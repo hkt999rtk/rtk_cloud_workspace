@@ -10,6 +10,3 @@
 [submodule "repos/rtk_account_manager"]
 	path = repos/rtk_account_manager
 	url = git@github.com-work:hkt999rtk/rtk_account_manager.git
-[submodule "repos/rtk_mqtt"]
-	path = repos/rtk_mqtt
-	url = git@github.com-work:hkt999rtk/rtk_mqtt.git
