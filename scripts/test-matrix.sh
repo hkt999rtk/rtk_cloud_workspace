@@ -15,7 +15,7 @@ if [ -d repos/rtk_cloud_client ]; then
     cd repos/rtk_cloud_client
     git diff --check
     git submodule status -- docs/rtk_cloud_contracts_doc || true
-    python3 -m unittest discover -s tools/tests
+    PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools/tests
   )
 else
   echo "SKIP: repos/rtk_cloud_client is missing"
@@ -23,7 +23,8 @@ fi
 
 echo
 echo "== repository status checks =="
-for repo in repos/rtk_video_cloud repos/rtk_cloud_contracts_doc repos/rtk_account_manager repos/rtk_mqtt; do
+repos=$(git config --file .gitmodules --get-regexp '^submodule\..*\.path$' | awk '{print $2}')
+for repo in $repos; do
   if [ -d "$repo" ]; then
     echo "-- $repo"
     git -C "$repo" status --short --branch
@@ -31,4 +32,3 @@ for repo in repos/rtk_video_cloud repos/rtk_cloud_contracts_doc repos/rtk_accoun
     echo "SKIP: $repo is missing"
   fi
 done
-
