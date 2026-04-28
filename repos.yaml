@@ -1,0 +1,44 @@
+schema: rtk-cloud-workspace-v1
+workspace:
+  name: rtk_cloud_workspace
+  remote: git@github.com-work:hkt999rtk/rtk_cloud_workspace.git
+  purpose: Cross-repository integration snapshot and orchestration.
+repositories:
+  - name: rtk_cloud_client
+    path: repos/rtk_cloud_client
+    remote: git@github.com-work:hkt999rtk/rtk_cloud_client.git
+    default_branch: main
+    role: Multi-language SDK client.
+    validation:
+      - git diff --check
+      - git submodule status -- docs/rtk_cloud_contracts_doc
+      - python3 -m unittest discover -s tools/tests
+  - name: rtk_video_cloud
+    path: repos/rtk_video_cloud
+    remote: git@github.com-work:hkt999rtk/rtk_video_cloud.git
+    default_branch: main
+    role: Video cloud server.
+    validation:
+      - git status --short --branch
+  - name: rtk_cloud_contracts_doc
+    path: repos/rtk_cloud_contracts_doc
+    remote: git@github.com-work:hkt999rtk/rtk_cloud_contracts_doc.git
+    default_branch: main
+    role: Cross-repo contracts source of truth.
+    validation:
+      - git status --short --branch
+  - name: rtk_account_manager
+    path: repos/rtk_account_manager
+    remote: git@github.com-work:hkt999rtk/rtk_account_manager.git
+    default_branch: main
+    role: Account, organization, and registry device service.
+    validation:
+      - git status --short --branch
+  - name: rtk_mqtt
+    path: repos/rtk_mqtt
+    remote: git@github.com-work:hkt999rtk/rtk_mqtt.git
+    default_branch: main
+    role: MQTT/broker and transport interop support.
+    validation:
+      - git status --short --branch
+
