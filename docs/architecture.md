@@ -1,7 +1,7 @@
 # RTK Cloud Architecture Notes
 
 This workspace tracks the integration boundary between the SDK client, video
-cloud server, contracts repository, and account manager.
+cloud server, contracts repository, account manager, and user-facing frontend.
 
 The workspace repository is an integration and governance layer. It does not
 own service implementation details, service-local architecture, or generated
@@ -14,6 +14,7 @@ artifacts. Those stay in the owning service repositories.
 - SDK/runtime implementation: `repos/rtk_cloud_client`
 - Video server implementation: `repos/rtk_video_cloud`
 - Account and registry implementation: `repos/rtk_account_manager`
+- User-facing Realtek Cloud introduction website: `repos/rtk_cloud_frontend`
 
 The contracts repository is the only normative source for shared API, payload,
 streaming, device transport, provisioning, and cross-service channel behavior.
@@ -26,6 +27,8 @@ not become a second contract source of truth.
 - `rtk_video_cloud` owns the video-cloud HTTP/WebSocket/MQTT server behavior.
 - `rtk_account_manager` owns account, organization, and registry-only device
   behavior.
+- `rtk_cloud_frontend` owns the public website content and lead/contact
+  experience for users learning about Realtek Cloud.
 - Cross-service provisioning and channel behavior should be tracked as
   integration work, not hidden inside the SDK client.
 - Workspace docs may describe repository boundaries, integration snapshots,

@@ -14,6 +14,7 @@ The workspace snapshot includes:
 | `repos/rtk_video_cloud` | `hkt999rtk/rtk_video_cloud` | Video cloud server. |
 | `repos/rtk_cloud_contracts_doc` | `hkt999rtk/rtk_cloud_contracts_doc` | Cross-repo contracts source of truth. |
 | `repos/rtk_account_manager` | `hkt999rtk/rtk_account_manager` | Account, organization, and device registry service. |
+| `repos/rtk_cloud_frontend` | `hkt999rtk/rtk_cloud_frontend` | User-facing Realtek Cloud introduction website. |
 
 ## Documentation Entry Points
 

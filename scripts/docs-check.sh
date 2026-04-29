@@ -63,6 +63,7 @@ echo "== service documentation entry points =="
 require_file repos/rtk_cloud_client/docs/README.md
 require_file repos/rtk_video_cloud/docs/architecture.md
 require_file repos/rtk_account_manager/docs/SPEC.md
+require_file repos/rtk_cloud_frontend/README.md
 
 echo
 echo "== contracts submodule alignment =="
