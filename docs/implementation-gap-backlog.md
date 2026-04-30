@@ -21,6 +21,7 @@ Normative sources:
 Supporting sources:
 
 - `docs/realtek-connect-plus-gap-analysis.md`
+- `docs/core-platform-gap-roadmap.md`
 - `docs/provisioning-issue-roadmap.md`
 - `docs/ota-issue-roadmap.md`
 - `repos/rtk_video_cloud/docs/firmware-campaign-alignment.md`
@@ -235,6 +236,22 @@ Acceptance criteria:
 3. Open `rtk_cloud_frontend` OTA wording follow-up as blocked by backend and SDK.
 4. Open Provisioning adapter and raw-claim design issues independently; they are
    not blockers for OTA.
+
+## Next Core Platform Backlog
+
+The issues in this file cover the post-interface OTA and Provisioning gaps. The
+next platform-layer gaps are tracked separately in
+`docs/core-platform-gap-roadmap.md`:
+
+- product readiness aggregator contract and source-fact alignment
+- private cloud deployment BOM and operations runbook
+- account/user lifecycle completeness
+- fleet groups/tags/batch operation primitives
+- product telemetry/insights event schema and ingestion
+- SDK/app delivery and push notification scope
+- WebRTC client media integration boundary
+- smart-home ecosystem boundary for schedules, scenes, Matter, and voice
+  assistants
 
 ## Non-Goals For This Backlog
 
