@@ -39,6 +39,11 @@ workflow, dashboards, analytics, staged percentage rollout, or mobile UX.
 
 ## Issues To Open After Docs Are Pushed
 
+These interface-first issues were opened and closed after the contracts and
+workspace planning documents were pushed. Do not reopen them for the next
+implementation phase; use `docs/implementation-gap-backlog.md` for remaining
+backend/SDK/frontend work.
+
 ### `hkt999rtk/rtk_cloud_contracts_doc`
 
 #### `[OTA] Define firmware campaign and rollout policy contract`
@@ -105,6 +110,12 @@ Acceptance criteria:
 - tests or follow-up test plan cover current basic rollout behavior and future
   policy gates separately
 
+Post-verification note: latest `rtk_video_cloud` documents this mapping in
+`docs/firmware-campaign-alignment.md` and keeps unsupported campaign policies
+explicit. The full campaign engine is still future implementation work:
+first-class campaign resource, policy enforcement, archive, and campaign-level
+cancel.
+
 ### `hkt999rtk/rtk_cloud_client`
 
 #### `[OTA] Align SDK firmware helpers with campaign contract`
@@ -159,3 +170,16 @@ Acceptance criteria:
 4. Open issues using GitHub links to the pushed contract and workspace docs.
 5. Keep issue bodies focused on acceptance criteria rather than duplicating the
    full design text.
+
+## Next Implementation Backlog
+
+Use `docs/implementation-gap-backlog.md` for the owner-repo issues that remain
+after the interface-first phase. The highest-priority OTA backlog is in
+`hkt999rtk/rtk_video_cloud`:
+
+- first-class firmware campaign resource and persistence
+- schedule, time-window, and user-consent policy enforcement
+- campaign-level cancel and archive behavior
+
+SDK and frontend follow-up should depend on the backend campaign APIs instead of
+inventing availability or eligibility semantics locally.

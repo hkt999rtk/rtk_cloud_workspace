@@ -14,11 +14,11 @@ Current local discussion snapshot used for this comparison:
 
 | Repository | Commit | Note |
 | --- | --- | --- |
-| `repos/rtk_cloud_frontend` | `b676c13` | Current local frontend snapshot used for public-copy evidence. |
-| `repos/rtk_account_manager` | `6cb9707` | Pushed docs-only firmware campaign contracts sync. |
-| `repos/rtk_cloud_client` | `c9e3a90` | Pushed docs-only firmware campaign contracts sync. |
-| `repos/rtk_video_cloud` | `cdd7ea5` | Pushed docs-only firmware campaign contracts sync. |
-| `repos/rtk_cloud_contracts_doc` | `e1887b4` | Product onboarding and firmware campaign interface source of truth. |
+| `repos/rtk_cloud_frontend` | `0eb8403` | Public Provisioning and OTA copy aligned to implementation status. |
+| `repos/rtk_account_manager` | `66e6a91` | Account readiness projection and claim/bind ownership policy present. |
+| `repos/rtk_cloud_client` | `1bc6309` | Local onboarding concepts, claim parser, and OTA campaign vocabulary present across SDK packages. |
+| `repos/rtk_video_cloud` | `ce80840` | Cross-service lifecycle worker hardening and current firmware lifecycle tests present; full OTA campaign engine remains future work. |
+| `repos/rtk_cloud_contracts_doc` | `1efa524` | Product onboarding and firmware campaign interface source of truth. |
 
 This snapshot is intentionally explicit so GitHub issues can link back to the exact
 workspace pins used by this planning note.
@@ -92,13 +92,32 @@ repo/service than the inspected implementation currently provides.
 
 ## OTA Campaign Interface-First Strategy
 
-OTA follow-up should be opened only after the campaign interface documents are pushed. The normative source is `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md`; the workspace planning source is `docs/ota-issue-roadmap.md`. First-phase scope is campaign policy core: schedule, time-window, cancel/archive, and user-consent policy vocabulary. Approval workflow, dashboards, analytics, staged percentage rollout, and mobile UX are out of first-phase scope.
+OTA interface-first issues have been merged. The normative source is
+`repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md`; the workspace planning
+source is `docs/ota-issue-roadmap.md`.
+
+The remaining implementation gap is not the contract vocabulary. The remaining
+gap is backend campaign behavior in `rtk_video_cloud`: first-class campaign
+resource/persistence, schedule and time-window policy enforcement,
+user-consent-required gates, archive, and campaign-level cancel. Follow-up issue
+planning is tracked in `docs/implementation-gap-backlog.md`.
 
 ## Provisioning Interface-First Strategy
 
-Provisioning follow-up should be opened only after the interface documents are pushed. The normative source is `repos/rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md`; the workspace planning source is `docs/provisioning-issue-roadmap.md`. Issues should link to those documents instead of duplicating the full design.
+Provisioning interface-first issues have been merged. The normative source is
+`repos/rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md`; the workspace planning
+source is `docs/provisioning-issue-roadmap.md`. Issues should link to those
+documents instead of duplicating the full design.
 
 The agreed first phase is documentation and interface only: no backend, SDK, or frontend implementation is required before the issues are opened. SDK local onboarding is expected to cover native, Android, iOS, and JavaScript/TypeScript with consistent concepts or explicit `unsupported_capability` behavior.
+
+The remaining implementation gap is real local onboarding behavior, not the SDK
+interface. Android and iOS still need owner-repo work for real BLE/SoftAP
+credential handoff once app/firmware details are defined. Account-side raw
+claim-material flows for QR, serial number, activation code, MAC address, or
+factory identity also need design before they can be treated as available
+product behavior. Follow-up issue planning is tracked in
+`docs/implementation-gap-backlog.md`.
 
 ## Discussion Questions
 
