@@ -216,6 +216,8 @@ Acceptance criteria:
 
 Summary: turn private-cloud positioning into a concrete deployment package plan.
 
+Status: completed by `docs/private-cloud-deployment.md`.
+
 Dependencies:
 
 - service deployment docs from account manager, video cloud, frontend, contracts,
@@ -229,6 +231,11 @@ Acceptance criteria:
 - document upgrade, rollback, backup, restore, and support boundaries
 - identify repo-specific follow-up issues for missing deployment scripts or docs
 - update frontend private-cloud wording only after package status is clear
+
+The workspace deliverable is
+[`private-cloud-deployment.md`](private-cloud-deployment.md). It is the
+product-level BOM and runbook index; service-specific deployment details remain
+owned by the service repositories.
 
 ### `hkt999rtk/rtk_cloud_client`
 
