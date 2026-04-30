@@ -13,6 +13,7 @@ repositories. Shared wire and payload contracts belong in
 | [documentation-governance.md](documentation-governance.md) | Source | Documentation ownership, status, and review rules. |
 | [realtek-connect-plus-gap-analysis.md](realtek-connect-plus-gap-analysis.md) | Discussion note | Evidence-backed gaps between Realtek Connect+ promotion content and current implementation. |
 | [provisioning-issue-roadmap.md](provisioning-issue-roadmap.md) | Supporting note | Interface-first provisioning issue plan and repository ownership matrix. |
+| [ota-issue-roadmap.md](ota-issue-roadmap.md) | Supporting note | Interface-first OTA campaign issue plan and repository ownership matrix. |
 | [testing.md](testing.md) | Source | Cross-repository validation commands for pinned snapshots. |
 | [adr/README.md](adr/README.md) | Index | Workspace architecture decision record location and format. |
 
