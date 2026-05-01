@@ -15,6 +15,7 @@ The workspace snapshot includes:
 | `repos/rtk_cloud_contracts_doc` | `hkt999rtk/rtk_cloud_contracts_doc` | Cross-repo contracts source of truth. |
 | `repos/rtk_account_manager` | `hkt999rtk/rtk_account_manager` | Account, organization, and device registry service. |
 | `repos/rtk_cloud_frontend` | `hkt999rtk/rtk_cloud_frontend` | User-facing Realtek Cloud introduction website. |
+| `repos/rtk_cloud_admin` | `hkt999rtk/rtk_cloud_admin` | Admin dashboard for fleet, provisioning, lifecycle, health, and audit operations. |
 
 ## Documentation Entry Points
 

@@ -29,6 +29,7 @@ repositories. Shared wire and payload contracts belong in
 | `repos/rtk_video_cloud` | Service-owned docs | [`docs/architecture.md`](../repos/rtk_video_cloud/docs/architecture.md) |
 | `repos/rtk_account_manager` | Service-owned docs | [`docs/SPEC.md`](../repos/rtk_account_manager/docs/SPEC.md) |
 | `repos/rtk_cloud_frontend` | User-facing website docs | [`README.md`](../repos/rtk_cloud_frontend/README.md) |
+| `repos/rtk_cloud_admin` | Admin dashboard docs | [`README.md`](../repos/rtk_cloud_admin/README.md) |
 
 ## Reference-Only Documents
 

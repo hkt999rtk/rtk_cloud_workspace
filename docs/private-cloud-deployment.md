@@ -48,6 +48,7 @@ runtime details.
 | Component | Required | Owner repo | Current source/status | Private-cloud role |
 | --- | --- | --- | --- | --- |
 | Public website / lead portal | Yes for external-facing deployments | `rtk_cloud_frontend` | Container recipe and SQLite lead storage exist. | Presents Realtek Connect+ pages, docs portal, contact leads, admin lead review. |
+| Admin dashboard | Yes for operator deployments | `rtk_cloud_admin` | Go BFF, React SPA, SQLite demo/cache storage, and dashboard docs exist. | Provides tenant/customer and platform operations views for fleet, provisioning, lifecycle, service health, and audit workflows. |
 | Account manager API | Yes | `rtk_account_manager` | Go/Postgres backend with auth, orgs, devices, groups/tags, provisioning projection. | Owns users, orgs, RBAC, registry devices, fleet primitives, account-side readiness facts. |
 | Video cloud API | Yes for camera/device runtime | `rtk_video_cloud` | Linux release bundle, systemd units, Postgres, media, firmware, transport, metrics. | Owns activation, tokens, media, firmware lifecycle, WebSocket/MQTT transport, runtime signals. |
 | Video cloud workers | Deployment-dependent | `rtk_video_cloud` | `ping`, `cleaner`, `statistics`, relay, RTSP relay, cross-service units exist. | Runs background lifecycle, cleanup, metrics/statistics, relay, cross-service workers. |
@@ -80,6 +81,7 @@ Recommended component placement:
 | Component | Placement |
 | --- | --- |
 | `rtk_cloud_frontend` | Container on the same host, HTTP on `8080`, SQLite volume under `/data`. |
+| `rtk_cloud_admin` | Go server on the same host, HTTP on a separate internal port, SQLite demo/cache volume. |
 | `rtk_account_manager` | Native service or container on the same host, Postgres local DSN. |
 | `rtk_video_cloud` | Release bundle installed under `/opt/video_cloud`, systemd units. |
 | EMQX | `video_cloud-emqx.service` using packaged Docker Compose, MQTT on `127.0.0.1:1883` unless exposed deliberately. |
@@ -304,6 +306,7 @@ clear. Do not imply all components are one-click deployable today.
 | Add account-manager deployment packaging/runbook | `hkt999rtk/rtk_account_manager` | Account manager has service/API docs, but private-cloud package needs deploy, migration, backup, and rollback instructions comparable to video cloud. |
 | Add account-manager readiness evidence script | `hkt999rtk/rtk_account_manager` | Product-level evidence needs auth/org/device/provisioning smoke output. |
 | Add frontend production deployment profile | `hkt999rtk/rtk_cloud_frontend` | Current container recipe is enough for evaluation; production-like profile needs backup/restore, reverse-proxy, and operational notes. |
+| Add admin-dashboard production deployment profile | `hkt999rtk/rtk_cloud_admin` | Current admin dashboard is a Go/React console with local demo/cache persistence; production-like profile needs upstream integration, backup/restore, reverse-proxy, and operational notes. |
 | Define product-level evidence wrapper | `hkt999rtk/rtk_cloud_workspace` | A future wrapper should collect per-service versions, health, metrics, and evidence artifact links. |
 | Define cross-service broker packaging decision | `hkt999rtk/rtk_cloud_workspace` or owner service | Video cloud packages EMQX, but NATS JetStream is an external prerequisite when cross-service lifecycle is enabled. |
 | Add private-cloud copy status update | `hkt999rtk/rtk_cloud_frontend` | Public wording should reflect this BOM and avoid one-click private-cloud claims until follow-ups land. |

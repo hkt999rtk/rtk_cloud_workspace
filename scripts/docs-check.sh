@@ -64,6 +64,7 @@ require_file repos/rtk_cloud_client/docs/README.md
 require_file repos/rtk_video_cloud/docs/architecture.md
 require_file repos/rtk_account_manager/docs/SPEC.md
 require_file repos/rtk_cloud_frontend/README.md
+require_file repos/rtk_cloud_admin/README.md
 
 echo
 echo "== contracts submodule alignment =="
@@ -72,6 +73,7 @@ repos/rtk_cloud_contracts_doc
 repos/rtk_account_manager/contracts
 repos/rtk_cloud_client/docs/rtk_cloud_contracts_doc
 repos/rtk_video_cloud/docs/rtk_cloud_contracts_doc
+repos/rtk_cloud_admin/rtk_cloud_contracts_doc
 "
 
 expected=""

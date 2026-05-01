@@ -13,3 +13,6 @@
 [submodule "repos/rtk_cloud_frontend"]
 	path = repos/rtk_cloud_frontend
 	url = git@github.com-work:hkt999rtk/rtk_cloud_frontend.git
+[submodule "repos/rtk_cloud_admin"]
+	path = repos/rtk_cloud_admin
+	url = git@github.com-work:hkt999rtk/rtk_cloud_admin.git
