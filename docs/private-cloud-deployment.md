@@ -20,6 +20,7 @@ customer deployment before opening service-specific work.
 
 | Area | Source document | Notes |
 | --- | --- | --- |
+| Business model and tier definitions | `docs/business-model.md` | Evaluation/commercial tier structure, pricing framing, SDK licensing, and website disclosure rules. |
 | Workspace gap evidence | `docs/realtek-connect-plus-gap-analysis.md` | Tracks public-copy versus implementation gaps. |
 | Core platform roadmap | `docs/core-platform-gap-roadmap.md` | Routes private-cloud work to owner repositories. |
 | Video cloud runtime deploy | `repos/rtk_video_cloud/docs/automation.md` | Release, deploy, staging evidence, and runner model. |
