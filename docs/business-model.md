@@ -34,7 +34,7 @@ deployment analysis).
 | Quota raise process | Contact us — manual review |
 | Commercial use | Not permitted; evaluation, PoC, and development only |
 | Time limit | None (indefinite, but subject to fair-use review) |
-| Signup | Self-service with email verification |
+| Signup | Self-service with email verification (owned by `rtk_cloud_admin` UI + `rtk_account_manager` API; not by the marketing site) |
 | Cost | Free |
 | Support | Community-tier: documentation + GitHub Issues only |
 | Data retention | Subject to evaluation policy; not for production data |
@@ -144,6 +144,20 @@ The website must NOT disclose:
   comparison with RainMaker's published model. See conversation thread in
   `clever-sammet-595d11` worktree.
 
+## Repository Ownership
+
+| Concern | Owning repo |
+| --- | --- |
+| Marketing site disclosure copy | `rtk_cloud_frontend` |
+| Self-service signup UI (signup form, email verification page, account dashboard) | `rtk_cloud_admin` (React frontend + Go backend) |
+| Account identity, password, email verification token, quota field on account | `rtk_account_manager` |
+| Device-side quota enforcement at registration | `rtk_video_cloud` and `rtk_account_manager` (per the existing transport/registry split) |
+| SDK packages and license | `rtk_cloud_client` |
+
+`rtk_cloud_frontend` does **not** own user accounts, signup, or any
+authenticated user surface. It is a public marketing site. Self-service signup
+links from the marketing site go out to `rtk_cloud_admin`.
+
 ## Cross-References
 
 - `docs/deep-research-report.md` — RainMaker pricing and deployment analysis
@@ -154,3 +168,5 @@ The website must NOT disclose:
   feature page content (must reflect this document)
 - `repos/rtk_cloud_frontend/internal/content/content.go` — i18n strings for
   pricing and tier disclosure
+- `repos/rtk_cloud_admin/` — owner of self-service signup UI
+- `repos/rtk_account_manager/` — owner of signup API and account quota field
