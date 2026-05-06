@@ -308,9 +308,11 @@ clear. Do not imply all components are one-click deployable today.
 | Add account-manager readiness evidence script | `hkt999rtk/rtk_account_manager` | Product-level evidence needs auth/org/device/provisioning smoke output. |
 | Add frontend production deployment profile | `hkt999rtk/rtk_cloud_frontend` | Current container recipe is enough for evaluation; production-like profile needs backup/restore, reverse-proxy, and operational notes. |
 | Add admin-dashboard production deployment profile | `hkt999rtk/rtk_cloud_admin` | Current admin dashboard is a Go/React console with local demo/cache persistence; production-like profile needs upstream integration, backup/restore, reverse-proxy, and operational notes. |
+| Add admin-dashboard authoritative readiness/telemetry production mode | `hkt999rtk/rtk_cloud_admin` | Production dashboard views should prefer Account Manager and Video Cloud source facts over demo/cache projections, with stable stale/partial/upstream-failure states. |
 | Define product-level evidence wrapper | `hkt999rtk/rtk_cloud_workspace` | A future wrapper should collect per-service versions, health, metrics, and evidence artifact links. |
 | Define cross-service broker packaging decision | `hkt999rtk/rtk_cloud_workspace` or owner service | Video cloud packages EMQX, but NATS JetStream is an external prerequisite when cross-service lifecycle is enabled. |
 | Add private-cloud copy status update | `hkt999rtk/rtk_cloud_frontend` | Public wording should reflect this BOM and avoid one-click private-cloud claims until follow-ups land. |
+| Add SDK release validation coverage and live-lab evidence | `hkt999rtk/rtk_cloud_client` | Private-cloud/customer handoff needs package release evidence for Android/iOS/native coverage exports and Pro2/FreeRTOS live-lab validation artifacts. |
 
 ## Issue #1 Acceptance Checklist
 

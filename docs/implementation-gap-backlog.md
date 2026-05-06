@@ -4,259 +4,261 @@ Status: supporting-note.
 
 Owner: `rtk_cloud_workspace`.
 
-Last reviewed: 2026-04-30.
+Last reviewed: 2026-05-07.
 
 ## Purpose
 
-This note records the implementation and test gaps that remain after the
-Provisioning and OTA interface-first issues were merged. It is a planning index
-for GitHub issues. It is not the normative contract source.
+This note records the remaining implementation and test gaps after the latest
+workspace/submodule refresh. It is a planning index for GitHub issues. It is not
+the normative contract source.
 
-Normative sources:
+The May 2026 refresh supersedes older OTA, telemetry, and account-lifecycle gap
+entries. Do not reopen those older issues unless a regression is found in the
+owning repository.
+
+Normative and primary sources:
 
 - `repos/rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md`
 - `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md`
-- `repos/rtk_cloud_contracts_doc/HTTP_API.md`
-
-Supporting sources:
-
-- `docs/realtek-connect-plus-gap-analysis.md`
+- `repos/rtk_cloud_contracts_doc/PRODUCT_READINESS.md`
+- `repos/rtk_cloud_contracts_doc/TELEMETRY_INSIGHTS.md`
+- `repos/rtk_cloud_contracts_doc/METRICS_EXPORT.md`
+- `docs/private-cloud-deployment.md`
 - `docs/core-platform-gap-roadmap.md`
-- `docs/provisioning-issue-roadmap.md`
-- `docs/ota-issue-roadmap.md`
-- `repos/rtk_video_cloud/docs/firmware-campaign-alignment.md`
-- `repos/rtk_cloud_client/docs/LOCAL_ONBOARDING_SDK.md`
-- `repos/rtk_account_manager/docs/SPEC.md`
+- `docs/realtek-connect-plus-gap-analysis.md`
 
 ## Verified Snapshot
 
 | Repository | Commit | Evidence summary |
 | --- | --- | --- |
-| `repos/rtk_cloud_contracts_doc` | `1efa524` | Product onboarding and firmware campaign contracts are present. |
-| `repos/rtk_cloud_client` | `1bc6309` | Local onboarding concepts, claim parser, campaign vocabulary, and unsupported-policy helpers are present across packages. |
-| `repos/rtk_account_manager` | `66e6a91` | Account-side readiness projection and claim/bind ownership policy are present. |
-| `repos/rtk_video_cloud` | `ce80840` | Cross-service lifecycle worker hardening and current firmware lifecycle tests are present; full OTA campaign engine remains future work. |
-| `repos/rtk_cloud_frontend` | `0eb8403` | Public Provisioning and OTA copy is aligned to implementation status. |
+| `repos/rtk_cloud_contracts_doc` | `bad301f` | Product readiness, telemetry insights, metrics export, firmware campaign, frontend style, and onboarding contracts are present. |
+| `repos/rtk_account_manager` | `d0de155` | Evaluation-tier signup, verification, password reset/change, account disable/delete, quota raise workflow, audit metrics, fleet registry, provisioning, and account-side readiness vocabulary are present. |
+| `repos/rtk_video_cloud` | `e763170` | Firmware campaign resource/persistence/policy gates/cancel/archive/pause/resume, product telemetry ingestion, fleet health summary, metric exporter, cert issuer, TURN registry, and deployment assets are present. |
+| `repos/rtk_cloud_client` | `2ceee44` | Firmware campaign helpers, telemetry typed helpers, Go SDK, Android/iOS PKI work, Pro2 lifecycle/media work, and release validation docs are present; release test-program coverage gaps remain. |
+| `repos/rtk_cloud_admin` | `32e3e1c` | Admin dashboard has self-service signup UI, fleet health, stream health, firmware/OTA, device telemetry, platform/customer views, upstream account/video proxy paths, and demo/cache mode. |
+| `repos/rtk_cloud_frontend` | `699b5d5` | Public website has privacy-friendly analytics, business model disclosure, private cloud content, OTA policy promotion, and updated product pages. |
 
-## Validation Run
+## Current Gap Status Summary
 
-Local verification on 2026-04-30:
-
-| Repository | Command | Result |
-| --- | --- | --- |
-| workspace | `./scripts/docs-check.sh` | Passed. |
-| `rtk_account_manager` | `go test ./...` | Passed. |
-| `rtk_video_cloud` | `go test ./...` | Passed. |
-| `rtk_cloud_frontend` | `go test ./...` | Passed. |
-| `rtk_cloud_client` native | `cmake -S . -B build && cmake --build build && ctest --test-dir build --output-on-failure` | Passed, 9/9 tests. |
-| `rtk_cloud_client` JavaScript | `npm ci && npm test` | Passed, 25/25 tests. |
-| `rtk_cloud_client` iOS | `swift test` | Passed, 26/26 tests. |
-| `rtk_cloud_client` Android | `gradle test` | Passed. |
-
-## Gap Status Summary
-
-| Area | Current status | Remaining implementation gap | Owner repo |
+| Area | Current status | Remaining gap | Owner repo |
 | --- | --- | --- | --- |
-| Provisioning contracts | Completed for interface-first scope. | None for the interface-first documentation phase. | `rtk_cloud_contracts_doc` |
-| SDK local onboarding | Interface and explicit `unsupported_capability` behavior are present. | Real BLE/SoftAP credential handoff adapters are not implemented. | `rtk_cloud_client` |
-| Claim material parsing | Implemented and tested across SDK packages. | Account-side raw QR/serial/activation-code claim endpoints are not implemented; current account API accepts existing-device video claim material only. | `rtk_account_manager` |
-| Product readiness | Account-side readiness projection exists. | A unified cross-service product-readiness API is not implemented. | future integration owner, with `rtk_account_manager` and `rtk_video_cloud` inputs |
-| Video lifecycle worker | Current hardening is implemented and tested. | Continue treating lifecycle worker regressions as owner-repo bugs, not a remaining interface gap. | `rtk_video_cloud` |
-| OTA contracts | Completed for interface-first scope. | None for the interface-first documentation phase. | `rtk_cloud_contracts_doc` |
-| OTA SDK helpers | Campaign vocabulary and unsupported-policy behavior are present. | First-class campaign API helpers should wait for backend campaign resources. | `rtk_cloud_client` |
-| OTA backend | Current firmware lifecycle foundation is implemented. | First-class campaign resource, schedule/time-window/user-consent policy enforcement, archive, and campaign-level cancel are not implemented. | `rtk_video_cloud` |
-| OTA frontend | Copy is aligned to current implementation status. | Promote campaign policies from roadmap/integration-ready wording only after backend and SDK support land. | `rtk_cloud_frontend` |
+| OTA campaign backend | Implemented for foundation scope. | Do not reopen campaign resource/policy/cancel/archive issues; advanced approval workflow, staged percentage rollout, and dashboards remain roadmap outside this batch. | `rtk_video_cloud` |
+| OTA SDK helpers | Implemented across SDK packages for campaign helper surface. | Treat future gaps as package-specific regressions or advanced policy work, not foundation blockers. | `rtk_cloud_client` |
+| Product telemetry baseline | Implemented for backend ingestion, SDK typed helpers, and admin display. | Product retention/analytics depth can evolve later; no baseline ingestion issue is needed now. | `rtk_video_cloud`, `rtk_cloud_client`, `rtk_cloud_admin` |
+| Account lifecycle baseline | Implemented for signup, email verification, forgot/reset password, password change, self-service disable/delete, and evaluation quota. | Third-party/social login remains deferred and is not part of this foundation batch. | `rtk_account_manager` |
+| PKI/mTLS server-side | In progress. | Existing open issue `hkt999rtk/rtk_video_cloud#262` remains the owner issue; do not duplicate. | `rtk_video_cloud` |
+| Private cloud packaging | Partial. | Account manager, frontend, and admin dashboard need production deployment/runbook profiles; workspace needs evidence wrapper and cross-service broker packaging decision. | multiple |
+| Product readiness evidence | Partial. | Account-side and admin/UI facts exist, but private-cloud acceptance still needs concrete smoke/evidence collection and production-mode upstream fact usage. | `rtk_account_manager`, `rtk_cloud_admin`, `rtk_cloud_workspace` |
+| Release validation | Partial. | Android/iOS/native coverage exports and Pro2/FreeRTOS live-lab release test programs are documented gaps. | `rtk_cloud_client` |
 
-## Issues To Open
-
-### `hkt999rtk/rtk_video_cloud`
-
-#### `[OTA] Add first-class firmware campaign resource and persistence`
-
-Summary: introduce backend campaign state without removing the existing firmware
-lifecycle routes.
-
-Dependencies:
-
-- `rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md`
-- `rtk_video_cloud/docs/firmware-campaign-alignment.md`
-- existing publish, enable, whitelist, rollout query/report/cancel, and download
-  routes
-
-Acceptance criteria:
-
-- add a first-class `FirmwareCampaign` domain model with id, model, target
-  version, selector, policy, lifecycle state, timestamps, and audit metadata
-- persist campaign records and link rollout records to campaign id where
-  applicable
-- keep current firmware lifecycle routes working for compatibility
-- document how legacy `enable_firmware` and `set_download_whitelist` map to
-  campaign behavior or remain legacy paths
-- add tests for campaign create/query lifecycle and compatibility with existing
-  firmware lifecycle behavior
-
-#### `[OTA] Enforce schedule, time-window, and user-consent rollout policies`
-
-Summary: implement campaign policy gates that are currently vocabulary only.
-
-Dependencies:
-
-- first-class campaign resource issue
-- `rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md` rollout policy vocabulary
-
-Acceptance criteria:
-
-- scheduled campaigns block eligibility before start and allow eligibility after
-  start
-- time-window campaigns block check/download outside the configured window
-- user-consent-required campaigns return a stable waiting-for-user state until
-  consent is recorded
-- unsupported or malformed policy fields fail explicitly instead of being ignored
-- tests cover eligible, waiting-for-window, waiting-for-user, already-current,
-  failed, canceled, and compatibility-gate behavior
-
-#### `[OTA] Add campaign-level cancel and archive behavior`
-
-Summary: distinguish per-device rollout cancel from campaign-level cancel and
-archive management.
-
-Dependencies:
-
-- first-class campaign resource issue
-- policy evaluator issue
-
-Acceptance criteria:
-
-- campaign-level cancel prevents future eligibility and cancels pending eligible
-  rollout records
-- archive hides closed campaigns from active query results without deleting audit
-  history
-- per-device rollout cancel continues to work for current lifecycle compatibility
-- query/report/download surfaces include campaign id where available
-- tests cover campaign cancel, archive filtering, audit lookup, and legacy
-  per-device cancel behavior
-
-### `hkt999rtk/rtk_cloud_client`
-
-#### `[OTA] Add SDK helpers for backend firmware campaign APIs after backend lands`
-
-Summary: add package-native campaign helpers after `rtk_video_cloud` exposes
-first-class campaign APIs.
-
-Dependencies:
-
-- backend campaign resource and policy issues in `rtk_video_cloud`
-- `rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md`
-
-Acceptance criteria:
-
-- native, Android, iOS, and JavaScript/TypeScript expose package-native helpers
-  for campaign query/report/cancel/download surfaces that exist in the backend
-- helpers preserve backend policy decisions and do not decide eligibility locally
-- unsupported policy surfaces keep explicit `unsupported_capability` behavior
-- tests cover campaign id propagation, rollout state vocabulary, report payloads,
-  and unsupported capability behavior across packages
-
-### `hkt999rtk/rtk_cloud_frontend`
-
-#### `[OTA] Promote campaign policy wording only after backend and SDK support land`
-
-Summary: keep public Realtek Connect+ OTA copy synchronized with actual campaign
-implementation status.
-
-Dependencies:
-
-- backend campaign resource and policy issues in `rtk_video_cloud`
-- SDK helper issue in `rtk_cloud_client`
-
-Acceptance criteria:
-
-- OTA page continues to label incomplete policies as contract-defined or roadmap
-  until backend and SDK support are merged
-- when backend and SDK support land, update availability wording for the exact
-  policies that are implemented
-- do not describe approval workflow, dashboards, analytics, or staged percentage
-  rollout as available unless separate implementation issues land
-- tests cover the public copy snippets that distinguish available,
-  integration-ready, and roadmap scope
-
-### `hkt999rtk/rtk_cloud_client`
-
-#### `[Provisioning] Implement real BLE/SoftAP local onboarding adapters`
-
-Summary: move beyond interface stubs for mobile local onboarding.
-
-Dependencies:
-
-- `rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md`
-- `rtk_cloud_client/docs/LOCAL_ONBOARDING_SDK.md`
-- platform-specific BLE/SoftAP design decisions from app/firmware owners
-
-Acceptance criteria:
-
-- Android and iOS implement real BLE and/or SoftAP adapter paths behind the
-  existing local onboarding interfaces
-- unsupported platforms continue returning explicit `unsupported_capability`
-- local onboarding success reports local setup result only; it does not claim
-  account binding or video activation success
-- timeout, cancel, invalid claim material, transport failure, and device rejected
-  setup are covered by tests
-- docs clarify which transports are implemented per package/runtime
+## Foundation Issues To Open
 
 ### `hkt999rtk/rtk_account_manager`
 
-#### `[Provisioning] Design raw claim-material endpoint for QR/serial/activation-code flows`
+#### `[Private Cloud] Add deployment packaging and operations runbook`
 
-Summary: define whether account manager should accept raw normalized claim
-material directly instead of only existing-device video claim payloads.
+Summary: make account manager deployable as part of the private-cloud package
+with service-local install, migration, upgrade, rollback, backup, and restore
+instructions.
 
 Dependencies:
 
-- `rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md`
-- SDK claim material parser behavior in `rtk_cloud_client`
-- product policy for transfer, reuse, factory reset, and already-claimed devices
+- `docs/private-cloud-deployment.md`
+- `repos/rtk_account_manager/docs/SPEC.md`
+- current migration and service startup model
 
 Acceptance criteria:
 
-- document whether raw QR, serial number, activation code, MAC address, and
-  factory identity should map to an existing registry device or create a pending
-  claim flow
-- define authorization and organization ownership rules for already-claimed,
-  cross-organization, transfer, and reset cases
-- if implemented, expose API schema and tests for accepted/rejected claim
-  material cases
-- if not implemented in this repo, document the owner service and keep current
-  API wording explicit
+- document single-node evaluation and production-like deployment profiles for
+  account manager
+- document environment variables, database migration sequence, health/smoke
+  checks, upgrade, rollback, backup, and restore
+- define how auth token delivery, SMTP/log adapters, quota notifications, and
+  platform-admin operations are configured for private deployments
+- avoid storing secrets in docs; reference secret categories and operator-owned
+  storage only
 
-## Issue Ordering
+#### `[Private Cloud] Add account-manager readiness evidence smoke script`
 
-1. Open `rtk_video_cloud` campaign resource issue first; policy and archive/cancel
-   issues depend on it.
-2. Open `rtk_cloud_client` OTA campaign helper issue as blocked by backend APIs.
-3. Open `rtk_cloud_frontend` OTA wording follow-up as blocked by backend and SDK.
-4. Open Provisioning adapter and raw-claim design issues independently; they are
-   not blockers for OTA.
+Summary: add a read-only smoke/evidence command that proves account-manager
+private-cloud readiness without mutating production data unexpectedly.
 
-## Next Core Platform Backlog
+Dependencies:
 
-The issues in this file cover the post-interface OTA and Provisioning gaps. The
-next platform-layer gaps are tracked separately in
-`docs/core-platform-gap-roadmap.md`:
+- `docs/private-cloud-deployment.md`
+- account manager auth/org/device/provisioning APIs
+- current audit and metrics endpoints
 
-- product readiness aggregator contract and source-fact alignment
-- private cloud deployment BOM and operations runbook
-- account/user lifecycle completeness
-- fleet groups/tags/batch operation primitives
-- product telemetry/insights event schema and ingestion
-- SDK/app delivery and push notification scope
-- WebRTC client media integration boundary
-- smart-home ecosystem boundary for schedules, scenes, Matter, and voice
-  assistants
+Acceptance criteria:
 
-## Non-Goals For This Backlog
+- provide a script or documented command sequence that records service version,
+  health, migration status, auth/login smoke, organization/device smoke, and
+  provisioning/readiness evidence
+- output a redacted artifact safe to attach to a GitHub issue or deployment
+  sign-off
+- support explicit skip markers for disabled optional features such as SMTP or
+  cross-service channel
+- include tests or dry-run validation where practical
 
-- Do not reopen already completed interface-first contract issues.
-- Do not duplicate full contract text in issue bodies.
-- Do not claim local BLE/SoftAP onboarding or OTA campaign policies are generally
-  available until implementation and tests land.
-- Do not move service-owned implementation design into the workspace repo.
+### `hkt999rtk/rtk_cloud_admin`
+
+#### `[Private Cloud] Add production deployment profile for admin dashboard`
+
+Summary: turn the admin dashboard's demo-capable Go/React app into a documented
+private-cloud production service.
+
+Dependencies:
+
+- `docs/private-cloud-deployment.md`
+- `repos/rtk_cloud_admin/docs/SPEC.md`
+- Account Manager and Video Cloud upstream base URLs
+
+Acceptance criteria:
+
+- document container or native deployment, persistent SQLite/cache storage,
+  reverse proxy/TLS assumptions, admin bootstrap secrets, backup/restore, and
+  rollback
+- document production-mode upstream configuration for Account Manager and Video
+  Cloud, including failure behavior when an upstream is unavailable
+- distinguish local demo/cache data from authoritative upstream account/video
+  data
+- add or update smoke checks for `/healthz`, login/session, upstream health, and
+  selected dashboard APIs
+
+#### `[Readiness] Use upstream account/video readiness and telemetry facts for production mode`
+
+Summary: ensure production-mode admin dashboard views prefer authoritative
+upstream facts instead of demo/cache-only projections.
+
+Dependencies:
+
+- `repos/rtk_cloud_contracts_doc/PRODUCT_READINESS.md`
+- `repos/rtk_cloud_contracts_doc/TELEMETRY_INSIGHTS.md`
+- Account Manager device/readiness projection APIs
+- Video Cloud telemetry and fleet health APIs
+
+Acceptance criteria:
+
+- document and implement the production-mode precedence for account registry,
+  video activation/transport, readiness, fleet health, and telemetry facts
+- preserve demo mode, but make demo/cache state visibly non-authoritative
+- handle upstream unavailable, stale, unauthorized, and partial-data cases with
+  stable UI/API states
+- add tests for upstream success, upstream failure, org isolation, telemetry
+  mapping, and no leakage of raw `video_cloud_devid` when the UI should hide it
+
+### `hkt999rtk/rtk_cloud_frontend`
+
+#### `[Private Cloud] Add production deployment profile and backup/restore notes`
+
+Summary: align the public website/lead portal deployment docs with the
+private-cloud BOM.
+
+Dependencies:
+
+- `docs/private-cloud-deployment.md`
+- `repos/rtk_cloud_frontend/docs/SPEC.md`
+- current container/native deployment and SQLite lead/analytics storage
+
+Acceptance criteria:
+
+- document production profile for public website deployment, persistent lead and
+  analytics storage, reverse proxy/TLS, cache headers, health checks, backup,
+  restore, and rollback
+- document how private-cloud wording should map to actual deployed package status
+- keep website lead admin separate from the real admin dashboard in
+  `rtk_cloud_admin`
+- add or update tests/docs checks for deployment-sensitive paths where practical
+
+### `hkt999rtk/rtk_cloud_workspace`
+
+#### `[Private Cloud] Add product-level evidence collector wrapper`
+
+Summary: add a workspace-level read-only wrapper that collects per-service
+private-cloud readiness evidence into one redacted bundle.
+
+Dependencies:
+
+- `docs/private-cloud-deployment.md`
+- service-local evidence/smoke commands from frontend, account manager, admin,
+  video cloud, EMQX, and broker components
+
+Acceptance criteria:
+
+- collect pinned service commits, selected service versions, health checks,
+  metrics links/snapshots, smoke outputs, broker status, and backup evidence
+  references
+- never print tokens, DSNs, private keys, or raw customer data
+- include explicit `PASS`, `FAIL`, and `SKIP` markers with reasons
+- produce a deterministic artifact directory or tarball suitable for deployment
+  sign-off
+
+#### `[Private Cloud] Decide and document cross-service broker packaging`
+
+Summary: decide how NATS JetStream or an approved equivalent is packaged for
+private-cloud account/video lifecycle deployments.
+
+Dependencies:
+
+- `docs/private-cloud-deployment.md`
+- `repos/rtk_account_manager/docs/PROVISIONING_AND_EVENT_CHANNEL_PLAN.md`
+- `repos/rtk_video_cloud/docs/cross-service-lifecycle-runbook.md`
+
+Acceptance criteria:
+
+- decide whether broker packaging is owned by workspace, video cloud deploy
+  assets, account manager deploy docs, or external platform/operator docs
+- document single-node evaluation and production-like broker profiles
+- document required streams, retention, dead-letter handling, backup/restore, and
+  smoke checks
+- update private-cloud BOM/runbook links after the owner decision is made
+
+### `hkt999rtk/rtk_cloud_client`
+
+#### `[Release] Add Android/iOS/native coverage export and release validation artifacts`
+
+Summary: close deterministic release evidence gaps for package consumers.
+
+Dependencies:
+
+- `repos/rtk_cloud_client/docs/TESTING.md`
+- `repos/rtk_cloud_client/docs/DELIVERABLES_AND_TEST_PROGRAMS.md`
+- `repos/rtk_cloud_client/docs/RELEASE_VALIDATION_REPORT.md`
+
+Acceptance criteria:
+
+- add native coverage export where supported by the host toolchain
+- add Android Jacoco or equivalent coverage export for macOS-capable runner paths
+- add iOS `xccov`/`xcrun` coverage export for simulator-capable runner paths
+- record generated artifact paths in release validation reports
+- preserve explicit `SKIP` behavior on hosts that cannot run mobile toolchains
+
+#### `[Release] Add Pro2/FreeRTOS live-lab release test program`
+
+Summary: define and automate the release evidence path for Pro2/FreeRTOS live
+hardware validation.
+
+Dependencies:
+
+- `repos/rtk_cloud_client/docs/TESTING.md`
+- Pro2 vendor SDK and ASDK artifacts from Git LFS
+- a configured video-cloud test server and device credentials
+
+Acceptance criteria:
+
+- define required host, board, firmware, credentials, and server prerequisites
+- add a repeatable live-lab command or test-program wrapper for Pro2 board build
+  and device/server interop
+- capture pass/fail/skip/block summary, logs, artifact checksums, client commit,
+  contracts commit, and server commit when applicable
+- skip cleanly when hardware, credentials, LFS artifacts, or server setup are not
+  available
+
+## Non-Goals For This Batch
+
+- Do not open smart-home schedules/scenes, Matter, Alexa, Google Assistant, or
+  consumer household-sharing implementation issues in this batch.
+- Do not reopen OTA campaign resource/policy/cancel/archive issues.
+- Do not reopen baseline telemetry ingestion or SDK telemetry helper issues.
+- Do not duplicate `rtk_video_cloud#262` for PKI/mTLS server-side work.
+- Do not copy full design docs into issue bodies; link to pushed workspace docs.

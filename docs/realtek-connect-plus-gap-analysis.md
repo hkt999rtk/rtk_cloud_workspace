@@ -2,11 +2,11 @@
 
 Status: discussion note.
 
-Date: 2026-04-30.
+Date: 2026-05-07.
 
-Purpose: record the observed differences between the external Realtek Connect+
-promotion content and the current RTK Cloud implementation. This note is for
-future product/engineering discussion. It does not change customer-facing copy.
+Purpose: record the observed differences between Realtek Connect+ public/product
+positioning and the current RTK Cloud implementation. This note is for product
+and engineering planning. It does not change customer-facing copy.
 
 ## Snapshot
 
@@ -14,13 +14,14 @@ Current local discussion snapshot used for this comparison:
 
 | Repository | Commit | Note |
 | --- | --- | --- |
-| `repos/rtk_cloud_frontend` | `0eb8403` | Public Provisioning and OTA copy aligned to implementation status. |
-| `repos/rtk_account_manager` | `66e6a91` | Account readiness projection and claim/bind ownership policy present. |
-| `repos/rtk_cloud_client` | `1bc6309` | Local onboarding concepts, claim parser, and OTA campaign vocabulary present across SDK packages. |
-| `repos/rtk_video_cloud` | `ce80840` | Cross-service lifecycle worker hardening and current firmware lifecycle tests present; full OTA campaign engine remains future work. |
-| `repos/rtk_cloud_contracts_doc` | `1efa524` | Product onboarding and firmware campaign interface source of truth. |
+| `repos/rtk_cloud_frontend` | `699b5d5` | Website has private-cloud content, analytics, OTA policy promotion, business-model disclosure, and updated feature pages. |
+| `repos/rtk_account_manager` | `d0de155` | Account lifecycle, evaluation signup/quota, fleet registry, provisioning, audit metrics, and account-side readiness vocabulary are present. |
+| `repos/rtk_cloud_admin` | `32e3e1c` | Admin dashboard has signup UI, fleet/stream health, firmware/OTA, telemetry, customer/platform views, and upstream proxy paths. |
+| `repos/rtk_cloud_client` | `2ceee44` | SDK campaign helpers, telemetry typed helpers, Go SDK, Android/iOS PKI work, Pro2 lifecycle/media work, and release-validation docs are present. |
+| `repos/rtk_video_cloud` | `e763170` | Video cloud has firmware campaign foundation, product telemetry ingestion, metrics exporter, cert issuer, TURN registry, and packaging assets. |
+| `repos/rtk_cloud_contracts_doc` | `bad301f` | Product readiness, telemetry, metrics, onboarding, auth, OTA, and ecosystem contracts are present. |
 
-This snapshot is intentionally explicit so GitHub issues can link back to the exact
+This snapshot is intentionally explicit so GitHub issues can link back to the
 workspace pins used by this planning note.
 
 ## Source Files
@@ -32,34 +33,16 @@ Primary external-facing source:
 
 Primary implementation and contract sources:
 
-- `repos/rtk_cloud_contracts_doc/PROVISION.md`
-- `repos/rtk_cloud_contracts_doc/CROSS_SERVICE_CHANNEL.md`
-- `repos/rtk_cloud_contracts_doc/DEVICE_TRANSPORT.md`
-- `repos/rtk_cloud_contracts_doc/HTTP_API.md`
+- `repos/rtk_cloud_contracts_doc/PRODUCT_READINESS.md`
+- `repos/rtk_cloud_contracts_doc/TELEMETRY_INSIGHTS.md`
+- `repos/rtk_cloud_contracts_doc/METRICS_EXPORT.md`
+- `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md`
 - `repos/rtk_account_manager/docs/SPEC.md`
-- `repos/rtk_account_manager/docs/PROVISIONING_AND_EVENT_CHANNEL_PLAN.md`
 - `repos/rtk_video_cloud/docs/architecture.md`
-- `repos/rtk_cloud_client/README.md`
-
-## Baseline Reading
-
-The frontend repository already distinguishes the website from the implemented
-cloud services. Its README says the project is a `v0.1 Marketing Foundation` and
-is not yet a complete IoT console, authentication service, OTA service,
-provisioning backend, or telemetry platform
-(`repos/rtk_cloud_frontend/README.md:5`, `repos/rtk_cloud_frontend/README.md:7`,
-`repos/rtk_cloud_frontend/README.md:9`).
-
-The frontend SPEC also says the public website tracks website v1 representation,
-not live cloud-service implementation
-(`repos/rtk_cloud_frontend/docs/SPEC.md:177`,
-`repos/rtk_cloud_frontend/docs/SPEC.md:186`,
-`repos/rtk_cloud_frontend/docs/SPEC.md:206`).
-
-The gap below is therefore not "the website forgot to say it is marketing."
-The issue is that some feature pages describe product capabilities that are not
-yet present as implemented service capabilities, or that belong to a different
-repo/service than the inspected implementation currently provides.
+- `repos/rtk_video_cloud/docs/firmware-campaign-alignment.md`
+- `repos/rtk_cloud_admin/docs/SPEC.md`
+- `repos/rtk_cloud_client/docs/TESTING.md`
+- `docs/private-cloud-deployment.md`
 
 ## Classification Legend
 
@@ -67,75 +50,44 @@ repo/service than the inspected implementation currently provides.
 | --- | --- |
 | `implemented` | Implemented service or package behavior exists in the inspected repositories. |
 | `partial` | A real implementation exists, but it covers only part of the external capability. |
-| `integration-gap` | Contracts and one or more sides exist, but end-to-end deployment or counterpart behavior still needs confirmation/hardening. |
-| `roadmap` | Promotion describes a valid product direction, but implementation was not found in the inspected sources. |
+| `foundation-gap` | Implementation exists, but deployment, evidence, packaging, or release validation is not yet sufficient for private-cloud/product commitments. |
+| `roadmap` | Promotion describes a valid product direction, but implementation is not generally available in the inspected sources. |
 | `wording-risk` | Current external wording could be interpreted as generally available even though the implementation is narrower. |
-| `out-of-scope-for-current-repos` | Capability may belong to another repo, app, firmware layer, or future service rather than the current backend repos. |
+| `out-of-scope-for-current-batch` | Capability is intentionally excluded from the May 2026 foundation issue batch. |
 
 ## Gap Matrix
 
-| Area | Classification | External statement or implication | Current implementation evidence | Gap to discuss |
-| --- | --- | --- | --- | --- |
-| Local onboarding | `out-of-scope-for-current-repos`, `wording-risk` | Frontend feature scope includes Wi-Fi/BLE onboarding, activation, binding, and user-device association (`repos/rtk_cloud_frontend/docs/SPEC.md:167`). | Contracts explicitly exclude BLE provisioning, SoftAP provisioning, local Wi-Fi credential transport, QR onboarding UX, ECDH/challenge-response, and manufacturing CA policy (`repos/rtk_cloud_contracts_doc/PROVISION.md:39`, `repos/rtk_cloud_contracts_doc/PROVISION.md:43`, `repos/rtk_cloud_contracts_doc/PROVISION.md:48`). Contracts say provisioning means cross-service registry/bootstrap/activation (`repos/rtk_cloud_contracts_doc/PROVISION.md:55`, `repos/rtk_cloud_contracts_doc/PROVISION.md:73`). | Local device onboarding UX and credential exchange are not contractually implemented in the current backend/contracts repos. Decide whether this belongs to mobile app, firmware, or a separate onboarding service. |
-| Product-level provisioning | `partial`, `integration-gap` | Promotion can read like a unified provisioning service. | Contracts say there is no unified `POST /provision`; provisioning is composed from account-manager APIs, video activation/token/transport APIs, and cross-service channel (`repos/rtk_cloud_contracts_doc/PROVISION.md:73`, `repos/rtk_cloud_contracts_doc/PROVISION.md:76`). Product-level provisioning needs the cross-service channel to bind account-manager registry state and video activation (`repos/rtk_cloud_contracts_doc/PROVISION.md:489`). | Keep discussion clear: product-level provisioning is multi-service orchestration, not a single backend API today. |
-| Cross-service provisioning channel | `integration-gap` | Realtek Connect+ presents provisioning as a platform capability. | Account manager now implements account-side provisioning/deactivation APIs, outbox/inbox, metadata projection, local broker, and Azure Event Hubs adapter (`repos/rtk_account_manager/docs/PROVISIONING_AND_EVENT_CHANNEL_PLAN.md:14`, `repos/rtk_account_manager/docs/PROVISIONING_AND_EVENT_CHANNEL_PLAN.md:18`, `repos/rtk_account_manager/docs/PROVISIONING_AND_EVENT_CHANNEL_PLAN.md:25`). The remaining follow-up is video-side worker hardening for invalid-payload failure correlation, retryable deactivation redelivery, and durable `operation_id` / dead-letter behavior (`repos/rtk_account_manager/docs/PROVISIONING_AND_EVENT_CHANNEL_PLAN.md:27`, `repos/rtk_account_manager/docs/PROVISIONING_AND_EVENT_CHANNEL_PLAN.md:29`). | Account side is implemented. Before claiming end-to-end production completeness, confirm the video-side lifecycle worker hardening and deployment docs. |
-| Account/user management | `partial`, `wording-risk` | Frontend lists sign up, sign in, OTP verification, third-party login, password recovery/change, and account deletion (`repos/rtk_cloud_frontend/docs/SPEC.md:171`). | Account manager v1 includes email/password auth, JWT, refresh tokens, org membership, RBAC, and device registry (`repos/rtk_account_manager/docs/SPEC.md:15`, `repos/rtk_account_manager/docs/SPEC.md:20`, `repos/rtk_account_manager/docs/SPEC.md:23`). User identity is email/password based (`repos/rtk_account_manager/docs/SPEC.md:115`). | Basic account backend exists. OTP, social login, password recovery/change, and account deletion are not shown as implemented service capabilities in the inspected docs. |
-| Smart-home app experience | `roadmap`, `out-of-scope-for-current-repos` | Frontend lists remote/local control, schedules, scenes, grouping, sharing, push notifications, alerts, and household flows (`repos/rtk_cloud_frontend/docs/SPEC.md:170`). | Video cloud implements video/device cloud surfaces: device lifecycle, stream issuance, clip/snapshot/blob, MQTT/WebSocket transport, firmware, telemetry metrics, notify adapters (`repos/rtk_video_cloud/docs/architecture.md:30`, `repos/rtk_video_cloud/docs/architecture.md:50`). | Smart-home rule engine, schedules, scenes, household sharing, and consumer mobile push flows are product-direction items, not clearly implemented service features. Decide whether they require a separate smart-home/app backend. |
-| OTA campaign depth | `partial`, `wording-risk` | Frontend lists firmware upload, campaign rollout, job status, cancel/archive, version validation, and force/normal/scheduled/user-controlled/time-window modes (`repos/rtk_cloud_frontend/docs/SPEC.md:168`). | Contracts expose firmware routes such as publish, upgrade, enum, enable, whitelist, query/report/cancel rollout, and download (`repos/rtk_cloud_contracts_doc/HTTP_API.md:89`, `repos/rtk_cloud_contracts_doc/HTTP_API.md:101`). Video cloud architecture says firmware rollout state tracks per-device target/current/status and only lists `pending`, `applied`, `failed`, `canceled` (`repos/rtk_video_cloud/docs/architecture.md:109`, `repos/rtk_video_cloud/docs/architecture.md:114`). | Basic firmware lifecycle exists. OTA will use an interface-first follow-up: `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md` defines campaign policy core, and `docs/ota-issue-roadmap.md` maps owner-repo issues before backend/SDK/frontend implementation. |
-| Fleet management | `partial`, `wording-risk` | Frontend lists registry, groups, tags, batch operations, timezone, and sharing (`repos/rtk_cloud_frontend/docs/SPEC.md:169`). | Account manager includes org-owned devices, categories, CRUD, status, and RBAC (`repos/rtk_account_manager/docs/SPEC.md:21`, `repos/rtk_account_manager/docs/SPEC.md:31`). V1 explicitly excludes telemetry ingestion, command dispatch, cert management, and multi-region concerns (`repos/rtk_account_manager/docs/SPEC.md:35`, `repos/rtk_account_manager/docs/SPEC.md:45`). | Registry and status exist. Batch operations, fleet console widgets, certificate lifecycle, and full operator workflows are not clearly implemented. |
-| Insights and telemetry | `partial`, `wording-risk` | Frontend lists activation statistics, firmware distribution, logs, crash reports, reboot reasons, RSSI, and memory metrics (`repos/rtk_cloud_frontend/docs/SPEC.md:173`). | Video cloud has HTTP metrics, JSON snapshots, Prometheus exposition, operational counters, optional CloudWatch sink, logs/events/statistics surfaces (`repos/rtk_video_cloud/docs/architecture.md:50`, `repos/rtk_video_cloud/docs/architecture.md:144`, `repos/rtk_video_cloud/docs/architecture.md:154`). Account manager v1 excludes telemetry ingestion (`repos/rtk_account_manager/docs/SPEC.md:35`, `repos/rtk_account_manager/docs/SPEC.md:40`). | Operational metrics/logging exist. Productized crash/reboot/RSSI/memory telemetry ingestion and dashboard story is not confirmed. |
-| App SDK | `partial` | Frontend lists iOS/Android SDK layers, sample app and rebrand path, push notifications, app publishing path (`repos/rtk_cloud_frontend/docs/SPEC.md:172`). | Client repo has native, Android, JS/TS, and iOS packages (`repos/rtk_cloud_client/README.md:3`, `repos/rtk_cloud_client/README.md:9`). Implemented surfaces include token, activation/device/config subset, lifecycle/event/log/command helpers, stream helpers, WebRTC signaling, WebSocket/snapshot helpers; native has MQTT while Android/JS/iOS report MQTT unsupported or adapter-not-configured (`repos/rtk_cloud_client/README.md:159`, `repos/rtk_cloud_client/README.md:166`). Latest local client history includes live MQTT interop work, but the documented public scope still keeps MQTT parity native-only. | SDK core exists, but full mobile app delivery/rebrand/push/app-store path and parity MQTT support across all languages are not confirmed. |
-| WebRTC | `partial` | Promotion may imply video streaming feature completeness. | Client SDK explicitly scopes WebRTC to signaling helpers and says peer connection/media-engine WebRTC integration is out of scope (`repos/rtk_cloud_client/README.md:162`, `repos/rtk_cloud_client/README.md:168`). Video cloud exposes formal stream modes including `webrtc` via dedicated routes (`repos/rtk_video_cloud/docs/architecture.md:70`, `repos/rtk_video_cloud/docs/architecture.md:77`). | Server-side signaling/stream issuance exists, but client media engine integration is not included in current SDK package scope. |
-| MQTT transport and broker | `implemented`, `partial` | Frontend includes MQTT over TLS as an integration path (`repos/rtk_cloud_frontend/docs/SPEC.md:175`). | Contracts define MQTT as a supported secondary owner transport, with websocket priority and single-owner routing (`repos/rtk_cloud_contracts_doc/DEVICE_TRANSPORT.md:19`, `repos/rtk_cloud_contracts_doc/DEVICE_TRANSPORT.md:24`, `repos/rtk_cloud_contracts_doc/DEVICE_TRANSPORT.md:30`, `repos/rtk_cloud_contracts_doc/DEVICE_TRANSPORT.md:45`). Current local video-cloud architecture says the MQTT adapter is in-tree, EMQX is the self-hosted reference broker, and local broker bring-up is documented (`repos/rtk_video_cloud/docs/architecture.md:81`, `repos/rtk_video_cloud/docs/architecture.md:89`). | MQTT server-side support is valid to discuss as a service component. In the current local video-cloud snapshot, EMQX is documented as the self-hosted reference broker rather than an in-process Go broker. Client-side MQTT parity still differs by SDK language. |
-| Private cloud | `partial`, `wording-risk` | Frontend lists public evaluation vs private commercial deployment, data ownership, custom domain, regional placement, upgrade path, deployment FAQ, and commercial support positioning (`repos/rtk_cloud_frontend/docs/SPEC.md:174`). | Video cloud has process entrypoints, Postgres persistence, blob adapters, operational endpoints, workers, EMQX reference broker packaging, and service deployment building blocks (`repos/rtk_video_cloud/docs/architecture.md:6`, `repos/rtk_video_cloud/docs/architecture.md:20`, `repos/rtk_video_cloud/docs/architecture.md:81`, `repos/rtk_video_cloud/docs/architecture.md:109`). Workspace private-cloud BOM and runbook are now tracked in `docs/private-cloud-deployment.md`. | Deployment building blocks and a product-level BOM now exist. Remaining gaps are service-specific packaging/runbooks for account manager/frontend, product-level evidence collection, cross-service broker packaging, and public wording updates only after package status is clear. |
-| Matter and voice assistants | `roadmap`, `out-of-scope-for-current-repos`, `wording-risk` | Frontend lists Matter Fabric, Alexa/Google Assistant, REST APIs, MQTT over TLS, webhooks, and cloud-to-cloud boundaries (`repos/rtk_cloud_frontend/docs/SPEC.md:175`). | Current confirmed implementation sources cover HTTP APIs, MQTT/WebSocket transport, webhooks/Event Hubs-style notification paths, and cross-service channel. No inspected implementation source confirms Matter Fabric or voice assistant integrations. | Matter and voice assistant integrations should remain roadmap/integration-positioning unless implementation is added or sourced elsewhere. |
+| Area | Classification | Current implementation evidence | Gap to discuss |
+| --- | --- | --- | --- |
+| Local onboarding | `partial`, `roadmap` | SDK local onboarding interfaces and explicit unsupported behavior exist, but real BLE/SoftAP credential handoff depends on app/firmware decisions. | Keep local Wi-Fi/BLE onboarding out of foundation private-cloud issues unless app/firmware owners are ready. |
+| Product-level provisioning/readiness | `partial`, `foundation-gap` | Contracts define product readiness; account manager and video cloud expose source facts; admin dashboard can consume upstream facts. | Need private-cloud evidence and production-mode admin precedence so readiness is demonstrably derived from authoritative account/video facts. |
+| Cross-service provisioning channel | `partial`, `foundation-gap` | Account/video lifecycle workers and broker boundaries exist; private-cloud BOM requires cross-service broker when lifecycle channel is enabled. | Need a broker packaging owner decision and runbook for NATS JetStream or approved equivalent. |
+| Account/user management | `implemented` | Account manager includes signup, email verification, forgot/reset password, current-user password change, user disable/delete, evaluation quota, quota raise workflow, audit, and metrics. | Do not reopen baseline account lifecycle; social login remains deferred outside this batch. |
+| OTA campaign depth | `implemented`, `roadmap` | Video cloud implements campaign resource/persistence, schedule/time-window/user-consent gates, cancel/archive, pause/resume, group targeting, and analytics foundation; SDK helpers exist. | Do not reopen foundation OTA issues. Approval workflow, staged percentage rollout, and commercial dashboard depth are roadmap. |
+| Fleet management | `partial`, `foundation-gap` | Account manager has device groups/tags and registry primitives; admin dashboard has fleet health/device views. | Foundation issue focus is deployability/evidence, not new fleet features. Admin production-mode upstream fact handling remains needed. |
+| Insights and telemetry | `implemented`, `foundation-gap` | Contracts, video telemetry ingestion, SDK typed helpers, and admin telemetry/fleet-health display exist. | Baseline ingestion is not a gap; production retention/deployment evidence and admin upstream behavior remain foundation concerns. |
+| App SDK release readiness | `partial`, `foundation-gap` | SDK packages and docs are broad, including campaign, telemetry, PKI, Go SDK, and Pro2 docs. | Release evidence still lacks Android/iOS/native coverage exports and Pro2/FreeRTOS live-lab test-program artifacts. |
+| WebRTC | `partial` | Server-side signaling/stream issuance exists; SDK boundaries still distinguish signaling from full media-engine integration. | Not part of this foundation batch unless product decides SDK should own media engine integration. |
+| MQTT transport and broker | `implemented`, `foundation-gap` | Video cloud has MQTT adapter and EMQX reference broker packaging; client parity varies by package. | Private-cloud package still needs broker/runbook clarity across EMQX and cross-service broker dependencies. |
+| Private cloud | `partial`, `foundation-gap` | Workspace BOM exists; video cloud has mature deploy assets; frontend/admin/account manager have partial deployment docs and runtime foundations. | Need service-local runbooks, backup/restore notes, product-level evidence wrapper, and broker packaging decision. |
+| Matter, voice assistants, smart-home scenes/schedules | `roadmap`, `out-of-scope-for-current-batch` | Contracts classify these as roadmap or integration-ready boundaries, not generally available service capabilities. | Do not open in this foundation batch. Revisit after deployability/evidence work is closed. |
 
-## OTA Campaign Interface-First Strategy
+## May 2026 Foundation Issue Strategy
 
-OTA interface-first issues have been merged. The normative source is
-`repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md`; the workspace planning
-source is `docs/ota-issue-roadmap.md`.
+Open only foundation issues that improve private-cloud deployability, evidence,
+production-mode admin behavior, and SDK release validation. The concrete issue
+bodies are maintained in `docs/implementation-gap-backlog.md`.
 
-The remaining implementation gap is not the contract vocabulary. The remaining
-gap is backend campaign behavior in `rtk_video_cloud`: first-class campaign
-resource/persistence, schedule and time-window policy enforcement,
-user-consent-required gates, archive, and campaign-level cancel. Follow-up issue
-planning is tracked in `docs/implementation-gap-backlog.md`.
+Do not reopen issues for:
 
-## Provisioning Interface-First Strategy
-
-Provisioning interface-first issues have been merged. The normative source is
-`repos/rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md`; the workspace planning
-source is `docs/provisioning-issue-roadmap.md`. Issues should link to those
-documents instead of duplicating the full design.
-
-The agreed first phase is documentation and interface only: no backend, SDK, or frontend implementation is required before the issues are opened. SDK local onboarding is expected to cover native, Android, iOS, and JavaScript/TypeScript with consistent concepts or explicit `unsupported_capability` behavior.
-
-The remaining implementation gap is real local onboarding behavior, not the SDK
-interface. Android and iOS still need owner-repo work for real BLE/SoftAP
-credential handoff once app/firmware details are defined. Account-side raw
-claim-material flows for QR, serial number, activation code, MAC address, or
-factory identity also need design before they can be treated as available
-product behavior. Follow-up issue planning is tracked in
-`docs/implementation-gap-backlog.md`.
-
-## Discussion Questions
-
-1. Should frontend feature pages show availability labels such as `Available now`,
-   `Integration-ready`, and `Roadmap`?
-2. Is there a separate repository or private branch for mobile app UI, smart-home
-   schedules/scenes, push notifications, Matter, voice assistant integrations, or
-   local BLE/Wi-Fi onboarding?
-3. Should OTA campaign policy semantics be implemented in `rtk_video_cloud`, or
-   should the frontend wording be reduced to the current firmware rollout scope?
-4. Should cross-service provisioning be described as complete only after the
-   video-side lifecycle worker hardening is merged, documented, and deployable?
-5. Should private cloud copy be tied to a concrete deployment bill of materials:
-   API services, workers, Postgres, object storage, EMQX, reverse proxy/TLS, and
-   upgrade procedure?
+- OTA campaign backend or SDK helper foundation
+- product telemetry ingestion or SDK typed helper baseline
+- account lifecycle baseline
+- PKI/mTLS server-side work already tracked by `hkt999rtk/rtk_video_cloud#262`
 
 ## Recommended Next Step
 
-Do not change customer-facing copy yet. Use this note as the discussion agenda,
-then decide which rows are product roadmap, which need implementation, which need
-a separate owner repo, and which only need clearer external wording.
+Update workspace planning docs, commit and push the refreshed workspace snapshot,
+then open the foundation issues listed in `docs/implementation-gap-backlog.md`.
+Issue bodies should link to the pushed workspace docs instead of duplicating the
+full design text.
