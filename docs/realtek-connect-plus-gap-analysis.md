@@ -60,16 +60,16 @@ Primary implementation and contract sources:
 | Area | Classification | Current implementation evidence | Gap to discuss |
 | --- | --- | --- | --- |
 | Local onboarding | `partial`, `roadmap` | SDK local onboarding interfaces and explicit unsupported behavior exist, but real BLE/SoftAP credential handoff depends on app/firmware decisions. | Keep local Wi-Fi/BLE onboarding out of foundation private-cloud issues unless app/firmware owners are ready. |
-| Product-level provisioning/readiness | `partial`, `foundation-gap` | Contracts define product readiness; account manager and video cloud expose source facts; admin dashboard can consume upstream facts; workspace now has a product-level evidence wrapper. | Need service-local account/admin evidence and production-mode admin precedence so readiness is demonstrably derived from authoritative account/video facts. |
+| Product-level provisioning/readiness | `partial`, `foundation-gap` | Contracts define product readiness; account manager has Claim Token resolve, registry-only readiness, and readiness smoke; video cloud exposes source facts; workspace has a product-level evidence wrapper. | Need production-mode admin precedence so readiness is demonstrably derived from authoritative account/video facts in the operator surface. |
 | Cross-service provisioning channel | `partial`, `foundation-gap` | Account/video lifecycle workers and broker boundaries exist; workspace now documents NATS JetStream as the default cross-service broker packaging decision. | Need operator deployment evidence and service-local broker smoke output when lifecycle channel is enabled. |
 | Account/user management | `implemented` | Account manager includes signup, email verification, forgot/reset password, current-user password change, user disable/delete, evaluation quota, quota raise workflow, audit, and metrics. | Do not reopen baseline account lifecycle; social login remains deferred outside this batch. |
 | OTA campaign depth | `implemented`, `roadmap` | Video cloud implements campaign resource/persistence, schedule/time-window/user-consent gates, cancel/archive, pause/resume, group targeting, and analytics foundation; SDK helpers exist. | Do not reopen foundation OTA issues. Approval workflow, staged percentage rollout, and commercial dashboard depth are roadmap. |
 | Fleet management | `partial`, `foundation-gap` | Account manager has device groups/tags and registry primitives; admin dashboard has fleet health/device views. | Foundation issue focus is deployability/evidence, not new fleet features. Admin production-mode upstream fact handling remains needed. |
-| Insights and telemetry | `implemented`, `foundation-gap` | Contracts, video telemetry ingestion, SDK typed helpers, and admin telemetry/fleet-health display exist. | Baseline ingestion is not a gap; production retention/deployment evidence and admin upstream behavior remain foundation concerns. |
-| App SDK release readiness | `partial`, `foundation-gap` | SDK packages and docs are broad, including campaign, telemetry, PKI, Go SDK, and Pro2 docs. | Release evidence still lacks Android/iOS/native coverage exports and Pro2/FreeRTOS live-lab test-program artifacts. |
-| WebRTC | `partial` | Server-side signaling/stream issuance exists; SDK boundaries still distinguish signaling from full media-engine integration. | Not part of this foundation batch unless product decides SDK should own media engine integration. |
+| Insights and telemetry | `implemented`, `foundation-gap` | Contracts, video telemetry ingestion, SDK typed helpers, and admin telemetry/fleet-health display exist. | Baseline ingestion is not a gap; admin upstream behavior and production evidence remain foundation concerns. |
+| App SDK release readiness | `implemented`, `evidence-dependent` | SDK packages and docs include campaign, telemetry, PKI, Go SDK, Pro2 docs, coverage export paths, and live-lab wrapper/report templates. | Actual release sign-off still needs environment-specific live runs and hardware/credential availability. |
+| WebRTC / TURN | `implemented`, `foundation-gap` | Server-side signaling/stream issuance, TURN credential policy, and TURN registry control plane exist; SDK boundaries still distinguish signaling from full media-engine integration. | Not a new foundation issue unless product decides SDK should own media engine integration or TURN operations evidence beyond current deploy assets. |
 | MQTT transport and broker | `implemented`, `foundation-gap` | Video cloud has MQTT adapter and EMQX reference broker packaging; workspace has cross-service broker packaging guidance. | Remaining work is operator evidence and service-local smoke/runbook depth, not the workspace broker decision. |
-| Private cloud | `partial`, `foundation-gap` | Workspace BOM and evidence wrapper exist; video cloud has mature deploy assets; frontend/admin/account manager have partial deployment docs and runtime foundations. | Need service-local runbooks, backup/restore notes, and upstream production-mode evidence. |
+| Private cloud | `partial`, `foundation-gap` | Workspace BOM/evidence wrapper exists; video cloud has mature deploy assets; account manager and admin have private-cloud deployment docs; frontend has production deployment notes and multilingual public content. | Need frontend backup/restore depth where it differs from the BOM and admin upstream production-mode evidence. |
 | Matter, voice assistants, smart-home scenes/schedules | `roadmap`, `out-of-scope-for-current-batch` | Contracts classify these as roadmap or integration-ready boundaries, not generally available service capabilities. | Do not open in this foundation batch. Revisit after deployability/evidence work is closed. |
 
 ## May 2026 Foundation Issue Strategy
@@ -83,7 +83,7 @@ Do not reopen issues for:
 - OTA campaign backend or SDK helper foundation
 - product telemetry ingestion or SDK typed helper baseline
 - account lifecycle baseline
-- PKI/mTLS server-side work already tracked by `hkt999rtk/rtk_video_cloud#262`
+- PKI/mTLS server-side foundation work now present in video cloud and contracts
 
 ## Recommended Next Step
 

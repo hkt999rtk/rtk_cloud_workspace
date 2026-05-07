@@ -33,12 +33,12 @@ Normative and primary sources:
 
 | Repository | Commit | Evidence summary |
 | --- | --- | --- |
-| `repos/rtk_cloud_contracts_doc` | `bad301f` | Product readiness, telemetry insights, metrics export, firmware campaign, frontend style, and onboarding contracts are present. |
-| `repos/rtk_account_manager` | `d0de155` | Evaluation-tier signup, verification, password reset/change, account disable/delete, quota raise workflow, audit metrics, fleet registry, provisioning, and account-side readiness vocabulary are present. |
-| `repos/rtk_video_cloud` | `e763170` | Firmware campaign resource/persistence/policy gates/cancel/archive/pause/resume, product telemetry ingestion, fleet health summary, metric exporter, cert issuer, TURN registry, and deployment assets are present. |
-| `repos/rtk_cloud_client` | `2ceee44` | Firmware campaign helpers, telemetry typed helpers, Go SDK, Android/iOS PKI work, Pro2 lifecycle/media work, and release validation docs are present; release test-program coverage gaps remain. |
-| `repos/rtk_cloud_admin` | `32e3e1c` | Admin dashboard has self-service signup UI, fleet health, stream health, firmware/OTA, device telemetry, platform/customer views, upstream account/video proxy paths, and demo/cache mode. |
-| `repos/rtk_cloud_frontend` | `699b5d5` | Public website has privacy-friendly analytics, business model disclosure, private cloud content, OTA policy promotion, and updated product pages. |
+| `repos/rtk_cloud_contracts_doc` | `273ef4b` | Product readiness, telemetry insights, metrics export, firmware campaign, frontend style, onboarding, PKI/mTLS, and TURN registry contracts are present. |
+| `repos/rtk_account_manager` | `b121676` | Evaluation-tier signup, account lifecycle, quota workflow, fleet registry, provisioning, Claim Token resolve, registry-only readiness, private-cloud runbook, and readiness smoke evidence are present. |
+| `repos/rtk_video_cloud` | `39942d8` | Firmware campaign, telemetry ingestion, fleet health, metric exporter, cert issuer, PKI/mTLS, TURN registry, EMQX, and deployment assets are present. |
+| `repos/rtk_cloud_client` | `746d7bf` | Firmware campaign helpers, telemetry helpers, Go SDK, Android/iOS PKI work, sample apps, Pro2 lifecycle/media work, coverage export docs, and live-lab validation tooling are present. |
+| `repos/rtk_cloud_admin` | `7c452f5` | Admin dashboard has self-service signup UI, fleet health, stream health, firmware/OTA, device telemetry, platform/customer views, upstream account/video proxy paths, demo/cache mode, and private-cloud deployment profile. |
+| `repos/rtk_cloud_frontend` | `6bcc5bd` | Public website has privacy-friendly analytics, multilingual content, manual pages, business model disclosure, private cloud content, OTA policy promotion, and SDK sample ecosystem content. |
 
 ## Current Gap Status Summary
 
@@ -48,16 +48,19 @@ Normative and primary sources:
 | OTA SDK helpers | Implemented across SDK packages for campaign helper surface. | Treat future gaps as package-specific regressions or advanced policy work, not foundation blockers. | `rtk_cloud_client` |
 | Product telemetry baseline | Implemented for backend ingestion, SDK typed helpers, and admin display. | Product retention/analytics depth can evolve later; no baseline ingestion issue is needed now. | `rtk_video_cloud`, `rtk_cloud_client`, `rtk_cloud_admin` |
 | Account lifecycle baseline | Implemented for signup, email verification, forgot/reset password, password change, self-service disable/delete, and evaluation quota. | Third-party/social login remains deferred and is not part of this foundation batch. | `rtk_account_manager` |
-| PKI/mTLS server-side | In progress. | Existing open issue `hkt999rtk/rtk_video_cloud#262` remains the owner issue; do not duplicate. | `rtk_video_cloud` |
-| Private cloud packaging | Partial. | Account manager, frontend, and admin dashboard need production deployment/runbook profiles; workspace evidence wrapper and cross-service broker packaging decision are now documented. | multiple |
-| Product readiness evidence | Partial. | Account-side and admin/UI facts exist; workspace can aggregate evidence, but service-local smoke collectors and admin production-mode upstream fact usage remain owner-repo work. | `rtk_account_manager`, `rtk_cloud_admin` |
-| Release validation | Partial. | Android/iOS/native coverage exports and Pro2/FreeRTOS live-lab release test programs are documented gaps. | `rtk_cloud_client` |
+| PKI/mTLS server-side | Implemented. | Latest video cloud and contracts cover verified device mTLS, certificate revocation, and `/api/device/renew_certificate`; do not duplicate old PKI issue work. | `rtk_video_cloud`, `rtk_cloud_contracts_doc` |
+| TURN registry | Implemented for foundation scope. | Latest video cloud has TURN registry runtime/docs and contracts describe `/v1/turn/nodes/*` as service/operator control-plane routes. | `rtk_video_cloud`, `rtk_cloud_contracts_doc` |
+| Private cloud packaging | Partial. | Account manager, admin dashboard, video cloud, and workspace have runbooks/evidence foundations; frontend production backup/restore depth and production operations polish remain. | multiple |
+| Product readiness evidence | Partial. | Account-side readiness smoke and workspace aggregation exist; admin production-mode upstream fact precedence remains owner-repo work. | `rtk_cloud_admin` |
+| Release validation | Implemented for documentation/tooling foundation. | Coverage export and Pro2 live-lab tooling/report templates exist; actual live evidence still depends on release-candidate environment and hardware availability. | `rtk_cloud_client` |
 
 ## Foundation Issues To Open
 
 ### `hkt999rtk/rtk_account_manager`
 
 #### `[Private Cloud] Add deployment packaging and operations runbook`
+
+Status: implemented in `rtk_account_manager`.
 
 Summary: make account manager deployable as part of the private-cloud package
 with service-local install, migration, upgrade, rollback, backup, and restore
@@ -82,6 +85,8 @@ Acceptance criteria:
 
 #### `[Private Cloud] Add account-manager readiness evidence smoke script`
 
+Status: implemented in `rtk_account_manager`.
+
 Summary: add a read-only smoke/evidence command that proves account-manager
 private-cloud readiness without mutating production data unexpectedly.
 
@@ -105,6 +110,8 @@ Acceptance criteria:
 ### `hkt999rtk/rtk_cloud_admin`
 
 #### `[Private Cloud] Add production deployment profile for admin dashboard`
+
+Status: implemented in `rtk_cloud_admin`.
 
 Summary: turn the admin dashboard's demo-capable Go/React app into a documented
 private-cloud production service.
@@ -152,6 +159,8 @@ Acceptance criteria:
 ### `hkt999rtk/rtk_cloud_frontend`
 
 #### `[Private Cloud] Add production deployment profile and backup/restore notes`
+
+Status: still open for production backup/restore depth in `rtk_cloud_frontend`.
 
 Summary: align the public website/lead portal deployment docs with the
 private-cloud BOM.
@@ -229,6 +238,8 @@ Acceptance criteria:
 
 #### `[Release] Add Android/iOS/native coverage export and release validation artifacts`
 
+Status: implemented in `rtk_cloud_client`.
+
 Summary: close deterministic release evidence gaps for package consumers.
 
 Dependencies:
@@ -246,6 +257,8 @@ Acceptance criteria:
 - preserve explicit `SKIP` behavior on hosts that cannot run mobile toolchains
 
 #### `[Release] Add Pro2/FreeRTOS live-lab release test program`
+
+Status: implemented in `rtk_cloud_client`.
 
 Summary: define and automate the release evidence path for Pro2/FreeRTOS live
 hardware validation.
@@ -272,5 +285,6 @@ Acceptance criteria:
   consumer household-sharing implementation issues in this batch.
 - Do not reopen OTA campaign resource/policy/cancel/archive issues.
 - Do not reopen baseline telemetry ingestion or SDK telemetry helper issues.
-- Do not duplicate `rtk_video_cloud#262` for PKI/mTLS server-side work.
+- Do not reopen PKI/mTLS server-side foundation work; latest video cloud and
+  contracts already cover it.
 - Do not copy full design docs into issue bodies; link to pushed workspace docs.

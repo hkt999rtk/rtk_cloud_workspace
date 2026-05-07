@@ -37,15 +37,15 @@ production-like deployments.
 
 | Gap | Priority | Owner repository | First deliverable |
 | --- | --- | --- | --- |
-| Account-manager private-cloud deployability | P0 | `hkt999rtk/rtk_account_manager` | Deployment packaging and operations runbook. |
-| Account-manager readiness evidence | P0 | `hkt999rtk/rtk_account_manager` | Read-only smoke/evidence script for auth, org, device, and provisioning facts. |
-| Admin dashboard production profile | P0 | `hkt999rtk/rtk_cloud_admin` | Production deployment profile for Go/React dashboard, persistence, upstreams, and rollback. |
+| Account-manager private-cloud deployability | Done | `hkt999rtk/rtk_account_manager` | Deployment packaging and operations runbook. |
+| Account-manager readiness evidence | Done | `hkt999rtk/rtk_account_manager` | Read-only smoke/evidence script for auth, org, device, and provisioning facts. |
+| Admin dashboard production profile | Done | `hkt999rtk/rtk_cloud_admin` | Production deployment profile for Go/React dashboard, persistence, upstreams, and rollback. |
 | Admin upstream readiness/telemetry mode | P0 | `hkt999rtk/rtk_cloud_admin` | Production-mode use of authoritative account/video readiness and telemetry facts. |
 | Frontend private-cloud deployment docs | P1 | `hkt999rtk/rtk_cloud_frontend` | Production deployment profile and backup/restore notes for website lead/analytics storage. |
 | Product-level evidence collector | Done | `hkt999rtk/rtk_cloud_workspace` | `scripts/collect-private-cloud-evidence.sh` gathers service evidence into a redacted bundle. |
 | Cross-service broker packaging | Done | `hkt999rtk/rtk_cloud_workspace` | `docs/cross-service-broker-packaging.md` records the owner decision and NATS JetStream packaging/runbook plan. |
-| SDK release coverage artifacts | P1 | `hkt999rtk/rtk_cloud_client` | Android/iOS/native coverage exports and release validation artifacts. |
-| Pro2/FreeRTOS live-lab validation | P1 | `hkt999rtk/rtk_cloud_client` | Live hardware release test program with clean skip/block reporting. |
+| SDK release coverage artifacts | Done | `hkt999rtk/rtk_cloud_client` | Android/iOS/native coverage exports and release validation artifacts. |
+| Pro2/FreeRTOS live-lab validation | Done | `hkt999rtk/rtk_cloud_client` | Live hardware release test program with clean skip/block reporting. |
 
 ## Completed Or No-Reopen Baseline
 
@@ -55,24 +55,25 @@ production-like deployments.
 | OTA SDK helpers | Latest SDK packages expose campaign helper surfaces. Treat future issues as package-specific regressions or advanced policy work. |
 | Product telemetry baseline | Contracts, video ingestion, SDK typed helpers, and admin telemetry display are present. Do not reopen baseline ingestion issues. |
 | Account lifecycle baseline | Signup, verification, password reset/change, delete/disable, evaluation quota, audit, and metrics are present. Social login remains deferred and outside this batch. |
-| PKI/mTLS server-side | Existing `rtk_video_cloud#262` remains the owner issue. Do not duplicate. |
+| PKI/mTLS server-side | Server-side mTLS, revocation, renewal route, and contracts are present. Do not duplicate old PKI issue work. |
+| TURN registry | Video cloud TURN registry runtime and contracts are present for multi-node coturn discovery. |
+| Account-manager private-cloud evidence | Deployment runbook and readiness smoke are present; workspace wrapper can aggregate service-local output. |
+| SDK release validation tooling | Coverage export docs and Pro2 live-lab wrapper/report templates are present; live runs still depend on release-candidate environment and hardware. |
 | Product-level evidence collector | Workspace wrapper is implemented; remaining gaps are service-local evidence collectors in owner repositories. |
 | Cross-service broker packaging | Workspace owner decision is documented; remaining gaps are operator deployment and service-local smoke evidence. |
 | Smart-home/Matter/voice assistants | Valid roadmap area, but intentionally excluded from this foundation batch. |
 
 ## Issue Ordering
 
-1. Commit and push this workspace roadmap plus submodule snapshot.
-2. Open account-manager deployment and evidence issues first; other private-cloud
-   evidence depends on those service-local outputs.
-3. Open admin dashboard production/upstream issues next; admin is the operator
-   surface that consumes account/video facts.
-4. Open frontend deployment docs issue after private-cloud wording has a pushed
-   workspace source.
-5. Open workspace evidence wrapper and broker packaging issues after service
-   owners have references to cite.
-6. Open SDK release validation issues independently; they are not blockers for
-   private-cloud packaging.
+1. Keep this roadmap and submodule snapshot current after each foundation merge.
+2. Do not reopen completed account-manager deployment/evidence, workspace
+   evidence/broker, SDK release validation, PKI/mTLS, or TURN registry issues.
+3. Prioritize admin dashboard production-mode upstream readiness/telemetry
+   behavior because it is the operator surface that consumes account/video facts.
+4. Prioritize frontend production backup/restore and launch-polish docs only
+   where website operation differs from the existing private-cloud BOM.
+5. Revisit smart-home/Matter/voice-assistant roadmap only after the remaining
+   deployability and evidence items are closed.
 
 ## Non-Goals
 

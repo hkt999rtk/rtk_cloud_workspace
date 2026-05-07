@@ -294,12 +294,13 @@ product direction and website content area, but availability labels must follow
 the actual package status:
 
 - available foundation: website container recipe, video cloud release bundle and
-  deploy runbooks, account manager service behavior, EMQX reference broker
+  deploy runbooks, account manager deploy runbook/readiness smoke, EMQX
+  reference broker, TURN registry runtime, workspace evidence wrapper, and
+  cross-service broker packaging decision
 - integration-ready: combined private-cloud BOM, single-node evaluation profile,
   production-like checklist
 - roadmap or customer-specific: HA topology, managed upgrades across all
-  services, unified product-level evidence collector, cross-service broker
-  packaging, production backup automation
+  services and production backup automation
 
 Update public copy only when the deployed package and support boundary are
 clear. Do not imply all components are one-click deployable today.
@@ -308,10 +309,10 @@ clear. Do not imply all components are one-click deployable today.
 
 | Follow-up | Repository | Reason |
 | --- | --- | --- |
-| Add account-manager deployment packaging/runbook | `hkt999rtk/rtk_account_manager` | Account manager has service/API docs, but private-cloud package needs deploy, migration, backup, and rollback instructions comparable to video cloud. |
-| Add account-manager readiness evidence script | `hkt999rtk/rtk_account_manager` | Product-level evidence needs auth/org/device/provisioning smoke output. |
+| Add account-manager deployment packaging/runbook | `hkt999rtk/rtk_account_manager` | Implemented by the account-manager private-cloud deployment runbook. |
+| Add account-manager readiness evidence script | `hkt999rtk/rtk_account_manager` | Implemented by the account-manager readiness smoke command and documented evidence flow. |
 | Add frontend production deployment profile | `hkt999rtk/rtk_cloud_frontend` | Current container recipe is enough for evaluation; production-like profile needs backup/restore, reverse-proxy, and operational notes. |
-| Add admin-dashboard production deployment profile | `hkt999rtk/rtk_cloud_admin` | Current admin dashboard is a Go/React console with local demo/cache persistence; production-like profile needs upstream integration, backup/restore, reverse-proxy, and operational notes. |
+| Add admin-dashboard production deployment profile | `hkt999rtk/rtk_cloud_admin` | Implemented by the admin dashboard private-cloud deployment profile; upstream authoritative production behavior remains separate below. |
 | Add admin-dashboard authoritative readiness/telemetry production mode | `hkt999rtk/rtk_cloud_admin` | Production dashboard views should prefer Account Manager and Video Cloud source facts over demo/cache projections, with stable stale/partial/upstream-failure states. |
 | Define product-level evidence wrapper | `hkt999rtk/rtk_cloud_workspace` | Implemented by `scripts/collect-private-cloud-evidence.sh` and documented in `docs/product-level-evidence.md`; service-local collectors remain owner-repo follow-ups. |
 | Define cross-service broker packaging decision | `hkt999rtk/rtk_cloud_workspace` | Decided in `docs/cross-service-broker-packaging.md`: workspace owns product requirements, service repos own client/runtime behavior, platform/operator owns broker installation and operations. |
