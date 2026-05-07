@@ -16,6 +16,8 @@ repositories. Shared wire and payload contracts belong in
 | [core-platform-gap-roadmap.md](core-platform-gap-roadmap.md) | Supporting note | Core platform gap roadmap for readiness, private cloud, account lifecycle, fleet, telemetry, SDK/app, WebRTC, and smart-home ecosystem boundaries. |
 | [business-model.md](business-model.md) | Source | Tier structure, evaluation limits, pricing model framing, SDK licensing posture, and website disclosure rules. |
 | [private-cloud-deployment.md](private-cloud-deployment.md) | Supporting note | Private-cloud deployment bill of materials, profiles, operations runbook, support boundary, and follow-up routing. |
+| [product-level-evidence.md](product-level-evidence.md) | Supporting note | Workspace evidence wrapper for private-cloud readiness sign-off. |
+| [cross-service-broker-packaging.md](cross-service-broker-packaging.md) | Supporting note | Cross-service broker packaging decision, profiles, and evidence expectations. |
 | [provisioning-issue-roadmap.md](provisioning-issue-roadmap.md) | Supporting note | Interface-first provisioning issue plan and repository ownership matrix. |
 | [ota-issue-roadmap.md](ota-issue-roadmap.md) | Supporting note | Interface-first OTA campaign issue plan and repository ownership matrix. |
 | [testing.md](testing.md) | Source | Cross-repository validation commands for pinned snapshots. |

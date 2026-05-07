@@ -24,6 +24,8 @@ Normative and primary sources:
 - `repos/rtk_cloud_contracts_doc/TELEMETRY_INSIGHTS.md`
 - `repos/rtk_cloud_contracts_doc/METRICS_EXPORT.md`
 - `docs/private-cloud-deployment.md`
+- `docs/product-level-evidence.md`
+- `docs/cross-service-broker-packaging.md`
 - `docs/core-platform-gap-roadmap.md`
 - `docs/realtek-connect-plus-gap-analysis.md`
 
@@ -47,8 +49,8 @@ Normative and primary sources:
 | Product telemetry baseline | Implemented for backend ingestion, SDK typed helpers, and admin display. | Product retention/analytics depth can evolve later; no baseline ingestion issue is needed now. | `rtk_video_cloud`, `rtk_cloud_client`, `rtk_cloud_admin` |
 | Account lifecycle baseline | Implemented for signup, email verification, forgot/reset password, password change, self-service disable/delete, and evaluation quota. | Third-party/social login remains deferred and is not part of this foundation batch. | `rtk_account_manager` |
 | PKI/mTLS server-side | In progress. | Existing open issue `hkt999rtk/rtk_video_cloud#262` remains the owner issue; do not duplicate. | `rtk_video_cloud` |
-| Private cloud packaging | Partial. | Account manager, frontend, and admin dashboard need production deployment/runbook profiles; workspace needs evidence wrapper and cross-service broker packaging decision. | multiple |
-| Product readiness evidence | Partial. | Account-side and admin/UI facts exist, but private-cloud acceptance still needs concrete smoke/evidence collection and production-mode upstream fact usage. | `rtk_account_manager`, `rtk_cloud_admin`, `rtk_cloud_workspace` |
+| Private cloud packaging | Partial. | Account manager, frontend, and admin dashboard need production deployment/runbook profiles; workspace evidence wrapper and cross-service broker packaging decision are now documented. | multiple |
+| Product readiness evidence | Partial. | Account-side and admin/UI facts exist; workspace can aggregate evidence, but service-local smoke collectors and admin production-mode upstream fact usage remain owner-repo work. | `rtk_account_manager`, `rtk_cloud_admin` |
 | Release validation | Partial. | Android/iOS/native coverage exports and Pro2/FreeRTOS live-lab release test programs are documented gaps. | `rtk_cloud_client` |
 
 ## Foundation Issues To Open
@@ -174,6 +176,8 @@ Acceptance criteria:
 
 #### `[Private Cloud] Add product-level evidence collector wrapper`
 
+Status: implemented in `rtk_cloud_workspace`.
+
 Summary: add a workspace-level read-only wrapper that collects per-service
 private-cloud readiness evidence into one redacted bundle.
 
@@ -185,15 +189,19 @@ Dependencies:
 
 Acceptance criteria:
 
-- collect pinned service commits, selected service versions, health checks,
+- `scripts/collect-private-cloud-evidence.sh` collects pinned service commits, selected service versions, health checks,
   metrics links/snapshots, smoke outputs, broker status, and backup evidence
   references
 - never print tokens, DSNs, private keys, or raw customer data
 - include explicit `PASS`, `FAIL`, and `SKIP` markers with reasons
-- produce a deterministic artifact directory or tarball suitable for deployment
+- produce a deterministic artifact directory and optional tarball suitable for deployment
   sign-off
+- document configuration, redaction, and acceptance rules in
+  `docs/product-level-evidence.md`
 
 #### `[Private Cloud] Decide and document cross-service broker packaging`
+
+Status: implemented in `rtk_cloud_workspace`.
 
 Summary: decide how NATS JetStream or an approved equivalent is packaged for
 private-cloud account/video lifecycle deployments.
@@ -207,10 +215,14 @@ Dependencies:
 Acceptance criteria:
 
 - decide whether broker packaging is owned by workspace, video cloud deploy
-  assets, account manager deploy docs, or external platform/operator docs
-- document single-node evaluation and production-like broker profiles
+  assets, account manager deploy docs, or external platform/operator docs:
+  `docs/cross-service-broker-packaging.md` assigns product requirements to the
+  workspace, service client/runtime behavior to account manager and video cloud,
+  and broker install/ops to the platform/operator
+- document single-node evaluation and production-like broker profiles in
+  `docs/cross-service-broker-packaging.md`
 - document required streams, retention, dead-letter handling, backup/restore, and
-  smoke checks
+  smoke checks in `docs/cross-service-broker-packaging.md`
 - update private-cloud BOM/runbook links after the owner decision is made
 
 ### `hkt999rtk/rtk_cloud_client`

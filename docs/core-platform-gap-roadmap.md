@@ -23,6 +23,8 @@ production-like deployments.
 | --- | --- | --- |
 | Cross-repo contracts | `repos/rtk_cloud_contracts_doc` | This roadmap only maps owner issues. |
 | Private-cloud BOM | `docs/private-cloud-deployment.md` | Product-level deployment package, runbook, and follow-up routing. |
+| Product-level evidence | `docs/product-level-evidence.md` | Workspace wrapper command, redaction rules, and artifact layout. |
+| Cross-service broker packaging | `docs/cross-service-broker-packaging.md` | Broker ownership decision, profiles, streams, retention, and evidence expectations. |
 | Gap evidence | `docs/realtek-connect-plus-gap-analysis.md` | Workspace-level comparison note. |
 | Issue backlog | `docs/implementation-gap-backlog.md` | Concrete foundation issue bodies and ordering. |
 | Account/user/device registry | `repos/rtk_account_manager/docs/SPEC.md` | Account manager owns org, user, auth, RBAC, registry, signup, quota, and account-side readiness behavior. |
@@ -40,8 +42,8 @@ production-like deployments.
 | Admin dashboard production profile | P0 | `hkt999rtk/rtk_cloud_admin` | Production deployment profile for Go/React dashboard, persistence, upstreams, and rollback. |
 | Admin upstream readiness/telemetry mode | P0 | `hkt999rtk/rtk_cloud_admin` | Production-mode use of authoritative account/video readiness and telemetry facts. |
 | Frontend private-cloud deployment docs | P1 | `hkt999rtk/rtk_cloud_frontend` | Production deployment profile and backup/restore notes for website lead/analytics storage. |
-| Product-level evidence collector | P1 | `hkt999rtk/rtk_cloud_workspace` | Read-only wrapper that gathers service evidence into a redacted bundle. |
-| Cross-service broker packaging | P1 | `hkt999rtk/rtk_cloud_workspace` | Owner decision and packaging/runbook plan for NATS JetStream or approved equivalent. |
+| Product-level evidence collector | Done | `hkt999rtk/rtk_cloud_workspace` | `scripts/collect-private-cloud-evidence.sh` gathers service evidence into a redacted bundle. |
+| Cross-service broker packaging | Done | `hkt999rtk/rtk_cloud_workspace` | `docs/cross-service-broker-packaging.md` records the owner decision and NATS JetStream packaging/runbook plan. |
 | SDK release coverage artifacts | P1 | `hkt999rtk/rtk_cloud_client` | Android/iOS/native coverage exports and release validation artifacts. |
 | Pro2/FreeRTOS live-lab validation | P1 | `hkt999rtk/rtk_cloud_client` | Live hardware release test program with clean skip/block reporting. |
 
@@ -54,6 +56,8 @@ production-like deployments.
 | Product telemetry baseline | Contracts, video ingestion, SDK typed helpers, and admin telemetry display are present. Do not reopen baseline ingestion issues. |
 | Account lifecycle baseline | Signup, verification, password reset/change, delete/disable, evaluation quota, audit, and metrics are present. Social login remains deferred and outside this batch. |
 | PKI/mTLS server-side | Existing `rtk_video_cloud#262` remains the owner issue. Do not duplicate. |
+| Product-level evidence collector | Workspace wrapper is implemented; remaining gaps are service-local evidence collectors in owner repositories. |
+| Cross-service broker packaging | Workspace owner decision is documented; remaining gaps are operator deployment and service-local smoke evidence. |
 | Smart-home/Matter/voice assistants | Valid roadmap area, but intentionally excluded from this foundation batch. |
 
 ## Issue Ordering

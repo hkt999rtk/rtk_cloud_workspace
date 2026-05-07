@@ -23,6 +23,8 @@ customer deployment before opening service-specific work.
 | Business model and tier definitions | `docs/business-model.md` | Evaluation/commercial tier structure, pricing framing, SDK licensing, and website disclosure rules. |
 | Workspace gap evidence | `docs/realtek-connect-plus-gap-analysis.md` | Tracks public-copy versus implementation gaps. |
 | Core platform roadmap | `docs/core-platform-gap-roadmap.md` | Routes private-cloud work to owner repositories. |
+| Product-level evidence wrapper | `docs/product-level-evidence.md` | Defines the workspace evidence artifact, redaction rules, and wrapper command. |
+| Cross-service broker packaging | `docs/cross-service-broker-packaging.md` | Defines NATS JetStream ownership, profiles, streams, retention, and evidence. |
 | Video cloud runtime deploy | `repos/rtk_video_cloud/docs/automation.md` | Release, deploy, staging evidence, and runner model. |
 | Video cloud release bundle | `repos/rtk_video_cloud/docs/release.md` | Release artifact contents and intended handoff shape. |
 | Video cloud host setup | `repos/rtk_video_cloud/docs/deployment-instance-setup.md` | Linux host bootstrap, PostgreSQL, systemd, EMQX, runner setup. |
@@ -59,7 +61,7 @@ runtime details.
 | Reverse proxy / TLS | Yes for production-like profile | platform/operator | Frontend and video cloud assume TLS can terminate outside app processes. | DNS, TLS certificates, routing, compression, request size limits, security headers. |
 | Secrets manager | Yes | platform/operator | GitHub Environment secrets or host-side manager are currently documented patterns. | Stores DSNs, auth secrets, MQTT credentials, webhook secrets, deploy keys, private keys. |
 | Observability stack | Yes for production-like profile | platform/operator | Video cloud exposes Prometheus endpoints and evidence collectors. | Scrapes metrics, collects logs, stores alerts, keeps readiness evidence. |
-| Cross-service broker | Required when account/video lifecycle channel is enabled | platform/operator | Video cloud cross-service process expects NATS JetStream; account manager supports broker adapter boundary. | Carries account-to-video lifecycle commands and video-to-account events. |
+| Cross-service broker | Required when account/video lifecycle channel is enabled | platform/operator, with workspace product requirements | `docs/cross-service-broker-packaging.md` selects NATS JetStream as the default and defines acceptable equivalents. | Carries account-to-video lifecycle commands and video-to-account events. |
 | Backup storage | Yes for production-like profile | platform/operator | Not packaged as a single workspace script. | Stores database dumps, object storage backups, env/secrets escrow metadata, release manifests. |
 
 ## Deployment Profiles
@@ -264,8 +266,10 @@ The production-like profile should collect:
 - release version manifest and source commits for each service
 
 Video cloud already has `collect-readiness-evidence.sh`. Workspace private-cloud
-readiness needs equivalent evidence collection for account manager and frontend
-or a product-level wrapper that gathers each service-local artifact.
+readiness now has `scripts/collect-private-cloud-evidence.sh` and the wrapper
+contract in `docs/product-level-evidence.md`. Account manager, admin dashboard,
+and frontend still own their service-local smoke/evidence commands; the
+workspace wrapper records them as `SKIP` until configured or implemented.
 
 ## Support Boundaries
 
@@ -309,8 +313,8 @@ clear. Do not imply all components are one-click deployable today.
 | Add frontend production deployment profile | `hkt999rtk/rtk_cloud_frontend` | Current container recipe is enough for evaluation; production-like profile needs backup/restore, reverse-proxy, and operational notes. |
 | Add admin-dashboard production deployment profile | `hkt999rtk/rtk_cloud_admin` | Current admin dashboard is a Go/React console with local demo/cache persistence; production-like profile needs upstream integration, backup/restore, reverse-proxy, and operational notes. |
 | Add admin-dashboard authoritative readiness/telemetry production mode | `hkt999rtk/rtk_cloud_admin` | Production dashboard views should prefer Account Manager and Video Cloud source facts over demo/cache projections, with stable stale/partial/upstream-failure states. |
-| Define product-level evidence wrapper | `hkt999rtk/rtk_cloud_workspace` | A future wrapper should collect per-service versions, health, metrics, and evidence artifact links. |
-| Define cross-service broker packaging decision | `hkt999rtk/rtk_cloud_workspace` or owner service | Video cloud packages EMQX, but NATS JetStream is an external prerequisite when cross-service lifecycle is enabled. |
+| Define product-level evidence wrapper | `hkt999rtk/rtk_cloud_workspace` | Implemented by `scripts/collect-private-cloud-evidence.sh` and documented in `docs/product-level-evidence.md`; service-local collectors remain owner-repo follow-ups. |
+| Define cross-service broker packaging decision | `hkt999rtk/rtk_cloud_workspace` | Decided in `docs/cross-service-broker-packaging.md`: workspace owns product requirements, service repos own client/runtime behavior, platform/operator owns broker installation and operations. |
 | Add private-cloud copy status update | `hkt999rtk/rtk_cloud_frontend` | Public wording should reflect this BOM and avoid one-click private-cloud claims until follow-ups land. |
 | Add SDK release validation coverage and live-lab evidence | `hkt999rtk/rtk_cloud_client` | Private-cloud/customer handoff needs package release evidence for Android/iOS/native coverage exports and Pro2/FreeRTOS live-lab validation artifacts. |
 
