@@ -15,14 +15,14 @@ Canonical contract source: `repos/rtk_cloud_contracts_doc/WEBRTC_ONLY_STREAMING_
 
 ## Issue Order
 
-| Order | Repository | Issue title | Dependency | Acceptance summary |
+| Order | Repository | Issue | Dependency | Acceptance summary |
 | --- | --- | --- | --- | --- |
-| 1 | `rtk_cloud_contracts_doc` | `[Streaming] Define WebRTC-only video contract and remove RTSP/legacy relay contract` | None | Active contract docs no longer present RTSP/legacy relay as supported streaming surfaces; WebRTC/TURN remains canonical. |
-| 2 | `rtk_video_cloud` | `[Streaming] Remove RTSP relay and legacy relay runtime` | Contracts issue | `/request_stream`, legacy relay binaries, `ScopeRTSP`, deployment units, OpenAPI entries, and related tests are removed; WebRTC/TURN tests pass. |
-| 3 | `rtk_cloud_client` | `[Streaming] Remove legacy RTSP/relay SDK helpers and fixtures` | Contracts and server issues | `requestStream` / `LegacyStream*` APIs, RTSP probe tooling, legacy fixtures, and sample RTSP/relay controls are removed; WebRTC helper tests pass. |
-| 4 | `rtk_cloud_admin` | `[Streaming] Align admin dashboard with WebRTC-only stream stats` | Server issue | RTSP/Relay chart lines, demo fallback data, and docs references are removed; stream stats are WebRTC-only. |
-| 5 | `rtk_cloud_frontend` | `[Streaming] Remove RTSP relay public copy and align Realtek Connect+ video wording` | Contracts issue | Public site describes WebRTC Video over TURN only; no RTSP relay promotion/manual content remains. |
-| 6 | `rtk_cloud_workspace` | `[Streaming] Track WebRTC-only migration rollout` | All implementation issues | Workspace records issue links, final validation, and submodule pointer snapshot. |
+| 1 | `rtk_cloud_contracts_doc` | [`[Streaming] Define WebRTC-only video contract and remove RTSP/legacy relay contract`](https://github.com/hkt999rtk/rtk_cloud_contracts_doc/issues/21) | None | Active contract docs no longer present RTSP/legacy relay as supported streaming surfaces; WebRTC/TURN remains canonical. |
+| 2 | `rtk_video_cloud` | [`[Streaming] Remove RTSP relay and legacy relay runtime`](https://github.com/hkt999rtk/rtk_video_cloud/issues/314) | Contracts issue | `/request_stream`, legacy relay binaries, `ScopeRTSP`, deployment units, OpenAPI entries, and related tests are removed; WebRTC/TURN tests pass. |
+| 3 | `rtk_cloud_client` | [`[Streaming] Remove legacy RTSP/relay SDK helpers and fixtures`](https://github.com/hkt999rtk/rtk_cloud_client/issues/317) | Contracts and server issues | `requestStream` / `LegacyStream*` APIs, RTSP probe tooling, legacy fixtures, and sample RTSP/relay controls are removed; WebRTC helper tests pass. |
+| 4 | `rtk_cloud_admin` | [`[Streaming] Align admin dashboard with WebRTC-only stream stats`](https://github.com/hkt999rtk/rtk_cloud_admin/issues/54) | Server issue | RTSP/Relay chart lines, demo fallback data, and docs references are removed; stream stats are WebRTC-only. |
+| 5 | `rtk_cloud_frontend` | [`[Streaming] Remove RTSP relay public copy and align Realtek Connect+ video wording`](https://github.com/hkt999rtk/rtk_cloud_frontend/issues/93) | Contracts issue | Public site describes WebRTC Video over TURN only; no RTSP relay promotion/manual content remains. |
+| 6 | `rtk_cloud_workspace` | [`[Streaming] Track WebRTC-only migration rollout`](https://github.com/hkt999rtk/rtk_cloud_workspace/issues/4) | All implementation issues | Workspace records issue links, final validation, and submodule pointer snapshot. |
 
 ## Removal Targets
 
