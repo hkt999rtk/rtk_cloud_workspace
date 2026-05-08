@@ -57,6 +57,7 @@ production-like deployments.
 | Account lifecycle baseline | Signup, verification, password reset/change, delete/disable, evaluation quota, audit, and metrics are present. Social login remains deferred and outside this batch. |
 | PKI/mTLS server-side | Server-side mTLS, revocation, renewal route, and contracts are present. Do not duplicate old PKI issue work. |
 | TURN registry | Video cloud TURN registry runtime and contracts are present for multi-node coturn discovery. |
+| WebRTC-only streaming migration | Planned breaking cleanup tracked in `docs/webrtc-only-streaming-migration.md`; legacy RTSP relay and legacy video relay are removal targets, while WebRTC/TURN remains the product video path. |
 | Account-manager private-cloud evidence | Deployment runbook and readiness smoke are present; workspace wrapper can aggregate service-local output. |
 | SDK release validation tooling | Coverage export docs and Pro2 live-lab wrapper/report templates are present; live runs still depend on release-candidate environment and hardware. |
 | Product-level evidence collector | Workspace wrapper is implemented; remaining gaps are service-local evidence collectors in owner repositories. |

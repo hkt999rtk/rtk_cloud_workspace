@@ -54,7 +54,7 @@ runtime details.
 | Admin dashboard | Yes for operator deployments | `rtk_cloud_admin` | Go BFF, React SPA, SQLite demo/cache storage, and dashboard docs exist. | Provides tenant/customer and platform operations views for fleet, provisioning, lifecycle, service health, and audit workflows. |
 | Account manager API | Yes | `rtk_account_manager` | Go/Postgres backend with auth, orgs, devices, groups/tags, provisioning projection. | Owns users, orgs, RBAC, registry devices, fleet primitives, account-side readiness facts. |
 | Video cloud API | Yes for camera/device runtime | `rtk_video_cloud` | Linux release bundle, systemd units, Postgres, media, firmware, transport, metrics. | Owns activation, tokens, media, firmware lifecycle, WebSocket/MQTT transport, runtime signals. |
-| Video cloud workers | Deployment-dependent | `rtk_video_cloud` | `ping`, `cleaner`, `statistics`, relay, RTSP relay, cross-service units exist. | Runs background lifecycle, cleanup, metrics/statistics, relay, cross-service workers. |
+| Video cloud workers | Deployment-dependent | `rtk_video_cloud` | `ping`, `cleaner`, `statistics`, cross-service, TURN registry, and WebRTC/TURN units exist. Legacy relay and RTSP relay are WebRTC-only migration removal targets. | Runs background lifecycle, cleanup, metrics/statistics, WebRTC/TURN, and cross-service workers. |
 | EMQX MQTT broker | Required when MQTT transport is enabled | `rtk_video_cloud` packaging / EMQX upstream | Packaged Docker Compose and `video_cloud-emqx.service` exist. | Self-hosted reference MQTT broker for device transport. |
 | PostgreSQL | Yes | platform/operator | Required by account manager and video cloud. | Persistent account, registry, runtime, media metadata, outbox/inbox, and projections. |
 | Object/blob storage | Yes for media/snapshots | platform/operator with `rtk_video_cloud` config | Local blob root and S3-style settings documented. | Stores snapshot/clip/firmware objects depending on runtime configuration. |
@@ -125,7 +125,7 @@ Recommended separation:
 
 | Layer | Production-like expectation |
 | --- | --- |
-| Edge | Reverse proxy/TLS in front of frontend, account API, video API, relay surfaces as needed. |
+| Edge | Reverse proxy/TLS in front of frontend, account API, video API, and WebRTC/TURN surfaces as needed. |
 | Frontend | Containerized service with persistent lead DB or migrated production storage. |
 | Account manager | Dedicated service and database/schema; migrations controlled by release. |
 | Video cloud API/workers | Release bundle or equivalent artifact; systemd/Kubernetes supervision; selected units only. |
