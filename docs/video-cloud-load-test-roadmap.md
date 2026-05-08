@@ -85,13 +85,13 @@ reported separately from generic HTTP/API metrics.
 
 | Order | Repository | Issue | Dependency | Acceptance summary |
 | --- | --- | --- | --- | --- |
-| 1 | `rtk_cloud_client` | To be opened: `[LoadTest] Add Go video cloud API-level load runner` | None | `rtk-video-loadtest` has `run` and `report` commands and can emit JSON plus Markdown artifacts for a short safe-staging run. |
-| 2 | `rtk_cloud_client` | To be opened: `[LoadTest] Add app/device/viewer actor simulation` | Runner skeleton | One process can run many app/device/viewer actors with controlled concurrency, ramp-up, deterministic run metadata, and bounded cleanup behavior. |
-| 3 | `rtk_cloud_client` | To be opened: `[LoadTest] Add Pion WebRTC viewer setup validation` | Actor simulation | Viewer actor validates signaling, ICE/TURN configuration, WebRTC setup result, and setup latency using Go Pion WebRTC. |
-| 4 | `rtk_cloud_client` | To be opened: `[LoadTest] Add JSON/Markdown report and threshold gate` | Runner metrics | Reports include success rate, p95/p99 latency, error classes, actor metrics, WebRTC metrics, and non-zero exit behavior on threshold failure. |
-| 5 | `rtk_cloud_client` | To be opened: `[LoadTest] Add manual/CD workflow for local and cloud load runs` | Report and thresholds | A manual workflow or script can run safe-staging locally, on self-hosted runners, or in cloud instances and upload reports as artifacts. |
-| 6 | `rtk_video_cloud` | To be opened: `[LoadTest] Document server prerequisites, metrics, and cleanup policy` | None | Server docs list required fleet state, tokens, TURN/WebRTC config, metrics endpoints, and cleanup expectations for client load tests. |
-| 7 | `rtk_cloud_workspace` | To be opened: `[LoadTest] Track video cloud E2E load test roadmap and issue links` | All opened issues | Workspace records issue links, dependency order, final validation checklist, and v1 completion status. |
+| 1 | `rtk_cloud_client` | [`[LoadTest] Add Go video cloud API-level load runner`](https://github.com/hkt999rtk/rtk_cloud_client/issues/319) | None | `rtk-video-loadtest` has `run` and `report` commands and can emit JSON plus Markdown artifacts for a short safe-staging run. |
+| 2 | `rtk_cloud_client` | [`[LoadTest] Add app/device/viewer actor simulation`](https://github.com/hkt999rtk/rtk_cloud_client/issues/320) | Runner skeleton | One process can run many app/device/viewer actors with controlled concurrency, ramp-up, deterministic run metadata, and bounded cleanup behavior. |
+| 3 | `rtk_cloud_client` | [`[LoadTest] Add Pion WebRTC viewer setup validation`](https://github.com/hkt999rtk/rtk_cloud_client/issues/321) | Actor simulation | Viewer actor validates signaling, ICE/TURN configuration, WebRTC setup result, and setup latency using Go Pion WebRTC. |
+| 4 | `rtk_cloud_client` | [`[LoadTest] Add JSON/Markdown report and threshold gate`](https://github.com/hkt999rtk/rtk_cloud_client/issues/322) | Runner metrics | Reports include success rate, p95/p99 latency, error classes, actor metrics, WebRTC metrics, and non-zero exit behavior on threshold failure. |
+| 5 | `rtk_cloud_client` | [`[LoadTest] Add manual/CD workflow for local and cloud load runs`](https://github.com/hkt999rtk/rtk_cloud_client/issues/323) | Report and thresholds | A manual workflow or script can run safe-staging locally, on self-hosted runners, or in cloud instances and upload reports as artifacts. |
+| 6 | `rtk_video_cloud` | [`[LoadTest] Document server prerequisites, metrics, and cleanup policy`](https://github.com/hkt999rtk/rtk_video_cloud/issues/316) | None | Server docs list required fleet state, tokens, TURN/WebRTC config, metrics endpoints, and cleanup expectations for client load tests. |
+| 7 | `rtk_cloud_workspace` | [`[LoadTest] Track video cloud E2E load test roadmap and issue links`](https://github.com/hkt999rtk/rtk_cloud_workspace/issues/5) | All opened issues | Workspace records issue links, dependency order, final validation checklist, and v1 completion status. |
 
 ## Validation Checklist
 
@@ -105,7 +105,7 @@ git diff --check
 After issues are opened:
 
 - Confirm each issue is in the intended repository.
-- Replace `To be opened` entries in this roadmap with issue links.
+- Keep the issue links in this roadmap current.
 - Commit and push the issue-link update.
 
 V1 is complete when:
