@@ -10,6 +10,7 @@ repositories. Shared wire and payload contracts belong in
 | Document | Classification | Purpose |
 | --- | --- | --- |
 | [architecture.md](architecture.md) | Source | Cross-repo boundaries and source-of-truth model. |
+| [account-manager-admin-boundary.md](account-manager-admin-boundary.md) | Source | Boundary between Account Manager as backend control plane and Admin as enterprise dashboard/BFF. |
 | [documentation-governance.md](documentation-governance.md) | Source | Documentation ownership, status, and review rules. |
 | [realtek-connect-plus-gap-analysis.md](realtek-connect-plus-gap-analysis.md) | Discussion note | Evidence-backed gaps between Realtek Connect+ promotion content and current implementation. |
 | [implementation-gap-backlog.md](implementation-gap-backlog.md) | Supporting note | Post-interface implementation and test gaps to open as owner-repo issues. |
