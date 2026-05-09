@@ -28,12 +28,20 @@ not become a second contract source of truth.
 - `rtk_cloud_client` implements client SDK APIs and runtime behavior.
 - `rtk_video_cloud` owns the video-cloud HTTP/WebSocket/MQTT server behavior.
 - `rtk_account_manager` owns account, organization, and registry-only device
-  behavior.
+  behavior. It is a backend identity, tenant, authorization, entitlement,
+  registry, and provisioning control-plane service; it should not own product
+  Web UI.
 - `rtk_cloud_frontend` owns the public website content and lead/contact
   experience for users learning about Realtek Cloud.
 - `rtk_cloud_admin` owns the B2B admin dashboard/BFF for fleet, provisioning,
   lifecycle, health, and audit operations; it does not replace account manager
-  or video cloud as system-of-record services.
+  or video cloud as system-of-record services. It may proxy or aggregate
+  account/video APIs, but it must not become the source of truth for customer,
+  organization, device, quota, or provisioning state.
+- Device/app provisioning should be able to complete without
+  `rtk_cloud_admin`; the canonical path is device/app/SDK to
+  `rtk_account_manager`, then cross-service activation through
+  `rtk_video_cloud`.
 - Cross-service provisioning and channel behavior should be tracked as
   integration work, not hidden inside the SDK client.
 - Workspace docs may describe repository boundaries, integration snapshots,
@@ -52,3 +60,6 @@ not become a second contract source of truth.
 
 See [`documentation-governance.md`](documentation-governance.md) for ownership,
 status, and review rules.
+
+See [`account-manager-admin-boundary.md`](account-manager-admin-boundary.md) for
+the detailed `rtk_account_manager` versus `rtk_cloud_admin` server boundary.
