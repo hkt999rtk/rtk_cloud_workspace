@@ -31,12 +31,13 @@ STATUS_FILE="$ARTIFACT_DIR/status.txt"
 SUMMARY_FILE="$ARTIFACT_DIR/summary.md"
 
 umask 077
-mkdir -p "$ARTIFACT_DIR" "$ARTIFACT_DIR/services" "$ARTIFACT_DIR/health" "$ARTIFACT_DIR/metrics" "$ARTIFACT_DIR/brokers" "$ARTIFACT_DIR/backups"
+mkdir -p "$ARTIFACT_DIR" "$ARTIFACT_DIR/services" "$ARTIFACT_DIR/health" "$ARTIFACT_DIR/metrics" "$ARTIFACT_DIR/brokers" "$ARTIFACT_DIR/backups" "$ARTIFACT_DIR/reports"
 : > "$STATUS_FILE"
 
 failures=0
 skips=0
 passes=0
+blocked=0
 
 redact_sensitive() {
   sed -E \
@@ -69,6 +70,7 @@ record() {
     PASS) passes=$((passes + 1)) ;;
     FAIL) failures=$((failures + 1)) ;;
     SKIP) skips=$((skips + 1)) ;;
+    BLOCKED) blocked=$((blocked + 1)) ;;
     *) echo "invalid status $status" >&2; exit 1 ;;
   esac
   printf '%s\t%s\t%s\n' "$status" "$area" "$reason" >> "$STATUS_FILE"
@@ -156,6 +158,92 @@ collect_versions() {
     printf '\n' >> "$out"
     record PASS "version:$path" "local version metadata captured when present"
   done
+}
+
+report_required() {
+  repo=$1
+  report=$2
+  set -f
+  for selector in ${RTK_EVIDENCE_REQUIRED_REPORTS:-}; do
+    case "$selector" in
+      "$repo:$report"|"$repo:*"|"*:$report"|"*:*")
+        set +f
+        return 0
+        ;;
+    esac
+  done
+  set +f
+  return 1
+}
+
+collect_canonical_reports() {
+  out="$ARTIFACT_DIR/reports/canonical-reports.tsv"
+  printf 'repo_path\trepo_commit\treport_file\tstatus\tsource_path\treason\n' > "$out"
+
+  while IFS='|' read -r repo report; do
+    [ -n "$repo" ] || continue
+    repo_dir="$ROOT_DIR/$repo"
+    source_path="$repo/$report"
+    if [ ! -d "$repo_dir" ]; then
+      printf '%s\tmissing\t%s\tSKIP\t%s\trepository path missing\n' "$repo" "$report" "$source_path" >> "$out"
+      record SKIP "report:$source_path" "repository path missing"
+      continue
+    fi
+    commit=$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || printf unknown)
+    if [ -f "$ROOT_DIR/$source_path" ]; then
+      printf '%s\t%s\t%s\tPASS\t%s\trepo-owned canonical report present\n' "$repo" "$commit" "$report" "$source_path" >> "$out"
+      record PASS "report:$source_path" "repo-owned canonical report present"
+    elif report_required "$repo" "$report"; then
+      printf '%s\t%s\t%s\tBLOCKED\t%s\trequired canonical report missing\n' "$repo" "$commit" "$report" "$source_path" >> "$out"
+      record BLOCKED "report:$source_path" "required canonical report missing"
+    else
+      printf '%s\t%s\t%s\tSKIP\t%s\treport not present or not applicable for this repo/profile\n' "$repo" "$commit" "$report" "$source_path" >> "$out"
+      record SKIP "report:$source_path" "report not present or not applicable for this repo/profile"
+    fi
+  done <<'REPORTS'
+repos/rtk_cloud_contracts_doc|docs/TEST_REPORT.md
+repos/rtk_cloud_contracts_doc|docs/RELEASE_TEST_REPORT.md
+repos/rtk_cloud_contracts_doc|docs/READINESS_TEST_REPORT.md
+repos/rtk_cloud_contracts_doc|docs/LOAD_TEST_REPORT.md
+repos/rtk_cloud_contracts_doc|docs/HARDWARE_TEST_REPORT.md
+repos/rtk_account_manager|docs/TEST_REPORT.md
+repos/rtk_account_manager|docs/RELEASE_TEST_REPORT.md
+repos/rtk_account_manager|docs/READINESS_TEST_REPORT.md
+repos/rtk_account_manager|docs/LOAD_TEST_REPORT.md
+repos/rtk_account_manager|docs/HARDWARE_TEST_REPORT.md
+repos/rtk_video_cloud|docs/TEST_REPORT.md
+repos/rtk_video_cloud|docs/RELEASE_TEST_REPORT.md
+repos/rtk_video_cloud|docs/READINESS_TEST_REPORT.md
+repos/rtk_video_cloud|docs/LOAD_TEST_REPORT.md
+repos/rtk_video_cloud|docs/HARDWARE_TEST_REPORT.md
+repos/rtk_cloud_client|docs/TEST_REPORT.md
+repos/rtk_cloud_client|docs/RELEASE_TEST_REPORT.md
+repos/rtk_cloud_client|docs/READINESS_TEST_REPORT.md
+repos/rtk_cloud_client|docs/LOAD_TEST_REPORT.md
+repos/rtk_cloud_client|docs/HARDWARE_TEST_REPORT.md
+repos/rtk_cloud_frontend|docs/TEST_REPORT.md
+repos/rtk_cloud_frontend|docs/RELEASE_TEST_REPORT.md
+repos/rtk_cloud_frontend|docs/READINESS_TEST_REPORT.md
+repos/rtk_cloud_frontend|docs/LOAD_TEST_REPORT.md
+repos/rtk_cloud_frontend|docs/HARDWARE_TEST_REPORT.md
+repos/rtk_cloud_admin|docs/TEST_REPORT.md
+repos/rtk_cloud_admin|docs/RELEASE_TEST_REPORT.md
+repos/rtk_cloud_admin|docs/READINESS_TEST_REPORT.md
+repos/rtk_cloud_admin|docs/LOAD_TEST_REPORT.md
+repos/rtk_cloud_admin|docs/HARDWARE_TEST_REPORT.md
+REPORTS
+
+  refs_file=${RTK_EVIDENCE_REPORT_ARTIFACT_REFS_FILE:-}
+  if [ -n "$refs_file" ] && [ -f "$refs_file" ]; then
+    redact_sensitive < "$refs_file" > "$ARTIFACT_DIR/reports/artifact-references.txt"
+    record PASS report_artifact_refs "sanitized report artifact references captured"
+  elif [ -n "$refs_file" ]; then
+    printf 'status=BLOCKED\nreason=RTK_EVIDENCE_REPORT_ARTIFACT_REFS_FILE not found\npath=%s\n' "$refs_file" | redact_sensitive > "$ARTIFACT_DIR/reports/artifact-references.txt"
+    record BLOCKED report_artifact_refs "configured report artifact reference file missing"
+  else
+    printf 'status=SKIP\nreason=RTK_EVIDENCE_REPORT_ARTIFACT_REFS_FILE not configured\n' > "$ARTIFACT_DIR/reports/artifact-references.txt"
+    record SKIP report_artifact_refs "report artifact references not configured"
+  fi
 }
 
 collect_url() {
@@ -305,6 +393,7 @@ write_summary() {
     printf '%s\n' "- Pass: \`$passes\`"
     printf '%s\n' "- Fail: \`$failures\`"
     printf '%s\n' "- Skip: \`$skips\`"
+    printf '%s\n' "- Blocked: \`$blocked\`"
     printf '\n## Status\n\n'
     awk -F '\t' '{ printf "- `%s` `%s` - %s\n", $1, $2, $3 }' "$STATUS_FILE"
   } > "$SUMMARY_FILE"
@@ -324,6 +413,7 @@ main() {
   write_manifest
   collect_commits
   collect_versions
+  collect_canonical_reports
   collect_health
   collect_metrics
   collect_brokers
@@ -339,8 +429,9 @@ main() {
   echo "passes=$passes"
   echo "failures=$failures"
   echo "skips=$skips"
+  echo "blocked=$blocked"
 
-  if [ "$STRICT" = 1 ] && [ "$failures" -gt 0 ]; then
+  if [ "$STRICT" = 1 ] && [ $((failures + blocked)) -gt 0 ]; then
     exit 1
   fi
 }
