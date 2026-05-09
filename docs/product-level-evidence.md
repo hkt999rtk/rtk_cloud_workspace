@@ -4,7 +4,7 @@ Status: supporting-note.
 
 Owner: `rtk_cloud_workspace`.
 
-Last reviewed: 2026-05-07.
+Last reviewed: 2026-05-09.
 
 ## Purpose
 
@@ -20,22 +20,78 @@ The implementation is `scripts/collect-private-cloud-evidence.sh`.
 The workspace wrapper owns product-level aggregation:
 
 - pinned workspace and submodule commits
+- canonical tracked test report inventory by submodule commit
 - selected service version metadata when available
 - health and metrics snapshots from configured URLs
 - broker status references for EMQX and the cross-service broker
 - backup evidence references
 - service-local collector output when explicitly enabled
-- explicit `PASS`, `FAIL`, and `SKIP` markers
+- explicit `PASS`, `FAIL`, `SKIP`, and `BLOCKED` markers
 
 Service repositories still own service-local evidence:
 
 | Evidence | Owner repository | Workspace behavior |
 | --- | --- | --- |
-| Account auth/org/device/provisioning smoke | `rtk_account_manager` | Invoke a configured collector command once that repo provides one. |
-| Video cloud runtime/deploy readiness | `rtk_video_cloud` | Can invoke `deploy/collect-readiness-evidence.sh`. |
-| Admin dashboard production-mode readiness | `rtk_cloud_admin` | Invoke a configured collector command once that repo provides one. |
-| Frontend website/lead portal readiness | `rtk_cloud_frontend` | Invoke a configured collector command once that repo provides one. |
-| SDK release validation evidence | `rtk_cloud_client` | Refer to release validation artifacts; not part of private-cloud runtime smoke. |
+| Account auth/org/device/provisioning smoke | `rtk_account_manager` | Record the repo-owned canonical report path and commit; invoke a configured collector command once that repo provides one. |
+| Video cloud runtime/deploy readiness | `rtk_video_cloud` | Record the repo-owned canonical report path and commit; can invoke `deploy/collect-readiness-evidence.sh`. |
+| Admin dashboard production-mode readiness | `rtk_cloud_admin` | Record the repo-owned canonical report path and commit; invoke a configured collector command once that repo provides one. |
+| Frontend website/lead portal readiness | `rtk_cloud_frontend` | Record the repo-owned canonical report path and commit; invoke a configured collector command once that repo provides one. |
+| SDK release validation, load, and lab evidence | `rtk_cloud_client` | Record the repo-owned canonical report path and commit; refer to release/load/lab artifacts rather than synthesizing them. |
+
+The workspace summary is an aggregation layer only. It must not create a
+replacement test report for a service repo, rewrite service-owned results, or
+turn raw logs into committed report content. Repo-owned canonical reports remain
+authoritative for their repository and are governed by the common contracts
+format in `rtk_cloud_contracts_doc`.
+
+## Canonical Report Aggregation
+
+The wrapper inventories these canonical tracked report filenames for every
+submodule that participates in product evidence:
+
+| Filename | Expected source |
+| --- | --- |
+| `docs/TEST_REPORT.md` | PR validation and normal CI evidence. |
+| `docs/RELEASE_TEST_REPORT.md` | Package, binary, SDK, image, or deployment artifact release validation. |
+| `docs/READINESS_TEST_REPORT.md` | Deployed service readiness evidence. |
+| `docs/LOAD_TEST_REPORT.md` | Load or performance validation evidence. |
+| `docs/HARDWARE_TEST_REPORT.md` | Hardware, lab, mobile-device, or runner-specific evidence. |
+
+The generated evidence bundle writes the inventory to
+`reports/canonical-reports.tsv` with:
+
+- submodule path
+- submodule commit
+- canonical report filename
+- result marker
+- source path
+- reason
+
+Result semantics:
+
+| Result | Meaning |
+| --- | --- |
+| `PASS` | The repo-owned canonical report exists at the pinned submodule commit. |
+| `SKIP` | The report is intentionally not present or not applicable for this repo/profile. |
+| `BLOCKED` | The report is expected for the run but unavailable. |
+
+Use `RTK_EVIDENCE_REQUIRED_REPORTS` to mark expected reports for a specific
+evidence run. It accepts space-separated selectors:
+
+- `repos/rtk_cloud_client:docs/LOAD_TEST_REPORT.md`
+- `repos/rtk_video_cloud:*`
+- `*:docs/TEST_REPORT.md`
+- `*:*`
+
+If a missing report matches a required selector, the wrapper records `BLOCKED`
+instead of `SKIP`. With `RTK_EVIDENCE_STRICT=1`, any `FAIL` or `BLOCKED` marker
+causes a non-zero exit.
+
+Remote CI/CD, staging, load, or hardware runners may also produce raw artifact
+references. Provide a sanitized file through
+`RTK_EVIDENCE_REPORT_ARTIFACT_REFS_FILE`; the wrapper copies it to
+`reports/artifact-references.txt` after redaction. Raw logs remain artifact-only
+and are not committed by the workspace.
 
 ## Command
 
@@ -74,8 +130,10 @@ evidence bundles from a half-configured environment.
 | `RTK_EVIDENCE_OUTPUT_DIR` | Parent output directory. | `./evidence` |
 | `RTK_EVIDENCE_TIMESTAMP` | Override timestamp for repeatable tests. | current UTC time |
 | `RTK_EVIDENCE_TARBALL` | Create a `.tar.gz` bundle. | `1` |
-| `RTK_EVIDENCE_STRICT` | Exit non-zero if any `FAIL` is recorded. | `0` |
+| `RTK_EVIDENCE_STRICT` | Exit non-zero if any `FAIL` or `BLOCKED` is recorded. | `0` |
 | `RTK_EVIDENCE_RUN_SERVICE_COLLECTORS` | Run service-local collectors. | `0` |
+| `RTK_EVIDENCE_REQUIRED_REPORTS` | Space-separated selectors for canonical reports that must exist. | unset, missing reports recorded as `SKIP` |
+| `RTK_EVIDENCE_REPORT_ARTIFACT_REFS_FILE` | Sanitized file containing links/paths to remote report artifacts. | unset, recorded as `SKIP` |
 | `RTK_EVIDENCE_FRONTEND_HEALTH_URL` | Frontend health URL. | unset, recorded as `SKIP` |
 | `RTK_EVIDENCE_ADMIN_HEALTH_URL` | Admin health URL. | unset, recorded as `SKIP` |
 | `RTK_EVIDENCE_ACCOUNT_MANAGER_HEALTH_URL` | Account manager health URL. | unset, recorded as `SKIP` |
@@ -112,6 +170,9 @@ realtek-connect-plus-evidence-<environment>-<timestamp>/
     <health probe outputs>
   metrics/
     <metrics snapshots>
+  reports/
+    canonical-reports.tsv
+    artifact-references.txt
   brokers/
     config.txt
     smoke-reference.txt
@@ -119,8 +180,8 @@ realtek-connect-plus-evidence-<environment>-<timestamp>/
     references.txt
 ```
 
-`status.txt` is tab-separated and every row begins with `PASS`, `FAIL`, or
-`SKIP`. `summary.md` is intended for deployment sign-off review.
+`status.txt` is tab-separated and every row begins with `PASS`, `FAIL`, `SKIP`,
+or `BLOCKED`. `summary.md` is intended for deployment sign-off review.
 
 ## Redaction Rules
 
@@ -149,4 +210,8 @@ Before a private-cloud deployment is considered evidence-ready:
 - Backup references cover Postgres, object storage, frontend lead storage, EMQX,
   and JetStream where those components are deployed.
 - Disabled optional components appear as `SKIP` with an intentional reason.
+- Missing required canonical reports appear as `BLOCKED` with the expected
+  repo-owned path and pinned submodule commit.
+- Existing canonical reports are referenced by path and commit; the workspace
+  does not synthesize replacement service reports.
 - The final bundle contains no tokens, DSNs, private keys, or raw customer data.
