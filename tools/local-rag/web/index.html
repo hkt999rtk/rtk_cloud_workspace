@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RTK Local RAG</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">R</div>
+          <div>
+            <h1>RTK Local RAG</h1>
+            <p>Workspace knowledge base</p>
+          </div>
+        </div>
+
+        <section class="side-section">
+          <div class="section-title">Index Health</div>
+          <dl class="stat-list">
+            <div><dt>Documents</dt><dd id="docCount">-</dd></div>
+            <div><dt>Chunks</dt><dd id="chunkCount">-</dd></div>
+            <div><dt>Dirty repos</dt><dd id="dirtyCount">-</dd></div>
+          </dl>
+          <button id="changedIndexButton" class="button secondary">Index changed</button>
+          <button id="fullIndexButton" class="button">Full reindex</button>
+        </section>
+
+        <section class="side-section">
+          <div class="section-title">Filters</div>
+          <label>Repository<select id="repoFilter"><option value="">All repositories</option></select></label>
+          <label>Source layer<select id="layerFilter"><option value="">All layers</option><option value="contracts">contracts</option><option value="workspace">workspace</option><option value="service">service</option><option value="code">code</option><option value="generated">generated</option></select></label>
+          <label>Classification<select id="classFilter"><option value="">All classes</option><option value="source">source</option><option value="supporting-note">supporting-note</option><option value="reference-only">reference-only</option></select></label>
+        </section>
+
+        <section class="side-section repo-list" id="repoList"></section>
+      </aside>
+
+      <main class="main">
+        <section class="query-panel">
+          <form id="queryForm">
+            <label for="queryInput">Natural language query</label>
+            <div class="query-row">
+              <input id="queryInput" name="query" value="device 怎麼取得認證" autocomplete="off" />
+              <button class="button" type="submit">Ask</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="answer-layout">
+          <article class="answer-panel">
+            <div class="panel-header">
+              <h2>Answer</h2>
+              <span id="queryState">Ready</span>
+            </div>
+            <div id="answerText" class="markdown-body">Run a query to inspect the local workspace index.</div>
+          </article>
+
+          <aside class="citations-panel">
+            <div class="panel-header">
+              <h2>Citations</h2>
+              <span id="citationCount">0</span>
+            </div>
+            <div id="citations"></div>
+          </aside>
+        </section>
+
+        <section class="matches-panel">
+          <div class="panel-header">
+            <h2>Matched Chunks</h2>
+            <span id="confidenceNotes"></span>
+          </div>
+          <div id="matches"></div>
+        </section>
+      </main>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>
