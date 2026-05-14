@@ -14,6 +14,7 @@ auth_key="${FACTORY_ENROLL_TEST_AUTH_KEY:-${FACTORY_ENROLL_AUTH_KEY:-factory-sec
 count="${FACTORY_ENROLL_TEST_COUNT:-100}"
 concurrency="${FACTORY_ENROLL_TEST_CONCURRENCY:-8}"
 audit_log="${FACTORY_ENROLL_AUDIT_LOG_PATH:-${artifact_dir}/factoryenroll-audit.jsonl}"
+write_key_files="${FACTORY_ENROLL_TEST_WRITE_KEY_FILES:-0}"
 
 cleanup() {
   if [ -n "${factory_pid:-}" ]; then
@@ -83,6 +84,10 @@ wait_for_url "http://$factory_addr/healthz"
 
 (
   cd "$e2e_root"
+  extra_args=()
+  if [ "$write_key_files" = "1" ] || [ "$write_key_files" = "true" ]; then
+    extra_args+=(--write-key-files)
+  fi
   go run ./factory_enroll/cmd/rtk-factory-enroll-test run \
     --factory-url "http://$factory_addr" \
     --auth-key "$auth_key" \
@@ -91,7 +96,8 @@ wait_for_url "http://$factory_addr/healthz"
     --run-id "$run_id" \
     --artifact-dir "$artifact_dir" \
     --output "$artifact_dir/factory-enroll-results.json" \
-    --report-output "$artifact_dir/factory-enroll-report.md"
+    --report-output "$artifact_dir/factory-enroll-report.md" \
+    "${extra_args[@]}"
 )
 
 test -s "$artifact_dir/factory-enroll-results.json"
