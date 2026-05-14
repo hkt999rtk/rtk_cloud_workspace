@@ -37,6 +37,11 @@ require_file docs/README.md
 require_file docs/architecture.md
 require_file docs/documentation-governance.md
 require_file docs/testing.md
+require_file docs/LOAD_TEST_REPORT.md
+require_file e2e_test/go.mod
+require_file e2e_test/video_cloud/load/cmd/rtk-video-loadtest/main.go
+require_file e2e_test/video_cloud/load/scripts/run_video_loadtest.sh
+require_file e2e_test/video_cloud/load/scripts/deploy_video_loadtest_two_host.sh
 require_file docs/adr/README.md
 require_file docs/product-level-evidence.md
 require_file docs/cross-service-broker-packaging.md

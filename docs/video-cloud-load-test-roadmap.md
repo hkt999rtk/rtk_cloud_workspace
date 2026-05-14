@@ -1,29 +1,28 @@
 # Video Cloud API-Level E2E Load Test Roadmap
 
-Status: planning
+Status: implemented owner migration
 Owner: rtk_cloud_workspace
-Last updated: 2026-05-08
+Last updated: 2026-05-14
 
 ## Summary
 
 Video cloud load testing will be developed as an API-level end-to-end client
-simulation, not as a server-only benchmark. The v1 runner is owned by
-`rtk_cloud_client` because it models client, app, device, and viewer behavior.
+simulation, not as a server-only benchmark. The v1 runner is owned by `rtk_cloud_workspace` because it coordinates behavior across client, device, viewer, and video cloud server boundaries.
 It uses a pre-provisioned and activated fleet; provisioning, claim/bind, and
 account readiness onboarding are prerequisites, not part of the v1 load loop.
 
-The v1 implementation target is a Go CLI named `rtk-video-loadtest`. It should
+The v1 implementation is a Go CLI named `rtk-video-loadtest` under `e2e_test/video_cloud/load/`. It should
 simulate many virtual actors from one process, support multiple load instances
 through shared run metadata, validate WebRTC setup with Pion, and emit JSON plus
-Markdown reports that can be used as CI/CD or release evidence.
+Markdown reports that can be used as manual, lab, or release evidence.
 
 ## Source-of-Truth Boundaries
 
 | Area | Owner | Rule |
 | --- | --- | --- |
-| Load runner implementation | `rtk_cloud_client` | Owns CLI, actor simulation, report generation, thresholds, and workflow entry points. |
+| Load runner implementation | `rtk_cloud_workspace` | Owns CLI, actor simulation, report generation, thresholds, local scripts, and manual two-host execution. |
 | Server prerequisites | `rtk_video_cloud` | Owns server metrics/readiness expectations, TURN/WebRTC setup notes, test fleet assumptions, and cleanup policy. |
-| Roadmap tracking | `rtk_cloud_workspace` | Tracks issue order, links, validation checklist, and final snapshot. |
+| Roadmap tracking | `rtk_cloud_workspace` | Tracks issue order, links, validation checklist, final snapshot, and product-level load report. |
 | Provisioning contract | `rtk_cloud_contracts_doc` | Remains the source of truth for onboarding/provisioning, but v1 load tests do not execute provisioning. |
 
 ## V1 Test Boundary
@@ -51,6 +50,15 @@ Out of scope for v1:
   behavior unless the implementing repo adds it explicitly as a later profile.
 
 ## Public Interface Target
+
+Workspace layout:
+
+- `e2e_test/video_cloud/load/cmd/rtk-video-loadtest/`: CLI entry point.
+- `e2e_test/video_cloud/load/loadtest/`: actor scheduler, WebRTC/Pion validation, reporting, and threshold evaluation.
+- `e2e_test/video_cloud/load/scripts/`: local and two-host execution scripts.
+- `e2e_test/video_cloud/load/tools/`: report candidate and two-host aggregation helpers.
+- `docs/LOAD_TEST_REPORT.md`: canonical product-level load report file.
+
 
 CLI examples:
 
@@ -81,7 +89,16 @@ The runner must exit non-zero when configured thresholds fail. Thresholds should
 cover at least success rate and p95/p99 latency; WebRTC setup metrics should be
 reported separately from generic HTTP/API metrics.
 
-## Issue Order
+## Execution Policy
+
+This workspace currently does not define GitHub Actions workflows for E2E load
+testing. The checked-in `e2e_test/` tree provides the runner, local scripts,
+two-host deployment script, aggregation helper, and report candidate helper.
+Operators can run these manually from a local, lab, or cloud host. If automated
+CI/CD execution is needed later, add it as a separate workspace decision instead
+of reintroducing cross-cloud load workflows in `rtk_cloud_client`.
+
+## Historical Issue Order
 
 | Order | Repository | Issue | Dependency | Acceptance summary |
 | --- | --- | --- | --- | --- |
@@ -95,28 +112,22 @@ reported separately from generic HTTP/API metrics.
 
 ## Validation Checklist
 
-Before opening issues:
+Before changing the runner:
 
 ```sh
 ./scripts/docs-check.sh
 git diff --check
 ```
 
-After issues are opened:
-
-- Confirm each issue is in the intended repository.
-- Keep the issue links in this roadmap current.
-- Commit and push the issue-link update.
-
 V1 is complete when:
 
-- `rtk_cloud_client` can run a safe-staging load profile against a
+- `rtk_cloud_workspace` can run a safe-staging load profile against a
   pre-provisioned fleet and produce JSON plus Markdown reports.
 - One process can simulate many API-level app/device/viewer actors.
 - Multiple instances can share a `VIDEO_CLOUD_LOAD_RUN_ID` with unique
   `VIDEO_CLOUD_LOAD_INSTANCE_ID` values.
 - WebRTC setup success/failure and latency are visible in the report.
-- Threshold failures produce a non-zero exit code suitable for CI/CD gating.
+- Threshold failures produce a non-zero exit code suitable for automation gating.
 - `rtk_video_cloud` documents the server prerequisites required to run the test
   without guessing.
 
