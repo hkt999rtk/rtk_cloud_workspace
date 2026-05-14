@@ -39,6 +39,9 @@ require_file docs/documentation-governance.md
 require_file docs/testing.md
 require_file docs/LOAD_TEST_REPORT.md
 require_file e2e_test/go.mod
+require_file e2e_test/factory_enroll/README.md
+require_file e2e_test/factory_enroll/cmd/rtk-factory-enroll-test/main.go
+require_file e2e_test/factory_enroll/scripts/run_factory_enroll_local.sh
 require_file e2e_test/video_cloud/load/cmd/rtk-video-loadtest/main.go
 require_file e2e_test/video_cloud/load/scripts/run_video_loadtest.sh
 require_file e2e_test/video_cloud/load/scripts/deploy_video_loadtest_two_host.sh
