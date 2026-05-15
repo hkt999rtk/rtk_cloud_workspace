@@ -27,8 +27,23 @@ the repository and be passed through environment variables or local temp files.
 
 ## Workspace E2E Tests
 
-Cross-cloud end-to-end tests live under `e2e_test/` in this workspace. The first
-workspace-owned suite is the video cloud API-level load runner:
+Cross-cloud and factory-environment end-to-end tests live under `e2e_test/` in
+this workspace.
+
+The factory enrollment v1 suite validates the local factory flow without Linode
+or production issuer secrets:
+
+- Runner: `e2e_test/factory_enroll/cmd/rtk-factory-enroll-test/`
+- Package: `e2e_test/factory_enroll/factoryenrolltest/`
+- Local script: `e2e_test/factory_enroll/scripts/run_factory_enroll_local.sh`
+- Source fixture: `../rtk_video_cloud/examples/factory-enrollment/`
+
+The runner generates device keys/CSRs, derives each `devid` from the public key
+fingerprint, calls local `cmd/factoryenroll`, and verifies the returned device
+certificate. Device private keys are not written unless explicitly requested for
+local debugging.
+
+The video cloud API-level load runner is also workspace-owned:
 
 - Go module: `e2e_test/go.mod`
 - Runner: `e2e_test/video_cloud/load/cmd/rtk-video-loadtest/`

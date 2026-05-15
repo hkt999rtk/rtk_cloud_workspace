@@ -16,8 +16,9 @@ repositories. Shared wire and payload contracts belong in
 | [implementation-gap-backlog.md](implementation-gap-backlog.md) | Supporting note | Post-interface implementation and test gaps to open as owner-repo issues. |
 | [core-platform-gap-roadmap.md](core-platform-gap-roadmap.md) | Supporting note | Core platform gap roadmap for readiness, private cloud, account lifecycle, fleet, telemetry, SDK/app, WebRTC, and smart-home ecosystem boundaries. |
 | [business-model.md](business-model.md) | Source | Tier structure, evaluation limits, pricing model framing, SDK licensing posture, and website disclosure rules. |
-| [private-cloud-deployment.md](private-cloud-deployment.md) | Supporting note | Private-cloud deployment bill of materials, profiles, operations runbook, support boundary, and follow-up routing. |
+| [private-cloud-deployment.md](private-cloud-deployment.md) | Supporting note | Private-cloud deployment bill of materials, deployment order, profiles, operations runbook, support boundary, and follow-up routing. |
 | [product-level-evidence.md](product-level-evidence.md) | Supporting note | Workspace evidence wrapper for private-cloud readiness sign-off and canonical report aggregation. |
+| [linode-staging-deployment-snapshot.md](linode-staging-deployment-snapshot.md) | Supporting note | Current Linode staging deployment snapshot, live endpoints, PR state, and remaining production-readiness work. |
 | [webrtc-only-streaming-migration.md](webrtc-only-streaming-migration.md) | Supporting note | WebRTC-only video migration issue roadmap and validation checklist. |
 | [video-cloud-load-test-roadmap.md](video-cloud-load-test-roadmap.md) | Supporting note | API-level video cloud E2E load test roadmap, issue owner matrix, and validation checklist. |
 | [cross-service-broker-packaging.md](cross-service-broker-packaging.md) | Supporting note | Cross-service broker packaging decision, profiles, and evidence expectations. |

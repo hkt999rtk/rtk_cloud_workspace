@@ -145,6 +145,97 @@ Production-like acceptance bar:
 - frontend private-cloud wording matches the actually deployed package, not a
   roadmap superset
 
+## Deployment Orchestration Order
+
+Cross-service deployments must follow a fixed order. Service-local runbooks
+describe how to deploy each component; this workspace section defines when a
+component is allowed to be deployed or promoted relative to the rest of the
+stack. Do not deploy the Admin dashboard as the first component in a fresh
+environment, because Admin is an aggregator and depends on both Account Manager
+and Video Cloud upstreams.
+
+### Dependency Graph
+
+```text
+platform prerequisites
+  -> Video Cloud runtime
+  -> Account Manager API
+  -> Admin dashboard
+  -> Public frontend / promotion site
+
+Video Cloud runtime ----\
+                       +--> Admin dashboard service health and operations
+Account Manager API ---/
+```
+
+`rtk_cloud_admin` must use public HTTPS upstream domains, not raw VM IPs or
+private app ports. For the current Linode staging profile, the required upstream
+configuration is:
+
+```env
+ACCOUNT_MANAGER_BASE_URL=https://account-manager.video-cloud-staging.realtekconnect.com
+VIDEO_CLOUD_BASE_URL=https://video-cloud-staging.realtekconnect.com
+```
+
+### Ordered Gates
+
+| Order | Component | Owner repo | Gate before next step | Current Linode staging shape |
+| --- | --- | --- | --- | --- |
+| 0 | Platform prerequisites | platform/operator | Linode token, DNS credentials, SSH key, operator CIDR, nginx.org `>=1.30` repo availability, and service secrets are ready. | Operator-local secrets are sourced locally and not committed. |
+| 1 | Video Cloud runtime | `rtk_video_cloud` | Public API health/version pass; required runtime dependencies such as PostgreSQL, EMQX, coturn/TURN, certissuer/factory path, and selected workers are healthy for the chosen profile. | `https://video-cloud-staging.realtekconnect.com`; edge nginx terminates TLS and proxies to the video cloud API. |
+| 2 | Account Manager API | `rtk_account_manager` | `GET /v1/health` passes; auth/register/login/`/v1/me` smoke passes; local PostgreSQL is active; public TLS domain is valid. | `https://account-manager.video-cloud-staging.realtekconnect.com`; dedicated public VM with nginx TLS and local PostgreSQL. |
+| 3 | Admin dashboard | `rtk_cloud_admin` | `/healthz` passes and `/api/service-health` reports Account Manager, Video Cloud, and SQLite as `ok`. | `https://admin.video-cloud-staging.realtekconnect.com`; dedicated public VM with nginx TLS and local SQLite cache. |
+| 4 | Public frontend / promotion site | `rtk_cloud_frontend` | Website content matches deployed capability status; API links and contact/lead persistence are verified for the selected profile. | Public-facing Realtek Connect+ website; deployment profile remains service-owned. |
+| 5 | Product-level evidence | `rtk_cloud_workspace` | Workspace evidence records exact submodule commits, deployed versions, health results, skipped checks, and residual blockers. | `docs/product-level-evidence.md` defines the wrapper contract. |
+
+### Fresh Environment Sequence
+
+1. Prepare platform prerequisites and create required DNS records.
+2. Deploy Video Cloud first, because it owns runtime media, transport, firmware,
+   TURN/WebRTC, MQTT/EMQX, and video-side readiness facts consumed by Admin.
+3. Deploy Account Manager next, because it owns users, organizations, registry
+   devices, membership, authentication, and provisioning/account-side readiness
+   facts consumed by Admin.
+4. Deploy Admin only after both upstreams have passed smoke checks. Admin is a
+   dashboard/BFF; it should not be used as evidence that upstream services are
+   deployed until `/api/service-health` reports all selected upstreams as `ok`.
+5. Deploy the public frontend after backend/admin status is known, so public copy
+   and links do not claim capabilities that are not live in the target profile.
+6. Collect product-level evidence from the workspace after all selected services
+   have passed their service-owned smoke checks.
+
+### Upgrade Sequence
+
+For routine upgrades, deploy lower-level dependencies before aggregators:
+
+1. Upgrade Video Cloud if its API, contracts, runtime paths, or readiness facts
+   changed.
+2. Upgrade Account Manager if auth/org/device/provisioning/account readiness
+   behavior changed.
+3. Upgrade Admin after its upstream API expectations are satisfied.
+4. Upgrade frontend copy last if user-visible wording or links depend on the new
+   backend/admin behavior.
+5. Re-run workspace evidence after all service-local verifications pass.
+
+If only Admin UI code changes and upstream contracts are unchanged, Admin may be
+redeployed independently, but `/api/service-health` must still be checked after
+deploy. If only Account Manager or Video Cloud changes, Admin does not need to
+be redeployed unless it has hard-coded endpoint assumptions, DTO expectations,
+or cached compatibility behavior affected by that change.
+
+### Rollback Sequence
+
+Rollback aggregators before rolling back their upstreams when an integration
+change breaks Admin:
+
+1. If Admin breaks after an upstream upgrade, first rollback or redeploy Admin to
+   the previous compatible version if the upstream remains healthy.
+2. If the upstream itself is unhealthy, rollback the owning upstream service
+   according to its service-local rollback runbook.
+3. Re-check Admin `/api/service-health` after any upstream rollback.
+4. Update workspace evidence with the failed version, rollback version, and any
+   residual compatibility issue.
+
 ## Network And TLS Boundary
 
 Production deployments should not expose raw service ports directly to the
