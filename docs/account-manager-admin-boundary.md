@@ -42,6 +42,8 @@ It owns:
 - user identity, email/password authentication, email verification, password
   reset, JWT access tokens, and refresh tokens
 - organization/tenant records
+- brand-cloud records (`organization_kind=brand_cloud`) under the Realtek
+  platform root
 - organization membership and roles such as `owner`, `admin`, and `member`
 - organization-owned device registry records
 - device groups and tags used as account-side fleet selection metadata
@@ -54,6 +56,7 @@ It owns:
   video metadata
 - account-domain audit, metrics, readiness smoke evidence, and platform-admin
   domain APIs
+- platform-admin brand-cloud create/list/read/update/member-assignment APIs
 
 It does not own:
 
@@ -84,6 +87,7 @@ It owns:
 - current dashboard session and active-organization UI state
 - platform/operator console entry point
 - proxying and aggregating Account Manager and Video Cloud APIs
+- proxying Account Manager brand-cloud management APIs for future WebUI screens
 - device, provisioning, activation, readiness, telemetry, firmware, stream, and
   service-health views
 - console-local platform-admin users when used as the dashboard operator entry
@@ -95,6 +99,7 @@ It does not own:
 
 - canonical user credentials or auth tokens
 - canonical organization/tenant records
+- canonical brand-cloud records
 - canonical organization membership or role policy
 - canonical device ownership
 - claim token or bind material source of truth
@@ -111,15 +116,20 @@ The enterprise tenant context lives in `rtk_account_manager` as organization
 and membership data:
 
 ```text
-User
-  belongs to one or more Organizations
-    with Role: owner / admin / member
-      owns Devices / Quota / Provisioning state
+System Root / Realtek Platform
+  manages Brand Cloud organizations
+    assign brand users and operators
+      own Devices / Quota / Provisioning state
 ```
 
 `rtk_cloud_admin` may remember which organization is selected in the current
 dashboard session, but it must not create a separate enterprise-customer source
 of truth.
+
+Brand-cloud management requires an Account Manager-backed platform-admin token.
+Admin Console local break-glass sessions are emergency dashboard sessions only;
+without an upstream Account Manager token they must not create or update brand
+clouds.
 
 There are two dashboard concepts:
 
@@ -169,6 +179,7 @@ overlap:
 | --- | --- |
 | Signup/login pages | `rtk_cloud_admin` owns UI; `rtk_account_manager` owns credentials, tokens, and auth policy. |
 | Organization selector | `rtk_cloud_admin` owns selected-org UI/session state; `rtk_account_manager` owns organizations, memberships, and roles. |
+| Brand-cloud management | `rtk_cloud_admin` owns optional dashboard/BFF routes; `rtk_account_manager` owns brand-cloud records, status, membership, and audit. |
 | Device list/detail | `rtk_cloud_admin` owns display and aggregation; `rtk_account_manager` owns registry facts; `rtk_video_cloud` owns video/runtime facts. |
 | Provision/deactivate button | `rtk_cloud_admin` owns the console action surface; `rtk_account_manager` owns the canonical operation API and intent. |
 | Quota display/request | `rtk_cloud_admin` owns UI; `rtk_account_manager` owns entitlement fields and quota workflow. |

@@ -41,6 +41,7 @@ production-like deployments.
 | Account-manager readiness evidence | Done | `hkt999rtk/rtk_account_manager` | Read-only smoke/evidence script for auth, org, device, and provisioning facts. |
 | Admin dashboard production profile | Done | `hkt999rtk/rtk_cloud_admin` | Production deployment profile for Go/React dashboard, persistence, upstreams, and rollback. |
 | Admin upstream readiness/telemetry mode | P0 | `hkt999rtk/rtk_cloud_admin` | Production-mode use of authoritative account/video readiness and telemetry facts. |
+| Brand-cloud backend management | Done | `hkt999rtk/rtk_account_manager`, `hkt999rtk/rtk_cloud_admin` | Account Manager owns `organization_kind=brand_cloud`, platform-admin APIs, bootstrap root, and audit; Admin provides backend/BFF proxy routes for future WebUI. |
 | Frontend private-cloud deployment docs | P1 | `hkt999rtk/rtk_cloud_frontend` | Production deployment profile and backup/restore notes for website lead/analytics storage. |
 | Product-level evidence collector | Done | `hkt999rtk/rtk_cloud_workspace` | `scripts/collect-private-cloud-evidence.sh` gathers service evidence into a redacted bundle. |
 | Cross-service broker packaging | Done | `hkt999rtk/rtk_cloud_workspace` | `docs/cross-service-broker-packaging.md` records the owner decision and NATS JetStream packaging/runbook plan. |
@@ -55,6 +56,7 @@ production-like deployments.
 | OTA SDK helpers | Latest SDK packages expose campaign helper surfaces. Treat future issues as package-specific regressions or advanced policy work. |
 | Product telemetry baseline | Contracts, video ingestion, SDK typed helpers, and admin telemetry display are present. Do not reopen baseline ingestion issues. |
 | Account lifecycle baseline | Signup, verification, password reset/change, delete/disable, evaluation quota, audit, and metrics are present. Social login remains deferred and outside this batch. |
+| Brand-cloud backend management | Account Manager has brand-cloud schema/API/audit/bootstrap; Admin has BFF proxy routes. WebUI remains deferred. |
 | PKI/mTLS server-side | Server-side mTLS, revocation, renewal route, and contracts are present. Do not duplicate old PKI issue work. |
 | TURN registry | Video cloud TURN registry runtime and contracts are present for multi-node coturn discovery. |
 | WebRTC-only streaming migration | Planned breaking cleanup tracked in `docs/webrtc-only-streaming-migration.md`; legacy RTSP relay and legacy video relay are removal targets, while WebRTC/TURN remains the product video path. |
