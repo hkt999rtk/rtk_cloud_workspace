@@ -24,6 +24,7 @@ The workspace snapshot includes:
 | Workspace docs | [`docs/README.md`](docs/README.md) | Cross-repository documentation index. |
 | Workspace architecture | [`docs/architecture.md`](docs/architecture.md) | Repository boundaries and source-of-truth model. |
 | Documentation governance | [`docs/documentation-governance.md`](docs/documentation-governance.md) | Ownership, status, review, and drift-prevention rules. |
+| Artifact release governance | [`docs/artifact-release-governance.md`](docs/artifact-release-governance.md) | Linode Object Storage release artifact policy and adoption matrix. |
 | Cross-repo contracts | [`repos/rtk_cloud_contracts_doc/README.md`](repos/rtk_cloud_contracts_doc/README.md) | Normative wire, payload, and integration contracts. |
 | Cross-repo testing | [`docs/testing.md`](docs/testing.md) | Local validation commands for pinned snapshots. |
 
