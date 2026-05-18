@@ -106,8 +106,8 @@ Verification must prove:
 | `rtk_video_cloud` | Video cloud release bundle | Done: release workflow publishes to Linode Object Storage. | None for this batch. |
 | `rtk_cloud_frontend` | Realtek Connect+ website bundle | Done: CI/release upload and deploy-linode download use Linode Object Storage. | None for this batch. |
 | `rtk_cloud_admin` | Admin dashboard release image bundle | Done: release workflow publishes to Linode Object Storage. | None for this batch. |
-| `rtk_account_manager` | Account manager release bundle | Gap: release workflow publishes GitHub artifact / GitHub Release, but not Linode Object Storage. | Open owner issue to add publish and self-check evidence. |
-| `rtk_cloud_client` | SDK delivery bundle | Gap: SDK package CD uploads GitHub Actions artifact, but not Linode Object Storage. | Open owner issue to add publish and self-check evidence. |
+| `rtk_account_manager` | Account manager release bundle | Done: release workflow publishes bundle, checksum, and manifest to Linode Object Storage; owner issue [hkt999rtk/rtk_account_manager#168](https://github.com/hkt999rtk/rtk_account_manager/issues/168) is closed. | None for publishing. Follow-up PR [hkt999rtk/rtk_account_manager#170](https://github.com/hkt999rtk/rtk_account_manager/pull/170) only tightens deploy verifier/runbook details. |
+| `rtk_cloud_client` | SDK delivery bundle | In progress: owner issue [hkt999rtk/rtk_cloud_client#482](https://github.com/hkt999rtk/rtk_cloud_client/issues/482) and implementation PR [hkt999rtk/rtk_cloud_client#484](https://github.com/hkt999rtk/rtk_cloud_client/pull/484) add Linode Object Storage publishing and repo-owned verifier support. CI is currently blocked by GitHub Actions artifact storage quota, not by test failure. | Merge owner PR after CI can upload short-lived GitHub debug artifacts again; then mark done after the SDK package workflow records object key/checksum in `RELEASE_TEST_REPORT` candidate. |
 | `rtk_cloud_contracts_doc` | Contract documentation | N/A: docs-only repository, no deployable or SDK handoff artifact. | None. |
 
 ## Issue Routing Rules
@@ -119,3 +119,6 @@ acceptance criteria. Do not duplicate this full policy in each issue.
 Do not open duplicate implementation issues for repositories already marked
 `Done` unless a later audit finds a concrete drift between their workflow and the
 policy above.
+
+Workspace tracking issue:
+[hkt999rtk/rtk_cloud_workspace#13](https://github.com/hkt999rtk/rtk_cloud_workspace/issues/13).
