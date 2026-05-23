@@ -36,6 +36,8 @@ require_file README.md
 require_file docs/README.md
 require_file docs/architecture.md
 require_file docs/documentation-governance.md
+require_file docs/deployment-secrets-governance.md
+require_file docs/examples/secrets-manifest.example.json
 require_file docs/testing.md
 require_file docs/LOAD_TEST_REPORT.md
 require_file e2e_test/README.md
@@ -54,6 +56,7 @@ require_file docs/product-level-evidence.md
 require_file docs/cross-service-broker-packaging.md
 require_file repos/rtk_cloud_contracts_doc/README.md
 require_file scripts/collect-private-cloud-evidence.sh
+require_file scripts/secrets-check.sh
 
 if grep -q 'repos/rtk_mqtt' README.md docs/architecture.md scripts/test-matrix.sh; then
   fail "workspace README, architecture, or test matrix still references repos/rtk_mqtt"
