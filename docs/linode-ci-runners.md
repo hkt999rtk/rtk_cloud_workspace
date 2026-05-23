@@ -105,6 +105,7 @@ Recommended local files:
 .secrets/shared/github/env/runner-registration.env
 .secrets/shared/ssh/private-keys/rtk-ci-runner
 .secrets/shared/ssh/public-certs/rtk-ci-runner.pub
+.secrets/shared/ssh/private-keys/github-work
 ```
 
 Required values:
@@ -116,6 +117,7 @@ Required values:
 | `CI_RUNNER_ALLOWED_SSH_CIDRS` | Comma-separated operator CIDRs allowed to SSH to runner VMs. |
 | `CI_RUNNER_PUBLIC_KEY_PATH` | SSH public key installed on the runner VMs. |
 | `CI_RUNNER_SSH_KEY` | SSH private key used by the provision script after VM creation. |
+| `CI_RUNNER_GITHUB_WORK_KEY_PATH` | GitHub SSH key used by CI runners to fetch private `git@github.com-work:` submodules. |
 | `LINODE_OBJ_BUCKET` | Linode Object Storage bucket for archived CI artifacts. |
 | `LINODE_OBJ_ENDPOINT` | Linode Object Storage S3-compatible endpoint. |
 
@@ -127,6 +129,7 @@ Optional values:
 | `CI_RUNNER_IMAGE` | `linode/ubuntu24.04` |
 | `CI_RUNNER_STATE_DIR` | `.secrets/shared/linode/state/ci-runners` when `.secrets` exists, otherwise `.artifacts/linode-ci-runners/state` |
 | `CI_RUNNER_VERSION` | latest GitHub Actions runner release discovered on the VM |
+| `CI_RUNNER_GITHUB_WORK_KEY_PATH` | `$HOME/.ssh/id_ed25519_github_work` |
 
 ## First-Time Provisioning
 
@@ -190,6 +193,10 @@ uploads them to Linode Object Storage under:
 ```text
 ci-runs/<owner>_<repo>/<run-id>/
 ```
+
+The script uses `aws s3 sync` when AWS CLI is installed. If AWS CLI is not
+available, it falls back to Python `boto3` against the same Linode
+S3-compatible endpoint.
 
 Only after artifact upload succeeds, shut down runners:
 
