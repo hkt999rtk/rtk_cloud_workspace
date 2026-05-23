@@ -170,6 +170,18 @@ Required GitHub Actions secrets in `rtk_cloud_workspace`:
 | `LINODE_OBJ_BUCKET` | Linode Object Storage bucket for archived CI artifacts. |
 | `LINODE_OBJ_ENDPOINT` | Linode Object Storage S3-compatible endpoint. |
 
+Pull request validation:
+
+1. PRs that change `.github/workflows/linode-ci-orchestrator.yml`,
+   `scripts/linode-ci-runners/**`, or this document trigger the orchestrator.
+2. The PR run uses smoke-only mode:
+   - boot all dedicated Linode CI VMs.
+   - wait until each GitHub runner is online.
+   - shut all CI VMs down.
+3. Smoke-only mode does not rerun service CI and does not archive artifacts,
+   because no target service run id exists during workspace PR validation.
+4. The PR run requires only `RTK_CI_GITHUB_TOKEN` and `LINODE_TOKEN`.
+
 Manual orchestrator flow:
 
 1. Open the workspace `Linode CI Orchestrator` workflow.

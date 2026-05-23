@@ -1,6 +1,11 @@
 name: Linode CI Orchestrator
 
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/linode-ci-orchestrator.yml'
+      - 'scripts/linode-ci-runners/**'
+      - 'docs/linode-ci-runners.md'
   workflow_dispatch:
     inputs:
       account_run_id:
@@ -42,6 +47,7 @@ env:
   LINODE_OBJ_BUCKET: ${{ secrets.LINODE_OBJ_BUCKET }}
   LINODE_OBJ_ENDPOINT: ${{ secrets.LINODE_OBJ_ENDPOINT }}
   CI_RUNNER_PROFILE: dedicated
+  LINODE_CI_SMOKE_ONLY: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
 
 jobs:
   orchestrate:
@@ -52,7 +58,11 @@ jobs:
       - name: Check required secrets
         run: |
           missing=0
-          for name in GH_TOKEN LINODE_TOKEN LINODE_OBJ_ACCESS_KEY_ID LINODE_OBJ_SECRET_ACCESS_KEY LINODE_OBJ_BUCKET LINODE_OBJ_ENDPOINT; do
+          required="GH_TOKEN LINODE_TOKEN"
+          if [ "$LINODE_CI_SMOKE_ONLY" != "true" ]; then
+            required="$required LINODE_OBJ_ACCESS_KEY_ID LINODE_OBJ_SECRET_ACCESS_KEY LINODE_OBJ_BUCKET LINODE_OBJ_ENDPOINT"
+          fi
+          for name in $required; do
             if [ -z "${!name:-}" ]; then
               echo "missing required secret-backed env: $name" >&2
               missing=1
@@ -73,9 +83,16 @@ jobs:
 
       - name: Run Linode CI session
         run: |
-          scripts/linode-ci-runners/run-ci-session.sh \
-            --account-run-id "${{ inputs.account_run_id }}" \
-            --admin-run-id "${{ inputs.admin_run_id }}" \
-            --video-run-id "${{ inputs.video_run_id }}" \
-            --rerun "${{ inputs.rerun }}" \
-            --shutdown-policy "${{ inputs.shutdown_policy }}"
+          if [ "$LINODE_CI_SMOKE_ONLY" = "true" ]; then
+            scripts/linode-ci-runners/run-ci-session.sh \
+              --smoke-only true \
+              --rerun false \
+              --shutdown-policy always
+          else
+            scripts/linode-ci-runners/run-ci-session.sh \
+              --account-run-id "${{ inputs.account_run_id }}" \
+              --admin-run-id "${{ inputs.admin_run_id }}" \
+              --video-run-id "${{ inputs.video_run_id }}" \
+              --rerun "${{ inputs.rerun }}" \
+              --shutdown-policy "${{ inputs.shutdown_policy }}"
+          fi
