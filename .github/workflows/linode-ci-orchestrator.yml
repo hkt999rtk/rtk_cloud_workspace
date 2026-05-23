@@ -34,6 +34,7 @@ permissions:
   contents: read
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   GH_TOKEN: ${{ secrets.RTK_CI_GITHUB_TOKEN }}
   LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
   LINODE_OBJ_ACCESS_KEY_ID: ${{ secrets.LINODE_OBJ_ACCESS_KEY_ID }}
