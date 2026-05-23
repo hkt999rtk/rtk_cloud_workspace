@@ -1,0 +1,80 @@
+name: Linode CI Orchestrator
+
+on:
+  workflow_dispatch:
+    inputs:
+      account_run_id:
+        description: 'rtk_account_manager GitHub Actions run id to rerun/watch/archive'
+        required: false
+        type: string
+      admin_run_id:
+        description: 'rtk_cloud_admin GitHub Actions run id to rerun/watch/archive'
+        required: false
+        type: string
+      video_run_id:
+        description: 'rtk_video_cloud GitHub Actions run id to rerun/watch/archive'
+        required: false
+        type: string
+      rerun:
+        description: 'Rerun each provided run id before watching'
+        required: true
+        default: true
+        type: boolean
+      shutdown_policy:
+        description: 'When to shut down Linode CI runner VMs'
+        required: true
+        default: always
+        type: choice
+        options:
+          - always
+          - on-success
+          - never
+
+permissions:
+  contents: read
+
+env:
+  GH_TOKEN: ${{ secrets.RTK_CI_GITHUB_TOKEN }}
+  LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
+  LINODE_OBJ_ACCESS_KEY_ID: ${{ secrets.LINODE_OBJ_ACCESS_KEY_ID }}
+  LINODE_OBJ_SECRET_ACCESS_KEY: ${{ secrets.LINODE_OBJ_SECRET_ACCESS_KEY }}
+  LINODE_OBJ_BUCKET: ${{ secrets.LINODE_OBJ_BUCKET }}
+  LINODE_OBJ_ENDPOINT: ${{ secrets.LINODE_OBJ_ENDPOINT }}
+  CI_RUNNER_PROFILE: dedicated
+
+jobs:
+  orchestrate:
+    name: Boot runners, run CI, archive artifacts, shutdown
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Check required secrets
+        run: |
+          missing=0
+          for name in GH_TOKEN LINODE_TOKEN LINODE_OBJ_ACCESS_KEY_ID LINODE_OBJ_SECRET_ACCESS_KEY LINODE_OBJ_BUCKET LINODE_OBJ_ENDPOINT; do
+            if [ -z "${!name:-}" ]; then
+              echo "missing required secret-backed env: $name" >&2
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Check out workspace
+        uses: actions/checkout@v4
+
+      - name: Set up Python upload fallback
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install S3 upload dependency
+        run: python -m pip install --disable-pip-version-check boto3
+
+      - name: Run Linode CI session
+        run: |
+          scripts/linode-ci-runners/run-ci-session.sh \
+            --account-run-id "${{ inputs.account_run_id }}" \
+            --admin-run-id "${{ inputs.admin_run_id }}" \
+            --video-run-id "${{ inputs.video_run_id }}" \
+            --rerun "${{ inputs.rerun }}" \
+            --shutdown-policy "${{ inputs.shutdown_policy }}"

@@ -154,31 +154,40 @@ exists, it reuses the VM and re-runs bootstrap.
 
 ## Normal CI Run Procedure
 
-Boot runners:
+The normal path is the GitHub-hosted workspace workflow
+`.github/workflows/linode-ci-orchestrator.yml`. It solves the self-hosted runner
+bootstrapping problem by running orchestration on `ubuntu-latest`, not on the
+Linode runner that is still powered off.
 
-```sh
-scripts/linode-ci-runners/power-ci-runners.sh start
-scripts/linode-ci-runners/wait-runners-online.sh
-```
+Required GitHub Actions secrets in `rtk_cloud_workspace`:
 
-Trigger or rerun the target PR CI. For already queued PR jobs, runners should
-pick them up once online. Otherwise rerun failed/queued checks from GitHub or
-with `gh run rerun <run-id> --repo <owner/repo>`.
+| Secret | Purpose |
+| --- | --- |
+| `RTK_CI_GITHUB_TOKEN` | PAT or GitHub token with permission to rerun/watch runs and download artifacts in the target private repos. |
+| `LINODE_TOKEN` | Linode API token with instance boot/shutdown permissions. |
+| `LINODE_OBJ_ACCESS_KEY_ID` | Linode Object Storage S3-compatible access key. |
+| `LINODE_OBJ_SECRET_ACCESS_KEY` | Linode Object Storage S3-compatible secret key. |
+| `LINODE_OBJ_BUCKET` | Linode Object Storage bucket for archived CI artifacts. |
+| `LINODE_OBJ_ENDPOINT` | Linode Object Storage S3-compatible endpoint. |
 
-Archive artifacts after each run completes:
+Manual orchestrator flow:
 
-```sh
-scripts/linode-ci-runners/archive-ci-artifacts.sh \
-  --repo hkt999rtk/rtk_account_manager \
-  --run-id <run-id>
+1. Open the workspace `Linode CI Orchestrator` workflow.
+2. Enter one or more target GitHub Actions run ids:
+   - `account_run_id` for `hkt999rtk/rtk_account_manager`.
+   - `admin_run_id` for `hkt999rtk/rtk_cloud_admin`.
+   - `video_run_id` for `hkt999rtk/rtk_video_cloud`.
+3. Keep `rerun=true` when re-running failed or queued PR checks.
+4. Keep `shutdown_policy=always` for normal use.
 
-scripts/linode-ci-runners/archive-ci-artifacts.sh \
-  --repo hkt999rtk/rtk_cloud_admin \
-  --run-id <run-id>
+The orchestrator runs this sequence:
 
-scripts/linode-ci-runners/archive-ci-artifacts.sh \
-  --repo hkt999rtk/rtk_video_cloud \
-  --run-id <run-id>
+```text
+power-ci-runners.sh start
+wait-runners-online.sh
+gh run rerun/watch for each provided run id
+archive-ci-artifacts.sh for each run id
+power-ci-runners.sh stop
 ```
 
 The archive script downloads GitHub Actions artifacts and run metadata, then
@@ -192,10 +201,18 @@ The script uses `aws s3 sync` when AWS CLI is installed. If AWS CLI is not
 available, it falls back to Python `boto3` against the same Linode
 S3-compatible endpoint.
 
-Only after artifact upload succeeds, shut down runners:
+### Operator Fallback
+
+If GitHub Actions itself is unavailable, an operator can run the same lifecycle
+locally with equivalent environment variables loaded:
 
 ```sh
-scripts/linode-ci-runners/power-ci-runners.sh stop
+scripts/linode-ci-runners/run-ci-session.sh \
+  --account-run-id <run-id> \
+  --admin-run-id <run-id> \
+  --video-run-id <run-id> \
+  --rerun true \
+  --shutdown-policy always
 ```
 
 ## Verification
