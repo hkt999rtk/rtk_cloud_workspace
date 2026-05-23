@@ -28,6 +28,8 @@ done
 [[ -n "$run_id" ]] || { echo "--run-id is required" >&2; exit 2; }
 : "${LINODE_OBJ_BUCKET:?LINODE_OBJ_BUCKET is required}"
 : "${LINODE_OBJ_ENDPOINT:?LINODE_OBJ_ENDPOINT is required}"
+: "${LINODE_OBJ_ACCESS_KEY_ID:?LINODE_OBJ_ACCESS_KEY_ID is required}"
+: "${LINODE_OBJ_SECRET_ACCESS_KEY:?LINODE_OBJ_SECRET_ACCESS_KEY is required}"
 
 command -v gh >/dev/null 2>&1 || { echo "gh is required" >&2; exit 1; }
 
@@ -41,6 +43,9 @@ gh run download "$run_id" --repo "$repo" --dir "$workdir/artifacts" || true
 if [[ -z "$prefix" ]]; then
   prefix="ci-runs/$safe_repo/$run_id"
 fi
+
+export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-$LINODE_OBJ_ACCESS_KEY_ID}"
+export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-$LINODE_OBJ_SECRET_ACCESS_KEY}"
 
 if command -v aws >/dev/null 2>&1; then
   aws s3 sync "$workdir" "s3://$LINODE_OBJ_BUCKET/$prefix/" \
