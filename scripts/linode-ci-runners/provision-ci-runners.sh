@@ -3,22 +3,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORKSPACE="${WORKSPACE:-$ROOT_DIR}"
-LINODE_API_BASE="${LINODE_API_BASE:-https://api.linode.com/v4}"
-GITHUB_API_BASE="${GITHUB_API_BASE:-https://api.github.com}"
-REGION="${CI_RUNNER_REGION:-us-sea}"
-IMAGE="${CI_RUNNER_IMAGE:-linode/ubuntu24.04}"
-PUBLIC_KEY_PATH="${CI_RUNNER_PUBLIC_KEY_PATH:-$HOME/.ssh/id_ed25519_rtkcloud.pub}"
-SSH_KEY="${CI_RUNNER_SSH_KEY:-$HOME/.ssh/id_ed25519_rtkcloud}"
-SSH_USER="${CI_RUNNER_SSH_USER:-root}"
-ALLOWED_SSH_CIDRS="${CI_RUNNER_ALLOWED_SSH_CIDRS:-}"
-STATE_DIR="${CI_RUNNER_STATE_DIR:-}"
-STATE_DIR="${STATE_DIR:-$WORKSPACE/.secrets/shared/linode/state/ci-runners}"
-if [[ "$STATE_DIR" == "$WORKSPACE/.secrets/"* && ! -d "$WORKSPACE/.secrets" ]]; then
-  STATE_DIR="$WORKSPACE/.artifacts/linode-ci-runners/state"
-fi
-
-source "$ROOT_DIR/scripts/linode-ci-runners/runner-specs.sh"
-load_runner_specs
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required"; }
@@ -36,6 +20,24 @@ load_env_file() {
 load_env_file "$WORKSPACE/.secrets/shared/linode/env/ci-runners.env"
 load_env_file "$WORKSPACE/.secrets/shared/github/env/runner-registration.env"
 
+LINODE_API_BASE="${LINODE_API_BASE:-https://api.linode.com/v4}"
+GITHUB_API_BASE="${GITHUB_API_BASE:-https://api.github.com}"
+REGION="${CI_RUNNER_REGION:-us-sea}"
+IMAGE="${CI_RUNNER_IMAGE:-linode/ubuntu24.04}"
+PUBLIC_KEY_PATH="${CI_RUNNER_PUBLIC_KEY_PATH:-$HOME/.ssh/id_ed25519_rtkcloud.pub}"
+SSH_KEY="${CI_RUNNER_SSH_KEY:-$HOME/.ssh/id_ed25519_rtkcloud}"
+GITHUB_WORK_KEY="${CI_RUNNER_GITHUB_WORK_KEY_PATH:-$HOME/.ssh/id_ed25519_github_work}"
+SSH_USER="${CI_RUNNER_SSH_USER:-root}"
+ALLOWED_SSH_CIDRS="${CI_RUNNER_ALLOWED_SSH_CIDRS:-}"
+STATE_DIR="${CI_RUNNER_STATE_DIR:-}"
+STATE_DIR="${STATE_DIR:-$WORKSPACE/.secrets/shared/linode/state/ci-runners}"
+if [[ "$STATE_DIR" == "$WORKSPACE/.secrets/"* && ! -d "$WORKSPACE/.secrets" ]]; then
+  STATE_DIR="$WORKSPACE/.artifacts/linode-ci-runners/state"
+fi
+
+source "$ROOT_DIR/scripts/linode-ci-runners/runner-specs.sh"
+load_runner_specs
+
 need curl
 need jq
 need openssl
@@ -47,6 +49,7 @@ need scp
 [[ -n "$ALLOWED_SSH_CIDRS" ]] || die "CI_RUNNER_ALLOWED_SSH_CIDRS is required"
 [[ -s "$PUBLIC_KEY_PATH" ]] || die "CI_RUNNER_PUBLIC_KEY_PATH not found: $PUBLIC_KEY_PATH"
 [[ -s "$SSH_KEY" ]] || die "CI_RUNNER_SSH_KEY not found: $SSH_KEY"
+[[ -s "$GITHUB_WORK_KEY" ]] || die "CI_RUNNER_GITHUB_WORK_KEY_PATH not found: $GITHUB_WORK_KEY"
 
 linode_api() {
   local method="$1" path="$2" data="${3:-}"
@@ -113,7 +116,9 @@ create_runner_vm() {
 }
 
 ensure_firewall() {
-  local label="$1" linode_id="$2" firewall_label="${label}-firewall"
+  local label="$1"
+  local linode_id="$2"
+  local firewall_label="${label}-firewall"
   local existing firewall_id payload created
   existing="$(firewall_by_label "$firewall_label" || true)"
   if [[ -n "$existing" ]]; then
@@ -142,7 +147,9 @@ ensure_firewall() {
 }
 
 wait_for_ssh() {
-  local host="$1" label="$2" attempt
+  local host="$1"
+  local label="$2"
+  local attempt
   local ssh_opts=(-i "$SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10)
   printf '[linode-ci] waiting for SSH: %s (%s)\n' "$label" "$host" >&2
   for attempt in $(seq 1 60); do
@@ -160,16 +167,21 @@ runner_registration_token() {
 }
 
 bootstrap_runner() {
-  local host="$1" runner_name="$2" repo="$3" custom_label="$4" token="$5"
+  local host="$1"
+  local runner_name="$2"
+  local repo="$3"
+  local custom_label="$4"
+  local token="$5"
   local ssh_opts=(-i "$SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null)
   printf '[linode-ci] bootstrapping runner %s for %s\n' "$runner_name" "$repo" >&2
+  scp "${ssh_opts[@]}" "$GITHUB_WORK_KEY" "$SSH_USER@$host:/tmp/github-work-key" >/dev/null
   ssh "${ssh_opts[@]}" "$SSH_USER@$host" bash -s -- "$runner_name" "$repo" "$custom_label" "$token" "${CI_RUNNER_VERSION:-}" <<'REMOTE'
 set -euo pipefail
 runner_name="$1"
 repo="$2"
 custom_label="$3"
 token="$4"
-runner_version="$5"
+runner_version="${5:-}"
 runner_user="github-runner"
 runner_root="/opt/actions-runner/${runner_name}"
 
@@ -181,6 +193,18 @@ if ! id "$runner_user" >/dev/null 2>&1; then
   useradd -m -s /bin/bash "$runner_user"
 fi
 usermod -aG docker "$runner_user"
+install -d -m 0750 -o "$runner_user" -g "$runner_user" /etc/github-runner
+install -m 0600 -o "$runner_user" -g "$runner_user" /tmp/github-work-key /etc/github-runner/github-work
+rm -f /tmp/github-work-key
+install -d -m 0755 /etc/ssh/ssh_config.d
+cat >/etc/ssh/ssh_config.d/github-work.conf <<EOF
+Host github.com-work
+  HostName github.com
+  User git
+  IdentityFile /etc/github-runner/github-work
+  IdentitiesOnly yes
+  StrictHostKeyChecking accept-new
+EOF
 mkdir -p "$runner_root"
 chown "$runner_user:$runner_user" "$runner_root"
 if [[ -z "$runner_version" ]]; then
@@ -202,35 +226,23 @@ if [[ -f "$runner_root/.runner" ]]; then
 fi
 repo_url="https://github.com/${repo}"
 sudo -u "$runner_user" bash -lc "cd '$runner_root' && ./config.sh --unattended --replace --url '$repo_url' --token '$token' --name '$runner_name' --labels '$custom_label' --work _work"
-"$runner_root/svc.sh" install "$runner_user"
-"$runner_root/svc.sh" start
+(cd "$runner_root" && ./svc.sh install "$runner_user")
+(cd "$runner_root" && ./svc.sh start)
 REMOTE
 }
 
 mkdir -p "$STATE_DIR"
 chmod 0700 "$STATE_DIR" 2>/dev/null || true
 
-declare -A HOST_JSON_BY_LABEL=()
-declare -A HOST_FIREWALL_BY_LABEL=()
-
 for spec in "${RUNNER_SPECS[@]}"; do
   IFS='|' read -r host_label runner_name repo type custom_label <<<"$spec"
-  if [[ -z "${HOST_JSON_BY_LABEL[$host_label]:-}" ]]; then
-    vm="$(create_runner_vm "$host_label" "$type")"
-    linode_id="$(jq -r '.id // .[0].id' <<<"$vm")"
-    public_ipv4="$(jq -r '(.ipv4[0] // .[0].ipv4[0])' <<<"$vm")"
-    [[ -n "$linode_id" && "$linode_id" != null ]] || die "failed to read Linode id for $host_label"
-    [[ -n "$public_ipv4" && "$public_ipv4" != null ]] || die "failed to read public IPv4 for $host_label"
-    firewall_id="$(ensure_firewall "$host_label" "$linode_id")"
-    wait_for_ssh "$public_ipv4" "$host_label"
-    HOST_JSON_BY_LABEL[$host_label]="$vm"
-    HOST_FIREWALL_BY_LABEL[$host_label]="$firewall_id"
-  fi
-
-  vm="${HOST_JSON_BY_LABEL[$host_label]}"
+  vm="$(create_runner_vm "$host_label" "$type")"
   linode_id="$(jq -r '.id // .[0].id' <<<"$vm")"
   public_ipv4="$(jq -r '(.ipv4[0] // .[0].ipv4[0])' <<<"$vm")"
-  firewall_id="${HOST_FIREWALL_BY_LABEL[$host_label]}"
+  [[ -n "$linode_id" && "$linode_id" != null ]] || die "failed to read Linode id for $host_label"
+  [[ -n "$public_ipv4" && "$public_ipv4" != null ]] || die "failed to read public IPv4 for $host_label"
+  firewall_id="$(ensure_firewall "$host_label" "$linode_id")"
+  wait_for_ssh "$public_ipv4" "$host_label"
   token="$(runner_registration_token "$repo")"
   [[ -n "$token" && "$token" != null ]] || die "failed to get registration token for $repo"
   bootstrap_runner "$public_ipv4" "$runner_name" "$repo" "$custom_label" "$token"
@@ -243,7 +255,7 @@ for spec in "${RUNNER_SPECS[@]}"; do
     --arg custom_label "$custom_label" \
     --argjson linode_id "$linode_id" \
     --arg public_ipv4 "$public_ipv4" \
-    --argjson firewall_id "$firewall_id" \
+    --arg firewall_id "$firewall_id" \
     --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     '{host_label:$host_label, runner_name:$runner_name, repo:$repo, type:$type, labels:["self-hosted","Linux","X64",$custom_label], linode_id:$linode_id, public_ipv4:$public_ipv4, firewall_id:$firewall_id, updated_at:$updated_at}' \
     > "$state_file"

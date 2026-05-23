@@ -60,13 +60,13 @@ linode_by_label() {
   api GET "/linode/instances?page_size=500" | jq -c --arg label "$label" '.data[] | select(.label == $label)' | head -n 1
 }
 
-declare -A SEEN_HOSTS=()
+seen_hosts="|"
 for spec in "${RUNNER_SPECS[@]}"; do
   IFS='|' read -r host_label _runner_name repo _type custom_label <<<"$spec"
-  if [[ -n "${SEEN_HOSTS[$host_label]:-}" ]]; then
-    continue
-  fi
-  SEEN_HOSTS[$host_label]=1
+  case "$seen_hosts" in
+    *"|$host_label|"*) continue ;;
+  esac
+  seen_hosts="$seen_hosts$host_label|"
   vm="$(linode_by_label "$host_label" || true)"
   if [[ -z "$vm" ]]; then
     printf '%s\t%s\tmissing\n' "$host_label" "$repo"
