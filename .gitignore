@@ -4,6 +4,12 @@ evidence/
 # Local E2E/load test artifacts
 .artifacts/
 
+# Local deployment secrets and operator-owned backups. Do not commit values.
+.secrets
+.secrets/
+.secrets.backup
+.secrets.backup/
+
 # Local RAG runtime index/cache.
 .rag/
 
