@@ -28,7 +28,8 @@ the repository and be passed through environment variables or local temp files.
 ## Workspace E2E Tests
 
 Cross-cloud and factory-environment end-to-end tests live under `e2e_test/` in
-this workspace.
+this workspace. Start from `e2e_test/README.md` for the canonical taxonomy,
+ownership rules, and artifact layout.
 
 The factory enrollment v1 suite validates the local factory flow without Linode
 or production issuer secrets:
@@ -56,3 +57,17 @@ The video cloud API-level load runner is also workspace-owned:
 cross-cloud video load runner. `rtk_video_cloud` owns server prerequisites,
 metrics expectations, TURN/WebRTC setup notes, and cleanup policy for these E2E
 runs.
+
+Provisioning smoke tests belong under
+`e2e_test/provisioning/account_video_smoke/`. The first planned smoke composes
+Account Manager test users, Account Manager Claim Token resolve/provision APIs,
+and factory-enrolled Video Cloud `devid` certificates. It must report missing
+video-side lifecycle or mTLS prerequisites as `BLOCKED`, not as pass.
+
+Admin BFF live checks are currently implemented in `rtk_cloud_admin`, but the
+workspace index for that product-facing flow lives at `e2e_test/admin_bff/`.
+Move wrappers or runners into the workspace when they coordinate multiple
+services or shared E2E fixtures.
+
+E2E fixtures are documented under `e2e_test/fixtures/`. Generated local fixture
+artifacts should use `.artifacts/e2e_test/fixtures/<fixture_type>/<run_id>/`.

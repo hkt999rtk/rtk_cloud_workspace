@@ -28,6 +28,17 @@ repositories. Shared wire and payload contracts belong in
 | [testing.md](testing.md) | Source | Cross-repository validation commands for pinned snapshots. |
 | [adr/README.md](adr/README.md) | Index | Workspace architecture decision record location and format. |
 
+## Workspace E2E Entry Points
+
+| Entry point | Classification | Purpose |
+| --- | --- | --- |
+| [`../e2e_test/README.md`](../e2e_test/README.md) | Index | Workspace-owned cross-repo E2E test taxonomy, ownership rules, and artifact layout. |
+| [`../e2e_test/factory_enroll/README.md`](../e2e_test/factory_enroll/README.md) | Source | Factory enrollment E2E runner and certificate issuance evidence path. |
+| [`../e2e_test/video_cloud/load/`](../e2e_test/video_cloud/load/) | Source | API-level video cloud load and WebRTC setup runner. |
+| [`../e2e_test/provisioning/account_video_smoke/README.md`](../e2e_test/provisioning/account_video_smoke/README.md) | Planned source | Account Manager + Video Cloud provisioning smoke test boundary and fixture inputs. |
+| [`../e2e_test/admin_bff/README.md`](../e2e_test/admin_bff/README.md) | Index | Admin BFF live E2E migration and current service-owned runner locations. |
+| [`../e2e_test/fixtures/README.md`](../e2e_test/fixtures/README.md) | Source | Local-only E2E fixture layout for test users and device certsets. |
+
 ## Repository Entry Points
 
 | Repository | Classification | Entry point |
