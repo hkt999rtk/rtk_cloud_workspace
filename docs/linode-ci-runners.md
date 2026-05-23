@@ -26,7 +26,7 @@ GitHub can start the job.
 
 ## Runner Topology
 
-V1 defaults to three dedicated Linode VMs:
+V1 uses exactly three dedicated Linode VMs:
 
 | VM label | GitHub repo | Runner labels | Recommended type | Reason |
 | --- | --- | --- | --- | --- |
@@ -34,9 +34,11 @@ V1 defaults to three dedicated Linode VMs:
 | `rtk-ci-cloud-admin` | `hkt999rtk/rtk_cloud_admin` | `self-hosted`, `Linux`, `X64`, `rtk-cloud-admin-ci` | `g6-standard-2` | Admin CI uses Go, Node, Docker build, and container smoke. |
 | `rtk-ci-video-cloud` | `hkt999rtk/rtk_video_cloud` | `self-hosted`, `Linux`, `X64`, `video-cloud-ci` | `g6-standard-4` | Video Cloud CI is the heaviest suite and should not block platform repos. |
 
-Do not run these three labels on one shared host in v1. `rtk_video_cloud` CI can
+Do not run these three labels on one shared host. `rtk_video_cloud` CI can
 consume enough CPU, disk IO, Docker state, and cache space to delay or pollute
 other repositories. Separate VMs also make runner failures easier to diagnose.
+Each VM is stopped independently after its repo CI has completed and its
+artifacts have been archived.
 
 ## Cost And Lifecycle Policy
 
@@ -51,32 +53,24 @@ other repositories. Separate VMs also make runner failures easier to diagnose.
   preserving local state.
 
 
-## Shared Host Profiles
+## Dedicated-Only Policy
 
-The default profile is `dedicated`, which creates one VM per repo runner. Shared
-hosts are supported for cost control, but each repository still needs its own
-GitHub runner registration. A single repo-scoped runner cannot serve multiple
-repositories. When profiles share a VM, the bootstrap installs multiple runner
-instances under separate directories such as `/opt/actions-runner/<runner-name>`
-and registers each instance to its owning repo.
+Shared runner hosts are not supported for normal RTK Cloud CI. The scripts keep
+`CI_RUNNER_PROFILE=dedicated` as a tolerated no-op for backwards-compatible
+operator shells, but any non-dedicated profile is rejected.
 
-| Profile | Hosts | Runner instances | Recommended use |
-| --- | --- | --- | --- |
-| `dedicated` | 3 | 3 | Default. Best isolation and easiest debugging. |
-| `shared-platform` | 2 | 3 | Account Manager and Admin share `rtk-ci-platform`; Video Cloud remains dedicated. |
-| `shared-all` | 1 | 3 | Lowest VM count, highest contention; use only for low-frequency CI or emergency cost saving. |
+This is intentionally stricter than a cost-optimized shared-host model:
 
-Set the profile before provisioning, powering, or waiting for runners:
+- Lifecycle is deterministic: one repo CI maps to one VM.
+- Shutdown is safe after that repo's CI artifacts are archived.
+- Docker state, caches, service containers, and temporary secrets do not cross
+  repo boundaries.
+- Runner debugging is direct because the VM label, runner name, and repo owner
+  are the same unit of operation.
 
-```sh
-export CI_RUNNER_PROFILE=dedicated          # default
-# export CI_RUNNER_PROFILE=shared-platform  # two VMs
-# export CI_RUNNER_PROFILE=shared-all       # one VM, three runner services
-```
-
-If a shared profile is used, do not allow concurrent heavy jobs unless the VM
-type is sized for it. `shared-all` should use at least `g6-standard-8` because
-Video Cloud, Docker builds, and service-container tests may overlap.
+If cost pressure requires fewer VMs later, that must be designed as a new
+workspace document and script change with explicit busy-runner checks. Do not
+reintroduce shared hosts by only changing local environment variables.
 
 ## Security Boundary
 
