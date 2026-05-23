@@ -37,6 +37,7 @@ require_file docs/README.md
 require_file docs/architecture.md
 require_file docs/documentation-governance.md
 require_file docs/deployment-secrets-governance.md
+require_file docs/linode-ci-runners.md
 require_file docs/examples/secrets-manifest.example.json
 require_file docs/testing.md
 require_file docs/LOAD_TEST_REPORT.md
@@ -57,6 +58,12 @@ require_file docs/cross-service-broker-packaging.md
 require_file repos/rtk_cloud_contracts_doc/README.md
 require_file scripts/collect-private-cloud-evidence.sh
 require_file scripts/secrets-check.sh
+require_file scripts/linode-ci-runners/runner-specs.sh
+require_file scripts/linode-ci-runners/provision-ci-runners.sh
+require_file scripts/linode-ci-runners/power-ci-runners.sh
+require_file scripts/linode-ci-runners/wait-runners-online.sh
+require_file scripts/linode-ci-runners/list-ci-runners.sh
+require_file scripts/linode-ci-runners/archive-ci-artifacts.sh
 
 if grep -q 'repos/rtk_mqtt' README.md docs/architecture.md scripts/test-matrix.sh; then
   fail "workspace README, architecture, or test matrix still references repos/rtk_mqtt"
