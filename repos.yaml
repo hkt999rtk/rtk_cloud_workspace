@@ -34,11 +34,3 @@ repositories:
     role: Account, organization, and registry device service.
     validation:
       - git status --short --branch
-  - name: rtk_mqtt
-    path: repos/rtk_mqtt
-    remote: git@github.com-work:hkt999rtk/rtk_mqtt.git
-    default_branch: main
-    role: MQTT/broker and transport interop support.
-    validation:
-      - git status --short --branch
-
