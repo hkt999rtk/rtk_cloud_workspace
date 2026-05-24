@@ -3,6 +3,7 @@
 Status: template.
 
 Use this outline for weekly Realtek Video / IoT Cloud status reports.
+Apply the writing rules in `../guidelines.md` when filling each section.
 
 ## Cover / Core Management Message
 

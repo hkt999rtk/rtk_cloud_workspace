@@ -33,6 +33,7 @@ material indexes, and builder changes.
 
 The current report structure is documented in
 [`templates/cloud-status-report-outline.md`](templates/cloud-status-report-outline.md).
+Writing standards are documented in [`guidelines.md`](guidelines.md).
 It is intentionally stable so the same skeleton can be reused for weekly
 management reports:
 
@@ -53,6 +54,7 @@ reuse the same materials.
 
 Tracked source indexes:
 
+- [`guidelines.md`](guidelines.md)
 - [`materials.md`](materials.md)
 - `repos/rtk_cloud_admin/docs/assets/webui-design/`
 - `repos/rtk_cloud_client/docs/mockups/`
