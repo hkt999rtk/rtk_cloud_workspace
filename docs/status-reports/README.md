@@ -37,13 +37,21 @@ Writing standards are documented in [`guidelines.md`](guidelines.md).
 It is intentionally stable so the same skeleton can be reused for weekly
 management reports:
 
-- Cover / core management message
-- Part 1: executive summary
-- Part 2: cloud, product, and KPI detail
-- Part 3: operation screenshots and usage flows
-- Part 4: Linode staging deployment and configuration
-- Review checklist
-- Appendix: material and source index
+- 封面 / 核心管理訊息
+- 第一頁目前狀態總結
+- 第一部分：摘要
+- 第二部分：Cloud / Product / KPI 細節
+- 第三部分：操作畫面與使用流程
+- 第四部分：Linode Staging 部署與設定
+- 審閱清單
+- Appendix：素材與來源索引
+
+## Language Policy
+
+Generated management reports use Traditional Chinese by default. Keep literal
+repository names, API names, endpoint paths, commands, product names, and status
+labels such as `PASS`/`FAIL`/`BLOCKED` in English when those terms are the
+source-of-truth wording.
 
 ## Material Policy
 

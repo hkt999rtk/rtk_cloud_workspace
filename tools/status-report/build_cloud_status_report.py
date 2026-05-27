@@ -23,6 +23,18 @@ SNAPSHOT_TIME_UTC = datetime.now(UTC).replace(microsecond=0).isoformat().replace
 OUT_DIR = ROOT / ".artifacts" / "status-reports" / REPORT_DATE
 FIG_DIR = OUT_DIR / "figures"
 DOCX_PATH = OUT_DIR / "realtek_video_iot_cloud_status_report.docx"
+REPORT_LANGUAGE = "繁體中文"
+CORE_MESSAGE = (
+    "天下武功，唯快不破。現階段不應停留在過度討論，而是先快速建立可運作的 Cloud，"
+    "讓 AmebaPRO、IoT module、SDK、App、OTA、Video Service 有完整展示與驗證鏈條。"
+    "工具可以加速建置，但正式商用後的維運、SLA、客戶支援與持續改善，仍需要人力與資源投入。"
+)
+CURRENT_STATUS_SUMMARY = [
+    ["Deployment", "Linode staging 已可作為 demo / 驗證環境使用，並以 public HTTPS health check 作為狀態證據。", "仍需補齊 release version、backup/restore 與 production-like sign-off。"],
+    ["Product / demo evidence", "Admin、SDK sample flow、Connect+ architecture 素材已可支撐端到端展示。", "下一步要把 demo flow 連到 loading test 與 customer PoC 指標。"],
+    ["Operations readiness", "Account Manager、Video Cloud、Admin 分工已清楚，service health 可被報告化。", "正式商用後的 SLA、support owner、incident response 與持續維運人力仍需確認。"],
+    ["Next milestone", "8 月 loading test 是把技術能力轉成商業信心的主要驗證點。", "需明確定義 50,000 IoT / 5,000 IoT Video 的量測項目、成功門檻與瓶頸分類。"],
+]
 
 FONT_REG = "/System/Library/Fonts/STHeiti Light.ttc"
 FONT_BOLD = "/System/Library/Fonts/STHeiti Medium.ttc"
@@ -49,7 +61,7 @@ DESIGN_MATERIALS = [
         "path": ROOT / "repos/rtk_cloud_admin/docs/assets/webui-design/customer-overview.png",
         "caption": "圖 7：Admin Customer View - Fleet Health Overview 操作畫面",
         "source": "rtk_cloud_admin/docs/assets/webui-design/customer-overview.png",
-        "purpose": "主管與客戶可一眼看到 online rate、attention queue、health distribution。",
+        "purpose": "管理者與客戶可一眼看到 online rate、attention queue、health distribution。",
     },
     {
         "key": "admin_devices",
@@ -582,7 +594,7 @@ def configure_section(section) -> None:
 
     footer = section.footer.paragraphs[0]
     footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = footer.add_run("Realtek Video / IoT Cloud 狀態報告 | Internal Draft")
+    r = footer.add_run("Realtek Video / IoT Cloud 狀態報告 | 內部草稿")
     set_run_font(r, 8.5, None, "5B6773")
 
 
@@ -643,17 +655,23 @@ def build_doc() -> None:
     add_callout(
         doc,
         "核心管理訊息",
-        "天下武功，唯快不破。現階段不應停留在過度討論，而是先快速建立可運作的 Cloud，讓 AmebaPRO、IoT module、SDK、App、OTA、Video Service 有完整展示與驗證鏈條。工具可以加速建置，但正式商用後的維運、SLA、客戶支援與持續改善，仍需要人力與資源投入。",
+        CORE_MESSAGE,
         "FFF2CC",
+    )
+    add_key_value_table(
+        doc,
+        ["面向", "目前狀態", "下一步或風險"],
+        CURRENT_STATUS_SUMMARY,
+        [3.0, 6.2, 6.4],
     )
     meta = doc.add_paragraph()
     meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = meta.add_run(f"版本：主管簡報式 Word 初稿｜日期：{REPORT_DATE}｜用途：Internal status review")
+    r = meta.add_run(f"版本：主管簡報式 Word 初稿｜日期：{REPORT_DATE}｜語言：{REPORT_LANGUAGE}｜用途：內部狀態審閱")
     set_run_font(r, 9.5, None, "5B6773")
     add_figure(doc, figures["product_to_kpi"], "圖 1：從 AmebaPRO module 到商業 KPI 的路徑")
     new_page(doc)
 
-    add_heading(doc, "Part 1：主管摘要", 1)
+    add_heading(doc, "第一部分：摘要", 1)
     add_callout(
         doc,
         "一頁結論",
@@ -665,7 +683,7 @@ def build_doc() -> None:
     for item in [
         "AmebaPRO 推廣缺少一個可展示、可驗證、可讓客戶快速導入的 Video Cloud。",
         "這不是單純做 server，而是補齊「module + SDK + app + cloud + OTA + video + management」的完整產品路徑。",
-        "主管要看到的重點：Cloud 讓模組銷售從硬體規格競爭，延伸到解決方案競爭。",
+        "商業意義：Cloud 讓模組銷售從硬體規格競爭，延伸到解決方案競爭。",
     ]:
         add_bullet(doc, item)
 
@@ -701,6 +719,12 @@ def build_doc() -> None:
 
     add_heading(doc, "5. 目前 Linode Fullset Deployment 現況", 2)
     add_figure(doc, figures["linode"], "圖 5：Linode fullset deployment 的主要服務")
+    add_callout(
+        doc,
+        "Linode 的定位與可搬移性",
+        "Linode 在本報告中代表較基礎的 VM / infrastructure 服務，不是 AWS-style managed-service stack。差別在於 PostgreSQL、MQ / message queue、broker、reverse proxy、runtime 等服務需要由我們在 VM / service layer 自行架設與管理，而不是直接依賴 AWS-native managed architecture。這個做法增加維運責任，但也降低 vendor lock-in，讓同一套 cloud foundation 未來較容易移動到 AWS、GCP、Azure、阿里雲或其他平台雲。",
+        "DCEBFF",
+    )
     add_key_value_table(
         doc,
         ["Server / Component", "主要責任"],
@@ -729,9 +753,9 @@ def build_doc() -> None:
     )
 
     new_page(doc)
-    add_heading(doc, "Part 2：Cloud / Product / KPI Detail", 1)
+    add_heading(doc, "第二部分：Cloud / Product / KPI 細節", 1)
 
-    add_heading(doc, "1. Architecture Detail", 2)
+    add_heading(doc, "1. 架構細節", 2)
     add_paragraph(
         doc,
         "系統採三層式租戶架構，避免平台治理、客戶品牌雲與終端使用者裝置管理混在一起。這個分層是未來 private cloud、brand cloud 租用、Realtek-operated cloud 三種模式能共存的基礎。",
@@ -757,7 +781,7 @@ def build_doc() -> None:
         [3.2, 6.2, 6.2],
     )
 
-    add_heading(doc, "3. KPI Framework", 2)
+    add_heading(doc, "3. KPI Framework / 指標框架", 2)
     add_key_value_table(
         doc,
         ["KPI 類型", "建議指標", "用途"],
@@ -770,10 +794,10 @@ def build_doc() -> None:
         [3.0, 8.1, 4.5],
     )
 
-    add_heading(doc, "4. Security / Device Trust", 2)
+    add_heading(doc, "4. Security / Device Trust / 裝置信任", 2)
     add_paragraph(
         doc,
-        "PKI/mTLS 是 security detail，不是本報告的商業主標題；但它仍然是 enterprise customer trust 的基礎。主管版可以用一句話理解：合法 device 才能安全上雲，避免未授權連線、錯誤綁定與售後追蹤困難。",
+        "PKI/mTLS 是 security detail，不是本報告的商業主標題；但它仍然是 enterprise customer trust 的基礎。可用一句話理解：合法 device 才能安全上雲，避免未授權連線、錯誤綁定與售後追蹤困難。",
     )
     for item in [
         "Device certificate / mTLS：裝置用憑證證明自己，不靠共用密碼。",
@@ -782,7 +806,7 @@ def build_doc() -> None:
     ]:
         add_bullet(doc, item)
 
-    add_heading(doc, "5. API / Cloud Pattern", 2)
+    add_heading(doc, "5. API / Cloud Pattern / 雲端設計模式", 2)
     add_paragraph(
         doc,
         "API 設計採用主流 IoT cloud 的共同設計原則，參考 AWS IoT、Azure IoT、GCP IoT 的常見 pattern，但不宣稱與任何一家雲端完全相同。",
@@ -801,7 +825,7 @@ def build_doc() -> None:
         [4.2, 11.4],
     )
 
-    add_heading(doc, "6. Product Features", 2)
+    add_heading(doc, "6. Product Features / 產品功能", 2)
     for item in [
         "OTA lifecycle：firmware publish、target、rollout、report、cancel、download。",
         "Burst / load 管理：load profile、concurrency、metrics、p95/p99 latency、error classification。",
@@ -856,7 +880,7 @@ def build_doc() -> None:
         "測試結果將成為對內資源投入與對外客戶信心的依據。若測試失敗，報告也要能清楚分類瓶頸：API、broker、database、TURN/WebRTC、resource limit、credential/token 或測試資料準備問題。",
     )
 
-    add_heading(doc, "10. Maintain / Operation Reality", 2)
+    add_heading(doc, "10. 維護與維運現實", 2)
     add_callout(
         doc,
         "維運現實",
@@ -865,7 +889,7 @@ def build_doc() -> None:
     )
 
     new_page(doc)
-    add_heading(doc, "Part 3：操作畫面與使用流程", 1)
+    add_heading(doc, "第三部分：操作畫面與使用流程", 1)
     add_callout(
         doc,
         "操作圖片補充",
@@ -897,7 +921,7 @@ def build_doc() -> None:
         [4.3, 11.3],
     )
 
-    add_heading(doc, "3. Frontend / Product Architecture 素材", 2)
+    add_heading(doc, "3. Frontend / Product Architecture 產品架構素材", 2)
     add_existing_figure(doc, DESIGN_MATERIALS[5], 12)
     add_paragraph(
         doc,
@@ -905,7 +929,7 @@ def build_doc() -> None:
     )
 
     new_page(doc)
-    add_heading(doc, "Part 4：Linode Staging Deployment & Configuration", 1)
+    add_heading(doc, "第四部分：Linode Staging 部署與設定", 1)
     add_callout(
         doc,
         "目前部署狀態",
@@ -939,7 +963,7 @@ def build_doc() -> None:
         [[row["component"], row["check"], row["result"], row["observed"]] for row in linode_health],
         [3.5, 3.0, 2.0, 7.1],
     )
-    add_heading(doc, "Production-ready gaps", 2)
+    add_heading(doc, "尚未達正式商用的缺口（Production-ready gaps）", 2)
     for item in [
         "Video Cloud staging `/version` 目前仍回報 AppVersion=debug；若要對外稱 release staging，需改成明確 release version。",
         "Public frontend / promotion site 在本 milestone 應明確標示部署完成或 SKIP，不應模糊帶過。",
@@ -947,9 +971,9 @@ def build_doc() -> None:
     ]:
         add_bullet(doc, item)
 
-    add_heading(doc, "Review Checklist", 1)
+    add_heading(doc, "審閱清單", 1)
     for item in [
-        "主管摘要可在 5 分鐘內看懂，且能回答：為什麼做、做到哪裡、對業務 KPI 有什麼幫助。",
+        "摘要可在 5 分鐘內看懂，且能回答：為什麼做、做到哪裡、對業務 KPI 有什麼幫助。",
         "Detail 與 repo 現況一致：Linode deployment、OTA、SDK、MQTT/EMQX、Account/Admin/Video Cloud 分工。",
         "技術與商業鏈條清楚：Cloud 的價值不是展示技術，而是提高 AmebaPRO / module 推廣成功率。",
         "操作圖片能支撐 demo flow：Admin overview/devices/OTA/stream health、SDK setup/provision/config/debug report。",
@@ -973,7 +997,7 @@ def build_doc() -> None:
     ]:
         add_bullet(doc, item)
 
-    add_heading(doc, "Sources / Internal References", 2)
+    add_heading(doc, "內部來源（Sources / Internal References）", 2)
     for item in [
         "rtk_cloud_workspace/docs/private-cloud-deployment.md",
         "rtk_cloud_workspace/docs/linode-staging-deployment-snapshot.md",

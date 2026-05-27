@@ -45,7 +45,19 @@ Use this narrative spine in every report:
 
 ### Cover / Core Message
 
-- State the one management message in plain language.
+- State the one weekly management message in plain language.
+- The core message can change every week, but it must always appear on the
+  first page of the report before the executive-summary body.
+- Treat the core message as an editable weekly input, not as a fixed template
+  sentence. Update it before generating the report.
+- Immediately after the core message, include a short current-status summary on
+  the first page. This status summary is also weekly input and must not become a
+  long executive summary.
+- Current-status summary format: use a compact table with three columns:
+  `面向`, `目前狀態`, and `下一步或風險`. Keep it to three to five rows, one
+  sentence per cell, and cover the minimum management scan points: deployment,
+  product/demo evidence, operations/readiness, and next milestone or resource
+  gap.
 - Mention both speed and operations reality: tools can accelerate cloud
   construction, but production maintain, SLA, customer support, monitoring, and
   incident response still need owners and resources.
@@ -84,6 +96,13 @@ Use this narrative spine in every report:
 
 ### Linode Deployment And Configuration
 
+- Explain what Linode represents in this report: a simpler VM/infrastructure
+  service rather than an AWS-style managed-service stack.
+- State the portability implication when relevant: PostgreSQL, MQ/message
+  queue, broker, storage, reverse proxy, and runtime services are operated by
+  us on the VM/service layer instead of depending on AWS-native managed
+  architecture, so the deployment model can be moved across AWS, GCP, Azure,
+  Alibaba Cloud, and other infrastructure clouds with less vendor lock-in.
 - Include public endpoints, live health result, snapshot timestamp, and runtime
   shape.
 - Use public HTTPS domains as evidence targets. Do not use raw VM IPs or private
@@ -123,6 +142,15 @@ verified`; do not copy an old status as if it were current.
 
 ## Language And Tone
 
+- The report body must be written in Traditional Chinese by default.
+- Keep repository names, API names, endpoint paths, product names, commands,
+  status labels such as `PASS`/`FAIL`/`BLOCKED`, and established technical
+  terms in English when that is the clearest source-of-truth wording.
+- Do not mix English section titles with Chinese prose. Section titles,
+  captions, table headers, summaries, and review checklist items should be
+  Traditional Chinese unless they are literal product/repo/API names.
+- If an English version is needed for external audiences, generate it as a
+  separate translation pass rather than mixing languages in the same report.
 - Use direct, management-readable language.
 - Be explicit about "done", "foundation exists", "integration-ready",
   "staging-only", "blocked", and "production gap".
@@ -130,8 +158,8 @@ verified`; do not copy an old status as if it were current.
   named.
 - Avoid overclaiming private cloud, SLA, HA, backup/restore, or customer-ready
   production status without evidence.
-- Use English technical terms where they are repo/API names; use Chinese prose
-  for management explanation when the report is Chinese.
+- Use English technical terms where they are repo/API names; use Traditional
+  Chinese prose for management explanation.
 
 ## Production-Readiness Guardrails
 
@@ -157,6 +185,8 @@ Before generating or sending a report:
 - Pull screenshots from `materials.md`.
 - Run the builder if a Word deliverable is needed.
 - Update live health checks instead of reusing stale results.
+- Confirm the generated Word report uses Traditional Chinese for all narrative
+  sections, captions, table headers, and checklist items.
 - Verify no secrets or raw customer data appear in text, tables, captions, or
   screenshots.
 - Keep generated artifacts under `.artifacts/status-reports/YYYY-MM-DD/`.
