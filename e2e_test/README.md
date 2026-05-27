@@ -11,7 +11,7 @@ scripts, and E2E fixture documentation should be indexed here.
 | --- | --- | --- |
 | `factory_enroll/` | Factory enrollment bridge to cert issuer and device certificate issuance. | Implemented. |
 | `video_cloud/load/` | API-level video cloud load and WebRTC setup runner. | Implemented. |
-| `provisioning/account_video_smoke/` | Account Manager + Video Cloud provisioning smoke using test users and factory certsets. | Planned next. |
+| `provisioning/account_video_smoke/` | Account Manager + Video Cloud provisioning smoke using test users and factory certsets. | Implemented; live staging prerequisites may report `BLOCKED`. |
 | `admin_bff/` | Admin dashboard live BFF E2E entry points and ownership notes. | Indexed; runner still lives in `rtk_cloud_admin` until migrated. |
 | `fixtures/` | Fixture layout and local secret/artifact conventions for E2E runs. | Documentation only; secrets stay untracked. |
 

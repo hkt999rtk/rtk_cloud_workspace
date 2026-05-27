@@ -48,6 +48,7 @@ require_file e2e_test/factory_enroll/README.md
 require_file e2e_test/factory_enroll/cmd/rtk-factory-enroll-test/main.go
 require_file e2e_test/factory_enroll/scripts/run_factory_enroll_local.sh
 require_file e2e_test/provisioning/account_video_smoke/README.md
+require_file e2e_test/provisioning/account_video_smoke/cmd/rtk-account-video-smoke/main.go
 require_file e2e_test/admin_bff/README.md
 require_file e2e_test/video_cloud/load/cmd/rtk-video-loadtest/main.go
 require_file e2e_test/video_cloud/load/scripts/run_video_loadtest.sh

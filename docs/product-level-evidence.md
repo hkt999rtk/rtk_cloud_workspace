@@ -134,6 +134,13 @@ evidence bundles from a half-configured environment.
 | `RTK_EVIDENCE_RUN_SERVICE_COLLECTORS` | Run service-local collectors. | `0` |
 | `RTK_EVIDENCE_REQUIRED_REPORTS` | Space-separated selectors for canonical reports that must exist. | unset, missing reports recorded as `SKIP` |
 | `RTK_EVIDENCE_REPORT_ARTIFACT_REFS_FILE` | Sanitized file containing links/paths to remote report artifacts. | unset, recorded as `SKIP` |
+| `RTK_EVIDENCE_REQUIRED_DEVICE_PRODUCTION_EVIDENCE` | Space-separated manufacturing evidence selectors that must exist: `factory_enroll_results`, `factory_enroll_report`, `account_video_smoke_results`, `account_video_smoke_report`, `device_mtls_token_smoke`, `transport_online_smoke`, or `all`. | unset, missing manufacturing evidence recorded as `SKIP` |
+| `RTK_EVIDENCE_FACTORY_ENROLL_RESULTS_REF` | Path or URL for `factory-enroll-results.json`. | unset, recorded as `SKIP` or `BLOCKED` when required |
+| `RTK_EVIDENCE_FACTORY_ENROLL_REPORT_REF` | Path or URL for `factory-enroll-report.md`. | unset, recorded as `SKIP` or `BLOCKED` when required |
+| `RTK_EVIDENCE_ACCOUNT_VIDEO_SMOKE_RESULTS_REF` | Path or URL for `account-video-smoke-results.json`. | unset, recorded as `SKIP` or `BLOCKED` when required |
+| `RTK_EVIDENCE_ACCOUNT_VIDEO_SMOKE_REPORT_REF` | Path or URL for `account-video-smoke-report.md`. | unset, recorded as `SKIP` or `BLOCKED` when required |
+| `RTK_EVIDENCE_DEVICE_MTLS_TOKEN_SMOKE_REF` | Path or URL for device mTLS token smoke evidence. | unset, recorded as `SKIP` or `BLOCKED` when required |
+| `RTK_EVIDENCE_TRANSPORT_ONLINE_SMOKE_REF` | Path or URL for optional websocket/MQTT owner transport evidence. | unset, recorded as `SKIP` or `BLOCKED` when required |
 | `RTK_EVIDENCE_FRONTEND_HEALTH_URL` | Frontend health URL. | unset, recorded as `SKIP` |
 | `RTK_EVIDENCE_ADMIN_HEALTH_URL` | Admin health URL. | unset, recorded as `SKIP` |
 | `RTK_EVIDENCE_ACCOUNT_MANAGER_HEALTH_URL` | Account manager health URL. | unset, recorded as `SKIP` |
@@ -173,6 +180,14 @@ realtek-connect-plus-evidence-<environment>-<timestamp>/
   reports/
     canonical-reports.tsv
     artifact-references.txt
+  manufacturing/
+    config.txt
+    factory_enroll_results.txt
+    factory_enroll_report.txt
+    account_video_smoke_results.txt
+    account_video_smoke_report.txt
+    device_mtls_token_smoke.txt
+    transport_online_smoke.txt
   brokers/
     config.txt
     smoke-reference.txt
@@ -192,7 +207,7 @@ The wrapper redacts common credential forms before writing command output:
 - `Bearer` tokens
 - environment-style key/value pairs containing token, secret, password, passwd,
   or dsn
-- PEM private-key body lines
+- PEM private-key, certificate, and certificate-request body lines
 
 Operators must still avoid pointing the wrapper at raw customer data endpoints.
 The wrapper is for readiness evidence, not data export.
@@ -212,6 +227,9 @@ Before a private-cloud deployment is considered evidence-ready:
 - Disabled optional components appear as `SKIP` with an intentional reason.
 - Missing required canonical reports appear as `BLOCKED` with the expected
   repo-owned path and pinned submodule commit.
+- Required manufacturing evidence appears under `manufacturing/` and missing
+  required pieces appear as `BLOCKED` with the specific factory enrollment,
+  account/video provisioning, mTLS token, or transport prerequisite.
 - Existing canonical reports are referenced by path and commit; the workspace
   does not synthesize replacement service reports.
 - The final bundle contains no tokens, DSNs, private keys, or raw customer data.
