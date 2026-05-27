@@ -31,7 +31,7 @@ STATUS_FILE="$ARTIFACT_DIR/status.txt"
 SUMMARY_FILE="$ARTIFACT_DIR/summary.md"
 
 umask 077
-mkdir -p "$ARTIFACT_DIR" "$ARTIFACT_DIR/services" "$ARTIFACT_DIR/health" "$ARTIFACT_DIR/metrics" "$ARTIFACT_DIR/brokers" "$ARTIFACT_DIR/backups" "$ARTIFACT_DIR/reports"
+mkdir -p "$ARTIFACT_DIR" "$ARTIFACT_DIR/services" "$ARTIFACT_DIR/health" "$ARTIFACT_DIR/metrics" "$ARTIFACT_DIR/brokers" "$ARTIFACT_DIR/backups" "$ARTIFACT_DIR/reports" "$ARTIFACT_DIR/manufacturing"
 : > "$STATUS_FILE"
 
 failures=0
@@ -55,7 +55,28 @@ redact_sensitive() {
     -e 's#([A-Za-z0-9_]*[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd][A-Za-z0-9_]*=)[^[:space:]]+#\1<redacted>#g' \
     -e 's#([A-Za-z0-9_]*[Pp][Aa][Ss][Ss][Ww][Dd][A-Za-z0-9_]*=)[^[:space:]]+#\1<redacted>#g' \
     -e 's#([A-Za-z0-9_]*[Dd][Ss][Nn][A-Za-z0-9_]*=)[^[:space:]]+#\1<redacted>#g' \
-    -e 's#(-----BEGIN [A-Z ]*PRIVATE KEY-----).*#\1 <redacted>#g'
+    -e 's#("[^"]*[Tt][Oo][Kk][Ee][Nn][^"]*"[[:space:]]*:[[:space:]]*")[^"]*"#\1<redacted>"#g' \
+    -e 's#("[^"]*[Ss][Ee][Cc][Rr][Ee][Tt][^"]*"[[:space:]]*:[[:space:]]*")[^"]*"#\1<redacted>"#g' \
+    -e 's#("[^"]*[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd][^"]*"[[:space:]]*:[[:space:]]*")[^"]*"#\1<redacted>"#g' \
+    -e 's#("[^"]*[Pp][Aa][Ss][Ss][Ww][Dd][^"]*"[[:space:]]*:[[:space:]]*")[^"]*"#\1<redacted>"#g' \
+    -e 's#("[^"]*[Dd][Ss][Nn][^"]*"[[:space:]]*:[[:space:]]*")[^"]*"#\1<redacted>"#g' \
+    -e 's#("[^"]*[Kk][Ee][Yy][^"]*"[[:space:]]*:[[:space:]]*")[^"]*"#\1<redacted>"#g' \
+    -e 's#("[^"]*[Aa][Uu][Tt][Hh][^"]*"[[:space:]]*:[[:space:]]*")[^"]*"#\1<redacted>"#g' |
+  awk '
+    /-----BEGIN (.*PRIVATE KEY|CERTIFICATE|CERTIFICATE REQUEST)-----/ {
+      print $0 " <redacted>"
+      in_pem=1
+      next
+    }
+    in_pem {
+      print "<redacted>"
+      if ($0 ~ /-----END (.*PRIVATE KEY|CERTIFICATE|CERTIFICATE REQUEST)-----/) {
+        in_pem=0
+      }
+      next
+    }
+    { print }
+  '
 }
 
 safe_name() {
@@ -174,6 +195,76 @@ report_required() {
   done
   set +f
   return 1
+}
+
+manufacturing_required() {
+  key=$1
+  set -f
+  for selector in ${RTK_EVIDENCE_REQUIRED_DEVICE_PRODUCTION_EVIDENCE:-}; do
+    case "$selector" in
+      "$key"|"all")
+        set +f
+        return 0
+        ;;
+    esac
+  done
+  set +f
+  return 1
+}
+
+capture_manufacturing_ref() {
+  key=$1
+  label=$2
+  value=$3
+  out="$ARTIFACT_DIR/manufacturing/$key.txt"
+  if [ -z "$value" ]; then
+    printf 'status=SKIP\nreason=%s not configured\n' "$label" > "$out"
+    if manufacturing_required "$key"; then
+      record BLOCKED "manufacturing:$key" "$label not configured"
+    else
+      record SKIP "manufacturing:$key" "$label not configured"
+    fi
+    return
+  fi
+
+  case "$value" in
+    http://*|https://*)
+      printf 'status=PASS\nreference=%s\n' "$value" | redact_sensitive > "$out"
+      record PASS "manufacturing:$key" "$label reference captured"
+      return
+      ;;
+  esac
+
+  if [ ! -f "$value" ]; then
+    printf 'status=BLOCKED\nreason=%s file not found\npath=%s\n' "$label" "$value" | redact_sensitive > "$out"
+    record BLOCKED "manufacturing:$key" "$label configured file missing"
+    return
+  fi
+
+  {
+    printf 'status=PASS\nsource=%s\n\n' "$value"
+    cat "$value"
+  } | redact_sensitive > "$out"
+  record PASS "manufacturing:$key" "$label artifact captured"
+}
+
+collect_device_production_evidence() {
+  {
+    printf 'required_device_production_evidence=%s\n' "${RTK_EVIDENCE_REQUIRED_DEVICE_PRODUCTION_EVIDENCE:-}"
+    printf 'factory_enroll_results_ref=%s\n' "${RTK_EVIDENCE_FACTORY_ENROLL_RESULTS_REF:-}"
+    printf 'factory_enroll_report_ref=%s\n' "${RTK_EVIDENCE_FACTORY_ENROLL_REPORT_REF:-}"
+    printf 'account_video_smoke_results_ref=%s\n' "${RTK_EVIDENCE_ACCOUNT_VIDEO_SMOKE_RESULTS_REF:-}"
+    printf 'account_video_smoke_report_ref=%s\n' "${RTK_EVIDENCE_ACCOUNT_VIDEO_SMOKE_REPORT_REF:-}"
+    printf 'device_mtls_token_smoke_ref=%s\n' "${RTK_EVIDENCE_DEVICE_MTLS_TOKEN_SMOKE_REF:-}"
+    printf 'transport_online_smoke_ref=%s\n' "${RTK_EVIDENCE_TRANSPORT_ONLINE_SMOKE_REF:-}"
+  } | redact_sensitive > "$ARTIFACT_DIR/manufacturing/config.txt"
+
+  capture_manufacturing_ref factory_enroll_results "factory enrollment results" "${RTK_EVIDENCE_FACTORY_ENROLL_RESULTS_REF:-}"
+  capture_manufacturing_ref factory_enroll_report "factory enrollment report" "${RTK_EVIDENCE_FACTORY_ENROLL_REPORT_REF:-}"
+  capture_manufacturing_ref account_video_smoke_results "account/video provisioning smoke results" "${RTK_EVIDENCE_ACCOUNT_VIDEO_SMOKE_RESULTS_REF:-}"
+  capture_manufacturing_ref account_video_smoke_report "account/video provisioning smoke report" "${RTK_EVIDENCE_ACCOUNT_VIDEO_SMOKE_REPORT_REF:-}"
+  capture_manufacturing_ref device_mtls_token_smoke "device mTLS token smoke evidence" "${RTK_EVIDENCE_DEVICE_MTLS_TOKEN_SMOKE_REF:-}"
+  capture_manufacturing_ref transport_online_smoke "transport online smoke evidence" "${RTK_EVIDENCE_TRANSPORT_ONLINE_SMOKE_REF:-}"
 }
 
 collect_canonical_reports() {
@@ -418,6 +509,7 @@ main() {
   collect_metrics
   collect_brokers
   collect_backups
+  collect_device_production_evidence
   collect_service_artifacts
   write_summary
   package_artifact
