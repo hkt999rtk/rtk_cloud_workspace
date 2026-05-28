@@ -158,7 +158,7 @@ PATH="$FAKE_BIN:$PATH" \
 	API_LOG="$LOG" \
 	VC_STATE_PATH="$VC_STATE" \
 	VC_SECRET_STATE_PATH="$VC_SECRET_STATE" \
-	"$ROOT/scripts/staging-provision.sh" \
+	"$ROOT/scripts/cloud-provision.sh" \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--ssh-key "$SSH_KEY" \

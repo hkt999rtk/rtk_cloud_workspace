@@ -62,7 +62,7 @@ LINODE_OBJ_ENDPOINT=https://object.example.test
 EOF_ENV
 
 OUT="$TMP/out.txt"
-if PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/staging-provision.sh" \
+if PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/cloud-provision.sh" \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--ssh-key "$SSH_KEY" \

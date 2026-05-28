@@ -77,7 +77,7 @@ SH
 chmod +x "$FAKE_BIN/curl"
 
 if PATH="$FAKE_BIN:$PATH" CURL_LOG="$LOG" CURL_STATE="$CURL_STATE" LINODE_TOKEN=test-token \
-	"$ROOT/scripts/staging-remove-all-vm.sh" --workspace "$WORKSPACE" >/dev/null 2>"$TMP/missing-env-root.err"; then
+	"$ROOT/scripts/cloud-remove-all-vm.sh" --workspace "$WORKSPACE" >/dev/null 2>"$TMP/missing-env-root.err"; then
 	printf 'expected missing --env-root to fail\n' >&2
 	exit 1
 fi
@@ -88,14 +88,14 @@ if [[ -e "$LOG" ]]; then
 fi
 
 printf 'no\n' | PATH="$FAKE_BIN:$PATH" CURL_LOG="$LOG" CURL_STATE="$CURL_STATE" LINODE_TOKEN=test-token \
-	"$ROOT/scripts/staging-remove-all-vm.sh" --workspace "$WORKSPACE" --env-root "$ENV_ROOT" >/dev/null
+	"$ROOT/scripts/cloud-remove-all-vm.sh" --workspace "$WORKSPACE" --env-root "$ENV_ROOT" >/dev/null
 if [[ -e "$LOG" ]]; then
 	printf 'cancelled run unexpectedly called curl\n' >&2
 	exit 1
 fi
 
 printf 'yes\n' | PATH="$FAKE_BIN:$PATH" CURL_LOG="$LOG" CURL_STATE="$CURL_STATE" LINODE_TOKEN=test-token \
-	"$ROOT/scripts/staging-remove-all-vm.sh" --workspace "$WORKSPACE" --env-root "$ENV_ROOT" >/dev/null
+	"$ROOT/scripts/cloud-remove-all-vm.sh" --workspace "$WORKSPACE" --env-root "$ENV_ROOT" >/dev/null
 
 grep -F -- '-X GET https://api.linode.com/v4/linode/instances?page_size=500' "$LOG" >/dev/null
 grep -F -- '-X DELETE https://api.linode.com/v4/linode/instances/101' "$LOG" >/dev/null

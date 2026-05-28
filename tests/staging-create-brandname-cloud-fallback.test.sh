@@ -91,7 +91,7 @@ SH
 chmod +x "$FAKE_BIN/curl"
 
 OUT="$TMP/out.json"
-PATH="$FAKE_BIN:$PATH" LIST_COUNT="$LIST_COUNT" "$ROOT/scripts/staging_create_brandname_cloud.sh" \
+PATH="$FAKE_BIN:$PATH" LIST_COUNT="$LIST_COUNT" "$ROOT/scripts/cloud-create-brandname-cloud.sh" \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--brandname RTK >"$OUT"

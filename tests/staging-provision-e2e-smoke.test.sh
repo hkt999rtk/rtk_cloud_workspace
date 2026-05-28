@@ -66,12 +66,12 @@ ADMIN_LINODE_PUBLIC_IPV4=203.0.113.70
 EOF_ADMIN
 
 OUT="$TMP/out.txt"
-PATH="$FAKE_BIN:$PATH" CURL_LOG="$CURL_LOG" "$ROOT/scripts/staging-provision.sh" \
+PATH="$FAKE_BIN:$PATH" CURL_LOG="$CURL_LOG" "$ROOT/scripts/cloud-provision.sh" \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--e2e >"$OUT" 2>&1
 
-REPORT_DIR="$(grep -F '[staging-provision] e2e report:' "$OUT" | tail -n 1 | sed 's/^.*e2e report: //')"
+REPORT_DIR="$(grep -F '[cloud-provision] e2e report:' "$OUT" | tail -n 1 | sed 's/^.*e2e report: //')"
 test -f "$REPORT_DIR/e2e-report.md"
 grep -F 'status: passed' "$REPORT_DIR/e2e-report.md" >/dev/null
 grep -F 'PASS `video-cloud-healthz`' "$REPORT_DIR/e2e-report.md" >/dev/null
@@ -97,13 +97,13 @@ SH
 chmod +x "$FAKE_BIN/curl"
 
 FAIL_OUT="$TMP/fail-out.txt"
-if PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/staging-provision.sh" \
+if PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/cloud-provision.sh" \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--e2e >"$FAIL_OUT" 2>&1; then
 	printf 'e2e unexpectedly passed when admin service-health failed\n' >&2
 	exit 1
 fi
-FAIL_REPORT_DIR="$(grep -F '[staging-provision] e2e report:' "$FAIL_OUT" | tail -n 1 | sed 's/^.*e2e report: //')"
+FAIL_REPORT_DIR="$(grep -F '[cloud-provision] e2e report:' "$FAIL_OUT" | tail -n 1 | sed 's/^.*e2e report: //')"
 grep -F 'status: failed' "$FAIL_REPORT_DIR/e2e-report.md" >/dev/null
 grep -F 'FAIL `admin-service-health`' "$FAIL_REPORT_DIR/e2e-report.md" >/dev/null
