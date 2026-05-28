@@ -82,6 +82,52 @@ scripts/collect-private-cloud-evidence.sh
 
 ## Linode staging 操作
 
+### `scripts/staging_generate_load_devices.sh`
+
+依照量產流程的素材形狀，產生 staging/load-test 用的模擬 device 身分。每台 device 會有 private key、CSR、由本地 simulation CA 簽出的 client certificate、metadata、PEM bundle，以及 load test 可直接 source 的 env 檔。
+
+預設產生 100 台，類型只使用目前 load runner 已實作的模擬種類：
+
+- `camera`
+- `light`
+- `air_conditioner`
+- `smart_meter`
+
+用法：
+
+```sh
+# 預設產生 100 台：camera=40,light=25,air_conditioner=20,smart_meter=15
+scripts/staging_generate_load_devices.sh
+
+# 指定數量與配比
+scripts/staging_generate_load_devices.sh \
+  --count 200 \
+  --mix camera=80,light=50,air_conditioner=40,smart_meter=30
+
+# 指定輸出目錄；若目錄已存在，用 --force 重建
+scripts/staging_generate_load_devices.sh \
+  --out-dir .secrets/staging/linode/video-cloud/load-devices/manual \
+  --force
+```
+
+常用選項：
+
+- `--count N`：產生 device 數量，預設 `100`。
+- `--mix SPEC`：類型權重，例如 `camera=40,light=25,air_conditioner=20,smart_meter=15`。
+- `--prefix PREFIX`：device id prefix，預設 `load-device`，輸出如 `load-device-0001`。
+- `--out-dir PATH`：輸出目錄，預設 `keys/test_device`，和既有 video cloud test-device layout 相容。
+- `--force`：移除既有輸出目錄後重建。
+
+重要輸出：
+
+- `summary.json`：本次產生的數量、配比與主要路徑。
+- `manifests/devices.json`：完整 device inventory。
+- `manifests/devices.csv`：簡表。
+- `manifests/device_ids.txt`：load test 可用的 device id 清單。
+- `loadtest.env`：可 `source` 的 load test 參數，不包含 bearer token。
+
+輸出的 private key 與 CA key 預設位於 git ignored 的 `keys/test_device`，不可 commit，也不可用在 production 或 customer environment。若要重建既有輸出，使用 `--force`。
+
 ### `scripts/staging-provision.sh`
 
 Linode staging 的主要編排腳本。它可以做 preflight、plan、reset、apply、DNS、deploy、artifact collection、e2e smoke。預設不變更環境，只做 `--plan`。
