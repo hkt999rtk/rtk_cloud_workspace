@@ -198,6 +198,33 @@ scripts/staging_create_brandname_cloud.sh --brandname RTK
 
 腳本的進度訊息會寫到 stderr，最後 JSON 結果會寫到 stdout，方便其他工具解析。
 
+### `scripts/staging_list_brandname_clouds.sh`
+
+查詢 Account Manager staging 目前有哪些 brand cloud。腳本會使用 staging platform-admin 帳密登入，呼叫唯讀的 Account Manager admin API，不會修改資料。
+
+用法：
+
+```sh
+# 顯示數量與摘要表格
+scripts/staging_list_brandname_clouds.sh
+
+# 查詢特定 brandname
+scripts/staging_list_brandname_clouds.sh --brandname RTK
+
+# 輸出完整 JSON，包含每個 brand cloud 的 metadata 等設定
+scripts/staging_list_brandname_clouds.sh --json
+```
+
+常用選項：
+
+- `--workspace PATH`：指定 workspace 根目錄。
+- `--secrets-root PATH`：指定 `.secrets/staging/linode` 位置。
+- `--brandname NAME`：只顯示 `name` 或 `metadata.brandname` 符合的 brand cloud。
+- `--limit N`：指定 API list limit，預設 `200`。
+- `--json`：輸出完整 API JSON，適合用 `jq` 進一步查詢。
+
+預設摘要會顯示 `brand_clouds`、`api_total`、`id`、`name`、`status`、`tier`、`evaluation_device_quota`、`metadata.brandname`、`created_at` 與完整 `metadata`。若要確認「每個 brandname cloud 的內容設定」，建議使用 `--json`。
+
 ## Linode CI runner 管理
 
 這些腳本位於 `scripts/linode-ci-runners/`，用來管理 repo-scoped GitHub Actions self-hosted runner VM。
