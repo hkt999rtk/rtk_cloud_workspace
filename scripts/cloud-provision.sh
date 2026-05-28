@@ -675,19 +675,27 @@ hydrate_video_state_from_live() {
 	instances="$(linode_api GET '/linode/instances?page_size=500')"
 	firewalls="$(linode_api GET '/networking/firewalls?page_size=500')"
 	vpcs="$(linode_api GET '/vpcs?page_size=500')"
-	vpc_id="$(jq -r '.data[] | select(.label == "video-cloud-staging-vpc") | .id' <<<"$vpcs")"
-	[[ -n "$vpc_id" && "$vpc_id" != "null" ]] || die "cannot hydrate Video Cloud state: missing video-cloud-staging-vpc"
-	subnet_id="$(linode_api GET "/vpcs/$vpc_id/subnets" | jq -r '.data[] | select(.label == "video-cloud-staging-subnet") | .id' | head -n 1)"
-	[[ -n "$subnet_id" && "$subnet_id" != "null" ]] || die "cannot hydrate Video Cloud state: missing video-cloud-staging-subnet"
+	vpc_id="$(jq -r --arg label "$VIDEO_CLOUD_VPC_LABEL" '.data[] | select(.label == $label) | .id' <<<"$vpcs")"
+	[[ -n "$vpc_id" && "$vpc_id" != "null" ]] || die "cannot hydrate Video Cloud state: missing $VIDEO_CLOUD_VPC_LABEL"
+	subnet_id="$(linode_api GET "/vpcs/$vpc_id/subnets" | jq -r --arg label "$VIDEO_CLOUD_SUBNET_LABEL" '.data[] | select(.label == $label) | .id' | head -n 1)"
+	[[ -n "$subnet_id" && "$subnet_id" != "null" ]] || die "cannot hydrate Video Cloud state: missing $VIDEO_CLOUD_SUBNET_LABEL"
 	mkdir -p "$(dirname "$VC_STATE")" "$(dirname "$VC_SECRET_STATE")"
-	jq -n --argjson vpc_id "$vpc_id" --argjson subnet_id "$subnet_id" --argjson instances "$instances" --argjson firewalls "$firewalls" '{
-		stack:"video-cloud-staging",
-		region:"us-sea",
+	jq -n \
+		--arg stack "$CLOUD_STACK_NAME" \
+		--arg region "$CLOUD_REGION" \
+		--arg label_prefix "$VIDEO_CLOUD_LABEL_PREFIX" \
+		--arg stack_tag "$CLOUD_STACK_NAME" \
+		--argjson vpc_id "$vpc_id" \
+		--argjson subnet_id "$subnet_id" \
+		--argjson instances "$instances" \
+		--argjson firewalls "$firewalls" '{
+		stack:$stack,
+		region:$region,
 		vpc_id:$vpc_id,
 		subnet_id:$subnet_id,
 		firewalls:(
 			$firewalls.data
-			| map(select((.label | startswith("video-cloud-staging-")) and ((.tags // []) | index("video-cloud-staging"))))
+			| map(select((.label | startswith($label_prefix + "-")) and ((.tags // []) | index($stack_tag))))
 			| map({role: ((.tags // []) | map(select(startswith("role:"))) | .[0] | sub("^role:";"")), id})
 			| map(select(.role != null and .role != ""))
 			| map({key:.role, value:.id})
@@ -695,7 +703,7 @@ hydrate_video_state_from_live() {
 		),
 		instances:(
 			$instances.data
-			| map(select((.label | startswith("video-cloud-staging-")) and ((.tags // []) | index("video-cloud-staging"))))
+			| map(select((.label | startswith($label_prefix + "-")) and ((.tags // []) | index($stack_tag))))
 			| map({
 				role: ((.tags // []) | map(select(startswith("role:"))) | .[0] | sub("^role:";"")),
 				value: {
@@ -718,7 +726,7 @@ hydrate_video_state_from_live() {
 			| map({key:.role, value:.value})
 			| from_entries
 		),
-		tags:["video-cloud-staging","managed-by:linode-deploy"]
+		tags:[$stack_tag,"managed-by:linode-deploy"]
 	}' > "$VC_STATE"
 	if [[ "$VC_STATE" != "$VC_SECRET_STATE" ]]; then
 		cp "$VC_STATE" "$VC_SECRET_STATE"
@@ -728,7 +736,7 @@ hydrate_video_state_from_live() {
 ensure_video_cloud_state_or_apply() {
 	local instances count
 	instances="$(linode_api GET '/linode/instances?page_size=500')"
-	count="$(jq -r '[.data[] | select((.label | startswith("video-cloud-staging-")) and ((.tags // []) | index("video-cloud-staging")))] | length' <<<"$instances")"
+	count="$(jq -r --arg label_prefix "$VIDEO_CLOUD_LABEL_PREFIX" --arg stack_tag "$CLOUD_STACK_NAME" '[.data[] | select((.label | startswith($label_prefix + "-")) and ((.tags // []) | index($stack_tag)))] | length' <<<"$instances")"
 	if [[ "$count" == "5" ]]; then
 		log "Video Cloud instances already exist; hydrating state and skipping apply"
 		hydrate_video_state_from_live
@@ -787,22 +795,22 @@ apply_stack() {
 	load_operator_env
 	load_service_envs
 	ensure_video_cloud_state_or_apply
-	if linode_api GET '/linode/instances?page_size=500' | jq -e '.data[] | select(.label == "rtk-account-manager-staging")' >/dev/null; then
+	if linode_api GET '/linode/instances?page_size=500' | jq -e --arg label "$ACCOUNT_MANAGER_LINODE_LABEL" '.data[] | select(.label == $label)' >/dev/null; then
 		log "Account Manager VM already exists; hydrating state and skipping provision"
-		hydrate_public_state_from_live "rtk-account-manager-staging" "rtk-account-manager-staging-fw" "$AM_STATE" "ACCOUNT_MANAGER"
+		hydrate_public_state_from_live "$ACCOUNT_MANAGER_LINODE_LABEL" "$ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL" "$AM_STATE" "ACCOUNT_MANAGER"
 	else
-		cleanup_orphan_public_service "rtk-account-manager-staging" "rtk-account-manager-staging-fw" "$AM_STATE"
+		cleanup_orphan_public_service "$ACCOUNT_MANAGER_LINODE_LABEL" "$ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL" "$AM_STATE"
 		(
 			cd "$AM_REPO"
 			ACCOUNT_MANAGER_LINODE_STATE_PATH="$AM_STATE" \
 				linode_deploy/scripts/provision-public-vm.sh
 		)
 	fi
-	if linode_api GET '/linode/instances?page_size=500' | jq -e '.data[] | select(.label == "rtk-cloud-admin-staging")' >/dev/null; then
+	if linode_api GET '/linode/instances?page_size=500' | jq -e --arg label "$ADMIN_LINODE_LABEL" '.data[] | select(.label == $label)' >/dev/null; then
 		log "Cloud Admin VM already exists; hydrating state and skipping provision"
-		hydrate_public_state_from_live "rtk-cloud-admin-staging" "rtk-cloud-admin-staging-firewall" "$ADMIN_STATE" "ADMIN"
+		hydrate_public_state_from_live "$ADMIN_LINODE_LABEL" "$ADMIN_LINODE_FIREWALL_LABEL" "$ADMIN_STATE" "ADMIN"
 	else
-		cleanup_orphan_public_service "rtk-cloud-admin-staging" "rtk-cloud-admin-staging-firewall" "$ADMIN_STATE"
+		cleanup_orphan_public_service "$ADMIN_LINODE_LABEL" "$ADMIN_LINODE_FIREWALL_LABEL" "$ADMIN_STATE"
 		create_admin_vm
 	fi
 	load_env_file "$AM_STATE"
@@ -990,9 +998,10 @@ write_artifacts() {
 	ns="$(authoritative_ns)"
 	tmp="$(mktemp -d /tmp/rtk-provision-artifacts.XXXXXX)"
 	trap 'rm -rf "$tmp"' RETURN
-	jq --arg am_id "$ACCOUNT_MANAGER_LINODE_ID" --arg am_ip "$ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4" --arg am_fw "$ACCOUNT_MANAGER_LINODE_FIREWALL_ID" \
-		--arg ad_id "$ADMIN_LINODE_ID" --arg ad_ip "$ADMIN_LINODE_PUBLIC_IPV4" --arg ad_fw "$ADMIN_LINODE_FIREWALL_ID" \
-		'{stack:"rtk-cloud-staging", generated_at:(now|todate), video_cloud:., account_manager:{id:($am_id|tonumber),label:"rtk-account-manager-staging",public_ipv4:$am_ip,firewall_id:($am_fw|tonumber)}, cloud_admin:{id:($ad_id|tonumber),label:"rtk-cloud-admin-staging",public_ipv4:$ad_ip,firewall_id:($ad_fw|tonumber)}}' \
+	jq --arg stack "$CLOUD_STACK_NAME" \
+		--arg am_id "$ACCOUNT_MANAGER_LINODE_ID" --arg am_label "$ACCOUNT_MANAGER_LINODE_LABEL" --arg am_ip "$ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4" --arg am_fw "$ACCOUNT_MANAGER_LINODE_FIREWALL_ID" \
+		--arg ad_id "$ADMIN_LINODE_ID" --arg ad_label "$ADMIN_LINODE_LABEL" --arg ad_ip "$ADMIN_LINODE_PUBLIC_IPV4" --arg ad_fw "$ADMIN_LINODE_FIREWALL_ID" \
+		'{stack:$stack, generated_at:(now|todate), video_cloud:., account_manager:{id:($am_id|tonumber),label:$am_label,public_ipv4:$am_ip,firewall_id:($am_fw|tonumber)}, cloud_admin:{id:($ad_id|tonumber),label:$ad_label,public_ipv4:$ad_ip,firewall_id:($ad_fw|tonumber)}}' \
 		"$VC_STATE" > "$art/inventory.json"
 	jq -n --slurpfile vc "$VC_STATE" --arg am "$ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4" --arg ad "$ADMIN_LINODE_PUBLIC_IPV4" '{
 		generated_at:(now|todate),
@@ -1041,8 +1050,8 @@ write_artifacts() {
 		printf '| Role | Label | Linode ID | Firewall ID | Network | Public IPv4 | Private/VPC IPv4 | Access / VPN | ProxyJump |\n'
 		printf '| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n'
 		write_video_vm_config_rows
-		write_public_vm_config_row "account-manager" "${ACCOUNT_MANAGER_LINODE_LABEL:-rtk-account-manager-staging}" "$ACCOUNT_MANAGER_LINODE_ID" "$ACCOUNT_MANAGER_LINODE_FIREWALL_ID" "$ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4"
-		write_public_vm_config_row "cloud-admin" "${ADMIN_LINODE_LABEL:-rtk-cloud-admin-staging}" "$ADMIN_LINODE_ID" "$ADMIN_LINODE_FIREWALL_ID" "$ADMIN_LINODE_PUBLIC_IPV4"
+		write_public_vm_config_row "account-manager" "$ACCOUNT_MANAGER_LINODE_LABEL" "$ACCOUNT_MANAGER_LINODE_ID" "$ACCOUNT_MANAGER_LINODE_FIREWALL_ID" "$ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4"
+		write_public_vm_config_row "cloud-admin" "$ADMIN_LINODE_LABEL" "$ADMIN_LINODE_ID" "$ADMIN_LINODE_FIREWALL_ID" "$ADMIN_LINODE_PUBLIC_IPV4"
 		printf '\n'
 		printf '## DNS Status\n\n| Domain | Expected | 8.8.8.8 | %s |\n| --- | --- | --- | --- |\n' "$ns"
 		awk -F '\t' '{printf "| `%s` | `%s` | `%s` | `%s` |\n", $1, $2, $3, $4}' "$tmp/dns.tsv"

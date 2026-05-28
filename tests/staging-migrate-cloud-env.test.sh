@@ -42,6 +42,7 @@ grep -F -- '--env-root is required' "$TMP/missing-env-root.out" >/dev/null
 "$ROOT/scripts/cloud-migrate-env.sh" --workspace "$WORKSPACE" --env-root "$WORKSPACE/cloud_env/staging" > "$OUT"
 
 test -f "$ENV_ROOT/env/operator.env"
+test -f "$ENV_ROOT/env/stack.env"
 test -f "$ENV_ROOT/topology/video-cloud-staging.yaml"
 test -f "$ENV_ROOT/services/video-cloud/video-cloud-staging.env"
 test -f "$ENV_ROOT/services/account-manager/account-manager-public-staging.env"
@@ -57,5 +58,9 @@ test -f "$ENV_ROOT/artifacts/run-1/report.md"
 MANIFEST="$(sed -n 's/^manifest=//p' "$OUT")"
 test -f "$MANIFEST"
 grep -F 'operator-env' "$MANIFEST" >/dev/null
+grep -F 'stack-metadata' "$MANIFEST" >/dev/null
 grep -F 'copied' "$MANIFEST" >/dev/null
 awk -F '\t' 'NR > 1 && $5 == "" { exit 1 }' "$MANIFEST"
+grep -F 'CLOUD_STACK_NAME=video-cloud-staging' "$ENV_ROOT/env/stack.env" >/dev/null
+grep -F 'ACCOUNT_MANAGER_DOMAIN=am.example' "$ENV_ROOT/env/stack.env" >/dev/null
+grep -F 'CLOUD_ADMIN_DOMAIN=admin.example' "$ENV_ROOT/env/stack.env" >/dev/null
