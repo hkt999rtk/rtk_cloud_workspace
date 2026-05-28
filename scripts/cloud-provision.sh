@@ -11,6 +11,7 @@ DEPRECATED_ENV_ROOT=""
 OPERATOR_ENV=""
 SSH_KEY="$HOME/.ssh/id_ed25519_rtkcloud"
 DNS_ROOT_DOMAIN="realtekconnect.com"
+DNS_ROOT_DOMAIN_EXPLICIT=0
 GODADDY_ENVIRONMENT="prod"
 DNS_WAIT_TTL="${GODADDY_WAIT_TTL:-${GODADDY_RECORD_WAIT_TTL:-600}}"
 DNS_FINAL_TTL="${GODADDY_RECORD_TTL:-600}"
@@ -57,8 +58,8 @@ Usage:
 Modes:
   default                            Same as --plan; read-only.
   --preflight                         Check local tools, env, credentials, SSH key, and optional release artifact.
-  --plan                              Print current and intended staging resources without mutation.
-  --reset --confirm rtk-cloud-staging Delete the 7 target VMs, 7 firewalls, and Video Cloud VPC.
+  --plan                              Print current and intended cloud resources without mutation.
+  --reset --confirm <stack-name>       Delete the 7 target VMs, 7 firewalls, and Video Cloud VPC.
   --apply                             Create/recreate the 7 target VMs and Video Cloud VPC.
   --dns                               Upsert and wait for the 4 staging A records.
   --deploy                            Deploy Video Cloud, Account Manager, and Cloud Admin releases.
@@ -87,7 +88,7 @@ Options:
   -h, --help                          Show this help.
 
 Safety:
-  reset requires --confirm rtk-cloud-staging. DNS and Object Storage are never deleted.
+  reset requires --confirm matching CLOUD_STACK_NAME. DNS and Object Storage are never deleted.
 USAGE
 }
 
@@ -110,7 +111,7 @@ while [[ $# -gt 0 ]]; do
 	--operator-env) OPERATOR_ENV="$2"; shift 2 ;;
 	--secrets-root) DEPRECATED_ENV_ROOT="$2"; ENV_ROOT="$2"; shift 2 ;;
 	--ssh-key) SSH_KEY="$2"; shift 2 ;;
-	--dns-root-domain) DNS_ROOT_DOMAIN="$2"; shift 2 ;;
+	--dns-root-domain) DNS_ROOT_DOMAIN="$2"; DNS_ROOT_DOMAIN_EXPLICIT=1; shift 2 ;;
 	--godaddy-env) GODADDY_ENVIRONMENT="$2"; shift 2 ;;
 	--dns-wait-ttl) DNS_WAIT_TTL="$2"; shift 2 ;;
 	--dns-final-ttl|--dns-ttl) DNS_FINAL_TTL="$2"; shift 2 ;;
@@ -140,6 +141,14 @@ source "$SCRIPT_DIR/lib/cloud-env.sh"
 [[ "$DNS_WAIT_TTL" -ge "$GODADDY_MIN_TTL" ]] || die "--dns-wait-ttl must be >= $GODADDY_MIN_TTL for GoDaddy DNS records"
 [[ "$DNS_FINAL_TTL" -ge "$GODADDY_MIN_TTL" ]] || die "--dns-final-ttl must be >= $GODADDY_MIN_TTL for GoDaddy DNS records"
 ENV_ROOT="$(cloud_env_init "$WORKSPACE" "$ENV_ROOT")"
+if [[ "$DNS_ROOT_DOMAIN_EXPLICIT" == "1" ]]; then
+	cloud_env_load_environment "$ENV_ROOT" "$DNS_ROOT_DOMAIN"
+else
+	cloud_env_load_environment "$ENV_ROOT" ""
+fi
+DNS_ROOT_DOMAIN="$CLOUD_DNS_ROOT_DOMAIN"
+cloud_env_validate_environment "$ENV_ROOT"
+cloud_env_export_filter_vars
 DEPRECATED_ENV_ROOT="$ENV_ROOT"
 OPERATOR_ENV="${OPERATOR_ENV:-$(cloud_env_operator_env "$ENV_ROOT")}"
 ARTIFACT_BASE="${ARTIFACT_BASE:-$(cloud_env_artifacts_dir "$ENV_ROOT")}"
@@ -158,10 +167,10 @@ ADMIN_ENV="$(cloud_env_admin_env "$ENV_ROOT")"
 ADMIN_STATE="$(cloud_env_admin_state "$ENV_ROOT")"
 CLOUD_DEPLOY_SCRIPT="${CLOUD_DEPLOY_SCRIPT:-${STAGING_DEPLOY_SCRIPT:-$SCRIPT_DIR/cloud-deploy.sh}}"
 
-VC_GATEWAY_DOMAIN="video-cloud-staging.$DNS_ROOT_DOMAIN"
-VC_CERTISSUER_DOMAIN="certissuer.video-cloud-staging.$DNS_ROOT_DOMAIN"
-AM_DOMAIN="account-manager.video-cloud-staging.$DNS_ROOT_DOMAIN"
-ADMIN_DOMAIN="admin.video-cloud-staging.$DNS_ROOT_DOMAIN"
+VC_GATEWAY_DOMAIN="$VIDEO_CLOUD_DOMAIN"
+VC_CERTISSUER_DOMAIN="$VIDEO_CLOUD_CERTISSUER_DOMAIN"
+AM_DOMAIN="$ACCOUNT_MANAGER_DOMAIN"
+ADMIN_DOMAIN="$CLOUD_ADMIN_DOMAIN"
 
 need_cmd() {
 	command -v "$1" >/dev/null 2>&1 || die "$1 is required"
@@ -408,18 +417,18 @@ wait_dns() {
 target_instance_filter='
 	.data[]
 	| select(
-		.label == "rtk-cloud-admin-staging"
-		or .label == "rtk-account-manager-staging"
-		or ((.label | startswith("video-cloud-staging-")) and ((.tags // []) | index("video-cloud-staging")))
+		.label == env.ADMIN_LINODE_LABEL
+		or .label == env.ACCOUNT_MANAGER_LINODE_LABEL
+		or ((.label | startswith(env.VIDEO_CLOUD_LABEL_PREFIX + "-")) and ((.tags // []) | index(env.CLOUD_STACK_NAME)))
 	)
 '
 
 target_firewall_filter='
 	.data[]
 	| select(
-		.label == "rtk-cloud-admin-staging-firewall"
-		or .label == "rtk-account-manager-staging-fw"
-		or ((.label | startswith("video-cloud-staging-")) and ((.tags // []) | index("video-cloud-staging")))
+		.label == env.ADMIN_LINODE_FIREWALL_LABEL
+		or .label == env.ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL
+		or ((.label | startswith(env.VIDEO_CLOUD_LABEL_PREFIX + "-")) and ((.tags // []) | index(env.CLOUD_STACK_NAME)))
 	)
 '
 
@@ -462,12 +471,12 @@ plan() {
 	printf '\nTarget firewalls:\n'
 	jq -r "$target_firewall_filter | [.id,.label,.status,((.tags // []) | join(\",\"))] | @tsv" <<<"$firewalls" || true
 	printf '\nTarget VPCs:\n'
-	jq -r '.data[] | select(.label == "video-cloud-staging-vpc") | [.id,.label,.region] | @tsv' <<<"$vpcs" || true
+	jq -r --arg label "$VIDEO_CLOUD_VPC_LABEL" '.data[] | select(.label == $label) | [.id,.label,.region] | @tsv' <<<"$vpcs" || true
 	printf '\nIntended resources:\n'
 	cat <<EOF_PLAN
-- instances: video-cloud-staging-edge/api/infra/mqtt/coturn, rtk-account-manager-staging, rtk-cloud-admin-staging
-- firewalls: video-cloud-staging-edge/api/infra/mqtt/coturn, rtk-account-manager-staging-fw, rtk-cloud-admin-staging-firewall
-- vpc/subnet: video-cloud-staging-vpc / video-cloud-staging-subnet
+- instances: $VIDEO_CLOUD_LABEL_PREFIX-edge/api/infra/mqtt/coturn, $ACCOUNT_MANAGER_LINODE_LABEL, $ADMIN_LINODE_LABEL
+- firewalls: $VIDEO_CLOUD_LABEL_PREFIX-edge/api/infra/mqtt/coturn, $ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL, $ADMIN_LINODE_FIREWALL_LABEL
+- vpc/subnet: $VIDEO_CLOUD_VPC_LABEL / $VIDEO_CLOUD_SUBNET_LABEL
 - dns: $VC_GATEWAY_DOMAIN, $VC_CERTISSUER_DOMAIN, $AM_DOMAIN, $ADMIN_DOMAIN
 EOF_PLAN
 }
@@ -487,7 +496,7 @@ backup_state_files() {
 }
 
 reset_stack() {
-	[[ "$CONFIRM" == "rtk-cloud-staging" ]] || die "reset requires --confirm rtk-cloud-staging"
+	[[ "$CONFIRM" == "$CLOUD_STACK_NAME" ]] || die "reset requires --confirm $CLOUD_STACK_NAME"
 	log "reset"
 	load_operator_env
 	local backup_dir tmp instances firewalls vpcs count remaining
@@ -522,7 +531,7 @@ reset_stack() {
 		[[ -n "$id" ]] && linode_delete_ignore_missing "/networking/firewalls/$id"
 	done < "$tmp/firewall_ids"
 	vpcs="$(linode_api GET '/vpcs?page_size=500')"
-	jq -r '.data[] | select(.label == "video-cloud-staging-vpc") | .id' <<<"$vpcs" > "$tmp/vpc_ids"
+	jq -r --arg label "$VIDEO_CLOUD_VPC_LABEL" '.data[] | select(.label == $label) | .id' <<<"$vpcs" > "$tmp/vpc_ids"
 	log "deleting VPCs: $(paste -sd ' ' "$tmp/vpc_ids")"
 	while IFS= read -r id; do
 		[[ -n "$id" ]] && linode_delete_ignore_missing "/vpcs/$id"
@@ -560,8 +569,8 @@ delete_vpcs_matching_label() {
 
 cleanup_orphan_video_cloud_infra() {
 	log "cleaning orphan Video Cloud firewalls/VPC/state before fresh apply"
-	delete_firewalls_matching_filter "$target_firewall_filter | select(.label | startswith(\"video-cloud-staging-\"))"
-	delete_vpcs_matching_label "video-cloud-staging-vpc"
+	delete_firewalls_matching_filter "$target_firewall_filter | select(.label | startswith(env.VIDEO_CLOUD_LABEL_PREFIX + \"-\"))"
+	delete_vpcs_matching_label "$VIDEO_CLOUD_VPC_LABEL"
 	rm -f "$VC_STATE" "$VC_SECRET_STATE"
 }
 
@@ -576,11 +585,11 @@ cleanup_orphan_public_service() {
 
 run_video_cloud_apply() {
 	local repo_state repo_backup_dir repo_backup
-	repo_state="$VC_REPO/linode_deploy/state/video-cloud-staging.state.json"
+	repo_state="$VC_REPO/linode_deploy/state/$CLOUD_STACK_NAME.state.json"
 	repo_backup_dir="$ARTIFACT_BASE/legacy-state-backup-$(date -u +%Y%m%dT%H%M%SZ)"
 	if [[ -e "$repo_state" || -L "$repo_state" ]]; then
 		mkdir -p "$repo_backup_dir"
-		repo_backup="$repo_backup_dir/video-cloud-staging.state.json"
+		repo_backup="$repo_backup_dir/$CLOUD_STACK_NAME.state.json"
 		mv "$repo_state" "$repo_backup"
 		log "moved legacy Video Cloud repo state backup: $repo_backup"
 	fi
@@ -602,8 +611,8 @@ load_service_envs() {
 
 create_admin_vm() {
 	load_service_envs
-	local label="${ADMIN_LINODE_LABEL:-rtk-cloud-admin-staging}"
-	local region="${ADMIN_LINODE_REGION:-us-sea}"
+	local label="${ADMIN_LINODE_LABEL:-$ADMIN_LINODE_LABEL}"
+	local region="${ADMIN_LINODE_REGION:-$CLOUD_REGION}"
 	local type="${ADMIN_LINODE_TYPE:-g6-standard-2}"
 	local image="${ADMIN_LINODE_IMAGE:-linode/ubuntu24.04}"
 	local public_key_path
@@ -626,7 +635,8 @@ create_admin_vm() {
 	create_payload="$(jq -cn \
 		--arg label "$label" --arg region "$region" --arg type "$type" --arg image "$image" \
 		--arg root_pass "$root_pass" --arg ssh_key "$ssh_key" \
-		'{label:$label, region:$region, type:$type, image:$image, root_pass:$root_pass, authorized_keys:[$ssh_key], tags:["rtk-cloud-admin-staging","admin-deploy"]}')"
+		--arg env_tag "$CLOUD_STACK_NAME" \
+		'{label:$label, region:$region, type:$type, image:$image, root_pass:$root_pass, authorized_keys:[$ssh_key], tags:[$env_tag,"admin-deploy"]}')"
 	log "creating Cloud Admin Linode $label"
 	create_json="$(linode_api POST /linode/instances "$create_payload")"
 	linode_id="$(jq -r '.id' <<<"$create_json")"
