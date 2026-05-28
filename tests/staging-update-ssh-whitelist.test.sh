@@ -77,7 +77,7 @@ SH
 chmod +x "$FAKE_BIN/curl"
 
 if PATH="$FAKE_BIN:$PATH" CURL_LOG="$LOG" LINODE_TOKEN=test-token \
-	"$ROOT/scripts/staging-update-ssh-whitelist.sh" \
+	"$ROOT/scripts/cloud-update-ssh-whitelist.sh" \
 		--workspace "$WORKSPACE" \
 		--cidr 198.51.100.9/32 >"$TMP/missing-env-root.out" 2>&1; then
 	echo "expected missing --env-root to fail" >&2
@@ -87,7 +87,7 @@ grep -F -- '--env-root is required' "$TMP/missing-env-root.out" >/dev/null
 : > "$LOG"
 
 PATH="$FAKE_BIN:$PATH" CURL_LOG="$LOG" LINODE_TOKEN=test-token \
-	"$ROOT/scripts/staging-update-ssh-whitelist.sh" \
+	"$ROOT/scripts/cloud-update-ssh-whitelist.sh" \
 		--workspace "$WORKSPACE" \
 		--env-root "$ENV_ROOT" \
 		--cidr 198.51.100.9/32 >/dev/null

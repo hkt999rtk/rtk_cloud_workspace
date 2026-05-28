@@ -80,6 +80,10 @@ cloud_env_keys_dir() {
 	printf '%s/keys\n' "$1"
 }
 
+cloud_env_certificates_dir() {
+	printf '%s/certificates\n' "$1"
+}
+
 cloud_env_test_devices_dir() {
 	printf '%s/devices/test_device\n' "$1"
 }

@@ -50,9 +50,9 @@ SH
 chmod +x "$TMP/mock-staging-deploy.sh"
 
 OUT="$TMP/out.txt"
-STAGING_DEPLOY_SCRIPT="$TMP/mock-staging-deploy.sh" \
+CLOUD_DEPLOY_SCRIPT="$TMP/mock-staging-deploy.sh" \
 DEPLOY_LOG="$DEPLOY_LOG" \
-PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/staging-provision.sh" \
+PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/cloud-provision.sh" \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--ssh-key "$SSH_KEY" \
@@ -61,7 +61,7 @@ PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/staging-provision.sh" \
 	--admin-release admin-test-release \
 	--deploy >"$OUT" 2>&1
 
-grep -F '[staging-provision] deploy' "$OUT" >/dev/null
+grep -F '[cloud-provision] deploy' "$OUT" >/dev/null
 grep -F 'deploy releases: video=staging-20260527T075403Z-c536e34 account=account-test-release admin=admin-test-release' "$OUT" >/dev/null
 grep -F -- '--workspace' "$DEPLOY_LOG" >/dev/null
 grep -F -- "$WORKSPACE" "$DEPLOY_LOG" >/dev/null

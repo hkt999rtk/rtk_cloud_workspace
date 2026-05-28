@@ -43,7 +43,7 @@ SH
 chmod +x "$TMP/mock-staging-deploy-fails.sh"
 
 OUT="$TMP/out.txt"
-if STAGING_DEPLOY_SCRIPT="$TMP/mock-staging-deploy-fails.sh" "$ROOT/scripts/staging-provision.sh" \
+if CLOUD_DEPLOY_SCRIPT="$TMP/mock-staging-deploy-fails.sh" "$ROOT/scripts/cloud-provision.sh" \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--ssh-key "$SSH_KEY" \
@@ -51,13 +51,13 @@ if STAGING_DEPLOY_SCRIPT="$TMP/mock-staging-deploy-fails.sh" "$ROOT/scripts/stag
 	--account-release account-test \
 	--admin-release admin-test \
 	--deploy >"$OUT" 2>&1; then
-	echo "staging-provision unexpectedly passed" >&2
+	echo "cloud-provision unexpectedly passed" >&2
 	exit 1
 fi
 
 grep -F 'mock deploy failed' "$OUT" >/dev/null
 grep -F 'deploy failed; artifacts and e2e were not run' "$OUT" >/dev/null
-if grep -F '[staging-provision] deploy complete' "$OUT" >/dev/null; then
+if grep -F '[cloud-provision] deploy complete' "$OUT" >/dev/null; then
 	echo "deploy complete was logged after failure" >&2
 	exit 1
 fi

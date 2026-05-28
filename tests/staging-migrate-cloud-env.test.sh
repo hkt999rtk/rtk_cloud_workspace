@@ -33,13 +33,13 @@ printf 'load-device-0001\n' > "$WORKSPACE/keys/test_device/manifests/device_ids.
 printf 'artifact\n' > "$WORKSPACE/.secrets/staging/linode/video-cloud/artifacts/run-1/report.md"
 
 OUT="$TMP/out.txt"
-if "$ROOT/scripts/staging_migrate_cloud_env.sh" --workspace "$WORKSPACE" > "$TMP/missing-env-root.out" 2>&1; then
+if "$ROOT/scripts/cloud-migrate-env.sh" --workspace "$WORKSPACE" > "$TMP/missing-env-root.out" 2>&1; then
 	echo "expected missing --env-root to fail" >&2
 	exit 1
 fi
 grep -F -- '--env-root is required' "$TMP/missing-env-root.out" >/dev/null
 
-"$ROOT/scripts/staging_migrate_cloud_env.sh" --workspace "$WORKSPACE" --env-root "$WORKSPACE/cloud_env/staging" > "$OUT"
+"$ROOT/scripts/cloud-migrate-env.sh" --workspace "$WORKSPACE" --env-root "$WORKSPACE/cloud_env/staging" > "$OUT"
 
 test -f "$ENV_ROOT/env/operator.env"
 test -f "$ENV_ROOT/topology/video-cloud-staging.yaml"

@@ -42,7 +42,7 @@ cat > "$ENV_ROOT/env/operator.env" <<'EOF_ENV'
 LINODE_TOKEN=test-token
 EOF_ENV
 
-if PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/staging-provision.sh" \
+if PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/cloud-provision.sh" \
 	--workspace "$WORKSPACE" >"$TMP/missing-env-root.out" 2>&1; then
 	echo "expected missing --env-root to fail" >&2
 	exit 1
@@ -50,7 +50,7 @@ fi
 grep -F -- '--env-root is required' "$TMP/missing-env-root.out" >/dev/null
 
 OUT="$TMP/out.txt"
-PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/staging-provision.sh" \
+PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/cloud-provision.sh" \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" >"$OUT"
 

@@ -6,7 +6,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 OUT="$TMP/devices"
-"$ROOT/scripts/staging_generate_load_devices.sh" \
+"$ROOT/scripts/cloud-generate-load-devices.sh" \
 	--env-root "$TMP/cloud_env/staging" \
 	--out-dir "$OUT" \
 	--count 7 \
@@ -31,13 +31,13 @@ grep -F 'test-load-0001,test-load-0002,test-load-0003,test-load-0004,test-load-0
 
 openssl x509 -in "$OUT/devices/camera/test-load-0001/device.cert.pem" -noout -subject | grep -F 'test-load-0001' >/dev/null
 
-if "$ROOT/scripts/staging_generate_load_devices.sh" --out-dir "$TMP/missing-env-root" >/tmp/missing-env-root.out 2>/tmp/missing-env-root.err; then
+if "$ROOT/scripts/cloud-generate-load-devices.sh" --out-dir "$TMP/missing-env-root" >/tmp/missing-env-root.out 2>/tmp/missing-env-root.err; then
 	printf 'expected missing --env-root to fail\n' >&2
 	exit 1
 fi
 grep -F -- '--env-root is required' /tmp/missing-env-root.err >/dev/null
 
-if "$ROOT/scripts/staging_generate_load_devices.sh" --env-root "$TMP/cloud_env/staging" --out-dir "$TMP/bad" --mix camera=1,sensor=1 >/tmp/bad.out 2>/tmp/bad.err; then
+if "$ROOT/scripts/cloud-generate-load-devices.sh" --env-root "$TMP/cloud_env/staging" --out-dir "$TMP/bad" --mix camera=1,sensor=1 >/tmp/bad.out 2>/tmp/bad.err; then
 	printf 'expected unsupported mix type to fail\n' >&2
 	exit 1
 fi
