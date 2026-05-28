@@ -4,7 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE="$(cd "$SCRIPT_DIR/.." && pwd)"
 START_EPOCH="$(date +%s)"
-SECRETS_ROOT=""
+ENV_ROOT=""
+DEPRECATED_ENV_ROOT=""
 BRANDNAME=""
 JSON_OUTPUT=0
 LIMIT=200
@@ -28,15 +29,16 @@ Usage:
 
 Options:
   --workspace PATH       Default: script parent workspace.
-  --secrets-root PATH    Default: <workspace>/.secrets/staging/linode.
+  --env-root PATH        Required environment directory, for example cloud_env/staging.
+  --secrets-root PATH    Deprecated alias for --env-root.
   --brandname NAME       Show only a matching brand cloud name or metadata.brandname.
   --limit N              API list limit. Default: 200.
   --json                 Print the full API response JSON.
   -h, --help             Show this help.
 
-Lists Account Manager brand clouds on the Linode staging deployment. The script
-logs in with the staging platform-admin credentials and only performs read-only
-Account Manager admin API calls.
+Lists Account Manager brand clouds on the selected Linode staging environment.
+The script logs in with that environment's platform-admin credentials and only
+performs read-only Account Manager admin API calls.
 USAGE
 }
 
@@ -49,7 +51,8 @@ require_value() {
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--workspace) require_value "$1" "${2:-}"; WORKSPACE="$2"; shift 2 ;;
-	--secrets-root) require_value "$1" "${2:-}"; SECRETS_ROOT="$2"; shift 2 ;;
+	--env-root) require_value "$1" "${2:-}"; ENV_ROOT="$2"; shift 2 ;;
+	--secrets-root) require_value "$1" "${2:-}"; DEPRECATED_ENV_ROOT="$2"; ENV_ROOT="$2"; shift 2 ;;
 	--brandname) require_value "$1" "${2:-}"; BRANDNAME="$2"; shift 2 ;;
 	--limit) require_value "$1" "${2:-}"; LIMIT="$2"; shift 2 ;;
 	--json) JSON_OUTPUT=1; shift ;;
@@ -152,18 +155,22 @@ print_human_summary() {
 
 [[ "$LIMIT" =~ ^[0-9]+$ ]] || die "--limit must be a positive integer"
 [[ "$LIMIT" -gt 0 ]] || die "--limit must be a positive integer"
+[[ -n "$ENV_ROOT" ]] || die "--env-root is required; pass the environment directory explicitly, for example --env-root cloud_env/staging"
 
 log "start staging brand cloud list"
 need_cmd curl
 need_cmd jq
 
 WORKSPACE="$(cd "$WORKSPACE" && pwd)"
-SECRETS_ROOT="${SECRETS_ROOT:-$WORKSPACE/.secrets/staging/linode}"
+source "$SCRIPT_DIR/lib/cloud-env.sh"
+ENV_ROOT="$(cloud_env_init "$WORKSPACE" "$ENV_ROOT")"
+DEPRECATED_ENV_ROOT="$ENV_ROOT"
 log "workspace=$WORKSPACE"
+log "env_root=$ENV_ROOT"
 AM_REPO="$WORKSPACE/repos/rtk_account_manager"
-AM_ENV="$AM_REPO/linode_deploy/secrets/account-manager-public-staging.env"
-AM_STATE="$AM_REPO/linode_deploy/state/rtk-account-manager-staging.env"
-AM_PLATFORM_ADMIN_ENV="$AM_REPO/linode_deploy/secrets/account-manager-platform-admin.env"
+AM_ENV="$(cloud_env_account_manager_env "$ENV_ROOT")"
+AM_STATE="$(cloud_env_account_manager_state "$ENV_ROOT")"
+AM_PLATFORM_ADMIN_ENV="$(cloud_env_account_manager_platform_admin_env "$ENV_ROOT")"
 
 log "loading Account Manager staging env/state"
 load_env_file "$AM_ENV"

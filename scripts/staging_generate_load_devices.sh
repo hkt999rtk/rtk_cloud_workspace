@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE="$(cd "$SCRIPT_DIR/.." && pwd)"
 START_EPOCH="$(date +%s)"
+ENV_ROOT=""
 COUNT=100
 MIX="camera=40,light=25,air_conditioner=20,smart_meter=15"
 PREFIX="load-device"
@@ -47,8 +48,9 @@ Options:
   --count N              Number of devices to generate. Default: 100.
   --mix SPEC             Device type weights. Default: camera=40,light=25,air_conditioner=20,smart_meter=15.
   --prefix PREFIX        Device id prefix. Default: load-device.
-  --out-dir PATH         Output directory. Default: keys/test_device.
+  --out-dir PATH         Output directory. Default: <env-root>/devices/test_device.
   --workspace PATH       Default: script parent workspace.
+  --env-root PATH        Required environment directory, for example cloud_env/staging.
   --ca-valid-days N      Dev CA certificate validity. Default: 365.
   --device-valid-days N  Device certificate validity. Default: 180.
   --force                Remove existing output directory before generation.
@@ -58,7 +60,7 @@ Supported device types match the currently implemented load-test simulator:
 camera, light, air_conditioner, smart_meter.
 
 The generated keys and certificates are simulation-only production-flow
-materials. They are written under .secrets by default and must not be committed.
+materials. They are written under cloud_env by default and must not be committed.
 USAGE
 }
 
@@ -75,6 +77,7 @@ while [[ $# -gt 0 ]]; do
 	--prefix) require_value "$1" "${2:-}"; PREFIX="$2"; shift 2 ;;
 	--out-dir) require_value "$1" "${2:-}"; OUT_DIR="$2"; shift 2 ;;
 	--workspace) require_value "$1" "${2:-}"; WORKSPACE="$2"; shift 2 ;;
+	--env-root) require_value "$1" "${2:-}"; ENV_ROOT="$2"; shift 2 ;;
 	--ca-valid-days) require_value "$1" "${2:-}"; CA_VALID_DAYS="$2"; shift 2 ;;
 	--device-valid-days) require_value "$1" "${2:-}"; DEVICE_VALID_DAYS="$2"; shift 2 ;;
 	--force) FORCE=1; shift ;;
@@ -514,14 +517,17 @@ require_positive_int "--count" "$COUNT"
 require_positive_int "--ca-valid-days" "$CA_VALID_DAYS"
 require_positive_int "--device-valid-days" "$DEVICE_VALID_DAYS"
 [[ "$PREFIX" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || die "--prefix contains unsupported characters"
+[[ -n "$ENV_ROOT" ]] || die "--env-root is required; pass the environment directory explicitly, for example --env-root cloud_env/staging"
 
 need_cmd openssl
 need_cmd jq
 need_cmd paste
 
 WORKSPACE="$(cd "$WORKSPACE" && pwd)"
+source "$SCRIPT_DIR/lib/cloud-env.sh"
+ENV_ROOT="$(cloud_env_init "$WORKSPACE" "$ENV_ROOT")"
 if [[ -z "$OUT_DIR" ]]; then
-	OUT_DIR="$WORKSPACE/keys/test_device"
+	OUT_DIR="$(cloud_env_test_devices_dir "$ENV_ROOT")"
 fi
 if [[ -e "$OUT_DIR" ]]; then
 	[[ "$FORCE" == "1" ]] || die "$OUT_DIR already exists; use --force to replace it"

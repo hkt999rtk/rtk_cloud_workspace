@@ -33,7 +33,7 @@ func TestRedactSensitiveMaterial(t *testing.T) {
 	input := strings.Join([]string{
 		"Authorization: Bearer abc.def.ghi",
 		"claim_token=claim_secret_value",
-		"PASSWORD=hunter2",
+		"PASSWORD=fake",
 		"-----BEGIN PRIVATE KEY-----",
 		"raw line",
 		"-----END PRIVATE KEY-----",
@@ -43,7 +43,7 @@ func TestRedactSensitiveMaterial(t *testing.T) {
 	}, "\n")
 
 	got := Redact(input)
-	for _, secret := range []string{"abc.def.ghi", "claim_secret_value", "hunter2", "MIIBsecretcert"} {
+	for _, secret := range []string{"abc.def.ghi", "claim_secret_value", "fake", "MIIBsecretcert"} {
 		if strings.Contains(got, secret) {
 			t.Fatalf("redacted output still contains %q: %s", secret, got)
 		}

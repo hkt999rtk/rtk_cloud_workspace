@@ -6,22 +6,23 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
+ENV_ROOT="$WORKSPACE/cloud_env/staging/linode"
 FAKE_BIN="$TMP/bin"
 mkdir -p \
 	"$FAKE_BIN" \
-	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/secrets" \
-	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/state"
+	"$ENV_ROOT/services/account-manager" \
+	"$ENV_ROOT/state"
 
-cat > "$WORKSPACE/repos/rtk_account_manager/linode_deploy/secrets/account-manager-public-staging.env" <<'EOF_ENV'
+cat > "$ENV_ROOT/services/account-manager/account-manager-public-staging.env" <<'EOF_ENV'
 ACCOUNT_MANAGER_LINODE_DOMAIN=account-manager.video-cloud-staging.example.com
 EOF_ENV
 
-cat > "$WORKSPACE/repos/rtk_account_manager/linode_deploy/state/rtk-account-manager-staging.env" <<'EOF_STATE'
+cat > "$ENV_ROOT/state/account-manager-staging.env" <<'EOF_STATE'
 ACCOUNT_MANAGER_LINODE_HOST=203.0.113.10
 ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4=203.0.113.10
 EOF_STATE
 
-cat > "$WORKSPACE/repos/rtk_account_manager/linode_deploy/secrets/account-manager-platform-admin.env" <<'EOF_ADMIN'
+cat > "$ENV_ROOT/services/account-manager/account-manager-platform-admin.env" <<'EOF_ADMIN'
 ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL=root@example.com
 ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD=correct-horse-battery-staple
 EOF_ADMIN
@@ -64,9 +65,18 @@ fi
 SH
 chmod +x "$FAKE_BIN/curl"
 
+ERR="$TMP/missing-env-root.err"
+if PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/staging_list_brandname_clouds.sh" \
+	--workspace "$WORKSPACE" >"$TMP/missing-env-root.out" 2>"$ERR"; then
+	echo "expected missing --env-root to fail" >&2
+	exit 1
+fi
+grep -F -- '--env-root is required' "$ERR" >/dev/null
+
 OUT="$TMP/out.txt"
 PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/staging_list_brandname_clouds.sh" \
-	--workspace "$WORKSPACE" >"$OUT"
+	--workspace "$WORKSPACE" \
+	--env-root "$ENV_ROOT" >"$OUT"
 
 grep -F 'brand_clouds=2 api_total=2' "$OUT" >/dev/null
 grep -F 'org-rtk' "$OUT" >/dev/null
@@ -76,6 +86,7 @@ grep -F '"region":"staging"' "$OUT" >/dev/null
 JSON_OUT="$TMP/out.json"
 PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/staging_list_brandname_clouds.sh" \
 	--workspace "$WORKSPACE" \
+	--env-root "$ENV_ROOT" \
 	--brandname RTK \
 	--json >"$JSON_OUT"
 

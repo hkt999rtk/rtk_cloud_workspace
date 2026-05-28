@@ -6,24 +6,25 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
+ENV_ROOT="$WORKSPACE/cloud_env/staging/linode"
 FAKE_BIN="$TMP/bin"
 mkdir -p \
 	"$FAKE_BIN" \
-	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/secrets" \
-	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/state"
+	"$ENV_ROOT/services/account-manager" \
+	"$ENV_ROOT/state"
 
-cat > "$WORKSPACE/repos/rtk_account_manager/linode_deploy/secrets/account-manager-public-staging.env" <<'EOF_ENV'
+cat > "$ENV_ROOT/services/account-manager/account-manager-public-staging.env" <<'EOF_ENV'
 ACCOUNT_MANAGER_LINODE_DOMAIN=account-manager.video-cloud-staging.example.com
 ACCOUNT_MANAGER_LINODE_SSH_KEY=/tmp/fake-key
 ACCOUNT_MANAGER_LINODE_SSH_USER=root
 EOF_ENV
 
-cat > "$WORKSPACE/repos/rtk_account_manager/linode_deploy/state/rtk-account-manager-staging.env" <<'EOF_STATE'
+cat > "$ENV_ROOT/state/account-manager-staging.env" <<'EOF_STATE'
 ACCOUNT_MANAGER_LINODE_HOST=203.0.113.10
 ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4=203.0.113.10
 EOF_STATE
 
-cat > "$WORKSPACE/repos/rtk_account_manager/linode_deploy/secrets/account-manager-platform-admin.env" <<'EOF_ADMIN'
+cat > "$ENV_ROOT/services/account-manager/account-manager-platform-admin.env" <<'EOF_ADMIN'
 ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL=root@example.com
 ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD=correct-horse-battery-staple
 EOF_ADMIN
@@ -92,6 +93,7 @@ chmod +x "$FAKE_BIN/curl"
 OUT="$TMP/out.json"
 PATH="$FAKE_BIN:$PATH" LIST_COUNT="$LIST_COUNT" "$ROOT/scripts/staging_create_brandname_cloud.sh" \
 	--workspace "$WORKSPACE" \
+	--env-root "$ENV_ROOT" \
 	--brandname RTK >"$OUT"
 
 jq -e '.action == "created"' "$OUT" >/dev/null

@@ -3,9 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE="$(cd "$SCRIPT_DIR/.." && pwd)"
+ENV_ROOT=""
 START_EPOCH="$(date +%s)"
 BRANDNAME=""
-SECRETS_ROOT=""
+DEPRECATED_ENV_ROOT=""
 SKIP_BOOTSTRAP=0
 
 die() {
@@ -27,7 +28,8 @@ Usage:
 
 Options:
   --workspace PATH       Default: script parent workspace.
-  --secrets-root PATH    Default: <workspace>/.secrets/staging/linode.
+  --env-root PATH        Required environment directory, for example cloud_env/staging.
+  --secrets-root PATH    Deprecated alias for --env-root.
   --skip-bootstrap       Do not update/restart the remote platform-admin bootstrap env.
   -h, --help             Show this help.
 
@@ -41,7 +43,8 @@ while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--brandname) BRANDNAME="$2"; shift 2 ;;
 	--workspace) WORKSPACE="$2"; shift 2 ;;
-	--secrets-root) SECRETS_ROOT="$2"; shift 2 ;;
+	--env-root) ENV_ROOT="$2"; shift 2 ;;
+	--secrets-root) DEPRECATED_ENV_ROOT="$2"; ENV_ROOT="$2"; shift 2 ;;
 	--skip-bootstrap) SKIP_BOOTSTRAP=1; shift ;;
 	-h|--help) usage; exit 0 ;;
 	*) die "unknown argument: $1" ;;
@@ -266,6 +269,7 @@ verify_created_with_api() {
 }
 
 validate_brandname
+[[ -n "$ENV_ROOT" ]] || die "--env-root is required; pass the environment directory explicitly, for example --env-root cloud_env/staging"
 log "start staging brand cloud create: brandname=$BRANDNAME"
 need_cmd curl
 need_cmd jq
@@ -273,12 +277,14 @@ need_cmd ssh
 need_cmd base64
 
 WORKSPACE="$(cd "$WORKSPACE" && pwd)"
-SECRETS_ROOT="${SECRETS_ROOT:-$WORKSPACE/.secrets/staging/linode}"
+source "$SCRIPT_DIR/lib/cloud-env.sh"
+ENV_ROOT="$(cloud_env_init "$WORKSPACE" "$ENV_ROOT")"
+DEPRECATED_ENV_ROOT="$ENV_ROOT"
 log "workspace=$WORKSPACE"
 AM_REPO="$WORKSPACE/repos/rtk_account_manager"
-AM_ENV="$AM_REPO/linode_deploy/secrets/account-manager-public-staging.env"
-AM_STATE="$AM_REPO/linode_deploy/state/rtk-account-manager-staging.env"
-AM_PLATFORM_ADMIN_ENV="$AM_REPO/linode_deploy/secrets/account-manager-platform-admin.env"
+AM_ENV="$(cloud_env_account_manager_env "$ENV_ROOT")"
+AM_STATE="$(cloud_env_account_manager_state "$ENV_ROOT")"
+AM_PLATFORM_ADMIN_ENV="$(cloud_env_account_manager_platform_admin_env "$ENV_ROOT")"
 
 log "loading Account Manager staging env/state"
 load_env_file "$AM_ENV"

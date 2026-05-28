@@ -6,41 +6,45 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
-SECRETS="$WORKSPACE/.secrets/staging/linode"
+ENV_ROOT="$WORKSPACE/cloud_env/staging/linode"
+SECRETS="$ENV_ROOT"
 FAKE_BIN="$TMP/bin"
+VIDEO_DEPLOY_ARGS="$TMP/video-deploy.args"
 mkdir -p \
+	"$ENV_ROOT/services/video-cloud" \
 	"$FAKE_BIN" \
-	"$SECRETS/video-cloud/config" \
-	"$SECRETS/video-cloud/env" \
-	"$SECRETS/video-cloud/artifacts" \
+	"$ENV_ROOT/topology" \
+	"$ENV_ROOT/env" \
+	"$ENV_ROOT/artifacts" \
 	"$WORKSPACE/repos/rtk_video_cloud/linode_deploy/scripts" \
-	"$WORKSPACE/repos/rtk_video_cloud/linode_deploy/state" \
+	"$ENV_ROOT/state" \
 	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/scripts" \
-	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/secrets" \
-	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/state" \
+	"$ENV_ROOT/services/account-manager" \
+	"$ENV_ROOT/state" \
+	"$ENV_ROOT/services/cloud-admin" \
 	"$WORKSPACE/repos/rtk_cloud_admin/deploy/linode"
 
-cat > "$SECRETS/video-cloud/env/operator.env" <<'EOF_OPERATOR'
+cat > "$ENV_ROOT/env/operator.env" <<'EOF_OPERATOR'
 LINODE_TOKEN=test-token
 EOF_OPERATOR
-touch "$SECRETS/video-cloud/config/video-cloud-staging.yaml"
-touch "$SECRETS/video-cloud/env/video-cloud-staging.env"
+touch "$ENV_ROOT/topology/video-cloud-staging.yaml"
+touch "$ENV_ROOT/services/video-cloud/video-cloud-staging.env"
 
-cat > "$WORKSPACE/repos/rtk_video_cloud/linode_deploy/state/video-cloud-staging.state.json" <<'EOF_STATE'
+cat > "$ENV_ROOT/state/video-cloud-staging.state.json" <<'EOF_STATE'
 {"instances":{"edge":{"public_ipv4":"203.0.113.10"}}}
 EOF_STATE
 
-cat > "$WORKSPACE/repos/rtk_account_manager/linode_deploy/secrets/account-manager-public-staging.env" <<'EOF_AM_ENV'
+cat > "$ENV_ROOT/services/account-manager/account-manager-public-staging.env" <<'EOF_AM_ENV'
 ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4=203.0.113.20
 EOF_AM_ENV
-cat > "$WORKSPACE/repos/rtk_account_manager/linode_deploy/state/rtk-account-manager-staging.env" <<'EOF_AM_STATE'
+cat > "$ENV_ROOT/state/account-manager-staging.env" <<'EOF_AM_STATE'
 ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4=203.0.113.20
 EOF_AM_STATE
 
-cat > "$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/admin-staging.env" <<'EOF_AD_ENV'
+cat > "$ENV_ROOT/services/cloud-admin/admin-staging.env" <<'EOF_AD_ENV'
 ADMIN_LINODE_PUBLIC_IPV4=203.0.113.30
 EOF_AD_ENV
-cat > "$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/rtk-cloud-admin-staging.state" <<'EOF_AD_STATE'
+cat > "$ENV_ROOT/state/cloud-admin-staging.env" <<'EOF_AD_STATE'
 ADMIN_LINODE_PUBLIC_IPV4=203.0.113.30
 EOF_AD_STATE
 
@@ -55,6 +59,7 @@ SH
 cat > "$WORKSPACE/repos/rtk_video_cloud/linode_deploy/scripts/deploy-staging.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+printf '%s\n' "$*" > "$VIDEO_DEPLOY_ARGS"
 echo "video cloud failed" >&2
 exit 42
 SH
@@ -114,9 +119,19 @@ chmod +x "$FAKE_BIN/curl" "$FAKE_BIN/dig"
 
 OUT="$TMP/out.txt"
 ERR="$TMP/err.txt"
-if PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/staging-deploy.sh" \
+if PATH="$FAKE_BIN:$PATH" VIDEO_DEPLOY_ARGS="$VIDEO_DEPLOY_ARGS" "$ROOT/scripts/staging-deploy.sh" \
 	--workspace "$WORKSPACE" \
-	--secrets-root "$SECRETS" \
+	--video-release video-test \
+	--account-release account-test \
+	--admin-release admin-test >"$TMP/missing-env-root.out" 2>&1; then
+	echo "expected missing --env-root to fail" >&2
+	exit 1
+fi
+grep -F -- '--env-root is required' "$TMP/missing-env-root.out" >/dev/null
+
+if PATH="$FAKE_BIN:$PATH" VIDEO_DEPLOY_ARGS="$VIDEO_DEPLOY_ARGS" "$ROOT/scripts/staging-deploy.sh" \
+	--workspace "$WORKSPACE" \
+	--env-root "$ENV_ROOT" \
 	--video-release video-test \
 	--account-release account-test \
 	--admin-release admin-test >"$OUT" 2>"$ERR"; then
@@ -126,9 +141,14 @@ fi
 
 REPORT="$(grep -F '[staging-deploy] readiness report:' "$ERR" | tail -n 1 | sed 's/^.*readiness report: //')"
 if [[ -z "$REPORT" ]]; then
-	REPORT="$(find "$SECRETS/video-cloud/artifacts" -name readiness-report.md | head -n 1)"
+	REPORT="$(find "$ENV_ROOT/artifacts" -name readiness-report.md | head -n 1)"
 fi
 grep -F 'status: failed' "$REPORT" >/dev/null
 grep -F 'FAIL `video-cloud-deploy-verify`' "$REPORT" >/dev/null
 grep -F 'SKIP `cloud-admin-deploy` blocked_by=`video-cloud-deploy-verify`' "$REPORT" >/dev/null
 grep -F 'SKIP `cloud-admin-verify` blocked_by=`video-cloud-deploy-verify`' "$REPORT" >/dev/null
+test -f "$VIDEO_DEPLOY_ARGS"
+if grep -F -- '--dns-ttl' "$VIDEO_DEPLOY_ARGS" >/dev/null; then
+	echo "root staging-deploy passed unsupported --dns-ttl to Video Cloud deploy" >&2
+	exit 1
+fi

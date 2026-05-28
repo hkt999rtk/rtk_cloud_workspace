@@ -6,7 +6,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE="$(cd "$SCRIPT_DIR/.." && pwd)"
-SECRETS_ROOT=""
+ENV_ROOT=""
+DEPRECATED_ENV_ROOT=""
 OPERATOR_ENV=""
 SSH_KEY="$HOME/.ssh/id_ed25519_rtkcloud"
 DNS_ROOT_DOMAIN="realtekconnect.com"
@@ -14,6 +15,8 @@ GODADDY_ENVIRONMENT="prod"
 DNS_WAIT_TTL="${GODADDY_WAIT_TTL:-${GODADDY_RECORD_WAIT_TTL:-600}}"
 DNS_FINAL_TTL="${GODADDY_RECORD_TTL:-600}"
 GODADDY_MIN_TTL=600
+DNS_WAIT_MAX_SECONDS="${DNS_WAIT_MAX_SECONDS:-700}"
+DNS_WAIT_INTERVAL_SECONDS="${DNS_WAIT_INTERVAL_SECONDS:-10}"
 ARTIFACT_BASE=""
 CONFIRM=""
 VERBOSE=0
@@ -49,7 +52,7 @@ usage() {
 	cat <<'USAGE'
 Usage:
   scripts/staging-provision.sh [modes] [options]
-  scripts/staging-provision.sh                  # default: --plan
+  scripts/staging-provision.sh --env-root cloud_env/staging  # default: --plan
 
 Modes:
   default                            Same as --plan; read-only.
@@ -66,15 +69,17 @@ Modes:
 
 Options:
   --workspace PATH                    Default: script parent workspace.
-  --operator-env PATH                 Default: <secrets-root>/video-cloud/env/operator.env.
-  --secrets-root PATH                 Default: <workspace>/.secrets/staging/linode.
+  --operator-env PATH                 Default: <env-root>/env/operator.env.
+  --env-root PATH                     Required environment directory, for example cloud_env/staging.
+  --secrets-root PATH                 Deprecated alias for --env-root.
   --ssh-key PATH                      Default: ~/.ssh/id_ed25519_rtkcloud.
   --dns-root-domain NAME              Default: realtekconnect.com.
   --godaddy-env ENV                   Default: prod.
   --dns-wait-ttl SECONDS              TTL used while waiting for DNS convergence. Default: GODADDY_WAIT_TTL, GODADDY_RECORD_WAIT_TTL, or 600.
   --dns-final-ttl SECONDS             TTL restored after DNS convergence. Default: GODADDY_RECORD_TTL or 600.
   --dns-ttl SECONDS                   Backward-compatible alias for --dns-final-ttl.
-  --artifact-dir PATH                 Default: <secrets-root>/video-cloud/artifacts.
+  --dns-wait-max-seconds SECONDS      Max DNS convergence wait per hostname. Default: 700.
+  --artifact-dir PATH                 Default: <env-root>/artifacts.
   --video-release VERSION             Optional; otherwise select from Object Storage releases.
   --account-release VERSION           Optional; otherwise use rtk_account_manager git short SHA.
   --admin-release VERSION             Optional; otherwise select from Object Storage releases.
@@ -101,13 +106,15 @@ while [[ $# -gt 0 ]]; do
 	--reset-and-all)
 		DO_PREFLIGHT=1; DO_PLAN=1; DO_RESET=1; DO_APPLY=1; DO_DNS=1; DO_DEPLOY=1; DO_ARTIFACTS=1; DO_E2E=1; shift ;;
 	--workspace) WORKSPACE="$2"; shift 2 ;;
+	--env-root) ENV_ROOT="$2"; shift 2 ;;
 	--operator-env) OPERATOR_ENV="$2"; shift 2 ;;
-	--secrets-root) SECRETS_ROOT="$2"; shift 2 ;;
+	--secrets-root) DEPRECATED_ENV_ROOT="$2"; ENV_ROOT="$2"; shift 2 ;;
 	--ssh-key) SSH_KEY="$2"; shift 2 ;;
 	--dns-root-domain) DNS_ROOT_DOMAIN="$2"; shift 2 ;;
 	--godaddy-env) GODADDY_ENVIRONMENT="$2"; shift 2 ;;
 	--dns-wait-ttl) DNS_WAIT_TTL="$2"; shift 2 ;;
 	--dns-final-ttl|--dns-ttl) DNS_FINAL_TTL="$2"; shift 2 ;;
+	--dns-wait-max-seconds) DNS_WAIT_MAX_SECONDS="$2"; shift 2 ;;
 	--artifact-dir) ARTIFACT_BASE="$2"; shift 2 ;;
 	--video-release) VIDEO_RELEASE="$2"; shift 2 ;;
 	--account-release) ACCOUNT_RELEASE="$2"; shift 2 ;;
@@ -122,28 +129,33 @@ done
 if [[ "$DO_PREFLIGHT$DO_PLAN$DO_RESET$DO_APPLY$DO_DNS$DO_DEPLOY$DO_ARTIFACTS$DO_E2E" == "00000000" ]]; then
 	DO_PLAN=1
 fi
+[[ -n "$ENV_ROOT" ]] || die "--env-root is required; pass the environment directory explicitly, for example --env-root cloud_env/staging"
 
 WORKSPACE="$(cd "$WORKSPACE" && pwd)"
+source "$SCRIPT_DIR/lib/cloud-env.sh"
 [[ "$DNS_WAIT_TTL" =~ ^[0-9]+$ && "$DNS_WAIT_TTL" -gt 0 ]] || die "--dns-wait-ttl must be a positive integer"
 [[ "$DNS_FINAL_TTL" =~ ^[0-9]+$ && "$DNS_FINAL_TTL" -gt 0 ]] || die "--dns-final-ttl must be a positive integer"
+[[ "$DNS_WAIT_MAX_SECONDS" =~ ^[0-9]+$ && "$DNS_WAIT_MAX_SECONDS" -gt 0 ]] || die "--dns-wait-max-seconds must be a positive integer"
+[[ "$DNS_WAIT_INTERVAL_SECONDS" =~ ^[0-9]+$ && "$DNS_WAIT_INTERVAL_SECONDS" -gt 0 ]] || die "DNS_WAIT_INTERVAL_SECONDS must be a positive integer"
 [[ "$DNS_WAIT_TTL" -ge "$GODADDY_MIN_TTL" ]] || die "--dns-wait-ttl must be >= $GODADDY_MIN_TTL for GoDaddy DNS records"
 [[ "$DNS_FINAL_TTL" -ge "$GODADDY_MIN_TTL" ]] || die "--dns-final-ttl must be >= $GODADDY_MIN_TTL for GoDaddy DNS records"
-SECRETS_ROOT="${SECRETS_ROOT:-$WORKSPACE/.secrets/staging/linode}"
-OPERATOR_ENV="${OPERATOR_ENV:-$SECRETS_ROOT/video-cloud/env/operator.env}"
-ARTIFACT_BASE="${ARTIFACT_BASE:-$SECRETS_ROOT/video-cloud/artifacts}"
+ENV_ROOT="$(cloud_env_init "$WORKSPACE" "$ENV_ROOT")"
+DEPRECATED_ENV_ROOT="$ENV_ROOT"
+OPERATOR_ENV="${OPERATOR_ENV:-$(cloud_env_operator_env "$ENV_ROOT")}"
+ARTIFACT_BASE="${ARTIFACT_BASE:-$(cloud_env_artifacts_dir "$ENV_ROOT")}"
 
 VC_REPO="$WORKSPACE/repos/rtk_video_cloud"
 AM_REPO="$WORKSPACE/repos/rtk_account_manager"
 ADMIN_REPO="$WORKSPACE/repos/rtk_cloud_admin"
 
-VC_CONFIG="$SECRETS_ROOT/video-cloud/config/video-cloud-staging.yaml"
-VC_STATE="$VC_REPO/linode_deploy/state/video-cloud-staging.state.json"
-VC_SECRET_STATE="$SECRETS_ROOT/video-cloud/state/video-cloud-staging.state.json"
-VC_SECRETS_FILE="$SECRETS_ROOT/video-cloud/env/video-cloud-staging.env"
-AM_ENV="$AM_REPO/linode_deploy/secrets/account-manager-public-staging.env"
-AM_STATE="$AM_REPO/linode_deploy/state/rtk-account-manager-staging.env"
-ADMIN_ENV="$ADMIN_REPO/deploy/linode/admin-staging.env"
-ADMIN_STATE="$ADMIN_REPO/deploy/linode/rtk-cloud-admin-staging.state"
+VC_CONFIG="$(cloud_env_video_config "$ENV_ROOT")"
+VC_STATE="$(cloud_env_video_state "$ENV_ROOT")"
+VC_SECRET_STATE="$VC_STATE"
+VC_SECRETS_FILE="$(cloud_env_video_env "$ENV_ROOT")"
+AM_ENV="$(cloud_env_account_manager_env "$ENV_ROOT")"
+AM_STATE="$(cloud_env_account_manager_state "$ENV_ROOT")"
+ADMIN_ENV="$(cloud_env_admin_env "$ENV_ROOT")"
+ADMIN_STATE="$(cloud_env_admin_state "$ENV_ROOT")"
 STAGING_DEPLOY_SCRIPT="${STAGING_DEPLOY_SCRIPT:-$SCRIPT_DIR/staging-deploy.sh}"
 
 VC_GATEWAY_DOMAIN="video-cloud-staging.$DNS_ROOT_DOMAIN"
@@ -185,6 +197,20 @@ linode_api() {
 			-H "Authorization: Bearer $LINODE_TOKEN" \
 			-H 'Content-Type: application/json'
 	fi
+}
+
+linode_delete_ignore_missing() {
+	local path="$1"
+	local err
+	if err="$(linode_api DELETE "$path" 2>&1 >/dev/null)"; then
+		return 0
+	fi
+	if [[ "$err" == *"404"* || "$err" == *"provided ID did not match"* || "$err" == *"not found"* ]]; then
+		log "delete skipped; already gone: $path"
+		return 0
+	fi
+	printf '%s\n' "$err" >&2
+	return 1
 }
 
 object_storage_aws() {
@@ -362,18 +388,19 @@ wait_dns() {
 	local domain="$1"
 	local ip="$2"
 	local ns
-	local got_google got_auth attempt
+	local got_google got_auth attempt max_attempts
+	max_attempts=$(((DNS_WAIT_MAX_SECONDS + DNS_WAIT_INTERVAL_SECONDS - 1) / DNS_WAIT_INTERVAL_SECONDS))
 	ns="$(authoritative_ns)"
 	[[ -n "$ns" ]] || die "could not resolve authoritative NS for $DNS_ROOT_DOMAIN"
-	for attempt in $(seq 1 60); do
+	for attempt in $(seq 1 "$max_attempts"); do
 		got_google="$(resolve_dns 8.8.8.8 "$domain")"
 		got_auth="$(resolve_dns "$ns" "$domain")"
 		if [[ "$got_google" == "$ip" && "$got_auth" == "$ip" ]]; then
 			log "DNS converged: $domain -> $ip"
 			return 0
 		fi
-		log "waiting DNS attempt $attempt/60: $domain expected=$ip google=${got_google:-<empty>} auth=${got_auth:-<empty>}"
-		sleep 10
+		log "waiting DNS attempt $attempt/$max_attempts: $domain expected=$ip google=${got_google:-<empty>} auth=${got_auth:-<empty>}"
+		sleep "$DNS_WAIT_INTERVAL_SECONDS"
 	done
 	die "DNS did not converge: $domain expected=$ip google=${got_google:-<empty>} auth=${got_auth:-<empty>}"
 }
@@ -448,7 +475,7 @@ EOF_PLAN
 backup_state_files() {
 	local ts backup_dir
 	ts="$(date -u +%Y%m%dT%H%M%SZ)"
-	backup_dir="$SECRETS_ROOT/full-reset-backup-$ts"
+	backup_dir="$DEPRECATED_ENV_ROOT/full-reset-backup-$ts"
 	mkdir -p "$backup_dir"
 	for file in "$VC_STATE" "$VC_SECRET_STATE" "$AM_STATE" "$ADMIN_STATE"; do
 		if [[ -f "$file" ]]; then
@@ -479,7 +506,7 @@ reset_stack() {
 	if [[ "$count" == "7" ]]; then
 		log "deleting instances: $(paste -sd ' ' "$tmp/instance_labels")"
 		while IFS= read -r id; do
-			[[ -n "$id" ]] && linode_api DELETE "/linode/instances/$id" >/dev/null
+			[[ -n "$id" ]] && linode_delete_ignore_missing "/linode/instances/$id"
 		done < "$tmp/instance_ids"
 		for _ in $(seq 1 60); do
 			remaining="$(linode_api GET '/linode/instances?page_size=500' | jq -r "[$target_instance_filter] | length")"
@@ -492,13 +519,13 @@ reset_stack() {
 	jq -r "$target_firewall_filter | .id" <<<"$firewalls" > "$tmp/firewall_ids"
 	log "deleting firewalls: $(paste -sd ' ' "$tmp/firewall_ids")"
 	while IFS= read -r id; do
-		[[ -n "$id" ]] && linode_api DELETE "/networking/firewalls/$id" >/dev/null
+		[[ -n "$id" ]] && linode_delete_ignore_missing "/networking/firewalls/$id"
 	done < "$tmp/firewall_ids"
 	vpcs="$(linode_api GET '/vpcs?page_size=500')"
 	jq -r '.data[] | select(.label == "video-cloud-staging-vpc") | .id' <<<"$vpcs" > "$tmp/vpc_ids"
 	log "deleting VPCs: $(paste -sd ' ' "$tmp/vpc_ids")"
 	while IFS= read -r id; do
-		[[ -n "$id" ]] && linode_api DELETE "/vpcs/$id" >/dev/null
+		[[ -n "$id" ]] && linode_delete_ignore_missing "/vpcs/$id"
 	done < "$tmp/vpc_ids"
 	rm -f "$VC_STATE" "$VC_SECRET_STATE" "$AM_STATE" "$ADMIN_STATE"
 }
@@ -512,7 +539,7 @@ delete_firewalls_matching_filter() {
 	while IFS=$'\t' read -r id label; do
 		[[ -n "$id" ]] || continue
 		log "deleting orphan firewall $label ($id)"
-		linode_api DELETE "/networking/firewalls/$id" >/dev/null
+		linode_delete_ignore_missing "/networking/firewalls/$id"
 	done < "$tmp"
 	rm -f "$tmp"
 }
@@ -526,7 +553,7 @@ delete_vpcs_matching_label() {
 	while IFS=$'\t' read -r id vpc_label; do
 		[[ -n "$id" ]] || continue
 		log "deleting orphan VPC $vpc_label ($id)"
-		linode_api DELETE "/vpcs/$id" >/dev/null
+		linode_delete_ignore_missing "/vpcs/$id"
 	done < "$tmp"
 	rm -f "$tmp"
 }
@@ -545,6 +572,27 @@ cleanup_orphan_public_service() {
 	log "cleaning orphan firewall/state for missing VM $label"
 	delete_firewalls_matching_filter ".data[] | select(.label == \"$firewall_label\")"
 	rm -f "$state_path"
+}
+
+run_video_cloud_apply() {
+	local repo_state repo_backup_dir repo_backup
+	repo_state="$VC_REPO/linode_deploy/state/video-cloud-staging.state.json"
+	repo_backup_dir="$ARTIFACT_BASE/legacy-state-backup-$(date -u +%Y%m%dT%H%M%SZ)"
+	if [[ -e "$repo_state" || -L "$repo_state" ]]; then
+		mkdir -p "$repo_backup_dir"
+		repo_backup="$repo_backup_dir/video-cloud-staging.state.json"
+		mv "$repo_state" "$repo_backup"
+		log "moved legacy Video Cloud repo state backup: $repo_backup"
+	fi
+	(
+		cd "$VC_REPO/linode_deploy"
+		go run ./cmd/linode-deploy apply --config "$VC_CONFIG"
+	)
+	if [[ -f "$repo_state" ]]; then
+		mkdir -p "$(dirname "$VC_STATE")"
+		cp "$repo_state" "$VC_STATE"
+		rm -f "$repo_state"
+	fi
 }
 
 load_service_envs() {
@@ -662,7 +710,9 @@ hydrate_video_state_from_live() {
 		),
 		tags:["video-cloud-staging","managed-by:linode-deploy"]
 	}' > "$VC_STATE"
-	cp "$VC_STATE" "$VC_SECRET_STATE"
+	if [[ "$VC_STATE" != "$VC_SECRET_STATE" ]]; then
+		cp "$VC_STATE" "$VC_SECRET_STATE"
+	fi
 }
 
 ensure_video_cloud_state_or_apply() {
@@ -674,12 +724,11 @@ ensure_video_cloud_state_or_apply() {
 		hydrate_video_state_from_live
 	elif [[ "$count" == "0" ]]; then
 		cleanup_orphan_video_cloud_infra
-		(
-			cd "$VC_REPO/linode_deploy"
-			go run ./cmd/linode-deploy apply --config "$VC_CONFIG"
-		)
+		run_video_cloud_apply
 		mkdir -p "$(dirname "$VC_SECRET_STATE")"
-		cp "$VC_STATE" "$VC_SECRET_STATE"
+		if [[ "$VC_STATE" != "$VC_SECRET_STATE" ]]; then
+			cp "$VC_STATE" "$VC_SECRET_STATE"
+		fi
 	else
 		die "partial Video Cloud instance set found: $count/5"
 	fi
@@ -791,7 +840,7 @@ deploy_stack() {
 	local args=(
 		--workspace "$WORKSPACE"
 		--operator-env "$OPERATOR_ENV"
-		--secrets-root "$SECRETS_ROOT"
+		--secrets-root "$DEPRECATED_ENV_ROOT"
 		--ssh-key "$SSH_KEY"
 		--dns-root-domain "$DNS_ROOT_DOMAIN"
 		--godaddy-env "$GODADDY_ENVIRONMENT"

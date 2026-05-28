@@ -4,6 +4,14 @@
 
 除非特別註明，以下指令都建議從 workspace 根目錄執行。
 
+## Cloud Environment Root
+
+Linode staging scripts 預設使用本機、git ignored 的 `cloud_env/staging/linode` 作為實際 Linode environment root。操作時可用 `--env-root cloud_env/staging` 指定 staging environment directory；script 會自動解析到 `cloud_env/staging/linode`。這個目錄集中保存 operator env、topology、service env、state、keys/certificates、device fixtures、artifacts 與 backups。
+
+可用 `--env-root PATH` 指向另一份 environment directory。舊的 `--secrets-root PATH` 仍保留為相容 alias，但新的操作與文件都應使用 `--env-root`。
+
+目錄配置請見 `docs/cloud-env-layout.zh-TW.md`。
+
 ## 一般檢查與同步
 
 ### `scripts/status-all.sh`
@@ -97,16 +105,18 @@ scripts/collect-private-cloud-evidence.sh
 
 ```sh
 # 預設產生 100 台：camera=40,light=25,air_conditioner=20,smart_meter=15
-scripts/staging_generate_load_devices.sh
+scripts/staging_generate_load_devices.sh --env-root cloud_env/staging
 
 # 指定數量與配比
 scripts/staging_generate_load_devices.sh \
+  --env-root cloud_env/staging \
   --count 200 \
   --mix camera=80,light=50,air_conditioner=40,smart_meter=30
 
 # 指定輸出目錄；若目錄已存在，用 --force 重建
 scripts/staging_generate_load_devices.sh \
-  --out-dir .secrets/staging/linode/video-cloud/load-devices/manual \
+  --env-root cloud_env/staging \
+  --out-dir cloud_env/staging/linode/devices/manual \
   --force
 ```
 
@@ -115,7 +125,8 @@ scripts/staging_generate_load_devices.sh \
 - `--count N`：產生 device 數量，預設 `100`。
 - `--mix SPEC`：類型權重，例如 `camera=40,light=25,air_conditioner=20,smart_meter=15`。
 - `--prefix PREFIX`：device id prefix，預設 `load-device`，輸出如 `load-device-0001`。
-- `--out-dir PATH`：輸出目錄，預設 `keys/test_device`，和既有 video cloud test-device layout 相容。
+- `--env-root PATH`：指定 environment directory；必填。可傳 `cloud_env/staging`，script 會自動使用其下的 `linode/`。
+- `--out-dir PATH`：輸出目錄，預設 `cloud_env/staging/linode/devices/test_device`。
 - `--force`：移除既有輸出目錄後重建。
 
 重要輸出：
@@ -126,7 +137,23 @@ scripts/staging_generate_load_devices.sh \
 - `manifests/device_ids.txt`：load test 可用的 device id 清單。
 - `loadtest.env`：可 `source` 的 load test 參數，不包含 bearer token。
 
-輸出的 private key 與 CA key 預設位於 git ignored 的 `keys/test_device`，不可 commit，也不可用在 production 或 customer environment。若要重建既有輸出，使用 `--force`。
+輸出的 private key 與 CA key 預設位於 git ignored 的 `cloud_env/staging/linode/devices/test_device`，不可 commit，也不可用在 production 或 customer environment。若要重建既有輸出，使用 `--force`。
+
+### `scripts/staging_migrate_cloud_env.sh`
+
+將目前分散在 `.secrets/`、`keys/`、以及各 submodule deploy 目錄的 staging local environment 檔案複製到 `cloud_env/staging/linode`。來源檔案會保留，並在 `cloud_env/staging/linode/backups/migration-<timestamp>` 產生 backup 與 migration manifest。
+
+用法：
+
+```sh
+scripts/staging_migrate_cloud_env.sh --env-root cloud_env/staging
+scripts/staging_migrate_cloud_env.sh --env-root cloud_env/staging --force
+```
+
+常用選項：
+
+- `--env-root PATH`：指定 environment directory；必填。可傳 `cloud_env/staging`，script 會自動使用其下的 `linode/`。
+- `--force`：覆蓋已存在的 target 檔案。
 
 ### `scripts/staging-provision.sh`
 
@@ -136,13 +163,14 @@ Linode staging 的主要編排腳本。它可以做 preflight、plan、reset、a
 
 ```sh
 # 只看目前狀態與預期資源，不做變更
-scripts/staging-provision.sh
+scripts/staging-provision.sh --env-root cloud_env/staging
 
 # 檢查工具、env、credential、SSH key、release artifact
-scripts/staging-provision.sh --preflight
+scripts/staging-provision.sh --env-root cloud_env/staging --preflight
 
 # 建立/更新 staging VM、DNS、部署三個服務、收集 artifacts、跑 e2e
 scripts/staging-provision.sh \
+  --env-root cloud_env/staging \
   --all \
   --video-release VIDEO_RELEASE \
   --account-release ACCOUNT_RELEASE \
@@ -150,6 +178,7 @@ scripts/staging-provision.sh \
 
 # 先刪除 staging VM/firewall/VPC，再重建與部署
 scripts/staging-provision.sh \
+  --env-root cloud_env/staging \
   --reset-and-all \
   --confirm rtk-cloud-staging \
   --video-release VIDEO_RELEASE \
@@ -160,11 +189,12 @@ scripts/staging-provision.sh \
 常用選項：
 
 - `--workspace PATH`：指定 workspace 根目錄。
-- `--secrets-root PATH`：指定 staging secrets 根目錄，預設是 `.secrets/staging/linode`。
+- `--env-root PATH`：指定 environment directory；必填，避免操作錯誤環境。可傳 `cloud_env/staging`，script 會自動使用其下的 `linode/`。
 - `--operator-env PATH`：指定含 `LINODE_TOKEN`、GoDaddy/Object Storage 設定的 env 檔。
 - `--ssh-key PATH`：指定連線 Linode 的 SSH key。
 - `--dns-wait-ttl SECONDS`：DNS converge 等待期間使用的 TTL。
 - `--dns-final-ttl SECONDS`：DNS converge 後恢復的 TTL。
+- `--dns-wait-max-seconds SECONDS`：每個 hostname 最長 DNS convergence 等待時間，預設 `700` 秒；每 10 秒檢查 Google DNS 與 authoritative DNS 一次。
 - `--verbose`：輸出更多 debug 訊息。
 
 ### `scripts/staging-deploy.sh`
@@ -175,6 +205,7 @@ scripts/staging-provision.sh \
 
 ```sh
 scripts/staging-deploy.sh \
+  --env-root cloud_env/staging \
   --video-release VIDEO_RELEASE \
   --account-release ACCOUNT_RELEASE \
   --admin-release ADMIN_RELEASE
@@ -183,21 +214,22 @@ scripts/staging-deploy.sh \
 常用選項：
 
 - `--admin-release-bundle PATH`：使用本機 Cloud Admin release bundle，不從 Object Storage 下載。
+- `--env-root PATH`：指定 environment directory；必填，避免部署到錯誤環境。可傳 `cloud_env/staging`，script 會自動使用其下的 `linode/`。
 - `--artifact-dir PATH`：指定 readiness report 和 logs 輸出目錄。
 - `--dns-ttl SECONDS`：傳給 Video Cloud deploy 的 GoDaddy DNS TTL。
 - `--verbose`：輸出更多 debug 訊息。
 
 ### `scripts/staging-remove-all-vm.sh`
 
-刪除 Linode 上 label 含 `staging` 的 VM。這是破壞性操作，腳本會要求輸入 `yes` 才會送出刪除請求。
+刪除 Linode 上 label 含 `staging` 的 VM，等待 VM 消失後清除 staging firewalls 與 `video-cloud-staging-vpc`，並把 active local state 移到 `cloud_env/staging/linode/backups/remove-vm-<timestamp>`。這是破壞性操作，腳本會要求輸入 `yes` 才會送出刪除請求。
 
 用法：
 
 ```sh
-scripts/staging-remove-all-vm.sh
+scripts/staging-remove-all-vm.sh --env-root cloud_env/staging
 ```
 
-需要 `LINODE_TOKEN`。通常 token 會放在 operator env 或 shell 環境。
+需要明確指定 `--env-root`，避免刪到錯誤環境。可以傳 `cloud_env/staging`，script 會自動解析到其下的 `linode/`。需要 `LINODE_TOKEN`；通常 token 會放在 operator env 或 shell 環境。若 Linode 回報資源已不存在，script 會視為已清除並繼續。
 
 ### `scripts/staging-update-ssh-whitelist.sh`
 
@@ -215,13 +247,13 @@ scripts/staging-remove-all-vm.sh
 
 ```sh
 # 自動偵測目前 public IP，加入 SSH allowlist
-scripts/staging-update-ssh-whitelist.sh
+scripts/staging-update-ssh-whitelist.sh --env-root cloud_env/staging
 
 # 手動指定 CIDR
-scripts/staging-update-ssh-whitelist.sh --cidr 203.0.113.10/32
+scripts/staging-update-ssh-whitelist.sh --env-root cloud_env/staging --cidr 203.0.113.10/32
 
 # 只看會更新哪些 firewall，不呼叫 Linode API 修改
-scripts/staging-update-ssh-whitelist.sh --cidr 203.0.113.10/32 --dry-run
+scripts/staging-update-ssh-whitelist.sh --env-root cloud_env/staging --cidr 203.0.113.10/32 --dry-run
 ```
 
 腳本只會 append CIDR，不會移除既有白名單。成功更新 Linode firewall 後，也會同步更新本地 ignored staging config/env，避免之後重新 provision 時又回到舊白名單。
@@ -233,13 +265,13 @@ scripts/staging-update-ssh-whitelist.sh --cidr 203.0.113.10/32 --dry-run
 用法：
 
 ```sh
-scripts/staging_create_brandname_cloud.sh --brandname RTK
+scripts/staging_create_brandname_cloud.sh --env-root cloud_env/staging --brandname RTK
 ```
 
 常用選項：
 
 - `--workspace PATH`：指定 workspace 根目錄。
-- `--secrets-root PATH`：指定 `.secrets/staging/linode` 位置。
+- `--env-root PATH`：指定 environment directory；必填，避免建立到錯誤環境。可傳 `cloud_env/staging`，script 會自動使用其下的 `linode/`。
 - `--skip-bootstrap`：不要更新/restart 遠端 Account Manager bootstrap admin env。
 
 腳本的進度訊息會寫到 stderr，最後 JSON 結果會寫到 stdout，方便其他工具解析。
@@ -252,19 +284,19 @@ scripts/staging_create_brandname_cloud.sh --brandname RTK
 
 ```sh
 # 顯示數量與摘要表格
-scripts/staging_list_brandname_clouds.sh
+scripts/staging_list_brandname_clouds.sh --env-root cloud_env/staging
 
 # 查詢特定 brandname
-scripts/staging_list_brandname_clouds.sh --brandname RTK
+scripts/staging_list_brandname_clouds.sh --env-root cloud_env/staging --brandname RTK
 
 # 輸出完整 JSON，包含每個 brand cloud 的 metadata 等設定
-scripts/staging_list_brandname_clouds.sh --json
+scripts/staging_list_brandname_clouds.sh --env-root cloud_env/staging --json
 ```
 
 常用選項：
 
 - `--workspace PATH`：指定 workspace 根目錄。
-- `--secrets-root PATH`：指定 `.secrets/staging/linode` 位置。
+- `--env-root PATH`：指定 environment directory；必填，避免誤查到錯誤環境。可傳 `cloud_env/staging`，script 會自動使用其下的 `linode/`。
 - `--brandname NAME`：只顯示 `name` 或 `metadata.brandname` 符合的 brand cloud。
 - `--limit N`：指定 API list limit，預設 `200`。
 - `--json`：輸出完整 API JSON，適合用 `jq` 進一步查詢。
