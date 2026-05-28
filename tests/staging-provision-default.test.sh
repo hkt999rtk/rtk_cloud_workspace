@@ -6,9 +6,10 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
-SECRETS="$WORKSPACE/.secrets/staging/linode"
+ENV_ROOT="$WORKSPACE/cloud_env/staging/linode"
+SECRETS="$ENV_ROOT"
 FAKE_BIN="$TMP/bin"
-mkdir -p "$FAKE_BIN" "$SECRETS/video-cloud/env"
+mkdir -p "$FAKE_BIN" "$ENV_ROOT/env"
 
 cat > "$FAKE_BIN/curl" <<'SH'
 #!/usr/bin/env bash
@@ -37,14 +38,21 @@ esac
 SH
 chmod +x "$FAKE_BIN/curl"
 
-cat > "$SECRETS/video-cloud/env/operator.env" <<'EOF_ENV'
+cat > "$ENV_ROOT/env/operator.env" <<'EOF_ENV'
 LINODE_TOKEN=test-token
 EOF_ENV
 
+if PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/cloud-provision.sh" \
+	--workspace "$WORKSPACE" >"$TMP/missing-env-root.out" 2>&1; then
+	echo "expected missing --env-root to fail" >&2
+	exit 1
+fi
+grep -F -- '--env-root is required' "$TMP/missing-env-root.out" >/dev/null
+
 OUT="$TMP/out.txt"
-PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/staging-provision.sh" \
+PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/cloud-provision.sh" \
 	--workspace "$WORKSPACE" \
-	--secrets-root "$SECRETS" >"$OUT"
+	--env-root "$ENV_ROOT" >"$OUT"
 
 grep -F 'Target instances:' "$OUT" >/dev/null
 grep -F 'video-cloud-staging-edge' "$OUT" >/dev/null

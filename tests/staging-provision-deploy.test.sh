@@ -6,23 +6,24 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
-SECRETS="$WORKSPACE/.secrets/staging/linode"
+ENV_ROOT="$WORKSPACE/cloud_env/staging/linode"
+SECRETS="$ENV_ROOT"
 FAKE_BIN="$TMP/bin"
 DEPLOY_LOG="$TMP/deploy.log"
 SSH_KEY="$TMP/id_ed25519_rtkcloud"
 mkdir -p \
 	"$FAKE_BIN" \
-	"$WORKSPACE/repos/rtk_video_cloud/linode_deploy/state" \
-	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/state" \
-	"$WORKSPACE/repos/rtk_cloud_admin/deploy/linode" \
-	"$SECRETS/video-cloud/env" \
-	"$SECRETS/video-cloud/artifacts"
+	"$ENV_ROOT/state" \
+	"$ENV_ROOT/state" \
+	"$ENV_ROOT/services/cloud-admin" \
+	"$ENV_ROOT/env" \
+	"$ENV_ROOT/artifacts"
 
-cat > "$SECRETS/video-cloud/env/operator.env" <<'EOF_ENV'
+cat > "$ENV_ROOT/env/operator.env" <<'EOF_ENV'
 LINODE_TOKEN=test-token
 EOF_ENV
 
-cat > "$WORKSPACE/repos/rtk_video_cloud/linode_deploy/state/video-cloud-staging.state.json" <<'EOF_STATE'
+cat > "$ENV_ROOT/state/video-cloud-staging.state.json" <<'EOF_STATE'
 {
   "stack": "video-cloud-staging",
   "instances": {
@@ -31,11 +32,11 @@ cat > "$WORKSPACE/repos/rtk_video_cloud/linode_deploy/state/video-cloud-staging.
 }
 EOF_STATE
 
-cat > "$WORKSPACE/repos/rtk_account_manager/linode_deploy/state/rtk-account-manager-staging.env" <<'EOF_AM'
+cat > "$ENV_ROOT/state/account-manager-staging.env" <<'EOF_AM'
 ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4=203.0.113.60
 EOF_AM
 
-cat > "$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/rtk-cloud-admin-staging.state" <<'EOF_ADMIN'
+cat > "$ENV_ROOT/state/cloud-admin-staging.env" <<'EOF_ADMIN'
 ADMIN_LINODE_PUBLIC_IPV4=203.0.113.70
 EOF_ADMIN
 
@@ -49,18 +50,18 @@ SH
 chmod +x "$TMP/mock-staging-deploy.sh"
 
 OUT="$TMP/out.txt"
-STAGING_DEPLOY_SCRIPT="$TMP/mock-staging-deploy.sh" \
+CLOUD_DEPLOY_SCRIPT="$TMP/mock-staging-deploy.sh" \
 DEPLOY_LOG="$DEPLOY_LOG" \
-PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/staging-provision.sh" \
+PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/cloud-provision.sh" \
 	--workspace "$WORKSPACE" \
-	--secrets-root "$SECRETS" \
+	--env-root "$ENV_ROOT" \
 	--ssh-key "$SSH_KEY" \
 	--video-release staging-20260527T075403Z-c536e34 \
 	--account-release account-test-release \
 	--admin-release admin-test-release \
 	--deploy >"$OUT" 2>&1
 
-grep -F '[staging-provision] deploy' "$OUT" >/dev/null
+grep -F '[cloud-provision] deploy' "$OUT" >/dev/null
 grep -F 'deploy releases: video=staging-20260527T075403Z-c536e34 account=account-test-release admin=admin-test-release' "$OUT" >/dev/null
 grep -F -- '--workspace' "$DEPLOY_LOG" >/dev/null
 grep -F -- "$WORKSPACE" "$DEPLOY_LOG" >/dev/null

@@ -6,16 +6,20 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
-SECRETS="$WORKSPACE/.secrets/staging/linode"
+ENV_ROOT="$WORKSPACE/cloud_env/staging/linode"
+SECRETS="$ENV_ROOT"
 FAKE_BIN="$TMP/bin"
 SSH_KEY="$TMP/id_ed25519_rtkcloud"
 mkdir -p \
+	"$ENV_ROOT/services/video-cloud" \
 	"$FAKE_BIN" \
 	"$WORKSPACE/repos/rtk_video_cloud" \
-	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/secrets" \
-	"$WORKSPACE/repos/rtk_cloud_admin/deploy/linode" \
-	"$SECRETS/video-cloud/config" \
-	"$SECRETS/video-cloud/env"
+	"$WORKSPACE/repos/rtk_account_manager" \
+	"$WORKSPACE/repos/rtk_cloud_admin" \
+	"$ENV_ROOT/services/account-manager" \
+	"$ENV_ROOT/services/cloud-admin" \
+	"$ENV_ROOT/topology" \
+	"$ENV_ROOT/env"
 
 cat > "$FAKE_BIN/curl" <<'SH'
 #!/usr/bin/env bash
@@ -43,13 +47,13 @@ esac
 SH
 chmod +x "$FAKE_BIN/aws"
 
-touch "$SECRETS/video-cloud/config/video-cloud-staging.yaml"
-touch "$SECRETS/video-cloud/env/video-cloud-staging.env"
-touch "$WORKSPACE/repos/rtk_account_manager/linode_deploy/secrets/account-manager-public-staging.env"
-touch "$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/admin-staging.env"
+touch "$ENV_ROOT/topology/video-cloud-staging.yaml"
+touch "$ENV_ROOT/services/video-cloud/video-cloud-staging.env"
+touch "$ENV_ROOT/services/account-manager/account-manager-public-staging.env"
+touch "$ENV_ROOT/services/cloud-admin/admin-staging.env"
 touch "$SSH_KEY" "$SSH_KEY.pub"
 
-cat > "$SECRETS/video-cloud/env/operator.env" <<'EOF_ENV'
+cat > "$ENV_ROOT/env/operator.env" <<'EOF_ENV'
 LINODE_TOKEN=test-token
 GODADDY_KEY=test-key
 GODADDY_SECRET=test-secret
@@ -58,9 +62,9 @@ LINODE_OBJ_ENDPOINT=https://object.example.test
 EOF_ENV
 
 OUT="$TMP/out.txt"
-if PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/staging-provision.sh" \
+if PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/cloud-provision.sh" \
 	--workspace "$WORKSPACE" \
-	--secrets-root "$SECRETS" \
+	--env-root "$ENV_ROOT" \
 	--ssh-key "$SSH_KEY" \
 	--preflight >"$OUT" 2>&1; then
 	printf 'preflight unexpectedly passed without Object Storage releases\n' >&2

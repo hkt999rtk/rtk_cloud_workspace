@@ -4,11 +4,17 @@ evidence/
 # Local E2E/load test artifacts
 .artifacts/
 
-# Local deployment secrets and operator-owned backups. Do not commit values.
-.secrets
+# Operator-local deployment and test key material. Never commit real keys,
+# certificates, tokens, or generated certsets.
+keys/
 .secrets/
 .secrets.backup
 .secrets.backup/
+cloud_env/
+
+# Local deploy/provision outputs.
+output/
+tmp/
 
 # Local RAG runtime index/cache.
 .rag/
