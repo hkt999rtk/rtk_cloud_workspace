@@ -65,6 +65,9 @@ echo "== ignore rules =="
 check_ignored .secrets
 check_ignored .secrets.backup
 check_ignored .secrets/staging/linode/admin/env/admin.env
+check_ignored cloud_env
+check_ignored cloud_env/staging/linode/env/operator.env
+check_ignored cloud_env/staging/linode/keys/root-ca.key.pem
 
 echo
 echo "== tracked workspace secret scan =="

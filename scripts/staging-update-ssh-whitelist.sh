@@ -6,7 +6,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE="$(cd "$SCRIPT_DIR/.." && pwd)"
-SECRETS_ROOT=""
+ENV_ROOT=""
+DEPRECATED_ENV_ROOT=""
 OPERATOR_ENV=""
 CIDR=""
 DRY_RUN=0
@@ -28,8 +29,9 @@ Usage:
 Options:
   --cidr CIDR           CIDR to allow. Default: current public IPv4 /32.
   --workspace PATH      Default: script parent workspace.
-  --secrets-root PATH   Default: <workspace>/.secrets/staging/linode.
-  --operator-env PATH   Default: <secrets-root>/video-cloud/env/operator.env.
+  --env-root PATH       Required environment directory, for example cloud_env/staging.
+  --secrets-root PATH   Deprecated alias for --env-root.
+  --operator-env PATH   Default: <env-root>/env/operator.env.
   --dry-run             Show target firewall updates without calling Linode API.
   -h, --help            Show this help.
 
@@ -48,13 +50,16 @@ while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--cidr) CIDR="$2"; shift 2 ;;
 	--workspace) WORKSPACE="$2"; shift 2 ;;
-	--secrets-root) SECRETS_ROOT="$2"; shift 2 ;;
+	--env-root) ENV_ROOT="$2"; shift 2 ;;
+	--secrets-root) DEPRECATED_ENV_ROOT="$2"; ENV_ROOT="$2"; shift 2 ;;
 	--operator-env) OPERATOR_ENV="$2"; shift 2 ;;
 	--dry-run) DRY_RUN=1; shift ;;
 	-h|--help) usage; exit 0 ;;
 	*) die "unknown argument: $1" ;;
 	esac
 done
+
+[[ -n "$ENV_ROOT" ]] || die "--env-root is required; pass the environment directory explicitly, for example --env-root cloud_env/staging"
 
 need_cmd() {
 	command -v "$1" >/dev/null 2>&1 || die "$1 is required"
@@ -208,8 +213,10 @@ need_cmd jq
 need_cmd python3
 
 WORKSPACE="$(cd "$WORKSPACE" && pwd)"
-SECRETS_ROOT="${SECRETS_ROOT:-$WORKSPACE/.secrets/staging/linode}"
-OPERATOR_ENV="${OPERATOR_ENV:-$SECRETS_ROOT/video-cloud/env/operator.env}"
+source "$SCRIPT_DIR/lib/cloud-env.sh"
+ENV_ROOT="$(cloud_env_init "$WORKSPACE" "$ENV_ROOT")"
+DEPRECATED_ENV_ROOT="$ENV_ROOT"
+OPERATOR_ENV="${OPERATOR_ENV:-$(cloud_env_operator_env "$ENV_ROOT")}"
 
 if [[ -z "$CIDR" ]]; then
 	CIDR="$(current_public_cidr)"
@@ -219,13 +226,13 @@ validate_cidr "$CIDR"
 load_env_file "$OPERATOR_ENV"
 [[ -n "${LINODE_TOKEN:-}" ]] || die "LINODE_TOKEN is required"
 
-VC_STATE="$WORKSPACE/repos/rtk_video_cloud/linode_deploy/state/video-cloud-staging.state.json"
-VC_SECRET_STATE="$SECRETS_ROOT/video-cloud/state/video-cloud-staging.state.json"
-VC_CONFIG="$SECRETS_ROOT/video-cloud/config/video-cloud-staging.yaml"
-AM_ENV="$WORKSPACE/repos/rtk_account_manager/linode_deploy/secrets/account-manager-public-staging.env"
-AM_STATE="$WORKSPACE/repos/rtk_account_manager/linode_deploy/state/rtk-account-manager-staging.env"
-ADMIN_ENV="$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/admin-staging.env"
-ADMIN_STATE="$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/rtk-cloud-admin-staging.state"
+VC_STATE="$(cloud_env_video_state "$ENV_ROOT")"
+VC_SECRET_STATE="$VC_STATE"
+VC_CONFIG="$(cloud_env_video_config "$ENV_ROOT")"
+AM_ENV="$(cloud_env_account_manager_env "$ENV_ROOT")"
+AM_STATE="$(cloud_env_account_manager_state "$ENV_ROOT")"
+ADMIN_ENV="$(cloud_env_admin_env "$ENV_ROOT")"
+ADMIN_STATE="$(cloud_env_admin_state "$ENV_ROOT")"
 
 load_env_file "$AM_STATE"
 load_env_file "$ADMIN_STATE"

@@ -6,16 +6,17 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
-SECRETS="$WORKSPACE/.secrets/staging/linode"
+ENV_ROOT="$WORKSPACE/cloud_env/staging/linode"
+SECRETS="$ENV_ROOT"
 FAKE_BIN="$TMP/bin"
 ERR="$TMP/staging-provision-artifacts.err"
 mkdir -p \
 	"$FAKE_BIN" \
-	"$WORKSPACE/repos/rtk_video_cloud/linode_deploy/state" \
-	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/state" \
-	"$WORKSPACE/repos/rtk_cloud_admin/deploy/linode" \
-	"$SECRETS/video-cloud/env" \
-	"$SECRETS/video-cloud/artifacts"
+	"$ENV_ROOT/state" \
+	"$ENV_ROOT/state" \
+	"$ENV_ROOT/services/cloud-admin" \
+	"$ENV_ROOT/env" \
+	"$ENV_ROOT/artifacts"
 
 cat > "$FAKE_BIN/dig" <<'SH'
 #!/usr/bin/env bash
@@ -58,11 +59,11 @@ printf '%s ssh-ed25519 AAAATESTKEY\n' "$host"
 SH
 chmod +x "$FAKE_BIN/ssh-keyscan"
 
-cat > "$SECRETS/video-cloud/env/operator.env" <<'EOF_ENV'
+cat > "$ENV_ROOT/env/operator.env" <<'EOF_ENV'
 LINODE_TOKEN=test-token
 EOF_ENV
 
-cat > "$WORKSPACE/repos/rtk_video_cloud/linode_deploy/state/video-cloud-staging.state.json" <<'EOF_STATE'
+cat > "$ENV_ROOT/state/video-cloud-staging.state.json" <<'EOF_STATE'
 {
   "stack": "video-cloud-staging",
   "region": "us-sea",
@@ -85,7 +86,7 @@ cat > "$WORKSPACE/repos/rtk_video_cloud/linode_deploy/state/video-cloud-staging.
 }
 EOF_STATE
 
-cat > "$WORKSPACE/repos/rtk_account_manager/linode_deploy/state/rtk-account-manager-staging.env" <<'EOF_AM'
+cat > "$ENV_ROOT/state/account-manager-staging.env" <<'EOF_AM'
 ACCOUNT_MANAGER_LINODE_ID=6
 ACCOUNT_MANAGER_LINODE_LABEL=rtk-account-manager-staging
 ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4=203.0.113.60
@@ -94,7 +95,7 @@ ACCOUNT_MANAGER_LINODE_FIREWALL_ID=106
 ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL=rtk-account-manager-staging-fw
 EOF_AM
 
-cat > "$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/rtk-cloud-admin-staging.state" <<'EOF_ADMIN'
+cat > "$ENV_ROOT/state/cloud-admin-staging.env" <<'EOF_ADMIN'
 ADMIN_LINODE_ID=7
 ADMIN_LINODE_LABEL=rtk-cloud-admin-staging
 ADMIN_LINODE_PUBLIC_IPV4=203.0.113.70
@@ -106,7 +107,7 @@ EOF_ADMIN
 OUT="$TMP/staging-provision-artifacts.out"
 PATH="$FAKE_BIN:$PATH" SSH_API_COUNT_FILE="$TMP/ssh-api.count" "$ROOT/scripts/staging-provision.sh" \
 	--workspace "$WORKSPACE" \
-	--secrets-root "$SECRETS" \
+	--env-root "$ENV_ROOT" \
 	--ssh-key "$TMP/id_ed25519" \
 	--artifacts >"$OUT" 2>"$ERR"
 

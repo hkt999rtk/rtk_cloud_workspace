@@ -6,24 +6,25 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
-SECRETS="$WORKSPACE/.secrets/staging/linode"
+ENV_ROOT="$WORKSPACE/cloud_env/staging/linode"
+SECRETS="$ENV_ROOT"
 FAKE_BIN="$TMP/bin"
 LOG="$TMP/api.log"
 SSH_KEY="$TMP/id_ed25519_rtkcloud"
-VC_STATE="$WORKSPACE/repos/rtk_video_cloud/linode_deploy/state/video-cloud-staging.state.json"
-VC_SECRET_STATE="$SECRETS/video-cloud/state/video-cloud-staging.state.json"
-AM_STATE="$WORKSPACE/repos/rtk_account_manager/linode_deploy/state/rtk-account-manager-staging.env"
+VC_STATE="$ENV_ROOT/state/video-cloud-staging.state.json"
+VC_SECRET_STATE="$ENV_ROOT/state/video-cloud-staging.state.json"
+AM_STATE="$ENV_ROOT/state/account-manager-staging.env"
 
 mkdir -p \
+	"$ENV_ROOT/services/video-cloud" \
 	"$FAKE_BIN" \
-	"$WORKSPACE/repos/rtk_video_cloud/linode_deploy/state" \
+	"$ENV_ROOT/state" \
 	"$WORKSPACE/repos/rtk_video_cloud/linode_deploy" \
 	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/scripts" \
-	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/secrets" \
-	"$WORKSPACE/repos/rtk_cloud_admin/deploy/linode" \
-	"$SECRETS/video-cloud/config" \
-	"$SECRETS/video-cloud/env" \
-	"$SECRETS/video-cloud/state"
+	"$ENV_ROOT/services/account-manager" \
+	"$ENV_ROOT/services/cloud-admin" \
+	"$ENV_ROOT/topology" \
+	"$ENV_ROOT/env" \
 
 cat > "$FAKE_BIN/curl" <<'SH'
 #!/usr/bin/env bash
@@ -50,6 +51,10 @@ JSON
 	printf '{"data":[{"id":499050,"label":"video-cloud-staging-vpc","region":"us-sea"}]}\n'
 	;;
 *"-X DELETE https://api.linode.com/v4/networking/firewalls/"*)
+	if [[ "$*" == *"/networking/firewalls/25411467"* ]]; then
+		printf '[404] The provided ID did not match any existing Firewalls\n' >&2
+		exit 22
+	fi
 	printf '{}\n'
 	;;
 *"-X DELETE https://api.linode.com/v4/vpcs/"*)
@@ -83,6 +88,10 @@ cat > "$FAKE_BIN/go" <<'SH'
 set -euo pipefail
 if [[ -e "$VC_STATE_PATH" || -e "$VC_SECRET_STATE_PATH" ]]; then
 	printf 'stale Video Cloud state still exists before apply\n' >&2
+	exit 1
+fi
+if [[ -e state/video-cloud-staging.state.json ]]; then
+	printf 'legacy repo Video Cloud state still exists before apply\n' >&2
 	exit 1
 fi
 mkdir -p "$(dirname "$VC_STATE_PATH")"
@@ -121,25 +130,29 @@ EOF_STATE
 SH
 chmod +x "$WORKSPACE/repos/rtk_account_manager/linode_deploy/scripts/provision-public-vm.sh"
 
-touch "$SECRETS/video-cloud/config/video-cloud-staging.yaml"
-touch "$SECRETS/video-cloud/env/video-cloud-staging.env"
+touch "$ENV_ROOT/topology/video-cloud-staging.yaml"
+touch "$ENV_ROOT/services/video-cloud/video-cloud-staging.env"
 touch "$SSH_KEY"
 printf 'ssh-ed25519 test-key\n' > "$SSH_KEY.pub"
 
-cat > "$SECRETS/video-cloud/env/operator.env" <<'EOF_ENV'
+cat > "$ENV_ROOT/env/operator.env" <<'EOF_ENV'
 LINODE_TOKEN=test-token
 EOF_ENV
-cat > "$WORKSPACE/repos/rtk_account_manager/linode_deploy/secrets/account-manager-public-staging.env" <<'EOF_AM'
+cat > "$ENV_ROOT/services/account-manager/account-manager-public-staging.env" <<'EOF_AM'
 ACCOUNT_MANAGER_LINODE_ALLOWED_SSH_CIDRS=198.51.100.10/32
 EOF_AM
-cat > "$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/admin-staging.env" <<'EOF_ADMIN'
+cat > "$ENV_ROOT/services/cloud-admin/admin-staging.env" <<'EOF_ADMIN'
 ADMIN_LINODE_ALLOWED_SSH_CIDRS=198.51.100.10/32
 EOF_ADMIN
 
 cat > "$VC_STATE" <<'JSON'
 {"stack":"video-cloud-staging","vpc_id":499050,"subnet_id":123,"firewalls":{"edge":999999},"instances":{}}
 JSON
-cp "$VC_STATE" "$VC_SECRET_STATE"
+mkdir -p "$WORKSPACE/repos/rtk_video_cloud/linode_deploy/state"
+cat > "$WORKSPACE/repos/rtk_video_cloud/linode_deploy/state/video-cloud-staging.state.json" <<'JSON'
+{"stack":"video-cloud-staging","firewalls":{"edge":25411467},"instances":{}}
+JSON
+:
 
 PATH="$FAKE_BIN:$PATH" \
 	API_LOG="$LOG" \
@@ -147,7 +160,7 @@ PATH="$FAKE_BIN:$PATH" \
 	VC_SECRET_STATE_PATH="$VC_SECRET_STATE" \
 	"$ROOT/scripts/staging-provision.sh" \
 	--workspace "$WORKSPACE" \
-	--secrets-root "$SECRETS" \
+	--env-root "$ENV_ROOT" \
 	--ssh-key "$SSH_KEY" \
 	--apply >/dev/null
 
@@ -158,3 +171,5 @@ grep -F -- '-X DELETE https://api.linode.com/v4/networking/firewalls/24476605' "
 grep -F -- '-X DELETE https://api.linode.com/v4/vpcs/499050' "$LOG" >/dev/null
 grep -F 'vpc_id' "$VC_STATE" >/dev/null
 test -f "$AM_STATE"
+test ! -e "$WORKSPACE/repos/rtk_video_cloud/linode_deploy/state/video-cloud-staging.state.json"
+find "$ENV_ROOT/artifacts" -path '*legacy-state-backup*/video-cloud-staging.state.json' | grep -q .

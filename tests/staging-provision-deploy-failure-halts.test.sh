@@ -6,28 +6,29 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
-SECRETS="$WORKSPACE/.secrets/staging/linode"
+ENV_ROOT="$WORKSPACE/cloud_env/staging/linode"
+SECRETS="$ENV_ROOT"
 SSH_KEY="$TMP/id_ed25519_rtkcloud"
 mkdir -p \
-	"$WORKSPACE/repos/rtk_video_cloud/linode_deploy/state" \
-	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/state" \
-	"$WORKSPACE/repos/rtk_cloud_admin/deploy/linode" \
-	"$SECRETS/video-cloud/env" \
-	"$SECRETS/video-cloud/artifacts"
+	"$ENV_ROOT/state" \
+	"$ENV_ROOT/state" \
+	"$ENV_ROOT/services/cloud-admin" \
+	"$ENV_ROOT/env" \
+	"$ENV_ROOT/artifacts"
 
-cat > "$SECRETS/video-cloud/env/operator.env" <<'EOF_ENV'
+cat > "$ENV_ROOT/env/operator.env" <<'EOF_ENV'
 LINODE_TOKEN=test-token
 EOF_ENV
 
-cat > "$WORKSPACE/repos/rtk_video_cloud/linode_deploy/state/video-cloud-staging.state.json" <<'EOF_STATE'
+cat > "$ENV_ROOT/state/video-cloud-staging.state.json" <<'EOF_STATE'
 {"stack":"video-cloud-staging","instances":{"edge":{"public_ipv4":"203.0.113.5"}}}
 EOF_STATE
 
-cat > "$WORKSPACE/repos/rtk_account_manager/linode_deploy/state/rtk-account-manager-staging.env" <<'EOF_AM'
+cat > "$ENV_ROOT/state/account-manager-staging.env" <<'EOF_AM'
 ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4=203.0.113.60
 EOF_AM
 
-cat > "$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/rtk-cloud-admin-staging.state" <<'EOF_ADMIN'
+cat > "$ENV_ROOT/state/cloud-admin-staging.env" <<'EOF_ADMIN'
 ADMIN_LINODE_PUBLIC_IPV4=203.0.113.70
 EOF_ADMIN
 
@@ -44,7 +45,7 @@ chmod +x "$TMP/mock-staging-deploy-fails.sh"
 OUT="$TMP/out.txt"
 if STAGING_DEPLOY_SCRIPT="$TMP/mock-staging-deploy-fails.sh" "$ROOT/scripts/staging-provision.sh" \
 	--workspace "$WORKSPACE" \
-	--secrets-root "$SECRETS" \
+	--env-root "$ENV_ROOT" \
 	--ssh-key "$SSH_KEY" \
 	--video-release video-test \
 	--account-release account-test \

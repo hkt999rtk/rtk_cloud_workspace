@@ -8,6 +8,9 @@ evidence/
 # certificates, tokens, or generated certsets.
 keys/
 .secrets/
+.secrets.backup
+.secrets.backup/
+cloud_env/
 
 # Local deploy/provision outputs.
 output/
