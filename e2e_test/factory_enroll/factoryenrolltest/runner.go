@@ -148,6 +148,11 @@ func (r *Runner) enrollOne(parent context.Context, cfg Config, index int) Device
 		FixtureID:    cfg.FixtureID,
 		OperatorID:   cfg.OperatorID,
 		BatchID:      cfg.BatchID,
+		ServiceOptions: []string{
+			"mqtt",
+			"video_streaming",
+			"video_storage",
+		},
 		Metadata: map[string]any{
 			"test_suite": "workspace_factory_enroll_v1",
 			"run_id":     cfg.RunID,

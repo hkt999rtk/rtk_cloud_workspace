@@ -19,6 +19,8 @@ jq -e '.allocated.light == 2' "$OUT/summary.json" >/dev/null
 jq -e '.allocated.air_conditioner == 2' "$OUT/summary.json" >/dev/null
 jq -e '.allocated.smart_meter == 1' "$OUT/summary.json" >/dev/null
 jq -e 'length == 7' "$OUT/manifests/devices.json" >/dev/null
+jq -e '.[0].service_options == ["mqtt","video_streaming","video_storage"]' "$OUT/manifests/devices.json" >/dev/null
+jq -e '.[2].service_options == ["mqtt"]' "$OUT/manifests/devices.json" >/dev/null
 
 test -f "$OUT/ca/sim-device-ca.cert.pem"
 test -f "$OUT/devices/camera/test-load-0001/device.key.pem"
@@ -28,6 +30,7 @@ test -f "$OUT/devices/air_conditioner/test-load-0005/metadata.json"
 test -f "$OUT/devices/smart_meter/test-load-0007/metadata.json"
 grep -F 'VIDEO_CLOUD_LOAD_DEVICE_IDS' "$OUT/loadtest.env" >/dev/null
 grep -F 'test-load-0001,test-load-0002,test-load-0003,test-load-0004,test-load-0005,test-load-0006,test-load-0007' "$OUT/loadtest.env" >/dev/null
+grep -F 'device_id,device_type,mqtt_capability,service_options,model,certificate_path,key_path,bundle_path' "$OUT/manifests/devices.csv" >/dev/null
 
 openssl x509 -in "$OUT/devices/camera/test-load-0001/device.cert.pem" -noout -subject | grep -F 'test-load-0001' >/dev/null
 

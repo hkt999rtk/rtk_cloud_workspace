@@ -94,7 +94,7 @@ scripts/collect-private-cloud-evidence.sh
 
 ### `scripts/cloud-generate-load-devices.sh`
 
-依照量產流程的素材形狀，產生 staging/load-test 用的模擬 device 身分。每台 device 會有 private key、CSR、由本地 simulation CA 簽出的 client certificate、metadata、PEM bundle，以及 load test 可直接 source 的 env 檔。
+依照量產流程的素材形狀，產生 staging/load-test 用的模擬 device 身分。每台 device 會有 private key、CSR、由本地 simulation CA 簽出的 client certificate、metadata、PEM bundle，以及 load test 可直接 source 的 env 檔。metadata 會同時記錄 inventory 用的 `device_type` 與 ACL 用的 `service_options`；`device_type` 不作為 ACL 來源。
 
 預設產生 100 台，類型只使用目前 load runner 已實作的模擬種類：
 
@@ -102,6 +102,11 @@ scripts/collect-private-cloud-evidence.sh
 - `light`
 - `air_conditioner`
 - `smart_meter`
+
+預設 service options：
+
+- `camera`：`mqtt`, `video_streaming`, `video_storage`
+- `light` / `air_conditioner` / `smart_meter`：`mqtt`
 
 用法：
 

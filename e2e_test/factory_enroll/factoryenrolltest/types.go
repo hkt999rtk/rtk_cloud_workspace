@@ -25,17 +25,18 @@ type Config struct {
 }
 
 type EnrollRequest struct {
-	RequestID    string         `json:"request_id"`
-	DeviceID     string         `json:"devid"`
-	CSRPem       string         `json:"csr_pem"`
-	SerialNumber string         `json:"serial_number,omitempty"`
-	FactoryID    string         `json:"factory_id,omitempty"`
-	LineID       string         `json:"line_id,omitempty"`
-	StationID    string         `json:"station_id,omitempty"`
-	FixtureID    string         `json:"fixture_id,omitempty"`
-	OperatorID   string         `json:"operator_id,omitempty"`
-	BatchID      string         `json:"batch_id,omitempty"`
-	Metadata     map[string]any `json:"metadata,omitempty"`
+	RequestID      string         `json:"request_id"`
+	DeviceID       string         `json:"devid"`
+	CSRPem         string         `json:"csr_pem"`
+	SerialNumber   string         `json:"serial_number,omitempty"`
+	FactoryID      string         `json:"factory_id,omitempty"`
+	LineID         string         `json:"line_id,omitempty"`
+	StationID      string         `json:"station_id,omitempty"`
+	FixtureID      string         `json:"fixture_id,omitempty"`
+	OperatorID     string         `json:"operator_id,omitempty"`
+	BatchID        string         `json:"batch_id,omitempty"`
+	ServiceOptions []string       `json:"service_options,omitempty"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
 }
 
 type EnrollResponse struct {

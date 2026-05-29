@@ -155,6 +155,17 @@ type_capabilities_json() {
 	esac
 }
 
+type_service_options_json() {
+	case "$1" in
+	camera)
+		printf '%s\n' '["mqtt","video_streaming","video_storage"]'
+		;;
+	light|air_conditioner|smart_meter)
+		printf '%s\n' '["mqtt"]'
+		;;
+	esac
+}
+
 set_weight() {
 	case "$1" in
 	camera) WEIGHT_camera="$2" ;;
@@ -295,12 +306,13 @@ write_device_material() {
 	local index="$1"
 	local type="$2"
 	local ordinal="$3"
-	local device_id model display capability capabilities_json device_dir bundle_dir
+	local device_id model display capability capabilities_json service_options_json device_dir bundle_dir
 	device_id="$(printf '%s-%04d' "$PREFIX" "$index")"
 	model="$(type_model "$type")"
 	display="$(type_display_name "$type" "$ordinal")"
 	capability="$(type_capability "$type")"
 	capabilities_json="$(type_capabilities_json "$type")"
+	service_options_json="$(type_service_options_json "$type")"
 	device_dir="$OUT_DIR/devices/$type/$device_id"
 	bundle_dir="$OUT_DIR/bundles/$type"
 	mkdir -p "$device_dir" "$bundle_dir"
@@ -362,10 +374,12 @@ EOF_EXT
 		--arg csr "devices/$type/$device_id/device.csr.pem" \
 		--arg bundle "bundles/$type/$device_id.pem" \
 		--argjson capabilities "$capabilities_json" \
+		--argjson service_options "$service_options_json" \
 		'{
 			device_id: $device_id,
 			device_type: $type,
 			mqtt_capability: $capability,
+			service_options: $service_options,
 			model: $model,
 			display_name: $display_name,
 			firmware_version: "0.0.0-loadtest",
@@ -379,8 +393,8 @@ EOF_EXT
 			warning: "Simulation-only generated credential. Do not use as a production or customer device identity."
 		}' > "$device_dir/metadata.json"
 
-	printf '%s,%s,%s,%s,%s,%s,%s\n' \
-		"$device_id" "$type" "$capability" "$model" \
+	printf '%s,%s,%s,%s,%s,%s,%s,%s\n' \
+		"$device_id" "$type" "$capability" "$(printf '%s' "$service_options_json" | jq -r 'join(";")')" "$model" \
 		"devices/$type/$device_id/device.cert.pem" \
 		"devices/$type/$device_id/device.key.pem" \
 		"bundles/$type/$device_id.pem" >> "$CSV_MANIFEST"
@@ -394,7 +408,7 @@ write_manifests() {
 	CSV_MANIFEST="$OUT_DIR/manifests/devices.csv"
 	DEVICE_IDS_FILE="$OUT_DIR/manifests/device_ids.txt"
 	METADATA_FILES="$OUT_DIR/manifests/metadata_files.txt"
-	printf 'device_id,device_type,mqtt_capability,model,certificate_path,key_path,bundle_path\n' > "$CSV_MANIFEST"
+	printf 'device_id,device_type,mqtt_capability,service_options,model,certificate_path,key_path,bundle_path\n' > "$CSV_MANIFEST"
 	: > "$DEVICE_IDS_FILE"
 	: > "$METADATA_FILES"
 
