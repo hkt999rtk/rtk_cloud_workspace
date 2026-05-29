@@ -10,6 +10,7 @@ ENV_ROOT="$WORKSPACE/cloud_env/staging/linode"
 SECRETS="$ENV_ROOT"
 FAKE_BIN="$TMP/bin"
 VIDEO_DEPLOY_ARGS="$TMP/video-deploy.args"
+ACCOUNT_BUNDLE="$TMP/rtk_account_manager-account-test.tar.gz"
 mkdir -p \
 	"$ENV_ROOT/services/video-cloud" \
 	"$FAKE_BIN" \
@@ -23,6 +24,8 @@ mkdir -p \
 	"$ENV_ROOT/state" \
 	"$ENV_ROOT/services/cloud-admin" \
 	"$WORKSPACE/repos/rtk_cloud_admin/deploy/linode"
+
+printf 'fake-account-bundle\n' > "$ACCOUNT_BUNDLE"
 
 cat > "$ENV_ROOT/env/operator.env" <<'EOF_OPERATOR'
 LINODE_TOKEN=test-token
@@ -152,6 +155,7 @@ if PATH="$FAKE_BIN:$PATH" VIDEO_DEPLOY_ARGS="$VIDEO_DEPLOY_ARGS" "$ROOT/scripts/
 	--env-root "$ENV_ROOT" \
 	--video-release video-test \
 	--account-release account-test \
+	--account-release-bundle "$ACCOUNT_BUNDLE" \
 	--admin-release admin-test >"$OUT" 2>"$ERR"; then
 	echo "cloud-deploy unexpectedly passed" >&2
 	exit 1

@@ -11,6 +11,8 @@ FAKE_BIN="$TMP/bin"
 SSH_KEY="$TMP/id_ed25519_rtkcloud"
 LOG="$TMP/cert-cache-env.log"
 ADMIN_BUNDLE="$TMP/rtk_cloud_admin-admin-test.tar.gz"
+ACCOUNT_OBJECT_CONTENT="fake-account-bundle"
+ACCOUNT_OBJECT_SHA="$(printf '%s\n' "$ACCOUNT_OBJECT_CONTENT" | shasum -a 256 | awk '{print $1}')"
 mkdir -p \
 	"$FAKE_BIN" \
 	"$ENV_ROOT/env" \
@@ -87,6 +89,8 @@ cat > "$WORKSPACE/repos/rtk_account_manager/linode_deploy/scripts/deploy-public-
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'am=%s\n' "${ACCOUNT_MANAGER_LINODE_CERT_CACHE_DIR:-}" >> "$CERT_CACHE_LOG"
+printf 'am_bundle=%s\n' "${ACCOUNT_MANAGER_LINODE_RELEASE_BUNDLE:-}" >> "$CERT_CACHE_LOG"
+[ -s "${ACCOUNT_MANAGER_LINODE_RELEASE_BUNDLE:-}" ]
 SH
 cat > "$WORKSPACE/repos/rtk_account_manager/linode_deploy/scripts/verify-public-vm.sh" <<'SH'
 #!/usr/bin/env bash
@@ -151,6 +155,30 @@ exit 0
 SH
 	chmod +x "$FAKE_BIN/$cmd"
 done
+cat > "$FAKE_BIN/aws" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+case "\$*" in
+*"s3 cp s3://test-bucket/releases/rtk_account_manager-account-test/manifest.json -"*)
+	cat <<'JSON'
+{
+  "version": "account-test",
+  "artifact_path": "releases/rtk_account_manager-account-test/account-test.tar.gz",
+  "sha256": "$ACCOUNT_OBJECT_SHA"
+}
+JSON
+	;;
+*"s3 cp s3://test-bucket/releases/rtk_account_manager-account-test/account-test.tar.gz "*)
+	dest="\${@: -3:1}"
+	printf '%s\n' "$ACCOUNT_OBJECT_CONTENT" > "\$dest"
+	;;
+*)
+	printf 'unexpected aws: %s\n' "\$*" >&2
+	exit 1
+	;;
+esac
+SH
+chmod +x "$FAKE_BIN/aws"
 chmod +x "$FAKE_BIN/curl" "$FAKE_BIN/dig" "$FAKE_BIN/ssh"
 
 PATH="$FAKE_BIN:$PATH" CERT_CACHE_LOG="$LOG" "$ROOT/scripts/cloud-deploy.sh" \
@@ -164,5 +192,6 @@ PATH="$FAKE_BIN:$PATH" CERT_CACHE_LOG="$LOG" "$ROOT/scripts/cloud-deploy.sh" \
 	--admin-release-bundle "$ADMIN_BUNDLE" >/dev/null
 
 grep -F "am=$ENV_ROOT/certificates/account-manager.video-cloud-ci.example.com" "$LOG" >/dev/null
+grep -F "am_bundle=$ENV_ROOT/artifacts/readiness-" "$LOG" >/dev/null
 grep -F "vc=$ENV_ROOT/certificates/video-cloud-ci.example.com" "$LOG" >/dev/null
 grep -F "admin=$ENV_ROOT/certificates/admin.video-cloud-ci.example.com" "$LOG" >/dev/null

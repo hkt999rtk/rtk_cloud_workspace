@@ -82,7 +82,7 @@ Options:
   --dns-wait-max-seconds SECONDS      Max DNS convergence wait per hostname. Default: 700.
   --artifact-dir PATH                 Default: <env-root>/artifacts.
   --video-release VERSION             Optional; otherwise select from Object Storage releases.
-  --account-release VERSION           Optional; otherwise use rtk_account_manager git short SHA.
+  --account-release VERSION           Optional; otherwise select from Object Storage releases.
   --admin-release VERSION             Optional; otherwise select from Object Storage releases.
   --verbose                           Print extra diagnostics.
   -h, --help                          Show this help.
@@ -307,13 +307,12 @@ check_latest_video_release() {
 	VIDEO_RELEASE="$(check_object_storage_release "Video Cloud" "rtk_video_cloud" "$VIDEO_RELEASE")"
 }
 
-check_latest_admin_release() {
-	ADMIN_RELEASE="$(check_object_storage_release "Cloud Admin" "rtk_cloud_admin" "$ADMIN_RELEASE")"
+check_latest_account_release() {
+	ACCOUNT_RELEASE="$(check_object_storage_release "Account Manager" "rtk_account_manager" "$ACCOUNT_RELEASE")"
 }
 
-git_short_sha() {
-	local repo="$1"
-	git -C "$repo" rev-parse --short HEAD
+check_latest_admin_release() {
+	ADMIN_RELEASE="$(check_object_storage_release "Cloud Admin" "rtk_cloud_admin" "$ADMIN_RELEASE")"
 }
 
 resolve_deploy_releases() {
@@ -321,7 +320,7 @@ resolve_deploy_releases() {
 		check_latest_video_release
 	fi
 	if [[ -z "$ACCOUNT_RELEASE" ]]; then
-		ACCOUNT_RELEASE="$(git_short_sha "$AM_REPO")"
+		check_latest_account_release
 	fi
 	if [[ -z "$ADMIN_RELEASE" ]]; then
 		check_latest_admin_release
@@ -453,6 +452,7 @@ preflight() {
 	cidr="$(current_public_cidr)" || die "could not determine current public IP"
 	log "operator public CIDR: $cidr"
 	check_latest_video_release
+	check_latest_account_release
 	check_latest_admin_release
 	if [[ "$DO_DEPLOY" == "1" ]]; then
 		resolve_deploy_releases
