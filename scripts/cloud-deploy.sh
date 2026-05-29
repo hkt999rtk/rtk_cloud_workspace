@@ -11,6 +11,7 @@ DEPRECATED_ENV_ROOT=""
 OPERATOR_ENV=""
 SSH_KEY="$HOME/.ssh/id_ed25519_rtkcloud"
 DNS_ROOT_DOMAIN="realtekconnect.com"
+DNS_ROOT_DOMAIN_EXPLICIT=0
 GODADDY_ENVIRONMENT="prod"
 DNS_TTL="${GODADDY_RECORD_TTL:-600}"
 ARTIFACT_BASE=""
@@ -76,7 +77,7 @@ while [[ $# -gt 0 ]]; do
 	--operator-env) OPERATOR_ENV="$2"; shift 2 ;;
 	--secrets-root) DEPRECATED_ENV_ROOT="$2"; ENV_ROOT="$2"; shift 2 ;;
 	--ssh-key) SSH_KEY="$2"; shift 2 ;;
-	--dns-root-domain) DNS_ROOT_DOMAIN="$2"; shift 2 ;;
+	--dns-root-domain) DNS_ROOT_DOMAIN="$2"; DNS_ROOT_DOMAIN_EXPLICIT=1; shift 2 ;;
 	--godaddy-env) GODADDY_ENVIRONMENT="$2"; shift 2 ;;
 	--dns-ttl) DNS_TTL="$2"; shift 2 ;;
 	--artifact-dir) ARTIFACT_BASE="$2"; shift 2 ;;
@@ -99,6 +100,14 @@ WORKSPACE="$(cd "$WORKSPACE" && pwd)"
 source "$SCRIPT_DIR/lib/cloud-env.sh"
 [[ "$DNS_TTL" =~ ^[0-9]+$ && "$DNS_TTL" -gt 0 ]] || die "--dns-ttl must be a positive integer"
 ENV_ROOT="$(cloud_env_init "$WORKSPACE" "$ENV_ROOT")"
+if [[ "$DNS_ROOT_DOMAIN_EXPLICIT" == "1" ]]; then
+	cloud_env_load_environment "$ENV_ROOT" "$DNS_ROOT_DOMAIN"
+else
+	cloud_env_load_environment "$ENV_ROOT" ""
+fi
+DNS_ROOT_DOMAIN="$CLOUD_DNS_ROOT_DOMAIN"
+cloud_env_validate_environment "$ENV_ROOT"
+cloud_env_export_filter_vars
 DEPRECATED_ENV_ROOT="$ENV_ROOT"
 OPERATOR_ENV="${OPERATOR_ENV:-$(cloud_env_operator_env "$ENV_ROOT")}"
 ARTIFACT_BASE="${ARTIFACT_BASE:-$(cloud_env_artifacts_dir "$ENV_ROOT")}"
@@ -119,10 +128,10 @@ AM_STATE="$(cloud_env_account_manager_state "$ENV_ROOT")"
 ADMIN_ENV="$(cloud_env_admin_env "$ENV_ROOT")"
 ADMIN_STATE="$(cloud_env_admin_state "$ENV_ROOT")"
 
-VC_GATEWAY_DOMAIN="video-cloud-staging.$DNS_ROOT_DOMAIN"
-VC_CERTISSUER_DOMAIN="certissuer.video-cloud-staging.$DNS_ROOT_DOMAIN"
-AM_DOMAIN="account-manager.video-cloud-staging.$DNS_ROOT_DOMAIN"
-ADMIN_DOMAIN="admin.video-cloud-staging.$DNS_ROOT_DOMAIN"
+VC_GATEWAY_DOMAIN="$VIDEO_CLOUD_DOMAIN"
+VC_CERTISSUER_DOMAIN="$VIDEO_CLOUD_CERTISSUER_DOMAIN"
+AM_DOMAIN="$ACCOUNT_MANAGER_DOMAIN"
+ADMIN_DOMAIN="$CLOUD_ADMIN_DOMAIN"
 VC_CERT_CACHE_DIR="$CERT_CACHE_ROOT/$VC_GATEWAY_DOMAIN"
 AM_CERT_CACHE_DIR="$CERT_CACHE_ROOT/$AM_DOMAIN"
 ADMIN_CERT_CACHE_DIR="$CERT_CACHE_ROOT/$ADMIN_DOMAIN"
@@ -303,9 +312,9 @@ require_files() {
 target_instance_filter='
 	.data[]
 	| select(
-		.label == "rtk-cloud-admin-staging"
-		or .label == "rtk-account-manager-staging"
-		or ((.label | startswith("video-cloud-staging-")) and ((.tags // []) | index("video-cloud-staging")))
+		.label == env.ADMIN_LINODE_LABEL
+		or .label == env.ACCOUNT_MANAGER_LINODE_LABEL
+		or ((.label | startswith(env.VIDEO_CLOUD_LABEL_PREFIX + "-")) and ((.tags // []) | index(env.CLOUD_STACK_NAME)))
 	)
 '
 
@@ -314,6 +323,46 @@ ensure_live_targets() {
 	instances="$(linode_api GET '/linode/instances?page_size=500')"
 	count="$(jq -r "[$target_instance_filter] | length" <<<"$instances")"
 	[[ "$count" == "7" ]] || die "expected 7 target VMs, found $count"
+	hydrate_video_state_from_live "$instances"
+}
+
+hydrate_video_state_from_live() {
+	local instances="$1"
+	local current
+	current="{}"
+	if [[ -f "$VC_STATE" ]]; then
+		current="$(cat "$VC_STATE")"
+	fi
+	mkdir -p "$(dirname "$VC_STATE")"
+	jq -n \
+		--arg stack "$CLOUD_STACK_NAME" \
+		--arg region "$CLOUD_REGION" \
+		--arg label_prefix "$VIDEO_CLOUD_LABEL_PREFIX" \
+		--argjson current "$current" \
+		--argjson instances "$instances" '
+		def role_instance($role; $private):
+			($instances.data[] | select(.label == ($label_prefix + "-" + $role))) as $i
+			| {
+				id: $i.id,
+				role: $role,
+				label: $i.label,
+				public_ipv4: (($i.ipv4 // []) | .[0] // ""),
+				public_ipv6: ($i.ipv6 // ""),
+				private_ip: $private,
+				tags: ($i.tags // [])
+			};
+		($current // {})
+		| .stack = $stack
+		| .region = $region
+		| .instances = {
+			edge: role_instance("edge"; "10.42.1.5"),
+			api: role_instance("api"; "10.42.1.10"),
+			infra: role_instance("infra"; "10.42.1.30"),
+			mqtt: role_instance("mqtt"; "10.42.1.40"),
+			coturn: role_instance("coturn"; "")
+		}
+		| .tags = [$stack, "managed-by:linode-deploy"]
+	' > "$VC_STATE"
 }
 
 load_states() {
@@ -485,10 +534,14 @@ video_cloud_deploy_and_verify() {
 		DEPLOY_SECRETS_DIR="$ENV_ROOT" \
 			LINODE_DEPLOY_CERT_CACHE_DIR="$cert_cache_dir" \
 			linode_deploy/scripts/deploy-staging.sh \
+				--stack "$CLOUD_STACK_NAME" \
 				--config "$VC_CONFIG" \
 				--secrets-file "$VC_SECRETS_FILE" \
 				--env-file "$OPERATOR_ENV" \
 				--release "$VIDEO_RELEASE" \
+				--gateway-domain "$VC_GATEWAY_DOMAIN" \
+				--dns-domain "$DNS_ROOT_DOMAIN" \
+				--dns-name "${VC_GATEWAY_DOMAIN%.$DNS_ROOT_DOMAIN}" \
 				--report "$READY_DIR/video-cloud-runtime-health.md"
 		local status=$?
 		set -e
