@@ -90,6 +90,9 @@ Run details:
 - Successes: `100`
 - Failures: `0`
 - Device ID policy: `pk-<sha256-spki-hex>`
+- Service options policy: factory requests must send canonical
+  `service_options`; the initial options are `mqtt`, `video_streaming`, and
+  `video_storage`. `allowed_services` is legacy compatibility only.
 - Local artifact source:
   `.artifacts/e2e_test/factory_enroll/factory-linode-certset-20260514T225802Z/`
 - Copied test material:
