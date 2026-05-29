@@ -125,6 +125,141 @@ copy_dir_contents() {
 	done
 }
 
+env_file_value() {
+	local file="$1"
+	local key="$2"
+	[[ -f "$file" ]] || return 0
+	(
+		set -a
+		# shellcheck source=/dev/null
+		. "$file"
+		set +a
+		printf '%s\n' "${!key:-}"
+	)
+}
+
+yaml_top_value() {
+	local file="$1"
+	local key="$2"
+	[[ -f "$file" ]] || return 0
+	awk -F ':' -v key="$key" '$1 == key {sub(/^[[:space:]]+/, "", $2); print $2; exit}' "$file"
+}
+
+yaml_path_value() {
+	local file="$1"
+	local path="$2"
+	[[ -f "$file" ]] || return 0
+	awk -v path="$path" '
+	BEGIN {
+		n = split(path, want, ".")
+	}
+	/^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+	{
+		match($0, /^[ ]*/)
+		indent = RLENGTH / 2
+		line = $0
+		sub(/^[ ]*/, "", line)
+		key = line
+		sub(/:.*/, "", key)
+		stack[indent + 1] = key
+		for (i = indent + 2; i <= 16; i++) {
+			delete stack[i]
+		}
+		if (line !~ /^[^:]+:[[:space:]]*[^[:space:]]/) {
+			next
+		}
+		if (indent + 1 != n) {
+			next
+		}
+		for (i = 1; i <= n; i++) {
+			if (stack[i] != want[i]) {
+				next
+			}
+		}
+		sub(/^[^:]+:[[:space:]]*/, "", line)
+		print line
+		exit
+	}' "$file"
+}
+
+metadata_env_name() {
+	if [[ "$(basename "$ENV_ROOT")" == "linode" ]]; then
+		basename "$(dirname "$ENV_ROOT")"
+	else
+		basename "$ENV_ROOT"
+	fi
+}
+
+write_environment_metadata() {
+	local dst
+	dst="$(cloud_env_stack_env "$ENV_ROOT")"
+	if [[ -e "$dst" && "$FORCE" != "1" ]]; then
+		record_manifest "stack-metadata" "$dst" "$dst" "skipped-existing" "$(sha256_file "$dst")"
+		return 0
+	fi
+
+	local video_config am_env admin_env env_name provider region root_domain stack
+	local video_domain certissuer_domain am_domain admin_domain
+	local label_prefix vpc_label subnet_label am_label am_fw_label admin_label admin_fw_label
+	video_config="$(cloud_env_video_config "$ENV_ROOT")"
+	am_env="$(cloud_env_account_manager_env "$ENV_ROOT")"
+	admin_env="$(cloud_env_admin_env "$ENV_ROOT")"
+
+	env_name="$(metadata_env_name)"
+	provider="linode"
+	region="$(yaml_top_value "$video_config" region)"
+	region="${region:-us-sea}"
+	root_domain="${CLOUD_DNS_ROOT_DOMAIN:-realtekconnect.com}"
+	stack="$(yaml_top_value "$video_config" stack)"
+	stack="${stack:-video-cloud-$env_name}"
+
+	video_domain="$(yaml_path_value "$video_config" instances.edge.letsencrypt.domain)"
+	video_domain="${video_domain:-$stack.$root_domain}"
+	certissuer_domain="$(yaml_path_value "$video_config" deploy.certissuer_domain)"
+	certissuer_domain="${certissuer_domain:-certissuer.$stack.$root_domain}"
+	am_domain="$(env_file_value "$am_env" ACCOUNT_MANAGER_LINODE_DOMAIN)"
+	am_domain="${am_domain:-account-manager.$stack.$root_domain}"
+	admin_domain="$(env_file_value "$admin_env" ADMIN_LINODE_DOMAIN)"
+	admin_domain="${admin_domain:-admin.$stack.$root_domain}"
+
+	label_prefix="$stack"
+	vpc_label="$(yaml_path_value "$video_config" vpc.label)"
+	vpc_label="${vpc_label:-$label_prefix-vpc}"
+	subnet_label="$(yaml_path_value "$video_config" vpc.subnet.label)"
+	subnet_label="${subnet_label:-$label_prefix-subnet}"
+	am_label="$(env_file_value "$am_env" ACCOUNT_MANAGER_LINODE_LABEL)"
+	am_label="${am_label:-rtk-account-manager-$env_name}"
+	am_fw_label="$(env_file_value "$am_env" ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL)"
+	am_fw_label="${am_fw_label:-$am_label-fw}"
+	admin_label="$(env_file_value "$admin_env" ADMIN_LINODE_LABEL)"
+	admin_label="${admin_label:-rtk-cloud-admin-$env_name}"
+	admin_fw_label="$(env_file_value "$admin_env" ADMIN_LINODE_FIREWALL_LABEL)"
+	admin_fw_label="${admin_fw_label:-$admin_label-firewall}"
+
+	mkdir -p "$(dirname "$dst")"
+	{
+		printf 'CLOUD_ENV_NAME=%s\n' "$env_name"
+		printf 'CLOUD_PROVIDER=%s\n' "$provider"
+		printf 'CLOUD_REGION=%s\n' "$region"
+		printf 'CLOUD_DNS_ROOT_DOMAIN=%s\n' "$root_domain"
+		printf 'CLOUD_STACK_NAME=%s\n' "$stack"
+		printf '\n'
+		printf 'VIDEO_CLOUD_DOMAIN=%s\n' "$video_domain"
+		printf 'VIDEO_CLOUD_CERTISSUER_DOMAIN=%s\n' "$certissuer_domain"
+		printf 'ACCOUNT_MANAGER_DOMAIN=%s\n' "$am_domain"
+		printf 'CLOUD_ADMIN_DOMAIN=%s\n' "$admin_domain"
+		printf '\n'
+		printf 'VIDEO_CLOUD_LABEL_PREFIX=%s\n' "$label_prefix"
+		printf 'VIDEO_CLOUD_VPC_LABEL=%s\n' "$vpc_label"
+		printf 'VIDEO_CLOUD_SUBNET_LABEL=%s\n' "$subnet_label"
+		printf 'ACCOUNT_MANAGER_LINODE_LABEL=%s\n' "$am_label"
+		printf 'ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL=%s\n' "$am_fw_label"
+		printf 'ADMIN_LINODE_LABEL=%s\n' "$admin_label"
+		printf 'ADMIN_LINODE_FIREWALL_LABEL=%s\n' "$admin_fw_label"
+	} > "$dst"
+	record_manifest "stack-metadata" "$dst" "$dst" "generated" "$(sha256_file "$dst")"
+}
+
 need_cmd jq
 WORKSPACE="$(cd "$WORKSPACE" && pwd)"
 source "$SCRIPT_DIR/lib/cloud-env.sh"
@@ -147,6 +282,13 @@ copy_file "$WORKSPACE/.secrets/staging/linode/video-cloud/env/video-cloud-stagin
 copy_file "$WORKSPACE/repos/rtk_account_manager/linode_deploy/secrets/account-manager-public-staging.env" "$(cloud_env_account_manager_env "$ENV_ROOT")" "service-env"
 copy_file "$WORKSPACE/repos/rtk_account_manager/linode_deploy/secrets/account-manager-platform-admin.env" "$(cloud_env_account_manager_platform_admin_env "$ENV_ROOT")" "service-env"
 copy_file "$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/admin-staging.env" "$(cloud_env_admin_env "$ENV_ROOT")" "service-env"
+if [[ -f "$WORKSPACE/.secrets/staging/linode/video-cloud/env/stack.env" ]]; then
+	copy_file "$WORKSPACE/.secrets/staging/linode/video-cloud/env/stack.env" "$(cloud_env_stack_env "$ENV_ROOT")" "stack-metadata"
+elif [[ -f "$WORKSPACE/.secrets/staging/linode/video-cloud/env/environment.env" ]]; then
+	copy_file "$WORKSPACE/.secrets/staging/linode/video-cloud/env/environment.env" "$(cloud_env_stack_env "$ENV_ROOT")" "stack-metadata"
+else
+	write_environment_metadata
+fi
 
 if [[ -f "$WORKSPACE/repos/rtk_video_cloud/linode_deploy/state/video-cloud-staging.state.json" ]]; then
 	copy_file "$WORKSPACE/repos/rtk_video_cloud/linode_deploy/state/video-cloud-staging.state.json" "$(cloud_env_video_state "$ENV_ROOT")" "state"

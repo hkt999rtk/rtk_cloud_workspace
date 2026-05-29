@@ -40,8 +40,8 @@ cloud_env_operator_env() {
 	printf '%s/env/operator.env\n' "$1"
 }
 
-cloud_env_environment_env() {
-	printf '%s/env/environment.env\n' "$1"
+cloud_env_stack_env() {
+	printf '%s/env/stack.env\n' "$1"
 }
 
 cloud_env_first_existing() {
@@ -128,7 +128,7 @@ cloud_env_load_environment() {
 	local env_root="$1"
 	local dns_override="${2:-}"
 	local metadata_file
-	metadata_file="$(cloud_env_environment_env "$env_root")"
+	metadata_file="$(cloud_env_stack_env "$env_root")"
 	local metadata_dns=""
 	if [[ -f "$metadata_file" ]]; then
 		set -a
@@ -142,7 +142,7 @@ cloud_env_load_environment() {
 	CLOUD_PROVIDER="${CLOUD_PROVIDER:-linode}"
 	CLOUD_REGION="${CLOUD_REGION:-us-sea}"
 	if [[ -n "$dns_override" && -n "$metadata_dns" && "$dns_override" != "$metadata_dns" ]]; then
-		cloud_env_die "--dns-root-domain $dns_override does not match $(cloud_env_environment_env "$env_root") CLOUD_DNS_ROOT_DOMAIN=$metadata_dns"
+		cloud_env_die "--dns-root-domain $dns_override does not match $(cloud_env_stack_env "$env_root") CLOUD_DNS_ROOT_DOMAIN=$metadata_dns"
 		return 1
 	fi
 	CLOUD_DNS_ROOT_DOMAIN="${metadata_dns:-${dns_override:-${CLOUD_DNS_ROOT_DOMAIN:-realtekconnect.com}}}"
@@ -196,6 +196,43 @@ cloud_env_yaml_top_value() {
 	awk -F ':' -v key="$key" '$1 == key {sub(/^[[:space:]]+/, "", $2); print $2; exit}' "$file"
 }
 
+cloud_env_yaml_path_value() {
+	local file="$1"
+	local path="$2"
+	[[ -f "$file" ]] || return 0
+	awk -v path="$path" '
+	BEGIN {
+		n = split(path, want, ".")
+	}
+	/^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+	{
+		match($0, /^[ ]*/)
+		indent = RLENGTH / 2
+		line = $0
+		sub(/^[ ]*/, "", line)
+		key = line
+		sub(/:.*/, "", key)
+		stack[indent + 1] = key
+		for (i = indent + 2; i <= 16; i++) {
+			delete stack[i]
+		}
+		if (line !~ /^[^:]+:[[:space:]]*[^[:space:]]/) {
+			next
+		}
+		if (indent + 1 != n) {
+			next
+		}
+		for (i = 1; i <= n; i++) {
+			if (stack[i] != want[i]) {
+				next
+			}
+		}
+		sub(/^[^:]+:[[:space:]]*/, "", line)
+		print line
+		exit
+	}' "$file"
+}
+
 cloud_env_video_gateway_domain() {
 	local file="$1"
 	[[ -f "$file" ]] || return 0
@@ -243,6 +280,14 @@ cloud_env_validate_environment() {
 	cloud_env_assert_equal_if_set "topology stack" "$CLOUD_STACK_NAME" "$value" || return 1
 	value="$(cloud_env_yaml_top_value "$video_config" region)"
 	cloud_env_assert_equal_if_set "topology region" "$CLOUD_REGION" "$value" || return 1
+	value="$(cloud_env_yaml_path_value "$video_config" vpc.label)"
+	cloud_env_assert_equal_if_set "topology VPC label" "$VIDEO_CLOUD_VPC_LABEL" "$value" || return 1
+	value="$(cloud_env_yaml_path_value "$video_config" vpc.subnet.label)"
+	cloud_env_assert_equal_if_set "topology subnet label" "$VIDEO_CLOUD_SUBNET_LABEL" "$value" || return 1
+	for role in edge api infra mqtt coturn; do
+		value="$(cloud_env_yaml_path_value "$video_config" "instances.$role.label")"
+		cloud_env_assert_equal_if_set "topology $role label" "$(cloud_env_video_role_label "$role")" "$value" || return 1
+	done
 	value="$(cloud_env_video_gateway_domain "$video_config")"
 	cloud_env_assert_equal_if_set "video gateway domain" "$VIDEO_CLOUD_DOMAIN" "$value" || return 1
 	value="$(cloud_env_video_deploy_value "$video_config" certissuer_domain)"
