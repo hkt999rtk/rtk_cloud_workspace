@@ -21,6 +21,7 @@ VIDEO_RELEASE=""
 ACCOUNT_RELEASE=""
 ADMIN_RELEASE=""
 ADMIN_RELEASE_BUNDLE="${ADMIN_RELEASE_BUNDLE:-}"
+ACCOUNT_RELEASE_BUNDLE="${ACCOUNT_RELEASE_BUNDLE:-}"
 VERBOSE=0
 
 die() {
@@ -60,6 +61,7 @@ Options:
   --artifact-dir PATH                 Default: <env-root>/artifacts.
   --cert-cache-root PATH              Default: <env-root>/certificates.
   --cert-cache-min-valid-seconds N    Default: CLOUD_CERT_CACHE_MIN_VALID_SECONDS or 604800.
+  --account-release-bundle PATH       Optional local Account Manager release bundle override.
   --admin-release-bundle PATH         Optional local Cloud Admin release bundle override.
   --verbose                           Print extra diagnostics.
   -h, --help                          Show this help.
@@ -71,6 +73,7 @@ while [[ $# -gt 0 ]]; do
 	--video-release) VIDEO_RELEASE="$2"; shift 2 ;;
 	--account-release) ACCOUNT_RELEASE="$2"; shift 2 ;;
 	--admin-release) ADMIN_RELEASE="$2"; shift 2 ;;
+	--account-release-bundle) ACCOUNT_RELEASE_BUNDLE="$2"; shift 2 ;;
 	--admin-release-bundle) ADMIN_RELEASE_BUNDLE="$2"; shift 2 ;;
 	--workspace) WORKSPACE="$2"; shift 2 ;;
 	--env-root) ENV_ROOT="$2"; shift 2 ;;
@@ -285,6 +288,37 @@ download_admin_release_bundle() {
 	log "Cloud Admin release artifact ready: $ADMIN_RELEASE_BUNDLE"
 }
 
+download_account_release_bundle() {
+	if [[ -n "$ACCOUNT_RELEASE_BUNDLE" ]]; then
+		[[ -s "$ACCOUNT_RELEASE_BUNDLE" ]] || die "Account Manager release bundle not found: $ACCOUNT_RELEASE_BUNDLE"
+		return
+	fi
+	[[ -n "${LINODE_OBJ_BUCKET:-}" ]] || die "LINODE_OBJ_BUCKET is required"
+	[[ -n "${LINODE_OBJ_ENDPOINT:-}" ]] || die "LINODE_OBJ_ENDPOINT is required"
+	need_cmd "${LINODE_AWS_CLI_PATH:-aws}"
+	local manifest_key manifest version object_key expected_sha bundle_dir checksum
+	manifest_key="releases/rtk_account_manager-$ACCOUNT_RELEASE/manifest.json"
+	manifest="$(object_storage_aws cp "s3://$LINODE_OBJ_BUCKET/$manifest_key" -)"
+	version="$(jq -r '.version // empty' <<<"$manifest")"
+	object_key="$(jq -r '.artifact_path // empty' <<<"$manifest")"
+	expected_sha="$(jq -r '.sha256 // empty' <<<"$manifest")"
+	[[ "$version" == "$ACCOUNT_RELEASE" ]] || die "Account Manager manifest version mismatch: requested=$ACCOUNT_RELEASE manifest=${version:-<empty>}"
+	[[ -n "$object_key" ]] || die "Account Manager manifest missing artifact_path: $manifest_key"
+	[[ -n "$expected_sha" ]] || die "Account Manager manifest missing sha256: $manifest_key"
+	bundle_dir="$READY_DIR/releases/rtk_account_manager-$ACCOUNT_RELEASE"
+	mkdir -p "$bundle_dir"
+	ACCOUNT_RELEASE_BUNDLE="$bundle_dir/rtk_account_manager-$ACCOUNT_RELEASE.tar.gz"
+	log "downloading Account Manager release artifact: $object_key"
+	object_storage_aws cp "s3://$LINODE_OBJ_BUCKET/$object_key" "$ACCOUNT_RELEASE_BUNDLE" >/dev/null
+	if command -v shasum >/dev/null 2>&1; then
+		checksum="$(shasum -a 256 "$ACCOUNT_RELEASE_BUNDLE" | awk '{print $1}')"
+	else
+		checksum="$(sha256sum "$ACCOUNT_RELEASE_BUNDLE" | awk '{print $1}')"
+	fi
+	[[ "$checksum" == "$expected_sha" ]] || die "Account Manager artifact checksum mismatch: expected=$expected_sha got=$checksum"
+	log "Account Manager release artifact ready: $ACCOUNT_RELEASE_BUNDLE"
+}
+
 resolve_dns() {
 	local server="$1"
 	local domain="$2"
@@ -482,6 +516,7 @@ finalize_report() {
 }
 
 account_manager_deploy() {
+	download_account_release_bundle
 	(
 		cd "$AM_REPO"
 		set -a
@@ -499,6 +534,7 @@ account_manager_deploy() {
 		fi
 		set +e
 		ACCOUNT_MANAGER_LINODE_RELEASE="$ACCOUNT_RELEASE" \
+			ACCOUNT_MANAGER_LINODE_RELEASE_BUNDLE="$ACCOUNT_RELEASE_BUNDLE" \
 			ACCOUNT_MANAGER_LINODE_CERT_CACHE_DIR="$cert_cache_dir" \
 			linode_deploy/scripts/deploy-public-vm.sh
 		local status=$?

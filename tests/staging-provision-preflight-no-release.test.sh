@@ -41,6 +41,7 @@ case "$*" in
 	cat <<'EOF_LS'
 2026-05-26 10:00:00        180 releases/rtk_video_cloud-v1.2.3/manifest.json
 2026-05-27 09:30:00        198 releases/rtk_video_cloud-ci-20260527-093000-abcdef123456/manifest.json
+2026-05-27 10:00:00        198 releases/rtk_account_manager-ci-20260527-100000-fedcba654321/manifest.json
 2026-05-27 10:30:00        198 releases/rtk_cloud_admin-admin-test/manifest.json
 EOF_LS
 	;;
@@ -49,6 +50,14 @@ EOF_LS
 {
   "version": "ci-20260527-093000-abcdef123456",
   "artifact_path": "releases/rtk_video_cloud-ci-20260527-093000-abcdef123456/ci-20260527-093000-abcdef123456.tar.gz"
+}
+EOF_MANIFEST
+	;;
+*"s3 cp s3://test-bucket/releases/rtk_account_manager-ci-20260527-100000-fedcba654321/manifest.json -"*)
+	cat <<'EOF_MANIFEST'
+{
+  "version": "ci-20260527-100000-fedcba654321",
+  "artifact_path": "releases/rtk_account_manager-ci-20260527-100000-fedcba654321/ci-20260527-100000-fedcba654321.tar.gz"
 }
 EOF_MANIFEST
 	;;
@@ -62,6 +71,9 @@ EOF_MANIFEST
 	;;
 *"s3 ls s3://test-bucket/releases/rtk_video_cloud-ci-20260527-093000-abcdef123456/ci-20260527-093000-abcdef123456.tar.gz"*)
 	printf '2026-05-27 09:31:00 123456 releases/rtk_video_cloud-ci-20260527-093000-abcdef123456/ci-20260527-093000-abcdef123456.tar.gz\n'
+	;;
+*"s3 ls s3://test-bucket/releases/rtk_account_manager-ci-20260527-100000-fedcba654321/ci-20260527-100000-fedcba654321.tar.gz"*)
+	printf '2026-05-27 10:01:00 123456 releases/rtk_account_manager-ci-20260527-100000-fedcba654321/ci-20260527-100000-fedcba654321.tar.gz\n'
 	;;
 *"s3 ls s3://test-bucket/releases/rtk_cloud_admin-admin-test/admin-test.tar.gz"*)
 	printf '2026-05-27 10:31:00 123456 releases/rtk_cloud_admin-admin-test/admin-test.tar.gz\n'
@@ -100,3 +112,6 @@ grep -F 'Available Video Cloud releases in Object Storage:' "$OUT" >/dev/null
 grep -F '1) ci-20260527-093000-abcdef123456' "$OUT" >/dev/null
 grep -F '2) v1.2.3' "$OUT" >/dev/null
 grep -F 'Video Cloud Object Storage release readable: releases/rtk_video_cloud-ci-20260527-093000-abcdef123456/ci-20260527-093000-abcdef123456.tar.gz' "$OUT" >/dev/null
+grep -F 'selected Account Manager Object Storage release: ci-20260527-100000-fedcba654321' "$OUT" >/dev/null
+grep -F 'Available Account Manager releases in Object Storage:' "$OUT" >/dev/null
+grep -F 'Account Manager Object Storage release readable: releases/rtk_account_manager-ci-20260527-100000-fedcba654321/ci-20260527-100000-fedcba654321.tar.gz' "$OUT" >/dev/null
