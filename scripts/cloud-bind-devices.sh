@@ -8,7 +8,7 @@ START_EPOCH="$(date +%s)"
 BRANDNAME=""
 USERS_FILE=""
 DEVICES_DIR=""
-COUNT=100
+COUNT=""
 SKIP_BOOTSTRAP=0
 DRY_RUN=0
 CLAIM_TTL_HOURS=24
@@ -28,15 +28,15 @@ log() {
 usage() {
 	cat <<'USAGE'
 Usage:
-  scripts/cloud-bind-devices.sh --env-root cloud_env/staging --brandname RTK --users-file FILE --devices-dir DIR [options]
+  scripts/cloud-bind-devices.sh --env-root cloud_env/staging --brandname RTK [options]
 
 Options:
   --workspace PATH       Default: script parent workspace.
   --env-root PATH        Required environment directory, for example cloud_env/staging.
   --brandname NAME       Required brand cloud name.
-  --users-file FILE      Required credentials artifact from cloud-create-users.sh.
-  --devices-dir DIR      Required generated/factory-enrolled devices directory.
-  --count N              Number of devices to bind. Default: 100.
+  --users-file FILE      Credentials artifact from cloud-create-users.sh. Default: latest <brand>-users-*.json.
+  --devices-dir DIR      Generated/factory-enrolled devices directory. Default: <env-root>/devices/test_device.
+  --count N              Optional number of devices to bind. Default: all devices in manifests/devices.json.
   --claim-ttl-hours N    Claim Token lifetime. Default: 24.
   --dry-run              Print planned assignments without calling APIs or writing artifacts.
   --skip-bootstrap       Do not update/restart the remote platform-admin bootstrap env.
@@ -87,10 +87,10 @@ validate_args() {
 	BRANDNAME="$(printf '%s' "$BRANDNAME" | awk '{$1=$1; print}')"
 	[[ -n "$BRANDNAME" ]] || die "--brandname is required"
 	[[ -n "$ENV_ROOT" ]] || die "--env-root is required; pass the environment directory explicitly, for example --env-root cloud_env/staging"
-	[[ -n "$USERS_FILE" ]] || die "--users-file is required"
-	[[ -n "$DEVICES_DIR" ]] || die "--devices-dir is required"
-	[[ "$COUNT" =~ ^[0-9]+$ ]] || die "--count must be a positive integer"
-	((COUNT > 0)) || die "--count must be greater than zero"
+	if [[ -n "$COUNT" ]]; then
+		[[ "$COUNT" =~ ^[0-9]+$ ]] || die "--count must be a positive integer"
+		((COUNT > 0)) || die "--count must be greater than zero"
+	fi
 	[[ "$CLAIM_TTL_HOURS" =~ ^[0-9]+$ ]] || die "--claim-ttl-hours must be a positive integer"
 	((CLAIM_TTL_HOURS > 0)) || die "--claim-ttl-hours must be greater than zero"
 	if printf '%s' "$BRANDNAME" | LC_ALL=C grep -q '[[:cntrl:]]'; then
@@ -197,6 +197,21 @@ abs_existing_dir() {
 	(cd "$path" && pwd)
 }
 
+resolve_default_inputs() {
+	local slug users_dir latest_users
+	if [[ -z "$DEVICES_DIR" ]]; then
+		DEVICES_DIR="$(cloud_env_test_devices_dir "$ENV_ROOT")"
+	fi
+	if [[ -z "$USERS_FILE" ]]; then
+		slug="$(brand_slug)"
+		users_dir="$(cloud_env_artifacts_dir "$ENV_ROOT")/users"
+		[[ -d "$users_dir" ]] || die "--users-file was not provided and users artifact directory was not found: $users_dir"
+		latest_users="$(find "$users_dir" -type f -name "$slug-users-*.json" -print | sort | tail -n 1)"
+		[[ -n "$latest_users" ]] || die "--users-file was not provided and no users artifact matched: $users_dir/$slug-users-*.json"
+		USERS_FILE="$latest_users"
+	fi
+}
+
 validate_users_and_devices() {
 	USERS_FILE="$(abs_existing_file "$USERS_FILE")"
 	DEVICES_DIR="$(abs_existing_dir "$DEVICES_DIR")"
@@ -206,6 +221,9 @@ validate_users_and_devices() {
 	DEVICE_COUNT="$(jq 'length' "$DEVICES_MANIFEST")"
 	[[ "$USER_COUNT" =~ ^[0-9]+$ && "$USER_COUNT" -gt 0 ]] || die "--users-file must contain at least one user"
 	[[ "$DEVICE_COUNT" =~ ^[0-9]+$ && "$DEVICE_COUNT" -gt 0 ]] || die "devices manifest must contain at least one device"
+	if [[ -z "$COUNT" ]]; then
+		COUNT="$DEVICE_COUNT"
+	fi
 	((COUNT <= DEVICE_COUNT)) || die "--count $COUNT exceeds device manifest count $DEVICE_COUNT"
 	USERS_BRAND="$(jq -r '.brandname // empty' "$USERS_FILE")"
 	[[ -z "$USERS_BRAND" || "$USERS_BRAND" == "$BRANDNAME" ]] || die "--users-file brandname $USERS_BRAND does not match --brandname $BRANDNAME"
@@ -397,6 +415,7 @@ TMPDIR="$(mktemp -d /tmp/rtk-bind-devices.XXXXXX)"
 trap 'rm -rf "$TMPDIR"' EXIT
 source "$SCRIPT_DIR/lib/cloud-env.sh"
 ENV_ROOT="$(cloud_env_init "$WORKSPACE" "$ENV_ROOT")"
+resolve_default_inputs
 validate_users_and_devices
 
 ASSIGNMENTS_JSON="$(build_assignments)"

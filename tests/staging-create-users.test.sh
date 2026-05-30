@@ -67,16 +67,21 @@ case "$url" in
 	fi
 	status=200
 	;;
-*/v1/admin/brand-clouds/org-rtk/users)
-	payload="${data#@}"
-	email="$(jq -r '.email' "$payload")"
-	role="$(jq -r '.role' "$payload")"
-	rotate="$(jq -r '.rotate_password // false' "$payload")"
-	cp "$payload" "$FAKE_CURL_LOG/user-$(printf '%s' "$email" | tr '@+' '__').json"
-	jq -cn --arg email "$email" --arg role "$role" --argjson rotate "$rotate" \
-		'{action:"created", user:{id:("user-"+$email), email:$email, display_name:$email, email_verified:true, signup_pending_verification:false, created_at:"2026-05-30T00:00:00Z", updated_at:"2026-05-30T00:00:00Z"}, member:{organization_id:"org-rtk", user_id:("user-"+$email), email:$email, role:$role, created_at:"2026-05-30T00:00:00Z", updated_at:"2026-05-30T00:00:00Z"}, rotate_password:$rotate}' >"$out"
-	status=201
-	;;
+	*/v1/admin/brand-clouds/org-rtk/users)
+		payload="${data#@}"
+		email="$(jq -r '.email' "$payload")"
+		role="$(jq -r '.role' "$payload")"
+		rotate="$(jq -r '.rotate_password // false' "$payload")"
+		action="${FAKE_USER_ACTION:-created}"
+		if [[ "$action" == "created" ]]; then
+			status=201
+		else
+			status=200
+		fi
+		cp "$payload" "$FAKE_CURL_LOG/user-$(printf '%s' "$email" | tr '@+' '__').json"
+		jq -cn --arg action "$action" --arg email "$email" --arg role "$role" --argjson rotate "$rotate" \
+			'{action:$action, user:{id:("user-"+$email), email:$email, display_name:$email, email_verified:true, signup_pending_verification:false, created_at:"2026-05-30T00:00:00Z", updated_at:"2026-05-30T00:00:00Z"}, member:{organization_id:"org-rtk", user_id:("user-"+$email), email:$email, role:$role, created_at:"2026-05-30T00:00:00Z", updated_at:"2026-05-30T00:00:00Z"}, rotate_password:$rotate}' >"$out"
+		;;
 *)
 	printf 'unexpected curl url: %s\n' "$url" >&2
 	exit 1
@@ -128,6 +133,33 @@ jq -e '.brandname == "RTK" and .brand_cloud_id == "org-rtk" and (.users | length
 jq -e '.users[0].email == "rtk+001@users.local" and (.users[0].password | length >= 24)' "$CREDS" >/dev/null
 test "$(find "$CURL_LOG" -name 'user-*.json' | wc -l | tr -d ' ')" = "2"
 jq -e '.role == "member" and .rotate_password == false' "$CURL_LOG/user-rtk_001_users.local.json" >/dev/null
+
+ASSIGNED_ERR="$TMP/assigned.err"
+if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_USER_ACTION=assigned "$ROOT/scripts/cloud-create-users.sh" \
+	--workspace "$WORKSPACE" \
+	--env-root "$ENV_ROOT" \
+	--brandname RTK \
+	--count 1 >"$TMP/assigned.out" 2>"$ASSIGNED_ERR"; then
+	echo "expected assigned users without --rotate-password to fail" >&2
+	exit 1
+fi
+grep -F 'brand user already exists and password was not rotated: email=rtk+001@users.local' "$ASSIGNED_ERR" >/dev/null
+if find "$ENV_ROOT/artifacts/users" -name 'rtk-users-*.json' -newer "$OUT" 2>/dev/null | grep -q .; then
+	echo "assigned failure must not write a new credentials artifact" >&2
+	exit 1
+fi
+
+ROTATE_OUT="$TMP/rotate.out"
+PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_USER_ACTION=assigned "$ROOT/scripts/cloud-create-users.sh" \
+	--workspace "$WORKSPACE" \
+	--env-root "$ENV_ROOT" \
+	--brandname RTK \
+	--count 1 \
+	--rotate-password >"$ROTATE_OUT"
+jq -e '.assigned == 1 and .created == 0' "$ROTATE_OUT" >/dev/null
+ROTATE_CREDS="$(jq -r '.credentials_file' "$ROTATE_OUT")"
+jq -e '.users[0].action == "assigned" and (.users[0].password | length >= 24)' "$ROTATE_CREDS" >/dev/null
+jq -e '.rotate_password == true' "$CURL_LOG/user-rtk_001_users.local.json" >/dev/null
 
 MISSING="$TMP/missing-brand.err"
 if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_NO_BRAND=1 "$ROOT/scripts/cloud-create-users.sh" \

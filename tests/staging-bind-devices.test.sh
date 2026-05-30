@@ -181,6 +181,16 @@ if find "$CURL_LOG" -type f | grep -q .; then
 	exit 1
 fi
 
+DEFAULT_DRY_RUN="$TMP/default-dry-run.json"
+PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "$ROOT/scripts/cloud-bind-devices.sh" \
+	--workspace "$WORKSPACE" \
+	--env-root "$ENV_ROOT" \
+	--brandname RTK \
+	--dry-run >"$DEFAULT_DRY_RUN"
+jq -e '.action == "dry_run" and .brandname == "RTK" and .count == 4' "$DEFAULT_DRY_RUN" >/dev/null
+jq -e --arg users "$USERS_FILE" --arg devices "$DEVICES_DIR" '.users_file == $users and .devices_dir == $devices' "$DEFAULT_DRY_RUN" >/dev/null
+jq -e '.assignments | length == 4' "$DEFAULT_DRY_RUN" >/dev/null
+
 MANY_USERS="$ENV_ROOT/artifacts/users/rtk-users-100-test.json"
 MANY_DEVICES="$TMP/devices-100"
 mkdir -p "$MANY_DEVICES/manifests"

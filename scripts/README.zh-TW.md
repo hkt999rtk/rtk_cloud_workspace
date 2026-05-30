@@ -407,10 +407,10 @@ scripts/cloud-create-users.sh --env-root cloud_env/staging --brandname RTK --cou
 - `--brandname NAME`：指定既有 brand cloud 名稱或 `metadata.brandname`。
 - `--count N`：建立帳號數量，預設 `10`；email 會使用 `<brand>+001@users.local` 這種序號格式。
 - `--role ROLE`：`owner`、`admin` 或 `member`，預設 `member`。
-- `--rotate-password`：既有 user 也更新初始密碼；預設重跑時保留既有密碼。
+- `--rotate-password`：既有 user 也更新初始密碼；預設遇到既有 user 會失敗，避免產生不會生效的新 credentials artifact。若只是要重用既有帳號，請使用前一次成功產生的 users artifact。
 - `--dry-run`：只列出將建立的 email，不呼叫建立 user API，也不寫 credentials。
 
-腳本的進度訊息會寫到 stderr，stdout 只輸出 summary JSON，不包含密碼。初始密碼只寫入 `cloud_env/.../artifacts/users/<brand>-users-<timestamp>.json`，檔案權限為 `0600`。
+腳本的進度訊息會寫到 stderr，stdout 只輸出 summary JSON，不包含密碼。初始密碼只寫入 `cloud_env/.../artifacts/users/<brand>-users-<timestamp>.json`，檔案權限為 `0600`。如果 API 回報 user 已存在且未指定 `--rotate-password`，腳本會停止，不會寫新的 credentials artifact。
 
 ### `scripts/cloud-bind-devices.sh`
 
@@ -425,10 +425,7 @@ scripts/cloud-generate-load-devices.sh --env-root cloud_env/staging --count 100
 
 scripts/cloud-bind-devices.sh \
   --env-root cloud_env/staging \
-  --brandname RTK \
-  --users-file cloud_env/staging/linode/artifacts/users/rtk-users-<timestamp>.json \
-  --devices-dir cloud_env/staging/linode/devices/test_device \
-  --count 100
+  --brandname RTK
 
 scripts/cloud-validate-device-bind.sh \
   --bind-artifact cloud_env/staging/linode/artifacts/device-bind/rtk-device-bind-<timestamp>.json
@@ -451,14 +448,17 @@ scripts/cloud-validate-device-bind.sh \
 - 完整 redacted artifact 寫到 `cloud_env/.../artifacts/device-bind/<brand>-device-bind-<timestamp>.json`，檔案權限為 `0600`。
 - artifact 只包含 assigned email、device id/type、`service_options`、claim id、account device id、operation id 與 status。
 - raw Claim Token、user password、bearer token 只存在 process 暫存檔，腳本結束會移除。
+- 未指定 `--users-file` 時，腳本會使用 `cloud-create-users.sh` 寫出的最新 `cloud_env/.../artifacts/users/<brand>-users-*.json`。
+- 未指定 `--devices-dir` 時，腳本會使用 `cloud-generate-load-devices.sh` 的預設輸出 `cloud_env/.../devices/test_device`。
+- 未指定 `--count` 時，腳本會綁定 `manifests/devices.json` 內全部 devices。
 
 常用選項：
 
 - `--env-root PATH`：指定 environment directory；必填。
 - `--brandname NAME`：指定既有 brand cloud。
-- `--users-file FILE`：`cloud-create-users.sh` 產生的 credentials artifact；必填。
-- `--devices-dir DIR`：`cloud-generate-load-devices.sh` 產生的 device output directory；必填。
-- `--count N`：綁定 device 數量，預設 `100`。
+- `--users-file FILE`：指定 `cloud-create-users.sh` 產生的 credentials artifact；未指定時使用同 brand 最新 artifact。
+- `--devices-dir DIR`：指定 `cloud-generate-load-devices.sh` 產生的 device output directory；未指定時使用 `<env-root>/devices/test_device`。
+- `--count N`：只綁定前 N 台 device；未指定時綁定 manifest 內全部 devices。
 - `--dry-run`：只輸出 assignment plan，不呼叫 Account Manager API，也不寫 artifact。
 - `--skip-bootstrap`：不要更新/restart 遠端 Account Manager bootstrap admin env。
 
