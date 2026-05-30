@@ -280,11 +280,16 @@ for i in $(seq 1 "$COUNT"); do
 	email="$SLUG+$suffix@users.local"
 	display_name="$BRANDNAME User $suffix"
 	password="$(random_password)"
-	log "creating brand user: email=$email role=$ROLE"
+	log "ensuring brand user: email=$email role=$ROLE"
 	action="$(create_user "$email" "$display_name" "$password")"
 	case "$action" in
 	created) CREATED=$((CREATED + 1)) ;;
-	*) ASSIGNED=$((ASSIGNED + 1)) ;;
+	*)
+		if [[ "$ROTATE_PASSWORD" != "1" ]]; then
+			die "brand user already exists and password was not rotated: email=$email; use the previous credentials artifact or rerun with --rotate-password"
+		fi
+		ASSIGNED=$((ASSIGNED + 1))
+		;;
 	esac
 	jq -cn \
 		--arg email "$email" \
