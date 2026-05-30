@@ -2,14 +2,16 @@
 # shellcheck shell=bash
 
 load_runner_specs() {
-  if [[ -n "${CI_RUNNER_PROFILE:-}" && "${CI_RUNNER_PROFILE:-}" != "dedicated" ]]; then
-    printf 'error: shared CI runner profiles are not supported; use dedicated VMs\n' >&2
+  if [[ -n "${CI_RUNNER_PROFILE:-}" && "${CI_RUNNER_PROFILE:-}" != "shared-linux" ]]; then
+    printf 'error: only shared-linux CI runner profile is supported\n' >&2
     return 2
   fi
 
   RUNNER_SPECS=(
-    "rtk-ci-account-manager|rtk-ci-account-manager|hkt999rtk/rtk_account_manager|g6-standard-2|account-manager-ci"
-    "rtk-ci-cloud-admin|rtk-ci-cloud-admin|hkt999rtk/rtk_cloud_admin|g6-standard-2|rtk-cloud-admin-ci"
-    "rtk-ci-video-cloud|rtk-ci-video-cloud|hkt999rtk/rtk_video_cloud|g6-standard-4|video-cloud-ci"
+    "rtk-shared-linux-ci|rtk-ci-account-manager|hkt999rtk/rtk_account_manager|g6-standard-4|account-manager-ci"
+    "rtk-shared-linux-ci|rtk-ci-cloud-admin|hkt999rtk/rtk_cloud_admin|g6-standard-4|rtk-cloud-admin-ci"
+    "rtk-shared-linux-ci|rtk-ci-cloud-frontend|hkt999rtk/rtk_cloud_frontend|g6-standard-4|rtk_cloud_frontend,go"
+    "rtk-shared-linux-ci|rtk-ci-cloud-client-linux|hkt999rtk/rtk_cloud_client|g6-standard-4|client-sdk-ci"
+    "rtk-shared-linux-ci|rtk-ci-cloud-logger|hkt999rtk/rtk_cloud_logger|g6-standard-4|rtk-cloud-logger-ci"
   )
 }

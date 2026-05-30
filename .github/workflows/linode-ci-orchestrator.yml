@@ -16,8 +16,16 @@ on:
         description: 'rtk_cloud_admin GitHub Actions run id to rerun/watch/archive'
         required: false
         type: string
-      video_run_id:
-        description: 'rtk_video_cloud GitHub Actions run id to rerun/watch/archive'
+      frontend_run_id:
+        description: 'rtk_cloud_frontend GitHub Actions run id to rerun/watch/archive'
+        required: false
+        type: string
+      client_run_id:
+        description: 'rtk_cloud_client Linux GitHub Actions run id to rerun/watch/archive'
+        required: false
+        type: string
+      logger_run_id:
+        description: 'rtk_cloud_logger GitHub Actions run id to rerun/watch/archive'
         required: false
         type: string
       rerun:
@@ -26,7 +34,7 @@ on:
         default: true
         type: boolean
       shutdown_policy:
-        description: 'When to shut down Linode CI runner VMs'
+        description: 'When to shut down the Linode CI runner VM'
         required: true
         default: always
         type: choice
@@ -46,7 +54,7 @@ env:
   LINODE_OBJ_SECRET_ACCESS_KEY: ${{ secrets.LINODE_OBJ_SECRET_ACCESS_KEY }}
   LINODE_OBJ_BUCKET: ${{ secrets.LINODE_OBJ_BUCKET }}
   LINODE_OBJ_ENDPOINT: ${{ secrets.LINODE_OBJ_ENDPOINT }}
-  CI_RUNNER_PROFILE: dedicated
+  CI_RUNNER_PROFILE: shared-linux
   LINODE_CI_SMOKE_ONLY: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
 
 jobs:
@@ -92,7 +100,9 @@ jobs:
             scripts/linode-ci-runners/run-ci-session.sh \
               --account-run-id "${{ inputs.account_run_id }}" \
               --admin-run-id "${{ inputs.admin_run_id }}" \
-              --video-run-id "${{ inputs.video_run_id }}" \
+              --frontend-run-id "${{ inputs.frontend_run_id }}" \
+              --client-run-id "${{ inputs.client_run_id }}" \
+              --logger-run-id "${{ inputs.logger_run_id }}" \
               --rerun "${{ inputs.rerun }}" \
               --shutdown-policy "${{ inputs.shutdown_policy }}"
           fi

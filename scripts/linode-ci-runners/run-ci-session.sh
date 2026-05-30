@@ -7,26 +7,30 @@ Usage:
   scripts/linode-ci-runners/run-ci-session.sh \
     [--account-run-id RUN_ID] \
     [--admin-run-id RUN_ID] \
-    [--video-run-id RUN_ID] \
+    [--frontend-run-id RUN_ID] \
+    [--client-run-id RUN_ID] \
+    [--logger-run-id RUN_ID] \
     [--rerun true|false] \
     [--shutdown-policy always|on-success|never] \
     [--smoke-only true|false]
 
-Boots the dedicated Linode CI runner VMs, waits for GitHub runners to become
-online, optionally reruns the selected GitHub Actions runs, watches them to
-completion, archives run metadata/artifacts to Linode Object Storage, and shuts
-VMs down according to the shutdown policy.
+Boots the shared Linode Linux CI runner VM, waits for repo-scoped GitHub
+runners to become online, optionally reruns the selected GitHub Actions runs,
+watches them to completion, archives run metadata/artifacts to Linode Object
+Storage, and shuts the VM down according to the shutdown policy.
 
-With --smoke-only true, the script only boots dedicated runner VMs, waits for
-GitHub runners to become online, and shuts the VMs down. It does not require
-run ids and does not archive artifacts.
+With --smoke-only true, the script only boots the shared Linux CI VM, waits for
+GitHub runners to become online, and shuts the VM down. It does not require run
+ids and does not archive artifacts.
 USAGE
 }
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 account_run_id=""
 admin_run_id=""
-video_run_id=""
+frontend_run_id=""
+client_run_id=""
+logger_run_id=""
 rerun="true"
 shutdown_policy="always"
 smoke_only="false"
@@ -35,7 +39,9 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --account-run-id) account_run_id="$2"; shift 2 ;;
     --admin-run-id) admin_run_id="$2"; shift 2 ;;
-    --video-run-id) video_run_id="$2"; shift 2 ;;
+    --frontend-run-id) frontend_run_id="$2"; shift 2 ;;
+    --client-run-id) client_run_id="$2"; shift 2 ;;
+    --logger-run-id) logger_run_id="$2"; shift 2 ;;
     --rerun) rerun="$2"; shift 2 ;;
     --shutdown-policy) shutdown_policy="$2"; shift 2 ;;
     --smoke-only) smoke_only="$2"; shift 2 ;;
@@ -48,7 +54,7 @@ case "$rerun" in true|false) ;; *) echo "--rerun must be true or false" >&2; exi
 case "$shutdown_policy" in always|on-success|never) ;; *) echo "--shutdown-policy must be always, on-success, or never" >&2; exit 2 ;; esac
 case "$smoke_only" in true|false) ;; *) echo "--smoke-only must be true or false" >&2; exit 2 ;; esac
 
-if [[ "$smoke_only" == "false" && -z "$account_run_id" && -z "$admin_run_id" && -z "$video_run_id" ]]; then
+if [[ "$smoke_only" == "false" && -z "$account_run_id" && -z "$admin_run_id" && -z "$frontend_run_id" && -z "$client_run_id" && -z "$logger_run_id" ]]; then
   echo "at least one run id is required" >&2
   usage >&2
   exit 2
@@ -109,7 +115,9 @@ watch_and_archive() {
 
 watch_and_archive hkt999rtk/rtk_account_manager "$account_run_id"
 watch_and_archive hkt999rtk/rtk_cloud_admin "$admin_run_id"
-watch_and_archive hkt999rtk/rtk_video_cloud "$video_run_id"
+watch_and_archive hkt999rtk/rtk_cloud_frontend "$frontend_run_id"
+watch_and_archive hkt999rtk/rtk_cloud_client "$client_run_id"
+watch_and_archive hkt999rtk/rtk_cloud_logger "$logger_run_id"
 
 if [[ "$shutdown_policy" == "on-success" && "$overall" -eq 0 ]]; then
   shutdown_runners

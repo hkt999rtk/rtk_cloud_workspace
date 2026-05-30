@@ -9,6 +9,7 @@ WORKSPACE="$TMP/workspace"
 ENV_ROOT="$WORKSPACE/cloud_env/staging/linode"
 FAKE_BIN="$TMP/bin"
 LOG="$TMP/curl.log"
+PAYLOAD_LOG="$TMP/payloads.jsonl"
 mkdir -p \
 	"$FAKE_BIN" \
 	"$ENV_ROOT/state" \
@@ -62,10 +63,19 @@ JSON
 	;;
 *"GET https://api.linode.com/v4/networking/firewalls/"*"/rules"*)
 	cat <<'JSON'
-{"inbound_policy":"DROP","outbound_policy":"ACCEPT","inbound":[{"label":"ssh","action":"ACCEPT","protocol":"TCP","ports":"22","addresses":{"ipv4":["203.0.113.10/32"]}}],"outbound":[],"version":2,"fingerprint":"test"}
+{"inbound_policy":"DROP","outbound_policy":"ACCEPT","inbound":[{"label":"ssh","action":"ACCEPT","protocol":"TCP","ports":"22","addresses":{"ipv4":["203.0.113.10/32","203.0.113.11/32"]}},{"label":"https","action":"ACCEPT","protocol":"TCP","ports":"443","addresses":{"ipv4":["0.0.0.0/0"]}}],"outbound":[],"version":2,"fingerprint":"test"}
 JSON
 	;;
 *"PUT https://api.linode.com/v4/networking/firewalls/"*"/rules"*)
+	payload=""
+	while [[ $# -gt 0 ]]; do
+		if [[ "$1" == "--data-binary" ]]; then
+			payload="$2"
+			break
+		fi
+		shift
+	done
+	jq -c . <<<"$payload" >> "$CURL_PAYLOAD_LOG"
 	exit 0
 	;;
 *)
@@ -76,7 +86,7 @@ esac
 SH
 chmod +x "$FAKE_BIN/curl"
 
-if PATH="$FAKE_BIN:$PATH" CURL_LOG="$LOG" LINODE_TOKEN=test-token \
+if PATH="$FAKE_BIN:$PATH" CURL_LOG="$LOG" CURL_PAYLOAD_LOG="$PAYLOAD_LOG" LINODE_TOKEN=test-token \
 	"$ROOT/scripts/cloud-update-ssh-whitelist.sh" \
 		--workspace "$WORKSPACE" \
 		--cidr 198.51.100.9/32 >"$TMP/missing-env-root.out" 2>&1; then
@@ -86,7 +96,7 @@ fi
 grep -F -- '--env-root is required' "$TMP/missing-env-root.out" >/dev/null
 : > "$LOG"
 
-PATH="$FAKE_BIN:$PATH" CURL_LOG="$LOG" LINODE_TOKEN=test-token \
+PATH="$FAKE_BIN:$PATH" CURL_LOG="$LOG" CURL_PAYLOAD_LOG="$PAYLOAD_LOG" LINODE_TOKEN=test-token \
 	"$ROOT/scripts/cloud-update-ssh-whitelist.sh" \
 		--workspace "$WORKSPACE" \
 		--env-root "$ENV_ROOT" \
@@ -100,3 +110,47 @@ done
 grep -F '198.51.100.9/32' "$ENV_ROOT/services/account-manager/account-manager-public-staging.env" >/dev/null
 grep -F '198.51.100.9/32' "$ENV_ROOT/services/cloud-admin/admin-staging.env" >/dev/null
 grep -F '    - 198.51.100.9/32' "$ENV_ROOT/topology/video-cloud-staging.yaml" >/dev/null
+grep -F '203.0.113.10/32,198.51.100.9/32' "$ENV_ROOT/services/account-manager/account-manager-public-staging.env" >/dev/null
+grep -F '203.0.113.20/32,198.51.100.9/32' "$ENV_ROOT/services/cloud-admin/admin-staging.env" >/dev/null
+grep -F '"203.0.113.10/32"' "$PAYLOAD_LOG" >/dev/null
+grep -F '"203.0.113.11/32"' "$PAYLOAD_LOG" >/dev/null
+grep -F '"198.51.100.9/32"' "$PAYLOAD_LOG" >/dev/null
+grep -F '"0.0.0.0/0"' "$PAYLOAD_LOG" >/dev/null
+
+cat > "$ENV_ROOT/services/account-manager/account-manager-public-staging.env" <<'EOF_ENV'
+ACCOUNT_MANAGER_LINODE_ALLOWED_SSH_CIDRS=203.0.113.10/32,198.51.100.9/32
+EOF_ENV
+cat > "$ENV_ROOT/services/cloud-admin/admin-staging.env" <<'EOF_ENV'
+ADMIN_LINODE_ALLOWED_SSH_CIDRS=203.0.113.20/32,198.51.100.9/32
+EOF_ENV
+cat > "$ENV_ROOT/topology/video-cloud-staging.yaml" <<'EOF_YAML'
+ssh:
+  user: root
+  allowed_source_cidrs:
+    - 203.0.113.30/32
+    - 198.51.100.9/32
+instances: {}
+EOF_YAML
+: > "$LOG"
+: > "$PAYLOAD_LOG"
+
+PATH="$FAKE_BIN:$PATH" CURL_LOG="$LOG" CURL_PAYLOAD_LOG="$PAYLOAD_LOG" LINODE_TOKEN=test-token \
+	"$ROOT/scripts/cloud-update-ssh-whitelist.sh" \
+		--workspace "$WORKSPACE" \
+		--env-root "$ENV_ROOT" \
+		--mode replace \
+		--cidr 198.51.100.77/32 >/dev/null
+
+grep -Fx 'ACCOUNT_MANAGER_LINODE_ALLOWED_SSH_CIDRS=198.51.100.77/32' "$ENV_ROOT/services/account-manager/account-manager-public-staging.env" >/dev/null
+grep -Fx 'ADMIN_LINODE_ALLOWED_SSH_CIDRS=198.51.100.77/32' "$ENV_ROOT/services/cloud-admin/admin-staging.env" >/dev/null
+grep -F '    - 198.51.100.77/32' "$ENV_ROOT/topology/video-cloud-staging.yaml" >/dev/null
+if grep -F '203.0.113.30/32' "$ENV_ROOT/topology/video-cloud-staging.yaml" >/dev/null; then
+	echo "expected replace mode to remove old video-cloud SSH CIDR" >&2
+	exit 1
+fi
+grep -F '"198.51.100.77/32"' "$PAYLOAD_LOG" >/dev/null
+if grep -F '203.0.113.10/32' "$PAYLOAD_LOG" >/dev/null; then
+	echo "expected replace mode PUT payload to remove old SSH CIDR" >&2
+	exit 1
+fi
+grep -F '"0.0.0.0/0"' "$PAYLOAD_LOG" >/dev/null

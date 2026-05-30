@@ -65,6 +65,7 @@ require_file scripts/linode-ci-runners/power-ci-runners.sh
 require_file scripts/linode-ci-runners/wait-runners-online.sh
 require_file scripts/linode-ci-runners/list-ci-runners.sh
 require_file scripts/linode-ci-runners/archive-ci-artifacts.sh
+require_file tests/linode-ci-runners/runner-specs.test.sh
 
 if grep -q 'repos/rtk_mqtt' README.md docs/architecture.md scripts/test-matrix.sh; then
   fail "workspace README, architecture, or test matrix still references repos/rtk_mqtt"
