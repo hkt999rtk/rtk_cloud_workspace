@@ -49,6 +49,8 @@ require_file e2e_test/factory_enroll/cmd/rtk-factory-enroll-test/main.go
 require_file e2e_test/factory_enroll/scripts/run_factory_enroll_local.sh
 require_file e2e_test/provisioning/account_video_smoke/README.md
 require_file e2e_test/provisioning/account_video_smoke/cmd/rtk-account-video-smoke/main.go
+require_file e2e_test/provisioning/bulk_bind_validation/README.md
+require_file e2e_test/provisioning/bulk_bind_validation/cmd/rtk-bulk-bind-validate/main.go
 require_file e2e_test/admin_bff/README.md
 require_file e2e_test/video_cloud/load/cmd/rtk-video-loadtest/main.go
 require_file e2e_test/video_cloud/load/scripts/run_video_loadtest.sh
@@ -59,6 +61,8 @@ require_file docs/cross-service-broker-packaging.md
 require_file repos/rtk_cloud_contracts_doc/README.md
 require_file scripts/collect-private-cloud-evidence.sh
 require_file scripts/secrets-check.sh
+require_file scripts/cloud-bind-devices.sh
+require_file scripts/cloud-validate-device-bind.sh
 require_file scripts/linode-ci-runners/runner-specs.sh
 require_file scripts/linode-ci-runners/provision-ci-runners.sh
 require_file scripts/linode-ci-runners/power-ci-runners.sh
@@ -66,6 +70,8 @@ require_file scripts/linode-ci-runners/wait-runners-online.sh
 require_file scripts/linode-ci-runners/list-ci-runners.sh
 require_file scripts/linode-ci-runners/archive-ci-artifacts.sh
 require_file tests/linode-ci-runners/runner-specs.test.sh
+require_file tests/staging-bind-devices.test.sh
+require_file tests/staging-bind-validation.test.sh
 
 if grep -q 'repos/rtk_mqtt' README.md docs/architecture.md scripts/test-matrix.sh; then
   fail "workspace README, architecture, or test matrix still references repos/rtk_mqtt"
