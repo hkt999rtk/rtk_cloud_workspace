@@ -16,3 +16,6 @@
 [submodule "repos/rtk_cloud_admin"]
 	path = repos/rtk_cloud_admin
 	url = git@github.com-work:hkt999rtk/rtk_cloud_admin.git
+[submodule "repos/rtk_cloud_logger"]
+	path = repos/rtk_cloud_logger
+	url = git@github.com-work:hkt999rtk/rtk_cloud_logger.git
