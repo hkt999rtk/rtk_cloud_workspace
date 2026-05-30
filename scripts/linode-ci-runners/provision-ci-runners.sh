@@ -187,7 +187,23 @@ runner_root="/opt/actions-runner/${runner_name}"
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y ca-certificates curl jq tar gzip git build-essential pkg-config unzip zip make docker.io nodejs npm golang-go
+apt-get install -y ca-certificates curl gnupg jq tar gzip git build-essential pkg-config unzip zip make docker.io docker-compose-v2 golang-go python3 python3-pip cmake ninja-build
+
+if ! command -v node >/dev/null 2>&1 || [[ "$(node --version | sed 's/^v//' | cut -d. -f1)" != "22" ]]; then
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  apt-get install -y nodejs
+fi
+
+if ! command -v google-chrome >/dev/null 2>&1 && ! command -v chromium >/dev/null 2>&1 && ! command -v chromium-browser >/dev/null 2>&1; then
+  install -d -m 0755 /etc/apt/keyrings
+  rm -f /etc/apt/keyrings/google-linux.gpg
+  curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /etc/apt/keyrings/google-linux.gpg
+  chmod 0644 /etc/apt/keyrings/google-linux.gpg
+  printf 'deb [arch=amd64 signed-by=/etc/apt/keyrings/google-linux.gpg] http://dl.google.com/linux/chrome/deb/ stable main\n' >/etc/apt/sources.list.d/google-chrome.list
+  apt-get update -y
+  apt-get install -y google-chrome-stable || true
+fi
+
 systemctl enable --now docker
 if ! id "$runner_user" >/dev/null 2>&1; then
   useradd -m -s /bin/bash "$runner_user"
@@ -257,9 +273,9 @@ for spec in "${RUNNER_SPECS[@]}"; do
     --arg public_ipv4 "$public_ipv4" \
     --arg firewall_id "$firewall_id" \
     --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '{host_label:$host_label, runner_name:$runner_name, repo:$repo, type:$type, labels:["self-hosted","Linux","X64",$custom_label], linode_id:$linode_id, public_ipv4:$public_ipv4, firewall_id:$firewall_id, updated_at:$updated_at}' \
+    '{host_label:$host_label, runner_name:$runner_name, repo:$repo, type:$type, labels:(["self-hosted","Linux","X64"] + ($custom_label | split(","))), linode_id:$linode_id, public_ipv4:$public_ipv4, firewall_id:$firewall_id, updated_at:$updated_at}' \
     > "$state_file"
   chmod 0600 "$state_file"
 done
 
-printf '[linode-ci] provisioned runner VMs. State dir: %s\n' "$STATE_DIR"
+printf '[linode-ci] provisioned runner VM registrations. State dir: %s\n' "$STATE_DIR"

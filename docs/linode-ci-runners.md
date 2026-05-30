@@ -6,11 +6,11 @@ This document defines the Linode CI runner topology used when GitHub Actions
 jobs require repo-specific self-hosted labels. CI runner VMs are not intended to
 stay on permanently. The operator flow is:
 
-1. Boot the Linode CI runner VMs before CI.
+1. Boot the shared Linode Linux CI runner VM before CI.
 2. Wait for GitHub runners to become online.
 3. Run or rerun the target CI jobs.
 4. Archive GitHub Actions artifacts to Linode Object Storage.
-5. Shut down the Linode CI runner VMs.
+5. Shut down the Linode CI runner VM.
 
 The workflow is intentionally external to GitHub Actions. A self-hosted job
 cannot boot its own runner VM because the runner must already be online before
@@ -19,58 +19,66 @@ GitHub can start the job.
 ## Goals
 
 - Unblock repo CI jobs that require self-hosted runners.
-- Keep heavy and privileged workloads isolated by repository.
+- Consolidate Linux validation jobs onto one shared runner VM.
+- Keep deployment, production, and environment-coupled workloads isolated from
+  validation CI.
 - Avoid storing deployment, production, or customer secrets on CI hosts.
 - Store CI outputs durably in Linode Object Storage after runs complete.
-- Keep runner VM cost bounded by shutting VMs down when CI is idle.
+- Keep runner VM cost bounded by shutting the shared VM down when CI is idle.
 
 ## Runner Topology
 
-V1 uses exactly three dedicated Linode VMs:
+The Linux validation profile uses one shared Linode VM with multiple
+repo-scoped GitHub runner registrations. This keeps existing repository
+permissions and labels intact while reducing the number of powered Linode
+instances.
 
-| VM label | GitHub repo | Runner labels | Recommended type | Reason |
-| --- | --- | --- | --- | --- |
-| `rtk-ci-account-manager` | `hkt999rtk/rtk_account_manager` | `self-hosted`, `Linux`, `X64`, `account-manager-ci` | `g6-standard-2` | Account Manager CI uses Go tests and PostgreSQL service containers. |
-| `rtk-ci-cloud-admin` | `hkt999rtk/rtk_cloud_admin` | `self-hosted`, `Linux`, `X64`, `rtk-cloud-admin-ci` | `g6-standard-2` | Admin CI uses Go, Node, Docker build, and container smoke. |
-| `rtk-ci-video-cloud` | `hkt999rtk/rtk_video_cloud` | `self-hosted`, `Linux`, `X64`, `video-cloud-ci` | `g6-standard-4` | Video Cloud CI is the heaviest suite and should not block platform repos. |
+| VM label | GitHub repo | Runner name | Runner labels | Recommended type | Reason |
+| --- | --- | --- | --- | --- | --- |
+| `rtk-shared-linux-ci` | `hkt999rtk/rtk_account_manager` | `rtk-ci-account-manager` | `self-hosted`, `Linux`, `X64`, `account-manager-ci` | `g6-standard-4` | Account Manager CI uses Go tests and PostgreSQL service containers. |
+| `rtk-shared-linux-ci` | `hkt999rtk/rtk_cloud_admin` | `rtk-ci-cloud-admin` | `self-hosted`, `Linux`, `X64`, `rtk-cloud-admin-ci` | `g6-standard-4` | Admin CI uses Go and Node 22/npm frontend validation. |
+| `rtk-shared-linux-ci` | `hkt999rtk/rtk_cloud_frontend` | `rtk-ci-cloud-frontend` | `self-hosted`, `Linux`, `X64`, `rtk_cloud_frontend`, `go` | `g6-standard-4` | Frontend CI is Go-based and can use Chrome/Chromium for visual smoke. |
+| `rtk-shared-linux-ci` | `hkt999rtk/rtk_cloud_client` | `rtk-ci-cloud-client-linux` | `self-hosted`, `Linux`, `X64`, `client-sdk-ci` | `g6-standard-4` | Client Linux CI needs Python, CMake/Ninja/CTest, and Node/npm. |
+| `rtk-shared-linux-ci` | `hkt999rtk/rtk_cloud_logger` | `rtk-ci-cloud-logger` | `self-hosted`, `Linux`, `X64`, `rtk-cloud-logger-ci` | `g6-standard-4` | Logger CI is a lightweight Go package validation. |
 
-Do not run these three labels on one shared host. `rtk_video_cloud` CI can
-consume enough CPU, disk IO, Docker state, and cache space to delay or pollute
-other repositories. Separate VMs also make runner failures easier to diagnose.
-Each VM is stopped independently after its repo CI has completed and its
-artifacts have been archived.
+The shared host is for Linux validation only. Do not register CD/deploy labels
+on it, including `account-manager-cd`, `video-cloud-cd`, or
+`rtk_cloud_frontend`, `go`, `cd`, `website-test`. Keep those runners on
+environment-specific deployment hosts.
+
+`rtk_video_cloud` validation currently uses GitHub-hosted runners for its main
+CI, release, deploy, and integration workflows. If Video Cloud Docker-heavy
+integration is moved to Linode later, use a separate heavy runner profile rather
+than adding it to `rtk-shared-linux-ci`.
 
 ## Cost And Lifecycle Policy
 
 - Runner VMs may remain provisioned, but they should be powered off when no CI
   is running.
-- Boot runners before triggering or rerunning PR CI.
-- Shut runners down only after required artifacts have been copied to Linode
-  Object Storage.
+- Boot the shared runner before triggering or rerunning PR CI.
+- Shut the shared runner down only after required artifacts have been copied to
+  Linode Object Storage.
 - Do not destroy runner VMs for normal idle periods; destroying them forces
   runner re-registration and loses host-level package/cache warmup.
 - If a runner is suspected compromised, delete and rebuild the VM instead of
   preserving local state.
 
 
-## Dedicated-Only Policy
+## Shared Linux Policy
 
-Shared runner hosts are not supported for normal RTK Cloud CI. The scripts keep
-`CI_RUNNER_PROFILE=dedicated` as a tolerated no-op for backwards-compatible
-operator shells, but any non-dedicated profile is rejected.
+The scripts accept only `CI_RUNNER_PROFILE=shared-linux` when a profile is set.
+The default is the shared Linux profile.
 
-This is intentionally stricter than a cost-optimized shared-host model:
+The consolidation boundary is intentionally narrow:
 
-- Lifecycle is deterministic: one repo CI maps to one VM.
-- Shutdown is safe after that repo's CI artifacts are archived.
-- Docker state, caches, service containers, and temporary secrets do not cross
-  repo boundaries.
-- Runner debugging is direct because the VM label, runner name, and repo owner
-  are the same unit of operation.
-
-If cost pressure requires fewer VMs later, that must be designed as a new
-workspace document and script change with explicit busy-runner checks. Do not
-reintroduce shared hosts by only changing local environment variables.
+- Validation CI for Account Manager, Cloud Admin, Cloud Frontend, Cloud Client
+  Linux, and Cloud Logger can share one VM.
+- CD/deploy labels remain outside this profile because they are coupled to
+  staging hosts, sudo, service state, or website-test runtime state.
+- macOS, iOS, Android, device-lab, and hardware validation are outside this
+  Linux profile.
+- Docker state and workspaces still need routine cleanup because multiple repos
+  share the same VM.
 
 ## Security Boundary
 
@@ -141,11 +149,12 @@ scripts/linode-ci-runners/provision-ci-runners.sh
 
 The script:
 
-1. Creates missing Linode VMs and per-VM firewalls.
+1. Creates the missing shared Linode VM and firewall.
 2. Waits for SSH readiness.
 3. Fetches a fresh GitHub runner registration token per repository.
-4. Installs Go, Node.js, Docker, build tools, and the GitHub Actions runner.
-5. Registers each VM with the required repo-specific label.
+4. Installs Go, Node.js 22, Docker, Docker Compose, Python, CMake, Ninja,
+   Chrome when available, build tools, and the GitHub Actions runner.
+5. Registers repo-scoped runners on the shared VM with the required labels.
 6. Writes local ignored state containing Linode ids, public IPs, runner names,
    and repo mappings.
 
@@ -175,9 +184,9 @@ Pull request validation:
 1. PRs that change `.github/workflows/linode-ci-orchestrator.yml`,
    `scripts/linode-ci-runners/**`, or this document trigger the orchestrator.
 2. The PR run uses smoke-only mode:
-   - boot all dedicated Linode CI VMs.
+   - boot the shared Linode Linux CI VM.
    - wait until each GitHub runner is online.
-   - shut all CI VMs down.
+   - shut the shared CI VM down.
 3. Smoke-only mode does not rerun service CI and does not archive artifacts,
    because no target service run id exists during workspace PR validation.
 4. The PR run requires only `RTK_CI_GITHUB_TOKEN` and `LINODE_TOKEN`.
@@ -188,7 +197,9 @@ Manual orchestrator flow:
 2. Enter one or more target GitHub Actions run ids:
    - `account_run_id` for `hkt999rtk/rtk_account_manager`.
    - `admin_run_id` for `hkt999rtk/rtk_cloud_admin`.
-   - `video_run_id` for `hkt999rtk/rtk_video_cloud`.
+   - `frontend_run_id` for `hkt999rtk/rtk_cloud_frontend`.
+   - `client_run_id` for `hkt999rtk/rtk_cloud_client`.
+   - `logger_run_id` for `hkt999rtk/rtk_cloud_logger`.
 3. Keep `rerun=true` when re-running failed or queued PR checks.
 4. Keep `shutdown_policy=always` for normal use.
 
@@ -222,7 +233,9 @@ locally with equivalent environment variables loaded:
 scripts/linode-ci-runners/run-ci-session.sh \
   --account-run-id <run-id> \
   --admin-run-id <run-id> \
-  --video-run-id <run-id> \
+  --frontend-run-id <run-id> \
+  --client-run-id <run-id> \
+  --logger-run-id <run-id> \
   --rerun true \
   --shutdown-policy always
 ```
@@ -247,7 +260,9 @@ Expected online runners before CI starts:
 | --- | --- |
 | `rtk_account_manager` | `rtk-ci-account-manager` with `account-manager-ci` |
 | `rtk_cloud_admin` | `rtk-ci-cloud-admin` with `rtk-cloud-admin-ci` |
-| `rtk_video_cloud` | `rtk-ci-video-cloud` with `video-cloud-ci` |
+| `rtk_cloud_frontend` | `rtk-ci-cloud-frontend` with `rtk_cloud_frontend`, `go` |
+| `rtk_cloud_client` | `rtk-ci-cloud-client-linux` with `client-sdk-ci` |
+| `rtk_cloud_logger` | `rtk-ci-cloud-logger` with `rtk-cloud-logger-ci` |
 
 After runners are online, queued jobs should move from `queued` to
 `in_progress` and show the runner name.

@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repos=(
-  hkt999rtk/rtk_account_manager
-  hkt999rtk/rtk_cloud_admin
-  hkt999rtk/rtk_video_cloud
-)
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$ROOT_DIR/scripts/linode-ci-runners/runner-specs.sh"
+load_runner_specs
 
-for repo in "${repos[@]}"; do
+seen="|"
+for spec in "${RUNNER_SPECS[@]}"; do
+  IFS='|' read -r _host_label _runner_name repo _type _custom_label <<<"$spec"
+  case "$seen" in
+    *"|$repo|"*) continue ;;
+  esac
+  seen="$seen$repo|"
   printf '== %s ==\n' "$repo"
   gh api "repos/$repo/actions/runners" \
     --jq '.runners[] | {name:.name,status:.status,busy:.busy,labels:[.labels[].name]}'
