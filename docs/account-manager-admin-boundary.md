@@ -57,6 +57,8 @@ It owns:
 - account-domain audit, metrics, readiness smoke evidence, and platform-admin
   domain APIs
 - platform-admin brand-cloud create/list/read/update/member-assignment APIs
+- platform-admin brand-cloud user creation/reactivation APIs for environments
+  where email delivery is not available yet
 
 It does not own:
 
