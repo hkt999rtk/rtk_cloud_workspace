@@ -186,6 +186,40 @@ load_env_file() {
 	fi
 }
 
+env_file_has_key() {
+	local path="$1"
+	local key="$2"
+	[[ -f "$path" ]] && grep -Eq "^${key}=" "$path"
+}
+
+append_secret_if_missing() {
+	local path="$1"
+	local key="$2"
+	local value="$3"
+	if ! env_file_has_key "$path" "$key"; then
+		printf '%s=%s\n' "$key" "$value" >> "$path"
+		log "generated Video Cloud secret: $key"
+	fi
+}
+
+ensure_video_cloud_factory_enroll_secrets() {
+	mkdir -p "$(dirname "$VC_SECRETS_FILE")"
+	touch "$VC_SECRETS_FILE"
+	chmod 0600 "$VC_SECRETS_FILE"
+	local key_dir="$WORKSPACE/keys/staging/linode/video-cloud"
+	local edge_private_ip
+	edge_private_ip="$(cloud_env_yaml_path_value "$VC_CONFIG" instances.edge.private_ip)"
+	edge_private_ip="${edge_private_ip:-10.42.1.5}"
+	append_secret_if_missing "$VC_SECRETS_FILE" FACTORY_ENROLL_URL "https://$VC_GATEWAY_DOMAIN"
+	append_secret_if_missing "$VC_SECRETS_FILE" FACTORY_ENROLL_AUTH_KEY "$(openssl rand -hex 32)"
+	append_secret_if_missing "$VC_SECRETS_FILE" FACTORY_ENROLL_AUDIT_LOG_PATH "/var/log/video_cloud/factoryenroll-audit.jsonl"
+	append_secret_if_missing "$VC_SECRETS_FILE" FACTORY_ENROLL_CERT_ISSUER_URL "https://$VC_CERTISSUER_DOMAIN"
+	append_secret_if_missing "$VC_SECRETS_FILE" FACTORY_ENROLL_CERT_ISSUER_PROXY_URL "http://$edge_private_ip:3128"
+	append_secret_if_missing "$VC_SECRETS_FILE" FACTORY_ENROLL_CERT_ISSUER_CLIENT_CERT_SOURCE "$key_dir/factoryenroll-client.ed25519.cert.pem"
+	append_secret_if_missing "$VC_SECRETS_FILE" FACTORY_ENROLL_CERT_ISSUER_CLIENT_KEY_SOURCE "$key_dir/factoryenroll-client.ed25519.key.pem"
+	append_secret_if_missing "$VC_SECRETS_FILE" FACTORY_ENROLL_CERT_ISSUER_CA_SOURCE "$key_dir/root-ca.ed25519.cert.pem"
+}
+
 load_operator_env() {
 	[[ -f "$OPERATOR_ENV" ]] || die "operator env not found: $OPERATOR_ENV"
 	load_env_file "$OPERATOR_ENV"
@@ -436,6 +470,7 @@ preflight() {
 	for cmd in curl jq dig ssh openssl go tar; do
 		need_cmd "$cmd"
 	done
+	ensure_video_cloud_factory_enroll_secrets
 	[[ -d "$VC_REPO" ]] || die "missing submodule: $VC_REPO"
 	[[ -d "$AM_REPO" ]] || die "missing submodule: $AM_REPO"
 	[[ -d "$ADMIN_REPO" ]] || die "missing submodule: $ADMIN_REPO"
@@ -793,6 +828,7 @@ update_public_firewall_ssh_allowlist() {
 apply_stack() {
 	log "apply"
 	load_operator_env
+	ensure_video_cloud_factory_enroll_secrets
 	load_service_envs
 	ensure_video_cloud_state_or_apply
 	if linode_api GET '/linode/instances?page_size=500' | jq -e --arg label "$ACCOUNT_MANAGER_LINODE_LABEL" '.data[] | select(.label == $label)' >/dev/null; then
@@ -852,6 +888,7 @@ dns_stack() {
 deploy_stack() {
 	log "deploy"
 	load_operator_env
+	ensure_video_cloud_factory_enroll_secrets
 	require_state
 	[[ -x "$CLOUD_DEPLOY_SCRIPT" || -f "$CLOUD_DEPLOY_SCRIPT" ]] || die "missing cloud deploy implementation: $CLOUD_DEPLOY_SCRIPT"
 	resolve_deploy_releases

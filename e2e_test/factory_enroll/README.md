@@ -114,6 +114,28 @@ Validation evidence:
 - Linode `video_cloud-certissuer.service` journal entries matching the run:
   `100`
 
+For the current staging load-test factory path, where
+`scripts/cloud-generate-load-devices.sh` calls the deployed
+`video_cloud-factoryenroll.service`, validate production data in the cloud
+database instead of expecting runtime inventory rows:
+
+- `factory_device_entitlements`: `100` rows for `load-device-0001` through
+  `load-device-0100`
+- `cert_issue_requests`: `100` rows with `request_status=succeeded`
+- `factory_device_entitlements.allowed_services`: canonical storage for
+  `service_options`
+- `devices`: expected to remain empty for `load-device-*` until a later
+  activation, claim, or runtime inventory flow
+
+Default staging mix:
+
+| Device type | Count | Service options |
+| --- | ---: | --- |
+| `camera` | 40 | `mqtt`, `video_streaming`, `video_storage` |
+| `light` | 25 | `mqtt` |
+| `air_conditioner` | 20 | `mqtt` |
+| `smart_meter` | 15 | `mqtt` |
+
 ## Linode Staging Check
 
 The staging certissuer was enabled before the recorded Linode certset was

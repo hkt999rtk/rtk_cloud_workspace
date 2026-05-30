@@ -94,7 +94,9 @@ scripts/collect-private-cloud-evidence.sh
 
 ### `scripts/cloud-generate-load-devices.sh`
 
-依照量產流程的素材形狀，產生 staging/load-test 用的模擬 device 身分。每台 device 會有 private key、CSR、由本地 simulation CA 簽出的 client certificate、metadata、PEM bundle，以及 load test 可直接 source 的 env 檔。metadata 會同時記錄 inventory 用的 `device_type` 與 ACL 用的 `service_options`；`device_type` 不作為 ACL 來源。
+依照量產流程產生 staging/load-test 用的 device 身分。每台 device 會先在本機產生 private key 與 CSR，然後預設呼叫真的 factory enrollment API，讓 server 簽發 client certificate 並寫入 entitlement。這模擬「沒有真實 security chip、但量產 enroll 流程是真的」的 loading test 情境。
+
+metadata 會同時記錄 inventory 用的 `device_type` 與 ACL 用的 `service_options`；`device_type` 不作為 ACL 來源。script 會針對每一台 device 印出 `enroll start` / `enroll ok` / `enroll failed`，並把逐台結果寫到 `manifests/factory-enroll-results.jsonl`。
 
 預設產生 100 台，類型只使用目前 load runner 已實作的模擬種類：
 
@@ -125,6 +127,11 @@ scripts/cloud-generate-load-devices.sh \
   --env-root cloud_env/staging \
   --out-dir cloud_env/staging/linode/devices/manual \
   --force
+
+# 只做離線 key/cert 材料產生，不呼叫 server；測試 script 本身時使用
+scripts/cloud-generate-load-devices.sh \
+  --env-root cloud_env/staging \
+  --generate-only
 ```
 
 常用選項：
@@ -134,7 +141,13 @@ scripts/cloud-generate-load-devices.sh \
 - `--prefix PREFIX`：device id prefix，預設 `load-device`，輸出如 `load-device-0001`。
 - `--env-root PATH`：指定 environment directory；必填。可傳 `cloud_env/staging`，script 會自動使用其下的 `linode/`。
 - `--out-dir PATH`：輸出目錄，預設 `cloud_env/staging/linode/devices/test_device`。
+- `--factory-url URL` / `FACTORY_ENROLL_URL`：覆寫 factory enrollment API base URL；預設從 env-root 的 `FACTORY_ENROLL_URL` 讀取，沒有時用 `VIDEO_CLOUD_DOMAIN` 推導 `https://<domain>`。
+- `--factory-auth-key KEY` / `FACTORY_ENROLL_AUTH_KEY`：覆寫 factory enrollment HMAC key；預設從 env-root 的 video-cloud service env 讀取。
+- `--factory-id`、`--line-id`、`--station-id`、`--fixture-id`、`--operator-id`、`--batch-id`：送到 factory enroll request 的量產欄位。
+- `--generate-only`：只用本地 simulation CA 簽發憑證，不寫入 cloud database。
 - `--force`：移除既有輸出目錄後重建。
+
+`scripts/cloud-provision.sh --preflight` / `--apply` / `--deploy` 會在 video-cloud service env 缺少 factory enrollment 設定時補齊 `FACTORY_ENROLL_URL`、`FACTORY_ENROLL_AUTH_KEY`、audit log path，以及 factory enrollment bridge 呼叫 certissuer 所需的 client cert/key/CA source path。補齊後需要重新 deploy Video Cloud，server 端才會使用同一組 key。
 
 重要輸出：
 
@@ -142,9 +155,34 @@ scripts/cloud-generate-load-devices.sh \
 - `manifests/devices.json`：完整 device inventory。
 - `manifests/devices.csv`：簡表。
 - `manifests/device_ids.txt`：load test 可用的 device id 清單。
+- `manifests/factory-enroll-results.jsonl`：逐台 enroll 狀態；失敗時用這個檔案對照 log。
 - `loadtest.env`：可 `source` 的 load test 參數，不包含 bearer token。
 
-輸出的 private key 與 CA key 預設位於 git ignored 的 `cloud_env/staging/linode/devices/test_device`，不可 commit，也不可用在 production 或 customer environment。若要重建既有輸出，使用 `--force`。
+正常 factory enroll 成功後，cloud database 預期可在 `video_cloud.factory_device_entitlements` 找到每台 device 的 `device_id`、`factory_id`、`serial_number`、`certificate_serial`、`certificate_sha256`、`csr_sha256`、`entitlement_state`、`metadata`，以及 storage 欄位 `allowed_services`（內容為 canonical `service_options`），並在 `video_cloud.cert_issue_requests` 找到每次簽發 request 的 `request_status=succeeded`、`signed_serial`、`cert_sha256` 與憑證 PEM。`video_cloud.devices` 通常要等後續 activation/claim/runtime inventory 流程才會出現；不要用它判斷 factory enrollment 是否成功。
+
+100 台預設配比的 staging 驗證重點：
+
+```sql
+SELECT count(*)
+FROM factory_device_entitlements
+WHERE device_id LIKE 'load-device-%';
+
+SELECT count(*)
+FROM cert_issue_requests
+WHERE device_id LIKE 'load-device-%';
+
+SELECT metadata->>'device_type' AS device_type,
+       allowed_services::text AS service_options,
+       count(*)
+FROM factory_device_entitlements
+WHERE device_id LIKE 'load-device-%'
+GROUP BY metadata->>'device_type', allowed_services
+ORDER BY device_type, service_options;
+```
+
+預期結果是 `factory_device_entitlements=100`、`cert_issue_requests=100`、全部 `entitlement_state=active`、全部 cert 欄位非空、缺號為 `0`；預設配比應為 camera `40` 台帶 `["mqtt", "video_storage", "video_streaming"]`，light `25`、air_conditioner `20`、smart_meter `15` 台各帶 `["mqtt"]`。
+
+輸出的 private key 與 `--generate-only` 的 CA key 預設位於 git ignored 的 `cloud_env/staging/linode/devices/test_device`，不可 commit，也不可用在 production 或 customer environment。若要重建既有輸出，使用 `--force`。
 
 ### `scripts/cloud-migrate-env.sh`
 
@@ -355,11 +393,11 @@ scripts/cloud-list-brandname-clouds.sh --env-root cloud_env/staging --json
 
 ### `scripts/linode-ci-runners/runner-specs.sh`
 
-共用設定檔，定義 dedicated runner VM、runner name、目標 GitHub repo、Linode type、runner label。通常不直接執行，而是被其他 runner 腳本 `source`。
+共用設定檔，定義 shared Linux runner VM、runner name、目標 GitHub repo、Linode type、runner label。通常不直接執行，而是被其他 runner 腳本 `source`。
 
 ### `scripts/linode-ci-runners/provision-ci-runners.sh`
 
-建立 dedicated Linode runner VM、防火牆，並註冊 GitHub Actions self-hosted runner。
+建立 shared Linode Linux runner VM、防火牆，並在同一台 VM 上註冊多個 repo-scoped GitHub Actions self-hosted runner。
 
 用法：
 
@@ -376,7 +414,7 @@ scripts/linode-ci-runners/provision-ci-runners.sh
 
 ### `scripts/linode-ci-runners/power-ci-runners.sh`
 
-啟動、關閉或列出 dedicated runner VM 狀態。
+啟動、關閉或列出 shared runner VM 狀態。
 
 用法：
 
@@ -403,7 +441,7 @@ scripts/linode-ci-runners/wait-runners-online.sh
 
 ### `scripts/linode-ci-runners/list-ci-runners.sh`
 
-列出 Account Manager、Cloud Admin、Video Cloud repo 的 GitHub Actions self-hosted runner 狀態、busy 狀態與 labels。
+依照 `runner-specs.sh` 列出 Account Manager、Cloud Admin、Cloud Frontend、Cloud Client、Cloud Logger repo 的 GitHub Actions self-hosted runner 狀態、busy 狀態與 labels。
 
 用法：
 
@@ -423,7 +461,9 @@ scripts/linode-ci-runners/list-ci-runners.sh
 scripts/linode-ci-runners/run-ci-session.sh \
   --account-run-id RUN_ID \
   --admin-run-id RUN_ID \
-  --video-run-id RUN_ID
+  --frontend-run-id RUN_ID \
+  --client-run-id RUN_ID \
+  --logger-run-id RUN_ID
 ```
 
 常用選項：
