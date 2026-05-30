@@ -158,7 +158,29 @@ scripts/cloud-generate-load-devices.sh \
 - `manifests/factory-enroll-results.jsonl`：逐台 enroll 狀態；失敗時用這個檔案對照 log。
 - `loadtest.env`：可 `source` 的 load test 參數，不包含 bearer token。
 
-正常 factory enroll 成功後，cloud database 預期可在 `video_cloud.factory_device_entitlements` 找到每台 device 的 `device_id`、`serial_number`、憑證 fingerprint 與 storage 欄位 `allowed_services`（內容為 canonical `service_options`），並在 `video_cloud.cert_issue_requests` 找到簽發記錄。`video_cloud.devices` 通常要等後續 activation/claim/runtime inventory 流程才會出現。
+正常 factory enroll 成功後，cloud database 預期可在 `video_cloud.factory_device_entitlements` 找到每台 device 的 `device_id`、`factory_id`、`serial_number`、`certificate_serial`、`certificate_sha256`、`csr_sha256`、`entitlement_state`、`metadata`，以及 storage 欄位 `allowed_services`（內容為 canonical `service_options`），並在 `video_cloud.cert_issue_requests` 找到每次簽發 request 的 `request_status=succeeded`、`signed_serial`、`cert_sha256` 與憑證 PEM。`video_cloud.devices` 通常要等後續 activation/claim/runtime inventory 流程才會出現；不要用它判斷 factory enrollment 是否成功。
+
+100 台預設配比的 staging 驗證重點：
+
+```sql
+SELECT count(*)
+FROM factory_device_entitlements
+WHERE device_id LIKE 'load-device-%';
+
+SELECT count(*)
+FROM cert_issue_requests
+WHERE device_id LIKE 'load-device-%';
+
+SELECT metadata->>'device_type' AS device_type,
+       allowed_services::text AS service_options,
+       count(*)
+FROM factory_device_entitlements
+WHERE device_id LIKE 'load-device-%'
+GROUP BY metadata->>'device_type', allowed_services
+ORDER BY device_type, service_options;
+```
+
+預期結果是 `factory_device_entitlements=100`、`cert_issue_requests=100`、全部 `entitlement_state=active`、全部 cert 欄位非空、缺號為 `0`；預設配比應為 camera `40` 台帶 `["mqtt", "video_storage", "video_streaming"]`，light `25`、air_conditioner `20`、smart_meter `15` 台各帶 `["mqtt"]`。
 
 輸出的 private key 與 `--generate-only` 的 CA key 預設位於 git ignored 的 `cloud_env/staging/linode/devices/test_device`，不可 commit，也不可用在 production 或 customer environment。若要重建既有輸出，使用 `--force`。
 
