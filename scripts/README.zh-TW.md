@@ -412,6 +412,77 @@ scripts/cloud-create-users.sh --env-root cloud_env/staging --brandname RTK --cou
 
 腳本的進度訊息會寫到 stderr，stdout 只輸出 summary JSON，不包含密碼。初始密碼只寫入 `cloud_env/.../artifacts/users/<brand>-users-<timestamp>.json`，檔案權限為 `0600`。
 
+### `scripts/cloud-bind-devices.sh`
+
+將已 factory-enrolled 的 device 透過 Account Manager API 綁定到 brand cloud user，並啟動 account-side device provisioning。這個腳本只走 API，不直接連 PostgreSQL；測試 possession proof 採一次性 Claim Token。
+
+典型 staging 順序：
+
+```sh
+scripts/cloud-create-users.sh --env-root cloud_env/staging --brandname RTK --count 10
+
+scripts/cloud-generate-load-devices.sh --env-root cloud_env/staging --count 100
+
+scripts/cloud-bind-devices.sh \
+  --env-root cloud_env/staging \
+  --brandname RTK \
+  --users-file cloud_env/staging/linode/artifacts/users/rtk-users-<timestamp>.json \
+  --devices-dir cloud_env/staging/linode/devices/test_device \
+  --count 100
+
+scripts/cloud-validate-device-bind.sh \
+  --bind-artifact cloud_env/staging/linode/artifacts/device-bind/rtk-device-bind-<timestamp>.json
+```
+
+流程：
+
+- platform admin 建立每台 device 的 Claim Token，帶入 `category` 與 canonical `service_options`。
+- 指派的 member user 登入 Account Manager。
+- member user resolve Claim Token，完成 claim/bind。
+- member user 呼叫 provision API，啟動同一種 device activation/provision operation。
+
+分配策略會保留 device manifest 順序輸出，同時依 device type 分段輪轉 user，讓預設 100 devices / 10 users 每個 user 取得 10 台，且 camera 與 mqtt-only device 分布平均。
+
+重跑政策是 fail-fast：如果 Account Manager 回報 already-claimed 或 already-bound，腳本會非 0 結束，不 skip、不 reclaim。operator 應改用新的 device fixture 或清楚處理環境狀態後再重跑。
+
+輸出與 secret handling：
+
+- stdout 只輸出 summary JSON，不包含密碼、bearer token、raw Claim Token、private key path。
+- 完整 redacted artifact 寫到 `cloud_env/.../artifacts/device-bind/<brand>-device-bind-<timestamp>.json`，檔案權限為 `0600`。
+- artifact 只包含 assigned email、device id/type、`service_options`、claim id、account device id、operation id 與 status。
+- raw Claim Token、user password、bearer token 只存在 process 暫存檔，腳本結束會移除。
+
+常用選項：
+
+- `--env-root PATH`：指定 environment directory；必填。
+- `--brandname NAME`：指定既有 brand cloud。
+- `--users-file FILE`：`cloud-create-users.sh` 產生的 credentials artifact；必填。
+- `--devices-dir DIR`：`cloud-generate-load-devices.sh` 產生的 device output directory；必填。
+- `--count N`：綁定 device 數量，預設 `100`。
+- `--dry-run`：只輸出 assignment plan，不呼叫 Account Manager API，也不寫 artifact。
+- `--skip-bootstrap`：不要更新/restart 遠端 Account Manager bootstrap admin env。
+
+### `scripts/cloud-validate-device-bind.sh`
+
+驗證 `cloud-bind-devices.sh` 產生的 redacted artifact，作為 100 devices onboarding staging smoke 的 API-level 結果檢查。這個 profile 不要求 live video streaming 成功；它確認每筆 API claim/bind/provision 結果都有 account device id、provision operation id，且 `service_options` 符合 ACL 預期。
+
+用法：
+
+```sh
+scripts/cloud-validate-device-bind.sh \
+  --bind-artifact cloud_env/staging/linode/artifacts/device-bind/rtk-device-bind-<timestamp>.json \
+  --expected-count 100 \
+  --expected-devices-per-user 10
+```
+
+輸出：
+
+- stdout summary JSON，包含 `overall`、`total_devices`、`users`、report path。
+- JSON report：`bulk-bind-validation-results.json`。
+- Markdown report：`bulk-bind-validation-report.md`。
+
+預設 report directory 是 `.artifacts/e2e_test/provisioning/bulk_bind_validation/<timestamp>/`。報告只使用 redacted API-level identifiers，不包含 credential material 或 local key paths。
+
 ## Linode CI runner 管理
 
 這些腳本位於 `scripts/linode-ci-runners/`，用來管理 repo-scoped GitHub Actions self-hosted runner VM。
