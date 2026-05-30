@@ -317,7 +317,7 @@ scripts/cloud-remove-all-vm.sh --env-root cloud_env/staging
 
 ### `scripts/cloud-update-ssh-whitelist.sh`
 
-更新所有 staging VM firewall 的 SSH allowlist。預設會自動偵測目前這台操作機器對外的 public IPv4，並把它以 `/32` 加到 7 個 staging firewall 的 port 22 rule：
+更新所有 staging VM firewall 的 SSH allowlist。預設會自動偵測目前這台操作機器對外的 public IPv4，並把它以 `/32` 加到 7 個 staging firewall 的 port 22 rule。互動執行時會詢問要 append 還是 replace；非互動執行未指定 `--mode` 時維持 append 相容行為：
 
 - `video-cloud-staging-edge`
 - `video-cloud-staging-api`
@@ -336,11 +336,14 @@ scripts/cloud-update-ssh-whitelist.sh --env-root cloud_env/staging
 # 手動指定 CIDR
 scripts/cloud-update-ssh-whitelist.sh --env-root cloud_env/staging --cidr 203.0.113.10/32
 
+# 只保留單一 SSH 入口，移除舊 SSH allowlist CIDR
+scripts/cloud-update-ssh-whitelist.sh --env-root cloud_env/staging --mode replace
+
 # 只看會更新哪些 firewall，不呼叫 Linode API 修改
-scripts/cloud-update-ssh-whitelist.sh --env-root cloud_env/staging --cidr 203.0.113.10/32 --dry-run
+scripts/cloud-update-ssh-whitelist.sh --env-root cloud_env/staging --mode replace --cidr 203.0.113.10/32 --dry-run
 ```
 
-腳本只會 append CIDR，不會移除既有白名單。成功更新 Linode firewall 後，也會同步更新本地 ignored staging config/env，避免之後重新 provision 時又回到舊白名單。
+`--mode append` 只會加入 CIDR，不會移除既有白名單；`--mode replace` 會把 SSH port 22 allowlist 改成只剩指定 CIDR，不影響其他 inbound rules。成功更新 Linode firewall 後，也會同步更新本地 ignored staging config/env，避免之後重新 provision 時又回到舊白名單。
 
 ### `scripts/cloud-create-brandname-cloud.sh`
 
