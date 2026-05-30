@@ -317,7 +317,7 @@ scripts/cloud-remove-all-vm.sh --env-root cloud_env/staging
 
 ### `scripts/cloud-update-ssh-whitelist.sh`
 
-更新所有 staging VM firewall 的 SSH allowlist。預設會自動偵測目前這台操作機器對外的 public IPv4，並把它以 `/32` 加到 7 個 staging firewall 的 port 22 rule：
+更新所有 staging VM firewall 的 SSH allowlist。預設會自動偵測目前這台操作機器對外的 public IPv4，並把它以 `/32` 加到 7 個 staging firewall 的 port 22 rule。互動執行時會詢問要 append 還是 replace；非互動執行未指定 `--mode` 時維持 append 相容行為：
 
 - `video-cloud-staging-edge`
 - `video-cloud-staging-api`
@@ -336,11 +336,14 @@ scripts/cloud-update-ssh-whitelist.sh --env-root cloud_env/staging
 # 手動指定 CIDR
 scripts/cloud-update-ssh-whitelist.sh --env-root cloud_env/staging --cidr 203.0.113.10/32
 
+# 只保留單一 SSH 入口，移除舊 SSH allowlist CIDR
+scripts/cloud-update-ssh-whitelist.sh --env-root cloud_env/staging --mode replace
+
 # 只看會更新哪些 firewall，不呼叫 Linode API 修改
-scripts/cloud-update-ssh-whitelist.sh --env-root cloud_env/staging --cidr 203.0.113.10/32 --dry-run
+scripts/cloud-update-ssh-whitelist.sh --env-root cloud_env/staging --mode replace --cidr 203.0.113.10/32 --dry-run
 ```
 
-腳本只會 append CIDR，不會移除既有白名單。成功更新 Linode firewall 後，也會同步更新本地 ignored staging config/env，避免之後重新 provision 時又回到舊白名單。
+`--mode append` 只會加入 CIDR，不會移除既有白名單；`--mode replace` 會把 SSH port 22 allowlist 改成只剩指定 CIDR，不影響其他 inbound rules。成功更新 Linode firewall 後，也會同步更新本地 ignored staging config/env，避免之後重新 provision 時又回到舊白名單。
 
 ### `scripts/cloud-create-brandname-cloud.sh`
 
@@ -386,6 +389,28 @@ scripts/cloud-list-brandname-clouds.sh --env-root cloud_env/staging --json
 - `--json`：輸出完整 API JSON，適合用 `jq` 進一步查詢。
 
 預設摘要會顯示 `brand_clouds`、`api_total`、`id`、`name`、`status`、`tier`、`evaluation_device_quota`、`metadata.brandname`、`created_at` 與完整 `metadata`。若要確認「每個 brandname cloud 的內容設定」，建議使用 `--json`。
+
+### `scripts/cloud-create-users.sh`
+
+在既有 brand cloud 下透過 Account Manager platform-admin API 建立已啟用 user account，不走 signup/email verification，也不直接連 PostgreSQL。
+
+用法：
+
+```sh
+scripts/cloud-create-users.sh --env-root cloud_env/staging --brandname RTK --count 10
+```
+
+常用選項：
+
+- `--workspace PATH`：指定 workspace 根目錄。
+- `--env-root PATH`：指定 environment directory；必填，避免誤建到錯誤環境。
+- `--brandname NAME`：指定既有 brand cloud 名稱或 `metadata.brandname`。
+- `--count N`：建立帳號數量，預設 `10`；email 會使用 `<brand>+001@users.local` 這種序號格式。
+- `--role ROLE`：`owner`、`admin` 或 `member`，預設 `member`。
+- `--rotate-password`：既有 user 也更新初始密碼；預設重跑時保留既有密碼。
+- `--dry-run`：只列出將建立的 email，不呼叫建立 user API，也不寫 credentials。
+
+腳本的進度訊息會寫到 stderr，stdout 只輸出 summary JSON，不包含密碼。初始密碼只寫入 `cloud_env/.../artifacts/users/<brand>-users-<timestamp>.json`，檔案權限為 `0600`。
 
 ## Linode CI runner 管理
 
