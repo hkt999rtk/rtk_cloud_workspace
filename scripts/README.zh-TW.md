@@ -184,6 +184,29 @@ ORDER BY device_type, service_options;
 
 輸出的 private key 與 `--generate-only` 的 CA key 預設位於 git ignored 的 `cloud_env/staging/linode/devices/test_device`，不可 commit，也不可用在 production 或 customer environment。若要重建既有輸出，使用 `--force`。
 
+### `scripts/cloud-unprovision-devices.sh`
+
+依照前一次 `scripts/cloud-bind-devices.sh` 產生的 redacted bind artifact，呼叫 Account Manager user-facing unprovision API，釋放 device 的 user/org binding，讓正常 device 回到可轉售或重新 onboarding 的狀態。這個 script 只走 Account Manager API，不 SSH 到遠端主機、不接觸 raw Claim Token、不撤銷 factory certificate，也不操作 Video Cloud denylist。
+
+預設會讀取最新的 `cloud_env/staging/linode/artifacts/device-bind/<brand>-device-bind-*.json`，並使用 artifact 內記錄的 `inputs.users_file` 登入原 assigned user 呼叫：
+
+```sh
+scripts/cloud-unprovision-devices.sh \
+  --env-root cloud_env/staging \
+  --brandname RTK
+```
+
+常用選項：
+
+- `--bind-artifact FILE`：指定要解除綁定的 device bind artifact。
+- `--count N`：只處理 artifact 前 N 台 device。
+- `--dry-run`：只輸出將呼叫的 account device 清單，不登入、不呼叫 API、不寫 artifact。
+
+重要輸出：
+
+- stdout：redacted summary，包含 `action=unprovisioned`、`count`、`unprovisioned`、`artifact_file`。
+- `artifacts/device-unprovision/<brand>-device-unprovision-<timestamp>.json`：redacted unprovision artifact，包含原 device id、account device id、user email、service options、unprovision status 與時間。不包含 password、bearer token、raw Claim Token 或 device private material。
+
 ### `scripts/cloud-migrate-env.sh`
 
 將目前分散在 `.secrets/`、`keys/`、以及各 submodule deploy 目錄的 staging local environment 檔案複製到 `cloud_env/staging/linode`。來源檔案會保留，並在 `cloud_env/staging/linode/backups/migration-<timestamp>` 產生 backup 與 migration manifest。
