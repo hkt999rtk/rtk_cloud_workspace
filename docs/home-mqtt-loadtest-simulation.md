@@ -138,28 +138,28 @@ Smart-meter behavior:
 
 Create implementation issues in this order:
 
-1. `[LoadTest] Add env-root discovery for home MQTT simulation`
+1. [`[LoadTest] Add env-root discovery for home MQTT simulation`](https://github.com/hkt999rtk/rtk_cloud_workspace/issues/60)
    - Add the wrapper entry point and preflight discovery.
    - Resolve users, bind artifact, devices, service endpoints, and mTLS files
      from `--env-root`.
    - Produce `BLOCKED` artifacts for missing prerequisites.
 
-2. `[LoadTest] Add MQTT mTLS device connections from env-root fixtures`
+2. [`[LoadTest] Add MQTT mTLS device connections from env-root fixtures`](https://github.com/hkt999rtk/rtk_cloud_workspace/issues/61)
    - Load per-device cert/key/chain paths from the device manifest.
    - Connect device actors to the configured MQTT broker with mTLS.
    - Keep credentials out of reports and logs.
 
-3. `[LoadTest] Add home daily-use APP actor through Cloud API`
+3. [`[LoadTest] Add home daily-use APP actor through Cloud API`](https://github.com/hkt999rtk/rtk_cloud_workspace/issues/62)
    - Login users from the users artifact.
    - Use the bind artifact to restrict each APP actor to authorized devices.
    - Send device commands through Cloud API, not direct device credentials.
 
-4. `[LoadTest] Add stateful light, air-conditioner, and smart-meter models`
+4. [`[LoadTest] Add stateful light, air-conditioner, and smart-meter models`](https://github.com/hkt999rtk/rtk_cloud_workspace/issues/63)
    - Replace fixed MQTT sample payloads with seeded state machines.
    - Implement state transitions, telemetry cadence, and command result
      correlation.
 
-5. `[LoadTest] Add home MQTT report metrics and negative authorization checks`
+5. [`[LoadTest] Add home MQTT report metrics and negative authorization checks`](https://github.com/hkt999rtk/rtk_cloud_workspace/issues/64)
    - Report per-user, per-device, and per-capability metrics.
    - Report command round-trip p95/p99 and telemetry freshness.
    - Add negative checks for cross-user device access and cross-device MQTT
