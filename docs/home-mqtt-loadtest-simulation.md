@@ -1,6 +1,6 @@
 # Home MQTT Load-Test Simulation Plan
 
-Status: planned
+Status: implemented smoke wrapper
 Owner: rtk_cloud_workspace
 Last updated: 2026-05-31
 
@@ -16,6 +16,12 @@ scripts/cloud-run-home-mqtt-loadtest.sh \
   --env-root cloud_env/staging \
   --brandname RTK
 ```
+
+`scripts/cloud_mqtt_test.sh` is the direct entry point; the hyphenated
+`cloud-run-home-mqtt-loadtest.sh` wrapper exists for the implementation issue
+contract. Reports are written under
+`<env-root>/artifacts/home-mqtt-loadtest/<timestamp>/` and include both
+`results.json` and `TEST_REPORT.md`.
 
 The wrapper resolves `cloud_env/staging` to `cloud_env/staging/linode`, reads
 the existing user/device artifacts, and runs a "home daily use" workload where

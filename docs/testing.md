@@ -58,17 +58,21 @@ cross-cloud video load runner. `rtk_video_cloud` owns server prerequisites,
 metrics expectations, TURN/WebRTC setup notes, and cleanup policy for these E2E
 runs.
 
-The planned home MQTT simulation profile extends the workspace load runner with
-an env-root driven real user case. Operators should start it from the same local
+The home MQTT simulation profile extends the workspace load runner with an
+env-root driven real user case. Operators should start it from the same local
 environment directory used by cloud provisioning:
 
 ```sh
 scripts/cloud-run-home-mqtt-loadtest.sh \
   --env-root cloud_env/staging \
-  --brandname RTK
+  --brandname RTK \
+  --mqtt-probe
 ```
 
-The wrapper must discover user credentials, device inventory, bind artifacts,
+`scripts/cloud_mqtt_test.sh` is the direct entry point and writes sanitized
+`results.json` plus `TEST_REPORT.md` under
+`<env-root>/artifacts/home-mqtt-loadtest/<timestamp>/`. The wrapper discovers
+user credentials, device inventory, bind artifacts,
 service endpoints, and per-device mTLS cert/key material from the resolved
 environment root. APP actors use user credentials and Cloud APIs; device actors
 use per-device MQTT mTLS identity. WebRTC, relay, storage, clips, and snapshots
