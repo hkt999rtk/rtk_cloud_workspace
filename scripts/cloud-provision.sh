@@ -825,6 +825,58 @@ update_public_firewall_ssh_allowlist() {
 	linode_api PUT "/networking/firewalls/$firewall_id/rules" "$updated" >/dev/null
 }
 
+account_manager_private_ipv4() {
+	printf '%s\n' "${ACCOUNT_MANAGER_LINODE_PRIVATE_IPV4:-10.42.1.50}"
+}
+
+account_manager_vpc_cidr() {
+	local cidr
+	cidr="$(cloud_env_yaml_path_value "$VC_CONFIG" vpc.subnet.cidr)"
+	printf '%s\n' "${cidr:-10.42.1.0/24}"
+}
+
+write_state_var() {
+	local path="$1"
+	local key="$2"
+	local value="$3"
+	local tmp
+	tmp="$(mktemp)"
+	if [[ -f "$path" ]]; then
+		grep -vE "^${key}=" "$path" > "$tmp"
+	fi
+	printf '%s=%s\n' "$key" "$value" >> "$tmp"
+	install -m 0600 "$tmp" "$path"
+	rm -f "$tmp"
+}
+
+ensure_account_manager_vpc_interface() {
+	local private_ip subnet_id linode_id configs config_id config updated
+	private_ip="$(account_manager_private_ipv4)"
+	subnet_id="$(jq -r '.subnet_id // empty' "$VC_STATE")"
+	linode_id="${ACCOUNT_MANAGER_LINODE_ID:-}"
+	[[ -n "$linode_id" && "$linode_id" != "null" ]] || die "ACCOUNT_MANAGER_LINODE_ID is required before VPC interface ensure"
+	[[ -n "$subnet_id" && "$subnet_id" != "null" ]] || die "Video Cloud subnet_id is required before Account Manager VPC interface ensure"
+	configs="$(linode_api GET "/linode/instances/$linode_id/configs")"
+	config_id="$(jq -r '.data[0].id // empty' <<<"$configs")"
+	[[ -n "$config_id" && "$config_id" != "null" ]] || die "cannot find Account Manager Linode config for $linode_id"
+	config="$(linode_api GET "/linode/instances/$linode_id/configs/$config_id")"
+	if jq -e --arg private_ip "$private_ip" '.interfaces[]? | select(.purpose == "vpc" and .ipv4.vpc == $private_ip)' <<<"$config" >/dev/null; then
+		write_state_var "$AM_STATE" ACCOUNT_MANAGER_LINODE_PRIVATE_IPV4 "$private_ip"
+		return 0
+	fi
+	log "adding Account Manager VPC interface: linode=$linode_id subnet=$subnet_id private_ip=$private_ip"
+	updated="$(jq --argjson subnet_id "$subnet_id" --arg private_ip "$private_ip" '
+		.interfaces = [
+			{purpose:"public", primary:true},
+			{purpose:"vpc", subnet_id:$subnet_id, ipv4:{vpc:$private_ip}}
+		]
+	' <<<"$config")"
+	linode_api PUT "/linode/instances/$linode_id/configs/$config_id" "$updated" >/dev/null
+	write_state_var "$AM_STATE" ACCOUNT_MANAGER_LINODE_PRIVATE_IPV4 "$private_ip"
+	log "rebooting Account Manager to activate VPC interface"
+	linode_api POST "/linode/instances/$linode_id/reboot" '{}' >/dev/null
+}
+
 apply_stack() {
 	log "apply"
 	load_operator_env
@@ -838,10 +890,15 @@ apply_stack() {
 		cleanup_orphan_public_service "$ACCOUNT_MANAGER_LINODE_LABEL" "$ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL" "$AM_STATE"
 		(
 			cd "$AM_REPO"
+			ACCOUNT_MANAGER_LINODE_VPC_SUBNET_ID="$(jq -r '.subnet_id' "$VC_STATE")" \
+				ACCOUNT_MANAGER_LINODE_PRIVATE_IPV4="$(account_manager_private_ipv4)" \
+				ACCOUNT_MANAGER_LINODE_VPC_CIDR="$(account_manager_vpc_cidr)" \
 			ACCOUNT_MANAGER_LINODE_STATE_PATH="$AM_STATE" \
 				linode_deploy/scripts/provision-public-vm.sh
 		)
 	fi
+	load_env_file "$AM_STATE"
+	ensure_account_manager_vpc_interface
 	if linode_api GET '/linode/instances?page_size=500' | jq -e --arg label "$ADMIN_LINODE_LABEL" '.data[] | select(.label == $label)' >/dev/null; then
 		log "Cloud Admin VM already exists; hydrating state and skipping provision"
 		hydrate_public_state_from_live "$ADMIN_LINODE_LABEL" "$ADMIN_LINODE_FIREWALL_LABEL" "$ADMIN_STATE" "ADMIN"
@@ -1008,12 +1065,17 @@ write_public_vm_config_row() {
 	local id="$3"
 	local firewall="$4"
 	local public_ip="$5"
-	printf '| `%s` | `%s` | `%s` | `%s` | `public` | `%s` | `N/A` | `direct public SSH` | `N/A` |\n' \
+	local private_ip="${6:-}"
+	local profile
+	profile="$(network_profile "$public_ip" "$private_ip")"
+	printf '| `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | `direct public SSH` | `N/A` |\n' \
 		"$role" \
 		"$(report_value "$label")" \
 		"$(report_value "$id")" \
 		"$(report_value "$firewall")" \
-		"$(report_value "$public_ip")"
+		"$profile" \
+		"$(report_value "$public_ip")" \
+		"$(report_value "$private_ip")"
 }
 
 write_artifacts() {
@@ -1036,11 +1098,11 @@ write_artifacts() {
 	tmp="$(mktemp -d /tmp/rtk-provision-artifacts.XXXXXX)"
 	trap 'rm -rf "$tmp"' RETURN
 	jq --arg stack "$CLOUD_STACK_NAME" \
-		--arg am_id "$ACCOUNT_MANAGER_LINODE_ID" --arg am_label "$ACCOUNT_MANAGER_LINODE_LABEL" --arg am_ip "$ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4" --arg am_fw "$ACCOUNT_MANAGER_LINODE_FIREWALL_ID" \
+		--arg am_id "$ACCOUNT_MANAGER_LINODE_ID" --arg am_label "$ACCOUNT_MANAGER_LINODE_LABEL" --arg am_ip "$ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4" --arg am_private "${ACCOUNT_MANAGER_LINODE_PRIVATE_IPV4:-}" --arg am_fw "$ACCOUNT_MANAGER_LINODE_FIREWALL_ID" \
 		--arg ad_id "$ADMIN_LINODE_ID" --arg ad_label "$ADMIN_LINODE_LABEL" --arg ad_ip "$ADMIN_LINODE_PUBLIC_IPV4" --arg ad_fw "$ADMIN_LINODE_FIREWALL_ID" \
-		'{stack:$stack, generated_at:(now|todate), video_cloud:., account_manager:{id:($am_id|tonumber),label:$am_label,public_ipv4:$am_ip,firewall_id:($am_fw|tonumber)}, cloud_admin:{id:($ad_id|tonumber),label:$ad_label,public_ipv4:$ad_ip,firewall_id:($ad_fw|tonumber)}}' \
+		'{stack:$stack, generated_at:(now|todate), video_cloud:., account_manager:{id:($am_id|tonumber),label:$am_label,public_ipv4:$am_ip,private_ip:$am_private,firewall_id:($am_fw|tonumber)}, cloud_admin:{id:($ad_id|tonumber),label:$ad_label,public_ipv4:$ad_ip,firewall_id:($ad_fw|tonumber)}}' \
 		"$VC_STATE" > "$art/inventory.json"
-	jq -n --slurpfile vc "$VC_STATE" --arg am "$ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4" --arg ad "$ADMIN_LINODE_PUBLIC_IPV4" '{
+	jq -n --slurpfile vc "$VC_STATE" --arg am "$ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4" --arg am_private "${ACCOUNT_MANAGER_LINODE_PRIVATE_IPV4:-}" --arg ad "$ADMIN_LINODE_PUBLIC_IPV4" '{
 		generated_at:(now|todate),
 		targets:{
 			edge:{host:$vc[0].instances.edge.public_ipv4,user:"root"},
@@ -1048,7 +1110,7 @@ write_artifacts() {
 			infra:{host:$vc[0].instances.infra.private_ip,user:"root",proxy_jump:("root@"+$vc[0].instances.edge.public_ipv4)},
 			mqtt:{host:$vc[0].instances.mqtt.private_ip,user:"root",proxy_jump:("root@"+$vc[0].instances.edge.public_ipv4)},
 			coturn:{host:$vc[0].instances.coturn.public_ipv4,user:"root"},
-			account_manager:{host:$am,user:"root"},
+			account_manager:{host:$am,user:"root",private_ip:$am_private},
 			cloud_admin:{host:$ad,user:"root"}
 		}
 	}' > "$art/deployment-targets.json"
@@ -1087,7 +1149,7 @@ write_artifacts() {
 		printf '| Role | Label | Linode ID | Firewall ID | Network | Public IPv4 | Private/VPC IPv4 | Access / VPN | ProxyJump |\n'
 		printf '| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n'
 		write_video_vm_config_rows
-		write_public_vm_config_row "account-manager" "$ACCOUNT_MANAGER_LINODE_LABEL" "$ACCOUNT_MANAGER_LINODE_ID" "$ACCOUNT_MANAGER_LINODE_FIREWALL_ID" "$ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4"
+		write_public_vm_config_row "account-manager" "$ACCOUNT_MANAGER_LINODE_LABEL" "$ACCOUNT_MANAGER_LINODE_ID" "$ACCOUNT_MANAGER_LINODE_FIREWALL_ID" "$ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4" "${ACCOUNT_MANAGER_LINODE_PRIVATE_IPV4:-}"
 		write_public_vm_config_row "cloud-admin" "$ADMIN_LINODE_LABEL" "$ADMIN_LINODE_ID" "$ADMIN_LINODE_FIREWALL_ID" "$ADMIN_LINODE_PUBLIC_IPV4"
 		printf '\n'
 		printf '## DNS Status\n\n| Domain | Expected | 8.8.8.8 | %s |\n| --- | --- | --- | --- |\n' "$ns"
