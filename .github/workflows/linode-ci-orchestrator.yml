@@ -1,108 +1,77 @@
-name: Linode CI Orchestrator
+name: Submodule Pointer Check
 
 on:
   pull_request:
     paths:
+      - '.gitmodules'
       - '.github/workflows/linode-ci-orchestrator.yml'
-      - 'scripts/linode-ci-runners/**'
-      - 'docs/linode-ci-runners.md'
+      - 'repos/**'
+  push:
+    branches:
+      - main
+    paths:
+      - '.gitmodules'
+      - '.github/workflows/linode-ci-orchestrator.yml'
+      - 'repos/**'
   workflow_dispatch:
-    inputs:
-      account_run_id:
-        description: 'rtk_account_manager GitHub Actions run id to rerun/watch/archive'
-        required: false
-        type: string
-      admin_run_id:
-        description: 'rtk_cloud_admin GitHub Actions run id to rerun/watch/archive'
-        required: false
-        type: string
-      frontend_run_id:
-        description: 'rtk_cloud_frontend GitHub Actions run id to rerun/watch/archive'
-        required: false
-        type: string
-      client_run_id:
-        description: 'rtk_cloud_client Linux GitHub Actions run id to rerun/watch/archive'
-        required: false
-        type: string
-      logger_run_id:
-        description: 'rtk_cloud_logger GitHub Actions run id to rerun/watch/archive'
-        required: false
-        type: string
-      rerun:
-        description: 'Rerun each provided run id before watching'
-        required: true
-        default: true
-        type: boolean
-      shutdown_policy:
-        description: 'When to shut down the Linode CI runner VM'
-        required: true
-        default: always
-        type: choice
-        options:
-          - always
-          - on-success
-          - never
 
 permissions:
   contents: read
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  GH_TOKEN: ${{ secrets.RTK_CI_GITHUB_TOKEN }}
-  LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
-  LINODE_OBJ_ACCESS_KEY_ID: ${{ secrets.LINODE_OBJ_ACCESS_KEY_ID }}
-  LINODE_OBJ_SECRET_ACCESS_KEY: ${{ secrets.LINODE_OBJ_SECRET_ACCESS_KEY }}
-  LINODE_OBJ_BUCKET: ${{ secrets.LINODE_OBJ_BUCKET }}
-  LINODE_OBJ_ENDPOINT: ${{ secrets.LINODE_OBJ_ENDPOINT }}
-  CI_RUNNER_PROFILE: shared-linux
-  LINODE_CI_SMOKE_ONLY: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
-
 jobs:
-  orchestrate:
-    name: Boot runners, run CI, archive artifacts, shutdown
+  submodules:
+    name: Check submodule pointers
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 10
     steps:
-      - name: Check required secrets
-        run: |
-          missing=0
-          required="GH_TOKEN LINODE_TOKEN"
-          if [ "$LINODE_CI_SMOKE_ONLY" != "true" ]; then
-            required="$required LINODE_OBJ_ACCESS_KEY_ID LINODE_OBJ_SECRET_ACCESS_KEY LINODE_OBJ_BUCKET LINODE_OBJ_ENDPOINT"
-          fi
-          for name in $required; do
-            if [ -z "${!name:-}" ]; then
-              echo "missing required secret-backed env: $name" >&2
-              missing=1
-            fi
-          done
-          exit "$missing"
-
-      - name: Check out workspace
+      - name: Check out workspace metadata
         uses: actions/checkout@v6
-
-      - name: Set up Python upload fallback
-        uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          fetch-depth: 1
+          submodules: false
 
-      - name: Install S3 upload dependency
-        run: python -m pip install --disable-pip-version-check boto3
-
-      - name: Run Linode CI session
+      - name: Validate submodule pointers
+        shell: bash
         run: |
-          if [ "$LINODE_CI_SMOKE_ONLY" = "true" ]; then
-            scripts/linode-ci-runners/run-ci-session.sh \
-              --smoke-only true \
-              --rerun false \
-              --shutdown-policy always
-          else
-            scripts/linode-ci-runners/run-ci-session.sh \
-              --account-run-id "${{ inputs.account_run_id }}" \
-              --admin-run-id "${{ inputs.admin_run_id }}" \
-              --frontend-run-id "${{ inputs.frontend_run_id }}" \
-              --client-run-id "${{ inputs.client_run_id }}" \
-              --logger-run-id "${{ inputs.logger_run_id }}" \
-              --rerun "${{ inputs.rerun }}" \
-              --shutdown-policy "${{ inputs.shutdown_policy }}"
+          set -euo pipefail
+
+          if [ ! -f .gitmodules ]; then
+            echo "missing .gitmodules" >&2
+            exit 1
           fi
+
+          paths_file="$(mktemp)"
+          git config --file .gitmodules --get-regexp 'submodule\..*\.path' | awk '{print $2}' | sort > "$paths_file"
+          if [ ! -s "$paths_file" ]; then
+            echo "no submodules declared in .gitmodules" >&2
+            exit 1
+          fi
+
+          {
+            echo "| Path | Commit | URL |"
+            echo "| --- | --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          while IFS= read -r path; do
+            name="$(git config --file .gitmodules --get-regexp 'submodule\..*\.path' | awk -v wanted="$path" '$2 == wanted { key=$1; sub(/^submodule\./, "", key); sub(/\.path$/, "", key); print key; exit }')"
+            url="$(git config --file .gitmodules --get "submodule.$name.url")"
+
+            if [ -z "$url" ]; then
+              echo "missing url for submodule path: $path" >&2
+              exit 1
+            fi
+
+            mode="$(git ls-tree HEAD -- "$path" | awk '{print $1}')"
+            sha="$(git ls-tree HEAD -- "$path" | awk '{print $3}')"
+            if [ "$mode" != "160000" ]; then
+              echo "path is not recorded as a gitlink: $path (mode=$mode)" >&2
+              exit 1
+            fi
+            if ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "invalid submodule commit pointer for $path: $sha" >&2
+              exit 1
+            fi
+
+            printf '%s\t%s\t%s\n' "$path" "$sha" "$url"
+            printf '| `%s` | `%s` | `%s` |\n' "$path" "$sha" "$url" >> "$GITHUB_STEP_SUMMARY"
+          done < "$paths_file"
