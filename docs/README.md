@@ -25,6 +25,7 @@ repositories. Shared wire and payload contracts belong in
 | [status-reports/README.md](status-reports/README.md) | Source | Reusable weekly status report framework, material index, and builder workflow. |
 | [webrtc-only-streaming-migration.md](webrtc-only-streaming-migration.md) | Supporting note | WebRTC-only video migration issue roadmap and validation checklist. |
 | [video-cloud-load-test-roadmap.md](video-cloud-load-test-roadmap.md) | Supporting note | API-level video cloud E2E load test roadmap, issue owner matrix, and validation checklist. |
+| [home-mqtt-loadtest-simulation.md](home-mqtt-loadtest-simulation.md) | Supporting note | Env-root driven home daily-use MQTT load simulation plan and developer issue breakdown. |
 | [cross-service-broker-packaging.md](cross-service-broker-packaging.md) | Supporting note | Cross-service broker packaging decision, profiles, and evidence expectations. |
 | [provisioning-issue-roadmap.md](provisioning-issue-roadmap.md) | Supporting note | Interface-first provisioning issue plan and repository ownership matrix. |
 | [ota-issue-roadmap.md](ota-issue-roadmap.md) | Supporting note | Interface-first OTA campaign issue plan and repository ownership matrix. |

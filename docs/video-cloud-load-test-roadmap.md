@@ -1,8 +1,8 @@
 # Video Cloud API-Level E2E Load Test Roadmap
 
-Status: implemented owner migration
+Status: implemented owner migration; home MQTT simulation planned
 Owner: rtk_cloud_workspace
-Last updated: 2026-05-14
+Last updated: 2026-05-31
 
 ## Summary
 
@@ -15,6 +15,13 @@ The v1 implementation is a Go CLI named `rtk-video-loadtest` under `e2e_test/vid
 simulate many virtual actors from one process, support multiple load instances
 through shared run metadata, validate WebRTC setup with Pion, and emit JSON plus
 Markdown reports that can be used as manual, lab, or release evidence.
+
+The next planned expansion is an env-root driven home MQTT simulation profile.
+It starts from the same local environment directory used by
+`scripts/cloud-provision.sh`, loads existing users, device fixtures, bind
+artifacts, and device mTLS material, then models a real home user operating
+lights, air conditioners, and smart meters through Cloud APIs. See
+[`home-mqtt-loadtest-simulation.md`](home-mqtt-loadtest-simulation.md).
 
 ## Source-of-Truth Boundaries
 
@@ -40,6 +47,9 @@ In scope:
 - Load profiles: `safe-staging`, `stress`, and `soak`.
 - Artifacts: `load-results.json`, `load-report.md`, run metadata, threshold
   result, and error classification.
+- Planned home MQTT profile: APP/user actors use Cloud APIs, device actors use
+  per-device MQTT mTLS credentials from env-root, and the workload models
+  stateful light, air-conditioner, and smart-meter behavior.
 
 Out of scope for v1:
 
@@ -48,6 +58,8 @@ Out of scope for v1:
 - Browser-based viewer automation.
 - Full media quality or bitrate validation beyond WebRTC setup and control-plane
   behavior unless the implementing repo adds it explicitly as a later profile.
+- For the home MQTT profile: WebRTC relay, video streaming, storage, clips, and
+  snapshots remain disabled or reported as `NOT_RUN`.
 
 ## Public Interface Target
 
@@ -84,6 +96,19 @@ Environment variables:
 - `VIDEO_CLOUD_LOAD_RUN_ID`
 - `VIDEO_CLOUD_LOAD_INSTANCE_ID`
 - `VIDEO_CLOUD_LOAD_DEVICE_PREFIX`
+
+Planned home MQTT wrapper:
+
+```sh
+scripts/cloud-run-home-mqtt-loadtest.sh \
+  --env-root cloud_env/staging \
+  --brandname RTK
+```
+
+The wrapper must resolve the environment root with `scripts/lib/cloud-env.sh`
+and discover users, device inventory, bind artifacts, service endpoints, and
+device mTLS material from that root. Missing prerequisites should produce a
+redacted `BLOCKED` report instead of falling back to fake data.
 
 The runner must exit non-zero when configured thresholds fail. Thresholds should
 cover at least success rate and p95/p99 latency; WebRTC setup metrics should be
@@ -137,3 +162,8 @@ A later `provisioning-e2e` profile may include account-manager claim resolve,
 claim/bind, cloud provisioning, readiness polling, video activation, and
 transport-online verification. That profile should be planned separately because
 it is a cross-service onboarding load test, not the v1 video cloud load loop.
+
+The home MQTT simulation profile is a separate runtime profile, not a
+provisioning profile. It assumes users and devices already exist under the
+environment root and validates realistic APP-to-device traffic for MQTT-only
+home devices before returning to WebRTC relay or storage load coverage.
