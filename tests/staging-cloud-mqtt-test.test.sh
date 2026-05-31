@@ -114,20 +114,23 @@ jq -n '{
 }' > "$ENV_ROOT/artifacts/device-bind/rtk-device-bind-20260531T000000Z.json"
 
 OUT="$TMP/out.json"
-"$ROOT/scripts/cloud_mqtt_test.sh" \
+if "$ROOT/scripts/cloud_mqtt_test.sh" \
 	--env-root "$TMP/cloud_env/staging" \
 	--brandname RTK \
 	--out-dir "$TMP/report" \
 	--seed 7 \
-	--no-mqtt-probe > "$OUT"
+	--no-mqtt-probe > "$OUT"; then
+	echo "expected --no-mqtt-probe to block instead of pass" >&2
+	exit 1
+fi
 
-jq -e '.overall == "pass" and .status == "PASS"' "$OUT" >/dev/null
+jq -e '.overall == "blocked" and .status == "BLOCKED"' "$OUT" >/dev/null
 RESULTS="$(jq -r '.results_file' "$OUT")"
 REPORT="$(jq -r '.report_file' "$OUT")"
-jq -e '.overall == "pass" and .metrics.success_rate_percent >= 95 and (.negative_checks | length == 4)' "$RESULTS" >/dev/null
+jq -e '.overall == "blocked" and (.blockers | index("--no-mqtt-probe skips live MQTT E2E"))' "$RESULTS" >/dev/null
 jq -e '.mqtt.probe_result == "NOT_RUN" and (.out_of_scope | index("webrtc"))' "$RESULTS" >/dev/null
 grep -F 'Home MQTT Load-Test Report' "$REPORT" >/dev/null
-grep -F 'cross_user_device_access' "$REPORT" >/dev/null
+grep -F -- '--no-mqtt-probe skips live MQTT E2E' "$REPORT" >/dev/null
 if grep -Ei 'secret|password|bearer|BEGIN|device.key.pem' "$REPORT" "$RESULTS" >/dev/null; then
 	echo "report output must be redacted" >&2
 	exit 1

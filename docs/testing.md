@@ -65,8 +65,7 @@ environment directory used by cloud provisioning:
 ```sh
 scripts/cloud-run-home-mqtt-loadtest.sh \
   --env-root cloud_env/staging \
-  --brandname RTK \
-  --mqtt-probe
+  --brandname RTK
 ```
 
 `scripts/cloud_mqtt_test.sh` is the direct entry point and writes sanitized
@@ -75,9 +74,31 @@ scripts/cloud-run-home-mqtt-loadtest.sh \
 user credentials, device inventory, bind artifacts,
 service endpoints, and per-device mTLS cert/key material from the resolved
 environment root. APP actors use user credentials and Cloud APIs; device actors
-use per-device MQTT mTLS identity. WebRTC, relay, storage, clips, and snapshots
-are disabled for this profile. The design and developer issue breakdown live in
-`docs/home-mqtt-loadtest-simulation.md`.
+use per-device MQTT mTLS identity. The default run is live MQTT E2E: each
+selected device connects to the staging MQTT broker with its certificate,
+subscribes to its shadow response topics, publishes a shadow update, and waits
+for accepted/documents responses through the Video Cloud MQTT bridge. WebRTC,
+relay, storage, clips, and snapshots are disabled for this profile. The design
+and developer issue breakdown live in `docs/home-mqtt-loadtest-simulation.md`.
+
+For a destructive staging reset followed by the full onboarding and MQTT smoke,
+use the one-stop orchestrator from the workspace root:
+
+```sh
+scripts/cloud-staging-e2e-test.sh \
+  --env-root cloud_env/staging \
+  --run \
+  --confirm video-cloud-stg-0529 \
+  --brandname RTK
+```
+
+The same command with `--plan` is read-only and should be used before a live run.
+The orchestrator performs remove VM, provision all, create brand, create users,
+create/factory-enroll devices, bind/provision devices, validate the bind
+artifact, and run `scripts/cloud_mqtt_test.sh`. It writes sanitized
+`summary.json` and `TEST_REPORT.md` under
+`<env-root>/artifacts/staging-e2e/<timestamp>/`; per-step logs remain local
+operator artifacts and should not be committed.
 
 Provisioning smoke tests belong under
 `e2e_test/provisioning/account_video_smoke/`. The first planned smoke composes

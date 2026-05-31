@@ -267,6 +267,47 @@ scripts/cloud-provision.sh \
 
 HTTPS certificate cache 由 `cloud-deploy.sh` 處理：如果 `cloud_env/staging/linode/certificates/<fqdn>/fullchain.pem` 與 `privkey.pem` 存在且在安全期限內未過期，就會先上傳到新 VM，建立 certbot lineage/renewal config、啟用 `certbot.timer`，並跳過新憑證申請；如果沒有可用 cache，deploy 仍會走 certbot，成功後再把 VM 上的 certificate/key 拉回 `cloud_env`。預設要求 certificate 至少還有 7 天有效期，可用 `--cert-cache-min-valid-seconds` 調整。
 
+### `scripts/cloud-staging-e2e-test.sh`
+
+Linode staging 一站式整合測試編排腳本。它把 remove VM、provision all、建立 RTK brand cloud、建立測試 users、產生並 factory-enroll devices、device bind/provision、bulk bind validation，以及 home MQTT simulation 串成單一流程，最後輸出 sanitized `summary.json` 與 `TEST_REPORT.md`。
+
+預設是 safe plan，不會刪 VM、不會 provision、不會呼叫 API：
+
+```sh
+scripts/cloud-staging-e2e-test.sh --env-root cloud_env/staging --plan
+```
+
+真正執行完整 staging reset + E2E 需要顯式 `--run`，且 `--confirm` 必須等於 env root 內的 `CLOUD_STACK_NAME`：
+
+```sh
+scripts/cloud-staging-e2e-test.sh \
+  --env-root cloud_env/staging \
+  --run \
+  --confirm video-cloud-stg-0529 \
+  --brandname RTK \
+  --user-count 10 \
+  --device-count 100 \
+  --device-mix camera=40,light=25,air_conditioner=20,smart_meter=15
+```
+
+常用選項：
+
+- `--env-root PATH`：指定 environment directory；必填。可傳 `cloud_env/staging`，script 會自動使用其下的 `linode/`。
+- `--plan`：只列出將執行的步驟，預設模式。
+- `--run --confirm STACK`：執行完整流程。`STACK` 必須符合 `CLOUD_STACK_NAME`，避免刪錯 staging stack。
+- `--skip-remove`：不先呼叫 `cloud-remove-all-vm.sh`，直接走 `cloud-provision.sh --reset-and-all` 後續流程。
+- `--video-release` / `--account-release` / `--admin-release`：轉傳給 `cloud-provision.sh` 使用指定 release artifact。
+- `--out-dir PATH`：指定報告輸出目錄；預設在 `<env-root>/artifacts/staging-e2e/<timestamp>/`。
+- `--skip-mqtt-probe`：略過 live MQTT E2E；這會讓 MQTT 子測試回報 `BLOCKED`，不會當作 PASS。
+
+輸出：
+
+- `summary.json`：整體結果、stack、brand、redacted artifact path，以及每個 step 的狀態、exit code、耗時和 log path。
+- `TEST_REPORT.md`：人工閱讀用測試報告。
+- `logs/*.log`：各步驟 stdout/stderr。這些 log 留在 git ignored cloud env artifacts；提交或分享前仍應視為 operator artifact 審查。
+
+報告檔會掃描常見敏感字串，避免 password、bearer token、private key 或服務 secret 被寫入 summary/report。完整 per-step log 不會自動清洗，不應 commit。MQTT 子測試預設會用 device mTLS 連到 broker，訂閱 device shadow response topics，publish shadow update，並等待 Video Cloud MQTT bridge 回 `accepted` / `documents`；只做 local artifact 檢查不能算通過。
+
 ### `scripts/cloud-deploy.sh`
 
 只做 staging deploy/verify，不負責建立 VM。它會依序部署與驗證 Account Manager、Video Cloud、Cloud Admin，失敗時會停止後續步驟並寫 readiness report。

@@ -18,8 +18,8 @@ Options:
   --duration-seconds N     Simulated workload duration for report metadata. Default: 120.
   --max-users N            Limit selected users. Default: 1 for smoke, all for real-case.
   --seed N                 Deterministic workload seed. Default: 20260531.
-  --mqtt-probe             Attempt a TLS/mTLS socket probe to the discovered MQTT broker.
-  --no-mqtt-probe          Do not perform network MQTT probe. Default.
+  --mqtt-probe             Run live MQTT E2E through the broker. Default.
+  --no-mqtt-probe          Only validate local artifacts; result is BLOCKED, not PASS.
   --help                   Show this help.
 
 The script never prints passwords, bearer tokens, private keys, certificate bodies, or raw service env values.
@@ -38,7 +38,7 @@ PROFILE="smoke"
 DURATION_SECONDS="120"
 MAX_USERS=""
 SEED="20260531"
-MQTT_PROBE="false"
+MQTT_PROBE="true"
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -125,11 +125,12 @@ export CERTIFICATES_DIR="$(cloud_env_certificates_dir "$ENV_ROOT")"
 python3 - <<'PY'
 import json
 import os
-import random
 import socket
 import ssl
 import stat
+import struct
 import sys
+import time
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -207,6 +208,169 @@ def percentile(values, pct):
     return ordered[low] + (ordered[high] - ordered[low]) * (rank - low)
 
 
+def mqtt_remaining_length(length):
+    encoded = bytearray()
+    while True:
+        digit = length % 128
+        length //= 128
+        if length > 0:
+            digit |= 0x80
+        encoded.append(digit)
+        if length == 0:
+            return bytes(encoded)
+
+
+def mqtt_utf8(value):
+    raw = value.encode("utf-8")
+    if len(raw) > 65535:
+        raise ValueError("mqtt string too long")
+    return struct.pack("!H", len(raw)) + raw
+
+
+def mqtt_write_packet(sock, packet_type, body):
+    sock.sendall(bytes([packet_type]) + mqtt_remaining_length(len(body)) + body)
+
+
+def mqtt_read_exact(sock, count):
+    chunks = bytearray()
+    while len(chunks) < count:
+        chunk = sock.recv(count - len(chunks))
+        if not chunk:
+            raise ConnectionError("mqtt connection closed")
+        chunks.extend(chunk)
+    return bytes(chunks)
+
+
+def mqtt_read_packet(sock):
+    first = mqtt_read_exact(sock, 1)[0]
+    multiplier = 1
+    remaining = 0
+    while True:
+        digit = mqtt_read_exact(sock, 1)[0]
+        remaining += (digit & 127) * multiplier
+        if (digit & 128) == 0:
+            break
+        multiplier *= 128
+        if multiplier > 128 * 128 * 128:
+            raise ValueError("malformed mqtt remaining length")
+    return first, mqtt_read_exact(sock, remaining)
+
+
+def mqtt_connect(sock, client_id):
+    variable = mqtt_utf8("MQTT") + bytes([4, 2]) + struct.pack("!H", 30)
+    mqtt_write_packet(sock, 0x10, variable + mqtt_utf8(client_id))
+    packet_type, body = mqtt_read_packet(sock)
+    if packet_type != 0x20 or len(body) < 2 or body[1] != 0:
+        raise RuntimeError(f"mqtt connack failed: {list(body)}")
+
+
+def mqtt_subscribe(sock, packet_id, topic, qos=0):
+    body = struct.pack("!H", packet_id) + mqtt_utf8(topic) + bytes([qos])
+    mqtt_write_packet(sock, 0x82, body)
+    packet_type, response = mqtt_read_packet(sock)
+    if packet_type != 0x90 or len(response) < 3 or response[2] == 0x80:
+        raise RuntimeError(f"mqtt suback failed for {topic}: {list(response)}")
+
+
+def mqtt_publish(sock, topic, payload):
+    mqtt_write_packet(sock, 0x30, mqtt_utf8(topic) + payload)
+
+
+def mqtt_decode_publish(flags, body):
+    if len(body) < 2:
+        raise ValueError("publish body too short")
+    topic_len = struct.unpack("!H", body[:2])[0]
+    topic_end = 2 + topic_len
+    if len(body) < topic_end:
+        raise ValueError("publish topic truncated")
+    pos = topic_end
+    qos = (flags >> 1) & 0x03
+    if qos:
+        pos += 2
+    return body[2:topic_end].decode("utf-8", errors="replace"), body[pos:]
+
+
+def run_device_shadow_e2e(record, host, port, timeout_seconds=10):
+    device_id = record["device_id"]
+    token = f"mqtt-e2e-{int(time.time())}-{device_id}"
+    base = f"$vc/devices/{device_id}/shadow/update"
+    topics = {
+        "accepted": base + "/accepted",
+        "documents": base + "/documents",
+        "rejected": base + "/rejected",
+    }
+    payload = json.dumps({
+        "state": {
+            "reported": {
+                "e2e_probe": {
+                    "brand": BRANDNAME,
+                    "device_type": record["device_type"],
+                    "timestamp": now_iso(),
+                }
+            }
+        },
+        "clientToken": token,
+    }, separators=(",", ":")).encode("utf-8")
+
+    started = time.monotonic()
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    context.load_cert_chain(record["cert_path"], record["key_path"])
+    with socket.create_connection((host, int(port)), timeout=timeout_seconds) as raw:
+        with context.wrap_socket(raw, server_hostname=str(host)) as sock:
+            sock.settimeout(timeout_seconds)
+            mqtt_connect(sock, f"rtk-e2e-{device_id}-{os.getpid()}")
+            mqtt_subscribe(sock, 1, topics["accepted"], 0)
+            mqtt_subscribe(sock, 2, topics["documents"], 0)
+            mqtt_subscribe(sock, 3, topics["rejected"], 0)
+            mqtt_publish(sock, base, payload)
+
+            seen = {}
+            deadline = time.monotonic() + timeout_seconds
+            while time.monotonic() < deadline:
+                sock.settimeout(max(0.1, deadline - time.monotonic()))
+                packet_type, body = mqtt_read_packet(sock)
+                if packet_type >> 4 != 3:
+                    continue
+                topic, message = mqtt_decode_publish(packet_type & 0x0F, body)
+                if topic not in topics.values():
+                    continue
+                try:
+                    doc = json.loads(message.decode("utf-8"))
+                except Exception:
+                    doc = {}
+                if doc.get("clientToken") != token:
+                    continue
+                if topic == topics["rejected"]:
+                    return {
+                        "device_id": device_id,
+                        "device_type": record["device_type"],
+                        "status": "FAIL",
+                        "error": f"shadow rejected: {doc.get('code', 'unknown')}",
+                        "latency_ms": round((time.monotonic() - started) * 1000),
+                    }
+                if topic == topics["accepted"]:
+                    seen["accepted"] = True
+                if topic == topics["documents"]:
+                    seen["documents"] = True
+                if seen.get("accepted") and seen.get("documents"):
+                    return {
+                        "device_id": device_id,
+                        "device_type": record["device_type"],
+                        "status": "PASS",
+                        "topics": ["accepted", "documents"],
+                        "latency_ms": round((time.monotonic() - started) * 1000),
+                    }
+    return {
+        "device_id": device_id,
+        "device_type": record["device_type"],
+        "status": "FAIL",
+        "error": "timed out waiting for shadow accepted/documents",
+        "latency_ms": round((time.monotonic() - started) * 1000),
+    }
+
+
 def write_outputs(result):
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     results_file = OUT_DIR / "results.json"
@@ -278,13 +442,29 @@ def render_report(result):
         lines.append(f"| {row['capability']} | {row['devices']} | {row['commands']} | {row['success_percent']:.1f}% |")
     lines += [
         "",
+        "## Per Device MQTT E2E",
+        "",
+        "| Device | Type | Status | Latency ms | Error |",
+        "| --- | --- | --- | ---: | --- |",
+    ]
+    for device in result["devices"]:
+        error = device.get("error", "")
+        latency = device.get("latency_ms", [0])[0] if device.get("latency_ms") else 0
+        lines.append(f"| {device['device_id']} | {device['device_type']} | {device.get('mqtt_status', 'UNKNOWN')} | {latency} | {error} |")
+    lines += [
+        "",
         "## Negative Checks",
         "",
-        "| Check | Result |",
-        "| --- | --- |",
     ]
-    for check in result["negative_checks"]:
-        lines.append(f"| {check['name']} | {check['result']} |")
+    if result["negative_checks"]:
+        lines += [
+            "| Check | Result |",
+            "| --- | --- |",
+        ]
+        for check in result["negative_checks"]:
+            lines.append(f"| {check['name']} | {check['result']} |")
+    else:
+        lines.append("- NOT_RUN")
     lines += [
         "",
         "## MQTT mTLS",
@@ -443,58 +623,65 @@ if blockers:
     write_outputs(base_result)
     sys.exit(3)
 
-rng = random.Random(SEED)
 latencies = []
 capability_counts = {kind: {"devices": 0, "commands": 0, "passed": 0} for kind in HOME_TYPES}
 per_device = []
-for item in selected_assignments:
-    dtype = item["device_type"]
-    capability_counts[dtype]["devices"] += 1
-    commands = 3 if dtype in ("light", "air_conditioner") else 1
-    capability_counts[dtype]["commands"] += commands
-    capability_counts[dtype]["passed"] += commands
-    device_latencies = []
-    for _ in range(commands):
-        if dtype == "light":
-            value = rng.randint(100, 800)
-        elif dtype == "air_conditioner":
-            value = rng.randint(300, 2000)
-        else:
-            value = rng.randint(50, 250)
-        latencies.append(value)
-        device_latencies.append(value)
-    per_device.append({
-        "device_id": item["device_id"],
-        "device_type": dtype,
-        "assigned_email": item["assigned_email"],
-        "commands": commands,
-        "success_percent": 100.0,
-        "latency_ms": device_latencies,
-    })
-
-def mqtt_probe():
-    if not MQTT_PROBE:
-        return "NOT_RUN"
+mqtt_probe_result = "NOT_RUN"
+if MQTT_PROBE:
     host = endpoints.get("mqtt_host")
     port = endpoints.get("mqtt_port")
     if not host or host == "unknown" or not port:
-        return "BLOCKED: missing MQTT endpoint"
-    first = cert_records[0]
-    try:
-        context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-        context.load_cert_chain(first["cert_path"], first["key_path"])
-        with socket.create_connection((host, int(port)), timeout=5) as sock:
-            with context.wrap_socket(sock, server_hostname=host):
-                return "PASS"
-    except Exception as exc:
-        return f"FAIL: {redacted_error(type(exc).__name__)}"
+        mqtt_probe_result = "BLOCKED: missing MQTT endpoint"
+    else:
+        mqtt_probe_result = "PASS"
+        for item in selected_assignments:
+            dtype = item["device_type"]
+            capability_counts[dtype]["devices"] += 1
+            capability_counts[dtype]["commands"] += 1
+            record = next((r for r in cert_records if r["device_id"] == item["device_id"]), None)
+            if not record:
+                outcome = {
+                    "device_id": item["device_id"],
+                    "device_type": dtype,
+                    "status": "FAIL",
+                    "error": "missing certificate record",
+                    "latency_ms": 0,
+                }
+            else:
+                try:
+                    outcome = run_device_shadow_e2e(record, host, port)
+                except Exception as exc:
+                    outcome = {
+                        "device_id": item["device_id"],
+                        "device_type": dtype,
+                        "status": "FAIL",
+                        "error": redacted_error(type(exc).__name__),
+                        "latency_ms": 0,
+                    }
+            if outcome["status"] == "PASS":
+                capability_counts[dtype]["passed"] += 1
+            else:
+                mqtt_probe_result = "FAIL"
+            latencies.append(outcome.get("latency_ms", 0))
+            per_device.append({
+                "device_id": item["device_id"],
+                "device_type": dtype,
+                "assigned_email": item["assigned_email"],
+                "commands": 1,
+                "success_percent": 100.0 if outcome["status"] == "PASS" else 0.0,
+                "latency_ms": [outcome.get("latency_ms", 0)],
+                "mqtt_status": outcome["status"],
+                **({"error": outcome["error"]} if outcome.get("error") else {}),
+            })
+else:
+    base_result["status"] = "BLOCKED"
+    base_result["overall"] = "blocked"
+    base_result.setdefault("blockers", []).append("--no-mqtt-probe skips live MQTT E2E")
 
 total_commands = sum(row["commands"] for row in per_device)
-total_passed = total_commands
-success_rate = 100.0 if total_commands else 0.0
-telemetry_freshness = [rng.randint(400, 5000) for _ in per_device if _.get("device_type") == "smart_meter"]
+total_passed = sum(1 for row in per_device if row.get("mqtt_status") == "PASS")
+success_rate = (total_passed / total_commands * 100.0) if total_commands else 0.0
+telemetry_freshness = [row["latency_ms"][0] for row in per_device if row.get("device_type") == "smart_meter"]
 capability_metrics = []
 for cap, row in capability_counts.items():
     pct = 100.0 if row["commands"] == row["passed"] else (row["passed"] / row["commands"] * 100.0 if row["commands"] else 0.0)
@@ -504,8 +691,6 @@ for cap, row in capability_counts.items():
         "commands": row["commands"],
         "success_percent": pct,
     })
-
-mqtt_probe_result = mqtt_probe()
 
 result = {
     **base_result,
@@ -523,12 +708,7 @@ result = {
         "telemetry_freshness_max_ms": max(telemetry_freshness) if telemetry_freshness else 0.0,
     },
     "capability_metrics": capability_metrics,
-    "negative_checks": [
-        {"name": "cross_user_device_access", "result": "PASS"},
-        {"name": "cross_device_mqtt_topic", "result": "PASS"},
-        {"name": "missing_user_token", "result": "PASS"},
-        {"name": "expired_user_token", "result": "PASS"},
-    ],
+    "negative_checks": [],
     "mqtt": {
         "probe_result": mqtt_probe_result,
         "client_identities_checked": len(cert_records),
@@ -536,10 +716,10 @@ result = {
     },
     "out_of_scope": ["webrtc", "relay", "storage", "clip", "snapshot"],
 }
-if result["metrics"]["success_rate_percent"] < 95.0:
+if result["overall"] != "blocked" and result["metrics"]["success_rate_percent"] < 95.0:
     result["status"] = "FAIL"
     result["overall"] = "fail"
-if MQTT_PROBE and mqtt_probe_result != "PASS":
+if result["overall"] != "blocked" and MQTT_PROBE and mqtt_probe_result != "PASS":
     result["status"] = "FAIL"
     result["overall"] = "fail"
 write_outputs(result)
