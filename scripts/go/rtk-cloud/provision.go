@@ -481,10 +481,18 @@ func provisionApply(paths provisionPaths, env map[string]string, opts provisionO
 		return err
 	}
 	if id := envFileValue(paths.AccountManagerState, "ACCOUNT_MANAGER_LINODE_FIREWALL_ID"); id != "" {
-		_ = updateFirewallRules(firewallTarget{Role: "account-manager", ID: id}, "append", envFileValue(paths.AccountManagerEnv, "ACCOUNT_MANAGER_LINODE_ALLOWED_SSH_CIDRS"), false)
+		for _, cidr := range splitCSV(envFileValue(paths.AccountManagerEnv, "ACCOUNT_MANAGER_LINODE_ALLOWED_SSH_CIDRS")) {
+			if err := updateFirewallRules(firewallTarget{Role: "account-manager", ID: id}, "append", cidr, false); err != nil {
+				return err
+			}
+		}
 	}
 	if id := envFileValue(paths.AdminState, "ADMIN_LINODE_FIREWALL_ID"); id != "" {
-		_ = updateFirewallRules(firewallTarget{Role: "cloud-admin", ID: id}, "append", envFileValue(paths.AdminEnv, "ADMIN_LINODE_ALLOWED_SSH_CIDRS"), false)
+		for _, cidr := range splitCSV(envFileValue(paths.AdminEnv, "ADMIN_LINODE_ALLOWED_SSH_CIDRS")) {
+			if err := updateFirewallRules(firewallTarget{Role: "cloud-admin", ID: id}, "append", cidr, false); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
