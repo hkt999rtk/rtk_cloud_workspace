@@ -130,6 +130,9 @@ AM_ENV="$(cloud_env_account_manager_env "$ENV_ROOT")"
 AM_STATE="$(cloud_env_account_manager_state "$ENV_ROOT")"
 ADMIN_ENV="$(cloud_env_admin_env "$ENV_ROOT")"
 ADMIN_STATE="$(cloud_env_admin_state "$ENV_ROOT")"
+LOGGER_ENV="$(cloud_env_logger_env "$ENV_ROOT")"
+LOGGER_STATE="$(cloud_env_logger_state "$ENV_ROOT")"
+CLOUD_LOGGER_SCRIPT="${CLOUD_LOGGER_SCRIPT:-$SCRIPT_DIR/cloud-logger.sh}"
 
 VC_GATEWAY_DOMAIN="$VIDEO_CLOUD_DOMAIN"
 VC_CERTISSUER_DOMAIN="$VIDEO_CLOUD_CERTISSUER_DOMAIN"
@@ -142,7 +145,10 @@ ADMIN_CERT_CACHE_DIR="$CERT_CACHE_ROOT/$ADMIN_DOMAIN"
 READY_DIR="$ARTIFACT_BASE/readiness-$(date -u +%Y%m%dT%H%M%SZ)"
 REPORT="$READY_DIR/readiness-report.md"
 STATUS_FILE="$READY_DIR/status.tsv"
+LOGGING_REPORT_STATUS="healthy"
 DEPLOY_STEPS=(
+	logger-provision-backend
+	logger-install-forwarders
 	account-manager-deploy
 	account-manager-verify
 	video-cloud-deploy-verify
@@ -441,6 +447,7 @@ init_report() {
 - video_release: $VIDEO_RELEASE
 - account_release: $ACCOUNT_RELEASE
 - admin_release: $ADMIN_RELEASE
+- logging: running
 - status: running
 
 ## Steps
@@ -489,9 +496,14 @@ mark_skipped_after_failure() {
 
 finalize_report() {
 	local status="$1"
+	local logging_status="${2:-$LOGGING_REPORT_STATUS}"
 	local tmp
 	tmp="$(mktemp)"
-	awk -v status="$status" '{gsub(/status: running/, "status: " status)} {print}' "$REPORT" > "$tmp"
+	awk -v status="$status" -v logging_status="$logging_status" '
+		{gsub(/status: running/, "status: " status)}
+		{gsub(/logging: running/, "logging: " logging_status)}
+		{print}
+	' "$REPORT" > "$tmp"
 	mv "$tmp" "$REPORT"
 	{
 		printf '\n## DNS\n\n'
@@ -513,6 +525,94 @@ finalize_report() {
 		printf -- '- video_cloud_verify_report: `%s`\n' "$READY_DIR/video-cloud-runtime-health.md"
 		printf -- '- cloud_admin_verify: `%s/.artifacts/linode-admin-verify`\n' "$ADMIN_REPO"
 	} >> "$REPORT"
+}
+
+logger_host_for_target() {
+	local target="$1"
+	case "$target" in
+	edge) jq -r '.instances.edge.public_ipv4 // ""' "$VC_STATE" ;;
+	api|video-cloud-api) jq -r '.instances.api.private_ip // ""' "$VC_STATE" ;;
+	infra|video-cloud-infra) jq -r '.instances.infra.private_ip // ""' "$VC_STATE" ;;
+	mqtt) jq -r '.instances.mqtt.private_ip // ""' "$VC_STATE" ;;
+	coturn) jq -r '.instances.coturn.public_ipv4 // ""' "$VC_STATE" ;;
+	account-manager) printf '%s\n' "${ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4:-}" ;;
+	cloud-admin) printf '%s\n' "${ADMIN_LINODE_PUBLIC_IPV4:-}" ;;
+	frontend|non-go-host-sources) jq -r '.instances.edge.public_ipv4 // ""' "$VC_STATE" ;;
+	*) printf '\n' ;;
+	esac
+}
+
+run_logging_command() {
+	local name="$1"
+	shift
+	local log_file="$READY_DIR/${name//[^A-Za-z0-9_.-]/_}.log"
+	if [[ ! -x "$CLOUD_LOGGER_SCRIPT" && ! -f "$CLOUD_LOGGER_SCRIPT" ]]; then
+		printf '%s\tSKIP\tmissing_logger_script=%s\n' "$name" "$CLOUD_LOGGER_SCRIPT" >> "$STATUS_FILE"
+		append_report_line "- SKIP \`$name\` missing_logger_script=\`$CLOUD_LOGGER_SCRIPT\`"
+		return 1
+	fi
+	if bash "$CLOUD_LOGGER_SCRIPT" "$@" > >(tee "$log_file") 2>&1; then
+		printf '%s\tPASS\t%s\n' "$name" "$log_file" >> "$STATUS_FILE"
+		append_report_line "- PASS \`$name\` log: \`$log_file\`"
+		return 0
+	fi
+	local code=$?
+	printf '%s\tDEGRADED\t%s\n' "$name" "$log_file" >> "$STATUS_FILE"
+	append_report_line "- DEGRADED \`$name\` exit=$code log: \`$log_file\`"
+	return 1
+}
+
+provision_logging_stack() {
+	local degraded=0 target host normalized
+	log "logger provision start: backend=$CLOUD_LOGGER_LINODE_LABEL"
+	run_logging_command logger-provision-backend \
+		provision-backend \
+		--workspace "$WORKSPACE" \
+		--env-root "$ENV_ROOT" \
+		--operator-env "$OPERATOR_ENV" \
+		--logger-env "$LOGGER_ENV" \
+		--logger-state "$LOGGER_STATE" \
+		--logger-label "$CLOUD_LOGGER_LINODE_LABEL" \
+		--logger-firewall "$CLOUD_LOGGER_LINODE_FIREWALL_LABEL" \
+		--logger-domain "$CLOUD_LOGGER_DOMAIN" || degraded=1
+
+	for target in edge api infra mqtt coturn account-manager cloud-admin frontend non-go-host-sources; do
+		host="$(logger_host_for_target "$target")"
+		normalized="$target"
+		[[ "$target" == "api" ]] && normalized="video-cloud-api"
+		if [[ -z "$host" || "$host" == "null" ]]; then
+			printf '%s\tDEGRADED\tmissing_host\n' "logger-forwarder:$normalized" >> "$STATUS_FILE"
+			append_report_line "- DEGRADED \`logger-forwarder:$normalized\` missing_host"
+			degraded=1
+			continue
+		fi
+		run_logging_command "logger-forwarder:$normalized" \
+			install-forwarder "$target" \
+			--host "$host" \
+			--ssh-key "$SSH_KEY" \
+			--logger-env "$LOGGER_ENV" \
+			--logger-state "$LOGGER_STATE" \
+			--endpoint "$CLOUD_LOGGER_DOMAIN" \
+			--journald-system-max-use "$CLOUD_LOGGER_JOURNALD_SYSTEM_MAX_USE" \
+			--journald-system-keep-free "$CLOUD_LOGGER_JOURNALD_SYSTEM_KEEP_FREE" \
+			--journald-max-retention-sec "$CLOUD_LOGGER_JOURNALD_MAX_RETENTION_SEC" || degraded=1
+	done
+	return "$degraded"
+}
+
+check_logging_readiness() {
+	local degraded="$1" target normalized
+	append_report_line ""
+	append_report_line "## Service Logging Readiness"
+	append_report_line ""
+	run_logging_command logger-backend-health backend-health --logger-state "$LOGGER_STATE" --endpoint "$CLOUD_LOGGER_DOMAIN" || degraded=1
+	for target in edge api infra mqtt coturn account-manager cloud-admin frontend non-go-host-sources; do
+		normalized="$target"
+		[[ "$target" == "api" ]] && normalized="video-cloud-api"
+		run_logging_command "logger-forwarder:$normalized" forwarder-status "$target" --logger-state "$LOGGER_STATE" || degraded=1
+	done
+	run_logging_command logger-sample-trace-query sample-trace-query --logger-state "$LOGGER_STATE" --endpoint "$CLOUD_LOGGER_DOMAIN" || degraded=1
+	return "$degraded"
 }
 
 account_manager_deploy() {
@@ -640,10 +740,22 @@ ensure_live_targets
 ensure_dns_converged
 init_report
 
+LOGGING_DEGRADED=0
+provision_logging_stack || LOGGING_DEGRADED=1
+if [[ "$LOGGING_DEGRADED" == "1" ]]; then
+	LOGGING_REPORT_STATUS="degraded"
+fi
 run_step account-manager-deploy account_manager_deploy
 run_step account-manager-verify account_manager_verify
 run_step video-cloud-deploy-verify video_cloud_deploy_and_verify
 run_step cloud-admin-deploy cloud_admin_deploy
 run_step cloud-admin-verify cloud_admin_verify
-finalize_report "passed"
+check_logging_readiness "$LOGGING_DEGRADED" || LOGGING_DEGRADED=1
+if [[ "$LOGGING_DEGRADED" == "1" ]]; then
+	LOGGING_REPORT_STATUS="degraded"
+	finalize_report "passed" "degraded"
+else
+	LOGGING_REPORT_STATUS="healthy"
+	finalize_report "passed" "healthy"
+fi
 log "readiness report: $REPORT"
