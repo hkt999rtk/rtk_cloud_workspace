@@ -576,39 +576,51 @@ func resolveProvisionReleases(paths provisionPaths, operator map[string]string, 
 }
 
 func selectObjectRelease(operator map[string]string, display, prefix, requested string) (string, string, error) {
-	bucket := firstNonEmpty(operator["LINODE_OBJ_BUCKET"], os.Getenv("LINODE_OBJ_BUCKET"))
-	endpoint := firstNonEmpty(operator["LINODE_OBJ_ENDPOINT"], os.Getenv("LINODE_OBJ_ENDPOINT"))
-	if bucket == "" || endpoint == "" {
-		return "", "", errors.New("LINODE_OBJ_BUCKET and LINODE_OBJ_ENDPOINT are required")
+	store, err := provisionObjectStoreFromEnv(operator)
+	if err != nil {
+		return "", "", err
 	}
-	if !strings.HasPrefix(endpoint, "file://") {
-		return "", "", errors.New("native Object Storage release selection currently supports file:// mirrors")
+	entries, err := provisionListObjects(store, "releases/")
+	if err != nil {
+		return "", "", err
 	}
-	root := strings.TrimPrefix(endpoint, "file://")
-	releaseRoot := filepath.Join(root, bucket, "releases")
-	matches, _ := filepath.Glob(filepath.Join(releaseRoot, prefix+"-*", "manifest.json"))
-	if len(matches) == 0 {
+	manifestEntries := []provisionObjectEntry{}
+	wantPrefix := "releases/" + prefix + "-"
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Key, wantPrefix) && strings.HasSuffix(entry.Key, "/manifest.json") {
+			manifestEntries = append(manifestEntries, entry)
+		}
+	}
+	if len(manifestEntries) == 0 {
 		return "", "", fmt.Errorf("no %s release manifest found in Object Storage under releases/", prefix)
 	}
-	sort.Strings(matches)
+	sort.Slice(manifestEntries, func(i, j int) bool {
+		if manifestEntries[i].LastModified == manifestEntries[j].LastModified {
+			return manifestEntries[i].Key < manifestEntries[j].Key
+		}
+		return manifestEntries[i].LastModified > manifestEntries[j].LastModified
+	})
 	fmt.Fprintf(os.Stderr, "Available %s releases in Object Storage:\n", display)
 	type candidate struct {
 		version string
 		key     string
-		path    string
 	}
 	candidates := []candidate{}
-	for _, path := range matches {
-		manifest, err := readJSONMap(path)
+	for _, entry := range manifestEntries {
+		data, err := provisionReadObject(store, entry.Key)
 		if err != nil {
 			return "", "", err
 		}
-		version := stringValue(manifest["version"])
-		key := stringValue(manifest["artifact_path"])
-		if version == "" || key == "" {
-			return "", "", fmt.Errorf("release manifest missing version or artifact_path: %s", path)
+		manifest := map[string]any{}
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			return "", "", err
 		}
-		candidates = append(candidates, candidate{version: version, key: key, path: path})
+		version := stringValue(manifest["version"])
+		artifactKey := stringValue(manifest["artifact_path"])
+		if version == "" || artifactKey == "" {
+			return "", "", fmt.Errorf("release manifest missing version or artifact_path: %s", entry.Key)
+		}
+		candidates = append(candidates, candidate{version: version, key: artifactKey})
 		fmt.Fprintf(os.Stderr, "%d) %s\n", len(candidates), version)
 	}
 	chosen := candidates[0]
@@ -625,7 +637,7 @@ func selectObjectRelease(operator map[string]string, display, prefix, requested 
 			return "", "", fmt.Errorf("%s release not found: %s", display, requested)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(root, bucket, chosen.key)); err != nil {
+	if err := provisionObjectExists(store, chosen.key); err != nil {
 		return "", "", err
 	}
 	return chosen.version, chosen.key, nil

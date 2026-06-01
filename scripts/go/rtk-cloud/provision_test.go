@@ -2,8 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -56,6 +59,81 @@ func TestWriteProvisionArtifactsIncludesCloudAdminPrivateIP(t *testing.T) {
 	readJSON(t, filepath.Join(dir, "deployment-targets.json"), &targets)
 	if targets.Targets["cloud_admin"].PrivateIP != "10.42.1.60" {
 		t.Fatalf("targets.cloud_admin.private_ip = %q", targets.Targets["cloud_admin"].PrivateIP)
+	}
+}
+
+func TestSelectObjectReleaseSupportsHTTPObjectStorage(t *testing.T) {
+	requests := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.RequestURI())
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/test-bucket" && r.URL.Query().Get("prefix") == "releases/":
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = w.Write([]byte(`<ListBucketResult>
+<Contents><Key>releases/rtk_video_cloud-ci-20260527-093000-abcdef123456/manifest.json</Key><LastModified>2026-06-01T00:00:00Z</LastModified><Size>1</Size></Contents>
+<Contents><Key>releases/rtk_video_cloud-v1.2.3/manifest.json</Key><LastModified>2026-05-31T00:00:00Z</LastModified><Size>1</Size></Contents>
+<IsTruncated>false</IsTruncated>
+</ListBucketResult>`))
+		case r.Method == http.MethodGet && r.URL.Path == "/test-bucket/releases/rtk_video_cloud-ci-20260527-093000-abcdef123456/manifest.json":
+			_, _ = w.Write([]byte(`{"version":"ci-20260527-093000-abcdef123456","artifact_path":"releases/rtk_video_cloud-ci-20260527-093000-abcdef123456/ci-20260527-093000-abcdef123456.tar.gz"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/test-bucket/releases/rtk_video_cloud-v1.2.3/manifest.json":
+			_, _ = w.Write([]byte(`{"version":"v1.2.3","artifact_path":"releases/rtk_video_cloud-v1.2.3/v1.2.3.tar.gz"}`))
+		case r.Method == http.MethodHead && r.URL.Path == "/test-bucket/releases/rtk_video_cloud-ci-20260527-093000-abcdef123456/ci-20260527-093000-abcdef123456.tar.gz":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected object storage request: %s %s", r.Method, r.URL.RequestURI())
+		}
+	}))
+	defer server.Close()
+
+	version, key, err := selectObjectRelease(map[string]string{
+		"LINODE_OBJ_BUCKET":            "test-bucket",
+		"LINODE_OBJ_ENDPOINT":          server.URL,
+		"LINODE_OBJ_ACCESS_KEY_ID":     "access",
+		"LINODE_OBJ_SECRET_ACCESS_KEY": "secret",
+	}, "Video Cloud", "rtk_video_cloud", "")
+	if err != nil {
+		t.Fatalf("selectObjectRelease returned error: %v", err)
+	}
+	if version != "ci-20260527-093000-abcdef123456" {
+		t.Fatalf("version = %q", version)
+	}
+	if key != "releases/rtk_video_cloud-ci-20260527-093000-abcdef123456/ci-20260527-093000-abcdef123456.tar.gz" {
+		t.Fatalf("key = %q", key)
+	}
+	if len(requests) < 4 || !strings.HasPrefix(requests[0], "GET /test-bucket?") {
+		t.Fatalf("requests = %#v", requests)
+	}
+}
+
+func TestMaterializeReleaseBundleSupportsHTTPObjectStorage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/test-bucket/releases/rtk_account_manager-account-test/manifest.json":
+			_, _ = w.Write([]byte(`{"version":"account-test","artifact_path":"releases/rtk_account_manager-account-test/account-test.tar.gz"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/test-bucket/releases/rtk_account_manager-account-test/account-test.tar.gz":
+			_, _ = w.Write([]byte("bundle"))
+		default:
+			t.Fatalf("unexpected object storage request: %s %s", r.Method, r.URL.RequestURI())
+		}
+	}))
+	defer server.Close()
+
+	out, err := materializeReleaseBundle(t.TempDir(), map[string]string{
+		"LINODE_OBJ_BUCKET":            "test-bucket",
+		"LINODE_OBJ_ENDPOINT":          server.URL,
+		"LINODE_OBJ_ACCESS_KEY_ID":     "access",
+		"LINODE_OBJ_SECRET_ACCESS_KEY": "secret",
+	}, "rtk_account_manager", "account-test")
+	if err != nil {
+		t.Fatalf("materializeReleaseBundle returned error: %v", err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "bundle" {
+		t.Fatalf("bundle = %q", string(data))
 	}
 }
 

@@ -336,33 +336,25 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 }
 
 func materializeReleaseBundle(dir string, operator map[string]string, prefix, release string) (string, error) {
-	bucket := firstNonEmpty(operator["LINODE_OBJ_BUCKET"], os.Getenv("LINODE_OBJ_BUCKET"))
-	endpoint := firstNonEmpty(operator["LINODE_OBJ_ENDPOINT"], os.Getenv("LINODE_OBJ_ENDPOINT"))
-	if bucket == "" || endpoint == "" {
-		return "", errors.New("LINODE_OBJ_BUCKET and LINODE_OBJ_ENDPOINT are required to resolve release bundles")
-	}
-	if !strings.HasPrefix(endpoint, "file://") {
-		return "", errors.New("native release bundle materialization currently supports file:// object storage mirrors in tests")
-	}
-	root := strings.TrimPrefix(endpoint, "file://")
-	manifestPath := filepath.Join(root, bucket, "releases", prefix+"-"+release, "manifest.json")
-	manifest, err := readJSONMap(manifestPath)
+	store, err := provisionObjectStoreFromEnv(operator)
 	if err != nil {
+		return "", err
+	}
+	manifestKey := "releases/" + prefix + "-" + release + "/manifest.json"
+	manifestData, err := provisionReadObject(store, manifestKey)
+	if err != nil {
+		return "", err
+	}
+	manifest := map[string]any{}
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
 		return "", err
 	}
 	objectKey := stringValue(manifest["artifact_path"])
 	if objectKey == "" {
-		return "", fmt.Errorf("release manifest missing artifact_path: %s", manifestPath)
-	}
-	data, err := os.ReadFile(filepath.Join(root, bucket, objectKey))
-	if err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
+		return "", fmt.Errorf("release manifest missing artifact_path: %s", manifestKey)
 	}
 	out := filepath.Join(dir, filepath.Base(objectKey))
-	if err := os.WriteFile(out, data, 0o600); err != nil {
+	if err := provisionWriteObjectToFile(store, objectKey, out); err != nil {
 		return "", err
 	}
 	return out, nil
