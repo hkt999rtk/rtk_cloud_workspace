@@ -78,3 +78,8 @@ grep -F 'Intended resources:' "$OUT" >/dev/null
 grep -F 'video-cloud-ci-edge/api/infra/mqtt/coturn' "$OUT" >/dev/null
 grep -F 'rtk-account-manager-ci' "$OUT" >/dev/null
 grep -F 'admin.video-cloud-ci.example.test' "$OUT" >/dev/null
+grep -F 'logger backend: rtk-cloud-logger-ci' "$OUT" >/dev/null
+grep -F 'logger env: '"$ENV_ROOT"'/services/cloud-logger/logger.env' "$OUT" >/dev/null
+grep -F 'logger state: '"$ENV_ROOT"'/state/cloud-logger.env' "$OUT" >/dev/null
+grep -F 'forwarder targets: edge, api, infra, mqtt, coturn, account-manager, cloud-admin, frontend, non-go-host-sources' "$OUT" >/dev/null
+grep -F 'journald retention: SystemMaxUse=1G SystemKeepFree=2G MaxRetentionSec=7day' "$OUT" >/dev/null

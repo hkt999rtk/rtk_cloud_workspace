@@ -76,6 +76,10 @@ cloud_env_admin_env() {
 	cloud_env_first_existing "$1/services/cloud-admin/admin.env" "$1/services/cloud-admin/admin-staging.env"
 }
 
+cloud_env_logger_env() {
+	printf '%s/services/cloud-logger/logger.env\n' "$1"
+}
+
 cloud_env_video_state() {
 	cloud_env_first_existing "$1/state/video-cloud.state.json" "$1/state/video-cloud-staging.state.json"
 }
@@ -86,6 +90,10 @@ cloud_env_account_manager_state() {
 
 cloud_env_admin_state() {
 	cloud_env_first_existing "$1/state/cloud-admin.env" "$1/state/cloud-admin-staging.env"
+}
+
+cloud_env_logger_state() {
+	printf '%s/state/cloud-logger.env\n' "$1"
 }
 
 cloud_env_artifacts_dir() {
@@ -158,6 +166,13 @@ cloud_env_load_environment() {
 	ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL="${ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL:-$ACCOUNT_MANAGER_LINODE_LABEL-fw}"
 	ADMIN_LINODE_LABEL="${ADMIN_LINODE_LABEL:-rtk-cloud-admin-$CLOUD_ENV_NAME}"
 	ADMIN_LINODE_FIREWALL_LABEL="${ADMIN_LINODE_FIREWALL_LABEL:-$ADMIN_LINODE_LABEL-firewall}"
+	CLOUD_LOGGER_LINODE_LABEL="${CLOUD_LOGGER_LINODE_LABEL:-rtk-cloud-logger-$CLOUD_ENV_NAME}"
+	CLOUD_LOGGER_LINODE_FIREWALL_LABEL="${CLOUD_LOGGER_LINODE_FIREWALL_LABEL:-$CLOUD_LOGGER_LINODE_LABEL-fw}"
+	CLOUD_LOGGER_DOMAIN="${CLOUD_LOGGER_DOMAIN:-logger.$CLOUD_STACK_NAME.$CLOUD_DNS_ROOT_DOMAIN}"
+	CLOUD_LOGGER_FORWARDER_TARGETS="${CLOUD_LOGGER_FORWARDER_TARGETS:-edge, api, infra, mqtt, coturn, account-manager, cloud-admin, frontend, non-go-host-sources}"
+	CLOUD_LOGGER_JOURNALD_SYSTEM_MAX_USE="${CLOUD_LOGGER_JOURNALD_SYSTEM_MAX_USE:-1G}"
+	CLOUD_LOGGER_JOURNALD_SYSTEM_KEEP_FREE="${CLOUD_LOGGER_JOURNALD_SYSTEM_KEEP_FREE:-2G}"
+	CLOUD_LOGGER_JOURNALD_MAX_RETENTION_SEC="${CLOUD_LOGGER_JOURNALD_MAX_RETENTION_SEC:-7day}"
 
 	if [[ -f "$metadata_file" ]]; then
 		for name in \
@@ -310,6 +325,7 @@ cloud_env_export_filter_vars() {
 	export CLOUD_STACK_NAME VIDEO_CLOUD_LABEL_PREFIX VIDEO_CLOUD_VPC_LABEL VIDEO_CLOUD_SUBNET_LABEL
 	export ACCOUNT_MANAGER_LINODE_LABEL ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL
 	export ADMIN_LINODE_LABEL ADMIN_LINODE_FIREWALL_LABEL
+	export CLOUD_LOGGER_LINODE_LABEL CLOUD_LOGGER_LINODE_FIREWALL_LABEL CLOUD_LOGGER_DOMAIN
 }
 
 cloud_env_video_role_label() {

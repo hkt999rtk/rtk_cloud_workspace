@@ -165,6 +165,8 @@ AM_ENV="$(cloud_env_account_manager_env "$ENV_ROOT")"
 AM_STATE="$(cloud_env_account_manager_state "$ENV_ROOT")"
 ADMIN_ENV="$(cloud_env_admin_env "$ENV_ROOT")"
 ADMIN_STATE="$(cloud_env_admin_state "$ENV_ROOT")"
+LOGGER_ENV="$(cloud_env_logger_env "$ENV_ROOT")"
+LOGGER_STATE="$(cloud_env_logger_state "$ENV_ROOT")"
 CLOUD_DEPLOY_SCRIPT="${CLOUD_DEPLOY_SCRIPT:-${STAGING_DEPLOY_SCRIPT:-$SCRIPT_DIR/cloud-deploy.sh}}"
 
 VC_GATEWAY_DOMAIN="$VIDEO_CLOUD_DOMAIN"
@@ -513,6 +515,15 @@ plan() {
 - firewalls: $VIDEO_CLOUD_LABEL_PREFIX-edge/api/infra/mqtt/coturn, $ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL, $ADMIN_LINODE_FIREWALL_LABEL
 - vpc/subnet: $VIDEO_CLOUD_VPC_LABEL / $VIDEO_CLOUD_SUBNET_LABEL
 - dns: $VC_GATEWAY_DOMAIN, $VC_CERTISSUER_DOMAIN, $AM_DOMAIN, $ADMIN_DOMAIN
+- logger backend: $CLOUD_LOGGER_LINODE_LABEL
+- logger firewall: $CLOUD_LOGGER_LINODE_FIREWALL_LABEL
+- logger endpoint: $CLOUD_LOGGER_DOMAIN
+- logger env: $LOGGER_ENV
+- logger state: $LOGGER_STATE
+- forwarder credentials: generated after logger backend provisioning
+- forwarder targets: $CLOUD_LOGGER_FORWARDER_TARGETS
+- journald retention: SystemMaxUse=$CLOUD_LOGGER_JOURNALD_SYSTEM_MAX_USE SystemKeepFree=$CLOUD_LOGGER_JOURNALD_SYSTEM_KEEP_FREE MaxRetentionSec=$CLOUD_LOGGER_JOURNALD_MAX_RETENTION_SEC
+- readiness evidence: logger backend health, per-host forwarder status, sample trace query
 EOF_PLAN
 }
 
