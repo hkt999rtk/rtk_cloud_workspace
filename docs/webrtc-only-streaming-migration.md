@@ -48,7 +48,7 @@ Canonical contract source: `repos/rtk_cloud_contracts_doc/WEBRTC_ONLY_STREAMING_
 
 Before opening implementation issues:
 
-- `./scripts/docs-check.sh`
+- `./go run ./scripts/go/rtk-cloud -- docs-check`
 - `git diff --check`
 - local links from this roadmap to the contracts migration note resolve.
 

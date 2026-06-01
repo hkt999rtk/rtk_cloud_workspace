@@ -48,7 +48,7 @@ ADMIN_LINODE_DOMAIN=admin.video-cloud-staging.example.com
 EOF_ADMIN
 
 JSON_OUT="$TMP/pass.json"
-"$ROOT/scripts/cloud-check-certificates.sh" \
+"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- check-certificates \
 	--workspace "$WORKSPACE" \
 	--env-root "$WORKSPACE/cloud_env/staging" \
 	--dns-root-domain example.com \
@@ -65,7 +65,7 @@ make_cert \
 	1
 
 FAIL_OUT="$TMP/fail.txt"
-if "$ROOT/scripts/cloud-check-certificates.sh" \
+if "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- check-certificates \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--dns-root-domain example.com \
@@ -78,7 +78,7 @@ grep -F 'cloud_certificates status=fail' "$FAIL_OUT" >/dev/null
 grep -F 'expires within 7 days' "$FAIL_OUT" >/dev/null
 
 ERR="$TMP/missing-env-root.err"
-if "$ROOT/scripts/cloud-check-certificates.sh" \
+if "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- check-certificates \
 	--workspace "$WORKSPACE" \
 	--skip-live > "$TMP/missing-env-root.out" 2> "$ERR"; then
 	echo "expected missing --env-root to fail" >&2

@@ -105,7 +105,7 @@ ADMIN_LINODE_FIREWALL_LABEL=rtk-cloud-admin-staging-firewall
 EOF_ADMIN
 
 OUT="$TMP/staging-provision-artifacts.out"
-PATH="$FAKE_BIN:$PATH" SSH_API_COUNT_FILE="$TMP/ssh-api.count" "$ROOT/scripts/cloud-provision.sh" \
+PATH="$FAKE_BIN:$PATH" SSH_API_COUNT_FILE="$TMP/ssh-api.count" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- provision \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--ssh-key "$TMP/id_ed25519" \

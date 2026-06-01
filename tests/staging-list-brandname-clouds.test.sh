@@ -66,7 +66,7 @@ SH
 chmod +x "$FAKE_BIN/curl"
 
 ERR="$TMP/missing-env-root.err"
-if PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/cloud-list-brandname-clouds.sh" \
+if PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- list-brandname-clouds \
 	--workspace "$WORKSPACE" >"$TMP/missing-env-root.out" 2>"$ERR"; then
 	echo "expected missing --env-root to fail" >&2
 	exit 1
@@ -74,7 +74,7 @@ fi
 grep -F -- '--env-root is required' "$ERR" >/dev/null
 
 OUT="$TMP/out.txt"
-PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/cloud-list-brandname-clouds.sh" \
+PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- list-brandname-clouds \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" >"$OUT"
 
@@ -84,7 +84,7 @@ grep -F 'RTK' "$OUT" >/dev/null
 grep -F '"region":"staging"' "$OUT" >/dev/null
 
 JSON_OUT="$TMP/out.json"
-PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/cloud-list-brandname-clouds.sh" \
+PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- list-brandname-clouds \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--brandname RTK \

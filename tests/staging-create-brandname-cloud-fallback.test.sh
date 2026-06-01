@@ -91,7 +91,7 @@ SH
 chmod +x "$FAKE_BIN/curl"
 
 OUT="$TMP/out.json"
-PATH="$FAKE_BIN:$PATH" LIST_COUNT="$LIST_COUNT" "$ROOT/scripts/cloud-create-brandname-cloud.sh" \
+PATH="$FAKE_BIN:$PATH" LIST_COUNT="$LIST_COUNT" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- create-brandname-cloud \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--brandname RTK >"$OUT"

@@ -66,7 +66,7 @@ ADMIN_LINODE_PUBLIC_IPV4=203.0.113.70
 EOF_ADMIN
 
 OUT="$TMP/out.txt"
-PATH="$FAKE_BIN:$PATH" CURL_LOG="$CURL_LOG" "$ROOT/scripts/cloud-provision.sh" \
+PATH="$FAKE_BIN:$PATH" CURL_LOG="$CURL_LOG" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- provision \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--e2e >"$OUT" 2>&1
@@ -97,7 +97,7 @@ SH
 chmod +x "$FAKE_BIN/curl"
 
 FAIL_OUT="$TMP/fail-out.txt"
-if PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/cloud-provision.sh" \
+if PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- provision \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--e2e >"$FAIL_OUT" 2>&1; then

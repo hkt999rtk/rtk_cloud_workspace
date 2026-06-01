@@ -42,14 +42,14 @@ jq -n '{
 	]
 }' > "$ARTIFACT"
 
-if "$ROOT/scripts/cloud-validate-device-bind.sh" --out-dir "$REPORT_DIR" >"$TMP/missing.out" 2>&1; then
+if "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- validate-device-bind --out-dir "$REPORT_DIR" >"$TMP/missing.out" 2>&1; then
 	echo "expected missing --bind-artifact to fail" >&2
 	exit 1
 fi
 grep -F -- '--bind-artifact is required' "$TMP/missing.out" >/dev/null
 
 OUT="$TMP/out.json"
-"$ROOT/scripts/cloud-validate-device-bind.sh" \
+"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- validate-device-bind \
 	--bind-artifact "$ARTIFACT" \
 	--out-dir "$REPORT_DIR" \
 	--expected-count 2 \
@@ -74,7 +74,7 @@ fi
 
 BAD="$TMP/bad-artifact.json"
 jq '.assignments[1].service_options = ["mqtt", "video_storage"]' "$ARTIFACT" > "$BAD"
-if "$ROOT/scripts/cloud-validate-device-bind.sh" \
+if "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- validate-device-bind \
 	--bind-artifact "$BAD" \
 	--out-dir "$TMP/bad-report" \
 	--expected-count 2 \

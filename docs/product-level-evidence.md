@@ -13,7 +13,7 @@ readiness sign-off. The wrapper gathers service-local evidence into one redacted
 artifact. It does not replace service-owned smoke tests, deployment runbooks, or
 production monitors.
 
-The implementation is `scripts/collect-private-cloud-evidence.sh`.
+The implementation is `go run ./scripts/go/rtk-cloud -- collect-evidence`.
 
 ## Evidence Boundary
 
@@ -98,7 +98,7 @@ and are not committed by the workspace.
 Run from the workspace root:
 
 ```sh
-scripts/collect-private-cloud-evidence.sh
+go run ./scripts/go/rtk-cloud -- collect-evidence
 ```
 
 The command writes a deterministic directory layout under `evidence/` and, by
@@ -115,7 +115,7 @@ RTK_EVIDENCE_ACCOUNT_MANAGER_HEALTH_URL=http://127.0.0.1:18070/healthz \
 RTK_EVIDENCE_VIDEO_CLOUD_HEALTH_URL=http://127.0.0.1:18080/health \
 RTK_EVIDENCE_EMQX_STATUS_URL=http://127.0.0.1:18083/status \
 RTK_EVIDENCE_METRICS_URLS="http://127.0.0.1:18080/metrics/prometheus" \
-  scripts/collect-private-cloud-evidence.sh
+  go run ./scripts/go/rtk-cloud -- collect-evidence
 ```
 
 Use `RTK_EVIDENCE_STRICT=1` when CI or release sign-off should fail on any

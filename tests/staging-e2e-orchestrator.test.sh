@@ -82,7 +82,7 @@ CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT="$TMP/generate-devices.sh" \
 CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT="$TMP/bind-devices.sh" \
 CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT="$TMP/validate-bind.sh" \
 CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT="$TMP/mqtt-test.sh" \
-	bash "$ROOT/scripts/cloud-staging-e2e-test.sh" \
+	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-e2e-test \
 	--workspace "$WORKSPACE" \
 	--env-root "$WORKSPACE/cloud_env/staging" \
 	--plan > "$PLAN_OUT"
@@ -99,7 +99,7 @@ CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT="$TMP/generate-devices.sh" \
 CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT="$TMP/bind-devices.sh" \
 CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT="$TMP/validate-bind.sh" \
 CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT="$TMP/mqtt-test.sh" \
-	bash "$ROOT/scripts/cloud-staging-e2e-test.sh" \
+	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-e2e-test \
 	--workspace "$WORKSPACE" \
 	--env-root "$WORKSPACE/cloud_env/staging" \
 	--run \
@@ -129,7 +129,7 @@ if grep -R -Ei 'super-secret|password|bearer|token|PRIVATE KEY|-----BEGIN' "$SUM
 	exit 1
 fi
 
-if bash "$ROOT/scripts/cloud-staging-e2e-test.sh" \
+if "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-e2e-test \
 	--workspace "$WORKSPACE" \
 	--env-root "$WORKSPACE/cloud_env/staging" \
 	--run \

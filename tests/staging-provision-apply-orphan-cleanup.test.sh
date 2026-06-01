@@ -69,6 +69,15 @@ JSON
 *"-X POST https://api.linode.com/v4/networking/firewalls/701/devices"*)
 	printf '{}\n'
 	;;
+*"-X GET https://api.linode.com/v4/linode/instances/600/configs"*)
+	printf '{"data":[{"id":602,"label":"default","interfaces":[]} ]}\n'
+	;;
+*"-X POST https://api.linode.com/v4/linode/instances/600/configs"*)
+	printf '{"id":602}\n'
+	;;
+*"-X PUT https://api.linode.com/v4/linode/instances/600/configs/602"*)
+	printf '{}\n'
+	;;
 *"-X GET https://api.linode.com/v4/networking/firewalls/"*"/rules"*)
 	printf '{"inbound":[{"label":"ssh","addresses":{"ipv4":[]}}]}\n'
 	;;
@@ -155,10 +164,11 @@ JSON
 :
 
 PATH="$FAKE_BIN:$PATH" \
+	RTK_CLOUD_GO="$FAKE_BIN/go" \
 	API_LOG="$LOG" \
 	VC_STATE_PATH="$VC_STATE" \
 	VC_SECRET_STATE_PATH="$VC_SECRET_STATE" \
-	"$ROOT/scripts/cloud-provision.sh" \
+	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- provision \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--ssh-key "$SSH_KEY" \

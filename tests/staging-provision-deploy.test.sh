@@ -52,7 +52,7 @@ chmod +x "$TMP/mock-staging-deploy.sh"
 OUT="$TMP/out.txt"
 CLOUD_DEPLOY_SCRIPT="$TMP/mock-staging-deploy.sh" \
 DEPLOY_LOG="$DEPLOY_LOG" \
-PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/cloud-provision.sh" \
+PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- provision \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--ssh-key "$SSH_KEY" \

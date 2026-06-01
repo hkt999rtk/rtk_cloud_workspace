@@ -356,9 +356,9 @@ The production-like profile should collect:
 - object storage availability and lifecycle policy evidence
 - release version manifest and source commits for each service
 
-Video cloud already has `collect-readiness-evidence.sh`. Workspace private-cloud
-readiness now has `scripts/collect-private-cloud-evidence.sh` and the wrapper
-contract in `docs/product-level-evidence.md`. Account manager, admin dashboard,
+Video cloud already has repo-owned readiness evidence collection. Workspace private-cloud
+readiness uses `go run ./scripts/go/rtk-cloud -- collect-evidence`; the evidence
+contract is documented in `docs/product-level-evidence.md`. Account manager, admin dashboard,
 and frontend still own their service-local smoke/evidence commands; the
 workspace wrapper records them as `SKIP` until configured or implemented.
 
@@ -405,7 +405,7 @@ clear. Do not imply all components are one-click deployable today.
 | Add frontend production deployment profile | `hkt999rtk/rtk_cloud_frontend` | Current container recipe is enough for evaluation; production-like profile needs backup/restore, reverse-proxy, and operational notes. |
 | Add admin-dashboard production deployment profile | `hkt999rtk/rtk_cloud_admin` | Implemented by the admin dashboard private-cloud deployment profile; upstream authoritative production behavior remains separate below. |
 | Add admin-dashboard authoritative readiness/telemetry production mode | `hkt999rtk/rtk_cloud_admin` | Production dashboard views should prefer Account Manager and Video Cloud source facts over demo/cache projections, with stable stale/partial/upstream-failure states. |
-| Define product-level evidence wrapper | `hkt999rtk/rtk_cloud_workspace` | Implemented by `scripts/collect-private-cloud-evidence.sh` and documented in `docs/product-level-evidence.md`; service-local collectors remain owner-repo follow-ups. |
+| Define product-level evidence wrapper | `hkt999rtk/rtk_cloud_workspace` | Implemented by `go run ./scripts/go/rtk-cloud -- collect-evidence` and documented in `docs/product-level-evidence.md`; service-local collectors remain owner-repo follow-ups. |
 | Define cross-service broker packaging decision | `hkt999rtk/rtk_cloud_workspace` | Decided in `docs/cross-service-broker-packaging.md`: workspace owns product requirements, service repos own client/runtime behavior, platform/operator owns broker installation and operations. |
 | Add private-cloud copy status update | `hkt999rtk/rtk_cloud_frontend` | Public wording should reflect this BOM and avoid one-click private-cloud claims until follow-ups land. |
 | Add SDK release validation coverage and live-lab evidence | `hkt999rtk/rtk_cloud_client` | Private-cloud/customer handoff needs package release evidence for Android/iOS/native coverage exports and Pro2/FreeRTOS live-lab validation artifacts. |

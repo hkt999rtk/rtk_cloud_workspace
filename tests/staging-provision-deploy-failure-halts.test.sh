@@ -43,7 +43,7 @@ SH
 chmod +x "$TMP/mock-staging-deploy-fails.sh"
 
 OUT="$TMP/out.txt"
-if CLOUD_DEPLOY_SCRIPT="$TMP/mock-staging-deploy-fails.sh" "$ROOT/scripts/cloud-provision.sh" \
+if CLOUD_DEPLOY_SCRIPT="$TMP/mock-staging-deploy-fails.sh" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- provision \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--ssh-key "$SSH_KEY" \

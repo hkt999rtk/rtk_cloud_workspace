@@ -93,7 +93,7 @@ fi
 SH
 chmod +x "$FAKE_BIN/curl"
 
-if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "$ROOT/scripts/cloud-create-users.sh" \
+if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- create-users \
 	--workspace "$WORKSPACE" \
 	--brandname RTK >"$TMP/missing-env-root.out" 2>&1; then
 	echo "expected missing --env-root to fail" >&2
@@ -102,7 +102,7 @@ fi
 grep -F -- '--env-root is required' "$TMP/missing-env-root.out" >/dev/null
 
 DRY_RUN="$TMP/dry-run.json"
-PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "$ROOT/scripts/cloud-create-users.sh" \
+PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- create-users \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--brandname RTK \
@@ -116,7 +116,7 @@ if find "$CURL_LOG" -name 'user-*.json' | grep -q .; then
 fi
 
 OUT="$TMP/out.json"
-PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "$ROOT/scripts/cloud-create-users.sh" \
+PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- create-users \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--brandname RTK \
@@ -135,7 +135,7 @@ test "$(find "$CURL_LOG" -name 'user-*.json' | wc -l | tr -d ' ')" = "2"
 jq -e '.role == "member" and .rotate_password == false' "$CURL_LOG/user-rtk_001_users.local.json" >/dev/null
 
 ASSIGNED_ERR="$TMP/assigned.err"
-if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_USER_ACTION=assigned "$ROOT/scripts/cloud-create-users.sh" \
+if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_USER_ACTION=assigned "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- create-users \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--brandname RTK \
@@ -150,7 +150,7 @@ if find "$ENV_ROOT/artifacts/users" -name 'rtk-users-*.json' -newer "$OUT" 2>/de
 fi
 
 ROTATE_OUT="$TMP/rotate.out"
-PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_USER_ACTION=assigned "$ROOT/scripts/cloud-create-users.sh" \
+PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_USER_ACTION=assigned "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- create-users \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--brandname RTK \
@@ -162,7 +162,7 @@ jq -e '.users[0].action == "assigned" and (.users[0].password | length >= 24)' "
 jq -e '.rotate_password == true' "$CURL_LOG/user-rtk_001_users.local.json" >/dev/null
 
 MISSING="$TMP/missing-brand.err"
-if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_NO_BRAND=1 "$ROOT/scripts/cloud-create-users.sh" \
+if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_NO_BRAND=1 "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- create-users \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--brandname RTK \

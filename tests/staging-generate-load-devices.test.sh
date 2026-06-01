@@ -6,7 +6,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 OUT="$TMP/devices"
-"$ROOT/scripts/cloud-generate-load-devices.sh" \
+"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- generate-load-devices \
 	--env-root "$TMP/cloud_env/staging" \
 	--out-dir "$OUT" \
 	--count 7 \
@@ -40,13 +40,13 @@ test -f "$OUT/manifests/factory-enroll-results.jsonl"
 
 openssl x509 -in "$OUT/devices/camera/test-load-0001/device.cert.pem" -noout -subject | grep -F 'test-load-0001' >/dev/null
 
-if "$ROOT/scripts/cloud-generate-load-devices.sh" --out-dir "$TMP/missing-env-root" >/tmp/missing-env-root.out 2>/tmp/missing-env-root.err; then
+if "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- generate-load-devices --out-dir "$TMP/missing-env-root" >/tmp/missing-env-root.out 2>/tmp/missing-env-root.err; then
 	printf 'expected missing --env-root to fail\n' >&2
 	exit 1
 fi
 grep -F -- '--env-root is required' /tmp/missing-env-root.err >/dev/null
 
-if "$ROOT/scripts/cloud-generate-load-devices.sh" --env-root "$TMP/cloud_env/staging" --out-dir "$TMP/bad" --mix camera=1,sensor=1 --generate-only >/tmp/bad.out 2>/tmp/bad.err; then
+if "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- generate-load-devices --env-root "$TMP/cloud_env/staging" --out-dir "$TMP/bad" --mix camera=1,sensor=1 --generate-only >/tmp/bad.out 2>/tmp/bad.err; then
 	printf 'expected unsupported mix type to fail\n' >&2
 	exit 1
 fi
@@ -59,86 +59,7 @@ openssl req -x509 -new -sha256 -key "$FACTORY_CA/ca.key.pem" -days 30 -subj "/CN
 
 FACTORY_LOG="$TMP/factory-enroll-requests.jsonl"
 PORT_FILE="$TMP/factory-enroll-port.txt"
-python3 - "$FACTORY_LOG" "$PORT_FILE" "$FACTORY_CA/ca.cert.pem" "$FACTORY_CA/ca.key.pem" <<'PY' &
-import hashlib
-import hmac
-import http.server
-import json
-import pathlib
-import subprocess
-import sys
-import tempfile
-
-log_path = pathlib.Path(sys.argv[1])
-port_path = pathlib.Path(sys.argv[2])
-ca_cert = pathlib.Path(sys.argv[3])
-ca_key = pathlib.Path(sys.argv[4])
-auth_key = b"test-secret"
-
-class Handler(http.server.BaseHTTPRequestHandler):
-    def do_POST(self):
-        length = int(self.headers.get("content-length", "0"))
-        body = self.rfile.read(length)
-        request_id = self.headers.get("X-Video-Cloud-Request-ID", "")
-        timestamp = self.headers.get("X-Video-Cloud-Timestamp", "")
-        body_hash = hashlib.sha256(body).hexdigest()
-        canonical = "\n".join(["POST", self.path, timestamp, request_id, body_hash])
-        expected = "v1=" + hmac.new(auth_key, canonical.encode(), hashlib.sha256).hexdigest()
-        payload = json.loads(body)
-        ok = (
-            self.path == "/v1/factory/enroll"
-            and self.headers.get("X-Video-Cloud-Signature") == expected
-            and "allowed_services" not in payload
-            and isinstance(payload.get("service_options"), list)
-            and payload.get("metadata", {}).get("service_options") == payload.get("service_options")
-        )
-        log_path.open("a").write(json.dumps({
-            "ok": ok,
-            "devid": payload.get("devid"),
-            "service_options": payload.get("service_options"),
-            "metadata_service_options": payload.get("metadata", {}).get("service_options"),
-        }) + "\n")
-        if not ok:
-            self.send_response(400)
-            self.end_headers()
-            self.wfile.write(b'{"error":"bad factory enroll request"}')
-            return
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = pathlib.Path(tmp)
-            csr_path = tmp_path / "device.csr.pem"
-            cert_path = tmp_path / "device.cert.pem"
-            csr_path.write_text(payload["csr_pem"])
-            subprocess.run([
-                "openssl", "x509", "-req", "-sha256",
-                "-in", str(csr_path),
-                "-CA", str(ca_cert),
-                "-CAkey", str(ca_key),
-                "-CAcreateserial",
-                "-days", "30",
-                "-out", str(cert_path),
-            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            cert_pem = cert_path.read_text()
-        response = {
-            "request_id": request_id,
-            "device_id": payload["devid"],
-            "serial_number": payload["serial_number"],
-            "certificate_pem": cert_pem,
-            "certificate_chain_pem": ca_cert.read_text(),
-        }
-        data = json.dumps(response).encode()
-        self.send_response(200)
-        self.send_header("content-type", "application/json")
-        self.send_header("content-length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-    def log_message(self, *args):
-        pass
-
-server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
-port_path.write_text(str(server.server_port))
-server.serve_forever()
-PY
+go run "$ROOT/tests/helpers/factory_enroll_mock.go" "$FACTORY_LOG" "$PORT_FILE" "$FACTORY_CA/ca.cert.pem" "$FACTORY_CA/ca.key.pem" &
 FACTORY_PID=$!
 cleanup() {
 	if [[ -n "${FACTORY_PID:-}" ]]; then
@@ -179,7 +100,7 @@ mkdir -p "$FACTORY_ENV_ROOT/env" "$FACTORY_ENV_ROOT/services/video-cloud"
 	printf 'FACTORY_ENROLL_AUTH_KEY=test-secret\n'
 } > "$FACTORY_ENV_ROOT/services/video-cloud/video-cloud.env"
 FACTORY_ENROLL_RUN_ID="test-run" \
-"$ROOT/scripts/cloud-generate-load-devices.sh" \
+"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- generate-load-devices \
 	--env-root "$FACTORY_ENV_ROOT" \
 	--out-dir "$FACTORY_OUT" \
 	--count 2 \

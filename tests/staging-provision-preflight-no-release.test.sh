@@ -10,6 +10,7 @@ ENV_ROOT="$WORKSPACE/cloud_env/staging/linode"
 SECRETS="$ENV_ROOT"
 FAKE_BIN="$TMP/bin"
 SSH_KEY="$TMP/id_ed25519_rtkcloud"
+OBJECT_ROOT="$TMP/object-storage"
 mkdir -p \
 	"$ENV_ROOT/services/video-cloud" \
 	"$FAKE_BIN" \
@@ -19,7 +20,11 @@ mkdir -p \
 	"$ENV_ROOT/services/account-manager" \
 	"$ENV_ROOT/services/cloud-admin" \
 	"$ENV_ROOT/topology" \
-	"$ENV_ROOT/env"
+	"$ENV_ROOT/env" \
+	"$OBJECT_ROOT/test-bucket/releases/rtk_video_cloud-v1.2.3" \
+	"$OBJECT_ROOT/test-bucket/releases/rtk_video_cloud-ci-20260527-093000-abcdef123456" \
+	"$OBJECT_ROOT/test-bucket/releases/rtk_account_manager-ci-20260527-100000-fedcba654321" \
+	"$OBJECT_ROOT/test-bucket/releases/rtk_cloud_admin-admin-test"
 
 cat > "$FAKE_BIN/curl" <<'SH'
 #!/usr/bin/env bash
@@ -33,58 +38,37 @@ exit 1
 SH
 chmod +x "$FAKE_BIN/curl"
 
-cat > "$FAKE_BIN/aws" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-case "$*" in
-*"s3 ls s3://test-bucket/releases/ --recursive"*)
-	cat <<'EOF_LS'
-2026-05-26 10:00:00        180 releases/rtk_video_cloud-v1.2.3/manifest.json
-2026-05-27 09:30:00        198 releases/rtk_video_cloud-ci-20260527-093000-abcdef123456/manifest.json
-2026-05-27 10:00:00        198 releases/rtk_account_manager-ci-20260527-100000-fedcba654321/manifest.json
-2026-05-27 10:30:00        198 releases/rtk_cloud_admin-admin-test/manifest.json
-EOF_LS
-	;;
-*"s3 cp s3://test-bucket/releases/rtk_video_cloud-ci-20260527-093000-abcdef123456/manifest.json -"*)
-	cat <<'EOF_MANIFEST'
+cat > "$OBJECT_ROOT/test-bucket/releases/rtk_video_cloud-v1.2.3/manifest.json" <<'EOF_MANIFEST'
+{
+  "version": "v1.2.3",
+  "artifact_path": "releases/rtk_video_cloud-v1.2.3/v1.2.3.tar.gz"
+}
+EOF_MANIFEST
+touch "$OBJECT_ROOT/test-bucket/releases/rtk_video_cloud-v1.2.3/v1.2.3.tar.gz"
+
+cat > "$OBJECT_ROOT/test-bucket/releases/rtk_video_cloud-ci-20260527-093000-abcdef123456/manifest.json" <<'EOF_MANIFEST'
 {
   "version": "ci-20260527-093000-abcdef123456",
   "artifact_path": "releases/rtk_video_cloud-ci-20260527-093000-abcdef123456/ci-20260527-093000-abcdef123456.tar.gz"
 }
 EOF_MANIFEST
-	;;
-*"s3 cp s3://test-bucket/releases/rtk_account_manager-ci-20260527-100000-fedcba654321/manifest.json -"*)
-	cat <<'EOF_MANIFEST'
+touch "$OBJECT_ROOT/test-bucket/releases/rtk_video_cloud-ci-20260527-093000-abcdef123456/ci-20260527-093000-abcdef123456.tar.gz"
+
+cat > "$OBJECT_ROOT/test-bucket/releases/rtk_account_manager-ci-20260527-100000-fedcba654321/manifest.json" <<'EOF_MANIFEST'
 {
   "version": "ci-20260527-100000-fedcba654321",
   "artifact_path": "releases/rtk_account_manager-ci-20260527-100000-fedcba654321/ci-20260527-100000-fedcba654321.tar.gz"
 }
 EOF_MANIFEST
-	;;
-*"s3 cp s3://test-bucket/releases/rtk_cloud_admin-admin-test/manifest.json -"*)
-	cat <<'EOF_MANIFEST'
+touch "$OBJECT_ROOT/test-bucket/releases/rtk_account_manager-ci-20260527-100000-fedcba654321/ci-20260527-100000-fedcba654321.tar.gz"
+
+cat > "$OBJECT_ROOT/test-bucket/releases/rtk_cloud_admin-admin-test/manifest.json" <<'EOF_MANIFEST'
 {
   "version": "admin-test",
   "artifact_path": "releases/rtk_cloud_admin-admin-test/admin-test.tar.gz"
 }
 EOF_MANIFEST
-	;;
-*"s3 ls s3://test-bucket/releases/rtk_video_cloud-ci-20260527-093000-abcdef123456/ci-20260527-093000-abcdef123456.tar.gz"*)
-	printf '2026-05-27 09:31:00 123456 releases/rtk_video_cloud-ci-20260527-093000-abcdef123456/ci-20260527-093000-abcdef123456.tar.gz\n'
-	;;
-*"s3 ls s3://test-bucket/releases/rtk_account_manager-ci-20260527-100000-fedcba654321/ci-20260527-100000-fedcba654321.tar.gz"*)
-	printf '2026-05-27 10:01:00 123456 releases/rtk_account_manager-ci-20260527-100000-fedcba654321/ci-20260527-100000-fedcba654321.tar.gz\n'
-	;;
-*"s3 ls s3://test-bucket/releases/rtk_cloud_admin-admin-test/admin-test.tar.gz"*)
-	printf '2026-05-27 10:31:00 123456 releases/rtk_cloud_admin-admin-test/admin-test.tar.gz\n'
-	;;
-*)
-	printf 'unexpected aws: %s\n' "$*" >&2
-	exit 1
-	;;
-esac
-SH
-chmod +x "$FAKE_BIN/aws"
+touch "$OBJECT_ROOT/test-bucket/releases/rtk_cloud_admin-admin-test/admin-test.tar.gz"
 
 touch "$ENV_ROOT/topology/video-cloud-staging.yaml"
 touch "$ENV_ROOT/services/video-cloud/video-cloud-staging.env"
@@ -97,11 +81,11 @@ LINODE_TOKEN=test-token
 GODADDY_KEY=test-key
 GODADDY_SECRET=test-secret
 LINODE_OBJ_BUCKET=test-bucket
-LINODE_OBJ_ENDPOINT=https://object.example.test
 EOF_ENV
+printf 'LINODE_OBJ_ENDPOINT=file://%s\n' "$OBJECT_ROOT" >> "$ENV_ROOT/env/operator.env"
 
 OUT="$TMP/out.txt"
-PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/cloud-provision.sh" \
+PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- provision \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--ssh-key "$SSH_KEY" \

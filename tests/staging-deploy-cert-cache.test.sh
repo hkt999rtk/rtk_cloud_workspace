@@ -8,6 +8,7 @@ trap 'rm -rf "$TMP"' EXIT
 WORKSPACE="$TMP/workspace"
 ENV_ROOT="$WORKSPACE/cloud_env/staging/linode"
 FAKE_BIN="$TMP/bin"
+OBJECT_ROOT="$TMP/object-storage"
 SSH_KEY="$TMP/id_ed25519_rtkcloud"
 LOG="$TMP/cert-cache-env.log"
 ADMIN_BUNDLE="$TMP/rtk_cloud_admin-admin-test.tar.gz"
@@ -25,6 +26,7 @@ mkdir -p \
 	"$ENV_ROOT/certificates/video-cloud-ci.example.com" \
 	"$ENV_ROOT/certificates/account-manager.video-cloud-ci.example.com" \
 	"$ENV_ROOT/certificates/admin.video-cloud-ci.example.com" \
+	"$OBJECT_ROOT/test-bucket/releases/rtk_account_manager-account-test" \
 	"$WORKSPACE/repos/rtk_video_cloud/linode_deploy/scripts" \
 	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/scripts" \
 	"$WORKSPACE/repos/rtk_cloud_admin/deploy/linode"
@@ -42,10 +44,19 @@ make_cert video-cloud-ci.example.com "$ENV_ROOT/certificates/video-cloud-ci.exam
 make_cert account-manager.video-cloud-ci.example.com "$ENV_ROOT/certificates/account-manager.video-cloud-ci.example.com"
 make_cert admin.video-cloud-ci.example.com "$ENV_ROOT/certificates/admin.video-cloud-ci.example.com"
 
-cat > "$ENV_ROOT/env/operator.env" <<'EOF_OPERATOR'
+cat > "$OBJECT_ROOT/test-bucket/releases/rtk_account_manager-account-test/manifest.json" <<EOF_MANIFEST
+{
+  "version": "account-test",
+  "artifact_path": "releases/rtk_account_manager-account-test/account-test.tar.gz",
+  "sha256": "$ACCOUNT_OBJECT_SHA"
+}
+EOF_MANIFEST
+printf '%s\n' "$ACCOUNT_OBJECT_CONTENT" > "$OBJECT_ROOT/test-bucket/releases/rtk_account_manager-account-test/account-test.tar.gz"
+
+cat > "$ENV_ROOT/env/operator.env" <<EOF_OPERATOR
 LINODE_TOKEN=test-token
 LINODE_OBJ_BUCKET=test-bucket
-LINODE_OBJ_ENDPOINT=https://example.invalid
+LINODE_OBJ_ENDPOINT=file://$OBJECT_ROOT
 EOF_OPERATOR
 cat > "$ENV_ROOT/env/stack.env" <<'EOF_STACK'
 CLOUD_ENV_NAME=ci
@@ -148,40 +159,16 @@ cat > "$FAKE_BIN/ssh" <<'SH'
 set -euo pipefail
 exit 1
 SH
-for cmd in go tar; do
+for cmd in tar; do
 	cat > "$FAKE_BIN/$cmd" <<'SH'
 #!/usr/bin/env bash
 exit 0
 SH
 	chmod +x "$FAKE_BIN/$cmd"
 done
-cat > "$FAKE_BIN/aws" <<SH
-#!/usr/bin/env bash
-set -euo pipefail
-case "\$*" in
-*"s3 cp s3://test-bucket/releases/rtk_account_manager-account-test/manifest.json -"*)
-	cat <<'JSON'
-{
-  "version": "account-test",
-  "artifact_path": "releases/rtk_account_manager-account-test/account-test.tar.gz",
-  "sha256": "$ACCOUNT_OBJECT_SHA"
-}
-JSON
-	;;
-*"s3 cp s3://test-bucket/releases/rtk_account_manager-account-test/account-test.tar.gz "*)
-	dest="\${@: -3:1}"
-	printf '%s\n' "$ACCOUNT_OBJECT_CONTENT" > "\$dest"
-	;;
-*)
-	printf 'unexpected aws: %s\n' "\$*" >&2
-	exit 1
-	;;
-esac
-SH
-chmod +x "$FAKE_BIN/aws"
 chmod +x "$FAKE_BIN/curl" "$FAKE_BIN/dig" "$FAKE_BIN/ssh"
 
-PATH="$FAKE_BIN:$PATH" CERT_CACHE_LOG="$LOG" "$ROOT/scripts/cloud-deploy.sh" \
+PATH="$FAKE_BIN:$PATH" CERT_CACHE_LOG="$LOG" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- deploy \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--ssh-key "$SSH_KEY" \

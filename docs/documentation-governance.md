@@ -67,7 +67,7 @@ Use these status values for contracts, policies, and ADRs:
 - Review service docs with the owning service change.
 - Keep plans and migration notes as supporting material; move stable behavior
   into service docs, contracts docs, or ADRs after implementation.
-- Run `./scripts/docs-check.sh` before committing workspace documentation or
+- Run `./go run ./scripts/go/rtk-cloud -- docs-check` before committing workspace documentation or
   submodule pointer changes.
 
 ## Metadata Template

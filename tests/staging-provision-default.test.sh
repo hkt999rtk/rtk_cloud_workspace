@@ -60,7 +60,7 @@ ADMIN_LINODE_LABEL=rtk-cloud-admin-ci
 ADMIN_LINODE_FIREWALL_LABEL=rtk-cloud-admin-ci-firewall
 EOF_ENV
 
-if PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/cloud-provision.sh" \
+if PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- provision \
 	--workspace "$WORKSPACE" >"$TMP/missing-env-root.out" 2>&1; then
 	echo "expected missing --env-root to fail" >&2
 	exit 1
@@ -68,7 +68,7 @@ fi
 grep -F -- '--env-root is required' "$TMP/missing-env-root.out" >/dev/null
 
 OUT="$TMP/out.txt"
-PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/cloud-provision.sh" \
+PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- provision \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" >"$OUT"
 

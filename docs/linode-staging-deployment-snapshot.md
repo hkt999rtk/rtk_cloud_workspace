@@ -95,7 +95,7 @@ Admin /api/service-health: Account Manager ok, Video Cloud ok, SQLite ok
 - Merge the service PRs and update the workspace submodule pointer snapshot on
   the merged commits.
 - Produce a product-level evidence bundle with
-  `scripts/collect-private-cloud-evidence.sh` after the workspace points at the
+  `go run ./scripts/go/rtk-cloud -- collect-evidence` after the workspace points at the
   merged service commits.
 - Decide whether `AppVersion=debug` on Video Cloud staging is acceptable for the
   current staging label or should be replaced by an explicit release version.

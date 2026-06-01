@@ -46,16 +46,33 @@ git submodule update --init --recursive
 ## Common Commands
 
 ```sh
-./scripts/status-all.sh
-./scripts/sync-all.sh
-./scripts/docs-check.sh
-./scripts/test-matrix.sh
+go run ./scripts/go/rtk-cloud -- status-all
+go run ./scripts/go/rtk-cloud -- sync-all
+go run ./scripts/go/rtk-cloud -- docs-check
+go run ./scripts/go/rtk-cloud -- test-matrix
 ```
 
-`status-all.sh` and `docs-check.sh` are read-only. `sync-all.sh` fetches every
-submodule remote but does not move pinned commits. To change the validated
-cross-repo snapshot, update the relevant submodule commit intentionally and
-commit the pointer change in this workspace repository.
+`status-all` and `docs-check` are read-only. `sync-all` fetches every submodule
+remote but does not move pinned commits. To change the validated cross-repo
+snapshot, update the relevant submodule commit intentionally and commit the
+pointer change in this workspace repository.
+
+## Staging Shortcuts
+
+Use `./stg.sh` for the local staging environment. It forwards to the Go CLI and
+sets `--env-root cloud_env/staging` automatically.
+
+```sh
+./stg.sh provision --all
+./stg.sh brand RTK
+./stg.sh brands
+./stg.sh users RTK 10
+./stg.sh devices 100
+./stg.sh bind RTK 100
+./stg.sh certs
+```
+
+From `scripts/`, use `../stg.sh ...`.
 
 ## Workspace Rules
 
