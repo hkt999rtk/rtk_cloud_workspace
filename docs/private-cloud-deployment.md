@@ -30,6 +30,7 @@ customer deployment before opening service-specific work.
 | Video cloud host setup | `repos/rtk_video_cloud/docs/deployment-instance-setup.md` | Linux host bootstrap, PostgreSQL, systemd, EMQX, runner setup. |
 | Video cloud promotion/rollback | `repos/rtk_video_cloud/docs/deployment-promotion-rollback.md` | Staging, PM sign-off, production deploy, rollback. |
 | Video cloud observability | `repos/rtk_video_cloud/docs/observability-baseline.md` | Metrics, logs, EMQX, dead-letter, and evidence signals. |
+| Cross-service service logging | `docs/service-logging-architecture.md` | Central logger, journald forwarder, correlation, retention, and provisioning dependency plan. |
 | Video cloud config | `repos/rtk_video_cloud/docs/config-map.md` | Runtime env map including Postgres, blob, MQTT, and cross-service settings. |
 | Video cloud deploy assets | `repos/rtk_video_cloud/deploy/README.md` | Systemd units, EMQX compose, verifier, evidence collector. |
 | Account manager behavior | `repos/rtk_account_manager/docs/SPEC.md` | Account, org, auth, registry, fleet, and provisioning scope. |
@@ -61,6 +62,7 @@ runtime details.
 | Reverse proxy / TLS | Yes for production-like profile | platform/operator | Frontend and video cloud assume TLS can terminate outside app processes. | DNS, TLS certificates, routing, compression, request size limits, security headers. |
 | Secrets manager | Yes | platform/operator | GitHub Environment secrets or host-side manager are currently documented patterns. | Stores DSNs, auth secrets, MQTT credentials, webhook secrets, deploy keys, private keys. |
 | Observability stack | Yes for production-like profile | platform/operator | Video cloud exposes Prometheus endpoints and evidence collectors. | Scrapes metrics, collects logs, stores alerts, keeps readiness evidence. |
+| Central service logger | Yes for production-like profile | `rtk_cloud_logger` with workspace provisioning | Planned logger backend, journald forwarder, and ingest API. | Stores queryable service logs across account, video, admin, frontend, and non-Go host sources. |
 | Cross-service broker | Required when account/video lifecycle channel is enabled | platform/operator, with workspace product requirements | `docs/cross-service-broker-packaging.md` selects NATS JetStream as the default and defines acceptable equivalents. | Carries account-to-video lifecycle commands and video-to-account events. |
 | Backup storage | Yes for production-like profile | platform/operator | Not packaged as a single workspace script. | Stores database dumps, object storage backups, env/secrets escrow metadata, release manifests. |
 
@@ -347,6 +349,8 @@ The production-like profile should collect:
 
 - service status and health checks for selected units/containers
 - Prometheus snapshots from video cloud services
+- central service logger backend health, per-host journald forwarder status,
+  and one sample trace/query result
 - frontend health and lead persistence checks
 - account manager auth/org/device smoke output
 - EMQX broker status and MQTT publish-subscribe smoke when MQTT is enabled
