@@ -119,6 +119,7 @@ func runProvision(args []string) error {
 		opts.sshKey = filepath.Join(os.Getenv("HOME"), ".ssh", "id_ed25519_rtkcloud")
 	}
 	envValues := env.Values
+	paths.VideoState = provisionCloudVideoStatePath(envRoot, envValues["CLOUD_STACK_NAME"], paths.VideoState)
 	if opts.mode.preflight {
 		if err := provisionPreflight(paths, &opts); err != nil {
 			return err
@@ -441,13 +442,25 @@ func provisionApply(paths provisionPaths, env map[string]string, opts provisionO
 	if token := firstNonEmpty(os.Getenv("LINODE_TOKEN"), operator["LINODE_TOKEN"]); token != "" {
 		_ = os.Setenv("LINODE_TOKEN", token)
 	}
-	if err := cleanupOrphanedProvisionState(paths, env); err != nil {
+	repoState := provisionRepoVideoStatePath(paths, env["CLOUD_STACK_NAME"])
+	stateUsable := provisionVideoStateHasInstances(paths.VideoState) || provisionVideoStateHasInstances(repoState)
+	if stateUsable {
+		if err := syncProvisionVideoState(paths.VideoState, repoState); err != nil {
+			return err
+		}
+		if err := hydrateProvisionVideoState(paths, env, repoState); err != nil {
+			return err
+		}
+	} else if err := cleanupOrphanedProvisionState(paths, env); err != nil {
 		return err
 	}
-	if _, err := os.Stat(paths.VideoState); err != nil {
+	if _, err := os.Stat(repoState); err != nil {
 		if err := runCmdWithEnv(filepath.Join(paths.Workspace, "repos", "rtk_video_cloud", "linode_deploy"), mergeEnv(operator, map[string]string{}), "go", "run", "./cmd/linode-deploy", "apply", "--config", paths.VideoConfig); err != nil {
 			return err
 		}
+	}
+	if err := syncProvisionVideoState(paths.VideoState, repoState); err != nil {
+		return err
 	}
 	if err := provisionPublicService(paths, env, "account-manager"); err != nil {
 		return err
@@ -519,6 +532,205 @@ func cleanupOrphanedProvisionState(paths provisionPaths, env map[string]string) 
 	return nil
 }
 
+func provisionCloudVideoStatePath(envRoot, stack, fallback string) string {
+	if stack == "" {
+		return fallback
+	}
+	stackPath := filepath.Join(envRoot, "state", stack+".state.json")
+	if exists(stackPath) {
+		return stackPath
+	}
+	if exists(fallback) {
+		return fallback
+	}
+	return stackPath
+}
+
+func provisionRepoVideoStatePath(paths provisionPaths, stack string) string {
+	if stack == "" {
+		stack = "video-cloud-staging"
+	}
+	return filepath.Join(paths.Workspace, "repos", "rtk_video_cloud", "linode_deploy", "state", stack+".state.json")
+}
+
+func syncProvisionVideoState(cloudState, repoState string) error {
+	switch {
+	case exists(cloudState) && !exists(repoState):
+		return copyFile(cloudState, repoState)
+	case exists(repoState) && !exists(cloudState):
+		return copyFile(repoState, cloudState)
+	default:
+		return nil
+	}
+}
+
+func provisionVideoStateHasInstances(path string) bool {
+	state, err := readJSONMap(path)
+	if err != nil {
+		return false
+	}
+	instances, _ := state["instances"].(map[string]any)
+	return len(instances) > 0
+}
+
+func uniqueNonEmpty(values ...string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func hydrateProvisionVideoState(paths provisionPaths, env map[string]string, repoState string) error {
+	for _, statePath := range uniqueNonEmpty(paths.VideoState, repoState) {
+		if !exists(statePath) {
+			continue
+		}
+		state, err := readJSONMap(statePath)
+		if err != nil {
+			return err
+		}
+		changed := false
+		if atoiOrZero(stringValue(state["vpc_id"])) == 0 {
+			vpcID, err := findLinodeVPCID(env["VIDEO_CLOUD_VPC_LABEL"])
+			if err != nil {
+				return err
+			}
+			if vpcID != 0 {
+				state["vpc_id"] = vpcID
+				changed = true
+			}
+		}
+		vpcID := atoiOrZero(stringValue(state["vpc_id"]))
+		if atoiOrZero(stringValue(state["subnet_id"])) == 0 && vpcID != 0 {
+			subnetID, err := findLinodeSubnetID(vpcID, env["VIDEO_CLOUD_SUBNET_LABEL"])
+			if err != nil {
+				return err
+			}
+			if subnetID != 0 {
+				state["subnet_id"] = subnetID
+				changed = true
+			}
+		}
+		firewalls, _ := state["firewalls"].(map[string]any)
+		if firewalls == nil {
+			firewalls = map[string]any{}
+		}
+		missingFirewall := false
+		for _, role := range []string{"edge", "api", "infra", "mqtt", "coturn"} {
+			if atoiOrZero(stringValue(firewalls[role])) == 0 {
+				missingFirewall = true
+				break
+			}
+		}
+		if missingFirewall {
+			found, err := findVideoFirewallIDs(env["VIDEO_CLOUD_LABEL_PREFIX"])
+			if err != nil {
+				return err
+			}
+			for _, role := range []string{"edge", "api", "infra", "mqtt", "coturn"} {
+				if atoiOrZero(stringValue(firewalls[role])) == 0 && found[role] != 0 {
+					firewalls[role] = found[role]
+					changed = true
+				}
+			}
+			state["firewalls"] = firewalls
+		}
+		if changed {
+			if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
+				return err
+			}
+			if err := writeJSON(statePath, state); err != nil {
+				return err
+			}
+		}
+	}
+	return syncProvisionVideoState(paths.VideoState, repoState)
+}
+
+func findLinodeVPCID(label string) (int, error) {
+	if label == "" {
+		return 0, nil
+	}
+	raw, err := curlLinode("GET", "/vpcs?page_size=500", "")
+	if err != nil {
+		return 0, err
+	}
+	var listed struct {
+		Data []struct {
+			ID    int    `json:"id"`
+			Label string `json:"label"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &listed); err != nil {
+		return 0, err
+	}
+	for _, item := range listed.Data {
+		if item.Label == label {
+			return item.ID, nil
+		}
+	}
+	return 0, fmt.Errorf("state is missing vpc_id and Linode VPC label was not found: %s", label)
+}
+
+func findLinodeSubnetID(vpcID int, label string) (int, error) {
+	if vpcID == 0 || label == "" {
+		return 0, nil
+	}
+	raw, err := curlLinode("GET", fmt.Sprintf("/vpcs/%d/subnets?page_size=500", vpcID), "")
+	if err != nil {
+		return 0, err
+	}
+	var listed struct {
+		Data []struct {
+			ID    int    `json:"id"`
+			Label string `json:"label"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &listed); err != nil {
+		return 0, err
+	}
+	for _, item := range listed.Data {
+		if item.Label == label {
+			return item.ID, nil
+		}
+	}
+	return 0, fmt.Errorf("state is missing subnet_id and Linode subnet label was not found: %s", label)
+}
+
+func findVideoFirewallIDs(labelPrefix string) (map[string]int, error) {
+	out := map[string]int{}
+	if labelPrefix == "" {
+		return out, nil
+	}
+	raw, err := curlLinode("GET", "/networking/firewalls?page_size=500", "")
+	if err != nil {
+		return nil, err
+	}
+	var listed struct {
+		Data []struct {
+			ID    int    `json:"id"`
+			Label string `json:"label"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &listed); err != nil {
+		return nil, err
+	}
+	for _, item := range listed.Data {
+		for _, role := range []string{"edge", "api", "infra", "mqtt", "coturn"} {
+			if item.Label == labelPrefix+"-"+role {
+				out[role] = item.ID
+			}
+		}
+	}
+	return out, nil
+}
+
 func provisionPublicService(paths provisionPaths, env map[string]string, service string) error {
 	switch service {
 	case "account-manager":
@@ -554,6 +766,7 @@ func provisionDeploy(paths provisionPaths, env map[string]string, opts provision
 }
 
 func resolveProvisionReleases(paths provisionPaths, operator map[string]string, opts *provisionOptions) error {
+	requestedAccountRelease := opts.accountRelease
 	releases := []struct {
 		display string
 		prefix  string
@@ -572,7 +785,77 @@ func resolveProvisionReleases(paths provisionPaths, operator map[string]string, 
 		fmt.Fprintf(os.Stderr, "selected %s Object Storage release: %s\n", item.display, version)
 		fmt.Fprintf(os.Stderr, "%s Object Storage release readable: %s\n", item.display, objectKey)
 	}
+	if err := ensureProvisionAccountReleaseCompatible(paths, operator, opts, requestedAccountRelease); err != nil {
+		return err
+	}
 	return nil
+}
+
+func ensureProvisionAccountReleaseCompatible(paths provisionPaths, operator map[string]string, opts *provisionOptions, requested string) error {
+	accountEnv, _ := readEnvFile(paths.AccountManagerEnv)
+	if !strings.EqualFold(accountEnv["CROSS_SERVICE_BROKER"], "nats") || opts.accountRelease == "" {
+		return nil
+	}
+	supports, known, err := provisionObjectReleaseSupportsAccountNATS(paths, operator, opts.accountRelease)
+	if err != nil {
+		return err
+	}
+	if !known || supports {
+		return nil
+	}
+	if requested != "" {
+		return fmt.Errorf("Account Manager release %s does not support CROSS_SERVICE_BROKER=nats; choose a NATS-capable release or unset CROSS_SERVICE_BROKER", opts.accountRelease)
+	}
+	localSupports, err := provisionLocalAccountManagerSupportsNATS(paths)
+	if err != nil {
+		return err
+	}
+	if !localSupports {
+		return fmt.Errorf("selected Account Manager release %s does not support CROSS_SERVICE_BROKER=nats, and local repo does not either", opts.accountRelease)
+	}
+	fmt.Fprintf(os.Stderr, "[rtk-cloud provision] selected Account Manager release %s does not support CROSS_SERVICE_BROKER=nats; using local Account Manager build\n", opts.accountRelease)
+	opts.accountRelease = ""
+	return nil
+}
+
+func provisionObjectReleaseSupportsAccountNATS(paths provisionPaths, operator map[string]string, release string) (bool, bool, error) {
+	store, err := provisionObjectStoreFromEnv(operator)
+	if err != nil {
+		return false, false, err
+	}
+	manifestKey := "releases/rtk_account_manager-" + release + "/manifest.json"
+	data, err := provisionReadObject(store, manifestKey)
+	if err != nil {
+		return false, false, err
+	}
+	manifest := map[string]any{}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return false, false, err
+	}
+	commit := stringValue(manifest["source_commit"])
+	if commit == "" {
+		return false, false, nil
+	}
+	supports, err := provisionAccountManagerCommitSupportsNATS(paths, commit)
+	if err != nil {
+		return false, false, err
+	}
+	return supports, true, nil
+}
+
+func provisionLocalAccountManagerSupportsNATS(paths provisionPaths) (bool, error) {
+	return provisionAccountManagerCommitSupportsNATS(paths, "HEAD")
+}
+
+func provisionAccountManagerCommitSupportsNATS(paths provisionPaths, rev string) (bool, error) {
+	repo := filepath.Join(paths.Workspace, "repos", "rtk_account_manager")
+	cmd := exec.Command("git", "show", rev+":internal/broker/broker.go")
+	cmd.Dir = repo
+	out, err := cmd.Output()
+	if err != nil {
+		return false, nil
+	}
+	return strings.Contains(string(out), "AdapterNATS") || strings.Contains(string(out), `"nats"`), nil
 }
 
 func selectObjectRelease(operator map[string]string, display, prefix, requested string) (string, string, error) {

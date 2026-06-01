@@ -198,5 +198,5 @@ grep -F -- '-X DELETE https://api.linode.com/v4/networking/firewalls/24476605' "
 grep -F -- '-X DELETE https://api.linode.com/v4/vpcs/499050' "$LOG" >/dev/null
 grep -F 'vpc_id' "$VC_STATE" >/dev/null
 test -f "$AM_STATE"
-test ! -e "$WORKSPACE/repos/rtk_video_cloud/linode_deploy/state/video-cloud-staging.state.json"
+test -e "$WORKSPACE/repos/rtk_video_cloud/linode_deploy/state/video-cloud-staging.state.json"
 find "$ENV_ROOT/artifacts" -path '*legacy-state-backup*/video-cloud-staging.state.json' | grep -q .

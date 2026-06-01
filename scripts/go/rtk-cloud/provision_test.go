@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -135,6 +136,55 @@ func TestMaterializeReleaseBundleSupportsHTTPObjectStorage(t *testing.T) {
 	if string(data) != "bundle" {
 		t.Fatalf("bundle = %q", string(data))
 	}
+}
+
+func TestProvisionAccountManagerCommitSupportsNATS(t *testing.T) {
+	workspace := t.TempDir()
+	repo := filepath.Join(workspace, "repos", "rtk_account_manager")
+	mkdirAll(t, filepath.Join(repo, "internal", "broker"))
+	writeFile(t, filepath.Join(repo, "internal", "broker", "broker.go"), `package broker
+
+const AdapterLog = "log"
+`)
+	runGit(t, repo, "init")
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "without nats")
+	withoutNATS := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	writeFile(t, filepath.Join(repo, "internal", "broker", "broker.go"), `package broker
+
+const AdapterLog = "log"
+const AdapterNATS = "nats"
+`)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "with nats")
+
+	paths := provisionPaths{Workspace: workspace}
+	supports, err := provisionAccountManagerCommitSupportsNATS(paths, withoutNATS)
+	if err != nil {
+		t.Fatalf("provisionAccountManagerCommitSupportsNATS returned error: %v", err)
+	}
+	if supports {
+		t.Fatal("commit without NATS reported support")
+	}
+	supports, err = provisionAccountManagerCommitSupportsNATS(paths, "HEAD")
+	if err != nil {
+		t.Fatalf("provisionAccountManagerCommitSupportsNATS returned error: %v", err)
+	}
+	if !supports {
+		t.Fatal("HEAD with NATS did not report support")
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, out)
+	}
+	return string(out)
 }
 
 func readJSON(t *testing.T, path string, out any) {

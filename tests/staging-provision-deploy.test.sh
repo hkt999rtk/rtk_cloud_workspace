@@ -89,6 +89,7 @@ PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -
 	--admin-release admin-test-release \
 	--deploy >"$OUT" 2>&1
 
-grep -F 'video --stack video-cloud-staging --gateway-domain video-cloud-staging.realtekconnect.com' "$DEPLOY_LOG" >/dev/null
+grep -F 'video --stack video-cloud-staging --config ' "$DEPLOY_LOG" >/dev/null
+grep -F -- '--gateway-domain video-cloud-staging.realtekconnect.com' "$DEPLOY_LOG" >/dev/null
 grep -F 'account release=account-test-release bundle='"$ACCOUNT_BUNDLE" "$DEPLOY_LOG" >/dev/null
 grep -F 'admin release=admin-test-release prometheus=http://10.42.1.30:9090' "$DEPLOY_LOG" >/dev/null

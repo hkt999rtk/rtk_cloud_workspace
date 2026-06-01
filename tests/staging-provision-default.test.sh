@@ -265,7 +265,8 @@ DEPLOY_LOG="$DEPLOY_LOG" \
 grep -F 'Target instances:' "$OUT" >/dev/null
 grep -F 'Intended resources:' "$OUT" >/dev/null
 grep -F 'video-cloud-ci-edge/api/infra/mqtt/coturn' "$OUT" >/dev/null
-grep -F 'video --stack video-cloud-ci --gateway-domain video-cloud-ci.example.test' "$DEPLOY_LOG" >/dev/null
+grep -F 'video --stack video-cloud-ci --config ' "$DEPLOY_LOG" >/dev/null
+grep -F -- '--gateway-domain video-cloud-ci.example.test' "$DEPLOY_LOG" >/dev/null
 grep -F 'account account-test' "$DEPLOY_LOG" >/dev/null
 grep -F 'admin admin-test http://10.42.1.30:9090' "$DEPLOY_LOG" >/dev/null
 grep -F 'records upsert example.test --type A --name video-cloud-ci --data 203.0.113.5 --ttl 600' "$GO_ARGS" >/dev/null

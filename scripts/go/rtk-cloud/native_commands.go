@@ -272,8 +272,11 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 	})
 	videoArgs := []string{
 		"--stack", env["CLOUD_STACK_NAME"],
+		"--config", paths.VideoConfig,
+		"--secrets-file", paths.VideoEnv,
+		"--env-file", paths.OperatorEnv,
 		"--gateway-domain", env["VIDEO_CLOUD_DOMAIN"],
-		"--certissuer-domain", env["VIDEO_CLOUD_CERTISSUER_DOMAIN"],
+		"--certbot-extra-domain", env["VIDEO_CLOUD_CERTISSUER_DOMAIN"],
 	}
 	if opts.videoRelease != "" {
 		videoArgs = append(videoArgs, "--release", opts.videoRelease)
