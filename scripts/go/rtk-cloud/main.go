@@ -2335,12 +2335,20 @@ func updateFirewallRules(target firewallTarget, mode, cidr string, dryRun bool) 
 }
 
 func curlLinode(method, path, data string) ([]byte, error) {
+	return curlLinodeWithStderr(method, path, data, os.Stderr)
+}
+
+func curlLinodeQuiet(method, path, data string) ([]byte, error) {
+	return curlLinodeWithStderr(method, path, data, io.Discard)
+}
+
+func curlLinodeWithStderr(method, path, data string, stderr io.Writer) ([]byte, error) {
 	args := []string{"-fsS", "-X", method, "https://api.linode.com/v4" + path, "-H", "Authorization: Bearer " + os.Getenv("LINODE_TOKEN"), "-H", "Content-Type: application/json"}
 	if data != "" {
 		args = append(args, "--data-binary", data)
 	}
 	cmd := exec.Command("curl", args...)
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = stderr
 	return cmd.Output()
 }
 

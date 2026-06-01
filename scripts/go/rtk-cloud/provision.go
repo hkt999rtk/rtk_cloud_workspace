@@ -114,6 +114,7 @@ func runProvision(args []string) error {
 	if opts.operatorEnv == "" {
 		opts.operatorEnv = paths.OperatorEnv
 	}
+	loadProvisionOperatorToken(paths)
 	if opts.sshKey == "" {
 		opts.sshKey = filepath.Join(os.Getenv("HOME"), ".ssh", "id_ed25519_rtkcloud")
 	}
@@ -397,7 +398,7 @@ func provisionPreflight(paths provisionPaths, opts provisionOptions) error {
 
 func provisionPlan(paths provisionPaths, env map[string]string) error {
 	fmt.Fprintln(os.Stdout, "Target instances:")
-	if raw, err := curlLinode("GET", "/linode/instances?page_size=500", ""); err == nil {
+	if raw, err := curlLinodeQuiet("GET", "/linode/instances?page_size=500", ""); err == nil {
 		var listed struct {
 			Data []struct {
 				Label string `json:"label"`
@@ -410,6 +411,8 @@ func provisionPlan(paths provisionPaths, env map[string]string) error {
 				}
 			}
 		}
+	} else {
+		fmt.Fprintf(os.Stderr, "[rtk-cloud provision] warning: cannot list Linode target instances: %v\n", err)
 	}
 	fmt.Fprintln(os.Stdout, "Intended resources:")
 	fmt.Fprintf(os.Stdout, "- instances: %s-edge/api/infra/mqtt/coturn, %s, %s\n", env["VIDEO_CLOUD_LABEL_PREFIX"], env["ACCOUNT_MANAGER_LINODE_LABEL"], env["ADMIN_LINODE_LABEL"])
@@ -418,6 +421,16 @@ func provisionPlan(paths provisionPaths, env map[string]string) error {
 	fmt.Fprintf(os.Stdout, "- dns: %s, %s, %s, %s\n", env["VIDEO_CLOUD_DOMAIN"], env["VIDEO_CLOUD_CERTISSUER_DOMAIN"], env["ACCOUNT_MANAGER_DOMAIN"], env["CLOUD_ADMIN_DOMAIN"])
 	fmt.Fprintf(os.Stdout, "- cloud-admin private IP: %s\n", adminPrivateIPv4(paths))
 	return nil
+}
+
+func loadProvisionOperatorToken(paths provisionPaths) {
+	if os.Getenv("LINODE_TOKEN") != "" {
+		return
+	}
+	operator, _ := readEnvFile(paths.OperatorEnv)
+	if operator["LINODE_TOKEN"] != "" {
+		_ = os.Setenv("LINODE_TOKEN", operator["LINODE_TOKEN"])
+	}
 }
 
 func provisionApply(paths provisionPaths, env map[string]string, opts provisionOptions) error {

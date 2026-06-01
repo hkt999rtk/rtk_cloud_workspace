@@ -15,6 +15,13 @@ cat > "$FAKE_BIN/curl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
+*"Authorization: Bearer test-token"*) ;;
+*)
+	printf 'missing operator token: %s\n' "$*" >&2
+	exit 22
+	;;
+esac
+case "$*" in
 *"/linode/instances?page_size=500"*)
 	cat <<'JSON'
 {"data":[{"id":1,"label":"video-cloud-ci-edge","region":"us-sea","type":"g6-standard-2","status":"running","ipv4":["203.0.113.5"],"tags":["video-cloud-ci","role:edge"]}]}
