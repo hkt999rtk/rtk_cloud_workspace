@@ -227,6 +227,8 @@ scripts/cloud-migrate-env.sh --env-root cloud_env/staging --force
 
 Linode staging 的主要編排腳本。它可以做 preflight、plan、reset、apply、DNS、deploy、artifact collection、e2e smoke。預設不變更環境，只做 `--plan`。
 
+service logging 的目標 provisioning model 記在 `docs/service-logging-architecture.md`：logger backend 要在 application services 前 provision，然後每台 VM 安裝 journald forwarder。forwarder 或 logger backend degraded 時，不應阻塞 account/video/admin/frontend service 啟動；readiness report 應標示 logging degraded。
+
 常用用法：
 
 ```sh
@@ -264,6 +266,8 @@ scripts/cloud-provision.sh \
 - `--dns-final-ttl SECONDS`：DNS converge 後恢復的 TTL。
 - `--dns-wait-max-seconds SECONDS`：每個 hostname 最長 DNS convergence 等待時間，預設 `700` 秒；每 10 秒檢查 Google DNS 與 authoritative DNS 一次。
 - `--verbose`：輸出更多 debug 訊息。
+
+後續 logger provisioning issue 需要讓 `--plan` 顯示 logger backend、forwarder credentials、每台 host 的 forwarder 安裝狀態，以及 e2e/sample trace readiness 檢查。
 
 HTTPS certificate cache 由 `cloud-deploy.sh` 處理：如果 `cloud_env/staging/linode/certificates/<fqdn>/fullchain.pem` 與 `privkey.pem` 存在且在安全期限內未過期，就會先上傳到新 VM，建立 certbot lineage/renewal config、啟用 `certbot.timer`，並跳過新憑證申請；如果沒有可用 cache，deploy 仍會走 certbot，成功後再把 VM 上的 certificate/key 拉回 `cloud_env`。預設要求 certificate 至少還有 7 天有效期，可用 `--cert-cache-min-valid-seconds` 調整。
 
