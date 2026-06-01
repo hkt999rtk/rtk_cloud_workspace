@@ -11,7 +11,7 @@ Usage:
   stg.sh <command> [args]
 
 Shortcuts:
-  provision [args]              -> rtk-cloud provision --env-root cloud_env/staging
+  provision [args]              -> rtk-cloud provision --env-root cloud_env/staging (default: --all)
   deploy [args]                 -> rtk-cloud deploy --env-root cloud_env/staging
   brand NAME [args]             -> create-brandname-cloud
   brands [args]                 -> list-brandname-clouds

@@ -63,7 +63,7 @@ Use `./stg.sh` for the local staging environment. It forwards to the Go CLI and
 sets `--env-root cloud_env/staging` automatically.
 
 ```sh
-./stg.sh provision --all
+./stg.sh provision
 ./stg.sh brand RTK
 ./stg.sh brands
 ./stg.sh users RTK 10

@@ -120,7 +120,7 @@ func runProvision(args []string) error {
 	}
 	envValues := env.Values
 	if opts.mode.preflight {
-		if err := provisionPreflight(paths, opts); err != nil {
+		if err := provisionPreflight(paths, &opts); err != nil {
 			return err
 		}
 	}
@@ -322,7 +322,7 @@ func parseProvisionArgs(args []string) (provisionOptions, error) {
 		}
 	}
 	if !opts.mode.preflight && !opts.mode.plan && !opts.mode.reset && !opts.mode.apply && !opts.mode.dns && !opts.mode.deploy && !opts.mode.artifacts && !opts.mode.e2e {
-		opts.mode.plan = true
+		opts.mode = provisionMode{preflight: true, plan: true, apply: true, dns: true, deploy: true, artifacts: true, e2e: true}
 	}
 	if opts.envRoot == "" {
 		return opts, errors.New("--env-root is required")
@@ -350,7 +350,10 @@ func validateProvisionNumericOptions(opts provisionOptions) error {
 
 func printProvisionUsage() {
 	fmt.Fprint(os.Stdout, `Usage:
-  rtk-cloud provision --env-root cloud_env/staging [--plan|--apply|--deploy|--artifacts]
+  rtk-cloud provision --env-root cloud_env/staging [--all|--plan|--apply|--deploy|--artifacts]
+
+Default:
+  no mode flags is the same as --all.
 `)
 }
 
@@ -371,7 +374,7 @@ func newProvisionPaths(workspace, root string, opts provisionOptions) provisionP
 	}
 }
 
-func provisionPreflight(paths provisionPaths, opts provisionOptions) error {
+func provisionPreflight(paths provisionPaths, opts *provisionOptions) error {
 	for _, cmd := range []string{"curl", "jq", "ssh", "openssl", "go", "tar"} {
 		if _, err := exec.LookPath(cmd); err != nil {
 			return fmt.Errorf("%s is required", cmd)
@@ -389,7 +392,7 @@ func provisionPreflight(paths provisionPaths, opts provisionOptions) error {
 	if firstNonEmpty(os.Getenv("LINODE_TOKEN"), operator["LINODE_TOKEN"]) == "" {
 		return errors.New("LINODE_TOKEN is required")
 	}
-	if err := resolveProvisionReleases(paths, operator, &opts); err != nil {
+	if err := resolveProvisionReleases(paths, operator, opts); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "[rtk-cloud provision] preflight ok")
