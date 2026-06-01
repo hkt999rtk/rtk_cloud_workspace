@@ -21,6 +21,7 @@ mkdir -p \
 	"$ENV_ROOT/state" \
 	"$WORKSPACE/repos/rtk_video_cloud/linode_deploy" \
 	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/scripts" \
+	"$WORKSPACE/repos/rtk_cloud_admin/deploy/linode" \
 	"$ENV_ROOT/services/account-manager" \
 	"$ENV_ROOT/services/cloud-admin" \
 	"$ENV_ROOT/topology" \
@@ -138,6 +139,22 @@ ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL=rtk-account-manager-staging-fw
 EOF_STATE
 SH
 chmod +x "$WORKSPACE/repos/rtk_account_manager/linode_deploy/scripts/provision-public-vm.sh"
+
+cat > "$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/provision-admin-vm.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p "$(dirname "$ADMIN_LINODE_STATE_PATH")"
+cat > "$ADMIN_LINODE_STATE_PATH" <<'EOF_STATE'
+ADMIN_LINODE_ID=700
+ADMIN_LINODE_LABEL=rtk-cloud-admin-staging
+ADMIN_LINODE_PUBLIC_IPV4=203.0.113.70
+ADMIN_LINODE_HOST=203.0.113.70
+ADMIN_LINODE_PRIVATE_IPV4=10.42.1.60
+ADMIN_LINODE_FIREWALL_ID=701
+ADMIN_LINODE_FIREWALL_LABEL=rtk-cloud-admin-staging-firewall
+EOF_STATE
+SH
+chmod +x "$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/provision-admin-vm.sh"
 
 touch "$ENV_ROOT/topology/video-cloud-staging.yaml"
 touch "$ENV_ROOT/services/video-cloud/video-cloud-staging.env"

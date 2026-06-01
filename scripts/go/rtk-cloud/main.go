@@ -29,29 +29,27 @@ import (
 	"strings"
 	"time"
 
-	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/legacy"
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/runner"
 )
 
 type commandSpec struct {
-	script string
-	run    func([]string) error
+	run func([]string) error
 }
 
 var commands = map[string]commandSpec{
 	"bind-devices":           {run: runBindDevices},
 	"check-certificates":     {run: runCheckCertificates},
-	"collect-evidence":       {script: "collect-private-cloud-evidence.sh"},
+	"collect-evidence":       {run: runCollectEvidence},
 	"create-brandname-cloud": {run: runCreateBrandnameCloud},
 	"create-users":           {run: runCreateUsers},
-	"deploy":                 {script: "cloud-deploy.sh"},
+	"deploy":                 {run: runDeploy},
 	"docs-check":             {run: runDocsCheck},
 	"generate-load-devices":  {run: runGenerateLoadDevices},
 	"list-brandname-clouds":  {run: runListBrandnameClouds},
 	"logs-check":             {run: runLogsCheck},
 	"migrate-env":            {run: runMigrateEnv},
 	"mqtt-test":              {run: runMQTTTest},
-	"provision":              {script: "cloud-provision.sh"},
+	"provision":              {run: runProvision},
 	"remove-all-vm":          {run: runRemoveAllVM},
 	"secrets-check":          {run: runSecretsCheck},
 	"staging-e2e-test":       {run: runStagingE2ETest},
@@ -64,11 +62,11 @@ var commands = map[string]commandSpec{
 }
 
 var ciRunnerCommands = map[string]commandSpec{
-	"archive-artifacts": {script: "linode-ci-runners/archive-ci-artifacts.sh"},
+	"archive-artifacts": {run: runCIRunnersArchiveArtifacts},
 	"list":              {run: runCIRunnersList},
 	"power":             {run: runCIRunnersPower},
-	"provision":         {script: "linode-ci-runners/provision-ci-runners.sh"},
-	"run-session":       {script: "linode-ci-runners/run-ci-session.sh"},
+	"provision":         {run: runCIRunnersProvision},
+	"run-session":       {run: runCIRunnersRunSession},
 	"wait-online":       {run: runCIRunnersWaitOnline},
 }
 
@@ -111,7 +109,7 @@ func run(args []string) error {
 		if spec.run != nil {
 			return spec.run(args[2:])
 		}
-		return runLegacy(spec.script, normalizeLegacyPathArgs(args[2:]))
+		return errors.New("internal error: command has no native implementation")
 	}
 	spec, ok := commands[cmdName]
 	if !ok {
@@ -123,7 +121,7 @@ func run(args []string) error {
 	if spec.run != nil {
 		return spec.run(args[1:])
 	}
-	return runLegacy(spec.script, normalizeLegacyPathArgs(args[1:]))
+	return errors.New("internal error: command has no native implementation")
 }
 
 func normalizeLegacyPathArgs(args []string) []string {
@@ -3881,84 +3879,6 @@ func printCIRunnerUsage() {
 	}
 }
 
-func runLegacy(script string, args []string) error {
-	workspace, err := workspaceRoot()
-	if err != nil {
-		return err
-	}
-	tmp, err := os.MkdirTemp("", "rtk-cloud-scripts-*")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(tmp)
-	if err := materializeLegacyScripts(tmp, workspace); err != nil {
-		return err
-	}
-	scriptPath := filepath.Join(tmp, "scripts", script)
-	cmd := exec.Command("/usr/bin/env", append([]string{"bash", scriptPath}, args...)...)
-	cmd.Dir = workspace
-	goCmd := os.Getenv("RTK_CLOUD_GO")
-	if goCmd == "" {
-		goCmd, _ = exec.LookPath("go")
-		if goCmd == "" {
-			goCmd = "go"
-		}
-	}
-	cmd.Env = withEnv(os.Environ(), map[string]string{
-		"RTK_CLOUD_WORKSPACE": workspace,
-		"RTK_CLOUD_GO":        goCmd,
-		"GOWORK":              "off",
-	})
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			os.Exit(exitErr.ExitCode())
-		}
-		return err
-	}
-	return nil
-}
-
-func materializeLegacyScripts(root, workspace string) error {
-	for name, content := range legacy.Scripts {
-		content = rewriteLegacyScript(content)
-		path := filepath.Join(root, "scripts", name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
-			return err
-		}
-	}
-	goLink := filepath.Join(root, "scripts", "go")
-	target := filepath.Join(workspace, "scripts", "go")
-	if err := os.Symlink(target, goLink); err != nil && !os.IsExist(err) {
-		return err
-	}
-	return nil
-}
-
-func rewriteLegacyScript(content string) string {
-	replacements := map[string]string{
-		`WORKSPACE="$(cd "$SCRIPT_DIR/.." && pwd)"`:                           `WORKSPACE="${RTK_CLOUD_WORKSPACE:-$(cd "$SCRIPT_DIR/.." && pwd)}"`,
-		`ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"`:      `ROOT_DIR="${RTK_CLOUD_WORKSPACE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"`,
-		`"$ROOT_DIR/scripts/linode-ci-runners/power-ci-runners.sh"`:           `"$SCRIPT_DIR/power-ci-runners.sh"`,
-		`"$ROOT_DIR/scripts/linode-ci-runners/wait-runners-online.sh"`:        `"$SCRIPT_DIR/wait-runners-online.sh"`,
-		`"$ROOT_DIR/scripts/linode-ci-runners/archive-ci-artifacts.sh"`:       `"$SCRIPT_DIR/archive-ci-artifacts.sh"`,
-		`source "$ROOT_DIR/scripts/linode-ci-runners/runner-specs.sh"`:        `source "$SCRIPT_DIR/runner-specs.sh"`,
-		`source "$ROOT_DIR/scripts/linode-ci-runners/runner-specs.sh"` + "\n": `source "$SCRIPT_DIR/runner-specs.sh"` + "\n",
-		`GODADDY_ENV="$GODADDY_ENVIRONMENT" go run ./cmd/godaddy-dns`:         `GODADDY_ENV="$GODADDY_ENVIRONMENT" "$RTK_CLOUD_GO" run ./cmd/godaddy-dns`,
-		`go run ./cmd/linode-deploy apply --config "$VC_CONFIG"`:              `"$RTK_CLOUD_GO" run ./cmd/linode-deploy apply --config "$VC_CONFIG"`,
-	}
-	for old, newValue := range replacements {
-		content = strings.ReplaceAll(content, old, newValue)
-	}
-	return content
-}
-
 func workspaceRoot() (string, error) {
 	if v := os.Getenv("RTK_CLOUD_WORKSPACE"); v != "" {
 		return filepath.Abs(v)
@@ -4039,12 +3959,4 @@ func withEnv(base []string, overrides map[string]string) []string {
 		out = append(out, key+"="+values[key])
 	}
 	return out
-}
-
-func init() {
-	for name := range legacy.Scripts {
-		if strings.Contains(name, string(filepath.Separator)) {
-			continue
-		}
-	}
 }

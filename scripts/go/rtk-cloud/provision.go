@@ -1,0 +1,1044 @@
+package main
+
+import (
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/envroot"
+)
+
+type provisionMode struct {
+	preflight bool
+	plan      bool
+	reset     bool
+	apply     bool
+	dns       bool
+	deploy    bool
+	artifacts bool
+	e2e       bool
+}
+
+type provisionPaths struct {
+	Workspace           string
+	EnvRoot             string
+	OperatorEnv         string
+	VideoConfig         string
+	VideoEnv            string
+	AccountManagerEnv   string
+	AdminEnv            string
+	VideoState          string
+	AccountManagerState string
+	AdminState          string
+	ArtifactsDir        string
+}
+
+type provisionOptions struct {
+	mode                 provisionMode
+	workspace            string
+	envRoot              string
+	operatorEnv          string
+	sshKey               string
+	dnsRoot              string
+	dnsRootExplicit      bool
+	godaddyEnv           string
+	dnsWaitTTL           string
+	dnsFinalTTL          string
+	dnsWaitMaxSeconds    string
+	artifactDir          string
+	videoRelease         string
+	accountRelease       string
+	accountReleaseBundle string
+	adminRelease         string
+	adminReleaseBundle   string
+	confirm              string
+	verbose              bool
+}
+
+func runProvision(args []string) error {
+	opts, err := parseProvisionArgs(args)
+	if err != nil {
+		return err
+	}
+	workspace := opts.workspace
+	if workspace == "" {
+		workspace, err = workspaceRoot()
+		if err != nil {
+			return err
+		}
+	}
+	envRoot, err := resolveEnvRoot(workspace, opts.envRoot)
+	if err != nil {
+		return err
+	}
+	paths := newProvisionPaths(workspace, envRoot, opts)
+	if opts.artifactDir != "" {
+		paths.ArtifactsDir = opts.artifactDir
+	}
+	if opts.mode.artifacts && !opts.mode.preflight && !opts.mode.plan && !opts.mode.reset && !opts.mode.apply && !opts.mode.dns && !opts.mode.deploy && !opts.mode.e2e {
+		dir, err := writeProvisionArtifacts(paths, "")
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stdout, dir)
+		return nil
+	}
+	dnsOverride := ""
+	if opts.dnsRootExplicit {
+		dnsOverride = opts.dnsRoot
+	}
+	env, err := envroot.Load(envRoot, dnsOverride)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			env = envroot.Environment{Values: defaultProvisionEnvValues()}
+		} else {
+			return err
+		}
+	}
+	if _, statErr := os.Stat(filepath.Join(envRoot, "env", "stack.env")); statErr == nil {
+		if err := envroot.Validate(envRoot, env); err != nil {
+			return err
+		}
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return statErr
+	}
+	if opts.operatorEnv == "" {
+		opts.operatorEnv = paths.OperatorEnv
+	}
+	if opts.sshKey == "" {
+		opts.sshKey = filepath.Join(os.Getenv("HOME"), ".ssh", "id_ed25519_rtkcloud")
+	}
+	envValues := env.Values
+	if opts.mode.preflight {
+		if err := provisionPreflight(paths, opts); err != nil {
+			return err
+		}
+	}
+	if opts.mode.plan {
+		if err := provisionPlan(paths, envValues); err != nil {
+			return err
+		}
+	}
+	if opts.mode.reset {
+		return errors.New("native provision reset is not implemented; use remove-all-vm for explicit teardown")
+	}
+	if opts.mode.apply {
+		if err := provisionApply(paths, envValues, opts); err != nil {
+			return err
+		}
+	}
+	if opts.mode.dns {
+		if err := provisionDNS(paths, envValues, opts); err != nil {
+			return err
+		}
+	}
+	if opts.mode.deploy {
+		if err := provisionDeploy(paths, envValues, opts); err != nil {
+			return err
+		}
+	}
+	if opts.mode.artifacts {
+		dir, err := writeProvisionArtifacts(paths, envValues["CLOUD_STACK_NAME"])
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stdout, dir)
+	}
+	if opts.mode.e2e {
+		if err := provisionE2E(paths, envValues); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func defaultProvisionEnvValues() map[string]string {
+	return map[string]string{
+		"CLOUD_ENV_NAME":                        "staging",
+		"CLOUD_PROVIDER":                        "linode",
+		"CLOUD_REGION":                          "us-sea",
+		"CLOUD_DNS_ROOT_DOMAIN":                 "realtekconnect.com",
+		"CLOUD_STACK_NAME":                      "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN":                    "video-cloud-staging.realtekconnect.com",
+		"VIDEO_CLOUD_CERTISSUER_DOMAIN":         "certissuer.video-cloud-staging.realtekconnect.com",
+		"ACCOUNT_MANAGER_DOMAIN":                "account-manager.video-cloud-staging.realtekconnect.com",
+		"CLOUD_ADMIN_DOMAIN":                    "admin.video-cloud-staging.realtekconnect.com",
+		"VIDEO_CLOUD_LABEL_PREFIX":              "video-cloud-staging",
+		"VIDEO_CLOUD_VPC_LABEL":                 "video-cloud-staging-vpc",
+		"VIDEO_CLOUD_SUBNET_LABEL":              "video-cloud-staging-subnet",
+		"ACCOUNT_MANAGER_LINODE_LABEL":          "rtk-account-manager-staging",
+		"ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL": "rtk-account-manager-staging-fw",
+		"ADMIN_LINODE_LABEL":                    "rtk-cloud-admin-staging",
+		"ADMIN_LINODE_FIREWALL_LABEL":           "rtk-cloud-admin-staging-firewall",
+	}
+}
+
+func parseProvisionArgs(args []string) (provisionOptions, error) {
+	opts := provisionOptions{
+		dnsRoot:           "realtekconnect.com",
+		godaddyEnv:        "prod",
+		dnsWaitTTL:        firstNonEmpty(os.Getenv("GODADDY_WAIT_TTL"), os.Getenv("GODADDY_RECORD_WAIT_TTL"), "600"),
+		dnsFinalTTL:       firstNonEmpty(os.Getenv("GODADDY_RECORD_TTL"), "600"),
+		dnsWaitMaxSeconds: firstNonEmpty(os.Getenv("DNS_WAIT_MAX_SECONDS"), "700"),
+	}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		next := func() (string, error) {
+			if i+1 >= len(args) {
+				return "", fmt.Errorf("%s requires a value", arg)
+			}
+			i++
+			return args[i], nil
+		}
+		switch arg {
+		case "--preflight":
+			opts.mode.preflight = true
+		case "--plan":
+			opts.mode.plan = true
+		case "--reset":
+			opts.mode.reset = true
+		case "--apply":
+			opts.mode.apply = true
+		case "--dns":
+			opts.mode.dns = true
+		case "--deploy":
+			opts.mode.deploy = true
+		case "--artifacts":
+			opts.mode.artifacts = true
+		case "--e2e":
+			opts.mode.e2e = true
+		case "--all":
+			opts.mode = provisionMode{preflight: true, plan: true, apply: true, dns: true, deploy: true, artifacts: true, e2e: true}
+		case "--reset-and-all":
+			opts.mode = provisionMode{preflight: true, plan: true, reset: true, apply: true, dns: true, deploy: true, artifacts: true, e2e: true}
+		case "--workspace":
+			v, err := next()
+			if err != nil {
+				return opts, err
+			}
+			opts.workspace = v
+		case "--env-root", "--secrets-root":
+			v, err := next()
+			if err != nil {
+				return opts, err
+			}
+			opts.envRoot = v
+		case "--operator-env":
+			v, err := next()
+			if err != nil {
+				return opts, err
+			}
+			opts.operatorEnv = v
+		case "--ssh-key":
+			v, err := next()
+			if err != nil {
+				return opts, err
+			}
+			opts.sshKey = v
+		case "--dns-root-domain":
+			v, err := next()
+			if err != nil {
+				return opts, err
+			}
+			opts.dnsRoot = v
+			opts.dnsRootExplicit = true
+		case "--godaddy-env":
+			v, err := next()
+			if err != nil {
+				return opts, err
+			}
+			opts.godaddyEnv = v
+		case "--dns-wait-ttl":
+			v, err := next()
+			if err != nil {
+				return opts, err
+			}
+			opts.dnsWaitTTL = v
+		case "--dns-final-ttl", "--dns-ttl":
+			v, err := next()
+			if err != nil {
+				return opts, err
+			}
+			opts.dnsFinalTTL = v
+		case "--dns-wait-max-seconds":
+			v, err := next()
+			if err != nil {
+				return opts, err
+			}
+			opts.dnsWaitMaxSeconds = v
+		case "--artifact-dir":
+			v, err := next()
+			if err != nil {
+				return opts, err
+			}
+			opts.artifactDir = v
+		case "--video-release":
+			v, err := next()
+			if err != nil {
+				return opts, err
+			}
+			opts.videoRelease = v
+		case "--account-release":
+			v, err := next()
+			if err != nil {
+				return opts, err
+			}
+			opts.accountRelease = v
+		case "--account-release-bundle":
+			v, err := next()
+			if err != nil {
+				return opts, err
+			}
+			opts.accountReleaseBundle = v
+		case "--admin-release":
+			v, err := next()
+			if err != nil {
+				return opts, err
+			}
+			opts.adminRelease = v
+		case "--confirm":
+			v, err := next()
+			if err != nil {
+				return opts, err
+			}
+			opts.confirm = v
+		case "--verbose":
+			opts.verbose = true
+		case "-h", "--help":
+			printProvisionUsage()
+			return opts, flag.ErrHelp
+		default:
+			return opts, fmt.Errorf("unknown provision argument: %s", arg)
+		}
+	}
+	if !opts.mode.preflight && !opts.mode.plan && !opts.mode.reset && !opts.mode.apply && !opts.mode.dns && !opts.mode.deploy && !opts.mode.artifacts && !opts.mode.e2e {
+		opts.mode.plan = true
+	}
+	if opts.envRoot == "" {
+		return opts, errors.New("--env-root is required")
+	}
+	return opts, validateProvisionNumericOptions(opts)
+}
+
+func validateProvisionNumericOptions(opts provisionOptions) error {
+	for name, value := range map[string]string{
+		"--dns-wait-ttl":            opts.dnsWaitTTL,
+		"--dns-final-ttl":           opts.dnsFinalTTL,
+		"--dns-wait-max-seconds":    opts.dnsWaitMaxSeconds,
+		"DNS_WAIT_INTERVAL_SECONDS": firstNonEmpty(os.Getenv("DNS_WAIT_INTERVAL_SECONDS"), "10"),
+	} {
+		n, err := strconv.Atoi(value)
+		if err != nil || n <= 0 {
+			return fmt.Errorf("%s must be a positive integer", name)
+		}
+		if (name == "--dns-wait-ttl" || name == "--dns-final-ttl") && n < 600 {
+			return fmt.Errorf("%s must be >= 600 for GoDaddy DNS records", name)
+		}
+	}
+	return nil
+}
+
+func printProvisionUsage() {
+	fmt.Fprint(os.Stdout, `Usage:
+  rtk-cloud provision --env-root cloud_env/staging [--plan|--apply|--deploy|--artifacts]
+`)
+}
+
+func newProvisionPaths(workspace, root string, opts provisionOptions) provisionPaths {
+	paths := envroot.NewPaths(root)
+	return provisionPaths{
+		Workspace:           workspace,
+		EnvRoot:             root,
+		OperatorEnv:         firstNonEmpty(opts.operatorEnv, paths.OperatorEnv),
+		VideoConfig:         paths.VideoConfig,
+		VideoEnv:            paths.VideoEnv,
+		AccountManagerEnv:   paths.AccountManagerEnv,
+		AdminEnv:            paths.AdminEnv,
+		VideoState:          paths.VideoState,
+		AccountManagerState: paths.AccountManagerState,
+		AdminState:          paths.AdminState,
+		ArtifactsDir:        paths.ArtifactsDir,
+	}
+}
+
+func provisionPreflight(paths provisionPaths, opts provisionOptions) error {
+	for _, cmd := range []string{"curl", "jq", "ssh", "openssl", "go", "tar"} {
+		if _, err := exec.LookPath(cmd); err != nil {
+			return fmt.Errorf("%s is required", cmd)
+		}
+	}
+	for _, path := range []string{paths.VideoConfig, paths.VideoEnv, paths.AccountManagerEnv, paths.AdminEnv, opts.sshKey, opts.sshKey + ".pub"} {
+		if path == "" {
+			return errors.New("provision path resolved empty")
+		}
+		if _, err := os.Stat(path); err != nil {
+			return err
+		}
+	}
+	operator, _ := readEnvFile(paths.OperatorEnv)
+	if firstNonEmpty(os.Getenv("LINODE_TOKEN"), operator["LINODE_TOKEN"]) == "" {
+		return errors.New("LINODE_TOKEN is required")
+	}
+	if err := resolveProvisionReleases(paths, operator, &opts); err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, "[rtk-cloud provision] preflight ok")
+	return nil
+}
+
+func provisionPlan(paths provisionPaths, env map[string]string) error {
+	fmt.Fprintln(os.Stdout, "Target instances:")
+	if raw, err := curlLinode("GET", "/linode/instances?page_size=500", ""); err == nil {
+		var listed struct {
+			Data []struct {
+				Label string `json:"label"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(raw, &listed) == nil {
+			for _, item := range listed.Data {
+				if item.Label != "" {
+					fmt.Fprintf(os.Stdout, "- %s\n", item.Label)
+				}
+			}
+		}
+	}
+	fmt.Fprintln(os.Stdout, "Intended resources:")
+	fmt.Fprintf(os.Stdout, "- instances: %s-edge/api/infra/mqtt/coturn, %s, %s\n", env["VIDEO_CLOUD_LABEL_PREFIX"], env["ACCOUNT_MANAGER_LINODE_LABEL"], env["ADMIN_LINODE_LABEL"])
+	fmt.Fprintf(os.Stdout, "- firewalls: %s-edge/api/infra/mqtt/coturn, %s, %s\n", env["VIDEO_CLOUD_LABEL_PREFIX"], env["ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL"], env["ADMIN_LINODE_FIREWALL_LABEL"])
+	fmt.Fprintf(os.Stdout, "- vpc/subnet: %s / %s\n", env["VIDEO_CLOUD_VPC_LABEL"], env["VIDEO_CLOUD_SUBNET_LABEL"])
+	fmt.Fprintf(os.Stdout, "- dns: %s, %s, %s, %s\n", env["VIDEO_CLOUD_DOMAIN"], env["VIDEO_CLOUD_CERTISSUER_DOMAIN"], env["ACCOUNT_MANAGER_DOMAIN"], env["CLOUD_ADMIN_DOMAIN"])
+	fmt.Fprintf(os.Stdout, "- cloud-admin private IP: %s\n", adminPrivateIPv4(paths))
+	return nil
+}
+
+func provisionApply(paths provisionPaths, env map[string]string, opts provisionOptions) error {
+	operator, _ := readEnvFile(paths.OperatorEnv)
+	if token := firstNonEmpty(os.Getenv("LINODE_TOKEN"), operator["LINODE_TOKEN"]); token != "" {
+		_ = os.Setenv("LINODE_TOKEN", token)
+	}
+	if err := cleanupOrphanedProvisionState(paths, env); err != nil {
+		return err
+	}
+	if _, err := os.Stat(paths.VideoState); err != nil {
+		if err := runCmdWithEnv(filepath.Join(paths.Workspace, "repos", "rtk_video_cloud"), mergeEnv(operator, map[string]string{}), "go", "run", "./cmd/linode-deploy", "apply", "--config", paths.VideoConfig); err != nil {
+			return err
+		}
+	}
+	if err := provisionPublicService(paths, env, "account-manager"); err != nil {
+		return err
+	}
+	if err := ensureProvisionVPCInterface(paths, "Account Manager", paths.AccountManagerState, "ACCOUNT_MANAGER", envFileValue(paths.AccountManagerState, "ACCOUNT_MANAGER_LINODE_ID"), accountManagerPrivateIPv4(paths)); err != nil {
+		return err
+	}
+	if err := provisionPublicService(paths, env, "cloud-admin"); err != nil {
+		return err
+	}
+	if err := ensureProvisionVPCInterface(paths, "Cloud Admin", paths.AdminState, "ADMIN", envFileValue(paths.AdminState, "ADMIN_LINODE_ID"), adminPrivateIPv4(paths)); err != nil {
+		return err
+	}
+	if id := envFileValue(paths.AccountManagerState, "ACCOUNT_MANAGER_LINODE_FIREWALL_ID"); id != "" {
+		_ = updateFirewallRules(firewallTarget{Role: "account-manager", ID: id}, "append", envFileValue(paths.AccountManagerEnv, "ACCOUNT_MANAGER_LINODE_ALLOWED_SSH_CIDRS"), false)
+	}
+	if id := envFileValue(paths.AdminState, "ADMIN_LINODE_FIREWALL_ID"); id != "" {
+		_ = updateFirewallRules(firewallTarget{Role: "cloud-admin", ID: id}, "append", envFileValue(paths.AdminEnv, "ADMIN_LINODE_ALLOWED_SSH_CIDRS"), false)
+	}
+	return nil
+}
+
+func cleanupOrphanedProvisionState(paths provisionPaths, env map[string]string) error {
+	legacyVideoState := filepath.Join(paths.Workspace, "repos", "rtk_video_cloud", "linode_deploy", "state", "video-cloud-staging.state.json")
+	if _, err := os.Stat(legacyVideoState); err == nil {
+		backupDir := filepath.Join(paths.ArtifactsDir, "legacy-state-backup-"+time.Now().UTC().Format("20060102T150405Z"))
+		if err := os.MkdirAll(backupDir, 0o755); err != nil {
+			return err
+		}
+		if err := os.Rename(legacyVideoState, filepath.Join(backupDir, filepath.Base(legacyVideoState))); err != nil {
+			return err
+		}
+	}
+	if raw, err := curlLinode("GET", "/networking/firewalls?page_size=500", ""); err == nil {
+		var listed struct {
+			Data []struct {
+				ID    int      `json:"id"`
+				Label string   `json:"label"`
+				Tags  []string `json:"tags"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(raw, &listed) == nil {
+			for _, item := range listed.Data {
+				if item.ID == 0 {
+					continue
+				}
+				if item.Label == env["ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL"] || item.Label == env["ADMIN_LINODE_FIREWALL_LABEL"] || strings.HasPrefix(item.Label, env["VIDEO_CLOUD_LABEL_PREFIX"]+"-") {
+					_, _ = curlLinode("DELETE", fmt.Sprintf("/networking/firewalls/%d", item.ID), "")
+				}
+			}
+		}
+	}
+	if raw, err := curlLinode("GET", "/vpcs?page_size=500", ""); err == nil {
+		var listed struct {
+			Data []struct {
+				ID    int    `json:"id"`
+				Label string `json:"label"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(raw, &listed) == nil {
+			for _, item := range listed.Data {
+				if item.ID != 0 && item.Label == env["VIDEO_CLOUD_VPC_LABEL"] {
+					_, _ = curlLinode("DELETE", fmt.Sprintf("/vpcs/%d", item.ID), "")
+				}
+			}
+		}
+	}
+	_ = os.Remove(paths.VideoState)
+	return nil
+}
+
+func provisionPublicService(paths provisionPaths, env map[string]string, service string) error {
+	switch service {
+	case "account-manager":
+		if envFileValue(paths.AccountManagerState, "ACCOUNT_MANAGER_LINODE_ID") != "" {
+			return nil
+		}
+		values, _ := readEnvFile(paths.AccountManagerEnv)
+		values["LINODE_TOKEN"] = os.Getenv("LINODE_TOKEN")
+		values["ACCOUNT_MANAGER_LINODE_VPC_SUBNET_ID"] = videoSubnetID(paths)
+		values["ACCOUNT_MANAGER_LINODE_PRIVATE_IPV4"] = accountManagerPrivateIPv4(paths)
+		values["ACCOUNT_MANAGER_LINODE_VPC_CIDR"] = provisionVPCCIDR(paths)
+		values["ACCOUNT_MANAGER_LINODE_STATE_PATH"] = paths.AccountManagerState
+		return runCmdWithEnv(filepath.Join(paths.Workspace, "repos", "rtk_account_manager"), mergeEnv(values, nil), "linode_deploy/scripts/provision-public-vm.sh")
+	case "cloud-admin":
+		if envFileValue(paths.AdminState, "ADMIN_LINODE_ID") != "" {
+			return nil
+		}
+		values, _ := readEnvFile(paths.AdminEnv)
+		values["LINODE_TOKEN"] = os.Getenv("LINODE_TOKEN")
+		values["ADMIN_LINODE_VPC_SUBNET_ID"] = videoSubnetID(paths)
+		values["ADMIN_LINODE_PRIVATE_IPV4"] = adminPrivateIPv4(paths)
+		values["ADMIN_LINODE_VPC_CIDR"] = provisionVPCCIDR(paths)
+		values["ADMIN_LINODE_STATE_PATH"] = paths.AdminState
+		return runCmdWithEnv(filepath.Join(paths.Workspace, "repos", "rtk_cloud_admin"), mergeEnv(values, nil), "deploy/linode/provision-admin-vm.sh")
+	default:
+		return fmt.Errorf("unknown service: %s", service)
+	}
+}
+
+func provisionDeploy(paths provisionPaths, env map[string]string, opts provisionOptions) error {
+	operator, _ := readEnvFile(paths.OperatorEnv)
+	return deployAllServices(paths, env, operator, opts)
+}
+
+func resolveProvisionReleases(paths provisionPaths, operator map[string]string, opts *provisionOptions) error {
+	releases := []struct {
+		display string
+		prefix  string
+		value   *string
+	}{
+		{"Video Cloud", "rtk_video_cloud", &opts.videoRelease},
+		{"Account Manager", "rtk_account_manager", &opts.accountRelease},
+		{"Cloud Admin", "rtk_cloud_admin", &opts.adminRelease},
+	}
+	for _, item := range releases {
+		version, objectKey, err := selectObjectRelease(operator, item.display, item.prefix, *item.value)
+		if err != nil {
+			return err
+		}
+		*item.value = version
+		fmt.Fprintf(os.Stderr, "selected %s Object Storage release: %s\n", item.display, version)
+		fmt.Fprintf(os.Stderr, "%s Object Storage release readable: %s\n", item.display, objectKey)
+	}
+	return nil
+}
+
+func selectObjectRelease(operator map[string]string, display, prefix, requested string) (string, string, error) {
+	bucket := firstNonEmpty(operator["LINODE_OBJ_BUCKET"], os.Getenv("LINODE_OBJ_BUCKET"))
+	endpoint := firstNonEmpty(operator["LINODE_OBJ_ENDPOINT"], os.Getenv("LINODE_OBJ_ENDPOINT"))
+	if bucket == "" || endpoint == "" {
+		return "", "", errors.New("LINODE_OBJ_BUCKET and LINODE_OBJ_ENDPOINT are required")
+	}
+	if !strings.HasPrefix(endpoint, "file://") {
+		return "", "", errors.New("native Object Storage release selection currently supports file:// mirrors")
+	}
+	root := strings.TrimPrefix(endpoint, "file://")
+	releaseRoot := filepath.Join(root, bucket, "releases")
+	matches, _ := filepath.Glob(filepath.Join(releaseRoot, prefix+"-*", "manifest.json"))
+	if len(matches) == 0 {
+		return "", "", fmt.Errorf("no %s release manifest found in Object Storage under releases/", prefix)
+	}
+	sort.Strings(matches)
+	fmt.Fprintf(os.Stderr, "Available %s releases in Object Storage:\n", display)
+	type candidate struct {
+		version string
+		key     string
+		path    string
+	}
+	candidates := []candidate{}
+	for _, path := range matches {
+		manifest, err := readJSONMap(path)
+		if err != nil {
+			return "", "", err
+		}
+		version := stringValue(manifest["version"])
+		key := stringValue(manifest["artifact_path"])
+		if version == "" || key == "" {
+			return "", "", fmt.Errorf("release manifest missing version or artifact_path: %s", path)
+		}
+		candidates = append(candidates, candidate{version: version, key: key, path: path})
+		fmt.Fprintf(os.Stderr, "%d) %s\n", len(candidates), version)
+	}
+	chosen := candidates[0]
+	if requested != "" {
+		found := false
+		for _, c := range candidates {
+			if c.version == requested {
+				chosen = c
+				found = true
+				break
+			}
+		}
+		if !found {
+			return "", "", fmt.Errorf("%s release not found: %s", display, requested)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, bucket, chosen.key)); err != nil {
+		return "", "", err
+	}
+	return chosen.version, chosen.key, nil
+}
+
+func provisionDNS(paths provisionPaths, env map[string]string, opts provisionOptions) error {
+	video, _ := readJSONMap(paths.VideoState)
+	instances, _ := video["instances"].(map[string]any)
+	edge, _ := instances["edge"].(map[string]any)
+	records := []struct {
+		domain string
+		ip     string
+	}{
+		{env["VIDEO_CLOUD_DOMAIN"], stringValue(edge["public_ipv4"])},
+		{env["VIDEO_CLOUD_CERTISSUER_DOMAIN"], stringValue(edge["public_ipv4"])},
+		{env["ACCOUNT_MANAGER_DOMAIN"], envFileValue(paths.AccountManagerState, "ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4")},
+		{env["CLOUD_ADMIN_DOMAIN"], envFileValue(paths.AdminState, "ADMIN_LINODE_PUBLIC_IPV4")},
+	}
+	for _, record := range records {
+		if record.domain == "" || record.ip == "" {
+			continue
+		}
+		if err := godaddyUpsert(paths, env["CLOUD_DNS_ROOT_DOMAIN"], opts.godaddyEnv, opts.operatorEnv, record.domain, record.ip, opts.dnsWaitTTL); err != nil {
+			return err
+		}
+		if err := waitDNS(record.domain, record.ip, env["CLOUD_DNS_ROOT_DOMAIN"], opts); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(os.Stderr, "restoring DNS final TTL: %s\n", opts.dnsFinalTTL)
+	for _, record := range records {
+		if record.domain == "" || record.ip == "" {
+			continue
+		}
+		if err := godaddyUpsert(paths, env["CLOUD_DNS_ROOT_DOMAIN"], opts.godaddyEnv, opts.operatorEnv, record.domain, record.ip, opts.dnsFinalTTL); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func godaddyUpsert(paths provisionPaths, rootDomain, godaddyEnv, operatorEnv, domain, ip, ttl string) error {
+	name := recordNameForDomain(rootDomain, domain)
+	goCmd := firstNonEmpty(os.Getenv("RTK_CLOUD_GO"), "go")
+	cmd := exec.Command(goCmd, "run", "./cmd/godaddy-dns", "--env-file", operatorEnv, "records", "upsert", rootDomain, "--type", "A", "--name", name, "--data", ip, "--ttl", ttl)
+	cmd.Dir = filepath.Join(paths.Workspace, "repos", "rtk_video_cloud", "tools", "godaddy-dns")
+	cmd.Env = append(os.Environ(), "GODADDY_ENV="+godaddyEnv)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func recordNameForDomain(rootDomain, domain string) string {
+	if domain == rootDomain {
+		return "@"
+	}
+	return strings.TrimSuffix(domain, "."+rootDomain)
+}
+
+func waitDNS(domain, ip, rootDomain string, opts provisionOptions) error {
+	interval, _ := strconv.Atoi(firstNonEmpty(os.Getenv("DNS_WAIT_INTERVAL_SECONDS"), "10"))
+	maxSeconds, _ := strconv.Atoi(opts.dnsWaitMaxSeconds)
+	maxAttempts := (maxSeconds + interval - 1) / interval
+	nsBytes, _ := exec.Command("dig", "NS", rootDomain, "+short").Output()
+	ns := strings.TrimSpace(strings.Split(string(nsBytes), "\n")[0])
+	if ns == "" {
+		return fmt.Errorf("could not resolve authoritative NS for %s", rootDomain)
+	}
+	var gotGoogle, gotAuth string
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		gotGoogle = digShort("8.8.8.8", domain)
+		gotAuth = digShort(ns, domain)
+		if gotGoogle == ip && gotAuth == ip {
+			fmt.Fprintf(os.Stderr, "DNS converged: %s -> %s\n", domain, ip)
+			return nil
+		}
+		fmt.Fprintf(os.Stderr, "waiting DNS attempt %d/%d: %s expected=%s google=%s auth=%s\n", attempt, maxAttempts, domain, ip, firstNonEmpty(gotGoogle, "<empty>"), firstNonEmpty(gotAuth, "<empty>"))
+		_ = exec.Command("sleep", strconv.Itoa(interval)).Run()
+	}
+	return fmt.Errorf("DNS did not converge: %s expected=%s google=%s auth=%s", domain, ip, firstNonEmpty(gotGoogle, "<empty>"), firstNonEmpty(gotAuth, "<empty>"))
+}
+
+func digShort(server, domain string) string {
+	out, _ := exec.Command("dig", "+short", "@"+server, domain).Output()
+	return strings.TrimSpace(strings.Split(string(out), "\n")[0])
+}
+
+func provisionE2E(paths provisionPaths, env map[string]string) error {
+	checks := []struct {
+		name string
+		url  string
+	}{
+		{"video-cloud-healthz", "https://" + env["VIDEO_CLOUD_DOMAIN"] + "/healthz"},
+		{"video-cloud-version", "https://" + env["VIDEO_CLOUD_DOMAIN"] + "/version"},
+		{"account-manager-health", "https://" + env["ACCOUNT_MANAGER_DOMAIN"] + "/v1/health"},
+		{"admin-service-health", "https://" + env["CLOUD_ADMIN_DOMAIN"] + "/api/service-health"},
+	}
+	dir := filepath.Join(paths.ArtifactsDir, "e2e-"+time.Now().UTC().Format("20060102T150405Z"))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "[rtk-cloud provision] e2e report: %s\n", dir)
+	ok := true
+	var b strings.Builder
+	fmt.Fprintln(&b, "# E2E Report")
+	fmt.Fprintln(&b)
+	for _, check := range checks {
+		cmd := exec.Command("curl", "-fsS", check.url)
+		cmd.Stdout = io.Discard
+		cmd.Stderr = io.Discard
+		if err := cmd.Run(); err != nil {
+			ok = false
+			fmt.Fprintf(&b, "- FAIL `%s`\n", check.name)
+		} else {
+			fmt.Fprintf(&b, "- PASS `%s`\n", check.name)
+		}
+	}
+	status := "passed"
+	if !ok {
+		status = "failed"
+	}
+	report := strings.Replace(b.String(), "# E2E Report\n", "# E2E Report\n\nstatus: "+status+"\n", 1)
+	if err := os.WriteFile(filepath.Join(dir, "e2e-report.md"), []byte(report), 0o644); err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("provision e2e failed")
+	}
+	return nil
+}
+
+func writeProvisionArtifacts(paths provisionPaths, stack string) (string, error) {
+	video, err := readJSONMap(paths.VideoState)
+	if err != nil {
+		return "", err
+	}
+	am, _ := readEnvFile(paths.AccountManagerState)
+	admin, _ := readEnvFile(paths.AdminState)
+	ts := time.Now().UTC().Format("20060102T150405Z")
+	dir := filepath.Join(paths.ArtifactsDir, "provision-"+ts)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	inventory := map[string]any{
+		"stack":        stack,
+		"generated_at": time.Now().UTC().Format(time.RFC3339),
+		"video_cloud":  video,
+		"account_manager": map[string]any{
+			"id":          atoiOrZero(am["ACCOUNT_MANAGER_LINODE_ID"]),
+			"label":       am["ACCOUNT_MANAGER_LINODE_LABEL"],
+			"public_ipv4": am["ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4"],
+			"private_ip":  am["ACCOUNT_MANAGER_LINODE_PRIVATE_IPV4"],
+			"firewall_id": atoiOrZero(am["ACCOUNT_MANAGER_LINODE_FIREWALL_ID"]),
+		},
+		"cloud_admin": map[string]any{
+			"id":          atoiOrZero(admin["ADMIN_LINODE_ID"]),
+			"label":       admin["ADMIN_LINODE_LABEL"],
+			"public_ipv4": admin["ADMIN_LINODE_PUBLIC_IPV4"],
+			"private_ip":  admin["ADMIN_LINODE_PRIVATE_IPV4"],
+			"firewall_id": atoiOrZero(admin["ADMIN_LINODE_FIREWALL_ID"]),
+		},
+	}
+	if err := writeJSON(filepath.Join(dir, "inventory.json"), inventory); err != nil {
+		return "", err
+	}
+	targets := map[string]any{
+		"generated_at": time.Now().UTC().Format(time.RFC3339),
+		"targets": map[string]any{
+			"edge":            targetFromVideo(video, "edge", false),
+			"api":             targetFromVideo(video, "api", true),
+			"infra":           targetFromVideo(video, "infra", true),
+			"mqtt":            targetFromVideo(video, "mqtt", true),
+			"coturn":          targetFromVideo(video, "coturn", false),
+			"account_manager": map[string]any{"host": am["ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4"], "user": "root", "private_ip": am["ACCOUNT_MANAGER_LINODE_PRIVATE_IPV4"]},
+			"cloud_admin":     map[string]any{"host": admin["ADMIN_LINODE_PUBLIC_IPV4"], "user": "root", "private_ip": admin["ADMIN_LINODE_PRIVATE_IPV4"]},
+		},
+	}
+	if err := writeJSON(filepath.Join(dir, "deployment-targets.json"), targets); err != nil {
+		return "", err
+	}
+	var report strings.Builder
+	fmt.Fprintf(&report, "# Provision Report\n\n- generated_at: %s\n- artifact_dir: %s\n- cloud_admin_private_ip: %s\n- prometheus: %s\n\n", time.Now().UTC().Format(time.RFC3339), dir, admin["ADMIN_LINODE_PRIVATE_IPV4"], videoCloudPrometheusBaseURL(paths))
+	fmt.Fprintln(&report, "## VM Configuration")
+	fmt.Fprintln(&report)
+	fmt.Fprintln(&report, "| Role | Label | Linode ID | Firewall ID | Network | Public IPv4 | Private IPv4 | SSH route | ProxyJump |")
+	fmt.Fprintln(&report, "| --- | --- | ---: | ---: | --- | --- | --- | --- | --- |")
+	writeVideoVMRows(&report, video)
+	fmt.Fprintf(&report, "| `account-manager` | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | `direct public SSH` | `N/A` |\n", am["ACCOUNT_MANAGER_LINODE_LABEL"], am["ACCOUNT_MANAGER_LINODE_ID"], am["ACCOUNT_MANAGER_LINODE_FIREWALL_ID"], publicPrivateNetwork(am["ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4"], am["ACCOUNT_MANAGER_LINODE_PRIVATE_IPV4"]), displayNA(am["ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4"]), displayNA(am["ACCOUNT_MANAGER_LINODE_PRIVATE_IPV4"]))
+	fmt.Fprintf(&report, "| `cloud-admin` | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | `direct public SSH` | `N/A` |\n", admin["ADMIN_LINODE_LABEL"], admin["ADMIN_LINODE_ID"], admin["ADMIN_LINODE_FIREWALL_ID"], publicPrivateNetwork(admin["ADMIN_LINODE_PUBLIC_IPV4"], admin["ADMIN_LINODE_PRIVATE_IPV4"]), displayNA(admin["ADMIN_LINODE_PUBLIC_IPV4"]), displayNA(admin["ADMIN_LINODE_PRIVATE_IPV4"]))
+	fmt.Fprintln(&report)
+	fmt.Fprintln(&report, "VPN: not configured by this script; private service access uses edge SSH ProxyJump over the Linode VPC.")
+	if err := os.WriteFile(filepath.Join(dir, "provision-report.md"), []byte(report.String()), 0o644); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+func writeVideoVMRows(b *strings.Builder, video map[string]any) {
+	instances, _ := video["instances"].(map[string]any)
+	firewalls, _ := video["firewalls"].(map[string]any)
+	edge, _ := instances["edge"].(map[string]any)
+	edgePublic := stringValue(edge["public_ipv4"])
+	for _, role := range []string{"edge", "api", "infra", "mqtt", "coturn"} {
+		item, _ := instances[role].(map[string]any)
+		if len(item) == 0 {
+			continue
+		}
+		publicIP := stringValue(item["public_ipv4"])
+		privateIP := stringValue(item["private_ip"])
+		route := "`direct public SSH`"
+		proxy := "`N/A`"
+		if publicIP == "" && privateIP != "" {
+			route = "`VPC via edge ProxyJump`"
+			proxy = "`root@" + edgePublic + "`"
+		}
+		fmt.Fprintf(b, "| `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | %s | %s |\n", role, stringValue(item["label"]), stringValue(item["id"]), stringValue(firewalls[role]), publicPrivateNetwork(publicIP, privateIP), displayNA(publicIP), displayNA(privateIP), route, proxy)
+	}
+}
+
+func publicPrivateNetwork(publicIP, privateIP string) string {
+	switch {
+	case publicIP != "" && privateIP != "":
+		return "public+vpc"
+	case privateIP != "":
+		return "private"
+	default:
+		return "public"
+	}
+}
+
+func displayNA(value string) string {
+	if value == "" {
+		return "N/A"
+	}
+	return value
+}
+
+func targetFromVideo(video map[string]any, role string, proxy bool) map[string]any {
+	instances, _ := video["instances"].(map[string]any)
+	item, _ := instances[role].(map[string]any)
+	host := stringValue(item["public_ipv4"])
+	if proxy {
+		host = stringValue(item["private_ip"])
+	}
+	out := map[string]any{"host": host, "user": "root"}
+	if proxy {
+		edge, _ := instances["edge"].(map[string]any)
+		out["proxy_jump"] = "root@" + stringValue(edge["public_ipv4"])
+	}
+	return out
+}
+
+func ensureProvisionVPCInterface(paths provisionPaths, serviceName, statePath, statePrefix, linodeID, privateIP string) error {
+	if linodeID == "" || privateIP == "" {
+		return nil
+	}
+	if envFileValue(statePath, statePrefix+"_LINODE_PRIVATE_IPV4") == privateIP {
+		return nil
+	}
+	subnetID := videoSubnetID(paths)
+	if subnetID == "" {
+		return errors.New("video cloud subnet_id is required")
+	}
+	configsRaw, err := curlLinode("GET", "/linode/instances/"+linodeID+"/configs", "")
+	if err != nil {
+		return err
+	}
+	var configs struct {
+		Data []struct {
+			ID int `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(configsRaw, &configs); err != nil {
+		return err
+	}
+	if len(configs.Data) == 0 {
+		return fmt.Errorf("cannot find %s Linode config", serviceName)
+	}
+	configPath := fmt.Sprintf("/linode/instances/%s/configs/%d", linodeID, configs.Data[0].ID)
+	configRaw, err := curlLinode("GET", configPath, "")
+	if err != nil {
+		return err
+	}
+	var config map[string]any
+	if err := json.Unmarshal(configRaw, &config); err != nil {
+		return err
+	}
+	for _, raw := range asSlice(config["interfaces"]) {
+		if iface, ok := raw.(map[string]any); ok && iface["purpose"] == "vpc" {
+			if ipv4, ok := iface["ipv4"].(map[string]any); ok && ipv4["vpc"] == privateIP {
+				return writeStateVar(statePath, statePrefix+"_LINODE_PRIVATE_IPV4", privateIP)
+			}
+		}
+	}
+	subnet, _ := strconv.Atoi(subnetID)
+	config["interfaces"] = []map[string]any{
+		{"purpose": "public", "primary": true},
+		{"purpose": "vpc", "subnet_id": subnet, "ipv4": map[string]any{"vpc": privateIP}},
+	}
+	payload, _ := json.Marshal(config)
+	if _, err := curlLinode("PUT", configPath, string(payload)); err != nil {
+		return err
+	}
+	if err := writeStateVar(statePath, statePrefix+"_LINODE_PRIVATE_IPV4", privateIP); err != nil {
+		return err
+	}
+	_, err = curlLinode("POST", "/linode/instances/"+linodeID+"/reboot", "{}")
+	return err
+}
+
+func readEnvFile(path string) (map[string]string, error) {
+	values := map[string]string{}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return values, err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if ok {
+			values[key] = strings.Trim(strings.TrimSpace(value), `"'`)
+		}
+	}
+	return values, nil
+}
+
+func mergeEnv(base map[string]string, overlay map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range overlay {
+		out[k] = v
+	}
+	return out
+}
+
+func runCmdWithEnv(dir string, env map[string]string, name string, args ...string) error {
+	if name == "go" && os.Getenv("RTK_CLOUD_GO") != "" {
+		name = os.Getenv("RTK_CLOUD_GO")
+	}
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = os.Environ()
+	for k, v := range env {
+		if v != "" {
+			cmd.Env = append(cmd.Env, k+"="+v)
+		}
+	}
+	return cmd.Run()
+}
+
+func readJSONMap(path string) (map[string]any, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func writeStateVar(path, key, value string) error {
+	values, _ := readEnvFile(path)
+	values[key] = value
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		fmt.Fprintf(&b, "%s=%s\n", k, values[k])
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(b.String()), 0o600)
+}
+
+func videoSubnetID(paths provisionPaths) string {
+	video, err := readJSONMap(paths.VideoState)
+	if err != nil {
+		return ""
+	}
+	return stringValue(video["subnet_id"])
+}
+
+func provisionVPCCIDR(paths provisionPaths) string {
+	return firstNonEmpty(envroot.YAMLPathValue(paths.VideoConfig, "vpc.subnet.cidr"), "10.42.1.0/24")
+}
+
+func accountManagerPrivateIPv4(paths provisionPaths) string {
+	return firstNonEmpty(envFileValue(paths.AccountManagerEnv, "ACCOUNT_MANAGER_LINODE_PRIVATE_IPV4"), envFileValue(paths.AccountManagerState, "ACCOUNT_MANAGER_LINODE_PRIVATE_IPV4"), "10.42.1.50")
+}
+
+func adminPrivateIPv4(paths provisionPaths) string {
+	return firstNonEmpty(envFileValue(paths.AdminEnv, "ADMIN_LINODE_PRIVATE_IPV4"), envFileValue(paths.AdminState, "ADMIN_LINODE_PRIVATE_IPV4"), "10.42.1.60")
+}
+
+func videoCloudPrometheusBaseURL(paths provisionPaths) string {
+	if value := envFileValue(paths.AdminEnv, "VIDEO_CLOUD_PROMETHEUS_BASE_URL"); value != "" {
+		return value
+	}
+	video, err := readJSONMap(paths.VideoState)
+	if err != nil {
+		return "http://10.42.1.30:9090"
+	}
+	instances, _ := video["instances"].(map[string]any)
+	infra, _ := instances["infra"].(map[string]any)
+	return "http://" + firstNonEmpty(stringValue(infra["private_ip"]), "10.42.1.30") + ":9090"
+}
+
+func atoiOrZero(value string) int {
+	n, _ := strconv.Atoi(value)
+	return n
+}
+
+func asSlice(value any) []any {
+	if values, ok := value.([]any); ok {
+		return values
+	}
+	return nil
+}

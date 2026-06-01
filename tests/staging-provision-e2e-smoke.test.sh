@@ -71,7 +71,7 @@ PATH="$FAKE_BIN:$PATH" CURL_LOG="$CURL_LOG" "/usr/local/go/bin/go" run "$ROOT/sc
 	--env-root "$ENV_ROOT" \
 	--e2e >"$OUT" 2>&1
 
-REPORT_DIR="$(grep -F '[cloud-provision] e2e report:' "$OUT" | tail -n 1 | sed 's/^.*e2e report: //')"
+REPORT_DIR="$(grep -F '[rtk-cloud provision] e2e report:' "$OUT" | tail -n 1 | sed 's/^.*e2e report: //')"
 test -f "$REPORT_DIR/e2e-report.md"
 grep -F 'status: passed' "$REPORT_DIR/e2e-report.md" >/dev/null
 grep -F 'PASS `video-cloud-healthz`' "$REPORT_DIR/e2e-report.md" >/dev/null
@@ -104,6 +104,6 @@ if PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud
 	printf 'e2e unexpectedly passed when admin service-health failed\n' >&2
 	exit 1
 fi
-FAIL_REPORT_DIR="$(grep -F '[cloud-provision] e2e report:' "$FAIL_OUT" | tail -n 1 | sed 's/^.*e2e report: //')"
+FAIL_REPORT_DIR="$(grep -F '[rtk-cloud provision] e2e report:' "$FAIL_OUT" | tail -n 1 | sed 's/^.*e2e report: //')"
 grep -F 'status: failed' "$FAIL_REPORT_DIR/e2e-report.md" >/dev/null
 grep -F 'FAIL `admin-service-health`' "$FAIL_REPORT_DIR/e2e-report.md" >/dev/null

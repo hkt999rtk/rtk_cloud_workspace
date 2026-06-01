@@ -14,7 +14,10 @@ mkdir -p \
 	"$ENV_ROOT/state" \
 	"$ENV_ROOT/services/cloud-admin" \
 	"$ENV_ROOT/env" \
-	"$ENV_ROOT/artifacts"
+	"$ENV_ROOT/artifacts" \
+	"$WORKSPACE/repos/rtk_video_cloud/linode_deploy/scripts" \
+	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/scripts" \
+	"$WORKSPACE/repos/rtk_cloud_admin/deploy/linode"
 
 cat > "$ENV_ROOT/env/operator.env" <<'EOF_ENV'
 LINODE_TOKEN=test-token
@@ -34,16 +37,31 @@ EOF_ADMIN
 
 touch "$SSH_KEY" "$SSH_KEY.pub"
 
-cat > "$TMP/mock-staging-deploy-fails.sh" <<'SH'
+cat > "$WORKSPACE/repos/rtk_video_cloud/linode_deploy/scripts/deploy-staging.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 echo "mock deploy failed" >&2
 exit 42
 SH
-chmod +x "$TMP/mock-staging-deploy-fails.sh"
+cat > "$WORKSPACE/repos/rtk_account_manager/linode_deploy/scripts/deploy-public-vm.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "account deploy should not run" >&2
+exit 99
+SH
+cat > "$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/deploy-admin.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "admin deploy should not run" >&2
+exit 99
+SH
+chmod +x \
+	"$WORKSPACE/repos/rtk_video_cloud/linode_deploy/scripts/deploy-staging.sh" \
+	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/scripts/deploy-public-vm.sh" \
+	"$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/deploy-admin.sh"
 
 OUT="$TMP/out.txt"
-if CLOUD_DEPLOY_SCRIPT="$TMP/mock-staging-deploy-fails.sh" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- provision \
+if "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- provision \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--ssh-key "$SSH_KEY" \
@@ -56,8 +74,6 @@ if CLOUD_DEPLOY_SCRIPT="$TMP/mock-staging-deploy-fails.sh" "/usr/local/go/bin/go
 fi
 
 grep -F 'mock deploy failed' "$OUT" >/dev/null
-grep -F 'deploy failed; artifacts and e2e were not run' "$OUT" >/dev/null
-if grep -F '[cloud-provision] deploy complete' "$OUT" >/dev/null; then
-	echo "deploy complete was logged after failure" >&2
-	exit 1
-fi
+REPORT="$(find "$ENV_ROOT/artifacts" -name readiness-report.md | head -n 1)"
+grep -F 'status: failed' "$REPORT" >/dev/null
+grep -F 'SKIP `cloud-admin-deploy` blocked_by=`video-cloud-deploy-verify`' "$REPORT" >/dev/null

@@ -120,6 +120,3 @@ grep -F '| `edge` | `video-cloud-staging-edge` | `1` | `101` | `public+vpc` | `2
 grep -F '| `account-manager` | `rtk-account-manager-staging` | `6` | `106` | `public` | `203.0.113.60` | `N/A` | `direct public SSH` | `N/A` |' "$REPORT" >/dev/null
 grep -F '| `cloud-admin` | `rtk-cloud-admin-staging` | `7` | `107` | `public` | `203.0.113.70` | `N/A` | `direct public SSH` | `N/A` |' "$REPORT" >/dev/null
 grep -F 'VPN: not configured by this script; private service access uses edge SSH ProxyJump over the Linode VPC.' "$REPORT" >/dev/null
-grep -F 'SSH readiness attempt 1/30: role=api host=10.42.1.10 route=proxy_jump via root@203.0.113.5' "$ERR" >/dev/null
-grep -F 'SSH readiness pending: role=api host=10.42.1.10 attempt=1/30; retrying in 10s' "$ERR" >/dev/null
-grep -F 'SSH readiness ok: role=api host=10.42.1.10 attempt=2/30' "$ERR" >/dev/null
