@@ -481,7 +481,7 @@ func cleanupOrphanedProvisionState(paths provisionPaths, env map[string]string) 
 			return err
 		}
 	}
-	if raw, err := curlLinode("GET", "/networking/firewalls?page_size=500", ""); err == nil {
+	if raw, err := curlLinodeQuiet("GET", "/networking/firewalls?page_size=500", ""); err == nil {
 		var listed struct {
 			Data []struct {
 				ID    int      `json:"id"`
@@ -495,12 +495,12 @@ func cleanupOrphanedProvisionState(paths provisionPaths, env map[string]string) 
 					continue
 				}
 				if item.Label == env["ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL"] || item.Label == env["ADMIN_LINODE_FIREWALL_LABEL"] || strings.HasPrefix(item.Label, env["VIDEO_CLOUD_LABEL_PREFIX"]+"-") {
-					_, _ = curlLinode("DELETE", fmt.Sprintf("/networking/firewalls/%d", item.ID), "")
+					_, _ = curlLinodeQuiet("DELETE", fmt.Sprintf("/networking/firewalls/%d", item.ID), "")
 				}
 			}
 		}
 	}
-	if raw, err := curlLinode("GET", "/vpcs?page_size=500", ""); err == nil {
+	if raw, err := curlLinodeQuiet("GET", "/vpcs?page_size=500", ""); err == nil {
 		var listed struct {
 			Data []struct {
 				ID    int    `json:"id"`
@@ -510,7 +510,7 @@ func cleanupOrphanedProvisionState(paths provisionPaths, env map[string]string) 
 		if json.Unmarshal(raw, &listed) == nil {
 			for _, item := range listed.Data {
 				if item.ID != 0 && item.Label == env["VIDEO_CLOUD_VPC_LABEL"] {
-					_, _ = curlLinode("DELETE", fmt.Sprintf("/vpcs/%d", item.ID), "")
+					_, _ = curlLinodeQuiet("DELETE", fmt.Sprintf("/vpcs/%d", item.ID), "")
 				}
 			}
 		}
@@ -685,6 +685,7 @@ func godaddyUpsert(paths provisionPaths, rootDomain, godaddyEnv, operatorEnv, do
 	cmd := exec.Command(goCmd, "run", "./cmd/godaddy-dns", "--env-file", operatorEnv, "records", "upsert", rootDomain, "--type", "A", "--name", name, "--data", ip, "--ttl", ttl)
 	cmd.Dir = filepath.Join(paths.Workspace, "repos", "rtk_video_cloud", "tools", "godaddy-dns")
 	cmd.Env = append(os.Environ(), "GODADDY_ENV="+godaddyEnv)
+	cmd.Env = append(cmd.Env, "GOWORK=off")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -979,6 +980,7 @@ func mergeEnv(base map[string]string, overlay map[string]string) map[string]stri
 }
 
 func runCmdWithEnv(dir string, env map[string]string, name string, args ...string) error {
+	isGo := name == "go"
 	if name == "go" && os.Getenv("RTK_CLOUD_GO") != "" {
 		name = os.Getenv("RTK_CLOUD_GO")
 	}
@@ -992,6 +994,9 @@ func runCmdWithEnv(dir string, env map[string]string, name string, args ...strin
 		if v != "" {
 			cmd.Env = append(cmd.Env, k+"="+v)
 		}
+	}
+	if isGo {
+		cmd.Env = append(cmd.Env, "GOWORK=off")
 	}
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("%s %s in %s: %w", name, strings.Join(args, " "), dir, err)

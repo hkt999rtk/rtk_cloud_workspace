@@ -71,7 +71,17 @@ chmod +x "$FAKE_BIN/curl"
 cat > "$FAKE_BIN/go" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$GO_ARGS"
+if [[ "$PWD" == */repos/rtk_video_cloud/tools/godaddy-dns ]]; then
+	if [[ "${GOWORK:-}" != "off" ]]; then
+		printf 'expected GOWORK=off for godaddy-dns, got %s\n' "${GOWORK:-}" >&2
+		exit 1
+	fi
+fi
 if [[ "$PWD" == */repos/rtk_video_cloud/linode_deploy && "$*" == *" ./cmd/linode-deploy apply "* ]]; then
+	if [[ "${GOWORK:-}" != "off" ]]; then
+		printf 'expected GOWORK=off for linode-deploy apply, got %s\n' "${GOWORK:-}" >&2
+		exit 1
+	fi
 	config=""
 	while [[ "$#" -gt 0 ]]; do
 		if [[ "$1" == "--config" ]]; then
