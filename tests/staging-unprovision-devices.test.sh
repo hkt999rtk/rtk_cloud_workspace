@@ -123,7 +123,7 @@ fi
 SH
 chmod +x "$FAKE_BIN/curl"
 
-if PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/cloud-unprovision-devices.sh" \
+if PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- unprovision-devices \
 	--workspace "$WORKSPACE" \
 	--brandname RTK \
 	--bind-artifact "$BIND_ARTIFACT" >"$TMP/missing-env-root.out" 2>&1; then
@@ -133,7 +133,7 @@ fi
 grep -F -- '--env-root is required' "$TMP/missing-env-root.out" >/dev/null
 
 DRY_RUN="$TMP/dry-run.json"
-PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "$ROOT/scripts/cloud-unprovision-devices.sh" \
+PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- unprovision-devices \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--brandname RTK \
@@ -149,7 +149,7 @@ if find "$CURL_LOG" -type f | grep -q .; then
 fi
 
 DEFAULT_DRY_RUN="$TMP/default-dry-run.json"
-PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "$ROOT/scripts/cloud-unprovision-devices.sh" \
+PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- unprovision-devices \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--brandname RTK \
@@ -158,7 +158,7 @@ jq -e '.action == "dry_run" and .brandname == "RTK" and .count == 3' "$DEFAULT_D
 jq -e --arg bind "$BIND_ARTIFACT" '.bind_artifact == $bind' "$DEFAULT_DRY_RUN" >/dev/null
 
 OUT="$TMP/out.json"
-PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "$ROOT/scripts/cloud-unprovision-devices.sh" \
+PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- unprovision-devices \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--brandname RTK \
@@ -181,7 +181,7 @@ jq -e '.assignments[0] | .assigned_email == "rtk+001@users.local" and .device_id
 jq -e '.assignments[1].service_options == ["mqtt"]' "$ARTIFACT" >/dev/null
 jq -e '.reason == "user_resale_factory_ready"' "$CURL_LOG/unprovision-account-device-load-device-0001.json" >/dev/null
 
-if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_UNPROVISION_FAIL=1 "$ROOT/scripts/cloud-unprovision-devices.sh" \
+if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_UNPROVISION_FAIL=1 "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- unprovision-devices \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--brandname RTK \
@@ -192,7 +192,7 @@ if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_UNPROVISION_FAIL=1 "$RO
 fi
 grep -F 'unprovision failed' "$TMP/fail.err" >/dev/null
 
-if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_UNPROVISION_ROUTE_MISSING=1 "$ROOT/scripts/cloud-unprovision-devices.sh" \
+if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_UNPROVISION_ROUTE_MISSING=1 "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- unprovision-devices \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--brandname RTK \

@@ -140,7 +140,7 @@ chmod +x "$FAKE_BIN/curl" "$FAKE_BIN/dig"
 
 OUT="$TMP/out.txt"
 ERR="$TMP/err.txt"
-if PATH="$FAKE_BIN:$PATH" VIDEO_DEPLOY_ARGS="$VIDEO_DEPLOY_ARGS" "$ROOT/scripts/cloud-deploy.sh" \
+if PATH="$FAKE_BIN:$PATH" VIDEO_DEPLOY_ARGS="$VIDEO_DEPLOY_ARGS" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- deploy \
 	--workspace "$WORKSPACE" \
 	--video-release video-test \
 	--account-release account-test \
@@ -150,7 +150,7 @@ if PATH="$FAKE_BIN:$PATH" VIDEO_DEPLOY_ARGS="$VIDEO_DEPLOY_ARGS" "$ROOT/scripts/
 fi
 grep -F -- '--env-root is required' "$TMP/missing-env-root.out" >/dev/null
 
-if PATH="$FAKE_BIN:$PATH" VIDEO_DEPLOY_ARGS="$VIDEO_DEPLOY_ARGS" "$ROOT/scripts/cloud-deploy.sh" \
+if PATH="$FAKE_BIN:$PATH" VIDEO_DEPLOY_ARGS="$VIDEO_DEPLOY_ARGS" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- deploy \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--video-release video-test \

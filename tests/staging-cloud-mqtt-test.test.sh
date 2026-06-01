@@ -114,12 +114,12 @@ jq -n '{
 }' > "$ENV_ROOT/artifacts/device-bind/rtk-device-bind-20260531T000000Z.json"
 
 OUT="$TMP/out.json"
-if "$ROOT/scripts/cloud_mqtt_test.sh" \
+if "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- mqtt-test \
 	--env-root "$TMP/cloud_env/staging" \
 	--brandname RTK \
 	--out-dir "$TMP/report" \
 	--seed 7 \
-	--no-mqtt-probe > "$OUT"; then
+	--no-mqtt-probe > "$OUT" 2>"$TMP/report.stderr"; then
 	echo "expected --no-mqtt-probe to block instead of pass" >&2
 	exit 1
 fi
@@ -129,6 +129,14 @@ RESULTS="$(jq -r '.results_file' "$OUT")"
 REPORT="$(jq -r '.report_file' "$OUT")"
 jq -e '.overall == "blocked" and (.blockers | index("--no-mqtt-probe skips live MQTT E2E"))' "$RESULTS" >/dev/null
 jq -e '.mqtt.probe_result == "NOT_RUN" and (.out_of_scope | index("webrtc"))' "$RESULTS" >/dev/null
+grep -F 'Home MQTT Load-Test Report' "$TMP/report.stderr" >/dev/null
+grep -F 'Status: BLOCKED | Overall: blocked' "$TMP/report.stderr" >/dev/null
+grep -F 'Blockers:' "$TMP/report.stderr" >/dev/null
+grep -F -- '--no-mqtt-probe skips live MQTT E2E' "$TMP/report.stderr" >/dev/null
+if grep -F '| Metric | Value |' "$TMP/report.stderr" >/dev/null; then
+	echo "console output should be TTY-oriented, not raw markdown tables" >&2
+	exit 1
+fi
 grep -F 'Home MQTT Load-Test Report' "$REPORT" >/dev/null
 grep -F -- '--no-mqtt-probe skips live MQTT E2E' "$REPORT" >/dev/null
 if grep -Ei 'secret|password|bearer|BEGIN|device.key.pem' "$REPORT" "$RESULTS" >/dev/null; then
@@ -137,14 +145,16 @@ if grep -Ei 'secret|password|bearer|BEGIN|device.key.pem' "$REPORT" "$RESULTS" >
 fi
 
 rm "$ENV_ROOT/devices/test_device/devices/light/light-001/device.key.pem"
-if "$ROOT/scripts/cloud_mqtt_test.sh" \
+if "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- mqtt-test \
 	--env-root "$TMP/cloud_env/staging" \
 	--brandname RTK \
-	--out-dir "$TMP/blocked" > "$TMP/blocked.out"; then
+	--out-dir "$TMP/blocked" > "$TMP/blocked.out" 2>"$TMP/blocked.stderr"; then
 	echo "expected missing key to block" >&2
 	exit 1
 fi
 jq -e '.overall == "blocked" and .status == "BLOCKED"' "$TMP/blocked.out" >/dev/null
+grep -F 'Status: BLOCKED | Overall: blocked' "$TMP/blocked.stderr" >/dev/null
+grep -F 'missing key file' "$TMP/blocked.stderr" >/dev/null
 grep -F 'missing key file' "$TMP/blocked/TEST_REPORT.md" >/dev/null
 if grep -Ei 'secret|password|bearer|BEGIN' "$TMP/blocked/TEST_REPORT.md" "$TMP/blocked/results.json" >/dev/null; then
 	echo "blocked report output must be redacted" >&2

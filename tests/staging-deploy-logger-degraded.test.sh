@@ -168,7 +168,7 @@ chmod +x "$FAKE_BIN/curl" "$FAKE_BIN/dig"
 
 OUT="$TMP/out.txt"
 ERR="$TMP/err.txt"
-ORDER_LOG="$ORDER_LOG" LOGGER_LOG="$LOGGER_LOG" CLOUD_LOGGER_SCRIPT="$TMP/mock-logger.sh" PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/cloud-deploy.sh" \
+ORDER_LOG="$ORDER_LOG" LOGGER_LOG="$LOGGER_LOG" CLOUD_LOGGER_SCRIPT="$TMP/mock-logger.sh" PATH="$FAKE_BIN:$PATH" /usr/local/go/bin/go run "$ROOT/scripts/go/rtk-cloud" -- deploy \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--ssh-key "$TMP/id_ed25519_rtkcloud" \

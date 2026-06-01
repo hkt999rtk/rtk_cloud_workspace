@@ -151,7 +151,7 @@ fi
 SH
 chmod +x "$FAKE_BIN/curl"
 
-if PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/cloud-bind-devices.sh" \
+if PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- bind-devices \
 	--workspace "$WORKSPACE" \
 	--brandname RTK \
 	--users-file "$USERS_FILE" \
@@ -162,7 +162,7 @@ fi
 grep -F -- '--env-root is required' "$TMP/missing-env-root.out" >/dev/null
 
 DRY_RUN="$TMP/dry-run.json"
-PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "$ROOT/scripts/cloud-bind-devices.sh" \
+PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- bind-devices \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--brandname RTK \
@@ -182,7 +182,7 @@ if find "$CURL_LOG" -type f | grep -q .; then
 fi
 
 DEFAULT_DRY_RUN="$TMP/default-dry-run.json"
-PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "$ROOT/scripts/cloud-bind-devices.sh" \
+PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- bind-devices \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--brandname RTK \
@@ -232,7 +232,7 @@ jq -n '
 	}])
 ' > "$MANY_DEVICES/manifests/devices.json"
 MANY_DRY_RUN="$TMP/dry-run-100.json"
-PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "$ROOT/scripts/cloud-bind-devices.sh" \
+PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- bind-devices \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--brandname RTK \
@@ -247,7 +247,7 @@ jq -e '
 ' "$MANY_DRY_RUN" >/dev/null
 
 OUT="$TMP/out.json"
-PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "$ROOT/scripts/cloud-bind-devices.sh" \
+PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- bind-devices \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--brandname RTK \
@@ -273,7 +273,7 @@ jq -e '.category == "ip_camera" and .service_options == ["mqtt", "video_streamin
 jq -e '.category == "mqtt_device" and .service_options == ["mqtt"]' "$CURL_LOG/claim-load-device-0002.json" >/dev/null
 jq -e '.service_options == ["mqtt"] and .video_cloud_devid == "load-device-0002"' "$CURL_LOG/provision-account-device-load-device-0002.json" >/dev/null
 
-if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_ALREADY_CLAIMED=1 "$ROOT/scripts/cloud-bind-devices.sh" \
+if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_ALREADY_CLAIMED=1 "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- bind-devices \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--brandname RTK \

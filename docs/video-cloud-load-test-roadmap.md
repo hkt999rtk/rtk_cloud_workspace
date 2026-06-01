@@ -18,7 +18,7 @@ Markdown reports that can be used as manual, lab, or release evidence.
 
 The next planned expansion is an env-root driven home MQTT simulation profile.
 It starts from the same local environment directory used by
-`scripts/cloud-provision.sh`, loads existing users, device fixtures, bind
+`go run ./scripts/go/rtk-cloud -- provision`, loads existing users, device fixtures, bind
 artifacts, and device mTLS material, then models a real home user operating
 lights, air conditioners, and smart meters through Cloud APIs. See
 [`home-mqtt-loadtest-simulation.md`](home-mqtt-loadtest-simulation.md).
@@ -100,12 +100,12 @@ Environment variables:
 Planned home MQTT wrapper:
 
 ```sh
-scripts/cloud-run-home-mqtt-loadtest.sh \
+go run ./scripts/go/rtk-cloud -- mqtt-test \
   --env-root cloud_env/staging \
   --brandname RTK
 ```
 
-The wrapper must resolve the environment root with `scripts/lib/cloud-env.sh`
+The wrapper must resolve the environment root with `scripts/go/rtk-cloud/internal/envroot`
 and discover users, device inventory, bind artifacts, service endpoints, and
 device mTLS material from that root. Missing prerequisites should produce a
 redacted `BLOCKED` report instead of falling back to fake data.
@@ -140,7 +140,7 @@ of reintroducing cross-cloud load workflows in `rtk_cloud_client`.
 Before changing the runner:
 
 ```sh
-./scripts/docs-check.sh
+./go run ./scripts/go/rtk-cloud -- docs-check
 git diff --check
 ```
 

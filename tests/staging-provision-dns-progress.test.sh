@@ -76,7 +76,7 @@ ADMIN_LINODE_PUBLIC_IPV4=203.0.113.5
 EOF_ADMIN
 
 OUT="$TMP/out.txt"
-PATH="$FAKE_BIN:$PATH" DIG_COUNT_FILE="$COUNT_FILE" GO_ARGS_FILE="$GO_ARGS_FILE" "$ROOT/scripts/cloud-provision.sh" \
+PATH="$FAKE_BIN:$PATH" RTK_CLOUD_GO="$FAKE_BIN/go" DIG_COUNT_FILE="$COUNT_FILE" GO_ARGS_FILE="$GO_ARGS_FILE" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- provision \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--dns-wait-ttl 600 \
@@ -91,13 +91,13 @@ if [[ "$(grep -F -c -- 'records upsert realtekconnect.com --type A --name video-
 	exit 1
 fi
 
-if "$ROOT/scripts/cloud-provision.sh" --workspace "$WORKSPACE" --env-root "$ENV_ROOT" --dns --dns-wait-ttl 60 >"$TMP/invalid.out" 2>&1; then
+if "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- provision --workspace "$WORKSPACE" --env-root "$ENV_ROOT" --dns --dns-wait-ttl 60 >"$TMP/invalid.out" 2>&1; then
 	echo "expected --dns-wait-ttl 60 to fail before GoDaddy API call" >&2
 	exit 1
 fi
 grep -F -- '--dns-wait-ttl must be >= 600 for GoDaddy DNS records' "$TMP/invalid.out" >/dev/null
 
-if "$ROOT/scripts/cloud-provision.sh" --workspace "$WORKSPACE" --env-root "$ENV_ROOT" --dns --dns-wait-max-seconds abc >"$TMP/invalid-wait-max.out" 2>&1; then
+if "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- provision --workspace "$WORKSPACE" --env-root "$ENV_ROOT" --dns --dns-wait-max-seconds abc >"$TMP/invalid-wait-max.out" 2>&1; then
 	echo "expected invalid --dns-wait-max-seconds to fail" >&2
 	exit 1
 fi

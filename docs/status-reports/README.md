@@ -13,7 +13,6 @@ Word files, rendered pages, and copied figure assets stay under `.artifacts/`.
 Use the builder from the workspace root:
 
 ```sh
-/Users/kevinhuang/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 \
   tools/status-report/build_cloud_status_report.py
 ```
 

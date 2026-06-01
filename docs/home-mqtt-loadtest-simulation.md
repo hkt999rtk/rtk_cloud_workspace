@@ -9,21 +9,19 @@ Last updated: 2026-05-31
 The first realistic load-test expansion should model a home user operating
 MQTT-only devices. It must not require operators to manually assemble user,
 device, key, certificate, and binding inputs. The simulation starts from the
-same environment root used by `scripts/cloud-provision.sh`, for example:
+same environment root used by `go run ./scripts/go/rtk-cloud -- provision`, for example:
 
 ```sh
-scripts/cloud-run-home-mqtt-loadtest.sh \
+go run ./scripts/go/rtk-cloud -- mqtt-test \
   --env-root cloud_env/staging \
   --brandname RTK
 ```
 
-`scripts/cloud_mqtt_test.sh` is the direct entry point; the hyphenated
-`cloud-run-home-mqtt-loadtest.sh` wrapper exists for the implementation issue
-contract. Reports are written under
+`go run ./scripts/go/rtk-cloud -- mqtt-test` is the direct entry point. Reports are written under
 `<env-root>/artifacts/home-mqtt-loadtest/<timestamp>/` and include both
 `results.json` and `TEST_REPORT.md`.
 
-The wrapper resolves `cloud_env/staging` to `cloud_env/staging/linode`, reads
+The command resolves `cloud_env/staging` to `cloud_env/staging/linode`, reads
 the existing user/device artifacts, and runs a "home daily use" workload where
 APP actors use Cloud APIs and device actors use per-device MQTT mTLS identity.
 WebRTC relay, video streaming, storage, clips, and snapshots are explicitly out
@@ -31,7 +29,7 @@ of scope for this profile.
 
 ## Environment Contract
 
-The runner must use `scripts/lib/cloud-env.sh` as the source of truth for local
+The runner must use `scripts/go/rtk-cloud/internal/envroot` as the source of truth for local
 environment layout:
 
 - `cloud_env_init` resolves `cloud_env/staging` to the provider-specific root.
@@ -179,7 +177,7 @@ Preflight validation:
 - Device manifest and `loadtest.env` exist.
 - All selected device cert/key/chain files exist and are readable.
 - Latest users artifact exists and has mode `0600`.
-- Latest bind artifact exists and passes `scripts/cloud-validate-device-bind.sh`.
+- Latest bind artifact exists and passes `go run ./scripts/go/rtk-cloud -- validate-device-bind`.
 
 Smoke profile:
 

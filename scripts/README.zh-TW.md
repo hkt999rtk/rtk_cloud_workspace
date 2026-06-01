@@ -10,74 +10,80 @@ Linode staging scripts 預設使用本機、git ignored 的 `cloud_env/staging/l
 
 可用 `--env-root PATH` 指向另一份 environment directory。舊的 `--secrets-root PATH` 仍保留為相容 alias，但新的操作與文件都應使用 `--env-root`。
 
-`cloud-*` 是目前正式入口。舊的 `staging-*` / `staging_*` script 名稱暫時保留為相容 wrapper，會顯示 deprecated warning 後轉呼叫對應的 `cloud-*` script；新 automation 與文件應使用 `cloud-*` 名稱。
+`cloud-*` 是目前正式入口。舊的 `staging-*` / `staging_*` 相容 wrapper 已移除；automation 與文件都應使用 `cloud-*` 名稱。
 
 目錄配置請見 `docs/cloud-env-layout.zh-TW.md`。
 
+## Runtime 依賴政策
+
+`scripts/` 內的正式操作腳本禁止依賴 Python。不要在這些腳本中新增 `python`、`python3`、`pip`、`boto3`、`conda`、inline Python heredoc，或要求操作者建立 Python/conda 環境。
+
+需要 JSON/YAML、Object Storage、TLS、MQTT、HTTP API 等較複雜邏輯時，優先新增或擴充 Go module/Go helper，再由 shell wrapper 呼叫 Go 工具。簡單文字處理可用 POSIX shell、awk、sed、jq、openssl 等既有 CLI。
+
 ## 一般檢查與同步
 
-### `scripts/status-all.sh`
+### `go run ./scripts/go/rtk-cloud -- status-all`
 
 顯示 workspace 與所有 submodule 的 Git 狀態和最後一個 commit。
 
 用法：
 
 ```sh
-scripts/status-all.sh
+go run ./scripts/go/rtk-cloud -- status-all
 ```
 
 適合在切 branch、pull、submodule update 前後確認整體狀態。
 
-### `scripts/sync-all.sh`
+### `go run ./scripts/go/rtk-cloud -- sync-all`
 
 同步 workspace 與 submodule remote 資訊，並初始化/更新 submodule 到目前 superproject 釘住的 commit。它只 fetch remote，不會改變 superproject 記錄的 submodule commit。
 
 用法：
 
 ```sh
-scripts/sync-all.sh
+go run ./scripts/go/rtk-cloud -- sync-all
 ```
 
-### `scripts/test-matrix.sh`
+### `go run ./scripts/go/rtk-cloud -- test-matrix`
 
-執行 workspace 快速驗證矩陣，包括 workspace 狀態、submodule 狀態，以及 `rtk_cloud_client` 的基本 Python unittest。
+執行 workspace 快速驗證矩陣，包括 workspace 狀態、submodule 狀態，以及 Go-based workspace checks。
 
 用法：
 
 ```sh
-scripts/test-matrix.sh
+go run ./scripts/go/rtk-cloud -- test-matrix
 ```
 
-### `scripts/docs-check.sh`
+### `go run ./scripts/go/rtk-cloud -- docs-check`
 
 檢查 workspace 文件入口、重要 runbook、e2e 測試目錄、submodule 文件，以及 contracts submodule 是否對齊。
 
 用法：
 
 ```sh
-scripts/docs-check.sh
+go run ./scripts/go/rtk-cloud -- docs-check
 ```
 
-### `scripts/secrets-check.sh`
+### `go run ./scripts/go/rtk-cloud -- secrets-check`
 
 檢查 `.secrets` 等敏感路徑是否被 git ignore，並掃描 tracked workspace 檔案，避免誤提交 private key、token、password、DSN 等敏感字串。
 
 用法：
 
 ```sh
-scripts/secrets-check.sh
+go run ./scripts/go/rtk-cloud -- secrets-check
 ```
 
 ## 證據與報告
 
-### `scripts/collect-private-cloud-evidence.sh`
+### `go run ./scripts/go/rtk-cloud -- collect-evidence`
 
 收集 private cloud / product readiness 相關證據，輸出到 `evidence/` 或指定目錄。腳本會產生 manifest、服務 commit 狀態、健康檢查、報告摘要，並對敏感資訊做 redaction。
 
 常用用法：
 
 ```sh
-scripts/collect-private-cloud-evidence.sh
+go run ./scripts/go/rtk-cloud -- collect-evidence
 ```
 
 可用環境變數：
@@ -87,12 +93,12 @@ RTK_EVIDENCE_ENVIRONMENT=evaluation \
 RTK_EVIDENCE_OUTPUT_DIR=./evidence \
 RTK_EVIDENCE_RUN_SERVICE_COLLECTORS=0 \
 RTK_EVIDENCE_TARBALL=1 \
-scripts/collect-private-cloud-evidence.sh
+go run ./scripts/go/rtk-cloud -- collect-evidence
 ```
 
 ## Linode cloud environment 操作
 
-### `scripts/cloud-generate-load-devices.sh`
+### `go run ./scripts/go/rtk-cloud -- generate-load-devices`
 
 依照量產流程產生 staging/load-test 用的 device 身分。每台 device 會先在本機產生 private key 與 CSR，然後預設呼叫真的 factory enrollment API，讓 server 簽發 client certificate 並寫入 entitlement。這模擬「沒有真實 security chip、但量產 enroll 流程是真的」的 loading test 情境。
 
@@ -114,22 +120,22 @@ metadata 會同時記錄 inventory 用的 `device_type` 與 ACL 用的 `service_
 
 ```sh
 # 預設產生 100 台：camera=40,light=25,air_conditioner=20,smart_meter=15
-scripts/cloud-generate-load-devices.sh --env-root cloud_env/staging
+go run ./scripts/go/rtk-cloud -- generate-load-devices --env-root cloud_env/staging
 
 # 指定數量與配比
-scripts/cloud-generate-load-devices.sh \
+go run ./scripts/go/rtk-cloud -- generate-load-devices \
   --env-root cloud_env/staging \
   --count 200 \
   --mix camera=80,light=50,air_conditioner=40,smart_meter=30
 
 # 指定輸出目錄；若目錄已存在，用 --force 重建
-scripts/cloud-generate-load-devices.sh \
+go run ./scripts/go/rtk-cloud -- generate-load-devices \
   --env-root cloud_env/staging \
   --out-dir cloud_env/staging/linode/devices/manual \
   --force
 
 # 只做離線 key/cert 材料產生，不呼叫 server；測試 script 本身時使用
-scripts/cloud-generate-load-devices.sh \
+go run ./scripts/go/rtk-cloud -- generate-load-devices \
   --env-root cloud_env/staging \
   --generate-only
 ```
@@ -147,7 +153,7 @@ scripts/cloud-generate-load-devices.sh \
 - `--generate-only`：只用本地 simulation CA 簽發憑證，不寫入 cloud database。
 - `--force`：移除既有輸出目錄後重建。
 
-`scripts/cloud-provision.sh --preflight` / `--apply` / `--deploy` 會在 video-cloud service env 缺少 factory enrollment 設定時補齊 `FACTORY_ENROLL_URL`、`FACTORY_ENROLL_AUTH_KEY`、audit log path，以及 factory enrollment bridge 呼叫 certissuer 所需的 client cert/key/CA source path。補齊後需要重新 deploy Video Cloud，server 端才會使用同一組 key。
+`go run ./scripts/go/rtk-cloud -- provision --preflight` / `--apply` / `--deploy` 會在 video-cloud service env 缺少 factory enrollment 設定時補齊 `FACTORY_ENROLL_URL`、`FACTORY_ENROLL_AUTH_KEY`、audit log path，以及 factory enrollment bridge 呼叫 certissuer 所需的 client cert/key/CA source path。補齊後需要重新 deploy Video Cloud，server 端才會使用同一組 key。
 
 重要輸出：
 
@@ -184,14 +190,14 @@ ORDER BY device_type, service_options;
 
 輸出的 private key 與 `--generate-only` 的 CA key 預設位於 git ignored 的 `cloud_env/staging/linode/devices/test_device`，不可 commit，也不可用在 production 或 customer environment。若要重建既有輸出，使用 `--force`。
 
-### `scripts/cloud-unprovision-devices.sh`
+### `go run ./scripts/go/rtk-cloud -- unprovision-devices`
 
-依照前一次 `scripts/cloud-bind-devices.sh` 產生的 redacted bind artifact，呼叫 Account Manager user-facing unprovision API，釋放 device 的 user/org binding，讓正常 device 回到可轉售或重新 onboarding 的狀態。這個 script 只走 Account Manager API，不 SSH 到遠端主機、不接觸 raw Claim Token、不撤銷 factory certificate，也不操作 Video Cloud denylist。
+依照前一次 `go run ./scripts/go/rtk-cloud -- bind-devices` 產生的 redacted bind artifact，呼叫 Account Manager user-facing unprovision API，釋放 device 的 user/org binding，讓正常 device 回到可轉售或重新 onboarding 的狀態。這個 script 只走 Account Manager API，不 SSH 到遠端主機、不接觸 raw Claim Token、不撤銷 factory certificate，也不操作 Video Cloud denylist。
 
 預設會讀取最新的 `cloud_env/staging/linode/artifacts/device-bind/<brand>-device-bind-*.json`，並使用 artifact 內記錄的 `inputs.users_file` 登入原 assigned user 呼叫：
 
 ```sh
-scripts/cloud-unprovision-devices.sh \
+go run ./scripts/go/rtk-cloud -- unprovision-devices \
   --env-root cloud_env/staging \
   --brandname RTK
 ```
@@ -207,15 +213,15 @@ scripts/cloud-unprovision-devices.sh \
 - stdout：redacted summary，包含 `action=unprovisioned`、`count`、`unprovisioned`、`artifact_file`。
 - `artifacts/device-unprovision/<brand>-device-unprovision-<timestamp>.json`：redacted unprovision artifact，包含原 device id、account device id、user email、service options、unprovision status 與時間。不包含 password、bearer token、raw Claim Token 或 device private material。
 
-### `scripts/cloud-migrate-env.sh`
+### `go run ./scripts/go/rtk-cloud -- migrate-env`
 
 將目前分散在 `.secrets/`、`keys/`、以及各 submodule deploy 目錄的 staging local environment 檔案複製到 `cloud_env/staging/linode`。來源檔案會保留，並在 `cloud_env/staging/linode/backups/migration-<timestamp>` 產生 backup 與 migration manifest。
 
 用法：
 
 ```sh
-scripts/cloud-migrate-env.sh --env-root cloud_env/staging
-scripts/cloud-migrate-env.sh --env-root cloud_env/staging --force
+go run ./scripts/go/rtk-cloud -- migrate-env --env-root cloud_env/staging
+go run ./scripts/go/rtk-cloud -- migrate-env --env-root cloud_env/staging --force
 ```
 
 常用選項：
@@ -223,7 +229,7 @@ scripts/cloud-migrate-env.sh --env-root cloud_env/staging --force
 - `--env-root PATH`：指定 environment directory；必填。可傳 `cloud_env/staging`，script 會自動使用其下的 `linode/`。
 - `--force`：覆蓋已存在的 target 檔案。
 
-### `scripts/cloud-provision.sh`
+### `go run ./scripts/go/rtk-cloud -- provision`
 
 Linode staging 的主要編排腳本。它可以做 preflight、plan、reset、apply、DNS、deploy、artifact collection、e2e smoke。預設不變更環境，只做 `--plan`。
 
@@ -236,19 +242,19 @@ service logging 的目標 provisioning model 記在 `docs/service-logging-archit
 - `CLOUD_LOGGER_FORWARDER_TARGETS`：plan 中列出的 forwarder target，預設包含 edge/api/infra/mqtt/coturn/account-manager/cloud-admin/frontend/non-Go host sources。
 - `CLOUD_LOGGER_JOURNALD_SYSTEM_MAX_USE`、`CLOUD_LOGGER_JOURNALD_SYSTEM_KEEP_FREE`、`CLOUD_LOGGER_JOURNALD_MAX_RETENTION_SEC`：journald retention guidance，會傳給 forwarder install hook。
 
-`cloud-deploy.sh` 會在 app deploy 前呼叫 `CLOUD_LOGGER_SCRIPT`（預設 `scripts/cloud-logger.sh`）執行 `provision-backend` 與每台 host 的 `install-forwarder`，再於 readiness report 收集 `backend-health`、`forwarder-status` 與 `sample-trace-query`。預設 script 只記錄 planned state 並回報 degraded；正式環境應將 `CLOUD_LOGGER_SCRIPT` 指到 `rtk_cloud_logger` 提供的 live provisioning hook。
+`go run ./scripts/go/rtk-cloud -- deploy` 會在 app deploy 前呼叫 `CLOUD_LOGGER_SCRIPT` 執行 `provision-backend` 與每台 host 的 `install-forwarder`，再於 readiness report 收集 `backend-health`、`forwarder-status` 與 `sample-trace-query`。未設定 `CLOUD_LOGGER_SCRIPT` 時會略過 logger hook；正式環境應將它指到 `rtk_cloud_logger` 提供的 live provisioning hook。hook degraded 時不會阻塞服務 deploy。
 
 常用用法：
 
 ```sh
 # 只看目前狀態與預期資源，不做變更
-scripts/cloud-provision.sh --env-root cloud_env/staging
+go run ./scripts/go/rtk-cloud -- provision --env-root cloud_env/staging
 
 # 檢查工具、env、credential、SSH key、release artifact
-scripts/cloud-provision.sh --env-root cloud_env/staging --preflight
+go run ./scripts/go/rtk-cloud -- provision --env-root cloud_env/staging --preflight
 
 # 建立/更新 staging VM、DNS、部署三個服務、收集 artifacts、跑 e2e
-scripts/cloud-provision.sh \
+go run ./scripts/go/rtk-cloud -- provision \
   --env-root cloud_env/staging \
   --all \
   --video-release VIDEO_RELEASE \
@@ -256,7 +262,7 @@ scripts/cloud-provision.sh \
   --admin-release ADMIN_RELEASE
 
 # 先刪除 staging VM/firewall/VPC，再重建與部署
-scripts/cloud-provision.sh \
+go run ./scripts/go/rtk-cloud -- provision \
   --env-root cloud_env/staging \
   --reset-and-all \
   --confirm rtk-cloud-staging \
@@ -276,24 +282,25 @@ scripts/cloud-provision.sh \
 - `--dns-wait-max-seconds SECONDS`：每個 hostname 最長 DNS convergence 等待時間，預設 `700` 秒；每 10 秒檢查 Google DNS 與 authoritative DNS 一次。
 - `--verbose`：輸出更多 debug 訊息。
 
+HTTPS certificate cache 由 `go run ./scripts/go/rtk-cloud -- deploy` 處理：如果 `cloud_env/staging/linode/certificates/<fqdn>/fullchain.pem` 與 `privkey.pem` 存在且在安全期限內未過期，就會先上傳到新 VM，建立 certbot lineage/renewal config、啟用 `certbot.timer`，並跳過新憑證申請；如果沒有可用 cache，deploy 仍會走 certbot，成功後再把 VM 上的 certificate/key 拉回 `cloud_env`。預設要求 certificate 至少還有 7 天有效期，可用 `--cert-cache-min-valid-seconds` 調整。
+
 `--plan` 會顯示 logger backend、logger env/state、forwarder credentials、每台 host 的 forwarder targets、journald retention guidance，以及 backend/forwarder/sample trace readiness evidence 項目。
 
-HTTPS certificate cache 由 `cloud-deploy.sh` 處理：如果 `cloud_env/staging/linode/certificates/<fqdn>/fullchain.pem` 與 `privkey.pem` 存在且在安全期限內未過期，就會先上傳到新 VM，建立 certbot lineage/renewal config、啟用 `certbot.timer`，並跳過新憑證申請；如果沒有可用 cache，deploy 仍會走 certbot，成功後再把 VM 上的 certificate/key 拉回 `cloud_env`。預設要求 certificate 至少還有 7 天有效期，可用 `--cert-cache-min-valid-seconds` 調整。
 
-### `scripts/cloud-staging-e2e-test.sh`
+### `go run ./scripts/go/rtk-cloud -- staging-e2e-test`
 
 Linode staging 一站式整合測試編排腳本。它把 remove VM、provision all、建立 RTK brand cloud、建立測試 users、產生並 factory-enroll devices、device bind/provision、bulk bind validation，以及 home MQTT simulation 串成單一流程，最後輸出 sanitized `summary.json` 與 `TEST_REPORT.md`。
 
 預設是 safe plan，不會刪 VM、不會 provision、不會呼叫 API：
 
 ```sh
-scripts/cloud-staging-e2e-test.sh --env-root cloud_env/staging --plan
+go run ./scripts/go/rtk-cloud -- staging-e2e-test --env-root cloud_env/staging --plan
 ```
 
 真正執行完整 staging reset + E2E 需要顯式 `--run`，且 `--confirm` 必須等於 env root 內的 `CLOUD_STACK_NAME`：
 
 ```sh
-scripts/cloud-staging-e2e-test.sh \
+go run ./scripts/go/rtk-cloud -- staging-e2e-test \
   --env-root cloud_env/staging \
   --run \
   --confirm video-cloud-stg-0529 \
@@ -308,8 +315,8 @@ scripts/cloud-staging-e2e-test.sh \
 - `--env-root PATH`：指定 environment directory；必填。可傳 `cloud_env/staging`，script 會自動使用其下的 `linode/`。
 - `--plan`：只列出將執行的步驟，預設模式。
 - `--run --confirm STACK`：執行完整流程。`STACK` 必須符合 `CLOUD_STACK_NAME`，避免刪錯 staging stack。
-- `--skip-remove`：不先呼叫 `cloud-remove-all-vm.sh`，直接走 `cloud-provision.sh --reset-and-all` 後續流程。
-- `--video-release` / `--account-release` / `--admin-release`：轉傳給 `cloud-provision.sh` 使用指定 release artifact。
+- `--skip-remove`：不先執行 `rtk-cloud remove-all-vm`，直接走 `rtk-cloud provision --reset-and-all` 後續流程。
+- `--video-release` / `--account-release` / `--admin-release`：轉傳給 `rtk-cloud provision` 使用指定 release artifact。
 - `--out-dir PATH`：指定報告輸出目錄；預設在 `<env-root>/artifacts/staging-e2e/<timestamp>/`。
 - `--skip-mqtt-probe`：略過 live MQTT E2E；這會讓 MQTT 子測試回報 `BLOCKED`，不會當作 PASS。
 
@@ -321,14 +328,14 @@ scripts/cloud-staging-e2e-test.sh \
 
 報告檔會掃描常見敏感字串，避免 password、bearer token、private key 或服務 secret 被寫入 summary/report。完整 per-step log 不會自動清洗，不應 commit。MQTT 子測試預設會用 device mTLS 連到 broker，訂閱 device shadow response topics，publish shadow update，並等待 Video Cloud MQTT bridge 回 `accepted` / `documents`；只做 local artifact 檢查不能算通過。
 
-### `scripts/cloud-deploy.sh`
+### `go run ./scripts/go/rtk-cloud -- deploy`
 
 只做 staging deploy/verify，不負責建立 VM。它會依序部署與驗證 Account Manager、Video Cloud、Cloud Admin，失敗時會停止後續步驟並寫 readiness report。
 
 用法：
 
 ```sh
-scripts/cloud-deploy.sh \
+go run ./scripts/go/rtk-cloud -- deploy \
   --env-root cloud_env/staging \
   --video-release VIDEO_RELEASE \
   --account-release ACCOUNT_RELEASE \
@@ -345,7 +352,7 @@ scripts/cloud-deploy.sh \
 - `--dns-ttl SECONDS`：傳給 Video Cloud deploy 的 GoDaddy DNS TTL。
 - `--verbose`：輸出更多 debug 訊息。
 
-### `scripts/cloud-check-certificates.sh`
+### `go run ./scripts/go/rtk-cloud -- check-certificates`
 
 檢查 staging 對外 HTTPS host 的 certificate 是否合法、hostname 是否符合、是否尚未過期，並確認剩餘效期高於指定門檻。預設會同時檢查 live HTTPS endpoint 與 `cloud_env` 內的 certificate cache。
 
@@ -360,13 +367,13 @@ scripts/cloud-deploy.sh \
 
 ```sh
 # 檢查 live endpoint 與本機 certificate cache
-scripts/cloud-check-certificates.sh --env-root cloud_env/staging
+go run ./scripts/go/rtk-cloud -- check-certificates --env-root cloud_env/staging
 
 # 只檢查 cloud_env 裡的 certificate cache，不連線到 live host
-scripts/cloud-check-certificates.sh --env-root cloud_env/staging --skip-live
+go run ./scripts/go/rtk-cloud -- check-certificates --env-root cloud_env/staging --skip-live
 
 # JSON 輸出，方便 CI 或 jq 使用
-scripts/cloud-check-certificates.sh --env-root cloud_env/staging --json
+go run ./scripts/go/rtk-cloud -- check-certificates --env-root cloud_env/staging --json
 ```
 
 常用選項：
@@ -380,19 +387,19 @@ scripts/cloud-check-certificates.sh --env-root cloud_env/staging --json
 
 如果任一 certificate 缺失、過期、hostname 不符合、live chain 驗證失敗，或低於剩餘效期門檻，script 會顯示 `status=fail` 並以 non-zero exit code 結束。
 
-### `scripts/cloud-remove-all-vm.sh`
+### `go run ./scripts/go/rtk-cloud -- remove-all-vm`
 
 刪除 Linode 上 label 含 `staging` 的 VM，等待 VM 消失後清除 staging firewalls 與 `video-cloud-staging-vpc`，並把 active local state 移到 `cloud_env/staging/linode/backups/remove-vm-<timestamp>`。這是破壞性操作，腳本會要求輸入 `yes` 才會送出刪除請求。
 
 用法：
 
 ```sh
-scripts/cloud-remove-all-vm.sh --env-root cloud_env/staging
+go run ./scripts/go/rtk-cloud -- remove-all-vm --env-root cloud_env/staging
 ```
 
 需要明確指定 `--env-root`，避免刪到錯誤環境。可以傳 `cloud_env/staging`，script 會自動解析到其下的 `linode/`。需要 `LINODE_TOKEN`；通常 token 會放在 operator env 或 shell 環境。若 Linode 回報資源已不存在，script 會視為已清除並繼續。
 
-### `scripts/cloud-update-ssh-whitelist.sh`
+### `go run ./scripts/go/rtk-cloud -- update-ssh-whitelist`
 
 更新所有 staging VM firewall 的 SSH allowlist。預設會自動偵測目前這台操作機器對外的 public IPv4，並把它以 `/32` 加到 7 個 staging firewall 的 port 22 rule。互動執行時會詢問要 append 還是 replace；非互動執行未指定 `--mode` 時維持 append 相容行為：
 
@@ -408,28 +415,28 @@ scripts/cloud-remove-all-vm.sh --env-root cloud_env/staging
 
 ```sh
 # 自動偵測目前 public IP，加入 SSH allowlist
-scripts/cloud-update-ssh-whitelist.sh --env-root cloud_env/staging
+go run ./scripts/go/rtk-cloud -- update-ssh-whitelist --env-root cloud_env/staging
 
 # 手動指定 CIDR
-scripts/cloud-update-ssh-whitelist.sh --env-root cloud_env/staging --cidr 203.0.113.10/32
+go run ./scripts/go/rtk-cloud -- update-ssh-whitelist --env-root cloud_env/staging --cidr 203.0.113.10/32
 
 # 只保留單一 SSH 入口，移除舊 SSH allowlist CIDR
-scripts/cloud-update-ssh-whitelist.sh --env-root cloud_env/staging --mode replace
+go run ./scripts/go/rtk-cloud -- update-ssh-whitelist --env-root cloud_env/staging --mode replace
 
 # 只看會更新哪些 firewall，不呼叫 Linode API 修改
-scripts/cloud-update-ssh-whitelist.sh --env-root cloud_env/staging --mode replace --cidr 203.0.113.10/32 --dry-run
+go run ./scripts/go/rtk-cloud -- update-ssh-whitelist --env-root cloud_env/staging --mode replace --cidr 203.0.113.10/32 --dry-run
 ```
 
 `--mode append` 只會加入 CIDR，不會移除既有白名單；`--mode replace` 會把 SSH port 22 allowlist 改成只剩指定 CIDR，不影響其他 inbound rules。成功更新 Linode firewall 後，也會同步更新本地 ignored staging config/env，避免之後重新 provision 時又回到舊白名單。
 
-### `scripts/cloud-create-brandname-cloud.sh`
+### `go run ./scripts/go/rtk-cloud -- create-brandname-cloud`
 
 在 Account Manager staging 上建立 brand cloud。腳本會先確保 platform-admin bootstrap env 可用，再用 Account Manager API 建立 brand cloud；若 API 建立遇到已知 server error，會用 PostgreSQL fallback upsert，最後再透過 API 驗證結果。
 
 用法：
 
 ```sh
-scripts/cloud-create-brandname-cloud.sh --env-root cloud_env/staging --brandname RTK
+go run ./scripts/go/rtk-cloud -- create-brandname-cloud --env-root cloud_env/staging --brandname RTK
 ```
 
 常用選項：
@@ -440,7 +447,7 @@ scripts/cloud-create-brandname-cloud.sh --env-root cloud_env/staging --brandname
 
 腳本的進度訊息會寫到 stderr，最後 JSON 結果會寫到 stdout，方便其他工具解析。
 
-### `scripts/cloud-list-brandname-clouds.sh`
+### `go run ./scripts/go/rtk-cloud -- list-brandname-clouds`
 
 查詢 Account Manager staging 目前有哪些 brand cloud。腳本會使用 staging platform-admin 帳密登入，呼叫唯讀的 Account Manager admin API，不會修改資料。
 
@@ -448,13 +455,13 @@ scripts/cloud-create-brandname-cloud.sh --env-root cloud_env/staging --brandname
 
 ```sh
 # 顯示數量與摘要表格
-scripts/cloud-list-brandname-clouds.sh --env-root cloud_env/staging
+go run ./scripts/go/rtk-cloud -- list-brandname-clouds --env-root cloud_env/staging
 
 # 查詢特定 brandname
-scripts/cloud-list-brandname-clouds.sh --env-root cloud_env/staging --brandname RTK
+go run ./scripts/go/rtk-cloud -- list-brandname-clouds --env-root cloud_env/staging --brandname RTK
 
 # 輸出完整 JSON，包含每個 brand cloud 的 metadata 等設定
-scripts/cloud-list-brandname-clouds.sh --env-root cloud_env/staging --json
+go run ./scripts/go/rtk-cloud -- list-brandname-clouds --env-root cloud_env/staging --json
 ```
 
 常用選項：
@@ -467,14 +474,14 @@ scripts/cloud-list-brandname-clouds.sh --env-root cloud_env/staging --json
 
 預設摘要會顯示 `brand_clouds`、`api_total`、`id`、`name`、`status`、`tier`、`evaluation_device_quota`、`metadata.brandname`、`created_at` 與完整 `metadata`。若要確認「每個 brandname cloud 的內容設定」，建議使用 `--json`。
 
-### `scripts/cloud-create-users.sh`
+### `go run ./scripts/go/rtk-cloud -- create-users`
 
 在既有 brand cloud 下透過 Account Manager platform-admin API 建立已啟用 user account，不走 signup/email verification，也不直接連 PostgreSQL。
 
 用法：
 
 ```sh
-scripts/cloud-create-users.sh --env-root cloud_env/staging --brandname RTK --count 10
+go run ./scripts/go/rtk-cloud -- create-users --env-root cloud_env/staging --brandname RTK --count 10
 ```
 
 常用選項：
@@ -489,22 +496,22 @@ scripts/cloud-create-users.sh --env-root cloud_env/staging --brandname RTK --cou
 
 腳本的進度訊息會寫到 stderr，stdout 只輸出 summary JSON，不包含密碼。初始密碼只寫入 `cloud_env/.../artifacts/users/<brand>-users-<timestamp>.json`，檔案權限為 `0600`。如果 API 回報 user 已存在且未指定 `--rotate-password`，腳本會停止，不會寫新的 credentials artifact。
 
-### `scripts/cloud-bind-devices.sh`
+### `go run ./scripts/go/rtk-cloud -- bind-devices`
 
 將已 factory-enrolled 的 device 透過 Account Manager API 綁定到 brand cloud user，並啟動 account-side device provisioning。這個腳本只走 API，不直接連 PostgreSQL；測試 possession proof 採一次性 Claim Token。
 
 典型 staging 順序：
 
 ```sh
-scripts/cloud-create-users.sh --env-root cloud_env/staging --brandname RTK --count 10
+go run ./scripts/go/rtk-cloud -- create-users --env-root cloud_env/staging --brandname RTK --count 10
 
-scripts/cloud-generate-load-devices.sh --env-root cloud_env/staging --count 100
+go run ./scripts/go/rtk-cloud -- generate-load-devices --env-root cloud_env/staging --count 100
 
-scripts/cloud-bind-devices.sh \
+go run ./scripts/go/rtk-cloud -- bind-devices \
   --env-root cloud_env/staging \
   --brandname RTK
 
-scripts/cloud-validate-device-bind.sh \
+go run ./scripts/go/rtk-cloud -- validate-device-bind \
   --bind-artifact cloud_env/staging/linode/artifacts/device-bind/rtk-device-bind-<timestamp>.json
 ```
 
@@ -525,28 +532,28 @@ scripts/cloud-validate-device-bind.sh \
 - 完整 redacted artifact 寫到 `cloud_env/.../artifacts/device-bind/<brand>-device-bind-<timestamp>.json`，檔案權限為 `0600`。
 - artifact 只包含 assigned email、device id/type、`service_options`、claim id、account device id、operation id 與 status。
 - raw Claim Token、user password、bearer token 只存在 process 暫存檔，腳本結束會移除。
-- 未指定 `--users-file` 時，腳本會使用 `cloud-create-users.sh` 寫出的最新 `cloud_env/.../artifacts/users/<brand>-users-*.json`。
-- 未指定 `--devices-dir` 時，腳本會使用 `cloud-generate-load-devices.sh` 的預設輸出 `cloud_env/.../devices/test_device`。
+- 未指定 `--users-file` 時，命令會使用 `rtk-cloud create-users` 寫出的最新 `cloud_env/.../artifacts/users/<brand>-users-*.json`。
+- 未指定 `--devices-dir` 時，命令會使用 `rtk-cloud generate-load-devices` 的預設輸出 `cloud_env/.../devices/test_device`。
 - 未指定 `--count` 時，腳本會綁定 `manifests/devices.json` 內全部 devices。
 
 常用選項：
 
 - `--env-root PATH`：指定 environment directory；必填。
 - `--brandname NAME`：指定既有 brand cloud。
-- `--users-file FILE`：指定 `cloud-create-users.sh` 產生的 credentials artifact；未指定時使用同 brand 最新 artifact。
-- `--devices-dir DIR`：指定 `cloud-generate-load-devices.sh` 產生的 device output directory；未指定時使用 `<env-root>/devices/test_device`。
+- `--users-file FILE`：指定 `rtk-cloud create-users` 產生的 credentials artifact；未指定時使用同 brand 最新 artifact。
+- `--devices-dir DIR`：指定 `rtk-cloud generate-load-devices` 產生的 device output directory；未指定時使用 `<env-root>/devices/test_device`。
 - `--count N`：只綁定前 N 台 device；未指定時綁定 manifest 內全部 devices。
 - `--dry-run`：只輸出 assignment plan，不呼叫 Account Manager API，也不寫 artifact。
 - `--skip-bootstrap`：不要更新/restart 遠端 Account Manager bootstrap admin env。
 
-### `scripts/cloud-validate-device-bind.sh`
+### `go run ./scripts/go/rtk-cloud -- validate-device-bind`
 
-驗證 `cloud-bind-devices.sh` 產生的 redacted artifact，作為 100 devices onboarding staging smoke 的 API-level 結果檢查。這個 profile 不要求 live video streaming 成功；它確認每筆 API claim/bind/provision 結果都有 account device id、provision operation id，且 `service_options` 符合 ACL 預期。
+驗證 `rtk-cloud bind-devices` 產生的 redacted artifact，作為 100 devices onboarding staging smoke 的 API-level 結果檢查。這個 profile 不要求 live video streaming 成功；它確認每筆 API claim/bind/provision 結果都有 account device id、provision operation id，且 `service_options` 符合 ACL 預期。
 
 用法：
 
 ```sh
-scripts/cloud-validate-device-bind.sh \
+go run ./scripts/go/rtk-cloud -- validate-device-bind \
   --bind-artifact cloud_env/staging/linode/artifacts/device-bind/rtk-device-bind-<timestamp>.json \
   --expected-count 100 \
   --expected-devices-per-user 10
@@ -564,18 +571,18 @@ scripts/cloud-validate-device-bind.sh \
 
 這些腳本位於 `scripts/linode-ci-runners/`，用來管理 repo-scoped GitHub Actions self-hosted runner VM。
 
-### `scripts/linode-ci-runners/runner-specs.sh`
+### `rtk-cloud ci-runners` runner specs
 
 共用設定檔，定義 shared Linux runner VM、runner name、目標 GitHub repo、Linode type、runner label。通常不直接執行，而是被其他 runner 腳本 `source`。
 
-### `scripts/linode-ci-runners/provision-ci-runners.sh`
+### `go run ./scripts/go/rtk-cloud -- ci-runners provision`
 
 建立 shared Linode Linux runner VM、防火牆，並在同一台 VM 上註冊多個 repo-scoped GitHub Actions self-hosted runner。
 
 用法：
 
 ```sh
-scripts/linode-ci-runners/provision-ci-runners.sh
+go run ./scripts/go/rtk-cloud -- ci-runners provision
 ```
 
 需要的設定通常來自：
@@ -585,26 +592,26 @@ scripts/linode-ci-runners/provision-ci-runners.sh
 
 必要變數包含 `LINODE_TOKEN`、`GITHUB_TOKEN`、`CI_RUNNER_ALLOWED_SSH_CIDRS`、SSH key 路徑等。
 
-### `scripts/linode-ci-runners/power-ci-runners.sh`
+### `go run ./scripts/go/rtk-cloud -- ci-runners power`
 
 啟動、關閉或列出 shared runner VM 狀態。
 
 用法：
 
 ```sh
-scripts/linode-ci-runners/power-ci-runners.sh status
-scripts/linode-ci-runners/power-ci-runners.sh start
-scripts/linode-ci-runners/power-ci-runners.sh stop
+go run ./scripts/go/rtk-cloud -- ci-runners power status
+go run ./scripts/go/rtk-cloud -- ci-runners power start
+go run ./scripts/go/rtk-cloud -- ci-runners power stop
 ```
 
-### `scripts/linode-ci-runners/wait-runners-online.sh`
+### `go run ./scripts/go/rtk-cloud -- ci-runners wait-online`
 
-等待 GitHub Actions runner 進入 online 狀態。常和 `power-ci-runners.sh start` 搭配使用。
+等待 GitHub Actions runner 進入 online 狀態。常和 `go run ./scripts/go/rtk-cloud -- ci-runners power start` 搭配使用。
 
 用法：
 
 ```sh
-scripts/linode-ci-runners/wait-runners-online.sh
+go run ./scripts/go/rtk-cloud -- ci-runners wait-online
 ```
 
 可用環境變數：
@@ -612,26 +619,26 @@ scripts/linode-ci-runners/wait-runners-online.sh
 - `CI_RUNNER_ONLINE_TIMEOUT_SECONDS`：等待 timeout，預設 900 秒。
 - `CI_RUNNER_ONLINE_POLL_SECONDS`：輪詢間隔，預設 15 秒。
 
-### `scripts/linode-ci-runners/list-ci-runners.sh`
+### `go run ./scripts/go/rtk-cloud -- ci-runners list`
 
-依照 `runner-specs.sh` 列出 Account Manager、Cloud Admin、Cloud Frontend、Cloud Client、Cloud Logger repo 的 GitHub Actions self-hosted runner 狀態、busy 狀態與 labels。
+依照 Go runner specs 列出 Account Manager、Cloud Admin、Cloud Frontend、Cloud Client、Cloud Logger repo 的 GitHub Actions self-hosted runner 狀態、busy 狀態與 labels。
 
 用法：
 
 ```sh
-scripts/linode-ci-runners/list-ci-runners.sh
+go run ./scripts/go/rtk-cloud -- ci-runners list
 ```
 
 需要已登入的 `gh`。
 
-### `scripts/linode-ci-runners/run-ci-session.sh`
+### `go run ./scripts/go/rtk-cloud -- ci-runners run-session`
 
 完整 CI session 編排：啟動 runner VM、等待 runner online、可選擇 rerun 指定 GitHub Actions run、watch 到結束、封存 artifacts 到 Linode Object Storage，最後依 policy 關閉 VM。
 
 用法：
 
 ```sh
-scripts/linode-ci-runners/run-ci-session.sh \
+go run ./scripts/go/rtk-cloud -- ci-runners run-session \
   --account-run-id RUN_ID \
   --admin-run-id RUN_ID \
   --frontend-run-id RUN_ID \
@@ -645,16 +652,16 @@ scripts/linode-ci-runners/run-ci-session.sh \
 - `--shutdown-policy always|on-success|never`：何時關閉 runner VM，預設 always。
 - `--smoke-only true`：只測試 VM start -> runner online -> shutdown，不需要 run id。
 
-### `scripts/linode-ci-runners/archive-ci-artifacts.sh`
+### `go run ./scripts/go/rtk-cloud -- ci-runners archive-artifacts`
 
 下載某個 GitHub Actions run 的 artifacts，並上傳到 Linode Object Storage。
 
 用法：
 
 ```sh
-scripts/linode-ci-runners/archive-ci-artifacts.sh \
+go run ./scripts/go/rtk-cloud -- ci-runners archive-artifacts \
   --repo hkt999rtk/rtk_video_cloud \
   --run-id RUN_ID
 ```
 
-可加 `--prefix PREFIX` 指定 Object Storage prefix。需要 `gh`、`LINODE_OBJ_BUCKET`、`LINODE_OBJ_ENDPOINT`、`LINODE_OBJ_ACCESS_KEY_ID`、`LINODE_OBJ_SECRET_ACCESS_KEY`。若本機有 `aws` CLI 會用 `aws s3 sync`；否則使用 Python `boto3` fallback。
+可加 `--prefix PREFIX` 指定 Object Storage prefix。需要 `gh`、`go`、`LINODE_OBJ_BUCKET`、`LINODE_OBJ_ENDPOINT`、`LINODE_OBJ_ACCESS_KEY_ID`、`LINODE_OBJ_SECRET_ACCESS_KEY`。

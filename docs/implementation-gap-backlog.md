@@ -200,7 +200,7 @@ Dependencies:
 
 Acceptance criteria:
 
-- `scripts/collect-private-cloud-evidence.sh` collects pinned service commits, selected service versions, health checks,
+- `go run ./scripts/go/rtk-cloud -- collect-evidence` collects pinned service commits, selected service versions, health checks,
   metrics links/snapshots, smoke outputs, broker status, and backup evidence
   references
 - never print tokens, DSNs, private keys, or raw customer data

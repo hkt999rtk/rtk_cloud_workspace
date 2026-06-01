@@ -10,6 +10,7 @@ ENV_ROOT="$WORKSPACE/cloud_env/staging/linode"
 SECRETS="$ENV_ROOT"
 FAKE_BIN="$TMP/bin"
 SSH_KEY="$TMP/id_ed25519_rtkcloud"
+OBJECT_ROOT="$TMP/object-storage"
 mkdir -p \
 	"$ENV_ROOT/services/video-cloud" \
 	"$FAKE_BIN" \
@@ -19,7 +20,8 @@ mkdir -p \
 	"$ENV_ROOT/services/account-manager" \
 	"$ENV_ROOT/services/cloud-admin" \
 	"$ENV_ROOT/topology" \
-	"$ENV_ROOT/env"
+	"$ENV_ROOT/env" \
+	"$OBJECT_ROOT/test-bucket/releases"
 
 cat > "$FAKE_BIN/curl" <<'SH'
 #!/usr/bin/env bash
@@ -32,21 +34,6 @@ exit 1
 SH
 chmod +x "$FAKE_BIN/curl"
 
-cat > "$FAKE_BIN/aws" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-case "$*" in
-*"s3 ls s3://test-bucket/releases/ --recursive"*)
-	exit 0
-	;;
-*)
-	printf 'unexpected aws: %s\n' "$*" >&2
-	exit 1
-	;;
-esac
-SH
-chmod +x "$FAKE_BIN/aws"
-
 touch "$ENV_ROOT/topology/video-cloud-staging.yaml"
 touch "$ENV_ROOT/services/video-cloud/video-cloud-staging.env"
 touch "$ENV_ROOT/services/account-manager/account-manager-public-staging.env"
@@ -58,11 +45,11 @@ LINODE_TOKEN=test-token
 GODADDY_KEY=test-key
 GODADDY_SECRET=test-secret
 LINODE_OBJ_BUCKET=test-bucket
-LINODE_OBJ_ENDPOINT=https://object.example.test
 EOF_ENV
+printf 'LINODE_OBJ_ENDPOINT=file://%s\n' "$OBJECT_ROOT" >> "$ENV_ROOT/env/operator.env"
 
 OUT="$TMP/out.txt"
-if PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/cloud-provision.sh" \
+if PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- provision \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--ssh-key "$SSH_KEY" \

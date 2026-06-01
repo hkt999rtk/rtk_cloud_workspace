@@ -75,7 +75,7 @@ SH
 chmod +x "$FAKE_BIN/curl"
 
 OUT="$TMP/out.json"
-if PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/cloud-create-brandname-cloud.sh" \
+if PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- create-brandname-cloud \
 	--workspace "$WORKSPACE" \
 	--brandname RTK >"$TMP/missing-env-root.out" 2>&1; then
 	echo "expected missing --env-root to fail" >&2
@@ -83,7 +83,7 @@ if PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/cloud-create-brandname-cloud.sh" \
 fi
 grep -F -- '--env-root is required' "$TMP/missing-env-root.out" >/dev/null
 
-PATH="$FAKE_BIN:$PATH" "$ROOT/scripts/cloud-create-brandname-cloud.sh" \
+PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- create-brandname-cloud \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--brandname RTK >"$OUT"

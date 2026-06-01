@@ -5,12 +5,12 @@ Use this workspace to coordinate validation across pinned submodule commits.
 ## Local Baseline
 
 ```sh
-./scripts/status-all.sh
-./scripts/docs-check.sh
-./scripts/test-matrix.sh
+go run ./scripts/go/rtk-cloud -- status-all
+go run ./scripts/go/rtk-cloud -- docs-check
+go run ./scripts/go/rtk-cloud -- test-matrix
 ```
 
-`docs-check.sh` is read-only and validates documentation governance assumptions:
+`docs-check` is read-only and validates documentation governance assumptions:
 workspace repository entries, key docs entry points, and contracts submodule
 commit alignment.
 
@@ -63,12 +63,12 @@ env-root driven real user case. Operators should start it from the same local
 environment directory used by cloud provisioning:
 
 ```sh
-scripts/cloud-run-home-mqtt-loadtest.sh \
+go run ./scripts/go/rtk-cloud -- mqtt-test \
   --env-root cloud_env/staging \
   --brandname RTK
 ```
 
-`scripts/cloud_mqtt_test.sh` is the direct entry point and writes sanitized
+`go run ./scripts/go/rtk-cloud -- mqtt-test` is the direct entry point and writes sanitized
 `results.json` plus `TEST_REPORT.md` under
 `<env-root>/artifacts/home-mqtt-loadtest/<timestamp>/`. The wrapper discovers
 user credentials, device inventory, bind artifacts,
@@ -85,7 +85,7 @@ For a destructive staging reset followed by the full onboarding and MQTT smoke,
 use the one-stop orchestrator from the workspace root:
 
 ```sh
-scripts/cloud-staging-e2e-test.sh \
+go run ./scripts/go/rtk-cloud -- staging-e2e-test \
   --env-root cloud_env/staging \
   --run \
   --confirm video-cloud-stg-0529 \
@@ -95,7 +95,7 @@ scripts/cloud-staging-e2e-test.sh \
 The same command with `--plan` is read-only and should be used before a live run.
 The orchestrator performs remove VM, provision all, create brand, create users,
 create/factory-enroll devices, bind/provision devices, validate the bind
-artifact, and run `scripts/cloud_mqtt_test.sh`. It writes sanitized
+artifact, and run `go run ./scripts/go/rtk-cloud -- mqtt-test`. It writes sanitized
 `summary.json` and `TEST_REPORT.md` under
 `<env-root>/artifacts/staging-e2e/<timestamp>/`; per-step logs remain local
 operator artifacts and should not be committed.
@@ -112,7 +112,7 @@ bind/provision devices, then validate the bind artifact. The validation profile
 lives under `e2e_test/provisioning/bulk_bind_validation/` and is invoked via:
 
 ```sh
-scripts/cloud-validate-device-bind.sh \
+go run ./scripts/go/rtk-cloud -- validate-device-bind \
   --bind-artifact cloud_env/staging/linode/artifacts/device-bind/rtk-device-bind-<timestamp>.json
 ```
 

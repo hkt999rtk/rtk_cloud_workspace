@@ -38,7 +38,7 @@ instances.
 | `rtk-shared-linux-ci` | `hkt999rtk/rtk_account_manager` | `rtk-ci-account-manager` | `self-hosted`, `Linux`, `X64`, `account-manager-ci` | `g6-standard-4` | Account Manager CI uses Go tests and PostgreSQL service containers. |
 | `rtk-shared-linux-ci` | `hkt999rtk/rtk_cloud_admin` | `rtk-ci-cloud-admin` | `self-hosted`, `Linux`, `X64`, `rtk-cloud-admin-ci` | `g6-standard-4` | Admin CI uses Go and Node 22/npm frontend validation. |
 | `rtk-shared-linux-ci` | `hkt999rtk/rtk_cloud_frontend` | `rtk-ci-cloud-frontend` | `self-hosted`, `Linux`, `X64`, `rtk_cloud_frontend`, `go` | `g6-standard-4` | Frontend CI is Go-based and can use Chrome/Chromium for visual smoke. |
-| `rtk-shared-linux-ci` | `hkt999rtk/rtk_cloud_client` | `rtk-ci-cloud-client-linux` | `self-hosted`, `Linux`, `X64`, `client-sdk-ci` | `g6-standard-4` | Client Linux CI needs Python, CMake/Ninja/CTest, and Node/npm. |
+| `rtk-shared-linux-ci` | `hkt999rtk/rtk_cloud_client` | `rtk-ci-cloud-client-linux` | `self-hosted`, `Linux`, `X64`, `client-sdk-ci` | `g6-standard-4` | Client Linux CI needs Go, CMake/Ninja/CTest, and Node/npm. |
 | `rtk-shared-linux-ci` | `hkt999rtk/rtk_cloud_logger` | `rtk-ci-cloud-logger` | `self-hosted`, `Linux`, `X64`, `rtk-cloud-logger-ci` | `g6-standard-4` | Logger CI is a lightweight Go package validation. |
 
 The shared host is for Linux validation only. Do not register CD/deploy labels
@@ -144,7 +144,7 @@ set -a
 . "$WORKSPACE/.secrets/shared/github/env/runner-registration.env"
 set +a
 
-scripts/linode-ci-runners/provision-ci-runners.sh
+go run ./scripts/go/rtk-cloud -- ci-runners provision
 ```
 
 The script:
@@ -152,7 +152,7 @@ The script:
 1. Creates the missing shared Linode VM and firewall.
 2. Waits for SSH readiness.
 3. Fetches a fresh GitHub runner registration token per repository.
-4. Installs Go, Node.js 22, Docker, Docker Compose, Python, CMake, Ninja,
+4. Installs Go, Node.js 22, Docker, Docker Compose, CMake, Ninja,
    Chrome when available, build tools, and the GitHub Actions runner.
 5. Registers repo-scoped runners on the shared VM with the required labels.
 6. Writes local ignored state containing Linode ids, public IPs, runner names,
@@ -206,11 +206,11 @@ Manual orchestrator flow:
 The orchestrator runs this sequence:
 
 ```text
-power-ci-runners.sh start
-wait-runners-online.sh
+go run ./scripts/go/rtk-cloud -- ci-runners power start
+go run ./scripts/go/rtk-cloud -- ci-runners wait-online
 gh run rerun/watch for each provided run id
-archive-ci-artifacts.sh for each run id
-power-ci-runners.sh stop
+go run ./scripts/go/rtk-cloud -- ci-runners archive-artifacts for each run id
+go run ./scripts/go/rtk-cloud -- ci-runners power stop
 ```
 
 The archive script downloads GitHub Actions artifacts and run metadata, then
@@ -220,9 +220,8 @@ uploads them to Linode Object Storage under:
 ci-runs/<owner>_<repo>/<run-id>/
 ```
 
-The script uses `aws s3 sync` when AWS CLI is installed. If AWS CLI is not
-available, it falls back to Python `boto3` against the same Linode
-S3-compatible endpoint.
+`rtk-cloud ci-runners archive-artifacts` uploads through the Go Object Storage
+client against the Linode S3-compatible endpoint.
 
 ### Operator Fallback
 
@@ -230,7 +229,7 @@ If GitHub Actions itself is unavailable, an operator can run the same lifecycle
 locally with equivalent environment variables loaded:
 
 ```sh
-scripts/linode-ci-runners/run-ci-session.sh \
+go run ./scripts/go/rtk-cloud -- ci-runners run-session \
   --account-run-id <run-id> \
   --admin-run-id <run-id> \
   --frontend-run-id <run-id> \
@@ -245,13 +244,13 @@ scripts/linode-ci-runners/run-ci-session.sh \
 Check Linode VM power state:
 
 ```sh
-scripts/linode-ci-runners/power-ci-runners.sh status
+go run ./scripts/go/rtk-cloud -- ci-runners power status
 ```
 
 Check registered runner status:
 
 ```sh
-scripts/linode-ci-runners/list-ci-runners.sh
+go run ./scripts/go/rtk-cloud -- ci-runners list
 ```
 
 Expected online runners before CI starts:

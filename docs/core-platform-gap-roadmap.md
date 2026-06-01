@@ -43,7 +43,7 @@ production-like deployments.
 | Admin upstream readiness/telemetry mode | P0 | `hkt999rtk/rtk_cloud_admin` | Production-mode use of authoritative account/video readiness and telemetry facts. |
 | Brand-cloud backend management | Done | `hkt999rtk/rtk_account_manager`, `hkt999rtk/rtk_cloud_admin` | Account Manager owns `organization_kind=brand_cloud`, platform-admin APIs, bootstrap root, and audit; Admin provides backend/BFF proxy routes for future WebUI. |
 | Frontend private-cloud deployment docs | P1 | `hkt999rtk/rtk_cloud_frontend` | Production deployment profile and backup/restore notes for website lead/analytics storage. |
-| Product-level evidence collector | Done | `hkt999rtk/rtk_cloud_workspace` | `scripts/collect-private-cloud-evidence.sh` gathers service evidence into a redacted bundle. |
+| Product-level evidence collector | Done | `hkt999rtk/rtk_cloud_workspace` | `go run ./scripts/go/rtk-cloud -- collect-evidence` gathers service evidence into a redacted bundle. |
 | Cross-service broker packaging | Done | `hkt999rtk/rtk_cloud_workspace` | `docs/cross-service-broker-packaging.md` records the owner decision and NATS JetStream packaging/runbook plan. |
 | SDK release coverage artifacts | Done | `hkt999rtk/rtk_cloud_client` | Android/iOS/native coverage exports and release validation artifacts. |
 | Pro2/FreeRTOS live-lab validation | Done | `hkt999rtk/rtk_cloud_client` | Live hardware release test program with clean skip/block reporting. |

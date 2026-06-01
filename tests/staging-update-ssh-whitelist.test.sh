@@ -87,7 +87,7 @@ SH
 chmod +x "$FAKE_BIN/curl"
 
 if PATH="$FAKE_BIN:$PATH" CURL_LOG="$LOG" CURL_PAYLOAD_LOG="$PAYLOAD_LOG" LINODE_TOKEN=test-token \
-	"$ROOT/scripts/cloud-update-ssh-whitelist.sh" \
+	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- update-ssh-whitelist \
 		--workspace "$WORKSPACE" \
 		--cidr 198.51.100.9/32 >"$TMP/missing-env-root.out" 2>&1; then
 	echo "expected missing --env-root to fail" >&2
@@ -97,7 +97,7 @@ grep -F -- '--env-root is required' "$TMP/missing-env-root.out" >/dev/null
 : > "$LOG"
 
 PATH="$FAKE_BIN:$PATH" CURL_LOG="$LOG" CURL_PAYLOAD_LOG="$PAYLOAD_LOG" LINODE_TOKEN=test-token \
-	"$ROOT/scripts/cloud-update-ssh-whitelist.sh" \
+	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- update-ssh-whitelist \
 		--workspace "$WORKSPACE" \
 		--env-root "$ENV_ROOT" \
 		--cidr 198.51.100.9/32 >/dev/null
@@ -135,7 +135,7 @@ EOF_YAML
 : > "$PAYLOAD_LOG"
 
 PATH="$FAKE_BIN:$PATH" CURL_LOG="$LOG" CURL_PAYLOAD_LOG="$PAYLOAD_LOG" LINODE_TOKEN=test-token \
-	"$ROOT/scripts/cloud-update-ssh-whitelist.sh" \
+	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- update-ssh-whitelist \
 		--workspace "$WORKSPACE" \
 		--env-root "$ENV_ROOT" \
 		--mode replace \

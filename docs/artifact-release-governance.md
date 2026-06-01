@@ -19,12 +19,12 @@ published, how operators find them, and how developers prove an artifact exists.
 ## Storage Boundary
 
 Linode Object Storage is the durable store for formal deploy and handoff
-artifacts. It exposes an S3-compatible API. Workflows may use `aws s3`, `s3cmd`,
-`rclone`, or another S3-compatible client, but the backend is Linode Object
-Storage and every command must point at the configured Linode endpoint.
+artifacts. It exposes an S3-compatible API. Workspace scripts must use the Go
+Object Storage client, and every command must point at the configured Linode
+endpoint.
 
-Do not describe this as publishing to AWS storage. When using the AWS CLI, write
-"AWS CLI as an S3-compatible client for Linode Object Storage" or equivalent.
+Do not describe this as publishing to AWS storage. Workspace automation must use
+the Go Object Storage client rather than provider-specific storage CLIs.
 
 | Store | Role |
 | --- | --- |
@@ -76,14 +76,11 @@ Minimum manifest fields:
 Every implementation issue that adds or changes artifact publishing must include
 commands that let the developer verify the published objects directly.
 
-AWS CLI example, using the AWS CLI only as an S3-compatible client:
+Go Object Storage client example:
 
 ```bash
-aws s3 ls "s3://$LINODE_OBJ_BUCKET/releases/<artifact-name>-<version>/" \
-  --endpoint-url "$LINODE_OBJ_ENDPOINT"
-
-aws s3 cp "s3://$LINODE_OBJ_BUCKET/releases/<artifact-name>-<version>/manifest.json" - \
-  --endpoint-url "$LINODE_OBJ_ENDPOINT"
+go run ./scripts/go/linode-object-storage -- list-manifests --release-prefix <artifact-name>
+go run ./scripts/go/linode-object-storage -- cat --key releases/<artifact-name>-<version>/manifest.json
 ```
 
 Equivalent `s3cmd` or `rclone` checks are acceptable if they use the same Linode
