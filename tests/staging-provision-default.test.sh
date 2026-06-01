@@ -71,7 +71,7 @@ chmod +x "$FAKE_BIN/curl"
 cat > "$FAKE_BIN/go" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$GO_ARGS"
-if [[ "$*" == *" ./cmd/linode-deploy apply "* ]]; then
+if [[ "$PWD" == */repos/rtk_video_cloud/linode_deploy && "$*" == *" ./cmd/linode-deploy apply "* ]]; then
 	config=""
 	while [[ "$#" -gt 0 ]]; do
 		if [[ "$1" == "--config" ]]; then

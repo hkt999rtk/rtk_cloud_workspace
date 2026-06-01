@@ -445,7 +445,7 @@ func provisionApply(paths provisionPaths, env map[string]string, opts provisionO
 		return err
 	}
 	if _, err := os.Stat(paths.VideoState); err != nil {
-		if err := runCmdWithEnv(filepath.Join(paths.Workspace, "repos", "rtk_video_cloud"), mergeEnv(operator, map[string]string{}), "go", "run", "./cmd/linode-deploy", "apply", "--config", paths.VideoConfig); err != nil {
+		if err := runCmdWithEnv(filepath.Join(paths.Workspace, "repos", "rtk_video_cloud", "linode_deploy"), mergeEnv(operator, map[string]string{}), "go", "run", "./cmd/linode-deploy", "apply", "--config", paths.VideoConfig); err != nil {
 			return err
 		}
 	}
@@ -993,7 +993,10 @@ func runCmdWithEnv(dir string, env map[string]string, name string, args ...strin
 			cmd.Env = append(cmd.Env, k+"="+v)
 		}
 	}
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%s %s in %s: %w", name, strings.Join(args, " "), dir, err)
+	}
+	return nil
 }
 
 func readJSONMap(path string) (map[string]any, error) {

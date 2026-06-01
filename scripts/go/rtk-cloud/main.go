@@ -2349,7 +2349,11 @@ func curlLinodeWithStderr(method, path, data string, stderr io.Writer) ([]byte, 
 	}
 	cmd := exec.Command("curl", args...)
 	cmd.Stderr = stderr
-	return cmd.Output()
+	out, err := cmd.Output()
+	if err != nil {
+		return out, fmt.Errorf("Linode API %s %s failed: %w", method, path, err)
+	}
+	return out, nil
 }
 
 func isSSHRule(rule firewallRule) bool {
