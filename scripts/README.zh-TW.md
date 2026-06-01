@@ -233,6 +233,17 @@ go run ./scripts/go/rtk-cloud -- migrate-env --env-root cloud_env/staging --forc
 
 Linode staging 的主要編排腳本。它可以做 preflight、plan、reset、apply、DNS、deploy、artifact collection、e2e smoke。預設不變更環境，只做 `--plan`。
 
+service logging 的目標 provisioning model 記在 `docs/service-logging-architecture.md`：logger backend 要在 application services 前 provision，然後每台 VM 安裝 journald forwarder。forwarder 或 logger backend degraded 時，不應阻塞 account/video/admin/frontend service 啟動；readiness report 會標示 `logging: degraded`。
+
+`cloud_env/<env>/linode/env/stack.env` 可設定 logger backend 與 forwarder 的環境 metadata：
+
+- `CLOUD_LOGGER_LINODE_LABEL` / `CLOUD_LOGGER_LINODE_FIREWALL_LABEL`：logger backend VM 與 firewall label。
+- `CLOUD_LOGGER_DOMAIN`：logger backend ingest/query endpoint domain。
+- `CLOUD_LOGGER_FORWARDER_TARGETS`：plan 中列出的 forwarder target，預設包含 edge/api/infra/mqtt/coturn/account-manager/cloud-admin/frontend/non-Go host sources。
+- `CLOUD_LOGGER_JOURNALD_SYSTEM_MAX_USE`、`CLOUD_LOGGER_JOURNALD_SYSTEM_KEEP_FREE`、`CLOUD_LOGGER_JOURNALD_MAX_RETENTION_SEC`：journald retention guidance，會傳給 forwarder install hook。
+
+`go run ./scripts/go/rtk-cloud -- deploy` 會在 app deploy 前呼叫 `CLOUD_LOGGER_SCRIPT` 執行 `provision-backend` 與每台 host 的 `install-forwarder`，再於 readiness report 收集 `backend-health`、`forwarder-status` 與 `sample-trace-query`。未設定 `CLOUD_LOGGER_SCRIPT` 時會略過 logger hook；正式環境應將它指到 `rtk_cloud_logger` 提供的 live provisioning hook。hook degraded 時不會阻塞服務 deploy。
+
 常用用法：
 
 ```sh
@@ -272,6 +283,9 @@ go run ./scripts/go/rtk-cloud -- provision \
 - `--verbose`：輸出更多 debug 訊息。
 
 HTTPS certificate cache 由 `go run ./scripts/go/rtk-cloud -- deploy` 處理：如果 `cloud_env/staging/linode/certificates/<fqdn>/fullchain.pem` 與 `privkey.pem` 存在且在安全期限內未過期，就會先上傳到新 VM，建立 certbot lineage/renewal config、啟用 `certbot.timer`，並跳過新憑證申請；如果沒有可用 cache，deploy 仍會走 certbot，成功後再把 VM 上的 certificate/key 拉回 `cloud_env`。預設要求 certificate 至少還有 7 天有效期，可用 `--cert-cache-min-valid-seconds` 調整。
+
+`--plan` 會顯示 logger backend、logger env/state、forwarder credentials、每台 host 的 forwarder targets、journald retention guidance，以及 backend/forwarder/sample trace readiness evidence 項目。
+
 
 ### `go run ./scripts/go/rtk-cloud -- staging-e2e-test`
 

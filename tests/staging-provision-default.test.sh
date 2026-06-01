@@ -272,3 +272,10 @@ grep -F 'admin admin-test http://10.42.1.30:9090' "$DEPLOY_LOG" >/dev/null
 grep -F 'records upsert example.test --type A --name video-cloud-ci --data 203.0.113.5 --ttl 600' "$GO_ARGS" >/dev/null
 find "$ENV_ROOT/artifacts" -path '*provision-report.md' | grep -q .
 find "$ENV_ROOT/artifacts" -path '*e2e-report.md' | grep -q .
+grep -F 'rtk-account-manager-ci' "$OUT" >/dev/null
+grep -F 'admin.video-cloud-ci.example.test' "$OUT" >/dev/null
+grep -F 'logger backend: rtk-cloud-logger-ci' "$OUT" >/dev/null
+grep -F 'logger env: '"$ENV_ROOT"'/services/cloud-logger/logger.env' "$OUT" >/dev/null
+grep -F 'logger state: '"$ENV_ROOT"'/state/cloud-logger.env' "$OUT" >/dev/null
+grep -F 'forwarder targets: edge, api, infra, mqtt, coturn, account-manager, cloud-admin, frontend, non-go-host-sources' "$OUT" >/dev/null
+grep -F 'journald retention: SystemMaxUse=1G SystemKeepFree=2G MaxRetentionSec=7day' "$OUT" >/dev/null

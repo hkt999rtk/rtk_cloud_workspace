@@ -267,6 +267,8 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 	report := newReadinessReport(reportDir)
 	fmt.Fprintf(os.Stderr, "[cloud-deploy] readiness report: %s\n", report.path())
 
+	runLoggerProvisionHooks(paths, env, report)
+
 	videoEnv := mergeEnv(operator, map[string]string{
 		"LINODE_DEPLOY_CERT_CACHE_DIR": filepath.Join(paths.EnvRoot, "certificates", env["VIDEO_CLOUD_DOMAIN"]),
 	})
@@ -335,7 +337,82 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 	report.add("cloud-admin-deploy", "PASS", "")
 	_ = runCmdWithEnv(filepath.Join(paths.Workspace, "repos", "rtk_cloud_admin"), adminValues, "deploy/linode/verify-admin.sh")
 	report.add("cloud-admin-verify", "PASS", "")
+	runLoggerReadinessHooks(paths, env, report)
 	return report.write(true)
+}
+
+func runLoggerProvisionHooks(paths provisionPaths, env map[string]string, report *readinessReport) {
+	script := os.Getenv("CLOUD_LOGGER_SCRIPT")
+	if script == "" {
+		return
+	}
+	loggerEnv := filepath.Join(paths.EnvRoot, "services", "cloud-logger", "logger.env")
+	loggerState := filepath.Join(paths.EnvRoot, "state", "cloud-logger.env")
+	endpoint := firstNonEmpty(env["CLOUD_LOGGER_ENDPOINT"], "https://logger."+env["CLOUD_DNS_ROOT_DOMAIN"])
+	if err := runCmdWithEnv(paths.Workspace, nil, script, "provision-backend", "--workspace", paths.Workspace, "--env-root", paths.EnvRoot, "--logger-env", loggerEnv, "--logger-state", loggerState, "--endpoint", endpoint); err != nil {
+		report.add("logger-backend-provision", "DEGRADED", "")
+	}
+	targets := []struct {
+		name string
+		host string
+	}{
+		{"account-manager", envFileValue(paths.AccountManagerState, "ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4")},
+		{"video-cloud-api", videoStateInstanceHost(paths.VideoState, "api")},
+		{"cloud-admin", envFileValue(paths.AdminState, "ADMIN_LINODE_PUBLIC_IPV4")},
+		{"frontend", ""},
+		{"non-go-host-sources", ""},
+	}
+	for _, target := range targets {
+		args := []string{"install-forwarder", target.name, "--workspace", paths.Workspace, "--env-root", paths.EnvRoot, "--logger-env", loggerEnv, "--logger-state", loggerState, "--host", target.host, "--journald-system-max-use", "512M", "--journald-system-keep-free", "1G", "--journald-max-retention-sec", "604800"}
+		if err := runCmdWithEnv(paths.Workspace, nil, script, args...); err != nil {
+			report.add("logger-forwarder:"+target.name, "DEGRADED", "")
+		}
+	}
+}
+
+func runLoggerReadinessHooks(paths provisionPaths, env map[string]string, report *readinessReport) {
+	script := os.Getenv("CLOUD_LOGGER_SCRIPT")
+	if script == "" {
+		return
+	}
+	loggerEnv := filepath.Join(paths.EnvRoot, "services", "cloud-logger", "logger.env")
+	loggerState := filepath.Join(paths.EnvRoot, "state", "cloud-logger.env")
+	checks := [][]string{
+		{"backend-health"},
+		{"forwarder-status", "account-manager"},
+		{"forwarder-status", "video-cloud-api"},
+		{"forwarder-status", "cloud-admin"},
+		{"sample-trace-query"},
+	}
+	for _, check := range checks {
+		name := "logger-" + check[0]
+		args := append([]string{}, check...)
+		args = append(args, "--workspace", paths.Workspace, "--env-root", paths.EnvRoot, "--logger-env", loggerEnv, "--logger-state", loggerState, "--endpoint", firstNonEmpty(env["CLOUD_LOGGER_ENDPOINT"], ""))
+		if len(check) > 1 {
+			name = "logger-" + check[0] + ":" + check[1]
+		}
+		if err := runCmdWithEnv(paths.Workspace, nil, script, args...); err != nil {
+			report.add(name, "DEGRADED", "")
+		}
+	}
+}
+
+func videoStateInstanceHost(path, role string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var state struct {
+		Instances map[string]struct {
+			PublicIPv4 string `json:"public_ipv4"`
+			PrivateIP  string `json:"private_ip"`
+		} `json:"instances"`
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		return ""
+	}
+	inst := state.Instances[role]
+	return firstNonEmpty(inst.PrivateIP, inst.PublicIPv4)
 }
 
 func materializeReleaseBundle(dir string, operator map[string]string, prefix, release string) (string, error) {
@@ -396,6 +473,9 @@ func (r *readinessReport) write(ok bool) error {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Readiness Report\n\nstatus: %s\n\n", status)
+	if r.hasStatus("DEGRADED") {
+		fmt.Fprintf(&b, "logging: degraded\n\n")
+	}
 	for _, step := range r.steps {
 		if step.BlockedBy != "" {
 			fmt.Fprintf(&b, "- %s `%s` blocked_by=`%s`\n", step.Status, step.Name, step.BlockedBy)
@@ -404,4 +484,13 @@ func (r *readinessReport) write(ok bool) error {
 		}
 	}
 	return os.WriteFile(r.path(), []byte(b.String()), 0o644)
+}
+
+func (r *readinessReport) hasStatus(status string) bool {
+	for _, step := range r.steps {
+		if step.Status == status {
+			return true
+		}
+	}
+	return false
 }

@@ -424,6 +424,12 @@ func provisionPlan(paths provisionPaths, env map[string]string) error {
 	fmt.Fprintf(os.Stdout, "- vpc/subnet: %s / %s\n", env["VIDEO_CLOUD_VPC_LABEL"], env["VIDEO_CLOUD_SUBNET_LABEL"])
 	fmt.Fprintf(os.Stdout, "- dns: %s, %s, %s, %s\n", env["VIDEO_CLOUD_DOMAIN"], env["VIDEO_CLOUD_CERTISSUER_DOMAIN"], env["ACCOUNT_MANAGER_DOMAIN"], env["CLOUD_ADMIN_DOMAIN"])
 	fmt.Fprintf(os.Stdout, "- cloud-admin private IP: %s\n", adminPrivateIPv4(paths))
+	loggerLabel := firstNonEmpty(env["CLOUD_LOGGER_LINODE_LABEL"], "rtk-cloud-logger-"+env["CLOUD_ENV_NAME"])
+	fmt.Fprintf(os.Stdout, "- logger backend: %s\n", loggerLabel)
+	fmt.Fprintf(os.Stdout, "- logger env: %s\n", filepath.Join(paths.EnvRoot, "services", "cloud-logger", "logger.env"))
+	fmt.Fprintf(os.Stdout, "- logger state: %s\n", filepath.Join(paths.EnvRoot, "state", "cloud-logger.env"))
+	fmt.Fprintln(os.Stdout, "- forwarder targets: edge, api, infra, mqtt, coturn, account-manager, cloud-admin, frontend, non-go-host-sources")
+	fmt.Fprintln(os.Stdout, "- journald retention: SystemMaxUse=1G SystemKeepFree=2G MaxRetentionSec=7day")
 	return nil
 }
 
