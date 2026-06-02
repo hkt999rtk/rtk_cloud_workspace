@@ -3578,7 +3578,20 @@ func runBindDevices(args []string) error {
 	}
 	runID := time.Now().UTC().Format("20060102T150405Z")
 	results := []bindAssignment{}
+	skipped := 0
 	for _, assignment := range assignments {
+		existingDevice, exists, err := accountFindDeviceByVideoCloudDevid(ctx, userTokens[assignment.AssignedEmail], brandCloudID, assignment.DeviceID)
+		if err != nil {
+			return err
+		}
+		if exists {
+			assignment.AccountDeviceID = stringValue(existingDevice["id"])
+			assignment.Status = "already_bound"
+			logBind("device already bound; skipping claim: device=%s account_device=%s", assignment.DeviceID, assignment.AccountDeviceID)
+			results = append(results, assignment)
+			skipped++
+			continue
+		}
 		claim, err := createClaimToken(ctx, token, brandCloudID, assignment, runID, *claimTTL)
 		if err != nil {
 			return err
@@ -3610,7 +3623,8 @@ func runBindDevices(args []string) error {
 		return err
 	}
 	_ = os.Chmod(artifactFile, 0o600)
-	return json.NewEncoder(os.Stdout).Encode(map[string]any{"action": "bound", "brandname": *brandname, "brand_cloud_id": brandCloudID, "count": *count, "created_claims": len(results), "resolved_claims": len(results), "provision_started": len(results), "artifact_file": artifactFile})
+	provisionStarted := len(results) - skipped
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{"action": "bound", "brandname": *brandname, "brand_cloud_id": brandCloudID, "count": *count, "created_claims": provisionStarted, "resolved_claims": provisionStarted, "provision_started": provisionStarted, "already_bound": skipped, "artifact_file": artifactFile})
 }
 
 func readUsersList(path string) (map[string]userCredential, []userCredential, error) {
@@ -3683,6 +3697,34 @@ func accountFindBrandCloudForLog(ctx accountManagerContext, token, brandname str
 	return nil, fmt.Errorf("brand cloud not found: %s", brandname)
 }
 
+func accountFindDeviceByVideoCloudDevid(ctx accountManagerContext, token, brandCloudID, videoCloudDevid string) (map[string]any, bool, error) {
+	const limit = 200
+	for offset := 0; ; offset += limit {
+		body, status, err := curlJSONStatus(fmt.Sprintf("%s/v1/orgs/%s/devices?limit=%d&offset=%d", ctx.BaseURL, brandCloudID, limit, offset), token, nil)
+		if err != nil {
+			return nil, false, err
+		}
+		if status != 200 {
+			return nil, false, fmt.Errorf("device lookup failed: device=%s HTTP %d%s", videoCloudDevid, status, errorBodySuffix(body))
+		}
+		var parsed map[string]any
+		if err := json.Unmarshal(body, &parsed); err != nil {
+			return nil, false, err
+		}
+		devices := anySlice(parsed["devices"])
+		for _, item := range devices {
+			device, _ := item.(map[string]any)
+			metadata, _ := device["metadata"].(map[string]any)
+			if stringValue(metadata["video_cloud_devid"]) == videoCloudDevid && device["disabled_at"] == nil {
+				return device, true, nil
+			}
+		}
+		if len(devices) < limit {
+			return nil, false, nil
+		}
+	}
+}
+
 func createClaimToken(ctx accountManagerContext, token, brandCloudID string, assignment bindAssignment, runID string, ttlHours int) (map[string]any, error) {
 	expires := time.Now().UTC().Add(time.Duration(ttlHours) * time.Hour).Format(time.RFC3339)
 	payload, _ := json.Marshal(map[string]any{
@@ -3700,7 +3742,7 @@ func createClaimToken(ctx accountManagerContext, token, brandCloudID string, ass
 		return nil, err
 	}
 	if status != 200 && status != 201 {
-		return nil, fmt.Errorf("claim token create failed: device=%s HTTP %d", assignment.DeviceID, status)
+		return nil, fmt.Errorf("claim token create failed: device=%s HTTP %d%s", assignment.DeviceID, status, errorBodySuffix(body))
 	}
 	var parsed map[string]any
 	return parsed, json.Unmarshal(body, &parsed)
@@ -3713,10 +3755,30 @@ func resolveClaim(ctx accountManagerContext, token, brandCloudID string, assignm
 		return nil, err
 	}
 	if status != 200 && status != 201 {
-		return nil, fmt.Errorf("claim resolve failed: device=%s HTTP %d", assignment.DeviceID, status)
+		return nil, fmt.Errorf("claim resolve failed: device=%s HTTP %d%s", assignment.DeviceID, status, errorBodySuffix(body))
 	}
 	var parsed map[string]any
 	return parsed, json.Unmarshal(body, &parsed)
+}
+
+func errorBodySuffix(body []byte) string {
+	if len(bytes.TrimSpace(body)) == 0 {
+		return ""
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err == nil {
+		code := stringValue(firstPresent(parsed, "error", "code"))
+		message := stringValue(parsed["message"])
+		switch {
+		case code != "" && message != "":
+			return fmt.Sprintf(": %s (%s)", code, message)
+		case code != "":
+			return ": " + code
+		case message != "":
+			return ": " + message
+		}
+	}
+	return ": " + strings.TrimSpace(string(body))
 }
 
 func startProvision(ctx accountManagerContext, token, brandCloudID string, assignment bindAssignment, operationID string, provisionInput map[string]any) error {

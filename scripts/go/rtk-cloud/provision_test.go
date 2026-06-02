@@ -189,6 +189,56 @@ func TestAccountLoginLogsPlatformAdminUsername(t *testing.T) {
 	}
 }
 
+func TestAccountFindDeviceByVideoCloudDevidSkipsDisabledAndPaginates(t *testing.T) {
+	requests := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.RawQuery)
+		if got := r.Header.Get("authorization"); got != "Bearer user-token" {
+			t.Fatalf("authorization = %q", got)
+		}
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/orgs/org-123/devices" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.RequestURI())
+		}
+		switch r.URL.Query().Get("offset") {
+		case "0":
+			devices := []map[string]any{{"id": "disabled-device", "metadata": map[string]any{"video_cloud_devid": "load-device-0001"}, "disabled_at": "2026-06-01T00:00:00Z"}}
+			for i := 1; i < 200; i++ {
+				devices = append(devices, map[string]any{"id": fmt.Sprintf("other-%03d", i), "metadata": map[string]any{"video_cloud_devid": fmt.Sprintf("other-device-%03d", i)}, "disabled_at": nil})
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"devices": devices})
+		case "200":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"devices":[{"id":"active-device","metadata":{"video_cloud_devid":"load-device-0001"},"disabled_at":null}]}`))
+		default:
+			t.Fatalf("unexpected offset: %s", r.URL.Query().Get("offset"))
+		}
+	}))
+	defer server.Close()
+
+	device, found, err := accountFindDeviceByVideoCloudDevid(accountManagerContext{BaseURL: server.URL}, "user-token", "org-123", "load-device-0001")
+	if err != nil {
+		t.Fatalf("accountFindDeviceByVideoCloudDevid returned error: %v", err)
+	}
+	if !found {
+		t.Fatal("expected device to be found")
+	}
+	if got := stringValue(device["id"]); got != "active-device" {
+		t.Fatalf("device id = %q", got)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("requests = %#v", requests)
+	}
+}
+
+func TestErrorBodySuffixIncludesStructuredAPIError(t *testing.T) {
+	got := errorBodySuffix([]byte(`{"error":"already_claimed","message":"Claim token has already been claimed"}`))
+	want := ": already_claimed (Claim token has already been claimed)"
+	if got != want {
+		t.Fatalf("suffix = %q, want %q", got, want)
+	}
+}
+
 func TestSelectObjectReleaseSupportsHTTPObjectStorage(t *testing.T) {
 	requests := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
