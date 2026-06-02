@@ -4,14 +4,14 @@ on:
   pull_request:
     paths:
       - '.gitmodules'
-      - '.github/workflows/linode-ci-orchestrator.yml'
+      - '.github/workflows/submodule-pointer-check.yml'
       - 'repos/**'
   push:
     branches:
       - main
     paths:
       - '.gitmodules'
-      - '.github/workflows/linode-ci-orchestrator.yml'
+      - '.github/workflows/submodule-pointer-check.yml'
       - 'repos/**'
   workflow_dispatch:
 
