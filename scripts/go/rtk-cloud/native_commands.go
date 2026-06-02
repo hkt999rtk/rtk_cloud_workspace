@@ -358,6 +358,7 @@ func writePlatformAdminSummary(w io.Writer, paths provisionPaths) {
 	}
 	fmt.Fprintf(w, "- username: %s\n", username)
 	fmt.Fprintf(w, "- password: see %s\n", platformEnv)
+	fmt.Fprintln(w, "- token: run ./stg.sh token")
 }
 
 func runLoggerProvisionHooks(paths provisionPaths, env map[string]string, report *readinessReport) {

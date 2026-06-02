@@ -116,8 +116,49 @@ func TestWritePlatformAdminSummaryRedactsPassword(t *testing.T) {
 	if !strings.Contains(body, "password: see "+platformEnv) {
 		t.Fatalf("summary missing password file hint:\n%s", body)
 	}
+	if !strings.Contains(body, "token: run ./stg.sh token") {
+		t.Fatalf("summary missing token command hint:\n%s", body)
+	}
 	if strings.Contains(body, "super-secret-password") {
 		t.Fatalf("summary leaked password:\n%s", body)
+	}
+}
+
+func TestWritePlatformAdminTokenLogsInWithBootstrapCredentials(t *testing.T) {
+	var gotEmail, gotPassword string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/auth/login" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var payload map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		gotEmail = payload["email"]
+		gotPassword = payload["password"]
+		_, _ = w.Write([]byte(`{"tokens":{"access_token":"access-token-123"}}`))
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	platformEnv := filepath.Join(root, "services", "account-manager", "account-manager-platform-admin.env")
+	mkdirAll(t, filepath.Dir(platformEnv))
+	writeFile(t, platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL=root@example.test\nACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD=super-secret-password\n")
+
+	var out strings.Builder
+	err := writePlatformAdminToken(&out, accountManagerContext{
+		BaseURL:       server.URL,
+		AdminEmail:    envFileValue(platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL"),
+		AdminPassword: envFileValue(platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD"),
+	})
+	if err != nil {
+		t.Fatalf("writePlatformAdminToken returned error: %v", err)
+	}
+	if gotEmail != "root@example.test" || gotPassword != "super-secret-password" {
+		t.Fatalf("login credentials email=%q password=%q", gotEmail, gotPassword)
+	}
+	if strings.TrimSpace(out.String()) != "access-token-123" {
+		t.Fatalf("token output = %q", out.String())
 	}
 }
 

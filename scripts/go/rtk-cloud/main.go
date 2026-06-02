@@ -49,6 +49,7 @@ var commands = map[string]commandSpec{
 	"logs-check":             {run: runLogsCheck},
 	"migrate-env":            {run: runMigrateEnv},
 	"mqtt-test":              {run: runMQTTTest},
+	"platform-admin-token":   {run: runPlatformAdminToken},
 	"provision":              {run: runProvision},
 	"remove-all-vm":          {run: runRemoveAllVM},
 	"secrets-check":          {run: runSecretsCheck},
@@ -2064,6 +2065,35 @@ func accountManagerContextFromFlags(workspaceFlag, envRootFlag string) (accountM
 		SSHKey:           firstNonEmpty(envFileValue(accountEnv, "ACCOUNT_MANAGER_LINODE_SSH_KEY"), filepath.Join(os.Getenv("HOME"), ".ssh", "id_ed25519_rtkcloud")),
 		PlatformAdminEnv: platformEnv,
 	}, nil
+}
+
+func runPlatformAdminToken(args []string) error {
+	fs := flag.NewFlagSet("platform-admin-token", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	workspaceFlag := fs.String("workspace", "", "workspace")
+	envRootFlag := fs.String("env-root", "", "environment root")
+	fs.StringVar(envRootFlag, "secrets-root", "", "deprecated env root")
+	baseURL := fs.String("base-url", "", "Account Manager base URL override")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	ctx, err := accountManagerContextFromFlags(*workspaceFlag, *envRootFlag)
+	if err != nil {
+		return err
+	}
+	if *baseURL != "" {
+		ctx.BaseURL = strings.TrimRight(*baseURL, "/")
+	}
+	return writePlatformAdminToken(os.Stdout, ctx)
+}
+
+func writePlatformAdminToken(w io.Writer, ctx accountManagerContext) error {
+	token, err := accountLogin(ctx, func(string, ...any) {})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(w, token)
+	return nil
 }
 
 func accountLogin(ctx accountManagerContext, logf func(string, ...any)) (string, error) {
