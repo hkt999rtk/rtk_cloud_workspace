@@ -15,6 +15,7 @@ mkdir -p "$FAKE_BIN" "$RESOLVED_ENV_ROOT/env" "$RESOLVED_ENV_ROOT/state"
 printf '{"instances":{}}\n' > "$RESOLVED_ENV_ROOT/state/video-cloud-staging.state.json"
 printf 'ACCOUNT_MANAGER_LINODE_ID=202\n' > "$RESOLVED_ENV_ROOT/state/account-manager-staging.env"
 printf 'ADMIN_LINODE_ID=303\n' > "$RESOLVED_ENV_ROOT/state/cloud-admin-staging.env"
+printf 'CLOUD_LOGGER_LINODE_ID=204\nCLOUD_LOGGER_INGEST_TOKEN=secret\n' > "$RESOLVED_ENV_ROOT/state/cloud-logger.env"
 
 cat > "$FAKE_BIN/curl" <<'SH'
 #!/usr/bin/env bash
@@ -34,6 +35,7 @@ JSON
     {"id": 102, "label": "staging-db", "status": "running"},
     {"id": 201, "label": "video-cloud-staging-edge", "status": "running"},
     {"id": 202, "label": "rtk-account-manager-staging", "status": "running"},
+    {"id": 204, "label": "rtk-cloud-logger-staging", "status": "running"},
     {"id": 203, "label": "prod-api", "status": "running"}
   ]
 }
@@ -52,6 +54,7 @@ if [[ "$*" == *"-X GET https://api.linode.com/v4/networking/firewalls?page_size=
   {"id":302,"label":"video-cloud-staging-api"},
   {"id":401,"label":"rtk-account-manager-staging-fw"},
   {"id":501,"label":"rtk-cloud-admin-staging-firewall"},
+  {"id":502,"label":"rtk-cloud-logger-staging-firewall"},
   {"id":999,"label":"prod-firewall"}
 ]}
 JSON
@@ -102,6 +105,7 @@ grep -F -- '-X DELETE https://api.linode.com/v4/linode/instances/101' "$LOG" >/d
 grep -F -- '-X DELETE https://api.linode.com/v4/linode/instances/102' "$LOG" >/dev/null
 grep -F -- '-X DELETE https://api.linode.com/v4/linode/instances/201' "$LOG" >/dev/null
 grep -F -- '-X DELETE https://api.linode.com/v4/linode/instances/202' "$LOG" >/dev/null
+grep -F -- '-X DELETE https://api.linode.com/v4/linode/instances/204' "$LOG" >/dev/null
 if grep -F -- '/linode/instances/203' "$LOG" >/dev/null; then
 	printf 'deleted a VM whose label is not staging\n' >&2
 	exit 1
@@ -110,6 +114,7 @@ grep -F -- '-X DELETE https://api.linode.com/v4/networking/firewalls/301' "$LOG"
 grep -F -- '-X DELETE https://api.linode.com/v4/networking/firewalls/302' "$LOG" >/dev/null
 grep -F -- '-X DELETE https://api.linode.com/v4/networking/firewalls/401' "$LOG" >/dev/null
 grep -F -- '-X DELETE https://api.linode.com/v4/networking/firewalls/501' "$LOG" >/dev/null
+grep -F -- '-X DELETE https://api.linode.com/v4/networking/firewalls/502' "$LOG" >/dev/null
 grep -F -- '-X DELETE https://api.linode.com/v4/vpcs/601' "$LOG" >/dev/null
 if grep -F -- '/networking/firewalls/999' "$LOG" >/dev/null || grep -F -- '/vpcs/999' "$LOG" >/dev/null; then
 	printf 'deleted non-staging firewall or VPC\n' >&2
@@ -119,6 +124,8 @@ fi
 test ! -e "$RESOLVED_ENV_ROOT/state/video-cloud-staging.state.json"
 test ! -e "$RESOLVED_ENV_ROOT/state/account-manager-staging.env"
 test ! -e "$RESOLVED_ENV_ROOT/state/cloud-admin-staging.env"
+test ! -e "$RESOLVED_ENV_ROOT/state/cloud-logger.env"
 find "$RESOLVED_ENV_ROOT/backups" -path '*remove-vm-*/state/video-cloud-staging.state.json' | grep -q .
 find "$RESOLVED_ENV_ROOT/backups" -path '*remove-vm-*/state/account-manager-staging.env' | grep -q .
 find "$RESOLVED_ENV_ROOT/backups" -path '*remove-vm-*/state/cloud-admin-staging.env' | grep -q .
+find "$RESOLVED_ENV_ROOT/backups" -path '*remove-vm-*/state/cloud-logger.env' | grep -q .

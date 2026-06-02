@@ -114,6 +114,8 @@ func TestWriteProvisionArtifactsRedactsLoggerToken(t *testing.T) {
 	writeFile(t, paths.AccountManagerState, "ACCOUNT_MANAGER_LINODE_ID=201\nACCOUNT_MANAGER_LINODE_LABEL=am\nACCOUNT_MANAGER_LINODE_PUBLIC_IPV4=203.0.113.20\nACCOUNT_MANAGER_LINODE_FIREWALL_ID=301\n")
 	writeFile(t, paths.AdminState, "ADMIN_LINODE_ID=202\nADMIN_LINODE_LABEL=admin\nADMIN_LINODE_PUBLIC_IPV4=203.0.113.30\nADMIN_LINODE_FIREWALL_ID=302\n")
 	writeFile(t, filepath.Join(root, "state", "cloud-logger.env"), "CLOUD_LOGGER_LINODE_ID=203\nCLOUD_LOGGER_LINODE_LABEL=logger\nCLOUD_LOGGER_LINODE_PUBLIC_IPV4=203.0.113.40\nCLOUD_LOGGER_LINODE_FIREWALL_ID=303\nCLOUD_LOGGER_DOMAIN=logger.example.test\nCLOUD_LOGGER_ENDPOINT=https://logger.example.test\nCLOUD_LOGGER_INGEST_TOKEN=super-secret-logger-token\n")
+	mkdirAll(t, filepath.Join(root, "services", "cloud-logger"))
+	writeFile(t, filepath.Join(root, "services", "cloud-logger", "logger.env"), "CLOUD_LOGGER_ENDPOINT=https://logger.example.test\nCLOUD_LOGGER_INGEST_TOKEN=super-secret-logger-token\n")
 
 	dir, err := writeProvisionArtifacts(paths, "video-cloud-test")
 	if err != nil {
@@ -126,6 +128,18 @@ func TestWriteProvisionArtifactsRedactsLoggerToken(t *testing.T) {
 		}
 		if strings.Contains(string(body), "super-secret-logger-token") {
 			t.Fatalf("%s leaked logger token:\n%s", name, string(body))
+		}
+	}
+	for _, name := range []string{"cloud-logger-state.redacted.env", "cloud-logger-env.redacted.env"} {
+		body, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(body), "super-secret-logger-token") {
+			t.Fatalf("%s leaked logger token:\n%s", name, string(body))
+		}
+		if !strings.Contains(string(body), "REDACTED") {
+			t.Fatalf("%s missing redaction marker:\n%s", name, string(body))
 		}
 	}
 }

@@ -1406,6 +1406,13 @@ func writeProvisionArtifacts(paths provisionPaths, stack string) (string, error)
 	if err := writeJSON(filepath.Join(dir, "deployment-targets.json"), targets); err != nil {
 		return "", err
 	}
+	if err := writeEnvMap(filepath.Join(dir, "cloud-logger-state.redacted.env"), redactEnvValues(logger.State), 0o600); err != nil {
+		return "", err
+	}
+	loggerEnv, _ := readEnvFile(logger.EnvPath)
+	if err := writeEnvMap(filepath.Join(dir, "cloud-logger-env.redacted.env"), redactEnvValues(loggerEnv), 0o600); err != nil {
+		return "", err
+	}
 	var report strings.Builder
 	fmt.Fprintf(&report, "# Provision Report\n\n- generated_at: %s\n- artifact_dir: %s\n- cloud_admin_private_ip: %s\n- prometheus: %s\n\n", time.Now().UTC().Format(time.RFC3339), dir, admin["ADMIN_LINODE_PRIVATE_IPV4"], videoCloudPrometheusBaseURL(paths))
 	fmt.Fprintln(&report, "## VM Configuration")
@@ -1630,6 +1637,28 @@ func writeEnvMap(path string, values map[string]string, perm os.FileMode) error 
 		return err
 	}
 	return os.WriteFile(path, []byte(b.String()), perm)
+}
+
+func redactEnvValues(values map[string]string) map[string]string {
+	out := map[string]string{}
+	for key, value := range values {
+		if sensitiveEnvKey(key) {
+			out[key] = "REDACTED"
+		} else {
+			out[key] = value
+		}
+	}
+	return out
+}
+
+func sensitiveEnvKey(key string) bool {
+	normalized := strings.ToLower(strings.ReplaceAll(key, "-", "_"))
+	for _, item := range []string{"token", "password", "secret", "credential", "private_key", "access_key"} {
+		if strings.Contains(normalized, item) {
+			return true
+		}
+	}
+	return false
 }
 
 func videoSubnetID(paths provisionPaths) string {
