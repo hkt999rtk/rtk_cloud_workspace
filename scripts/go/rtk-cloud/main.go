@@ -530,13 +530,14 @@ func (ioDiscard) Write(p []byte) (int, error) { return len(p), nil }
 func isStagingFirewall(label string) bool {
 	return strings.Contains(label, "video-cloud-staging") ||
 		label == "rtk-account-manager-staging-fw" ||
-		label == "rtk-cloud-admin-staging-firewall"
+		label == "rtk-cloud-admin-staging-firewall" ||
+		label == "rtk-cloud-logger-staging-firewall"
 }
 
 func backupAndRemoveState(envRoot string) error {
 	stateDir := filepath.Join(envRoot, "state")
 	backupDir := filepath.Join(envRoot, "backups", "remove-vm-"+time.Now().UTC().Format("20060102T150405Z"), "state")
-	files := []string{"video-cloud-staging.state.json", "account-manager-staging.env", "cloud-admin-staging.env"}
+	files := []string{"video-cloud-staging.state.json", "account-manager-staging.env", "cloud-admin-staging.env", "cloud-logger.env"}
 	for _, name := range files {
 		src := filepath.Join(stateDir, name)
 		if _, err := os.Stat(src); err != nil {
