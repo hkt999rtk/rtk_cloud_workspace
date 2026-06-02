@@ -423,7 +423,7 @@ func buildLoggerBackend(workspace string) (string, func(), error) {
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 	binary := filepath.Join(dir, "rtk-cloud-logger")
-	if err := runCmdWithEnv(filepath.Join(workspace, "repos", "rtk_cloud_logger"), map[string]string{"GOWORK": "off"}, "go", "build", "-o", binary, "./cmd/rtk-cloud-logger"); err != nil {
+	if err := runCmdWithEnv(filepath.Join(workspace, "repos", "rtk_cloud_logger"), linuxBuildEnv(), "go", "build", "-o", binary, "./cmd/rtk-cloud-logger"); err != nil {
 		cleanup()
 		return "", func() {}, err
 	}
@@ -612,7 +612,7 @@ func buildLoggerForwarder(workspace string) (string, func(), error) {
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 	binary := filepath.Join(dir, "rtk-cloud-log-forwarder")
-	if err := runCmdWithEnv(filepath.Join(workspace, "repos", "rtk_cloud_logger"), map[string]string{"GOWORK": "off"}, "go", "build", "-o", binary, "./cmd/rtk-cloud-log-forwarder"); err != nil {
+	if err := runCmdWithEnv(filepath.Join(workspace, "repos", "rtk_cloud_logger"), linuxBuildEnv(), "go", "build", "-o", binary, "./cmd/rtk-cloud-log-forwarder"); err != nil {
 		cleanup()
 		return "", func() {}, err
 	}
@@ -624,7 +624,7 @@ func loggerForwarderInstallScript(endpoint, token, units string) string {
 	fmt.Fprintln(&b, "set -euo pipefail")
 	fmt.Fprintln(&b, "install -d -m 0755 /etc/rtk-cloud /var/lib/rtk-cloud-logger/spool")
 	fmt.Fprintln(&b, "cat > /etc/rtk-cloud/log-forwarder.env <<'EOF'")
-	fmt.Fprintf(&b, "RTK_CLOUD_LOGGER_INGEST_URL=%s\n", shellEnvValue(endpoint))
+	fmt.Fprintf(&b, "RTK_CLOUD_LOGGER_INGEST_URL=%s\n", shellEnvValue(loggerIngestURL(endpoint)))
 	fmt.Fprintf(&b, "RTK_CLOUD_LOGGER_TOKEN=%s\n", shellEnvValue(token))
 	fmt.Fprintf(&b, "RTK_CLOUD_LOGGER_UNITS=%s\n", shellEnvValue(units))
 	fmt.Fprintln(&b, "RTK_CLOUD_LOGGER_CURSOR=/var/lib/rtk-cloud-logger/journal.cursor")
@@ -651,8 +651,24 @@ func loggerForwarderInstallScript(endpoint, token, units string) string {
 	return b.String()
 }
 
+func loggerIngestURL(endpoint string) string {
+	endpoint = strings.TrimRight(endpoint, "/")
+	if strings.HasSuffix(endpoint, "/v1/logs/ingest") {
+		return endpoint
+	}
+	return endpoint + "/v1/logs/ingest"
+}
+
 func defaultStagingSSHKey() string {
 	return filepath.Join(os.Getenv("HOME"), ".ssh", "id_ed25519_rtkcloud")
+}
+
+func linuxBuildEnv() map[string]string {
+	return map[string]string{
+		"GOWORK": "off",
+		"GOOS":   "linux",
+		"GOARCH": "amd64",
+	}
 }
 
 func loggerSSHArgs(paths provisionPaths, sshKey, host string, remoteArgs ...string) []string {

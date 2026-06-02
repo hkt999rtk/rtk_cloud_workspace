@@ -11,6 +11,7 @@ FAKE_BIN="$TMP/bin"
 ORDER_LOG="$TMP/order.log"
 SSH_LOG="$TMP/ssh.log"
 SCP_LOG="$TMP/scp.log"
+GO_LOG="$TMP/go.log"
 CURL_EVENT="$TMP/logger-event.json"
 mkdir -p \
 	"$FAKE_BIN" \
@@ -89,6 +90,7 @@ done
 cat > "$FAKE_BIN/go" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+printf 'GOOS=%s GOARCH=%s args=%s\n' "${GOOS:-}" "${GOARCH:-}" "$*" >> "$GO_LOG"
 while [[ "$#" -gt 0 ]]; do
 	if [[ "$1" == "-o" ]]; then
 		mkdir -p "$(dirname "$2")"
@@ -127,6 +129,10 @@ if [[ "$input" != *super-secret-forwarder-token* ]]; then
 	printf 'remote install script missing token\n' >&2
 	exit 9
 fi
+if [[ "$input" != *"RTK_CLOUD_LOGGER_INGEST_URL=https://logger.video-cloud-ci.example.com/v1/logs/ingest"* ]]; then
+	printf 'remote install script missing ingest path\n' >&2
+	exit 10
+fi
 printf 'host=%s args=%s\n%s\n' "$host" "$*" "${input//super-secret-forwarder-token/[REDACTED]}" >> "$SSH_LOG"
 exit 0
 SH
@@ -160,7 +166,7 @@ chmod +x "$FAKE_BIN/go" "$FAKE_BIN/scp" "$FAKE_BIN/ssh" "$FAKE_BIN/curl"
 
 OUT="$TMP/out.txt"
 ERR="$TMP/err.txt"
-ORDER_LOG="$ORDER_LOG" SSH_LOG="$SSH_LOG" SCP_LOG="$SCP_LOG" CURL_EVENT="$CURL_EVENT" RTK_CLOUD_GO="$FAKE_BIN/go" PATH="$FAKE_BIN:$PATH" /usr/local/go/bin/go run "$ROOT/scripts/go/rtk-cloud" -- deploy \
+ORDER_LOG="$ORDER_LOG" SSH_LOG="$SSH_LOG" SCP_LOG="$SCP_LOG" GO_LOG="$GO_LOG" CURL_EVENT="$CURL_EVENT" RTK_CLOUD_GO="$FAKE_BIN/go" PATH="$FAKE_BIN:$PATH" /usr/local/go/bin/go run "$ROOT/scripts/go/rtk-cloud" -- deploy \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" >"$OUT" 2>"$ERR"
 
@@ -173,6 +179,7 @@ for host in 203.0.113.20 10.42.1.10 203.0.113.30 203.0.113.10 10.42.1.30 203.0.1
 	grep -F "host=root@$host" "$SSH_LOG" >/dev/null
 	grep -F "readiness root@$host" "$SSH_LOG" >/dev/null
 done
+grep -F 'GOOS=linux GOARCH=amd64' "$GO_LOG" >/dev/null
 grep -F -- '-i ' "$SCP_LOG" >/dev/null
 grep -F -- 'BatchMode=yes' "$SCP_LOG" >/dev/null
 grep -F -- 'StrictHostKeyChecking=accept-new' "$SCP_LOG" >/dev/null
