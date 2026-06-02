@@ -100,6 +100,37 @@ func TestLoggerProvisionStatusesReflectEnvAndStateFiles(t *testing.T) {
 	}
 }
 
+func TestLoggerForwarderTargetsUseStagingSystemdUnits(t *testing.T) {
+	root := t.TempDir()
+	paths := provisionPaths{
+		VideoState:          filepath.Join(root, "state", "video-cloud-staging.state.json"),
+		AccountManagerState: filepath.Join(root, "state", "account-manager-staging.env"),
+		AdminState:          filepath.Join(root, "state", "cloud-admin-staging.env"),
+	}
+	mkdirAll(t, filepath.Dir(paths.VideoState))
+	writeFile(t, paths.VideoState, `{"instances":{"api":{"private_ip":"10.42.1.10"},"infra":{"private_ip":"10.42.1.30"},"mqtt":{"private_ip":"10.42.1.40"},"edge":{"public_ipv4":"203.0.113.5"},"coturn":{"public_ipv4":"203.0.113.9"}}}`)
+	writeFile(t, paths.AccountManagerState, "ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4=203.0.113.20\n")
+	writeFile(t, paths.AdminState, "ADMIN_LINODE_PUBLIC_IPV4=203.0.113.30\n")
+
+	byName := map[string]loggerForwarderTarget{}
+	for _, target := range loggerForwarderTargets(paths) {
+		byName[target.name] = target
+	}
+	assertUnitsContain(t, byName["video-cloud-api"].units,
+		"video_cloud-api.service",
+		"video_cloud-logingester.service",
+		"video_cloud-turnregistry.service",
+		"video_cloud-metricsexporter.service",
+		"video_cloud-crossservice.service",
+		"video_cloud-cleaner.service",
+		"video_cloud-statistics.service",
+	)
+	assertUnitsNotContain(t, byName["video-cloud-api"].units, "rtk-video-cloud-api.service")
+	assertUnitsContain(t, byName["infra"].units, "nats-server.service", "prometheus.service", "postgresql.service", "redis-server.service")
+	assertUnitsNotContain(t, byName["infra"].units, "nats.service")
+	assertUnitsContain(t, byName["coturn"].units, "coturn.service", "video_cloud-turnregistrar.service")
+}
+
 func TestWriteProvisionArtifactsRedactsLoggerToken(t *testing.T) {
 	root := t.TempDir()
 	paths := provisionPaths{
@@ -140,6 +171,26 @@ func TestWriteProvisionArtifactsRedactsLoggerToken(t *testing.T) {
 		}
 		if !strings.Contains(string(body), "REDACTED") {
 			t.Fatalf("%s missing redaction marker:\n%s", name, string(body))
+		}
+	}
+}
+
+func assertUnitsContain(t *testing.T, units string, wants ...string) {
+	t.Helper()
+	have := "," + units + ","
+	for _, want := range wants {
+		if !strings.Contains(have, ","+want+",") {
+			t.Fatalf("units %q missing %q", units, want)
+		}
+	}
+}
+
+func assertUnitsNotContain(t *testing.T, units string, wants ...string) {
+	t.Helper()
+	have := "," + units + ","
+	for _, want := range wants {
+		if strings.Contains(have, ","+want+",") {
+			t.Fatalf("units %q unexpectedly contains %q", units, want)
 		}
 	}
 }

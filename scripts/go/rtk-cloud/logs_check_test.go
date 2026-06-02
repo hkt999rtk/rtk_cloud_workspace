@@ -69,6 +69,32 @@ func TestLogSecretScanner(t *testing.T) {
 	}
 }
 
+func TestLogsCheckRemoteSpecsUseStagingSystemdUnits(t *testing.T) {
+	specs := logsCheckRemoteSpecs(logsCheckConfig{Since: "15m", Tail: 300})
+	byName := map[string]logsCheckRemoteSpec{}
+	for _, spec := range specs {
+		byName[spec.Name] = spec
+	}
+
+	apiJournal := byName["api-journal"].Command
+	for _, want := range []string{"video_cloud-api.service", "video_cloud-logingester.service", "video_cloud-turnregistry.service"} {
+		if !strings.Contains(apiJournal, want) {
+			t.Fatalf("api journal command missing %q: %s", want, apiJournal)
+		}
+	}
+	if strings.Contains(apiJournal, "rtk-video-cloud-api.service") {
+		t.Fatalf("api journal command still uses stale unit: %s", apiJournal)
+	}
+	infraJournal := byName["infra-journal"].Command
+	if !strings.Contains(infraJournal, "nats-server") || strings.Contains(infraJournal, "nats.service") {
+		t.Fatalf("infra journal command has wrong nats unit: %s", infraJournal)
+	}
+	coturnJournal := byName["coturn-journal"].Command
+	if !strings.Contains(coturnJournal, "video_cloud-turnregistrar.service") {
+		t.Fatalf("coturn journal command missing turn registrar: %s", coturnJournal)
+	}
+}
+
 func TestRenderLogsCheckReportIncludesFailuresAndArtifacts(t *testing.T) {
 	result := logsCheckResult{
 		GeneratedAt: "2026-06-01T00:00:00Z",
