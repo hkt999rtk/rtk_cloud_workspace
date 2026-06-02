@@ -182,13 +182,15 @@ REPORT="$(grep -F '[cloud-deploy] readiness report:' "$ERR" | tail -n 1 | sed 's
 grep -F 'status: passed' "$REPORT" >/dev/null
 grep -F 'logging: degraded' "$REPORT" >/dev/null
 grep -F 'DEGRADED `logger-backend-health`' "$REPORT" >/dev/null
-grep -F 'DEGRADED `logger-forwarder:account-manager`' "$REPORT" >/dev/null
-grep -F 'DEGRADED `logger-forwarder:video-cloud-api`' "$REPORT" >/dev/null
-grep -F 'DEGRADED `logger-forwarder:cloud-admin`' "$REPORT" >/dev/null
+for target in account-manager video-cloud-api cloud-admin edge infra mqtt coturn; do
+	grep -F 'DEGRADED `logger-forwarder:'"$target"'`' "$REPORT" >/dev/null
+	grep -F 'install-forwarder '"$target" "$LOGGER_LOG" >/dev/null
+done
 grep -F 'DEGRADED `logger-sample-trace-query`' "$REPORT" >/dev/null
-grep -F 'install-forwarder frontend' "$LOGGER_LOG" >/dev/null
-grep -F 'install-forwarder non-go-host-sources' "$LOGGER_LOG" >/dev/null
 
 logger_line="$(grep -n '^logger-provision-backend$' "$ORDER_LOG" | cut -d: -f1)"
 account_line="$(grep -n '^account-manager-deploy$' "$ORDER_LOG" | cut -d: -f1)"
+install_line="$(grep -n '^logger-install-forwarder account-manager$' "$ORDER_LOG" | cut -d: -f1)"
+admin_verify_line="$(grep -n '^cloud-admin-verify$' "$ORDER_LOG" | cut -d: -f1)"
 [[ "$logger_line" -lt "$account_line" ]]
+[[ "$install_line" -gt "$admin_verify_line" ]]
