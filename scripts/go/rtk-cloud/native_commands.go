@@ -31,7 +31,6 @@ func runDeploy(args []string) error {
 	accountBundle := fs.String("account-release-bundle", os.Getenv("ACCOUNT_RELEASE_BUNDLE"), "Account Manager release bundle")
 	adminRelease := fs.String("admin-release", "", "Cloud Admin release")
 	adminBundle := fs.String("admin-release-bundle", os.Getenv("ADMIN_RELEASE_BUNDLE"), "Cloud Admin release bundle")
-	_ = sshKey
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -62,6 +61,7 @@ func runDeploy(args []string) error {
 		adminRelease:         *adminRelease,
 		accountReleaseBundle: *accountBundle,
 		adminReleaseBundle:   *adminBundle,
+		sshKey:               *sshKey,
 	})
 }
 
@@ -266,11 +266,14 @@ func runExternal(name string, args ...string) error {
 }
 
 func deployAllServices(paths provisionPaths, env, operator map[string]string, opts provisionOptions) error {
+	if opts.sshKey == "" {
+		opts.sshKey = defaultStagingSSHKey()
+	}
 	reportDir := filepath.Join(paths.ArtifactsDir, "readiness-"+time.Now().UTC().Format("20060102T150405Z"))
 	report := newReadinessReport(reportDir)
 	fmt.Fprintf(os.Stderr, "[cloud-deploy] readiness report: %s\n", report.path())
 
-	runLoggerProvisionHooks(paths, env, report)
+	runLoggerProvisionHooks(paths, env, opts.sshKey, report)
 
 	videoEnv := mergeEnv(operator, map[string]string{
 		"LINODE_DEPLOY_CERT_CACHE_DIR": filepath.Join(paths.EnvRoot, "certificates", env["VIDEO_CLOUD_DOMAIN"]),
@@ -340,8 +343,8 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 	report.add("cloud-admin-deploy", "PASS", "")
 	_ = runCmdWithEnv(filepath.Join(paths.Workspace, "repos", "rtk_cloud_admin"), adminValues, "deploy/linode/verify-admin.sh")
 	report.add("cloud-admin-verify", "PASS", "")
-	runLoggerForwarderInstallHooks(paths, env, report)
-	runLoggerReadinessHooks(paths, env, report)
+	runLoggerForwarderInstallHooks(paths, env, opts.sshKey, report)
+	runLoggerReadinessHooks(paths, env, opts.sshKey, report)
 	if err := report.write(true); err != nil {
 		return err
 	}
@@ -364,7 +367,7 @@ func writePlatformAdminSummary(w io.Writer, paths provisionPaths) {
 	fmt.Fprintln(w, "- token: run ./stg.sh token")
 }
 
-func runLoggerProvisionHooks(paths provisionPaths, env map[string]string, report *readinessReport) {
+func runLoggerProvisionHooks(paths provisionPaths, env map[string]string, sshKey string, report *readinessReport) {
 	script := os.Getenv("CLOUD_LOGGER_SCRIPT")
 	if script != "" {
 		loggerEnv := filepath.Join(paths.EnvRoot, "services", "cloud-logger", "logger.env")
@@ -377,7 +380,7 @@ func runLoggerProvisionHooks(paths provisionPaths, env map[string]string, report
 		}
 		return
 	}
-	if err := installNativeLoggerBackend(paths, env); err != nil {
+	if err := installNativeLoggerBackend(paths, env, sshKey); err != nil {
 		report.add("logger-backend-provision", "DEGRADED", "")
 		fmt.Fprintf(os.Stderr, "[cloud-deploy] logger backend provision degraded: %v\n", err)
 	} else {
@@ -385,7 +388,7 @@ func runLoggerProvisionHooks(paths provisionPaths, env map[string]string, report
 	}
 }
 
-func installNativeLoggerBackend(paths provisionPaths, env map[string]string) error {
+func installNativeLoggerBackend(paths provisionPaths, env map[string]string, sshKey string) error {
 	loggerEnv, _ := readEnvFile(filepath.Join(paths.EnvRoot, "services", "cloud-logger", "logger.env"))
 	loggerState, _ := readEnvFile(filepath.Join(paths.EnvRoot, "state", "cloud-logger.env"))
 	endpoint := firstNonEmpty(loggerEnv["CLOUD_LOGGER_ENDPOINT"], loggerState["CLOUD_LOGGER_ENDPOINT"], env["CLOUD_LOGGER_ENDPOINT"])
@@ -406,11 +409,11 @@ func installNativeLoggerBackend(paths provisionPaths, env map[string]string) err
 	}
 	defer cleanup()
 	remote := "root@" + host
-	if err := runExternal("scp", binary, remote+":/usr/local/bin/rtk-cloud-logger"); err != nil {
+	if err := runExternal("scp", loggerSCPArgs(paths, sshKey, host, binary, remote+":/usr/local/bin/rtk-cloud-logger")...); err != nil {
 		return err
 	}
 	script := loggerBackendInstallScript(domain, token, firstNonEmpty(os.Getenv("CLOUD_LOGGER_LOKI_VERSION"), "v3.5.1"))
-	return runCmdWithInput("", script, "ssh", remote, "bash", "-s")
+	return runCmdWithInput("", script, "ssh", loggerSSHArgs(paths, sshKey, host, "bash", "-s")...)
 }
 
 func buildLoggerBackend(workspace string) (string, func(), error) {
@@ -536,13 +539,13 @@ type loggerForwarderTarget struct {
 	units string
 }
 
-func runLoggerForwarderInstallHooks(paths provisionPaths, env map[string]string, report *readinessReport) {
+func runLoggerForwarderInstallHooks(paths provisionPaths, env map[string]string, sshKey string, report *readinessReport) {
 	targets := loggerForwarderTargets(paths)
 	if script := os.Getenv("CLOUD_LOGGER_SCRIPT"); script != "" {
 		runLoggerForwarderScriptHooks(paths, script, targets, report)
 		return
 	}
-	if err := installNativeLoggerForwarders(paths, env, targets); err != nil {
+	if err := installNativeLoggerForwarders(paths, env, sshKey, targets); err != nil {
 		for _, target := range targets {
 			report.add("logger-forwarder:"+target.name, "DEGRADED", "")
 		}
@@ -573,7 +576,7 @@ func loggerForwarderTargets(paths provisionPaths) []loggerForwarderTarget {
 	}
 }
 
-func installNativeLoggerForwarders(paths provisionPaths, env map[string]string, targets []loggerForwarderTarget) error {
+func installNativeLoggerForwarders(paths provisionPaths, env map[string]string, sshKey string, targets []loggerForwarderTarget) error {
 	loggerEnv, _ := readEnvFile(filepath.Join(paths.EnvRoot, "services", "cloud-logger", "logger.env"))
 	loggerState, _ := readEnvFile(filepath.Join(paths.EnvRoot, "state", "cloud-logger.env"))
 	endpoint := firstNonEmpty(loggerEnv["CLOUD_LOGGER_ENDPOINT"], loggerState["CLOUD_LOGGER_ENDPOINT"], env["CLOUD_LOGGER_ENDPOINT"])
@@ -591,11 +594,11 @@ func installNativeLoggerForwarders(paths provisionPaths, env map[string]string, 
 			return fmt.Errorf("logger forwarder target host missing: %s", target.name)
 		}
 		remote := "root@" + target.host
-		if err := runExternal("scp", binary, remote+":/usr/local/bin/rtk-cloud-log-forwarder"); err != nil {
+		if err := runExternal("scp", loggerSCPArgs(paths, sshKey, target.host, binary, remote+":/usr/local/bin/rtk-cloud-log-forwarder")...); err != nil {
 			return err
 		}
 		script := loggerForwarderInstallScript(endpoint, token, target.units)
-		if err := runCmdWithInput("", script, "ssh", remote, "bash", "-s"); err != nil {
+		if err := runCmdWithInput("", script, "ssh", loggerSSHArgs(paths, sshKey, target.host, "bash", "-s")...); err != nil {
 			return err
 		}
 	}
@@ -648,6 +651,81 @@ func loggerForwarderInstallScript(endpoint, token, units string) string {
 	return b.String()
 }
 
+func defaultStagingSSHKey() string {
+	return filepath.Join(os.Getenv("HOME"), ".ssh", "id_ed25519_rtkcloud")
+}
+
+func loggerSSHArgs(paths provisionPaths, sshKey, host string, remoteArgs ...string) []string {
+	if sshKey == "" {
+		sshKey = defaultStagingSSHKey()
+	}
+	args := []string{
+		"-i", sshKey,
+		"-o", "IdentitiesOnly=yes",
+		"-o", "BatchMode=yes",
+		"-o", "ConnectTimeout=15",
+		"-o", "ServerAliveInterval=10",
+		"-o", "ServerAliveCountMax=3",
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "LogLevel=ERROR",
+	}
+	if proxy := loggerProxyJump(paths, host); proxy != "" {
+		args = append(args, "-J", proxy)
+	}
+	args = append(args, "root@"+host)
+	args = append(args, remoteArgs...)
+	return args
+}
+
+func loggerSCPArgs(paths provisionPaths, sshKey, host, source, dest string) []string {
+	if sshKey == "" {
+		sshKey = defaultStagingSSHKey()
+	}
+	args := []string{
+		"-i", sshKey,
+		"-o", "IdentitiesOnly=yes",
+		"-o", "BatchMode=yes",
+		"-o", "ConnectTimeout=15",
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "LogLevel=ERROR",
+	}
+	if proxy := loggerProxyJump(paths, host); proxy != "" {
+		args = append(args, "-o", "ProxyJump="+proxy)
+	}
+	args = append(args, source, dest)
+	return args
+}
+
+func loggerProxyJump(paths provisionPaths, host string) string {
+	if !isPrivateIPv4(host) {
+		return ""
+	}
+	edge := videoStatePublicHost(paths.VideoState, "edge")
+	if edge == "" || edge == host {
+		return ""
+	}
+	return "root@" + edge
+}
+
+func isPrivateIPv4(host string) bool {
+	parts := strings.Split(host, ".")
+	if len(parts) != 4 {
+		return false
+	}
+	a := atoiOrZero(parts[0])
+	b := atoiOrZero(parts[1])
+	switch {
+	case a == 10:
+		return true
+	case a == 172 && b >= 16 && b <= 31:
+		return true
+	case a == 192 && b == 168:
+		return true
+	default:
+		return false
+	}
+}
+
 func shellEnvValue(value string) string {
 	return strings.ReplaceAll(value, "\n", "")
 }
@@ -664,13 +742,13 @@ func runCmdWithInput(dir, input, name string, args ...string) error {
 	return nil
 }
 
-func runLoggerReadinessHooks(paths provisionPaths, env map[string]string, report *readinessReport) {
+func runLoggerReadinessHooks(paths provisionPaths, env map[string]string, sshKey string, report *readinessReport) {
 	script := os.Getenv("CLOUD_LOGGER_SCRIPT")
 	if script != "" {
 		runLoggerReadinessScriptHooks(paths, env, script, report)
 		return
 	}
-	runNativeLoggerReadinessChecks(paths, env, report)
+	runNativeLoggerReadinessChecks(paths, env, sshKey, report)
 }
 
 func runLoggerReadinessScriptHooks(paths provisionPaths, env map[string]string, script string, report *readinessReport) {
@@ -696,7 +774,7 @@ func runLoggerReadinessScriptHooks(paths provisionPaths, env map[string]string, 
 	}
 }
 
-func runNativeLoggerReadinessChecks(paths provisionPaths, env map[string]string, report *readinessReport) {
+func runNativeLoggerReadinessChecks(paths provisionPaths, env map[string]string, sshKey string, report *readinessReport) {
 	loggerEnv, _ := readEnvFile(filepath.Join(paths.EnvRoot, "services", "cloud-logger", "logger.env"))
 	loggerState, _ := readEnvFile(filepath.Join(paths.EnvRoot, "state", "cloud-logger.env"))
 	endpoint := firstNonEmpty(loggerEnv["CLOUD_LOGGER_ENDPOINT"], loggerState["CLOUD_LOGGER_ENDPOINT"], env["CLOUD_LOGGER_ENDPOINT"])
@@ -751,7 +829,7 @@ func runNativeLoggerReadinessChecks(paths provisionPaths, env map[string]string,
 			report.add("logger-forwarder:"+target.name, "DEGRADED", "")
 			continue
 		}
-		if err := runCmdQuiet("ssh", "root@"+target.host, "systemctl", "is-active", "--quiet", "rtk-cloud-log-forwarder.service"); err != nil {
+		if err := runCmdQuiet("ssh", loggerSSHArgs(paths, sshKey, target.host, "systemctl", "is-active", "--quiet", "rtk-cloud-log-forwarder.service")...); err != nil {
 			report.add("logger-forwarder:"+target.name, "DEGRADED", "")
 		} else {
 			report.add("logger-forwarder:"+target.name, "PASS", "")
@@ -801,6 +879,22 @@ func videoStateInstanceHost(path, role string) string {
 	}
 	inst := state.Instances[role]
 	return firstNonEmpty(inst.PrivateIP, inst.PublicIPv4)
+}
+
+func videoStatePublicHost(path, role string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var state struct {
+		Instances map[string]struct {
+			PublicIPv4 string `json:"public_ipv4"`
+		} `json:"instances"`
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		return ""
+	}
+	return state.Instances[role].PublicIPv4
 }
 
 func materializeReleaseBundle(dir string, operator map[string]string, prefix, release string) (string, error) {
