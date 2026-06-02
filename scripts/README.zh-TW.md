@@ -244,6 +244,8 @@ service logging 的目標 provisioning model 記在 `docs/service-logging-archit
 
 目前 staging centralized logger 已納入 native flow：`provision --plan/--all` 會處理 logger VM/firewall/DNS/env/state，artifact/cleanup 會納入 logger 並 redacted token，`deploy` 會在 logger VM 安裝 Loki 與 `rtk-cloud-logger` backend systemd service，也會在 service hosts 安裝 `rtk-cloud-log-forwarder`。readiness 會檢查 backend health、ingest/idempotency、sample query 與 forwarder status；`CLOUD_LOGGER_SCRIPT` 保留為 override/debug hook。logger degraded 時不會阻塞服務 deploy，但 readiness 必須標示 `logging: degraded`。Cloud Admin v1 dashboard 不依賴 Grafana。
 
+目前 native forwarder 的 v1 範圍是 journald systemd units；target 必須對應實際 staging unit，例如 `video_cloud-api.service`、`video_cloud-logingester.service`、`nats-server.service`、`video_cloud-turnregistrar.service`。EMQX broker 的 per-publish / per-subscribe detail 不一定會進 journald，因為 `video_cloud-emqx.service` 是 Docker Compose oneshot wrapper；若要保證 broker-side command-level trace，還需要 Docker/EMQX/file-source adapter。`./stg.sh mqtt` 會寫入 operator-side `workspace-mqtt-test` trace event，可用來確認 centralized logger ingest/query path。
+
 常用用法：
 
 ```sh
