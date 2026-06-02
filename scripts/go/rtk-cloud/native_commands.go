@@ -601,6 +601,12 @@ func installNativeLoggerForwarders(paths provisionPaths, env map[string]string, 
 		if err := runCmdWithInput("", script, "ssh", loggerSSHArgs(paths, sshKey, target.host, "bash", "-s")...); err != nil {
 			return err
 		}
+		if target.name == "mqtt" && truthy(env["CLOUD_LOGGER_EMQX_VERBOSE_TRACE"]) {
+			script := loggerEMQXForwarderInstallScript(endpoint, token)
+			if err := runCmdWithInput("", script, "ssh", loggerSSHArgs(paths, sshKey, target.host, "bash", "-s")...); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -648,6 +654,45 @@ func loggerForwarderInstallScript(endpoint, token, units string) string {
 	fmt.Fprintln(&b, "EOF")
 	fmt.Fprintln(&b, "systemctl daemon-reload")
 	fmt.Fprintln(&b, "systemctl enable --now rtk-cloud-log-forwarder.service")
+	return b.String()
+}
+
+func loggerEMQXForwarderInstallScript(endpoint, token string) string {
+	var b strings.Builder
+	fmt.Fprintln(&b, "set -euo pipefail")
+	fmt.Fprintln(&b, "install -d -m 0755 /etc/rtk-cloud /var/lib/rtk-cloud-logger/emqx-spool")
+	fmt.Fprintln(&b, "cat > /etc/rtk-cloud/emqx-log-forwarder.env <<'EOF'")
+	fmt.Fprintf(&b, "RTK_CLOUD_LOGGER_INGEST_URL=%s\n", shellEnvValue(loggerIngestURL(endpoint)))
+	fmt.Fprintf(&b, "RTK_CLOUD_LOGGER_TOKEN=%s\n", shellEnvValue(token))
+	fmt.Fprintln(&b, "RTK_CLOUD_LOGGER_EMQX_DOCKER_CONTAINER=video-cloud-emqx")
+	fmt.Fprintln(&b, "RTK_CLOUD_LOGGER_CURSOR=/var/lib/rtk-cloud-logger/emqx-docker.cursor")
+	fmt.Fprintln(&b, "RTK_CLOUD_LOGGER_SPOOL_DIR=/var/lib/rtk-cloud-logger/emqx-spool")
+	fmt.Fprintln(&b, "RTK_CLOUD_LOGGER_INITIAL_SINCE=5m")
+	fmt.Fprintln(&b, "SERVICE=emqx-broker")
+	fmt.Fprintln(&b, "ENV=staging")
+	fmt.Fprintln(&b, "VERSION=emqx")
+	fmt.Fprintln(&b, "EOF")
+	fmt.Fprintln(&b, "chmod 0600 /etc/rtk-cloud/emqx-log-forwarder.env")
+	fmt.Fprintln(&b, "if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -qx video-cloud-emqx; then")
+	fmt.Fprintln(&b, "  docker exec video-cloud-emqx sh -lc 'emqx ctl log set-level debug || emqx ctl log primary-level debug || true' >/dev/null 2>&1 || true")
+	fmt.Fprintln(&b, "fi")
+	fmt.Fprintln(&b, "cat > /etc/systemd/system/rtk-cloud-emqx-log-forwarder.service <<'EOF'")
+	fmt.Fprintln(&b, "[Unit]")
+	fmt.Fprintln(&b, "Description=RTK Cloud EMQX verbose broker log forwarder")
+	fmt.Fprintln(&b, "After=network-online.target docker.service")
+	fmt.Fprintln(&b, "Wants=network-online.target docker.service")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "[Service]")
+	fmt.Fprintln(&b, "EnvironmentFile=/etc/rtk-cloud/emqx-log-forwarder.env")
+	fmt.Fprintln(&b, "ExecStart=/usr/local/bin/rtk-cloud-log-forwarder")
+	fmt.Fprintln(&b, "Restart=always")
+	fmt.Fprintln(&b, "RestartSec=5")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "[Install]")
+	fmt.Fprintln(&b, "WantedBy=multi-user.target")
+	fmt.Fprintln(&b, "EOF")
+	fmt.Fprintln(&b, "systemctl daemon-reload")
+	fmt.Fprintln(&b, "systemctl enable --now rtk-cloud-emqx-log-forwarder.service")
 	return b.String()
 }
 
@@ -946,6 +991,15 @@ func materializeReleaseBundle(dir string, operator map[string]string, prefix, re
 		return "", err
 	}
 	return out, nil
+}
+
+func truthy(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "y", "on", "enabled":
+		return true
+	default:
+		return false
+	}
 }
 
 type readinessReport struct {

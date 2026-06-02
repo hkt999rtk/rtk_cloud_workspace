@@ -131,6 +131,23 @@ func TestLoggerForwarderTargetsUseStagingSystemdUnits(t *testing.T) {
 	assertUnitsContain(t, byName["coturn"].units, "coturn.service", "video_cloud-turnregistrar.service")
 }
 
+func TestLoggerEMQXForwarderInstallScriptUsesOptInDockerSource(t *testing.T) {
+	script := loggerEMQXForwarderInstallScript("https://logger.example.test", "secret-token")
+	for _, want := range []string{
+		"RTK_CLOUD_LOGGER_INGEST_URL=https://logger.example.test/v1/logs/ingest",
+		"RTK_CLOUD_LOGGER_EMQX_DOCKER_CONTAINER=video-cloud-emqx",
+		"RTK_CLOUD_LOGGER_CURSOR=/var/lib/rtk-cloud-logger/emqx-docker.cursor",
+		"RTK_CLOUD_LOGGER_SPOOL_DIR=/var/lib/rtk-cloud-logger/emqx-spool",
+		"SERVICE=emqx-broker",
+		"rtk-cloud-emqx-log-forwarder.service",
+		"docker exec video-cloud-emqx",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("script missing %q:\n%s", want, script)
+		}
+	}
+}
+
 func TestWriteProvisionArtifactsRedactsLoggerToken(t *testing.T) {
 	root := t.TempDir()
 	paths := provisionPaths{
