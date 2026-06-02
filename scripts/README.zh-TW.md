@@ -242,7 +242,7 @@ service logging 的目標 provisioning model 記在 `docs/service-logging-archit
 - `CLOUD_LOGGER_FORWARDER_TARGETS`：plan 中列出的 forwarder target，預設包含 edge/api/infra/mqtt/coturn/account-manager/cloud-admin/frontend/non-Go host sources。
 - `CLOUD_LOGGER_JOURNALD_SYSTEM_MAX_USE`、`CLOUD_LOGGER_JOURNALD_SYSTEM_KEEP_FREE`、`CLOUD_LOGGER_JOURNALD_MAX_RETENTION_SEC`：journald retention guidance，會傳給 forwarder install hook。
 
-目前 staging centralized logger 已完成多數 native wiring：`provision --plan/--all` 會處理 logger VM/firewall/DNS/env/state，artifact/cleanup 會納入 logger 並 redacted token，`deploy` 可安裝 `rtk-cloud-log-forwarder`，readiness 會檢查 backend health、ingest/idempotency、sample query 與 forwarder status；`rtk_cloud_logger` 也已支援 Loki-backed store，Cloud Admin v1 dashboard 不依賴 Grafana。剩餘 follow-up 是在未設定 `CLOUD_LOGGER_SCRIPT` 時，native deploy 還需要安裝並驗證 logger VM 上的 Loki 與 `rtk-cloud-logger` backend systemd service。`CLOUD_LOGGER_SCRIPT` 保留為 override/debug hook；logger degraded 時不會阻塞服務 deploy，但 readiness 必須標示 `logging: degraded`。
+目前 staging centralized logger 已納入 native flow：`provision --plan/--all` 會處理 logger VM/firewall/DNS/env/state，artifact/cleanup 會納入 logger 並 redacted token，`deploy` 會在 logger VM 安裝 Loki 與 `rtk-cloud-logger` backend systemd service，也會在 service hosts 安裝 `rtk-cloud-log-forwarder`。readiness 會檢查 backend health、ingest/idempotency、sample query 與 forwarder status；`CLOUD_LOGGER_SCRIPT` 保留為 override/debug hook。logger degraded 時不會阻塞服務 deploy，但 readiness 必須標示 `logging: degraded`。Cloud Admin v1 dashboard 不依賴 Grafana。
 
 常用用法：
 

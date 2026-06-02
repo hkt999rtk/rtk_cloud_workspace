@@ -160,11 +160,10 @@ degraded` while keeping service health checks independent.
 
 ## Current Staging Implementation Status
 
-The staging implementation has moved past the initial planning-only state.
-Recent workspace changes add native logger VM/firewall/env/state/DNS planning,
-logger artifacts with redaction, forwarder installation, native readiness
-checks, and Cloud Admin dashboard wiring. `rtk_cloud_logger` also includes a
-Loki-backed event store.
+The staging implementation now includes native logger resource provisioning,
+Loki-backed backend deployment, per-host forwarder installation, readiness
+checks, logger artifact redaction, cleanup coverage, and Cloud Admin dashboard
+wiring. `CLOUD_LOGGER_SCRIPT` remains available only as an override/debug hook.
 
 Current status:
 
@@ -172,11 +171,11 @@ Current status:
 | --- | --- | --- |
 | Logger VM/firewall/env/state/DNS | Implemented in workspace provisioning | `./stg.sh provision --plan` reports logger resource status and `./stg.sh provision --all` creates the logger resource metadata. |
 | Loki-backed store | Implemented in `rtk_cloud_logger` | `rtk-cloud-logger` supports `-store loki` / `RTK_CLOUD_LOGGER_STORE=loki`. |
+| Logger backend/Loki service install | Implemented in workspace deploy | When `CLOUD_LOGGER_SCRIPT` is unset, deploy installs Loki plus `rtk-cloud-logger` systemd services on the logger VM. |
 | Per-host forwarders | Implemented in workspace deploy | `./stg.sh deploy` installs `rtk-cloud-log-forwarder` when logger env/state is available. |
 | Readiness checks | Implemented in workspace deploy | Backend health, ingest/idempotency, sample query, and forwarder status are reported as PASS/DEGRADED. |
 | Artifacts and cleanup | Implemented in workspace provisioning/cleanup | Logger inventory and redacted logger env/state evidence are included; cleanup includes logger resources. |
 | Cloud Admin dashboard | Implemented in `rtk_cloud_admin` submodule pointer | Cloud Admin owns the v1 UI; Grafana remains optional. |
-| Logger backend/Loki service install on logger VM | Follow-up required | Native deploy still needs to install and verify Loki plus `rtk-cloud-logger` systemd service on the logger VM when `CLOUD_LOGGER_SCRIPT` is unset. |
 
 ## Repository Responsibilities
 

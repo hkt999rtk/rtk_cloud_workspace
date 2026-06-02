@@ -366,15 +366,168 @@ func writePlatformAdminSummary(w io.Writer, paths provisionPaths) {
 
 func runLoggerProvisionHooks(paths provisionPaths, env map[string]string, report *readinessReport) {
 	script := os.Getenv("CLOUD_LOGGER_SCRIPT")
-	if script == "" {
+	if script != "" {
+		loggerEnv := filepath.Join(paths.EnvRoot, "services", "cloud-logger", "logger.env")
+		loggerState := filepath.Join(paths.EnvRoot, "state", "cloud-logger.env")
+		endpoint := firstNonEmpty(env["CLOUD_LOGGER_ENDPOINT"], "https://logger."+env["CLOUD_DNS_ROOT_DOMAIN"])
+		if err := runCmdWithEnv(paths.Workspace, nil, script, "provision-backend", "--workspace", paths.Workspace, "--env-root", paths.EnvRoot, "--logger-env", loggerEnv, "--logger-state", loggerState, "--endpoint", endpoint); err != nil {
+			report.add("logger-backend-provision", "DEGRADED", "")
+		} else {
+			report.add("logger-backend-provision", "PASS", "")
+		}
 		return
 	}
-	loggerEnv := filepath.Join(paths.EnvRoot, "services", "cloud-logger", "logger.env")
-	loggerState := filepath.Join(paths.EnvRoot, "state", "cloud-logger.env")
-	endpoint := firstNonEmpty(env["CLOUD_LOGGER_ENDPOINT"], "https://logger."+env["CLOUD_DNS_ROOT_DOMAIN"])
-	if err := runCmdWithEnv(paths.Workspace, nil, script, "provision-backend", "--workspace", paths.Workspace, "--env-root", paths.EnvRoot, "--logger-env", loggerEnv, "--logger-state", loggerState, "--endpoint", endpoint); err != nil {
+	if err := installNativeLoggerBackend(paths, env); err != nil {
 		report.add("logger-backend-provision", "DEGRADED", "")
+		fmt.Fprintf(os.Stderr, "[cloud-deploy] logger backend provision degraded: %v\n", err)
+	} else {
+		report.add("logger-backend-provision", "PASS", "")
 	}
+}
+
+func installNativeLoggerBackend(paths provisionPaths, env map[string]string) error {
+	loggerEnv, _ := readEnvFile(filepath.Join(paths.EnvRoot, "services", "cloud-logger", "logger.env"))
+	loggerState, _ := readEnvFile(filepath.Join(paths.EnvRoot, "state", "cloud-logger.env"))
+	endpoint := firstNonEmpty(loggerEnv["CLOUD_LOGGER_ENDPOINT"], loggerState["CLOUD_LOGGER_ENDPOINT"], env["CLOUD_LOGGER_ENDPOINT"])
+	token := firstNonEmpty(loggerEnv["CLOUD_LOGGER_INGEST_TOKEN"], loggerState["CLOUD_LOGGER_INGEST_TOKEN"])
+	host := loggerState["CLOUD_LOGGER_LINODE_PUBLIC_IPV4"]
+	domain := firstNonEmpty(loggerState["CLOUD_LOGGER_DOMAIN"], loggerEnv["CLOUD_LOGGER_DOMAIN"], env["CLOUD_LOGGER_DOMAIN"])
+	if endpoint == "" || token == "" || host == "" {
+		return errors.New("logger endpoint, ingest token, and logger host are required")
+	}
+	if domain == "" {
+		if parsed, err := url.Parse(endpoint); err == nil {
+			domain = parsed.Hostname()
+		}
+	}
+	binary, cleanup, err := buildLoggerBackend(paths.Workspace)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	remote := "root@" + host
+	if err := runExternal("scp", binary, remote+":/usr/local/bin/rtk-cloud-logger"); err != nil {
+		return err
+	}
+	script := loggerBackendInstallScript(domain, token, firstNonEmpty(os.Getenv("CLOUD_LOGGER_LOKI_VERSION"), "v3.5.1"))
+	return runCmdWithInput("", script, "ssh", remote, "bash", "-s")
+}
+
+func buildLoggerBackend(workspace string) (string, func(), error) {
+	dir, err := os.MkdirTemp("", "rtk-cloud-logger-*")
+	if err != nil {
+		return "", func() {}, err
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	binary := filepath.Join(dir, "rtk-cloud-logger")
+	if err := runCmdWithEnv(filepath.Join(workspace, "repos", "rtk_cloud_logger"), map[string]string{"GOWORK": "off"}, "go", "build", "-o", binary, "./cmd/rtk-cloud-logger"); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	return binary, cleanup, nil
+}
+
+func loggerBackendInstallScript(domain, token, lokiVersion string) string {
+	var b strings.Builder
+	fmt.Fprintln(&b, "set -euo pipefail")
+	fmt.Fprintln(&b, "export DEBIAN_FRONTEND=noninteractive")
+	fmt.Fprintln(&b, "apt-get update")
+	fmt.Fprintln(&b, "apt-get install -y nginx certbot python3-certbot-nginx curl unzip")
+	fmt.Fprintln(&b, "install -d -m 0755 /etc/rtk-cloud /var/lib/loki")
+	fmt.Fprintln(&b, "if ! command -v loki >/dev/null 2>&1; then")
+	fmt.Fprintf(&b, "  curl -fsSL -o /tmp/loki-linux-amd64.zip https://github.com/grafana/loki/releases/download/%s/loki-linux-amd64.zip\n", shellEnvValue(lokiVersion))
+	fmt.Fprintln(&b, "  unzip -o /tmp/loki-linux-amd64.zip -d /tmp")
+	fmt.Fprintln(&b, "  install -m 0755 /tmp/loki-linux-amd64 /usr/local/bin/loki")
+	fmt.Fprintln(&b, "fi")
+	fmt.Fprintln(&b, "cat > /etc/loki-local-config.yaml <<'EOF'")
+	fmt.Fprintln(&b, "auth_enabled: false")
+	fmt.Fprintln(&b, "server:")
+	fmt.Fprintln(&b, "  http_listen_address: 127.0.0.1")
+	fmt.Fprintln(&b, "  http_listen_port: 3100")
+	fmt.Fprintln(&b, "common:")
+	fmt.Fprintln(&b, "  path_prefix: /var/lib/loki")
+	fmt.Fprintln(&b, "  replication_factor: 1")
+	fmt.Fprintln(&b, "  ring:")
+	fmt.Fprintln(&b, "    kvstore:")
+	fmt.Fprintln(&b, "      store: inmemory")
+	fmt.Fprintln(&b, "schema_config:")
+	fmt.Fprintln(&b, "  configs:")
+	fmt.Fprintln(&b, "    - from: 2024-01-01")
+	fmt.Fprintln(&b, "      store: tsdb")
+	fmt.Fprintln(&b, "      object_store: filesystem")
+	fmt.Fprintln(&b, "      schema: v13")
+	fmt.Fprintln(&b, "      index:")
+	fmt.Fprintln(&b, "        prefix: index_")
+	fmt.Fprintln(&b, "        period: 24h")
+	fmt.Fprintln(&b, "storage_config:")
+	fmt.Fprintln(&b, "  filesystem:")
+	fmt.Fprintln(&b, "    directory: /var/lib/loki/chunks")
+	fmt.Fprintln(&b, "  tsdb_shipper:")
+	fmt.Fprintln(&b, "    active_index_directory: /var/lib/loki/tsdb-index")
+	fmt.Fprintln(&b, "    cache_location: /var/lib/loki/tsdb-cache")
+	fmt.Fprintln(&b, "limits_config:")
+	fmt.Fprintln(&b, "  allow_structured_metadata: false")
+	fmt.Fprintln(&b, "EOF")
+	fmt.Fprintln(&b, "cat > /etc/systemd/system/loki.service <<'EOF'")
+	fmt.Fprintln(&b, "[Unit]")
+	fmt.Fprintln(&b, "Description=Loki log storage")
+	fmt.Fprintln(&b, "After=network-online.target")
+	fmt.Fprintln(&b, "Wants=network-online.target")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "[Service]")
+	fmt.Fprintln(&b, "ExecStart=/usr/local/bin/loki -config.file=/etc/loki-local-config.yaml")
+	fmt.Fprintln(&b, "Restart=always")
+	fmt.Fprintln(&b, "RestartSec=5")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "[Install]")
+	fmt.Fprintln(&b, "WantedBy=multi-user.target")
+	fmt.Fprintln(&b, "EOF")
+	fmt.Fprintln(&b, "cat > /etc/rtk-cloud/logger.env <<'EOF'")
+	fmt.Fprintf(&b, "RTK_CLOUD_LOGGER_TOKEN=%s\n", shellEnvValue(token))
+	fmt.Fprintln(&b, "RTK_CLOUD_LOGGER_STORE=loki")
+	fmt.Fprintln(&b, "RTK_CLOUD_LOGGER_LOKI_URL=http://127.0.0.1:3100")
+	fmt.Fprintln(&b, "EOF")
+	fmt.Fprintln(&b, "chmod 0600 /etc/rtk-cloud/logger.env")
+	fmt.Fprintln(&b, "cat > /etc/systemd/system/rtk-cloud-logger.service <<'EOF'")
+	fmt.Fprintln(&b, "[Unit]")
+	fmt.Fprintln(&b, "Description=RTK Cloud central logger")
+	fmt.Fprintln(&b, "After=network-online.target loki.service")
+	fmt.Fprintln(&b, "Wants=network-online.target loki.service")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "[Service]")
+	fmt.Fprintln(&b, "EnvironmentFile=/etc/rtk-cloud/logger.env")
+	fmt.Fprintln(&b, "ExecStart=/usr/local/bin/rtk-cloud-logger -addr 127.0.0.1:18090")
+	fmt.Fprintln(&b, "Restart=always")
+	fmt.Fprintln(&b, "RestartSec=5")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "[Install]")
+	fmt.Fprintln(&b, "WantedBy=multi-user.target")
+	fmt.Fprintln(&b, "EOF")
+	fmt.Fprintln(&b, "cat > /etc/nginx/sites-available/rtk-cloud-logger <<'EOF'")
+	fmt.Fprintln(&b, "server {")
+	fmt.Fprintln(&b, "  listen 80;")
+	if domain != "" {
+		fmt.Fprintf(&b, "  server_name %s;\n", shellEnvValue(domain))
+	} else {
+		fmt.Fprintln(&b, "  server_name _;")
+	}
+	fmt.Fprintln(&b, "  location / {")
+	fmt.Fprintln(&b, "    proxy_pass http://127.0.0.1:18090;")
+	fmt.Fprintln(&b, "    proxy_set_header Host $host;")
+	fmt.Fprintln(&b, "    proxy_set_header X-Forwarded-Proto $scheme;")
+	fmt.Fprintln(&b, "    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;")
+	fmt.Fprintln(&b, "  }")
+	fmt.Fprintln(&b, "}")
+	fmt.Fprintln(&b, "EOF")
+	fmt.Fprintln(&b, "ln -sf /etc/nginx/sites-available/rtk-cloud-logger /etc/nginx/sites-enabled/rtk-cloud-logger")
+	fmt.Fprintln(&b, "rm -f /etc/nginx/sites-enabled/default")
+	fmt.Fprintln(&b, "systemctl daemon-reload")
+	fmt.Fprintln(&b, "systemctl enable --now loki.service rtk-cloud-logger.service nginx.service")
+	fmt.Fprintln(&b, "systemctl reload nginx")
+	if domain != "" {
+		fmt.Fprintf(&b, "certbot --nginx -d %s --non-interactive --agree-tos --register-unsafely-without-email --redirect\n", shellEnvValue(domain))
+	}
+	return b.String()
 }
 
 type loggerForwarderTarget struct {
