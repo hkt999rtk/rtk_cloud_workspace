@@ -179,8 +179,10 @@ grep -F -- 'StrictHostKeyChecking=accept-new' "$SCP_LOG" >/dev/null
 grep -F -- '-i ' "$SSH_LOG" >/dev/null
 grep -F -- 'BatchMode=yes' "$SSH_LOG" >/dev/null
 grep -F -- 'StrictHostKeyChecking=accept-new' "$SSH_LOG" >/dev/null
-grep -F -- 'ProxyJump=root@203.0.113.10' "$SCP_LOG" >/dev/null
-grep -F -- '-J root@203.0.113.10' "$SSH_LOG" >/dev/null
+grep -F -- 'ProxyCommand=ssh' "$SCP_LOG" >/dev/null
+grep -F -- 'ProxyCommand=ssh' "$SSH_LOG" >/dev/null
+grep -F -- '-W %h:%p root@203.0.113.10' "$SCP_LOG" >/dev/null
+grep -F -- '-W %h:%p root@203.0.113.10' "$SSH_LOG" >/dev/null
 if grep -R 'super-secret-forwarder-token' "$OUT" "$ERR" "$ENV_ROOT/artifacts" "$SCP_LOG" "$SSH_LOG" >/dev/null; then
 	echo "forwarder token leaked to output, report, or scp args" >&2
 	exit 1
