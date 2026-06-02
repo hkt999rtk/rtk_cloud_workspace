@@ -471,10 +471,8 @@ func provisionApply(paths provisionPaths, env map[string]string, opts provisionO
 	} else if err := cleanupOrphanedProvisionState(paths, env); err != nil {
 		return err
 	}
-	if _, err := os.Stat(repoState); err != nil {
-		if err := runCmdWithEnv(filepath.Join(paths.Workspace, "repos", "rtk_video_cloud", "linode_deploy"), mergeEnv(operator, map[string]string{}), "go", "run", "./cmd/linode-deploy", "apply", "--config", paths.VideoConfig); err != nil {
-			return err
-		}
+	if err := runCmdWithEnv(filepath.Join(paths.Workspace, "repos", "rtk_video_cloud", "linode_deploy"), mergeEnv(operator, map[string]string{}), "go", "run", "./cmd/linode-deploy", "apply", "--config", paths.VideoConfig); err != nil {
+		return err
 	}
 	if err := syncProvisionVideoState(paths.VideoState, repoState); err != nil {
 		return err
@@ -1451,11 +1449,20 @@ func writeVideoVMRows(b *strings.Builder, video map[string]any) {
 		privateIP := stringValue(item["private_ip"])
 		route := "`direct public SSH`"
 		proxy := "`N/A`"
-		if publicIP == "" && privateIP != "" {
+		if privateVideoRoleUsesProxyJump(role) && privateIP != "" {
 			route = "`VPC via edge ProxyJump`"
 			proxy = "`root@" + edgePublic + "`"
 		}
 		fmt.Fprintf(b, "| `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | %s | %s |\n", role, stringValue(item["label"]), stringValue(item["id"]), stringValue(firewalls[role]), publicPrivateNetwork(publicIP, privateIP), displayNA(publicIP), displayNA(privateIP), route, proxy)
+	}
+}
+
+func privateVideoRoleUsesProxyJump(role string) bool {
+	switch role {
+	case "api", "infra", "mqtt":
+		return true
+	default:
+		return false
 	}
 }
 
