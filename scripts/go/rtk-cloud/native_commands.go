@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -511,9 +513,14 @@ func runCmdWithInput(dir, input, name string, args ...string) error {
 
 func runLoggerReadinessHooks(paths provisionPaths, env map[string]string, report *readinessReport) {
 	script := os.Getenv("CLOUD_LOGGER_SCRIPT")
-	if script == "" {
+	if script != "" {
+		runLoggerReadinessScriptHooks(paths, env, script, report)
 		return
 	}
+	runNativeLoggerReadinessChecks(paths, env, report)
+}
+
+func runLoggerReadinessScriptHooks(paths provisionPaths, env map[string]string, script string, report *readinessReport) {
 	loggerEnv := filepath.Join(paths.EnvRoot, "services", "cloud-logger", "logger.env")
 	loggerState := filepath.Join(paths.EnvRoot, "state", "cloud-logger.env")
 	checks := [][]string{
@@ -534,6 +541,95 @@ func runLoggerReadinessHooks(paths provisionPaths, env map[string]string, report
 			report.add(name, "DEGRADED", "")
 		}
 	}
+}
+
+func runNativeLoggerReadinessChecks(paths provisionPaths, env map[string]string, report *readinessReport) {
+	loggerEnv, _ := readEnvFile(filepath.Join(paths.EnvRoot, "services", "cloud-logger", "logger.env"))
+	loggerState, _ := readEnvFile(filepath.Join(paths.EnvRoot, "state", "cloud-logger.env"))
+	endpoint := firstNonEmpty(loggerEnv["CLOUD_LOGGER_ENDPOINT"], loggerState["CLOUD_LOGGER_ENDPOINT"], env["CLOUD_LOGGER_ENDPOINT"])
+	token := firstNonEmpty(loggerEnv["CLOUD_LOGGER_INGEST_TOKEN"], loggerState["CLOUD_LOGGER_INGEST_TOKEN"])
+	if endpoint == "" || token == "" {
+		report.add("logger-backend-health", "DEGRADED", "")
+		report.add("logger-ingest-idempotency", "DEGRADED", "")
+		report.add("logger-sample-trace-query", "DEGRADED", "")
+		for _, target := range loggerForwarderTargets(paths) {
+			report.add("logger-forwarder:"+target.name, "DEGRADED", "")
+		}
+		return
+	}
+	if err := loggerHTTP(endpoint, token, http.MethodGet, "/healthz", ""); err != nil {
+		report.add("logger-backend-health", "DEGRADED", "")
+	} else {
+		report.add("logger-backend-health", "PASS", "")
+	}
+	eventID := "readiness-" + time.Now().UTC().Format("20060102T150405.000000000Z")
+	traceID := eventID + "-trace"
+	requestID := eventID + "-request"
+	event := map[string]any{
+		"event_id":   eventID,
+		"ts":         time.Now().UTC().Format(time.RFC3339Nano),
+		"level":      "info",
+		"msg":        "logger readiness probe",
+		"service":    "workspace-readiness",
+		"env":        firstNonEmpty(env["CLOUD_ENV_NAME"], "staging"),
+		"version":    "workspace",
+		"host":       "operator",
+		"unit":       "stg.sh",
+		"source":     "readiness",
+		"trace_id":   traceID,
+		"request_id": requestID,
+	}
+	bodyBytes, _ := json.Marshal(map[string]any{"events": []map[string]any{event}})
+	if err := loggerHTTP(endpoint, token, http.MethodPost, "/v1/logs/ingest", string(bodyBytes)); err != nil {
+		report.add("logger-ingest-idempotency", "DEGRADED", "")
+	} else if err := loggerHTTP(endpoint, token, http.MethodPost, "/v1/logs/ingest", string(bodyBytes)); err != nil {
+		report.add("logger-ingest-idempotency", "DEGRADED", "")
+	} else {
+		report.add("logger-ingest-idempotency", "PASS", "")
+	}
+	queryPath := "/v1/logs?service=workspace-readiness&trace_id=" + url.QueryEscape(traceID) + "&request_id=" + url.QueryEscape(requestID)
+	if raw, err := loggerHTTPOutput(endpoint, token, http.MethodGet, queryPath, ""); err != nil || !strings.Contains(string(raw), eventID) {
+		report.add("logger-sample-trace-query", "DEGRADED", "")
+	} else {
+		report.add("logger-sample-trace-query", "PASS", "")
+	}
+	for _, target := range loggerForwarderTargets(paths) {
+		if target.host == "" {
+			report.add("logger-forwarder:"+target.name, "DEGRADED", "")
+			continue
+		}
+		if err := runCmdQuiet("ssh", "root@"+target.host, "systemctl", "is-active", "--quiet", "rtk-cloud-log-forwarder.service"); err != nil {
+			report.add("logger-forwarder:"+target.name, "DEGRADED", "")
+		} else {
+			report.add("logger-forwarder:"+target.name, "PASS", "")
+		}
+	}
+}
+
+func loggerHTTP(endpoint, token, method, path, body string) error {
+	_, err := loggerHTTPOutput(endpoint, token, method, path, body)
+	return err
+}
+
+func loggerHTTPOutput(endpoint, token, method, path, body string) ([]byte, error) {
+	args := []string{"-fsS", "-X", method, strings.TrimRight(endpoint, "/") + path, "-H", "Authorization: Bearer " + token, "-H", "Content-Type: application/json"}
+	if body != "" {
+		args = append(args, "--data-binary", body)
+	}
+	cmd := exec.Command("curl", args...)
+	cmd.Stderr = io.Discard
+	out, err := cmd.Output()
+	if err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
+func runCmdQuiet(name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd.Run()
 }
 
 func videoStateInstanceHost(path, role string) string {

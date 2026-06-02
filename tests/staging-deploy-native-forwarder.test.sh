@@ -11,6 +11,7 @@ FAKE_BIN="$TMP/bin"
 ORDER_LOG="$TMP/order.log"
 SSH_LOG="$TMP/ssh.log"
 SCP_LOG="$TMP/scp.log"
+CURL_EVENT="$TMP/logger-event.json"
 mkdir -p \
 	"$FAKE_BIN" \
 	"$ENV_ROOT/topology" \
@@ -107,6 +108,10 @@ SH
 cat > "$FAKE_BIN/ssh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "$*" == *"systemctl is-active --quiet rtk-cloud-log-forwarder.service"* ]]; then
+	printf 'readiness %s\n' "$1" >> "$SSH_LOG"
+	exit 0
+fi
 input="$(cat)"
 if [[ "$input" != *super-secret-forwarder-token* ]]; then
 	printf 'remote install script missing token\n' >&2
@@ -117,21 +122,48 @@ exit 0
 SH
 cat > "$FAKE_BIN/curl" <<'SH'
 #!/usr/bin/env bash
-printf 'ok\n'
+set -euo pipefail
+case "$*" in
+*"/healthz"*)
+	printf 'ok\n'
+	;;
+*"/v1/logs/ingest"*)
+	while [[ "$#" -gt 0 ]]; do
+		if [[ "$1" == "--data-binary" ]]; then
+			printf '%s\n' "$2" > "$CURL_EVENT"
+			break
+		fi
+		shift
+	done
+	printf '{"results":[{"status":"accepted"}]}\n'
+	;;
+*"/v1/logs?"*)
+	cat "$CURL_EVENT"
+	;;
+*)
+	printf 'unexpected curl: %s\n' "$*" >&2
+	exit 1
+	;;
+esac
 SH
 chmod +x "$FAKE_BIN/go" "$FAKE_BIN/scp" "$FAKE_BIN/ssh" "$FAKE_BIN/curl"
 
 OUT="$TMP/out.txt"
 ERR="$TMP/err.txt"
-ORDER_LOG="$ORDER_LOG" SSH_LOG="$SSH_LOG" SCP_LOG="$SCP_LOG" PATH="$FAKE_BIN:$PATH" /usr/local/go/bin/go run "$ROOT/scripts/go/rtk-cloud" -- deploy \
+ORDER_LOG="$ORDER_LOG" SSH_LOG="$SSH_LOG" SCP_LOG="$SCP_LOG" CURL_EVENT="$CURL_EVENT" PATH="$FAKE_BIN:$PATH" /usr/local/go/bin/go run "$ROOT/scripts/go/rtk-cloud" -- deploy \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" >"$OUT" 2>"$ERR"
 
+REPORT="$(grep -F '[cloud-deploy] readiness report:' "$ERR" | tail -n 1 | sed 's/^.*readiness report: //')"
+grep -F 'PASS `logger-backend-health`' "$REPORT" >/dev/null
+grep -F 'PASS `logger-ingest-idempotency`' "$REPORT" >/dev/null
+grep -F 'PASS `logger-sample-trace-query`' "$REPORT" >/dev/null
 for host in 203.0.113.20 10.42.1.10 203.0.113.30 203.0.113.10 10.42.1.30 203.0.113.13 203.0.113.14; do
 	grep -F "root@$host:/usr/local/bin/rtk-cloud-log-forwarder" "$SCP_LOG" >/dev/null
 	grep -F "host=root@$host" "$SSH_LOG" >/dev/null
+	grep -F "readiness root@$host" "$SSH_LOG" >/dev/null
 done
-if grep -R 'super-secret-forwarder-token' "$OUT" "$ERR" "$ENV_ROOT/artifacts" "$SCP_LOG" >/dev/null; then
+if grep -R 'super-secret-forwarder-token' "$OUT" "$ERR" "$ENV_ROOT/artifacts" "$SCP_LOG" "$SSH_LOG" >/dev/null; then
 	echo "forwarder token leaked to output, report, or scp args" >&2
 	exit 1
 fi
