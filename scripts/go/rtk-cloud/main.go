@@ -2250,17 +2250,19 @@ type firewallTarget struct {
 
 func firewallTargets(envRoot string) ([]firewallTarget, error) {
 	targets := []firewallTarget{}
-	statePath := filepath.Join(envRoot, "state", "video-cloud-staging.state.json")
+	statePath := videoCloudStatePath(envRoot)
 	if data, err := os.ReadFile(statePath); err == nil {
 		var parsed struct {
+			Stack     string         `json:"stack"`
 			Firewalls map[string]any `json:"firewalls"`
 		}
 		if err := json.Unmarshal(data, &parsed); err != nil {
 			return nil, err
 		}
+		labelPrefix := firstNonEmpty(parsed.Stack, stackNameFromEnvRoot(envRoot), "video-cloud-staging")
 		for _, role := range []string{"edge", "api", "infra", "mqtt", "coturn"} {
 			if id, ok := parsed.Firewalls[role]; ok {
-				targets = append(targets, firewallTarget{Role: role, Label: "video-cloud-staging-" + role, ID: fmt.Sprintf("%.0f", asFloat(id))})
+				targets = append(targets, firewallTarget{Role: role, Label: labelPrefix + "-" + role, ID: fmt.Sprintf("%.0f", asFloat(id))})
 			}
 		}
 	}
@@ -2277,6 +2279,31 @@ func firewallTargets(envRoot string) ([]firewallTarget, error) {
 		ID:    envFileValue(adminState, "ADMIN_LINODE_FIREWALL_ID"),
 	})
 	return targets, nil
+}
+
+func videoCloudStatePath(envRoot string) string {
+	stack := stackNameFromEnvRoot(envRoot)
+	if stack == "" {
+		stack = "video-cloud-staging"
+	}
+	return filepath.Join(envRoot, "state", stack+".state.json")
+}
+
+func stackNameFromEnvRoot(envRoot string) string {
+	if stack := envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_STACK_NAME"); stack != "" {
+		return stack
+	}
+	data, err := os.ReadFile(filepath.Join(envRoot, "topology", "video-cloud-staging.yaml"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "stack:") {
+			return strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "stack:")), `"'`)
+		}
+	}
+	return ""
 }
 
 func updateFirewallRules(target firewallTarget, mode, cidr string, dryRun bool) error {

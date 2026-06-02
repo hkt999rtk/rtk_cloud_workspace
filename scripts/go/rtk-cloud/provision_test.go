@@ -63,6 +63,44 @@ func TestWriteProvisionArtifactsIncludesCloudAdminPrivateIP(t *testing.T) {
 	}
 }
 
+func TestFirewallTargetsUsesConfiguredVideoCloudStackState(t *testing.T) {
+	root := t.TempDir()
+	mkdirAll(t, filepath.Join(root, "env"))
+	mkdirAll(t, filepath.Join(root, "state"))
+	writeFile(t, filepath.Join(root, "env", "stack.env"), "CLOUD_STACK_NAME=video-cloud-stg-0529\n")
+	writeFile(t, filepath.Join(root, "state", "video-cloud-stg-0529.state.json"), `{
+  "stack":"video-cloud-stg-0529",
+  "firewalls":{"edge":101,"api":102,"infra":103,"mqtt":104,"coturn":105}
+}`)
+	writeFile(t, filepath.Join(root, "state", "account-manager-staging.env"), "ACCOUNT_MANAGER_LINODE_FIREWALL_ID=201\nACCOUNT_MANAGER_LINODE_FIREWALL_LABEL=account-fw\n")
+	writeFile(t, filepath.Join(root, "state", "cloud-admin-staging.env"), "ADMIN_LINODE_FIREWALL_ID=202\nADMIN_LINODE_FIREWALL_LABEL=admin-fw\n")
+
+	targets, err := firewallTargets(root)
+	if err != nil {
+		t.Fatalf("firewallTargets returned error: %v", err)
+	}
+	byRole := map[string]firewallTarget{}
+	for _, target := range targets {
+		byRole[target.Role] = target
+	}
+	for role, wantID := range map[string]string{
+		"edge":            "101",
+		"api":             "102",
+		"infra":           "103",
+		"mqtt":            "104",
+		"coturn":          "105",
+		"account-manager": "201",
+		"cloud-admin":     "202",
+	} {
+		if byRole[role].ID != wantID {
+			t.Fatalf("%s firewall id = %q, want %q; targets=%#v", role, byRole[role].ID, wantID, targets)
+		}
+	}
+	if byRole["edge"].Label != "video-cloud-stg-0529-edge" {
+		t.Fatalf("edge label = %q", byRole["edge"].Label)
+	}
+}
+
 func TestSelectObjectReleaseSupportsHTTPObjectStorage(t *testing.T) {
 	requests := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
