@@ -349,8 +349,8 @@ The production-like profile should collect:
 
 - service status and health checks for selected units/containers
 - Prometheus snapshots from video cloud services
-- central service logger backend health, per-host journald forwarder status,
-  and one sample trace/query result
+- central Loki-backed service logger health, per-host journald forwarder
+  status, and one sample Loki trace/query result
 - frontend health and lead persistence checks
 - account manager auth/org/device smoke output
 - EMQX broker status and MQTT publish-subscribe smoke when MQTT is enabled

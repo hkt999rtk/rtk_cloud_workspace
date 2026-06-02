@@ -23,8 +23,9 @@ Go services and workers
   -> zap JSON logs on stdout/stderr
   -> systemd journald on each VM
   -> rtk-cloud-log-forwarder systemd service
-  -> rtk_cloud_logger ingest API
-  -> logger storage/query backend
+  -> rtk_cloud_logger ingest API or Loki-compatible ingest adapter
+  -> Loki on the dedicated logs VM
+  -> Cloud Admin BFF/UI through Loki query APIs
 ```
 
 Applications must not synchronously push logs to the logger backend. They write
@@ -32,6 +33,12 @@ structured JSON logs to stdout/stderr and continue to run when the logger backen
 or forwarder is degraded. Journald is the local durable buffer. The forwarder is
 responsible for batching, retry, cursor persistence, bounded local spool, and
 deduplication metadata.
+
+Private-cloud v1 requires Loki as the centralized log storage/query backend.
+Grafana is optional and is not the v1 dashboard dependency. The operator log
+dashboard is owned by Cloud Admin, which should query Loki through a backend
+service or workspace/logger query adapter. Loki should stay private to the
+deployment network unless an explicit authenticated proxy is added.
 
 ## Log Taxonomy
 
@@ -141,12 +148,12 @@ traffic, but application services remain tolerant of logging degradation.
 Required order:
 
 1. Create network, VPC, DNS, and base secrets.
-2. Provision the logger backend VM or service.
-3. Generate logger endpoint and forwarder credentials.
+2. Provision the logs VM and Loki-backed logger backend.
+3. Generate logger ingest/query endpoints and forwarder credentials.
 4. Install and enable the forwarder on each service host.
 5. Deploy Account Manager, Video Cloud, Cloud Admin, and Frontend services.
-6. Run readiness checks that verify backend health, forwarder status, and one
-   sample trace query.
+6. Run readiness checks that verify Loki/backend health, forwarder status, and
+   one sample trace query.
 
 If the logger backend is unavailable, readiness should report `logging:
 degraded` while keeping service health checks independent.
@@ -159,7 +166,7 @@ degraded` while keeping service health checks independent.
 | `rtk_cloud_contracts_doc` | Shared service logging contract and correlation field rules. |
 | `rtk_video_cloud` | Migrate service and worker logs from `slog` to `rtk_cloud_logger` zap and propagate workflow ids. |
 | `rtk_account_manager` | Replace stdlib/Gin logging with zap for API, migrations, workers, and cleanup timer. |
-| `rtk_cloud_admin` | Add zap request logging and upstream correlation for Account Manager and Video Cloud calls. |
+| `rtk_cloud_admin` | Add zap request logging, upstream correlation for Account Manager and Video Cloud calls, and the v1 operator log dashboard backed by Loki query APIs. |
 | `rtk_cloud_frontend` | Add zap logs for Go web/search processes and define labels for web/runtime logs. |
 | `rtk_cloud_client` | Document SDK correlation propagation and the boundary between device runtime logs and cloud service logs. |
 | `rtk_cloud_workspace` | Provision logger role, forwarder install, env/state files, readiness evidence, and cross-repo issue tracking. |
@@ -173,6 +180,8 @@ degraded` while keeping service health checks independent.
   journal event.
 - A support engineer can query by `trace_id`, `operation_id`, `request_id`,
   `device_id`, service, unit, host, and time range.
+- Cloud Admin can show those results without Grafana by calling a Loki-backed
+  query endpoint.
 - Staging readiness reports logger backend health, per-host forwarder health,
   and a sample query result.
 - Stopping the logger backend does not stop account, video, admin, or frontend
