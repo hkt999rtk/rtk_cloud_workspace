@@ -1,6 +1,6 @@
 # Video Cloud API-Level E2E Load Test Roadmap
 
-Status: implemented owner migration; home MQTT simulation planned
+Status: implemented owner migration; home MQTT smoke wrapper implemented
 Owner: rtk_cloud_workspace
 Last updated: 2026-05-31
 
@@ -16,11 +16,12 @@ simulate many virtual actors from one process, support multiple load instances
 through shared run metadata, validate WebRTC setup with Pion, and emit JSON plus
 Markdown reports that can be used as manual, lab, or release evidence.
 
-The next planned expansion is an env-root driven home MQTT simulation profile.
-It starts from the same local environment directory used by
-`go run ./scripts/go/rtk-cloud -- provision`, loads existing users, device fixtures, bind
-artifacts, and device mTLS material, then models a real home user operating
-lights, air conditioners, and smart meters through Cloud APIs. See
+The current env-root driven home MQTT smoke profile starts from the same local
+environment directory used by `go run ./scripts/go/rtk-cloud -- provision`,
+loads existing users, device fixtures, bind artifacts, and device mTLS material,
+then validates live MQTT publish/subscribe with the documented sample
+home-device envelope. Follow-on real-case work should model a home user
+operating lights, air conditioners, and smart meters through Cloud APIs. See
 [`home-mqtt-loadtest-simulation.md`](home-mqtt-loadtest-simulation.md).
 
 ## Source-of-Truth Boundaries
@@ -47,9 +48,10 @@ In scope:
 - Load profiles: `safe-staging`, `stress`, and `soak`.
 - Artifacts: `load-results.json`, `load-report.md`, run metadata, threshold
   result, and error classification.
-- Planned home MQTT profile: APP/user actors use Cloud APIs, device actors use
-  per-device MQTT mTLS credentials from env-root, and the workload models
-  stateful light, air-conditioner, and smart-meter behavior.
+- Home MQTT profile: device actors use per-device MQTT mTLS credentials from
+  env-root and publish `home_device_message` payloads on
+  `devices/<device_id>/up/messages`; follow-on APP/user actors use Cloud APIs
+  and model stateful light, air-conditioner, and smart-meter behavior.
 
 Out of scope for v1:
 
@@ -97,7 +99,7 @@ Environment variables:
 - `VIDEO_CLOUD_LOAD_INSTANCE_ID`
 - `VIDEO_CLOUD_LOAD_DEVICE_PREFIX`
 
-Planned home MQTT wrapper:
+Home MQTT wrapper:
 
 ```sh
 go run ./scripts/go/rtk-cloud -- mqtt-test \
@@ -105,10 +107,14 @@ go run ./scripts/go/rtk-cloud -- mqtt-test \
   --brandname RTK
 ```
 
-The wrapper must resolve the environment root with `scripts/go/rtk-cloud/internal/envroot`
-and discover users, device inventory, bind artifacts, service endpoints, and
-device mTLS material from that root. Missing prerequisites should produce a
-redacted `BLOCKED` report instead of falling back to fake data.
+The wrapper must resolve the environment root with
+`scripts/go/rtk-cloud/internal/envroot` and discover users, device inventory,
+bind artifacts, service endpoints, and device mTLS material from that root.
+Missing prerequisites should produce a redacted `BLOCKED` report instead of
+falling back to fake data. Smoke evidence must use the sample home-device
+envelope from `repos/rtk_cloud_client/docs/SAMPLE_DEVICE_MQTT_PAYLOADS.md`;
+reserved `$vc` shadow traffic is a separate probe and does not satisfy this
+profile's home-device payload evidence.
 
 The runner must exit non-zero when configured thresholds fail. Thresholds should
 cover at least success rate and p95/p99 latency; WebRTC setup metrics should be

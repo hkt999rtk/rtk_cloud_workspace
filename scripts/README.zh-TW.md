@@ -330,7 +330,7 @@ go run ./scripts/go/rtk-cloud -- staging-e2e-test \
 - `TEST_REPORT.md`：人工閱讀用測試報告。
 - `logs/*.log`：各步驟 stdout/stderr。這些 log 留在 git ignored cloud env artifacts；提交或分享前仍應視為 operator artifact 審查。
 
-報告檔會掃描常見敏感字串，避免 password、bearer token、private key 或服務 secret 被寫入 summary/report。完整 per-step log 不會自動清洗，不應 commit。MQTT 子測試預設會用 device mTLS 連到 broker，訂閱 device shadow response topics，publish shadow update，並等待 Video Cloud MQTT bridge 回 `accepted` / `documents`；只做 local artifact 檢查不能算通過。
+報告檔會掃描常見敏感字串，避免 password、bearer token、private key 或服務 secret 被寫入 summary/report。完整 per-step log 不會自動清洗，不應 commit。MQTT 子測試預設會用 device mTLS 連到 broker，使用 sample home-device envelope，在 `devices/<device_id>/up/messages` publish `home_device_message` 狀態/回報 payload，並等待 broker 回送同一筆訊息；只做 local artifact 檢查不能算通過。`$vc/devices/{devid}/shadow/...` 是保留的 device shadow probe，不能取代 sample home automation payload coverage。
 
 ### `go run ./scripts/go/rtk-cloud -- deploy`
 

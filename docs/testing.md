@@ -68,18 +68,22 @@ go run ./scripts/go/rtk-cloud -- mqtt-test \
   --brandname RTK
 ```
 
-`go run ./scripts/go/rtk-cloud -- mqtt-test` is the direct entry point and writes sanitized
-`results.json` plus `TEST_REPORT.md` under
+`go run ./scripts/go/rtk-cloud -- mqtt-test` is the direct entry point and writes
+sanitized `results.json` plus `TEST_REPORT.md` under
 `<env-root>/artifacts/home-mqtt-loadtest/<timestamp>/`. The wrapper discovers
-user credentials, device inventory, bind artifacts,
-service endpoints, and per-device mTLS cert/key material from the resolved
-environment root. APP actors use user credentials and Cloud APIs; device actors
-use per-device MQTT mTLS identity. The default run is live MQTT E2E: each
-selected device connects to the staging MQTT broker with its certificate,
-subscribes to its shadow response topics, publishes a shadow update, and waits
-for accepted/documents responses through the Video Cloud MQTT bridge. WebRTC,
-relay, storage, clips, and snapshots are disabled for this profile. The design
-and developer issue breakdown live in `docs/home-mqtt-loadtest-simulation.md`.
+user credentials, device inventory, bind artifacts, service endpoints, and
+per-device mTLS cert/key material from the resolved environment root. APP actors
+use user credentials and Cloud APIs; device actors use per-device MQTT mTLS
+identity. The default run is live MQTT E2E for the sample home-device envelope:
+each selected device connects to the staging MQTT broker with its certificate,
+subscribes to `devices/<device_id>/up/messages`, publishes a
+`home_device_message` status/state report on that topic, and waits for the same
+message to be delivered back through the broker. Shadow topics under
+`$vc/devices/{devid}/shadow/...` are valid device-shadow probes, but they are not
+sufficient evidence for sample home automation command/result payload coverage.
+WebRTC, relay, storage, clips, and snapshots are disabled for this profile. The
+design and developer issue breakdown live in
+`docs/home-mqtt-loadtest-simulation.md`.
 
 For a destructive staging reset followed by the full onboarding and MQTT smoke,
 use the one-stop orchestrator from the workspace root:

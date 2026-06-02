@@ -81,8 +81,12 @@ Expected APP flow:
 Expected device flow:
 
 - Connect to MQTT with the per-device mTLS cert/key from env-root.
-- Subscribe only to the device's command topic.
-- Publish heartbeat/status and capability-specific telemetry.
+- Subscribe to the sample report topic `devices/<device_id>/up/messages` for
+  smoke-loopback evidence and to the command topic
+  `devices/<device_id>/down/commands` when APP command delivery is enabled.
+- Publish heartbeat/status and capability-specific telemetry using the
+  `home_device_message` envelope from
+  `repos/rtk_cloud_client/docs/SAMPLE_DEVICE_MQTT_PAYLOADS.md`.
 - Maintain local state across commands.
 - Publish `command_result` and `state_report` with the command correlation id.
 
@@ -183,6 +187,9 @@ Smoke profile:
 
 - One user.
 - Three MQTT-only devices: light, air-conditioner, and smart meter.
+- Validate live broker publish/subscribe with the sample home-device envelope on
+  `devices/<device_id>/up/messages`; reserved `$vc` device-shadow updates are a
+  separate low-level probe and do not satisfy home-device payload coverage.
 - Two-minute duration.
 - No WebRTC, viewer, storage, clip, or snapshot coverage.
 
