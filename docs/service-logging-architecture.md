@@ -158,28 +158,24 @@ Required order:
 If the logger backend is unavailable, readiness should report `logging:
 degraded` while keeping service health checks independent.
 
-## Current Staging Gap / Implementation Backlog
+## Current Staging Implementation Status
 
-The architecture above is the required staging target, but the native staging
-provisioning path is not complete yet. Until the backlog below is implemented,
-centralized logging must be treated as an implementation gap rather than a
-provisioned staging service.
+The staging implementation now includes native logger resource provisioning,
+Loki-backed backend deployment, per-host forwarder installation, readiness
+checks, logger artifact redaction, cleanup coverage, and Cloud Admin dashboard
+wiring. `CLOUD_LOGGER_SCRIPT` remains available only as an override/debug hook.
 
-Missing staging pieces:
+Current status:
 
-- logger VM, firewall, DNS record, service env, and state files are not created
-  by the native `./stg.sh provision --all` flow yet
-- Loki-backed logger backend deployment is not wired into staging provisioning
-- `rtk-cloud-log-forwarder` is not installed as a native deploy step on the
-  account-manager, video-cloud-api, cloud-admin, edge, infra, mqtt, or coturn
-  hosts yet
-- readiness does not yet run backend health, ingest/idempotency, forwarder
-  status, or sample Loki query checks through a native path
-- provision artifacts and remove-vm cleanup do not yet include logger inventory,
-  redacted logger env/state evidence, and logger VM/firewall cleanup
-- the Cloud Admin v1 log dashboard still needs a Loki-backed query endpoint or
-  workspace/logger query adapter; Grafana remains optional and is not the v1
-  dashboard dependency
+| Area | Status | Notes |
+| --- | --- | --- |
+| Logger VM/firewall/env/state/DNS | Implemented in workspace provisioning | `./stg.sh provision --plan` reports logger resource status and `./stg.sh provision --all` creates the logger resource metadata. |
+| Loki-backed store | Implemented in `rtk_cloud_logger` | `rtk-cloud-logger` supports `-store loki` / `RTK_CLOUD_LOGGER_STORE=loki`. |
+| Logger backend/Loki service install | Implemented in workspace deploy | When `CLOUD_LOGGER_SCRIPT` is unset, deploy installs Loki plus `rtk-cloud-logger` systemd services on the logger VM. |
+| Per-host forwarders | Implemented in workspace deploy | `./stg.sh deploy` installs `rtk-cloud-log-forwarder` when logger env/state is available. |
+| Readiness checks | Implemented in workspace deploy | Backend health, ingest/idempotency, sample query, and forwarder status are reported as PASS/DEGRADED. |
+| Artifacts and cleanup | Implemented in workspace provisioning/cleanup | Logger inventory and redacted logger env/state evidence are included; cleanup includes logger resources. |
+| Cloud Admin dashboard | Implemented in `rtk_cloud_admin` submodule pointer | Cloud Admin owns the v1 UI; Grafana remains optional. |
 
 ## Repository Responsibilities
 
