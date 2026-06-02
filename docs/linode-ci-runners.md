@@ -174,6 +174,11 @@ their own GitHub-hosted `ubuntu-latest` jobs can upload bundles, checksums,
 manifests, or CI evidence directly to Linode Object Storage when those workflows
 have the required secrets.
 
+An Object Storage artifact is not evidence that `rtk-shared-linux-ci` was
+running. Check the artifact manifest fields such as `workflow`, `run_id`,
+`run_attempt`, runner/job logs, and `source_commit` to identify the workflow that
+built and uploaded it.
+
 There is currently no active workspace GitHub Actions workflow that automatically
 orchestrates the shared Linode CI runner lifecycle. Use the manual runner session
 commands below when a job explicitly needs the `rtk-shared-linux-ci` VM.
