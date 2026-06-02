@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -159,6 +160,32 @@ func TestWritePlatformAdminTokenLogsInWithBootstrapCredentials(t *testing.T) {
 	}
 	if strings.TrimSpace(out.String()) != "access-token-123" {
 		t.Fatalf("token output = %q", out.String())
+	}
+}
+
+func TestAccountLoginLogsPlatformAdminUsername(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"tokens":{"access_token":"access-token-123"}}`))
+	}))
+	defer server.Close()
+
+	logs := []string{}
+	_, err := accountLogin(accountManagerContext{
+		BaseURL:       server.URL,
+		AdminEmail:    "admin@example.test",
+		AdminPassword: "super-secret-password",
+	}, func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	})
+	if err != nil {
+		t.Fatalf("accountLogin returned error: %v", err)
+	}
+	body := strings.Join(logs, "\n")
+	if !strings.Contains(body, "username=admin@example.test") {
+		t.Fatalf("login logs missing username:\n%s", body)
+	}
+	if strings.Contains(body, "super-secret-password") {
+		t.Fatalf("login logs leaked password:\n%s", body)
 	}
 }
 

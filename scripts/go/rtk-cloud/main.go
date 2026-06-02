@@ -2100,7 +2100,7 @@ func accountLogin(ctx accountManagerContext, logf func(string, ...any)) (string,
 	if ctx.AdminEmail == "" || ctx.AdminPassword == "" {
 		return "", errors.New("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL and PASSWORD are required")
 	}
-	logf("logging in platform admin: %s/v1/auth/login", ctx.BaseURL)
+	logf("logging in platform admin: username=%s url=%s/v1/auth/login", ctx.AdminEmail, ctx.BaseURL)
 	payload, _ := json.Marshal(map[string]string{"email": ctx.AdminEmail, "password": ctx.AdminPassword})
 	body, status, err := curlJSONStatus(ctx.BaseURL+"/v1/auth/login", "", payload)
 	if err != nil {
