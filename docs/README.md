@@ -14,6 +14,7 @@ repositories. Shared wire and payload contracts belong in
 | [documentation-governance.md](documentation-governance.md) | Source | Documentation ownership, status, and review rules. |
 | [artifact-release-governance.md](artifact-release-governance.md) | Source | Linode Object Storage artifact source-of-truth policy and adoption matrix. |
 | [deployment-secrets-governance.md](deployment-secrets-governance.md) | Source | Local deployment secret layout, environment/provider/service taxonomy, and handling rules. |
+| [persistence-cache-refactor-roadmap.md](persistence-cache-refactor-roadmap.md) | Source | Cross-repo persistence boundary audit and Redis/cache-readiness issue roadmap. |
 | [realtek-connect-plus-gap-analysis.md](realtek-connect-plus-gap-analysis.md) | Discussion note | Evidence-backed gaps between Realtek Connect+ promotion content and current implementation. |
 | [implementation-gap-backlog.md](implementation-gap-backlog.md) | Supporting note | Post-interface implementation and test gaps to open as owner-repo issues. |
 | [core-platform-gap-roadmap.md](core-platform-gap-roadmap.md) | Supporting note | Core platform gap roadmap for readiness, private cloud, account lifecycle, fleet, telemetry, SDK/app, WebRTC, and smart-home ecosystem boundaries. |
