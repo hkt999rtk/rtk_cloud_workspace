@@ -158,6 +158,29 @@ Required order:
 If the logger backend is unavailable, readiness should report `logging:
 degraded` while keeping service health checks independent.
 
+## Current Staging Gap / Implementation Backlog
+
+The architecture above is the required staging target, but the native staging
+provisioning path is not complete yet. Until the backlog below is implemented,
+centralized logging must be treated as an implementation gap rather than a
+provisioned staging service.
+
+Missing staging pieces:
+
+- logger VM, firewall, DNS record, service env, and state files are not created
+  by the native `./stg.sh provision --all` flow yet
+- Loki-backed logger backend deployment is not wired into staging provisioning
+- `rtk-cloud-log-forwarder` is not installed as a native deploy step on the
+  account-manager, video-cloud-api, cloud-admin, edge, infra, mqtt, or coturn
+  hosts yet
+- readiness does not yet run backend health, ingest/idempotency, forwarder
+  status, or sample Loki query checks through a native path
+- provision artifacts and remove-vm cleanup do not yet include logger inventory,
+  redacted logger env/state evidence, and logger VM/firewall cleanup
+- the Cloud Admin v1 log dashboard still needs a Loki-backed query endpoint or
+  workspace/logger query adapter; Grafana remains optional and is not the v1
+  dashboard dependency
+
 ## Repository Responsibilities
 
 | Repository | Responsibility |

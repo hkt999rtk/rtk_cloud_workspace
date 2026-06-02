@@ -242,7 +242,7 @@ service logging 的目標 provisioning model 記在 `docs/service-logging-archit
 - `CLOUD_LOGGER_FORWARDER_TARGETS`：plan 中列出的 forwarder target，預設包含 edge/api/infra/mqtt/coturn/account-manager/cloud-admin/frontend/non-Go host sources。
 - `CLOUD_LOGGER_JOURNALD_SYSTEM_MAX_USE`、`CLOUD_LOGGER_JOURNALD_SYSTEM_KEEP_FREE`、`CLOUD_LOGGER_JOURNALD_MAX_RETENTION_SEC`：journald retention guidance，會傳給 forwarder install hook。
 
-`go run ./scripts/go/rtk-cloud -- deploy` 會在 app deploy 前呼叫 `CLOUD_LOGGER_SCRIPT` 執行 `provision-backend` 與每台 host 的 `install-forwarder`，再於 readiness report 收集 `backend-health`、`forwarder-status` 與 `sample-trace-query`。未設定 `CLOUD_LOGGER_SCRIPT` 時會略過 logger hook；正式環境應將它指到 `rtk_cloud_logger` 提供的 live provisioning hook。hook degraded 時不會阻塞服務 deploy。Grafana 只屬於 optional observability profile，不是 v1 dashboard 的必要元件。
+目前 staging centralized logger 還是 known implementation gap：native `provision/deploy` 尚未建立 logger VM/firewall/DNS/env/state、Loki-backed backend、forwarder systemd service、readiness query 與 remove-vm cleanup。現有 `CLOUD_LOGGER_SCRIPT` 只應視為 override/debug hook，可執行 `provision-backend`、`install-forwarder`、`backend-health`、`forwarder-status` 與 `sample-trace-query`；正式目標是 workspace native flow，不應在未設定 hook 時 silently skip。hook 或 logger degraded 時不會阻塞服務 deploy，但 readiness 必須標示 `logging: degraded`。Grafana 只屬於 optional observability profile，不是 v1 dashboard 的必要元件。
 
 常用用法：
 
