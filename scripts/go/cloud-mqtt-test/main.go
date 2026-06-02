@@ -71,6 +71,10 @@ type deviceResult struct {
 	SuccessPercent float64   `json:"success_percent"`
 	LatencyMS      []float64 `json:"latency_ms"`
 	MQTTStatus     string    `json:"mqtt_status"`
+	PublishTopic   string    `json:"publish_topic,omitempty"`
+	SubscribeTopic string    `json:"subscribe_topic,omitempty"`
+	MessageType    string    `json:"message_type,omitempty"`
+	PayloadSchema  string    `json:"payload_schema,omitempty"`
 	Error          string    `json:"error,omitempty"`
 }
 
@@ -303,7 +307,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 			row["devices"]++
 			row["commands"]++
 			record := findCert(certRecords, item.DeviceID)
-			outcome := runDeviceShadow(record, brandname, mqttHost, mqttPort)
+			outcome := runDeviceSampleEnvelope(record, brandname, mqttHost, mqttPort)
 			if outcome.MQTTStatus == "PASS" {
 				row["passed"]++
 			} else {
@@ -367,7 +371,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	return writeOutputs(outDir, result)
 }
 
-func runDeviceShadow(record certRecord, brandname, host string, port int) deviceResult {
+func runDeviceSampleEnvelope(record certRecord, brandname, host string, port int) deviceResult {
 	start := time.Now()
 	result := deviceResult{DeviceID: record.DeviceID, DeviceType: record.DeviceType, Commands: 1, SuccessPercent: 0, MQTTStatus: "FAIL", LatencyMS: []float64{0}}
 	cert, err := tls.LoadX509KeyPair(record.CertPath, record.KeyPath)
@@ -387,30 +391,24 @@ func runDeviceShadow(record certRecord, brandname, host string, port int) device
 		result.Error = redactedError(err)
 		return result
 	}
-	token := fmt.Sprintf("mqtt-e2e-%d-%s", time.Now().Unix(), record.DeviceID)
-	base := "$vc/devices/" + record.DeviceID + "/shadow/update"
-	accepted := base + "/accepted"
-	documents := base + "/documents"
-	rejected := base + "/rejected"
-	if err := mqttSubscribe(conn, 1, accepted); err != nil {
+	messageID := fmt.Sprintf("msg-mqtt-e2e-%d-%s", time.Now().Unix(), record.DeviceID)
+	topic, payload, err := sampleHomeStatusReport(record.DeviceID, record.DeviceType, brandname, messageID, time.Now().UTC())
+	if err != nil {
 		result.Error = redactedError(err)
 		return result
 	}
-	if err := mqttSubscribe(conn, 2, documents); err != nil {
+	result.PublishTopic = topic
+	result.SubscribeTopic = topic
+	result.MessageType = "status_report"
+	result.PayloadSchema = "home_device_message/v1"
+	if err := mqttSubscribe(conn, 1, topic); err != nil {
 		result.Error = redactedError(err)
 		return result
 	}
-	if err := mqttSubscribe(conn, 3, rejected); err != nil {
+	if err := mqttPublish(conn, topic, payload); err != nil {
 		result.Error = redactedError(err)
 		return result
 	}
-	payload, _ := json.Marshal(map[string]any{"state": map[string]any{"reported": map[string]any{"e2e_probe": map[string]any{"brand": brandname, "device_type": record.DeviceType, "timestamp": nowISO()}}}, "clientToken": token})
-	if err := mqttPublish(conn, base, payload); err != nil {
-		result.Error = redactedError(err)
-		return result
-	}
-	seenAccepted := false
-	seenDocuments := false
 	for time.Since(start) < 10*time.Second {
 		packetType, body, err := mqttReadPacket(conn)
 		if err != nil {
@@ -421,35 +419,48 @@ func runDeviceShadow(record certRecord, brandname, host string, port int) device
 			continue
 		}
 		topic, message, err := mqttDecodePublish(packetType&0x0f, body)
-		if err != nil || (topic != accepted && topic != documents && topic != rejected) {
+		if err != nil || topic != result.SubscribeTopic {
 			continue
 		}
 		doc := map[string]any{}
-		_ = json.Unmarshal(message, &doc)
-		if doc["clientToken"] != token {
+		if err := json.Unmarshal(message, &doc); err != nil {
 			continue
 		}
-		if topic == rejected {
-			result.Error = "shadow rejected"
-			result.LatencyMS = []float64{float64(time.Since(start).Milliseconds())}
-			return result
+		if doc["sample_type"] != "home_device_message" || doc["message_id"] != messageID {
+			continue
 		}
-		if topic == accepted {
-			seenAccepted = true
-		}
-		if topic == documents {
-			seenDocuments = true
-		}
-		if seenAccepted && seenDocuments {
-			result.MQTTStatus = "PASS"
-			result.SuccessPercent = 100
-			result.LatencyMS = []float64{float64(time.Since(start).Milliseconds())}
-			return result
-		}
+		result.MQTTStatus = "PASS"
+		result.SuccessPercent = 100
+		result.LatencyMS = []float64{float64(time.Since(start).Milliseconds())}
+		return result
 	}
-	result.Error = "timed out waiting for shadow accepted/documents"
+	result.Error = "timed out waiting for sample home-device message loopback"
 	result.LatencyMS = []float64{float64(time.Since(start).Milliseconds())}
 	return result
+}
+
+func sampleHomeStatusReport(deviceID, capability, brandname, messageID string, occurredAt time.Time) (string, []byte, error) {
+	topic := "devices/" + deviceID + "/up/messages"
+	body := map[string]any{
+		"sample_type":    "home_device_message",
+		"schema_version": 1,
+		"message_type":   "status_report",
+		"message_id":     messageID,
+		"correlation_id": nil,
+		"command_id":     nil,
+		"device_id":      deviceID,
+		"capability":     capability,
+		"occurred_at":    occurredAt.UTC().Format(time.RFC3339),
+		"payload": map[string]any{
+			"brand":       brandname,
+			"transport":   "mqtt",
+			"status":      "online",
+			"probe":       "home-mqtt-loadtest",
+			"reported_at": occurredAt.UTC().Format(time.RFC3339),
+		},
+	}
+	payload, err := json.Marshal(body)
+	return topic, payload, err
 }
 
 func mqttConnect(w io.ReadWriter, clientID string) error {
