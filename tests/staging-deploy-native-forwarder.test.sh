@@ -108,8 +108,18 @@ SH
 cat > "$FAKE_BIN/ssh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+host=""
+for arg in "$@"; do
+	case "$arg" in
+	root@*) host="$arg" ;;
+	esac
+done
+if [[ -z "$host" ]]; then
+	printf 'missing ssh host: %s\n' "$*" >&2
+	exit 8
+fi
 if [[ "$*" == *"systemctl is-active --quiet rtk-cloud-log-forwarder.service"* ]]; then
-	printf 'readiness %s\n' "$1" >> "$SSH_LOG"
+	printf 'readiness %s args=%s\n' "$host" "$*" >> "$SSH_LOG"
 	exit 0
 fi
 input="$(cat)"
@@ -117,7 +127,7 @@ if [[ "$input" != *super-secret-forwarder-token* ]]; then
 	printf 'remote install script missing token\n' >&2
 	exit 9
 fi
-printf 'host=%s\n%s\n' "$1" "${input//super-secret-forwarder-token/[REDACTED]}" >> "$SSH_LOG"
+printf 'host=%s args=%s\n%s\n' "$host" "$*" "${input//super-secret-forwarder-token/[REDACTED]}" >> "$SSH_LOG"
 exit 0
 SH
 cat > "$FAKE_BIN/curl" <<'SH'
@@ -163,6 +173,14 @@ for host in 203.0.113.20 10.42.1.10 203.0.113.30 203.0.113.10 10.42.1.30 203.0.1
 	grep -F "host=root@$host" "$SSH_LOG" >/dev/null
 	grep -F "readiness root@$host" "$SSH_LOG" >/dev/null
 done
+grep -F -- '-i ' "$SCP_LOG" >/dev/null
+grep -F -- 'BatchMode=yes' "$SCP_LOG" >/dev/null
+grep -F -- 'StrictHostKeyChecking=accept-new' "$SCP_LOG" >/dev/null
+grep -F -- '-i ' "$SSH_LOG" >/dev/null
+grep -F -- 'BatchMode=yes' "$SSH_LOG" >/dev/null
+grep -F -- 'StrictHostKeyChecking=accept-new' "$SSH_LOG" >/dev/null
+grep -F -- 'ProxyJump=root@203.0.113.10' "$SCP_LOG" >/dev/null
+grep -F -- '-J root@203.0.113.10' "$SSH_LOG" >/dev/null
 if grep -R 'super-secret-forwarder-token' "$OUT" "$ERR" "$ENV_ROOT/artifacts" "$SCP_LOG" "$SSH_LOG" >/dev/null; then
 	echo "forwarder token leaked to output, report, or scp args" >&2
 	exit 1

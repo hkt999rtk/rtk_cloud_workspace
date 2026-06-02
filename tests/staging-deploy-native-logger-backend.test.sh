@@ -117,14 +117,24 @@ SH
 cat > "$FAKE_BIN/ssh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+host=""
+for arg in "$@"; do
+	case "$arg" in
+	root@*) host="$arg" ;;
+	esac
+done
+if [[ -z "$host" ]]; then
+	printf 'missing ssh host: %s\n' "$*" >&2
+	exit 8
+fi
 if [[ "$*" == *"systemctl is-active --quiet rtk-cloud-log-forwarder.service"* ]]; then
-	printf 'readiness-forwarder %s\n' "$1" >> "$SSH_LOG"
+	printf 'readiness-forwarder %s args=%s\n' "$host" "$*" >> "$SSH_LOG"
 	exit 0
 fi
 input="$(cat)"
 redacted="${input//super-secret-backend-token/[REDACTED]}"
-printf 'host=%s\n%s\n' "$1" "$redacted" >> "$SSH_LOG"
-case "$1" in
+printf 'host=%s args=%s\n%s\n' "$host" "$*" "$redacted" >> "$SSH_LOG"
+case "$host" in
 root@203.0.113.80)
 	[[ "$input" == *"RTK_CLOUD_LOGGER_STORE=loki"* ]]
 	[[ "$input" == *"RTK_CLOUD_LOGGER_LOKI_URL=http://127.0.0.1:3100"* ]]
@@ -180,7 +190,13 @@ grep -F 'PASS `logger-sample-trace-query`' "$REPORT" >/dev/null
 grep -F './cmd/rtk-cloud-logger' "$GO_LOG" >/dev/null
 grep -F './cmd/rtk-cloud-log-forwarder' "$GO_LOG" >/dev/null
 grep -F 'root@203.0.113.80:/usr/local/bin/rtk-cloud-logger' "$SCP_LOG" >/dev/null
+grep -F -- '-i ' "$SCP_LOG" >/dev/null
+grep -F -- 'BatchMode=yes' "$SCP_LOG" >/dev/null
+grep -F -- 'StrictHostKeyChecking=accept-new' "$SCP_LOG" >/dev/null
 grep -F 'host=root@203.0.113.80' "$SSH_LOG" >/dev/null
+grep -F -- '-i ' "$SSH_LOG" >/dev/null
+grep -F -- 'BatchMode=yes' "$SSH_LOG" >/dev/null
+grep -F -- 'StrictHostKeyChecking=accept-new' "$SSH_LOG" >/dev/null
 grep -F 'rtk-cloud-logger.service' "$SSH_LOG" >/dev/null
 grep -F 'loki.service' "$SSH_LOG" >/dev/null
 for host in 203.0.113.20 10.42.1.10 203.0.113.30 203.0.113.10 10.42.1.30 203.0.113.13 203.0.113.14; do
@@ -188,6 +204,8 @@ for host in 203.0.113.20 10.42.1.10 203.0.113.30 203.0.113.10 10.42.1.30 203.0.1
 	grep -F "host=root@$host" "$SSH_LOG" >/dev/null
 	grep -F "readiness-forwarder root@$host" "$SSH_LOG" >/dev/null
 done
+grep -F -- 'ProxyJump=root@203.0.113.10' "$SCP_LOG" >/dev/null
+grep -F -- '-J root@203.0.113.10' "$SSH_LOG" >/dev/null
 if grep -R 'super-secret-backend-token' "$OUT" "$ERR" "$ENV_ROOT/artifacts" "$SCP_LOG" "$SSH_LOG" "$GO_LOG" >/dev/null; then
 	echo "logger token leaked to output, report, or command logs" >&2
 	exit 1
