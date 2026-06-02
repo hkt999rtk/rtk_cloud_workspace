@@ -139,6 +139,18 @@ Docker/EMQX logs rather than journald. Until that adapter is added, MQTT smoke
 tests provide an operator-side `workspace-mqtt-test` trace event, while
 broker-side per-publish detail is not guaranteed in central logger queries.
 
+Broker-side publish/subscribe detail must be opt-in. The expected staging flag
+is `CLOUD_LOGGER_EMQX_VERBOSE_TRACE=true`, exposed by `./stg.sh deploy` through
+the logger/EMQX deploy path. When disabled, only normal service and readiness
+logs are forwarded. When enabled, the implementation should collect explicit
+EMQX broker events for publish/subscribe flow and label them with
+`service=emqx-broker`, `source=emqx`, `component=mqtt-broker`, and
+`operation_id=mqtt-broker-trace`. The preferred implementation is EMQX event or
+rule-engine output to a logger-compatible adapter because it gives structured
+publish/subscribe events. A Docker/file log tailer is acceptable only if the
+EMQX configuration reliably emits the required publish/subscribe details at the
+selected verbose level.
+
 ## Security Rules
 
 Logs must not contain authorization headers, bearer tokens, refresh tokens,
@@ -182,7 +194,8 @@ Current status:
 | Loki-backed store | Implemented in `rtk_cloud_logger` | `rtk-cloud-logger` supports `-store loki` / `RTK_CLOUD_LOGGER_STORE=loki`. |
 | Logger backend/Loki service install | Implemented in workspace deploy | When `CLOUD_LOGGER_SCRIPT` is unset, deploy installs Loki plus `rtk-cloud-logger` systemd services on the logger VM. |
 | Per-host journald forwarders | Implemented in workspace deploy | `./stg.sh deploy` installs `rtk-cloud-log-forwarder` when logger env/state is available. Forwarder targets must use the actual staging systemd units such as `video_cloud-api.service`, `video_cloud-logingester.service`, `nats-server.service`, and `video_cloud-turnregistrar.service`. |
-| Container/file-source forwarding | Follow-up required | EMQX broker per-publish details and other non-journald file/container logs require a Docker/EMQX/file source adapter before they are guaranteed in central logger queries. |
+| Verbose EMQX broker trace | Follow-up required | Broker-side per-publish/per-subscribe detail must be controlled by `CLOUD_LOGGER_EMQX_VERBOSE_TRACE=true`; default remains off to avoid high-volume Loki writes. |
+| Container/file-source forwarding | Follow-up required | EMQX broker per-publish details and other non-journald file/container logs require a Docker/EMQX/file source adapter or EMQX event-output adapter before they are guaranteed in central logger queries. |
 | Readiness checks | Implemented in workspace deploy | Backend health, ingest/idempotency, sample query, and forwarder status are reported as PASS/DEGRADED. |
 | Artifacts and cleanup | Implemented in workspace provisioning/cleanup | Logger inventory and redacted logger env/state evidence are included; cleanup includes logger resources. |
 | Cloud Admin dashboard | Implemented in `rtk_cloud_admin` submodule pointer | Cloud Admin owns the v1 UI; Grafana remains optional. |

@@ -246,6 +246,8 @@ service logging 的目標 provisioning model 記在 `docs/service-logging-archit
 
 目前 native forwarder 的 v1 範圍是 journald systemd units；target 必須對應實際 staging unit，例如 `video_cloud-api.service`、`video_cloud-logingester.service`、`nats-server.service`、`video_cloud-turnregistrar.service`。EMQX broker 的 per-publish / per-subscribe detail 不一定會進 journald，因為 `video_cloud-emqx.service` 是 Docker Compose oneshot wrapper；若要保證 broker-side command-level trace，還需要 Docker/EMQX/file-source adapter。`./stg.sh mqtt` 會寫入 operator-side `workspace-mqtt-test` trace event，可用來確認 centralized logger ingest/query path。
 
+broker-side 每筆 publish/subscribe trace 必須是 opt-in verbose mode，預期 flag 是 `CLOUD_LOGGER_EMQX_VERBOSE_TRACE=true`。預設不開，避免大量 MQTT traffic 直接灌進 Loki。開啟後，deploy 應設定 EMQX event/rule output 或 logger adapter，將 broker event 標成 `service=emqx-broker`、`source=emqx`、`operation_id=mqtt-broker-trace`；如果只用 Docker/file log tailer，必須先確認 EMQX verbose 設定真的會輸出 publish/subscribe detail。
+
 常用用法：
 
 ```sh
