@@ -101,6 +101,26 @@ func TestFirewallTargetsUsesConfiguredVideoCloudStackState(t *testing.T) {
 	}
 }
 
+func TestWritePlatformAdminSummaryRedactsPassword(t *testing.T) {
+	root := t.TempDir()
+	platformEnv := filepath.Join(root, "services", "account-manager", "account-manager-platform-admin.env")
+	mkdirAll(t, filepath.Dir(platformEnv))
+	writeFile(t, platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL=root@example.test\nACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD=super-secret-password\n")
+
+	var out strings.Builder
+	writePlatformAdminSummary(&out, provisionPaths{EnvRoot: root})
+	body := out.String()
+	if !strings.Contains(body, "username: root@example.test") {
+		t.Fatalf("summary missing username:\n%s", body)
+	}
+	if !strings.Contains(body, "password: see "+platformEnv) {
+		t.Fatalf("summary missing password file hint:\n%s", body)
+	}
+	if strings.Contains(body, "super-secret-password") {
+		t.Fatalf("summary leaked password:\n%s", body)
+	}
+}
+
 func TestSelectObjectReleaseSupportsHTTPObjectStorage(t *testing.T) {
 	requests := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
