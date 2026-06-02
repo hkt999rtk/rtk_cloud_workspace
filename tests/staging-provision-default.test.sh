@@ -36,6 +36,10 @@ case "$*" in
 	printf 'ok\n'
 	exit 0
 	;;
+*"https://api.ipify.org"*)
+	printf '198.51.100.10\n'
+	exit 0
+	;;
 esac
 case "$*" in
 *"Authorization: Bearer test-token"*) ;;
@@ -48,8 +52,17 @@ case "$*" in
 *"/linode/instances?page_size=500"*)
 	printf '{"data":[{"id":1,"label":"video-cloud-ci-edge","status":"running"}]}\n'
 	;;
+*"-X POST https://api.linode.com/v4/linode/instances"*)
+	printf '{"id":8,"label":"rtk-cloud-logger-ci","ipv4":["203.0.113.80"]}\n'
+	;;
 *"/networking/firewalls?page_size=500"*)
 	printf '{"data":[]}\n'
+	;;
+*"-X POST https://api.linode.com/v4/networking/firewalls"*"rtk-cloud-logger-ci-firewall"*)
+	printf '{"id":108,"label":"rtk-cloud-logger-ci-firewall"}\n'
+	;;
+*"-X POST https://api.linode.com/v4/networking/firewalls/108/devices"*)
+	printf '{}\n'
 	;;
 *"/vpcs?page_size=500"*)
 	printf '{"data":[]}\n'
@@ -122,6 +135,8 @@ elif [[ "$*" == *"account-manager.video-cloud-ci.example.test"* ]]; then
 	printf '203.0.113.60\n'
 elif [[ "$*" == *"admin.video-cloud-ci.example.test"* ]]; then
 	printf '203.0.113.70\n'
+elif [[ "$*" == *"logger.video-cloud-ci.example.test"* ]]; then
+	printf '203.0.113.80\n'
 else
 	printf '203.0.113.5\n'
 fi
@@ -274,8 +289,20 @@ find "$ENV_ROOT/artifacts" -path '*provision-report.md' | grep -q .
 find "$ENV_ROOT/artifacts" -path '*e2e-report.md' | grep -q .
 grep -F 'rtk-account-manager-ci' "$OUT" >/dev/null
 grep -F 'admin.video-cloud-ci.example.test' "$OUT" >/dev/null
-grep -F 'logger backend: rtk-cloud-logger-ci' "$OUT" >/dev/null
-grep -F 'logger env: '"$ENV_ROOT"'/services/cloud-logger/logger.env' "$OUT" >/dev/null
-grep -F 'logger state: '"$ENV_ROOT"'/state/cloud-logger.env' "$OUT" >/dev/null
+grep -F 'logger VM: rtk-cloud-logger-ci [missing]' "$OUT" >/dev/null
+grep -F 'logger firewall: rtk-cloud-logger-ci-firewall [missing]' "$OUT" >/dev/null
+grep -F 'logger DNS: logger.video-cloud-ci.example.test [missing]' "$OUT" >/dev/null
+grep -F 'logger env: '"$ENV_ROOT"'/services/cloud-logger/logger.env [missing]' "$OUT" >/dev/null
+grep -F 'logger state: '"$ENV_ROOT"'/state/cloud-logger.env [missing]' "$OUT" >/dev/null
 grep -F 'forwarder targets: edge, api, infra, mqtt, coturn, account-manager, cloud-admin, frontend, non-go-host-sources' "$OUT" >/dev/null
 grep -F 'journald retention: SystemMaxUse=1G SystemKeepFree=2G MaxRetentionSec=7day' "$OUT" >/dev/null
+grep -F 'records upsert example.test --type A --name logger.video-cloud-ci --data 203.0.113.80 --ttl 600' "$GO_ARGS" >/dev/null
+grep -F 'CLOUD_LOGGER_LINODE_ID=8' "$ENV_ROOT/state/cloud-logger.env" >/dev/null
+grep -F 'CLOUD_LOGGER_LINODE_FIREWALL_ID=108' "$ENV_ROOT/state/cloud-logger.env" >/dev/null
+grep -F 'CLOUD_LOGGER_ENDPOINT=https://logger.video-cloud-ci.example.test' "$ENV_ROOT/services/cloud-logger/logger.env" >/dev/null
+LOGGER_TOKEN="$(sed -n 's/^CLOUD_LOGGER_INGEST_TOKEN=//p' "$ENV_ROOT/services/cloud-logger/logger.env")"
+test -n "$LOGGER_TOKEN"
+if grep -R -- "$LOGGER_TOKEN" "$ENV_ROOT/artifacts" "$OUT" "$GO_ARGS" "$DEPLOY_LOG" >/dev/null; then
+	echo "logger token leaked into output or artifacts" >&2
+	exit 1
+fi

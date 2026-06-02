@@ -64,6 +64,72 @@ func TestWriteProvisionArtifactsIncludesCloudAdminPrivateIP(t *testing.T) {
 	}
 }
 
+func TestLoggerProvisionStatusesReflectEnvAndStateFiles(t *testing.T) {
+	root := t.TempDir()
+	paths := provisionPaths{EnvRoot: root}
+	env := map[string]string{
+		"CLOUD_ENV_NAME":                     "ci",
+		"CLOUD_DNS_ROOT_DOMAIN":              "example.test",
+		"CLOUD_LOGGER_LINODE_LABEL":          "rtk-cloud-logger-ci",
+		"CLOUD_LOGGER_LINODE_FIREWALL_LABEL": "rtk-cloud-logger-ci-fw",
+		"CLOUD_LOGGER_DOMAIN":                "logger.video-cloud-ci.example.test",
+	}
+
+	missing := loggerProvisionStatuses(loggerProvisionTarget(paths, env))
+	for _, item := range missing {
+		if item.status != "missing" {
+			t.Fatalf("%s status = %q, want missing", item.kind, item.status)
+		}
+	}
+
+	target := loggerProvisionTarget(paths, env)
+	mkdirAll(t, filepath.Dir(target.EnvPath))
+	writeFile(t, target.EnvPath, "CLOUD_LOGGER_ENDPOINT=https://logger.video-cloud-ci.example.test\nCLOUD_LOGGER_INGEST_TOKEN=secret-token\n")
+	mkdirAll(t, filepath.Dir(target.StatePath))
+	writeFile(t, target.StatePath, "CLOUD_LOGGER_LINODE_ID=301\nCLOUD_LOGGER_LINODE_FIREWALL_ID=401\nCLOUD_LOGGER_DNS_RECORD=logger.video-cloud-ci.example.test\n")
+
+	statuses := loggerProvisionStatuses(loggerProvisionTarget(paths, env))
+	got := map[string]string{}
+	for _, item := range statuses {
+		got[item.kind] = item.status
+	}
+	for _, kind := range []string{"VM", "firewall", "DNS", "env", "state"} {
+		if got[kind] != "provisioned" {
+			t.Fatalf("%s status = %q, want provisioned; all=%#v", kind, got[kind], statuses)
+		}
+	}
+}
+
+func TestWriteProvisionArtifactsRedactsLoggerToken(t *testing.T) {
+	root := t.TempDir()
+	paths := provisionPaths{
+		EnvRoot:             root,
+		VideoState:          filepath.Join(root, "state", "video-cloud-staging.state.json"),
+		AccountManagerState: filepath.Join(root, "state", "account-manager-staging.env"),
+		AdminState:          filepath.Join(root, "state", "cloud-admin-staging.env"),
+		ArtifactsDir:        filepath.Join(root, "artifacts"),
+	}
+	mkdirAll(t, filepath.Dir(paths.VideoState))
+	writeFile(t, paths.VideoState, `{"instances":{"edge":{"label":"edge","public_ipv4":"203.0.113.5"}},"firewalls":{"edge":101}}`)
+	writeFile(t, paths.AccountManagerState, "ACCOUNT_MANAGER_LINODE_ID=201\nACCOUNT_MANAGER_LINODE_LABEL=am\nACCOUNT_MANAGER_LINODE_PUBLIC_IPV4=203.0.113.20\nACCOUNT_MANAGER_LINODE_FIREWALL_ID=301\n")
+	writeFile(t, paths.AdminState, "ADMIN_LINODE_ID=202\nADMIN_LINODE_LABEL=admin\nADMIN_LINODE_PUBLIC_IPV4=203.0.113.30\nADMIN_LINODE_FIREWALL_ID=302\n")
+	writeFile(t, filepath.Join(root, "state", "cloud-logger.env"), "CLOUD_LOGGER_LINODE_ID=203\nCLOUD_LOGGER_LINODE_LABEL=logger\nCLOUD_LOGGER_LINODE_PUBLIC_IPV4=203.0.113.40\nCLOUD_LOGGER_LINODE_FIREWALL_ID=303\nCLOUD_LOGGER_DOMAIN=logger.example.test\nCLOUD_LOGGER_ENDPOINT=https://logger.example.test\nCLOUD_LOGGER_INGEST_TOKEN=super-secret-logger-token\n")
+
+	dir, err := writeProvisionArtifacts(paths, "video-cloud-test")
+	if err != nil {
+		t.Fatalf("writeProvisionArtifacts returned error: %v", err)
+	}
+	for _, name := range []string{"inventory.json", "deployment-targets.json", "provision-report.md"} {
+		body, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(body), "super-secret-logger-token") {
+			t.Fatalf("%s leaked logger token:\n%s", name, string(body))
+		}
+	}
+}
+
 func TestFirewallTargetsUsesConfiguredVideoCloudStackState(t *testing.T) {
 	root := t.TempDir()
 	mkdirAll(t, filepath.Join(root, "env"))
