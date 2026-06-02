@@ -448,6 +448,12 @@ func provisionApply(paths provisionPaths, env map[string]string, opts provisionO
 	if token := firstNonEmpty(os.Getenv("LINODE_TOKEN"), operator["LINODE_TOKEN"]); token != "" {
 		_ = os.Setenv("LINODE_TOKEN", token)
 	}
+	currentCIDR, err := currentPublicIPv4CIDR()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "[cloud-ssh-whitelist] staging automation will replace SSH whitelist with current operator CIDR: %s\n", currentCIDR)
+	updateLocalSSHWhitelistInputs(paths.EnvRoot, currentCIDR, false)
 	repoState := provisionRepoVideoStatePath(paths, env["CLOUD_STACK_NAME"])
 	stateUsable := provisionVideoStateHasInstances(paths.VideoState) || provisionVideoStateHasInstances(repoState)
 	if stateUsable {
@@ -480,21 +486,7 @@ func provisionApply(paths provisionPaths, env map[string]string, opts provisionO
 	if err := ensureProvisionVPCInterface(paths, "Cloud Admin", paths.AdminState, "ADMIN", envFileValue(paths.AdminState, "ADMIN_LINODE_ID"), adminPrivateIPv4(paths)); err != nil {
 		return err
 	}
-	if id := envFileValue(paths.AccountManagerState, "ACCOUNT_MANAGER_LINODE_FIREWALL_ID"); id != "" {
-		for _, cidr := range splitCSV(envFileValue(paths.AccountManagerEnv, "ACCOUNT_MANAGER_LINODE_ALLOWED_SSH_CIDRS")) {
-			if err := updateFirewallRules(firewallTarget{Role: "account-manager", ID: id}, "append", cidr, false); err != nil {
-				return err
-			}
-		}
-	}
-	if id := envFileValue(paths.AdminState, "ADMIN_LINODE_FIREWALL_ID"); id != "" {
-		for _, cidr := range splitCSV(envFileValue(paths.AdminEnv, "ADMIN_LINODE_ALLOWED_SSH_CIDRS")) {
-			if err := updateFirewallRules(firewallTarget{Role: "cloud-admin", ID: id}, "append", cidr, false); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return replaceLiveSSHWhitelist(paths.EnvRoot, currentCIDR)
 }
 
 func cleanupOrphanedProvisionState(paths provisionPaths, env map[string]string) error {

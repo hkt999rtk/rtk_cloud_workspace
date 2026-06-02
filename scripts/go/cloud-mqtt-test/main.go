@@ -116,10 +116,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 		filepath.Join(envRoot, "services", "video-cloud", "video-cloud.env"),
 		filepath.Join(envRoot, "services", "video-cloud", "video-cloud-staging.env"),
 	)
-	videoState := firstExisting(
-		filepath.Join(envRoot, "state", "video-cloud.state.json"),
-		filepath.Join(envRoot, "state", "video-cloud-staging.state.json"),
-	)
+	videoState := videoStatePath(envRoot, stackEnv)
 
 	blockers := []string{}
 	required := map[string]string{
@@ -138,7 +135,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	}
 
 	usersPath := latest(filepath.Join(artifactsDir, "users", brandLower+"-users-*.json"))
-	bindPath := latest(filepath.Join(artifactsDir, "device-bind", brandLower+"-device-bind-*.json"))
+	bindPath := latestHomeMQTTBindArtifact(filepath.Join(artifactsDir, "device-bind", brandLower+"-device-bind-*.json"), brandLower)
 	if usersPath == "" {
 		blockers = append(blockers, fmt.Sprintf("missing latest users artifact for brand %s", brandname))
 	}
@@ -660,6 +657,50 @@ func latest(pattern string) string {
 		aj, _ := os.Stat(matches[j])
 		return ai.ModTime().After(aj.ModTime())
 	})
+	if len(matches) == 0 {
+		return ""
+	}
+	return matches[0]
+}
+
+func videoStatePath(envRoot, stackEnv string) string {
+	stackValues := envValues(stackEnv)
+	candidates := []string{}
+	if stack := strings.TrimSpace(stackValues["CLOUD_STACK_NAME"]); stack != "" {
+		candidates = append(candidates, filepath.Join(envRoot, "state", stack+".state.json"))
+	}
+	candidates = append(candidates,
+		filepath.Join(envRoot, "state", "video-cloud.state.json"),
+		filepath.Join(envRoot, "state", "video-cloud-staging.state.json"),
+	)
+	return firstExisting(candidates...)
+}
+
+func latestHomeMQTTBindArtifact(pattern, brandLower string) string {
+	matches, _ := filepath.Glob(pattern)
+	sort.Slice(matches, func(i, j int) bool {
+		ai, _ := os.Stat(matches[i])
+		aj, _ := os.Stat(matches[j])
+		return ai.ModTime().After(aj.ModTime())
+	})
+	for _, path := range matches {
+		bind := bindArtifact{}
+		if err := readJSON(path, &bind); err != nil {
+			continue
+		}
+		if strings.ToLower(bind.Brandname) != brandLower {
+			continue
+		}
+		found := map[string]bool{}
+		for _, item := range bind.Assignments {
+			if homeTypes[item.DeviceType] && contains(item.ServiceOptions, "mqtt") {
+				found[item.DeviceType] = true
+			}
+		}
+		if found["light"] && found["air_conditioner"] && found["smart_meter"] {
+			return path
+		}
+	}
 	if len(matches) == 0 {
 		return ""
 	}

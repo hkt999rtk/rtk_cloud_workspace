@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/hmac"
@@ -1143,13 +1144,17 @@ func runUpdateSSHWhitelist(args []string) error {
 		return errors.New("--env-root is required; pass the environment directory explicitly, for example --env-root cloud_env/staging")
 	}
 	if *mode == "" {
-		*mode = "append"
+		*mode = "replace"
 	}
 	if *mode != "append" && *mode != "replace" {
 		return fmt.Errorf("invalid --mode: %s; expected append or replace", *mode)
 	}
 	if *cidr == "" {
-		return errors.New("--cidr is required in Go CLI mode")
+		detected, err := currentPublicIPv4CIDR()
+		if err != nil {
+			return err
+		}
+		*cidr = detected
 	}
 	if ok, _ := regexp.MatchString(`^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])$`, *cidr); !ok {
 		return fmt.Errorf("invalid IPv4 CIDR: %s", *cidr)
@@ -1190,18 +1195,7 @@ func runUpdateSSHWhitelist(args []string) error {
 		}
 	}
 	if !*dryRun {
-		videoConfig := filepath.Join(envRoot, "topology", "video-cloud-staging.yaml")
-		accountEnv := firstExistingPath(filepath.Join(envRoot, "services", "account-manager", "account-manager.env"), filepath.Join(envRoot, "services", "account-manager", "account-manager-public-staging.env"))
-		adminEnv := firstExistingPath(filepath.Join(envRoot, "services", "cloud-admin", "admin.env"), filepath.Join(envRoot, "services", "cloud-admin", "admin-staging.env"))
-		if *mode == "replace" {
-			updateCSVEnv(accountEnv, "ACCOUNT_MANAGER_LINODE_ALLOWED_SSH_CIDRS", *cidr, false)
-			updateCSVEnv(adminEnv, "ADMIN_LINODE_ALLOWED_SSH_CIDRS", *cidr, false)
-			updateVideoCIDR(videoConfig, *cidr, false)
-		} else {
-			updateCSVEnv(accountEnv, "ACCOUNT_MANAGER_LINODE_ALLOWED_SSH_CIDRS", *cidr, true)
-			updateCSVEnv(adminEnv, "ADMIN_LINODE_ALLOWED_SSH_CIDRS", *cidr, true)
-			updateVideoCIDR(videoConfig, *cidr, true)
-		}
+		updateLocalSSHWhitelistInputs(envRoot, *cidr, *mode == "append")
 		fmt.Fprintf(os.Stderr, "[cloud-ssh-whitelist] local ignored staging config/env updated: mode=%s cidr=%s\n", *mode, *cidr)
 	}
 	return nil
@@ -2198,6 +2192,9 @@ func accountBootstrap(ctx accountManagerContext) error {
 	if ctx.SSHKey == "" {
 		return errors.New("ACCOUNT_MANAGER_LINODE_SSH_KEY is required")
 	}
+	if err := ensureAccountManagerSSHWhitelist(ctx); err != nil {
+		return err
+	}
 	logBrandCreate("updating platform-admin bootstrap env on account-manager host=%s", ctx.Host)
 	remote := `set -euo pipefail
 env_file=/etc/rtk-account-manager/account-manager.env
@@ -2211,14 +2208,84 @@ rm -f "$tmp"
 systemctl restart rtk-account-manager.service
 echo "bootstrap admin env applied and account-manager is healthy" >&2
 `
-	cmd := exec.Command("ssh", "-i", ctx.SSHKey, "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", ctx.SSHUser+"@"+ctx.Host, remote)
+	sshCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(sshCtx, "ssh", "-i", ctx.SSHKey, "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3", "-o", "StrictHostKeyChecking=accept-new", ctx.SSHUser+"@"+ctx.Host, remote)
 	cmd.Stdin = strings.NewReader(fmt.Sprintf("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL=%s\nACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD=%s\n", ctx.AdminEmail, ctx.AdminPassword))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
+		if sshCtx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("account-manager bootstrap SSH timed out after 90s: host=%s", ctx.Host)
+		}
 		return err
 	}
 	logBrandCreate("platform-admin bootstrap env ready")
+	return nil
+}
+
+func ensureAccountManagerSSHWhitelist(ctx accountManagerContext) error {
+	operatorEnv := filepath.Join(ctx.EnvRoot, "env", "operator.env")
+	if token := envFileValue(operatorEnv, "LINODE_TOKEN"); token != "" && os.Getenv("LINODE_TOKEN") == "" {
+		_ = os.Setenv("LINODE_TOKEN", token)
+	}
+	if os.Getenv("LINODE_TOKEN") == "" {
+		return errors.New("LINODE_TOKEN is required to refresh account-manager SSH whitelist before bootstrap")
+	}
+	cidr, err := currentPublicIPv4CIDR()
+	if err != nil {
+		return err
+	}
+	accountState := filepath.Join(ctx.EnvRoot, "state", "account-manager-staging.env")
+	target := firewallTarget{
+		Role:  "account-manager",
+		Label: firstNonEmpty(envFileValue(accountState, "ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL"), "rtk-account-manager-staging-fw"),
+		ID:    envFileValue(accountState, "ACCOUNT_MANAGER_LINODE_FIREWALL_ID"),
+	}
+	if target.ID == "" {
+		return errors.New("ACCOUNT_MANAGER_LINODE_FIREWALL_ID is required to refresh account-manager SSH whitelist before bootstrap")
+	}
+	logBrandCreate("refreshing account-manager SSH whitelist: cidr=%s", cidr)
+	updateCSVEnv(firstExistingPath(filepath.Join(ctx.EnvRoot, "services", "account-manager", "account-manager.env"), filepath.Join(ctx.EnvRoot, "services", "account-manager", "account-manager-public-staging.env")), "ACCOUNT_MANAGER_LINODE_ALLOWED_SSH_CIDRS", cidr, false)
+	return updateFirewallRules(target, "replace", cidr, false)
+}
+
+func currentPublicIPv4CIDR() (string, error) {
+	cmd := exec.Command("curl", "-4", "-fsS", "--connect-timeout", "5", "--max-time", "10", "https://api.ipify.org")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("detect current public IPv4 failed: %w", err)
+	}
+	ip := strings.TrimSpace(string(out))
+	if ok, _ := regexp.MatchString(`^([0-9]{1,3}\.){3}[0-9]{1,3}$`, ip); !ok {
+		return "", fmt.Errorf("detect current public IPv4 returned invalid value: %q", ip)
+	}
+	return ip + "/32", nil
+}
+
+func updateLocalSSHWhitelistInputs(envRoot, cidr string, appendMode bool) {
+	videoConfig := filepath.Join(envRoot, "topology", "video-cloud-staging.yaml")
+	accountEnv := firstExistingPath(filepath.Join(envRoot, "services", "account-manager", "account-manager.env"), filepath.Join(envRoot, "services", "account-manager", "account-manager-public-staging.env"))
+	adminEnv := firstExistingPath(filepath.Join(envRoot, "services", "cloud-admin", "admin.env"), filepath.Join(envRoot, "services", "cloud-admin", "admin-staging.env"))
+	updateCSVEnv(accountEnv, "ACCOUNT_MANAGER_LINODE_ALLOWED_SSH_CIDRS", cidr, appendMode)
+	updateCSVEnv(adminEnv, "ADMIN_LINODE_ALLOWED_SSH_CIDRS", cidr, appendMode)
+	updateVideoCIDR(videoConfig, cidr, appendMode)
+}
+
+func replaceLiveSSHWhitelist(envRoot, cidr string) error {
+	targets, err := firewallTargets(envRoot)
+	if err != nil {
+		return err
+	}
+	for _, target := range targets {
+		if target.ID == "" || target.ID == "null" {
+			fmt.Fprintf(os.Stderr, "[cloud-ssh-whitelist] skip: %s firewall id missing label=%s\n", target.Role, target.Label)
+			continue
+		}
+		if err := updateFirewallRules(target, "replace", cidr, false); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
