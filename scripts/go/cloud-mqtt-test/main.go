@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -10,6 +13,7 @@ import (
 	"io"
 	"math"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -574,6 +578,9 @@ func writeOutputs(outDir string, result map[string]any) error {
 	if err := os.WriteFile(reportFile, []byte(report), 0o644); err != nil {
 		return err
 	}
+	if err := emitCentralLoggerEvent(result["env"].(map[string]string)["root"], result); err != nil {
+		fmt.Fprintf(os.Stderr, "[home-mqtt-loadtest] central logger emit skipped: %s\n", redactedError(err))
+	}
 	fmt.Fprint(os.Stderr, renderConsole(result))
 	summary, _ := json.Marshal(map[string]any{"action": "home-mqtt-loadtest", "overall": result["overall"], "status": result["status"], "results_file": resultsFile, "report_file": reportFile})
 	fmt.Println(string(summary))
@@ -582,6 +589,107 @@ func writeOutputs(outDir string, result map[string]any) error {
 	}
 	os.Exit(1)
 	return nil
+}
+
+func emitCentralLoggerEvent(envRoot string, result map[string]any) error {
+	loggerEnvPath := filepath.Join(envRoot, "services", "cloud-logger", "logger.env")
+	if !readable(loggerEnvPath) {
+		return nil
+	}
+	values := envValues(loggerEnvPath)
+	endpoint := loggerIngestURL(values["CLOUD_LOGGER_ENDPOINT"])
+	token := values["CLOUD_LOGGER_INGEST_TOKEN"]
+	if endpoint == "" || token == "" {
+		return nil
+	}
+
+	generatedAt := asString(result["generated_at"])
+	ts, err := time.Parse(time.RFC3339, generatedAt)
+	if err != nil {
+		ts = time.Now().UTC()
+	}
+	brandname := asString(result["brandname"])
+	overall := asString(result["overall"])
+	status := asString(result["status"])
+	eventID := mqttLoggerEventID(generatedAt, brandname, asString(result["results_file"]))
+	fields := map[string]any{
+		"brandname":        brandname,
+		"profile":          result["profile"],
+		"duration_seconds": result["duration_seconds"],
+		"status":           status,
+		"overall":          overall,
+		"metrics":          result["metrics"],
+		"mqtt":             result["mqtt"],
+		"results_file":     result["results_file"],
+		"report_file":      result["report_file"],
+	}
+	request := map[string]any{
+		"events": []map[string]any{{
+			"event_id":     eventID,
+			"ts":           ts.UTC().Format(time.RFC3339Nano),
+			"level":        loggerLevel(overall),
+			"msg":          "home mqtt loadtest " + overall,
+			"service":      "workspace-mqtt-test",
+			"env":          envNameFromRoot(envRoot),
+			"version":      "workspace",
+			"host":         "operator",
+			"unit":         "stg.sh mqtt",
+			"source":       "workspace",
+			"trace_id":     eventID,
+			"request_id":   eventID,
+			"operation_id": "home-mqtt-loadtest",
+			"component":    "cloud-mqtt-test",
+			"fields":       fields,
+		}},
+	}
+	body, err := json.Marshal(request)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	client := http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("logger ingest status=%d", resp.StatusCode)
+	}
+	return nil
+}
+
+func loggerIngestURL(endpoint string) string {
+	endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/")
+	if endpoint == "" || strings.HasSuffix(endpoint, "/v1/logs/ingest") {
+		return endpoint
+	}
+	return endpoint + "/v1/logs/ingest"
+}
+
+func mqttLoggerEventID(generatedAt, brandname, resultsFile string) string {
+	sum := sha256.Sum256([]byte(generatedAt + "\x00" + brandname + "\x00" + resultsFile))
+	return "home-mqtt-loadtest-" + hex.EncodeToString(sum[:12])
+}
+
+func loggerLevel(overall string) string {
+	if overall == "pass" {
+		return "info"
+	}
+	return "warn"
+}
+
+func envNameFromRoot(envRoot string) string {
+	envName := filepath.Base(filepath.Dir(envRoot))
+	if envName == "." || envName == string(filepath.Separator) || envName == "" {
+		return "staging"
+	}
+	return envName
 }
 
 func renderConsole(result map[string]any) string {
