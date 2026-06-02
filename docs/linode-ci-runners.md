@@ -161,14 +161,25 @@ The script:
 The script is idempotent for already existing VM labels. If a label already
 exists, it reuses the VM and re-runs bootstrap.
 
-## Normal CI Run Procedure
+## Current Workspace CI Boundary
 
-The normal path is the GitHub-hosted workspace workflow
-`.github/workflows/linode-ci-orchestrator.yml`. It solves the self-hosted runner
-bootstrapping problem by running orchestration on `ubuntu-latest`, not on the
-Linode runner that is still powered off.
+The active workspace workflow is
+`.github/workflows/submodule-pointer-check.yml`. It runs on `ubuntu-latest` and
+only validates `.gitmodules` plus recorded submodule gitlink pointers. It does
+not boot `rtk-shared-linux-ci`, wait for repo-scoped self-hosted runners, rerun
+service CI, or archive CI artifacts.
 
-Required GitHub Actions secrets in `rtk_cloud_workspace`:
+Service repositories may still create artifacts without the shared Linode runner:
+their own GitHub-hosted `ubuntu-latest` jobs can upload bundles, checksums,
+manifests, or CI evidence directly to Linode Object Storage when those workflows
+have the required secrets.
+
+There is currently no active workspace GitHub Actions workflow that automatically
+orchestrates the shared Linode CI runner lifecycle. Use the manual runner session
+commands below when a job explicitly needs the `rtk-shared-linux-ci` VM.
+
+Required environment variables for local manual sessions, or equivalent GitHub
+Actions secrets if a runner lifecycle workflow is reintroduced:
 
 | Secret | Purpose |
 | --- | --- |
@@ -179,31 +190,18 @@ Required GitHub Actions secrets in `rtk_cloud_workspace`:
 | `LINODE_OBJ_BUCKET` | Linode Object Storage bucket for archived CI artifacts. |
 | `LINODE_OBJ_ENDPOINT` | Linode Object Storage S3-compatible endpoint. |
 
-Pull request validation:
+Manual runner session flow:
 
-1. PRs that change `.github/workflows/linode-ci-orchestrator.yml`,
-   `scripts/linode-ci-runners/**`, or this document trigger the orchestrator.
-2. The PR run uses smoke-only mode:
-   - boot the shared Linode Linux CI VM.
-   - wait until each GitHub runner is online.
-   - shut the shared CI VM down.
-3. Smoke-only mode does not rerun service CI and does not archive artifacts,
-   because no target service run id exists during workspace PR validation.
-4. The PR run requires only `RTK_CI_GITHUB_TOKEN` and `LINODE_TOKEN`.
+1. Collect one or more target GitHub Actions run ids:
+   - `--account-run-id` for `hkt999rtk/rtk_account_manager`.
+   - `--admin-run-id` for `hkt999rtk/rtk_cloud_admin`.
+   - `--frontend-run-id` for `hkt999rtk/rtk_cloud_frontend`.
+   - `--client-run-id` for `hkt999rtk/rtk_cloud_client`.
+   - `--logger-run-id` for `hkt999rtk/rtk_cloud_logger`.
+2. Keep `--rerun true` when re-running failed or queued PR checks.
+3. Keep `--shutdown-policy always` for normal use.
 
-Manual orchestrator flow:
-
-1. Open the workspace `Linode CI Orchestrator` workflow.
-2. Enter one or more target GitHub Actions run ids:
-   - `account_run_id` for `hkt999rtk/rtk_account_manager`.
-   - `admin_run_id` for `hkt999rtk/rtk_cloud_admin`.
-   - `frontend_run_id` for `hkt999rtk/rtk_cloud_frontend`.
-   - `client_run_id` for `hkt999rtk/rtk_cloud_client`.
-   - `logger_run_id` for `hkt999rtk/rtk_cloud_logger`.
-3. Keep `rerun=true` when re-running failed or queued PR checks.
-4. Keep `shutdown_policy=always` for normal use.
-
-The orchestrator runs this sequence:
+`rtk-cloud ci-runners run-session` runs this sequence:
 
 ```text
 go run ./scripts/go/rtk-cloud -- ci-runners power start
