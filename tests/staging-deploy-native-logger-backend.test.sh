@@ -204,8 +204,10 @@ for host in 203.0.113.20 10.42.1.10 203.0.113.30 203.0.113.10 10.42.1.30 203.0.1
 	grep -F "host=root@$host" "$SSH_LOG" >/dev/null
 	grep -F "readiness-forwarder root@$host" "$SSH_LOG" >/dev/null
 done
-grep -F -- 'ProxyJump=root@203.0.113.10' "$SCP_LOG" >/dev/null
-grep -F -- '-J root@203.0.113.10' "$SSH_LOG" >/dev/null
+grep -F -- 'ProxyCommand=ssh' "$SCP_LOG" >/dev/null
+grep -F -- 'ProxyCommand=ssh' "$SSH_LOG" >/dev/null
+grep -F -- '-W %h:%p root@203.0.113.10' "$SCP_LOG" >/dev/null
+grep -F -- '-W %h:%p root@203.0.113.10' "$SSH_LOG" >/dev/null
 if grep -R 'super-secret-backend-token' "$OUT" "$ERR" "$ENV_ROOT/artifacts" "$SCP_LOG" "$SSH_LOG" "$GO_LOG" >/dev/null; then
 	echo "logger token leaked to output, report, or command logs" >&2
 	exit 1

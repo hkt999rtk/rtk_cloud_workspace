@@ -669,8 +669,8 @@ func loggerSSHArgs(paths provisionPaths, sshKey, host string, remoteArgs ...stri
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "LogLevel=ERROR",
 	}
-	if proxy := loggerProxyJump(paths, host); proxy != "" {
-		args = append(args, "-J", proxy)
+	if proxy := loggerProxyCommand(paths, sshKey, host); proxy != "" {
+		args = append(args, "-o", "ProxyCommand="+proxy)
 	}
 	args = append(args, "root@"+host)
 	args = append(args, remoteArgs...)
@@ -689,14 +689,14 @@ func loggerSCPArgs(paths provisionPaths, sshKey, host, source, dest string) []st
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "LogLevel=ERROR",
 	}
-	if proxy := loggerProxyJump(paths, host); proxy != "" {
-		args = append(args, "-o", "ProxyJump="+proxy)
+	if proxy := loggerProxyCommand(paths, sshKey, host); proxy != "" {
+		args = append(args, "-o", "ProxyCommand="+proxy)
 	}
 	args = append(args, source, dest)
 	return args
 }
 
-func loggerProxyJump(paths provisionPaths, host string) string {
+func loggerProxyCommand(paths provisionPaths, sshKey, host string) string {
 	if !isPrivateIPv4(host) {
 		return ""
 	}
@@ -704,7 +704,17 @@ func loggerProxyJump(paths provisionPaths, host string) string {
 	if edge == "" || edge == host {
 		return ""
 	}
-	return "root@" + edge
+	return strings.Join([]string{
+		"ssh",
+		"-i", shellQuote(sshKey),
+		"-o", "IdentitiesOnly=yes",
+		"-o", "BatchMode=yes",
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "ConnectTimeout=15",
+		"-o", "LogLevel=ERROR",
+		"-W", "%h:%p",
+		"root@" + edge,
+	}, " ")
 }
 
 func isPrivateIPv4(host string) bool {
