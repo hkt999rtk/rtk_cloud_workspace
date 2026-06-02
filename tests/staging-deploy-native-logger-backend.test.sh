@@ -97,7 +97,7 @@ done
 cat > "$FAKE_BIN/go" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-printf 'pwd=%s args=%s\n' "$PWD" "$*" >> "$GO_LOG"
+printf 'pwd=%s GOOS=%s GOARCH=%s args=%s\n' "$PWD" "${GOOS:-}" "${GOARCH:-}" "$*" >> "$GO_LOG"
 while [[ "$#" -gt 0 ]]; do
 	if [[ "$1" == "-o" ]]; then
 		mkdir -p "$(dirname "$2")"
@@ -189,6 +189,7 @@ grep -F 'PASS `logger-ingest-idempotency`' "$REPORT" >/dev/null
 grep -F 'PASS `logger-sample-trace-query`' "$REPORT" >/dev/null
 grep -F './cmd/rtk-cloud-logger' "$GO_LOG" >/dev/null
 grep -F './cmd/rtk-cloud-log-forwarder' "$GO_LOG" >/dev/null
+grep -F 'GOOS=linux GOARCH=amd64' "$GO_LOG" >/dev/null
 grep -F 'root@203.0.113.80:/usr/local/bin/rtk-cloud-logger' "$SCP_LOG" >/dev/null
 grep -F -- '-i ' "$SCP_LOG" >/dev/null
 grep -F -- 'BatchMode=yes' "$SCP_LOG" >/dev/null

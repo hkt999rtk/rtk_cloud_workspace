@@ -423,7 +423,7 @@ func buildLoggerBackend(workspace string) (string, func(), error) {
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 	binary := filepath.Join(dir, "rtk-cloud-logger")
-	if err := runCmdWithEnv(filepath.Join(workspace, "repos", "rtk_cloud_logger"), map[string]string{"GOWORK": "off"}, "go", "build", "-o", binary, "./cmd/rtk-cloud-logger"); err != nil {
+	if err := runCmdWithEnv(filepath.Join(workspace, "repos", "rtk_cloud_logger"), linuxBuildEnv(), "go", "build", "-o", binary, "./cmd/rtk-cloud-logger"); err != nil {
 		cleanup()
 		return "", func() {}, err
 	}
@@ -612,7 +612,7 @@ func buildLoggerForwarder(workspace string) (string, func(), error) {
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 	binary := filepath.Join(dir, "rtk-cloud-log-forwarder")
-	if err := runCmdWithEnv(filepath.Join(workspace, "repos", "rtk_cloud_logger"), map[string]string{"GOWORK": "off"}, "go", "build", "-o", binary, "./cmd/rtk-cloud-log-forwarder"); err != nil {
+	if err := runCmdWithEnv(filepath.Join(workspace, "repos", "rtk_cloud_logger"), linuxBuildEnv(), "go", "build", "-o", binary, "./cmd/rtk-cloud-log-forwarder"); err != nil {
 		cleanup()
 		return "", func() {}, err
 	}
@@ -653,6 +653,14 @@ func loggerForwarderInstallScript(endpoint, token, units string) string {
 
 func defaultStagingSSHKey() string {
 	return filepath.Join(os.Getenv("HOME"), ".ssh", "id_ed25519_rtkcloud")
+}
+
+func linuxBuildEnv() map[string]string {
+	return map[string]string{
+		"GOWORK": "off",
+		"GOOS":   "linux",
+		"GOARCH": "amd64",
+	}
 }
 
 func loggerSSHArgs(paths provisionPaths, sshKey, host string, remoteArgs ...string) []string {
