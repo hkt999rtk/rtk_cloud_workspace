@@ -13,6 +13,7 @@ Usage:
 Shortcuts:
   provision [args]              -> rtk-cloud provision --env-root cloud_env/staging (default: --all)
   deploy [args]                 -> rtk-cloud deploy --env-root cloud_env/staging
+  token [args]                  -> rtk-cloud platform-admin-token --env-root cloud_env/staging
   brand NAME [args]             -> create-brandname-cloud
   brands [args]                 -> list-brandname-clouds
   users NAME [COUNT] [args]     -> create-users
@@ -64,6 +65,9 @@ case "$cmd" in
 		;;
 	deploy)
 		with_env deploy "$@"
+		;;
+	token)
+		with_env platform-admin-token "$@"
 		;;
 	brand)
 		need_value "brand name" "${1:-}"

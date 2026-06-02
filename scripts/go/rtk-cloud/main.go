@@ -49,6 +49,7 @@ var commands = map[string]commandSpec{
 	"logs-check":             {run: runLogsCheck},
 	"migrate-env":            {run: runMigrateEnv},
 	"mqtt-test":              {run: runMQTTTest},
+	"platform-admin-token":   {run: runPlatformAdminToken},
 	"provision":              {run: runProvision},
 	"remove-all-vm":          {run: runRemoveAllVM},
 	"secrets-check":          {run: runSecretsCheck},
@@ -2066,11 +2067,40 @@ func accountManagerContextFromFlags(workspaceFlag, envRootFlag string) (accountM
 	}, nil
 }
 
+func runPlatformAdminToken(args []string) error {
+	fs := flag.NewFlagSet("platform-admin-token", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	workspaceFlag := fs.String("workspace", "", "workspace")
+	envRootFlag := fs.String("env-root", "", "environment root")
+	fs.StringVar(envRootFlag, "secrets-root", "", "deprecated env root")
+	baseURL := fs.String("base-url", "", "Account Manager base URL override")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	ctx, err := accountManagerContextFromFlags(*workspaceFlag, *envRootFlag)
+	if err != nil {
+		return err
+	}
+	if *baseURL != "" {
+		ctx.BaseURL = strings.TrimRight(*baseURL, "/")
+	}
+	return writePlatformAdminToken(os.Stdout, ctx)
+}
+
+func writePlatformAdminToken(w io.Writer, ctx accountManagerContext) error {
+	token, err := accountLogin(ctx, func(string, ...any) {})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(w, token)
+	return nil
+}
+
 func accountLogin(ctx accountManagerContext, logf func(string, ...any)) (string, error) {
 	if ctx.AdminEmail == "" || ctx.AdminPassword == "" {
 		return "", errors.New("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL and PASSWORD are required")
 	}
-	logf("logging in platform admin: %s/v1/auth/login", ctx.BaseURL)
+	logf("logging in platform admin: username=%s url=%s/v1/auth/login", ctx.AdminEmail, ctx.BaseURL)
 	payload, _ := json.Marshal(map[string]string{"email": ctx.AdminEmail, "password": ctx.AdminPassword})
 	body, status, err := curlJSONStatus(ctx.BaseURL+"/v1/auth/login", "", payload)
 	if err != nil {
@@ -2250,17 +2280,19 @@ type firewallTarget struct {
 
 func firewallTargets(envRoot string) ([]firewallTarget, error) {
 	targets := []firewallTarget{}
-	statePath := filepath.Join(envRoot, "state", "video-cloud-staging.state.json")
+	statePath := videoCloudStatePath(envRoot)
 	if data, err := os.ReadFile(statePath); err == nil {
 		var parsed struct {
+			Stack     string         `json:"stack"`
 			Firewalls map[string]any `json:"firewalls"`
 		}
 		if err := json.Unmarshal(data, &parsed); err != nil {
 			return nil, err
 		}
+		labelPrefix := firstNonEmpty(parsed.Stack, stackNameFromEnvRoot(envRoot), "video-cloud-staging")
 		for _, role := range []string{"edge", "api", "infra", "mqtt", "coturn"} {
 			if id, ok := parsed.Firewalls[role]; ok {
-				targets = append(targets, firewallTarget{Role: role, Label: "video-cloud-staging-" + role, ID: fmt.Sprintf("%.0f", asFloat(id))})
+				targets = append(targets, firewallTarget{Role: role, Label: labelPrefix + "-" + role, ID: fmt.Sprintf("%.0f", asFloat(id))})
 			}
 		}
 	}
@@ -2277,6 +2309,31 @@ func firewallTargets(envRoot string) ([]firewallTarget, error) {
 		ID:    envFileValue(adminState, "ADMIN_LINODE_FIREWALL_ID"),
 	})
 	return targets, nil
+}
+
+func videoCloudStatePath(envRoot string) string {
+	stack := stackNameFromEnvRoot(envRoot)
+	if stack == "" {
+		stack = "video-cloud-staging"
+	}
+	return filepath.Join(envRoot, "state", stack+".state.json")
+}
+
+func stackNameFromEnvRoot(envRoot string) string {
+	if stack := envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_STACK_NAME"); stack != "" {
+		return stack
+	}
+	data, err := os.ReadFile(filepath.Join(envRoot, "topology", "video-cloud-staging.yaml"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "stack:") {
+			return strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "stack:")), `"'`)
+		}
+	}
+	return ""
 }
 
 func updateFirewallRules(target firewallTarget, mode, cidr string, dryRun bool) error {
@@ -3521,7 +3578,20 @@ func runBindDevices(args []string) error {
 	}
 	runID := time.Now().UTC().Format("20060102T150405Z")
 	results := []bindAssignment{}
+	skipped := 0
 	for _, assignment := range assignments {
+		existingDevice, exists, err := accountFindDeviceByVideoCloudDevid(ctx, userTokens[assignment.AssignedEmail], brandCloudID, assignment.DeviceID)
+		if err != nil {
+			return err
+		}
+		if exists {
+			assignment.AccountDeviceID = stringValue(existingDevice["id"])
+			assignment.Status = "already_bound"
+			logBind("device already bound; skipping claim: device=%s account_device=%s", assignment.DeviceID, assignment.AccountDeviceID)
+			results = append(results, assignment)
+			skipped++
+			continue
+		}
 		claim, err := createClaimToken(ctx, token, brandCloudID, assignment, runID, *claimTTL)
 		if err != nil {
 			return err
@@ -3553,7 +3623,8 @@ func runBindDevices(args []string) error {
 		return err
 	}
 	_ = os.Chmod(artifactFile, 0o600)
-	return json.NewEncoder(os.Stdout).Encode(map[string]any{"action": "bound", "brandname": *brandname, "brand_cloud_id": brandCloudID, "count": *count, "created_claims": len(results), "resolved_claims": len(results), "provision_started": len(results), "artifact_file": artifactFile})
+	provisionStarted := len(results) - skipped
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{"action": "bound", "brandname": *brandname, "brand_cloud_id": brandCloudID, "count": *count, "created_claims": provisionStarted, "resolved_claims": provisionStarted, "provision_started": provisionStarted, "already_bound": skipped, "artifact_file": artifactFile})
 }
 
 func readUsersList(path string) (map[string]userCredential, []userCredential, error) {
@@ -3626,6 +3697,34 @@ func accountFindBrandCloudForLog(ctx accountManagerContext, token, brandname str
 	return nil, fmt.Errorf("brand cloud not found: %s", brandname)
 }
 
+func accountFindDeviceByVideoCloudDevid(ctx accountManagerContext, token, brandCloudID, videoCloudDevid string) (map[string]any, bool, error) {
+	const limit = 200
+	for offset := 0; ; offset += limit {
+		body, status, err := curlJSONStatus(fmt.Sprintf("%s/v1/orgs/%s/devices?limit=%d&offset=%d", ctx.BaseURL, brandCloudID, limit, offset), token, nil)
+		if err != nil {
+			return nil, false, err
+		}
+		if status != 200 {
+			return nil, false, fmt.Errorf("device lookup failed: device=%s HTTP %d%s", videoCloudDevid, status, errorBodySuffix(body))
+		}
+		var parsed map[string]any
+		if err := json.Unmarshal(body, &parsed); err != nil {
+			return nil, false, err
+		}
+		devices := anySlice(parsed["devices"])
+		for _, item := range devices {
+			device, _ := item.(map[string]any)
+			metadata, _ := device["metadata"].(map[string]any)
+			if stringValue(metadata["video_cloud_devid"]) == videoCloudDevid && device["disabled_at"] == nil {
+				return device, true, nil
+			}
+		}
+		if len(devices) < limit {
+			return nil, false, nil
+		}
+	}
+}
+
 func createClaimToken(ctx accountManagerContext, token, brandCloudID string, assignment bindAssignment, runID string, ttlHours int) (map[string]any, error) {
 	expires := time.Now().UTC().Add(time.Duration(ttlHours) * time.Hour).Format(time.RFC3339)
 	payload, _ := json.Marshal(map[string]any{
@@ -3643,7 +3742,7 @@ func createClaimToken(ctx accountManagerContext, token, brandCloudID string, ass
 		return nil, err
 	}
 	if status != 200 && status != 201 {
-		return nil, fmt.Errorf("claim token create failed: device=%s HTTP %d", assignment.DeviceID, status)
+		return nil, fmt.Errorf("claim token create failed: device=%s HTTP %d%s", assignment.DeviceID, status, errorBodySuffix(body))
 	}
 	var parsed map[string]any
 	return parsed, json.Unmarshal(body, &parsed)
@@ -3656,10 +3755,30 @@ func resolveClaim(ctx accountManagerContext, token, brandCloudID string, assignm
 		return nil, err
 	}
 	if status != 200 && status != 201 {
-		return nil, fmt.Errorf("claim resolve failed: device=%s HTTP %d", assignment.DeviceID, status)
+		return nil, fmt.Errorf("claim resolve failed: device=%s HTTP %d%s", assignment.DeviceID, status, errorBodySuffix(body))
 	}
 	var parsed map[string]any
 	return parsed, json.Unmarshal(body, &parsed)
+}
+
+func errorBodySuffix(body []byte) string {
+	if len(bytes.TrimSpace(body)) == 0 {
+		return ""
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err == nil {
+		code := stringValue(firstPresent(parsed, "error", "code"))
+		message := stringValue(parsed["message"])
+		switch {
+		case code != "" && message != "":
+			return fmt.Sprintf(": %s (%s)", code, message)
+		case code != "":
+			return ": " + code
+		case message != "":
+			return ": " + message
+		}
+	}
+	return ": " + strings.TrimSpace(string(body))
 }
 
 func startProvision(ctx accountManagerContext, token, brandCloudID string, assignment bindAssignment, operationID string, provisionInput map[string]any) error {

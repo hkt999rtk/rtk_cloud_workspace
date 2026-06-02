@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -338,7 +339,26 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 	_ = runCmdWithEnv(filepath.Join(paths.Workspace, "repos", "rtk_cloud_admin"), adminValues, "deploy/linode/verify-admin.sh")
 	report.add("cloud-admin-verify", "PASS", "")
 	runLoggerReadinessHooks(paths, env, report)
-	return report.write(true)
+	if err := report.write(true); err != nil {
+		return err
+	}
+	writePlatformAdminSummary(os.Stdout, paths)
+	return nil
+}
+
+func writePlatformAdminSummary(w io.Writer, paths provisionPaths) {
+	platformEnv := filepath.Join(paths.EnvRoot, "services", "account-manager", "account-manager-platform-admin.env")
+	username := envFileValue(platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Platform admin:")
+	if username == "" {
+		fmt.Fprintln(w, "- username: unavailable")
+		fmt.Fprintf(w, "- password: see %s\n", platformEnv)
+		return
+	}
+	fmt.Fprintf(w, "- username: %s\n", username)
+	fmt.Fprintf(w, "- password: see %s\n", platformEnv)
+	fmt.Fprintln(w, "- token: run ./stg.sh token")
 }
 
 func runLoggerProvisionHooks(paths provisionPaths, env map[string]string, report *readinessReport) {
