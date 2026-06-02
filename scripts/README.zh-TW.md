@@ -233,7 +233,7 @@ go run ./scripts/go/rtk-cloud -- migrate-env --env-root cloud_env/staging --forc
 
 Linode staging 的主要編排腳本。它可以做 preflight、plan、reset、apply、DNS、deploy、artifact collection、e2e smoke。預設不變更環境，只做 `--plan`。
 
-service logging 的目標 provisioning model 記在 `docs/service-logging-architecture.md`：logger backend 要在 application services 前 provision，然後每台 VM 安裝 journald forwarder。forwarder 或 logger backend degraded 時，不應阻塞 account/video/admin/frontend service 啟動；readiness report 會標示 `logging: degraded`。
+service logging 的目標 provisioning model 記在 `docs/service-logging-architecture.md`：logger backend 要在 application services 前 provision，然後每台 VM 安裝 journald forwarder。private-cloud v1 需要 Loki 作為集中 log storage/query backend；dashboard 由 Cloud Admin 查 Loki query API 或 workspace/logger query adapter，不需要 Grafana。forwarder 或 logger backend degraded 時，不應阻塞 account/video/admin/frontend service 啟動；readiness report 會標示 `logging: degraded`。
 
 `cloud_env/<env>/linode/env/stack.env` 可設定 logger backend 與 forwarder 的環境 metadata：
 
@@ -242,7 +242,7 @@ service logging 的目標 provisioning model 記在 `docs/service-logging-archit
 - `CLOUD_LOGGER_FORWARDER_TARGETS`：plan 中列出的 forwarder target，預設包含 edge/api/infra/mqtt/coturn/account-manager/cloud-admin/frontend/non-Go host sources。
 - `CLOUD_LOGGER_JOURNALD_SYSTEM_MAX_USE`、`CLOUD_LOGGER_JOURNALD_SYSTEM_KEEP_FREE`、`CLOUD_LOGGER_JOURNALD_MAX_RETENTION_SEC`：journald retention guidance，會傳給 forwarder install hook。
 
-`go run ./scripts/go/rtk-cloud -- deploy` 會在 app deploy 前呼叫 `CLOUD_LOGGER_SCRIPT` 執行 `provision-backend` 與每台 host 的 `install-forwarder`，再於 readiness report 收集 `backend-health`、`forwarder-status` 與 `sample-trace-query`。未設定 `CLOUD_LOGGER_SCRIPT` 時會略過 logger hook；正式環境應將它指到 `rtk_cloud_logger` 提供的 live provisioning hook。hook degraded 時不會阻塞服務 deploy。
+`go run ./scripts/go/rtk-cloud -- deploy` 會在 app deploy 前呼叫 `CLOUD_LOGGER_SCRIPT` 執行 `provision-backend` 與每台 host 的 `install-forwarder`，再於 readiness report 收集 `backend-health`、`forwarder-status` 與 `sample-trace-query`。未設定 `CLOUD_LOGGER_SCRIPT` 時會略過 logger hook；正式環境應將它指到 `rtk_cloud_logger` 提供的 live provisioning hook。hook degraded 時不會阻塞服務 deploy。Grafana 只屬於 optional observability profile，不是 v1 dashboard 的必要元件。
 
 常用用法：
 
