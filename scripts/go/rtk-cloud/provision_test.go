@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -60,6 +61,181 @@ func TestWriteProvisionArtifactsIncludesCloudAdminPrivateIP(t *testing.T) {
 	readJSON(t, filepath.Join(dir, "deployment-targets.json"), &targets)
 	if targets.Targets["cloud_admin"].PrivateIP != "10.42.1.60" {
 		t.Fatalf("targets.cloud_admin.private_ip = %q", targets.Targets["cloud_admin"].PrivateIP)
+	}
+}
+
+func TestFirewallTargetsUsesConfiguredVideoCloudStackState(t *testing.T) {
+	root := t.TempDir()
+	mkdirAll(t, filepath.Join(root, "env"))
+	mkdirAll(t, filepath.Join(root, "state"))
+	writeFile(t, filepath.Join(root, "env", "stack.env"), "CLOUD_STACK_NAME=video-cloud-stg-0529\n")
+	writeFile(t, filepath.Join(root, "state", "video-cloud-stg-0529.state.json"), `{
+  "stack":"video-cloud-stg-0529",
+  "firewalls":{"edge":101,"api":102,"infra":103,"mqtt":104,"coturn":105}
+}`)
+	writeFile(t, filepath.Join(root, "state", "account-manager-staging.env"), "ACCOUNT_MANAGER_LINODE_FIREWALL_ID=201\nACCOUNT_MANAGER_LINODE_FIREWALL_LABEL=account-fw\n")
+	writeFile(t, filepath.Join(root, "state", "cloud-admin-staging.env"), "ADMIN_LINODE_FIREWALL_ID=202\nADMIN_LINODE_FIREWALL_LABEL=admin-fw\n")
+
+	targets, err := firewallTargets(root)
+	if err != nil {
+		t.Fatalf("firewallTargets returned error: %v", err)
+	}
+	byRole := map[string]firewallTarget{}
+	for _, target := range targets {
+		byRole[target.Role] = target
+	}
+	for role, wantID := range map[string]string{
+		"edge":            "101",
+		"api":             "102",
+		"infra":           "103",
+		"mqtt":            "104",
+		"coturn":          "105",
+		"account-manager": "201",
+		"cloud-admin":     "202",
+	} {
+		if byRole[role].ID != wantID {
+			t.Fatalf("%s firewall id = %q, want %q; targets=%#v", role, byRole[role].ID, wantID, targets)
+		}
+	}
+	if byRole["edge"].Label != "video-cloud-stg-0529-edge" {
+		t.Fatalf("edge label = %q", byRole["edge"].Label)
+	}
+}
+
+func TestWritePlatformAdminSummaryRedactsPassword(t *testing.T) {
+	root := t.TempDir()
+	platformEnv := filepath.Join(root, "services", "account-manager", "account-manager-platform-admin.env")
+	mkdirAll(t, filepath.Dir(platformEnv))
+	writeFile(t, platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL=root@example.test\nACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD=super-secret-password\n")
+
+	var out strings.Builder
+	writePlatformAdminSummary(&out, provisionPaths{EnvRoot: root})
+	body := out.String()
+	if !strings.Contains(body, "username: root@example.test") {
+		t.Fatalf("summary missing username:\n%s", body)
+	}
+	if !strings.Contains(body, "password: see "+platformEnv) {
+		t.Fatalf("summary missing password file hint:\n%s", body)
+	}
+	if !strings.Contains(body, "token: run ./stg.sh token") {
+		t.Fatalf("summary missing token command hint:\n%s", body)
+	}
+	if strings.Contains(body, "super-secret-password") {
+		t.Fatalf("summary leaked password:\n%s", body)
+	}
+}
+
+func TestWritePlatformAdminTokenLogsInWithBootstrapCredentials(t *testing.T) {
+	var gotEmail, gotPassword string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/auth/login" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var payload map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		gotEmail = payload["email"]
+		gotPassword = payload["password"]
+		_, _ = w.Write([]byte(`{"tokens":{"access_token":"access-token-123"}}`))
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	platformEnv := filepath.Join(root, "services", "account-manager", "account-manager-platform-admin.env")
+	mkdirAll(t, filepath.Dir(platformEnv))
+	writeFile(t, platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL=root@example.test\nACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD=super-secret-password\n")
+
+	var out strings.Builder
+	err := writePlatformAdminToken(&out, accountManagerContext{
+		BaseURL:       server.URL,
+		AdminEmail:    envFileValue(platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL"),
+		AdminPassword: envFileValue(platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD"),
+	})
+	if err != nil {
+		t.Fatalf("writePlatformAdminToken returned error: %v", err)
+	}
+	if gotEmail != "root@example.test" || gotPassword != "super-secret-password" {
+		t.Fatalf("login credentials email=%q password=%q", gotEmail, gotPassword)
+	}
+	if strings.TrimSpace(out.String()) != "access-token-123" {
+		t.Fatalf("token output = %q", out.String())
+	}
+}
+
+func TestAccountLoginLogsPlatformAdminUsername(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"tokens":{"access_token":"access-token-123"}}`))
+	}))
+	defer server.Close()
+
+	logs := []string{}
+	_, err := accountLogin(accountManagerContext{
+		BaseURL:       server.URL,
+		AdminEmail:    "admin@example.test",
+		AdminPassword: "super-secret-password",
+	}, func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	})
+	if err != nil {
+		t.Fatalf("accountLogin returned error: %v", err)
+	}
+	body := strings.Join(logs, "\n")
+	if !strings.Contains(body, "username=admin@example.test") {
+		t.Fatalf("login logs missing username:\n%s", body)
+	}
+	if strings.Contains(body, "super-secret-password") {
+		t.Fatalf("login logs leaked password:\n%s", body)
+	}
+}
+
+func TestAccountFindDeviceByVideoCloudDevidSkipsDisabledAndPaginates(t *testing.T) {
+	requests := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.RawQuery)
+		if got := r.Header.Get("authorization"); got != "Bearer user-token" {
+			t.Fatalf("authorization = %q", got)
+		}
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/orgs/org-123/devices" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.RequestURI())
+		}
+		switch r.URL.Query().Get("offset") {
+		case "0":
+			devices := []map[string]any{{"id": "disabled-device", "metadata": map[string]any{"video_cloud_devid": "load-device-0001"}, "disabled_at": "2026-06-01T00:00:00Z"}}
+			for i := 1; i < 200; i++ {
+				devices = append(devices, map[string]any{"id": fmt.Sprintf("other-%03d", i), "metadata": map[string]any{"video_cloud_devid": fmt.Sprintf("other-device-%03d", i)}, "disabled_at": nil})
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"devices": devices})
+		case "200":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"devices":[{"id":"active-device","metadata":{"video_cloud_devid":"load-device-0001"},"disabled_at":null}]}`))
+		default:
+			t.Fatalf("unexpected offset: %s", r.URL.Query().Get("offset"))
+		}
+	}))
+	defer server.Close()
+
+	device, found, err := accountFindDeviceByVideoCloudDevid(accountManagerContext{BaseURL: server.URL}, "user-token", "org-123", "load-device-0001")
+	if err != nil {
+		t.Fatalf("accountFindDeviceByVideoCloudDevid returned error: %v", err)
+	}
+	if !found {
+		t.Fatal("expected device to be found")
+	}
+	if got := stringValue(device["id"]); got != "active-device" {
+		t.Fatalf("device id = %q", got)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("requests = %#v", requests)
+	}
+}
+
+func TestErrorBodySuffixIncludesStructuredAPIError(t *testing.T) {
+	got := errorBodySuffix([]byte(`{"error":"already_claimed","message":"Claim token has already been claimed"}`))
+	want := ": already_claimed (Claim token has already been claimed)"
+	if got != want {
+		t.Fatalf("suffix = %q, want %q", got, want)
 	}
 }
 
