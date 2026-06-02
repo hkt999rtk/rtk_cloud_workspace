@@ -144,6 +144,7 @@ root@203.0.113.80)
 	;;
 *)
 	[[ "$input" == *"rtk-cloud-log-forwarder.service"* ]]
+	[[ "$input" == *"RTK_CLOUD_LOGGER_INGEST_URL=https://logger.video-cloud-ci.example.com/v1/logs/ingest"* ]]
 	;;
 esac
 exit 0

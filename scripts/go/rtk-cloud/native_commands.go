@@ -624,7 +624,7 @@ func loggerForwarderInstallScript(endpoint, token, units string) string {
 	fmt.Fprintln(&b, "set -euo pipefail")
 	fmt.Fprintln(&b, "install -d -m 0755 /etc/rtk-cloud /var/lib/rtk-cloud-logger/spool")
 	fmt.Fprintln(&b, "cat > /etc/rtk-cloud/log-forwarder.env <<'EOF'")
-	fmt.Fprintf(&b, "RTK_CLOUD_LOGGER_INGEST_URL=%s\n", shellEnvValue(endpoint))
+	fmt.Fprintf(&b, "RTK_CLOUD_LOGGER_INGEST_URL=%s\n", shellEnvValue(loggerIngestURL(endpoint)))
 	fmt.Fprintf(&b, "RTK_CLOUD_LOGGER_TOKEN=%s\n", shellEnvValue(token))
 	fmt.Fprintf(&b, "RTK_CLOUD_LOGGER_UNITS=%s\n", shellEnvValue(units))
 	fmt.Fprintln(&b, "RTK_CLOUD_LOGGER_CURSOR=/var/lib/rtk-cloud-logger/journal.cursor")
@@ -649,6 +649,14 @@ func loggerForwarderInstallScript(endpoint, token, units string) string {
 	fmt.Fprintln(&b, "systemctl daemon-reload")
 	fmt.Fprintln(&b, "systemctl enable --now rtk-cloud-log-forwarder.service")
 	return b.String()
+}
+
+func loggerIngestURL(endpoint string) string {
+	endpoint = strings.TrimRight(endpoint, "/")
+	if strings.HasSuffix(endpoint, "/v1/logs/ingest") {
+		return endpoint
+	}
+	return endpoint + "/v1/logs/ingest"
 }
 
 func defaultStagingSSHKey() string {

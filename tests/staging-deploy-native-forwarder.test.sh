@@ -129,6 +129,10 @@ if [[ "$input" != *super-secret-forwarder-token* ]]; then
 	printf 'remote install script missing token\n' >&2
 	exit 9
 fi
+if [[ "$input" != *"RTK_CLOUD_LOGGER_INGEST_URL=https://logger.video-cloud-ci.example.com/v1/logs/ingest"* ]]; then
+	printf 'remote install script missing ingest path\n' >&2
+	exit 10
+fi
 printf 'host=%s args=%s\n%s\n' "$host" "$*" "${input//super-secret-forwarder-token/[REDACTED]}" >> "$SSH_LOG"
 exit 0
 SH
