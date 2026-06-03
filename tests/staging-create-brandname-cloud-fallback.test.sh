@@ -10,8 +10,13 @@ ENV_ROOT="$WORKSPACE/cloud_env/staging/linode"
 FAKE_BIN="$TMP/bin"
 mkdir -p \
 	"$FAKE_BIN" \
+	"$ENV_ROOT/env" \
 	"$ENV_ROOT/services/account-manager" \
 	"$ENV_ROOT/state"
+
+cat > "$ENV_ROOT/env/operator.env" <<'EOF_OPERATOR'
+LINODE_TOKEN=fake-linode-token
+EOF_OPERATOR
 
 cat > "$ENV_ROOT/services/account-manager/account-manager-public-staging.env" <<'EOF_ENV'
 ACCOUNT_MANAGER_LINODE_DOMAIN=account-manager.video-cloud-staging.example.com
@@ -22,6 +27,8 @@ EOF_ENV
 cat > "$ENV_ROOT/state/account-manager-staging.env" <<'EOF_STATE'
 ACCOUNT_MANAGER_LINODE_HOST=203.0.113.10
 ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4=203.0.113.10
+ACCOUNT_MANAGER_LINODE_FIREWALL_ID=12345
+ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL=account-fw
 EOF_STATE
 
 cat > "$ENV_ROOT/services/account-manager/account-manager-platform-admin.env" <<'EOF_ADMIN'
@@ -56,8 +63,22 @@ for ((i = 0; i < ${#args[@]}; i++)); do
 	-w) write_code="${args[$((i + 1))]}" ;;
 	esac
 done
-url="${args[$((${#args[@]} - 1))]}"
+url=""
+for arg in "${args[@]}"; do
+	if [[ "$arg" == http://* || "$arg" == https://* ]]; then
+		url="$arg"
+		break
+	fi
+done
 case "$url" in
+https://api.ipify.org)
+	printf '198.51.100.20'
+	exit 0
+	;;
+https://api.linode.com/v4/networking/firewalls/12345/rules)
+	printf '{"inbound":[{"label":"ssh","action":"ACCEPT","protocol":"TCP","ports":"22","addresses":{"ipv4":["198.51.100.20/32"]}}],"outbound":[]}'
+	exit 0
+	;;
 */v1/auth/login)
 	printf '{"tokens":{"access_token":"test-token"}}' >"$out"
 	status=200

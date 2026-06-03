@@ -40,24 +40,21 @@ cat > "$FAKE_BIN/ssh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 cat >/dev/null
-printf 'bootstrap admin env applied and account-manager is healthy\n' >&2
+if [[ "$*" == *"Account Manager VM is provisioned but the runtime is not deployed"* ]]; then
+	printf 'Account Manager VM is provisioned but the runtime is not deployed on this host.\n' >&2
+	printf 'Run ./stg.sh deploy --account-release <release> or pass --account-release-bundle <bundle>, then retry ./stg.sh brand.\n' >&2
+	exit 1
+fi
+printf 'Unit rtk-account-manager.service could not be found.\n' >&2
+exit 1
 SH
 chmod +x "$FAKE_BIN/ssh"
 
 cat > "$FAKE_BIN/curl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-out=""
-write_code=""
-args=("$@")
-for ((i = 0; i < ${#args[@]}; i++)); do
-	case "${args[$i]}" in
-	-o) out="${args[$((i + 1))]}" ;;
-	-w) write_code="${args[$((i + 1))]}" ;;
-	esac
-done
 url=""
-for arg in "${args[@]}"; do
+for arg in "$@"; do
 	if [[ "$arg" == http://* || "$arg" == https://* ]]; then
 		url="$arg"
 		break
@@ -66,49 +63,24 @@ done
 case "$url" in
 https://api.ipify.org)
 	printf '198.51.100.20'
-	exit 0
 	;;
 https://api.linode.com/v4/networking/firewalls/12345/rules)
 	printf '{"inbound":[{"label":"ssh","action":"ACCEPT","protocol":"TCP","ports":"22","addresses":{"ipv4":["198.51.100.20/32"]}}],"outbound":[]}'
-	exit 0
-	;;
-*/v1/auth/login)
-	printf '{"tokens":{"access_token":"test-token"}}' >"$out"
-	status=200
-	;;
-*/v1/admin/brand-clouds\?limit=200)
-	printf '{"brand_clouds":[],"pagination":{"limit":200,"offset":0,"total":0}}' >"$out"
-	status=200
-	;;
-*/v1/admin/brand-clouds)
-	printf '{"brand_cloud":{"id":"org-rtk","name":"RTK","organization_kind":"brand_cloud","status":"active","tier":"commercial","evaluation_device_quota":5,"metadata":{"brandname":"RTK"},"created_at":"2026-05-27T00:00:00Z","updated_at":"2026-05-27T00:00:00Z"}}' >"$out"
-	status=201
 	;;
 *)
-	printf 'unexpected curl url: %s\n' "$url" >&2
-	exit 1
+	exit 99
 	;;
 esac
-if [[ -n "$write_code" ]]; then
-	printf '%s' "${write_code//'%{http_code}'/$status}"
-fi
 SH
 chmod +x "$FAKE_BIN/curl"
 
-OUT="$TMP/out.json"
 if PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- create-brandname-cloud \
 	--workspace "$WORKSPACE" \
-	--brandname RTK >"$TMP/missing-env-root.out" 2>&1; then
-	echo "expected missing --env-root to fail" >&2
+	--env-root "$ENV_ROOT" \
+	--brandname RTK >"$TMP/out" 2>&1; then
+	echo "expected missing Account Manager runtime to fail" >&2
 	exit 1
 fi
-grep -F -- '--env-root is required' "$TMP/missing-env-root.out" >/dev/null
 
-PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- create-brandname-cloud \
-	--workspace "$WORKSPACE" \
-	--env-root "$ENV_ROOT" \
-	--brandname RTK >"$OUT"
-
-jq -e '.action == "created"' "$OUT" >/dev/null
-jq -e '.brand_cloud.id == "org-rtk"' "$OUT" >/dev/null
-jq -e '.brand_cloud.metadata.brandname == "RTK"' "$OUT" >/dev/null
+grep -F 'Account Manager VM is provisioned but the runtime is not deployed' "$TMP/out" >/dev/null
+grep -F './stg.sh deploy --account-release' "$TMP/out" >/dev/null

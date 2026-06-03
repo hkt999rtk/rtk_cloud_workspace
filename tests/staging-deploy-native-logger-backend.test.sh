@@ -64,7 +64,7 @@ CLOUD_LOGGER_ENDPOINT=https://logger.video-cloud-ci.example.com
 CLOUD_LOGGER_INGEST_TOKEN=super-secret-backend-token
 CLOUD_LOGGER_LINODE_PUBLIC_IPV4=203.0.113.80
 EOF_LOGGER_STATE
-cat > "$ENV_ROOT/state/video-cloud-staging.state.json" <<'EOF_STATE'
+cat > "$ENV_ROOT/state/video-cloud-ci.state.json" <<'EOF_STATE'
 {"instances":{
   "edge":{"public_ipv4":"203.0.113.10"},
   "api":{"private_ip":"10.42.1.10"},
@@ -134,6 +134,9 @@ fi
 input="$(cat)"
 redacted="${input//super-secret-backend-token/[REDACTED]}"
 printf 'host=%s args=%s\n%s\n' "$host" "$*" "$redacted" >> "$SSH_LOG"
+if [[ "$input" == *"mv -f /tmp/.rtk-cloud-"* ]]; then
+	exit 0
+fi
 case "$host" in
 root@203.0.113.80)
 	[[ "$input" == *"RTK_CLOUD_LOGGER_STORE=loki"* ]]
@@ -181,7 +184,8 @@ OUT="$TMP/out.txt"
 ERR="$TMP/err.txt"
 ORDER_LOG="$ORDER_LOG" SSH_LOG="$SSH_LOG" SCP_LOG="$SCP_LOG" GO_LOG="$GO_LOG" CURL_EVENT="$CURL_EVENT" RTK_CLOUD_GO="$FAKE_BIN/go" PATH="$FAKE_BIN:$PATH" /usr/local/go/bin/go run "$ROOT/scripts/go/rtk-cloud" -- deploy \
 	--workspace "$WORKSPACE" \
-	--env-root "$ENV_ROOT" >"$OUT" 2>"$ERR"
+	--env-root "$ENV_ROOT" \
+	--logger-only >"$OUT" 2>"$ERR"
 
 REPORT="$(grep -F '[cloud-deploy] readiness report:' "$ERR" | tail -n 1 | sed 's/^.*readiness report: //')"
 grep -F 'PASS `logger-backend-provision`' "$REPORT" >/dev/null
@@ -191,21 +195,26 @@ grep -F 'PASS `logger-sample-trace-query`' "$REPORT" >/dev/null
 grep -F './cmd/rtk-cloud-logger' "$GO_LOG" >/dev/null
 grep -F './cmd/rtk-cloud-log-forwarder' "$GO_LOG" >/dev/null
 grep -F 'GOOS=linux GOARCH=amd64' "$GO_LOG" >/dev/null
-grep -F 'root@203.0.113.80:/usr/local/bin/rtk-cloud-logger' "$SCP_LOG" >/dev/null
+grep -F 'root@203.0.113.80:/tmp/.rtk-cloud-logger.' "$SCP_LOG" >/dev/null
 grep -F -- '-i ' "$SCP_LOG" >/dev/null
 grep -F -- 'BatchMode=yes' "$SCP_LOG" >/dev/null
 grep -F -- 'StrictHostKeyChecking=accept-new' "$SCP_LOG" >/dev/null
 grep -F 'host=root@203.0.113.80' "$SSH_LOG" >/dev/null
+grep -F 'mv -f /tmp/.rtk-cloud-logger.' "$SSH_LOG" >/dev/null
+grep -F '/usr/local/bin/rtk-cloud-logger' "$SSH_LOG" >/dev/null
 grep -F -- '-i ' "$SSH_LOG" >/dev/null
 grep -F -- 'BatchMode=yes' "$SSH_LOG" >/dev/null
 grep -F -- 'StrictHostKeyChecking=accept-new' "$SSH_LOG" >/dev/null
 grep -F 'rtk-cloud-logger.service' "$SSH_LOG" >/dev/null
 grep -F 'loki.service' "$SSH_LOG" >/dev/null
+test ! -s "$ORDER_LOG"
 for host in 203.0.113.20 10.42.1.10 203.0.113.30 203.0.113.10 10.42.1.30 203.0.113.13 203.0.113.14; do
-	grep -F "root@$host:/usr/local/bin/rtk-cloud-log-forwarder" "$SCP_LOG" >/dev/null
+	grep -F "root@$host:/tmp/.rtk-cloud-log-forwarder." "$SCP_LOG" >/dev/null
 	grep -F "host=root@$host" "$SSH_LOG" >/dev/null
 	grep -F "readiness-forwarder root@$host" "$SSH_LOG" >/dev/null
 done
+grep -F 'mv -f /tmp/.rtk-cloud-log-forwarder.' "$SSH_LOG" >/dev/null
+grep -F '/usr/local/bin/rtk-cloud-log-forwarder' "$SSH_LOG" >/dev/null
 grep -F -- 'ProxyCommand=ssh' "$SCP_LOG" >/dev/null
 grep -F -- 'ProxyCommand=ssh' "$SSH_LOG" >/dev/null
 grep -F -- '-W %h:%p root@203.0.113.10' "$SCP_LOG" >/dev/null
