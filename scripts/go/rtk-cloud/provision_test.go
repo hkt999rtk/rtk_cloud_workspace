@@ -233,6 +233,88 @@ func TestFirewallTargetsUsesConfiguredVideoCloudStackState(t *testing.T) {
 	}
 }
 
+func TestResolveLinodeTokenFallsBackToHomeEnv(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("LINODE_TOKEN", "")
+	writeFile(t, filepath.Join(home, ".env"), "LINODE_TOKEN=home-token\n")
+
+	token := resolveLinodeToken(t.TempDir())
+
+	if token != "home-token" {
+		t.Fatalf("token = %q, want home-token", token)
+	}
+}
+
+func TestResolveLinodeTokenPrefersProcessEnv(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("LINODE_TOKEN", "process-token")
+	writeFile(t, filepath.Join(home, ".env"), "LINODE_TOKEN=home-token\n")
+
+	token := resolveLinodeToken(t.TempDir())
+
+	if token != "process-token" {
+		t.Fatalf("token = %q, want process-token", token)
+	}
+}
+
+func TestRemoveAllVMMatcherUsesStackEnvLabels(t *testing.T) {
+	root := t.TempDir()
+	mkdirAll(t, filepath.Join(root, "env"))
+	writeFile(t, filepath.Join(root, "env", "stack.env"), `CLOUD_STACK_NAME=video-cloud-stg-0529
+VIDEO_CLOUD_LABEL_PREFIX=video-cloud-stg-0529
+VIDEO_CLOUD_VPC_LABEL=video-cloud-stg-0529-vpc
+ACCOUNT_MANAGER_LINODE_LABEL=rtk-account-manager-stg-0529
+ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL=rtk-account-manager-stg-0529-fw
+ADMIN_LINODE_LABEL=rtk-cloud-admin-stg-0529
+ADMIN_LINODE_FIREWALL_LABEL=rtk-cloud-admin-stg-0529-fw
+CLOUD_LOGGER_LINODE_LABEL=rtk-cloud-logger-stg-0529
+CLOUD_LOGGER_LINODE_FIREWALL_LABEL=rtk-cloud-logger-stg-0529-fw
+`)
+
+	matcher := removeAllVMMatcherForEnv(root)
+
+	for _, label := range []string{
+		"video-cloud-stg-0529-edge",
+		"rtk-account-manager-stg-0529",
+		"rtk-cloud-admin-stg-0529",
+		"rtk-cloud-logger-stg-0529",
+	} {
+		if !matcher.matchVM(label) {
+			t.Fatalf("VM label %q did not match", label)
+		}
+	}
+	for _, label := range []string{
+		"video-cloud-stg-0529-edge",
+		"rtk-account-manager-stg-0529-fw",
+		"rtk-cloud-admin-stg-0529-fw",
+		"rtk-cloud-logger-stg-0529-fw",
+	} {
+		if !matcher.matchFirewall(label) {
+			t.Fatalf("firewall label %q did not match", label)
+		}
+	}
+	if !matcher.matchVPC("video-cloud-stg-0529-vpc") {
+		t.Fatal("VPC label did not match")
+	}
+}
+
+func TestBackupAndRemoveStateUsesConfiguredStackState(t *testing.T) {
+	root := t.TempDir()
+	mkdirAll(t, filepath.Join(root, "env"))
+	mkdirAll(t, filepath.Join(root, "state"))
+	writeFile(t, filepath.Join(root, "env", "stack.env"), "CLOUD_STACK_NAME=video-cloud-stg-0529\n")
+	writeFile(t, filepath.Join(root, "state", "video-cloud-stg-0529.state.json"), "{}\n")
+
+	if err := backupAndRemoveState(root); err != nil {
+		t.Fatalf("backupAndRemoveState returned error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "state", "video-cloud-stg-0529.state.json")); !os.IsNotExist(err) {
+		t.Fatalf("stack state still exists or unexpected stat error: %v", err)
+	}
+}
+
 func TestWritePlatformAdminSummaryRedactsPassword(t *testing.T) {
 	root := t.TempDir()
 	platformEnv := filepath.Join(root, "services", "account-manager", "account-manager-platform-admin.env")

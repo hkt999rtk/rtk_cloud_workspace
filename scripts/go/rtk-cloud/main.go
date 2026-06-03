@@ -448,24 +448,30 @@ func runRemoveAllVM(args []string) error {
 			return nil
 		}
 	}
-	token := os.Getenv("LINODE_TOKEN")
+	token := resolveLinodeToken(envRoot)
 	if token == "" {
 		return errors.New("LINODE_TOKEN is required")
 	}
+	matcher := removeAllVMMatcherForEnv(envRoot)
 	instances, err := linodeGetList[linodeEntity](token, "/linode/instances?page_size=500")
 	if err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "[cloud-remove-all-vm] deleting VMs:")
+	deletedVMs := 0
 	for _, vm := range instances {
-		if !strings.Contains(vm.Label, "staging") {
+		if !matcher.matchVM(vm.Label) {
 			continue
 		}
+		deletedVMs++
 		fmt.Fprintf(os.Stderr, "  - %s (%d)\n", vm.Label, vm.ID)
 		fmt.Fprintf(os.Stderr, "[cloud-remove-all-vm] delete %s (%d)\n", vm.Label, vm.ID)
 		if err := linodeDelete(token, fmt.Sprintf("/linode/instances/%d", vm.ID)); err != nil {
 			return err
 		}
+	}
+	if deletedVMs == 0 {
+		fmt.Fprintln(os.Stderr, "[cloud-remove-all-vm] no matching staging VMs found")
 	}
 	fmt.Fprintln(os.Stderr, "[cloud-remove-all-vm] VM delete requests submitted")
 	firewalls, err := linodeGetList[linodeEntity](token, "/networking/firewalls?page_size=500")
@@ -473,30 +479,40 @@ func runRemoveAllVM(args []string) error {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "[cloud-remove-all-vm] deleting staging firewalls:")
+	deletedFirewalls := 0
 	for _, fw := range firewalls {
-		if !isStagingFirewall(fw.Label) {
+		if !matcher.matchFirewall(fw.Label) {
 			continue
 		}
+		deletedFirewalls++
 		fmt.Fprintf(os.Stderr, "  - %s (%d)\n", fw.Label, fw.ID)
 		fmt.Fprintf(os.Stderr, "[cloud-remove-all-vm] delete firewall %s (%d)\n", fw.Label, fw.ID)
 		if err := linodeDelete(token, fmt.Sprintf("/networking/firewalls/%d", fw.ID)); err != nil {
 			return err
 		}
 	}
+	if deletedFirewalls == 0 {
+		fmt.Fprintln(os.Stderr, "[cloud-remove-all-vm] no matching staging firewalls found")
+	}
 	vpcs, err := linodeGetList[linodeEntity](token, "/vpcs?page_size=500")
 	if err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "[cloud-remove-all-vm] deleting staging VPCs:")
+	deletedVPCs := 0
 	for _, vpc := range vpcs {
-		if !strings.Contains(vpc.Label, "staging") {
+		if !matcher.matchVPC(vpc.Label) {
 			continue
 		}
+		deletedVPCs++
 		fmt.Fprintf(os.Stderr, "  - %s (%d)\n", vpc.Label, vpc.ID)
 		fmt.Fprintf(os.Stderr, "[cloud-remove-all-vm] delete VPC %s (%d)\n", vpc.Label, vpc.ID)
 		if err := linodeDelete(token, fmt.Sprintf("/vpcs/%d", vpc.ID)); err != nil {
 			return err
 		}
+	}
+	if deletedVPCs == 0 {
+		fmt.Fprintln(os.Stderr, "[cloud-remove-all-vm] no matching staging VPCs found")
 	}
 	if err := backupAndRemoveState(envRoot); err != nil {
 		return err
@@ -524,11 +540,120 @@ func linodeDelete(token, path string) error {
 	return cmd.Run()
 }
 
+func resolveLinodeToken(envRoot string) string {
+	if token := os.Getenv("LINODE_TOKEN"); token != "" {
+		return token
+	}
+	if envRoot != "" {
+		if token := envFileValue(filepath.Join(envRoot, "env", "operator.env"), "LINODE_TOKEN"); token != "" {
+			return token
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if token := envFileValue(filepath.Join(home, ".env"), "LINODE_TOKEN"); token != "" {
+			return token
+		}
+	}
+	return ""
+}
+
+type removeAllVMMatcher struct {
+	labelPrefix string
+	stackName   string
+	vmLabels    map[string]bool
+	fwLabels    map[string]bool
+	vpcLabels   map[string]bool
+}
+
+func removeAllVMMatcherForEnv(envRoot string) removeAllVMMatcher {
+	matcher := removeAllVMMatcher{
+		vmLabels:  map[string]bool{},
+		fwLabels:  map[string]bool{},
+		vpcLabels: map[string]bool{},
+	}
+	stackEnv := filepath.Join(envRoot, "env", "stack.env")
+	matcher.stackName = envFileValue(stackEnv, "CLOUD_STACK_NAME")
+	matcher.labelPrefix = envFileValue(stackEnv, "VIDEO_CLOUD_LABEL_PREFIX")
+	if matcher.labelPrefix == "" {
+		matcher.labelPrefix = matcher.stackName
+	}
+	for _, key := range []string{
+		"ACCOUNT_MANAGER_LINODE_LABEL",
+		"ADMIN_LINODE_LABEL",
+		"CLOUD_LOGGER_LINODE_LABEL",
+	} {
+		addLabel(matcher.vmLabels, envFileValue(stackEnv, key))
+	}
+	for _, key := range []string{
+		"ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL",
+		"ADMIN_LINODE_FIREWALL_LABEL",
+		"CLOUD_LOGGER_LINODE_FIREWALL_LABEL",
+	} {
+		addLabel(matcher.fwLabels, envFileValue(stackEnv, key))
+	}
+	addLabel(matcher.vpcLabels, envFileValue(stackEnv, "VIDEO_CLOUD_VPC_LABEL"))
+	matcher.addVideoStateLabels(filepath.Join(envRoot, "state", matcher.stackName+".state.json"))
+	matcher.addVideoStateLabels(filepath.Join(envRoot, "state", "video-cloud-staging.state.json"))
+	return matcher
+}
+
+func (m removeAllVMMatcher) matchVM(label string) bool {
+	return m.matchVideoCloudLabel(label) ||
+		m.vmLabels[label] ||
+		strings.Contains(label, "staging")
+}
+
+func (m removeAllVMMatcher) matchFirewall(label string) bool {
+	return m.matchVideoCloudLabel(label) ||
+		m.fwLabels[label] ||
+		isLegacyStagingFirewall(label)
+}
+
+func (m removeAllVMMatcher) matchVPC(label string) bool {
+	return m.vpcLabels[label] ||
+		(m.stackName != "" && strings.Contains(label, m.stackName)) ||
+		strings.Contains(label, "staging")
+}
+
+func (m removeAllVMMatcher) matchVideoCloudLabel(label string) bool {
+	if m.labelPrefix != "" && (label == m.labelPrefix || strings.HasPrefix(label, m.labelPrefix+"-")) {
+		return true
+	}
+	if m.stackName != "" && strings.Contains(label, m.stackName) {
+		return true
+	}
+	return false
+}
+
+func (m removeAllVMMatcher) addVideoStateLabels(path string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var state struct {
+		Instances map[string]struct {
+			Label string `json:"label"`
+		} `json:"instances"`
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		return
+	}
+	for _, instance := range state.Instances {
+		addLabel(m.vmLabels, instance.Label)
+	}
+}
+
+func addLabel(labels map[string]bool, label string) {
+	if label != "" {
+		labels[label] = true
+	}
+}
+
 type ioDiscard struct{}
 
 func (ioDiscard) Write(p []byte) (int, error) { return len(p), nil }
 
-func isStagingFirewall(label string) bool {
+func isLegacyStagingFirewall(label string) bool {
 	return strings.Contains(label, "video-cloud-staging") ||
 		label == "rtk-account-manager-staging-fw" ||
 		label == "rtk-cloud-admin-staging-firewall" ||
@@ -539,6 +664,9 @@ func backupAndRemoveState(envRoot string) error {
 	stateDir := filepath.Join(envRoot, "state")
 	backupDir := filepath.Join(envRoot, "backups", "remove-vm-"+time.Now().UTC().Format("20060102T150405Z"), "state")
 	files := []string{"video-cloud-staging.state.json", "account-manager-staging.env", "cloud-admin-staging.env", "cloud-logger.env"}
+	if stackName := envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_STACK_NAME"); stackName != "" {
+		files = append(files, stackName+".state.json")
+	}
 	for _, name := range files {
 		src := filepath.Join(stateDir, name)
 		if _, err := os.Stat(src); err != nil {
