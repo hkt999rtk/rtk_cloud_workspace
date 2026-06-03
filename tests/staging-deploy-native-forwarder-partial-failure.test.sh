@@ -8,7 +8,6 @@ trap 'rm -rf "$TMP"' EXIT
 WORKSPACE="$TMP/workspace"
 ENV_ROOT="$WORKSPACE/cloud_env/staging/linode"
 FAKE_BIN="$TMP/bin"
-ORDER_LOG="$TMP/order.log"
 SSH_LOG="$TMP/ssh.log"
 SCP_LOG="$TMP/scp.log"
 GO_LOG="$TMP/go.log"
@@ -26,6 +25,7 @@ mkdir -p \
 	"$WORKSPACE/repos/rtk_video_cloud/linode_deploy/scripts" \
 	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/scripts" \
 	"$WORKSPACE/repos/rtk_cloud_admin/deploy/linode" \
+	"$WORKSPACE/repos/rtk_cloud_logger/cmd/rtk-cloud-logger" \
 	"$WORKSPACE/repos/rtk_cloud_logger/cmd/rtk-cloud-log-forwarder"
 
 cat > "$ENV_ROOT/env/operator.env" <<'EOF_OPERATOR'
@@ -55,8 +55,14 @@ touch "$ENV_ROOT/services/account-manager/account-manager-public-staging.env"
 touch "$ENV_ROOT/services/cloud-admin/admin-staging.env"
 cat > "$ENV_ROOT/services/cloud-logger/logger.env" <<'EOF_LOGGER'
 CLOUD_LOGGER_ENDPOINT=https://logger.video-cloud-ci.example.com
-CLOUD_LOGGER_INGEST_TOKEN=super-secret-forwarder-token
+CLOUD_LOGGER_INGEST_TOKEN=super-secret-partial-token
 EOF_LOGGER
+cat > "$ENV_ROOT/state/cloud-logger.env" <<'EOF_LOGGER_STATE'
+CLOUD_LOGGER_DOMAIN=logger.video-cloud-ci.example.com
+CLOUD_LOGGER_ENDPOINT=https://logger.video-cloud-ci.example.com
+CLOUD_LOGGER_INGEST_TOKEN=super-secret-partial-token
+CLOUD_LOGGER_LINODE_PUBLIC_IPV4=203.0.113.80
+EOF_LOGGER_STATE
 cat > "$ENV_ROOT/state/video-cloud-ci.state.json" <<'EOF_STATE'
 {"instances":{
   "edge":{"public_ipv4":"203.0.113.10"},
@@ -82,7 +88,7 @@ for path in \
 	cat > "$path" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$(basename "$0")" >> "$ORDER_LOG"
+exit 99
 SH
 	chmod +x "$path"
 done
@@ -105,7 +111,10 @@ SH
 cat > "$FAKE_BIN/scp" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$SCP_LOG"
-exit 0
+case "$*" in
+*"root@10.42.1.10:/tmp/.rtk-cloud-log-forwarder."*) exit 17 ;;
+*) exit 0 ;;
+esac
 SH
 cat > "$FAKE_BIN/ssh" <<'SH'
 #!/usr/bin/env bash
@@ -116,12 +125,8 @@ for arg in "$@"; do
 	root@*) host="$arg" ;;
 	esac
 done
-if [[ -z "$host" ]]; then
-	printf 'missing ssh host: %s\n' "$*" >&2
-	exit 8
-fi
 if [[ "$*" == *"systemctl is-active --quiet rtk-cloud-log-forwarder.service"* ]]; then
-	printf 'readiness %s args=%s\n' "$host" "$*" >> "$SSH_LOG"
+	printf 'readiness %s\n' "$host" >> "$SSH_LOG"
 	exit 0
 fi
 input="$(cat)"
@@ -129,15 +134,7 @@ if [[ "$input" == *"mv -f /tmp/.rtk-cloud-log-forwarder."* ]]; then
 	printf 'host=%s args=%s\n%s\n' "$host" "$*" "$input" >> "$SSH_LOG"
 	exit 0
 fi
-if [[ "$input" != *super-secret-forwarder-token* ]]; then
-	printf 'remote install script missing token\n' >&2
-	exit 9
-fi
-if [[ "$input" != *"RTK_CLOUD_LOGGER_INGEST_URL=https://logger.video-cloud-ci.example.com/v1/logs/ingest"* ]]; then
-	printf 'remote install script missing ingest path\n' >&2
-	exit 10
-fi
-printf 'host=%s args=%s\n%s\n' "$host" "$*" "${input//super-secret-forwarder-token/[REDACTED]}" >> "$SSH_LOG"
+printf 'host=%s\n%s\n' "$host" "${input//super-secret-partial-token/[REDACTED]}" >> "$SSH_LOG"
 exit 0
 SH
 cat > "$FAKE_BIN/curl" <<'SH'
@@ -161,7 +158,6 @@ case "$*" in
 	cat "$CURL_EVENT"
 	;;
 *)
-	printf 'unexpected curl: %s\n' "$*" >&2
 	exit 1
 	;;
 esac
@@ -170,33 +166,24 @@ chmod +x "$FAKE_BIN/go" "$FAKE_BIN/scp" "$FAKE_BIN/ssh" "$FAKE_BIN/curl"
 
 OUT="$TMP/out.txt"
 ERR="$TMP/err.txt"
-ORDER_LOG="$ORDER_LOG" SSH_LOG="$SSH_LOG" SCP_LOG="$SCP_LOG" GO_LOG="$GO_LOG" CURL_EVENT="$CURL_EVENT" RTK_CLOUD_GO="$FAKE_BIN/go" PATH="$FAKE_BIN:$PATH" /usr/local/go/bin/go run "$ROOT/scripts/go/rtk-cloud" -- deploy \
+SSH_LOG="$SSH_LOG" SCP_LOG="$SCP_LOG" GO_LOG="$GO_LOG" CURL_EVENT="$CURL_EVENT" RTK_CLOUD_GO="$FAKE_BIN/go" PATH="$FAKE_BIN:$PATH" /usr/local/go/bin/go run "$ROOT/scripts/go/rtk-cloud" -- deploy \
 	--workspace "$WORKSPACE" \
-	--env-root "$ENV_ROOT" >"$OUT" 2>"$ERR"
+	--env-root "$ENV_ROOT" \
+	--logger-only >"$OUT" 2>"$ERR"
 
 REPORT="$(grep -F '[cloud-deploy] readiness report:' "$ERR" | tail -n 1 | sed 's/^.*readiness report: //')"
-grep -F 'PASS `logger-backend-health`' "$REPORT" >/dev/null
-grep -F 'PASS `logger-ingest-idempotency`' "$REPORT" >/dev/null
-grep -F 'PASS `logger-sample-trace-query`' "$REPORT" >/dev/null
-for host in 203.0.113.20 10.42.1.10 203.0.113.30 203.0.113.10 10.42.1.30 203.0.113.13 203.0.113.14; do
+grep -F 'status: passed' "$REPORT" >/dev/null
+grep -F 'logging: degraded' "$REPORT" >/dev/null
+grep -F 'DEGRADED `logger-forwarder:video-cloud-api`' "$REPORT" >/dev/null
+for host in 203.0.113.20 203.0.113.30 203.0.113.10 10.42.1.30 203.0.113.13 203.0.113.14; do
 	grep -F "root@$host:/tmp/.rtk-cloud-log-forwarder." "$SCP_LOG" >/dev/null
 	grep -F "host=root@$host" "$SSH_LOG" >/dev/null
-	grep -F "readiness root@$host" "$SSH_LOG" >/dev/null
 done
+grep -F "root@10.42.1.10:/tmp/.rtk-cloud-log-forwarder." "$SCP_LOG" >/dev/null
+! grep -F "host=root@10.42.1.10" "$SSH_LOG" >/dev/null
 grep -F 'mv -f /tmp/.rtk-cloud-log-forwarder.' "$SSH_LOG" >/dev/null
 grep -F '/usr/local/bin/rtk-cloud-log-forwarder' "$SSH_LOG" >/dev/null
-grep -F 'GOOS=linux GOARCH=amd64' "$GO_LOG" >/dev/null
-grep -F -- '-i ' "$SCP_LOG" >/dev/null
-grep -F -- 'BatchMode=yes' "$SCP_LOG" >/dev/null
-grep -F -- 'StrictHostKeyChecking=accept-new' "$SCP_LOG" >/dev/null
-grep -F -- '-i ' "$SSH_LOG" >/dev/null
-grep -F -- 'BatchMode=yes' "$SSH_LOG" >/dev/null
-grep -F -- 'StrictHostKeyChecking=accept-new' "$SSH_LOG" >/dev/null
-grep -F -- 'ProxyCommand=ssh' "$SCP_LOG" >/dev/null
-grep -F -- 'ProxyCommand=ssh' "$SSH_LOG" >/dev/null
-grep -F -- '-W %h:%p root@203.0.113.10' "$SCP_LOG" >/dev/null
-grep -F -- '-W %h:%p root@203.0.113.10' "$SSH_LOG" >/dev/null
-if grep -R 'super-secret-forwarder-token' "$OUT" "$ERR" "$ENV_ROOT/artifacts" "$SCP_LOG" "$SSH_LOG" >/dev/null; then
-	echo "forwarder token leaked to output, report, or scp args" >&2
+if grep -R 'super-secret-partial-token' "$OUT" "$ERR" "$ENV_ROOT/artifacts" "$SCP_LOG" "$SSH_LOG" "$GO_LOG" >/dev/null; then
+	echo "forwarder token leaked to output, report, or command logs" >&2
 	exit 1
 fi

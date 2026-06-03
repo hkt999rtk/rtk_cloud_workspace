@@ -62,6 +62,7 @@ type provisionOptions struct {
 	accountReleaseBundle string
 	adminRelease         string
 	adminReleaseBundle   string
+	loggerOnly           bool
 	confirm              string
 	verbose              bool
 }
@@ -138,6 +139,9 @@ func runProvision(args []string) error {
 	if opts.mode.apply {
 		if err := provisionApply(paths, envValues, opts); err != nil {
 			return err
+		}
+		if !opts.mode.deploy {
+			fmt.Fprintln(os.Stderr, "[cloud-provision] apply complete without deploy; service runtimes were not installed. Run ./stg.sh provision --deploy with explicit releases, or use ./stg.sh provision/--all for the full automated path before brand/user/device steps.")
 		}
 	}
 	if opts.mode.dns {
@@ -474,7 +478,7 @@ func provisionApply(paths provisionPaths, env map[string]string, opts provisionO
 	if err := runCmdWithEnv(filepath.Join(paths.Workspace, "repos", "rtk_video_cloud", "linode_deploy"), mergeEnv(operator, map[string]string{}), "go", "run", "./cmd/linode-deploy", "apply", "--config", paths.VideoConfig); err != nil {
 		return err
 	}
-	if err := syncProvisionVideoState(paths.VideoState, repoState); err != nil {
+	if err := syncProvisionVideoStateFromRepo(paths.VideoState, repoState); err != nil {
 		return err
 	}
 	if err := provisionPublicService(paths, env, "account-manager"); err != nil {
@@ -851,6 +855,13 @@ func syncProvisionVideoState(cloudState, repoState string) error {
 	default:
 		return nil
 	}
+}
+
+func syncProvisionVideoStateFromRepo(cloudState, repoState string) error {
+	if !exists(repoState) {
+		return nil
+	}
+	return copyFile(repoState, cloudState)
 }
 
 func provisionVideoStateHasInstances(path string) bool {

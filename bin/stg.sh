@@ -17,7 +17,7 @@ Shortcuts:
   brand NAME [args]             -> create-brandname-cloud
   brands [args]                 -> list-brandname-clouds
   users NAME [COUNT] [args]     -> create-users
-  devices [COUNT] [args]        -> generate-load-devices
+  devices [BRAND] [COUNT] [args]-> generate-load-devices
   bind NAME [COUNT] [args]      -> bind-devices
   unprovision NAME [args]       -> unprovision-devices
   mqtt NAME [args]              -> mqtt-test
@@ -95,6 +95,17 @@ case "$cmd" in
 			count="$1"
 			shift
 			with_env generate-load-devices --count "$count" "$@"
+		elif [[ -n "${1:-}" && "${1:-}" != -* ]]; then
+			brand="$1"
+			shift
+			prefix="$(printf '%s' "$brand" | tr '[:upper:]' '[:lower:]')"
+			if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
+				count="$1"
+				shift
+				with_env generate-load-devices --prefix "$prefix" --count "$count" "$@"
+			else
+				with_env generate-load-devices --prefix "$prefix" "$@"
+			fi
 		else
 			with_env generate-load-devices "$@"
 		fi

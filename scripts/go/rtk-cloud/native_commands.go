@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,6 +32,7 @@ func runDeploy(args []string) error {
 	accountBundle := fs.String("account-release-bundle", os.Getenv("ACCOUNT_RELEASE_BUNDLE"), "Account Manager release bundle")
 	adminRelease := fs.String("admin-release", "", "Cloud Admin release")
 	adminBundle := fs.String("admin-release-bundle", os.Getenv("ADMIN_RELEASE_BUNDLE"), "Cloud Admin release bundle")
+	loggerOnly := fs.Bool("logger-only", false, "install and verify only logger backend and log forwarders")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -54,6 +56,7 @@ func runDeploy(args []string) error {
 	if err != nil {
 		return err
 	}
+	paths.VideoState = provisionCloudVideoStatePath(envRoot, env.Values["CLOUD_STACK_NAME"], paths.VideoState)
 	operator, _ := readEnvFile(paths.OperatorEnv)
 	return deployAllServices(paths, env.Values, operator, provisionOptions{
 		videoRelease:         *videoRelease,
@@ -61,6 +64,7 @@ func runDeploy(args []string) error {
 		adminRelease:         *adminRelease,
 		accountReleaseBundle: *accountBundle,
 		adminReleaseBundle:   *adminBundle,
+		loggerOnly:           *loggerOnly,
 		sshKey:               *sshKey,
 	})
 }
@@ -274,6 +278,11 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 	fmt.Fprintf(os.Stderr, "[cloud-deploy] readiness report: %s\n", report.path())
 
 	runLoggerProvisionHooks(paths, env, opts.sshKey, report)
+	runLoggerForwarderInstallHooks(paths, env, opts.sshKey, report)
+	runLoggerReadinessHooks(paths, env, opts.sshKey, report)
+	if opts.loggerOnly {
+		return report.write(true)
+	}
 
 	videoEnv := mergeEnv(operator, map[string]string{
 		"LINODE_DEPLOY_CERT_CACHE_DIR": filepath.Join(paths.EnvRoot, "certificates", env["VIDEO_CLOUD_DOMAIN"]),
@@ -408,8 +417,7 @@ func installNativeLoggerBackend(paths provisionPaths, env map[string]string, ssh
 		return err
 	}
 	defer cleanup()
-	remote := "root@" + host
-	if err := runExternal("scp", loggerSCPArgs(paths, sshKey, host, binary, remote+":/usr/local/bin/rtk-cloud-logger")...); err != nil {
+	if err := uploadLoggerBinary(paths, sshKey, host, binary, "/usr/local/bin/rtk-cloud-logger"); err != nil {
 		return err
 	}
 	script := loggerBackendInstallScript(domain, token, firstNonEmpty(os.Getenv("CLOUD_LOGGER_LOKI_VERSION"), "v3.5.1"))
@@ -525,8 +533,9 @@ func loggerBackendInstallScript(domain, token, lokiVersion string) string {
 	fmt.Fprintln(&b, "ln -sf /etc/nginx/sites-available/rtk-cloud-logger /etc/nginx/sites-enabled/rtk-cloud-logger")
 	fmt.Fprintln(&b, "rm -f /etc/nginx/sites-enabled/default")
 	fmt.Fprintln(&b, "systemctl daemon-reload")
-	fmt.Fprintln(&b, "systemctl enable --now loki.service rtk-cloud-logger.service nginx.service")
-	fmt.Fprintln(&b, "systemctl reload nginx")
+	fmt.Fprintln(&b, "systemctl enable loki.service rtk-cloud-logger.service nginx.service")
+	fmt.Fprintln(&b, "systemctl restart loki.service rtk-cloud-logger.service")
+	fmt.Fprintln(&b, "systemctl reload-or-restart nginx.service")
 	if domain != "" {
 		fmt.Fprintf(&b, "certbot --nginx -d %s --non-interactive --agree-tos --register-unsafely-without-email --redirect\n", shellEnvValue(domain))
 	}
@@ -545,12 +554,7 @@ func runLoggerForwarderInstallHooks(paths provisionPaths, env map[string]string,
 		runLoggerForwarderScriptHooks(paths, script, targets, report)
 		return
 	}
-	if err := installNativeLoggerForwarders(paths, env, sshKey, targets); err != nil {
-		for _, target := range targets {
-			report.add("logger-forwarder:"+target.name, "DEGRADED", "")
-		}
-		fmt.Fprintf(os.Stderr, "[cloud-deploy] logger forwarder install degraded: %v\n", err)
-	}
+	installNativeLoggerForwarders(paths, env, sshKey, targets, report)
 }
 
 func runLoggerForwarderScriptHooks(paths provisionPaths, script string, targets []loggerForwarderTarget, report *readinessReport) {
@@ -576,33 +580,63 @@ func loggerForwarderTargets(paths provisionPaths) []loggerForwarderTarget {
 	}
 }
 
-func installNativeLoggerForwarders(paths provisionPaths, env map[string]string, sshKey string, targets []loggerForwarderTarget) error {
+func installNativeLoggerForwarders(paths provisionPaths, env map[string]string, sshKey string, targets []loggerForwarderTarget, report *readinessReport) {
 	loggerEnv, _ := readEnvFile(filepath.Join(paths.EnvRoot, "services", "cloud-logger", "logger.env"))
 	loggerState, _ := readEnvFile(filepath.Join(paths.EnvRoot, "state", "cloud-logger.env"))
 	endpoint := firstNonEmpty(loggerEnv["CLOUD_LOGGER_ENDPOINT"], loggerState["CLOUD_LOGGER_ENDPOINT"], env["CLOUD_LOGGER_ENDPOINT"])
 	token := firstNonEmpty(loggerEnv["CLOUD_LOGGER_INGEST_TOKEN"], loggerState["CLOUD_LOGGER_INGEST_TOKEN"])
+	loggerHostIP := loggerState["CLOUD_LOGGER_LINODE_PUBLIC_IPV4"]
 	if endpoint == "" || token == "" {
-		return errors.New("logger endpoint and ingest token are required")
+		markLoggerForwardersDegraded(report, targets)
+		fmt.Fprintln(os.Stderr, "[cloud-deploy] logger forwarder install degraded: logger endpoint and ingest token are required")
+		return
 	}
 	binary, cleanup, err := buildLoggerForwarder(paths.Workspace)
 	if err != nil {
-		return err
+		markLoggerForwardersDegraded(report, targets)
+		fmt.Fprintf(os.Stderr, "[cloud-deploy] logger forwarder install degraded: %v\n", err)
+		return
 	}
 	defer cleanup()
 	for _, target := range targets {
-		if target.host == "" {
-			return fmt.Errorf("logger forwarder target host missing: %s", target.name)
+		proxyURL := ""
+		if isPrivateIPv4(target.host) {
+			if edge := videoStateInstanceHost(paths.VideoState, "edge"); edge != "" {
+				proxyURL = "http://" + edge + ":3128"
+			}
 		}
-		remote := "root@" + target.host
-		if err := runExternal("scp", loggerSCPArgs(paths, sshKey, target.host, binary, remote+":/usr/local/bin/rtk-cloud-log-forwarder")...); err != nil {
-			return err
-		}
-		script := loggerForwarderInstallScript(endpoint, token, target.units)
-		if err := runCmdWithInput("", script, "ssh", loggerSSHArgs(paths, sshKey, target.host, "bash", "-s")...); err != nil {
-			return err
+		if err := installNativeLoggerForwarderTarget(paths, sshKey, binary, endpoint, token, loggerHostIP, proxyURL, target); err != nil {
+			report.add("logger-forwarder:"+target.name, "DEGRADED", "")
+			fmt.Fprintf(os.Stderr, "[cloud-deploy] logger forwarder install degraded: target=%s error=%v\n", target.name, err)
 		}
 	}
-	return nil
+}
+
+func markLoggerForwardersDegraded(report *readinessReport, targets []loggerForwarderTarget) {
+	for _, target := range targets {
+		report.add("logger-forwarder:"+target.name, "DEGRADED", "")
+	}
+}
+
+func installNativeLoggerForwarderTarget(paths provisionPaths, sshKey, binary, endpoint, token, loggerHostIP, proxyURL string, target loggerForwarderTarget) error {
+	if target.host == "" {
+		return fmt.Errorf("logger forwarder target host missing: %s", target.name)
+	}
+	if err := uploadLoggerBinary(paths, sshKey, target.host, binary, "/usr/local/bin/rtk-cloud-log-forwarder"); err != nil {
+		return err
+	}
+	script := loggerForwarderInstallScript(endpoint, token, target.units, loggerHostIP, proxyURL)
+	return runCmdWithInput("", script, "ssh", loggerSSHArgs(paths, sshKey, target.host, "bash", "-s")...)
+}
+
+func uploadLoggerBinary(paths provisionPaths, sshKey, host, source, dest string) error {
+	tmp := "/tmp/." + filepath.Base(dest) + "." + strconv.FormatInt(time.Now().UnixNano(), 10)
+	remoteTmp := "root@" + host + ":" + tmp
+	if err := runExternal("scp", loggerSCPArgs(paths, sshKey, host, source, remoteTmp)...); err != nil {
+		return err
+	}
+	script := "set -euo pipefail\nchmod 0755 " + tmp + "\nmv -f " + tmp + " " + dest + "\n"
+	return runCmdWithInput("", script, "ssh", loggerSSHArgs(paths, sshKey, host, "bash", "-s")...)
 }
 
 func buildLoggerForwarder(workspace string) (string, func(), error) {
@@ -619,16 +653,29 @@ func buildLoggerForwarder(workspace string) (string, func(), error) {
 	return binary, cleanup, nil
 }
 
-func loggerForwarderInstallScript(endpoint, token, units string) string {
+func loggerForwarderInstallScript(endpoint, token, units, loggerHostIP, proxyURL string) string {
 	var b strings.Builder
+	loggerHost := ""
+	if parsed, err := url.Parse(endpoint); err == nil {
+		loggerHost = parsed.Hostname()
+	}
 	fmt.Fprintln(&b, "set -euo pipefail")
 	fmt.Fprintln(&b, "install -d -m 0755 /etc/rtk-cloud /var/lib/rtk-cloud-logger/spool")
+	if loggerHost != "" && loggerHostIP != "" {
+		fmt.Fprintf(&b, "sed -i.bak '/[[:space:]]%s$/d' /etc/hosts\n", shellEnvValue(loggerHost))
+		fmt.Fprintf(&b, "printf '%%s %%s\\n' %s %s >> /etc/hosts\n", shellEnvValue(loggerHostIP), shellEnvValue(loggerHost))
+	}
 	fmt.Fprintln(&b, "cat > /etc/rtk-cloud/log-forwarder.env <<'EOF'")
 	fmt.Fprintf(&b, "RTK_CLOUD_LOGGER_INGEST_URL=%s\n", shellEnvValue(loggerIngestURL(endpoint)))
 	fmt.Fprintf(&b, "RTK_CLOUD_LOGGER_TOKEN=%s\n", shellEnvValue(token))
 	fmt.Fprintf(&b, "RTK_CLOUD_LOGGER_UNITS=%s\n", shellEnvValue(units))
 	fmt.Fprintln(&b, "RTK_CLOUD_LOGGER_CURSOR=/var/lib/rtk-cloud-logger/journal.cursor")
 	fmt.Fprintln(&b, "RTK_CLOUD_LOGGER_SPOOL_DIR=/var/lib/rtk-cloud-logger/spool")
+	if proxyURL != "" {
+		fmt.Fprintf(&b, "HTTPS_PROXY=%s\n", shellEnvValue(proxyURL))
+		fmt.Fprintf(&b, "HTTP_PROXY=%s\n", shellEnvValue(proxyURL))
+		fmt.Fprintln(&b, "NO_PROXY=localhost,127.0.0.1,10.42.0.0/16")
+	}
 	fmt.Fprintln(&b, "EOF")
 	fmt.Fprintln(&b, "chmod 0600 /etc/rtk-cloud/log-forwarder.env")
 	fmt.Fprintln(&b, "cat > /etc/systemd/system/rtk-cloud-log-forwarder.service <<'EOF'")
@@ -647,7 +694,8 @@ func loggerForwarderInstallScript(endpoint, token, units string) string {
 	fmt.Fprintln(&b, "WantedBy=multi-user.target")
 	fmt.Fprintln(&b, "EOF")
 	fmt.Fprintln(&b, "systemctl daemon-reload")
-	fmt.Fprintln(&b, "systemctl enable --now rtk-cloud-log-forwarder.service")
+	fmt.Fprintln(&b, "systemctl enable rtk-cloud-log-forwarder.service")
+	fmt.Fprintln(&b, "systemctl restart rtk-cloud-log-forwarder.service")
 	return b.String()
 }
 
@@ -782,10 +830,10 @@ func runLoggerReadinessScriptHooks(paths provisionPaths, env map[string]string, 
 	loggerState := filepath.Join(paths.EnvRoot, "state", "cloud-logger.env")
 	checks := [][]string{
 		{"backend-health"},
-		{"forwarder-status", "account-manager"},
-		{"forwarder-status", "video-cloud-api"},
-		{"forwarder-status", "cloud-admin"},
 		{"sample-trace-query"},
+	}
+	for _, target := range loggerForwarderTargets(paths) {
+		checks = append(checks, []string{"forwarder-status", target.name})
 	}
 	for _, check := range checks {
 		name := "logger-" + check[0]
@@ -796,6 +844,8 @@ func runLoggerReadinessScriptHooks(paths provisionPaths, env map[string]string, 
 		}
 		if err := runCmdWithEnv(paths.Workspace, nil, script, args...); err != nil {
 			report.add(name, "DEGRADED", "")
+		} else {
+			report.add(name, "PASS", "")
 		}
 	}
 }

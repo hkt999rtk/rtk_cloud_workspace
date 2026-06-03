@@ -242,7 +242,7 @@ service logging 的目標 provisioning model 記在 `docs/service-logging-archit
 - `CLOUD_LOGGER_FORWARDER_TARGETS`：plan 中列出的 forwarder target，預設包含 edge/api/infra/mqtt/coturn/account-manager/cloud-admin/frontend/non-Go host sources。
 - `CLOUD_LOGGER_JOURNALD_SYSTEM_MAX_USE`、`CLOUD_LOGGER_JOURNALD_SYSTEM_KEEP_FREE`、`CLOUD_LOGGER_JOURNALD_MAX_RETENTION_SEC`：journald retention guidance，會傳給 forwarder install hook。
 
-目前 staging centralized logger 已納入 native flow：`provision --plan/--all` 會處理 logger VM/firewall/DNS/env/state，artifact/cleanup 會納入 logger 並 redacted token，`deploy` 會在 logger VM 安裝 Loki 與 `rtk-cloud-logger` backend systemd service，也會在 service hosts 安裝 `rtk-cloud-log-forwarder`。readiness 會檢查 backend health、ingest/idempotency、sample query 與 forwarder status；`CLOUD_LOGGER_SCRIPT` 保留為 override/debug hook。logger degraded 時不會阻塞服務 deploy，但 readiness 必須標示 `logging: degraded`。Cloud Admin v1 dashboard 不依賴 Grafana。
+目前 staging centralized logger 已納入 native flow：`provision --plan/--all` 會處理 logger VM/firewall/DNS/env/state，artifact/cleanup 會納入 logger 並 redacted token；`provision --apply` 不安裝 runtime service。`deploy` 會先 best-effort 在 logger VM 安裝 Loki 與 `rtk-cloud-logger` backend systemd service，再 best-effort 在 service hosts 安裝 `rtk-cloud-log-forwarder`，即使後續 Video Cloud、Account Manager 或 Cloud Admin deploy 失敗，也會保留 logger readiness evidence。`deploy --logger-only` 可只重跑 logger backend、forwarder install 與 readiness，不部署 application services；full deploy 會在 application deploy 後再 refresh 一次 forwarder。readiness 會檢查 backend health、ingest/idempotency、sample query 與每台 forwarder status；`CLOUD_LOGGER_SCRIPT` 保留為 override/debug hook。logger degraded 時不會阻塞服務 deploy，但 readiness 必須標示 `logging: degraded`。Cloud Admin v1 dashboard 不依賴 Grafana。
 
 目前 native forwarder 的 v1 範圍是 journald systemd units；target 必須對應實際 staging unit，例如 `video_cloud-api.service`、`video_cloud-logingester.service`、`nats-server.service`、`video_cloud-turnregistrar.service`。EMQX broker 的 per-publish / per-subscribe detail 不一定會進 journald，因為 `video_cloud-emqx.service` 是 Docker Compose oneshot wrapper；若要保證 broker-side command-level trace，還需要 Docker/EMQX/file-source adapter。`./stg.sh mqtt` 會寫入 operator-side `workspace-mqtt-test` trace event，可用來確認 centralized logger ingest/query path。
 
@@ -334,7 +334,7 @@ go run ./scripts/go/rtk-cloud -- staging-e2e-test \
 
 ### `go run ./scripts/go/rtk-cloud -- deploy`
 
-只做 staging deploy/verify，不負責建立 VM。它會依序部署與驗證 Account Manager、Video Cloud、Cloud Admin，失敗時會停止後續步驟並寫 readiness report。
+只做 staging deploy/verify，不負責建立 VM。它會先 best-effort 安裝與驗證 logger backend/forwarder，再部署與驗證 Video Cloud、Account Manager、Cloud Admin；失敗時會停止後續 application deploy 步驟並寫 readiness report。logger/forwarder degraded 不會阻塞 application deploy。
 
 用法：
 
@@ -350,6 +350,7 @@ go run ./scripts/go/rtk-cloud -- deploy \
 
 - `--admin-release-bundle PATH`：使用本機 Cloud Admin release bundle，不從 Object Storage 下載。
 - `--env-root PATH`：指定 environment directory；必填，避免部署到錯誤環境。可傳 `cloud_env/staging`，script 會自動使用其下的 `linode/`。
+- `--logger-only`：只安裝/更新 Loki、`rtk-cloud-logger.service` 與各 host 的 `rtk-cloud-log-forwarder.service`，並執行 logger readiness；不部署 Video Cloud、Account Manager 或 Cloud Admin。
 - `--artifact-dir PATH`：指定 readiness report 和 logs 輸出目錄。
 - `--cert-cache-root PATH`：指定 HTTPS certificate cache 根目錄，預設 `<env-root>/certificates`。
 - `--cert-cache-min-valid-seconds N`：cached certificate 至少還要有效多久才可重用，預設 `604800` 秒。
@@ -498,7 +499,7 @@ go run ./scripts/go/rtk-cloud -- create-users --env-root cloud_env/staging --bra
 - `--rotate-password`：既有 user 也更新初始密碼；預設遇到既有 user 會失敗，避免產生不會生效的新 credentials artifact。若只是要重用既有帳號，請使用前一次成功產生的 users artifact。
 - `--dry-run`：只列出將建立的 email，不呼叫建立 user API，也不寫 credentials。
 
-腳本的進度訊息會寫到 stderr，stdout 只輸出 summary JSON，不包含密碼。初始密碼只寫入 `cloud_env/.../artifacts/users/<brand>-users-<timestamp>.json`，檔案權限為 `0600`。如果 API 回報 user 已存在且未指定 `--rotate-password`，腳本會停止，不會寫新的 credentials artifact。
+腳本的進度訊息會寫到 stderr，stdout 只輸出 summary JSON，不包含密碼、private key、CSR 或 certificate PEM。初始密碼與 app-local bootstrap material 只寫入 `cloud_env/.../artifacts/users/<brand>-users-<timestamp>.json`，檔案權限為 `0600`。建立或重設密碼後，腳本會依文件模擬第一次 app login：先登入 Account Manager；若回傳 `app_certificate.status=csr_required`，就在本機產生 app private key 與 subject `app-user:<user_id>` 的 CSR，以 `app_csr_pem` 再登入一次，讓 Account Manager 透過 certissuer 簽發 app certificate 並寫入 database。artifact 會記錄每個 user 的密碼、app private key、CSR、certificate/chain、fingerprint、serial、issuer request id 與有效期，供後續 production-like app mTLS/token bootstrap 測試使用。如果 API 回報 user 已存在且未指定 `--rotate-password`，腳本會停止，不會寫新的 credentials artifact。若 user 已有有效 app certificate，腳本會從同 brand 既有 users artifact 重用本機 app key/CSR；找不到既有 key 時會停止，避免產生缺少 mTLS private key 的最新 artifact。
 
 ### `go run ./scripts/go/rtk-cloud -- bind-devices`
 
