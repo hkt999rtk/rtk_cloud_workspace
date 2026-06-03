@@ -23,7 +23,8 @@ go run ./scripts/go/rtk-cloud -- mqtt-test \
 
 The command resolves `cloud_env/staging` to `cloud_env/staging/linode`, reads
 the existing user/device artifacts, and runs a "home daily use" workload where
-APP actors use Cloud APIs and device actors use per-device MQTT mTLS identity.
+APP actors use Cloud APIs and device actors use mTLS only to bootstrap device
+tokens for MQTT.
 WebRTC relay, video streaming, storage, clips, and snapshots are explicitly out
 of scope for this profile.
 
@@ -67,6 +68,14 @@ tokens or device certificates.
 Expected APP flow:
 
 - Login or reuse credentials from the env-root user artifact.
+- If Account Manager returns `app_certificate.status=csr_required`, generate an
+  app-local private key and CSR with subject `app-user:<user_id>`, then submit
+  `app_csr_pem` through Account Manager so certissuer can sign the app
+  certificate over service mTLS.
+- Pin the app certificate identity locally; private keys, PEM bodies, and raw
+  tokens must not be written to reports.
+- Use the pinned app certificate only to call Video Cloud `POST /request_token`
+  over mutual TLS and obtain a subject-bound `app` token.
 - Open the home screen by listing the user's authorized devices.
 - Read current state for assigned light, air-conditioner, and smart-meter
   devices.
@@ -80,7 +89,9 @@ Expected APP flow:
 
 Expected device flow:
 
-- Connect to MQTT with the per-device mTLS cert/key from env-root.
+- Use the per-device mTLS cert/key from env-root only to call
+  `POST /request_token` and obtain a device token.
+- Connect to MQTT with the issued device token credential.
 - Subscribe only to the device's command topic.
 - Publish heartbeat/status and capability-specific telemetry.
 - Maintain local state across commands.
@@ -155,6 +166,10 @@ Create implementation issues in this order:
 
 3. [`[LoadTest] Add home daily-use APP actor through Cloud API`](https://github.com/hkt999rtk/rtk_cloud_workspace/issues/62)
    - Login users from the users artifact.
+   - Model first-login app key generation, CSR submission, app certificate
+     pinning, and app token issuance.
+   - Exchange the pinned app certificate for a Video Cloud `app` token before
+     app-side commands or subscriptions.
    - Use the bind artifact to restrict each APP actor to authorized devices.
    - Send device commands through Cloud API, not direct device credentials.
 
@@ -196,8 +211,10 @@ Acceptance criteria:
 
 - The simulation starts from `--env-root`; scattered manual paths are optional
   overrides only.
-- APP traffic uses user credentials and Cloud APIs.
-- Device traffic uses per-device mTLS credentials from env-root.
+- APP traffic includes Account Manager login, app key/CSR bootstrap,
+  certificate pinning, mTLS app-token bootstrap, and Cloud APIs.
+- Device token bootstrap uses per-device mTLS credentials from env-root; MQTT
+  publish/subscribe traffic uses the issued device token.
 - Reports include per-user, per-device, and per-capability metrics.
 - Reports include command round-trip p95/p99.
 - MQTT/home-device coverage passes with success rate at least 95%.

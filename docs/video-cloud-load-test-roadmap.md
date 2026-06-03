@@ -19,8 +19,8 @@ Markdown reports that can be used as manual, lab, or release evidence.
 The next planned expansion is an env-root driven home MQTT simulation profile.
 It starts from the same local environment directory used by
 `go run ./scripts/go/rtk-cloud -- provision`, loads existing users, device fixtures, bind
-artifacts, and device mTLS material, then models a real home user operating
-lights, air conditioners, and smart meters through Cloud APIs. See
+artifacts, and device mTLS material for token bootstrap, then models a real home
+user operating lights, air conditioners, and smart meters through Cloud APIs. See
 [`home-mqtt-loadtest-simulation.md`](home-mqtt-loadtest-simulation.md).
 
 ## Source-of-Truth Boundaries
@@ -47,9 +47,12 @@ In scope:
 - Load profiles: `safe-staging`, `stress`, and `soak`.
 - Artifacts: `load-results.json`, `load-report.md`, run metadata, threshold
   result, and error classification.
-- Planned home MQTT profile: APP/user actors use Cloud APIs, device actors use
-  per-device MQTT mTLS credentials from env-root, and the workload models
-  stateful light, air-conditioner, and smart-meter behavior.
+- Planned home MQTT profile: APP/user actors use Account Manager login,
+  first-login app key generation, CSR submission, certificate pinning,
+  mTLS app-token bootstrap, and
+  Cloud APIs; device actors use mTLS credentials from env-root only to
+  bootstrap MQTT device tokens; the workload models stateful light,
+  air-conditioner, and smart-meter behavior.
 
 Out of scope for v1:
 
@@ -107,8 +110,9 @@ go run ./scripts/go/rtk-cloud -- mqtt-test \
 
 The wrapper must resolve the environment root with `scripts/go/rtk-cloud/internal/envroot`
 and discover users, device inventory, bind artifacts, service endpoints, and
-device mTLS material from that root. Missing prerequisites should produce a
-redacted `BLOCKED` report instead of falling back to fake data.
+device mTLS material from that root. Device mTLS is used to obtain a token; MQTT
+publish/subscribe uses that token credential. Missing prerequisites should
+produce a redacted `BLOCKED` report instead of falling back to fake data.
 
 The runner must exit non-zero when configured thresholds fail. Thresholds should
 cover at least success rate and p95/p99 latency; WebRTC setup metrics should be

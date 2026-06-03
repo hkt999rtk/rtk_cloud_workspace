@@ -330,7 +330,7 @@ go run ./scripts/go/rtk-cloud -- staging-e2e-test \
 - `TEST_REPORT.md`：人工閱讀用測試報告。
 - `logs/*.log`：各步驟 stdout/stderr。這些 log 留在 git ignored cloud env artifacts；提交或分享前仍應視為 operator artifact 審查。
 
-報告檔會掃描常見敏感字串，避免 password、bearer token、private key 或服務 secret 被寫入 summary/report。完整 per-step log 不會自動清洗，不應 commit。MQTT 子測試預設會用 device mTLS 連到 broker，訂閱 device shadow response topics，publish shadow update，並等待 Video Cloud MQTT bridge 回 `accepted` / `documents`；只做 local artifact 檢查不能算通過。
+報告檔會掃描常見敏感字串，避免 password、bearer token、private key 或服務 secret 被寫入 summary/report。完整 per-step log 不會自動清洗，不應 commit。Production-like APP actor 不能只做 Account Manager login；第一次 login 後如果回傳 `app_certificate.status=csr_required`，要模擬 app 本機產生 private key 與 subject `app-user:<user_id>` 的 CSR，透過 Account Manager 交給 certissuer 簽發 app certificate，pin certificate identity，並用該 certificate 透過 mutual TLS 呼叫 Video Cloud `POST /request_token` 換 subject-bound `app` token，後續 APP command/subscribe 才能用 token 執行。MQTT 子測試預設會先用 device certificate/key 透過 mutual TLS 呼叫 Video Cloud `POST /request_token` 換 device token，再用該 token 連到 broker，訂閱 `devices/<device_id>/up/messages`，publish sample home-device envelope，並等待同 topic loopback；只做 local artifact 檢查不能算通過。
 
 ### `go run ./scripts/go/rtk-cloud -- deploy`
 
