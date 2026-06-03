@@ -2276,6 +2276,21 @@ func accountAPIErrorSuffix(body []byte) string {
 	return ": " + strings.Join(parts, " ")
 }
 
+func accountAPIErrorCode(body []byte) string {
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 {
+		return ""
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return ""
+	}
+	if nested, ok := parsed["error"].(map[string]any); ok {
+		return strings.TrimSpace(stringValue(firstPresent(nested, "code", "error")))
+	}
+	return strings.TrimSpace(stringValue(firstPresent(parsed, "code", "error")))
+}
+
 func truncateForLog(value string, maxLen int) string {
 	value = strings.TrimSpace(strings.ReplaceAll(value, "\n", " "))
 	if maxLen <= 0 || len(value) <= maxLen {
@@ -2482,7 +2497,9 @@ func curlJSONStatus(url, bearer string, payload []byte) ([]byte, int, error) {
 	}
 	tmp.Close()
 	defer os.Remove(tmp.Name())
-	args := []string{"-sS", "-o", tmp.Name(), "-w", "%{http_code}"}
+	connectTimeout := firstNonEmpty(os.Getenv("RTK_CLOUD_CURL_CONNECT_TIMEOUT"), "10")
+	maxTime := firstNonEmpty(os.Getenv("RTK_CLOUD_CURL_MAX_TIME"), "60")
+	args := []string{"-sS", "--connect-timeout", connectTimeout, "--max-time", maxTime, "-o", tmp.Name(), "-w", "%{http_code}"}
 	var payloadPath string
 	if payload != nil {
 		payloadFile, err := os.CreateTemp("", "rtk-curl-payload-*")
@@ -3984,7 +4001,9 @@ func runBindDevices(args []string) error {
 	runID := time.Now().UTC().Format("20060102T150405Z")
 	results := []bindAssignment{}
 	skipped := 0
-	for _, assignment := range assignments {
+	for i, assignment := range assignments {
+		logBind("binding device %d/%d: device=%s user=%s services=%s", i+1, len(assignments), assignment.DeviceID, assignment.AssignedEmail, strings.Join(assignment.ServiceOptions, ","))
+		logBind("checking existing binding: device=%s", assignment.DeviceID)
 		existingDevice, exists, err := accountFindDeviceByVideoCloudDevid(ctx, userTokens[assignment.AssignedEmail], brandCloudID, assignment.DeviceID)
 		if err != nil {
 			return err
@@ -3995,14 +4014,17 @@ func runBindDevices(args []string) error {
 			logBind("device already bound; skipping claim: device=%s account_device=%s", assignment.DeviceID, assignment.AccountDeviceID)
 			results = append(results, assignment)
 			skipped++
+			logBind("bind progress: done=%d/%d created_claims=%d resolved_claims=%d provision_started=%d skipped=%d", len(results), len(assignments), len(results)-skipped, len(results)-skipped, len(results)-skipped, skipped)
 			continue
 		}
+		logBind("creating claim token: device=%s", assignment.DeviceID)
 		claim, err := createClaimToken(ctx, token, brandCloudID, assignment, runID, *claimTTL)
 		if err != nil {
 			return err
 		}
 		claimToken := stringValue(claim["claim_token"])
 		assignment.ClaimID = stringValue(firstPresent(claim, "claim_id", "id"))
+		logBind("resolving claim: device=%s user=%s", assignment.DeviceID, assignment.AssignedEmail)
 		resolve, err := resolveClaim(ctx, userTokens[assignment.AssignedEmail], brandCloudID, assignment, claimToken)
 		if err != nil {
 			return err
@@ -4012,12 +4034,14 @@ func runBindDevices(args []string) error {
 		}
 		prov, _ := resolve["provision_input"].(map[string]any)
 		opID := fmt.Sprintf("bulk-bind-%s-%s", runID, assignment.DeviceID)
+		logBind("starting provision: device=%s account_device=%s", assignment.DeviceID, assignment.AccountDeviceID)
 		if err := startProvision(ctx, userTokens[assignment.AssignedEmail], brandCloudID, assignment, opID, prov); err != nil {
 			return err
 		}
 		assignment.OperationID = opID
 		assignment.Status = "provision_requested"
 		results = append(results, assignment)
+		logBind("bind progress: done=%d/%d created_claims=%d resolved_claims=%d provision_started=%d skipped=%d", len(results), len(assignments), len(results)-skipped, len(results)-skipped, len(results)-skipped, skipped)
 	}
 	artifactDir := filepath.Join(envRoot, "artifacts", "device-bind")
 	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
@@ -4260,9 +4284,7 @@ func preflightUnprovision(ctx accountManagerContext, brandCloudID string, assign
 		return err
 	}
 	if status == 404 {
-		var parsed map[string]any
-		_ = json.Unmarshal(body, &parsed)
-		if parsed["error"] == "not_found" {
+		if accountAPIErrorCode(body) == "not_found" {
 			logUnprovision("Account Manager unprovision API route is available")
 			return nil
 		}

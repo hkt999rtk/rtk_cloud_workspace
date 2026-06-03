@@ -18,5 +18,15 @@ require_workflow() {
 	grep -F "releases/$artifact-\$VERSION" "$workflow" >/dev/null
 }
 
+require_main_push_release() {
+	local repo="$1"
+	local workflow="$ROOT/repos/$repo/.github/workflows/release.yml"
+
+	test -f "$workflow"
+	grep -F 'branches:' "$workflow" >/dev/null
+	grep -F 'main' "$workflow" >/dev/null
+}
+
 require_workflow rtk_cloud_client rtk_cloud_client
 require_workflow rtk_cloud_logger rtk_cloud_logger
+require_main_push_release rtk_account_manager
