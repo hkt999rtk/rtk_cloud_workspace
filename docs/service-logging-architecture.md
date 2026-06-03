@@ -77,6 +77,12 @@ High-cardinality values must stay in the log body. They must not become default
 labels or partition keys unless the logger backend explicitly supports that
 query pattern.
 
+The journald forwarder parses JSON object `MESSAGE` payloads and promotes known
+correlation fields into the top-level event body. Support queries can therefore
+filter certissuer events by `request_id` or `device_id`, and account-manager
+events by `org_id` or `request_id`, without turning those high-cardinality
+values into Loki labels.
+
 ## Delivery And Deduplication
 
 Delivery is at-least-once. Duplicate delivery can happen when the forwarder
