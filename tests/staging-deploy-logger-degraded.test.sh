@@ -49,6 +49,8 @@ ACCOUNT_MANAGER_LINODE_LABEL=rtk-account-manager-ci
 ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL=rtk-account-manager-ci-fw
 ADMIN_LINODE_LABEL=rtk-cloud-admin-ci
 ADMIN_LINODE_FIREWALL_LABEL=rtk-cloud-admin-ci-fw
+CLOUD_SERVICE_LOG_LEVEL=warn
+VIDEO_CLOUD_LOG_LEVEL=debug
 EOF_STACK
 touch "$ENV_ROOT/topology/video-cloud-staging.yaml"
 touch "$ENV_ROOT/services/video-cloud/video-cloud-staging.env"
@@ -68,6 +70,7 @@ EOF_ADMIN
 cat > "$WORKSPACE/repos/rtk_account_manager/linode_deploy/scripts/deploy-public-vm.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+test "${ACCOUNT_MANAGER_LOG_LEVEL:-}" = "warn"
 printf 'account-manager-deploy\n' >> "$ORDER_LOG"
 SH
 cat > "$WORKSPACE/repos/rtk_account_manager/linode_deploy/scripts/verify-public-vm.sh" <<'SH'
@@ -78,6 +81,7 @@ SH
 cat > "$WORKSPACE/repos/rtk_video_cloud/linode_deploy/scripts/deploy-staging.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+test "${VIDEO_CLOUD_LOG_LEVEL:-}" = "debug"
 printf 'video-cloud-deploy-verify\n' >> "$ORDER_LOG"
 while [[ $# -gt 0 ]]; do
 	if [[ "$1" == "--report" ]]; then
@@ -91,6 +95,7 @@ SH
 cat > "$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/deploy-admin.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+test "${CLOUD_ADMIN_LOG_LEVEL:-}" = "warn"
 printf 'cloud-admin-deploy\n' >> "$ORDER_LOG"
 SH
 cat > "$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/verify-admin.sh" <<'SH'

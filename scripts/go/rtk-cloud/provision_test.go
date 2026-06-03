@@ -100,6 +100,49 @@ func TestLoggerProvisionStatusesReflectEnvAndStateFiles(t *testing.T) {
 	}
 }
 
+func TestServiceLogLevelsDefaultAndOverrides(t *testing.T) {
+	env := map[string]string{
+		"CLOUD_SERVICE_LOG_LEVEL":   "warn",
+		"VIDEO_CLOUD_LOG_LEVEL":     "debug",
+		"ACCOUNT_MANAGER_LOG_LEVEL": "error",
+	}
+	levels, err := serviceLogLevels(env)
+	if err != nil {
+		t.Fatalf("serviceLogLevels returned error: %v", err)
+	}
+	if levels["VIDEO_CLOUD_LOG_LEVEL"] != "debug" {
+		t.Fatalf("VIDEO_CLOUD_LOG_LEVEL = %q, want debug", levels["VIDEO_CLOUD_LOG_LEVEL"])
+	}
+	if levels["ACCOUNT_MANAGER_LOG_LEVEL"] != "error" {
+		t.Fatalf("ACCOUNT_MANAGER_LOG_LEVEL = %q, want error", levels["ACCOUNT_MANAGER_LOG_LEVEL"])
+	}
+	if levels["CLOUD_ADMIN_LOG_LEVEL"] != "warn" {
+		t.Fatalf("CLOUD_ADMIN_LOG_LEVEL = %q, want warn", levels["CLOUD_ADMIN_LOG_LEVEL"])
+	}
+}
+
+func TestServiceLogLevelsDefaultToInfo(t *testing.T) {
+	levels, err := serviceLogLevels(map[string]string{})
+	if err != nil {
+		t.Fatalf("serviceLogLevels returned error: %v", err)
+	}
+	for _, key := range []string{"VIDEO_CLOUD_LOG_LEVEL", "ACCOUNT_MANAGER_LOG_LEVEL", "CLOUD_ADMIN_LOG_LEVEL"} {
+		if levels[key] != "info" {
+			t.Fatalf("%s = %q, want info", key, levels[key])
+		}
+	}
+}
+
+func TestServiceLogLevelsRejectInvalidValues(t *testing.T) {
+	_, err := serviceLogLevels(map[string]string{"CLOUD_SERVICE_LOG_LEVEL": "verbose"})
+	if err == nil {
+		t.Fatalf("serviceLogLevels succeeded, want invalid level error")
+	}
+	if !strings.Contains(err.Error(), "CLOUD_SERVICE_LOG_LEVEL") || !strings.Contains(err.Error(), "debug, info, warn, error") {
+		t.Fatalf("error = %v, want level guidance", err)
+	}
+}
+
 func TestLoggerForwarderTargetsUseStagingSystemdUnits(t *testing.T) {
 	root := t.TempDir()
 	paths := provisionPaths{
