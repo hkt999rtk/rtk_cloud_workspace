@@ -273,6 +273,10 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 	if opts.sshKey == "" {
 		opts.sshKey = defaultStagingSSHKey()
 	}
+	logLevels, err := serviceLogLevelsFrom(env, processServiceLogLevelEnv())
+	if err != nil {
+		return err
+	}
 	reportDir := filepath.Join(paths.ArtifactsDir, "readiness-"+time.Now().UTC().Format("20060102T150405Z"))
 	report := newReadinessReport(reportDir)
 	fmt.Fprintf(os.Stderr, "[cloud-deploy] readiness report: %s\n", report.path())
@@ -286,6 +290,7 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 
 	videoEnv := mergeEnv(operator, map[string]string{
 		"LINODE_DEPLOY_CERT_CACHE_DIR": filepath.Join(paths.EnvRoot, "certificates", env["VIDEO_CLOUD_DOMAIN"]),
+		"VIDEO_CLOUD_LOG_LEVEL":        logLevels["VIDEO_CLOUD_LOG_LEVEL"],
 	})
 	videoArgs := []string{
 		"--stack", env["CLOUD_STACK_NAME"],
@@ -324,6 +329,7 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 		"ACCOUNT_MANAGER_LINODE_RELEASE":        opts.accountRelease,
 		"ACCOUNT_MANAGER_LINODE_RELEASE_BUNDLE": accountBundle,
 		"ACCOUNT_MANAGER_LINODE_CERT_CACHE_DIR": filepath.Join(paths.EnvRoot, "certificates", env["ACCOUNT_MANAGER_DOMAIN"]),
+		"ACCOUNT_MANAGER_LOG_LEVEL":             logLevels["ACCOUNT_MANAGER_LOG_LEVEL"],
 	})
 	if err := runCmdWithEnv(filepath.Join(paths.Workspace, "repos", "rtk_account_manager"), accountValues, "linode_deploy/scripts/deploy-public-vm.sh"); err != nil {
 		report.add("account-manager-deploy", "FAIL", "")
@@ -343,6 +349,7 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 		"ACCOUNT_MANAGER_BASE_URL":        "https://" + env["ACCOUNT_MANAGER_DOMAIN"],
 		"VIDEO_CLOUD_BASE_URL":            "https://" + env["VIDEO_CLOUD_DOMAIN"],
 		"VIDEO_CLOUD_PROMETHEUS_BASE_URL": videoCloudPrometheusBaseURL(paths),
+		"CLOUD_ADMIN_LOG_LEVEL":           logLevels["CLOUD_ADMIN_LOG_LEVEL"],
 	})
 	if err := runCmdWithEnv(filepath.Join(paths.Workspace, "repos", "rtk_cloud_admin"), adminValues, "deploy/linode/deploy-admin.sh"); err != nil {
 		report.add("cloud-admin-deploy", "FAIL", "")
@@ -359,6 +366,46 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 	}
 	writePlatformAdminSummary(os.Stdout, paths)
 	return nil
+}
+
+func serviceLogLevels(env map[string]string) (map[string]string, error) {
+	return serviceLogLevelsFrom(env, nil)
+}
+
+func serviceLogLevelsFrom(env, process map[string]string) (map[string]string, error) {
+	global, err := serviceLogLevelValue("CLOUD_SERVICE_LOG_LEVEL", env, process, "info")
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for _, key := range []string{"VIDEO_CLOUD_LOG_LEVEL", "ACCOUNT_MANAGER_LOG_LEVEL", "CLOUD_ADMIN_LOG_LEVEL"} {
+		value, err := serviceLogLevelValue(key, env, process, global)
+		if err != nil {
+			return nil, err
+		}
+		out[key] = value
+	}
+	return out, nil
+}
+
+func serviceLogLevelValue(key string, env, process map[string]string, fallback string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(firstNonEmpty(process[key], env[key], fallback)))
+	switch value {
+	case "debug", "info", "warn", "error":
+		return value, nil
+	default:
+		return "", fmt.Errorf("%s must be one of debug, info, warn, error: %s", key, value)
+	}
+}
+
+func processServiceLogLevelEnv() map[string]string {
+	out := map[string]string{}
+	for _, key := range []string{"CLOUD_SERVICE_LOG_LEVEL", "VIDEO_CLOUD_LOG_LEVEL", "ACCOUNT_MANAGER_LOG_LEVEL", "CLOUD_ADMIN_LOG_LEVEL"} {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			out[key] = value
+		}
+	}
+	return out
 }
 
 func writePlatformAdminSummary(w io.Writer, paths provisionPaths) {

@@ -241,6 +241,8 @@ service logging 的目標 provisioning model 記在 `docs/service-logging-archit
 - `CLOUD_LOGGER_DOMAIN`：logger backend ingest/query endpoint domain。
 - `CLOUD_LOGGER_FORWARDER_TARGETS`：plan 中列出的 forwarder target，預設包含 edge/api/infra/mqtt/coturn/account-manager/cloud-admin/frontend/non-Go host sources。
 - `CLOUD_LOGGER_JOURNALD_SYSTEM_MAX_USE`、`CLOUD_LOGGER_JOURNALD_SYSTEM_KEEP_FREE`、`CLOUD_LOGGER_JOURNALD_MAX_RETENTION_SEC`：journald retention guidance，會傳給 forwarder install hook。
+- `CLOUD_SERVICE_LOG_LEVEL`：staging application service 預設 log level，合法值為 `debug`、`info`、`warn`、`error`，預設 `info`。大量測試太囉唆時可用 `warn` 降噪。
+- `VIDEO_CLOUD_LOG_LEVEL`、`ACCOUNT_MANAGER_LOG_LEVEL`、`CLOUD_ADMIN_LOG_LEVEL`：各 service override；未設定時使用 `CLOUD_SERVICE_LOG_LEVEL`。
 
 目前 staging centralized logger 已納入 native flow：`provision --plan/--all` 會處理 logger VM/firewall/DNS/env/state，artifact/cleanup 會納入 logger 並 redacted token；`provision --apply` 不安裝 runtime service。`deploy` 會先 best-effort 在 logger VM 安裝 Loki 與 `rtk-cloud-logger` backend systemd service，再 best-effort 在 service hosts 安裝 `rtk-cloud-log-forwarder`，即使後續 Video Cloud、Account Manager 或 Cloud Admin deploy 失敗，也會保留 logger readiness evidence。`deploy --logger-only` 可只重跑 logger backend、forwarder install 與 readiness，不部署 application services；full deploy 會在 application deploy 後再 refresh 一次 forwarder。readiness 會檢查 backend health、ingest/idempotency、sample query 與每台 forwarder status；`CLOUD_LOGGER_SCRIPT` 保留為 override/debug hook。logger degraded 時不會阻塞服務 deploy，但 readiness 必須標示 `logging: degraded`。Cloud Admin v1 dashboard 不依賴 Grafana。
 
@@ -335,6 +337,21 @@ go run ./scripts/go/rtk-cloud -- staging-e2e-test \
 ### `go run ./scripts/go/rtk-cloud -- deploy`
 
 只做 staging deploy/verify，不負責建立 VM。它會先 best-effort 安裝與驗證 logger backend/forwarder，再部署與驗證 Video Cloud、Account Manager、Cloud Admin；失敗時會停止後續 application deploy 步驟並寫 readiness report。logger/forwarder degraded 不會阻塞 application deploy。
+
+若 staging log 太囉唆，可在 deploy 時降低 application service log level：
+
+```bash
+CLOUD_SERVICE_LOG_LEVEL=warn ./stg.sh deploy
+```
+
+也可固定寫在 `cloud_env/staging/linode/env/stack.env`：
+
+```bash
+CLOUD_SERVICE_LOG_LEVEL=warn
+VIDEO_CLOUD_LOG_LEVEL=info
+```
+
+`debug` 只建議短時間診斷使用；logger backend/forwarder 自身不受 `CLOUD_SERVICE_LOG_LEVEL` 影響。
 
 用法：
 

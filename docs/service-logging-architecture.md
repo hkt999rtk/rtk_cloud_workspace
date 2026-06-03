@@ -83,6 +83,14 @@ filter certissuer events by `request_id` or `device_id`, and account-manager
 events by `org_id` or `request_id`, without turning those high-cardinality
 values into Loki labels.
 
+Application log volume is controlled at the source. Staging deploy accepts
+`CLOUD_SERVICE_LOG_LEVEL` as the default application service level and
+`VIDEO_CLOUD_LOG_LEVEL`, `ACCOUNT_MANAGER_LOG_LEVEL`, and
+`CLOUD_ADMIN_LOG_LEVEL` as per-service overrides. Valid levels are `debug`,
+`info`, `warn`, and `error`; default is `info`. Use `warn` for noisy load tests
+and short-lived `debug` only for diagnosis. The forwarder does not filter by
+level in v1, so rejected logs are not written to journald or Loki.
+
 ## Delivery And Deduplication
 
 Delivery is at-least-once. Duplicate delivery can happen when the forwarder
