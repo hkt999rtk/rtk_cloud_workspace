@@ -4,118 +4,460 @@ Status: source.
 
 Owner: `rtk_cloud_workspace`.
 
-These guidelines define how Realtek Video / IoT Cloud status reports should be
-written, regardless of where the report is generated. The goal is consistency:
-the report should connect engineering progress to product/commercial outcomes,
-use reusable evidence, and avoid overclaiming production readiness.
+本文件定義 Realtek Video / IoT Cloud 週報的固定寫法。目標是讓不同
+人、不同工具、或不同 LLM 產出的報告仍然使用同一套章節、同一種判斷
+語言、同一個 evidence 標準。
 
-## Audience And Intent
+## 0. 一頁速查
 
-Write for a mixed management, product, and engineering audience.
+每份報告先回答七個問題：
 
-Every report must answer these questions quickly:
+| 問題 | 報告要給出的答案 |
+| --- | --- |
+| 為什麼做這個 cloud？ | 它如何支援 AmebaPRO / IoT module、SDK/app、生態系、customer PoC、design-in 與商業 KPI。 |
+| 現在有什麼能展示？ | UI、SDK/sample app、API、deployment、health check、design asset、load-test evidence。 |
+| 時程走到哪裡？ | 從 2026-05-01 到 early-August 50,000-device loading test 的目前位置、下一個 gate、風險判定。 |
+| 哪些能力已驗證？ | 用 `PASS`、`FAIL`、`SKIP`、`BLOCKED`、`not verified` 標明，不用模糊描述。 |
+| 技術如何連到產品與 KPI？ | deployability、online success、OTA success、video setup、MQTT/shadow、load capacity、support effort、incident response。 |
+| 哪些地方還不能宣稱 production-ready？ | release/version、backup/restore、security review、load-test、dynamic scaling、frontend staging、operations owner 等缺口。 |
+| 管理層或同事需要知道什麼？ | Decision/support needed、risk burn-down、evidence index、next gate。 |
 
-- Why are we doing this cloud work?
-- What is working now?
-- What can be demonstrated through UI, SDK, API, or deployment evidence?
-- What business or product KPI does the work support?
-- What remains blocked, risky, or not production-ready?
-- What decision or resource implication should management understand?
+寫作原則：
 
-Do not write the report as a raw engineering changelog. Engineering details
-matter only when they explain capability, evidence, risk, or next action.
+- 報告用 Traditional Chinese；repo、API、endpoint、command、status label 保持英文原文。
+- 不寫成工程 changelog；工程細節只在能解釋 capability、evidence、risk、next action 時出現。
+- 重要數字優先用 chart、timeline、progress visual、bar/line chart 呈現；表格主要用於 evidence、risk、checklist、action tracking。
+- 未驗證就寫 `not verified` 或 `BLOCKED`；不要沿用舊狀態當成本週狀態。
+- 不放 secrets、tokens、DSN、private keys、raw lead data、raw customer data、raw media。
 
-## Required Narrative
+## 1. 固定 Table Of Contents
 
-Use this narrative spine in every report:
+每份管理週報使用下列結構。短報告可以壓縮內容，但章節意圖不可消失。
 
-1. Cloud is part of the AmebaPRO / IoT module product path, not an isolated
-   server project.
-2. The value chain is module -> SDK/app -> cloud onboarding -> video/OTA/
-   telemetry -> admin operations -> customer PoC -> design-in/commercial KPI.
-3. Technical status must be translated into observable KPI: deployability,
-   online success, SDK integration, OTA success, video setup success, load
-   capacity, support effort, and incident response.
-4. Operation screenshots should show how a customer, SDK developer, operator,
-   or reviewer would actually use the system.
-5. Deployment status must separate live staging evidence from production-ready
-   claims.
+| 章節 | 目的 | 必須回答 |
+| --- | --- | --- |
+| Cover / 核心管理訊息 | 第一頁讓管理層知道本週重點。 | 本週一句核心訊息、目前狀態總結、schedule snapshot、product-to-KPI visual。 |
+| Part 1：主管摘要 | 五分鐘內看懂全局。 | 為什麼做、目前完成什麼、下一步、風險、需要什麼決策。 |
+| Part 2：Schedule / Loading Test 路徑 | 說明從 May 1 到 early August 的進度。 | 目前位置、本週 gate、下個 gate、50,000-device IoT target、Video 500-device staged gate、風險判定。 |
+| Part 3：Cloud / Product / KPI Detail | 把工程能力翻譯成產品與商業價值。 | Cloud relationship、KPI、architecture、portal marketing、MQTT/shadow、WebRTC/storage、Security/PKI、threat model。 |
+| Part 4：操作畫面與使用流程 | 讓非工程讀者看懂使用情境。 | Admin overview、device drawer、OTA、stream health、SDK/sample flow、demo journey。 |
+| Part 5：Linode Staging Deployment & Configuration | 說明目前 staging 部署與限制。 | Endpoint、runtime shape、safe config、health check、production-ready gap。 |
+| Part 6：決策、風險與 Evidence | 把管理需求、風險、證據集中。 | Decision/support table、risk burn-down、evidence index。 |
+| Review Checklist | 產出前檢查。 | 是否過度宣稱、是否有 secrets、是否用 chart、是否標明缺口。 |
+| Appendix：素材與來源索引 | 讓下週可重複使用。 | Screenshots、design assets、repo paths、PR/commit、health evidence、blocked evidence。 |
 
-## Section Standards
+## 2. Report Generation Workflow
 
-### Cover / Core Message
+每週產生報告時照這個順序做：
 
-- State the one weekly management message in plain language.
-- The core message can change every week, but it must always appear on the
-  first page of the report before the executive-summary body.
-- Treat the core message as an editable weekly input, not as a fixed template
-  sentence. Update it before generating the report.
-- Immediately after the core message, include a short current-status summary on
-  the first page. This status summary is also weekly input and must not become a
-  long executive summary.
-- Current-status summary format: use a compact table with three columns:
-  `面向`, `目前狀態`, and `下一步或風險`. Keep it to three to five rows, one
-  sentence per cell, and cover the minimum management scan points: deployment,
-  product/demo evidence, operations/readiness, and next milestone or resource
-  gap.
-- Mention both speed and operations reality: tools can accelerate cloud
-  construction, but production maintain, SLA, customer support, monitoring, and
-  incident response still need owners and resources.
-- Include one product-to-KPI visual.
+1. 更新本週報告日期、snapshot timestamp、current position。
+2. 收集 live evidence：public health endpoint、deployment status、repo/PR/commit、design screenshots、load-test artifact。
+3. 判斷 schedule：`on track`、`at risk`、`blocked`，判斷依 evidence，不依樂觀日期。
+4. 選 4 到 6 張正文圖片，其餘放 appendix。
+5. 把重要數字轉成 visual：timeline、milestone lane、progress bar、bar chart、line chart。
+6. 寫主管摘要與 core message。
+7. 檢查 secrets/redaction。
+8. 產生 `.docx` 到 `.artifacts/status-reports/YYYY-MM-DD/`。
+9. Render DOCX 做視覺 QA。
+10. 更新 evidence index 與 missing/blocked items。
 
-### Executive Summary
+Generated output 留在 `.artifacts/`，不要 commit。可 commit 的是：
 
-- Keep it readable in five minutes.
-- Use bullets and compact tables, not long paragraphs.
-- Include a clear "completed foundation / next step" table.
-- If the report mentions a milestone such as a loading test, include the target
-  number, what will be measured, and why it matters commercially.
+- `docs/status-reports/guidelines.md`
+- `docs/status-reports/materials.md`
+- `docs/status-reports/templates/cloud-status-report-outline.md`
+- `docs/status-reports/master_slide/`
+- `tools/status-report/build_cloud_status_report.py`
 
-### Cloud / Product / KPI Detail
+## 3. Narrative Spine
 
-- Use source-of-truth boundaries:
-  - Account Manager owns identity, tenant, user, organization, registry, and
-    account-side readiness facts.
-  - Video Cloud owns runtime activation, device transport, video, OTA,
-    telemetry, TURN/WebRTC, and runtime readiness facts.
-  - Admin is a dashboard/BFF and evidence aggregator, not the source of truth.
-- Describe PKI/mTLS as device trust and enterprise-readiness foundation, not as
-  the main commercial headline.
-- Mention API/cloud patterns as design alignment, but do not claim equivalence
-  with AWS/Azure/GCP unless evidence exists.
+每份報告都要維持同一條主線：
 
-### Operation Screenshots
+1. Cloud 是 AmebaPRO / IoT module 的產品化路徑，不是孤立 server project。
+2. 價值鏈是 module -> SDK/app -> cloud onboarding -> video / OTA / telemetry / MQTT shadow -> admin operations -> customer PoC -> design-in / commercial KPI。
+3. 技術進度要翻譯成 observable KPI：deployability、online success、SDK integration、OTA success、video setup success、load capacity、support effort、incident response。
+4. 操作截圖要展示 customer、SDK developer、operator、reviewer 會如何使用系統。
+5. Staging evidence 和 production-ready claim 必須分開。
+6. Security 要講 PKI 的安全管理價值：identity、factory issuance、entitlement、audit、revocation、lifecycle governance。
+7. MQTT 要分成 traditional MQTT transport 與 IoT device shadow。
+8. Video 要分成 WebRTC live video 與 video storage/media operations。
+9. Cloud structure 要說清楚 Realtek Platform Root、Brand Cloud、brand users、end users、devices 的關係。
+10. Portal web 要說清楚它是 marketing / documentation / lead-generation layer，不是 operational cloud console。
+11. Threat model / cyber security review 是風險管理軌道，不等於健康檢查。
+12. Dynamic scaling 是 architecture design-in 的方向，但 August release baseline 不實作 autoscaling；loading test 後再依證據決策。
 
-- Prefer existing design assets from submodules over newly invented pictures.
-- Body screenshots should be selective: Admin overview, devices/detail,
-  firmware/OTA, stream health, SDK/sample flow, and product architecture are
-  enough for the standard management report.
-- Each screenshot needs a caption and one sentence explaining the operation or
-  evidence it supports.
-- Put the complete material list in the appendix instead of flooding the body.
+## 4. Section Playbook
 
-### Linode Deployment And Configuration
+以下每章用同一個格式填寫：`目的`、`必填內容`、`建議視覺`、`資料來源`、`避免事項`。
 
-- Explain what Linode represents in this report: a simpler VM/infrastructure
-  service rather than an AWS-style managed-service stack.
-- State the portability implication when relevant: PostgreSQL, MQ/message
-  queue, broker, storage, reverse proxy, and runtime services are operated by
-  us on the VM/service layer instead of depending on AWS-native managed
-  architecture, so the deployment model can be moved across AWS, GCP, Azure,
-  Alibaba Cloud, and other infrastructure clouds with less vendor lock-in.
-- Include public endpoints, live health result, snapshot timestamp, and runtime
-  shape.
-- Use public HTTPS domains as evidence targets. Do not use raw VM IPs or private
-  app ports as report evidence.
-- List only non-secret configuration boundaries: environment variable names,
-  domain relationships, runtime placement, persistence category, and reverse
-  proxy/TLS boundary.
-- Mark health checks as `PASS`, `FAIL`, or `BLOCKED`.
-- Call out production-ready gaps explicitly.
+### 4.1 Cover / 核心管理訊息
 
-## Evidence Rules
+| 項目 | 指引 |
+| --- | --- |
+| 目的 | 第一頁讓管理層立即知道本週狀態、商業意義、下一步與維運現實。 |
+| 必填內容 | 報告標題、日期、一句核心管理訊息、目前狀態總結、schedule snapshot、product-to-KPI visual。 |
+| 建議視覺 | Product-to-KPI flow、status traffic-light、small progress visual。 |
+| 資料來源 | 本週 evidence、schedule section、deployment health、PR/commit。 |
+| 避免事項 | 不要放長篇 executive summary；不要只寫技術完成項；不要省略 operations/SLA/support 現實。 |
 
-Allowed evidence:
+目前狀態總結使用三欄表格：
+
+| 面向 | 目前狀態 | 下一步或風險 |
+| --- | --- | --- |
+| Deployment | 一句話 | 一句話 |
+| Product / demo evidence | 一句話 | 一句話 |
+| Operations / readiness | 一句話 | 一句話 |
+| Next milestone | 一句話 | 一句話 |
+
+### 4.2 Part 1：主管摘要
+
+| 項目 | 指引 |
+| --- | --- |
+| 目的 | 讓管理層五分鐘內理解 why, now, next, risk。 |
+| 必填內容 | Why cloud、completed foundation、current evidence、next gate、risk、decision/support needed。 |
+| 建議視覺 | Foundation vs next-step table、small schedule snapshot、KPI bridge。 |
+| 資料來源 | Part 2 schedule、Part 3 capability、Part 5 deployment、Part 6 risks。 |
+| 避免事項 | 不要塞滿 repo 細節；不要把未驗證項目寫成已完成。 |
+
+摘要必須包含：
+
+- 目前 phase。
+- Target date。
+- Next measurable gate。
+- `on track` / `at risk` / `blocked`。
+- 需要管理層知道的 decision/support。
+
+### 4.3 Part 2：Schedule / Loading Test 路徑
+
+| 項目 | 指引 |
+| --- | --- |
+| 目的 | 說清楚專案從 2026-05-01 到 early-August target 的進度。 |
+| 必填內容 | `目前位置`、`本週目標`、`下個 gate`、`風險`、`判定`。 |
+| 建議視覺 | Timeline、Gantt-style chart、milestone lane、progress bar。 |
+| 資料來源 | Load-test plan、runner output、deployment status、metrics threshold、weekly evidence。 |
+| 避免事項 | 不要只用純表格；不要因為日期未到就宣稱 on track；不要把 IoT 50,000 target 和 Video 5,000 target 混在一起。 |
+
+Schedule constants：
+
+| 項目 | 固定值 |
+| --- | --- |
+| Project start | 2026-05-01 |
+| IoT target | Early August 2026 pass 50,000-device loading test |
+| Video staged gate | August 2026 validate 500-device video stage |
+| Video later target | 500-device gate 通過後，再往 5,000-device video target 推進 |
+| Dynamic scaling | August release 不實作；loading test 後依 evidence 決定 |
+
+Baseline milestone path：
+
+| 時段 | Milestone | Evidence |
+| --- | --- | --- |
+| 2026-05-01 to 2026-05-10 | Project kickoff and scope lock | Cloud purpose、source-of-truth boundaries、deployment target、50,000-device target。 |
+| 2026-05-11 to 2026-05-24 | Foundation buildout | Linode staging、Account Manager / Video Cloud / Admin integration、SDK/sample、OTA/telemetry、status-report framework。 |
+| 2026-05-25 to 2026-06-07 | Load-test preparation | Runner boundary、safe staging profile、fleet assumptions、metrics、thresholds、operator runbook。 |
+| 2026-06-08 to 2026-06-21 | Small-to-medium validation | 100 / 1,000 / 5,000-device runs，並分類 API、broker、DB、resource、credential、test-data failure。 |
+| 2026-06-22 to 2026-07-05 | Multi-host and capacity expansion | Multi-instance / multi-host、aggregation、resource dashboard、bottleneck fixes。 |
+| 2026-07-06 to 2026-07-19 | 10,000 to 30,000-device rehearsal | p95/p99 latency、success rate、broker/database capacity、recovery behavior、operator response。 |
+| 2026-07-20 to 2026-07-31 | 50,000-device dry run and hardening | Near-final dry run、soak test、rollback/retry plan、monitoring、report packaging。 |
+| Early August 2026 | 50,000-device loading-test pass | Final run passes agreed thresholds and produces management-ready evidence。 |
+| After loading test | Dynamic scaling implementation assessment | 依 bottleneck、traffic profile、cost、operating model、production direction 決定是否實作。 |
+
+Video lane：
+
+| 時段 | Video milestone | Evidence |
+| --- | --- | --- |
+| 2026-06-01 to 2026-06-21 | Video readiness foundation | WebRTC signaling、owner transport、TURN/ICE、stream health、snapshot/media upload/download evidence。 |
+| 2026-06-22 to 2026-07-12 | Video small-scale validation | Representative app/device signaling、media upload、download auth、stream-health pass。 |
+| 2026-07-13 to 2026-07-31 | 500-device video staged preparation | Fleet、media profile、TURN/coturn capacity、metrics、storage/retention、runbook。 |
+| August 2026 | 500-device video staged validation | 500 devices validate WebRTC/video-storage readiness before 5,000-device claim。 |
+| After 500-device validation | 5,000-device video target path | 依 500-device evidence 擴大。 |
+
+Current-position rule：
+
+- 2026-06-03 附近的報告應標示在 `Load-test preparation`。
+- 後續報告必須根據 evidence 推進；日期到了但 gate 沒過，要標 `at risk` 或 `blocked`。
+- Dynamic scaling 可寫成 `architecture supports future scaling`，但不能寫成 August release 已支援 autoscaling。
+
+### 4.4 Part 3：Cloud / Product / KPI Detail
+
+| 項目 | 指引 |
+| --- | --- |
+| 目的 | 把 cloud engineering 轉成產品、商業、維運可理解的 capability。 |
+| 必填內容 | Source-of-truth boundaries、current-vs-target architecture、KPI framework、cloud relationship、portal marketing、WebRTC/storage、MQTT/shadow、Security/PKI、threat model。 |
+| 建議視覺 | Architecture diagram、cloud relationship diagram、KPI bridge、readiness matrix、capability table。 |
+| 資料來源 | `docs/architecture.md`、contracts docs、submodule docs、design assets、deployment evidence。 |
+| 避免事項 | 不要把 Admin 當 source of truth；不要用 health endpoint 代替 capability evidence。 |
+
+Source-of-truth boundaries：
+
+| Layer | Source-of-truth |
+| --- | --- |
+| Account Manager | Identity、tenant、user、organization、membership、registry devices、provisioning operations、authoritative audit。 |
+| Video Cloud | Runtime activation、device transport、WebRTC/video、MQTT/shadow、OTA/media/telemetry/log runtime facts。 |
+| Admin Console | Dashboard/BFF、evidence aggregator、operation surface；不是 authoritative store。 |
+| Frontend / portal | Marketing website、documentation/manual portal、lead-generation layer；不是 operational console。 |
+| SDK/app/firmware | Onboarding、claim material handling、local setup、device transport、end-user flow；不決定 tenant policy。 |
+
+### 4.5 Cloud Relationship / Tenant Structure
+
+| 項目 | 指引 |
+| --- | --- |
+| 目的 | 避免讀者混淆 Realtek platform cloud、brand-name cloud、end user/device experience。 |
+| 必填內容 | Realtek Platform Root -> Brand Cloud -> brand users / end users / devices。 |
+| 建議視覺 | Three-layer diagram、source-of-truth map、end-user onboarding flow、role/audience table。 |
+| 資料來源 | `BRAND_CLOUD_ADMIN.md`、`PRODUCT_ONBOARDING.md`、`AUTHORIZATION.md`、`PROVISION.md`、Admin SPEC。 |
+| 避免事項 | 不要把 Brand Cloud 寫成 Admin SQLite local record；不要暗示每個 Brand Cloud 都是獨立 physical cloud，除非有部署證據。 |
+
+Required relationship model：
+
+```text
+System Root / Realtek Platform
+  -> Brand Cloud
+      -> brand users / operators
+      -> end users
+      -> registry devices / activated cloud devices
+      -> lifecycle operations, service options, runtime evidence
+```
+
+### 4.6 Portal Web / Digital Marketing
+
+| 項目 | 指引 |
+| --- | --- |
+| 目的 | 說明 `rtk_cloud_frontend` 如何支援 marketing、documentation、lead generation、sales improvement。 |
+| 必填內容 | SEO、content development、visitor behavior analytics、CTA conversion、lead capture、sales follow-up loop。 |
+| 建議視覺 | Funnel chart、content map、SEO readiness matrix、aggregate behavior chart、lead conversion chart。 |
+| 資料來源 | `rtk_cloud_frontend/README.md`、`docs/SPEC.md`、`docs/ANALYTICS.md`、`docs/API_REFERENCE.md`、`docs/MANUAL_CONTENT_SYSTEM.md`。 |
+| 避免事項 | 不要把 website analytics 當 device telemetry；不要放 raw lead email、raw analytics rows、full referrer、search query、`ADMIN_TOKEN`。 |
+
+Positioning：
+
+- `rtk_cloud_frontend` 是 public marketing website、documentation/manual portal、lead-generation layer。
+- 它不是 IoT console、authentication service、OTA backend、device provisioning backend、telemetry platform、production mobile app。
+- 報告應連到 sales improvement：哪些頁面、功能、demo、keyword、CTA 需要改善，才能增加 qualified sales conversations。
+
+### 4.7 WebRTC / Video Storage Management
+
+| 項目 | 指引 |
+| --- | --- |
+| 目的 | 分清楚 live-video readiness 與 stored-media readiness。 |
+| 必填內容 | WebRTC signaling、owner transport、TURN/ICE、session lifecycle、stream-health；snapshot/media upload、metadata、download auth、byte range、delete、retention/backup。 |
+| 建議視覺 | WebRTC flow diagram、media capability table、readiness matrix。 |
+| 資料來源 | `STREAMING.md`、`SNAPSHOT_AND_MEDIA.md`、`DEVICE_TRANSPORT.md`、`AUTH.md`、`AUTHORIZATION.md`、client integration docs。 |
+| 避免事項 | 不要用 API health claim end-to-end live video；不要放 object storage key、signed URL secret、bearer token、raw media。 |
+
+WebRTC wording：
+
+- `WebRTC signaling readiness`：只有 offer / answer / close route、auth、owner transport evidence。
+- `live-video readiness`：signaling、device owner transport、representative media path / stream-health evidence 都存在。
+- `video storage/media readiness`：upload、metadata、download authorization、storage/retention evidence 都存在。
+
+Required WebRTC flow：
+
+```text
+app offer -> POST /api/request_webrtc
+  -> owner transport webrtc_offer
+  -> device answer
+  -> POST /api/request_webrtc/answer
+  -> app media negotiation
+  -> POST /api/request_webrtc/close
+```
+
+### 4.8 MQTT / Device Shadow Management
+
+| 項目 | 指引 |
+| --- | --- |
+| 目的 | 說明 IoT Cloud 同時有 traditional MQTT transport 與 IoT device shadow。 |
+| 必填內容 | Broker/topic connectivity、owner transport、command delivery、events/logs；desired/reported/delta/version/lifecycle/tombstone/ACL。 |
+| 建議視覺 | Two-lane MQTT/shadow diagram、topic-surface table、state-management matrix。 |
+| 資料來源 | `DEVICE_TRANSPORT.md`、`DEVICE_SHADOW.md`、`PROVISION.md`、`API_USAGE.md`、client transports docs。 |
+| 避免事項 | 不要用 broker health claim shadow readiness；不要把 MQTT 當 activation/deactivation API。 |
+
+分層說法：
+
+| 層 | 用途 | Evidence |
+| --- | --- | --- |
+| MQTT transport | Broker connectivity、command routing、event/log ingress、owner transport、QoS/topic delivery。 | Topic delivery、owner transport、command/event/log evidence。 |
+| Device shadow | Cloud-held device state：`state.desired`、`state.reported`、`state.delta`、`version`、`clientToken`。 | Shadow API/topic behavior、version conflict、delta、bootstrap、deactivation、tombstone evidence。 |
+
+### 4.9 Security / PKI Management
+
+| 項目 | 指引 |
+| --- | --- |
+| 目的 | 把 PKI 寫成安全管理制度，而不是單純 mTLS 技術。 |
+| 必填內容 | Device identity、factory enrollment、CSR policy、certissuer、service entitlement、token bootstrap、revocation、audit、unprovision vs deactivation。 |
+| 建議視覺 | Trust-chain diagram、security-management matrix、PKI readiness table。 |
+| 資料來源 | `AUTH.md`、`PROVISION.md`、`CONTRACT_OVERVIEW.md`、cert issuer design、factory enrollment design、client PKI docs。 |
+| 避免事項 | 不要放 private key、raw CSR PEM、raw certificate PEM、CA signing material、bearer token；不要說 CSR 本身就是 authentication。 |
+
+Management message：
+
+- PKI/mTLS 是 target production authentication model。
+- Device identity 來自 verified client certificate subject，不可由 request body `devid` 覆蓋。
+- Factory enrollment 是 manufacturing/security-management flow。
+- `service_options` 是 canonical service-access ACL，不用 `device_type` 當權限來源。
+- Device certificates 是 bootstrap credentials；runtime routes 仍使用 scoped、subject-bound tokens 與 ACL checks。
+- Revocation、deactivation、unprovision 是不同 lifecycle control。
+
+Trust-chain visual：
+
+```text
+factory/MES or fixture
+  -> factory enrollment
+  -> certissuer
+  -> device certificate
+  -> mTLS token bootstrap
+  -> service-options ACL
+  -> runtime services
+```
+
+### 4.10 Threat Model / Cyber Security Review
+
+| 項目 | 指引 |
+| --- | --- |
+| 目的 | 說明 cyber risk review 的進度、缺口、下一步，而不是宣稱「安全」。 |
+| 必填內容 | Method/scope、current status、top critical/high risks、open questions、next review focus、mitigation/evidence status。 |
+| 建議視覺 | Cyber security review table、risk heatmap、risk burn-down。 |
+| 資料來源 | `cyber_security/README.md`、`assumptions.md`、`sources.md`、STRIDE threat model、STRIDE matrix、evidence notes。 |
+| 避免事項 | 不要把 health check 當 security sign-off；不要放 raw logs、tokens、DSNs、private keys、certificates、customer data、raw lead data。 |
+
+Status vocabulary：
+
+| Status | 意義 |
+| --- | --- |
+| `drafted` | Threat model 或 matrix 已建立但未 review。 |
+| `reviewing` | Manual/code/deployment review 進行中。 |
+| `evidence-needed` | 需要 command、code、deployment、artifact evidence。 |
+| `mitigation-needed` | 風險已知，但修正或 owner 未關閉。 |
+| `blocked` | 需要的 evidence 或 owner 不可得。 |
+| `closed` | Mitigation 或 verification 完成且有 evidence reference。 |
+
+Top risk themes 至少檢查：
+
+- `I2`: secrets leaking through git, logs, artifacts, evidence, issue bodies。
+- `S1/E1`: token、subject binding、route scope、legacy credential、certificate-header confusion。
+- `S2`: MQTT auth/TLS/device identity spoofing。
+- `D1`: WebRTC、MQTT、media、database、storage、TURN capacity exhaustion。
+- `E2`: Admin BFF proxy/cache expanding privileges beyond upstream authority。
+
+### 4.11 Loading Test Readiness
+
+| 項目 | 指引 |
+| --- | --- |
+| 目的 | 對 early-August 50,000-device target 做可驗證 readiness tracking。 |
+| 必填內容 | Runner/profile、fleet/data、metrics/thresholds、infra/multi-host、broker/database/storage visibility、report evidence。 |
+| 建議視覺 | Readiness matrix、progress bar、risk burn-down、scale target chart。 |
+| 資料來源 | Load-test runner output、JSON/Markdown reports、metrics dashboard、deployment evidence。 |
+| 避免事項 | 不要用 vague prose；使用 `ready`、`partial`、`blocked`、`not verified`。 |
+
+Matrix columns：
+
+| Area | Current status | Needed before 50k | Owner / dependency | Risk |
+| --- | --- | --- | --- | --- |
+
+### 4.12 Part 4：操作畫面與使用流程
+
+| 項目 | 指引 |
+| --- | --- |
+| 目的 | 用畫面讓非工程讀者理解 cloud 如何被操作與驗證。 |
+| 必填內容 | Admin Fleet Overview、Devices Drawer、Firmware OTA、Stream Health、SDK/sample app flow、Frontend/product architecture。 |
+| 建議視覺 | 4 到 6 張正文精選圖片，appendix 放完整素材索引。 |
+| 資料來源 | `rtk_cloud_admin/docs/assets/webui-design/`、`rtk_cloud_client/docs/mockups/`、`rtk_cloud_frontend/static/assets/`、`docs/status-reports/master_slide/assets/`。 |
+| 避免事項 | 不要放太多圖造成報告像素材 dump；每張圖必須有 caption 和用途說明。 |
+
+Standard demo flow：
+
+1. Admin reviews fleet overview。
+2. Admin finds abnormal or attention-needed device。
+3. Admin opens device detail drawer。
+4. Admin checks firmware、stream、telemetry、readiness/source facts。
+5. SDK/sample app demonstrates provisioning、configuration、camera monitor、debug report。
+6. Loading test validates the same capability path at scale。
+
+### 4.13 Part 5：Linode Staging Deployment & Configuration
+
+| 項目 | 指引 |
+| --- | --- |
+| 目的 | 清楚說明 staging 部署、runtime shape、configuration boundaries、health status、production gap。 |
+| 必填內容 | Public endpoints、snapshot timestamp、live health table、runtime placement、non-secret env key names、persistence category、reverse proxy/TLS boundary、production-ready gaps。 |
+| 建議視覺 | Runtime topology、health status table、configuration boundary diagram。 |
+| 資料來源 | Public health endpoints、deployment docs、Linode runbooks、evidence bundle。 |
+| 避免事項 | 不要放 raw VM IP/private ports 當報告證據；不要放 DB DSN、JWT secret、Linode token、DNS credential、object storage key。 |
+
+Linode wording：
+
+- Linode 在本報告中是較基礎的 VM / infrastructure service，不是 AWS-style managed-service stack。
+- PostgreSQL、MQ/message queue、broker、reverse proxy、runtime services 由我們在 VM/service layer 管理。
+- 可說明可搬移性：未來較容易移到 AWS、GCP、Azure、Alibaba Cloud 或其他 infrastructure cloud。
+- Health checks 是 status evidence，不是 production sign-off。
+
+Dynamic scaling status 預設寫法：
+
+```text
+architecture supports future scaling; implementation deferred until after loading test
+```
+
+### 4.14 Part 6：決策、風險與 Evidence
+
+| 項目 | 指引 |
+| --- | --- |
+| 目的 | 讓管理層知道需要什麼決策、風險是否下降、證據在哪裡。 |
+| 必填內容 | Decision/support table、risk burn-down、evidence index。 |
+| 建議視覺 | Risk trend、burn-down table、evidence status summary。 |
+| 資料來源 | 本週 blockers、PR/commit、health evidence、load-test reports、deployment docs。 |
+| 避免事項 | 不要把 management asks 藏在段落裡；不要放 resource plan，除非 report owner 明確要求。 |
+
+Decision/support table：
+
+| Decision / support needed | Why now | Impact if delayed | Owner / audience |
+| --- | --- | --- | --- |
+
+Risk burn-down table：
+
+| Risk | Current status | Mitigation | Owner / dependency | Trend |
+| --- | --- | --- | --- | --- |
+
+Trend values：
+
+- `down`
+- `flat`
+- `up`
+- `new`
+- `closed`
+
+Evidence index categories：
+
+- live endpoint evidence
+- repo / PR / commit evidence
+- screenshot / design evidence
+- load-test report evidence
+- deployment / configuration evidence
+- production-readiness evidence
+- missing or blocked evidence
+
+## 5. Visual And Number Rules
+
+重要數字不要只放 number table。優先使用：
+
+| 內容 | 建議 visual |
+| --- | --- |
+| Schedule path / current position | Timeline、Gantt-style chart、milestone lane。 |
+| Loading-test scale target | Progress bar、scale ladder、bar chart。 |
+| Success rate / error rate / latency / throughput | Line chart、bar chart、bullet chart。 |
+| KPI movement across weeks | Line chart、small multiples。 |
+| Online/offline、firmware rollout、stream health distribution | Stacked bar、distribution chart。 |
+| Risk trend | Risk burn-down、trend indicator。 |
+
+表格適合用於：
+
+- Evidence index。
+- Risk list。
+- Decision/support list。
+- Endpoint health checks。
+- Readiness matrix。
+- Appendix material catalog。
+
+## 6. Evidence And Redaction Rules
+
+Allowed evidence：
 
 - public health/version/service-health endpoint output
 - source repo and path references
@@ -125,7 +467,7 @@ Allowed evidence:
 - generated report output path under `.artifacts`
 - formal evidence bundle references
 
-Forbidden evidence:
+Forbidden evidence：
 
 - Linode tokens
 - DNS provider credentials
@@ -133,60 +475,60 @@ Forbidden evidence:
 - JWT/auth signing secrets
 - bearer tokens
 - object storage access keys
+- signed media URLs with secret query material
 - private keys or certificate private material
+- raw CSR PEM or raw certificate PEM
+- CA signing key paths or CA signing material
+- raw media files or customer-visible captured media unless sanitized and approved
+- raw lead payloads、lead emails、analytics event rows、full referrer URLs、search query text
 - raw customer data
 - raw upstream payloads that expose internal-only fields
 
-If a status cannot be verified from a safe source, write `BLOCKED` or `not yet
-verified`; do not copy an old status as if it were current.
+If a status cannot be verified from a safe source, write `BLOCKED` or
+`not verified`; do not copy an old status as if it were current.
 
-## Language And Tone
+## 7. Review Checklist
 
-- The report body must be written in Traditional Chinese by default.
-- Keep repository names, API names, endpoint paths, product names, commands,
-  status labels such as `PASS`/`FAIL`/`BLOCKED`, and established technical
-  terms in English when that is the clearest source-of-truth wording.
-- Do not mix English section titles with Chinese prose. Section titles,
-  captions, table headers, summaries, and review checklist items should be
-  Traditional Chinese unless they are literal product/repo/API names.
-- If an English version is needed for external audiences, generate it as a
-  separate translation pass rather than mixing languages in the same report.
-- Use direct, management-readable language.
-- Be explicit about "done", "foundation exists", "integration-ready",
-  "staging-only", "blocked", and "production gap".
-- Avoid vague optimism such as "almost ready" unless the remaining gate is
-  named.
-- Avoid overclaiming private cloud, SLA, HA, backup/restore, or customer-ready
-  production status without evidence.
-- Use English technical terms where they are repo/API names; use Traditional
-  Chinese prose for management explanation.
+產出前逐項檢查：
 
-## Production-Readiness Guardrails
+- 第一頁有核心管理訊息、目前狀態總結、schedule snapshot。
+- 摘要可在五分鐘內看懂。
+- Schedule path 顯示 2026-05-01 到 early-August 50,000-device target，並標出 `目前位置`。
+- Video 500-device staged gate 和 IoT 50,000-device target 分開。
+- 重要數字優先用 chart / timeline / progress visual。
+- Loading Test Readiness Matrix 有列出 50,000-device target 前的 gates。
+- Cloud relationship 清楚：Realtek Platform Root、Brand Cloud、brand users、end users、devices。
+- Admin Console 沒有被描述成 Account Manager 或 Video Cloud 的 source of truth。
+- Portal web / digital marketing 有 SEO、content、behavior analytics、lead conversion、sales improvement。
+- WebRTC live video 和 video storage/media 分開。
+- MQTT transport 和 IoT device shadow 分開。
+- Security / PKI 是安全管理敘事，不只是 mTLS 技術。
+- Threat model / cyber security review 有 STRIDE、top risks、open questions、review progress。
+- 操作截圖能證明 demo 或 customer workflow readiness。
+- Linode deployment/configuration 沒有 secrets，也沒有 overclaim production-ready。
+- Decision/support、risk burn-down、evidence index 清楚。
+- Resource plan 沒有預設加入，除非 report owner 明確要求。
+- Dynamic scaling 沒有被宣稱為 August release 已實作。
+- Production-ready gaps 明確列出。
 
-Do not call the deployment production-ready unless these are covered:
+## 8. Source Reference Map
 
-- release versions are explicit and not `debug`
-- selected public health checks pass
-- service-local smoke checks pass
-- product-level evidence bundle exists
-- backup/restore references exist for deployed persistent stores
-- broker evidence exists when MQTT/NATS/EMQX is enabled
-- support boundary and owner model are clear
-- disabled optional components are marked `SKIP` intentionally
+| 主題 | Primary sources |
+| --- | --- |
+| Report framework | `docs/status-reports/README.md`、`materials.md`、`templates/cloud-status-report-outline.md`。 |
+| Master slide / design | `docs/status-reports/master_slide/powerpoint_master.pptx`、`master_slide/design-guidelines.md`、`master_slide/SKILL.md`、`master_slide/assets/`。 |
+| Cloud relationship | `rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md`、`PRODUCT_ONBOARDING.md`、`AUTHORIZATION.md`、`PROVISION.md`、`rtk_cloud_admin/docs/SPEC.md`。 |
+| Portal web / digital marketing | `rtk_cloud_frontend/README.md`、`docs/SPEC.md`、`docs/ANALYTICS.md`、`docs/API_REFERENCE.md`、`docs/MANUAL_CONTENT_SYSTEM.md`。 |
+| WebRTC / video storage | `rtk_cloud_contracts_doc/STREAMING.md`、`SNAPSHOT_AND_MEDIA.md`、`DEVICE_TRANSPORT.md`、`AUTH.md`、`AUTHORIZATION.md`、client integration docs。 |
+| MQTT / shadow | `rtk_cloud_contracts_doc/DEVICE_TRANSPORT.md`、`DEVICE_SHADOW.md`、`PROVISION.md`、`API_USAGE.md`、client transports docs。 |
+| PKI / security | `rtk_cloud_contracts_doc/AUTH.md`、`PROVISION.md`、`rtk_video_cloud/docs/cert-issuer-server-design.md`、`factory-enrollment-server.md`、`rtk_cloud_client/docs/PKI_DEVICE_AUTH.md`。 |
+| Threat model / cyber security | `cyber_security/README.md`、`assumptions.md`、`sources.md`、`threat_models/rtk_video_cloud-stride-threat-model.md`、`analysis/stride-matrix.md`。 |
+| Deployment / evidence | `docs/product-level-evidence.md`、`docs/deployment-secrets-governance.md`、deployment runbooks、public health endpoints。 |
 
-For normal weekly status, it is acceptable to say "staging is live" or
-"foundation exists" when evidence supports that wording.
+## 9. Language And Tone
 
-## Reuse Checklist
-
-Before generating or sending a report:
-
-- Follow the outline in `templates/cloud-status-report-outline.md`.
-- Pull screenshots from `materials.md`.
-- Run the builder if a Word deliverable is needed.
-- Update live health checks instead of reusing stale results.
-- Confirm the generated Word report uses Traditional Chinese for all narrative
-  sections, captions, table headers, and checklist items.
-- Verify no secrets or raw customer data appear in text, tables, captions, or
-  screenshots.
-- Keep generated artifacts under `.artifacts/status-reports/YYYY-MM-DD/`.
+- 報告正文用 Traditional Chinese。
+- Repo、API、endpoint、command、product name、status label 使用英文原文。
+- Section title、caption、table header、summary、checklist 盡量用 Traditional Chinese，除非是固定產品或 API 名稱。
+- 對外英文版應另開 translation pass，不要中英混雜。
+- 不使用誇大詞，例如 `secure`、`production-ready`、`autoscaling ready`，除非有對應 evidence。
