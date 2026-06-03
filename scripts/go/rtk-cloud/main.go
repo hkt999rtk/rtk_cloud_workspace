@@ -1550,6 +1550,7 @@ func runCreateUsers(args []string) error {
 	if *dryRun {
 		return json.NewEncoder(os.Stdout).Encode(map[string]any{"action": "dry_run", "brand_cloud": brandCloud, "role": *role, "users": planned})
 	}
+	existingAppCredentials := loadExistingUserAppCredentials(ctx.EnvRoot, slug)
 	users := []map[string]any{}
 	created := 0
 	assigned := 0
@@ -1573,13 +1574,26 @@ func runCreateUsers(args []string) error {
 			}
 			assigned++
 		}
-		users = append(users, map[string]any{"email": email, "display_name": displayName, "role": *role, "password": password, "action": action})
+		logCreateUsers("bootstrapping app certificate: email=%s", email)
+		appCredentials, appCertificate, err := accountEnsureUserAppCertificate(ctx, email, password, existingAppCredentials[email])
+		if err != nil {
+			return err
+		}
+		users = append(users, map[string]any{
+			"email":           email,
+			"display_name":    displayName,
+			"role":            *role,
+			"password":        password,
+			"action":          action,
+			"app_credentials": appCredentials,
+			"app_certificate": appCertificate,
+		})
 	}
 	artifactDir := filepath.Join(ctx.EnvRoot, "artifacts", "users")
 	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
 		return err
 	}
-	credentialsFile := filepath.Join(artifactDir, fmt.Sprintf("%s-users-%s.json", slug, time.Now().UTC().Format("20060102T150405Z")))
+	credentialsFile := uniqueUserCredentialsFile(artifactDir, slug)
 	if err := writeJSON(credentialsFile, map[string]any{"brandname": *brandname, "brand_cloud_id": brandCloudID, "role": *role, "users": users}); err != nil {
 		return err
 	}
@@ -1593,6 +1607,7 @@ func runCreateUsers(args []string) error {
 		"count":            *count,
 		"created":          created,
 		"assigned":         assigned,
+		"app_certificates": *count,
 		"credentials_file": credentialsFile,
 	})
 }
@@ -2095,6 +2110,217 @@ func accountCreateUser(ctx accountManagerContext, token, brandCloudID, email, di
 	return action, nil
 }
 
+type accountUserLoginResponse struct {
+	User struct {
+		ID    string `json:"id"`
+		Email string `json:"email"`
+	} `json:"user"`
+	Tokens struct {
+		AccessToken string `json:"access_token"`
+	} `json:"tokens"`
+	AppCertificate accountAppCertificate `json:"app_certificate"`
+}
+
+type accountAppCertificate struct {
+	Status              string `json:"status"`
+	Subject             string `json:"subject,omitempty"`
+	CertificatePEM      string `json:"certificate_pem,omitempty"`
+	CertificateChainPEM string `json:"certificate_chain_pem,omitempty"`
+	FingerprintSHA256   string `json:"fingerprint_sha256,omitempty"`
+	SerialNumber        string `json:"serial_number,omitempty"`
+	IssuerRequestID     string `json:"issuer_request_id,omitempty"`
+	NotBefore           string `json:"not_before,omitempty"`
+	NotAfter            string `json:"not_after,omitempty"`
+}
+
+func accountEnsureUserAppCertificate(ctx accountManagerContext, email, password string, existingAppCredentials map[string]any) (map[string]any, map[string]any, error) {
+	initial, err := accountLoginUserFull(ctx, email, password, "")
+	if err != nil {
+		return nil, nil, err
+	}
+	switch initial.AppCertificate.Status {
+	case "issued":
+		if !hasLocalAppCredentials(existingAppCredentials) {
+			return nil, nil, fmt.Errorf("app certificate already exists for %s but no matching local app private key was found in previous users artifacts; use the artifact that originally bootstrapped this user or revoke/rotate the app certificate before generating a new key", email)
+		}
+		return existingAppCredentials, accountAppCertificateMap(initial.AppCertificate), nil
+	case "csr_required":
+	default:
+		return nil, nil, fmt.Errorf("login response included unexpected app certificate status for %s: %s", email, initial.AppCertificate.Status)
+	}
+	if initial.User.ID == "" {
+		return nil, nil, fmt.Errorf("login response did not include a user id for app certificate bootstrap: %s", email)
+	}
+	subject := "app-user:" + initial.User.ID
+	privateKeyPEM, csrPEM, err := generateAppCertificateCSR(subject)
+	if err != nil {
+		return nil, nil, err
+	}
+	issued, err := accountLoginUserFull(ctx, email, password, csrPEM)
+	if err != nil {
+		return nil, nil, err
+	}
+	if issued.AppCertificate.Status != "issued" {
+		return nil, nil, fmt.Errorf("app certificate was not issued for %s: status=%s", email, issued.AppCertificate.Status)
+	}
+	if strings.TrimSpace(issued.AppCertificate.CertificatePEM) == "" || strings.TrimSpace(issued.AppCertificate.FingerprintSHA256) == "" {
+		return nil, nil, fmt.Errorf("app certificate response missing certificate material for %s", email)
+	}
+	return map[string]any{
+		"subject":         subject,
+		"private_key_pem": privateKeyPEM,
+		"csr_pem":         csrPEM,
+	}, accountAppCertificateMap(issued.AppCertificate), nil
+}
+
+func loadExistingUserAppCredentials(envRoot, slug string) map[string]map[string]any {
+	out := map[string]map[string]any{}
+	dir := filepath.Join(envRoot, "artifacts", "users")
+	matches, _ := filepath.Glob(filepath.Join(dir, slug+"-users-*.json"))
+	sort.Strings(matches)
+	for i := len(matches) - 1; i >= 0; i-- {
+		raw, err := os.ReadFile(matches[i])
+		if err != nil {
+			continue
+		}
+		var artifact struct {
+			Users []struct {
+				Email          string         `json:"email"`
+				AppCredentials map[string]any `json:"app_credentials"`
+			} `json:"users"`
+		}
+		if err := json.Unmarshal(raw, &artifact); err != nil {
+			continue
+		}
+		for _, user := range artifact.Users {
+			email := strings.ToLower(strings.TrimSpace(user.Email))
+			if email == "" || out[email] != nil || !hasLocalAppCredentials(user.AppCredentials) {
+				continue
+			}
+			out[email] = user.AppCredentials
+		}
+	}
+	return out
+}
+
+func uniqueUserCredentialsFile(artifactDir, slug string) string {
+	base := fmt.Sprintf("%s-users-%s", slug, time.Now().UTC().Format("20060102T150405Z"))
+	path := filepath.Join(artifactDir, base+".json")
+	if !exists(path) {
+		return path
+	}
+	for i := 2; ; i++ {
+		path = filepath.Join(artifactDir, fmt.Sprintf("%s-%02d.json", base, i))
+		if !exists(path) {
+			return path
+		}
+	}
+}
+
+func hasLocalAppCredentials(credentials map[string]any) bool {
+	if credentials == nil {
+		return false
+	}
+	privateKey := strings.TrimSpace(stringValue(credentials["private_key_pem"]))
+	csr := strings.TrimSpace(stringValue(credentials["csr_pem"]))
+	return strings.HasPrefix(privateKey, "-----BEGIN ") &&
+		strings.Contains(privateKey, "PRIVATE KEY-----") &&
+		strings.HasPrefix(csr, "-----BEGIN CERTIFICATE REQUEST-----")
+}
+
+func accountLoginUserFull(ctx accountManagerContext, email, password, csrPEM string) (accountUserLoginResponse, error) {
+	payload := map[string]string{"email": email, "password": password}
+	if strings.TrimSpace(csrPEM) != "" {
+		payload["app_csr_pem"] = csrPEM
+	}
+	raw, _ := json.Marshal(payload)
+	body, status, err := curlJSONStatus(ctx.BaseURL+"/v1/auth/login", "", raw)
+	if err != nil {
+		return accountUserLoginResponse{}, err
+	}
+	if status != 200 {
+		return accountUserLoginResponse{}, fmt.Errorf("login failed during app certificate bootstrap: email=%s HTTP %d%s", email, status, accountAPIErrorSuffix(body))
+	}
+	var parsed accountUserLoginResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return accountUserLoginResponse{}, err
+	}
+	if parsed.Tokens.AccessToken == "" {
+		return accountUserLoginResponse{}, fmt.Errorf("login response did not include an access token: %s", email)
+	}
+	return parsed, nil
+}
+
+func accountAPIErrorSuffix(body []byte) string {
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 {
+		return ""
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return fmt.Sprintf(": %s", truncateForLog(string(body), 240))
+	}
+	parts := []string{}
+	if nested, ok := parsed["error"].(map[string]any); ok {
+		parsed = nested
+	}
+	for _, key := range []string{"code", "error", "message", "detail"} {
+		value := strings.TrimSpace(stringValue(parsed[key]))
+		if value != "" {
+			parts = append(parts, fmt.Sprintf("%s=%s", key, truncateForLog(value, 160)))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return ": " + strings.Join(parts, " ")
+}
+
+func truncateForLog(value string, maxLen int) string {
+	value = strings.TrimSpace(strings.ReplaceAll(value, "\n", " "))
+	if maxLen <= 0 || len(value) <= maxLen {
+		return value
+	}
+	if maxLen <= 3 {
+		return value[:maxLen]
+	}
+	return value[:maxLen-3] + "..."
+}
+
+func generateAppCertificateCSR(subject string) (string, string, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return "", "", err
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return "", "", err
+	}
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject: pkix.Name{CommonName: subject},
+	}, key)
+	if err != nil {
+		return "", "", err
+	}
+	privateKeyPEM := string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}))
+	csrPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER}))
+	return privateKeyPEM, csrPEM, nil
+}
+
+func accountAppCertificateMap(cert accountAppCertificate) map[string]any {
+	return map[string]any{
+		"status":                cert.Status,
+		"subject":               cert.Subject,
+		"certificate_pem":       cert.CertificatePEM,
+		"certificate_chain_pem": cert.CertificateChainPEM,
+		"fingerprint_sha256":    cert.FingerprintSHA256,
+		"serial_number":         cert.SerialNumber,
+		"issuer_request_id":     cert.IssuerRequestID,
+		"not_before":            cert.NotBefore,
+		"not_after":             cert.NotAfter,
+	}
+}
+
 func plannedUsers(brandname, slug, role string, count int) []map[string]any {
 	users := make([]map[string]any, 0, count)
 	for i := 1; i <= count; i++ {
@@ -2306,7 +2532,11 @@ func accountBootstrap(ctx accountManagerContext) error {
 	logBrandCreate("updating platform-admin bootstrap env on account-manager host=%s", ctx.Host)
 	remote := `set -euo pipefail
 env_file=/etc/rtk-account-manager/account-manager.env
-test -f "$env_file"
+if [ ! -f "$env_file" ] || ! systemctl cat rtk-account-manager.service >/dev/null 2>&1; then
+  echo "Account Manager VM is provisioned but the runtime is not deployed on this host." >&2
+  echo "Run ./stg.sh deploy --account-release <release> or pass --account-release-bundle <bundle>, then retry ./stg.sh brand." >&2
+  exit 1
+fi
 cp -p "$env_file" "$env_file.bootstrap-admin.bak.$(date -u +%Y%m%dT%H%M%SZ)"
 tmp="$(mktemp)"
 grep -vE "^ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_(EMAIL|PASSWORD)=" "$env_file" > "$tmp"

@@ -10,8 +10,6 @@ ENV_ROOT="$WORKSPACE/cloud_env/staging/linode"
 FAKE_BIN="$TMP/bin"
 ORDER_LOG="$TMP/order.log"
 LOGGER_LOG="$TMP/logger.log"
-ACCOUNT_BUNDLE="$TMP/rtk_account_manager-account-test.tar.gz"
-ADMIN_BUNDLE="$TMP/rtk_cloud_admin-admin-test.tar.gz"
 mkdir -p \
 	"$FAKE_BIN" \
 	"$ENV_ROOT/topology" \
@@ -24,10 +22,6 @@ mkdir -p \
 	"$WORKSPACE/repos/rtk_video_cloud/linode_deploy/scripts" \
 	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/scripts" \
 	"$WORKSPACE/repos/rtk_cloud_admin/deploy/linode"
-
-printf 'fake-account-bundle\n' > "$ACCOUNT_BUNDLE"
-printf 'fake-admin-bundle\n' > "$ADMIN_BUNDLE"
-touch "$TMP/id_ed25519_rtkcloud"
 
 cat > "$ENV_ROOT/env/operator.env" <<'EOF_OPERATOR'
 LINODE_TOKEN=test-token
@@ -54,9 +48,14 @@ touch "$ENV_ROOT/topology/video-cloud-staging.yaml"
 touch "$ENV_ROOT/services/video-cloud/video-cloud-staging.env"
 touch "$ENV_ROOT/services/account-manager/account-manager-public-staging.env"
 touch "$ENV_ROOT/services/cloud-admin/admin-staging.env"
-
 cat > "$ENV_ROOT/state/video-cloud-ci.state.json" <<'EOF_STATE'
-{"instances":{"edge":{"public_ipv4":"203.0.113.10"}}}
+{"instances":{
+  "edge":{"public_ipv4":"203.0.113.10"},
+  "api":{"private_ip":"10.42.1.10"},
+  "infra":{"private_ip":"10.42.1.30"},
+  "mqtt":{"public_ipv4":"203.0.113.13"},
+  "coturn":{"public_ipv4":"203.0.113.14"}
+}}
 EOF_STATE
 cat > "$ENV_ROOT/state/account-manager-staging.env" <<'EOF_AM'
 ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4=203.0.113.20
@@ -65,43 +64,27 @@ cat > "$ENV_ROOT/state/cloud-admin-staging.env" <<'EOF_ADMIN'
 ADMIN_LINODE_PUBLIC_IPV4=203.0.113.30
 EOF_ADMIN
 
-cat > "$WORKSPACE/repos/rtk_account_manager/linode_deploy/scripts/deploy-public-vm.sh" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-printf 'account-manager-deploy\n' >> "$ORDER_LOG"
-SH
-cat > "$WORKSPACE/repos/rtk_account_manager/linode_deploy/scripts/verify-public-vm.sh" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-printf 'account-manager-verify\n' >> "$ORDER_LOG"
-SH
 cat > "$WORKSPACE/repos/rtk_video_cloud/linode_deploy/scripts/deploy-staging.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'video-cloud-deploy-verify\n' >> "$ORDER_LOG"
-while [[ $# -gt 0 ]]; do
-	if [[ "$1" == "--report" ]]; then
-		printf '# video health\n' > "$2"
-		shift 2
-	else
-		shift
-	fi
-done
+exit 42
 SH
-cat > "$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/deploy-admin.sh" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-printf 'cloud-admin-deploy\n' >> "$ORDER_LOG"
-SH
-cat > "$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/verify-admin.sh" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-printf 'cloud-admin-verify\n' >> "$ORDER_LOG"
-SH
-chmod +x \
+for path in \
 	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/scripts/deploy-public-vm.sh" \
 	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/scripts/verify-public-vm.sh" \
+	"$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/deploy-admin.sh" \
+	"$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/verify-admin.sh"; do
+	cat > "$path" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$(basename "$0")" >> "$ORDER_LOG"
+SH
+done
+chmod +x \
 	"$WORKSPACE/repos/rtk_video_cloud/linode_deploy/scripts/deploy-staging.sh" \
+	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/scripts/deploy-public-vm.sh" \
+	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/scripts/verify-public-vm.sh" \
 	"$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/deploy-admin.sh" \
 	"$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/verify-admin.sh"
 
@@ -112,17 +95,11 @@ printf '%s\n' "$*" >> "$LOGGER_LOG"
 case "$1" in
 provision-backend)
 	printf 'logger-provision-backend\n' >> "$ORDER_LOG"
-	exit 23
 	;;
 install-forwarder)
 	printf 'logger-install-forwarder %s\n' "$2" >> "$ORDER_LOG"
-	exit 24
 	;;
-backend-health|sample-trace-query)
-	exit 25
-	;;
-forwarder-status)
-	exit 26
+backend-health|sample-trace-query|forwarder-status)
 	;;
 *)
 	exit 27
@@ -134,65 +111,39 @@ chmod +x "$TMP/mock-logger.sh"
 cat > "$FAKE_BIN/curl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-cat <<'JSON'
-{"data":[
-  {"id":1,"label":"video-cloud-ci-edge","ipv4":["203.0.113.10"],"ipv6":"","tags":["video-cloud-ci"]},
-  {"id":2,"label":"video-cloud-ci-api","ipv4":["203.0.113.11"],"ipv6":"","tags":["video-cloud-ci"]},
-  {"id":3,"label":"video-cloud-ci-infra","ipv4":["203.0.113.12"],"ipv6":"","tags":["video-cloud-ci"]},
-  {"id":4,"label":"video-cloud-ci-mqtt","ipv4":["203.0.113.13"],"ipv6":"","tags":["video-cloud-ci"]},
-  {"id":5,"label":"video-cloud-ci-coturn","ipv4":["203.0.113.14"],"ipv6":"","tags":["video-cloud-ci"]},
-  {"id":6,"label":"rtk-account-manager-ci","ipv4":["203.0.113.20"],"ipv6":"","tags":[]},
-  {"id":7,"label":"rtk-cloud-admin-ci","ipv4":["203.0.113.30"],"ipv6":"","tags":[]}
-]}
-JSON
+printf '{"data":[]}\n'
 SH
-cat > "$FAKE_BIN/dig" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-case "$*" in
-*" NS "*) echo "ns.example.com." ;;
-*account-manager*) echo "203.0.113.20" ;;
-*admin*) echo "203.0.113.30" ;;
-*video-cloud-ci*) echo "203.0.113.10" ;;
-*) echo "203.0.113.10" ;;
-esac
-SH
-for cmd in ssh go tar openssl; do
+for cmd in ssh go tar openssl dig; do
 	cat > "$FAKE_BIN/$cmd" <<'SH'
 #!/usr/bin/env bash
 exit 0
 SH
 	chmod +x "$FAKE_BIN/$cmd"
 done
-chmod +x "$FAKE_BIN/curl" "$FAKE_BIN/dig"
+chmod +x "$FAKE_BIN/curl"
 
 OUT="$TMP/out.txt"
 ERR="$TMP/err.txt"
+set +e
 ORDER_LOG="$ORDER_LOG" LOGGER_LOG="$LOGGER_LOG" CLOUD_LOGGER_SCRIPT="$TMP/mock-logger.sh" PATH="$FAKE_BIN:$PATH" /usr/local/go/bin/go run "$ROOT/scripts/go/rtk-cloud" -- deploy \
 	--workspace "$WORKSPACE" \
-	--env-root "$ENV_ROOT" \
-	--ssh-key "$TMP/id_ed25519_rtkcloud" \
-	--video-release video-test \
-	--account-release account-test \
-	--account-release-bundle "$ACCOUNT_BUNDLE" \
-	--admin-release admin-test \
-	--admin-release-bundle "$ADMIN_BUNDLE" >"$OUT" 2>"$ERR"
+	--env-root "$ENV_ROOT" >"$OUT" 2>"$ERR"
+status=$?
+set -e
+[[ "$status" -ne 0 ]]
 
 REPORT="$(grep -F '[cloud-deploy] readiness report:' "$ERR" | tail -n 1 | sed 's/^.*readiness report: //')"
-grep -F 'status: passed' "$REPORT" >/dev/null
-grep -F 'logging: degraded' "$REPORT" >/dev/null
-grep -F 'DEGRADED `logger-backend-health`' "$REPORT" >/dev/null
+grep -F 'status: failed' "$REPORT" >/dev/null
+grep -F 'FAIL `video-cloud-deploy-verify`' "$REPORT" >/dev/null
 for target in account-manager video-cloud-api cloud-admin edge infra mqtt coturn; do
-	grep -F 'DEGRADED `logger-forwarder:'"$target"'`' "$REPORT" >/dev/null
 	grep -F 'install-forwarder '"$target" "$LOGGER_LOG" >/dev/null
+	grep -F 'PASS `logger-forwarder-status:'"$target"'`' "$REPORT" >/dev/null
 done
-grep -F 'DEGRADED `logger-sample-trace-query`' "$REPORT" >/dev/null
-
+test "$(grep -c '^logger-install-forwarder account-manager$' "$ORDER_LOG")" -eq 1
 logger_line="$(grep -n '^logger-provision-backend$' "$ORDER_LOG" | cut -d: -f1)"
-account_line="$(grep -n '^account-manager-deploy$' "$ORDER_LOG" | cut -d: -f1)"
-first_install_line="$(grep -n '^logger-install-forwarder account-manager$' "$ORDER_LOG" | head -n 1 | cut -d: -f1)"
-last_install_line="$(grep -n '^logger-install-forwarder account-manager$' "$ORDER_LOG" | tail -n 1 | cut -d: -f1)"
-admin_verify_line="$(grep -n '^cloud-admin-verify$' "$ORDER_LOG" | cut -d: -f1)"
-[[ "$logger_line" -lt "$account_line" ]]
-[[ "$first_install_line" -lt "$account_line" ]]
-[[ "$last_install_line" -gt "$admin_verify_line" ]]
+install_line="$(grep -n '^logger-install-forwarder account-manager$' "$ORDER_LOG" | cut -d: -f1)"
+video_line="$(grep -n '^video-cloud-deploy-verify$' "$ORDER_LOG" | cut -d: -f1)"
+[[ "$logger_line" -lt "$video_line" ]]
+[[ "$install_line" -lt "$video_line" ]]
+! grep -F 'deploy-public-vm.sh' "$ORDER_LOG" >/dev/null
+! grep -F 'deploy-admin.sh' "$ORDER_LOG" >/dev/null

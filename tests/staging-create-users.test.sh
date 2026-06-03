@@ -12,8 +12,13 @@ CURL_LOG="$TMP/curl-log"
 mkdir -p \
 	"$FAKE_BIN" \
 	"$CURL_LOG" \
+	"$ENV_ROOT/env" \
 	"$ENV_ROOT/services/account-manager" \
 	"$ENV_ROOT/state"
+
+cat > "$ENV_ROOT/env/operator.env" <<'EOF_OPERATOR'
+LINODE_TOKEN=fake-linode-token
+EOF_OPERATOR
 
 cat > "$ENV_ROOT/services/account-manager/account-manager-public-staging.env" <<'EOF_ENV'
 ACCOUNT_MANAGER_LINODE_DOMAIN=account-manager.video-cloud-staging.example.com
@@ -24,6 +29,8 @@ EOF_ENV
 cat > "$ENV_ROOT/state/account-manager-staging.env" <<'EOF_STATE'
 ACCOUNT_MANAGER_LINODE_HOST=203.0.113.10
 ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4=203.0.113.10
+ACCOUNT_MANAGER_LINODE_FIREWALL_ID=12345
+ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL=account-fw
 EOF_STATE
 
 cat > "$ENV_ROOT/services/account-manager/account-manager-platform-admin.env" <<'EOF_ADMIN'
@@ -53,11 +60,51 @@ for ((i = 0; i < ${#args[@]}; i++)); do
 	--data-binary) data="${args[$((i + 1))]}" ;;
 	esac
 done
-url="${args[$((${#args[@]} - 1))]}"
+url=""
+for arg in "${args[@]}"; do
+	if [[ "$arg" == http://* || "$arg" == https://* ]]; then
+		url="$arg"
+		break
+	fi
+done
 case "$url" in
+https://api.ipify.org)
+	printf '198.51.100.20'
+	exit 0
+	;;
+https://api.linode.com/v4/networking/firewalls/12345/rules)
+	printf '{"inbound":[{"label":"ssh","action":"ACCEPT","protocol":"TCP","ports":"22","addresses":{"ipv4":["198.51.100.20/32"]}}],"outbound":[]}'
+	exit 0
+	;;
 */v1/auth/login)
-	printf '{"tokens":{"access_token":"test-token"}}' >"$out"
+	payload="${data#@}"
+	email="$(jq -r '.email' "$payload")"
+	csr="$(jq -r '.app_csr_pem // ""' "$payload")"
 	status=200
+	case "$email" in
+	root@example.com)
+		printf '{"tokens":{"access_token":"test-token"}}' >"$out"
+		;;
+	*)
+		user_id="user-$(printf '%s' "$email" | tr '@+' '__')"
+		if [[ -n "$csr" ]]; then
+			if [[ "${FAKE_APP_LOGIN_ERROR:-0}" == "1" ]]; then
+				printf '{"code":"app_certificate_csr_invalid","message":"CSR subject does not match the authenticated user"}' >"$out"
+				status=400
+			else
+				cp "$payload" "$FAKE_CURL_LOG/app-login-$(printf '%s' "$email" | tr '@+' '__').json"
+				jq -cn --arg email "$email" --arg user_id "$user_id" \
+					'{user:{id:$user_id,email:$email,display_name:$email,email_verified:true,signup_pending_verification:false,platform_admin:false,created_at:"2026-05-30T00:00:00Z",updated_at:"2026-05-30T00:00:00Z"},tokens:{access_token:"user-token"},app_certificate:{status:"issued",subject:("app-user:"+$user_id),certificate_pem:"-----BEGIN CERTIFICATE-----\nissued\n-----END CERTIFICATE-----\n",certificate_chain_pem:"-----BEGIN CERTIFICATE-----\nchain\n-----END CERTIFICATE-----\n",fingerprint_sha256:("fp-"+$user_id),serial_number:"01",issuer_request_id:("req-"+$user_id),not_before:"2026-06-03T00:00:00Z",not_after:"2027-06-03T00:00:00Z"}}' >"$out"
+			fi
+		elif [[ "${FAKE_INITIAL_ISSUED:-0}" == "1" ]]; then
+			jq -cn --arg email "$email" --arg user_id "$user_id" \
+				'{user:{id:$user_id,email:$email,display_name:$email,email_verified:true,signup_pending_verification:false,platform_admin:false,created_at:"2026-05-30T00:00:00Z",updated_at:"2026-05-30T00:00:00Z"},tokens:{access_token:"user-token"},app_certificate:{status:"issued",subject:("app-user:"+$user_id),certificate_pem:"-----BEGIN CERTIFICATE-----\nissued-existing\n-----END CERTIFICATE-----\n",certificate_chain_pem:"-----BEGIN CERTIFICATE-----\nchain-existing\n-----END CERTIFICATE-----\n",fingerprint_sha256:("fp-existing-"+$user_id),serial_number:"02",issuer_request_id:("req-existing-"+$user_id),not_before:"2026-06-03T00:00:00Z",not_after:"2027-06-03T00:00:00Z"}}' >"$out"
+		else
+			jq -cn --arg email "$email" --arg user_id "$user_id" \
+				'{user:{id:$user_id,email:$email,display_name:$email,email_verified:true,signup_pending_verification:false,platform_admin:false,created_at:"2026-05-30T00:00:00Z",updated_at:"2026-05-30T00:00:00Z"},tokens:{access_token:"user-token"},app_certificate:{status:"csr_required"}}' >"$out"
+		fi
+		;;
+	esac
 	;;
 */v1/admin/brand-clouds\?limit=200)
 	if [[ "${FAKE_NO_BRAND:-0}" == "1" ]]; then
@@ -126,11 +173,20 @@ if grep -i 'password' "$OUT" >/dev/null; then
 	echo "stdout must not include passwords" >&2
 	exit 1
 fi
+if grep -i 'private_key' "$OUT" >/dev/null; then
+	echo "stdout must not include private keys" >&2
+	exit 1
+fi
 jq -e '.action == "created" and .created == 2 and .role == "member"' "$OUT" >/dev/null
 CREDS="$(jq -r '.credentials_file' "$OUT")"
 test -f "$CREDS"
 jq -e '.brandname == "RTK" and .brand_cloud_id == "org-rtk" and (.users | length == 2)' "$CREDS" >/dev/null
 jq -e '.users[0].email == "rtk+001@users.local" and (.users[0].password | length >= 24)' "$CREDS" >/dev/null
+jq -e '.users[0].app_credentials.private_key_pem | startswith("-----BEGIN EC PRIVATE KEY-----")' "$CREDS" >/dev/null
+jq -e '.users[0].app_credentials.csr_pem | startswith("-----BEGIN CERTIFICATE REQUEST-----")' "$CREDS" >/dev/null
+jq -e '.users[0].app_certificate.status == "issued" and .users[0].app_certificate.fingerprint_sha256 == "fp-user-rtk_001_users.local"' "$CREDS" >/dev/null
+test "$(find "$CURL_LOG" -name 'app-login-*.json' | wc -l | tr -d ' ')" = "2"
+jq -e '.app_csr_pem | startswith("-----BEGIN CERTIFICATE REQUEST-----")' "$CURL_LOG/app-login-rtk_001_users.local.json" >/dev/null
 test "$(find "$CURL_LOG" -name 'user-*.json' | wc -l | tr -d ' ')" = "2"
 jq -e '.role == "member" and .rotate_password == false' "$CURL_LOG/user-rtk_001_users.local.json" >/dev/null
 
@@ -159,7 +215,35 @@ PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_USER_ACTION=assigned "/usr
 jq -e '.assigned == 1 and .created == 0' "$ROTATE_OUT" >/dev/null
 ROTATE_CREDS="$(jq -r '.credentials_file' "$ROTATE_OUT")"
 jq -e '.users[0].action == "assigned" and (.users[0].password | length >= 24)' "$ROTATE_CREDS" >/dev/null
+jq -e '.users[0].app_certificate.status == "issued"' "$ROTATE_CREDS" >/dev/null
 jq -e '.rotate_password == true' "$CURL_LOG/user-rtk_001_users.local.json" >/dev/null
+
+ISSUED_OUT="$TMP/issued-existing.out"
+PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_USER_ACTION=assigned FAKE_INITIAL_ISSUED=1 "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- create-users \
+	--workspace "$WORKSPACE" \
+	--env-root "$ENV_ROOT" \
+	--brandname RTK \
+	--count 1 \
+	--rotate-password >"$ISSUED_OUT"
+ISSUED_CREDS="$(jq -r '.credentials_file' "$ISSUED_OUT")"
+jq -e '.users[0].app_certificate.status == "issued" and .users[0].app_certificate.fingerprint_sha256 == "fp-existing-user-rtk_001_users.local"' "$ISSUED_CREDS" >/dev/null
+jq -e '.users[0].app_credentials.private_key_pem | startswith("-----BEGIN EC PRIVATE KEY-----")' "$ISSUED_CREDS" >/dev/null
+jq -e '.users[0].app_credentials.csr_pem | startswith("-----BEGIN CERTIFICATE REQUEST-----")' "$ISSUED_CREDS" >/dev/null
+
+APP_LOGIN_ERR="$TMP/app-login.err"
+if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_APP_LOGIN_ERROR=1 "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- create-users \
+	--workspace "$WORKSPACE" \
+	--env-root "$ENV_ROOT" \
+	--brandname RTK \
+	--count 1 >"$TMP/app-login.out" 2>"$APP_LOGIN_ERR"; then
+	echo "expected app certificate login failure" >&2
+	exit 1
+fi
+grep -F 'login failed during app certificate bootstrap: email=rtk+001@users.local HTTP 400: code=app_certificate_csr_invalid message=CSR subject does not match the authenticated user' "$APP_LOGIN_ERR" >/dev/null
+if grep -Ei 'password|private_key|BEGIN CERTIFICATE REQUEST' "$APP_LOGIN_ERR" >/dev/null; then
+	echo "app login error must not include sensitive material" >&2
+	exit 1
+fi
 
 MISSING="$TMP/missing-brand.err"
 if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_NO_BRAND=1 "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- create-users \

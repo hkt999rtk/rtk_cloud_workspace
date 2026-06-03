@@ -315,6 +315,28 @@ func TestBackupAndRemoveStateUsesConfiguredStackState(t *testing.T) {
 	}
 }
 
+func TestSyncProvisionVideoStateFromRepoOverwritesCloudState(t *testing.T) {
+	root := t.TempDir()
+	cloudState := filepath.Join(root, "cloud", "video-cloud-stg-0529.state.json")
+	repoState := filepath.Join(root, "repo", "video-cloud-stg-0529.state.json")
+	mkdirAll(t, filepath.Dir(cloudState))
+	mkdirAll(t, filepath.Dir(repoState))
+	writeFile(t, cloudState, `{"firewalls":{"edge":101}}`)
+	writeFile(t, repoState, `{"firewalls":{"edge":202}}`)
+
+	if err := syncProvisionVideoStateFromRepo(cloudState, repoState); err != nil {
+		t.Fatalf("syncProvisionVideoStateFromRepo returned error: %v", err)
+	}
+	state, err := readJSONMap(cloudState)
+	if err != nil {
+		t.Fatalf("read cloud state: %v", err)
+	}
+	firewalls, _ := state["firewalls"].(map[string]any)
+	if got := stringValue(firewalls["edge"]); got != "202" {
+		t.Fatalf("cloud edge firewall = %q, want repo value 202", got)
+	}
+}
+
 func TestWritePlatformAdminSummaryRedactsPassword(t *testing.T) {
 	root := t.TempDir()
 	platformEnv := filepath.Join(root, "services", "account-manager", "account-manager-platform-admin.env")
