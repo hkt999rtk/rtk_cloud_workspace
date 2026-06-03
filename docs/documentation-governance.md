@@ -33,6 +33,9 @@ are authoritative, and how to review changes.
 - Nested contracts submodules should be pinned to the same commit as
   `repos/rtk_cloud_contracts_doc` unless a deliberate compatibility test needs a
   different snapshot.
+- Consumer repositories that need a local contracts checkout should mount it at
+  `docs/rtk_cloud_contracts_doc`; see
+  [contracts-submodule-governance.md](contracts-submodule-governance.md).
 
 ## Document Classifications
 
@@ -67,8 +70,10 @@ Use these status values for contracts, policies, and ADRs:
 - Review service docs with the owning service change.
 - Keep plans and migration notes as supporting material; move stable behavior
   into service docs, contracts docs, or ADRs after implementation.
-- Run `./go run ./scripts/go/rtk-cloud -- docs-check` before committing workspace documentation or
+- Run `go run ./scripts/go/rtk-cloud -- docs-check` before committing workspace documentation or
   submodule pointer changes.
+- Run `go run ./scripts/go/rtk-cloud -- contracts-check` before committing
+  contracts submodule path, URL, or pointer changes.
 
 ## Metadata Template
 

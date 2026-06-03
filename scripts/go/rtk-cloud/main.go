@@ -41,6 +41,7 @@ var commands = map[string]commandSpec{
 	"bind-devices":           {run: runBindDevices},
 	"check-certificates":     {run: runCheckCertificates},
 	"collect-evidence":       {run: runCollectEvidence},
+	"contracts-check":        {run: runContractsCheck},
 	"create-brandname-cloud": {run: runCreateBrandnameCloud},
 	"create-users":           {run: runCreateUsers},
 	"deploy":                 {run: runDeploy},
@@ -649,6 +650,7 @@ func runDocsCheck(args []string) error {
 		"README.md",
 		"docs/README.md",
 		"docs/architecture.md",
+		"docs/contracts-submodule-governance.md",
 		"docs/documentation-governance.md",
 		"docs/deployment-secrets-governance.md",
 		"docs/linode-ci-runners.md",
@@ -718,30 +720,7 @@ func runDocsCheck(args []string) error {
 	}
 
 	fmt.Fprintln(os.Stdout)
-	fmt.Fprintln(os.Stdout, "== contracts submodule alignment ==")
-	contractPaths := []string{
-		"repos/rtk_cloud_contracts_doc",
-		"repos/rtk_account_manager/contracts",
-		"repos/rtk_cloud_client/docs/rtk_cloud_contracts_doc",
-		"repos/rtk_video_cloud/docs/rtk_cloud_contracts_doc",
-		"repos/rtk_cloud_admin/rtk_cloud_contracts_doc",
-	}
-	expected := ""
-	for _, path := range contractPaths {
-		check.requireDir(workspace, path)
-		commit, err := gitOutput(filepath.Join(workspace, path), "rev-parse", "HEAD")
-		if err != nil {
-			check.fail(path + " commit could not be read")
-			continue
-		}
-		commit = strings.TrimSpace(commit)
-		fmt.Fprintf(os.Stdout, "%s %s\n", path, commit)
-		if expected == "" {
-			expected = commit
-		} else if commit != expected {
-			fmt.Fprintf(os.Stderr, "WARN: %s is pinned to %s, top-level contracts is %s\n", path, commit, expected)
-		}
-	}
+	checkContractsPolicy(check, workspace, collectContractsCommits(workspace))
 	if check.failures == 0 {
 		fmt.Fprintln(os.Stdout)
 		fmt.Fprintln(os.Stdout, "Documentation checks passed.")
