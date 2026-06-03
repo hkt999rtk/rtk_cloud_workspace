@@ -74,12 +74,18 @@ go run ./scripts/go/rtk-cloud -- mqtt-test \
 user credentials, device inventory, bind artifacts,
 service endpoints, and per-device mTLS cert/key material from the resolved
 environment root. APP actors use user credentials and Cloud APIs; device actors
-use per-device MQTT mTLS identity. The default run is live MQTT E2E: each
-selected device connects to the staging MQTT broker with its certificate,
-subscribes to its shadow response topics, publishes a shadow update, and waits
-for accepted/documents responses through the Video Cloud MQTT bridge. WebRTC,
-relay, storage, clips, and snapshots are disabled for this profile. The design
-and developer issue breakdown live in `docs/home-mqtt-loadtest-simulation.md`.
+use their per-device certificate only to bootstrap a device token over mutual
+TLS. Production-like APP actors must model first-login app key generation, CSR
+submission through Account Manager, certissuer-backed app certificate
+pinning, and use the pinned certificate to bootstrap a subject-bound Video
+Cloud `app` token before sending commands or subscribing to device data.
+The default run is live MQTT E2E: each selected device calls
+`POST /request_token` with its mTLS certificate, connects to the staging MQTT
+broker with the issued token credential, subscribes to
+`devices/<device_id>/up/messages`, publishes a sample home-device envelope, and
+waits for the loopback message. WebRTC, relay, storage, clips, and snapshots are
+disabled for this profile. The design and developer issue breakdown live in
+`docs/home-mqtt-loadtest-simulation.md`.
 
 For a destructive staging reset followed by the full onboarding and MQTT smoke,
 use the one-stop orchestrator from the workspace root:
@@ -104,7 +110,8 @@ Provisioning smoke tests belong under
 `e2e_test/provisioning/account_video_smoke/`. The first planned smoke composes
 Account Manager test users, Account Manager Claim Token resolve/provision APIs,
 and factory-enrolled Video Cloud `devid` certificates. It must report missing
-video-side lifecycle or mTLS prerequisites as `BLOCKED`, not as pass.
+app certificate bootstrap, video-side lifecycle, or mTLS prerequisites as
+`BLOCKED`, not as pass.
 
 Bulk device onboarding validation uses the workspace script sequence documented
 in `scripts/README.zh-TW.md`: create users, generate/factory-enroll devices,

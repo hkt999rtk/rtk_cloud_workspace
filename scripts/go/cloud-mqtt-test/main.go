@@ -2,11 +2,16 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -29,10 +34,13 @@ var homeTypes = map[string]bool{
 }
 
 type userArtifact struct {
-	Brandname string `json:"brandname"`
-	Users     []struct {
-		Email string `json:"email"`
-	} `json:"users"`
+	Brandname string           `json:"brandname"`
+	Users     []userCredential `json:"users"`
+}
+
+type userCredential struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
 }
 
 type bindArtifact struct {
@@ -76,6 +84,17 @@ type deviceResult struct {
 	MessageType    string    `json:"message_type,omitempty"`
 	PayloadSchema  string    `json:"payload_schema,omitempty"`
 	Error          string    `json:"error,omitempty"`
+}
+
+type appBootstrapStatus struct {
+	Status            string `json:"status"`
+	Reason            string `json:"reason,omitempty"`
+	UserEmail         string `json:"user_email,omitempty"`
+	DeviceID          string `json:"device_id,omitempty"`
+	CertificateStatus string `json:"certificate_status,omitempty"`
+	Subject           string `json:"subject,omitempty"`
+	FingerprintSHA256 string `json:"fingerprint_sha256,omitempty"`
+	TokenScope        string `json:"token_scope,omitempty"`
 }
 
 func main() {
@@ -201,9 +220,11 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	}
 
 	userEmails := map[string]bool{}
+	usersByEmail := map[string]userCredential{}
 	for _, u := range users.Users {
 		if u.Email != "" {
 			userEmails[u.Email] = true
+			usersByEmail[u.Email] = u
 		}
 	}
 	manifestByID := map[string]manifestRecord{}
@@ -283,6 +304,19 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 		base["overall"] = "blocked"
 		return writeOutputs(outDir, base)
 	}
+	appBootstrap := appBootstrapStatus{Status: "BLOCKED", Reason: "no selected assignment"}
+	if len(selectedAssignments) > 0 {
+		first := selectedAssignments[0]
+		appBootstrap = runAppCertificateBootstrap(endpoints["account_manager_base_url"].(string), endpoints["video_cloud_base_url"].(string), usersByEmail[first.AssignedEmail], first.DeviceID)
+		if appBootstrap.Status == "FAIL" {
+			base["status"] = "FAIL"
+			base["overall"] = "fail"
+		} else if appBootstrap.Status == "BLOCKED" {
+			base["status"] = "BLOCKED"
+			base["overall"] = "blocked"
+			base["blockers"] = append(blockers, "app certificate bootstrap: "+appBootstrap.Reason)
+		}
+	}
 
 	perDevice := []deviceResult{}
 	latencies := []float64{}
@@ -307,7 +341,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 			row["devices"]++
 			row["commands"]++
 			record := findCert(certRecords, item.DeviceID)
-			outcome := runDeviceSampleEnvelope(record, brandname, mqttHost, mqttPort)
+			outcome := runDeviceSampleEnvelope(record, brandname, endpoints["video_cloud_base_url"].(string), mqttHost, mqttPort)
 			if outcome.MQTTStatus == "PASS" {
 				row["passed"]++
 			} else {
@@ -358,7 +392,8 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	}
 	result["capability_metrics"] = capMetrics
 	result["negative_checks"] = []any{}
-	result["mqtt"] = map[string]any{"probe_result": mqttProbeResult, "client_identities_checked": len(certRecords), "client_identity_mode": "device_id"}
+	result["mqtt"] = map[string]any{"probe_result": mqttProbeResult, "client_identities_checked": len(certRecords), "client_identity_mode": "device_token", "auth_flow": "device certificate mTLS request_token -> MQTT token credential"}
+	result["app_certificate_bootstrap"] = appBootstrap
 	result["out_of_scope"] = []string{"webrtc", "relay", "storage", "clip", "snapshot"}
 	if result["overall"] != "blocked" && successRate < 95 {
 		result["status"] = "FAIL"
@@ -371,7 +406,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	return writeOutputs(outDir, result)
 }
 
-func runDeviceSampleEnvelope(record certRecord, brandname, host string, port int) deviceResult {
+func runDeviceSampleEnvelope(record certRecord, brandname, apiBaseURL, host string, port int) deviceResult {
 	start := time.Now()
 	result := deviceResult{DeviceID: record.DeviceID, DeviceType: record.DeviceType, Commands: 1, SuccessPercent: 0, MQTTStatus: "FAIL", LatencyMS: []float64{0}}
 	cert, err := tls.LoadX509KeyPair(record.CertPath, record.KeyPath)
@@ -379,7 +414,12 @@ func runDeviceSampleEnvelope(record certRecord, brandname, host string, port int
 		result.Error = redactedError(err)
 		return result
 	}
-	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", net.JoinHostPort(host, strconv.Itoa(port)), &tls.Config{Certificates: []tls.Certificate{cert}, InsecureSkipVerify: true})
+	token, err := requestDeviceToken(apiBaseURL, cert)
+	if err != nil {
+		result.Error = redactedError(err)
+		return result
+	}
+	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", net.JoinHostPort(host, strconv.Itoa(port)), &tls.Config{InsecureSkipVerify: true})
 	if err != nil {
 		result.Error = redactedError(err)
 		return result
@@ -387,7 +427,7 @@ func runDeviceSampleEnvelope(record certRecord, brandname, host string, port int
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(10 * time.Second))
 	clientID := fmt.Sprintf("rtk-e2e-%s-%d", record.DeviceID, os.Getpid())
-	if err := mqttConnect(conn, clientID); err != nil {
+	if err := mqttConnect(conn, clientID, record.DeviceID, token); err != nil {
 		result.Error = redactedError(err)
 		return result
 	}
@@ -439,6 +479,216 @@ func runDeviceSampleEnvelope(record certRecord, brandname, host string, port int
 	return result
 }
 
+func requestDeviceToken(apiBaseURL string, cert tls.Certificate) (string, error) {
+	apiBaseURL = strings.TrimRight(strings.TrimSpace(apiBaseURL), "/")
+	if apiBaseURL == "" || strings.Contains(apiBaseURL, "unknown") {
+		return "", errors.New("missing video cloud API base URL for mTLS token bootstrap")
+	}
+	body := bytes.NewBufferString(`{"scope":"device"}`)
+	req, err := http.NewRequest(http.MethodPost, apiBaseURL+"/request_token", body)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{Certificates: []tls.Certificate{cert}, InsecureSkipVerify: true},
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("request_token failed with HTTP %d", resp.StatusCode)
+	}
+	var token struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(payload, &token); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(token.AccessToken) == "" {
+		return "", errors.New("request_token response missing access_token")
+	}
+	return token.AccessToken, nil
+}
+
+func runAppCertificateBootstrap(accountBaseURL, videoBaseURL string, user userCredential, deviceID string) appBootstrapStatus {
+	status := appBootstrapStatus{Status: "FAIL", UserEmail: user.Email, DeviceID: deviceID}
+	if strings.TrimSpace(user.Email) == "" || strings.TrimSpace(user.Password) == "" {
+		status.Status = "BLOCKED"
+		status.Reason = "selected user is missing login credential"
+		return status
+	}
+	first, err := accountLoginAppCertificate(accountBaseURL, user, "")
+	if err != nil {
+		status.Reason = redactedError(err)
+		return status
+	}
+	if first.User.ID == "" {
+		status.Reason = "login response missing user id"
+		return status
+	}
+	status.CertificateStatus = first.AppCertificate.Status
+	login := first
+	var keyPEM []byte
+	if first.AppCertificate.Status == "csr_required" {
+		csrPEM, generatedKeyPEM, err := generateAppCSR("app-user:" + first.User.ID)
+		if err != nil {
+			status.Reason = redactedError(err)
+			return status
+		}
+		keyPEM = generatedKeyPEM
+		login, err = accountLoginAppCertificate(accountBaseURL, user, csrPEM)
+		if err != nil {
+			status.Reason = redactedError(err)
+			return status
+		}
+		status.CertificateStatus = login.AppCertificate.Status
+	}
+	status.Subject = login.AppCertificate.Subject
+	status.FingerprintSHA256 = login.AppCertificate.FingerprintSHA256
+	if login.AppCertificate.CertificatePEM == "" {
+		status.Reason = "login response missing app certificate"
+		return status
+	}
+	if len(keyPEM) == 0 {
+		status.Status = "BLOCKED"
+		status.Reason = "existing app certificate returned but simulation has no matching private key"
+		return status
+	}
+	certPEM := []byte(firstNonEmpty(login.AppCertificate.CertificateChainPEM, login.AppCertificate.CertificatePEM))
+	appCert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		status.Reason = redactedError(err)
+		return status
+	}
+	token, err := requestAppToken(videoBaseURL, appCert, deviceID)
+	if err != nil {
+		status.Reason = redactedError(err)
+		return status
+	}
+	status.Status = "PASS"
+	status.Reason = ""
+	status.TokenScope = token.Scope
+	return status
+}
+
+type accountLoginAppResponse struct {
+	User struct {
+		ID string `json:"id"`
+	} `json:"user"`
+	AppCertificate struct {
+		Status              string `json:"status"`
+		Subject             string `json:"subject"`
+		CertificatePEM      string `json:"certificate_pem"`
+		CertificateChainPEM string `json:"certificate_chain_pem"`
+		FingerprintSHA256   string `json:"fingerprint_sha256"`
+	} `json:"app_certificate"`
+}
+
+func accountLoginAppCertificate(baseURL string, user userCredential, csrPEM string) (accountLoginAppResponse, error) {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" || strings.Contains(baseURL, "unknown") {
+		return accountLoginAppResponse{}, errors.New("missing account manager base URL")
+	}
+	payload := map[string]string{"email": user.Email, "password": user.Password}
+	if strings.TrimSpace(csrPEM) != "" {
+		payload["app_csr_pem"] = csrPEM
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return accountLoginAppResponse{}, err
+	}
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/v1/auth/login", bytes.NewReader(raw))
+	if err != nil {
+		return accountLoginAppResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return accountLoginAppResponse{}, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return accountLoginAppResponse{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return accountLoginAppResponse{}, fmt.Errorf("account login status=%d", resp.StatusCode)
+	}
+	var out accountLoginAppResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		return accountLoginAppResponse{}, err
+	}
+	return out, nil
+}
+
+func generateAppCSR(subject string) (string, []byte, error) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return "", nil, err
+	}
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: subject}}, key)
+	if err != nil {
+		return "", nil, err
+	}
+	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	return string(csrPEM), keyPEM, nil
+}
+
+type appTokenResponse struct {
+	Scope string `json:"scope"`
+}
+
+func requestAppToken(apiBaseURL string, cert tls.Certificate, deviceID string) (appTokenResponse, error) {
+	apiBaseURL = strings.TrimRight(strings.TrimSpace(apiBaseURL), "/")
+	if apiBaseURL == "" || strings.Contains(apiBaseURL, "unknown") {
+		return appTokenResponse{}, errors.New("missing video cloud API base URL for app token bootstrap")
+	}
+	raw, err := json.Marshal(map[string]string{"scope": "app", "devid": deviceID})
+	if err != nil {
+		return appTokenResponse{}, err
+	}
+	req, err := http.NewRequest(http.MethodPost, apiBaseURL+"/request_token", bytes.NewReader(raw))
+	if err != nil {
+		return appTokenResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{Certificates: []tls.Certificate{cert}, InsecureSkipVerify: true},
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return appTokenResponse{}, err
+	}
+	defer resp.Body.Close()
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return appTokenResponse{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return appTokenResponse{}, fmt.Errorf("app request_token status=%d", resp.StatusCode)
+	}
+	var out appTokenResponse
+	if err := json.Unmarshal(payload, &out); err != nil {
+		return appTokenResponse{}, err
+	}
+	return out, nil
+}
+
 func sampleHomeStatusReport(deviceID, capability, brandname, messageID string, occurredAt time.Time) (string, []byte, error) {
 	topic := "devices/" + deviceID + "/up/messages"
 	body := map[string]any{
@@ -463,9 +713,22 @@ func sampleHomeStatusReport(deviceID, capability, brandname, messageID string, o
 	return topic, payload, err
 }
 
-func mqttConnect(w io.ReadWriter, clientID string) error {
-	body := append(mqttString("MQTT"), 4, 2, 0, 30)
+func mqttConnect(w io.ReadWriter, clientID, username, password string) error {
+	flags := byte(2)
+	if username != "" {
+		flags |= 0x80
+	}
+	if password != "" {
+		flags |= 0x40
+	}
+	body := append(mqttString("MQTT"), 4, flags, 0, 30)
 	body = append(body, mqttString(clientID)...)
+	if username != "" {
+		body = append(body, mqttString(username)...)
+	}
+	if password != "" {
+		body = append(body, mqttString(password)...)
+	}
 	if err := mqttWritePacket(w, 0x10, body); err != nil {
 		return err
 	}
