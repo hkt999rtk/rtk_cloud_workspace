@@ -1,0 +1,164 @@
+[
+  {
+    "file": "image1.png",
+    "source": "ppt/media/image1.png",
+    "bytes": 1403115,
+    "width": 1920,
+    "height": 1080,
+    "mode": "RGBA",
+    "avg_rgba": "#E1E9F0FF"
+  },
+  {
+    "file": "image10.jpeg",
+    "source": "ppt/media/image10.jpeg",
+    "bytes": 6520,
+    "width": 1020,
+    "height": 28,
+    "mode": "RGB",
+    "avg_rgba": "#88A0BBFF"
+  },
+  {
+    "file": "image11.png",
+    "source": "ppt/media/image11.png",
+    "bytes": 14406,
+    "width": 248,
+    "height": 51,
+    "mode": "RGBA",
+    "avg_rgba": "#ADADAD48"
+  },
+  {
+    "file": "image12.png",
+    "source": "ppt/media/image12.png",
+    "bytes": 32531,
+    "width": 221,
+    "height": 441,
+    "mode": "P",
+    "avg_rgba": "#6F8AA890"
+  },
+  {
+    "file": "image13.jpeg",
+    "source": "ppt/media/image13.jpeg",
+    "bytes": 702,
+    "width": 620,
+    "height": 25,
+    "mode": "RGB",
+    "avg_rgba": "#20436BFF"
+  },
+  {
+    "file": "image14.png",
+    "source": "ppt/media/image14.png",
+    "bytes": 63452,
+    "width": 511,
+    "height": 699,
+    "mode": "RGBA",
+    "avg_rgba": "#C7D0DBFF"
+  },
+  {
+    "file": "image15.png",
+    "source": "ppt/media/image15.png",
+    "bytes": 62484,
+    "width": 784,
+    "height": 163,
+    "mode": "RGBA",
+    "avg_rgba": "#ECEEEFFF"
+  },
+  {
+    "file": "image16.png",
+    "source": "ppt/media/image16.png",
+    "bytes": 189775,
+    "width": 1224,
+    "height": 871,
+    "mode": "RGBA",
+    "avg_rgba": "#EDEFF1FF"
+  },
+  {
+    "file": "image17.jpeg",
+    "source": "ppt/media/image17.jpeg",
+    "bytes": 580,
+    "width": 25,
+    "height": 25,
+    "mode": "RGB",
+    "avg_rgba": "#ABD3EBFF"
+  },
+  {
+    "file": "image18.jpeg",
+    "source": "ppt/media/image18.jpeg",
+    "bytes": 564,
+    "width": 23,
+    "height": 22,
+    "mode": "RGB",
+    "avg_rgba": "#ABD2E9FF"
+  },
+  {
+    "file": "image2.png",
+    "source": "ppt/media/image2.png",
+    "bytes": 25825,
+    "width": 621,
+    "height": 127,
+    "mode": "P",
+    "avg_rgba": "#2A5C9B48"
+  },
+  {
+    "file": "image3.png",
+    "source": "ppt/media/image3.png",
+    "bytes": 15016,
+    "width": 446,
+    "height": 91,
+    "mode": "P",
+    "avg_rgba": "#2A5C9B48"
+  },
+  {
+    "file": "image4.png",
+    "source": "ppt/media/image4.png",
+    "bytes": 44633,
+    "width": 148,
+    "height": 211,
+    "mode": "RGBA",
+    "avg_rgba": "#BBC0C6FF"
+  },
+  {
+    "file": "image5.jpg",
+    "source": "ppt/media/image5.jpg",
+    "bytes": 84323,
+    "width": 535,
+    "height": 1238,
+    "mode": "RGB",
+    "avg_rgba": "#D4DEE9FF"
+  },
+  {
+    "file": "image6.png",
+    "source": "ppt/media/image6.png",
+    "bytes": 13385,
+    "width": 417,
+    "height": 85,
+    "mode": "P",
+    "avg_rgba": "#2A5C9B48"
+  },
+  {
+    "file": "image7.jpg",
+    "source": "ppt/media/image7.jpg",
+    "bytes": 257387,
+    "width": 1920,
+    "height": 1080,
+    "mode": "RGB",
+    "avg_rgba": "#EEF2F5FF"
+  },
+  {
+    "file": "image8.jpg",
+    "source": "ppt/media/image8.jpg",
+    "bytes": 180239,
+    "width": 872,
+    "height": 1245,
+    "mode": "RGB",
+    "avg_rgba": "#CEDAE4FF"
+  },
+  {
+    "file": "image9.png",
+    "source": "ppt/media/image9.png",
+    "bytes": 915238,
+    "width": 849,
+    "height": 1237,
+    "mode": "RGBA",
+    "avg_rgba": "#D7E1EAC4"
+  }
+]
