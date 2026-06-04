@@ -22,6 +22,7 @@ Shortcuts:
   unprovision NAME [args]       -> unprovision-devices
   mqtt NAME [args]              -> mqtt-test
   mqtt-report [NAME] [args]     -> mqtt-trace-report
+  video NAME [args]             -> video-relay-test
   certs [args]                  -> check-certificates
   ssh [CIDR] [args]             -> update-ssh-whitelist
   rm-vm [args]                  -> remove-all-vm
@@ -143,6 +144,12 @@ case "$cmd" in
 		else
 			with_env mqtt-trace-report "$@"
 		fi
+		;;
+	video)
+		need_value "brand name" "${1:-}"
+		brand="$1"
+		shift
+		with_env video-relay-test --brandname "$brand" "$@"
 		;;
 	certs)
 		with_env check-certificates "$@"

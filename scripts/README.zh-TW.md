@@ -338,6 +338,8 @@ go run ./scripts/go/rtk-cloud -- staging-e2e-test \
 
 `./stg.sh mqtt RTK` 的 console runtime trace 可用 `--trace-detail` 控制：`summary` 是預設，只顯示 publish/receive 與資料摘要；`full` 顯示 token/connect/subscribe/publish/receive 全鏈條；`none` 關閉 console trace。資料摘要包含 timestamp、actor、topic、message_type、message_id、command_id、device_id、payload action/status，以及 selected `desired.*` / `reported.*` state 欄位，不輸出 payload body、`clientToken` 或 credential material。
 
+可用 `./stg.sh video RTK` 執行 staging WebRTC RTP relay smoke。這個測試只選最新 bind artifact 內具備 `video_streaming` service option 的 camera device，使用 device certificate mTLS 換 device token，使用 users artifact 內 app private key + app certificate mTLS 換 device-bound app token，然後重用 `e2e_test/video_cloud/load` runner。PASS 代表 device websocket owner online、viewer 建立 WebRTC session、server 回 SDP offer 與 ICE servers、device 送 SDP answer、ICE connected/completed、viewer 收到 synthetic VP8 RTP packets/bytes，且 session close 成功。這不是 legacy raw RTP relay 測試；PASS 來源是 WebRTC signaling + RTP receive evidence。輸出在 `<env-root>/artifacts/video-relay-test/<timestamp>/results.json` 與 `TEST_REPORT.md`，console/report 會 redacted bearer token、TURN credential、private key、CSR 與 certificate PEM。
+
 ### `go run ./scripts/go/rtk-cloud -- deploy`
 
 只做 staging deploy/verify，不負責建立 VM。它會先 best-effort 安裝與驗證 logger backend/forwarder，再部署與驗證 Video Cloud、Account Manager、Cloud Admin；失敗時會停止後續 application deploy 步驟並寫 readiness report。logger/forwarder degraded 不會阻塞 application deploy。

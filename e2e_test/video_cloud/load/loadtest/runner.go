@@ -248,9 +248,9 @@ func (c *Config) Validate() error {
 		c.DeviceRouteSet = DeviceRouteSetFunctional
 	}
 	switch c.DeviceRouteSet {
-	case DeviceRouteSetSmoke, DeviceRouteSetFunctional:
+	case DeviceRouteSetOff, DeviceRouteSetSmoke, DeviceRouteSetFunctional:
 	default:
-		return fmt.Errorf("unsupported device route set %q: expected %q or %q", c.DeviceRouteSet, DeviceRouteSetSmoke, DeviceRouteSetFunctional)
+		return fmt.Errorf("unsupported device route set %q: expected %q, %q, or %q", c.DeviceRouteSet, DeviceRouteSetOff, DeviceRouteSetSmoke, DeviceRouteSetFunctional)
 	}
 	if c.DeviceTransportSet == "" {
 		c.DeviceTransportSet = DeviceTransportSetSmoke
@@ -1228,6 +1228,9 @@ func (r *Runner) runAppActor(ctx context.Context, cfg Config, deviceID string) [
 }
 
 func (r *Runner) runDeviceActor(ctx context.Context, cfg Config, deviceID string) []Operation {
+	if cfg.DeviceRouteSet == DeviceRouteSetOff {
+		return nil
+	}
 	token := cfg.DeviceBearerFor(deviceID)
 	if token == "" {
 		return []Operation{{
@@ -1765,7 +1768,7 @@ func (r *Runner) postMultipart(ctx context.Context, cfg Config, actor, name, dev
 		return op
 	}
 	op.Success = true
-	op.Evidence = string(raw)
+	op.Evidence = sanitizeEvidence(raw)
 	return op
 }
 
@@ -2427,6 +2430,7 @@ func (r *Runner) runWebRTCMediaViewerActor(ctx context.Context, cfg Config, devi
 		})
 		return ops
 	}
+	answerOp.Evidence = summarizeWebRTCResponseEvidence(response)
 	if offer, err := extractOfferPayload(response); err == nil {
 		return append([]Operation{offerOp, answerOp}, r.completeServerOfferWebRTCMedia(ctx, cfg, deviceID, viewerID, response, offer, accountToken)...)
 	}
@@ -2496,7 +2500,19 @@ func (r *Runner) runWebRTCMediaViewerActor(ctx context.Context, cfg Config, devi
 }
 
 func (r *Runner) completeServerOfferWebRTCMedia(ctx context.Context, cfg Config, deviceID, viewerID string, response map[string]any, offer map[string]string, bearer string) []Operation {
-	answerer, err := NewPionMediaAnswerSession(ctx, offer, cfg.HTTPTimeout)
+	iceServers, err := extractICEServers(response)
+	if err != nil {
+		return []Operation{{
+			Actor:       ActorViewer,
+			Name:        "webrtc_media_ice_connected",
+			DeviceID:    deviceID,
+			ViewerID:    viewerID,
+			Success:     false,
+			ErrorClass:  ClassWebRTCSetup,
+			ErrorDetail: redactDetail(err.Error()),
+		}}
+	}
+	answerer, err := NewPionMediaAnswerSessionWithICEServers(ctx, offer, iceServers, cfg.HTTPTimeout)
 	if err != nil {
 		return []Operation{{
 			Actor:       ActorViewer,
@@ -2560,6 +2576,52 @@ func extractAnswerPayload(response map[string]any) (map[string]string, error) {
 		return nil, errors.New("invalid media answer")
 	}
 	return answer, nil
+}
+
+func summarizeWebRTCResponseEvidence(response map[string]any) string {
+	iceCount := 0
+	if _, ok := response["ice_servers"]; ok {
+		if servers, err := extractICEServers(response); err == nil {
+			iceCount = len(servers)
+		}
+	}
+	mode, _ := response["mode"].(string)
+	candidateTypes := strings.Join(extractOfferCandidateTypes(response), ",")
+	return fmt.Sprintf("webrtc_response mode=%s session_id_present=%t ice_servers=%d offer_present=%t answer_present=%t candidate_types=%s",
+		mode,
+		responseString(response, "session_id") != "",
+		iceCount,
+		response["offer"] != nil,
+		response["answer"] != nil,
+		candidateTypes,
+	)
+}
+
+func extractOfferCandidateTypes(response map[string]any) []string {
+	offer, err := extractOfferPayload(response)
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(offer["sdp"], "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "a=candidate:") {
+			continue
+		}
+		fields := strings.Fields(line)
+		for i, field := range fields {
+			if field == "typ" && i+1 < len(fields) {
+				seen[fields[i+1]] = true
+				break
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for typ := range seen {
+		out = append(out, typ)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func extractOfferPayload(response map[string]any) (map[string]string, error) {
@@ -2705,7 +2767,7 @@ func (r *Runner) requestJSON(ctx context.Context, cfg Config, method, actor, nam
 		return op
 	}
 	op.Success = true
-	op.Evidence = string(raw)
+	op.Evidence = sanitizeEvidence(raw)
 	return op
 }
 
@@ -3235,6 +3297,59 @@ func redactToken(token string) string {
 		return ""
 	}
 	return "<redacted>"
+}
+
+func sanitizeEvidence(raw []byte) string {
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return redactDetail(string(raw))
+	}
+	return sanitizeEvidenceValue(value)
+}
+
+func sanitizeEvidenceValue(value any) string {
+	switch v := value.(type) {
+	case map[string]any:
+		for key, child := range v {
+			lower := strings.ToLower(key)
+			if lower == "credential" || lower == "username" || lower == "access_token" || lower == "refresh_token" || lower == "token" {
+				v[key] = "<redacted>"
+				continue
+			}
+			v[key] = sanitizeEvidenceAny(child)
+		}
+	case []any:
+		for i, child := range v {
+			v[i] = sanitizeEvidenceAny(child)
+		}
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return "<redacted>"
+	}
+	return string(raw)
+}
+
+func sanitizeEvidenceAny(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		for key, child := range v {
+			lower := strings.ToLower(key)
+			if lower == "credential" || lower == "username" || lower == "access_token" || lower == "refresh_token" || lower == "token" {
+				v[key] = "<redacted>"
+				continue
+			}
+			v[key] = sanitizeEvidenceAny(child)
+		}
+		return v
+	case []any:
+		for i, child := range v {
+			v[i] = sanitizeEvidenceAny(child)
+		}
+		return v
+	default:
+		return value
+	}
 }
 
 func redactDetail(detail string) string {

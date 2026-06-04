@@ -63,6 +63,7 @@ var commands = map[string]commandSpec{
 	"unprovision-devices":    {run: runUnprovisionDevices},
 	"update-ssh-whitelist":   {run: runUpdateSSHWhitelist},
 	"validate-device-bind":   {run: runValidateDeviceBind},
+	"video-relay-test":       {run: runVideoRelayTest},
 }
 
 var ciRunnerCommands = map[string]commandSpec{

@@ -212,10 +212,14 @@ func (s *PionMediaOfferSession) Close() {
 }
 
 func NewPionMediaAnswerSession(ctx context.Context, offer map[string]string, gatherTimeout time.Duration) (*PionMediaAnswerSession, error) {
+	return NewPionMediaAnswerSessionWithICEServers(ctx, offer, nil, gatherTimeout)
+}
+
+func NewPionMediaAnswerSessionWithICEServers(ctx context.Context, offer map[string]string, iceServers []webrtc.ICEServer, gatherTimeout time.Duration) (*PionMediaAnswerSession, error) {
 	if offer["type"] != "offer" || offer["sdp"] == "" {
 		return nil, errors.New("invalid media offer")
 	}
-	peer, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	peer, err := webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: iceServers})
 	if err != nil {
 		return nil, fmt.Errorf("pion media answer peer connection: %w", err)
 	}

@@ -32,6 +32,7 @@ const (
 )
 
 const (
+	DeviceRouteSetOff        = "off"
 	DeviceRouteSetSmoke      = "smoke"
 	DeviceRouteSetFunctional = "functional"
 )

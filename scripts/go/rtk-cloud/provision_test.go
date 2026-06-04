@@ -100,6 +100,65 @@ func TestLoggerProvisionStatusesReflectEnvAndStateFiles(t *testing.T) {
 	}
 }
 
+func TestEnsureProvisionRuntimeContractsWritesMTLSAndInternalAuth(t *testing.T) {
+	root := t.TempDir()
+	workspace := t.TempDir()
+	keysDir := filepath.Join(workspace, "keys", "staging", "linode", "video-cloud")
+	mkdirAll(t, keysDir)
+	writeFile(t, filepath.Join(keysDir, "root-ca.ed25519.cert.pem"), "-----BEGIN CERTIFICATE-----\nroot\n-----END CERTIFICATE-----\n")
+	writeFile(t, filepath.Join(keysDir, "production-issuer.ed25519.cert.pem"), "-----BEGIN CERTIFICATE-----\ndevice\n-----END CERTIFICATE-----\n")
+	writeFile(t, filepath.Join(keysDir, "app-user-issuer.ed25519.cert.pem"), "-----BEGIN CERTIFICATE-----\napp\n-----END CERTIFICATE-----\n")
+
+	paths := provisionPaths{
+		Workspace:           workspace,
+		EnvRoot:             root,
+		VideoConfig:         filepath.Join(root, "topology", "video-cloud-staging.yaml"),
+		VideoEnv:            filepath.Join(root, "services", "video-cloud", "video-cloud-staging.env"),
+		AccountManagerEnv:   filepath.Join(root, "services", "account-manager", "account-manager-public-staging.env"),
+		AccountManagerState: filepath.Join(root, "state", "account-manager-staging.env"),
+	}
+	mkdirAll(t, filepath.Dir(paths.VideoConfig))
+	writeFile(t, paths.VideoConfig, `deploy:
+  device_client_domain: ""
+  device_client_ca_cert_path: ""
+`)
+	mkdirAll(t, filepath.Dir(paths.VideoEnv))
+	writeFile(t, paths.VideoEnv, "VIDEO_CLOUD_AUTH_SECRET=auth-secret\n")
+	mkdirAll(t, filepath.Dir(paths.AccountManagerEnv))
+	writeFile(t, paths.AccountManagerEnv, "ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN=shared-internal-token\n")
+	mkdirAll(t, filepath.Dir(paths.AccountManagerState))
+	writeFile(t, paths.AccountManagerState, "ACCOUNT_MANAGER_LINODE_PRIVATE_IPV4=10.42.1.55\n")
+
+	err := ensureProvisionRuntimeContracts(paths, map[string]string{"VIDEO_CLOUD_DOMAIN": "video-cloud-stg-0529.realtekconnect.com"})
+	if err != nil {
+		t.Fatalf("ensureProvisionRuntimeContracts returned error: %v", err)
+	}
+
+	config := readFile(t, paths.VideoConfig)
+	if !strings.Contains(config, "device_client_domain: device.video-cloud-stg-0529.realtekconnect.com") {
+		t.Fatalf("video config missing device client domain:\n%s", config)
+	}
+	bundlePath := filepath.Join(keysDir, "device-app-client-ca-bundle.pem")
+	if !strings.Contains(config, "device_client_ca_cert_path: "+bundlePath) {
+		t.Fatalf("video config missing device client CA bundle:\n%s", config)
+	}
+	bundle := readFile(t, bundlePath)
+	if strings.Count(bundle, "BEGIN CERTIFICATE") != 3 {
+		t.Fatalf("bundle certificate count = %d, want 3:\n%s", strings.Count(bundle, "BEGIN CERTIFICATE"), bundle)
+	}
+
+	videoEnv, _ := readEnvFile(paths.VideoEnv)
+	if videoEnv["VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_URL"] != "http://10.42.1.55:18081" {
+		t.Fatalf("VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_URL = %q", videoEnv["VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_URL"])
+	}
+	if videoEnv["VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN"] != "shared-internal-token" {
+		t.Fatalf("video internal token was not synchronized")
+	}
+	if videoEnv["VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TIMEOUT"] != "10s" {
+		t.Fatalf("VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TIMEOUT = %q", videoEnv["VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TIMEOUT"])
+	}
+}
+
 func TestServiceLogLevelsDefaultAndOverrides(t *testing.T) {
 	env := map[string]string{
 		"CLOUD_SERVICE_LOG_LEVEL":   "warn",

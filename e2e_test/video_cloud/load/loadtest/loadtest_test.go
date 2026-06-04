@@ -1448,7 +1448,9 @@ func TestRunnerWebRTCMediaRTPRecordsCoverage(t *testing.T) {
 				"session_id": "media-session-1",
 				"answer":     answerer.AnswerPayload(),
 				"ice_servers": []map[string]any{{
-					"urls": []string{"stun:stun.example.test:3478"},
+					"urls":       []string{"turn:turn.example.test:3478?transport=udp"},
+					"username":   "turn-user",
+					"credential": "turn-secret",
 				}},
 			})
 		case "/api/request_webrtc/close":
@@ -1491,6 +1493,50 @@ func TestRunnerWebRTCMediaRTPRecordsCoverage(t *testing.T) {
 	}
 	if result.WebRTCMedia.PacketsReceived == 0 || result.WebRTCMedia.BytesReceived == 0 {
 		t.Fatalf("WebRTCMedia metrics = %#v, want packets and bytes", result.WebRTCMedia)
+	}
+	for _, op := range result.Operations {
+		if strings.Contains(op.Evidence, "turn-user") || strings.Contains(op.Evidence, "turn-secret") {
+			t.Fatalf("operation evidence leaked TURN credentials: %#v", op)
+		}
+	}
+}
+
+func TestRunnerDeviceRouteSetOffSkipsDeviceHTTP(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/camera_event" {
+			called = true
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	result, err := NewRunner(server.Client()).Run(context.Background(), Config{
+		Profile:          ProfileSmoke,
+		APIURL:           server.URL,
+		Actors:           ActorDevice,
+		DeviceRouteSet:   DeviceRouteSetOff,
+		DeviceToken:      "device-token",
+		RunID:            "run-device-off",
+		InstanceID:       "instance-device-off",
+		DevicePrefix:     "load-device",
+		Duration:         time.Nanosecond,
+		VirtualDevices:   1,
+		Iterations:       1,
+		DeviceOnlineMode: DeviceOnlineModeNone,
+		Thresholds:       Thresholds{MinSuccessRate: 1, RequireCoverageMatrix: true},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if called {
+		t.Fatal("camera_event should not be called when device route set is off")
+	}
+	if result.Summary.Failures != 0 {
+		t.Fatalf("failures = %d operations=%#v", result.Summary.Failures, result.Operations)
+	}
+	if result.CoverageMatrix["device_http"].Status != CoverageStatusNotRun {
+		t.Fatalf("device_http coverage = %#v, want NOT_RUN", result.CoverageMatrix["device_http"])
 	}
 }
 
@@ -1615,6 +1661,7 @@ func TestRunnerWebRTCMediaAnswersServerOfferAndSendsSyntheticRTP(t *testing.T) {
 				"devid":      "load-device-0",
 				"session_id": sessionID,
 				"offer":      offerSession.OfferPayload(),
+				"ice_servers": []map[string]any{},
 			})
 		case "/api/request_webrtc/answer":
 			var body map[string]any
