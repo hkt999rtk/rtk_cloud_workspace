@@ -14,7 +14,7 @@ literal product, repo, API, endpoint, command, and status-label names in English
 - 核心管理訊息必須固定出現在第一頁，且要在摘要正文之前。
 - 核心管理訊息之後必須放「目前狀態總結」。
 - 目前狀態總結格式：三欄表格 `面向` / `目前狀態` / `下一步或風險`，三到五列，每格一句話，至少涵蓋 deployment、product/demo evidence、operations/readiness、下一個 milestone 或 resource gap。
-- 一列 schedule snapshot，標示目前在 May 1 到 early-August 50,000-device loading test 目標路徑上的位置。
+- 一列 schedule snapshot，標示目前在 May 1 到 Aug.1 loading-test milestone，再到 alpha、beta、public 路徑上的位置。
 - 一張 product-to-KPI 視覺圖。
 
 ## 第一部分：摘要
@@ -31,13 +31,14 @@ literal product, repo, API, endpoint, command, and status-label names in English
 ## 第二部分：時程與 Loading Test 路徑
 
 - Project start：2026-05-01。
-- Target：Early August 2026 pass 50,000 IoT devices loading test。
-- Video staged target：如果本週報告涵蓋 IoT Video / WebRTC / video storage，另外列出 August 2026 的 500-device video staged validation，並說明這是往 5,000-device video target 前進前的 gate，不可和 50,000-device IoT loading test 混在一起。
+- Target：2026-08-01 pass 50,000 IoT devices + 5,000 video cameras loading test。
+- Post-loading-test release path：August alpha test（including SDK）、September beta test（including SDK and pilot customer）、then public release path。
+- Video target：如果本週報告涵蓋 IoT Video / WebRTC / video storage，另外列出 2026-08-01 5,000 video-camera loading-test milestone；video lane 要說明 WebRTC setup、TURN behavior、storage path、stream health 與 metrics。
 - Dynamic scaling：目前架構可說明已 design-in scaling-ready boundaries / scale-out direction，但 August release 不實作 dynamic scaling；八月前報告只描述 architecture direction、capacity evidence、multi-host readiness、bottleneck visibility 和 runbook，不可宣稱 autoscaling / elastic scaling implemented。
 - 目前位置：依報告日期與實際 evidence 更新，不可只用樂觀日期推進。
-- Timeline / Gantt / milestone-lane chart：標示 May 1 到 early-August target，並清楚標出 `目前位置`；schedule 不要只用純數字表格呈現。
-- Milestone detail table：只作為輔助明細，內容包含 May kickoff、May foundation、late-May/early-June load-test preparation、June small/medium validation、late-June multi-host/capacity、July 10k/30k rehearsal、late-July 50k dry run、early-Aug final pass。
-- Video schedule lane：June video readiness foundation、July 500-device preparation、August 500-device staged validation、after 500-device validation 才往 5,000-device video target 擴大。
+- Timeline / Gantt / milestone-lane chart：標示 May 1 到 Aug.1 loading-test milestone，再接 alpha、beta、public，並清楚標出 `目前位置`；schedule 不要只用純數字表格呈現。
+- Milestone detail table：只作為輔助明細，內容包含 May kickoff、May foundation、late-May/early-June load-test preparation、June validation、July scale rehearsal、Aug.1 50,000-device + 5,000-camera pass、August alpha、September beta、public path。
+- Video schedule lane：June video readiness foundation、July video profile、late-July 5,000-camera rehearsal、Aug.1 5,000-camera pass。
 - 本週 gate：本週必須完成或驗證的可量測項目。
 - 下個 gate：下一個可驗證 milestone。
 - Schedule risk：用 `on track` / `at risk` / `blocked`，並說明原因。
@@ -49,7 +50,7 @@ literal product, repo, API, endpoint, command, and status-label names in English
 - Cloud relationship diagram：Realtek Platform Root -> Brand Cloud -> brand users / end users / devices，並標明 Account Manager、Video Cloud、Admin Console、Frontend、SDK/app/firmware 的 source-of-truth 邊界。
 - Portal Web / Digital Marketing：說明 `rtk_cloud_frontend` 是 marketing website、docs/manual portal、lead generation layer；涵蓋 SEO、content development、visitor behavior analytics、CTA conversion、lead capture、sales improvement loop。
 - Portal funnel / content map：traffic/source -> page engagement -> CTA click -> contact lead -> sales follow-up；homepage -> features -> docs/manual -> contact。
-- Current-vs-target architecture：目前 staging/runtime/evidence/operations readiness 對照 early-August load-test-ready target。
+- Current-vs-target architecture：目前 staging/runtime/evidence/operations readiness 對照 Production Target；scaling architecture 可說明已 design-in，但 autoscaling 只在 production deployment 評估。
 - Module-to-cloud-to-commercial KPI 路徑。
 - KPI framework：技術、產品、商業、維運。
 - WebRTC / Video Storage Management：分開說明 live WebRTC signaling readiness 和 stored-media/video-storage readiness；WebRTC 是 APP-offer/device-answer、TURN/ICE、owner transport、session lifecycle，video storage 是 snapshot/media upload、metadata、download auth、byte range、retention/backup。
@@ -92,12 +93,16 @@ Keep the body selective. Put the full material catalog in the appendix.
 - 附 timestamp 的 live health check table。
 - Production-ready gaps。
 
-## 第六部分：決策、風險與 Evidence
+## 第六部分：決策、支援、風險與 Evidence
 
-- Decision / support needed table：decision、why now、impact if delayed、owner/audience。
+- Alpha readiness support board：account/payment ownership、operation backup、temporary alpha internal testers、temporary beta pilot customer。
+- Account/payment ownership 必須明確寫出 DNS、Linode billing、credit-card payment、mail/service accounts 是否已從 Kevin personal account 轉到 company-managed 或 approved third-party account；alpha 前不能留成 single point failure。
+- Temporary alpha internal testers：建議 4-6 位 real human testers，其中至少 3-4 位 developer / firmware / app 類型；auto test 補 quantity，不取代 human developer feedback。
+- Temporary beta pilot customer：beta 前需要 1-2 個 pilot customer 或 partner use case；這是 beta window 的外部驗證，不等於長期營運人頭。
+- Ongoing operation/development coverage：另用一頁估算 public 前後需要留下來的 backend/service owner、DevOps/SRE、SDK support、QA/load test、security review、FAE/pilot support coverage。
 - Risk burn-down table：risk、current status、mitigation、owner/dependency、trend。
 - Evidence index：live endpoint、repo/PR/commit、screenshot/design、load-test report、deployment/configuration、production-readiness、missing/blocked evidence。
-- Resource plan 預設不放；只有使用者或 report owner 明確要求時才加入。
+- Resource plan 預設不展開成詳細人力或預算表；Page 30 只列 alpha/beta 前會影響 milestone 的 ownership/support。
 
 Allowed configuration detail:
 
@@ -127,7 +132,7 @@ Forbidden configuration detail:
 - 摘要可在五分鐘內看懂。
 - Schedule path 和目前位置清楚。
 - 重要數字優先用 chart / timeline / progress visual 呈現，純表格只作為 evidence 或明細。
-- Loading Test Readiness Matrix 有列出 50,000-device target 前的 gates。
+- Loading Test Readiness Matrix 有列出 50,000-device + 5,000-video-camera target 前的 gates。
 - 細節符合目前 repo 與 deployment 狀態。
 - 技術工作有連到 AmebaPRO / module commercial KPI。
 - WebRTC live video 與 video storage/media 沒有混在一起；signaling、TURN/ICE、owner transport、stream-health、snapshot/media upload、download auth、retention/backup evidence 各自清楚。

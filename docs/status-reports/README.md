@@ -6,14 +6,23 @@ Owner: `rtk_cloud_workspace`.
 
 This directory defines the reusable weekly status report framework for Realtek
 Video / IoT Cloud and Connect+ work. The framework is tracked in git; generated
-Word files, rendered pages, and copied figure assets stay under `.artifacts/`.
+Word/PPTX files, rendered pages, and copied figure assets stay under
+`.artifacts/`.
 
 ## Output Model
 
-Use the builder from the workspace root:
+Use the Word builder from the workspace root:
 
 ```sh
   tools/status-report/build_cloud_status_report.py
+```
+
+Use the PowerPoint builder from the workspace root:
+
+```sh
+  NODE_PATH="$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules" \
+    "$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node" \
+    tools/status-report/build_cloud_status_report_pptx.mjs
 ```
 
 The builder writes:
@@ -21,53 +30,126 @@ The builder writes:
 ```text
 .artifacts/status-reports/YYYY-MM-DD/
   realtek_video_iot_cloud_status_report.docx
+  realtek_video_iot_cloud_status_report.pptx
   figures/
   rendered/
+  pptx-rendered/
+  pptx-layout/
 ```
 
 Do not commit generated report output. Commit only framework changes, source
 material indexes, and builder changes.
 
+## Recreate The Same PPTX Next Time
+
+The current PowerPoint status report is generated from tracked source files,
+not from conversation memory. To recreate a deck with the same guideline,
+context, slide order, and Realtek master style, start from these files in this
+order:
+
+1. [`guidelines.md`](guidelines.md) - report-writing rules, business context,
+   schedule policy, security policy, and evidence rules.
+2. [`templates/cloud-status-report-pptx-layout.md`](templates/cloud-status-report-pptx-layout.md)
+   - fixed slide sequence, topic transitions, proof-object expectations, and
+   layout rules.
+3. [`materials.md`](materials.md) - design assets, screenshots, deployment
+   evidence, and source index.
+4. [`master_slide/design-guidelines.md`](master_slide/design-guidelines.md) -
+   designer-facing Realtek master rules.
+5. [`master_slide/SKILL.md`](master_slide/SKILL.md) - AI/LLM-facing slide
+   generation rules.
+6. [`../../tools/status-report/report_model.py`](../../tools/status-report/report_model.py)
+   - shared report data model: `CORE_MESSAGE`, schedule data, material list,
+   Linode checks, portal web screenshot path, and generated figures.
+7. [`../../tools/status-report/build_cloud_status_report_pptx.mjs`](../../tools/status-report/build_cloud_status_report_pptx.mjs)
+   - actual PPTX builder and slide implementation.
+
+Stable context that must be preserved unless the report owner explicitly
+changes it:
+
+- Core purpose: the cloud supports bottom-up business module sales by giving
+  users, developers, and customer PoC teams a convenient and secure cloud
+  network architecture.
+- Audience: cross-unit leaders; assume some leaders may not already know why
+  this cloud exists.
+- Narrative order: presenter context, major-topic map, cloud relationship,
+  module product path, two cloud types, operational progress, portal web,
+  technical/security design, deployment/operation/evidence, review gate.
+- Schedule context: project start is 2026-05-01; the Aug.1 milestone is
+  completing the 50,000-device IoT loading test and the 5,000 video-camera
+  loading test. After that, plan one month of alpha test including SDK, one
+  month of beta test including SDK and pilot customer, then public release.
+- Scaling context: scaling architecture is designed in, but autoscaling/dynamic
+  scaling implementation is deferred until after loading-test evidence.
+- Security context: explain STRIDE visually before PKI implementation; frame
+  PKI as identity, entitlement, audit, revocation, and lifecycle management.
+- Portal context: `rtk_cloud_frontend` is the public website, documentation /
+  manual portal, SEO/content layer, CTA/lead capture, and sales follow-up
+  surface. Keep it separate from operational cloud runtime.
+
+Generated PPTX and QA images remain under `.artifacts/status-reports/YYYY-MM-DD/`.
+If a fresh portal screenshot is needed, capture `https://webtest.mgmeet.io`,
+crop the first viewport to a 16:9 image, and save it as
+`.artifacts/status-reports/YYYY-MM-DD/figures/portal-webtest-home-hero.png`
+before running the PPTX builder. If the screenshot is absent, the builder falls
+back to the tracked frontend hero image.
+
 ## Report Shape
 
 The current report structure is documented in
 [`templates/cloud-status-report-outline.md`](templates/cloud-status-report-outline.md).
+The PPTX slide sequence is documented in
+[`templates/cloud-status-report-pptx-layout.md`](templates/cloud-status-report-pptx-layout.md).
 Writing standards are documented in [`guidelines.md`](guidelines.md).
 It is intentionally stable so the same skeleton can be reused for weekly
 management reports:
 
 - 封面 / 核心管理訊息
-- 第一頁目前狀態總結
-- 第一部分：摘要
-- 第二部分：時程與 Loading Test 路徑
-- 第三部分：Cloud / Product / KPI 細節
+- Presenter context：Kevin Huang IoT cloud / video cloud / digital marketing background
+- 開場：本次報告 major topics
+- 第一部分：Cloud business context
   - Cloud relationship / tenant structure
+  - Cloud as module product path
+  - Operational IoT / Video Cloud vs Portal Web / Marketing Cloud
+- 第二部分：Operational Cloud 目前進度與 8 月路徑
+  - 目前狀態總結
+  - Schedule path
+  - Loading test readiness
+  - Video schedule lane
+  - Current staging vs production target architecture
+- 第三部分：Portal Web / Digital Marketing
   - Portal web / digital marketing
+- 第四部分：Operational Cloud 技術設計與安全管理
   - WebRTC / Video Storage Management
   - MQTT / Device Shadow Management
+  - STRIDE security implementation explainer
   - Security / PKI trust management
   - Threat model / cyber security review
-- 第四部分：操作畫面與使用流程
-- 第五部分：Linode Staging 部署與設定
+- 第五部分：Deployment、操作流程與 Evidence
+  - Linode Staging 部署與設定
+  - 操作畫面與使用流程
+  - 決策、風險與 Evidence
 - 審閱清單
 - Appendix：素材與來源索引
 
 ## Schedule Policy
 
 Every report must show the schedule path from project start on 2026-05-01 to
-the early-August target of passing the 50,000-device IoT loading test. The
-schedule section must state the current position, weekly gate, next gate, risk,
-and `on track` / `at risk` / `blocked` judgment based on evidence.
+the 2026-08-01 loading-test milestone: 50,000 IoT devices plus 5,000 video
+cameras. The schedule section must state the current position, weekly gate,
+next gate, risk, and `on track` / `at risk` / `blocked` judgment based on
+evidence.
 
-If the report also covers IoT Video / WebRTC / video storage, include a
-separate video schedule lane: August 2026 should show a 500-device video staged
-validation gate before the report claims progress toward the 5,000-device video
-target. Keep this separate from the 50,000-device IoT loading-test target.
+After the Aug.1 loading-test milestone, the report should show the release path:
+August alpha test including SDK, September beta test including SDK and pilot
+customer, then public release. If the report covers IoT Video / WebRTC / video
+storage, include a separate video schedule lane that leads to the same Aug.1
+5,000-camera loading-test milestone.
 
 The current architecture may be described as scaling-ready when evidence
 supports scale-out boundaries, service separation, multi-host readiness, and
 metrics. Dynamic scaling implementation is still deferred until after the
-early-August loading test. Before that point, reports should discuss scaling
+Aug.1 loading test. Before that point, reports should discuss scaling
 architecture direction, capacity evidence, bottleneck visibility, and operator
 runbook status; do not claim autoscaling or elastic scaling is implemented for
 the August release.

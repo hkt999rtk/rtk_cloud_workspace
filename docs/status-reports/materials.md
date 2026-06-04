@@ -47,6 +47,8 @@ status reports.
 | Realtek PowerPoint Master | `docs/status-reports/master_slide/powerpoint_master.pptx` | Company master for PowerPoint report decks. |
 | Designer Guideline | `docs/status-reports/master_slide/design-guidelines.md` | Designer-facing rules for typography, palette, layout patterns, and report-to-slide mapping. |
 | AI Slide Skill | `docs/status-reports/master_slide/SKILL.md` | AI/LLM-facing instruction file for generating slides in the master style. |
+| PPTX Layout Template | `docs/status-reports/templates/cloud-status-report-pptx-layout.md` | Fixed 33-slide management deck structure with presenter context, why-cloud priority chart, transition slides, initial operation-cost view, and support/coverage pages. |
+| PPTX Builder | `tools/status-report/build_cloud_status_report_pptx.mjs` | Generates the editable PowerPoint deck and rendered QA PNGs. |
 | Extracted Master Assets | `docs/status-reports/master_slide/assets/` | Reusable background, logo, strip, and side-imagery assets extracted from the PPTX. |
 | Master Asset Contact Sheet | `docs/status-reports/master_slide/assets/media-contact-sheet.png` | Quick visual inventory for selecting extracted assets. |
 

@@ -9,6 +9,14 @@ updates, or presentation artifacts that must follow the company master in
 - Master deck: `docs/status-reports/master_slide/powerpoint_master.pptx`
 - Designer guideline:
   `docs/status-reports/master_slide/design-guidelines.md`
+- Report guideline:
+  `docs/status-reports/guidelines.md`
+- PPTX status-report layout:
+  `docs/status-reports/templates/cloud-status-report-pptx-layout.md`
+- Report data model:
+  `tools/status-report/report_model.py`
+- PPTX builder:
+  `tools/status-report/build_cloud_status_report_pptx.mjs`
 - Extracted assets: `docs/status-reports/master_slide/assets/`
 - Asset contact sheet:
   `docs/status-reports/master_slide/assets/media-contact-sheet.png`
@@ -45,9 +53,17 @@ endpoint checks, risk/decision tracking, or exact audit detail.
 
 For status reports, preserve the report guideline structure:
 
+- Presenter context page immediately after the cover when the audience may not
+  know Kevin Huang's IoT cloud, video cloud, and digital marketing background.
+- Major-topic map after presenter context.
+- Cloud relationship / tenant structure before detailed status: Realtek
+  Platform Root -> Brand Cloud -> brand users / end users / devices.
+- Cloud as the module product path for bottom-up business module sales.
+- Two-cloud explanation: Operational IoT / Video Cloud versus Portal Web /
+  Marketing Cloud.
+- Transition slides between operational progress, portal web, technical/security
+  design, and deployment/evidence.
 - Schedule and loading-test path.
-- Cloud relationship / tenant structure: Realtek Platform Root -> Brand Cloud
-  -> brand users / end users / devices, with source-of-truth boundaries.
 - Portal web / digital marketing: `rtk_cloud_frontend` as marketing website,
   documentation/manual portal, SEO/content layer, first-party behavior
   analytics, CTA/lead conversion, and sales improvement loop.
@@ -59,7 +75,9 @@ For status reports, preserve the report guideline structure:
   loading test and is not an August-release commitment.
 - WebRTC / video storage readiness.
 - MQTT transport / device shadow management.
-- Security / PKI management.
+- STRIDE explainer graphic before Security / PKI management.
+- Security / PKI management as identity, entitlement, audit, revocation, and
+  lifecycle governance.
 - Linode deployment/configuration evidence.
 - Operation screenshots and material appendix.
 - Decision/support, risk burn-down, and evidence index.
@@ -84,3 +102,29 @@ its evidence separate.
 - Do not claim production readiness without evidence.
 - Do not use a dark theme, decorative gradients, or generic SaaS cards.
 - Do not change the company fonts or logo proportions.
+
+## AI / LLM Recreation Rules
+
+When an AI or LLM recreates the weekly PPTX status report, read these files
+before changing slide order or report context:
+
+1. `docs/status-reports/README.md`
+2. `docs/status-reports/guidelines.md`
+3. `docs/status-reports/templates/cloud-status-report-pptx-layout.md`
+4. `docs/status-reports/materials.md`
+5. `tools/status-report/report_model.py`
+6. `tools/status-report/build_cloud_status_report_pptx.mjs`
+
+Do not rely on prior chat context. The tracked files above are the source of
+truth for the report purpose, core message, schedule, portal web context,
+security implementation context, and slide sequence.
+
+Before exporting, run a tone pass using the non-AI sense rules in
+`docs/status-reports/guidelines.md#91-non-ai-sense-writing-rules`. Remove
+formulaic contrast sentences such as "這不是 A，而是 B", empty marketing
+adjectives, and repeated slide-openers. Prefer direct management claims tied to
+evidence, risk, owner, or next action.
+
+Use the builder when possible instead of hand-making a new deck. Generated
+output belongs under `.artifacts/status-reports/YYYY-MM-DD/`; commit only
+guidelines, source indexes, builders, templates, and master assets.
