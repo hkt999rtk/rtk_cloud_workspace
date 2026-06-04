@@ -21,6 +21,7 @@ Shortcuts:
   bind NAME [COUNT] [args]      -> bind-devices
   unprovision NAME [args]       -> unprovision-devices
   mqtt NAME [args]              -> mqtt-test
+  mqtt-report [NAME] [args]     -> mqtt-trace-report
   certs [args]                  -> check-certificates
   ssh [CIDR] [args]             -> update-ssh-whitelist
   rm-vm [args]                  -> remove-all-vm
@@ -133,6 +134,15 @@ case "$cmd" in
 		brand="$1"
 		shift
 		with_env mqtt-test --brandname "$brand" "$@"
+		;;
+	mqtt-report)
+		if [[ -n "${1:-}" && "${1:-}" != -* ]]; then
+			brand="$1"
+			shift
+			with_env mqtt-trace-report --brandname "$brand" "$@"
+		else
+			with_env mqtt-trace-report "$@"
+		fi
 		;;
 	certs)
 		with_env check-certificates "$@"

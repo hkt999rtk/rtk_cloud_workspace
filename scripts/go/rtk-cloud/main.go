@@ -51,6 +51,7 @@ var commands = map[string]commandSpec{
 	"logs-check":             {run: runLogsCheck},
 	"migrate-env":            {run: runMigrateEnv},
 	"mqtt-test":              {run: runMQTTTest},
+	"mqtt-trace-report":      {run: runMQTTTraceReport},
 	"platform-admin-token":   {run: runPlatformAdminToken},
 	"provision":              {run: runProvision},
 	"remove-all-vm":          {run: runRemoveAllVM},
@@ -181,6 +182,7 @@ func runMQTTTest(args []string) error {
 	duration := fs.Int("duration-seconds", 120, "duration seconds")
 	maxUsers := fs.String("max-users", "", "max users")
 	seed := fs.Int("seed", 20260531, "seed")
+	traceDetail := fs.String("trace-detail", "summary", "console trace detail: none, summary, full")
 	mqttProbe := true
 	fs.BoolFunc("mqtt-probe", "run mqtt probe", func(string) error { mqttProbe = true; return nil })
 	fs.BoolFunc("no-mqtt-probe", "skip mqtt probe", func(string) error { mqttProbe = false; return nil })
@@ -224,6 +226,7 @@ func runMQTTTest(args []string) error {
 		"--max-users", *maxUsers,
 		"--seed", strconv.Itoa(*seed),
 		"--mqtt-probe", strconv.FormatBool(mqttProbe),
+		"--trace-detail", *traceDetail,
 	)
 	cmd.Dir = filepath.Join(workspace, "scripts", "go")
 	cmd.Env = withEnv(os.Environ(), map[string]string{"GOWORK": "off"})
