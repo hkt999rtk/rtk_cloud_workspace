@@ -605,7 +605,7 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 		result.TraceChain = appendTrace(result.TraceChain, "telemetry", "device_client", "publish", upTopic, "FAIL", "")
 		return result
 	}
-	telemetryData := traceDataSummary(map[string]any{"message_type": "status_report", "message_id": messageID, "device_id": probe.DeviceID, "direction": "device_to_app"})
+	telemetryData := traceDataSummaryFromPayload(telemetryPayload, "device_to_app")
 	result.TraceChain = appendTraceData(result.TraceChain, "telemetry", "device_client", "publish", upTopic, "PASS", telemetryData, "")
 	telemetryDoc, err := waitForMQTTPublish(appObserver, upTopic, probe.Timeout, func(doc map[string]any) bool {
 		return doc["sample_type"] == "home_device_message" && doc["message_id"] == messageID
@@ -632,7 +632,7 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 		result.TraceChain = appendTrace(result.TraceChain, "command", "app_controller", "publish", downTopic, "FAIL", "")
 		return result
 	}
-	commandData := traceDataSummary(map[string]any{"message_type": "command", "message_id": "msg-" + commandID, "command_id": commandID, "device_id": probe.DeviceID, "direction": "app_to_device"})
+	commandData := traceDataSummaryFromPayload(commandPayload, "app_to_device")
 	result.TraceChain = appendTraceData(result.TraceChain, "command", "app_controller", "publish", downTopic, "PASS", commandData, "")
 	commandDoc, err := waitForMQTTPublish(device, downTopic, probe.Timeout, func(doc map[string]any) bool {
 		return doc["sample_type"] == "home_device_message" && doc["message_type"] == "command" && doc["command_id"] == commandID
@@ -654,7 +654,7 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 		result.TraceChain = appendTrace(result.TraceChain, "command_ack", "device_client", "publish", upTopic, "FAIL", "")
 		return result
 	}
-	ackData := traceDataSummary(map[string]any{"message_type": "command_result", "message_id": "msg-result-" + commandID, "command_id": commandID, "device_id": probe.DeviceID, "direction": "device_to_app"})
+	ackData := traceDataSummaryFromPayload(ackPayload, "device_to_app")
 	result.TraceChain = appendTraceData(result.TraceChain, "command_ack", "device_client", "publish", upTopic, "PASS", ackData, "")
 	ackDoc, err := waitForMQTTPublish(appObserver, upTopic, probe.Timeout, func(doc map[string]any) bool {
 		return doc["sample_type"] == "home_device_message" && doc["message_type"] == "command_result" && doc["command_id"] == commandID
@@ -761,7 +761,40 @@ func traceDataSummary(doc map[string]any) string {
 		}
 		parts = append(parts, key+"="+value)
 	}
+	if payload, ok := doc["payload"].(map[string]any); ok {
+		for _, key := range []string{"action", "status"} {
+			value := strings.TrimSpace(fmt.Sprint(payload[key]))
+			if value == "" || value == "<nil>" {
+				continue
+			}
+			parts = append(parts, "payload."+key+"="+value)
+		}
+		if state, ok := payload["state"].(map[string]any); ok {
+			for _, section := range []string{"desired", "reported"} {
+				values, ok := state[section].(map[string]any)
+				if !ok {
+					continue
+				}
+				for _, key := range []string{"power", "mode", "target_temperature_c", "fan", "reading", "telemetry_report_requested"} {
+					value := strings.TrimSpace(fmt.Sprint(values[key]))
+					if value == "" || value == "<nil>" {
+						continue
+					}
+					parts = append(parts, section+"."+key+"="+value)
+				}
+			}
+		}
+	}
 	return strings.Join(parts, " ")
+}
+
+func traceDataSummaryFromPayload(payload []byte, direction string) string {
+	doc := map[string]any{}
+	if err := json.Unmarshal(payload, &doc); err != nil {
+		return ""
+	}
+	doc["direction"] = direction
+	return traceDataSummary(doc)
 }
 
 func traceDetail(detail string) string {
@@ -1060,8 +1093,11 @@ func sampleHomeCommand(deviceID, capability, commandID string, occurredAt time.T
 		"capability":     capability,
 		"occurred_at":    occurredAt.UTC().Format(time.RFC3339),
 		"payload": map[string]any{
-			"action": "probe_command",
-			"probe":  "home-mqtt-loadtest",
+			"action":      commandActionForCapability(capability),
+			"clientToken": commandID,
+			"state": map[string]any{
+				"desired": desiredStateForCapability(capability),
+			},
 		},
 	}
 	return json.Marshal(body)
@@ -1079,11 +1115,49 @@ func sampleHomeCommandResult(deviceID, capability, commandID string, occurredAt 
 		"capability":     capability,
 		"occurred_at":    occurredAt.UTC().Format(time.RFC3339),
 		"payload": map[string]any{
-			"status": "accepted",
-			"probe":  "home-mqtt-loadtest",
+			"clientToken": commandID,
+			"status":      "accepted",
+			"state": map[string]any{
+				"reported": reportedStateForCapability(capability),
+			},
 		},
 	}
 	return json.Marshal(body)
+}
+
+func commandActionForCapability(capability string) string {
+	switch strings.TrimSpace(strings.ToLower(capability)) {
+	case "light", "smart_light":
+		return "set_power"
+	case "air_conditioner", "ac", "hvac":
+		return "set_hvac"
+	case "smart_meter", "meter":
+		return "read_meter"
+	default:
+		return "probe_command"
+	}
+}
+
+func desiredStateForCapability(capability string) map[string]any {
+	switch strings.TrimSpace(strings.ToLower(capability)) {
+	case "light", "smart_light":
+		return map[string]any{"power": true}
+	case "air_conditioner", "ac", "hvac":
+		return map[string]any{"mode": "cool", "target_temperature_c": 24, "fan": "auto"}
+	case "smart_meter", "meter":
+		return map[string]any{"reading": "instantaneous"}
+	default:
+		return map[string]any{"command": "probe"}
+	}
+}
+
+func reportedStateForCapability(capability string) map[string]any {
+	switch strings.TrimSpace(strings.ToLower(capability)) {
+	case "smart_meter", "meter":
+		return map[string]any{"reading": "instantaneous", "telemetry_report_requested": true}
+	default:
+		return desiredStateForCapability(capability)
+	}
 }
 
 func mqttConnect(w io.ReadWriter, clientID, username, password string) error {

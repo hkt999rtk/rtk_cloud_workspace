@@ -454,9 +454,17 @@ func TestActorSeparatedProbeRecordsTraceChain(t *testing.T) {
 		t.Fatalf("first trace step = %#v, want app observer connect", result.TraceChain[0])
 	}
 	foundCommandAck := false
+	foundDesiredState := false
+	foundReportedState := false
 	for _, step := range result.TraceChain {
 		if step.Phase == "command_ack" && step.Actor == "app_observer" && step.Action == "receive" && step.Status == "PASS" {
 			foundCommandAck = true
+		}
+		if step.Phase == "command" && step.Actor == "app_controller" && step.Action == "publish" && strings.Contains(step.Data, "desired.power=true") {
+			foundDesiredState = true
+		}
+		if step.Phase == "command_ack" && step.Actor == "app_observer" && step.Action == "receive" && strings.Contains(step.Data, "reported.power=true") {
+			foundReportedState = true
 		}
 		if strings.Contains(strings.ToLower(step.Detail), "token") || strings.Contains(step.Detail, "BEGIN ") {
 			t.Fatalf("trace detail leaked sensitive material: %#v", step)
@@ -464,6 +472,9 @@ func TestActorSeparatedProbeRecordsTraceChain(t *testing.T) {
 	}
 	if !foundCommandAck {
 		t.Fatalf("trace chain missing app observer command ack receive: %#v", result.TraceChain)
+	}
+	if !foundDesiredState || !foundReportedState {
+		t.Fatalf("trace chain missing light desired/reported state: %#v", result.TraceChain)
 	}
 }
 
