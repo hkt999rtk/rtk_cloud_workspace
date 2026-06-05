@@ -12,8 +12,9 @@ Usage:
 
 Shortcuts:
   provision [args]              -> rtk-cloud provision --env-root cloud_env/staging (default: --all)
-  deploy [args]                 -> rtk-cloud deploy --env-root cloud_env/staging
-                                   fast binary update: deploy --video-only --binary-only --video-release VERSION
+  deploy [VERSION] [args]       -> fast Video Cloud binary update
+                                   default: latest Video Cloud Object Storage release
+                                   full deploy: raw deploy [args]
   token [args]                  -> rtk-cloud platform-admin-token --env-root cloud_env/staging
   brand NAME [args]             -> create-brandname-cloud
   brands [args]                 -> list-brandname-clouds
@@ -67,7 +68,13 @@ case "$cmd" in
 		with_env provision "$@"
 		;;
 	deploy)
-		with_env deploy "$@"
+		if [[ -n "${1:-}" && "${1:-}" != -* ]]; then
+			release="$1"
+			shift
+			with_env deploy --video-only --binary-only --video-release "$release" "$@"
+		else
+			with_env deploy --video-only --binary-only "$@"
+		fi
 		;;
 	token)
 		with_env platform-admin-token "$@"

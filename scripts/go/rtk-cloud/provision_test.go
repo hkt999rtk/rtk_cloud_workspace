@@ -673,10 +673,91 @@ func TestVideoDeployArgsSupportBinaryOnlyFastMode(t *testing.T) {
 			t.Fatalf("video deploy args missing %q: %#v", want, args)
 		}
 	}
+	for _, notWant := range []string{"--secrets-file", "--certbot-extra-domain"} {
+		if strings.Contains(joined, notWant) {
+			t.Fatalf("binary-only video deploy args unexpectedly include %q: %s", notWant, joined)
+		}
+	}
 
 	full := strings.Join(videoDeployArgs(paths, map[string]string{"CLOUD_STACK_NAME": "stack"}, provisionOptions{videoRelease: "v-full"}), " ")
 	if strings.Contains(full, "--binary-only") {
 		t.Fatalf("full deploy args unexpectedly include binary-only: %s", full)
+	}
+	for _, want := range []string{"--secrets-file", "--certbot-extra-domain"} {
+		if !strings.Contains(full, want) {
+			t.Fatalf("full video deploy args missing %q: %s", want, full)
+		}
+	}
+}
+
+func TestStgDeployShortcutDefaultsToVideoBinaryOnly(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	argsFile := filepath.Join(tmp, "args.txt")
+	fakeGo := filepath.Join(tmp, "fake-go")
+	writeFile(t, fakeGo, "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > \"$RTK_FAKE_GO_ARGS\"\n")
+	if err := os.Chmod(fakeGo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("bash", filepath.Join(root, "bin", "stg.sh"), "deploy")
+	cmd.Env = append(os.Environ(),
+		"RTK_CLOUD_GO="+fakeGo,
+		"RTK_FAKE_GO_ARGS="+argsFile,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("stg.sh deploy failed: %v\n%s", err, out)
+	}
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(strings.Fields(string(data)), " ")
+	for _, want := range []string{"deploy", "--video-only", "--binary-only"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stg.sh deploy args missing %q: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "--video-release") {
+		t.Fatalf("stg.sh deploy should not require an explicit release by default: %s", got)
+	}
+}
+
+func TestStgDeployShortcutAcceptsOptionalRelease(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	argsFile := filepath.Join(tmp, "args.txt")
+	fakeGo := filepath.Join(tmp, "fake-go")
+	writeFile(t, fakeGo, "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > \"$RTK_FAKE_GO_ARGS\"\n")
+	if err := os.Chmod(fakeGo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("bash", filepath.Join(root, "bin", "stg.sh"), "deploy", "v-test")
+	cmd.Env = append(os.Environ(),
+		"RTK_CLOUD_GO="+fakeGo,
+		"RTK_FAKE_GO_ARGS="+argsFile,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("stg.sh deploy v-test failed: %v\n%s", err, out)
+	}
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(strings.Fields(string(data)), " ")
+	for _, want := range []string{"deploy", "--video-only", "--binary-only", "--video-release v-test"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stg.sh deploy v-test args missing %q: %s", want, got)
+		}
 	}
 }
 
