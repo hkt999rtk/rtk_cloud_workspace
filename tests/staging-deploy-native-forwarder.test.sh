@@ -124,6 +124,10 @@ if [[ "$*" == *"systemctl is-active --quiet rtk-cloud-log-forwarder.service"* ]]
 	printf 'readiness %s args=%s\n' "$host" "$*" >> "$SSH_LOG"
 	exit 0
 fi
+if [[ "$*" == *"systemctl is-active --quiet rtk-cloud-emqx-log-forwarder.service"* ]]; then
+	printf 'readiness-emqx %s args=%s\n' "$host" "$*" >> "$SSH_LOG"
+	exit 0
+fi
 input="$(cat)"
 if [[ "$input" == *"mv -f /tmp/.rtk-cloud-log-forwarder."* ]]; then
 	printf 'host=%s args=%s\n%s\n' "$host" "$*" "$input" >> "$SSH_LOG"
@@ -170,7 +174,7 @@ chmod +x "$FAKE_BIN/go" "$FAKE_BIN/scp" "$FAKE_BIN/ssh" "$FAKE_BIN/curl"
 
 OUT="$TMP/out.txt"
 ERR="$TMP/err.txt"
-ORDER_LOG="$ORDER_LOG" SSH_LOG="$SSH_LOG" SCP_LOG="$SCP_LOG" GO_LOG="$GO_LOG" CURL_EVENT="$CURL_EVENT" RTK_CLOUD_GO="$FAKE_BIN/go" PATH="$FAKE_BIN:$PATH" /usr/local/go/bin/go run "$ROOT/scripts/go/rtk-cloud" -- deploy \
+ORDER_LOG="$ORDER_LOG" SSH_LOG="$SSH_LOG" SCP_LOG="$SCP_LOG" GO_LOG="$GO_LOG" CURL_EVENT="$CURL_EVENT" RTK_CLOUD_GO="$FAKE_BIN/go" CLOUD_LOGGER_EMQX_VERBOSE_TRACE=true PATH="$FAKE_BIN:$PATH" /usr/local/go/bin/go run "$ROOT/scripts/go/rtk-cloud" -- deploy \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" >"$OUT" 2>"$ERR"
 
@@ -178,13 +182,18 @@ REPORT="$(grep -F '[cloud-deploy] readiness report:' "$ERR" | tail -n 1 | sed 's
 grep -F 'PASS `logger-backend-health`' "$REPORT" >/dev/null
 grep -F 'PASS `logger-ingest-idempotency`' "$REPORT" >/dev/null
 grep -F 'PASS `logger-sample-trace-query`' "$REPORT" >/dev/null
+grep -F 'PASS `logger-forwarder:emqx-broker-trace`' "$REPORT" >/dev/null
 for host in 203.0.113.20 10.42.1.10 203.0.113.30 203.0.113.10 10.42.1.30 203.0.113.13 203.0.113.14; do
 	grep -F "root@$host:/tmp/.rtk-cloud-log-forwarder." "$SCP_LOG" >/dev/null
 	grep -F "host=root@$host" "$SSH_LOG" >/dev/null
 	grep -F "readiness root@$host" "$SSH_LOG" >/dev/null
 done
+grep -F "readiness-emqx root@203.0.113.13" "$SSH_LOG" >/dev/null
 grep -F 'mv -f /tmp/.rtk-cloud-log-forwarder.' "$SSH_LOG" >/dev/null
 grep -F '/usr/local/bin/rtk-cloud-log-forwarder' "$SSH_LOG" >/dev/null
+grep -F 'RTK_CLOUD_LOGGER_EMQX_DOCKER_CONTAINER=video-cloud-emqx' "$SSH_LOG" >/dev/null
+grep -F 'rtk-cloud-emqx-log-forwarder.service' "$SSH_LOG" >/dev/null
+grep -F 'EMQX verbose broker trace forwarding enabled: service=emqx-broker source=emqx operation_id=mqtt-broker-trace' "$ERR" >/dev/null
 grep -F 'GOOS=linux GOARCH=amd64' "$GO_LOG" >/dev/null
 grep -F -- '-i ' "$SCP_LOG" >/dev/null
 grep -F -- 'BatchMode=yes' "$SCP_LOG" >/dev/null
