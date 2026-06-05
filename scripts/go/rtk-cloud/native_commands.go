@@ -33,11 +33,21 @@ func runDeploy(args []string) error {
 	adminRelease := fs.String("admin-release", "", "Cloud Admin release")
 	adminBundle := fs.String("admin-release-bundle", os.Getenv("ADMIN_RELEASE_BUNDLE"), "Cloud Admin release bundle")
 	loggerOnly := fs.Bool("logger-only", false, "install and verify only logger backend and log forwarders")
+	videoOnly := fs.Bool("video-only", false, "deploy only Video Cloud")
+	binaryOnly := fs.Bool("binary-only", false, "fast path: update only Video Cloud API binaries; requires --video-only and --video-release")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *envRootFlag == "" {
 		return errors.New("--env-root is required")
+	}
+	if *binaryOnly {
+		if !*videoOnly {
+			return errors.New("--binary-only requires --video-only")
+		}
+		if strings.TrimSpace(*videoRelease) == "" {
+			return errors.New("--binary-only requires --video-release")
+		}
 	}
 	workspace := *workspaceFlag
 	var err error
@@ -65,6 +75,8 @@ func runDeploy(args []string) error {
 		accountReleaseBundle: *accountBundle,
 		adminReleaseBundle:   *adminBundle,
 		loggerOnly:           *loggerOnly,
+		videoOnly:            *videoOnly,
+		binaryOnly:           *binaryOnly,
 		sshKey:               *sshKey,
 	})
 }
@@ -292,17 +304,7 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 		"LINODE_DEPLOY_CERT_CACHE_DIR": filepath.Join(paths.EnvRoot, "certificates", env["VIDEO_CLOUD_DOMAIN"]),
 		"VIDEO_CLOUD_LOG_LEVEL":        logLevels["VIDEO_CLOUD_LOG_LEVEL"],
 	})
-	videoArgs := []string{
-		"--stack", env["CLOUD_STACK_NAME"],
-		"--config", paths.VideoConfig,
-		"--secrets-file", paths.VideoEnv,
-		"--env-file", paths.OperatorEnv,
-		"--gateway-domain", env["VIDEO_CLOUD_DOMAIN"],
-		"--certbot-extra-domain", env["VIDEO_CLOUD_CERTISSUER_DOMAIN"],
-	}
-	if opts.videoRelease != "" {
-		videoArgs = append(videoArgs, "--release", opts.videoRelease)
-	}
+	videoArgs := videoDeployArgs(paths, env, opts)
 	if err := runCmdWithEnv(filepath.Join(paths.Workspace, "repos", "rtk_video_cloud"), videoEnv, "linode_deploy/scripts/deploy-staging.sh", videoArgs...); err != nil {
 		report.add("video-cloud-deploy-verify", "FAIL", "")
 		report.add("cloud-admin-deploy", "SKIP", "video-cloud-deploy-verify")
@@ -311,6 +313,11 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 		return err
 	}
 	report.add("video-cloud-deploy-verify", "PASS", "")
+	if opts.videoOnly {
+		runLoggerForwarderInstallHooks(paths, env, opts.sshKey, report)
+		runLoggerReadinessHooks(paths, env, opts.sshKey, report)
+		return report.write(true)
+	}
 
 	accountBundle := opts.accountReleaseBundle
 	if accountBundle == "" && opts.accountRelease != "" {
@@ -366,6 +373,24 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 	}
 	writePlatformAdminSummary(os.Stdout, paths)
 	return nil
+}
+
+func videoDeployArgs(paths provisionPaths, env map[string]string, opts provisionOptions) []string {
+	args := []string{
+		"--stack", env["CLOUD_STACK_NAME"],
+		"--config", paths.VideoConfig,
+		"--secrets-file", paths.VideoEnv,
+		"--env-file", paths.OperatorEnv,
+		"--gateway-domain", env["VIDEO_CLOUD_DOMAIN"],
+		"--certbot-extra-domain", env["VIDEO_CLOUD_CERTISSUER_DOMAIN"],
+	}
+	if opts.videoRelease != "" {
+		args = append(args, "--release", opts.videoRelease)
+	}
+	if opts.binaryOnly {
+		args = append(args, "--binary-only")
+	}
+	return args
 }
 
 func serviceLogLevels(env map[string]string) (map[string]string, error) {

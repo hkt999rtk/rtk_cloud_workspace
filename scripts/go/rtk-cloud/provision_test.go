@@ -651,6 +651,35 @@ func TestMaterializeReleaseBundleSupportsHTTPObjectStorage(t *testing.T) {
 	}
 }
 
+func TestVideoDeployArgsSupportBinaryOnlyFastMode(t *testing.T) {
+	paths := provisionPaths{
+		Workspace:   "/workspace",
+		EnvRoot:     "/env",
+		VideoConfig: "/env/topology/video-cloud-staging.yaml",
+		VideoEnv:    "/env/services/video-cloud/video-cloud-staging.env",
+		OperatorEnv: "/env/env/operator.env",
+	}
+	args := videoDeployArgs(paths, map[string]string{
+		"CLOUD_STACK_NAME":              "video-cloud-stg-0529",
+		"VIDEO_CLOUD_DOMAIN":            "video-cloud.example.test",
+		"VIDEO_CLOUD_CERTISSUER_DOMAIN": "certissuer.video-cloud.example.test",
+	}, provisionOptions{
+		videoRelease: "v-fast",
+		binaryOnly:   true,
+	})
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"--release v-fast", "--binary-only", "--config /env/topology/video-cloud-staging.yaml"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("video deploy args missing %q: %#v", want, args)
+		}
+	}
+
+	full := strings.Join(videoDeployArgs(paths, map[string]string{"CLOUD_STACK_NAME": "stack"}, provisionOptions{videoRelease: "v-full"}), " ")
+	if strings.Contains(full, "--binary-only") {
+		t.Fatalf("full deploy args unexpectedly include binary-only: %s", full)
+	}
+}
+
 func TestProvisionAccountManagerCommitSupportsNATS(t *testing.T) {
 	workspace := t.TempDir()
 	repo := filepath.Join(workspace, "repos", "rtk_account_manager")

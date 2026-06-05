@@ -63,6 +63,8 @@ type provisionOptions struct {
 	adminRelease         string
 	adminReleaseBundle   string
 	loggerOnly           bool
+	videoOnly            bool
+	binaryOnly           bool
 	confirm              string
 	verbose              bool
 }
