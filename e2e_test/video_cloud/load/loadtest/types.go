@@ -32,6 +32,7 @@ const (
 )
 
 const (
+	DeviceRouteSetOff        = "off"
 	DeviceRouteSetSmoke      = "smoke"
 	DeviceRouteSetFunctional = "functional"
 )
@@ -48,8 +49,16 @@ const (
 )
 
 const (
-	WebRTCMediaSetOff = "off"
-	WebRTCMediaSetRTP = "rtp"
+	WebRTCMediaSetOff  = "off"
+	WebRTCMediaSetRTP  = "rtp"
+	WebRTCMediaSetH264 = "h264"
+	WebRTCMediaSetAV   = "av"
+)
+
+const (
+	WebRTCRelayRoleBoth       = "both"
+	WebRTCRelayRoleAppOnly    = "app-only"
+	WebRTCRelayRoleDeviceOnly = "device-only"
 )
 
 const (
@@ -91,6 +100,8 @@ type Config struct {
 	DeviceTransportSet    string            `json:"device_transport_set"`
 	ViewerRouteSet        string            `json:"viewer_route_set"`
 	WebRTCMediaSet        string            `json:"webrtc_media_set"`
+	WebRTCRelayRole       string            `json:"webrtc_relay_role"`
+	WebRTCMediaDuration   time.Duration     `json:"webrtc_media_duration"`
 	ClipSet               string            `json:"clip_set"`
 	MQTTSet               string            `json:"mqtt_set"`
 	MQTTAddr              string            `json:"mqtt_addr,omitempty"`
@@ -168,6 +179,7 @@ type RedactedConfig struct {
 	DeviceTransportSet string   `json:"device_transport_set"`
 	ViewerRouteSet     string   `json:"viewer_route_set"`
 	WebRTCMediaSet     string   `json:"webrtc_media_set"`
+	WebRTCRelayRole    string   `json:"webrtc_relay_role"`
 	ClipSet            string   `json:"clip_set"`
 	MQTTSet            string   `json:"mqtt_set"`
 	MQTTAddr           string   `json:"mqtt_addr,omitempty"`
@@ -234,6 +246,11 @@ type WebRTCMediaMetrics struct {
 	Failures            int            `json:"failures"`
 	PacketsReceived     int            `json:"packets_received"`
 	BytesReceived       int            `json:"bytes_received"`
+	H264PacketsReceived int            `json:"h264_packets_received,omitempty"`
+	H264BytesReceived   int            `json:"h264_bytes_received,omitempty"`
+	OpusPacketsReceived int            `json:"opus_packets_received,omitempty"`
+	OpusBytesReceived   int            `json:"opus_bytes_received,omitempty"`
+	OpusFramesReceived  int            `json:"opus_frames_received,omitempty"`
 	TimeToFirstRTPP95MS int64          `json:"time_to_first_rtp_p95_ms"`
 	ICEConnectedP95MS   int64          `json:"ice_connected_p95_ms"`
 	ReceiveDurationMS   int64          `json:"receive_duration_ms"`

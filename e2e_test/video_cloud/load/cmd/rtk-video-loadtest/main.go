@@ -38,7 +38,7 @@ func usage() error {
 
 func runLoad(args []string) error {
 	cfg := loadtest.DefaultConfigFromEnv()
-	var output, reportOutput, deviceTokenMapJSON, appTokenMapJSON, deviceIDsCSV string
+	var output, reportOutput, deviceTokenMapJSON, appTokenMapJSON, deviceTokenMapFile, appTokenMapFile, deviceIDsCSV string
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.StringVar(&cfg.Profile, "profile", cfg.Profile, "load profile: smoke, functional, safe-staging, stress, soak")
 	fs.StringVar(&cfg.APIURL, "api-url", cfg.APIURL, "rtk_video_cloud API base URL")
@@ -49,6 +49,8 @@ func runLoad(args []string) error {
 	fs.StringVar(&cfg.RefreshToken, "refresh-token", cfg.RefreshToken, "optional refresh token for functional app route coverage")
 	fs.StringVar(&deviceTokenMapJSON, "device-token-map-json", "", "JSON object mapping device id to device/camera-scoped bearer token")
 	fs.StringVar(&appTokenMapJSON, "app-token-map-json", "", "JSON object mapping device id to app/viewer-scoped bearer token")
+	fs.StringVar(&deviceTokenMapFile, "device-token-map-file", "", "path to JSON object mapping device id to device/camera-scoped bearer token")
+	fs.StringVar(&appTokenMapFile, "app-token-map-file", "", "path to JSON object mapping device id to app/viewer-scoped bearer token")
 	fs.StringVar(&cfg.RunID, "run-id", cfg.RunID, "shared load run id")
 	fs.StringVar(&cfg.InstanceID, "instance-id", cfg.InstanceID, "load runner instance id")
 	fs.StringVar(&cfg.Actors, "actors", cfg.Actors, "actor set: all, device, app, viewer, or comma-separated values such as app,viewer")
@@ -56,7 +58,9 @@ func runLoad(args []string) error {
 	fs.StringVar(&cfg.DeviceRouteSet, "device-route-set", cfg.DeviceRouteSet, "device route set: smoke or functional")
 	fs.StringVar(&cfg.DeviceTransportSet, "device-transport-set", cfg.DeviceTransportSet, "device transport set: smoke or snapshot")
 	fs.StringVar(&cfg.ViewerRouteSet, "viewer-route-set", cfg.ViewerRouteSet, "viewer route set: smoke, functional, or negative")
-	fs.StringVar(&cfg.WebRTCMediaSet, "webrtc-media-set", cfg.WebRTCMediaSet, "WebRTC media coverage set: off or rtp")
+	fs.StringVar(&cfg.WebRTCMediaSet, "webrtc-media-set", cfg.WebRTCMediaSet, "WebRTC media coverage set: off, rtp, h264, or av")
+	fs.StringVar(&cfg.WebRTCRelayRole, "webrtc-relay-role", cfg.WebRTCRelayRole, "WebRTC relay role: both, app-only, or device-only")
+	fs.DurationVar(&cfg.WebRTCMediaDuration, "webrtc-media-duration", cfg.WebRTCMediaDuration, "WebRTC media send duration")
 	fs.StringVar(&cfg.ClipSet, "clip-set", cfg.ClipSet, "camera recording clip coverage set: off or recording-functional")
 	fs.StringVar(&cfg.MQTTSet, "mqtt-set", cfg.MQTTSet, "MQTT coverage set: off or broker")
 	fs.StringVar(&cfg.MQTTAddr, "mqtt-addr", cfg.MQTTAddr, "MQTT broker host:port")
@@ -101,15 +105,15 @@ func runLoad(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if deviceTokenMapJSON != "" {
-		if err := json.Unmarshal([]byte(deviceTokenMapJSON), &cfg.DeviceTokens); err != nil {
-			return fmt.Errorf("device-token-map-json: %w", err)
-		}
+	if tokens, err := loadTokenMapFlag("device-token-map", deviceTokenMapJSON, deviceTokenMapFile); err != nil {
+		return err
+	} else if tokens != nil {
+		cfg.DeviceTokens = tokens
 	}
-	if appTokenMapJSON != "" {
-		if err := json.Unmarshal([]byte(appTokenMapJSON), &cfg.AppTokens); err != nil {
-			return fmt.Errorf("app-token-map-json: %w", err)
-		}
+	if tokens, err := loadTokenMapFlag("app-token-map", appTokenMapJSON, appTokenMapFile); err != nil {
+		return err
+	} else if tokens != nil {
+		cfg.AppTokens = tokens
 	}
 	if deviceIDsCSV != "" {
 		cfg.DeviceIDs = loadtest.ParseDeviceIDs(deviceIDsCSV)
@@ -134,6 +138,27 @@ func runLoad(args []string) error {
 		return fmt.Errorf("threshold gate failed: %v", result.Thresholds.Failures)
 	}
 	return nil
+}
+
+func loadTokenMapFlag(name, jsonValue, filePath string) (map[string]string, error) {
+	if jsonValue != "" && filePath != "" {
+		return nil, fmt.Errorf("%s: use either JSON or file, not both", name)
+	}
+	if filePath != "" {
+		raw, err := os.ReadFile(filePath)
+		if err != nil {
+			return nil, fmt.Errorf("%s-file: %w", name, err)
+		}
+		jsonValue = string(raw)
+	}
+	if jsonValue == "" {
+		return nil, nil
+	}
+	tokens := map[string]string{}
+	if err := json.Unmarshal([]byte(jsonValue), &tokens); err != nil {
+		return nil, fmt.Errorf("%s-json: %w", name, err)
+	}
+	return tokens, nil
 }
 
 func runReport(args []string) error {

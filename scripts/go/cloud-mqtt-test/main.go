@@ -39,8 +39,20 @@ type userArtifact struct {
 }
 
 type userCredential struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email          string                `json:"email"`
+	Password       string                `json:"password"`
+	AppCredentials appCertificateKeys    `json:"app_credentials"`
+	AppCertificate appCertificateSummary `json:"app_certificate"`
+}
+
+type appCertificateKeys struct {
+	PrivateKeyPEM string `json:"private_key_pem"`
+	CSRPem        string `json:"csr_pem"`
+}
+
+type appCertificateSummary struct {
+	Subject           string `json:"subject"`
+	FingerprintSHA256 string `json:"fingerprint_sha256"`
 }
 
 type bindArtifact struct {
@@ -72,18 +84,40 @@ type certRecord struct {
 }
 
 type deviceResult struct {
-	DeviceID       string    `json:"device_id"`
-	DeviceType     string    `json:"device_type"`
-	AssignedEmail  string    `json:"assigned_email"`
-	Commands       int       `json:"commands"`
-	SuccessPercent float64   `json:"success_percent"`
-	LatencyMS      []float64 `json:"latency_ms"`
-	MQTTStatus     string    `json:"mqtt_status"`
-	PublishTopic   string    `json:"publish_topic,omitempty"`
-	SubscribeTopic string    `json:"subscribe_topic,omitempty"`
-	MessageType    string    `json:"message_type,omitempty"`
-	PayloadSchema  string    `json:"payload_schema,omitempty"`
-	Error          string    `json:"error,omitempty"`
+	DeviceID                string      `json:"device_id"`
+	DeviceType              string      `json:"device_type"`
+	AssignedEmail           string      `json:"assigned_email"`
+	Commands                int         `json:"commands"`
+	SuccessPercent          float64     `json:"success_percent"`
+	LatencyMS               []float64   `json:"latency_ms"`
+	MQTTStatus              string      `json:"mqtt_status"`
+	PublishTopic            string      `json:"publish_topic,omitempty"`
+	SubscribeTopic          string      `json:"subscribe_topic,omitempty"`
+	MessageType             string      `json:"message_type,omitempty"`
+	PayloadSchema           string      `json:"payload_schema,omitempty"`
+	TelemetryStatus         string      `json:"telemetry_status,omitempty"`
+	TelemetryPublishActor   string      `json:"telemetry_publish_actor,omitempty"`
+	TelemetrySubscribeActor string      `json:"telemetry_subscribe_actor,omitempty"`
+	TelemetryTopic          string      `json:"telemetry_topic,omitempty"`
+	CommandStatus           string      `json:"command_status,omitempty"`
+	CommandPublishActor     string      `json:"command_publish_actor,omitempty"`
+	CommandSubscribeActor   string      `json:"command_subscribe_actor,omitempty"`
+	CommandTopic            string      `json:"command_topic,omitempty"`
+	AckTopic                string      `json:"ack_topic,omitempty"`
+	TraceChain              []traceStep `json:"trace_chain,omitempty"`
+	Error                   string      `json:"error,omitempty"`
+}
+
+type traceStep struct {
+	Step      int    `json:"step"`
+	Timestamp string `json:"timestamp,omitempty"`
+	Phase     string `json:"phase"`
+	Actor     string `json:"actor"`
+	Action    string `json:"action"`
+	Topic     string `json:"topic,omitempty"`
+	Status    string `json:"status"`
+	Data      string `json:"data,omitempty"`
+	Detail    string `json:"detail,omitempty"`
 }
 
 type appBootstrapStatus struct {
@@ -95,10 +129,27 @@ type appBootstrapStatus struct {
 	Subject           string `json:"subject,omitempty"`
 	FingerprintSHA256 string `json:"fingerprint_sha256,omitempty"`
 	TokenScope        string `json:"token_scope,omitempty"`
+	AccessToken       string `json:"-"`
+}
+
+type appBootstrapMaterial struct {
+	Status      appBootstrapStatus
+	Certificate tls.Certificate
+}
+
+type mqttActorProbe struct {
+	DeviceID    string
+	DeviceType  string
+	Brandname   string
+	DeviceToken string
+	AppToken    string
+	Dial        func() (io.ReadWriteCloser, error)
+	Timeout     time.Duration
+	Now         func() time.Time
 }
 
 func main() {
-	var root, envRoot, brandname, outDir, profile, maxUsersRaw, mqttProbeRaw string
+	var root, envRoot, brandname, outDir, profile, maxUsersRaw, mqttProbeRaw, traceDetail string
 	var duration, seed int
 	flag.StringVar(&root, "root", "", "workspace root")
 	flag.StringVar(&envRoot, "env-root", "", "environment root")
@@ -109,6 +160,7 @@ func main() {
 	flag.StringVar(&maxUsersRaw, "max-users", "", "max users")
 	flag.IntVar(&seed, "seed", 20260531, "seed")
 	flag.StringVar(&mqttProbeRaw, "mqtt-probe", "true", "mqtt probe")
+	flag.StringVar(&traceDetail, "trace-detail", "summary", "console trace detail: none, summary, full")
 	flag.Parse()
 
 	maxUsers := 0
@@ -120,7 +172,7 @@ func main() {
 		maxUsers = parsed
 	}
 	mqttProbe := mqttProbeRaw == "true"
-	if err := run(root, envRoot, brandname, outDir, profile, duration, maxUsers, seed, mqttProbe); err != nil {
+	if err := run(root, envRoot, brandname, outDir, profile, duration, maxUsers, seed, mqttProbe, traceDetail); err != nil {
 		fatal(err)
 	}
 }
@@ -130,7 +182,14 @@ func fatal(err error) {
 	os.Exit(2)
 }
 
-func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, seed int, mqttProbe bool) error {
+func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, seed int, mqttProbe bool, traceDetail string) error {
+	traceDetail = strings.ToLower(strings.TrimSpace(traceDetail))
+	if traceDetail == "" {
+		traceDetail = "summary"
+	}
+	if traceDetail != "none" && traceDetail != "summary" && traceDetail != "full" {
+		return errors.New("--trace-detail must be none, summary, or full")
+	}
 	brandLower := strings.ToLower(brandname)
 	artifactsDir := filepath.Join(envRoot, "artifacts")
 	testDevicesDir := filepath.Join(envRoot, "devices", "test_device")
@@ -188,9 +247,14 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	stackValues := envValues(stackEnv)
 	accountValues := envValues(accountEnv)
 	loadValues := envValues(filepath.Join(testDevicesDir, "loadtest.env"))
+	videoPublicBaseURL := "https://" + firstNonEmpty(stackValues["VIDEO_CLOUD_DOMAIN"], "unknown")
+	videoMTLSBaseURL := videoCloudMTLSBaseURL(envRoot, stackValues, videoPublicBaseURL)
 	endpoints := map[string]any{
 		"account_manager_base_url": "https://" + firstNonEmpty(stackValues["ACCOUNT_MANAGER_DOMAIN"], accountValues["ACCOUNT_MANAGER_LINODE_DOMAIN"], "unknown"),
-		"video_cloud_base_url":     "https://" + firstNonEmpty(stackValues["VIDEO_CLOUD_DOMAIN"], "unknown"),
+		"video_cloud_base_url":     videoMTLSBaseURL,
+	}
+	if videoMTLSBaseURL != videoPublicBaseURL {
+		endpoints["video_cloud_public_base_url"] = videoPublicBaseURL
 	}
 	mqttHost, mqttPort := mqttEndpoint(videoState, loadValues)
 	endpoints["mqtt_host"] = mqttHost
@@ -295,6 +359,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 		"duration_seconds": duration,
 		"seed":             seed,
 		"env":              map[string]string{"root": envRoot},
+		"trace_detail":     traceDetail,
 		"inputs":           inputs,
 		"endpoints":        endpoints,
 		"blockers":         blockers,
@@ -305,9 +370,11 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 		return writeOutputs(outDir, base)
 	}
 	appBootstrap := appBootstrapStatus{Status: "BLOCKED", Reason: "no selected assignment"}
+	appMaterial := appBootstrapMaterial{Status: appBootstrap}
 	if len(selectedAssignments) > 0 {
 		first := selectedAssignments[0]
-		appBootstrap = runAppCertificateBootstrap(endpoints["account_manager_base_url"].(string), endpoints["video_cloud_base_url"].(string), usersByEmail[first.AssignedEmail], first.DeviceID)
+		appMaterial = prepareAppCertificateBootstrap(endpoints["account_manager_base_url"].(string), endpoints["video_cloud_base_url"].(string), usersByEmail[first.AssignedEmail], first.DeviceID)
+		appBootstrap = appMaterial.Status
 		if appBootstrap.Status == "FAIL" {
 			base["status"] = "FAIL"
 			base["overall"] = "fail"
@@ -334,6 +401,8 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 		base["overall"] = "blocked"
 		base["blockers"] = []string{"missing MQTT endpoint"}
 		mqttProbeResult = "BLOCKED: missing MQTT endpoint"
+	} else if appMaterial.Status.Status != "PASS" {
+		mqttProbeResult = appMaterial.Status.Status + ": app MQTT actor unavailable"
 	} else {
 		mqttProbeResult = "PASS"
 		for _, item := range selectedAssignments {
@@ -341,9 +410,10 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 			row["devices"]++
 			row["commands"]++
 			record := findCert(certRecords, item.DeviceID)
-			outcome := runDeviceSampleEnvelope(record, brandname, endpoints["video_cloud_base_url"].(string), mqttHost, mqttPort)
+			outcome := runDeviceActorSeparatedEnvelope(record, brandname, endpoints["video_cloud_base_url"].(string), mqttHost, mqttPort, appMaterial.Certificate)
+			row["commands"] += outcome.Commands - 1
 			if outcome.MQTTStatus == "PASS" {
-				row["passed"]++
+				row["passed"] += outcome.Commands
 			} else {
 				mqttProbeResult = "FAIL"
 			}
@@ -360,7 +430,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	for _, row := range perDevice {
 		totalCommands += row.Commands
 		if row.MQTTStatus == "PASS" {
-			totalPassed++
+			totalPassed += row.Commands
 		}
 	}
 	successRate := 0.0
@@ -392,7 +462,15 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	}
 	result["capability_metrics"] = capMetrics
 	result["negative_checks"] = []any{}
-	result["mqtt"] = map[string]any{"probe_result": mqttProbeResult, "client_identities_checked": len(certRecords), "client_identity_mode": "device_token", "auth_flow": "device certificate mTLS request_token -> MQTT token credential"}
+	result["mqtt"] = map[string]any{
+		"probe_result":              mqttProbeResult,
+		"probe_model":               "actor_separated_iot",
+		"client_identities_checked": len(certRecords),
+		"client_identity_mode":      "app_token_and_device_token",
+		"telemetry_receiver":        "app_observer",
+		"command_receiver":          "device_client",
+		"auth_flow":                 "device/app certificate mTLS request_token -> MQTT token credential",
+	}
 	result["app_certificate_bootstrap"] = appBootstrap
 	result["out_of_scope"] = []string{"webrtc", "relay", "storage", "clip", "snapshot"}
 	if result["overall"] != "blocked" && successRate < 95 {
@@ -406,77 +484,324 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	return writeOutputs(outDir, result)
 }
 
-func runDeviceSampleEnvelope(record certRecord, brandname, apiBaseURL, host string, port int) deviceResult {
+func runDeviceActorSeparatedEnvelope(record certRecord, brandname, apiBaseURL, host string, port int, appCert tls.Certificate) deviceResult {
+	certPath := firstNonEmpty(record.ChainPath, record.CertPath)
+	cert, err := tls.LoadX509KeyPair(certPath, record.KeyPath)
+	if err != nil {
+		return failedActorResult(record.DeviceID, record.DeviceType, redactedError(err))
+	}
+	deviceToken, err := requestDeviceToken(apiBaseURL, cert)
+	if err != nil {
+		return failedActorResult(record.DeviceID, record.DeviceType, redactedError(err))
+	}
+	appToken, err := requestAppToken(apiBaseURL, appCert, record.DeviceID)
+	if err != nil {
+		return failedActorResult(record.DeviceID, record.DeviceType, redactedError(err))
+	}
+	if strings.TrimSpace(appToken.AccessToken) == "" {
+		return failedActorResult(record.DeviceID, record.DeviceType, "app request_token response missing access_token")
+	}
+	result := runActorSeparatedProbe(mqttActorProbe{
+		DeviceID:    record.DeviceID,
+		DeviceType:  record.DeviceType,
+		Brandname:   brandname,
+		DeviceToken: deviceToken,
+		AppToken:    appToken.AccessToken,
+		Dial: func() (io.ReadWriteCloser, error) {
+			return tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", net.JoinHostPort(host, strconv.Itoa(port)), &tls.Config{InsecureSkipVerify: true})
+		},
+		Timeout: 10 * time.Second,
+		Now:     time.Now,
+	})
+	prefix := []traceStep{
+		{Step: 1, Timestamp: nowISO(), Phase: "app_token", Actor: "app_actor", Action: "request_token", Status: "PASS", Detail: "scope=app"},
+		{Step: 2, Timestamp: nowISO(), Phase: "device_token", Actor: "device_client", Action: "request_token", Status: "PASS", Detail: "scope=device"},
+	}
+	result.TraceChain = renumberTrace(append(prefix, result.TraceChain...))
+	return result
+}
+
+func failedActorResult(deviceID, deviceType, reason string) deviceResult {
+	return deviceResult{DeviceID: deviceID, DeviceType: deviceType, Commands: 2, SuccessPercent: 0, MQTTStatus: "FAIL", TelemetryStatus: "FAIL", CommandStatus: "FAIL", LatencyMS: []float64{0}, Error: reason}
+}
+
+func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
+	if probe.Timeout <= 0 {
+		probe.Timeout = 10 * time.Second
+	}
+	if probe.Now == nil {
+		probe.Now = time.Now
+	}
 	start := time.Now()
-	result := deviceResult{DeviceID: record.DeviceID, DeviceType: record.DeviceType, Commands: 1, SuccessPercent: 0, MQTTStatus: "FAIL", LatencyMS: []float64{0}}
-	cert, err := tls.LoadX509KeyPair(record.CertPath, record.KeyPath)
+	upTopic := "devices/" + probe.DeviceID + "/up/messages"
+	downTopic := "devices/" + probe.DeviceID + "/down/commands"
+	result := deviceResult{
+		DeviceID:                probe.DeviceID,
+		DeviceType:              probe.DeviceType,
+		Commands:                2,
+		SuccessPercent:          0,
+		MQTTStatus:              "FAIL",
+		TelemetryStatus:         "FAIL",
+		CommandStatus:           "FAIL",
+		LatencyMS:               []float64{0, 0},
+		PublishTopic:            upTopic,
+		SubscribeTopic:          upTopic,
+		MessageType:             "status_report",
+		PayloadSchema:           "home_device_message/v1",
+		TelemetryPublishActor:   "device_client",
+		TelemetrySubscribeActor: "app_observer",
+		TelemetryTopic:          upTopic,
+		CommandPublishActor:     "app_controller",
+		CommandSubscribeActor:   "device_client",
+		CommandTopic:            downTopic,
+		AckTopic:                upTopic,
+	}
+	appObserver, err := connectMQTTActor(probe, "app-observer", appMQTTUsername(probe.DeviceID), probe.AppToken)
+	if err != nil {
+		result.Error = "app MQTT actor unauthorized or unavailable: " + redactedError(err)
+		result.TraceChain = appendTrace(result.TraceChain, "mqtt_connect", "app_observer", "mqtt_connect", "", "FAIL", "")
+		return result
+	}
+	result.TraceChain = appendTrace(result.TraceChain, "mqtt_connect", "app_observer", "mqtt_connect", "", "PASS", "")
+	defer appObserver.Close()
+	device, err := connectMQTTActor(probe, "device", probe.DeviceID, probe.DeviceToken)
+	if err != nil {
+		result.Error = "device MQTT actor unauthorized or unavailable: " + redactedError(err)
+		result.TraceChain = appendTrace(result.TraceChain, "mqtt_connect", "device_client", "mqtt_connect", "", "FAIL", "")
+		return result
+	}
+	result.TraceChain = appendTrace(result.TraceChain, "mqtt_connect", "device_client", "mqtt_connect", "", "PASS", "")
+	defer device.Close()
+	appController, err := connectMQTTActor(probe, "app-controller", appMQTTUsername(probe.DeviceID), probe.AppToken)
+	if err != nil {
+		result.Error = "app MQTT actor unauthorized or unavailable: " + redactedError(err)
+		result.TraceChain = appendTrace(result.TraceChain, "mqtt_connect", "app_controller", "mqtt_connect", "", "FAIL", "")
+		return result
+	}
+	result.TraceChain = appendTrace(result.TraceChain, "mqtt_connect", "app_controller", "mqtt_connect", "", "PASS", "")
+	defer appController.Close()
+
+	if err := mqttSubscribe(appObserver, 1, upTopic); err != nil {
+		result.Error = "app observer subscribe failed: " + redactedError(err)
+		result.TraceChain = appendTrace(result.TraceChain, "telemetry", "app_observer", "subscribe", upTopic, "FAIL", "")
+		return result
+	}
+	result.TraceChain = appendTrace(result.TraceChain, "telemetry", "app_observer", "subscribe", upTopic, "PASS", "")
+	if err := mqttSubscribe(device, 1, downTopic); err != nil {
+		result.Error = "device command subscribe failed: " + redactedError(err)
+		result.TraceChain = appendTrace(result.TraceChain, "command", "device_client", "subscribe", downTopic, "FAIL", "")
+		return result
+	}
+	result.TraceChain = appendTrace(result.TraceChain, "command", "device_client", "subscribe", downTopic, "PASS", "")
+
+	messageID := fmt.Sprintf("msg-mqtt-e2e-%d-%s", probe.Now().Unix(), probe.DeviceID)
+	_, telemetryPayload, err := sampleHomeStatusReport(probe.DeviceID, probe.DeviceType, probe.Brandname, messageID, probe.Now().UTC())
 	if err != nil {
 		result.Error = redactedError(err)
 		return result
 	}
-	token, err := requestDeviceToken(apiBaseURL, cert)
+	if err := mqttPublish(device, upTopic, telemetryPayload); err != nil {
+		result.Error = "device telemetry publish failed: " + redactedError(err)
+		result.TraceChain = appendTrace(result.TraceChain, "telemetry", "device_client", "publish", upTopic, "FAIL", "")
+		return result
+	}
+	telemetryData := traceDataSummaryFromPayload(telemetryPayload, "device_to_app")
+	result.TraceChain = appendTraceData(result.TraceChain, "telemetry", "device_client", "publish", upTopic, "PASS", telemetryData, "")
+	telemetryDoc, err := waitForMQTTPublish(appObserver, upTopic, probe.Timeout, func(doc map[string]any) bool {
+		return doc["sample_type"] == "home_device_message" && doc["message_id"] == messageID
+	})
+	if err != nil {
+		result.Error = "app observer did not receive device telemetry: " + redactedError(err)
+		result.LatencyMS = []float64{float64(time.Since(start).Milliseconds()), 0}
+		result.TraceChain = appendTrace(result.TraceChain, "telemetry", "app_observer", "receive", upTopic, "FAIL", "")
+		return result
+	}
+	result.TraceChain = appendTraceData(result.TraceChain, "telemetry", "app_observer", "receive", upTopic, "PASS", traceDataSummary(telemetryDoc), "")
+	result.TelemetryStatus = "PASS"
+	telemetryLatency := float64(time.Since(start).Milliseconds())
+
+	commandID := fmt.Sprintf("cmd-mqtt-e2e-%d-%s", probe.Now().Unix(), probe.DeviceID)
+	commandPayload, err := sampleHomeCommand(probe.DeviceID, probe.DeviceType, commandID, probe.Now().UTC())
 	if err != nil {
 		result.Error = redactedError(err)
 		return result
 	}
-	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", net.JoinHostPort(host, strconv.Itoa(port)), &tls.Config{InsecureSkipVerify: true})
+	commandStart := time.Now()
+	if err := mqttPublish(appController, downTopic, commandPayload); err != nil {
+		result.Error = "app command publish failed: " + redactedError(err)
+		result.TraceChain = appendTrace(result.TraceChain, "command", "app_controller", "publish", downTopic, "FAIL", "")
+		return result
+	}
+	commandData := traceDataSummaryFromPayload(commandPayload, "app_to_device")
+	result.TraceChain = appendTraceData(result.TraceChain, "command", "app_controller", "publish", downTopic, "PASS", commandData, "")
+	commandDoc, err := waitForMQTTPublish(device, downTopic, probe.Timeout, func(doc map[string]any) bool {
+		return doc["sample_type"] == "home_device_message" && doc["message_type"] == "command" && doc["command_id"] == commandID
+	})
+	if err != nil {
+		result.Error = "device did not receive app command: " + redactedError(err)
+		result.LatencyMS = []float64{telemetryLatency, float64(time.Since(commandStart).Milliseconds())}
+		result.TraceChain = appendTrace(result.TraceChain, "command", "device_client", "receive", downTopic, "FAIL", "")
+		return result
+	}
+	result.TraceChain = appendTraceData(result.TraceChain, "command", "device_client", "receive", downTopic, "PASS", traceDataSummary(commandDoc), "")
+	ackPayload, err := sampleHomeCommandResult(probe.DeviceID, probe.DeviceType, commandID, probe.Now().UTC())
 	if err != nil {
 		result.Error = redactedError(err)
 		return result
 	}
-	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(10 * time.Second))
-	clientID := fmt.Sprintf("rtk-e2e-%s-%d", record.DeviceID, os.Getpid())
-	if err := mqttConnect(conn, clientID, record.DeviceID, token); err != nil {
-		result.Error = redactedError(err)
+	if err := mqttPublish(device, upTopic, ackPayload); err != nil {
+		result.Error = "device command ack publish failed: " + redactedError(err)
+		result.TraceChain = appendTrace(result.TraceChain, "command_ack", "device_client", "publish", upTopic, "FAIL", "")
 		return result
 	}
-	messageID := fmt.Sprintf("msg-mqtt-e2e-%d-%s", time.Now().Unix(), record.DeviceID)
-	topic, payload, err := sampleHomeStatusReport(record.DeviceID, record.DeviceType, brandname, messageID, time.Now().UTC())
+	ackData := traceDataSummaryFromPayload(ackPayload, "device_to_app")
+	result.TraceChain = appendTraceData(result.TraceChain, "command_ack", "device_client", "publish", upTopic, "PASS", ackData, "")
+	ackDoc, err := waitForMQTTPublish(appObserver, upTopic, probe.Timeout, func(doc map[string]any) bool {
+		return doc["sample_type"] == "home_device_message" && doc["message_type"] == "command_result" && doc["command_id"] == commandID
+	})
 	if err != nil {
-		result.Error = redactedError(err)
+		result.Error = "app observer did not receive device command ack: " + redactedError(err)
+		result.LatencyMS = []float64{telemetryLatency, float64(time.Since(commandStart).Milliseconds())}
+		result.TraceChain = appendTrace(result.TraceChain, "command_ack", "app_observer", "receive", upTopic, "FAIL", "")
 		return result
 	}
-	result.PublishTopic = topic
-	result.SubscribeTopic = topic
-	result.MessageType = "status_report"
-	result.PayloadSchema = "home_device_message/v1"
-	if err := mqttSubscribe(conn, 1, topic); err != nil {
-		result.Error = redactedError(err)
-		return result
+	result.TraceChain = appendTraceData(result.TraceChain, "command_ack", "app_observer", "receive", upTopic, "PASS", traceDataSummary(ackDoc), "")
+	result.CommandStatus = "PASS"
+	result.MQTTStatus = "PASS"
+	result.SuccessPercent = 100
+	result.LatencyMS = []float64{telemetryLatency, float64(time.Since(commandStart).Milliseconds())}
+	return result
+}
+
+func connectMQTTActor(probe mqttActorProbe, actor, username, password string) (io.ReadWriteCloser, error) {
+	if probe.Dial == nil {
+		return nil, errors.New("missing MQTT dialer")
 	}
-	if err := mqttPublish(conn, topic, payload); err != nil {
-		result.Error = redactedError(err)
-		return result
+	conn, err := probe.Dial()
+	if err != nil {
+		return nil, err
 	}
-	for time.Since(start) < 10*time.Second {
+	if setter, ok := conn.(interface{ SetDeadline(time.Time) error }); ok {
+		_ = setter.SetDeadline(time.Now().Add(probe.Timeout))
+	}
+	clientID := fmt.Sprintf("rtk-e2e-%s-%s-%d", probe.DeviceID, actor, os.Getpid())
+	if err := mqttConnect(conn, clientID, username, password); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
+func waitForMQTTPublish(conn io.Reader, topic string, timeout time.Duration, match func(map[string]any) bool) (map[string]any, error) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
 		packetType, body, err := mqttReadPacket(conn)
 		if err != nil {
-			result.Error = redactedError(err)
-			return result
+			return nil, err
 		}
 		if packetType>>4 != 3 {
 			continue
 		}
-		topic, message, err := mqttDecodePublish(packetType&0x0f, body)
-		if err != nil || topic != result.SubscribeTopic {
+		gotTopic, message, err := mqttDecodePublish(packetType&0x0f, body)
+		if err != nil || gotTopic != topic {
 			continue
 		}
 		doc := map[string]any{}
 		if err := json.Unmarshal(message, &doc); err != nil {
 			continue
 		}
-		if doc["sample_type"] != "home_device_message" || doc["message_id"] != messageID {
+		if match(doc) {
+			return doc, nil
+		}
+	}
+	return nil, errors.New("timed out waiting for MQTT publish")
+}
+
+func appMQTTUsername(deviceID string) string {
+	return "app-user:" + deviceID
+}
+
+func appendTrace(chain []traceStep, phase, actor, action, topic, status, detail string) []traceStep {
+	return appendTraceData(chain, phase, actor, action, topic, status, "", detail)
+}
+
+func appendTraceData(chain []traceStep, phase, actor, action, topic, status, data, detail string) []traceStep {
+	step := traceStep{
+		Step:      len(chain) + 1,
+		Timestamp: nowISO(),
+		Phase:     phase,
+		Actor:     actor,
+		Action:    action,
+		Topic:     topic,
+		Status:    status,
+		Data:      traceDetail(data),
+		Detail:    traceDetail(detail),
+	}
+	return append(chain, step)
+}
+
+func renumberTrace(chain []traceStep) []traceStep {
+	for i := range chain {
+		chain[i].Step = i + 1
+		if chain[i].Timestamp == "" {
+			chain[i].Timestamp = nowISO()
+		}
+		chain[i].Data = traceDetail(chain[i].Data)
+		chain[i].Detail = traceDetail(chain[i].Detail)
+	}
+	return chain
+}
+
+func traceDataSummary(doc map[string]any) string {
+	parts := []string{}
+	for _, key := range []string{"direction", "sample_type", "message_type", "message_id", "command_id", "device_id", "capability"} {
+		value := strings.TrimSpace(fmt.Sprint(doc[key]))
+		if value == "" || value == "<nil>" {
 			continue
 		}
-		result.MQTTStatus = "PASS"
-		result.SuccessPercent = 100
-		result.LatencyMS = []float64{float64(time.Since(start).Milliseconds())}
-		return result
+		parts = append(parts, key+"="+value)
 	}
-	result.Error = "timed out waiting for sample home-device message loopback"
-	result.LatencyMS = []float64{float64(time.Since(start).Milliseconds())}
-	return result
+	if payload, ok := doc["payload"].(map[string]any); ok {
+		for _, key := range []string{"action", "status"} {
+			value := strings.TrimSpace(fmt.Sprint(payload[key]))
+			if value == "" || value == "<nil>" {
+				continue
+			}
+			parts = append(parts, "payload."+key+"="+value)
+		}
+		if state, ok := payload["state"].(map[string]any); ok {
+			for _, section := range []string{"desired", "reported"} {
+				values, ok := state[section].(map[string]any)
+				if !ok {
+					continue
+				}
+				for _, key := range []string{"power", "mode", "target_temperature_c", "fan", "reading", "telemetry_report_requested"} {
+					value := strings.TrimSpace(fmt.Sprint(values[key]))
+					if value == "" || value == "<nil>" {
+						continue
+					}
+					parts = append(parts, section+"."+key+"="+value)
+				}
+			}
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func traceDataSummaryFromPayload(payload []byte, direction string) string {
+	doc := map[string]any{}
+	if err := json.Unmarshal(payload, &doc); err != nil {
+		return ""
+	}
+	doc["direction"] = direction
+	return traceDataSummary(doc)
+}
+
+func traceDetail(detail string) string {
+	if detail == "" {
+		return ""
+	}
+	return redactedErrorString(detail)
 }
 
 func requestDeviceToken(apiBaseURL string, cert tls.Certificate) (string, error) {
@@ -521,64 +846,103 @@ func requestDeviceToken(apiBaseURL string, cert tls.Certificate) (string, error)
 }
 
 func runAppCertificateBootstrap(accountBaseURL, videoBaseURL string, user userCredential, deviceID string) appBootstrapStatus {
+	return prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL, user, deviceID).Status
+}
+
+func prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL string, user userCredential, deviceID string) appBootstrapMaterial {
 	status := appBootstrapStatus{Status: "FAIL", UserEmail: user.Email, DeviceID: deviceID}
+	material := appBootstrapMaterial{Status: status}
 	if strings.TrimSpace(user.Email) == "" || strings.TrimSpace(user.Password) == "" {
 		status.Status = "BLOCKED"
 		status.Reason = "selected user is missing login credential"
-		return status
+		material.Status = status
+		return material
 	}
 	first, err := accountLoginAppCertificate(accountBaseURL, user, "")
 	if err != nil {
 		status.Reason = redactedError(err)
-		return status
+		material.Status = status
+		return material
 	}
 	if first.User.ID == "" {
 		status.Reason = "login response missing user id"
-		return status
+		material.Status = status
+		return material
 	}
 	status.CertificateStatus = first.AppCertificate.Status
 	login := first
 	var keyPEM []byte
-	if first.AppCertificate.Status == "csr_required" {
+	switch first.AppCertificate.Status {
+	case "csr_required":
 		csrPEM, generatedKeyPEM, err := generateAppCSR("app-user:" + first.User.ID)
 		if err != nil {
 			status.Reason = redactedError(err)
-			return status
+			material.Status = status
+			return material
 		}
 		keyPEM = generatedKeyPEM
 		login, err = accountLoginAppCertificate(accountBaseURL, user, csrPEM)
 		if err != nil {
 			status.Reason = redactedError(err)
-			return status
+			material.Status = status
+			return material
 		}
 		status.CertificateStatus = login.AppCertificate.Status
+	case "issued":
+		if !hasLocalAppCredentials(user.AppCredentials) {
+			status.Status = "BLOCKED"
+			status.Reason = "users artifact lacks local app credentials for issued app certificate"
+			material.Status = status
+			return material
+		}
+		keyPEM = []byte(strings.TrimSpace(user.AppCredentials.PrivateKeyPEM))
 	}
 	status.Subject = login.AppCertificate.Subject
 	status.FingerprintSHA256 = login.AppCertificate.FingerprintSHA256
 	if login.AppCertificate.CertificatePEM == "" {
 		status.Reason = "login response missing app certificate"
-		return status
+		material.Status = status
+		return material
 	}
 	if len(keyPEM) == 0 {
 		status.Status = "BLOCKED"
 		status.Reason = "existing app certificate returned but simulation has no matching private key"
-		return status
+		material.Status = status
+		return material
 	}
 	certPEM := []byte(firstNonEmpty(login.AppCertificate.CertificateChainPEM, login.AppCertificate.CertificatePEM))
 	appCert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
 		status.Reason = redactedError(err)
-		return status
+		material.Status = status
+		return material
 	}
 	token, err := requestAppToken(videoBaseURL, appCert, deviceID)
 	if err != nil {
 		status.Reason = redactedError(err)
-		return status
+		material.Status = status
+		return material
+	}
+	if strings.TrimSpace(token.AccessToken) == "" {
+		status.Reason = "app request_token response missing access_token"
+		material.Status = status
+		return material
 	}
 	status.Status = "PASS"
 	status.Reason = ""
 	status.TokenScope = token.Scope
-	return status
+	status.AccessToken = token.AccessToken
+	material.Status = status
+	material.Certificate = appCert
+	return material
+}
+
+func hasLocalAppCredentials(credentials appCertificateKeys) bool {
+	privateKey := strings.TrimSpace(credentials.PrivateKeyPEM)
+	csr := strings.TrimSpace(credentials.CSRPem)
+	return strings.HasPrefix(privateKey, "-----BEGIN ") &&
+		strings.Contains(privateKey, "PRIVATE KEY-----") &&
+		strings.HasPrefix(csr, "-----BEGIN CERTIFICATE REQUEST-----")
 }
 
 type accountLoginAppResponse struct {
@@ -647,7 +1011,8 @@ func generateAppCSR(subject string) (string, []byte, error) {
 }
 
 type appTokenResponse struct {
-	Scope string `json:"scope"`
+	Scope       string `json:"scope"`
+	AccessToken string `json:"access_token"`
 }
 
 func requestAppToken(apiBaseURL string, cert tls.Certificate, deviceID string) (appTokenResponse, error) {
@@ -686,6 +1051,9 @@ func requestAppToken(apiBaseURL string, cert tls.Certificate, deviceID string) (
 	if err := json.Unmarshal(payload, &out); err != nil {
 		return appTokenResponse{}, err
 	}
+	if strings.TrimSpace(out.AccessToken) == "" {
+		return appTokenResponse{}, errors.New("app request_token response missing access_token")
+	}
 	return out, nil
 }
 
@@ -711,6 +1079,85 @@ func sampleHomeStatusReport(deviceID, capability, brandname, messageID string, o
 	}
 	payload, err := json.Marshal(body)
 	return topic, payload, err
+}
+
+func sampleHomeCommand(deviceID, capability, commandID string, occurredAt time.Time) ([]byte, error) {
+	body := map[string]any{
+		"sample_type":    "home_device_message",
+		"schema_version": 1,
+		"message_type":   "command",
+		"message_id":     "msg-" + commandID,
+		"correlation_id": commandID,
+		"command_id":     commandID,
+		"device_id":      deviceID,
+		"capability":     capability,
+		"occurred_at":    occurredAt.UTC().Format(time.RFC3339),
+		"payload": map[string]any{
+			"action":      commandActionForCapability(capability),
+			"clientToken": commandID,
+			"state": map[string]any{
+				"desired": desiredStateForCapability(capability),
+			},
+		},
+	}
+	return json.Marshal(body)
+}
+
+func sampleHomeCommandResult(deviceID, capability, commandID string, occurredAt time.Time) ([]byte, error) {
+	body := map[string]any{
+		"sample_type":    "home_device_message",
+		"schema_version": 1,
+		"message_type":   "command_result",
+		"message_id":     "msg-result-" + commandID,
+		"correlation_id": commandID,
+		"command_id":     commandID,
+		"device_id":      deviceID,
+		"capability":     capability,
+		"occurred_at":    occurredAt.UTC().Format(time.RFC3339),
+		"payload": map[string]any{
+			"clientToken": commandID,
+			"status":      "accepted",
+			"state": map[string]any{
+				"reported": reportedStateForCapability(capability),
+			},
+		},
+	}
+	return json.Marshal(body)
+}
+
+func commandActionForCapability(capability string) string {
+	switch strings.TrimSpace(strings.ToLower(capability)) {
+	case "light", "smart_light":
+		return "set_power"
+	case "air_conditioner", "ac", "hvac":
+		return "set_hvac"
+	case "smart_meter", "meter":
+		return "read_meter"
+	default:
+		return "probe_command"
+	}
+}
+
+func desiredStateForCapability(capability string) map[string]any {
+	switch strings.TrimSpace(strings.ToLower(capability)) {
+	case "light", "smart_light":
+		return map[string]any{"power": true}
+	case "air_conditioner", "ac", "hvac":
+		return map[string]any{"mode": "cool", "target_temperature_c": 24, "fan": "auto"}
+	case "smart_meter", "meter":
+		return map[string]any{"reading": "instantaneous"}
+	default:
+		return map[string]any{"command": "probe"}
+	}
+}
+
+func reportedStateForCapability(capability string) map[string]any {
+	switch strings.TrimSpace(strings.ToLower(capability)) {
+	case "smart_meter", "meter":
+		return map[string]any{"reading": "instantaneous", "telemetry_report_requested": true}
+	default:
+		return desiredStateForCapability(capability)
+	}
 }
 
 func mqttConnect(w io.ReadWriter, clientID, username, password string) error {
@@ -987,7 +1434,52 @@ func renderConsole(result map[string]any) string {
 		lines = append(lines, "")
 		return strings.Join(lines, "\n") + "\n"
 	}
+	traceDetail := asString(result["trace_detail"])
+	if traceDetail == "" {
+		traceDetail = "summary"
+	}
+	if traceDetail != "none" {
+		if devices, ok := result["devices"].([]deviceResult); ok && len(devices) > 0 {
+			lines = append(lines, "Runtime MQTT Trace:")
+			for _, row := range devices {
+				for _, step := range row.TraceChain {
+					if !consoleTraceStepVisible(step, traceDetail) {
+						continue
+					}
+					topic := step.Topic
+					if topic == "" {
+						topic = "-"
+					}
+					data := step.Data
+					if data == "" {
+						data = step.Detail
+					}
+					if data == "" {
+						data = "-"
+					}
+					lines = append(lines, fmt.Sprintf("  [%s] %s step=%02d %s %s topic=%s status=%s data=%s",
+						step.Timestamp,
+						row.DeviceID,
+						step.Step,
+						step.Actor,
+						step.Action,
+						topic,
+						step.Status,
+						data,
+					))
+				}
+			}
+			lines = append(lines, "")
+		}
+	}
 	return strings.Join(lines, "\n") + "\n"
+}
+
+func consoleTraceStepVisible(step traceStep, detail string) bool {
+	if detail == "full" {
+		return true
+	}
+	return step.Action == "publish" || step.Action == "receive" || step.Status == "FAIL"
 }
 
 func renderReport(result map[string]any) string {
@@ -1011,6 +1503,63 @@ func renderReport(result map[string]any) string {
 		}
 		lines = append(lines, "")
 		return strings.Join(lines, "\n") + "\n"
+	}
+	if mqtt, ok := result["mqtt"].(map[string]any); ok {
+		lines = append(lines,
+			"## MQTT Actor-Separated E2E",
+			"",
+			fmt.Sprintf("- Probe model: `%s`", asString(mqtt["probe_model"])),
+			fmt.Sprintf("- Client identity mode: `%s`", asString(mqtt["client_identity_mode"])),
+			fmt.Sprintf("- Telemetry receiver: `%s`", asString(mqtt["telemetry_receiver"])),
+			fmt.Sprintf("- Command receiver: `%s`", asString(mqtt["command_receiver"])),
+			"",
+		)
+	}
+	if devices, ok := result["devices"].([]deviceResult); ok && len(devices) > 0 {
+		lines = append(lines,
+			"## Per Device MQTT E2E",
+			"",
+			"| Device | Type | Telemetry | Command | Up topic | Down topic |",
+			"| --- | --- | --- | --- | --- | --- |",
+		)
+		for _, row := range devices {
+			lines = append(lines, fmt.Sprintf("| `%s` | `%s` | `%s -> %s: %s` | `%s -> %s: %s` | `%s` | `%s` |",
+				row.DeviceID,
+				row.DeviceType,
+				row.TelemetryPublishActor,
+				row.TelemetrySubscribeActor,
+				row.TelemetryStatus,
+				row.CommandPublishActor,
+				row.CommandSubscribeActor,
+				row.CommandStatus,
+				row.TelemetryTopic,
+				row.CommandTopic,
+			))
+		}
+		lines = append(lines, "")
+		lines = append(lines,
+			"## MQTT E2E Trace Chain",
+			"",
+			"| Device | Step | Timestamp | Phase | Actor | Action | Topic | Status | Data | Detail |",
+			"| --- | ---: | --- | --- | --- | --- | --- | --- | --- | --- |",
+		)
+		for _, row := range devices {
+			for _, step := range row.TraceChain {
+				lines = append(lines, fmt.Sprintf("| `%s` | %d | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` |",
+					row.DeviceID,
+					step.Step,
+					step.Timestamp,
+					step.Phase,
+					step.Actor,
+					step.Action,
+					step.Topic,
+					step.Status,
+					step.Data,
+					step.Detail,
+				))
+			}
+		}
+		lines = append(lines, "")
 	}
 	return strings.Join(lines, "\n") + "\n"
 }
@@ -1056,6 +1605,48 @@ func videoStatePath(envRoot, stackEnv string) string {
 		filepath.Join(envRoot, "state", "video-cloud-staging.state.json"),
 	)
 	return firstExisting(candidates...)
+}
+
+func videoCloudMTLSBaseURL(envRoot string, stackValues map[string]string, fallback string) string {
+	host := firstNonEmpty(
+		stackValues["VIDEO_CLOUD_MTLS_DOMAIN"],
+		stackValues["VIDEO_CLOUD_DEVICE_CLIENT_DOMAIN"],
+		topologyDeployValue(firstExisting(
+			filepath.Join(envRoot, "topology", "video-cloud.yaml"),
+			filepath.Join(envRoot, "topology", "video-cloud-staging.yaml"),
+		), "device_client_domain"),
+	)
+	if host == "" {
+		return fallback
+	}
+	return "https://" + strings.TrimRight(strings.TrimSpace(host), "/")
+}
+
+func topologyDeployValue(path, key string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	inDeploy := false
+	for _, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if !strings.HasPrefix(line, " ") && strings.HasSuffix(trimmed, ":") {
+			inDeploy = trimmed == "deploy:"
+			continue
+		}
+		if !inDeploy {
+			continue
+		}
+		name, value, ok := strings.Cut(trimmed, ":")
+		if !ok || strings.TrimSpace(name) != key {
+			continue
+		}
+		return strings.Trim(strings.TrimSpace(value), `"'`)
+	}
+	return ""
 }
 
 func latestHomeMQTTBindArtifact(pattern, brandLower string) string {
@@ -1185,6 +1776,10 @@ func redactedError(err error) string {
 
 func redactedErrorString(message string) string {
 	lower := strings.ToLower(message)
+	if strings.Contains(lower, "request_token") &&
+		(strings.Contains(lower, "http ") || strings.Contains(lower, "status=") || strings.Contains(lower, "failed with")) {
+		return message
+	}
 	for _, word := range []string{"password", "token", "secret", "private", "bearer", "device.key", "-----begin"} {
 		if strings.Contains(lower, word) {
 			return "redacted sensitive error"

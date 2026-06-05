@@ -15,6 +15,7 @@ device_route_set="${VIDEO_CLOUD_LOAD_DEVICE_ROUTE_SET:-smoke}"
 device_transport_set="${VIDEO_CLOUD_LOAD_DEVICE_TRANSPORT_SET:-smoke}"
 viewer_route_set="${VIDEO_CLOUD_LOAD_VIEWER_ROUTE_SET:-smoke}"
 webrtc_media_set="${VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_SET:-off}"
+webrtc_relay_role="${VIDEO_CLOUD_LOAD_WEBRTC_RELAY_ROLE:-both}"
 clip_set="${VIDEO_CLOUD_LOAD_CLIP_SET:-off}"
 mqtt_set="${VIDEO_CLOUD_LOAD_MQTT_SET:-off}"
 mqtt_addr="${VIDEO_CLOUD_MQTT_ADDR:-}"
@@ -56,6 +57,7 @@ cat >"${artifact_dir}/metadata.json" <<EOF
   "device_transport_set": "${device_transport_set}",
   "viewer_route_set": "${viewer_route_set}",
   "webrtc_media_set": "${webrtc_media_set}",
+  "webrtc_relay_role": "${webrtc_relay_role}",
   "clip_set": "${clip_set}",
   "mqtt_set": "${mqtt_set}",
   "mqtt_addr": "${mqtt_addr}",
@@ -104,6 +106,7 @@ fi
     --device-transport-set "${device_transport_set}" \
     --viewer-route-set "${viewer_route_set}" \
     --webrtc-media-set "${webrtc_media_set}" \
+    --webrtc-relay-role "${webrtc_relay_role}" \
     --clip-set "${clip_set}" \
     --mqtt-set "${mqtt_set}" \
     --mqtt-addr "${mqtt_addr}" \

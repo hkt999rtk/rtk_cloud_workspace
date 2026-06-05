@@ -33,11 +33,19 @@ func runDeploy(args []string) error {
 	adminRelease := fs.String("admin-release", "", "Cloud Admin release")
 	adminBundle := fs.String("admin-release-bundle", os.Getenv("ADMIN_RELEASE_BUNDLE"), "Cloud Admin release bundle")
 	loggerOnly := fs.Bool("logger-only", false, "install and verify only logger backend and log forwarders")
+	videoOnly := fs.Bool("video-only", false, "deploy only Video Cloud")
+	binaryOnly := fs.Bool("binary-only", false, "fast path: update only Video Cloud API binaries")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *envRootFlag == "" {
 		return errors.New("--env-root is required")
+	}
+	if *binaryOnly && !*videoOnly {
+		*videoOnly = true
+	}
+	if *binaryOnly && *loggerOnly {
+		return errors.New("--binary-only cannot be combined with --logger-only")
 	}
 	workspace := *workspaceFlag
 	var err error
@@ -59,6 +67,15 @@ func runDeploy(args []string) error {
 	applyDeployProcessEnv(env.Values)
 	paths.VideoState = provisionCloudVideoStatePath(envRoot, env.Values["CLOUD_STACK_NAME"], paths.VideoState)
 	operator, _ := readEnvFile(paths.OperatorEnv)
+	if *binaryOnly && strings.TrimSpace(*videoRelease) == "" {
+		selected, objectKey, err := selectObjectRelease(operator, "Video Cloud", "rtk_video_cloud", "")
+		if err != nil {
+			return err
+		}
+		*videoRelease = selected
+		fmt.Fprintf(os.Stderr, "[cloud-deploy] selected Video Cloud binary release: %s\n", selected)
+		fmt.Fprintf(os.Stderr, "[cloud-deploy] Video Cloud release readable: %s\n", objectKey)
+	}
 	return deployAllServices(paths, env.Values, operator, provisionOptions{
 		videoRelease:         *videoRelease,
 		accountRelease:       *accountRelease,
@@ -66,6 +83,8 @@ func runDeploy(args []string) error {
 		accountReleaseBundle: *accountBundle,
 		adminReleaseBundle:   *adminBundle,
 		loggerOnly:           *loggerOnly,
+		videoOnly:            *videoOnly,
+		binaryOnly:           *binaryOnly,
 		sshKey:               *sshKey,
 	})
 }
@@ -282,9 +301,11 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 	report := newReadinessReport(reportDir)
 	fmt.Fprintf(os.Stderr, "[cloud-deploy] readiness report: %s\n", report.path())
 
-	runLoggerProvisionHooks(paths, env, opts.sshKey, report)
-	runLoggerForwarderInstallHooks(paths, env, opts.sshKey, report)
-	runLoggerReadinessHooks(paths, env, opts.sshKey, report)
+	if !opts.binaryOnly {
+		runLoggerProvisionHooks(paths, env, opts.sshKey, report)
+		runLoggerForwarderInstallHooks(paths, env, opts.sshKey, report)
+		runLoggerReadinessHooks(paths, env, opts.sshKey, report)
+	}
 	if opts.loggerOnly {
 		return report.write(true)
 	}
@@ -293,17 +314,7 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 		"LINODE_DEPLOY_CERT_CACHE_DIR": filepath.Join(paths.EnvRoot, "certificates", env["VIDEO_CLOUD_DOMAIN"]),
 		"VIDEO_CLOUD_LOG_LEVEL":        logLevels["VIDEO_CLOUD_LOG_LEVEL"],
 	})
-	videoArgs := []string{
-		"--stack", env["CLOUD_STACK_NAME"],
-		"--config", paths.VideoConfig,
-		"--secrets-file", paths.VideoEnv,
-		"--env-file", paths.OperatorEnv,
-		"--gateway-domain", env["VIDEO_CLOUD_DOMAIN"],
-		"--certbot-extra-domain", env["VIDEO_CLOUD_CERTISSUER_DOMAIN"],
-	}
-	if opts.videoRelease != "" {
-		videoArgs = append(videoArgs, "--release", opts.videoRelease)
-	}
+	videoArgs := videoDeployArgs(paths, env, opts)
 	if err := runCmdWithEnv(filepath.Join(paths.Workspace, "repos", "rtk_video_cloud"), videoEnv, "linode_deploy/scripts/deploy-staging.sh", videoArgs...); err != nil {
 		report.add("video-cloud-deploy-verify", "FAIL", "")
 		report.add("cloud-admin-deploy", "SKIP", "video-cloud-deploy-verify")
@@ -312,6 +323,13 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 		return err
 	}
 	report.add("video-cloud-deploy-verify", "PASS", "")
+	if opts.videoOnly {
+		if !opts.binaryOnly {
+			runLoggerForwarderInstallHooks(paths, env, opts.sshKey, report)
+			runLoggerReadinessHooks(paths, env, opts.sshKey, report)
+		}
+		return report.write(true)
+	}
 
 	accountBundle := opts.accountReleaseBundle
 	if accountBundle == "" && opts.accountRelease != "" {
@@ -367,6 +385,28 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 	}
 	writePlatformAdminSummary(os.Stdout, paths)
 	return nil
+}
+
+func videoDeployArgs(paths provisionPaths, env map[string]string, opts provisionOptions) []string {
+	args := []string{
+		"--stack", env["CLOUD_STACK_NAME"],
+		"--config", paths.VideoConfig,
+		"--env-file", paths.OperatorEnv,
+		"--gateway-domain", env["VIDEO_CLOUD_DOMAIN"],
+	}
+	if !opts.binaryOnly {
+		args = append(args,
+			"--secrets-file", paths.VideoEnv,
+			"--certbot-extra-domain", env["VIDEO_CLOUD_CERTISSUER_DOMAIN"],
+		)
+	}
+	if opts.videoRelease != "" {
+		args = append(args, "--release", opts.videoRelease)
+	}
+	if opts.binaryOnly {
+		args = append(args, "--binary-only")
+	}
+	return args
 }
 
 func serviceLogLevels(env map[string]string) (map[string]string, error) {

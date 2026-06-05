@@ -1,0 +1,1 @@
+e2e_test/video_cloud/load/testdata/*.h264 filter=lfs diff=lfs merge=lfs -text

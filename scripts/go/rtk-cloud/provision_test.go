@@ -100,6 +100,65 @@ func TestLoggerProvisionStatusesReflectEnvAndStateFiles(t *testing.T) {
 	}
 }
 
+func TestEnsureProvisionRuntimeContractsWritesMTLSAndInternalAuth(t *testing.T) {
+	root := t.TempDir()
+	workspace := t.TempDir()
+	keysDir := filepath.Join(workspace, "keys", "staging", "linode", "video-cloud")
+	mkdirAll(t, keysDir)
+	writeFile(t, filepath.Join(keysDir, "root-ca.ed25519.cert.pem"), "-----BEGIN CERTIFICATE-----\nroot\n-----END CERTIFICATE-----\n")
+	writeFile(t, filepath.Join(keysDir, "production-issuer.ed25519.cert.pem"), "-----BEGIN CERTIFICATE-----\ndevice\n-----END CERTIFICATE-----\n")
+	writeFile(t, filepath.Join(keysDir, "app-user-issuer.ed25519.cert.pem"), "-----BEGIN CERTIFICATE-----\napp\n-----END CERTIFICATE-----\n")
+
+	paths := provisionPaths{
+		Workspace:           workspace,
+		EnvRoot:             root,
+		VideoConfig:         filepath.Join(root, "topology", "video-cloud-staging.yaml"),
+		VideoEnv:            filepath.Join(root, "services", "video-cloud", "video-cloud-staging.env"),
+		AccountManagerEnv:   filepath.Join(root, "services", "account-manager", "account-manager-public-staging.env"),
+		AccountManagerState: filepath.Join(root, "state", "account-manager-staging.env"),
+	}
+	mkdirAll(t, filepath.Dir(paths.VideoConfig))
+	writeFile(t, paths.VideoConfig, `deploy:
+  device_client_domain: ""
+  device_client_ca_cert_path: ""
+`)
+	mkdirAll(t, filepath.Dir(paths.VideoEnv))
+	writeFile(t, paths.VideoEnv, "VIDEO_CLOUD_AUTH_SECRET=auth-secret\n")
+	mkdirAll(t, filepath.Dir(paths.AccountManagerEnv))
+	writeFile(t, paths.AccountManagerEnv, "ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN=shared-internal-token\n")
+	mkdirAll(t, filepath.Dir(paths.AccountManagerState))
+	writeFile(t, paths.AccountManagerState, "ACCOUNT_MANAGER_LINODE_PRIVATE_IPV4=10.42.1.55\n")
+
+	err := ensureProvisionRuntimeContracts(paths, map[string]string{"VIDEO_CLOUD_DOMAIN": "video-cloud-stg-0529.realtekconnect.com"})
+	if err != nil {
+		t.Fatalf("ensureProvisionRuntimeContracts returned error: %v", err)
+	}
+
+	config := readFile(t, paths.VideoConfig)
+	if !strings.Contains(config, "device_client_domain: device.video-cloud-stg-0529.realtekconnect.com") {
+		t.Fatalf("video config missing device client domain:\n%s", config)
+	}
+	bundlePath := filepath.Join(keysDir, "device-app-client-ca-bundle.pem")
+	if !strings.Contains(config, "device_client_ca_cert_path: "+bundlePath) {
+		t.Fatalf("video config missing device client CA bundle:\n%s", config)
+	}
+	bundle := readFile(t, bundlePath)
+	if strings.Count(bundle, "BEGIN CERTIFICATE") != 3 {
+		t.Fatalf("bundle certificate count = %d, want 3:\n%s", strings.Count(bundle, "BEGIN CERTIFICATE"), bundle)
+	}
+
+	videoEnv, _ := readEnvFile(paths.VideoEnv)
+	if videoEnv["VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_URL"] != "http://10.42.1.55:18081" {
+		t.Fatalf("VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_URL = %q", videoEnv["VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_URL"])
+	}
+	if videoEnv["VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN"] != "shared-internal-token" {
+		t.Fatalf("video internal token was not synchronized")
+	}
+	if videoEnv["VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TIMEOUT"] != "10s" {
+		t.Fatalf("VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TIMEOUT = %q", videoEnv["VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TIMEOUT"])
+	}
+}
+
 func TestServiceLogLevelsDefaultAndOverrides(t *testing.T) {
 	env := map[string]string{
 		"CLOUD_SERVICE_LOG_LEVEL":   "warn",
@@ -618,6 +677,116 @@ func TestMaterializeReleaseBundleSupportsHTTPObjectStorage(t *testing.T) {
 	}
 	if string(data) != "bundle" {
 		t.Fatalf("bundle = %q", string(data))
+	}
+}
+
+func TestVideoDeployArgsSupportBinaryOnlyFastMode(t *testing.T) {
+	paths := provisionPaths{
+		Workspace:   "/workspace",
+		EnvRoot:     "/env",
+		VideoConfig: "/env/topology/video-cloud-staging.yaml",
+		VideoEnv:    "/env/services/video-cloud/video-cloud-staging.env",
+		OperatorEnv: "/env/env/operator.env",
+	}
+	args := videoDeployArgs(paths, map[string]string{
+		"CLOUD_STACK_NAME":              "video-cloud-stg-0529",
+		"VIDEO_CLOUD_DOMAIN":            "video-cloud.example.test",
+		"VIDEO_CLOUD_CERTISSUER_DOMAIN": "certissuer.video-cloud.example.test",
+	}, provisionOptions{
+		videoRelease: "v-fast",
+		binaryOnly:   true,
+	})
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"--release v-fast", "--binary-only", "--config /env/topology/video-cloud-staging.yaml"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("video deploy args missing %q: %#v", want, args)
+		}
+	}
+	for _, notWant := range []string{"--secrets-file", "--certbot-extra-domain"} {
+		if strings.Contains(joined, notWant) {
+			t.Fatalf("binary-only video deploy args unexpectedly include %q: %s", notWant, joined)
+		}
+	}
+
+	full := strings.Join(videoDeployArgs(paths, map[string]string{"CLOUD_STACK_NAME": "stack"}, provisionOptions{videoRelease: "v-full"}), " ")
+	if strings.Contains(full, "--binary-only") {
+		t.Fatalf("full deploy args unexpectedly include binary-only: %s", full)
+	}
+	for _, want := range []string{"--secrets-file", "--certbot-extra-domain"} {
+		if !strings.Contains(full, want) {
+			t.Fatalf("full video deploy args missing %q: %s", want, full)
+		}
+	}
+}
+
+func TestStgDeployShortcutDefaultsToVideoBinaryOnly(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	argsFile := filepath.Join(tmp, "args.txt")
+	fakeGo := filepath.Join(tmp, "fake-go")
+	writeFile(t, fakeGo, "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > \"$RTK_FAKE_GO_ARGS\"\n")
+	if err := os.Chmod(fakeGo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("bash", filepath.Join(root, "bin", "stg.sh"), "deploy")
+	cmd.Env = append(os.Environ(),
+		"RTK_CLOUD_GO="+fakeGo,
+		"RTK_FAKE_GO_ARGS="+argsFile,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("stg.sh deploy failed: %v\n%s", err, out)
+	}
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(strings.Fields(string(data)), " ")
+	for _, want := range []string{"deploy", "--video-only", "--binary-only"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stg.sh deploy args missing %q: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "--video-release") {
+		t.Fatalf("stg.sh deploy should not require an explicit release by default: %s", got)
+	}
+}
+
+func TestStgDeployShortcutAcceptsOptionalRelease(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	argsFile := filepath.Join(tmp, "args.txt")
+	fakeGo := filepath.Join(tmp, "fake-go")
+	writeFile(t, fakeGo, "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > \"$RTK_FAKE_GO_ARGS\"\n")
+	if err := os.Chmod(fakeGo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("bash", filepath.Join(root, "bin", "stg.sh"), "deploy", "v-test")
+	cmd.Env = append(os.Environ(),
+		"RTK_CLOUD_GO="+fakeGo,
+		"RTK_FAKE_GO_ARGS="+argsFile,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("stg.sh deploy v-test failed: %v\n%s", err, out)
+	}
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(strings.Fields(string(data)), " ")
+	for _, want := range []string{"deploy", "--video-only", "--binary-only", "--video-release v-test"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stg.sh deploy v-test args missing %q: %s", want, got)
+		}
 	}
 }
 

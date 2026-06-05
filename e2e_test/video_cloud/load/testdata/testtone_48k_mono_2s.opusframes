@@ -1,0 +1,7 @@
+# RTK deterministic Opus RTP payload fixture.
+# 48 kHz mono, 20 ms frames, 2 seconds total.
+# Each repeat item is one raw Opus RTP payload frame encoded as hex.
+sample_rate=48000
+channels=1
+frame_duration_ms=20
+repeat=50 f8fffe f8fffd

@@ -12,7 +12,9 @@ Usage:
 
 Shortcuts:
   provision [args]              -> rtk-cloud provision --env-root cloud_env/staging (default: --all)
-  deploy [args]                 -> rtk-cloud deploy --env-root cloud_env/staging
+  deploy [VERSION] [args]       -> fast Video Cloud binary update
+                                   default: latest Video Cloud Object Storage release
+                                   full deploy: raw deploy [args]
   token [args]                  -> rtk-cloud platform-admin-token --env-root cloud_env/staging
   brand NAME [args]             -> create-brandname-cloud
   brands [args]                 -> list-brandname-clouds
@@ -21,6 +23,8 @@ Shortcuts:
   bind NAME [COUNT] [args]      -> bind-devices
   unprovision NAME [args]       -> unprovision-devices
   mqtt NAME [args]              -> mqtt-test
+  mqtt-report [NAME] [args]     -> mqtt-trace-report
+  video NAME [args]             -> video-relay-test
   certs [args]                  -> check-certificates
   ssh [CIDR] [args]             -> update-ssh-whitelist
   rm-vm [args]                  -> remove-all-vm
@@ -64,7 +68,13 @@ case "$cmd" in
 		with_env provision "$@"
 		;;
 	deploy)
-		with_env deploy "$@"
+		if [[ -n "${1:-}" && "${1:-}" != -* ]]; then
+			release="$1"
+			shift
+			with_env deploy --video-only --binary-only --video-release "$release" "$@"
+		else
+			with_env deploy --video-only --binary-only "$@"
+		fi
 		;;
 	token)
 		with_env platform-admin-token "$@"
@@ -133,6 +143,21 @@ case "$cmd" in
 		brand="$1"
 		shift
 		with_env mqtt-test --brandname "$brand" "$@"
+		;;
+	mqtt-report)
+		if [[ -n "${1:-}" && "${1:-}" != -* ]]; then
+			brand="$1"
+			shift
+			with_env mqtt-trace-report --brandname "$brand" "$@"
+		else
+			with_env mqtt-trace-report "$@"
+		fi
+		;;
+	video)
+		need_value "brand name" "${1:-}"
+		brand="$1"
+		shift
+		with_env video-relay-test --brandname "$brand" "$@"
 		;;
 	certs)
 		with_env check-certificates "$@"

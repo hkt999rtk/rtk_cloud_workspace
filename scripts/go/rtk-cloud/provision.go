@@ -63,6 +63,8 @@ type provisionOptions struct {
 	adminRelease         string
 	adminReleaseBundle   string
 	loggerOnly           bool
+	videoOnly            bool
+	binaryOnly           bool
 	confirm              string
 	verbose              bool
 }
@@ -125,6 +127,11 @@ func runProvision(args []string) error {
 	paths.VideoState = provisionCloudVideoStatePath(envRoot, envValues["CLOUD_STACK_NAME"], paths.VideoState)
 	if opts.mode.preflight {
 		if err := provisionPreflight(paths, &opts); err != nil {
+			return err
+		}
+	}
+	if opts.mode.apply || opts.mode.dns || opts.mode.deploy || opts.mode.e2e {
+		if err := ensureProvisionRuntimeContracts(paths, envValues); err != nil {
 			return err
 		}
 	}
@@ -1065,6 +1072,131 @@ func provisionDeploy(paths provisionPaths, env map[string]string, opts provision
 	return deployAllServices(paths, env, operator, opts)
 }
 
+func ensureProvisionRuntimeContracts(paths provisionPaths, env map[string]string) error {
+	if err := ensureProvisionDeviceMTLSIngress(paths, env); err != nil {
+		return err
+	}
+	return ensureProvisionAccountManagerInternalAuth(paths)
+}
+
+func ensureProvisionDeviceMTLSIngress(paths provisionPaths, env map[string]string) error {
+	videoDomain := firstNonEmpty(env["VIDEO_CLOUD_DOMAIN"], "video-cloud-staging.realtekconnect.com")
+	deviceDomain := "device." + videoDomain
+	if strings.HasPrefix(videoDomain, "video-cloud-") {
+		deviceDomain = "device." + videoDomain
+	}
+	keysDir := filepath.Join(paths.Workspace, "keys", "staging", "linode", "video-cloud")
+	bundlePath := filepath.Join(keysDir, "device-app-client-ca-bundle.pem")
+	rootCA := filepath.Join(keysDir, "root-ca.ed25519.cert.pem")
+	deviceIssuer := filepath.Join(keysDir, "production-issuer.ed25519.cert.pem")
+	appIssuer := filepath.Join(keysDir, "app-user-issuer.ed25519.cert.pem")
+	if err := ensurePEMBundle(bundlePath, []string{rootCA, deviceIssuer, appIssuer}); err != nil {
+		return err
+	}
+	if err := setYAMLScalar(paths.VideoConfig, "device_client_domain", deviceDomain); err != nil {
+		return err
+	}
+	return setYAMLScalar(paths.VideoConfig, "device_client_ca_cert_path", bundlePath)
+}
+
+func ensureProvisionAccountManagerInternalAuth(paths provisionPaths) error {
+	accountEnv, _ := readEnvFile(paths.AccountManagerEnv)
+	videoEnv, _ := readEnvFile(paths.VideoEnv)
+	token := firstNonEmpty(accountEnv["ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN"], videoEnv["VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN"])
+	if token == "" {
+		generated, err := randomHex(32)
+		if err != nil {
+			return err
+		}
+		token = generated
+	}
+	accountEnv["ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN"] = token
+	accountHost := firstNonEmpty(envFileValue(paths.AccountManagerState, "ACCOUNT_MANAGER_LINODE_PRIVATE_IPV4"), accountManagerPrivateIPv4(paths), "10.42.1.50")
+	videoEnv["VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_URL"] = "http://" + accountHost + ":18081"
+	videoEnv["VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN"] = token
+	if strings.TrimSpace(videoEnv["VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TIMEOUT"]) == "" {
+		videoEnv["VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TIMEOUT"] = "10s"
+	}
+	if err := writeEnvMap(paths.AccountManagerEnv, accountEnv, 0o600); err != nil {
+		return err
+	}
+	return writeEnvMap(paths.VideoEnv, videoEnv, 0o600)
+}
+
+func ensurePEMBundle(bundlePath string, certPaths []string) error {
+	var b strings.Builder
+	for _, path := range certPaths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read CA certificate for device mTLS bundle: %w", err)
+		}
+		text := strings.TrimSpace(string(data))
+		if text == "" {
+			return fmt.Errorf("CA certificate for device mTLS bundle is empty: %s", path)
+		}
+		b.WriteString(text)
+		b.WriteString("\n")
+	}
+	if err := os.MkdirAll(filepath.Dir(bundlePath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(bundlePath, []byte(b.String()), 0o644)
+}
+
+func setYAMLScalar(path, key, value string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	prefix := key + ":"
+	replaced := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, prefix) {
+			indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+			lines[i] = indent + key + ": " + value
+			replaced = true
+		}
+	}
+	if !replaced {
+		lines = append(lines, key+": "+value)
+	}
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+}
+
+func yamlScalarValue(path, key string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	prefix := key + ":"
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, prefix) {
+			return strings.Trim(strings.TrimSpace(strings.TrimPrefix(trimmed, prefix)), `"'`)
+		}
+	}
+	return ""
+}
+
+func randomHex(bytesLen int) (string, error) {
+	if bytesLen <= 0 {
+		return "", errors.New("random hex byte length must be positive")
+	}
+	buf := make([]byte, bytesLen)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	const hex = "0123456789abcdef"
+	out := make([]byte, bytesLen*2)
+	for i, b := range buf {
+		out[i*2] = hex[b>>4]
+		out[i*2+1] = hex[b&0x0f]
+	}
+	return string(out), nil
+}
+
 func resolveProvisionReleases(paths provisionPaths, operator map[string]string, opts *provisionOptions) error {
 	requestedAccountRelease := opts.accountRelease
 	releases := []struct {
@@ -1237,6 +1369,7 @@ func provisionDNS(paths provisionPaths, env map[string]string, opts provisionOpt
 	}{
 		{env["VIDEO_CLOUD_DOMAIN"], stringValue(edge["public_ipv4"])},
 		{env["VIDEO_CLOUD_CERTISSUER_DOMAIN"], stringValue(edge["public_ipv4"])},
+		{yamlScalarValue(paths.VideoConfig, "device_client_domain"), stringValue(edge["public_ipv4"])},
 		{env["ACCOUNT_MANAGER_DOMAIN"], envFileValue(paths.AccountManagerState, "ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4")},
 		{env["CLOUD_ADMIN_DOMAIN"], envFileValue(paths.AdminState, "ADMIN_LINODE_PUBLIC_IPV4")},
 		{logger.Domain, logger.State["CLOUD_LOGGER_LINODE_PUBLIC_IPV4"]},

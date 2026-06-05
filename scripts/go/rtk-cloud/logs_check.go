@@ -180,6 +180,12 @@ func loadLogsCheckTargets(root string) (map[string]logsCheckTarget, error) {
 		for role, target := range loaded {
 			targets[role] = target
 		}
+	} else if loaded, err := readVideoStateTargets(root); err == nil {
+		for _, role := range []string{"edge", "api", "infra", "mqtt", "coturn"} {
+			if target := loaded[role]; target.Host != "" {
+				targets[role] = target
+			}
+		}
 	}
 	accountState := filepath.Join(root, "state", "account-manager-staging.env")
 	if host := firstNonEmpty(envFileValue(accountState, "ACCOUNT_MANAGER_LINODE_HOST"), envFileValue(accountState, "ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4")); host != "" {

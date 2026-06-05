@@ -104,6 +104,7 @@ device_route_set="${VIDEO_CLOUD_LOAD_DEVICE_ROUTE_SET:-smoke}"
 device_transport_set="${VIDEO_CLOUD_LOAD_DEVICE_TRANSPORT_SET:-smoke}"
 viewer_route_set="${VIDEO_CLOUD_LOAD_VIEWER_ROUTE_SET:-smoke}"
 webrtc_media_set="${VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_SET:-off}"
+webrtc_relay_role="${VIDEO_CLOUD_LOAD_WEBRTC_RELAY_ROLE:-}"
 clip_set="${VIDEO_CLOUD_LOAD_CLIP_SET:-off}"
 mqtt_set="${VIDEO_CLOUD_LOAD_MQTT_SET:-off}"
 mqtt_addr="${VIDEO_CLOUD_MQTT_ADDR:-}"
@@ -422,6 +423,19 @@ install_binary() {
   run_ssh "$remote" "chmod 755 $(quote "$remote_dir")/rtk-video-loadtest && printf '%s  rtk-video-loadtest\n' $(quote "$binary_sha256") > $(quote "$remote_dir")/SHA256SUMS"
 }
 
+relay_role_for_host_role() {
+  local role="$1"
+  if [ -n "$webrtc_relay_role" ]; then
+    printf '%s' "$webrtc_relay_role"
+    return
+  fi
+  case "$role" in
+    device) printf 'device-only' ;;
+    app-viewer) printf 'app-only' ;;
+    *) printf 'both' ;;
+  esac
+}
+
 write_remote_metadata() {
   local host="$1"
   local role="$2"
@@ -429,6 +443,8 @@ write_remote_metadata() {
   local instance_id="$4"
   local remote="${remote_user}@${host}"
   local remote_artifact_dir="${remote_dir}/runs/${run_id}/${role}"
+  local relay_role
+  relay_role="$(relay_role_for_host_role "$role")"
   local metadata
   metadata="$(cat <<EOF
 {
@@ -442,6 +458,7 @@ write_remote_metadata() {
   "device_transport_set": "${device_transport_set}",
   "viewer_route_set": "${viewer_route_set}",
   "webrtc_media_set": "${webrtc_media_set}",
+  "webrtc_relay_role": "${relay_role}",
   "clip_set": "${clip_set}",
   "device_ids": "${device_ids}",
   "mqtt_set": "${mqtt_set}",
@@ -472,6 +489,8 @@ remote_run_command() {
   local instance_id="$3"
   local role_duration="$4"
   local remote_artifact_dir="${remote_dir}/runs/${run_id}/${role}"
+  local relay_role
+  relay_role="$(relay_role_for_host_role "$role")"
   local cmd=()
   cmd+=("VIDEO_CLOUD_LOAD_API_URL=$(quote "$api_url")")
   cmd+=("VIDEO_CLOUD_LOAD_WS_URL=$(quote "$ws_url")")
@@ -489,6 +508,7 @@ remote_run_command() {
   cmd+=("VIDEO_CLOUD_LOAD_DEVICE_TRANSPORT_SET=$(quote "$device_transport_set")")
   cmd+=("VIDEO_CLOUD_LOAD_VIEWER_ROUTE_SET=$(quote "$viewer_route_set")")
   cmd+=("VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_SET=$(quote "$webrtc_media_set")")
+  cmd+=("VIDEO_CLOUD_LOAD_WEBRTC_RELAY_ROLE=$(quote "$relay_role")")
   cmd+=("VIDEO_CLOUD_LOAD_CLIP_SET=$(quote "$clip_set")")
   cmd+=("VIDEO_CLOUD_LOAD_MQTT_SET=$(quote "$mqtt_set")")
   cmd+=("VIDEO_CLOUD_LOAD_MQTT_DEVICE_PROFILE=$(quote "$mqtt_device_profile")")
@@ -514,6 +534,7 @@ remote_run_command() {
   cmd+=(--device-transport-set "$(quote "$device_transport_set")")
   cmd+=(--viewer-route-set "$(quote "$viewer_route_set")")
   cmd+=(--webrtc-media-set "$(quote "$webrtc_media_set")")
+  cmd+=(--webrtc-relay-role "$(quote "$relay_role")")
   cmd+=(--clip-set "$(quote "$clip_set")")
   cmd+=(--mqtt-set "$(quote "$mqtt_set")")
   cmd+=(--mqtt-addr "$(quote "$mqtt_addr")")
