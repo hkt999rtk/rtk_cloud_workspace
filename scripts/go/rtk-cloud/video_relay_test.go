@@ -75,8 +75,11 @@ func TestVideoRelayBuildsRunnerArgsWithoutLeakingTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "--webrtc-media-set") || !strings.Contains(joined, "rtp") {
-		t.Fatalf("runner args missing WebRTC RTP media flags: %v", args)
+	if !strings.Contains(joined, "--webrtc-media-set") || !strings.Contains(joined, "h264") {
+		t.Fatalf("runner args missing WebRTC H.264 media flags: %v", args)
+	}
+	if !strings.Contains(joined, "--webrtc-media-duration") || !strings.Contains(joined, "20s") {
+		t.Fatalf("runner args missing 20s WebRTC media duration: %v", args)
 	}
 	if !strings.Contains(joined, "--device-route-set") || !strings.Contains(joined, "off") {
 		t.Fatalf("runner args should disable legacy device HTTP route coverage: %v", args)

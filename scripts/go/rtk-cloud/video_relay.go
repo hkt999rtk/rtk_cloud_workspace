@@ -111,6 +111,8 @@ type videoRelayDeviceResult struct {
 	SessionIDPresent      bool   `json:"session_id_present,omitempty"`
 	ICEServerCount        int    `json:"ice_server_count,omitempty"`
 	ICEConnectedLatencyMS int64  `json:"ice_connected_latency_ms,omitempty"`
+	RTPCodec              string `json:"rtp_codec,omitempty"`
+	RTPNALTypes           string `json:"rtp_nal_types,omitempty"`
 	RTPPacketsReceived    int    `json:"rtp_packets_received,omitempty"`
 	RTPBytesReceived      int    `json:"rtp_bytes_received,omitempty"`
 	Error                 string `json:"error,omitempty"`
@@ -376,7 +378,8 @@ func buildVideoRelayRunnerArgs(cfg videoRelayRunnerConfig) ([]string, string, er
 		"--actors", "device,viewer",
 		"--device-online-mode", "websocket",
 		"--device-route-set", "off",
-		"--webrtc-media-set", "rtp",
+		"--webrtc-media-set", "h264",
+		"--webrtc-media-duration", "20s",
 		"--device-ids", strings.Join(cfg.DeviceIDs, ","),
 		"--virtual-devices", strconv.Itoa(len(cfg.DeviceIDs)),
 		"--virtual-viewers", strconv.Itoa(len(cfg.DeviceIDs)),
@@ -488,6 +491,8 @@ func summarizeVideoRelayLoadResults(path string, selected []videoRelaySelectedDe
 			packets, bytes := parseRTPRelayEvidence(op.Evidence)
 			row.RTPPacketsReceived = packets
 			row.RTPBytesReceived = bytes
+			row.RTPCodec = parseEvidenceString(op.Evidence, "codec")
+			row.RTPNALTypes = parseEvidenceString(op.Evidence, "nal_types")
 		case "webrtc_media_close":
 			row.CloseStatus = status
 		}
@@ -541,6 +546,15 @@ func parseEvidenceInt(evidence, key string) int {
 	return n
 }
 
+func parseEvidenceString(evidence, key string) string {
+	re := regexp.MustCompile(regexp.QuoteMeta(key) + `=([^ ]+)`)
+	m := re.FindStringSubmatch(evidence)
+	if len(m) != 2 {
+		return ""
+	}
+	return m[1]
+}
+
 func renderVideoRelayReport(result videoRelayResult) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, "Video Relay Test Report")
@@ -552,10 +566,10 @@ func renderVideoRelayReport(result videoRelayResult) string {
 	}
 	fmt.Fprintln(&b, "Devices:")
 	for _, device := range result.Devices {
-		fmt.Fprintf(&b, "- %s websocket=%s create=%s answer=%s ice=%s close=%s ICE servers=%d ICE connected=%dms RTP packets=%d RTP bytes=%d",
+		fmt.Fprintf(&b, "- %s websocket=%s create=%s answer=%s ice=%s close=%s codec=%s nal_types=%s ICE servers=%d ICE connected=%dms RTP packets=%d RTP bytes=%d",
 			device.DeviceID, device.WebSocketOwnerStatus, device.WebRTCCreateStatus, device.WebRTCAnswerStatus,
-			device.ICEConnectedStatus, device.CloseStatus, device.ICEServerCount, device.ICEConnectedLatencyMS,
-			device.RTPPacketsReceived, device.RTPBytesReceived)
+			device.ICEConnectedStatus, device.CloseStatus, device.RTPCodec, device.RTPNALTypes, device.ICEServerCount,
+			device.ICEConnectedLatencyMS, device.RTPPacketsReceived, device.RTPBytesReceived)
 		if device.Error != "" {
 			fmt.Fprintf(&b, " error=%s", sanitizeVideoRelayText(device.Error))
 		}
@@ -609,9 +623,9 @@ func renderVideoRelayConsole(result videoRelayResult) string {
 	fmt.Fprintf(&b, "Status: %s | Overall: %s\n", result.Status, result.Overall)
 	fmt.Fprintf(&b, "Brand: %s | Profile: %s\n", result.Brandname, result.Profile)
 	for _, device := range result.Devices {
-		fmt.Fprintf(&b, "  %s websocket=%s create=%s answer=%s ice=%s rtp=%s close=%s packets=%d bytes=%d\n",
+		fmt.Fprintf(&b, "  %s websocket=%s create=%s answer=%s ice=%s rtp=%s close=%s codec=%s nal_types=%s packets=%d bytes=%d\n",
 			device.DeviceID, device.WebSocketOwnerStatus, device.WebRTCCreateStatus, device.WebRTCAnswerStatus,
-			device.ICEConnectedStatus, device.RTPReceiveStatus, device.CloseStatus, device.RTPPacketsReceived, device.RTPBytesReceived)
+			device.ICEConnectedStatus, device.RTPReceiveStatus, device.CloseStatus, device.RTPCodec, device.RTPNALTypes, device.RTPPacketsReceived, device.RTPBytesReceived)
 	}
 	if result.Error != "" {
 		fmt.Fprintf(&b, "Error: %s\n", sanitizeVideoRelayText(result.Error))

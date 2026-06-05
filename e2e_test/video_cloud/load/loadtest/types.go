@@ -49,8 +49,9 @@ const (
 )
 
 const (
-	WebRTCMediaSetOff = "off"
-	WebRTCMediaSetRTP = "rtp"
+	WebRTCMediaSetOff  = "off"
+	WebRTCMediaSetRTP  = "rtp"
+	WebRTCMediaSetH264 = "h264"
 )
 
 const (
@@ -92,6 +93,7 @@ type Config struct {
 	DeviceTransportSet    string            `json:"device_transport_set"`
 	ViewerRouteSet        string            `json:"viewer_route_set"`
 	WebRTCMediaSet        string            `json:"webrtc_media_set"`
+	WebRTCMediaDuration   time.Duration     `json:"webrtc_media_duration"`
 	ClipSet               string            `json:"clip_set"`
 	MQTTSet               string            `json:"mqtt_set"`
 	MQTTAddr              string            `json:"mqtt_addr,omitempty"`

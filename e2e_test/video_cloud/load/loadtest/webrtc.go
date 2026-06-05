@@ -1,15 +1,22 @@
 package loadtest
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/pion/rtp"
+	"github.com/pion/rtp/codecs"
 	"github.com/pion/webrtc/v3"
+	"github.com/pion/webrtc/v3/pkg/media/h264reader"
 )
 
 type WebRTCValidation struct {
@@ -29,6 +36,28 @@ type WebRTCMediaStats struct {
 	ReceiveDurationMS     int64
 }
 
+type H264RTPPlan struct {
+	Duration  time.Duration
+	Loops     int
+	FrameRate int
+	Frames    int
+	Packets   []*rtp.Packet
+	Evidence  H264RTPEvidence
+}
+
+type H264RTPEvidence struct {
+	Packets        int
+	Bytes          int
+	DurationMS     int64
+	Loops          int
+	Frames         int
+	NALTypes       map[string]bool
+	Packetizations map[string]bool
+	ReceiveMS      int64
+	TimeToFirstMS  int64
+	ICEMS          int64
+}
+
 type PionMediaOfferSession struct {
 	peer         *webrtc.PeerConnection
 	offer        webrtc.SessionDescription
@@ -46,6 +75,7 @@ type PionMediaOfferSession struct {
 type PionMediaAnswerSession struct {
 	peer         *webrtc.PeerConnection
 	track        *webrtc.TrackLocalStaticRTP
+	codecMime    string
 	answer       webrtc.SessionDescription
 	iceConnected chan struct{}
 	closeOnce    sync.Once
@@ -232,7 +262,11 @@ func NewPionMediaAnswerSessionWithICEServers(ctx context.Context, offer map[stri
 			session.iceOnce.Do(func() { close(session.iceConnected) })
 		}
 	})
-	track, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8}, "video", "rtk-video-loadtest")
+	track, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{
+		MimeType:    webrtc.MimeTypeH264,
+		ClockRate:   90000,
+		SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f",
+	}, "video", "rtk-video-loadtest")
 	if err != nil {
 		_ = peer.Close()
 		return nil, fmt.Errorf("pion media answer track: %w", err)
@@ -242,6 +276,7 @@ func NewPionMediaAnswerSessionWithICEServers(ctx context.Context, offer map[stri
 		return nil, fmt.Errorf("pion media answer add track: %w", err)
 	}
 	session.track = track
+	session.codecMime = webrtc.MimeTypeH264
 	if err := peer.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: offer["sdp"]}); err != nil {
 		_ = peer.Close()
 		return nil, fmt.Errorf("pion media answer set remote offer: %w", err)
@@ -268,6 +303,13 @@ func (s *PionMediaAnswerSession) AnswerPayload() map[string]string {
 		"type": "answer",
 		"sdp":  s.answer.SDP,
 	}
+}
+
+func (s *PionMediaAnswerSession) CodecMimeType() string {
+	if s == nil {
+		return ""
+	}
+	return s.codecMime
 }
 
 func (s *PionMediaAnswerSession) SendSyntheticRTP(ctx context.Context, packets int, interval time.Duration) error {
@@ -308,6 +350,249 @@ func (s *PionMediaAnswerSession) SendSyntheticRTP(ctx context.Context, packets i
 		}
 	}
 	return nil
+}
+
+func (s *PionMediaAnswerSession) SendH264RTP(ctx context.Context, duration time.Duration) (H264RTPPlan, error) {
+	select {
+	case <-s.iceConnected:
+	case <-ctx.Done():
+		return H264RTPPlan{}, ctx.Err()
+	case <-time.After(5 * time.Second):
+		return H264RTPPlan{}, errors.New("webrtc media answerer ICE connection timeout")
+	}
+	plan, err := buildH264MediaPlan(duration)
+	if err != nil {
+		return H264RTPPlan{}, err
+	}
+	interval := time.Duration(0)
+	if len(plan.Packets) > 0 && duration > 0 {
+		interval = duration / time.Duration(len(plan.Packets))
+	}
+	for i, packet := range plan.Packets {
+		if err := s.track.WriteRTP(packet); err != nil {
+			return H264RTPPlan{}, err
+		}
+		if interval <= 0 || i == len(plan.Packets)-1 {
+			continue
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return H264RTPPlan{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return plan, nil
+}
+
+func buildH264MediaPlan(duration time.Duration) (H264RTPPlan, error) {
+	if duration <= 0 {
+		duration = 20 * time.Second
+	}
+	sample, err := h264AnnexBSample(context.Background())
+	if err != nil {
+		return H264RTPPlan{}, err
+	}
+	const (
+		fixtureDuration = 2 * time.Second
+		frameRate       = 30
+	)
+	loops := int((duration + fixtureDuration - 1) / fixtureDuration)
+	if loops < 1 {
+		loops = 1
+	}
+	packetizer := rtp.NewPacketizer(1200, 96, 0x52544b43, &codecs.H264Payloader{}, rtp.NewFixedSequencer(1), 90000)
+	allPackets := make([]*rtp.Packet, 0)
+	evidence := H264RTPEvidence{
+		DurationMS:     duration.Milliseconds(),
+		Loops:          loops,
+		Frames:         int(duration.Seconds() * frameRate),
+		NALTypes:       map[string]bool{},
+		Packetizations: map[string]bool{},
+	}
+	for i := 0; i < loops; i++ {
+		packets, loopEvidence, err := packetizeH264AnnexBWithPacketizer(sample, packetizer, 3000)
+		if err != nil {
+			return H264RTPPlan{}, err
+		}
+		allPackets = append(allPackets, packets...)
+		evidence.Packets += loopEvidence.Packets
+		evidence.Bytes += loopEvidence.Bytes
+		for name := range loopEvidence.NALTypes {
+			evidence.NALTypes[name] = true
+		}
+		for name := range loopEvidence.Packetizations {
+			evidence.Packetizations[name] = true
+		}
+	}
+	return H264RTPPlan{Duration: duration, Loops: loops, FrameRate: frameRate, Frames: evidence.Frames, Packets: allPackets, Evidence: evidence}, nil
+}
+
+func h264AnnexBSample(_ context.Context) ([]byte, error) {
+	for _, path := range []string{
+		"../testdata/testsrc2_1080p_2s.h264",
+		"testdata/testsrc2_1080p_2s.h264",
+		"video_cloud/load/testdata/testsrc2_1080p_2s.h264",
+		"e2e_test/video_cloud/load/testdata/testsrc2_1080p_2s.h264",
+	} {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			return data, nil
+		}
+	}
+	return nil, errors.New("missing H.264 fixture testsrc2_1080p_2s.h264")
+}
+
+func packetizeH264AnnexBForRTP(sample []byte, mtu uint16) ([]*rtp.Packet, H264RTPEvidence, error) {
+	packetizer := rtp.NewPacketizer(mtu, 96, 0x52544b43, &codecs.H264Payloader{}, rtp.NewFixedSequencer(1), 90000)
+	return packetizeH264AnnexBWithPacketizer(sample, packetizer, 3000)
+}
+
+func packetizeH264AnnexBWithPacketizer(sample []byte, packetizer rtp.Packetizer, samples uint32) ([]*rtp.Packet, H264RTPEvidence, error) {
+	nals, err := h264NALUnits(sample)
+	if err != nil {
+		return nil, H264RTPEvidence{}, err
+	}
+	evidence := H264RTPEvidence{NALTypes: map[string]bool{}, Packetizations: map[string]bool{}}
+	packets := make([]*rtp.Packet, 0)
+	for _, nal := range nals {
+		if len(nal) == 0 {
+			continue
+		}
+		nalType := h264NALTypeName(nal[0] & 0x1f)
+		if nalType != "" {
+			evidence.NALTypes[nalType] = true
+		}
+		rtpPackets := packetizer.Packetize(nal, samples)
+		for _, packet := range rtpPackets {
+			evidence.Packets++
+			evidence.Bytes += len(packet.Payload)
+			for _, packetization := range h264PayloadPacketizations(packet.Payload) {
+				evidence.Packetizations[packetization] = true
+			}
+			packets = append(packets, packet)
+		}
+	}
+	if evidence.Packets == 0 {
+		return nil, H264RTPEvidence{}, errors.New("H.264 fixture produced no RTP packets")
+	}
+	return packets, evidence, nil
+}
+
+func h264NALUnits(sample []byte) ([][]byte, error) {
+	reader, err := h264reader.NewReader(bytes.NewReader(sample))
+	if err != nil {
+		return nil, err
+	}
+	nals := make([][]byte, 0)
+	for {
+		nal, err := reader.NextNAL()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		nals = append(nals, nal.Data)
+	}
+	if len(nals) == 0 {
+		return nil, errors.New("H.264 fixture has no NAL units")
+	}
+	return nals, nil
+}
+
+func validateH264RTPPayloads(packets []*rtp.Packet) error {
+	for _, packet := range packets {
+		if len(packet.Payload) == 0 {
+			return errors.New("empty H.264 RTP payload")
+		}
+		packetizations := h264PayloadPacketizations(packet.Payload)
+		if len(packetizations) == 0 {
+			return fmt.Errorf("unsupported H.264 RTP payload type %d", packet.Payload[0]&0x1f)
+		}
+	}
+	return nil
+}
+
+func validateH264RTPSequence(packets []*rtp.Packet) error {
+	if len(packets) == 0 {
+		return errors.New("no RTP packets")
+	}
+	for i := 1; i < len(packets); i++ {
+		if packets[i].SequenceNumber != packets[i-1].SequenceNumber+1 {
+			return fmt.Errorf("RTP sequence discontinuity at %d: %d after %d", i, packets[i].SequenceNumber, packets[i-1].SequenceNumber)
+		}
+		if packets[i].Timestamp < packets[i-1].Timestamp {
+			return fmt.Errorf("RTP timestamp moved backwards at %d: %d after %d", i, packets[i].Timestamp, packets[i-1].Timestamp)
+		}
+	}
+	return nil
+}
+
+func h264PayloadPacketizations(payload []byte) []string {
+	if len(payload) == 0 {
+		return nil
+	}
+	switch payload[0] & 0x1f {
+	case 1, 5, 6, 7, 8, 9:
+		return []string{"single-nal"}
+	case 24:
+		return []string{"stap-a"}
+	case 28:
+		if len(payload) < 2 {
+			return nil
+		}
+		return []string{"fu-a", h264NALTypeName(payload[1] & 0x1f)}
+	default:
+		return nil
+	}
+}
+
+func h264NALTypeName(nalType byte) string {
+	switch nalType {
+	case 1:
+		return "non-idr"
+	case 5:
+		return "idr"
+	case 6:
+		return "sei"
+	case 7:
+		return "sps"
+	case 8:
+		return "pps"
+	case 9:
+		return "aud"
+	default:
+		return ""
+	}
+}
+
+func (e H264RTPEvidence) HasNALType(name string) bool {
+	return e.NALTypes[name]
+}
+
+func (e H264RTPEvidence) WithTimings(receiveMS, timeToFirstMS, iceMS int64) H264RTPEvidence {
+	e.ReceiveMS = receiveMS
+	e.TimeToFirstMS = timeToFirstMS
+	e.ICEMS = iceMS
+	return e
+}
+
+func (e H264RTPEvidence) String() string {
+	return fmt.Sprintf("codec=h264 packets=%d bytes=%d duration_ms=%d loops=%d frames=%d nal_types=%s packetization=%s receive_ms=%d ttfb_ms=%d ice_ms=%d",
+		e.Packets, e.Bytes, e.DurationMS, e.Loops, e.Frames, joinEvidenceKeys(e.NALTypes), joinEvidenceKeys(e.Packetizations), e.ReceiveMS, e.TimeToFirstMS, e.ICEMS)
+}
+
+func joinEvidenceKeys(values map[string]bool) string {
+	keys := make([]string, 0, len(values))
+	for key, ok := range values {
+		if ok && key != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ",")
 }
 
 func (s *PionMediaAnswerSession) Close() {

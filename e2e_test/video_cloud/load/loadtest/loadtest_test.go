@@ -1400,12 +1400,18 @@ func TestPionWebRTCMediaLoopbackReceivesSyntheticRTP(t *testing.T) {
 		t.Fatalf("NewPionMediaAnswerSession: %v", err)
 	}
 	defer answerer.Close()
+	if answerer.CodecMimeType() != webrtc.MimeTypeH264 {
+		t.Fatalf("answerer codec = %q, want H.264", answerer.CodecMimeType())
+	}
+	if answer := answerer.AnswerPayload(); !strings.Contains(answer["sdp"], "H264") {
+		t.Fatalf("answer SDP does not negotiate H.264:\n%s", answer["sdp"])
+	}
 	if err := viewer.SetRemoteAnswer(answerer.AnswerPayload()); err != nil {
 		t.Fatalf("SetRemoteAnswer: %v", err)
 	}
 
 	go func() {
-		_ = answerer.SendSyntheticRTP(ctx, 6, 20*time.Millisecond)
+		_, _ = answerer.SendH264RTP(ctx, 200*time.Millisecond)
 	}()
 	stats, err := viewer.WaitForMedia(ctx, 3, 3*time.Second)
 	if err != nil {
@@ -1413,6 +1419,53 @@ func TestPionWebRTCMediaLoopbackReceivesSyntheticRTP(t *testing.T) {
 	}
 	if stats.PacketsReceived < 3 || stats.BytesReceived == 0 {
 		t.Fatalf("media stats = %#v, want RTP packets and bytes", stats)
+	}
+}
+
+func TestH264AnnexBSamplePacketizesIntoValidRTPPayloads(t *testing.T) {
+	sample, err := h264AnnexBSample(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	packets, evidence, err := packetizeH264AnnexBForRTP(sample, 1200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(packets) == 0 || evidence.Packets == 0 || evidence.Bytes == 0 {
+		t.Fatalf("packets=%d evidence=%#v, want RTP payloads", len(packets), evidence)
+	}
+	for _, want := range []string{"sps", "pps", "idr"} {
+		if !evidence.HasNALType(want) {
+			t.Fatalf("H.264 evidence missing %s: %#v", want, evidence)
+		}
+	}
+	if !strings.Contains(evidence.String(), "codec=h264") || !strings.Contains(evidence.String(), "nal_types=") {
+		t.Fatalf("evidence string missing H.264 payload details: %s", evidence.String())
+	}
+	if err := validateH264RTPPayloads(packets); err != nil {
+		t.Fatalf("invalid H.264 RTP payloads: %v", err)
+	}
+}
+
+func TestH264MediaPlanLoopsTwoSecondFixtureForTwentySeconds(t *testing.T) {
+	plan, err := buildH264MediaPlan(20 * time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Duration != 20*time.Second || plan.Loops != 10 || plan.FrameRate != 30 {
+		t.Fatalf("plan = %#v, want 20s/10 loops/30fps", plan)
+	}
+	if plan.Frames != 600 {
+		t.Fatalf("frames = %d, want 600", plan.Frames)
+	}
+	if len(plan.Packets) == 0 {
+		t.Fatal("plan should include RTP packets")
+	}
+	if err := validateH264RTPSequence(plan.Packets); err != nil {
+		t.Fatalf("invalid RTP sequence/timestamps: %v", err)
+	}
+	if !strings.Contains(plan.Evidence.String(), "duration_ms=20000") || !strings.Contains(plan.Evidence.String(), "loops=10") {
+		t.Fatalf("evidence missing 20s loop details: %s", plan.Evidence.String())
 	}
 }
 
@@ -1441,7 +1494,7 @@ func TestRunnerWebRTCMediaRTPRecordsCoverage(t *testing.T) {
 			answerers = append(answerers, answerer)
 			answerersMu.Unlock()
 			go func() {
-				_ = answerer.SendSyntheticRTP(context.Background(), 8, 20*time.Millisecond)
+				_, _ = answerer.SendH264RTP(context.Background(), 200*time.Millisecond)
 			}()
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"status":     "ok",
@@ -1469,21 +1522,22 @@ func TestRunnerWebRTCMediaRTPRecordsCoverage(t *testing.T) {
 	}()
 
 	result, err := NewRunner(server.Client()).Run(context.Background(), Config{
-		Profile:          ProfileSmoke,
-		APIURL:           server.URL,
-		Actors:           ActorViewer,
-		AccountToken:     "account-token",
-		WebRTCMediaSet:   WebRTCMediaSetRTP,
-		RunID:            "run-media",
-		InstanceID:       "instance-media",
-		DevicePrefix:     "load-device",
-		Duration:         time.Nanosecond,
-		VirtualDevices:   1,
-		VirtualViewers:   1,
-		Iterations:       1,
-		HTTPTimeout:      3 * time.Second,
-		Thresholds:       Thresholds{MinSuccessRate: 1, RequireCoverageMatrix: true},
-		DeviceOnlineMode: DeviceOnlineModeNone,
+		Profile:             ProfileSmoke,
+		APIURL:              server.URL,
+		Actors:              ActorViewer,
+		AccountToken:        "account-token",
+		WebRTCMediaSet:      WebRTCMediaSetH264,
+		WebRTCMediaDuration: 200 * time.Millisecond,
+		RunID:               "run-media",
+		InstanceID:          "instance-media",
+		DevicePrefix:        "load-device",
+		Duration:            time.Nanosecond,
+		VirtualDevices:      1,
+		VirtualViewers:      1,
+		Iterations:          1,
+		HTTPTimeout:         3 * time.Second,
+		Thresholds:          Thresholds{MinSuccessRate: 1, RequireCoverageMatrix: true},
+		DeviceOnlineMode:    DeviceOnlineModeNone,
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -1601,22 +1655,23 @@ func TestRunnerWebRTCMediaUsesPerDeviceAppTokens(t *testing.T) {
 	defer server.Close()
 
 	result, err := NewRunner(server.Client()).Run(context.Background(), Config{
-		Profile:          ProfileSmoke,
-		APIURL:           server.URL,
-		Actors:           ActorViewer,
-		AccountToken:     "fallback-app-token",
-		AppTokens:        map[string]string{"load-device-0": "app-token-0", "load-device-1": "app-token-1"},
-		WebRTCMediaSet:   WebRTCMediaSetRTP,
-		RunID:            "run-media-token-map",
-		InstanceID:       "instance-media-token-map",
-		DevicePrefix:     "load-device",
-		Duration:         time.Nanosecond,
-		VirtualDevices:   2,
-		VirtualViewers:   2,
-		Iterations:       1,
-		HTTPTimeout:      time.Second,
-		DeviceOnlineMode: DeviceOnlineModeNone,
-		Thresholds:       Thresholds{MinSuccessRate: 0},
+		Profile:             ProfileSmoke,
+		APIURL:              server.URL,
+		Actors:              ActorViewer,
+		AccountToken:        "fallback-app-token",
+		AppTokens:           map[string]string{"load-device-0": "app-token-0", "load-device-1": "app-token-1"},
+		WebRTCMediaSet:      WebRTCMediaSetH264,
+		WebRTCMediaDuration: 200 * time.Millisecond,
+		RunID:               "run-media-token-map",
+		InstanceID:          "instance-media-token-map",
+		DevicePrefix:        "load-device",
+		Duration:            time.Nanosecond,
+		VirtualDevices:      2,
+		VirtualViewers:      2,
+		Iterations:          1,
+		HTTPTimeout:         time.Second,
+		DeviceOnlineMode:    DeviceOnlineModeNone,
+		Thresholds:          Thresholds{MinSuccessRate: 0},
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -1627,6 +1682,15 @@ func TestRunnerWebRTCMediaUsesPerDeviceAppTokens(t *testing.T) {
 	if seen["load-device-0"] != "Bearer app-token-0" || seen["load-device-1"] != "Bearer app-token-1" {
 		t.Fatalf("request_webrtc auth headers = %#v, want per-device app tokens", seen)
 	}
+}
+
+func operationByName(ops []Operation, name string) Operation {
+	for _, op := range ops {
+		if op.Name == name {
+			return op
+		}
+	}
+	return Operation{}
 }
 
 func TestRunnerWebRTCMediaAnswersServerOfferAndSendsSyntheticRTP(t *testing.T) {
@@ -1656,11 +1720,11 @@ func TestRunnerWebRTCMediaAnswersServerOfferAndSendsSyntheticRTP(t *testing.T) {
 			sessions[sessionID] = offerSession
 			sessionsMu.Unlock()
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status":     "ok",
-				"mode":       "webrtc",
-				"devid":      "load-device-0",
-				"session_id": sessionID,
-				"offer":      offerSession.OfferPayload(),
+				"status":      "ok",
+				"mode":        "webrtc",
+				"devid":       "load-device-0",
+				"session_id":  sessionID,
+				"offer":       offerSession.OfferPayload(),
 				"ice_servers": []map[string]any{},
 			})
 		case "/api/request_webrtc/answer":
@@ -1695,21 +1759,22 @@ func TestRunnerWebRTCMediaAnswersServerOfferAndSendsSyntheticRTP(t *testing.T) {
 	defer server.Close()
 
 	result, err := NewRunner(server.Client()).Run(ctx, Config{
-		Profile:          ProfileSmoke,
-		APIURL:           server.URL,
-		Actors:           ActorViewer,
-		AccountToken:     "app-token",
-		WebRTCMediaSet:   WebRTCMediaSetRTP,
-		RunID:            "run-media-server-offer",
-		InstanceID:       "instance-media-server-offer",
-		DevicePrefix:     "load-device",
-		Duration:         time.Nanosecond,
-		VirtualDevices:   1,
-		VirtualViewers:   1,
-		Iterations:       1,
-		HTTPTimeout:      5 * time.Second,
-		DeviceOnlineMode: DeviceOnlineModeNone,
-		Thresholds:       Thresholds{MinSuccessRate: 1, RequireCoverageMatrix: true},
+		Profile:             ProfileSmoke,
+		APIURL:              server.URL,
+		Actors:              ActorViewer,
+		AccountToken:        "app-token",
+		WebRTCMediaSet:      WebRTCMediaSetH264,
+		WebRTCMediaDuration: 200 * time.Millisecond,
+		RunID:               "run-media-server-offer",
+		InstanceID:          "instance-media-server-offer",
+		DevicePrefix:        "load-device",
+		Duration:            time.Nanosecond,
+		VirtualDevices:      1,
+		VirtualViewers:      1,
+		Iterations:          1,
+		HTTPTimeout:         5 * time.Second,
+		DeviceOnlineMode:    DeviceOnlineModeNone,
+		Thresholds:          Thresholds{MinSuccessRate: 1, RequireCoverageMatrix: true},
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -1727,6 +1792,10 @@ func TestRunnerWebRTCMediaAnswersServerOfferAndSendsSyntheticRTP(t *testing.T) {
 	}
 	if result.WebRTCMedia.PacketsReceived == 0 || result.WebRTCMedia.BytesReceived == 0 {
 		t.Fatalf("WebRTCMedia metrics = %#v, want RTP evidence", result.WebRTCMedia)
+	}
+	receive := operationByName(result.Operations, "webrtc_media_receive")
+	if !strings.Contains(receive.Evidence, "codec=h264") || !strings.Contains(receive.Evidence, "nal_types=") {
+		t.Fatalf("receive evidence missing H.264 payload validation: %#v", receive)
 	}
 }
 

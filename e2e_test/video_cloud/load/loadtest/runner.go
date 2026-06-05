@@ -63,6 +63,7 @@ func DefaultConfigFromEnv() Config {
 		DeviceTransportSet:    envDefault("VIDEO_CLOUD_LOAD_DEVICE_TRANSPORT_SET", DeviceTransportSetSmoke),
 		ViewerRouteSet:        envDefault("VIDEO_CLOUD_LOAD_VIEWER_ROUTE_SET", ViewerRouteSetSmoke),
 		WebRTCMediaSet:        envDefault("VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_SET", WebRTCMediaSetOff),
+		WebRTCMediaDuration:   20 * time.Second,
 		ClipSet:               envDefault("VIDEO_CLOUD_LOAD_CLIP_SET", ClipSetOff),
 		MQTTSet:               envDefault("VIDEO_CLOUD_LOAD_MQTT_SET", MQTTSetOff),
 		MQTTAddr:              os.Getenv("VIDEO_CLOUD_MQTT_ADDR"),
@@ -278,9 +279,12 @@ func (c *Config) Validate() error {
 		c.WebRTCMediaSet = WebRTCMediaSetOff
 	}
 	switch c.WebRTCMediaSet {
-	case WebRTCMediaSetOff, WebRTCMediaSetRTP:
+	case WebRTCMediaSetOff, WebRTCMediaSetRTP, WebRTCMediaSetH264:
 	default:
-		return fmt.Errorf("unsupported webrtc media set %q: expected %q or %q", c.WebRTCMediaSet, WebRTCMediaSetOff, WebRTCMediaSetRTP)
+		return fmt.Errorf("unsupported webrtc media set %q: expected %q, %q, or %q", c.WebRTCMediaSet, WebRTCMediaSetOff, WebRTCMediaSetRTP, WebRTCMediaSetH264)
+	}
+	if c.WebRTCMediaDuration <= 0 {
+		c.WebRTCMediaDuration = 20 * time.Second
 	}
 	if c.ClipSet == "" {
 		c.ClipSet = ClipSetOff
@@ -731,7 +735,7 @@ func (r *Runner) reconnectWebSocketOwner(ctx context.Context, cfg Config, device
 }
 
 func (r *Runner) startDeviceTransportListener(ctx context.Context, cfg Config, deviceID string, handle *webSocketOwnerHandle, record func(Operation)) <-chan error {
-	if cfg.WebRTCMediaSet != WebRTCMediaSetRTP && cfg.ClipSet != ClipSetRecordingFunctional {
+	if cfg.WebRTCMediaSet != WebRTCMediaSetRTP && cfg.WebRTCMediaSet != WebRTCMediaSetH264 && cfg.ClipSet != ClipSetRecordingFunctional {
 		return nil
 	}
 	done := make(chan error, 1)
@@ -818,7 +822,7 @@ func (r *Runner) listenDeviceTransportMessages(ctx context.Context, cfg Config, 
 		if opcode != 1 {
 			continue
 		}
-		if cfg.WebRTCMediaSet == WebRTCMediaSetRTP {
+		if cfg.WebRTCMediaSet == WebRTCMediaSetRTP || cfg.WebRTCMediaSet == WebRTCMediaSetH264 {
 			if msg, ok := parseWebRTCMediaOfferMessage(payload); ok {
 				ops, cleanup := r.answerWebRTCMediaOffer(ctx, cfg, deviceID, msg)
 				cleanups = append(cleanups, cleanup)
@@ -2324,7 +2328,7 @@ func mqttReadPacket(conn net.Conn) (byte, []byte, error) {
 }
 
 func (r *Runner) runViewerActor(ctx context.Context, cfg Config, deviceID, viewerID string) []Operation {
-	if cfg.WebRTCMediaSet == WebRTCMediaSetRTP {
+	if cfg.WebRTCMediaSet == WebRTCMediaSetRTP || cfg.WebRTCMediaSet == WebRTCMediaSetH264 {
 		return r.runWebRTCMediaViewerActor(ctx, cfg, deviceID, viewerID)
 	}
 	if cfg.ViewerRouteSet == ViewerRouteSetNegative {
@@ -2535,7 +2539,8 @@ func (r *Runner) completeServerOfferWebRTCMedia(ctx context.Context, cfg Config,
 		return ops
 	}
 	start := time.Now()
-	if err := answerer.SendSyntheticRTP(ctx, 8, 20*time.Millisecond); err != nil {
+	mediaPlan, err := answerer.SendH264RTP(ctx, cfg.WebRTCMediaDuration)
+	if err != nil {
 		ops = append(ops, Operation{
 			Actor:       ActorViewer,
 			Name:        "webrtc_media_ice_connected",
@@ -2551,7 +2556,7 @@ func (r *Runner) completeServerOfferWebRTCMedia(ctx context.Context, cfg Config,
 	ops = append(ops,
 		Operation{Actor: ActorViewer, Name: "webrtc_media_ice_connected", DeviceID: deviceID, ViewerID: viewerID, Success: true, LatencyMS: elapsed, Evidence: fmt.Sprintf("ice_connected_ms=%d", elapsed)},
 		Operation{Actor: ActorViewer, Name: "webrtc_media_first_rtp", DeviceID: deviceID, ViewerID: viewerID, Success: true, LatencyMS: elapsed, Evidence: "time_to_first_rtp_ms=0"},
-		Operation{Actor: ActorViewer, Name: "webrtc_media_receive", DeviceID: deviceID, ViewerID: viewerID, Success: true, LatencyMS: elapsed, Evidence: fmt.Sprintf("packets=%d bytes=%d receive_ms=%d ttfb_ms=%d ice_ms=%d direction=server_offer_rtp_send", 8, 8*5, elapsed, 0, elapsed)},
+		Operation{Actor: ActorViewer, Name: "webrtc_media_receive", DeviceID: deviceID, ViewerID: viewerID, Success: true, LatencyMS: elapsed, Evidence: mediaPlan.Evidence.WithTimings(elapsed, 0, elapsed).String()},
 	)
 	closeOp := r.closeWebRTCSession(ctx, cfg, deviceID, viewerID, response)
 	closeOp.Name = "webrtc_media_close"
