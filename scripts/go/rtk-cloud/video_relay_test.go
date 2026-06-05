@@ -75,8 +75,8 @@ func TestVideoRelayBuildsRunnerArgsWithoutLeakingTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "--webrtc-media-set") || !strings.Contains(joined, "h264") {
-		t.Fatalf("runner args missing WebRTC H.264 media flags: %v", args)
+	if !strings.Contains(joined, "--webrtc-media-set") || !strings.Contains(joined, "av") {
+		t.Fatalf("runner args missing WebRTC audio+video media flags: %v", args)
 	}
 	if !strings.Contains(joined, "--webrtc-media-duration") || !strings.Contains(joined, "20s") {
 		t.Fatalf("runner args missing 20s WebRTC media duration: %v", args)
@@ -131,6 +131,8 @@ func TestVideoRelayRenderPassReportIncludesRTPEvidenceAndSanitizesSecrets(t *tes
 			DeviceID: "cam-1", WebSocketOwnerStatus: "PASS", WebRTCCreateStatus: "PASS", WebRTCAnswerStatus: "PASS",
 			ICEConnectedStatus: "PASS", RTPReceiveStatus: "PASS", CloseStatus: "PASS", ICEServerCount: 3,
 			ICEConnectedLatencyMS: 12, RTPPacketsReceived: 8, RTPBytesReceived: 40,
+			MediaModel: "h264_opus_av", VideoCodec: "h264", VideoBitstreamMatch: true,
+			AudioCodec: "opus", AudioPayloadMatch: true, AudioPacketsReceived: 4, AudioBytesReceived: 12, AudioFramesReceived: 4,
 		}},
 		SignalingTrace: []videoRelayTraceEvent{
 			{DeviceID: "cam-1", Event: "websocket_owner_online", Status: "PASS"},
@@ -138,13 +140,13 @@ func TestVideoRelayRenderPassReportIncludesRTPEvidenceAndSanitizesSecrets(t *tes
 			{DeviceID: "cam-1", Event: "webrtc_offer_received", Status: "PASS"},
 			{DeviceID: "cam-1", Event: "answer_submitted", Status: "PASS"},
 			{DeviceID: "cam-1", Event: "ice_connected", Status: "PASS"},
-			{DeviceID: "cam-1", Event: "h264_bitstream_compared", Status: "PASS"},
+			{DeviceID: "cam-1", Event: "media_bitstreams_compared", Status: "PASS"},
 			{DeviceID: "cam-1", Event: "request_webrtc_close", Status: "PASS"},
 		},
 		Error: "Bearer abc private_key_pem -----BEGIN PRIVATE KEY----- turn credential secret",
 	}
 	report := renderVideoRelayReport(result)
-	if !strings.Contains(report, "webrtc_rtp_relay") || !strings.Contains(report, "RTP packets") || !strings.Contains(report, "Signaling Trace") || !strings.Contains(report, "Relay Evidence") {
+	if !strings.Contains(report, "webrtc_rtp_relay") || !strings.Contains(report, "RTP packets") || !strings.Contains(report, "Audio payload match") || !strings.Contains(report, "Signaling Trace") || !strings.Contains(report, "Relay Evidence") {
 		t.Fatalf("report missing relay evidence:\n%s", report)
 	}
 	for _, forbidden := range []string{"abc", "PRIVATE KEY", "turn credential secret", "Bearer", "loopback"} {
@@ -159,7 +161,7 @@ func TestVideoRelaySummaryUsesOperationEvidenceICEServerCount(t *testing.T) {
 		{"name":"webrtc_media_answer","device_id":"cam-1","success":true,"evidence":"webrtc_response mode=webrtc session_id_present=true ice_servers=2 offer_present=true answer_present=false candidate_types=relay"},
 		{"name":"webrtc_media_answer","device_id":"cam-1","success":true,"evidence":"{\"status\":\"ok\"}"},
 		{"name":"webrtc_media_ice_connected","device_id":"cam-1","success":true,"latency_ms":25,"evidence":"ice_connected_ms=25"},
-		{"name":"webrtc_media_receive","device_id":"cam-1","success":true,"evidence":"codec=h264 packets=10 bytes=20 nal_types=idr,sps receiver_bitstream_match=true"},
+		{"name":"webrtc_media_receive","device_id":"cam-1","success":true,"evidence":"media_model=h264_opus_av video_codec=h264 video_receiver_packets=10 video_receiver_bytes=20 video_receiver_bitstream_match=true video_nal_types=idr,sps audio_codec=opus audio_receiver_packets=5 audio_receiver_bytes=15 audio_receiver_frames=5 audio_payload_match=true"},
 		{"name":"webrtc_media_close","device_id":"cam-1","success":true,"evidence":"{\"status\":\"ok\"}"}
 	]}`)
 	path := filepath.Join(t.TempDir(), "load-results.json")
@@ -172,6 +174,9 @@ func TestVideoRelaySummaryUsesOperationEvidenceICEServerCount(t *testing.T) {
 	}
 	if devices[0].ICEServerCount != 2 {
 		t.Fatalf("ICE server count = %d, want operation evidence count 2", devices[0].ICEServerCount)
+	}
+	if devices[0].MediaModel != "h264_opus_av" || !devices[0].VideoBitstreamMatch || !devices[0].AudioPayloadMatch || devices[0].AudioPacketsReceived != 5 {
+		t.Fatalf("media summary = %+v, want parsed AV audio/video evidence", devices[0])
 	}
 }
 

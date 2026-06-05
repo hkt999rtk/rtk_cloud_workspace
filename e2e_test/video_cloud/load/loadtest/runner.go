@@ -279,9 +279,9 @@ func (c *Config) Validate() error {
 		c.WebRTCMediaSet = WebRTCMediaSetOff
 	}
 	switch c.WebRTCMediaSet {
-	case WebRTCMediaSetOff, WebRTCMediaSetRTP, WebRTCMediaSetH264:
+	case WebRTCMediaSetOff, WebRTCMediaSetRTP, WebRTCMediaSetH264, WebRTCMediaSetAV:
 	default:
-		return fmt.Errorf("unsupported webrtc media set %q: expected %q, %q, or %q", c.WebRTCMediaSet, WebRTCMediaSetOff, WebRTCMediaSetRTP, WebRTCMediaSetH264)
+		return fmt.Errorf("unsupported webrtc media set %q: expected %q, %q, %q, or %q", c.WebRTCMediaSet, WebRTCMediaSetOff, WebRTCMediaSetRTP, WebRTCMediaSetH264, WebRTCMediaSetAV)
 	}
 	if c.WebRTCMediaDuration <= 0 {
 		c.WebRTCMediaDuration = 20 * time.Second
@@ -735,7 +735,7 @@ func (r *Runner) reconnectWebSocketOwner(ctx context.Context, cfg Config, device
 }
 
 func (r *Runner) startDeviceTransportListener(ctx context.Context, cfg Config, deviceID string, handle *webSocketOwnerHandle, record func(Operation)) <-chan error {
-	if cfg.WebRTCMediaSet != WebRTCMediaSetRTP && cfg.WebRTCMediaSet != WebRTCMediaSetH264 && cfg.ClipSet != ClipSetRecordingFunctional {
+	if cfg.WebRTCMediaSet != WebRTCMediaSetRTP && cfg.WebRTCMediaSet != WebRTCMediaSetH264 && cfg.WebRTCMediaSet != WebRTCMediaSetAV && cfg.ClipSet != ClipSetRecordingFunctional {
 		return nil
 	}
 	done := make(chan error, 1)
@@ -822,7 +822,7 @@ func (r *Runner) listenDeviceTransportMessages(ctx context.Context, cfg Config, 
 		if opcode != 1 {
 			continue
 		}
-		if cfg.WebRTCMediaSet == WebRTCMediaSetRTP || cfg.WebRTCMediaSet == WebRTCMediaSetH264 {
+		if cfg.WebRTCMediaSet == WebRTCMediaSetRTP || cfg.WebRTCMediaSet == WebRTCMediaSetH264 || cfg.WebRTCMediaSet == WebRTCMediaSetAV {
 			if msg, ok := parseWebRTCMediaOfferMessage(payload); ok {
 				record(Operation{
 					Actor:    ActorDevice,
@@ -2335,7 +2335,7 @@ func mqttReadPacket(conn net.Conn) (byte, []byte, error) {
 }
 
 func (r *Runner) runViewerActor(ctx context.Context, cfg Config, deviceID, viewerID string) []Operation {
-	if cfg.WebRTCMediaSet == WebRTCMediaSetRTP || cfg.WebRTCMediaSet == WebRTCMediaSetH264 {
+	if cfg.WebRTCMediaSet == WebRTCMediaSetRTP || cfg.WebRTCMediaSet == WebRTCMediaSetH264 || cfg.WebRTCMediaSet == WebRTCMediaSetAV {
 		return r.runWebRTCMediaViewerActor(ctx, cfg, deviceID, viewerID)
 	}
 	if cfg.ViewerRouteSet == ViewerRouteSetNegative {
@@ -2406,7 +2406,7 @@ func (r *Runner) runViewerActor(ctx context.Context, cfg Config, deviceID, viewe
 }
 
 func (r *Runner) runWebRTCMediaViewerActor(ctx context.Context, cfg Config, deviceID, viewerID string) []Operation {
-	session, err := NewPionMediaOfferSession(ctx, cfg.HTTPTimeout)
+	session, err := NewPionMediaOfferSessionForSet(ctx, cfg.WebRTCMediaSet, cfg.HTTPTimeout)
 	offerOp := Operation{Actor: ActorViewer, Name: "webrtc_media_offer", DeviceID: deviceID, ViewerID: viewerID}
 	if err != nil {
 		offerOp.Success = false
@@ -2523,7 +2523,7 @@ func (r *Runner) completeServerOfferWebRTCMedia(ctx context.Context, cfg Config,
 			ErrorDetail: redactDetail(err.Error()),
 		}}
 	}
-	answerer, err := NewPionMediaAnswerSessionWithICEServers(ctx, offer, iceServers, cfg.HTTPTimeout)
+	answerer, err := NewPionMediaAnswerSessionWithICEServersForSet(ctx, offer, iceServers, cfg.WebRTCMediaSet, cfg.HTTPTimeout)
 	if err != nil {
 		return []Operation{{
 			Actor:       ActorViewer,
@@ -2546,6 +2546,33 @@ func (r *Runner) completeServerOfferWebRTCMedia(ctx context.Context, cfg Config,
 		return ops
 	}
 	start := time.Now()
+	var receiveOp Operation
+	if cfg.WebRTCMediaSet == WebRTCMediaSetAV {
+		mediaEvidence, err := answerer.SendAVRTP(ctx, cfg.WebRTCMediaDuration)
+		if err != nil {
+			ops = append(ops, Operation{
+				Actor:       ActorViewer,
+				Name:        "webrtc_media_ice_connected",
+				DeviceID:    deviceID,
+				ViewerID:    viewerID,
+				Success:     false,
+				ErrorClass:  ClassWebRTCMedia,
+				ErrorDetail: redactDetail(err.Error()),
+			})
+			return ops
+		}
+		elapsed := time.Since(start).Milliseconds()
+		closeOp := r.closeWebRTCSession(ctx, cfg, deviceID, viewerID, response)
+		closeOp.Name = "webrtc_media_close"
+		receiveOp = avReceiverCompareOperation(deviceID, viewerID, elapsed, mediaEvidence.WithTimings(elapsed, 0, elapsed), closeOp)
+		ops = append(ops,
+			Operation{Actor: ActorViewer, Name: "webrtc_media_ice_connected", DeviceID: deviceID, ViewerID: viewerID, Success: true, LatencyMS: elapsed, Evidence: fmt.Sprintf("ice_connected_ms=%d", elapsed)},
+			Operation{Actor: ActorViewer, Name: "webrtc_media_first_rtp", DeviceID: deviceID, ViewerID: viewerID, Success: true, LatencyMS: elapsed, Evidence: "time_to_first_rtp_ms=0"},
+			receiveOp,
+			closeOp,
+		)
+		return ops
+	}
 	mediaPlan, err := answerer.SendH264RTP(ctx, cfg.WebRTCMediaDuration)
 	if err != nil {
 		ops = append(ops, Operation{
@@ -2562,7 +2589,7 @@ func (r *Runner) completeServerOfferWebRTCMedia(ctx context.Context, cfg Config,
 	elapsed := time.Since(start).Milliseconds()
 	closeOp := r.closeWebRTCSession(ctx, cfg, deviceID, viewerID, response)
 	closeOp.Name = "webrtc_media_close"
-	receiveOp := h264ReceiverCompareOperation(deviceID, viewerID, elapsed, mediaPlan.Evidence.WithTimings(elapsed, 0, elapsed), closeOp)
+	receiveOp = h264ReceiverCompareOperation(deviceID, viewerID, elapsed, mediaPlan.Evidence.WithTimings(elapsed, 0, elapsed), closeOp)
 	ops = append(ops,
 		Operation{Actor: ActorViewer, Name: "webrtc_media_ice_connected", DeviceID: deviceID, ViewerID: viewerID, Success: true, LatencyMS: elapsed, Evidence: fmt.Sprintf("ice_connected_ms=%d", elapsed)},
 		Operation{Actor: ActorViewer, Name: "webrtc_media_first_rtp", DeviceID: deviceID, ViewerID: viewerID, Success: true, LatencyMS: elapsed, Evidence: "time_to_first_rtp_ms=0"},
@@ -2612,12 +2639,68 @@ func h264ReceiverCompareOperation(deviceID, viewerID string, latencyMS int64, ev
 	return op
 }
 
+func avReceiverCompareOperation(deviceID, viewerID string, latencyMS int64, evidence AVRTPEvidence, closeOp Operation) Operation {
+	op := Operation{Actor: ActorViewer, Name: "webrtc_media_receive", DeviceID: deviceID, ViewerID: viewerID, LatencyMS: latencyMS}
+	if evidence.Video.ExpectedSHA256 == "" || evidence.Audio.ExpectedSHA256 == "" {
+		op.Success = false
+		op.ErrorClass = ClassWebRTCMedia
+		op.ErrorDetail = "missing expected audio/video media hash"
+		op.Evidence = evidence.String()
+		return op
+	}
+	if !closeOp.Success {
+		op.Success = false
+		op.ErrorClass = ClassWebRTCMedia
+		op.ErrorDetail = "receiver media stats unavailable because WebRTC close failed"
+		op.Evidence = evidence.String()
+		return op
+	}
+	stats, err := parseCloseMediaStats(closeOp.Evidence)
+	if err != nil {
+		op.Success = false
+		op.ErrorClass = ClassWebRTCMedia
+		op.ErrorDetail = redactDetail(err.Error())
+		op.Evidence = evidence.String()
+		return op
+	}
+	evidence.Video.ReceiverSHA256 = stats.H264SHA256
+	evidence.Video.ReceiverPackets = stats.H264Packets
+	evidence.Video.ReceiverBytes = stats.H264Bytes
+	evidence.Video.ReceiverNALTypes = mapFromStrings(stats.NALTypes)
+	evidence.Video.BitstreamMatch = stats.H264SHA256 == evidence.Video.ExpectedSHA256 && stats.H264Bytes > 0 && stats.H264Packets > 0
+	evidence.Audio.ReceiverSHA256 = stats.OpusSHA256
+	evidence.Audio.ReceiverPackets = stats.OpusPackets
+	evidence.Audio.ReceiverBytes = stats.OpusBytes
+	evidence.Audio.ReceiverFrames = stats.OpusFrames
+	evidence.Audio.PayloadMatch = stats.OpusSHA256 == evidence.Audio.ExpectedSHA256 && stats.OpusBytes > 0 && stats.OpusPackets > 0 && stats.OpusFrames > 0
+	op.Evidence = evidence.String()
+	if !evidence.Video.BitstreamMatch {
+		op.Success = false
+		op.ErrorClass = ClassWebRTCMedia
+		op.ErrorDetail = "receiver H.264 bitstream hash mismatch"
+		return op
+	}
+	if !evidence.Audio.PayloadMatch {
+		op.Success = false
+		op.ErrorClass = ClassWebRTCMedia
+		op.ErrorDetail = "receiver Opus payload hash mismatch"
+		return op
+	}
+	op.Success = true
+	return op
+}
+
 type closeMediaStats struct {
 	PacketsReceived int
 	BytesReceived   int
+	H264Packets     int
 	H264SHA256      string
 	H264Bytes       int
 	NALTypes        []string
+	OpusSHA256      string
+	OpusBytes       int
+	OpusPackets     int
+	OpusFrames      int
 }
 
 func parseCloseMediaStats(evidence string) (closeMediaStats, error) {
@@ -2625,9 +2708,14 @@ func parseCloseMediaStats(evidence string) (closeMediaStats, error) {
 		Media struct {
 			PacketsReceived int      `json:"packets_received"`
 			BytesReceived   int      `json:"bytes_received"`
+			H264Packets     int      `json:"h264_packets"`
 			H264SHA256      string   `json:"h264_sha256"`
 			H264Bytes       int      `json:"h264_bytes"`
 			NALTypes        []string `json:"nal_types"`
+			OpusSHA256      string   `json:"opus_sha256"`
+			OpusBytes       int      `json:"opus_bytes"`
+			OpusPackets     int      `json:"opus_packets"`
+			OpusFrames      int      `json:"opus_frames"`
 		} `json:"media"`
 	}
 	if err := json.Unmarshal([]byte(evidence), &decoded); err != nil {
@@ -2636,9 +2724,17 @@ func parseCloseMediaStats(evidence string) (closeMediaStats, error) {
 	stats := closeMediaStats{
 		PacketsReceived: decoded.Media.PacketsReceived,
 		BytesReceived:   decoded.Media.BytesReceived,
+		H264Packets:     decoded.Media.H264Packets,
 		H264SHA256:      decoded.Media.H264SHA256,
 		H264Bytes:       decoded.Media.H264Bytes,
 		NALTypes:        decoded.Media.NALTypes,
+		OpusSHA256:      decoded.Media.OpusSHA256,
+		OpusBytes:       decoded.Media.OpusBytes,
+		OpusPackets:     decoded.Media.OpusPackets,
+		OpusFrames:      decoded.Media.OpusFrames,
+	}
+	if stats.H264Packets == 0 {
+		stats.H264Packets = stats.PacketsReceived
 	}
 	if stats.H264SHA256 == "" {
 		return closeMediaStats{}, errors.New("receiver media stats missing h264_sha256")
@@ -3341,8 +3437,26 @@ func summarizeWebRTCMedia(operations []Operation) WebRTCMediaMetrics {
 		}
 		if op.Success && op.Name == "webrtc_media_receive" {
 			metrics.Successes++
-			metrics.PacketsReceived += evidenceInt(op.Evidence, "packets")
-			metrics.BytesReceived += evidenceInt(op.Evidence, "bytes")
+			packets := evidenceInt(op.Evidence, "packets")
+			bytes := evidenceInt(op.Evidence, "bytes")
+			h264Packets := firstNonZero(evidenceInt(op.Evidence, "video_receiver_packets"), evidenceInt(op.Evidence, "receiver_packets"))
+			h264Bytes := firstNonZero(evidenceInt(op.Evidence, "video_receiver_bytes"), evidenceInt(op.Evidence, "receiver_bytes"))
+			opusPackets := evidenceInt(op.Evidence, "audio_receiver_packets")
+			opusBytes := evidenceInt(op.Evidence, "audio_receiver_bytes")
+			opusFrames := evidenceInt(op.Evidence, "audio_receiver_frames")
+			if packets == 0 {
+				packets = h264Packets + opusPackets
+			}
+			if bytes == 0 {
+				bytes = h264Bytes + opusBytes
+			}
+			metrics.PacketsReceived += packets
+			metrics.BytesReceived += bytes
+			metrics.H264PacketsReceived += h264Packets
+			metrics.H264BytesReceived += h264Bytes
+			metrics.OpusPacketsReceived += opusPackets
+			metrics.OpusBytesReceived += opusBytes
+			metrics.OpusFramesReceived += opusFrames
 			if receiveMS := evidenceInt(op.Evidence, "receive_ms"); int64(receiveMS) > metrics.ReceiveDurationMS {
 				metrics.ReceiveDurationMS = int64(receiveMS)
 			}
@@ -3361,6 +3475,15 @@ func summarizeWebRTCMedia(operations []Operation) WebRTCMediaMetrics {
 	metrics.TimeToFirstRTPP95MS = percentile(firstRTPLatencies, 95)
 	metrics.ICEConnectedP95MS = percentile(iceLatencies, 95)
 	return metrics
+}
+
+func firstNonZero(values ...int) int {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func evidenceInt(evidence, key string) int {

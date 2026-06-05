@@ -115,10 +115,20 @@ type videoRelayDeviceResult struct {
 	SessionIDPresent      bool   `json:"session_id_present,omitempty"`
 	ICEServerCount        int    `json:"ice_server_count,omitempty"`
 	ICEConnectedLatencyMS int64  `json:"ice_connected_latency_ms,omitempty"`
+	MediaModel            string `json:"media_model,omitempty"`
 	RTPCodec              string `json:"rtp_codec,omitempty"`
 	RTPNALTypes           string `json:"rtp_nal_types,omitempty"`
 	RTPPacketsReceived    int    `json:"rtp_packets_received,omitempty"`
 	RTPBytesReceived      int    `json:"rtp_bytes_received,omitempty"`
+	VideoCodec            string `json:"video_codec,omitempty"`
+	VideoBitstreamMatch   bool   `json:"video_bitstream_match,omitempty"`
+	VideoPacketsReceived  int    `json:"video_packets_received,omitempty"`
+	VideoBytesReceived    int    `json:"video_bytes_received,omitempty"`
+	AudioCodec            string `json:"audio_codec,omitempty"`
+	AudioPayloadMatch     bool   `json:"audio_payload_match,omitempty"`
+	AudioPacketsReceived  int    `json:"audio_packets_received,omitempty"`
+	AudioBytesReceived    int    `json:"audio_bytes_received,omitempty"`
+	AudioFramesReceived   int    `json:"audio_frames_received,omitempty"`
 	Error                 string `json:"error,omitempty"`
 }
 
@@ -447,7 +457,7 @@ func buildVideoRelayRunnerArgs(cfg videoRelayRunnerConfig) ([]string, string, er
 		"--actors", "device,viewer",
 		"--device-online-mode", "websocket",
 		"--device-route-set", "off",
-		"--webrtc-media-set", "h264",
+		"--webrtc-media-set", "av",
 		"--webrtc-media-duration", "20s",
 		"--device-ids", strings.Join(cfg.DeviceIDs, ","),
 		"--virtual-devices", strconv.Itoa(len(cfg.DeviceIDs)),
@@ -560,8 +570,36 @@ func summarizeVideoRelayLoadResults(path string, selected []videoRelaySelectedDe
 			packets, bytes := parseRTPRelayEvidence(op.Evidence)
 			row.RTPPacketsReceived = packets
 			row.RTPBytesReceived = bytes
-			row.RTPCodec = parseEvidenceString(op.Evidence, "codec")
-			row.RTPNALTypes = parseEvidenceString(op.Evidence, "nal_types")
+			row.MediaModel = parseEvidenceString(op.Evidence, "media_model")
+			row.RTPCodec = firstNonEmpty(parseEvidenceString(op.Evidence, "codec"), parseEvidenceString(op.Evidence, "video_codec"))
+			row.RTPNALTypes = firstNonEmpty(parseEvidenceString(op.Evidence, "nal_types"), parseEvidenceString(op.Evidence, "video_nal_types"))
+			row.VideoCodec = parseEvidenceString(op.Evidence, "video_codec")
+			row.VideoPacketsReceived = parseEvidenceInt(op.Evidence, "video_receiver_packets")
+			row.VideoBytesReceived = parseEvidenceInt(op.Evidence, "video_receiver_bytes")
+			row.VideoBitstreamMatch = parseEvidenceBool(op.Evidence, "video_receiver_bitstream_match")
+			if row.VideoPacketsReceived == 0 {
+				row.VideoPacketsReceived = parseEvidenceInt(op.Evidence, "receiver_packets")
+			}
+			if row.VideoBytesReceived == 0 {
+				row.VideoBytesReceived = parseEvidenceInt(op.Evidence, "receiver_bytes")
+			}
+			if !row.VideoBitstreamMatch {
+				row.VideoBitstreamMatch = parseEvidenceBool(op.Evidence, "receiver_bitstream_match")
+			}
+			row.AudioCodec = parseEvidenceString(op.Evidence, "audio_codec")
+			row.AudioPacketsReceived = parseEvidenceInt(op.Evidence, "audio_receiver_packets")
+			row.AudioBytesReceived = parseEvidenceInt(op.Evidence, "audio_receiver_bytes")
+			row.AudioFramesReceived = parseEvidenceInt(op.Evidence, "audio_receiver_frames")
+			row.AudioPayloadMatch = parseEvidenceBool(op.Evidence, "audio_audio_payload_match")
+			if !row.AudioPayloadMatch {
+				row.AudioPayloadMatch = parseEvidenceBool(op.Evidence, "audio_payload_match")
+			}
+			if row.RTPPacketsReceived == 0 {
+				row.RTPPacketsReceived = row.VideoPacketsReceived + row.AudioPacketsReceived
+			}
+			if row.RTPBytesReceived == 0 {
+				row.RTPBytesReceived = row.VideoBytesReceived + row.AudioBytesReceived
+			}
 		case "webrtc_media_close":
 			row.CloseStatus = status
 		}
@@ -675,7 +713,7 @@ func videoRelayTraceEventForOperation(op videoRelayLoadOperation) (string, strin
 	case "webrtc_media_first_rtp":
 		return "first_rtp_received", "device_to_video_cloud", true
 	case "webrtc_media_receive":
-		return "h264_bitstream_compared", "video_cloud_receiver", true
+		return "media_bitstreams_compared", "video_cloud_receiver", true
 	case "webrtc_media_close":
 		return "request_webrtc_close", "viewer_to_video_cloud", true
 	case "device_websocket_owner":
@@ -744,7 +782,7 @@ func writeVideoRelaySignalingTraceJSONL(path string, trace []videoRelayTraceEven
 }
 
 func videoRelaySignalingTraceStatus(trace []videoRelayTraceEvent, deviceIDs []string) string {
-	required := []string{"websocket_owner_online", "request_webrtc_response", "webrtc_offer_received", "answer_submitted", "ice_connected", "h264_bitstream_compared", "request_webrtc_close"}
+	required := []string{"websocket_owner_online", "request_webrtc_response", "webrtc_offer_received", "answer_submitted", "ice_connected", "media_bitstreams_compared", "request_webrtc_close"}
 	byDevice := map[string]map[string]string{}
 	for _, deviceID := range deviceIDs {
 		byDevice[deviceID] = map[string]string{}
@@ -889,6 +927,12 @@ func fillMissingVideoRelayStatuses(row *videoRelayDeviceResult) {
 func parseRTPRelayEvidence(evidence string) (int, int) {
 	packets := parseEvidenceInt(evidence, "packets")
 	bytes := parseEvidenceInt(evidence, "bytes")
+	if packets == 0 {
+		packets = parseEvidenceInt(evidence, "video_receiver_packets") + parseEvidenceInt(evidence, "audio_receiver_packets")
+	}
+	if bytes == 0 {
+		bytes = parseEvidenceInt(evidence, "video_receiver_bytes") + parseEvidenceInt(evidence, "audio_receiver_bytes")
+	}
 	return packets, bytes
 }
 
@@ -911,6 +955,12 @@ func parseEvidenceString(evidence, key string) string {
 	return m[1]
 }
 
+func parseEvidenceBool(evidence, key string) bool {
+	re := regexp.MustCompile(regexp.QuoteMeta(key) + `=(true|false)`)
+	m := re.FindStringSubmatch(evidence)
+	return len(m) == 2 && m[1] == "true"
+}
+
 func renderVideoRelayReport(result videoRelayResult) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, "Video Relay Test Report")
@@ -922,10 +972,15 @@ func renderVideoRelayReport(result videoRelayResult) string {
 	}
 	fmt.Fprintln(&b, "Devices:")
 	for _, device := range result.Devices {
-		fmt.Fprintf(&b, "- %s websocket=%s create=%s answer=%s ice=%s close=%s codec=%s nal_types=%s ICE servers=%d ICE connected=%dms RTP packets=%d RTP bytes=%d",
+		fmt.Fprintf(&b, "- %s websocket=%s create=%s answer=%s ice=%s close=%s media=%s codec=%s nal_types=%s ICE servers=%d ICE connected=%dms RTP packets=%d RTP bytes=%d",
 			device.DeviceID, device.WebSocketOwnerStatus, device.WebRTCCreateStatus, device.WebRTCAnswerStatus,
-			device.ICEConnectedStatus, device.CloseStatus, device.RTPCodec, device.RTPNALTypes, device.ICEServerCount,
+			device.ICEConnectedStatus, device.CloseStatus, firstNonEmpty(device.MediaModel, "h264"), device.RTPCodec, device.RTPNALTypes, device.ICEServerCount,
 			device.ICEConnectedLatencyMS, device.RTPPacketsReceived, device.RTPBytesReceived)
+		if device.VideoCodec != "" || device.AudioCodec != "" {
+			fmt.Fprintf(&b, " Video bitstream match=%t video packets=%d video bytes=%d Audio payload match=%t audio codec=%s audio packets=%d audio bytes=%d audio frames=%d",
+				device.VideoBitstreamMatch, device.VideoPacketsReceived, device.VideoBytesReceived,
+				device.AudioPayloadMatch, device.AudioCodec, device.AudioPacketsReceived, device.AudioBytesReceived, device.AudioFramesReceived)
+		}
 		if device.Error != "" {
 			fmt.Fprintf(&b, " error=%s", sanitizeVideoRelayText(device.Error))
 		}
@@ -993,9 +1048,10 @@ func renderVideoRelayConsole(result videoRelayResult) string {
 		firstNonEmpty(result.WebRTC.RelayEvidenceStatus, "not_checked"),
 		firstNonEmpty(result.WebRTC.SelectedCandidateTypes, "unknown"))
 	for _, device := range result.Devices {
-		fmt.Fprintf(&b, "  %s websocket=%s create=%s answer=%s ice=%s rtp=%s close=%s codec=%s nal_types=%s packets=%d bytes=%d\n",
+		fmt.Fprintf(&b, "  %s websocket=%s create=%s answer=%s ice=%s rtp=%s close=%s media=%s codec=%s nal_types=%s packets=%d bytes=%d video_match=%t audio_match=%t audio_packets=%d audio_bytes=%d\n",
 			device.DeviceID, device.WebSocketOwnerStatus, device.WebRTCCreateStatus, device.WebRTCAnswerStatus,
-			device.ICEConnectedStatus, device.RTPReceiveStatus, device.CloseStatus, device.RTPCodec, device.RTPNALTypes, device.RTPPacketsReceived, device.RTPBytesReceived)
+			device.ICEConnectedStatus, device.RTPReceiveStatus, device.CloseStatus, firstNonEmpty(device.MediaModel, "h264"), device.RTPCodec, device.RTPNALTypes, device.RTPPacketsReceived, device.RTPBytesReceived,
+			device.VideoBitstreamMatch, device.AudioPayloadMatch, device.AudioPacketsReceived, device.AudioBytesReceived)
 		if result.TraceDetail != "none" {
 			fmt.Fprintf(&b, "    signaling=%s\n", videoRelayTraceChainSummary(result.SignalingTrace, device.DeviceID))
 		}
@@ -1016,15 +1072,15 @@ func renderVideoRelayConsole(result videoRelayResult) string {
 }
 
 func videoRelayTraceChainSummary(trace []videoRelayTraceEvent, deviceID string) string {
-	order := []string{"websocket_owner_online", "request_webrtc_response", "webrtc_offer_received", "answer_submitted", "ice_connected", "h264_bitstream_compared", "request_webrtc_close"}
+	order := []string{"websocket_owner_online", "request_webrtc_response", "webrtc_offer_received", "answer_submitted", "ice_connected", "media_bitstreams_compared", "request_webrtc_close"}
 	labels := map[string]string{
-		"websocket_owner_online":  "websocket",
-		"request_webrtc_response": "offer",
-		"webrtc_offer_received":   "device_rx_offer",
-		"answer_submitted":        "answer",
-		"ice_connected":           "ice",
-		"h264_bitstream_compared": "h264_compare",
-		"request_webrtc_close":    "close",
+		"websocket_owner_online":    "websocket",
+		"request_webrtc_response":   "offer",
+		"webrtc_offer_received":     "device_rx_offer",
+		"answer_submitted":          "answer",
+		"ice_connected":             "ice",
+		"media_bitstreams_compared": "media_compare",
+		"request_webrtc_close":      "close",
 	}
 	statuses := map[string]string{}
 	for _, event := range trace {

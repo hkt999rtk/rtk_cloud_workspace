@@ -1469,6 +1469,65 @@ func TestH264MediaPlanLoopsTwoSecondFixtureForTwentySeconds(t *testing.T) {
 	}
 }
 
+func TestOpusMediaPlanLoopsTwoSecondFixtureForTwentySeconds(t *testing.T) {
+	plan, err := buildOpusMediaPlan(20 * time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Duration != 20*time.Second || plan.Loops != 10 || plan.SampleRate != 48000 || plan.Channels != 1 {
+		t.Fatalf("plan = %#v, want 20s/10 loops/48kHz mono", plan)
+	}
+	if plan.Frames != 1000 {
+		t.Fatalf("frames = %d, want 1000", plan.Frames)
+	}
+	if len(plan.Packets) != plan.Frames {
+		t.Fatalf("packets = %d, want one RTP packet per Opus frame", len(plan.Packets))
+	}
+	if plan.Evidence.ExpectedSHA256 == "" || plan.Evidence.Bytes == 0 {
+		t.Fatalf("evidence = %#v, want expected audio payload hash and bytes", plan.Evidence)
+	}
+	if !strings.Contains(plan.Evidence.String(), "codec=opus") || !strings.Contains(plan.Evidence.String(), "sample_rate=48000") {
+		t.Fatalf("evidence missing Opus details: %s", plan.Evidence.String())
+	}
+}
+
+func TestPionWebRTCMediaAVLoopbackReceivesVideoAndAudioRTP(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	viewer, err := NewPionMediaOfferSessionForSet(ctx, WebRTCMediaSetAV, 2*time.Second)
+	if err != nil {
+		t.Fatalf("NewPionMediaOfferSessionForSet: %v", err)
+	}
+	defer viewer.Close()
+	if offer := viewer.OfferPayload(); !strings.Contains(offer["sdp"], "m=video") || !strings.Contains(offer["sdp"], "m=audio") || !strings.Contains(offer["sdp"], "recvonly") {
+		t.Fatalf("AV offer does not advertise recvonly audio+video:\n%s", offer["sdp"])
+	}
+
+	answerer, err := NewPionMediaAnswerSessionForSet(ctx, viewer.OfferPayload(), WebRTCMediaSetAV, 2*time.Second)
+	if err != nil {
+		t.Fatalf("NewPionMediaAnswerSessionForSet: %v", err)
+	}
+	defer answerer.Close()
+	if answer := answerer.AnswerPayload(); !strings.Contains(answer["sdp"], "H264") || !strings.Contains(answer["sdp"], "opus") {
+		t.Fatalf("answer SDP does not negotiate H.264 + Opus:\n%s", answer["sdp"])
+	}
+	if err := viewer.SetRemoteAnswer(answerer.AnswerPayload()); err != nil {
+		t.Fatalf("SetRemoteAnswer: %v", err)
+	}
+
+	go func() {
+		_, _ = answerer.SendAVRTP(ctx, 200*time.Millisecond)
+	}()
+	stats, err := viewer.WaitForMedia(ctx, 3, 3*time.Second)
+	if err != nil {
+		t.Fatalf("WaitForMedia: %v", err)
+	}
+	if stats.H264Bytes == 0 || stats.OpusBytes == 0 || stats.OpusPackets == 0 {
+		t.Fatalf("media stats = %#v, want both H.264 and Opus RTP evidence", stats)
+	}
+}
+
 func TestRunnerWebRTCMediaRTPRecordsCoverage(t *testing.T) {
 	var answerersMu sync.Mutex
 	answerers := make([]*PionMediaAnswerSession, 0)
@@ -1908,6 +1967,29 @@ func TestRunnerWebRTCMediaServerOfferFailsWithoutReceiverBitstreamStats(t *testi
 	}
 	if result.CoverageMatrix["webrtc_media"].Status != CoverageStatusFail {
 		t.Fatalf("webrtc_media coverage = %#v, want FAIL", result.CoverageMatrix["webrtc_media"])
+	}
+}
+
+func TestAVReceiverCompareFailsWithoutAudioPayloadStats(t *testing.T) {
+	videoPlan, err := buildH264MediaPlan(200 * time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	audioPlan, err := buildOpusMediaPlan(200 * time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeOp := Operation{
+		Success: true,
+		Evidence: fmt.Sprintf(`{"status":"ok","media":{"packets_received":%d,"bytes_received":%d,"h264_packets":%d,"h264_sha256":%q,"h264_bytes":%d,"nal_types":["idr","sps"]}}`,
+			len(videoPlan.Packets), videoPlan.Evidence.Bytes, len(videoPlan.Packets), videoPlan.Evidence.ExpectedSHA256, videoPlan.Evidence.ReceiverBytes),
+	}
+	op := avReceiverCompareOperation("load-device-0", "viewer-0", 10, AVRTPEvidence{Video: videoPlan.Evidence, Audio: audioPlan.Evidence}, closeOp)
+	if op.Success || op.ErrorDetail != "receiver Opus payload hash mismatch" {
+		t.Fatalf("receive op = %#v, want audio payload mismatch failure", op)
+	}
+	if !strings.Contains(op.Evidence, "video_receiver_bitstream_match=true") || !strings.Contains(op.Evidence, "audio_payload_match=false") {
+		t.Fatalf("receive evidence should show video matched but audio failed: %s", op.Evidence)
 	}
 }
 

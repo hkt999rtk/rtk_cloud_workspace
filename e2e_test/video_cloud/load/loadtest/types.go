@@ -52,6 +52,7 @@ const (
 	WebRTCMediaSetOff  = "off"
 	WebRTCMediaSetRTP  = "rtp"
 	WebRTCMediaSetH264 = "h264"
+	WebRTCMediaSetAV   = "av"
 )
 
 const (
@@ -237,6 +238,11 @@ type WebRTCMediaMetrics struct {
 	Failures            int            `json:"failures"`
 	PacketsReceived     int            `json:"packets_received"`
 	BytesReceived       int            `json:"bytes_received"`
+	H264PacketsReceived int            `json:"h264_packets_received,omitempty"`
+	H264BytesReceived   int            `json:"h264_bytes_received,omitempty"`
+	OpusPacketsReceived int            `json:"opus_packets_received,omitempty"`
+	OpusBytesReceived   int            `json:"opus_bytes_received,omitempty"`
+	OpusFramesReceived  int            `json:"opus_frames_received,omitempty"`
 	TimeToFirstRTPP95MS int64          `json:"time_to_first_rtp_p95_ms"`
 	ICEConnectedP95MS   int64          `json:"ice_connected_p95_ms"`
 	ReceiveDurationMS   int64          `json:"receive_duration_ms"`

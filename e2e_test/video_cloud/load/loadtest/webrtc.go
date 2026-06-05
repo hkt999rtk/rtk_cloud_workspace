@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,8 +39,13 @@ type WebRTCMediaStats struct {
 	ReceiveDurationMS     int64
 	H264SHA256            string
 	H264Bytes             int
+	H264Packets           int
 	NALTypes              []string
 	Packetizations        []string
+	OpusSHA256            string
+	OpusBytes             int
+	OpusPackets           int
+	OpusFrames            int
 }
 
 type H264RTPPlan struct {
@@ -70,6 +76,40 @@ type H264RTPEvidence struct {
 	BitstreamMatch   bool
 }
 
+type OpusRTPPlan struct {
+	Duration   time.Duration
+	Loops      int
+	SampleRate int
+	Channels   int
+	Frames     int
+	Packets    []*rtp.Packet
+	Evidence   OpusRTPEvidence
+}
+
+type OpusRTPEvidence struct {
+	Packets         int
+	Bytes           int
+	DurationMS      int64
+	Loops           int
+	Frames          int
+	SampleRate      int
+	Channels        int
+	ReceiveMS       int64
+	TimeToFirstMS   int64
+	ICEMS           int64
+	ExpectedSHA256  string
+	ReceiverSHA256  string
+	ReceiverPackets int
+	ReceiverBytes   int
+	ReceiverFrames  int
+	PayloadMatch    bool
+}
+
+type AVRTPEvidence struct {
+	Video H264RTPEvidence
+	Audio OpusRTPEvidence
+}
+
 type PionMediaOfferSession struct {
 	peer           *webrtc.PeerConnection
 	offer          webrtc.SessionDescription
@@ -84,6 +124,7 @@ type PionMediaOfferSession struct {
 	stats          WebRTCMediaStats
 	h264           codecs.H264Packet
 	h264Bytes      bytes.Buffer
+	opusBytes      bytes.Buffer
 	nalTypes       map[string]bool
 	packetizations map[string]bool
 }
@@ -91,6 +132,8 @@ type PionMediaOfferSession struct {
 type PionMediaAnswerSession struct {
 	peer         *webrtc.PeerConnection
 	track        *webrtc.TrackLocalStaticRTP
+	videoTrack   *webrtc.TrackLocalStaticRTP
+	audioTrack   *webrtc.TrackLocalStaticRTP
 	codecMime    string
 	answer       webrtc.SessionDescription
 	iceConnected chan struct{}
@@ -120,6 +163,10 @@ func NewPionOfferSession() (*PionOfferSession, error) {
 }
 
 func NewPionMediaOfferSession(ctx context.Context, gatherTimeout time.Duration) (*PionMediaOfferSession, error) {
+	return NewPionMediaOfferSessionForSet(ctx, WebRTCMediaSetH264, gatherTimeout)
+}
+
+func NewPionMediaOfferSessionForSet(ctx context.Context, mediaSet string, gatherTimeout time.Duration) (*PionMediaOfferSession, error) {
 	peer, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
 		return nil, fmt.Errorf("pion media offer peer connection: %w", err)
@@ -150,6 +197,12 @@ func NewPionMediaOfferSession(ctx context.Context, gatherTimeout time.Duration) 
 		_ = peer.Close()
 		return nil, fmt.Errorf("pion media recvonly transceiver: %w", err)
 	}
+	if mediaSet == WebRTCMediaSetAV {
+		if _, err := peer.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
+			_ = peer.Close()
+			return nil, fmt.Errorf("pion media audio recvonly transceiver: %w", err)
+		}
+	}
 	offer, err := peer.CreateOffer(nil)
 	if err != nil {
 		_ = peer.Close()
@@ -169,6 +222,7 @@ func NewPionMediaOfferSession(ctx context.Context, gatherTimeout time.Duration) 
 
 func (s *PionMediaOfferSession) readRemoteRTP(track *webrtc.TrackRemote) {
 	isH264 := strings.EqualFold(track.Codec().MimeType, webrtc.MimeTypeH264)
+	isOpus := strings.EqualFold(track.Codec().MimeType, webrtc.MimeTypeOpus)
 	for {
 		packet, _, err := track.ReadRTP()
 		if err != nil {
@@ -178,6 +232,7 @@ func (s *PionMediaOfferSession) readRemoteRTP(track *webrtc.TrackRemote) {
 		s.stats.PacketsReceived++
 		s.stats.BytesReceived += len(packet.Payload)
 		if isH264 {
+			s.stats.H264Packets++
 			for _, packetization := range h264PayloadPacketizations(packet.Payload) {
 				s.packetizations[packetization] = true
 			}
@@ -191,6 +246,13 @@ func (s *PionMediaOfferSession) readRemoteRTP(track *webrtc.TrackRemote) {
 				s.stats.NALTypes = sortedEvidenceKeys(s.nalTypes)
 				s.stats.Packetizations = sortedEvidenceKeys(s.packetizations)
 			}
+		}
+		if isOpus {
+			_, _ = s.opusBytes.Write(packet.Payload)
+			s.stats.OpusPackets++
+			s.stats.OpusFrames++
+			s.stats.OpusBytes = s.opusBytes.Len()
+			s.stats.OpusSHA256 = sha256Hex(s.opusBytes.Bytes())
 		}
 		if s.stats.TimeToFirstRTPMS == 0 {
 			s.stats.TimeToFirstRTPMS = time.Since(s.started).Milliseconds()
@@ -280,6 +342,14 @@ func NewPionMediaAnswerSession(ctx context.Context, offer map[string]string, gat
 }
 
 func NewPionMediaAnswerSessionWithICEServers(ctx context.Context, offer map[string]string, iceServers []webrtc.ICEServer, gatherTimeout time.Duration) (*PionMediaAnswerSession, error) {
+	return NewPionMediaAnswerSessionWithICEServersForSet(ctx, offer, iceServers, WebRTCMediaSetH264, gatherTimeout)
+}
+
+func NewPionMediaAnswerSessionForSet(ctx context.Context, offer map[string]string, mediaSet string, gatherTimeout time.Duration) (*PionMediaAnswerSession, error) {
+	return NewPionMediaAnswerSessionWithICEServersForSet(ctx, offer, nil, mediaSet, gatherTimeout)
+}
+
+func NewPionMediaAnswerSessionWithICEServersForSet(ctx context.Context, offer map[string]string, iceServers []webrtc.ICEServer, mediaSet string, gatherTimeout time.Duration) (*PionMediaAnswerSession, error) {
 	if offer["type"] != "offer" || offer["sdp"] == "" {
 		return nil, errors.New("invalid media offer")
 	}
@@ -296,7 +366,7 @@ func NewPionMediaAnswerSessionWithICEServers(ctx context.Context, offer map[stri
 			session.iceOnce.Do(func() { close(session.iceConnected) })
 		}
 	})
-	track, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{
+	videoTrack, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{
 		MimeType:    webrtc.MimeTypeH264,
 		ClockRate:   90000,
 		SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f",
@@ -305,11 +375,28 @@ func NewPionMediaAnswerSessionWithICEServers(ctx context.Context, offer map[stri
 		_ = peer.Close()
 		return nil, fmt.Errorf("pion media answer track: %w", err)
 	}
-	if _, err := peer.AddTrack(track); err != nil {
+	if _, err := peer.AddTrack(videoTrack); err != nil {
 		_ = peer.Close()
 		return nil, fmt.Errorf("pion media answer add track: %w", err)
 	}
-	session.track = track
+	session.track = videoTrack
+	session.videoTrack = videoTrack
+	if mediaSet == WebRTCMediaSetAV {
+		audioTrack, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{
+			MimeType:  webrtc.MimeTypeOpus,
+			ClockRate: 48000,
+			Channels:  1,
+		}, "audio", "rtk-video-loadtest")
+		if err != nil {
+			_ = peer.Close()
+			return nil, fmt.Errorf("pion media answer audio track: %w", err)
+		}
+		if _, err := peer.AddTrack(audioTrack); err != nil {
+			_ = peer.Close()
+			return nil, fmt.Errorf("pion media answer add audio track: %w", err)
+		}
+		session.audioTrack = audioTrack
+	}
 	session.codecMime = webrtc.MimeTypeH264
 	if err := peer.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: offer["sdp"]}); err != nil {
 		_ = peer.Close()
@@ -374,7 +461,7 @@ func (s *PionMediaAnswerSession) SendSyntheticRTP(ctx context.Context, packets i
 			},
 			Payload: []byte{0x90, 0x90, byte(i), 0x00, 0x01},
 		}
-		if err := s.track.WriteRTP(packet); err != nil {
+		if err := s.videoTrack.WriteRTP(packet); err != nil {
 			return err
 		}
 		select {
@@ -387,23 +474,63 @@ func (s *PionMediaAnswerSession) SendSyntheticRTP(ctx context.Context, packets i
 }
 
 func (s *PionMediaAnswerSession) SendH264RTP(ctx context.Context, duration time.Duration) (H264RTPPlan, error) {
-	select {
-	case <-s.iceConnected:
-	case <-ctx.Done():
-		return H264RTPPlan{}, ctx.Err()
-	case <-time.After(5 * time.Second):
-		return H264RTPPlan{}, errors.New("webrtc media answerer ICE connection timeout")
+	if err := s.waitICEConnected(ctx); err != nil {
+		return H264RTPPlan{}, err
 	}
 	plan, err := buildH264MediaPlan(duration)
 	if err != nil {
 		return H264RTPPlan{}, err
 	}
+	return s.sendH264Plan(ctx, plan)
+}
+
+func (s *PionMediaAnswerSession) SendAVRTP(ctx context.Context, duration time.Duration) (AVRTPEvidence, error) {
+	if err := s.waitICEConnected(ctx); err != nil {
+		return AVRTPEvidence{}, err
+	}
+	videoPlan, err := buildH264MediaPlan(duration)
+	if err != nil {
+		return AVRTPEvidence{}, err
+	}
+	audioPlan, err := buildOpusMediaPlan(duration)
+	if err != nil {
+		return AVRTPEvidence{}, err
+	}
+	errCh := make(chan error, 2)
+	go func() {
+		_, err := s.sendH264Plan(ctx, videoPlan)
+		errCh <- err
+	}()
+	go func() {
+		_, err := s.sendOpusPlan(ctx, audioPlan)
+		errCh <- err
+	}()
+	for i := 0; i < 2; i++ {
+		if err := <-errCh; err != nil {
+			return AVRTPEvidence{}, err
+		}
+	}
+	return AVRTPEvidence{Video: videoPlan.Evidence, Audio: audioPlan.Evidence}, nil
+}
+
+func (s *PionMediaAnswerSession) waitICEConnected(ctx context.Context) error {
+	select {
+	case <-s.iceConnected:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(5 * time.Second):
+		return errors.New("webrtc media answerer ICE connection timeout")
+	}
+}
+
+func (s *PionMediaAnswerSession) sendH264Plan(ctx context.Context, plan H264RTPPlan) (H264RTPPlan, error) {
 	interval := time.Duration(0)
-	if len(plan.Packets) > 0 && duration > 0 {
-		interval = duration / time.Duration(len(plan.Packets))
+	if len(plan.Packets) > 0 && plan.Duration > 0 {
+		interval = plan.Duration / time.Duration(len(plan.Packets))
 	}
 	for i, packet := range plan.Packets {
-		if err := s.track.WriteRTP(packet); err != nil {
+		if err := s.videoTrack.WriteRTP(packet); err != nil {
 			return H264RTPPlan{}, err
 		}
 		if interval <= 0 || i == len(plan.Packets)-1 {
@@ -414,6 +541,32 @@ func (s *PionMediaAnswerSession) SendH264RTP(ctx context.Context, duration time.
 		case <-ctx.Done():
 			timer.Stop()
 			return H264RTPPlan{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return plan, nil
+}
+
+func (s *PionMediaAnswerSession) sendOpusPlan(ctx context.Context, plan OpusRTPPlan) (OpusRTPPlan, error) {
+	if s.audioTrack == nil {
+		return OpusRTPPlan{}, errors.New("webrtc media answerer missing Opus audio track")
+	}
+	interval := time.Duration(0)
+	if len(plan.Packets) > 0 && plan.Duration > 0 {
+		interval = plan.Duration / time.Duration(len(plan.Packets))
+	}
+	for i, packet := range plan.Packets {
+		if err := s.audioTrack.WriteRTP(packet); err != nil {
+			return OpusRTPPlan{}, err
+		}
+		if interval <= 0 || i == len(plan.Packets)-1 {
+			continue
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return OpusRTPPlan{}, ctx.Err()
 		case <-timer.C:
 		}
 	}
@@ -468,6 +621,114 @@ func buildH264MediaPlan(duration time.Duration) (H264RTPPlan, error) {
 	evidence.ReceiverSHA256 = ""
 	evidence.ReceiverBytes = h264Bytes
 	return H264RTPPlan{Duration: duration, Loops: loops, FrameRate: frameRate, Frames: evidence.Frames, Packets: allPackets, Evidence: evidence}, nil
+}
+
+func buildOpusMediaPlan(duration time.Duration) (OpusRTPPlan, error) {
+	if duration <= 0 {
+		duration = 20 * time.Second
+	}
+	const (
+		fixtureDuration = 2 * time.Second
+		sampleRate      = 48000
+		channels        = 1
+		frameDuration   = 20 * time.Millisecond
+	)
+	frames, err := opusFrameFixture()
+	if err != nil {
+		return OpusRTPPlan{}, err
+	}
+	loops := int((duration + fixtureDuration - 1) / fixtureDuration)
+	if loops < 1 {
+		loops = 1
+	}
+	allPackets := make([]*rtp.Packet, 0, loops*len(frames))
+	var payloads bytes.Buffer
+	sequence := uint16(1)
+	timestamp := uint32(0)
+	for i := 0; i < loops; i++ {
+		for _, frame := range frames {
+			payload := append([]byte(nil), frame...)
+			allPackets = append(allPackets, &rtp.Packet{
+				Header: rtp.Header{
+					Version:        2,
+					PayloadType:    111,
+					SequenceNumber: sequence,
+					Timestamp:      timestamp,
+					SSRC:           0x52544b41,
+					Marker:         false,
+				},
+				Payload: payload,
+			})
+			_, _ = payloads.Write(payload)
+			sequence++
+			timestamp += uint32(sampleRate * frameDuration / time.Second)
+		}
+	}
+	evidence := OpusRTPEvidence{
+		Packets:        len(allPackets),
+		Bytes:          payloads.Len(),
+		DurationMS:     duration.Milliseconds(),
+		Loops:          loops,
+		Frames:         len(allPackets),
+		SampleRate:     sampleRate,
+		Channels:       channels,
+		ExpectedSHA256: sha256Hex(payloads.Bytes()),
+	}
+	return OpusRTPPlan{Duration: duration, Loops: loops, SampleRate: sampleRate, Channels: channels, Frames: len(allPackets), Packets: allPackets, Evidence: evidence}, nil
+}
+
+func opusFrameFixture() ([][]byte, error) {
+	data, err := opusFrameFixtureData()
+	if err != nil {
+		return nil, err
+	}
+	frames := make([][]byte, 0, 100)
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || strings.Contains(line, "=") && !strings.HasPrefix(line, "repeat=") {
+			continue
+		}
+		if !strings.HasPrefix(line, "repeat=") {
+			continue
+		}
+		fields := strings.Fields(strings.TrimPrefix(line, "repeat="))
+		if len(fields) < 2 {
+			return nil, errors.New("Opus fixture repeat line requires count and frame hex payloads")
+		}
+		count, err := strconv.Atoi(fields[0])
+		if err != nil || count <= 0 {
+			return nil, errors.New("Opus fixture repeat count is invalid")
+		}
+		payloads := fields[1:]
+		for i := 0; i < count; i++ {
+			for _, payloadHex := range payloads {
+				payload, err := hex.DecodeString(payloadHex)
+				if err != nil {
+					return nil, fmt.Errorf("decode Opus fixture payload: %w", err)
+				}
+				frames = append(frames, payload)
+			}
+		}
+	}
+	if len(frames) == 0 {
+		return nil, errors.New("Opus fixture has no frames")
+	}
+	return frames, nil
+}
+
+func opusFrameFixtureData() ([]byte, error) {
+	for _, path := range []string{
+		"../testdata/testtone_48k_mono_2s.opusframes",
+		"testdata/testtone_48k_mono_2s.opusframes",
+		"video_cloud/load/testdata/testtone_48k_mono_2s.opusframes",
+		"e2e_test/video_cloud/load/testdata/testtone_48k_mono_2s.opusframes",
+	} {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			return data, nil
+		}
+	}
+	return nil, errors.New("missing Opus fixture testtone_48k_mono_2s.opusframes")
 }
 
 func h264AnnexBSample(_ context.Context) ([]byte, error) {
@@ -671,6 +932,44 @@ func (e H264RTPEvidence) String() string {
 			e.ReceiverSHA256, e.ReceiverPackets, e.ReceiverBytes, joinEvidenceKeys(e.ReceiverNALTypes), e.BitstreamMatch)
 	}
 	return base
+}
+
+func (e OpusRTPEvidence) WithTimings(receiveMS, timeToFirstMS, iceMS int64) OpusRTPEvidence {
+	e.ReceiveMS = receiveMS
+	e.TimeToFirstMS = timeToFirstMS
+	e.ICEMS = iceMS
+	return e
+}
+
+func (e OpusRTPEvidence) String() string {
+	base := fmt.Sprintf("codec=opus packets=%d bytes=%d duration_ms=%d loops=%d frames=%d sample_rate=%d channels=%d receive_ms=%d ttfb_ms=%d ice_ms=%d",
+		e.Packets, e.Bytes, e.DurationMS, e.Loops, e.Frames, e.SampleRate, e.Channels, e.ReceiveMS, e.TimeToFirstMS, e.ICEMS)
+	if e.ExpectedSHA256 != "" {
+		base += fmt.Sprintf(" expected_sha256=%s", e.ExpectedSHA256)
+	}
+	base += fmt.Sprintf(" received_sha256=%s receiver_packets=%d receiver_bytes=%d receiver_frames=%d audio_payload_match=%t",
+		e.ReceiverSHA256, e.ReceiverPackets, e.ReceiverBytes, e.ReceiverFrames, e.PayloadMatch)
+	return base
+}
+
+func (e AVRTPEvidence) WithTimings(receiveMS, timeToFirstMS, iceMS int64) AVRTPEvidence {
+	e.Video = e.Video.WithTimings(receiveMS, timeToFirstMS, iceMS)
+	e.Audio = e.Audio.WithTimings(receiveMS, timeToFirstMS, iceMS)
+	return e
+}
+
+func (e AVRTPEvidence) String() string {
+	return "media_model=h264_opus_av " + prefixEvidenceKeys(e.Video.String(), "video_") + " " + prefixEvidenceKeys(e.Audio.String(), "audio_")
+}
+
+func prefixEvidenceKeys(evidence, prefix string) string {
+	parts := strings.Fields(evidence)
+	for i, part := range parts {
+		if eq := strings.IndexByte(part, '='); eq > 0 && !strings.HasPrefix(part[:eq], prefix) {
+			parts[i] = prefix + part
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 func joinEvidenceKeys(values map[string]bool) string {
