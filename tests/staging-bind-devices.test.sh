@@ -130,7 +130,11 @@ case "$url" in
 				service_options: (if ($device_id == "load-device-0001" or $device_id == "load-device-0003") then ["mqtt", "video_streaming", "video_storage"] else ["mqtt"] end)
 			},
 			_user_tag: $user_tag
-		}' >"$out"
+	}' >"$out"
+	status=200
+	;;
+*/v1/orgs/org-rtk/devices\?limit=200\&offset=0)
+	printf '{"devices":[],"pagination":{"total":0}}' >"$out"
 	status=200
 	;;
 */v1/orgs/org-rtk/devices/*/provision)
@@ -253,7 +257,8 @@ PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "/usr/local/go/bin/go" run "$RO
 	--brandname RTK \
 	--users-file "$USERS_FILE" \
 	--devices-dir "$DEVICES_DIR" \
-	--count 4 >"$OUT"
+	--count 4 \
+	--skip-bootstrap >"$OUT" 2>"$TMP/bind.err"
 
 if grep -Ei 'password|bearer|raw-token|private|device.key' "$OUT" >/dev/null; then
 	echo "stdout must not include secrets" >&2
@@ -272,6 +277,11 @@ jq -e '.assignments[1].service_options == ["mqtt"]' "$ARTIFACT" >/dev/null
 jq -e '.category == "ip_camera" and .service_options == ["mqtt", "video_streaming", "video_storage"]' "$CURL_LOG/claim-load-device-0001.json" >/dev/null
 jq -e '.category == "mqtt_device" and .service_options == ["mqtt"]' "$CURL_LOG/claim-load-device-0002.json" >/dev/null
 jq -e '.service_options == ["mqtt"] and .video_cloud_devid == "load-device-0002"' "$CURL_LOG/provision-account-device-load-device-0002.json" >/dev/null
+grep -F 'binding device 1/4: device=load-device-0001 user=rtk+001@users.local services=mqtt,video_streaming,video_storage' "$TMP/bind.err" >/dev/null
+grep -F 'creating claim token: device=load-device-0001' "$TMP/bind.err" >/dev/null
+grep -F 'resolving claim: device=load-device-0001 user=rtk+001@users.local' "$TMP/bind.err" >/dev/null
+grep -F 'starting provision: device=load-device-0001 account_device=account-device-load-device-0001' "$TMP/bind.err" >/dev/null
+grep -F 'bind progress: done=4/4 created_claims=4 resolved_claims=4 provision_started=4 skipped=0' "$TMP/bind.err" >/dev/null
 
 if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_ALREADY_CLAIMED=1 "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- bind-devices \
 	--workspace "$WORKSPACE" \
@@ -279,7 +289,8 @@ if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_ALREADY_CLAIMED=1 "/usr
 	--brandname RTK \
 	--users-file "$USERS_FILE" \
 	--devices-dir "$DEVICES_DIR" \
-	--count 1 >"$TMP/already.out" 2>"$TMP/already.err"; then
+	--count 1 \
+	--skip-bootstrap >"$TMP/already.out" 2>"$TMP/already.err"; then
 	echo "expected already-claimed device to fail" >&2
 	exit 1
 fi

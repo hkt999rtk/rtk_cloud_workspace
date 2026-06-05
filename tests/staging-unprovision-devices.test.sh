@@ -84,6 +84,8 @@ case "$url" in
 */v1/orgs/org-rtk/devices/00000000-0000-0000-0000-000000000000/unprovision)
 	if [[ "${FAKE_UNPROVISION_ROUTE_MISSING:-0}" == "1" ]]; then
 		printf '404 page not found' >"$out"
+	elif [[ "${FAKE_UNPROVISION_NESTED_NOT_FOUND:-0}" == "1" ]]; then
+		printf '{"error":{"code":"not_found","message":"Resource not found"}}' >"$out"
 	else
 		printf '{"error":"not_found","message":"Resource not found"}' >"$out"
 	fi
@@ -180,6 +182,15 @@ jq -e '.schema == "rtk-cloud-workspace.bulk-device-unprovision/v1" and (.assignm
 jq -e '.assignments[0] | .assigned_email == "rtk+001@users.local" and .device_id == "load-device-0001" and .account_device_id == "account-device-load-device-0001" and .response_device_id == "account-device-load-device-0001" and .video_cloud_devid == "load-device-0001" and .status == "unprovisioned"' "$ARTIFACT" >/dev/null
 jq -e '.assignments[1].service_options == ["mqtt"]' "$ARTIFACT" >/dev/null
 jq -e '.reason == "user_resale_factory_ready"' "$CURL_LOG/unprovision-account-device-load-device-0001.json" >/dev/null
+
+NESTED_OUT="$TMP/nested-out.json"
+PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_UNPROVISION_NESTED_NOT_FOUND=1 "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- unprovision-devices \
+	--workspace "$WORKSPACE" \
+	--env-root "$ENV_ROOT" \
+	--brandname RTK \
+	--bind-artifact "$BIND_ARTIFACT" \
+	--count 1 >"$NESTED_OUT"
+jq -e '.action == "unprovisioned" and .brandname == "RTK" and .count == 1 and .unprovisioned == 1' "$NESTED_OUT" >/dev/null
 
 if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_UNPROVISION_FAIL=1 "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- unprovision-devices \
 	--workspace "$WORKSPACE" \

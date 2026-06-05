@@ -56,6 +56,7 @@ func runDeploy(args []string) error {
 	if err != nil {
 		return err
 	}
+	applyDeployProcessEnv(env.Values)
 	paths.VideoState = provisionCloudVideoStatePath(envRoot, env.Values["CLOUD_STACK_NAME"], paths.VideoState)
 	operator, _ := readEnvFile(paths.OperatorEnv)
 	return deployAllServices(paths, env.Values, operator, provisionOptions{
@@ -408,6 +409,14 @@ func processServiceLogLevelEnv() map[string]string {
 	return out
 }
 
+func applyDeployProcessEnv(env map[string]string) {
+	for _, key := range []string{"CLOUD_LOGGER_EMQX_VERBOSE_TRACE"} {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			env[key] = value
+		}
+	}
+}
+
 func writePlatformAdminSummary(w io.Writer, paths provisionPaths) {
 	platformEnv := filepath.Join(paths.EnvRoot, "services", "account-manager", "account-manager-platform-admin.env")
 	username := envFileValue(platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL")
@@ -598,19 +607,26 @@ type loggerForwarderTarget struct {
 func runLoggerForwarderInstallHooks(paths provisionPaths, env map[string]string, sshKey string, report *readinessReport) {
 	targets := loggerForwarderTargets(paths)
 	if script := os.Getenv("CLOUD_LOGGER_SCRIPT"); script != "" {
-		runLoggerForwarderScriptHooks(paths, script, targets, report)
+		runLoggerForwarderScriptHooks(paths, env, script, targets, report)
 		return
 	}
 	installNativeLoggerForwarders(paths, env, sshKey, targets, report)
 }
 
-func runLoggerForwarderScriptHooks(paths provisionPaths, script string, targets []loggerForwarderTarget, report *readinessReport) {
+func runLoggerForwarderScriptHooks(paths provisionPaths, env map[string]string, script string, targets []loggerForwarderTarget, report *readinessReport) {
 	loggerEnv := filepath.Join(paths.EnvRoot, "services", "cloud-logger", "logger.env")
 	loggerState := filepath.Join(paths.EnvRoot, "state", "cloud-logger.env")
 	for _, target := range targets {
 		args := []string{"install-forwarder", target.name, "--workspace", paths.Workspace, "--env-root", paths.EnvRoot, "--logger-env", loggerEnv, "--logger-state", loggerState, "--host", target.host, "--units", target.units, "--journald-system-max-use", "512M", "--journald-system-keep-free", "1G", "--journald-max-retention-sec", "604800"}
 		if err := runCmdWithEnv(paths.Workspace, nil, script, args...); err != nil {
 			report.add("logger-forwarder:"+target.name, "DEGRADED", "")
+		}
+	}
+	if emqxVerboseTraceEnabled(env) {
+		mqtt := loggerForwarderTargetByName(targets, "mqtt")
+		args := []string{"install-forwarder", "emqx-broker-trace", "--workspace", paths.Workspace, "--env-root", paths.EnvRoot, "--logger-env", loggerEnv, "--logger-state", loggerState, "--host", mqtt.host, "--emqx-docker-container", "video-cloud-emqx", "--service", "emqx-broker", "--source", "emqx", "--component", "mqtt-broker", "--operation-id", "mqtt-broker-trace"}
+		if err := runCmdWithEnv(paths.Workspace, nil, script, args...); err != nil {
+			report.add("logger-forwarder:emqx-broker-trace", "DEGRADED", "")
 		}
 	}
 }
@@ -656,6 +672,14 @@ func installNativeLoggerForwarders(paths provisionPaths, env map[string]string, 
 			report.add("logger-forwarder:"+target.name, "DEGRADED", "")
 			fmt.Fprintf(os.Stderr, "[cloud-deploy] logger forwarder install degraded: target=%s error=%v\n", target.name, err)
 		}
+		if target.name == "mqtt" && emqxVerboseTraceEnabled(env) {
+			if err := installNativeLoggerEMQXForwarderTarget(paths, sshKey, binary, endpoint, token, loggerHostIP, proxyURL, firstNonEmpty(env["CLOUD_ENV_NAME"], "staging"), target); err != nil {
+				report.add("logger-forwarder:emqx-broker-trace", "DEGRADED", "")
+				fmt.Fprintf(os.Stderr, "[cloud-deploy] EMQX verbose broker trace forwarder degraded: %v\n", err)
+			} else {
+				fmt.Fprintln(os.Stderr, "[cloud-deploy] EMQX verbose broker trace forwarding enabled: service=emqx-broker source=emqx operation_id=mqtt-broker-trace")
+			}
+		}
 	}
 }
 
@@ -673,6 +697,17 @@ func installNativeLoggerForwarderTarget(paths provisionPaths, sshKey, binary, en
 		return err
 	}
 	script := loggerForwarderInstallScript(endpoint, token, target.units, loggerHostIP, proxyURL)
+	return runCmdWithInput("", script, "ssh", loggerSSHArgs(paths, sshKey, target.host, "bash", "-s")...)
+}
+
+func installNativeLoggerEMQXForwarderTarget(paths provisionPaths, sshKey, binary, endpoint, token, loggerHostIP, proxyURL, envName string, target loggerForwarderTarget) error {
+	if target.host == "" {
+		return fmt.Errorf("logger forwarder target host missing: %s", target.name)
+	}
+	if err := uploadLoggerBinary(paths, sshKey, target.host, binary, "/usr/local/bin/rtk-cloud-log-forwarder"); err != nil {
+		return err
+	}
+	script := loggerEMQXForwarderInstallScript(endpoint, token, loggerHostIP, proxyURL, envName)
 	return runCmdWithInput("", script, "ssh", loggerSSHArgs(paths, sshKey, target.host, "bash", "-s")...)
 }
 
@@ -743,6 +778,59 @@ func loggerForwarderInstallScript(endpoint, token, units, loggerHostIP, proxyURL
 	fmt.Fprintln(&b, "systemctl daemon-reload")
 	fmt.Fprintln(&b, "systemctl enable rtk-cloud-log-forwarder.service")
 	fmt.Fprintln(&b, "systemctl restart rtk-cloud-log-forwarder.service")
+	return b.String()
+}
+
+func loggerEMQXForwarderInstallScript(endpoint, token, loggerHostIP, proxyURL, envName string) string {
+	var b strings.Builder
+	loggerHost := ""
+	if parsed, err := url.Parse(endpoint); err == nil {
+		loggerHost = parsed.Hostname()
+	}
+	fmt.Fprintln(&b, "set -euo pipefail")
+	fmt.Fprintln(&b, "install -d -m 0755 /etc/rtk-cloud /var/lib/rtk-cloud-logger/emqx-spool")
+	if loggerHost != "" && loggerHostIP != "" {
+		fmt.Fprintf(&b, "sed -i.bak '/[[:space:]]%s$/d' /etc/hosts\n", shellEnvValue(loggerHost))
+		fmt.Fprintf(&b, "printf '%%s %%s\\n' %s %s >> /etc/hosts\n", shellEnvValue(loggerHostIP), shellEnvValue(loggerHost))
+	}
+	fmt.Fprintln(&b, "cat > /etc/rtk-cloud/emqx-log-forwarder.env <<'EOF'")
+	fmt.Fprintf(&b, "RTK_CLOUD_LOGGER_INGEST_URL=%s\n", shellEnvValue(loggerIngestURL(endpoint)))
+	fmt.Fprintf(&b, "RTK_CLOUD_LOGGER_TOKEN=%s\n", shellEnvValue(token))
+	fmt.Fprintln(&b, "RTK_CLOUD_LOGGER_EMQX_DOCKER_CONTAINER=video-cloud-emqx")
+	fmt.Fprintln(&b, "RTK_CLOUD_LOGGER_CURSOR=/var/lib/rtk-cloud-logger/emqx-docker.cursor")
+	fmt.Fprintln(&b, "RTK_CLOUD_LOGGER_SPOOL_DIR=/var/lib/rtk-cloud-logger/emqx-spool")
+	fmt.Fprintln(&b, "RTK_CLOUD_LOGGER_INITIAL_SINCE=5m")
+	fmt.Fprintln(&b, "SERVICE=emqx-broker")
+	fmt.Fprintf(&b, "ENV=%s\n", shellEnvValue(firstNonEmpty(envName, "staging")))
+	fmt.Fprintln(&b, "VERSION=emqx")
+	if proxyURL != "" {
+		fmt.Fprintf(&b, "HTTPS_PROXY=%s\n", shellEnvValue(proxyURL))
+		fmt.Fprintf(&b, "HTTP_PROXY=%s\n", shellEnvValue(proxyURL))
+		fmt.Fprintln(&b, "NO_PROXY=localhost,127.0.0.1,10.42.0.0/16")
+	}
+	fmt.Fprintln(&b, "EOF")
+	fmt.Fprintln(&b, "chmod 0600 /etc/rtk-cloud/emqx-log-forwarder.env")
+	fmt.Fprintln(&b, "if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -qx video-cloud-emqx; then")
+	fmt.Fprintln(&b, "  docker exec video-cloud-emqx sh -lc 'emqx ctl log set-level debug || emqx ctl log primary-level debug || true' >/dev/null 2>&1 || true")
+	fmt.Fprintln(&b, "fi")
+	fmt.Fprintln(&b, "cat > /etc/systemd/system/rtk-cloud-emqx-log-forwarder.service <<'EOF'")
+	fmt.Fprintln(&b, "[Unit]")
+	fmt.Fprintln(&b, "Description=RTK Cloud EMQX verbose broker log forwarder")
+	fmt.Fprintln(&b, "After=network-online.target docker.service")
+	fmt.Fprintln(&b, "Wants=network-online.target docker.service")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "[Service]")
+	fmt.Fprintln(&b, "EnvironmentFile=/etc/rtk-cloud/emqx-log-forwarder.env")
+	fmt.Fprintln(&b, "ExecStart=/usr/local/bin/rtk-cloud-log-forwarder")
+	fmt.Fprintln(&b, "Restart=always")
+	fmt.Fprintln(&b, "RestartSec=5")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "[Install]")
+	fmt.Fprintln(&b, "WantedBy=multi-user.target")
+	fmt.Fprintln(&b, "EOF")
+	fmt.Fprintln(&b, "systemctl daemon-reload")
+	fmt.Fprintln(&b, "systemctl enable rtk-cloud-emqx-log-forwarder.service")
+	fmt.Fprintln(&b, "systemctl restart rtk-cloud-emqx-log-forwarder.service")
 	return b.String()
 }
 
@@ -882,6 +970,9 @@ func runLoggerReadinessScriptHooks(paths provisionPaths, env map[string]string, 
 	for _, target := range loggerForwarderTargets(paths) {
 		checks = append(checks, []string{"forwarder-status", target.name})
 	}
+	if emqxVerboseTraceEnabled(env) {
+		checks = append(checks, []string{"forwarder-status", "emqx-broker-trace"})
+	}
 	for _, check := range checks {
 		name := "logger-" + check[0]
 		args := append([]string{}, check...)
@@ -908,6 +999,9 @@ func runNativeLoggerReadinessChecks(paths provisionPaths, env map[string]string,
 		report.add("logger-sample-trace-query", "DEGRADED", "")
 		for _, target := range loggerForwarderTargets(paths) {
 			report.add("logger-forwarder:"+target.name, "DEGRADED", "")
+		}
+		if emqxVerboseTraceEnabled(env) {
+			report.add("logger-forwarder:emqx-broker-trace", "DEGRADED", "")
 		}
 		return
 	}
@@ -957,6 +1051,34 @@ func runNativeLoggerReadinessChecks(paths provisionPaths, env map[string]string,
 		} else {
 			report.add("logger-forwarder:"+target.name, "PASS", "")
 		}
+	}
+	if emqxVerboseTraceEnabled(env) {
+		target := loggerForwarderTargetByName(loggerForwarderTargets(paths), "mqtt")
+		if target.host == "" {
+			report.add("logger-forwarder:emqx-broker-trace", "DEGRADED", "")
+		} else if err := runCmdQuiet("ssh", loggerSSHArgs(paths, sshKey, target.host, "systemctl", "is-active", "--quiet", "rtk-cloud-emqx-log-forwarder.service")...); err != nil {
+			report.add("logger-forwarder:emqx-broker-trace", "DEGRADED", "")
+		} else {
+			report.add("logger-forwarder:emqx-broker-trace", "PASS", "")
+		}
+	}
+}
+
+func loggerForwarderTargetByName(targets []loggerForwarderTarget, name string) loggerForwarderTarget {
+	for _, target := range targets {
+		if target.name == name {
+			return target
+		}
+	}
+	return loggerForwarderTarget{}
+}
+
+func emqxVerboseTraceEnabled(env map[string]string) bool {
+	switch strings.ToLower(strings.TrimSpace(env["CLOUD_LOGGER_EMQX_VERBOSE_TRACE"])) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
 	}
 }
 
