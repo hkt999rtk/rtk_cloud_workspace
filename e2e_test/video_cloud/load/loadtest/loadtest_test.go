@@ -2105,6 +2105,108 @@ func TestRunnerWebRTCMediaServerOfferUsesDeviceWebSocketActor(t *testing.T) {
 	}
 }
 
+func TestWebRTCRelayRoleDefaultsAndValidation(t *testing.T) {
+	cfg := DefaultConfigFromEnv()
+	if cfg.WebRTCRelayRole != WebRTCRelayRoleBoth {
+		t.Fatalf("default WebRTCRelayRole = %q, want %q", cfg.WebRTCRelayRole, WebRTCRelayRoleBoth)
+	}
+
+	cfg = Config{Profile: ProfileSmoke, APIURL: "https://example.test", Actors: ActorAll, WebRTCMediaSet: WebRTCMediaSetAV, WebRTCRelayRole: "kiosk"}
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "unsupported webrtc relay role") {
+		t.Fatalf("Validate error = %v, want unsupported webrtc relay role", err)
+	}
+}
+
+func TestApplyWebRTCRelayRoleSelectsMediaActors(t *testing.T) {
+	for _, tc := range []struct {
+		role   string
+		app    bool
+		device bool
+		viewer bool
+	}{
+		{role: WebRTCRelayRoleBoth, app: false, device: true, viewer: true},
+		{role: WebRTCRelayRoleAppOnly, app: false, device: false, viewer: true},
+		{role: WebRTCRelayRoleDeviceOnly, app: false, device: true, viewer: false},
+	} {
+		t.Run(tc.role, func(t *testing.T) {
+			enabled := map[string]bool{ActorApp: true, ActorDevice: true, ActorViewer: true}
+			cfg := Config{WebRTCMediaSet: WebRTCMediaSetAV, WebRTCRelayRole: tc.role}
+			got := cfg.ApplyWebRTCRelayRole(enabled)
+			if got[ActorApp] != tc.app || got[ActorDevice] != tc.device || got[ActorViewer] != tc.viewer {
+				t.Fatalf("enabled actors = %#v, want app=%t device=%t viewer=%t", got, tc.app, tc.device, tc.viewer)
+			}
+		})
+	}
+}
+
+func TestBuildCoverageMatrixPassesDeviceOnlyWebRTCMediaSend(t *testing.T) {
+	cfg := Config{WebRTCMediaSet: WebRTCMediaSetAV, WebRTCRelayRole: WebRTCRelayRoleDeviceOnly}
+	matrix := BuildCoverageMatrix(cfg, []Operation{
+		{Actor: ActorDevice, Name: "device_websocket_owner", DeviceID: "device-1", Success: true},
+		{Actor: ActorDevice, Name: "webrtc_media_offer_receive", DeviceID: "device-1", Success: true},
+		{Actor: ActorDevice, Name: "webrtc_media_answer", DeviceID: "device-1", Success: true},
+		{Actor: ActorDevice, Name: "webrtc_media_ice_connected", DeviceID: "device-1", Success: true},
+		{Actor: ActorDevice, Name: "webrtc_media_first_rtp", DeviceID: "device-1", Success: true},
+		{Actor: ActorDevice, Name: "webrtc_media_send", DeviceID: "device-1", Success: true},
+	})
+	if got := matrix["webrtc_media"]; got.Status != CoverageStatusPass {
+		t.Fatalf("webrtc_media coverage = %#v, want PASS", got)
+	}
+}
+
+func TestRunnerDeviceOnlyWebRTCRelayWaitsForDuration(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ws/device" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Fatal("response writer does not support hijack")
+		}
+		conn, _, err := hijacker.Hijack()
+		if err != nil {
+			t.Fatalf("hijack: %v", err)
+		}
+		defer conn.Close()
+		_, _ = fmt.Fprintf(conn, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: test\r\n\r\n")
+		_, _ = io.Copy(io.Discard, conn)
+	}))
+	defer server.Close()
+
+	duration := 50 * time.Millisecond
+	start := time.Now()
+	result, err := NewRunner(server.Client()).Run(context.Background(), Config{
+		Profile:             ProfileSmoke,
+		APIURL:              server.URL,
+		Actors:              ActorAll,
+		AccountToken:        "app-token",
+		DeviceToken:         "device-token",
+		WebRTCMediaSet:      WebRTCMediaSetAV,
+		WebRTCRelayRole:     WebRTCRelayRoleDeviceOnly,
+		RunID:               "run-device-only-wait",
+		InstanceID:          "instance-device-only-wait",
+		DevicePrefix:        "load-device",
+		Duration:            duration,
+		VirtualDevices:      1,
+		VirtualViewers:      1,
+		Iterations:          1,
+		HTTPTimeout:         time.Second,
+		DeviceOnlineMode:    DeviceOnlineModeWebSocket,
+		DeviceRouteSet:      DeviceRouteSetOff,
+		DeviceRatePerSecond: 1,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < duration {
+		t.Fatalf("device-only run elapsed %s, want at least %s", elapsed, duration)
+	}
+	if result.Actors[ActorViewer].Operations != 0 {
+		t.Fatalf("viewer actor unexpectedly ran: %#v", result.Actors)
+	}
+}
+
 func TestRunnerWebRTCMediaServerOfferFailsWithoutReceiverBitstreamStats(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()

@@ -59,6 +59,7 @@ func runLoad(args []string) error {
 	fs.StringVar(&cfg.DeviceTransportSet, "device-transport-set", cfg.DeviceTransportSet, "device transport set: smoke or snapshot")
 	fs.StringVar(&cfg.ViewerRouteSet, "viewer-route-set", cfg.ViewerRouteSet, "viewer route set: smoke, functional, or negative")
 	fs.StringVar(&cfg.WebRTCMediaSet, "webrtc-media-set", cfg.WebRTCMediaSet, "WebRTC media coverage set: off, rtp, h264, or av")
+	fs.StringVar(&cfg.WebRTCRelayRole, "webrtc-relay-role", cfg.WebRTCRelayRole, "WebRTC relay role: both, app-only, or device-only")
 	fs.DurationVar(&cfg.WebRTCMediaDuration, "webrtc-media-duration", cfg.WebRTCMediaDuration, "WebRTC media send duration")
 	fs.StringVar(&cfg.ClipSet, "clip-set", cfg.ClipSet, "camera recording clip coverage set: off or recording-functional")
 	fs.StringVar(&cfg.MQTTSet, "mqtt-set", cfg.MQTTSet, "MQTT coverage set: off or broker")

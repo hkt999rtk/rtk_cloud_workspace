@@ -126,6 +126,7 @@ func DefaultConfigFromEnv() Config {
 		DeviceTransportSet:    envDefault("VIDEO_CLOUD_LOAD_DEVICE_TRANSPORT_SET", DeviceTransportSetSmoke),
 		ViewerRouteSet:        envDefault("VIDEO_CLOUD_LOAD_VIEWER_ROUTE_SET", ViewerRouteSetSmoke),
 		WebRTCMediaSet:        envDefault("VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_SET", WebRTCMediaSetOff),
+		WebRTCRelayRole:       envDefault("VIDEO_CLOUD_LOAD_WEBRTC_RELAY_ROLE", WebRTCRelayRoleBoth),
 		WebRTCMediaDuration:   20 * time.Second,
 		ClipSet:               envDefault("VIDEO_CLOUD_LOAD_CLIP_SET", ClipSetOff),
 		MQTTSet:               envDefault("VIDEO_CLOUD_LOAD_MQTT_SET", MQTTSetOff),
@@ -346,6 +347,14 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("unsupported webrtc media set %q: expected %q, %q, %q, or %q", c.WebRTCMediaSet, WebRTCMediaSetOff, WebRTCMediaSetRTP, WebRTCMediaSetH264, WebRTCMediaSetAV)
 	}
+	if c.WebRTCRelayRole == "" {
+		c.WebRTCRelayRole = WebRTCRelayRoleBoth
+	}
+	switch c.WebRTCRelayRole {
+	case WebRTCRelayRoleBoth, WebRTCRelayRoleAppOnly, WebRTCRelayRoleDeviceOnly:
+	default:
+		return fmt.Errorf("unsupported webrtc relay role %q: expected %q, %q, or %q", c.WebRTCRelayRole, WebRTCRelayRoleBoth, WebRTCRelayRoleAppOnly, WebRTCRelayRoleDeviceOnly)
+	}
 	if c.WebRTCMediaDuration <= 0 {
 		c.WebRTCMediaDuration = 20 * time.Second
 	}
@@ -486,6 +495,31 @@ func (c Config) EnabledActors() map[string]bool {
 	return enabled
 }
 
+func (c Config) ApplyWebRTCRelayRole(enabled map[string]bool) map[string]bool {
+	out := map[string]bool{}
+	for actor, value := range enabled {
+		out[actor] = value
+	}
+	if c.WebRTCMediaSet == "" || c.WebRTCMediaSet == WebRTCMediaSetOff {
+		return out
+	}
+	switch c.WebRTCRelayRole {
+	case WebRTCRelayRoleAppOnly:
+		out[ActorApp] = false
+		out[ActorDevice] = false
+		out[ActorViewer] = true
+	case WebRTCRelayRoleDeviceOnly:
+		out[ActorApp] = false
+		out[ActorDevice] = true
+		out[ActorViewer] = false
+	case WebRTCRelayRoleBoth, "":
+		out[ActorApp] = false
+		out[ActorDevice] = true
+		out[ActorViewer] = true
+	}
+	return out
+}
+
 func (c Config) DeviceIDsForRun() []string {
 	if len(c.DeviceIDs) > 0 {
 		ids := make([]string, len(c.DeviceIDs))
@@ -533,6 +567,7 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (*Result, error) {
 		return nil, err
 	}
 	enabledActors := cfg.EnabledActors()
+	enabledActors = cfg.ApplyWebRTCRelayRole(enabledActors)
 	if r.ownsClient || r.client.Timeout == 0 {
 		r.client.Timeout = cfg.HTTPTimeout
 	}
@@ -594,6 +629,14 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (*Result, error) {
 		}()
 	}
 	groups.Wait()
+	if cfg.WebRTCMediaSet != WebRTCMediaSetOff && cfg.WebRTCRelayRole == WebRTCRelayRoleDeviceOnly && cfg.Duration > 0 {
+		timer := time.NewTimer(cfg.Duration)
+		select {
+		case <-runCtx.Done():
+			timer.Stop()
+		case <-timer.C:
+		}
+	}
 	for _, op := range r.runNegativeCoverage(runCtx, cfg) {
 		record(op)
 	}
@@ -3408,6 +3451,7 @@ func BuildResult(cfg Config, started, ended time.Time, operations []Operation) *
 			DeviceTransportSet: cfg.DeviceTransportSet,
 			ViewerRouteSet:     cfg.ViewerRouteSet,
 			WebRTCMediaSet:     cfg.WebRTCMediaSet,
+			WebRTCRelayRole:    cfg.WebRTCRelayRole,
 			ClipSet:            cfg.ClipSet,
 			MQTTSet:            cfg.MQTTSet,
 			MQTTAddr:           cfg.MQTTAddr,
@@ -3499,7 +3543,7 @@ func BuildCoverageMatrix(cfg Config, operations []Operation) map[string]Coverage
 	for family, names := range families {
 		matrix[family] = coverageForFamily(names, operations)
 	}
-	matrix["webrtc_media"] = coverageForWebRTCMedia(operations)
+	matrix["webrtc_media"] = coverageForWebRTCMedia(cfg, operations)
 	matrix["camera_recording_clip"] = coverageForRecordingClip(operations)
 	if matrix["owner_transport"].Status == CoverageStatusPass && matrix["websocket_snapshot"].Status == CoverageStatusNotRun {
 		item := matrix["websocket_snapshot"]
@@ -3592,10 +3636,11 @@ func coverageForMQTTIoT(operations []Operation) CoverageItem {
 	return item
 }
 
-func coverageForWebRTCMedia(operations []Operation) CoverageItem {
+func coverageForWebRTCMedia(cfg Config, operations []Operation) CoverageItem {
 	mediaOps := make([]Operation, 0)
 	attemptedDevices := map[string]bool{}
 	successfulDevices := map[string]bool{}
+	deviceSendDevices := map[string]bool{}
 	failed := false
 	for _, op := range operations {
 		if strings.HasPrefix(op.Name, "webrtc_media_") {
@@ -3607,12 +3652,29 @@ func coverageForWebRTCMedia(operations []Operation) CoverageItem {
 		if op.Name == "webrtc_media_receive" && op.Success {
 			successfulDevices[op.DeviceID] = true
 		}
+		if op.Name == "webrtc_media_send" && op.Success {
+			deviceSendDevices[op.DeviceID] = true
+		}
 		if strings.HasPrefix(op.Name, "webrtc_media_") && !op.Success && !op.Skipped {
 			failed = true
 		}
 	}
 	if len(mediaOps) == 0 {
 		return CoverageItem{Status: CoverageStatusNotRun, Summary: "not exercised by this profile"}
+	}
+	if cfg.WebRTCRelayRole == WebRTCRelayRoleDeviceOnly {
+		item := coverageForFamily([]string{"webrtc_media_offer_receive", "webrtc_media_answer", "webrtc_media_ice_connected", "webrtc_media_first_rtp", "webrtc_media_send"}, operations)
+		if failed {
+			item.Status = CoverageStatusFail
+			item.Summary = "WebRTC device-only media sender failed"
+			return item
+		}
+		if len(deviceSendDevices) > 0 && item.Status != CoverageStatusFail {
+			item.Status = CoverageStatusPass
+			item.Summary = fmt.Sprintf("WebRTC device-only media sent for %d device(s)", len(deviceSendDevices))
+			return item
+		}
+		return item
 	}
 	item := coverageForFamily([]string{"webrtc_media_offer", "webrtc_media_answer", "webrtc_media_ice_connected", "webrtc_media_first_rtp", "webrtc_media_receive", "webrtc_media_close"}, operations)
 	if failed || (len(attemptedDevices) > 0 && len(successfulDevices) < len(attemptedDevices)) {

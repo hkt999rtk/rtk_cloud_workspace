@@ -75,6 +75,7 @@ type videoRelayRunnerConfig struct {
 	APIURL             string
 	OutDir             string
 	Profile            string
+	WebRTCRelayRole    string
 	DurationSeconds    int
 	DeviceIDs          []string
 	DeviceTokenMapFile string
@@ -94,6 +95,7 @@ type videoRelayResult struct {
 	Brandname           string                   `json:"brandname"`
 	Profile             string                   `json:"profile"`
 	ProbeModel          string                   `json:"probe_model"`
+	WebRTCRelayRole     string                   `json:"webrtc_relay_role"`
 	WebRTC              videoRelayWebRTCResult   `json:"webrtc"`
 	Artifacts           map[string]string        `json:"artifacts,omitempty"`
 	Devices             []videoRelayDeviceResult `json:"devices"`
@@ -170,6 +172,7 @@ func runVideoRelayTest(args []string) error {
 	duration := fs.Int("duration-seconds", 120, "duration seconds")
 	maxDevices := fs.Int("max-devices", 3, "maximum selected video devices")
 	traceDetail := fs.String("trace-detail", "summary", "console trace detail: none, summary, or verbose")
+	webrtcRelayRole := fs.String("webrtc-relay-role", "both", "WebRTC relay role: both, app-only, or device-only")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -188,6 +191,9 @@ func runVideoRelayTest(args []string) error {
 	if *traceDetail != "none" && *traceDetail != "summary" && *traceDetail != "verbose" {
 		return errors.New("--trace-detail must be none, summary, or verbose")
 	}
+	if *webrtcRelayRole != "both" && *webrtcRelayRole != "app-only" && *webrtcRelayRole != "device-only" {
+		return errors.New("--webrtc-relay-role must be both, app-only, or device-only")
+	}
 	workspace, err := workspaceRoot()
 	if err != nil {
 		return err
@@ -199,7 +205,7 @@ func runVideoRelayTest(args []string) error {
 	if *outDir == "" {
 		*outDir = filepath.Join(envRoot, "artifacts", "video-relay-test", time.Now().UTC().Format("20060102T150405Z"))
 	}
-	result, exitErr := executeVideoRelayTest(workspace, envRoot, *brandname, *outDir, *profile, *duration, *maxDevices, *traceDetail)
+	result, exitErr := executeVideoRelayTest(workspace, envRoot, *brandname, *outDir, *profile, *webrtcRelayRole, *duration, *maxDevices, *traceDetail)
 	if result.Status == "PASS" {
 		return nil
 	}
@@ -209,16 +215,17 @@ func runVideoRelayTest(args []string) error {
 	return exitCode(1)
 }
 
-func executeVideoRelayTest(workspace, envRoot, brandname, outDir, profile string, durationSeconds, maxDevices int, traceDetail string) (videoRelayResult, error) {
+func executeVideoRelayTest(workspace, envRoot, brandname, outDir, profile, webrtcRelayRole string, durationSeconds, maxDevices int, traceDetail string) (videoRelayResult, error) {
 	_ = os.MkdirAll(outDir, 0o755)
 	result := videoRelayResult{
-		Schema:      "rtk-cloud-workspace.video-relay-test/v1",
-		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
-		Status:      "PASS",
-		Overall:     "pass",
-		Brandname:   brandname,
-		Profile:     profile,
-		ProbeModel:  videoRelayProbeModel,
+		Schema:          "rtk-cloud-workspace.video-relay-test/v1",
+		GeneratedAt:     time.Now().UTC().Format(time.RFC3339),
+		Status:          "PASS",
+		Overall:         "pass",
+		Brandname:       brandname,
+		Profile:         profile,
+		ProbeModel:      videoRelayProbeModel,
+		WebRTCRelayRole: firstNonEmpty(webrtcRelayRole, "both"),
 		WebRTC: videoRelayWebRTCResult{
 			SignalingTraceStatus: "not_run",
 			RelayEvidenceStatus:  "not_checked",
@@ -300,6 +307,7 @@ func executeVideoRelayTest(workspace, envRoot, brandname, outDir, profile string
 		APIURL:             apiURL,
 		OutDir:             outDir,
 		Profile:            profile,
+		WebRTCRelayRole:    webrtcRelayRole,
 		DurationSeconds:    durationSeconds,
 		DeviceIDs:          deviceIDs,
 		DeviceTokenMapFile: tokenFiles.Device,
@@ -311,7 +319,7 @@ func executeVideoRelayTest(workspace, envRoot, brandname, outDir, profile string
 	}
 	if traceDetail != "none" {
 		fmt.Fprintf(os.Stdout, "Video Relay Runtime Trace\n")
-		fmt.Fprintf(os.Stdout, "  probe_model=%s devices=%s runner=%s\n", videoRelayProbeModel, strings.Join(deviceIDs, ","), display)
+		fmt.Fprintf(os.Stdout, "  probe_model=%s webrtc_relay_role=%s devices=%s runner=%s\n", videoRelayProbeModel, result.WebRTCRelayRole, strings.Join(deviceIDs, ","), display)
 	}
 	goCmd, err := exec.LookPath("go")
 	if err != nil {
@@ -452,26 +460,50 @@ func buildVideoRelayRunnerArgs(cfg videoRelayRunnerConfig) ([]string, string, er
 	if cfg.DeviceTokenMapFile == "" || cfg.AppTokenMapFile == "" {
 		return nil, "", errors.New("device and app token map files are required")
 	}
+	role := firstNonEmpty(cfg.WebRTCRelayRole, "both")
+	actors := "device,viewer"
+	virtualViewers := len(cfg.DeviceIDs)
+	runnerDuration := "5s"
+	minSuccessRate := "1"
+	maxOpenSessions := "0"
+	requireCoverage := true
+	switch role {
+	case "both":
+	case "app-only":
+		actors = "viewer"
+	case "device-only":
+		actors = "device"
+		virtualViewers = 0
+		runnerDuration = strconv.Itoa(cfg.DurationSeconds) + "s"
+		minSuccessRate = "0"
+		maxOpenSessions = "-1"
+		requireCoverage = false
+	default:
+		return nil, "", fmt.Errorf("unsupported webrtc relay role %q", role)
+	}
 	args := []string{"run", "./video_cloud/load/cmd/rtk-video-loadtest", "run",
 		"--profile", cfg.Profile,
-		"--actors", "device,viewer",
+		"--actors", actors,
 		"--device-online-mode", "websocket",
 		"--device-route-set", "off",
 		"--webrtc-media-set", "av",
+		"--webrtc-relay-role", role,
 		"--webrtc-media-duration", "20s",
 		"--device-ids", strings.Join(cfg.DeviceIDs, ","),
 		"--virtual-devices", strconv.Itoa(len(cfg.DeviceIDs)),
-		"--virtual-viewers", strconv.Itoa(len(cfg.DeviceIDs)),
+		"--virtual-viewers", strconv.Itoa(virtualViewers),
 		"--iterations", "1",
-		"--duration", "5s",
+		"--duration", runnerDuration,
 		"--api-url", cfg.APIURL,
 		"--device-token-map-file", cfg.DeviceTokenMapFile,
 		"--app-token-map-file", cfg.AppTokenMapFile,
 		"--output", filepath.Join(cfg.OutDir, "load-results.json"),
 		"--report-output", filepath.Join(cfg.OutDir, "load-report.md"),
-		"--min-success-rate", "1",
-		"--max-open-webrtc-sessions", "0",
-		"--require-coverage-matrix",
+		"--min-success-rate", minSuccessRate,
+		"--max-open-webrtc-sessions", maxOpenSessions,
+	}
+	if requireCoverage {
+		args = append(args, "--require-coverage-matrix")
 	}
 	display := sanitizeVideoRelayText(strings.Join(args, " "))
 	return args, display, nil
@@ -968,7 +1000,7 @@ func renderVideoRelayReport(result videoRelayResult) string {
 	fmt.Fprintln(&b, "Video Relay Test Report")
 	fmt.Fprintln(&b, "=======================")
 	fmt.Fprintf(&b, "Status: %s | Overall: %s\n", result.Status, result.Overall)
-	fmt.Fprintf(&b, "Brand: %s | Profile: %s | Probe: %s\n\n", result.Brandname, result.Profile, result.ProbeModel)
+	fmt.Fprintf(&b, "Brand: %s | Profile: %s | Probe: %s | WebRTC relay role: %s\n\n", result.Brandname, result.Profile, result.ProbeModel, firstNonEmpty(result.WebRTCRelayRole, "both"))
 	if result.Error != "" {
 		fmt.Fprintf(&b, "Error: %s\n\n", sanitizeVideoRelayText(result.Error))
 	}
@@ -1044,7 +1076,7 @@ func renderVideoRelayConsole(result videoRelayResult) string {
 	fmt.Fprintln(&b, "Video Relay Test Report")
 	fmt.Fprintln(&b, "=======================")
 	fmt.Fprintf(&b, "Status: %s | Overall: %s\n", result.Status, result.Overall)
-	fmt.Fprintf(&b, "Brand: %s | Profile: %s\n", result.Brandname, result.Profile)
+	fmt.Fprintf(&b, "Brand: %s | Profile: %s | WebRTC relay role: %s\n", result.Brandname, result.Profile, firstNonEmpty(result.WebRTCRelayRole, "both"))
 	fmt.Fprintf(&b, "Signaling: %s | Relay evidence: %s | Candidate types: %s\n",
 		firstNonEmpty(result.WebRTC.SignalingTraceStatus, "not_run"),
 		firstNonEmpty(result.WebRTC.RelayEvidenceStatus, "not_checked"),

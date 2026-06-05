@@ -56,6 +56,12 @@ const (
 )
 
 const (
+	WebRTCRelayRoleBoth       = "both"
+	WebRTCRelayRoleAppOnly    = "app-only"
+	WebRTCRelayRoleDeviceOnly = "device-only"
+)
+
+const (
 	ClipSetOff                 = "off"
 	ClipSetRecordingFunctional = "recording-functional"
 )
@@ -94,6 +100,7 @@ type Config struct {
 	DeviceTransportSet    string            `json:"device_transport_set"`
 	ViewerRouteSet        string            `json:"viewer_route_set"`
 	WebRTCMediaSet        string            `json:"webrtc_media_set"`
+	WebRTCRelayRole       string            `json:"webrtc_relay_role"`
 	WebRTCMediaDuration   time.Duration     `json:"webrtc_media_duration"`
 	ClipSet               string            `json:"clip_set"`
 	MQTTSet               string            `json:"mqtt_set"`
@@ -172,6 +179,7 @@ type RedactedConfig struct {
 	DeviceTransportSet string   `json:"device_transport_set"`
 	ViewerRouteSet     string   `json:"viewer_route_set"`
 	WebRTCMediaSet     string   `json:"webrtc_media_set"`
+	WebRTCRelayRole    string   `json:"webrtc_relay_role"`
 	ClipSet            string   `json:"clip_set"`
 	MQTTSet            string   `json:"mqtt_set"`
 	MQTTAddr           string   `json:"mqtt_addr,omitempty"`

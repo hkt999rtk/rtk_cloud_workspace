@@ -81,6 +81,9 @@ func TestVideoRelayBuildsRunnerArgsWithoutLeakingTokens(t *testing.T) {
 	if !strings.Contains(joined, "--webrtc-media-duration") || !strings.Contains(joined, "20s") {
 		t.Fatalf("runner args missing 20s WebRTC media duration: %v", args)
 	}
+	if !strings.Contains(joined, "--webrtc-relay-role") || !strings.Contains(joined, "both") {
+		t.Fatalf("runner args missing default WebRTC relay role: %v", args)
+	}
 	if !strings.Contains(joined, "--duration") || !strings.Contains(joined, "5s") {
 		t.Fatalf("runner args should use short smoke scheduling duration so tokens do not expire before later devices: %v", args)
 	}
@@ -95,6 +98,61 @@ func TestVideoRelayBuildsRunnerArgsWithoutLeakingTokens(t *testing.T) {
 	}
 	if strings.Contains(display, "device-secret-token") || strings.Contains(display, "app-secret-token") {
 		t.Fatalf("display args leaked token: %s", display)
+	}
+}
+
+func TestVideoRelayBuildsRunnerArgsForSplitRelayRoles(t *testing.T) {
+	base := videoRelayRunnerConfig{
+		Workspace:          "/workspace",
+		APIURL:             "https://video.example.test",
+		OutDir:             "/tmp/out",
+		Profile:            "smoke",
+		DurationSeconds:    120,
+		DeviceIDs:          []string{"cam-1", "cam-2"},
+		DeviceTokenMapFile: "/tmp/device-tokens.json",
+		AppTokenMapFile:    "/tmp/app-tokens.json",
+	}
+	for _, tc := range []struct {
+		role         string
+		wantActors   string
+		wantDuration string
+		wantViewers  string
+		wantMaxOpen  string
+		wantMinRate  string
+		wantCoverage bool
+	}{
+		{role: "app-only", wantActors: "viewer", wantDuration: "5s", wantViewers: "2", wantMaxOpen: "0", wantMinRate: "1", wantCoverage: true},
+		{role: "device-only", wantActors: "device", wantDuration: "120s", wantViewers: "0", wantMaxOpen: "-1", wantMinRate: "0", wantCoverage: false},
+	} {
+		t.Run(tc.role, func(t *testing.T) {
+			cfg := base
+			cfg.WebRTCRelayRole = tc.role
+			args, _, err := buildVideoRelayRunnerArgs(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := flagValue(args, "--webrtc-relay-role"); got != tc.role {
+				t.Fatalf("relay role arg = %q, want %q; args=%v", got, tc.role, args)
+			}
+			if got := flagValue(args, "--actors"); got != tc.wantActors {
+				t.Fatalf("actors arg = %q, want %q; args=%v", got, tc.wantActors, args)
+			}
+			if got := flagValue(args, "--virtual-viewers"); got != tc.wantViewers {
+				t.Fatalf("virtual viewers arg = %q, want %q; args=%v", got, tc.wantViewers, args)
+			}
+			if got := flagValue(args, "--duration"); got != tc.wantDuration {
+				t.Fatalf("duration arg = %q, want %q; args=%v", got, tc.wantDuration, args)
+			}
+			if got := flagValue(args, "--max-open-webrtc-sessions"); got != tc.wantMaxOpen {
+				t.Fatalf("max open sessions arg = %q, want %q; args=%v", got, tc.wantMaxOpen, args)
+			}
+			if got := flagValue(args, "--min-success-rate"); got != tc.wantMinRate {
+				t.Fatalf("min success rate arg = %q, want %q; args=%v", got, tc.wantMinRate, args)
+			}
+			if containsString(args, "--require-coverage-matrix") != tc.wantCoverage {
+				t.Fatalf("require coverage flag presence mismatch for %s: %v", tc.role, args)
+			}
+		})
 	}
 }
 
@@ -405,4 +463,16 @@ func containsString(items []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func flagValue(args []string, name string) string {
+	for i, arg := range args {
+		if arg == name && i+1 < len(args) {
+			return args[i+1]
+		}
+		if key, value, ok := strings.Cut(arg, "="); ok && key == name {
+			return value
+		}
+	}
+	return ""
 }
