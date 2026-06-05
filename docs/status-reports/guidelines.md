@@ -532,3 +532,34 @@ If a status cannot be verified from a safe source, write `BLOCKED` or
 - Section title、caption、table header、summary、checklist 盡量用 Traditional Chinese，除非是固定產品或 API 名稱。
 - 對外英文版應另開 translation pass，不要中英混雜。
 - 不使用誇大詞，例如 `secure`、`production-ready`、`autoscaling ready`，除非有對應 evidence。
+
+### 9.1 Non-AI Sense Writing Rules
+
+產生正文、slide title、transition text、caption、speaker-facing summary 時，
+文案要像實際主管報告，不要像 LLM 自動摘要。遵守下列規則：
+
+- 避免公式化對比句，尤其是「這不是 A，而是 B」、「不只是 A，也是 B」。
+  需要區分概念時，直接說明兩者角色或用表格拆開。
+- 避免空泛形容詞，例如「完整」、「強大」、「無縫」、「智慧化」、「端到端」
+  單獨出現。若要使用，必須接 evidence、範圍或限制。
+- 避免過度解釋顯而易見的內容。管理簡報優先寫結論、影響、下一步。
+- 避免每頁都用同一種句型開頭，例如「本頁說明」、「重點是」、
+  「目的：」。同一份 deck 內要變化語氣。
+- 避免把技術名詞堆成口號。技術名詞要連到 capability、control point、
+  evidence、risk 或 owner。
+- 避免誇張承諾。未驗證內容用 `not verified`、`evidence-needed`、
+  `BLOCKED`、`target`、`planned`。
+- 過渡頁使用自然口吻，例如「接下來看...」、「這一段聚焦...」、
+  「先用...建立共識」。不要用過度戲劇化語句。
+- 每頁只保留一個主要訊息；若文字超過兩行仍無法說清楚，改用圖、
+  timeline、diagram 或拆頁。
+
+建議替換：
+
+| 避免寫法 | 建議寫法 |
+| --- | --- |
+| 這不是單一技術進度報告，而是... | 本次報告聚焦四件事：... |
+| 這不是 device runtime，而是 public website... | 接下來看 public website、documentation、SEO 與 lead flow。 |
+| 它不是只支援 A，而是也支援 B | A 和 B 分別承擔不同角色：... |
+| 強大的雲端能力 | 已驗證的 capability：...；待補 evidence：... |
+| 完整端到端解決方案 | 目前涵蓋 module、SDK、onboarding、OTA、video、admin；production gaps 包含... |

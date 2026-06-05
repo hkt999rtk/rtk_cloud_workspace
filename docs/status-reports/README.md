@@ -6,32 +6,100 @@ Owner: `rtk_cloud_workspace`.
 
 This directory defines the reusable weekly status report framework for Realtek
 Video / IoT Cloud and Connect+ work. The framework is tracked in git; generated
-Word files, rendered pages, and copied figure assets stay under `.artifacts/`.
+Word/PPTX files, rendered pages, and copied figure assets stay under
+`.artifacts/`.
 
 ## Output Model
 
-Use the builder from the workspace root:
+Use the Word builder from the workspace root:
 
 ```sh
   tools/status-report/build_cloud_status_report.py
 ```
 
-The builder writes:
+Use the PowerPoint builder from the workspace root:
+
+```sh
+  NODE_PATH="$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules" \
+    "$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node" \
+    tools/status-report/build_cloud_status_report_pptx.mjs
+```
+
+The builders write:
 
 ```text
 .artifacts/status-reports/YYYY-MM-DD/
   realtek_video_iot_cloud_status_report.docx
+  realtek_video_iot_cloud_status_report.pptx
   figures/
   rendered/
+  pptx-rendered/
+  pptx-layout/
 ```
 
 Do not commit generated report output. Commit only framework changes, source
 material indexes, and builder changes.
 
+## Recreate The Same PPTX Next Time
+
+The current PowerPoint status report is generated from tracked source files,
+not from conversation memory. To recreate a deck with the same guideline,
+context, slide order, and Realtek master style, start from these files in this
+order:
+
+1. [`guidelines.md`](guidelines.md) - report-writing rules, business context,
+   schedule policy, security policy, and evidence rules.
+2. [`templates/cloud-status-report-pptx-layout.md`](templates/cloud-status-report-pptx-layout.md)
+   - fixed slide sequence, topic transitions, proof-object expectations, and
+   layout rules.
+3. [`materials.md`](materials.md) - design assets, screenshots, deployment
+   evidence, and source index.
+4. [`master_slide/design-guidelines.md`](master_slide/design-guidelines.md) -
+   designer-facing Realtek master rules.
+5. [`master_slide/SKILL.md`](master_slide/SKILL.md) - AI/LLM-facing slide
+   generation rules.
+6. [`../../tools/status-report/report_model.py`](../../tools/status-report/report_model.py)
+   - shared report data model: core message, schedule data, material list,
+   Linode checks, portal web screenshot path, and generated figures.
+7. [`../../tools/status-report/build_cloud_status_report_pptx.mjs`](../../tools/status-report/build_cloud_status_report_pptx.mjs)
+   - actual PPTX builder and slide implementation.
+
+Stable context that must be preserved unless the report owner explicitly
+changes it:
+
+- Core purpose: the cloud supports bottom-up business module sales by giving
+  users, developers, and customer PoC teams a convenient and secure cloud
+  network architecture.
+- Audience: cross-unit leaders; assume some leaders may not already know why
+  this cloud exists.
+- Narrative order: presenter context, major-topic map, cloud relationship,
+  module product path, operational progress, portal web, technical/security
+  design, deployment/operation/evidence, and review gate.
+- Schedule context: project start is 2026-05-01; the early-August milestone is
+  the 50,000-device IoT loading test. Video reports must keep the August
+  500-device staged validation gate separate from the later 5,000-device video
+  target.
+- Scaling context: scaling architecture is designed in, but autoscaling/dynamic
+  scaling implementation is deferred until after loading-test evidence.
+- Security context: frame PKI as identity, entitlement, audit, revocation, and
+  lifecycle management.
+- Portal context: `rtk_cloud_frontend` is the public website, documentation /
+  manual portal, SEO/content layer, CTA/lead capture, and sales follow-up
+  surface. Keep it separate from operational cloud runtime.
+
+Generated PPTX and QA images remain under `.artifacts/status-reports/YYYY-MM-DD/`.
+If a fresh portal screenshot is needed, capture `https://webtest.mgmeet.io`,
+crop the first viewport to a 16:9 image, and save it as
+`.artifacts/status-reports/YYYY-MM-DD/figures/portal-webtest-home-hero.png`
+before running the PPTX builder. If the screenshot is absent, the builder falls
+back to the tracked frontend hero image.
+
 ## Report Shape
 
 The current report structure is documented in
 [`templates/cloud-status-report-outline.md`](templates/cloud-status-report-outline.md).
+The PPTX slide sequence is documented in
+[`templates/cloud-status-report-pptx-layout.md`](templates/cloud-status-report-pptx-layout.md).
 Writing standards are documented in [`guidelines.md`](guidelines.md).
 It is intentionally stable so the same skeleton can be reused for weekly
 management reports:
@@ -90,9 +158,12 @@ Tracked source indexes:
 
 - [`guidelines.md`](guidelines.md)
 - [`materials.md`](materials.md)
+- [`templates/cloud-status-report-pptx-layout.md`](templates/cloud-status-report-pptx-layout.md)
 - [`master_slide/README.md`](master_slide/README.md)
 - [`master_slide/design-guidelines.md`](master_slide/design-guidelines.md)
 - [`master_slide/SKILL.md`](master_slide/SKILL.md)
+- `tools/status-report/report_model.py`
+- `tools/status-report/build_cloud_status_report_pptx.mjs`
 - `repos/rtk_cloud_admin/docs/assets/webui-design/`
 - `repos/rtk_cloud_client/docs/mockups/`
 - `repos/rtk_cloud_frontend/static/assets/`
@@ -102,9 +173,12 @@ Tracked source indexes:
 When producing PowerPoint or slide-style status reports, follow the company
 master in [`master_slide/powerpoint_master.pptx`](master_slide/powerpoint_master.pptx).
 Use [`master_slide/design-guidelines.md`](master_slide/design-guidelines.md) for
-designer-facing rules and [`master_slide/SKILL.md`](master_slide/SKILL.md) for
-AI/LLM slide-generation instructions. Reusable assets extracted from the master
-live under [`master_slide/assets/`](master_slide/assets/).
+designer-facing rules, [`templates/cloud-status-report-pptx-layout.md`](templates/cloud-status-report-pptx-layout.md)
+for the fixed report slide sequence, and [`master_slide/SKILL.md`](master_slide/SKILL.md)
+for AI/LLM slide-generation instructions. Prefer
+`tools/status-report/build_cloud_status_report_pptx.mjs` when producing an
+editable deck from tracked report data. Reusable assets extracted from the
+master live under [`master_slide/assets/`](master_slide/assets/).
 
 ## Cloud Relationship Policy
 
