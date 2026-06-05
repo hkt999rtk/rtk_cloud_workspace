@@ -2910,9 +2910,12 @@ func webRTCMediaDrainDelay(duration time.Duration) time.Duration {
 	if duration <= 0 {
 		return 0
 	}
+	if duration >= 20*time.Second {
+		return 5 * time.Second
+	}
 	delay := duration / 10
-	if delay > 2*time.Second {
-		return 2 * time.Second
+	if delay > 5*time.Second {
+		return 5 * time.Second
 	}
 	return delay
 }

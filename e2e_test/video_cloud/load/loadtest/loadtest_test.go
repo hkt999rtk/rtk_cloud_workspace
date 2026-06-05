@@ -2217,8 +2217,11 @@ func TestAVReceiverCompareFailsWithoutAudioPayloadStats(t *testing.T) {
 }
 
 func TestWebRTCMediaDrainDelayAllowsInFlightRelayPackets(t *testing.T) {
-	if got := webRTCMediaDrainDelay(20 * time.Second); got != 2*time.Second {
-		t.Fatalf("20s media drain delay = %s, want 2s", got)
+	if got := webRTCMediaDrainDelay(20 * time.Second); got != 5*time.Second {
+		t.Fatalf("20s media drain delay = %s, want 5s", got)
+	}
+	if got := webRTCMediaDrainDelay(60 * time.Second); got != 5*time.Second {
+		t.Fatalf("60s media drain delay = %s, want 5s", got)
 	}
 	if got := webRTCMediaDrainDelay(200 * time.Millisecond); got != 20*time.Millisecond {
 		t.Fatalf("short media drain delay = %s, want 20ms", got)
