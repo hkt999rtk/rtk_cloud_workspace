@@ -3,6 +3,8 @@ package loadtest
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +36,10 @@ type WebRTCMediaStats struct {
 	PacketsReceived       int
 	BytesReceived         int
 	ReceiveDurationMS     int64
+	H264SHA256            string
+	H264Bytes             int
+	NALTypes              []string
+	Packetizations        []string
 }
 
 type H264RTPPlan struct {
@@ -46,30 +52,40 @@ type H264RTPPlan struct {
 }
 
 type H264RTPEvidence struct {
-	Packets        int
-	Bytes          int
-	DurationMS     int64
-	Loops          int
-	Frames         int
-	NALTypes       map[string]bool
-	Packetizations map[string]bool
-	ReceiveMS      int64
-	TimeToFirstMS  int64
-	ICEMS          int64
+	Packets          int
+	Bytes            int
+	DurationMS       int64
+	Loops            int
+	Frames           int
+	NALTypes         map[string]bool
+	Packetizations   map[string]bool
+	ReceiveMS        int64
+	TimeToFirstMS    int64
+	ICEMS            int64
+	ExpectedSHA256   string
+	ReceiverSHA256   string
+	ReceiverPackets  int
+	ReceiverBytes    int
+	ReceiverNALTypes map[string]bool
+	BitstreamMatch   bool
 }
 
 type PionMediaOfferSession struct {
-	peer         *webrtc.PeerConnection
-	offer        webrtc.SessionDescription
-	started      time.Time
-	iceConnected chan struct{}
-	firstRTP     chan struct{}
-	packetCh     chan struct{}
-	closeOnce    sync.Once
-	iceOnce      sync.Once
-	firstOnce    sync.Once
-	mu           sync.Mutex
-	stats        WebRTCMediaStats
+	peer           *webrtc.PeerConnection
+	offer          webrtc.SessionDescription
+	started        time.Time
+	iceConnected   chan struct{}
+	firstRTP       chan struct{}
+	packetCh       chan struct{}
+	closeOnce      sync.Once
+	iceOnce        sync.Once
+	firstOnce      sync.Once
+	mu             sync.Mutex
+	stats          WebRTCMediaStats
+	h264           codecs.H264Packet
+	h264Bytes      bytes.Buffer
+	nalTypes       map[string]bool
+	packetizations map[string]bool
 }
 
 type PionMediaAnswerSession struct {
@@ -109,11 +125,13 @@ func NewPionMediaOfferSession(ctx context.Context, gatherTimeout time.Duration) 
 		return nil, fmt.Errorf("pion media offer peer connection: %w", err)
 	}
 	session := &PionMediaOfferSession{
-		peer:         peer,
-		started:      time.Now(),
-		iceConnected: make(chan struct{}),
-		firstRTP:     make(chan struct{}),
-		packetCh:     make(chan struct{}, 32),
+		peer:           peer,
+		started:        time.Now(),
+		iceConnected:   make(chan struct{}),
+		firstRTP:       make(chan struct{}),
+		packetCh:       make(chan struct{}, 32),
+		nalTypes:       map[string]bool{},
+		packetizations: map[string]bool{},
 	}
 	peer.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		if state == webrtc.ICEConnectionStateConnected || state == webrtc.ICEConnectionStateCompleted {
@@ -150,6 +168,7 @@ func NewPionMediaOfferSession(ctx context.Context, gatherTimeout time.Duration) 
 }
 
 func (s *PionMediaOfferSession) readRemoteRTP(track *webrtc.TrackRemote) {
+	isH264 := strings.EqualFold(track.Codec().MimeType, webrtc.MimeTypeH264)
 	for {
 		packet, _, err := track.ReadRTP()
 		if err != nil {
@@ -158,6 +177,21 @@ func (s *PionMediaOfferSession) readRemoteRTP(track *webrtc.TrackRemote) {
 		s.mu.Lock()
 		s.stats.PacketsReceived++
 		s.stats.BytesReceived += len(packet.Payload)
+		if isH264 {
+			for _, packetization := range h264PayloadPacketizations(packet.Payload) {
+				s.packetizations[packetization] = true
+			}
+			if out, err := s.h264.Unmarshal(packet.Payload); err == nil && len(out) > 0 {
+				_, _ = s.h264Bytes.Write(out)
+				s.stats.H264Bytes = s.h264Bytes.Len()
+				s.stats.H264SHA256 = sha256Hex(s.h264Bytes.Bytes())
+				for _, name := range h264NALTypeNamesFromAnnexB(out) {
+					s.nalTypes[name] = true
+				}
+				s.stats.NALTypes = sortedEvidenceKeys(s.nalTypes)
+				s.stats.Packetizations = sortedEvidenceKeys(s.packetizations)
+			}
+		}
 		if s.stats.TimeToFirstRTPMS == 0 {
 			s.stats.TimeToFirstRTPMS = time.Since(s.started).Milliseconds()
 		}
@@ -426,6 +460,13 @@ func buildH264MediaPlan(duration time.Duration) (H264RTPPlan, error) {
 			evidence.Packetizations[name] = true
 		}
 	}
+	expectedSHA256, h264Bytes, err := h264BitstreamSHA256FromRTP(allPackets)
+	if err != nil {
+		return H264RTPPlan{}, err
+	}
+	evidence.ExpectedSHA256 = expectedSHA256
+	evidence.ReceiverSHA256 = ""
+	evidence.ReceiverBytes = h264Bytes
 	return H264RTPPlan{Duration: duration, Loops: loops, FrameRate: frameRate, Frames: evidence.Frames, Packets: allPackets, Evidence: evidence}, nil
 }
 
@@ -500,6 +541,46 @@ func h264NALUnits(sample []byte) ([][]byte, error) {
 		return nil, errors.New("H.264 fixture has no NAL units")
 	}
 	return nals, nil
+}
+
+func h264BitstreamSHA256FromRTP(packets []*rtp.Packet) (string, int, error) {
+	var depacketizer codecs.H264Packet
+	var out bytes.Buffer
+	for _, packet := range packets {
+		payload, err := depacketizer.Unmarshal(packet.Payload)
+		if err != nil {
+			return "", 0, err
+		}
+		if len(payload) > 0 {
+			_, _ = out.Write(payload)
+		}
+	}
+	if out.Len() == 0 {
+		return "", 0, errors.New("H.264 RTP packets depacketized to empty bitstream")
+	}
+	return sha256Hex(out.Bytes()), out.Len(), nil
+}
+
+func sha256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func h264NALTypeNamesFromAnnexB(data []byte) []string {
+	nals, err := h264NALUnits(data)
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, nal := range nals {
+		if len(nal) == 0 {
+			continue
+		}
+		if name := h264NALTypeName(nal[0] & 0x1f); name != "" {
+			seen[name] = true
+		}
+	}
+	return sortedEvidenceKeys(seen)
 }
 
 func validateH264RTPPayloads(packets []*rtp.Packet) error {
@@ -580,11 +661,23 @@ func (e H264RTPEvidence) WithTimings(receiveMS, timeToFirstMS, iceMS int64) H264
 }
 
 func (e H264RTPEvidence) String() string {
-	return fmt.Sprintf("codec=h264 packets=%d bytes=%d duration_ms=%d loops=%d frames=%d nal_types=%s packetization=%s receive_ms=%d ttfb_ms=%d ice_ms=%d",
+	base := fmt.Sprintf("codec=h264 packets=%d bytes=%d duration_ms=%d loops=%d frames=%d nal_types=%s packetization=%s receive_ms=%d ttfb_ms=%d ice_ms=%d",
 		e.Packets, e.Bytes, e.DurationMS, e.Loops, e.Frames, joinEvidenceKeys(e.NALTypes), joinEvidenceKeys(e.Packetizations), e.ReceiveMS, e.TimeToFirstMS, e.ICEMS)
+	if e.ExpectedSHA256 != "" {
+		base += fmt.Sprintf(" expected_sha256=%s", e.ExpectedSHA256)
+	}
+	if e.ReceiverSHA256 != "" || e.ReceiverPackets > 0 || e.ReceiverBytes > 0 {
+		base += fmt.Sprintf(" received_sha256=%s receiver_packets=%d receiver_bytes=%d receiver_nal_types=%s receiver_bitstream_match=%t",
+			e.ReceiverSHA256, e.ReceiverPackets, e.ReceiverBytes, joinEvidenceKeys(e.ReceiverNALTypes), e.BitstreamMatch)
+	}
+	return base
 }
 
 func joinEvidenceKeys(values map[string]bool) string {
+	return strings.Join(sortedEvidenceKeys(values), ",")
+}
+
+func sortedEvidenceKeys(values map[string]bool) []string {
 	keys := make([]string, 0, len(values))
 	for key, ok := range values {
 		if ok && key != "" {
@@ -592,7 +685,7 @@ func joinEvidenceKeys(values map[string]bool) string {
 		}
 	}
 	sort.Strings(keys)
-	return strings.Join(keys, ",")
+	return keys
 }
 
 func (s *PionMediaAnswerSession) Close() {

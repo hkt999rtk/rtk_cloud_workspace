@@ -140,6 +140,27 @@ func TestVideoRelayRenderPassReportIncludesRTPEvidenceAndSanitizesSecrets(t *tes
 	}
 }
 
+func TestVideoRelaySummaryUsesOperationEvidenceICEServerCount(t *testing.T) {
+	raw := []byte(`{"operations":[
+		{"name":"webrtc_media_answer","device_id":"cam-1","success":true,"evidence":"webrtc_response mode=webrtc session_id_present=true ice_servers=2 offer_present=true answer_present=false candidate_types=relay"},
+		{"name":"webrtc_media_answer","device_id":"cam-1","success":true,"evidence":"{\"status\":\"ok\"}"},
+		{"name":"webrtc_media_ice_connected","device_id":"cam-1","success":true,"latency_ms":25,"evidence":"ice_connected_ms=25"},
+		{"name":"webrtc_media_receive","device_id":"cam-1","success":true,"evidence":"codec=h264 packets=10 bytes=20 nal_types=idr,sps receiver_bitstream_match=true"},
+		{"name":"webrtc_media_close","device_id":"cam-1","success":true,"evidence":"{\"status\":\"ok\"}"}
+	]}`)
+	path := filepath.Join(t.TempDir(), "load-results.json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	devices := summarizeVideoRelayLoadResults(path, []videoRelaySelectedDevice{{DeviceID: "cam-1", AssignedEmail: "u1@example.test"}})
+	if len(devices) != 1 {
+		t.Fatalf("devices len = %d, want 1", len(devices))
+	}
+	if devices[0].ICEServerCount != 2 {
+		t.Fatalf("ICE server count = %d, want operation evidence count 2", devices[0].ICEServerCount)
+	}
+}
+
 func TestVideoRelayReadsCurrentUsersArtifactShape(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "users.json")

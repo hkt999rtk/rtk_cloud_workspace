@@ -479,7 +479,7 @@ func summarizeVideoRelayLoadResults(path string, selected []videoRelaySelectedDe
 			if row.WebRTCCreateStatus == "" {
 				row.WebRTCCreateStatus = status
 				row.SessionIDPresent = op.Success
-				row.ICEServerCount = max(row.ICEServerCount, 1)
+				row.ICEServerCount = max(row.ICEServerCount, parseEvidenceInt(op.Evidence, "ice_servers"))
 			} else {
 				row.WebRTCAnswerStatus = status
 			}

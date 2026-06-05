@@ -2553,15 +2553,106 @@ func (r *Runner) completeServerOfferWebRTCMedia(ctx context.Context, cfg Config,
 		return ops
 	}
 	elapsed := time.Since(start).Milliseconds()
+	closeOp := r.closeWebRTCSession(ctx, cfg, deviceID, viewerID, response)
+	closeOp.Name = "webrtc_media_close"
+	receiveOp := h264ReceiverCompareOperation(deviceID, viewerID, elapsed, mediaPlan.Evidence.WithTimings(elapsed, 0, elapsed), closeOp)
 	ops = append(ops,
 		Operation{Actor: ActorViewer, Name: "webrtc_media_ice_connected", DeviceID: deviceID, ViewerID: viewerID, Success: true, LatencyMS: elapsed, Evidence: fmt.Sprintf("ice_connected_ms=%d", elapsed)},
 		Operation{Actor: ActorViewer, Name: "webrtc_media_first_rtp", DeviceID: deviceID, ViewerID: viewerID, Success: true, LatencyMS: elapsed, Evidence: "time_to_first_rtp_ms=0"},
-		Operation{Actor: ActorViewer, Name: "webrtc_media_receive", DeviceID: deviceID, ViewerID: viewerID, Success: true, LatencyMS: elapsed, Evidence: mediaPlan.Evidence.WithTimings(elapsed, 0, elapsed).String()},
+		receiveOp,
 	)
-	closeOp := r.closeWebRTCSession(ctx, cfg, deviceID, viewerID, response)
-	closeOp.Name = "webrtc_media_close"
 	ops = append(ops, closeOp)
 	return ops
+}
+
+func h264ReceiverCompareOperation(deviceID, viewerID string, latencyMS int64, evidence H264RTPEvidence, closeOp Operation) Operation {
+	op := Operation{Actor: ActorViewer, Name: "webrtc_media_receive", DeviceID: deviceID, ViewerID: viewerID, LatencyMS: latencyMS}
+	if evidence.ExpectedSHA256 == "" {
+		op.Success = false
+		op.ErrorClass = ClassWebRTCMedia
+		op.ErrorDetail = "missing expected H.264 bitstream hash"
+		op.Evidence = evidence.String()
+		return op
+	}
+	if !closeOp.Success {
+		op.Success = false
+		op.ErrorClass = ClassWebRTCMedia
+		op.ErrorDetail = "receiver media stats unavailable because WebRTC close failed"
+		op.Evidence = evidence.String()
+		return op
+	}
+	stats, err := parseCloseMediaStats(closeOp.Evidence)
+	if err != nil {
+		op.Success = false
+		op.ErrorClass = ClassWebRTCMedia
+		op.ErrorDetail = redactDetail(err.Error())
+		op.Evidence = evidence.String()
+		return op
+	}
+	evidence.ReceiverSHA256 = stats.H264SHA256
+	evidence.ReceiverPackets = stats.PacketsReceived
+	evidence.ReceiverBytes = stats.H264Bytes
+	evidence.ReceiverNALTypes = mapFromStrings(stats.NALTypes)
+	evidence.BitstreamMatch = stats.H264SHA256 == evidence.ExpectedSHA256 && stats.H264Bytes > 0 && stats.PacketsReceived > 0
+	op.Evidence = evidence.String()
+	if !evidence.BitstreamMatch {
+		op.Success = false
+		op.ErrorClass = ClassWebRTCMedia
+		op.ErrorDetail = "receiver H.264 bitstream hash mismatch"
+		return op
+	}
+	op.Success = true
+	return op
+}
+
+type closeMediaStats struct {
+	PacketsReceived int
+	BytesReceived   int
+	H264SHA256      string
+	H264Bytes       int
+	NALTypes        []string
+}
+
+func parseCloseMediaStats(evidence string) (closeMediaStats, error) {
+	var decoded struct {
+		Media struct {
+			PacketsReceived int      `json:"packets_received"`
+			BytesReceived   int      `json:"bytes_received"`
+			H264SHA256      string   `json:"h264_sha256"`
+			H264Bytes       int      `json:"h264_bytes"`
+			NALTypes        []string `json:"nal_types"`
+		} `json:"media"`
+	}
+	if err := json.Unmarshal([]byte(evidence), &decoded); err != nil {
+		return closeMediaStats{}, fmt.Errorf("decode receiver media stats: %w", err)
+	}
+	stats := closeMediaStats{
+		PacketsReceived: decoded.Media.PacketsReceived,
+		BytesReceived:   decoded.Media.BytesReceived,
+		H264SHA256:      decoded.Media.H264SHA256,
+		H264Bytes:       decoded.Media.H264Bytes,
+		NALTypes:        decoded.Media.NALTypes,
+	}
+	if stats.H264SHA256 == "" {
+		return closeMediaStats{}, errors.New("receiver media stats missing h264_sha256")
+	}
+	if stats.H264Bytes <= 0 {
+		return closeMediaStats{}, errors.New("receiver media stats missing H.264 bytes")
+	}
+	if stats.PacketsReceived <= 0 {
+		return closeMediaStats{}, errors.New("receiver media stats missing RTP packets")
+	}
+	return stats, nil
+}
+
+func mapFromStrings(values []string) map[string]bool {
+	out := map[string]bool{}
+	for _, value := range values {
+		if value != "" {
+			out[value] = true
+		}
+	}
+	return out
 }
 
 func extractAnswerPayload(response map[string]any) (map[string]string, error) {
