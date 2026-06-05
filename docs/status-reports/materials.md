@@ -30,6 +30,26 @@ status reports.
 | Feature Provision Flow | `repos/rtk_cloud_frontend/static/assets/feature-provision-flow.jpg` | Optional onboarding/provisioning visual. |
 | Feature OTA Control Center | `repos/rtk_cloud_frontend/static/assets/feature-ota-control-center.jpg` | Optional OTA feature visual. |
 
+## Portal Web / Digital Marketing Sources
+
+| Source | Use in report |
+| --- | --- |
+| `repos/rtk_cloud_frontend/README.md` | Portal positioning, marketing foundation, SEO/social metadata, sitemap/robots, contact lead capture, analytics, multilingual routes, and public website boundaries. |
+| `repos/rtk_cloud_frontend/docs/SPEC.md` | Current portal implementation, visual direction, content system, routes, and product marketing scope. |
+| `repos/rtk_cloud_frontend/docs/ANALYTICS.md` | First-party analytics purpose, privacy guardrails, event model, CTA/engagement tracking, and admin aggregate behavior. |
+| `repos/rtk_cloud_frontend/docs/API_REFERENCE.md` | `/api/event`, `/api/search`, `/contact`, `/admin/leads`, and admin export surfaces. |
+| `repos/rtk_cloud_frontend/docs/MANUAL_CONTENT_SYSTEM.md` | File-backed manual/content system and managed content workflow. |
+
+## Master Slide / Presentation Design
+
+| Material | Source | Use in report |
+| --- | --- | --- |
+| Realtek PowerPoint Master | `docs/status-reports/master_slide/powerpoint_master.pptx` | Company master for PowerPoint report decks. |
+| Designer Guideline | `docs/status-reports/master_slide/design-guidelines.md` | Designer-facing rules for typography, palette, layout patterns, and report-to-slide mapping. |
+| AI Slide Skill | `docs/status-reports/master_slide/SKILL.md` | AI/LLM-facing instruction file for generating slides in the master style. |
+| Extracted Master Assets | `docs/status-reports/master_slide/assets/` | Reusable background, logo, strip, and side-imagery assets extracted from the PPTX. |
+| Master Asset Contact Sheet | `docs/status-reports/master_slide/assets/media-contact-sheet.png` | Quick visual inventory for selecting extracted assets. |
+
 ## Deployment And Configuration Sources
 
 | Source | Use in report |
@@ -42,6 +62,17 @@ status reports.
 | `repos/rtk_account_manager/linode_deploy/README.md` | Account Manager public VM shape, deployment model, PostgreSQL and nginx boundary. |
 | `repos/rtk_cloud_admin/deploy/linode/README.md` | Admin dashboard public VM shape, upstream configuration, Docker/SQLite/nginx boundary. |
 | `repos/rtk_cloud_frontend/docs/deployment-linode.md` | Frontend artifact-first Linode deployment model and runtime env categories. |
+
+## Threat Model / Cyber Security Sources
+
+| Source | Use in report |
+| --- | --- |
+| `cyber_security/README.md` | Threat modeling method, STRIDE categories, directory purpose, and data handling rules. |
+| `cyber_security/assumptions.md` | Deployment, auth, authorization, data-sensitivity, and open-question assumptions that affect risk ranking. |
+| `cyber_security/sources.md` | Security-relevant source index for architecture, deployment, auth, streaming, MQTT, media, logging, and evidence docs. |
+| `cyber_security/threat_models/rtk_video_cloud-stride-threat-model.md` | Executive summary, scope, trust boundaries, assets, attacker model, STRIDE risk summary, and recommendations. |
+| `cyber_security/analysis/stride-matrix.md` | Detailed STRIDE rows, priority, gaps, mitigations, detections, and manual review focus paths. |
+| `cyber_security/evidence/README.md` | Redacted security evidence notes and artifact handling expectations. |
 
 ## Live Health Checks
 
