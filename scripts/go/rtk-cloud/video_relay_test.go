@@ -122,18 +122,32 @@ func TestVideoRelayRenderPassReportIncludesRTPEvidenceAndSanitizesSecrets(t *tes
 		Overall:    "pass",
 		Brandname:  "RTK",
 		ProbeModel: "webrtc_rtp_relay",
+		WebRTC: videoRelayWebRTCResult{
+			SignalingTraceStatus:   "PASS",
+			RelayEvidenceStatus:    "not_required",
+			SelectedCandidateTypes: "host",
+		},
 		Devices: []videoRelayDeviceResult{{
 			DeviceID: "cam-1", WebSocketOwnerStatus: "PASS", WebRTCCreateStatus: "PASS", WebRTCAnswerStatus: "PASS",
 			ICEConnectedStatus: "PASS", RTPReceiveStatus: "PASS", CloseStatus: "PASS", ICEServerCount: 3,
 			ICEConnectedLatencyMS: 12, RTPPacketsReceived: 8, RTPBytesReceived: 40,
 		}},
+		SignalingTrace: []videoRelayTraceEvent{
+			{DeviceID: "cam-1", Event: "websocket_owner_online", Status: "PASS"},
+			{DeviceID: "cam-1", Event: "request_webrtc_response", Status: "PASS"},
+			{DeviceID: "cam-1", Event: "webrtc_offer_received", Status: "PASS"},
+			{DeviceID: "cam-1", Event: "answer_submitted", Status: "PASS"},
+			{DeviceID: "cam-1", Event: "ice_connected", Status: "PASS"},
+			{DeviceID: "cam-1", Event: "h264_bitstream_compared", Status: "PASS"},
+			{DeviceID: "cam-1", Event: "request_webrtc_close", Status: "PASS"},
+		},
 		Error: "Bearer abc private_key_pem -----BEGIN PRIVATE KEY----- turn credential secret",
 	}
 	report := renderVideoRelayReport(result)
-	if !strings.Contains(report, "webrtc_rtp_relay") || !strings.Contains(report, "RTP packets") {
+	if !strings.Contains(report, "webrtc_rtp_relay") || !strings.Contains(report, "RTP packets") || !strings.Contains(report, "Signaling Trace") || !strings.Contains(report, "Relay Evidence") {
 		t.Fatalf("report missing relay evidence:\n%s", report)
 	}
-	for _, forbidden := range []string{"abc", "PRIVATE KEY", "turn credential secret", "Bearer"} {
+	for _, forbidden := range []string{"abc", "PRIVATE KEY", "turn credential secret", "Bearer", "loopback"} {
 		if strings.Contains(report, forbidden) {
 			t.Fatalf("report leaked %q:\n%s", forbidden, report)
 		}
@@ -158,6 +172,64 @@ func TestVideoRelaySummaryUsesOperationEvidenceICEServerCount(t *testing.T) {
 	}
 	if devices[0].ICEServerCount != 2 {
 		t.Fatalf("ICE server count = %d, want operation evidence count 2", devices[0].ICEServerCount)
+	}
+}
+
+func TestVideoRelaySignalingTraceSanitizesSensitiveEvidence(t *testing.T) {
+	summary := videoRelayLoadSummary{
+		RunID:     "run-1",
+		StartedAt: time.Date(2026, 6, 5, 1, 2, 3, 0, time.UTC),
+		Operations: []videoRelayLoadOperation{{
+			Actor:    "viewer",
+			Name:     "webrtc_media_answer",
+			DeviceID: "cam-1",
+			Success:  true,
+			Evidence: `{"status":"ok","session_id":"session-1","offer":{"type":"offer","sdp":"v=0 secret-sdp"},"ice_servers":[{"username":"turn-user","credential":"turn-secret"}],"access_token":"token-secret"}`,
+		}, {
+			Actor:    "device",
+			Name:     "webrtc_media_offer_receive",
+			DeviceID: "cam-1",
+			Success:  true,
+			Evidence: "session_id_present=true offer_present=true candidate_types=relay Bearer abc.def -----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----",
+		}},
+	}
+	trace := buildVideoRelaySignalingTrace(summary)
+	if len(trace) != 2 {
+		t.Fatalf("trace len = %d, want 2", len(trace))
+	}
+	path := filepath.Join(t.TempDir(), "SIGNALING_TRACE.jsonl")
+	if err := writeVideoRelaySignalingTraceJSONL(path, trace); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, forbidden := range []string{"secret-sdp", "turn-user", "turn-secret", "token-secret", "abc.def", "PRIVATE KEY"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("trace leaked %q:\n%s", forbidden, body)
+		}
+	}
+	for _, want := range []string{"request_webrtc_response", "webrtc_offer_received", "candidate_types=relay"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("trace missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestVideoRelayCoturnEvidencePolicy(t *testing.T) {
+	status, events := evaluateVideoRelayCoturnEvidence(t.TempDir(), t.TempDir(), time.Time{}, "", "host")
+	if status.Status != "not_required" || status.Required || len(events) != 0 {
+		t.Fatalf("direct relay status = %+v events=%v, want not_required", status, events)
+	}
+	status, _ = evaluateVideoRelayCoturnEvidence(t.TempDir(), t.TempDir(), time.Time{}, "relay", "")
+	if status.Status != "FAIL" || !status.Required {
+		t.Fatalf("relay-required status = %+v, want FAIL required", status)
+	}
+	events = parseVideoRelayCoturnEvents("Jun 05 turnserver: session 001: new allocation; relay addr 203.0.113.99\n")
+	if len(events) != 1 || events[0].Kind != "allocation" {
+		t.Fatalf("coturn events = %#v, want allocation event", events)
 	}
 }
 

@@ -824,6 +824,13 @@ func (r *Runner) listenDeviceTransportMessages(ctx context.Context, cfg Config, 
 		}
 		if cfg.WebRTCMediaSet == WebRTCMediaSetRTP || cfg.WebRTCMediaSet == WebRTCMediaSetH264 {
 			if msg, ok := parseWebRTCMediaOfferMessage(payload); ok {
+				record(Operation{
+					Actor:    ActorDevice,
+					Name:     "webrtc_media_offer_receive",
+					DeviceID: deviceID,
+					Success:  true,
+					Evidence: fmt.Sprintf("session_id_present=%t offer_present=%t candidate_types=%s", msg.SessionID != "", msg.Offer["sdp"] != "", strings.Join(candidateTypesFromSDP(msg.Offer["sdp"]), ",")),
+				})
 				ops, cleanup := r.answerWebRTCMediaOffer(ctx, cfg, deviceID, msg)
 				cleanups = append(cleanups, cleanup)
 				for _, op := range ops {
@@ -2698,8 +2705,12 @@ func extractOfferCandidateTypes(response map[string]any) []string {
 	if err != nil {
 		return nil
 	}
+	return candidateTypesFromSDP(offer["sdp"])
+}
+
+func candidateTypesFromSDP(sdp string) []string {
 	seen := map[string]bool{}
-	for _, line := range strings.Split(offer["sdp"], "\n") {
+	for _, line := range strings.Split(sdp, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "a=candidate:") {
 			continue

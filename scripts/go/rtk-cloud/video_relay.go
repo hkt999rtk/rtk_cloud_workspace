@@ -87,16 +87,20 @@ type videoRelayTokenMapFiles struct {
 }
 
 type videoRelayResult struct {
-	Schema      string                   `json:"schema"`
-	GeneratedAt string                   `json:"generated_at"`
-	Status      string                   `json:"status"`
-	Overall     string                   `json:"overall"`
-	Brandname   string                   `json:"brandname"`
-	Profile     string                   `json:"profile"`
-	ProbeModel  string                   `json:"probe_model"`
-	Artifacts   map[string]string        `json:"artifacts,omitempty"`
-	Devices     []videoRelayDeviceResult `json:"devices"`
-	Error       string                   `json:"error,omitempty"`
+	Schema              string                   `json:"schema"`
+	GeneratedAt         string                   `json:"generated_at"`
+	Status              string                   `json:"status"`
+	Overall             string                   `json:"overall"`
+	Brandname           string                   `json:"brandname"`
+	Profile             string                   `json:"profile"`
+	ProbeModel          string                   `json:"probe_model"`
+	WebRTC              videoRelayWebRTCResult   `json:"webrtc"`
+	Artifacts           map[string]string        `json:"artifacts,omitempty"`
+	Devices             []videoRelayDeviceResult `json:"devices"`
+	SignalingTrace      []videoRelayTraceEvent   `json:"signaling_trace,omitempty"`
+	CoturnRelayEvidence []videoRelayCoturnEvent  `json:"coturn_relay_evidence,omitempty"`
+	Error               string                   `json:"error,omitempty"`
+	TraceDetail         string                   `json:"-"`
 }
 
 type videoRelayDeviceResult struct {
@@ -118,6 +122,34 @@ type videoRelayDeviceResult struct {
 	Error                 string `json:"error,omitempty"`
 }
 
+type videoRelayWebRTCResult struct {
+	SignalingTraceStatus   string `json:"signaling_trace_status,omitempty"`
+	RelayEvidenceStatus    string `json:"relay_evidence_status,omitempty"`
+	SelectedCandidateTypes string `json:"selected_candidate_types,omitempty"`
+	ICEPolicy              string `json:"ice_policy,omitempty"`
+	RelayEvidenceRequired  bool   `json:"relay_evidence_required,omitempty"`
+	RelayEvidenceDetail    string `json:"relay_evidence_detail,omitempty"`
+}
+
+type videoRelayTraceEvent struct {
+	Timestamp string `json:"timestamp"`
+	RunID     string `json:"run_id,omitempty"`
+	DeviceID  string `json:"device_id,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	Actor     string `json:"actor"`
+	Direction string `json:"direction"`
+	Event     string `json:"event"`
+	Status    string `json:"status"`
+	LatencyMS int64  `json:"latency_ms,omitempty"`
+	Evidence  string `json:"evidence,omitempty"`
+}
+
+type videoRelayCoturnEvent struct {
+	Timestamp string `json:"timestamp,omitempty"`
+	Kind      string `json:"kind"`
+	Evidence  string `json:"evidence"`
+}
+
 func runVideoRelayTest(args []string) error {
 	fs := flag.NewFlagSet("video-relay-test", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -127,7 +159,7 @@ func runVideoRelayTest(args []string) error {
 	profile := fs.String("profile", "smoke", "profile")
 	duration := fs.Int("duration-seconds", 120, "duration seconds")
 	maxDevices := fs.Int("max-devices", 3, "maximum selected video devices")
-	traceDetail := fs.String("trace-detail", "summary", "console trace detail: none or summary")
+	traceDetail := fs.String("trace-detail", "summary", "console trace detail: none, summary, or verbose")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -139,6 +171,12 @@ func runVideoRelayTest(args []string) error {
 	}
 	if *profile != "smoke" {
 		return errors.New("--profile must be smoke")
+	}
+	if *traceDetail == "full" {
+		*traceDetail = "verbose"
+	}
+	if *traceDetail != "none" && *traceDetail != "summary" && *traceDetail != "verbose" {
+		return errors.New("--trace-detail must be none, summary, or verbose")
 	}
 	workspace, err := workspaceRoot()
 	if err != nil {
@@ -171,7 +209,12 @@ func executeVideoRelayTest(workspace, envRoot, brandname, outDir, profile string
 		Brandname:   brandname,
 		Profile:     profile,
 		ProbeModel:  videoRelayProbeModel,
+		WebRTC: videoRelayWebRTCResult{
+			SignalingTraceStatus: "not_run",
+			RelayEvidenceStatus:  "not_checked",
+		},
 		Artifacts:   map[string]string{},
+		TraceDetail: traceDetail,
 	}
 	brandSlug := strings.ToLower(strings.TrimSpace(brandname))
 	usersPath := latestMatchingFile(filepath.Join(envRoot, "artifacts", "users"), brandSlug+"-users-*.json")
@@ -277,6 +320,24 @@ func executeVideoRelayTest(workspace, envRoot, brandname, outDir, profile string
 	loadResultsPath := filepath.Join(outDir, "load-results.json")
 	result.Artifacts["load_results"] = loadResultsPath
 	result.Artifacts["load_report"] = filepath.Join(outDir, "load-report.md")
+	loadSummary := readVideoRelayLoadSummary(loadResultsPath)
+	result.SignalingTrace = buildVideoRelaySignalingTrace(loadSummary)
+	result.WebRTC.SignalingTraceStatus = videoRelaySignalingTraceStatus(result.SignalingTrace, deviceIDs)
+	result.WebRTC.SelectedCandidateTypes = strings.Join(videoRelayCandidateTypes(result.SignalingTrace), ",")
+	result.WebRTC.ICEPolicy = videoRelayICEPolicy(envRoot)
+	tracePath := filepath.Join(outDir, "SIGNALING_TRACE.jsonl")
+	if err := writeVideoRelaySignalingTraceJSONL(tracePath, result.SignalingTrace); err != nil {
+		return writeVideoRelayFailed(outDir, result, "write signaling trace failed: "+sanitizeVideoRelayText(err.Error()))
+	}
+	result.Artifacts["signaling_trace"] = tracePath
+	relayStatus, relayEvents := evaluateVideoRelayCoturnEvidence(envRoot, outDir, loadSummary.StartedAt, result.WebRTC.ICEPolicy, result.WebRTC.SelectedCandidateTypes)
+	result.WebRTC.RelayEvidenceStatus = relayStatus.Status
+	result.WebRTC.RelayEvidenceRequired = relayStatus.Required
+	result.WebRTC.RelayEvidenceDetail = relayStatus.Detail
+	result.CoturnRelayEvidence = relayEvents
+	if relayStatus.Required {
+		result.Artifacts["coturn_relay_journal"] = filepath.Join(outDir, "coturn-relay-journal.log")
+	}
 	result.Devices = summarizeVideoRelayLoadResults(loadResultsPath, selected)
 	for _, device := range result.Devices {
 		if device.WebSocketOwnerStatus != "PASS" || device.WebRTCCreateStatus != "PASS" || device.WebRTCAnswerStatus != "PASS" ||
@@ -286,6 +347,14 @@ func executeVideoRelayTest(workspace, envRoot, brandname, outDir, profile string
 			result.Overall = "fail"
 			break
 		}
+	}
+	if result.WebRTC.SignalingTraceStatus != "PASS" {
+		result.Status = "FAIL"
+		result.Overall = "fail"
+	}
+	if result.WebRTC.RelayEvidenceRequired && result.WebRTC.RelayEvidenceStatus != "PASS" {
+		result.Status = "FAIL"
+		result.Overall = "fail"
 	}
 	return writeVideoRelayFinal(outDir, result)
 }
@@ -509,6 +578,293 @@ func summarizeVideoRelayLoadResults(path string, selected []videoRelaySelectedDe
 	return out
 }
 
+type videoRelayLoadSummary struct {
+	RunID      string
+	StartedAt  time.Time
+	Operations []videoRelayLoadOperation
+}
+
+type videoRelayLoadOperation struct {
+	Actor       string `json:"actor"`
+	Name        string `json:"name"`
+	DeviceID    string `json:"device_id"`
+	ViewerID    string `json:"viewer_id"`
+	Success     bool   `json:"success"`
+	Skipped     bool   `json:"skipped"`
+	SkipReason  string `json:"skip_reason"`
+	StatusCode  int    `json:"status_code"`
+	LatencyMS   int64  `json:"latency_ms"`
+	Evidence    string `json:"evidence"`
+	ErrorClass  string `json:"error_class"`
+	ErrorDetail string `json:"error_detail"`
+}
+
+type videoRelayCoturnStatus struct {
+	Status   string
+	Required bool
+	Detail   string
+}
+
+func readVideoRelayLoadSummary(path string) videoRelayLoadSummary {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return videoRelayLoadSummary{}
+	}
+	var parsed struct {
+		RunID      string                    `json:"run_id"`
+		StartedAt  time.Time                 `json:"started_at"`
+		Operations []videoRelayLoadOperation `json:"operations"`
+	}
+	_ = json.Unmarshal(raw, &parsed)
+	return videoRelayLoadSummary{RunID: parsed.RunID, StartedAt: parsed.StartedAt, Operations: parsed.Operations}
+}
+
+func buildVideoRelaySignalingTrace(summary videoRelayLoadSummary) []videoRelayTraceEvent {
+	base := summary.StartedAt
+	if base.IsZero() {
+		base = time.Now().UTC()
+	}
+	trace := make([]videoRelayTraceEvent, 0, len(summary.Operations))
+	for idx, op := range summary.Operations {
+		event, direction, ok := videoRelayTraceEventForOperation(op)
+		if !ok {
+			continue
+		}
+		status := "FAIL"
+		if op.Success {
+			status = "PASS"
+		}
+		if op.Skipped {
+			status = "SKIP"
+		}
+		evidence := sanitizeVideoRelayTraceEvidence(op.Evidence)
+		if evidence == "" && op.ErrorDetail != "" {
+			evidence = sanitizeVideoRelayTraceEvidence(op.ErrorClass + ": " + op.ErrorDetail)
+		}
+		trace = append(trace, videoRelayTraceEvent{
+			Timestamp: base.Add(time.Duration(idx) * time.Millisecond).UTC().Format(time.RFC3339Nano),
+			RunID:     summary.RunID,
+			DeviceID:  op.DeviceID,
+			SessionID: parseVideoRelaySessionID(op.Evidence),
+			Actor:     op.Actor,
+			Direction: direction,
+			Event:     event,
+			Status:    status,
+			LatencyMS: op.LatencyMS,
+			Evidence:  evidence,
+		})
+	}
+	return trace
+}
+
+func videoRelayTraceEventForOperation(op videoRelayLoadOperation) (string, string, bool) {
+	switch op.Name {
+	case "webrtc_media_offer":
+		return "viewer_local_offer_created", "local", true
+	case "webrtc_media_answer":
+		if op.Actor == "viewer" {
+			return "request_webrtc_response", "video_cloud_to_viewer", true
+		}
+		if op.Actor == "device" {
+			return "answer_submitted", "device_to_video_cloud", true
+		}
+	case "webrtc_media_offer_receive":
+		return "webrtc_offer_received", "video_cloud_to_device", true
+	case "webrtc_media_ice_connected":
+		return "ice_connected", "peer_connection", true
+	case "webrtc_media_first_rtp":
+		return "first_rtp_received", "device_to_video_cloud", true
+	case "webrtc_media_receive":
+		return "h264_bitstream_compared", "video_cloud_receiver", true
+	case "webrtc_media_close":
+		return "request_webrtc_close", "viewer_to_video_cloud", true
+	case "device_websocket_owner":
+		return "websocket_owner_online", "device_to_video_cloud", true
+	}
+	return "", "", false
+}
+
+func sanitizeVideoRelayTraceEvidence(evidence string) string {
+	evidence = sanitizeVideoRelayText(evidence)
+	if strings.HasPrefix(strings.TrimSpace(evidence), "{") {
+		var value any
+		if err := json.Unmarshal([]byte(evidence), &value); err == nil {
+			value = pruneVideoRelayTraceEvidence(value)
+			if raw, err := json.Marshal(value); err == nil {
+				return string(raw)
+			}
+		}
+	}
+	return evidence
+}
+
+func pruneVideoRelayTraceEvidence(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		out := map[string]any{}
+		for key, child := range v {
+			lower := strings.ToLower(key)
+			switch lower {
+			case "offer", "answer", "sdp", "access_token", "refresh_token", "credential", "username", "token":
+				continue
+			default:
+				out[key] = pruneVideoRelayTraceEvidence(child)
+			}
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(v))
+		for _, child := range v {
+			out = append(out, pruneVideoRelayTraceEvidence(child))
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func parseVideoRelaySessionID(evidence string) string {
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(evidence), &decoded); err != nil {
+		return ""
+	}
+	value, _ := decoded["session_id"].(string)
+	return value
+}
+
+func writeVideoRelaySignalingTraceJSONL(path string, trace []videoRelayTraceEvent) error {
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	for _, event := range trace {
+		if err := enc.Encode(event); err != nil {
+			return err
+		}
+	}
+	return os.WriteFile(path, []byte(sanitizeVideoRelayText(b.String())), 0o644)
+}
+
+func videoRelaySignalingTraceStatus(trace []videoRelayTraceEvent, deviceIDs []string) string {
+	required := []string{"websocket_owner_online", "request_webrtc_response", "webrtc_offer_received", "answer_submitted", "ice_connected", "h264_bitstream_compared", "request_webrtc_close"}
+	byDevice := map[string]map[string]string{}
+	for _, deviceID := range deviceIDs {
+		byDevice[deviceID] = map[string]string{}
+	}
+	for _, event := range trace {
+		if byDevice[event.DeviceID] == nil {
+			continue
+		}
+		if _, ok := byDevice[event.DeviceID][event.Event]; !ok || event.Status == "PASS" {
+			byDevice[event.DeviceID][event.Event] = event.Status
+		}
+	}
+	for _, deviceID := range deviceIDs {
+		for _, event := range required {
+			if byDevice[deviceID][event] != "PASS" {
+				return "FAIL"
+			}
+		}
+	}
+	return "PASS"
+}
+
+func videoRelayCandidateTypes(trace []videoRelayTraceEvent) []string {
+	seen := map[string]bool{}
+	for _, event := range trace {
+		value := parseEvidenceString(event.Evidence, "candidate_types")
+		for _, typ := range strings.Split(value, ",") {
+			typ = strings.TrimSpace(typ)
+			if typ != "" {
+				seen[typ] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for typ := range seen {
+		out = append(out, typ)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func videoRelayICEPolicy(envRoot string) string {
+	for _, path := range []string{
+		filepath.Join(envRoot, "services", "video-cloud", "video-cloud-staging.env"),
+		filepath.Join(envRoot, "services", "video-cloud", "video-cloud.env"),
+	} {
+		if value := strings.TrimSpace(envFileValue(path, "VIDEO_CLOUD_WEBRTC_ICE_POLICY")); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func evaluateVideoRelayCoturnEvidence(envRoot, outDir string, startedAt time.Time, icePolicy, candidateTypes string) (videoRelayCoturnStatus, []videoRelayCoturnEvent) {
+	required := strings.EqualFold(strings.TrimSpace(icePolicy), "relay") || containsCSV(candidateTypes, "relay")
+	if !required {
+		return videoRelayCoturnStatus{Status: "not_required", Required: false, Detail: "WebRTC path did not require TURN relay evidence"}, nil
+	}
+	targets, err := loadLogsCheckTargets(envRoot)
+	if err != nil {
+		return videoRelayCoturnStatus{Status: "FAIL", Required: true, Detail: "coturn target unavailable: " + sanitizeVideoRelayText(err.Error())}, nil
+	}
+	target := targets["coturn"]
+	if target.Host == "" {
+		return videoRelayCoturnStatus{Status: "FAIL", Required: true, Detail: "coturn target missing"}, nil
+	}
+	since := "15 minutes ago"
+	if !startedAt.IsZero() {
+		since = startedAt.Add(-1 * time.Minute).UTC().Format("2006-01-02 15:04:05")
+	}
+	command := "journalctl -u coturn -u video_cloud-turnregistrar.service --since " + logShellQuote(since) + " -n 1200 --no-pager || true"
+	raw, err := (sshRemoteRunner{KeyPath: filepath.Join(os.Getenv("HOME"), ".ssh", "id_ed25519_rtkcloud"), KnownHosts: filepath.Join(outDir, "coturn_known_hosts")}).Run(target, command)
+	raw = sanitizeVideoRelayText(raw)
+	journalPath := filepath.Join(outDir, "coturn-relay-journal.log")
+	_ = os.WriteFile(journalPath, []byte(raw), 0o644)
+	if err != nil {
+		return videoRelayCoturnStatus{Status: "FAIL", Required: true, Detail: "coturn journal query failed: " + sanitizeVideoRelayText(err.Error())}, nil
+	}
+	events := parseVideoRelayCoturnEvents(raw)
+	if len(events) == 0 {
+		return videoRelayCoturnStatus{Status: "FAIL", Required: true, Detail: "coturn journal has no relay allocation/permission/channel evidence"}, nil
+	}
+	return videoRelayCoturnStatus{Status: "PASS", Required: true, Detail: fmt.Sprintf("coturn relay evidence events=%d", len(events))}, events
+}
+
+func parseVideoRelayCoturnEvents(raw string) []videoRelayCoturnEvent {
+	keywords := []string{"allocation", "session", "permission", "channel", "peer", "relay"}
+	events := []videoRelayCoturnEvent{}
+	for _, line := range strings.Split(raw, "\n") {
+		lower := strings.ToLower(line)
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		matched := ""
+		for _, keyword := range keywords {
+			if strings.Contains(lower, keyword) {
+				matched = keyword
+				break
+			}
+		}
+		if matched == "" {
+			continue
+		}
+		events = append(events, videoRelayCoturnEvent{Kind: matched, Evidence: sanitizeVideoRelayText(strings.TrimSpace(line))})
+		if len(events) >= 20 {
+			break
+		}
+	}
+	return events
+}
+
+func containsCSV(csv, want string) bool {
+	for _, item := range strings.Split(csv, ",") {
+		if strings.EqualFold(strings.TrimSpace(item), want) {
+			return true
+		}
+	}
+	return false
+}
+
 func fillMissingVideoRelayStatuses(row *videoRelayDeviceResult) {
 	if row.WebSocketOwnerStatus == "" {
 		row.WebSocketOwnerStatus = "FAIL"
@@ -575,6 +931,16 @@ func renderVideoRelayReport(result videoRelayResult) string {
 		}
 		fmt.Fprintln(&b)
 	}
+	fmt.Fprintln(&b, "\nSignaling Trace:")
+	fmt.Fprintf(&b, "- status=%s selected_candidate_types=%s ice_policy=%s\n", result.WebRTC.SignalingTraceStatus, firstNonEmpty(result.WebRTC.SelectedCandidateTypes, "unknown"), firstNonEmpty(result.WebRTC.ICEPolicy, "unknown"))
+	for _, device := range result.Devices {
+		fmt.Fprintf(&b, "- %s %s\n", device.DeviceID, videoRelayTraceChainSummary(result.SignalingTrace, device.DeviceID))
+	}
+	fmt.Fprintln(&b, "\nRelay Evidence:")
+	fmt.Fprintf(&b, "- status=%s required=%t detail=%s\n", result.WebRTC.RelayEvidenceStatus, result.WebRTC.RelayEvidenceRequired, sanitizeVideoRelayText(result.WebRTC.RelayEvidenceDetail))
+	for _, event := range result.CoturnRelayEvidence {
+		fmt.Fprintf(&b, "- %s %s\n", event.Kind, event.Evidence)
+	}
 	if len(result.Artifacts) > 0 {
 		fmt.Fprintln(&b, "\nArtifacts:")
 		for _, key := range sortedMapKeys(result.Artifacts) {
@@ -622,10 +988,24 @@ func renderVideoRelayConsole(result videoRelayResult) string {
 	fmt.Fprintln(&b, "=======================")
 	fmt.Fprintf(&b, "Status: %s | Overall: %s\n", result.Status, result.Overall)
 	fmt.Fprintf(&b, "Brand: %s | Profile: %s\n", result.Brandname, result.Profile)
+	fmt.Fprintf(&b, "Signaling: %s | Relay evidence: %s | Candidate types: %s\n",
+		firstNonEmpty(result.WebRTC.SignalingTraceStatus, "not_run"),
+		firstNonEmpty(result.WebRTC.RelayEvidenceStatus, "not_checked"),
+		firstNonEmpty(result.WebRTC.SelectedCandidateTypes, "unknown"))
 	for _, device := range result.Devices {
 		fmt.Fprintf(&b, "  %s websocket=%s create=%s answer=%s ice=%s rtp=%s close=%s codec=%s nal_types=%s packets=%d bytes=%d\n",
 			device.DeviceID, device.WebSocketOwnerStatus, device.WebRTCCreateStatus, device.WebRTCAnswerStatus,
 			device.ICEConnectedStatus, device.RTPReceiveStatus, device.CloseStatus, device.RTPCodec, device.RTPNALTypes, device.RTPPacketsReceived, device.RTPBytesReceived)
+		if result.TraceDetail != "none" {
+			fmt.Fprintf(&b, "    signaling=%s\n", videoRelayTraceChainSummary(result.SignalingTrace, device.DeviceID))
+		}
+	}
+	if result.TraceDetail == "verbose" {
+		fmt.Fprintln(&b, "Signaling Trace Events:")
+		for _, event := range result.SignalingTrace {
+			fmt.Fprintf(&b, "  %s %s %s/%s %s status=%s latency_ms=%d evidence=%s\n",
+				event.Timestamp, event.DeviceID, event.Actor, event.Direction, event.Event, event.Status, event.LatencyMS, event.Evidence)
+		}
 	}
 	if result.Error != "" {
 		fmt.Fprintf(&b, "Error: %s\n", sanitizeVideoRelayText(result.Error))
@@ -633,6 +1013,33 @@ func renderVideoRelayConsole(result videoRelayResult) string {
 	fmt.Fprintf(&b, "\n{\"action\":\"video-relay-test\",\"overall\":\"%s\",\"status\":\"%s\",\"report_file\":\"%s\",\"results_file\":\"%s\"}\n",
 		result.Overall, result.Status, result.Artifacts["report"], result.Artifacts["results"])
 	return sanitizeVideoRelayText(b.String())
+}
+
+func videoRelayTraceChainSummary(trace []videoRelayTraceEvent, deviceID string) string {
+	order := []string{"websocket_owner_online", "request_webrtc_response", "webrtc_offer_received", "answer_submitted", "ice_connected", "h264_bitstream_compared", "request_webrtc_close"}
+	labels := map[string]string{
+		"websocket_owner_online":  "websocket",
+		"request_webrtc_response": "offer",
+		"webrtc_offer_received":   "device_rx_offer",
+		"answer_submitted":        "answer",
+		"ice_connected":           "ice",
+		"h264_bitstream_compared": "h264_compare",
+		"request_webrtc_close":    "close",
+	}
+	statuses := map[string]string{}
+	for _, event := range trace {
+		if event.DeviceID != deviceID {
+			continue
+		}
+		if _, ok := statuses[event.Event]; !ok || event.Status == "PASS" {
+			statuses[event.Event] = event.Status
+		}
+	}
+	parts := make([]string, 0, len(order))
+	for _, event := range order {
+		parts = append(parts, labels[event]+"="+firstNonEmpty(statuses[event], "MISSING"))
+	}
+	return strings.Join(parts, " -> ")
 }
 
 func sanitizeVideoRelayText(text string) string {

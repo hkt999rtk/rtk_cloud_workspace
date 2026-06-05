@@ -13,9 +13,10 @@ func TestBuildLogCheckTargetsFromLatestProvisionArtifact(t *testing.T) {
 	mkdirAll(t, filepath.Join(root, "state"))
 	mkdirAll(t, filepath.Join(root, "artifacts", "provision-20260101T000000Z"))
 	mkdirAll(t, filepath.Join(root, "artifacts", "provision-20260102T000000Z"))
-	writeFile(t, filepath.Join(root, "env", "stack.env"), "VIDEO_CLOUD_DOMAIN=vc.example.test\nACCOUNT_MANAGER_DOMAIN=am.example.test\nCLOUD_ADMIN_DOMAIN=admin.example.test\n")
 	writeFile(t, filepath.Join(root, "state", "account-manager-staging.env"), "ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4=198.51.100.50\n")
 	writeFile(t, filepath.Join(root, "state", "cloud-admin-staging.env"), "ADMIN_LINODE_PUBLIC_IPV4=198.51.100.60\n")
+	writeFile(t, filepath.Join(root, "state", "video-cloud-stg-0529.state.json"), `{"instances":{"edge":{"public_ipv4":"203.0.113.15"},"api":{"private_ip":"10.42.2.10"},"infra":{"private_ip":"10.42.2.30"},"mqtt":{"private_ip":"10.42.2.40"},"coturn":{"public_ipv4":"203.0.113.99"}}}`)
+	writeFile(t, filepath.Join(root, "env", "stack.env"), "CLOUD_STACK_NAME=video-cloud-stg-0529\nVIDEO_CLOUD_DOMAIN=vc.example.test\nACCOUNT_MANAGER_DOMAIN=am.example.test\nCLOUD_ADMIN_DOMAIN=admin.example.test\n")
 	writeFile(t, filepath.Join(root, "artifacts", "provision-20260101T000000Z", "deployment-targets.json"), `{"targets":{"edge":{"host":"old","user":"root"}}}`)
 	writeFile(t, filepath.Join(root, "artifacts", "provision-20260102T000000Z", "deployment-targets.json"), `{
 		"targets": {
@@ -34,10 +35,13 @@ func TestBuildLogCheckTargetsFromLatestProvisionArtifact(t *testing.T) {
 	if cfg.Domains.VideoCloud != "vc.example.test" || cfg.Domains.AccountManager != "am.example.test" || cfg.Domains.CloudAdmin != "admin.example.test" {
 		t.Fatalf("domains not loaded: %+v", cfg.Domains)
 	}
-	if cfg.Targets["edge"].Host != "203.0.113.5" {
-		t.Fatalf("did not use latest provision target: %+v", cfg.Targets["edge"])
+	if cfg.Targets["edge"].Host != "203.0.113.15" {
+		t.Fatalf("did not use current video state target: %+v", cfg.Targets["edge"])
 	}
-	if cfg.Targets["api"].ProxyJump != "root@203.0.113.5" {
+	if cfg.Targets["coturn"].Host != "203.0.113.99" {
+		t.Fatalf("coturn target should use current video state over stale provision artifact: %+v", cfg.Targets["coturn"])
+	}
+	if cfg.Targets["api"].ProxyJump != "root@203.0.113.15" {
 		t.Fatalf("api ProxyJump missing: %+v", cfg.Targets["api"])
 	}
 	if cfg.Targets["account-manager"].Host != "198.51.100.50" {
