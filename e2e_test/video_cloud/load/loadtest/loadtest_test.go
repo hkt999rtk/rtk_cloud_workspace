@@ -1698,6 +1698,7 @@ func TestDeviceWebRTCMediaAnswererSubmitsAnswer(t *testing.T) {
 
 func TestRunnerWebRTCMediaUsesPerDeviceAppTokens(t *testing.T) {
 	seen := map[string]string{}
+	expiries := map[string]float64{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/request_webrtc" {
 			http.NotFound(w, r)
@@ -1709,6 +1710,8 @@ func TestRunnerWebRTCMediaUsesPerDeviceAppTokens(t *testing.T) {
 		}
 		devid, _ := body["devid"].(string)
 		seen[devid] = r.Header.Get("Authorization")
+		expiry, _ := body["expiry"].(float64)
+		expiries[devid] = expiry
 		http.Error(w, `{"status":"fail","reason":"stop after auth capture"}`, http.StatusBadRequest)
 	}))
 	defer server.Close()
@@ -1740,6 +1743,9 @@ func TestRunnerWebRTCMediaUsesPerDeviceAppTokens(t *testing.T) {
 	}
 	if seen["load-device-0"] != "Bearer app-token-0" || seen["load-device-1"] != "Bearer app-token-1" {
 		t.Fatalf("request_webrtc auth headers = %#v, want per-device app tokens", seen)
+	}
+	if expiries["load-device-0"] < 300 || expiries["load-device-1"] < 300 {
+		t.Fatalf("request_webrtc expiry = %#v, want at least 300 seconds for relay AV media", expiries)
 	}
 }
 
@@ -1882,6 +1888,166 @@ func TestRunnerWebRTCMediaAnswersServerOfferAndSendsSyntheticRTP(t *testing.T) {
 	}
 }
 
+func TestRunnerWebRTCMediaServerOfferUsesDeviceWebSocketActor(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	answerAuth := make(chan string, 1)
+	var mu sync.Mutex
+	var wsConn net.Conn
+	sessions := map[string]*PionMediaOfferSession{}
+	defer func() {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, session := range sessions {
+			session.Close()
+		}
+		if wsConn != nil {
+			_ = wsConn.Close()
+		}
+	}()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/ws/device":
+			hijacker, ok := w.(http.Hijacker)
+			if !ok {
+				t.Fatal("response writer does not support hijack")
+			}
+			conn, _, err := hijacker.Hijack()
+			if err != nil {
+				t.Fatalf("hijack: %v", err)
+			}
+			mu.Lock()
+			wsConn = conn
+			mu.Unlock()
+			_, _ = fmt.Fprintf(conn, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: test\r\n\r\n")
+		case "/api/request_webrtc":
+			sessionID := "server-offer-ws-session-1"
+			offerSession, err := NewPionMediaOfferSessionForSet(ctx, WebRTCMediaSetAV, 2*time.Second)
+			if err != nil {
+				t.Fatalf("NewPionMediaOfferSessionForSet: %v", err)
+			}
+			mu.Lock()
+			sessions[sessionID] = offerSession
+			conn := wsConn
+			mu.Unlock()
+			if conn == nil {
+				t.Fatal("websocket owner not connected before request_webrtc")
+			}
+			offer := offerSession.OfferPayload()
+			payload, _ := json.Marshal(map[string]any{
+				"event":      "webrtc_offer",
+				"session_id": sessionID,
+				"offer":      offer,
+				"ice_servers": []map[string]any{{
+					"urls": []string{"stun:stun.example.test:3478"},
+				}},
+				"data": map[string]any{
+					"session_id": sessionID,
+					"offer":      offer,
+					"ice_servers": []map[string]any{{
+						"urls": []string{"stun:stun.example.test:3478"},
+					}},
+				},
+			})
+			if err := writeWebSocketFrame(conn, 1, payload); err != nil {
+				t.Fatalf("write websocket offer: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":      "ok",
+				"mode":        "webrtc",
+				"devid":       "load-device-0",
+				"session_id":  sessionID,
+				"offer":       offer,
+				"ice_servers": []map[string]any{{"urls": []string{"stun:stun.example.test:3478"}}},
+			})
+		case "/api/request_webrtc/answer":
+			answerAuth <- r.Header.Get("Authorization")
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode request_webrtc answer: %v", err)
+			}
+			sessionID, _ := body["session_id"].(string)
+			mu.Lock()
+			offerSession := sessions[sessionID]
+			mu.Unlock()
+			if offerSession == nil {
+				t.Fatalf("unknown session id: %s", sessionID)
+			}
+			answer := mapStringAnyToStringMap(body["answer"].(map[string]any))
+			if err := offerSession.SetRemoteAnswer(answer); err != nil {
+				t.Fatalf("SetRemoteAnswer: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "session_id": sessionID})
+		case "/api/request_webrtc/close":
+			mu.Lock()
+			offerSession := sessions["server-offer-ws-session-1"]
+			mu.Unlock()
+			if offerSession == nil {
+				t.Fatal("missing offer session on close")
+			}
+			stats := offerSession.Snapshot()
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "ok",
+				"media": map[string]any{
+					"packets_received": stats.PacketsReceived,
+					"bytes_received":   stats.BytesReceived,
+					"h264_packets":     stats.H264Packets,
+					"h264_sha256":      stats.H264SHA256,
+					"h264_bytes":       stats.H264Bytes,
+					"nal_types":        stats.NALTypes,
+					"opus_sha256":      stats.OpusSHA256,
+					"opus_bytes":       stats.OpusBytes,
+					"opus_packets":     stats.OpusPackets,
+					"opus_frames":      stats.OpusFrames,
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	result, err := NewRunner(server.Client()).Run(ctx, Config{
+		Profile:             ProfileSmoke,
+		APIURL:              server.URL,
+		Actors:              ActorDevice + "," + ActorViewer,
+		AccountToken:        "app-token",
+		DeviceToken:         "device-token",
+		WebRTCMediaSet:      WebRTCMediaSetAV,
+		WebRTCMediaDuration: 200 * time.Millisecond,
+		RunID:               "run-media-server-offer-ws",
+		InstanceID:          "instance-media-server-offer-ws",
+		DevicePrefix:        "load-device",
+		Duration:            time.Nanosecond,
+		VirtualDevices:      1,
+		VirtualViewers:      1,
+		Iterations:          1,
+		HTTPTimeout:         5 * time.Second,
+		DeviceOnlineMode:    DeviceOnlineModeWebSocket,
+		DeviceRouteSet:      DeviceRouteSetOff,
+		Thresholds:          Thresholds{MinSuccessRate: 1, RequireCoverageMatrix: true},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := <-answerAuth; got != "Bearer device-token" {
+		t.Fatalf("answer Authorization = %q, want device token", got)
+	}
+	if op := operationByName(result.Operations, "webrtc_media_offer_receive"); !op.Success || op.Actor != ActorDevice {
+		t.Fatalf("offer receive op = %#v, want successful device actor", op)
+	}
+	answer := operationByName(result.Operations, "webrtc_media_answer")
+	if !answer.Success || answer.Actor != ActorDevice {
+		t.Fatalf("answer op = %#v, want successful device actor", answer)
+	}
+	receive := operationByName(result.Operations, "webrtc_media_receive")
+	if !receive.Success || !strings.Contains(receive.Evidence, "video_receiver_bitstream_match=true") || !strings.Contains(receive.Evidence, "audio_payload_match=true") {
+		t.Fatalf("receive op = %#v, want AV receiver hash match", receive)
+	}
+}
+
 func TestRunnerWebRTCMediaServerOfferFailsWithoutReceiverBitstreamStats(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
@@ -1990,6 +2156,18 @@ func TestAVReceiverCompareFailsWithoutAudioPayloadStats(t *testing.T) {
 	}
 	if !strings.Contains(op.Evidence, "video_receiver_bitstream_match=true") || !strings.Contains(op.Evidence, "audio_payload_match=false") {
 		t.Fatalf("receive evidence should show video matched but audio failed: %s", op.Evidence)
+	}
+}
+
+func TestWebRTCMediaDrainDelayAllowsInFlightRelayPackets(t *testing.T) {
+	if got := webRTCMediaDrainDelay(20 * time.Second); got != 2*time.Second {
+		t.Fatalf("20s media drain delay = %s, want 2s", got)
+	}
+	if got := webRTCMediaDrainDelay(200 * time.Millisecond); got != 20*time.Millisecond {
+		t.Fatalf("short media drain delay = %s, want 20ms", got)
+	}
+	if got := webRTCMediaDrainDelay(0); got != 0 {
+		t.Fatalf("disabled media drain delay = %s, want 0", got)
 	}
 }
 

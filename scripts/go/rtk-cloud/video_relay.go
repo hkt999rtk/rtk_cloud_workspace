@@ -463,7 +463,7 @@ func buildVideoRelayRunnerArgs(cfg videoRelayRunnerConfig) ([]string, string, er
 		"--virtual-devices", strconv.Itoa(len(cfg.DeviceIDs)),
 		"--virtual-viewers", strconv.Itoa(len(cfg.DeviceIDs)),
 		"--iterations", "1",
-		"--duration", strconv.Itoa(cfg.DurationSeconds) + "s",
+		"--duration", "5s",
 		"--api-url", cfg.APIURL,
 		"--device-token-map-file", cfg.DeviceTokenMapFile,
 		"--app-token-map-file", cfg.AppTokenMapFile,
@@ -1140,15 +1140,15 @@ type videoRelayTokenResponse struct {
 }
 
 func requestVideoRelayDeviceToken(apiBaseURL string, cert tls.Certificate) (string, error) {
-	resp, err := requestVideoRelayToken(apiBaseURL, cert, map[string]string{"scope": "device"})
+	resp, err := requestVideoRelayToken(apiBaseURL, cert, map[string]any{"scope": "device", "expiry": 300})
 	return resp.AccessToken, err
 }
 
 func requestVideoRelayAppToken(apiBaseURL string, cert tls.Certificate, deviceID string) (videoRelayTokenResponse, error) {
-	return requestVideoRelayToken(apiBaseURL, cert, map[string]string{"scope": "app", "devid": deviceID})
+	return requestVideoRelayToken(apiBaseURL, cert, map[string]any{"scope": "app", "devid": deviceID, "expiry": 300})
 }
 
-func requestVideoRelayToken(apiBaseURL string, cert tls.Certificate, payload map[string]string) (videoRelayTokenResponse, error) {
+func requestVideoRelayToken(apiBaseURL string, cert tls.Certificate, payload map[string]any) (videoRelayTokenResponse, error) {
 	apiBaseURL = strings.TrimRight(strings.TrimSpace(apiBaseURL), "/")
 	if apiBaseURL == "" {
 		return videoRelayTokenResponse{}, errors.New("missing video cloud API URL")

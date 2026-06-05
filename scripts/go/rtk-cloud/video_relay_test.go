@@ -81,6 +81,9 @@ func TestVideoRelayBuildsRunnerArgsWithoutLeakingTokens(t *testing.T) {
 	if !strings.Contains(joined, "--webrtc-media-duration") || !strings.Contains(joined, "20s") {
 		t.Fatalf("runner args missing 20s WebRTC media duration: %v", args)
 	}
+	if !strings.Contains(joined, "--duration") || !strings.Contains(joined, "5s") {
+		t.Fatalf("runner args should use short smoke scheduling duration so tokens do not expire before later devices: %v", args)
+	}
 	if !strings.Contains(joined, "--device-route-set") || !strings.Contains(joined, "off") {
 		t.Fatalf("runner args should disable legacy device HTTP route coverage: %v", args)
 	}
@@ -269,17 +272,18 @@ func TestVideoRelayReadsCurrentUsersArtifactShape(t *testing.T) {
 }
 
 func TestVideoRelayTokenRequestsUseExpectedScopes(t *testing.T) {
-	seen := []map[string]string{}
+	seen := []map[string]any{}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/request_token" {
 			t.Fatalf("path = %s, want /request_token", r.URL.Path)
 		}
-		var body map[string]string
+		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
 		seen = append(seen, body)
-		_, _ = w.Write([]byte(`{"scope":"` + body["scope"] + `","access_token":"token-` + body["scope"] + `"}`))
+		scope, _ := body["scope"].(string)
+		_, _ = w.Write([]byte(`{"scope":"` + scope + `","access_token":"token-` + scope + `"}`))
 	}))
 	defer server.Close()
 
@@ -297,6 +301,9 @@ func TestVideoRelayTokenRequestsUseExpectedScopes(t *testing.T) {
 	}
 	if len(seen) != 2 || seen[0]["scope"] != "device" || seen[1]["scope"] != "app" || seen[1]["devid"] != "cam-1" {
 		t.Fatalf("seen token requests = %#v", seen)
+	}
+	if seen[0]["expiry"] != float64(300) || seen[1]["expiry"] != float64(300) {
+		t.Fatalf("token requests should ask for numeric 300s TTL, got %#v", seen)
 	}
 }
 
