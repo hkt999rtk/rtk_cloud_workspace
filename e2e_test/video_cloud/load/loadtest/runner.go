@@ -895,7 +895,7 @@ func (r *Runner) listenDeviceTransportMessages(ctx context.Context, cfg Config, 
 					Name:     "webrtc_media_offer_receive",
 					DeviceID: deviceID,
 					Success:  true,
-					Evidence: fmt.Sprintf("session_id_present=%t offer_present=%t candidate_types=%s", msg.SessionID != "", msg.Offer["sdp"] != "", strings.Join(candidateTypesFromSDP(msg.Offer["sdp"]), ",")),
+					Evidence: fmt.Sprintf("session_id=%s session_id_present=%t offer_present=%t candidate_types=%s", msg.SessionID, msg.SessionID != "", msg.Offer["sdp"] != "", strings.Join(candidateTypesFromSDP(msg.Offer["sdp"]), ",")),
 				})
 				ops, cleanup := r.answerWebRTCMediaOffer(ctx, cfg, deviceID, msg)
 				cleanups = append(cleanups, cleanup)
@@ -923,7 +923,37 @@ func (r *Runner) listenDeviceTransportMessages(ctx context.Context, cfg Config, 
 				record(r.uploadRecordingClip(ctx, cfg, deviceID))
 			}
 		}
+		record(Operation{
+			Actor:    ActorDevice,
+			Name:     "device_websocket_text_unhandled",
+			DeviceID: deviceID,
+			Success:  true,
+			Evidence: summarizeUnhandledWebSocketTextFrame(payload),
+		})
 	}
+}
+
+func summarizeUnhandledWebSocketTextFrame(payload []byte) string {
+	var envelope map[string]any
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		return fmt.Sprintf("json=false bytes=%d", len(payload))
+	}
+	parts := []string{"json=true"}
+	if event, _ := envelope["event"].(string); event != "" {
+		parts = append(parts, "event="+redactDetail(event))
+	}
+	if typ, _ := envelope["type"].(string); typ != "" {
+		parts = append(parts, "type="+redactDetail(typ))
+	}
+	if data, _ := envelope["data"].(map[string]any); len(data) > 0 {
+		keys := make([]string, 0, len(data))
+		for key := range data {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		parts = append(parts, "data_keys="+strings.Join(keys, ","))
+	}
+	return strings.Join(parts, " ")
 }
 
 type recordingCommandMessage struct {
@@ -1069,20 +1099,54 @@ func readWebSocketFrame(r io.Reader) ([]byte, byte, error) {
 	if _, err := io.ReadFull(r, header); err != nil {
 		return nil, 0, err
 	}
+	fin := header[0]&0x80 != 0
 	opcode := header[0] & 0x0f
-	masked := header[1]&0x80 != 0
-	length := int64(header[1] & 0x7f)
+	payload, err := readWebSocketFramePayload(r, header[1])
+	if err != nil {
+		return nil, 0, err
+	}
+	if opcode == 8 {
+		return payload, opcode, io.EOF
+	}
+	if fin || (opcode != 1 && opcode != 2) {
+		return payload, opcode, nil
+	}
+	message := append([]byte{}, payload...)
+	for !fin {
+		if _, err := io.ReadFull(r, header); err != nil {
+			return nil, 0, err
+		}
+		fin = header[0]&0x80 != 0
+		nextOpcode := header[0] & 0x0f
+		nextPayload, err := readWebSocketFramePayload(r, header[1])
+		if err != nil {
+			return nil, 0, err
+		}
+		if nextOpcode == 8 {
+			return nextPayload, nextOpcode, io.EOF
+		}
+		if nextOpcode != 0 {
+			return nil, 0, fmt.Errorf("unexpected websocket continuation opcode %d", nextOpcode)
+		}
+		message = append(message, nextPayload...)
+	}
+	return message, opcode, nil
+}
+
+func readWebSocketFramePayload(r io.Reader, lengthByte byte) ([]byte, error) {
+	masked := lengthByte&0x80 != 0
+	length := int64(lengthByte & 0x7f)
 	switch length {
 	case 126:
 		extended := []byte{0, 0}
 		if _, err := io.ReadFull(r, extended); err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		length = int64(extended[0])<<8 | int64(extended[1])
 	case 127:
 		extended := make([]byte, 8)
 		if _, err := io.ReadFull(r, extended); err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		length = 0
 		for _, b := range extended {
@@ -1092,22 +1156,19 @@ func readWebSocketFrame(r io.Reader) ([]byte, byte, error) {
 	var mask [4]byte
 	if masked {
 		if _, err := io.ReadFull(r, mask[:]); err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 	}
 	payload := make([]byte, length)
 	if _, err := io.ReadFull(r, payload); err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	if masked {
 		for i := range payload {
 			payload[i] ^= mask[i%4]
 		}
 	}
-	if opcode == 8 {
-		return payload, opcode, io.EOF
-	}
-	return payload, opcode, nil
+	return payload, nil
 }
 
 func writeWebSocketFrame(w io.Writer, opcode byte, payload []byte) error {
@@ -2741,7 +2802,8 @@ func (r *Runner) completeServerOfferWebRTCMedia(ctx context.Context, cfg Config,
 
 func (r *Runner) completeDeviceOwnerWebRTCMedia(ctx context.Context, cfg Config, deviceID, viewerID string, response map[string]any) []Operation {
 	sessionID := responseString(response, "session_id")
-	waitCtx, cancel := context.WithTimeout(ctx, cfg.HTTPTimeout+cfg.WebRTCMediaDuration+webRTCMediaDrainDelay(cfg.WebRTCMediaDuration))
+	waitTimeout := 2*cfg.HTTPTimeout + defaultWebRTCMediaSettle + cfg.WebRTCMediaDuration + webRTCMediaDrainDelay(cfg.WebRTCMediaDuration)
+	waitCtx, cancel := context.WithTimeout(ctx, waitTimeout)
 	defer cancel()
 	result, err := r.mediaCoord.wait(waitCtx, sessionID)
 	if err != nil {
@@ -3091,9 +3153,11 @@ func summarizeWebRTCResponseEvidence(response map[string]any) string {
 	}
 	mode, _ := response["mode"].(string)
 	candidateTypes := strings.Join(extractOfferCandidateTypes(response), ",")
-	return fmt.Sprintf("webrtc_response mode=%s session_id_present=%t ice_servers=%d offer_present=%t answer_present=%t candidate_types=%s",
+	sessionID := responseString(response, "session_id")
+	return fmt.Sprintf("webrtc_response mode=%s session_id=%s session_id_present=%t ice_servers=%d offer_present=%t answer_present=%t candidate_types=%s",
 		mode,
-		responseString(response, "session_id") != "",
+		sessionID,
+		sessionID != "",
 		iceCount,
 		response["offer"] != nil,
 		response["answer"] != nil,
@@ -3673,9 +3737,17 @@ func summarizeMQTTIoT(operations []Operation, duration time.Duration) map[string
 }
 
 func summarizeOperationsByName(operations []Operation, name string, duration time.Duration) ActorMetrics {
+	return summarizeOperationsByNames(operations, duration, name)
+}
+
+func summarizeOperationsByNames(operations []Operation, duration time.Duration, names ...string) ActorMetrics {
+	wanted := map[string]bool{}
+	for _, name := range names {
+		wanted[name] = true
+	}
 	filtered := make([]Operation, 0)
 	for _, op := range operations {
-		if op.Name == name {
+		if wanted[op.Name] {
 			filtered = append(filtered, op)
 		}
 	}
@@ -3721,7 +3793,7 @@ func summarizeWebRTC(operations []Operation, duration time.Duration) WebRTCMetri
 	metrics.SetupLatencyP99MS = percentile(latencies, 99)
 	metrics.Create = summarizeOperationsByName(operations, "request_webrtc_create", duration)
 	metrics.Setup = summarizeOperationsByName(operations, "webrtc_setup", duration)
-	metrics.Close = summarizeOperationsByName(operations, "request_webrtc_close", duration)
+	metrics.Close = summarizeOperationsByNames(operations, duration, "request_webrtc_close", "webrtc_media_close")
 	metrics.OpenSessions = metrics.Create.Successes - metrics.Close.Successes
 	if metrics.OpenSessions < 0 {
 		metrics.OpenSessions = 0

@@ -124,6 +124,63 @@ func TestRunnerSimulatesActorsAndClosesWebRTCSessions(t *testing.T) {
 	}
 }
 
+func TestSummarizeUnhandledWebSocketTextFrameRedactsBody(t *testing.T) {
+	body := []byte(`{"event":"webrtc_offer","data":{"session_id":"s1","offer":{"type":"offer","sdp":"SECRET-SDP"},"ice_servers":[{"username":"turn-user","credential":"turn-pass"}]}}`)
+
+	got := summarizeUnhandledWebSocketTextFrame(body)
+
+	for _, want := range []string{"event=webrtc_offer", "data_keys=ice_servers,offer,session_id"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("summary missing %q: %s", want, got)
+		}
+	}
+	for _, leaked := range []string{"SECRET-SDP", "turn-user", "turn-pass"} {
+		if strings.Contains(got, leaked) {
+			t.Fatalf("summary leaked %q: %s", leaked, got)
+		}
+	}
+}
+
+func TestReadWebSocketFrameAssemblesFragmentedTextMessage(t *testing.T) {
+	var stream bytes.Buffer
+	writeServerFrameFragment(t, &stream, false, 1, []byte(`{"event":"webrtc_`))
+	writeServerFrameFragment(t, &stream, true, 0, []byte(`offer","data":{"session_id":"s1"}}`))
+
+	payload, opcode, err := readWebSocketFrame(&stream)
+	if err != nil {
+		t.Fatalf("readWebSocketFrame() error = %v", err)
+	}
+	if opcode != 1 {
+		t.Fatalf("opcode = %d, want text", opcode)
+	}
+	if got := string(payload); got != `{"event":"webrtc_offer","data":{"session_id":"s1"}}` {
+		t.Fatalf("payload = %q", got)
+	}
+}
+
+func writeServerFrameFragment(t *testing.T, w io.Writer, fin bool, opcode byte, payload []byte) {
+	t.Helper()
+	first := opcode & 0x0f
+	if fin {
+		first |= 0x80
+	}
+	header := []byte{first}
+	switch {
+	case len(payload) < 126:
+		header = append(header, byte(len(payload)))
+	case len(payload) <= 0xffff:
+		header = append(header, 126, byte(len(payload)>>8), byte(len(payload)))
+	default:
+		t.Fatalf("test payload too large: %d", len(payload))
+	}
+	if _, err := w.Write(header); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRunnerFiltersDeviceActorOnly(t *testing.T) {
 	called := map[string]int{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2661,6 +2718,21 @@ func TestBuildResultFailsFunctionalGateOnPartialWebRTCMedia(t *testing.T) {
 		if !strings.Contains(md, want) {
 			t.Fatalf("markdown missing %q:\n%s", want, md)
 		}
+	}
+}
+
+func TestBuildResultCountsWebRTCMediaCloseAsClosedSession(t *testing.T) {
+	started := time.Date(2026, 5, 9, 5, 33, 0, 0, time.UTC)
+	result := BuildResult(Config{}, started, started.Add(time.Second), []Operation{
+		{Actor: ActorViewer, Name: "request_webrtc_create", DeviceID: "device-1", ViewerID: "viewer-1", Success: true},
+		{Actor: ActorViewer, Name: "webrtc_media_close", DeviceID: "device-1", ViewerID: "viewer-1", Success: true},
+	})
+
+	if result.WebRTC.Close.Successes != 1 {
+		t.Fatalf("webrtc close successes = %d, want 1", result.WebRTC.Close.Successes)
+	}
+	if result.WebRTC.OpenSessions != 0 {
+		t.Fatalf("open sessions = %d, want 0", result.WebRTC.OpenSessions)
 	}
 }
 

@@ -697,6 +697,8 @@ func buildVideoRelaySignalingTrace(summary videoRelayLoadSummary) []videoRelayTr
 
 func videoRelayTraceEventForOperation(op videoRelayLoadOperation) (string, string, bool) {
 	switch op.Name {
+	case "request_webrtc_create":
+		return "request_webrtc_response", "video_cloud_to_viewer", true
 	case "webrtc_media_offer":
 		return "viewer_local_offer_created", "local", true
 	case "webrtc_media_answer":

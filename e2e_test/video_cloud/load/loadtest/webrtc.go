@@ -22,6 +22,8 @@ import (
 	"github.com/pion/webrtc/v3/pkg/media/h264reader"
 )
 
+const defaultWebRTCMediaSettle = time.Second
+
 type WebRTCValidation struct {
 	ICEServerCount int
 }
@@ -477,6 +479,9 @@ func (s *PionMediaAnswerSession) SendH264RTP(ctx context.Context, duration time.
 	if err := s.waitICEConnected(ctx); err != nil {
 		return H264RTPPlan{}, err
 	}
+	if err := waitWebRTCMediaSettle(ctx); err != nil {
+		return H264RTPPlan{}, err
+	}
 	plan, err := buildH264MediaPlan(duration)
 	if err != nil {
 		return H264RTPPlan{}, err
@@ -486,6 +491,9 @@ func (s *PionMediaAnswerSession) SendH264RTP(ctx context.Context, duration time.
 
 func (s *PionMediaAnswerSession) SendAVRTP(ctx context.Context, duration time.Duration) (AVRTPEvidence, error) {
 	if err := s.waitICEConnected(ctx); err != nil {
+		return AVRTPEvidence{}, err
+	}
+	if err := waitWebRTCMediaSettle(ctx); err != nil {
 		return AVRTPEvidence{}, err
 	}
 	videoPlan, err := buildH264MediaPlan(duration)
@@ -511,6 +519,17 @@ func (s *PionMediaAnswerSession) SendAVRTP(ctx context.Context, duration time.Du
 		}
 	}
 	return AVRTPEvidence{Video: videoPlan.Evidence, Audio: audioPlan.Evidence}, nil
+}
+
+func waitWebRTCMediaSettle(ctx context.Context) error {
+	timer := time.NewTimer(defaultWebRTCMediaSettle)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (s *PionMediaAnswerSession) waitICEConnected(ctx context.Context) error {
