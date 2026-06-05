@@ -143,6 +143,35 @@ func TestServiceLogLevelsRejectInvalidValues(t *testing.T) {
 	}
 }
 
+func TestEMQXVerboseTraceFlagDefaultsOff(t *testing.T) {
+	if emqxVerboseTraceEnabled(map[string]string{}) {
+		t.Fatalf("EMQX verbose trace enabled by default")
+	}
+	if emqxVerboseTraceEnabled(map[string]string{"CLOUD_LOGGER_EMQX_VERBOSE_TRACE": "false"}) {
+		t.Fatalf("EMQX verbose trace enabled for false")
+	}
+	if !emqxVerboseTraceEnabled(map[string]string{"CLOUD_LOGGER_EMQX_VERBOSE_TRACE": "true"}) {
+		t.Fatalf("EMQX verbose trace disabled for true")
+	}
+}
+
+func TestLoggerEMQXForwarderInstallScriptConfiguresBrokerTrace(t *testing.T) {
+	script := loggerEMQXForwarderInstallScript("https://logger.example.com", "secret-token", "203.0.113.99", "http://10.42.1.10:3128", "ci")
+	for _, want := range []string{
+		"RTK_CLOUD_LOGGER_INGEST_URL=https://logger.example.com/v1/logs/ingest",
+		"RTK_CLOUD_LOGGER_EMQX_DOCKER_CONTAINER=video-cloud-emqx",
+		"RTK_CLOUD_LOGGER_CURSOR=/var/lib/rtk-cloud-logger/emqx-docker.cursor",
+		"SERVICE=emqx-broker",
+		"ENV=ci",
+		"rtk-cloud-emqx-log-forwarder.service",
+		"HTTP_PROXY=http://10.42.1.10:3128",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("EMQX forwarder install script missing %q:\n%s", want, script)
+		}
+	}
+}
+
 func TestLoggerForwarderTargetsUseStagingSystemdUnits(t *testing.T) {
 	root := t.TempDir()
 	paths := provisionPaths{
