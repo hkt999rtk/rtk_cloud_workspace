@@ -466,10 +466,10 @@ Response:
 }
 ```
 
-Data source: new stream session event log in rtk_video_cloud, recording each
-`/request_stream` and `/api/request_webrtc` call outcome (success/failure,
-mode, duration). rtk_video_cloud must expose a query API or push aggregated
-facts to rtk_cloud_admin.
+Data source: stream session event log in rtk_video_cloud, recording WebRTC
+session outcomes from `/api/request_webrtc` and related answer/close paths.
+rtk_video_cloud exposes the WebRTC-only aggregate query API consumed by
+rtk_cloud_admin.
 
 ### `GET /api/devices/{id}/telemetry`
 

@@ -4,7 +4,7 @@ Status: supporting-note.
 
 Owner: `rtk_cloud_workspace`.
 
-Last reviewed: 2026-05-07.
+Last reviewed: 2026-06-06.
 
 ## Purpose
 
@@ -33,12 +33,12 @@ Normative and primary sources:
 
 | Repository | Commit | Evidence summary |
 | --- | --- | --- |
-| `repos/rtk_cloud_contracts_doc` | `273ef4b` | Product readiness, telemetry insights, metrics export, firmware campaign, frontend style, onboarding, PKI/mTLS, and TURN registry contracts are present. |
-| `repos/rtk_account_manager` | `b121676` | Evaluation-tier signup, account lifecycle, quota workflow, fleet registry, provisioning, Claim Token resolve, registry-only readiness, private-cloud runbook, and readiness smoke evidence are present. |
-| `repos/rtk_video_cloud` | `39942d8` | Firmware campaign, telemetry ingestion, fleet health, metric exporter, cert issuer, PKI/mTLS, TURN registry, EMQX, and deployment assets are present. |
-| `repos/rtk_cloud_client` | `746d7bf` | Firmware campaign helpers, telemetry helpers, Go SDK, Android/iOS PKI work, sample apps, Pro2 lifecycle/media work, coverage export docs, and live-lab validation tooling are present. |
-| `repos/rtk_cloud_admin` | `7c452f5` | Admin dashboard has self-service signup UI, fleet health, stream health, firmware/OTA, device telemetry, platform/customer views, upstream account/video proxy paths, demo/cache mode, and private-cloud deployment profile. |
-| `repos/rtk_cloud_frontend` | `6bcc5bd` | Public website has privacy-friendly analytics, multilingual content, manual pages, business model disclosure, private cloud content, OTA policy promotion, and SDK sample ecosystem content. |
+| `repos/rtk_cloud_contracts_doc` | `22c3eee` | Product readiness, telemetry insights, metrics export, firmware campaign, frontend style, onboarding, PKI/mTLS, TURN registry, and WebRTC-only contracts are present. |
+| `repos/rtk_account_manager` | `796988e` | Evaluation-tier signup, account lifecycle, quota workflow, fleet registry, provisioning, Claim Token resolve, registry-only readiness, app-certificate bootstrap, private-cloud runbook, and readiness smoke evidence are present. |
+| `repos/rtk_video_cloud` | `972a0f5` | Firmware campaign, telemetry ingestion, fleet health, stream stats, per-device telemetry, metric exporter, cert issuer, PKI/mTLS, TURN registry, EMQX, WebRTC-only backend path, canonical local reports, and deployment assets are present. |
+| `repos/rtk_cloud_client` | `7f06f49` | Firmware campaign helpers, telemetry helpers, Go SDK, Android/iOS PKI work, sample apps, Pro2 lifecycle/media work, coverage export docs, and live-lab validation tooling are present. |
+| `repos/rtk_cloud_admin` | `7f14fca` | Admin dashboard has self-service signup UI, fleet health, stream health, firmware/OTA, device telemetry, platform/customer views, upstream account/video proxy paths, demo/cache mode, production source unavailable states, and private-cloud deployment profile. |
+| `repos/rtk_cloud_frontend` | `39d5bb4` | Public website has privacy-friendly analytics, multilingual content, manual pages, business model disclosure, private cloud content, OTA policy promotion, and SDK sample ecosystem content. |
 
 ## Current Gap Status Summary
 
@@ -50,11 +50,11 @@ Normative and primary sources:
 | Account lifecycle baseline | Implemented for signup, email verification, forgot/reset password, password change, self-service disable/delete, and evaluation quota. | Third-party/social login remains deferred and is not part of this foundation batch. | `rtk_account_manager` |
 | Brand-cloud backend management | Implemented for backend foundation. | Account Manager owns `organization_kind=brand_cloud`, platform-admin create/list/read/update/member APIs, bootstrap root, and audit; Admin owns backend/BFF proxy routes only. WebUI remains future work. | `rtk_account_manager`, `rtk_cloud_admin` |
 | PKI/mTLS server-side | Implemented. | Latest video cloud and contracts cover verified device mTLS, certificate revocation, and `/api/device/renew_certificate`; do not duplicate old PKI issue work. | `rtk_video_cloud`, `rtk_cloud_contracts_doc` |
-| WebRTC-only streaming migration | Planned breaking cleanup. | Product direction is WebRTC Video over TURN only. Legacy `/request_stream`, RTSP relay, legacy video relay, and `rtsp` scope are removal targets tracked in `docs/webrtc-only-streaming-migration.md`. | `rtk_cloud_contracts_doc`, `rtk_video_cloud`, `rtk_cloud_client`, `rtk_cloud_admin`, `rtk_cloud_frontend`, `rtk_cloud_workspace` |
+| WebRTC-only streaming migration | Implemented for active backend/product paths; historical references remain as migration evidence. | Product direction is WebRTC Video over TURN only. Active backend validation uses `/api/request_webrtc`, WebRTC/TURN, TURN registry, fleet stream stats, and telemetry paths. Legacy `/request_stream`, RTSP relay, legacy video relay, and `rtsp` scope must remain absent from active runtime surfaces. | `rtk_cloud_contracts_doc`, `rtk_video_cloud`, `rtk_cloud_client`, `rtk_cloud_admin`, `rtk_cloud_frontend`, `rtk_cloud_workspace` |
 | TURN registry | Implemented for foundation scope and retained. | Latest video cloud has TURN registry runtime/docs and contracts describe `/v1/turn/nodes/*` as service/operator control-plane routes for WebRTC ICE server selection. | `rtk_video_cloud`, `rtk_cloud_contracts_doc` |
 | Private cloud packaging | Partial. | Account manager, admin dashboard, video cloud, and workspace have runbooks/evidence foundations; frontend production backup/restore depth and production operations polish remain. | multiple |
-| Product readiness evidence | Partial. | Account-side readiness smoke and workspace aggregation exist; admin production-mode upstream fact precedence remains owner-repo work. | `rtk_cloud_admin` |
-| Release validation | Implemented for documentation/tooling foundation. | Coverage export and Pro2 live-lab tooling/report templates exist; actual live evidence still depends on release-candidate environment and hardware availability. | `rtk_cloud_client` |
+| Product readiness evidence | Implemented for local backend foundation; live deployment evidence remains environment-owned. | Account-side readiness smoke, workspace aggregation, video-cloud telemetry/fleet endpoints, and admin production proxy/unavailable states exist. Staging and hardware sign-off must be recorded as explicit `PASS` or `SKIP` evidence in owner reports. | multiple |
+| Release validation | Implemented for documentation/tooling foundation and local backend closeout. | Video Cloud canonical reports now record local backend validation with explicit live staging, hardware, packaging, and cutover skips. Actual live evidence still depends on release-candidate environment and hardware availability. | `rtk_video_cloud`, `rtk_cloud_client` |
 
 ## Foundation Issues To Open
 
