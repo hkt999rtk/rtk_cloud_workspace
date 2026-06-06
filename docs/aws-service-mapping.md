@@ -117,7 +117,28 @@ Likely AWS line items:
 Use this profile for a managed-service cost comparison. Do not treat it as a
 drop-in migration plan.
 
-### Profile C: Low-Cost Evaluation Environment
+### Profile C: Robust Redundant Managed AWS Services
+
+This profile keeps the same product traffic assumptions as the first AWS
+baseline but prices redundant infrastructure where the baseline intentionally
+avoids single-failure protection.
+
+Likely AWS line items:
+
+- Two CloudHSMs instead of one HSM.
+- Multi-AZ-style RDS PostgreSQL estimate for the shared account/video database.
+- Two ElastiCache/Valkey cache nodes instead of one node.
+- Two NAT Gateways for two-AZ private subnet routing.
+- Two tasks for each Video Cloud worker service and certissuer/factory
+  enrollment runtime.
+- Camera/WebRTC/TURN and ACM Private CA remain excluded unless a later profile
+  explicitly enables them.
+
+Use this profile for a first robust-production cost comparison after the
+baseline. It improves resilience inside one region, but it is not a multi-region
+disaster-recovery estimate.
+
+### Profile D: Low-Cost Evaluation Environment
 
 This profile approximates the current single-node evaluation setup on AWS.
 

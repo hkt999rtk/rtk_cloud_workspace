@@ -141,6 +141,8 @@ AWS IoT Core calculation:
 | --- | ---: |
 | Base services only, excluding CloudHSM | 1,063.38 USD |
 | Default estimate with one CloudHSM and self-managed certissuer | 2,421.18 USD |
+| Robust redundant design, excluding CloudHSM | 1,497.11 USD |
+| Robust redundant design with two CloudHSMs | 4,212.71 USD |
 
 Per-unit calculation:
 
@@ -150,6 +152,33 @@ Per-unit calculation:
 | Base services per device | 1,063.38 USD / 10,000 devices | 0.11 USD/device-month |
 | Default with CloudHSM per user | 2,421.18 USD / 2,500 users | 0.97 USD/user-month |
 | Default with CloudHSM per device | 2,421.18 USD / 10,000 devices | 0.24 USD/device-month |
+| Robust with CloudHSM per user | 4,212.71 USD / 2,500 users | 1.69 USD/user-month |
+| Robust with CloudHSM per device | 4,212.71 USD / 10,000 devices | 0.42 USD/device-month |
+
+Robust-profile changes:
+
+| Area | Baseline | Robust profile |
+| --- | --- | --- |
+| CloudHSM | 1 HSM | 2 HSMs |
+| RDS PostgreSQL | Single-AZ shared `db.t4g.large` | Multi-AZ-style writer plus standby estimate |
+| ElastiCache/Valkey | 1 `cache.t4g.small` node | 2 `cache.t4g.small` nodes |
+| NAT Gateway | 1 gateway plus 200 GB processed | 2 gateways plus 200 GB processed |
+| Video workers | 1 task per worker service | 2 tasks per worker service |
+| Certissuer/factory enrollment | 1 task | 2 tasks |
+| Camera/WebRTC | Excluded | Excluded |
+| ACM Private CA | Excluded | Excluded |
+
+Robust cost delta:
+
+| Cost area | Baseline | Robust | Delta |
+| --- | ---: | ---: | ---: |
+| ECS Fargate backend services | 539.79 | 719.72 | 179.93 |
+| RDS PostgreSQL | 182.69 | 365.38 | 182.69 |
+| ElastiCache for Valkey | 28.03 | 56.06 | 28.03 |
+| NAT Gateway | 54.87 | 97.94 | 43.07 |
+| CloudHSM | 1,357.80 | 2,715.60 | 1,357.80 |
+| Other baseline items | 257.99 | 257.99 | 0.00 |
+| Total with CloudHSM | 2,421.18 | 4,212.71 | 1,791.53 |
 
 Top 10 monthly cost items:
 
@@ -161,6 +190,21 @@ Top 10 monthly cost items:
 | 4 | AWS IoT Core MQTT plus Shadow | 164.95 |
 | 5 | NAT Gateway | 54.87 |
 | 6 | ElastiCache for Valkey | 28.03 |
+| 7 | CloudWatch Logs | 24.53 |
+| 8 | Application Load Balancer | 24.24 |
+| 9 | Secrets Manager | 20.05 |
+| 10 | Public frontend CloudFront CDN | 12.07 |
+
+Robust top 10 monthly cost items:
+
+| Rank | Cost item | Monthly estimate |
+| ---: | --- | ---: |
+| 1 | CloudHSM, 2 HSMs | 2,715.60 |
+| 2 | ECS Fargate backend services | 719.72 |
+| 3 | RDS PostgreSQL, Multi-AZ-style estimate | 365.38 |
+| 4 | AWS IoT Core MQTT plus Shadow | 164.95 |
+| 5 | NAT Gateway, 2 gateways | 97.94 |
+| 6 | ElastiCache for Valkey, 2 nodes | 56.06 |
 | 7 | CloudWatch Logs | 24.53 |
 | 8 | Application Load Balancer | 24.24 |
 | 9 | Secrets Manager | 20.05 |
@@ -188,7 +232,7 @@ Top 10 monthly cost items:
 ## Cost Drivers
 
 CloudHSM dominates the default estimate. The base application and data plane is
-roughly 0.9k USD/month under the pilot assumptions, while one CloudHSM adds
+roughly 1.1k USD/month under the pilot assumptions, while one CloudHSM adds
 1,357.80 USD/month. Adding a second CloudHSM later would add another
 1,357.80 USD/month at the current collected unit price.
 
