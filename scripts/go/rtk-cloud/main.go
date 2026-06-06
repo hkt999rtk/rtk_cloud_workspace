@@ -2402,9 +2402,13 @@ func accountManagerContextFromFlags(workspaceFlag, envRootFlag string) (accountM
 	accountState := filepath.Join(envRoot, "state", "account-manager-staging.env")
 	platformEnv := filepath.Join(envRoot, "services", "account-manager", "account-manager-platform-admin.env")
 	domain := firstNonEmpty(envFileValue(accountEnv, "ACCOUNT_MANAGER_LINODE_DOMAIN"), "account-manager.video-cloud-staging.realtekconnect.com")
+	baseURL := strings.TrimRight(firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_BASE_URL"), envFileValue(accountEnv, "ACCOUNT_MANAGER_BASE_URL")), "/")
+	if baseURL == "" {
+		baseURL = "https://" + domain
+	}
 	return accountManagerContext{
 		EnvRoot:          envRoot,
-		BaseURL:          "https://" + domain,
+		BaseURL:          baseURL,
 		AdminEmail:       envFileValue(platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL"),
 		AdminPassword:    envFileValue(platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD"),
 		Host:             firstNonEmpty(envFileValue(accountState, "ACCOUNT_MANAGER_LINODE_HOST"), envFileValue(accountState, "ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4")),
@@ -3852,7 +3856,6 @@ func runUnprovisionDevices(args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx.BaseURL = "https://" + firstNonEmpty(envFileValue(firstExistingPath(filepath.Join(envRoot, "services", "account-manager", "account-manager.env"), filepath.Join(envRoot, "services", "account-manager", "account-manager-public-staging.env")), "ACCOUNT_MANAGER_LINODE_DOMAIN"), envFileValue(filepath.Join(envRoot, "env", "stack.env"), "ACCOUNT_MANAGER_DOMAIN"), "account-manager.video-cloud-staging.realtekconnect.com")
 	logUnprovision("workspace=%s", workspace)
 	logUnprovision("env_root=%s", envRoot)
 	logUnprovision("bind_artifact=%s", bindAbs)
