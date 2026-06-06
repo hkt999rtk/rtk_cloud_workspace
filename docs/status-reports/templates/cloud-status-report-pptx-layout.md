@@ -52,13 +52,14 @@ presentation. When recreating the deck, keep this story spine:
 7. Present important numbers as timelines, milestone lanes, readiness visuals,
    or charts before using tables.
 8. Treat security as management controls: STRIDE explainer graphic, PKI trust
-   lifecycle, then cyber-security review progress.
+   lifecycle, HSM/PKCS#11 signer custody boundary, then cyber-security review
+   progress.
 9. Treat Linode health checks, screenshots, and sample flows as status evidence,
    not production or security sign-off.
 
 Do not remove the major-topic map, cloud relationship page, two-cloud
 explanation, schedule path, portal web introduction, STRIDE graphic, PKI page,
-threat-model progress page, Linode evidence pages, or appendix source index
+HSM signer design page, threat-model progress page, Linode evidence pages, or appendix source index
 unless the report owner explicitly changes the framework.
 
 ## Slide Sequence
@@ -66,26 +67,26 @@ unless the report owner explicitly changes the framework.
 | # | Slide | Primary proof object |
 | --- | --- | --- |
 | 1 | Cover / 核心管理訊息 | Master cover background, Realtek logo, core message. |
-| 2 | Career background | One-page presenter background connecting IoT cloud, video relay/storage, and data-driven digital marketing experience. |
-| 3 | 本次報告要先建立共同上下文 | Major topic map: why cloud exists, schedule/release path, portal/sales loop, technical/security design, deployment/cost/support. |
-| 4 | Cloud Relationship / Tenant Structure | Realtek Platform Root -> Brand Cloud -> users/devices diagram. |
-| 5 | Why We Need This Cloud | Business-driver chart plus first-phase priority chart; no long goal list. |
-| 6 | Cloud 是 module product path | Executive summary claims plus product-to-KPI flow. |
-| 7 | Two Cloud Types in This Report | Difference between Operational IoT/Video Cloud and Portal Web / Marketing Cloud. |
-| 8 | Transition：Operational Cloud 目前進度與 8 月路徑 | Topic break before status, schedule, loading test, video gate, and current-vs-production target. |
-| 9 | 目前狀態總結 | Status summary table plus schedule snapshot. |
-| 10 | Schedule Path：May 1 到 Public | Timeline / milestone lane with `目前位置`, Aug.1 loading pass, August alpha, September beta, and public path. |
-| 11 | Loading Test Readiness | Aug.1 50,000-device + 5,000-video-camera readiness matrix. |
-| 12 | Video Schedule Lane | 5,000 video-camera loading-test path to Aug.1. |
-| 13 | Current vs Target Architecture | Current staging vs Production Target, with scaling facility designed in staging and auto scaling reserved for production deployment. |
-| 14 | Transition：Portal Web / Digital Marketing | Chapter title page explaining the switch from operational cloud to marketing/portal cloud. |
-| 15 | Portal Web：市場入口與開發者導流 | Live `webtest.mgmeet.io` screenshot plus why-we-need-it and feature summary. |
-| 16 | Portal Web / Digital Marketing | Observation -> content decision -> sales action -> result/learning loop, with explicit linkage back to IoT module selling. |
-| 17 | Transition：Operational Cloud 技術設計與安全管理 | Topic break before runtime capability, PKI/security, and threat-model evidence. |
-| 18 | WebRTC / Video Storage | WebRTC signaling flow plus video-storage readiness matrix. |
-| 19 | MQTT / Device Shadow | MQTT transport vs IoT shadow state-management table. |
-| 20 | STRIDE：Security implementation 的檢查語言 | Hub-and-spoke STRIDE graphic mapping six threat categories to cloud implementation controls. |
-| 21 | Security / PKI Management | Device trust-chain and security-management matrix. |
+| 2 | 本次報告要先建立共同上下文 | Major topic map: why cloud exists, schedule/release path, portal/sales loop, technical/security design, deployment/cost/support. |
+| 3 | Cloud Relationship / Tenant Structure | Realtek Platform Root -> Brand Cloud -> users/devices diagram. |
+| 4 | Why We Need This Cloud | Business-driver chart plus first-phase priority chart; no long goal list. |
+| 5 | Cloud 是 module product path | Executive summary claims plus product-to-KPI flow. |
+| 6 | Two Cloud Types in This Report | Difference between Operational IoT/Video Cloud and Portal Web / Marketing Cloud. |
+| 7 | Transition：Operational Cloud 目前進度與 8 月路徑 | Topic break before status, schedule, loading test, video gate, and current-vs-production target. |
+| 8 | 目前狀態總結 | Status summary table plus schedule snapshot. |
+| 9 | Schedule Path：May 1 到 Public | Timeline / milestone lane with `目前位置`, Aug.1 loading pass, August alpha, September beta, and public path. |
+| 10 | Loading Test Readiness | Aug.1 50,000-device + 5,000-video-camera readiness matrix. |
+| 11 | Video Schedule Lane | 5,000 video-camera loading-test path to Aug.1. |
+| 12 | Current vs Target Architecture | Current staging vs Production Target, with scaling facility designed in staging and auto scaling reserved for production deployment. |
+| 13 | Transition：Portal Web / Digital Marketing | Chapter title page explaining the switch from operational cloud to marketing/portal cloud. |
+| 14 | Portal Web：市場入口與開發者導流 | Live `webtest.mgmeet.io` screenshot plus why-we-need-it and feature summary. |
+| 15 | Portal Web / Digital Marketing | Observation -> content decision -> sales action -> result/learning loop, with explicit linkage back to IoT module selling. |
+| 16 | Transition：Operational Cloud 技術設計與安全管理 | Topic break before runtime capability, PKI/security, and threat-model evidence. |
+| 17 | WebRTC / Video Storage | WebRTC signaling flow plus video-storage readiness matrix. |
+| 18 | MQTT / Device Shadow | MQTT transport vs IoT shadow state-management table. |
+| 19 | STRIDE：Security implementation 的檢查語言 | Hub-and-spoke STRIDE graphic mapping six threat categories to cloud implementation controls. |
+| 20 | Security / PKI Management | Device trust-chain and security-management matrix. |
+| 21 | HSM / PKCS#11 Signer Design | Key-custody boundary for certissuer and token signing; service gets signing capability, not raw private key material. |
 | 22 | Threat Model / Cyber Security Review | STRIDE risk matrix and next review focus. |
 | 23 | Transition：Deployment、操作流程與 Evidence | Topic break before Linode runtime, health/config boundary, operation screenshots, and SDK flow. |
 | 24 | Linode Staging Runtime Shape | Runtime topology plus component responsibility table. |
@@ -105,10 +106,8 @@ unless the report owner explicitly changes the framework.
 - Apply the non-AI sense writing rules in `../guidelines.md`: avoid formulaic
   contrast sentences such as "這不是 A，而是 B"; write direct management
   claims tied to evidence, risk, or next action.
-- Put one presenter-context page after the cover when the audience may not know
-  the speaker's IoT cloud / video cloud / digital marketing background.
-- Put a major-topic map immediately after presenter context when the report is
-  for leaders who may not already know why the cloud exists.
+- Put a major-topic map immediately after the cover when the report is for
+  leaders who may not already know why the cloud exists.
 - Put one explicit "Why We Need This Cloud" page before detailed module/product
   path slides. Use a business-driver chart and first-phase priority visual;
   highlight PoC onboarding, core runtime services, and demo/sales handoff.

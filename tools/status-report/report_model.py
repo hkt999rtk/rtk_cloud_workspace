@@ -619,7 +619,7 @@ EVIDENCE_INDEX = [
 
 DECK_REQUIRED_TOPICS = [
     "Schedule", "Loading Test", "Cloud Relationship", "Portal Marketing", "WebRTC/storage",
-    "MQTT/shadow", "PKI", "Threat Model", "Linode", "Operation Screenshots", "Evidence Appendix",
+    "MQTT/shadow", "PKI", "HSM signer", "Threat Model", "Linode", "Operation Screenshots", "Evidence Appendix",
 ]
 
 
