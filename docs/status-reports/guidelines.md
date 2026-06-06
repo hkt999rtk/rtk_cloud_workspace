@@ -296,6 +296,8 @@ Management message：
 - `service_options` 是 canonical service-access ACL，不用 `device_type` 當權限來源。
 - Device certificates 是 bootstrap credentials；runtime routes 仍使用 scoped、subject-bound tokens 與 ACL checks。
 - Revocation、deactivation、unprovision 是不同 lifecycle control。
+- HSM / PKCS#11 signer design 要描述 key custody boundary：service 取得 signing capability，但不持有 raw private key material。
+- 報告可列 provider type、signer boundary、audit/fail-closed behavior；不可列 PKCS#11 module path、PIN、slot id、token label、key label、CA key path 或任何 raw signer config。
 
 Trust-chain visual：
 
@@ -307,6 +309,15 @@ factory/MES or fixture
   -> mTLS token bootstrap
   -> service-options ACL
   -> runtime services
+```
+
+HSM / PKCS#11 signer visual：
+
+```text
+HSM-backed token / non-exportable key
+  -> PKCS#11 signer adapter
+  -> certissuer CA signing and RS256 token signing
+  -> certificate/token output with audit
 ```
 
 ### 4.10 Threat Model / Cyber Security Review

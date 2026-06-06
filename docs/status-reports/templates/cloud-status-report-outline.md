@@ -59,6 +59,7 @@ literal product, repo, API, endpoint, command, and status-label names in English
 - MQTT/shadow topic-surface table：`devices/<device_id>/...` command/event/log topics 與 `$vc/devices/{devid}/shadow/...` get/update/delete/accepted/rejected/delta/documents topics 分開列。
 - Security / PKI trust management：把 PKI 說明成 device identity、factory enrollment、service entitlement、audit、revocation、lifecycle governance，而不是只寫 mTLS 技術。
 - PKI trust-chain visual：factory/MES or fixture -> factory enrollment -> certissuer -> device certificate -> mTLS token bootstrap -> service-options ACL -> runtime services。
+- HSM / PKCS#11 signer design：說明 certissuer CA signing 與 RS256 token signing 的 key custody boundary；service 只取得 signing capability，不持有 raw private key material。
 - Security management matrix：identity、key custody、certificate issuance、entitlement、token binding、revocation、audit、lifecycle handling。
 - PKI readiness evidence：以 `implemented` / `staging` / `not verified` / `blocked` 標示，不可把未驗證設計寫成 production-ready。
 - Threat Model / Cyber Security Review：列出 STRIDE threat model 進度、trust boundaries、top critical/high risks、open questions、review focus paths、mitigation/evidence status。

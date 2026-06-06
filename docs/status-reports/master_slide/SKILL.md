@@ -53,9 +53,8 @@ endpoint checks, risk/decision tracking, or exact audit detail.
 
 For status reports, preserve the report guideline structure:
 
-- Presenter context page immediately after the cover when the audience may not
-  know Kevin Huang's IoT cloud, video cloud, and digital marketing background.
-- Major-topic map after presenter context.
+- Major-topic map immediately after the cover when the audience may not already
+  know why the cloud exists.
 - Cloud relationship / tenant structure before detailed status: Realtek
   Platform Root -> Brand Cloud -> brand users / end users / devices.
 - Cloud as the module product path for bottom-up business module sales.
