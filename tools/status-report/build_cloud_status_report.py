@@ -13,9 +13,11 @@ from docx.shared import Cm, Inches, Pt, RGBColor
 from report_model import (
     CORE_MESSAGE,
     CURRENT_STATUS_SUMMARY,
+    CUSTOMER_USE_CASE_FIT,
     DESIGN_MATERIALS,
     DOCX_PATH,
     FIG_DIR,
+    RELEASE_GATE_DEFINITIONS,
     REPORT_DATE,
     REPORT_LANGUAGE,
     SNAPSHOT_TIME_UTC,
@@ -304,12 +306,27 @@ def build_doc() -> None:
         doc,
         "IoT 50,000 與 IoT Video 5,000 不只是技術壓測數字，也是在對內確認資源投入、對外建立客戶信心。測試結果應轉化為可溝通的成功率、延遲、錯誤分類與容量邊界。",
     )
+    add_heading(doc, "3.1 Release Gate Definition", 3)
+    add_key_value_table(
+        doc,
+        ["Gate", "Scope", "Evidence to pass"],
+        RELEASE_GATE_DEFINITIONS,
+        [4.2, 4.2, 7.2],
+    )
 
     add_heading(doc, "4. 三層次架構", 2)
     add_figure(doc, figures["three_layer"], "圖 4：Root / Brand Cloud / End User 三層架構")
     add_paragraph(
         doc,
         "Root 是 Realtek Platform 的治理層；Brand Cloud 是客戶或品牌租戶；End User 則在租戶下管理多台 devices。客戶可以選擇自建 private cloud，也可以依附 Realtek-operated cloud；business model 與收費方式仍待定案。",
+    )
+
+    add_heading(doc, "4.1 Customer / Use Case Fit", 3)
+    add_key_value_table(
+        doc,
+        ["Target customer", "What they need", "Module sales linkage"],
+        CUSTOMER_USE_CASE_FIT,
+        [3.6, 7.0, 5.0],
     )
 
     add_heading(doc, "5. 目前 Linode Fullset Deployment 現況", 2)
