@@ -4,7 +4,7 @@ Status: supporting-note.
 
 Owner: `rtk_cloud_workspace`.
 
-Last reviewed: 2026-05-07.
+Last reviewed: 2026-06-06.
 
 ## Purpose
 
@@ -13,9 +13,10 @@ is a planning document for GitHub issues and should not replace service-owned
 specifications or cross-repo contracts.
 
 The current priority is not to reopen already-landed OTA, telemetry, account
-lifecycle, or admin UI work. The priority is to make the platform deployable,
-evidence-producing, and release-verifiable for private-cloud evaluation and
-production-like deployments.
+lifecycle, admin UI, PKI/mTLS, TURN registry, WebRTC-only backend, or
+admin-production-proxy work. The remaining priority is to keep release evidence
+fresh and to make live environment skips explicit when staging, hardware, or
+artifact credentials are unavailable.
 
 ## Source Of Truth
 
@@ -40,13 +41,14 @@ production-like deployments.
 | Account-manager private-cloud deployability | Done | `hkt999rtk/rtk_account_manager` | Deployment packaging and operations runbook. |
 | Account-manager readiness evidence | Done | `hkt999rtk/rtk_account_manager` | Read-only smoke/evidence script for auth, org, device, and provisioning facts. |
 | Admin dashboard production profile | Done | `hkt999rtk/rtk_cloud_admin` | Production deployment profile for Go/React dashboard, persistence, upstreams, and rollback. |
-| Admin upstream readiness/telemetry mode | P0 | `hkt999rtk/rtk_cloud_admin` | Production-mode use of authoritative account/video readiness and telemetry facts. |
+| Admin upstream readiness/telemetry mode | Done | `hkt999rtk/rtk_cloud_admin` | Production-mode use of authoritative account/video readiness, telemetry, stream, and firmware facts with stable unavailable states when upstreams are absent. |
 | Brand-cloud backend management | Done | `hkt999rtk/rtk_account_manager`, `hkt999rtk/rtk_cloud_admin` | Account Manager owns `organization_kind=brand_cloud`, platform-admin APIs, bootstrap root, and audit; Admin provides backend/BFF proxy routes for future WebUI. |
-| Frontend private-cloud deployment docs | P1 | `hkt999rtk/rtk_cloud_frontend` | Production deployment profile and backup/restore notes for website lead/analytics storage. |
+| Frontend private-cloud deployment docs | Evidence follow-up | `hkt999rtk/rtk_cloud_frontend` | Production deployment profile exists; backup/restore and legal/contact polishing remain launch evidence, not backend foundation work. |
 | Product-level evidence collector | Done | `hkt999rtk/rtk_cloud_workspace` | `go run ./scripts/go/rtk-cloud -- collect-evidence` gathers service evidence into a redacted bundle. |
 | Cross-service broker packaging | Done | `hkt999rtk/rtk_cloud_workspace` | `docs/cross-service-broker-packaging.md` records the owner decision and NATS JetStream packaging/runbook plan. |
 | SDK release coverage artifacts | Done | `hkt999rtk/rtk_cloud_client` | Android/iOS/native coverage exports and release validation artifacts. |
 | Pro2/FreeRTOS live-lab validation | Done | `hkt999rtk/rtk_cloud_client` | Live hardware release test program with clean skip/block reporting. |
+| Video Cloud local backend reports | Done | `hkt999rtk/rtk_video_cloud` | `docs/TEST_REPORT.md`, `docs/READINESS_TEST_REPORT.md`, and `docs/RELEASE_TEST_REPORT.md` record local backend validation and explicit live-environment skips. |
 
 ## Completed Or No-Reopen Baseline
 
@@ -59,11 +61,11 @@ production-like deployments.
 | Brand-cloud backend management | Account Manager has brand-cloud schema/API/audit/bootstrap; Admin has BFF proxy routes. WebUI remains deferred. |
 | PKI/mTLS server-side | Server-side mTLS, revocation, renewal route, and contracts are present. Do not duplicate old PKI issue work. |
 | TURN registry | Video cloud TURN registry runtime and contracts are present for multi-node coturn discovery. |
-| WebRTC-only streaming migration | Planned breaking cleanup tracked in `docs/webrtc-only-streaming-migration.md`; legacy RTSP relay and legacy video relay are removal targets, while WebRTC/TURN remains the product video path. |
+| WebRTC-only streaming migration | Active backend/product paths are WebRTC-only. Legacy RTSP/relay terms remain only in migration, historical, or negative-test context; WebRTC/TURN remains the product video path. |
 | Account-manager private-cloud evidence | Deployment runbook and readiness smoke are present; workspace wrapper can aggregate service-local output. |
 | SDK release validation tooling | Coverage export docs and Pro2 live-lab wrapper/report templates are present; live runs still depend on release-candidate environment and hardware. |
-| Product-level evidence collector | Workspace wrapper is implemented; remaining gaps are service-local evidence collectors in owner repositories. |
-| Cross-service broker packaging | Workspace owner decision is documented; remaining gaps are operator deployment and service-local smoke evidence. |
+| Product-level evidence collector | Workspace wrapper is implemented; service-local reports must distinguish local evidence from live staging, hardware, and artifact-packaging skips. |
+| Cross-service broker packaging | Workspace owner decision is documented; remaining gaps are operator deployment evidence and service-local broker smoke output when lifecycle channel is enabled. |
 | Smart-home/Matter/voice assistants | Valid roadmap area, but intentionally excluded from this foundation batch. |
 
 ## Issue Ordering
@@ -71,8 +73,9 @@ production-like deployments.
 1. Keep this roadmap and submodule snapshot current after each foundation merge.
 2. Do not reopen completed account-manager deployment/evidence, workspace
    evidence/broker, SDK release validation, PKI/mTLS, or TURN registry issues.
-3. Prioritize admin dashboard production-mode upstream readiness/telemetry
-   behavior because it is the operator surface that consumes account/video facts.
+3. Keep admin production-mode upstream readiness/telemetry behavior in the
+   no-reopen baseline unless a regression is found in route tests or live
+   evidence.
 4. Prioritize frontend production backup/restore and launch-polish docs only
    where website operation differs from the existing private-cloud BOM.
 5. Revisit smart-home/Matter/voice-assistant roadmap only after the remaining
