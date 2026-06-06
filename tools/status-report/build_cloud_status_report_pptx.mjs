@@ -680,6 +680,37 @@ async function slide12(p, payload) {
   return slide;
 }
 
+async function slideHsmSignerDesign(p, payload) {
+  const slide = p.slides.add();
+  await addBackground(slide, payload);
+  await addHeader(slide, payload, "HSM / PKCS#11 Signer Design", "KEY CUSTODY / CERTISSUER / TOKEN SIGNING");
+  addText(slide, "新的 signer design 把 signing key custody 從 service file secret 往 HSM / PKCS#11 boundary 移動；service 只拿到 signing capability, 不拿 private key material。", { x: 85, y: 154, w: 1110, h: 44 }, { size: 16, color: C.navy, bold: true, align: "center", fill: C.pale });
+
+  const lanes = [
+    ["Signing key custody", "CA key / JWT key stays in HSM-backed token", "non-exportable key, PIN/module handled as deployment config", C.paleAmber],
+    ["PKCS#11 signer adapter", "certissuer signer + RS256 token signer", "select slot/token label/key label, sign only approved digest/CSR", C.paleBlue],
+    ["Cloud services", "certissuer, token bootstrap, Account Manager path", "issue cert/token, write audit, fail closed if signer unavailable", C.paleTeal],
+  ];
+  lanes.forEach((lane, i) => {
+    const x = 70 + i * 390;
+    addShape(slide, { x, y: 245, w: 320, h: 142, fill: lane[3], line: C.line });
+    addText(slide, lane[0], { x: x + 18, y: 268, w: 284, h: 24 }, { size: 18, color: C.navy, bold: true, align: "center", face: FONT_EN });
+    addText(slide, lane[1], { x: x + 24, y: 310, w: 272, h: 34 }, { size: 13, color: C.black, bold: true, align: "center" });
+    addText(slide, lane[2], { x: x + 24, y: 350, w: 272, h: 26 }, { size: 10, color: C.muted, align: "center" });
+    if (i < lanes.length - 1) addArrow(slide, x + 325, 316, x + 376, 316, C.sky);
+  });
+
+  addTable(slide, ["Management control", "Report message"], [
+    ["Key custody", "Private key should be non-exportable in HSM-backed deployment; report only provider type, not PIN/path/label values."],
+    ["Signer boundaries", "Certificate issuance and RS256 token signing use signer adapters; business services do not own raw signing keys."],
+    ["Audit and failure mode", "certissuer records request/certificate evidence; signer unavailable must block issuance instead of falling back silently."],
+    ["Rollout evidence", "SoftHSM/local CI can prove behavior; production needs HSM provider, key ceremony, backup/rotation and access owner."],
+  ], { x: 155, y: 450, w: 970, h: 155 }, [1.15, 3.05], { rowH: 31, headerH: 28, fontSize: 10 });
+
+  addText(slide, "Source：rtk_video_cloud branch `codex/pkcs11-certissuer-token-signers`, certissuer material/signers and auth token signer. No secrets or raw PKCS#11 config should appear in status reports.", { x: 110, y: 625, w: 1060, h: 28 }, { size: 12, color: C.navy, bold: true, align: "center", fill: C.paleAmber });
+  return slide;
+}
+
 async function slide13(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
@@ -900,7 +931,7 @@ async function slide21(p, payload) {
 
 const SLIDES = [
   slide01, slidePresenterContext, slideMajorTopics, slide07, slideWhyCloud, slide03, slideCloudTypes, slideOperationalTransition, slide02, slide04, slide05, slide06, slide08,
-  slidePortalTransition, slidePortalIntro, slide09, slideTechnicalTransition, slide10, slide11, slideStrideOverview, slide12, slide13,
+  slidePortalTransition, slidePortalIntro, slide09, slideTechnicalTransition, slide10, slide11, slideStrideOverview, slide12, slideHsmSignerDesign, slide13,
   slideEvidenceTransition, slide14, slideCostView, slide15, slide16, slide17, slide18, slide19, slidePostAlphaCoverage, slide20, slide21,
 ];
 

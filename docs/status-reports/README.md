@@ -81,8 +81,8 @@ changes it:
   target.
 - Scaling context: scaling architecture is designed in, but autoscaling/dynamic
   scaling implementation is deferred until after loading-test evidence.
-- Security context: frame PKI as identity, entitlement, audit, revocation, and
-  lifecycle management.
+- Security context: frame PKI as identity, entitlement, audit, revocation,
+  lifecycle management, and HSM / PKCS#11 key-custody boundaries.
 - Portal context: `rtk_cloud_frontend` is the public website, documentation /
   manual portal, SEO/content layer, CTA/lead capture, and sales follow-up
   surface. Keep it separate from operational cloud runtime.
@@ -225,9 +225,11 @@ readiness, or production-readiness trust controls, include the Security / PKI
 trust-management section from
 [`guidelines.md`](guidelines.md#security--pki-management). Frame PKI as
 security management: device identity, factory enrollment, service entitlement,
-audit, revocation, and lifecycle governance. Do not include private keys, raw
-CSR PEM, raw certificate PEM, CA signing material, bearer tokens, or secret
-paths.
+audit, revocation, lifecycle governance, and HSM / PKCS#11 signer custody.
+When discussing the signer design, report provider type and control boundary
+only. Do not include private keys, raw CSR PEM, raw certificate PEM, CA signing
+material, bearer tokens, module paths, PINs, slot ids, token labels, key labels,
+or secret paths.
 
 ## Threat Model / Cyber Security Policy
 

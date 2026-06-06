@@ -52,13 +52,14 @@ presentation. When recreating the deck, keep this story spine:
 7. Present important numbers as timelines, milestone lanes, readiness visuals,
    or charts before using tables.
 8. Treat security as management controls: STRIDE explainer graphic, PKI trust
-   lifecycle, then cyber-security review progress.
+   lifecycle, HSM/PKCS#11 signer custody boundary, then cyber-security review
+   progress.
 9. Treat Linode health checks, screenshots, and sample flows as status evidence,
    not production or security sign-off.
 
 Do not remove the major-topic map, cloud relationship page, two-cloud
 explanation, schedule path, portal web introduction, STRIDE graphic, PKI page,
-threat-model progress page, Linode evidence pages, or appendix source index
+HSM signer design page, threat-model progress page, Linode evidence pages, or appendix source index
 unless the report owner explicitly changes the framework.
 
 ## Slide Sequence
@@ -86,18 +87,19 @@ unless the report owner explicitly changes the framework.
 | 19 | MQTT / Device Shadow | MQTT transport vs IoT shadow state-management table. |
 | 20 | STRIDE：Security implementation 的檢查語言 | Hub-and-spoke STRIDE graphic mapping six threat categories to cloud implementation controls. |
 | 21 | Security / PKI Management | Device trust-chain and security-management matrix. |
-| 22 | Threat Model / Cyber Security Review | STRIDE risk matrix and next review focus. |
-| 23 | Transition：Deployment、操作流程與 Evidence | Topic break before Linode runtime, health/config boundary, operation screenshots, and SDK flow. |
-| 24 | Linode Staging Runtime Shape | Runtime topology plus component responsibility table. |
-| 25 | Initial Operation Cost View | Current Linode monthly run-rate estimate, billing/baseline, post-loading-test estimate timing, and key production cost variables. |
-| 26 | Linode Health & Configuration Boundary | Live health table and safe configuration boundary. |
-| 27 | Operation Flow Overview | Demo journey flow. |
-| 28 | Admin Operation Screenshots | 2x2 Admin screenshot grid. |
-| 29 | SDK / Sample App Flow | Sample app flow screenshot plus evidence-purpose table. |
-| 30 | Decision / Support Needed | Alpha-readiness support board: account/payment ownership, operation backup, alpha internal testers, beta pilot customer, and milestone impact. |
-| 31 | Ongoing Operation / Development Coverage | Ongoing baseline estimate separate from temporary alpha/beta testers: backend/service owner, DevOps/SRE, SDK support, QA/load test, security review, and FAE/pilot support. |
-| 32 | Appendix：素材與來源索引 | Dense material/source/status table. |
-| 33 | Thank You / Review Gate | Master-style closing slide and checklist summary. |
+| 22 | HSM / PKCS#11 Signer Design | Key-custody boundary for certissuer and token signing; service gets signing capability, not raw private key material. |
+| 23 | Threat Model / Cyber Security Review | STRIDE risk matrix and next review focus. |
+| 24 | Transition：Deployment、操作流程與 Evidence | Topic break before Linode runtime, health/config boundary, operation screenshots, and SDK flow. |
+| 25 | Linode Staging Runtime Shape | Runtime topology plus component responsibility table. |
+| 26 | Initial Operation Cost View | Current Linode monthly run-rate estimate, billing/baseline, post-loading-test estimate timing, and key production cost variables. |
+| 27 | Linode Health & Configuration Boundary | Live health table and safe configuration boundary. |
+| 28 | Operation Flow Overview | Demo journey flow. |
+| 29 | Admin Operation Screenshots | 2x2 Admin screenshot grid. |
+| 30 | SDK / Sample App Flow | Sample app flow screenshot plus evidence-purpose table. |
+| 31 | Decision / Support Needed | Alpha-readiness support board: account/payment ownership, operation backup, alpha internal testers, beta pilot customer, and milestone impact. |
+| 32 | Ongoing Operation / Development Coverage | Ongoing baseline estimate separate from temporary alpha/beta testers: backend/service owner, DevOps/SRE, SDK support, QA/load test, security review, and FAE/pilot support. |
+| 33 | Appendix：素材與來源索引 | Dense material/source/status table. |
+| 34 | Thank You / Review Gate | Master-style closing slide and checklist summary. |
 
 ## Layout Rules
 
