@@ -128,7 +128,9 @@ Likely AWS line items:
 - Two CloudHSMs instead of one HSM.
 - Multi-AZ-style RDS PostgreSQL estimate for the shared account/video database.
 - Two ElastiCache/Valkey cache nodes instead of one node.
-- Two NAT Gateways for two-AZ private subnet routing.
+- Two NAT Gateways for two-AZ private subnet routing. NAT Gateway is managed by
+  AWS, but it is AZ-scoped, so one NAT Gateway per AZ avoids routing all private
+  subnet outbound traffic through a single AZ.
 - Two tasks for each Video Cloud worker service and certissuer/factory
   enrollment runtime.
 - Camera/WebRTC/TURN and ACM Private CA remain excluded unless a later profile
@@ -137,6 +139,10 @@ Likely AWS line items:
 Use this profile for a first robust-production cost comparison after the
 baseline. It improves resilience inside one region, but it is not a multi-region
 disaster-recovery estimate.
+
+This profile is not a blanket 2x cost multiplier. Usage-priced managed services
+such as AWS IoT Core, CloudWatch Logs, CloudFront, S3, Secrets Manager, and KMS
+remain unchanged when product traffic and retention assumptions are unchanged.
 
 ### Profile D: Low-Cost Evaluation Environment
 

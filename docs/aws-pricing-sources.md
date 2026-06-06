@@ -162,11 +162,15 @@ Robust-profile changes:
 | CloudHSM | 1 HSM | 2 HSMs |
 | RDS PostgreSQL | Single-AZ shared `db.t4g.large` | Multi-AZ-style writer plus standby estimate |
 | ElastiCache/Valkey | 1 `cache.t4g.small` node | 2 `cache.t4g.small` nodes |
-| NAT Gateway | 1 gateway plus 200 GB processed | 2 gateways plus 200 GB processed |
+| NAT Gateway | 1 gateway plus 200 GB processed | 2 gateways plus 200 GB processed; gateway-hours double, data processing does not |
 | Video workers | 1 task per worker service | 2 tasks per worker service |
 | Certissuer/factory enrollment | 1 task | 2 tasks |
 | Camera/WebRTC | Excluded | Excluded |
 | ACM Private CA | Excluded | Excluded |
+
+Robust is not a blanket 2x multiplier. It increases only the components that
+are AZ-scoped, single-instance, or explicitly duplicated for service continuity.
+Traffic-priced managed services stay flat when product traffic is unchanged.
 
 Robust cost delta:
 
@@ -179,6 +183,14 @@ Robust cost delta:
 | CloudHSM | 1,357.80 | 2,715.60 | 1,357.80 |
 | Other baseline items | 257.99 | 257.99 | 0.00 |
 | Total with CloudHSM | 2,421.18 | 4,212.71 | 1,791.53 |
+
+Robust cost behavior:
+
+| Behavior | Items | Reason |
+| --- | --- | --- |
+| Doubled | CloudHSM, RDS estimate, ElastiCache | These are single-instance or stateful components where the robust profile adds a second node/standby. |
+| Partially increased | NAT Gateway, ECS Fargate backend services | NAT gateway-hours double but data processing stays the same; only selected worker/certissuer tasks are duplicated. |
+| Unchanged | AWS IoT Core, CloudWatch Logs, ALB, frontend CDN/Lambda/S3, Secrets Manager, KMS, S3 storage | Product traffic, log volume, and request volume are unchanged between baseline and robust profiles. |
 
 Top 10 monthly cost items:
 
