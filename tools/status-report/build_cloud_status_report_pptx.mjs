@@ -310,6 +310,30 @@ async function slideWhyCloud(p, payload) {
   return slide;
 }
 
+async function slideCustomerUseCaseFit(p, payload) {
+  const slide = p.slides.add();
+  await addBackground(slide, payload);
+  await addHeader(slide, payload, "Customer / Use Case Fit", "WHO THIS CLOUD HELPS");
+  addText(slide, "這頁用來讓主管先判斷：哪些客戶會需要這個 cloud，以及它如何回到 module selling、PoC 和 design-in。", { x: 82, y: 154, w: 1120, h: 40 }, { size: 16, color: C.navy, bold: true, align: "center", fill: C.pale });
+
+  const rows = payload.customerUseCaseFit || [];
+  rows.forEach((row, i) => {
+    const x = 70 + (i % 2) * 585;
+    const y = 230 + Math.floor(i / 2) * 160;
+    const fill = i % 2 ? C.paleTeal : C.paleBlue;
+    addShape(slide, { x, y, w: 520, h: 122, fill, line: C.line });
+    addText(slide, row[0], { x: x + 22, y: y + 18, w: 215, h: 26 }, { size: 18, color: C.navy, bold: true, face: FONT_EN });
+    addShape(slide, { x: x + 260, y: y + 24, w: 205, h: 12, fill: C.blue, line: "none" });
+    addText(slide, "need", { x: x + 260, y: y + 39, w: 60, h: 14 }, { size: 8, color: C.muted, face: FONT_EN });
+    addText(slide, row[1], { x: x + 22, y: y + 52, w: 235, h: 50 }, { size: 11, color: C.black });
+    addText(slide, row[2], { x: x + 280, y: y + 52, w: 205, h: 42 }, { size: 11, color: C.navy, bold: true });
+  });
+
+  addShape(slide, { x: 180, y: 575, w: 920, h: 48, fill: C.paleAmber, line: "#E3C25A" });
+  addText(slide, "判斷重點：報告要指出 target customer、使用情境、需要提供的內容，最後連回 IoT module selling / PoC / design-in。", { x: 205, y: 589, w: 870, h: 22 }, { size: 14, color: C.navy, bold: true, align: "center" });
+  return slide;
+}
+
 async function slide04(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
@@ -330,6 +354,28 @@ async function slide04(p, payload) {
     }
   });
   addText(slide, "Aug.1 gate: 50,000 IoT devices + 5,000 video cameras loading test; next: Aug alpha with SDK, Sep beta with SDK + pilot customer, then public.", { x: 90, y: 565, w: 1040, h: 42 }, { size: 16, color: C.navy, bold: true, align: "center", fill: C.pale });
+  return slide;
+}
+
+async function slideReleaseGateDefinition(p, payload) {
+  const slide = p.slides.add();
+  await addBackground(slide, payload);
+  await addHeader(slide, payload, "Release Gate Definition", "AUG.1 / ALPHA / BETA / PUBLIC");
+  addText(slide, "每個階段都要有明確通過條件；日期只是排程，gate 要靠 evidence 判斷。", { x: 85, y: 154, w: 1110, h: 36 }, { size: 16, color: C.navy, bold: true, align: "center", fill: C.pale });
+
+  const gates = payload.releaseGateDefinitions || [];
+  const colors = [C.blue, C.teal, C.sky, C.amber];
+  gates.forEach((gate, i) => {
+    const x = 80 + i * 290;
+    const barH = 80 + i * 24;
+    addShape(slide, { x, y: 520 - barH, w: 210, h: barH, fill: colors[i], line: "none" });
+    addText(slide, gate[0], { x: x - 10, y: 198, w: 230, h: 42 }, { size: 15, color: C.navy, bold: true, align: "center", face: FONT_EN });
+    addText(slide, gate[1], { x: x - 5, y: 248, w: 220, h: 44 }, { size: 12, color: C.black, bold: true, align: "center" });
+    addText(slide, gate[2], { x: x - 4, y: 540, w: 218, h: 68 }, { size: 9, color: C.black, align: "center" });
+    addText(slide, `${i + 1}`, { x: x + 78, y: 520 - barH + 18, w: 54, h: 34 }, { size: 24, color: C.white, bold: true, align: "center", face: FONT_EN });
+  });
+
+  addText(slide, "報告更新規則：gate 未過就標 `at risk` / `blocked` / `not verified`，不要用時間進度取代實際驗證。", { x: 140, y: 625, w: 1000, h: 28 }, { size: 14, color: C.navy, bold: true, align: "center", fill: C.paleAmber });
   return slide;
 }
 
@@ -896,7 +942,7 @@ async function slide21(p, payload) {
 }
 
 const SLIDES = [
-  slide01, slideMajorTopics, slide07, slideWhyCloud, slide03, slideCloudTypes, slideOperationalTransition, slide02, slide04, slide05, slide06, slide08,
+  slide01, slideMajorTopics, slide07, slideWhyCloud, slideCustomerUseCaseFit, slide03, slideCloudTypes, slideOperationalTransition, slide02, slide04, slideReleaseGateDefinition, slide05, slide06, slide08,
   slidePortalTransition, slidePortalIntro, slide09, slideTechnicalTransition, slide10, slide11, slideStrideOverview, slide12, slideHsmSignerDesign, slide13,
   slideEvidenceTransition, slide14, slideCostView, slide15, slide16, slide17, slide18, slide19, slidePostAlphaCoverage, slide20, slide21,
 ];

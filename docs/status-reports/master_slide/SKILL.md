@@ -58,11 +58,14 @@ For status reports, preserve the report guideline structure:
 - Cloud relationship / tenant structure before detailed status: Realtek
   Platform Root -> Brand Cloud -> brand users / end users / devices.
 - Cloud as the module product path for bottom-up business module sales.
+- Customer / use-case fit near the beginning: target customer, customer need,
+  cloud proof object, and module sales / PoC / design-in linkage.
 - Two-cloud explanation: Operational IoT / Video Cloud versus Portal Web /
   Marketing Cloud.
 - Transition slides between operational progress, portal web, technical/security
   design, and deployment/evidence.
-- Schedule and loading-test path.
+- Schedule and loading-test path, plus release-gate definition for Aug.1,
+  Alpha, Beta, and Public.
 - Portal web / digital marketing: `rtk_cloud_frontend` as marketing website,
   documentation/manual portal, SEO/content layer, first-party behavior
   analytics, CTA/lead conversion, and sales improvement loop.

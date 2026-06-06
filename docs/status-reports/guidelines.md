@@ -10,7 +10,7 @@ Owner: `rtk_cloud_workspace`.
 
 ## 0. 一頁速查
 
-每份報告先回答七個問題：
+每份報告先回答九個問題：
 
 | 問題 | 報告要給出的答案 |
 | --- | --- |
@@ -18,6 +18,8 @@ Owner: `rtk_cloud_workspace`.
 | 現在有什麼能展示？ | UI、SDK/sample app、API、deployment、health check、design asset、load-test evidence。 |
 | 時程走到哪裡？ | 從 2026-05-01 到 early-August 50,000-device loading test 的目前位置、下一個 gate、風險判定。 |
 | 哪些能力已驗證？ | 用 `PASS`、`FAIL`、`SKIP`、`BLOCKED`、`not verified` 標明，不用模糊描述。 |
+| 主要對象是誰？ | Module buyer、solution developer、brand/ODM customer、video IoT customer 等，每一類要連到 cloud proof 與 module selling path。 |
+| 每個 release gate 怎麼判定？ | Aug.1 loading test、Alpha、Beta、Public 的通過條件、需要 evidence、以及未過時的標示方式。 |
 | 技術如何連到產品與 KPI？ | deployability、online success、OTA success、video setup、MQTT/shadow、load capacity、support effort、incident response。 |
 | 哪些地方還不能宣稱 production-ready？ | release/version、backup/restore、security review、load-test、dynamic scaling、frontend staging、operations owner 等缺口。 |
 | 管理層或同事需要知道什麼？ | Decision/support needed、risk burn-down、evidence index、next gate。 |
@@ -37,9 +39,9 @@ Owner: `rtk_cloud_workspace`.
 | 章節 | 目的 | 必須回答 |
 | --- | --- | --- |
 | Cover / 核心管理訊息 | 第一頁讓管理層知道本週重點。 | 本週一句核心訊息、目前狀態總結、schedule snapshot、product-to-KPI visual。 |
-| Part 1：主管摘要 | 五分鐘內看懂全局。 | 為什麼做、目前完成什麼、下一步、風險、需要什麼決策。 |
-| Part 2：Schedule / Loading Test 路徑 | 說明從 May 1 到 early August 的進度。 | 目前位置、本週 gate、下個 gate、50,000-device IoT target、Video 500-device staged gate、風險判定。 |
-| Part 3：Cloud / Product / KPI Detail | 把工程能力翻譯成產品與商業價值。 | Cloud relationship、KPI、architecture、portal marketing、MQTT/shadow、WebRTC/storage、Security/PKI、threat model。 |
+| Part 1：主管摘要 | 五分鐘內看懂全局。 | 為什麼做、target customer / use case fit、目前完成什麼、下一步、風險、需要什麼決策。 |
+| Part 2：Schedule / Loading Test 路徑 | 說明從 May 1 到 early August 的進度。 | 目前位置、本週 gate、下個 gate、50,000-device IoT target、5,000-video-camera target、release gate definition、風險判定。 |
+| Part 3：Cloud / Product / KPI Detail | 把工程能力翻譯成產品與商業價值。 | Cloud relationship、customer/use-case fit、KPI、architecture、portal marketing、MQTT/shadow、WebRTC/storage、Security/PKI、threat model。 |
 | Part 4：操作畫面與使用流程 | 讓非工程讀者看懂使用情境。 | Admin overview、device drawer、OTA、stream health、SDK/sample flow、demo journey。 |
 | Part 5：Linode Staging Deployment & Configuration | 說明目前 staging 部署與限制。 | Endpoint、runtime shape、safe config、health check、production-ready gap。 |
 | Part 6：決策、風險與 Evidence | 把管理需求、風險、證據集中。 | Decision/support table、risk burn-down、evidence index。 |
@@ -85,6 +87,8 @@ Generated output 留在 `.artifacts/`，不要 commit。可 commit 的是：
 10. Portal web 要說清楚它是 marketing / documentation / lead-generation layer，不是 operational cloud console。
 11. Threat model / cyber security review 是風險管理軌道，不等於健康檢查。
 12. Dynamic scaling 是 architecture design-in 的方向，但 August release baseline 不實作 autoscaling；loading test 後再依證據決策。
+13. Customer / use-case fit 要提早說明，讓讀者知道 cloud 對 module buyer、solution developer、brand/ODM customer、video IoT customer 各自解決什麼問題。
+14. Release gate 要用 evidence 判斷；日期到了但條件未滿足，報告要標 `at risk`、`blocked` 或 `not verified`。
 
 ## 4. Section Playbook
 
@@ -114,7 +118,7 @@ Generated output 留在 `.artifacts/`，不要 commit。可 commit 的是：
 | 項目 | 指引 |
 | --- | --- |
 | 目的 | 讓管理層五分鐘內理解 why, now, next, risk。 |
-| 必填內容 | Why cloud、completed foundation、current evidence、next gate、risk、decision/support needed。 |
+| 必填內容 | Why cloud、target customer / use-case fit、completed foundation、current evidence、next gate、risk、decision/support needed。 |
 | 建議視覺 | Foundation vs next-step table、small schedule snapshot、KPI bridge。 |
 | 資料來源 | Part 2 schedule、Part 3 capability、Part 5 deployment、Part 6 risks。 |
 | 避免事項 | 不要塞滿 repo 細節；不要把未驗證項目寫成已完成。 |
@@ -124,8 +128,28 @@ Generated output 留在 `.artifacts/`，不要 commit。可 commit 的是：
 - 目前 phase。
 - Target date。
 - Next measurable gate。
+- Target customer / use-case fit。
 - `on track` / `at risk` / `blocked`。
 - 需要管理層知道的 decision/support。
+
+### 4.2.1 Customer / Use Case Fit
+
+| 項目 | 指引 |
+| --- | --- |
+| 目的 | 讓主管和同事知道這個 cloud 服務哪些客戶情境，並把客戶需求連回 module selling、PoC、design-in。 |
+| 必填內容 | Target customer、customer need、cloud proof object、module sales / PoC linkage。 |
+| 建議視覺 | 2x2 customer-fit cards、segment bar、use-case-to-sales bridge。 |
+| 資料來源 | 客戶/FAE 討論、Portal Web 內容、SDK/sample app、Admin screenshot、Video/MQTT/OTA evidence。 |
+| 避免事項 | 不要寫成泛泛的市場願景；不要列沒有對應 cloud proof 的客戶類型。 |
+
+建議 customer / use-case 分類：
+
+| Target customer | What they need | Module sales linkage |
+| --- | --- | --- |
+| Module buyer | 看到 module 之外的 onboarding、SDK/App、OTA、video、MQTT/shadow、Admin operation。 | 縮短評估時間，增加 design-in 信心。 |
+| Solution developer | 可直接測試的 cloud API、sample app、device flow、debug report、文件入口。 | 讓開發者能自己跑 PoC，減少 FAE 重複解釋。 |
+| Brand / ODM customer | Brand Cloud、tenant/user/device 關係清楚，知道哪些可由 Realtek platform 支援。 | 把 private / brand cloud 討論提前到可驗證架構。 |
+| Video IoT customer | Live video relay、storage/media、stream health、future scaling/cost 的判斷基礎。 | 支援 camera / sensor solution 的商業化評估。 |
 
 ### 4.3 Part 2：Schedule / Loading Test 路徑
 
@@ -143,8 +167,8 @@ Schedule constants：
 | --- | --- |
 | Project start | 2026-05-01 |
 | IoT target | Early August 2026 pass 50,000-device loading test |
-| Video staged gate | August 2026 validate 500-device video stage |
-| Video later target | 500-device gate 通過後，再往 5,000-device video target 推進 |
+| Video target | 2026-08-01 pass 5,000-video-camera loading test |
+| Post-load-test release path | August alpha test, September beta test, then public path |
 | Dynamic scaling | August release 不實作；loading test 後依 evidence 決定 |
 
 Baseline milestone path：
@@ -158,7 +182,10 @@ Baseline milestone path：
 | 2026-06-22 to 2026-07-05 | Multi-host and capacity expansion | Multi-instance / multi-host、aggregation、resource dashboard、bottleneck fixes。 |
 | 2026-07-06 to 2026-07-19 | 10,000 to 30,000-device rehearsal | p95/p99 latency、success rate、broker/database capacity、recovery behavior、operator response。 |
 | 2026-07-20 to 2026-07-31 | 50,000-device dry run and hardening | Near-final dry run、soak test、rollback/retry plan、monitoring、report packaging。 |
-| Early August 2026 | 50,000-device loading-test pass | Final run passes agreed thresholds and produces management-ready evidence。 |
+| 2026-08-01 | 50,000-device + 5,000-video-camera loading-test pass | Final run passes agreed thresholds and produces management-ready evidence。 |
+| August 2026 | Alpha test | SDK included；internal developers use onboarding、sample app、debug/report flow。 |
+| September 2026 | Beta test | SDK + pilot customer；collect customer feedback and support evidence。 |
+| After beta | Public path | Operation, account, support, security baseline ready。 |
 | After loading test | Dynamic scaling implementation assessment | 依 bottleneck、traffic profile、cost、operating model、production direction 決定是否實作。 |
 
 Video lane：
@@ -167,15 +194,24 @@ Video lane：
 | --- | --- | --- |
 | 2026-06-01 to 2026-06-21 | Video readiness foundation | WebRTC signaling、owner transport、TURN/ICE、stream health、snapshot/media upload/download evidence。 |
 | 2026-06-22 to 2026-07-12 | Video small-scale validation | Representative app/device signaling、media upload、download auth、stream-health pass。 |
-| 2026-07-13 to 2026-07-31 | 500-device video staged preparation | Fleet、media profile、TURN/coturn capacity、metrics、storage/retention、runbook。 |
-| August 2026 | 500-device video staged validation | 500 devices validate WebRTC/video-storage readiness before 5,000-device claim。 |
-| After 500-device validation | 5,000-device video target path | 依 500-device evidence 擴大。 |
+| 2026-07-13 to 2026-07-31 | 5,000-camera rehearsal | Fleet、media profile、TURN/coturn capacity、metrics、storage/retention、runbook。 |
+| 2026-08-01 | 5,000-camera loading-test pass | Validate WebRTC/video-storage readiness at the same gate as 50,000 IoT devices。 |
+| After loading-test pass | Alpha / beta release support | Use evidence to size operation cost, production scaling, and customer pilot boundary。 |
 
 Current-position rule：
 
 - 2026-06-03 附近的報告應標示在 `Load-test preparation`。
 - 後續報告必須根據 evidence 推進；日期到了但 gate 沒過，要標 `at risk` 或 `blocked`。
 - Dynamic scaling 可寫成 `architecture supports future scaling`，但不能寫成 August release 已支援 autoscaling。
+
+Release gate definition：
+
+| Gate | Scope | Evidence to pass |
+| --- | --- | --- |
+| Aug.1 loading-test pass | 50,000 IoT devices + 5,000 video cameras | Success rate、p95/p99、error taxonomy、resource use、recovery behavior、report package。 |
+| Alpha test | SDK + internal developer real use | 4-6 internal testers；至少 3-4 位 developer/firmware/app testers 實際跑 onboarding、SDK sample、debug/report。 |
+| Beta test | SDK + pilot customer | 1-2 pilot customers 或 partner use cases；確認 PoC feedback、support flow、deployment/cost assumptions。 |
+| Public path | Operation, account, support, security baseline | 公司/核准第三方帳務、backup operator、release version、backup/restore、security review gate。 |
 
 ### 4.4 Part 3：Cloud / Product / KPI Detail
 
@@ -504,8 +540,9 @@ If a status cannot be verified from a safe source, write `BLOCKED` or
 
 - 第一頁有核心管理訊息、目前狀態總結、schedule snapshot。
 - 摘要可在五分鐘內看懂。
-- Schedule path 顯示 2026-05-01 到 early-August 50,000-device target，並標出 `目前位置`。
-- Video 500-device staged gate 和 IoT 50,000-device target 分開。
+- Schedule path 顯示 2026-05-01 到 2026-08-01 50,000-device + 5,000-video-camera target，並標出 `目前位置`。
+- Video schedule lane 有把 WebRTC/video-storage evidence 和 IoT telemetry/loading-test evidence 分開。
+- Release gate definition 有列 Aug.1、Alpha、Beta、Public 的通過條件。
 - 重要數字優先用 chart / timeline / progress visual。
 - Loading Test Readiness Matrix 有列出 50,000-device target 前的 gates。
 - Cloud relationship 清楚：Realtek Platform Root、Brand Cloud、brand users、end users、devices。

@@ -72,13 +72,14 @@ changes it:
   network architecture.
 - Audience: cross-unit leaders; assume some leaders may not already know why
   this cloud exists.
-- Narrative order: major-topic map, cloud relationship, module product path,
-  operational progress, portal web, technical/security design,
+- Narrative order: major-topic map, cloud relationship, why-cloud,
+  customer/use-case fit, module product path, operational progress,
+  release-gate definition, portal web, technical/security design,
   deployment/operation/evidence, and review gate.
 - Schedule context: project start is 2026-05-01; the early-August milestone is
-  the 50,000-device IoT loading test. Video reports must keep the August
-  500-device staged validation gate separate from the later 5,000-device video
-  target.
+  the 50,000-device IoT loading test plus 5,000-video-camera loading test.
+  August alpha includes SDK/internal developer use, September beta includes SDK
+  and pilot customer feedback, then the public path follows after gate evidence.
 - Scaling context: scaling architecture is designed in, but autoscaling/dynamic
   scaling implementation is deferred until after loading-test evidence.
 - Security context: frame PKI as identity, entitlement, audit, revocation,
@@ -108,8 +109,10 @@ management reports:
 - 第一頁目前狀態總結
 - 第一部分：摘要
 - 第二部分：時程與 Loading Test 路徑
+  - Release gate definition
 - 第三部分：Cloud / Product / KPI 細節
   - Cloud relationship / tenant structure
+  - Customer / use-case fit
   - Portal web / digital marketing
   - WebRTC / Video Storage Management
   - MQTT / Device Shadow Management
@@ -123,14 +126,15 @@ management reports:
 ## Schedule Policy
 
 Every report must show the schedule path from project start on 2026-05-01 to
-the early-August target of passing the 50,000-device IoT loading test. The
-schedule section must state the current position, weekly gate, next gate, risk,
-and `on track` / `at risk` / `blocked` judgment based on evidence.
+the 2026-08-01 target of passing the 50,000-device IoT loading test plus
+5,000-video-camera loading test. The schedule section must state the current
+position, weekly gate, next gate, risk, and `on track` / `at risk` / `blocked`
+judgment based on evidence.
 
 If the report also covers IoT Video / WebRTC / video storage, include a
-separate video schedule lane: August 2026 should show a 500-device video staged
-validation gate before the report claims progress toward the 5,000-device video
-target. Keep this separate from the 50,000-device IoT loading-test target.
+separate video schedule lane for the 5,000-camera path: June foundation, July
+profile/rehearsal, and 2026-08-01 pass evidence. Keep video control/media
+evidence separate from the 50,000-device IoT telemetry/loading-test evidence.
 
 The current architecture may be described as scaling-ready when evidence
 supports scale-out boundaries, service separation, multi-host readiness, and
