@@ -16,6 +16,9 @@ repositories. Shared wire and payload contracts belong in
 | [artifact-release-governance.md](artifact-release-governance.md) | Source | Linode Object Storage artifact source-of-truth policy and adoption matrix. |
 | [backend-release-readiness.md](backend-release-readiness.md) | Supporting note | Backend foundation closeout checklist, validation commands, report status, and remaining release-evidence items. |
 | [deployment-secrets-governance.md](deployment-secrets-governance.md) | Source | Local deployment secret layout, environment/provider/service taxonomy, and handling rules. |
+| [aws-service-mapping.md](aws-service-mapping.md) | Supporting note | AWS service candidate mapping for future cost estimation from the current private-cloud structure. |
+| [aws-cost-estimate-worksheet.csv](aws-cost-estimate-worksheet.csv) | Supporting artifact | Quantity-first AWS cost estimation worksheet for a 10k-device commercial pilot in `ap-southeast-1`. |
+| [aws-pricing-sources.md](aws-pricing-sources.md) | Supporting note | AWS public pricing snapshot, source URLs, selected unit prices, and first-pass transfer cost estimate. |
 | [persistence-cache-refactor-roadmap.md](persistence-cache-refactor-roadmap.md) | Source | Cross-repo persistence boundary audit and Redis/cache-readiness issue roadmap. |
 | [realtek-connect-plus-gap-analysis.md](realtek-connect-plus-gap-analysis.md) | Discussion note | Evidence-backed gaps between Realtek Connect+ promotion content and current implementation. |
 | [implementation-gap-backlog.md](implementation-gap-backlog.md) | Supporting note | Post-interface implementation and test gaps to open as owner-repo issues. |
