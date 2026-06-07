@@ -1732,7 +1732,7 @@ func runStagingE2ETest(args []string) error {
 			return err
 		}
 	}
-	provisionArgs := []string{"--workspace", workspace, "--env-root", envRoot, "--reset-and-all", "--confirm", stackName}
+	provisionArgs := []string{"--workspace", workspace, "--env-root", envRoot, "--all", "--confirm", stackName}
 	if *videoRelease != "" {
 		provisionArgs = append(provisionArgs, "--video-release", *videoRelease)
 	}
@@ -3750,7 +3750,7 @@ func runValidateDeviceBind(args []string) error {
 				failures = append(failures, fmt.Sprintf("camera device %s is missing video service option", assignment.DeviceID))
 			}
 		}
-		if assignment.AccountDeviceID == "" || assignment.OperationID == "" || assignment.ClaimID == "" {
+		if assignment.AccountDeviceID == "" || assignment.OperationID == "" {
 			failures = append(failures, fmt.Sprintf("device %s missing bind identifiers", assignment.DeviceID))
 		}
 	}

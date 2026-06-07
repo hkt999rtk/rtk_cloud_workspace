@@ -116,6 +116,11 @@ actual="$(cut -f1 "$COMMAND_LOG")"
 	printf 'unexpected command order:\n%s\n' "$actual" >&2
 	exit 1
 }
+grep -F $'provision\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --all --confirm video-cloud-staging' "$COMMAND_LOG" >/dev/null
+if grep -F -- '--reset-and-all' "$COMMAND_LOG" >/dev/null; then
+	echo "staging-e2e-test should remove VMs explicitly, then provision with --all rather than unsupported --reset-and-all" >&2
+	exit 1
+fi
 
 SUMMARY="$(jq -r '.summary_file' "$RUN_OUT")"
 REPORT="$(jq -r '.report_file' "$RUN_OUT")"

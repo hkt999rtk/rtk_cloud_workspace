@@ -906,6 +906,7 @@ func loggerSSHArgs(paths provisionPaths, sshKey, host string, remoteArgs ...stri
 		"-o", "ServerAliveInterval=10",
 		"-o", "ServerAliveCountMax=3",
 		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
 	}
 	if proxy := loggerProxyCommand(paths, sshKey, host); proxy != "" {
@@ -926,6 +927,7 @@ func loggerSCPArgs(paths provisionPaths, sshKey, host, source, dest string) []st
 		"-o", "BatchMode=yes",
 		"-o", "ConnectTimeout=15",
 		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
 	}
 	if proxy := loggerProxyCommand(paths, sshKey, host); proxy != "" {
@@ -949,6 +951,7 @@ func loggerProxyCommand(paths provisionPaths, sshKey, host string) string {
 		"-o", "IdentitiesOnly=yes",
 		"-o", "BatchMode=yes",
 		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "ConnectTimeout=15",
 		"-o", "LogLevel=ERROR",
 		"-W", "%h:%p",
