@@ -30,7 +30,7 @@ func ExpandQuery(query string) string {
 		"凭證":           "auth authentication credential certificate cert token activation provision provisioning",
 		"组成":           "architecture component service runtime inventory deployment",
 		"組成":           "architecture component service runtime inventory deployment",
-		"video server": "rtk_video_cloud API media storage WebRTC MQTT NATS Postgres",
+		"video server": "rtk_video_cloud API media storage WebRTC MQTT Postgres",
 		"device":       "device registry activation certificate token transport provisioning",
 		"webrtc":       "streaming WebRTC TURN ICE session",
 		"mqtt":         "MQTT broker transport EMQX topic",

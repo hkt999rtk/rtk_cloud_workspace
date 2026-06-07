@@ -34,6 +34,20 @@ CURRENT_STATUS_SUMMARY = [
     ["Next milestone", "2026-08-01 要完成 50,000 IoT devices + 5,000 video cameras loading test。", "8 月進 alpha test（含 SDK），9 月進 beta test（含 SDK 與 pilot customer），再進 public。"],
 ]
 
+CUSTOMER_USE_CASE_FIT = [
+    ["Module buyer", "需要看到 module 不只是一顆 IC，而是有 onboarding、SDK/App、OTA、video、MQTT/shadow 與管理工具。", "縮短評估時間，增加 design-in 信心。"],
+    ["Solution developer", "需要可直接測試的 cloud API、sample app、device flow、debug report 與文件入口。", "讓開發者能自己跑 PoC，減少 FAE 重複解釋。"],
+    ["Brand / ODM customer", "需要 Brand Cloud、tenant/user/device 關係清楚，也要知道哪些可由 Realtek platform 支援。", "把 private / brand cloud 討論提前到可驗證架構。"],
+    ["Video IoT customer", "需要 live video relay、storage/media、stream health 與 future scaling/cost 的判斷基礎。", "支援 camera / sensor solution 的商業化評估。"],
+]
+
+RELEASE_GATE_DEFINITIONS = [
+    ["Aug.1 loading-test pass", "50,000 IoT devices + 5,000 video cameras", "Success rate、p95/p99、error taxonomy、resource use、recovery behavior、report package。"],
+    ["Alpha test", "SDK + internal developer real use", "4-6 internal testers；至少 3-4 位 developer/firmware/app testers 實際跑 onboarding、SDK sample、debug/report。"],
+    ["Beta test", "SDK + pilot customer", "1-2 pilot customers 或 partner use cases；確認 PoC feedback、support flow、deployment/cost assumptions。"],
+    ["Public path", "operation, account, support, security baseline", "公司/核准第三方帳務、backup operator、release version、backup/restore、security review gate。"],
+]
+
 FONT_REG = "/System/Library/Fonts/STHeiti Light.ttc"
 FONT_BOLD = "/System/Library/Fonts/STHeiti Medium.ttc"
 
@@ -569,7 +583,7 @@ VIDEO_MILESTONES = [
     {"period": "Jun", "label": "Foundation", "status": "current", "note": "WebRTC / media / storage path"},
     {"period": "Jul 1-15", "label": "Video profile", "status": "next", "note": "camera mix / viewer behavior"},
     {"period": "Jul 16-31", "label": "5k rehearsal", "status": "planned", "note": "TURN / storage / metrics"},
-    {"period": "Aug 1", "label": "5k cameras pass", "status": "target", "note": "same gate as 50k IoT"},
+    {"period": "Aug 1", "label": "5,000 cameras pass", "status": "target", "note": "same gate as 50k IoT"},
 ]
 
 LOAD_READINESS = [
@@ -618,8 +632,9 @@ EVIDENCE_INDEX = [
 ]
 
 DECK_REQUIRED_TOPICS = [
-    "Schedule", "Loading Test", "Cloud Relationship", "Portal Marketing", "WebRTC/storage",
-    "MQTT/shadow", "PKI", "Threat Model", "Linode", "Operation Screenshots", "Evidence Appendix",
+    "Schedule", "Release Gate", "Loading Test", "Cloud Relationship", "Customer Fit",
+    "Portal Marketing", "WebRTC/storage", "MQTT/shadow", "PKI", "HSM signer",
+    "Threat Model", "Linode", "Operation Screenshots", "Evidence Appendix",
 ]
 
 
@@ -647,6 +662,8 @@ def build_report_payload() -> dict[str, object]:
         "language": REPORT_LANGUAGE,
         "coreMessage": CORE_MESSAGE,
         "currentStatusSummary": CURRENT_STATUS_SUMMARY,
+        "customerUseCaseFit": CUSTOMER_USE_CASE_FIT,
+        "releaseGateDefinitions": RELEASE_GATE_DEFINITIONS,
         "scheduleSnapshot": SCHEDULE_SNAPSHOT,
         "scheduleMilestones": SCHEDULE_MILESTONES,
         "videoMilestones": VIDEO_MILESTONES,

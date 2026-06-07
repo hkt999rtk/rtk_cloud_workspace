@@ -16,6 +16,9 @@ repositories. Shared wire and payload contracts belong in
 | [artifact-release-governance.md](artifact-release-governance.md) | Source | Linode Object Storage artifact source-of-truth policy and adoption matrix. |
 | [backend-release-readiness.md](backend-release-readiness.md) | Supporting note | Backend foundation closeout checklist, validation commands, report status, and remaining release-evidence items. |
 | [deployment-secrets-governance.md](deployment-secrets-governance.md) | Source | Local deployment secret layout, environment/provider/service taxonomy, and handling rules. |
+| [aws-service-mapping.md](aws-service-mapping.md) | Supporting note | AWS service candidate mapping for future cost estimation from the current private-cloud structure. |
+| [aws-cost-estimate-worksheet.csv](aws-cost-estimate-worksheet.csv) | Supporting artifact | Quantity-first AWS cost estimation worksheet for a 10k-device commercial pilot in `ap-southeast-1`. |
+| [aws-pricing-sources.md](aws-pricing-sources.md) | Supporting note | AWS public pricing snapshot, source URLs, selected unit prices, and first-pass transfer cost estimate. |
 | [persistence-cache-refactor-roadmap.md](persistence-cache-refactor-roadmap.md) | Source | Cross-repo persistence boundary audit and Redis/cache-readiness issue roadmap. |
 | [realtek-connect-plus-gap-analysis.md](realtek-connect-plus-gap-analysis.md) | Discussion note | Evidence-backed gaps between Realtek Connect+ promotion content and current implementation. |
 | [implementation-gap-backlog.md](implementation-gap-backlog.md) | Supporting note | Post-interface implementation and test gaps to open as owner-repo issues. |
@@ -25,11 +28,12 @@ repositories. Shared wire and payload contracts belong in
 | [product-level-evidence.md](product-level-evidence.md) | Supporting note | Workspace evidence wrapper for private-cloud readiness sign-off and canonical report aggregation. |
 | [linode-staging-deployment-snapshot.md](linode-staging-deployment-snapshot.md) | Supporting note | Current Linode staging deployment snapshot, live endpoints, PR state, and remaining production-readiness work. |
 | [linode-ci-runners.md](linode-ci-runners.md) | Source | Linode self-hosted CI runner VM topology, lifecycle, artifact archive, and shutdown policy. |
+| [linode-10k-mqtt-loadtest.md](linode-10k-mqtt-loadtest.md) | Supporting note | Two-phase 10,000-device MQTT-only Linode load-test workflow, distributed shard execution, and capacity evidence checklist. |
 | [status-reports/README.md](status-reports/README.md) | Source | Reusable weekly status report framework, material index, and builder workflow. |
 | [webrtc-only-streaming-migration.md](webrtc-only-streaming-migration.md) | Supporting note | WebRTC-only video migration issue roadmap and validation checklist. |
 | [video-cloud-load-test-roadmap.md](video-cloud-load-test-roadmap.md) | Supporting note | API-level video cloud E2E load test roadmap, issue owner matrix, and validation checklist. |
 | [home-mqtt-loadtest-simulation.md](home-mqtt-loadtest-simulation.md) | Supporting note | Env-root driven home daily-use MQTT load simulation plan and developer issue breakdown. |
-| [cross-service-broker-packaging.md](cross-service-broker-packaging.md) | Supporting note | Cross-service broker packaging decision, profiles, and evidence expectations. |
+| [cross-service-broker-packaging.md](cross-service-broker-packaging.md) | Supporting note | Retired cross-service broker packaging decision and future reintroduction bar. |
 | [provisioning-issue-roadmap.md](provisioning-issue-roadmap.md) | Supporting note | Interface-first provisioning issue plan and repository ownership matrix. |
 | [ota-issue-roadmap.md](ota-issue-roadmap.md) | Supporting note | Interface-first OTA campaign issue plan and repository ownership matrix. |
 | [testing.md](testing.md) | Source | Cross-repository validation commands for pinned snapshots. |

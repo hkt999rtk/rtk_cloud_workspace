@@ -199,40 +199,6 @@ async function slide01(p, payload) {
   return slide;
 }
 
-async function slidePresenterContext(p, payload) {
-  const slide = p.slides.add();
-  await addBackground(slide, payload);
-  await addHeader(slide, payload, "Career background", "IOT CLOUD / VIDEO CLOUD / DIGITAL MARKETING");
-  addText(slide, "這一頁先交代報告者的相關背景：本報告對 cloud structure、IoT device cloud、video relay/storage 與 portal/digital marketing 的判斷，來自實際建立與營運雲端產品的經驗。", { x: 85, y: 154, w: 1110, h: 44 }, { size: 16, color: C.navy, bold: true, align: "center", fill: C.pale });
-
-  addShape(slide, { x: 78, y: 235, w: 535, h: 250, fill: C.paleBlue, line: C.line });
-  addText(slide, "Edimax IoT BU / IoT Cloud", { x: 105, y: 262, w: 480, h: 28 }, { size: 22, color: C.navy, bold: true, face: FONT_EN });
-  [
-    "Former Edimax IoT BU head and creator of Edimax IoT Cloud.",
-    "Built IoT cloud experience for connected devices and customer PoC-to-business paths.",
-    "Honeywell / Resideo experience: supported IoT device scenarios such as water leak detector ecosystem.",
-    "Created video relay and storage cloud capabilities for Honeywell and expanded into business video cloud opportunities.",
-  ].forEach((text, i) => {
-    addStatusDot(slide, "ready", 108, 315 + i * 38);
-    addText(slide, text, { x: 132, y: 307 + i * 38, w: 435, h: 30 }, { size: 12, color: C.black });
-  });
-
-  addShape(slide, { x: 665, y: 235, w: 535, h: 250, fill: C.paleTeal, line: C.line });
-  addText(slide, "Pixnet RD VP / Data-driven Growth", { x: 692, y: 262, w: 480, h: 28 }, { size: 22, color: C.navy, bold: true, face: FONT_EN });
-  [
-    "Former RD VP at Pixnet, a top-100 worldwide website without relying on mainland China market traffic.",
-    "Led web-scale product and engineering execution under high-volume consumer internet traffic.",
-    "Built data-driven intelligent systems that improved profitability through digital marketing methods.",
-    "Practical experience in behavior data, cookie-era growth loops, content/traffic optimization, and monetization.",
-  ].forEach((text, i) => {
-    addStatusDot(slide, "ready", 695, 315 + i * 38);
-    addText(slide, text, { x: 719, y: 307 + i * 38, w: 435, h: 30 }, { size: 12, color: C.black });
-  });
-
-  addText(slide, "這些經驗會用在本報告的判斷：cloud structure、IoT device cloud、video relay/storage、portal/digital marketing 與後續營運支援。", { x: 135, y: 565, w: 1010, h: 44 }, { size: 16, color: C.navy, bold: true, align: "center", fill: C.paleAmber });
-  return slide;
-}
-
 async function slideMajorTopics(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
@@ -344,6 +310,30 @@ async function slideWhyCloud(p, payload) {
   return slide;
 }
 
+async function slideCustomerUseCaseFit(p, payload) {
+  const slide = p.slides.add();
+  await addBackground(slide, payload);
+  await addHeader(slide, payload, "Customer / Use Case Fit", "WHO THIS CLOUD HELPS");
+  addText(slide, "這頁用來讓主管先判斷：哪些客戶會需要這個 cloud，以及它如何回到 module selling、PoC 和 design-in。", { x: 82, y: 154, w: 1120, h: 40 }, { size: 16, color: C.navy, bold: true, align: "center", fill: C.pale });
+
+  const rows = payload.customerUseCaseFit || [];
+  rows.forEach((row, i) => {
+    const x = 70 + (i % 2) * 585;
+    const y = 230 + Math.floor(i / 2) * 160;
+    const fill = i % 2 ? C.paleTeal : C.paleBlue;
+    addShape(slide, { x, y, w: 520, h: 122, fill, line: C.line });
+    addText(slide, row[0], { x: x + 22, y: y + 18, w: 215, h: 26 }, { size: 18, color: C.navy, bold: true, face: FONT_EN });
+    addShape(slide, { x: x + 260, y: y + 24, w: 205, h: 12, fill: C.blue, line: "none" });
+    addText(slide, "need", { x: x + 260, y: y + 39, w: 60, h: 14 }, { size: 8, color: C.muted, face: FONT_EN });
+    addText(slide, row[1], { x: x + 22, y: y + 52, w: 235, h: 50 }, { size: 11, color: C.black });
+    addText(slide, row[2], { x: x + 280, y: y + 52, w: 205, h: 42 }, { size: 11, color: C.navy, bold: true });
+  });
+
+  addShape(slide, { x: 180, y: 575, w: 920, h: 48, fill: C.paleAmber, line: "#E3C25A" });
+  addText(slide, "判斷重點：報告要指出 target customer、使用情境、需要提供的內容，最後連回 IoT module selling / PoC / design-in。", { x: 205, y: 589, w: 870, h: 22 }, { size: 14, color: C.navy, bold: true, align: "center" });
+  return slide;
+}
+
 async function slide04(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
@@ -364,6 +354,28 @@ async function slide04(p, payload) {
     }
   });
   addText(slide, "Aug.1 gate: 50,000 IoT devices + 5,000 video cameras loading test; next: Aug alpha with SDK, Sep beta with SDK + pilot customer, then public.", { x: 90, y: 565, w: 1040, h: 42 }, { size: 16, color: C.navy, bold: true, align: "center", fill: C.pale });
+  return slide;
+}
+
+async function slideReleaseGateDefinition(p, payload) {
+  const slide = p.slides.add();
+  await addBackground(slide, payload);
+  await addHeader(slide, payload, "Release Gate Definition", "AUG.1 / ALPHA / BETA / PUBLIC");
+  addText(slide, "每個階段都要有明確通過條件；日期只是排程，gate 要靠 evidence 判斷。", { x: 85, y: 154, w: 1110, h: 36 }, { size: 16, color: C.navy, bold: true, align: "center", fill: C.pale });
+
+  const gates = payload.releaseGateDefinitions || [];
+  const colors = [C.blue, C.teal, C.sky, C.amber];
+  gates.forEach((gate, i) => {
+    const x = 80 + i * 290;
+    const barH = 80 + i * 24;
+    addShape(slide, { x, y: 520 - barH, w: 210, h: barH, fill: colors[i], line: "none" });
+    addText(slide, gate[0], { x: x - 10, y: 198, w: 230, h: 42 }, { size: 15, color: C.navy, bold: true, align: "center", face: FONT_EN });
+    addText(slide, gate[1], { x: x - 5, y: 248, w: 220, h: 44 }, { size: 12, color: C.black, bold: true, align: "center" });
+    addText(slide, gate[2], { x: x - 4, y: 540, w: 218, h: 68 }, { size: 9, color: C.black, align: "center" });
+    addText(slide, `${i + 1}`, { x: x + 78, y: 520 - barH + 18, w: 54, h: 34 }, { size: 24, color: C.white, bold: true, align: "center", face: FONT_EN });
+  });
+
+  addText(slide, "報告更新規則：gate 未過就標 `at risk` / `blocked` / `not verified`，不要用時間進度取代實際驗證。", { x: 140, y: 625, w: 1000, h: 28 }, { size: 14, color: C.navy, bold: true, align: "center", fill: C.paleAmber });
   return slide;
 }
 
@@ -680,6 +692,37 @@ async function slide12(p, payload) {
   return slide;
 }
 
+async function slideHsmSignerDesign(p, payload) {
+  const slide = p.slides.add();
+  await addBackground(slide, payload);
+  await addHeader(slide, payload, "HSM / PKCS#11 Signer Design", "KEY CUSTODY / CERTISSUER / TOKEN SIGNING");
+  addText(slide, "新的 signer design 把 signing key custody 從 service file secret 往 HSM / PKCS#11 boundary 移動；service 只拿到 signing capability, 不拿 private key material。", { x: 85, y: 154, w: 1110, h: 44 }, { size: 16, color: C.navy, bold: true, align: "center", fill: C.pale });
+
+  const lanes = [
+    ["Signing key custody", "CA key / JWT key stays in HSM-backed token", "non-exportable key, PIN/module handled as deployment config", C.paleAmber],
+    ["PKCS#11 signer adapter", "certissuer signer + RS256 token signer", "select slot/token label/key label, sign only approved digest/CSR", C.paleBlue],
+    ["Cloud services", "certissuer, token bootstrap, Account Manager path", "issue cert/token, write audit, fail closed if signer unavailable", C.paleTeal],
+  ];
+  lanes.forEach((lane, i) => {
+    const x = 70 + i * 390;
+    addShape(slide, { x, y: 245, w: 320, h: 142, fill: lane[3], line: C.line });
+    addText(slide, lane[0], { x: x + 18, y: 268, w: 284, h: 24 }, { size: 18, color: C.navy, bold: true, align: "center", face: FONT_EN });
+    addText(slide, lane[1], { x: x + 24, y: 310, w: 272, h: 34 }, { size: 13, color: C.black, bold: true, align: "center" });
+    addText(slide, lane[2], { x: x + 24, y: 350, w: 272, h: 26 }, { size: 10, color: C.muted, align: "center" });
+    if (i < lanes.length - 1) addArrow(slide, x + 325, 316, x + 376, 316, C.sky);
+  });
+
+  addTable(slide, ["Management control", "Report message"], [
+    ["Key custody", "Private key should be non-exportable in HSM-backed deployment; report only provider type, not PIN/path/label values."],
+    ["Signer boundaries", "Certificate issuance and RS256 token signing use signer adapters; business services do not own raw signing keys."],
+    ["Audit and failure mode", "certissuer records request/certificate evidence; signer unavailable must block issuance instead of falling back silently."],
+    ["Rollout evidence", "SoftHSM/local CI can prove behavior; production needs HSM provider, key ceremony, backup/rotation and access owner."],
+  ], { x: 155, y: 450, w: 970, h: 155 }, [1.15, 3.05], { rowH: 31, headerH: 28, fontSize: 10 });
+
+  addText(slide, "Source：rtk_video_cloud branch `codex/pkcs11-certissuer-token-signers`, certissuer material/signers and auth token signer. No secrets or raw PKCS#11 config should appear in status reports.", { x: 110, y: 625, w: 1060, h: 28 }, { size: 12, color: C.navy, bold: true, align: "center", fill: C.paleAmber });
+  return slide;
+}
+
 async function slide13(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
@@ -899,8 +942,8 @@ async function slide21(p, payload) {
 }
 
 const SLIDES = [
-  slide01, slidePresenterContext, slideMajorTopics, slide07, slideWhyCloud, slide03, slideCloudTypes, slideOperationalTransition, slide02, slide04, slide05, slide06, slide08,
-  slidePortalTransition, slidePortalIntro, slide09, slideTechnicalTransition, slide10, slide11, slideStrideOverview, slide12, slide13,
+  slide01, slideMajorTopics, slide07, slideWhyCloud, slideCustomerUseCaseFit, slide03, slideCloudTypes, slideOperationalTransition, slide02, slide04, slideReleaseGateDefinition, slide05, slide06, slide08,
+  slidePortalTransition, slidePortalIntro, slide09, slideTechnicalTransition, slide10, slide11, slideStrideOverview, slide12, slideHsmSignerDesign, slide13,
   slideEvidenceTransition, slide14, slideCostView, slide15, slide16, slide17, slide18, slide19, slidePostAlphaCoverage, slide20, slide21,
 ];
 

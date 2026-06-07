@@ -674,10 +674,10 @@ func runLoggerForwarderScriptHooks(paths provisionPaths, env map[string]string, 
 func loggerForwarderTargets(paths provisionPaths) []loggerForwarderTarget {
 	return []loggerForwarderTarget{
 		{"account-manager", envFileValue(paths.AccountManagerState, "ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4"), "rtk-account-manager.service,rtk-account-manager-inbox-worker.service,rtk-account-manager-outbox-worker.service"},
-		{"video-cloud-api", videoStateInstanceHost(paths.VideoState, "api"), "video_cloud-api.service,video_cloud-logingester.service,video_cloud-turnregistry.service,video_cloud-metricsexporter.service,video_cloud-crossservice.service,video_cloud-cleaner.service,video_cloud-statistics.service,video_cloud-certissuer.service,video_cloud-factoryenroll.service"},
+		{"video-cloud-api", videoStateInstanceHost(paths.VideoState, "api"), "video_cloud-api.service,video_cloud-logingester.service,video_cloud-turnregistry.service,video_cloud-metricsexporter.service,video_cloud-cleaner.service,video_cloud-statistics.service,video_cloud-certissuer.service,video_cloud-factoryenroll.service"},
 		{"cloud-admin", envFileValue(paths.AdminState, "ADMIN_LINODE_PUBLIC_IPV4"), "rtk-cloud-admin.service"},
 		{"edge", videoStateInstanceHost(paths.VideoState, "edge"), "nginx.service,certbot.timer"},
-		{"infra", videoStateInstanceHost(paths.VideoState, "infra"), "postgresql.service,postgresql@16-main.service,redis-server.service,nats-server.service,prometheus.service,prometheus-node-exporter.service,prometheus-postgres-exporter.service,prometheus-redis-exporter.service"},
+		{"infra", videoStateInstanceHost(paths.VideoState, "infra"), "postgresql.service,postgresql@16-main.service,redis-server.service,prometheus.service,prometheus-node-exporter.service,prometheus-postgres-exporter.service,prometheus-redis-exporter.service"},
 		{"mqtt", videoStateInstanceHost(paths.VideoState, "mqtt"), "emqx.service"},
 		{"coturn", videoStateInstanceHost(paths.VideoState, "coturn"), "coturn.service,video_cloud-turnregistrar.service"},
 	}
@@ -906,6 +906,7 @@ func loggerSSHArgs(paths provisionPaths, sshKey, host string, remoteArgs ...stri
 		"-o", "ServerAliveInterval=10",
 		"-o", "ServerAliveCountMax=3",
 		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
 	}
 	if proxy := loggerProxyCommand(paths, sshKey, host); proxy != "" {
@@ -926,6 +927,7 @@ func loggerSCPArgs(paths provisionPaths, sshKey, host, source, dest string) []st
 		"-o", "BatchMode=yes",
 		"-o", "ConnectTimeout=15",
 		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
 	}
 	if proxy := loggerProxyCommand(paths, sshKey, host); proxy != "" {
@@ -949,6 +951,7 @@ func loggerProxyCommand(paths provisionPaths, sshKey, host string) string {
 		"-o", "IdentitiesOnly=yes",
 		"-o", "BatchMode=yes",
 		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "ConnectTimeout=15",
 		"-o", "LogLevel=ERROR",
 		"-W", "%h:%p",

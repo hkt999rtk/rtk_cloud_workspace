@@ -20,7 +20,7 @@ func TestCheckContractsPolicyAcceptsStandardPathsURLsAndAlignedCommits(t *testin
 	writeFile(t, filepath.Join(root, "repos", "rtk_video_cloud", ".gitmodules"), `
 [submodule "rtk_cloud_contracts_doc"]
 	path = docs/rtk_cloud_contracts_doc
-	url = git@github.com-work:hkt999rtk/rtk_cloud_contracts_doc.git
+	url = https://github.com/hkt999rtk/rtk_cloud_contracts_doc.git
 `)
 	for _, repo := range []string{"rtk_cloud_client", "rtk_account_manager", "rtk_cloud_admin"} {
 		mkdirAll(t, filepath.Join(root, "repos", repo))
@@ -51,7 +51,7 @@ func TestCheckContractsPolicyRejectsLegacyPathsURLsAndDrift(t *testing.T) {
 	writeFile(t, filepath.Join(root, ".gitmodules"), `
 [submodule "repos/rtk_cloud_contracts_doc"]
 	path = repos/rtk_cloud_contracts_doc
-	url = https://github.com/hkt999rtk/rtk_cloud_contracts_doc.git
+	url = https://x-access-token:secret@github.com/hkt999rtk/rtk_cloud_contracts_doc.git
 `)
 	mkdirAll(t, filepath.Join(root, "repos", "rtk_account_manager"))
 	writeFile(t, filepath.Join(root, "repos", "rtk_account_manager", ".gitmodules"), `

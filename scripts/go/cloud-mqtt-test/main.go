@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -150,7 +151,8 @@ type mqttActorProbe struct {
 
 func main() {
 	var root, envRoot, brandname, outDir, profile, maxUsersRaw, mqttProbeRaw, traceDetail string
-	var duration, seed int
+	var rampUp, telemetryInterval, stateInterval, commandRate string
+	var duration, seed, shardIndex, shardCount, concurrency, maxConnectedDevices int
 	flag.StringVar(&root, "root", "", "workspace root")
 	flag.StringVar(&envRoot, "env-root", "", "environment root")
 	flag.StringVar(&brandname, "brandname", "", "brand name")
@@ -161,6 +163,14 @@ func main() {
 	flag.IntVar(&seed, "seed", 20260531, "seed")
 	flag.StringVar(&mqttProbeRaw, "mqtt-probe", "true", "mqtt probe")
 	flag.StringVar(&traceDetail, "trace-detail", "summary", "console trace detail: none, summary, full")
+	flag.IntVar(&shardIndex, "shard-index", 0, "load-test shard index")
+	flag.IntVar(&shardCount, "shard-count", 1, "load-test shard count")
+	flag.StringVar(&rampUp, "ramp-up", "", "load-test ramp-up duration")
+	flag.StringVar(&telemetryInterval, "telemetry-interval", "", "load-test telemetry interval")
+	flag.StringVar(&stateInterval, "state-interval", "", "load-test state interval")
+	flag.StringVar(&commandRate, "command-rate-per-device-per-day", "", "load-test command rate per device per day")
+	flag.IntVar(&concurrency, "concurrency", 25, "load-test MQTT probe concurrency")
+	flag.IntVar(&maxConnectedDevices, "max-connected-devices", 0, "load-test max connected devices in this shard")
 	flag.Parse()
 
 	maxUsers := 0
@@ -172,7 +182,17 @@ func main() {
 		maxUsers = parsed
 	}
 	mqttProbe := mqttProbeRaw == "true"
-	if err := run(root, envRoot, brandname, outDir, profile, duration, maxUsers, seed, mqttProbe, traceDetail); err != nil {
+	opts := loadOptions{
+		ShardIndex:                  shardIndex,
+		ShardCount:                  shardCount,
+		RampUp:                      rampUp,
+		TelemetryInterval:           telemetryInterval,
+		StateInterval:               stateInterval,
+		CommandRatePerDevicePerDay:  commandRate,
+		Concurrency:                 concurrency,
+		MaxConnectedDevicesPerShard: maxConnectedDevices,
+	}
+	if err := run(root, envRoot, brandname, outDir, profile, duration, maxUsers, seed, mqttProbe, traceDetail, opts); err != nil {
 		fatal(err)
 	}
 }
@@ -182,13 +202,36 @@ func fatal(err error) {
 	os.Exit(2)
 }
 
-func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, seed int, mqttProbe bool, traceDetail string) error {
+type loadOptions struct {
+	ShardIndex                  int    `json:"shard_index"`
+	ShardCount                  int    `json:"shard_count"`
+	RampUp                      string `json:"ramp_up"`
+	TelemetryInterval           string `json:"telemetry_interval"`
+	StateInterval               string `json:"state_interval"`
+	CommandRatePerDevicePerDay  string `json:"command_rate_per_device_per_day"`
+	Concurrency                 int    `json:"concurrency"`
+	MaxConnectedDevicesPerShard int    `json:"max_connected_devices_per_shard"`
+}
+
+func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, seed int, mqttProbe bool, traceDetail string, opts loadOptions) error {
 	traceDetail = strings.ToLower(strings.TrimSpace(traceDetail))
 	if traceDetail == "" {
 		traceDetail = "summary"
 	}
 	if traceDetail != "none" && traceDetail != "summary" && traceDetail != "full" {
 		return errors.New("--trace-detail must be none, summary, or full")
+	}
+	if profile != "smoke" && profile != "real-case" && profile != "baseline-10k" {
+		return errors.New("--profile must be smoke, real-case, or baseline-10k")
+	}
+	if opts.ShardCount <= 0 || opts.ShardIndex < 0 || opts.ShardIndex >= opts.ShardCount {
+		return errors.New("--shard-count must be positive and --shard-index must be within range")
+	}
+	if opts.Concurrency <= 0 {
+		opts.Concurrency = 25
+	}
+	if profile == "baseline-10k" {
+		opts = baseline10KDefaults(opts)
 	}
 	brandLower := strings.ToLower(brandname)
 	artifactsDir := filepath.Join(envRoot, "artifacts")
@@ -327,6 +370,14 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	for _, email := range selectedUsers {
 		selectedAssignments = append(selectedAssignments, selectedByUser[email]...)
 	}
+	totalEligibleAssignments := len(selectedAssignments)
+	selectedAssignments = shardAssignments(selectedAssignments, opts.ShardIndex, opts.ShardCount)
+	if opts.MaxConnectedDevicesPerShard > 0 && len(selectedAssignments) > opts.MaxConnectedDevicesPerShard {
+		selectedAssignments = selectedAssignments[:opts.MaxConnectedDevicesPerShard]
+	}
+	if len(selectedAssignments) == 0 && totalEligibleAssignments > 0 {
+		blockers = append(blockers, fmt.Sprintf("shard %d/%d has no selected MQTT devices", opts.ShardIndex, opts.ShardCount))
+	}
 	certRecords := []certRecord{}
 	for _, item := range selectedAssignments {
 		record, ok := manifestByID[item.DeviceID]
@@ -358,11 +409,24 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 		"profile":          profile,
 		"duration_seconds": duration,
 		"seed":             seed,
-		"env":              map[string]string{"root": envRoot},
-		"trace_detail":     traceDetail,
-		"inputs":           inputs,
-		"endpoints":        endpoints,
-		"blockers":         blockers,
+		"load": map[string]any{
+			"profile":                     profile,
+			"total_eligible_devices":      totalEligibleAssignments,
+			"selected_shard_devices":      len(selectedAssignments),
+			"shard_index":                 opts.ShardIndex,
+			"shard_count":                 opts.ShardCount,
+			"ramp_up":                     opts.RampUp,
+			"telemetry_interval":          opts.TelemetryInterval,
+			"state_interval":              opts.StateInterval,
+			"command_rate_per_device_day": opts.CommandRatePerDevicePerDay,
+			"concurrency":                 opts.Concurrency,
+			"max_connected_devices":       opts.MaxConnectedDevicesPerShard,
+		},
+		"env":          map[string]string{"root": envRoot},
+		"trace_detail": traceDetail,
+		"inputs":       inputs,
+		"endpoints":    endpoints,
+		"blockers":     blockers,
 	}
 	if len(blockers) > 0 {
 		base["status"] = "BLOCKED"
@@ -405,12 +469,12 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 		mqttProbeResult = appMaterial.Status.Status + ": app MQTT actor unavailable"
 	} else {
 		mqttProbeResult = "PASS"
+		outcomes := runSelectedDeviceProbes(selectedAssignments, certRecords, brandname, endpoints["video_cloud_base_url"].(string), mqttHost, mqttPort, appMaterial.Certificate, opts.Concurrency)
 		for _, item := range selectedAssignments {
 			row := capCounts[item.DeviceType]
 			row["devices"]++
 			row["commands"]++
-			record := findCert(certRecords, item.DeviceID)
-			outcome := runDeviceActorSeparatedEnvelope(record, brandname, endpoints["video_cloud_base_url"].(string), mqttHost, mqttPort, appMaterial.Certificate)
+			outcome := outcomes[item.DeviceID]
 			row["commands"] += outcome.Commands - 1
 			if outcome.MQTTStatus == "PASS" {
 				row["passed"] += outcome.Commands
@@ -519,6 +583,74 @@ func runDeviceActorSeparatedEnvelope(record certRecord, brandname, apiBaseURL, h
 	}
 	result.TraceChain = renumberTrace(append(prefix, result.TraceChain...))
 	return result
+}
+
+func baseline10KDefaults(opts loadOptions) loadOptions {
+	if opts.RampUp == "" {
+		opts.RampUp = "10m"
+	}
+	if opts.TelemetryInterval == "" {
+		opts.TelemetryInterval = "5m"
+	}
+	if opts.StateInterval == "" {
+		opts.StateInterval = "1h"
+	}
+	if opts.CommandRatePerDevicePerDay == "" {
+		opts.CommandRatePerDevicePerDay = "1"
+	}
+	if opts.Concurrency <= 0 {
+		opts.Concurrency = 250
+	}
+	return opts
+}
+
+func shardAssignments(items []assignment, shardIndex, shardCount int) []assignment {
+	if shardCount <= 1 {
+		return append([]assignment(nil), items...)
+	}
+	out := []assignment{}
+	for idx, item := range items {
+		if idx%shardCount == shardIndex {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func runSelectedDeviceProbes(assignments []assignment, certs []certRecord, brandname, apiBaseURL, host string, port int, appCert tls.Certificate, concurrency int) map[string]deviceResult {
+	if concurrency <= 0 {
+		concurrency = 25
+	}
+	if concurrency > len(assignments) && len(assignments) > 0 {
+		concurrency = len(assignments)
+	}
+	type job struct {
+		Assignment assignment
+		Cert       certRecord
+	}
+	jobs := make(chan job)
+	results := make(chan deviceResult, len(assignments))
+	var wg sync.WaitGroup
+	for worker := 0; worker < concurrency; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for item := range jobs {
+				results <- runDeviceActorSeparatedEnvelope(item.Cert, brandname, apiBaseURL, host, port, appCert)
+			}
+		}()
+	}
+	for _, item := range assignments {
+		jobs <- job{Assignment: item, Cert: findCert(certs, item.DeviceID)}
+	}
+	close(jobs)
+	wg.Wait()
+	close(results)
+	out := map[string]deviceResult{}
+	for row := range results {
+		out[row.DeviceID] = row
+	}
+	return out
 }
 
 func failedActorResult(deviceID, deviceType, reason string) deviceResult {

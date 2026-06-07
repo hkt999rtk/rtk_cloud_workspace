@@ -27,17 +27,20 @@ literal product, repo, API, endpoint, command, and status-label names in English
 - 目前高階架構。
 - 目前部署狀態。
 - 已完成 foundation 與下一步。
+- Target customer / use-case fit：module buyer、solution developer、
+  brand/ODM customer、video IoT customer，各自需要什麼 cloud proof，以及
+  如何連回 module selling / PoC / design-in。
 
 ## 第二部分：時程與 Loading Test 路徑
 
 - Project start：2026-05-01。
-- Target：Early August 2026 pass 50,000 IoT devices loading test。
-- Video staged target：如果本週報告涵蓋 IoT Video / WebRTC / video storage，另外列出 August 2026 的 500-device video staged validation，並說明這是往 5,000-device video target 前進前的 gate，不可和 50,000-device IoT loading test 混在一起。
+- Target：2026-08-01 pass 50,000 IoT devices + 5,000 video cameras loading test。
 - Dynamic scaling：目前架構可說明已 design-in scaling-ready boundaries / scale-out direction，但 August release 不實作 dynamic scaling；八月前報告只描述 architecture direction、capacity evidence、multi-host readiness、bottleneck visibility 和 runbook，不可宣稱 autoscaling / elastic scaling implemented。
 - 目前位置：依報告日期與實際 evidence 更新，不可只用樂觀日期推進。
 - Timeline / Gantt / milestone-lane chart：標示 May 1 到 early-August target，並清楚標出 `目前位置`；schedule 不要只用純數字表格呈現。
 - Milestone detail table：只作為輔助明細，內容包含 May kickoff、May foundation、late-May/early-June load-test preparation、June small/medium validation、late-June multi-host/capacity、July 10k/30k rehearsal、late-July 50k dry run、early-Aug final pass。
-- Video schedule lane：June video readiness foundation、July 500-device preparation、August 500-device staged validation、after 500-device validation 才往 5,000-device video target 擴大。
+- Video schedule lane：June video readiness foundation、July video profile / 5,000-camera rehearsal、2026-08-01 與 50,000 IoT devices 同一個 gate 驗證 5,000 video cameras。
+- Release gate definition：Aug.1 loading-test pass、Alpha、Beta、Public path 各自要有通過條件、evidence、未通過時的狀態標示。
 - 本週 gate：本週必須完成或驗證的可量測項目。
 - 下個 gate：下一個可驗證 milestone。
 - Schedule risk：用 `on track` / `at risk` / `blocked`，並說明原因。
@@ -47,6 +50,7 @@ literal product, repo, API, endpoint, command, and status-label names in English
 
 - 架構細節。
 - Cloud relationship diagram：Realtek Platform Root -> Brand Cloud -> brand users / end users / devices，並標明 Account Manager、Video Cloud、Admin Console、Frontend、SDK/app/firmware 的 source-of-truth 邊界。
+- Customer / Use Case Fit：以 2x2 cards 或 segment visual 說明 target customer、customer need、cloud proof object、module sales / PoC linkage。
 - Portal Web / Digital Marketing：說明 `rtk_cloud_frontend` 是 marketing website、docs/manual portal、lead generation layer；涵蓋 SEO、content development、visitor behavior analytics、CTA conversion、lead capture、sales improvement loop。
 - Portal funnel / content map：traffic/source -> page engagement -> CTA click -> contact lead -> sales follow-up；homepage -> features -> docs/manual -> contact。
 - Current-vs-target architecture：目前 staging/runtime/evidence/operations readiness 對照 early-August load-test-ready target。
@@ -59,6 +63,7 @@ literal product, repo, API, endpoint, command, and status-label names in English
 - MQTT/shadow topic-surface table：`devices/<device_id>/...` command/event/log topics 與 `$vc/devices/{devid}/shadow/...` get/update/delete/accepted/rejected/delta/documents topics 分開列。
 - Security / PKI trust management：把 PKI 說明成 device identity、factory enrollment、service entitlement、audit、revocation、lifecycle governance，而不是只寫 mTLS 技術。
 - PKI trust-chain visual：factory/MES or fixture -> factory enrollment -> certissuer -> device certificate -> mTLS token bootstrap -> service-options ACL -> runtime services。
+- HSM / PKCS#11 signer design：說明 certissuer CA signing 與 RS256 token signing 的 key custody boundary；service 只取得 signing capability，不持有 raw private key material。
 - Security management matrix：identity、key custody、certificate issuance、entitlement、token binding、revocation、audit、lifecycle handling。
 - PKI readiness evidence：以 `implemented` / `staging` / `not verified` / `blocked` 標示，不可把未驗證設計寫成 production-ready。
 - Threat Model / Cyber Security Review：列出 STRIDE threat model 進度、trust boundaries、top critical/high risks、open questions、review focus paths、mitigation/evidence status。

@@ -53,17 +53,19 @@ endpoint checks, risk/decision tracking, or exact audit detail.
 
 For status reports, preserve the report guideline structure:
 
-- Presenter context page immediately after the cover when the audience may not
-  know Kevin Huang's IoT cloud, video cloud, and digital marketing background.
-- Major-topic map after presenter context.
+- Major-topic map immediately after the cover when the audience may not already
+  know why the cloud exists.
 - Cloud relationship / tenant structure before detailed status: Realtek
   Platform Root -> Brand Cloud -> brand users / end users / devices.
 - Cloud as the module product path for bottom-up business module sales.
+- Customer / use-case fit near the beginning: target customer, customer need,
+  cloud proof object, and module sales / PoC / design-in linkage.
 - Two-cloud explanation: Operational IoT / Video Cloud versus Portal Web /
   Marketing Cloud.
 - Transition slides between operational progress, portal web, technical/security
   design, and deployment/evidence.
-- Schedule and loading-test path.
+- Schedule and loading-test path, plus release-gate definition for Aug.1,
+  Alpha, Beta, and Public.
 - Portal web / digital marketing: `rtk_cloud_frontend` as marketing website,
   documentation/manual portal, SEO/content layer, first-party behavior
   analytics, CTA/lead conversion, and sales improvement loop.
