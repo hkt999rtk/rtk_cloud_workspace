@@ -30,14 +30,21 @@ submodule at:
 docs/rtk_cloud_contracts_doc
 ```
 
-The standard submodule URL is:
+The standard submodule URL is the developer SSH alias:
 
 ```text
 git@github.com-work:hkt999rtk/rtk_cloud_contracts_doc.git
 ```
 
-CI may rewrite that URL to a token-authenticated HTTPS URL at runtime. The token
-URL must not be committed to `.gitmodules`.
+Repositories that need GitHub Actions to initialize the private contracts
+submodule may instead commit the exact canonical HTTPS URL:
+
+```text
+https://github.com/hkt999rtk/rtk_cloud_contracts_doc.git
+```
+
+CI may rewrite either canonical URL to a token-authenticated HTTPS URL at
+runtime. The token URL must not be committed to `.gitmodules`.
 
 ## Commit Alignment
 

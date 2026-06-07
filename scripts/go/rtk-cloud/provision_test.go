@@ -252,13 +252,12 @@ func TestLoggerForwarderTargetsUseStagingSystemdUnits(t *testing.T) {
 		"video_cloud-logingester.service",
 		"video_cloud-turnregistry.service",
 		"video_cloud-metricsexporter.service",
-		"video_cloud-crossservice.service",
 		"video_cloud-cleaner.service",
 		"video_cloud-statistics.service",
 	)
 	assertUnitsNotContain(t, byName["video-cloud-api"].units, "rtk-video-cloud-api.service")
-	assertUnitsContain(t, byName["infra"].units, "nats-server.service", "prometheus.service", "postgresql.service", "redis-server.service")
-	assertUnitsNotContain(t, byName["infra"].units, "nats.service")
+	assertUnitsContain(t, byName["infra"].units, "prometheus.service", "postgresql.service", "redis-server.service")
+	assertUnitsNotContain(t, byName["infra"].units, "nats-server.service", "nats.service")
 	assertUnitsContain(t, byName["coturn"].units, "coturn.service", "video_cloud-turnregistrar.service")
 }
 
@@ -787,44 +786,6 @@ func TestStgDeployShortcutAcceptsOptionalRelease(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("stg.sh deploy v-test args missing %q: %s", want, got)
 		}
-	}
-}
-
-func TestProvisionAccountManagerCommitSupportsNATS(t *testing.T) {
-	workspace := t.TempDir()
-	repo := filepath.Join(workspace, "repos", "rtk_account_manager")
-	mkdirAll(t, filepath.Join(repo, "internal", "broker"))
-	writeFile(t, filepath.Join(repo, "internal", "broker", "broker.go"), `package broker
-
-const AdapterLog = "log"
-`)
-	runGit(t, repo, "init")
-	runGit(t, repo, "add", ".")
-	runGit(t, repo, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "without nats")
-	withoutNATS := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
-
-	writeFile(t, filepath.Join(repo, "internal", "broker", "broker.go"), `package broker
-
-const AdapterLog = "log"
-const AdapterNATS = "nats"
-`)
-	runGit(t, repo, "add", ".")
-	runGit(t, repo, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "with nats")
-
-	paths := provisionPaths{Workspace: workspace}
-	supports, err := provisionAccountManagerCommitSupportsNATS(paths, withoutNATS)
-	if err != nil {
-		t.Fatalf("provisionAccountManagerCommitSupportsNATS returned error: %v", err)
-	}
-	if supports {
-		t.Fatal("commit without NATS reported support")
-	}
-	supports, err = provisionAccountManagerCommitSupportsNATS(paths, "HEAD")
-	if err != nil {
-		t.Fatalf("provisionAccountManagerCommitSupportsNATS returned error: %v", err)
-	}
-	if !supports {
-		t.Fatal("HEAD with NATS did not report support")
 	}
 }
 

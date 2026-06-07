@@ -19,8 +19,8 @@ file when deployment facts are confirmed.
 - Production-like deployments place a reverse proxy or load balancer with TLS
   in front of public frontend, account, video, and selected WebRTC/TURN
   surfaces.
-- Raw service ports, PostgreSQL, NATS JetStream, Prometheus metrics, and the
-  EMQX dashboard are private network or authenticated admin surfaces.
+- Raw service ports, PostgreSQL, Prometheus metrics, and the EMQX dashboard are
+  private network or authenticated admin surfaces.
 - MQTT is enabled only when device transport requires it; if exposed outside a
   private network, it uses TLS, explicit authentication, logs, and firewall
   policy.
@@ -60,8 +60,7 @@ file when deployment facts are confirmed.
   production endpoints today?
 - Which legacy compatibility routes or certificate-header flows are enabled in
   the target deployment?
-- Are MQTT, TURN registry APIs, metrics, EMQX dashboard, or NATS reachable from
+- Are MQTT, TURN registry APIs, metrics, or the EMQX dashboard reachable from
   outside the private network?
 - What tenant isolation and customer data-retention requirements apply to the
   target deployment?
-

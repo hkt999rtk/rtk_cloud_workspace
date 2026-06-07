@@ -24,14 +24,14 @@ customer deployment before opening service-specific work.
 | Workspace gap evidence | `docs/realtek-connect-plus-gap-analysis.md` | Tracks public-copy versus implementation gaps. |
 | Core platform roadmap | `docs/core-platform-gap-roadmap.md` | Routes private-cloud work to owner repositories. |
 | Product-level evidence wrapper | `docs/product-level-evidence.md` | Defines the workspace evidence artifact, redaction rules, and wrapper command. |
-| Cross-service broker packaging | `docs/cross-service-broker-packaging.md` | Defines NATS JetStream ownership, profiles, streams, retention, and evidence. |
+| Cross-service broker packaging | `docs/cross-service-broker-packaging.md` | Records that shared broker packaging is retired for the current runtime. |
 | Video cloud runtime deploy | `repos/rtk_video_cloud/docs/automation.md` | Release, deploy, staging evidence, and runner model. |
 | Video cloud release bundle | `repos/rtk_video_cloud/docs/release.md` | Release artifact contents and intended handoff shape. |
 | Video cloud host setup | `repos/rtk_video_cloud/docs/deployment-instance-setup.md` | Linux host bootstrap, PostgreSQL, systemd, EMQX, runner setup. |
 | Video cloud promotion/rollback | `repos/rtk_video_cloud/docs/deployment-promotion-rollback.md` | Staging, PM sign-off, production deploy, rollback. |
 | Video cloud observability | `repos/rtk_video_cloud/docs/observability-baseline.md` | Metrics, logs, EMQX, dead-letter, and evidence signals. |
 | Cross-service service logging | `docs/service-logging-architecture.md` | Central logger, journald forwarder, correlation, retention, and provisioning dependency plan. |
-| Video cloud config | `repos/rtk_video_cloud/docs/config-map.md` | Runtime env map including Postgres, blob, MQTT, and cross-service settings. |
+| Video cloud config | `repos/rtk_video_cloud/docs/config-map.md` | Runtime env map including Postgres, blob, MQTT, TURN, and certissuer settings. |
 | Video cloud deploy assets | `repos/rtk_video_cloud/deploy/README.md` | Systemd units, EMQX compose, verifier, evidence collector. |
 | Account manager behavior | `repos/rtk_account_manager/docs/SPEC.md` | Account, org, auth, registry, fleet, and provisioning scope. |
 | Frontend deployment | `repos/rtk_cloud_frontend/README.md` | Container packaging, SQLite persistence, reverse-proxy TLS assumption. |
@@ -55,7 +55,7 @@ runtime details.
 | Admin dashboard | Yes for operator deployments | `rtk_cloud_admin` | Go BFF, React SPA, SQLite demo/cache storage, and dashboard docs exist. | Provides tenant/customer and platform operations views for fleet, provisioning, lifecycle, service health, and audit workflows. |
 | Account manager API | Yes | `rtk_account_manager` | Go/Postgres backend with auth, orgs, devices, groups/tags, provisioning projection. | Owns users, orgs, RBAC, registry devices, fleet primitives, account-side readiness facts. |
 | Video cloud API | Yes for camera/device runtime | `rtk_video_cloud` | Linux release bundle, systemd units, Postgres, media, firmware, transport, metrics. | Owns activation, tokens, media, firmware lifecycle, WebSocket/MQTT transport, runtime signals. |
-| Video cloud workers | Deployment-dependent | `rtk_video_cloud` | `ping`, `cleaner`, `statistics`, cross-service, TURN registry, and WebRTC/TURN units exist. Legacy relay and RTSP relay are WebRTC-only migration removal targets. | Runs background lifecycle, cleanup, metrics/statistics, WebRTC/TURN, and cross-service workers. |
+| Video cloud workers | Deployment-dependent | `rtk_video_cloud` | `cleaner`, `statistics`, TURN registry, certissuer/factory enrollment, and WebRTC/TURN units exist. Legacy relay and RTSP relay are WebRTC-only migration removal targets. | Runs background cleanup, metrics/statistics, WebRTC/TURN, and certificate/factory workers. |
 | EMQX MQTT broker | Required when MQTT transport is enabled | `rtk_video_cloud` packaging / EMQX upstream | Packaged Docker Compose and `video_cloud-emqx.service` exist. | Self-hosted reference MQTT broker for device transport. |
 | PostgreSQL | Yes | platform/operator | Required by account manager and video cloud. | Persistent account, registry, runtime, media metadata, outbox/inbox, and projections. |
 | Object/blob storage | Yes for media/snapshots | platform/operator with `rtk_video_cloud` config | Local blob root and S3-style settings documented. | Stores snapshot/clip/firmware objects depending on runtime configuration. |
@@ -63,7 +63,6 @@ runtime details.
 | Secrets manager | Yes | platform/operator | GitHub Environment secrets or host-side manager are currently documented patterns. | Stores DSNs, auth secrets, MQTT credentials, webhook secrets, deploy keys, private keys. |
 | Observability stack | Yes for production-like profile | platform/operator | Video cloud exposes Prometheus endpoints and evidence collectors. | Scrapes metrics, collects logs, stores alerts, keeps readiness evidence. |
 | Central service logger | Yes for production-like profile | `rtk_cloud_logger` with workspace provisioning | Implemented in staging native flow: logger resource provisioning, Loki-backed backend service, journald forwarders, readiness checks, artifacts, cleanup, and Cloud Admin dashboard wiring. Container/file sources such as EMQX broker per-publish logs still need a source adapter. | Stores queryable service logs across account, video, admin, frontend, and systemd-managed host sources without requiring Grafana for the v1 dashboard. |
-| Cross-service broker | Required when account/video lifecycle channel is enabled | platform/operator, with workspace product requirements | `docs/cross-service-broker-packaging.md` selects NATS JetStream as the default and defines acceptable equivalents. | Carries account-to-video lifecycle commands and video-to-account events. |
 | Backup storage | Yes for production-like profile | platform/operator | Not packaged as a single workspace script. | Stores database dumps, object storage backups, env/secrets escrow metadata, release manifests. |
 
 ## Deployment Profiles
@@ -102,8 +101,8 @@ Evaluation acceptance bar:
 - video cloud `verify.sh` or smoke parity wrapper passes for selected services
 - EMQX publish-subscribe smoke passes when MQTT is enabled
 - readiness evidence collector produces an artifact without secrets
-- documented skipped services are explicit, for example no cross-service channel
-  if NATS JetStream is not deployed
+- documented skipped services are explicit, for example no shared broker because
+  lifecycle coordination uses explicit service APIs
 
 ### Production-Like Private Profile
 
@@ -116,8 +115,6 @@ Required infrastructure:
 - managed or self-managed PostgreSQL with backup/restore procedures
 - object storage with retention and lifecycle policy
 - EMQX broker deployment when MQTT transport is enabled
-- NATS JetStream or equivalent broker when account/video cross-service channel
-  is enabled
 - reverse proxy/load balancer with TLS, DNS, request limits, and access logs
 - secrets manager or GitHub Environment secrets with rotation process
 - metrics/logging/alerting stack
@@ -132,7 +129,6 @@ Recommended separation:
 | Account manager | Dedicated service and database/schema; migrations controlled by release. |
 | Video cloud API/workers | Release bundle or equivalent artifact; systemd/Kubernetes supervision; selected units only. |
 | MQTT | EMQX as managed/self-hosted broker with auth/TLS policy, logs, and health checks. |
-| Cross-service broker | NATS JetStream or approved equivalent with retention, replicas, and dead-letter handling. |
 | Storage | Postgres backups plus object storage lifecycle/replication according to customer policy. |
 | Observability | Prometheus-compatible metrics, service logs, broker logs, dead-letter evidence, alert routing. |
 
@@ -143,7 +139,7 @@ Production-like acceptance bar:
 - upgrade and rollback are rehearsed before customer traffic
 - database and object storage backups are restorable in a test environment
 - secrets are not stored in git or public workflow logs
-- EMQX and cross-service broker operations are included in runbooks when enabled
+- EMQX operations are included in runbooks when enabled
 - frontend private-cloud wording matches the actually deployed package, not a
   roadmap superset
 
@@ -255,7 +251,6 @@ Recommended defaults:
 | Prometheus metrics | Private network or authenticated scrape path only. |
 | EMQX dashboard | Private/admin network only. |
 | PostgreSQL | Private network only. |
-| NATS JetStream | Private network only. |
 
 TLS ownership belongs to the platform/operator layer. The frontend explicitly
 assumes production TLS termination is handled by a reverse proxy, ingress, or
@@ -338,7 +333,6 @@ Minimum backup set:
 | Runtime env and non-secret manifest | platform/operator | Store redacted env key inventory and release manifest. | Confirm required keys are known without leaking secrets. |
 | Secrets | platform/operator | Secret-manager backup/escrow according to customer policy. | Rotation drill, not plaintext restore in git. |
 | EMQX config | platform/operator | Back up broker config, auth policy, TLS material references. | Broker smoke after restore. |
-| NATS JetStream state | platform/operator | Back up stream config/state if cross-service channel requires persistence. | Publish/consume smoke and dead-letter inspection. |
 
 Restore drills should run before a production-like deployment is called
 customer-ready.
@@ -354,8 +348,6 @@ The production-like profile should collect:
 - frontend health and lead persistence checks
 - account manager auth/org/device smoke output
 - EMQX broker status and MQTT publish-subscribe smoke when MQTT is enabled
-- cross-service worker metrics and dead-letter files when lifecycle channel is
-  enabled
 - PostgreSQL backup job status
 - object storage availability and lifecycle policy evidence
 - release version manifest and source commits for each service
@@ -391,7 +383,7 @@ the actual package status:
 - available foundation: website container recipe, video cloud release bundle and
   deploy runbooks, account manager deploy runbook/readiness smoke, EMQX
   reference broker, TURN registry runtime, workspace evidence wrapper, and
-  cross-service broker packaging decision
+  retired cross-service broker packaging note
 - integration-ready: combined private-cloud BOM, single-node evaluation profile,
   production-like checklist
 - roadmap or customer-specific: HA topology, managed upgrades across all
@@ -410,7 +402,7 @@ clear. Do not imply all components are one-click deployable today.
 | Add admin-dashboard production deployment profile | `hkt999rtk/rtk_cloud_admin` | Implemented by the admin dashboard private-cloud deployment profile; upstream authoritative production behavior remains separate below. |
 | Add admin-dashboard authoritative readiness/telemetry production mode | `hkt999rtk/rtk_cloud_admin` | Production dashboard views should prefer Account Manager and Video Cloud source facts over demo/cache projections, with stable stale/partial/upstream-failure states. |
 | Define product-level evidence wrapper | `hkt999rtk/rtk_cloud_workspace` | Implemented by `go run ./scripts/go/rtk-cloud -- collect-evidence` and documented in `docs/product-level-evidence.md`; service-local collectors remain owner-repo follow-ups. |
-| Define cross-service broker packaging decision | `hkt999rtk/rtk_cloud_workspace` | Decided in `docs/cross-service-broker-packaging.md`: workspace owns product requirements, service repos own client/runtime behavior, platform/operator owns broker installation and operations. |
+| Retire cross-service broker packaging decision | `hkt999rtk/rtk_cloud_workspace` | `docs/cross-service-broker-packaging.md` records that shared broker packaging is retired; future async coordination should use explicit APIs plus DB-backed outbox/retry unless a real multi-consumer event bus requirement appears. |
 | Add private-cloud copy status update | `hkt999rtk/rtk_cloud_frontend` | Public wording should reflect this BOM and avoid one-click private-cloud claims until follow-ups land. |
 | Add SDK release validation coverage and live-lab evidence | `hkt999rtk/rtk_cloud_client` | Private-cloud/customer handoff needs package release evidence for Android/iOS/native coverage exports and Pro2/FreeRTOS live-lab validation artifacts. |
 

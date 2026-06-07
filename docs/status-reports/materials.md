@@ -59,7 +59,7 @@ status reports.
 | `docs/private-cloud-deployment.md` | Deployment order, support boundary, network/TLS, backup/restore, and production-ready gaps. |
 | `docs/linode-staging-deployment-snapshot.md` | Linode staging endpoint list, runtime shape, and previous snapshot evidence. |
 | `docs/product-level-evidence.md` | Formal evidence bundle boundary and status semantics. |
-| `repos/rtk_video_cloud/deploy/README.md` | Video Cloud packaged runtime inventory, systemd services, EMQX/NATS/coturn/PostgreSQL/Prometheus shape. |
+| `repos/rtk_video_cloud/deploy/README.md` | Video Cloud packaged runtime inventory, systemd services, EMQX/coturn/PostgreSQL/Prometheus shape. |
 | `repos/rtk_video_cloud/docs/config-map.md` | Video Cloud non-secret configuration categories. |
 | `repos/rtk_account_manager/linode_deploy/README.md` | Account Manager public VM shape, deployment model, PostgreSQL and nginx boundary. |
 | `repos/rtk_cloud_admin/deploy/linode/README.md` | Admin dashboard public VM shape, upstream configuration, Docker/SQLite/nginx boundary. |

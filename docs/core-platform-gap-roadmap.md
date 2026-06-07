@@ -45,7 +45,7 @@ artifact credentials are unavailable.
 | Brand-cloud backend management | Done | `hkt999rtk/rtk_account_manager`, `hkt999rtk/rtk_cloud_admin` | Account Manager owns `organization_kind=brand_cloud`, platform-admin APIs, bootstrap root, and audit; Admin provides backend/BFF proxy routes for future WebUI. |
 | Frontend private-cloud deployment docs | Evidence follow-up | `hkt999rtk/rtk_cloud_frontend` | Production deployment profile exists; backup/restore and legal/contact polishing remain launch evidence, not backend foundation work. |
 | Product-level evidence collector | Done | `hkt999rtk/rtk_cloud_workspace` | `go run ./scripts/go/rtk-cloud -- collect-evidence` gathers service evidence into a redacted bundle. |
-| Cross-service broker packaging | Done | `hkt999rtk/rtk_cloud_workspace` | `docs/cross-service-broker-packaging.md` records the owner decision and NATS JetStream packaging/runbook plan. |
+| Cross-service broker packaging | Retired | `hkt999rtk/rtk_cloud_workspace` | `docs/cross-service-broker-packaging.md` records that shared broker packaging is not part of the current runtime; future async coordination should use explicit APIs plus DB-backed outbox/retry unless a real multi-consumer event bus requirement appears. |
 | SDK release coverage artifacts | Done | `hkt999rtk/rtk_cloud_client` | Android/iOS/native coverage exports and release validation artifacts. |
 | Pro2/FreeRTOS live-lab validation | Done | `hkt999rtk/rtk_cloud_client` | Live hardware release test program with clean skip/block reporting. |
 | Video Cloud local backend reports | Done | `hkt999rtk/rtk_video_cloud` | `docs/TEST_REPORT.md`, `docs/READINESS_TEST_REPORT.md`, and `docs/RELEASE_TEST_REPORT.md` record local backend validation and explicit live-environment skips. |
@@ -65,7 +65,7 @@ artifact credentials are unavailable.
 | Account-manager private-cloud evidence | Deployment runbook and readiness smoke are present; workspace wrapper can aggregate service-local output. |
 | SDK release validation tooling | Coverage export docs and Pro2 live-lab wrapper/report templates are present; live runs still depend on release-candidate environment and hardware. |
 | Product-level evidence collector | Workspace wrapper is implemented; service-local reports must distinguish local evidence from live staging, hardware, and artifact-packaging skips. |
-| Cross-service broker packaging | Workspace owner decision is documented; remaining gaps are operator deployment evidence and service-local broker smoke output when lifecycle channel is enabled. |
+| Cross-service broker packaging | Retired for the current runtime; no broker deployment evidence is required unless a future event-bus design is approved. |
 | Smart-home/Matter/voice assistants | Valid roadmap area, but intentionally excluded from this foundation batch. |
 
 ## Issue Ordering

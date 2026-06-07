@@ -210,12 +210,14 @@ Acceptance criteria:
 - document configuration, redaction, and acceptance rules in
   `docs/product-level-evidence.md`
 
-#### `[Private Cloud] Decide and document cross-service broker packaging`
+#### `[Private Cloud] Retire cross-service broker packaging`
 
 Status: implemented in `rtk_cloud_workspace`.
 
-Summary: decide how NATS JetStream or an approved equivalent is packaged for
-private-cloud account/video lifecycle deployments.
+Summary: retire shared broker packaging for private-cloud account/video
+lifecycle deployments. Current coordination should use explicit service APIs;
+future async coordination should use DB-backed outbox/retry unless a real
+multi-consumer event bus requirement appears.
 
 Dependencies:
 
@@ -225,15 +227,11 @@ Dependencies:
 
 Acceptance criteria:
 
-- decide whether broker packaging is owned by workspace, video cloud deploy
-  assets, account manager deploy docs, or external platform/operator docs:
-  `docs/cross-service-broker-packaging.md` assigns product requirements to the
-  workspace, service client/runtime behavior to account manager and video cloud,
-  and broker install/ops to the platform/operator
-- document single-node evaluation and production-like broker profiles in
+- document the retired broker-packaging decision in
   `docs/cross-service-broker-packaging.md`
-- document required streams, retention, dead-letter handling, backup/restore, and
-  smoke checks in `docs/cross-service-broker-packaging.md`
+- remove broker deployment/evidence expectations from the private-cloud BOM
+- document direct API plus DB-backed outbox/retry as the preferred future
+  coordination pattern
 - update private-cloud BOM/runbook links after the owner decision is made
 
 ### `hkt999rtk/rtk_cloud_client`

@@ -134,7 +134,6 @@ the Go zap SDK:
 
 - nginx access/error logs
 - EMQX broker logs
-- NATS logs
 - coturn logs
 - PostgreSQL logs when locally managed
 - Redis logs when locally managed
@@ -207,7 +206,7 @@ Current status:
 | Logger VM/firewall/env/state/DNS | Implemented in workspace provisioning | `./stg.sh provision --plan` reports logger resource status and `./stg.sh provision --all` creates the logger resource metadata. |
 | Loki-backed store | Implemented in `rtk_cloud_logger` | `rtk-cloud-logger` supports `-store loki` / `RTK_CLOUD_LOGGER_STORE=loki`. |
 | Logger backend/Loki service install | Implemented in workspace deploy | When `CLOUD_LOGGER_SCRIPT` is unset, deploy installs Loki plus `rtk-cloud-logger` systemd services on the logger VM. |
-| Per-host journald forwarders | Implemented in workspace deploy | `./stg.sh deploy` installs `rtk-cloud-log-forwarder` before application deploy and refreshes it after application deploy. `./stg.sh deploy --logger-only` installs only the logger backend and forwarders. Forwarder targets must use the actual staging systemd units such as `video_cloud-api.service`, `video_cloud-logingester.service`, `nats-server.service`, and `video_cloud-turnregistrar.service`. |
+| Per-host journald forwarders | Implemented in workspace deploy | `./stg.sh deploy` installs `rtk-cloud-log-forwarder` before application deploy and refreshes it after application deploy. `./stg.sh deploy --logger-only` installs only the logger backend and forwarders. Forwarder targets must use the actual staging systemd units such as `video_cloud-api.service`, `video_cloud-logingester.service`, and `video_cloud-turnregistrar.service`. |
 | Verbose EMQX broker trace | Implemented in workspace deploy | `CLOUD_LOGGER_EMQX_VERBOSE_TRACE=true` installs a dedicated `rtk-cloud-emqx-log-forwarder.service` for `video-cloud-emqx` Docker logs and labels events as `service=emqx-broker`, `source=emqx`, `component=mqtt-broker`, `operation_id=mqtt-broker-trace`; default remains off to avoid high-volume Loki writes. |
 | Container/file-source forwarding | Partial | EMQX Docker-log forwarding is implemented for the opt-in broker trace path. Other non-journald file/container sources still need source-specific adapters before they are guaranteed in central logger queries. |
 | Readiness checks | Implemented in workspace deploy | Backend health, ingest/idempotency, sample query, and forwarder status are reported as PASS/DEGRADED. |

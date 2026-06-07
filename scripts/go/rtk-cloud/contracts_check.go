@@ -11,6 +11,7 @@ import (
 )
 
 const contractsRepoURL = "git@github.com-work:hkt999rtk/rtk_cloud_contracts_doc.git"
+const contractsRepoHTTPSURL = "https://github.com/hkt999rtk/rtk_cloud_contracts_doc.git"
 
 var expectedContractsPaths = []string{
 	"repos/rtk_cloud_contracts_doc",
@@ -62,10 +63,10 @@ func checkContractsPolicy(check *checkState, workspace string, commits map[strin
 	}
 	byPath := map[string]gitmoduleEntry{}
 	for _, entry := range entries {
-		if entry.URL != contractsRepoURL && strings.Contains(entry.URL, "rtk_cloud_contracts_doc") {
+		if !isCanonicalContractsURL(entry.URL) && strings.Contains(entry.URL, "rtk_cloud_contracts_doc") {
 			check.fail(fmt.Sprintf("%s uses non-standard contracts URL %s", entry.File, entry.URL))
 		}
-		if entry.URL != contractsRepoURL {
+		if !isCanonicalContractsURL(entry.URL) {
 			continue
 		}
 		fullPath := entry.Path
@@ -113,10 +114,15 @@ func renderContractsPolicyReport(rootCommit string, findings []contractsPolicyFi
 	}
 	b.WriteString("contracts_standard_path=docs/rtk_cloud_contracts_doc\n")
 	b.WriteString("contracts_standard_url=" + contractsRepoURL + "\n")
+	b.WriteString("contracts_standard_https_url=" + contractsRepoHTTPSURL + "\n")
 	for _, finding := range findings {
 		b.WriteString(finding.Status + ": " + finding.Detail + "\n")
 	}
 	return b.String()
+}
+
+func isCanonicalContractsURL(url string) bool {
+	return url == contractsRepoURL || url == contractsRepoHTTPSURL
 }
 
 func isExpectedContractsPath(path string) bool {
