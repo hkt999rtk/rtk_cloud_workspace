@@ -146,6 +146,9 @@ AWS IoT Core calculation:
 
 Per-unit calculation:
 
+The raw per-user and per-device rows below are alternate views of the same
+monthly cost pool. Do not add them together.
+
 | Scenario | Calculation | Estimate |
 | --- | --- | ---: |
 | Base services per user | 1,063.38 USD / 2,500 users | 0.43 USD/user-month |
@@ -154,6 +157,25 @@ Per-unit calculation:
 | Default with CloudHSM per device | 2,421.18 USD / 10,000 devices | 0.24 USD/device-month |
 | Robust with CloudHSM per user | 4,212.71 USD / 2,500 users | 1.69 USD/user-month |
 | Robust with CloudHSM per device | 4,212.71 USD / 10,000 devices | 0.42 USD/device-month |
+
+Weighted allocation model:
+
+Default allocation uses a device-dominant split because most RTK Cloud cost
+drivers scale with device fleet size: MQTT connection minutes, messages, shadow
+operations, device logs, firmware delivery, storage, certificates, and device
+API traffic. A 10% user pool is kept for account/app/admin/audit/session costs.
+
+| Allocation item | Weight | Rationale |
+| --- | ---: | --- |
+| User pool | 10% | Account, auth/session, app/API, admin, audit, reporting, and user-driven support surfaces. |
+| Device pool | 90% | MQTT, shadow, telemetry/logs, certificates, firmware, storage, and device API workload. |
+| Device-heavy sensitivity case | 5% user / 95% device | Use only when modeling a fleet-first deployment with minimal user/app activity. |
+
+| Scenario | User pool | Device pool | Per user | Per device | Effective 1 user + 4 devices |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Base services only, excluding CloudHSM | 106.34 | 957.04 | 0.04 USD/user-month | 0.10 USD/device-month | 0.43 USD/month |
+| Default estimate with one CloudHSM | 242.12 | 2,179.06 | 0.10 USD/user-month | 0.22 USD/device-month | 0.97 USD/month |
+| Robust redundant design with two CloudHSMs | 421.27 | 3,791.44 | 0.17 USD/user-month | 0.38 USD/device-month | 1.69 USD/month |
 
 Robust-profile changes:
 
