@@ -87,6 +87,28 @@ waits for the loopback message. WebRTC, relay, storage, clips, and snapshots are
 disabled for this profile. The design and developer issue breakdown live in
 `docs/home-mqtt-loadtest-simulation.md`.
 
+For the 10,000-device MQTT-only capacity baseline, use the two-phase
+`mqtt-loadtest` wrapper. It prepares 2,500 users and 10,000 non-camera devices
+once, then runs repeatable local or distributed shards:
+
+```sh
+go run ./scripts/go/rtk-cloud -- mqtt-loadtest prepare \
+  --env-root cloud_env/staging \
+  --brandname RTK \
+  --plan
+
+go run ./scripts/go/rtk-cloud -- mqtt-loadtest run \
+  --env-root cloud_env/staging \
+  --brandname RTK
+```
+
+The default `baseline-10k` profile uses 100% connected MQTT devices, excludes
+camera/WebRTC/TURN/media, uses telemetry every 5 minutes, and writes shard
+results under `<env-root>/artifacts/mqtt-loadtest/<timestamp>/`. For multiple
+load-generator VMs, pass `--hosts-file`; the wrapper assigns one shard per SSH
+host and aggregates the copied shard results. See
+`docs/linode-10k-mqtt-loadtest.md`.
+
 For a destructive staging reset followed by the full onboarding and MQTT smoke,
 use the one-stop orchestrator from the workspace root:
 
