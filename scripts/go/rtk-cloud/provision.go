@@ -1198,7 +1198,6 @@ func randomHex(bytesLen int) (string, error) {
 }
 
 func resolveProvisionReleases(paths provisionPaths, operator map[string]string, opts *provisionOptions) error {
-	requestedAccountRelease := opts.accountRelease
 	releases := []struct {
 		display string
 		prefix  string
@@ -1217,77 +1216,7 @@ func resolveProvisionReleases(paths provisionPaths, operator map[string]string, 
 		fmt.Fprintf(os.Stderr, "selected %s Object Storage release: %s\n", item.display, version)
 		fmt.Fprintf(os.Stderr, "%s Object Storage release readable: %s\n", item.display, objectKey)
 	}
-	if err := ensureProvisionAccountReleaseCompatible(paths, operator, opts, requestedAccountRelease); err != nil {
-		return err
-	}
 	return nil
-}
-
-func ensureProvisionAccountReleaseCompatible(paths provisionPaths, operator map[string]string, opts *provisionOptions, requested string) error {
-	accountEnv, _ := readEnvFile(paths.AccountManagerEnv)
-	if !strings.EqualFold(accountEnv["CROSS_SERVICE_BROKER"], "nats") || opts.accountRelease == "" {
-		return nil
-	}
-	supports, known, err := provisionObjectReleaseSupportsAccountNATS(paths, operator, opts.accountRelease)
-	if err != nil {
-		return err
-	}
-	if !known || supports {
-		return nil
-	}
-	if requested != "" {
-		return fmt.Errorf("Account Manager release %s does not support CROSS_SERVICE_BROKER=nats; choose a NATS-capable release or unset CROSS_SERVICE_BROKER", opts.accountRelease)
-	}
-	localSupports, err := provisionLocalAccountManagerSupportsNATS(paths)
-	if err != nil {
-		return err
-	}
-	if !localSupports {
-		return fmt.Errorf("selected Account Manager release %s does not support CROSS_SERVICE_BROKER=nats, and local repo does not either", opts.accountRelease)
-	}
-	fmt.Fprintf(os.Stderr, "[rtk-cloud provision] selected Account Manager release %s does not support CROSS_SERVICE_BROKER=nats; using local Account Manager build\n", opts.accountRelease)
-	opts.accountRelease = ""
-	return nil
-}
-
-func provisionObjectReleaseSupportsAccountNATS(paths provisionPaths, operator map[string]string, release string) (bool, bool, error) {
-	store, err := provisionObjectStoreFromEnv(operator)
-	if err != nil {
-		return false, false, err
-	}
-	manifestKey := "releases/rtk_account_manager-" + release + "/manifest.json"
-	data, err := provisionReadObject(store, manifestKey)
-	if err != nil {
-		return false, false, err
-	}
-	manifest := map[string]any{}
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		return false, false, err
-	}
-	commit := stringValue(manifest["source_commit"])
-	if commit == "" {
-		return false, false, nil
-	}
-	supports, err := provisionAccountManagerCommitSupportsNATS(paths, commit)
-	if err != nil {
-		return false, false, err
-	}
-	return supports, true, nil
-}
-
-func provisionLocalAccountManagerSupportsNATS(paths provisionPaths) (bool, error) {
-	return provisionAccountManagerCommitSupportsNATS(paths, "HEAD")
-}
-
-func provisionAccountManagerCommitSupportsNATS(paths provisionPaths, rev string) (bool, error) {
-	repo := filepath.Join(paths.Workspace, "repos", "rtk_account_manager")
-	cmd := exec.Command("git", "show", rev+":internal/broker/broker.go")
-	cmd.Dir = repo
-	out, err := cmd.Output()
-	if err != nil {
-		return false, nil
-	}
-	return strings.Contains(string(out), "AdapterNATS") || strings.Contains(string(out), `"nats"`), nil
 }
 
 func selectObjectRelease(operator map[string]string, display, prefix, requested string) (string, string, error) {

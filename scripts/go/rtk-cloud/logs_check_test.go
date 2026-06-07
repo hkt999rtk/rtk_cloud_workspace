@@ -90,8 +90,8 @@ func TestLogsCheckRemoteSpecsUseStagingSystemdUnits(t *testing.T) {
 		t.Fatalf("api journal command still uses stale unit: %s", apiJournal)
 	}
 	infraJournal := byName["infra-journal"].Command
-	if !strings.Contains(infraJournal, "nats-server") || strings.Contains(infraJournal, "nats.service") {
-		t.Fatalf("infra journal command has wrong nats unit: %s", infraJournal)
+	if strings.Contains(infraJournal, "nats-server") || strings.Contains(infraJournal, "nats.service") {
+		t.Fatalf("infra journal command still includes nats unit: %s", infraJournal)
 	}
 	coturnJournal := byName["coturn-journal"].Command
 	if !strings.Contains(coturnJournal, "video_cloud-turnregistrar.service") {

@@ -23,7 +23,7 @@ The workspace wrapper owns product-level aggregation:
 - canonical tracked test report inventory by submodule commit
 - selected service version metadata when available
 - health and metrics snapshots from configured URLs
-- broker status references for EMQX and the cross-service broker
+- broker status references for EMQX when MQTT transport is enabled
 - backup evidence references
 - service-local collector output when explicitly enabled
 - explicit `PASS`, `FAIL`, `SKIP`, and `BLOCKED` markers
@@ -147,13 +147,11 @@ evidence bundles from a half-configured environment.
 | `RTK_EVIDENCE_VIDEO_CLOUD_HEALTH_URL` | Video cloud health URL. | unset, recorded as `SKIP` |
 | `RTK_EVIDENCE_METRICS_URLS` | Space-separated metrics snapshot URLs. | unset, recorded as `SKIP` |
 | `RTK_EVIDENCE_EMQX_STATUS_URL` | EMQX status endpoint or operator proxy URL. | unset, recorded as `SKIP` |
-| `RTK_EVIDENCE_NATS_URL` | Redacted NATS JetStream endpoint presence marker. | unset, recorded as `SKIP` |
 | `RTK_EVIDENCE_BROKER_SMOKE_REF` | Link/path to broker smoke evidence. | unset, recorded as `SKIP` |
 | `RTK_EVIDENCE_POSTGRES_BACKUP_REF` | Link/path to database backup evidence. | unset, recorded as `SKIP` |
 | `RTK_EVIDENCE_OBJECT_STORAGE_BACKUP_REF` | Link/path to object storage backup evidence. | unset, recorded as `SKIP` |
 | `RTK_EVIDENCE_FRONTEND_BACKUP_REF` | Link/path to frontend lead DB backup evidence. | unset, recorded as `SKIP` |
 | `RTK_EVIDENCE_EMQX_BACKUP_REF` | Link/path to EMQX config/state backup evidence. | unset, recorded as `SKIP` |
-| `RTK_EVIDENCE_NATS_BACKUP_REF` | Link/path to JetStream backup evidence. | unset, recorded as `SKIP` |
 | `RTK_EVIDENCE_ACCOUNT_MANAGER_COLLECTOR_CMD` | Account manager collector command. | unset, recorded as `SKIP` |
 | `RTK_EVIDENCE_ADMIN_COLLECTOR_CMD` | Admin dashboard collector command. | unset, recorded as `SKIP` |
 | `RTK_EVIDENCE_FRONTEND_COLLECTOR_CMD` | Frontend collector command. | unset, recorded as `SKIP` |
@@ -220,10 +218,9 @@ Before a private-cloud deployment is considered evidence-ready:
 - Required health endpoints are configured and report `PASS`.
 - Metrics snapshots or links are present for selected runtime services.
 - EMQX status is present when MQTT transport is enabled.
-- NATS JetStream configuration and broker smoke reference are present when the
-  cross-service lifecycle channel is enabled.
-- Backup references cover Postgres, object storage, frontend lead storage, EMQX,
-  and JetStream where those components are deployed.
+- Broker smoke reference is present when MQTT transport is enabled.
+- Backup references cover Postgres, object storage, frontend lead storage, and
+  EMQX where those components are deployed.
 - Disabled optional components appear as `SKIP` with an intentional reason.
 - Missing required canonical reports appear as `BLOCKED` with the expected
   repo-owned path and pinned submodule commit.

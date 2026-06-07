@@ -35,8 +35,8 @@ Key assumptions:
 
 - Production-like deployments terminate TLS at a reverse proxy or load balancer
   before routing to selected public service surfaces.
-- Raw service ports, PostgreSQL, NATS JetStream, Prometheus metrics, and EMQX
-  dashboard are private or authenticated admin surfaces.
+- Raw service ports, PostgreSQL, Prometheus metrics, and EMQX dashboard are
+  private or authenticated admin surfaces.
 - Device mTLS is the intended production device-authentication model, while
   some legacy compatibility flows may still exist during migration.
 - Media, snapshots, firmware, device identity, tenant ownership, provisioning
@@ -51,8 +51,8 @@ Open questions:
 - Is device mTLS required on production device-facing endpoints today?
 - Which legacy token, certificate-header, subscriber, or query-token
   compatibility paths remain enabled?
-- Are MQTT, TURN registry APIs, metrics, EMQX dashboard, NATS, or raw service
-  ports reachable outside the private network?
+- Are MQTT, TURN registry APIs, metrics, EMQX dashboard, or raw service ports
+  reachable outside the private network?
 
 ## Evidence Anchors
 
@@ -60,7 +60,7 @@ Open questions:
 | --- | --- |
 | Video Cloud provides HTTP, WebSocket, WebRTC signaling, TURN registry control-plane support, PostgreSQL runtime state, local/S3 object storage, and deployment artifacts. | `repos/rtk_video_cloud/README.md` |
 | Production-like private cloud requires reverse proxy/TLS, Postgres, object storage, EMQX when MQTT is enabled, broker support when cross-service channel is enabled, secrets management, and observability. | `docs/private-cloud-deployment.md` |
-| Production guidance keeps metrics, EMQX dashboard, PostgreSQL, and NATS private or authenticated. | `docs/private-cloud-deployment.md` |
+| Production guidance keeps metrics, EMQX dashboard, and PostgreSQL private or authenticated. | `docs/private-cloud-deployment.md` |
 | Required secret categories include DSNs, JWT/auth signing secrets, MQTT credentials, cloud credentials, object storage keys, deploy keys, and private clip/certificate assets. | `docs/private-cloud-deployment.md`, `docs/deployment-secrets-governance.md` |
 | Account Manager is authoritative for identity, tenant context, authorization, entitlement, device registry, and provisioning intent. | `docs/account-manager-admin-boundary.md` |
 | Admin dashboard/BFF state is non-authoritative when upstream services are configured. | `docs/account-manager-admin-boundary.md` |
@@ -365,7 +365,7 @@ Detection:
 | --- | --- |
 | Critical | Add or enforce secret scanning across commits, artifacts, evidence packages, and `cyber_security/` outputs. |
 | High | Build table-driven authorization tests for route family, scope, subject, legacy alias, and token/cert conflict coverage. |
-| High | Add deployment preflight checks for public listener drift on metrics, EMQX dashboard, Postgres, NATS, and raw service ports. |
+| High | Add deployment preflight checks for public listener drift on metrics, EMQX dashboard, Postgres, and raw service ports. |
 | High | Verify MQTT auth/TLS policy and per-device identity binding in EMQX deployment assets. |
 | High | Verify WebRTC/session limits, request body limits, timeout cleanup, and TURN capacity controls. |
 | High | Verify cross-service command authentication, idempotency, and replay/conflict rejection. |
@@ -398,4 +398,3 @@ Detection:
 - User context gaps are recorded in `../assumptions.md` and in this report's
   open questions.
 - No raw secrets are intentionally stored in this report.
-
