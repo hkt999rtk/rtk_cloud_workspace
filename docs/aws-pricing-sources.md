@@ -54,7 +54,7 @@ Prices were collected from the AWS Bulk Price List API regional CSV files for
 | Object storage | S3 Standard, first 50 TB | 0.025 USD per GB-month |
 | Object requests | S3 PUT/COPY/POST/LIST | 0.000005 USD per request |
 | IoT connection | AWS IoT Core connection minutes | 0.096 USD per million minutes |
-| IoT messaging | AWS IoT Core messages, first 1B/month | 1.20 USD per million messages |
+| IoT messaging | AWS IoT Core 5 KB-metered messages, first 1B/month | 1.20 USD per million metered messages |
 | IoT state | AWS IoT Device Shadow/Registry operations | 1.50 USD per million operations |
 | Load balancer | Application Load Balancer | 0.0252 USD per ALB-hour |
 | Load balancer capacity | Application Load Balancer LCU | 0.008 USD per LCU-hour |
@@ -132,9 +132,9 @@ AWS IoT Core calculation:
 | Item | Calculation | Monthly estimate |
 | --- | --- | ---: |
 | Connection minutes | 10,000 devices * 24 * 60 * 30 * 0.096 USD / 1M minutes | 41.47 |
-| Telemetry/status messages | 10,000 devices * 12/hour * 24 * 30 * 1.20 USD / 1M messages | 103.68 |
-| Downlink command messages | 10,000 devices * 1/day * 30 * 1.20 USD / 1M messages | 0.36 |
-| Shadow update messages | 10,000 devices * 1/hour * 24 * 30 * 1.20 USD / 1M messages | 8.64 |
+| Telemetry/status messages | 10,000 devices * 12/hour * 24 * 30 * ceil(1 KB / 5 KB) * 1.20 USD / 1M metered messages | 103.68 |
+| Downlink command messages | 10,000 devices * 1/day * 30 * ceil(1 KB / 5 KB) * 1.20 USD / 1M metered messages | 0.36 |
+| Shadow update messages | 10,000 devices * 1/hour * 24 * 30 * ceil(1 KB / 5 KB) * 1.20 USD / 1M metered messages | 8.64 |
 | Shadow operations | 7.2M operations * 1.50 USD / 1M operations | 10.80 |
 
 | Scenario | Estimated monthly cost |
