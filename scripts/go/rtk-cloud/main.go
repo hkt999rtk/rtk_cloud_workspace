@@ -50,6 +50,7 @@ var commands = map[string]commandSpec{
 	"list-brandname-clouds":  {run: runListBrandnameClouds},
 	"logs-check":             {run: runLogsCheck},
 	"migrate-env":            {run: runMigrateEnv},
+	"mqtt-loadtest":          {run: runMQTTLoadTest},
 	"mqtt-test":              {run: runMQTTTest},
 	"mqtt-trace-report":      {run: runMQTTTraceReport},
 	"platform-admin-token":   {run: runPlatformAdminToken},
@@ -177,6 +178,7 @@ func runMQTTTest(args []string) error {
 	fs := flag.NewFlagSet("mqtt-test", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	envRoot := fs.String("env-root", "", "environment root")
+	workspaceFlag := fs.String("workspace", "", "workspace")
 	brandname := fs.String("brandname", "", "brand name")
 	outDir := fs.String("out-dir", "", "output directory")
 	profile := fs.String("profile", "smoke", "profile")
@@ -184,6 +186,14 @@ func runMQTTTest(args []string) error {
 	maxUsers := fs.String("max-users", "", "max users")
 	seed := fs.Int("seed", 20260531, "seed")
 	traceDetail := fs.String("trace-detail", "summary", "console trace detail: none, summary, full")
+	shardIndex := fs.Int("shard-index", 0, "load-test shard index")
+	shardCount := fs.Int("shard-count", 1, "load-test shard count")
+	rampUp := fs.String("ramp-up", "", "load-test ramp-up duration")
+	telemetryInterval := fs.String("telemetry-interval", "", "load-test telemetry interval")
+	stateInterval := fs.String("state-interval", "", "load-test state interval")
+	commandRate := fs.String("command-rate-per-device-per-day", "", "load-test command rate per device per day")
+	concurrency := fs.Int("concurrency", 25, "load-test MQTT probe concurrency")
+	maxConnectedDevices := fs.Int("max-connected-devices", 0, "load-test max connected devices in this shard")
 	mqttProbe := true
 	fs.BoolFunc("mqtt-probe", "run mqtt probe", func(string) error { mqttProbe = true; return nil })
 	fs.BoolFunc("no-mqtt-probe", "skip mqtt probe", func(string) error { mqttProbe = false; return nil })
@@ -196,12 +206,19 @@ func runMQTTTest(args []string) error {
 	if *brandname == "" {
 		return errors.New("--brandname is required")
 	}
-	if *profile != "smoke" && *profile != "real-case" {
-		return errors.New("--profile must be smoke or real-case")
+	if *profile != "smoke" && *profile != "real-case" && *profile != "baseline-10k" {
+		return errors.New("--profile must be smoke, real-case, or baseline-10k")
 	}
-	workspace, err := workspaceRoot()
-	if err != nil {
-		return err
+	if *shardCount <= 0 || *shardIndex < 0 || *shardIndex >= *shardCount {
+		return errors.New("--shard-count must be positive and --shard-index must be within range")
+	}
+	workspace := *workspaceFlag
+	var err error
+	if workspace == "" {
+		workspace, err = workspaceRoot()
+		if err != nil {
+			return err
+		}
 	}
 	resolvedEnv, err := resolveEnvRoot(workspace, *envRoot)
 	if err != nil {
@@ -228,6 +245,14 @@ func runMQTTTest(args []string) error {
 		"--seed", strconv.Itoa(*seed),
 		"--mqtt-probe", strconv.FormatBool(mqttProbe),
 		"--trace-detail", *traceDetail,
+		"--shard-index", strconv.Itoa(*shardIndex),
+		"--shard-count", strconv.Itoa(*shardCount),
+		"--ramp-up", *rampUp,
+		"--telemetry-interval", *telemetryInterval,
+		"--state-interval", *stateInterval,
+		"--command-rate-per-device-per-day", *commandRate,
+		"--concurrency", strconv.Itoa(*concurrency),
+		"--max-connected-devices", strconv.Itoa(*maxConnectedDevices),
 	)
 	cmd.Dir = filepath.Join(workspace, "scripts", "go")
 	cmd.Env = withEnv(os.Environ(), map[string]string{"GOWORK": "off"})
