@@ -12,13 +12,16 @@ FAKE_BIN="$TMP/bin"
 DEPLOY_LOG="$TMP/deploy.log"
 SSH_KEY="$TMP/id_ed25519_rtkcloud"
 ACCOUNT_BUNDLE="$TMP/account.tar.gz"
+ADMIN_BUNDLE="$TMP/rtk_cloud_admin-admin-test-release.tar.gz"
 mkdir -p \
 	"$FAKE_BIN" \
 	"$ENV_ROOT/state" \
 	"$ENV_ROOT/state" \
+	"$ENV_ROOT/topology" \
 	"$ENV_ROOT/services/cloud-admin" \
 	"$ENV_ROOT/env" \
 	"$ENV_ROOT/artifacts" \
+	"$WORKSPACE/keys/staging/linode/video-cloud" \
 	"$WORKSPACE/repos/rtk_video_cloud/linode_deploy/scripts" \
 	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/scripts" \
 	"$WORKSPACE/repos/rtk_cloud_admin/deploy/linode"
@@ -36,6 +39,12 @@ cat > "$ENV_ROOT/state/video-cloud-staging.state.json" <<'EOF_STATE'
 }
 EOF_STATE
 
+cat > "$ENV_ROOT/topology/video-cloud-staging.yaml" <<'EOF_TOPOLOGY'
+deploy:
+  device_client_domain: ""
+  device_client_ca_cert_path: ""
+EOF_TOPOLOGY
+
 cat > "$ENV_ROOT/state/account-manager-staging.env" <<'EOF_AM'
 ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4=203.0.113.60
 EOF_AM
@@ -44,8 +53,17 @@ cat > "$ENV_ROOT/state/cloud-admin-staging.env" <<'EOF_ADMIN'
 ADMIN_LINODE_PUBLIC_IPV4=203.0.113.70
 EOF_ADMIN
 
+for cert in root-ca production-issuer app-user-issuer; do
+	cat > "$WORKSPACE/keys/staging/linode/video-cloud/$cert.ed25519.cert.pem" <<EOF_CERT
+-----BEGIN CERTIFICATE-----
+$cert
+-----END CERTIFICATE-----
+EOF_CERT
+done
+
 touch "$SSH_KEY" "$SSH_KEY.pub"
 printf 'fake account bundle\n' > "$ACCOUNT_BUNDLE"
+printf 'fake admin bundle\n' > "$ADMIN_BUNDLE"
 
 cat > "$WORKSPACE/repos/rtk_video_cloud/linode_deploy/scripts/deploy-staging.sh" <<'SH'
 #!/usr/bin/env bash
@@ -64,7 +82,7 @@ SH
 cat > "$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/deploy-admin.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-printf 'admin release=%s prometheus=%s\n' "${ADMIN_LINODE_RELEASE:-}" "${VIDEO_CLOUD_PROMETHEUS_BASE_URL:-}" >> "$DEPLOY_LOG"
+printf 'admin release=%s bundle=%s prometheus=%s\n' "${ADMIN_LINODE_RELEASE:-}" "${ADMIN_LINODE_RELEASE_BUNDLE:-}" "${VIDEO_CLOUD_PROMETHEUS_BASE_URL:-}" >> "$DEPLOY_LOG"
 SH
 cat > "$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/verify-admin.sh" <<'SH'
 #!/usr/bin/env bash
@@ -87,9 +105,10 @@ PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -
 	--account-release account-test-release \
 	--account-release-bundle "$ACCOUNT_BUNDLE" \
 	--admin-release admin-test-release \
+	--admin-release-bundle "$ADMIN_BUNDLE" \
 	--deploy >"$OUT" 2>&1
 
 grep -F 'video --stack video-cloud-staging --config ' "$DEPLOY_LOG" >/dev/null
 grep -F -- '--gateway-domain video-cloud-staging.realtekconnect.com' "$DEPLOY_LOG" >/dev/null
 grep -F 'account release=account-test-release bundle='"$ACCOUNT_BUNDLE" "$DEPLOY_LOG" >/dev/null
-grep -F 'admin release=admin-test-release prometheus=http://10.42.1.30:9090' "$DEPLOY_LOG" >/dev/null
+grep -F 'admin release=admin-test-release bundle='"$ADMIN_BUNDLE"' prometheus=http://10.42.1.30:9090' "$DEPLOY_LOG" >/dev/null

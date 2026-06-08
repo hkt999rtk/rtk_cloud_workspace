@@ -305,6 +305,145 @@ func TestWriteProvisionArtifactsRedactsLoggerToken(t *testing.T) {
 	}
 }
 
+func TestLoggerHTTPArgsUseBoundedTimeouts(t *testing.T) {
+	args := loggerHTTPArgs("https://logger.example.test/", "secret-token", http.MethodGet, "/v1/logs", "")
+	got := strings.Join(args, "\x00")
+	for _, want := range []string{
+		"--connect-timeout\x005",
+		"--max-time\x0015",
+		"-X\x00GET",
+		"https://logger.example.test/v1/logs",
+		"Authorization: Bearer secret-token",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("loggerHTTPArgs missing %q in %#v", want, args)
+		}
+	}
+}
+
+func TestLoggerBackendInstallScriptUsesCachedCertificate(t *testing.T) {
+	script := loggerBackendInstallScript("logger.example.test", "secret-token", "v3.5.1", true)
+	for _, want := range []string{
+		"/tmp/rtk-cloud-logger-deploy/cert-cache/fullchain.pem",
+		"/etc/letsencrypt/live/$domain/fullchain.pem",
+		"openssl x509 -in /tmp/rtk-cloud-logger-deploy/cert-cache/fullchain.pem",
+		"awk 'BEGIN{n=0} /-----BEGIN CERTIFICATE-----/{n++} n>1{print}'",
+		"installed cached certificate lineage",
+		"systemctl enable --now certbot.timer",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("logger backend cached-cert script missing %q:\n%s", want, script)
+		}
+	}
+	if strings.Contains(script, "certbot --nginx -d") {
+		t.Fatalf("logger backend cached-cert script should not issue a new cert:\n%s", script)
+	}
+}
+
+func TestLoggerBackendInstallScriptIssuesCertificateWithoutCache(t *testing.T) {
+	script := loggerBackendInstallScript("logger.example.test", "secret-token", "v3.5.1", false)
+	if !strings.Contains(script, "certbot --nginx -d logger.example.test") {
+		t.Fatalf("logger backend script missing certbot issuance:\n%s", script)
+	}
+}
+
+func TestCheckCertificatesIncludesCloudLoggerTarget(t *testing.T) {
+	root := t.TempDir()
+	mkdirAll(t, filepath.Join(root, "env"))
+	writeFile(t, filepath.Join(root, "env", "stack.env"), `VIDEO_CLOUD_DOMAIN=video.example.test
+VIDEO_CLOUD_CERTISSUER_DOMAIN=certissuer.video.example.test
+CLOUD_LOGGER_DOMAIN=logger.video.example.test
+`)
+	mkdirAll(t, filepath.Join(root, "services", "account-manager"))
+	writeFile(t, filepath.Join(root, "services", "account-manager", "account-manager-public-staging.env"), "ACCOUNT_MANAGER_LINODE_DOMAIN=account.example.test\n")
+	mkdirAll(t, filepath.Join(root, "services", "cloud-admin"))
+	writeFile(t, filepath.Join(root, "services", "cloud-admin", "admin-staging.env"), "ADMIN_LINODE_DOMAIN=admin.example.test\n")
+
+	var runErr error
+	output := captureStdout(t, func() {
+		runErr = runCheckCertificates([]string{"--workspace", t.TempDir(), "--env-root", root, "--json"})
+	})
+	if _, ok := runErr.(exitCode); !ok {
+		t.Fatalf("runCheckCertificates error = %T %[1]v, want exitCode", runErr)
+	}
+	var payload struct {
+		Results []certCheckResult `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, output)
+	}
+	for _, result := range payload.Results {
+		if result.Target == "cloud-logger" && result.Domain == "logger.video.example.test" {
+			return
+		}
+	}
+	t.Fatalf("cloud-logger target missing from check-certificates results: %#v", payload.Results)
+}
+
+func TestStagingCertificateCacheTargetsIncludeLoggerBeforeRemove(t *testing.T) {
+	root := t.TempDir()
+	paths := provisionPaths{
+		EnvRoot:             root,
+		VideoState:          filepath.Join(root, "state", "video-cloud-staging.state.json"),
+		AccountManagerState: filepath.Join(root, "state", "account-manager-staging.env"),
+		AdminState:          filepath.Join(root, "state", "cloud-admin-staging.env"),
+	}
+	mkdirAll(t, filepath.Dir(paths.VideoState))
+	writeFile(t, paths.VideoState, `{"instances":{"edge":{"public_ipv4":"203.0.113.5"}}}`)
+	writeFile(t, paths.AccountManagerState, "ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4=203.0.113.20\n")
+	writeFile(t, paths.AdminState, "ADMIN_LINODE_PUBLIC_IPV4=203.0.113.30\n")
+	mkdirAll(t, filepath.Join(root, "state"))
+	writeFile(t, filepath.Join(root, "state", "cloud-logger.env"), "CLOUD_LOGGER_DOMAIN=logger.video.example.test\nCLOUD_LOGGER_LINODE_PUBLIC_IPV4=203.0.113.40\n")
+
+	env := map[string]string{
+		"VIDEO_CLOUD_DOMAIN":      "video.example.test",
+		"ACCOUNT_MANAGER_DOMAIN":  "account.example.test",
+		"CLOUD_ADMIN_DOMAIN":      "admin.example.test",
+		"CLOUD_LOGGER_DOMAIN":     "logger.video.example.test",
+		"CLOUD_DNS_ROOT_DOMAIN":   "example.test",
+		"CLOUD_LOGGER_LINODE_ID":  "301",
+		"CLOUD_LOGGER_ENDPOINT":   "https://logger.video.example.test",
+		"CLOUD_LOGGER_LINODE_KEY": "ignored",
+	}
+	targets := stagingCertificateCacheTargets(paths, env)
+	got := map[string]certificateCacheTarget{}
+	for _, target := range targets {
+		got[target.Name] = target
+	}
+	for name, want := range map[string]string{
+		"video-cloud":     "video.example.test",
+		"account-manager": "account.example.test",
+		"cloud-admin":     "admin.example.test",
+		"cloud-logger":    "logger.video.example.test",
+	} {
+		if got[name].Domain != want {
+			t.Fatalf("%s domain = %q, want %q; targets=%#v", name, got[name].Domain, want, targets)
+		}
+		if got[name].Host == "" {
+			t.Fatalf("%s host missing; targets=%#v", name, targets)
+		}
+		if got[name].Dir != filepath.Join(root, "certificates", want) {
+			t.Fatalf("%s dir = %q, want certificates dir for %s", name, got[name].Dir, want)
+		}
+	}
+}
+
+func TestCertCacheEnvRequiresFullchainAndPrivateKey(t *testing.T) {
+	dir := t.TempDir()
+	if got := certCacheEnv("CERT_CACHE", dir); got != nil {
+		t.Fatalf("certCacheEnv without files = %#v, want nil", got)
+	}
+	writeFile(t, filepath.Join(dir, "fullchain.pem"), "fullchain")
+	if got := certCacheEnv("CERT_CACHE", dir); got != nil {
+		t.Fatalf("certCacheEnv without private key = %#v, want nil", got)
+	}
+	writeFile(t, filepath.Join(dir, "privkey.pem"), "private-key")
+	got := certCacheEnv("CERT_CACHE", dir)
+	if got["CERT_CACHE"] != dir {
+		t.Fatalf("certCacheEnv = %#v, want CERT_CACHE=%s", got, dir)
+	}
+}
+
 func assertUnitsContain(t *testing.T, units string, wants ...string) {
 	t.Helper()
 	have := "," + units + ","
@@ -787,17 +926,6 @@ func TestStgDeployShortcutAcceptsOptionalRelease(t *testing.T) {
 			t.Fatalf("stg.sh deploy v-test args missing %q: %s", want, got)
 		}
 	}
-}
-
-func runGit(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v failed: %v\n%s", args, err, out)
-	}
-	return string(out)
 }
 
 func readJSON(t *testing.T, path string, out any) {
