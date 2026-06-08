@@ -229,16 +229,36 @@ go run ./scripts/go/rtk-cloud -- migrate-env --env-root cloud_env/staging --forc
 - `--env-root PATH`：指定 environment directory；必填。可傳 `cloud_env/staging`，script 會自動使用其下的 `linode/`。
 - `--force`：覆蓋已存在的 target 檔案。
 
+### `go run ./scripts/go/rtk-cloud -- sync-env`
+
+依照 `cloud_env/<env>/linode/env/stack.env` 內的 root metadata 產生所有命名欄位。`CLOUD_ENV_NAME` 是唯一 stack slug/root；stack name、domain、topology label、Linode VM/firewall label、VPC/subnet label，以及 Account Manager、Cloud Admin、Cloud Logger service env 的 domain/label 都由它推演，不要手動分別修改。
+
+Root inputs 固定為：
+
+- `CLOUD_ENV_NAME`
+- `CLOUD_PROVIDER`
+- `CLOUD_REGION`
+- `CLOUD_DNS_ROOT_DOMAIN`
+
+以 `CLOUD_ENV_NAME=stg` 為例，generated naming 會包含 `video-cloud-stg-edge`、`rtk-account-manager-stg`、`rtk-cloud-admin-stg`、`rtk-cloud-logger-stg`。
+
+用法：
+
+```sh
+go run ./scripts/go/rtk-cloud -- sync-env --env-root cloud_env/staging
+go run ./scripts/go/rtk-cloud -- sync-env --env-root cloud_env/staging --check
+```
+
+`--check` 不改檔，只檢查 `stack.env` generated block、topology YAML、service env 是否已和 root metadata 同步。`provision --plan/preflight/apply/deploy/all` 也會先做一致性檢查；若不同步會 fail，請先執行 `sync-env --env-root ...`，避免 plan/preflight 意外改 tracked config。
+
 ### `go run ./scripts/go/rtk-cloud -- provision`
 
 Linode staging 的主要編排腳本。它可以做 preflight、plan、reset、apply、DNS、deploy、artifact collection、e2e smoke。預設不變更環境，只做 `--plan`。
 
 service logging 的目標 provisioning model 記在 `docs/service-logging-architecture.md`：logger backend 要在 application services 前 provision，然後每台 VM 安裝 journald forwarder。private-cloud v1 需要 Loki 作為集中 log storage/query backend；dashboard 由 Cloud Admin 查 Loki query API 或 workspace/logger query adapter，不需要 Grafana。forwarder 或 logger backend degraded 時，不應阻塞 account/video/admin/frontend service 啟動；readiness report 會標示 `logging: degraded`。
 
-`cloud_env/<env>/linode/env/stack.env` 可設定 logger backend 與 forwarder 的環境 metadata：
+`cloud_env/<env>/linode/env/stack.env` 可設定 logger backend 與 forwarder 的非命名 metadata；logger domain 與 VM label 由 `sync-env` 從 `CLOUD_ENV_NAME` 推演：
 
-- `CLOUD_LOGGER_LINODE_LABEL` / `CLOUD_LOGGER_LINODE_FIREWALL_LABEL`：logger backend VM 與 firewall label。
-- `CLOUD_LOGGER_DOMAIN`：logger backend ingest/query endpoint domain。
 - `CLOUD_LOGGER_FORWARDER_TARGETS`：plan 中列出的 forwarder target，預設包含 edge/api/infra/mqtt/coturn/account-manager/cloud-admin/frontend/non-Go host sources。
 - `CLOUD_LOGGER_JOURNALD_SYSTEM_MAX_USE`、`CLOUD_LOGGER_JOURNALD_SYSTEM_KEEP_FREE`、`CLOUD_LOGGER_JOURNALD_MAX_RETENTION_SEC`：journald retention guidance，會傳給 forwarder install hook。
 - `CLOUD_LOGGER_EMQX_VERBOSE_TRACE`：設成 `true` 時，`deploy` 會在 MQTT host 額外安裝 `rtk-cloud-emqx-log-forwarder.service`，從 `video-cloud-emqx` Docker logs 轉送 broker-side verbose trace；預設關閉，避免高流量 MQTT message trace 直接進 Loki。
@@ -268,14 +288,11 @@ go run ./scripts/go/rtk-cloud -- provision \
   --account-release ACCOUNT_RELEASE \
   --admin-release ADMIN_RELEASE
 
-# 先刪除 staging VM/firewall/VPC，再重建與部署
-go run ./scripts/go/rtk-cloud -- provision \
-  --env-root cloud_env/staging \
-  --reset-and-all \
-  --confirm rtk-cloud-staging \
-  --video-release VIDEO_RELEASE \
-  --account-release ACCOUNT_RELEASE \
-  --admin-release ADMIN_RELEASE
+# 改名或重建 staging 前，先用舊 metadata 刪除 VM/firewall/VPC；改 CLOUD_ENV_NAME 後再 sync 與 provision
+go run ./scripts/go/rtk-cloud -- remove-all-vm --env-root cloud_env/staging --yes
+# edit cloud_env/staging/linode/env/stack.env: CLOUD_ENV_NAME=stg
+go run ./scripts/go/rtk-cloud -- sync-env --env-root cloud_env/staging
+go run ./scripts/go/rtk-cloud -- provision --env-root cloud_env/staging --plan
 ```
 
 常用選項：

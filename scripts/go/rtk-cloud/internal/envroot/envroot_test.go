@@ -60,6 +60,7 @@ func TestLoadAndValidate(t *testing.T) {
 	mkdir(t, filepath.Join(root, "topology"))
 	mkdir(t, filepath.Join(root, "services", "account-manager"))
 	mkdir(t, filepath.Join(root, "services", "cloud-admin"))
+	mkdir(t, filepath.Join(root, "services", "cloud-logger"))
 	write(t, filepath.Join(root, "env", "stack.env"), `CLOUD_ENV_NAME=staging
 CLOUD_PROVIDER=linode
 CLOUD_REGION=us-sea
@@ -75,7 +76,10 @@ VIDEO_CLOUD_SUBNET_LABEL=video-cloud-staging-subnet
 ACCOUNT_MANAGER_LINODE_LABEL=rtk-account-manager-staging
 ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL=rtk-account-manager-staging-fw
 ADMIN_LINODE_LABEL=rtk-cloud-admin-staging
-ADMIN_LINODE_FIREWALL_LABEL=rtk-cloud-admin-staging-firewall
+CLOUD_LOGGER_DOMAIN=logger.video-cloud-staging.realtekconnect.com
+CLOUD_LOGGER_LINODE_LABEL=rtk-cloud-logger-staging
+CLOUD_LOGGER_LINODE_FIREWALL_LABEL=rtk-cloud-logger-staging-fw
+ADMIN_LINODE_FIREWALL_LABEL=rtk-cloud-admin-staging-fw
 `)
 	write(t, filepath.Join(root, "topology", "video-cloud-staging.yaml"), `stack: video-cloud-staging
 region: us-sea
@@ -104,8 +108,12 @@ ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL=rtk-account-manager-staging-fw
 ACCOUNT_MANAGER_LINODE_DOMAIN=account-manager.video-cloud-staging.realtekconnect.com
 `)
 	write(t, filepath.Join(root, "services", "cloud-admin", "admin-staging.env"), `ADMIN_LINODE_LABEL=rtk-cloud-admin-staging
-ADMIN_LINODE_FIREWALL_LABEL=rtk-cloud-admin-staging-firewall
+ADMIN_LINODE_FIREWALL_LABEL=rtk-cloud-admin-staging-fw
 ADMIN_LINODE_DOMAIN=admin.video-cloud-staging.realtekconnect.com
+`)
+	write(t, filepath.Join(root, "services", "cloud-logger", "logger.env"), `CLOUD_LOGGER_LINODE_LABEL=rtk-cloud-logger-staging
+CLOUD_LOGGER_LINODE_FIREWALL_LABEL=rtk-cloud-logger-staging-fw
+CLOUD_LOGGER_DOMAIN=logger.video-cloud-staging.realtekconnect.com
 `)
 	env, err := Load(root, "")
 	if err != nil {
@@ -117,11 +125,11 @@ ADMIN_LINODE_DOMAIN=admin.video-cloud-staging.realtekconnect.com
 	if err := Validate(root, env); err != nil {
 		t.Fatal(err)
 	}
-	good, err := os.ReadFile(filepath.Join(root, "env", "stack.env"))
+	good, err := os.ReadFile(filepath.Join(root, "services", "account-manager", "account-manager-public-staging.env"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	write(t, filepath.Join(root, "env", "stack.env"), strings.ReplaceAll(string(good), "account-manager.video-cloud-staging.realtekconnect.com", "account-manager-mismatch.realtekconnect.com"))
+	write(t, filepath.Join(root, "services", "account-manager", "account-manager-public-staging.env"), strings.ReplaceAll(string(good), "account-manager.video-cloud-staging.realtekconnect.com", "account-manager-mismatch.realtekconnect.com"))
 	badEnv, err := Load(root, "")
 	if err != nil {
 		t.Fatal(err)
@@ -129,6 +137,52 @@ ADMIN_LINODE_DOMAIN=admin.video-cloud-staging.realtekconnect.com
 	err = Validate(root, badEnv)
 	if err == nil || !strings.Contains(err.Error(), "Account Manager domain mismatch") {
 		t.Fatalf("expected Account Manager domain mismatch, got %v", err)
+	}
+}
+
+func TestDeriveStackValuesFromEnvName(t *testing.T) {
+	values := Derive(map[string]string{
+		"CLOUD_ENV_NAME":        "stg",
+		"CLOUD_PROVIDER":        "linode",
+		"CLOUD_REGION":          "us-sea",
+		"CLOUD_DNS_ROOT_DOMAIN": "realtekconnect.com",
+	})
+	want := map[string]string{
+		"CLOUD_STACK_NAME":                      "video-cloud-stg",
+		"VIDEO_CLOUD_DOMAIN":                    "video-cloud-stg.realtekconnect.com",
+		"VIDEO_CLOUD_CERTISSUER_DOMAIN":         "certissuer.video-cloud-stg.realtekconnect.com",
+		"ACCOUNT_MANAGER_DOMAIN":                "account-manager.video-cloud-stg.realtekconnect.com",
+		"CLOUD_ADMIN_DOMAIN":                    "admin.video-cloud-stg.realtekconnect.com",
+		"CLOUD_LOGGER_DOMAIN":                   "logger.video-cloud-stg.realtekconnect.com",
+		"VIDEO_CLOUD_LABEL_PREFIX":              "video-cloud-stg",
+		"VIDEO_CLOUD_VPC_LABEL":                 "video-cloud-stg-vpc",
+		"VIDEO_CLOUD_SUBNET_LABEL":              "video-cloud-stg-subnet",
+		"ACCOUNT_MANAGER_LINODE_LABEL":          "rtk-account-manager-stg",
+		"ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL": "rtk-account-manager-stg-fw",
+		"ADMIN_LINODE_LABEL":                    "rtk-cloud-admin-stg",
+		"ADMIN_LINODE_FIREWALL_LABEL":           "rtk-cloud-admin-stg-fw",
+		"CLOUD_LOGGER_LINODE_LABEL":             "rtk-cloud-logger-stg",
+		"CLOUD_LOGGER_LINODE_FIREWALL_LABEL":    "rtk-cloud-logger-stg-fw",
+	}
+	for key, expected := range want {
+		if values[key] != expected {
+			t.Fatalf("%s got %q want %q", key, values[key], expected)
+		}
+	}
+}
+
+func TestLoadRejectsGeneratedMismatch(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "metadata", "staging", "linode")
+	mkdir(t, filepath.Join(root, "env"))
+	write(t, filepath.Join(root, "env", "stack.env"), `CLOUD_ENV_NAME=stg
+CLOUD_PROVIDER=linode
+CLOUD_REGION=us-sea
+CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+CLOUD_STACK_NAME=video-cloud-stg-0529
+`)
+	_, err := Load(root, "")
+	if err == nil || !strings.Contains(err.Error(), "sync-env --env-root") {
+		t.Fatalf("expected sync-env mismatch error, got %v", err)
 	}
 }
 

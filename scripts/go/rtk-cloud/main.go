@@ -30,6 +30,7 @@ import (
 	"strings"
 	"time"
 
+	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/envroot"
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/runner"
 )
 
@@ -59,6 +60,7 @@ var commands = map[string]commandSpec{
 	"secrets-check":          {run: runSecretsCheck},
 	"staging-e2e-test":       {run: runStagingE2ETest},
 	"status-all":             {run: runStatusAll},
+	"sync-env":               {run: runSyncEnv},
 	"sync-all":               {run: runSyncAll},
 	"test-matrix":            {run: runTestMatrix},
 	"unprovision-devices":    {run: runUnprovisionDevices},
@@ -400,25 +402,13 @@ func runMigrateEnv(args []string) error {
 	if err := os.MkdirAll(filepath.Dir(stackPath), 0o755); err != nil {
 		return err
 	}
-	accountDomain := envFileValue(filepath.Join(envRoot, "services", "account-manager", "account-manager-public-staging.env"), "ACCOUNT_MANAGER_LINODE_DOMAIN")
-	adminDomain := envFileValue(filepath.Join(envRoot, "services", "cloud-admin", "admin-staging.env"), "ADMIN_LINODE_DOMAIN")
-	stack := fmt.Sprintf(`CLOUD_ENV_NAME=staging
-CLOUD_PROVIDER=linode
-CLOUD_REGION=us-sea
-CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
-CLOUD_STACK_NAME=video-cloud-staging
-VIDEO_CLOUD_DOMAIN=video-cloud-staging.realtekconnect.com
-VIDEO_CLOUD_CERTISSUER_DOMAIN=certissuer.video-cloud-staging.realtekconnect.com
-ACCOUNT_MANAGER_DOMAIN=%s
-CLOUD_ADMIN_DOMAIN=%s
-VIDEO_CLOUD_LABEL_PREFIX=video-cloud-staging
-VIDEO_CLOUD_VPC_LABEL=video-cloud-staging-vpc
-VIDEO_CLOUD_SUBNET_LABEL=video-cloud-staging-subnet
-ACCOUNT_MANAGER_LINODE_LABEL=rtk-account-manager-staging
-ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL=rtk-account-manager-staging-fw
-ADMIN_LINODE_LABEL=rtk-cloud-admin-staging
-ADMIN_LINODE_FIREWALL_LABEL=rtk-cloud-admin-staging-firewall
-`, firstNonEmpty(accountDomain, "account-manager.video-cloud-staging.realtekconnect.com"), firstNonEmpty(adminDomain, "admin.video-cloud-staging.realtekconnect.com"))
+	rootEnv := map[string]string{
+		"CLOUD_ENV_NAME":        "staging",
+		"CLOUD_PROVIDER":        "linode",
+		"CLOUD_REGION":          "us-sea",
+		"CLOUD_DNS_ROOT_DOMAIN": "realtekconnect.com",
+	}
+	stack := renderStackEnv(rootEnv, envroot.Derive(rootEnv))
 	if err := os.WriteFile(stackPath, []byte(stack), 0o644); err != nil {
 		return err
 	}
@@ -432,6 +422,250 @@ ADMIN_LINODE_FIREWALL_LABEL=rtk-cloud-admin-staging-firewall
 	fmt.Fprintf(os.Stderr, "[cloud-env-migrate] migration manifest: %s\n", manifest)
 	fmt.Fprintf(os.Stdout, "manifest=%s\n", manifest)
 	return nil
+}
+
+func runSyncEnv(args []string) error {
+	fs := flag.NewFlagSet("sync-env", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	workspaceFlag := fs.String("workspace", "", "workspace")
+	envRootFlag := fs.String("env-root", "", "environment root")
+	check := fs.Bool("check", false, "check only")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *envRootFlag == "" {
+		return errors.New("--env-root is required")
+	}
+	workspace := *workspaceFlag
+	var err error
+	if workspace == "" {
+		workspace, err = workspaceRoot()
+		if err != nil {
+			return err
+		}
+	}
+	resolvedEnvRoot, err := resolveEnvRoot(workspace, *envRootFlag)
+	if err != nil {
+		return err
+	}
+	changed, err := syncEnvRoot(resolvedEnvRoot, *check)
+	if err != nil {
+		return err
+	}
+	if *check && changed {
+		return errors.New("environment metadata is not synchronized; run sync-env --env-root " + resolvedEnvRoot)
+	}
+	if changed {
+		fmt.Fprintf(os.Stdout, "synced=%s\n", resolvedEnvRoot)
+	} else {
+		fmt.Fprintf(os.Stdout, "synced=%s unchanged\n", resolvedEnvRoot)
+	}
+	return nil
+}
+
+func syncEnvRoot(root string, check bool) (bool, error) {
+	stackPath := filepath.Join(root, "env", "stack.env")
+	raw, err := readEnvFile(stackPath)
+	if err != nil {
+		return false, err
+	}
+	if raw["CLOUD_ENV_NAME"] == "" {
+		raw["CLOUD_ENV_NAME"] = filepath.Base(filepath.Dir(root))
+	}
+	if raw["CLOUD_PROVIDER"] == "" {
+		raw["CLOUD_PROVIDER"] = "linode"
+	}
+	if raw["CLOUD_REGION"] == "" {
+		raw["CLOUD_REGION"] = "us-sea"
+	}
+	if raw["CLOUD_DNS_ROOT_DOMAIN"] == "" {
+		raw["CLOUD_DNS_ROOT_DOMAIN"] = "realtekconnect.com"
+	}
+	derived := envroot.Derive(raw)
+	changed := false
+	if c, err := syncTextFile(stackPath, renderStackEnv(raw, derived), check); err != nil {
+		return changed, err
+	} else if c {
+		changed = true
+	}
+	topology := firstExistingPath(filepath.Join(root, "topology", "video-cloud.yaml"), filepath.Join(root, "topology", "video-cloud-staging.yaml"))
+	if c, err := syncTopology(topology, raw, derived, check); err != nil {
+		return changed, err
+	} else if c {
+		changed = true
+	}
+	envUpdates := []struct {
+		path string
+		keys map[string]string
+	}{
+		{firstExistingPath(filepath.Join(root, "services", "video-cloud", "video-cloud.env"), filepath.Join(root, "services", "video-cloud", "video-cloud-staging.env")), map[string]string{}},
+		{firstExistingPath(filepath.Join(root, "services", "account-manager", "account-manager.env"), filepath.Join(root, "services", "account-manager", "account-manager-public-staging.env")), map[string]string{
+			"ACCOUNT_MANAGER_LINODE_LABEL":          derived["ACCOUNT_MANAGER_LINODE_LABEL"],
+			"ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL": derived["ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL"],
+			"ACCOUNT_MANAGER_LINODE_DOMAIN":         derived["ACCOUNT_MANAGER_DOMAIN"],
+		}},
+		{firstExistingPath(filepath.Join(root, "services", "cloud-admin", "admin.env"), filepath.Join(root, "services", "cloud-admin", "admin-staging.env")), map[string]string{
+			"ADMIN_LINODE_LABEL":          derived["ADMIN_LINODE_LABEL"],
+			"ADMIN_LINODE_FIREWALL_LABEL": derived["ADMIN_LINODE_FIREWALL_LABEL"],
+			"ADMIN_LINODE_DOMAIN":         derived["CLOUD_ADMIN_DOMAIN"],
+		}},
+		{filepath.Join(root, "services", "cloud-logger", "logger.env"), map[string]string{
+			"CLOUD_LOGGER_LINODE_LABEL":          derived["CLOUD_LOGGER_LINODE_LABEL"],
+			"CLOUD_LOGGER_LINODE_FIREWALL_LABEL": derived["CLOUD_LOGGER_LINODE_FIREWALL_LABEL"],
+			"CLOUD_LOGGER_DOMAIN":                derived["CLOUD_LOGGER_DOMAIN"],
+		}},
+	}
+	for _, item := range envUpdates {
+		c, err := syncEnvFile(item.path, item.keys, raw, derived, check)
+		if err != nil {
+			return changed, err
+		}
+		if c {
+			changed = true
+		}
+	}
+	return changed, nil
+}
+
+func renderStackEnv(raw, derived map[string]string) string {
+	rootKeys := []string{"CLOUD_ENV_NAME", "CLOUD_PROVIDER", "CLOUD_REGION", "CLOUD_DNS_ROOT_DOMAIN"}
+	generatedKeys := envroot.GeneratedKeys()
+	known := map[string]bool{}
+	var b strings.Builder
+	for _, key := range rootKeys {
+		known[key] = true
+		fmt.Fprintf(&b, "%s=%s\n", key, firstNonEmpty(raw[key], derived[key]))
+	}
+	b.WriteString("\n# Generated by rtk-cloud sync-env. Do not edit manually.\n")
+	for _, key := range generatedKeys {
+		known[key] = true
+		if derived[key] != "" {
+			fmt.Fprintf(&b, "%s=%s\n", key, derived[key])
+		}
+	}
+	extraKeys := make([]string, 0, len(raw))
+	for key := range raw {
+		if !known[key] {
+			extraKeys = append(extraKeys, key)
+		}
+	}
+	sort.Strings(extraKeys)
+	if len(extraKeys) > 0 {
+		b.WriteString("\n# Local overrides and operator metadata.\n")
+		for _, key := range extraKeys {
+			fmt.Fprintf(&b, "%s=%s\n", key, raw[key])
+		}
+	}
+	return b.String()
+}
+
+func syncTopology(path string, raw, derived map[string]string, check bool) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	text := string(data)
+	for _, key := range envroot.GeneratedKeys() {
+		if old := raw[key]; old != "" && derived[key] != "" {
+			text = strings.ReplaceAll(text, old, derived[key])
+		}
+	}
+	text = replaceDerivedText(text, raw, derived)
+	if derived["CLOUD_REGION"] != "" {
+		text = replaceYAMLTopScalar(text, "region", derived["CLOUD_REGION"])
+	}
+	if derived["CLOUD_STACK_NAME"] != "" {
+		text = replaceYAMLTopScalar(text, "stack", derived["CLOUD_STACK_NAME"])
+	}
+	return syncTextFile(path, text, check)
+}
+
+func replaceYAMLTopScalar(text, key, value string) string {
+	lines := strings.Split(text, "\n")
+	prefix := key + ":"
+	for i, line := range lines {
+		if strings.HasPrefix(line, prefix) {
+			lines[i] = key + ": " + value
+			return strings.Join(lines, "\n")
+		}
+	}
+	return key + ": " + value + "\n" + text
+}
+
+func syncEnvFile(path string, updates map[string]string, raw, derived map[string]string, check bool) (bool, error) {
+	values, err := readEnvFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+	for key, value := range values {
+		values[key] = replaceDerivedText(value, raw, derived)
+	}
+	for key, value := range updates {
+		values[key] = value
+	}
+	return syncTextFile(path, renderEnvMap(values), check)
+}
+
+func replaceDerivedText(text string, raw, derived map[string]string) string {
+	for _, key := range envroot.GeneratedKeys() {
+		old := raw[key]
+		newValue := derived[key]
+		if old != "" && newValue != "" {
+			text = strings.ReplaceAll(text, old, newValue)
+		}
+	}
+	replacements := []struct {
+		pattern string
+		value   string
+	}{
+		{`video-cloud-stg-[0-9]{4}`, derived["CLOUD_STACK_NAME"]},
+		{`video-cloud-staging`, derived["CLOUD_STACK_NAME"]},
+		{`rtk-account-manager-stg-[0-9]{4}`, derived["ACCOUNT_MANAGER_LINODE_LABEL"]},
+		{`rtk-account-manager-staging`, derived["ACCOUNT_MANAGER_LINODE_LABEL"]},
+		{`rtk-cloud-admin-stg-[0-9]{4}`, derived["ADMIN_LINODE_LABEL"]},
+		{`rtk-cloud-admin-staging-firewall`, derived["ADMIN_LINODE_FIREWALL_LABEL"]},
+		{`rtk-cloud-admin-staging`, derived["ADMIN_LINODE_LABEL"]},
+		{`rtk-cloud-logger-stg-[0-9]{4}`, derived["CLOUD_LOGGER_LINODE_LABEL"]},
+		{`rtk-cloud-logger-staging-firewall`, derived["CLOUD_LOGGER_LINODE_FIREWALL_LABEL"]},
+		{`rtk-cloud-logger-staging`, derived["CLOUD_LOGGER_LINODE_LABEL"]},
+	}
+	for _, item := range replacements {
+		if item.value == "" {
+			continue
+		}
+		text = regexp.MustCompile(item.pattern).ReplaceAllString(text, item.value)
+	}
+	return text
+}
+
+func renderEnvMap(values map[string]string) string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, key := range keys {
+		fmt.Fprintf(&b, "%s=%s\n", key, values[key])
+	}
+	return b.String()
+}
+
+func syncTextFile(path, want string, check bool) (bool, error) {
+	current, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+	if string(current) == want {
+		return false, nil
+	}
+	if check {
+		return true, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return false, err
+	}
+	return true, os.WriteFile(path, []byte(want), 0o644)
 }
 
 type linodeList[T any] struct {
