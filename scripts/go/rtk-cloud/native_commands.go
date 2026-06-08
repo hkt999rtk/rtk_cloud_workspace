@@ -311,9 +311,9 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 	}
 
 	videoEnv := mergeEnv(operator, map[string]string{
-		"LINODE_DEPLOY_CERT_CACHE_DIR": filepath.Join(paths.EnvRoot, "certificates", env["VIDEO_CLOUD_DOMAIN"]),
-		"VIDEO_CLOUD_LOG_LEVEL":        logLevels["VIDEO_CLOUD_LOG_LEVEL"],
+		"VIDEO_CLOUD_LOG_LEVEL": logLevels["VIDEO_CLOUD_LOG_LEVEL"],
 	})
+	videoEnv = mergeEnv(videoEnv, certCacheEnv("LINODE_DEPLOY_CERT_CACHE_DIR", filepath.Join(paths.EnvRoot, "certificates", env["VIDEO_CLOUD_DOMAIN"])))
 	videoArgs := videoDeployArgs(paths, env, opts)
 	if err := runCmdWithEnv(filepath.Join(paths.Workspace, "repos", "rtk_video_cloud"), videoEnv, "linode_deploy/scripts/deploy-staging.sh", videoArgs...); err != nil {
 		report.add("video-cloud-deploy-verify", "FAIL", "")
@@ -347,9 +347,9 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 	accountValues = mergeEnv(accountValues, map[string]string{
 		"ACCOUNT_MANAGER_LINODE_RELEASE":        opts.accountRelease,
 		"ACCOUNT_MANAGER_LINODE_RELEASE_BUNDLE": accountBundle,
-		"ACCOUNT_MANAGER_LINODE_CERT_CACHE_DIR": filepath.Join(paths.EnvRoot, "certificates", env["ACCOUNT_MANAGER_DOMAIN"]),
 		"ACCOUNT_MANAGER_LOG_LEVEL":             logLevels["ACCOUNT_MANAGER_LOG_LEVEL"],
 	})
+	accountValues = mergeEnv(accountValues, certCacheEnv("ACCOUNT_MANAGER_LINODE_CERT_CACHE_DIR", filepath.Join(paths.EnvRoot, "certificates", env["ACCOUNT_MANAGER_DOMAIN"])))
 	if err := runCmdWithEnv(filepath.Join(paths.Workspace, "repos", "rtk_account_manager"), accountValues, "linode_deploy/scripts/deploy-public-vm.sh"); err != nil {
 		report.add("account-manager-deploy", "FAIL", "")
 		_ = report.write(false)
@@ -358,18 +358,28 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 	report.add("account-manager-deploy", "PASS", "")
 	_ = runCmdWithEnv(filepath.Join(paths.Workspace, "repos", "rtk_account_manager"), accountValues, "linode_deploy/scripts/verify-public-vm.sh")
 
+	adminBundle := opts.adminReleaseBundle
+	if adminBundle == "" && opts.adminRelease != "" {
+		var err error
+		adminBundle, err = materializeReleaseBundle(reportDir, operator, "rtk_cloud_admin", opts.adminRelease)
+		if err != nil {
+			report.add("cloud-admin-deploy", "FAIL", "")
+			_ = report.write(false)
+			return err
+		}
+	}
 	adminEnv, _ := readEnvFile(paths.AdminEnv)
 	adminState, _ := readEnvFile(paths.AdminState)
 	adminValues := mergeEnv(adminEnv, adminState)
 	adminValues = mergeEnv(adminValues, map[string]string{
 		"ADMIN_LINODE_RELEASE":            opts.adminRelease,
-		"ADMIN_LINODE_RELEASE_BUNDLE":     opts.adminReleaseBundle,
-		"ADMIN_LINODE_CERT_CACHE_DIR":     filepath.Join(paths.EnvRoot, "certificates", env["CLOUD_ADMIN_DOMAIN"]),
+		"ADMIN_LINODE_RELEASE_BUNDLE":     adminBundle,
 		"ACCOUNT_MANAGER_BASE_URL":        "https://" + env["ACCOUNT_MANAGER_DOMAIN"],
 		"VIDEO_CLOUD_BASE_URL":            "https://" + env["VIDEO_CLOUD_DOMAIN"],
 		"VIDEO_CLOUD_PROMETHEUS_BASE_URL": videoCloudPrometheusBaseURL(paths),
 		"CLOUD_ADMIN_LOG_LEVEL":           logLevels["CLOUD_ADMIN_LOG_LEVEL"],
 	})
+	adminValues = mergeEnv(adminValues, certCacheEnv("ADMIN_LINODE_CERT_CACHE_DIR", filepath.Join(paths.EnvRoot, "certificates", env["CLOUD_ADMIN_DOMAIN"])))
 	if err := runCmdWithEnv(filepath.Join(paths.Workspace, "repos", "rtk_cloud_admin"), adminValues, "deploy/linode/deploy-admin.sh"); err != nil {
 		report.add("cloud-admin-deploy", "FAIL", "")
 		_ = report.write(false)
@@ -516,8 +526,24 @@ func installNativeLoggerBackend(paths provisionPaths, env map[string]string, ssh
 	if err := uploadLoggerBinary(paths, sshKey, host, binary, "/usr/local/bin/rtk-cloud-logger"); err != nil {
 		return err
 	}
-	script := loggerBackendInstallScript(domain, token, firstNonEmpty(os.Getenv("CLOUD_LOGGER_LOKI_VERSION"), "v3.5.1"))
-	return runCmdWithInput("", script, "ssh", loggerSSHArgs(paths, sshKey, host, "bash", "-s")...)
+	certCacheDir := ""
+	if domain != "" {
+		certCacheDir = filepath.Join(paths.EnvRoot, "certificates", domain)
+	}
+	cachedCert, err := uploadLoggerCachedCertificate(paths, sshKey, host, certCacheDir)
+	if err != nil {
+		return err
+	}
+	script := loggerBackendInstallScript(domain, token, firstNonEmpty(os.Getenv("CLOUD_LOGGER_LOKI_VERSION"), "v3.5.1"), cachedCert)
+	if err := runCmdWithInput("", script, "ssh", loggerSSHArgs(paths, sshKey, host, "bash", "-s")...); err != nil {
+		return err
+	}
+	if domain != "" {
+		if err := cacheCertificateFromRemote(paths, sshKey, host, domain, certCacheDir, "cloud-logger"); err != nil {
+			fmt.Fprintf(os.Stderr, "[cloud-deploy] logger certificate cache refresh skipped: %v\n", err)
+		}
+	}
+	return nil
 }
 
 func buildLoggerBackend(workspace string) (string, func(), error) {
@@ -534,7 +560,105 @@ func buildLoggerBackend(workspace string) (string, func(), error) {
 	return binary, cleanup, nil
 }
 
-func loggerBackendInstallScript(domain, token, lokiVersion string) string {
+func uploadLoggerCachedCertificate(paths provisionPaths, sshKey, host, dir string) (bool, error) {
+	if certCacheEnv("CLOUD_LOGGER_CERT_CACHE_DIR", dir) == nil {
+		return false, nil
+	}
+	if err := runCmdQuiet("ssh", loggerSSHArgs(paths, sshKey, host, "mkdir", "-p", "/tmp/rtk-cloud-logger-deploy/cert-cache")...); err != nil {
+		return false, err
+	}
+	remote := "root@" + host + ":/tmp/rtk-cloud-logger-deploy/cert-cache/"
+	if err := runExternal("scp", loggerSCPArgs(paths, sshKey, host, filepath.Join(dir, "fullchain.pem"), remote+"fullchain.pem")...); err != nil {
+		return false, err
+	}
+	if err := runExternal("scp", loggerSCPArgs(paths, sshKey, host, filepath.Join(dir, "privkey.pem"), remote+"privkey.pem")...); err != nil {
+		return false, err
+	}
+	fmt.Fprintf(os.Stderr, "[cloud-deploy] using cached certificate for logger backend: %s\n", filepath.Base(dir))
+	return true, nil
+}
+
+type certificateCacheTarget struct {
+	Name   string
+	Host   string
+	Domain string
+	Dir    string
+}
+
+func refreshStagingCertificateCaches(paths provisionPaths, env map[string]string, sshKey string) {
+	for _, target := range stagingCertificateCacheTargets(paths, env) {
+		if target.Host == "" || target.Domain == "" {
+			continue
+		}
+		if err := cacheCertificateFromRemote(paths, sshKey, target.Host, target.Domain, target.Dir, target.Name); err != nil {
+			fmt.Fprintf(os.Stderr, "[cloud-e2e] certificate cache refresh skipped: target=%s domain=%s error=%v\n", target.Name, target.Domain, err)
+		}
+	}
+}
+
+func stagingCertificateCacheTargets(paths provisionPaths, env map[string]string) []certificateCacheTarget {
+	logger := loggerProvisionTarget(paths, env)
+	return []certificateCacheTarget{
+		{
+			Name:   "video-cloud",
+			Host:   videoStateInstanceHost(paths.VideoState, "edge"),
+			Domain: env["VIDEO_CLOUD_DOMAIN"],
+			Dir:    filepath.Join(paths.EnvRoot, "certificates", env["VIDEO_CLOUD_DOMAIN"]),
+		},
+		{
+			Name:   "account-manager",
+			Host:   envFileValue(paths.AccountManagerState, "ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4"),
+			Domain: env["ACCOUNT_MANAGER_DOMAIN"],
+			Dir:    filepath.Join(paths.EnvRoot, "certificates", env["ACCOUNT_MANAGER_DOMAIN"]),
+		},
+		{
+			Name:   "cloud-admin",
+			Host:   envFileValue(paths.AdminState, "ADMIN_LINODE_PUBLIC_IPV4"),
+			Domain: env["CLOUD_ADMIN_DOMAIN"],
+			Dir:    filepath.Join(paths.EnvRoot, "certificates", env["CLOUD_ADMIN_DOMAIN"]),
+		},
+		{
+			Name:   "cloud-logger",
+			Host:   logger.State["CLOUD_LOGGER_LINODE_PUBLIC_IPV4"],
+			Domain: logger.Domain,
+			Dir:    filepath.Join(paths.EnvRoot, "certificates", logger.Domain),
+		},
+	}
+}
+
+func cacheCertificateFromRemote(paths provisionPaths, sshKey, host, domain, dir, label string) error {
+	if strings.TrimSpace(dir) == "" {
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	liveDir := "/etc/letsencrypt/live/" + domain
+	fullchainTmp := filepath.Join(dir, ".fullchain.pem.tmp")
+	privkeyTmp := filepath.Join(dir, ".privkey.pem.tmp")
+	defer os.Remove(fullchainTmp)
+	defer os.Remove(privkeyTmp)
+	remote := "root@" + host + ":"
+	if err := runExternal("scp", loggerSCPArgs(paths, sshKey, host, remote+liveDir+"/fullchain.pem", fullchainTmp)...); err != nil {
+		return err
+	}
+	if err := runExternal("scp", loggerSCPArgs(paths, sshKey, host, remote+liveDir+"/privkey.pem", privkeyTmp)...); err != nil {
+		return err
+	}
+	if err := os.Rename(fullchainTmp, filepath.Join(dir, "fullchain.pem")); err != nil {
+		return err
+	}
+	if err := os.Rename(privkeyTmp, filepath.Join(dir, "privkey.pem")); err != nil {
+		return err
+	}
+	if err := os.Chmod(filepath.Join(dir, "privkey.pem"), 0o600); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "[cloud-deploy] caching certificate: %s domain=%s\n", label, domain)
+	return nil
+}
+
+func loggerBackendInstallScript(domain, token, lokiVersion string, cachedCert bool) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, "set -euo pipefail")
 	fmt.Fprintln(&b, "export DEBIAN_FRONTEND=noninteractive")
@@ -633,7 +757,42 @@ func loggerBackendInstallScript(domain, token, lokiVersion string) string {
 	fmt.Fprintln(&b, "systemctl restart loki.service rtk-cloud-logger.service")
 	fmt.Fprintln(&b, "systemctl reload-or-restart nginx.service")
 	if domain != "" {
-		fmt.Fprintf(&b, "certbot --nginx -d %s --non-interactive --agree-tos --register-unsafely-without-email --redirect\n", shellEnvValue(domain))
+		if cachedCert {
+			fmt.Fprintf(&b, "domain=%s\n", shellEnvValue(domain))
+			fmt.Fprintln(&b, "archive_dir=/etc/letsencrypt/archive/$domain")
+			fmt.Fprintln(&b, "live_dir=/etc/letsencrypt/live/$domain")
+			fmt.Fprintln(&b, "install -d -m 0755 \"$archive_dir\" \"$live_dir\" /etc/letsencrypt/renewal")
+			fmt.Fprintln(&b, "install -m 0644 /tmp/rtk-cloud-logger-deploy/cert-cache/fullchain.pem \"$archive_dir/fullchain1.pem\"")
+			fmt.Fprintln(&b, "openssl x509 -in /tmp/rtk-cloud-logger-deploy/cert-cache/fullchain.pem -out \"$archive_dir/cert1.pem\"")
+			fmt.Fprintln(&b, "awk 'BEGIN{n=0} /-----BEGIN CERTIFICATE-----/{n++} n>1{print}' /tmp/rtk-cloud-logger-deploy/cert-cache/fullchain.pem > \"$archive_dir/chain1.pem\"")
+			fmt.Fprintln(&b, "[ -s \"$archive_dir/chain1.pem\" ] || cp \"$archive_dir/fullchain1.pem\" \"$archive_dir/chain1.pem\"")
+			fmt.Fprintln(&b, "install -m 0600 /tmp/rtk-cloud-logger-deploy/cert-cache/privkey.pem \"$archive_dir/privkey1.pem\"")
+			fmt.Fprintln(&b, "ln -sfn \"../../archive/$domain/cert1.pem\" \"$live_dir/cert.pem\"")
+			fmt.Fprintln(&b, "ln -sfn \"../../archive/$domain/chain1.pem\" \"$live_dir/chain.pem\"")
+			fmt.Fprintln(&b, "ln -sfn \"../../archive/$domain/fullchain1.pem\" \"$live_dir/fullchain.pem\"")
+			fmt.Fprintln(&b, "ln -sfn \"../../archive/$domain/privkey1.pem\" \"$live_dir/privkey.pem\"")
+			fmt.Fprintln(&b, "cat > \"/etc/letsencrypt/renewal/$domain.conf\" <<EOF")
+			fmt.Fprintln(&b, "version = 2.9.0")
+			fmt.Fprintln(&b, "archive_dir = /etc/letsencrypt/archive/$domain")
+			fmt.Fprintln(&b, "cert = /etc/letsencrypt/live/$domain/cert.pem")
+			fmt.Fprintln(&b, "privkey = /etc/letsencrypt/live/$domain/privkey.pem")
+			fmt.Fprintln(&b, "chain = /etc/letsencrypt/live/$domain/chain.pem")
+			fmt.Fprintln(&b, "fullchain = /etc/letsencrypt/live/$domain/fullchain.pem")
+			fmt.Fprintln(&b)
+			fmt.Fprintln(&b, "[renewalparams]")
+			fmt.Fprintln(&b, "account =")
+			fmt.Fprintln(&b, "authenticator = nginx")
+			fmt.Fprintln(&b, "server = https://acme-v02.api.letsencrypt.org/directory")
+			fmt.Fprintln(&b, "key_type = rsa")
+			fmt.Fprintln(&b, "EOF")
+			fmt.Fprintln(&b, "certbot register --non-interactive --agree-tos --register-unsafely-without-email >/dev/null 2>&1 || true")
+			fmt.Fprintln(&b, "nginx -t")
+			fmt.Fprintln(&b, "systemctl reload nginx.service")
+			fmt.Fprintln(&b, "systemctl enable --now certbot.timer")
+			fmt.Fprintf(&b, "printf 'installed cached certificate lineage for %%s\\n' %s\n", shellEnvValue(domain))
+		} else {
+			fmt.Fprintf(&b, "certbot --nginx -d %s --non-interactive --agree-tos --register-unsafely-without-email --redirect\n", shellEnvValue(domain))
+		}
 	}
 	return b.String()
 }
@@ -674,7 +833,7 @@ func runLoggerForwarderScriptHooks(paths provisionPaths, env map[string]string, 
 func loggerForwarderTargets(paths provisionPaths) []loggerForwarderTarget {
 	return []loggerForwarderTarget{
 		{"account-manager", envFileValue(paths.AccountManagerState, "ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4"), "rtk-account-manager.service,rtk-account-manager-inbox-worker.service,rtk-account-manager-outbox-worker.service"},
-		{"video-cloud-api", videoStateInstanceHost(paths.VideoState, "api"), "video_cloud-api.service,video_cloud-logingester.service,video_cloud-turnregistry.service,video_cloud-metricsexporter.service,video_cloud-cleaner.service,video_cloud-statistics.service,video_cloud-certissuer.service,video_cloud-factoryenroll.service"},
+		{"video-cloud-api", videoStateInstanceHost(paths.VideoState, "api"), "video_cloud-api.service,video_cloud-logingester.service,video_cloud-turnregistry.service,video_cloud-metricsexporter.service,video_cloud-crossservice.service,video_cloud-cleaner.service,video_cloud-statistics.service,video_cloud-certissuer.service,video_cloud-factoryenroll.service"},
 		{"cloud-admin", envFileValue(paths.AdminState, "ADMIN_LINODE_PUBLIC_IPV4"), "rtk-cloud-admin.service"},
 		{"edge", videoStateInstanceHost(paths.VideoState, "edge"), "nginx.service,certbot.timer"},
 		{"infra", videoStateInstanceHost(paths.VideoState, "infra"), "postgresql.service,postgresql@16-main.service,redis-server.service,prometheus.service,prometheus-node-exporter.service,prometheus-postgres-exporter.service,prometheus-redis-exporter.service"},
@@ -1131,17 +1290,42 @@ func loggerHTTP(endpoint, token, method, path, body string) error {
 }
 
 func loggerHTTPOutput(endpoint, token, method, path, body string) ([]byte, error) {
-	args := []string{"-fsS", "-X", method, strings.TrimRight(endpoint, "/") + path, "-H", "Authorization: Bearer " + token, "-H", "Content-Type: application/json"}
-	if body != "" {
-		args = append(args, "--data-binary", body)
-	}
-	cmd := exec.Command("curl", args...)
+	cmd := exec.Command("curl", loggerHTTPArgs(endpoint, token, method, path, body)...)
 	cmd.Stderr = io.Discard
 	out, err := cmd.Output()
 	if err != nil {
 		return out, err
 	}
 	return out, nil
+}
+
+func loggerHTTPArgs(endpoint, token, method, path, body string) []string {
+	args := []string{
+		"-fsS",
+		"--connect-timeout", "5",
+		"--max-time", "15",
+		"-X", method,
+		strings.TrimRight(endpoint, "/") + path,
+		"-H", "Authorization: Bearer " + token,
+		"-H", "Content-Type: application/json",
+	}
+	if body != "" {
+		args = append(args, "--data-binary", body)
+	}
+	return args
+}
+
+func certCacheEnv(key, dir string) map[string]string {
+	if strings.TrimSpace(dir) == "" {
+		return nil
+	}
+	if _, err := os.Stat(filepath.Join(dir, "fullchain.pem")); err != nil {
+		return nil
+	}
+	if _, err := os.Stat(filepath.Join(dir, "privkey.pem")); err != nil {
+		return nil
+	}
+	return map[string]string{key: dir}
 }
 
 func runCmdQuiet(name string, args ...string) error {
