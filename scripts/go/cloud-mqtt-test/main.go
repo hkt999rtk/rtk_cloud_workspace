@@ -19,6 +19,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -35,8 +36,10 @@ var homeTypes = map[string]bool{
 }
 
 type userArtifact struct {
-	Brandname string           `json:"brandname"`
-	Users     []userCredential `json:"users"`
+	Brandname    string           `json:"brandname"`
+	BrandCloudID string           `json:"brand_cloud_id"`
+	TenantSlug   string           `json:"tenant_slug"`
+	Users        []userCredential `json:"users"`
 }
 
 type userCredential struct {
@@ -57,8 +60,10 @@ type appCertificateSummary struct {
 }
 
 type bindArtifact struct {
-	Brandname   string       `json:"brandname"`
-	Assignments []assignment `json:"assignments"`
+	Brandname    string       `json:"brandname"`
+	BrandCloudID string       `json:"brand_cloud_id"`
+	TenantSlug   string       `json:"tenant_slug"`
+	Assignments  []assignment `json:"assignments"`
 }
 
 type assignment struct {
@@ -319,6 +324,9 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 			blockers = append(blockers, "device-bind artifact brand mismatch: "+bindPath)
 		}
 	}
+	if strings.TrimSpace(users.TenantSlug) == "" {
+		users.TenantSlug = strings.TrimSpace(bind.TenantSlug)
+	}
 	manifest := []manifestRecord{}
 	if readable(required["device_manifest"]) {
 		if err := readJSON(required["device_manifest"], &manifest); err != nil {
@@ -437,7 +445,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	appMaterial := appBootstrapMaterial{Status: appBootstrap}
 	if len(selectedAssignments) > 0 {
 		first := selectedAssignments[0]
-		appMaterial = prepareAppCertificateBootstrap(endpoints["account_manager_base_url"].(string), endpoints["video_cloud_base_url"].(string), usersByEmail[first.AssignedEmail], first.DeviceID)
+		appMaterial = prepareAppCertificateBootstrap(endpoints["account_manager_base_url"].(string), endpoints["video_cloud_base_url"].(string), users.TenantSlug, usersByEmail[first.AssignedEmail], first.DeviceID)
 		appBootstrap = appMaterial.Status
 		if appBootstrap.Status == "FAIL" {
 			base["status"] = "FAIL"
@@ -977,20 +985,26 @@ func requestDeviceToken(apiBaseURL string, cert tls.Certificate) (string, error)
 	return token.AccessToken, nil
 }
 
-func runAppCertificateBootstrap(accountBaseURL, videoBaseURL string, user userCredential, deviceID string) appBootstrapStatus {
-	return prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL, user, deviceID).Status
+func runAppCertificateBootstrap(accountBaseURL, videoBaseURL, tenantSlug string, user userCredential, deviceID string) appBootstrapStatus {
+	return prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL, tenantSlug, user, deviceID).Status
 }
 
-func prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL string, user userCredential, deviceID string) appBootstrapMaterial {
+func prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL, tenantSlug string, user userCredential, deviceID string) appBootstrapMaterial {
 	status := appBootstrapStatus{Status: "FAIL", UserEmail: user.Email, DeviceID: deviceID}
 	material := appBootstrapMaterial{Status: status}
+	if strings.TrimSpace(tenantSlug) == "" {
+		status.Status = "BLOCKED"
+		status.Reason = "users artifact missing tenant_slug"
+		material.Status = status
+		return material
+	}
 	if strings.TrimSpace(user.Email) == "" || strings.TrimSpace(user.Password) == "" {
 		status.Status = "BLOCKED"
 		status.Reason = "selected user is missing login credential"
 		material.Status = status
 		return material
 	}
-	first, err := accountLoginAppCertificate(accountBaseURL, user, "")
+	first, err := accountLoginAppCertificate(accountBaseURL, tenantSlug, user, "")
 	if err != nil {
 		status.Reason = redactedError(err)
 		material.Status = status
@@ -1013,7 +1027,7 @@ func prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL string, user us
 			return material
 		}
 		keyPEM = generatedKeyPEM
-		login, err = accountLoginAppCertificate(accountBaseURL, user, csrPEM)
+		login, err = accountLoginAppCertificate(accountBaseURL, tenantSlug, user, csrPEM)
 		if err != nil {
 			status.Reason = redactedError(err)
 			material.Status = status
@@ -1090,10 +1104,14 @@ type accountLoginAppResponse struct {
 	} `json:"app_certificate"`
 }
 
-func accountLoginAppCertificate(baseURL string, user userCredential, csrPEM string) (accountLoginAppResponse, error) {
+func accountLoginAppCertificate(baseURL, tenantSlug string, user userCredential, csrPEM string) (accountLoginAppResponse, error) {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" || strings.Contains(baseURL, "unknown") {
 		return accountLoginAppResponse{}, errors.New("missing account manager base URL")
+	}
+	tenantSlug = strings.TrimSpace(tenantSlug)
+	if tenantSlug == "" {
+		return accountLoginAppResponse{}, errors.New("missing tenant_slug")
 	}
 	payload := map[string]string{"email": user.Email, "password": user.Password}
 	if strings.TrimSpace(csrPEM) != "" {
@@ -1103,7 +1121,7 @@ func accountLoginAppCertificate(baseURL string, user userCredential, csrPEM stri
 	if err != nil {
 		return accountLoginAppResponse{}, err
 	}
-	req, err := http.NewRequest(http.MethodPost, baseURL+"/v1/auth/login", bytes.NewReader(raw))
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/v1/brand-clouds/"+url.PathEscape(tenantSlug)+"/auth/login", bytes.NewReader(raw))
 	if err != nil {
 		return accountLoginAppResponse{}, err
 	}

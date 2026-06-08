@@ -585,29 +585,44 @@ type certificateCacheTarget struct {
 	Dir    string
 }
 
-func refreshStagingCertificateCaches(paths provisionPaths, env map[string]string, sshKey string) {
+func refreshStagingCertificateCaches(paths provisionPaths, env map[string]string, sshKey string) []certificateCacheTarget {
+	required := []certificateCacheTarget{}
 	for _, target := range stagingCertificateCacheTargets(paths, env) {
 		if target.Host == "" || target.Domain == "" {
 			continue
 		}
+		present, err := remoteCertificatePresent(paths, sshKey, target.Host, target.Domain)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[cloud-e2e] certificate cache presence check skipped: target=%s domain=%s error=%v\n", target.Name, target.Domain, err)
+			continue
+		}
+		if !present {
+			fmt.Fprintf(os.Stderr, "[cloud-e2e] certificate cache refresh skipped: target=%s domain=%s remote_certificate=missing\n", target.Name, target.Domain)
+			continue
+		}
 		if err := cacheCertificateFromRemote(paths, sshKey, target.Host, target.Domain, target.Dir, target.Name); err != nil {
 			fmt.Fprintf(os.Stderr, "[cloud-e2e] certificate cache refresh skipped: target=%s domain=%s error=%v\n", target.Name, target.Domain, err)
+			required = append(required, target)
 		}
 	}
+	return required
 }
 
 func requireStagingCertificateCaches(paths provisionPaths, env map[string]string) error {
+	return requireStagingCertificateCachesForTargets(stagingCertificateCacheTargets(paths, env))
+}
+
+func requireStagingCertificateCachesForTargets(targets []certificateCacheTarget) error {
 	missing := []string{}
-	for _, target := range stagingCertificateCacheTargets(paths, env) {
+	for _, target := range targets {
 		if target.Domain == "" {
 			continue
 		}
+		if target.Host == "" {
+			continue
+		}
 		if certCacheEnv("CERT_CACHE", target.Dir) == nil {
-			if target.Host == "" {
-				missing = append(missing, fmt.Sprintf("%s domain=%s cache=%s host=missing", target.Name, target.Domain, target.Dir))
-			} else {
-				missing = append(missing, fmt.Sprintf("%s domain=%s cache=%s host=%s", target.Name, target.Domain, target.Dir, target.Host))
-			}
+			missing = append(missing, fmt.Sprintf("%s domain=%s cache=%s host=%s", target.Name, target.Domain, target.Dir, target.Host))
 		}
 	}
 	if len(missing) == 0 {
@@ -676,6 +691,21 @@ func cacheCertificateFromRemote(paths provisionPaths, sshKey, host, domain, dir,
 	}
 	fmt.Fprintf(os.Stderr, "[cloud-deploy] caching certificate: %s domain=%s\n", label, domain)
 	return nil
+}
+
+func remoteCertificatePresent(paths provisionPaths, sshKey, host, domain string) (bool, error) {
+	liveDir := "/etc/letsencrypt/live/" + domain
+	check := fmt.Sprintf("test -s %q -a -s %q", liveDir+"/fullchain.pem", liveDir+"/privkey.pem")
+	args := loggerSSHArgs(paths, sshKey, host, "sh", "-c", check)
+	err := runCmdQuiet("ssh", args...)
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
 }
 
 func loggerBackendInstallScript(domain, token, lokiVersion string, cachedCert bool) string {
@@ -853,12 +883,12 @@ func runLoggerForwarderScriptHooks(paths provisionPaths, env map[string]string, 
 func loggerForwarderTargets(paths provisionPaths) []loggerForwarderTarget {
 	return []loggerForwarderTarget{
 		{"account-manager", envFileValue(paths.AccountManagerState, "ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4"), "rtk-account-manager.service,rtk-account-manager-inbox-worker.service,rtk-account-manager-outbox-worker.service"},
-		{"video-cloud-api", videoStateInstanceHost(paths.VideoState, "api"), "video_cloud-api.service,video_cloud-logingester.service,video_cloud-turnregistry.service,video_cloud-metricsexporter.service,video_cloud-cleaner.service,video_cloud-statistics.service,video_cloud-certissuer.service,video_cloud-factoryenroll.service"},
+		{"video-cloud-api", videoStatePrivateHost(paths.VideoState, "api"), "video_cloud-api.service,video_cloud-logingester.service,video_cloud-turnregistry.service,video_cloud-metricsexporter.service,video_cloud-cleaner.service,video_cloud-statistics.service,video_cloud-certissuer.service,video_cloud-factoryenroll.service"},
 		{"cloud-admin", envFileValue(paths.AdminState, "ADMIN_LINODE_PUBLIC_IPV4"), "rtk-cloud-admin.service"},
-		{"edge", videoStateInstanceHost(paths.VideoState, "edge"), "nginx.service,certbot.timer"},
-		{"infra", videoStateInstanceHost(paths.VideoState, "infra"), "postgresql.service,postgresql@16-main.service,redis-server.service,prometheus.service,prometheus-node-exporter.service,prometheus-postgres-exporter.service,prometheus-redis-exporter.service"},
-		{"mqtt", videoStateInstanceHost(paths.VideoState, "mqtt"), "emqx.service"},
-		{"coturn", videoStateInstanceHost(paths.VideoState, "coturn"), "coturn.service,video_cloud-turnregistrar.service"},
+		{"edge", videoStatePublicHost(paths.VideoState, "edge"), "nginx.service,certbot.timer"},
+		{"infra", videoStatePrivateHost(paths.VideoState, "infra"), "postgresql.service,postgresql@16-main.service,redis-server.service,prometheus.service,prometheus-node-exporter.service,prometheus-postgres-exporter.service,prometheus-redis-exporter.service"},
+		{"mqtt", videoStatePrivateHost(paths.VideoState, "mqtt"), "emqx.service"},
+		{"coturn", videoStatePublicHost(paths.VideoState, "coturn"), "coturn.service,video_cloud-turnregistrar.service"},
 	}
 }
 
@@ -887,6 +917,11 @@ func installNativeLoggerForwarders(paths provisionPaths, env map[string]string, 
 				proxyURL = "http://" + edge + ":3128"
 			}
 		}
+		if err := waitForLoggerForwarderSSH(paths, sshKey, target); err != nil {
+			report.add("logger-forwarder:"+target.name, "DEGRADED", "")
+			fmt.Fprintf(os.Stderr, "[cloud-deploy] logger forwarder install degraded: target=%s host=%s readiness_error=%v\n", target.name, target.host, err)
+			continue
+		}
 		if err := installNativeLoggerForwarderTarget(paths, sshKey, binary, endpoint, token, loggerHostIP, proxyURL, target); err != nil {
 			report.add("logger-forwarder:"+target.name, "DEGRADED", "")
 			fmt.Fprintf(os.Stderr, "[cloud-deploy] logger forwarder install degraded: target=%s error=%v\n", target.name, err)
@@ -900,6 +935,31 @@ func installNativeLoggerForwarders(paths provisionPaths, env map[string]string, 
 			}
 		}
 	}
+}
+
+func waitForLoggerForwarderSSH(paths provisionPaths, sshKey string, target loggerForwarderTarget) error {
+	if target.host == "" {
+		return fmt.Errorf("logger forwarder target host missing: %s", target.name)
+	}
+	attempts := envInt("CLOUD_LOGGER_FORWARDER_SSH_READY_ATTEMPTS", 60)
+	delay := time.Duration(envInt("CLOUD_LOGGER_FORWARDER_SSH_READY_DELAY_SEC", 10)) * time.Second
+	if attempts < 1 {
+		attempts = 1
+	}
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		fmt.Fprintf(os.Stderr, "[cloud-deploy] logger forwarder SSH readiness attempt %d/%d: target=%s host=%s\n", attempt, attempts, target.name, target.host)
+		if err := runCmdQuiet("ssh", loggerSSHArgs(paths, sshKey, target.host, "true")...); err == nil {
+			fmt.Fprintf(os.Stderr, "[cloud-deploy] logger forwarder SSH ready: target=%s host=%s\n", target.name, target.host)
+			return nil
+		} else {
+			lastErr = err
+		}
+		if attempt < attempts && delay > 0 {
+			time.Sleep(delay)
+		}
+	}
+	return fmt.Errorf("ssh did not become ready after %d attempts: %w", attempts, lastErr)
 }
 
 func markLoggerForwardersDegraded(report *readinessReport, targets []loggerForwarderTarget) {
@@ -1387,6 +1447,22 @@ func videoStatePublicHost(path, role string) string {
 		return ""
 	}
 	return state.Instances[role].PublicIPv4
+}
+
+func videoStatePrivateHost(path, role string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var state struct {
+		Instances map[string]struct {
+			PrivateIP string `json:"private_ip"`
+		} `json:"instances"`
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		return ""
+	}
+	return state.Instances[role].PrivateIP
 }
 
 func materializeReleaseBundle(dir string, operator map[string]string, prefix, release string) (string, error) {

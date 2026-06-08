@@ -1123,6 +1123,39 @@ func ensureProvisionPKCS11Signing(paths provisionPaths, env map[string]string) e
 		return nil
 	}
 	videoEnv, _ := readEnvFile(paths.VideoEnv)
+	pin := firstNonEmpty(videoEnv["VIDEO_CLOUD_AUTH_TOKEN_PKCS11_PIN"], videoEnv["CERT_ISSUER_PKCS11_PIN"], videoEnv["CERT_ISSUER_APP_PKCS11_PIN"])
+	if pin == "" {
+		generated, err := randomHex(16)
+		if err != nil {
+			return err
+		}
+		pin = generated
+	}
+	setDefault := func(key, value string) {
+		if strings.TrimSpace(videoEnv[key]) == "" {
+			videoEnv[key] = value
+		}
+	}
+	modulePath := "/usr/lib/softhsm/libsofthsm2.so"
+	tokenLabel := "video-cloud-signing"
+	setDefault("VIDEO_CLOUD_AUTH_TOKEN_SIGNER_PROVIDER", "pkcs11")
+	setDefault("VIDEO_CLOUD_AUTH_TOKEN_PKCS11_MODULE_PATH", modulePath)
+	setDefault("VIDEO_CLOUD_AUTH_TOKEN_PKCS11_TOKEN_LABEL", tokenLabel)
+	setDefault("VIDEO_CLOUD_AUTH_TOKEN_PKCS11_PIN", pin)
+	setDefault("VIDEO_CLOUD_AUTH_TOKEN_PKCS11_KEY_LABEL", "auth-token")
+	setDefault("CERT_ISSUER_SIGNER_PROVIDER", "pkcs11")
+	setDefault("CERT_ISSUER_PKCS11_MODULE_PATH", modulePath)
+	setDefault("CERT_ISSUER_PKCS11_TOKEN_LABEL", tokenLabel)
+	setDefault("CERT_ISSUER_PKCS11_PIN", pin)
+	setDefault("CERT_ISSUER_PKCS11_KEY_LABEL", "device-ca")
+	setDefault("CERT_ISSUER_PKCS11_EXPECTED_ALGORITHM", "ed25519")
+	setDefault("CERT_ISSUER_APP_SIGNER_PROVIDER", "pkcs11")
+	setDefault("CERT_ISSUER_APP_PKCS11_MODULE_PATH", modulePath)
+	setDefault("CERT_ISSUER_APP_PKCS11_TOKEN_LABEL", tokenLabel)
+	setDefault("CERT_ISSUER_APP_PKCS11_PIN", pin)
+	setDefault("CERT_ISSUER_APP_PKCS11_KEY_LABEL", "app-ca")
+	setDefault("CERT_ISSUER_APP_PKCS11_EXPECTED_ALGORITHM", "ed25519")
+
 	missing := []string{}
 	requirePKCS11Group := func(label, providerKey, moduleKey, tokenKey, slotKey, pinKey, keyLabelKey string) {
 		if !strings.EqualFold(strings.TrimSpace(videoEnv[providerKey]), "pkcs11") {
@@ -1141,13 +1174,19 @@ func ensureProvisionPKCS11Signing(paths provisionPaths, env map[string]string) e
 			missing = append(missing, keyLabelKey)
 		}
 	}
+	if strings.TrimSpace(videoEnv["CERT_ISSUER_CA_KEY_SOURCE"]) == "" && strings.TrimSpace(videoEnv["CERT_ISSUER_CA_KEY_PEM"]) == "" {
+		missing = append(missing, "CERT_ISSUER_CA_KEY_SOURCE or CERT_ISSUER_CA_KEY_PEM")
+	}
+	if strings.TrimSpace(videoEnv["CERT_ISSUER_APP_CA_KEY_SOURCE"]) == "" && strings.TrimSpace(videoEnv["CERT_ISSUER_APP_CA_KEY_PEM"]) == "" {
+		missing = append(missing, "CERT_ISSUER_APP_CA_KEY_SOURCE or CERT_ISSUER_APP_CA_KEY_PEM")
+	}
 	requirePKCS11Group("api auth token pkcs11", "VIDEO_CLOUD_AUTH_TOKEN_SIGNER_PROVIDER", "VIDEO_CLOUD_AUTH_TOKEN_PKCS11_MODULE_PATH", "VIDEO_CLOUD_AUTH_TOKEN_PKCS11_TOKEN_LABEL", "VIDEO_CLOUD_AUTH_TOKEN_PKCS11_SLOT_ID", "VIDEO_CLOUD_AUTH_TOKEN_PKCS11_PIN", "VIDEO_CLOUD_AUTH_TOKEN_PKCS11_KEY_LABEL")
 	requirePKCS11Group("api certissuer pkcs11", "CERT_ISSUER_SIGNER_PROVIDER", "CERT_ISSUER_PKCS11_MODULE_PATH", "CERT_ISSUER_PKCS11_TOKEN_LABEL", "CERT_ISSUER_PKCS11_SLOT_ID", "CERT_ISSUER_PKCS11_PIN", "CERT_ISSUER_PKCS11_KEY_LABEL")
 	requirePKCS11Group("api app certissuer pkcs11", "CERT_ISSUER_APP_SIGNER_PROVIDER", "CERT_ISSUER_APP_PKCS11_MODULE_PATH", "CERT_ISSUER_APP_PKCS11_TOKEN_LABEL", "CERT_ISSUER_APP_PKCS11_SLOT_ID", "CERT_ISSUER_APP_PKCS11_PIN", "CERT_ISSUER_APP_PKCS11_KEY_LABEL")
 	if len(missing) > 0 {
 		return fmt.Errorf("staging provision requires SoftHSMv2/PKCS#11 signing; update %s with %s, or set CLOUD_REQUIRE_PKCS11_SIGNING=0 only for an explicit legacy PEM run", paths.VideoEnv, strings.Join(missing, ", "))
 	}
-	return nil
+	return writeEnvMap(paths.VideoEnv, videoEnv, 0o600)
 }
 
 func ensurePEMBundle(bundlePath string, certPaths []string) error {
