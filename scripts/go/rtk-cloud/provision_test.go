@@ -185,9 +185,9 @@ func TestEnsureProvisionRuntimeContractsRequiresPKCS11SigningByDefault(t *testin
 
 	err := ensureProvisionRuntimeContracts(paths, map[string]string{"VIDEO_CLOUD_DOMAIN": "video.example.test"})
 	if err == nil {
-		t.Fatalf("ensureProvisionRuntimeContracts succeeded without pkcs11 signing config")
+		t.Fatalf("ensureProvisionRuntimeContracts succeeded without issuer key material")
 	}
-	for _, want := range []string{"SoftHSMv2/PKCS#11", "VIDEO_CLOUD_AUTH_TOKEN_SIGNER_PROVIDER=pkcs11", "CERT_ISSUER_SIGNER_PROVIDER=pkcs11", "CERT_ISSUER_APP_SIGNER_PROVIDER=pkcs11"} {
+	for _, want := range []string{"SoftHSMv2/PKCS#11", "CERT_ISSUER_CA_KEY_SOURCE", "CERT_ISSUER_APP_CA_KEY_SOURCE"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error missing %q: %v", want, err)
 		}
@@ -202,6 +202,10 @@ func TestEnsureProvisionRuntimeContractsAcceptsPKCS11Signing(t *testing.T) {
 	for _, name := range []string{"root-ca.ed25519.cert.pem", "production-issuer.ed25519.cert.pem", "app-user-issuer.ed25519.cert.pem"} {
 		writeFile(t, filepath.Join(keysDir, name), "-----BEGIN CERTIFICATE-----\nca\n-----END CERTIFICATE-----\n")
 	}
+	deviceKey := filepath.Join(keysDir, "production-issuer.ed25519.key.pem")
+	appKey := filepath.Join(keysDir, "app-user-issuer.ed25519.key.pem")
+	writeFile(t, deviceKey, "device-key")
+	writeFile(t, appKey, "app-key")
 	paths := provisionPaths{
 		Workspace:         workspace,
 		VideoConfig:       filepath.Join(root, "topology", "video-cloud-staging.yaml"),
@@ -211,28 +215,27 @@ func TestEnsureProvisionRuntimeContractsAcceptsPKCS11Signing(t *testing.T) {
 	mkdirAll(t, filepath.Dir(paths.VideoConfig))
 	writeFile(t, paths.VideoConfig, "deploy: {}\n")
 	mkdirAll(t, filepath.Dir(paths.VideoEnv))
-	writeFile(t, paths.VideoEnv, `VIDEO_CLOUD_AUTH_SECRET=auth-secret
-VIDEO_CLOUD_AUTH_TOKEN_SIGNER_PROVIDER=pkcs11
-VIDEO_CLOUD_AUTH_TOKEN_PKCS11_MODULE_PATH=/usr/lib/softhsm/libsofthsm2.so
-VIDEO_CLOUD_AUTH_TOKEN_PKCS11_TOKEN_LABEL=video-cloud-signing
-VIDEO_CLOUD_AUTH_TOKEN_PKCS11_PIN=secret-pin
-VIDEO_CLOUD_AUTH_TOKEN_PKCS11_KEY_LABEL=auth-token
-CERT_ISSUER_SIGNER_PROVIDER=pkcs11
-CERT_ISSUER_PKCS11_MODULE_PATH=/usr/lib/softhsm/libsofthsm2.so
-CERT_ISSUER_PKCS11_TOKEN_LABEL=video-cloud-signing
-CERT_ISSUER_PKCS11_PIN=secret-pin
-CERT_ISSUER_PKCS11_KEY_LABEL=device-ca
-CERT_ISSUER_APP_SIGNER_PROVIDER=pkcs11
-CERT_ISSUER_APP_PKCS11_MODULE_PATH=/usr/lib/softhsm/libsofthsm2.so
-CERT_ISSUER_APP_PKCS11_TOKEN_LABEL=video-cloud-signing
-CERT_ISSUER_APP_PKCS11_PIN=secret-pin
-CERT_ISSUER_APP_PKCS11_KEY_LABEL=app-ca
-`)
+	writeFile(t, paths.VideoEnv, "VIDEO_CLOUD_AUTH_SECRET=auth-secret\nCERT_ISSUER_CA_KEY_SOURCE="+deviceKey+"\nCERT_ISSUER_APP_CA_KEY_SOURCE="+appKey+"\n")
 	mkdirAll(t, filepath.Dir(paths.AccountManagerEnv))
 	writeFile(t, paths.AccountManagerEnv, "ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN=shared-internal-token\n")
 
 	if err := ensureProvisionRuntimeContracts(paths, map[string]string{"VIDEO_CLOUD_DOMAIN": "video.example.test"}); err != nil {
 		t.Fatalf("ensureProvisionRuntimeContracts returned error: %v", err)
+	}
+	videoEnv, _ := readEnvFile(paths.VideoEnv)
+	for key, want := range map[string]string{
+		"VIDEO_CLOUD_AUTH_TOKEN_SIGNER_PROVIDER": "pkcs11",
+		"CERT_ISSUER_SIGNER_PROVIDER":            "pkcs11",
+		"CERT_ISSUER_APP_SIGNER_PROVIDER":        "pkcs11",
+		"CERT_ISSUER_PKCS11_KEY_LABEL":           "device-ca",
+		"CERT_ISSUER_APP_PKCS11_KEY_LABEL":       "app-ca",
+	} {
+		if videoEnv[key] != want {
+			t.Fatalf("%s = %q, want %q", key, videoEnv[key], want)
+		}
+	}
+	if videoEnv["VIDEO_CLOUD_AUTH_TOKEN_PKCS11_PIN"] == "" {
+		t.Fatalf("generated pkcs11 pin is empty")
 	}
 }
 
@@ -316,7 +319,7 @@ func TestLoggerForwarderTargetsUseStagingSystemdUnits(t *testing.T) {
 		AdminState:          filepath.Join(root, "state", "cloud-admin-staging.env"),
 	}
 	mkdirAll(t, filepath.Dir(paths.VideoState))
-	writeFile(t, paths.VideoState, `{"instances":{"api":{"private_ip":"10.42.1.10"},"infra":{"private_ip":"10.42.1.30"},"mqtt":{"private_ip":"10.42.1.40"},"edge":{"public_ipv4":"203.0.113.5"},"coturn":{"public_ipv4":"203.0.113.9"}}}`)
+	writeFile(t, paths.VideoState, `{"instances":{"api":{"private_ip":"10.42.1.10"},"infra":{"private_ip":"10.42.1.30"},"mqtt":{"private_ip":"10.42.1.40"},"edge":{"public_ipv4":"203.0.113.5","private_ip":"10.42.1.5"},"coturn":{"public_ipv4":"203.0.113.9","private_ip":"10.42.1.80"}}}`)
 	writeFile(t, paths.AccountManagerState, "ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4=203.0.113.20\n")
 	writeFile(t, paths.AdminState, "ADMIN_LINODE_PUBLIC_IPV4=203.0.113.30\n")
 
@@ -336,6 +339,12 @@ func TestLoggerForwarderTargetsUseStagingSystemdUnits(t *testing.T) {
 	assertUnitsContain(t, byName["infra"].units, "prometheus.service", "postgresql.service", "redis-server.service")
 	assertUnitsNotContain(t, byName["infra"].units, "nats-server.service", "nats.service")
 	assertUnitsContain(t, byName["coturn"].units, "coturn.service", "video_cloud-turnregistrar.service")
+	if byName["edge"].host != "203.0.113.5" {
+		t.Fatalf("edge logger forwarder host = %q, want public IP", byName["edge"].host)
+	}
+	if byName["coturn"].host != "203.0.113.9" {
+		t.Fatalf("coturn logger forwarder host = %q, want public IP", byName["coturn"].host)
+	}
 }
 
 func TestWriteProvisionArtifactsRedactsLoggerToken(t *testing.T) {
@@ -560,6 +569,22 @@ func TestRequireStagingCertificateCachesPassesWhenAllTargetsCached(t *testing.T)
 
 	if err := requireStagingCertificateCaches(paths, env); err != nil {
 		t.Fatalf("requireStagingCertificateCaches returned error: %v", err)
+	}
+}
+
+func TestRequireStagingCertificateCachesForTargetsOnlyRequiresRemotePresentTargets(t *testing.T) {
+	root := t.TempDir()
+	cachedDomain := "video.example.test"
+	cachedDir := filepath.Join(root, "certificates", cachedDomain)
+	mkdirAll(t, cachedDir)
+	writeFile(t, filepath.Join(cachedDir, "fullchain.pem"), "fullchain")
+	writeFile(t, filepath.Join(cachedDir, "privkey.pem"), "private-key")
+
+	targets := []certificateCacheTarget{
+		{Name: "video-cloud", Host: "203.0.113.5", Domain: cachedDomain, Dir: cachedDir},
+	}
+	if err := requireStagingCertificateCachesForTargets(targets); err != nil {
+		t.Fatalf("requireStagingCertificateCachesForTargets returned error: %v", err)
 	}
 }
 

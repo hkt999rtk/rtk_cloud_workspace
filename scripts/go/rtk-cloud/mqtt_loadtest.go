@@ -141,7 +141,7 @@ func runMQTTLoadTestPrepare(args []string) error {
 		return fmt.Errorf("no device-bind artifact found for brand slug %s", slug)
 	}
 	expectedPerUser := (*deviceCount + *userCount - 1) / *userCount
-	validateArgs := commandWithArgs(selfCommandPath("validate-device-bind"), "--bind-artifact", bindFile, "--out-dir", filepath.Join(*outDir, "bind-validation"), "--expected-count", strconv.Itoa(*deviceCount), "--expected-devices-per-user", strconv.Itoa(expectedPerUser))
+	validateArgs := commandWithArgs(selfCommandPath("validate-device-bind"), "--workspace", workspace, "--env-root", envRoot, "--bind-artifact", bindFile, "--out-dir", filepath.Join(*outDir, "bind-validation"), "--expected-count", strconv.Itoa(*deviceCount), "--expected-devices-per-user", strconv.Itoa(expectedPerUser), "--wait-provisioned-timeout", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_PROVISION_TIMEOUT"), "10m"), "--wait-provisioned-poll", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_PROVISION_POLL"), "10s"))
 	step, err = runE2EStep("validate_bind", filepath.Join(*outDir, "validate_bind.log"), validateArgs...)
 	steps = append(steps, step)
 	if err != nil {
