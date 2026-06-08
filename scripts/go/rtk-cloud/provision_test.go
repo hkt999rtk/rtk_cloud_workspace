@@ -252,7 +252,6 @@ func TestLoggerForwarderTargetsUseStagingSystemdUnits(t *testing.T) {
 		"video_cloud-logingester.service",
 		"video_cloud-turnregistry.service",
 		"video_cloud-metricsexporter.service",
-		"video_cloud-crossservice.service",
 		"video_cloud-cleaner.service",
 		"video_cloud-statistics.service",
 	)

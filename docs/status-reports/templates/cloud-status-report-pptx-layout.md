@@ -95,15 +95,16 @@ appendix source index unless the report owner explicitly changes the framework.
 | 24 | Threat Model / Cyber Security Review | STRIDE risk matrix and next review focus. |
 | 25 | Transition：Deployment、操作流程與 Evidence | Topic break before Linode runtime, health/config boundary, operation screenshots, and SDK flow. |
 | 26 | Linode Staging Runtime Shape | Runtime topology plus component responsibility table. |
-| 27 | Initial Operation Cost View | Current Linode monthly run-rate estimate, billing/baseline, post-loading-test estimate timing, and key production cost variables. |
-| 28 | Linode Health & Configuration Boundary | Live health table and safe configuration boundary. |
-| 29 | Operation Flow Overview | Demo journey flow. |
-| 30 | Admin Operation Screenshots | 2x2 Admin screenshot grid. |
-| 31 | SDK / Sample App Flow | Sample app flow screenshot plus evidence-purpose table. |
-| 32 | Decision / Support Needed | Alpha-readiness support board: account/payment ownership, operation backup, alpha internal testers, beta pilot customer, and milestone impact. |
-| 33 | Ongoing Operation / Development Coverage | Ongoing baseline estimate separate from temporary alpha/beta testers: backend/service owner, DevOps/SRE, SDK support, QA/load test, security review, and FAE/pilot support. |
-| 34 | Appendix：素材與來源索引 | Dense material/source/status table. |
-| 35 | Thank You / Review Gate | Master-style closing slide and checklist summary. |
+| 27 | Initial Operation Cost View | Current Linode monthly run-rate estimate plus AWS commercial-pilot difference view from `docs/cost`, focused on CloudHSM on/off and Robust Design on/off. |
+| 28 | AWS Unit Cost Per Month | Raw monthly total divided by users/devices plus weighted 10% user / 90% device unit-cost view. |
+| 29 | Linode Health & Configuration Boundary | Live health table and safe configuration boundary. |
+| 30 | Operation Flow Overview | Demo journey flow. |
+| 31 | Admin Operation Screenshots | 2x2 Admin screenshot grid. |
+| 32 | SDK / Sample App Flow | Sample app flow screenshot plus evidence-purpose table. |
+| 33 | Decision / Support Needed | Alpha-readiness support board: account/payment ownership, operation backup, alpha internal testers, beta pilot customer, and milestone impact. |
+| 34 | Ongoing Operation / Development Coverage | Ongoing baseline estimate separate from temporary alpha/beta testers: backend/service owner, DevOps/SRE, SDK support, QA/load test, security review, and FAE/pilot support. |
+| 35 | Appendix：素材與來源索引 | Dense material/source/status table. |
+| 36 | Thank You / Review Gate | Master-style closing slide and checklist summary. |
 
 ## Layout Rules
 
@@ -136,11 +137,12 @@ appendix source index unless the report owner explicitly changes the framework.
   sales action, result/learning, and IoT module sales message refinement.
 - Treat endpoint health as status evidence only, not production or security
   sign-off.
-- Keep operation-cost discussion to one lightweight slide unless requested:
-  current Linode staging monthly run-rate estimate, billing baseline,
-  post-loading-test estimate timing, and the main production variables such as
-  video behavior, TURN relay, media retention, HA/DR/SLA, observability
-  retention, and customer traffic.
+- Keep operation-cost discussion to one or two lightweight slides unless requested:
+  current Linode staging monthly run-rate estimate, AWS pilot estimate from
+  `docs/cost/aws-pricing-sources.md`, clear CloudHSM and Robust Design cost
+  differences, per-user/per-device unit cost per month, post-loading-test
+  estimate timing, and caveats that AWS numbers are a planning snapshot rather
+  than an actual AWS bill or committed quote.
 - When presenting security implementation, add one STRIDE explainer page before
   PKI implementation details so non-security leaders understand what is being
   checked and how controls map to implementation.

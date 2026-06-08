@@ -767,42 +767,119 @@ async function slide14(p, payload) {
 async function slideCostView(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
-  await addHeader(slide, payload, "Initial Operation Cost View", "CURRENT BASELINE / POST-LOAD-TEST ESTIMATE");
+  await addHeader(slide, payload, "Initial Operation Cost View", "LINODE BASELINE / AWS PILOT ESTIMATE");
   const billing = payload.linodeBilling || {};
-  addText(slide, "目前 Linode implementation 可作為 staging/demo 的初始營運成本基準；production operation cost 需在 8 月 loading test 後，依實測資源與流量 profile 建立。", { x: 85, y: 154, w: 1110, h: 42 }, { size: 16, color: C.navy, bold: true, align: "center", fill: C.pale });
+  const aws = payload.awsCostEstimate || {};
+  const scenarios = aws.scenarios || {};
+  const comparisons = aws.comparisons || {};
+  const perUnit = aws.perUnit || {};
+  const moneyText = (value) => (value && value !== "n/a" ? `${value}/month` : "n/a");
 
-  const steps = [
-    ["Current Linode baseline", "staging runtime / DB-storage / nginx-TLS / Admin-Account-Video-Frontend"],
-    ["August loading test", "measure CPU, memory, network, MQTT, DB/storage, log/metrics volume"],
-    ["Production cost model", "size production runtime after evidence; do not commit final monthly cost yet"],
+  addText(slide, "AWS cost discussion should focus on two decisions: whether to pay for CloudHSM key custody, and whether to use the robust redundant design. These are estimates, not AWS actual bills.", { x: 85, y: 154, w: 1110, h: 42 }, { size: 15, color: C.navy, bold: true, align: "center", fill: C.pale });
+
+  addShape(slide, { x: 70, y: 220, w: 360, h: 182, fill: C.white, line: C.line });
+  addText(slide, "Linode staging baseline", { x: 94, y: 238, w: 300, h: 28 }, { size: 18, color: C.navy, bold: true, face: FONT_EN });
+  addShape(slide, { x: 98, y: 284, w: 180, h: 66, fill: C.paleAmber, line: C.line });
+  addText(slide, "Current run-rate", { x: 104, y: 292, w: 168, h: 15 }, { size: 9, color: C.muted, bold: true, align: "center", face: FONT_EN });
+  addText(slide, billing.estimatedMonthlyRunRate || "n/a", { x: 104, y: 313, w: 168, h: 26 }, { size: 19, color: C.navy, bold: true, align: "center", face: FONT_EN });
+  addText(slide, `Period: ${billing.estimatePeriod || "n/a"}`, { x: 292, y: 285, w: 112, h: 36 }, { size: 8, color: C.black, face: FONT_EN });
+  addText(slide, "Baseline only; AWS is separate planning estimate.", { x: 98, y: 366, w: 295, h: 18 }, { size: 10, color: C.navy, bold: true, align: "center", fill: C.paleBlue });
+
+  addShape(slide, { x: 450, y: 220, w: 730, h: 182, fill: C.white, line: C.line });
+  addText(slide, `AWS scenario totals (${aws.region || "ap-southeast-1"}, ${aws.currency || "USD"})`, { x: 474, y: 238, w: 680, h: 28 }, { size: 18, color: C.navy, bold: true, face: FONT_EN });
+  const totals = [
+    ["Base\n(no HSM, no robust)", moneyText(scenarios.baseWithoutCloudHsm), C.paleBlue],
+    ["+ CloudHSM\n(default)", moneyText(scenarios.defaultWithOneCloudHsm), C.paleAmber],
+    ["Robust\n(no HSM)", moneyText(scenarios.robustWithoutCloudHsm), C.paleTeal],
+    ["Robust\n+ 2 HSMs", moneyText(scenarios.robustWithTwoCloudHsms), C.paleAmber],
   ];
-  steps.forEach((s, i) => {
-    const x = 80 + i * 390;
-    addShape(slide, { x, y: 235, w: 300, h: 116, fill: i === 1 ? C.paleAmber : i === 2 ? C.paleTeal : C.paleBlue, line: C.line });
-    addText(slide, s[0], { x: x + 15, y: 255, w: 270, h: 26 }, { size: 17, color: C.navy, bold: true, align: "center", face: FONT_EN });
-    addText(slide, s[1], { x: x + 18, y: 292, w: 264, h: 42 }, { size: 11, color: C.black, align: "center" });
-    if (i < steps.length - 1) addArrow(slide, x + 310, 293, x + 375, 293, C.sky);
+  totals.forEach((m, i) => {
+    const x = 475 + i * 172;
+    addShape(slide, { x, y: 286, w: 154, h: 70, fill: m[2], line: C.line });
+    addText(slide, m[0], { x: x + 5, y: 292, w: 144, h: 28 }, { size: 9, color: C.muted, bold: true, align: "center", face: FONT_EN });
+    addText(slide, m[1], { x: x + 5, y: 326, w: 144, h: 22 }, { size: 13, color: C.navy, bold: true, align: "center", face: FONT_EN });
+  });
+  addText(slide, `Default unit view: ${perUnit.defaultWithCloudHsmPerUser || "n/a"} / ${perUnit.defaultWithCloudHsmPerDevice || "n/a"}`, { x: 500, y: 370, w: 640, h: 18 }, { size: 11, color: C.navy, bold: true, align: "center", face: FONT_EN, fill: C.pale });
+
+  addShape(slide, { x: 70, y: 430, w: 565, h: 172, fill: C.white, line: C.line });
+  addText(slide, "Decision 1: CloudHSM on / off", { x: 94, y: 448, w: 520, h: 22 }, { size: 16, color: C.navy, bold: true, face: FONT_EN });
+  const cloudHsmRows = [
+    ["Default profile", comparisons.cloudHsmDefault?.without, comparisons.cloudHsmDefault?.with, `+${comparisons.cloudHsmDefault?.delta || "n/a"}`],
+    ["Robust profile", comparisons.cloudHsmRobust?.without, comparisons.cloudHsmRobust?.with, `+${comparisons.cloudHsmRobust?.delta || "n/a"}`],
+  ];
+  addTable(slide, ["Profile", "w/o CloudHSM", "w/ CloudHSM", "Difference"], cloudHsmRows, { x: 95, y: 485, w: 510, h: 78 }, [1.2, 1.2, 1.2, 1.1], { rowH: 28, headerH: 24, fontSize: 8.5 });
+  addText(slide, "CloudHSM is the largest security-cost decision; robust design uses two HSMs.", { x: 102, y: 575, w: 500, h: 18 }, { size: 10, color: C.navy, bold: true, align: "center", fill: C.paleAmber });
+
+  addShape(slide, { x: 655, y: 430, w: 525, h: 172, fill: C.white, line: C.line });
+  addText(slide, "Decision 2: Robust Design on / off", { x: 679, y: 448, w: 480, h: 22 }, { size: 16, color: C.navy, bold: true, face: FONT_EN });
+  const robustRows = [
+    ["No CloudHSM", comparisons.robustWithoutCloudHsm?.without, comparisons.robustWithoutCloudHsm?.with, `+${comparisons.robustWithoutCloudHsm?.delta || "n/a"}`],
+    ["With CloudHSM", comparisons.robustWithCloudHsm?.without, comparisons.robustWithCloudHsm?.with, `+${comparisons.robustWithCloudHsm?.delta || "n/a"}`],
+  ];
+  addTable(slide, ["Security mode", "w/o Robust", "w/ Robust", "Difference"], robustRows, { x: 680, y: 485, w: 470, h: 78 }, [1.1, 1.15, 1.15, 1.05], { rowH: 28, headerH: 24, fontSize: 8.5 });
+  addText(slide, "Robust is not a blanket 2x; it adds redundancy to HSM, RDS, cache, NAT, and selected workers.", { x: 682, y: 575, w: 465, h: 18 }, { size: 10, color: C.navy, bold: true, align: "center", fill: C.paleBlue });
+
+  addShape(slide, { x: 70, y: 618, w: 495, h: 48, fill: C.white, line: C.line });
+  addText(slide, "Top drivers: CloudHSM, ECS Fargate, RDS PostgreSQL, AWS IoT Core, NAT Gateway.", { x: 92, y: 628, w: 450, h: 16 }, { size: 9.5, color: C.black, face: FONT_EN });
+  addText(slide, `Source: docs/cost/aws-pricing-sources.md, collected ${aws.collected || "n/a"}`, { x: 92, y: 646, w: 450, h: 14 }, { size: 8.5, color: C.muted, face: FONT_EN });
+
+  addShape(slide, { x: 585, y: 618, w: 595, h: 48, fill: C.white, line: C.line });
+  const caveats = [
+    "Estimate excludes tax, support plan, discounts, Savings Plans, Reserved Instances, Marketplace charges, and camera/WebRTC/TURN relay.",
+    "Actual AWS bill is not queried; refresh after loading-test evidence.",
+  ];
+  caveats.forEach((c, i) => {
+    addStatusDot(slide, "partial", 600, 628 + i * 18);
+    addText(slide, c, { x: 620, y: 624 + i * 18, w: 540, h: 16 }, { size: 8.5, color: C.black, face: FONT_EN });
+  });
+  return slide;
+}
+
+async function slideAwsUnitCost(p, payload) {
+  const slide = p.slides.add();
+  await addBackground(slide, payload);
+  await addHeader(slide, payload, "AWS Unit Cost Per Month", "PER USER / PER DEVICE VIEW");
+  const aws = payload.awsCostEstimate || {};
+  const unitCosts = aws.unitCosts || {};
+  const basis = unitCosts.basis || {};
+
+  addText(slide, "This page converts the AWS monthly estimate into unit economics. Use raw division for budget sizing; use weighted allocation when explaining the device-heavy business model.", { x: 85, y: 154, w: 1110, h: 42 }, { size: 15, color: C.navy, bold: true, align: "center", fill: C.pale });
+
+  const basisItems = [
+    ["End users", basis.endUsers || "2,500"],
+    ["Registered devices", basis.registeredDevices || "10,000"],
+    ["Devices / user", basis.devicesPerUser || "4"],
+    ["Allocation", `${basis.weightedUserPool || "10%"} user / ${basis.weightedDevicePool || "90%"} device`],
+  ];
+  basisItems.forEach((item, i) => {
+    const x = 82 + i * 300;
+    addShape(slide, { x, y: 218, w: 245, h: 62, fill: i === 3 ? C.paleAmber : C.paleBlue, line: C.line });
+    addText(slide, item[0], { x: x + 8, y: 226, w: 229, h: 15 }, { size: 9, color: C.muted, bold: true, align: "center", face: FONT_EN });
+    addText(slide, item[1], { x: x + 8, y: 248, w: 229, h: 22 }, { size: i === 3 ? 13 : 16, color: C.navy, bold: true, align: "center", face: FONT_EN });
   });
 
-  addShape(slide, { x: 80, y: 405, w: 480, h: 145, fill: C.white, line: C.line });
-  addText(slide, "Linode staging monthly estimate", { x: 105, y: 425, w: 420, h: 24 }, { size: 17, color: C.navy, bold: true, face: FONT_EN });
-  addShape(slide, { x: 140, y: 462, w: 165, h: 58, fill: C.paleAmber, line: C.line });
-  addText(slide, "Est. monthly cost", { x: 146, y: 470, w: 153, h: 15 }, { size: 8, color: C.muted, bold: true, align: "center", face: FONT_EN });
-  addText(slide, billing.estimatedMonthlyRunRate || "n/a", { x: 146, y: 489, w: 153, h: 24 }, { size: 18, color: C.navy, bold: true, align: "center", face: FONT_EN });
-  addText(slide, `Period：${billing.estimatePeriod || "n/a"}`, { x: 112, y: 523, w: 400, h: 12 }, { size: 8, color: C.muted, face: FONT_EN, align: "center" });
-  addText(slide, `Calculation：${billing.estimateBasis || "n/a"}`, { x: 112, y: 536, w: 400, h: 12 }, { size: 8, color: C.muted, face: FONT_EN, align: "center" });
+  const rawRows = (unitCosts.rawDivision || []).map((row) => [
+    row.scenario,
+    row.monthlyTotal,
+    row.perUserMonth,
+    row.perDeviceMonth,
+    row.notes,
+  ]);
+  addText(slide, "Raw unit cost: total monthly AWS estimate divided by fleet size", { x: 70, y: 315, w: 1120, h: 22 }, { size: 16, color: C.navy, bold: true, face: FONT_EN });
+  addTable(slide, ["Scenario", "Monthly total", "Per user / month", "Per device / month", "Notes"], rawRows, { x: 70, y: 350, w: 1140, h: 150 }, [1.45, 0.85, 0.95, 0.95, 1.45], { rowH: 26, headerH: 26, fontSize: 8.5 });
 
-  addShape(slide, { x: 615, y: 405, w: 585, h: 145, fill: C.white, line: C.line });
-  addText(slide, "Cost variables to watch", { x: 640, y: 425, w: 520, h: 24 }, { size: 17, color: C.navy, bold: true, face: FONT_EN });
-  const vars = ["Video usage behavior", "TURN relay ratio", "Stored media retention", "HA / DR / SLA level", "Observability retention", "Customer traffic pattern"];
-  vars.forEach((v, i) => {
-    const x = 645 + (i % 2) * 270;
-    const y = 462 + Math.floor(i / 2) * 30;
-    addStatusDot(slide, "partial", x, y + 4);
-    addText(slide, v, { x: x + 22, y, w: 230, h: 22 }, { size: 12, color: C.black, face: FONT_EN });
-  });
+  const weightedRows = (unitCosts.weightedAllocation || []).map((row) => [
+    row.scenario.replace("Default estimate with one CloudHSM", "Default + 1 CloudHSM").replace("Robust redundant design with two CloudHSMs", "Robust + 2 CloudHSMs").replace("Base services only, excluding CloudHSM", "Base services only"),
+    row.perUserMonth,
+    row.perDeviceMonth,
+    row.effectiveUserWithFourDevices,
+  ]);
+  addText(slide, "Weighted unit cost: 10% user pool / 90% device pool", { x: 70, y: 530, w: 650, h: 22 }, { size: 16, color: C.navy, bold: true, face: FONT_EN });
+  addTable(slide, ["Scenario", "Per user / month", "Per device / month", "1 user + 4 devices"], weightedRows, { x: 70, y: 565, w: 700, h: 104 }, [1.7, 1.0, 1.0, 1.0], { rowH: 24, headerH: 24, fontSize: 8.2 });
 
-  addText(slide, "Message：這頁只建立 initial cost view；正式 production operation cost 需等 loading-test evidence 與 usage assumptions 收斂後再估算。", { x: 120, y: 605, w: 1040, h: 34 }, { size: 15, color: C.navy, bold: true, align: "center", fill: C.paleAmber });
+  addShape(slide, { x: 810, y: 536, w: 380, h: 118, fill: C.paleTeal, line: C.line });
+  addText(slide, "How to present it", { x: 832, y: 555, w: 336, h: 24 }, { size: 17, color: C.navy, bold: true, align: "center", face: FONT_EN });
+  addText(slide, "For budget approval, use the monthly total. For customer / business-model discussion, use the weighted device-heavy unit view. Do not add per-user and per-device raw rows together.", { x: 832, y: 590, w: 336, h: 46 }, { size: 10.5, color: C.black, align: "center" });
   return slide;
 }
 
@@ -944,7 +1021,7 @@ async function slide21(p, payload) {
 const SLIDES = [
   slide01, slideMajorTopics, slide07, slideWhyCloud, slideCustomerUseCaseFit, slide03, slideCloudTypes, slideOperationalTransition, slide02, slide04, slideReleaseGateDefinition, slide05, slide06, slide08,
   slidePortalTransition, slidePortalIntro, slide09, slideTechnicalTransition, slide10, slide11, slideStrideOverview, slide12, slideHsmSignerDesign, slide13,
-  slideEvidenceTransition, slide14, slideCostView, slide15, slide16, slide17, slide18, slide19, slidePostAlphaCoverage, slide20, slide21,
+  slideEvidenceTransition, slide14, slideCostView, slideAwsUnitCost, slide15, slide16, slide17, slide18, slide19, slidePostAlphaCoverage, slide20, slide21,
 ];
 
 async function makeContactSheet(previewPaths, outputPath) {

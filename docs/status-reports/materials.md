@@ -58,6 +58,7 @@ status reports.
 | --- | --- |
 | `docs/private-cloud-deployment.md` | Deployment order, support boundary, network/TLS, backup/restore, and production-ready gaps. |
 | `docs/linode-staging-deployment-snapshot.md` | Linode staging endpoint list, runtime shape, and previous snapshot evidence. |
+| `docs/cost/` | AWS commercial-pilot cost estimate material: service mapping, quantity worksheet, public pricing snapshot, scenario totals, support-plan treatment, and caveats. |
 | `docs/product-level-evidence.md` | Formal evidence bundle boundary and status semantics. |
 | `repos/rtk_video_cloud/deploy/README.md` | Video Cloud packaged runtime inventory, systemd services, EMQX/coturn/PostgreSQL/Prometheus shape. |
 | `repos/rtk_video_cloud/docs/config-map.md` | Video Cloud non-secret configuration categories. |
