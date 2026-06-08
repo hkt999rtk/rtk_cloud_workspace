@@ -1067,7 +1067,10 @@ func ensureProvisionRuntimeContracts(paths provisionPaths, env map[string]string
 	if err := ensureProvisionDeviceMTLSIngress(paths, env); err != nil {
 		return err
 	}
-	return ensureProvisionAccountManagerInternalAuth(paths)
+	if err := ensureProvisionAccountManagerInternalAuth(paths); err != nil {
+		return err
+	}
+	return ensureProvisionPKCS11Signing(paths, env)
 }
 
 func ensureProvisionDeviceMTLSIngress(paths provisionPaths, env map[string]string) error {
@@ -1112,6 +1115,39 @@ func ensureProvisionAccountManagerInternalAuth(paths provisionPaths) error {
 		return err
 	}
 	return writeEnvMap(paths.VideoEnv, videoEnv, 0o600)
+}
+
+func ensureProvisionPKCS11Signing(paths provisionPaths, env map[string]string) error {
+	switch strings.ToLower(strings.TrimSpace(env["CLOUD_REQUIRE_PKCS11_SIGNING"])) {
+	case "0", "false", "no", "off":
+		return nil
+	}
+	videoEnv, _ := readEnvFile(paths.VideoEnv)
+	missing := []string{}
+	requirePKCS11Group := func(label, providerKey, moduleKey, tokenKey, slotKey, pinKey, keyLabelKey string) {
+		if !strings.EqualFold(strings.TrimSpace(videoEnv[providerKey]), "pkcs11") {
+			missing = append(missing, providerKey+"=pkcs11")
+		}
+		if strings.TrimSpace(videoEnv[moduleKey]) == "" {
+			missing = append(missing, moduleKey)
+		}
+		if strings.TrimSpace(videoEnv[tokenKey]) == "" && strings.TrimSpace(videoEnv[slotKey]) == "" {
+			missing = append(missing, label+" token label or slot id ("+tokenKey+" or "+slotKey+")")
+		}
+		if strings.TrimSpace(videoEnv[pinKey]) == "" {
+			missing = append(missing, pinKey)
+		}
+		if strings.TrimSpace(videoEnv[keyLabelKey]) == "" {
+			missing = append(missing, keyLabelKey)
+		}
+	}
+	requirePKCS11Group("api auth token pkcs11", "VIDEO_CLOUD_AUTH_TOKEN_SIGNER_PROVIDER", "VIDEO_CLOUD_AUTH_TOKEN_PKCS11_MODULE_PATH", "VIDEO_CLOUD_AUTH_TOKEN_PKCS11_TOKEN_LABEL", "VIDEO_CLOUD_AUTH_TOKEN_PKCS11_SLOT_ID", "VIDEO_CLOUD_AUTH_TOKEN_PKCS11_PIN", "VIDEO_CLOUD_AUTH_TOKEN_PKCS11_KEY_LABEL")
+	requirePKCS11Group("api certissuer pkcs11", "CERT_ISSUER_SIGNER_PROVIDER", "CERT_ISSUER_PKCS11_MODULE_PATH", "CERT_ISSUER_PKCS11_TOKEN_LABEL", "CERT_ISSUER_PKCS11_SLOT_ID", "CERT_ISSUER_PKCS11_PIN", "CERT_ISSUER_PKCS11_KEY_LABEL")
+	requirePKCS11Group("api app certissuer pkcs11", "CERT_ISSUER_APP_SIGNER_PROVIDER", "CERT_ISSUER_APP_PKCS11_MODULE_PATH", "CERT_ISSUER_APP_PKCS11_TOKEN_LABEL", "CERT_ISSUER_APP_PKCS11_SLOT_ID", "CERT_ISSUER_APP_PKCS11_PIN", "CERT_ISSUER_APP_PKCS11_KEY_LABEL")
+	if len(missing) > 0 {
+		return fmt.Errorf("staging provision requires SoftHSMv2/PKCS#11 signing; update %s with %s, or set CLOUD_REQUIRE_PKCS11_SIGNING=0 only for an explicit legacy PEM run", paths.VideoEnv, strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 func ensurePEMBundle(bundlePath string, certPaths []string) error {
