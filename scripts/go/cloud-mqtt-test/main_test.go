@@ -99,6 +99,7 @@ func TestUserArtifactPreservesAppCredentials(t *testing.T) {
 	var artifact userArtifact
 	if err := json.Unmarshal([]byte(`{
   "brandname": "RTK",
+  "tenant_slug": "rtk-1234",
   "users": [{
     "email": "rtk+001@users.local",
     "password": "secret",
@@ -114,11 +115,17 @@ func TestUserArtifactPreservesAppCredentials(t *testing.T) {
 	if got == "" || !hasLocalAppCredentials(artifact.Users[0].AppCredentials) {
 		t.Fatalf("app credentials were not preserved: %#v", artifact.Users[0].AppCredentials)
 	}
+	if artifact.TenantSlug != "rtk-1234" {
+		t.Fatalf("tenant_slug = %q", artifact.TenantSlug)
+	}
 }
 
 func TestRunAppCertificateBootstrapUsesArtifactKeyForIssuedCertificate(t *testing.T) {
 	certPEM, keyPEM, csrPEM := testAppMaterial(t, "app-user:user-1")
 	account := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/brand-clouds/rtk-1234/auth/login" {
+			t.Fatalf("login path = %q, want brand-cloud login route", r.URL.Path)
+		}
 		var body map[string]string
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode login: %v", err)
@@ -140,7 +147,7 @@ func TestRunAppCertificateBootstrapUsesArtifactKeyForIssuedCertificate(t *testin
 	video, sawClientCert := newAppTokenServer(t, "app-user:user-1")
 	defer video.Close()
 
-	status := runAppCertificateBootstrap(account.URL, video.URL, userCredential{
+	status := runAppCertificateBootstrap(account.URL, video.URL, "rtk-1234", userCredential{
 		Email:    "rtk+001@users.local",
 		Password: "secret",
 		AppCredentials: appCertificateKeys{
@@ -171,7 +178,7 @@ func TestRunAppCertificateBootstrapBlocksIssuedCertificateWithoutArtifactKey(t *
 	}))
 	defer account.Close()
 
-	status := runAppCertificateBootstrap(account.URL, "https://video.example.invalid", userCredential{
+	status := runAppCertificateBootstrap(account.URL, "https://video.example.invalid", "rtk-1234", userCredential{
 		Email:    "rtk+001@users.local",
 		Password: "secret",
 	}, "rtk-0041")
@@ -187,6 +194,9 @@ func TestRunAppCertificateBootstrapBlocksIssuedCertificateWithoutArtifactKey(t *
 func TestRunAppCertificateBootstrapCSRRequiredStillGeneratesCSR(t *testing.T) {
 	loginCalls := 0
 	account := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/brand-clouds/rtk-1234/auth/login" {
+			t.Fatalf("login path = %q, want brand-cloud login route", r.URL.Path)
+		}
 		loginCalls++
 		var body map[string]string
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -214,7 +224,7 @@ func TestRunAppCertificateBootstrapCSRRequiredStillGeneratesCSR(t *testing.T) {
 	video, sawClientCert := newAppTokenServer(t, "app-user:user-1")
 	defer video.Close()
 
-	status := runAppCertificateBootstrap(account.URL, video.URL, userCredential{
+	status := runAppCertificateBootstrap(account.URL, video.URL, "rtk-1234", userCredential{
 		Email:    "rtk+001@users.local",
 		Password: "secret",
 	}, "rtk-0041")
@@ -227,6 +237,17 @@ func TestRunAppCertificateBootstrapCSRRequiredStillGeneratesCSR(t *testing.T) {
 	}
 	if !*sawClientCert {
 		t.Fatal("video token server did not receive generated app client certificate")
+	}
+}
+
+func TestRunAppCertificateBootstrapBlocksMissingTenantSlug(t *testing.T) {
+	status := runAppCertificateBootstrap("https://account.example.invalid", "https://video.example.invalid", "", userCredential{
+		Email:    "rtk+001@users.local",
+		Password: "secret",
+	}, "rtk-0041")
+
+	if status.Status != "BLOCKED" || status.Reason != "users artifact missing tenant_slug" {
+		t.Fatalf("status = %#v, want BLOCKED missing tenant_slug", status)
 	}
 }
 

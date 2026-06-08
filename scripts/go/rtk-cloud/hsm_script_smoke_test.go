@@ -34,6 +34,12 @@ func TestCreateUsersUsesAccountManagerBaseURLOverrideAndWritesArtifact(t *testin
 				})
 				return
 			}
+			t.Fatalf("brand-cloud user login used platform auth endpoint")
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/brand-clouds/rtk-test/auth/login":
+			var payload map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode brand-cloud login payload: %v", err)
+			}
 			if payload["app_csr_pem"] == "" {
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"user":            map[string]string{"id": "user-1", "email": payload["email"]},
@@ -63,9 +69,10 @@ func TestCreateUsersUsesAccountManagerBaseURLOverrideAndWritesArtifact(t *testin
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"brand_clouds": []map[string]any{{
-					"id":       "brand-1",
-					"name":     "RTK",
-					"metadata": map[string]any{"brandname": "RTK"},
+					"id":          "brand-1",
+					"name":        "RTK",
+					"tenant_slug": "rtk-test",
+					"metadata":    map[string]any{"brandname": "RTK"},
 				}},
 				"pagination": map[string]any{"total": 1},
 			})

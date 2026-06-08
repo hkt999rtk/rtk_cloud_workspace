@@ -629,14 +629,14 @@ func replaceDerivedText(text string, raw, derived map[string]string) string {
 		pattern string
 		value   string
 	}{
-		{`video-cloud-stg-[0-9]{4}`, derived["CLOUD_STACK_NAME"]},
+		{`video-cloud-stg-[0-9]{4}[a-z0-9]*`, derived["CLOUD_STACK_NAME"]},
 		{`video-cloud-staging`, derived["CLOUD_STACK_NAME"]},
-		{`rtk-account-manager-stg-[0-9]{4}`, derived["ACCOUNT_MANAGER_LINODE_LABEL"]},
+		{`rtk-account-manager-stg-[0-9]{4}[a-z0-9]*`, derived["ACCOUNT_MANAGER_LINODE_LABEL"]},
 		{`rtk-account-manager-staging`, derived["ACCOUNT_MANAGER_LINODE_LABEL"]},
-		{`rtk-cloud-admin-stg-[0-9]{4}`, derived["ADMIN_LINODE_LABEL"]},
+		{`rtk-cloud-admin-stg-[0-9]{4}[a-z0-9]*`, derived["ADMIN_LINODE_LABEL"]},
 		{`rtk-cloud-admin-staging-firewall`, derived["ADMIN_LINODE_FIREWALL_LABEL"]},
 		{`rtk-cloud-admin-staging`, derived["ADMIN_LINODE_LABEL"]},
-		{`rtk-cloud-logger-stg-[0-9]{4}`, derived["CLOUD_LOGGER_LINODE_LABEL"]},
+		{`rtk-cloud-logger-stg-[0-9]{4}[a-z0-9]*`, derived["CLOUD_LOGGER_LINODE_LABEL"]},
 		{`rtk-cloud-logger-staging-firewall`, derived["CLOUD_LOGGER_LINODE_FIREWALL_LABEL"]},
 		{`rtk-cloud-logger-staging`, derived["CLOUD_LOGGER_LINODE_LABEL"]},
 	}
@@ -808,10 +808,24 @@ func linodeGetList[T any](token, path string) ([]T, error) {
 }
 
 func linodeDelete(token, path string) error {
-	cmd := exec.Command("curl", "-fsS", "-X", "DELETE", "https://api.linode.com/v4"+path, "-H", "Authorization: Bearer "+token, "-H", "Content-Type: application/json")
-	cmd.Stdout = ioDiscard{}
+	cmd := exec.Command("curl", "-sS", "-o", "/dev/null", "-w", "%{http_code}", "-X", "DELETE", "https://api.linode.com/v4"+path, "-H", "Authorization: Bearer "+token, "-H", "Content-Type: application/json")
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	out, err := cmd.Output()
+	if err != nil {
+		return err
+	}
+	status, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return fmt.Errorf("delete %s returned invalid status %q", path, strings.TrimSpace(string(out)))
+	}
+	if status >= 200 && status < 300 {
+		return nil
+	}
+	if status == http.StatusNotFound {
+		fmt.Fprintf(os.Stderr, "[cloud-remove-all-vm] already gone: %s\n", path)
+		return nil
+	}
+	return fmt.Errorf("delete %s returned HTTP %d", path, status)
 }
 
 func resolveLinodeToken(envRoot string) string {
@@ -1818,6 +1832,10 @@ func runCreateUsers(args []string) error {
 		return err
 	}
 	brandCloudID := stringValue(brandCloud["id"])
+	tenantSlug := stringValue(brandCloud["tenant_slug"])
+	if tenantSlug == "" {
+		return fmt.Errorf("brand cloud response missing tenant_slug for %s", *brandname)
+	}
 	logCreateUsers("brand cloud found: id=%s", brandCloudID)
 	slug := brandSlug(*brandname)
 	planned := plannedUsers(*brandname, slug, *role, *count)
@@ -1849,7 +1867,7 @@ func runCreateUsers(args []string) error {
 			assigned++
 		}
 		logCreateUsers("bootstrapping app certificate: email=%s", email)
-		appCredentials, appCertificate, err := accountEnsureUserAppCertificate(ctx, email, password, existingAppCredentials[email])
+		appCredentials, appCertificate, err := accountEnsureUserAppCertificate(ctx, tenantSlug, email, password, existingAppCredentials[email])
 		if err != nil {
 			return err
 		}
@@ -1868,7 +1886,7 @@ func runCreateUsers(args []string) error {
 		return err
 	}
 	credentialsFile := uniqueUserCredentialsFile(artifactDir, slug)
-	if err := writeJSON(credentialsFile, map[string]any{"brandname": *brandname, "brand_cloud_id": brandCloudID, "role": *role, "users": users}); err != nil {
+	if err := writeJSON(credentialsFile, map[string]any{"brandname": *brandname, "brand_cloud_id": brandCloudID, "tenant_slug": tenantSlug, "role": *role, "users": users}); err != nil {
 		return err
 	}
 	_ = os.Chmod(credentialsFile, 0o600)
@@ -1877,6 +1895,7 @@ func runCreateUsers(args []string) error {
 		"action":           "created",
 		"brandname":        *brandname,
 		"brand_cloud_id":   brandCloudID,
+		"tenant_slug":      tenantSlug,
 		"role":             *role,
 		"count":            *count,
 		"created":          created,
@@ -1977,8 +1996,8 @@ func runStagingE2ETest(args []string) error {
 	}
 	if !*skipRemove {
 		paths := newProvisionPaths(workspace, envRoot, provisionOptions{})
-		refreshStagingCertificateCaches(paths, env, defaultStagingSSHKey())
-		if err := requireStagingCertificateCaches(paths, env); err != nil {
+		requiredCaches := refreshStagingCertificateCaches(paths, env, defaultStagingSSHKey())
+		if err := requireStagingCertificateCachesForTargets(requiredCaches); err != nil {
 			return err
 		}
 		if err := runStep("remove_vm", append(commandWithArgs(scripts["remove"], "--workspace", workspace, "--env-root", envRoot), "--yes")...); err != nil {
@@ -2007,7 +2026,7 @@ func runStagingE2ETest(args []string) error {
 	if err := runStep("create_brand", commandWithArgs(scripts["create-brand"], "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname)...); err != nil {
 		return err
 	}
-	if err := runStep("create_users", commandWithArgs(scripts["create-users"], "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--count", strconv.Itoa(*userCount))...); err != nil {
+	if err := runStep("create_users", commandWithArgs(scripts["create-users"], "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--count", strconv.Itoa(*userCount), "--rotate-password")...); err != nil {
 		return err
 	}
 	if err := runStep("create_devices", commandWithArgs(scripts["generate-devices"], "--workspace", workspace, "--env-root", envRoot, "--count", strconv.Itoa(*deviceCount), "--mix", *deviceMix, "--prefix", *devicePrefix, "--force")...); err != nil {
@@ -2027,7 +2046,7 @@ func runStagingE2ETest(args []string) error {
 		return fmt.Errorf("no device-bind artifact found for brand slug %s", slug)
 	}
 	expectedPerUser := (*deviceCount + *userCount - 1) / *userCount
-	if err := runStep("validate_bind", commandWithArgs(scripts["validate-bind"], "--bind-artifact", bindFile, "--out-dir", filepath.Join(*outDir, "bind-validation"), "--expected-count", strconv.Itoa(*deviceCount), "--expected-devices-per-user", strconv.Itoa(expectedPerUser))...); err != nil {
+	if err := runStep("validate_bind", commandWithArgs(scripts["validate-bind"], "--workspace", mustWorkspace(*workspaceFlag), "--env-root", *envRootFlag, "--bind-artifact", bindFile, "--out-dir", filepath.Join(*outDir, "bind-validation"), "--expected-count", strconv.Itoa(*deviceCount), "--expected-devices-per-user", strconv.Itoa(expectedPerUser), "--wait-provisioned-timeout", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_PROVISION_TIMEOUT"), "10m"), "--wait-provisioned-poll", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_PROVISION_POLL"), "10s"))...); err != nil {
 		return err
 	}
 	mqttArgs := []string{"--env-root", envRoot, "--brandname", *brandname, "--profile", "smoke", "--out-dir", filepath.Join(*outDir, "home-mqtt")}
@@ -2421,8 +2440,8 @@ type accountAppCertificate struct {
 	NotAfter            string `json:"not_after,omitempty"`
 }
 
-func accountEnsureUserAppCertificate(ctx accountManagerContext, email, password string, existingAppCredentials map[string]any) (map[string]any, map[string]any, error) {
-	initial, err := accountLoginUserFull(ctx, email, password, "")
+func accountEnsureUserAppCertificate(ctx accountManagerContext, tenantSlug, email, password string, existingAppCredentials map[string]any) (map[string]any, map[string]any, error) {
+	initial, err := accountLoginUserFull(ctx, tenantSlug, email, password, "")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2444,7 +2463,7 @@ func accountEnsureUserAppCertificate(ctx accountManagerContext, email, password 
 	if err != nil {
 		return nil, nil, err
 	}
-	issued, err := accountLoginUserFull(ctx, email, password, csrPEM)
+	issued, err := accountLoginUserFull(ctx, tenantSlug, email, password, csrPEM)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2516,13 +2535,14 @@ func hasLocalAppCredentials(credentials map[string]any) bool {
 		strings.HasPrefix(csr, "-----BEGIN CERTIFICATE REQUEST-----")
 }
 
-func accountLoginUserFull(ctx accountManagerContext, email, password, csrPEM string) (accountUserLoginResponse, error) {
+func accountLoginUserFull(ctx accountManagerContext, tenantSlug, email, password, csrPEM string) (accountUserLoginResponse, error) {
 	payload := map[string]string{"email": email, "password": password}
 	if strings.TrimSpace(csrPEM) != "" {
 		payload["app_csr_pem"] = csrPEM
 	}
 	raw, _ := json.Marshal(payload)
-	body, status, err := curlJSONStatus(ctx.BaseURL+"/v1/auth/login", "", raw)
+	loginURL := fmt.Sprintf("%s/v1/brand-clouds/%s/auth/login", ctx.BaseURL, url.PathEscape(tenantSlug))
+	body, status, err := curlJSONStatus(loginURL, "", raw)
 	if err != nil {
 		return accountUserLoginResponse{}, err
 	}
@@ -3928,6 +3948,7 @@ func checkCertTarget(target, domain, certPath string, minValidDays int) certChec
 type bindArtifact struct {
 	Brandname    string           `json:"brandname"`
 	BrandCloudID string           `json:"brand_cloud_id"`
+	TenantSlug   string           `json:"tenant_slug"`
 	Count        int              `json:"count"`
 	Inputs       bindInputs       `json:"inputs"`
 	Assignments  []bindAssignment `json:"assignments"`
@@ -3954,10 +3975,14 @@ type bindAssignment struct {
 func runValidateDeviceBind(args []string) error {
 	fs := flag.NewFlagSet("validate-device-bind", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	workspaceFlag := fs.String("workspace", "", "workspace")
+	envRootFlag := fs.String("env-root", "", "environment root")
 	bindPath := fs.String("bind-artifact", "", "bind artifact")
 	outDir := fs.String("out-dir", "", "output directory")
 	expectedCount := fs.Int("expected-count", 0, "expected count")
 	expectedDevicesPerUser := fs.Int("expected-devices-per-user", 0, "expected devices per user")
+	waitProvisionedTimeout := fs.Duration("wait-provisioned-timeout", 0, "wait for Account Manager provisioning state to reach activated/online readiness")
+	waitProvisionedPoll := fs.Duration("wait-provisioned-poll", 10*time.Second, "provisioning state poll interval")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -4013,6 +4038,17 @@ func runValidateDeviceBind(args []string) error {
 			failures = append(failures, fmt.Sprintf("device %s missing bind identifiers", assignment.DeviceID))
 		}
 	}
+	if *waitProvisionedTimeout > 0 && len(failures) == 0 {
+		waitResult, err := waitBindProvisioned(*workspaceFlag, *envRootFlag, artifact, *waitProvisionedTimeout, *waitProvisionedPoll)
+		if err != nil {
+			failures = append(failures, err.Error())
+		} else {
+			result["provisioning"] = waitResult
+			for _, failure := range waitResult.Failures {
+				failures = append(failures, failure)
+			}
+		}
+	}
 	if *expectedDevicesPerUser > 0 {
 		for email, count := range userCounts {
 			if count != *expectedDevicesPerUser {
@@ -4051,6 +4087,175 @@ func runValidateDeviceBind(args []string) error {
 		return exitCode(1)
 	}
 	return nil
+}
+
+type bindProvisionWaitResult struct {
+	Checked     int                                      `json:"checked"`
+	Ready       int                                      `json:"ready"`
+	Pending     int                                      `json:"pending"`
+	Failed      int                                      `json:"failed"`
+	Attempts    int                                      `json:"attempts"`
+	ElapsedMS   int64                                    `json:"elapsed_ms"`
+	LastStates  map[string]bindProvisioningStateSnapshot `json:"last_states"`
+	Failures    []string                                 `json:"failures"`
+	CompletedAt string                                   `json:"completed_at"`
+}
+
+type bindProvisioningStateSnapshot struct {
+	DeviceID              string `json:"device_id"`
+	AccountDeviceID       string `json:"account_device_id"`
+	AssignedEmail         string `json:"assigned_email"`
+	ReadinessState        string `json:"readiness_state,omitempty"`
+	ProductState          string `json:"product_state,omitempty"`
+	OperationStatus       string `json:"operation_status,omitempty"`
+	ActivationStatus      string `json:"activation_status,omitempty"`
+	FailureCode           string `json:"failure_code,omitempty"`
+	FailureMessage        string `json:"failure_message,omitempty"`
+	ProvisioningHTTPError string `json:"provisioning_http_error,omitempty"`
+}
+
+func waitBindProvisioned(workspaceFlag, envRootFlag string, artifact bindArtifact, timeout, poll time.Duration) (bindProvisionWaitResult, error) {
+	if timeout <= 0 {
+		return bindProvisionWaitResult{}, nil
+	}
+	if poll <= 0 {
+		poll = 10 * time.Second
+	}
+	ctx, err := accountManagerContextFromFlags(workspaceFlag, envRootFlag)
+	if err != nil {
+		return bindProvisionWaitResult{}, err
+	}
+	if artifact.TenantSlug == "" {
+		token, err := accountLogin(ctx, func(string, ...any) {})
+		if err != nil {
+			return bindProvisionWaitResult{}, fmt.Errorf("bind artifact missing tenant_slug and platform login failed: %w", err)
+		}
+		brandCloud, err := accountFindBrandCloud(ctx, token, artifact.Brandname)
+		if err != nil {
+			return bindProvisionWaitResult{}, fmt.Errorf("bind artifact missing tenant_slug and brand cloud lookup failed: %w", err)
+		}
+		artifact.TenantSlug = stringValue(brandCloud["tenant_slug"])
+		if artifact.TenantSlug == "" {
+			return bindProvisionWaitResult{}, errors.New("bind artifact missing tenant_slug and brand cloud lookup did not return tenant_slug")
+		}
+	}
+	if artifact.Inputs.UsersFile == "" {
+		return bindProvisionWaitResult{}, errors.New("bind artifact missing inputs.users_file; cannot poll brand-cloud provisioning state")
+	}
+	users, err := readUsersFile(artifact.Inputs.UsersFile)
+	if err != nil {
+		return bindProvisionWaitResult{}, fmt.Errorf("read bind users file: %w", err)
+	}
+	userTokens := map[string]string{}
+	selected := []bindAssignment{}
+	for _, assignment := range artifact.Assignments {
+		if assignment.AccountDeviceID == "" || assignment.AssignedEmail == "" {
+			continue
+		}
+		selected = append(selected, assignment)
+		if userTokens[assignment.AssignedEmail] == "" {
+			user := users[assignment.AssignedEmail]
+			if user.Password == "" {
+				return bindProvisionWaitResult{}, fmt.Errorf("users artifact missing password for %s", assignment.AssignedEmail)
+			}
+			token, err := loginBrandCloudUser(ctx, artifact.TenantSlug, assignment.AssignedEmail, user.Password)
+			if err != nil {
+				return bindProvisionWaitResult{}, err
+			}
+			userTokens[assignment.AssignedEmail] = token
+		}
+	}
+	result := bindProvisionWaitResult{Checked: len(selected), LastStates: map[string]bindProvisioningStateSnapshot{}}
+	started := time.Now()
+	deadline := started.Add(timeout)
+	attempts := 0
+	for {
+		attempts++
+		ready := 0
+		pending := 0
+		failed := 0
+		failures := []string{}
+		for _, assignment := range selected {
+			snapshot, err := fetchBindProvisioningState(ctx, userTokens[assignment.AssignedEmail], artifact.BrandCloudID, assignment)
+			if err != nil {
+				snapshot = bindProvisioningStateSnapshot{
+					DeviceID:              assignment.DeviceID,
+					AccountDeviceID:       assignment.AccountDeviceID,
+					AssignedEmail:         assignment.AssignedEmail,
+					ProvisioningHTTPError: err.Error(),
+				}
+			}
+			result.LastStates[assignment.DeviceID] = snapshot
+			switch {
+			case snapshotReady(snapshot):
+				ready++
+			case snapshotFailed(snapshot):
+				failed++
+				failures = append(failures, fmt.Sprintf("device %s provisioning failed: readiness=%s product=%s operation=%s activation=%s error=%s", assignment.DeviceID, snapshot.ReadinessState, snapshot.ProductState, snapshot.OperationStatus, snapshot.ActivationStatus, firstNonEmpty(snapshot.FailureCode, snapshot.ProvisioningHTTPError)))
+			default:
+				pending++
+			}
+		}
+		result.Ready = ready
+		result.Pending = pending
+		result.Failed = failed
+		result.Attempts = attempts
+		result.ElapsedMS = time.Since(started).Milliseconds()
+		result.Failures = failures
+		result.CompletedAt = time.Now().UTC().Format(time.RFC3339)
+		if ready == len(selected) || len(failures) > 0 {
+			return result, nil
+		}
+		if time.Now().After(deadline) {
+			for _, snapshot := range result.LastStates {
+				if !snapshotReady(snapshot) {
+					failures = append(failures, fmt.Sprintf("device %s provisioning not ready before timeout: readiness=%s product=%s operation=%s activation=%s error=%s", snapshot.DeviceID, snapshot.ReadinessState, snapshot.ProductState, snapshot.OperationStatus, snapshot.ActivationStatus, snapshot.ProvisioningHTTPError))
+				}
+			}
+			sort.Strings(failures)
+			result.Failures = failures
+			return result, nil
+		}
+		time.Sleep(poll)
+	}
+}
+
+func fetchBindProvisioningState(ctx accountManagerContext, bearer, brandCloudID string, assignment bindAssignment) (bindProvisioningStateSnapshot, error) {
+	endpoint := fmt.Sprintf("%s/v1/orgs/%s/devices/%s/provisioning", ctx.BaseURL, url.PathEscape(brandCloudID), url.PathEscape(assignment.AccountDeviceID))
+	body, status, err := curlJSONStatus(endpoint, bearer, nil)
+	if err != nil {
+		return bindProvisioningStateSnapshot{}, err
+	}
+	if status != 200 {
+		return bindProvisioningStateSnapshot{}, fmt.Errorf("provisioning state HTTP %d%s", status, errorBodySuffix(body))
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return bindProvisioningStateSnapshot{}, err
+	}
+	readiness, _ := parsed["readiness"].(map[string]any)
+	sources, _ := readiness["sources"].(map[string]any)
+	operation, _ := parsed["operation"].(map[string]any)
+	failure, _ := readiness["failure"].(map[string]any)
+	return bindProvisioningStateSnapshot{
+		DeviceID:         assignment.DeviceID,
+		AccountDeviceID:  assignment.AccountDeviceID,
+		AssignedEmail:    assignment.AssignedEmail,
+		ReadinessState:   stringValue(readiness["state"]),
+		ProductState:     stringValue(readiness["product_state"]),
+		OperationStatus:  firstNonEmpty(stringValue(operation["status"]), stringValue(sources["provisioning_operation_status"])),
+		ActivationStatus: stringValue(sources["video_cloud_activation_status"]),
+		FailureCode:      stringValue(failure["error_code"]),
+		FailureMessage:   stringValue(failure["error_message"]),
+	}, nil
+}
+
+func snapshotReady(snapshot bindProvisioningStateSnapshot) bool {
+	return snapshot.ActivationStatus == "activated" || snapshot.ProductState == "activated" || snapshot.ProductState == "online" || snapshot.ReadinessState == "ready" || snapshot.ReadinessState == "transport_pending"
+}
+
+func snapshotFailed(snapshot bindProvisioningStateSnapshot) bool {
+	return snapshot.ProvisioningHTTPError != "" || snapshot.ReadinessState == "activation_failed" || snapshot.ProductState == "failed" || snapshot.OperationStatus == "failed" || snapshot.ActivationStatus == "failed"
 }
 
 func renderBindReport(artifact bindArtifact, result map[string]any) string {
@@ -4203,6 +4408,7 @@ func runBindDevices(args []string) error {
 	claimTTL := fs.Int("claim-ttl-hours", 24, "claim TTL hours")
 	dryRun := fs.Bool("dry-run", false, "dry run")
 	skipBootstrap := fs.Bool("skip-bootstrap", false, "skip bootstrap")
+	skipDirectProvisionBridge := fs.Bool("skip-direct-provision-bridge", false, "skip staging direct provisioning bridge")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -4267,6 +4473,13 @@ func runBindDevices(args []string) error {
 			return err
 		}
 	}
+	provisionBridge, err := stagingProvisionBridgeFromEnvRoot(ctx, *skipDirectProvisionBridge)
+	if err != nil {
+		return err
+	}
+	if provisionBridge.Enabled {
+		logBind("staging direct provisioning bridge enabled: video_base_url=%s account_base_url=%s", provisionBridge.VideoBaseURL, provisionBridge.AccountBaseURL)
+	}
 	token, err := accountLogin(ctx, logBind)
 	if err != nil {
 		return err
@@ -4276,6 +4489,10 @@ func runBindDevices(args []string) error {
 		return err
 	}
 	brandCloudID := stringValue(brandCloud["id"])
+	tenantSlug := stringValue(brandCloud["tenant_slug"])
+	if tenantSlug == "" {
+		return fmt.Errorf("brand cloud response missing tenant_slug for %s", *brandname)
+	}
 	userTokens := map[string]string{}
 	for _, assignment := range assignments {
 		if userTokens[assignment.AssignedEmail] != "" {
@@ -4283,7 +4500,7 @@ func runBindDevices(args []string) error {
 		}
 		user := users[assignment.AssignedEmail]
 		logBind("logging in assigned user: email=%s", assignment.AssignedEmail)
-		userToken, err := loginAccountUser(ctx, assignment.AssignedEmail, user.Password)
+		userToken, err := loginBrandCloudUser(ctx, tenantSlug, assignment.AssignedEmail, user.Password)
 		if err != nil {
 			return err
 		}
@@ -4331,6 +4548,13 @@ func runBindDevices(args []string) error {
 		}
 		assignment.OperationID = opID
 		assignment.Status = "provision_requested"
+		if provisionBridge.Enabled {
+			logBind("completing staging direct provisioning bridge: device=%s account_device=%s", assignment.DeviceID, assignment.AccountDeviceID)
+			if err := completeStagingProvisionBridge(provisionBridge, brandCloudID, assignment, opID, prov); err != nil {
+				return err
+			}
+			assignment.Status = "provisioned"
+		}
 		results = append(results, assignment)
 		logBind("bind progress: done=%d/%d created_claims=%d resolved_claims=%d provision_started=%d skipped=%d", len(results), len(assignments), len(results)-skipped, len(results)-skipped, len(results)-skipped, skipped)
 	}
@@ -4339,7 +4563,7 @@ func runBindDevices(args []string) error {
 		return err
 	}
 	artifactFile := filepath.Join(artifactDir, fmt.Sprintf("%s-device-bind-%s.json", slug, runID))
-	if err := writeJSON(artifactFile, map[string]any{"schema": "rtk-cloud-workspace.bulk-device-bind/v1", "generated_at": time.Now().UTC().Format(time.RFC3339), "brandname": *brandname, "brand_cloud_id": brandCloudID, "count": *count, "inputs": map[string]string{"users_file": usersAbs, "devices_dir": devicesAbs}, "assignments": results}); err != nil {
+	if err := writeJSON(artifactFile, map[string]any{"schema": "rtk-cloud-workspace.bulk-device-bind/v1", "generated_at": time.Now().UTC().Format(time.RFC3339), "brandname": *brandname, "brand_cloud_id": brandCloudID, "tenant_slug": tenantSlug, "count": *count, "inputs": map[string]string{"users_file": usersAbs, "devices_dir": devicesAbs}, "assignments": results}); err != nil {
 		return err
 	}
 	_ = os.Chmod(artifactFile, 0o600)
@@ -4501,6 +4725,111 @@ func errorBodySuffix(body []byte) string {
 	return ": " + strings.TrimSpace(string(body))
 }
 
+type stagingProvisionBridge struct {
+	Enabled        bool
+	AccountBaseURL string
+	AccountToken   string
+	VideoBaseURL   string
+	VideoToken     string
+}
+
+func stagingProvisionBridgeFromEnvRoot(ctx accountManagerContext, skip bool) (stagingProvisionBridge, error) {
+	if skip || stagingDirectProvisionBridgeDisabled(os.Getenv("CLOUD_STAGING_DIRECT_PROVISION_BRIDGE")) {
+		return stagingProvisionBridge{}, nil
+	}
+	accountEnv := firstExistingPath(filepath.Join(ctx.EnvRoot, "services", "account-manager", "account-manager.env"), filepath.Join(ctx.EnvRoot, "services", "account-manager", "account-manager-public-staging.env"))
+	videoEnv := filepath.Join(ctx.EnvRoot, "services", "video-cloud", "video-cloud-staging.env")
+	adminEnv := filepath.Join(ctx.EnvRoot, "services", "cloud-admin", "admin-staging.env")
+	stackEnv := filepath.Join(ctx.EnvRoot, "env", "stack.env")
+
+	accountToken := firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN"), envFileValue(accountEnv, "ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN"))
+	videoToken := firstNonEmpty(os.Getenv("VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN"), envFileValue(videoEnv, "VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN"), accountToken)
+	videoBaseURL := strings.TrimRight(firstNonEmpty(os.Getenv("VIDEO_CLOUD_BASE_URL"), envFileValue(adminEnv, "VIDEO_CLOUD_BASE_URL"), envFileValue(videoEnv, "VIDEO_CLOUD_PUBLIC_API_BASE_URL")), "/")
+	if videoBaseURL == "" {
+		if domain := envFileValue(stackEnv, "VIDEO_CLOUD_DOMAIN"); domain != "" {
+			videoBaseURL = "https://" + domain
+		}
+	}
+	bridge := stagingProvisionBridge{
+		Enabled:        true,
+		AccountBaseURL: strings.TrimRight(ctx.BaseURL, "/"),
+		AccountToken:   accountToken,
+		VideoBaseURL:   videoBaseURL,
+		VideoToken:     videoToken,
+	}
+	missing := []string{}
+	if bridge.AccountBaseURL == "" {
+		missing = append(missing, "ACCOUNT_MANAGER_BASE_URL")
+	}
+	if bridge.AccountToken == "" {
+		missing = append(missing, "ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN")
+	}
+	if bridge.VideoBaseURL == "" {
+		missing = append(missing, "VIDEO_CLOUD_BASE_URL")
+	}
+	if bridge.VideoToken == "" {
+		missing = append(missing, "VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN")
+	}
+	if len(missing) > 0 {
+		return stagingProvisionBridge{}, fmt.Errorf("staging direct provisioning bridge missing %s; pass --skip-direct-provision-bridge only when another provisioning transport is active", strings.Join(missing, ", "))
+	}
+	return bridge, nil
+}
+
+func stagingDirectProvisionBridgeDisabled(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "1", "true", "yes", "on":
+		return false
+	case "0", "false", "no", "off":
+		return true
+	default:
+		return false
+	}
+}
+
+func completeStagingProvisionBridge(bridge stagingProvisionBridge, brandCloudID string, assignment bindAssignment, operationID string, provisionInput map[string]any) error {
+	activityID := stringValue(firstPresent(provisionInput, "activity_id"))
+	clipPublicKey := stringValue(firstPresent(provisionInput, "clip_public_key"))
+	videoCloudDevid := firstNonEmpty(stringValue(firstPresent(provisionInput, "video_cloud_devid")), assignment.DeviceID)
+	activatedAt := time.Now().UTC().Format(time.RFC3339)
+
+	videoPayload, _ := json.Marshal(map[string]any{
+		"devid":             videoCloudDevid,
+		"clip_public_key":   clipPublicKey,
+		"activityid":        activityID,
+		"org_id":            brandCloudID,
+		"account_device_id": assignment.AccountDeviceID,
+		"device_type":       firstNonEmpty(assignment.DeviceType, assignment.Category),
+		"model":             assignment.Category,
+	})
+	videoURL := fmt.Sprintf("%s/v1/internal/account-manager/devices/%s/activate", bridge.VideoBaseURL, url.PathEscape(videoCloudDevid))
+	body, status, err := curlJSONStatus(videoURL, bridge.VideoToken, videoPayload)
+	if err != nil {
+		return fmt.Errorf("video direct activation failed: device=%s account_device=%s: %w", assignment.DeviceID, assignment.AccountDeviceID, err)
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("video direct activation failed: device=%s account_device=%s HTTP %d%s", assignment.DeviceID, assignment.AccountDeviceID, status, errorBodySuffix(body))
+	}
+
+	accountPayload, _ := json.Marshal(map[string]any{
+		"operation_id":      operationID,
+		"org_id":            brandCloudID,
+		"account_device_id": assignment.AccountDeviceID,
+		"video_cloud_devid": videoCloudDevid,
+		"activity_id":       activityID,
+		"activated_at":      activatedAt,
+	})
+	accountURL := bridge.AccountBaseURL + "/v1/internal/device-provisioning-results"
+	body, status, err = curlJSONStatus(accountURL, bridge.AccountToken, accountPayload)
+	if err != nil {
+		return fmt.Errorf("account direct provisioning result failed: device=%s account_device=%s: %w", assignment.DeviceID, assignment.AccountDeviceID, err)
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("account direct provisioning result failed: device=%s account_device=%s HTTP %d%s", assignment.DeviceID, assignment.AccountDeviceID, status, errorBodySuffix(body))
+	}
+	return nil
+}
+
 func startProvision(ctx accountManagerContext, token, brandCloudID string, assignment bindAssignment, operationID string, provisionInput map[string]any) error {
 	serviceOptions := assignment.ServiceOptions
 	if items, ok := provisionInput["service_options"].([]any); ok {
@@ -4641,6 +4970,30 @@ func loginAccountUser(ctx accountManagerContext, email, password string) (string
 	}
 	if parsed.Tokens.AccessToken == "" {
 		return "", fmt.Errorf("login response did not include an access token: %s", email)
+	}
+	return parsed.Tokens.AccessToken, nil
+}
+
+func loginBrandCloudUser(ctx accountManagerContext, tenantSlug, email, password string) (string, error) {
+	payload, _ := json.Marshal(map[string]string{"email": email, "password": password})
+	loginURL := fmt.Sprintf("%s/v1/brand-clouds/%s/auth/login", ctx.BaseURL, url.PathEscape(tenantSlug))
+	body, status, err := curlJSONStatus(loginURL, "", payload)
+	if err != nil {
+		return "", err
+	}
+	if status != 200 {
+		return "", fmt.Errorf("brand-cloud login failed: email=%s tenant_slug=%s HTTP %d%s", email, tenantSlug, status, accountAPIErrorSuffix(body))
+	}
+	var parsed struct {
+		Tokens struct {
+			AccessToken string `json:"access_token"`
+		} `json:"tokens"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", err
+	}
+	if parsed.Tokens.AccessToken == "" {
+		return "", fmt.Errorf("brand-cloud login response did not include an access token: %s", email)
 	}
 	return parsed.Tokens.AccessToken, nil
 }
