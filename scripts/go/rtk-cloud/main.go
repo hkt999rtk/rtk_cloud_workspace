@@ -305,10 +305,14 @@ func runCheckCertificates(args []string) error {
 	}
 	accountEnv := firstExistingPath(filepath.Join(envRoot, "services", "account-manager", "account-manager.env"), filepath.Join(envRoot, "services", "account-manager", "account-manager-public-staging.env"))
 	adminEnv := firstExistingPath(filepath.Join(envRoot, "services", "cloud-admin", "admin.env"), filepath.Join(envRoot, "services", "cloud-admin", "admin-staging.env"))
-	videoDomain := "video-cloud-staging." + *dnsRoot
-	certIssuerDomain := "certissuer.video-cloud-staging." + *dnsRoot
+	stackEnv, _ := readEnvFile(filepath.Join(envRoot, "env", "stack.env"))
+	loggerEnv, _ := readEnvFile(filepath.Join(envRoot, "services", "cloud-logger", "logger.env"))
+	loggerState, _ := readEnvFile(filepath.Join(envRoot, "state", "cloud-logger.env"))
+	videoDomain := firstNonEmpty(stackEnv["VIDEO_CLOUD_DOMAIN"], "video-cloud-staging."+*dnsRoot)
+	certIssuerDomain := firstNonEmpty(stackEnv["VIDEO_CLOUD_CERTISSUER_DOMAIN"], "certissuer."+videoDomain)
 	accountDomain := envFileValue(accountEnv, "ACCOUNT_MANAGER_LINODE_DOMAIN")
 	adminDomain := envFileValue(adminEnv, "ADMIN_LINODE_DOMAIN")
+	loggerDomain := firstNonEmpty(stackEnv["CLOUD_LOGGER_DOMAIN"], loggerEnv["CLOUD_LOGGER_DOMAIN"], loggerState["CLOUD_LOGGER_DOMAIN"], "logger."+videoDomain)
 	targets := []struct {
 		name   string
 		domain string
@@ -318,6 +322,7 @@ func runCheckCertificates(args []string) error {
 		{"video-cloud-certissuer", certIssuerDomain, filepath.Join(envRoot, "certificates", videoDomain)},
 		{"account-manager", accountDomain, filepath.Join(envRoot, "certificates", accountDomain)},
 		{"cloud-admin", adminDomain, filepath.Join(envRoot, "certificates", adminDomain)},
+		{"cloud-logger", loggerDomain, filepath.Join(envRoot, "certificates", loggerDomain)},
 	}
 	results := []certCheckResult{}
 	overall := "pass"
@@ -330,7 +335,13 @@ func runCheckCertificates(args []string) error {
 	}
 	payload := map[string]any{"status": overall, "results": results}
 	if *jsonOut {
-		return json.NewEncoder(os.Stdout).Encode(payload)
+		if err := json.NewEncoder(os.Stdout).Encode(payload); err != nil {
+			return err
+		}
+		if overall != "pass" {
+			return exitCode(1)
+		}
+		return nil
 	}
 	fmt.Fprintf(os.Stdout, "cloud_certificates status=%s min_valid_days=%d env_root=%s\n", overall, *minValidDays, envRoot)
 	for _, result := range results {
@@ -571,7 +582,7 @@ func syncTopology(path string, raw, derived map[string]string, check bool) (bool
 		}
 	}
 	text = replaceDerivedText(text, raw, derived)
-	if derived["CLOUD_REGION"] != "" {
+	if old := raw["CLOUD_REGION"]; old != "" && derived["CLOUD_REGION"] != "" {
 		text = replaceYAMLTopScalar(text, "region", derived["CLOUD_REGION"])
 	}
 	if derived["CLOUD_STACK_NAME"] != "" {
@@ -1899,7 +1910,9 @@ func runStagingE2ETest(args []string) error {
 	devicePrefix := fs.String("device-prefix", "load-device", "device prefix")
 	videoRelease := fs.String("video-release", os.Getenv("VIDEO_RELEASE"), "video release")
 	accountRelease := fs.String("account-release", os.Getenv("ACCOUNT_RELEASE"), "account release")
+	accountReleaseBundle := fs.String("account-release-bundle", os.Getenv("ACCOUNT_RELEASE_BUNDLE"), "account release bundle")
 	adminRelease := fs.String("admin-release", os.Getenv("ADMIN_RELEASE"), "admin release")
+	adminReleaseBundle := fs.String("admin-release-bundle", os.Getenv("ADMIN_RELEASE_BUNDLE"), "admin release bundle")
 	outDir := fs.String("out-dir", "", "out dir")
 	skipMQTTProbe := fs.Bool("skip-mqtt-probe", false, "skip mqtt probe")
 	if err := fs.Parse(args); err != nil {
@@ -1955,6 +1968,8 @@ func runStagingE2ETest(args []string) error {
 	if err := os.MkdirAll(logsDir, 0o755); err != nil {
 		return err
 	}
+	env, _ := readEnvFile(filepath.Join(envRoot, "env", "stack.env"))
+	refreshStagingCertificateCaches(newProvisionPaths(workspace, envRoot, provisionOptions{}), env, defaultStagingSSHKey())
 	steps := []e2eStep{}
 	runStep := func(name string, argv ...string) error {
 		step, err := runE2EStep(name, filepath.Join(logsDir, name+".log"), argv...)
@@ -1973,8 +1988,14 @@ func runStagingE2ETest(args []string) error {
 	if *accountRelease != "" {
 		provisionArgs = append(provisionArgs, "--account-release", *accountRelease)
 	}
+	if *accountReleaseBundle != "" {
+		provisionArgs = append(provisionArgs, "--account-release-bundle", *accountReleaseBundle)
+	}
 	if *adminRelease != "" {
 		provisionArgs = append(provisionArgs, "--admin-release", *adminRelease)
+	}
+	if *adminReleaseBundle != "" {
+		provisionArgs = append(provisionArgs, "--admin-release-bundle", *adminReleaseBundle)
 	}
 	if err := runStep("provision_all", commandWithArgs(scripts["provision"], provisionArgs...)...); err != nil {
 		return err

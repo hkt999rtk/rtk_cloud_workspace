@@ -308,6 +308,12 @@ func parseProvisionArgs(args []string) (provisionOptions, error) {
 				return opts, err
 			}
 			opts.adminRelease = v
+		case "--admin-release-bundle":
+			v, err := next()
+			if err != nil {
+				return opts, err
+			}
+			opts.adminReleaseBundle = v
 		case "--confirm":
 			v, err := next()
 			if err != nil {
