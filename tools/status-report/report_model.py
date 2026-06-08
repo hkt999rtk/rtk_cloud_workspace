@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 from datetime import date, datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -17,6 +18,10 @@ SNAPSHOT_TIME_UTC = datetime.now(timezone.utc).replace(microsecond=0).isoformat(
 OUT_DIR = ROOT / ".artifacts" / "status-reports" / REPORT_DATE
 FIG_DIR = OUT_DIR / "figures"
 DOCX_PATH = OUT_DIR / "realtek_video_iot_cloud_status_report.docx"
+COST_DIR = ROOT / "docs" / "cost"
+AWS_PRICING_SOURCES_PATH = COST_DIR / "aws-pricing-sources.md"
+AWS_COST_WORKSHEET_PATH = COST_DIR / "aws-cost-estimate-worksheet.csv"
+AWS_SERVICE_MAPPING_PATH = COST_DIR / "aws-service-mapping.md"
 PORTAL_WEB_URL = "https://webtest.mgmeet.io"
 PORTAL_WEB_SCREENSHOT = FIG_DIR / "portal-webtest-home-hero.png"
 PORTAL_WEB_FALLBACK_IMAGE = ROOT / "repos/rtk_cloud_frontend/static/assets/connectplus-hero-corporate-v2.jpg"
@@ -370,6 +375,230 @@ def collect_linode_billing() -> dict[str, object]:
     }
 
 
+def parse_markdown_metadata(text: str) -> dict[str, str]:
+    metadata = {}
+    for key in ["Region", "Currency", "Collected"]:
+        match = re.search(rf"^{key}:\s+`?([^`\n]+)`?", text, re.MULTILINE)
+        metadata[key[0].lower() + key[1:]] = match.group(1).strip() if match else "n/a"
+    return metadata
+
+
+def parse_markdown_tables(text: str) -> list[list[list[str]]]:
+    tables: list[list[list[str]]] = []
+    current: list[list[str]] = []
+    for line in text.splitlines():
+        if line.startswith("|") and line.endswith("|"):
+            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            if all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells):
+                continue
+            current.append(cells)
+        elif current:
+            tables.append(current)
+            current = []
+    if current:
+        tables.append(current)
+    return tables
+
+
+def table_by_header(tables: list[list[list[str]]], headers: list[str], occurrence: int = 1) -> list[list[str]]:
+    found = 0
+    for table in tables:
+        if table and table[0] == headers:
+            found += 1
+            if found == occurrence:
+                return table[1:]
+    return []
+
+
+def parse_usd_amount(value: str) -> float | None:
+    match = re.search(r"([0-9][0-9,]*\.?[0-9]*)", value)
+    if not match:
+        return None
+    return float(match.group(1).replace(",", ""))
+
+
+def format_usd_amount(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:,.2f} USD"
+
+
+def diff_usd_amount(after: str, before: str) -> str:
+    after_amount = parse_usd_amount(after)
+    before_amount = parse_usd_amount(before)
+    if after_amount is None or before_amount is None:
+        return "n/a"
+    return format_usd_amount(after_amount - before_amount)
+
+
+def divide_usd_amount(value: str, denominator: float, suffix: str) -> str:
+    amount = parse_usd_amount(value)
+    if amount is None or denominator <= 0:
+        return "n/a"
+    return f"{amount / denominator:,.2f} USD/{suffix}"
+
+
+def collect_aws_cost_estimate() -> dict[str, object]:
+    pricing_path = AWS_PRICING_SOURCES_PATH
+    if not pricing_path.exists():
+        pricing_path = ROOT / "docs" / "aws-pricing-sources.md"
+    if not pricing_path.exists():
+        return {
+            "status": "unavailable",
+            "summary": "AWS cost material not found.",
+            "source": "n/a",
+            "worksheet": "n/a",
+            "serviceMapping": "n/a",
+            "region": "n/a",
+            "currency": "n/a",
+            "collected": "n/a",
+            "scenarios": {},
+            "perUnit": {},
+            "topDrivers": [],
+            "caveats": [],
+        }
+
+    text = pricing_path.read_text(encoding="utf-8")
+    tables = parse_markdown_tables(text)
+    metadata = parse_markdown_metadata(text)
+    scenario_rows = table_by_header(tables, ["Scenario", "Estimated monthly cost"])
+    per_unit_rows = table_by_header(tables, ["Scenario", "Calculation", "Estimate"])
+    weighted_unit_rows = table_by_header(tables, ["Scenario", "User pool", "Device pool", "Per user", "Per device", "Effective 1 user + 4 devices"])
+    top_driver_rows = table_by_header(tables, ["Rank", "Cost item", "Monthly estimate"])
+
+    scenarios = {row[0]: row[1] for row in scenario_rows if len(row) >= 2}
+    per_unit = {row[0]: row[2] for row in per_unit_rows if len(row) >= 3}
+    infrastructure_driver_rows = [
+        row for row in top_driver_rows
+        if len(row) >= 3 and "support" not in row[1].lower()
+    ]
+    top_drivers = [
+        {"rank": row[0], "item": row[1], "monthlyEstimate": row[2]}
+        for row in infrastructure_driver_rows[:5]
+        if len(row) >= 3
+    ]
+
+    base_without_hsm = scenarios.get("Base services only, excluding CloudHSM", "n/a")
+    default_with_hsm = scenarios.get("Default estimate with one CloudHSM and self-managed certissuer", "n/a")
+    robust_without_hsm = scenarios.get("Robust redundant design, excluding CloudHSM", "n/a")
+    robust_with_hsm = scenarios.get("Robust redundant design with two CloudHSMs", "n/a")
+    weighted_units = {row[0]: row for row in weighted_unit_rows if len(row) >= 6}
+    raw_unit_costs = [
+        {
+            "scenario": "Base services only",
+            "monthlyTotal": base_without_hsm,
+            "perUserMonth": divide_usd_amount(base_without_hsm, 2500, "user-month"),
+            "perDeviceMonth": divide_usd_amount(base_without_hsm, 10000, "device-month"),
+            "notes": "No CloudHSM, no robust redundancy",
+        },
+        {
+            "scenario": "Default + 1 CloudHSM",
+            "monthlyTotal": default_with_hsm,
+            "perUserMonth": divide_usd_amount(default_with_hsm, 2500, "user-month"),
+            "perDeviceMonth": divide_usd_amount(default_with_hsm, 10000, "device-month"),
+            "notes": "Default security profile",
+        },
+        {
+            "scenario": "Robust, no CloudHSM",
+            "monthlyTotal": robust_without_hsm,
+            "perUserMonth": divide_usd_amount(robust_without_hsm, 2500, "user-month"),
+            "perDeviceMonth": divide_usd_amount(robust_without_hsm, 10000, "device-month"),
+            "notes": "Redundant infra without HSM",
+        },
+        {
+            "scenario": "Robust + 2 CloudHSMs",
+            "monthlyTotal": robust_with_hsm,
+            "perUserMonth": divide_usd_amount(robust_with_hsm, 2500, "user-month"),
+            "perDeviceMonth": divide_usd_amount(robust_with_hsm, 10000, "device-month"),
+            "notes": "Robust security profile",
+        },
+    ]
+
+    weighted_unit_costs = [
+        {
+            "scenario": scenario,
+            "userPool": row[1],
+            "devicePool": row[2],
+            "perUserMonth": row[3],
+            "perDeviceMonth": row[4],
+            "effectiveUserWithFourDevices": row[5],
+        }
+        for scenario, row in weighted_units.items()
+        if scenario in {
+            "Base services only, excluding CloudHSM",
+            "Default estimate with one CloudHSM",
+            "Robust redundant design with two CloudHSMs",
+        }
+    ]
+
+    return {
+        "status": "available",
+        "summary": "AWS commercial-pilot planning estimate from tracked cost material; not an actual AWS billing query.",
+        "source": str(pricing_path),
+        "worksheet": str(AWS_COST_WORKSHEET_PATH if AWS_COST_WORKSHEET_PATH.exists() else ROOT / "docs" / "aws-cost-estimate-worksheet.csv"),
+        "serviceMapping": str(AWS_SERVICE_MAPPING_PATH if AWS_SERVICE_MAPPING_PATH.exists() else ROOT / "docs" / "aws-service-mapping.md"),
+        "region": metadata.get("region", "n/a"),
+        "currency": metadata.get("currency", "n/a"),
+        "collected": metadata.get("collected", "n/a"),
+        "scenarios": {
+            "baseWithoutCloudHsm": base_without_hsm,
+            "defaultWithOneCloudHsm": default_with_hsm,
+            "robustWithoutCloudHsm": robust_without_hsm,
+            "robustWithTwoCloudHsms": robust_with_hsm,
+        },
+        "comparisons": {
+            "cloudHsmDefault": {
+                "without": base_without_hsm,
+                "with": default_with_hsm,
+                "delta": diff_usd_amount(default_with_hsm, base_without_hsm),
+                "label": "CloudHSM impact in default pilot profile",
+            },
+            "cloudHsmRobust": {
+                "without": robust_without_hsm,
+                "with": robust_with_hsm,
+                "delta": diff_usd_amount(robust_with_hsm, robust_without_hsm),
+                "label": "CloudHSM impact in robust profile",
+            },
+            "robustWithoutCloudHsm": {
+                "without": base_without_hsm,
+                "with": robust_without_hsm,
+                "delta": diff_usd_amount(robust_without_hsm, base_without_hsm),
+                "label": "Robust design impact without CloudHSM",
+            },
+            "robustWithCloudHsm": {
+                "without": default_with_hsm,
+                "with": robust_with_hsm,
+                "delta": diff_usd_amount(robust_with_hsm, default_with_hsm),
+                "label": "Robust design impact with CloudHSM",
+            },
+        },
+        "perUnit": {
+            "defaultWithCloudHsmPerUser": per_unit.get("Default with CloudHSM per user", "n/a"),
+            "defaultWithCloudHsmPerDevice": per_unit.get("Default with CloudHSM per device", "n/a"),
+            "robustWithCloudHsmPerUser": per_unit.get("Robust with CloudHSM per user", "n/a"),
+            "robustWithCloudHsmPerDevice": per_unit.get("Robust with CloudHSM per device", "n/a"),
+        },
+        "unitCosts": {
+            "basis": {
+                "endUsers": "2,500",
+                "registeredDevices": "10,000",
+                "devicesPerUser": "4",
+                "weightedUserPool": "10%",
+                "weightedDevicePool": "90%",
+            },
+            "rawDivision": raw_unit_costs,
+            "weightedAllocation": weighted_unit_costs,
+        },
+        "topDrivers": top_drivers,
+        "caveats": [
+            "Planning snapshot only; not a committed AWS quote.",
+            "Infrastructure totals shown on the status slide exclude tax, support plans, enterprise discounts, Savings Plans, Reserved Instances, and AWS Marketplace charges.",
+            "Camera/WebRTC/TURN relay is excluded from the first estimate.",
+            "Actual AWS bill is not queried; Cost Explorer can be added later when AWS workloads exist.",
+        ],
+    }
+
+
 def normalize_observed(kind: str, observed: str) -> str:
     prefix, _, body = observed.partition(": ")
     if kind == "version" and body:
@@ -648,6 +877,7 @@ def build_report_payload() -> dict[str, object]:
     figures = make_figures()
     health = collect_linode_health()
     billing = collect_linode_billing()
+    aws_cost = collect_aws_cost_estimate()
     return {
         "root": str(ROOT),
         "reportDate": REPORT_DATE,
@@ -683,6 +913,7 @@ def build_report_payload() -> dict[str, object]:
         },
         "linodeHealth": health,
         "linodeBilling": billing,
+        "awsCostEstimate": aws_cost,
         "figures": {key: str(value) for key, value in figures.items()},
         "masterAssets": {
             "cover": str(ROOT / "docs/status-reports/master_slide/assets/image1.png"),
