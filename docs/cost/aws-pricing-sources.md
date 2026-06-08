@@ -9,8 +9,9 @@ Service mapping: [aws-service-mapping.md](aws-service-mapping.md)
 
 This document records the public AWS unit prices used for the first-pass cost
 brief. It is a tracking snapshot, not a committed quote. Prices exclude tax,
-support plans, enterprise discounts, Savings Plans, Reserved Instances, and
-AWS Marketplace charges.
+enterprise discounts, Savings Plans, Reserved Instances, and AWS Marketplace
+charges. Support-plan adders are listed separately because AWS Support is billed
+as a monthly plan fee, not as a per-ticket unit price.
 
 ## Retrieval Method
 
@@ -35,6 +36,17 @@ Prices were collected from the AWS Bulk Price List API regional CSV files for
 | AWSELB | <https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSELB/current/ap-southeast-1/index.csv> | 2026-05-07T19:01:31Z |
 | AmazonCloudWatch | <https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonCloudWatch/current/ap-southeast-1/index.csv> | 2026-03-13T17:42:19Z |
 | AmazonVPC | <https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonVPC/current/ap-southeast-1/index.csv> | 2026-06-04T17:34:26Z |
+
+Support and professional-services references were checked against public AWS
+pages on 2026-06-08:
+
+| Area | Public reference | Pricing treatment |
+| --- | --- | --- |
+| AWS Support plans | <https://aws.amazon.com/premiumsupport/pricing/> | Add Business Support+ as the default recurring support-plan adder; keep Enterprise and Unified Operations as sensitivity cases. |
+| AWS Support plan comparison | <https://aws.amazon.com/premiumsupport/plans/> | Business Support+ is the minimum recommended plan for production workloads and includes technical support access. |
+| AWS Support plan end of support | <https://docs.aws.amazon.com/awssupport/latest/user/support-plans-eos.html> | Developer Support, Business Support, and Enterprise On-Ramp are being discontinued on 2027-01-01, so the estimate uses Business Support+ naming. |
+| AWS IQ end of support | <https://docs.aws.amazon.com/aws-iq/> | Do not use AWS IQ as a future consulting-cost source; AWS IQ ended on 2026-05-28. |
+| AWS Marketplace Professional Services | <https://docs.aws.amazon.com/marketplace/latest/userguide/proserv-products.html> | Treat consulting as a quote/private-offer item, not as public fixed unit pricing. |
 
 ## Selected Unit Prices
 
@@ -74,6 +86,35 @@ Prices were collected from the AWS Bulk Price List API regional CSV files for
 | Private certificate issuance | ACM Private CA general-purpose certs, next 1,001-10,000 | 0.35 USD per certificate |
 | Private certificate issuance | ACM Private CA short-lived certs | 0.058 USD per certificate |
 | Revocation evidence | ACM Private CA OCSP query | 0.20 USD per 100,000 queries |
+| Support plan | AWS Business Support+ | Greater of 29 USD/month per account or tiered percentage of monthly AWS charges: 9% up to 10k, 7% from 10k to 80k, 5% from 80k to 250k, 3% over 250k |
+| Support plan sensitivity | AWS Enterprise Support | Greater of 5,000 USD/month or tiered percentage of monthly AWS charges |
+| Launch support sensitivity | AWS Countdown Premium | 10,000 USD per project per month for Business Support+ and Enterprise Support customers; included with Unified Operations |
+
+## Support And Consulting Treatment
+
+The estimate treats AWS technical support as a recurring support-plan line item,
+not as a cost per ticket. For the current pilot-scale scenarios, Business
+Support+ is the default support adder because it is the AWS-recommended minimum
+plan for production workloads and the existing monthly usage is below the first
+10,000 USD support-pricing tier.
+
+| Scenario basis | Gross monthly AWS charges | Business Support+ calculation | Monthly support estimate |
+| --- | ---: | --- | ---: |
+| Base services only, excluding CloudHSM | 1,063.38 | max(29, 1,063.38 * 9%) | 95.70 |
+| Default estimate with one CloudHSM | 2,421.18 | max(29, 2,421.18 * 9%) | 217.91 |
+| Robust redundant design, excluding CloudHSM | 1,497.11 | max(29, 1,497.11 * 9%) | 134.74 |
+| Robust redundant design with two CloudHSMs | 4,212.71 | max(29, 4,212.71 * 9%) | 379.14 |
+
+Enterprise Support remains an optional sensitivity case. Its 5,000 USD/month
+minimum is larger than the current pilot infrastructure estimates, so it should
+be added only when designated TAM coverage or business-critical escalation is a
+project requirement.
+
+AWS Marketplace Professional Services can cover consulting, migration, support,
+managed services, or training work through negotiated private offers. Because
+Marketplace Professional Services pricing is quote-based and scope-specific, it
+is tracked in the worksheet as `quote_required` rather than folded into the
+recurring infrastructure baseline.
 
 ## Rough Estimate
 
@@ -88,7 +129,7 @@ The calculation below uses the commercial-pilot worksheet assumptions:
 | Camera-capable devices | 0 in first estimate; camera/WebRTC profile excluded |
 | Runtime model | S3/CloudFront plus optional Lambda for public frontend, ECS Fargate for backend services; coturn/TURN excluded until camera/WebRTC profile is enabled |
 | Database model | One shared Single-AZ RDS PostgreSQL `db.t4g.large` server for account and video schemas |
-| Key and certificate model | One CloudHSM plus CloudHSM-backed certissuer; ACM Private CA excluded from default estimate |
+| Key and certificate model | Local/CI PKCS#11 validation uses SoftHSM2; production estimate assumes one CloudHSM plus CloudHSM-backed certissuer; ACM Private CA excluded from default estimate; OpenHSM is not assumed |
 | NAT assumption | One NAT Gateway, 200 GB processed per month |
 | Availability posture | Single-region pilot, production-like but not full multi-region HA |
 
@@ -115,6 +156,7 @@ measured device telemetry to reduce this assumption later.
 | KMS | 5.30 | Five customer managed keys plus 100,000 requests. |
 | Base subtotal before HSM/Private CA | 1,063.38 | Application, data, cache, storage, MQTT, logging, basic network, frontend hosting, and key API surface; camera/WebRTC excluded. |
 | CloudHSM | 1,357.80 | One HSM running 730 hours/month; no HSM redundancy assumed for early stage. |
+| AWS Business Support+ | 217.91 | Default support-plan adder for the one-CloudHSM pilot scenario, calculated as 9% of 2,421.18 USD gross monthly AWS charges. |
 | ACM Private CA | 0.00 | Excluded from default estimate because certificates are signed by CloudHSM-backed certissuer. |
 
 Frontend calculation:
@@ -140,9 +182,13 @@ AWS IoT Core calculation:
 | Scenario | Estimated monthly cost |
 | --- | ---: |
 | Base services only, excluding CloudHSM | 1,063.38 USD |
+| Base services plus Business Support+ | 1,159.08 USD |
 | Default estimate with one CloudHSM and self-managed certissuer | 2,421.18 USD |
+| Default estimate with one CloudHSM plus Business Support+ | 2,639.09 USD |
 | Robust redundant design, excluding CloudHSM | 1,497.11 USD |
+| Robust redundant design excluding CloudHSM plus Business Support+ | 1,631.85 USD |
 | Robust redundant design with two CloudHSMs | 4,212.71 USD |
+| Robust redundant design with two CloudHSMs plus Business Support+ | 4,591.85 USD |
 
 Per-unit calculation:
 
@@ -155,8 +201,12 @@ monthly cost pool. Do not add them together.
 | Base services per device | 1,063.38 USD / 10,000 devices | 0.11 USD/device-month |
 | Default with CloudHSM per user | 2,421.18 USD / 2,500 users | 0.97 USD/user-month |
 | Default with CloudHSM per device | 2,421.18 USD / 10,000 devices | 0.24 USD/device-month |
+| Default with CloudHSM and Business Support+ per user | 2,639.09 USD / 2,500 users | 1.06 USD/user-month |
+| Default with CloudHSM and Business Support+ per device | 2,639.09 USD / 10,000 devices | 0.26 USD/device-month |
 | Robust with CloudHSM per user | 4,212.71 USD / 2,500 users | 1.69 USD/user-month |
 | Robust with CloudHSM per device | 4,212.71 USD / 10,000 devices | 0.42 USD/device-month |
+| Robust with CloudHSM and Business Support+ per user | 4,591.85 USD / 2,500 users | 1.84 USD/user-month |
+| Robust with CloudHSM and Business Support+ per device | 4,591.85 USD / 10,000 devices | 0.46 USD/device-month |
 
 Weighted allocation model:
 
@@ -175,7 +225,9 @@ API traffic. A 10% user pool is kept for account/app/admin/audit/session costs.
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Base services only, excluding CloudHSM | 106.34 | 957.04 | 0.04 USD/user-month | 0.10 USD/device-month | 0.43 USD/month |
 | Default estimate with one CloudHSM | 242.12 | 2,179.06 | 0.10 USD/user-month | 0.22 USD/device-month | 0.97 USD/month |
+| Default estimate with one CloudHSM plus Business Support+ | 263.91 | 2,375.18 | 0.11 USD/user-month | 0.24 USD/device-month | 1.06 USD/month |
 | Robust redundant design with two CloudHSMs | 421.27 | 3,791.44 | 0.17 USD/user-month | 0.38 USD/device-month | 1.69 USD/month |
+| Robust redundant design with two CloudHSMs plus Business Support+ | 459.19 | 4,132.66 | 0.18 USD/user-month | 0.41 USD/device-month | 1.84 USD/month |
 
 Robust-profile changes:
 
@@ -203,8 +255,9 @@ Robust cost delta:
 | ElastiCache for Valkey | 28.03 | 56.06 | 28.03 |
 | NAT Gateway | 54.87 | 97.94 | 43.07 |
 | CloudHSM | 1,357.80 | 2,715.60 | 1,357.80 |
+| AWS Business Support+ | 217.91 | 379.14 | 161.23 |
 | Other baseline items | 257.99 | 257.99 | 0.00 |
-| Total with CloudHSM | 2,421.18 | 4,212.71 | 1,791.53 |
+| Total with CloudHSM and Business Support+ | 2,639.09 | 4,591.85 | 1,952.76 |
 
 Robust cost behavior:
 
@@ -212,6 +265,7 @@ Robust cost behavior:
 | --- | --- | --- |
 | Doubled | CloudHSM, RDS estimate, ElastiCache | These are single-instance or stateful components where the robust profile adds a second node/standby. |
 | Partially increased | NAT Gateway, ECS Fargate backend services | NAT gateway-hours double but data processing stays the same; only selected worker/certissuer tasks are duplicated. |
+| Increased by percentage of gross AWS charges | AWS Business Support+ | Support is calculated from monthly AWS charges, so robust infrastructure increases the support-plan adder. |
 | Unchanged | AWS IoT Core, CloudWatch Logs, ALB, frontend CDN/Lambda/S3, Secrets Manager, KMS, S3 storage | Product traffic, log volume, and request volume are unchanged between baseline and robust profiles. |
 
 Top 10 monthly cost items:
@@ -220,14 +274,14 @@ Top 10 monthly cost items:
 | ---: | --- | ---: |
 | 1 | CloudHSM, 1 HSM | 1,357.80 |
 | 2 | ECS Fargate backend services | 539.79 |
-| 3 | RDS PostgreSQL, shared `db.t4g.large` plus storage | 182.69 |
-| 4 | AWS IoT Core MQTT plus Shadow | 164.95 |
-| 5 | NAT Gateway | 54.87 |
-| 6 | ElastiCache for Valkey | 28.03 |
-| 7 | CloudWatch Logs | 24.53 |
-| 8 | Application Load Balancer | 24.24 |
-| 9 | Secrets Manager | 20.05 |
-| 10 | Public frontend CloudFront CDN | 12.07 |
+| 3 | AWS Business Support+ | 217.91 |
+| 4 | RDS PostgreSQL, shared `db.t4g.large` plus storage | 182.69 |
+| 5 | AWS IoT Core MQTT plus Shadow | 164.95 |
+| 6 | NAT Gateway | 54.87 |
+| 7 | ElastiCache for Valkey | 28.03 |
+| 8 | CloudWatch Logs | 24.53 |
+| 9 | Application Load Balancer | 24.24 |
+| 10 | Secrets Manager | 20.05 |
 
 Robust top 10 monthly cost items:
 
@@ -235,14 +289,14 @@ Robust top 10 monthly cost items:
 | ---: | --- | ---: |
 | 1 | CloudHSM, 2 HSMs | 2,715.60 |
 | 2 | ECS Fargate backend services | 719.72 |
-| 3 | RDS PostgreSQL, Multi-AZ-style estimate | 365.38 |
-| 4 | AWS IoT Core MQTT plus Shadow | 164.95 |
-| 5 | NAT Gateway, 2 gateways | 97.94 |
-| 6 | ElastiCache for Valkey, 2 nodes | 56.06 |
-| 7 | CloudWatch Logs | 24.53 |
-| 8 | Application Load Balancer | 24.24 |
-| 9 | Secrets Manager | 20.05 |
-| 10 | Public frontend CloudFront CDN | 12.07 |
+| 3 | AWS Business Support+ | 379.14 |
+| 4 | RDS PostgreSQL, Multi-AZ-style estimate | 365.38 |
+| 5 | AWS IoT Core MQTT plus Shadow | 164.95 |
+| 6 | NAT Gateway, 2 gateways | 97.94 |
+| 7 | ElastiCache for Valkey, 2 nodes | 56.06 |
+| 8 | CloudWatch Logs | 24.53 |
+| 9 | Application Load Balancer | 24.24 |
+| 10 | Secrets Manager | 20.05 |
 
 ## Service Set
 
@@ -262,6 +316,7 @@ Robust top 10 monthly cost items:
 | TURN relay | Excluded from first estimate; add EC2 or ECS-on-EC2 running coturn when camera/WebRTC profile is enabled |
 | DNS | Route 53 |
 | Private networking | VPC subnets, security groups, NAT Gateway, VPC endpoints where cost-effective |
+| Technical support | AWS Business Support+ as default production support-plan adder; Enterprise Support and Countdown Premium as optional sensitivity items |
 
 ## Cost Drivers
 
@@ -269,6 +324,12 @@ CloudHSM dominates the default estimate. The base application and data plane is
 roughly 1.1k USD/month under the pilot assumptions, while one CloudHSM adds
 1,357.80 USD/month. Adding a second CloudHSM later would add another
 1,357.80 USD/month at the current collected unit price.
+
+AWS Business Support+ becomes a material recurring adder once it is included.
+For the current one-CloudHSM default estimate, it adds 217.91 USD/month. For the
+robust two-CloudHSM estimate, it adds 379.14 USD/month. Enterprise Support is a
+separate budget decision because its 5,000 USD/month minimum exceeds the current
+pilot infrastructure total.
 
 Reducing HSM/PKI cost requires an explicit security decision. Candidate options
 include using KMS without CloudHSM for less sensitive keys or separating
@@ -289,5 +350,5 @@ These items should be refined before using the estimate as a budget:
 | RDS Multi-AZ, replicas, Aurora, or split DB instances | Pilot estimate uses one shared Single-AZ RDS server; production HA or isolation will cost more. |
 | VPC endpoints | Can reduce NAT traffic but add hourly and data-processing charges. |
 | WAF/Shield | Not included in the first-pass security perimeter cost. |
-| Support plan | Business or Enterprise support can be a percentage-based addition. |
+| Professional services consulting | Marketplace Professional Services and AWS partner consulting are quote/private-offer items and need a scoped proposal before budget approval. |
 | Committed-use discounts | Savings Plans, Reserved Instances, and enterprise discounts may reduce compute/database cost. |
