@@ -1969,7 +1969,6 @@ func runStagingE2ETest(args []string) error {
 		return err
 	}
 	env, _ := readEnvFile(filepath.Join(envRoot, "env", "stack.env"))
-	refreshStagingCertificateCaches(newProvisionPaths(workspace, envRoot, provisionOptions{}), env, defaultStagingSSHKey())
 	steps := []e2eStep{}
 	runStep := func(name string, argv ...string) error {
 		step, err := runE2EStep(name, filepath.Join(logsDir, name+".log"), argv...)
@@ -1977,6 +1976,11 @@ func runStagingE2ETest(args []string) error {
 		return err
 	}
 	if !*skipRemove {
+		paths := newProvisionPaths(workspace, envRoot, provisionOptions{})
+		refreshStagingCertificateCaches(paths, env, defaultStagingSSHKey())
+		if err := requireStagingCertificateCaches(paths, env); err != nil {
+			return err
+		}
 		if err := runStep("remove_vm", append(commandWithArgs(scripts["remove"], "--workspace", workspace, "--env-root", envRoot), "--yes")...); err != nil {
 			return err
 		}

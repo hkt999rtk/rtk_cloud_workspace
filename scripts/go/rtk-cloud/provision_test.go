@@ -129,7 +129,10 @@ func TestEnsureProvisionRuntimeContractsWritesMTLSAndInternalAuth(t *testing.T) 
 	mkdirAll(t, filepath.Dir(paths.AccountManagerState))
 	writeFile(t, paths.AccountManagerState, "ACCOUNT_MANAGER_LINODE_PRIVATE_IPV4=10.42.1.55\n")
 
-	err := ensureProvisionRuntimeContracts(paths, map[string]string{"VIDEO_CLOUD_DOMAIN": "video-cloud-stg-0529.realtekconnect.com"})
+	err := ensureProvisionRuntimeContracts(paths, map[string]string{
+		"VIDEO_CLOUD_DOMAIN":           "video-cloud-stg-0529.realtekconnect.com",
+		"CLOUD_REQUIRE_PKCS11_SIGNING": "0",
+	})
 	if err != nil {
 		t.Fatalf("ensureProvisionRuntimeContracts returned error: %v", err)
 	}
@@ -156,6 +159,80 @@ func TestEnsureProvisionRuntimeContractsWritesMTLSAndInternalAuth(t *testing.T) 
 	}
 	if videoEnv["VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TIMEOUT"] != "10s" {
 		t.Fatalf("VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TIMEOUT = %q", videoEnv["VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TIMEOUT"])
+	}
+}
+
+func TestEnsureProvisionRuntimeContractsRequiresPKCS11SigningByDefault(t *testing.T) {
+	root := t.TempDir()
+	workspace := t.TempDir()
+	keysDir := filepath.Join(workspace, "keys", "staging", "linode", "video-cloud")
+	mkdirAll(t, keysDir)
+	for _, name := range []string{"root-ca.ed25519.cert.pem", "production-issuer.ed25519.cert.pem", "app-user-issuer.ed25519.cert.pem"} {
+		writeFile(t, filepath.Join(keysDir, name), "-----BEGIN CERTIFICATE-----\nca\n-----END CERTIFICATE-----\n")
+	}
+	paths := provisionPaths{
+		Workspace:         workspace,
+		VideoConfig:       filepath.Join(root, "topology", "video-cloud-staging.yaml"),
+		VideoEnv:          filepath.Join(root, "services", "video-cloud", "video-cloud-staging.env"),
+		AccountManagerEnv: filepath.Join(root, "services", "account-manager", "account-manager-public-staging.env"),
+	}
+	mkdirAll(t, filepath.Dir(paths.VideoConfig))
+	writeFile(t, paths.VideoConfig, "deploy: {}\n")
+	mkdirAll(t, filepath.Dir(paths.VideoEnv))
+	writeFile(t, paths.VideoEnv, "VIDEO_CLOUD_AUTH_SECRET=auth-secret\n")
+	mkdirAll(t, filepath.Dir(paths.AccountManagerEnv))
+	writeFile(t, paths.AccountManagerEnv, "ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN=shared-internal-token\n")
+
+	err := ensureProvisionRuntimeContracts(paths, map[string]string{"VIDEO_CLOUD_DOMAIN": "video.example.test"})
+	if err == nil {
+		t.Fatalf("ensureProvisionRuntimeContracts succeeded without pkcs11 signing config")
+	}
+	for _, want := range []string{"SoftHSMv2/PKCS#11", "VIDEO_CLOUD_AUTH_TOKEN_SIGNER_PROVIDER=pkcs11", "CERT_ISSUER_SIGNER_PROVIDER=pkcs11", "CERT_ISSUER_APP_SIGNER_PROVIDER=pkcs11"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error missing %q: %v", want, err)
+		}
+	}
+}
+
+func TestEnsureProvisionRuntimeContractsAcceptsPKCS11Signing(t *testing.T) {
+	root := t.TempDir()
+	workspace := t.TempDir()
+	keysDir := filepath.Join(workspace, "keys", "staging", "linode", "video-cloud")
+	mkdirAll(t, keysDir)
+	for _, name := range []string{"root-ca.ed25519.cert.pem", "production-issuer.ed25519.cert.pem", "app-user-issuer.ed25519.cert.pem"} {
+		writeFile(t, filepath.Join(keysDir, name), "-----BEGIN CERTIFICATE-----\nca\n-----END CERTIFICATE-----\n")
+	}
+	paths := provisionPaths{
+		Workspace:         workspace,
+		VideoConfig:       filepath.Join(root, "topology", "video-cloud-staging.yaml"),
+		VideoEnv:          filepath.Join(root, "services", "video-cloud", "video-cloud-staging.env"),
+		AccountManagerEnv: filepath.Join(root, "services", "account-manager", "account-manager-public-staging.env"),
+	}
+	mkdirAll(t, filepath.Dir(paths.VideoConfig))
+	writeFile(t, paths.VideoConfig, "deploy: {}\n")
+	mkdirAll(t, filepath.Dir(paths.VideoEnv))
+	writeFile(t, paths.VideoEnv, `VIDEO_CLOUD_AUTH_SECRET=auth-secret
+VIDEO_CLOUD_AUTH_TOKEN_SIGNER_PROVIDER=pkcs11
+VIDEO_CLOUD_AUTH_TOKEN_PKCS11_MODULE_PATH=/usr/lib/softhsm/libsofthsm2.so
+VIDEO_CLOUD_AUTH_TOKEN_PKCS11_TOKEN_LABEL=video-cloud-signing
+VIDEO_CLOUD_AUTH_TOKEN_PKCS11_PIN=secret-pin
+VIDEO_CLOUD_AUTH_TOKEN_PKCS11_KEY_LABEL=auth-token
+CERT_ISSUER_SIGNER_PROVIDER=pkcs11
+CERT_ISSUER_PKCS11_MODULE_PATH=/usr/lib/softhsm/libsofthsm2.so
+CERT_ISSUER_PKCS11_TOKEN_LABEL=video-cloud-signing
+CERT_ISSUER_PKCS11_PIN=secret-pin
+CERT_ISSUER_PKCS11_KEY_LABEL=device-ca
+CERT_ISSUER_APP_SIGNER_PROVIDER=pkcs11
+CERT_ISSUER_APP_PKCS11_MODULE_PATH=/usr/lib/softhsm/libsofthsm2.so
+CERT_ISSUER_APP_PKCS11_TOKEN_LABEL=video-cloud-signing
+CERT_ISSUER_APP_PKCS11_PIN=secret-pin
+CERT_ISSUER_APP_PKCS11_KEY_LABEL=app-ca
+`)
+	mkdirAll(t, filepath.Dir(paths.AccountManagerEnv))
+	writeFile(t, paths.AccountManagerEnv, "ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN=shared-internal-token\n")
+
+	if err := ensureProvisionRuntimeContracts(paths, map[string]string{"VIDEO_CLOUD_DOMAIN": "video.example.test"}); err != nil {
+		t.Fatalf("ensureProvisionRuntimeContracts returned error: %v", err)
 	}
 }
 
@@ -425,6 +502,64 @@ func TestStagingCertificateCacheTargetsIncludeLoggerBeforeRemove(t *testing.T) {
 		if got[name].Dir != filepath.Join(root, "certificates", want) {
 			t.Fatalf("%s dir = %q, want certificates dir for %s", name, got[name].Dir, want)
 		}
+	}
+}
+
+func TestRequireStagingCertificateCachesFailsBeforeDestructiveRemove(t *testing.T) {
+	root := t.TempDir()
+	paths := provisionPaths{
+		EnvRoot:             root,
+		VideoState:          filepath.Join(root, "state", "video-cloud-staging.state.json"),
+		AccountManagerState: filepath.Join(root, "state", "account-manager-staging.env"),
+		AdminState:          filepath.Join(root, "state", "cloud-admin-staging.env"),
+	}
+	mkdirAll(t, filepath.Dir(paths.VideoState))
+	writeFile(t, paths.VideoState, `{"instances":{"edge":{"public_ipv4":"203.0.113.5"}}}`)
+	writeFile(t, paths.AccountManagerState, "ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4=203.0.113.20\n")
+	writeFile(t, paths.AdminState, "ADMIN_LINODE_PUBLIC_IPV4=203.0.113.30\n")
+	mkdirAll(t, filepath.Join(root, "state"))
+	writeFile(t, filepath.Join(root, "state", "cloud-logger.env"), "CLOUD_LOGGER_DOMAIN=logger.video.example.test\nCLOUD_LOGGER_LINODE_PUBLIC_IPV4=203.0.113.40\n")
+
+	env := map[string]string{
+		"VIDEO_CLOUD_DOMAIN":     "video.example.test",
+		"ACCOUNT_MANAGER_DOMAIN": "account.example.test",
+		"CLOUD_ADMIN_DOMAIN":     "admin.example.test",
+		"CLOUD_LOGGER_DOMAIN":    "logger.video.example.test",
+	}
+	for _, domain := range []string{"video.example.test", "account.example.test", "admin.example.test"} {
+		dir := filepath.Join(root, "certificates", domain)
+		mkdirAll(t, dir)
+		writeFile(t, filepath.Join(dir, "fullchain.pem"), "fullchain")
+		writeFile(t, filepath.Join(dir, "privkey.pem"), "private-key")
+	}
+
+	err := requireStagingCertificateCaches(paths, env)
+	if err == nil {
+		t.Fatalf("requireStagingCertificateCaches succeeded with missing logger cache")
+	}
+	if !strings.Contains(err.Error(), "cloud-logger") || !strings.Contains(err.Error(), "logger.video.example.test") || !strings.Contains(err.Error(), "before destructive e2e remove") {
+		t.Fatalf("error did not identify missing logger certificate cache: %v", err)
+	}
+}
+
+func TestRequireStagingCertificateCachesPassesWhenAllTargetsCached(t *testing.T) {
+	root := t.TempDir()
+	paths := provisionPaths{EnvRoot: root}
+	env := map[string]string{
+		"VIDEO_CLOUD_DOMAIN":     "video.example.test",
+		"ACCOUNT_MANAGER_DOMAIN": "account.example.test",
+		"CLOUD_ADMIN_DOMAIN":     "admin.example.test",
+		"CLOUD_LOGGER_DOMAIN":    "logger.video.example.test",
+	}
+	for _, domain := range []string{"video.example.test", "account.example.test", "admin.example.test", "logger.video.example.test"} {
+		dir := filepath.Join(root, "certificates", domain)
+		mkdirAll(t, dir)
+		writeFile(t, filepath.Join(dir, "fullchain.pem"), "fullchain")
+		writeFile(t, filepath.Join(dir, "privkey.pem"), "private-key")
+	}
+
+	if err := requireStagingCertificateCaches(paths, env); err != nil {
+		t.Fatalf("requireStagingCertificateCaches returned error: %v", err)
 	}
 }
 

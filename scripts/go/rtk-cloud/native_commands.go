@@ -596,6 +596,26 @@ func refreshStagingCertificateCaches(paths provisionPaths, env map[string]string
 	}
 }
 
+func requireStagingCertificateCaches(paths provisionPaths, env map[string]string) error {
+	missing := []string{}
+	for _, target := range stagingCertificateCacheTargets(paths, env) {
+		if target.Domain == "" {
+			continue
+		}
+		if certCacheEnv("CERT_CACHE", target.Dir) == nil {
+			if target.Host == "" {
+				missing = append(missing, fmt.Sprintf("%s domain=%s cache=%s host=missing", target.Name, target.Domain, target.Dir))
+			} else {
+				missing = append(missing, fmt.Sprintf("%s domain=%s cache=%s host=%s", target.Name, target.Domain, target.Dir, target.Host))
+			}
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("staging HTTPS certificate cache is required before destructive e2e remove; missing or incomplete cache for: %s. Refresh from the existing VM first or restore fullchain.pem and privkey.pem under cloud_env/staging/linode/certificates before rerunning", strings.Join(missing, "; "))
+}
+
 func stagingCertificateCacheTargets(paths provisionPaths, env map[string]string) []certificateCacheTarget {
 	logger := loggerProvisionTarget(paths, env)
 	return []certificateCacheTarget{
