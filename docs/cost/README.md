@@ -28,3 +28,11 @@ service mappings, and support-plan adders can be reviewed as one package.
 - Keep quote-only services, such as AWS Marketplace Professional Services,
   separate from baseline recurring infrastructure cost.
 - Validate CSV syntax after editing the worksheet.
+
+## Future Automation References
+
+| Use case | Official AWS source |
+| --- | --- |
+| Export a reviewed estimate from AWS Pricing Calculator | <https://docs.aws.amazon.com/pricing-calculator/latest/userguide/export-estimate.html> |
+| Query actual AWS account spend after workloads run on AWS | <https://docs.aws.amazon.com/aws-cost-management/latest/APIReference/API_GetCostAndUsage.html> |
+| Refresh public unit prices for worksheet automation | <https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/using-price-list-query-api.html> |
