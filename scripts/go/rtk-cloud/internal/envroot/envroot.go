@@ -17,6 +17,7 @@ type Paths struct {
 	AccountManagerEnv         string
 	AccountManagerPlatformEnv string
 	AdminEnv                  string
+	CloudLoggerEnv            string
 	VideoState                string
 	AccountManagerState       string
 	AdminState                string
@@ -28,6 +29,28 @@ type Paths struct {
 
 type Environment struct {
 	Values map[string]string
+}
+
+var generatedKeys = []string{
+	"CLOUD_STACK_NAME",
+	"VIDEO_CLOUD_DOMAIN",
+	"VIDEO_CLOUD_CERTISSUER_DOMAIN",
+	"ACCOUNT_MANAGER_DOMAIN",
+	"CLOUD_ADMIN_DOMAIN",
+	"CLOUD_LOGGER_DOMAIN",
+	"VIDEO_CLOUD_LABEL_PREFIX",
+	"VIDEO_CLOUD_VPC_LABEL",
+	"VIDEO_CLOUD_SUBNET_LABEL",
+	"ACCOUNT_MANAGER_LINODE_LABEL",
+	"ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL",
+	"ADMIN_LINODE_LABEL",
+	"ADMIN_LINODE_FIREWALL_LABEL",
+	"CLOUD_LOGGER_LINODE_LABEL",
+	"CLOUD_LOGGER_LINODE_FIREWALL_LABEL",
+}
+
+func GeneratedKeys() []string {
+	return append([]string(nil), generatedKeys...)
 }
 
 func Resolve(workspace, envRoot string) (string, error) {
@@ -60,6 +83,7 @@ func NewPaths(root string) Paths {
 		AccountManagerEnv:         firstExisting(filepath.Join(root, "services", "account-manager", "account-manager.env"), filepath.Join(root, "services", "account-manager", "account-manager-public-staging.env")),
 		AccountManagerPlatformEnv: firstExisting(filepath.Join(root, "services", "account-manager", "platform-admin.env"), filepath.Join(root, "services", "account-manager", "account-manager-platform-admin.env")),
 		AdminEnv:                  firstExisting(filepath.Join(root, "services", "cloud-admin", "admin.env"), filepath.Join(root, "services", "cloud-admin", "admin-staging.env")),
+		CloudLoggerEnv:            filepath.Join(root, "services", "cloud-logger", "logger.env"),
 		VideoState:                firstExisting(filepath.Join(root, "state", "video-cloud.state.json"), filepath.Join(root, "state", "video-cloud-staging.state.json")),
 		AccountManagerState:       firstExisting(filepath.Join(root, "state", "account-manager.env"), filepath.Join(root, "state", "account-manager-staging.env")),
 		AdminState:                firstExisting(filepath.Join(root, "state", "cloud-admin.env"), filepath.Join(root, "state", "cloud-admin-staging.env")),
@@ -82,6 +106,17 @@ func Load(root, dnsOverride string) (Environment, error) {
 	if values["CLOUD_PROVIDER"] == "" {
 		values["CLOUD_PROVIDER"] = "linode"
 	}
+	derived := Derive(values)
+	for _, key := range generatedKeys {
+		expected := derived[key]
+		if expected == "" {
+			continue
+		}
+		if values[key] != "" && values[key] != expected {
+			return Environment{}, fmt.Errorf("%s mismatch: expected %s from CLOUD_ENV_NAME=%s; run sync-env --env-root %s", key, expected, values["CLOUD_ENV_NAME"], root)
+		}
+		values[key] = expected
+	}
 	if dnsOverride != "" && values["CLOUD_DNS_ROOT_DOMAIN"] != "" && values["CLOUD_DNS_ROOT_DOMAIN"] != dnsOverride {
 		return Environment{}, fmt.Errorf("--dns-root-domain %s does not match %s CLOUD_DNS_ROOT_DOMAIN=%s", dnsOverride, paths.StackEnv, values["CLOUD_DNS_ROOT_DOMAIN"])
 	}
@@ -91,6 +126,7 @@ func Load(root, dnsOverride string) (Environment, error) {
 		"VIDEO_CLOUD_LABEL_PREFIX", "VIDEO_CLOUD_VPC_LABEL", "VIDEO_CLOUD_SUBNET_LABEL",
 		"ACCOUNT_MANAGER_LINODE_LABEL", "ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL",
 		"ADMIN_LINODE_LABEL", "ADMIN_LINODE_FIREWALL_LABEL",
+		"CLOUD_LOGGER_DOMAIN", "CLOUD_LOGGER_LINODE_LABEL", "CLOUD_LOGGER_LINODE_FIREWALL_LABEL",
 	}
 	for _, key := range required {
 		if values[key] == "" {
@@ -101,6 +137,40 @@ func Load(root, dnsOverride string) (Environment, error) {
 		return Environment{}, fmt.Errorf("unsupported CLOUD_PROVIDER=%s", values["CLOUD_PROVIDER"])
 	}
 	return Environment{Values: values}, nil
+}
+
+func Derive(values map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, v := range values {
+		out[k] = v
+	}
+	envName := out["CLOUD_ENV_NAME"]
+	if envName == "" {
+		envName = "staging"
+		out["CLOUD_ENV_NAME"] = envName
+	}
+	dnsRoot := out["CLOUD_DNS_ROOT_DOMAIN"]
+	if dnsRoot == "" {
+		dnsRoot = "realtekconnect.com"
+		out["CLOUD_DNS_ROOT_DOMAIN"] = dnsRoot
+	}
+	stack := "video-cloud-" + envName
+	out["CLOUD_STACK_NAME"] = stack
+	out["VIDEO_CLOUD_DOMAIN"] = stack + "." + dnsRoot
+	out["VIDEO_CLOUD_CERTISSUER_DOMAIN"] = "certissuer." + stack + "." + dnsRoot
+	out["ACCOUNT_MANAGER_DOMAIN"] = "account-manager." + stack + "." + dnsRoot
+	out["CLOUD_ADMIN_DOMAIN"] = "admin." + stack + "." + dnsRoot
+	out["CLOUD_LOGGER_DOMAIN"] = "logger." + stack + "." + dnsRoot
+	out["VIDEO_CLOUD_LABEL_PREFIX"] = stack
+	out["VIDEO_CLOUD_VPC_LABEL"] = stack + "-vpc"
+	out["VIDEO_CLOUD_SUBNET_LABEL"] = stack + "-subnet"
+	out["ACCOUNT_MANAGER_LINODE_LABEL"] = "rtk-account-manager-" + envName
+	out["ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL"] = "rtk-account-manager-" + envName + "-fw"
+	out["ADMIN_LINODE_LABEL"] = "rtk-cloud-admin-" + envName
+	out["ADMIN_LINODE_FIREWALL_LABEL"] = "rtk-cloud-admin-" + envName + "-fw"
+	out["CLOUD_LOGGER_LINODE_LABEL"] = "rtk-cloud-logger-" + envName
+	out["CLOUD_LOGGER_LINODE_FIREWALL_LABEL"] = "rtk-cloud-logger-" + envName + "-fw"
+	return out
 }
 
 func Validate(root string, env Environment) error {
@@ -122,6 +192,9 @@ func Validate(root string, env Environment) error {
 		{"Cloud Admin domain", env.Values["CLOUD_ADMIN_DOMAIN"], FileVar(paths.AdminEnv, "ADMIN_LINODE_DOMAIN")},
 		{"Cloud Admin label", env.Values["ADMIN_LINODE_LABEL"], FileVar(paths.AdminEnv, "ADMIN_LINODE_LABEL")},
 		{"Cloud Admin firewall label", env.Values["ADMIN_LINODE_FIREWALL_LABEL"], FileVar(paths.AdminEnv, "ADMIN_LINODE_FIREWALL_LABEL")},
+		{"Cloud Logger domain", env.Values["CLOUD_LOGGER_DOMAIN"], FileVar(paths.CloudLoggerEnv, "CLOUD_LOGGER_DOMAIN")},
+		{"Cloud Logger label", env.Values["CLOUD_LOGGER_LINODE_LABEL"], FileVar(paths.CloudLoggerEnv, "CLOUD_LOGGER_LINODE_LABEL")},
+		{"Cloud Logger firewall label", env.Values["CLOUD_LOGGER_LINODE_FIREWALL_LABEL"], FileVar(paths.CloudLoggerEnv, "CLOUD_LOGGER_LINODE_FIREWALL_LABEL")},
 	}
 	for role := range map[string]bool{"edge": true, "api": true, "infra": true, "mqtt": true, "coturn": true} {
 		checks = append(checks, struct {

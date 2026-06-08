@@ -34,5 +34,26 @@ cloud_env/staging/linode/
 - staging scripts 需要明確指定 `--env-root PATH`，避免操作到錯誤環境。
 - 可傳 `cloud_env/staging` 作為 environment directory；script 會自動解析到 `cloud_env/staging/linode`。
 - `--secrets-root PATH` 只保留為舊參數 alias，新的文件與操作都使用 `--env-root`。
+- `env/stack.env` 內的 `CLOUD_ENV_NAME` 是 Linode staging 命名 root。`CLOUD_STACK_NAME`、公開 domain、Linode VM/firewall label、VPC/subnet label、topology label，以及 service env 內的相關 URL 都由 `go run ./scripts/go/rtk-cloud -- sync-env --env-root cloud_env/staging` 產生。
+- Generated 欄位不要手動修改。若要把環境改名，例如從 `stg-0529` 改成 `stg`，先用舊 metadata 執行 `remove-all-vm` 清掉 live VM/firewall/VPC，再修改 `CLOUD_ENV_NAME`，最後執行 `sync-env`。
 - HTTPS certificate cache 是 environment-local secret material，包含 private key；只放在 `cloud_env/`，不要複製到 repo 或 artifact。
 - 不要 commit `cloud_env/` 裡的任何檔案。
+
+## 命名推演
+
+以 `CLOUD_ENV_NAME=stg`、`CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com` 為例，`sync-env` 會產生：
+
+- `CLOUD_STACK_NAME=video-cloud-stg`
+- `VIDEO_CLOUD_DOMAIN=video-cloud-stg.realtekconnect.com`
+- Video Cloud VM labels：`video-cloud-stg-edge`、`video-cloud-stg-api`、`video-cloud-stg-infra`、`video-cloud-stg-mqtt`、`video-cloud-stg-coturn`
+- Sibling service labels：`rtk-account-manager-stg`、`rtk-cloud-admin-stg`、`rtk-cloud-logger-stg`
+
+改名流程：
+
+```sh
+go run ./scripts/go/rtk-cloud -- remove-all-vm --env-root cloud_env/staging --yes
+# edit cloud_env/staging/linode/env/stack.env: CLOUD_ENV_NAME=stg
+go run ./scripts/go/rtk-cloud -- sync-env --env-root cloud_env/staging
+go run ./scripts/go/rtk-cloud -- sync-env --env-root cloud_env/staging --check
+go run ./scripts/go/rtk-cloud -- provision --env-root cloud_env/staging --plan
+```

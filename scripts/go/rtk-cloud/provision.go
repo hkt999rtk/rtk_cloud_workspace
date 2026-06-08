@@ -177,27 +177,12 @@ func runProvision(args []string) error {
 }
 
 func defaultProvisionEnvValues() map[string]string {
-	return map[string]string{
-		"CLOUD_ENV_NAME":                        "staging",
-		"CLOUD_PROVIDER":                        "linode",
-		"CLOUD_REGION":                          "us-sea",
-		"CLOUD_DNS_ROOT_DOMAIN":                 "realtekconnect.com",
-		"CLOUD_STACK_NAME":                      "video-cloud-staging",
-		"VIDEO_CLOUD_DOMAIN":                    "video-cloud-staging.realtekconnect.com",
-		"VIDEO_CLOUD_CERTISSUER_DOMAIN":         "certissuer.video-cloud-staging.realtekconnect.com",
-		"ACCOUNT_MANAGER_DOMAIN":                "account-manager.video-cloud-staging.realtekconnect.com",
-		"CLOUD_ADMIN_DOMAIN":                    "admin.video-cloud-staging.realtekconnect.com",
-		"VIDEO_CLOUD_LABEL_PREFIX":              "video-cloud-staging",
-		"VIDEO_CLOUD_VPC_LABEL":                 "video-cloud-staging-vpc",
-		"VIDEO_CLOUD_SUBNET_LABEL":              "video-cloud-staging-subnet",
-		"ACCOUNT_MANAGER_LINODE_LABEL":          "rtk-account-manager-staging",
-		"ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL": "rtk-account-manager-staging-fw",
-		"ADMIN_LINODE_LABEL":                    "rtk-cloud-admin-staging",
-		"ADMIN_LINODE_FIREWALL_LABEL":           "rtk-cloud-admin-staging-firewall",
-		"CLOUD_LOGGER_DOMAIN":                   "logger.video-cloud-staging.realtekconnect.com",
-		"CLOUD_LOGGER_LINODE_LABEL":             "rtk-cloud-logger-staging",
-		"CLOUD_LOGGER_LINODE_FIREWALL_LABEL":    "rtk-cloud-logger-staging-firewall",
-	}
+	return envroot.Derive(map[string]string{
+		"CLOUD_ENV_NAME":        "staging",
+		"CLOUD_PROVIDER":        "linode",
+		"CLOUD_REGION":          "us-sea",
+		"CLOUD_DNS_ROOT_DOMAIN": "realtekconnect.com",
+	})
 }
 
 func parseProvisionArgs(args []string) (provisionOptions, error) {

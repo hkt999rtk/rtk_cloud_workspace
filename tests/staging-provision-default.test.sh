@@ -20,6 +20,7 @@ mkdir -p \
 	"$ENV_ROOT/services/cloud-admin" \
 	"$ENV_ROOT/state" \
 	"$ENV_ROOT/artifacts" \
+	"$WORKSPACE/keys/staging/linode/video-cloud" \
 	"$WORKSPACE/repos/rtk_video_cloud/linode_deploy/scripts" \
 	"$WORKSPACE/repos/rtk_video_cloud/tools/godaddy-dns" \
 	"$WORKSPACE/repos/rtk_account_manager/linode_deploy/scripts" \
@@ -58,8 +59,8 @@ case "$*" in
 *"/networking/firewalls?page_size=500"*)
 	printf '{"data":[]}\n'
 	;;
-*"-X POST https://api.linode.com/v4/networking/firewalls"*"rtk-cloud-logger-ci-firewall"*)
-	printf '{"id":108,"label":"rtk-cloud-logger-ci-firewall"}\n'
+*"-X POST https://api.linode.com/v4/networking/firewalls"*"rtk-cloud-logger-ci-fw"*)
+	printf '{"id":108,"label":"rtk-cloud-logger-ci-fw"}\n'
 	;;
 *"-X POST https://api.linode.com/v4/networking/firewalls/108/devices"*)
 	printf '{}\n'
@@ -149,6 +150,18 @@ exit 0
 SH
 chmod +x "$FAKE_BIN/sleep"
 
+cat > "$FAKE_BIN/ssh" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+chmod +x "$FAKE_BIN/ssh"
+
+cat > "$FAKE_BIN/scp" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+chmod +x "$FAKE_BIN/scp"
+
 for prefix in rtk_video_cloud rtk_account_manager rtk_cloud_admin; do
 	case "$prefix" in
 	rtk_video_cloud) version=video-test ;;
@@ -184,18 +197,55 @@ VIDEO_CLOUD_SUBNET_LABEL=video-cloud-ci-subnet
 ACCOUNT_MANAGER_LINODE_LABEL=rtk-account-manager-ci
 ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL=rtk-account-manager-ci-fw
 ADMIN_LINODE_LABEL=rtk-cloud-admin-ci
-ADMIN_LINODE_FIREWALL_LABEL=rtk-cloud-admin-ci-firewall
+ADMIN_LINODE_FIREWALL_LABEL=rtk-cloud-admin-ci-fw
 EOF_ENV
 
-touch "$ENV_ROOT/topology/video-cloud-staging.yaml"
+cat > "$ENV_ROOT/topology/video-cloud-staging.yaml" <<'EOF_TOPOLOGY'
+stack: video-cloud-ci
+region: us-sea
+vpc:
+  label: video-cloud-ci-vpc
+  subnet:
+    label: video-cloud-ci-subnet
+instances:
+  edge:
+    label: video-cloud-ci-edge
+    letsencrypt:
+      domain: video-cloud-ci.example.test
+  api:
+    label: video-cloud-ci-api
+  infra:
+    label: video-cloud-ci-infra
+  mqtt:
+    label: video-cloud-ci-mqtt
+  coturn:
+    label: video-cloud-ci-coturn
+deploy:
+  certissuer_domain: certissuer.video-cloud-ci.example.test
+EOF_TOPOLOGY
 touch "$ENV_ROOT/services/video-cloud/video-cloud-staging.env"
+printf 'root-ca\n' > "$WORKSPACE/keys/staging/linode/video-cloud/root-ca.ed25519.cert.pem"
+printf 'device-issuer\n' > "$WORKSPACE/keys/staging/linode/video-cloud/production-issuer.ed25519.cert.pem"
+printf 'app-issuer\n' > "$WORKSPACE/keys/staging/linode/video-cloud/app-user-issuer.ed25519.cert.pem"
 cat > "$ENV_ROOT/services/account-manager/account-manager-public-staging.env" <<'EOF_AM_ENV'
 ACCOUNT_MANAGER_LINODE_ALLOWED_SSH_CIDRS=198.51.100.10/32
+ACCOUNT_MANAGER_LINODE_DOMAIN=account-manager.video-cloud-ci.example.test
+ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL=rtk-account-manager-ci-fw
+ACCOUNT_MANAGER_LINODE_LABEL=rtk-account-manager-ci
 EOF_AM_ENV
 cat > "$ENV_ROOT/services/cloud-admin/admin-staging.env" <<'EOF_ADMIN_ENV'
 ADMIN_LINODE_ALLOWED_SSH_CIDRS=198.51.100.10/32
+ADMIN_LINODE_DOMAIN=admin.video-cloud-ci.example.test
+ADMIN_LINODE_FIREWALL_LABEL=rtk-cloud-admin-ci-fw
+ADMIN_LINODE_LABEL=rtk-cloud-admin-ci
 VIDEO_CLOUD_PROMETHEUS_BASE_URL=http://10.42.1.30:9090
 EOF_ADMIN_ENV
+mkdir -p "$ENV_ROOT/services/cloud-logger"
+cat > "$ENV_ROOT/services/cloud-logger/logger.env" <<'EOF_LOGGER_ENV'
+CLOUD_LOGGER_DOMAIN=logger.video-cloud-ci.example.test
+CLOUD_LOGGER_LINODE_FIREWALL_LABEL=rtk-cloud-logger-ci-fw
+CLOUD_LOGGER_LINODE_LABEL=rtk-cloud-logger-ci
+EOF_LOGGER_ENV
 
 cat > "$ENV_ROOT/state/video-cloud-staging.state.json" <<'EOF_STATE'
 {
@@ -290,9 +340,9 @@ find "$ENV_ROOT/artifacts" -path '*e2e-report.md' | grep -q .
 grep -F 'rtk-account-manager-ci' "$OUT" >/dev/null
 grep -F 'admin.video-cloud-ci.example.test' "$OUT" >/dev/null
 grep -F 'logger VM: rtk-cloud-logger-ci [missing]' "$OUT" >/dev/null
-grep -F 'logger firewall: rtk-cloud-logger-ci-firewall [missing]' "$OUT" >/dev/null
+grep -F 'logger firewall: rtk-cloud-logger-ci-fw [missing]' "$OUT" >/dev/null
 grep -F 'logger DNS: logger.video-cloud-ci.example.test [missing]' "$OUT" >/dev/null
-grep -F 'logger env: '"$ENV_ROOT"'/services/cloud-logger/logger.env [missing]' "$OUT" >/dev/null
+grep -F 'logger env: '"$ENV_ROOT"'/services/cloud-logger/logger.env [provisioned]' "$OUT" >/dev/null
 grep -F 'logger state: '"$ENV_ROOT"'/state/cloud-logger.env [missing]' "$OUT" >/dev/null
 grep -F 'forwarder targets: edge, api, infra, mqtt, coturn, account-manager, cloud-admin, frontend, non-go-host-sources' "$OUT" >/dev/null
 grep -F 'journald retention: SystemMaxUse=1G SystemKeepFree=2G MaxRetentionSec=7day' "$OUT" >/dev/null
