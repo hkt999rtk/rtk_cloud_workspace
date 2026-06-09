@@ -812,6 +812,65 @@ func TestSyncProvisionVideoStateFromRepoOverwritesCloudState(t *testing.T) {
 	}
 }
 
+func TestProvisionVideoStateReusableTreatsMissingVPCAsFresh(t *testing.T) {
+	root := t.TempDir()
+	cloudState := filepath.Join(root, "cloud", "video-cloud-staging.state.json")
+	repoState := filepath.Join(root, "repo", "video-cloud-staging.state.json")
+	mkdirAll(t, filepath.Dir(cloudState))
+	mkdirAll(t, filepath.Dir(repoState))
+	writeFile(t, cloudState, `{"instances":{"edge":{"id":1,"label":"video-cloud-staging-edge"}}}`)
+	writeFile(t, repoState, `{"instances":{"api":{"id":2,"label":"video-cloud-staging-api"}}}`)
+
+	oldFind := findProvisionLinodeVPCID
+	findProvisionLinodeVPCID = func(label string) (int, error) {
+		if label != "video-cloud-staging-vpc" {
+			t.Fatalf("lookup label = %q", label)
+		}
+		return 0, fmt.Errorf("%w: %s", errLinodeVPCNotFound, label)
+	}
+	t.Cleanup(func() { findProvisionLinodeVPCID = oldFind })
+
+	reusable, err := provisionVideoStateReusable(
+		provisionPaths{VideoState: cloudState},
+		map[string]string{"VIDEO_CLOUD_VPC_LABEL": "video-cloud-staging-vpc"},
+		repoState,
+	)
+	if err != nil {
+		t.Fatalf("provisionVideoStateReusable returned error: %v", err)
+	}
+	if reusable {
+		t.Fatal("stale state with missing VPC was marked reusable")
+	}
+}
+
+func TestProvisionVideoStateReusableRequiresExistingVPC(t *testing.T) {
+	root := t.TempDir()
+	cloudState := filepath.Join(root, "cloud", "video-cloud-staging.state.json")
+	mkdirAll(t, filepath.Dir(cloudState))
+	writeFile(t, cloudState, `{"instances":{"edge":{"id":101,"label":"video-cloud-staging-edge"}}}`)
+
+	oldFind := findProvisionLinodeVPCID
+	findProvisionLinodeVPCID = func(label string) (int, error) {
+		if label != "video-cloud-staging-vpc" {
+			t.Fatalf("lookup label = %q", label)
+		}
+		return 42, nil
+	}
+	t.Cleanup(func() { findProvisionLinodeVPCID = oldFind })
+
+	reusable, err := provisionVideoStateReusable(
+		provisionPaths{VideoState: cloudState},
+		map[string]string{"VIDEO_CLOUD_VPC_LABEL": "video-cloud-staging-vpc"},
+		"",
+	)
+	if err != nil {
+		t.Fatalf("provisionVideoStateReusable returned error: %v", err)
+	}
+	if !reusable {
+		t.Fatal("state with existing VPC was not marked reusable")
+	}
+}
+
 func TestWritePlatformAdminSummaryRedactsPassword(t *testing.T) {
 	root := t.TempDir()
 	platformEnv := filepath.Join(root, "services", "account-manager", "account-manager-platform-admin.env")

@@ -491,7 +491,10 @@ func provisionApply(paths provisionPaths, env map[string]string, opts provisionO
 	fmt.Fprintf(os.Stderr, "[cloud-ssh-whitelist] staging automation will replace SSH whitelist with current operator CIDR: %s\n", currentCIDR)
 	updateLocalSSHWhitelistInputs(paths.EnvRoot, currentCIDR, false)
 	repoState := provisionRepoVideoStatePath(paths, env["CLOUD_STACK_NAME"])
-	stateUsable := provisionVideoStateHasInstances(paths.VideoState) || provisionVideoStateHasInstances(repoState)
+	stateUsable, err := provisionVideoStateReusable(paths, env, repoState)
+	if err != nil {
+		return err
+	}
 	if stateUsable {
 		if err := syncProvisionVideoState(paths.VideoState, repoState); err != nil {
 			return err
@@ -900,6 +903,20 @@ func provisionVideoStateHasInstances(path string) bool {
 	return len(instances) > 0
 }
 
+func provisionVideoStateReusable(paths provisionPaths, env map[string]string, repoState string) (bool, error) {
+	if !provisionVideoStateHasInstances(paths.VideoState) && !provisionVideoStateHasInstances(repoState) {
+		return false, nil
+	}
+	vpcID, err := findProvisionLinodeVPCID(env["VIDEO_CLOUD_VPC_LABEL"])
+	if errors.Is(err, errLinodeVPCNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return vpcID != 0, nil
+}
+
 func uniqueNonEmpty(values ...string) []string {
 	seen := map[string]bool{}
 	out := []string{}
@@ -924,7 +941,7 @@ func hydrateProvisionVideoState(paths provisionPaths, env map[string]string, rep
 		}
 		changed := false
 		if atoiOrZero(stringValue(state["vpc_id"])) == 0 {
-			vpcID, err := findLinodeVPCID(env["VIDEO_CLOUD_VPC_LABEL"])
+			vpcID, err := findProvisionLinodeVPCID(env["VIDEO_CLOUD_VPC_LABEL"])
 			if err != nil {
 				return err
 			}
@@ -980,6 +997,11 @@ func hydrateProvisionVideoState(paths provisionPaths, env map[string]string, rep
 	return syncProvisionVideoState(paths.VideoState, repoState)
 }
 
+var (
+	errLinodeVPCNotFound     = errors.New("linode vpc label not found")
+	findProvisionLinodeVPCID = findLinodeVPCID
+)
+
 func findLinodeVPCID(label string) (int, error) {
 	if label == "" {
 		return 0, nil
@@ -1002,7 +1024,7 @@ func findLinodeVPCID(label string) (int, error) {
 			return item.ID, nil
 		}
 	}
-	return 0, fmt.Errorf("state is missing vpc_id and Linode VPC label was not found: %s", label)
+	return 0, fmt.Errorf("%w: %s", errLinodeVPCNotFound, label)
 }
 
 func findLinodeSubnetID(vpcID int, label string) (int, error) {
