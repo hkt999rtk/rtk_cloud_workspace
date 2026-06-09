@@ -17,6 +17,7 @@ mkdir -p \
 	"$WORKSPACE/repos/rtk_video_cloud" \
 	"$WORKSPACE/repos/rtk_account_manager" \
 	"$WORKSPACE/repos/rtk_cloud_admin" \
+	"$WORKSPACE/keys/staging/linode/video-cloud" \
 	"$ENV_ROOT/services/account-manager" \
 	"$ENV_ROOT/services/cloud-admin" \
 	"$ENV_ROOT/topology" \
@@ -71,8 +72,34 @@ EOF_MANIFEST
 touch "$OBJECT_ROOT/test-bucket/releases/rtk_cloud_admin-admin-test/admin-test.tar.gz"
 
 touch "$ENV_ROOT/topology/video-cloud-staging.yaml"
-touch "$ENV_ROOT/services/video-cloud/video-cloud-staging.env"
-touch "$ENV_ROOT/services/account-manager/account-manager-public-staging.env"
+printf 'root-ca\n' > "$WORKSPACE/keys/staging/linode/video-cloud/root-ca.ed25519.cert.pem"
+printf 'device-issuer\n' > "$WORKSPACE/keys/staging/linode/video-cloud/production-issuer.ed25519.cert.pem"
+printf 'app-issuer\n' > "$WORKSPACE/keys/staging/linode/video-cloud/app-user-issuer.ed25519.cert.pem"
+cat > "$ENV_ROOT/services/video-cloud/video-cloud-staging.env" <<'EOF_VIDEO_ENV'
+CERT_ISSUER_CA_KEY_SOURCE=/tmp/device-ca.key
+CERT_ISSUER_APP_CA_KEY_SOURCE=/tmp/app-ca.key
+CERT_ISSUER_SIGNER_PROVIDER=pkcs11
+CERT_ISSUER_PKCS11_MODULE_PATH=/usr/lib/softhsm/libsofthsm2.so
+CERT_ISSUER_PKCS11_TOKEN_LABEL=video-cloud-signing
+CERT_ISSUER_PKCS11_PIN=test-pin
+CERT_ISSUER_PKCS11_KEY_LABEL=device-ca
+CERT_ISSUER_APP_SIGNER_PROVIDER=pkcs11
+CERT_ISSUER_APP_PKCS11_MODULE_PATH=/usr/lib/softhsm/libsofthsm2.so
+CERT_ISSUER_APP_PKCS11_TOKEN_LABEL=video-cloud-signing
+CERT_ISSUER_APP_PKCS11_PIN=test-pin
+CERT_ISSUER_APP_PKCS11_KEY_LABEL=app-ca
+VIDEO_CLOUD_AUTH_TOKEN_SIGNER_PROVIDER=pkcs11
+VIDEO_CLOUD_AUTH_TOKEN_PKCS11_MODULE_PATH=/usr/lib/softhsm/libsofthsm2.so
+VIDEO_CLOUD_AUTH_TOKEN_PKCS11_TOKEN_LABEL=video-cloud-signing
+VIDEO_CLOUD_AUTH_TOKEN_PKCS11_PIN=test-pin
+VIDEO_CLOUD_AUTH_TOKEN_PKCS11_KEY_LABEL=auth-token
+VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_URL=http://10.42.1.50:18081
+VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN=shared-internal-token
+VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TIMEOUT=10s
+EOF_VIDEO_ENV
+cat > "$ENV_ROOT/services/account-manager/account-manager-public-staging.env" <<'EOF_AM_ENV'
+ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN=shared-internal-token
+EOF_AM_ENV
 touch "$ENV_ROOT/services/cloud-admin/admin-staging.env"
 touch "$SSH_KEY" "$SSH_KEY.pub"
 
