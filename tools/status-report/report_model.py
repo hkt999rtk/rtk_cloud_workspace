@@ -465,6 +465,13 @@ def collect_aws_cost_estimate() -> dict[str, object]:
     per_unit_rows = table_by_header(tables, ["Scenario", "Calculation", "Estimate"])
     weighted_unit_rows = table_by_header(tables, ["Scenario", "User pool", "Device pool", "Per user", "Per device", "Effective 1 user + 4 devices"])
     top_driver_rows = table_by_header(tables, ["Rank", "Cost item", "Monthly estimate"])
+    assumption_rows = table_by_header(tables, ["Assumption", "Value"])
+    cost_area_rows = table_by_header(tables, ["Cost area", "Monthly estimate", "Notes"])
+    frontend_calc_rows = table_by_header(tables, ["Item", "Calculation", "Monthly estimate"], occurrence=1)
+    iot_calc_rows = table_by_header(tables, ["Item", "Calculation", "Monthly estimate"], occurrence=2)
+    support_calc_rows = table_by_header(tables, ["Scenario basis", "Gross monthly AWS charges", "Business Support+ calculation", "Monthly support estimate"])
+    robust_profile_rows = table_by_header(tables, ["Area", "Baseline", "Robust profile"])
+    robust_delta_rows = table_by_header(tables, ["Cost area", "Baseline", "Robust", "Delta"])
 
     scenarios = {row[0]: row[1] for row in scenario_rows if len(row) >= 2}
     per_unit = {row[0]: row[2] for row in per_unit_rows if len(row) >= 3}
@@ -530,6 +537,78 @@ def collect_aws_cost_estimate() -> dict[str, object]:
             "Robust redundant design with two CloudHSMs",
         }
     ]
+    line_item_names = {
+        "ECS Fargate application services",
+        "Public frontend CloudFront CDN",
+        "Public frontend Lambda",
+        "Public frontend S3 static origin",
+        "RDS PostgreSQL",
+        "ElastiCache for Valkey",
+        "S3 storage and PUT requests",
+        "AWS IoT Core",
+        "Application Load Balancer",
+        "NAT Gateway",
+        "CloudWatch Logs",
+        "Secrets Manager",
+        "KMS",
+        "CloudHSM",
+        "Base subtotal before HSM/Private CA",
+    }
+    calculation_line_items = [
+        {"area": row[0], "monthlyEstimate": row[1], "notes": row[2]}
+        for row in cost_area_rows
+        if len(row) >= 3 and row[0] in line_item_names
+    ]
+    calculation_assumptions = [
+        {"assumption": row[0], "value": row[1]}
+        for row in assumption_rows
+        if len(row) >= 2 and row[0] in {
+            "End users",
+            "Devices per user",
+            "Registered devices",
+            "Average connected MQTT devices",
+            "Database model",
+            "Key and certificate model",
+            "NAT assumption",
+            "Availability posture",
+        }
+    ]
+    calculation_details = {
+        "assumptions": calculation_assumptions,
+        "baseLineItems": calculation_line_items,
+        "frontendCalculation": [
+            {"item": row[0], "calculation": row[1], "monthlyEstimate": row[2]}
+            for row in frontend_calc_rows
+            if len(row) >= 3
+        ],
+        "iotCalculation": [
+            {"item": row[0], "calculation": row[1], "monthlyEstimate": row[2]}
+            for row in iot_calc_rows
+            if len(row) >= 3
+        ],
+        "supportCalculation": [
+            {"scenario": row[0], "grossMonthlyCharges": row[1], "calculation": row[2], "monthlySupportEstimate": row[3]}
+            for row in support_calc_rows
+            if len(row) >= 4
+        ],
+        "robustProfile": [
+            {"area": row[0], "baseline": row[1], "robustProfile": row[2]}
+            for row in robust_profile_rows
+            if len(row) >= 3
+        ],
+        "robustDelta": [
+            {"area": row[0], "baseline": row[1], "robust": row[2], "delta": row[3]}
+            for row in robust_delta_rows
+            if len(row) >= 4
+        ],
+        "scenarioEquations": [
+            {"scenario": "Base services only", "formula": "sum base service line items, excluding CloudHSM and Private CA", "estimate": base_without_hsm},
+            {"scenario": "Default + 1 CloudHSM", "formula": f"{base_without_hsm} + 1,357.80 CloudHSM", "estimate": default_with_hsm},
+            {"scenario": "Robust, no CloudHSM", "formula": f"{base_without_hsm} + {diff_usd_amount(robust_without_hsm, base_without_hsm)} robust infra delta", "estimate": robust_without_hsm},
+            {"scenario": "Robust + 2 CloudHSMs", "formula": f"{robust_without_hsm} + 2 * 1,357.80 CloudHSM", "estimate": robust_with_hsm},
+        ],
+        "cloudWatchFormula": "30.0 GB service logs + 3.6 GB device runtime logs = 33.6 GB/month; 33.6 * 0.70 ingestion + 33.6 * 0.03 retention = 24.53 USD/month.",
+    }
 
     return {
         "status": "available",
@@ -589,6 +668,7 @@ def collect_aws_cost_estimate() -> dict[str, object]:
             "rawDivision": raw_unit_costs,
             "weightedAllocation": weighted_unit_costs,
         },
+        "calculationDetails": calculation_details,
         "topDrivers": top_drivers,
         "caveats": [
             "Planning snapshot only; not a committed AWS quote.",
