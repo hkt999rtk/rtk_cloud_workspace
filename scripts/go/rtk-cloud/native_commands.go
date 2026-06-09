@@ -35,6 +35,7 @@ func runDeploy(args []string) error {
 	loggerOnly := fs.Bool("logger-only", false, "install and verify only logger backend and log forwarders")
 	videoOnly := fs.Bool("video-only", false, "deploy only Video Cloud")
 	binaryOnly := fs.Bool("binary-only", false, "fast path: update only Video Cloud API binaries")
+	localBuild := fs.Bool("local-build", false, "build a local Linux x86_64 Video Cloud bundle before deploy")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -46,6 +47,9 @@ func runDeploy(args []string) error {
 	}
 	if *binaryOnly && *loggerOnly {
 		return errors.New("--binary-only cannot be combined with --logger-only")
+	}
+	if *localBuild && *loggerOnly {
+		return errors.New("--local-build cannot be combined with --logger-only")
 	}
 	workspace := *workspaceFlag
 	var err error
@@ -67,7 +71,7 @@ func runDeploy(args []string) error {
 	applyDeployProcessEnv(env.Values)
 	paths.VideoState = provisionCloudVideoStatePath(envRoot, env.Values["CLOUD_STACK_NAME"], paths.VideoState)
 	operator, _ := readEnvFile(paths.OperatorEnv)
-	if *binaryOnly && strings.TrimSpace(*videoRelease) == "" {
+	if *binaryOnly && !*localBuild && strings.TrimSpace(*videoRelease) == "" {
 		selected, objectKey, err := selectObjectRelease(operator, "Video Cloud", "rtk_video_cloud", "")
 		if err != nil {
 			return err
@@ -82,6 +86,7 @@ func runDeploy(args []string) error {
 		adminRelease:         *adminRelease,
 		accountReleaseBundle: *accountBundle,
 		adminReleaseBundle:   *adminBundle,
+		localBuild:           *localBuild,
 		loggerOnly:           *loggerOnly,
 		videoOnly:            *videoOnly,
 		binaryOnly:           *binaryOnly,
@@ -415,6 +420,9 @@ func videoDeployArgs(paths provisionPaths, env map[string]string, opts provision
 	}
 	if opts.binaryOnly {
 		args = append(args, "--binary-only")
+	}
+	if opts.localBuild {
+		args = append(args, "--local-build")
 	}
 	return args
 }

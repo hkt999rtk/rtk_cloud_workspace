@@ -62,6 +62,7 @@ type provisionOptions struct {
 	accountReleaseBundle string
 	adminRelease         string
 	adminReleaseBundle   string
+	localBuild           bool
 	loggerOnly           bool
 	videoOnly            bool
 	binaryOnly           bool
@@ -383,11 +384,13 @@ func newProvisionPaths(workspace, root string, opts provisionOptions) provisionP
 }
 
 func provisionPreflight(paths provisionPaths, opts *provisionOptions) error {
-	for _, cmd := range []string{"curl", "jq", "ssh", "openssl", "go", "tar"} {
+	preflightStep("local-build-tools")
+	for _, cmd := range []string{"curl", "jq", "ssh", "openssl", "go", "tar", "git", "make", "file", "strings"} {
 		if _, err := exec.LookPath(cmd); err != nil {
 			return fmt.Errorf("%s is required", cmd)
 		}
 	}
+	preflightStep("config")
 	for _, path := range []string{paths.VideoConfig, paths.VideoEnv, paths.AccountManagerEnv, paths.AdminEnv, opts.sshKey, opts.sshKey + ".pub"} {
 		if path == "" {
 			return errors.New("provision path resolved empty")
@@ -396,15 +399,41 @@ func provisionPreflight(paths provisionPaths, opts *provisionOptions) error {
 			return err
 		}
 	}
+	preflightStep("credentials")
 	operator, _ := readEnvFile(paths.OperatorEnv)
 	if firstNonEmpty(os.Getenv("LINODE_TOKEN"), operator["LINODE_TOKEN"]) == "" {
 		return errors.New("LINODE_TOKEN is required")
 	}
+	dnsOverride := ""
+	if opts.dnsRootExplicit {
+		dnsOverride = opts.dnsRoot
+	}
+	env, err := envroot.Load(paths.EnvRoot, dnsOverride)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			env = envroot.Environment{Values: defaultProvisionEnvValues()}
+		} else {
+			return err
+		}
+	}
+	preflightStep("runtime-contracts")
+	if err := validateProvisionRuntimeContracts(paths, env.Values); err != nil {
+		return err
+	}
+	preflightStep("removed-services")
+	if err := validateRemovedStagingServices(paths); err != nil {
+		return err
+	}
+	preflightStep("release")
 	if err := resolveProvisionReleases(paths, operator, opts); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "[rtk-cloud provision] preflight ok")
 	return nil
+}
+
+func preflightStep(name string) {
+	fmt.Fprintf(os.Stderr, "[rtk-cloud provision] preflight %s\n", name)
 }
 
 func provisionPlan(paths provisionPaths, env map[string]string) error {
@@ -1071,6 +1100,123 @@ func ensureProvisionRuntimeContracts(paths provisionPaths, env map[string]string
 		return err
 	}
 	return ensureProvisionPKCS11Signing(paths, env)
+}
+
+func validateProvisionRuntimeContracts(paths provisionPaths, env map[string]string) error {
+	if err := validateProvisionDeviceMTLSIngress(paths); err != nil {
+		return err
+	}
+	if err := validateProvisionAccountManagerInternalAuth(paths); err != nil {
+		return err
+	}
+	return validateProvisionPKCS11Signing(paths, env)
+}
+
+func validateProvisionDeviceMTLSIngress(paths provisionPaths) error {
+	keysDir := filepath.Join(paths.Workspace, "keys", "staging", "linode", "video-cloud")
+	for _, name := range []string{"root-ca.ed25519.cert.pem", "production-issuer.ed25519.cert.pem", "app-user-issuer.ed25519.cert.pem"} {
+		path := filepath.Join(keysDir, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("preflight runtime-contracts: read device mTLS CA certificate %s: %w", path, err)
+		}
+		if strings.TrimSpace(string(data)) == "" {
+			return fmt.Errorf("preflight runtime-contracts: device mTLS CA certificate is empty: %s", path)
+		}
+	}
+	return nil
+}
+
+func validateProvisionAccountManagerInternalAuth(paths provisionPaths) error {
+	accountEnv, _ := readEnvFile(paths.AccountManagerEnv)
+	videoEnv, _ := readEnvFile(paths.VideoEnv)
+	accountToken := strings.TrimSpace(accountEnv["ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN"])
+	videoToken := strings.TrimSpace(videoEnv["VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN"])
+	missing := []string{}
+	if accountToken == "" {
+		missing = append(missing, "ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN")
+	}
+	if videoToken == "" {
+		missing = append(missing, "VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN")
+	}
+	if accountToken != "" && videoToken != "" && accountToken != videoToken {
+		missing = append(missing, "matching Account Manager internal auth tokens")
+	}
+	if strings.TrimSpace(videoEnv["VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_URL"]) == "" {
+		missing = append(missing, "VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_URL")
+	}
+	if strings.TrimSpace(videoEnv["VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TIMEOUT"]) == "" {
+		missing = append(missing, "VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TIMEOUT")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("preflight runtime-contracts: update %s and %s with %s", paths.AccountManagerEnv, paths.VideoEnv, strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+func validateProvisionPKCS11Signing(paths provisionPaths, env map[string]string) error {
+	switch strings.ToLower(strings.TrimSpace(env["CLOUD_REQUIRE_PKCS11_SIGNING"])) {
+	case "0", "false", "no", "off":
+		return nil
+	}
+	videoEnv, _ := readEnvFile(paths.VideoEnv)
+	missing := provisionPKCS11SigningMissing(videoEnv)
+	if len(missing) > 0 {
+		return fmt.Errorf("preflight runtime-contracts: staging requires SoftHSMv2/PKCS#11 signing; update %s with %s, or set CLOUD_REQUIRE_PKCS11_SIGNING=0 only for an explicit legacy PEM run", paths.VideoEnv, strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+func provisionPKCS11SigningMissing(videoEnv map[string]string) []string {
+	missing := []string{}
+	requirePKCS11Group := func(label, providerKey, moduleKey, tokenKey, slotKey, pinKey, keyLabelKey string) {
+		if !strings.EqualFold(strings.TrimSpace(videoEnv[providerKey]), "pkcs11") {
+			missing = append(missing, providerKey+"=pkcs11")
+		}
+		if strings.TrimSpace(videoEnv[moduleKey]) == "" {
+			missing = append(missing, moduleKey)
+		}
+		if strings.TrimSpace(videoEnv[tokenKey]) == "" && strings.TrimSpace(videoEnv[slotKey]) == "" {
+			missing = append(missing, label+" token label or slot id ("+tokenKey+" or "+slotKey+")")
+		}
+		if strings.TrimSpace(videoEnv[pinKey]) == "" {
+			missing = append(missing, pinKey)
+		}
+		if strings.TrimSpace(videoEnv[keyLabelKey]) == "" {
+			missing = append(missing, keyLabelKey)
+		}
+	}
+	if strings.TrimSpace(videoEnv["CERT_ISSUER_CA_KEY_SOURCE"]) == "" && strings.TrimSpace(videoEnv["CERT_ISSUER_CA_KEY_PEM"]) == "" {
+		missing = append(missing, "CERT_ISSUER_CA_KEY_SOURCE or CERT_ISSUER_CA_KEY_PEM")
+	}
+	if strings.TrimSpace(videoEnv["CERT_ISSUER_APP_CA_KEY_SOURCE"]) == "" && strings.TrimSpace(videoEnv["CERT_ISSUER_APP_CA_KEY_PEM"]) == "" {
+		missing = append(missing, "CERT_ISSUER_APP_CA_KEY_SOURCE or CERT_ISSUER_APP_CA_KEY_PEM")
+	}
+	requirePKCS11Group("api auth token pkcs11", "VIDEO_CLOUD_AUTH_TOKEN_SIGNER_PROVIDER", "VIDEO_CLOUD_AUTH_TOKEN_PKCS11_MODULE_PATH", "VIDEO_CLOUD_AUTH_TOKEN_PKCS11_TOKEN_LABEL", "VIDEO_CLOUD_AUTH_TOKEN_PKCS11_SLOT_ID", "VIDEO_CLOUD_AUTH_TOKEN_PKCS11_PIN", "VIDEO_CLOUD_AUTH_TOKEN_PKCS11_KEY_LABEL")
+	requirePKCS11Group("api certissuer pkcs11", "CERT_ISSUER_SIGNER_PROVIDER", "CERT_ISSUER_PKCS11_MODULE_PATH", "CERT_ISSUER_PKCS11_TOKEN_LABEL", "CERT_ISSUER_PKCS11_SLOT_ID", "CERT_ISSUER_PKCS11_PIN", "CERT_ISSUER_PKCS11_KEY_LABEL")
+	requirePKCS11Group("api app certissuer pkcs11", "CERT_ISSUER_APP_SIGNER_PROVIDER", "CERT_ISSUER_APP_PKCS11_MODULE_PATH", "CERT_ISSUER_APP_PKCS11_TOKEN_LABEL", "CERT_ISSUER_APP_PKCS11_SLOT_ID", "CERT_ISSUER_APP_PKCS11_PIN", "CERT_ISSUER_APP_PKCS11_KEY_LABEL")
+	return missing
+}
+
+func validateRemovedStagingServices(paths provisionPaths) error {
+	data, err := os.ReadFile(paths.VideoConfig)
+	if err != nil {
+		return err
+	}
+	text := string(data)
+	for _, removed := range []string{"cmd_crossservice", "nats-server", "nats"} {
+		if strings.Contains(text, removed) {
+			return fmt.Errorf("preflight removed-services: active retired service %q remains in %s", removed, paths.VideoConfig)
+		}
+	}
+	for _, target := range loggerForwarderTargets(paths) {
+		for _, removed := range []string{"nats-server.service", "nats.service", "video_cloud-crossservice.service"} {
+			if strings.Contains(target.units, removed) {
+				return fmt.Errorf("preflight removed-services: logger forwarder target %s still references retired unit %s", target.name, removed)
+			}
+		}
+	}
+	return nil
 }
 
 func ensureProvisionDeviceMTLSIngress(paths provisionPaths, env map[string]string) error {

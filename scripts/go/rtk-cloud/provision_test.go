@@ -194,6 +194,35 @@ func TestEnsureProvisionRuntimeContractsRequiresPKCS11SigningByDefault(t *testin
 	}
 }
 
+func TestValidateProvisionRuntimeContractsRequiresPKCS11SigningByDefault(t *testing.T) {
+	root := t.TempDir()
+	workspace := t.TempDir()
+	keysDir := filepath.Join(workspace, "keys", "staging", "linode", "video-cloud")
+	mkdirAll(t, keysDir)
+	for _, name := range []string{"root-ca.ed25519.cert.pem", "production-issuer.ed25519.cert.pem", "app-user-issuer.ed25519.cert.pem"} {
+		writeFile(t, filepath.Join(keysDir, name), "-----BEGIN CERTIFICATE-----\nca\n-----END CERTIFICATE-----\n")
+	}
+	paths := provisionPaths{
+		Workspace:         workspace,
+		VideoEnv:          filepath.Join(root, "services", "video-cloud", "video-cloud-staging.env"),
+		AccountManagerEnv: filepath.Join(root, "services", "account-manager", "account-manager-public-staging.env"),
+	}
+	mkdirAll(t, filepath.Dir(paths.VideoEnv))
+	writeFile(t, paths.VideoEnv, "VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_URL=http://10.42.1.50:18081\nVIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN=shared\nVIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TIMEOUT=10s\n")
+	mkdirAll(t, filepath.Dir(paths.AccountManagerEnv))
+	writeFile(t, paths.AccountManagerEnv, "ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN=shared\n")
+
+	err := validateProvisionRuntimeContracts(paths, map[string]string{"VIDEO_CLOUD_DOMAIN": "video.example.test"})
+	if err == nil {
+		t.Fatalf("validateProvisionRuntimeContracts succeeded without pkcs11 signer settings")
+	}
+	for _, want := range []string{"SoftHSMv2/PKCS#11", "CERT_ISSUER_CA_KEY_SOURCE", "CERT_ISSUER_APP_CA_KEY_SOURCE", "VIDEO_CLOUD_AUTH_TOKEN_SIGNER_PROVIDER=pkcs11"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error missing %q: %v", want, err)
+		}
+	}
+}
+
 func TestEnsureProvisionRuntimeContractsAcceptsPKCS11Signing(t *testing.T) {
 	root := t.TempDir()
 	workspace := t.TempDir()
@@ -344,6 +373,23 @@ func TestLoggerForwarderTargetsUseStagingSystemdUnits(t *testing.T) {
 	}
 	if byName["coturn"].host != "203.0.113.9" {
 		t.Fatalf("coturn logger forwarder host = %q, want public IP", byName["coturn"].host)
+	}
+}
+
+func TestValidateRemovedStagingServicesRejectsActiveNATSAndCrossservice(t *testing.T) {
+	root := t.TempDir()
+	paths := provisionPaths{
+		VideoConfig: filepath.Join(root, "topology", "video-cloud-staging.yaml"),
+	}
+	mkdirAll(t, filepath.Dir(paths.VideoConfig))
+	writeFile(t, paths.VideoConfig, "roles:\n  - cmd_crossservice\n  - nats\n")
+
+	err := validateRemovedStagingServices(paths)
+	if err == nil {
+		t.Fatalf("validateRemovedStagingServices succeeded with retired roles")
+	}
+	if !strings.Contains(err.Error(), "cmd_crossservice") {
+		t.Fatalf("error missing retired role: %v", err)
 	}
 }
 
@@ -1017,6 +1063,13 @@ func TestVideoDeployArgsSupportBinaryOnlyFastMode(t *testing.T) {
 	}
 }
 
+func TestDeployLocalBuildCannotCombineWithLoggerOnly(t *testing.T) {
+	err := runDeploy([]string{"--env-root", t.TempDir(), "--local-build", "--logger-only"})
+	if err == nil || !strings.Contains(err.Error(), "--local-build cannot be combined with --logger-only") {
+		t.Fatalf("expected local-build/logger-only conflict, got %v", err)
+	}
+}
+
 func TestStgDeployShortcutDefaultsToVideoBinaryOnly(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
@@ -1084,6 +1137,40 @@ func TestStgDeployShortcutAcceptsOptionalRelease(t *testing.T) {
 	for _, want := range []string{"deploy", "--video-only", "--binary-only", "--video-release v-test"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("stg.sh deploy v-test args missing %q: %s", want, got)
+		}
+	}
+}
+
+func TestStgDeployLocalShortcutBuildsLocalBinaryRelease(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	argsFile := filepath.Join(tmp, "args.txt")
+	fakeGo := filepath.Join(tmp, "fake-go")
+	writeFile(t, fakeGo, "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > \"$RTK_FAKE_GO_ARGS\"\n")
+	if err := os.Chmod(fakeGo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("bash", filepath.Join(root, "bin", "stg.sh"), "deploy-local", "v-local")
+	cmd.Env = append(os.Environ(),
+		"RTK_CLOUD_GO="+fakeGo,
+		"RTK_FAKE_GO_ARGS="+argsFile,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("stg.sh deploy-local failed: %v\n%s", err, out)
+	}
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(strings.Fields(string(data)), " ")
+	for _, want := range []string{"deploy", "--video-only", "--binary-only", "--local-build", "--video-release v-local"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stg.sh deploy-local args missing %q: %s", want, got)
 		}
 	}
 }

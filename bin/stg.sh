@@ -15,6 +15,8 @@ Shortcuts:
   deploy [VERSION] [args]       -> fast Video Cloud binary update
                                    default: latest Video Cloud Object Storage release
                                    full deploy: raw deploy [args]
+  deploy-local [VERSION] [args] -> rebuild local Video Cloud Linux x86_64 bundle,
+                                   then fast binary-only deploy
   token [args]                  -> rtk-cloud platform-admin-token --env-root cloud_env/staging
   brand NAME [args]             -> create-brandname-cloud
   brands [args]                 -> list-brandname-clouds
@@ -75,6 +77,15 @@ case "$cmd" in
 		else
 			with_env deploy --video-only --binary-only "$@"
 		fi
+		;;
+	deploy-local)
+		if [[ -n "${1:-}" && "${1:-}" != -* ]]; then
+			release="$1"
+			shift
+		else
+			release="local-$(git -C "$ROOT/repos/rtk_video_cloud" rev-parse --short HEAD)"
+		fi
+		with_env deploy --video-only --binary-only --local-build --video-release "$release" "$@"
 		;;
 	token)
 		with_env platform-admin-token "$@"
