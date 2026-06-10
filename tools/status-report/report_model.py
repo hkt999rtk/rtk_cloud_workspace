@@ -912,6 +912,7 @@ DECISIONS = [
 
 ALPHA_SUPPORT = [
     ["Account / payment ownership", "DNS, Linode billing, credit-card payment, mail/service accounts", "Move from Kevin personal account to company-managed or approved third-party account before alpha.", "Alpha"],
+    ["Official mobile market accounts", "Google Play Console and Apple Developer Program organization accounts", "Need official company-owned accounts to upload Android / iOS apps, manage signing, TestFlight / internal testing, store listing, review, and production release ownership.", "Alpha"],
     ["Operation backup", "DNS, Linode console, deploy, health check, runbook, incident contact", "Assign backup operator so staging/alpha is not blocked when Kevin is unavailable.", "Alpha"],
     ["Temporary alpha internal testers", "4-6 real human testers; at least 3-4 developer/firmware/app testers", "Auto test covers quantity; human developers validate SDK onboarding, sample flow, debug/report behavior during alpha.", "Alpha"],
     ["Temporary beta pilot customer", "1-2 pilot customers or partner use cases", "Beta needs external usage feedback before public scope and production boundary are finalized.", "Beta"],

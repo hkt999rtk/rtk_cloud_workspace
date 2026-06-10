@@ -1053,18 +1053,18 @@ async function slide19(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
   await addHeader(slide, payload, "Decision / Support Needed", "ALPHA READINESS");
-  addText(slide, "Alpha 前要把 Kevin personal-resource dependency 降下來，先補上 operation backup, 內部測試使用者, beta pilot customer path。", { x: 92, y: 154, w: 1095, h: 42 }, { size: 16, color: C.navy, bold: true, align: "center", fill: C.pale });
+  addText(slide, "Alpha 前要把 Kevin personal-resource dependency 降下來，先補上 company-owned account, market publishing, operation backup, internal tester, beta pilot customer path。", { x: 92, y: 154, w: 1095, h: 42 }, { size: 15, color: C.navy, bold: true, align: "center", fill: C.pale });
 
   const support = payload.alphaSupport || [];
   support.forEach((row, i) => {
     const x = 72 + (i % 2) * 585;
-    const y = 232 + Math.floor(i / 2) * 154;
+    const y = 215 + Math.floor(i / 2) * 105;
     const fill = i % 2 ? C.paleTeal : C.paleBlue;
-    addShape(slide, { x, y, w: 520, h: 120, fill, line: C.line });
-    addText(slide, row[0], { x: x + 20, y: y + 15, w: 300, h: 24 }, { size: 17, color: C.navy, bold: true, face: FONT_EN });
-    addPill(slide, row[3], x + 392, y + 15, 92, row[3] === "Beta" ? C.teal : C.blue);
-    addText(slide, row[1], { x: x + 22, y: y + 48, w: 470, h: 26 }, { size: 11, color: C.black, bold: true });
-    addText(slide, row[2], { x: x + 22, y: y + 78, w: 470, h: 34 }, { size: 11, color: C.black });
+    addShape(slide, { x, y, w: 520, h: 92, fill, line: C.line });
+    addText(slide, row[0], { x: x + 18, y: y + 10, w: 315, h: 20 }, { size: 13.5, color: C.navy, bold: true, face: FONT_EN });
+    addPill(slide, row[3], x + 392, y + 9, 92, row[3] === "Beta" ? C.teal : C.blue);
+    addText(slide, row[1], { x: x + 20, y: y + 35, w: 475, h: 20 }, { size: 8.8, color: C.black, bold: true });
+    addText(slide, row[2], { x: x + 20, y: y + 58, w: 475, h: 26 }, { size: 8.2, color: C.black });
   });
 
   const milestones = ["Aug.1 Loading Test", "Alpha", "Beta", "Public"];
@@ -1075,7 +1075,7 @@ async function slide19(p, payload) {
     addShape(slide, { x, y: 560, w: 130, h: 36, fill: i === 1 ? C.paleAmber : C.pale, line: C.line });
     addText(slide, m, { x: x + 6, y: 569, w: 118, h: 18 }, { size: 10, color: C.navy, bold: true, align: "center", face: FONT_EN });
   });
-  addText(slide, "Alpha 前先處理付款歸屬: 信用卡, Linode 帳單, DNS / mail service 要轉到公司或核准的第三方帳號。", { x: 175, y: 625, w: 930, h: 28 }, { size: 14, color: C.navy, bold: true, align: "center", fill: C.paleAmber });
+  addText(slide, "Alpha 前先處理帳號歸屬: credit card, Linode billing, DNS/mail service, Google Play Console, Apple Developer Program 都要轉到公司或核准的官方帳號。", { x: 115, y: 625, w: 1050, h: 28 }, { size: 12.5, color: C.navy, bold: true, align: "center", fill: C.paleAmber });
   return slide;
 }
 
