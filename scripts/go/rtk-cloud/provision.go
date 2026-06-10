@@ -1436,12 +1436,17 @@ func resolveProvisionReleases(paths provisionPaths, operator map[string]string, 
 		display string
 		prefix  string
 		value   *string
+		bundle  *string
 	}{
-		{"Video Cloud", "rtk_video_cloud", &opts.videoRelease},
-		{"Account Manager", "rtk_account_manager", &opts.accountRelease},
-		{"Cloud Admin", "rtk_cloud_admin", &opts.adminRelease},
+		{"Video Cloud", "rtk_video_cloud", &opts.videoRelease, nil},
+		{"Account Manager", "rtk_account_manager", &opts.accountRelease, &opts.accountReleaseBundle},
+		{"Cloud Admin", "rtk_cloud_admin", &opts.adminRelease, &opts.adminReleaseBundle},
 	}
 	for _, item := range releases {
+		if item.bundle != nil && *item.bundle != "" && *item.value == "" {
+			fmt.Fprintf(os.Stderr, "using %s local release bundle: %s\n", item.display, *item.bundle)
+			continue
+		}
 		version, objectKey, err := selectObjectRelease(operator, item.display, item.prefix, *item.value)
 		if err != nil {
 			return err
