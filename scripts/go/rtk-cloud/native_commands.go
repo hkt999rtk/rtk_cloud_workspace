@@ -476,18 +476,18 @@ func applyDeployProcessEnv(env map[string]string) {
 }
 
 func writePlatformAdminSummary(w io.Writer, paths provisionPaths) {
-	platformEnv := filepath.Join(paths.EnvRoot, "services", "account-manager", "account-manager-platform-admin.env")
-	username := envFileValue(platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL")
+	adminEnv := filepath.Join(paths.EnvRoot, "services", "cloud-admin", "admin-staging.env")
+	username := envFileValue(adminEnv, "ADMIN_BOOTSTRAP_EMAIL")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Platform admin:")
+	fmt.Fprintln(w, "Cloud Admin platform login:")
 	if username == "" {
 		fmt.Fprintln(w, "- username: unavailable")
-		fmt.Fprintf(w, "- password: see %s\n", platformEnv)
+		fmt.Fprintf(w, "- password: see %s\n", adminEnv)
 		return
 	}
 	fmt.Fprintf(w, "- username: %s\n", username)
-	fmt.Fprintf(w, "- password: see %s\n", platformEnv)
-	fmt.Fprintln(w, "- token: run ./stg.sh token")
+	fmt.Fprintf(w, "- password: see %s\n", adminEnv)
+	fmt.Fprintln(w, "- account-manager token: run ./stg.sh token")
 }
 
 func runLoggerProvisionHooks(paths provisionPaths, env map[string]string, sshKey string, report *readinessReport) {

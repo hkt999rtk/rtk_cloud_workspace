@@ -873,20 +873,23 @@ func TestProvisionVideoStateReusableRequiresExistingVPC(t *testing.T) {
 
 func TestWritePlatformAdminSummaryRedactsPassword(t *testing.T) {
 	root := t.TempDir()
-	platformEnv := filepath.Join(root, "services", "account-manager", "account-manager-platform-admin.env")
-	mkdirAll(t, filepath.Dir(platformEnv))
-	writeFile(t, platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL=root@example.test\nACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD=super-secret-password\n")
+	adminEnv := filepath.Join(root, "services", "cloud-admin", "admin-staging.env")
+	mkdirAll(t, filepath.Dir(adminEnv))
+	writeFile(t, adminEnv, "ADMIN_BOOTSTRAP_EMAIL=admin@example.test\nADMIN_BOOTSTRAP_PASSWORD=super-secret-password\n")
 
 	var out strings.Builder
 	writePlatformAdminSummary(&out, provisionPaths{EnvRoot: root})
 	body := out.String()
-	if !strings.Contains(body, "username: root@example.test") {
+	if !strings.Contains(body, "Cloud Admin platform login:") {
+		t.Fatalf("summary missing cloud admin heading:\n%s", body)
+	}
+	if !strings.Contains(body, "username: admin@example.test") {
 		t.Fatalf("summary missing username:\n%s", body)
 	}
-	if !strings.Contains(body, "password: see "+platformEnv) {
+	if !strings.Contains(body, "password: see "+adminEnv) {
 		t.Fatalf("summary missing password file hint:\n%s", body)
 	}
-	if !strings.Contains(body, "token: run ./stg.sh token") {
+	if !strings.Contains(body, "account-manager token: run ./stg.sh token") {
 		t.Fatalf("summary missing token command hint:\n%s", body)
 	}
 	if strings.Contains(body, "super-secret-password") {
