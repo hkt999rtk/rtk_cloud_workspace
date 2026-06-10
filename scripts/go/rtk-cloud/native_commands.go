@@ -542,7 +542,7 @@ func installNativeLoggerBackend(paths provisionPaths, env map[string]string, ssh
 	if err != nil {
 		return err
 	}
-	script := loggerBackendInstallScript(domain, token, firstNonEmpty(os.Getenv("CLOUD_LOGGER_LOKI_VERSION"), "v3.5.1"), cachedCert)
+	script := loggerBackendInstallScript(domain, token, firstNonEmpty(os.Getenv("CLOUD_LOGGER_LOKI_VERSION"), "v3.5.1"), cachedCert, loggerState["CLOUD_LOGGER_LINODE_PRIVATE_IPV4"])
 	if err := runCmdWithInput("", script, "ssh", loggerSSHArgs(paths, sshKey, host, "bash", "-s")...); err != nil {
 		return err
 	}
@@ -716,13 +716,24 @@ func remoteCertificatePresent(paths provisionPaths, sshKey, host, domain string)
 	return false, err
 }
 
-func loggerBackendInstallScript(domain, token, lokiVersion string, cachedCert bool) string {
+func loggerBackendInstallScript(domain, token, lokiVersion string, cachedCert bool, privateIP ...string) string {
+	nodeExporterListenIP := ""
+	if len(privateIP) > 0 {
+		nodeExporterListenIP = strings.TrimSpace(privateIP[0])
+	}
+	loggerListenAddr := "127.0.0.1:18090"
+	if nodeExporterListenIP != "" {
+		loggerListenAddr = "0.0.0.0:18090"
+	}
 	var b strings.Builder
 	fmt.Fprintln(&b, "set -euo pipefail")
 	fmt.Fprintln(&b, "export DEBIAN_FRONTEND=noninteractive")
 	fmt.Fprintln(&b, "apt-get update")
-	fmt.Fprintln(&b, "apt-get install -y nginx certbot python3-certbot-nginx curl unzip")
+	fmt.Fprintln(&b, "apt-get install -y nginx certbot python3-certbot-nginx curl unzip prometheus-node-exporter")
 	fmt.Fprintln(&b, "install -d -m 0755 /etc/rtk-cloud /var/lib/loki")
+	if nodeExporterListenIP != "" {
+		fmt.Fprintf(&b, "printf 'ARGS=\"--web.listen-address=%s:9100\"\\n' > /etc/default/prometheus-node-exporter\n", shellEnvValue(nodeExporterListenIP))
+	}
 	fmt.Fprintln(&b, "if ! command -v loki >/dev/null 2>&1; then")
 	fmt.Fprintf(&b, "  curl -fsSL -o /tmp/loki-linux-amd64.zip https://github.com/grafana/loki/releases/download/%s/loki-linux-amd64.zip\n", shellEnvValue(lokiVersion))
 	fmt.Fprintln(&b, "  unzip -o /tmp/loki-linux-amd64.zip -d /tmp")
@@ -785,7 +796,7 @@ func loggerBackendInstallScript(domain, token, lokiVersion string, cachedCert bo
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "[Service]")
 	fmt.Fprintln(&b, "EnvironmentFile=/etc/rtk-cloud/logger.env")
-	fmt.Fprintln(&b, "ExecStart=/usr/local/bin/rtk-cloud-logger -addr 127.0.0.1:18090")
+	fmt.Fprintf(&b, "ExecStart=/usr/local/bin/rtk-cloud-logger -addr %s\n", shellEnvValue(loggerListenAddr))
 	fmt.Fprintln(&b, "Restart=always")
 	fmt.Fprintln(&b, "RestartSec=5")
 	fmt.Fprintln(&b)
@@ -811,8 +822,12 @@ func loggerBackendInstallScript(domain, token, lokiVersion string, cachedCert bo
 	fmt.Fprintln(&b, "ln -sf /etc/nginx/sites-available/rtk-cloud-logger /etc/nginx/sites-enabled/rtk-cloud-logger")
 	fmt.Fprintln(&b, "rm -f /etc/nginx/sites-enabled/default")
 	fmt.Fprintln(&b, "systemctl daemon-reload")
-	fmt.Fprintln(&b, "systemctl enable loki.service rtk-cloud-logger.service nginx.service")
-	fmt.Fprintln(&b, "systemctl restart loki.service rtk-cloud-logger.service")
+	fmt.Fprintln(&b, "systemctl enable loki.service rtk-cloud-logger.service nginx.service prometheus-node-exporter.service")
+	fmt.Fprintln(&b, "systemctl restart loki.service rtk-cloud-logger.service prometheus-node-exporter.service")
+	fmt.Fprintln(&b, "systemctl is-active prometheus-node-exporter.service")
+	if nodeExporterListenIP != "" {
+		fmt.Fprintf(&b, "ss -lnt | grep %s\n", shellEnvValue(nodeExporterListenIP+":9100"))
+	}
 	fmt.Fprintln(&b, "systemctl reload-or-restart nginx.service")
 	if domain != "" {
 		if cachedCert {
