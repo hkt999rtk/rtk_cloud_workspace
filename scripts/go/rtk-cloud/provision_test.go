@@ -454,8 +454,12 @@ func TestLoggerHTTPArgsUseBoundedTimeouts(t *testing.T) {
 }
 
 func TestLoggerBackendInstallScriptUsesCachedCertificate(t *testing.T) {
-	script := loggerBackendInstallScript("logger.example.test", "secret-token", "v3.5.1", true)
+	script := loggerBackendInstallScript("logger.example.test", "secret-token", "v3.5.1", true, "10.42.1.90")
 	for _, want := range []string{
+		"apt-get install -y nginx certbot python3-certbot-nginx curl unzip prometheus-node-exporter",
+		"printf 'ARGS=\"--web.listen-address=10.42.1.90:9100\"\\n' > /etc/default/prometheus-node-exporter",
+		"systemctl restart prometheus-node-exporter.service",
+		"ss -lnt | grep 10.42.1.90:9100",
 		"/tmp/rtk-cloud-logger-deploy/cert-cache/fullchain.pem",
 		"/etc/letsencrypt/live/$domain/fullchain.pem",
 		"openssl x509 -in /tmp/rtk-cloud-logger-deploy/cert-cache/fullchain.pem",
@@ -473,9 +477,23 @@ func TestLoggerBackendInstallScriptUsesCachedCertificate(t *testing.T) {
 }
 
 func TestLoggerBackendInstallScriptIssuesCertificateWithoutCache(t *testing.T) {
-	script := loggerBackendInstallScript("logger.example.test", "secret-token", "v3.5.1", false)
+	script := loggerBackendInstallScript("logger.example.test", "secret-token", "v3.5.1", false, "")
 	if !strings.Contains(script, "certbot --nginx -d logger.example.test") {
 		t.Fatalf("logger backend script missing certbot issuance:\n%s", script)
+	}
+}
+
+func TestPrometheusTargetHostReadsCloudLoggerNode(t *testing.T) {
+	config := filepath.Join(t.TempDir(), "video-cloud-staging.yaml")
+	writeFile(t, config, `deploy:
+  prometheus_targets:
+    - job: cloud_logger_app
+      address: 10.42.1.90:18090
+    - job: cloud_logger_node
+      address: 10.42.1.90:9100
+`)
+	if got := prometheusTargetHost(config, "cloud_logger_node"); got != "10.42.1.90" {
+		t.Fatalf("prometheusTargetHost = %q, want 10.42.1.90", got)
 	}
 }
 
