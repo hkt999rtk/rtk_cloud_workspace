@@ -129,30 +129,28 @@ dashboard session, but it must not create a separate enterprise-customer source
 of truth.
 
 Brand-cloud management requires an Account Manager-backed platform-admin token.
-Admin Console local break-glass sessions are emergency dashboard sessions only;
-without an upstream Account Manager token they must not create or update brand
-clouds.
+Cloud Admin does not provide a local break-glass administrator account; platform
+sessions without an upstream Account Manager token must not create or update
+brand clouds.
 
 ## Staging Login Credential Boundary
 
-Staging has two different platform-admin credential contexts. They are related
-to the same operator workflow, but they are not interchangeable:
+Staging has one platform-admin credential source for both Cloud Admin browser
+login and Account Manager API automation:
 
 | Context | Endpoint / UI | Credential source | Intended use |
 | --- | --- | --- | --- |
-| Cloud Admin platform login | `https://admin.video-cloud-staging.<root-domain>/login?next=/admin` and `/api/auth/platform/login` | `cloud_env/staging/linode/services/cloud-admin/admin-staging.env`, keys `ADMIN_BOOTSTRAP_EMAIL` and `ADMIN_BOOTSTRAP_PASSWORD` | Browser login to Platform Dashboard and Admin Console recovery access |
-| Account Manager platform token | `https://account-manager.video-cloud-staging.<root-domain>/v1/auth/login` and `./stg.sh token` | `cloud_env/staging/linode/services/account-manager/account-manager-platform-admin.env`, keys `ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL` and `ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD` | Backend/API automation for brand cloud, user, bind, and e2e setup |
+| Account Manager platform admin | Cloud Admin `https://admin.video-cloud-staging.<root-domain>/login?next=/admin`, Cloud Admin `/api/auth/platform/login`, Account Manager `/v1/auth/login`, and `./stg.sh token` | `cloud_env/staging/linode/services/account-manager/account-manager-platform-admin.env`, keys `ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL` and `ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD` | Browser login to Platform Dashboard plus backend/API automation for brand cloud, user, bind, and e2e setup |
 
-Do not use the Account Manager bootstrap platform-admin account as the Cloud
-Admin `/admin` UI login. In staging, `root@realtekconnect.com` is the Account
-Manager platform-admin bootstrap account used for API automation and token
-minting; it is not the browser login account for the Cloud Admin Platform
-Dashboard.
+Do not use legacy Cloud Admin `ADMIN_BOOTSTRAP_*` credentials for `/admin`.
+Those local break-glass credentials are not supported. In staging,
+`root@realtekconnect.com` is the Account Manager platform-admin bootstrap
+account used for Cloud Admin Platform Dashboard login and API token minting.
 
-When verifying the Admin Console login page, use the Cloud Admin bootstrap
-account from `admin-staging.env`. A successful platform UI login should return
-`/api/me` with `kind=platform_admin` and navigate to `/admin` without an access
-denied state.
+When verifying the Admin Console login page, use the Account Manager platform
+admin account from `account-manager-platform-admin.env`. A successful platform
+UI login should return `/api/me` with `kind=platform_admin` and navigate to
+`/admin` without an access denied state.
 
 There are two dashboard concepts:
 

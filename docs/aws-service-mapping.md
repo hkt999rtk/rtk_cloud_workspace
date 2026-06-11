@@ -194,8 +194,8 @@ Sizing inputs:
 Current shape:
 
 - Go BFF with a React SPA served from the Go backend.
-- SQLite is authoritative only for console-local platform admins, sessions,
-  settings, audit, preferences, and demo data.
+- SQLite is authoritative only for console-local sessions, settings, audit,
+  preferences, and demo data.
 - Account Manager and Video Cloud remain authoritative for customer, device,
   provisioning, firmware, telemetry, stream, and readiness facts.
 
