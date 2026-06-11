@@ -371,6 +371,7 @@ grep -F 'journald retention: SystemMaxUse=1G SystemKeepFree=2G MaxRetentionSec=7
 grep -F 'records upsert example.test --type A --name logger.video-cloud-ci --data 203.0.113.80 --ttl 600' "$GO_ARGS" >/dev/null
 grep -F 'CLOUD_LOGGER_LINODE_ID=8' "$ENV_ROOT/state/cloud-logger.env" >/dev/null
 grep -F 'CLOUD_LOGGER_LINODE_FIREWALL_ID=108' "$ENV_ROOT/state/cloud-logger.env" >/dev/null
+grep -F 'CLOUD_LOGGER_LINODE_PRIVATE_IPV4=10.42.1.90' "$ENV_ROOT/state/cloud-logger.env" >/dev/null
 grep -F 'CLOUD_LOGGER_ENDPOINT=https://logger.video-cloud-ci.example.test' "$ENV_ROOT/services/cloud-logger/logger.env" >/dev/null
 LOGGER_TOKEN="$(sed -n 's/^CLOUD_LOGGER_INGEST_TOKEN=//p' "$ENV_ROOT/services/cloud-logger/logger.env")"
 test -n "$LOGGER_TOKEN"

@@ -762,7 +762,9 @@ func loggerBackendInstallScript(domain, token, lokiVersion string, cachedCert bo
 	fmt.Fprintln(&b, "apt-get update")
 	fmt.Fprintln(&b, "apt-get install -y nginx certbot python3-certbot-nginx curl unzip prometheus-node-exporter")
 	nodeExporterListenIP = strings.TrimSpace(nodeExporterListenIP)
+	loggerListenAddr := "127.0.0.1:18090"
 	if validMetricsListenIP(nodeExporterListenIP) {
+		loggerListenAddr = "0.0.0.0:18090"
 		fmt.Fprintf(&b, "printf 'ARGS=\"--web.listen-address=%s:9100\"\\n' > /etc/default/prometheus-node-exporter\n", nodeExporterListenIP)
 	}
 	fmt.Fprintln(&b, "install -d -m 0755 /etc/rtk-cloud /var/lib/loki")
@@ -828,7 +830,7 @@ func loggerBackendInstallScript(domain, token, lokiVersion string, cachedCert bo
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "[Service]")
 	fmt.Fprintln(&b, "EnvironmentFile=/etc/rtk-cloud/logger.env")
-	fmt.Fprintln(&b, "ExecStart=/usr/local/bin/rtk-cloud-logger -addr 127.0.0.1:18090")
+	fmt.Fprintf(&b, "ExecStart=/usr/local/bin/rtk-cloud-logger -addr %s\n", shellEnvValue(loggerListenAddr))
 	fmt.Fprintln(&b, "Restart=always")
 	fmt.Fprintln(&b, "RestartSec=5")
 	fmt.Fprintln(&b)

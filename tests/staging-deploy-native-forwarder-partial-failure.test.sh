@@ -68,7 +68,7 @@ cat > "$ENV_ROOT/state/video-cloud-ci.state.json" <<'EOF_STATE'
   "edge":{"public_ipv4":"203.0.113.10"},
   "api":{"private_ip":"10.42.1.10"},
   "infra":{"private_ip":"10.42.1.30"},
-  "mqtt":{"public_ipv4":"203.0.113.13"},
+  "mqtt":{"public_ipv4":"203.0.113.13","private_ip":"10.42.1.40"},
   "coturn":{"public_ipv4":"203.0.113.14"}
 }}
 EOF_STATE
@@ -129,6 +129,10 @@ if [[ "$*" == *"systemctl is-active --quiet rtk-cloud-log-forwarder.service"* ]]
 	printf 'readiness %s\n' "$host" >> "$SSH_LOG"
 	exit 0
 fi
+if [[ "${@: -1}" == "true" ]]; then
+	printf 'readiness %s\n' "$host" >> "$SSH_LOG"
+	exit 0
+fi
 input="$(cat)"
 if [[ "$input" == *"mv -f /tmp/.rtk-cloud-log-forwarder."* ]]; then
 	printf 'host=%s args=%s\n%s\n' "$host" "$*" "$input" >> "$SSH_LOG"
@@ -175,7 +179,7 @@ REPORT="$(grep -F '[cloud-deploy] readiness report:' "$ERR" | tail -n 1 | sed 's
 grep -F 'status: passed' "$REPORT" >/dev/null
 grep -F 'logging: degraded' "$REPORT" >/dev/null
 grep -F 'DEGRADED `logger-forwarder:video-cloud-api`' "$REPORT" >/dev/null
-for host in 203.0.113.20 203.0.113.30 203.0.113.10 10.42.1.30 203.0.113.13 203.0.113.14; do
+for host in 203.0.113.20 203.0.113.30 203.0.113.10 10.42.1.30 10.42.1.40 203.0.113.14; do
 	grep -F "root@$host:/tmp/.rtk-cloud-log-forwarder." "$SCP_LOG" >/dev/null
 	grep -F "host=root@$host" "$SSH_LOG" >/dev/null
 done

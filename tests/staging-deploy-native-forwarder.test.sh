@@ -62,7 +62,7 @@ cat > "$ENV_ROOT/state/video-cloud-ci.state.json" <<'EOF_STATE'
   "edge":{"public_ipv4":"203.0.113.10"},
   "api":{"private_ip":"10.42.1.10"},
   "infra":{"private_ip":"10.42.1.30"},
-  "mqtt":{"public_ipv4":"203.0.113.13"},
+  "mqtt":{"public_ipv4":"203.0.113.13","private_ip":"10.42.1.40"},
   "coturn":{"public_ipv4":"203.0.113.14"}
 }}
 EOF_STATE
@@ -119,6 +119,10 @@ done
 if [[ -z "$host" ]]; then
 	printf 'missing ssh host: %s\n' "$*" >&2
 	exit 8
+fi
+if [[ "${@: -1}" == "true" ]]; then
+	printf 'readiness %s args=%s\n' "$host" "$*" >> "$SSH_LOG"
+	exit 0
 fi
 if [[ "$*" == *"systemctl is-active --quiet rtk-cloud-log-forwarder.service"* ]]; then
 	printf 'readiness %s args=%s\n' "$host" "$*" >> "$SSH_LOG"
@@ -183,12 +187,12 @@ grep -F 'PASS `logger-backend-health`' "$REPORT" >/dev/null
 grep -F 'PASS `logger-ingest-idempotency`' "$REPORT" >/dev/null
 grep -F 'PASS `logger-sample-trace-query`' "$REPORT" >/dev/null
 grep -F 'PASS `logger-forwarder:emqx-broker-trace`' "$REPORT" >/dev/null
-for host in 203.0.113.20 10.42.1.10 203.0.113.30 203.0.113.10 10.42.1.30 203.0.113.13 203.0.113.14; do
+for host in 203.0.113.20 10.42.1.10 203.0.113.30 203.0.113.10 10.42.1.30 10.42.1.40 203.0.113.14; do
 	grep -F "root@$host:/tmp/.rtk-cloud-log-forwarder." "$SCP_LOG" >/dev/null
 	grep -F "host=root@$host" "$SSH_LOG" >/dev/null
 	grep -F "readiness root@$host" "$SSH_LOG" >/dev/null
 done
-grep -F "readiness-emqx root@203.0.113.13" "$SSH_LOG" >/dev/null
+grep -F "readiness-emqx root@10.42.1.40" "$SSH_LOG" >/dev/null
 grep -F 'mv -f /tmp/.rtk-cloud-log-forwarder.' "$SSH_LOG" >/dev/null
 grep -F '/usr/local/bin/rtk-cloud-log-forwarder' "$SSH_LOG" >/dev/null
 grep -F 'RTK_CLOUD_LOGGER_EMQX_DOCKER_CONTAINER=video-cloud-emqx' "$SSH_LOG" >/dev/null

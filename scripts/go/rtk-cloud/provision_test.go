@@ -466,6 +466,9 @@ func TestLoggerBackendInstallScriptUsesCachedCertificate(t *testing.T) {
 		"awk 'BEGIN{n=0} /-----BEGIN CERTIFICATE-----/{n++} n>1{print}'",
 		"installed cached certificate lineage",
 		"systemctl enable --now certbot.timer",
+		"ExecStart=/usr/local/bin/rtk-cloud-logger -addr 0.0.0.0:18090",
+		"ARGS=\"--web.listen-address=10.42.1.90:9100\"",
+		"ss -lnt | grep 10.42.1.90:9100",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("logger backend cached-cert script missing %q:\n%s", want, script)

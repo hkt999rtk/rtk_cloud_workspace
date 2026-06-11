@@ -63,13 +63,14 @@ CLOUD_LOGGER_DOMAIN=logger.video-cloud-ci.example.com
 CLOUD_LOGGER_ENDPOINT=https://logger.video-cloud-ci.example.com
 CLOUD_LOGGER_INGEST_TOKEN=super-secret-backend-token
 CLOUD_LOGGER_LINODE_PUBLIC_IPV4=203.0.113.80
+CLOUD_LOGGER_LINODE_PRIVATE_IPV4=10.42.1.90
 EOF_LOGGER_STATE
 cat > "$ENV_ROOT/state/video-cloud-ci.state.json" <<'EOF_STATE'
 {"instances":{
   "edge":{"public_ipv4":"203.0.113.10"},
   "api":{"private_ip":"10.42.1.10"},
   "infra":{"private_ip":"10.42.1.30"},
-  "mqtt":{"public_ipv4":"203.0.113.13"},
+  "mqtt":{"public_ipv4":"203.0.113.13","private_ip":"10.42.1.40"},
   "coturn":{"public_ipv4":"203.0.113.14"}
 }}
 EOF_STATE
@@ -207,8 +208,11 @@ grep -F -- 'BatchMode=yes' "$SSH_LOG" >/dev/null
 grep -F -- 'StrictHostKeyChecking=accept-new' "$SSH_LOG" >/dev/null
 grep -F 'rtk-cloud-logger.service' "$SSH_LOG" >/dev/null
 grep -F 'loki.service' "$SSH_LOG" >/dev/null
+grep -F 'prometheus-node-exporter' "$SSH_LOG" >/dev/null
+grep -F 'ExecStart=/usr/local/bin/rtk-cloud-logger -addr 0.0.0.0:18090' "$SSH_LOG" >/dev/null
+grep -F '10.42.1.90:9100' "$SSH_LOG" >/dev/null
 test ! -s "$ORDER_LOG"
-for host in 203.0.113.20 10.42.1.10 203.0.113.30 203.0.113.10 10.42.1.30 203.0.113.13 203.0.113.14; do
+for host in 203.0.113.20 10.42.1.10 203.0.113.30 203.0.113.10 10.42.1.30 10.42.1.40 203.0.113.14; do
 	grep -F "root@$host:/tmp/.rtk-cloud-log-forwarder." "$SCP_LOG" >/dev/null
 	grep -F "host=root@$host" "$SSH_LOG" >/dev/null
 	grep -F "readiness-forwarder root@$host" "$SSH_LOG" >/dev/null

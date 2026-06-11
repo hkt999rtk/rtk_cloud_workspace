@@ -534,6 +534,9 @@ type loggerTarget struct {
 	FirewallLabel string
 	Domain        string
 	Endpoint      string
+	PrivateIPv4   string
+	SubnetID      string
+	VPCCIDR       string
 	EnvPath       string
 	StatePath     string
 	State         map[string]string
@@ -558,6 +561,9 @@ func loggerProvisionTarget(paths provisionPaths, env map[string]string) loggerTa
 		FirewallLabel: firstNonEmpty(env["CLOUD_LOGGER_LINODE_FIREWALL_LABEL"], "rtk-cloud-logger-"+envName+"-firewall"),
 		Domain:        domain,
 		Endpoint:      firstNonEmpty(env["CLOUD_LOGGER_ENDPOINT"], "https://"+domain),
+		PrivateIPv4:   loggerPrivateIPv4(paths),
+		SubnetID:      videoSubnetID(paths),
+		VPCCIDR:       provisionVPCCIDR(paths),
 		EnvPath:       filepath.Join(paths.EnvRoot, "services", "cloud-logger", "logger.env"),
 		StatePath:     statePath,
 		State:         state,
@@ -615,16 +621,22 @@ func provisionLoggerResource(paths provisionPaths, env map[string]string, opts p
 		state["CLOUD_LOGGER_LINODE_ID"] = strconv.Itoa(vm.ID)
 		state["CLOUD_LOGGER_LINODE_LABEL"] = target.Label
 		state["CLOUD_LOGGER_LINODE_PUBLIC_IPV4"] = vm.PublicIPv4
+		state["CLOUD_LOGGER_LINODE_PRIVATE_IPV4"] = firstNonEmpty(vm.PrivateIPv4, target.PrivateIPv4)
 	}
-	loggerPrivateIP := loggerPrivateIPv4(paths)
-	if state["CLOUD_LOGGER_LINODE_ID"] != "" && loggerPrivateIP != "" {
+	if state["CLOUD_LOGGER_LINODE_PRIVATE_IPV4"] == "" {
+		state["CLOUD_LOGGER_LINODE_PRIVATE_IPV4"] = envFileValue(target.StatePath, "CLOUD_LOGGER_LINODE_PRIVATE_IPV4")
+	}
+	if state["CLOUD_LOGGER_LINODE_PRIVATE_IPV4"] == "" {
+		state["CLOUD_LOGGER_LINODE_PRIVATE_IPV4"] = target.PrivateIPv4
+	}
+	if state["CLOUD_LOGGER_LINODE_ID"] != "" && target.PrivateIPv4 != "" && state["CLOUD_LOGGER_LINODE_PRIVATE_IPV4"] != target.PrivateIPv4 {
 		if err := writeEnvMap(target.StatePath, state, 0o600); err != nil {
 			return err
 		}
-		if err := ensureProvisionVPCInterface(paths, "Cloud Logger", target.StatePath, "CLOUD_LOGGER", state["CLOUD_LOGGER_LINODE_ID"], loggerPrivateIP); err != nil {
+		if err := ensureProvisionVPCInterface(paths, "Cloud Logger", target.StatePath, "CLOUD_LOGGER", state["CLOUD_LOGGER_LINODE_ID"], target.PrivateIPv4); err != nil {
 			return err
 		}
-		state["CLOUD_LOGGER_LINODE_PRIVATE_IPV4"] = loggerPrivateIP
+		state["CLOUD_LOGGER_LINODE_PRIVATE_IPV4"] = target.PrivateIPv4
 	}
 	if state["CLOUD_LOGGER_LINODE_FIREWALL_ID"] == "" {
 		firewallID, err := ensureLoggerFirewall(target, state, opts, provisionVPCCIDR(paths))
@@ -651,8 +663,9 @@ func provisionLoggerResource(paths provisionPaths, env map[string]string, opts p
 }
 
 type loggerVM struct {
-	ID         int
-	PublicIPv4 string
+	ID          int
+	PublicIPv4  string
+	PrivateIPv4 string
 }
 
 func ensureLoggerVM(target loggerTarget, opts provisionOptions) (loggerVM, error) {
@@ -670,7 +683,7 @@ func ensureLoggerVM(target loggerTarget, opts provisionOptions) (loggerVM, error
 	if err != nil {
 		return loggerVM{}, err
 	}
-	payload, _ := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"label":           target.Label,
 		"region":          firstNonEmpty(os.Getenv("CLOUD_LOGGER_LINODE_REGION"), "us-sea"),
 		"type":            firstNonEmpty(os.Getenv("CLOUD_LOGGER_LINODE_TYPE"), "g6-standard-2"),
@@ -678,12 +691,24 @@ func ensureLoggerVM(target loggerTarget, opts provisionOptions) (loggerVM, error
 		"root_pass":       rootPass,
 		"authorized_keys": []string{strings.TrimSpace(string(publicKey))},
 		"tags":            []string{"rtk-cloud", "cloud-logger", "staging"},
-	})
-	raw, err := curlLinode("POST", "/linode/instances", string(payload))
+	}
+	if target.SubnetID != "" && target.PrivateIPv4 != "" {
+		subnet, _ := strconv.Atoi(target.SubnetID)
+		payload["interfaces"] = []map[string]any{
+			{"purpose": "public", "primary": true},
+			{"purpose": "vpc", "subnet_id": subnet, "ipv4": map[string]any{"vpc": target.PrivateIPv4}},
+		}
+	}
+	rawPayload, _ := json.Marshal(payload)
+	raw, err := curlLinode("POST", "/linode/instances", string(rawPayload))
 	if err != nil {
 		return loggerVM{}, err
 	}
-	return parseLoggerVM(raw)
+	vm, err := parseLoggerVM(raw)
+	if vm.PrivateIPv4 == "" {
+		vm.PrivateIPv4 = target.PrivateIPv4
+	}
+	return vm, err
 }
 
 func ensureLoggerFirewall(target loggerTarget, state map[string]string, opts provisionOptions, vpcCIDR string) (int, error) {
@@ -838,8 +863,14 @@ func findLinodeFirewallID(label string) (int, error) {
 
 func parseLoggerVM(raw []byte) (loggerVM, error) {
 	var vm struct {
-		ID   int      `json:"id"`
-		IPv4 []string `json:"ipv4"`
+		ID         int      `json:"id"`
+		IPv4       []string `json:"ipv4"`
+		Interfaces []struct {
+			Purpose string `json:"purpose"`
+			IPv4    struct {
+				VPC string `json:"vpc"`
+			} `json:"ipv4"`
+		} `json:"interfaces"`
 	}
 	if err := json.Unmarshal(raw, &vm); err != nil {
 		return loggerVM{}, err
@@ -851,7 +882,14 @@ func parseLoggerVM(raw []byte) (loggerVM, error) {
 	if len(vm.IPv4) > 0 {
 		publicIP = vm.IPv4[0]
 	}
-	return loggerVM{ID: vm.ID, PublicIPv4: publicIP}, nil
+	privateIP := ""
+	for _, iface := range vm.Interfaces {
+		if iface.Purpose == "vpc" && iface.IPv4.VPC != "" {
+			privateIP = iface.IPv4.VPC
+			break
+		}
+	}
+	return loggerVM{ID: vm.ID, PublicIPv4: publicIP, PrivateIPv4: privateIP}, nil
 }
 
 func randomURLToken(bytes int) (string, error) {
