@@ -97,16 +97,17 @@ appendix source index unless the report owner explicitly changes the framework.
 | 26 | Linode Staging Runtime Shape | Runtime topology plus component responsibility table. |
 | 27 | Initial Operation Cost View | Current Linode monthly run-rate estimate plus AWS commercial-pilot difference view from `docs/cost`, focused on CloudHSM on/off and Robust Design on/off. |
 | 28 | AWS Unit Cost Per Month | Raw monthly total divided by users/devices plus weighted 10% user / 90% device unit-cost view. |
-| 29 | AWS Cost Calculation Detail 1/2 | Base-service line-item math from `docs/cost`: ECS, RDS, IoT Core, NAT, CloudWatch Logs, Secrets, S3, KMS, and subtotal. |
-| 30 | AWS Cost Calculation Detail 2/2 | Scenario equations, CloudHSM/robust deltas, optional support-plan calculation, and per-user/per-device formulas. |
-| 31 | Linode Health & Configuration Boundary | Live health table and safe configuration boundary. |
-| 32 | Operation Flow Overview | Demo journey flow. |
-| 33 | Admin Operation Screenshots | 2x2 Admin screenshot grid. |
-| 34 | SDK / Sample App Flow | Sample app flow screenshot plus evidence-purpose table. |
-| 35 | Decision / Support Needed | Alpha-readiness support board: account/payment ownership, official Android/iOS market publishing accounts, operation backup, alpha internal testers, beta pilot customer, and milestone impact. |
-| 36 | Ongoing Operation / Development Coverage | Ongoing baseline estimate separate from temporary alpha/beta testers: backend/service owner, DevOps/SRE, SDK support, QA/load test, security review, and FAE/pilot support. |
-| 37 | Appendix：素材與來源索引 | Dense material/source/status table. |
-| 38 | Thank You / Review Gate | Master-style closing slide and checklist summary. |
+| 29 | AWS Cost Calculation Detail 1/3 | Base-service line-item math from `docs/cost`: ECS, RDS, IoT Core, NAT, CloudWatch Logs, Secrets, S3, KMS, and subtotal. |
+| 30 | AWS Cost Calculation Detail 2/3 | Explicit quantity * unit-price formulas for major items, e.g. RDS DB-hours plus storage GB-month. |
+| 31 | AWS Cost Calculation Detail 3/3 | Scenario equations, CloudHSM/robust deltas, optional support-plan calculation, and per-user/per-device formulas. |
+| 32 | Linode Health & Configuration Boundary | Live health table and safe configuration boundary. |
+| 33 | Operation Flow Overview | Demo journey flow. |
+| 34 | Admin Operation Screenshots | 2x2 Admin screenshot grid. |
+| 35 | SDK / Sample App Flow | Sample app flow screenshot plus evidence-purpose table. |
+| 36 | Decision / Support Needed | Alpha-readiness support board: account/payment ownership, official Android/iOS market publishing accounts, operation backup, alpha internal testers, beta pilot customer, and milestone impact. |
+| 37 | Ongoing Operation / Development Coverage | Ongoing baseline estimate separate from temporary alpha/beta testers: backend/service owner, DevOps/SRE, SDK support, QA/load test, security review, and FAE/pilot support. |
+| 38 | Appendix：素材與來源索引 | Dense material/source/status table. |
+| 39 | Thank You / Review Gate | Master-style closing slide and checklist summary. |
 
 ## Layout Rules
 

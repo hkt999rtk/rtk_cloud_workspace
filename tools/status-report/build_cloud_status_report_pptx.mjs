@@ -886,7 +886,7 @@ async function slideAwsUnitCost(p, payload) {
 async function slideAwsCostCalculationBase(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
-  await addHeader(slide, payload, "AWS Cost Calculation Detail 1/2", "BASE SERVICE LINE ITEMS");
+  await addHeader(slide, payload, "AWS Cost Calculation Detail 1/3", "BASE SERVICE LINE ITEMS");
   const aws = payload.awsCostEstimate || {};
   const details = aws.calculationDetails || {};
   const findLine = (name) => (details.baseLineItems || []).find((row) => row.area === name) || {};
@@ -943,10 +943,38 @@ async function slideAwsCostCalculationBase(p, payload) {
   return slide;
 }
 
+async function slideAwsCostFormulaBreakdown(p, payload) {
+  const slide = p.slides.add();
+  await addBackground(slide, payload);
+  await addHeader(slide, payload, "AWS Cost Calculation Detail 2/3", "UNIT PRICE FORMULA BREAKDOWN");
+  const aws = payload.awsCostEstimate || {};
+  const details = aws.calculationDetails || {};
+
+  addText(slide, "This page expands each major estimate into quantity * public unit price. Example: RDS PostgreSQL is not a single number; it is DB instance hours plus storage GB-month.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.5, color: C.navy, bold: true, align: "center", fill: C.pale });
+
+  const formulaRows = (details.formulaBreakdown || []).map((row) => [
+    row.item,
+    row.quantity,
+    row.unitPrice,
+    row.formula,
+    row.estimate,
+  ]);
+  addTable(slide, ["Item", "Quantity", "Public unit price", "Formula", "USD / month"], formulaRows, { x: 42, y: 220, w: 1195, h: 365 }, [1.25, 1.45, 1.55, 2.15, 0.75], { rowH: 24, headerH: 25, fontSize: 6.55 });
+
+  addShape(slide, { x: 66, y: 604, w: 540, h: 58, fill: C.paleAmber, line: "#E3C25A" });
+  addText(slide, "RDS example", { x: 86, y: 613, w: 150, h: 16 }, { size: 12, color: C.navy, bold: true, face: FONT_EN });
+  addText(slide, "730 DB-hours * 0.203 USD/hour = 148.19; 250 GB-month * 0.138 USD/GB-month = 34.50; total = 182.69 USD/month.", { x: 86, y: 636, w: 500, h: 18 }, { size: 8.8, color: C.black, face: FONT_EN });
+
+  addShape(slide, { x: 650, y: 604, w: 560, h: 58, fill: C.paleBlue, line: C.line });
+  addText(slide, "Reading rule", { x: 670, y: 613, w: 150, h: 16 }, { size: 12, color: C.navy, bold: true, face: FONT_EN });
+  addText(slide, "Hourly services use 730 hours/month. Traffic, logs, storage, and key services use GB, request, key, or message unit prices from docs/cost/aws-pricing-sources.md.", { x: 670, y: 636, w: 520, h: 18 }, { size: 8.8, color: C.black, face: FONT_EN });
+  return slide;
+}
+
 async function slideAwsCostCalculationScenarios(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
-  await addHeader(slide, payload, "AWS Cost Calculation Detail 2/2", "SCENARIOS / ROBUST / UNIT COST");
+  await addHeader(slide, payload, "AWS Cost Calculation Detail 3/3", "SCENARIOS / ROBUST / UNIT COST");
   const aws = payload.awsCostEstimate || {};
   const details = aws.calculationDetails || {};
 
@@ -1128,7 +1156,7 @@ async function slide21(p, payload) {
 const SLIDES = [
   slide01, slideMajorTopics, slide07, slideWhyCloud, slideCustomerUseCaseFit, slide03, slideCloudTypes, slideOperationalTransition, slide02, slide04, slideReleaseGateDefinition, slide05, slide06, slide08,
   slidePortalTransition, slidePortalIntro, slide09, slideTechnicalTransition, slide10, slide11, slideStrideOverview, slide12, slideHsmSignerDesign, slide13,
-  slideEvidenceTransition, slide14, slideCostView, slideAwsUnitCost, slideAwsCostCalculationBase, slideAwsCostCalculationScenarios, slide15, slide16, slide17, slide18, slide19, slidePostAlphaCoverage, slide20, slide21,
+  slideEvidenceTransition, slide14, slideCostView, slideAwsUnitCost, slideAwsCostCalculationBase, slideAwsCostFormulaBreakdown, slideAwsCostCalculationScenarios, slide15, slide16, slide17, slide18, slide19, slidePostAlphaCoverage, slide20, slide21,
 ];
 
 async function makeContactSheet(previewPaths, outputPath) {
