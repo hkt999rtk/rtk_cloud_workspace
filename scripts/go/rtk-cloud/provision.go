@@ -561,7 +561,7 @@ func loggerProvisionTarget(paths provisionPaths, env map[string]string) loggerTa
 		FirewallLabel: firstNonEmpty(env["CLOUD_LOGGER_LINODE_FIREWALL_LABEL"], "rtk-cloud-logger-"+envName+"-firewall"),
 		Domain:        domain,
 		Endpoint:      firstNonEmpty(env["CLOUD_LOGGER_ENDPOINT"], "https://"+domain),
-		PrivateIPv4:   cloudLoggerPrivateIPv4(paths),
+		PrivateIPv4:   loggerPrivateIPv4(paths),
 		SubnetID:      videoSubnetID(paths),
 		VPCCIDR:       provisionVPCCIDR(paths),
 		EnvPath:       filepath.Join(paths.EnvRoot, "services", "cloud-logger", "logger.env"),
@@ -623,19 +623,23 @@ func provisionLoggerResource(paths provisionPaths, env map[string]string, opts p
 		state["CLOUD_LOGGER_LINODE_PUBLIC_IPV4"] = vm.PublicIPv4
 		state["CLOUD_LOGGER_LINODE_PRIVATE_IPV4"] = firstNonEmpty(vm.PrivateIPv4, target.PrivateIPv4)
 	}
-	if state["CLOUD_LOGGER_LINODE_PRIVATE_IPV4"] != target.PrivateIPv4 {
-		if err := ensureProvisionVPCInterface(paths, "Cloud Logger", target.StatePath, "CLOUD_LOGGER", state["CLOUD_LOGGER_LINODE_ID"], target.PrivateIPv4); err != nil {
-			return err
-		}
-	}
 	if state["CLOUD_LOGGER_LINODE_PRIVATE_IPV4"] == "" {
 		state["CLOUD_LOGGER_LINODE_PRIVATE_IPV4"] = envFileValue(target.StatePath, "CLOUD_LOGGER_LINODE_PRIVATE_IPV4")
 	}
 	if state["CLOUD_LOGGER_LINODE_PRIVATE_IPV4"] == "" {
 		state["CLOUD_LOGGER_LINODE_PRIVATE_IPV4"] = target.PrivateIPv4
 	}
+	if state["CLOUD_LOGGER_LINODE_ID"] != "" && target.PrivateIPv4 != "" && state["CLOUD_LOGGER_LINODE_PRIVATE_IPV4"] != target.PrivateIPv4 {
+		if err := writeEnvMap(target.StatePath, state, 0o600); err != nil {
+			return err
+		}
+		if err := ensureProvisionVPCInterface(paths, "Cloud Logger", target.StatePath, "CLOUD_LOGGER", state["CLOUD_LOGGER_LINODE_ID"], target.PrivateIPv4); err != nil {
+			return err
+		}
+		state["CLOUD_LOGGER_LINODE_PRIVATE_IPV4"] = target.PrivateIPv4
+	}
 	if state["CLOUD_LOGGER_LINODE_FIREWALL_ID"] == "" {
-		firewallID, err := ensureLoggerFirewall(target, state, opts)
+		firewallID, err := ensureLoggerFirewall(target, state, opts, provisionVPCCIDR(paths))
 		if err != nil {
 			return err
 		}
@@ -707,16 +711,20 @@ func ensureLoggerVM(target loggerTarget, opts provisionOptions) (loggerVM, error
 	return vm, err
 }
 
-func ensureLoggerFirewall(target loggerTarget, state map[string]string, opts provisionOptions) (int, error) {
+func ensureLoggerFirewall(target loggerTarget, state map[string]string, opts provisionOptions, vpcCIDR string) (int, error) {
 	if existing, err := findLinodeFirewallID(target.FirewallLabel); err != nil {
 		return 0, err
 	} else if existing != 0 {
+		if err := reconcileLoggerFirewallRules(existing, vpcCIDR); err != nil {
+			return 0, err
+		}
 		return existing, attachLoggerFirewall(existing, state)
 	}
 	currentCIDR, err := currentPublicIPv4CIDR()
 	if err != nil {
 		return 0, err
 	}
+	vpcCIDR = firstNonEmpty(vpcCIDR, "10.42.1.0/24")
 	payload, _ := json.Marshal(map[string]any{
 		"label": target.FirewallLabel,
 		"rules": map[string]any{
@@ -726,7 +734,8 @@ func ensureLoggerFirewall(target loggerTarget, state map[string]string, opts pro
 				{"label": "ssh", "action": "ACCEPT", "protocol": "TCP", "ports": "22", "addresses": map[string]any{"ipv4": []string{currentCIDR}}},
 				{"label": "http", "action": "ACCEPT", "protocol": "TCP", "ports": "80", "addresses": map[string]any{"ipv4": []string{"0.0.0.0/0"}}},
 				{"label": "https", "action": "ACCEPT", "protocol": "TCP", "ports": "443", "addresses": map[string]any{"ipv4": []string{"0.0.0.0/0"}}},
-				{"label": "vpc-private-metrics", "action": "ACCEPT", "protocol": "TCP", "ports": "18090,9100", "addresses": map[string]any{"ipv4": []string{firstNonEmpty(target.VPCCIDR, "10.42.1.0/24")}}},
+				{"label": "logger-private", "action": "ACCEPT", "protocol": "TCP", "ports": "18090", "addresses": map[string]any{"ipv4": []string{vpcCIDR}}},
+				{"label": "node-exporter-private", "action": "ACCEPT", "protocol": "TCP", "ports": "9100", "addresses": map[string]any{"ipv4": []string{vpcCIDR}}},
 			},
 			"outbound": []any{},
 		},
@@ -745,6 +754,46 @@ func ensureLoggerFirewall(target loggerTarget, state map[string]string, opts pro
 		return 0, errors.New("logger firewall creation did not return an id")
 	}
 	return created.ID, attachLoggerFirewall(created.ID, state)
+}
+
+func reconcileLoggerFirewallRules(firewallID int, vpcCIDR string) error {
+	if firewallID == 0 {
+		return nil
+	}
+	vpcCIDR = firstNonEmpty(vpcCIDR, "10.42.1.0/24")
+	raw, err := curlLinode("GET", fmt.Sprintf("/networking/firewalls/%d/rules", firewallID), "")
+	if err != nil {
+		return err
+	}
+	var rules firewallRules
+	if err := json.Unmarshal(raw, &rules); err != nil {
+		return err
+	}
+	changed := false
+	for _, rule := range []firewallRule{
+		{Label: "logger-private", Action: "ACCEPT", Protocol: "TCP", Ports: "18090", Addresses: map[string][]string{"ipv4": {vpcCIDR}}},
+		{Label: "node-exporter-private", Action: "ACCEPT", Protocol: "TCP", Ports: "9100", Addresses: map[string][]string{"ipv4": {vpcCIDR}}},
+	} {
+		if !firewallRuleExists(rules.Inbound, rule.Label) {
+			rules.Inbound = append(rules.Inbound, rule)
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	payload, _ := json.Marshal(rules)
+	_, err = curlLinode("PUT", fmt.Sprintf("/networking/firewalls/%d/rules", firewallID), string(payload))
+	return err
+}
+
+func firewallRuleExists(rules []firewallRule, label string) bool {
+	for _, rule := range rules {
+		if rule.Label == label {
+			return true
+		}
+	}
+	return false
 }
 
 func attachLoggerFirewall(firewallID int, state map[string]string) error {
@@ -1481,12 +1530,17 @@ func resolveProvisionReleases(paths provisionPaths, operator map[string]string, 
 		display string
 		prefix  string
 		value   *string
+		bundle  *string
 	}{
-		{"Video Cloud", "rtk_video_cloud", &opts.videoRelease},
-		{"Account Manager", "rtk_account_manager", &opts.accountRelease},
-		{"Cloud Admin", "rtk_cloud_admin", &opts.adminRelease},
+		{"Video Cloud", "rtk_video_cloud", &opts.videoRelease, nil},
+		{"Account Manager", "rtk_account_manager", &opts.accountRelease, &opts.accountReleaseBundle},
+		{"Cloud Admin", "rtk_cloud_admin", &opts.adminRelease, &opts.adminReleaseBundle},
 	}
 	for _, item := range releases {
+		if item.bundle != nil && *item.bundle != "" && *item.value == "" {
+			fmt.Fprintf(os.Stderr, "using %s local release bundle: %s\n", item.display, *item.bundle)
+			continue
+		}
 		version, objectKey, err := selectObjectRelease(operator, item.display, item.prefix, *item.value)
 		if err != nil {
 			return err
@@ -1733,6 +1787,7 @@ func writeProvisionArtifacts(paths provisionPaths, stack string) (string, error)
 			"domain":      logger.State["CLOUD_LOGGER_DOMAIN"],
 			"endpoint":    logger.State["CLOUD_LOGGER_ENDPOINT"],
 			"public_ipv4": logger.State["CLOUD_LOGGER_LINODE_PUBLIC_IPV4"],
+			"private_ip":  logger.State["CLOUD_LOGGER_LINODE_PRIVATE_IPV4"],
 			"firewall_id": atoiOrZero(logger.State["CLOUD_LOGGER_LINODE_FIREWALL_ID"]),
 			"token":       "REDACTED",
 		},
@@ -1750,7 +1805,7 @@ func writeProvisionArtifacts(paths provisionPaths, stack string) (string, error)
 			"coturn":          targetFromVideo(video, "coturn", false),
 			"account_manager": map[string]any{"host": am["ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4"], "user": "root", "private_ip": am["ACCOUNT_MANAGER_LINODE_PRIVATE_IPV4"]},
 			"cloud_admin":     map[string]any{"host": admin["ADMIN_LINODE_PUBLIC_IPV4"], "user": "root", "private_ip": admin["ADMIN_LINODE_PRIVATE_IPV4"]},
-			"cloud_logger":    map[string]any{"host": logger.State["CLOUD_LOGGER_LINODE_PUBLIC_IPV4"], "user": "root", "endpoint": logger.State["CLOUD_LOGGER_ENDPOINT"]},
+			"cloud_logger":    map[string]any{"host": logger.State["CLOUD_LOGGER_LINODE_PUBLIC_IPV4"], "user": "root", "private_ip": logger.State["CLOUD_LOGGER_LINODE_PRIVATE_IPV4"], "endpoint": logger.State["CLOUD_LOGGER_ENDPOINT"]},
 		},
 	}
 	if err := writeJSON(filepath.Join(dir, "deployment-targets.json"), targets); err != nil {
@@ -1772,7 +1827,7 @@ func writeProvisionArtifacts(paths provisionPaths, stack string) (string, error)
 	writeVideoVMRows(&report, video)
 	fmt.Fprintf(&report, "| `account-manager` | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | `direct public SSH` | `N/A` |\n", am["ACCOUNT_MANAGER_LINODE_LABEL"], am["ACCOUNT_MANAGER_LINODE_ID"], am["ACCOUNT_MANAGER_LINODE_FIREWALL_ID"], publicPrivateNetwork(am["ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4"], am["ACCOUNT_MANAGER_LINODE_PRIVATE_IPV4"]), displayNA(am["ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4"]), displayNA(am["ACCOUNT_MANAGER_LINODE_PRIVATE_IPV4"]))
 	fmt.Fprintf(&report, "| `cloud-admin` | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | `direct public SSH` | `N/A` |\n", admin["ADMIN_LINODE_LABEL"], admin["ADMIN_LINODE_ID"], admin["ADMIN_LINODE_FIREWALL_ID"], publicPrivateNetwork(admin["ADMIN_LINODE_PUBLIC_IPV4"], admin["ADMIN_LINODE_PRIVATE_IPV4"]), displayNA(admin["ADMIN_LINODE_PUBLIC_IPV4"]), displayNA(admin["ADMIN_LINODE_PRIVATE_IPV4"]))
-	fmt.Fprintf(&report, "| `cloud-logger` | `%s` | `%s` | `%s` | `%s` | `%s` | `N/A` | `direct public SSH` | `N/A` |\n", logger.State["CLOUD_LOGGER_LINODE_LABEL"], logger.State["CLOUD_LOGGER_LINODE_ID"], logger.State["CLOUD_LOGGER_LINODE_FIREWALL_ID"], publicPrivateNetwork(logger.State["CLOUD_LOGGER_LINODE_PUBLIC_IPV4"], ""), displayNA(logger.State["CLOUD_LOGGER_LINODE_PUBLIC_IPV4"]))
+	fmt.Fprintf(&report, "| `cloud-logger` | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | `direct public SSH` | `N/A` |\n", logger.State["CLOUD_LOGGER_LINODE_LABEL"], logger.State["CLOUD_LOGGER_LINODE_ID"], logger.State["CLOUD_LOGGER_LINODE_FIREWALL_ID"], publicPrivateNetwork(logger.State["CLOUD_LOGGER_LINODE_PUBLIC_IPV4"], logger.State["CLOUD_LOGGER_LINODE_PRIVATE_IPV4"]), displayNA(logger.State["CLOUD_LOGGER_LINODE_PUBLIC_IPV4"]), displayNA(logger.State["CLOUD_LOGGER_LINODE_PRIVATE_IPV4"]))
 	fmt.Fprintln(&report)
 	fmt.Fprintln(&report, "## Logger")
 	fmt.Fprintln(&report)
@@ -2040,8 +2095,13 @@ func adminPrivateIPv4(paths provisionPaths) string {
 	return firstNonEmpty(envFileValue(paths.AdminEnv, "ADMIN_LINODE_PRIVATE_IPV4"), envFileValue(paths.AdminState, "ADMIN_LINODE_PRIVATE_IPV4"), "10.42.1.60")
 }
 
-func cloudLoggerPrivateIPv4(paths provisionPaths) string {
-	return firstNonEmpty(envFileValue(filepath.Join(paths.EnvRoot, "services", "cloud-logger", "logger.env"), "CLOUD_LOGGER_LINODE_PRIVATE_IPV4"), envFileValue(filepath.Join(paths.EnvRoot, "state", "cloud-logger.env"), "CLOUD_LOGGER_LINODE_PRIVATE_IPV4"), "10.42.1.90")
+func loggerPrivateIPv4(paths provisionPaths) string {
+	return firstNonEmpty(
+		envFileValue(filepath.Join(paths.EnvRoot, "services", "cloud-logger", "logger.env"), "CLOUD_LOGGER_LINODE_PRIVATE_IPV4"),
+		envFileValue(filepath.Join(paths.EnvRoot, "state", "cloud-logger.env"), "CLOUD_LOGGER_LINODE_PRIVATE_IPV4"),
+		prometheusTargetHost(paths.VideoConfig, "cloud_logger_node"),
+		"10.42.1.90",
+	)
 }
 
 func videoCloudPrometheusBaseURL(paths provisionPaths) string {

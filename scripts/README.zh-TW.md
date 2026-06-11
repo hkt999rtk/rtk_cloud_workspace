@@ -430,6 +430,13 @@ VIDEO_CLOUD_LOG_LEVEL=info
 
 `debug` 只建議短時間診斷使用；logger backend/forwarder 自身不受 `CLOUD_SERVICE_LOG_LEVEL` 影響。
 
+Staging 的平台管理頁登入帳密和 Account Manager automation token 帳密不同：
+
+- Cloud Admin `/login?next=/admin` 使用 `cloud_env/staging/linode/services/cloud-admin/admin-staging.env` 內的 `ADMIN_BOOTSTRAP_EMAIL` / `ADMIN_BOOTSTRAP_PASSWORD`。
+- `./stg.sh token` 和 e2e brand/user/bind automation 使用 `cloud_env/staging/linode/services/account-manager/account-manager-platform-admin.env` 內的 Account Manager bootstrap platform-admin 帳密。
+
+不要用 Account Manager bootstrap 帳號登入 Cloud Admin `/admin` UI。詳細邊界見 `docs/account-manager-admin-boundary.md#staging-login-credential-boundary`。
+
 用法：
 
 ```sh

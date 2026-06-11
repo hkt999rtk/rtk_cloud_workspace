@@ -103,7 +103,7 @@ appendix source index unless the report owner explicitly changes the framework.
 | 32 | Operation Flow Overview | Demo journey flow. |
 | 33 | Admin Operation Screenshots | 2x2 Admin screenshot grid. |
 | 34 | SDK / Sample App Flow | Sample app flow screenshot plus evidence-purpose table. |
-| 35 | Decision / Support Needed | Alpha-readiness support board: account/payment ownership, operation backup, alpha internal testers, beta pilot customer, and milestone impact. |
+| 35 | Decision / Support Needed | Alpha-readiness support board: account/payment ownership, official Android/iOS market publishing accounts, operation backup, alpha internal testers, beta pilot customer, and milestone impact. |
 | 36 | Ongoing Operation / Development Coverage | Ongoing baseline estimate separate from temporary alpha/beta testers: backend/service owner, DevOps/SRE, SDK support, QA/load test, security review, and FAE/pilot support. |
 | 37 | Appendix：素材與來源索引 | Dense material/source/status table. |
 | 38 | Thank You / Review Gate | Master-style closing slide and checklist summary. |
