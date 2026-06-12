@@ -6,7 +6,17 @@
 
 ## Cloud Environment Root
 
-Linode staging scripts 預設使用本機、git ignored 的 `cloud_env/staging/linode` 作為實際 Linode environment root。操作時可用 `--env-root cloud_env/staging` 指定 staging environment directory；script 會自動解析到 `cloud_env/staging/linode`。這個目錄集中保存 operator env、topology、service env、state、keys/certificates、device fixtures、artifacts 與 backups。
+Environment root 採 `cloud_env/<env>/<provider>` 形式。Linode staging scripts
+預設使用本機、git ignored 的 `cloud_env/staging/linode` 作為實際 Linode
+environment root。操作時可用 `--env-root cloud_env/staging` 指定 staging
+environment directory；script 會自動解析到 `cloud_env/staging/linode`。這個目錄集中保存 operator env、topology、service env、state、keys/certificates、device fixtures、artifacts 與 backups。
+
+目前 workspace provision routing 唯一支援 `CLOUD_PROVIDER=linode`。AWS、GCP
+和 Azure 是後續 provider abstraction 的目標，但現階段任何非 `linode`
+provider 都應在 preflight/provision 早期失敗，不可呼叫 live API、SSH、DNS
+或寫 state。現有 `provision` flow 仍 dispatch 到 Video Cloud、Account Manager、
+Cloud Admin、Cloud Logger 的 Linode-only scripts；provider routing 抽象化是
+下一步實作項目。
 
 可用 `--env-root PATH` 指向另一份 environment directory。舊的 `--secrets-root PATH` 仍保留為相容 alias，但新的操作與文件都應使用 `--env-root`。
 
@@ -233,6 +243,10 @@ go run ./scripts/go/rtk-cloud -- migrate-env --env-root cloud_env/staging --forc
 
 依照 `cloud_env/<env>/linode/env/stack.env` 內的 root metadata 產生所有命名欄位。`CLOUD_ENV_NAME` 是唯一 stack slug/root；stack name、domain、topology label、Linode VM/firewall label、VPC/subnet label，以及 Account Manager、Cloud Admin、Cloud Logger service env 的 domain/label 都由它推演，不要手動分別修改。
 
+目前 `sync-env` 是 Linode-only：`CLOUD_PROVIDER` 必須是 `linode`，產出的
+`*_LINODE_*` 欄位是 Linode provider metadata，不是未來 AWS/GCP/Azure 的
+跨 provider 欄位。
+
 Root inputs 固定為：
 
 - `CLOUD_ENV_NAME`
@@ -253,7 +267,7 @@ go run ./scripts/go/rtk-cloud -- sync-env --env-root cloud_env/staging --check
 
 ### `go run ./scripts/go/rtk-cloud -- provision`
 
-Linode staging 的主要編排腳本。它可以做 preflight、plan、reset、apply、DNS、deploy、artifact collection、e2e smoke。預設不變更環境，只做 `--plan`。
+Linode staging 的主要編排腳本。它可以做 preflight、plan、reset、apply、DNS、deploy、artifact collection、e2e smoke。目前它只支援 `CLOUD_PROVIDER=linode`；其他 provider 應在後續 provider routing 實作完成前 fail fast。預設不變更環境，只做 `--plan`。
 
 service logging 的目標 provisioning model 記在 `docs/service-logging-architecture.md`：logger backend 要在 application services 前 provision，然後每台 VM 安裝 journald forwarder。private-cloud v1 需要 Loki 作為集中 log storage/query backend；dashboard 由 Cloud Admin 查 Loki query API 或 workspace/logger query adapter，不需要 Grafana。forwarder 或 logger backend degraded 時，不應阻塞 account/video/admin/frontend service 啟動；readiness report 會標示 `logging: degraded`。
 

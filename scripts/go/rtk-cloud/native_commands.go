@@ -327,6 +327,7 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 		_ = report.write(false)
 		return err
 	}
+	cacheVideoCertificateFromRemote(paths, env, opts.sshKey)
 	report.add("video-cloud-deploy-verify", "PASS", "")
 	if opts.videoOnly {
 		if !opts.binaryOnly {
@@ -643,12 +644,7 @@ func requireStagingCertificateCachesForTargets(targets []certificateCacheTarget)
 func stagingCertificateCacheTargets(paths provisionPaths, env map[string]string) []certificateCacheTarget {
 	logger := loggerProvisionTarget(paths, env)
 	return []certificateCacheTarget{
-		{
-			Name:   "video-cloud",
-			Host:   videoStateInstanceHost(paths.VideoState, "edge"),
-			Domain: env["VIDEO_CLOUD_DOMAIN"],
-			Dir:    filepath.Join(paths.EnvRoot, "certificates", env["VIDEO_CLOUD_DOMAIN"]),
-		},
+		videoCertificateCacheTarget(paths, env),
 		{
 			Name:   "account-manager",
 			Host:   envFileValue(paths.AccountManagerState, "ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4"),
@@ -667,6 +663,25 @@ func stagingCertificateCacheTargets(paths provisionPaths, env map[string]string)
 			Domain: logger.Domain,
 			Dir:    filepath.Join(paths.EnvRoot, "certificates", logger.Domain),
 		},
+	}
+}
+
+func cacheVideoCertificateFromRemote(paths provisionPaths, env map[string]string, sshKey string) {
+	target := videoCertificateCacheTarget(paths, env)
+	if target.Host == "" || target.Domain == "" {
+		return
+	}
+	if err := cacheCertificateFromRemote(paths, sshKey, target.Host, target.Domain, target.Dir, target.Name); err != nil {
+		fmt.Fprintf(os.Stderr, "[cloud-deploy] video certificate cache refresh skipped: %v\n", err)
+	}
+}
+
+func videoCertificateCacheTarget(paths provisionPaths, env map[string]string) certificateCacheTarget {
+	return certificateCacheTarget{
+		Name:   "video-cloud",
+		Host:   videoStateInstanceHost(paths.VideoState, "edge"),
+		Domain: env["VIDEO_CLOUD_DOMAIN"],
+		Dir:    filepath.Join(paths.EnvRoot, "certificates", env["VIDEO_CLOUD_DOMAIN"]),
 	}
 }
 

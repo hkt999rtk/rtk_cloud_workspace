@@ -26,6 +26,7 @@ mkdir -p \
 	"$ENV_ROOT/services/cloud-admin" \
 	"$ENV_ROOT/topology" \
 	"$ENV_ROOT/env" \
+	"$WORKSPACE/keys/staging/linode/video-cloud"
 
 cat > "$FAKE_BIN/curl" <<'SH'
 #!/usr/bin/env bash
@@ -44,7 +45,7 @@ case "$*" in
   {"id":25411464,"label":"video-cloud-staging-edge","status":"enabled","tags":["managed-by:linode-deploy","role:edge","video-cloud-staging"]},
   {"id":25411467,"label":"video-cloud-staging-api","status":"enabled","tags":["managed-by:linode-deploy","role:api","video-cloud-staging"]},
   {"id":24476583,"label":"rtk-account-manager-staging-fw","status":"enabled","tags":[]},
-  {"id":24476605,"label":"rtk-cloud-admin-staging-firewall","status":"enabled","tags":[]}
+  {"id":24476605,"label":"rtk-cloud-admin-staging-fw","status":"enabled","tags":[]}
 ] }
 JSON
 	;;
@@ -105,6 +106,7 @@ if [[ -e state/video-cloud-staging.state.json ]]; then
 	exit 1
 fi
 mkdir -p "$(dirname "$VC_STATE_PATH")"
+mkdir -p state
 cat > "$VC_STATE_PATH" <<'JSON'
 {
   "stack": "video-cloud-staging",
@@ -121,6 +123,7 @@ cat > "$VC_STATE_PATH" <<'JSON'
   }
 }
 JSON
+cp "$VC_STATE_PATH" state/video-cloud-staging.state.json
 printf 'applied fake video cloud\n'
 SH
 chmod +x "$FAKE_BIN/go"
@@ -151,13 +154,25 @@ ADMIN_LINODE_PUBLIC_IPV4=203.0.113.70
 ADMIN_LINODE_HOST=203.0.113.70
 ADMIN_LINODE_PRIVATE_IPV4=10.42.1.60
 ADMIN_LINODE_FIREWALL_ID=701
-ADMIN_LINODE_FIREWALL_LABEL=rtk-cloud-admin-staging-firewall
+ADMIN_LINODE_FIREWALL_LABEL=rtk-cloud-admin-staging-fw
 EOF_STATE
 SH
 chmod +x "$WORKSPACE/repos/rtk_cloud_admin/deploy/linode/provision-admin-vm.sh"
 
 touch "$ENV_ROOT/topology/video-cloud-staging.yaml"
-touch "$ENV_ROOT/services/video-cloud/video-cloud-staging.env"
+cat > "$ENV_ROOT/services/video-cloud/video-cloud-staging.env" <<EOF_VIDEO
+CERT_ISSUER_CA_KEY_SOURCE=$WORKSPACE/keys/staging/linode/video-cloud/production-issuer.ed25519.key.pem
+CERT_ISSUER_APP_CA_KEY_SOURCE=$WORKSPACE/keys/staging/linode/video-cloud/app-user-issuer.ed25519.key.pem
+EOF_VIDEO
+printf 'device-key\n' > "$WORKSPACE/keys/staging/linode/video-cloud/production-issuer.ed25519.key.pem"
+printf 'app-key\n' > "$WORKSPACE/keys/staging/linode/video-cloud/app-user-issuer.ed25519.key.pem"
+for cert in root-ca.ed25519.cert.pem production-issuer.ed25519.cert.pem app-user-issuer.ed25519.cert.pem; do
+	cat > "$WORKSPACE/keys/staging/linode/video-cloud/$cert" <<'EOF_CERT'
+-----BEGIN CERTIFICATE-----
+fixture
+-----END CERTIFICATE-----
+EOF_CERT
+done
 touch "$SSH_KEY"
 printf 'ssh-ed25519 test-key\n' > "$SSH_KEY.pub"
 

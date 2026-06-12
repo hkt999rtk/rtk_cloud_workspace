@@ -186,6 +186,20 @@ CLOUD_STACK_NAME=video-cloud-stg-0529
 	}
 }
 
+func TestLoadRejectsUnsupportedProvider(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "metadata", "staging", "aws")
+	mkdir(t, filepath.Join(root, "env"))
+	write(t, filepath.Join(root, "env", "stack.env"), `CLOUD_ENV_NAME=staging
+CLOUD_PROVIDER=aws
+CLOUD_REGION=us-east-1
+CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+`)
+	_, err := Load(root, "")
+	if err == nil || !strings.Contains(err.Error(), "unsupported CLOUD_PROVIDER=aws") {
+		t.Fatalf("expected unsupported provider error, got %v", err)
+	}
+}
+
 func mkdir(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(path, 0o755); err != nil {
