@@ -23,28 +23,35 @@ printf '{"overall":"pass","summary_file":"%s","report_file":"%s"}\n' "$TMP/summa
 SH
 chmod +x "$TMP/stg-stub.sh"
 
-if RTK_CLOUD_STAGING_STACK_NAME=video-cloud-staging RTK_CLOUD_STG_SH="$TMP/stg-stub.sh" "$ROOT/scripts/run-staging-linode-e2e.sh" >"$TMP/missing.out" 2>"$TMP/missing.err"; then
+if RTK_CLOUD_STAGING_STACK_NAME=video-cloud-staging RTK_CLOUD_STG_SH="$TMP/stg-stub.sh" "$ROOT/scripts/run-staging-e2e.sh" >"$TMP/missing.out" 2>"$TMP/missing.err"; then
 	echo "expected missing --confirm to fail" >&2
 	exit 1
 fi
 grep -F -- '--confirm video-cloud-staging is required' "$TMP/missing.err" >/dev/null
 test ! -e "$STG_LOG"
 
-if RTK_CLOUD_STAGING_STACK_NAME=video-cloud-staging RTK_CLOUD_STG_SH="$TMP/stg-stub.sh" "$ROOT/scripts/run-staging-linode-e2e.sh" --confirm wrong >"$TMP/wrong.out" 2>"$TMP/wrong.err"; then
+if RTK_CLOUD_STAGING_STACK_NAME=video-cloud-staging RTK_CLOUD_STG_SH="$TMP/stg-stub.sh" "$ROOT/scripts/run-staging-e2e.sh" --confirm wrong >"$TMP/wrong.out" 2>"$TMP/wrong.err"; then
 	echo "expected wrong --confirm to fail" >&2
 	exit 1
 fi
 grep -F -- '--confirm must be video-cloud-staging' "$TMP/wrong.err" >/dev/null
 test ! -e "$STG_LOG"
 
-RTK_CLOUD_STAGING_STACK_NAME=video-cloud-staging RTK_CLOUD_STG_SH="$TMP/stg-stub.sh" "$ROOT/scripts/run-staging-linode-e2e.sh" --plan >"$TMP/plan.out"
+if CLOUD_PROVIDER=aws RTK_CLOUD_STAGING_STACK_NAME=video-cloud-staging RTK_CLOUD_STG_SH="$TMP/stg-stub.sh" "$ROOT/scripts/run-staging-e2e.sh" --plan >"$TMP/provider.out" 2>"$TMP/provider.err"; then
+	echo "expected unsupported provider to fail" >&2
+	exit 1
+fi
+grep -F 'unsupported CLOUD_PROVIDER=aws' "$TMP/provider.err" >/dev/null
+test ! -e "$STG_LOG"
+
+RTK_CLOUD_STAGING_STACK_NAME=video-cloud-staging RTK_CLOUD_STG_SH="$TMP/stg-stub.sh" "$ROOT/scripts/run-staging-e2e.sh" --plan >"$TMP/plan.out"
 grep -F 'cloud-staging-e2e-test plan' "$TMP/plan.out" >/dev/null
 grep -F 'args=e2e --plan --brandname RTK --user-count 10 --device-count 100' "$STG_LOG" >/dev/null
 
 rm "$STG_LOG"
 RTK_CLOUD_STAGING_STACK_NAME=custom-stack \
 RTK_CLOUD_STG_SH="$TMP/stg-stub.sh" \
-	"$ROOT/scripts/run-staging-linode-e2e.sh" \
+	"$ROOT/scripts/run-staging-e2e.sh" \
 	--confirm custom-stack >"$TMP/custom-stack.out"
 grep -F 'args=e2e --run --confirm custom-stack --brandname RTK --user-count 10 --device-count 100' "$STG_LOG" >/dev/null
 
@@ -54,7 +61,7 @@ ACCOUNT_RELEASE=account-ci-release \
 ADMIN_RELEASE=admin-ci-release \
 RTK_CLOUD_STAGING_STACK_NAME=video-cloud-staging \
 RTK_CLOUD_STG_SH="$TMP/stg-stub.sh" \
-	"$ROOT/scripts/run-staging-linode-e2e.sh" \
+	"$ROOT/scripts/run-staging-e2e.sh" \
 	--confirm video-cloud-staging \
 	--out-dir "$TMP/report-dir" >"$TMP/run.out"
 
