@@ -360,7 +360,7 @@ go run ./scripts/go/rtk-cloud -- staging-e2e-test \
 
 輸出：
 
-- `summary.json`：整體結果、stack、brand、redacted artifact path，以及每個 step 的狀態、exit code、耗時和 log path。
+- `summary.json`：整體結果、stack、brand、redacted artifact path，以及每個 top-level segment 的狀態、exit code、耗時和 log path。Data setup 內部 create/bind/validate 子步驟記錄在 `data-setup/summary.json`。
 - `TEST_REPORT.md`：人工閱讀用測試報告。
 - `logs/*.log`：各步驟 stdout/stderr。這些 log 留在 git ignored cloud env artifacts；提交或分享前仍應視為 operator artifact 審查。
 
@@ -380,6 +380,12 @@ scripts/setup-staging-e2e-data.sh \
   --user-count 10 \
   --device-count 100 \
   --out-dir cloud_env/staging/linode/artifacts/staging-e2e/manual-data-setup
+```
+
+也可以用 staging shortcut：
+
+```sh
+./stg.sh data --brandname RTK --user-count 10 --device-count 100
 ```
 
 常用選項：

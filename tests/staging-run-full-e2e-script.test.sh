@@ -38,10 +38,18 @@ cat > "$TMP/summary.json" <<JSON
       "status": "pass",
       "duration_seconds": 7,
       "log_file": "$TMP/report-dir/logs/provision-all.log"
+    },
+    {
+      "name": "setup_brand_devices",
+      "status": "pass",
+      "duration_seconds": 11,
+      "log_file": "$TMP/report-dir/logs/setup_brand_devices.log"
     }
   ],
   "artifacts": {
-    "report_file": "$TMP/TEST_REPORT.md"
+    "report_file": "$TMP/TEST_REPORT.md",
+    "data_setup_summary_file": "$TMP/report-dir/data-setup/summary.json",
+    "bind_validation_dir": "$TMP/report-dir/data-setup/bind-validation"
   }
 }
 JSON
@@ -73,14 +81,14 @@ test ! -e "$STG_LOG"
 
 RTK_CLOUD_STAGING_STACK_NAME=video-cloud-staging RTK_CLOUD_STG_SH="$TMP/stg-stub.sh" "$ROOT/scripts/run-staging-e2e.sh" --plan >"$TMP/plan.out"
 grep -F 'cloud-staging-e2e-test plan' "$TMP/plan.out" >/dev/null
-grep -F 'args=e2e --plan --brandname RTK --user-count 10 --device-count 100' "$STG_LOG" >/dev/null
+grep -F 'args=e2e --plan' "$STG_LOG" >/dev/null
 
 rm "$STG_LOG"
 RTK_CLOUD_STAGING_STACK_NAME=custom-stack \
 RTK_CLOUD_STG_SH="$TMP/stg-stub.sh" \
 	"$ROOT/scripts/run-staging-e2e.sh" \
 	--confirm custom-stack >"$TMP/custom-stack.out"
-grep -F 'args=e2e --run --confirm custom-stack --brandname RTK --user-count 10 --device-count 100' "$STG_LOG" >/dev/null
+grep -F 'args=e2e --run --confirm custom-stack' "$STG_LOG" >/dev/null
 
 rm "$STG_LOG"
 VIDEO_RELEASE=video-ci-release \
@@ -90,9 +98,15 @@ RTK_CLOUD_STAGING_STACK_NAME=video-cloud-staging \
 RTK_CLOUD_STG_SH="$TMP/stg-stub.sh" \
 	"$ROOT/scripts/run-staging-e2e.sh" \
 	--confirm video-cloud-staging \
-	--out-dir "$TMP/report-dir" >"$TMP/run.out"
+	--brandname RTK \
+	--user-count 10 \
+	--device-count 100 \
+	--device-mix camera=40,light=25,air_conditioner=20,smart_meter=15 \
+	--device-prefix load-device \
+	--out-dir "$TMP/report-dir" \
+	--skip-mqtt-probe >"$TMP/run.out"
 
-grep -F 'args=e2e --run --confirm video-cloud-staging --brandname RTK --user-count 10 --device-count 100 --out-dir '"$TMP/report-dir" "$STG_LOG" >/dev/null
+grep -F 'args=e2e --run --confirm video-cloud-staging --brandname RTK --user-count 10 --device-count 100 --device-mix camera=40,light=25,air_conditioner=20,smart_meter=15 --device-prefix load-device --out-dir '"$TMP/report-dir"' --skip-mqtt-probe' "$STG_LOG" >/dev/null
 grep -F 'VIDEO_RELEASE=video-ci-release' "$STG_LOG" >/dev/null
 grep -F 'ACCOUNT_RELEASE=account-ci-release' "$STG_LOG" >/dev/null
 grep -F 'ADMIN_RELEASE=admin-ci-release' "$STG_LOG" >/dev/null
@@ -100,11 +114,15 @@ grep -F 'summary_file='"$TMP/summary.json" "$TMP/run.out" >/dev/null
 grep -F 'report_file='"$TMP/TEST_REPORT.md" "$TMP/run.out" >/dev/null
 grep -F 'install_report_file='"$TMP/report-dir/INSTALL_REPORT.md" "$TMP/run.out" >/dev/null
 grep -F 'logs_dir='"$TMP/report-dir/logs" "$TMP/run.out" >/dev/null
-grep -F 'bind_validation_dir='"$TMP/report-dir/bind-validation" "$TMP/run.out" >/dev/null
+grep -F 'data_setup_summary_file='"$TMP/report-dir/data-setup/summary.json" "$TMP/run.out" >/dev/null
+grep -F 'bind_validation_dir='"$TMP/report-dir/data-setup/bind-validation" "$TMP/run.out" >/dev/null
 grep -F 'mqtt_report_file='"$TMP/report-dir/home-mqtt/TEST_REPORT.md" "$TMP/run.out" >/dev/null
 
 grep -F '# Staging Installation Report' "$TMP/report-dir/INSTALL_REPORT.md" >/dev/null
 grep -F -- '- Provider: linode' "$TMP/report-dir/INSTALL_REPORT.md" >/dev/null
-grep -F -- '- Total duration seconds: 10' "$TMP/report-dir/INSTALL_REPORT.md" >/dev/null
+grep -F -- '- Total duration seconds: 21' "$TMP/report-dir/INSTALL_REPORT.md" >/dev/null
+grep -F -- '- Data setup summary: `'"$TMP/report-dir/data-setup/summary.json"'`' "$TMP/report-dir/INSTALL_REPORT.md" >/dev/null
+grep -F -- '- Bind validation: `'"$TMP/report-dir/data-setup/bind-validation"'`' "$TMP/report-dir/INSTALL_REPORT.md" >/dev/null
 grep -F '| remove_vm | pass | 3 | `'"$TMP/report-dir/logs/remove-vm.log"'` |' "$TMP/report-dir/INSTALL_REPORT.md" >/dev/null
 grep -F '| provision_all | pass | 7 | `'"$TMP/report-dir/logs/provision-all.log"'` |' "$TMP/report-dir/INSTALL_REPORT.md" >/dev/null
+grep -F '| setup_brand_devices | pass | 11 | `'"$TMP/report-dir/logs/setup_brand_devices.log"'` |' "$TMP/report-dir/INSTALL_REPORT.md" >/dev/null

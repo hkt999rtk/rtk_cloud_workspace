@@ -18,12 +18,15 @@ if [[ -z "$STACK_NAME" && -f "$STACK_FILE" ]]; then
 	STACK_NAME="$(awk -F= '$1 == "CLOUD_STACK_NAME" {print $2; exit}' "$STACK_FILE")"
 fi
 STACK_NAME="${STACK_NAME:-video-cloud-staging}"
-BRANDNAME="RTK"
-USER_COUNT="10"
-DEVICE_COUNT="100"
+BRANDNAME=""
+USER_COUNT=""
+DEVICE_COUNT=""
+DEVICE_MIX=""
+DEVICE_PREFIX=""
 CONFIRM=""
 PLAN=0
 OUT_DIR=""
+SKIP_MQTT_PROBE=0
 
 usage() {
 	cat <<'USAGE'
@@ -46,6 +49,12 @@ Options:
   --confirm <stack-name>         Required for destructive run mode.
   --plan                         Print the underlying E2E plan only.
   --out-dir PATH                  Override report output directory.
+  --brandname NAME                Override E2E brand cloud name.
+  --user-count N                  Override E2E user count.
+  --device-count N                Override E2E device count.
+  --device-mix MIX                Override E2E device mix.
+  --device-prefix PREFIX          Override generated device prefix.
+  --skip-mqtt-probe               Run MQTT test without live broker probe.
   -h, --help                      Show this help.
 
 Artifact selection:
@@ -81,6 +90,9 @@ write_install_report() {
 	if [[ -z "$e2e_report_file" ]]; then
 		e2e_report_file="$(jq -r '.artifacts.report_file // empty' "$summary_file")"
 	fi
+	local bind_validation_dir data_setup_summary_file
+	bind_validation_dir="$(jq -r '.artifacts.bind_validation_dir // empty' "$summary_file")"
+	data_setup_summary_file="$(jq -r '.artifacts.data_setup_summary_file // empty' "$summary_file")"
 
 	{
 		printf '# Staging Installation Report\n\n'
@@ -116,8 +128,13 @@ write_install_report() {
 		if [[ -n "$e2e_report_file" ]]; then
 			printf '%s\n' "- E2E report: \`$e2e_report_file\`"
 		fi
+		if [[ -n "$data_setup_summary_file" ]]; then
+			printf '%s\n' "- Data setup summary: \`$data_setup_summary_file\`"
+		fi
 		printf '%s\n' "- Logs: \`$report_dir/logs\`"
-		printf '%s\n' "- Bind validation: \`$report_dir/bind-validation\`"
+		if [[ -n "$bind_validation_dir" ]]; then
+			printf '%s\n' "- Bind validation: \`$bind_validation_dir\`"
+		fi
 		printf '%s\n' "- MQTT report: \`$report_dir/home-mqtt/TEST_REPORT.md\`"
 	} >"$install_report_file"
 
@@ -146,6 +163,50 @@ while [[ $# -gt 0 ]]; do
 			fi
 			shift 2
 			;;
+		--brandname)
+			BRANDNAME="${2:-}"
+			if [[ -z "$BRANDNAME" ]]; then
+				printf 'error: --brandname requires a value\n' >&2
+				exit 2
+			fi
+			shift 2
+			;;
+		--user-count)
+			USER_COUNT="${2:-}"
+			if [[ -z "$USER_COUNT" ]]; then
+				printf 'error: --user-count requires a value\n' >&2
+				exit 2
+			fi
+			shift 2
+			;;
+		--device-count)
+			DEVICE_COUNT="${2:-}"
+			if [[ -z "$DEVICE_COUNT" ]]; then
+				printf 'error: --device-count requires a value\n' >&2
+				exit 2
+			fi
+			shift 2
+			;;
+		--device-mix)
+			DEVICE_MIX="${2:-}"
+			if [[ -z "$DEVICE_MIX" ]]; then
+				printf 'error: --device-mix requires a value\n' >&2
+				exit 2
+			fi
+			shift 2
+			;;
+		--device-prefix)
+			DEVICE_PREFIX="${2:-}"
+			if [[ -z "$DEVICE_PREFIX" ]]; then
+				printf 'error: --device-prefix requires a value\n' >&2
+				exit 2
+			fi
+			shift 2
+			;;
+		--skip-mqtt-probe)
+			SKIP_MQTT_PROBE=1
+			shift
+			;;
 		-h|--help)
 			usage
 			exit 0
@@ -159,7 +220,26 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$PLAN" -eq 1 ]]; then
-	exec "$STG_SH" e2e --plan --brandname "$BRANDNAME" --user-count "$USER_COUNT" --device-count "$DEVICE_COUNT"
+	plan_args=(e2e --plan)
+	if [[ -n "$BRANDNAME" ]]; then
+		plan_args+=(--brandname "$BRANDNAME")
+	fi
+	if [[ -n "$USER_COUNT" ]]; then
+		plan_args+=(--user-count "$USER_COUNT")
+	fi
+	if [[ -n "$DEVICE_COUNT" ]]; then
+		plan_args+=(--device-count "$DEVICE_COUNT")
+	fi
+	if [[ -n "$DEVICE_MIX" ]]; then
+		plan_args+=(--device-mix "$DEVICE_MIX")
+	fi
+	if [[ -n "$DEVICE_PREFIX" ]]; then
+		plan_args+=(--device-prefix "$DEVICE_PREFIX")
+	fi
+	if [[ "$SKIP_MQTT_PROBE" -eq 1 ]]; then
+		plan_args+=(--skip-mqtt-probe)
+	fi
+	exec "$STG_SH" "${plan_args[@]}"
 fi
 
 if [[ "$CONFIRM" != "$STACK_NAME" ]]; then
@@ -175,12 +255,27 @@ run_args=(
 	e2e
 	--run
 	--confirm "$STACK_NAME"
-	--brandname "$BRANDNAME"
-	--user-count "$USER_COUNT"
-	--device-count "$DEVICE_COUNT"
 )
+if [[ -n "$BRANDNAME" ]]; then
+	run_args+=(--brandname "$BRANDNAME")
+fi
+if [[ -n "$USER_COUNT" ]]; then
+	run_args+=(--user-count "$USER_COUNT")
+fi
+if [[ -n "$DEVICE_COUNT" ]]; then
+	run_args+=(--device-count "$DEVICE_COUNT")
+fi
+if [[ -n "$DEVICE_MIX" ]]; then
+	run_args+=(--device-mix "$DEVICE_MIX")
+fi
+if [[ -n "$DEVICE_PREFIX" ]]; then
+	run_args+=(--device-prefix "$DEVICE_PREFIX")
+fi
 if [[ -n "$OUT_DIR" ]]; then
 	run_args+=(--out-dir "$OUT_DIR")
+fi
+if [[ "$SKIP_MQTT_PROBE" -eq 1 ]]; then
+	run_args+=(--skip-mqtt-probe)
 fi
 
 output="$("$STG_SH" "${run_args[@]}")"
@@ -217,8 +312,19 @@ if [[ -n "$summary_file" || -n "$report_file" ]]; then
 		printf 'install_report_file=%s\n' "$install_report_file"
 	fi
 	if [[ -n "$report_dir" ]]; then
+		bind_validation_dir=""
+		data_setup_summary_file=""
+		if [[ -n "$summary_file" && -f "$summary_file" ]] && command -v jq >/dev/null 2>&1; then
+			bind_validation_dir="$(jq -r '.artifacts.bind_validation_dir // empty' "$summary_file")"
+			data_setup_summary_file="$(jq -r '.artifacts.data_setup_summary_file // empty' "$summary_file")"
+		fi
 		printf 'logs_dir=%s\n' "$report_dir/logs"
-		printf 'bind_validation_dir=%s\n' "$report_dir/bind-validation"
+		if [[ -n "$data_setup_summary_file" ]]; then
+			printf 'data_setup_summary_file=%s\n' "$data_setup_summary_file"
+		fi
+		if [[ -n "$bind_validation_dir" ]]; then
+			printf 'bind_validation_dir=%s\n' "$bind_validation_dir"
+		fi
 		printf 'mqtt_report_file=%s\n' "$report_dir/home-mqtt/TEST_REPORT.md"
 	fi
 fi

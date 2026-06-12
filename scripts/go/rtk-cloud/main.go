@@ -2223,14 +2223,22 @@ func runStagingE2ETest(args []string) error {
 		steps = append(steps, dataSetupStep)
 		return err
 	}
-	steps = append(steps, dataSummary.Steps...)
+	steps = append(steps, dataSetupStep)
 	usersFile := dataSummary.UsersFile
 	bindFile := dataSummary.DeviceBindFile
+	dataSetupSummaryFile := dataSummary.SummaryFile
+	bindValidationDir := dataSummary.BindValidationDir
 	if usersFile == "" {
 		return errors.New("data setup summary did not include users_file")
 	}
 	if bindFile == "" {
 		return errors.New("data setup summary did not include device_bind_file")
+	}
+	if dataSetupSummaryFile == "" {
+		dataSetupSummaryFile = filepath.Join(dataSetupDir, "summary.json")
+	}
+	if bindValidationDir == "" {
+		return errors.New("data setup summary did not include bind_validation_dir")
 	}
 	mqttArgs := []string{"--env-root", envRoot, "--brandname", *brandname, "--profile", "smoke", "--out-dir", filepath.Join(*outDir, "home-mqtt")}
 	if *skipMQTTProbe {
@@ -2255,13 +2263,13 @@ func runStagingE2ETest(args []string) error {
 		"env_root":     envRoot,
 		"stack":        stackName,
 		"brandname":    *brandname,
-		"artifacts":    map[string]any{"users_file": usersFile, "device_bind_file": bindFile, "report_file": reportFile},
+		"artifacts":    map[string]any{"users_file": usersFile, "device_bind_file": bindFile, "bind_validation_dir": bindValidationDir, "data_setup_summary_file": dataSetupSummaryFile, "report_file": reportFile},
 		"steps":        steps,
 	}
 	if err := writeJSON(summaryFile, summary); err != nil {
 		return err
 	}
-	if err := os.WriteFile(reportFile, []byte(renderE2EReport(overall, envRoot, stackName, *brandname, usersFile, bindFile, filepath.Join(*outDir, "home-mqtt"), steps)), 0o644); err != nil {
+	if err := os.WriteFile(reportFile, []byte(renderE2EReport(overall, envRoot, stackName, *brandname, usersFile, bindFile, bindValidationDir, dataSetupSummaryFile, filepath.Join(*outDir, "home-mqtt"), steps)), 0o644); err != nil {
 		return err
 	}
 	if containsSensitiveReportTerms(readText(summaryFile)) || containsSensitiveReportTerms(readText(reportFile)) {
@@ -2353,7 +2361,7 @@ func latestMatchingFile(dir, pattern string) string {
 	return matches[len(matches)-1]
 }
 
-func renderE2EReport(overall, envRoot, stack, brandname, usersFile, bindFile, mqttDir string, steps []e2eStep) string {
+func renderE2EReport(overall, envRoot, stack, brandname, usersFile, bindFile, bindValidationDir, dataSetupSummaryFile, mqttDir string, steps []e2eStep) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, "# Staging E2E Test Report")
 	fmt.Fprintln(&b)
@@ -2374,6 +2382,8 @@ func renderE2EReport(overall, envRoot, stack, brandname, usersFile, bindFile, mq
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "- Users artifact: `%s`\n", usersFile)
 	fmt.Fprintf(&b, "- Device bind artifact: `%s`\n", bindFile)
+	fmt.Fprintf(&b, "- Bind validation: `%s`\n", bindValidationDir)
+	fmt.Fprintf(&b, "- Data setup summary: `%s`\n", dataSetupSummaryFile)
 	fmt.Fprintf(&b, "- Home MQTT report: `%s`\n", filepath.Join(mqttDir, "TEST_REPORT.md"))
 	fmt.Fprintf(&b, "- Home MQTT results: `%s`\n", filepath.Join(mqttDir, "results.json"))
 	return b.String()

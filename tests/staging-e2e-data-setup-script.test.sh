@@ -84,3 +84,12 @@ if CLOUD_PROVIDER=aws "$ROOT/scripts/setup-staging-e2e-data.sh" --workspace "$WO
 	exit 1
 fi
 grep -F 'unsupported CLOUD_PROVIDER=aws' "$TMP/provider.err" >/dev/null
+
+RTK_CLOUD_STAGING_ENV_ROOT="$WORKSPACE/cloud_env/staging" "$ROOT/stg.sh" data --plan >"$TMP/stg-data-plan.out"
+grep -F 'cloud-staging-e2e-data-setup plan' "$TMP/stg-data-plan.out" >/dev/null
+
+if CLOUD_PROVIDER=aws RTK_CLOUD_STAGING_ENV_ROOT="$WORKSPACE/cloud_env/staging" "$ROOT/stg.sh" data --plan >"$TMP/stg-data-provider.out" 2>"$TMP/stg-data-provider.err"; then
+	echo "expected stg.sh data unsupported provider to fail" >&2
+	exit 1
+fi
+grep -F 'unsupported CLOUD_PROVIDER=aws' "$TMP/stg-data-provider.err" >/dev/null

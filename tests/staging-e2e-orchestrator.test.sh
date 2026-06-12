@@ -154,8 +154,10 @@ SUMMARY="$(jq -r '.summary_file' "$RUN_OUT")"
 REPORT="$(jq -r '.report_file' "$RUN_OUT")"
 test -f "$SUMMARY"
 test -f "$REPORT"
-jq -e '.overall == "pass" and (.steps | length == 8)' "$SUMMARY" >/dev/null
+jq -e '.overall == "pass" and (.steps | length == 4) and .artifacts.data_setup_summary_file != "" and .artifacts.bind_validation_dir != ""' "$SUMMARY" >/dev/null
+jq -e '.steps[] | select(.name == "setup_brand_devices")' "$SUMMARY" >/dev/null
 grep -F 'Staging E2E Test Report' "$REPORT" >/dev/null
+grep -F 'Data setup summary' "$REPORT" >/dev/null
 grep -F 'cloud_mqtt_test' "$REPORT" >/dev/null
 if grep -R -Ei 'super-secret|password|bearer|token|PRIVATE KEY|-----BEGIN' "$SUMMARY" "$REPORT" >/dev/null; then
 	echo "orchestrator reports must be redacted" >&2
