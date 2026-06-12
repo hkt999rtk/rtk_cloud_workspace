@@ -23,6 +23,7 @@ Shortcuts:
   users NAME [COUNT] [args]     -> create-users
   devices [BRAND] [COUNT] [args]-> generate-load-devices
   bind NAME [COUNT] [args]      -> bind-devices
+  data [args]                   -> staging-e2e-data-setup
   unprovision NAME [args]       -> unprovision-devices
   mqtt NAME [args]              -> mqtt-test
   mqtt-report [NAME] [args]     -> mqtt-trace-report
@@ -142,6 +143,9 @@ case "$cmd" in
 		else
 			with_env bind-devices --brandname "$brand" "$@"
 		fi
+		;;
+	data)
+		with_env staging-e2e-data-setup "$@"
 		;;
 	unprovision)
 		need_value "brand name" "${1:-}"

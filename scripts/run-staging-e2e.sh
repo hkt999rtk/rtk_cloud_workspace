@@ -37,13 +37,10 @@ Current supported provider: linode.
 Flow:
   1. remove staging provider resources
   2. provision/deploy staging with current CI artifacts
-  3. create RTK brand cloud
-  4. create 10 users
-  5. create 100 devices
-  6. bind devices to users
-  7. run live MQTT E2E
-  8. write final installation report with segment durations
-  9. print final redacted report paths
+  3. run scripts/setup-staging-e2e-data.sh for brand/users/devices/bind
+  4. run live MQTT E2E
+  5. write final installation report with segment durations
+  6. print final redacted report paths
 
 Options:
   --confirm <stack-name>         Required for destructive run mode.
