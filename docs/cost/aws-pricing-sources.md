@@ -37,11 +37,12 @@ Prices were collected from the AWS Bulk Price List API regional CSV files for
 | AmazonCloudWatch | <https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonCloudWatch/current/ap-southeast-1/index.csv> | 2026-03-13T17:42:19Z |
 | AmazonVPC | <https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonVPC/current/ap-southeast-1/index.csv> | 2026-06-04T17:34:26Z |
 
-Support and professional-services references were checked against public AWS
-pages on 2026-06-08:
+Support, identity, and professional-services references were checked against
+public AWS pages:
 
 | Area | Public reference | Pricing treatment |
 | --- | --- | --- |
+| Amazon Cognito pricing | <https://aws.amazon.com/cognito/pricing/> | Use Essentials direct/social MAU pricing as the default planning case; show Plus and SAML/OIDC as sensitivity cases. Checked on 2026-06-12. |
 | AWS Support plans | <https://aws.amazon.com/premiumsupport/pricing/> | Add Business Support+ as the default recurring support-plan adder; keep Enterprise and Unified Operations as sensitivity cases. |
 | AWS Support plan comparison | <https://aws.amazon.com/premiumsupport/plans/> | Business Support+ is the minimum recommended plan for production workloads and includes technical support access. |
 | AWS Support plan end of support | <https://docs.aws.amazon.com/awssupport/latest/user/support-plans-eos.html> | Developer Support, Business Support, and Enterprise On-Ramp are being discontinued on 2027-01-01, so the estimate uses Business Support+ naming. |
@@ -68,6 +69,9 @@ pages on 2026-06-08:
 | IoT connection | AWS IoT Core connection minutes | 0.096 USD per million minutes |
 | IoT messaging | AWS IoT Core 5 KB-metered messages, first 1B/month | 1.20 USD per million metered messages |
 | IoT state | AWS IoT Device Shadow/Registry operations | 1.50 USD per million operations |
+| User authentication | Amazon Cognito Essentials direct/social sign-in | 10,000 MAUs free tier per month; 0.015 USD per MAU above free tier |
+| User authentication sensitivity | Amazon Cognito Plus direct/social sign-in | No free tier; 0.020 USD per MAU in first pricing tier |
+| Federated user sensitivity | Amazon Cognito SAML/OIDC federation | 50 MAUs free tier per month; 0.015 USD per MAU above free tier |
 | Load balancer | Application Load Balancer | 0.0252 USD per ALB-hour |
 | Load balancer capacity | Application Load Balancer LCU | 0.008 USD per LCU-hour |
 | NAT | NAT Gateway | 0.059 USD per gateway-hour |
@@ -144,6 +148,7 @@ measured device telemetry to reduce this assumption later.
 | Public frontend CloudFront CDN | 12.07 | 100 GB CloudFront egress plus 60,000 HTTPS requests/month. |
 | Public frontend Lambda | 0.06 | 60,000 requests/month at 256 MB and 200 ms average duration. |
 | Public frontend S3 static origin | 0.03 | 1 GB static asset storage and small deployment PUT allowance. |
+| Amazon Cognito User Pools | 0.00 | 2,500 pilot end users are below the 10,000 MAU free tier for Essentials direct/social sign-in; SMS, SES, M2M token requests, and SAML/OIDC federation are not included. |
 | RDS PostgreSQL | 182.69 | One shared `db.t4g.large` DB server plus 250 GB account/video storage; logs go to CloudWatch. |
 | ElastiCache for Valkey | 28.03 | One non-redundant `cache.t4g.small` node for the original Redis-compatible cache. |
 | S3 storage and PUT requests | 6.78 | Firmware binaries, backups, CI/release artifacts, and non-camera object storage; camera snapshots excluded. |
@@ -228,6 +233,20 @@ API traffic. A 10% user pool is kept for account/app/admin/audit/session costs.
 | Default estimate with one CloudHSM plus Business Support+ | 263.91 | 2,375.18 | 0.11 USD/user-month | 0.24 USD/device-month | 1.06 USD/month |
 | Robust redundant design with two CloudHSMs | 421.27 | 3,791.44 | 0.17 USD/user-month | 0.38 USD/device-month | 1.69 USD/month |
 | Robust redundant design with two CloudHSMs plus Business Support+ | 459.19 | 4,132.66 | 0.18 USD/user-month | 0.41 USD/device-month | 1.84 USD/month |
+
+Cognito sensitivity:
+
+| Scenario | Calculation | Monthly estimate |
+| --- | --- | ---: |
+| Essentials direct/social sign-in, pilot size | max(0, 2,500 MAUs - 10,000 free MAUs) * 0.015 USD/MAU | 0.00 |
+| Essentials direct/social sign-in, 25,000 MAUs | max(0, 25,000 MAUs - 10,000 free MAUs) * 0.015 USD/MAU | 225.00 |
+| Plus direct/social sign-in, pilot size | 2,500 MAUs * 0.020 USD/MAU | 50.00 |
+| SAML/OIDC federation, pilot size | max(0, 2,500 MAUs - 50 free MAUs) * 0.015 USD/MAU | 36.75 |
+
+The default estimate uses Cognito Essentials direct/social sign-in as a planning
+assumption. If enterprise SAML/OIDC federation, Plus threat-protection features,
+SMS MFA, SES email volume, machine-to-machine token requests, or higher API RPS
+quota are required, add the corresponding Cognito/SNS/SES adders.
 
 Robust-profile changes:
 

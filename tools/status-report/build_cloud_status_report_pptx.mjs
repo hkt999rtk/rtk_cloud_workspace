@@ -891,7 +891,7 @@ async function slideAwsCostCalculationBase(p, payload) {
   const details = aws.calculationDetails || {};
   const findLine = (name) => (details.baseLineItems || []).find((row) => row.area === name) || {};
 
-  addText(slide, "This page shows how the base monthly AWS estimate is built from service quantities and unit prices. CloudWatch logger cost is included here, but camera/WebRTC/TURN relay remains excluded.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.5, color: C.navy, bold: true, align: "center", fill: C.pale });
+  addText(slide, "This page shows how the base monthly AWS estimate is built from service quantities and unit prices. CloudWatch logger and Cognito user-pool cost are included here, but camera/WebRTC/TURN relay remains excluded.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.5, color: C.navy, bold: true, align: "center", fill: C.pale });
 
   const assumptions = [
     ["Region", aws.region || "ap-southeast-1"],
@@ -908,6 +908,7 @@ async function slideAwsCostCalculationBase(p, payload) {
 
   const baseRows = [
     ["ECS Fargate app services", findLine("ECS Fargate application services").monthlyEstimate || "539.79", "vCPU-hours * 0.05056 + GB-hours * 0.00553; includes account, video, admin, bridges, workers."],
+    ["Amazon Cognito User Pools", findLine("Amazon Cognito User Pools").monthlyEstimate || "0.00", "2,500 direct/social MAUs are below the 10,000 MAU free tier; after that use billable MAUs * 0.015."],
     ["RDS PostgreSQL", findLine("RDS PostgreSQL").monthlyEstimate || "182.69", "One shared db.t4g.large: 730 DB-hours * 0.203 + 250 GB storage * 0.138."],
     ["AWS IoT Core", findLine("AWS IoT Core").monthlyEstimate || "164.95", "10,000 connected devices: connection minutes + MQTT messages + shadow ops."],
     ["NAT Gateway", findLine("NAT Gateway").monthlyEstimate || "54.87", "730 gateway-hours * 0.059 + 200 GB processed * 0.059."],
@@ -919,7 +920,7 @@ async function slideAwsCostCalculationBase(p, payload) {
     ["KMS", findLine("KMS").monthlyEstimate || "5.30", "5 customer-managed keys * 1.00 + 100,000 requests * 0.000003."],
     ["Base subtotal", findLine("Base subtotal before HSM/Private CA").monthlyEstimate || "1,063.38", "Sum of base services; excludes CloudHSM, ACM Private CA, support plan, tax, discounts."],
   ];
-  addTable(slide, ["Base service item", "USD / month", "Calculation / assumption"], baseRows, { x: 58, y: 285, w: 720, h: 308 }, [1.45, 0.75, 3.15], { rowH: 23, headerH: 24, fontSize: 7.4 });
+  addTable(slide, ["Base service item", "USD / month", "Calculation / assumption"], baseRows, { x: 58, y: 285, w: 720, h: 308 }, [1.45, 0.75, 3.15], { rowH: 21, headerH: 23, fontSize: 7.1 });
 
   const frontendRows = (details.frontendCalculation || []).slice(0, 5).map((row) => [
     row.item.replace("CloudFront ", "CF "),
@@ -950,7 +951,7 @@ async function slideAwsCostFormulaBreakdown(p, payload) {
   const aws = payload.awsCostEstimate || {};
   const details = aws.calculationDetails || {};
 
-  addText(slide, "This page expands each major estimate into quantity * public unit price. Example: RDS PostgreSQL is not a single number; it is DB instance hours plus storage GB-month.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.5, color: C.navy, bold: true, align: "center", fill: C.pale });
+  addText(slide, "This page expands each major estimate into quantity * public unit price. Example: RDS PostgreSQL is DB instance hours plus storage GB-month; Cognito is 0.00 at pilot size and becomes billable after 10,000 MAUs.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.5, color: C.navy, bold: true, align: "center", fill: C.pale });
 
   const formulaRows = (details.formulaBreakdown || []).map((row) => [
     row.item,
@@ -959,15 +960,16 @@ async function slideAwsCostFormulaBreakdown(p, payload) {
     row.formula,
     row.estimate,
   ]);
-  addTable(slide, ["Item", "Quantity", "Public unit price", "Formula", "USD / month"], formulaRows, { x: 42, y: 220, w: 1195, h: 365 }, [1.25, 1.45, 1.55, 2.15, 0.75], { rowH: 24, headerH: 25, fontSize: 6.55 });
+  addTable(slide, ["Item", "Quantity", "Public unit price", "Formula", "USD / month"], formulaRows, { x: 42, y: 220, w: 1195, h: 365 }, [1.25, 1.45, 1.55, 2.15, 0.75], { rowH: 23, headerH: 25, fontSize: 6.4 });
 
   addShape(slide, { x: 66, y: 604, w: 540, h: 58, fill: C.paleAmber, line: "#E3C25A" });
   addText(slide, "RDS example", { x: 86, y: 613, w: 150, h: 16 }, { size: 12, color: C.navy, bold: true, face: FONT_EN });
   addText(slide, "730 DB-hours * 0.203 USD/hour = 148.19; 250 GB-month * 0.138 USD/GB-month = 34.50; total = 182.69 USD/month.", { x: 86, y: 636, w: 500, h: 18 }, { size: 8.8, color: C.black, face: FONT_EN });
 
   addShape(slide, { x: 650, y: 604, w: 560, h: 58, fill: C.paleBlue, line: C.line });
-  addText(slide, "Reading rule", { x: 670, y: 613, w: 150, h: 16 }, { size: 12, color: C.navy, bold: true, face: FONT_EN });
-  addText(slide, "Hourly services use 730 hours/month. Traffic, logs, storage, and key services use GB, request, key, or message unit prices from docs/cost/aws-pricing-sources.md.", { x: 670, y: 636, w: 520, h: 18 }, { size: 8.8, color: C.black, face: FONT_EN });
+  addText(slide, "Cognito sensitivity", { x: 670, y: 613, w: 210, h: 16 }, { size: 12, color: C.navy, bold: true, face: FONT_EN });
+  addText(slide, "Default Essentials formula: max(0, MAUs - 10,000) * 0.015 USD/MAU.", { x: 670, y: 634, w: 520, h: 11 }, { size: 8.7, color: C.black, face: FONT_EN });
+  addText(slide, "Examples: 2,500 MAUs = 0.00; 25,000 MAUs = 225.00. Plus 2,500 MAUs = 50.00; SAML/OIDC 2,500 MAUs = 36.75.", { x: 670, y: 648, w: 520, h: 11 }, { size: 8.2, color: C.black, face: FONT_EN });
   return slide;
 }
 

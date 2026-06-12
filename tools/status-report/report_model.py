@@ -469,6 +469,7 @@ def collect_aws_cost_estimate() -> dict[str, object]:
     cost_area_rows = table_by_header(tables, ["Cost area", "Monthly estimate", "Notes"])
     frontend_calc_rows = table_by_header(tables, ["Item", "Calculation", "Monthly estimate"], occurrence=1)
     iot_calc_rows = table_by_header(tables, ["Item", "Calculation", "Monthly estimate"], occurrence=2)
+    cognito_sensitivity_rows = table_by_header(tables, ["Scenario", "Calculation", "Monthly estimate"])
     support_calc_rows = table_by_header(tables, ["Scenario basis", "Gross monthly AWS charges", "Business Support+ calculation", "Monthly support estimate"])
     robust_profile_rows = table_by_header(tables, ["Area", "Baseline", "Robust profile"])
     robust_delta_rows = table_by_header(tables, ["Cost area", "Baseline", "Robust", "Delta"])
@@ -542,6 +543,7 @@ def collect_aws_cost_estimate() -> dict[str, object]:
         "Public frontend CloudFront CDN",
         "Public frontend Lambda",
         "Public frontend S3 static origin",
+        "Amazon Cognito User Pools",
         "RDS PostgreSQL",
         "ElastiCache for Valkey",
         "S3 storage and PUT requests",
@@ -584,6 +586,11 @@ def collect_aws_cost_estimate() -> dict[str, object]:
         "iotCalculation": [
             {"item": row[0], "calculation": row[1], "monthlyEstimate": row[2]}
             for row in iot_calc_rows
+            if len(row) >= 3
+        ],
+        "cognitoSensitivity": [
+            {"scenario": row[0], "calculation": row[1], "monthlyEstimate": row[2]}
+            for row in cognito_sensitivity_rows
             if len(row) >= 3
         ],
         "supportCalculation": [
@@ -671,6 +678,13 @@ def collect_aws_cost_estimate() -> dict[str, object]:
                 "unitPrice": "0.120/GB; 0.012/10k HTTPS; Lambda request/duration rates",
                 "formula": "12.07 CDN + 0.06 Lambda + 0.03 S3",
                 "estimate": "12.16",
+            },
+            {
+                "item": "Amazon Cognito User Pools",
+                "quantity": "2,500 direct/social MAUs",
+                "unitPrice": "10,000 MAUs free; 0.015/MAU above free tier",
+                "formula": "max(0, 2,500 - 10,000) * 0.015",
+                "estimate": "0.00",
             },
             {
                 "item": "S3 storage and PUT requests",
