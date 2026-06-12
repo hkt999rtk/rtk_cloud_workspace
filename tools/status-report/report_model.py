@@ -491,33 +491,36 @@ def collect_aws_cost_estimate() -> dict[str, object]:
     robust_without_hsm = scenarios.get("Robust redundant design, excluding CloudHSM", "n/a")
     robust_with_hsm = scenarios.get("Robust redundant design with two CloudHSMs", "n/a")
     weighted_units = {row[0]: row for row in weighted_unit_rows if len(row) >= 6}
+    end_user_count = 25000
+    registered_device_count = 100000
+
     raw_unit_costs = [
         {
             "scenario": "Base services only",
             "monthlyTotal": base_without_hsm,
-            "perUserMonth": divide_usd_amount(base_without_hsm, 2500, "user-month"),
-            "perDeviceMonth": divide_usd_amount(base_without_hsm, 10000, "device-month"),
+            "perUserMonth": divide_usd_amount(base_without_hsm, end_user_count, "user-month"),
+            "perDeviceMonth": divide_usd_amount(base_without_hsm, registered_device_count, "device-month"),
             "notes": "No CloudHSM, no robust redundancy",
         },
         {
             "scenario": "Default + 1 CloudHSM",
             "monthlyTotal": default_with_hsm,
-            "perUserMonth": divide_usd_amount(default_with_hsm, 2500, "user-month"),
-            "perDeviceMonth": divide_usd_amount(default_with_hsm, 10000, "device-month"),
+            "perUserMonth": divide_usd_amount(default_with_hsm, end_user_count, "user-month"),
+            "perDeviceMonth": divide_usd_amount(default_with_hsm, registered_device_count, "device-month"),
             "notes": "Default security profile",
         },
         {
             "scenario": "Robust, no CloudHSM",
             "monthlyTotal": robust_without_hsm,
-            "perUserMonth": divide_usd_amount(robust_without_hsm, 2500, "user-month"),
-            "perDeviceMonth": divide_usd_amount(robust_without_hsm, 10000, "device-month"),
+            "perUserMonth": divide_usd_amount(robust_without_hsm, end_user_count, "user-month"),
+            "perDeviceMonth": divide_usd_amount(robust_without_hsm, registered_device_count, "device-month"),
             "notes": "Redundant infra without HSM",
         },
         {
             "scenario": "Robust + 2 CloudHSMs",
             "monthlyTotal": robust_with_hsm,
-            "perUserMonth": divide_usd_amount(robust_with_hsm, 2500, "user-month"),
-            "perDeviceMonth": divide_usd_amount(robust_with_hsm, 10000, "device-month"),
+            "perUserMonth": divide_usd_amount(robust_with_hsm, end_user_count, "user-month"),
+            "perDeviceMonth": divide_usd_amount(robust_with_hsm, registered_device_count, "device-month"),
             "notes": "Robust security profile",
         },
     ]
@@ -614,7 +617,7 @@ def collect_aws_cost_estimate() -> dict[str, object]:
             {"scenario": "Robust, no CloudHSM", "formula": f"{base_without_hsm} + {diff_usd_amount(robust_without_hsm, base_without_hsm)} robust infra delta", "estimate": robust_without_hsm},
             {"scenario": "Robust + 2 CloudHSMs", "formula": f"{robust_without_hsm} + 2 * 1,357.80 CloudHSM", "estimate": robust_with_hsm},
         ],
-        "cloudWatchFormula": "30.0 GB service logs + 3.6 GB device runtime logs = 33.6 GB/month; 33.6 * 0.70 ingestion + 33.6 * 0.03 retention = 24.53 USD/month.",
+        "cloudWatchFormula": "30.0 GB service logs + 36.0 GB device runtime logs = 66.0 GB/month; 66.0 * 0.70 ingestion + 66.0 * 0.03 retention = 48.18 USD/month.",
         "formulaBreakdown": [
             {
                 "item": "ECS Fargate application services",
@@ -625,24 +628,24 @@ def collect_aws_cost_estimate() -> dict[str, object]:
             },
             {
                 "item": "RDS PostgreSQL",
-                "quantity": "730 DB-hr + 250 GB-month",
+                "quantity": "730 DB-hr + 2,500 GB-month",
                 "unitPrice": "0.203/DB-hr; 0.138/GB-month",
-                "formula": "730 * 0.203 + 250 * 0.138 = 148.19 + 34.50",
-                "estimate": "182.69",
+                "formula": "730 * 0.203 + 2,500 * 0.138 = 148.19 + 345.00",
+                "estimate": "493.19",
             },
             {
                 "item": "AWS IoT Core",
-                "quantity": "43.2M conn-min + 101.1M metered msgs/ops",
+                "quantity": "432.0M conn-min + 1,011.0M metered msgs/ops",
                 "unitPrice": "0.096/M conn-min; 1.20/M msg; 1.50/M shadow op",
-                "formula": "41.47 connection + 112.68 messages + 10.80 shadow ops",
-                "estimate": "164.95",
+                "formula": "414.72 connection + 1,126.80 messages + 108.00 shadow ops",
+                "estimate": "1,649.52",
             },
             {
                 "item": "NAT Gateway",
-                "quantity": "730 gateway-hr + 200 GB processed",
+                "quantity": "730 gateway-hr + 2,000 GB processed",
                 "unitPrice": "0.059/gateway-hr; 0.059/GB",
-                "formula": "730 * 0.059 + 200 * 0.059 = 43.07 + 11.80",
-                "estimate": "54.87",
+                "formula": "730 * 0.059 + 2,000 * 0.059 = 43.07 + 118.00",
+                "estimate": "161.07",
             },
             {
                 "item": "ElastiCache / Valkey",
@@ -660,45 +663,45 @@ def collect_aws_cost_estimate() -> dict[str, object]:
             },
             {
                 "item": "CloudWatch Logs",
-                "quantity": "33.6 GB ingest + 33.6 GB-month retain",
+                "quantity": "66.0 GB ingest + 66.0 GB-month retain",
                 "unitPrice": "0.70/GB ingest; 0.03/GB-month",
-                "formula": "33.6 * 0.70 + 33.6 * 0.03 = 23.52 + 1.01",
-                "estimate": "24.53",
+                "formula": "66.0 * 0.70 + 66.0 * 0.03 = 46.20 + 1.98",
+                "estimate": "48.18",
             },
             {
                 "item": "Secrets Manager",
-                "quantity": "50 secrets + 10,000 API calls",
+                "quantity": "50 secrets + 100,000 API calls",
                 "unitPrice": "0.40/secret-month; 0.000005/API call",
-                "formula": "50 * 0.40 + 10,000 * 0.000005",
-                "estimate": "20.05",
+                "formula": "50 * 0.40 + 100,000 * 0.000005",
+                "estimate": "20.50",
             },
             {
                 "item": "Frontend CloudFront/Lambda/S3",
-                "quantity": "100 GB egress + 60k requests + 3,072 GB-sec + 1 GB S3",
+                "quantity": "1,000 GB egress + 600k requests + 30,720 GB-sec + 1 GB S3",
                 "unitPrice": "0.120/GB; 0.012/10k HTTPS; Lambda request/duration rates",
-                "formula": "12.07 CDN + 0.06 Lambda + 0.03 S3",
-                "estimate": "12.16",
+                "formula": "120.72 CDN + 0.63 Lambda + 0.03 S3",
+                "estimate": "121.38",
             },
             {
                 "item": "Amazon Cognito User Pools",
-                "quantity": "2,500 direct/social MAUs",
+                "quantity": "25,000 direct/social MAUs",
                 "unitPrice": "10,000 MAUs free; 0.015/MAU above free tier",
-                "formula": "max(0, 2,500 - 10,000) * 0.015",
-                "estimate": "0.00",
+                "formula": "max(0, 25,000 - 10,000) * 0.015",
+                "estimate": "225.00",
             },
             {
                 "item": "S3 storage and PUT requests",
-                "quantity": "firmware, backup, revocation, CI artifact storage",
+                "quantity": "100k-device firmware, backup, revocation, CI artifact storage",
                 "unitPrice": "0.025/GB-month plus request allowance",
-                "formula": "worksheet aggregate for non-camera object storage",
-                "estimate": "6.78",
+                "formula": "commercial case aggregate for non-camera object storage",
+                "estimate": "67.80",
             },
             {
                 "item": "KMS",
-                "quantity": "5 keys + 100,000 requests",
+                "quantity": "5 keys + 1,000,000 requests",
                 "unitPrice": "1.00/key-month; 0.000003/request",
-                "formula": "5 * 1.00 + 100,000 * 0.000003",
-                "estimate": "5.30",
+                "formula": "5 * 1.00 + 1,000,000 * 0.000003",
+                "estimate": "8.00",
             },
             {
                 "item": "CloudHSM add-on",
@@ -759,8 +762,8 @@ def collect_aws_cost_estimate() -> dict[str, object]:
         },
         "unitCosts": {
             "basis": {
-                "endUsers": "2,500",
-                "registeredDevices": "10,000",
+                "endUsers": "25,000",
+                "registeredDevices": "100,000",
                 "devicesPerUser": "4",
                 "weightedUserPool": "10%",
                 "weightedDevicePool": "90%",
