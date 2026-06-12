@@ -352,7 +352,7 @@ HSM / PKCS#11 signer visual：
 ```text
 HSM-backed token / non-exportable key
   -> PKCS#11 signer adapter
-  -> certissuer CA signing and RS256 token signing
+  -> certissuer CA signing and Ed25519 token signing
   -> certificate/token output with audit
 ```
 

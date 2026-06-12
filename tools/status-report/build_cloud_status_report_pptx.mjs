@@ -700,7 +700,7 @@ async function slideHsmSignerDesign(p, payload) {
 
   const lanes = [
     ["Signing key custody", "CA key / JWT key stays in HSM-backed token", "non-exportable key, PIN/module handled as deployment config", C.paleAmber],
-    ["PKCS#11 signer adapter", "certissuer signer + RS256 token signer", "select slot/token label/key label, sign only approved digest/CSR", C.paleBlue],
+    ["PKCS#11 signer adapter", "certissuer signer + Ed25519 token signer", "select slot/token label/key label, sign only approved payload/CSR", C.paleBlue],
     ["Cloud services", "certissuer, token bootstrap, Account Manager path", "issue cert/token, write audit, fail closed if signer unavailable", C.paleTeal],
   ];
   lanes.forEach((lane, i) => {
@@ -714,7 +714,7 @@ async function slideHsmSignerDesign(p, payload) {
 
   addTable(slide, ["Management control", "Report message"], [
     ["Key custody", "Private key should be non-exportable in HSM-backed deployment; report only provider type, not PIN/path/label values."],
-    ["Signer boundaries", "Certificate issuance and RS256 token signing use signer adapters; business services do not own raw signing keys."],
+    ["Signer boundaries", "Certificate issuance and Ed25519 token signing use signer adapters; business services do not own raw signing keys."],
     ["Audit and failure mode", "certissuer records request/certificate evidence; signer unavailable must block issuance instead of falling back silently."],
     ["Rollout evidence", "SoftHSM/local CI can prove behavior; production needs HSM provider, key ceremony, backup/rotation and access owner."],
   ], { x: 155, y: 450, w: 970, h: 155 }, [1.15, 3.05], { rowH: 31, headerH: 28, fontSize: 10 });
