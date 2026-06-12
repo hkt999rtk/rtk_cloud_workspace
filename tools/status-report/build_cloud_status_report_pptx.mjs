@@ -767,7 +767,7 @@ async function slide14(p, payload) {
 async function slideCostView(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
-  await addHeader(slide, payload, "Initial Operation Cost View", "LINODE BASELINE / AWS PILOT ESTIMATE");
+  await addHeader(slide, payload, "Initial Operation Cost View", "LINODE BASELINE / AWS COMMERCIAL-SCALE ESTIMATE");
   const billing = payload.linodeBilling || {};
   const aws = payload.awsCostEstimate || {};
   const scenarios = aws.scenarios || {};
@@ -832,6 +832,54 @@ async function slideCostView(p, payload) {
     addStatusDot(slide, "partial", 600, 628 + i * 18);
     addText(slide, c, { x: 620, y: 624 + i * 18, w: 540, h: 16 }, { size: 8.5, color: C.black, face: FONT_EN });
   });
+  return slide;
+}
+
+async function slideLinodeScaleEstimate(p, payload) {
+  const slide = p.slides.add();
+  await addBackground(slide, payload);
+  await addHeader(slide, payload, "Linode 100k Device Cost View", "SELF-MANAGED CLUSTER ESTIMATE");
+  const estimate = payload.linodeScaleEstimate || {};
+  const scenarios = estimate.scenarios || {};
+  const perUnit = estimate.perUnit || {};
+  const config = estimate.configuration || [];
+
+  addText(slide, "This is a planning profile for 25,000 users and 100,000 usually-online MQTT devices on Linode/Akamai Cloud. It is not the current Linode bill and still needs load-test evidence before sizing is final.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.5, color: C.navy, bold: true, align: "center", fill: C.pale });
+
+  const summary = [
+    ["Sizing", "25,000 users / 100,000 devices"],
+    ["Self-managed cluster", scenarios.selfManaged || "4,720.00 USD"],
+    ["With Managed Service", scenarios.withManagedService || "6,220.00 USD"],
+    ["Default unit view", perUnit.selfManagedUserWithFourDevices || "0.19 USD/month"],
+  ];
+  summary.forEach((item, i) => {
+    const x = 70 + i * 292;
+    addShape(slide, { x, y: 214, w: 250, h: 66, fill: i === 1 ? C.paleAmber : C.paleBlue, line: C.line });
+    addText(slide, item[0], { x: x + 8, y: 224, w: 234, h: 14 }, { size: 8.5, color: C.muted, bold: true, align: "center", face: FONT_EN });
+    addText(slide, item[1], { x: x + 8, y: 246, w: 234, h: 18 }, { size: 12, color: C.navy, bold: true, align: "center", face: FONT_EN });
+  });
+
+  const configRows = config.map((row) => [
+    row.role,
+    row.count,
+    row.plan.replace("G8 Dedicated ", "G8 "),
+    row.monthlySubtotal,
+    row.rationale,
+  ]);
+  addText(slide, "100k Linode configuration", { x: 58, y: 310, w: 720, h: 22 }, { size: 15, color: C.navy, bold: true, face: FONT_EN });
+  addTable(slide, ["Role", "Count", "Plan", "USD / mo", "Why needed"], configRows, { x: 50, y: 342, w: 780, h: 260 }, [1.35, 0.42, 1.25, 0.55, 2.65], { rowH: 24, headerH: 24, fontSize: 6.9 });
+
+  addShape(slide, { x: 860, y: 320, w: 360, h: 118, fill: C.paleTeal, line: C.line });
+  addText(slide, "Per-unit view", { x: 884, y: 340, w: 312, h: 20 }, { size: 16, color: C.navy, bold: true, align: "center", face: FONT_EN });
+  addText(slide, `${perUnit.selfManagedPerUser || "0.19 USD/user-month"}\n${perUnit.selfManagedPerDevice || "0.05 USD/device-month"}\n${perUnit.selfManagedUserWithFourDevices || "0.19 USD/month"} for 1 user + 4 devices`, { x: 892, y: 370, w: 296, h: 48 }, { size: 12, color: C.black, bold: true, align: "center", face: FONT_EN });
+
+  addShape(slide, { x: 860, y: 466, w: 360, h: 118, fill: C.paleAmber, line: "#E3C25A" });
+  addText(slide, "Interpretation", { x: 884, y: 486, w: 312, h: 20 }, { size: 16, color: C.navy, bold: true, align: "center", face: FONT_EN });
+  addText(slide, "This Linode profile is cheaper than managed AWS only if Realtek owns broker/database/cache operations, backup/restore, failover, patching, and capacity tuning.", { x: 890, y: 518, w: 300, h: 42 }, { size: 10.2, color: C.black, align: "center" });
+
+  addShape(slide, { x: 70, y: 620, w: 1130, h: 44, fill: C.white, line: C.line });
+  addText(slide, "Caveats: no AWS IoT Core/Cognito/CloudHSM equivalents; camera/WebRTC/TURN media excluded; not load-tested; optional Managed Service adds 1,500 USD/month for 15 compute instances.", { x: 92, y: 630, w: 1090, h: 16 }, { size: 9.3, color: C.black, bold: true, align: "center", face: FONT_EN });
+  addText(slide, `Source: ${estimate.source || "docs/cost/linode-100k-estimate.md"}, collected ${estimate.collected || "n/a"}`, { x: 92, y: 650, w: 1090, h: 12 }, { size: 7.5, color: C.muted, align: "center", face: FONT_EN });
   return slide;
 }
 
@@ -1158,7 +1206,7 @@ async function slide21(p, payload) {
 const SLIDES = [
   slide01, slideMajorTopics, slide07, slideWhyCloud, slideCustomerUseCaseFit, slide03, slideCloudTypes, slideOperationalTransition, slide02, slide04, slideReleaseGateDefinition, slide05, slide06, slide08,
   slidePortalTransition, slidePortalIntro, slide09, slideTechnicalTransition, slide10, slide11, slideStrideOverview, slide12, slideHsmSignerDesign, slide13,
-  slideEvidenceTransition, slide14, slideCostView, slideAwsUnitCost, slideAwsCostCalculationBase, slideAwsCostFormulaBreakdown, slideAwsCostCalculationScenarios, slide15, slide16, slide17, slide18, slide19, slidePostAlphaCoverage, slide20, slide21,
+  slideEvidenceTransition, slide14, slideCostView, slideLinodeScaleEstimate, slideAwsUnitCost, slideAwsCostCalculationBase, slideAwsCostFormulaBreakdown, slideAwsCostCalculationScenarios, slide15, slide16, slide17, slide18, slide19, slidePostAlphaCoverage, slide20, slide21,
 ];
 
 async function makeContactSheet(previewPaths, outputPath) {

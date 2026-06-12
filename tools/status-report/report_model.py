@@ -22,6 +22,7 @@ COST_DIR = ROOT / "docs" / "cost"
 AWS_PRICING_SOURCES_PATH = COST_DIR / "aws-pricing-sources.md"
 AWS_COST_WORKSHEET_PATH = COST_DIR / "aws-cost-estimate-worksheet.csv"
 AWS_SERVICE_MAPPING_PATH = COST_DIR / "aws-service-mapping.md"
+LINODE_100K_ESTIMATE_PATH = COST_DIR / "linode-100k-estimate.md"
 PORTAL_WEB_URL = "https://webtest.mgmeet.io"
 PORTAL_WEB_SCREENSHOT = FIG_DIR / "portal-webtest-home-hero.png"
 PORTAL_WEB_FALLBACK_IMAGE = ROOT / "repos/rtk_cloud_frontend/static/assets/connectplus-hero-corporate-v2.jpg"
@@ -375,9 +376,69 @@ def collect_linode_billing() -> dict[str, object]:
     }
 
 
+def collect_linode_scale_estimate() -> dict[str, object]:
+    if not LINODE_100K_ESTIMATE_PATH.exists():
+        return {
+            "status": "unavailable",
+            "source": str(LINODE_100K_ESTIMATE_PATH.relative_to(ROOT)),
+            "summary": "Linode 100k planning estimate source not found.",
+        }
+
+    text = LINODE_100K_ESTIMATE_PATH.read_text(encoding="utf-8")
+    tables = parse_markdown_tables(text)
+    metadata = parse_markdown_metadata(text)
+    config_rows = table_by_header(tables, ["Role", "Count", "Plan", "Monthly unit", "Monthly subtotal", "Rationale"])
+    scenario_rows = table_by_header(tables, ["Scenario", "Calculation", "Monthly estimate"])
+    per_unit_rows = table_by_header(tables, ["Scenario", "Per user", "Per device", "1 user + 4 devices"])
+
+    scenarios = {row[0]: row[2] for row in scenario_rows if len(row) >= 3}
+    per_unit = {row[0]: row for row in per_unit_rows if len(row) >= 4}
+    default_scenario = "Linode 100k self-managed cluster"
+    managed_scenario = "Linode 100k with optional Managed Service"
+
+    return {
+        "status": "available",
+        "source": str(LINODE_100K_ESTIMATE_PATH.relative_to(ROOT)),
+        "region": metadata.get("Region", "us-sea"),
+        "currency": metadata.get("Currency", "USD"),
+        "collected": metadata.get("Collected", "n/a"),
+        "summary": "Linode/Akamai Cloud 100k-device self-managed cluster planning estimate; not current bill and not load-tested.",
+        "sizing": "25,000 users / 100,000 devices",
+        "scenarios": {
+            "selfManaged": scenarios.get(default_scenario, "n/a"),
+            "withManagedService": scenarios.get(managed_scenario, "n/a"),
+        },
+        "configuration": [
+            {
+                "role": row[0],
+                "count": row[1],
+                "plan": row[2],
+                "monthlyUnit": row[3],
+                "monthlySubtotal": row[4],
+                "rationale": row[5],
+            }
+            for row in config_rows
+            if len(row) >= 6
+        ],
+        "perUnit": {
+            "selfManagedPerUser": per_unit.get(default_scenario, ["", "n/a", "n/a", "n/a"])[1],
+            "selfManagedPerDevice": per_unit.get(default_scenario, ["", "n/a", "n/a", "n/a"])[2],
+            "selfManagedUserWithFourDevices": per_unit.get(default_scenario, ["", "n/a", "n/a", "n/a"])[3],
+            "managedServicePerUser": per_unit.get(managed_scenario, ["", "n/a", "n/a", "n/a"])[1],
+            "managedServicePerDevice": per_unit.get(managed_scenario, ["", "n/a", "n/a", "n/a"])[2],
+            "managedServiceUserWithFourDevices": per_unit.get(managed_scenario, ["", "n/a", "n/a", "n/a"])[3],
+        },
+        "caveats": [
+            "Not load-tested yet; right-size after 10k/50k/100k MQTT evidence.",
+            "Self-managed Linode is not service-equivalent to AWS IoT Core, Cognito, CloudHSM, RDS, or ElastiCache.",
+            "Excludes camera/WebRTC/TURN media traffic, tax, DNS/email, external monitoring, and support beyond optional Managed Service.",
+        ],
+    }
+
+
 def parse_markdown_metadata(text: str) -> dict[str, str]:
     metadata = {}
-    for key in ["Region", "Currency", "Collected"]:
+    for key in ["Region", "Currency", "Collected", "Sizing"]:
         match = re.search(rf"^{key}:\s+`?([^`\n]+)`?", text, re.MULTILINE)
         metadata[key[0].lower() + key[1:]] = match.group(1).strip() if match else "n/a"
     return metadata
@@ -1061,6 +1122,7 @@ def build_report_payload() -> dict[str, object]:
     figures = make_figures()
     health = collect_linode_health()
     billing = collect_linode_billing()
+    linode_scale = collect_linode_scale_estimate()
     aws_cost = collect_aws_cost_estimate()
     return {
         "root": str(ROOT),
@@ -1097,6 +1159,7 @@ def build_report_payload() -> dict[str, object]:
         },
         "linodeHealth": health,
         "linodeBilling": billing,
+        "linodeScaleEstimate": linode_scale,
         "awsCostEstimate": aws_cost,
         "figures": {key: str(value) for key, value in figures.items()},
         "masterAssets": {
