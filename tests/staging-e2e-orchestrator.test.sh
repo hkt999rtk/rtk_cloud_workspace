@@ -53,6 +53,40 @@ bind-devices)
 validate-bind)
 	printf '{"overall":"pass","report_file":"validate-report.md"}\\n'
 	;;
+setup-data)
+	out_dir=""
+	while [[ \$# -gt 0 ]]; do
+		case "\$1" in
+			--out-dir)
+				out_dir="\$2"
+				shift 2
+				;;
+			*)
+				shift
+				;;
+		esac
+	done
+	mkdir -p "\$out_dir/logs" "\$out_dir/bind-validation" "$ENV_ROOT/artifacts/users" "$ENV_ROOT/artifacts/device-bind"
+	printf '{"brandname":"RTK","users":[{"email":"rtk+001@users.local"}]}\\n' > "$ENV_ROOT/artifacts/users/rtk-users-test.json"
+	printf '{"brandname":"RTK","count":1,"assignments":[{"device_id":"dev-1"}]}\\n' > "$ENV_ROOT/artifacts/device-bind/rtk-device-bind-test.json"
+	cat > "\$out_dir/summary.json" <<JSON
+{
+  "overall": "pass",
+  "summary_file": "\$out_dir/summary.json",
+  "users_file": "$ENV_ROOT/artifacts/users/rtk-users-test.json",
+  "device_bind_file": "$ENV_ROOT/artifacts/device-bind/rtk-device-bind-test.json",
+  "bind_validation_dir": "\$out_dir/bind-validation",
+  "steps": [
+    {"name": "create_brand", "status": "PASS", "exit_code": 0, "duration_seconds": 1, "log_file": "\$out_dir/logs/create_brand.log"},
+    {"name": "create_users", "status": "PASS", "exit_code": 0, "duration_seconds": 1, "log_file": "\$out_dir/logs/create_users.log"},
+    {"name": "create_devices", "status": "PASS", "exit_code": 0, "duration_seconds": 1, "log_file": "\$out_dir/logs/create_devices.log"},
+    {"name": "bind_devices", "status": "PASS", "exit_code": 0, "duration_seconds": 1, "log_file": "\$out_dir/logs/bind_devices.log"},
+    {"name": "validate_bind", "status": "PASS", "exit_code": 0, "duration_seconds": 1, "log_file": "\$out_dir/logs/validate_bind.log"}
+  ]
+}
+JSON
+	printf '{"overall":"pass","summary_file":"%s","users_file":"%s","device_bind_file":"%s"}\\n' "\$out_dir/summary.json" "$ENV_ROOT/artifacts/users/rtk-users-test.json" "$ENV_ROOT/artifacts/device-bind/rtk-device-bind-test.json"
+	;;
 mqtt-test)
 	mkdir -p "$TMP/mqtt-report"
 	printf '{"overall":"pass","status":"PASS","report_file":"%s","results_file":"%s"}\\n' "$TMP/mqtt-report/TEST_REPORT.md" "$TMP/mqtt-report/results.json"
@@ -71,16 +105,13 @@ make_stub "$TMP/create-users.sh" create-users
 make_stub "$TMP/generate-devices.sh" generate-devices
 make_stub "$TMP/bind-devices.sh" bind-devices
 make_stub "$TMP/validate-bind.sh" validate-bind
+make_stub "$TMP/setup-data.sh" setup-data
 make_stub "$TMP/mqtt-test.sh" mqtt-test
 
 PLAN_OUT="$TMP/plan.out"
 CLOUD_STAGING_E2E_REMOVE_SCRIPT="$TMP/remove.sh" \
 CLOUD_STAGING_E2E_PROVISION_SCRIPT="$TMP/provision.sh" \
-CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT="$TMP/create-brand.sh" \
-CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT="$TMP/create-users.sh" \
-CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT="$TMP/generate-devices.sh" \
-CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT="$TMP/bind-devices.sh" \
-CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT="$TMP/validate-bind.sh" \
+CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT="$TMP/setup-data.sh" \
 CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT="$TMP/mqtt-test.sh" \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-e2e-test \
 	--workspace "$WORKSPACE" \
@@ -93,11 +124,7 @@ test ! -e "$COMMAND_LOG"
 RUN_OUT="$TMP/run.out"
 CLOUD_STAGING_E2E_REMOVE_SCRIPT="$TMP/remove.sh" \
 CLOUD_STAGING_E2E_PROVISION_SCRIPT="$TMP/provision.sh" \
-CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT="$TMP/create-brand.sh" \
-CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT="$TMP/create-users.sh" \
-CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT="$TMP/generate-devices.sh" \
-CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT="$TMP/bind-devices.sh" \
-CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT="$TMP/validate-bind.sh" \
+CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT="$TMP/setup-data.sh" \
 CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT="$TMP/mqtt-test.sh" \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-e2e-test \
 	--workspace "$WORKSPACE" \
@@ -110,13 +137,14 @@ CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT="$TMP/mqtt-test.sh" \
 	--device-mix camera=1,light=1,smart_meter=1 \
 	--skip-mqtt-probe > "$RUN_OUT"
 
-expected=$'remove\nprovision\ncreate-brand\ncreate-users\ngenerate-devices\nbind-devices\nvalidate-bind\nmqtt-test'
+expected=$'remove\nprovision\nsetup-data\nmqtt-test'
 actual="$(cut -f1 "$COMMAND_LOG")"
 [[ "$actual" == "$expected" ]] || {
 	printf 'unexpected command order:\n%s\n' "$actual" >&2
 	exit 1
 }
 grep -F $'provision\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --all --confirm video-cloud-staging' "$COMMAND_LOG" >/dev/null
+grep -F $'setup-data\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --brandname RTK --user-count 1 --device-count 3 --device-mix camera=1,light=1,smart_meter=1 --device-prefix load-device --out-dir ' "$COMMAND_LOG" >/dev/null
 if grep -F -- '--reset-and-all' "$COMMAND_LOG" >/dev/null; then
 	echo "staging-e2e-test should remove VMs explicitly, then provision with --all rather than unsupported --reset-and-all" >&2
 	exit 1
@@ -126,8 +154,10 @@ SUMMARY="$(jq -r '.summary_file' "$RUN_OUT")"
 REPORT="$(jq -r '.report_file' "$RUN_OUT")"
 test -f "$SUMMARY"
 test -f "$REPORT"
-jq -e '.overall == "pass" and (.steps | length == 8)' "$SUMMARY" >/dev/null
+jq -e '.overall == "pass" and (.steps | length == 4) and .artifacts.data_setup_summary_file != "" and .artifacts.bind_validation_dir != ""' "$SUMMARY" >/dev/null
+jq -e '.steps[] | select(.name == "setup_brand_devices")' "$SUMMARY" >/dev/null
 grep -F 'Staging E2E Test Report' "$REPORT" >/dev/null
+grep -F 'Data setup summary' "$REPORT" >/dev/null
 grep -F 'cloud_mqtt_test' "$REPORT" >/dev/null
 if grep -R -Ei 'super-secret|password|bearer|token|PRIVATE KEY|-----BEGIN' "$SUMMARY" "$REPORT" >/dev/null; then
 	echo "orchestrator reports must be redacted" >&2

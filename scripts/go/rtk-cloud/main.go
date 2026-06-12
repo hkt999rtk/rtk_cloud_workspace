@@ -58,6 +58,7 @@ var commands = map[string]commandSpec{
 	"provision":              {run: runProvision},
 	"remove-all-vm":          {run: runRemoveAllVM},
 	"secrets-check":          {run: runSecretsCheck},
+	"staging-e2e-data-setup": {run: runStagingE2EDataSetup},
 	"staging-e2e-test":       {run: runStagingE2ETest},
 	"status-all":             {run: runStatusAll},
 	"sync-env":               {run: runSyncEnv},
@@ -1913,6 +1914,198 @@ type e2eStep struct {
 	LogFile         string `json:"log_file"`
 }
 
+type e2eDataSetupSummary struct {
+	Overall           string    `json:"overall"`
+	SummaryFile       string    `json:"summary_file"`
+	UsersFile         string    `json:"users_file"`
+	DeviceBindFile    string    `json:"device_bind_file"`
+	BindValidationDir string    `json:"bind_validation_dir"`
+	Steps             []e2eStep `json:"steps"`
+}
+
+func runStagingE2EDataSetup(args []string) error {
+	fs := flag.NewFlagSet("staging-e2e-data-setup", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	workspaceFlag := fs.String("workspace", "", "workspace")
+	envRootFlag := fs.String("env-root", "", "environment root")
+	planMode := fs.Bool("plan", false, "plan")
+	brandname := fs.String("brandname", "RTK", "brand name")
+	userCount := fs.Int("user-count", 10, "user count")
+	deviceCount := fs.Int("device-count", 100, "device count")
+	deviceMix := fs.String("device-mix", "camera=40,light=25,air_conditioner=20,smart_meter=15", "device mix")
+	devicePrefix := fs.String("device-prefix", "load-device", "device prefix")
+	outDir := fs.String("out-dir", "", "out dir")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *envRootFlag == "" {
+		return errors.New("--env-root is required")
+	}
+	if *userCount <= 0 {
+		return errors.New("--user-count must be a positive integer")
+	}
+	if *deviceCount <= 0 {
+		return errors.New("--device-count must be a positive integer")
+	}
+	workspace := *workspaceFlag
+	var err error
+	if workspace == "" {
+		workspace, err = workspaceRoot()
+		if err != nil {
+			return err
+		}
+	}
+	envRoot, err := resolveEnvRoot(workspace, *envRootFlag)
+	if err != nil {
+		return err
+	}
+	scripts := map[string]string{
+		"create-brand":     firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT"), selfCommandPath("create-brandname-cloud")),
+		"create-users":     firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT"), selfCommandPath("create-users")),
+		"generate-devices": firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT"), selfCommandPath("generate-load-devices")),
+		"bind-devices":     firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT"), selfCommandPath("bind-devices")),
+		"validate-bind":    firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT"), selfCommandPath("validate-device-bind")),
+	}
+	if *planMode {
+		printE2EDataSetupPlan(workspace, envRoot, *brandname, *userCount, *deviceCount, *deviceMix, scripts)
+		return nil
+	}
+	if *outDir == "" {
+		*outDir = filepath.Join(envRoot, "artifacts", "staging-e2e-data", time.Now().UTC().Format("20060102T150405Z"))
+	}
+	logsDir := filepath.Join(*outDir, "logs")
+	if err := os.MkdirAll(logsDir, 0o755); err != nil {
+		return err
+	}
+	steps := []e2eStep{}
+	runStep := func(name string, argv ...string) error {
+		step, err := runE2EStep(name, filepath.Join(logsDir, name+".log"), argv...)
+		steps = append(steps, step)
+		return err
+	}
+	if err := runStep("create_brand", commandWithArgs(scripts["create-brand"], "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname)...); err != nil {
+		return err
+	}
+	if err := runStep("create_users", commandWithArgs(scripts["create-users"], "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--count", strconv.Itoa(*userCount), "--rotate-password")...); err != nil {
+		return err
+	}
+	if err := runStep("create_devices", commandWithArgs(scripts["generate-devices"], "--workspace", workspace, "--env-root", envRoot, "--count", strconv.Itoa(*deviceCount), "--mix", *deviceMix, "--prefix", *devicePrefix, "--force")...); err != nil {
+		return err
+	}
+	slug := brandSlug(*brandname)
+	usersFile := latestMatchingFile(filepath.Join(envRoot, "artifacts", "users"), slug+"-users-*.json")
+	if usersFile == "" {
+		return fmt.Errorf("no users artifact found for brand slug %s", slug)
+	}
+	devicesDir := filepath.Join(envRoot, "devices", "test_device")
+	if err := runStep("bind_devices", commandWithArgs(scripts["bind-devices"], "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--users-file", usersFile, "--devices-dir", devicesDir, "--count", strconv.Itoa(*deviceCount))...); err != nil {
+		return err
+	}
+	bindFile := latestMatchingFile(filepath.Join(envRoot, "artifacts", "device-bind"), slug+"-device-bind-*.json")
+	if bindFile == "" {
+		return fmt.Errorf("no device-bind artifact found for brand slug %s", slug)
+	}
+	expectedPerUser := (*deviceCount + *userCount - 1) / *userCount
+	bindValidationDir := filepath.Join(*outDir, "bind-validation")
+	if err := runStep("validate_bind", commandWithArgs(scripts["validate-bind"], "--workspace", workspace, "--env-root", envRoot, "--bind-artifact", bindFile, "--out-dir", bindValidationDir, "--expected-count", strconv.Itoa(*deviceCount), "--expected-devices-per-user", strconv.Itoa(expectedPerUser), "--wait-provisioned-timeout", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_PROVISION_TIMEOUT"), "10m"), "--wait-provisioned-poll", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_PROVISION_POLL"), "10s"))...); err != nil {
+		return err
+	}
+	overall := "pass"
+	for _, step := range steps {
+		if step.Status != "PASS" {
+			overall = "fail"
+		}
+	}
+	summaryFile := filepath.Join(*outDir, "summary.json")
+	summary := e2eDataSetupSummary{
+		Overall:           overall,
+		SummaryFile:       summaryFile,
+		UsersFile:         usersFile,
+		DeviceBindFile:    bindFile,
+		BindValidationDir: bindValidationDir,
+		Steps:             steps,
+	}
+	if err := writeJSON(summaryFile, map[string]any{
+		"overall":             summary.Overall,
+		"generated_at":        time.Now().UTC().Format(time.RFC3339),
+		"env_root":            envRoot,
+		"brandname":           *brandname,
+		"summary_file":        summary.SummaryFile,
+		"users_file":          summary.UsersFile,
+		"device_bind_file":    summary.DeviceBindFile,
+		"bind_validation_dir": summary.BindValidationDir,
+		"artifacts":           map[string]any{"users_file": summary.UsersFile, "device_bind_file": summary.DeviceBindFile, "bind_validation_dir": summary.BindValidationDir},
+		"steps":               summary.Steps,
+	}); err != nil {
+		return err
+	}
+	if containsSensitiveReportTerms(readText(summaryFile)) {
+		return errors.New("sanitized data setup summary contains sensitive terms")
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(summary); err != nil {
+		return err
+	}
+	if overall != "pass" {
+		return exitCode(1)
+	}
+	return nil
+}
+
+func printE2EDataSetupPlan(workspace, envRoot, brandname string, userCount, deviceCount int, deviceMix string, scripts map[string]string) {
+	fmt.Fprintln(os.Stdout, "cloud-staging-e2e-data-setup plan")
+	fmt.Fprintf(os.Stdout, "workspace: %s\n", workspace)
+	fmt.Fprintf(os.Stdout, "env_root: %s\n", envRoot)
+	fmt.Fprintf(os.Stdout, "brandname: %s\n", brandname)
+	fmt.Fprintf(os.Stdout, "user_count: %d\n", userCount)
+	fmt.Fprintf(os.Stdout, "device_count: %d\n", deviceCount)
+	fmt.Fprintf(os.Stdout, "device_mix: %s\n", deviceMix)
+	fmt.Fprintln(os.Stdout, "steps:")
+	fmt.Fprintf(os.Stdout, "  - create brand cloud with %s\n", scripts["create-brand"])
+	fmt.Fprintf(os.Stdout, "  - create users with %s\n", scripts["create-users"])
+	fmt.Fprintf(os.Stdout, "  - generate/factory-enroll devices with %s\n", scripts["generate-devices"])
+	fmt.Fprintf(os.Stdout, "  - bind/provision devices with %s\n", scripts["bind-devices"])
+	fmt.Fprintf(os.Stdout, "  - validate bind artifact with %s\n", scripts["validate-bind"])
+}
+
+func readE2EDataSetupSummary(path string) (e2eDataSetupSummary, error) {
+	var summary e2eDataSetupSummary
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return summary, err
+	}
+	if err := json.Unmarshal(body, &summary); err != nil {
+		return summary, err
+	}
+	if summary.UsersFile == "" {
+		summary.UsersFile = stringFromJSONPath(body, "artifacts", "users_file")
+	}
+	if summary.DeviceBindFile == "" {
+		summary.DeviceBindFile = stringFromJSONPath(body, "artifacts", "device_bind_file")
+	}
+	if summary.BindValidationDir == "" {
+		summary.BindValidationDir = stringFromJSONPath(body, "artifacts", "bind_validation_dir")
+	}
+	return summary, nil
+}
+
+func stringFromJSONPath(body []byte, keys ...string) string {
+	var value any
+	if err := json.Unmarshal(body, &value); err != nil {
+		return ""
+	}
+	for _, key := range keys {
+		obj, ok := value.(map[string]any)
+		if !ok {
+			return ""
+		}
+		value = obj[key]
+	}
+	if s, ok := value.(string); ok {
+		return s
+	}
+	return ""
+}
+
 func runStagingE2ETest(args []string) error {
 	fs := flag.NewFlagSet("staging-e2e-test", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -1964,14 +2157,10 @@ func runStagingE2ETest(args []string) error {
 		stackName = "video-cloud-staging"
 	}
 	scripts := map[string]string{
-		"remove":           firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_REMOVE_SCRIPT"), selfCommandPath("remove-all-vm")),
-		"provision":        firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_PROVISION_SCRIPT"), selfCommandPath("provision")),
-		"create-brand":     firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT"), selfCommandPath("create-brandname-cloud")),
-		"create-users":     firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT"), selfCommandPath("create-users")),
-		"generate-devices": firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT"), selfCommandPath("generate-load-devices")),
-		"bind-devices":     firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT"), selfCommandPath("bind-devices")),
-		"validate-bind":    firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT"), selfCommandPath("validate-device-bind")),
-		"mqtt-test":        firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT"), selfCommandPath("mqtt-test")),
+		"remove":     firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_REMOVE_SCRIPT"), selfCommandPath("remove-all-vm")),
+		"provision":  firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_PROVISION_SCRIPT"), selfCommandPath("provision")),
+		"setup-data": firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT"), filepath.Join(workspace, "scripts", "setup-staging-e2e-data.sh")),
+		"mqtt-test":  firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT"), selfCommandPath("mqtt-test")),
 	}
 	if !*runMode {
 		printE2EPlan(workspace, envRoot, stackName, *brandname, *userCount, *deviceCount, *deviceMix, *skipRemove, scripts)
@@ -2023,31 +2212,33 @@ func runStagingE2ETest(args []string) error {
 	if err := runStep("provision_all", commandWithArgs(scripts["provision"], provisionArgs...)...); err != nil {
 		return err
 	}
-	if err := runStep("create_brand", commandWithArgs(scripts["create-brand"], "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname)...); err != nil {
+	dataSetupDir := filepath.Join(*outDir, "data-setup")
+	dataSetupStep, err := runE2EStep("setup_brand_devices", filepath.Join(logsDir, "setup_brand_devices.log"), commandWithArgs(scripts["setup-data"], "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--user-count", strconv.Itoa(*userCount), "--device-count", strconv.Itoa(*deviceCount), "--device-mix", *deviceMix, "--device-prefix", *devicePrefix, "--out-dir", dataSetupDir)...)
+	if err != nil {
+		steps = append(steps, dataSetupStep)
 		return err
 	}
-	if err := runStep("create_users", commandWithArgs(scripts["create-users"], "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--count", strconv.Itoa(*userCount), "--rotate-password")...); err != nil {
+	dataSummary, err := readE2EDataSetupSummary(filepath.Join(dataSetupDir, "summary.json"))
+	if err != nil {
+		steps = append(steps, dataSetupStep)
 		return err
 	}
-	if err := runStep("create_devices", commandWithArgs(scripts["generate-devices"], "--workspace", workspace, "--env-root", envRoot, "--count", strconv.Itoa(*deviceCount), "--mix", *deviceMix, "--prefix", *devicePrefix, "--force")...); err != nil {
-		return err
-	}
-	slug := brandSlug(*brandname)
-	usersFile := latestMatchingFile(filepath.Join(envRoot, "artifacts", "users"), slug+"-users-*.json")
+	steps = append(steps, dataSetupStep)
+	usersFile := dataSummary.UsersFile
+	bindFile := dataSummary.DeviceBindFile
+	dataSetupSummaryFile := dataSummary.SummaryFile
+	bindValidationDir := dataSummary.BindValidationDir
 	if usersFile == "" {
-		return fmt.Errorf("no users artifact found for brand slug %s", slug)
+		return errors.New("data setup summary did not include users_file")
 	}
-	devicesDir := filepath.Join(envRoot, "devices", "test_device")
-	if err := runStep("bind_devices", commandWithArgs(scripts["bind-devices"], "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--users-file", usersFile, "--devices-dir", devicesDir, "--count", strconv.Itoa(*deviceCount))...); err != nil {
-		return err
-	}
-	bindFile := latestMatchingFile(filepath.Join(envRoot, "artifacts", "device-bind"), slug+"-device-bind-*.json")
 	if bindFile == "" {
-		return fmt.Errorf("no device-bind artifact found for brand slug %s", slug)
+		return errors.New("data setup summary did not include device_bind_file")
 	}
-	expectedPerUser := (*deviceCount + *userCount - 1) / *userCount
-	if err := runStep("validate_bind", commandWithArgs(scripts["validate-bind"], "--workspace", mustWorkspace(*workspaceFlag), "--env-root", *envRootFlag, "--bind-artifact", bindFile, "--out-dir", filepath.Join(*outDir, "bind-validation"), "--expected-count", strconv.Itoa(*deviceCount), "--expected-devices-per-user", strconv.Itoa(expectedPerUser), "--wait-provisioned-timeout", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_PROVISION_TIMEOUT"), "10m"), "--wait-provisioned-poll", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_PROVISION_POLL"), "10s"))...); err != nil {
-		return err
+	if dataSetupSummaryFile == "" {
+		dataSetupSummaryFile = filepath.Join(dataSetupDir, "summary.json")
+	}
+	if bindValidationDir == "" {
+		return errors.New("data setup summary did not include bind_validation_dir")
 	}
 	mqttArgs := []string{"--env-root", envRoot, "--brandname", *brandname, "--profile", "smoke", "--out-dir", filepath.Join(*outDir, "home-mqtt")}
 	if *skipMQTTProbe {
@@ -2072,13 +2263,13 @@ func runStagingE2ETest(args []string) error {
 		"env_root":     envRoot,
 		"stack":        stackName,
 		"brandname":    *brandname,
-		"artifacts":    map[string]any{"users_file": usersFile, "device_bind_file": bindFile, "report_file": reportFile},
+		"artifacts":    map[string]any{"users_file": usersFile, "device_bind_file": bindFile, "bind_validation_dir": bindValidationDir, "data_setup_summary_file": dataSetupSummaryFile, "report_file": reportFile},
 		"steps":        steps,
 	}
 	if err := writeJSON(summaryFile, summary); err != nil {
 		return err
 	}
-	if err := os.WriteFile(reportFile, []byte(renderE2EReport(overall, envRoot, stackName, *brandname, usersFile, bindFile, filepath.Join(*outDir, "home-mqtt"), steps)), 0o644); err != nil {
+	if err := os.WriteFile(reportFile, []byte(renderE2EReport(overall, envRoot, stackName, *brandname, usersFile, bindFile, bindValidationDir, dataSetupSummaryFile, filepath.Join(*outDir, "home-mqtt"), steps)), 0o644); err != nil {
 		return err
 	}
 	if containsSensitiveReportTerms(readText(summaryFile)) || containsSensitiveReportTerms(readText(reportFile)) {
@@ -2108,11 +2299,7 @@ func printE2EPlan(workspace, envRoot, stack, brandname string, userCount, device
 		fmt.Fprintf(os.Stdout, "  - remove VMs with %s\n", scripts["remove"])
 	}
 	fmt.Fprintf(os.Stdout, "  - provision all with %s\n", scripts["provision"])
-	fmt.Fprintf(os.Stdout, "  - create brand cloud with %s\n", scripts["create-brand"])
-	fmt.Fprintf(os.Stdout, "  - create users with %s\n", scripts["create-users"])
-	fmt.Fprintf(os.Stdout, "  - generate/factory-enroll devices with %s\n", scripts["generate-devices"])
-	fmt.Fprintf(os.Stdout, "  - bind/provision devices with %s\n", scripts["bind-devices"])
-	fmt.Fprintf(os.Stdout, "  - validate bind artifact with %s\n", scripts["validate-bind"])
+	fmt.Fprintf(os.Stdout, "  - setup brand/users/devices with %s\n", scripts["setup-data"])
 	fmt.Fprintf(os.Stdout, "  - run live home MQTT E2E with %s\n", scripts["mqtt-test"])
 }
 
@@ -2174,7 +2361,7 @@ func latestMatchingFile(dir, pattern string) string {
 	return matches[len(matches)-1]
 }
 
-func renderE2EReport(overall, envRoot, stack, brandname, usersFile, bindFile, mqttDir string, steps []e2eStep) string {
+func renderE2EReport(overall, envRoot, stack, brandname, usersFile, bindFile, bindValidationDir, dataSetupSummaryFile, mqttDir string, steps []e2eStep) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, "# Staging E2E Test Report")
 	fmt.Fprintln(&b)
@@ -2195,6 +2382,8 @@ func renderE2EReport(overall, envRoot, stack, brandname, usersFile, bindFile, mq
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "- Users artifact: `%s`\n", usersFile)
 	fmt.Fprintf(&b, "- Device bind artifact: `%s`\n", bindFile)
+	fmt.Fprintf(&b, "- Bind validation: `%s`\n", bindValidationDir)
+	fmt.Fprintf(&b, "- Data setup summary: `%s`\n", dataSetupSummaryFile)
 	fmt.Fprintf(&b, "- Home MQTT report: `%s`\n", filepath.Join(mqttDir, "TEST_REPORT.md"))
 	fmt.Fprintf(&b, "- Home MQTT results: `%s`\n", filepath.Join(mqttDir, "results.json"))
 	return b.String()
