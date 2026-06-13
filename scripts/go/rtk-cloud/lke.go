@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"flag"
 	"fmt"
 	"math/big"
 	"net"
@@ -21,6 +22,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/envroot"
 )
 
 type lkeNamespace struct {
@@ -46,8 +49,131 @@ type lkeVideoCloudAuxiliaryService struct {
 	MetricsPath string
 }
 
+type lkeImageArtifact struct {
+	Key    string `json:"key"`
+	Name   string `json:"name"`
+	EnvKey string `json:"env_key"`
+	Image  string `json:"image"`
+}
+
 var errLKEMissingCluster = errors.New("no matching LKE cluster found")
 var lkeRuntimeSecretCache = map[string]string{}
+
+func runLKEBuildImages(args []string) error {
+	fs := flag.NewFlagSet("lke-build-images", flag.ContinueOnError)
+	workspace := fs.String("workspace", ".", "workspace root")
+	envRoot := fs.String("env-root", "cloud_env/staging", "environment root; provider-aware roots may resolve to cloud_env/staging/lke")
+	registryFlag := fs.String("registry", "", "container image registry/repository prefix, for example ghcr.io/org/repo/lke")
+	tagFlag := fs.String("tag", "", "container image tag")
+	out := fs.String("out", "", "write image manifest JSON to this path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	workspaceAbs, err := filepath.Abs(*workspace)
+	if err != nil {
+		return err
+	}
+	oldwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	if err := os.Chdir(workspaceAbs); err != nil {
+		return err
+	}
+	defer func() { _ = os.Chdir(oldwd) }()
+	oldWorkspaceEnv, hadWorkspaceEnv := os.LookupEnv("RTK_CLOUD_WORKSPACE")
+	_ = os.Setenv("RTK_CLOUD_WORKSPACE", workspaceAbs)
+	defer func() {
+		if hadWorkspaceEnv {
+			_ = os.Setenv("RTK_CLOUD_WORKSPACE", oldWorkspaceEnv)
+			return
+		}
+		_ = os.Unsetenv("RTK_CLOUD_WORKSPACE")
+	}()
+
+	resolvedEnvRoot := *envRoot
+	if !filepath.IsAbs(resolvedEnvRoot) {
+		resolvedEnvRoot = filepath.Join(workspaceAbs, resolvedEnvRoot)
+	}
+	if filepath.Base(resolvedEnvRoot) != "lke" {
+		candidate := filepath.Join(resolvedEnvRoot, "lke")
+		if _, err := os.Stat(candidate); err == nil {
+			resolvedEnvRoot = candidate
+		}
+	}
+	env, err := envroot.Load(resolvedEnvRoot, "")
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			env = envroot.Environment{Values: defaultProvisionEnvValues()}
+		} else {
+			return err
+		}
+	}
+	env.Values["CLOUD_PROVIDER"] = "lke"
+
+	registry := strings.TrimRight(firstNonEmpty(*registryFlag, os.Getenv("LKE_IMAGE_REGISTRY")), "/")
+	if registry == "" {
+		return errors.New("lke-build-images requires --registry or LKE_IMAGE_REGISTRY")
+	}
+	tag := firstNonEmpty(*tagFlag, os.Getenv("LKE_IMAGE_TAG"), shortGitCommit(workspaceAbs), lkeName(firstNonEmpty(env.Values["CLOUD_STACK_NAME"], "video-cloud-staging")))
+	artifacts := []lkeImageArtifact{}
+	for _, workload := range lkeWorkloads(env.Values) {
+		image := registry + "/" + workload.Name + ":" + tag
+		if err := buildLKEImage(workload, image); err != nil {
+			return err
+		}
+		artifacts = append(artifacts, lkeImageArtifact{
+			Key:    workload.Key,
+			Name:   workload.Name,
+			EnvKey: workload.EnvKey,
+			Image:  image,
+		})
+	}
+	manifest := map[string]any{
+		"schema":        "rtk-cloud-workspace.lke-image-artifacts/v1",
+		"generated_at":  time.Now().UTC().Format(time.RFC3339),
+		"provider":      "lke",
+		"stack":         env.Values["CLOUD_STACK_NAME"],
+		"source_commit": strings.TrimSpace(firstNonEmpty(shortGitCommit(workspaceAbs), "unknown")),
+		"registry":      registry,
+		"tag":           tag,
+		"images":        artifacts,
+		"env":           lkeImageArtifactEnv(artifacts),
+	}
+	body, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	body = append(body, '\n')
+	if *out == "" {
+		_, err = os.Stdout.Write(body)
+		return err
+	}
+	outPath := *out
+	if !filepath.IsAbs(outPath) {
+		outPath = filepath.Join(workspaceAbs, outPath)
+	}
+	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(outPath, body, 0o644)
+}
+
+func lkeImageArtifactEnv(artifacts []lkeImageArtifact) map[string]string {
+	out := map[string]string{}
+	for _, artifact := range artifacts {
+		out[artifact.EnvKey] = artifact.Image
+	}
+	return out
+}
+
+func shortGitCommit(dir string) string {
+	out, err := gitOutput(dir, "rev-parse", "--short=12", "HEAD")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
 
 func runLKEProvision(paths provisionPaths, env map[string]string, opts provisionOptions) error {
 	if opts.mode.reset {

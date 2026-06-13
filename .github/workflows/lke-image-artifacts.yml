@@ -1,0 +1,132 @@
+name: LKE Image Artifacts
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/lke-image-artifacts.yml"
+      - "scripts/go/**"
+      - "docs/lke-migration-inventory.md"
+      - "scripts/README.zh-TW.md"
+  workflow_dispatch:
+    inputs:
+      registry:
+        description: "Image registry/repository prefix. Defaults to ghcr.io/<owner>/rtk-cloud-lke."
+        required: false
+        type: string
+      tag:
+        description: "Image tag. Defaults to ci-<short SHA>."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  validate:
+    name: Validate LKE image artifact tooling
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out workspace metadata
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: scripts/go/go.mod
+          cache-dependency-path: scripts/go/go.sum
+
+      - name: Run LKE image artifact tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          cd scripts/go
+          GOWORK=off go test ./rtk-cloud -run 'TestRunLKEBuildImagesWritesManifest|TestRunProvisionLKEDeployBuildsMissingImagesWhenRegistryConfigured'
+
+  build:
+    name: Build LKE image artifacts
+    if: github.event_name == 'workflow_dispatch'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out workspace metadata
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      - name: Initialize private submodules
+        shell: bash
+        env:
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CI_RUNNER_GITHUB_WORK_KEY" ]; then
+            echo "CI_RUNNER_GITHUB_WORK_KEY is required to fetch private git@github.com-work: submodules." >&2
+            exit 1
+          fi
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$CI_RUNNER_GITHUB_WORK_KEY" > ~/.ssh/id_ed25519_github_work
+          chmod 0600 ~/.ssh/id_ed25519_github_work
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          git config --global core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
+          git config --global url."git@github.com:".insteadOf "git@github.com-work:"
+          git submodule sync --recursive
+          git submodule update --init --recursive --depth=1
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: scripts/go/go.mod
+          cache-dependency-path: scripts/go/go.sum
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push LKE images
+        shell: bash
+        env:
+          INPUT_REGISTRY: ${{ inputs.registry }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          registry="${INPUT_REGISTRY:-ghcr.io/${GITHUB_REPOSITORY_OWNER}/rtk-cloud-lke}"
+          tag="${INPUT_TAG:-ci-${GITHUB_SHA::12}}"
+          mkdir -p .artifacts/lke-images
+          go run ./scripts/go/rtk-cloud -- lke-build-images \
+            --workspace "$GITHUB_WORKSPACE" \
+            --env-root cloud_env/staging/lke \
+            --registry "$registry" \
+            --tag "$tag" \
+            --out .artifacts/lke-images/lke-image-manifest.json
+          jq -r '.env | to_entries[] | "export \(.key)=\(.value|@sh)"' \
+            .artifacts/lke-images/lke-image-manifest.json \
+            > .artifacts/lke-images/lke-image-env.sh
+
+      - name: Summarize images
+        shell: bash
+        run: |
+          {
+            echo "Built LKE image artifacts."
+            echo
+            echo "| Env key | Image |"
+            echo "| --- | --- |"
+            jq -r '.env | to_entries[] | "| `\(.key)` | `\(.value)` |"' .artifacts/lke-images/lke-image-manifest.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload LKE image manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: lke-image-artifacts
+          path: .artifacts/lke-images/
+          if-no-files-found: error
