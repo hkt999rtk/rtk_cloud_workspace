@@ -62,7 +62,8 @@ CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT="$TMP/validate-bind.sh" \
 	--user-count 2 \
 	--device-count 4 \
 	--device-mix camera=2,light=2 \
-	--out-dir "$OUT_DIR" > "$TMP/run.out"
+	--out-dir "$OUT_DIR" \
+	--quiet > "$TMP/run.out" 2> "$TMP/run.err"
 
 expected=$'create-brand\ncreate-users\ngenerate-devices\nbind-devices\nvalidate-bind'
 actual="$(cut -f1 "$COMMAND_LOG")"
@@ -70,14 +71,19 @@ actual="$(cut -f1 "$COMMAND_LOG")"
 	printf 'unexpected command order:\n%s\n' "$actual" >&2
 	exit 1
 }
-grep -F $'create-users\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --brandname RTK --count 2 --rotate-password' "$COMMAND_LOG" >/dev/null
-grep -F $'generate-devices\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --count 4 --mix camera=2,light=2 --prefix load-device --force' "$COMMAND_LOG" >/dev/null
-grep -F $'bind-devices\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --brandname RTK --users-file '"$ENV_ROOT/artifacts/users/rtk-users-test.json"$' --devices-dir '"$ENV_ROOT/devices/test_device"$' --count 4' "$COMMAND_LOG" >/dev/null
+grep -F $'create-users\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --brandname RTK --count 2 --rotate-password --concurrency 16' "$COMMAND_LOG" >/dev/null
+grep -F $'generate-devices\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --count 4 --mix camera=2,light=2 --prefix load-device --force --concurrency 16' "$COMMAND_LOG" >/dev/null
+grep -F $'bind-devices\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --brandname RTK --users-file '"$ENV_ROOT/artifacts/users/rtk-users-test.json"$' --devices-dir '"$ENV_ROOT/devices/test_device"$' --count 4 --concurrency 16' "$COMMAND_LOG" >/dev/null
 
 SUMMARY="$(jq -r '.summary_file' "$TMP/run.out")"
 test "$SUMMARY" = "$OUT_DIR/summary.json"
 test -f "$SUMMARY"
 jq -e '.overall == "pass" and .users_file != "" and .device_bind_file != "" and (.steps | length == 5)' "$SUMMARY" >/dev/null
+grep -E '\[cloud-staging-e2e\] start: create_brand log=.*/logs/create_brand.log' "$TMP/run.err" >/dev/null
+if grep -F '[cloud-staging-e2e] progress:' "$TMP/run.err" >/dev/null; then
+	echo "quiet data setup should not print progress lines" >&2
+	exit 1
+fi
 
 if CLOUD_PROVIDER=aws "$ROOT/scripts/setup-staging-e2e-data.sh" --workspace "$WORKSPACE" --env-root "$WORKSPACE/cloud_env/staging" --plan >"$TMP/provider.out" 2>"$TMP/provider.err"; then
 	echo "expected unsupported provider to fail" >&2

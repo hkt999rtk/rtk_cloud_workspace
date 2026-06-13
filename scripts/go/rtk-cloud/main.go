@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/ecdsa"
@@ -28,6 +29,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/envroot"
@@ -56,6 +58,7 @@ var commands = map[string]commandSpec{
 	"mqtt-trace-report":      {run: runMQTTTraceReport},
 	"platform-admin-token":   {run: runPlatformAdminToken},
 	"provision":              {run: runProvision},
+	"refresh-user-tokens":    {run: runRefreshUserTokens},
 	"remove-all-vm":          {run: runRemoveAllVM},
 	"secrets-check":          {run: runSecretsCheck},
 	"staging-e2e-data-setup": {run: runStagingE2EDataSetup},
@@ -1307,6 +1310,7 @@ func runGenerateLoadDevices(args []string) error {
 	generateOnly := fs.Bool("generate-only", false, "generate only")
 	caValidDays := fs.Int("ca-valid-days", 365, "CA validity days")
 	deviceValidDays := fs.Int("device-valid-days", 180, "device validity days")
+	concurrency := fs.Int("concurrency", envInt("CLOUD_CREATE_DEVICES_CONCURRENCY", 16), "device generation concurrency")
 	force := fs.Bool("force", false, "force")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -1319,6 +1323,9 @@ func runGenerateLoadDevices(args []string) error {
 	}
 	if *caValidDays <= 0 || *deviceValidDays <= 0 || *timeoutSeconds <= 0 {
 		return errors.New("validity days and enroll timeout must be positive integers")
+	}
+	if *concurrency <= 0 {
+		return errors.New("--concurrency must be greater than zero")
 	}
 	if ok, _ := regexp.MatchString(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`, *prefix); !ok {
 		return errors.New("--prefix contains unsupported characters")
@@ -1409,10 +1416,14 @@ func runGenerateLoadDevices(args []string) error {
 	}
 	_ = os.WriteFile(deviceIDsPath, nil, 0o644)
 	_ = os.WriteFile(enrollResultsPath, nil, 0o644)
-	devices := []generatedDevice{}
-	deviceIDs := []string{}
-	enrollSucceeded := 0
-	enrollFailed := 0
+	type deviceTask struct {
+		input loadDeviceInput
+	}
+	type deviceResult struct {
+		device generatedDevice
+		ok     bool
+	}
+	tasks := []deviceTask{}
 	index := 1
 	for _, dt := range loadDeviceTypes {
 		n := alloc[dt.Name]
@@ -1421,7 +1432,7 @@ func runGenerateLoadDevices(args []string) error {
 		}
 		logLoad("generating devices: type=%s count=%d", dt.Name, n)
 		for ordinal := 1; ordinal <= n; ordinal++ {
-			device, ok, err := writeLoadDevice(loadDeviceInput{
+			tasks = append(tasks, deviceTask{input: loadDeviceInput{
 				Index:          index,
 				Ordinal:        ordinal,
 				Type:           dt,
@@ -1443,20 +1454,31 @@ func runGenerateLoadDevices(args []string) error {
 				RunID:          *runID,
 				Timeout:        time.Duration(*timeoutSeconds) * time.Second,
 				ResultsPath:    enrollResultsPath,
-			})
-			if err != nil {
-				return err
-			}
-			if ok {
-				enrollSucceeded++
-				devices = append(devices, device)
-				deviceIDs = append(deviceIDs, device.DeviceID)
-				appendCSV(csvPath, device)
-				appendLine(deviceIDsPath, device.DeviceID)
-			} else {
-				enrollFailed++
-			}
+			}})
 			index++
+		}
+	}
+	logLoad("device generation concurrency=%d", *concurrency)
+	deviceResults, err := boundedParallelMap(len(tasks), *concurrency, func(i int) (deviceResult, error) {
+		device, ok, err := writeLoadDevice(tasks[i].input)
+		return deviceResult{device: device, ok: ok}, err
+	})
+	if err != nil {
+		return err
+	}
+	devices := []generatedDevice{}
+	deviceIDs := []string{}
+	enrollSucceeded := 0
+	enrollFailed := 0
+	for _, result := range deviceResults {
+		if ok := result.ok; ok {
+			enrollSucceeded++
+			devices = append(devices, result.device)
+			deviceIDs = append(deviceIDs, result.device.DeviceID)
+			appendCSV(csvPath, result.device)
+			appendLine(deviceIDsPath, result.device.DeviceID)
+		} else {
+			enrollFailed++
 		}
 	}
 	if err := writeJSON(filepath.Join(manifestsDir, "devices.json"), devices); err != nil {
@@ -1794,6 +1816,7 @@ func runCreateUsers(args []string) error {
 	count := fs.Int("count", 10, "count")
 	role := fs.String("role", "member", "role")
 	rotatePassword := fs.Bool("rotate-password", false, "rotate password")
+	concurrency := fs.Int("concurrency", envInt("CLOUD_CREATE_USERS_CONCURRENCY", 16), "user creation concurrency")
 	dryRun := fs.Bool("dry-run", false, "dry run")
 	skipBootstrap := fs.Bool("skip-bootstrap", false, "skip bootstrap")
 	if err := fs.Parse(args); err != nil {
@@ -1812,6 +1835,9 @@ func runCreateUsers(args []string) error {
 	if *role != "owner" && *role != "admin" && *role != "member" {
 		return errors.New("--role must be owner, admin, or member")
 	}
+	if *concurrency <= 0 {
+		return errors.New("--concurrency must be greater than zero")
+	}
 	ctx, err := accountManagerContextFromFlags(*workspaceFlag, *envRootFlag)
 	if err != nil {
 		return err
@@ -1824,11 +1850,11 @@ func runCreateUsers(args []string) error {
 			return err
 		}
 	}
-	token, err := accountLogin(ctx, logCreateUsers)
+	session, err := accountLoginSession(ctx, logCreateUsers)
 	if err != nil {
 		return err
 	}
-	brandCloud, err := accountFindBrandCloud(ctx, token, *brandname)
+	brandCloud, err := accountFindBrandCloud(ctx, session.AccessToken, *brandname)
 	if err != nil {
 		return err
 	}
@@ -1844,43 +1870,87 @@ func runCreateUsers(args []string) error {
 		return json.NewEncoder(os.Stdout).Encode(map[string]any{"action": "dry_run", "brand_cloud": brandCloud, "role": *role, "users": planned})
 	}
 	existingAppCredentials := loadExistingUserAppCredentials(ctx.EnvRoot, slug)
-	users := []map[string]any{}
-	created := 0
-	assigned := 0
-	for _, plan := range planned {
+	type createUserResult struct {
+		user     map[string]any
+		created  bool
+		assigned bool
+	}
+	var sessionMu sync.Mutex
+	var logMu sync.Mutex
+	safeLog := func(format string, args ...any) {
+		logMu.Lock()
+		defer logMu.Unlock()
+		logCreateUsers(format, args...)
+	}
+	safeAccountCreateUser := func(email, displayName, password string) (accountCreateUserResult, error) {
+		sessionMu.Lock()
+		defer sessionMu.Unlock()
+		return accountCreateUser(ctx, &session, safeLog, brandCloudID, email, displayName, password, *role, *rotatePassword)
+	}
+	safeRevokeAppCertificate := func(brandCloudUserID string) error {
+		sessionMu.Lock()
+		defer sessionMu.Unlock()
+		return accountRevokeBrandCloudUserAppCertificate(ctx, &session, safeLog, brandCloudID, brandCloudUserID)
+	}
+	safeLog("user creation concurrency=%d", *concurrency)
+	results, err := boundedParallelMap(len(planned), *concurrency, func(i int) (createUserResult, error) {
+		plan := planned[i]
 		email := plan["email"].(string)
 		displayName := plan["display_name"].(string)
 		password, err := randomPassword()
 		if err != nil {
-			return err
+			return createUserResult{}, err
 		}
-		logCreateUsers("ensuring brand user: email=%s role=%s", email, *role)
-		action, err := accountCreateUser(ctx, token, brandCloudID, email, displayName, password, *role, *rotatePassword)
+		safeLog("ensuring brand user: email=%s role=%s", email, *role)
+		createResult, err := safeAccountCreateUser(email, displayName, password)
 		if err != nil {
-			return err
+			return createUserResult{}, err
 		}
-		if action == "created" {
-			created++
+		result := createUserResult{}
+		if createResult.Action == "created" {
+			result.created = true
 		} else {
 			if !*rotatePassword {
-				return fmt.Errorf("brand user already exists and password was not rotated: email=%s; use the previous credentials artifact or rerun with --rotate-password", email)
+				return createUserResult{}, fmt.Errorf("brand user already exists and password was not rotated: email=%s; use the previous credentials artifact or rerun with --rotate-password", email)
 			}
-			assigned++
+			result.assigned = true
 		}
-		logCreateUsers("bootstrapping app certificate: email=%s", email)
-		appCredentials, appCertificate, err := accountEnsureUserAppCertificate(ctx, tenantSlug, email, password, existingAppCredentials[email])
+		safeLog("bootstrapping app certificate: email=%s", email)
+		appCredentials, appCertificate, userSession, err := accountEnsureUserAppCertificate(ctx, tenantSlug, email, password, existingAppCredentials[email], func() error {
+			if createResult.BrandCloudUserID == "" {
+				return fmt.Errorf("brand user create response missing brand_cloud_user.id for %s", email)
+			}
+			return safeRevokeAppCertificate(createResult.BrandCloudUserID)
+		})
 		if err != nil {
-			return err
+			return createUserResult{}, err
 		}
-		users = append(users, map[string]any{
+		result.user = map[string]any{
 			"email":           email,
 			"display_name":    displayName,
 			"role":            *role,
 			"password":        password,
-			"action":          action,
+			"action":          createResult.Action,
 			"app_credentials": appCredentials,
 			"app_certificate": appCertificate,
-		})
+			"tokens":          userSession,
+		}
+		return result, nil
+	})
+	if err != nil {
+		return err
+	}
+	users := []map[string]any{}
+	created := 0
+	assigned := 0
+	for _, result := range results {
+		if result.created {
+			created++
+		}
+		if result.assigned {
+			assigned++
+		}
+		users = append(users, result.user)
 	}
 	artifactDir := filepath.Join(ctx.EnvRoot, "artifacts", "users")
 	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
@@ -1934,7 +2004,15 @@ func runStagingE2EDataSetup(args []string) error {
 	deviceCount := fs.Int("device-count", 100, "device count")
 	deviceMix := fs.String("device-mix", "camera=40,light=25,air_conditioner=20,smart_meter=15", "device mix")
 	devicePrefix := fs.String("device-prefix", "load-device", "device prefix")
+	userConcurrency := fs.Int("user-concurrency", envInt("CLOUD_STAGING_E2E_USER_CONCURRENCY", 16), "user creation concurrency")
+	deviceConcurrency := fs.Int("device-concurrency", envInt("CLOUD_STAGING_E2E_DEVICE_CONCURRENCY", 16), "device generation concurrency")
+	bindConcurrency := fs.Int("bind-concurrency", envInt("CLOUD_STAGING_E2E_BIND_CONCURRENCY", 16), "device bind concurrency")
 	outDir := fs.String("out-dir", "", "out dir")
+	quiet := fs.Bool("quiet", false, "suppress periodic progress output")
+	resume := fs.Bool("resume", false, "reuse completed artifacts for matching steps")
+	fromStep := fs.String("from-step", "", "start from step: create_brand, create_users, create_devices, bind_devices, or validate_bind")
+	usersFileFlag := fs.String("users-file", "", "existing users artifact for bind/validate resume")
+	bindArtifactFlag := fs.String("bind-artifact", "", "existing bind artifact for validate resume")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -1946,6 +2024,12 @@ func runStagingE2EDataSetup(args []string) error {
 	}
 	if *deviceCount <= 0 {
 		return errors.New("--device-count must be a positive integer")
+	}
+	if *userConcurrency <= 0 || *deviceConcurrency <= 0 || *bindConcurrency <= 0 {
+		return errors.New("--user-concurrency, --device-concurrency, and --bind-concurrency must be positive integers")
+	}
+	if *fromStep != "" && e2eStepIndex(*fromStep) < 0 {
+		return fmt.Errorf("--from-step must be one of: %s", strings.Join(e2eStepOrder(), ", "))
 	}
 	workspace := *workspaceFlag
 	var err error
@@ -1967,7 +2051,7 @@ func runStagingE2EDataSetup(args []string) error {
 		"validate-bind":    firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT"), selfCommandPath("validate-device-bind")),
 	}
 	if *planMode {
-		printE2EDataSetupPlan(workspace, envRoot, *brandname, *userCount, *deviceCount, *deviceMix, scripts)
+		printE2EDataSetupPlan(workspace, envRoot, *brandname, *userCount, *deviceCount, *deviceMix, *userConcurrency, *deviceConcurrency, *bindConcurrency, scripts)
 		return nil
 	}
 	if *outDir == "" {
@@ -1979,40 +2063,87 @@ func runStagingE2EDataSetup(args []string) error {
 	}
 	steps := []e2eStep{}
 	runStep := func(name string, argv ...string) error {
-		step, err := runE2EStep(name, filepath.Join(logsDir, name+".log"), argv...)
+		step, err := runE2EStepWithOptions(name, filepath.Join(logsDir, name+".log"), e2eStepOptions{Quiet: *quiet}, argv...)
 		steps = append(steps, step)
 		return err
 	}
-	if err := runStep("create_brand", commandWithArgs(scripts["create-brand"], "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname)...); err != nil {
-		return err
+	skipStep := func(name, reason string) {
+		fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] skip: %s reason=%q\n", name, reason)
+		steps = append(steps, e2eStep{Name: name, Status: "SKIP", ExitCode: 0, DurationSeconds: 0, LogFile: ""})
 	}
-	if err := runStep("create_users", commandWithArgs(scripts["create-users"], "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--count", strconv.Itoa(*userCount), "--rotate-password")...); err != nil {
-		return err
+	shouldRunStep := func(name string) bool {
+		return shouldRunE2EStep(name, *fromStep)
 	}
-	if err := runStep("create_devices", commandWithArgs(scripts["generate-devices"], "--workspace", workspace, "--env-root", envRoot, "--count", strconv.Itoa(*deviceCount), "--mix", *deviceMix, "--prefix", *devicePrefix, "--force")...); err != nil {
-		return err
+	if shouldRunStep("create_brand") {
+		if err := runStep("create_brand", commandWithArgs(scripts["create-brand"], "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname)...); err != nil {
+			return err
+		}
+	} else {
+		skipStep("create_brand", "--from-step")
 	}
 	slug := brandSlug(*brandname)
-	usersFile := latestMatchingFile(filepath.Join(envRoot, "artifacts", "users"), slug+"-users-*.json")
+	usersFile := *usersFileFlag
+	if usersFile == "" {
+		usersFile = latestMatchingFile(filepath.Join(envRoot, "artifacts", "users"), slug+"-users-*.json")
+	}
+	if shouldRunStep("create_users") && !(*resume && usersArtifactCount(usersFile) == *userCount) {
+		if err := runStep("create_users", commandWithArgs(scripts["create-users"], "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--count", strconv.Itoa(*userCount), "--rotate-password", "--concurrency", strconv.Itoa(*userConcurrency))...); err != nil {
+			return err
+		}
+		usersFile = latestMatchingFile(filepath.Join(envRoot, "artifacts", "users"), slug+"-users-*.json")
+	} else {
+		reason := "--from-step"
+		if shouldRunStep("create_users") {
+			reason = fmt.Sprintf("--resume users artifact count=%d", usersArtifactCount(usersFile))
+		}
+		skipStep("create_users", reason)
+	}
+	devicesDir := filepath.Join(envRoot, "devices", "test_device")
+	if shouldRunStep("create_devices") && !(*resume && deviceManifestCount(devicesDir) == *deviceCount) {
+		if err := runStep("create_devices", commandWithArgs(scripts["generate-devices"], "--workspace", workspace, "--env-root", envRoot, "--count", strconv.Itoa(*deviceCount), "--mix", *deviceMix, "--prefix", *devicePrefix, "--force", "--concurrency", strconv.Itoa(*deviceConcurrency))...); err != nil {
+			return err
+		}
+	} else {
+		reason := "--from-step"
+		if shouldRunStep("create_devices") {
+			reason = fmt.Sprintf("--resume device manifest count=%d", deviceManifestCount(devicesDir))
+		}
+		skipStep("create_devices", reason)
+	}
 	if usersFile == "" {
 		return fmt.Errorf("no users artifact found for brand slug %s", slug)
 	}
-	devicesDir := filepath.Join(envRoot, "devices", "test_device")
-	if err := runStep("bind_devices", commandWithArgs(scripts["bind-devices"], "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--users-file", usersFile, "--devices-dir", devicesDir, "--count", strconv.Itoa(*deviceCount))...); err != nil {
-		return err
+	bindFile := *bindArtifactFlag
+	if bindFile == "" {
+		bindFile = latestMatchingFile(filepath.Join(envRoot, "artifacts", "device-bind"), slug+"-device-bind-*.json")
 	}
-	bindFile := latestMatchingFile(filepath.Join(envRoot, "artifacts", "device-bind"), slug+"-device-bind-*.json")
+	if shouldRunStep("bind_devices") && !(*resume && bindArtifactCount(bindFile) == *deviceCount) {
+		if err := runStep("bind_devices", commandWithArgs(scripts["bind-devices"], "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--users-file", usersFile, "--devices-dir", devicesDir, "--count", strconv.Itoa(*deviceCount), "--concurrency", strconv.Itoa(*bindConcurrency))...); err != nil {
+			return err
+		}
+		bindFile = latestMatchingFile(filepath.Join(envRoot, "artifacts", "device-bind"), slug+"-device-bind-*.json")
+	} else {
+		reason := "--from-step"
+		if shouldRunStep("bind_devices") {
+			reason = fmt.Sprintf("--resume bind artifact count=%d", bindArtifactCount(bindFile))
+		}
+		skipStep("bind_devices", reason)
+	}
 	if bindFile == "" {
 		return fmt.Errorf("no device-bind artifact found for brand slug %s", slug)
 	}
 	expectedPerUser := (*deviceCount + *userCount - 1) / *userCount
 	bindValidationDir := filepath.Join(*outDir, "bind-validation")
-	if err := runStep("validate_bind", commandWithArgs(scripts["validate-bind"], "--workspace", workspace, "--env-root", envRoot, "--bind-artifact", bindFile, "--out-dir", bindValidationDir, "--expected-count", strconv.Itoa(*deviceCount), "--expected-devices-per-user", strconv.Itoa(expectedPerUser), "--wait-provisioned-timeout", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_PROVISION_TIMEOUT"), "10m"), "--wait-provisioned-poll", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_PROVISION_POLL"), "10s"))...); err != nil {
-		return err
+	if shouldRunStep("validate_bind") {
+		if err := runStep("validate_bind", commandWithArgs(scripts["validate-bind"], "--workspace", workspace, "--env-root", envRoot, "--bind-artifact", bindFile, "--out-dir", bindValidationDir, "--expected-count", strconv.Itoa(*deviceCount), "--expected-devices-per-user", strconv.Itoa(expectedPerUser), "--wait-provisioned-timeout", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_PROVISION_TIMEOUT"), "10m"), "--wait-provisioned-poll", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_PROVISION_POLL"), "10s"), "--wait-provisioned-concurrency", strconv.Itoa(*bindConcurrency))...); err != nil {
+			return err
+		}
+	} else {
+		skipStep("validate_bind", "--from-step")
 	}
 	overall := "pass"
 	for _, step := range steps {
-		if step.Status != "PASS" {
+		if step.Status != "PASS" && step.Status != "SKIP" {
 			overall = "fail"
 		}
 	}
@@ -2051,7 +2182,7 @@ func runStagingE2EDataSetup(args []string) error {
 	return nil
 }
 
-func printE2EDataSetupPlan(workspace, envRoot, brandname string, userCount, deviceCount int, deviceMix string, scripts map[string]string) {
+func printE2EDataSetupPlan(workspace, envRoot, brandname string, userCount, deviceCount int, deviceMix string, userConcurrency, deviceConcurrency, bindConcurrency int, scripts map[string]string) {
 	fmt.Fprintln(os.Stdout, "cloud-staging-e2e-data-setup plan")
 	fmt.Fprintf(os.Stdout, "workspace: %s\n", workspace)
 	fmt.Fprintf(os.Stdout, "env_root: %s\n", envRoot)
@@ -2059,12 +2190,81 @@ func printE2EDataSetupPlan(workspace, envRoot, brandname string, userCount, devi
 	fmt.Fprintf(os.Stdout, "user_count: %d\n", userCount)
 	fmt.Fprintf(os.Stdout, "device_count: %d\n", deviceCount)
 	fmt.Fprintf(os.Stdout, "device_mix: %s\n", deviceMix)
+	fmt.Fprintf(os.Stdout, "user_concurrency: %d\n", userConcurrency)
+	fmt.Fprintf(os.Stdout, "device_concurrency: %d\n", deviceConcurrency)
+	fmt.Fprintf(os.Stdout, "bind_concurrency: %d\n", bindConcurrency)
 	fmt.Fprintln(os.Stdout, "steps:")
 	fmt.Fprintf(os.Stdout, "  - create brand cloud with %s\n", scripts["create-brand"])
 	fmt.Fprintf(os.Stdout, "  - create users with %s\n", scripts["create-users"])
 	fmt.Fprintf(os.Stdout, "  - generate/factory-enroll devices with %s\n", scripts["generate-devices"])
 	fmt.Fprintf(os.Stdout, "  - bind/provision devices with %s\n", scripts["bind-devices"])
 	fmt.Fprintf(os.Stdout, "  - validate bind artifact with %s\n", scripts["validate-bind"])
+}
+
+func e2eStepOrder() []string {
+	return []string{"create_brand", "create_users", "create_devices", "bind_devices", "validate_bind"}
+}
+
+func e2eStepIndex(name string) int {
+	for i, step := range e2eStepOrder() {
+		if step == name {
+			return i
+		}
+	}
+	return -1
+}
+
+func shouldRunE2EStep(name, fromStep string) bool {
+	if fromStep == "" {
+		return true
+	}
+	stepIndex := e2eStepIndex(name)
+	fromIndex := e2eStepIndex(fromStep)
+	return stepIndex >= 0 && fromIndex >= 0 && stepIndex >= fromIndex
+}
+
+func usersArtifactCount(path string) int {
+	if path == "" {
+		return 0
+	}
+	var parsed struct {
+		Users []json.RawMessage `json:"users"`
+	}
+	if raw, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(raw, &parsed); err == nil {
+			return len(parsed.Users)
+		}
+	}
+	return 0
+}
+
+func deviceManifestCount(devicesDir string) int {
+	if devicesDir == "" {
+		return 0
+	}
+	var devices []json.RawMessage
+	path := filepath.Join(devicesDir, "manifests", "devices.json")
+	if raw, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(raw, &devices); err == nil {
+			return len(devices)
+		}
+	}
+	return 0
+}
+
+func bindArtifactCount(path string) int {
+	if path == "" {
+		return 0
+	}
+	var artifact struct {
+		Assignments []json.RawMessage `json:"assignments"`
+	}
+	if raw, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(raw, &artifact); err == nil {
+			return len(artifact.Assignments)
+		}
+	}
+	return 0
 }
 
 func readE2EDataSetupSummary(path string) (e2eDataSetupSummary, error) {
@@ -2120,6 +2320,9 @@ func runStagingE2ETest(args []string) error {
 	deviceCount := fs.Int("device-count", 100, "device count")
 	deviceMix := fs.String("device-mix", "camera=40,light=25,air_conditioner=20,smart_meter=15", "device mix")
 	devicePrefix := fs.String("device-prefix", "load-device", "device prefix")
+	userConcurrency := fs.Int("user-concurrency", envInt("CLOUD_STAGING_E2E_USER_CONCURRENCY", 16), "user creation concurrency")
+	deviceConcurrency := fs.Int("device-concurrency", envInt("CLOUD_STAGING_E2E_DEVICE_CONCURRENCY", 16), "device generation concurrency")
+	bindConcurrency := fs.Int("bind-concurrency", envInt("CLOUD_STAGING_E2E_BIND_CONCURRENCY", 16), "device bind concurrency")
 	videoRelease := fs.String("video-release", os.Getenv("VIDEO_RELEASE"), "video release")
 	accountRelease := fs.String("account-release", os.Getenv("ACCOUNT_RELEASE"), "account release")
 	accountReleaseBundle := fs.String("account-release-bundle", os.Getenv("ACCOUNT_RELEASE_BUNDLE"), "account release bundle")
@@ -2127,6 +2330,7 @@ func runStagingE2ETest(args []string) error {
 	adminReleaseBundle := fs.String("admin-release-bundle", os.Getenv("ADMIN_RELEASE_BUNDLE"), "admin release bundle")
 	outDir := fs.String("out-dir", "", "out dir")
 	skipMQTTProbe := fs.Bool("skip-mqtt-probe", false, "skip mqtt probe")
+	quiet := fs.Bool("quiet", false, "suppress periodic progress output")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -2138,6 +2342,9 @@ func runStagingE2ETest(args []string) error {
 	}
 	if *deviceCount <= 0 {
 		return errors.New("--device-count must be a positive integer")
+	}
+	if *userConcurrency <= 0 || *deviceConcurrency <= 0 || *bindConcurrency <= 0 {
+		return errors.New("--user-concurrency, --device-concurrency, and --bind-concurrency must be positive integers")
 	}
 	_ = planMode
 	workspace := *workspaceFlag
@@ -2163,7 +2370,7 @@ func runStagingE2ETest(args []string) error {
 		"mqtt-test":  firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT"), selfCommandPath("mqtt-test")),
 	}
 	if !*runMode {
-		printE2EPlan(workspace, envRoot, stackName, *brandname, *userCount, *deviceCount, *deviceMix, *skipRemove, scripts)
+		printE2EPlan(workspace, envRoot, stackName, *brandname, *userCount, *deviceCount, *deviceMix, *userConcurrency, *deviceConcurrency, *bindConcurrency, *skipRemove, scripts)
 		return nil
 	}
 	if *confirm != stackName {
@@ -2179,7 +2386,7 @@ func runStagingE2ETest(args []string) error {
 	env, _ := readEnvFile(filepath.Join(envRoot, "env", "stack.env"))
 	steps := []e2eStep{}
 	runStep := func(name string, argv ...string) error {
-		step, err := runE2EStep(name, filepath.Join(logsDir, name+".log"), argv...)
+		step, err := runE2EStepWithOptions(name, filepath.Join(logsDir, name+".log"), e2eStepOptions{Quiet: *quiet}, argv...)
 		steps = append(steps, step)
 		return err
 	}
@@ -2213,7 +2420,11 @@ func runStagingE2ETest(args []string) error {
 		return err
 	}
 	dataSetupDir := filepath.Join(*outDir, "data-setup")
-	dataSetupStep, err := runE2EStep("setup_brand_devices", filepath.Join(logsDir, "setup_brand_devices.log"), commandWithArgs(scripts["setup-data"], "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--user-count", strconv.Itoa(*userCount), "--device-count", strconv.Itoa(*deviceCount), "--device-mix", *deviceMix, "--device-prefix", *devicePrefix, "--out-dir", dataSetupDir)...)
+	dataSetupArgs := []string{"--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--user-count", strconv.Itoa(*userCount), "--device-count", strconv.Itoa(*deviceCount), "--device-mix", *deviceMix, "--device-prefix", *devicePrefix, "--user-concurrency", strconv.Itoa(*userConcurrency), "--device-concurrency", strconv.Itoa(*deviceConcurrency), "--bind-concurrency", strconv.Itoa(*bindConcurrency), "--out-dir", dataSetupDir}
+	if *quiet {
+		dataSetupArgs = append(dataSetupArgs, "--quiet")
+	}
+	dataSetupStep, err := runE2EStepWithOptions("setup_brand_devices", filepath.Join(logsDir, "setup_brand_devices.log"), e2eStepOptions{Quiet: *quiet}, commandWithArgs(scripts["setup-data"], dataSetupArgs...)...)
 	if err != nil {
 		steps = append(steps, dataSetupStep)
 		return err
@@ -2284,7 +2495,7 @@ func runStagingE2ETest(args []string) error {
 	return nil
 }
 
-func printE2EPlan(workspace, envRoot, stack, brandname string, userCount, deviceCount int, deviceMix string, skipRemove bool, scripts map[string]string) {
+func printE2EPlan(workspace, envRoot, stack, brandname string, userCount, deviceCount int, deviceMix string, userConcurrency, deviceConcurrency, bindConcurrency int, skipRemove bool, scripts map[string]string) {
 	fmt.Fprintln(os.Stdout, "cloud-staging-e2e-test plan")
 	fmt.Fprintf(os.Stdout, "workspace: %s\n", workspace)
 	fmt.Fprintf(os.Stdout, "env_root: %s\n", envRoot)
@@ -2293,6 +2504,9 @@ func printE2EPlan(workspace, envRoot, stack, brandname string, userCount, device
 	fmt.Fprintf(os.Stdout, "user_count: %d\n", userCount)
 	fmt.Fprintf(os.Stdout, "device_count: %d\n", deviceCount)
 	fmt.Fprintf(os.Stdout, "device_mix: %s\n", deviceMix)
+	fmt.Fprintf(os.Stdout, "user_concurrency: %d\n", userConcurrency)
+	fmt.Fprintf(os.Stdout, "device_concurrency: %d\n", deviceConcurrency)
+	fmt.Fprintf(os.Stdout, "bind_concurrency: %d\n", bindConcurrency)
 	fmt.Fprintf(os.Stdout, "skip_remove: %v\n", skipRemove)
 	fmt.Fprintln(os.Stdout, "steps:")
 	if !skipRemove {
@@ -2303,11 +2517,21 @@ func printE2EPlan(workspace, envRoot, stack, brandname string, userCount, device
 	fmt.Fprintf(os.Stdout, "  - run live home MQTT E2E with %s\n", scripts["mqtt-test"])
 }
 
+type e2eStepOptions struct {
+	Quiet bool
+}
+
 func runE2EStep(name, logPath string, argv ...string) (e2eStep, error) {
+	return runE2EStepWithOptions(name, logPath, e2eStepOptions{}, argv...)
+}
+
+func runE2EStepWithOptions(name, logPath string, options e2eStepOptions, argv ...string) (e2eStep, error) {
 	start := time.Now()
-	fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] start: %s\n", name)
+	fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] start: %s log=%s\n", name, logPath)
 	if len(argv) == 0 {
-		return e2eStep{Name: name, Status: "FAIL", ExitCode: 1, LogFile: logPath}, errors.New("empty e2e command")
+		durationSeconds := int64(time.Since(start).Seconds())
+		fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] fail: %s duration_seconds=%d elapsed=%s\n", name, durationSeconds, formatDurationSeconds(durationSeconds))
+		return e2eStep{Name: name, Status: "FAIL", ExitCode: 1, DurationSeconds: durationSeconds, LogFile: logPath}, errors.New("empty e2e command")
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	logFile, err := os.Create(logPath)
@@ -2318,7 +2542,7 @@ func runE2EStep(name, logPath string, argv ...string) (e2eStep, error) {
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	rc := 0
-	err = cmd.Run()
+	err = runE2ECommandWithProgress(cmd, name, logPath, start, options.Quiet)
 	if err != nil {
 		rc = 1
 		var exitErr *exec.ExitError
@@ -2330,13 +2554,269 @@ func runE2EStep(name, logPath string, argv ...string) (e2eStep, error) {
 	if rc != 0 {
 		status = "FAIL"
 	}
-	step := e2eStep{Name: name, Status: status, ExitCode: rc, DurationSeconds: int64(time.Since(start).Seconds()), LogFile: logPath}
+	durationSeconds := int64(time.Since(start).Seconds())
+	step := e2eStep{Name: name, Status: status, ExitCode: rc, DurationSeconds: durationSeconds, LogFile: logPath}
 	if rc != 0 {
-		fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] fail: %s (see %s)\n", name, logPath)
+		fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] fail: %s duration_seconds=%d elapsed=%s (see %s)\n", name, durationSeconds, formatDurationSeconds(durationSeconds), logPath)
+		for _, line := range latestLogLines(logPath, e2eFailureTailLines()) {
+			fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] fail-log: %s %s\n", name, line)
+		}
 		return step, err
 	}
-	fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] pass: %s\n", name)
+	fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] pass: %s duration_seconds=%d elapsed=%s\n", name, durationSeconds, formatDurationSeconds(durationSeconds))
 	return step, nil
+}
+
+func runE2ECommandWithProgress(cmd *exec.Cmd, name, logPath string, start time.Time, quiet bool) error {
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+	if quiet {
+		return <-done
+	}
+
+	interval := e2eProgressInterval()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	lastPrinted := ""
+	for {
+		select {
+		case err := <-done:
+			return err
+		case <-ticker.C:
+			line := latestLogLine(logPath)
+			if line == "" || line == lastPrinted {
+				continue
+			}
+			lastPrinted = line
+			elapsed := time.Since(start)
+			fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] progress: %s elapsed=%s%s latest=%q log=%s\n", name, formatDurationSeconds(int64(elapsed.Seconds())), e2eProgressMetrics(line, elapsed), line, logPath)
+		}
+	}
+}
+
+func e2eFailureTailLines() int {
+	const defaultLines = 40
+	raw := strings.TrimSpace(os.Getenv("CLOUD_STAGING_E2E_FAILURE_TAIL_LINES"))
+	if raw == "" {
+		return defaultLines
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return defaultLines
+	}
+	return n
+}
+
+func e2eProgressInterval() time.Duration {
+	const defaultInterval = 30 * time.Second
+	raw := strings.TrimSpace(os.Getenv("CLOUD_STAGING_E2E_PROGRESS_INTERVAL"))
+	if raw == "" {
+		return defaultInterval
+	}
+	interval, err := time.ParseDuration(raw)
+	if err != nil || interval <= 0 {
+		return defaultInterval
+	}
+	return interval
+}
+
+func latestLogLine(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil || st.Size() == 0 {
+		return ""
+	}
+	const maxTail = int64(64 * 1024)
+	offset := int64(0)
+	if st.Size() > maxTail {
+		offset = st.Size() - maxTail
+	}
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return ""
+	}
+	buf, err := io.ReadAll(f)
+	if err != nil {
+		return ""
+	}
+	buf = bytes.TrimSpace(buf)
+	if len(buf) == 0 {
+		return ""
+	}
+	if idx := bytes.LastIndexByte(buf, '\n'); idx >= 0 {
+		buf = bytes.TrimSpace(buf[idx+1:])
+	}
+	line := strings.TrimSpace(string(buf))
+	if line == "" {
+		return ""
+	}
+	return redactProgressLogLine(line)
+}
+
+func latestLogLines(path string, count int) []string {
+	if count <= 0 {
+		return nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	ring := make([]string, count)
+	written := 0
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		ring[written%count] = redactProgressLogLine(line)
+		written++
+	}
+	if written == 0 {
+		return nil
+	}
+	n := written
+	if n > count {
+		n = count
+	}
+	out := make([]string, 0, n)
+	start := written - n
+	for i := 0; i < n; i++ {
+		out = append(out, ring[(start+i)%count])
+	}
+	return out
+}
+
+func e2eProgressMetrics(line string, elapsed time.Duration) string {
+	if elapsed <= 0 {
+		return ""
+	}
+	re := regexp.MustCompile(`(?:done|completed|processed)=([0-9]+)/([0-9]+)`)
+	m := re.FindStringSubmatch(line)
+	if len(m) != 3 {
+		return ""
+	}
+	done, errDone := strconv.Atoi(m[1])
+	total, errTotal := strconv.Atoi(m[2])
+	if errDone != nil || errTotal != nil || done <= 0 || total <= 0 || done > total {
+		return ""
+	}
+	rateElapsed := elapsed
+	if lineElapsed, ok := progressLineElapsed(line); ok && lineElapsed > 0 {
+		rateElapsed = lineElapsed
+	}
+	rate := float64(done) / rateElapsed.Seconds()
+	remaining := total - done
+	eta := int64(0)
+	if rate > 0 {
+		eta = int64(float64(remaining) / rate)
+	}
+	return fmt.Sprintf(" done=%d/%d rate=%.2f/s eta=%s", done, total, rate, formatDurationSeconds(eta))
+}
+
+func progressLineElapsed(line string) (time.Duration, bool) {
+	re := regexp.MustCompile(`elapsed=([0-9]{2}):([0-9]{2}):([0-9]{2})`)
+	m := re.FindStringSubmatch(line)
+	if len(m) != 4 {
+		return 0, false
+	}
+	hours, _ := strconv.Atoi(m[1])
+	minutes, _ := strconv.Atoi(m[2])
+	seconds, _ := strconv.Atoi(m[3])
+	return time.Duration(hours)*time.Hour + time.Duration(minutes)*time.Minute + time.Duration(seconds)*time.Second, true
+}
+
+func redactProgressLogLine(line string) string {
+	lower := strings.ToLower(line)
+	for _, marker := range []string{"token", "password", "secret", "private key", "-----begin", "bearer "} {
+		if strings.Contains(lower, marker) {
+			return "[redacted sensitive log line]"
+		}
+	}
+	return line
+}
+
+func formatDurationSeconds(seconds int64) string {
+	if seconds < 0 {
+		seconds = 0
+	}
+	hours := seconds / 3600
+	minutes := (seconds % 3600) / 60
+	secs := seconds % 60
+	return fmt.Sprintf("%02d:%02d:%02d", hours, minutes, secs)
+}
+
+func boundedParallelMap[T any](count, concurrency int, fn func(int) (T, error)) ([]T, error) {
+	if count < 0 {
+		return nil, errors.New("parallel map count must not be negative")
+	}
+	if concurrency <= 0 {
+		return nil, errors.New("parallel map concurrency must be greater than zero")
+	}
+	results := make([]T, count)
+	if count == 0 {
+		return results, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	jobs := make(chan int)
+	errs := make(chan error, 1)
+	var wg sync.WaitGroup
+	workerCount := concurrency
+	if workerCount > count {
+		workerCount = count
+	}
+	for worker := 0; worker < workerCount; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case i, ok := <-jobs:
+					if !ok {
+						return
+					}
+					result, err := fn(i)
+					if err != nil {
+						select {
+						case errs <- err:
+							cancel()
+						default:
+						}
+						return
+					}
+					results[i] = result
+				}
+			}
+		}()
+	}
+sendLoop:
+	for i := 0; i < count; i++ {
+		select {
+		case <-ctx.Done():
+			break sendLoop
+		case jobs <- i:
+		}
+	}
+	close(jobs)
+	wg.Wait()
+	select {
+	case err := <-errs:
+		return nil, err
+	default:
+	}
+	return results, nil
 }
 
 func commandWithArgs(command string, args ...string) []string {
@@ -2586,24 +3066,46 @@ func accountFindBrandCloud(ctx accountManagerContext, token, brandname string) (
 	return nil, fmt.Errorf("brand cloud not found: %s", brandname)
 }
 
-func accountCreateUser(ctx accountManagerContext, token, brandCloudID, email, displayName, password, role string, rotate bool) (string, error) {
+type accountCreateUserResult struct {
+	Action           string
+	BrandCloudUserID string
+}
+
+func accountCreateUser(ctx accountManagerContext, session *accountPlatformSession, logf func(string, ...any), brandCloudID, email, displayName, password, role string, rotate bool) (accountCreateUserResult, error) {
 	payload, _ := json.Marshal(map[string]any{"email": email, "password": password, "display_name": displayName, "role": role, "rotate_password": rotate})
-	body, status, err := curlJSONStatus(fmt.Sprintf("%s/v1/admin/brand-clouds/%s/users", ctx.BaseURL, brandCloudID), token, payload)
+	body, status, err := curlJSONStatusWithPlatformRetry(ctx, session, logf, "brand user create", func(platformToken string) ([]byte, int, error) {
+		return curlJSONStatus(fmt.Sprintf("%s/v1/admin/brand-clouds/%s/users", ctx.BaseURL, brandCloudID), platformToken, payload)
+	})
 	if err != nil {
-		return "", err
+		return accountCreateUserResult{}, err
 	}
 	if status != 200 && status != 201 {
-		return "", fmt.Errorf("brand user create failed: email=%s HTTP %d", email, status)
+		return accountCreateUserResult{}, fmt.Errorf("brand user create failed: email=%s HTTP %d", email, status)
 	}
 	var parsed map[string]any
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", err
+		return accountCreateUserResult{}, err
 	}
 	action := stringValue(parsed["action"])
 	if action == "" {
 		action = "assigned"
 	}
-	return action, nil
+	brandCloudUser, _ := parsed["brand_cloud_user"].(map[string]any)
+	return accountCreateUserResult{Action: action, BrandCloudUserID: stringValue(brandCloudUser["id"])}, nil
+}
+
+func accountRevokeBrandCloudUserAppCertificate(ctx accountManagerContext, session *accountPlatformSession, logf func(string, ...any), brandCloudID, brandCloudUserID string) error {
+	body, status, err := curlJSONStatusWithPlatformRetry(ctx, session, logf, "brand user app certificate revoke", func(platformToken string) ([]byte, int, error) {
+		endpoint := fmt.Sprintf("%s/v1/admin/brand-clouds/%s/users/%s/app-certificate/revoke", ctx.BaseURL, url.PathEscape(brandCloudID), url.PathEscape(brandCloudUserID))
+		return curlJSONStatus(endpoint, platformToken, []byte("{}"))
+	})
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("brand user app certificate revoke failed: brand_cloud_user=%s HTTP %d%s", brandCloudUserID, status, errorBodySuffix(body))
+	}
+	return nil
 }
 
 type accountUserLoginResponse struct {
@@ -2612,7 +3114,8 @@ type accountUserLoginResponse struct {
 		Email string `json:"email"`
 	} `json:"user"`
 	Tokens struct {
-		AccessToken string `json:"access_token"`
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
 	} `json:"tokens"`
 	AppCertificate accountAppCertificate `json:"app_certificate"`
 }
@@ -2629,44 +3132,58 @@ type accountAppCertificate struct {
 	NotAfter            string `json:"not_after,omitempty"`
 }
 
-func accountEnsureUserAppCertificate(ctx accountManagerContext, tenantSlug, email, password string, existingAppCredentials map[string]any) (map[string]any, map[string]any, error) {
+func accountEnsureUserAppCertificate(ctx accountManagerContext, tenantSlug, email, password string, existingAppCredentials map[string]any, recoverMissingLocalCredentials func() error) (map[string]any, map[string]any, accountPlatformSession, error) {
 	initial, err := accountLoginUserFull(ctx, tenantSlug, email, password, "")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, accountPlatformSession{}, err
 	}
 	switch initial.AppCertificate.Status {
 	case "issued":
 		if !hasLocalAppCredentials(existingAppCredentials) {
-			return nil, nil, fmt.Errorf("app certificate already exists for %s but no matching local app private key was found in previous users artifacts; use the artifact that originally bootstrapped this user or revoke/rotate the app certificate before generating a new key", email)
+			if recoverMissingLocalCredentials == nil {
+				return nil, nil, accountPlatformSession{}, fmt.Errorf("app certificate already exists for %s but no matching local app private key was found in previous users artifacts; use the artifact that originally bootstrapped this user or revoke/rotate the app certificate before generating a new key", email)
+			}
+			logCreateUsers("revoking stale app certificate without local private key: email=%s", email)
+			if err := recoverMissingLocalCredentials(); err != nil {
+				return nil, nil, accountPlatformSession{}, err
+			}
+			initial, err = accountLoginUserFull(ctx, tenantSlug, email, password, "")
+			if err != nil {
+				return nil, nil, accountPlatformSession{}, err
+			}
+			if initial.AppCertificate.Status != "csr_required" {
+				return nil, nil, accountPlatformSession{}, fmt.Errorf("app certificate recovery for %s did not return csr_required: status=%s", email, initial.AppCertificate.Status)
+			}
+			break
 		}
-		return existingAppCredentials, accountAppCertificateMap(initial.AppCertificate), nil
+		return existingAppCredentials, accountAppCertificateMap(initial.AppCertificate), accountPlatformSession{AccessToken: initial.Tokens.AccessToken, RefreshToken: initial.Tokens.RefreshToken}, nil
 	case "csr_required":
 	default:
-		return nil, nil, fmt.Errorf("login response included unexpected app certificate status for %s: %s", email, initial.AppCertificate.Status)
+		return nil, nil, accountPlatformSession{}, fmt.Errorf("login response included unexpected app certificate status for %s: %s", email, initial.AppCertificate.Status)
 	}
 	if initial.User.ID == "" {
-		return nil, nil, fmt.Errorf("login response did not include a user id for app certificate bootstrap: %s", email)
+		return nil, nil, accountPlatformSession{}, fmt.Errorf("login response did not include a user id for app certificate bootstrap: %s", email)
 	}
 	subject := "app-user:" + initial.User.ID
 	privateKeyPEM, csrPEM, err := generateAppCertificateCSR(subject)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, accountPlatformSession{}, err
 	}
 	issued, err := accountLoginUserFull(ctx, tenantSlug, email, password, csrPEM)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, accountPlatformSession{}, err
 	}
 	if issued.AppCertificate.Status != "issued" {
-		return nil, nil, fmt.Errorf("app certificate was not issued for %s: status=%s", email, issued.AppCertificate.Status)
+		return nil, nil, accountPlatformSession{}, fmt.Errorf("app certificate was not issued for %s: status=%s", email, issued.AppCertificate.Status)
 	}
 	if strings.TrimSpace(issued.AppCertificate.CertificatePEM) == "" || strings.TrimSpace(issued.AppCertificate.FingerprintSHA256) == "" {
-		return nil, nil, fmt.Errorf("app certificate response missing certificate material for %s", email)
+		return nil, nil, accountPlatformSession{}, fmt.Errorf("app certificate response missing certificate material for %s", email)
 	}
 	return map[string]any{
 		"subject":         subject,
 		"private_key_pem": privateKeyPEM,
 		"csr_pem":         csrPEM,
-	}, accountAppCertificateMap(issued.AppCertificate), nil
+	}, accountAppCertificateMap(issued.AppCertificate), accountPlatformSession{AccessToken: issued.Tokens.AccessToken, RefreshToken: issued.Tokens.RefreshToken}, nil
 }
 
 func loadExistingUserAppCredentials(envRoot, slug string) map[string]map[string]any {
@@ -2940,32 +3457,81 @@ func writePlatformAdminToken(w io.Writer, ctx accountManagerContext) error {
 	return nil
 }
 
+type accountPlatformSession struct {
+	AccessToken  string `json:"access_token,omitempty"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+}
+
 func accountLogin(ctx accountManagerContext, logf func(string, ...any)) (string, error) {
+	session, err := accountLoginSession(ctx, logf)
+	if err != nil {
+		return "", err
+	}
+	return session.AccessToken, nil
+}
+
+func accountLoginSession(ctx accountManagerContext, logf func(string, ...any)) (accountPlatformSession, error) {
 	if ctx.AdminEmail == "" || ctx.AdminPassword == "" {
-		return "", errors.New("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL and PASSWORD are required")
+		return accountPlatformSession{}, errors.New("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL and PASSWORD are required")
 	}
 	logf("logging in platform admin: username=%s url=%s/v1/auth/login", ctx.AdminEmail, ctx.BaseURL)
 	payload, _ := json.Marshal(map[string]string{"email": ctx.AdminEmail, "password": ctx.AdminPassword})
 	body, status, err := curlJSONStatus(ctx.BaseURL+"/v1/auth/login", "", payload)
 	if err != nil {
-		return "", err
+		return accountPlatformSession{}, err
 	}
 	if status != 200 {
-		return "", fmt.Errorf("platform admin login failed: HTTP %d", status)
+		return accountPlatformSession{}, fmt.Errorf("platform admin login failed: HTTP %d", status)
 	}
+	session, err := parsePlatformSession(body)
+	if err != nil {
+		return accountPlatformSession{}, err
+	}
+	if session.AccessToken == "" {
+		return accountPlatformSession{}, errors.New("platform admin login response did not include an access token")
+	}
+	logf("platform admin login ok")
+	return session, nil
+}
+
+func accountRefreshSession(ctx accountManagerContext, refreshToken string, logf func(string, ...any)) (accountPlatformSession, error) {
+	if strings.TrimSpace(refreshToken) == "" {
+		return accountPlatformSession{}, errors.New("platform admin refresh token is empty")
+	}
+	logf("refreshing platform admin token: url=%s/v1/auth/refresh", ctx.BaseURL)
+	payload, _ := json.Marshal(map[string]string{"refresh_token": refreshToken})
+	body, status, err := curlJSONStatus(ctx.BaseURL+"/v1/auth/refresh", "", payload)
+	if err != nil {
+		return accountPlatformSession{}, err
+	}
+	if status != 200 {
+		return accountPlatformSession{}, fmt.Errorf("platform admin token refresh failed: HTTP %d%s", status, accountAPIErrorSuffix(body))
+	}
+	session, err := parsePlatformSession(body)
+	if err != nil {
+		return accountPlatformSession{}, err
+	}
+	if session.AccessToken == "" || session.RefreshToken == "" {
+		return accountPlatformSession{}, errors.New("platform admin refresh response did not include access and refresh tokens")
+	}
+	logf("platform admin token refresh ok")
+	return session, nil
+}
+
+func parsePlatformSession(body []byte) (accountPlatformSession, error) {
 	var parsed struct {
 		Tokens struct {
-			AccessToken string `json:"access_token"`
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
 		} `json:"tokens"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", err
+		return accountPlatformSession{}, err
 	}
-	if parsed.Tokens.AccessToken == "" {
-		return "", errors.New("platform admin login response did not include an access token")
-	}
-	logf("platform admin login ok")
-	return parsed.Tokens.AccessToken, nil
+	return accountPlatformSession{
+		AccessToken:  parsed.Tokens.AccessToken,
+		RefreshToken: parsed.Tokens.RefreshToken,
+	}, nil
 }
 
 func accountListBrandClouds(ctx accountManagerContext, token string, limit int) (map[string]any, error) {
@@ -3024,10 +3590,33 @@ func curlJSONStatus(url, bearer string, payload []byte) ([]byte, int, error) {
 		args = append(args, "-H", "authorization: Bearer "+bearer)
 	}
 	args = append(args, url)
-	cmd := exec.Command("curl", args...)
-	statusBytes, err := cmd.Output()
-	if err != nil {
-		return nil, 0, err
+	retries := envInt("RTK_CLOUD_CURL_RETRIES", 3)
+	if retries < 1 {
+		retries = 1
+	}
+	var statusBytes []byte
+	var lastErr error
+	for attempt := 1; attempt <= retries; attempt++ {
+		var stderr bytes.Buffer
+		cmd := exec.Command("curl", args...)
+		cmd.Stderr = &stderr
+		statusBytes, err = cmd.Output()
+		if err == nil {
+			lastErr = nil
+			break
+		}
+		errText := strings.TrimSpace(stderr.String())
+		if errText != "" {
+			lastErr = fmt.Errorf("curl failed for %s: %w: %s", url, err, errText)
+		} else {
+			lastErr = fmt.Errorf("curl failed for %s: %w", url, err)
+		}
+		if attempt < retries {
+			time.Sleep(time.Duration(250*attempt*attempt) * time.Millisecond)
+		}
+	}
+	if lastErr != nil {
+		return nil, 0, lastErr
 	}
 	body, err := os.ReadFile(tmp.Name())
 	if err != nil {
@@ -3035,6 +3624,96 @@ func curlJSONStatus(url, bearer string, payload []byte) ([]byte, int, error) {
 	}
 	status, _ := strconv.Atoi(strings.TrimSpace(string(statusBytes)))
 	return body, status, nil
+}
+
+func curlJSONStatusWithPlatformRetry(ctx accountManagerContext, session *accountPlatformSession, logf func(string, ...any), operation string, call func(string) ([]byte, int, error)) ([]byte, int, error) {
+	if logf == nil {
+		logf = func(string, ...any) {}
+	}
+	if err := ensurePlatformSessionFresh(ctx, session, logf); err != nil {
+		return nil, 0, err
+	}
+	body, status, err := call(session.AccessToken)
+	if err != nil || status != http.StatusUnauthorized {
+		return body, status, err
+	}
+	logf("%s got HTTP 401; refreshing platform admin token before retry", operation)
+	if err := refreshOrLoginPlatformSession(ctx, session, logf); err != nil {
+		return body, status, err
+	}
+	return call(session.AccessToken)
+}
+
+func curlJSONStatusWithPlatformRetryLocked(ctx accountManagerContext, session *accountPlatformSession, sessionMu *sync.Mutex, logf func(string, ...any), operation string, call func(string) ([]byte, int, error)) ([]byte, int, error) {
+	if sessionMu == nil {
+		return curlJSONStatusWithPlatformRetry(ctx, session, logf, operation, call)
+	}
+	if logf == nil {
+		logf = func(string, ...any) {}
+	}
+	sessionMu.Lock()
+	if err := ensurePlatformSessionFresh(ctx, session, logf); err != nil {
+		sessionMu.Unlock()
+		return nil, 0, err
+	}
+	platformToken := session.AccessToken
+	sessionMu.Unlock()
+	body, status, err := call(platformToken)
+	if err != nil || status != http.StatusUnauthorized {
+		return body, status, err
+	}
+	logf("%s got HTTP 401; refreshing platform admin token before retry", operation)
+	sessionMu.Lock()
+	if err := refreshOrLoginPlatformSession(ctx, session, logf); err != nil {
+		sessionMu.Unlock()
+		return body, status, err
+	}
+	platformToken = session.AccessToken
+	sessionMu.Unlock()
+	return call(platformToken)
+}
+
+func ensurePlatformSessionFresh(ctx accountManagerContext, session *accountPlatformSession, logf func(string, ...any)) error {
+	const refreshWindow = 2 * time.Minute
+	if expiresAt, ok := jwtExpiresAt(session.AccessToken); session.AccessToken != "" && (!ok || time.Until(expiresAt) > refreshWindow) {
+		return nil
+	}
+	return refreshOrLoginPlatformSession(ctx, session, logf)
+}
+
+func refreshOrLoginPlatformSession(ctx accountManagerContext, session *accountPlatformSession, logf func(string, ...any)) error {
+	if expiresAt, ok := jwtExpiresAt(session.RefreshToken); session.RefreshToken != "" && (!ok || time.Now().Before(expiresAt)) {
+		refreshed, err := accountRefreshSession(ctx, session.RefreshToken, logf)
+		if err == nil {
+			*session = refreshed
+			return nil
+		}
+		logf("platform admin token refresh failed; falling back to login: %v", err)
+	}
+	loggedIn, err := accountLoginSession(ctx, logf)
+	if err != nil {
+		return err
+	}
+	*session = loggedIn
+	return nil
+}
+
+func jwtExpiresAt(token string) (time.Time, bool) {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return time.Time{}, false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return time.Time{}, false
+	}
+	var claims struct {
+		Exp float64 `json:"exp"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil || claims.Exp <= 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(int64(claims.Exp), 0), true
 }
 
 func accountBootstrap(ctx accountManagerContext) error {
@@ -3769,9 +4448,13 @@ func signFactoryRequest(key, method, path, timestamp, requestID string, body []b
 	return "v1=" + hex.EncodeToString(mac.Sum(nil))
 }
 
+var enrollResultMu sync.Mutex
+
 func recordEnrollResult(path, status string, index int, deviceID, deviceType string, serviceOptions []string, httpStatus, requestID, serial, errText string) {
 	entry := map[string]any{"status": status, "index": index, "device_id": deviceID, "device_type": deviceType, "service_options": serviceOptions, "http_status": httpStatus, "request_id": requestID, "serial_number": serial, "error": errText}
 	data, _ := json.Marshal(entry)
+	enrollResultMu.Lock()
+	defer enrollResultMu.Unlock()
 	fh, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return
@@ -4172,6 +4855,7 @@ func runValidateDeviceBind(args []string) error {
 	expectedDevicesPerUser := fs.Int("expected-devices-per-user", 0, "expected devices per user")
 	waitProvisionedTimeout := fs.Duration("wait-provisioned-timeout", 0, "wait for Account Manager provisioning state to reach activated/online readiness")
 	waitProvisionedPoll := fs.Duration("wait-provisioned-poll", 10*time.Second, "provisioning state poll interval")
+	waitProvisionedConcurrency := fs.Int("wait-provisioned-concurrency", envInt("CLOUD_STAGING_E2E_BIND_PROVISION_CONCURRENCY", 16), "provisioning state poll concurrency")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -4180,6 +4864,9 @@ func runValidateDeviceBind(args []string) error {
 	}
 	if *outDir == "" {
 		return errors.New("--out-dir is required")
+	}
+	if *waitProvisionedConcurrency <= 0 {
+		return errors.New("--wait-provisioned-concurrency must be greater than zero")
 	}
 	data, err := os.ReadFile(*bindPath)
 	if err != nil {
@@ -4199,8 +4886,13 @@ func runValidateDeviceBind(args []string) error {
 	}
 	userCounts := result["user_counts"].(map[string]int)
 	failures := []string{}
+	failureCategories := map[string]int{}
+	addFailure := func(category, message string) {
+		failureCategories[category]++
+		failures = append(failures, message)
+	}
 	if *expectedCount > 0 && len(artifact.Assignments) != *expectedCount {
-		failures = append(failures, fmt.Sprintf("expected %d devices, got %d", *expectedCount, len(artifact.Assignments)))
+		addFailure("count_mismatch", fmt.Sprintf("expected %d devices, got %d", *expectedCount, len(artifact.Assignments)))
 	}
 	mqttOnly := 0
 	videoDevices := 0
@@ -4211,37 +4903,37 @@ func runValidateDeviceBind(args []string) error {
 		if assignment.Category == "mqtt_device" {
 			mqttOnly++
 			if hasVideo {
-				failures = append(failures, fmt.Sprintf("mqtt-only device %s has video service option", assignment.DeviceID))
+				addFailure("service_option_mismatch", fmt.Sprintf("mqtt-only device %s has video service option", assignment.DeviceID))
 			}
 			if !hasMQTT {
-				failures = append(failures, fmt.Sprintf("mqtt-only device %s is missing mqtt service option", assignment.DeviceID))
+				addFailure("service_option_mismatch", fmt.Sprintf("mqtt-only device %s is missing mqtt service option", assignment.DeviceID))
 			}
 		}
 		if assignment.Category == "ip_camera" {
 			videoDevices++
 			if !hasVideo {
-				failures = append(failures, fmt.Sprintf("camera device %s is missing video service option", assignment.DeviceID))
+				addFailure("service_option_mismatch", fmt.Sprintf("camera device %s is missing video service option", assignment.DeviceID))
 			}
 		}
-		if assignment.AccountDeviceID == "" || assignment.OperationID == "" {
-			failures = append(failures, fmt.Sprintf("device %s missing bind identifiers", assignment.DeviceID))
+		if assignment.AccountDeviceID == "" || (assignment.OperationID == "" && assignment.Status != "already_bound") {
+			addFailure("missing_bind_identifier", fmt.Sprintf("device %s missing bind identifiers", assignment.DeviceID))
 		}
 	}
 	if *waitProvisionedTimeout > 0 && len(failures) == 0 {
-		waitResult, err := waitBindProvisioned(*workspaceFlag, *envRootFlag, artifact, *waitProvisionedTimeout, *waitProvisionedPoll)
+		waitResult, err := waitBindProvisioned(*workspaceFlag, *envRootFlag, artifact, *waitProvisionedTimeout, *waitProvisionedPoll, *waitProvisionedConcurrency)
 		if err != nil {
 			failures = append(failures, err.Error())
 		} else {
 			result["provisioning"] = waitResult
 			for _, failure := range waitResult.Failures {
-				failures = append(failures, failure)
+				addFailure(categorizeBindValidationFailure(failure), failure)
 			}
 		}
 	}
 	if *expectedDevicesPerUser > 0 {
 		for email, count := range userCounts {
 			if count != *expectedDevicesPerUser {
-				failures = append(failures, fmt.Sprintf("user %s expected %d devices, got %d", email, *expectedDevicesPerUser, count))
+				addFailure("user_device_count_mismatch", fmt.Sprintf("user %s expected %d devices, got %d", email, *expectedDevicesPerUser, count))
 			}
 		}
 	}
@@ -4249,8 +4941,10 @@ func runValidateDeviceBind(args []string) error {
 		result["overall"] = "fail"
 	}
 	result["failures"] = failures
+	result["failure_categories"] = failureCategories
 	result["summary"].(map[string]any)["mqtt_only_devices"] = mqttOnly
 	result["summary"].(map[string]any)["video_devices"] = videoDevices
+	result["summary"].(map[string]any)["failure_categories"] = failureCategories
 	if err := os.MkdirAll(*outDir, 0o755); err != nil {
 		return err
 	}
@@ -4263,11 +4957,12 @@ func runValidateDeviceBind(args []string) error {
 		return err
 	}
 	stdout := map[string]any{
-		"action":        "validated",
-		"overall":       result["overall"],
-		"total_devices": len(artifact.Assignments),
-		"results_file":  resultsFile,
-		"report_file":   reportFile,
+		"action":             "validated",
+		"overall":            result["overall"],
+		"total_devices":      len(artifact.Assignments),
+		"failure_categories": failureCategories,
+		"results_file":       resultsFile,
+		"report_file":        reportFile,
 	}
 	if err := json.NewEncoder(os.Stdout).Encode(stdout); err != nil {
 		return err
@@ -4294,6 +4989,7 @@ type bindProvisioningStateSnapshot struct {
 	DeviceID              string `json:"device_id"`
 	AccountDeviceID       string `json:"account_device_id"`
 	AssignedEmail         string `json:"assigned_email"`
+	BindStatus            string `json:"bind_status,omitempty"`
 	ReadinessState        string `json:"readiness_state,omitempty"`
 	ProductState          string `json:"product_state,omitempty"`
 	OperationStatus       string `json:"operation_status,omitempty"`
@@ -4303,12 +4999,15 @@ type bindProvisioningStateSnapshot struct {
 	ProvisioningHTTPError string `json:"provisioning_http_error,omitempty"`
 }
 
-func waitBindProvisioned(workspaceFlag, envRootFlag string, artifact bindArtifact, timeout, poll time.Duration) (bindProvisionWaitResult, error) {
+func waitBindProvisioned(workspaceFlag, envRootFlag string, artifact bindArtifact, timeout, poll time.Duration, concurrency int) (bindProvisionWaitResult, error) {
 	if timeout <= 0 {
 		return bindProvisionWaitResult{}, nil
 	}
 	if poll <= 0 {
 		poll = 10 * time.Second
+	}
+	if concurrency <= 0 {
+		concurrency = 16
 	}
 	ctx, err := accountManagerContextFromFlags(workspaceFlag, envRootFlag)
 	if err != nil {
@@ -4335,52 +5034,110 @@ func waitBindProvisioned(workspaceFlag, envRootFlag string, artifact bindArtifac
 	if err != nil {
 		return bindProvisionWaitResult{}, fmt.Errorf("read bind users file: %w", err)
 	}
-	userTokens := map[string]string{}
+	userSessions := map[string]*brandCloudUserSession{}
 	selected := []bindAssignment{}
 	for _, assignment := range artifact.Assignments {
 		if assignment.AccountDeviceID == "" || assignment.AssignedEmail == "" {
 			continue
 		}
 		selected = append(selected, assignment)
-		if userTokens[assignment.AssignedEmail] == "" {
+		if userSessions[assignment.AssignedEmail] == nil {
 			user := users[assignment.AssignedEmail]
 			if user.Password == "" {
 				return bindProvisionWaitResult{}, fmt.Errorf("users artifact missing password for %s", assignment.AssignedEmail)
 			}
-			token, err := loginBrandCloudUser(ctx, artifact.TenantSlug, assignment.AssignedEmail, user.Password)
-			if err != nil {
-				return bindProvisionWaitResult{}, err
-			}
-			userTokens[assignment.AssignedEmail] = token
+			userSessions[assignment.AssignedEmail] = &brandCloudUserSession{Email: assignment.AssignedEmail, Password: user.Password, Session: user.Tokens}
 		}
 	}
+	for _, userSession := range userSessions {
+		if _, err := brandCloudUserAccessToken(ctx, artifact.TenantSlug, userSession, func(string, ...any) {}); err != nil {
+			return bindProvisionWaitResult{}, err
+		}
+	}
+	defer func() {
+		_, _ = updateUsersArtifactTokens(artifact.Inputs.UsersFile, userSessions)
+	}()
 	result := bindProvisionWaitResult{Checked: len(selected), LastStates: map[string]bindProvisioningStateSnapshot{}}
 	started := time.Now()
 	deadline := started.Add(timeout)
 	attempts := 0
+	lastPollDuration := time.Duration(0)
 	for {
+		if attempts > 0 && lastPollDuration > 0 && time.Until(deadline) < lastPollDuration {
+			failures := bindTimeoutFailures(result.LastStates)
+			result.Failures = failures
+			result.Pending = len(failures)
+			result.CompletedAt = time.Now().UTC().Format(time.RFC3339)
+			return result, nil
+		}
 		attempts++
-		ready := 0
-		pending := 0
-		failed := 0
-		failures := []string{}
-		for _, assignment := range selected {
-			snapshot, err := fetchBindProvisioningState(ctx, userTokens[assignment.AssignedEmail], artifact.BrandCloudID, assignment)
+		attemptStarted := time.Now()
+		type pollResult struct {
+			snapshot bindProvisioningStateSnapshot
+			failure  string
+		}
+		var pollProgressMu sync.Mutex
+		pollCompleted := 0
+		lastProgressLog := time.Now()
+		logPollProgress := func(force bool) {
+			pollProgressMu.Lock()
+			defer pollProgressMu.Unlock()
+			pollCompleted++
+			if !force && pollCompleted < len(selected) && pollCompleted%100 != 0 && time.Since(lastProgressLog) < 10*time.Second {
+				return
+			}
+			lastProgressLog = time.Now()
+			fmt.Fprintf(os.Stderr, "[validate-device-bind] provisioning poll progress: attempt=%d done=%d/%d elapsed=%s total_elapsed=%s\n", attempts, pollCompleted, len(selected), formatDurationSeconds(int64(time.Since(attemptStarted).Seconds())), formatDurationSeconds(int64(time.Since(started).Seconds())))
+		}
+		pollResults, err := boundedParallelMap(len(selected), concurrency, func(i int) (pollResult, error) {
+			assignment := selected[i]
+			userSession := userSessions[assignment.AssignedEmail]
+			token, err := brandCloudUserAccessToken(ctx, artifact.TenantSlug, userSession, func(string, ...any) {})
+			if err != nil {
+				snapshot := bindProvisioningStateSnapshot{
+					DeviceID:              assignment.DeviceID,
+					AccountDeviceID:       assignment.AccountDeviceID,
+					AssignedEmail:         assignment.AssignedEmail,
+					BindStatus:            assignment.Status,
+					ProvisioningHTTPError: err.Error(),
+				}
+				logPollProgress(false)
+				return pollResult{snapshot: snapshot, failure: fmt.Sprintf("device %s provisioning token failed: %s", assignment.DeviceID, err)}, nil
+			}
+			snapshot, err := fetchBindProvisioningState(ctx, token, artifact.BrandCloudID, assignment)
 			if err != nil {
 				snapshot = bindProvisioningStateSnapshot{
 					DeviceID:              assignment.DeviceID,
 					AccountDeviceID:       assignment.AccountDeviceID,
 					AssignedEmail:         assignment.AssignedEmail,
+					BindStatus:            assignment.Status,
 					ProvisioningHTTPError: err.Error(),
 				}
 			}
-			result.LastStates[assignment.DeviceID] = snapshot
+			logPollProgress(false)
+			return pollResult{snapshot: snapshot}, nil
+		})
+		if err != nil {
+			return result, err
+		}
+		ready := 0
+		pending := 0
+		failed := 0
+		failures := []string{}
+		for _, pollResult := range pollResults {
+			snapshot := pollResult.snapshot
+			result.LastStates[snapshot.DeviceID] = snapshot
+			if pollResult.failure != "" {
+				failed++
+				failures = append(failures, pollResult.failure)
+				continue
+			}
 			switch {
 			case snapshotReady(snapshot):
 				ready++
 			case snapshotFailed(snapshot):
 				failed++
-				failures = append(failures, fmt.Sprintf("device %s provisioning failed: readiness=%s product=%s operation=%s activation=%s error=%s", assignment.DeviceID, snapshot.ReadinessState, snapshot.ProductState, snapshot.OperationStatus, snapshot.ActivationStatus, firstNonEmpty(snapshot.FailureCode, snapshot.ProvisioningHTTPError)))
+				failures = append(failures, fmt.Sprintf("device %s provisioning failed: readiness=%s product=%s operation=%s activation=%s error=%s", snapshot.DeviceID, snapshot.ReadinessState, snapshot.ProductState, snapshot.OperationStatus, snapshot.ActivationStatus, firstNonEmpty(snapshot.FailureCode, snapshot.ProvisioningHTTPError)))
 			default:
 				pending++
 			}
@@ -4392,21 +5149,47 @@ func waitBindProvisioned(workspaceFlag, envRootFlag string, artifact bindArtifac
 		result.ElapsedMS = time.Since(started).Milliseconds()
 		result.Failures = failures
 		result.CompletedAt = time.Now().UTC().Format(time.RFC3339)
+		lastPollDuration = time.Since(attemptStarted)
+		fmt.Fprintf(os.Stderr, "[validate-device-bind] provisioning poll: attempt=%d checked=%d ready=%d pending=%d failed=%d elapsed=%s total_elapsed=%s\n", attempts, len(selected), ready, pending, failed, formatDurationSeconds(int64(time.Since(attemptStarted).Seconds())), formatDurationSeconds(int64(time.Since(started).Seconds())))
 		if ready == len(selected) || len(failures) > 0 {
 			return result, nil
 		}
 		if time.Now().After(deadline) {
-			for _, snapshot := range result.LastStates {
-				if !snapshotReady(snapshot) {
-					failures = append(failures, fmt.Sprintf("device %s provisioning not ready before timeout: readiness=%s product=%s operation=%s activation=%s error=%s", snapshot.DeviceID, snapshot.ReadinessState, snapshot.ProductState, snapshot.OperationStatus, snapshot.ActivationStatus, snapshot.ProvisioningHTTPError))
-				}
-			}
-			sort.Strings(failures)
-			result.Failures = failures
+			result.Failures = bindTimeoutFailures(result.LastStates)
 			return result, nil
 		}
 		time.Sleep(poll)
 	}
+}
+
+func categorizeBindValidationFailure(failure string) string {
+	lower := strings.ToLower(failure)
+	switch {
+	case strings.Contains(lower, "not ready") || strings.Contains(lower, "timeout"):
+		if strings.Contains(lower, "bind_status=already_bound") {
+			return "already_bound_not_ready"
+		}
+		return "provisioning_timeout"
+	case strings.Contains(lower, "token"):
+		return "token"
+	case strings.Contains(lower, "http"):
+		return "provisioning_http"
+	case strings.Contains(lower, "activation") || strings.Contains(lower, "provisioning failed"):
+		return "provisioning_failed"
+	default:
+		return "provisioning"
+	}
+}
+
+func bindTimeoutFailures(states map[string]bindProvisioningStateSnapshot) []string {
+	failures := []string{}
+	for _, snapshot := range states {
+		if !snapshotReady(snapshot) {
+			failures = append(failures, fmt.Sprintf("device %s provisioning not ready before timeout: bind_status=%s readiness=%s product=%s operation=%s activation=%s error=%s", snapshot.DeviceID, snapshot.BindStatus, snapshot.ReadinessState, snapshot.ProductState, snapshot.OperationStatus, snapshot.ActivationStatus, snapshot.ProvisioningHTTPError))
+		}
+	}
+	sort.Strings(failures)
+	return failures
 }
 
 func fetchBindProvisioningState(ctx accountManagerContext, bearer, brandCloudID string, assignment bindAssignment) (bindProvisioningStateSnapshot, error) {
@@ -4430,6 +5213,7 @@ func fetchBindProvisioningState(ctx accountManagerContext, bearer, brandCloudID 
 		DeviceID:         assignment.DeviceID,
 		AccountDeviceID:  assignment.AccountDeviceID,
 		AssignedEmail:    assignment.AssignedEmail,
+		BindStatus:       assignment.Status,
 		ReadinessState:   stringValue(readiness["state"]),
 		ProductState:     stringValue(readiness["product_state"]),
 		OperationStatus:  firstNonEmpty(stringValue(operation["status"]), stringValue(sources["provisioning_operation_status"])),
@@ -4449,7 +5233,8 @@ func snapshotFailed(snapshot bindProvisioningStateSnapshot) bool {
 
 func renderBindReport(artifact bindArtifact, result map[string]any) string {
 	summary := result["summary"].(map[string]any)
-	return fmt.Sprintf(`# Bulk Device Bind Validation Report
+	var b strings.Builder
+	fmt.Fprintf(&b, `# Bulk Device Bind Validation Report
 
 - brandname: %s
 - brand_cloud_id: %s
@@ -4458,6 +5243,31 @@ func renderBindReport(artifact bindArtifact, result map[string]any) string {
 - MQTT-only devices: %v
 - Video-capable devices: %v
 `, artifact.Brandname, artifact.BrandCloudID, result["overall"], summary["total_devices"], summary["mqtt_only_devices"], summary["video_devices"])
+	if categories, ok := result["failure_categories"].(map[string]int); ok && len(categories) > 0 {
+		fmt.Fprintf(&b, "\n## Failure Categories\n\n")
+		keys := make([]string, 0, len(categories))
+		for key := range categories {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			fmt.Fprintf(&b, "- %s: %d\n", key, categories[key])
+		}
+	}
+	if failures, ok := result["failures"].([]string); ok && len(failures) > 0 {
+		fmt.Fprintf(&b, "\n## Failure Samples\n\n")
+		limit := len(failures)
+		if limit > 20 {
+			limit = 20
+		}
+		for i := 0; i < limit; i++ {
+			fmt.Fprintf(&b, "- %s\n", failures[i])
+		}
+		if len(failures) > limit {
+			fmt.Fprintf(&b, "- ... %d more\n", len(failures)-limit)
+		}
+	}
+	return b.String()
 }
 
 func runUnprovisionDevices(args []string) error {
@@ -4595,6 +5405,7 @@ func runBindDevices(args []string) error {
 	devicesDir := fs.String("devices-dir", "", "devices dir")
 	count := fs.Int("count", 0, "count")
 	claimTTL := fs.Int("claim-ttl-hours", 24, "claim TTL hours")
+	concurrency := fs.Int("concurrency", envInt("CLOUD_BIND_DEVICES_CONCURRENCY", 16), "device binding concurrency")
 	dryRun := fs.Bool("dry-run", false, "dry run")
 	skipBootstrap := fs.Bool("skip-bootstrap", false, "skip bootstrap")
 	skipDirectProvisionBridge := fs.Bool("skip-direct-provision-bridge", false, "skip staging direct provisioning bridge")
@@ -4610,6 +5421,9 @@ func runBindDevices(args []string) error {
 	}
 	if *claimTTL <= 0 {
 		return errors.New("--claim-ttl-hours must be greater than zero")
+	}
+	if *concurrency <= 0 {
+		return errors.New("--concurrency must be greater than zero")
 	}
 	workspace := *workspaceFlag
 	var err error
@@ -4669,11 +5483,11 @@ func runBindDevices(args []string) error {
 	if provisionBridge.Enabled {
 		logBind("staging direct provisioning bridge enabled: video_base_url=%s account_base_url=%s", provisionBridge.VideoBaseURL, provisionBridge.AccountBaseURL)
 	}
-	token, err := accountLogin(ctx, logBind)
+	session, err := accountLoginSession(ctx, logBind)
 	if err != nil {
 		return err
 	}
-	brandCloud, err := accountFindBrandCloudForLog(ctx, token, *brandname, logBind)
+	brandCloud, err := accountFindBrandCloudForLog(ctx, session.AccessToken, *brandname, logBind)
 	if err != nil {
 		return err
 	}
@@ -4682,70 +5496,145 @@ func runBindDevices(args []string) error {
 	if tenantSlug == "" {
 		return fmt.Errorf("brand cloud response missing tenant_slug for %s", *brandname)
 	}
-	userTokens := map[string]string{}
+	assignedEmails := []string{}
+	seenAssignedEmails := map[string]bool{}
 	for _, assignment := range assignments {
-		if userTokens[assignment.AssignedEmail] != "" {
+		if seenAssignedEmails[assignment.AssignedEmail] {
 			continue
 		}
-		user := users[assignment.AssignedEmail]
-		logBind("logging in assigned user: email=%s", assignment.AssignedEmail)
-		userToken, err := loginBrandCloudUser(ctx, tenantSlug, assignment.AssignedEmail, user.Password)
-		if err != nil {
-			return err
+		seenAssignedEmails[assignment.AssignedEmail] = true
+		assignedEmails = append(assignedEmails, assignment.AssignedEmail)
+	}
+	loginConcurrency := *concurrency
+	if loginConcurrency > 16 {
+		loginConcurrency = 16
+	}
+	logBind("preparing assigned user sessions: count=%d concurrency=%d", len(assignedEmails), loginConcurrency)
+	userTokenResults, err := boundedParallelMap(len(assignedEmails), loginConcurrency, func(i int) (struct {
+		email    string
+		password string
+		session  accountPlatformSession
+	}, error) {
+		email := assignedEmails[i]
+		user := users[email]
+		userSession := user.Tokens
+		var err error
+		if userSession.AccessToken != "" || userSession.RefreshToken != "" {
+			session := &brandCloudUserSession{Email: email, Password: user.Password, Session: userSession}
+			if _, err = brandCloudUserAccessToken(ctx, tenantSlug, session, logBind); err == nil {
+				userSession = session.Session
+			}
+		} else {
+			logBind("logging in assigned user: email=%s", email)
+			userSession, err = loginBrandCloudUserSession(ctx, tenantSlug, email, user.Password)
 		}
-		userTokens[assignment.AssignedEmail] = userToken
+		return struct {
+			email    string
+			password string
+			session  accountPlatformSession
+		}{email: email, password: user.Password, session: userSession}, err
+	})
+	if err != nil {
+		return err
+	}
+	userSessions := map[string]*brandCloudUserSession{}
+	for _, result := range userTokenResults {
+		session := result.session
+		userSessions[result.email] = &brandCloudUserSession{Email: result.email, Password: result.password, Session: session}
 	}
 	runID := time.Now().UTC().Format("20060102T150405Z")
-	results := []bindAssignment{}
-	skipped := 0
-	for i, assignment := range assignments {
-		logBind("binding device %d/%d: device=%s user=%s services=%s", i+1, len(assignments), assignment.DeviceID, assignment.AssignedEmail, strings.Join(assignment.ServiceOptions, ","))
-		logBind("checking existing binding: device=%s", assignment.DeviceID)
-		existingDevice, exists, err := accountFindDeviceByVideoCloudDevid(ctx, userTokens[assignment.AssignedEmail], brandCloudID, assignment.DeviceID)
+	var sessionMu sync.Mutex
+	var logMu sync.Mutex
+	safeLog := func(format string, args ...any) {
+		logMu.Lock()
+		defer logMu.Unlock()
+		logBind(format, args...)
+	}
+	safeCreateClaimToken := func(assignment bindAssignment) (map[string]any, error) {
+		return createClaimToken(ctx, &session, &sessionMu, safeLog, brandCloudID, assignment, runID, *claimTTL)
+	}
+	existingDeviceIndex := map[string]map[string]any{}
+	if len(assignments) > 0 {
+		indexUserSession := userSessions[assignments[0].AssignedEmail]
+		indexToken, err := brandCloudUserAccessToken(ctx, tenantSlug, indexUserSession, safeLog)
 		if err != nil {
 			return err
 		}
+		safeLog("indexing existing account devices: brand_cloud_id=%s", brandCloudID)
+		index, indexed, err := accountIndexDevicesByVideoCloudDevid(ctx, indexToken, brandCloudID)
+		if err != nil {
+			return err
+		}
+		existingDeviceIndex = index
+		safeLog("indexed existing account devices: active_video_cloud_devices=%d", indexed)
+	}
+	var progressMu sync.Mutex
+	done := 0
+	skipped := 0
+	createdClaims := 0
+	resolvedClaims := 0
+	provisionStarted := 0
+	progress := func(skippedDelta, createdDelta, resolvedDelta, provisionDelta int) {
+		progressMu.Lock()
+		defer progressMu.Unlock()
+		done++
+		skipped += skippedDelta
+		createdClaims += createdDelta
+		resolvedClaims += resolvedDelta
+		provisionStarted += provisionDelta
+		safeLog("bind progress: done=%d/%d created_claims=%d resolved_claims=%d provision_started=%d skipped=%d", done, len(assignments), createdClaims, resolvedClaims, provisionStarted, skipped)
+	}
+	safeLog("device bind concurrency=%d", *concurrency)
+	results, err := boundedParallelMap(len(assignments), *concurrency, func(i int) (bindAssignment, error) {
+		assignment := assignments[i]
+		safeLog("binding device %d/%d: device=%s user=%s services=%s", i+1, len(assignments), assignment.DeviceID, assignment.AssignedEmail, strings.Join(assignment.ServiceOptions, ","))
+		existingDevice, exists := existingDeviceIndex[assignment.DeviceID]
 		if exists {
 			assignment.AccountDeviceID = stringValue(existingDevice["id"])
 			assignment.Status = "already_bound"
-			logBind("device already bound; skipping claim: device=%s account_device=%s", assignment.DeviceID, assignment.AccountDeviceID)
-			results = append(results, assignment)
-			skipped++
-			logBind("bind progress: done=%d/%d created_claims=%d resolved_claims=%d provision_started=%d skipped=%d", len(results), len(assignments), len(results)-skipped, len(results)-skipped, len(results)-skipped, skipped)
-			continue
+			safeLog("device already bound; skipping claim: device=%s account_device=%s", assignment.DeviceID, assignment.AccountDeviceID)
+			progress(1, 0, 0, 0)
+			return assignment, nil
 		}
-		logBind("creating claim token: device=%s", assignment.DeviceID)
-		claim, err := createClaimToken(ctx, token, brandCloudID, assignment, runID, *claimTTL)
+		safeLog("creating claim token: device=%s", assignment.DeviceID)
+		claim, err := safeCreateClaimToken(assignment)
 		if err != nil {
-			return err
+			return bindAssignment{}, err
 		}
 		claimToken := stringValue(claim["claim_token"])
 		assignment.ClaimID = stringValue(firstPresent(claim, "claim_id", "id"))
-		logBind("resolving claim: device=%s user=%s", assignment.DeviceID, assignment.AssignedEmail)
-		resolve, err := resolveClaim(ctx, userTokens[assignment.AssignedEmail], brandCloudID, assignment, claimToken)
+		userSession := userSessions[assignment.AssignedEmail]
+		if userSession == nil {
+			return bindAssignment{}, fmt.Errorf("missing assigned user session: %s", assignment.AssignedEmail)
+		}
+		safeLog("resolving claim: device=%s user=%s", assignment.DeviceID, assignment.AssignedEmail)
+		resolve, err := resolveClaimWithBrandCloudUserRetry(ctx, tenantSlug, brandCloudID, assignment, claimToken, userSession, safeLog)
 		if err != nil {
-			return err
+			return bindAssignment{}, err
 		}
 		if dev, ok := resolve["device"].(map[string]any); ok {
 			assignment.AccountDeviceID = stringValue(dev["id"])
 		}
 		prov, _ := resolve["provision_input"].(map[string]any)
 		opID := fmt.Sprintf("bulk-bind-%s-%s", runID, assignment.DeviceID)
-		logBind("starting provision: device=%s account_device=%s", assignment.DeviceID, assignment.AccountDeviceID)
-		if err := startProvision(ctx, userTokens[assignment.AssignedEmail], brandCloudID, assignment, opID, prov); err != nil {
-			return err
+		safeLog("starting provision: device=%s account_device=%s", assignment.DeviceID, assignment.AccountDeviceID)
+		if err := startProvisionWithBrandCloudUserRetry(ctx, tenantSlug, brandCloudID, assignment, opID, prov, userSession, safeLog); err != nil {
+			return bindAssignment{}, err
 		}
 		assignment.OperationID = opID
 		assignment.Status = "provision_requested"
 		if provisionBridge.Enabled {
-			logBind("completing staging direct provisioning bridge: device=%s account_device=%s", assignment.DeviceID, assignment.AccountDeviceID)
+			safeLog("completing staging direct provisioning bridge: device=%s account_device=%s", assignment.DeviceID, assignment.AccountDeviceID)
 			if err := completeStagingProvisionBridge(provisionBridge, brandCloudID, assignment, opID, prov); err != nil {
-				return err
+				return bindAssignment{}, err
 			}
 			assignment.Status = "provisioned"
 		}
-		results = append(results, assignment)
-		logBind("bind progress: done=%d/%d created_claims=%d resolved_claims=%d provision_started=%d skipped=%d", len(results), len(assignments), len(results)-skipped, len(results)-skipped, len(results)-skipped, skipped)
+		progress(0, 1, 1, 1)
+		return assignment, nil
+	})
+	if err != nil {
+		return err
 	}
 	artifactDir := filepath.Join(envRoot, "artifacts", "device-bind")
 	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
@@ -4756,8 +5645,126 @@ func runBindDevices(args []string) error {
 		return err
 	}
 	_ = os.Chmod(artifactFile, 0o600)
-	provisionStarted := len(results) - skipped
+	if updated, err := updateUsersArtifactTokens(usersAbs, userSessions); err != nil {
+		return fmt.Errorf("update users artifact tokens: %w", err)
+	} else if updated > 0 {
+		logBind("updated users artifact tokens: count=%d file=%s", updated, usersAbs)
+	}
 	return json.NewEncoder(os.Stdout).Encode(map[string]any{"action": "bound", "brandname": *brandname, "brand_cloud_id": brandCloudID, "count": *count, "created_claims": provisionStarted, "resolved_claims": provisionStarted, "provision_started": provisionStarted, "already_bound": skipped, "artifact_file": artifactFile})
+}
+
+func runRefreshUserTokens(args []string) error {
+	fs := flag.NewFlagSet("refresh-user-tokens", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	workspaceFlag := fs.String("workspace", "", "workspace")
+	envRootFlag := fs.String("env-root", "", "environment root")
+	usersFileFlag := fs.String("users-file", "", "users artifact")
+	brandname := fs.String("brandname", "", "brand name")
+	concurrency := fs.Int("concurrency", envInt("CLOUD_REFRESH_USER_TOKENS_CONCURRENCY", 16), "refresh concurrency")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *usersFileFlag == "" {
+		return errors.New("--users-file is required")
+	}
+	if *concurrency <= 0 {
+		return errors.New("--concurrency must be greater than zero")
+	}
+	ctx, err := accountManagerContextFromFlags(*workspaceFlag, *envRootFlag)
+	if err != nil {
+		return err
+	}
+	usersAbs, _ := filepath.Abs(*usersFileFlag)
+	var artifact struct {
+		Brandname  string           `json:"brandname"`
+		TenantSlug string           `json:"tenant_slug"`
+		Users      []userCredential `json:"users"`
+	}
+	raw, err := os.ReadFile(usersAbs)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(raw, &artifact); err != nil {
+		return err
+	}
+	if *brandname != "" && artifact.Brandname != "" && *brandname != artifact.Brandname {
+		return fmt.Errorf("--brandname %s does not match users artifact brandname %s", *brandname, artifact.Brandname)
+	}
+	tenantSlug := artifact.TenantSlug
+	if tenantSlug == "" {
+		effectiveBrandname := firstNonEmpty(*brandname, artifact.Brandname)
+		if effectiveBrandname == "" {
+			return errors.New("users artifact missing tenant_slug; pass --brandname to look it up")
+		}
+		session, err := accountLoginSession(ctx, func(string, ...any) {})
+		if err != nil {
+			return err
+		}
+		brandCloud, err := accountFindBrandCloud(ctx, session.AccessToken, effectiveBrandname)
+		if err != nil {
+			return err
+		}
+		tenantSlug = stringValue(brandCloud["tenant_slug"])
+		if tenantSlug == "" {
+			return fmt.Errorf("brand cloud lookup did not return tenant_slug for %s", effectiveBrandname)
+		}
+	}
+	type tokenRefreshResult struct {
+		email     string
+		password  string
+		session   accountPlatformSession
+		refreshed bool
+		loggedIn  bool
+	}
+	results, err := boundedParallelMap(len(artifact.Users), *concurrency, func(i int) (tokenRefreshResult, error) {
+		user := artifact.Users[i]
+		if user.Email == "" {
+			return tokenRefreshResult{}, errors.New("users artifact contains user without email")
+		}
+		if user.Password == "" {
+			return tokenRefreshResult{}, fmt.Errorf("users artifact missing password for %s", user.Email)
+		}
+		before := user.Tokens
+		session := &brandCloudUserSession{Email: user.Email, Password: user.Password, Session: user.Tokens}
+		if _, err := brandCloudUserAccessToken(ctx, tenantSlug, session, func(string, ...any) {}); err != nil {
+			return tokenRefreshResult{}, err
+		}
+		return tokenRefreshResult{
+			email:     user.Email,
+			password:  user.Password,
+			session:   session.Session,
+			refreshed: before.RefreshToken != "" && before.AccessToken != session.Session.AccessToken,
+			loggedIn:  before.AccessToken == "" && before.RefreshToken == "",
+		}, nil
+	})
+	if err != nil {
+		return err
+	}
+	sessions := map[string]*brandCloudUserSession{}
+	refreshed := 0
+	loggedIn := 0
+	for _, result := range results {
+		sessions[result.email] = &brandCloudUserSession{Email: result.email, Password: result.password, Session: result.session}
+		if result.refreshed {
+			refreshed++
+		}
+		if result.loggedIn {
+			loggedIn++
+		}
+	}
+	updated, err := updateUsersArtifactTokens(usersAbs, sessions)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"action":      "refreshed_user_tokens",
+		"users_file":  usersAbs,
+		"tenant_slug": tenantSlug,
+		"count":       len(artifact.Users),
+		"updated":     updated,
+		"refreshed":   refreshed,
+		"logged_in":   loggedIn,
+	})
 }
 
 func readUsersList(path string) (map[string]userCredential, []userCredential, error) {
@@ -4831,34 +5838,47 @@ func accountFindBrandCloudForLog(ctx accountManagerContext, token, brandname str
 }
 
 func accountFindDeviceByVideoCloudDevid(ctx accountManagerContext, token, brandCloudID, videoCloudDevid string) (map[string]any, bool, error) {
+	index, _, err := accountIndexDevicesByVideoCloudDevid(ctx, token, brandCloudID)
+	if err != nil {
+		return nil, false, err
+	}
+	device, ok := index[videoCloudDevid]
+	return device, ok, nil
+}
+
+func accountIndexDevicesByVideoCloudDevid(ctx accountManagerContext, token, brandCloudID string) (map[string]map[string]any, int, error) {
 	const limit = 200
+	index := map[string]map[string]any{}
 	for offset := 0; ; offset += limit {
 		body, status, err := curlJSONStatus(fmt.Sprintf("%s/v1/orgs/%s/devices?limit=%d&offset=%d", ctx.BaseURL, brandCloudID, limit, offset), token, nil)
 		if err != nil {
-			return nil, false, err
+			return nil, 0, err
 		}
 		if status != 200 {
-			return nil, false, fmt.Errorf("device lookup failed: device=%s HTTP %d%s", videoCloudDevid, status, errorBodySuffix(body))
+			return nil, 0, fmt.Errorf("device index failed: HTTP %d%s", status, errorBodySuffix(body))
 		}
 		var parsed map[string]any
 		if err := json.Unmarshal(body, &parsed); err != nil {
-			return nil, false, err
+			return nil, 0, err
 		}
 		devices := anySlice(parsed["devices"])
 		for _, item := range devices {
 			device, _ := item.(map[string]any)
 			metadata, _ := device["metadata"].(map[string]any)
-			if stringValue(metadata["video_cloud_devid"]) == videoCloudDevid && device["disabled_at"] == nil {
-				return device, true, nil
+			videoCloudDevid := stringValue(metadata["video_cloud_devid"])
+			if videoCloudDevid != "" && device["disabled_at"] == nil {
+				if _, exists := index[videoCloudDevid]; !exists {
+					index[videoCloudDevid] = device
+				}
 			}
 		}
 		if len(devices) < limit {
-			return nil, false, nil
+			return index, len(index), nil
 		}
 	}
 }
 
-func createClaimToken(ctx accountManagerContext, token, brandCloudID string, assignment bindAssignment, runID string, ttlHours int) (map[string]any, error) {
+func createClaimToken(ctx accountManagerContext, session *accountPlatformSession, sessionMu *sync.Mutex, logf func(string, ...any), brandCloudID string, assignment bindAssignment, runID string, ttlHours int) (map[string]any, error) {
 	expires := time.Now().UTC().Add(time.Duration(ttlHours) * time.Hour).Format(time.RFC3339)
 	payload, _ := json.Marshal(map[string]any{
 		"organization_id":   brandCloudID,
@@ -4870,7 +5890,9 @@ func createClaimToken(ctx accountManagerContext, token, brandCloudID string, ass
 		"service_options":   assignment.ServiceOptions,
 		"metadata":          map[string]any{"source": "cloud-bind-devices", "device_type": assignment.DeviceType, "service_options": assignment.ServiceOptions},
 	})
-	body, status, err := curlJSONStatus(ctx.BaseURL+"/v1/admin/device-claim-tokens", token, payload)
+	body, status, err := curlJSONStatusWithPlatformRetryLocked(ctx, session, sessionMu, logf, "claim token create", func(platformToken string) ([]byte, int, error) {
+		return curlJSONStatus(ctx.BaseURL+"/v1/admin/device-claim-tokens", platformToken, payload)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -4884,6 +5906,21 @@ func createClaimToken(ctx accountManagerContext, token, brandCloudID string, ass
 func resolveClaim(ctx accountManagerContext, token, brandCloudID string, assignment bindAssignment, claimToken string) (map[string]any, error) {
 	payload, _ := json.Marshal(map[string]string{"claim_token": claimToken, "device_name": firstNonEmpty(assignment.DeviceID, assignment.DeviceID)})
 	body, status, err := curlJSONStatus(fmt.Sprintf("%s/v1/orgs/%s/devices/claim/resolve", ctx.BaseURL, brandCloudID), token, payload)
+	if err != nil {
+		return nil, err
+	}
+	if status != 200 && status != 201 {
+		return nil, fmt.Errorf("claim resolve failed: device=%s HTTP %d%s", assignment.DeviceID, status, errorBodySuffix(body))
+	}
+	var parsed map[string]any
+	return parsed, json.Unmarshal(body, &parsed)
+}
+
+func resolveClaimWithBrandCloudUserRetry(ctx accountManagerContext, tenantSlug, brandCloudID string, assignment bindAssignment, claimToken string, user *brandCloudUserSession, logf func(string, ...any)) (map[string]any, error) {
+	payload, _ := json.Marshal(map[string]string{"claim_token": claimToken, "device_name": firstNonEmpty(assignment.DeviceID, assignment.DeviceID)})
+	body, status, err := curlJSONStatusWithBrandCloudUserRetryLocked(ctx, tenantSlug, user, logf, "claim resolve", func(token string) ([]byte, int, error) {
+		return curlJSONStatus(fmt.Sprintf("%s/v1/orgs/%s/devices/claim/resolve", ctx.BaseURL, brandCloudID), token, payload)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -5044,6 +6081,33 @@ func startProvision(ctx accountManagerContext, token, brandCloudID string, assig
 	return nil
 }
 
+func startProvisionWithBrandCloudUserRetry(ctx accountManagerContext, tenantSlug, brandCloudID string, assignment bindAssignment, operationID string, provisionInput map[string]any, user *brandCloudUserSession, logf func(string, ...any)) error {
+	serviceOptions := assignment.ServiceOptions
+	if items, ok := provisionInput["service_options"].([]any); ok {
+		serviceOptions = []string{}
+		for _, item := range items {
+			serviceOptions = append(serviceOptions, stringValue(item))
+		}
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"video_cloud_devid": stringValue(firstPresent(provisionInput, "video_cloud_devid")),
+		"activity_id":       stringValue(firstPresent(provisionInput, "activity_id")),
+		"clip_public_key":   stringValue(firstPresent(provisionInput, "clip_public_key")),
+		"operation_id":      operationID,
+		"service_options":   serviceOptions,
+	})
+	body, status, err := curlJSONStatusWithBrandCloudUserRetryLocked(ctx, tenantSlug, user, logf, "provision start", func(token string) ([]byte, int, error) {
+		return curlJSONStatus(fmt.Sprintf("%s/v1/orgs/%s/devices/%s/provision", ctx.BaseURL, brandCloudID, assignment.AccountDeviceID), token, payload)
+	})
+	if err != nil {
+		return err
+	}
+	if status != 200 && status != 201 && status != 202 {
+		return fmt.Errorf("provision start failed: device=%s account_device=%s HTTP %d%s", assignment.DeviceID, assignment.AccountDeviceID, status, errorBodySuffix(body))
+	}
+	return nil
+}
+
 func firstPresent(values map[string]any, keys ...string) any {
 	for _, key := range keys {
 		if value, ok := values[key]; ok && value != nil {
@@ -5058,8 +6122,49 @@ func logBind(format string, args ...any) {
 }
 
 type userCredential struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email    string                 `json:"email"`
+	Password string                 `json:"password"`
+	Tokens   accountPlatformSession `json:"tokens,omitempty"`
+}
+
+func updateUsersArtifactTokens(path string, sessions map[string]*brandCloudUserSession) (int, error) {
+	if len(sessions) == 0 {
+		return 0, nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	var artifact map[string]any
+	if err := json.Unmarshal(raw, &artifact); err != nil {
+		return 0, err
+	}
+	users, ok := artifact["users"].([]any)
+	if !ok {
+		return 0, errors.New("users artifact missing users array")
+	}
+	updated := 0
+	for _, entry := range users {
+		user, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		email := stringValue(user["email"])
+		session := sessions[email]
+		if session == nil || (session.Session.AccessToken == "" && session.Session.RefreshToken == "") {
+			continue
+		}
+		user["tokens"] = session.Session
+		updated++
+	}
+	if updated == 0 {
+		return 0, nil
+	}
+	if err := writeJSON(path, artifact); err != nil {
+		return 0, err
+	}
+	_ = os.Chmod(path, 0o600)
+	return updated, nil
 }
 
 func readUsersFile(path string) (map[string]userCredential, error) {
@@ -5163,28 +6268,131 @@ func loginAccountUser(ctx accountManagerContext, email, password string) (string
 	return parsed.Tokens.AccessToken, nil
 }
 
+type brandCloudUserSession struct {
+	Email    string
+	Password string
+	Session  accountPlatformSession
+	Mu       sync.Mutex
+}
+
 func loginBrandCloudUser(ctx accountManagerContext, tenantSlug, email, password string) (string, error) {
+	session, err := loginBrandCloudUserSession(ctx, tenantSlug, email, password)
+	if err != nil {
+		return "", err
+	}
+	return session.AccessToken, nil
+}
+
+func loginBrandCloudUserSession(ctx accountManagerContext, tenantSlug, email, password string) (accountPlatformSession, error) {
 	payload, _ := json.Marshal(map[string]string{"email": email, "password": password})
 	loginURL := fmt.Sprintf("%s/v1/brand-clouds/%s/auth/login", ctx.BaseURL, url.PathEscape(tenantSlug))
 	body, status, err := curlJSONStatus(loginURL, "", payload)
 	if err != nil {
-		return "", err
+		return accountPlatformSession{}, err
 	}
 	if status != 200 {
-		return "", fmt.Errorf("brand-cloud login failed: email=%s tenant_slug=%s HTTP %d%s", email, tenantSlug, status, accountAPIErrorSuffix(body))
+		return accountPlatformSession{}, fmt.Errorf("brand-cloud login failed: email=%s tenant_slug=%s HTTP %d%s", email, tenantSlug, status, accountAPIErrorSuffix(body))
 	}
-	var parsed struct {
-		Tokens struct {
-			AccessToken string `json:"access_token"`
-		} `json:"tokens"`
+	session, err := parsePlatformSession(body)
+	if err != nil {
+		return accountPlatformSession{}, err
 	}
-	if err := json.Unmarshal(body, &parsed); err != nil {
+	if session.AccessToken == "" {
+		return accountPlatformSession{}, fmt.Errorf("brand-cloud login response did not include an access token: %s", email)
+	}
+	return session, nil
+}
+
+func accountRefreshBrandCloudUserSession(ctx accountManagerContext, tenantSlug, email, refreshToken string, logf func(string, ...any)) (accountPlatformSession, error) {
+	if strings.TrimSpace(refreshToken) == "" {
+		return accountPlatformSession{}, errors.New("brand-cloud user refresh token is empty")
+	}
+	logf("refreshing brand-cloud user token: email=%s url=%s/v1/brand-clouds/%s/auth/refresh", email, ctx.BaseURL, tenantSlug)
+	payload, _ := json.Marshal(map[string]string{"refresh_token": refreshToken})
+	refreshURL := fmt.Sprintf("%s/v1/brand-clouds/%s/auth/refresh", ctx.BaseURL, url.PathEscape(tenantSlug))
+	body, status, err := curlJSONStatus(refreshURL, "", payload)
+	if err != nil {
+		return accountPlatformSession{}, err
+	}
+	if status != 200 {
+		return accountPlatformSession{}, fmt.Errorf("brand-cloud user token refresh failed: email=%s HTTP %d%s", email, status, accountAPIErrorSuffix(body))
+	}
+	session, err := parsePlatformSession(body)
+	if err != nil {
+		return accountPlatformSession{}, err
+	}
+	if session.AccessToken == "" || session.RefreshToken == "" {
+		return accountPlatformSession{}, fmt.Errorf("brand-cloud user refresh response did not include access and refresh tokens: %s", email)
+	}
+	logf("brand-cloud user token refresh ok: email=%s", email)
+	return session, nil
+}
+
+func brandCloudUserAccessToken(ctx accountManagerContext, tenantSlug string, user *brandCloudUserSession, logf func(string, ...any)) (string, error) {
+	if user == nil {
+		return "", errors.New("brand-cloud user session is nil")
+	}
+	user.Mu.Lock()
+	defer user.Mu.Unlock()
+	if err := ensureBrandCloudUserSessionFresh(ctx, tenantSlug, user, logf); err != nil {
 		return "", err
 	}
-	if parsed.Tokens.AccessToken == "" {
-		return "", fmt.Errorf("brand-cloud login response did not include an access token: %s", email)
+	return user.Session.AccessToken, nil
+}
+
+func ensureBrandCloudUserSessionFresh(ctx accountManagerContext, tenantSlug string, user *brandCloudUserSession, logf func(string, ...any)) error {
+	const refreshWindow = 2 * time.Minute
+	if expiresAt, ok := jwtExpiresAt(user.Session.AccessToken); user.Session.AccessToken != "" && (!ok || time.Until(expiresAt) > refreshWindow) {
+		return nil
 	}
-	return parsed.Tokens.AccessToken, nil
+	return refreshOrLoginBrandCloudUserSession(ctx, tenantSlug, user, logf)
+}
+
+func refreshOrLoginBrandCloudUserSession(ctx accountManagerContext, tenantSlug string, user *brandCloudUserSession, logf func(string, ...any)) error {
+	if expiresAt, ok := jwtExpiresAt(user.Session.RefreshToken); user.Session.RefreshToken != "" && (!ok || time.Now().Before(expiresAt)) {
+		refreshed, err := accountRefreshBrandCloudUserSession(ctx, tenantSlug, user.Email, user.Session.RefreshToken, logf)
+		if err == nil {
+			user.Session = refreshed
+			return nil
+		}
+		logf("brand-cloud user token refresh failed; falling back to login: email=%s error=%v", user.Email, err)
+	}
+	logf("logging in brand-cloud user: email=%s", user.Email)
+	loggedIn, err := loginBrandCloudUserSession(ctx, tenantSlug, user.Email, user.Password)
+	if err != nil {
+		return err
+	}
+	user.Session = loggedIn
+	return nil
+}
+
+func curlJSONStatusWithBrandCloudUserRetryLocked(ctx accountManagerContext, tenantSlug string, user *brandCloudUserSession, logf func(string, ...any), operation string, call func(string) ([]byte, int, error)) ([]byte, int, error) {
+	if logf == nil {
+		logf = func(string, ...any) {}
+	}
+	if user == nil {
+		return nil, 0, errors.New("brand-cloud user session is nil")
+	}
+	user.Mu.Lock()
+	if err := ensureBrandCloudUserSessionFresh(ctx, tenantSlug, user, logf); err != nil {
+		user.Mu.Unlock()
+		return nil, 0, err
+	}
+	userToken := user.Session.AccessToken
+	user.Mu.Unlock()
+	body, status, err := call(userToken)
+	if err != nil || status != http.StatusUnauthorized {
+		return body, status, err
+	}
+	logf("%s got HTTP 401; refreshing brand-cloud user token before retry: email=%s", operation, user.Email)
+	user.Mu.Lock()
+	if err := refreshOrLoginBrandCloudUserSession(ctx, tenantSlug, user, logf); err != nil {
+		user.Mu.Unlock()
+		return body, status, err
+	}
+	userToken = user.Session.AccessToken
+	user.Mu.Unlock()
+	return call(userToken)
 }
 
 func logUnprovision(format string, args ...any) {
