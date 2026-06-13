@@ -319,7 +319,7 @@ func TestAccountEnsureUserAppCertificateRecoversMissingLocalCredentials(t *testi
 	defer server.Close()
 
 	ctx := accountManagerContext{BaseURL: server.URL}
-	credentials, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", nil, func() error {
+	credentials, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", "app-brand-cloud-user:brand-user-1", nil, func() error {
 		recovered = true
 		return nil
 	})

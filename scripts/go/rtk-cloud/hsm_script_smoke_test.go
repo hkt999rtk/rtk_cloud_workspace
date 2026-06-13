@@ -82,7 +82,10 @@ func TestCreateUsersUsesAccountManagerBaseURLOverrideAndWritesArtifact(t *testin
 				t.Fatalf("Authorization = %q, want bearer token", got)
 			}
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(map[string]any{"action": "created"})
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"action":           "created",
+				"brand_cloud_user": map[string]string{"id": "brand-user-1"},
+			})
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
 		}

@@ -349,7 +349,8 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 	}
 	accountEnv, _ := readEnvFile(paths.AccountManagerEnv)
 	accountState, _ := readEnvFile(paths.AccountManagerState)
-	accountValues := mergeEnv(accountEnv, accountState)
+	accountValues := mergeEnv(certbotPublicDeployEnv(env, operator), accountEnv)
+	accountValues = mergeEnv(accountValues, accountState)
 	accountValues = mergeEnv(accountValues, map[string]string{
 		"ACCOUNT_MANAGER_LINODE_RELEASE":        opts.accountRelease,
 		"ACCOUNT_MANAGER_LINODE_RELEASE_BUNDLE": accountBundle,
@@ -376,7 +377,8 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 	}
 	adminEnv, _ := readEnvFile(paths.AdminEnv)
 	adminState, _ := readEnvFile(paths.AdminState)
-	adminValues := mergeEnv(adminEnv, adminState)
+	adminValues := mergeEnv(certbotPublicDeployEnv(env, operator), adminEnv)
+	adminValues = mergeEnv(adminValues, adminState)
 	adminValues = mergeEnv(adminValues, map[string]string{
 		"ADMIN_LINODE_RELEASE":            opts.adminRelease,
 		"ADMIN_LINODE_RELEASE_BUNDLE":     adminBundle,
@@ -401,6 +403,24 @@ func deployAllServices(paths provisionPaths, env, operator map[string]string, op
 	}
 	writePlatformAdminSummary(os.Stdout, paths)
 	return nil
+}
+
+func certbotPublicDeployEnv(stackEnv, operatorEnv map[string]string) map[string]string {
+	out := map[string]string{}
+	set := func(key, value string) {
+		if strings.TrimSpace(value) != "" {
+			out[key] = value
+		}
+	}
+	set("GODADDY_KEY", firstNonEmpty(operatorEnv["GODADDY_KEY"], operatorEnv["GODADDY_API_KEY"], os.Getenv("GODADDY_KEY"), os.Getenv("GODADDY_API_KEY")))
+	set("GODADDY_SECRET", firstNonEmpty(operatorEnv["GODADDY_SECRET"], operatorEnv["GODADDY_API_SECRET"], os.Getenv("GODADDY_SECRET"), os.Getenv("GODADDY_API_SECRET")))
+	set("GODADDY_ENV", firstNonEmpty(operatorEnv["GODADDY_ENV"], os.Getenv("GODADDY_ENV"), "prod"))
+	set("CLOUD_DNS_ROOT_DOMAIN", firstNonEmpty(stackEnv["CLOUD_DNS_ROOT_DOMAIN"], operatorEnv["CLOUD_DNS_ROOT_DOMAIN"], os.Getenv("CLOUD_DNS_ROOT_DOMAIN")))
+	set("GODADDY_RECORD_TTL", firstNonEmpty(operatorEnv["GODADDY_RECORD_TTL"], operatorEnv["GODADDY_DNS_TTL"], os.Getenv("GODADDY_RECORD_TTL"), os.Getenv("GODADDY_DNS_TTL")))
+	set("GODADDY_DNS_WAIT_SECONDS", firstNonEmpty(operatorEnv["GODADDY_DNS_WAIT_SECONDS"], os.Getenv("GODADDY_DNS_WAIT_SECONDS")))
+	set("GODADDY_DNS_PROPAGATION_SECONDS", firstNonEmpty(operatorEnv["GODADDY_DNS_PROPAGATION_SECONDS"], os.Getenv("GODADDY_DNS_PROPAGATION_SECONDS")))
+	set("GODADDY_DNS_RESOLVERS", firstNonEmpty(operatorEnv["GODADDY_DNS_RESOLVERS"], os.Getenv("GODADDY_DNS_RESOLVERS")))
+	return out
 }
 
 func videoDeployArgs(paths provisionPaths, env map[string]string, opts provisionOptions) []string {

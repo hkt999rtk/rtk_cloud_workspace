@@ -315,6 +315,8 @@ func parseProvisionArgs(args []string) (provisionOptions, error) {
 				return opts, err
 			}
 			opts.adminReleaseBundle = v
+		case "--local-build":
+			opts.localBuild = true
 		case "--confirm":
 			v, err := next()
 			if err != nil {

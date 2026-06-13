@@ -504,6 +504,35 @@ func TestLoggerBackendInstallScriptIssuesCertificateWithoutCache(t *testing.T) {
 	}
 }
 
+func TestCertbotPublicDeployEnvPassesOperatorDNSCredentials(t *testing.T) {
+	got := certbotPublicDeployEnv(
+		map[string]string{"CLOUD_DNS_ROOT_DOMAIN": "realtekconnect.com"},
+		map[string]string{
+			"GODADDY_API_KEY":                 "operator-key",
+			"GODADDY_API_SECRET":              "operator-secret",
+			"GODADDY_ENV":                     "prod",
+			"GODADDY_DNS_TTL":                 "600",
+			"GODADDY_DNS_WAIT_SECONDS":        "300",
+			"GODADDY_DNS_PROPAGATION_SECONDS": "60",
+			"GODADDY_DNS_RESOLVERS":           "8.8.8.8 1.1.1.1",
+		},
+	)
+	for key, want := range map[string]string{
+		"GODADDY_KEY":                     "operator-key",
+		"GODADDY_SECRET":                  "operator-secret",
+		"GODADDY_ENV":                     "prod",
+		"CLOUD_DNS_ROOT_DOMAIN":           "realtekconnect.com",
+		"GODADDY_RECORD_TTL":              "600",
+		"GODADDY_DNS_WAIT_SECONDS":        "300",
+		"GODADDY_DNS_PROPAGATION_SECONDS": "60",
+		"GODADDY_DNS_RESOLVERS":           "8.8.8.8 1.1.1.1",
+	} {
+		if got[key] != want {
+			t.Fatalf("%s = %q, want %q", key, got[key], want)
+		}
+	}
+}
+
 func TestPrometheusTargetHostReadsCloudLoggerNode(t *testing.T) {
 	config := filepath.Join(t.TempDir(), "video-cloud-staging.yaml")
 	writeFile(t, config, `deploy:
@@ -1227,6 +1256,16 @@ func TestDeployLocalBuildCannotCombineWithLoggerOnly(t *testing.T) {
 	err := runDeploy([]string{"--env-root", t.TempDir(), "--local-build", "--logger-only"})
 	if err == nil || !strings.Contains(err.Error(), "--local-build cannot be combined with --logger-only") {
 		t.Fatalf("expected local-build/logger-only conflict, got %v", err)
+	}
+}
+
+func TestProvisionArgsAcceptLocalBuild(t *testing.T) {
+	opts, err := parseProvisionArgs([]string{"--env-root", t.TempDir(), "--all", "--local-build"})
+	if err != nil {
+		t.Fatalf("parseProvisionArgs returned error: %v", err)
+	}
+	if !opts.localBuild {
+		t.Fatal("expected provision --local-build to set localBuild")
 	}
 }
 

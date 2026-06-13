@@ -15,6 +15,9 @@ It is a governance document only; it must not contain secret values.
   migration paths.
 - Give deployment scripts a stable way to locate secrets without hard-coding
   service-specific local paths.
+- Standardize staging and production on OpenBao as the runtime secret source of
+  truth, while retaining local files only for bootstrap, local development, and
+  rollback.
 
 ## Canonical Local Secret Root
 
@@ -56,6 +59,78 @@ without changing the service directory shape.
 
 The `shared/` top-level tree is for operator-scope credentials that are not
 owned by one deployable service. It is not a deployment environment.
+
+## OpenBao Source Of Truth
+
+OpenBao is the target secret manager for staging and production. The local
+`.secrets/<environment>/<provider>/<service>/` tree remains the operator
+bootstrap and rollback interface, but long-lived runtime secrets should be
+stored in OpenBao after migration.
+
+V1 OpenBao responsibilities:
+
+- `kv-v2` stores runtime secrets such as DSNs, JWT/token keys, MQTT
+  credentials, TURN shared secrets, object-storage credentials, factory
+  enrollment HMAC keys, and service bootstrap pointers.
+- `pki` signs device/factory, gateway/server, and app/user CSRs. Existing
+  service-side CSR validation, request idempotency, and audit tables remain in
+  `rtk_video_cloud`.
+- OpenBao audit logging records secret reads and PKI signing operations. RTK
+  services still record domain audit events such as certificate issuance
+  request id, CSR hash, subject, serial, entitlement evidence, and outcome.
+
+V1 OpenBao mounts:
+
+```text
+secret/rtk-cloud/<environment>/<service>/...
+pki/device
+pki/app
+pki/gateway
+```
+
+The `secret/` paths are examples. Deployments may choose a different mount, but
+the service-level manifest must record the actual mount and path prefix.
+
+Recommended `kv-v2` layout:
+
+```text
+secret/rtk-cloud/staging/video-cloud/api
+secret/rtk-cloud/staging/video-cloud/certissuer
+secret/rtk-cloud/staging/video-cloud/factoryenroll
+secret/rtk-cloud/staging/video-cloud/mqtt
+secret/rtk-cloud/staging/video-cloud/turn
+secret/rtk-cloud/staging/account-manager/api
+secret/rtk-cloud/staging/shared/dns
+secret/rtk-cloud/staging/shared/object-storage
+```
+
+OpenBao policies must be least-privilege:
+
+- `video-cloud-certissuer` may sign only approved PKI roles and read only the
+  runtime values needed by `cmd/certissuer`.
+- `video-cloud-env-renderer` may read only the KV paths needed to render the
+  target host's systemd environment files.
+- `factoryenroll` may not sign certificates directly in OpenBao; it continues
+  to call `cmd/certissuer` over the existing issuer boundary.
+- Operators may write or rotate secrets through explicit administrative policy;
+  service roles must not have write access to production runtime secrets.
+
+For current Linode/systemd deployments, service authentication to OpenBao uses
+AppRole:
+
+```text
+/etc/video_cloud/openbao/role_id
+/etc/video_cloud/openbao/secret_id
+```
+
+Both files must be root-owned, mode `0600`, and excluded from readiness
+reports. Kubernetes auth is reserved for a future Kubernetes deployment path.
+
+Runtime services should continue to consume env files initially. A deployment
+render step reads OpenBao KV entries and writes root-owned files under
+`/run/video_cloud/*.env` or another tmpfs runtime directory before systemd
+starts the service. This preserves the current process config boundary while
+moving secret ownership to OpenBao.
 
 ## Standard Service Directory
 
@@ -154,6 +229,26 @@ DEPLOY_SECRETS_DIR=.secrets/${DEPLOY_ENV}/${DEPLOY_PROVIDER}/${DEPLOY_SERVICE}
 Follow-up service PRs may keep documented legacy path fallbacks temporarily, but
 new docs and examples should prefer `DEPLOY_SECRETS_DIR`.
 
+When OpenBao is enabled, `DEPLOY_SECRETS_DIR` should contain only bootstrap
+material, non-secret manifests, public certificates, and rollback env files.
+Deployment scripts must not copy raw OpenBao-managed runtime secrets from
+operator machines to hosts except as an explicit rollback path.
+
+OpenBao-aware deployment scripts should accept:
+
+```sh
+OPENBAO_ADDR=https://openbao.internal:8200
+OPENBAO_CACERT=/etc/video_cloud/openbao/ca.pem
+OPENBAO_AUTH_METHOD=approle
+OPENBAO_ROLE_ID_FILE=/etc/video_cloud/openbao/role_id
+OPENBAO_SECRET_ID_FILE=/etc/video_cloud/openbao/secret_id
+OPENBAO_KV_MOUNT=secret
+OPENBAO_KV_PREFIX=rtk-cloud/staging/video-cloud
+```
+
+The renderer output is runtime state, not source material. Do not commit it and
+do not archive it in readiness artifacts.
+
 ## Artifact Boundary
 
 `.artifacts/` remains test output only. It may contain temporary E2E run outputs,
@@ -176,12 +271,32 @@ manifest.
   staging certsets, or test-only device material.
 - Any secret that appears in tracked files, PR bodies, issue bodies, shared logs,
   or generated reports should be treated as compromised and rotated.
+- Do not log OpenBao tokens, AppRole `secret_id` values, rendered env files, or
+  OpenBao response bodies that contain secret data.
+- Treat OpenBao availability as a deployment prerequisite. If OpenBao is
+  unreachable during startup, services must fail closed unless an operator has
+  explicitly selected the rollback env-file path.
 
 ## V1 Migration Order
 
-1. Merge this governance document and read-only checks.
-2. Create local ignored `.secrets/` directories for Linode staging and production.
-3. Move operator-local Account Manager, Admin, Video Cloud, and E2E secret
-   material into the new layout without committing the values.
-4. Add service-specific PRs so deployment scripts support `DEPLOY_SECRETS_DIR`.
-5. Rotate any values previously exposed in tracked files or logs.
+1. Update documentation first: governance, service config maps, certissuer
+   design, OpenBao bootstrap, rollout, rollback, and acceptance criteria.
+2. Create local ignored `.secrets/` directories for Linode staging and
+   production that hold only bootstrap material, manifests, public certificates,
+   and rollback files.
+3. Stand up OpenBao with TLS, audit logging, `kv-v2`, and PKI mounts for
+   device/factory, app/user, and gateway/server certificates.
+4. Move operator-local Account Manager, Admin, Video Cloud, and E2E secret
+   material into OpenBao without committing values.
+5. Add service-specific PRs so deployment scripts support OpenBao-backed env
+   rendering while preserving `DEPLOY_SECRETS_DIR` rollback.
+6. Switch `cmd/certissuer` staging config to the OpenBao PKI signer provider.
+7. Run staging validation, including `scripts/run-staging-e2e.sh`.
+8. Rotate any values previously exposed in tracked files or logs.
+
+The OpenBao migration is not accepted until the staging end-to-end command
+passes:
+
+```sh
+scripts/run-staging-e2e.sh
+```

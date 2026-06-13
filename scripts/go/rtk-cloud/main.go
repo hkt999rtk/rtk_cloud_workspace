@@ -1915,11 +1915,12 @@ func runCreateUsers(args []string) error {
 			}
 			result.assigned = true
 		}
+		if createResult.BrandCloudUserID == "" {
+			return createUserResult{}, fmt.Errorf("brand user create response missing brand_cloud_user.id for %s", email)
+		}
+		appSubject := "app-brand-cloud-user:" + createResult.BrandCloudUserID
 		safeLog("bootstrapping app certificate: email=%s", email)
-		appCredentials, appCertificate, userSession, err := accountEnsureUserAppCertificate(ctx, tenantSlug, email, password, existingAppCredentials[email], func() error {
-			if createResult.BrandCloudUserID == "" {
-				return fmt.Errorf("brand user create response missing brand_cloud_user.id for %s", email)
-			}
+		appCredentials, appCertificate, userSession, err := accountEnsureUserAppCertificate(ctx, tenantSlug, email, password, appSubject, existingAppCredentials[email], func() error {
 			return safeRevokeAppCertificate(createResult.BrandCloudUserID)
 		})
 		if err != nil {
@@ -2328,6 +2329,7 @@ func runStagingE2ETest(args []string) error {
 	accountReleaseBundle := fs.String("account-release-bundle", os.Getenv("ACCOUNT_RELEASE_BUNDLE"), "account release bundle")
 	adminRelease := fs.String("admin-release", os.Getenv("ADMIN_RELEASE"), "admin release")
 	adminReleaseBundle := fs.String("admin-release-bundle", os.Getenv("ADMIN_RELEASE_BUNDLE"), "admin release bundle")
+	localBuild := fs.Bool("local-build", false, "build a local Linux x86_64 Video Cloud bundle before deploy")
 	outDir := fs.String("out-dir", "", "out dir")
 	skipMQTTProbe := fs.Bool("skip-mqtt-probe", false, "skip mqtt probe")
 	quiet := fs.Bool("quiet", false, "suppress periodic progress output")
@@ -2415,6 +2417,9 @@ func runStagingE2ETest(args []string) error {
 	}
 	if *adminReleaseBundle != "" {
 		provisionArgs = append(provisionArgs, "--admin-release-bundle", *adminReleaseBundle)
+	}
+	if *localBuild {
+		provisionArgs = append(provisionArgs, "--local-build")
 	}
 	if err := runStep("provision_all", commandWithArgs(scripts["provision"], provisionArgs...)...); err != nil {
 		return err
@@ -3132,7 +3137,7 @@ type accountAppCertificate struct {
 	NotAfter            string `json:"not_after,omitempty"`
 }
 
-func accountEnsureUserAppCertificate(ctx accountManagerContext, tenantSlug, email, password string, existingAppCredentials map[string]any, recoverMissingLocalCredentials func() error) (map[string]any, map[string]any, accountPlatformSession, error) {
+func accountEnsureUserAppCertificate(ctx accountManagerContext, tenantSlug, email, password, subject string, existingAppCredentials map[string]any, recoverMissingLocalCredentials func() error) (map[string]any, map[string]any, accountPlatformSession, error) {
 	initial, err := accountLoginUserFull(ctx, tenantSlug, email, password, "")
 	if err != nil {
 		return nil, nil, accountPlatformSession{}, err
@@ -3164,7 +3169,9 @@ func accountEnsureUserAppCertificate(ctx accountManagerContext, tenantSlug, emai
 	if initial.User.ID == "" {
 		return nil, nil, accountPlatformSession{}, fmt.Errorf("login response did not include a user id for app certificate bootstrap: %s", email)
 	}
-	subject := "app-user:" + initial.User.ID
+	if strings.TrimSpace(subject) == "" {
+		return nil, nil, accountPlatformSession{}, fmt.Errorf("app certificate subject is required for %s", email)
+	}
 	privateKeyPEM, csrPEM, err := generateAppCertificateCSR(subject)
 	if err != nil {
 		return nil, nil, accountPlatformSession{}, err

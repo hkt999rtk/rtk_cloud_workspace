@@ -3,19 +3,31 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STG_SH="${RTK_CLOUD_STG_SH:-$ROOT/stg.sh}"
-STACK_FILE="$ROOT/cloud_env/staging/linode/env/stack.env"
+STACK_FILE="${RTK_CLOUD_STACK_FILE:-$ROOT/cloud_env/staging/linode/env/stack.env}"
+stack_value() {
+	local key="$1"
+	if [[ -f "$STACK_FILE" ]]; then
+		awk -F= -v key="$key" '$1 == key {print $2; exit}' "$STACK_FILE"
+	fi
+}
 PROVIDER="${CLOUD_PROVIDER:-}"
 if [[ -z "$PROVIDER" && -f "$STACK_FILE" ]]; then
-	PROVIDER="$(awk -F= '$1 == "CLOUD_PROVIDER" {print $2; exit}' "$STACK_FILE")"
+	PROVIDER="$(stack_value CLOUD_PROVIDER)"
 fi
 PROVIDER="${PROVIDER:-linode}"
+if [[ -z "${CLOUD_DNS_ROOT_DOMAIN:-}" && -f "$STACK_FILE" ]]; then
+	CLOUD_DNS_ROOT_DOMAIN="$(stack_value CLOUD_DNS_ROOT_DOMAIN)"
+	if [[ -n "$CLOUD_DNS_ROOT_DOMAIN" ]]; then
+		export CLOUD_DNS_ROOT_DOMAIN
+	fi
+fi
 if [[ "$PROVIDER" != "linode" ]]; then
 	printf 'error: unsupported CLOUD_PROVIDER=%s; staging E2E currently supports only linode\n' "$PROVIDER" >&2
 	exit 2
 fi
 STACK_NAME="${RTK_CLOUD_STAGING_STACK_NAME:-}"
 if [[ -z "$STACK_NAME" && -f "$STACK_FILE" ]]; then
-	STACK_NAME="$(awk -F= '$1 == "CLOUD_STACK_NAME" {print $2; exit}' "$STACK_FILE")"
+	STACK_NAME="$(stack_value CLOUD_STACK_NAME)"
 fi
 STACK_NAME="${STACK_NAME:-video-cloud-staging}"
 BRANDNAME=""
@@ -31,6 +43,7 @@ PLAN=0
 OUT_DIR=""
 SKIP_MQTT_PROBE=0
 QUIET=0
+LOCAL_BUILD=0
 
 usage() {
 	cat <<'USAGE'
@@ -62,6 +75,7 @@ Options:
   --device-concurrency N          Concurrent device generation workers. Default: 16.
   --bind-concurrency N            Concurrent device binding workers. Default: 16.
   --skip-mqtt-probe               Run MQTT test without live broker probe.
+  --local-build                    Build and deploy a local Video Cloud bundle.
   --quiet                         Suppress periodic progress lines.
   -h, --help                      Show this help.
 
@@ -239,6 +253,10 @@ while [[ $# -gt 0 ]]; do
 			SKIP_MQTT_PROBE=1
 			shift
 			;;
+		--local-build)
+			LOCAL_BUILD=1
+			shift
+			;;
 		--quiet)
 			QUIET=1
 			shift
@@ -283,6 +301,9 @@ if [[ "$PLAN" -eq 1 ]]; then
 	fi
 	if [[ "$SKIP_MQTT_PROBE" -eq 1 ]]; then
 		plan_args+=(--skip-mqtt-probe)
+	fi
+	if [[ "$LOCAL_BUILD" -eq 1 ]]; then
+		plan_args+=(--local-build)
 	fi
 	if [[ "$QUIET" -eq 1 ]]; then
 		plan_args+=(--quiet)
@@ -333,6 +354,9 @@ if [[ -n "$OUT_DIR" ]]; then
 fi
 if [[ "$SKIP_MQTT_PROBE" -eq 1 ]]; then
 	run_args+=(--skip-mqtt-probe)
+fi
+if [[ "$LOCAL_BUILD" -eq 1 ]]; then
+	run_args+=(--local-build)
 fi
 if [[ "$QUIET" -eq 1 ]]; then
 	run_args+=(--quiet)

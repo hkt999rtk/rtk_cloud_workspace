@@ -12,6 +12,7 @@ cat > "$TMP/stg-stub.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'args=%s\n' "$*" >> "$STG_LOG"
+printf 'CLOUD_DNS_ROOT_DOMAIN=%s\n' "${CLOUD_DNS_ROOT_DOMAIN:-}" >> "$STG_LOG"
 printf 'VIDEO_RELEASE=%s\n' "${VIDEO_RELEASE:-}" >> "$STG_LOG"
 printf 'ACCOUNT_RELEASE=%s\n' "${ACCOUNT_RELEASE:-}" >> "$STG_LOG"
 printf 'ADMIN_RELEASE=%s\n' "${ADMIN_RELEASE:-}" >> "$STG_LOG"
@@ -58,6 +59,12 @@ printf '{"overall":"pass","summary_file":"%s","report_file":"%s"}\n' "$TMP/summa
 SH
 chmod +x "$TMP/stg-stub.sh"
 
+cat > "$TMP/stack.env" <<'EOF'
+CLOUD_PROVIDER=linode
+CLOUD_STACK_NAME=video-cloud-staging
+CLOUD_DNS_ROOT_DOMAIN=example.test
+EOF
+
 if RTK_CLOUD_STAGING_STACK_NAME=video-cloud-staging RTK_CLOUD_STG_SH="$TMP/stg-stub.sh" "$ROOT/scripts/run-staging-e2e.sh" >"$TMP/missing.out" 2>"$TMP/missing.err"; then
 	echo "expected missing --confirm to fail" >&2
 	exit 1
@@ -95,6 +102,7 @@ VIDEO_RELEASE=video-ci-release \
 ACCOUNT_RELEASE=account-ci-release \
 ADMIN_RELEASE=admin-ci-release \
 RTK_CLOUD_STAGING_STACK_NAME=video-cloud-staging \
+RTK_CLOUD_STACK_FILE="$TMP/stack.env" \
 RTK_CLOUD_STG_SH="$TMP/stg-stub.sh" \
 	"$ROOT/scripts/run-staging-e2e.sh" \
 	--confirm video-cloud-staging \
@@ -104,12 +112,14 @@ RTK_CLOUD_STG_SH="$TMP/stg-stub.sh" \
 	--device-mix camera=40,light=25,air_conditioner=20,smart_meter=15 \
 	--device-prefix load-device \
 	--out-dir "$TMP/report-dir" \
+	--local-build \
 	--skip-mqtt-probe >"$TMP/run.out"
 
-grep -F 'args=e2e --run --confirm video-cloud-staging --brandname RTK --user-count 10 --device-count 100 --device-mix camera=40,light=25,air_conditioner=20,smart_meter=15 --device-prefix load-device --out-dir '"$TMP/report-dir"' --skip-mqtt-probe' "$STG_LOG" >/dev/null
+grep -F 'args=e2e --run --confirm video-cloud-staging --brandname RTK --user-count 10 --device-count 100 --device-mix camera=40,light=25,air_conditioner=20,smart_meter=15 --device-prefix load-device --out-dir '"$TMP/report-dir"' --skip-mqtt-probe --local-build' "$STG_LOG" >/dev/null
 grep -F 'VIDEO_RELEASE=video-ci-release' "$STG_LOG" >/dev/null
 grep -F 'ACCOUNT_RELEASE=account-ci-release' "$STG_LOG" >/dev/null
 grep -F 'ADMIN_RELEASE=admin-ci-release' "$STG_LOG" >/dev/null
+grep -F 'CLOUD_DNS_ROOT_DOMAIN=example.test' "$STG_LOG" >/dev/null
 grep -F 'summary_file='"$TMP/summary.json" "$TMP/run.out" >/dev/null
 grep -F 'report_file='"$TMP/TEST_REPORT.md" "$TMP/run.out" >/dev/null
 grep -F 'install_report_file='"$TMP/report-dir/INSTALL_REPORT.md" "$TMP/run.out" >/dev/null
