@@ -515,6 +515,7 @@ func runLoggerProvisionHooks(paths provisionPaths, env map[string]string, sshKey
 func installNativeLoggerBackend(paths provisionPaths, env map[string]string, sshKey string) error {
 	loggerEnv, _ := readEnvFile(filepath.Join(paths.EnvRoot, "services", "cloud-logger", "logger.env"))
 	loggerState, _ := readEnvFile(filepath.Join(paths.EnvRoot, "state", "cloud-logger.env"))
+	operatorEnv, _ := readEnvFile(paths.OperatorEnv)
 	endpoint := firstNonEmpty(loggerEnv["CLOUD_LOGGER_ENDPOINT"], loggerState["CLOUD_LOGGER_ENDPOINT"], env["CLOUD_LOGGER_ENDPOINT"])
 	token := firstNonEmpty(loggerEnv["CLOUD_LOGGER_INGEST_TOKEN"], loggerState["CLOUD_LOGGER_INGEST_TOKEN"])
 	host := loggerState["CLOUD_LOGGER_LINODE_PUBLIC_IPV4"]
@@ -527,6 +528,10 @@ func installNativeLoggerBackend(paths provisionPaths, env map[string]string, ssh
 		if parsed, err := url.Parse(endpoint); err == nil {
 			domain = parsed.Hostname()
 		}
+	}
+	dnsEnv, err := certbotDNS01Env(env, operatorEnv)
+	if err != nil {
+		return err
 	}
 	binary, cleanup, err := buildLoggerBackend(paths.Workspace)
 	if err != nil {
@@ -545,6 +550,7 @@ func installNativeLoggerBackend(paths provisionPaths, env map[string]string, ssh
 		return err
 	}
 	script := loggerBackendInstallScript(domain, token, firstNonEmpty(os.Getenv("CLOUD_LOGGER_LOKI_VERSION"), "v3.5.1"), cachedCert, nodeExporterListenIP)
+	script = injectCertbotDNS01EnvScript(dnsEnv) + script
 	if err := runCmdWithInput("", script, "ssh", loggerSSHArgs(paths, sshKey, host, "bash", "-s")...); err != nil {
 		return err
 	}
@@ -775,14 +781,15 @@ func loggerBackendInstallScript(domain, token, lokiVersion string, cachedCert bo
 	fmt.Fprintln(&b, "set -euo pipefail")
 	fmt.Fprintln(&b, "export DEBIAN_FRONTEND=noninteractive")
 	fmt.Fprintln(&b, "apt-get update")
-	fmt.Fprintln(&b, "apt-get install -y nginx certbot python3-certbot-nginx curl unzip prometheus-node-exporter")
+	fmt.Fprintln(&b, "apt-get install -y nginx certbot curl unzip prometheus-node-exporter dnsutils")
 	nodeExporterListenIP = strings.TrimSpace(nodeExporterListenIP)
 	loggerListenAddr := "127.0.0.1:18090"
 	if validMetricsListenIP(nodeExporterListenIP) {
 		loggerListenAddr = "0.0.0.0:18090"
 		fmt.Fprintf(&b, "printf 'ARGS=\"--web.listen-address=%s:9100\"\\n' > /etc/default/prometheus-node-exporter\n", nodeExporterListenIP)
 	}
-	fmt.Fprintln(&b, "install -d -m 0755 /etc/rtk-cloud /var/lib/loki")
+	fmt.Fprintln(&b, "install -d -m 0755 /etc/rtk-cloud /var/lib/loki /usr/local/libexec")
+	writeCertbotDNS01Hooks(&b)
 	fmt.Fprintln(&b, "if ! command -v loki >/dev/null 2>&1; then")
 	fmt.Fprintf(&b, "  curl -fsSL -o /tmp/loki-linux-amd64.zip https://github.com/grafana/loki/releases/download/%s/loki-linux-amd64.zip\n", shellEnvValue(lokiVersion))
 	fmt.Fprintln(&b, "  unzip -o /tmp/loki-linux-amd64.zip -d /tmp")
@@ -853,20 +860,11 @@ func loggerBackendInstallScript(domain, token, lokiVersion string, cachedCert bo
 	fmt.Fprintln(&b, "WantedBy=multi-user.target")
 	fmt.Fprintln(&b, "EOF")
 	fmt.Fprintln(&b, "cat > /etc/nginx/sites-available/rtk-cloud-logger <<'EOF'")
-	fmt.Fprintln(&b, "server {")
-	fmt.Fprintln(&b, "  listen 80;")
-	if domain != "" {
-		fmt.Fprintf(&b, "  server_name %s;\n", shellEnvValue(domain))
+	if domain != "" && cachedCert {
+		writeLoggerHTTPSNginx(&b, domain)
 	} else {
-		fmt.Fprintln(&b, "  server_name _;")
+		fmt.Fprintln(&b, "# DNS-01 bootstrap config intentionally opens no HTTP listener.")
 	}
-	fmt.Fprintln(&b, "  location / {")
-	fmt.Fprintln(&b, "    proxy_pass http://127.0.0.1:18090;")
-	fmt.Fprintln(&b, "    proxy_set_header Host $host;")
-	fmt.Fprintln(&b, "    proxy_set_header X-Forwarded-Proto $scheme;")
-	fmt.Fprintln(&b, "    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;")
-	fmt.Fprintln(&b, "  }")
-	fmt.Fprintln(&b, "}")
 	fmt.Fprintln(&b, "EOF")
 	fmt.Fprintln(&b, "ln -sf /etc/nginx/sites-available/rtk-cloud-logger /etc/nginx/sites-enabled/rtk-cloud-logger")
 	fmt.Fprintln(&b, "rm -f /etc/nginx/sites-enabled/default")
@@ -894,30 +892,218 @@ func loggerBackendInstallScript(domain, token, lokiVersion string, cachedCert bo
 			fmt.Fprintln(&b, "ln -sfn \"../../archive/$domain/chain1.pem\" \"$live_dir/chain.pem\"")
 			fmt.Fprintln(&b, "ln -sfn \"../../archive/$domain/fullchain1.pem\" \"$live_dir/fullchain.pem\"")
 			fmt.Fprintln(&b, "ln -sfn \"../../archive/$domain/privkey1.pem\" \"$live_dir/privkey.pem\"")
-			fmt.Fprintln(&b, "cat > \"/etc/letsencrypt/renewal/$domain.conf\" <<EOF")
-			fmt.Fprintln(&b, "version = 2.9.0")
-			fmt.Fprintln(&b, "archive_dir = /etc/letsencrypt/archive/$domain")
-			fmt.Fprintln(&b, "cert = /etc/letsencrypt/live/$domain/cert.pem")
-			fmt.Fprintln(&b, "privkey = /etc/letsencrypt/live/$domain/privkey.pem")
-			fmt.Fprintln(&b, "chain = /etc/letsencrypt/live/$domain/chain.pem")
-			fmt.Fprintln(&b, "fullchain = /etc/letsencrypt/live/$domain/fullchain.pem")
-			fmt.Fprintln(&b)
-			fmt.Fprintln(&b, "[renewalparams]")
-			fmt.Fprintln(&b, "account =")
-			fmt.Fprintln(&b, "authenticator = nginx")
-			fmt.Fprintln(&b, "server = https://acme-v02.api.letsencrypt.org/directory")
-			fmt.Fprintln(&b, "key_type = rsa")
-			fmt.Fprintln(&b, "EOF")
+			writeCertbotRenewalConf(&b, "$domain", false)
 			fmt.Fprintln(&b, "certbot register --non-interactive --agree-tos --register-unsafely-without-email >/dev/null 2>&1 || true")
 			fmt.Fprintln(&b, "nginx -t")
 			fmt.Fprintln(&b, "systemctl reload nginx.service")
 			fmt.Fprintln(&b, "systemctl enable --now certbot.timer")
 			fmt.Fprintf(&b, "printf 'installed cached certificate lineage for %%s\\n' %s\n", shellEnvValue(domain))
 		} else {
-			fmt.Fprintf(&b, "certbot --nginx -d %s --non-interactive --agree-tos --register-unsafely-without-email --redirect\n", shellEnvValue(domain))
+			fmt.Fprintf(&b, "certbot certonly --manual --preferred-challenges dns --manual-auth-hook /usr/local/libexec/rtk-cloud-certbot-dns-auth --manual-cleanup-hook /usr/local/libexec/rtk-cloud-certbot-dns-cleanup --manual-public-ip-logging-ok --non-interactive --agree-tos --register-unsafely-without-email -d %s\n", shellEnvValue(domain))
+			fmt.Fprintln(&b, "cat > /etc/nginx/sites-available/rtk-cloud-logger <<'EOF'")
+			writeLoggerHTTPSNginx(&b, domain)
+			fmt.Fprintln(&b, "EOF")
+			fmt.Fprintln(&b, "nginx -t")
+			fmt.Fprintln(&b, "systemctl reload nginx.service")
+			fmt.Fprintln(&b, "systemctl enable --now certbot.timer")
 		}
 	}
 	return b.String()
+}
+
+func writeLoggerHTTPSNginx(b *strings.Builder, domain string) {
+	fmt.Fprintln(b, "server {")
+	fmt.Fprintln(b, "  listen 443 ssl;")
+	if domain != "" {
+		fmt.Fprintf(b, "  server_name %s;\n", shellEnvValue(domain))
+	} else {
+		fmt.Fprintln(b, "  server_name _;")
+	}
+	if domain != "" {
+		fmt.Fprintf(b, "  ssl_certificate /etc/letsencrypt/live/%s/fullchain.pem;\n", domain)
+		fmt.Fprintf(b, "  ssl_certificate_key /etc/letsencrypt/live/%s/privkey.pem;\n", domain)
+	}
+	fmt.Fprintln(b, "  location / {")
+	fmt.Fprintln(b, "    proxy_pass http://127.0.0.1:18090;")
+	fmt.Fprintln(b, "    proxy_set_header Host $host;")
+	fmt.Fprintln(b, "    proxy_set_header X-Forwarded-Proto https;")
+	fmt.Fprintln(b, "    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;")
+	fmt.Fprintln(b, "  }")
+	fmt.Fprintln(b, "}")
+}
+
+func writeCertbotRenewalConf(b *strings.Builder, domainExpr string, quoted bool) {
+	target := "\"/etc/letsencrypt/renewal/" + domainExpr + ".conf\""
+	if quoted {
+		target = shellEnvValue("/etc/letsencrypt/renewal/" + domainExpr + ".conf")
+	}
+	fmt.Fprintf(b, "cat > %s <<EOF\n", target)
+	fmt.Fprintln(b, "version = 2.9.0")
+	fmt.Fprintf(b, "archive_dir = /etc/letsencrypt/archive/%s\n", domainExpr)
+	fmt.Fprintf(b, "cert = /etc/letsencrypt/live/%s/cert.pem\n", domainExpr)
+	fmt.Fprintf(b, "privkey = /etc/letsencrypt/live/%s/privkey.pem\n", domainExpr)
+	fmt.Fprintf(b, "chain = /etc/letsencrypt/live/%s/chain.pem\n", domainExpr)
+	fmt.Fprintf(b, "fullchain = /etc/letsencrypt/live/%s/fullchain.pem\n", domainExpr)
+	fmt.Fprintln(b)
+	fmt.Fprintln(b, "[renewalparams]")
+	fmt.Fprintln(b, "account =")
+	fmt.Fprintln(b, "authenticator = manual")
+	fmt.Fprintln(b, "pref_challs = dns-01")
+	fmt.Fprintln(b, "manual_auth_hook = /usr/local/libexec/rtk-cloud-certbot-dns-auth")
+	fmt.Fprintln(b, "manual_cleanup_hook = /usr/local/libexec/rtk-cloud-certbot-dns-cleanup")
+	fmt.Fprintln(b, "manual_public_ip_logging_ok = True")
+	fmt.Fprintln(b, "server = https://acme-v02.api.letsencrypt.org/directory")
+	fmt.Fprintln(b, "key_type = rsa")
+	fmt.Fprintln(b, "deploy_hook = systemctl reload nginx")
+	fmt.Fprintln(b, "EOF")
+}
+
+func writeCertbotDNS01Hooks(b *strings.Builder) {
+	fmt.Fprintln(b, "cat > /usr/local/libexec/rtk-cloud-certbot-dns-auth <<'EOF'")
+	fmt.Fprintln(b, certbotDNSAuthHookScript())
+	fmt.Fprintln(b, "EOF")
+	fmt.Fprintln(b, "cat > /usr/local/libexec/rtk-cloud-certbot-dns-cleanup <<'EOF'")
+	fmt.Fprintln(b, certbotDNSCleanupHookScript())
+	fmt.Fprintln(b, "EOF")
+	fmt.Fprintln(b, "chmod 0755 /usr/local/libexec/rtk-cloud-certbot-dns-auth /usr/local/libexec/rtk-cloud-certbot-dns-cleanup")
+}
+
+type certbotDNS01EnvValues struct {
+	Key                string
+	Secret             string
+	Env                string
+	RootDomain         string
+	TTL                string
+	WaitSeconds        string
+	PropagationSeconds string
+	Resolvers          string
+}
+
+func certbotDNS01Env(stackEnv, operatorEnv map[string]string) (certbotDNS01EnvValues, error) {
+	values := certbotDNS01EnvValues{
+		Key:                firstNonEmpty(operatorEnv["GODADDY_KEY"], operatorEnv["GODADDY_API_KEY"], os.Getenv("GODADDY_KEY"), os.Getenv("GODADDY_API_KEY")),
+		Secret:             firstNonEmpty(operatorEnv["GODADDY_SECRET"], operatorEnv["GODADDY_API_SECRET"], os.Getenv("GODADDY_SECRET"), os.Getenv("GODADDY_API_SECRET")),
+		Env:                firstNonEmpty(operatorEnv["GODADDY_ENV"], os.Getenv("GODADDY_ENV"), "prod"),
+		RootDomain:         firstNonEmpty(stackEnv["CLOUD_DNS_ROOT_DOMAIN"], operatorEnv["CLOUD_DNS_ROOT_DOMAIN"], os.Getenv("CLOUD_DNS_ROOT_DOMAIN")),
+		TTL:                firstNonEmpty(operatorEnv["GODADDY_DNS_TTL"], operatorEnv["GODADDY_RECORD_TTL"], os.Getenv("GODADDY_DNS_TTL"), os.Getenv("GODADDY_RECORD_TTL"), "600"),
+		WaitSeconds:        firstNonEmpty(operatorEnv["GODADDY_DNS_WAIT_SECONDS"], os.Getenv("GODADDY_DNS_WAIT_SECONDS"), "300"),
+		PropagationSeconds: firstNonEmpty(operatorEnv["GODADDY_DNS_PROPAGATION_SECONDS"], os.Getenv("GODADDY_DNS_PROPAGATION_SECONDS"), "60"),
+		Resolvers:          firstNonEmpty(operatorEnv["GODADDY_DNS_RESOLVERS"], os.Getenv("GODADDY_DNS_RESOLVERS"), "8.8.8.8 1.1.1.1 9.9.9.9"),
+	}
+	var missing []string
+	if values.Key == "" {
+		missing = append(missing, "GODADDY_KEY")
+	}
+	if values.Secret == "" {
+		missing = append(missing, "GODADDY_SECRET")
+	}
+	if values.RootDomain == "" {
+		missing = append(missing, "CLOUD_DNS_ROOT_DOMAIN")
+	}
+	if len(missing) > 0 {
+		return certbotDNS01EnvValues{}, fmt.Errorf("GoDaddy DNS-01 credentials missing: %s", strings.Join(missing, ", "))
+	}
+	return values, nil
+}
+
+func injectCertbotDNS01EnvScript(values certbotDNS01EnvValues) string {
+	var b strings.Builder
+	fmt.Fprintln(&b, "install -d -m 0755 /etc/rtk-cloud")
+	fmt.Fprintln(&b, "cat > /etc/rtk-cloud/godaddy-dns.env <<'EOF'")
+	fmt.Fprintf(&b, "GODADDY_KEY=%s\n", shellEnvValue(values.Key))
+	fmt.Fprintf(&b, "GODADDY_SECRET=%s\n", shellEnvValue(values.Secret))
+	fmt.Fprintf(&b, "GODADDY_ENV=%s\n", shellEnvValue(values.Env))
+	fmt.Fprintf(&b, "CLOUD_DNS_ROOT_DOMAIN=%s\n", shellEnvValue(values.RootDomain))
+	fmt.Fprintf(&b, "GODADDY_DNS_TTL=%s\n", shellEnvValue(values.TTL))
+	fmt.Fprintf(&b, "GODADDY_DNS_WAIT_SECONDS=%s\n", shellEnvValue(values.WaitSeconds))
+	fmt.Fprintf(&b, "GODADDY_DNS_PROPAGATION_SECONDS=%s\n", shellEnvValue(values.PropagationSeconds))
+	fmt.Fprintf(&b, "GODADDY_DNS_RESOLVERS=%s\n", shellEnvValue(values.Resolvers))
+	fmt.Fprintln(&b, "EOF")
+	fmt.Fprintln(&b, "chmod 0600 /etc/rtk-cloud/godaddy-dns.env")
+	return b.String()
+}
+
+func certbotDNSAuthHookScript() string {
+	return `#!/usr/bin/env bash
+set -euo pipefail
+. /etc/rtk-cloud/godaddy-dns.env
+: "${GODADDY_KEY:?GODADDY_KEY is required}"
+: "${GODADDY_SECRET:?GODADDY_SECRET is required}"
+: "${CLOUD_DNS_ROOT_DOMAIN:?CLOUD_DNS_ROOT_DOMAIN is required}"
+: "${CERTBOT_DOMAIN:?CERTBOT_DOMAIN is required}"
+: "${CERTBOT_VALIDATION:?CERTBOT_VALIDATION is required}"
+zone="${CLOUD_DNS_ROOT_DOMAIN%.}"
+domain="${CERTBOT_DOMAIN%.}"
+case "$domain" in
+  "$zone") relative="" ;;
+  *."$zone") relative="${domain%.$zone}" ;;
+  *) echo "CERTBOT_DOMAIN $domain is outside zone $zone" >&2; exit 1 ;;
+esac
+record="_acme-challenge"
+if [ -n "$relative" ]; then
+  record="$record.$relative"
+fi
+ttl="${GODADDY_DNS_TTL:-600}"
+api_root="https://api.godaddy.com"
+if [ "${GODADDY_ENV:-prod}" != "prod" ]; then
+  api_root="https://api.ote-godaddy.com"
+fi
+payload="$(CERTBOT_VALIDATION="$CERTBOT_VALIDATION" GODADDY_DNS_TTL="$ttl" python3 - <<'PY'
+import json, os
+print(json.dumps([{"data": os.environ["CERTBOT_VALIDATION"], "ttl": int(os.environ["GODADDY_DNS_TTL"])}]))
+PY
+)"
+curl -fsS -X PUT "$api_root/v1/domains/$zone/records/TXT/$record" \
+  -H "Authorization: sso-key $GODADDY_KEY:$GODADDY_SECRET" \
+  -H "Content-Type: application/json" \
+  --data "$payload" >/dev/null
+fqdn="$record.$zone"
+deadline=$((SECONDS + ${GODADDY_DNS_WAIT_SECONDS:-300}))
+resolvers="${GODADDY_DNS_RESOLVERS:-8.8.8.8 1.1.1.1 9.9.9.9}"
+propagation_seconds="${GODADDY_DNS_PROPAGATION_SECONDS:-60}"
+while [ "$SECONDS" -lt "$deadline" ]; do
+  found=1
+  for resolver in $resolvers; do
+    if ! dig +short TXT "$fqdn" "@$resolver" | tr -d '"' | grep -Fx "$CERTBOT_VALIDATION" >/dev/null; then
+      found=0
+      break
+    fi
+  done
+  if [ "$found" = "1" ]; then
+    sleep "$propagation_seconds"
+    exit 0
+  fi
+  sleep 10
+done
+echo "DNS TXT validation did not propagate for $fqdn" >&2
+exit 1`
+}
+
+func certbotDNSCleanupHookScript() string {
+	return `#!/usr/bin/env bash
+set -euo pipefail
+. /etc/rtk-cloud/godaddy-dns.env
+: "${GODADDY_KEY:?GODADDY_KEY is required}"
+: "${GODADDY_SECRET:?GODADDY_SECRET is required}"
+: "${CLOUD_DNS_ROOT_DOMAIN:?CLOUD_DNS_ROOT_DOMAIN is required}"
+: "${CERTBOT_DOMAIN:?CERTBOT_DOMAIN is required}"
+zone="${CLOUD_DNS_ROOT_DOMAIN%.}"
+domain="${CERTBOT_DOMAIN%.}"
+case "$domain" in
+  "$zone") relative="" ;;
+  *."$zone") relative="${domain%.$zone}" ;;
+  *) exit 0 ;;
+esac
+record="_acme-challenge"
+if [ -n "$relative" ]; then
+  record="$record.$relative"
+fi
+api_root="https://api.godaddy.com"
+if [ "${GODADDY_ENV:-prod}" != "prod" ]; then
+  api_root="https://api.ote-godaddy.com"
+fi
+curl -fsS -X DELETE "$api_root/v1/domains/$zone/records/TXT/$record" \
+  -H "Authorization: sso-key $GODADDY_KEY:$GODADDY_SECRET" >/dev/null || true`
 }
 
 type loggerForwarderTarget struct {
