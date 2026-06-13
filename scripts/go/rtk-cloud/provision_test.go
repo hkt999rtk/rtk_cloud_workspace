@@ -469,6 +469,10 @@ func TestLoggerBackendInstallScriptUsesCachedCertificate(t *testing.T) {
 		"ExecStart=/usr/local/bin/rtk-cloud-logger -addr 0.0.0.0:18090",
 		"ARGS=\"--web.listen-address=10.42.1.90:9100\"",
 		"ss -lnt | grep 10.42.1.90:9100",
+		"listen 443 ssl;",
+		"server_name logger.example.test;",
+		"ssl_certificate /etc/letsencrypt/live/logger.example.test/fullchain.pem;",
+		"ssl_certificate_key /etc/letsencrypt/live/logger.example.test/privkey.pem;",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("logger backend cached-cert script missing %q:\n%s", want, script)
