@@ -68,6 +68,14 @@ func runDeploy(args []string) error {
 	if err != nil {
 		return err
 	}
+	if env.Values["CLOUD_PROVIDER"] == "lke" {
+		return runLKEProvision(paths, env.Values, provisionOptions{
+			mode:       provisionMode{preflight: true, apply: true, deploy: true},
+			videoOnly:  *videoOnly,
+			loggerOnly: *loggerOnly,
+			sshKey:     *sshKey,
+		})
+	}
 	applyDeployProcessEnv(env.Values)
 	paths.VideoState = provisionCloudVideoStatePath(envRoot, env.Values["CLOUD_STACK_NAME"], paths.VideoState)
 	operator, _ := readEnvFile(paths.OperatorEnv)

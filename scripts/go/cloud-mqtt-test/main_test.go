@@ -85,6 +85,69 @@ deploy:
 	}
 }
 
+func TestMQTTEndpointUsesLKEPortForwardOverrides(t *testing.T) {
+	t.Setenv("RTK_CLOUD_MQTT_TEST_MQTT_HOST", "127.0.0.1")
+	t.Setenv("RTK_CLOUD_MQTT_TEST_MQTT_PORT", "39123")
+
+	host, port := mqttEndpoint("/missing/state.json", map[string]string{"MQTT_HOST": "mqtt.example.test", "MQTT_TLS_PORT": "8883"})
+
+	if host != "127.0.0.1" || port != 39123 {
+		t.Fatalf("mqttEndpoint = %s:%d, want 127.0.0.1:39123", host, port)
+	}
+}
+
+func TestRequestDeviceTokenSendsTrustedCertHeadersForHTTPPortForward(t *testing.T) {
+	certPEM, keyPEM, _ := testAppMaterial(t, "device-1")
+	cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-Client-Verify"); got != "SUCCESS" {
+			t.Fatalf("X-Client-Verify = %q, want SUCCESS", got)
+		}
+		if got := r.Header.Get("X-Client-S-DN"); got != "/CN=device-1/O=VideoCloud" {
+			t.Fatalf("X-Client-S-DN = %q, want device subject", got)
+		}
+		writeJSON(t, w, map[string]string{"access_token": "device-token"})
+	}))
+	defer server.Close()
+
+	token, err := requestDeviceToken(server.URL, cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "device-token" {
+		t.Fatalf("token = %q, want device-token", token)
+	}
+}
+
+func TestRequestAppTokenSendsTrustedCertHeadersForHTTPPortForward(t *testing.T) {
+	certPEM, keyPEM, _ := testAppMaterial(t, "app-user:user-1")
+	cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-Client-Verify"); got != "SUCCESS" {
+			t.Fatalf("X-Client-Verify = %q, want SUCCESS", got)
+		}
+		if got := r.Header.Get("X-Client-S-DN"); got != "/CN=app-user:user-1/O=VideoCloud" {
+			t.Fatalf("X-Client-S-DN = %q, want app subject", got)
+		}
+		writeJSON(t, w, map[string]string{"scope": "app", "access_token": "app-token"})
+	}))
+	defer server.Close()
+
+	token, err := requestAppToken(server.URL, cert, "device-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token.AccessToken != "app-token" || token.Scope != "app" {
+		t.Fatalf("token = %#v, want app-token", token)
+	}
+}
+
 func TestRedactedErrorPreservesRequestTokenHTTPStatus(t *testing.T) {
 	got := redactedErrorString("request_token failed with HTTP 400")
 	if got != "request_token failed with HTTP 400" {

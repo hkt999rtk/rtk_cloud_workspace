@@ -304,6 +304,12 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	if videoMTLSBaseURL != videoPublicBaseURL {
 		endpoints["video_cloud_public_base_url"] = videoPublicBaseURL
 	}
+	if override := strings.TrimRight(strings.TrimSpace(os.Getenv("RTK_CLOUD_MQTT_TEST_ACCOUNT_BASE_URL")), "/"); override != "" {
+		endpoints["account_manager_base_url"] = override
+	}
+	if override := strings.TrimRight(strings.TrimSpace(os.Getenv("RTK_CLOUD_MQTT_TEST_VIDEO_BASE_URL")), "/"); override != "" {
+		endpoints["video_cloud_base_url"] = override
+	}
 	mqttHost, mqttPort := mqttEndpoint(videoState, loadValues)
 	endpoints["mqtt_host"] = mqttHost
 	endpoints["mqtt_port"] = mqttPort
@@ -955,6 +961,7 @@ func requestDeviceToken(apiBaseURL string, cert tls.Certificate) (string, error)
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	addTrustedClientCertHeaders(req, cert)
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
@@ -1179,6 +1186,7 @@ func requestAppToken(apiBaseURL string, cert tls.Certificate, deviceID string) (
 		return appTokenResponse{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	addTrustedClientCertHeaders(req, cert)
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
@@ -1861,6 +1869,11 @@ func envKeys(path string) []string {
 }
 
 func mqttEndpoint(videoState string, loadValues map[string]string) (string, int) {
+	if host := strings.TrimSpace(os.Getenv("RTK_CLOUD_MQTT_TEST_MQTT_HOST")); host != "" {
+		portRaw := firstNonEmpty(os.Getenv("RTK_CLOUD_MQTT_TEST_MQTT_PORT"), "8883")
+		port, _ := strconv.Atoi(portRaw)
+		return host, port
+	}
 	host := firstNonEmpty(loadValues["MQTT_HOST"], "unknown")
 	portRaw := firstNonEmpty(loadValues["MQTT_TLS_PORT"], loadValues["MQTT_PORT"], "8883")
 	if host == "unknown" {
@@ -1875,6 +1888,22 @@ func mqttEndpoint(videoState string, loadValues map[string]string) (string, int)
 	}
 	port, _ := strconv.Atoi(portRaw)
 	return host, port
+}
+
+func addTrustedClientCertHeaders(req *http.Request, cert tls.Certificate) {
+	if req == nil || req.URL == nil || req.URL.Scheme != "http" || len(cert.Certificate) == 0 {
+		return
+	}
+	parsed, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return
+	}
+	cn := strings.TrimSpace(parsed.Subject.CommonName)
+	if cn == "" {
+		return
+	}
+	req.Header.Set("X-Client-Verify", "SUCCESS")
+	req.Header.Set("X-Client-S-DN", "/CN="+cn+"/O=VideoCloud")
 }
 
 func firstNonEmpty(values ...string) string {

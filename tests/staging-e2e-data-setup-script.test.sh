@@ -91,6 +91,15 @@ if CLOUD_PROVIDER=aws "$ROOT/scripts/setup-staging-e2e-data.sh" --workspace "$WO
 fi
 grep -F 'unsupported CLOUD_PROVIDER=aws' "$TMP/provider.err" >/dev/null
 
+mkdir -p "$WORKSPACE/cloud_env/staging/lke/env"
+cat > "$WORKSPACE/cloud_env/staging/lke/env/stack.env" <<'EOF_LKE_ENV'
+CLOUD_PROVIDER=lke
+CLOUD_STACK_NAME=video-cloud-staging
+EOF_LKE_ENV
+CLOUD_PROVIDER=lke "$ROOT/scripts/setup-staging-e2e-data.sh" --workspace "$WORKSPACE" --env-root "$WORKSPACE/cloud_env/staging" --plan >"$TMP/lke-plan.out"
+grep -F 'cloud-staging-e2e-data-setup plan' "$TMP/lke-plan.out" >/dev/null
+grep -F 'env_root: '"$WORKSPACE/cloud_env/staging/lke" "$TMP/lke-plan.out" >/dev/null
+
 RTK_CLOUD_STAGING_ENV_ROOT="$WORKSPACE/cloud_env/staging" "$ROOT/stg.sh" data --plan >"$TMP/stg-data-plan.out"
 grep -F 'cloud-staging-e2e-data-setup plan' "$TMP/stg-data-plan.out" >/dev/null
 
@@ -99,3 +108,6 @@ if CLOUD_PROVIDER=aws RTK_CLOUD_STAGING_ENV_ROOT="$WORKSPACE/cloud_env/staging" 
 	exit 1
 fi
 grep -F 'unsupported CLOUD_PROVIDER=aws' "$TMP/stg-data-provider.err" >/dev/null
+
+CLOUD_PROVIDER=lke RTK_CLOUD_STAGING_ENV_ROOT="$WORKSPACE/cloud_env/staging" "$ROOT/stg.sh" data --plan >"$TMP/stg-data-lke-plan.out"
+grep -F 'env_root: '"$WORKSPACE/cloud_env/staging/lke" "$TMP/stg-data-lke-plan.out" >/dev/null

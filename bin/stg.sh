@@ -4,6 +4,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_ROOT="${RTK_CLOUD_STAGING_ENV_ROOT:-$ROOT/cloud_env/staging}"
 GO_CMD="${RTK_CLOUD_GO:-go}"
+STAGING_PROVIDER="${CLOUD_PROVIDER:-${RTK_CLOUD_STAGING_PROVIDER:-}}"
+if [[ -z "${RTK_CLOUD_STAGING_ENV_ROOT:-}" && -n "$STAGING_PROVIDER" ]]; then
+	ENV_ROOT="$ROOT/cloud_env/staging/$STAGING_PROVIDER"
+fi
 
 usage() {
 	cat <<'USAGE'

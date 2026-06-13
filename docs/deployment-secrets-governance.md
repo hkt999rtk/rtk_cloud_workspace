@@ -15,6 +15,9 @@ It is a governance document only; it must not contain secret values.
   migration paths.
 - Give deployment scripts a stable way to locate secrets without hard-coding
   service-specific local paths.
+- Standardize production-like LKE deployments on OpenBao or an approved
+  customer secret manager, with Kubernetes Secrets limited to synchronized
+  runtime material.
 
 ## Canonical Local Secret Root
 
@@ -37,6 +40,7 @@ V1 providers:
 ```text
 local
 linode
+lke
 ```
 
 V1 services:
@@ -49,10 +53,13 @@ frontend
 e2e
 ```
 
-Production is currently Linode, so production secrets use
-`.secrets/production/linode/<service>/`. If a future deployment uses AWS or GCP,
-add a parallel provider directory such as `.secrets/production/aws/video-cloud/`
-without changing the service directory shape.
+Production is currently Linode VM-based, so existing production secrets use
+`.secrets/production/linode/<service>/`. The LKE migration uses
+`.secrets/<environment>/lke/<service>/` only for bootstrap pointers, manifests,
+public certificates, rollback material, and operator-local recovery references.
+If a future deployment uses AWS or GCP, add a parallel provider directory such
+as `.secrets/production/aws/video-cloud/` without changing the service directory
+shape.
 
 The `shared/` top-level tree is for operator-scope credentials that are not
 owned by one deployable service. It is not a deployment environment.
@@ -114,6 +121,31 @@ Shared directories hold operator-level material that is not owned by one
 service, for example SSH keys, DNS API credentials, GitHub deploy credentials,
 or Linode Object Storage credentials.
 
+## LKE Secret Management Target
+
+LKE deployments must not make Git, Helm values, Kustomize overlays, Docker
+images, or CI logs the source of truth for runtime secrets. The target secret
+boundary is:
+
+- OpenBao or an approved customer secret manager stores long-lived runtime
+  secrets, PKI state, policy, and audit logs.
+- Workloads authenticate to OpenBao through Kubernetes auth or another reviewed
+  workload identity method. AppRole remains a legacy VM bridge unless a specific
+  transition runbook approves it.
+- Kubernetes Secrets may hold short-lived synchronized material or bootstrap
+  references needed by Pods, but those values must be generated or injected at
+  deploy time and never committed.
+- External Secrets-style sync, CSI secret injection, or init-container rendering
+  are acceptable implementation options only after the LKE migration gates are
+  approved.
+- OpenBao root tokens, unseal keys, recovery keys, HSM PINs, production signing
+  keys, and raw private key PEM values must never be committed, embedded in
+  images, placed in public documentation, or stored in readiness artifacts.
+
+TODO: confirm the LKE OpenBao storage backend, HA mode, seal/unseal process,
+recovery key escrow, audit sink, policy naming, Kubernetes auth roles, and
+backup/restore procedure before producing production manifests.
+
 ## Manifest Rules
 
 Each `manifest.json` records metadata only. It must not contain raw secret
@@ -154,6 +186,11 @@ DEPLOY_SECRETS_DIR=.secrets/${DEPLOY_ENV}/${DEPLOY_PROVIDER}/${DEPLOY_SERVICE}
 Follow-up service PRs may keep documented legacy path fallbacks temporarily, but
 new docs and examples should prefer `DEPLOY_SECRETS_DIR`.
 
+For LKE, `DEPLOY_SECRETS_DIR` is not the runtime secret source of truth. It may
+hold operator-local bootstrap files, non-secret manifests, public certificates,
+and rollback references while OpenBao or the approved secret manager owns live
+runtime values.
+
 ## Artifact Boundary
 
 `.artifacts/` remains test output only. It may contain temporary E2E run outputs,
@@ -176,12 +213,21 @@ manifest.
   staging certsets, or test-only device material.
 - Any secret that appears in tracked files, PR bodies, issue bodies, shared logs,
   or generated reports should be treated as compromised and rotated.
+- Kubernetes manifests, Helm values, and CI/CD deployment pipelines must not be
+  produced until the LKE secret-management gate in
+  `docs/lke-migration-inventory.md` is complete and human-approved.
 
 ## V1 Migration Order
 
 1. Merge this governance document and read-only checks.
-2. Create local ignored `.secrets/` directories for Linode staging and production.
+2. Create local ignored `.secrets/` directories for Linode VM staging and
+   production.
 3. Move operator-local Account Manager, Admin, Video Cloud, and E2E secret
    material into the new layout without committing the values.
-4. Add service-specific PRs so deployment scripts support `DEPLOY_SECRETS_DIR`.
-5. Rotate any values previously exposed in tracked files or logs.
+4. Add service-specific PRs so deployment scripts support `DEPLOY_SECRETS_DIR`
+   for the legacy VM bridge.
+5. Complete the LKE secret-management gate before writing production
+   Kubernetes manifests, Helm values, or CI/CD deployment pipelines.
+6. Stand up or select the OpenBao/customer secret manager target with audited
+   backup and restore.
+7. Rotate any values previously exposed in tracked files or logs.

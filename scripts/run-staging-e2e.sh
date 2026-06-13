@@ -3,19 +3,44 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STG_SH="${RTK_CLOUD_STG_SH:-$ROOT/stg.sh}"
-STACK_FILE="$ROOT/cloud_env/staging/linode/env/stack.env"
-PROVIDER="${CLOUD_PROVIDER:-}"
-if [[ -z "$PROVIDER" && -f "$STACK_FILE" ]]; then
-	PROVIDER="$(awk -F= '$1 == "CLOUD_PROVIDER" {print $2; exit}' "$STACK_FILE")"
+env_file_value() {
+	local file="$1"
+	local key="$2"
+	if [[ -f "$file" ]]; then
+		awk -F= -v key="$key" '$1 == key {print $2; exit}' "$file"
+	fi
+}
+
+PROVIDER="${CLOUD_PROVIDER:-${RTK_CLOUD_STAGING_PROVIDER:-}}"
+STACK_FILE="${RTK_CLOUD_STACK_FILE:-}"
+if [[ -z "$STACK_FILE" ]]; then
+	if [[ -n "$PROVIDER" ]]; then
+		STACK_FILE="$ROOT/cloud_env/staging/$PROVIDER/env/stack.env"
+	elif [[ "$(env_file_value "$ROOT/cloud_env/staging/lke/env/stack.env" CLOUD_PROVIDER)" == "lke" ]]; then
+		STACK_FILE="$ROOT/cloud_env/staging/lke/env/stack.env"
+	else
+		STACK_FILE="$ROOT/cloud_env/staging/linode/env/stack.env"
+	fi
+fi
+if [[ -z "$PROVIDER" ]]; then
+	PROVIDER="$(env_file_value "$STACK_FILE" CLOUD_PROVIDER)"
 fi
 PROVIDER="${PROVIDER:-linode}"
-if [[ "$PROVIDER" != "linode" ]]; then
-	printf 'error: unsupported CLOUD_PROVIDER=%s; staging E2E currently supports only linode\n' "$PROVIDER" >&2
+if [[ "$PROVIDER" != "linode" && "$PROVIDER" != "lke" ]]; then
+	printf 'error: unsupported CLOUD_PROVIDER=%s; staging E2E currently supports linode or lke\n' "$PROVIDER" >&2
 	exit 2
+fi
+export CLOUD_PROVIDER="$PROVIDER"
+if [[ -z "${RTK_CLOUD_STAGING_ENV_ROOT:-}" ]]; then
+	stack_env_root="$(dirname "$STACK_FILE")/.."
+	if [[ -d "$stack_env_root" ]]; then
+		stack_env_root="$(cd "$stack_env_root" && pwd)"
+	fi
+	export RTK_CLOUD_STAGING_ENV_ROOT="$stack_env_root"
 fi
 STACK_NAME="${RTK_CLOUD_STAGING_STACK_NAME:-}"
 if [[ -z "$STACK_NAME" && -f "$STACK_FILE" ]]; then
-	STACK_NAME="$(awk -F= '$1 == "CLOUD_STACK_NAME" {print $2; exit}' "$STACK_FILE")"
+	STACK_NAME="$(env_file_value "$STACK_FILE" CLOUD_STACK_NAME)"
 fi
 STACK_NAME="${STACK_NAME:-video-cloud-staging}"
 BRANDNAME=""
@@ -39,7 +64,7 @@ Usage:
   scripts/run-staging-e2e.sh --plan [args]
 
 Runs the full staging E2E flow through ./stg.sh e2e.
-Current supported provider: linode.
+Current supported providers: linode, lke.
 
 Flow:
   1. remove staging provider resources

@@ -54,6 +54,31 @@ func TestResolveAndPaths(t *testing.T) {
 	}
 }
 
+func TestResolveStagingRootUsesLKEProvider(t *testing.T) {
+	workspace := t.TempDir()
+	staging := filepath.Join(workspace, "cloud_env", "staging")
+	mkdir(t, filepath.Join(staging, "lke", "env"))
+	write(t, filepath.Join(staging, "lke", "env", "stack.env"), `CLOUD_PROVIDER=lke
+`)
+
+	root, err := Resolve(workspace, staging)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root != filepath.Join(staging, "lke") {
+		t.Fatalf("staging root got %s", root)
+	}
+
+	t.Setenv("CLOUD_PROVIDER", "linode")
+	root, err = Resolve(workspace, staging)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root != filepath.Join(staging, "linode") {
+		t.Fatalf("env override root got %s", root)
+	}
+}
+
 func TestLoadAndValidate(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "metadata", "staging", "linode")
 	mkdir(t, filepath.Join(root, "env"))
@@ -137,6 +162,26 @@ CLOUD_LOGGER_DOMAIN=logger.video-cloud-staging.realtekconnect.com
 	err = Validate(root, badEnv)
 	if err == nil || !strings.Contains(err.Error(), "Account Manager domain mismatch") {
 		t.Fatalf("expected Account Manager domain mismatch, got %v", err)
+	}
+}
+
+func TestLoadAcceptsLKEProvider(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "metadata", "staging", "lke")
+	mkdir(t, filepath.Join(root, "env"))
+	write(t, filepath.Join(root, "env", "stack.env"), `CLOUD_ENV_NAME=staging
+CLOUD_PROVIDER=lke
+CLOUD_REGION=us-sea
+CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+`)
+	env, err := Load(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.Values["CLOUD_PROVIDER"] != "lke" {
+		t.Fatalf("provider got %s", env.Values["CLOUD_PROVIDER"])
+	}
+	if env.Values["CLOUD_STACK_NAME"] != "video-cloud-staging" {
+		t.Fatalf("stack got %s", env.Values["CLOUD_STACK_NAME"])
 	}
 }
 
