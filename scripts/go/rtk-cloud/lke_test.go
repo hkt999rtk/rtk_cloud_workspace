@@ -225,6 +225,147 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 	}
 }
 
+func TestLKEPostgresStatefulSetDefaultsToEphemeralStorageForStagingBridge(t *testing.T) {
+	manifest := lkePostgresStatefulSetManifest(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})
+
+	if !strings.Contains(manifest, "emptyDir: {}") {
+		t.Fatalf("expected default staging PostgreSQL manifest to use emptyDir, got:\n%s", manifest)
+	}
+	if strings.Contains(manifest, "volumeClaimTemplates") {
+		t.Fatalf("default staging PostgreSQL manifest should not create Linode Block Storage PVCs, got:\n%s", manifest)
+	}
+}
+
+func TestLKEPostgresStatefulSetSupportsExplicitPVCStorage(t *testing.T) {
+	t.Setenv("LKE_POSTGRES_STORAGE_MODE", "pvc")
+	t.Setenv("LKE_POSTGRES_STORAGE", "20Gi")
+
+	manifest := lkePostgresStatefulSetManifest(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})
+
+	for _, want := range []string{
+		"volumeClaimTemplates:",
+		"storage: 20Gi",
+		"name: data",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("expected %q in explicit PVC manifest, got:\n%s", want, manifest)
+		}
+	}
+	if strings.Contains(manifest, "emptyDir: {}") {
+		t.Fatalf("explicit PVC manifest should not use emptyDir, got:\n%s", manifest)
+	}
+}
+
+func TestRunProvisionLKEDeployAppliesVideoCloudAuxiliaryServices(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	logPath := fakeKubectl(t)
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
+	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
+	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
+	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
+
+	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, logPath)
+	for _, want := range []string{
+		"kind: Secret\nmetadata:\n  name: video-cloud-workers-runtime",
+		"VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY: \"test-seed-turn-registry-node-auth\"",
+		"VIDEO_CLOUD_MQTT_USAGE_INGEST_TOKEN: \"test-seed-mqtt-usage-ingest\"",
+		"kind: Deployment\nmetadata:\n  name: video-cloud-cleaner",
+		"command: [\"/app/cleaner\"]",
+		"kind: Deployment\nmetadata:\n  name: video-cloud-statistics",
+		"command: [\"/app/statistics\"]",
+		"kind: Deployment\nmetadata:\n  name: video-cloud-metricsexporter",
+		"command: [\"/app/metricsexporter\"]",
+		"containerPort: 19200",
+		"kind: Deployment\nmetadata:\n  name: video-cloud-turnregistry",
+		"command: [\"/app/turnregistry\"]",
+		"containerPort: 18190",
+		"kind: Deployment\nmetadata:\n  name: video-cloud-logingester",
+		"command: [\"/app/logingester\"]",
+		"containerPort: 19300",
+		"VIDEO_CLOUD_MQTT_ADDR\n              value: \"mqtt.video-cloud-staging-video-cloud.svc.cluster.local:1883\"",
+		"kind: Deployment\nmetadata:\n  name: video-cloud-mqttusage",
+		"command: [\"/app/mqttusage\"]",
+		"containerPort: 19400",
+		"kind: Service\nmetadata:\n  name: video-cloud-turnregistry",
+		"kind: Service\nmetadata:\n  name: video-cloud-logingester",
+		"kind: ConfigMap\nmetadata:\n  name: video-cloud-prometheus-config",
+		"kind: Deployment\nmetadata:\n  name: video-cloud-prometheus",
+		"image: prom/prometheus:",
+		"targets: [\"video-cloud-api.video-cloud-staging-video-cloud.svc.cluster.local:80\"]",
+		"targets: [\"video-cloud-metricsexporter.video-cloud-staging-video-cloud.svc.cluster.local:19200\"]",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("expected %q in kubectl manifests, got:\n%s", want, log)
+		}
+	}
+	for _, want := range []string{
+		"ARGS -n video-cloud-staging-video-cloud rollout status deployment/video-cloud-cleaner",
+		"ARGS -n video-cloud-staging-video-cloud rollout status deployment/video-cloud-statistics",
+		"ARGS -n video-cloud-staging-video-cloud rollout status deployment/video-cloud-metricsexporter",
+		"ARGS -n video-cloud-staging-video-cloud rollout status deployment/video-cloud-turnregistry",
+		"ARGS -n video-cloud-staging-video-cloud rollout status deployment/video-cloud-logingester",
+		"ARGS -n video-cloud-staging-video-cloud rollout status deployment/video-cloud-mqttusage",
+		"ARGS -n video-cloud-staging-observability rollout status deployment/video-cloud-prometheus",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("expected rollout check %q in kubectl calls, got:\n%s", want, log)
+		}
+	}
+}
+
+func TestRunProvisionLKEDeployAppliesCoturnRuntime(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	logPath := fakeKubectl(t)
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
+	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
+	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
+	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
+
+	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, logPath)
+	for _, want := range []string{
+		"kind: Secret\nmetadata:\n  name: coturn-runtime",
+		"VIDEO_CLOUD_TURN_SHARED_SECRET: \"test-seed-turn-shared\"",
+		"kind: ConfigMap\nmetadata:\n  name: coturn-config",
+		"use-auth-secret",
+		"static-auth-secret=$(VIDEO_CLOUD_TURN_SHARED_SECRET)",
+		"realm=video_cloud",
+		"kind: Deployment\nmetadata:\n  name: coturn",
+		"image: coturn/coturn:",
+		"initContainers:",
+		"command: [\"/usr/bin/turnserver\", \"-c\", \"/tmp/coturn/turnserver.conf\"]",
+		"containerPort: 3478\n              protocol: UDP",
+		"kind: Service\nmetadata:\n  name: coturn",
+		"type: ClusterIP",
+		"port: 3478\n      targetPort: 3478\n      protocol: UDP",
+		"ARGS -n video-cloud-staging-video-cloud rollout status deployment/coturn",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("expected %q in kubectl manifests, got:\n%s", want, log)
+		}
+	}
+
+	state := readTestFile(t, filepath.Join(envRoot, "state", "video-cloud.state.json"))
+	for _, want := range []string{
+		`"coturn"`,
+		`"private_ip": "coturn.video-cloud-staging-video-cloud.svc.cluster.local"`,
+		`"role": "deployment/coturn"`,
+	} {
+		if !strings.Contains(state, want) {
+			t.Fatalf("expected %q in video state, got:\n%s", want, state)
+		}
+	}
+}
+
 func TestRunProvisionLKEDeployWritesLegacyStackAndVideoState(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	fakeKubectl(t)
@@ -374,8 +515,20 @@ func TestVideoCloudDockerfileIncludesCertIssuerBinary(t *testing.T) {
 		"go build -trimpath -o /out/api ./cmd/api",
 		"go build -trimpath -o /out/certissuer ./cmd/certissuer",
 		"go build -trimpath -o /out/factoryenroll ./cmd/factoryenroll",
+		"go build -trimpath -o /out/cleaner ./cmd/cleaner",
+		"go build -trimpath -o /out/statistics ./cmd/statistics",
+		"go build -trimpath -o /out/metricsexporter ./cmd/metricsexporter",
+		"go build -trimpath -o /out/turnregistry ./cmd/turnregistry",
+		"go build -trimpath -o /out/logingester ./cmd/logingester",
+		"go build -trimpath -o /out/mqttusage ./cmd/mqttusage",
 		"COPY --from=builder /out/certissuer /app/certissuer",
 		"COPY --from=builder /out/factoryenroll /app/factoryenroll",
+		"COPY --from=builder /out/cleaner /app/cleaner",
+		"COPY --from=builder /out/statistics /app/statistics",
+		"COPY --from=builder /out/metricsexporter /app/metricsexporter",
+		"COPY --from=builder /out/turnregistry /app/turnregistry",
+		"COPY --from=builder /out/logingester /app/logingester",
+		"COPY --from=builder /out/mqttusage /app/mqttusage",
 		"ENTRYPOINT [\"/app/api\"]",
 	} {
 		if !strings.Contains(body, want) {

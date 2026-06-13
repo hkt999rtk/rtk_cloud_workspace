@@ -1,7 +1,6 @@
 # Linode Kubernetes Engine Migration Inventory
 
-Status: documentation-first migration gate with provider-aware staging script
-adapter.
+Status: provider-aware staging bridge with production migration gates.
 
 Owner: `rtk_cloud_workspace`.
 
@@ -92,14 +91,14 @@ The target is Linode Kubernetes Engine, not generic Kubernetes.
 | Service / surface | Current method | Exposure / ports | Persistent data | Target Kubernetes model | Storage / ingress target | Risk | Rollback / TODO |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Video Cloud public API | `cmd/api` on `api` VM behind `edge` nginx | Public HTTPS via `edge:443`, private app `18080` | PostgreSQL, object/blob storage | Deployment + Service | Ingress/Gateway via NodeBalancer; preserve `/healthz`, `/version`, API routes | Medium | Roll back to VM release bundle until LKE cutover is approved. |
-| Video Cloud workers | systemd units on `api` VM (`cleaner`, `statistics`, `metricsexporter`, `mqttusage`, `logingester`) | Private metrics endpoints | PostgreSQL and runtime stores | Deployment for long-running workers; CronJob/Job only where code is confirmed one-shot or scheduled | ClusterIP Services for metrics where needed | Medium | TODO: classify each worker's scheduling semantics before manifests. |
+| Video Cloud workers | systemd units on `api` VM (`cleaner`, `statistics`, `metricsexporter`, `mqttusage`, `logingester`) | Private metrics endpoints | PostgreSQL and runtime stores | Runtime-generated LKE staging bridge deploys the long-running workers as Deployments; production manifests remain gated | ClusterIP Services for metrics where needed | Medium | Validate worker startup and metrics in `scripts/run-staging-e2e.sh`; classify any future one-shot/scheduled worker before converting to Job/CronJob. |
 | CRS / certissuer | `cmd/certissuer` on `api` VM, edge mTLS trusted headers | `certissuer.<domain>:443` via nginx SNI to private `9443` | CA public chains, signing audit DB state | Deployment + Service | Separate mTLS Ingress/Gateway hostname or TCP/TLS gateway path | High | Preserve CSR validation and audit behavior; signer migration blocked on key-management gate. |
 | Factory enrollment | Optional systemd service and smoke script | Factory/API HTTP surface, mTLS through certissuer boundary | Enrollment audit and generated device material | Deployment, or Job for controlled factory batch flows if confirmed | Internal Service plus explicit external route only when required | High | TODO: confirm factory/MES network source and auth model. |
 | EMQX MQTT | Docker Compose on `mqtt` VM | MQTT `1883`, MQTTS `8883`, dashboard private | Broker config, retained/session state if enabled | EMQX operator/StatefulSet, or external broker | LoadBalancer/NodeBalancer for MQTT(S); not normal HTTP-only Ingress | High | TODO: confirm retained messages/session persistence and cluster requirements. |
-| coturn | public-only VM | `3478/tcp+udp`, `5349/tcp`, relay UDP range | Config and TLS material | Deployment/DaemonSet only if host networking and UDP exposure are accepted; otherwise external VM during transition | Linode LoadBalancer/NodeBalancer UDP limits must be confirmed | High | Keep VM coturn as migration bridge until LKE TURN exposure is proven. |
-| PostgreSQL | Local VM databases for Video Cloud infra and Account Manager | Private `5432` | Primary relational state | Compare external/VM retention, operator, StatefulSet, or managed/external PostgreSQL | PVC if in-cluster; Object Storage backup target | High | Do not move before backup restore drill and rollback plan. |
+| coturn | public-only VM | `3478/tcp+udp`, `5349/tcp`, relay UDP range | Config and TLS material | Runtime-generated LKE staging bridge deploys coturn as a Deployment/Service with internal ClusterIP by default; production public TURN needs approved exposure and scaling design | `LKE_COTURN_SERVICE_TYPE=LoadBalancer` is available for explicit public exposure testing; Linode UDP/TCP behavior and relay range must be confirmed before production | High | Prove LKE TURN data-plane behavior and rollback before removing VM coturn fallback. |
+| PostgreSQL | Local VM databases for Video Cloud infra and Account Manager | Private `5432` | Primary relational state | Runtime-generated LKE staging bridge deploys PostgreSQL with ephemeral `emptyDir` by default and `LKE_POSTGRES_STORAGE_MODE=pvc` opt-in; production must compare external/VM retention, operator, StatefulSet, or managed/external PostgreSQL | Production requires PVC or external database plus Object Storage backup target | High | Do not move production data before backup restore drill and rollback plan. |
 | Redis / Valkey | `infra` VM Redis-compatible service | Private `6379` | TODO: cache vs queue vs persistent store | Deployment/StatefulSet or external cache depending on persistence | PVC only if persistence is required | Medium | TODO: confirm usage from config/code before selecting HA mode. |
-| Prometheus | `infra` VM | Private `9090`; scrapes node/nginx/postgres/redis/EMQX/app targets | TSDB | Prometheus stack or existing operator | PVC for retention; ServiceMonitor/PodMonitor where supported | Medium | Preserve private-only access and readiness evidence. |
+| Prometheus | `infra` VM | Private `9090`; scrapes node/nginx/postgres/redis/EMQX/app targets | TSDB | Runtime-generated LKE staging bridge deploys a Prometheus Deployment/Service with generated scrape config; production stack/operator remains gated | Staging bridge uses ephemeral storage; production requires PVC/retention and private-only operator access | Medium | Preserve private-only access and readiness evidence; add PVC/alerting only after observability gate approval. |
 | Central logger / Loki | Logger VM/backend plus journald forwarders | Private ingest/query; Cloud Admin BFF reads query path | Loki/log store, forwarder cursor/spool | Loki/logger backend Deployment/StatefulSet plus log agent DaemonSet or sidecar-free stdout collection | PVC/Object Storage per retention policy | Medium | VM journald forwarder remains legacy reference. |
 | Account Manager API | Public VM, nginx, local PostgreSQL, systemd | Public HTTPS `443`, app `18081` | PostgreSQL | Deployment + Service | Ingress/Gateway hostname; private metrics Service | Medium | Keep existing VM path until DB migration and smoke pass. |
 | Cloud Admin | Public+VPC VM, nginx, Go app, SQLite | Public HTTPS `443`, app `8080`, private Prometheus upstream | SQLite sessions/cache/audit | Deployment + PVC for SQLite, or TODO migration to production DB | Ingress/Gateway hostname | Medium | Restore SQLite PVC snapshot with known-good release. |
@@ -108,7 +107,7 @@ The target is Linode Kubernetes Engine, not generic Kubernetes.
 | OpenBao | Target secret manager; VM details not fully confirmed in main docs | Internal HTTPS | Storage backend, audit logs, PKI state | StatefulSet/operator or external OpenBao | PVC/storage backend; Kubernetes auth | High | TODO: confirm storage backend, HA, seal/unseal, audit, backup, policy migration. |
 | SoftHSM / PKCS#11 | VM-local SoftHSM/PKCS#11 documented in service configs | Local library/token access | Token DB/private keys | Development/staging only unless explicit production risk approval; external signer/HSM preferred | PVC-backed token storage only for non-production or approved risk | High | Never put PINs/tokens/private keys in images or Git. |
 | Backup jobs | VM scripts and manual artifact collection | Operator initiated | Database dumps, SQLite, object storage, manifests | CronJob/Job only after storage targets and retention are confirmed | Linode Object Storage or approved backup target | High | Restore drill required before production cutover. |
-| Staging E2E | `scripts/run-staging-e2e.sh` and workspace orchestration | Operator/local runner | Generated fixtures/artifacts | Current wrapper is provider-aware for `linode` and `lke`; LKE path can discover/create the cluster, fetch kubeconfig through Linode API, and build/push missing service images when `LKE_IMAGE_REGISTRY` is set; Kubernetes-aware smoke/E2E Job later | Artifact output remains redacted | Medium | TODO: define production LKE smoke Job after manifests are approved. |
+| Staging E2E | `scripts/run-staging-e2e.sh` and workspace orchestration | Operator/local runner | Generated fixtures/artifacts | Current wrapper is provider-aware for `linode` and `lke`; LKE path can discover/create the cluster, fetch kubeconfig through Linode API, build/push missing service images when `LKE_IMAGE_REGISTRY` is set, deploy runtime-generated Kubernetes resources, and use service port-forwards for account, video, factory enrollment, and MQTT tests | Artifact output remains redacted | Medium | Production LKE smoke Job remains gated; current acceptance for this phase is a passing `scripts/run-staging-e2e.sh` run against LKE. |
 
 ## Migration Gates
 
@@ -176,5 +175,8 @@ Until the gates above are complete and approved:
   suite passes and restore evidence exists for every stateful dependency.
 
 Runtime-generated kubectl resources used by local staging scripts are allowed
-only as a bridge for provider-aware orchestration. They are not production
-manifests and do not satisfy the gates above.
+only as a bridge for provider-aware orchestration. The current bridge covers
+LKE namespaces, PostgreSQL, Video Cloud API/certissuer/factory enrollment,
+Video Cloud workers, staging MQTT, coturn, Prometheus, Account Manager, Cloud
+Admin, and Frontend. They are not production manifests and do not satisfy the
+gates above.
