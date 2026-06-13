@@ -732,7 +732,6 @@ func ensureLoggerFirewall(target loggerTarget, state map[string]string, opts pro
 			"outbound_policy": "ACCEPT",
 			"inbound": []map[string]any{
 				{"label": "ssh", "action": "ACCEPT", "protocol": "TCP", "ports": "22", "addresses": map[string]any{"ipv4": []string{currentCIDR}}},
-				{"label": "http", "action": "ACCEPT", "protocol": "TCP", "ports": "80", "addresses": map[string]any{"ipv4": []string{"0.0.0.0/0"}}},
 				{"label": "https", "action": "ACCEPT", "protocol": "TCP", "ports": "443", "addresses": map[string]any{"ipv4": []string{"0.0.0.0/0"}}},
 				{"label": "logger-private", "action": "ACCEPT", "protocol": "TCP", "ports": "18090", "addresses": map[string]any{"ipv4": []string{vpcCIDR}}},
 				{"label": "node-exporter-private", "action": "ACCEPT", "protocol": "TCP", "ports": "9100", "addresses": map[string]any{"ipv4": []string{vpcCIDR}}},
@@ -770,6 +769,10 @@ func reconcileLoggerFirewallRules(firewallID int, vpcCIDR string) error {
 		return err
 	}
 	changed := false
+	if filtered, removed := removePublicHTTPFirewallRules(rules.Inbound); removed {
+		rules.Inbound = filtered
+		changed = true
+	}
 	for _, rule := range []firewallRule{
 		{Label: "logger-private", Action: "ACCEPT", Protocol: "TCP", Ports: "18090", Addresses: map[string][]string{"ipv4": {vpcCIDR}}},
 		{Label: "node-exporter-private", Action: "ACCEPT", Protocol: "TCP", Ports: "9100", Addresses: map[string][]string{"ipv4": {vpcCIDR}}},
@@ -785,6 +788,28 @@ func reconcileLoggerFirewallRules(firewallID int, vpcCIDR string) error {
 	payload, _ := json.Marshal(rules)
 	_, err = curlLinode("PUT", fmt.Sprintf("/networking/firewalls/%d/rules", firewallID), string(payload))
 	return err
+}
+
+func removePublicHTTPFirewallRules(rules []firewallRule) ([]firewallRule, bool) {
+	filtered := rules[:0]
+	removed := false
+	for _, rule := range rules {
+		if strings.EqualFold(rule.Protocol, "TCP") && firewallPortsInclude(rule.Ports, "80") {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, rule)
+	}
+	return filtered, removed
+}
+
+func firewallPortsInclude(ports, want string) bool {
+	for _, part := range strings.Split(ports, ",") {
+		if strings.TrimSpace(part) == want {
+			return true
+		}
+	}
+	return false
 }
 
 func firewallRuleExists(rules []firewallRule, label string) bool {

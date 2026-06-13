@@ -322,6 +322,8 @@ go run ./scripts/go/rtk-cloud -- provision --env-root cloud_env/staging --plan
 
 HTTPS certificate cache 由 `go run ./scripts/go/rtk-cloud -- deploy` 處理：如果 `cloud_env/staging/linode/certificates/<fqdn>/fullchain.pem` 與 `privkey.pem` 存在且在安全期限內未過期，就會先上傳到新 VM，建立 certbot lineage/renewal config、啟用 `certbot.timer`，並跳過新憑證申請；如果沒有可用 cache，deploy 仍會走 certbot，成功後再把 VM 上的 certificate/key 拉回 `cloud_env`。預設要求 certificate 至少還有 7 天有效期，可用 `--cert-cache-min-valid-seconds` 調整。
 
+Let’s Encrypt 一律使用 GoDaddy DNS-01 challenge，不使用 HTTP-01，也不要求任何公開服務開放 `80/tcp`。operator env 必須提供 `GODADDY_KEY`、`GODADDY_SECRET`、`GODADDY_ENV=prod` 與 `CLOUD_DNS_ROOT_DOMAIN`；deploy 只會把 token 寫入 VM 上 root-only 的 credential env，不會寫入 git、artifact 或報告。此規則適用於 `edge`、`account-manager`、`cloud-admin` 與 `cloud-logger`，cached certificate 的 renewal config 也必須保留 DNS-01 hook，避免下一次 renew 回到 HTTP-01。
+
 `--plan` 會顯示 logger backend、logger env/state、forwarder credentials、每台 host 的 forwarder targets、journald retention guidance，以及 backend/forwarder/sample trace readiness evidence 項目。
 
 

@@ -456,7 +456,7 @@ func TestLoggerHTTPArgsUseBoundedTimeouts(t *testing.T) {
 func TestLoggerBackendInstallScriptUsesCachedCertificate(t *testing.T) {
 	script := loggerBackendInstallScript("logger.example.test", "secret-token", "v3.5.1", true, "10.42.1.90")
 	for _, want := range []string{
-		"apt-get install -y nginx certbot python3-certbot-nginx curl unzip prometheus-node-exporter",
+		"apt-get install -y nginx certbot curl unzip prometheus-node-exporter dnsutils",
 		"printf 'ARGS=\"--web.listen-address=10.42.1.90:9100\"\\n' > /etc/default/prometheus-node-exporter",
 		"systemctl restart prometheus-node-exporter.service",
 		"ss -lnt | grep 10.42.1.90:9100",
@@ -478,15 +478,29 @@ func TestLoggerBackendInstallScriptUsesCachedCertificate(t *testing.T) {
 			t.Fatalf("logger backend cached-cert script missing %q:\n%s", want, script)
 		}
 	}
-	if strings.Contains(script, "certbot --nginx -d") {
-		t.Fatalf("logger backend cached-cert script should not issue a new cert:\n%s", script)
+	for _, want := range []string{"authenticator = manual", "pref_challs = dns-01", "manual_auth_hook = /usr/local/libexec/rtk-cloud-certbot-dns-auth", "manual_cleanup_hook = /usr/local/libexec/rtk-cloud-certbot-dns-cleanup"} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("logger backend cached-cert script missing DNS-01 renewal %q:\n%s", want, script)
+		}
+	}
+	for _, notWant := range []string{"certbot --nginx -d", "listen 80", "/.well-known/acme-challenge", "authenticator = nginx"} {
+		if strings.Contains(script, notWant) {
+			t.Fatalf("logger backend cached-cert script should not contain %q:\n%s", notWant, script)
+		}
 	}
 }
 
 func TestLoggerBackendInstallScriptIssuesCertificateWithoutCache(t *testing.T) {
 	script := loggerBackendInstallScript("logger.example.test", "secret-token", "v3.5.1", false, "")
-	if !strings.Contains(script, "certbot --nginx -d logger.example.test") {
-		t.Fatalf("logger backend script missing certbot issuance:\n%s", script)
+	for _, want := range []string{"certbot certonly --manual", "--preferred-challenges dns", "--manual-auth-hook /usr/local/libexec/rtk-cloud-certbot-dns-auth", "--manual-cleanup-hook /usr/local/libexec/rtk-cloud-certbot-dns-cleanup", "-d logger.example.test"} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("logger backend script missing DNS-01 certbot issuance %q:\n%s", want, script)
+		}
+	}
+	for _, notWant := range []string{"certbot --nginx", "listen 80", "/.well-known/acme-challenge"} {
+		if strings.Contains(script, notWant) {
+			t.Fatalf("logger backend script should not contain %q:\n%s", notWant, script)
+		}
 	}
 }
 
@@ -730,6 +744,28 @@ func TestFirewallTargetsUsesConfiguredVideoCloudStackState(t *testing.T) {
 	}
 	if byRole["edge"].Label != "video-cloud-stg-0529-edge" {
 		t.Fatalf("edge label = %q", byRole["edge"].Label)
+	}
+}
+
+func TestRemovePublicHTTPFirewallRulesKeepsPrivatePortsContaining80(t *testing.T) {
+	rules := []firewallRule{
+		{Label: "ssh", Protocol: "TCP", Ports: "22"},
+		{Label: "http", Protocol: "TCP", Ports: "80"},
+		{Label: "https", Protocol: "TCP", Ports: "443"},
+		{Label: "logger-private", Protocol: "TCP", Ports: "18090"},
+		{Label: "admin-private", Protocol: "TCP", Ports: "8080,9100,9113"},
+	}
+	filtered, removed := removePublicHTTPFirewallRules(rules)
+	if !removed {
+		t.Fatal("expected public HTTP rule to be removed")
+	}
+	for _, rule := range filtered {
+		if rule.Ports == "80" {
+			t.Fatalf("port 80 rule was not removed: %#v", filtered)
+		}
+	}
+	if !firewallRuleExists(filtered, "logger-private") || !firewallRuleExists(filtered, "admin-private") || !firewallRuleExists(filtered, "https") {
+		t.Fatalf("private/https rules should be preserved: %#v", filtered)
 	}
 }
 
