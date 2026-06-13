@@ -38,6 +38,14 @@ type lkeWorkload struct {
 	Host      string
 }
 
+type lkeVideoCloudAuxiliaryService struct {
+	Name        string
+	Binary      string
+	Port        int
+	PortName    string
+	MetricsPath string
+}
+
 var errLKEMissingCluster = errors.New("no matching LKE cluster found")
 var lkeRuntimeSecretCache = map[string]string{}
 
@@ -308,6 +316,12 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/api ./cmd/api
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/certissuer ./cmd/certissuer
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/factoryenroll ./cmd/factoryenroll
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/cleaner ./cmd/cleaner
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/statistics ./cmd/statistics
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/metricsexporter ./cmd/metricsexporter
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/turnregistry ./cmd/turnregistry
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/logingester ./cmd/logingester
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/mqttusage ./cmd/mqttusage
 
 FROM debian:bookworm-slim
 WORKDIR /app
@@ -315,6 +329,12 @@ RUN useradd -r -u 10001 app && chown app:app /app
 COPY --from=builder /out/api /app/api
 COPY --from=builder /out/certissuer /app/certissuer
 COPY --from=builder /out/factoryenroll /app/factoryenroll
+COPY --from=builder /out/cleaner /app/cleaner
+COPY --from=builder /out/statistics /app/statistics
+COPY --from=builder /out/metricsexporter /app/metricsexporter
+COPY --from=builder /out/turnregistry /app/turnregistry
+COPY --from=builder /out/logingester /app/logingester
+COPY --from=builder /out/mqttusage /app/mqttusage
 USER app
 EXPOSE 8080
 ENTRYPOINT ["/app/api"]
@@ -488,6 +508,17 @@ func lkeWorkloads(env map[string]string) []lkeWorkload {
 	}
 }
 
+func lkeVideoCloudAuxiliaryServices() []lkeVideoCloudAuxiliaryService {
+	return []lkeVideoCloudAuxiliaryService{
+		{Name: "video-cloud-cleaner", Binary: "cleaner"},
+		{Name: "video-cloud-statistics", Binary: "statistics"},
+		{Name: "video-cloud-metricsexporter", Binary: "metricsexporter", Port: 19200, PortName: "http", MetricsPath: "/metrics/prometheus"},
+		{Name: "video-cloud-turnregistry", Binary: "turnregistry", Port: 18190, PortName: "http", MetricsPath: "/metrics/prometheus"},
+		{Name: "video-cloud-logingester", Binary: "logingester", Port: 19300, PortName: "http", MetricsPath: "/metrics/prometheus"},
+		{Name: "video-cloud-mqttusage", Binary: "mqttusage", Port: 19400, PortName: "http", MetricsPath: "/metrics/prometheus"},
+	}
+}
+
 func lkeSelectedWorkloads(env map[string]string, opts provisionOptions) []lkeWorkload {
 	workloads := lkeWorkloads(env)
 	if !opts.videoOnly {
@@ -579,6 +610,12 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/mqtt", "--timeout", firstNonEmpty(os.Getenv("LKE_MQTT_ROLLOUT_TIMEOUT"), "5m")); err != nil {
 			return err
 		}
+		if err := lkeApplyCoturnRuntime(env); err != nil {
+			return err
+		}
+		if err := lkeApplyVideoCloudAuxiliaryServices(env); err != nil {
+			return err
+		}
 	}
 	if !lkeWorkloadSelected(env, opts, "account-manager") {
 		return nil
@@ -607,6 +644,51 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 		return err
 	}
 	return runKubectl("-n", lkeNamespaceName(env, "account-manager"), "wait", "--for=condition=complete", "job/account-manager-migrate", "--timeout", firstNonEmpty(os.Getenv("LKE_MIGRATION_JOB_TIMEOUT"), "5m"))
+}
+
+func lkeApplyCoturnRuntime(env map[string]string) error {
+	if err := kubectlApply(lkeCoturnRuntimeSecretManifest(env)); err != nil {
+		return err
+	}
+	if err := kubectlApply(lkeCoturnConfigManifest(env)); err != nil {
+		return err
+	}
+	if err := kubectlApply(lkeCoturnDeploymentManifest(env)); err != nil {
+		return err
+	}
+	if err := kubectlApply(lkeCoturnServiceManifest(env)); err != nil {
+		return err
+	}
+	return runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/coturn", "--timeout", firstNonEmpty(os.Getenv("LKE_COTURN_ROLLOUT_TIMEOUT"), "5m"))
+}
+
+func lkeApplyVideoCloudAuxiliaryServices(env map[string]string) error {
+	if err := kubectlApply(lkeVideoCloudWorkersSecretManifest(env)); err != nil {
+		return err
+	}
+	for _, service := range lkeVideoCloudAuxiliaryServices() {
+		if err := kubectlApply(lkeVideoCloudAuxiliaryDeploymentManifest(env, service)); err != nil {
+			return err
+		}
+		if service.Port > 0 {
+			if err := kubectlApply(lkeVideoCloudAuxiliaryServiceManifest(env, service)); err != nil {
+				return err
+			}
+		}
+		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/"+service.Name, "--timeout", firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_WORKER_ROLLOUT_TIMEOUT"), "5m")); err != nil {
+			return err
+		}
+	}
+	if err := kubectlApply(lkeVideoCloudPrometheusConfigManifest(env)); err != nil {
+		return err
+	}
+	if err := kubectlApply(lkeVideoCloudPrometheusDeploymentManifest(env)); err != nil {
+		return err
+	}
+	if err := kubectlApply(lkeVideoCloudPrometheusServiceManifest(env)); err != nil {
+		return err
+	}
+	return runKubectl("-n", lkeNamespaceName(env, "observability"), "rollout", "status", "deployment/video-cloud-prometheus", "--timeout", firstNonEmpty(os.Getenv("LKE_PROMETHEUS_ROLLOUT_TIMEOUT"), "5m"))
 }
 
 func writeLKECompatibilityArtifacts(paths provisionPaths, env map[string]string) error {
@@ -673,8 +755,8 @@ func lkeCompatibilityVideoState(env map[string]string) map[string]any {
 				"role":       "deployment/mqtt",
 			},
 			"coturn": map[string]any{
-				"private_ip": "TODO: LKE TURN LoadBalancer/NodeBalancer endpoint not provisioned yet",
-				"role":       "TODO: coturn",
+				"private_ip": serviceHost("coturn", videoNS),
+				"role":       "deployment/coturn",
 			},
 			"account-manager": map[string]any{
 				"private_ip": serviceHost("account-manager", accountNS),
@@ -759,6 +841,30 @@ spec:
 }
 
 func lkePostgresStatefulSetManifest(env map[string]string) string {
+	storage := `      volumes:
+        - name: initdb
+          configMap:
+            name: postgresql-initdb
+        - name: data
+          emptyDir: {}
+`
+	volumeClaims := ""
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("LKE_POSTGRES_STORAGE_MODE")), "pvc") {
+		storage = `      volumes:
+        - name: initdb
+          configMap:
+            name: postgresql-initdb
+`
+		volumeClaims = fmt.Sprintf(`  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: %s
+`, firstNonEmpty(os.Getenv("LKE_POSTGRES_STORAGE"), "10Gi"))
+	}
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -802,19 +908,7 @@ spec:
               mountPath: /var/lib/postgresql/data
             - name: initdb
               mountPath: /docker-entrypoint-initdb.d
-      volumes:
-        - name: initdb
-          configMap:
-            name: postgresql-initdb
-  volumeClaimTemplates:
-    - metadata:
-        name: data
-      spec:
-        accessModes: ["ReadWriteOnce"]
-        resources:
-          requests:
-            storage: %s
-`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_POSTGRES_STORAGE"), "10Gi"))
+%s%s`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], storage, volumeClaims)
 }
 
 type lkeCertIssuerMaterial struct {
@@ -1079,6 +1173,9 @@ metadata:
     rtk.realtek.com/stack: %s
 data:
   mosquitto.conf: |
+    listener 1883 0.0.0.0
+    allow_anonymous true
+
     listener 8883 0.0.0.0
     allow_anonymous true
     persistence false
@@ -1118,6 +1215,8 @@ spec:
           imagePullPolicy: IfNotPresent
           args: ["mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
           ports:
+            - name: mqtt
+              containerPort: 1883
             - name: mqtts
               containerPort: 8883
           volumeMounts:
@@ -1153,10 +1252,397 @@ spec:
   selector:
     app.kubernetes.io/name: mqtt
   ports:
+    - name: mqtt
+      port: 1883
+      targetPort: 1883
     - name: mqtts
       port: 8883
       targetPort: 8883
 `, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
+}
+
+func lkeVideoCloudWorkersSecretManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: video-cloud-workers-runtime
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-workers
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: %q
+  VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY: %q
+  VIDEO_CLOUD_MQTT_USAGE_INGEST_TOKEN: %q
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("turn-registry-node-auth"), lkeRuntimeSecretValue("mqtt-usage-ingest"))
+}
+
+func lkeCoturnRuntimeSecretManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: coturn-runtime
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: coturn
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+type: Opaque
+stringData:
+  VIDEO_CLOUD_TURN_SHARED_SECRET: %q
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("turn-shared"))
+}
+
+func lkeCoturnConfigManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coturn-config
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: coturn
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+data:
+  turnserver.conf: |
+    use-auth-secret
+    static-auth-secret=$(VIDEO_CLOUD_TURN_SHARED_SECRET)
+    realm=%s
+    listening-port=3478
+    fingerprint
+    min-port=%s
+    max-port=%s
+    no-loopback-peers
+    no-multicast-peers
+    log-file=stdout
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_COTURN_REALM"), "video_cloud"), firstNonEmpty(os.Getenv("LKE_COTURN_MIN_PORT"), "49152"), firstNonEmpty(os.Getenv("LKE_COTURN_MAX_PORT"), "49200"))
+}
+
+func lkeCoturnDeploymentManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coturn
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: coturn
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: coturn
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: coturn
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+    spec:
+      initContainers:
+        - name: render-config
+          image: busybox:1.36
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              printf '%%s\n' \
+                use-auth-secret \
+                "static-auth-secret=${VIDEO_CLOUD_TURN_SHARED_SECRET}" \
+                realm=%s \
+                listening-port=3478 \
+                fingerprint \
+                min-port=%s \
+                max-port=%s \
+                no-loopback-peers \
+                no-multicast-peers \
+                log-file=stdout \
+                > /tmp/coturn/turnserver.conf
+          env:
+            - name: VIDEO_CLOUD_TURN_SHARED_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: coturn-runtime
+                  key: VIDEO_CLOUD_TURN_SHARED_SECRET
+          volumeMounts:
+            - name: coturn-runtime-config
+              mountPath: /tmp/coturn
+      containers:
+        - name: coturn
+          image: %s
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/bin/turnserver", "-c", "/tmp/coturn/turnserver.conf"]
+          ports:
+            - name: turn-udp
+              containerPort: 3478
+              protocol: UDP
+            - name: turn-tcp
+              containerPort: 3478
+              protocol: TCP
+          volumeMounts:
+            - name: coturn-runtime-config
+              mountPath: /tmp/coturn
+              readOnly: true
+      volumes:
+        - name: coturn-runtime-config
+          emptyDir: {}
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_COTURN_REALM"), "video_cloud"), firstNonEmpty(os.Getenv("LKE_COTURN_MIN_PORT"), "49152"), firstNonEmpty(os.Getenv("LKE_COTURN_MAX_PORT"), "49200"), firstNonEmpty(os.Getenv("LKE_COTURN_IMAGE"), "coturn/coturn:4.6.2"))
+}
+
+func lkeCoturnServiceManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Service
+metadata:
+  name: coturn
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: coturn
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  type: %s
+  selector:
+    app.kubernetes.io/name: coturn
+  ports:
+    - name: turn-udp
+      port: 3478
+      targetPort: 3478
+      protocol: UDP
+    - name: turn-tcp
+      port: 3478
+      targetPort: 3478
+      protocol: TCP
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_COTURN_SERVICE_TYPE"), "ClusterIP"))
+}
+
+func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lkeVideoCloudAuxiliaryService) string {
+	ports := ""
+	if service.Port > 0 {
+		ports = fmt.Sprintf(`          ports:
+            - name: %s
+              containerPort: %d
+`, firstNonEmpty(service.PortName, "http"), service.Port)
+	}
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: %s
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: %s
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: %s
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: %s
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+    spec:
+      containers:
+        - name: app
+          image: %s
+          imagePullPolicy: IfNotPresent
+          command: ["/app/%s"]
+%s          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-workers-runtime
+                  key: POSTGRES_PASSWORD
+            - name: VIDEO_CLOUD_ENV
+              value: "staging"
+            - name: VIDEO_CLOUD_LOG_LEVEL
+              value: %q
+            - name: VIDEO_CLOUD_DB_DSN
+              value: "postgres://postgres:$(POSTGRES_PASSWORD)@postgresql.%s.svc.cluster.local:5432/video_cloud?sslmode=disable"
+            - name: VIDEO_CLOUD_LOG_DB_DSN
+              value: "postgres://postgres:$(POSTGRES_PASSWORD)@postgresql.%s.svc.cluster.local:5432/video_cloud?sslmode=disable"
+            - name: VIDEO_CLOUD_MQTT_ADDR
+              value: %q
+            - name: VIDEO_CLOUD_MQTT_CLIENT_ID
+              value: %q
+            - name: VIDEO_CLOUD_MQTT_TOPIC_ROOT
+              value: "devices"
+            - name: VIDEO_CLOUD_METRICS_EXPORTER_ADDR
+              value: "0.0.0.0:19200"
+            - name: VIDEO_CLOUD_TURN_REGISTRY_ADDR
+              value: "0.0.0.0:18190"
+            - name: VIDEO_CLOUD_LOG_INGESTER_ADDR
+              value: "0.0.0.0:19300"
+            - name: VIDEO_CLOUD_MQTT_USAGE_ADDR
+              value: "0.0.0.0:19400"
+            - name: VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-workers-runtime
+                  key: VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY
+            - name: VIDEO_CLOUD_MQTT_USAGE_INGEST_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-workers-runtime
+                  key: VIDEO_CLOUD_MQTT_USAGE_INGEST_TOKEN
+`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeVideoCloudImage(env), service.Binary, ports, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeNamespaceName(env, "platform"), lkeMQTTInternalAddr(env), service.Name)
+}
+
+func lkeVideoCloudAuxiliaryServiceManifest(env map[string]string, service lkeVideoCloudAuxiliaryService) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Service
+metadata:
+  name: %s
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: %s
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: %s
+  ports:
+    - name: %s
+      port: %d
+      targetPort: %d
+`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], service.Name, firstNonEmpty(service.PortName, "http"), service.Port, service.Port)
+}
+
+func lkeVideoCloudPrometheusConfigManifest(env map[string]string) string {
+	videoNS := lkeNamespaceName(env, "video-cloud")
+	return fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: video-cloud-prometheus-config
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-prometheus
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    scrape_configs:
+      - job_name: video-cloud-api
+        metrics_path: /metrics/prometheus
+        static_configs:
+          - targets: ["video-cloud-api.%s.svc.cluster.local:80"]
+      - job_name: video-cloud-turnregistry
+        metrics_path: /metrics/prometheus
+        static_configs:
+          - targets: ["video-cloud-turnregistry.%s.svc.cluster.local:18190"]
+      - job_name: video-cloud-metrics-exporter
+        metrics_path: /metrics/prometheus
+        static_configs:
+          - targets: ["video-cloud-metricsexporter.%s.svc.cluster.local:19200"]
+      - job_name: video-cloud-logingester
+        metrics_path: /metrics/prometheus
+        static_configs:
+          - targets: ["video-cloud-logingester.%s.svc.cluster.local:19300"]
+      - job_name: video-cloud-mqttusage
+        metrics_path: /metrics/prometheus
+        static_configs:
+          - targets: ["video-cloud-mqttusage.%s.svc.cluster.local:19400"]
+      - job_name: video-cloud-factoryenroll
+        metrics_path: /metrics/prometheus
+        static_configs:
+          - targets: ["factoryenroll.%s.svc.cluster.local:80"]
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], videoNS, videoNS, videoNS, videoNS, videoNS, videoNS)
+}
+
+func lkeVideoCloudPrometheusDeploymentManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: video-cloud-prometheus
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-prometheus
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: video-cloud-prometheus
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: video-cloud-prometheus
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+    spec:
+      containers:
+        - name: prometheus
+          image: %s
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=%s
+            - --web.listen-address=0.0.0.0:9090
+          ports:
+            - name: http
+              containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+              readOnly: true
+            - name: data
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: video-cloud-prometheus-config
+        - name: data
+          emptyDir: {}
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_PROMETHEUS_IMAGE"), "prom/prometheus:v2.53.1"), firstNonEmpty(os.Getenv("LKE_PROMETHEUS_RETENTION"), "24h"))
+}
+
+func lkeVideoCloudPrometheusServiceManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Service
+metadata:
+  name: video-cloud-prometheus
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-prometheus
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: video-cloud-prometheus
+  ports:
+    - name: http
+      port: 9090
+      targetPort: 9090
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"])
+}
+
+func lkeMQTTInternalAddr(env map[string]string) string {
+	return "mqtt." + lkeNamespaceName(env, "video-cloud") + ".svc.cluster.local:1883"
 }
 
 func lkeFactoryEnrollCertIssuerClientSecretManifest(env map[string]string, material lkeCertIssuerMaterial) string {

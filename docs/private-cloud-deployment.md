@@ -137,9 +137,9 @@ Recommended separation:
 | Edge | NodeBalancer in front of Ingress/Gateway for frontend, account API, video API, and required mTLS hostnames. |
 | Frontend | Deployment with persistent lead storage or migrated production database. |
 | Account manager | Deployment with Service/Ingress; database migrations controlled by release. |
-| Video cloud API/workers | Deployments for long-running services; Jobs/CronJobs only after worker behavior is confirmed. |
+| Video cloud API/workers | Deployments for API, certissuer/factory enrollment, and long-running workers; Jobs/CronJobs only for explicitly one-shot or scheduled flows. |
 | MQTT | EMQX operator/StatefulSet or external broker with explicit TCP exposure, auth/TLS policy, logs, and health checks. |
-| TURN | Keep VM coturn as a migration bridge until LKE UDP/TCP relay exposure and rollback are proven. |
+| TURN | LKE staging can run coturn as a Kubernetes Deployment/Service; production public TURN still requires explicit Linode LoadBalancer/NodeBalancer UDP/TCP exposure, scaling, TLS, and rollback approval. |
 | Storage | PostgreSQL restore-tested before migration; object storage lifecycle/replication according to customer policy. |
 | Observability | Prometheus-compatible metrics, Loki/logger service logs, broker logs, dead-letter evidence, alert routing. |
 
@@ -212,7 +212,7 @@ VIDEO_CLOUD_BASE_URL=https://video-cloud-staging.realtekconnect.com
 | Order | Component | Owner repo | Gate before next step | LKE target / current bridge |
 | --- | --- | --- | --- | --- |
 | 0 | Platform prerequisites | platform/operator | LKE cluster, node pools, namespaces, RBAC, NetworkPolicy, DNS, cert-manager issuer, OpenBao/secret injection, storage classes, and backup target are documented and approved. | Current VM bridge still requires Linode token, DNS credentials, SSH key, operator CIDR, and service secrets. |
-| 1 | Video Cloud runtime | `rtk_video_cloud` | Public API health/version pass; PostgreSQL, EMQX, coturn/TURN, certissuer/factory path, and selected workers are healthy for the chosen profile. | Target is Deployments/Services/Ingress plus explicit MQTT/TURN exposure; current bridge is `https://video-cloud-staging.realtekconnect.com`. |
+| 1 | Video Cloud runtime | `rtk_video_cloud` | Public API health/version pass; PostgreSQL, MQTT broker, coturn/TURN, certissuer/factory path, Prometheus scrape path, and selected workers are healthy for the chosen profile. | Runtime-generated LKE staging resources now cover API, certissuer, factory enrollment, workers, MQTT broker, coturn, ephemeral PostgreSQL, and Prometheus; production Ingress, persistent database/storage, MQTT/TURN public exposure, and OpenBao remain gated. |
 | 2 | Account Manager API | `rtk_account_manager` | `GET /v1/health` passes; auth/register/login/`/v1/me` smoke passes; database migration and public TLS route are valid. | Target is Deployment/Service/Ingress; current bridge is `https://account-manager.video-cloud-staging.realtekconnect.com`. |
 | 3 | Admin dashboard | `rtk_cloud_admin` | `/healthz` passes and `/api/service-health` reports Account Manager, Video Cloud, and local persistence as `ok`. | Target is Deployment with PVC or approved database migration; current bridge is `https://admin.video-cloud-staging.realtekconnect.com`. |
 | 4 | Public frontend / promotion site | `rtk_cloud_frontend` | Website content matches deployed capability status; API links and contact/lead persistence are verified for the selected profile. | Public-facing Realtek Connect+ website; deployment profile remains service-owned. |
