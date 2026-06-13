@@ -717,6 +717,13 @@ func runRemoveAllVM(args []string) error {
 	if err != nil {
 		return err
 	}
+	stackValues, _ := readEnvFile(filepath.Join(envRoot, "env", "stack.env"))
+	stackValues["CLOUD_PROVIDER"] = firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), os.Getenv("RTK_CLOUD_STAGING_PROVIDER"), stackValues["CLOUD_PROVIDER"], "linode")
+	if stackValues["CLOUD_PROVIDER"] == "lke" {
+		envValues := envroot.Derive(stackValues)
+		envValues["CLOUD_PROVIDER"] = "lke"
+		return runRemoveAllLKE(envRoot, envValues, *confirm)
+	}
 	if !*confirm {
 		fmt.Fprint(os.Stderr, `Delete all Linode VMs whose label contains "staging"? Type yes to continue: `)
 		var answer string
@@ -2370,7 +2377,9 @@ func runStagingE2ETest(args []string) error {
 		"mqtt-test":  firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT"), selfCommandPath("mqtt-test")),
 	}
 	if !*runMode {
-		printE2EPlan(workspace, envRoot, stackName, *brandname, *userCount, *deviceCount, *deviceMix, *userConcurrency, *deviceConcurrency, *bindConcurrency, *skipRemove, scripts)
+		env, _ := readEnvFile(filepath.Join(envRoot, "env", "stack.env"))
+		provider := firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), env["CLOUD_PROVIDER"], "linode")
+		printE2EPlan(workspace, envRoot, stackName, provider, *brandname, *userCount, *deviceCount, *deviceMix, *userConcurrency, *deviceConcurrency, *bindConcurrency, *skipRemove, scripts)
 		return nil
 	}
 	if *confirm != stackName {
@@ -2384,6 +2393,7 @@ func runStagingE2ETest(args []string) error {
 		return err
 	}
 	env, _ := readEnvFile(filepath.Join(envRoot, "env", "stack.env"))
+	provider := firstNonEmpty(env["CLOUD_PROVIDER"], "linode")
 	steps := []e2eStep{}
 	runStep := func(name string, argv ...string) error {
 		step, err := runE2EStepWithOptions(name, filepath.Join(logsDir, name+".log"), e2eStepOptions{Quiet: *quiet}, argv...)
@@ -2391,10 +2401,12 @@ func runStagingE2ETest(args []string) error {
 		return err
 	}
 	if !*skipRemove {
-		paths := newProvisionPaths(workspace, envRoot, provisionOptions{})
-		requiredCaches := refreshStagingCertificateCaches(paths, env, defaultStagingSSHKey())
-		if err := requireStagingCertificateCachesForTargets(requiredCaches); err != nil {
-			return err
+		if provider != "lke" {
+			paths := newProvisionPaths(workspace, envRoot, provisionOptions{})
+			requiredCaches := refreshStagingCertificateCaches(paths, env, defaultStagingSSHKey())
+			if err := requireStagingCertificateCachesForTargets(requiredCaches); err != nil {
+				return err
+			}
 		}
 		if err := runStep("remove_vm", append(commandWithArgs(scripts["remove"], "--workspace", workspace, "--env-root", envRoot), "--yes")...); err != nil {
 			return err
@@ -2495,11 +2507,12 @@ func runStagingE2ETest(args []string) error {
 	return nil
 }
 
-func printE2EPlan(workspace, envRoot, stack, brandname string, userCount, deviceCount int, deviceMix string, userConcurrency, deviceConcurrency, bindConcurrency int, skipRemove bool, scripts map[string]string) {
+func printE2EPlan(workspace, envRoot, stack, provider, brandname string, userCount, deviceCount int, deviceMix string, userConcurrency, deviceConcurrency, bindConcurrency int, skipRemove bool, scripts map[string]string) {
 	fmt.Fprintln(os.Stdout, "cloud-staging-e2e-test plan")
 	fmt.Fprintf(os.Stdout, "workspace: %s\n", workspace)
 	fmt.Fprintf(os.Stdout, "env_root: %s\n", envRoot)
 	fmt.Fprintf(os.Stdout, "stack: %s\n", stack)
+	fmt.Fprintf(os.Stdout, "provider: %s\n", provider)
 	fmt.Fprintf(os.Stdout, "brandname: %s\n", brandname)
 	fmt.Fprintf(os.Stdout, "user_count: %d\n", userCount)
 	fmt.Fprintf(os.Stdout, "device_count: %d\n", deviceCount)
@@ -2510,7 +2523,7 @@ func printE2EPlan(workspace, envRoot, stack, brandname string, userCount, device
 	fmt.Fprintf(os.Stdout, "skip_remove: %v\n", skipRemove)
 	fmt.Fprintln(os.Stdout, "steps:")
 	if !skipRemove {
-		fmt.Fprintf(os.Stdout, "  - remove VMs with %s\n", scripts["remove"])
+		fmt.Fprintf(os.Stdout, "  - remove provider resources with %s\n", scripts["remove"])
 	}
 	fmt.Fprintf(os.Stdout, "  - provision all with %s\n", scripts["provision"])
 	fmt.Fprintf(os.Stdout, "  - setup brand/users/devices with %s\n", scripts["setup-data"])
@@ -6513,7 +6526,7 @@ func resolveEnvRoot(workspace, envRoot string) (string, error) {
 	}
 	envRoot = filepath.Clean(envRoot)
 	if filepath.Base(envRoot) == "staging" {
-		return filepath.Join(envRoot, "linode"), nil
+		return filepath.Join(envRoot, stagingProviderForRoot(envRoot)), nil
 	}
 	if info, err := os.Stat(filepath.Join(envRoot, "linode")); err == nil && info.IsDir() {
 		if _, servicesErr := os.Stat(filepath.Join(envRoot, "services")); os.IsNotExist(servicesErr) {
@@ -6523,6 +6536,25 @@ func resolveEnvRoot(workspace, envRoot string) (string, error) {
 		}
 	}
 	return envRoot, nil
+}
+
+func stagingProviderForRoot(stagingRoot string) string {
+	provider := firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), os.Getenv("RTK_CLOUD_STAGING_PROVIDER"))
+	if provider == "" {
+		for _, candidate := range []string{"lke", "linode"} {
+			stackFile := filepath.Join(stagingRoot, candidate, "env", "stack.env")
+			if value := envFileValue(stackFile, "CLOUD_PROVIDER"); value != "" {
+				if value == candidate {
+					provider = candidate
+					break
+				}
+			}
+		}
+	}
+	if provider == "" {
+		provider = "linode"
+	}
+	return provider
 }
 
 func hasFlag(args []string, name string) bool {

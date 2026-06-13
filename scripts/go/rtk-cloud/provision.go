@@ -90,14 +90,6 @@ func runProvision(args []string) error {
 	if opts.artifactDir != "" {
 		paths.ArtifactsDir = opts.artifactDir
 	}
-	if opts.mode.artifacts && !opts.mode.preflight && !opts.mode.plan && !opts.mode.reset && !opts.mode.apply && !opts.mode.dns && !opts.mode.deploy && !opts.mode.e2e {
-		dir, err := writeProvisionArtifacts(paths, "")
-		if err != nil {
-			return err
-		}
-		fmt.Fprintln(os.Stdout, dir)
-		return nil
-	}
 	dnsOverride := ""
 	if opts.dnsRootExplicit {
 		dnsOverride = opts.dnsRoot
@@ -109,6 +101,17 @@ func runProvision(args []string) error {
 		} else {
 			return err
 		}
+	}
+	if env.Values["CLOUD_PROVIDER"] == "lke" {
+		return runLKEProvision(paths, env.Values, opts)
+	}
+	if opts.mode.artifacts && !opts.mode.preflight && !opts.mode.plan && !opts.mode.reset && !opts.mode.apply && !opts.mode.dns && !opts.mode.deploy && !opts.mode.e2e {
+		dir, err := writeProvisionArtifacts(paths, "")
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stdout, dir)
+		return nil
 	}
 	if _, statErr := os.Stat(filepath.Join(envRoot, "env", "stack.env")); statErr == nil {
 		if err := envroot.Validate(envRoot, env); err != nil {
@@ -180,7 +183,7 @@ func runProvision(args []string) error {
 func defaultProvisionEnvValues() map[string]string {
 	return envroot.Derive(map[string]string{
 		"CLOUD_ENV_NAME":        "staging",
-		"CLOUD_PROVIDER":        "linode",
+		"CLOUD_PROVIDER":        firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), os.Getenv("RTK_CLOUD_STAGING_PROVIDER"), "linode"),
 		"CLOUD_REGION":          "us-sea",
 		"CLOUD_DNS_ROOT_DOMAIN": "realtekconnect.com",
 	})

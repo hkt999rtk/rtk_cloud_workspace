@@ -16,6 +16,7 @@ repositories. Shared wire and payload contracts belong in
 | [artifact-release-governance.md](artifact-release-governance.md) | Source | Linode Object Storage artifact source-of-truth policy and adoption matrix. |
 | [backend-release-readiness.md](backend-release-readiness.md) | Supporting note | Backend foundation closeout checklist, validation commands, report status, and remaining release-evidence items. |
 | [deployment-secrets-governance.md](deployment-secrets-governance.md) | Source | Local deployment secret layout, environment/provider/service taxonomy, and handling rules. |
+| [lke-migration-inventory.md](lke-migration-inventory.md) | Source | Documentation-first LKE migration inventory, current architecture review, target summary, and implementation gates. |
 | [cost/README.md](cost/README.md) | Index | AWS cost estimation materials, including service mapping, sizing worksheet, pricing sources, and support-plan assumptions. |
 | [persistence-cache-refactor-roadmap.md](persistence-cache-refactor-roadmap.md) | Source | Cross-repo persistence boundary audit and Redis/cache-readiness issue roadmap. |
 | [realtek-connect-plus-gap-analysis.md](realtek-connect-plus-gap-analysis.md) | Discussion note | Evidence-backed gaps between Realtek Connect+ promotion content and current implementation. |

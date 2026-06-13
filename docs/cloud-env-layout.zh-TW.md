@@ -3,8 +3,8 @@
 `cloud_env/` 是 workspace 的本機 cloud environment 目錄，整個目錄都被 git ignore。它保存 live deployment 需要的 topology、runtime env、state、keys/certificates、device fixtures、artifacts 與 migration backup。
 
 Environment root 採 `cloud_env/<env>/<provider>` 形式保存 provider-specific
-資料。預設 staging environment directory 是 `cloud_env/staging`；目前唯一支援
-的 provider 是 `linode`，所以實際資料在：
+資料。預設 staging environment directory 是 `cloud_env/staging`；目前支援的
+provider 是 `linode` 與 `lke`，所以實際資料在 provider 子目錄：
 
 ```text
 cloud_env/staging/linode/
@@ -14,6 +14,12 @@ cloud_env/staging/linode/
   keys/
   certificates/
   devices/
+  state/
+  artifacts/
+  backups/
+cloud_env/staging/lke/
+  env/
+  services/
   state/
   artifacts/
   backups/
@@ -34,8 +40,15 @@ cloud_env/staging/linode/
 ## 操作原則
 
 - staging scripts 需要明確指定 `--env-root PATH`，避免操作到錯誤環境。
-- 可傳 `cloud_env/staging` 作為 environment directory；script 會自動解析到 `cloud_env/staging/linode`。
-- `CLOUD_PROVIDER` 目前唯一可用值是 `linode`。未來若加入 AWS、GCP 或 Azure，應建立平行的 `cloud_env/<env>/<provider>` 目錄；在實作前，非 `linode` provider 必須在 preflight/provision 一開始就失敗，不可做任何 live mutation。
+- 可傳 `cloud_env/staging` 作為 environment directory；script 會依
+  `CLOUD_PROVIDER`、`RTK_CLOUD_STAGING_PROVIDER` 或 provider stack file 自動解析
+  到 `cloud_env/staging/linode` 或 `cloud_env/staging/lke`。
+- `CLOUD_PROVIDER` 目前可用值是 `linode` 與 `lke`。`linode` 代表既有
+  VM/systemd/manual deploy path；`lke` 代表 Linode Kubernetes Engine path，
+  由 kubectl 建立/刪除 namespaces、套用 runtime-generated base resources，並在
+  deploy 時要求明確 container image env vars。未來若加入 AWS、GCP 或 Azure，
+  應建立平行的 `cloud_env/<env>/<provider>` 目錄；在實作前，其他 provider
+  必須在 preflight/provision 一開始就失敗，不可做任何 live mutation。
 - `--secrets-root PATH` 只保留為舊參數 alias，新的文件與操作都使用 `--env-root`。
 - `env/stack.env` 內的 `CLOUD_ENV_NAME` 是 Linode staging 命名 root。`CLOUD_STACK_NAME`、公開 domain、Linode VM/firewall label、VPC/subnet label、topology label，以及 service env 內的相關 URL 都由 `go run ./scripts/go/rtk-cloud -- sync-env --env-root cloud_env/staging` 產生。
 - Generated 欄位不要手動修改。若要把環境改名，例如從 `stg-0529` 改成 `stg`，先用舊 metadata 執行 `remove-all-vm` 清掉 live VM/firewall/VPC，再修改 `CLOUD_ENV_NAME`，最後執行 `sync-env`。
@@ -44,9 +57,12 @@ cloud_env/staging/linode/
 
 ## 命名推演
 
-目前命名推演是 Linode-only provider routing。`CLOUD_PROVIDER=linode` 時，
-`sync-env` 會產生 Linode VM/firewall/VPC/subnet label；其他 provider 尚未
-支援，也不應重用 `*_LINODE_*` 欄位作為跨 provider contract。
+目前 `sync-env` 的 generated naming 仍以 Linode VM metadata 為主。
+`CLOUD_PROVIDER=linode` 時，`sync-env` 會產生 Linode VM/firewall/VPC/subnet
+label；`CLOUD_PROVIDER=lke` 的 runtime CLI 可以使用同一組 root metadata 推導
+stack/domain/namespace 名稱，但不應重用 `*_LINODE_*` 欄位作為 Kubernetes 或跨
+provider contract。production Kubernetes manifests、Helm charts、CI/CD
+deployment pipelines 仍受 `docs/lke-migration-inventory.md` gates 管制。
 
 以 `CLOUD_ENV_NAME=stg`、`CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com` 為例，`sync-env` 會產生：
 

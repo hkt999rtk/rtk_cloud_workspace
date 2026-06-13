@@ -15,6 +15,8 @@ printf 'args=%s\n' "$*" >> "$STG_LOG"
 printf 'VIDEO_RELEASE=%s\n' "${VIDEO_RELEASE:-}" >> "$STG_LOG"
 printf 'ACCOUNT_RELEASE=%s\n' "${ACCOUNT_RELEASE:-}" >> "$STG_LOG"
 printf 'ADMIN_RELEASE=%s\n' "${ADMIN_RELEASE:-}" >> "$STG_LOG"
+printf 'CLOUD_PROVIDER=%s\n' "${CLOUD_PROVIDER:-}" >> "$STG_LOG"
+printf 'RTK_CLOUD_STAGING_ENV_ROOT=%s\n' "${RTK_CLOUD_STAGING_ENV_ROOT:-}" >> "$STG_LOG"
 if [[ "$*" == *"--plan"* ]]; then
 	printf 'cloud-staging-e2e-test plan\n'
 	exit 0
@@ -82,6 +84,20 @@ test ! -e "$STG_LOG"
 RTK_CLOUD_STAGING_STACK_NAME=video-cloud-staging RTK_CLOUD_STG_SH="$TMP/stg-stub.sh" "$ROOT/scripts/run-staging-e2e.sh" --plan >"$TMP/plan.out"
 grep -F 'cloud-staging-e2e-test plan' "$TMP/plan.out" >/dev/null
 grep -F 'args=e2e --plan' "$STG_LOG" >/dev/null
+
+rm "$STG_LOG"
+mkdir -p "$TMP/lke/env"
+cat > "$TMP/lke/env/stack.env" <<'EOF_LKE_STACK'
+CLOUD_PROVIDER=lke
+CLOUD_STACK_NAME=video-cloud-staging
+EOF_LKE_STACK
+RTK_CLOUD_STACK_FILE="$TMP/lke/env/stack.env" \
+RTK_CLOUD_STG_SH="$TMP/stg-stub.sh" \
+	"$ROOT/scripts/run-staging-e2e.sh" --plan >"$TMP/lke-plan.out"
+grep -F 'cloud-staging-e2e-test plan' "$TMP/lke-plan.out" >/dev/null
+grep -F 'args=e2e --plan' "$STG_LOG" >/dev/null
+grep -F 'CLOUD_PROVIDER=lke' "$STG_LOG" >/dev/null
+grep -F 'RTK_CLOUD_STAGING_ENV_ROOT='"$TMP/lke" "$STG_LOG" >/dev/null
 
 rm "$STG_LOG"
 RTK_CLOUD_STAGING_STACK_NAME=custom-stack \

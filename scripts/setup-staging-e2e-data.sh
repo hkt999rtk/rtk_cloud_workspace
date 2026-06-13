@@ -21,6 +21,14 @@ FROM_STEP=""
 USERS_FILE=""
 BIND_ARTIFACT=""
 
+env_file_value() {
+	local file="$1"
+	local key="$2"
+	if [[ -f "$file" ]]; then
+		awk -F= -v key="$key" '$1 == key {print $2; exit}' "$file"
+	fi
+}
+
 usage() {
 	cat <<'USAGE'
 Usage:
@@ -190,16 +198,26 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
+PROVIDER="${CLOUD_PROVIDER:-${RTK_CLOUD_STAGING_PROVIDER:-}}"
+if [[ "$(basename "$ENV_ROOT")" == "staging" ]]; then
+	if [[ -n "$PROVIDER" ]]; then
+		ENV_ROOT="$ENV_ROOT/$PROVIDER"
+	elif [[ "$(env_file_value "$ENV_ROOT/lke/env/stack.env" CLOUD_PROVIDER)" == "lke" ]]; then
+		ENV_ROOT="$ENV_ROOT/lke"
+	else
+		ENV_ROOT="$ENV_ROOT/linode"
+	fi
+fi
 STACK_FILE="$ENV_ROOT/env/stack.env"
-PROVIDER="${CLOUD_PROVIDER:-}"
 if [[ -z "$PROVIDER" && -f "$STACK_FILE" ]]; then
-	PROVIDER="$(awk -F= '$1 == "CLOUD_PROVIDER" {print $2; exit}' "$STACK_FILE")"
+	PROVIDER="$(env_file_value "$STACK_FILE" CLOUD_PROVIDER)"
 fi
 PROVIDER="${PROVIDER:-linode}"
-if [[ "$PROVIDER" != "linode" ]]; then
-	printf 'error: unsupported CLOUD_PROVIDER=%s; staging E2E data setup currently supports only linode\n' "$PROVIDER" >&2
+if [[ "$PROVIDER" != "linode" && "$PROVIDER" != "lke" ]]; then
+	printf 'error: unsupported CLOUD_PROVIDER=%s; staging E2E data setup currently supports linode or lke\n' "$PROVIDER" >&2
 	exit 2
 fi
+export CLOUD_PROVIDER="$PROVIDER"
 
 run_args=(
 	staging-e2e-data-setup
