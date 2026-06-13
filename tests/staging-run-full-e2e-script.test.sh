@@ -100,6 +100,7 @@ grep -F 'CLOUD_PROVIDER=lke' "$STG_LOG" >/dev/null
 grep -F 'RTK_CLOUD_STAGING_ENV_ROOT='"$TMP/lke" "$STG_LOG" >/dev/null
 
 rm "$STG_LOG"
+CLOUD_PROVIDER=linode \
 RTK_CLOUD_STAGING_STACK_NAME=custom-stack \
 RTK_CLOUD_STG_SH="$TMP/stg-stub.sh" \
 	"$ROOT/scripts/run-staging-e2e.sh" \
@@ -110,6 +111,7 @@ rm "$STG_LOG"
 VIDEO_RELEASE=video-ci-release \
 ACCOUNT_RELEASE=account-ci-release \
 ADMIN_RELEASE=admin-ci-release \
+CLOUD_PROVIDER=linode \
 RTK_CLOUD_STAGING_STACK_NAME=video-cloud-staging \
 RTK_CLOUD_STG_SH="$TMP/stg-stub.sh" \
 	"$ROOT/scripts/run-staging-e2e.sh" \

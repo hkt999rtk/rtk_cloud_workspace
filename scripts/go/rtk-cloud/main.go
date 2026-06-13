@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -236,6 +237,46 @@ func runMQTTTest(args []string) error {
 	if *outDir == "" {
 		*outDir = filepath.Join(resolvedEnv, "artifacts", "home-mqtt-loadtest", time.Now().UTC().Format("20060102T150405Z"))
 	}
+	stackValues, _ := readEnvFile(filepath.Join(resolvedEnv, "env", "stack.env"))
+	childEnv := map[string]string{"GOWORK": "off"}
+	cleanups := []func(){}
+	defer func() {
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			cleanups[i]()
+		}
+	}()
+	if mqttProbe && firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), stackValues["CLOUD_PROVIDER"]) == "lke" {
+		lkeEnv := map[string]string{"CLOUD_STACK_NAME": firstNonEmpty(stackValues["CLOUD_STACK_NAME"], "video-cloud-staging")}
+		if os.Getenv("RTK_CLOUD_MQTT_TEST_MQTT_HOST") == "" || os.Getenv("RTK_CLOUD_MQTT_TEST_MQTT_PORT") == "" {
+			port, cleanup, err := lkeMQTTPortForward(resolvedEnv, lkeEnv)
+			if err != nil {
+				return err
+			}
+			cleanups = append(cleanups, cleanup)
+			if os.Getenv("RTK_CLOUD_MQTT_TEST_MQTT_HOST") == "" {
+				childEnv["RTK_CLOUD_MQTT_TEST_MQTT_HOST"] = "127.0.0.1"
+			}
+			if os.Getenv("RTK_CLOUD_MQTT_TEST_MQTT_PORT") == "" {
+				childEnv["RTK_CLOUD_MQTT_TEST_MQTT_PORT"] = strconv.Itoa(port)
+			}
+		}
+		if os.Getenv("RTK_CLOUD_MQTT_TEST_VIDEO_BASE_URL") == "" {
+			baseURL, cleanup, err := lkeVideoCloudAPIPortForward(resolvedEnv, lkeEnv)
+			if err != nil {
+				return err
+			}
+			cleanups = append(cleanups, cleanup)
+			childEnv["RTK_CLOUD_MQTT_TEST_VIDEO_BASE_URL"] = baseURL
+		}
+		if os.Getenv("RTK_CLOUD_MQTT_TEST_ACCOUNT_BASE_URL") == "" {
+			baseURL, cleanup, err := lkeAccountManagerPortForward(resolvedEnv, lkeEnv)
+			if err != nil {
+				return err
+			}
+			cleanups = append(cleanups, cleanup)
+			childEnv["RTK_CLOUD_MQTT_TEST_ACCOUNT_BASE_URL"] = baseURL
+		}
+	}
 	goCmd, err := exec.LookPath("go")
 	if err != nil {
 		return errors.New("go is required")
@@ -261,7 +302,7 @@ func runMQTTTest(args []string) error {
 		"--max-connected-devices", strconv.Itoa(*maxConnectedDevices),
 	)
 	cmd.Dir = filepath.Join(workspace, "scripts", "go")
-	cmd.Env = withEnv(os.Environ(), map[string]string{"GOWORK": "off"})
+	cmd.Env = withEnv(os.Environ(), childEnv)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -1349,6 +1390,13 @@ func runGenerateLoadDevices(args []string) error {
 	if err != nil {
 		return err
 	}
+	stackEnv, _ := readEnvFile(filepath.Join(envRoot, "env", "stack.env"))
+	var cleanupFactoryEnroll func()
+	defer func() {
+		if cleanupFactoryEnroll != nil {
+			cleanupFactoryEnroll()
+		}
+	}()
 	if *runID == "" {
 		*runID = time.Now().UTC().Format("20060102T150405Z")
 	}
@@ -1365,6 +1413,16 @@ func runGenerateLoadDevices(args []string) error {
 		}
 		if *factoryAuthKey == "" {
 			*factoryAuthKey = envFileValue(videoEnv, "FACTORY_ENROLL_AUTH_KEY")
+		}
+		if *factoryURL == "" && firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), stackEnv["CLOUD_PROVIDER"]) == "lke" {
+			forwardURL, cleanup, err := lkeFactoryEnrollPortForward(envRoot, map[string]string{
+				"CLOUD_STACK_NAME": firstNonEmpty(stackEnv["CLOUD_STACK_NAME"], "video-cloud-staging"),
+			})
+			if err != nil {
+				return err
+			}
+			*factoryURL = forwardURL
+			cleanupFactoryEnroll = cleanup
 		}
 		if *factoryURL == "" {
 			return errors.New("factory enrollment URL missing; set FACTORY_ENROLL_URL in video-cloud env or pass --factory-url")
@@ -1636,6 +1694,13 @@ type accountManagerContext struct {
 	SSHUser          string
 	SSHKey           string
 	PlatformAdminEnv string
+	cleanup          func()
+}
+
+func (ctx accountManagerContext) Close() {
+	if ctx.cleanup != nil {
+		ctx.cleanup()
+	}
 }
 
 func runListBrandnameClouds(args []string) error {
@@ -3421,6 +3486,7 @@ func accountManagerContextFromFlags(workspaceFlag, envRootFlag string) (accountM
 	if err != nil {
 		return accountManagerContext{}, err
 	}
+	stackEnv := filepath.Join(envRoot, "env", "stack.env")
 	accountEnv := firstExistingPath(filepath.Join(envRoot, "services", "account-manager", "account-manager.env"), filepath.Join(envRoot, "services", "account-manager", "account-manager-public-staging.env"))
 	accountState := filepath.Join(envRoot, "state", "account-manager-staging.env")
 	platformEnv := filepath.Join(envRoot, "services", "account-manager", "account-manager-platform-admin.env")
@@ -3429,7 +3495,7 @@ func accountManagerContextFromFlags(workspaceFlag, envRootFlag string) (accountM
 	if baseURL == "" {
 		baseURL = "https://" + domain
 	}
-	return accountManagerContext{
+	ctx := accountManagerContext{
 		EnvRoot:          envRoot,
 		BaseURL:          baseURL,
 		AdminEmail:       envFileValue(platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL"),
@@ -3438,7 +3504,107 @@ func accountManagerContextFromFlags(workspaceFlag, envRootFlag string) (accountM
 		SSHUser:          firstNonEmpty(envFileValue(accountEnv, "ACCOUNT_MANAGER_LINODE_SSH_USER"), "root"),
 		SSHKey:           firstNonEmpty(envFileValue(accountEnv, "ACCOUNT_MANAGER_LINODE_SSH_KEY"), filepath.Join(os.Getenv("HOME"), ".ssh", "id_ed25519_rtkcloud")),
 		PlatformAdminEnv: platformEnv,
-	}, nil
+	}
+	if firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), envFileValue(stackEnv, "CLOUD_PROVIDER")) == "lke" && os.Getenv("ACCOUNT_MANAGER_BASE_URL") == "" {
+		forwardURL, cleanup, err := lkeAccountManagerPortForward(envRoot, map[string]string{
+			"CLOUD_STACK_NAME": firstNonEmpty(envFileValue(stackEnv, "CLOUD_STACK_NAME"), "video-cloud-staging"),
+		})
+		if err != nil {
+			return accountManagerContext{}, err
+		}
+		ctx.BaseURL = forwardURL
+		ctx.Host = ""
+		ctx.cleanup = cleanup
+	}
+	return ctx, nil
+}
+
+func lkeAccountManagerPortForward(envRoot string, env map[string]string) (string, func(), error) {
+	return lkeServicePortForward(envRoot, env, "account-manager", "account-manager", 80, "account-manager")
+}
+
+func lkeFactoryEnrollPortForward(envRoot string, env map[string]string) (string, func(), error) {
+	return lkeServicePortForward(envRoot, env, "video-cloud", "factoryenroll", 80, "factoryenroll")
+}
+
+func lkeVideoCloudAPIPortForward(envRoot string, env map[string]string) (string, func(), error) {
+	return lkeServicePortForward(envRoot, env, "video-cloud", "video-cloud-api", 80, "video-cloud-api")
+}
+
+func lkeMQTTPortForward(envRoot string, env map[string]string) (int, func(), error) {
+	return lkeTCPServicePortForward(envRoot, env, "video-cloud", "mqtt", 8883, "mqtt")
+}
+
+func lkeServicePortForward(envRoot string, env map[string]string, namespaceKey, service string, remotePort int, label string) (string, func(), error) {
+	port, cleanup, err := lkeTCPServicePortForward(envRoot, env, namespaceKey, service, remotePort, label)
+	if err != nil {
+		return "", cleanup, err
+	}
+	return fmt.Sprintf("http://127.0.0.1:%d", port), cleanup, nil
+}
+
+func lkeTCPServicePortForward(envRoot string, env map[string]string, namespaceKey, service string, remotePort int, label string) (int, func(), error) {
+	if err := ensureLKEKubeAccess(provisionPaths{EnvRoot: envRoot}, env, false); err != nil {
+		return 0, func() {}, err
+	}
+	port, err := freeLocalPort()
+	if err != nil {
+		return 0, func() {}, err
+	}
+	args := lkeKubectlArgs("-n", lkeNamespaceName(env, namespaceKey), "port-forward", "svc/"+service, fmt.Sprintf("%d:%d", port, remotePort))
+	cmd := exec.Command(lkeKubectl(), args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return 0, func() {}, err
+	}
+	cleanup := func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+			_, _ = cmd.Process.Wait()
+		}
+	}
+	waitTimeout := envDurationDefault("RTK_CLOUD_LKE_PORT_FORWARD_WAIT", 10*time.Second)
+	if waitTimeout > 0 {
+		if err := waitForLocalHTTPPort(port, waitTimeout); err != nil {
+			cleanup()
+			errText := strings.TrimSpace(stderr.String())
+			if errText != "" {
+				return 0, func() {}, fmt.Errorf("%s port-forward failed: %w: %s", label, err, errText)
+			}
+			return 0, func() {}, err
+		}
+	}
+	if waitTimeout == 0 && cmd.ProcessState != nil && cmd.ProcessState.Exited() {
+		cleanup()
+		return 0, func() {}, fmt.Errorf("%s port-forward exited before becoming ready", label)
+	}
+	return port, cleanup, nil
+}
+
+func freeLocalPort() (int, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port, nil
+}
+
+func waitForLocalHTTPPort(port int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		lastErr = err
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("timed out waiting for local port-forward %s: %w", addr, lastErr)
 }
 
 func runPlatformAdminToken(args []string) error {
@@ -3730,6 +3896,10 @@ func jwtExpiresAt(token string) (time.Time, bool) {
 }
 
 func accountBootstrap(ctx accountManagerContext) error {
+	if strings.HasPrefix(ctx.BaseURL, "http://127.0.0.1:") || strings.HasPrefix(ctx.BaseURL, "http://localhost:") {
+		logBrandCreate("platform-admin bootstrap handled by LKE runtime secret; skipping VM SSH bootstrap")
+		return nil
+	}
 	if ctx.Host == "" {
 		return errors.New("ACCOUNT_MANAGER_LINODE_HOST or ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4 is required")
 	}
@@ -5493,6 +5663,7 @@ func runBindDevices(args []string) error {
 	if err != nil {
 		return err
 	}
+	defer provisionBridge.Close()
 	if provisionBridge.Enabled {
 		logBind("staging direct provisioning bridge enabled: video_base_url=%s account_base_url=%s", provisionBridge.VideoBaseURL, provisionBridge.AccountBaseURL)
 	}
@@ -5970,6 +6141,13 @@ type stagingProvisionBridge struct {
 	AccountToken   string
 	VideoBaseURL   string
 	VideoToken     string
+	cleanup        func()
+}
+
+func (bridge stagingProvisionBridge) Close() {
+	if bridge.cleanup != nil {
+		bridge.cleanup()
+	}
 }
 
 func stagingProvisionBridgeFromEnvRoot(ctx accountManagerContext, skip bool) (stagingProvisionBridge, error) {
@@ -5977,13 +6155,24 @@ func stagingProvisionBridgeFromEnvRoot(ctx accountManagerContext, skip bool) (st
 		return stagingProvisionBridge{}, nil
 	}
 	accountEnv := firstExistingPath(filepath.Join(ctx.EnvRoot, "services", "account-manager", "account-manager.env"), filepath.Join(ctx.EnvRoot, "services", "account-manager", "account-manager-public-staging.env"))
-	videoEnv := filepath.Join(ctx.EnvRoot, "services", "video-cloud", "video-cloud-staging.env")
+	videoEnv := firstExistingPath(filepath.Join(ctx.EnvRoot, "services", "video-cloud", "video-cloud.env"), filepath.Join(ctx.EnvRoot, "services", "video-cloud", "video-cloud-staging.env"))
 	adminEnv := filepath.Join(ctx.EnvRoot, "services", "cloud-admin", "admin-staging.env")
 	stackEnv := filepath.Join(ctx.EnvRoot, "env", "stack.env")
 
 	accountToken := firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN"), envFileValue(accountEnv, "ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN"))
 	videoToken := firstNonEmpty(os.Getenv("VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN"), envFileValue(videoEnv, "VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN"), accountToken)
 	videoBaseURL := strings.TrimRight(firstNonEmpty(os.Getenv("VIDEO_CLOUD_BASE_URL"), envFileValue(adminEnv, "VIDEO_CLOUD_BASE_URL"), envFileValue(videoEnv, "VIDEO_CLOUD_PUBLIC_API_BASE_URL")), "/")
+	var cleanup func()
+	if videoBaseURL == "" && firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), envFileValue(stackEnv, "CLOUD_PROVIDER")) == "lke" {
+		forwardURL, forwardCleanup, err := lkeVideoCloudAPIPortForward(ctx.EnvRoot, map[string]string{
+			"CLOUD_STACK_NAME": firstNonEmpty(envFileValue(stackEnv, "CLOUD_STACK_NAME"), "video-cloud-staging"),
+		})
+		if err != nil {
+			return stagingProvisionBridge{}, err
+		}
+		videoBaseURL = forwardURL
+		cleanup = forwardCleanup
+	}
 	if videoBaseURL == "" {
 		if domain := envFileValue(stackEnv, "VIDEO_CLOUD_DOMAIN"); domain != "" {
 			videoBaseURL = "https://" + domain
@@ -5995,6 +6184,7 @@ func stagingProvisionBridgeFromEnvRoot(ctx accountManagerContext, skip bool) (st
 		AccountToken:   accountToken,
 		VideoBaseURL:   videoBaseURL,
 		VideoToken:     videoToken,
+		cleanup:        cleanup,
 	}
 	missing := []string{}
 	if bridge.AccountBaseURL == "" {

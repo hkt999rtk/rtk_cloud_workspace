@@ -2,10 +2,18 @@ package main
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"math/big"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,10 +39,16 @@ type lkeWorkload struct {
 }
 
 var errLKEMissingCluster = errors.New("no matching LKE cluster found")
+var lkeRuntimeSecretCache = map[string]string{}
 
 func runLKEProvision(paths provisionPaths, env map[string]string, opts provisionOptions) error {
 	if opts.mode.reset {
 		return errors.New("LKE provision reset is not implemented; use remove-all-vm for namespace teardown")
+	}
+	if opts.mode.apply || opts.mode.deploy || opts.mode.artifacts || opts.mode.e2e {
+		if err := writeLKECompatibilityArtifacts(paths, env); err != nil {
+			return err
+		}
 	}
 	if opts.mode.preflight {
 		if err := lkePreflight(paths, env); err != nil {
@@ -66,7 +80,7 @@ func runLKEProvision(paths provisionPaths, env map[string]string, opts provision
 		fmt.Fprintln(os.Stderr, "[lke-provision] dns step is delegated to Linode NodeBalancer, Ingress/Gateway, and cert-manager; no DNS records were mutated")
 	}
 	if opts.mode.deploy {
-		if err := lkeDeployWorkloads(env, opts); err != nil {
+		if err := lkeDeployWorkloads(paths, env, opts); err != nil {
 			return err
 		}
 	}
@@ -158,11 +172,14 @@ data:
 	return kubectlApply(config)
 }
 
-func lkeDeployWorkloads(env map[string]string, opts provisionOptions) error {
+func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provisionOptions) error {
 	if opts.loggerOnly {
 		return errors.New("LKE logger-only deploy is not implemented; configure the Kubernetes log collection pipeline before enabling logger-only deploy")
 	}
 	if err := ensureLKEDeployImages(env, opts); err != nil {
+		return err
+	}
+	if err := lkeApplyRuntimeDependencies(paths, env, opts); err != nil {
 		return err
 	}
 	for _, workload := range lkeSelectedWorkloads(env, opts) {
@@ -237,9 +254,9 @@ func lkeImageBuildContext(workload lkeWorkload) (contextDir, dockerfile string, 
 	}
 	switch workload.Key {
 	case "video-cloud":
-		return generatedGoServiceDockerfile(filepath.Join(workspace, "repos", "rtk_video_cloud"), "./cmd/api", "api")
+		return generatedVideoCloudDockerfile(filepath.Join(workspace, "repos", "rtk_video_cloud"))
 	case "account-manager":
-		return generatedGoServiceDockerfile(filepath.Join(workspace, "repos", "rtk_account_manager"), "./cmd/server", "rtk-account-manager")
+		return generatedAccountManagerDockerfile(filepath.Join(workspace, "repos", "rtk_account_manager"))
 	case "cloud-admin":
 		return generatedGoServiceDockerfile(filepath.Join(workspace, "repos", "rtk_cloud_admin"), "./cmd/server", "rtk-cloud-admin")
 	case "frontend":
@@ -256,7 +273,8 @@ func generatedGoServiceDockerfile(contextDir, packagePath, binaryName string) (s
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 	dockerfile := filepath.Join(dir, "Dockerfile")
-	body := fmt.Sprintf(`FROM golang:1.24-bookworm AS builder
+	goVersion := goModMajorMinor(filepath.Join(contextDir, "go.mod"))
+	body := fmt.Sprintf(`FROM golang:%s-bookworm AS builder
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/app %s
@@ -268,12 +286,94 @@ COPY --from=builder /out/app /app/%s
 USER app
 EXPOSE 8080
 ENTRYPOINT ["/app/%s"]
-`, packagePath, binaryName, binaryName)
+`, goVersion, packagePath, binaryName, binaryName)
 	if err := os.WriteFile(dockerfile, []byte(body), 0o644); err != nil {
 		cleanup()
 		return "", "", func() {}, err
 	}
 	return contextDir, dockerfile, cleanup, nil
+}
+
+func generatedVideoCloudDockerfile(contextDir string) (string, string, func(), error) {
+	dir, err := os.MkdirTemp("", "rtk-lke-dockerfile-*")
+	if err != nil {
+		return "", "", func() {}, err
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	dockerfile := filepath.Join(dir, "Dockerfile")
+	goVersion := goModMajorMinor(filepath.Join(contextDir, "go.mod"))
+	body := fmt.Sprintf(`FROM golang:%s-bookworm AS builder
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/api ./cmd/api
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/certissuer ./cmd/certissuer
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/factoryenroll ./cmd/factoryenroll
+
+FROM debian:bookworm-slim
+WORKDIR /app
+RUN useradd -r -u 10001 app && chown app:app /app
+COPY --from=builder /out/api /app/api
+COPY --from=builder /out/certissuer /app/certissuer
+COPY --from=builder /out/factoryenroll /app/factoryenroll
+USER app
+EXPOSE 8080
+ENTRYPOINT ["/app/api"]
+`, goVersion)
+	if err := os.WriteFile(dockerfile, []byte(body), 0o644); err != nil {
+		cleanup()
+		return "", "", func() {}, err
+	}
+	return contextDir, dockerfile, cleanup, nil
+}
+
+func generatedAccountManagerDockerfile(contextDir string) (string, string, func(), error) {
+	dir, err := os.MkdirTemp("", "rtk-lke-dockerfile-*")
+	if err != nil {
+		return "", "", func() {}, err
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	dockerfile := filepath.Join(dir, "Dockerfile")
+	goVersion := goModMajorMinor(filepath.Join(contextDir, "go.mod"))
+	body := fmt.Sprintf(`FROM golang:%s-bookworm AS builder
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account-manager ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account-manager-migrate ./cmd/migrate
+
+FROM debian:bookworm-slim
+WORKDIR /app
+RUN useradd -r -u 10001 app && chown app:app /app
+COPY --from=builder /out/rtk-account-manager /app/rtk-account-manager
+COPY --from=builder /out/rtk-account-manager-migrate /app/rtk-account-manager-migrate
+COPY --from=builder /src/migrations /app/migrations
+USER app
+EXPOSE 8080
+ENTRYPOINT ["/app/rtk-account-manager"]
+`, goVersion)
+	if err := os.WriteFile(dockerfile, []byte(body), 0o644); err != nil {
+		cleanup()
+		return "", "", func() {}, err
+	}
+	return contextDir, dockerfile, cleanup, nil
+}
+
+func goModMajorMinor(path string) string {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return "1.24"
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || fields[0] != "go" {
+			continue
+		}
+		parts := strings.Split(fields[1], ".")
+		if len(parts) >= 2 {
+			return parts[0] + "." + parts[1]
+		}
+		return fields[1]
+	}
+	return "1.24"
 }
 
 func lkeProvisionE2E(env map[string]string, opts provisionOptions) error {
@@ -402,7 +502,1050 @@ func lkeSelectedWorkloads(env map[string]string, opts provisionOptions) []lkeWor
 	return selected
 }
 
+func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, opts provisionOptions) error {
+	if err := kubectlApply(lkePostgresSecretManifest(env)); err != nil {
+		return err
+	}
+	if err := kubectlApply(lkePostgresInitManifest(env)); err != nil {
+		return err
+	}
+	if err := kubectlApply(lkePostgresServiceManifest(env)); err != nil {
+		return err
+	}
+	if err := kubectlApply(lkePostgresStatefulSetManifest(env)); err != nil {
+		return err
+	}
+	if err := runKubectl("-n", lkeNamespaceName(env, "platform"), "rollout", "status", "statefulset/postgresql", "--timeout", firstNonEmpty(os.Getenv("LKE_POSTGRES_ROLLOUT_TIMEOUT"), "5m")); err != nil {
+		return err
+	}
+	var material lkeCertIssuerMaterial
+	materialReady := false
+	if lkeWorkloadSelected(env, opts, "video-cloud") {
+		var err error
+		material, err = newLKECertIssuerMaterial(env)
+		if err != nil {
+			return err
+		}
+		materialReady = true
+		if err := writeLKEVideoCloudRuntimeEnv(paths, env); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeVideoCloudRuntimeSecretManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeCertIssuerRuntimeSecretManifest(env, material)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeCertIssuerServiceManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeCertIssuerDeploymentManifest(env)); err != nil {
+			return err
+		}
+		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/certissuer", "--timeout", firstNonEmpty(os.Getenv("LKE_CERTISSUER_ROLLOUT_TIMEOUT"), "5m")); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeFactoryEnrollRuntimeSecretManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeFactoryEnrollCertIssuerClientSecretManifest(env, material)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeFactoryEnrollServiceManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeFactoryEnrollDeploymentManifest(env)); err != nil {
+			return err
+		}
+		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/factoryenroll", "--timeout", firstNonEmpty(os.Getenv("LKE_FACTORYENROLL_ROLLOUT_TIMEOUT"), "5m")); err != nil {
+			return err
+		}
+		mqttMaterial, err := newLKEMQTTMaterial()
+		if err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeMQTTRuntimeSecretManifest(env, mqttMaterial)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeMQTTConfigManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeMQTTServiceManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeMQTTDeploymentManifest(env)); err != nil {
+			return err
+		}
+		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/mqtt", "--timeout", firstNonEmpty(os.Getenv("LKE_MQTT_ROLLOUT_TIMEOUT"), "5m")); err != nil {
+			return err
+		}
+	}
+	if !lkeWorkloadSelected(env, opts, "account-manager") {
+		return nil
+	}
+	if !materialReady {
+		var err error
+		material, err = newLKECertIssuerMaterial(env)
+		if err != nil {
+			return err
+		}
+	}
+	if err := kubectlApply(lkeAccountManagerCertIssuerClientSecretManifest(env, material)); err != nil {
+		return err
+	}
+	if err := writeLKEAccountManagerRuntimeEnv(paths, env); err != nil {
+		return err
+	}
+	if err := writeLKEPlatformAdminEnv(paths, env); err != nil {
+		return err
+	}
+	if err := kubectlApply(lkeAccountManagerSecretManifest(env)); err != nil {
+		return err
+	}
+	_ = runKubectl("-n", lkeNamespaceName(env, "account-manager"), "delete", "job", "account-manager-migrate", "--ignore-not-found")
+	if err := kubectlApply(lkeAccountManagerMigrationJobManifest(env)); err != nil {
+		return err
+	}
+	return runKubectl("-n", lkeNamespaceName(env, "account-manager"), "wait", "--for=condition=complete", "job/account-manager-migrate", "--timeout", firstNonEmpty(os.Getenv("LKE_MIGRATION_JOB_TIMEOUT"), "5m"))
+}
+
+func writeLKECompatibilityArtifacts(paths provisionPaths, env map[string]string) error {
+	if err := os.MkdirAll(filepath.Join(paths.EnvRoot, "env"), 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Join(paths.EnvRoot, "state"), 0o755); err != nil {
+		return err
+	}
+	stackBody := renderStackEnv(map[string]string{
+		"CLOUD_ENV_NAME":        firstNonEmpty(env["CLOUD_ENV_NAME"], "staging"),
+		"CLOUD_PROVIDER":        "lke",
+		"CLOUD_REGION":          firstNonEmpty(env["CLOUD_REGION"], "us-sea"),
+		"CLOUD_DNS_ROOT_DOMAIN": firstNonEmpty(env["CLOUD_DNS_ROOT_DOMAIN"], "realtekconnect.com"),
+	}, env)
+	if err := os.WriteFile(filepath.Join(paths.EnvRoot, "env", "stack.env"), []byte(stackBody), 0o644); err != nil {
+		return err
+	}
+	stateBody, err := json.MarshalIndent(lkeCompatibilityVideoState(env), "", "  ")
+	if err != nil {
+		return err
+	}
+	stateBody = append(stateBody, '\n')
+	for _, path := range uniqueNonEmpty(
+		filepath.Join(paths.EnvRoot, "state", "video-cloud.state.json"),
+		filepath.Join(paths.EnvRoot, "state", firstNonEmpty(env["CLOUD_STACK_NAME"], "video-cloud-staging")+".state.json"),
+	) {
+		if err := os.WriteFile(path, stateBody, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func lkeCompatibilityVideoState(env map[string]string) map[string]any {
+	stack := firstNonEmpty(env["CLOUD_STACK_NAME"], "video-cloud-staging")
+	videoNS := lkeNamespaceName(env, "video-cloud")
+	accountNS := lkeNamespaceName(env, "account-manager")
+	adminNS := lkeNamespaceName(env, "admin")
+	frontendNS := lkeNamespaceName(env, "frontend")
+	platformNS := lkeNamespaceName(env, "platform")
+	serviceHost := func(service, namespace string) string {
+		return service + "." + namespace + ".svc.cluster.local"
+	}
+	return map[string]any{
+		"provider": "lke",
+		"stack":    stack,
+		"region":   env["CLOUD_REGION"],
+		"instances": map[string]any{
+			"edge": map[string]any{
+				"public_ipv4": env["VIDEO_CLOUD_DOMAIN"],
+				"role":        "ingress",
+			},
+			"api": map[string]any{
+				"private_ip": serviceHost("video-cloud-api", videoNS),
+				"role":       "deployment/video-cloud-api",
+			},
+			"infra": map[string]any{
+				"private_ip": serviceHost("postgresql", platformNS),
+				"role":       "statefulset/postgresql",
+			},
+			"mqtt": map[string]any{
+				"private_ip": serviceHost("mqtt", videoNS),
+				"role":       "deployment/mqtt",
+			},
+			"coturn": map[string]any{
+				"private_ip": "TODO: LKE TURN LoadBalancer/NodeBalancer endpoint not provisioned yet",
+				"role":       "TODO: coturn",
+			},
+			"account-manager": map[string]any{
+				"private_ip": serviceHost("account-manager", accountNS),
+				"role":       "deployment/account-manager",
+			},
+			"cloud-admin": map[string]any{
+				"private_ip": serviceHost("cloud-admin", adminNS),
+				"role":       "deployment/cloud-admin",
+			},
+			"frontend": map[string]any{
+				"private_ip": serviceHost("frontend", frontendNS),
+				"role":       "deployment/frontend",
+			},
+		},
+	}
+}
+
+func lkeWorkloadSelected(env map[string]string, opts provisionOptions, key string) bool {
+	for _, workload := range lkeSelectedWorkloads(env, opts) {
+		if workload.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+func lkePostgresSecretManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: postgresql-runtime
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: %q
+`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"))
+}
+
+func lkePostgresInitManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgresql-initdb
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+data:
+  001-create-databases.sql: |
+    CREATE DATABASE rtk_account_manager;
+    CREATE DATABASE video_cloud;
+`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"])
+}
+
+func lkePostgresServiceManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: postgresql
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"])
+}
+
+func lkePostgresStatefulSetManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgresql
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  serviceName: postgresql
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgresql
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-runtime
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: initdb
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: initdb
+          configMap:
+            name: postgresql-initdb
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: %s
+`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_POSTGRES_STORAGE"), "10Gi"))
+}
+
+type lkeCertIssuerMaterial struct {
+	ServerCert   string
+	ServerKey    string
+	ServiceCA    string
+	ClientCert   string
+	ClientKey    string
+	FactoryCert  string
+	FactoryKey   string
+	DeviceCACert string
+	DeviceCAKey  string
+	AppCACert    string
+	AppCAKey     string
+}
+
+type lkeMQTTMaterial struct {
+	ServerCert string
+	ServerKey  string
+}
+
+func newLKEMQTTMaterial() (lkeMQTTMaterial, error) {
+	caCert, caKey, _, _, err := newLKECertificateAuthority("rtk-lke-mqtt-ca")
+	if err != nil {
+		return lkeMQTTMaterial{}, err
+	}
+	serverCert, serverKey, err := newLKESignedCertificate(caCert, caKey, "mqtt", []string{"mqtt"}, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+	if err != nil {
+		return lkeMQTTMaterial{}, err
+	}
+	return lkeMQTTMaterial{ServerCert: serverCert, ServerKey: serverKey}, nil
+}
+
+func newLKECertIssuerMaterial(env map[string]string) (lkeCertIssuerMaterial, error) {
+	serviceCACert, serviceCAKey, serviceCACertPEM, _, err := newLKECertificateAuthority("rtk-lke-certissuer-service-ca")
+	if err != nil {
+		return lkeCertIssuerMaterial{}, err
+	}
+	deviceCACert, deviceCAKey, deviceCACertPEM, deviceCAKeyPEM, err := newLKECertificateAuthority("rtk-lke-device-ca")
+	if err != nil {
+		return lkeCertIssuerMaterial{}, err
+	}
+	appCACert, appCAKey, appCACertPEM, appCAKeyPEM, err := newLKECertificateAuthority("rtk-lke-app-ca")
+	if err != nil {
+		return lkeCertIssuerMaterial{}, err
+	}
+	serverDNS := lkeCertIssuerDNSNames(env)
+	serverCertPEM, serverKeyPEM, err := newLKESignedCertificate(serviceCACert, serviceCAKey, "certissuer", serverDNS, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+	if err != nil {
+		return lkeCertIssuerMaterial{}, err
+	}
+	clientCertPEM, clientKeyPEM, err := newLKESignedCertificate(serviceCACert, serviceCAKey, "account-manager", nil, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+	if err != nil {
+		return lkeCertIssuerMaterial{}, err
+	}
+	factoryCertPEM, factoryKeyPEM, err := newLKESignedCertificate(serviceCACert, serviceCAKey, "factoryenroll", nil, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+	if err != nil {
+		return lkeCertIssuerMaterial{}, err
+	}
+	_ = deviceCACert
+	_ = deviceCAKey
+	_ = appCACert
+	_ = appCAKey
+	return lkeCertIssuerMaterial{
+		ServerCert:   serverCertPEM,
+		ServerKey:    serverKeyPEM,
+		ServiceCA:    serviceCACertPEM,
+		ClientCert:   clientCertPEM,
+		ClientKey:    clientKeyPEM,
+		FactoryCert:  factoryCertPEM,
+		FactoryKey:   factoryKeyPEM,
+		DeviceCACert: deviceCACertPEM,
+		DeviceCAKey:  deviceCAKeyPEM,
+		AppCACert:    appCACertPEM,
+		AppCAKey:     appCAKeyPEM,
+	}, nil
+}
+
+func newLKECertificateAuthority(commonName string) (*x509.Certificate, *ecdsa.PrivateKey, string, string, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, "", "", err
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return nil, nil, "", "", err
+	}
+	now := time.Now().UTC()
+	template := &x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: commonName},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.AddDate(10, 0, 0),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		return nil, nil, "", "", err
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return nil, nil, "", "", err
+	}
+	return template, key,
+		string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
+		string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})),
+		nil
+}
+
+func newLKESignedCertificate(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, commonName string, dnsNames []string, ipAddresses []net.IP, usages []x509.ExtKeyUsage) (string, string, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return "", "", err
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return "", "", err
+	}
+	now := time.Now().UTC()
+	template := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: commonName},
+		NotBefore:    now.Add(-time.Hour),
+		NotAfter:     now.AddDate(2, 0, 0),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  usages,
+		DNSNames:     dnsNames,
+		IPAddresses:  ipAddresses,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, caCert, &key.PublicKey, caKey)
+	if err != nil {
+		return "", "", err
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return "", "", err
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
+		string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})),
+		nil
+}
+
+func lkeCertIssuerDNSNames(env map[string]string) []string {
+	namespace := lkeNamespaceName(env, "video-cloud")
+	return []string{
+		"certissuer",
+		"certissuer." + namespace,
+		"certissuer." + namespace + ".svc",
+		"certissuer." + namespace + ".svc.cluster.local",
+	}
+}
+
+func lkeCertIssuerRuntimeSecretManifest(env map[string]string, material lkeCertIssuerMaterial) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: certissuer-runtime
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: certissuer
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: %q
+  tls.crt: %q
+  tls.key: %q
+  client-ca.crt: %q
+  device-ca.crt: %q
+  device-ca.key: %q
+  app-ca.crt: %q
+  app-ca.key: %q
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), material.ServerCert, material.ServerKey, material.ServiceCA, material.DeviceCACert, material.DeviceCAKey, material.AppCACert, material.AppCAKey)
+}
+
+func lkeAccountManagerCertIssuerClientSecretManifest(env map[string]string, material lkeCertIssuerMaterial) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: account-manager-certissuer-client
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: account-manager
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+type: Opaque
+stringData:
+  client.crt: %q
+  client.key: %q
+  ca.crt: %q
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], material.ClientCert, material.ClientKey, material.ServiceCA)
+}
+
+func lkeFactoryEnrollRuntimeSecretManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: factoryenroll-runtime
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: factoryenroll
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+type: Opaque
+stringData:
+  FACTORY_ENROLL_AUTH_KEY: %q
+  POSTGRES_PASSWORD: %q
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeFactoryEnrollAuthKey(env), lkeRuntimeSecretValue("postgres"))
+}
+
+func lkeVideoCloudRuntimeSecretManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: video-cloud-runtime
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-api
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: %q
+  VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN: %q
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeInternalAuthToken())
+}
+
+func lkeMQTTRuntimeSecretManifest(env map[string]string, material lkeMQTTMaterial) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: mqtt-runtime
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: mqtt
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+type: Opaque
+stringData:
+  tls.crt: %q
+  tls.key: %q
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], material.ServerCert, material.ServerKey)
+}
+
+func lkeMQTTConfigManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mqtt-config
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: mqtt
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+data:
+  mosquitto.conf: |
+    listener 8883 0.0.0.0
+    allow_anonymous true
+    persistence false
+    log_dest stdout
+    certfile /mosquitto/certs/tls.crt
+    keyfile /mosquitto/certs/tls.key
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
+}
+
+func lkeMQTTDeploymentManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mqtt
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: mqtt
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mqtt
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mqtt
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+    spec:
+      containers:
+        - name: mqtt
+          image: %s
+          imagePullPolicy: IfNotPresent
+          args: ["mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
+          ports:
+            - name: mqtts
+              containerPort: 8883
+          volumeMounts:
+            - name: mqtt-config
+              mountPath: /mosquitto/config
+              readOnly: true
+            - name: mqtt-runtime
+              mountPath: /mosquitto/certs
+              readOnly: true
+      volumes:
+        - name: mqtt-config
+          configMap:
+            name: mqtt-config
+        - name: mqtt-runtime
+          secret:
+            secretName: mqtt-runtime
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_MQTT_IMAGE"), "eclipse-mosquitto:2"))
+}
+
+func lkeMQTTServiceManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Service
+metadata:
+  name: mqtt
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: mqtt
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: mqtt
+  ports:
+    - name: mqtts
+      port: 8883
+      targetPort: 8883
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
+}
+
+func lkeFactoryEnrollCertIssuerClientSecretManifest(env map[string]string, material lkeCertIssuerMaterial) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: factoryenroll-certissuer-client
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: factoryenroll
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+type: Opaque
+stringData:
+  client.crt: %q
+  client.key: %q
+  ca.crt: %q
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], material.FactoryCert, material.FactoryKey, material.ServiceCA)
+}
+
+func lkeCertIssuerDeploymentManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: certissuer
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: certissuer
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: certissuer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: certissuer
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+    spec:
+      containers:
+        - name: certissuer
+          image: %s
+          imagePullPolicy: IfNotPresent
+          command: ["/app/certissuer"]
+          ports:
+            - name: https
+              containerPort: 9443
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: certissuer-runtime
+                  key: POSTGRES_PASSWORD
+            - name: CERT_ISSUER_LISTEN_ADDR
+              value: ":9443"
+            - name: CERT_ISSUER_SERVER_CERT
+              value: /etc/video-cloud/certissuer/tls.crt
+            - name: CERT_ISSUER_SERVER_KEY
+              value: /etc/video-cloud/certissuer/tls.key
+            - name: CERT_ISSUER_CLIENT_CA
+              value: /etc/video-cloud/certissuer/client-ca.crt
+            - name: CERT_ISSUER_CA_CERT_PATH
+              value: /etc/video-cloud/certissuer/device-ca.crt
+            - name: CERT_ISSUER_CA_KEY_PATH
+              value: /etc/video-cloud/certissuer/device-ca.key
+            - name: CERT_ISSUER_APP_CA_CERT_PATH
+              value: /etc/video-cloud/certissuer/app-ca.crt
+            - name: CERT_ISSUER_APP_CA_KEY_PATH
+              value: /etc/video-cloud/certissuer/app-ca.key
+            - name: CERT_ISSUER_DB_DSN
+              value: "postgres://postgres:$(POSTGRES_PASSWORD)@postgresql.%s.svc.cluster.local:5432/video_cloud?sslmode=disable"
+          volumeMounts:
+            - name: certissuer-runtime
+              mountPath: /etc/video-cloud/certissuer
+              readOnly: true
+      volumes:
+        - name: certissuer-runtime
+          secret:
+            secretName: certissuer-runtime
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeVideoCloudImage(env), lkeNamespaceName(env, "platform"))
+}
+
+func lkeFactoryEnrollDeploymentManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: factoryenroll
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: factoryenroll
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: factoryenroll
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: factoryenroll
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+    spec:
+      containers:
+        - name: factoryenroll
+          image: %s
+          imagePullPolicy: IfNotPresent
+          command: ["/app/factoryenroll"]
+          ports:
+            - name: http
+              containerPort: 18443
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: factoryenroll-runtime
+                  key: POSTGRES_PASSWORD
+            - name: FACTORY_ENROLL_AUTH_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: factoryenroll-runtime
+                  key: FACTORY_ENROLL_AUTH_KEY
+            - name: FACTORY_ENROLL_ADDR
+              value: ":18443"
+            - name: FACTORY_ENROLL_CERT_ISSUER_URL
+              value: %q
+            - name: FACTORY_ENROLL_CERT_ISSUER_CLIENT_CERT
+              value: /etc/video-cloud/factoryenroll/client.crt
+            - name: FACTORY_ENROLL_CERT_ISSUER_CLIENT_KEY
+              value: /etc/video-cloud/factoryenroll/client.key
+            - name: FACTORY_ENROLL_CERT_ISSUER_CA
+              value: /etc/video-cloud/factoryenroll/ca.crt
+            - name: VIDEO_CLOUD_DB_DSN
+              value: "postgres://postgres:$(POSTGRES_PASSWORD)@postgresql.%s.svc.cluster.local:5432/video_cloud?sslmode=disable"
+          volumeMounts:
+            - name: factoryenroll-certissuer-client
+              mountPath: /etc/video-cloud/factoryenroll
+              readOnly: true
+      volumes:
+        - name: factoryenroll-certissuer-client
+          secret:
+            secretName: factoryenroll-certissuer-client
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeVideoCloudImage(env), lkeCertIssuerBaseURL(env), lkeNamespaceName(env, "platform"))
+}
+
+func lkeCertIssuerServiceManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Service
+metadata:
+  name: certissuer
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: certissuer
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: certissuer
+  ports:
+    - name: https
+      port: 9443
+      targetPort: 9443
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
+}
+
+func lkeFactoryEnrollServiceManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Service
+metadata:
+  name: factoryenroll
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: factoryenroll
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: factoryenroll
+  ports:
+    - name: http
+      port: 80
+      targetPort: 18443
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
+}
+
+func lkeVideoCloudImage(env map[string]string) string {
+	for _, workload := range lkeWorkloads(env) {
+		if workload.Key == "video-cloud" {
+			return workload.Image
+		}
+	}
+	return ""
+}
+
+func lkeCertIssuerBaseURL(env map[string]string) string {
+	return "https://certissuer." + lkeNamespaceName(env, "video-cloud") + ".svc.cluster.local:9443"
+}
+
+func lkeFactoryEnrollAuthKey(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("FACTORY_ENROLL_AUTH_KEY"), lkeRuntimeSecretValue("factory-enroll-auth"))
+}
+
+func lkeInternalAuthToken() string {
+	return lkeRuntimeSecretValue("internal-auth")
+}
+
+func lkeAccountManagerSecretManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: account-manager-runtime
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: account-manager
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+type: Opaque
+stringData:
+  DATABASE_URL: %q
+  JWT_ACCESS_SECRET: %q
+  JWT_REFRESH_SECRET: %q
+  ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN: %q
+  ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL: %q
+  ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD: %q
+  ACCOUNT_MANAGER_ENV: "staging"
+  ACCOUNT_MANAGER_LOG_LEVEL: %q
+  AUTH_TOKEN_DELIVERY: "log"
+  CROSS_SERVICE_BROKER: "log"
+  APP_CERT_ISSUER_BASE_URL: %q
+  APP_CERT_ISSUER_CLIENT_CERT: "/etc/rtk-account-manager/certissuer/client.crt"
+  APP_CERT_ISSUER_CLIENT_KEY: "/etc/rtk-account-manager/certissuer/client.key"
+  APP_CERT_ISSUER_CA_FILE: "/etc/rtk-account-manager/certissuer/ca.crt"
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), lkeCertIssuerBaseURL(env))
+}
+
+func lkeAccountManagerMigrationJobManifest(env map[string]string) string {
+	image := ""
+	for _, workload := range lkeWorkloads(env) {
+		if workload.Key == "account-manager" {
+			image = workload.Image
+			break
+		}
+	}
+	return fmt.Sprintf(`apiVersion: batch/v1
+kind: Job
+metadata:
+  name: account-manager-migrate
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: account-manager-migrate
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: account-manager-migrate
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: %s
+          imagePullPolicy: IfNotPresent
+          command: ["/app/rtk-account-manager-migrate"]
+          envFrom:
+            - secretRef:
+                name: account-manager-runtime
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], image)
+}
+
+func lkeAccountManagerDatabaseURL(env map[string]string) string {
+	return fmt.Sprintf("postgres://postgres:%s@postgresql.%s.svc.cluster.local:5432/rtk_account_manager?sslmode=disable", lkeRuntimeSecretValue("postgres"), lkeNamespaceName(env, "platform"))
+}
+
+func writeLKEPlatformAdminEnv(paths provisionPaths, env map[string]string) error {
+	path := filepath.Join(paths.EnvRoot, "services", "account-manager", "account-manager-platform-admin.env")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	body := fmt.Sprintf("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL=%s\nACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD=%s\n", lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"))
+	return os.WriteFile(path, []byte(body), 0o600)
+}
+
+func writeLKEAccountManagerRuntimeEnv(paths provisionPaths, env map[string]string) error {
+	path := filepath.Join(paths.EnvRoot, "services", "account-manager", "account-manager.env")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	body := fmt.Sprintf("ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN=%s\n", lkeInternalAuthToken())
+	return os.WriteFile(path, []byte(body), 0o600)
+}
+
+func writeLKEVideoCloudRuntimeEnv(paths provisionPaths, env map[string]string) error {
+	path := filepath.Join(paths.EnvRoot, "services", "video-cloud", "video-cloud.env")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	body := fmt.Sprintf("FACTORY_ENROLL_AUTH_KEY=%s\nVIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN=%s\n", lkeFactoryEnrollAuthKey(env), lkeInternalAuthToken())
+	return os.WriteFile(path, []byte(body), 0o600)
+}
+
+func lkePlatformAdminEmail(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL"), "platform-admin@"+lkeName(firstNonEmpty(env["CLOUD_STACK_NAME"], "video-cloud-staging"))+".local")
+}
+
+func lkeRuntimeSecretValue(name string) string {
+	if value := os.Getenv("LKE_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))); value != "" {
+		return value
+	}
+	if seed := os.Getenv("LKE_RUNTIME_SECRET_SEED"); seed != "" {
+		return seed + "-" + name
+	}
+	if value := lkeRuntimeSecretCache[name]; value != "" {
+		return value
+	}
+	value := randomSecret()
+	lkeRuntimeSecretCache[name] = value
+	return value
+}
+
+func randomSecret() string {
+	var buf [24]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	return base64.RawURLEncoding.EncodeToString(buf[:])
+}
+
 func lkeDeploymentManifest(env map[string]string, workload lkeWorkload) string {
+	envFrom := ""
+	extraEnv := ""
+	volumeMounts := ""
+	volumes := ""
+	if workload.Key == "account-manager" {
+		envFrom = `          envFrom:
+            - secretRef:
+                name: account-manager-runtime
+`
+		volumeMounts = `          volumeMounts:
+            - name: account-manager-certissuer-client
+              mountPath: /etc/rtk-account-manager/certissuer
+              readOnly: true
+`
+		volumes = `      volumes:
+        - name: account-manager-certissuer-client
+          secret:
+            secretName: account-manager-certissuer-client
+`
+	}
+	if workload.Key == "video-cloud" {
+		extraEnv = fmt.Sprintf(`            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-runtime
+                  key: POSTGRES_PASSWORD
+            - name: VIDEO_CLOUD_API_ADDR
+              value: ":8080"
+            - name: VIDEO_CLOUD_DB_DSN
+              value: "postgres://postgres:$(POSTGRES_PASSWORD)@postgresql.%s.svc.cluster.local:5432/video_cloud?sslmode=disable"
+            - name: VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-runtime
+                  key: VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN
+            - name: VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_URL
+              value: %q
+            - name: VIDEO_CLOUD_AUTH_TRUSTED_CLIENT_CERT_HEADERS
+              value: "true"
+`, lkeNamespaceName(env, "platform"), lkeAccountManagerInternalURL(env))
+	}
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -440,7 +1583,11 @@ spec:
               value: %q
             - name: SERVICE_PUBLIC_HOST
               value: %q
-`, workload.Name, workload.Namespace, workload.Name, env["CLOUD_STACK_NAME"], workload.Name, workload.Name, env["CLOUD_STACK_NAME"], workload.Image, workload.Port, env["CLOUD_STACK_NAME"], workload.Host)
+%s%s%s%s`, workload.Name, workload.Namespace, workload.Name, env["CLOUD_STACK_NAME"], workload.Name, workload.Name, env["CLOUD_STACK_NAME"], workload.Image, workload.Port, env["CLOUD_STACK_NAME"], workload.Host, extraEnv, envFrom, volumeMounts, volumes)
+}
+
+func lkeAccountManagerInternalURL(env map[string]string) string {
+	return "http://account-manager." + lkeNamespaceName(env, "account-manager") + ".svc.cluster.local:80"
 }
 
 func lkeServiceManifest(env map[string]string, workload lkeWorkload) string {
@@ -676,9 +1823,23 @@ func writeLKEState(paths provisionPaths, cluster lkeCluster) error {
 }
 
 func fetchLKEKubeconfig(token, clusterID string) ([]byte, error) {
-	out, err := linodeRequestRaw(token, "GET", "/lke/clusters/"+clusterID+"/kubeconfig", "")
-	if err != nil {
-		return nil, err
+	path := "/lke/clusters/" + clusterID + "/kubeconfig"
+	var out []byte
+	var err error
+	attempts := envIntDefault("LKE_KUBECONFIG_RETRY_ATTEMPTS", 30)
+	delay := envDurationDefault("LKE_KUBECONFIG_RETRY_DELAY", 10*time.Second)
+	for attempt := 1; attempt <= attempts; attempt++ {
+		out, err = linodeRequestRaw(token, "GET", path, "")
+		if err == nil {
+			break
+		}
+		if attempt == attempts || !isTransientLKEKubeconfigError(err) {
+			return nil, err
+		}
+		fmt.Fprintf(os.Stderr, "[lke] kubeconfig not available yet, retrying attempt %d/%d\n", attempt+1, attempts)
+		if delay > 0 {
+			time.Sleep(delay)
+		}
 	}
 	var parsed struct {
 		Kubeconfig string `json:"kubeconfig"`
@@ -696,14 +1857,28 @@ func fetchLKEKubeconfig(token, clusterID string) ([]byte, error) {
 	return decoded, nil
 }
 
+func isTransientLKEKubeconfigError(err error) bool {
+	message := err.Error()
+	return strings.Contains(message, "503") || strings.Contains(message, "not yet available")
+}
+
 func linodeRequestRaw(token, method, path, data string) ([]byte, error) {
 	args := []string{"-fsS", "-X", method, "https://api.linode.com/v4" + path, "-H", "Authorization: Bearer " + token, "-H", "Content-Type: application/json"}
 	if data != "" {
 		args = append(args, "-d", data)
 	}
 	cmd := exec.Command("curl", args...)
-	cmd.Stderr = os.Stderr
-	return cmd.Output()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		errText := strings.TrimSpace(stderr.String())
+		if errText != "" {
+			return nil, fmt.Errorf("Linode API %s %s failed: %w: %s", method, path, err, errText)
+		}
+		return nil, fmt.Errorf("Linode API %s %s failed: %w", method, path, err)
+	}
+	return out, nil
 }
 
 func lkeName(value string) string {
@@ -727,6 +1902,15 @@ func lkeName(value string) string {
 func envIntDefault(key string, fallback int) int {
 	if value := os.Getenv(key); value != "" {
 		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return fallback
+}
+
+func envDurationDefault(key string, fallback time.Duration) time.Duration {
+	if value := os.Getenv(key); value != "" {
+		if parsed, err := time.ParseDuration(value); err == nil && parsed >= 0 {
 			return parsed
 		}
 	}
