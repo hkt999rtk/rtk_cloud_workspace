@@ -820,7 +820,7 @@ async function slideCostView(p, payload) {
   addText(slide, "Robust is not a blanket 2x; it adds redundancy to HSM, RDS, cache, NAT, and selected workers.", { x: 682, y: 575, w: 465, h: 18 }, { size: 10, color: C.navy, bold: true, align: "center", fill: C.paleBlue });
 
   addShape(slide, { x: 70, y: 618, w: 495, h: 48, fill: C.white, line: C.line });
-  addText(slide, "Top drivers: AWS IoT Core, CloudHSM, ECS Fargate, RDS PostgreSQL, Cognito.", { x: 92, y: 628, w: 450, h: 16 }, { size: 9.5, color: C.black, face: FONT_EN });
+  addText(slide, "Top drivers: AWS IoT Core, CloudHSM, ECS Fargate, RDS PostgreSQL, NAT Gateway.", { x: 92, y: 628, w: 450, h: 16 }, { size: 9.5, color: C.black, face: FONT_EN });
   addText(slide, `Source: docs/cost/aws-pricing-sources.md, collected ${aws.collected || "n/a"}`, { x: 92, y: 646, w: 450, h: 14 }, { size: 8.5, color: C.muted, face: FONT_EN });
 
   addShape(slide, { x: 585, y: 618, w: 595, h: 48, fill: C.white, line: C.line });
@@ -844,13 +844,13 @@ async function slideLinodeScaleEstimate(p, payload) {
   const perUnit = estimate.perUnit || {};
   const config = estimate.configuration || [];
 
-  addText(slide, "This is a planning profile for 25,000 users and 100,000 usually-online MQTT devices on Linode/Akamai Cloud. It is not the current Linode bill and still needs load-test evidence before sizing is final.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.5, color: C.navy, bold: true, align: "center", fill: C.pale });
+  addText(slide, "This is a planning profile for 10,000 users and 100,000 usually-online MQTT devices on Linode/Akamai Cloud. It is not the current Linode bill and still needs load-test evidence before sizing is final.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.5, color: C.navy, bold: true, align: "center", fill: C.pale });
 
   const summary = [
-    ["Sizing", "25,000 users / 100,000 devices"],
+    ["Sizing", "10,000 users / 100,000 devices"],
     ["Self-managed cluster", scenarios.selfManaged || "4,720.00 USD"],
     ["With Managed Service", scenarios.withManagedService || "6,220.00 USD"],
-    ["Default unit view", perUnit.selfManagedUserWithFourDevices || "0.19 USD/month"],
+    ["Default unit view", perUnit.selfManagedUserWithTenDevices || perUnit.selfManagedUserWithFourDevices || "0.47 USD/month"],
   ];
   summary.forEach((item, i) => {
     const x = 70 + i * 292;
@@ -871,7 +871,7 @@ async function slideLinodeScaleEstimate(p, payload) {
 
   addShape(slide, { x: 860, y: 320, w: 360, h: 118, fill: C.paleTeal, line: C.line });
   addText(slide, "Per-unit view", { x: 884, y: 340, w: 312, h: 20 }, { size: 16, color: C.navy, bold: true, align: "center", face: FONT_EN });
-  addText(slide, `${perUnit.selfManagedPerUser || "0.19 USD/user-month"}\n${perUnit.selfManagedPerDevice || "0.05 USD/device-month"}\n${perUnit.selfManagedUserWithFourDevices || "0.19 USD/month"} for 1 user + 4 devices`, { x: 892, y: 370, w: 296, h: 48 }, { size: 12, color: C.black, bold: true, align: "center", face: FONT_EN });
+  addText(slide, `${perUnit.selfManagedPerUser || "0.47 USD/user-month"}\n${perUnit.selfManagedPerDevice || "0.05 USD/device-month"}\n${perUnit.selfManagedUserWithTenDevices || perUnit.selfManagedUserWithFourDevices || "0.47 USD/month"} for 1 user + 10 devices`, { x: 892, y: 370, w: 296, h: 48 }, { size: 12, color: C.black, bold: true, align: "center", face: FONT_EN });
 
   addShape(slide, { x: 860, y: 466, w: 360, h: 118, fill: C.paleAmber, line: "#E3C25A" });
   addText(slide, "Interpretation", { x: 884, y: 486, w: 312, h: 20 }, { size: 16, color: C.navy, bold: true, align: "center", face: FONT_EN });
@@ -894,9 +894,9 @@ async function slideAwsUnitCost(p, payload) {
   addText(slide, "This page converts the AWS monthly estimate into unit economics. Use raw division for budget sizing; use weighted allocation when explaining the device-heavy business model.", { x: 85, y: 154, w: 1110, h: 42 }, { size: 15, color: C.navy, bold: true, align: "center", fill: C.pale });
 
   const basisItems = [
-    ["End users", basis.endUsers || "25,000"],
+    ["End users", basis.endUsers || "10,000"],
     ["Registered devices", basis.registeredDevices || "100,000"],
-    ["Devices / user", basis.devicesPerUser || "4"],
+    ["Devices / user", basis.devicesPerUser || "10"],
     ["Allocation", `${basis.weightedUserPool || "10%"} user / ${basis.weightedDevicePool || "90%"} device`],
   ];
   basisItems.forEach((item, i) => {
@@ -920,10 +920,10 @@ async function slideAwsUnitCost(p, payload) {
     row.scenario.replace("Default estimate with one CloudHSM", "Default + 1 CloudHSM").replace("Robust redundant design with two CloudHSMs", "Robust + 2 CloudHSMs").replace("Base services only, excluding CloudHSM", "Base services only"),
     row.perUserMonth,
     row.perDeviceMonth,
-    row.effectiveUserWithFourDevices,
+    row.effectiveUserWithTenDevices || row.effectiveUserWithFourDevices,
   ]);
   addText(slide, "Weighted unit cost: 10% user pool / 90% device pool", { x: 70, y: 530, w: 650, h: 22 }, { size: 16, color: C.navy, bold: true, face: FONT_EN });
-  addTable(slide, ["Scenario", "Per user / month", "Per device / month", "1 user + 4 devices"], weightedRows, { x: 70, y: 565, w: 700, h: 104 }, [1.7, 1.0, 1.0, 1.0], { rowH: 24, headerH: 24, fontSize: 8.2 });
+  addTable(slide, ["Scenario", "Per user / month", "Per device / month", "1 user + 10 devices"], weightedRows, { x: 70, y: 565, w: 700, h: 104 }, [1.7, 1.0, 1.0, 1.0], { rowH: 24, headerH: 24, fontSize: 8.2 });
 
   addShape(slide, { x: 810, y: 536, w: 380, h: 118, fill: C.paleTeal, line: C.line });
   addText(slide, "How to present it", { x: 832, y: 555, w: 336, h: 24 }, { size: 17, color: C.navy, bold: true, align: "center", face: FONT_EN });
@@ -943,7 +943,7 @@ async function slideAwsCostCalculationBase(p, payload) {
 
   const assumptions = [
     ["Region", aws.region || "ap-southeast-1"],
-    ["Users / devices", "25,000 users / 100,000 devices"],
+    ["Users / devices", "10,000 users / 100,000 devices"],
     ["Runtime month", "730 hours"],
     ["Currency", aws.currency || "USD"],
   ];
@@ -956,7 +956,7 @@ async function slideAwsCostCalculationBase(p, payload) {
 
   const baseRows = [
     ["ECS Fargate app services", findLine("ECS Fargate application services").monthlyEstimate || "539.79", "vCPU-hours * 0.05056 + GB-hours * 0.00553; includes account, video, admin, bridges, workers."],
-    ["Amazon Cognito User Pools", findLine("Amazon Cognito User Pools").monthlyEstimate || "225.00", "25,000 direct/social MAUs: max(0, 25,000 - 10,000) * 0.015."],
+    ["Amazon Cognito User Pools", findLine("Amazon Cognito User Pools").monthlyEstimate || "0.00", "10,000 direct/social MAUs: max(0, 10,000 - 10,000) * 0.015."],
     ["RDS PostgreSQL", findLine("RDS PostgreSQL").monthlyEstimate || "493.19", "One shared db.t4g.large: 730 DB-hours * 0.203 + 2,500 GB storage * 0.138."],
     ["AWS IoT Core", findLine("AWS IoT Core").monthlyEstimate || "1,649.52", "100,000 connected devices: connection minutes + MQTT messages + shadow ops."],
     ["NAT Gateway", findLine("NAT Gateway").monthlyEstimate || "161.07", "730 gateway-hours * 0.059 + 2,000 GB processed * 0.059."],
@@ -966,7 +966,7 @@ async function slideAwsCostCalculationBase(p, payload) {
     ["Secrets Manager", findLine("Secrets Manager").monthlyEstimate || "20.50", "50 secrets * 0.40 + 100,000 API calls * 0.000005."],
     ["S3 storage / PUT", findLine("S3 storage and PUT requests").monthlyEstimate || "67.80", "100k-device firmware, backup, release artifact storage; camera snapshots excluded."],
     ["KMS", findLine("KMS").monthlyEstimate || "8.00", "5 customer-managed keys * 1.00 + 1,000,000 requests * 0.000003."],
-    ["Base subtotal", findLine("Base subtotal before HSM/Private CA").monthlyEstimate || "3,386.70", "Sum of base services; excludes CloudHSM, ACM Private CA, support plan, tax, discounts."],
+    ["Base subtotal", findLine("Base subtotal before HSM/Private CA").monthlyEstimate || "3,088.89", "Sum of base services; excludes CloudHSM, ACM Private CA, support plan, tax, discounts."],
   ];
   addTable(slide, ["Base service item", "USD / month", "Calculation / assumption"], baseRows, { x: 58, y: 285, w: 720, h: 308 }, [1.45, 0.75, 3.15], { rowH: 21, headerH: 23, fontSize: 7.1 });
 
@@ -1017,7 +1017,7 @@ async function slideAwsCostFormulaBreakdown(p, payload) {
   addShape(slide, { x: 650, y: 604, w: 560, h: 58, fill: C.paleBlue, line: C.line });
   addText(slide, "Cognito sensitivity", { x: 670, y: 613, w: 210, h: 16 }, { size: 12, color: C.navy, bold: true, face: FONT_EN });
   addText(slide, "Default Essentials formula: max(0, MAUs - 10,000) * 0.015 USD/MAU.", { x: 670, y: 634, w: 520, h: 11 }, { size: 8.7, color: C.black, face: FONT_EN });
-  addText(slide, "Examples: 25,000 MAUs = 225.00; 100,000 MAUs = 1,350.00. Plus 25,000 MAUs = 500.00; SAML/OIDC 25,000 MAUs = 374.25.", { x: 670, y: 648, w: 520, h: 11 }, { size: 8.2, color: C.black, face: FONT_EN });
+  addText(slide, "Examples: 10,000 MAUs = 0.00; 25,000 MAUs = 225.00; 100,000 MAUs = 1,350.00. Plus 25,000 MAUs = 500.00.", { x: 670, y: 648, w: 520, h: 11 }, { size: 8.2, color: C.black, face: FONT_EN });
   return slide;
 }
 
@@ -1058,7 +1058,7 @@ async function slideAwsCostCalculationScenarios(p, payload) {
 
   const unitRows = (aws.unitCosts?.rawDivision || []).map((row) => [
     row.scenario,
-    `${row.monthlyTotal} / 25,000 = ${row.perUserMonth}`,
+    `${row.monthlyTotal} / 10,000 = ${row.perUserMonth}`,
     `${row.monthlyTotal} / 100,000 = ${row.perDeviceMonth}`,
   ]);
   addText(slide, "Unit cost formulas", { x: 760, y: 454, w: 420, h: 20 }, { size: 14, color: C.navy, bold: true, face: FONT_EN });
