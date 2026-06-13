@@ -45,8 +45,10 @@ cloud_env/staging/lke/
   到 `cloud_env/staging/linode` 或 `cloud_env/staging/lke`。
 - `CLOUD_PROVIDER` 目前可用值是 `linode` 與 `lke`。`linode` 代表既有
   VM/systemd/manual deploy path；`lke` 代表 Linode Kubernetes Engine path，
-  由 kubectl 建立/刪除 namespaces、套用 runtime-generated base resources，並在
-  deploy 時要求明確 container image env vars。未來若加入 AWS、GCP 或 Azure，
+  會使用 Linode LKE API discover/create cluster、下載 kubeconfig 到
+  `state/lke-kubeconfig.yaml`，再由 kubectl 建立/刪除 namespaces、套用
+  runtime-generated base resources，並在 deploy 時要求明確 container image env
+  vars 或 `LKE_IMAGE_REGISTRY` 以自動 build/push images。未來若加入 AWS、GCP 或 Azure，
   應建立平行的 `cloud_env/<env>/<provider>` 目錄；在實作前，其他 provider
   必須在 preflight/provision 一開始就失敗，不可做任何 live mutation。
 - `--secrets-root PATH` 只保留為舊參數 alias，新的文件與操作都使用 `--env-root`。
@@ -63,6 +65,10 @@ label；`CLOUD_PROVIDER=lke` 的 runtime CLI 可以使用同一組 root metadata
 stack/domain/namespace 名稱，但不應重用 `*_LINODE_*` 欄位作為 Kubernetes 或跨
 provider contract。production Kubernetes manifests、Helm charts、CI/CD
 deployment pipelines 仍受 `docs/lke-migration-inventory.md` gates 管制。
+
+LKE provider 的 live state 放在 `cloud_env/<env>/lke/state/`，包含
+`lke.env` 和 `lke-kubeconfig.yaml`。這些檔案是 operator-local secret/runtime
+material，必須維持 git ignored；kubeconfig 應以 `0600` 權限保存。
 
 以 `CLOUD_ENV_NAME=stg`、`CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com` 為例，`sync-env` 會產生：
 

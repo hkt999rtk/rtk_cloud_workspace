@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,17 +30,29 @@ type lkeWorkload struct {
 	Host      string
 }
 
+var errLKEMissingCluster = errors.New("no matching LKE cluster found")
+
 func runLKEProvision(paths provisionPaths, env map[string]string, opts provisionOptions) error {
 	if opts.mode.reset {
 		return errors.New("LKE provision reset is not implemented; use remove-all-vm for namespace teardown")
 	}
 	if opts.mode.preflight {
-		if err := lkePreflight(env); err != nil {
+		if err := lkePreflight(paths, env); err != nil {
 			return err
 		}
 	}
 	if opts.mode.plan {
 		lkePlan(env)
+	}
+	if opts.mode.deploy {
+		if err := ensureLKEDeployImages(env, opts); err != nil {
+			return err
+		}
+	}
+	if opts.mode.apply || opts.mode.deploy || opts.mode.e2e {
+		if err := ensureLKEKubeAccess(paths, env, opts.mode.apply); err != nil {
+			return err
+		}
 	}
 	if opts.mode.apply {
 		if err := lkeApplyBase(env); err != nil {
@@ -72,16 +85,13 @@ func runLKEProvision(paths provisionPaths, env map[string]string, opts provision
 	return nil
 }
 
-func lkePreflight(env map[string]string) error {
+func lkePreflight(paths provisionPaths, env map[string]string) error {
 	if env["CLOUD_PROVIDER"] != "lke" {
 		return fmt.Errorf("LKE provision requires CLOUD_PROVIDER=lke, got %s", env["CLOUD_PROVIDER"])
 	}
 	kubectl := lkeKubectl()
 	if _, err := exec.LookPath(kubectl); err != nil && filepath.Base(kubectl) == kubectl {
 		return fmt.Errorf("%s is required for LKE provision", kubectl)
-	}
-	if err := requireLKEKubeContext(); err != nil {
-		return err
 	}
 	if err := runKubectl("version", "--client"); err != nil {
 		return err
@@ -152,18 +162,10 @@ func lkeDeployWorkloads(env map[string]string, opts provisionOptions) error {
 	if opts.loggerOnly {
 		return errors.New("LKE logger-only deploy is not implemented; configure the Kubernetes log collection pipeline before enabling logger-only deploy")
 	}
-	workloads := lkeSelectedWorkloads(env, opts)
-	missing := []string{}
-	for _, workload := range workloads {
-		if workload.Image == "" {
-			missing = append(missing, workload.EnvKey)
-		}
+	if err := ensureLKEDeployImages(env, opts); err != nil {
+		return err
 	}
-	if len(missing) > 0 {
-		sort.Strings(missing)
-		return fmt.Errorf("LKE deploy requires container image environment variables: %s", strings.Join(missing, ", "))
-	}
-	for _, workload := range workloads {
+	for _, workload := range lkeSelectedWorkloads(env, opts) {
 		if err := kubectlApply(lkeDeploymentManifest(env, workload)); err != nil {
 			return err
 		}
@@ -172,6 +174,106 @@ func lkeDeployWorkloads(env map[string]string, opts provisionOptions) error {
 		}
 	}
 	return nil
+}
+
+func ensureLKEDeployImages(env map[string]string, opts provisionOptions) error {
+	missing := lkeMissingImageWorkloads(env, opts)
+	if len(missing) == 0 {
+		return nil
+	}
+	registry := strings.TrimRight(os.Getenv("LKE_IMAGE_REGISTRY"), "/")
+	if registry == "" {
+		return validateLKEDeployInputs(env, opts)
+	}
+	tag := firstNonEmpty(os.Getenv("LKE_IMAGE_TAG"), lkeName(firstNonEmpty(env["CLOUD_STACK_NAME"], "video-cloud-staging")))
+	for _, workload := range missing {
+		image := registry + "/" + workload.Name + ":" + tag
+		if err := buildLKEImage(workload, image); err != nil {
+			return err
+		}
+		_ = os.Setenv(workload.EnvKey, image)
+	}
+	return nil
+}
+
+func validateLKEDeployInputs(env map[string]string, opts provisionOptions) error {
+	missingWorkloads := lkeMissingImageWorkloads(env, opts)
+	missing := []string{}
+	for _, workload := range missingWorkloads {
+		missing = append(missing, workload.EnvKey)
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return fmt.Errorf("LKE deploy requires container image environment variables or LKE_IMAGE_REGISTRY for auto build/push: %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+func lkeMissingImageWorkloads(env map[string]string, opts provisionOptions) []lkeWorkload {
+	missing := []lkeWorkload{}
+	for _, workload := range lkeSelectedWorkloads(env, opts) {
+		if firstNonEmpty(os.Getenv(workload.EnvKey), workload.Image) == "" {
+			missing = append(missing, workload)
+		}
+	}
+	return missing
+}
+
+func buildLKEImage(workload lkeWorkload, image string) error {
+	contextDir, dockerfile, cleanup, err := lkeImageBuildContext(workload)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	args := []string{"buildx", "build", "--platform", "linux/amd64", "--push", "-t", image, "-f", dockerfile, contextDir}
+	fmt.Fprintf(os.Stderr, "[lke] building image %s\n", image)
+	return runExternal("docker", args...)
+}
+
+func lkeImageBuildContext(workload lkeWorkload) (contextDir, dockerfile string, cleanup func(), err error) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		return "", "", func() {}, err
+	}
+	switch workload.Key {
+	case "video-cloud":
+		return generatedGoServiceDockerfile(filepath.Join(workspace, "repos", "rtk_video_cloud"), "./cmd/api", "api")
+	case "account-manager":
+		return generatedGoServiceDockerfile(filepath.Join(workspace, "repos", "rtk_account_manager"), "./cmd/server", "rtk-account-manager")
+	case "cloud-admin":
+		return generatedGoServiceDockerfile(filepath.Join(workspace, "repos", "rtk_cloud_admin"), "./cmd/server", "rtk-cloud-admin")
+	case "frontend":
+		return filepath.Join(workspace, "repos", "rtk_cloud_frontend"), filepath.Join(workspace, "repos", "rtk_cloud_frontend", "Dockerfile"), func() {}, nil
+	default:
+		return "", "", func() {}, fmt.Errorf("no LKE image build context for workload %s", workload.Key)
+	}
+}
+
+func generatedGoServiceDockerfile(contextDir, packagePath, binaryName string) (string, string, func(), error) {
+	dir, err := os.MkdirTemp("", "rtk-lke-dockerfile-*")
+	if err != nil {
+		return "", "", func() {}, err
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	dockerfile := filepath.Join(dir, "Dockerfile")
+	body := fmt.Sprintf(`FROM golang:1.24-bookworm AS builder
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/app %s
+
+FROM debian:bookworm-slim
+WORKDIR /app
+RUN useradd -r -u 10001 app && chown app:app /app
+COPY --from=builder /out/app /app/%s
+USER app
+EXPOSE 8080
+ENTRYPOINT ["/app/%s"]
+`, packagePath, binaryName, binaryName)
+	if err := os.WriteFile(dockerfile, []byte(body), 0o644); err != nil {
+		cleanup()
+		return "", "", func() {}, err
+	}
+	return contextDir, dockerfile, cleanup, nil
 }
 
 func lkeProvisionE2E(env map[string]string, opts provisionOptions) error {
@@ -197,7 +299,11 @@ func runRemoveAllLKE(envRoot string, env map[string]string, confirmed bool) erro
 			return nil
 		}
 	}
-	if err := requireLKEKubeContext(); err != nil {
+	if err := ensureLKEKubeAccess(provisionPaths{EnvRoot: envRoot}, env, false); err != nil {
+		if errors.Is(err, errLKEMissingCluster) {
+			fmt.Fprintf(os.Stderr, "[cloud-remove-all-vm] no LKE cluster found for stack %s\n", stack)
+			return nil
+		}
 		return err
 	}
 	args := []string{"delete", "namespace", "--ignore-not-found"}
@@ -360,7 +466,7 @@ spec:
 }
 
 func kubectlApply(manifest string) error {
-	cmd := exec.Command(lkeKubectl(), "apply", "-f", "-")
+	cmd := exec.Command(lkeKubectl(), lkeKubectlArgs("apply", "-f", "-")...)
 	cmd.Stdin = strings.NewReader(manifest)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -368,7 +474,7 @@ func kubectlApply(manifest string) error {
 }
 
 func runKubectl(args ...string) error {
-	cmd := exec.Command(lkeKubectl(), args...)
+	cmd := exec.Command(lkeKubectl(), lkeKubectlArgs(args...)...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -379,14 +485,225 @@ func lkeKubectl() string {
 	return firstNonEmpty(os.Getenv("RTK_CLOUD_KUBECTL"), "kubectl")
 }
 
-func requireLKEKubeContext() error {
+func lkeKubectlArgs(args ...string) []string {
+	if kubeconfig := os.Getenv("RTK_CLOUD_LKE_KUBECONFIG"); kubeconfig != "" {
+		return append([]string{"--kubeconfig", kubeconfig}, args...)
+	}
+	return args
+}
+
+func ensureLKEKubeAccess(paths provisionPaths, env map[string]string, allowCreate bool) error {
 	out, err := exec.Command(lkeKubectl(), "config", "current-context").CombinedOutput()
 	context := strings.TrimSpace(string(out))
-	if err != nil || context == "" {
-		return fmt.Errorf("kubectl current-context is required for LKE operations; set KUBECONFIG or RTK_CLOUD_KUBECTL before running destructive staging commands")
+	if err == nil && context != "" {
+		fmt.Fprintf(os.Stderr, "[lke] kubectl context: %s\n", context)
+		return nil
 	}
-	fmt.Fprintf(os.Stderr, "[lke] kubectl context: %s\n", context)
+	if kubeconfig := firstNonEmpty(os.Getenv("RTK_CLOUD_LKE_KUBECONFIG"), os.Getenv("LKE_KUBECONFIG")); kubeconfig != "" {
+		if _, statErr := os.Stat(kubeconfig); statErr != nil {
+			return statErr
+		}
+		_ = os.Setenv("RTK_CLOUD_LKE_KUBECONFIG", kubeconfig)
+		return nil
+	}
+	stateKubeconfig := filepath.Join(paths.EnvRoot, "state", "lke-kubeconfig.yaml")
+	if _, statErr := os.Stat(stateKubeconfig); statErr == nil {
+		_ = os.Setenv("RTK_CLOUD_LKE_KUBECONFIG", stateKubeconfig)
+		return nil
+	}
+	clusterID := lkeClusterID(paths, env)
+	token := resolveLinodeToken(paths.EnvRoot)
+	if clusterID == "" {
+		if token == "" {
+			return fmt.Errorf("kubectl current-context is required for LKE operations; set KUBECONFIG, RTK_CLOUD_LKE_KUBECONFIG, LKE_CLUSTER_ID, or LINODE_TOKEN before running destructive staging commands")
+		}
+		discovered, err := discoverLKECluster(token, paths, env, allowCreate)
+		if err != nil {
+			return err
+		}
+		clusterID = strconv.Itoa(discovered.ID)
+		if err := writeLKEState(paths, discovered); err != nil {
+			return err
+		}
+	}
+	if token == "" {
+		return errors.New("LINODE_TOKEN is required to fetch LKE kubeconfig")
+	}
+	kubeconfig, err := fetchLKEKubeconfig(token, clusterID)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(stateKubeconfig), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(stateKubeconfig, kubeconfig, 0o600); err != nil {
+		return err
+	}
+	_ = os.Setenv("RTK_CLOUD_LKE_KUBECONFIG", stateKubeconfig)
+	fmt.Fprintf(os.Stderr, "[lke] wrote kubeconfig: %s\n", stateKubeconfig)
 	return nil
+}
+
+func lkeClusterID(paths provisionPaths, env map[string]string) string {
+	return firstNonEmpty(
+		os.Getenv("LKE_CLUSTER_ID"),
+		env["LKE_CLUSTER_ID"],
+		envFileValue(filepath.Join(paths.EnvRoot, "state", "lke.env"), "LKE_CLUSTER_ID"),
+		envFileValue(filepath.Join(paths.EnvRoot, "env", "stack.env"), "LKE_CLUSTER_ID"),
+	)
+}
+
+type lkeCluster struct {
+	ID         int    `json:"id"`
+	Label      string `json:"label"`
+	Region     string `json:"region"`
+	K8sVersion string `json:"k8s_version"`
+}
+
+func lkeClusterLabel(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_CLUSTER_LABEL"), env["LKE_CLUSTER_LABEL"], env["CLOUD_STACK_NAME"]+"-lke")
+}
+
+func discoverLKECluster(token string, paths provisionPaths, env map[string]string, allowCreate bool) (lkeCluster, error) {
+	label := lkeClusterLabel(env)
+	if label == "" {
+		return lkeCluster{}, errors.New("LKE_CLUSTER_LABEL or CLOUD_STACK_NAME is required to discover an LKE cluster")
+	}
+	out, err := linodeRequestRaw(token, "GET", "/lke/clusters?page_size=500", "")
+	if err != nil {
+		return lkeCluster{}, err
+	}
+	var listed struct {
+		Data []lkeCluster `json:"data"`
+	}
+	if err := json.Unmarshal(out, &listed); err != nil {
+		return lkeCluster{}, err
+	}
+	for _, cluster := range listed.Data {
+		if cluster.Label == label {
+			return cluster, nil
+		}
+	}
+	if !allowCreate {
+		return lkeCluster{}, fmt.Errorf("%w: %s", errLKEMissingCluster, label)
+	}
+	return createLKECluster(token, env)
+}
+
+func createLKECluster(token string, env map[string]string) (lkeCluster, error) {
+	version := firstNonEmpty(os.Getenv("LKE_K8S_VERSION"), env["LKE_K8S_VERSION"])
+	if version == "" {
+		selected, err := latestLKEVersion(token)
+		if err != nil {
+			return lkeCluster{}, err
+		}
+		version = selected
+	}
+	nodeType := firstNonEmpty(os.Getenv("LKE_NODE_TYPE"), env["LKE_NODE_TYPE"], "g6-standard-2")
+	nodeCount, err := strconv.Atoi(firstNonEmpty(os.Getenv("LKE_NODE_COUNT"), env["LKE_NODE_COUNT"], "3"))
+	if err != nil || nodeCount <= 0 {
+		return lkeCluster{}, errors.New("LKE_NODE_COUNT must be a positive integer")
+	}
+	payload, err := json.Marshal(map[string]any{
+		"label":       lkeClusterLabel(env),
+		"region":      firstNonEmpty(env["CLOUD_REGION"], "us-sea"),
+		"k8s_version": version,
+		"tags":        []string{"rtk-cloud", env["CLOUD_STACK_NAME"], "staging"},
+		"node_pools": []map[string]any{
+			{"type": nodeType, "count": nodeCount},
+		},
+	})
+	if err != nil {
+		return lkeCluster{}, err
+	}
+	out, err := linodeRequestRaw(token, "POST", "/lke/clusters", string(payload))
+	if err != nil {
+		return lkeCluster{}, err
+	}
+	var created lkeCluster
+	if err := json.Unmarshal(out, &created); err != nil {
+		return lkeCluster{}, err
+	}
+	if created.ID == 0 {
+		return lkeCluster{}, errors.New("LKE create response did not include cluster id")
+	}
+	if created.Label == "" {
+		created.Label = lkeClusterLabel(env)
+	}
+	if created.Region == "" {
+		created.Region = env["CLOUD_REGION"]
+	}
+	if created.K8sVersion == "" {
+		created.K8sVersion = version
+	}
+	return created, nil
+}
+
+func latestLKEVersion(token string) (string, error) {
+	out, err := linodeRequestRaw(token, "GET", "/lke/versions", "")
+	if err != nil {
+		return "", err
+	}
+	var listed struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out, &listed); err != nil {
+		return "", err
+	}
+	if len(listed.Data) == 0 || listed.Data[0].ID == "" {
+		return "", errors.New("LKE versions response did not include any versions")
+	}
+	return listed.Data[0].ID, nil
+}
+
+func writeLKEState(paths provisionPaths, cluster lkeCluster) error {
+	statePath := filepath.Join(paths.EnvRoot, "state", "lke.env")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
+		return err
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "LKE_CLUSTER_ID=%d\n", cluster.ID)
+	fmt.Fprintf(&b, "LKE_CLUSTER_LABEL=%s\n", cluster.Label)
+	if cluster.Region != "" {
+		fmt.Fprintf(&b, "LKE_CLUSTER_REGION=%s\n", cluster.Region)
+	}
+	if cluster.K8sVersion != "" {
+		fmt.Fprintf(&b, "LKE_CLUSTER_VERSION=%s\n", cluster.K8sVersion)
+	}
+	return os.WriteFile(statePath, []byte(b.String()), 0o600)
+}
+
+func fetchLKEKubeconfig(token, clusterID string) ([]byte, error) {
+	out, err := linodeRequestRaw(token, "GET", "/lke/clusters/"+clusterID+"/kubeconfig", "")
+	if err != nil {
+		return nil, err
+	}
+	var parsed struct {
+		Kubeconfig string `json:"kubeconfig"`
+	}
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		return nil, err
+	}
+	if parsed.Kubeconfig == "" {
+		return nil, errors.New("LKE kubeconfig response did not include kubeconfig")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(parsed.Kubeconfig)
+	if err != nil {
+		return nil, err
+	}
+	return decoded, nil
+}
+
+func linodeRequestRaw(token, method, path, data string) ([]byte, error) {
+	args := []string{"-fsS", "-X", method, "https://api.linode.com/v4" + path, "-H", "Authorization: Bearer " + token, "-H", "Content-Type: application/json"}
+	if data != "" {
+		args = append(args, "-d", data)
+	}
+	cmd := exec.Command("curl", args...)
+	cmd.Stderr = os.Stderr
+	return cmd.Output()
 }
 
 func lkeName(value string) string {

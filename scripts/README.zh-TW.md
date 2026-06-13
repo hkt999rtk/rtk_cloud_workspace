@@ -16,12 +16,17 @@ env、state、keys/certificates、device fixtures、artifacts 與 backups。
 
 目前 workspace provision routing 支援 `CLOUD_PROVIDER=linode` 與
 `CLOUD_PROVIDER=lke`。Linode provider 仍 dispatch 到 Video Cloud、Account
-Manager、Cloud Admin、Cloud Logger 的 VM scripts。LKE provider 走 kubectl
-namespace/apply/delete/rollout path；`deploy` 需要明確提供 container image env
-vars，例如 `LKE_VIDEO_CLOUD_IMAGE`、`LKE_ACCOUNT_MANAGER_IMAGE`、
-`LKE_CLOUD_ADMIN_IMAGE`、`LKE_FRONTEND_IMAGE`。AWS、GCP 和 Azure 仍是後續
-provider abstraction 目標，現階段應 fail fast，不可呼叫 live API、SSH、DNS
-或寫 state。
+Manager、Cloud Admin、Cloud Logger 的 VM scripts。LKE provider 會先使用
+Linode LKE API 取得 kubeconfig；若沒有 `KUBECONFIG` / current context，會依
+`LKE_CLUSTER_ID`、`state/lke.env` 或 cluster label `<CLOUD_STACK_NAME>-lke`
+尋找既有 cluster，`provision --apply` 找不到時會建立 LKE cluster，再把
+kubeconfig 寫到 git-ignored `<env-root>/state/lke-kubeconfig.yaml`。之後才走
+kubectl namespace/apply/delete/rollout path。`deploy` 需要 container image；
+可以明確提供 `LKE_VIDEO_CLOUD_IMAGE`、`LKE_ACCOUNT_MANAGER_IMAGE`、
+`LKE_CLOUD_ADMIN_IMAGE`、`LKE_FRONTEND_IMAGE`，或提供 `LKE_IMAGE_REGISTRY`
+讓 provision flow 以 Docker buildx build/push 缺失的 service images。AWS、GCP
+和 Azure 仍是後續 provider abstraction 目標，現階段應 fail fast，不可呼叫
+live API、SSH、DNS 或寫 state。
 
 可用 `--env-root PATH` 指向另一份 environment directory。舊的 `--secrets-root PATH` 仍保留為相容 alias，但新的操作與文件都應使用 `--env-root`。
 
