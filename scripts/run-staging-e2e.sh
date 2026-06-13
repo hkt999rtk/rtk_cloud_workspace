@@ -23,10 +23,14 @@ USER_COUNT=""
 DEVICE_COUNT=""
 DEVICE_MIX=""
 DEVICE_PREFIX=""
+USER_CONCURRENCY=""
+DEVICE_CONCURRENCY=""
+BIND_CONCURRENCY=""
 CONFIRM=""
 PLAN=0
 OUT_DIR=""
 SKIP_MQTT_PROBE=0
+QUIET=0
 
 usage() {
 	cat <<'USAGE'
@@ -54,7 +58,11 @@ Options:
   --device-count N                Override E2E device count.
   --device-mix MIX                Override E2E device mix.
   --device-prefix PREFIX          Override generated device prefix.
+  --user-concurrency N            Concurrent user creation workers. Default: 16.
+  --device-concurrency N          Concurrent device generation workers. Default: 16.
+  --bind-concurrency N            Concurrent device binding workers. Default: 16.
   --skip-mqtt-probe               Run MQTT test without live broker probe.
+  --quiet                         Suppress periodic progress lines.
   -h, --help                      Show this help.
 
 Artifact selection:
@@ -203,8 +211,36 @@ while [[ $# -gt 0 ]]; do
 			fi
 			shift 2
 			;;
+		--user-concurrency)
+			USER_CONCURRENCY="${2:-}"
+			if [[ -z "$USER_CONCURRENCY" ]]; then
+				printf 'error: --user-concurrency requires a value\n' >&2
+				exit 2
+			fi
+			shift 2
+			;;
+		--device-concurrency)
+			DEVICE_CONCURRENCY="${2:-}"
+			if [[ -z "$DEVICE_CONCURRENCY" ]]; then
+				printf 'error: --device-concurrency requires a value\n' >&2
+				exit 2
+			fi
+			shift 2
+			;;
+		--bind-concurrency)
+			BIND_CONCURRENCY="${2:-}"
+			if [[ -z "$BIND_CONCURRENCY" ]]; then
+				printf 'error: --bind-concurrency requires a value\n' >&2
+				exit 2
+			fi
+			shift 2
+			;;
 		--skip-mqtt-probe)
 			SKIP_MQTT_PROBE=1
+			shift
+			;;
+		--quiet)
+			QUIET=1
 			shift
 			;;
 		-h|--help)
@@ -236,8 +272,20 @@ if [[ "$PLAN" -eq 1 ]]; then
 	if [[ -n "$DEVICE_PREFIX" ]]; then
 		plan_args+=(--device-prefix "$DEVICE_PREFIX")
 	fi
+	if [[ -n "$USER_CONCURRENCY" ]]; then
+		plan_args+=(--user-concurrency "$USER_CONCURRENCY")
+	fi
+	if [[ -n "$DEVICE_CONCURRENCY" ]]; then
+		plan_args+=(--device-concurrency "$DEVICE_CONCURRENCY")
+	fi
+	if [[ -n "$BIND_CONCURRENCY" ]]; then
+		plan_args+=(--bind-concurrency "$BIND_CONCURRENCY")
+	fi
 	if [[ "$SKIP_MQTT_PROBE" -eq 1 ]]; then
 		plan_args+=(--skip-mqtt-probe)
+	fi
+	if [[ "$QUIET" -eq 1 ]]; then
+		plan_args+=(--quiet)
 	fi
 	exec "$STG_SH" "${plan_args[@]}"
 fi
@@ -271,11 +319,23 @@ fi
 if [[ -n "$DEVICE_PREFIX" ]]; then
 	run_args+=(--device-prefix "$DEVICE_PREFIX")
 fi
+if [[ -n "$USER_CONCURRENCY" ]]; then
+	run_args+=(--user-concurrency "$USER_CONCURRENCY")
+fi
+if [[ -n "$DEVICE_CONCURRENCY" ]]; then
+	run_args+=(--device-concurrency "$DEVICE_CONCURRENCY")
+fi
+if [[ -n "$BIND_CONCURRENCY" ]]; then
+	run_args+=(--bind-concurrency "$BIND_CONCURRENCY")
+fi
 if [[ -n "$OUT_DIR" ]]; then
 	run_args+=(--out-dir "$OUT_DIR")
 fi
 if [[ "$SKIP_MQTT_PROBE" -eq 1 ]]; then
 	run_args+=(--skip-mqtt-probe)
+fi
+if [[ "$QUIET" -eq 1 ]]; then
+	run_args+=(--quiet)
 fi
 
 output="$("$STG_SH" "${run_args[@]}")"

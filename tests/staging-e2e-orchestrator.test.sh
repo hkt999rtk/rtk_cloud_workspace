@@ -37,6 +37,10 @@ make_stub() {
 set -euo pipefail
 printf '%s\\t%s\\n' "$name" "\$*" >> "$COMMAND_LOG"
 case "$name" in
+provision)
+	printf 'provision stage: applying linode topology\n'
+	sleep 1
+	;;
 create-users)
 	mkdir -p "$ENV_ROOT/artifacts/users"
 	printf '{"brandname":"RTK","users":[{"email":"rtk+001@users.local","password":"super-secret"}]}\\n' > "$ENV_ROOT/artifacts/users/rtk-users-test.json"
@@ -122,10 +126,12 @@ grep -F 'cloud-staging-e2e-test plan' "$PLAN_OUT" >/dev/null
 test ! -e "$COMMAND_LOG"
 
 RUN_OUT="$TMP/run.out"
+RUN_ERR="$TMP/run.err"
 CLOUD_STAGING_E2E_REMOVE_SCRIPT="$TMP/remove.sh" \
 CLOUD_STAGING_E2E_PROVISION_SCRIPT="$TMP/provision.sh" \
 CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT="$TMP/setup-data.sh" \
 CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT="$TMP/mqtt-test.sh" \
+CLOUD_STAGING_E2E_PROGRESS_INTERVAL=100ms \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-e2e-test \
 	--workspace "$WORKSPACE" \
 	--env-root "$WORKSPACE/cloud_env/staging" \
@@ -135,7 +141,7 @@ CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT="$TMP/mqtt-test.sh" \
 	--user-count 1 \
 	--device-count 3 \
 	--device-mix camera=1,light=1,smart_meter=1 \
-	--skip-mqtt-probe > "$RUN_OUT"
+	--skip-mqtt-probe > "$RUN_OUT" 2> "$RUN_ERR"
 
 expected=$'remove\nprovision\nsetup-data\nmqtt-test'
 actual="$(cut -f1 "$COMMAND_LOG")"
@@ -144,11 +150,16 @@ actual="$(cut -f1 "$COMMAND_LOG")"
 	exit 1
 }
 grep -F $'provision\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --all --confirm video-cloud-staging' "$COMMAND_LOG" >/dev/null
-grep -F $'setup-data\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --brandname RTK --user-count 1 --device-count 3 --device-mix camera=1,light=1,smart_meter=1 --device-prefix load-device --out-dir ' "$COMMAND_LOG" >/dev/null
+grep -F $'setup-data\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --brandname RTK --user-count 1 --device-count 3 --device-mix camera=1,light=1,smart_meter=1 --device-prefix load-device --user-concurrency 16 --device-concurrency 16 --bind-concurrency 16 --out-dir ' "$COMMAND_LOG" >/dev/null
 if grep -F -- '--reset-and-all' "$COMMAND_LOG" >/dev/null; then
 	echo "staging-e2e-test should remove VMs explicitly, then provision with --all rather than unsupported --reset-and-all" >&2
 	exit 1
 fi
+for step in remove_vm provision_all setup_brand_devices cloud_mqtt_test; do
+	grep -E "\\[cloud-staging-e2e\\] pass: ${step} duration_seconds=[0-9]+" "$RUN_ERR" >/dev/null
+done
+grep -E "\\[cloud-staging-e2e\\] start: provision_all log=.*/logs/provision_all.log" "$RUN_ERR" >/dev/null
+grep -E "\\[cloud-staging-e2e\\] progress: provision_all elapsed=[0-9:]+ latest=\"provision stage: applying linode topology\"" "$RUN_ERR" >/dev/null
 
 SUMMARY="$(jq -r '.summary_file' "$RUN_OUT")"
 REPORT="$(jq -r '.report_file' "$RUN_OUT")"
@@ -161,6 +172,33 @@ grep -F 'Data setup summary' "$REPORT" >/dev/null
 grep -F 'cloud_mqtt_test' "$REPORT" >/dev/null
 if grep -R -Ei 'super-secret|password|bearer|token|PRIVATE KEY|-----BEGIN' "$SUMMARY" "$REPORT" >/dev/null; then
 	echo "orchestrator reports must be redacted" >&2
+	exit 1
+fi
+
+: > "$COMMAND_LOG"
+QUIET_OUT="$TMP/quiet.out"
+QUIET_ERR="$TMP/quiet.err"
+CLOUD_STAGING_E2E_REMOVE_SCRIPT="$TMP/remove.sh" \
+CLOUD_STAGING_E2E_PROVISION_SCRIPT="$TMP/provision.sh" \
+CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT="$TMP/setup-data.sh" \
+CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT="$TMP/mqtt-test.sh" \
+CLOUD_STAGING_E2E_PROGRESS_INTERVAL=100ms \
+	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-e2e-test \
+	--workspace "$WORKSPACE" \
+	--env-root "$WORKSPACE/cloud_env/staging" \
+	--run \
+	--confirm video-cloud-staging \
+	--brandname RTK \
+	--user-count 1 \
+	--device-count 3 \
+	--device-mix camera=1,light=1,smart_meter=1 \
+	--skip-mqtt-probe \
+	--quiet > "$QUIET_OUT" 2> "$QUIET_ERR"
+
+grep -F $'setup-data\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --brandname RTK --user-count 1 --device-count 3 --device-mix camera=1,light=1,smart_meter=1 --device-prefix load-device --user-concurrency 16 --device-concurrency 16 --bind-concurrency 16 --out-dir ' "$COMMAND_LOG" | grep -F -- '--quiet' >/dev/null
+grep -E "\\[cloud-staging-e2e\\] start: provision_all log=.*/logs/provision_all.log" "$QUIET_ERR" >/dev/null
+if grep -F '[cloud-staging-e2e] progress:' "$QUIET_ERR" >/dev/null; then
+	echo "quiet staging e2e should not print progress lines" >&2
 	exit 1
 fi
 

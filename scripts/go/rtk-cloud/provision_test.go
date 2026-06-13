@@ -1024,6 +1024,43 @@ func TestAccountFindDeviceByVideoCloudDevidSkipsDisabledAndPaginates(t *testing.
 	}
 }
 
+func TestAccountIndexDevicesByVideoCloudDevidBuildsReusableMap(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if got := r.Header.Get("authorization"); got != "Bearer user-token" {
+			t.Fatalf("authorization = %q", got)
+		}
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/orgs/org-123/devices" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.RequestURI())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"devices": []map[string]any{
+			{"id": "active-1", "metadata": map[string]any{"video_cloud_devid": "load-device-0001"}, "disabled_at": nil},
+			{"id": "disabled-2", "metadata": map[string]any{"video_cloud_devid": "load-device-0002"}, "disabled_at": "2026-06-01T00:00:00Z"},
+			{"id": "active-3", "metadata": map[string]any{"video_cloud_devid": "load-device-0003"}, "disabled_at": nil},
+		}})
+	}))
+	defer server.Close()
+
+	index, count, err := accountIndexDevicesByVideoCloudDevid(accountManagerContext{BaseURL: server.URL}, "user-token", "org-123")
+	if err != nil {
+		t.Fatalf("accountIndexDevicesByVideoCloudDevid returned error: %v", err)
+	}
+	if count != 2 || len(index) != 2 {
+		t.Fatalf("count=%d len=%d index=%#v", count, len(index), index)
+	}
+	if got := stringValue(index["load-device-0001"]["id"]); got != "active-1" {
+		t.Fatalf("load-device-0001 id = %q", got)
+	}
+	if _, ok := index["load-device-0002"]; ok {
+		t.Fatal("disabled device should not be indexed")
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
+	}
+}
+
 func TestErrorBodySuffixIncludesStructuredAPIError(t *testing.T) {
 	got := errorBodySuffix([]byte(`{"error":"already_claimed","message":"Claim token has already been claimed"}`))
 	want := ": already_claimed (Claim token has already been claimed)"

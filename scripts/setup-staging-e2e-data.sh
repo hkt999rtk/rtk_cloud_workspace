@@ -10,8 +10,16 @@ USER_COUNT="10"
 DEVICE_COUNT="100"
 DEVICE_MIX="camera=40,light=25,air_conditioner=20,smart_meter=15"
 DEVICE_PREFIX="load-device"
+USER_CONCURRENCY="16"
+DEVICE_CONCURRENCY="16"
+BIND_CONCURRENCY="16"
 PLAN=0
 OUT_DIR=""
+QUIET=0
+RESUME=0
+FROM_STEP=""
+USERS_FILE=""
+BIND_ARTIFACT=""
 
 usage() {
 	cat <<'USAGE'
@@ -31,7 +39,15 @@ Options:
   --device-count N                Devices to create and bind. Default: 100.
   --device-mix MIX                Device mix for generate-load-devices.
   --device-prefix PREFIX          Device prefix. Default: load-device.
+  --user-concurrency N            Concurrent user creation workers. Default: 16.
+  --device-concurrency N          Concurrent device generation workers. Default: 16.
+  --bind-concurrency N            Concurrent device binding workers. Default: 16.
   --out-dir PATH                  Output directory for logs and summary.
+  --quiet                         Suppress periodic progress lines.
+  --resume                        Reuse matching completed artifacts.
+  --from-step STEP                Start from create_brand, create_users, create_devices, bind_devices, or validate_bind.
+  --users-file PATH               Existing users artifact for bind/validate resume.
+  --bind-artifact PATH            Existing bind artifact for validate resume.
   -h, --help                      Show this help.
 USAGE
 }
@@ -98,10 +114,66 @@ while [[ $# -gt 0 ]]; do
 			fi
 			shift 2
 			;;
+		--user-concurrency)
+			USER_CONCURRENCY="${2:-}"
+			if [[ -z "$USER_CONCURRENCY" ]]; then
+				printf 'error: --user-concurrency requires a value\n' >&2
+				exit 2
+			fi
+			shift 2
+			;;
+		--device-concurrency)
+			DEVICE_CONCURRENCY="${2:-}"
+			if [[ -z "$DEVICE_CONCURRENCY" ]]; then
+				printf 'error: --device-concurrency requires a value\n' >&2
+				exit 2
+			fi
+			shift 2
+			;;
+		--bind-concurrency)
+			BIND_CONCURRENCY="${2:-}"
+			if [[ -z "$BIND_CONCURRENCY" ]]; then
+				printf 'error: --bind-concurrency requires a value\n' >&2
+				exit 2
+			fi
+			shift 2
+			;;
 		--out-dir)
 			OUT_DIR="${2:-}"
 			if [[ -z "$OUT_DIR" ]]; then
 				printf 'error: --out-dir requires a value\n' >&2
+				exit 2
+			fi
+			shift 2
+			;;
+		--quiet)
+			QUIET=1
+			shift
+			;;
+		--resume)
+			RESUME=1
+			shift
+			;;
+		--from-step)
+			FROM_STEP="${2:-}"
+			if [[ -z "$FROM_STEP" ]]; then
+				printf 'error: --from-step requires a value\n' >&2
+				exit 2
+			fi
+			shift 2
+			;;
+		--users-file)
+			USERS_FILE="${2:-}"
+			if [[ -z "$USERS_FILE" ]]; then
+				printf 'error: --users-file requires a value\n' >&2
+				exit 2
+			fi
+			shift 2
+			;;
+		--bind-artifact)
+			BIND_ARTIFACT="${2:-}"
+			if [[ -z "$BIND_ARTIFACT" ]]; then
+				printf 'error: --bind-artifact requires a value\n' >&2
 				exit 2
 			fi
 			shift 2
@@ -138,12 +210,30 @@ run_args=(
 	--device-count "$DEVICE_COUNT"
 	--device-mix "$DEVICE_MIX"
 	--device-prefix "$DEVICE_PREFIX"
+	--user-concurrency "$USER_CONCURRENCY"
+	--device-concurrency "$DEVICE_CONCURRENCY"
+	--bind-concurrency "$BIND_CONCURRENCY"
 )
 if [[ "$PLAN" -eq 1 ]]; then
 	run_args+=(--plan)
 fi
 if [[ -n "$OUT_DIR" ]]; then
 	run_args+=(--out-dir "$OUT_DIR")
+fi
+if [[ "$QUIET" -eq 1 ]]; then
+	run_args+=(--quiet)
+fi
+if [[ "$RESUME" -eq 1 ]]; then
+	run_args+=(--resume)
+fi
+if [[ -n "$FROM_STEP" ]]; then
+	run_args+=(--from-step "$FROM_STEP")
+fi
+if [[ -n "$USERS_FILE" ]]; then
+	run_args+=(--users-file "$USERS_FILE")
+fi
+if [[ -n "$BIND_ARTIFACT" ]]; then
+	run_args+=(--bind-artifact "$BIND_ARTIFACT")
 fi
 
 (cd "$ROOT" && "$GO_CMD" run ./scripts/go/rtk-cloud -- "${run_args[@]}")

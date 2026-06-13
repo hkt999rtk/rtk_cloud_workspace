@@ -58,6 +58,43 @@ func TestValidateDeviceBindAllowsMissingClaimIDWhenProvisionIdentifiersExist(t *
 	}
 }
 
+func TestValidateDeviceBindAllowsAlreadyBoundDevicesWithoutOperationID(t *testing.T) {
+	root := t.TempDir()
+	bindPath := filepath.Join(root, "bind.json")
+	outDir := filepath.Join(root, "out")
+	data := `{
+  "brandname":"RTK",
+  "brand_cloud_id":"brand-1",
+  "assignments":[
+    {
+      "assignment_index":0,
+      "assigned_email":"rtk+001@users.local",
+      "device_id":"load-device-0001",
+      "device_type":"camera",
+      "category":"ip_camera",
+      "service_options":["mqtt","video_streaming","video_storage"],
+      "claim_id":"",
+      "account_device_id":"account-device-1",
+      "operation_id":"",
+      "status":"already_bound"
+    }
+  ]
+}`
+	if err := os.WriteFile(bindPath, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := runValidateDeviceBind([]string{
+		"--bind-artifact", bindPath,
+		"--out-dir", outDir,
+		"--expected-count", "1",
+		"--expected-devices-per-user", "1",
+	})
+	if err != nil {
+		t.Fatalf("runValidateDeviceBind() error = %v", err)
+	}
+}
+
 func TestValidateDeviceBindWaitsForProvisionedState(t *testing.T) {
 	root := t.TempDir()
 	envRoot := filepath.Join(root, "env")
