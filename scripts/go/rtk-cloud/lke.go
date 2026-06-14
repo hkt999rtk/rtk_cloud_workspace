@@ -68,6 +68,12 @@ type lkePrometheusTarget struct {
 	Path      string
 }
 
+type lkeRolloutTarget struct {
+	Namespace string
+	Resource  string
+	Timeout   string
+}
+
 type lkeImageArtifact struct {
 	Key          string `json:"key"`
 	Name         string `json:"name"`
@@ -561,15 +567,55 @@ func lkeApplyPublicHTTPS(paths provisionPaths, env map[string]string, opts provi
 	if err != nil {
 		return err
 	}
+	return lkeSyncPublicHTTPSDNS(paths, env, opts, hosts, ip)
+}
+
+func lkeSyncPublicHTTPSDNS(paths provisionPaths, env map[string]string, opts provisionOptions, hosts []string, ip string) error {
+	if len(hosts) == 0 {
+		return nil
+	}
+	concurrency := envIntDefault("LKE_PUBLIC_HTTPS_DNS_CONCURRENCY", 4)
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	if concurrency > len(hosts) {
+		concurrency = len(hosts)
+	}
+	if err := lkeRunHostTasks(hosts, concurrency, func(host string) error {
+		return godaddyUpsert(paths, env["CLOUD_DNS_ROOT_DOMAIN"], opts.godaddyEnv, opts.operatorEnv, host, ip, opts.dnsFinalTTL)
+	}); err != nil {
+		return err
+	}
+	return lkeRunHostTasks(hosts, concurrency, func(host string) error {
+		return waitDNS(host, ip, env["CLOUD_DNS_ROOT_DOMAIN"], opts)
+	})
+}
+
+func lkeRunHostTasks(hosts []string, concurrency int, task func(string) error) error {
+	if len(hosts) == 0 {
+		return nil
+	}
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	sem := make(chan struct{}, concurrency)
+	errCh := make(chan error, len(hosts))
 	for _, host := range hosts {
-		if err := godaddyUpsert(paths, env["CLOUD_DNS_ROOT_DOMAIN"], opts.godaddyEnv, opts.operatorEnv, host, ip, opts.dnsFinalTTL); err != nil {
-			return err
-		}
-		if err := waitDNS(host, ip, env["CLOUD_DNS_ROOT_DOMAIN"], opts); err != nil {
-			return err
+		host := host
+		go func() {
+			sem <- struct{}{}
+			err := task(host)
+			<-sem
+			errCh <- err
+		}()
+	}
+	var firstErr error
+	for range hosts {
+		if err := <-errCh; err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
-	return nil
+	return firstErr
 }
 
 func lkeIngressNamespace(env map[string]string) string {
@@ -1180,6 +1226,7 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 		}
 		certIssuerMaterial = &material
 	}
+	rollouts := []lkeRolloutTarget{}
 	for _, workload := range lkeSelectedWorkloads(env, opts) {
 		if err := kubectlApply(lkeDeploymentManifest(env, workload, certIssuerMaterial)); err != nil {
 			return err
@@ -1187,11 +1234,13 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 		if err := kubectlApply(lkeServiceManifest(env, workload)); err != nil {
 			return err
 		}
-		if err := runKubectl("-n", workload.Namespace, "rollout", "status", "deployment/"+workload.Name, "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "5m")); err != nil {
-			return err
-		}
+		rollouts = append(rollouts, lkeRolloutTarget{
+			Namespace: workload.Namespace,
+			Resource:  "deployment/" + workload.Name,
+			Timeout:   firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "5m"),
+		})
 	}
-	return nil
+	return lkeWaitForRollouts(rollouts)
 }
 
 func ensureLKEDeployImages(env map[string]string, opts provisionOptions) error {
@@ -1702,6 +1751,7 @@ func lkeApplyVideoCloudAuxiliaryServices(env map[string]string, opts provisionOp
 	if err := kubectlApply(lkeVideoCloudWorkersSecretManifest(env)); err != nil {
 		return err
 	}
+	rollouts := []lkeRolloutTarget{}
 	for _, service := range lkeVideoCloudAuxiliaryServices() {
 		if err := kubectlApply(lkeVideoCloudAuxiliaryDeploymentManifest(env, service)); err != nil {
 			return err
@@ -1711,9 +1761,14 @@ func lkeApplyVideoCloudAuxiliaryServices(env map[string]string, opts provisionOp
 				return err
 			}
 		}
-		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/"+service.Name, "--timeout", firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_WORKER_ROLLOUT_TIMEOUT"), "5m")); err != nil {
-			return err
-		}
+		rollouts = append(rollouts, lkeRolloutTarget{
+			Namespace: lkeNamespaceName(env, "video-cloud"),
+			Resource:  "deployment/" + service.Name,
+			Timeout:   firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_WORKER_ROLLOUT_TIMEOUT"), "5m"),
+		})
+	}
+	if err := lkeWaitForRollouts(rollouts); err != nil {
+		return err
 	}
 	if err := kubectlApply(lkeVideoCloudPrometheusConfigManifest(env, opts)); err != nil {
 		return err
@@ -1725,6 +1780,26 @@ func lkeApplyVideoCloudAuxiliaryServices(env map[string]string, opts provisionOp
 		return err
 	}
 	return runKubectl("-n", lkeNamespaceName(env, "observability"), "rollout", "status", "deployment/video-cloud-prometheus", "--timeout", firstNonEmpty(os.Getenv("LKE_PROMETHEUS_ROLLOUT_TIMEOUT"), "5m"))
+}
+
+func lkeWaitForRollouts(targets []lkeRolloutTarget) error {
+	if len(targets) == 0 {
+		return nil
+	}
+	errCh := make(chan error, len(targets))
+	for _, target := range targets {
+		target := target
+		go func() {
+			errCh <- runKubectl("-n", target.Namespace, "rollout", "status", target.Resource, "--timeout", target.Timeout)
+		}()
+	}
+	var firstErr error
+	for range targets {
+		if err := <-errCh; err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func writeLKECompatibilityArtifacts(paths provisionPaths, env map[string]string) error {
@@ -2368,6 +2443,7 @@ func lkeOpenBaoDNSNames(env map[string]string) []string {
 }
 
 func lkeEnsureOpenBao(paths provisionPaths, env map[string]string, tls lkeOpenBaoTLSMaterial) (lkeOpenBaoBootstrapResult, error) {
+	tlsUnchanged := lkeOpenBaoTLSSecretUnchanged(env, tls)
 	if err := kubectlApply(lkeOpenBaoTLSSecretManifest(env, tls)); err != nil {
 		return lkeOpenBaoBootstrapResult{}, err
 	}
@@ -2379,18 +2455,29 @@ func lkeEnsureOpenBao(paths provisionPaths, env map[string]string, tls lkeOpenBa
 	if err := runHelm("repo", "add", "openbao", "https://openbao.github.io/openbao-helm", "--force-update"); err != nil {
 		return lkeOpenBaoBootstrapResult{}, err
 	}
-	if err := runHelm("repo", "update", "openbao"); err != nil {
-		return lkeOpenBaoBootstrapResult{}, err
-	}
 	namespace := lkeNamespaceName(env, "secrets")
 	chartVersion := lkeOpenBaoChartVersion()
-	if err := runHelmQuiet("template", "openbao", "openbao/openbao", "--version", chartVersion, "--namespace", namespace, "-f", valuesPath); err != nil {
-		return lkeOpenBaoBootstrapResult{}, err
+	templateArgs := []string{"template", "openbao", "openbao/openbao", "--version", chartVersion, "--namespace", namespace, "-f", valuesPath}
+	if os.Getenv("LKE_OPENBAO_HELM_REPO_UPDATE") == "1" {
+		if err := runHelm("repo", "update", "openbao"); err != nil {
+			return lkeOpenBaoBootstrapResult{}, err
+		}
+	}
+	if err := runHelmQuiet(templateArgs...); err != nil {
+		if os.Getenv("LKE_OPENBAO_HELM_REPO_UPDATE") != "1" {
+			if updateErr := runHelm("repo", "update", "openbao"); updateErr != nil {
+				return lkeOpenBaoBootstrapResult{}, updateErr
+			}
+			err = runHelmQuiet(templateArgs...)
+		}
+		if err != nil {
+			return lkeOpenBaoBootstrapResult{}, err
+		}
 	}
 	if err := runHelm("upgrade", "--install", "openbao", "openbao/openbao", "--version", chartVersion, "--namespace", namespace, "-f", valuesPath, "--wait", "--timeout", firstNonEmpty(os.Getenv("LKE_OPENBAO_HELM_TIMEOUT"), "10m")); err != nil {
 		return lkeOpenBaoBootstrapResult{}, err
 	}
-	if os.Getenv("LKE_OPENBAO_RESTART_AFTER_HELM") == "0" {
+	if os.Getenv("LKE_OPENBAO_RESTART_AFTER_HELM") == "0" || tlsUnchanged {
 		if err := runKubectl("-n", namespace, "wait", "--for=jsonpath={.status.phase}=Running", "pod/openbao-0", "--timeout", firstNonEmpty(os.Getenv("LKE_OPENBAO_ROLLOUT_TIMEOUT"), "10m")); err != nil {
 			return lkeOpenBaoBootstrapResult{}, err
 		}
@@ -2411,6 +2498,24 @@ func lkeEnsureOpenBao(paths provisionPaths, env map[string]string, tls lkeOpenBa
 	}
 	result.TLSCACert = tls.CACert
 	return result, nil
+}
+
+func lkeOpenBaoTLSSecretUnchanged(env map[string]string, tls lkeOpenBaoTLSMaterial) bool {
+	namespace := lkeNamespaceName(env, "secrets")
+	cmd := exec.Command(lkeKubectl(), lkeKubectlArgs("-n", namespace, "get", "secret", "openbao-tls", "-o", "json")...)
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	var parsed struct {
+		Data map[string]string `json:"data"`
+	}
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		return false
+	}
+	return parsed.Data["ca.crt"] == base64.StdEncoding.EncodeToString([]byte(tls.CACert)) &&
+		parsed.Data["tls.crt"] == base64.StdEncoding.EncodeToString([]byte(tls.ServerCert)) &&
+		parsed.Data["tls.key"] == base64.StdEncoding.EncodeToString([]byte(tls.ServerKey))
 }
 
 func lkeOpenBaoChartVersion() string {

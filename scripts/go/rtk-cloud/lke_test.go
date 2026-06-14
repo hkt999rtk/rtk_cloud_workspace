@@ -8,9 +8,12 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -529,6 +532,108 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 	}
 }
 
+func TestRunProvisionLKEPublicHTTPSStartsDNSUpsertsBeforeWaiting(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	if err := os.MkdirAll(filepath.Join(workspace, "repos", "rtk_video_cloud", "tools", "godaddy-dns"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeKubectl(t)
+	fakeHelm(t)
+	eventLog := fakeDNSCommandsWithGoDelay(t, "203.0.113.42", "0.2")
+	fakeCertbot(t)
+	t.Setenv("LKE_PUBLIC_HTTPS_ISSUE_EMAIL", "ops@example.test")
+	t.Setenv("LKE_PUBLIC_HTTPS_ACME_SERVER", "https://acme-staging-v02.api.letsencrypt.org/directory")
+	t.Setenv("GODADDY_KEY", "test-key")
+	t.Setenv("GODADDY_SECRET", "test-secret")
+	t.Setenv("GODADDY_ENV", "prod")
+
+	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--dns"}); err != nil {
+		t.Fatal(err)
+	}
+
+	events := readTestFile(t, eventLog)
+	firstDig := strings.Index(events, "DIG ARGS NS realtekconnect.com")
+	if firstDig < 0 {
+		t.Fatalf("expected DNS wait calls, got:\n%s", events)
+	}
+	lastUpsert := -1
+	for _, want := range []string{
+		"--name video-cloud-staging",
+		"--name device.video-cloud-staging",
+		"--name certissuer.video-cloud-staging",
+		"--name account-manager.video-cloud-staging",
+		"--name admin.video-cloud-staging",
+		"--name frontend.video-cloud-staging",
+	} {
+		idx := strings.Index(events, "GO ARGS run ./cmd/godaddy-dns")
+		if idx < 0 {
+			t.Fatalf("expected GoDaddy upsert, got:\n%s", events)
+		}
+		idx = strings.Index(events, want)
+		if idx < 0 {
+			t.Fatalf("expected GoDaddy upsert %q, got:\n%s", want, events)
+		}
+		if idx > lastUpsert {
+			lastUpsert = idx
+		}
+	}
+	if firstDig < lastUpsert {
+		t.Fatalf("DNS waits should start after all public HTTPS A-record upserts have started, got:\n%s", events)
+	}
+}
+
+func TestLKEEnsureOpenBaoSkipsRestartWhenTLSSecretUnchanged(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	_ = workspace
+	kubectlLog := fakeKubectl(t)
+	fakeHelm(t)
+	material := lkeOpenBaoTLSMaterial{
+		CACert:     "test-ca",
+		ServerCert: "test-cert",
+		ServerKey:  "test-key",
+	}
+	t.Setenv("FAKE_OPENBAO_TLS_SECRET_JSON", lkeOpenBaoTLSSecretTestJSON(material))
+
+	_, err := lkeEnsureOpenBao(provisionPaths{EnvRoot: envRoot}, map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}, material)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, kubectlLog)
+	if strings.Contains(log, "delete pod/openbao-0") {
+		t.Fatalf("OpenBao pod should not restart when TLS secret is unchanged, got:\n%s", log)
+	}
+	if !strings.Contains(log, "wait --for=jsonpath={.status.phase}=Running pod/openbao-0") {
+		t.Fatalf("expected OpenBao running wait when restart is skipped, got:\n%s", log)
+	}
+}
+
+func TestLKEEnsureOpenBaoSkipsHelmRepoUpdateWhenTemplateWorks(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	_ = workspace
+	fakeKubectl(t)
+	helmLog := fakeHelm(t)
+	material := lkeOpenBaoTLSMaterial{
+		CACert:     "test-ca",
+		ServerCert: "test-cert",
+		ServerKey:  "test-key",
+	}
+	t.Setenv("FAKE_OPENBAO_TLS_SECRET_JSON", lkeOpenBaoTLSSecretTestJSON(material))
+
+	_, err := lkeEnsureOpenBao(provisionPaths{EnvRoot: envRoot}, map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}, material)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, helmLog)
+	if strings.Contains(log, "ARGS repo update openbao") {
+		t.Fatalf("OpenBao repo update should be lazy when helm template succeeds, got:\n%s", log)
+	}
+	if !strings.Contains(log, "ARGS template openbao openbao/openbao") {
+		t.Fatalf("expected helm template validation, got:\n%s", log)
+	}
+}
+
 func TestRenderCertbotDNS01EnvFileQuotesShellValues(t *testing.T) {
 	body := renderCertbotDNS01EnvFile(certbotDNS01EnvValues{
 		Key:                "test key",
@@ -1013,6 +1118,28 @@ func TestRunProvisionLKEDeployAppliesCoturnRuntime(t *testing.T) {
 	}
 }
 
+func TestLKEVideoCloudAuxiliaryRolloutsWaitAfterAllApplies(t *testing.T) {
+	logPath := fakeKubectl(t)
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+
+	if err := lkeApplyVideoCloudAuxiliaryServices(env, provisionOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, logPath)
+	firstRollout := strings.Index(log, "rollout status deployment/video-cloud-cleaner")
+	lastWorkerApply := strings.LastIndex(log, "kind: Deployment\nmetadata:\n  name: video-cloud-mqttusage")
+	if firstRollout < 0 {
+		t.Fatalf("expected worker rollout wait, got:\n%s", log)
+	}
+	if lastWorkerApply < 0 {
+		t.Fatalf("expected mqttusage deployment apply, got:\n%s", log)
+	}
+	if firstRollout < lastWorkerApply {
+		t.Fatalf("worker rollout waits should start after all worker deployments are applied, got:\n%s", log)
+	}
+}
+
 func TestRunProvisionLKEDeployWritesLegacyStackAndVideoState(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	fakeKubectl(t)
@@ -1381,6 +1508,67 @@ CLOUD_STACK_NAME=video-cloud-staging
 	}
 }
 
+func TestStartK8SE2EPortForwardsStartsAllBeforeWaiting(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	kubectlLog := fakeKubectlForK8SE2EPortForwards(t)
+	writeTestFile(t, filepath.Join(envRoot, "state", "lke-kubeconfig.yaml"), "apiVersion: v1\n")
+	accountPort := freeTCPPort(t)
+	videoPort := freeTCPPort(t)
+	factoryPort := freeTCPPort(t)
+	mqttPort := freeTCPPort(t)
+	t.Setenv("CLOUD_STAGING_E2E_ACCOUNT_MANAGER_PORT", accountPort)
+	t.Setenv("CLOUD_STAGING_E2E_VIDEO_CLOUD_PORT", videoPort)
+	t.Setenv("CLOUD_STAGING_E2E_FACTORY_ENROLL_PORT", factoryPort)
+	t.Setenv("CLOUD_STAGING_E2E_MQTT_PORT", mqttPort)
+
+	_, cleanup, err := startK8SE2EPortForwards(workspace, envRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	log := readTestFile(t, kubectlLog)
+	lastStart := -1
+	for _, service := range []string{"svc/account-manager", "svc/video-cloud-api", "svc/factoryenroll", "svc/mqtt"} {
+		idx := strings.Index(log, "PF_START "+service)
+		if idx < 0 {
+			t.Fatalf("expected port-forward start for %s, got:\n%s", service, log)
+		}
+		if idx > lastStart {
+			lastStart = idx
+		}
+	}
+	firstReady := strings.Index(log, "PF_READY ")
+	if firstReady < 0 {
+		t.Fatalf("expected port-forward readiness log, got:\n%s", log)
+	}
+	if firstReady < lastStart {
+		t.Fatalf("port-forward readiness waits should happen after all forwards start, got:\n%s", log)
+	}
+}
+
+func TestK8SE2EPortForwardOutputFilterSuppressesKubectlNoise(t *testing.T) {
+	for _, line := range []string{
+		"Forwarding from 127.0.0.1:18080 -> 8080",
+		"Forwarding from [::1]:18080 -> 8080",
+		"Handling connection for 18080",
+		"",
+		"   ",
+	} {
+		if shouldLogK8SPortForwardLine(line) {
+			t.Fatalf("expected port-forward noise to be suppressed: %q", line)
+		}
+	}
+	for _, line := range []string{
+		"error: unable to listen on any of the requested ports",
+		"E0614 portforward.go: lost connection to pod",
+	} {
+		if !shouldLogK8SPortForwardLine(line) {
+			t.Fatalf("expected actionable port-forward output to be logged: %q", line)
+		}
+	}
+}
+
 func TestAccountBootstrapNoopsForLKEPortForwardContext(t *testing.T) {
 	err := accountBootstrap(accountManagerContext{
 		EnvRoot: "/tmp/env-root",
@@ -1544,6 +1732,18 @@ if [[ "$*" == *"get service ingress-nginx-controller -o jsonpath={.status.loadBa
   printf '203.0.113.42'
   exit 0
 fi
+if [[ "$*" == *"get secret openbao-tls -o json"* && -n "${FAKE_OPENBAO_TLS_SECRET_JSON:-}" ]]; then
+  printf '%s\n' "$FAKE_OPENBAO_TLS_SECRET_JSON"
+  exit 0
+fi
+if [[ "$*" == *"rollout status"* ]]; then
+  line='ARGS'
+  for arg in "$@"; do
+    line="$line $arg"
+  done
+  printf '%s\n' "$line" >> "` + logPath + `"
+  exit 0
+fi
 if [[ "$*" == *"exec -i openbao-0 -- sh -s"* ]]; then
   body="$(cat)"
   if [[ "$body" == *"bao operator unseal"* ]]; then
@@ -1613,6 +1813,18 @@ if [[ "$*" == *"get service ingress-nginx-controller -o jsonpath={.status.loadBa
   printf '203.0.113.42'
   exit 0
 fi
+if [[ "$*" == *"get secret openbao-tls -o json"* && -n "${FAKE_OPENBAO_TLS_SECRET_JSON:-}" ]]; then
+  printf '%s\n' "$FAKE_OPENBAO_TLS_SECRET_JSON"
+  exit 0
+fi
+if [[ "$*" == *"rollout status"* ]]; then
+  line='ARGS'
+  for arg in "$@"; do
+    line="$line $arg"
+  done
+  printf '%s\n' "$line" >> "` + logPath + `"
+  exit 0
+fi
 if [[ "$*" == *"exec -i openbao-0 -- sh -s"* ]]; then
   body="$(cat)"
   if [[ "$body" == *"bao operator unseal"* ]]; then
@@ -1647,6 +1859,84 @@ fi
 	}
 	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
 	return logPath
+}
+
+func fakeKubectlForK8SE2EPortForwards(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "kubectl.log")
+	kubectl := filepath.Join(dir, "kubectl")
+	secretData := `"ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL":"YWRtaW5AZXhhbXBsZS50ZXN0","ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD":"cGFzc3dvcmQxMjM=","ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN":"dGVzdC10b2tlbg==","VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN":"dGVzdC10b2tlbg==","FACTORY_ENROLL_AUTH_KEY":"dGVzdC1mYWN0b3J5LWtleQ=="`
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+{
+  printf 'ARGS'
+  for arg in "$@"; do
+    printf ' %s' "$arg"
+  done
+  printf '\n'
+} >> "` + logPath + `"
+if [[ "$*" == *" get svc "* ]]; then
+  service="${5:-}"
+  case "$service" in
+    account-manager|video-cloud-api) port=8080 ;;
+    factoryenroll) port=18443 ;;
+    mqtt) port=8883 ;;
+    *) port=80 ;;
+  esac
+  printf '{"spec":{"ports":[{"name":"http","port":%s},{"name":"mqtts","port":8883}]}}\n' "$port"
+  exit 0
+fi
+if [[ "$*" == *" get secret "* ]]; then
+  printf '{"data":{` + secretData + `}}\n'
+  exit 0
+fi
+if [[ "${3:-}" == "port-forward" ]]; then
+  service="${4:-}"
+  mapping="${5:-}"
+  local_port="${mapping%%:*}"
+  printf 'PF_START %s\n' "$service" >> "` + logPath + `"
+  exec python3 - "$local_port" "` + logPath + `" "$service" <<'PY'
+import socket
+import sys
+
+port = int(sys.argv[1])
+log_path = sys.argv[2]
+service = sys.argv[3]
+sock = socket.socket()
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+sock.bind(("127.0.0.1", port))
+sock.listen()
+with open(log_path, "a", encoding="utf-8") as log:
+    log.write(f"PF_READY {service}\n")
+while True:
+    conn, _ = sock.accept()
+    conn.close()
+PY
+fi
+`
+	if err := os.WriteFile(kubectl, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return logPath
+}
+
+func freeTCPPort(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	return strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
+}
+
+func lkeOpenBaoTLSSecretTestJSON(material lkeOpenBaoTLSMaterial) string {
+	return fmt.Sprintf(`{"data":{"ca.crt":%q,"tls.crt":%q,"tls.key":%q}}`,
+		base64.StdEncoding.EncodeToString([]byte(material.CACert)),
+		base64.StdEncoding.EncodeToString([]byte(material.ServerCert)),
+		base64.StdEncoding.EncodeToString([]byte(material.ServerKey)))
 }
 
 func fakeHelm(t *testing.T) string {
@@ -1699,18 +1989,55 @@ func fakeGoForDNS(t *testing.T) string {
 	goPath := filepath.Join(dir, "go")
 	script := `#!/usr/bin/env bash
 set -euo pipefail
-{
-  printf 'ARGS'
-  for arg in "$@"; do
-    printf ' %s' "$arg"
-  done
-  printf '\n'
-} >> "` + logPath + `"
+line='ARGS'
+for arg in "$@"; do
+  line="$line $arg"
+done
+printf '%s\n' "$line" >> "` + logPath + `"
 `
 	if err := os.WriteFile(goPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("RTK_CLOUD_GO", goPath)
+	return logPath
+}
+
+func fakeDNSCommandsWithGoDelay(t *testing.T, ip, delay string) string {
+	t.Helper()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "dns-events.log")
+	goPath := filepath.Join(dir, "go")
+	goScript := `#!/usr/bin/env bash
+set -euo pipefail
+line='GO ARGS'
+for arg in "$@"; do
+  line="$line $arg"
+done
+printf '%s\n' "$line" >> "` + logPath + `"
+sleep "` + delay + `"
+`
+	if err := os.WriteFile(goPath, []byte(goScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	digPath := filepath.Join(dir, "dig")
+	digScript := `#!/usr/bin/env bash
+set -euo pipefail
+line='DIG ARGS'
+for arg in "$@"; do
+  line="$line $arg"
+done
+printf '%s\n' "$line" >> "` + logPath + `"
+if [[ "$*" == *" NS "* || "${1:-}" == "NS" ]]; then
+  printf 'ns23.domaincontrol.com.\n'
+  exit 0
+fi
+printf '` + ip + `\n'
+`
+	if err := os.WriteFile(digPath, []byte(digScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_GO", goPath)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return logPath
 }
 
