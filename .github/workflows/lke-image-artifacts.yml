@@ -1,4 +1,4 @@
-name: LKE Image Artifacts
+name: LKE Image Manifest
 
 on:
   pull_request:
@@ -9,22 +9,22 @@ on:
       - "scripts/README.zh-TW.md"
   workflow_dispatch:
     inputs:
-      registry:
-        description: "Image registry/repository prefix. Defaults to ghcr.io/<owner>/rtk-cloud-lke."
+      owner:
+        description: "GHCR owner/organization. Defaults to hkt999rtk."
         required: false
         type: string
-      tag:
-        description: "Image tag. Defaults to ci-<short SHA>."
+      registry_host:
+        description: "Container registry host. Defaults to ghcr.io."
         required: false
         type: string
 
 permissions:
   contents: read
-  packages: write
+  packages: read
 
 jobs:
   validate:
-    name: Validate LKE image artifact tooling
+    name: Validate LKE image manifest tooling
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -37,16 +37,16 @@ jobs:
           go-version-file: go.work
           cache-dependency-path: scripts/go/go.sum
 
-      - name: Run LKE image artifact tests
+      - name: Run LKE image manifest tests
         shell: bash
         run: |
           set -euo pipefail
           git diff --check
           cd scripts/go
-          GOWORK=off go test ./rtk-cloud -run 'TestRunLKEBuildImagesWritesManifest|TestRunProvisionLKEDeployBuildsMissingImagesWhenRegistryConfigured|TestLKEPostgresStatefulSetUsesPostgresImageOverride'
+          GOWORK=off go test ./rtk-cloud -run 'TestRunLKEBuildImagesWritesManifest|TestRunLKEResolveImages|TestRunProvisionLKEDeployDoesNotBuildServiceImagesWhenRegistryConfigured|TestLKEPostgresStatefulSetUsesPostgresImageOverride'
 
-  build:
-    name: Build LKE image artifacts
+  resolve:
+    name: Resolve LKE image manifest
     if: github.event_name == 'workflow_dispatch'
     needs: validate
     runs-on: ubuntu-latest
@@ -94,21 +94,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push LKE images
+      - name: Resolve and verify LKE images
         shell: bash
         env:
-          INPUT_REGISTRY: ${{ inputs.registry }}
-          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_OWNER: ${{ inputs.owner }}
+          INPUT_REGISTRY_HOST: ${{ inputs.registry_host }}
         run: |
           set -euo pipefail
-          registry="${INPUT_REGISTRY:-ghcr.io/${GITHUB_REPOSITORY_OWNER}/rtk-cloud-lke}"
-          tag="${INPUT_TAG:-ci-${GITHUB_SHA::12}}"
+          owner="${INPUT_OWNER:-hkt999rtk}"
+          registry_host="${INPUT_REGISTRY_HOST:-ghcr.io}"
           mkdir -p .artifacts/lke-images
-          go run ./scripts/go/rtk-cloud -- lke-build-images \
+          go run ./scripts/go/rtk-cloud -- lke-resolve-images \
             --workspace "$GITHUB_WORKSPACE" \
             --env-root cloud_env/staging/lke \
-            --registry "$registry" \
-            --tag "$tag" \
+            --registry-host "$registry_host" \
+            --owner "$owner" \
             --out .artifacts/lke-images/lke-image-manifest.json
           jq -r '.env | to_entries[] | "export \(.key)=\(.value|@sh)"' \
             .artifacts/lke-images/lke-image-manifest.json \
@@ -118,7 +118,7 @@ jobs:
         shell: bash
         run: |
           {
-            echo "Built LKE image artifacts."
+            echo "Resolved LKE image manifest."
             echo
             echo "| Env key | Image |"
             echo "| --- | --- |"
