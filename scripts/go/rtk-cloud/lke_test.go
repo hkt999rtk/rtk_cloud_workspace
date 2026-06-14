@@ -63,6 +63,25 @@ func TestRunProvisionLKEApplyFetchesKubeconfigWhenNoContext(t *testing.T) {
 	}
 }
 
+func TestEnsureK8SKubeconfigPrefersEnvRootState(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	t.Setenv("CLOUD_STAGING_K8S_KUBECONFIG", "")
+	t.Setenv("KUBECONFIG", "")
+	t.Setenv("LINODE_TOKEN", "")
+	envRootKubeconfig := filepath.Join(envRoot, "state", "lke-kubeconfig.yaml")
+	workspaceKubeconfig := filepath.Join(workspace, ".artifacts", "kube", "video-cloud-staging-lke.kubeconfig")
+	writeTestFile(t, envRootKubeconfig, "env-root kubeconfig\n")
+	writeTestFile(t, workspaceKubeconfig, "stale workspace kubeconfig\n")
+
+	got, err := ensureK8SKubeconfig(workspace, envRoot, "video-cloud-staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != envRootKubeconfig {
+		t.Fatalf("kubeconfig got %s want %s", got, envRootKubeconfig)
+	}
+}
+
 func TestRunProvisionLKEApplyDiscoversClusterByLabel(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	encodedKubeconfig := base64.StdEncoding.EncodeToString([]byte("apiVersion: v1\nclusters: []\n"))
@@ -141,6 +160,36 @@ func TestRunProvisionLKEDeployRequiresImages(t *testing.T) {
 	err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"})
 	if err == nil || !strings.Contains(err.Error(), "LKE deploy requires container image environment variables") {
 		t.Fatalf("expected image requirement error, got %v", err)
+	}
+}
+
+func TestRunProvisionLKEDeployUsesImageManifestDefaults(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	logPath := fakeKubectl(t)
+	writeTestFile(t, filepath.Join(envRoot, "artifacts", "lke-images", "lke-image-manifest.json"), `{
+  "env": {
+    "LKE_POSTGRES_IMAGE": "postgres:16-alpine",
+    "LKE_VIDEO_CLOUD_IMAGE": "registry.example.test/rtk/video-cloud:manifest",
+    "LKE_ACCOUNT_MANAGER_IMAGE": "registry.example.test/rtk/account-manager:manifest",
+    "LKE_CLOUD_ADMIN_IMAGE": "registry.example.test/rtk/cloud-admin:manifest",
+    "LKE_FRONTEND_IMAGE": "registry.example.test/rtk/frontend:manifest"
+  }
+}`)
+
+	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, logPath)
+	for _, want := range []string{
+		"image: registry.example.test/rtk/video-cloud:manifest",
+		"image: registry.example.test/rtk/account-manager:manifest",
+		"image: registry.example.test/rtk/cloud-admin:manifest",
+		"image: registry.example.test/rtk/frontend:manifest",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("expected %q from image manifest defaults, got:\n%s", want, log)
+		}
 	}
 }
 
@@ -423,6 +472,20 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"kind: NetworkPolicy\nmetadata:\n  name: default-deny-ingress",
 		"kind: NetworkPolicy\nmetadata:\n  name: allow-public-ingress",
 		"kind: NetworkPolicy\nmetadata:\n  name: allow-postgres-clients",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-account-manager-certissuer",
+		"app.kubernetes.io/name: certissuer",
+		"app.kubernetes.io/name: factoryenroll",
+		"kubernetes.io/metadata.name: video-cloud-staging-account-manager",
+		"port: 9443",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-video-cloud-account-manager",
+		"app.kubernetes.io/name: account-manager",
+		"kubernetes.io/metadata.name: video-cloud-staging-video-cloud",
+		"port: 8080",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-video-cloud-mqtt-clients",
+		"app.kubernetes.io/name: mqtt",
+		"app.kubernetes.io/name: video-cloud-logingester",
+		"app.kubernetes.io/name: video-cloud-mqttusage",
+		"port: 1883",
 	} {
 		if !strings.Contains(kubectlCalls, want) {
 			t.Fatalf("expected %q in kubectl calls, got:\n%s", want, kubectlCalls)
@@ -431,7 +494,6 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 	for _, forbidden := range []string{
 		"nodePort:",
 		"controller.service.ports.http=80",
-		"port: 1883",
 		"port: 8883",
 		"port: 3478",
 	} {
@@ -459,8 +521,51 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 	if !strings.Contains(readTestFile(t, certbotLog), "-d video-cloud-staging.realtekconnect.com") {
 		t.Fatalf("expected certbot DNS-01 certificate issuance, got:\n%s", readTestFile(t, certbotLog))
 	}
+	if strings.Contains(readTestFile(t, certbotLog), "--manual-public-ip-logging-ok") {
+		t.Fatalf("certbot args must not include removed --manual-public-ip-logging-ok flag, got:\n%s", readTestFile(t, certbotLog))
+	}
 	if !strings.Contains(readTestFile(t, digLog), "video-cloud-staging.realtekconnect.com") {
 		t.Fatalf("expected DNS convergence checks, got:\n%s", readTestFile(t, digLog))
+	}
+}
+
+func TestRenderCertbotDNS01EnvFileQuotesShellValues(t *testing.T) {
+	body := renderCertbotDNS01EnvFile(certbotDNS01EnvValues{
+		Key:                "test key",
+		Secret:             "test'secret",
+		Env:                "prod",
+		RootDomain:         "realtekconnect.com",
+		TTL:                "600",
+		WaitSeconds:        "300",
+		PropagationSeconds: "60",
+		Resolvers:          "8.8.8.8 1.1.1.1 9.9.9.9",
+	})
+
+	for _, want := range []string{
+		"GODADDY_KEY='test key'",
+		"GODADDY_SECRET='test'\"'\"'secret'",
+		"GODADDY_DNS_RESOLVERS='8.8.8.8 1.1.1.1 9.9.9.9'",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected %q in certbot DNS env file, got:\n%s", want, body)
+		}
+	}
+}
+
+func TestCertbotDNSHooksUseBoundedNetworkCalls(t *testing.T) {
+	auth := certbotDNSAuthHookScript()
+	for _, want := range []string{
+		"curl --connect-timeout 10 --max-time 30 -fsS -X PUT",
+		"dig +time=5 +tries=1 +short TXT",
+	} {
+		if !strings.Contains(auth, want) {
+			t.Fatalf("expected auth hook to contain %q, got:\n%s", want, auth)
+		}
+	}
+
+	cleanup := certbotDNSCleanupHookScript()
+	if !strings.Contains(cleanup, "curl --connect-timeout 10 --max-time 30 -fsS -X DELETE") {
+		t.Fatalf("expected cleanup hook to use bounded curl, got:\n%s", cleanup)
 	}
 }
 

@@ -315,6 +315,39 @@ func lkeImageArtifactEnv(artifacts []lkeImageArtifact) map[string]string {
 	return out
 }
 
+func loadLKEImageManifestDefaults(envRoot string, env map[string]string) error {
+	path := filepath.Join(envRoot, "artifacts", "lke-images", "lke-image-manifest.json")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	var manifest struct {
+		Env map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal(body, &manifest); err != nil {
+		return fmt.Errorf("read LKE image manifest %s: %w", path, err)
+	}
+	for _, key := range []string{
+		"LKE_POSTGRES_IMAGE",
+		"LKE_VIDEO_CLOUD_IMAGE",
+		"LKE_ACCOUNT_MANAGER_IMAGE",
+		"LKE_CLOUD_ADMIN_IMAGE",
+		"LKE_FRONTEND_IMAGE",
+	} {
+		if os.Getenv(key) == "" && env[key] == "" && manifest.Env[key] != "" {
+			env[key] = manifest.Env[key]
+		}
+	}
+	return nil
+}
+
+func lkeEnvValue(env map[string]string, key string) string {
+	return firstNonEmpty(os.Getenv(key), env[key])
+}
+
 func lkeServiceImageSources() []lkeServiceImageSource {
 	return []lkeServiceImageSource{
 		{Key: "video-cloud", Name: "video-cloud-api", EnvKey: "LKE_VIDEO_CLOUD_IMAGE", RepoName: "rtk_video_cloud", RepoPath: filepath.Join("repos", "rtk_video_cloud")},
@@ -334,6 +367,9 @@ func shortGitCommit(dir string) string {
 
 func runLKEProvision(paths provisionPaths, env map[string]string, opts provisionOptions) error {
 	lkeRuntimeSecretStateDir = filepath.Join(paths.EnvRoot, "state", "secrets")
+	if err := loadLKEImageManifestDefaults(paths.EnvRoot, env); err != nil {
+		return err
+	}
 	if opts.mode.reset {
 		return errors.New("LKE provision reset is not implemented; use remove-all-vm for namespace teardown")
 	}
@@ -687,7 +723,6 @@ func lkeIssuePublicHTTPSCertificate(env map[string]string, opts provisionOptions
 		"--preferred-challenges", "dns",
 		"--manual-auth-hook", authHook,
 		"--manual-cleanup-hook", cleanupHook,
-		"--manual-public-ip-logging-ok",
 		"--non-interactive",
 		"--agree-tos",
 		"--config-dir", configDir,
@@ -768,14 +803,14 @@ func lkeCertificateCoversHosts(certPEM []byte, hosts []string, minValidUntil tim
 
 func renderCertbotDNS01EnvFile(values certbotDNS01EnvValues) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "GODADDY_KEY=%s\n", shellEnvValue(values.Key))
-	fmt.Fprintf(&b, "GODADDY_SECRET=%s\n", shellEnvValue(values.Secret))
-	fmt.Fprintf(&b, "GODADDY_ENV=%s\n", shellEnvValue(values.Env))
-	fmt.Fprintf(&b, "CLOUD_DNS_ROOT_DOMAIN=%s\n", shellEnvValue(values.RootDomain))
-	fmt.Fprintf(&b, "GODADDY_DNS_TTL=%s\n", shellEnvValue(values.TTL))
-	fmt.Fprintf(&b, "GODADDY_DNS_WAIT_SECONDS=%s\n", shellEnvValue(values.WaitSeconds))
-	fmt.Fprintf(&b, "GODADDY_DNS_PROPAGATION_SECONDS=%s\n", shellEnvValue(values.PropagationSeconds))
-	fmt.Fprintf(&b, "GODADDY_DNS_RESOLVERS=%s\n", shellEnvValue(values.Resolvers))
+	fmt.Fprintf(&b, "GODADDY_KEY=%s\n", shellSingleQuote(values.Key))
+	fmt.Fprintf(&b, "GODADDY_SECRET=%s\n", shellSingleQuote(values.Secret))
+	fmt.Fprintf(&b, "GODADDY_ENV=%s\n", shellSingleQuote(values.Env))
+	fmt.Fprintf(&b, "CLOUD_DNS_ROOT_DOMAIN=%s\n", shellSingleQuote(values.RootDomain))
+	fmt.Fprintf(&b, "GODADDY_DNS_TTL=%s\n", shellSingleQuote(values.TTL))
+	fmt.Fprintf(&b, "GODADDY_DNS_WAIT_SECONDS=%s\n", shellSingleQuote(values.WaitSeconds))
+	fmt.Fprintf(&b, "GODADDY_DNS_PROPAGATION_SECONDS=%s\n", shellSingleQuote(values.PropagationSeconds))
+	fmt.Fprintf(&b, "GODADDY_DNS_RESOLVERS=%s\n", shellSingleQuote(values.Resolvers))
 	return b.String()
 }
 
@@ -902,6 +937,9 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 	}
 	manifests = append(manifests, lkeAllowPostgresClientsNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowOpenBaoClientsNetworkPolicyManifest(env))
+	manifests = append(manifests, lkeAllowAccountManagerCertIssuerNetworkPolicyManifest(env))
+	manifests = append(manifests, lkeAllowVideoCloudAccountManagerNetworkPolicyManifest(env))
+	manifests = append(manifests, lkeAllowVideoCloudMQTTClientsNetworkPolicyManifest(env))
 	return manifests
 }
 
@@ -1017,6 +1055,93 @@ spec:
         - protocol: TCP
           port: 8201
 `, lkeNamespaceName(env, "secrets"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "video-cloud"))
+}
+
+func lkeAllowAccountManagerCertIssuerNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-account-manager-certissuer
+  namespace: %s
+  labels:
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: certissuer
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: factoryenroll
+      ports:
+        - protocol: TCP
+          port: 9443
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "account-manager"))
+}
+
+func lkeAllowVideoCloudAccountManagerNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-video-cloud-account-manager
+  namespace: %s
+  labels:
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: account-manager
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
+      ports:
+        - protocol: TCP
+          port: 8080
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "video-cloud"))
+}
+
+func lkeAllowVideoCloudMQTTClientsNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-video-cloud-mqtt-clients
+  namespace: %s
+  labels:
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mqtt
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: video-cloud-logingester
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: video-cloud-mqttusage
+      ports:
+        - protocol: TCP
+          port: 1883
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
 }
 
 func lkeWaitForIngressExternalIP(env map[string]string) (string, error) {
@@ -1383,10 +1508,10 @@ func lkeNamespaceName(env map[string]string, key string) string {
 
 func lkeWorkloads(env map[string]string) []lkeWorkload {
 	return []lkeWorkload{
-		{Key: "video-cloud", Name: "video-cloud-api", EnvKey: "LKE_VIDEO_CLOUD_IMAGE", Image: os.Getenv("LKE_VIDEO_CLOUD_IMAGE"), Namespace: lkeNamespaceName(env, "video-cloud"), Port: envIntDefault("LKE_VIDEO_CLOUD_PORT", 8080), Host: env["VIDEO_CLOUD_DOMAIN"], MetricsEnabled: true, MetricsPath: "/metrics/prometheus", MetricsPort: 80},
-		{Key: "account-manager", Name: "account-manager", EnvKey: "LKE_ACCOUNT_MANAGER_IMAGE", Image: os.Getenv("LKE_ACCOUNT_MANAGER_IMAGE"), Namespace: lkeNamespaceName(env, "account-manager"), Port: envIntDefault("LKE_ACCOUNT_MANAGER_PORT", 8080), Host: env["ACCOUNT_MANAGER_DOMAIN"], MetricsEnabled: true, MetricsPath: "/metrics/prometheus", MetricsPort: 80},
-		{Key: "cloud-admin", Name: "cloud-admin", EnvKey: "LKE_CLOUD_ADMIN_IMAGE", Image: os.Getenv("LKE_CLOUD_ADMIN_IMAGE"), Namespace: lkeNamespaceName(env, "admin"), Port: envIntDefault("LKE_CLOUD_ADMIN_PORT", 8080), Host: env["CLOUD_ADMIN_DOMAIN"], MetricsEnabled: true, MetricsPath: "/metrics/prometheus", MetricsPort: 80},
-		{Key: "frontend", Name: "frontend", EnvKey: "LKE_FRONTEND_IMAGE", Image: os.Getenv("LKE_FRONTEND_IMAGE"), Namespace: lkeNamespaceName(env, "frontend"), Port: envIntDefault("LKE_FRONTEND_PORT", 8080), Host: firstNonEmpty(os.Getenv("LKE_FRONTEND_DOMAIN"), env["CLOUD_ADMIN_DOMAIN"]), MetricsEnabled: true, MetricsPath: "/metrics/prometheus", MetricsPort: 80},
+		{Key: "video-cloud", Name: "video-cloud-api", EnvKey: "LKE_VIDEO_CLOUD_IMAGE", Image: lkeEnvValue(env, "LKE_VIDEO_CLOUD_IMAGE"), Namespace: lkeNamespaceName(env, "video-cloud"), Port: envIntDefault("LKE_VIDEO_CLOUD_PORT", 8080), Host: env["VIDEO_CLOUD_DOMAIN"], MetricsEnabled: true, MetricsPath: "/metrics/prometheus", MetricsPort: 80},
+		{Key: "account-manager", Name: "account-manager", EnvKey: "LKE_ACCOUNT_MANAGER_IMAGE", Image: lkeEnvValue(env, "LKE_ACCOUNT_MANAGER_IMAGE"), Namespace: lkeNamespaceName(env, "account-manager"), Port: envIntDefault("LKE_ACCOUNT_MANAGER_PORT", 8080), Host: env["ACCOUNT_MANAGER_DOMAIN"], MetricsEnabled: true, MetricsPath: "/metrics/prometheus", MetricsPort: 80},
+		{Key: "cloud-admin", Name: "cloud-admin", EnvKey: "LKE_CLOUD_ADMIN_IMAGE", Image: lkeEnvValue(env, "LKE_CLOUD_ADMIN_IMAGE"), Namespace: lkeNamespaceName(env, "admin"), Port: envIntDefault("LKE_CLOUD_ADMIN_PORT", 8080), Host: env["CLOUD_ADMIN_DOMAIN"], MetricsEnabled: true, MetricsPath: "/metrics/prometheus", MetricsPort: 80},
+		{Key: "frontend", Name: "frontend", EnvKey: "LKE_FRONTEND_IMAGE", Image: lkeEnvValue(env, "LKE_FRONTEND_IMAGE"), Namespace: lkeNamespaceName(env, "frontend"), Port: envIntDefault("LKE_FRONTEND_PORT", 8080), Host: firstNonEmpty(os.Getenv("LKE_FRONTEND_DOMAIN"), env["CLOUD_ADMIN_DOMAIN"]), MetricsEnabled: true, MetricsPath: "/metrics/prometheus", MetricsPort: 80},
 	}
 }
 
@@ -1403,7 +1528,7 @@ func lkeVideoCloudAuxiliaryServices() []lkeVideoCloudAuxiliaryService {
 
 func lkeImageWorkloads(env map[string]string, opts provisionOptions) []lkeWorkload {
 	workloads := []lkeWorkload{
-		{Key: "postgres", Name: "postgresql", EnvKey: "LKE_POSTGRES_IMAGE", Image: os.Getenv("LKE_POSTGRES_IMAGE"), Namespace: lkeNamespaceName(env, "platform"), Port: 5432},
+		{Key: "postgres", Name: "postgresql", EnvKey: "LKE_POSTGRES_IMAGE", Image: lkeEnvValue(env, "LKE_POSTGRES_IMAGE"), Namespace: lkeNamespaceName(env, "platform"), Port: 5432},
 	}
 	workloads = append(workloads, lkeSelectedWorkloads(env, opts)...)
 	return workloads

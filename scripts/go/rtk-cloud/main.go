@@ -2048,6 +2048,10 @@ func ensureK8SKubeconfig(workspace, envRoot, stack string) (string, error) {
 	if path := firstNonEmpty(os.Getenv("CLOUD_STAGING_K8S_KUBECONFIG"), os.Getenv("KUBECONFIG")); path != "" {
 		return path, nil
 	}
+	envRootKubeconfig := filepath.Join(envRoot, "state", "lke-kubeconfig.yaml")
+	if info, err := os.Stat(envRootKubeconfig); err == nil && !info.IsDir() {
+		return envRootKubeconfig, nil
+	}
 	out := filepath.Join(workspace, ".artifacts", "kube", stack+"-lke.kubeconfig")
 	if info, err := os.Stat(out); err == nil && !info.IsDir() {
 		return out, nil
