@@ -18,7 +18,7 @@ Markdown reports that can be used as manual, lab, or release evidence.
 
 The next planned expansion is an env-root driven home MQTT simulation profile.
 It starts from the same local environment directory used by
-`go run ./scripts/go/rtk-cloud -- provision`, loads existing users, device fixtures, bind
+`go run ./scripts/go/rtk-cloud -- provision-k8s`, loads existing users, device fixtures, bind
 artifacts, and device mTLS material for token bootstrap, then models a real home
 user operating lights, air conditioners, and smart meters through Cloud APIs. See
 [`home-mqtt-loadtest-simulation.md`](home-mqtt-loadtest-simulation.md).

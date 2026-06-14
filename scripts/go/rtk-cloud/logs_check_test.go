@@ -7,48 +7,18 @@ import (
 	"testing"
 )
 
-func TestBuildLogCheckTargetsFromLatestProvisionArtifact(t *testing.T) {
+func TestLogsCheckIsRetiredForK8sStaging(t *testing.T) {
 	root := t.TempDir()
 	mkdirAll(t, filepath.Join(root, "env"))
-	mkdirAll(t, filepath.Join(root, "state"))
-	mkdirAll(t, filepath.Join(root, "artifacts", "provision-20260101T000000Z"))
-	mkdirAll(t, filepath.Join(root, "artifacts", "provision-20260102T000000Z"))
-	writeFile(t, filepath.Join(root, "state", "account-manager-staging.env"), "ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4=198.51.100.50\n")
-	writeFile(t, filepath.Join(root, "state", "cloud-admin-staging.env"), "ADMIN_LINODE_PUBLIC_IPV4=198.51.100.60\n")
-	writeFile(t, filepath.Join(root, "state", "video-cloud-stg-0529.state.json"), `{"instances":{"edge":{"public_ipv4":"203.0.113.15"},"api":{"private_ip":"10.42.2.10"},"infra":{"private_ip":"10.42.2.30"},"mqtt":{"private_ip":"10.42.2.40"},"coturn":{"public_ipv4":"203.0.113.99"}}}`)
-	writeFile(t, filepath.Join(root, "env", "stack.env"), "CLOUD_STACK_NAME=video-cloud-stg-0529\nVIDEO_CLOUD_DOMAIN=vc.example.test\nACCOUNT_MANAGER_DOMAIN=am.example.test\nCLOUD_ADMIN_DOMAIN=admin.example.test\n")
-	writeFile(t, filepath.Join(root, "artifacts", "provision-20260101T000000Z", "deployment-targets.json"), `{"targets":{"edge":{"host":"old","user":"root"}}}`)
-	writeFile(t, filepath.Join(root, "artifacts", "provision-20260102T000000Z", "deployment-targets.json"), `{
-		"targets": {
-			"edge": {"host": "203.0.113.5", "user": "root"},
-			"api": {"host": "10.42.1.10", "user": "root", "proxy_jump": "root@203.0.113.5"},
-			"infra": {"host": "10.42.1.30", "user": "root", "proxy_jump": "root@203.0.113.5"},
-			"mqtt": {"host": "10.42.1.40", "user": "root", "proxy_jump": "root@203.0.113.5"},
-			"coturn": {"host": "203.0.113.40", "user": "root"}
-		}
-	}`)
-
-	cfg, err := newLogCheckConfig(root, "", "15m", 300, filepath.Join(root, "id_ed25519"), false, false, true)
-	if err != nil {
-		t.Fatal(err)
+	writeFile(t, filepath.Join(root, "env", "stack.env"), "CLOUD_STACK_NAME=video-cloud-staging\n")
+	outDir := filepath.Join(root, "artifacts", "logs-check")
+	err := runLogsCheck([]string{"--env-root", root, "--out-dir", outDir, "--json"})
+	if err == nil || !strings.Contains(err.Error(), logsCheckRetiredMessage) {
+		t.Fatalf("expected retired error, got %v", err)
 	}
-	if cfg.Domains.VideoCloud != "vc.example.test" || cfg.Domains.AccountManager != "am.example.test" || cfg.Domains.CloudAdmin != "admin.example.test" {
-		t.Fatalf("domains not loaded: %+v", cfg.Domains)
-	}
-	if cfg.Targets["edge"].Host != "203.0.113.15" {
-		t.Fatalf("did not use current video state target: %+v", cfg.Targets["edge"])
-	}
-	if cfg.Targets["coturn"].Host != "203.0.113.99" {
-		t.Fatalf("coturn target should use current video state over stale provision artifact: %+v", cfg.Targets["coturn"])
-	}
-	if cfg.Targets["api"].ProxyJump != "root@203.0.113.15" {
-		t.Fatalf("api ProxyJump missing: %+v", cfg.Targets["api"])
-	}
-	if cfg.Targets["account-manager"].Host != "198.51.100.50" {
-		t.Fatalf("account-manager target missing: %+v", cfg.Targets["account-manager"])
-	}
-	if cfg.Targets["cloud-admin"].Host != "198.51.100.60" {
-		t.Fatalf("cloud-admin target missing: %+v", cfg.Targets["cloud-admin"])
+	report := readFile(t, filepath.Join(outDir, "report.md"))
+	if !strings.Contains(report, logsCheckRetiredMessage) || !strings.Contains(report, "status: retired") {
+		t.Fatalf("retired report missing expected content:\n%s", report)
 	}
 }
 
@@ -70,32 +40,6 @@ func TestLogSecretScanner(t *testing.T) {
 				t.Fatalf("scanLogSecrets hit=%v want %v hits=%v", gotHit, tc.wantHit, hits)
 			}
 		})
-	}
-}
-
-func TestLogsCheckRemoteSpecsUseStagingSystemdUnits(t *testing.T) {
-	specs := logsCheckRemoteSpecs(logsCheckConfig{Since: "15m", Tail: 300})
-	byName := map[string]logsCheckRemoteSpec{}
-	for _, spec := range specs {
-		byName[spec.Name] = spec
-	}
-
-	apiJournal := byName["api-journal"].Command
-	for _, want := range []string{"video_cloud-api.service", "video_cloud-logingester.service", "video_cloud-turnregistry.service"} {
-		if !strings.Contains(apiJournal, want) {
-			t.Fatalf("api journal command missing %q: %s", want, apiJournal)
-		}
-	}
-	if strings.Contains(apiJournal, "rtk-video-cloud-api.service") {
-		t.Fatalf("api journal command still uses stale unit: %s", apiJournal)
-	}
-	infraJournal := byName["infra-journal"].Command
-	if strings.Contains(infraJournal, "nats-server") || strings.Contains(infraJournal, "nats.service") {
-		t.Fatalf("infra journal command still includes nats unit: %s", infraJournal)
-	}
-	coturnJournal := byName["coturn-journal"].Command
-	if !strings.Contains(coturnJournal, "video_cloud-turnregistrar.service") {
-		t.Fatalf("coturn journal command missing turn registrar: %s", coturnJournal)
 	}
 }
 

@@ -11,12 +11,7 @@ Usage:
   stg.sh <command> [args]
 
 Shortcuts:
-  provision [args]              -> rtk-cloud provision --env-root cloud_env/staging (default: --all)
-  deploy [VERSION] [args]       -> fast Video Cloud binary update
-                                   default: latest Video Cloud Object Storage release
-                                   full deploy: raw deploy [args]
-  deploy-local [VERSION] [args] -> rebuild local Video Cloud Linux x86_64 bundle,
-                                   then fast binary-only deploy
+  provision [args]              -> provision-k8s
   token [args]                  -> rtk-cloud platform-admin-token --env-root cloud_env/staging
   brand NAME [args]             -> create-brandname-cloud
   brands [args]                 -> list-brandname-clouds
@@ -29,8 +24,6 @@ Shortcuts:
   mqtt-report [NAME] [args]     -> mqtt-trace-report
   video NAME [args]             -> video-relay-test
   certs [args]                  -> check-certificates
-  ssh [CIDR] [args]             -> update-ssh-whitelist
-  rm-vm [args]                  -> remove-all-vm
   e2e [args]                    -> staging-e2e-test
   raw COMMAND [args]            -> pass through to rtk-cloud with staging env-root
 
@@ -59,6 +52,11 @@ need_value() {
 	fi
 }
 
+retired_vm_shortcut() {
+	printf 'error: staging VM shortcut "%s" has been retired; use K8s staging commands instead\n' "$1" >&2
+	exit 2
+}
+
 cmd="${1:-}"
 if [[ -z "$cmd" || "$cmd" == "-h" || "$cmd" == "--help" ]]; then
 	usage
@@ -68,25 +66,13 @@ shift
 
 case "$cmd" in
 	provision)
-		with_env provision "$@"
+		with_env provision-k8s "$@"
 		;;
 	deploy)
-		if [[ -n "${1:-}" && "${1:-}" != -* ]]; then
-			release="$1"
-			shift
-			with_env deploy --video-only --binary-only --video-release "$release" "$@"
-		else
-			with_env deploy --video-only --binary-only "$@"
-		fi
+		retired_vm_shortcut "$cmd"
 		;;
 	deploy-local)
-		if [[ -n "${1:-}" && "${1:-}" != -* ]]; then
-			release="$1"
-			shift
-		else
-			release="local-$(git -C "$ROOT/repos/rtk_video_cloud" rev-parse --short HEAD)"
-		fi
-		with_env deploy --video-only --binary-only --local-build --video-release "$release" "$@"
+		retired_vm_shortcut "$cmd"
 		;;
 	token)
 		with_env platform-admin-token "$@"
@@ -178,16 +164,10 @@ case "$cmd" in
 		with_env check-certificates "$@"
 		;;
 	ssh)
-		if [[ "${1:-}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])$ ]]; then
-			cidr="$1"
-			shift
-			with_env update-ssh-whitelist --cidr "$cidr" "$@"
-		else
-			with_env update-ssh-whitelist "$@"
-		fi
+		retired_vm_shortcut "$cmd"
 		;;
 	rm-vm)
-		with_env remove-all-vm "$@"
+		retired_vm_shortcut "$cmd"
 		;;
 	e2e)
 		with_env staging-e2e-test "$@"

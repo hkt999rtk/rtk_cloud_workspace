@@ -9,7 +9,7 @@ Last updated: 2026-05-31
 The first realistic load-test expansion should model a home user operating
 MQTT-only devices. It must not require operators to manually assemble user,
 device, key, certificate, and binding inputs. The simulation starts from the
-same environment root used by `go run ./scripts/go/rtk-cloud -- provision`, for example:
+same Linode K8s staging environment root used by `provision-k8s` and the E2E flow, for example:
 
 ```sh
 go run ./scripts/go/rtk-cloud -- mqtt-test \

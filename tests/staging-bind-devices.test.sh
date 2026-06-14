@@ -78,7 +78,7 @@ url="${args[$((${#args[@]} - 1))]}"
 payload="${data#@}"
 mkdir -p "$FAKE_CURL_LOG"
 case "$url" in
-*/v1/auth/login)
+*/v1/auth/login|*/v1/brand-clouds/*/auth/login)
 	email="$(jq -r '.email' "$payload")"
 	case "$email" in
 	root@example.com) token="platform-token" ;;
@@ -90,7 +90,7 @@ case "$url" in
 	status=200
 	;;
 */v1/admin/brand-clouds\?limit=200)
-	printf '{"brand_clouds":[{"id":"org-rtk","name":"RTK","organization_kind":"brand_cloud","metadata":{"brandname":"RTK"}}]}' >"$out"
+	printf '{"brand_clouds":[{"id":"org-rtk","name":"RTK","tenant_slug":"rtk","organization_kind":"brand_cloud","metadata":{"brandname":"RTK"}}]}' >"$out"
 	status=200
 	;;
 */v1/admin/device-claim-tokens)
@@ -258,7 +258,8 @@ PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "/usr/local/go/bin/go" run "$RO
 	--users-file "$USERS_FILE" \
 	--devices-dir "$DEVICES_DIR" \
 	--count 4 \
-	--skip-bootstrap >"$OUT" 2>"$TMP/bind.err"
+	--skip-bootstrap \
+	--skip-direct-provision-bridge >"$OUT" 2>"$TMP/bind.err"
 
 if grep -Ei 'password|bearer|raw-token|private|device.key' "$OUT" >/dev/null; then
 	echo "stdout must not include secrets" >&2
@@ -290,7 +291,8 @@ if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_ALREADY_CLAIMED=1 "/usr
 	--users-file "$USERS_FILE" \
 	--devices-dir "$DEVICES_DIR" \
 	--count 1 \
-	--skip-bootstrap >"$TMP/already.out" 2>"$TMP/already.err"; then
+	--skip-bootstrap \
+	--skip-direct-provision-bridge >"$TMP/already.out" 2>"$TMP/already.err"; then
 	echo "expected already-claimed device to fail" >&2
 	exit 1
 fi

@@ -164,6 +164,65 @@ func TestRunAppCertificateBootstrapUsesArtifactKeyForIssuedCertificate(t *testin
 	}
 }
 
+func TestRequestAppTokenUsesTrustedHeadersForHTTPBaseURL(t *testing.T) {
+	certPEM, keyPEM, _ := testAppMaterial(t, "app-user:user-1")
+	cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Client-Verify") != "SUCCESS" {
+			t.Fatalf("X-Client-Verify = %q", r.Header.Get("X-Client-Verify"))
+		}
+		if got := r.Header.Get("X-Client-S-DN"); got != "/CN=app-user:user-1" {
+			t.Fatalf("X-Client-S-DN = %q", got)
+		}
+		writeJSON(t, w, map[string]string{"scope": "app", "access_token": "app-token"})
+	}))
+	defer server.Close()
+
+	token, err := requestAppToken(server.URL, cert, "rtk-0041")
+	if err != nil {
+		t.Fatalf("requestAppToken() error = %v", err)
+	}
+	if token.Scope != "app" || token.AccessToken != "app-token" {
+		t.Fatalf("token = %#v", token)
+	}
+}
+
+func TestRequestDeviceTokenUsesTrustedHeadersForHTTPBaseURL(t *testing.T) {
+	certPEM, keyPEM, _ := testAppMaterial(t, "device-1")
+	cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Client-Verify") != "SUCCESS" {
+			t.Fatalf("X-Client-Verify = %q", r.Header.Get("X-Client-Verify"))
+		}
+		if got := r.Header.Get("X-Client-S-DN"); got != "/CN=device-1" {
+			t.Fatalf("X-Client-S-DN = %q", got)
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["scope"] != "device" || body["devid"] != "device-1" || body["service"] != "mqtt" {
+			t.Fatalf("body = %#v", body)
+		}
+		writeJSON(t, w, map[string]string{"access_token": "device-token"})
+	}))
+	defer server.Close()
+
+	token, err := requestDeviceToken(server.URL, cert, "device-1")
+	if err != nil {
+		t.Fatalf("requestDeviceToken() error = %v", err)
+	}
+	if token != "device-token" {
+		t.Fatalf("token = %q", token)
+	}
+}
+
 func TestRunAppCertificateBootstrapBlocksIssuedCertificateWithoutArtifactKey(t *testing.T) {
 	certPEM, _, _ := testAppMaterial(t, "app-user:user-1")
 	account := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -326,6 +385,38 @@ func TestActorSeparatedCommandRequiresDeviceReceiveAndAppAck(t *testing.T) {
 	}
 	if broker.PublishCount("device", "devices/rtk-0041/up/messages") < 2 {
 		t.Fatal("device did not publish telemetry and command ack on up topic")
+	}
+}
+
+func TestActorSeparatedProbePublishesRuntimeLogsForDeviceAndAppActors(t *testing.T) {
+	broker := newFakeMQTTBroker(t)
+	defer broker.Close()
+	probe := mqttActorProbe{
+		DeviceID:    "rtk-0041",
+		DeviceType:  "light",
+		Brandname:   "RTK",
+		DeviceToken: "device-token",
+		AppToken:    "app-token",
+		Dial:        broker.Dial,
+		Timeout:     time.Second,
+		Now:         fixedProbeTime,
+	}
+
+	result := runActorSeparatedProbe(probe)
+
+	if result.MQTTStatus != "PASS" {
+		t.Fatalf("result = %#v, want PASS", result)
+	}
+	if result.RuntimeLogStreamID == "" {
+		t.Fatalf("runtime log stream id missing: %#v", result)
+	}
+	if len(result.RuntimeLogExpectations) < 6 {
+		t.Fatalf("runtime log expectations = %#v, want publish/receive entries", result.RuntimeLogExpectations)
+	}
+	for _, actor := range []string{"device", "app-controller", "app-observer"} {
+		if broker.PublishCount(actor, "devices/rtk-0041/logs") == 0 {
+			t.Fatalf("%s did not publish runtime logs", actor)
+		}
 	}
 }
 

@@ -110,8 +110,16 @@ type deviceResult struct {
 	CommandSubscribeActor   string      `json:"command_subscribe_actor,omitempty"`
 	CommandTopic            string      `json:"command_topic,omitempty"`
 	AckTopic                string      `json:"ack_topic,omitempty"`
+	RuntimeLogStreamID      string      `json:"runtime_log_stream_id,omitempty"`
+	RuntimeLogExpectations  []logExpect `json:"runtime_log_expectations,omitempty"`
 	TraceChain              []traceStep `json:"trace_chain,omitempty"`
 	Error                   string      `json:"error,omitempty"`
+}
+
+type logExpect struct {
+	Seq     int    `json:"seq"`
+	Source  string `json:"source"`
+	Message string `json:"message"`
 }
 
 type traceStep struct {
@@ -297,14 +305,22 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	loadValues := envValues(filepath.Join(testDevicesDir, "loadtest.env"))
 	videoPublicBaseURL := "https://" + firstNonEmpty(stackValues["VIDEO_CLOUD_DOMAIN"], "unknown")
 	videoMTLSBaseURL := videoCloudMTLSBaseURL(envRoot, stackValues, videoPublicBaseURL)
+	accountBaseURL := strings.TrimRight(firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_BASE_URL"), "https://"+firstNonEmpty(stackValues["ACCOUNT_MANAGER_DOMAIN"], accountValues["ACCOUNT_MANAGER_DOMAIN"], "unknown")), "/")
+	videoBaseURL := strings.TrimRight(firstNonEmpty(os.Getenv("VIDEO_CLOUD_BASE_URL"), videoMTLSBaseURL), "/")
 	endpoints := map[string]any{
-		"account_manager_base_url": "https://" + firstNonEmpty(stackValues["ACCOUNT_MANAGER_DOMAIN"], accountValues["ACCOUNT_MANAGER_LINODE_DOMAIN"], "unknown"),
-		"video_cloud_base_url":     videoMTLSBaseURL,
+		"account_manager_base_url": accountBaseURL,
+		"video_cloud_base_url":     videoBaseURL,
 	}
-	if videoMTLSBaseURL != videoPublicBaseURL {
+	if videoBaseURL != videoPublicBaseURL {
 		endpoints["video_cloud_public_base_url"] = videoPublicBaseURL
 	}
 	mqttHost, mqttPort := mqttEndpoint(videoState, loadValues)
+	if override := strings.TrimSpace(os.Getenv("VIDEO_CLOUD_MQTT_ADDR")); override != "" {
+		if host, port, ok := splitHostPortInt(override); ok {
+			mqttHost = host
+			mqttPort = port
+		}
+	}
 	endpoints["mqtt_host"] = mqttHost
 	endpoints["mqtt_port"] = mqttPort
 
@@ -562,7 +578,7 @@ func runDeviceActorSeparatedEnvelope(record certRecord, brandname, apiBaseURL, h
 	if err != nil {
 		return failedActorResult(record.DeviceID, record.DeviceType, redactedError(err))
 	}
-	deviceToken, err := requestDeviceToken(apiBaseURL, cert)
+	deviceToken, err := requestDeviceToken(apiBaseURL, cert, record.DeviceID)
 	if err != nil {
 		return failedActorResult(record.DeviceID, record.DeviceType, redactedError(err))
 	}
@@ -675,6 +691,7 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 	start := time.Now()
 	upTopic := "devices/" + probe.DeviceID + "/up/messages"
 	downTopic := "devices/" + probe.DeviceID + "/down/commands"
+	logStreamID := fmt.Sprintf("mqtt-e2e-%d-%s", probe.Now().Unix(), probe.DeviceID)
 	result := deviceResult{
 		DeviceID:                probe.DeviceID,
 		DeviceType:              probe.DeviceType,
@@ -695,6 +712,24 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 		CommandSubscribeActor:   "device_client",
 		CommandTopic:            downTopic,
 		AckTopic:                upTopic,
+		RuntimeLogStreamID:      logStreamID,
+	}
+	logSeq := 0
+	recordRuntimeLog := func(conn io.ReadWriter, phase, actor, action, topic string, attrs map[string]any) error {
+		logSeq++
+		message := fmt.Sprintf("mqtt_e2e %s %s %s", phase, actor, action)
+		if attrs == nil {
+			attrs = map[string]any{}
+		}
+		attrs["phase"] = phase
+		attrs["actor"] = actor
+		attrs["action"] = action
+		attrs["topic"] = topic
+		if err := mqttPublishRuntimeLog(conn, probe.DeviceID, logStreamID, logSeq, actor, message, attrs, probe.Now().UTC()); err != nil {
+			return err
+		}
+		result.RuntimeLogExpectations = append(result.RuntimeLogExpectations, logExpect{Seq: logSeq, Source: actor, Message: message})
+		return nil
 	}
 	appObserver, err := connectMQTTActor(probe, "app-observer", appMQTTUsername(probe.DeviceID), probe.AppToken)
 	if err != nil {
@@ -747,6 +782,10 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 	}
 	telemetryData := traceDataSummaryFromPayload(telemetryPayload, "device_to_app")
 	result.TraceChain = appendTraceData(result.TraceChain, "telemetry", "device_client", "publish", upTopic, "PASS", telemetryData, "")
+	if err := recordRuntimeLog(device, "telemetry", "device_client", "publish", upTopic, map[string]any{"direction": "device_to_app", "message_id": messageID}); err != nil {
+		result.Error = "device telemetry runtime log publish failed: " + redactedError(err)
+		return result
+	}
 	telemetryDoc, err := waitForMQTTPublish(appObserver, upTopic, probe.Timeout, func(doc map[string]any) bool {
 		return doc["sample_type"] == "home_device_message" && doc["message_id"] == messageID
 	})
@@ -757,6 +796,10 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 		return result
 	}
 	result.TraceChain = appendTraceData(result.TraceChain, "telemetry", "app_observer", "receive", upTopic, "PASS", traceDataSummary(telemetryDoc), "")
+	if err := recordRuntimeLog(appObserver, "telemetry", "app_observer", "receive", upTopic, map[string]any{"direction": "device_to_app", "message_id": messageID}); err != nil {
+		result.Error = "app telemetry runtime log publish failed: " + redactedError(err)
+		return result
+	}
 	result.TelemetryStatus = "PASS"
 	telemetryLatency := float64(time.Since(start).Milliseconds())
 
@@ -774,6 +817,10 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 	}
 	commandData := traceDataSummaryFromPayload(commandPayload, "app_to_device")
 	result.TraceChain = appendTraceData(result.TraceChain, "command", "app_controller", "publish", downTopic, "PASS", commandData, "")
+	if err := recordRuntimeLog(appController, "command", "app_controller", "publish", downTopic, map[string]any{"direction": "app_to_device", "command_id": commandID}); err != nil {
+		result.Error = "app command runtime log publish failed: " + redactedError(err)
+		return result
+	}
 	commandDoc, err := waitForMQTTPublish(device, downTopic, probe.Timeout, func(doc map[string]any) bool {
 		return doc["sample_type"] == "home_device_message" && doc["message_type"] == "command" && doc["command_id"] == commandID
 	})
@@ -784,6 +831,10 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 		return result
 	}
 	result.TraceChain = appendTraceData(result.TraceChain, "command", "device_client", "receive", downTopic, "PASS", traceDataSummary(commandDoc), "")
+	if err := recordRuntimeLog(device, "command", "device_client", "receive", downTopic, map[string]any{"direction": "app_to_device", "command_id": commandID}); err != nil {
+		result.Error = "device command runtime log publish failed: " + redactedError(err)
+		return result
+	}
 	ackPayload, err := sampleHomeCommandResult(probe.DeviceID, probe.DeviceType, commandID, probe.Now().UTC())
 	if err != nil {
 		result.Error = redactedError(err)
@@ -796,6 +847,10 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 	}
 	ackData := traceDataSummaryFromPayload(ackPayload, "device_to_app")
 	result.TraceChain = appendTraceData(result.TraceChain, "command_ack", "device_client", "publish", upTopic, "PASS", ackData, "")
+	if err := recordRuntimeLog(device, "command_ack", "device_client", "publish", upTopic, map[string]any{"direction": "device_to_app", "command_id": commandID}); err != nil {
+		result.Error = "device command ack runtime log publish failed: " + redactedError(err)
+		return result
+	}
 	ackDoc, err := waitForMQTTPublish(appObserver, upTopic, probe.Timeout, func(doc map[string]any) bool {
 		return doc["sample_type"] == "home_device_message" && doc["message_type"] == "command_result" && doc["command_id"] == commandID
 	})
@@ -806,6 +861,10 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 		return result
 	}
 	result.TraceChain = appendTraceData(result.TraceChain, "command_ack", "app_observer", "receive", upTopic, "PASS", traceDataSummary(ackDoc), "")
+	if err := recordRuntimeLog(appObserver, "command_ack", "app_observer", "receive", upTopic, map[string]any{"direction": "device_to_app", "command_id": commandID}); err != nil {
+		result.Error = "app command ack runtime log publish failed: " + redactedError(err)
+		return result
+	}
 	result.CommandStatus = "PASS"
 	result.MQTTStatus = "PASS"
 	result.SuccessPercent = 100
@@ -944,17 +1003,26 @@ func traceDetail(detail string) string {
 	return redactedErrorString(detail)
 }
 
-func requestDeviceToken(apiBaseURL string, cert tls.Certificate) (string, error) {
+func requestDeviceToken(apiBaseURL string, cert tls.Certificate, deviceID string) (string, error) {
 	apiBaseURL = strings.TrimRight(strings.TrimSpace(apiBaseURL), "/")
 	if apiBaseURL == "" || strings.Contains(apiBaseURL, "unknown") {
 		return "", errors.New("missing video cloud API base URL for mTLS token bootstrap")
 	}
-	body := bytes.NewBufferString(`{"scope":"device"}`)
+	raw, err := json.Marshal(map[string]string{"scope": "device", "devid": deviceID, "service": "mqtt"})
+	if err != nil {
+		return "", err
+	}
+	body := bytes.NewBuffer(raw)
 	req, err := http.NewRequest(http.MethodPost, apiBaseURL+"/request_token", body)
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if isHTTPBaseURL(apiBaseURL) {
+		if err := setTrustedClientCertHeaders(req, cert); err != nil {
+			return "", err
+		}
+	}
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
@@ -1179,6 +1247,11 @@ func requestAppToken(apiBaseURL string, cert tls.Certificate, deviceID string) (
 		return appTokenResponse{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if isHTTPBaseURL(apiBaseURL) {
+		if err := setTrustedClientCertHeaders(req, cert); err != nil {
+			return appTokenResponse{}, err
+		}
+	}
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
@@ -1205,6 +1278,28 @@ func requestAppToken(apiBaseURL string, cert tls.Certificate, deviceID string) (
 		return appTokenResponse{}, errors.New("app request_token response missing access_token")
 	}
 	return out, nil
+}
+
+func isHTTPBaseURL(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	return err == nil && strings.EqualFold(parsed.Scheme, "http")
+}
+
+func setTrustedClientCertHeaders(req *http.Request, cert tls.Certificate) error {
+	if len(cert.Certificate) == 0 {
+		return errors.New("missing client certificate for trusted header token request")
+	}
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return err
+	}
+	cn := strings.TrimSpace(leaf.Subject.CommonName)
+	if cn == "" {
+		return errors.New("client certificate missing common name for trusted header token request")
+	}
+	req.Header.Set("X-Client-Verify", "SUCCESS")
+	req.Header.Set("X-Client-S-DN", "/CN="+cn)
+	return nil
 }
 
 func sampleHomeStatusReport(deviceID, capability, brandname, messageID string, occurredAt time.Time) (string, []byte, error) {
@@ -1359,6 +1454,26 @@ func mqttSubscribe(w io.ReadWriter, packetID uint16, topic string) error {
 func mqttPublish(w io.ReadWriter, topic string, payload []byte) error {
 	body := append(mqttString(topic), payload...)
 	return mqttWritePacket(w, 0x30, body)
+}
+
+func mqttPublishRuntimeLog(w io.ReadWriter, deviceID, streamID string, seq int, source, message string, attrs map[string]any, at time.Time) error {
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	payload, err := json.Marshal(map[string]any{
+		"devid":     deviceID,
+		"stream_id": streamID,
+		"seq":       seq,
+		"ts":        at.UTC().Format(time.RFC3339Nano),
+		"level":     "info",
+		"source":    source,
+		"message":   message,
+		"attrs":     attrs,
+	})
+	if err != nil {
+		return err
+	}
+	return mqttPublish(w, "devices/"+deviceID+"/logs", payload)
 }
 
 func mqttWritePacket(w io.Writer, packetType byte, body []byte) error {
@@ -1997,6 +2112,22 @@ func maxLatency(rows []deviceResult, kind string) float64 {
 
 func nowISO() string {
 	return time.Now().UTC().Format(time.RFC3339)
+}
+
+func splitHostPortInt(value string) (string, int, bool) {
+	host, portRaw, err := net.SplitHostPort(value)
+	if err != nil && strings.Count(value, ":") == 1 {
+		parts := strings.SplitN(value, ":", 2)
+		host, portRaw, err = parts[0], parts[1], nil
+	}
+	if err != nil {
+		return "", 0, false
+	}
+	port, err := strconv.Atoi(portRaw)
+	if err != nil || port <= 0 {
+		return "", 0, false
+	}
+	return host, port, true
 }
 
 func asString(value any) string {

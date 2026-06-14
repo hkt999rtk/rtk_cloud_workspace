@@ -62,8 +62,8 @@ status reports.
 | `docs/product-level-evidence.md` | Formal evidence bundle boundary and status semantics. |
 | `repos/rtk_video_cloud/deploy/README.md` | Video Cloud packaged runtime inventory, systemd services, EMQX/coturn/PostgreSQL/Prometheus shape. |
 | `repos/rtk_video_cloud/docs/config-map.md` | Video Cloud non-secret configuration categories. |
-| `repos/rtk_account_manager/linode_deploy/README.md` | Account Manager public VM shape, deployment model, PostgreSQL and nginx boundary. |
-| `repos/rtk_cloud_admin/deploy/linode/README.md` | Admin dashboard public VM shape, upstream configuration, Docker/SQLite/nginx boundary. |
+| `repos/rtk_account_manager/docs/linode-staging-k8s.md` | Account Manager staging boundary after VM toolkit retirement. |
+| `repos/rtk_cloud_admin/docs/linode-staging-k8s.md` | Admin dashboard staging boundary after VM toolkit retirement. |
 | `repos/rtk_cloud_frontend/docs/deployment-linode.md` | Frontend artifact-first Linode deployment model and runtime env categories. |
 
 ## Threat Model / Cyber Security Sources

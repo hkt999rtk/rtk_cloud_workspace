@@ -37,10 +37,6 @@ make_stub() {
 set -euo pipefail
 printf '%s\\t%s\\n' "$name" "\$*" >> "$COMMAND_LOG"
 case "$name" in
-provision)
-	printf 'provision stage: applying linode topology\n'
-	sleep 1
-	;;
 create-users)
 	mkdir -p "$ENV_ROOT/artifacts/users"
 	printf '{"brandname":"RTK","users":[{"email":"rtk+001@users.local","password":"super-secret"}]}\\n' > "$ENV_ROOT/artifacts/users/rtk-users-test.json"
@@ -95,15 +91,32 @@ mqtt-test)
 	mkdir -p "$TMP/mqtt-report"
 	printf '{"overall":"pass","status":"PASS","report_file":"%s","results_file":"%s"}\\n' "$TMP/mqtt-report/TEST_REPORT.md" "$TMP/mqtt-report/results.json"
 	printf '# MQTT Report\\nPASS\\n' > "$TMP/mqtt-report/TEST_REPORT.md"
-	printf '{"overall":"pass"}\\n' > "$TMP/mqtt-report/results.json"
+	printf '{"overall":"pass","devices":[{"device_id":"dev-1","runtime_log_stream_id":"mqtt-e2e-dev-1","runtime_log_expectations":[{"seq":1,"source":"device_client","message":"mqtt_e2e telemetry device_client publish"}]}]}\\n' > "$TMP/mqtt-report/results.json"
+	;;
+mqtt-log-verify)
+	out_dir=""
+	while [[ \$# -gt 0 ]]; do
+		case "\$1" in
+			--out-dir)
+				out_dir="\$2"
+				shift 2
+				;;
+			*)
+				shift
+				;;
+		esac
+	done
+	mkdir -p "\$out_dir"
+	printf '{"overall":"pass","checked_devices":1,"checked_logs":1}\\n' > "\$out_dir/summary.json"
+	printf '{"overall":"pass","summary_file":"%s"}\\n' "\$out_dir/summary.json"
 	;;
 esac
 SH
 	chmod +x "$path"
 }
 
-make_stub "$TMP/remove.sh" remove
-make_stub "$TMP/provision.sh" provision
+make_stub "$TMP/remove-k8s.sh" remove-k8s
+make_stub "$TMP/provision-k8s.sh" provision-k8s
 make_stub "$TMP/create-brand.sh" create-brand
 make_stub "$TMP/create-users.sh" create-users
 make_stub "$TMP/generate-devices.sh" generate-devices
@@ -111,27 +124,34 @@ make_stub "$TMP/bind-devices.sh" bind-devices
 make_stub "$TMP/validate-bind.sh" validate-bind
 make_stub "$TMP/setup-data.sh" setup-data
 make_stub "$TMP/mqtt-test.sh" mqtt-test
+make_stub "$TMP/mqtt-log-verify.sh" mqtt-log-verify
 
 PLAN_OUT="$TMP/plan.out"
-CLOUD_STAGING_E2E_REMOVE_SCRIPT="$TMP/remove.sh" \
-CLOUD_STAGING_E2E_PROVISION_SCRIPT="$TMP/provision.sh" \
+CLOUD_STAGING_E2E_REMOVE_K8S_SCRIPT="$TMP/remove-k8s.sh" \
+CLOUD_STAGING_E2E_PROVISION_K8S_SCRIPT="$TMP/provision-k8s.sh" \
 CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT="$TMP/setup-data.sh" \
 CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT="$TMP/mqtt-test.sh" \
+CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT="$TMP/mqtt-log-verify.sh" \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-e2e-test \
 	--workspace "$WORKSPACE" \
 	--env-root "$WORKSPACE/cloud_env/staging" \
 	--plan > "$PLAN_OUT"
 
 grep -F 'cloud-staging-e2e-test plan' "$PLAN_OUT" >/dev/null
+grep -F 'target: k8s' "$PLAN_OUT" >/dev/null
+grep -F 'reset K8s staging with '"$TMP/remove-k8s.sh" "$PLAN_OUT" >/dev/null
+grep -F 'provision K8s staging with '"$TMP/provision-k8s.sh" "$PLAN_OUT" >/dev/null
 test ! -e "$COMMAND_LOG"
 
 RUN_OUT="$TMP/run.out"
 RUN_ERR="$TMP/run.err"
-CLOUD_STAGING_E2E_REMOVE_SCRIPT="$TMP/remove.sh" \
-CLOUD_STAGING_E2E_PROVISION_SCRIPT="$TMP/provision.sh" \
+CLOUD_STAGING_E2E_REMOVE_K8S_SCRIPT="$TMP/remove-k8s.sh" \
+CLOUD_STAGING_E2E_PROVISION_K8S_SCRIPT="$TMP/provision-k8s.sh" \
 CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT="$TMP/setup-data.sh" \
 CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT="$TMP/mqtt-test.sh" \
+CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT="$TMP/mqtt-log-verify.sh" \
 CLOUD_STAGING_E2E_PROGRESS_INTERVAL=100ms \
+CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0 \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-e2e-test \
 	--workspace "$WORKSPACE" \
 	--env-root "$WORKSPACE/cloud_env/staging" \
@@ -143,33 +163,34 @@ CLOUD_STAGING_E2E_PROGRESS_INTERVAL=100ms \
 	--device-mix camera=1,light=1,smart_meter=1 \
 	--skip-mqtt-probe > "$RUN_OUT" 2> "$RUN_ERR"
 
-expected=$'remove\nprovision\nsetup-data\nmqtt-test'
+expected=$'remove-k8s\nprovision-k8s\nsetup-data\nmqtt-test\nmqtt-log-verify'
 actual="$(cut -f1 "$COMMAND_LOG")"
 [[ "$actual" == "$expected" ]] || {
 	printf 'unexpected command order:\n%s\n' "$actual" >&2
 	exit 1
 }
-grep -F $'provision\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --all --confirm video-cloud-staging' "$COMMAND_LOG" >/dev/null
+grep -F $'remove-k8s\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --yes' "$COMMAND_LOG" >/dev/null
+grep -F $'provision-k8s\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --confirm video-cloud-staging' "$COMMAND_LOG" >/dev/null
 grep -F $'setup-data\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --brandname RTK --user-count 1 --device-count 3 --device-mix camera=1,light=1,smart_meter=1 --device-prefix load-device --user-concurrency 16 --device-concurrency 16 --bind-concurrency 16 --out-dir ' "$COMMAND_LOG" >/dev/null
-if grep -F -- '--reset-and-all' "$COMMAND_LOG" >/dev/null; then
-	echo "staging-e2e-test should remove VMs explicitly, then provision with --all rather than unsupported --reset-and-all" >&2
+if grep -E '(^|[[:space:]])(remove-all-vm|provision|deploy|remove_vm|provision_all)([[:space:]]|$)' "$COMMAND_LOG" >/dev/null; then
+	echo "staging-e2e-test should not invoke retired VM runtime commands" >&2
 	exit 1
 fi
-for step in remove_vm provision_all setup_brand_devices cloud_mqtt_test; do
+for step in reset_k8s provision_k8s setup_brand_devices cloud_mqtt_test verify_mqtt_logs; do
 	grep -E "\\[cloud-staging-e2e\\] pass: ${step} duration_seconds=[0-9]+" "$RUN_ERR" >/dev/null
 done
-grep -E "\\[cloud-staging-e2e\\] start: provision_all log=.*/logs/provision_all.log" "$RUN_ERR" >/dev/null
-grep -E "\\[cloud-staging-e2e\\] progress: provision_all elapsed=[0-9:]+ latest=\"provision stage: applying linode topology\"" "$RUN_ERR" >/dev/null
+grep -E "\\[cloud-staging-e2e\\] start: provision_k8s log=.*/logs/provision_k8s.log" "$RUN_ERR" >/dev/null
 
 SUMMARY="$(jq -r '.summary_file' "$RUN_OUT")"
 REPORT="$(jq -r '.report_file' "$RUN_OUT")"
 test -f "$SUMMARY"
 test -f "$REPORT"
-jq -e '.overall == "pass" and (.steps | length == 4) and .artifacts.data_setup_summary_file != "" and .artifacts.bind_validation_dir != ""' "$SUMMARY" >/dev/null
+jq -e '.overall == "pass" and .target == "k8s" and (.steps | length == 5) and .artifacts.data_setup_summary_file != "" and .artifacts.bind_validation_dir != "" and .artifacts.mqtt_log_verify_summary_file != ""' "$SUMMARY" >/dev/null
 jq -e '.steps[] | select(.name == "setup_brand_devices")' "$SUMMARY" >/dev/null
 grep -F 'Staging E2E Test Report' "$REPORT" >/dev/null
 grep -F 'Data setup summary' "$REPORT" >/dev/null
 grep -F 'cloud_mqtt_test' "$REPORT" >/dev/null
+grep -F 'verify_mqtt_logs' "$REPORT" >/dev/null
 if grep -R -Ei 'super-secret|password|bearer|token|PRIVATE KEY|-----BEGIN' "$SUMMARY" "$REPORT" >/dev/null; then
 	echo "orchestrator reports must be redacted" >&2
 	exit 1
@@ -178,11 +199,13 @@ fi
 : > "$COMMAND_LOG"
 QUIET_OUT="$TMP/quiet.out"
 QUIET_ERR="$TMP/quiet.err"
-CLOUD_STAGING_E2E_REMOVE_SCRIPT="$TMP/remove.sh" \
-CLOUD_STAGING_E2E_PROVISION_SCRIPT="$TMP/provision.sh" \
+CLOUD_STAGING_E2E_REMOVE_K8S_SCRIPT="$TMP/remove-k8s.sh" \
+CLOUD_STAGING_E2E_PROVISION_K8S_SCRIPT="$TMP/provision-k8s.sh" \
 CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT="$TMP/setup-data.sh" \
 CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT="$TMP/mqtt-test.sh" \
+CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT="$TMP/mqtt-log-verify.sh" \
 CLOUD_STAGING_E2E_PROGRESS_INTERVAL=100ms \
+CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0 \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-e2e-test \
 	--workspace "$WORKSPACE" \
 	--env-root "$WORKSPACE/cloud_env/staging" \
@@ -196,7 +219,7 @@ CLOUD_STAGING_E2E_PROGRESS_INTERVAL=100ms \
 	--quiet > "$QUIET_OUT" 2> "$QUIET_ERR"
 
 grep -F $'setup-data\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --brandname RTK --user-count 1 --device-count 3 --device-mix camera=1,light=1,smart_meter=1 --device-prefix load-device --user-concurrency 16 --device-concurrency 16 --bind-concurrency 16 --out-dir ' "$COMMAND_LOG" | grep -F -- '--quiet' >/dev/null
-grep -E "\\[cloud-staging-e2e\\] start: provision_all log=.*/logs/provision_all.log" "$QUIET_ERR" >/dev/null
+grep -E "\\[cloud-staging-e2e\\] start: provision_k8s log=.*/logs/provision_k8s.log" "$QUIET_ERR" >/dev/null
 if grep -F '[cloud-staging-e2e] progress:' "$QUIET_ERR" >/dev/null; then
 	echo "quiet staging e2e should not print progress lines" >&2
 	exit 1

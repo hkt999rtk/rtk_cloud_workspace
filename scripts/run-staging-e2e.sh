@@ -43,7 +43,6 @@ PLAN=0
 OUT_DIR=""
 SKIP_MQTT_PROBE=0
 QUIET=0
-LOCAL_BUILD=0
 
 usage() {
 	cat <<'USAGE'
@@ -51,16 +50,16 @@ Usage:
   scripts/run-staging-e2e.sh --confirm <stack-name> [args]
   scripts/run-staging-e2e.sh --plan [args]
 
-Runs the full staging E2E flow through ./stg.sh e2e.
-Current supported provider: linode.
+Runs the full Linode K8s staging E2E flow through ./stg.sh e2e.
 
 Flow:
-  1. remove staging provider resources
-  2. provision/deploy staging with current CI artifacts
+  1. reset K8s staging state
+  2. verify K8s rollout readiness and query service endpoints
   3. run scripts/setup-staging-e2e-data.sh for brand/users/devices/bind
   4. run live MQTT E2E
-  5. write final installation report with segment durations
-  6. print final redacted report paths
+  5. verify persisted device/app MQTT runtime logs
+  6. write final installation report with segment durations
+  7. print final redacted report paths
 
 Options:
   --confirm <stack-name>         Required for destructive run mode.
@@ -75,13 +74,8 @@ Options:
   --device-concurrency N          Concurrent device generation workers. Default: 16.
   --bind-concurrency N            Concurrent device binding workers. Default: 16.
   --skip-mqtt-probe               Run MQTT test without live broker probe.
-  --local-build                    Build and deploy a local Video Cloud bundle.
   --quiet                         Suppress periodic progress lines.
   -h, --help                      Show this help.
-
-Artifact selection:
-  By default the underlying staging deploy logic selects the latest readable CI
-  artifacts. Set VIDEO_RELEASE, ACCOUNT_RELEASE, or ADMIN_RELEASE to override.
 USAGE
 }
 
@@ -253,10 +247,6 @@ while [[ $# -gt 0 ]]; do
 			SKIP_MQTT_PROBE=1
 			shift
 			;;
-		--local-build)
-			LOCAL_BUILD=1
-			shift
-			;;
 		--quiet)
 			QUIET=1
 			shift
@@ -301,9 +291,6 @@ if [[ "$PLAN" -eq 1 ]]; then
 	fi
 	if [[ "$SKIP_MQTT_PROBE" -eq 1 ]]; then
 		plan_args+=(--skip-mqtt-probe)
-	fi
-	if [[ "$LOCAL_BUILD" -eq 1 ]]; then
-		plan_args+=(--local-build)
 	fi
 	if [[ "$QUIET" -eq 1 ]]; then
 		plan_args+=(--quiet)
@@ -354,9 +341,6 @@ if [[ -n "$OUT_DIR" ]]; then
 fi
 if [[ "$SKIP_MQTT_PROBE" -eq 1 ]]; then
 	run_args+=(--skip-mqtt-probe)
-fi
-if [[ "$LOCAL_BUILD" -eq 1 ]]; then
-	run_args+=(--local-build)
 fi
 if [[ "$QUIET" -eq 1 ]]; then
 	run_args+=(--quiet)

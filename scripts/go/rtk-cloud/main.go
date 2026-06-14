@@ -9,6 +9,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
@@ -20,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -41,36 +43,35 @@ type commandSpec struct {
 }
 
 var commands = map[string]commandSpec{
-	"bind-devices":           {run: runBindDevices},
-	"check-certificates":     {run: runCheckCertificates},
-	"collect-evidence":       {run: runCollectEvidence},
-	"contracts-check":        {run: runContractsCheck},
-	"create-brandname-cloud": {run: runCreateBrandnameCloud},
-	"create-users":           {run: runCreateUsers},
-	"deploy":                 {run: runDeploy},
-	"docs-check":             {run: runDocsCheck},
-	"generate-load-devices":  {run: runGenerateLoadDevices},
-	"list-brandname-clouds":  {run: runListBrandnameClouds},
-	"logs-check":             {run: runLogsCheck},
-	"migrate-env":            {run: runMigrateEnv},
-	"mqtt-loadtest":          {run: runMQTTLoadTest},
-	"mqtt-test":              {run: runMQTTTest},
-	"mqtt-trace-report":      {run: runMQTTTraceReport},
-	"platform-admin-token":   {run: runPlatformAdminToken},
-	"provision":              {run: runProvision},
-	"refresh-user-tokens":    {run: runRefreshUserTokens},
-	"remove-all-vm":          {run: runRemoveAllVM},
-	"secrets-check":          {run: runSecretsCheck},
-	"staging-e2e-data-setup": {run: runStagingE2EDataSetup},
-	"staging-e2e-test":       {run: runStagingE2ETest},
-	"status-all":             {run: runStatusAll},
-	"sync-env":               {run: runSyncEnv},
-	"sync-all":               {run: runSyncAll},
-	"test-matrix":            {run: runTestMatrix},
-	"unprovision-devices":    {run: runUnprovisionDevices},
-	"update-ssh-whitelist":   {run: runUpdateSSHWhitelist},
-	"validate-device-bind":   {run: runValidateDeviceBind},
-	"video-relay-test":       {run: runVideoRelayTest},
+	"bind-devices":                {run: runBindDevices},
+	"check-certificates":          {run: runCheckCertificates},
+	"collect-evidence":            {run: runCollectEvidence},
+	"contracts-check":             {run: runContractsCheck},
+	"create-brandname-cloud":      {run: runCreateBrandnameCloud},
+	"create-users":                {run: runCreateUsers},
+	"docs-check":                  {run: runDocsCheck},
+	"generate-load-devices":       {run: runGenerateLoadDevices},
+	"list-brandname-clouds":       {run: runListBrandnameClouds},
+	"logs-check":                  {run: runLogsCheck},
+	"migrate-env":                 {run: runMigrateEnv},
+	"mqtt-loadtest":               {run: runMQTTLoadTest},
+	"mqtt-test":                   {run: runMQTTTest},
+	"mqtt-trace-report":           {run: runMQTTTraceReport},
+	"platform-admin-token":        {run: runPlatformAdminToken},
+	"provision-k8s":               {run: runProvisionK8s},
+	"refresh-user-tokens":         {run: runRefreshUserTokens},
+	"remove-k8s":                  {run: runRemoveK8s},
+	"secrets-check":               {run: runSecretsCheck},
+	"staging-e2e-data-setup":      {run: runStagingE2EDataSetup},
+	"staging-e2e-mqtt-log-verify": {run: runStagingE2EMQTTLogVerify},
+	"staging-e2e-test":            {run: runStagingE2ETest},
+	"status-all":                  {run: runStatusAll},
+	"sync-env":                    {run: runSyncEnv},
+	"sync-all":                    {run: runSyncAll},
+	"test-matrix":                 {run: runTestMatrix},
+	"unprovision-devices":         {run: runUnprovisionDevices},
+	"validate-device-bind":        {run: runValidateDeviceBind},
+	"video-relay-test":            {run: runVideoRelayTest},
 }
 
 var ciRunnerCommands = map[string]commandSpec{
@@ -126,9 +127,6 @@ func run(args []string) error {
 	spec, ok := commands[cmdName]
 	if !ok {
 		return fmt.Errorf("unknown command: %s", cmdName)
-	}
-	if cmdName == "deploy" && !hasFlag(args[1:], "--env-root") && !hasFlag(args[1:], "--operator-env") {
-		return errors.New("--env-root is required")
 	}
 	if spec.run != nil {
 		return spec.run(args[1:])
@@ -314,8 +312,8 @@ func runCheckCertificates(args []string) error {
 	loggerState, _ := readEnvFile(filepath.Join(envRoot, "state", "cloud-logger.env"))
 	videoDomain := firstNonEmpty(stackEnv["VIDEO_CLOUD_DOMAIN"], "video-cloud-staging."+*dnsRoot)
 	certIssuerDomain := firstNonEmpty(stackEnv["VIDEO_CLOUD_CERTISSUER_DOMAIN"], "certissuer."+videoDomain)
-	accountDomain := envFileValue(accountEnv, "ACCOUNT_MANAGER_LINODE_DOMAIN")
-	adminDomain := envFileValue(adminEnv, "ADMIN_LINODE_DOMAIN")
+	accountDomain := firstNonEmpty(stackEnv["ACCOUNT_MANAGER_DOMAIN"], envFileValue(accountEnv, "ACCOUNT_MANAGER_DOMAIN"))
+	adminDomain := firstNonEmpty(stackEnv["CLOUD_ADMIN_DOMAIN"], envFileValue(adminEnv, "CLOUD_ADMIN_DOMAIN"))
 	loggerDomain := firstNonEmpty(stackEnv["CLOUD_LOGGER_DOMAIN"], loggerEnv["CLOUD_LOGGER_DOMAIN"], loggerState["CLOUD_LOGGER_DOMAIN"], "logger."+videoDomain)
 	targets := []struct {
 		name   string
@@ -360,83 +358,16 @@ func runCheckCertificates(args []string) error {
 func runMigrateEnv(args []string) error {
 	fs := flag.NewFlagSet("migrate-env", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	workspaceFlag := fs.String("workspace", "", "workspace")
 	envRootFlag := fs.String("env-root", "", "environment root")
-	force := fs.Bool("force", false, "force")
-	_ = force
+	fs.String("workspace", "", "workspace")
+	fs.Bool("force", false, "retired")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *envRootFlag == "" {
 		return errors.New("--env-root is required")
 	}
-	workspace := *workspaceFlag
-	var err error
-	if workspace == "" {
-		workspace, err = workspaceRoot()
-		if err != nil {
-			return err
-		}
-	}
-	envRoot, err := resolveEnvRoot(workspace, *envRootFlag)
-	if err != nil {
-		return err
-	}
-	timestamp := time.Now().UTC().Format("20060102T150405Z")
-	backup := filepath.Join(envRoot, "backups", "migration-"+timestamp)
-	manifest := filepath.Join(backup, "migration-manifest.tsv")
-	if err := os.MkdirAll(backup, 0o755); err != nil {
-		return err
-	}
-	rows := [][]string{{"item", "source", "destination", "status", "detail"}}
-	copyItem := func(item, src, dst string) {
-		status := "missing"
-		detail := "source not found"
-		if err := copyPath(src, dst); err == nil {
-			status = "copied"
-			detail = "ok"
-		} else if !os.IsNotExist(err) {
-			status = "error"
-			detail = err.Error()
-		}
-		rows = append(rows, []string{item, src, dst, status, detail})
-	}
-	copyItem("operator-env", filepath.Join(workspace, ".secrets", "staging", "linode", "video-cloud", "env", "operator.env"), filepath.Join(envRoot, "env", "operator.env"))
-	copyItem("video-topology", filepath.Join(workspace, ".secrets", "staging", "linode", "video-cloud", "config", "video-cloud-staging.yaml"), filepath.Join(envRoot, "topology", "video-cloud-staging.yaml"))
-	copyItem("video-env", filepath.Join(workspace, ".secrets", "staging", "linode", "video-cloud", "env", "video-cloud-staging.env"), filepath.Join(envRoot, "services", "video-cloud", "video-cloud-staging.env"))
-	copyItem("account-manager-env", filepath.Join(workspace, "repos", "rtk_account_manager", "linode_deploy", "secrets", "account-manager-public-staging.env"), filepath.Join(envRoot, "services", "account-manager", "account-manager-public-staging.env"))
-	copyItem("account-manager-platform-admin", filepath.Join(workspace, "repos", "rtk_account_manager", "linode_deploy", "secrets", "account-manager-platform-admin.env"), filepath.Join(envRoot, "services", "account-manager", "account-manager-platform-admin.env"))
-	copyItem("account-manager-state", filepath.Join(workspace, "repos", "rtk_account_manager", "linode_deploy", "state", "rtk-account-manager-staging.env"), filepath.Join(envRoot, "state", "account-manager-staging.env"))
-	copyItem("cloud-admin-env", filepath.Join(workspace, "repos", "rtk_cloud_admin", "deploy", "linode", "admin-staging.env"), filepath.Join(envRoot, "services", "cloud-admin", "admin-staging.env"))
-	copyItem("cloud-admin-state", filepath.Join(workspace, "repos", "rtk_cloud_admin", "deploy", "linode", "rtk-cloud-admin-staging.state"), filepath.Join(envRoot, "state", "cloud-admin-staging.env"))
-	copyItem("video-state", filepath.Join(workspace, "repos", "rtk_video_cloud", "linode_deploy", "state", "video-cloud-staging.state.json"), filepath.Join(envRoot, "state", "video-cloud-staging.state.json"))
-	copyItem("video-key-root-ca", filepath.Join(workspace, "keys", "staging", "linode", "video-cloud", "root-ca.key.pem"), filepath.Join(envRoot, "keys", "video-cloud", "root-ca.key.pem"))
-	copyItem("test-device-manifest", filepath.Join(workspace, "keys", "test_device", "manifests", "device_ids.txt"), filepath.Join(envRoot, "devices", "test_device", "manifests", "device_ids.txt"))
-	copyItem("artifacts", filepath.Join(workspace, ".secrets", "staging", "linode", "video-cloud", "artifacts"), filepath.Join(envRoot, "artifacts"))
-	stackPath := filepath.Join(envRoot, "env", "stack.env")
-	if err := os.MkdirAll(filepath.Dir(stackPath), 0o755); err != nil {
-		return err
-	}
-	rootEnv := map[string]string{
-		"CLOUD_ENV_NAME":        "staging",
-		"CLOUD_PROVIDER":        "linode",
-		"CLOUD_REGION":          "us-sea",
-		"CLOUD_DNS_ROOT_DOMAIN": "realtekconnect.com",
-	}
-	stack := renderStackEnv(rootEnv, envroot.Derive(rootEnv))
-	if err := os.WriteFile(stackPath, []byte(stack), 0o644); err != nil {
-		return err
-	}
-	rows = append(rows, []string{"stack-metadata", "generated", stackPath, "copied", "ok"})
-	if err := writeTSV(manifest, rows); err != nil {
-		return err
-	}
-	fmt.Fprintf(os.Stderr, "[cloud-env-migrate] workspace=%s\n", workspace)
-	fmt.Fprintf(os.Stderr, "[cloud-env-migrate] env_root=%s\n", envRoot)
-	fmt.Fprintf(os.Stderr, "[cloud-env-migrate] backup=%s\n", backup)
-	fmt.Fprintf(os.Stderr, "[cloud-env-migrate] migration manifest: %s\n", manifest)
-	fmt.Fprintf(os.Stdout, "manifest=%s\n", manifest)
-	return nil
+	return errors.New("migrate-env is retired with the staging VM toolkit; use sync-env plus the K8s staging service discovery flow")
 }
 
 func runSyncEnv(args []string) error {
@@ -515,19 +446,13 @@ func syncEnvRoot(root string, check bool) (bool, error) {
 	}{
 		{firstExistingPath(filepath.Join(root, "services", "video-cloud", "video-cloud.env"), filepath.Join(root, "services", "video-cloud", "video-cloud-staging.env")), map[string]string{}},
 		{firstExistingPath(filepath.Join(root, "services", "account-manager", "account-manager.env"), filepath.Join(root, "services", "account-manager", "account-manager-public-staging.env")), map[string]string{
-			"ACCOUNT_MANAGER_LINODE_LABEL":          derived["ACCOUNT_MANAGER_LINODE_LABEL"],
-			"ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL": derived["ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL"],
-			"ACCOUNT_MANAGER_LINODE_DOMAIN":         derived["ACCOUNT_MANAGER_DOMAIN"],
+			"ACCOUNT_MANAGER_DOMAIN": derived["ACCOUNT_MANAGER_DOMAIN"],
 		}},
 		{firstExistingPath(filepath.Join(root, "services", "cloud-admin", "admin.env"), filepath.Join(root, "services", "cloud-admin", "admin-staging.env")), map[string]string{
-			"ADMIN_LINODE_LABEL":          derived["ADMIN_LINODE_LABEL"],
-			"ADMIN_LINODE_FIREWALL_LABEL": derived["ADMIN_LINODE_FIREWALL_LABEL"],
-			"ADMIN_LINODE_DOMAIN":         derived["CLOUD_ADMIN_DOMAIN"],
+			"CLOUD_ADMIN_DOMAIN": derived["CLOUD_ADMIN_DOMAIN"],
 		}},
 		{filepath.Join(root, "services", "cloud-logger", "logger.env"), map[string]string{
-			"CLOUD_LOGGER_LINODE_LABEL":          derived["CLOUD_LOGGER_LINODE_LABEL"],
-			"CLOUD_LOGGER_LINODE_FIREWALL_LABEL": derived["CLOUD_LOGGER_LINODE_FIREWALL_LABEL"],
-			"CLOUD_LOGGER_DOMAIN":                derived["CLOUD_LOGGER_DOMAIN"],
+			"CLOUD_LOGGER_DOMAIN": derived["CLOUD_LOGGER_DOMAIN"],
 		}},
 	}
 	for _, item := range envUpdates {
@@ -560,7 +485,7 @@ func renderStackEnv(raw, derived map[string]string) string {
 	}
 	extraKeys := make([]string, 0, len(raw))
 	for key := range raw {
-		if !known[key] {
+		if !known[key] && !isRetiredStagingRuntimeEnvKey(key) {
 			extraKeys = append(extraKeys, key)
 		}
 	}
@@ -613,6 +538,10 @@ func syncEnvFile(path string, updates map[string]string, raw, derived map[string
 		return false, err
 	}
 	for key, value := range values {
+		if isRetiredStagingRuntimeEnvKey(key) {
+			delete(values, key)
+			continue
+		}
 		values[key] = replaceDerivedText(value, raw, derived)
 	}
 	for key, value := range updates {
@@ -635,14 +564,6 @@ func replaceDerivedText(text string, raw, derived map[string]string) string {
 	}{
 		{`video-cloud-stg-[0-9]{4}[a-z0-9]*`, derived["CLOUD_STACK_NAME"]},
 		{`video-cloud-staging`, derived["CLOUD_STACK_NAME"]},
-		{`rtk-account-manager-stg-[0-9]{4}[a-z0-9]*`, derived["ACCOUNT_MANAGER_LINODE_LABEL"]},
-		{`rtk-account-manager-staging`, derived["ACCOUNT_MANAGER_LINODE_LABEL"]},
-		{`rtk-cloud-admin-stg-[0-9]{4}[a-z0-9]*`, derived["ADMIN_LINODE_LABEL"]},
-		{`rtk-cloud-admin-staging-firewall`, derived["ADMIN_LINODE_FIREWALL_LABEL"]},
-		{`rtk-cloud-admin-staging`, derived["ADMIN_LINODE_LABEL"]},
-		{`rtk-cloud-logger-stg-[0-9]{4}[a-z0-9]*`, derived["CLOUD_LOGGER_LINODE_LABEL"]},
-		{`rtk-cloud-logger-staging-firewall`, derived["CLOUD_LOGGER_LINODE_FIREWALL_LABEL"]},
-		{`rtk-cloud-logger-staging`, derived["CLOUD_LOGGER_LINODE_LABEL"]},
 	}
 	for _, item := range replacements {
 		if item.value == "" {
@@ -651,6 +572,23 @@ func replaceDerivedText(text string, raw, derived map[string]string) string {
 		text = regexp.MustCompile(item.pattern).ReplaceAllString(text, item.value)
 	}
 	return text
+}
+
+func isRetiredStagingRuntimeEnvKey(key string) bool {
+	retiredExact := map[string]bool{
+		"VIDEO_CLOUD_" + "LABEL_PREFIX": true,
+		"VIDEO_CLOUD_" + "VPC_LABEL":    true,
+		"VIDEO_CLOUD_" + "SUBNET_LABEL": true,
+	}
+	if retiredExact[key] {
+		return true
+	}
+	for _, prefix := range []string{"ACCOUNT_MANAGER_" + "LINODE_", "ADMIN_" + "LINODE_", "CLOUD_LOGGER_" + "LINODE_"} {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func renderEnvMap(values map[string]string) string {
@@ -687,118 +625,6 @@ type linodeList[T any] struct {
 	Data []T `json:"data"`
 }
 
-type linodeEntity struct {
-	ID     int    `json:"id"`
-	Label  string `json:"label"`
-	Status string `json:"status"`
-}
-
-func runRemoveAllVM(args []string) error {
-	fs := flag.NewFlagSet("remove-all-vm", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	workspaceFlag := fs.String("workspace", "", "workspace")
-	envRootFlag := fs.String("env-root", "", "environment root")
-	confirm := fs.Bool("yes", false, "confirm")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if *envRootFlag == "" {
-		return errors.New("--env-root is required")
-	}
-	workspace := *workspaceFlag
-	var err error
-	if workspace == "" {
-		workspace, err = workspaceRoot()
-		if err != nil {
-			return err
-		}
-	}
-	envRoot, err := resolveEnvRoot(workspace, *envRootFlag)
-	if err != nil {
-		return err
-	}
-	if !*confirm {
-		fmt.Fprint(os.Stderr, `Delete all Linode VMs whose label contains "staging"? Type yes to continue: `)
-		var answer string
-		_, _ = fmt.Fscan(os.Stdin, &answer)
-		if answer != "yes" {
-			fmt.Fprintln(os.Stderr, "[cloud-remove-all-vm] cancelled")
-			return nil
-		}
-	}
-	token := resolveLinodeToken(envRoot)
-	if token == "" {
-		return errors.New("LINODE_TOKEN is required")
-	}
-	matcher := removeAllVMMatcherForEnv(envRoot)
-	instances, err := linodeGetList[linodeEntity](token, "/linode/instances?page_size=500")
-	if err != nil {
-		return err
-	}
-	fmt.Fprintln(os.Stderr, "[cloud-remove-all-vm] deleting VMs:")
-	deletedVMs := 0
-	for _, vm := range instances {
-		if !matcher.matchVM(vm.Label) {
-			continue
-		}
-		deletedVMs++
-		fmt.Fprintf(os.Stderr, "  - %s (%d)\n", vm.Label, vm.ID)
-		fmt.Fprintf(os.Stderr, "[cloud-remove-all-vm] delete %s (%d)\n", vm.Label, vm.ID)
-		if err := linodeDelete(token, fmt.Sprintf("/linode/instances/%d", vm.ID)); err != nil {
-			return err
-		}
-	}
-	if deletedVMs == 0 {
-		fmt.Fprintln(os.Stderr, "[cloud-remove-all-vm] no matching staging VMs found")
-	}
-	fmt.Fprintln(os.Stderr, "[cloud-remove-all-vm] VM delete requests submitted")
-	firewalls, err := linodeGetList[linodeEntity](token, "/networking/firewalls?page_size=500")
-	if err != nil {
-		return err
-	}
-	fmt.Fprintln(os.Stderr, "[cloud-remove-all-vm] deleting staging firewalls:")
-	deletedFirewalls := 0
-	for _, fw := range firewalls {
-		if !matcher.matchFirewall(fw.Label) {
-			continue
-		}
-		deletedFirewalls++
-		fmt.Fprintf(os.Stderr, "  - %s (%d)\n", fw.Label, fw.ID)
-		fmt.Fprintf(os.Stderr, "[cloud-remove-all-vm] delete firewall %s (%d)\n", fw.Label, fw.ID)
-		if err := linodeDelete(token, fmt.Sprintf("/networking/firewalls/%d", fw.ID)); err != nil {
-			return err
-		}
-	}
-	if deletedFirewalls == 0 {
-		fmt.Fprintln(os.Stderr, "[cloud-remove-all-vm] no matching staging firewalls found")
-	}
-	vpcs, err := linodeGetList[linodeEntity](token, "/vpcs?page_size=500")
-	if err != nil {
-		return err
-	}
-	fmt.Fprintln(os.Stderr, "[cloud-remove-all-vm] deleting staging VPCs:")
-	deletedVPCs := 0
-	for _, vpc := range vpcs {
-		if !matcher.matchVPC(vpc.Label) {
-			continue
-		}
-		deletedVPCs++
-		fmt.Fprintf(os.Stderr, "  - %s (%d)\n", vpc.Label, vpc.ID)
-		fmt.Fprintf(os.Stderr, "[cloud-remove-all-vm] delete VPC %s (%d)\n", vpc.Label, vpc.ID)
-		if err := linodeDelete(token, fmt.Sprintf("/vpcs/%d", vpc.ID)); err != nil {
-			return err
-		}
-	}
-	if deletedVPCs == 0 {
-		fmt.Fprintln(os.Stderr, "[cloud-remove-all-vm] no matching staging VPCs found")
-	}
-	if err := backupAndRemoveState(envRoot); err != nil {
-		return err
-	}
-	fmt.Fprintln(os.Stderr, "[cloud-remove-all-vm] remove complete")
-	return nil
-}
-
 func linodeGetList[T any](token, path string) ([]T, error) {
 	out, err := exec.Command("curl", "-fsS", "-X", "GET", "https://api.linode.com/v4"+path, "-H", "Authorization: Bearer "+token, "-H", "Content-Type: application/json").Output()
 	if err != nil {
@@ -809,27 +635,6 @@ func linodeGetList[T any](token, path string) ([]T, error) {
 		return nil, err
 	}
 	return parsed.Data, nil
-}
-
-func linodeDelete(token, path string) error {
-	cmd := exec.Command("curl", "-sS", "-o", "/dev/null", "-w", "%{http_code}", "-X", "DELETE", "https://api.linode.com/v4"+path, "-H", "Authorization: Bearer "+token, "-H", "Content-Type: application/json")
-	cmd.Stderr = os.Stderr
-	out, err := cmd.Output()
-	if err != nil {
-		return err
-	}
-	status, err := strconv.Atoi(strings.TrimSpace(string(out)))
-	if err != nil {
-		return fmt.Errorf("delete %s returned invalid status %q", path, strings.TrimSpace(string(out)))
-	}
-	if status >= 200 && status < 300 {
-		return nil
-	}
-	if status == http.StatusNotFound {
-		fmt.Fprintf(os.Stderr, "[cloud-remove-all-vm] already gone: %s\n", path)
-		return nil
-	}
-	return fmt.Errorf("delete %s returned HTTP %d", path, status)
 }
 
 func resolveLinodeToken(envRoot string) string {
@@ -849,138 +654,9 @@ func resolveLinodeToken(envRoot string) string {
 	return ""
 }
 
-type removeAllVMMatcher struct {
-	labelPrefix string
-	stackName   string
-	vmLabels    map[string]bool
-	fwLabels    map[string]bool
-	vpcLabels   map[string]bool
-}
-
-func removeAllVMMatcherForEnv(envRoot string) removeAllVMMatcher {
-	matcher := removeAllVMMatcher{
-		vmLabels:  map[string]bool{},
-		fwLabels:  map[string]bool{},
-		vpcLabels: map[string]bool{},
-	}
-	stackEnv := filepath.Join(envRoot, "env", "stack.env")
-	matcher.stackName = envFileValue(stackEnv, "CLOUD_STACK_NAME")
-	matcher.labelPrefix = envFileValue(stackEnv, "VIDEO_CLOUD_LABEL_PREFIX")
-	if matcher.labelPrefix == "" {
-		matcher.labelPrefix = matcher.stackName
-	}
-	for _, key := range []string{
-		"ACCOUNT_MANAGER_LINODE_LABEL",
-		"ADMIN_LINODE_LABEL",
-		"CLOUD_LOGGER_LINODE_LABEL",
-	} {
-		addLabel(matcher.vmLabels, envFileValue(stackEnv, key))
-	}
-	for _, key := range []string{
-		"ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL",
-		"ADMIN_LINODE_FIREWALL_LABEL",
-		"CLOUD_LOGGER_LINODE_FIREWALL_LABEL",
-	} {
-		addLabel(matcher.fwLabels, envFileValue(stackEnv, key))
-	}
-	addLabel(matcher.vpcLabels, envFileValue(stackEnv, "VIDEO_CLOUD_VPC_LABEL"))
-	matcher.addVideoStateLabels(filepath.Join(envRoot, "state", matcher.stackName+".state.json"))
-	matcher.addVideoStateLabels(filepath.Join(envRoot, "state", "video-cloud-staging.state.json"))
-	return matcher
-}
-
-func (m removeAllVMMatcher) matchVM(label string) bool {
-	return m.matchVideoCloudLabel(label) ||
-		m.vmLabels[label] ||
-		strings.Contains(label, "staging")
-}
-
-func (m removeAllVMMatcher) matchFirewall(label string) bool {
-	return m.matchVideoCloudLabel(label) ||
-		m.fwLabels[label] ||
-		isLegacyStagingFirewall(label)
-}
-
-func (m removeAllVMMatcher) matchVPC(label string) bool {
-	return m.vpcLabels[label] ||
-		(m.stackName != "" && strings.Contains(label, m.stackName)) ||
-		strings.Contains(label, "staging")
-}
-
-func (m removeAllVMMatcher) matchVideoCloudLabel(label string) bool {
-	if m.labelPrefix != "" && (label == m.labelPrefix || strings.HasPrefix(label, m.labelPrefix+"-")) {
-		return true
-	}
-	if m.stackName != "" && strings.Contains(label, m.stackName) {
-		return true
-	}
-	return false
-}
-
-func (m removeAllVMMatcher) addVideoStateLabels(path string) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
-	var state struct {
-		Instances map[string]struct {
-			Label string `json:"label"`
-		} `json:"instances"`
-	}
-	if err := json.Unmarshal(data, &state); err != nil {
-		return
-	}
-	for _, instance := range state.Instances {
-		addLabel(m.vmLabels, instance.Label)
-	}
-}
-
-func addLabel(labels map[string]bool, label string) {
-	if label != "" {
-		labels[label] = true
-	}
-}
-
 type ioDiscard struct{}
 
 func (ioDiscard) Write(p []byte) (int, error) { return len(p), nil }
-
-func isLegacyStagingFirewall(label string) bool {
-	return strings.Contains(label, "video-cloud-staging") ||
-		label == "rtk-account-manager-staging-fw" ||
-		label == "rtk-cloud-admin-staging-firewall" ||
-		label == "rtk-cloud-logger-staging-firewall"
-}
-
-func backupAndRemoveState(envRoot string) error {
-	stateDir := filepath.Join(envRoot, "state")
-	backupDir := filepath.Join(envRoot, "backups", "remove-vm-"+time.Now().UTC().Format("20060102T150405Z"), "state")
-	files := []string{"video-cloud-staging.state.json", "account-manager-staging.env", "cloud-admin-staging.env", "cloud-logger.env"}
-	if stackName := envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_STACK_NAME"); stackName != "" {
-		files = append(files, stackName+".state.json")
-	}
-	for _, name := range files {
-		src := filepath.Join(stateDir, name)
-		if _, err := os.Stat(src); err != nil {
-			continue
-		}
-		if err := os.MkdirAll(backupDir, 0o755); err != nil {
-			return err
-		}
-		dst := filepath.Join(backupDir, name)
-		if err := copyFile(src, dst); err != nil {
-			return err
-		}
-		if err := os.Remove(src); err != nil {
-			return err
-		}
-		fmt.Fprintf(os.Stderr, "[cloud-remove-all-vm] removed local state: %s\n", src)
-	}
-	if _, err := os.Stat(backupDir); err == nil {
-		fmt.Fprintf(os.Stderr, "[cloud-remove-all-vm] local state backup: %s\n", filepath.Dir(backupDir))
-	}
-	return nil
-}
 
 func runStatusAll(args []string) error {
 	fs := flag.NewFlagSet("status-all", flag.ContinueOnError)
@@ -1529,105 +1205,11 @@ export VIDEO_CLOUD_LOAD_DEVICE_CERT_ROOT='%s'
 	return nil
 }
 
-type firewallRules struct {
-	InboundPolicy  string         `json:"inbound_policy,omitempty"`
-	OutboundPolicy string         `json:"outbound_policy,omitempty"`
-	Inbound        []firewallRule `json:"inbound"`
-	Outbound       []firewallRule `json:"outbound"`
-	Version        any            `json:"version,omitempty"`
-	Fingerprint    any            `json:"fingerprint,omitempty"`
-}
-
-type firewallRule struct {
-	Label     string              `json:"label,omitempty"`
-	Action    string              `json:"action,omitempty"`
-	Protocol  string              `json:"protocol,omitempty"`
-	Ports     string              `json:"ports,omitempty"`
-	Addresses map[string][]string `json:"addresses,omitempty"`
-}
-
-func runUpdateSSHWhitelist(args []string) error {
-	fs := flag.NewFlagSet("update-ssh-whitelist", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	cidr := fs.String("cidr", "", "CIDR")
-	mode := fs.String("mode", "", "append or replace")
-	workspaceFlag := fs.String("workspace", "", "workspace")
-	envRootFlag := fs.String("env-root", "", "environment root")
-	fs.StringVar(envRootFlag, "secrets-root", "", "deprecated env root")
-	operatorEnv := fs.String("operator-env", "", "operator env")
-	dryRun := fs.Bool("dry-run", false, "dry run")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if *envRootFlag == "" {
-		return errors.New("--env-root is required; pass the environment directory explicitly, for example --env-root cloud_env/staging")
-	}
-	if *mode == "" {
-		*mode = "replace"
-	}
-	if *mode != "append" && *mode != "replace" {
-		return fmt.Errorf("invalid --mode: %s; expected append or replace", *mode)
-	}
-	if *cidr == "" {
-		detected, err := currentPublicIPv4CIDR()
-		if err != nil {
-			return err
-		}
-		*cidr = detected
-	}
-	if ok, _ := regexp.MatchString(`^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])$`, *cidr); !ok {
-		return fmt.Errorf("invalid IPv4 CIDR: %s", *cidr)
-	}
-	workspace := *workspaceFlag
-	var err error
-	if workspace == "" {
-		workspace, err = workspaceRoot()
-		if err != nil {
-			return err
-		}
-	}
-	envRoot, err := resolveEnvRoot(workspace, *envRootFlag)
-	if err != nil {
-		return err
-	}
-	if *operatorEnv == "" {
-		*operatorEnv = filepath.Join(envRoot, "env", "operator.env")
-	}
-	if token := envFileValue(*operatorEnv, "LINODE_TOKEN"); token != "" && os.Getenv("LINODE_TOKEN") == "" {
-		_ = os.Setenv("LINODE_TOKEN", token)
-	}
-	if os.Getenv("LINODE_TOKEN") == "" {
-		return errors.New("LINODE_TOKEN is required")
-	}
-	fmt.Fprintf(os.Stderr, "[cloud-ssh-whitelist] allowing SSH CIDR: mode=%s cidr=%s\n", *mode, *cidr)
-	targets, err := firewallTargets(envRoot)
-	if err != nil {
-		return err
-	}
-	for _, target := range targets {
-		if target.ID == "" || target.ID == "null" {
-			fmt.Fprintf(os.Stderr, "[cloud-ssh-whitelist] skip: %s firewall id missing label=%s\n", target.Role, target.Label)
-			continue
-		}
-		if err := updateFirewallRules(target, *mode, *cidr, *dryRun); err != nil {
-			return err
-		}
-	}
-	if !*dryRun {
-		updateLocalSSHWhitelistInputs(envRoot, *cidr, *mode == "append")
-		fmt.Fprintf(os.Stderr, "[cloud-ssh-whitelist] local ignored staging config/env updated: mode=%s cidr=%s\n", *mode, *cidr)
-	}
-	return nil
-}
-
 type accountManagerContext struct {
 	EnvRoot          string
 	BaseURL          string
 	AdminEmail       string
 	AdminPassword    string
-	Host             string
-	SSHUser          string
-	SSHKey           string
 	PlatformAdminEnv string
 }
 
@@ -2076,7 +1658,11 @@ func runStagingE2EDataSetup(args []string) error {
 		return shouldRunE2EStep(name, *fromStep)
 	}
 	if shouldRunStep("create_brand") {
-		if err := runStep("create_brand", commandWithArgs(scripts["create-brand"], "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname)...); err != nil {
+		args := []string{"--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname}
+		if boolishEnv("CLOUD_STAGING_E2E_SKIP_BOOTSTRAP") {
+			args = append(args, "--skip-bootstrap")
+		}
+		if err := runStep("create_brand", commandWithArgs(scripts["create-brand"], args...)...); err != nil {
 			return err
 		}
 	} else {
@@ -2088,7 +1674,11 @@ func runStagingE2EDataSetup(args []string) error {
 		usersFile = latestMatchingFile(filepath.Join(envRoot, "artifacts", "users"), slug+"-users-*.json")
 	}
 	if shouldRunStep("create_users") && !(*resume && usersArtifactCount(usersFile) == *userCount) {
-		if err := runStep("create_users", commandWithArgs(scripts["create-users"], "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--count", strconv.Itoa(*userCount), "--rotate-password", "--concurrency", strconv.Itoa(*userConcurrency))...); err != nil {
+		args := []string{"--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--count", strconv.Itoa(*userCount), "--rotate-password", "--concurrency", strconv.Itoa(*userConcurrency)}
+		if boolishEnv("CLOUD_STAGING_E2E_SKIP_BOOTSTRAP") {
+			args = append(args, "--skip-bootstrap")
+		}
+		if err := runStep("create_users", commandWithArgs(scripts["create-users"], args...)...); err != nil {
 			return err
 		}
 		usersFile = latestMatchingFile(filepath.Join(envRoot, "artifacts", "users"), slug+"-users-*.json")
@@ -2119,7 +1709,11 @@ func runStagingE2EDataSetup(args []string) error {
 		bindFile = latestMatchingFile(filepath.Join(envRoot, "artifacts", "device-bind"), slug+"-device-bind-*.json")
 	}
 	if shouldRunStep("bind_devices") && !(*resume && bindArtifactCount(bindFile) == *deviceCount) {
-		if err := runStep("bind_devices", commandWithArgs(scripts["bind-devices"], "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--users-file", usersFile, "--devices-dir", devicesDir, "--count", strconv.Itoa(*deviceCount), "--concurrency", strconv.Itoa(*bindConcurrency))...); err != nil {
+		args := []string{"--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--users-file", usersFile, "--devices-dir", devicesDir, "--count", strconv.Itoa(*deviceCount), "--concurrency", strconv.Itoa(*bindConcurrency)}
+		if boolishEnv("CLOUD_STAGING_E2E_SKIP_BOOTSTRAP") {
+			args = append(args, "--skip-bootstrap")
+		}
+		if err := runStep("bind_devices", commandWithArgs(scripts["bind-devices"], args...)...); err != nil {
 			return err
 		}
 		bindFile = latestMatchingFile(filepath.Join(envRoot, "artifacts", "device-bind"), slug+"-device-bind-*.json")
@@ -2307,6 +1901,377 @@ func stringFromJSONPath(body []byte, keys ...string) string {
 	return ""
 }
 
+func runRemoveK8s(args []string) error {
+	fs := flag.NewFlagSet("remove-k8s", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	workspaceFlag := fs.String("workspace", "", "workspace")
+	envRootFlag := fs.String("env-root", "", "environment root")
+	yes := fs.Bool("yes", false, "confirm")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if !*yes {
+		return errors.New("--yes is required")
+	}
+	workspace := *workspaceFlag
+	var err error
+	if workspace == "" {
+		workspace, err = workspaceRoot()
+		if err != nil {
+			return err
+		}
+	}
+	envRoot, err := resolveEnvRoot(workspace, *envRootFlag)
+	if err != nil {
+		return err
+	}
+	stack := firstNonEmpty(envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_STACK_NAME"), "video-cloud-staging")
+	if os.Getenv("CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET") != "1" {
+		fmt.Fprintf(os.Stderr, "[cloud-remove-k8s] non-destructive reset for %s; set CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET=1 to delete namespaces\n", stack)
+		return nil
+	}
+	kubeconfig, err := ensureK8SKubeconfig(workspace, envRoot, stack)
+	if err != nil {
+		return err
+	}
+	for _, ns := range k8sStagingNamespaces(stack) {
+		if err := runKubectl(kubeconfig, "delete", "namespace", ns, "--ignore-not-found=true"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runProvisionK8s(args []string) error {
+	fs := flag.NewFlagSet("provision-k8s", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	workspaceFlag := fs.String("workspace", "", "workspace")
+	envRootFlag := fs.String("env-root", "", "environment root")
+	confirm := fs.String("confirm", "", "confirm stack name")
+	timeout := fs.Duration("timeout", envDurationDefault("CLOUD_STAGING_E2E_K8S_ROLLOUT_TIMEOUT", 5*time.Minute), "rollout timeout")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	workspace := *workspaceFlag
+	var err error
+	if workspace == "" {
+		workspace, err = workspaceRoot()
+		if err != nil {
+			return err
+		}
+	}
+	envRoot, err := resolveEnvRoot(workspace, *envRootFlag)
+	if err != nil {
+		return err
+	}
+	stack := firstNonEmpty(envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_STACK_NAME"), "video-cloud-staging")
+	if *confirm != stack {
+		return fmt.Errorf("--confirm %s does not match CLOUD_STACK_NAME=%s", *confirm, stack)
+	}
+	kubeconfig, err := ensureK8SKubeconfig(workspace, envRoot, stack)
+	if err != nil {
+		return err
+	}
+	if err := runKubectl(kubeconfig, "get", "nodes"); err != nil {
+		return err
+	}
+	for _, ns := range k8sStagingNamespaces(stack) {
+		if err := runKubectl(kubeconfig, "get", "namespace", ns); err != nil {
+			return err
+		}
+		rolloutTimeout := "--timeout=" + timeout.String()
+		if err := rolloutK8SKind(kubeconfig, ns, "deployment", rolloutTimeout); err != nil {
+			return err
+		}
+		if err := rolloutK8SKind(kubeconfig, ns, "statefulset", rolloutTimeout); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(os.Stderr, "[cloud-provision-k8s] rollout ready stack=%s kubeconfig=%s\n", stack, kubeconfig)
+	return nil
+}
+
+func k8sStagingNamespaces(stack string) []string {
+	return []string{
+		stack + "-platform",
+		stack + "-account-manager",
+		stack + "-admin",
+		stack + "-frontend",
+		stack + "-observability",
+		stack + "-video-cloud",
+	}
+}
+
+func ensureK8SKubeconfig(workspace, envRoot, stack string) (string, error) {
+	if path := firstNonEmpty(os.Getenv("CLOUD_STAGING_K8S_KUBECONFIG"), os.Getenv("KUBECONFIG")); path != "" {
+		return path, nil
+	}
+	out := filepath.Join(workspace, ".artifacts", "kube", stack+"-lke.kubeconfig")
+	if info, err := os.Stat(out); err == nil && !info.IsDir() {
+		return out, nil
+	}
+	token := strings.TrimSpace(os.Getenv("LINODE_TOKEN"))
+	if token == "" {
+		return "", errors.New("LINODE_TOKEN, KUBECONFIG, or CLOUD_STAGING_K8S_KUBECONFIG is required for K8s staging")
+	}
+	clusterID := strings.TrimSpace(os.Getenv("CLOUD_STAGING_LKE_CLUSTER_ID"))
+	if clusterID == "" {
+		id, err := findLinodeLKEClusterID(token, firstNonEmpty(os.Getenv("CLOUD_STAGING_LKE_CLUSTER_LABEL"), stack+"-lke"))
+		if err != nil {
+			return "", err
+		}
+		clusterID = id
+	}
+	req, err := http.NewRequest(http.MethodGet, "https://api.linode.com/v4/lke/clusters/"+clusterID+"/kubeconfig", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return "", fmt.Errorf("Linode kubeconfig request failed: HTTP %d %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var parsed struct {
+		Kubeconfig string `json:"kubeconfig"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return "", err
+	}
+	decoded, err := base64.StdEncoding.DecodeString(parsed.Kubeconfig)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(out), 0o700); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(out, decoded, 0o600); err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
+func findLinodeLKEClusterID(token, label string) (string, error) {
+	req, err := http.NewRequest(http.MethodGet, "https://api.linode.com/v4/lke/clusters?page_size=100", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("Linode LKE list failed: HTTP %d", resp.StatusCode)
+	}
+	var parsed struct {
+		Data []struct {
+			ID    int    `json:"id"`
+			Label string `json:"label"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return "", err
+	}
+	for _, cluster := range parsed.Data {
+		if cluster.Label == label {
+			return strconv.Itoa(cluster.ID), nil
+		}
+	}
+	return "", fmt.Errorf("Linode LKE cluster not found: %s", label)
+}
+
+func runKubectl(kubeconfig string, args ...string) error {
+	cmd := exec.Command("kubectl", args...)
+	cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfig)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func rolloutK8SKind(kubeconfig, namespace, kind, timeoutArg string) error {
+	cmd := exec.Command("kubectl", "-n", namespace, "get", kind, "-o", "name")
+	cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfig)
+	out, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && len(exitErr.Stderr) > 0 {
+			return fmt.Errorf("kubectl get %s/%s: %s", namespace, kind, strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return err
+	}
+	for _, name := range strings.Fields(string(out)) {
+		if err := runKubectl(kubeconfig, "-n", namespace, "rollout", "status", name, timeoutArg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func k8sServicePort(kubeconfig, namespace, service, portName string) (int, error) {
+	cmd := exec.Command("kubectl", "-n", namespace, "get", "svc", service, "-o", "json")
+	cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfig)
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, err
+	}
+	var parsed struct {
+		Spec struct {
+			Ports []struct {
+				Name string `json:"name"`
+				Port int    `json:"port"`
+			} `json:"ports"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		return 0, err
+	}
+	if wanted, err := strconv.Atoi(portName); err == nil {
+		for _, port := range parsed.Spec.Ports {
+			if port.Port == wanted {
+				return port.Port, nil
+			}
+		}
+	}
+	for _, port := range parsed.Spec.Ports {
+		if port.Name == portName {
+			return port.Port, nil
+		}
+	}
+	return 0, fmt.Errorf("k8s service %s/%s missing port %s", namespace, service, portName)
+}
+
+func startK8SE2EPortForwards(workspace, envRoot string) ([]string, func(), error) {
+	portForward := strings.ToLower(strings.TrimSpace(os.Getenv("CLOUD_STAGING_E2E_K8S_PORT_FORWARD")))
+	if portForward == "0" || portForward == "false" || portForward == "off" {
+		return nil, func() {}, nil
+	}
+	stack := firstNonEmpty(envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_STACK_NAME"), "video-cloud-staging")
+	kubeconfig, err := ensureK8SKubeconfig(workspace, envRoot, stack)
+	if err != nil {
+		return nil, nil, err
+	}
+	accountPort := firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_ACCOUNT_MANAGER_PORT"), "18081")
+	videoPort := firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_VIDEO_CLOUD_PORT"), "18080")
+	factoryPort := firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_FACTORY_ENROLL_PORT"), "18443")
+	mqttPort := firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_MQTT_PORT"), "18883")
+	forwards := []struct {
+		ns      string
+		service string
+		port    string
+		local   string
+	}{
+		{stack + "-account-manager", "account-manager", "http", accountPort},
+		{stack + "-video-cloud", "video-cloud-api", "http", videoPort},
+		{stack + "-video-cloud", "factoryenroll", "http", factoryPort},
+		{stack + "-video-cloud", "mqtt", "mqtts", mqttPort},
+	}
+	cmds := []*exec.Cmd{}
+	cleanup := func() {
+		for _, cmd := range cmds {
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+				_, _ = cmd.Process.Wait()
+			}
+		}
+	}
+	for _, fwd := range forwards {
+		servicePort, err := k8sServicePort(kubeconfig, fwd.ns, fwd.service, fwd.port)
+		if err != nil {
+			cleanup()
+			return nil, nil, err
+		}
+		cmd := exec.Command("kubectl", "-n", fwd.ns, "port-forward", "svc/"+fwd.service, fwd.local+":"+strconv.Itoa(servicePort))
+		cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfig)
+		cmd.Stdout = os.Stderr
+		cmd.Stderr = os.Stderr
+		if err := cmd.Start(); err != nil {
+			cleanup()
+			return nil, nil, err
+		}
+		cmds = append(cmds, cmd)
+		if err := waitTCP("127.0.0.1:"+fwd.local, 15*time.Second); err != nil {
+			cleanup()
+			return nil, nil, err
+		}
+	}
+	env := []string{
+		"ACCOUNT_MANAGER_BASE_URL=http://127.0.0.1:" + accountPort,
+		"VIDEO_CLOUD_BASE_URL=http://127.0.0.1:" + videoPort,
+		"FACTORY_ENROLL_URL=http://127.0.0.1:" + factoryPort,
+		"VIDEO_CLOUD_MQTT_ADDR=127.0.0.1:" + mqttPort,
+		"VIDEO_CLOUD_LOAD_MQTT_SET=broker",
+		"CLOUD_STAGING_E2E_SKIP_BOOTSTRAP=1",
+		"CLOUD_STAGING_E2E_ENDPOINT_SOURCE=k8s-service",
+	}
+	if secretEnv, err := readK8SSecretEnv(kubeconfig, stack+"-account-manager", "account-manager-runtime", "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL", "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD", "ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN"); err == nil {
+		env = append(env, secretEnv...)
+	} else {
+		cleanup()
+		return nil, nil, err
+	}
+	if secretEnv, err := readK8SSecretEnv(kubeconfig, stack+"-video-cloud", "video-cloud-runtime", "VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN"); err == nil {
+		env = append(env, secretEnv...)
+	} else {
+		cleanup()
+		return nil, nil, err
+	}
+	if secretEnv, err := readK8SSecretEnv(kubeconfig, stack+"-video-cloud", "factoryenroll-runtime", "FACTORY_ENROLL_AUTH_KEY"); err == nil {
+		env = append(env, secretEnv...)
+	} else {
+		cleanup()
+		return nil, nil, err
+	}
+	return env, cleanup, nil
+}
+
+func readK8SSecretEnv(kubeconfig, namespace, secret string, keys ...string) ([]string, error) {
+	cmd := exec.Command("kubectl", "-n", namespace, "get", "secret", secret, "-o", "json")
+	cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfig)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	var parsed struct {
+		Data map[string]string `json:"data"`
+	}
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		return nil, err
+	}
+	env := []string{}
+	for _, key := range keys {
+		raw := strings.TrimSpace(parsed.Data[key])
+		if raw == "" {
+			return nil, fmt.Errorf("k8s secret %s/%s missing %s", namespace, secret, key)
+		}
+		decoded, err := base64.StdEncoding.DecodeString(raw)
+		if err != nil {
+			return nil, err
+		}
+		env = append(env, key+"="+string(decoded))
+	}
+	return env, nil
+}
+
+func waitTCP(addr string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		lastErr = err
+		time.Sleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("timeout waiting for %s: %w", addr, lastErr)
+}
+
 func runStagingE2ETest(args []string) error {
 	fs := flag.NewFlagSet("staging-e2e-test", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -2324,12 +2289,6 @@ func runStagingE2ETest(args []string) error {
 	userConcurrency := fs.Int("user-concurrency", envInt("CLOUD_STAGING_E2E_USER_CONCURRENCY", 16), "user creation concurrency")
 	deviceConcurrency := fs.Int("device-concurrency", envInt("CLOUD_STAGING_E2E_DEVICE_CONCURRENCY", 16), "device generation concurrency")
 	bindConcurrency := fs.Int("bind-concurrency", envInt("CLOUD_STAGING_E2E_BIND_CONCURRENCY", 16), "device bind concurrency")
-	videoRelease := fs.String("video-release", os.Getenv("VIDEO_RELEASE"), "video release")
-	accountRelease := fs.String("account-release", os.Getenv("ACCOUNT_RELEASE"), "account release")
-	accountReleaseBundle := fs.String("account-release-bundle", os.Getenv("ACCOUNT_RELEASE_BUNDLE"), "account release bundle")
-	adminRelease := fs.String("admin-release", os.Getenv("ADMIN_RELEASE"), "admin release")
-	adminReleaseBundle := fs.String("admin-release-bundle", os.Getenv("ADMIN_RELEASE_BUNDLE"), "admin release bundle")
-	localBuild := fs.Bool("local-build", false, "build a local Linux x86_64 Video Cloud bundle before deploy")
 	outDir := fs.String("out-dir", "", "out dir")
 	skipMQTTProbe := fs.Bool("skip-mqtt-probe", false, "skip mqtt probe")
 	quiet := fs.Bool("quiet", false, "suppress periodic progress output")
@@ -2366,10 +2325,11 @@ func runStagingE2ETest(args []string) error {
 		stackName = "video-cloud-staging"
 	}
 	scripts := map[string]string{
-		"remove":     firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_REMOVE_SCRIPT"), selfCommandPath("remove-all-vm")),
-		"provision":  firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_PROVISION_SCRIPT"), selfCommandPath("provision")),
-		"setup-data": firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT"), filepath.Join(workspace, "scripts", "setup-staging-e2e-data.sh")),
-		"mqtt-test":  firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT"), selfCommandPath("mqtt-test")),
+		"remove-k8s":      firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_REMOVE_K8S_SCRIPT"), selfCommandPath("remove-k8s")),
+		"provision-k8s":   firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_PROVISION_K8S_SCRIPT"), selfCommandPath("provision-k8s")),
+		"setup-data":      firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT"), filepath.Join(workspace, "scripts", "setup-staging-e2e-data.sh")),
+		"mqtt-test":       firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT"), selfCommandPath("mqtt-test")),
+		"mqtt-log-verify": firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT"), selfCommandPath("staging-e2e-mqtt-log-verify")),
 	}
 	if !*runMode {
 		printE2EPlan(workspace, envRoot, stackName, *brandname, *userCount, *deviceCount, *deviceMix, *userConcurrency, *deviceConcurrency, *bindConcurrency, *skipRemove, scripts)
@@ -2385,51 +2345,34 @@ func runStagingE2ETest(args []string) error {
 	if err := os.MkdirAll(logsDir, 0o755); err != nil {
 		return err
 	}
-	env, _ := readEnvFile(filepath.Join(envRoot, "env", "stack.env"))
 	steps := []e2eStep{}
 	runStep := func(name string, argv ...string) error {
 		step, err := runE2EStepWithOptions(name, filepath.Join(logsDir, name+".log"), e2eStepOptions{Quiet: *quiet}, argv...)
 		steps = append(steps, step)
 		return err
 	}
+	childEnv := []string{}
 	if !*skipRemove {
-		paths := newProvisionPaths(workspace, envRoot, provisionOptions{})
-		requiredCaches := refreshStagingCertificateCaches(paths, env, defaultStagingSSHKey())
-		if err := requireStagingCertificateCachesForTargets(requiredCaches); err != nil {
-			return err
-		}
-		if err := runStep("remove_vm", append(commandWithArgs(scripts["remove"], "--workspace", workspace, "--env-root", envRoot), "--yes")...); err != nil {
+		if err := runStep("reset_k8s", append(commandWithArgs(scripts["remove-k8s"], "--workspace", workspace, "--env-root", envRoot), "--yes")...); err != nil {
 			return err
 		}
 	}
-	provisionArgs := []string{"--workspace", workspace, "--env-root", envRoot, "--all", "--confirm", stackName}
-	if *videoRelease != "" {
-		provisionArgs = append(provisionArgs, "--video-release", *videoRelease)
-	}
-	if *accountRelease != "" {
-		provisionArgs = append(provisionArgs, "--account-release", *accountRelease)
-	}
-	if *accountReleaseBundle != "" {
-		provisionArgs = append(provisionArgs, "--account-release-bundle", *accountReleaseBundle)
-	}
-	if *adminRelease != "" {
-		provisionArgs = append(provisionArgs, "--admin-release", *adminRelease)
-	}
-	if *adminReleaseBundle != "" {
-		provisionArgs = append(provisionArgs, "--admin-release-bundle", *adminReleaseBundle)
-	}
-	if *localBuild {
-		provisionArgs = append(provisionArgs, "--local-build")
-	}
-	if err := runStep("provision_all", commandWithArgs(scripts["provision"], provisionArgs...)...); err != nil {
+	k8sProvisionArgs := []string{"--workspace", workspace, "--env-root", envRoot, "--confirm", stackName}
+	if err := runStep("provision_k8s", commandWithArgs(scripts["provision-k8s"], k8sProvisionArgs...)...); err != nil {
 		return err
 	}
+	portForwardEnv, cleanup, err := startK8SE2EPortForwards(workspace, envRoot)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	childEnv = append(childEnv, portForwardEnv...)
 	dataSetupDir := filepath.Join(*outDir, "data-setup")
 	dataSetupArgs := []string{"--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--user-count", strconv.Itoa(*userCount), "--device-count", strconv.Itoa(*deviceCount), "--device-mix", *deviceMix, "--device-prefix", *devicePrefix, "--user-concurrency", strconv.Itoa(*userConcurrency), "--device-concurrency", strconv.Itoa(*deviceConcurrency), "--bind-concurrency", strconv.Itoa(*bindConcurrency), "--out-dir", dataSetupDir}
 	if *quiet {
 		dataSetupArgs = append(dataSetupArgs, "--quiet")
 	}
-	dataSetupStep, err := runE2EStepWithOptions("setup_brand_devices", filepath.Join(logsDir, "setup_brand_devices.log"), e2eStepOptions{Quiet: *quiet}, commandWithArgs(scripts["setup-data"], dataSetupArgs...)...)
+	dataSetupStep, err := runE2EStepWithOptions("setup_brand_devices", filepath.Join(logsDir, "setup_brand_devices.log"), e2eStepOptions{Quiet: *quiet, Env: childEnv}, commandWithArgs(scripts["setup-data"], dataSetupArgs...)...)
 	if err != nil {
 		steps = append(steps, dataSetupStep)
 		return err
@@ -2462,7 +2405,17 @@ func runStagingE2ETest(args []string) error {
 	} else {
 		mqttArgs = append(mqttArgs, "--mqtt-probe")
 	}
-	if err := runStep("cloud_mqtt_test", commandWithArgs(scripts["mqtt-test"], mqttArgs...)...); err != nil {
+	step, err := runE2EStepWithOptions("cloud_mqtt_test", filepath.Join(logsDir, "cloud_mqtt_test.log"), e2eStepOptions{Quiet: *quiet, Env: childEnv}, commandWithArgs(scripts["mqtt-test"], mqttArgs...)...)
+	steps = append(steps, step)
+	if err != nil {
+		return err
+	}
+	mqttLogVerifyDir := filepath.Join(*outDir, "mqtt-log-verify")
+	mqttLogVerifySummaryFile := filepath.Join(mqttLogVerifyDir, "summary.json")
+	mqttLogVerifyArgs := []string{"--workspace", workspace, "--env-root", envRoot, "--mqtt-results", filepath.Join(*outDir, "home-mqtt", "results.json"), "--out-dir", mqttLogVerifyDir}
+	step, err = runE2EStepWithOptions("verify_mqtt_logs", filepath.Join(logsDir, "verify_mqtt_logs.log"), e2eStepOptions{Quiet: *quiet, Env: childEnv}, commandWithArgs(scripts["mqtt-log-verify"], mqttLogVerifyArgs...)...)
+	steps = append(steps, step)
+	if err != nil {
 		return err
 	}
 	overall := "pass"
@@ -2478,14 +2431,15 @@ func runStagingE2ETest(args []string) error {
 		"generated_at": time.Now().UTC().Format(time.RFC3339),
 		"env_root":     envRoot,
 		"stack":        stackName,
+		"target":       "k8s",
 		"brandname":    *brandname,
-		"artifacts":    map[string]any{"users_file": usersFile, "device_bind_file": bindFile, "bind_validation_dir": bindValidationDir, "data_setup_summary_file": dataSetupSummaryFile, "report_file": reportFile},
+		"artifacts":    map[string]any{"users_file": usersFile, "device_bind_file": bindFile, "bind_validation_dir": bindValidationDir, "data_setup_summary_file": dataSetupSummaryFile, "mqtt_log_verify_summary_file": mqttLogVerifySummaryFile, "report_file": reportFile},
 		"steps":        steps,
 	}
 	if err := writeJSON(summaryFile, summary); err != nil {
 		return err
 	}
-	if err := os.WriteFile(reportFile, []byte(renderE2EReport(overall, envRoot, stackName, *brandname, usersFile, bindFile, bindValidationDir, dataSetupSummaryFile, filepath.Join(*outDir, "home-mqtt"), steps)), 0o644); err != nil {
+	if err := os.WriteFile(reportFile, []byte(renderE2EReport(overall, envRoot, stackName, *brandname, usersFile, bindFile, bindValidationDir, dataSetupSummaryFile, filepath.Join(*outDir, "home-mqtt"), mqttLogVerifySummaryFile, steps)), 0o644); err != nil {
 		return err
 	}
 	if containsSensitiveReportTerms(readText(summaryFile)) || containsSensitiveReportTerms(readText(reportFile)) {
@@ -2500,11 +2454,215 @@ func runStagingE2ETest(args []string) error {
 	return nil
 }
 
+type mqttLogVerifyResults struct {
+	Overall string `json:"overall"`
+	Devices []struct {
+		DeviceID               string `json:"device_id"`
+		MQTTStatus             string `json:"mqtt_status"`
+		RuntimeLogStreamID     string `json:"runtime_log_stream_id"`
+		RuntimeLogExpectations []struct {
+			Seq     int    `json:"seq"`
+			Source  string `json:"source"`
+			Message string `json:"message"`
+		} `json:"runtime_log_expectations"`
+	} `json:"devices"`
+}
+
+type mqttLogExpectation struct {
+	DeviceID string `json:"device_id"`
+	StreamID string `json:"stream_id"`
+	Seq      int    `json:"seq"`
+	Source   string `json:"source"`
+	Message  string `json:"message"`
+}
+
+func runStagingE2EMQTTLogVerify(args []string) error {
+	fs := flag.NewFlagSet("staging-e2e-mqtt-log-verify", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	workspaceFlag := fs.String("workspace", "", "workspace")
+	envRootFlag := fs.String("env-root", "", "environment root")
+	target := fs.String("target", "k8s", "staging target")
+	mqttResults := fs.String("mqtt-results", "", "cloud MQTT test results.json")
+	outDir := fs.String("out-dir", "", "output directory")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *mqttResults == "" {
+		return errors.New("--mqtt-results is required")
+	}
+	if *outDir == "" {
+		return errors.New("--out-dir is required")
+	}
+	workspace := *workspaceFlag
+	var err error
+	if workspace == "" {
+		workspace, err = workspaceRoot()
+		if err != nil {
+			return err
+		}
+	}
+	envRoot, err := resolveEnvRoot(workspace, *envRootFlag)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(*outDir, 0o755); err != nil {
+		return err
+	}
+	parsed := mqttLogVerifyResults{}
+	rawResults, err := os.ReadFile(*mqttResults)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(rawResults, &parsed); err != nil {
+		return err
+	}
+	if strings.ToLower(strings.TrimSpace(parsed.Overall)) != "pass" {
+		return fmt.Errorf("MQTT test did not pass: %s", parsed.Overall)
+	}
+	expectations := []mqttLogExpectation{}
+	for _, device := range parsed.Devices {
+		if device.MQTTStatus != "" && device.MQTTStatus != "PASS" {
+			continue
+		}
+		if strings.TrimSpace(device.DeviceID) == "" || strings.TrimSpace(device.RuntimeLogStreamID) == "" {
+			continue
+		}
+		for _, item := range device.RuntimeLogExpectations {
+			if item.Seq <= 0 || strings.TrimSpace(item.Source) == "" || strings.TrimSpace(item.Message) == "" {
+				continue
+			}
+			expectations = append(expectations, mqttLogExpectation{DeviceID: device.DeviceID, StreamID: device.RuntimeLogStreamID, Seq: item.Seq, Source: item.Source, Message: item.Message})
+		}
+	}
+	if len(expectations) == 0 {
+		return errors.New("MQTT test results did not include runtime log expectations")
+	}
+	if strings.ToLower(strings.TrimSpace(*target)) != "k8s" {
+		return fmt.Errorf("MQTT log verification requires k8s target, got %s", *target)
+	}
+	stack := firstNonEmpty(envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_STACK_NAME"), "video-cloud-staging")
+	kubeconfig, err := ensureK8SKubeconfig(workspace, envRoot, stack)
+	if err != nil {
+		return err
+	}
+	verifyTimeout := envDurationDefault("CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_TIMEOUT", 60*time.Second)
+	missing, err := waitForK8SMQTTRuntimeLogs(kubeconfig, stack, expectations, verifyTimeout)
+	if err != nil {
+		return err
+	}
+	checkedDevices := map[string]bool{}
+	for _, item := range expectations {
+		checkedDevices[item.DeviceID] = true
+	}
+	overall := "pass"
+	if len(missing) > 0 {
+		overall = "fail"
+	}
+	summaryFile := filepath.Join(*outDir, "summary.json")
+	summary := map[string]any{
+		"overall":         overall,
+		"generated_at":    time.Now().UTC().Format(time.RFC3339),
+		"target":          "k8s",
+		"mqtt_results":    *mqttResults,
+		"timeout_seconds": int(verifyTimeout.Seconds()),
+		"checked_devices": len(checkedDevices),
+		"checked_logs":    len(expectations),
+		"missing_logs":    missing,
+	}
+	if err := writeJSON(summaryFile, summary); err != nil {
+		return err
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"overall": overall, "summary_file": summaryFile}); err != nil {
+		return err
+	}
+	if overall != "pass" {
+		return fmt.Errorf("missing %d persisted MQTT runtime logs", len(missing))
+	}
+	return nil
+}
+
+func waitForK8SMQTTRuntimeLogs(kubeconfig, stack string, expectations []mqttLogExpectation, timeout time.Duration) ([]mqttLogExpectation, error) {
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	deadline := time.Now().Add(timeout)
+	var lastMissing []mqttLogExpectation
+	for {
+		missing, err := queryMissingK8SMQTTRuntimeLogs(kubeconfig, stack, expectations)
+		if err != nil {
+			return nil, err
+		}
+		if len(missing) == 0 || time.Now().After(deadline) {
+			return missing, nil
+		}
+		lastMissing = missing
+		time.Sleep(2 * time.Second)
+		if time.Now().After(deadline) {
+			return lastMissing, nil
+		}
+	}
+}
+
+func queryMissingK8SMQTTRuntimeLogs(kubeconfig, stack string, expectations []mqttLogExpectation) ([]mqttLogExpectation, error) {
+	if len(expectations) == 0 {
+		return nil, nil
+	}
+	values := make([]string, 0, len(expectations))
+	for _, item := range expectations {
+		values = append(values, fmt.Sprintf("(%s,%s,%d,%s,%s)", sqlLiteral(item.DeviceID), sqlLiteral(item.StreamID), item.Seq, sqlLiteral(item.Source), sqlLiteral(item.Message)))
+	}
+	sql := `
+WITH expected(device_id, stream_id, seq, source, message) AS (
+	VALUES ` + strings.Join(values, ",") + `
+)
+SELECT e.device_id, e.stream_id, e.seq, e.source, e.message
+FROM expected e
+LEFT JOIN device_runtime_logs l
+  ON l.device_id = e.device_id
+ AND l.stream_id = e.stream_id
+ AND l.seq = e.seq
+ AND l.source = e.source
+ AND l.message = e.message
+WHERE l.id IS NULL
+ORDER BY e.device_id, e.stream_id, e.seq`
+	cmd := exec.Command("kubectl", "-n", stack+"-platform", "exec", "postgresql-0", "--", "psql", "-U", "postgres", "-d", "video_cloud", "-At", "-F", "\t", "-c", sql)
+	cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfig)
+	out, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("query MQTT runtime logs: %s", strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return nil, err
+	}
+	out = bytes.TrimSpace(out)
+	if len(out) == 0 {
+		return nil, nil
+	}
+	missing := []mqttLogExpectation{}
+	for _, line := range strings.Split(string(out), "\n") {
+		parts := strings.Split(line, "\t")
+		if len(parts) != 5 {
+			return nil, fmt.Errorf("unexpected MQTT log verification row: %q", line)
+		}
+		seq, err := strconv.Atoi(parts[2])
+		if err != nil {
+			return nil, err
+		}
+		missing = append(missing, mqttLogExpectation{DeviceID: parts[0], StreamID: parts[1], Seq: seq, Source: parts[3], Message: parts[4]})
+	}
+	return missing, nil
+}
+
+func sqlLiteral(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
 func printE2EPlan(workspace, envRoot, stack, brandname string, userCount, deviceCount int, deviceMix string, userConcurrency, deviceConcurrency, bindConcurrency int, skipRemove bool, scripts map[string]string) {
 	fmt.Fprintln(os.Stdout, "cloud-staging-e2e-test plan")
 	fmt.Fprintf(os.Stdout, "workspace: %s\n", workspace)
 	fmt.Fprintf(os.Stdout, "env_root: %s\n", envRoot)
 	fmt.Fprintf(os.Stdout, "stack: %s\n", stack)
+	fmt.Fprintln(os.Stdout, "target: k8s")
 	fmt.Fprintf(os.Stdout, "brandname: %s\n", brandname)
 	fmt.Fprintf(os.Stdout, "user_count: %d\n", userCount)
 	fmt.Fprintf(os.Stdout, "device_count: %d\n", deviceCount)
@@ -2515,15 +2673,17 @@ func printE2EPlan(workspace, envRoot, stack, brandname string, userCount, device
 	fmt.Fprintf(os.Stdout, "skip_remove: %v\n", skipRemove)
 	fmt.Fprintln(os.Stdout, "steps:")
 	if !skipRemove {
-		fmt.Fprintf(os.Stdout, "  - remove VMs with %s\n", scripts["remove"])
+		fmt.Fprintf(os.Stdout, "  - reset K8s staging with %s\n", scripts["remove-k8s"])
 	}
-	fmt.Fprintf(os.Stdout, "  - provision all with %s\n", scripts["provision"])
+	fmt.Fprintf(os.Stdout, "  - provision K8s staging with %s\n", scripts["provision-k8s"])
 	fmt.Fprintf(os.Stdout, "  - setup brand/users/devices with %s\n", scripts["setup-data"])
 	fmt.Fprintf(os.Stdout, "  - run live home MQTT E2E with %s\n", scripts["mqtt-test"])
+	fmt.Fprintf(os.Stdout, "  - verify persisted MQTT runtime logs with %s\n", scripts["mqtt-log-verify"])
 }
 
 type e2eStepOptions struct {
 	Quiet bool
+	Env   []string
 }
 
 func runE2EStep(name, logPath string, argv ...string) (e2eStep, error) {
@@ -2539,6 +2699,9 @@ func runE2EStepWithOptions(name, logPath string, options e2eStepOptions, argv ..
 		return e2eStep{Name: name, Status: "FAIL", ExitCode: 1, DurationSeconds: durationSeconds, LogFile: logPath}, errors.New("empty e2e command")
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
+	if len(options.Env) > 0 {
+		cmd.Env = append(os.Environ(), options.Env...)
+	}
 	logFile, err := os.Create(logPath)
 	if err != nil {
 		return e2eStep{}, err
@@ -2846,7 +3009,7 @@ func latestMatchingFile(dir, pattern string) string {
 	return matches[len(matches)-1]
 }
 
-func renderE2EReport(overall, envRoot, stack, brandname, usersFile, bindFile, bindValidationDir, dataSetupSummaryFile, mqttDir string, steps []e2eStep) string {
+func renderE2EReport(overall, envRoot, stack, brandname, usersFile, bindFile, bindValidationDir, dataSetupSummaryFile, mqttDir, mqttLogVerifySummaryFile string, steps []e2eStep) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, "# Staging E2E Test Report")
 	fmt.Fprintln(&b)
@@ -2871,6 +3034,7 @@ func renderE2EReport(overall, envRoot, stack, brandname, usersFile, bindFile, bi
 	fmt.Fprintf(&b, "- Data setup summary: `%s`\n", dataSetupSummaryFile)
 	fmt.Fprintf(&b, "- Home MQTT report: `%s`\n", filepath.Join(mqttDir, "TEST_REPORT.md"))
 	fmt.Fprintf(&b, "- Home MQTT results: `%s`\n", filepath.Join(mqttDir, "results.json"))
+	fmt.Fprintf(&b, "- MQTT log verification summary: `%s`\n", mqttLogVerifySummaryFile)
 	return b.String()
 }
 
@@ -3144,11 +3308,11 @@ func accountEnsureUserAppCertificate(ctx accountManagerContext, tenantSlug, emai
 	}
 	switch initial.AppCertificate.Status {
 	case "issued":
-		if !hasLocalAppCredentials(existingAppCredentials) {
+		if !hasLocalAppCredentials(existingAppCredentials) || !appCredentialsMatchCertificate(existingAppCredentials, initial.AppCertificate) {
 			if recoverMissingLocalCredentials == nil {
 				return nil, nil, accountPlatformSession{}, fmt.Errorf("app certificate already exists for %s but no matching local app private key was found in previous users artifacts; use the artifact that originally bootstrapped this user or revoke/rotate the app certificate before generating a new key", email)
 			}
-			logCreateUsers("revoking stale app certificate without local private key: email=%s", email)
+			logCreateUsers("revoking stale app certificate without matching local private key: email=%s", email)
 			if err := recoverMissingLocalCredentials(); err != nil {
 				return nil, nil, accountPlatformSession{}, err
 			}
@@ -3177,6 +3341,16 @@ func accountEnsureUserAppCertificate(ctx accountManagerContext, tenantSlug, emai
 		return nil, nil, accountPlatformSession{}, err
 	}
 	issued, err := accountLoginUserFull(ctx, tenantSlug, email, password, csrPEM)
+	if err != nil && strings.Contains(err.Error(), "app_certificate_csr_invalid") && strings.HasPrefix(subject, "app-brand-cloud-user:") && initial.User.ID != "" {
+		legacySubject := "app-user:" + initial.User.ID
+		logCreateUsers("retrying app certificate with legacy subject: email=%s", email)
+		subject = legacySubject
+		privateKeyPEM, csrPEM, err = generateAppCertificateCSR(subject)
+		if err != nil {
+			return nil, nil, accountPlatformSession{}, err
+		}
+		issued, err = accountLoginUserFull(ctx, tenantSlug, email, password, csrPEM)
+	}
 	if err != nil {
 		return nil, nil, accountPlatformSession{}, err
 	}
@@ -3246,6 +3420,19 @@ func hasLocalAppCredentials(credentials map[string]any) bool {
 	return strings.HasPrefix(privateKey, "-----BEGIN ") &&
 		strings.Contains(privateKey, "PRIVATE KEY-----") &&
 		strings.HasPrefix(csr, "-----BEGIN CERTIFICATE REQUEST-----")
+}
+
+func appCredentialsMatchCertificate(credentials map[string]any, certificate accountAppCertificate) bool {
+	if !hasLocalAppCredentials(credentials) {
+		return false
+	}
+	certPEM := strings.TrimSpace(firstNonEmpty(certificate.CertificateChainPEM, certificate.CertificatePEM))
+	if certPEM == "" {
+		return false
+	}
+	privateKey := strings.TrimSpace(stringValue(credentials["private_key_pem"]))
+	_, err := tls.X509KeyPair([]byte(certPEM), []byte(privateKey))
+	return err == nil
 }
 
 func accountLoginUserFull(ctx accountManagerContext, tenantSlug, email, password, csrPEM string) (accountUserLoginResponse, error) {
@@ -3416,9 +3603,9 @@ func accountManagerContextFromFlags(workspaceFlag, envRootFlag string) (accountM
 		return accountManagerContext{}, err
 	}
 	accountEnv := firstExistingPath(filepath.Join(envRoot, "services", "account-manager", "account-manager.env"), filepath.Join(envRoot, "services", "account-manager", "account-manager-public-staging.env"))
-	accountState := filepath.Join(envRoot, "state", "account-manager-staging.env")
 	platformEnv := filepath.Join(envRoot, "services", "account-manager", "account-manager-platform-admin.env")
-	domain := firstNonEmpty(envFileValue(accountEnv, "ACCOUNT_MANAGER_LINODE_DOMAIN"), "account-manager.video-cloud-staging.realtekconnect.com")
+	stackEnv, _ := readEnvFile(filepath.Join(envRoot, "env", "stack.env"))
+	domain := firstNonEmpty(envFileValue(accountEnv, "ACCOUNT_MANAGER_DOMAIN"), stackEnv["ACCOUNT_MANAGER_DOMAIN"], "account-manager.video-cloud-staging.realtekconnect.com")
 	baseURL := strings.TrimRight(firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_BASE_URL"), envFileValue(accountEnv, "ACCOUNT_MANAGER_BASE_URL")), "/")
 	if baseURL == "" {
 		baseURL = "https://" + domain
@@ -3426,11 +3613,8 @@ func accountManagerContextFromFlags(workspaceFlag, envRootFlag string) (accountM
 	return accountManagerContext{
 		EnvRoot:          envRoot,
 		BaseURL:          baseURL,
-		AdminEmail:       envFileValue(platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL"),
-		AdminPassword:    envFileValue(platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD"),
-		Host:             firstNonEmpty(envFileValue(accountState, "ACCOUNT_MANAGER_LINODE_HOST"), envFileValue(accountState, "ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4")),
-		SSHUser:          firstNonEmpty(envFileValue(accountEnv, "ACCOUNT_MANAGER_LINODE_SSH_USER"), "root"),
-		SSHKey:           firstNonEmpty(envFileValue(accountEnv, "ACCOUNT_MANAGER_LINODE_SSH_KEY"), filepath.Join(os.Getenv("HOME"), ".ssh", "id_ed25519_rtkcloud")),
+		AdminEmail:       firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL"), envFileValue(platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL")),
+		AdminPassword:    firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD"), envFileValue(platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD")),
 		PlatformAdminEnv: platformEnv,
 	}, nil
 }
@@ -3724,127 +3908,15 @@ func jwtExpiresAt(token string) (time.Time, bool) {
 }
 
 func accountBootstrap(ctx accountManagerContext) error {
-	if ctx.Host == "" {
-		return errors.New("ACCOUNT_MANAGER_LINODE_HOST or ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4 is required")
+	if strings.TrimSpace(ctx.AdminEmail) == "" || strings.TrimSpace(ctx.AdminPassword) == "" {
+		return errors.New("Account Manager K8s bootstrap credentials are required; provide ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL and ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD from the K8s runtime secret or run through staging-e2e-test port-forward setup")
 	}
-	if ctx.SSHKey == "" {
-		return errors.New("ACCOUNT_MANAGER_LINODE_SSH_KEY is required")
-	}
-	if err := ensureAccountManagerSSHWhitelist(ctx); err != nil {
-		return err
-	}
-	logBrandCreate("updating platform-admin bootstrap env on account-manager host=%s", ctx.Host)
-	remote := `set -euo pipefail
-env_file=/etc/rtk-account-manager/account-manager.env
-if [ ! -f "$env_file" ] || ! systemctl cat rtk-account-manager.service >/dev/null 2>&1; then
-  echo "Account Manager VM is provisioned but the runtime is not deployed on this host." >&2
-  echo "Run ./stg.sh deploy --account-release <release> or pass --account-release-bundle <bundle>, then retry ./stg.sh brand." >&2
-  exit 1
-fi
-cp -p "$env_file" "$env_file.bootstrap-admin.bak.$(date -u +%Y%m%dT%H%M%SZ)"
-tmp="$(mktemp)"
-grep -vE "^ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_(EMAIL|PASSWORD)=" "$env_file" > "$tmp"
-cat >> "$tmp"
-install -m 0600 -o root -g root "$tmp" "$env_file"
-rm -f "$tmp"
-systemctl restart rtk-account-manager.service
-echo "bootstrap admin env applied and account-manager is healthy" >&2
-`
-	sshCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(sshCtx, "ssh", "-i", ctx.SSHKey, "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3", "-o", "StrictHostKeyChecking=accept-new", ctx.SSHUser+"@"+ctx.Host, remote)
-	cmd.Stdin = strings.NewReader(fmt.Sprintf("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL=%s\nACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD=%s\n", ctx.AdminEmail, ctx.AdminPassword))
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		if sshCtx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("account-manager bootstrap SSH timed out after 90s: host=%s", ctx.Host)
-		}
-		return err
-	}
-	logBrandCreate("platform-admin bootstrap env ready")
-	return nil
-}
-
-func ensureAccountManagerSSHWhitelist(ctx accountManagerContext) error {
-	operatorEnv := filepath.Join(ctx.EnvRoot, "env", "operator.env")
-	if token := envFileValue(operatorEnv, "LINODE_TOKEN"); token != "" && os.Getenv("LINODE_TOKEN") == "" {
-		_ = os.Setenv("LINODE_TOKEN", token)
-	}
-	if os.Getenv("LINODE_TOKEN") == "" {
-		return errors.New("LINODE_TOKEN is required to refresh account-manager SSH whitelist before bootstrap")
-	}
-	cidr, err := currentPublicIPv4CIDR()
-	if err != nil {
-		return err
-	}
-	accountState := filepath.Join(ctx.EnvRoot, "state", "account-manager-staging.env")
-	target := firewallTarget{
-		Role:  "account-manager",
-		Label: firstNonEmpty(envFileValue(accountState, "ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL"), "rtk-account-manager-staging-fw"),
-		ID:    envFileValue(accountState, "ACCOUNT_MANAGER_LINODE_FIREWALL_ID"),
-	}
-	if target.ID == "" {
-		return errors.New("ACCOUNT_MANAGER_LINODE_FIREWALL_ID is required to refresh account-manager SSH whitelist before bootstrap")
-	}
-	logBrandCreate("refreshing account-manager SSH whitelist: cidr=%s", cidr)
-	updateCSVEnv(firstExistingPath(filepath.Join(ctx.EnvRoot, "services", "account-manager", "account-manager.env"), filepath.Join(ctx.EnvRoot, "services", "account-manager", "account-manager-public-staging.env")), "ACCOUNT_MANAGER_LINODE_ALLOWED_SSH_CIDRS", cidr, false)
-	return updateFirewallRules(target, "replace", cidr, false)
-}
-
-func currentPublicIPv4CIDR() (string, error) {
-	cmd := exec.Command("curl", "-4", "-fsS", "--connect-timeout", "5", "--max-time", "10", "https://api.ipify.org")
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("detect current public IPv4 failed: %w", err)
-	}
-	ip := strings.TrimSpace(string(out))
-	if ok, _ := regexp.MatchString(`^([0-9]{1,3}\.){3}[0-9]{1,3}$`, ip); !ok {
-		return "", fmt.Errorf("detect current public IPv4 returned invalid value: %q", ip)
-	}
-	return ip + "/32", nil
-}
-
-func updateLocalSSHWhitelistInputs(envRoot, cidr string, appendMode bool) {
-	videoConfig := filepath.Join(envRoot, "topology", "video-cloud-staging.yaml")
-	accountEnv := firstExistingPath(filepath.Join(envRoot, "services", "account-manager", "account-manager.env"), filepath.Join(envRoot, "services", "account-manager", "account-manager-public-staging.env"))
-	adminEnv := firstExistingPath(filepath.Join(envRoot, "services", "cloud-admin", "admin.env"), filepath.Join(envRoot, "services", "cloud-admin", "admin-staging.env"))
-	updateCSVEnv(accountEnv, "ACCOUNT_MANAGER_LINODE_ALLOWED_SSH_CIDRS", cidr, appendMode)
-	updateCSVEnv(adminEnv, "ADMIN_LINODE_ALLOWED_SSH_CIDRS", cidr, appendMode)
-	updateVideoCIDR(videoConfig, cidr, appendMode)
-}
-
-func replaceLiveSSHWhitelist(envRoot, cidr string) error {
-	targets, err := firewallTargets(envRoot)
-	if err != nil {
-		return err
-	}
-	for _, target := range targets {
-		if target.ID == "" || target.ID == "null" {
-			fmt.Fprintf(os.Stderr, "[cloud-ssh-whitelist] skip: %s firewall id missing label=%s\n", target.Role, target.Label)
-			continue
-		}
-		if err := updateFirewallRules(target, "replace", cidr, false); err != nil {
-			return err
-		}
-	}
+	logBrandCreate("using Account Manager K8s bootstrap credentials from env/runtime secret")
 	return nil
 }
 
 func accountPostgresFallback(ctx accountManagerContext, brandname string) (string, error) {
-	if ctx.Host == "" {
-		return "", errors.New("ACCOUNT_MANAGER_LINODE_HOST or ACCOUNT_MANAGER_LINODE_PUBLIC_IPV4 is required")
-	}
-	script := `set -euo pipefail
-sudo -u postgres psql -d rtk_account_manager -v ON_ERROR_STOP=1 <<'SQL'
-SELECT 'placeholder';
-SQL
-`
-	cmd := exec.Command("ssh", "-i", ctx.SSHKey, "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", ctx.SSHUser+"@"+ctx.Host, "bash", "-s", "--", ctx.AdminEmail, brandname)
-	cmd.Stdin = strings.NewReader(script)
-	cmd.Stderr = os.Stderr
-	out, err := cmd.Output()
-	return string(out), err
+	return "", fmt.Errorf("Account Manager PostgreSQL fallback is retired for K8s staging; fix the create-brandname-cloud API failure instead of using a VM database fallback for brandname=%s", brandname)
 }
 
 func logBrandList(format string, args ...any) {
@@ -3881,45 +3953,6 @@ func stringValue(value any) string {
 	return fmt.Sprint(value)
 }
 
-type firewallTarget struct {
-	Role  string
-	Label string
-	ID    string
-}
-
-func firewallTargets(envRoot string) ([]firewallTarget, error) {
-	targets := []firewallTarget{}
-	statePath := videoCloudStatePath(envRoot)
-	if data, err := os.ReadFile(statePath); err == nil {
-		var parsed struct {
-			Stack     string         `json:"stack"`
-			Firewalls map[string]any `json:"firewalls"`
-		}
-		if err := json.Unmarshal(data, &parsed); err != nil {
-			return nil, err
-		}
-		labelPrefix := firstNonEmpty(parsed.Stack, stackNameFromEnvRoot(envRoot), "video-cloud-staging")
-		for _, role := range []string{"edge", "api", "infra", "mqtt", "coturn"} {
-			if id, ok := parsed.Firewalls[role]; ok {
-				targets = append(targets, firewallTarget{Role: role, Label: labelPrefix + "-" + role, ID: fmt.Sprintf("%.0f", asFloat(id))})
-			}
-		}
-	}
-	accountState := filepath.Join(envRoot, "state", "account-manager-staging.env")
-	adminState := filepath.Join(envRoot, "state", "cloud-admin-staging.env")
-	targets = append(targets, firewallTarget{
-		Role:  "account-manager",
-		Label: firstNonEmpty(envFileValue(accountState, "ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL"), "rtk-account-manager-staging-fw"),
-		ID:    envFileValue(accountState, "ACCOUNT_MANAGER_LINODE_FIREWALL_ID"),
-	})
-	targets = append(targets, firewallTarget{
-		Role:  "cloud-admin",
-		Label: firstNonEmpty(envFileValue(adminState, "ADMIN_LINODE_FIREWALL_LABEL"), "rtk-cloud-admin-staging-firewall"),
-		ID:    envFileValue(adminState, "ADMIN_LINODE_FIREWALL_ID"),
-	})
-	return targets, nil
-}
-
 func videoCloudStatePath(envRoot string) string {
 	stack := stackNameFromEnvRoot(envRoot)
 	if stack == "" {
@@ -3945,61 +3978,6 @@ func stackNameFromEnvRoot(envRoot string) string {
 	return ""
 }
 
-func updateFirewallRules(target firewallTarget, mode, cidr string, dryRun bool) error {
-	out, err := curlLinode("GET", fmt.Sprintf("/networking/firewalls/%s/rules", target.ID), "")
-	if err != nil {
-		return err
-	}
-	var rules firewallRules
-	if err := json.Unmarshal(out, &rules); err != nil {
-		return err
-	}
-	changed := false
-	for i := range rules.Inbound {
-		rule := &rules.Inbound[i]
-		if !isSSHRule(*rule) {
-			continue
-		}
-		if rule.Addresses == nil {
-			rule.Addresses = map[string][]string{}
-		}
-		if mode == "replace" {
-			if len(rule.Addresses["ipv4"]) != 1 || rule.Addresses["ipv4"][0] != cidr {
-				rule.Addresses["ipv4"] = []string{cidr}
-				changed = true
-			}
-		} else if !contains(rule.Addresses["ipv4"], cidr) {
-			rule.Addresses["ipv4"] = append(rule.Addresses["ipv4"], cidr)
-			sort.Strings(rule.Addresses["ipv4"])
-			changed = true
-		}
-	}
-	if !changed {
-		if mode == "replace" {
-			fmt.Fprintf(os.Stderr, "[cloud-ssh-whitelist] already restricted: mode=replace role=%s firewall=%s id=%s cidr=%s\n", target.Role, target.Label, target.ID, cidr)
-		} else {
-			fmt.Fprintf(os.Stderr, "[cloud-ssh-whitelist] already allowed: mode=append role=%s firewall=%s id=%s cidr=%s\n", target.Role, target.Label, target.ID, cidr)
-		}
-		return nil
-	}
-	rules.Version = nil
-	rules.Fingerprint = nil
-	payload, _ := json.Marshal(rules)
-	if dryRun {
-		fmt.Fprintf(os.Stderr, "[cloud-ssh-whitelist] dry-run %s: mode=%s role=%s firewall=%s id=%s cidr=%s\n", mode, mode, target.Role, target.Label, target.ID, cidr)
-		return nil
-	}
-	if _, err := curlLinode("PUT", fmt.Sprintf("/networking/firewalls/%s/rules", target.ID), string(payload)); err != nil {
-		return err
-	}
-	if mode == "replace" {
-		fmt.Fprintf(os.Stderr, "[cloud-ssh-whitelist] replaced: mode=replace role=%s firewall=%s id=%s cidr=%s\n", target.Role, target.Label, target.ID, cidr)
-	} else {
-		fmt.Fprintf(os.Stderr, "[cloud-ssh-whitelist] appended: mode=append role=%s firewall=%s id=%s cidr=%s\n", target.Role, target.Label, target.ID, cidr)
-	}
-	return nil
-}
-
 func curlLinode(method, path, data string) ([]byte, error) {
 	return curlLinodeWithStderr(method, path, data, os.Stderr)
 }
@@ -4020,84 +3998,6 @@ func curlLinodeWithStderr(method, path, data string, stderr io.Writer) ([]byte, 
 		return out, fmt.Errorf("Linode API %s %s failed: %w", method, path, err)
 	}
 	return out, nil
-}
-
-func isSSHRule(rule firewallRule) bool {
-	return rule.Label == "ssh" || (strings.EqualFold(rule.Protocol, "TCP") && rule.Ports == "22")
-}
-
-func updateCSVEnv(path, key, cidr string, appendMode bool) {
-	if path == "" || !exists(path) {
-		return
-	}
-	lines := strings.Split(strings.TrimRight(readText(path), "\n"), "\n")
-	updated := false
-	for i, line := range lines {
-		if strings.HasPrefix(line, key+"=") {
-			updated = true
-			if appendMode {
-				_, value, _ := strings.Cut(line, "=")
-				parts := splitCSV(value)
-				if !contains(parts, cidr) {
-					parts = append(parts, cidr)
-				}
-				lines[i] = key + "=" + strings.Join(parts, ",")
-			} else {
-				lines[i] = key + "=" + cidr
-			}
-		}
-	}
-	if !updated {
-		lines = append(lines, key+"="+cidr)
-	}
-	_ = os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
-}
-
-func updateVideoCIDR(path, cidr string, appendMode bool) {
-	if path == "" || !exists(path) {
-		return
-	}
-	lines := strings.Split(strings.TrimRight(readText(path), "\n"), "\n")
-	out := []string{}
-	inAllowed := false
-	inserted := false
-	replaced := false
-	for _, line := range lines {
-		if strings.TrimSpace(line) == "allowed_source_cidrs:" {
-			inAllowed = true
-			out = append(out, line)
-			if !appendMode {
-				out = append(out, "    - "+cidr)
-				inserted = true
-				replaced = true
-			}
-			continue
-		}
-		if inAllowed {
-			if strings.HasPrefix(line, "    - ") {
-				if appendMode {
-					if strings.TrimSpace(strings.TrimPrefix(line, "-")) == cidr {
-						inserted = true
-					}
-					out = append(out, line)
-				}
-				continue
-			}
-			if appendMode && !inserted {
-				out = append(out, "    - "+cidr)
-				inserted = true
-			}
-			inAllowed = false
-		}
-		out = append(out, line)
-	}
-	if inAllowed && appendMode && !inserted {
-		out = append(out, "    - "+cidr)
-	}
-	if !appendMode && !replaced {
-		out = append(out, "ssh:", "  allowed_source_cidrs:", "    - "+cidr)
-	}
-	_ = os.WriteFile(path, []byte(strings.Join(out, "\n")+"\n"), 0o644)
 }
 
 func splitCSV(value string) []string {
@@ -4567,6 +4467,24 @@ func envInt(key string, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+func envDurationDefault(key string, fallback time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return fallback
+}
+
+func boolishEnv(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func mustParseURIs(values ...string) []*url.URL {

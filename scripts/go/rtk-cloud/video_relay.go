@@ -875,31 +875,7 @@ func evaluateVideoRelayCoturnEvidence(envRoot, outDir string, startedAt time.Tim
 	if !required {
 		return videoRelayCoturnStatus{Status: "not_required", Required: false, Detail: "WebRTC path did not require TURN relay evidence"}, nil
 	}
-	targets, err := loadLogsCheckTargets(envRoot)
-	if err != nil {
-		return videoRelayCoturnStatus{Status: "FAIL", Required: true, Detail: "coturn target unavailable: " + sanitizeVideoRelayText(err.Error())}, nil
-	}
-	target := targets["coturn"]
-	if target.Host == "" {
-		return videoRelayCoturnStatus{Status: "FAIL", Required: true, Detail: "coturn target missing"}, nil
-	}
-	since := "15 minutes ago"
-	if !startedAt.IsZero() {
-		since = startedAt.Add(-1 * time.Minute).UTC().Format("2006-01-02 15:04:05")
-	}
-	command := "journalctl -u coturn -u video_cloud-turnregistrar.service --since " + logShellQuote(since) + " -n 1200 --no-pager || true"
-	raw, err := (sshRemoteRunner{KeyPath: filepath.Join(os.Getenv("HOME"), ".ssh", "id_ed25519_rtkcloud"), KnownHosts: filepath.Join(outDir, "coturn_known_hosts")}).Run(target, command)
-	raw = sanitizeVideoRelayText(raw)
-	journalPath := filepath.Join(outDir, "coturn-relay-journal.log")
-	_ = os.WriteFile(journalPath, []byte(raw), 0o644)
-	if err != nil {
-		return videoRelayCoturnStatus{Status: "FAIL", Required: true, Detail: "coturn journal query failed: " + sanitizeVideoRelayText(err.Error())}, nil
-	}
-	events := parseVideoRelayCoturnEvents(raw)
-	if len(events) == 0 {
-		return videoRelayCoturnStatus{Status: "FAIL", Required: true, Detail: "coturn journal has no relay allocation/permission/channel evidence"}, nil
-	}
-	return videoRelayCoturnStatus{Status: "PASS", Required: true, Detail: fmt.Sprintf("coturn relay evidence events=%d", len(events))}, events
+	return videoRelayCoturnStatus{Status: "retired", Required: true, Detail: "VM coturn journal evidence is retired for K8s staging; use K8s observability or persisted runtime logs"}, nil
 }
 
 func parseVideoRelayCoturnEvents(raw string) []videoRelayCoturnEvent {

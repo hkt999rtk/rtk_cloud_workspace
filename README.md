@@ -59,17 +59,19 @@ pointer change in this workspace repository.
 
 ## Staging Shortcuts
 
-Use `./stg.sh` for the local staging environment. It forwards to the Go CLI and
-sets `--env-root cloud_env/staging` automatically.
+Use `./stg.sh` for the Linode K8s staging environment. It forwards to the Go CLI
+and sets `--env-root cloud_env/staging` automatically.
 
 ```sh
-./stg.sh provision
+./stg.sh e2e --plan
+scripts/run-staging-e2e.sh --plan
+./stg.sh provision --confirm video-cloud-staging
 ./stg.sh brand RTK
 ./stg.sh brands
 ./stg.sh users RTK 10
 ./stg.sh devices 100
 ./stg.sh bind RTK 100
-./stg.sh certs
+./stg.sh mqtt RTK
 ```
 
 From `scripts/`, use `../stg.sh ...`.
