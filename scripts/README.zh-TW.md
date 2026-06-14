@@ -69,6 +69,8 @@ mapping。使用這些 image 跑 LKE staging e2e 時，可先把 mapping export 
 
 需要 JSON/YAML、Object Storage、TLS、MQTT、HTTP API 等較複雜邏輯時，優先新增或擴充 Go module/Go helper，再由 shell wrapper 呼叫 Go 工具。簡單文字處理可用 POSIX shell、awk、sed、jq、openssl 等既有 CLI。
 
+Linode Object Storage 的正式 artifact upload/download/verify 必須使用 Go helper。不要安裝或呼叫 `awscli`、`boto3`、`pip install awscli`、`aws s3 cp`，也不要在 shell 中用 inline Python 實作 SigV4 uploader；各 repo 的 CI/release/deploy workflow 應呼叫 repo-local `cmd/linode-object-storage` 或等效 Go 工具。
+
 ## 一般檢查與同步
 
 ### `go run ./scripts/go/rtk-cloud -- status-all`

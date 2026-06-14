@@ -25,6 +25,11 @@ endpoint.
 
 Do not describe this as publishing to AWS storage. Workspace automation must use
 the Go Object Storage client rather than provider-specific storage CLIs.
+Formal artifact upload, download, and verification steps must not install or
+invoke Python AWS packages or CLIs, including `awscli`, `boto3`,
+`pip install awscli`, `python3 -m venv` for AWS CLI setup, `aws s3 cp`, or
+inline Python SigV4 uploaders. Use the repository-local Go helper for
+CI/release/deploy Object Storage access.
 
 | Store | Role |
 | --- | --- |
@@ -81,6 +86,14 @@ Go Object Storage client example:
 ```bash
 go run ./scripts/go/linode-object-storage -- list-manifests --release-prefix <artifact-name>
 go run ./scripts/go/linode-object-storage -- cat --key releases/<artifact-name>-<version>/manifest.json
+```
+
+Repository-local release helpers should expose the same core operations with
+`put`, `download`, `cat`, and `exists`, for example:
+
+```bash
+go run ./cmd/linode-object-storage put --file dist/<version>.tar.gz --key releases/<artifact-name>-<version>/<version>.tar.gz
+go run ./cmd/linode-object-storage download --key releases/<artifact-name>-<version>/manifest.json --out dist/manifest.json
 ```
 
 Equivalent `s3cmd` or `rclone` checks are acceptable if they use the same Linode
