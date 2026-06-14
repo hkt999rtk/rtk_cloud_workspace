@@ -141,7 +141,7 @@ Recommended separation:
 | MQTT | EMQX operator/StatefulSet or external broker with explicit TCP exposure, auth/TLS policy, logs, and health checks. |
 | TURN | LKE staging can run coturn as a Kubernetes Deployment/Service; production public TURN still requires explicit Linode LoadBalancer/NodeBalancer UDP/TCP exposure, scaling, TLS, and rollback approval. |
 | Storage | PostgreSQL restore-tested before migration; object storage lifecycle/replication according to customer policy. |
-| Observability | Prometheus-compatible metrics, Loki/logger service logs, broker logs, dead-letter evidence, alert routing. |
+| Observability | Prometheus-compatible metrics scraped from the LKE workload metrics registry, Loki/logger service logs, broker logs, dead-letter evidence, alert routing. |
 
 Production-like acceptance bar:
 
@@ -282,7 +282,7 @@ Recommended defaults:
 | WebSocket device transport | HTTPS/WSS through Ingress/Gateway only if device runtime requires external owner transport. |
 | MQTT | Prefer MQTTS, auth, and explicit NetworkPolicy/firewall rules; expose only broker listeners required by devices through LoadBalancer/NodeBalancer or TCP-capable ingress. |
 | TURN | Keep UDP/TCP relay exposure explicit; do not assume HTTP ingress can carry TURN traffic. |
-| Prometheus metrics | Private ServiceMonitor/PodMonitor or authenticated scrape path only. |
+| Prometheus metrics | Private cluster scrape path only. The workspace-managed LKE Prometheus ConfigMap is generated from workload metrics metadata; ServiceMonitor/PodMonitor is a later operator-gated option. |
 | EMQX dashboard | Private/admin network only. |
 | PostgreSQL | Private Service or external private endpoint only. |
 

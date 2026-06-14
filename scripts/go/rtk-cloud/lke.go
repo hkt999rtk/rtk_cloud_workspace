@@ -37,13 +37,18 @@ type lkeNamespace struct {
 }
 
 type lkeWorkload struct {
-	Key       string
-	Name      string
-	EnvKey    string
-	Image     string
-	Namespace string
-	Port      int
-	Host      string
+	Key            string
+	Name           string
+	EnvKey         string
+	Image          string
+	Namespace      string
+	Port           int
+	Host           string
+	MetricsEnabled bool
+	MetricsPath    string
+	MetricsJob     string
+	MetricsService string
+	MetricsPort    int
 }
 
 type lkeVideoCloudAuxiliaryService struct {
@@ -52,6 +57,15 @@ type lkeVideoCloudAuxiliaryService struct {
 	Port        int
 	PortName    string
 	MetricsPath string
+	MetricsJob  string
+}
+
+type lkePrometheusTarget struct {
+	Job       string
+	Namespace string
+	Service   string
+	Port      int
+	Path      string
 }
 
 type lkeImageArtifact struct {
@@ -679,10 +693,10 @@ func lkeNamespaceName(env map[string]string, key string) string {
 
 func lkeWorkloads(env map[string]string) []lkeWorkload {
 	return []lkeWorkload{
-		{Key: "video-cloud", Name: "video-cloud-api", EnvKey: "LKE_VIDEO_CLOUD_IMAGE", Image: os.Getenv("LKE_VIDEO_CLOUD_IMAGE"), Namespace: lkeNamespaceName(env, "video-cloud"), Port: envIntDefault("LKE_VIDEO_CLOUD_PORT", 8080), Host: env["VIDEO_CLOUD_DOMAIN"]},
-		{Key: "account-manager", Name: "account-manager", EnvKey: "LKE_ACCOUNT_MANAGER_IMAGE", Image: os.Getenv("LKE_ACCOUNT_MANAGER_IMAGE"), Namespace: lkeNamespaceName(env, "account-manager"), Port: envIntDefault("LKE_ACCOUNT_MANAGER_PORT", 8080), Host: env["ACCOUNT_MANAGER_DOMAIN"]},
-		{Key: "cloud-admin", Name: "cloud-admin", EnvKey: "LKE_CLOUD_ADMIN_IMAGE", Image: os.Getenv("LKE_CLOUD_ADMIN_IMAGE"), Namespace: lkeNamespaceName(env, "admin"), Port: envIntDefault("LKE_CLOUD_ADMIN_PORT", 8080), Host: env["CLOUD_ADMIN_DOMAIN"]},
-		{Key: "frontend", Name: "frontend", EnvKey: "LKE_FRONTEND_IMAGE", Image: os.Getenv("LKE_FRONTEND_IMAGE"), Namespace: lkeNamespaceName(env, "frontend"), Port: envIntDefault("LKE_FRONTEND_PORT", 8080), Host: firstNonEmpty(os.Getenv("LKE_FRONTEND_DOMAIN"), env["CLOUD_ADMIN_DOMAIN"])},
+		{Key: "video-cloud", Name: "video-cloud-api", EnvKey: "LKE_VIDEO_CLOUD_IMAGE", Image: os.Getenv("LKE_VIDEO_CLOUD_IMAGE"), Namespace: lkeNamespaceName(env, "video-cloud"), Port: envIntDefault("LKE_VIDEO_CLOUD_PORT", 8080), Host: env["VIDEO_CLOUD_DOMAIN"], MetricsEnabled: true, MetricsPath: "/metrics/prometheus", MetricsPort: 80},
+		{Key: "account-manager", Name: "account-manager", EnvKey: "LKE_ACCOUNT_MANAGER_IMAGE", Image: os.Getenv("LKE_ACCOUNT_MANAGER_IMAGE"), Namespace: lkeNamespaceName(env, "account-manager"), Port: envIntDefault("LKE_ACCOUNT_MANAGER_PORT", 8080), Host: env["ACCOUNT_MANAGER_DOMAIN"], MetricsEnabled: true, MetricsPath: "/metrics/prometheus", MetricsPort: 80},
+		{Key: "cloud-admin", Name: "cloud-admin", EnvKey: "LKE_CLOUD_ADMIN_IMAGE", Image: os.Getenv("LKE_CLOUD_ADMIN_IMAGE"), Namespace: lkeNamespaceName(env, "admin"), Port: envIntDefault("LKE_CLOUD_ADMIN_PORT", 8080), Host: env["CLOUD_ADMIN_DOMAIN"], MetricsEnabled: true, MetricsPath: "/metrics/prometheus", MetricsPort: 80},
+		{Key: "frontend", Name: "frontend", EnvKey: "LKE_FRONTEND_IMAGE", Image: os.Getenv("LKE_FRONTEND_IMAGE"), Namespace: lkeNamespaceName(env, "frontend"), Port: envIntDefault("LKE_FRONTEND_PORT", 8080), Host: firstNonEmpty(os.Getenv("LKE_FRONTEND_DOMAIN"), env["CLOUD_ADMIN_DOMAIN"]), MetricsEnabled: true, MetricsPath: "/metrics/prometheus", MetricsPort: 80},
 	}
 }
 
@@ -690,7 +704,7 @@ func lkeVideoCloudAuxiliaryServices() []lkeVideoCloudAuxiliaryService {
 	return []lkeVideoCloudAuxiliaryService{
 		{Name: "video-cloud-cleaner", Binary: "cleaner"},
 		{Name: "video-cloud-statistics", Binary: "statistics"},
-		{Name: "video-cloud-metricsexporter", Binary: "metricsexporter", Port: 19200, PortName: "http", MetricsPath: "/metrics/prometheus"},
+		{Name: "video-cloud-metricsexporter", Binary: "metricsexporter", Port: 19200, PortName: "http", MetricsPath: "/metrics/prometheus", MetricsJob: "video-cloud-metrics-exporter"},
 		{Name: "video-cloud-turnregistry", Binary: "turnregistry", Port: 18190, PortName: "http", MetricsPath: "/metrics/prometheus"},
 		{Name: "video-cloud-logingester", Binary: "logingester", Port: 19300, PortName: "http", MetricsPath: "/metrics/prometheus"},
 		{Name: "video-cloud-mqttusage", Binary: "mqttusage", Port: 19400, PortName: "http", MetricsPath: "/metrics/prometheus"},
@@ -820,7 +834,7 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 		if err := lkeApplyCoturnRuntime(env); err != nil {
 			return err
 		}
-		if err := lkeApplyVideoCloudAuxiliaryServices(env); err != nil {
+		if err := lkeApplyVideoCloudAuxiliaryServices(env, opts); err != nil {
 			return err
 		}
 	}
@@ -869,7 +883,7 @@ func lkeApplyCoturnRuntime(env map[string]string) error {
 	return runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/coturn", "--timeout", firstNonEmpty(os.Getenv("LKE_COTURN_ROLLOUT_TIMEOUT"), "5m"))
 }
 
-func lkeApplyVideoCloudAuxiliaryServices(env map[string]string) error {
+func lkeApplyVideoCloudAuxiliaryServices(env map[string]string, opts provisionOptions) error {
 	if err := kubectlApply(lkeVideoCloudWorkersSecretManifest(env)); err != nil {
 		return err
 	}
@@ -886,7 +900,7 @@ func lkeApplyVideoCloudAuxiliaryServices(env map[string]string) error {
 			return err
 		}
 	}
-	if err := kubectlApply(lkeVideoCloudPrometheusConfigManifest(env)); err != nil {
+	if err := kubectlApply(lkeVideoCloudPrometheusConfigManifest(env, opts)); err != nil {
 		return err
 	}
 	if err := kubectlApply(lkeVideoCloudPrometheusDeploymentManifest(env)); err != nil {
@@ -2449,8 +2463,58 @@ spec:
 `, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], service.Name, firstNonEmpty(service.PortName, "http"), service.Port, service.Port)
 }
 
-func lkeVideoCloudPrometheusConfigManifest(env map[string]string) string {
-	videoNS := lkeNamespaceName(env, "video-cloud")
+func lkePrometheusTargets(env map[string]string, opts provisionOptions) []lkePrometheusTarget {
+	targets := []lkePrometheusTarget{}
+	for _, workload := range lkeSelectedWorkloads(env, opts) {
+		if !workload.MetricsEnabled {
+			continue
+		}
+		port := workload.MetricsPort
+		if port == 0 {
+			port = 80
+		}
+		targets = append(targets, lkePrometheusTarget{
+			Job:       firstNonEmpty(workload.MetricsJob, workload.Name),
+			Namespace: workload.Namespace,
+			Service:   firstNonEmpty(workload.MetricsService, workload.Name),
+			Port:      port,
+			Path:      firstNonEmpty(workload.MetricsPath, "/metrics/prometheus"),
+		})
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") {
+		videoNS := lkeNamespaceName(env, "video-cloud")
+		for _, service := range lkeVideoCloudAuxiliaryServices() {
+			if service.Port == 0 || service.MetricsPath == "" {
+				continue
+			}
+			targets = append(targets, lkePrometheusTarget{
+				Job:       firstNonEmpty(service.MetricsJob, service.Name),
+				Namespace: videoNS,
+				Service:   service.Name,
+				Port:      service.Port,
+				Path:      service.MetricsPath,
+			})
+		}
+		targets = append(targets, lkePrometheusTarget{
+			Job:       "video-cloud-factoryenroll",
+			Namespace: videoNS,
+			Service:   "factoryenroll",
+			Port:      80,
+			Path:      "/metrics/prometheus",
+		})
+	}
+	return targets
+}
+
+func lkeVideoCloudPrometheusConfigManifest(env map[string]string, opts provisionOptions) string {
+	var scrape strings.Builder
+	for _, target := range lkePrometheusTargets(env, opts) {
+		fmt.Fprintf(&scrape, `      - job_name: %s
+        metrics_path: %s
+        static_configs:
+          - targets: ["%s.%s.svc.cluster.local:%d"]
+`, target.Job, target.Path, target.Service, target.Namespace, target.Port)
+	}
 	return fmt.Sprintf(`apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -2468,31 +2532,7 @@ data:
       evaluation_interval: 15s
 
     scrape_configs:
-      - job_name: video-cloud-api
-        metrics_path: /metrics/prometheus
-        static_configs:
-          - targets: ["video-cloud-api.%s.svc.cluster.local:80"]
-      - job_name: video-cloud-turnregistry
-        metrics_path: /metrics/prometheus
-        static_configs:
-          - targets: ["video-cloud-turnregistry.%s.svc.cluster.local:18190"]
-      - job_name: video-cloud-metrics-exporter
-        metrics_path: /metrics/prometheus
-        static_configs:
-          - targets: ["video-cloud-metricsexporter.%s.svc.cluster.local:19200"]
-      - job_name: video-cloud-logingester
-        metrics_path: /metrics/prometheus
-        static_configs:
-          - targets: ["video-cloud-logingester.%s.svc.cluster.local:19300"]
-      - job_name: video-cloud-mqttusage
-        metrics_path: /metrics/prometheus
-        static_configs:
-          - targets: ["video-cloud-mqttusage.%s.svc.cluster.local:19400"]
-      - job_name: video-cloud-factoryenroll
-        metrics_path: /metrics/prometheus
-        static_configs:
-          - targets: ["factoryenroll.%s.svc.cluster.local:80"]
-`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], videoNS, videoNS, videoNS, videoNS, videoNS, videoNS)
+%s`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], scrape.String())
 }
 
 func lkeVideoCloudPrometheusDeploymentManifest(env map[string]string) string {
