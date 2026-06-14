@@ -861,7 +861,7 @@ import json, os
 print(json.dumps([{"data": os.environ["CERTBOT_VALIDATION"], "ttl": int(os.environ["GODADDY_DNS_TTL"])}]))
 PY
 )"
-curl -fsS -X PUT "$api_root/v1/domains/$zone/records/TXT/$record" \
+curl --connect-timeout 10 --max-time 30 -fsS -X PUT "$api_root/v1/domains/$zone/records/TXT/$record" \
   -H "Authorization: sso-key $GODADDY_KEY:$GODADDY_SECRET" \
   -H "Content-Type: application/json" \
   --data "$payload" >/dev/null
@@ -872,7 +872,7 @@ propagation_seconds="${GODADDY_DNS_PROPAGATION_SECONDS:-60}"
 while [ "$SECONDS" -lt "$deadline" ]; do
   found=1
   for resolver in $resolvers; do
-    if ! dig +short TXT "$fqdn" "@$resolver" | tr -d '"' | grep -Fx "$CERTBOT_VALIDATION" >/dev/null; then
+    if ! dig +time=5 +tries=1 +short TXT "$fqdn" "@$resolver" | tr -d '"' | grep -Fx "$CERTBOT_VALIDATION" >/dev/null; then
       found=0
       break
     fi
@@ -910,7 +910,7 @@ api_root="https://api.godaddy.com"
 if [ "${GODADDY_ENV:-prod}" != "prod" ]; then
   api_root="https://api.ote-godaddy.com"
 fi
-curl -fsS -X DELETE "$api_root/v1/domains/$zone/records/TXT/$record" \
+curl --connect-timeout 10 --max-time 30 -fsS -X DELETE "$api_root/v1/domains/$zone/records/TXT/$record" \
   -H "Authorization: sso-key $GODADDY_KEY:$GODADDY_SECRET" >/dev/null || true`
 }
 
