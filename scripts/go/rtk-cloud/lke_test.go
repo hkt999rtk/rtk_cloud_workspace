@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -143,35 +144,22 @@ func TestRunProvisionLKEDeployRequiresImages(t *testing.T) {
 	}
 }
 
-func TestRunProvisionLKEDeployBuildsMissingImagesWhenRegistryConfigured(t *testing.T) {
+func TestRunProvisionLKEDeployDoesNotBuildServiceImagesWhenRegistryConfigured(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
-	kubectlLog := fakeKubectl(t)
 	dockerLog := fakeDocker(t)
 	t.Setenv("LKE_IMAGE_REGISTRY", "registry.example.test/rtk")
 	t.Setenv("LKE_IMAGE_TAG", "testtag")
 
-	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+	err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"})
+	if err == nil || !strings.Contains(err.Error(), "LKE deploy requires container image environment variables") {
+		t.Fatalf("expected explicit image requirement error, got %v", err)
+	}
+	dockerCalls, err := os.ReadFile(dockerLog)
+	if err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
-
-	dockerCalls := readTestFile(t, dockerLog)
-	for _, image := range []string{
-		"registry.example.test/rtk/postgresql:testtag",
-		"registry.example.test/rtk/video-cloud-api:testtag",
-		"registry.example.test/rtk/account-manager:testtag",
-		"registry.example.test/rtk/cloud-admin:testtag",
-		"registry.example.test/rtk/frontend:testtag",
-	} {
-		if !strings.Contains(dockerCalls, " -t "+image+" ") {
-			t.Fatalf("expected docker build for %s, got:\n%s", image, dockerCalls)
-		}
-	}
-	kubectlCalls := readTestFile(t, kubectlLog)
-	if !strings.Contains(kubectlCalls, "image: registry.example.test/rtk/video-cloud-api:testtag") {
-		t.Fatalf("expected built image in kubectl manifest, got:\n%s", kubectlCalls)
-	}
-	if !strings.Contains(kubectlCalls, "image: registry.example.test/rtk/postgresql:testtag") {
-		t.Fatalf("expected built PostgreSQL image in kubectl manifest, got:\n%s", kubectlCalls)
+	if string(dockerCalls) != "" {
+		t.Fatalf("expected no docker calls during deploy image validation, got:\n%s", dockerCalls)
 	}
 }
 
@@ -193,27 +181,100 @@ func TestRunLKEBuildImagesWritesManifest(t *testing.T) {
 	dockerCalls := readTestFile(t, dockerLog)
 	for _, image := range []string{
 		"registry.example.test/rtk/lke/postgresql:ci-1234",
+	} {
+		if !strings.Contains(dockerCalls, " -t "+image+" ") {
+			t.Fatalf("expected docker build for %s, got:\n%s", image, dockerCalls)
+		}
+	}
+	for _, image := range []string{
 		"registry.example.test/rtk/lke/video-cloud-api:ci-1234",
 		"registry.example.test/rtk/lke/account-manager:ci-1234",
 		"registry.example.test/rtk/lke/cloud-admin:ci-1234",
 		"registry.example.test/rtk/lke/frontend:ci-1234",
 	} {
-		if !strings.Contains(dockerCalls, " -t "+image+" ") {
-			t.Fatalf("expected docker build for %s, got:\n%s", image, dockerCalls)
+		if strings.Contains(dockerCalls, " -t "+image+" ") {
+			t.Fatalf("did not expect service image build for %s, got:\n%s", image, dockerCalls)
 		}
 	}
 	body := readTestFile(t, out)
 	for _, want := range []string{
 		`"schema": "rtk-cloud-workspace.lke-image-artifacts/v1"`,
 		`"LKE_POSTGRES_IMAGE": "registry.example.test/rtk/lke/postgresql:ci-1234"`,
-		`"LKE_VIDEO_CLOUD_IMAGE": "registry.example.test/rtk/lke/video-cloud-api:ci-1234"`,
-		`"LKE_ACCOUNT_MANAGER_IMAGE": "registry.example.test/rtk/lke/account-manager:ci-1234"`,
-		`"LKE_CLOUD_ADMIN_IMAGE": "registry.example.test/rtk/lke/cloud-admin:ci-1234"`,
-		`"LKE_FRONTEND_IMAGE": "registry.example.test/rtk/lke/frontend:ci-1234"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("manifest missing %q:\n%s", want, body)
 		}
+	}
+	for _, notWant := range []string{
+		"LKE_VIDEO_CLOUD_IMAGE",
+		"LKE_ACCOUNT_MANAGER_IMAGE",
+		"LKE_CLOUD_ADMIN_IMAGE",
+		"LKE_FRONTEND_IMAGE",
+	} {
+		if strings.Contains(body, notWant) {
+			t.Fatalf("legacy build manifest should not include %s:\n%s", notWant, body)
+		}
+	}
+}
+
+func TestRunLKEResolveImagesWritesPinnedSubmoduleManifest(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	commits := makeLKEServiceRepos(t, workspace)
+	out := filepath.Join(t.TempDir(), "lke-images.json")
+
+	if err := runLKEResolveImages([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--owner", "hkt999rtk",
+		"--skip-verify",
+		"--out", out,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := readTestFile(t, out)
+	for _, want := range []string{
+		`"schema": "rtk-cloud-workspace.lke-image-manifest/v1"`,
+		`"LKE_POSTGRES_IMAGE": "postgres:16-alpine"`,
+		`"LKE_VIDEO_CLOUD_IMAGE": "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api:sha-` + commits["rtk_video_cloud"] + `"`,
+		`"LKE_ACCOUNT_MANAGER_IMAGE": "ghcr.io/hkt999rtk/rtk_account_manager/account-manager:sha-` + commits["rtk_account_manager"] + `"`,
+		`"LKE_CLOUD_ADMIN_IMAGE": "ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin:sha-` + commits["rtk_cloud_admin"] + `"`,
+		`"LKE_FRONTEND_IMAGE": "ghcr.io/hkt999rtk/rtk_cloud_frontend/frontend:sha-` + commits["rtk_cloud_frontend"] + `"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("manifest missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestRunLKEResolveImagesFailsWhenServiceImageIsMissing(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	commits := makeLKEServiceRepos(t, workspace)
+	inspected := []string{}
+	oldInspect := inspectLKEImage
+	inspectLKEImage = func(image string) error {
+		inspected = append(inspected, image)
+		if strings.Contains(image, "/frontend:") {
+			return errLKEImageNotFound
+		}
+		return nil
+	}
+	t.Cleanup(func() { inspectLKEImage = oldInspect })
+
+	err := runLKEResolveImages([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--owner", "hkt999rtk",
+	})
+	if err == nil {
+		t.Fatal("expected missing image error")
+	}
+	wantImage := "ghcr.io/hkt999rtk/rtk_cloud_frontend/frontend:sha-" + commits["rtk_cloud_frontend"]
+	if !strings.Contains(err.Error(), wantImage) || !strings.Contains(err.Error(), "repos/rtk_cloud_frontend") {
+		t.Fatalf("expected missing image and repo path in error, got %v", err)
+	}
+	if len(inspected) != 4 {
+		t.Fatalf("expected four service image inspections, got %d: %v", len(inspected), inspected)
 	}
 }
 
@@ -1165,6 +1226,42 @@ CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
 		t.Fatal(err)
 	}
 	return workspace, envRoot
+}
+
+func makeLKEServiceRepos(t *testing.T, workspace string) map[string]string {
+	t.Helper()
+	repos := []string{
+		"rtk_video_cloud",
+		"rtk_account_manager",
+		"rtk_cloud_admin",
+		"rtk_cloud_frontend",
+	}
+	commits := map[string]string{}
+	for _, repo := range repos {
+		repoDir := filepath.Join(workspace, "repos", repo)
+		if err := os.MkdirAll(repoDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		runTestCommand(t, repoDir, "git", "init", "-q")
+		runTestCommand(t, repoDir, "git", "config", "user.email", "test@example.invalid")
+		runTestCommand(t, repoDir, "git", "config", "user.name", "Test User")
+		writeTestFile(t, filepath.Join(repoDir, "README.md"), repo+"\n")
+		runTestCommand(t, repoDir, "git", "add", "README.md")
+		runTestCommand(t, repoDir, "git", "commit", "-q", "-m", "initial")
+		commits[repo] = strings.TrimSpace(runTestCommand(t, repoDir, "git", "rev-parse", "--short=12", "HEAD"))
+	}
+	return commits
+}
+
+func runTestCommand(t *testing.T, dir, name string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s %s failed: %v\n%s", name, strings.Join(args, " "), err, out)
+	}
+	return string(out)
 }
 
 func fakeKubectl(t *testing.T) string {

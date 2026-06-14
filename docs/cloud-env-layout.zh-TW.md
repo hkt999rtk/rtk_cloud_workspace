@@ -48,7 +48,8 @@ cloud_env/staging/lke/
   會使用 Linode LKE API discover/create cluster、下載 kubeconfig 到
   `state/lke-kubeconfig.yaml`，再由 kubectl 建立/刪除 namespaces、套用
   runtime-generated base resources，並在 deploy 時要求明確 container image env
-  vars 或 `LKE_IMAGE_REGISTRY` 以自動 build/push images。未來若加入 AWS、GCP 或 Azure，
+  vars。Service images 由各 service repo 發布；workspace 只解析與驗證 pinned
+  commit 對應的 GHCR image manifest。未來若加入 AWS、GCP 或 Azure，
   應建立平行的 `cloud_env/<env>/<provider>` 目錄；在實作前，其他 provider
   必須在 preflight/provision 一開始就失敗，不可做任何 live mutation。
 - `--secrets-root PATH` 只保留為舊參數 alias，新的文件與操作都使用 `--env-root`。

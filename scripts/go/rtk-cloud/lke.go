@@ -69,15 +69,31 @@ type lkePrometheusTarget struct {
 }
 
 type lkeImageArtifact struct {
-	Key    string `json:"key"`
-	Name   string `json:"name"`
-	EnvKey string `json:"env_key"`
-	Image  string `json:"image"`
+	Key          string `json:"key"`
+	Name         string `json:"name"`
+	EnvKey       string `json:"env_key"`
+	Image        string `json:"image"`
+	SourceRepo   string `json:"source_repo,omitempty"`
+	SourcePath   string `json:"source_path,omitempty"`
+	SourceCommit string `json:"source_commit,omitempty"`
+	Tag          string `json:"tag,omitempty"`
+}
+
+type lkeServiceImageSource struct {
+	Key      string
+	Name     string
+	EnvKey   string
+	RepoName string
+	RepoPath string
 }
 
 var errLKEMissingCluster = errors.New("no matching LKE cluster found")
+var errLKEImageNotFound = errors.New("LKE image not found")
 var lkeRuntimeSecretCache = map[string]string{}
 var lkeRuntimeSecretStateDir string
+var inspectLKEImage = func(image string) error {
+	return runExternal("docker", "buildx", "imagetools", "inspect", image)
+}
 
 func runLKEBuildImages(args []string) error {
 	fs := flag.NewFlagSet("lke-build-images", flag.ContinueOnError)
@@ -138,6 +154,9 @@ func runLKEBuildImages(args []string) error {
 	tag := firstNonEmpty(*tagFlag, os.Getenv("LKE_IMAGE_TAG"), shortGitCommit(workspaceAbs), lkeName(firstNonEmpty(env.Values["CLOUD_STACK_NAME"], "video-cloud-staging")))
 	artifacts := []lkeImageArtifact{}
 	for _, workload := range lkeImageWorkloads(env.Values, provisionOptions{}) {
+		if workload.Key != "postgres" {
+			continue
+		}
 		image := registry + "/" + workload.Name + ":" + tag
 		if err := buildLKEImage(workload, image); err != nil {
 			return err
@@ -147,6 +166,7 @@ func runLKEBuildImages(args []string) error {
 			Name:   workload.Name,
 			EnvKey: workload.EnvKey,
 			Image:  image,
+			Tag:    tag,
 		})
 	}
 	manifest := map[string]any{
@@ -179,12 +199,129 @@ func runLKEBuildImages(args []string) error {
 	return os.WriteFile(outPath, body, 0o644)
 }
 
+func runLKEResolveImages(args []string) error {
+	fs := flag.NewFlagSet("lke-resolve-images", flag.ContinueOnError)
+	workspace := fs.String("workspace", ".", "workspace root")
+	envRoot := fs.String("env-root", "cloud_env/staging", "environment root; provider-aware roots may resolve to cloud_env/staging/lke")
+	registryHost := fs.String("registry-host", "ghcr.io", "container registry host")
+	owner := fs.String("owner", "hkt999rtk", "container registry owner or organization")
+	out := fs.String("out", "", "write image manifest JSON to this path")
+	skipVerify := fs.Bool("skip-verify", false, "skip remote image existence checks")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	workspaceAbs, err := filepath.Abs(*workspace)
+	if err != nil {
+		return err
+	}
+	env, err := loadLKEImageEnv(workspaceAbs, *envRoot)
+	if err != nil {
+		return err
+	}
+	artifacts := []lkeImageArtifact{
+		{
+			Key:    "postgres",
+			Name:   "postgresql",
+			EnvKey: "LKE_POSTGRES_IMAGE",
+			Image:  firstNonEmpty(os.Getenv("LKE_POSTGRES_IMAGE"), "postgres:16-alpine"),
+			Tag:    "16-alpine",
+		},
+	}
+	for _, source := range lkeServiceImageSources() {
+		repoDir := filepath.Join(workspaceAbs, source.RepoPath)
+		fullCommit, err := gitOutput(repoDir, "rev-parse", "HEAD")
+		if err != nil {
+			return fmt.Errorf("resolve %s source commit from %s: %w", source.Key, source.RepoPath, err)
+		}
+		fullCommit = strings.TrimSpace(fullCommit)
+		shortCommit, err := gitOutput(repoDir, "rev-parse", "--short=12", "HEAD")
+		if err != nil {
+			return fmt.Errorf("resolve %s short commit from %s: %w", source.Key, source.RepoPath, err)
+		}
+		tag := "sha-" + strings.TrimSpace(shortCommit)
+		image := strings.TrimRight(*registryHost, "/") + "/" + strings.Trim(*owner, "/") + "/" + source.RepoName + "/" + source.Name + ":" + tag
+		if !*skipVerify {
+			if err := inspectLKEImage(image); err != nil {
+				return fmt.Errorf("LKE image missing for %s at %s (%s): %s: %w: %v", source.Key, source.RepoPath, fullCommit, image, errLKEImageNotFound, err)
+			}
+		}
+		artifacts = append(artifacts, lkeImageArtifact{
+			Key:          source.Key,
+			Name:         source.Name,
+			EnvKey:       source.EnvKey,
+			Image:        image,
+			SourceRepo:   source.RepoName,
+			SourcePath:   source.RepoPath,
+			SourceCommit: fullCommit,
+			Tag:          tag,
+		})
+	}
+	manifest := map[string]any{
+		"schema":        "rtk-cloud-workspace.lke-image-manifest/v1",
+		"generated_at":  time.Now().UTC().Format(time.RFC3339),
+		"provider":      "lke",
+		"stack":         env.Values["CLOUD_STACK_NAME"],
+		"source_commit": strings.TrimSpace(firstNonEmpty(shortGitCommit(workspaceAbs), "unknown")),
+		"images":        artifacts,
+		"env":           lkeImageArtifactEnv(artifacts),
+	}
+	body, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	body = append(body, '\n')
+	if *out == "" {
+		_, err = os.Stdout.Write(body)
+		return err
+	}
+	outPath := *out
+	if !filepath.IsAbs(outPath) {
+		outPath = filepath.Join(workspaceAbs, outPath)
+	}
+	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(outPath, body, 0o644)
+}
+
+func loadLKEImageEnv(workspaceAbs, envRoot string) (envroot.Environment, error) {
+	resolvedEnvRoot := envRoot
+	if !filepath.IsAbs(resolvedEnvRoot) {
+		resolvedEnvRoot = filepath.Join(workspaceAbs, resolvedEnvRoot)
+	}
+	if filepath.Base(resolvedEnvRoot) != "lke" {
+		candidate := filepath.Join(resolvedEnvRoot, "lke")
+		if _, err := os.Stat(candidate); err == nil {
+			resolvedEnvRoot = candidate
+		}
+	}
+	env, err := envroot.Load(resolvedEnvRoot, "")
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			env = envroot.Environment{Values: defaultProvisionEnvValues()}
+		} else {
+			return envroot.Environment{}, err
+		}
+	}
+	env.Values["CLOUD_PROVIDER"] = "lke"
+	return env, nil
+}
+
 func lkeImageArtifactEnv(artifacts []lkeImageArtifact) map[string]string {
 	out := map[string]string{}
 	for _, artifact := range artifacts {
 		out[artifact.EnvKey] = artifact.Image
 	}
 	return out
+}
+
+func lkeServiceImageSources() []lkeServiceImageSource {
+	return []lkeServiceImageSource{
+		{Key: "video-cloud", Name: "video-cloud-api", EnvKey: "LKE_VIDEO_CLOUD_IMAGE", RepoName: "rtk_video_cloud", RepoPath: filepath.Join("repos", "rtk_video_cloud")},
+		{Key: "account-manager", Name: "account-manager", EnvKey: "LKE_ACCOUNT_MANAGER_IMAGE", RepoName: "rtk_account_manager", RepoPath: filepath.Join("repos", "rtk_account_manager")},
+		{Key: "cloud-admin", Name: "cloud-admin", EnvKey: "LKE_CLOUD_ADMIN_IMAGE", RepoName: "rtk_cloud_admin", RepoPath: filepath.Join("repos", "rtk_cloud_admin")},
+		{Key: "frontend", Name: "frontend", EnvKey: "LKE_FRONTEND_IMAGE", RepoName: "rtk_cloud_frontend", RepoPath: filepath.Join("repos", "rtk_cloud_frontend")},
+	}
 }
 
 func shortGitCommit(dir string) string {
@@ -364,23 +501,7 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 }
 
 func ensureLKEDeployImages(env map[string]string, opts provisionOptions) error {
-	registry := strings.TrimRight(os.Getenv("LKE_IMAGE_REGISTRY"), "/")
-	if registry == "" {
-		return validateLKEDeployInputs(env, opts)
-	}
-	missing := lkeMissingBuildImageWorkloads(env, opts)
-	if len(missing) == 0 {
-		return nil
-	}
-	tag := firstNonEmpty(os.Getenv("LKE_IMAGE_TAG"), lkeName(firstNonEmpty(env["CLOUD_STACK_NAME"], "video-cloud-staging")))
-	for _, workload := range missing {
-		image := registry + "/" + workload.Name + ":" + tag
-		if err := buildLKEImage(workload, image); err != nil {
-			return err
-		}
-		_ = os.Setenv(workload.EnvKey, image)
-	}
-	return nil
+	return validateLKEDeployInputs(env, opts)
 }
 
 func validateLKEDeployInputs(env map[string]string, opts provisionOptions) error {
@@ -391,7 +512,7 @@ func validateLKEDeployInputs(env map[string]string, opts provisionOptions) error
 	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
-		return fmt.Errorf("LKE deploy requires container image environment variables or LKE_IMAGE_REGISTRY for auto build/push: %s", strings.Join(missing, ", "))
+		return fmt.Errorf("LKE deploy requires container image environment variables; generate them with lke-resolve-images: %s", strings.Join(missing, ", "))
 	}
 	return nil
 }

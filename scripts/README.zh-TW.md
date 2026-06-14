@@ -23,19 +23,20 @@ Linode LKE API 取得 kubeconfig；若沒有 `KUBECONFIG` / current context，�
 kubeconfig 寫到 git-ignored `<env-root>/state/lke-kubeconfig.yaml`。之後才走
 kubectl namespace/apply/delete/rollout path。`deploy` 需要 container image；
 可以明確提供 `LKE_POSTGRES_IMAGE`、`LKE_VIDEO_CLOUD_IMAGE`、
-`LKE_ACCOUNT_MANAGER_IMAGE`、`LKE_CLOUD_ADMIN_IMAGE`、`LKE_FRONTEND_IMAGE`，
-或提供 `LKE_IMAGE_REGISTRY` 讓 provision flow 以 Docker buildx build/push
-缺失的 service images。AWS、GCP
-和 Azure 仍是後續 provider abstraction 目標，現階段應 fail fast，不可呼叫
-live API、SSH、DNS 或寫 state。
+`LKE_ACCOUNT_MANAGER_IMAGE`、`LKE_CLOUD_ADMIN_IMAGE`、`LKE_FRONTEND_IMAGE`。
+Service images 由各 service repo 的 release workflow 發布到 GHCR；
+workspace 只解析 pinned submodule commit、驗證對應 image 是否存在，並輸出
+後續 deploy/e2e 需要的 `LKE_*_IMAGE` mapping。AWS、GCP 和 Azure 仍是
+後續 provider abstraction 目標，現階段應 fail fast，不可呼叫 live API、
+SSH、DNS 或寫 state。
 
-`.github/workflows/lke-image-artifacts.yml` 是 workspace 的 LKE container
-artifact workflow。PR 會先跑不需要 secret 的 tooling validation；
-`workflow_dispatch` 會 checkout pinned submodules、build/push
-`postgresql`、`video-cloud-api`、`account-manager`、`cloud-admin`、`frontend` 五個 image
-到 GHCR，並上傳 `lke-image-manifest.json` 與 `lke-image-env.sh`。workflow
-需要 repo secret `CI_RUNNER_GITHUB_WORK_KEY` 來讀取 `git@github.com-work:`
-private submodules；產出的 `lke-image-env.sh` 可用來設定後續
+`.github/workflows/lke-image-artifacts.yml` 是 workspace 的 LKE image
+manifest workflow。PR 會先跑不需要 secret 的 tooling validation；
+`workflow_dispatch` 會 checkout pinned submodules、用 `sha-<12 char commit>`
+規則解析各 service repo 應發布的 GHCR image、驗證 image manifest 存在，
+並上傳 `lke-image-manifest.json` 與 `lke-image-env.sh`。workflow 需要 repo
+secret `CI_RUNNER_GITHUB_WORK_KEY` 來讀取 `git@github.com-work:` private
+submodules；產出的 `lke-image-env.sh` 可用來設定後續
 `run-staging-e2e.sh` / `rtk-cloud provision --deploy` 需要的 `LKE_*_IMAGE`。
 
 LKE Prometheus targets 由 workspace Go deployer 的 workload metrics registry
@@ -51,17 +52,16 @@ ConfigMap，不導入 Prometheus Operator、ServiceMonitor 或 PodMonitor。
 
 目錄配置請見 `docs/cloud-env-layout.zh-TW.md`。
 
-### `go run ./scripts/go/rtk-cloud -- lke-build-images`
+### `go run ./scripts/go/rtk-cloud -- lke-resolve-images`
 
-只 build/push LKE staging 所需 container images，不建立 cluster、不套用
-Kubernetes resources。這個 command 主要給 CI image artifact workflow 使用，
-也可本機手動產 image manifest：
+解析 workspace 目前 pinned submodule commits 對應的 service images，不建立
+cluster、不套用 Kubernetes resources、不 build service images。這個 command
+主要給 CI image manifest workflow 使用，也可本機手動產 image manifest：
 
 ```sh
-go run ./scripts/go/rtk-cloud -- lke-build-images \
+go run ./scripts/go/rtk-cloud -- lke-resolve-images \
   --env-root cloud_env/staging/lke \
-  --registry ghcr.io/hkt999rtk/rtk-cloud-lke \
-  --tag ci-<sha> \
+  --owner hkt999rtk \
   --out .artifacts/lke-images/lke-image-manifest.json
 ```
 
@@ -69,6 +69,12 @@ go run ./scripts/go/rtk-cloud -- lke-build-images \
 `LKE_ACCOUNT_MANAGER_IMAGE`、`LKE_CLOUD_ADMIN_IMAGE`、`LKE_FRONTEND_IMAGE`
 mapping。使用這些 image 跑 LKE staging e2e 時，可先把 mapping export 到 shell
 環境，再執行 `scripts/run-staging-e2e.sh`。
+
+### `go run ./scripts/go/rtk-cloud -- lke-build-images`
+
+Legacy helper。只保留 PostgreSQL staging image build/push 能力；service
+images 不再由 workspace build。正常 LKE staging flow 應使用
+`lke-resolve-images` 取得各 service repo 已發布的 GHCR images。
 
 ## Runtime 依賴政策
 
