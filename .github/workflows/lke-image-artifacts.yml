@@ -74,6 +74,7 @@ jobs:
           ssh-keyscan github.com >> ~/.ssh/known_hosts
           git config --global core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
           git config --global url."git@github.com:".insteadOf "git@github.com-work:"
+          git config --global url."git@github.com:".insteadOf "https://github.com/"
           git submodule sync --recursive
           git submodule update --init --recursive --depth=1
 
