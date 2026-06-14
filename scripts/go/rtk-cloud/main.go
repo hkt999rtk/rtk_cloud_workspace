@@ -2206,15 +2206,16 @@ func startK8SE2EPortForwards(workspace, envRoot string) ([]string, func(), error
 	factoryPort := firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_FACTORY_ENROLL_PORT"), "18443")
 	mqttPort := firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_MQTT_PORT"), "18883")
 	forwards := []struct {
-		ns      string
-		service string
-		port    string
-		local   string
+		ns          string
+		service     string
+		port        string
+		local       string
+		servicePort int
 	}{
-		{stack + "-account-manager", "account-manager", "http", accountPort},
-		{stack + "-video-cloud", "video-cloud-api", "http", videoPort},
-		{stack + "-video-cloud", "factoryenroll", "http", factoryPort},
-		{stack + "-video-cloud", "mqtt", "mqtts", mqttPort},
+		{ns: stack + "-account-manager", service: "account-manager", port: "http", local: accountPort},
+		{ns: stack + "-video-cloud", service: "video-cloud-api", port: "http", local: videoPort},
+		{ns: stack + "-video-cloud", service: "factoryenroll", port: "http", local: factoryPort},
+		{ns: stack + "-video-cloud", service: "mqtt", port: "mqtts", local: mqttPort},
 	}
 	cmds := []*exec.Cmd{}
 	cleanup := func() {
@@ -2225,25 +2226,44 @@ func startK8SE2EPortForwards(workspace, envRoot string) ([]string, func(), error
 			}
 		}
 	}
-	for _, fwd := range forwards {
+	for i := range forwards {
+		fwd := forwards[i]
 		servicePort, err := k8sServicePort(kubeconfig, fwd.ns, fwd.service, fwd.port)
 		if err != nil {
 			cleanup()
 			return nil, nil, err
 		}
-		cmd := exec.Command("kubectl", "-n", fwd.ns, "port-forward", "svc/"+fwd.service, fwd.local+":"+strconv.Itoa(servicePort))
+		forwards[i].servicePort = servicePort
+	}
+	for _, fwd := range forwards {
+		cmd := exec.Command("kubectl", "-n", fwd.ns, "port-forward", "svc/"+fwd.service, fwd.local+":"+strconv.Itoa(fwd.servicePort))
 		cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfig)
-		cmd.Stdout = os.Stderr
-		cmd.Stderr = os.Stderr
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			cleanup()
+			return nil, nil, err
+		}
+		stderr, err := cmd.StderrPipe()
+		if err != nil {
+			cleanup()
+			return nil, nil, err
+		}
+		label := fwd.ns + "/" + fwd.service
+		fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] port-forward start: %s 127.0.0.1:%s -> %d\n", label, fwd.local, fwd.servicePort)
 		if err := cmd.Start(); err != nil {
 			cleanup()
 			return nil, nil, err
 		}
+		go streamK8SPortForwardOutput(label, stdout)
+		go streamK8SPortForwardOutput(label, stderr)
 		cmds = append(cmds, cmd)
+	}
+	for _, fwd := range forwards {
 		if err := waitTCP("127.0.0.1:"+fwd.local, 15*time.Second); err != nil {
 			cleanup()
 			return nil, nil, err
 		}
+		fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] port-forward ready: %s/%s 127.0.0.1:%s -> %d\n", fwd.ns, fwd.service, fwd.local, fwd.servicePort)
 	}
 	env := []string{
 		"ACCOUNT_MANAGER_BASE_URL=http://127.0.0.1:" + accountPort,
@@ -2273,6 +2293,31 @@ func startK8SE2EPortForwards(workspace, envRoot string) ([]string, func(), error
 		return nil, nil, err
 	}
 	return env, cleanup, nil
+}
+
+func streamK8SPortForwardOutput(label string, r io.Reader) {
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !shouldLogK8SPortForwardLine(line) {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] port-forward %s: %s\n", label, line)
+	}
+}
+
+func shouldLogK8SPortForwardLine(line string) bool {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return false
+	}
+	if strings.HasPrefix(line, "Forwarding from ") {
+		return false
+	}
+	if strings.HasPrefix(line, "Handling connection for ") {
+		return false
+	}
+	return true
 }
 
 func readK8SSecretEnv(kubeconfig, namespace, secret string, keys ...string) ([]string, error) {
