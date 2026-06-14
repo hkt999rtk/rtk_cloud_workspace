@@ -53,6 +53,7 @@ var commands = map[string]commandSpec{
 	"generate-load-devices":  {run: runGenerateLoadDevices},
 	"list-brandname-clouds":  {run: runListBrandnameClouds},
 	"logs-check":             {run: runLogsCheck},
+	"lke-build-images":       {run: runLKEBuildImages},
 	"migrate-env":            {run: runMigrateEnv},
 	"mqtt-loadtest":          {run: runMQTTLoadTest},
 	"mqtt-test":              {run: runMQTTTest},

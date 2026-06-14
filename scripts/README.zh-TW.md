@@ -28,11 +28,39 @@ kubectl namespace/apply/delete/rollout path。`deploy` 需要 container image；
 和 Azure 仍是後續 provider abstraction 目標，現階段應 fail fast，不可呼叫
 live API、SSH、DNS 或寫 state。
 
+`.github/workflows/lke-image-artifacts.yml` 是 workspace 的 LKE container
+artifact workflow。PR 會先跑不需要 secret 的 tooling validation；
+`workflow_dispatch` 會 checkout pinned submodules、build/push
+`video-cloud-api`、`account-manager`、`cloud-admin`、`frontend` 四個 image
+到 GHCR，並上傳 `lke-image-manifest.json` 與 `lke-image-env.sh`。workflow
+需要 repo secret `CI_RUNNER_GITHUB_WORK_KEY` 來讀取 `git@github.com-work:`
+private submodules；產出的 `lke-image-env.sh` 可用來設定後續
+`run-staging-e2e.sh` / `rtk-cloud provision --deploy` 需要的 `LKE_*_IMAGE`。
+
 可用 `--env-root PATH` 指向另一份 environment directory。舊的 `--secrets-root PATH` 仍保留為相容 alias，但新的操作與文件都應使用 `--env-root`。
 
 `cloud-*` 是目前正式入口。舊的 `staging-*` / `staging_*` 相容 wrapper 已移除；automation 與文件都應使用 `cloud-*` 名稱。
 
 目錄配置請見 `docs/cloud-env-layout.zh-TW.md`。
+
+### `go run ./scripts/go/rtk-cloud -- lke-build-images`
+
+只 build/push LKE staging 所需 container images，不建立 cluster、不套用
+Kubernetes resources。這個 command 主要給 CI image artifact workflow 使用，
+也可本機手動產 image manifest：
+
+```sh
+go run ./scripts/go/rtk-cloud -- lke-build-images \
+  --env-root cloud_env/staging/lke \
+  --registry ghcr.io/hkt999rtk/rtk-cloud-lke \
+  --tag ci-<sha> \
+  --out .artifacts/lke-images/lke-image-manifest.json
+```
+
+輸出的 manifest 會包含 `LKE_VIDEO_CLOUD_IMAGE`、
+`LKE_ACCOUNT_MANAGER_IMAGE`、`LKE_CLOUD_ADMIN_IMAGE`、`LKE_FRONTEND_IMAGE`
+mapping。使用這些 image 跑 LKE staging e2e 時，可先把 mapping export 到 shell
+環境，再執行 `scripts/run-staging-e2e.sh`。
 
 ## Runtime 依賴政策
 

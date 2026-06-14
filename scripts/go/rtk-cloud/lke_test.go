@@ -165,6 +165,46 @@ func TestRunProvisionLKEDeployBuildsMissingImagesWhenRegistryConfigured(t *testi
 	}
 }
 
+func TestRunLKEBuildImagesWritesManifest(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	dockerLog := fakeDocker(t)
+	out := filepath.Join(t.TempDir(), "lke-images.json")
+
+	if err := runLKEBuildImages([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--registry", "registry.example.test/rtk/lke",
+		"--tag", "ci-1234",
+		"--out", out,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	dockerCalls := readTestFile(t, dockerLog)
+	for _, image := range []string{
+		"registry.example.test/rtk/lke/video-cloud-api:ci-1234",
+		"registry.example.test/rtk/lke/account-manager:ci-1234",
+		"registry.example.test/rtk/lke/cloud-admin:ci-1234",
+		"registry.example.test/rtk/lke/frontend:ci-1234",
+	} {
+		if !strings.Contains(dockerCalls, " -t "+image+" ") {
+			t.Fatalf("expected docker build for %s, got:\n%s", image, dockerCalls)
+		}
+	}
+	body := readTestFile(t, out)
+	for _, want := range []string{
+		`"schema": "rtk-cloud-workspace.lke-image-artifacts/v1"`,
+		`"LKE_VIDEO_CLOUD_IMAGE": "registry.example.test/rtk/lke/video-cloud-api:ci-1234"`,
+		`"LKE_ACCOUNT_MANAGER_IMAGE": "registry.example.test/rtk/lke/account-manager:ci-1234"`,
+		`"LKE_CLOUD_ADMIN_IMAGE": "registry.example.test/rtk/lke/cloud-admin:ci-1234"`,
+		`"LKE_FRONTEND_IMAGE": "registry.example.test/rtk/lke/frontend:ci-1234"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("manifest missing %q:\n%s", want, body)
+		}
+	}
+}
+
 func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)
