@@ -117,6 +117,8 @@ SH
 
 make_stub "$TMP/remove-k8s.sh" remove-k8s
 make_stub "$TMP/provision-k8s.sh" provision-k8s
+make_stub "$TMP/remove.sh" remove
+make_stub "$TMP/provision.sh" provision
 make_stub "$TMP/create-brand.sh" create-brand
 make_stub "$TMP/create-users.sh" create-users
 make_stub "$TMP/generate-devices.sh" generate-devices
@@ -241,6 +243,8 @@ CLOUD_STAGING_E2E_REMOVE_SCRIPT="$TMP/remove.sh" \
 CLOUD_STAGING_E2E_PROVISION_SCRIPT="$TMP/provision.sh" \
 CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT="$TMP/setup-data.sh" \
 CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT="$TMP/mqtt-test.sh" \
+CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT="$TMP/mqtt-log-verify.sh" \
+CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0 \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-e2e-test \
 	--workspace "$WORKSPACE" \
 	--env-root "$WORKSPACE/cloud_env/staging" \
