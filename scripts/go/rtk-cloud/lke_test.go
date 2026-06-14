@@ -1,7 +1,13 @@
 package main
 
 import (
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
 	"os"
 	"path/filepath"
 	"strings"
@@ -227,6 +233,10 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 	log := readTestFile(t, logPath)
 	for _, want := range []string{
 		"kind: StatefulSet\nmetadata:\n  name: postgresql",
+		"kind: Secret\nmetadata:\n  name: openbao-tls",
+		"namespace: video-cloud-staging-secrets",
+		"ca.crt:",
+		"ARGS -n video-cloud-staging-secrets get pod/openbao-0 -o jsonpath={.status.phase}",
 		"kind: Secret\nmetadata:\n  name: account-manager-runtime",
 		"kind: Job\nmetadata:\n  name: account-manager-migrate",
 		"envFrom:\n            - secretRef:\n                name: account-manager-runtime",
@@ -237,16 +247,29 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"PGDATA\n              value: /var/lib/postgresql/data/pgdata",
 		"name: postgresql-runtime\n                  key: POSTGRES_PASSWORD",
 		"kind: Secret\nmetadata:\n  name: certissuer-runtime",
+		"device-ca.crt: \"-----BEGIN CERTIFICATE-----\\ntest-device-ca\\n-----END CERTIFICATE-----\\n\"",
+		"app-ca.crt: \"-----BEGIN CERTIFICATE-----\\ntest-app-ca\\n-----END CERTIFICATE-----\\n\"",
+		"kind: Secret\nmetadata:\n  name: certissuer-openbao-auth",
+		"role_id: \"test-role-id\"",
+		"secret_id: \"test-secret-id\"",
 		"kind: Secret\nmetadata:\n  name: account-manager-certissuer-client",
 		"kind: Deployment\nmetadata:\n  name: certissuer",
 		"command: [\"/app/certissuer\"]",
 		"containerPort: 9443",
+		"CERT_ISSUER_SIGNER_PROVIDER\n              value: openbao",
+		"CERT_ISSUER_OPENBAO_PKI_MOUNT\n              value: pki/device",
+		"CERT_ISSUER_OPENBAO_PKI_ROLE\n              value: factory-device",
+		"CERT_ISSUER_APP_SIGNER_PROVIDER\n              value: openbao",
+		"OPENBAO_ADDR\n              value: \"https://openbao.video-cloud-staging-secrets.svc.cluster.local:8200\"",
+		"OPENBAO_ROLE_ID_FILE\n              value: /etc/video-cloud/openbao/role_id",
+		"name: certissuer-openbao-auth",
 		"APP_CERT_ISSUER_BASE_URL: \"https://certissuer.video-cloud-staging-video-cloud.svc.cluster.local:9443\"",
 		"APP_CERT_ISSUER_CLIENT_CERT: \"/etc/rtk-account-manager/certissuer/client.crt\"",
 		"name: account-manager-certissuer-client",
 		"kind: Secret\nmetadata:\n  name: factoryenroll-runtime",
 		"kind: Secret\nmetadata:\n  name: factoryenroll-certissuer-client",
 		"kind: Deployment\nmetadata:\n  name: factoryenroll",
+		"rtk.realtek.com/runtime-checksum",
 		"command: [\"/app/factoryenroll\"]",
 		"FACTORY_ENROLL_CERT_ISSUER_URL\n              value: \"https://certissuer.video-cloud-staging-video-cloud.svc.cluster.local:9443\"",
 		"FACTORY_ENROLL_AUTH_KEY",
@@ -269,16 +292,181 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 			t.Fatalf("expected %q in kubectl manifests, got:\n%s", want, log)
 		}
 	}
+	if strings.Contains(log, "device-ca.key") || strings.Contains(log, "app-ca.key") {
+		t.Fatalf("certissuer runtime must not mount CA private keys, got:\n%s", log)
+	}
+	openBaoIndex := strings.Index(log, "name: openbao-tls")
+	certIssuerIndex := strings.Index(log, "name: certissuer-runtime")
+	if openBaoIndex < 0 || certIssuerIndex < 0 || openBaoIndex > certIssuerIndex {
+		t.Fatalf("expected OpenBao resources before certissuer runtime secret, got:\n%s", log)
+	}
 }
 
-func TestLKEPostgresStatefulSetDefaultsToEphemeralStorageForStagingBridge(t *testing.T) {
+func TestLKEOpenBaoBootstrapRolesAllowEd25519AndP256CSRs(t *testing.T) {
+	script := lkeOpenBaoBootstrapScript(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})
+
+	for _, want := range []string{
+		"bao write pki/device/roles/factory-device",
+		"bao write pki/device/roles/gateway-server",
+		"bao write pki/app/roles/app-user",
+		"key_type=any key_usage=DigitalSignature ext_key_usage=ClientAuth",
+		"key_type=any key_usage=DigitalSignature ext_key_usage=ServerAuth",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("expected %q in OpenBao bootstrap script, got:\n%s", want, script)
+		}
+	}
+	if strings.Contains(script, "key_type=rsa") || strings.Contains(script, "key_usage=KeyEncipherment") {
+		t.Fatalf("OpenBao device/app roles must not be constrained to RSA or key encipherment, got:\n%s", script)
+	}
+}
+
+func TestLKEGeneratedCertificatesPreferEd25519(t *testing.T) {
+	caCert, caKey, caCertPEM, caKeyPEM, err := newLKECertificateAuthority("test-ca")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPEMPrivateKeyIsEd25519(t, caKeyPEM)
+	if _, ok := caKey.(ed25519.PrivateKey); !ok {
+		t.Fatalf("expected Ed25519 CA signer, got %T", caKey)
+	}
+	caBlock, _ := pem.Decode([]byte(caCertPEM))
+	if caBlock == nil {
+		t.Fatalf("expected CA certificate PEM, got %q", caCertPEM)
+	}
+	parsedCA, err := x509.ParseCertificate(caBlock.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := parsedCA.PublicKey.(ed25519.PublicKey); !ok {
+		t.Fatalf("expected Ed25519 CA certificate public key, got %T", parsedCA.PublicKey)
+	}
+
+	certPEM, keyPEM, err := newLKESignedCertificate(caCert, caKey, "svc", []string{"svc"}, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPEMPrivateKeyIsEd25519(t, keyPEM)
+	certBlock, _ := pem.Decode([]byte(certPEM))
+	if certBlock == nil {
+		t.Fatalf("expected certificate PEM, got %q", certPEM)
+	}
+	cert, err := x509.ParseCertificate(certBlock.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cert.PublicKey.(ed25519.PublicKey); !ok {
+		t.Fatalf("expected Ed25519 certificate public key, got %T", cert.PublicKey)
+	}
+	if cert.KeyUsage&x509.KeyUsageKeyEncipherment != 0 {
+		t.Fatalf("expected no key encipherment usage, got %v", cert.KeyUsage)
+	}
+}
+
+func TestLKEOpenBaoTLSMaterialRotatesLegacyP256State(t *testing.T) {
+	envRoot := t.TempDir()
+	stateDir := filepath.Join(envRoot, "state", "openbao")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(stateDir, "tls-ca.crt"), "legacy-ca")
+	writeTestFile(t, filepath.Join(stateDir, "tls.crt"), "legacy-cert")
+	writeP256PrivateKey(t, filepath.Join(stateDir, "tls.key"))
+	writeTestFile(t, filepath.Join(stateDir, "root-token"), "keep-root-token")
+
+	material, err := loadOrCreateLKEOpenBaoTLSMaterial(provisionPaths{EnvRoot: envRoot}, map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertPEMPrivateKeyIsEd25519(t, material.ServerKey)
+	assertPEMPrivateKeyIsEd25519(t, readTestFile(t, filepath.Join(stateDir, "tls.key")))
+	if got := readTestFile(t, filepath.Join(stateDir, "root-token")); got != "keep-root-token" {
+		t.Fatalf("expected root token state to survive TLS rotation, got %q", got)
+	}
+}
+
+func TestLKECertIssuerMaterialRotatesLegacyP256State(t *testing.T) {
+	envRoot := t.TempDir()
+	stateDir := filepath.Join(envRoot, "state", "certissuer")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"server.crt", "service-ca.crt", "client.crt", "factory.crt"} {
+		writeTestFile(t, filepath.Join(stateDir, name), "legacy-cert")
+	}
+	for _, name := range []string{"server.key", "client.key", "factory.key"} {
+		writeP256PrivateKey(t, filepath.Join(stateDir, name))
+	}
+
+	material, err := loadOrCreateLKECertIssuerMaterial(provisionPaths{EnvRoot: envRoot}, map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertPEMPrivateKeyIsEd25519(t, material.ServerKey)
+	assertPEMPrivateKeyIsEd25519(t, material.ClientKey)
+	assertPEMPrivateKeyIsEd25519(t, material.FactoryKey)
+}
+
+func assertPEMPrivateKeyIsEd25519(t *testing.T, keyPEM string) {
+	t.Helper()
+	block, rest := pem.Decode([]byte(keyPEM))
+	if block == nil || len(rest) != 0 {
+		t.Fatalf("expected single private key PEM, got block=%v rest=%d", block, len(rest))
+	}
+	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := key.(ed25519.PrivateKey); !ok {
+		t.Fatalf("expected Ed25519 private key, got %T", key)
+	}
+}
+
+func writeP256PrivateKey(t *testing.T, path string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLKEPostgresStatefulSetDefaultsToPVCStorage(t *testing.T) {
+	manifest := lkePostgresStatefulSetManifest(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})
+
+	for _, want := range []string{
+		"volumeClaimTemplates:",
+		"storage: 20Gi",
+		"volumeMode: Filesystem",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("expected %q in default PostgreSQL PVC manifest, got:\n%s", want, manifest)
+		}
+	}
+	if strings.Contains(manifest, "emptyDir: {}") {
+		t.Fatalf("default PostgreSQL manifest should not use emptyDir, got:\n%s", manifest)
+	}
+}
+
+func TestLKEPostgresStatefulSetSupportsExplicitEphemeralStorage(t *testing.T) {
+	t.Setenv("LKE_POSTGRES_STORAGE_MODE", "emptydir")
+
 	manifest := lkePostgresStatefulSetManifest(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})
 
 	if !strings.Contains(manifest, "emptyDir: {}") {
-		t.Fatalf("expected default staging PostgreSQL manifest to use emptyDir, got:\n%s", manifest)
+		t.Fatalf("expected explicit ephemeral PostgreSQL manifest to use emptyDir, got:\n%s", manifest)
 	}
 	if strings.Contains(manifest, "volumeClaimTemplates") {
-		t.Fatalf("default staging PostgreSQL manifest should not create Linode Block Storage PVCs, got:\n%s", manifest)
+		t.Fatalf("explicit ephemeral PostgreSQL manifest should not create PVCs, got:\n%s", manifest)
 	}
 }
 
@@ -291,6 +479,7 @@ func TestLKEPostgresStatefulSetSupportsExplicitPVCStorage(t *testing.T) {
 	for _, want := range []string{
 		"volumeClaimTemplates:",
 		"storage: 20Gi",
+		"volumeMode: Filesystem",
 		"name: data",
 	} {
 		if !strings.Contains(manifest, want) {
@@ -299,6 +488,42 @@ func TestLKEPostgresStatefulSetSupportsExplicitPVCStorage(t *testing.T) {
 	}
 	if strings.Contains(manifest, "emptyDir: {}") {
 		t.Fatalf("explicit PVC manifest should not use emptyDir, got:\n%s", manifest)
+	}
+}
+
+func TestLKEPostgresStatefulSetSupportsEnvRootPVCStorage(t *testing.T) {
+	manifest := lkePostgresStatefulSetManifest(map[string]string{
+		"CLOUD_STACK_NAME":          "video-cloud-staging",
+		"LKE_POSTGRES_STORAGE_MODE": "pvc",
+		"LKE_POSTGRES_STORAGE":      "20Gi",
+	})
+
+	for _, want := range []string{
+		"volumeClaimTemplates:",
+		"storage: 20Gi",
+		"volumeMode: Filesystem",
+		"name: data",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("expected %q in env-root PVC manifest, got:\n%s", want, manifest)
+		}
+	}
+	if strings.Contains(manifest, "emptyDir: {}") {
+		t.Fatalf("env-root PVC manifest should not use emptyDir, got:\n%s", manifest)
+	}
+}
+
+func TestLKEWaitForPostgresPVCUsesBoundGate(t *testing.T) {
+	logPath := fakeKubectl(t)
+
+	if err := lkeWaitForPostgresPVC(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}); err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, logPath)
+	want := "ARGS -n video-cloud-staging-platform wait --for=jsonpath={.status.phase}=Bound pvc/data-postgresql-0"
+	if !strings.Contains(log, want) {
+		t.Fatalf("expected %q in kubectl calls, got:\n%s", want, log)
 	}
 }
 
@@ -867,6 +1092,7 @@ func makeLKETestEnv(t *testing.T) (string, string) {
 	t.Cleanup(func() {
 		_ = os.Unsetenv("RTK_CLOUD_LKE_KUBECONFIG")
 	})
+	fakeHelm(t)
 	workspace := t.TempDir()
 	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")
 	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
@@ -891,6 +1117,42 @@ func fakeKubectl(t *testing.T) string {
 set -euo pipefail
 if [[ "${1:-}" == "config" && "${2:-}" == "current-context" ]]; then
   printf 'test-context\n'
+  exit 0
+fi
+if [[ "$*" == *"exec openbao-0 -- env "* && "$*" == *" bao status -format=json"* ]]; then
+  printf '{"initialized":false,"sealed":true}\n'
+  exit 0
+fi
+if [[ "$*" == *"exec openbao-0 -- env "* && "$*" == *" bao operator init "* ]]; then
+  printf '{"unseal_keys_b64":["test-unseal-key"],"root_token":"test-root-token"}\n'
+  exit 0
+fi
+if [[ "$*" == *"get pod/openbao-0 -o jsonpath={.status.phase}"* ]]; then
+  {
+    printf 'ARGS'
+    for arg in "$@"; do
+      printf ' %s' "$arg"
+    done
+    printf '\n'
+  } >> "` + logPath + `"
+  printf 'Running'
+  exit 0
+fi
+if [[ "$*" == *"exec -i openbao-0 -- sh -s"* ]]; then
+  body="$(cat)"
+  if [[ "$body" == *"bao operator unseal"* ]]; then
+    exit 0
+  fi
+  printf 'ROLE_ID=test-role-id\n'
+  printf 'SECRET_ID=test-secret-id\n'
+  printf 'DEVICE_CA_CERT_B64=%s\n' "$(printf '%s' '-----BEGIN CERTIFICATE-----
+test-device-ca
+-----END CERTIFICATE-----
+' | base64 | tr -d '\n')"
+  printf 'APP_CA_CERT_B64=%s\n' "$(printf '%s' '-----BEGIN CERTIFICATE-----
+test-app-ca
+-----END CERTIFICATE-----
+' | base64 | tr -d '\n')"
   exit 0
 fi
 {
@@ -922,6 +1184,42 @@ set -euo pipefail
 if [[ "${1:-}" == "config" && "${2:-}" == "current-context" ]]; then
   exit 1
 fi
+if [[ "$*" == *"exec openbao-0 -- env "* && "$*" == *" bao status -format=json"* ]]; then
+  printf '{"initialized":false,"sealed":true}\n'
+  exit 0
+fi
+if [[ "$*" == *"exec openbao-0 -- env "* && "$*" == *" bao operator init "* ]]; then
+  printf '{"unseal_keys_b64":["test-unseal-key"],"root_token":"test-root-token"}\n'
+  exit 0
+fi
+if [[ "$*" == *"get pod/openbao-0 -o jsonpath={.status.phase}"* ]]; then
+  {
+    printf 'ARGS'
+    for arg in "$@"; do
+      printf ' %s' "$arg"
+    done
+    printf '\n'
+  } >> "` + logPath + `"
+  printf 'Running'
+  exit 0
+fi
+if [[ "$*" == *"exec -i openbao-0 -- sh -s"* ]]; then
+  body="$(cat)"
+  if [[ "$body" == *"bao operator unseal"* ]]; then
+    exit 0
+  fi
+  printf 'ROLE_ID=test-role-id\n'
+  printf 'SECRET_ID=test-secret-id\n'
+  printf 'DEVICE_CA_CERT_B64=%s\n' "$(printf '%s' '-----BEGIN CERTIFICATE-----
+test-device-ca
+-----END CERTIFICATE-----
+' | base64 | tr -d '\n')"
+  printf 'APP_CA_CERT_B64=%s\n' "$(printf '%s' '-----BEGIN CERTIFICATE-----
+test-app-ca
+-----END CERTIFICATE-----
+' | base64 | tr -d '\n')"
+  exit 0
+fi
 {
   printf 'ARGS'
   for arg in "$@"; do
@@ -938,6 +1236,26 @@ fi
 		t.Fatal(err)
 	}
 	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	return logPath
+}
+
+func fakeHelm(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "helm.log")
+	helmPath := filepath.Join(dir, "helm")
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+printf 'ARGS' >> "` + logPath + `"
+for arg in "$@"; do
+  printf ' %s' "$arg" >> "` + logPath + `"
+done
+printf '\n' >> "` + logPath + `"
+`
+	if err := os.WriteFile(helmPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_HELM", helmPath)
 	return logPath
 }
 

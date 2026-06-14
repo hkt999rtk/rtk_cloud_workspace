@@ -3,9 +3,11 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -331,6 +333,90 @@ func TestAccountEnsureUserAppCertificateRecoversMissingLocalCredentials(t *testi
 	}
 }
 
+func TestShouldRetryLegacyAppCertificateSubject(t *testing.T) {
+	cases := []struct {
+		name    string
+		err     error
+		subject string
+		userID  string
+		want    bool
+	}{
+		{
+			name:    "csr invalid brand subject",
+			err:     errors.New("login failed during app certificate bootstrap: email=rtk+001@users.local HTTP 400: code=app_certificate_csr_invalid message=App certificate CSR is invalid"),
+			subject: "app-brand-cloud-user:brand-user-1",
+			userID:  "brand-user-1",
+			want:    true,
+		},
+		{
+			name:    "internal error uses algorithm fallback instead of legacy subject",
+			err:     errors.New("login failed during app certificate bootstrap: email=rtk+001@users.local HTTP 500: code=internal_error message=Internal server error"),
+			subject: "app-brand-cloud-user:brand-user-1",
+			userID:  "brand-user-1",
+			want:    false,
+		},
+		{
+			name:    "platform subject",
+			err:     errors.New("login failed during app certificate bootstrap: email=rtk+001@users.local HTTP 500: code=internal_error message=Internal server error"),
+			subject: "app-user:user-1",
+			userID:  "user-1",
+			want:    false,
+		},
+		{
+			name:    "missing user id uses brand cloud subject id on csr invalid",
+			err:     errors.New("login failed during app certificate bootstrap: email=rtk+001@users.local HTTP 400: code=app_certificate_csr_invalid message=App certificate CSR is invalid"),
+			subject: "app-brand-cloud-user:brand-user-1",
+			userID:  "",
+			want:    true,
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldRetryLegacyAppCertificateSubject(tt.err, tt.subject, tt.userID); got != tt.want {
+				t.Fatalf("shouldRetryLegacyAppCertificateSubject() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestShouldRetrySameAppCertificateSubject(t *testing.T) {
+	if !shouldRetrySameAppCertificateSubject(errors.New("login failed during app certificate bootstrap: email=rtk+001@users.local HTTP 500: code=internal_error message=Internal server error"), "app-brand-cloud-user:brand-user-1") {
+		t.Fatal("expected transient internal error to retry same brand-cloud subject")
+	}
+	if shouldRetrySameAppCertificateSubject(errors.New("login failed during app certificate bootstrap: email=rtk+001@users.local HTTP 400: code=app_certificate_csr_invalid message=App certificate CSR is invalid"), "app-brand-cloud-user:brand-user-1") {
+		t.Fatal("did not expect CSR validation error to retry same subject")
+	}
+	if shouldRetrySameAppCertificateSubject(errors.New("login failed during app certificate bootstrap: email=rtk+001@users.local HTTP 500: code=internal_error message=Internal server error"), "app-user:user-1") {
+		t.Fatal("did not expect platform subject to retry same subject")
+	}
+}
+
+func TestShouldFallbackAppCertificateAlgorithm(t *testing.T) {
+	err := errors.New("login failed during app certificate bootstrap: email=rtk+001@users.local HTTP 500: code=internal_error message=Internal server error")
+	if !shouldFallbackAppCertificateAlgorithm(err, "ed25519") {
+		t.Fatal("expected Ed25519 internal error to fall back to P-256")
+	}
+	if shouldFallbackAppCertificateAlgorithm(err, "p256") {
+		t.Fatal("did not expect P-256 to fall back again")
+	}
+	if shouldFallbackAppCertificateAlgorithm(errors.New("login failed during app certificate bootstrap: email=rtk+001@users.local HTTP 400: code=app_certificate_csr_invalid message=App certificate CSR is invalid"), "ed25519") {
+		t.Fatal("did not expect CSR validation error to trigger algorithm fallback")
+	}
+}
+
+func TestLegacyAppCertificateSubjects(t *testing.T) {
+	got := legacyAppCertificateSubjects("app-brand-cloud-user:brand-user-1", "user-1")
+	want := []string{"app-user:brand-user-1", "app-user:user-1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("legacyAppCertificateSubjects() = %#v, want %#v", got, want)
+	}
+	got = legacyAppCertificateSubjects("app-brand-cloud-user:brand-user-1", "brand-user-1")
+	want = []string{"app-user:brand-user-1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("legacyAppCertificateSubjects() = %#v, want %#v", got, want)
+	}
+}
+
 func TestAccountEnsureUserAppCertificateRecoversMismatchedLocalCredentials(t *testing.T) {
 	loginAttempts := 0
 	recovered := false
@@ -378,7 +464,7 @@ func TestAccountEnsureUserAppCertificateRecoversMismatchedLocalCredentials(t *te
 	defer server.Close()
 
 	staleCredentials := map[string]any{
-		"private_key_pem": "-----BEGIN RSA PRIVATE KEY-----\nstale\n-----END RSA PRIVATE KEY-----",
+		"private_key_pem": "-----BEGIN PRIVATE KEY-----\nstale\n-----END PRIVATE KEY-----",
 		"csr_pem":         "-----BEGIN CERTIFICATE REQUEST-----\nstale\n-----END CERTIFICATE REQUEST-----",
 	}
 	ctx := accountManagerContext{BaseURL: server.URL}

@@ -2,17 +2,22 @@ package main
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"os"
@@ -58,6 +63,7 @@ type lkeImageArtifact struct {
 
 var errLKEMissingCluster = errors.New("no matching LKE cluster found")
 var lkeRuntimeSecretCache = map[string]string{}
+var lkeRuntimeSecretStateDir string
 
 func runLKEBuildImages(args []string) error {
 	fs := flag.NewFlagSet("lke-build-images", flag.ContinueOnError)
@@ -176,6 +182,7 @@ func shortGitCommit(dir string) string {
 }
 
 func runLKEProvision(paths provisionPaths, env map[string]string, opts provisionOptions) error {
+	lkeRuntimeSecretStateDir = filepath.Join(paths.EnvRoot, "state", "secrets")
 	if opts.mode.reset {
 		return errors.New("LKE provision reset is not implemented; use remove-all-vm for namespace teardown")
 	}
@@ -241,6 +248,10 @@ func lkePreflight(paths provisionPaths, env map[string]string) error {
 	if _, err := exec.LookPath(kubectl); err != nil && filepath.Base(kubectl) == kubectl {
 		return fmt.Errorf("%s is required for LKE provision", kubectl)
 	}
+	helm := lkeHelm()
+	if _, err := exec.LookPath(helm); err != nil && filepath.Base(helm) == helm {
+		return fmt.Errorf("%s is required for LKE OpenBao provision", helm)
+	}
 	if err := runKubectl("version", "--client"); err != nil {
 		return err
 	}
@@ -257,7 +268,7 @@ func lkePlan(env map[string]string) {
 	}
 	fmt.Fprintln(os.Stdout, "- public HTTP: Linode NodeBalancer -> Ingress/Gateway -> video-cloud/account-manager/admin/frontend")
 	fmt.Fprintln(os.Stdout, "- non-HTTP: MQTT/TURN require LoadBalancer/NodeBalancer or a TCP-capable ingress path")
-	fmt.Fprintln(os.Stdout, "- secrets: OpenBao with Kubernetes auth / External Secrets; no root, unseal, HSM PIN, or signing key material in Kubernetes manifests")
+	fmt.Fprintln(os.Stdout, "- secrets: OpenBao standalone/AppRole for staging PKI; certissuer delegates device/app signing to OpenBao and Kubernetes Secrets do not carry CA private keys")
 	fmt.Fprintln(os.Stdout, "- deploy images:")
 	for _, workload := range lkeWorkloads(env) {
 		status := "TODO"
@@ -316,11 +327,22 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 	if err := lkeApplyRuntimeDependencies(paths, env, opts); err != nil {
 		return err
 	}
+	var certIssuerMaterial *lkeCertIssuerMaterial
+	if lkeWorkloadSelected(env, opts, "account-manager") {
+		material, err := loadOrCreateLKECertIssuerMaterial(paths, env)
+		if err != nil {
+			return err
+		}
+		certIssuerMaterial = &material
+	}
 	for _, workload := range lkeSelectedWorkloads(env, opts) {
-		if err := kubectlApply(lkeDeploymentManifest(env, workload)); err != nil {
+		if err := kubectlApply(lkeDeploymentManifest(env, workload, certIssuerMaterial)); err != nil {
 			return err
 		}
 		if err := kubectlApply(lkeServiceManifest(env, workload)); err != nil {
+			return err
+		}
+		if err := runKubectl("-n", workload.Namespace, "rollout", "status", "deployment/"+workload.Name, "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "5m")); err != nil {
 			return err
 		}
 	}
@@ -707,8 +729,13 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 	if err := kubectlApply(lkePostgresServiceManifest(env)); err != nil {
 		return err
 	}
-	if err := kubectlApply(lkePostgresStatefulSetManifest(env)); err != nil {
+	if err := lkeApplyPostgresStatefulSet(env); err != nil {
 		return err
+	}
+	if lkePostgresUsesPVC(env) {
+		if err := lkeWaitForPostgresPVC(env); err != nil {
+			return err
+		}
 	}
 	if err := runKubectl("-n", lkeNamespaceName(env, "platform"), "rollout", "status", "statefulset/postgresql", "--timeout", firstNonEmpty(os.Getenv("LKE_POSTGRES_ROLLOUT_TIMEOUT"), "5m")); err != nil {
 		return err
@@ -717,10 +744,20 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 	materialReady := false
 	if lkeWorkloadSelected(env, opts, "video-cloud") {
 		var err error
-		material, err = newLKECertIssuerMaterial(env)
+		material, err = loadOrCreateLKECertIssuerMaterial(paths, env)
 		if err != nil {
 			return err
 		}
+		openBaoTLS, err := loadOrCreateLKEOpenBaoTLSMaterial(paths, env)
+		if err != nil {
+			return err
+		}
+		openBao, err := lkeEnsureOpenBao(paths, env, openBaoTLS)
+		if err != nil {
+			return err
+		}
+		material.DeviceCACert = openBao.DeviceCACert
+		material.AppCACert = openBao.AppCACert
 		materialReady = true
 		if err := writeLKEVideoCloudRuntimeEnv(paths, env); err != nil {
 			return err
@@ -728,13 +765,19 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 		if err := kubectlApply(lkeVideoCloudRuntimeSecretManifest(env)); err != nil {
 			return err
 		}
+		if err := kubectlDeleteSecret(lkeNamespaceName(env, "video-cloud"), "certissuer-runtime"); err != nil {
+			return err
+		}
 		if err := kubectlApply(lkeCertIssuerRuntimeSecretManifest(env, material)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeCertIssuerOpenBaoAuthSecretManifest(env, openBao)); err != nil {
 			return err
 		}
 		if err := kubectlApply(lkeCertIssuerServiceManifest(env)); err != nil {
 			return err
 		}
-		if err := kubectlApply(lkeCertIssuerDeploymentManifest(env)); err != nil {
+		if err := kubectlApply(lkeCertIssuerDeploymentManifest(env, material, openBao)); err != nil {
 			return err
 		}
 		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/certissuer", "--timeout", firstNonEmpty(os.Getenv("LKE_CERTISSUER_ROLLOUT_TIMEOUT"), "5m")); err != nil {
@@ -749,7 +792,7 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 		if err := kubectlApply(lkeFactoryEnrollServiceManifest(env)); err != nil {
 			return err
 		}
-		if err := kubectlApply(lkeFactoryEnrollDeploymentManifest(env)); err != nil {
+		if err := kubectlApply(lkeFactoryEnrollDeploymentManifest(env, material)); err != nil {
 			return err
 		}
 		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/factoryenroll", "--timeout", firstNonEmpty(os.Getenv("LKE_FACTORYENROLL_ROLLOUT_TIMEOUT"), "5m")); err != nil {
@@ -786,7 +829,7 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 	}
 	if !materialReady {
 		var err error
-		material, err = newLKECertIssuerMaterial(env)
+		material, err = loadOrCreateLKECertIssuerMaterial(paths, env)
 		if err != nil {
 			return err
 		}
@@ -1013,7 +1056,7 @@ func lkePostgresStatefulSetManifest(env map[string]string) string {
           emptyDir: {}
 `
 	volumeClaims := ""
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("LKE_POSTGRES_STORAGE_MODE")), "pvc") {
+	if lkePostgresUsesPVC(env) {
 		storage = `      volumes:
         - name: initdb
           configMap:
@@ -1024,10 +1067,11 @@ func lkePostgresStatefulSetManifest(env map[string]string) string {
         name: data
       spec:
         accessModes: ["ReadWriteOnce"]
+        volumeMode: Filesystem
         resources:
           requests:
             storage: %s
-`, firstNonEmpty(os.Getenv("LKE_POSTGRES_STORAGE"), "10Gi"))
+`, firstNonEmpty(os.Getenv("LKE_POSTGRES_STORAGE"), env["LKE_POSTGRES_STORAGE"], "20Gi"))
 	}
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: StatefulSet
@@ -1075,6 +1119,36 @@ spec:
 %s%s`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkePostgresImage(), storage, volumeClaims)
 }
 
+func lkeApplyPostgresStatefulSet(env map[string]string) error {
+	manifest := lkePostgresStatefulSetManifest(env)
+	err := kubectlApply(manifest)
+	if err == nil || !strings.Contains(manifest, "volumeClaimTemplates:") || !isStatefulSetImmutableUpdateError(err) {
+		return err
+	}
+	namespace := lkeNamespaceName(env, "platform")
+	if deleteErr := runKubectl("-n", namespace, "delete", "statefulset/postgresql", "--cascade=orphan", "--ignore-not-found=true"); deleteErr != nil {
+		return deleteErr
+	}
+	return kubectlApply(manifest)
+}
+
+func isStatefulSetImmutableUpdateError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "StatefulSet") && strings.Contains(msg, "Forbidden") && strings.Contains(msg, "updates to statefulset spec")
+}
+
+func lkePostgresUsesPVC(env map[string]string) bool {
+	mode := strings.ToLower(strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_POSTGRES_STORAGE_MODE"), env["LKE_POSTGRES_STORAGE_MODE"], "pvc")))
+	return mode != "emptydir" && mode != "ephemeral"
+}
+
+func lkeWaitForPostgresPVC(env map[string]string) error {
+	return runKubectl("-n", lkeNamespaceName(env, "platform"), "wait", "--for=jsonpath={.status.phase}=Bound", "pvc/data-postgresql-0", "--timeout", firstNonEmpty(os.Getenv("LKE_POSTGRES_PVC_TIMEOUT"), "5m"))
+}
+
 func lkePostgresImage() string {
 	return firstNonEmpty(os.Getenv("LKE_POSTGRES_IMAGE"), "postgres:16-alpine")
 }
@@ -1088,14 +1162,31 @@ type lkeCertIssuerMaterial struct {
 	FactoryCert  string
 	FactoryKey   string
 	DeviceCACert string
-	DeviceCAKey  string
 	AppCACert    string
-	AppCAKey     string
 }
 
 type lkeMQTTMaterial struct {
 	ServerCert string
 	ServerKey  string
+}
+
+type lkeOpenBaoTLSMaterial struct {
+	CACert     string
+	ServerCert string
+	ServerKey  string
+}
+
+type lkeOpenBaoBootstrapResult struct {
+	RoleID       string
+	SecretID     string
+	TLSCACert    string
+	DeviceCACert string
+	AppCACert    string
+}
+
+type lkeOpenBaoStatus struct {
+	Initialized bool `json:"initialized"`
+	Sealed      bool `json:"sealed"`
 }
 
 func newLKEMQTTMaterial() (lkeMQTTMaterial, error) {
@@ -1115,14 +1206,6 @@ func newLKECertIssuerMaterial(env map[string]string) (lkeCertIssuerMaterial, err
 	if err != nil {
 		return lkeCertIssuerMaterial{}, err
 	}
-	deviceCACert, deviceCAKey, deviceCACertPEM, deviceCAKeyPEM, err := newLKECertificateAuthority("rtk-lke-device-ca")
-	if err != nil {
-		return lkeCertIssuerMaterial{}, err
-	}
-	appCACert, appCAKey, appCACertPEM, appCAKeyPEM, err := newLKECertificateAuthority("rtk-lke-app-ca")
-	if err != nil {
-		return lkeCertIssuerMaterial{}, err
-	}
 	serverDNS := lkeCertIssuerDNSNames(env)
 	serverCertPEM, serverKeyPEM, err := newLKESignedCertificate(serviceCACert, serviceCAKey, "certissuer", serverDNS, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
 	if err != nil {
@@ -1136,27 +1219,245 @@ func newLKECertIssuerMaterial(env map[string]string) (lkeCertIssuerMaterial, err
 	if err != nil {
 		return lkeCertIssuerMaterial{}, err
 	}
-	_ = deviceCACert
-	_ = deviceCAKey
-	_ = appCACert
-	_ = appCAKey
 	return lkeCertIssuerMaterial{
-		ServerCert:   serverCertPEM,
-		ServerKey:    serverKeyPEM,
-		ServiceCA:    serviceCACertPEM,
-		ClientCert:   clientCertPEM,
-		ClientKey:    clientKeyPEM,
-		FactoryCert:  factoryCertPEM,
-		FactoryKey:   factoryKeyPEM,
-		DeviceCACert: deviceCACertPEM,
-		DeviceCAKey:  deviceCAKeyPEM,
-		AppCACert:    appCACertPEM,
-		AppCAKey:     appCAKeyPEM,
+		ServerCert:  serverCertPEM,
+		ServerKey:   serverKeyPEM,
+		ServiceCA:   serviceCACertPEM,
+		ClientCert:  clientCertPEM,
+		ClientKey:   clientKeyPEM,
+		FactoryCert: factoryCertPEM,
+		FactoryKey:  factoryKeyPEM,
 	}, nil
 }
 
-func newLKECertificateAuthority(commonName string) (*x509.Certificate, *ecdsa.PrivateKey, string, string, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+func loadOrCreateLKECertIssuerMaterial(paths provisionPaths, env map[string]string) (lkeCertIssuerMaterial, error) {
+	stateDir := filepath.Join(paths.EnvRoot, "state", "certissuer")
+	files := map[string]*string{
+		"server.crt":     nil,
+		"server.key":     nil,
+		"service-ca.crt": nil,
+		"client.crt":     nil,
+		"client.key":     nil,
+		"factory.crt":    nil,
+		"factory.key":    nil,
+	}
+	exists := false
+	for name := range files {
+		if fileExists(filepath.Join(stateDir, name)) {
+			exists = true
+			break
+		}
+	}
+	if exists {
+		for _, name := range []string{"server.key", "client.key", "factory.key"} {
+			keyPath := filepath.Join(stateDir, name)
+			if !fileExists(keyPath) {
+				return lkeCertIssuerMaterial{}, fmt.Errorf("certissuer TLS state is incomplete under %s", stateDir)
+			}
+			isEd25519, err := lkePEMPrivateKeyIsEd25519(keyPath)
+			if err != nil {
+				return lkeCertIssuerMaterial{}, err
+			}
+			if !isEd25519 {
+				if err := os.RemoveAll(stateDir); err != nil {
+					return lkeCertIssuerMaterial{}, err
+				}
+				exists = false
+				break
+			}
+		}
+	}
+	if exists {
+		readPublic := func(name string) (string, error) {
+			body, err := os.ReadFile(filepath.Join(stateDir, name))
+			if err != nil {
+				return "", err
+			}
+			return string(body), nil
+		}
+		readPrivate := func(name, label string) (string, error) {
+			return readSensitiveFile(filepath.Join(stateDir, name), label)
+		}
+		serverCert, err := readPublic("server.crt")
+		if err != nil {
+			return lkeCertIssuerMaterial{}, err
+		}
+		serverKey, err := readPrivate("server.key", "certissuer server private key")
+		if err != nil {
+			return lkeCertIssuerMaterial{}, err
+		}
+		serviceCA, err := readPublic("service-ca.crt")
+		if err != nil {
+			return lkeCertIssuerMaterial{}, err
+		}
+		clientCert, err := readPublic("client.crt")
+		if err != nil {
+			return lkeCertIssuerMaterial{}, err
+		}
+		clientKey, err := readPrivate("client.key", "certissuer account-manager client private key")
+		if err != nil {
+			return lkeCertIssuerMaterial{}, err
+		}
+		factoryCert, err := readPublic("factory.crt")
+		if err != nil {
+			return lkeCertIssuerMaterial{}, err
+		}
+		factoryKey, err := readPrivate("factory.key", "certissuer factory client private key")
+		if err != nil {
+			return lkeCertIssuerMaterial{}, err
+		}
+		return lkeCertIssuerMaterial{
+			ServerCert:  serverCert,
+			ServerKey:   serverKey,
+			ServiceCA:   serviceCA,
+			ClientCert:  clientCert,
+			ClientKey:   clientKey,
+			FactoryCert: factoryCert,
+			FactoryKey:  factoryKey,
+		}, nil
+	}
+	material, err := newLKECertIssuerMaterial(env)
+	if err != nil {
+		return lkeCertIssuerMaterial{}, err
+	}
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		return lkeCertIssuerMaterial{}, err
+	}
+	writes := map[string]string{
+		"server.crt":     material.ServerCert,
+		"service-ca.crt": material.ServiceCA,
+		"client.crt":     material.ClientCert,
+		"factory.crt":    material.FactoryCert,
+	}
+	for name, value := range writes {
+		if err := os.WriteFile(filepath.Join(stateDir, name), []byte(value), 0o600); err != nil {
+			return lkeCertIssuerMaterial{}, err
+		}
+	}
+	privateWrites := map[string]string{
+		"server.key":  material.ServerKey,
+		"client.key":  material.ClientKey,
+		"factory.key": material.FactoryKey,
+	}
+	for name, value := range privateWrites {
+		if err := writeSensitiveFile(filepath.Join(stateDir, name), value); err != nil {
+			return lkeCertIssuerMaterial{}, err
+		}
+	}
+	return material, nil
+}
+
+func newLKEOpenBaoTLSMaterial(env map[string]string) (lkeOpenBaoTLSMaterial, error) {
+	caCert, caKey, caCertPEM, _, err := newLKECertificateAuthority("rtk-lke-openbao-tls-ca")
+	if err != nil {
+		return lkeOpenBaoTLSMaterial{}, err
+	}
+	serverCert, serverKey, err := newLKESignedCertificate(caCert, caKey, "openbao", lkeOpenBaoDNSNames(env), nil, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+	if err != nil {
+		return lkeOpenBaoTLSMaterial{}, err
+	}
+	return lkeOpenBaoTLSMaterial{CACert: caCertPEM, ServerCert: serverCert, ServerKey: serverKey}, nil
+}
+
+func loadOrCreateLKEOpenBaoTLSMaterial(paths provisionPaths, env map[string]string) (lkeOpenBaoTLSMaterial, error) {
+	stateDir := filepath.Join(paths.EnvRoot, "state", "openbao")
+	caPath := filepath.Join(stateDir, "tls-ca.crt")
+	certPath := filepath.Join(stateDir, "tls.crt")
+	keyPath := filepath.Join(stateDir, "tls.key")
+	if fileExists(caPath) || fileExists(certPath) || fileExists(keyPath) {
+		if !fileExists(caPath) || !fileExists(certPath) || !fileExists(keyPath) {
+			return lkeOpenBaoTLSMaterial{}, fmt.Errorf("OpenBao TLS state is incomplete under %s", stateDir)
+		}
+		isEd25519, err := lkePEMPrivateKeyIsEd25519(keyPath)
+		if err != nil {
+			return lkeOpenBaoTLSMaterial{}, err
+		}
+		if !isEd25519 {
+			for _, path := range []string{caPath, certPath, keyPath} {
+				if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+					return lkeOpenBaoTLSMaterial{}, err
+				}
+			}
+			return loadOrCreateLKEOpenBaoTLSMaterial(paths, env)
+		}
+		ca, err := os.ReadFile(caPath)
+		if err != nil {
+			return lkeOpenBaoTLSMaterial{}, err
+		}
+		cert, err := os.ReadFile(certPath)
+		if err != nil {
+			return lkeOpenBaoTLSMaterial{}, err
+		}
+		key, err := readSensitiveFile(keyPath, "OpenBao TLS private key")
+		if err != nil {
+			return lkeOpenBaoTLSMaterial{}, err
+		}
+		return lkeOpenBaoTLSMaterial{CACert: string(ca), ServerCert: string(cert), ServerKey: key}, nil
+	}
+	material, err := newLKEOpenBaoTLSMaterial(env)
+	if err != nil {
+		return lkeOpenBaoTLSMaterial{}, err
+	}
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		return lkeOpenBaoTLSMaterial{}, err
+	}
+	if err := os.WriteFile(caPath, []byte(material.CACert), 0o600); err != nil {
+		return lkeOpenBaoTLSMaterial{}, err
+	}
+	if err := os.WriteFile(certPath, []byte(material.ServerCert), 0o600); err != nil {
+		return lkeOpenBaoTLSMaterial{}, err
+	}
+	if err := writeSensitiveFile(keyPath, material.ServerKey); err != nil {
+		return lkeOpenBaoTLSMaterial{}, err
+	}
+	return material, nil
+}
+
+func lkePEMPrivateKeyIsEd25519(path string) (bool, error) {
+	body, err := readSensitiveFile(path, "private key")
+	if err != nil {
+		return false, err
+	}
+	block, rest := pem.Decode([]byte(body))
+	if block == nil || len(strings.TrimSpace(string(rest))) != 0 {
+		return false, fmt.Errorf("invalid PEM private key at %s", path)
+	}
+	if key, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
+		_, ok := key.(ed25519.PrivateKey)
+		return ok, nil
+	}
+	if _, err := x509.ParseECPrivateKey(block.Bytes); err == nil {
+		return false, nil
+	}
+	if _, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
+		return false, nil
+	}
+	return false, fmt.Errorf("unsupported PEM private key at %s", path)
+}
+
+func newLKECertificatePrivateKey() (crypto.Signer, string, error) {
+	_, edKey, err := ed25519.GenerateKey(rand.Reader)
+	if err == nil {
+		keyDER, err := x509.MarshalPKCS8PrivateKey(edKey)
+		if err != nil {
+			return nil, "", err
+		}
+		return edKey, string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})), nil
+	}
+
+	p256Key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, "", err
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(p256Key)
+	if err != nil {
+		return nil, "", err
+	}
+	return p256Key, string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})), nil
+}
+
+func newLKECertificateAuthority(commonName string) (*x509.Certificate, crypto.Signer, string, string, error) {
+	key, keyPEM, err := newLKECertificatePrivateKey()
 	if err != nil {
 		return nil, nil, "", "", err
 	}
@@ -1174,22 +1475,18 @@ func newLKECertificateAuthority(commonName string) (*x509.Certificate, *ecdsa.Pr
 		BasicConstraintsValid: true,
 		IsCA:                  true,
 	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	if err != nil {
-		return nil, nil, "", "", err
-	}
-	keyDER, err := x509.MarshalECPrivateKey(key)
+	der, err := x509.CreateCertificate(rand.Reader, template, template, key.Public(), key)
 	if err != nil {
 		return nil, nil, "", "", err
 	}
 	return template, key,
 		string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
-		string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})),
+		keyPEM,
 		nil
 }
 
-func newLKESignedCertificate(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, commonName string, dnsNames []string, ipAddresses []net.IP, usages []x509.ExtKeyUsage) (string, string, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+func newLKESignedCertificate(caCert *x509.Certificate, caKey crypto.Signer, commonName string, dnsNames []string, ipAddresses []net.IP, usages []x509.ExtKeyUsage) (string, string, error) {
+	key, keyPEM, err := newLKECertificatePrivateKey()
 	if err != nil {
 		return "", "", err
 	}
@@ -1203,21 +1500,17 @@ func newLKESignedCertificate(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, 
 		Subject:      pkix.Name{CommonName: commonName},
 		NotBefore:    now.Add(-time.Hour),
 		NotAfter:     now.AddDate(2, 0, 0),
-		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  usages,
 		DNSNames:     dnsNames,
 		IPAddresses:  ipAddresses,
 	}
-	der, err := x509.CreateCertificate(rand.Reader, template, caCert, &key.PublicKey, caKey)
-	if err != nil {
-		return "", "", err
-	}
-	keyDER, err := x509.MarshalECPrivateKey(key)
+	der, err := x509.CreateCertificate(rand.Reader, template, caCert, key.Public(), caKey)
 	if err != nil {
 		return "", "", err
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
-		string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})),
+		keyPEM,
 		nil
 }
 
@@ -1229,6 +1522,455 @@ func lkeCertIssuerDNSNames(env map[string]string) []string {
 		"certissuer." + namespace + ".svc",
 		"certissuer." + namespace + ".svc.cluster.local",
 	}
+}
+
+func lkeOpenBaoDNSNames(env map[string]string) []string {
+	namespace := lkeNamespaceName(env, "secrets")
+	return []string{
+		"openbao",
+		"openbao." + namespace,
+		"openbao." + namespace + ".svc",
+		"openbao." + namespace + ".svc.cluster.local",
+		"openbao-0.openbao-internal",
+		"openbao-0.openbao-internal." + namespace,
+		"openbao-0.openbao-internal." + namespace + ".svc",
+		"openbao-0.openbao-internal." + namespace + ".svc.cluster.local",
+	}
+}
+
+func lkeEnsureOpenBao(paths provisionPaths, env map[string]string, tls lkeOpenBaoTLSMaterial) (lkeOpenBaoBootstrapResult, error) {
+	if err := kubectlApply(lkeOpenBaoTLSSecretManifest(env, tls)); err != nil {
+		return lkeOpenBaoBootstrapResult{}, err
+	}
+	valuesPath, cleanup, err := writeLKEOpenBaoHelmValues(env)
+	if err != nil {
+		return lkeOpenBaoBootstrapResult{}, err
+	}
+	defer cleanup()
+	if err := runHelm("repo", "add", "openbao", "https://openbao.github.io/openbao-helm", "--force-update"); err != nil {
+		return lkeOpenBaoBootstrapResult{}, err
+	}
+	if err := runHelm("repo", "update", "openbao"); err != nil {
+		return lkeOpenBaoBootstrapResult{}, err
+	}
+	namespace := lkeNamespaceName(env, "secrets")
+	chartVersion := lkeOpenBaoChartVersion()
+	if err := runHelmQuiet("template", "openbao", "openbao/openbao", "--version", chartVersion, "--namespace", namespace, "-f", valuesPath); err != nil {
+		return lkeOpenBaoBootstrapResult{}, err
+	}
+	if err := runHelm("upgrade", "--install", "openbao", "openbao/openbao", "--version", chartVersion, "--namespace", namespace, "-f", valuesPath, "--wait", "--timeout", firstNonEmpty(os.Getenv("LKE_OPENBAO_HELM_TIMEOUT"), "10m")); err != nil {
+		return lkeOpenBaoBootstrapResult{}, err
+	}
+	if os.Getenv("LKE_OPENBAO_RESTART_AFTER_HELM") == "0" {
+		if err := runKubectl("-n", namespace, "wait", "--for=jsonpath={.status.phase}=Running", "pod/openbao-0", "--timeout", firstNonEmpty(os.Getenv("LKE_OPENBAO_ROLLOUT_TIMEOUT"), "10m")); err != nil {
+			return lkeOpenBaoBootstrapResult{}, err
+		}
+	} else {
+		if err := lkeRestartOpenBaoPod(env); err != nil {
+			return lkeOpenBaoBootstrapResult{}, err
+		}
+	}
+	result, err := lkeBootstrapOpenBao(paths, env)
+	if err != nil && lkeIsOpenBaoTLSMismatch(err) {
+		if restartErr := lkeRestartOpenBaoPod(env); restartErr != nil {
+			return lkeOpenBaoBootstrapResult{}, restartErr
+		}
+		result, err = lkeBootstrapOpenBao(paths, env)
+	}
+	if err != nil {
+		return lkeOpenBaoBootstrapResult{}, err
+	}
+	result.TLSCACert = tls.CACert
+	return result, nil
+}
+
+func lkeOpenBaoChartVersion() string {
+	return firstNonEmpty(os.Getenv("LKE_OPENBAO_CHART_VERSION"), "0.28.3")
+}
+
+func lkeIsOpenBaoTLSMismatch(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "certificate signed by unknown authority") || strings.Contains(msg, "ECDSA verification failure")
+}
+
+func lkeRestartOpenBaoPod(env map[string]string) error {
+	namespace := lkeNamespaceName(env, "secrets")
+	if err := runKubectl("-n", namespace, "delete", "pod/openbao-0", "--ignore-not-found=true", "--wait=true", "--timeout", "2m"); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(lkeOpenBaoWaitTimeout())
+	var lastOut []byte
+	var lastErr error
+	for time.Now().Before(deadline) {
+		cmd := exec.Command(lkeKubectl(), lkeKubectlArgs("-n", namespace, "get", "pod/openbao-0", "-o", "jsonpath={.status.phase}")...)
+		lastOut, lastErr = cmd.CombinedOutput()
+		if lastErr == nil && strings.TrimSpace(string(lastOut)) == "Running" {
+			fmt.Fprintln(os.Stdout, "pod/openbao-0 condition met")
+			return nil
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("wait for restarted OpenBao pod: %w: %s", lastErr, strings.TrimSpace(string(lastOut)))
+}
+
+func lkeOpenBaoWaitTimeout() time.Duration {
+	timeout, err := time.ParseDuration(firstNonEmpty(os.Getenv("LKE_OPENBAO_ROLLOUT_TIMEOUT"), "10m"))
+	if err != nil {
+		return 10 * time.Minute
+	}
+	return timeout
+}
+
+func writeLKEOpenBaoHelmValues(env map[string]string) (string, func(), error) {
+	dir, err := os.MkdirTemp("", "rtk-lke-openbao-values-*")
+	if err != nil {
+		return "", func() {}, err
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	path := filepath.Join(dir, "values.yaml")
+	body := fmt.Sprintf(`global:
+  tlsDisable: false
+injector:
+  enabled: false
+server:
+  enabled: true
+  standalone:
+    enabled: true
+    config: |
+      ui = true
+
+      listener "tcp" {
+        tls_disable = 0
+        tls_cert_file = "/openbao/tls/tls.crt"
+        tls_key_file = "/openbao/tls/tls.key"
+        address = "[::]:8200"
+        cluster_address = "[::]:8201"
+      }
+
+      storage "file" {
+        path = "/openbao/data"
+      }
+
+      audit "file" "file" {
+        options = {
+          file_path = "/openbao/audit/openbao-audit.log"
+        }
+      }
+  ha:
+    enabled: false
+  service:
+    type: ClusterIP
+  dataStorage:
+    enabled: true
+    size: %s
+  auditStorage:
+    enabled: true
+    size: %s
+  volumes:
+    - name: openbao-tls
+      secret:
+        secretName: openbao-tls
+  volumeMounts:
+    - name: openbao-tls
+      mountPath: /openbao/tls
+      readOnly: true
+`, firstNonEmpty(os.Getenv("LKE_OPENBAO_DATA_STORAGE"), "10Gi"), firstNonEmpty(os.Getenv("LKE_OPENBAO_AUDIT_STORAGE"), "5Gi"))
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	return path, cleanup, nil
+}
+
+func lkeOpenBaoTLSSecretManifest(env map[string]string, material lkeOpenBaoTLSMaterial) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: openbao-tls
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: openbao
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+type: kubernetes.io/tls
+stringData:
+  ca.crt: %q
+  tls.crt: %q
+  tls.key: %q
+`, lkeNamespaceName(env, "secrets"), env["CLOUD_STACK_NAME"], material.CACert, material.ServerCert, material.ServerKey)
+}
+
+func lkeBootstrapOpenBao(paths provisionPaths, env map[string]string) (lkeOpenBaoBootstrapResult, error) {
+	status, err := lkeOpenBaoStatusValue(env)
+	if err != nil {
+		return lkeOpenBaoBootstrapResult{}, err
+	}
+	stateDir := filepath.Join(paths.EnvRoot, "state", "openbao")
+	if !status.Initialized {
+		if err := os.MkdirAll(stateDir, 0o700); err != nil {
+			return lkeOpenBaoBootstrapResult{}, err
+		}
+		out, err := openBaoExecOutput(env, "operator", "init", "-key-shares=1", "-key-threshold=1", "-format=json")
+		if err != nil {
+			return lkeOpenBaoBootstrapResult{}, err
+		}
+		var initOut struct {
+			UnsealKeysB64 []string `json:"unseal_keys_b64"`
+			RootToken     string   `json:"root_token"`
+		}
+		if err := json.Unmarshal([]byte(out), &initOut); err != nil {
+			return lkeOpenBaoBootstrapResult{}, fmt.Errorf("decode OpenBao init output: %w", err)
+		}
+		if len(initOut.UnsealKeysB64) == 0 || strings.TrimSpace(initOut.RootToken) == "" {
+			return lkeOpenBaoBootstrapResult{}, errors.New("OpenBao init output missing unseal key or root token")
+		}
+		if err := writeSensitiveFile(filepath.Join(stateDir, "unseal-key"), initOut.UnsealKeysB64[0]); err != nil {
+			return lkeOpenBaoBootstrapResult{}, err
+		}
+		if err := writeSensitiveFile(filepath.Join(stateDir, "root-token"), initOut.RootToken); err != nil {
+			return lkeOpenBaoBootstrapResult{}, err
+		}
+		status.Initialized = true
+		status.Sealed = true
+	}
+	unsealKey, err := readSensitiveFile(filepath.Join(stateDir, "unseal-key"), "OpenBao unseal key")
+	if err != nil {
+		return lkeOpenBaoBootstrapResult{}, err
+	}
+	rootToken, err := readSensitiveFile(filepath.Join(stateDir, "root-token"), "OpenBao root token")
+	if err != nil {
+		return lkeOpenBaoBootstrapResult{}, err
+	}
+	if status.Sealed {
+		if _, err := openBaoSensitiveScript(env, unsealKey, `bao operator unseal "$OPENBAO_SECRET_INPUT" >/dev/null`); err != nil {
+			return lkeOpenBaoBootstrapResult{}, err
+		}
+	}
+	out, err := openBaoSensitiveScript(env, rootToken, lkeOpenBaoBootstrapScript(env))
+	if err != nil {
+		return lkeOpenBaoBootstrapResult{}, err
+	}
+	result, err := parseLKEOpenBaoBootstrapOutput(out)
+	if err != nil {
+		return lkeOpenBaoBootstrapResult{}, err
+	}
+	if result.RoleID == "" || result.SecretID == "" || result.DeviceCACert == "" || result.AppCACert == "" {
+		return lkeOpenBaoBootstrapResult{}, errors.New("OpenBao bootstrap output missing role_id, secret_id, or CA certificate")
+	}
+	return result, nil
+}
+
+func lkeOpenBaoStatusValue(env map[string]string) (lkeOpenBaoStatus, error) {
+	namespace := lkeNamespaceName(env, "secrets")
+	argv := []string{"-n", namespace, "exec", "openbao-0", "--", "env", "BAO_ADDR=" + lkeOpenBaoAddr(env), "BAO_CACERT=/openbao/tls/ca.crt", "bao", "status", "-format=json"}
+	cmd := exec.Command(lkeKubectl(), lkeKubectlArgs(argv...)...)
+	out, statusErr := cmd.CombinedOutput()
+	var status lkeOpenBaoStatus
+	statusJSON := extractJSONObject(string(out))
+	if err := json.Unmarshal([]byte(statusJSON), &status); err != nil {
+		if statusErr != nil {
+			return lkeOpenBaoStatus{}, fmt.Errorf("kubectl exec openbao status -format=json: %w: %s", statusErr, strings.TrimSpace(string(out)))
+		}
+		return lkeOpenBaoStatus{}, fmt.Errorf("decode OpenBao status: %w", err)
+	}
+	return status, nil
+}
+
+func extractJSONObject(out string) string {
+	start := strings.Index(out, "{")
+	end := strings.LastIndex(out, "}")
+	if start >= 0 && end >= start {
+		return out[start : end+1]
+	}
+	return out
+}
+
+func lkeOpenBaoBootstrapScript(env map[string]string) string {
+	rootCN := firstNonEmpty(os.Getenv("LKE_OPENBAO_ROOT_CN"), lkeName(firstNonEmpty(env["CLOUD_STACK_NAME"], "video-cloud-staging"))+"-root-ca")
+	deviceCN := firstNonEmpty(os.Getenv("LKE_OPENBAO_DEVICE_INTERMEDIATE_CN"), lkeName(firstNonEmpty(env["CLOUD_STACK_NAME"], "video-cloud-staging"))+"-device-ca")
+	appCN := firstNonEmpty(os.Getenv("LKE_OPENBAO_APP_INTERMEDIATE_CN"), lkeName(firstNonEmpty(env["CLOUD_STACK_NAME"], "video-cloud-staging"))+"-app-ca")
+	return fmt.Sprintf(`
+export BAO_TOKEN="$OPENBAO_SECRET_INPUT"
+ensure_pki() {
+  path="$1"
+  max_ttl="$2"
+  if ! bao secrets enable -path="$path" pki >/tmp/openbao-enable.err 2>&1; then
+    if ! grep -q "path is already in use" /tmp/openbao-enable.err; then
+      cat /tmp/openbao-enable.err >&2
+      exit 1
+    fi
+  fi
+  bao secrets tune -max-lease-ttl="$max_ttl" "$path" >/dev/null
+}
+has_ca() {
+  bao read -field=certificate "$1/cert/ca" >/dev/null 2>&1
+}
+ensure_pki pki/root 87600h
+ensure_pki pki/device 26280h
+ensure_pki pki/app 26280h
+if ! has_ca pki/root; then
+  bao write -field=certificate pki/root/root/generate/internal common_name=%s ttl=87600h >/tmp/openbao-root-ca.crt
+fi
+if ! has_ca pki/device; then
+  bao write -field=csr pki/device/intermediate/generate/internal common_name=%s ttl=26280h >/tmp/openbao-device.csr
+  bao write -field=certificate pki/root/root/sign-intermediate csr=@/tmp/openbao-device.csr common_name=%s ttl=26280h >/tmp/openbao-device.crt
+  bao write pki/device/intermediate/set-signed certificate=@/tmp/openbao-device.crt >/dev/null
+fi
+if ! has_ca pki/app; then
+  bao write -field=csr pki/app/intermediate/generate/internal common_name=%s ttl=26280h >/tmp/openbao-app.csr
+  bao write -field=certificate pki/root/root/sign-intermediate csr=@/tmp/openbao-app.csr common_name=%s ttl=26280h >/tmp/openbao-app.crt
+  bao write pki/app/intermediate/set-signed certificate=@/tmp/openbao-app.crt >/dev/null
+fi
+	bao write pki/device/roles/factory-device \
+	  allow_any_name=true enforce_hostnames=false server_flag=false client_flag=true \
+	  key_type=any key_usage=DigitalSignature ext_key_usage=ClientAuth \
+	  ttl=8760h max_ttl=26280h >/dev/null
+	bao write pki/device/roles/gateway-server \
+	  allow_any_name=true enforce_hostnames=false server_flag=true client_flag=false \
+	  key_type=any key_usage=DigitalSignature ext_key_usage=ServerAuth \
+	  ttl=8760h max_ttl=26280h >/dev/null
+	bao write pki/app/roles/app-user \
+	  allow_any_name=true enforce_hostnames=false server_flag=false client_flag=true \
+	  key_type=any key_usage=DigitalSignature ext_key_usage=ClientAuth \
+	  ttl=8760h max_ttl=26280h >/dev/null
+if ! bao auth enable approle >/tmp/openbao-auth.err 2>&1; then
+  if ! grep -q "path is already in use" /tmp/openbao-auth.err; then
+    cat /tmp/openbao-auth.err >&2
+    exit 1
+  fi
+fi
+cat >/tmp/video-cloud-certissuer-policy.hcl <<'POLICY'
+path "pki/device/sign/factory-device" { capabilities = ["update"] }
+path "pki/device/sign/gateway-server" { capabilities = ["update"] }
+path "pki/app/sign/app-user" { capabilities = ["update"] }
+path "pki/device/cert/ca" { capabilities = ["read"] }
+path "pki/app/cert/ca" { capabilities = ["read"] }
+path "pki/device/ca_chain" { capabilities = ["read"] }
+path "pki/app/ca_chain" { capabilities = ["read"] }
+POLICY
+bao policy write video-cloud-certissuer /tmp/video-cloud-certissuer-policy.hcl >/dev/null
+bao write auth/approle/role/video-cloud-certissuer \
+  token_policies=video-cloud-certissuer token_ttl=1h token_max_ttl=24h \
+  secret_id_ttl=0 secret_id_num_uses=0 >/dev/null
+role_id="$(bao read -field=role_id auth/approle/role/video-cloud-certissuer/role-id)"
+secret_id="$(bao write -f -field=secret_id auth/approle/role/video-cloud-certissuer/secret-id)"
+device_ca="$(bao read -field=certificate pki/device/cert/ca | base64 | tr -d '\n')"
+app_ca="$(bao read -field=certificate pki/app/cert/ca | base64 | tr -d '\n')"
+printf 'ROLE_ID=%%s\n' "$role_id"
+printf 'SECRET_ID=%%s\n' "$secret_id"
+printf 'DEVICE_CA_CERT_B64=%%s\n' "$device_ca"
+printf 'APP_CA_CERT_B64=%%s\n' "$app_ca"
+`, strconv.Quote(rootCN), strconv.Quote(deviceCN), strconv.Quote(deviceCN), strconv.Quote(appCN), strconv.Quote(appCN))
+}
+
+func parseLKEOpenBaoBootstrapOutput(out string) (lkeOpenBaoBootstrapResult, error) {
+	values := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		values[strings.TrimSpace(key)] = strings.TrimSpace(value)
+	}
+	deviceCA, err := base64.StdEncoding.DecodeString(values["DEVICE_CA_CERT_B64"])
+	if err != nil {
+		return lkeOpenBaoBootstrapResult{}, fmt.Errorf("decode OpenBao device CA certificate: %w", err)
+	}
+	appCA, err := base64.StdEncoding.DecodeString(values["APP_CA_CERT_B64"])
+	if err != nil {
+		return lkeOpenBaoBootstrapResult{}, fmt.Errorf("decode OpenBao app CA certificate: %w", err)
+	}
+	return lkeOpenBaoBootstrapResult{
+		RoleID:       values["ROLE_ID"],
+		SecretID:     values["SECRET_ID"],
+		DeviceCACert: string(deviceCA),
+		AppCACert:    string(appCA),
+	}, nil
+}
+
+func openBaoExecOutput(env map[string]string, args ...string) (string, error) {
+	namespace := lkeNamespaceName(env, "secrets")
+	argv := []string{"-n", namespace, "exec", "openbao-0", "--", "env", "BAO_ADDR=" + lkeOpenBaoAddr(env), "BAO_CACERT=/openbao/tls/ca.crt", "bao"}
+	argv = append(argv, args...)
+	cmd := exec.Command(lkeKubectl(), lkeKubectlArgs(argv...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("kubectl exec openbao %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return string(out), nil
+}
+
+func openBaoSensitiveScript(env map[string]string, secret, script string) (string, error) {
+	namespace := lkeNamespaceName(env, "secrets")
+	prologue := fmt.Sprintf("set -euo pipefail\nOPENBAO_SECRET_INPUT=%s\nexport BAO_ADDR=%s\nexport BAO_CACERT=/openbao/tls/ca.crt\n", shellSingleQuote(secret), strconv.Quote(lkeOpenBaoAddr(env)))
+	cmd := exec.Command(lkeKubectl(), lkeKubectlArgs("-n", namespace, "exec", "-i", "openbao-0", "--", "sh", "-s")...)
+	cmd.Stdin = strings.NewReader(prologue + script + "\n")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("kubectl exec openbao bootstrap failed: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return string(out), nil
+}
+
+func shellSingleQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
+}
+
+func lkeOpenBaoAddr(env map[string]string) string {
+	return "https://openbao." + lkeNamespaceName(env, "secrets") + ".svc.cluster.local:8200"
+}
+
+func writeSensitiveFile(path, value string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(strings.TrimSpace(value)+"\n"), 0o600)
+}
+
+func readSensitiveFile(path, label string) (string, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("%s is required at %s; existing OpenBao instances cannot be managed without local operator state", label, path)
+		}
+		return "", err
+	}
+	value := strings.TrimSpace(string(body))
+	if value == "" {
+		return "", fmt.Errorf("%s at %s is empty", label, path)
+	}
+	return value, nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func runHelm(args ...string) error {
+	cmd := exec.Command(lkeHelm(), lkeHelmArgs(args...)...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func runHelmQuiet(args ...string) error {
+	cmd := exec.Command(lkeHelm(), lkeHelmArgs(args...)...)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func lkeHelm() string {
+	return firstNonEmpty(os.Getenv("RTK_CLOUD_HELM"), "helm")
+}
+
+func lkeHelmArgs(args ...string) []string {
+	if kubeconfig := os.Getenv("RTK_CLOUD_LKE_KUBECONFIG"); kubeconfig != "" {
+		return append([]string{"--kubeconfig", kubeconfig}, args...)
+	}
+	return args
 }
 
 func lkeCertIssuerRuntimeSecretManifest(env map[string]string, material lkeCertIssuerMaterial) string {
@@ -1249,10 +1991,27 @@ stringData:
   tls.key: %q
   client-ca.crt: %q
   device-ca.crt: %q
-  device-ca.key: %q
   app-ca.crt: %q
-  app-ca.key: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), material.ServerCert, material.ServerKey, material.ServiceCA, material.DeviceCACert, material.DeviceCAKey, material.AppCACert, material.AppCAKey)
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), material.ServerCert, material.ServerKey, material.ServiceCA, material.DeviceCACert, material.AppCACert)
+}
+
+func lkeCertIssuerOpenBaoAuthSecretManifest(env map[string]string, openBao lkeOpenBaoBootstrapResult) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: certissuer-openbao-auth
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: certissuer
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+type: Opaque
+stringData:
+  role_id: %q
+  secret_id: %q
+  ca.crt: %q
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], openBao.RoleID, openBao.SecretID, openBao.TLSCACert)
 }
 
 func lkeAccountManagerCertIssuerClientSecretManifest(env map[string]string, material lkeCertIssuerMaterial) string {
@@ -1832,7 +2591,17 @@ stringData:
 `, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], material.FactoryCert, material.FactoryKey, material.ServiceCA)
 }
 
-func lkeCertIssuerDeploymentManifest(env map[string]string) string {
+func lkeCertIssuerDeploymentManifest(env map[string]string, material lkeCertIssuerMaterial, openBao lkeOpenBaoBootstrapResult) string {
+	checksum := lkeConfigChecksum(
+		material.ServerCert,
+		material.ServiceCA,
+		material.DeviceCACert,
+		material.AppCACert,
+		openBao.RoleID,
+		openBao.SecretID,
+		openBao.TLSCACert,
+		lkeRuntimeSecretValue("postgres"),
+	)
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -1850,6 +2619,8 @@ spec:
       app.kubernetes.io/name: certissuer
   template:
     metadata:
+      annotations:
+        rtk.realtek.com/runtime-checksum: %q
       labels:
         app.kubernetes.io/name: certissuer
         app.kubernetes.io/part-of: rtk-cloud
@@ -1880,26 +2651,59 @@ spec:
               value: /etc/video-cloud/certissuer/client-ca.crt
             - name: CERT_ISSUER_CA_CERT_PATH
               value: /etc/video-cloud/certissuer/device-ca.crt
-            - name: CERT_ISSUER_CA_KEY_PATH
-              value: /etc/video-cloud/certissuer/device-ca.key
             - name: CERT_ISSUER_APP_CA_CERT_PATH
               value: /etc/video-cloud/certissuer/app-ca.crt
-            - name: CERT_ISSUER_APP_CA_KEY_PATH
-              value: /etc/video-cloud/certissuer/app-ca.key
+            - name: CERT_ISSUER_SIGNER_PROVIDER
+              value: openbao
+            - name: CERT_ISSUER_OPENBAO_PKI_MOUNT
+              value: pki/device
+            - name: CERT_ISSUER_OPENBAO_PKI_ROLE
+              value: factory-device
+            - name: CERT_ISSUER_OPENBAO_GATEWAY_ROLE
+              value: gateway-server
+            - name: CERT_ISSUER_APP_SIGNER_PROVIDER
+              value: openbao
+            - name: CERT_ISSUER_APP_OPENBAO_PKI_MOUNT
+              value: pki/app
+            - name: CERT_ISSUER_APP_OPENBAO_PKI_ROLE
+              value: app-user
+            - name: OPENBAO_ADDR
+              value: %q
+            - name: OPENBAO_CACERT
+              value: /etc/video-cloud/openbao/ca.crt
+            - name: OPENBAO_AUTH_METHOD
+              value: approle
+            - name: OPENBAO_ROLE_ID_FILE
+              value: /etc/video-cloud/openbao/role_id
+            - name: OPENBAO_SECRET_ID_FILE
+              value: /etc/video-cloud/openbao/secret_id
             - name: CERT_ISSUER_DB_DSN
               value: "postgres://postgres:$(POSTGRES_PASSWORD)@postgresql.%s.svc.cluster.local:5432/video_cloud?sslmode=disable"
           volumeMounts:
             - name: certissuer-runtime
               mountPath: /etc/video-cloud/certissuer
               readOnly: true
+            - name: certissuer-openbao-auth
+              mountPath: /etc/video-cloud/openbao
+              readOnly: true
       volumes:
         - name: certissuer-runtime
           secret:
             secretName: certissuer-runtime
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeVideoCloudImage(env), lkeNamespaceName(env, "platform"))
+        - name: certissuer-openbao-auth
+          secret:
+            secretName: certissuer-openbao-auth
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], lkeVideoCloudImage(env), lkeOpenBaoAddr(env), lkeNamespaceName(env, "platform"))
 }
 
-func lkeFactoryEnrollDeploymentManifest(env map[string]string) string {
+func lkeFactoryEnrollDeploymentManifest(env map[string]string, material lkeCertIssuerMaterial) string {
+	checksum := lkeConfigChecksum(
+		lkeRuntimeSecretValue("postgres"),
+		lkeRuntimeSecretValue("factory-enroll-auth"),
+		lkeCertIssuerBaseURL(env),
+		material.FactoryCert,
+		material.ServiceCA,
+	)
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -1917,6 +2721,8 @@ spec:
       app.kubernetes.io/name: factoryenroll
   template:
     metadata:
+      annotations:
+        rtk.realtek.com/runtime-checksum: %q
       labels:
         app.kubernetes.io/name: factoryenroll
         app.kubernetes.io/part-of: rtk-cloud
@@ -1962,7 +2768,7 @@ spec:
         - name: factoryenroll-certissuer-client
           secret:
             secretName: factoryenroll-certissuer-client
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeVideoCloudImage(env), lkeCertIssuerBaseURL(env), lkeNamespaceName(env, "platform"))
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], lkeVideoCloudImage(env), lkeCertIssuerBaseURL(env), lkeNamespaceName(env, "platform"))
 }
 
 func lkeCertIssuerServiceManifest(env map[string]string) string {
@@ -2145,9 +2951,26 @@ func lkeRuntimeSecretValue(name string) string {
 	if value := lkeRuntimeSecretCache[name]; value != "" {
 		return value
 	}
+	if lkeRuntimeSecretStateDir != "" {
+		path := filepath.Join(lkeRuntimeSecretStateDir, lkeSecretFileName(name))
+		if value, err := readSensitiveFile(path, "LKE runtime secret "+name); err == nil {
+			lkeRuntimeSecretCache[name] = value
+			return value
+		}
+		value := randomSecret()
+		if err := writeSensitiveFile(path, value); err == nil {
+			lkeRuntimeSecretCache[name] = value
+			return value
+		}
+	}
 	value := randomSecret()
 	lkeRuntimeSecretCache[name] = value
 	return value
+}
+
+func lkeSecretFileName(name string) string {
+	replacer := strings.NewReplacer("/", "-", "\\", "-", "..", "-")
+	return replacer.Replace(strings.TrimSpace(name))
 }
 
 func randomSecret() string {
@@ -2158,12 +2981,37 @@ func randomSecret() string {
 	return base64.RawURLEncoding.EncodeToString(buf[:])
 }
 
-func lkeDeploymentManifest(env map[string]string, workload lkeWorkload) string {
+func lkeConfigChecksum(values ...string) string {
+	h := sha256.New()
+	for _, value := range values {
+		_, _ = h.Write([]byte(value))
+		_, _ = h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssuerMaterial *lkeCertIssuerMaterial) string {
 	envFrom := ""
 	extraEnv := ""
+	templateAnnotations := ""
 	volumeMounts := ""
 	volumes := ""
 	if workload.Key == "account-manager" {
+		checksumValues := []string{
+			lkeAccountManagerDatabaseURL(env),
+			lkeRuntimeSecretValue("jwt-access"),
+			lkeRuntimeSecretValue("jwt-refresh"),
+			lkeInternalAuthToken(),
+			lkePlatformAdminEmail(env),
+			lkeRuntimeSecretValue("platform-admin"),
+			lkeCertIssuerBaseURL(env),
+		}
+		if certIssuerMaterial != nil {
+			checksumValues = append(checksumValues, certIssuerMaterial.ClientCert, certIssuerMaterial.ServiceCA)
+		}
+		templateAnnotations = fmt.Sprintf(`      annotations:
+        rtk.realtek.com/runtime-checksum: %q
+`, lkeConfigChecksum(checksumValues...))
 		envFrom = `          envFrom:
             - secretRef:
                 name: account-manager-runtime
@@ -2217,6 +3065,7 @@ spec:
       app.kubernetes.io/name: %s
   template:
     metadata:
+%s
       labels:
         app.kubernetes.io/name: %s
         app.kubernetes.io/part-of: rtk-cloud
@@ -2237,7 +3086,7 @@ spec:
               value: %q
             - name: SERVICE_PUBLIC_HOST
               value: %q
-%s%s%s%s`, workload.Name, workload.Namespace, workload.Name, env["CLOUD_STACK_NAME"], workload.Name, workload.Name, env["CLOUD_STACK_NAME"], workload.Image, workload.Port, env["CLOUD_STACK_NAME"], workload.Host, extraEnv, envFrom, volumeMounts, volumes)
+%s%s%s%s`, workload.Name, workload.Namespace, workload.Name, env["CLOUD_STACK_NAME"], workload.Name, templateAnnotations, workload.Name, env["CLOUD_STACK_NAME"], workload.Image, workload.Port, env["CLOUD_STACK_NAME"], workload.Host, extraEnv, envFrom, volumeMounts, volumes)
 }
 
 func lkeAccountManagerInternalURL(env map[string]string) string {
@@ -2269,9 +3118,18 @@ spec:
 func kubectlApply(manifest string) error {
 	cmd := exec.Command(lkeKubectl(), lkeKubectlArgs("apply", "-f", "-")...)
 	cmd.Stdin = strings.NewReader(manifest)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	out, err := cmd.CombinedOutput()
+	if len(out) > 0 {
+		fmt.Fprint(os.Stdout, string(out))
+	}
+	if err != nil {
+		return fmt.Errorf("kubectl apply failed: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func kubectlDeleteSecret(namespace, name string) error {
+	return runKubectl("-n", namespace, "delete", "secret/"+name, "--ignore-not-found=true")
 }
 
 func runKubectl(args ...string) error {
