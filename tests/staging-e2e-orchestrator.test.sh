@@ -225,6 +225,40 @@ if grep -F '[cloud-staging-e2e] progress:' "$QUIET_ERR" >/dev/null; then
 	exit 1
 fi
 
+LKE_ENV_ROOT="$WORKSPACE/cloud_env/staging/lke"
+mkdir -p "$LKE_ENV_ROOT/env"
+cat > "$LKE_ENV_ROOT/env/stack.env" <<'EOF_LKE_ENV'
+CLOUD_ENV_NAME=staging
+CLOUD_PROVIDER=lke
+CLOUD_REGION=us-sea
+CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+CLOUD_STACK_NAME=video-cloud-staging
+EOF_LKE_ENV
+: > "$COMMAND_LOG"
+LKE_OUT="$TMP/lke.out"
+LKE_ERR="$TMP/lke.err"
+CLOUD_STAGING_E2E_REMOVE_SCRIPT="$TMP/remove.sh" \
+CLOUD_STAGING_E2E_PROVISION_SCRIPT="$TMP/provision.sh" \
+CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT="$TMP/setup-data.sh" \
+CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT="$TMP/mqtt-test.sh" \
+	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-e2e-test \
+	--workspace "$WORKSPACE" \
+	--env-root "$WORKSPACE/cloud_env/staging" \
+	--run \
+	--confirm video-cloud-staging \
+	--brandname RTK \
+	--user-count 1 \
+	--device-count 3 \
+	--device-mix camera=1,light=1,smart_meter=1 \
+	--skip-mqtt-probe > "$LKE_OUT" 2> "$LKE_ERR"
+
+grep -F $'remove\t--workspace '"$WORKSPACE"$' --env-root '"$LKE_ENV_ROOT"$' --yes' "$COMMAND_LOG" >/dev/null
+grep -F $'provision\t--workspace '"$WORKSPACE"$' --env-root '"$LKE_ENV_ROOT"$' --all --confirm video-cloud-staging' "$COMMAND_LOG" >/dev/null
+if grep -F 'staging certificate cache' "$LKE_ERR" >/dev/null; then
+	echo "LKE staging e2e should not require VM certificate caches before remove" >&2
+	exit 1
+fi
+
 if "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-e2e-test \
 	--workspace "$WORKSPACE" \
 	--env-root "$WORKSPACE/cloud_env/staging" \

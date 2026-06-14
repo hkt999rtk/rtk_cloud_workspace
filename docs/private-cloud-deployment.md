@@ -24,6 +24,7 @@ customer deployment before opening service-specific work.
 | Workspace gap evidence | `docs/realtek-connect-plus-gap-analysis.md` | Tracks public-copy versus implementation gaps. |
 | Core platform roadmap | `docs/core-platform-gap-roadmap.md` | Routes private-cloud work to owner repositories. |
 | Product-level evidence wrapper | `docs/product-level-evidence.md` | Defines the workspace evidence artifact, redaction rules, and wrapper command. |
+| LKE migration inventory and gates | `docs/lke-migration-inventory.md` | Source-of-truth current architecture review, service inventory, LKE target summary, and implementation gates. |
 | Cross-service broker packaging | `docs/cross-service-broker-packaging.md` | Records that shared broker packaging is retired for the current runtime. |
 | Video cloud runtime deploy | `repos/rtk_video_cloud/docs/automation.md` | Release, deploy, staging evidence, and runner model. |
 | Video cloud release bundle | `repos/rtk_video_cloud/docs/release.md` | Release artifact contents and intended handoff shape. |
@@ -45,7 +46,10 @@ service operation, data, upgrades, and support.
 
 It does not mean the workspace repo owns every service deploy script. The
 workspace defines the product-level package; each service repo owns its local
-runtime details.
+runtime details. For production-like deployments, the target deployment model is
+Linode Kubernetes Engine (LKE). Existing Linode VM and systemd instructions are
+retained as migration reference and rollback context, not as the primary future
+production path.
 
 ## Required Components
 
@@ -104,33 +108,40 @@ Evaluation acceptance bar:
 - documented skipped services are explicit, for example no shared broker because
   lifecycle coordination uses explicit service APIs
 
-### Production-Like Private Profile
+### Production-Like LKE Profile
 
 Use this profile for customer pilots, private commercial deployments, and any
 environment where operations, rollback, and support commitments matter.
 
 Required infrastructure:
 
-- Linux hosts or Kubernetes nodes with explicit ownership and patching policy
-- managed or self-managed PostgreSQL with backup/restore procedures
-- object storage with retention and lifecycle policy
-- EMQX broker deployment when MQTT transport is enabled
-- reverse proxy/load balancer with TLS, DNS, request limits, and access logs
-- secrets manager or GitHub Environment secrets with rotation process
-- metrics/logging/alerting stack
-- backup target independent from the primary runtime host
+- LKE cluster with documented region, node pools, upgrade policy, and ownership
+- Linode NodeBalancer plus Kubernetes Ingress or Gateway API for public HTTP(S)
+- cert-manager for TLS automation; existing DNS-01 behavior must be represented
+  as issuer configuration
+- PostgreSQL deployment choice documented before cutover: external/VM bridge,
+  in-cluster operator, in-cluster StatefulSet, or managed/external service
+- Linode Object Storage or approved object storage for artifacts, media, and
+  backups
+- EMQX MQTT deployment or external broker path when MQTT transport is enabled;
+  MQTT/MQTTS must not be treated as normal HTTP-only ingress
+- OpenBao plus Kubernetes auth, External Secrets, or reviewed secret injection
+  path for runtime secrets
+- metrics, logs, alerts, probes, backup, restore, and rollback evidence
+- backup target independent from the primary LKE runtime storage
 
 Recommended separation:
 
 | Layer | Production-like expectation |
 | --- | --- |
-| Edge | Reverse proxy/TLS in front of frontend, account API, video API, and WebRTC/TURN surfaces as needed. |
-| Frontend | Containerized service with persistent lead DB or migrated production storage. |
-| Account manager | Dedicated service and database/schema; migrations controlled by release. |
-| Video cloud API/workers | Release bundle or equivalent artifact; systemd/Kubernetes supervision; selected units only. |
-| MQTT | EMQX as managed/self-hosted broker with auth/TLS policy, logs, and health checks. |
-| Storage | Postgres backups plus object storage lifecycle/replication according to customer policy. |
-| Observability | Prometheus-compatible metrics, service logs, broker logs, dead-letter evidence, alert routing. |
+| Edge | NodeBalancer in front of Ingress/Gateway for frontend, account API, video API, and required mTLS hostnames. |
+| Frontend | Deployment with persistent lead storage or migrated production database. |
+| Account manager | Deployment with Service/Ingress; database migrations controlled by release. |
+| Video cloud API/workers | Deployments for API, certissuer/factory enrollment, and long-running workers; Jobs/CronJobs only for explicitly one-shot or scheduled flows. |
+| MQTT | EMQX operator/StatefulSet or external broker with explicit TCP exposure, auth/TLS policy, logs, and health checks. |
+| TURN | LKE staging can run coturn as a Kubernetes Deployment/Service; production public TURN still requires explicit Linode LoadBalancer/NodeBalancer UDP/TCP exposure, scaling, TLS, and rollback approval. |
+| Storage | PostgreSQL restore-tested before migration; object storage lifecycle/replication according to customer policy. |
+| Observability | Prometheus-compatible metrics, Loki/logger service logs, broker logs, dead-letter evidence, alert routing. |
 
 Production-like acceptance bar:
 
@@ -142,6 +153,27 @@ Production-like acceptance bar:
 - EMQX operations are included in runbooks when enabled
 - frontend private-cloud wording matches the actually deployed package, not a
   roadmap superset
+- the migration inventory and gates in `docs/lke-migration-inventory.md` are
+  complete and human-approved before production implementation
+- production Kubernetes YAML, Helm charts, Kustomize overlays, CI/CD deployment
+  pipelines, DNS changes, secret changes, and data movement remain blocked until
+  those gates are approved
+
+### Legacy Linode VM Migration Reference
+
+The current VM/systemd deployment remains useful for staging, rollback, and
+architecture discovery while the LKE migration is being designed. It must not be
+treated as the final production target after the LKE gates are approved.
+
+Legacy VM reference shape:
+
+| Layer | Current VM reference |
+| --- | --- |
+| Video Cloud | Five Linode roles: `edge`, `api`, `infra`, `mqtt`, `coturn`; see `repos/rtk_video_cloud/linode_deploy/docs/ARCHITECTURE.md`. |
+| Account Manager | Dedicated public VM with nginx TLS and local PostgreSQL; see `repos/rtk_account_manager/linode_deploy/docs/RUNBOOK.md`. |
+| Cloud Admin | Dedicated public+VPC VM with nginx TLS and SQLite persistence; see `repos/rtk_cloud_admin/docs/private-cloud-deployment.md`. |
+| Logging | Loki-backed backend and VM journald forwarders; see `docs/service-logging-architecture.md`. |
+| Secrets | Operator-local `.secrets/` and protected GitHub Environment secrets; see `docs/deployment-secrets-governance.md`. |
 
 ## Deployment Orchestration Order
 
@@ -166,9 +198,9 @@ Video Cloud runtime ----\
 Account Manager API ---/
 ```
 
-`rtk_cloud_admin` must use public HTTPS upstream domains, not raw VM IPs or
-private app ports. For the current Linode staging profile, the required upstream
-configuration is:
+`rtk_cloud_admin` must use service DNS names or public HTTPS upstream domains,
+not raw VM IPs or private app ports. During VM-to-LKE migration, the current
+Linode staging profile still uses these public HTTPS upstreams:
 
 ```env
 ACCOUNT_MANAGER_BASE_URL=https://account-manager.video-cloud-staging.realtekconnect.com
@@ -177,12 +209,12 @@ VIDEO_CLOUD_BASE_URL=https://video-cloud-staging.realtekconnect.com
 
 ### Ordered Gates
 
-| Order | Component | Owner repo | Gate before next step | Current Linode staging shape |
+| Order | Component | Owner repo | Gate before next step | LKE target / current bridge |
 | --- | --- | --- | --- | --- |
-| 0 | Platform prerequisites | platform/operator | Linode token, DNS credentials, SSH key, operator CIDR, nginx.org `>=1.30` repo availability, and service secrets are ready. | Operator-local secrets are sourced locally and not committed. |
-| 1 | Video Cloud runtime | `rtk_video_cloud` | Public API health/version pass; required runtime dependencies such as PostgreSQL, EMQX, coturn/TURN, certissuer/factory path, and selected workers are healthy for the chosen profile. | `https://video-cloud-staging.realtekconnect.com`; edge nginx terminates TLS and proxies to the video cloud API. |
-| 2 | Account Manager API | `rtk_account_manager` | `GET /v1/health` passes; auth/register/login/`/v1/me` smoke passes; local PostgreSQL is active; public TLS domain is valid. | `https://account-manager.video-cloud-staging.realtekconnect.com`; dedicated public VM with nginx TLS and local PostgreSQL. |
-| 3 | Admin dashboard | `rtk_cloud_admin` | `/healthz` passes and `/api/service-health` reports Account Manager, Video Cloud, and SQLite as `ok`. | `https://admin.video-cloud-staging.realtekconnect.com`; dedicated public+VPC VM with nginx TLS, local SQLite cache, and private Prometheus access. |
+| 0 | Platform prerequisites | platform/operator | LKE cluster, node pools, namespaces, RBAC, NetworkPolicy, DNS, cert-manager issuer, OpenBao/secret injection, storage classes, and backup target are documented and approved. | Current VM bridge still requires Linode token, DNS credentials, SSH key, operator CIDR, and service secrets. |
+| 1 | Video Cloud runtime | `rtk_video_cloud` | Public API health/version pass; PostgreSQL, MQTT broker, coturn/TURN, certissuer/factory path, Prometheus scrape path, and selected workers are healthy for the chosen profile. | Runtime-generated LKE staging resources now cover API, certissuer, factory enrollment, workers, MQTT broker, coturn, ephemeral PostgreSQL, and Prometheus; production Ingress, persistent database/storage, MQTT/TURN public exposure, and OpenBao remain gated. |
+| 2 | Account Manager API | `rtk_account_manager` | `GET /v1/health` passes; auth/register/login/`/v1/me` smoke passes; database migration and public TLS route are valid. | Target is Deployment/Service/Ingress; current bridge is `https://account-manager.video-cloud-staging.realtekconnect.com`. |
+| 3 | Admin dashboard | `rtk_cloud_admin` | `/healthz` passes and `/api/service-health` reports Account Manager, Video Cloud, and local persistence as `ok`. | Target is Deployment with PVC or approved database migration; current bridge is `https://admin.video-cloud-staging.realtekconnect.com`. |
 | 4 | Public frontend / promotion site | `rtk_cloud_frontend` | Website content matches deployed capability status; API links and contact/lead persistence are verified for the selected profile. | Public-facing Realtek Connect+ website; deployment profile remains service-owned. |
 | 5 | Product-level evidence | `rtk_cloud_workspace` | Workspace evidence records exact submodule commits, deployed versions, health results, skipped checks, and residual blockers. | `docs/product-level-evidence.md` defines the wrapper contract. |
 
@@ -243,17 +275,19 @@ Recommended defaults:
 
 | Surface | Exposure guidance |
 | --- | --- |
-| Frontend website | Public HTTPS through reverse proxy/CDN/ingress. |
-| Account manager API | HTTPS through reverse proxy; scope CORS and auth policy deliberately. |
-| Video cloud API | HTTPS through reverse proxy; route only required external APIs. |
-| WebSocket device transport | HTTPS/WSS through reverse proxy only if device runtime requires external owner transport. |
-| MQTT | Prefer TLS, auth, and explicit firewall rules; expose only broker listener required by devices. |
-| Prometheus metrics | Private network or authenticated scrape path only. |
+| Frontend website | Public HTTPS through LKE Ingress/Gateway behind Linode NodeBalancer. |
+| Account manager API | HTTPS through Ingress/Gateway; scope CORS and auth policy deliberately. |
+| Video cloud API | HTTPS through Ingress/Gateway; route only required external APIs. |
+| mTLS device / certissuer hostnames | Separate hostname or Gateway listener with the same CA separation currently enforced by nginx SNI. |
+| WebSocket device transport | HTTPS/WSS through Ingress/Gateway only if device runtime requires external owner transport. |
+| MQTT | Prefer MQTTS, auth, and explicit NetworkPolicy/firewall rules; expose only broker listeners required by devices through LoadBalancer/NodeBalancer or TCP-capable ingress. |
+| TURN | Keep UDP/TCP relay exposure explicit; do not assume HTTP ingress can carry TURN traffic. |
+| Prometheus metrics | Private ServiceMonitor/PodMonitor or authenticated scrape path only. |
 | EMQX dashboard | Private/admin network only. |
-| PostgreSQL | Private network only. |
+| PostgreSQL | Private Service or external private endpoint only. |
 
 TLS ownership belongs to the platform/operator layer. The frontend explicitly
-assumes production TLS termination is handled by a reverse proxy, ingress, or
+assumes production TLS termination is handled by Ingress/Gateway or the selected
 deployment platform.
 
 ## Secrets And Configuration Boundary
@@ -274,9 +308,12 @@ Required secret categories:
 Current accepted storage patterns:
 
 - GitHub Environment secrets for GitHub Actions deploy workflows
-- host-side secret manager or root-owned env files for long-lived self-hosted
-  deployments
-- production secret manager when available from the customer environment
+- OpenBao with Kubernetes auth or reviewed External Secrets/injection for LKE
+  runtime secrets
+- Kubernetes Secrets only for synchronized/runtime material, never for values
+  committed to Git
+- host-side secret manager or root-owned env files only for the legacy VM bridge
+- production secret manager when required by the customer environment
 
 ## Upgrade Runbook
 
@@ -341,10 +378,11 @@ customer-ready.
 
 The production-like profile should collect:
 
-- service status and health checks for selected units/containers
+- Kubernetes readiness/liveness status and service health checks for selected
+  workloads
 - Prometheus snapshots from video cloud services
-- central Loki-backed service logger health, per-host journald forwarder
-  status, and one sample Loki trace/query result
+- central Loki-backed service logger health, Kubernetes log collector status,
+  and one sample Loki trace/query result
 - frontend health and lead persistence checks
 - account manager auth/org/device smoke output
 - EMQX broker status and MQTT publish-subscribe smoke when MQTT is enabled
@@ -357,6 +395,12 @@ readiness uses `go run ./scripts/go/rtk-cloud -- collect-evidence`; the evidence
 contract is documented in `docs/product-level-evidence.md`. Account manager, admin dashboard,
 and frontend still own their service-local smoke/evidence commands; the
 workspace wrapper records them as `SKIP` until configured or implemented.
+
+The current `scripts/run-staging-e2e.sh` remains the workspace acceptance
+reference. It is provider-aware for `linode` and `lke`; LKE execution requires
+an approved kubeconfig context plus explicit container image env vars for the
+services being deployed. A future in-cluster LKE smoke Job still requires the
+gates in `docs/lke-migration-inventory.md`.
 
 ## Support Boundaries
 

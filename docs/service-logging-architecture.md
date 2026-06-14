@@ -21,18 +21,18 @@ paths to a remote logging backend.
 ```text
 Go services and workers
   -> zap JSON logs on stdout/stderr
-  -> systemd journald on each VM
-  -> rtk-cloud-log-forwarder systemd service
+  -> Kubernetes container logs on LKE
+  -> cluster log agent, Loki-compatible pipeline, or rtk_cloud_logger adapter
   -> rtk_cloud_logger ingest API or Loki-compatible ingest adapter
-  -> Loki on the dedicated logs VM
+  -> Loki/logger backend in the observability namespace or approved external backend
   -> Cloud Admin BFF/UI through Loki query APIs
 ```
 
 Applications must not synchronously push logs to the logger backend. They write
 structured JSON logs to stdout/stderr and continue to run when the logger backend
-or forwarder is degraded. Journald is the local durable buffer. The forwarder is
-responsible for batching, retry, cursor persistence, bounded local spool, and
-deduplication metadata.
+or collection path is degraded. In LKE, container runtime logs and the selected
+cluster log agent replace VM-local journald as the primary collection boundary.
+The legacy VM forwarder remains migration reference for systemd-managed hosts.
 
 Private-cloud v1 requires Loki as the centralized log storage/query backend.
 Grafana is optional and is not the v1 dashboard dependency. The operator log
@@ -107,7 +107,30 @@ sha256(host_id + boot_id + systemd_unit + journal_cursor)
 If a source does not have a journal cursor, the source adapter must document its
 own stable id material before enabling retries.
 
-## Forwarder Requirements
+## LKE Collection Requirements
+
+The LKE logging path must be selected before production manifests or deployment
+pipelines are written. Acceptable targets are a cluster log agent DaemonSet, a
+Loki-compatible pipeline, or a `rtk_cloud_logger` adapter that consumes
+Kubernetes container logs without coupling application request paths to the log
+backend.
+
+Required behavior:
+
+- collect stdout/stderr from selected namespaces and workloads
+- attach stable low-cardinality labels such as environment, namespace, service,
+  pod, container, and version
+- preserve queryable correlation fields from JSON log bodies
+- retry with bounded buffering according to the selected agent/backend
+- expose collector/backend health for readiness reports
+- authenticate to the backend with Kubernetes-injected credentials or mTLS
+- avoid blocking application Pod startup when logging is degraded
+- avoid collecting Kubernetes Secrets, mounted secret files, or raw env dumps
+
+TODO: select the LKE collector/backend implementation, retention policy, buffer
+limits, and Cloud Admin query path before production implementation.
+
+## Legacy VM Forwarder Requirements
 
 The Go forwarder lives in `rtk_cloud_logger` and runs as a root-owned systemd
 service on every service VM.
@@ -176,7 +199,17 @@ marker instead of the raw value.
 Provisioning must create logging dependencies before starting application
 traffic, but application services remain tolerant of logging degradation.
 
-Required order:
+Required LKE order:
+
+1. Create namespaces, RBAC, NetworkPolicy, base secrets, and storage.
+2. Deploy or connect the Loki/logger backend.
+3. Deploy the selected cluster log agent or logger adapter.
+4. Configure ServiceMonitor/PodMonitor or equivalent health checks.
+5. Deploy Account Manager, Video Cloud, Cloud Admin, and Frontend workloads.
+6. Run readiness checks that verify backend health, collector health, and one
+   sample query.
+
+Legacy VM order:
 
 1. Create network, VPC, DNS, and base secrets.
 2. Provision the logs VM and Loki-backed logger backend.

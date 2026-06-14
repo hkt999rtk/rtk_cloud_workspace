@@ -56,12 +56,28 @@ func Resolve(workspace, envRoot string) (string, error) {
 		return "", err
 	}
 	if filepath.Base(abs) == "staging" {
-		return filepath.Join(abs, "linode"), nil
+		return filepath.Join(abs, stagingProviderForRoot(abs)), nil
 	}
 	if isDir(filepath.Join(abs, "linode")) && !isDir(filepath.Join(abs, "services")) && !isDir(filepath.Join(abs, "env")) && !isDir(filepath.Join(abs, "topology")) {
 		return filepath.Join(abs, "linode"), nil
 	}
 	return abs, nil
+}
+
+func stagingProviderForRoot(stagingRoot string) string {
+	provider := firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), os.Getenv("RTK_CLOUD_STAGING_PROVIDER"))
+	if provider == "" {
+		for _, candidate := range []string{"lke", "linode"} {
+			if value := FileVar(filepath.Join(stagingRoot, candidate, "env", "stack.env"), "CLOUD_PROVIDER"); value == candidate {
+				provider = candidate
+				break
+			}
+		}
+	}
+	if provider == "" {
+		provider = "linode"
+	}
+	return provider
 }
 
 func NewPaths(root string) Paths {
@@ -121,7 +137,7 @@ func Load(root, dnsOverride string) (Environment, error) {
 			return Environment{}, fmt.Errorf("required environment metadata missing: %s", key)
 		}
 	}
-	if values["CLOUD_PROVIDER"] != "linode" {
+	if values["CLOUD_PROVIDER"] != "linode" && values["CLOUD_PROVIDER"] != "lke" {
 		return Environment{}, fmt.Errorf("unsupported CLOUD_PROVIDER=%s", values["CLOUD_PROVIDER"])
 	}
 	return Environment{Values: values}, nil
@@ -261,6 +277,15 @@ func firstExisting(paths ...string) string {
 		}
 	}
 	return paths[len(paths)-1]
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func isDir(path string) bool {

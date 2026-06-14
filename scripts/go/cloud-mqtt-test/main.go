@@ -1297,8 +1297,14 @@ func setTrustedClientCertHeaders(req *http.Request, cert tls.Certificate) error 
 	if cn == "" {
 		return errors.New("client certificate missing common name for trusted header token request")
 	}
+	subject := "/CN=" + cn
+	org := "VideoCloud"
+	if len(leaf.Subject.Organization) > 0 && strings.TrimSpace(leaf.Subject.Organization[0]) != "" {
+		org = strings.TrimSpace(leaf.Subject.Organization[0])
+	}
+	subject += "/O=" + org
 	req.Header.Set("X-Client-Verify", "SUCCESS")
-	req.Header.Set("X-Client-S-DN", "/CN="+cn)
+	req.Header.Set("X-Client-S-DN", subject)
 	return nil
 }
 
@@ -1976,6 +1982,9 @@ func envKeys(path string) []string {
 }
 
 func mqttEndpoint(videoState string, loadValues map[string]string) (string, int) {
+	if host := strings.TrimSpace(os.Getenv("RTK_CLOUD_MQTT_TEST_MQTT_HOST")); host != "" {
+		return host, envIntDefault("RTK_CLOUD_MQTT_TEST_MQTT_PORT", 8883)
+	}
 	host := firstNonEmpty(loadValues["MQTT_HOST"], "unknown")
 	portRaw := firstNonEmpty(loadValues["MQTT_TLS_PORT"], loadValues["MQTT_PORT"], "8883")
 	if host == "unknown" {
@@ -1990,6 +1999,15 @@ func mqttEndpoint(videoState string, loadValues map[string]string) (string, int)
 	}
 	port, _ := strconv.Atoi(portRaw)
 	return host, port
+}
+
+func envIntDefault(key string, fallback int) int {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			return parsed
+		}
+	}
+	return fallback
 }
 
 func firstNonEmpty(values ...string) string {

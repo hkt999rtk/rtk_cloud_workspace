@@ -49,15 +49,18 @@ var commands = map[string]commandSpec{
 	"contracts-check":             {run: runContractsCheck},
 	"create-brandname-cloud":      {run: runCreateBrandnameCloud},
 	"create-users":                {run: runCreateUsers},
+	"deploy":                      {run: runDeploy},
 	"docs-check":                  {run: runDocsCheck},
 	"generate-load-devices":       {run: runGenerateLoadDevices},
 	"list-brandname-clouds":       {run: runListBrandnameClouds},
 	"logs-check":                  {run: runLogsCheck},
+	"lke-build-images":            {run: runLKEBuildImages},
 	"migrate-env":                 {run: runMigrateEnv},
 	"mqtt-loadtest":               {run: runMQTTLoadTest},
 	"mqtt-test":                   {run: runMQTTTest},
 	"mqtt-trace-report":           {run: runMQTTTraceReport},
 	"platform-admin-token":        {run: runPlatformAdminToken},
+	"provision":                   {run: runProvision},
 	"provision-k8s":               {run: runProvisionK8s},
 	"refresh-user-tokens":         {run: runRefreshUserTokens},
 	"remove-k8s":                  {run: runRemoveK8s},
@@ -234,6 +237,31 @@ func runMQTTTest(args []string) error {
 	if *outDir == "" {
 		*outDir = filepath.Join(resolvedEnv, "artifacts", "home-mqtt-loadtest", time.Now().UTC().Format("20060102T150405Z"))
 	}
+	childEnv := map[string]string{"GOWORK": "off"}
+	stackEnv, _ := readEnvFile(filepath.Join(resolvedEnv, "env", "stack.env"))
+	if firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), stackEnv["CLOUD_PROVIDER"]) == "lke" {
+		stack := firstNonEmpty(stackEnv["CLOUD_STACK_NAME"], "video-cloud-staging")
+		env := map[string]string{"CLOUD_STACK_NAME": stack}
+		mqttPort, mqttCleanup, err := lkeTCPServicePortForward(resolvedEnv, env, "video-cloud", "mqtt", 8883, "mqtt")
+		if err != nil {
+			return err
+		}
+		defer mqttCleanup()
+		videoURL, videoCleanup, err := lkeVideoCloudAPIPortForward(resolvedEnv, env)
+		if err != nil {
+			return err
+		}
+		defer videoCleanup()
+		accountURL, accountCleanup, err := lkeAccountManagerPortForward(resolvedEnv, env)
+		if err != nil {
+			return err
+		}
+		defer accountCleanup()
+		childEnv["RTK_CLOUD_MQTT_TEST_MQTT_HOST"] = "127.0.0.1"
+		childEnv["RTK_CLOUD_MQTT_TEST_MQTT_PORT"] = strconv.Itoa(mqttPort)
+		childEnv["RTK_CLOUD_MQTT_TEST_VIDEO_BASE_URL"] = videoURL
+		childEnv["RTK_CLOUD_MQTT_TEST_ACCOUNT_BASE_URL"] = accountURL
+	}
 	goCmd, err := exec.LookPath("go")
 	if err != nil {
 		return errors.New("go is required")
@@ -259,7 +287,7 @@ func runMQTTTest(args []string) error {
 		"--max-connected-devices", strconv.Itoa(*maxConnectedDevices),
 	)
 	cmd.Dir = filepath.Join(workspace, "scripts", "go")
-	cmd.Env = withEnv(os.Environ(), map[string]string{"GOWORK": "off"})
+	cmd.Env = withEnv(os.Environ(), childEnv)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -1210,7 +1238,17 @@ type accountManagerContext struct {
 	BaseURL          string
 	AdminEmail       string
 	AdminPassword    string
+	Host             string
+	SSHUser          string
+	SSHKey           string
 	PlatformAdminEnv string
+	cleanup          func()
+}
+
+func (ctx accountManagerContext) Close() {
+	if ctx.cleanup != nil {
+		ctx.cleanup()
+	}
 }
 
 func runListBrandnameClouds(args []string) error {
@@ -1935,7 +1973,7 @@ func runRemoveK8s(args []string) error {
 		return err
 	}
 	for _, ns := range k8sStagingNamespaces(stack) {
-		if err := runKubectl(kubeconfig, "delete", "namespace", ns, "--ignore-not-found=true"); err != nil {
+		if err := runK8SKubectl(kubeconfig, "delete", "namespace", ns, "--ignore-not-found=true"); err != nil {
 			return err
 		}
 	}
@@ -1972,11 +2010,11 @@ func runProvisionK8s(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := runKubectl(kubeconfig, "get", "nodes"); err != nil {
+	if err := runK8SKubectl(kubeconfig, "get", "nodes"); err != nil {
 		return err
 	}
 	for _, ns := range k8sStagingNamespaces(stack) {
-		if err := runKubectl(kubeconfig, "get", "namespace", ns); err != nil {
+		if err := runK8SKubectl(kubeconfig, "get", "namespace", ns); err != nil {
 			return err
 		}
 		rolloutTimeout := "--timeout=" + timeout.String()
@@ -2086,7 +2124,7 @@ func findLinodeLKEClusterID(token, label string) (string, error) {
 	return "", fmt.Errorf("Linode LKE cluster not found: %s", label)
 }
 
-func runKubectl(kubeconfig string, args ...string) error {
+func runK8SKubectl(kubeconfig string, args ...string) error {
 	cmd := exec.Command("kubectl", args...)
 	cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfig)
 	cmd.Stdout = os.Stderr
@@ -2105,7 +2143,7 @@ func rolloutK8SKind(kubeconfig, namespace, kind, timeoutArg string) error {
 		return err
 	}
 	for _, name := range strings.Fields(string(out)) {
-		if err := runKubectl(kubeconfig, "-n", namespace, "rollout", "status", name, timeoutArg); err != nil {
+		if err := runK8SKubectl(kubeconfig, "-n", namespace, "rollout", "status", name, timeoutArg); err != nil {
 			return err
 		}
 	}
@@ -3610,13 +3648,24 @@ func accountManagerContextFromFlags(workspaceFlag, envRootFlag string) (accountM
 	if baseURL == "" {
 		baseURL = "https://" + domain
 	}
-	return accountManagerContext{
+	ctx := accountManagerContext{
 		EnvRoot:          envRoot,
 		BaseURL:          baseURL,
 		AdminEmail:       firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL"), envFileValue(platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL")),
 		AdminPassword:    firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD"), envFileValue(platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD")),
 		PlatformAdminEnv: platformEnv,
-	}, nil
+	}
+	if firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), stackEnv["CLOUD_PROVIDER"]) == "lke" && os.Getenv("ACCOUNT_MANAGER_BASE_URL") == "" {
+		forwardURL, cleanup, err := lkeAccountManagerPortForward(envRoot, map[string]string{
+			"CLOUD_STACK_NAME": firstNonEmpty(stackEnv["CLOUD_STACK_NAME"], "video-cloud-staging"),
+		})
+		if err != nil {
+			return accountManagerContext{}, err
+		}
+		ctx.BaseURL = forwardURL
+		ctx.cleanup = cleanup
+	}
+	return ctx, nil
 }
 
 func runPlatformAdminToken(args []string) error {
@@ -3908,6 +3957,10 @@ func jwtExpiresAt(token string) (time.Time, bool) {
 }
 
 func accountBootstrap(ctx accountManagerContext) error {
+	if strings.HasPrefix(ctx.BaseURL, "http://127.0.0.1:") || strings.HasPrefix(ctx.BaseURL, "http://localhost:") {
+		logBrandCreate("platform-admin bootstrap handled by LKE runtime secret; skipping VM SSH bootstrap")
+		return nil
+	}
 	if strings.TrimSpace(ctx.AdminEmail) == "" || strings.TrimSpace(ctx.AdminPassword) == "" {
 		return errors.New("Account Manager K8s bootstrap credentials are required; provide ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL and ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD from the K8s runtime secret or run through staging-e2e-test port-forward setup")
 	}
@@ -4464,15 +4517,6 @@ func envInt(key string, fallback int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
-		}
-	}
-	return fallback
-}
-
-func envDurationDefault(key string, fallback time.Duration) time.Duration {
-	if v := os.Getenv(key); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			return d
 		}
 	}
 	return fallback
@@ -5882,6 +5926,13 @@ type stagingProvisionBridge struct {
 	AccountToken   string
 	VideoBaseURL   string
 	VideoToken     string
+	cleanup        func()
+}
+
+func (bridge stagingProvisionBridge) Close() {
+	if bridge.cleanup != nil {
+		bridge.cleanup()
+	}
 }
 
 func stagingProvisionBridgeFromEnvRoot(ctx accountManagerContext, skip bool) (stagingProvisionBridge, error) {
@@ -5901,12 +5952,24 @@ func stagingProvisionBridgeFromEnvRoot(ctx accountManagerContext, skip bool) (st
 			videoBaseURL = "https://" + domain
 		}
 	}
+	var cleanup func()
+	if firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), envFileValue(stackEnv, "CLOUD_PROVIDER")) == "lke" && os.Getenv("VIDEO_CLOUD_BASE_URL") == "" {
+		forwardURL, forwardCleanup, err := lkeVideoCloudAPIPortForward(ctx.EnvRoot, map[string]string{
+			"CLOUD_STACK_NAME": firstNonEmpty(envFileValue(stackEnv, "CLOUD_STACK_NAME"), "video-cloud-staging"),
+		})
+		if err != nil {
+			return stagingProvisionBridge{}, err
+		}
+		videoBaseURL = forwardURL
+		cleanup = forwardCleanup
+	}
 	bridge := stagingProvisionBridge{
 		Enabled:        true,
 		AccountBaseURL: strings.TrimRight(ctx.BaseURL, "/"),
 		AccountToken:   accountToken,
 		VideoBaseURL:   videoBaseURL,
 		VideoToken:     videoToken,
+		cleanup:        cleanup,
 	}
 	missing := []string{}
 	if bridge.AccountBaseURL == "" {
