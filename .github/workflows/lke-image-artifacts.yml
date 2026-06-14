@@ -43,7 +43,7 @@ jobs:
           set -euo pipefail
           git diff --check
           cd scripts/go
-          GOWORK=off go test ./rtk-cloud -run 'TestRunLKEBuildImagesWritesManifest|TestRunProvisionLKEDeployBuildsMissingImagesWhenRegistryConfigured'
+          GOWORK=off go test ./rtk-cloud -run 'TestRunLKEBuildImagesWritesManifest|TestRunProvisionLKEDeployBuildsMissingImagesWhenRegistryConfigured|TestLKEPostgresStatefulSetUsesPostgresImageOverride'
 
   build:
     name: Build LKE image artifacts

@@ -117,7 +117,7 @@ func runLKEBuildImages(args []string) error {
 	}
 	tag := firstNonEmpty(*tagFlag, os.Getenv("LKE_IMAGE_TAG"), shortGitCommit(workspaceAbs), lkeName(firstNonEmpty(env.Values["CLOUD_STACK_NAME"], "video-cloud-staging")))
 	artifacts := []lkeImageArtifact{}
-	for _, workload := range lkeWorkloads(env.Values) {
+	for _, workload := range lkeImageWorkloads(env.Values, provisionOptions{}) {
 		image := registry + "/" + workload.Name + ":" + tag
 		if err := buildLKEImage(workload, image); err != nil {
 			return err
@@ -328,13 +328,13 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 }
 
 func ensureLKEDeployImages(env map[string]string, opts provisionOptions) error {
-	missing := lkeMissingImageWorkloads(env, opts)
-	if len(missing) == 0 {
-		return nil
-	}
 	registry := strings.TrimRight(os.Getenv("LKE_IMAGE_REGISTRY"), "/")
 	if registry == "" {
 		return validateLKEDeployInputs(env, opts)
+	}
+	missing := lkeMissingBuildImageWorkloads(env, opts)
+	if len(missing) == 0 {
+		return nil
 	}
 	tag := firstNonEmpty(os.Getenv("LKE_IMAGE_TAG"), lkeName(firstNonEmpty(env["CLOUD_STACK_NAME"], "video-cloud-staging")))
 	for _, workload := range missing {
@@ -348,7 +348,7 @@ func ensureLKEDeployImages(env map[string]string, opts provisionOptions) error {
 }
 
 func validateLKEDeployInputs(env map[string]string, opts provisionOptions) error {
-	missingWorkloads := lkeMissingImageWorkloads(env, opts)
+	missingWorkloads := lkeMissingDeployImageWorkloads(env, opts)
 	missing := []string{}
 	for _, workload := range missingWorkloads {
 		missing = append(missing, workload.EnvKey)
@@ -360,9 +360,19 @@ func validateLKEDeployInputs(env map[string]string, opts provisionOptions) error
 	return nil
 }
 
-func lkeMissingImageWorkloads(env map[string]string, opts provisionOptions) []lkeWorkload {
+func lkeMissingDeployImageWorkloads(env map[string]string, opts provisionOptions) []lkeWorkload {
 	missing := []lkeWorkload{}
 	for _, workload := range lkeSelectedWorkloads(env, opts) {
+		if firstNonEmpty(os.Getenv(workload.EnvKey), workload.Image) == "" {
+			missing = append(missing, workload)
+		}
+	}
+	return missing
+}
+
+func lkeMissingBuildImageWorkloads(env map[string]string, opts provisionOptions) []lkeWorkload {
+	missing := []lkeWorkload{}
+	for _, workload := range lkeImageWorkloads(env, opts) {
 		if firstNonEmpty(os.Getenv(workload.EnvKey), workload.Image) == "" {
 			missing = append(missing, workload)
 		}
@@ -387,6 +397,8 @@ func lkeImageBuildContext(workload lkeWorkload) (contextDir, dockerfile string, 
 		return "", "", func() {}, err
 	}
 	switch workload.Key {
+	case "postgres":
+		return generatedPostgresDockerfile()
 	case "video-cloud":
 		return generatedVideoCloudDockerfile(filepath.Join(workspace, "repos", "rtk_video_cloud"))
 	case "account-manager":
@@ -398,6 +410,24 @@ func lkeImageBuildContext(workload lkeWorkload) (contextDir, dockerfile string, 
 	default:
 		return "", "", func() {}, fmt.Errorf("no LKE image build context for workload %s", workload.Key)
 	}
+}
+
+func generatedPostgresDockerfile() (string, string, func(), error) {
+	dir, err := os.MkdirTemp("", "rtk-lke-postgres-*")
+	if err != nil {
+		return "", "", func() {}, err
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	dockerfile := filepath.Join(dir, "Dockerfile")
+	body := `FROM postgres:16-alpine
+LABEL org.opencontainers.image.title="rtk-cloud-lke-postgresql"
+LABEL org.opencontainers.image.description="PostgreSQL runtime image for the RTK Cloud LKE staging bridge"
+`
+	if err := os.WriteFile(dockerfile, []byte(body), 0o644); err != nil {
+		cleanup()
+		return "", "", func() {}, err
+	}
+	return dir, dockerfile, cleanup, nil
 }
 
 func generatedGoServiceDockerfile(contextDir, packagePath, binaryName string) (string, string, func(), error) {
@@ -643,6 +673,14 @@ func lkeVideoCloudAuxiliaryServices() []lkeVideoCloudAuxiliaryService {
 		{Name: "video-cloud-logingester", Binary: "logingester", Port: 19300, PortName: "http", MetricsPath: "/metrics/prometheus"},
 		{Name: "video-cloud-mqttusage", Binary: "mqttusage", Port: 19400, PortName: "http", MetricsPath: "/metrics/prometheus"},
 	}
+}
+
+func lkeImageWorkloads(env map[string]string, opts provisionOptions) []lkeWorkload {
+	workloads := []lkeWorkload{
+		{Key: "postgres", Name: "postgresql", EnvKey: "LKE_POSTGRES_IMAGE", Image: os.Getenv("LKE_POSTGRES_IMAGE"), Namespace: lkeNamespaceName(env, "platform"), Port: 5432},
+	}
+	workloads = append(workloads, lkeSelectedWorkloads(env, opts)...)
+	return workloads
 }
 
 func lkeSelectedWorkloads(env map[string]string, opts provisionOptions) []lkeWorkload {
@@ -1017,7 +1055,7 @@ spec:
     spec:
       containers:
         - name: postgres
-          image: postgres:16-alpine
+          image: %s
           ports:
             - name: postgres
               containerPort: 5432
@@ -1034,7 +1072,11 @@ spec:
               mountPath: /var/lib/postgresql/data
             - name: initdb
               mountPath: /docker-entrypoint-initdb.d
-%s%s`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], storage, volumeClaims)
+%s%s`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkePostgresImage(), storage, volumeClaims)
+}
+
+func lkePostgresImage() string {
+	return firstNonEmpty(os.Getenv("LKE_POSTGRES_IMAGE"), "postgres:16-alpine")
 }
 
 type lkeCertIssuerMaterial struct {

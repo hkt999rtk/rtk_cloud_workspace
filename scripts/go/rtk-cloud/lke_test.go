@@ -150,6 +150,7 @@ func TestRunProvisionLKEDeployBuildsMissingImagesWhenRegistryConfigured(t *testi
 
 	dockerCalls := readTestFile(t, dockerLog)
 	for _, image := range []string{
+		"registry.example.test/rtk/postgresql:testtag",
 		"registry.example.test/rtk/video-cloud-api:testtag",
 		"registry.example.test/rtk/account-manager:testtag",
 		"registry.example.test/rtk/cloud-admin:testtag",
@@ -162,6 +163,9 @@ func TestRunProvisionLKEDeployBuildsMissingImagesWhenRegistryConfigured(t *testi
 	kubectlCalls := readTestFile(t, kubectlLog)
 	if !strings.Contains(kubectlCalls, "image: registry.example.test/rtk/video-cloud-api:testtag") {
 		t.Fatalf("expected built image in kubectl manifest, got:\n%s", kubectlCalls)
+	}
+	if !strings.Contains(kubectlCalls, "image: registry.example.test/rtk/postgresql:testtag") {
+		t.Fatalf("expected built PostgreSQL image in kubectl manifest, got:\n%s", kubectlCalls)
 	}
 }
 
@@ -182,6 +186,7 @@ func TestRunLKEBuildImagesWritesManifest(t *testing.T) {
 
 	dockerCalls := readTestFile(t, dockerLog)
 	for _, image := range []string{
+		"registry.example.test/rtk/lke/postgresql:ci-1234",
 		"registry.example.test/rtk/lke/video-cloud-api:ci-1234",
 		"registry.example.test/rtk/lke/account-manager:ci-1234",
 		"registry.example.test/rtk/lke/cloud-admin:ci-1234",
@@ -194,6 +199,7 @@ func TestRunLKEBuildImagesWritesManifest(t *testing.T) {
 	body := readTestFile(t, out)
 	for _, want := range []string{
 		`"schema": "rtk-cloud-workspace.lke-image-artifacts/v1"`,
+		`"LKE_POSTGRES_IMAGE": "registry.example.test/rtk/lke/postgresql:ci-1234"`,
 		`"LKE_VIDEO_CLOUD_IMAGE": "registry.example.test/rtk/lke/video-cloud-api:ci-1234"`,
 		`"LKE_ACCOUNT_MANAGER_IMAGE": "registry.example.test/rtk/lke/account-manager:ci-1234"`,
 		`"LKE_CLOUD_ADMIN_IMAGE": "registry.example.test/rtk/lke/cloud-admin:ci-1234"`,
@@ -293,6 +299,16 @@ func TestLKEPostgresStatefulSetSupportsExplicitPVCStorage(t *testing.T) {
 	}
 	if strings.Contains(manifest, "emptyDir: {}") {
 		t.Fatalf("explicit PVC manifest should not use emptyDir, got:\n%s", manifest)
+	}
+}
+
+func TestLKEPostgresStatefulSetUsesPostgresImageOverride(t *testing.T) {
+	t.Setenv("LKE_POSTGRES_IMAGE", "registry.example.test/rtk/lke/postgresql:ci-1234")
+
+	manifest := lkePostgresStatefulSetManifest(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})
+
+	if !strings.Contains(manifest, "image: registry.example.test/rtk/lke/postgresql:ci-1234") {
+		t.Fatalf("expected LKE_POSTGRES_IMAGE in PostgreSQL manifest, got:\n%s", manifest)
 	}
 }
 
