@@ -2362,18 +2362,38 @@ func runStagingE2ETest(args []string) error {
 	if err != nil {
 		return err
 	}
+	if filepath.Base(envRoot) == "linode" {
+		lkeCandidate := filepath.Join(filepath.Dir(envRoot), "lke")
+		if _, statErr := os.Stat(filepath.Join(lkeCandidate, "env", "stack.env")); statErr == nil {
+			requestedProvider := firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), os.Getenv("RTK_CLOUD_STAGING_PROVIDER"), envFileValue(filepath.Join(lkeCandidate, "env", "stack.env"), "CLOUD_PROVIDER"))
+			if requestedProvider == "lke" && (os.Getenv("CLOUD_STAGING_E2E_PROVISION_SCRIPT") != "" || os.Getenv("CLOUD_STAGING_E2E_REMOVE_SCRIPT") != "" || os.Getenv("CLOUD_PROVIDER") == "lke" || os.Getenv("RTK_CLOUD_STAGING_PROVIDER") == "lke") {
+				envRoot = lkeCandidate
+			}
+		}
+	}
 	stackName := envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_STACK_NAME")
 	if stackName == "" {
 		stackName = "video-cloud-staging"
 	}
 	provider := firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), os.Getenv("RTK_CLOUD_STAGING_PROVIDER"), envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER"))
-	useLKEProvision := provider == "lke" && os.Getenv("CLOUD_STAGING_E2E_PROVISION_K8S_SCRIPT") == ""
+	lkeRemoveScript := os.Getenv("CLOUD_STAGING_E2E_REMOVE_SCRIPT")
+	lkeProvisionScript := os.Getenv("CLOUD_STAGING_E2E_PROVISION_SCRIPT")
+	useLKEProvision := provider == "lke" && os.Getenv("CLOUD_STAGING_E2E_PROVISION_K8S_SCRIPT") == "" && lkeProvisionScript == ""
+	useLegacyLKEProvision := provider == "lke" && lkeProvisionScript != ""
 	scripts := map[string]string{
 		"remove-k8s":      firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_REMOVE_K8S_SCRIPT"), selfCommandPath("remove-k8s")),
 		"provision-k8s":   firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_PROVISION_K8S_SCRIPT"), selfCommandPath("provision-k8s")),
 		"setup-data":      firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT"), filepath.Join(workspace, "scripts", "setup-staging-e2e-data.sh")),
 		"mqtt-test":       firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT"), selfCommandPath("mqtt-test")),
 		"mqtt-log-verify": firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT"), selfCommandPath("staging-e2e-mqtt-log-verify")),
+	}
+	if provider == "lke" {
+		if lkeRemoveScript != "" {
+			scripts["remove-k8s"] = lkeRemoveScript
+		}
+		if lkeProvisionScript != "" {
+			scripts["provision-k8s"] = lkeProvisionScript
+		}
 	}
 	if useLKEProvision {
 		scripts["provision-k8s"] = selfCommandPath("provision")
@@ -2406,7 +2426,9 @@ func runStagingE2ETest(args []string) error {
 	}
 	k8sProvisionArgs := []string{"--workspace", workspace, "--env-root", envRoot, "--confirm", stackName}
 	if useLKEProvision {
-		k8sProvisionArgs = []string{"--workspace", workspace, "--env-root", envRoot, "--preflight", "--plan", "--apply", "--deploy", "--artifacts", "--confirm", stackName}
+		k8sProvisionArgs = []string{"--workspace", workspace, "--env-root", envRoot, "--preflight", "--plan", "--apply", "--deploy", "--dns", "--artifacts", "--confirm", stackName}
+	} else if useLegacyLKEProvision {
+		k8sProvisionArgs = []string{"--workspace", workspace, "--env-root", envRoot, "--all", "--confirm", stackName}
 	}
 	if err := runStep("provision_k8s", commandWithArgs(scripts["provision-k8s"], k8sProvisionArgs...)...); err != nil {
 		return err

@@ -363,6 +363,147 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 	}
 }
 
+func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	if err := os.MkdirAll(filepath.Join(workspace, "repos", "rtk_video_cloud", "tools", "godaddy-dns"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	kubectlLog := fakeKubectl(t)
+	helmLog := fakeHelm(t)
+	goLog := fakeGoForDNS(t)
+	certbotLog := fakeCertbot(t)
+	digLog := fakeDig(t, "203.0.113.42")
+	t.Setenv("LKE_PUBLIC_HTTPS_ISSUE_EMAIL", "ops@example.test")
+	t.Setenv("LKE_PUBLIC_HTTPS_ACME_SERVER", "https://acme-staging-v02.api.letsencrypt.org/directory")
+	t.Setenv("GODADDY_KEY", "test-key")
+	t.Setenv("GODADDY_SECRET", "test-secret")
+	t.Setenv("GODADDY_ENV", "prod")
+
+	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--dns"}); err != nil {
+		t.Fatal(err)
+	}
+
+	helmCalls := readTestFile(t, helmLog)
+	for _, want := range []string{
+		"upgrade --install ingress-nginx ingress-nginx",
+		"--namespace video-cloud-staging-ingress",
+		"--set controller.service.type=LoadBalancer",
+		"--set controller.service.ports.https=443",
+		"--set controller.service.targetPorts.https=https",
+		"--set controller.service.enableHttp=false",
+	} {
+		if !strings.Contains(helmCalls, want) {
+			t.Fatalf("expected %q in helm calls, got:\n%s", want, helmCalls)
+		}
+	}
+
+	kubectlCalls := readTestFile(t, kubectlLog)
+	for _, want := range []string{
+		"kind: Secret\nmetadata:\n  name: video-cloud-staging-public-tls\n  namespace: video-cloud-staging-ingress",
+		"kind: Service\nmetadata:\n  name: public-video-cloud-api-video-cloud",
+		"type: ExternalName",
+		"externalName: video-cloud-api.video-cloud-staging-video-cloud.svc.cluster.local",
+		"kind: Service\nmetadata:\n  name: public-certissuer-video-cloud",
+		"externalName: certissuer.video-cloud-staging-video-cloud.svc.cluster.local",
+		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-public",
+		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-certissuer",
+		"nginx.ingress.kubernetes.io/backend-protocol: \"HTTPS\"",
+		"ingressClassName: nginx",
+		"host: video-cloud-staging.realtekconnect.com",
+		"host: device.video-cloud-staging.realtekconnect.com",
+		"host: certissuer.video-cloud-staging.realtekconnect.com",
+		"host: account-manager.video-cloud-staging.realtekconnect.com",
+		"host: admin.video-cloud-staging.realtekconnect.com",
+		"host: frontend.video-cloud-staging.realtekconnect.com",
+		"name: public-video-cloud-api-video-cloud\n                port:\n                  number: 80",
+		"name: public-certissuer-video-cloud\n                port:\n                  number: 9443",
+		"name: public-account-manager-account-manager\n                port:\n                  number: 80",
+		"name: public-cloud-admin-admin\n                port:\n                  number: 80",
+		"name: public-frontend-frontend\n                port:\n                  number: 80",
+		"kind: NetworkPolicy\nmetadata:\n  name: default-deny-ingress",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-public-ingress",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-postgres-clients",
+	} {
+		if !strings.Contains(kubectlCalls, want) {
+			t.Fatalf("expected %q in kubectl calls, got:\n%s", want, kubectlCalls)
+		}
+	}
+	for _, forbidden := range []string{
+		"nodePort:",
+		"controller.service.ports.http=80",
+		"port: 1883",
+		"port: 8883",
+		"port: 3478",
+	} {
+		if strings.Contains(kubectlCalls, forbidden) {
+			t.Fatalf("public HTTPS edge must not expose %q, got:\n%s", forbidden, kubectlCalls)
+		}
+	}
+
+	goCalls := readTestFile(t, goLog)
+	for _, want := range []string{
+		"--name video-cloud-staging --data 203.0.113.42 --ttl 600",
+		"--name device.video-cloud-staging --data 203.0.113.42 --ttl 600",
+		"--name certissuer.video-cloud-staging --data 203.0.113.42 --ttl 600",
+		"--name account-manager.video-cloud-staging --data 203.0.113.42 --ttl 600",
+		"--name admin.video-cloud-staging --data 203.0.113.42 --ttl 600",
+		"--name frontend.video-cloud-staging --data 203.0.113.42 --ttl 600",
+	} {
+		if !strings.Contains(goCalls, want) {
+			t.Fatalf("expected %q in GoDaddy calls, got:\n%s", want, goCalls)
+		}
+	}
+	if strings.Contains(goCalls, "logger.video-cloud-staging") {
+		t.Fatalf("logger DNS must be skipped when no logger LKE service exists, got:\n%s", goCalls)
+	}
+	if !strings.Contains(readTestFile(t, certbotLog), "-d video-cloud-staging.realtekconnect.com") {
+		t.Fatalf("expected certbot DNS-01 certificate issuance, got:\n%s", readTestFile(t, certbotLog))
+	}
+	if !strings.Contains(readTestFile(t, digLog), "video-cloud-staging.realtekconnect.com") {
+		t.Fatalf("expected DNS convergence checks, got:\n%s", readTestFile(t, digLog))
+	}
+}
+
+func TestRunProvisionLKEDNSRequiresGoDaddyCredentialsBeforeDNSMutation(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	if err := os.MkdirAll(filepath.Join(workspace, "repos", "rtk_video_cloud", "tools", "godaddy-dns"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeKubectl(t)
+	fakeHelm(t)
+	goLog := fakeGoForDNS(t)
+	fakeCertbot(t)
+
+	err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--dns"})
+	if err == nil || !strings.Contains(err.Error(), "GoDaddy DNS-01 credentials missing") {
+		t.Fatalf("expected missing GoDaddy credentials error, got %v", err)
+	}
+	if _, statErr := os.Stat(goLog); !os.IsNotExist(statErr) {
+		t.Fatalf("GoDaddy A record upsert must not run without DNS-01 credentials, log=%q body=%q", goLog, readTestFile(t, goLog))
+	}
+}
+
+func TestRunProvisionLKEDNSStopsBeforeDNSWhenCertificateIssuanceFails(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	if err := os.MkdirAll(filepath.Join(workspace, "repos", "rtk_video_cloud", "tools", "godaddy-dns"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeKubectl(t)
+	fakeHelm(t)
+	goLog := fakeGoForDNS(t)
+	fakeFailingCertbot(t)
+	t.Setenv("GODADDY_KEY", "test-key")
+	t.Setenv("GODADDY_SECRET", "test-secret")
+
+	err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--dns"})
+	if err == nil || !strings.Contains(err.Error(), "public HTTPS ACME DNS-01 issuance failed") {
+		t.Fatalf("expected certificate issuance failure, got %v", err)
+	}
+	if _, statErr := os.Stat(goLog); !os.IsNotExist(statErr) {
+		t.Fatalf("GoDaddy A record upsert must not run after certbot failure, log=%q body=%q", goLog, readTestFile(t, goLog))
+	}
+}
+
 func TestLKEOpenBaoBootstrapRolesAllowEd25519AndP256CSRs(t *testing.T) {
 	script := lkeOpenBaoBootstrapScript(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})
 
@@ -1294,6 +1435,10 @@ if [[ "$*" == *"get pod/openbao-0 -o jsonpath={.status.phase}"* ]]; then
   printf 'Running'
   exit 0
 fi
+if [[ "$*" == *"get service ingress-nginx-controller -o jsonpath={.status.loadBalancer.ingress[0].ip}"* ]]; then
+  printf '203.0.113.42'
+  exit 0
+fi
 if [[ "$*" == *"exec -i openbao-0 -- sh -s"* ]]; then
   body="$(cat)"
   if [[ "$body" == *"bao operator unseal"* ]]; then
@@ -1357,6 +1502,10 @@ if [[ "$*" == *"get pod/openbao-0 -o jsonpath={.status.phase}"* ]]; then
     printf '\n'
   } >> "` + logPath + `"
   printf 'Running'
+  exit 0
+fi
+if [[ "$*" == *"get service ingress-nginx-controller -o jsonpath={.status.loadBalancer.ingress[0].ip}"* ]]; then
+  printf '203.0.113.42'
   exit 0
 fi
 if [[ "$*" == *"exec -i openbao-0 -- sh -s"* ]]; then
@@ -1432,6 +1581,131 @@ set -euo pipefail
 } >> "` + logPath + `"
 `
 	if err := os.WriteFile(goPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return logPath
+}
+
+func fakeGoForDNS(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "go.log")
+	goPath := filepath.Join(dir, "go")
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+{
+  printf 'ARGS'
+  for arg in "$@"; do
+    printf ' %s' "$arg"
+  done
+  printf '\n'
+} >> "` + logPath + `"
+`
+	if err := os.WriteFile(goPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_GO", goPath)
+	return logPath
+}
+
+func fakeCertbot(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "certbot.log")
+	certbotPath := filepath.Join(dir, "certbot")
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+{
+  printf 'ARGS'
+  for arg in "$@"; do
+    printf ' %s' "$arg"
+  done
+  printf '\n'
+} >> "` + logPath + `"
+config_dir=""
+domain=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --config-dir)
+      config_dir="$2"
+      shift 2
+      ;;
+    -d)
+      if [[ -z "$domain" ]]; then
+        domain="$2"
+      fi
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+live_dir="$config_dir/live/$domain"
+mkdir -p "$live_dir"
+cat > "$live_dir/fullchain.pem" <<'EOF'
+-----BEGIN CERTIFICATE-----
+test-cert
+-----END CERTIFICATE-----
+EOF
+cat > "$live_dir/privkey.pem" <<'EOF'
+-----BEGIN PRIVATE KEY-----
+test-key
+-----END PRIVATE KEY-----
+EOF
+`
+	if err := os.WriteFile(certbotPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_CERTBOT", certbotPath)
+	return logPath
+}
+
+func fakeFailingCertbot(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "certbot.log")
+	certbotPath := filepath.Join(dir, "certbot")
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+{
+  printf 'ARGS'
+  for arg in "$@"; do
+    printf ' %s' "$arg"
+  done
+  printf '\n'
+} >> "` + logPath + `"
+exit 42
+`
+	if err := os.WriteFile(certbotPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_CERTBOT", certbotPath)
+	return logPath
+}
+
+func fakeDig(t *testing.T, ip string) string {
+	t.Helper()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "dig.log")
+	digPath := filepath.Join(dir, "dig")
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+{
+  printf 'ARGS'
+  for arg in "$@"; do
+    printf ' %s' "$arg"
+  done
+  printf '\n'
+} >> "` + logPath + `"
+if [[ "$*" == *" NS "* || "${1:-}" == "NS" ]]; then
+  printf 'ns23.domaincontrol.com.\n'
+  exit 0
+fi
+printf '` + ip + `\n'
+`
+	if err := os.WriteFile(digPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))

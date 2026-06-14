@@ -344,6 +344,45 @@ go run ./scripts/go/rtk-cloud -- provision-k8s \
 - `--confirm STACK`：必須符合 `CLOUD_STACK_NAME`，避免操作錯誤 stack。
 - `--timeout DURATION`：K8s rollout 等待時間，預設 5 分鐘；也可用 `CLOUD_STAGING_E2E_K8S_ROLLOUT_TIMEOUT` 設定。
 
+### `go run ./scripts/go/rtk-cloud -- provision --dns`
+
+LKE `--dns` 會建立 public HTTPS entry，不再是 no-op。流程是：
+
+1. 用 Helm 安裝或更新 `ingress-nginx` 到 `<stack>-ingress` namespace。
+2. ingress-nginx controller service 使用 Linode `LoadBalancer` / NodeBalancer，只開 `443/TCP`，不建立 public `80/TCP` listener。
+3. 透過 certbot manual DNS-01 hook 與 GoDaddy TXT record 簽一張 staging multi-SAN certificate，寫入 Kubernetes TLS secret `video-cloud-staging-public-tls`。
+4. 建立 ingress namespace 內的 ExternalName bridge services，讓 Ingress 合法轉到各 namespace 的 internal `ClusterIP` services。
+5. 建立 HTTPS Ingress rules：
+   - `video-cloud-staging.realtekconnect.com` -> `video-cloud-api`
+   - `device.video-cloud-staging.realtekconnect.com` -> `video-cloud-api`
+   - `certissuer.video-cloud-staging.realtekconnect.com` -> `certissuer`
+   - `account-manager.video-cloud-staging.realtekconnect.com` -> `account-manager`
+   - `admin.video-cloud-staging.realtekconnect.com` -> `cloud-admin`
+   - `frontend.video-cloud-staging.realtekconnect.com` -> `frontend`
+6. 等待 NodeBalancer public IP，並用 GoDaddy A records 指向該 IP。
+7. 套用 default-deny ingress NetworkPolicy 與必要 allow rules。
+
+必要輸入：
+
+- `GODADDY_KEY` / `GODADDY_SECRET` 或 operator env 內的等效 GoDaddy credentials。
+- `CLOUD_DNS_ROOT_DOMAIN`，staging 預設是 `realtekconnect.com`。
+- `certbot` CLI，或用 `RTK_CLOUD_CERTBOT` 指到指定 binary。
+- `helm` 與 `kubectl` 可操作目標 LKE cluster。
+
+常用驗證：
+
+```sh
+kubectl -n video-cloud-staging-ingress get svc ingress-nginx-controller
+kubectl get ingress -A
+dig +short A video-cloud-staging.realtekconnect.com @ns23.domaincontrol.com
+nc -vz video-cloud-staging.realtekconnect.com 80
+curl -fsS https://video-cloud-staging.realtekconnect.com/healthz
+curl -fsS https://account-manager.video-cloud-staging.realtekconnect.com/v1/health
+curl -fsS https://admin.video-cloud-staging.realtekconnect.com/healthz
+```
+
+MQTT、TURN、Postgres、OpenBao、Prometheus 不會因 `--dns` 對外公開；MQTT/TURN 需要另行設計 TCP/UDP exposure。
+
 Kubeconfig 來源順序：
 
 - `CLOUD_STAGING_K8S_KUBECONFIG`

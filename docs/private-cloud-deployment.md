@@ -116,9 +116,11 @@ environment where operations, rollback, and support commitments matter.
 Required infrastructure:
 
 - LKE cluster with documented region, node pools, upgrade policy, and ownership
-- Linode NodeBalancer plus Kubernetes Ingress or Gateway API for public HTTP(S)
-- cert-manager for TLS automation; existing DNS-01 behavior must be represented
-  as issuer configuration
+- Linode NodeBalancer plus Kubernetes Ingress or Gateway API for public HTTPS
+- DNS-01 TLS automation for public hostnames. The workspace-managed LKE staging
+  bridge uses GoDaddy DNS-01 plus certbot to create a Kubernetes TLS Secret;
+  cert-manager remains the production operator path when an approved DNS
+  provider integration exists.
 - PostgreSQL deployment choice documented before cutover: external/VM bridge,
   in-cluster operator, in-cluster StatefulSet, or managed/external service
 - Linode Object Storage or approved object storage for artifacts, media, and
@@ -134,7 +136,7 @@ Recommended separation:
 
 | Layer | Production-like expectation |
 | --- | --- |
-| Edge | NodeBalancer in front of Ingress/Gateway for frontend, account API, video API, and required mTLS hostnames. |
+| Edge | NodeBalancer in front of ingress-nginx/Gateway for frontend, account API, video API, and required mTLS hostnames; public `80/TCP` remains closed. |
 | Frontend | Deployment with persistent lead storage or migrated production database. |
 | Account manager | Deployment with Service/Ingress; database migrations controlled by release. |
 | Video cloud API/workers | Deployments for API, certissuer/factory enrollment, and long-running workers; Jobs/CronJobs only for explicitly one-shot or scheduled flows. |
@@ -275,7 +277,7 @@ Recommended defaults:
 
 | Surface | Exposure guidance |
 | --- | --- |
-| Frontend website | Public HTTPS through LKE Ingress/Gateway behind Linode NodeBalancer. |
+| Frontend website | Public HTTPS through LKE Ingress/Gateway behind Linode NodeBalancer; use DNS-01 rather than HTTP-01 so public `80/TCP` stays closed. |
 | Account manager API | HTTPS through Ingress/Gateway; scope CORS and auth policy deliberately. |
 | Video cloud API | HTTPS through Ingress/Gateway; route only required external APIs. |
 | mTLS device / certissuer hostnames | Separate hostname or Gateway listener with the same CA separation currently enforced by nginx SNI. |

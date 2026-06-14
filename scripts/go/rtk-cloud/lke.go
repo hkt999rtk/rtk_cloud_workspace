@@ -337,7 +337,7 @@ func runLKEProvision(paths provisionPaths, env map[string]string, opts provision
 	if opts.mode.reset {
 		return errors.New("LKE provision reset is not implemented; use remove-all-vm for namespace teardown")
 	}
-	if opts.mode.apply || opts.mode.deploy || opts.mode.artifacts || opts.mode.e2e {
+	if opts.mode.apply || opts.mode.dns || opts.mode.deploy || opts.mode.artifacts || opts.mode.e2e {
 		if err := writeLKECompatibilityArtifacts(paths, env); err != nil {
 			return err
 		}
@@ -355,7 +355,7 @@ func runLKEProvision(paths provisionPaths, env map[string]string, opts provision
 			return err
 		}
 	}
-	if opts.mode.apply || opts.mode.deploy || opts.mode.e2e {
+	if opts.mode.apply || opts.mode.dns || opts.mode.deploy || opts.mode.e2e {
 		if err := ensureLKEKubeAccess(paths, env, opts.mode.apply); err != nil {
 			return err
 		}
@@ -369,7 +369,9 @@ func runLKEProvision(paths provisionPaths, env map[string]string, opts provision
 		}
 	}
 	if opts.mode.dns {
-		fmt.Fprintln(os.Stderr, "[lke-provision] dns step is delegated to Linode NodeBalancer, Ingress/Gateway, and cert-manager; no DNS records were mutated")
+		if err := lkeApplyPublicHTTPS(paths, env, opts); err != nil {
+			return err
+		}
 	}
 	if opts.mode.deploy {
 		if err := lkeDeployWorkloads(paths, env, opts); err != nil {
@@ -417,8 +419,9 @@ func lkePlan(env map[string]string) {
 	for _, ns := range lkeNamespaces(env) {
 		fmt.Fprintf(os.Stdout, "  - %s=%s\n", ns.Key, ns.Name)
 	}
-	fmt.Fprintln(os.Stdout, "- public HTTP: Linode NodeBalancer -> Ingress/Gateway -> video-cloud/account-manager/admin/frontend")
-	fmt.Fprintln(os.Stdout, "- non-HTTP: MQTT/TURN require LoadBalancer/NodeBalancer or a TCP-capable ingress path")
+	fmt.Fprintln(os.Stdout, "- public HTTPS: Linode NodeBalancer :443 -> ingress-nginx -> ClusterIP services")
+	fmt.Fprintln(os.Stdout, "- public HTTP :80 is not exposed; TLS issuance uses GoDaddy DNS-01")
+	fmt.Fprintln(os.Stdout, "- non-HTTP: MQTT/TURN remain internal until explicitly exposed in a separate design")
 	fmt.Fprintln(os.Stdout, "- secrets: OpenBao standalone/AppRole for staging PKI; certissuer delegates device/app signing to OpenBao and Kubernetes Secrets do not carry CA private keys")
 	fmt.Fprintln(os.Stdout, "- deploy images:")
 	for _, workload := range lkeWorkloads(env) {
@@ -466,6 +469,572 @@ data:
   CLOUD_LOGGER_DOMAIN: %q
 `, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_ENV_NAME"], env["CLOUD_REGION"], env["CLOUD_STACK_NAME"], env["VIDEO_CLOUD_DOMAIN"], env["VIDEO_CLOUD_CERTISSUER_DOMAIN"], env["ACCOUNT_MANAGER_DOMAIN"], env["CLOUD_ADMIN_DOMAIN"], env["CLOUD_LOGGER_DOMAIN"])
 	return kubectlApply(config)
+}
+
+type lkePublicHTTPSRoute struct {
+	Host        string
+	Service     string
+	Namespace   string
+	ServicePort int
+	Protocol    string
+}
+
+func lkeApplyPublicHTTPS(paths provisionPaths, env map[string]string, opts provisionOptions) error {
+	routes := lkePublicHTTPSRoutes(env)
+	if len(routes) == 0 {
+		return errors.New("no public HTTPS routes configured")
+	}
+	if err := kubectlApply(lkeIngressNamespaceManifest(env)); err != nil {
+		return err
+	}
+	if err := lkeInstallIngressNginx(env); err != nil {
+		return err
+	}
+	hosts := lkePublicHTTPSHosts(routes)
+	hasTLS, err := lkeExistingPublicHTTPSTLSSecretCoversHosts(env, hosts)
+	if err != nil {
+		return err
+	}
+	if hasTLS {
+		fmt.Fprintf(os.Stderr, "[lke-provision] reusing existing public TLS secret %s/%s\n", lkeIngressNamespace(env), lkePublicHTTPSTLSSecretName(env))
+	} else {
+		certPEM, keyPEM, err := lkeIssuePublicHTTPSCertificate(env, opts, hosts)
+		if err != nil {
+			return err
+		}
+		if err := kubectlApply(lkePublicHTTPSTLSSecretManifest(env, certPEM, keyPEM)); err != nil {
+			return err
+		}
+	}
+	for _, manifest := range lkePublicHTTPSBridgeServiceManifests(env, routes) {
+		if err := kubectlApply(manifest); err != nil {
+			return err
+		}
+	}
+	for _, manifest := range lkePublicHTTPSIngressManifests(env, routes) {
+		if err := kubectlApply(manifest); err != nil {
+			return err
+		}
+	}
+	for _, manifest := range lkePublicHTTPSNetworkPolicyManifests(env, routes) {
+		if err := kubectlApply(manifest); err != nil {
+			return err
+		}
+	}
+	ip, err := lkeWaitForIngressExternalIP(env)
+	if err != nil {
+		return err
+	}
+	for _, host := range hosts {
+		if err := godaddyUpsert(paths, env["CLOUD_DNS_ROOT_DOMAIN"], opts.godaddyEnv, opts.operatorEnv, host, ip, opts.dnsFinalTTL); err != nil {
+			return err
+		}
+		if err := waitDNS(host, ip, env["CLOUD_DNS_ROOT_DOMAIN"], opts); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func lkeIngressNamespace(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_NAMESPACE_INGRESS"), lkeName(firstNonEmpty(env["CLOUD_STACK_NAME"], "video-cloud-staging"))+"-ingress")
+}
+
+func lkeIngressNamespaceManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Namespace
+metadata:
+  name: %s
+  labels:
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+`, lkeIngressNamespace(env), env["CLOUD_STACK_NAME"])
+}
+
+func lkeInstallIngressNginx(env map[string]string) error {
+	ns := lkeIngressNamespace(env)
+	if err := runHelm(
+		"upgrade", "--install", "ingress-nginx", "ingress-nginx",
+		"--repo", "https://kubernetes.github.io/ingress-nginx",
+		"--namespace", ns,
+		"--create-namespace",
+		"--set", "controller.service.type=LoadBalancer",
+		"--set", "controller.service.ports.https=443",
+		"--set", "controller.service.targetPorts.https=https",
+		"--set", "controller.service.enableHttp=false",
+		"--set", "controller.ingressClassResource.default=false",
+	); err != nil {
+		return err
+	}
+	return runKubectl("-n", ns, "rollout", "status", "deployment/ingress-nginx-controller", "--timeout", firstNonEmpty(os.Getenv("LKE_INGRESS_ROLLOUT_TIMEOUT"), "5m"))
+}
+
+func lkePublicHTTPSRoutes(env map[string]string) []lkePublicHTTPSRoute {
+	videoNS := lkeNamespaceName(env, "video-cloud")
+	videoDomain := env["VIDEO_CLOUD_DOMAIN"]
+	routes := []lkePublicHTTPSRoute{
+		{Host: videoDomain, Namespace: videoNS, Service: "video-cloud-api", ServicePort: 80},
+		{Host: firstNonEmpty(os.Getenv("LKE_DEVICE_DOMAIN"), env["VIDEO_CLOUD_DEVICE_DOMAIN"], "device."+videoDomain), Namespace: videoNS, Service: "video-cloud-api", ServicePort: 80},
+		{Host: env["VIDEO_CLOUD_CERTISSUER_DOMAIN"], Namespace: videoNS, Service: "certissuer", ServicePort: 9443, Protocol: "HTTPS"},
+		{Host: env["ACCOUNT_MANAGER_DOMAIN"], Namespace: lkeNamespaceName(env, "account-manager"), Service: "account-manager", ServicePort: 80},
+		{Host: env["CLOUD_ADMIN_DOMAIN"], Namespace: lkeNamespaceName(env, "admin"), Service: "cloud-admin", ServicePort: 80},
+		{Host: firstNonEmpty(os.Getenv("LKE_FRONTEND_DOMAIN"), env["FRONTEND_DOMAIN"], "frontend."+videoDomain), Namespace: lkeNamespaceName(env, "frontend"), Service: "frontend", ServicePort: 80},
+	}
+	if logger := lkeCloudLoggerRoute(env); logger.Host != "" {
+		routes = append(routes, logger)
+	}
+	return routes
+}
+
+func lkeCloudLoggerRoute(env map[string]string) lkePublicHTTPSRoute {
+	host := env["CLOUD_LOGGER_DOMAIN"]
+	if host == "" {
+		return lkePublicHTTPSRoute{}
+	}
+	namespace := firstNonEmpty(os.Getenv("LKE_NAMESPACE_CLOUD_LOGGER"), lkeName(firstNonEmpty(env["CLOUD_STACK_NAME"], "video-cloud-staging"))+"-logger")
+	service := firstNonEmpty(os.Getenv("LKE_CLOUD_LOGGER_SERVICE"), "cloud-logger")
+	out, err := exec.Command(lkeKubectl(), lkeKubectlArgs("-n", namespace, "get", "service", service, "-o", "name")...).CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) == "" {
+		return lkePublicHTTPSRoute{}
+	}
+	return lkePublicHTTPSRoute{Host: host, Namespace: namespace, Service: service, ServicePort: envIntDefault("LKE_CLOUD_LOGGER_SERVICE_PORT", 80)}
+}
+
+func lkePublicHTTPSBridgeServiceManifests(env map[string]string, routes []lkePublicHTTPSRoute) []string {
+	manifests := []string{}
+	seen := map[string]bool{}
+	for _, route := range routes {
+		name := lkePublicHTTPSBridgeServiceName(env, route)
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		manifests = append(manifests, fmt.Sprintf(`apiVersion: v1
+kind: Service
+metadata:
+  name: %s
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: %s
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  type: ExternalName
+  externalName: %s.%s.svc.cluster.local
+  ports:
+    - name: %s
+      port: %d
+      protocol: TCP
+`, name, lkeIngressNamespace(env), name, env["CLOUD_STACK_NAME"], route.Service, route.Namespace, strings.ToLower(firstNonEmpty(route.Protocol, "HTTP")), route.ServicePort))
+	}
+	return manifests
+}
+
+func lkePublicHTTPSBridgeServiceName(env map[string]string, route lkePublicHTTPSRoute) string {
+	stackPrefix := lkeName(firstNonEmpty(env["CLOUD_STACK_NAME"], "video-cloud-staging")) + "-"
+	namespaceKey := strings.TrimPrefix(route.Namespace, stackPrefix)
+	return lkeName("public-" + route.Service + "-" + namespaceKey)
+}
+
+func lkePublicHTTPSHosts(routes []lkePublicHTTPSRoute) []string {
+	hosts := []string{}
+	seen := map[string]bool{}
+	for _, route := range routes {
+		host := strings.TrimSpace(route.Host)
+		if host == "" || seen[host] {
+			continue
+		}
+		seen[host] = true
+		hosts = append(hosts, host)
+	}
+	sort.Strings(hosts)
+	return hosts
+}
+
+func lkeIssuePublicHTTPSCertificate(env map[string]string, opts provisionOptions, hosts []string) (string, string, error) {
+	if len(hosts) == 0 {
+		return "", "", errors.New("public HTTPS certificate requires at least one hostname")
+	}
+	operatorEnv, _ := readEnvFile(opts.operatorEnv)
+	dnsEnv, err := certbotDNS01Env(env, operatorEnv)
+	if err != nil {
+		return "", "", err
+	}
+	workDir, err := os.MkdirTemp("", "rtk-lke-public-https-*")
+	if err != nil {
+		return "", "", err
+	}
+	defer os.RemoveAll(workDir)
+	dnsEnvPath := filepath.Join(workDir, "godaddy-dns.env")
+	if err := os.WriteFile(dnsEnvPath, []byte(renderCertbotDNS01EnvFile(dnsEnv)), 0o600); err != nil {
+		return "", "", err
+	}
+	authHook := filepath.Join(workDir, "dns-auth.sh")
+	cleanupHook := filepath.Join(workDir, "dns-cleanup.sh")
+	if err := os.WriteFile(authHook, []byte(lkeCertbotHookScript(certbotDNSAuthHookScript())), 0o700); err != nil {
+		return "", "", err
+	}
+	if err := os.WriteFile(cleanupHook, []byte(lkeCertbotHookScript(certbotDNSCleanupHookScript())), 0o700); err != nil {
+		return "", "", err
+	}
+	configDir := filepath.Join(workDir, "config")
+	certbot := firstNonEmpty(os.Getenv("RTK_CLOUD_CERTBOT"), "certbot")
+	args := []string{
+		"certonly",
+		"--manual",
+		"--preferred-challenges", "dns",
+		"--manual-auth-hook", authHook,
+		"--manual-cleanup-hook", cleanupHook,
+		"--manual-public-ip-logging-ok",
+		"--non-interactive",
+		"--agree-tos",
+		"--config-dir", configDir,
+		"--work-dir", filepath.Join(workDir, "work"),
+		"--logs-dir", filepath.Join(workDir, "logs"),
+	}
+	if server := os.Getenv("LKE_PUBLIC_HTTPS_ACME_SERVER"); server != "" {
+		args = append(args, "--server", server)
+	}
+	if email := os.Getenv("LKE_PUBLIC_HTTPS_ISSUE_EMAIL"); email != "" {
+		args = append(args, "--email", email)
+	} else {
+		args = append(args, "--register-unsafely-without-email")
+	}
+	for _, host := range hosts {
+		args = append(args, "-d", host)
+	}
+	cmd := exec.Command(certbot, args...)
+	cmd.Env = append(os.Environ(), "RTK_CLOUD_CERTBOT_DNS_ENV="+dnsEnvPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", "", fmt.Errorf("public HTTPS ACME DNS-01 issuance failed: %w", err)
+	}
+	liveDir := filepath.Join(configDir, "live", hosts[0])
+	certPEM, err := os.ReadFile(filepath.Join(liveDir, "fullchain.pem"))
+	if err != nil {
+		return "", "", err
+	}
+	keyPEM, err := os.ReadFile(filepath.Join(liveDir, "privkey.pem"))
+	if err != nil {
+		return "", "", err
+	}
+	if len(bytes.TrimSpace(certPEM)) == 0 || len(bytes.TrimSpace(keyPEM)) == 0 {
+		return "", "", errors.New("public HTTPS ACME DNS-01 issuance produced an empty certificate or key")
+	}
+	return string(certPEM), string(keyPEM), nil
+}
+
+func lkeExistingPublicHTTPSTLSSecretCoversHosts(env map[string]string, hosts []string) (bool, error) {
+	out, err := exec.Command(lkeKubectl(), lkeKubectlArgs("-n", lkeIngressNamespace(env), "get", "secret", lkePublicHTTPSTLSSecretName(env), "-o", "jsonpath={.data.tls\\.crt}")...).CombinedOutput()
+	if err != nil {
+		return false, nil
+	}
+	encoded := strings.TrimSpace(string(out))
+	if encoded == "" {
+		return false, nil
+	}
+	certPEM, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return false, fmt.Errorf("decode existing public TLS secret certificate: %w", err)
+	}
+	return lkeCertificateCoversHosts(certPEM, hosts, time.Now().Add(30*24*time.Hour))
+}
+
+func lkeCertificateCoversHosts(certPEM []byte, hosts []string, minValidUntil time.Time) (bool, error) {
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return false, nil
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return false, fmt.Errorf("parse existing public TLS certificate: %w", err)
+	}
+	if cert.NotAfter.Before(minValidUntil) {
+		return false, nil
+	}
+	for _, host := range hosts {
+		if host == "" {
+			continue
+		}
+		if err := cert.VerifyHostname(host); err != nil {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func renderCertbotDNS01EnvFile(values certbotDNS01EnvValues) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "GODADDY_KEY=%s\n", shellEnvValue(values.Key))
+	fmt.Fprintf(&b, "GODADDY_SECRET=%s\n", shellEnvValue(values.Secret))
+	fmt.Fprintf(&b, "GODADDY_ENV=%s\n", shellEnvValue(values.Env))
+	fmt.Fprintf(&b, "CLOUD_DNS_ROOT_DOMAIN=%s\n", shellEnvValue(values.RootDomain))
+	fmt.Fprintf(&b, "GODADDY_DNS_TTL=%s\n", shellEnvValue(values.TTL))
+	fmt.Fprintf(&b, "GODADDY_DNS_WAIT_SECONDS=%s\n", shellEnvValue(values.WaitSeconds))
+	fmt.Fprintf(&b, "GODADDY_DNS_PROPAGATION_SECONDS=%s\n", shellEnvValue(values.PropagationSeconds))
+	fmt.Fprintf(&b, "GODADDY_DNS_RESOLVERS=%s\n", shellEnvValue(values.Resolvers))
+	return b.String()
+}
+
+func lkeCertbotHookScript(script string) string {
+	return strings.Replace(script, ". /etc/rtk-cloud/godaddy-dns.env", `. "${RTK_CLOUD_CERTBOT_DNS_ENV:?RTK_CLOUD_CERTBOT_DNS_ENV is required}"`, 1)
+}
+
+func lkePublicHTTPSTLSSecretName(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_PUBLIC_HTTPS_TLS_SECRET"), "video-cloud-staging-public-tls")
+}
+
+func lkePublicHTTPSTLSSecretManifest(env map[string]string, certPEM, keyPEM string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: %s
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+type: kubernetes.io/tls
+data:
+  tls.crt: %s
+  tls.key: %s
+`, lkePublicHTTPSTLSSecretName(env), lkeIngressNamespace(env), lkePublicHTTPSTLSSecretName(env), env["CLOUD_STACK_NAME"], base64.StdEncoding.EncodeToString([]byte(certPEM)), base64.StdEncoding.EncodeToString([]byte(keyPEM)))
+}
+
+func lkePublicHTTPSIngressManifests(env map[string]string, routes []lkePublicHTTPSRoute) []string {
+	httpRoutes := []lkePublicHTTPSRoute{}
+	httpsRoutes := []lkePublicHTTPSRoute{}
+	for _, route := range routes {
+		if strings.EqualFold(route.Protocol, "HTTPS") {
+			httpsRoutes = append(httpsRoutes, route)
+			continue
+		}
+		httpRoutes = append(httpRoutes, route)
+	}
+	manifests := []string{}
+	if len(httpRoutes) > 0 {
+		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-public", httpRoutes, ""))
+	}
+	if len(httpsRoutes) > 0 {
+		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-certissuer", httpsRoutes, "HTTPS"))
+	}
+	return manifests
+}
+
+func lkePublicHTTPSIngressManifest(env map[string]string, name string, routes []lkePublicHTTPSRoute, backendProtocol string) string {
+	var rules strings.Builder
+	for _, route := range routes {
+		if route.Host == "" {
+			continue
+		}
+		fmt.Fprintf(&rules, `    - host: %s
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: %s
+                port:
+                  number: %d
+`, route.Host, lkePublicHTTPSBridgeServiceName(env, route), route.ServicePort)
+	}
+	backendAnnotation := ""
+	if backendProtocol != "" {
+		backendAnnotation = fmt.Sprintf("    nginx.ingress.kubernetes.io/backend-protocol: %q\n", backendProtocol)
+	}
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: %s
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: %s
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+%s
+spec:
+  ingressClassName: nginx
+  tls:
+    - secretName: video-cloud-staging-public-tls
+      hosts:
+%s
+  rules:
+%s`, name, lkeIngressNamespace(env), name, env["CLOUD_STACK_NAME"], backendAnnotation, lkePublicHTTPSTLSHostsYAML(routes), rules.String())
+}
+
+func lkePublicHTTPSTLSHostsYAML(routes []lkePublicHTTPSRoute) string {
+	var b strings.Builder
+	for _, host := range lkePublicHTTPSHosts(routes) {
+		fmt.Fprintf(&b, "        - %s\n", host)
+	}
+	return b.String()
+}
+
+func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePublicHTTPSRoute) []string {
+	namespaces := uniqueNonEmpty(
+		lkeNamespaceName(env, "platform"),
+		lkeNamespaceName(env, "video-cloud"),
+		lkeNamespaceName(env, "account-manager"),
+		lkeNamespaceName(env, "admin"),
+		lkeNamespaceName(env, "frontend"),
+		lkeNamespaceName(env, "observability"),
+		lkeNamespaceName(env, "secrets"),
+	)
+	manifests := []string{}
+	for _, namespace := range namespaces {
+		manifests = append(manifests, lkeDefaultDenyIngressNetworkPolicyManifest(env, namespace))
+	}
+	byNamespace := map[string][]int{}
+	for _, route := range routes {
+		byNamespace[route.Namespace] = append(byNamespace[route.Namespace], route.ServicePort)
+	}
+	for namespace, ports := range byNamespace {
+		manifests = append(manifests, lkeAllowPublicIngressNetworkPolicyManifest(env, namespace, ports))
+	}
+	manifests = append(manifests, lkeAllowPostgresClientsNetworkPolicyManifest(env))
+	manifests = append(manifests, lkeAllowOpenBaoClientsNetworkPolicyManifest(env))
+	return manifests
+}
+
+func lkeDefaultDenyIngressNetworkPolicyManifest(env map[string]string, namespace string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: %s
+  labels:
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+`, namespace, env["CLOUD_STACK_NAME"])
+}
+
+func lkeAllowPublicIngressNetworkPolicyManifest(env map[string]string, namespace string, ports []int) string {
+	uniquePorts := []int{}
+	seen := map[int]bool{}
+	for _, port := range ports {
+		if !seen[port] {
+			seen[port] = true
+			uniquePorts = append(uniquePorts, port)
+		}
+	}
+	sort.Ints(uniquePorts)
+	var portRules strings.Builder
+	for _, port := range uniquePorts {
+		fmt.Fprintf(&portRules, `        - protocol: TCP
+          port: %d
+`, port)
+	}
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-public-ingress
+  namespace: %s
+  labels:
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
+      ports:
+%s`, namespace, env["CLOUD_STACK_NAME"], lkeIngressNamespace(env), portRules.String())
+}
+
+func lkeAllowPostgresClientsNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-clients
+  namespace: %s
+  labels:
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
+      ports:
+        - protocol: TCP
+          port: 5432
+`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "video-cloud"), lkeNamespaceName(env, "account-manager"))
+}
+
+func lkeAllowOpenBaoClientsNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-openbao-clients
+  namespace: %s
+  labels:
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: openbao
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
+      ports:
+        - protocol: TCP
+          port: 8200
+        - protocol: TCP
+          port: 8201
+`, lkeNamespaceName(env, "secrets"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "video-cloud"))
+}
+
+func lkeWaitForIngressExternalIP(env map[string]string) (string, error) {
+	ns := lkeIngressNamespace(env)
+	timeout := envDurationDefault("LKE_INGRESS_EXTERNAL_IP_TIMEOUT", 10*time.Minute)
+	deadline := time.Now().Add(timeout)
+	var last string
+	for {
+		out, err := exec.Command(lkeKubectl(), lkeKubectlArgs("-n", ns, "get", "service", "ingress-nginx-controller", "-o", "jsonpath={.status.loadBalancer.ingress[0].ip}")...).CombinedOutput()
+		last = strings.TrimSpace(string(out))
+		if err == nil && net.ParseIP(last) != nil {
+			return last, nil
+		}
+		if time.Now().After(deadline) {
+			return "", fmt.Errorf("ingress-nginx LoadBalancer external IP not ready: %s", last)
+		}
+		time.Sleep(5 * time.Second)
+	}
 }
 
 func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provisionOptions) error {

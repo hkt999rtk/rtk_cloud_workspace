@@ -77,8 +77,8 @@ The target is Linode Kubernetes Engine, not generic Kubernetes.
 | --- | --- |
 | Cluster | LKE cluster with environment-specific node pools. TODO: confirm region, node types, autoscaling limits, and maintenance window. |
 | Namespaces | `platform`, `video-cloud`, `account-manager`, `admin`, `frontend`, `observability`, and `secrets` unless a later platform standard chooses different names. |
-| Public HTTP(S) | Linode NodeBalancer fronting Ingress or Gateway API; cert-manager owns TLS automation. |
-| DNS | Existing GoDaddy DNS-01 can be represented as cert-manager issuer config. TODO: confirm whether Linode DNS should replace GoDaddy for LKE. |
+| Public HTTP(S) | Linode NodeBalancer fronting ingress-nginx for public `443/TCP`; public `80/TCP` remains closed. |
+| DNS | Workspace LKE `--dns` provisions GoDaddy A records after the NodeBalancer IP is assigned and uses GoDaddy DNS-01 for ACME TLS issuance. |
 | Internal traffic | Kubernetes Services and NetworkPolicy replace VM private IP allowlists. |
 | Stateful storage | Linode Block Storage-backed PVCs where in-cluster persistence is selected. |
 | Object storage | Linode Object Storage remains the preferred artifact/media/backup target where applicable. |
@@ -90,9 +90,9 @@ The target is Linode Kubernetes Engine, not generic Kubernetes.
 
 | Service / surface | Current method | Exposure / ports | Persistent data | Target Kubernetes model | Storage / ingress target | Risk | Rollback / TODO |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Video Cloud public API | `cmd/api` on `api` VM behind `edge` nginx | Public HTTPS via `edge:443`, private app `18080` | PostgreSQL, object/blob storage | Deployment + Service | Ingress/Gateway via NodeBalancer; preserve `/healthz`, `/version`, API routes | Medium | Roll back to VM release bundle until LKE cutover is approved. |
+| Video Cloud public API | `cmd/api` on `api` VM behind `edge` nginx | Public HTTPS via `edge:443`, private app `18080` | PostgreSQL, object/blob storage | Runtime-generated LKE staging bridge deploys Deployment + ClusterIP Service | ingress-nginx behind NodeBalancer via `--dns`; preserve `/healthz`, `/version`, API routes | Medium | Remove GoDaddy A records or point them back to VM release bundle until LKE cutover is approved. |
 | Video Cloud workers | systemd units on `api` VM (`cleaner`, `statistics`, `metricsexporter`, `mqttusage`, `logingester`) | Private metrics endpoints | PostgreSQL and runtime stores | Runtime-generated LKE staging bridge deploys the long-running workers as Deployments; production manifests remain gated | ClusterIP Services for metrics where needed | Medium | Validate worker startup and metrics in `scripts/run-staging-e2e.sh`; classify any future one-shot/scheduled worker before converting to Job/CronJob. |
-| CRS / certissuer | `cmd/certissuer` on `api` VM, edge mTLS trusted headers | `certissuer.<domain>:443` via nginx SNI to private `9443` | CA public chains, signing audit DB state | Deployment + Service | Separate mTLS Ingress/Gateway hostname or TCP/TLS gateway path | High | Preserve CSR validation and audit behavior; signer migration blocked on key-management gate. |
+| CRS / certissuer | `cmd/certissuer` on `api` VM, edge mTLS trusted headers | `certissuer.<domain>:443` via nginx SNI to private `9443` | CA public chains, signing audit DB state | Runtime-generated LKE staging bridge deploys Deployment + ClusterIP Service | Separate ingress-nginx hostname with HTTPS backend protocol; mTLS policy still requires follow-up before production | High | Preserve CSR validation and audit behavior; signer migration blocked on key-management gate. |
 | Factory enrollment | Optional systemd service and smoke script | Factory/API HTTP surface, mTLS through certissuer boundary | Enrollment audit and generated device material | Deployment, or Job for controlled factory batch flows if confirmed | Internal Service plus explicit external route only when required | High | TODO: confirm factory/MES network source and auth model. |
 | EMQX MQTT | Docker Compose on `mqtt` VM | MQTT `1883`, MQTTS `8883`, dashboard private | Broker config, retained/session state if enabled | EMQX operator/StatefulSet, or external broker | LoadBalancer/NodeBalancer for MQTT(S); not normal HTTP-only Ingress | High | TODO: confirm retained messages/session persistence and cluster requirements. |
 | coturn | public-only VM | `3478/tcp+udp`, `5349/tcp`, relay UDP range | Config and TLS material | Runtime-generated LKE staging bridge deploys coturn as a Deployment/Service with internal ClusterIP by default; production public TURN needs approved exposure and scaling design | `LKE_COTURN_SERVICE_TYPE=LoadBalancer` is available for explicit public exposure testing; Linode UDP/TCP behavior and relay range must be confirmed before production | High | Prove LKE TURN data-plane behavior and rollback before removing VM coturn fallback. |
@@ -103,7 +103,7 @@ The target is Linode Kubernetes Engine, not generic Kubernetes.
 | Account Manager API | Public VM, nginx, local PostgreSQL, systemd | Public HTTPS `443`, app `18081` | PostgreSQL | Deployment + Service | Ingress/Gateway hostname; private metrics Service | Medium | Keep existing VM path until DB migration and smoke pass. |
 | Cloud Admin | Public+VPC VM, nginx, Go app, SQLite | Public HTTPS `443`, app `8080`, private Prometheus upstream | SQLite sessions/cache/audit | Deployment + PVC for SQLite, or TODO migration to production DB | Ingress/Gateway hostname | Medium | Restore SQLite PVC snapshot with known-good release. |
 | Frontend | Container recipe with SQLite lead storage | Public HTTPS | SQLite lead DB or migrated store | Deployment + PVC, or migrate lead persistence to database | Ingress/Gateway hostname | Medium | TODO: confirm production persistence target. |
-| Nginx / TLS edge | VM-local nginx and certbot DNS-01 | Public HTTPS and mTLS SNI hostnames | Certificates on VM disk | Ingress controller or Gateway API plus cert-manager | NodeBalancer + cert-manager issuer | High | VM nginx may remain temporary bridge during DNS cutover only. |
+| Nginx / TLS edge | VM-local nginx and certbot DNS-01 | Public HTTPS and mTLS SNI hostnames | Certificates on VM disk | ingress-nginx in LKE with ExternalName bridge Services and Kubernetes TLS Secret generated by workspace DNS-01 flow | NodeBalancer + ingress-nginx; cert-manager/webhook remains a later operator-owned option | High | VM nginx may remain temporary bridge during DNS cutover only. |
 | OpenBao | Target secret manager; VM details not fully confirmed in main docs | Internal HTTPS | Storage backend, audit logs, PKI state | StatefulSet/operator or external OpenBao | PVC/storage backend; Kubernetes auth | High | TODO: confirm storage backend, HA, seal/unseal, audit, backup, policy migration. |
 | SoftHSM / PKCS#11 | VM-local SoftHSM/PKCS#11 documented in service configs | Local library/token access | Token DB/private keys | Development/staging only unless explicit production risk approval; external signer/HSM preferred | PVC-backed token storage only for non-production or approved risk | High | Never put PINs/tokens/private keys in images or Git. |
 | Backup jobs | VM scripts and manual artifact collection | Operator initiated | Database dumps, SQLite, object storage, manifests | CronJob/Job only after storage targets and retention are confirmed | Linode Object Storage or approved backup target | High | Restore drill required before production cutover. |
@@ -129,8 +129,8 @@ Required before implementation:
 
 - LKE region, node pools, sizing, autoscaling, and upgrade policy documented.
 - Namespace and RBAC plan documented.
-- Ingress/Gateway, NodeBalancer, DNS, cert-manager, mTLS hostname, and MQTT/TURN
-  exposure plans documented.
+- Ingress/Gateway, NodeBalancer, DNS-01 TLS issuance, mTLS hostname, and
+  MQTT/TURN exposure plans documented.
 - Storage and PVC plan documented, including Linode Block Storage behavior.
 - OpenBao/External Secrets/secret injection plan documented.
 - Monitoring, logging, alerting, and evidence plan documented.
