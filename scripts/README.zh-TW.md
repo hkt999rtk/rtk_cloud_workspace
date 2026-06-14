@@ -38,6 +38,13 @@ artifact workflow。PR 會先跑不需要 secret 的 tooling validation；
 private submodules；產出的 `lke-image-env.sh` 可用來設定後續
 `run-staging-e2e.sh` / `rtk-cloud provision --deploy` 需要的 `LKE_*_IMAGE`。
 
+LKE Prometheus targets 由 workspace Go deployer 的 workload metrics registry
+產生，不直接手寫 Prometheus `scrape_configs`。新增 LKE workload 或 exporter
+時，必須在 workload metadata 宣告 metrics service、namespace、port 與
+`/metrics/prometheus` path；`provision --deploy` 會用這份 registry 產生
+`video-cloud-prometheus-config`。第一版維持 workspace-managed Prometheus
+ConfigMap，不導入 Prometheus Operator、ServiceMonitor 或 PodMonitor。
+
 可用 `--env-root PATH` 指向另一份 environment directory。舊的 `--secrets-root PATH` 仍保留為相容 alias，但新的操作與文件都應使用 `--env-root`。
 
 `cloud-*` 是目前正式入口。舊的 `staging-*` / `staging_*` 相容 wrapper 已移除；automation 與文件都應使用 `cloud-*` 名稱。

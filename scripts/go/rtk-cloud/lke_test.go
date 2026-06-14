@@ -578,7 +578,11 @@ func TestRunProvisionLKEDeployAppliesVideoCloudAuxiliaryServices(t *testing.T) {
 		"kind: Deployment\nmetadata:\n  name: video-cloud-prometheus",
 		"image: prom/prometheus:",
 		"targets: [\"video-cloud-api.video-cloud-staging-video-cloud.svc.cluster.local:80\"]",
+		"targets: [\"account-manager.video-cloud-staging-account-manager.svc.cluster.local:80\"]",
+		"targets: [\"cloud-admin.video-cloud-staging-admin.svc.cluster.local:80\"]",
+		"targets: [\"frontend.video-cloud-staging-frontend.svc.cluster.local:80\"]",
 		"targets: [\"video-cloud-metricsexporter.video-cloud-staging-video-cloud.svc.cluster.local:19200\"]",
+		"targets: [\"factoryenroll.video-cloud-staging-video-cloud.svc.cluster.local:80\"]",
 	} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("expected %q in kubectl manifests, got:\n%s", want, log)
@@ -595,6 +599,61 @@ func TestRunProvisionLKEDeployAppliesVideoCloudAuxiliaryServices(t *testing.T) {
 	} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("expected rollout check %q in kubectl calls, got:\n%s", want, log)
+		}
+	}
+}
+
+func TestLKEPrometheusConfigIsGeneratedFromMetricsRegistry(t *testing.T) {
+	manifest := lkeVideoCloudPrometheusConfigManifest(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}, provisionOptions{})
+
+	for _, want := range []string{
+		"job_name: video-cloud-api",
+		"targets: [\"video-cloud-api.video-cloud-staging-video-cloud.svc.cluster.local:80\"]",
+		"job_name: account-manager",
+		"targets: [\"account-manager.video-cloud-staging-account-manager.svc.cluster.local:80\"]",
+		"job_name: cloud-admin",
+		"targets: [\"cloud-admin.video-cloud-staging-admin.svc.cluster.local:80\"]",
+		"job_name: frontend",
+		"targets: [\"frontend.video-cloud-staging-frontend.svc.cluster.local:80\"]",
+		"job_name: video-cloud-turnregistry",
+		"targets: [\"video-cloud-turnregistry.video-cloud-staging-video-cloud.svc.cluster.local:18190\"]",
+		"job_name: video-cloud-metrics-exporter",
+		"targets: [\"video-cloud-metricsexporter.video-cloud-staging-video-cloud.svc.cluster.local:19200\"]",
+		"job_name: video-cloud-logingester",
+		"targets: [\"video-cloud-logingester.video-cloud-staging-video-cloud.svc.cluster.local:19300\"]",
+		"job_name: video-cloud-mqttusage",
+		"targets: [\"video-cloud-mqttusage.video-cloud-staging-video-cloud.svc.cluster.local:19400\"]",
+		"job_name: video-cloud-factoryenroll",
+		"targets: [\"factoryenroll.video-cloud-staging-video-cloud.svc.cluster.local:80\"]",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("expected %q in Prometheus config manifest, got:\n%s", want, manifest)
+		}
+	}
+	if got, want := strings.Count(manifest, "metrics_path: /metrics/prometheus"), 9; got != want {
+		t.Fatalf("metrics_path count = %d, want %d in manifest:\n%s", got, want, manifest)
+	}
+}
+
+func TestLKEPrometheusConfigHonorsSelectedWorkloads(t *testing.T) {
+	manifest := lkeVideoCloudPrometheusConfigManifest(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}, provisionOptions{videoOnly: true})
+
+	for _, want := range []string{
+		"targets: [\"video-cloud-api.video-cloud-staging-video-cloud.svc.cluster.local:80\"]",
+		"targets: [\"video-cloud-metricsexporter.video-cloud-staging-video-cloud.svc.cluster.local:19200\"]",
+		"targets: [\"factoryenroll.video-cloud-staging-video-cloud.svc.cluster.local:80\"]",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("expected %q in video-only Prometheus config manifest, got:\n%s", want, manifest)
+		}
+	}
+	for _, notWant := range []string{
+		"account-manager.video-cloud-staging-account-manager.svc.cluster.local:80",
+		"cloud-admin.video-cloud-staging-admin.svc.cluster.local:80",
+		"frontend.video-cloud-staging-frontend.svc.cluster.local:80",
+	} {
+		if strings.Contains(manifest, notWant) {
+			t.Fatalf("video-only Prometheus config should not include %q:\n%s", notWant, manifest)
 		}
 	}
 }
