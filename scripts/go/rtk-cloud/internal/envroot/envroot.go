@@ -38,15 +38,6 @@ var generatedKeys = []string{
 	"ACCOUNT_MANAGER_DOMAIN",
 	"CLOUD_ADMIN_DOMAIN",
 	"CLOUD_LOGGER_DOMAIN",
-	"VIDEO_CLOUD_LABEL_PREFIX",
-	"VIDEO_CLOUD_VPC_LABEL",
-	"VIDEO_CLOUD_SUBNET_LABEL",
-	"ACCOUNT_MANAGER_LINODE_LABEL",
-	"ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL",
-	"ADMIN_LINODE_LABEL",
-	"ADMIN_LINODE_FIREWALL_LABEL",
-	"CLOUD_LOGGER_LINODE_LABEL",
-	"CLOUD_LOGGER_LINODE_FIREWALL_LABEL",
 }
 
 func GeneratedKeys() []string {
@@ -139,10 +130,7 @@ func Load(root, dnsOverride string) (Environment, error) {
 	required := []string{
 		"CLOUD_ENV_NAME", "CLOUD_PROVIDER", "CLOUD_REGION", "CLOUD_STACK_NAME",
 		"VIDEO_CLOUD_DOMAIN", "VIDEO_CLOUD_CERTISSUER_DOMAIN", "ACCOUNT_MANAGER_DOMAIN", "CLOUD_ADMIN_DOMAIN",
-		"VIDEO_CLOUD_LABEL_PREFIX", "VIDEO_CLOUD_VPC_LABEL", "VIDEO_CLOUD_SUBNET_LABEL",
-		"ACCOUNT_MANAGER_LINODE_LABEL", "ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL",
-		"ADMIN_LINODE_LABEL", "ADMIN_LINODE_FIREWALL_LABEL",
-		"CLOUD_LOGGER_DOMAIN", "CLOUD_LOGGER_LINODE_LABEL", "CLOUD_LOGGER_LINODE_FIREWALL_LABEL",
+		"CLOUD_LOGGER_DOMAIN",
 	}
 	for _, key := range required {
 		if values[key] == "" {
@@ -177,15 +165,6 @@ func Derive(values map[string]string) map[string]string {
 	out["ACCOUNT_MANAGER_DOMAIN"] = "account-manager." + stack + "." + dnsRoot
 	out["CLOUD_ADMIN_DOMAIN"] = "admin." + stack + "." + dnsRoot
 	out["CLOUD_LOGGER_DOMAIN"] = "logger." + stack + "." + dnsRoot
-	out["VIDEO_CLOUD_LABEL_PREFIX"] = stack
-	out["VIDEO_CLOUD_VPC_LABEL"] = stack + "-vpc"
-	out["VIDEO_CLOUD_SUBNET_LABEL"] = stack + "-subnet"
-	out["ACCOUNT_MANAGER_LINODE_LABEL"] = "rtk-account-manager-" + envName
-	out["ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL"] = "rtk-account-manager-" + envName + "-fw"
-	out["ADMIN_LINODE_LABEL"] = "rtk-cloud-admin-" + envName
-	out["ADMIN_LINODE_FIREWALL_LABEL"] = "rtk-cloud-admin-" + envName + "-fw"
-	out["CLOUD_LOGGER_LINODE_LABEL"] = "rtk-cloud-logger-" + envName
-	out["CLOUD_LOGGER_LINODE_FIREWALL_LABEL"] = "rtk-cloud-logger-" + envName + "-fw"
 	return out
 }
 
@@ -198,26 +177,10 @@ func Validate(root string, env Environment) error {
 	}{
 		{"topology stack", env.Values["CLOUD_STACK_NAME"], YAMLTopValue(paths.VideoConfig, "stack")},
 		{"topology region", env.Values["CLOUD_REGION"], YAMLTopValue(paths.VideoConfig, "region")},
-		{"topology VPC label", env.Values["VIDEO_CLOUD_VPC_LABEL"], YAMLPathValue(paths.VideoConfig, "vpc.label")},
-		{"topology subnet label", env.Values["VIDEO_CLOUD_SUBNET_LABEL"], YAMLPathValue(paths.VideoConfig, "vpc.subnet.label")},
-		{"video gateway domain", env.Values["VIDEO_CLOUD_DOMAIN"], YAMLPathValue(paths.VideoConfig, "instances.edge.letsencrypt.domain")},
 		{"video certissuer domain", env.Values["VIDEO_CLOUD_CERTISSUER_DOMAIN"], YAMLPathValue(paths.VideoConfig, "deploy.certissuer_domain")},
-		{"Account Manager domain", env.Values["ACCOUNT_MANAGER_DOMAIN"], FileVar(paths.AccountManagerEnv, "ACCOUNT_MANAGER_LINODE_DOMAIN")},
-		{"Account Manager label", env.Values["ACCOUNT_MANAGER_LINODE_LABEL"], FileVar(paths.AccountManagerEnv, "ACCOUNT_MANAGER_LINODE_LABEL")},
-		{"Account Manager firewall label", env.Values["ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL"], FileVar(paths.AccountManagerEnv, "ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL")},
-		{"Cloud Admin domain", env.Values["CLOUD_ADMIN_DOMAIN"], FileVar(paths.AdminEnv, "ADMIN_LINODE_DOMAIN")},
-		{"Cloud Admin label", env.Values["ADMIN_LINODE_LABEL"], FileVar(paths.AdminEnv, "ADMIN_LINODE_LABEL")},
-		{"Cloud Admin firewall label", env.Values["ADMIN_LINODE_FIREWALL_LABEL"], FileVar(paths.AdminEnv, "ADMIN_LINODE_FIREWALL_LABEL")},
+		{"Account Manager domain", env.Values["ACCOUNT_MANAGER_DOMAIN"], FileVar(paths.AccountManagerEnv, "ACCOUNT_MANAGER_DOMAIN")},
+		{"Cloud Admin domain", env.Values["CLOUD_ADMIN_DOMAIN"], FileVar(paths.AdminEnv, "CLOUD_ADMIN_DOMAIN")},
 		{"Cloud Logger domain", env.Values["CLOUD_LOGGER_DOMAIN"], FileVar(paths.CloudLoggerEnv, "CLOUD_LOGGER_DOMAIN")},
-		{"Cloud Logger label", env.Values["CLOUD_LOGGER_LINODE_LABEL"], FileVar(paths.CloudLoggerEnv, "CLOUD_LOGGER_LINODE_LABEL")},
-		{"Cloud Logger firewall label", env.Values["CLOUD_LOGGER_LINODE_FIREWALL_LABEL"], FileVar(paths.CloudLoggerEnv, "CLOUD_LOGGER_LINODE_FIREWALL_LABEL")},
-	}
-	for role := range map[string]bool{"edge": true, "api": true, "infra": true, "mqtt": true, "coturn": true} {
-		checks = append(checks, struct {
-			label    string
-			expected string
-			actual   string
-		}{label: "topology " + role + " label", expected: env.Values["VIDEO_CLOUD_LABEL_PREFIX"] + "-" + role, actual: YAMLPathValue(paths.VideoConfig, "instances."+role+".label")})
 	}
 	for _, check := range checks {
 		if check.actual != "" && check.expected != check.actual {

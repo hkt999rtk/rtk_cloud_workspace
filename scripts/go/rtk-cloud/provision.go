@@ -1992,25 +1992,6 @@ func ensureProvisionVPCInterface(paths provisionPaths, serviceName, statePath, s
 	return err
 }
 
-func readEnvFile(path string) (map[string]string, error) {
-	values := map[string]string{}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return values, err
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		key, value, ok := strings.Cut(line, "=")
-		if ok {
-			values[key] = strings.Trim(strings.TrimSpace(value), `"'`)
-		}
-	}
-	return values, nil
-}
-
 func mergeEnv(base map[string]string, overlay map[string]string) map[string]string {
 	out := map[string]string{}
 	for k, v := range base {

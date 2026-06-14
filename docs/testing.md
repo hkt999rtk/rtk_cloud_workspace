@@ -121,9 +121,10 @@ go run ./scripts/go/rtk-cloud -- staging-e2e-test \
 ```
 
 The same command with `--plan` is read-only and should be used before a live run.
-The orchestrator performs remove VM, provision all, create brand, create users,
-create/factory-enroll devices, bind/provision devices, validate the bind
-artifact, and run `go run ./scripts/go/rtk-cloud -- mqtt-test`. It writes sanitized
+The orchestrator performs K8s reset, K8s rollout readiness checks, create brand,
+create users, create/factory-enroll devices, bind/provision devices, validate the
+bind artifact, run `go run ./scripts/go/rtk-cloud -- mqtt-test`, and verify
+persisted MQTT runtime logs. It writes sanitized
 `summary.json` and `TEST_REPORT.md` under
 `<env-root>/artifacts/staging-e2e/<timestamp>/`; per-step logs remain local
 operator artifacts and should not be committed.

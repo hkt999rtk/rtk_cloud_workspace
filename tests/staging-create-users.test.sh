@@ -76,7 +76,7 @@ https://api.linode.com/v4/networking/firewalls/12345/rules)
 	printf '{"inbound":[{"label":"ssh","action":"ACCEPT","protocol":"TCP","ports":"22","addresses":{"ipv4":["198.51.100.20/32"]}}],"outbound":[]}'
 	exit 0
 	;;
-*/v1/auth/login)
+*/v1/auth/login|*/v1/brand-clouds/*/auth/login)
 	payload="${data#@}"
 	email="$(jq -r '.email' "$payload")"
 	csr="$(jq -r '.app_csr_pem // ""' "$payload")"
@@ -85,21 +85,26 @@ https://api.linode.com/v4/networking/firewalls/12345/rules)
 	root@example.com)
 		printf '{"tokens":{"access_token":"test-token"}}' >"$out"
 		;;
-	*)
-		user_id="user-$(printf '%s' "$email" | tr '@+' '__')"
-		if [[ -n "$csr" ]]; then
-			if [[ "${FAKE_APP_LOGIN_ERROR:-0}" == "1" ]]; then
-				printf '{"code":"app_certificate_csr_invalid","message":"CSR subject does not match the authenticated user"}' >"$out"
+		*)
+			user_id="user-$(printf '%s' "$email" | tr '@+' '__')"
+			brand_user_id="brand-user-$(printf '%s' "$email" | tr '@+' '__')"
+			revoked_marker="$FAKE_CURL_LOG/revoked-$(printf '%s' "$brand_user_id" | tr '@+' '__')"
+			if [[ -n "$csr" ]]; then
+				if [[ "${FAKE_APP_LOGIN_ERROR:-0}" == "1" ]]; then
+					printf '{"code":"app_certificate_csr_invalid","message":"CSR subject does not match the authenticated user"}' >"$out"
+					status=400
+			elif ! jq -r '.app_csr_pem' "$payload" | openssl req -noout -subject -nameopt RFC2253 | grep -F "CN=app-brand-cloud-user:$brand_user_id" >/dev/null; then
+				printf '{"code":"app_certificate_csr_invalid","message":"CSR subject does not match the authenticated brand-cloud user"}' >"$out"
 				status=400
 			else
 				cp "$payload" "$FAKE_CURL_LOG/app-login-$(printf '%s' "$email" | tr '@+' '__').json"
-				jq -cn --arg email "$email" --arg user_id "$user_id" \
-					'{user:{id:$user_id,email:$email,display_name:$email,email_verified:true,signup_pending_verification:false,platform_admin:false,created_at:"2026-05-30T00:00:00Z",updated_at:"2026-05-30T00:00:00Z"},tokens:{access_token:"user-token"},app_certificate:{status:"issued",subject:("app-user:"+$user_id),certificate_pem:"-----BEGIN CERTIFICATE-----\nissued\n-----END CERTIFICATE-----\n",certificate_chain_pem:"-----BEGIN CERTIFICATE-----\nchain\n-----END CERTIFICATE-----\n",fingerprint_sha256:("fp-"+$user_id),serial_number:"01",issuer_request_id:("req-"+$user_id),not_before:"2026-06-03T00:00:00Z",not_after:"2027-06-03T00:00:00Z"}}' >"$out"
+				jq -cn --arg email "$email" --arg user_id "$user_id" --arg brand_user_id "$brand_user_id" \
+					'{user:{id:$user_id,email:$email,display_name:$email,email_verified:true,signup_pending_verification:false,platform_admin:false,created_at:"2026-05-30T00:00:00Z",updated_at:"2026-05-30T00:00:00Z"},tokens:{access_token:"user-token"},app_certificate:{status:"issued",subject:("app-brand-cloud-user:"+$brand_user_id),certificate_pem:"-----BEGIN CERTIFICATE-----\nissued\n-----END CERTIFICATE-----\n",certificate_chain_pem:"-----BEGIN CERTIFICATE-----\nchain\n-----END CERTIFICATE-----\n",fingerprint_sha256:("fp-"+$user_id),serial_number:"01",issuer_request_id:("req-"+$user_id),not_before:"2026-06-03T00:00:00Z",not_after:"2027-06-03T00:00:00Z"}}' >"$out"
 			fi
-		elif [[ "${FAKE_INITIAL_ISSUED:-0}" == "1" ]]; then
-			jq -cn --arg email "$email" --arg user_id "$user_id" \
-				'{user:{id:$user_id,email:$email,display_name:$email,email_verified:true,signup_pending_verification:false,platform_admin:false,created_at:"2026-05-30T00:00:00Z",updated_at:"2026-05-30T00:00:00Z"},tokens:{access_token:"user-token"},app_certificate:{status:"issued",subject:("app-user:"+$user_id),certificate_pem:"-----BEGIN CERTIFICATE-----\nissued-existing\n-----END CERTIFICATE-----\n",certificate_chain_pem:"-----BEGIN CERTIFICATE-----\nchain-existing\n-----END CERTIFICATE-----\n",fingerprint_sha256:("fp-existing-"+$user_id),serial_number:"02",issuer_request_id:("req-existing-"+$user_id),not_before:"2026-06-03T00:00:00Z",not_after:"2027-06-03T00:00:00Z"}}' >"$out"
-		else
+			elif [[ "${FAKE_INITIAL_ISSUED:-0}" == "1" && ! -f "$revoked_marker" ]]; then
+				jq -cn --arg email "$email" --arg user_id "$user_id" --arg brand_user_id "$brand_user_id" \
+					'{user:{id:$user_id,email:$email,display_name:$email,email_verified:true,signup_pending_verification:false,platform_admin:false,created_at:"2026-05-30T00:00:00Z",updated_at:"2026-05-30T00:00:00Z"},tokens:{access_token:"user-token"},app_certificate:{status:"issued",subject:("app-brand-cloud-user:"+$brand_user_id),certificate_pem:"-----BEGIN CERTIFICATE-----\nissued-existing\n-----END CERTIFICATE-----\n",certificate_chain_pem:"-----BEGIN CERTIFICATE-----\nchain-existing\n-----END CERTIFICATE-----\n",fingerprint_sha256:("fp-existing-"+$user_id),serial_number:"02",issuer_request_id:("req-existing-"+$user_id),not_before:"2026-06-03T00:00:00Z",not_after:"2027-06-03T00:00:00Z"}}' >"$out"
+			else
 			jq -cn --arg email "$email" --arg user_id "$user_id" \
 				'{user:{id:$user_id,email:$email,display_name:$email,email_verified:true,signup_pending_verification:false,platform_admin:false,created_at:"2026-05-30T00:00:00Z",updated_at:"2026-05-30T00:00:00Z"},tokens:{access_token:"user-token"},app_certificate:{status:"csr_required"}}' >"$out"
 		fi
@@ -110,7 +115,7 @@ https://api.linode.com/v4/networking/firewalls/12345/rules)
 	if [[ "${FAKE_NO_BRAND:-0}" == "1" ]]; then
 		printf '{"brand_clouds":[],"pagination":{"limit":200,"offset":0,"total":0}}' >"$out"
 	else
-		printf '{"brand_clouds":[{"id":"org-rtk","name":"RTK","organization_kind":"brand_cloud","status":"active","tier":"commercial","evaluation_device_quota":5,"metadata":{"brandname":"RTK"},"created_at":"2026-05-27T00:00:00Z","updated_at":"2026-05-27T00:00:00Z"}],"pagination":{"limit":200,"offset":0,"total":1}}' >"$out"
+		printf '{"brand_clouds":[{"id":"org-rtk","tenant_slug":"rtk-test","name":"RTK","organization_kind":"brand_cloud","status":"active","tier":"commercial","evaluation_device_quota":5,"metadata":{"brandname":"RTK"},"created_at":"2026-05-27T00:00:00Z","updated_at":"2026-05-27T00:00:00Z"}],"pagination":{"limit":200,"offset":0,"total":1}}' >"$out"
 	fi
 	status=200
 	;;
@@ -126,8 +131,15 @@ https://api.linode.com/v4/networking/firewalls/12345/rules)
 			status=200
 		fi
 		cp "$payload" "$FAKE_CURL_LOG/user-$(printf '%s' "$email" | tr '@+' '__').json"
-		jq -cn --arg action "$action" --arg email "$email" --arg role "$role" --argjson rotate "$rotate" \
-			'{action:$action, user:{id:("user-"+$email), email:$email, display_name:$email, email_verified:true, signup_pending_verification:false, created_at:"2026-05-30T00:00:00Z", updated_at:"2026-05-30T00:00:00Z"}, member:{organization_id:"org-rtk", user_id:("user-"+$email), email:$email, role:$role, created_at:"2026-05-30T00:00:00Z", updated_at:"2026-05-30T00:00:00Z"}, rotate_password:$rotate}' >"$out"
+		jq -cn --arg action "$action" --arg email "$email" --arg role "$role" --arg brand_user_id "brand-user-$(printf '%s' "$email" | tr '@+' '__')" --argjson rotate "$rotate" \
+			'{action:$action, user:{id:("user-"+$email), email:$email, display_name:$email, email_verified:true, signup_pending_verification:false, created_at:"2026-05-30T00:00:00Z", updated_at:"2026-05-30T00:00:00Z"}, brand_cloud_user:{id:$brand_user_id}, member:{organization_id:"org-rtk", user_id:("user-"+$email), email:$email, role:$role, created_at:"2026-05-30T00:00:00Z", updated_at:"2026-05-30T00:00:00Z"}, rotate_password:$rotate}' >"$out"
+		;;
+*/v1/admin/brand-clouds/org-rtk/users/*/app-certificate/revoke)
+		brand_user_id="${url%/app-certificate/revoke}"
+		brand_user_id="${brand_user_id##*/}"
+		touch "$FAKE_CURL_LOG/revoked-$(printf '%s' "$brand_user_id" | tr '@+' '__')"
+		printf '{"status":"revoked"}' >"$out"
+		status=200
 		;;
 *)
 	printf 'unexpected curl url: %s\n' "$url" >&2
@@ -226,9 +238,10 @@ PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_USER_ACTION=assigned FAKE_
 	--count 1 \
 	--rotate-password >"$ISSUED_OUT"
 ISSUED_CREDS="$(jq -r '.credentials_file' "$ISSUED_OUT")"
-jq -e '.users[0].app_certificate.status == "issued" and .users[0].app_certificate.fingerprint_sha256 == "fp-existing-user-rtk_001_users.local"' "$ISSUED_CREDS" >/dev/null
+jq -e '.users[0].app_certificate.status == "issued" and .users[0].app_certificate.fingerprint_sha256 == "fp-user-rtk_001_users.local"' "$ISSUED_CREDS" >/dev/null
 jq -e '.users[0].app_credentials.private_key_pem | startswith("-----BEGIN EC PRIVATE KEY-----")' "$ISSUED_CREDS" >/dev/null
 jq -e '.users[0].app_credentials.csr_pem | startswith("-----BEGIN CERTIFICATE REQUEST-----")' "$ISSUED_CREDS" >/dev/null
+test -f "$CURL_LOG/revoked-brand-user-rtk_001_users.local"
 
 APP_LOGIN_ERR="$TMP/app-login.err"
 if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_APP_LOGIN_ERROR=1 "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- create-users \

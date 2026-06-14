@@ -290,8 +290,8 @@ func TestVideoRelayCoturnEvidencePolicy(t *testing.T) {
 		t.Fatalf("direct relay status = %+v events=%v, want not_required", status, events)
 	}
 	status, _ = evaluateVideoRelayCoturnEvidence(t.TempDir(), t.TempDir(), time.Time{}, "relay", "")
-	if status.Status != "FAIL" || !status.Required {
-		t.Fatalf("relay-required status = %+v, want FAIL required", status)
+	if status.Status != "retired" || !status.Required {
+		t.Fatalf("relay-required status = %+v, want retired required", status)
 	}
 	events = parseVideoRelayCoturnEvents("Jun 05 turnserver: session 001: new allocation; relay addr 203.0.113.99\n")
 	if len(events) != 1 || events[0].Kind != "allocation" {

@@ -319,7 +319,70 @@ func TestAccountEnsureUserAppCertificateRecoversMissingLocalCredentials(t *testi
 	defer server.Close()
 
 	ctx := accountManagerContext{BaseURL: server.URL}
-	credentials, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", nil, func() error {
+	credentials, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", "app-brand-cloud-user:brand-user-1", nil, func() error {
+		recovered = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("accountEnsureUserAppCertificate() error = %v", err)
+	}
+	if !hasLocalAppCredentials(credentials) || stringValue(certificate["fingerprint_sha256"]) != "new-fingerprint" || loginAttempts != 3 {
+		t.Fatalf("credentials=%v certificate=%v loginAttempts=%d", credentials, certificate, loginAttempts)
+	}
+}
+
+func TestAccountEnsureUserAppCertificateRecoversMismatchedLocalCredentials(t *testing.T) {
+	loginAttempts := 0
+	recovered := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/brand-clouds/rtk-test/auth/login" {
+			http.NotFound(w, r)
+			return
+		}
+		loginAttempts++
+		var req map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		switch {
+		case loginAttempts == 1:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"user":            map[string]string{"id": "user-1", "email": "rtk+001@users.local"},
+				"tokens":          map[string]string{"access_token": testJWT(time.Now().Add(time.Hour))},
+				"app_certificate": map[string]string{"status": "issued", "fingerprint_sha256": "old-fingerprint", "certificate_pem": "old-cert"},
+			})
+		case loginAttempts == 2:
+			if !recovered {
+				t.Fatal("expected recovery before second login")
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"user":            map[string]string{"id": "user-1", "email": "rtk+001@users.local"},
+				"tokens":          map[string]string{"access_token": testJWT(time.Now().Add(time.Hour))},
+				"app_certificate": map[string]string{"status": "csr_required"},
+			})
+		default:
+			if req["app_csr_pem"] == "" {
+				t.Fatal("expected CSR on issuing login")
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"user":   map[string]string{"id": "user-1", "email": "rtk+001@users.local"},
+				"tokens": map[string]string{"access_token": testJWT(time.Now().Add(time.Hour))},
+				"app_certificate": map[string]string{
+					"status":             "issued",
+					"fingerprint_sha256": "new-fingerprint",
+					"certificate_pem":    "new-cert",
+				},
+			})
+		}
+	}))
+	defer server.Close()
+
+	staleCredentials := map[string]any{
+		"private_key_pem": "-----BEGIN RSA PRIVATE KEY-----\nstale\n-----END RSA PRIVATE KEY-----",
+		"csr_pem":         "-----BEGIN CERTIFICATE REQUEST-----\nstale\n-----END CERTIFICATE REQUEST-----",
+	}
+	ctx := accountManagerContext{BaseURL: server.URL}
+	credentials, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", "app-brand-cloud-user:brand-user-1", staleCredentials, func() error {
 		recovered = true
 		return nil
 	})

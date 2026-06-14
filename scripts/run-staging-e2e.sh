@@ -31,6 +31,12 @@ if [[ "$PROVIDER" != "linode" && "$PROVIDER" != "lke" ]]; then
 	exit 2
 fi
 export CLOUD_PROVIDER="$PROVIDER"
+if [[ -z "${CLOUD_DNS_ROOT_DOMAIN:-}" && -f "$STACK_FILE" ]]; then
+	CLOUD_DNS_ROOT_DOMAIN="$(env_file_value "$STACK_FILE" CLOUD_DNS_ROOT_DOMAIN)"
+	if [[ -n "$CLOUD_DNS_ROOT_DOMAIN" ]]; then
+		export CLOUD_DNS_ROOT_DOMAIN
+	fi
+fi
 if [[ -z "${RTK_CLOUD_STAGING_ENV_ROOT:-}" ]]; then
 	stack_env_root="$(dirname "$STACK_FILE")/.."
 	if [[ -d "$stack_env_root" ]]; then
@@ -67,12 +73,13 @@ Runs the full staging E2E flow through ./stg.sh e2e.
 Current supported providers: linode, lke.
 
 Flow:
-  1. remove staging provider resources
-  2. provision/deploy staging with current CI artifacts
+  1. reset K8s staging state
+  2. verify K8s rollout readiness and query service endpoints
   3. run scripts/setup-staging-e2e-data.sh for brand/users/devices/bind
   4. run live MQTT E2E
-  5. write final installation report with segment durations
-  6. print final redacted report paths
+  5. verify persisted device/app MQTT runtime logs
+  6. write final installation report with segment durations
+  7. print final redacted report paths
 
 Options:
   --confirm <stack-name>         Required for destructive run mode.
@@ -89,10 +96,6 @@ Options:
   --skip-mqtt-probe               Run MQTT test without live broker probe.
   --quiet                         Suppress periodic progress lines.
   -h, --help                      Show this help.
-
-Artifact selection:
-  By default the underlying staging deploy logic selects the latest readable CI
-  artifacts. Set VIDEO_RELEASE, ACCOUNT_RELEASE, or ADMIN_RELEASE to override.
 USAGE
 }
 

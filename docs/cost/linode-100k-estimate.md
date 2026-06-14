@@ -12,11 +12,9 @@ validated capacity result and it is not the current Linode bill. Use the current
 Linode run-rate only as staging evidence; use this page for budget discussion.
 
 The estimate uses public Akamai Cloud pricing examples from
-<https://www.akamai.com/cloud/pricing> and the current deployment roles from
-`repos/rtk_video_cloud/linode_deploy/docs/ARCHITECTURE.md`. It assumes a
-self-managed cluster: Realtek/platform operators still own broker, database,
-cache, observability, patching, backup, restore, scale-out, and incident
-response.
+<https://www.akamai.com/cloud/pricing> and should now be treated as a historical
+self-managed VM sizing note. Linode staging runtime has moved to K8s/LKE, so any
+new commercial sizing should be recalculated from the K8s deployment shape.
 
 ## Public Pricing Inputs
 

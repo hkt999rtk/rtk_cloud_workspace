@@ -29,19 +29,22 @@ func TestSyncEnvRewritesDerivedMetadata(t *testing.T) {
 		"CLOUD_ENV_NAME=stg",
 		"CLOUD_STACK_NAME=video-cloud-stg",
 		"VIDEO_CLOUD_DOMAIN=video-cloud-stg.realtekconnect.com",
-		"ACCOUNT_MANAGER_LINODE_LABEL=rtk-account-manager-stg",
-		"ADMIN_LINODE_FIREWALL_LABEL=rtk-cloud-admin-stg-fw",
-		"CLOUD_LOGGER_LINODE_FIREWALL_LABEL=rtk-cloud-logger-stg-fw",
+		"ACCOUNT_MANAGER_DOMAIN=account-manager.video-cloud-stg.realtekconnect.com",
+		"CLOUD_ADMIN_DOMAIN=admin.video-cloud-stg.realtekconnect.com",
+		"CLOUD_LOGGER_DOMAIN=logger.video-cloud-stg.realtekconnect.com",
 	} {
 		if !strings.Contains(stack, want) {
 			t.Fatalf("stack.env missing %q:\n%s", want, stack)
 		}
 	}
+	for _, retired := range []string{"ACCOUNT_MANAGER_LINODE_", "ADMIN_LINODE_", "CLOUD_LOGGER_LINODE_", "VIDEO_CLOUD_LABEL_PREFIX", "VIDEO_CLOUD_VPC_LABEL", "VIDEO_CLOUD_SUBNET_LABEL"} {
+		if strings.Contains(stack, retired) {
+			t.Fatalf("stack.env still contains retired VM metadata %q:\n%s", retired, stack)
+		}
+	}
 	topology := readFile(t, filepath.Join(resolved, "topology", "video-cloud-staging.yaml"))
 	for _, want := range []string{
 		"stack: video-cloud-stg",
-		"label: video-cloud-stg-vpc",
-		"label: video-cloud-stg-edge",
 		"domain: video-cloud-stg.realtekconnect.com",
 		"certissuer_domain: certissuer.video-cloud-stg.realtekconnect.com",
 	} {
@@ -51,37 +54,40 @@ func TestSyncEnvRewritesDerivedMetadata(t *testing.T) {
 	}
 	account := readFile(t, filepath.Join(resolved, "services", "account-manager", "account-manager-public-staging.env"))
 	for _, want := range []string{
-		"ACCOUNT_MANAGER_LINODE_LABEL=rtk-account-manager-stg",
-		"ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL=rtk-account-manager-stg-fw",
-		"ACCOUNT_MANAGER_LINODE_DOMAIN=account-manager.video-cloud-stg.realtekconnect.com",
+		"ACCOUNT_MANAGER_DOMAIN=account-manager.video-cloud-stg.realtekconnect.com",
 		"APP_CERT_ISSUER_BASE_URL=https://certissuer.video-cloud-stg.realtekconnect.com",
 	} {
 		if !strings.Contains(account, want) {
 			t.Fatalf("account env missing %q:\n%s", want, account)
 		}
 	}
+	if strings.Contains(account, "ACCOUNT_MANAGER_LINODE_") {
+		t.Fatalf("account env still contains retired VM metadata:\n%s", account)
+	}
 	admin := readFile(t, filepath.Join(resolved, "services", "cloud-admin", "admin-staging.env"))
 	for _, want := range []string{
 		"ACCOUNT_MANAGER_BASE_URL=https://account-manager.video-cloud-stg.realtekconnect.com",
-		"ADMIN_LINODE_LABEL=rtk-cloud-admin-stg",
-		"ADMIN_LINODE_FIREWALL_LABEL=rtk-cloud-admin-stg-fw",
-		"ADMIN_LINODE_DOMAIN=admin.video-cloud-stg.realtekconnect.com",
+		"CLOUD_ADMIN_DOMAIN=admin.video-cloud-stg.realtekconnect.com",
 		"VIDEO_CLOUD_BASE_URL=https://video-cloud-stg.realtekconnect.com",
 	} {
 		if !strings.Contains(admin, want) {
 			t.Fatalf("admin env missing %q:\n%s", want, admin)
 		}
 	}
+	if strings.Contains(admin, "ADMIN_LINODE_") {
+		t.Fatalf("admin env still contains retired VM metadata:\n%s", admin)
+	}
 	logger := readFile(t, filepath.Join(resolved, "services", "cloud-logger", "logger.env"))
 	for _, want := range []string{
 		"CLOUD_LOGGER_ENDPOINT=https://logger.video-cloud-stg.realtekconnect.com",
-		"CLOUD_LOGGER_LINODE_LABEL=rtk-cloud-logger-stg",
-		"CLOUD_LOGGER_LINODE_FIREWALL_LABEL=rtk-cloud-logger-stg-fw",
 		"CLOUD_LOGGER_DOMAIN=logger.video-cloud-stg.realtekconnect.com",
 	} {
 		if !strings.Contains(logger, want) {
 			t.Fatalf("logger env missing %q:\n%s", want, logger)
 		}
+	}
+	if strings.Contains(logger, "CLOUD_LOGGER_LINODE_") {
+		t.Fatalf("logger env still contains retired VM metadata:\n%s", logger)
 	}
 }
 
@@ -98,15 +104,6 @@ VIDEO_CLOUD_CERTISSUER_DOMAIN=certissuer.video-cloud-stg.realtekconnect.com
 ACCOUNT_MANAGER_DOMAIN=account-manager.video-cloud-stg.realtekconnect.com
 CLOUD_ADMIN_DOMAIN=admin.video-cloud-stg.realtekconnect.com
 CLOUD_LOGGER_DOMAIN=logger.video-cloud-stg.realtekconnect.com
-VIDEO_CLOUD_LABEL_PREFIX=video-cloud-stg
-VIDEO_CLOUD_VPC_LABEL=video-cloud-stg-vpc
-VIDEO_CLOUD_SUBNET_LABEL=video-cloud-stg-subnet
-ACCOUNT_MANAGER_LINODE_LABEL=rtk-account-manager-stg
-ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL=rtk-account-manager-stg-fw
-ADMIN_LINODE_LABEL=rtk-cloud-admin-stg
-ADMIN_LINODE_FIREWALL_LABEL=rtk-cloud-admin-stg-fw
-CLOUD_LOGGER_LINODE_LABEL=rtk-cloud-logger-stg
-CLOUD_LOGGER_LINODE_FIREWALL_LABEL=rtk-cloud-logger-stg-fw
 `)
 	if err := run([]string{"sync-env", "--workspace", workspace, "--env-root", envRoot, "--check"}); err == nil {
 		t.Fatal("expected sync-env --check to fail when service env still contains legacy stg-0529 URLs")
@@ -142,12 +139,9 @@ CLOUD_ADMIN_DOMAIN=admin.video-cloud-stg-0529.realtekconnect.com
 VIDEO_CLOUD_LABEL_PREFIX=video-cloud-stg-0529
 VIDEO_CLOUD_VPC_LABEL=video-cloud-stg-0529-vpc
 VIDEO_CLOUD_SUBNET_LABEL=video-cloud-stg-0529-subnet
-ACCOUNT_MANAGER_LINODE_LABEL=rtk-account-manager-stg-0529
-ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL=rtk-account-manager-stg-0529-fw
-ADMIN_LINODE_LABEL=rtk-cloud-admin-stg-0529
-ADMIN_LINODE_FIREWALL_LABEL=rtk-cloud-admin-stg-0529-fw
 CLOUD_LOGGER_DOMAIN=logger.video-cloud-stg-0529.realtekconnect.com
-CLOUD_LOGGER_LINODE_LABEL=rtk-cloud-logger-stg-0529
+ACCOUNT_MANAGER_LINODE_LABEL=rtk-account-manager-stg-0529
+ADMIN_LINODE_HOST=203.0.113.60
 CLOUD_LOGGER_LINODE_FIREWALL_LABEL=rtk-cloud-logger-stg-0529-fw
 `)
 	writeFile(t, filepath.Join(resolved, "topology", "video-cloud-staging.yaml"), `stack: video-cloud-stg-0529
@@ -174,12 +168,12 @@ deploy:
 `)
 	writeFile(t, filepath.Join(resolved, "services", "account-manager", "account-manager-public-staging.env"), `ACCOUNT_MANAGER_LINODE_LABEL=rtk-account-manager-stg-0529
 ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL=rtk-account-manager-stg-0529-fw
-ACCOUNT_MANAGER_LINODE_DOMAIN=account-manager.video-cloud-stg-0529.realtekconnect.com
+ACCOUNT_MANAGER_DOMAIN=account-manager.video-cloud-stg-0529.realtekconnect.com
 APP_CERT_ISSUER_BASE_URL=https://certissuer.video-cloud-stg-0529.realtekconnect.com
 `)
 	writeFile(t, filepath.Join(resolved, "services", "cloud-admin", "admin-staging.env"), `ADMIN_LINODE_LABEL=rtk-cloud-admin-stg-0529
 ADMIN_LINODE_FIREWALL_LABEL=rtk-cloud-admin-stg-0529-fw
-ADMIN_LINODE_DOMAIN=admin.video-cloud-stg-0529.realtekconnect.com
+CLOUD_ADMIN_DOMAIN=admin.video-cloud-stg-0529.realtekconnect.com
 ACCOUNT_MANAGER_BASE_URL=https://account-manager.video-cloud-stg-0529.realtekconnect.com
 VIDEO_CLOUD_BASE_URL=https://video-cloud-stg-0529.realtekconnect.com
 `)
