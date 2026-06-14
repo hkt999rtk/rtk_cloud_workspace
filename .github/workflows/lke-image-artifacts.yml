@@ -34,7 +34,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: scripts/go/go.mod
+          go-version-file: go.work
           cache-dependency-path: scripts/go/go.sum
 
       - name: Run LKE image artifact tests
@@ -81,7 +81,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: scripts/go/go.mod
+          go-version-file: go.work
           cache-dependency-path: scripts/go/go.sum
 
       - name: Set up Docker Buildx
