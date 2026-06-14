@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/hmac"
 	"crypto/rand"
@@ -982,6 +984,7 @@ type generatedDevice struct {
 	FirmwareVersion      string   `json:"firmware_version"`
 	Capabilities         []string `json:"capabilities"`
 	CertificateProfile   string   `json:"certificate_profile"`
+	KeyAlgorithm         string   `json:"key_algorithm"`
 	CertificatePath      string   `json:"certificate_path"`
 	CertificateChainPath string   `json:"certificate_chain_path"`
 	KeyPath              string   `json:"key_path"`
@@ -2362,12 +2365,17 @@ func runStagingE2ETest(args []string) error {
 	if stackName == "" {
 		stackName = "video-cloud-staging"
 	}
+	provider := firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), os.Getenv("RTK_CLOUD_STAGING_PROVIDER"), envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER"))
+	useLKEProvision := provider == "lke" && os.Getenv("CLOUD_STAGING_E2E_PROVISION_K8S_SCRIPT") == ""
 	scripts := map[string]string{
 		"remove-k8s":      firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_REMOVE_K8S_SCRIPT"), selfCommandPath("remove-k8s")),
 		"provision-k8s":   firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_PROVISION_K8S_SCRIPT"), selfCommandPath("provision-k8s")),
 		"setup-data":      firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT"), filepath.Join(workspace, "scripts", "setup-staging-e2e-data.sh")),
 		"mqtt-test":       firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT"), selfCommandPath("mqtt-test")),
 		"mqtt-log-verify": firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT"), selfCommandPath("staging-e2e-mqtt-log-verify")),
+	}
+	if useLKEProvision {
+		scripts["provision-k8s"] = selfCommandPath("provision")
 	}
 	if !*runMode {
 		printE2EPlan(workspace, envRoot, stackName, *brandname, *userCount, *deviceCount, *deviceMix, *userConcurrency, *deviceConcurrency, *bindConcurrency, *skipRemove, scripts)
@@ -2396,6 +2404,9 @@ func runStagingE2ETest(args []string) error {
 		}
 	}
 	k8sProvisionArgs := []string{"--workspace", workspace, "--env-root", envRoot, "--confirm", stackName}
+	if useLKEProvision {
+		k8sProvisionArgs = []string{"--workspace", workspace, "--env-root", envRoot, "--preflight", "--plan", "--apply", "--deploy", "--artifacts", "--confirm", stackName}
+	}
 	if err := runStep("provision_k8s", commandWithArgs(scripts["provision-k8s"], k8sProvisionArgs...)...); err != nil {
 		return err
 	}
@@ -3374,20 +3385,44 @@ func accountEnsureUserAppCertificate(ctx accountManagerContext, tenantSlug, emai
 	if strings.TrimSpace(subject) == "" {
 		return nil, nil, accountPlatformSession{}, fmt.Errorf("app certificate subject is required for %s", email)
 	}
-	privateKeyPEM, csrPEM, err := generateAppCertificateCSR(subject)
+	keyAlgorithm := "ed25519"
+	privateKeyPEM, csrPEM, err := generateAppCertificateCSRWithAlgorithm(subject, keyAlgorithm)
 	if err != nil {
 		return nil, nil, accountPlatformSession{}, err
 	}
 	issued, err := accountLoginUserFull(ctx, tenantSlug, email, password, csrPEM)
-	if err != nil && strings.Contains(err.Error(), "app_certificate_csr_invalid") && strings.HasPrefix(subject, "app-brand-cloud-user:") && initial.User.ID != "" {
-		legacySubject := "app-user:" + initial.User.ID
-		logCreateUsers("retrying app certificate with legacy subject: email=%s", email)
-		subject = legacySubject
-		privateKeyPEM, csrPEM, err = generateAppCertificateCSR(subject)
+	for attempt := 1; shouldRetrySameAppCertificateSubject(err, subject) && attempt <= 5; attempt++ {
+		logCreateUsers("retrying app certificate after transient error: email=%s attempt=%d", email, attempt)
+		time.Sleep(time.Duration(2*attempt) * time.Second)
+		issued, err = accountLoginUserFull(ctx, tenantSlug, email, password, csrPEM)
+	}
+	if shouldFallbackAppCertificateAlgorithm(err, keyAlgorithm) {
+		keyAlgorithm = "p256"
+		logCreateUsers("retrying app certificate with fallback key algorithm: email=%s algorithm=%s", email, keyAlgorithm)
+		privateKeyPEM, csrPEM, err = generateAppCertificateCSRWithAlgorithm(subject, keyAlgorithm)
 		if err != nil {
 			return nil, nil, accountPlatformSession{}, err
 		}
 		issued, err = accountLoginUserFull(ctx, tenantSlug, email, password, csrPEM)
+		for attempt := 1; shouldRetrySameAppCertificateSubject(err, subject) && attempt <= 5; attempt++ {
+			logCreateUsers("retrying app certificate after transient error: email=%s algorithm=%s attempt=%d", email, keyAlgorithm, attempt)
+			time.Sleep(time.Duration(2*attempt) * time.Second)
+			issued, err = accountLoginUserFull(ctx, tenantSlug, email, password, csrPEM)
+		}
+	}
+	if shouldRetryLegacyAppCertificateSubject(err, subject, initial.User.ID) {
+		for _, legacySubject := range legacyAppCertificateSubjects(subject, initial.User.ID) {
+			logCreateUsers("retrying app certificate with legacy subject: email=%s", email)
+			subject = legacySubject
+			privateKeyPEM, csrPEM, err = generateAppCertificateCSRWithAlgorithm(subject, keyAlgorithm)
+			if err != nil {
+				return nil, nil, accountPlatformSession{}, err
+			}
+			issued, err = accountLoginUserFull(ctx, tenantSlug, email, password, csrPEM)
+			if err == nil || !strings.Contains(err.Error(), "app_certificate_csr_invalid") {
+				break
+			}
+		}
 	}
 	if err != nil {
 		return nil, nil, accountPlatformSession{}, err
@@ -3400,9 +3435,50 @@ func accountEnsureUserAppCertificate(ctx accountManagerContext, tenantSlug, emai
 	}
 	return map[string]any{
 		"subject":         subject,
+		"key_algorithm":   keyAlgorithm,
 		"private_key_pem": privateKeyPEM,
 		"csr_pem":         csrPEM,
 	}, accountAppCertificateMap(issued.AppCertificate), accountPlatformSession{AccessToken: issued.Tokens.AccessToken, RefreshToken: issued.Tokens.RefreshToken}, nil
+}
+
+func shouldRetrySameAppCertificateSubject(err error, subject string) bool {
+	if err == nil || !strings.HasPrefix(subject, "app-brand-cloud-user:") {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "HTTP 500") && strings.Contains(msg, "internal_error")
+}
+
+func shouldRetryLegacyAppCertificateSubject(err error, subject, userID string) bool {
+	if err == nil || len(legacyAppCertificateSubjects(subject, userID)) == 0 {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "app_certificate_csr_invalid")
+}
+
+func shouldFallbackAppCertificateAlgorithm(err error, algorithm string) bool {
+	if err == nil || strings.ToLower(strings.TrimSpace(algorithm)) != "ed25519" {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "HTTP 500") && strings.Contains(msg, "internal_error")
+}
+
+func legacyAppCertificateSubjects(subject, userID string) []string {
+	out := []string{}
+	if !strings.HasPrefix(subject, "app-brand-cloud-user:") {
+		return out
+	}
+	brandCloudUserID := strings.TrimSpace(strings.TrimPrefix(subject, "app-brand-cloud-user:"))
+	if brandCloudUserID != "" {
+		out = append(out, "app-user:"+brandCloudUserID)
+	}
+	userID = strings.TrimSpace(userID)
+	if userID != "" && userID != brandCloudUserID {
+		out = append(out, "app-user:"+userID)
+	}
+	return out
 }
 
 func loadExistingUserAppCredentials(envRoot, slug string) map[string]map[string]any {
@@ -3549,11 +3625,11 @@ func truncateForLog(value string, maxLen int) string {
 }
 
 func generateAppCertificateCSR(subject string) (string, string, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return "", "", err
-	}
-	keyDER, err := x509.MarshalECPrivateKey(key)
+	return generateAppCertificateCSRWithAlgorithm(subject, "ed25519")
+}
+
+func generateAppCertificateCSRWithAlgorithm(subject, algorithm string) (string, string, error) {
+	key, keyPEM, err := newCertificatePrivateKey(algorithm)
 	if err != nil {
 		return "", "", err
 	}
@@ -3563,9 +3639,35 @@ func generateAppCertificateCSR(subject string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	privateKeyPEM := string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}))
 	csrPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER}))
-	return privateKeyPEM, csrPEM, nil
+	return keyPEM, csrPEM, nil
+}
+
+func newCertificatePrivateKey(algorithm string) (crypto.Signer, string, error) {
+	switch strings.ToLower(strings.TrimSpace(algorithm)) {
+	case "", "ed25519":
+		_, key, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return nil, "", err
+		}
+		der, err := x509.MarshalPKCS8PrivateKey(key)
+		if err != nil {
+			return nil, "", err
+		}
+		return key, string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})), nil
+	case "p256", "p-256", "ecdsa-p256":
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			return nil, "", err
+		}
+		der, err := x509.MarshalECPrivateKey(key)
+		if err != nil {
+			return nil, "", err
+		}
+		return key, string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})), nil
+	default:
+		return nil, "", fmt.Errorf("unsupported certificate key algorithm: %s", algorithm)
+	}
 }
 
 func accountAppCertificateMap(cert accountAppCertificate) map[string]any {
@@ -4103,6 +4205,15 @@ type loadDeviceInput struct {
 	ResultsPath    string
 }
 
+type factoryEnrollOutcome struct {
+	OK         bool
+	Retryable  bool
+	HTTPStatus string
+	ErrorText  string
+	Serial     string
+	RequestID  string
+}
+
 func writeLoadDevice(in loadDeviceInput) (generatedDevice, bool, error) {
 	deviceID := fmt.Sprintf("%s-%04d", in.Prefix, in.Index)
 	display := loadDisplayName(in.Type.Name, in.Ordinal)
@@ -4114,30 +4225,17 @@ func writeLoadDevice(in loadDeviceInput) (generatedDevice, bool, error) {
 	if err := os.MkdirAll(bundleDir, 0o755); err != nil {
 		return generatedDevice{}, false, err
 	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return generatedDevice{}, false, err
-	}
 	keyPath := filepath.Join(deviceDir, "device.key.pem")
-	if err := writeECPrivateKey(keyPath, key); err != nil {
-		return generatedDevice{}, false, err
-	}
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
-		Subject:  pkix.Name{Country: []string{"TW"}, Organization: []string{"Realtek Connect Plus Simulation"}, OrganizationalUnit: []string{in.Type.Name}, CommonName: deviceID},
-		DNSNames: []string{deviceID + ".simulated.realtek-connect.local"},
-		URIs:     mustParseURIs("urn:realtek-connect:simulated-device:" + deviceID),
-	}, key)
-	if err != nil {
-		return generatedDevice{}, false, err
-	}
 	csrPath := filepath.Join(deviceDir, "device.csr.pem")
-	if err := writePEM(csrPath, "CERTIFICATE REQUEST", csrDER, 0o644); err != nil {
-		return generatedDevice{}, false, err
-	}
 	certPath := filepath.Join(deviceDir, "device.cert.pem")
 	chainPath := filepath.Join(deviceDir, "device.chain.pem")
 	profile := "factory-enrolled-device-mtls-client"
 	warning := "Factory-enrolled staging load-test credential. Keep private key material out of source control."
+	keyAlgorithm := "ed25519"
+	key, err := writeDeviceKeyAndCSR(keyPath, csrPath, deviceID, in.Type.Name, keyAlgorithm)
+	if err != nil {
+		return generatedDevice{}, false, err
+	}
 	if in.GenerateOnly {
 		logLoad("generate-only: index=%03d device=%s type=%s service_options=%s", in.Index, deviceID, in.Type.Name, strings.Join(in.Type.ServiceOptions, ","))
 		certDER, err := signDeviceCert(deviceID, key, in.CAKey, in.CACert, in.DeviceDays)
@@ -4153,10 +4251,32 @@ func writeLoadDevice(in loadDeviceInput) (generatedDevice, bool, error) {
 		profile = "simulation-device-mtls-client"
 		warning = "Simulation-only generated credential. Do not use as a production or customer device identity."
 	} else {
-		ok, err := factoryEnrollDevice(in, deviceID, display, csrPath, certPath, chainPath)
-		if err != nil || !ok {
-			return generatedDevice{}, ok, err
+		var outcome factoryEnrollOutcome
+		for i, algorithm := range []string{"ed25519", "p256"} {
+			keyAlgorithm = algorithm
+			if i > 0 {
+				logLoad("retrying factory enrollment with fallback key algorithm: index=%03d device=%s algorithm=%s", in.Index, deviceID, keyAlgorithm)
+				if _, err := writeDeviceKeyAndCSR(keyPath, csrPath, deviceID, in.Type.Name, keyAlgorithm); err != nil {
+					return generatedDevice{}, false, err
+				}
+			}
+			outcome, err = factoryEnrollDevice(in, deviceID, display, csrPath, certPath, chainPath, keyAlgorithm)
+			if err != nil {
+				return generatedDevice{}, false, err
+			}
+			if outcome.OK {
+				break
+			}
+			if !outcome.Retryable || i == 1 {
+				break
+			}
 		}
+		if !outcome.OK {
+			recordEnrollResult(in.ResultsPath, "failed", in.Index, deviceID, in.Type.Name, in.Type.ServiceOptions, outcome.HTTPStatus, outcome.RequestID, fmt.Sprintf("%s-%s-%04d", in.SerialPrefix, in.RunID, in.Index), outcome.ErrorText)
+			logLoad("enroll failed: index=%03d device=%s type=%s status=%s error=%s", in.Index, deviceID, in.Type.Name, outcome.HTTPStatus, outcome.ErrorText)
+			return generatedDevice{}, false, nil
+		}
+		recordEnrollResult(in.ResultsPath, "ok", in.Index, deviceID, in.Type.Name, in.Type.ServiceOptions, outcome.HTTPStatus, outcome.RequestID, outcome.Serial, "")
 	}
 	bundlePath := filepath.Join(bundleDir, deviceID+".pem")
 	certBytes, err := os.ReadFile(certPath)
@@ -4180,6 +4300,7 @@ func writeLoadDevice(in loadDeviceInput) (generatedDevice, bool, error) {
 		FirmwareVersion:      "0.0.0-loadtest",
 		Capabilities:         in.Type.Capabilities,
 		CertificateProfile:   profile,
+		KeyAlgorithm:         keyAlgorithm,
 		CertificatePath:      relSlash(in.OutDir, certPath),
 		CertificateChainPath: relSlash(in.OutDir, chainPath),
 		KeyPath:              relSlash(in.OutDir, keyPath),
@@ -4194,14 +4315,40 @@ func writeLoadDevice(in loadDeviceInput) (generatedDevice, bool, error) {
 	return device, true, nil
 }
 
-func factoryEnrollDevice(in loadDeviceInput, deviceID, display, csrPath, certPath, chainPath string) (bool, error) {
+func writeDeviceKeyAndCSR(keyPath, csrPath, deviceID, deviceType, algorithm string) (crypto.Signer, error) {
+	key, keyPEM, err := newCertificatePrivateKey(algorithm)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(keyPath), 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(keyPath, []byte(keyPEM), 0o600); err != nil {
+		return nil, err
+	}
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject: pkix.Name{Country: []string{"TW"}, Organization: []string{"Realtek Connect Plus Simulation"}, OrganizationalUnit: []string{deviceType}, CommonName: deviceID},
+	}, key)
+	if err != nil {
+		return nil, err
+	}
+	if err := writePEM(csrPath, "CERTIFICATE REQUEST", csrDER, 0o644); err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
+func factoryEnrollDevice(in loadDeviceInput, deviceID, display, csrPath, certPath, chainPath, keyAlgorithm string) (factoryEnrollOutcome, error) {
 	requestID := fmt.Sprintf("%s-%s", in.RunID, deviceID)
+	if strings.EqualFold(strings.TrimSpace(keyAlgorithm), "p256") {
+		requestID += "-p256"
+	}
 	serial := fmt.Sprintf("%s-%s-%04d", in.SerialPrefix, in.RunID, in.Index)
 	deviceDir := filepath.Dir(csrPath)
 	logLoad("enroll start: index=%03d device=%s type=%s service_options=%s", in.Index, deviceID, in.Type.Name, strings.Join(in.Type.ServiceOptions, ","))
 	csrPEM, err := os.ReadFile(csrPath)
 	if err != nil {
-		return false, err
+		return factoryEnrollOutcome{}, err
 	}
 	body := map[string]any{
 		"request_id":      requestID,
@@ -4228,18 +4375,18 @@ func factoryEnrollDevice(in loadDeviceInput, deviceID, display, csrPath, certPat
 	}
 	bodyBytes, err := json.MarshalIndent(body, "", "  ")
 	if err != nil {
-		return false, err
+		return factoryEnrollOutcome{}, err
 	}
 	requestPath := filepath.Join(deviceDir, "factory-enroll-request.json")
 	if err := os.WriteFile(requestPath, bodyBytes, 0o644); err != nil {
-		return false, err
+		return factoryEnrollOutcome{}, err
 	}
 	timestamp := time.Now().UTC().Format(time.RFC3339)
 	signature := signFactoryRequest(in.FactoryAuthKey, "POST", "/v1/factory/enroll", timestamp, requestID, bodyBytes)
 	client := &http.Client{Timeout: in.Timeout}
 	req, err := http.NewRequest(http.MethodPost, in.FactoryURL+"/v1/factory/enroll", bytes.NewReader(bodyBytes))
 	if err != nil {
-		return false, err
+		return factoryEnrollOutcome{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Video-Cloud-Request-ID", requestID)
@@ -4247,16 +4394,13 @@ func factoryEnrollDevice(in loadDeviceInput, deviceID, display, csrPath, certPat
 	req.Header.Set("X-Video-Cloud-Signature", signature)
 	resp, err := client.Do(req)
 	if err != nil {
-		recordEnrollResult(in.ResultsPath, "failed", in.Index, deviceID, in.Type.Name, in.Type.ServiceOptions, "000", requestID, serial, err.Error())
-		return false, nil
+		return factoryEnrollOutcome{Retryable: true, HTTPStatus: "000", ErrorText: err.Error(), Serial: serial, RequestID: requestID}, nil
 	}
 	defer resp.Body.Close()
 	respBytes, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		errText := fmt.Sprintf("factory enrollment HTTP %d", resp.StatusCode)
-		recordEnrollResult(in.ResultsPath, "failed", in.Index, deviceID, in.Type.Name, in.Type.ServiceOptions, strconv.Itoa(resp.StatusCode), requestID, serial, errText)
-		logLoad("enroll failed: index=%03d device=%s type=%s status=%d error=%s", in.Index, deviceID, in.Type.Name, resp.StatusCode, errText)
-		return false, nil
+		return factoryEnrollOutcome{Retryable: resp.StatusCode >= 500, HTTPStatus: strconv.Itoa(resp.StatusCode), ErrorText: errText, Serial: serial, RequestID: requestID}, nil
 	}
 	var parsed struct {
 		CertificatePEM      string `json:"certificate_pem"`
@@ -4264,32 +4408,30 @@ func factoryEnrollDevice(in loadDeviceInput, deviceID, display, csrPath, certPat
 		SerialNumber        string `json:"serial_number"`
 	}
 	if err := json.Unmarshal(respBytes, &parsed); err != nil {
-		return false, err
+		return factoryEnrollOutcome{}, err
 	}
 	if parsed.CertificatePEM == "" || parsed.CertificateChainPEM == "" {
 		errText := "factory enrollment response missing certificate_pem or certificate_chain_pem"
-		recordEnrollResult(in.ResultsPath, "failed", in.Index, deviceID, in.Type.Name, in.Type.ServiceOptions, strconv.Itoa(resp.StatusCode), requestID, serial, errText)
-		return false, nil
+		return factoryEnrollOutcome{HTTPStatus: strconv.Itoa(resp.StatusCode), ErrorText: errText, Serial: serial, RequestID: requestID}, nil
 	}
 	if err := os.WriteFile(certPath, []byte(parsed.CertificatePEM), 0o644); err != nil {
-		return false, err
+		return factoryEnrollOutcome{}, err
 	}
 	if err := os.WriteFile(chainPath, []byte(parsed.CertificateChainPEM), 0o644); err != nil {
-		return false, err
+		return factoryEnrollOutcome{}, err
 	}
 	var redacted map[string]any
 	_ = json.Unmarshal(respBytes, &redacted)
 	delete(redacted, "certificate_pem")
 	delete(redacted, "certificate_chain_pem")
 	if err := writeJSON(filepath.Join(deviceDir, "factory-enroll-response.redacted.json"), redacted); err != nil {
-		return false, err
+		return factoryEnrollOutcome{}, err
 	}
 	if parsed.SerialNumber == "" {
 		parsed.SerialNumber = serial
 	}
 	logLoad("enroll ok: index=%03d device=%s type=%s status=%d serial=%s", in.Index, deviceID, in.Type.Name, resp.StatusCode, parsed.SerialNumber)
-	recordEnrollResult(in.ResultsPath, "ok", in.Index, deviceID, in.Type.Name, in.Type.ServiceOptions, strconv.Itoa(resp.StatusCode), requestID, parsed.SerialNumber, "")
-	return true, nil
+	return factoryEnrollOutcome{OK: true, HTTPStatus: strconv.Itoa(resp.StatusCode), Serial: parsed.SerialNumber, RequestID: requestID}, nil
 }
 
 func allocateDeviceMix(count int, raw string) (map[string]int, error) {
@@ -4378,7 +4520,7 @@ func writeGeneratedCA(outDir string, days int) (*ecdsa.PrivateKey, []byte, error
 	return key, pemBytes, nil
 }
 
-func signDeviceCert(deviceID string, key, caKey *ecdsa.PrivateKey, caPEM []byte, days int) ([]byte, error) {
+func signDeviceCert(deviceID string, key crypto.Signer, caKey *ecdsa.PrivateKey, caPEM []byte, days int) ([]byte, error) {
 	block, _ := pem.Decode(caPEM)
 	if block == nil {
 		return nil, errors.New("invalid CA certificate")
@@ -4397,7 +4539,7 @@ func signDeviceCert(deviceID string, key, caKey *ecdsa.PrivateKey, caPEM []byte,
 		DNSNames:     []string{deviceID + ".simulated.realtek-connect.local"},
 		URIs:         mustParseURIs("urn:realtek-connect:simulated-device:" + deviceID),
 	}
-	return x509.CreateCertificate(rand.Reader, tpl, caCert, &key.PublicKey, caKey)
+	return x509.CreateCertificate(rand.Reader, tpl, caCert, key.Public(), caKey)
 }
 
 func signFactoryRequest(key, method, path, timestamp, requestID string, body []byte) string {
@@ -4451,7 +4593,7 @@ This directory contains staging load-test device identities generated for factor
 - Device count: %d
 - Requested mix: %s
 - Mode: %s
-- Device key type: EC P-256
+- Device key type: Ed25519, with P-256 fallback when the staging signer rejects Ed25519
 - Device certificate profile: clientAuth
 - Credential source: %s
 - CA validity days: %d

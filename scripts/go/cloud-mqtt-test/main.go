@@ -2,8 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -55,8 +55,10 @@ type appCertificateKeys struct {
 }
 
 type appCertificateSummary struct {
-	Subject           string `json:"subject"`
-	FingerprintSHA256 string `json:"fingerprint_sha256"`
+	Subject             string `json:"subject"`
+	CertificatePEM      string `json:"certificate_pem"`
+	CertificateChainPEM string `json:"certificate_chain_pem"`
+	FingerprintSHA256   string `json:"fingerprint_sha256"`
 }
 
 type bindArtifact struct {
@@ -144,6 +146,7 @@ type appBootstrapStatus struct {
 	FingerprintSHA256 string `json:"fingerprint_sha256,omitempty"`
 	TokenScope        string `json:"token_scope,omitempty"`
 	AccessToken       string `json:"-"`
+	CertificateSource string `json:"certificate_source,omitempty"`
 }
 
 type appBootstrapMaterial struct {
@@ -573,8 +576,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 }
 
 func runDeviceActorSeparatedEnvelope(record certRecord, brandname, apiBaseURL, host string, port int, appCert tls.Certificate) deviceResult {
-	certPath := firstNonEmpty(record.ChainPath, record.CertPath)
-	cert, err := tls.LoadX509KeyPair(certPath, record.KeyPath)
+	cert, err := loadLeafFirstX509KeyPair(record.CertPath, record.ChainPath, record.KeyPath)
 	if err != nil {
 		return failedActorResult(record.DeviceID, record.DeviceType, redactedError(err))
 	}
@@ -607,6 +609,19 @@ func runDeviceActorSeparatedEnvelope(record certRecord, brandname, apiBaseURL, h
 	}
 	result.TraceChain = renumberTrace(append(prefix, result.TraceChain...))
 	return result
+}
+
+func loadLeafFirstX509KeyPair(certPath, chainPath, keyPath string) (tls.Certificate, error) {
+	if strings.TrimSpace(certPath) != "" {
+		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err == nil {
+			return cert, nil
+		}
+		if strings.TrimSpace(chainPath) == "" || chainPath == certPath {
+			return tls.Certificate{}, err
+		}
+	}
+	return tls.LoadX509KeyPair(chainPath, keyPath)
 }
 
 func baseline10KDefaults(opts loadOptions) loadOptions {
@@ -1113,18 +1128,25 @@ func prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL, tenantSlug str
 	}
 	status.Subject = login.AppCertificate.Subject
 	status.FingerprintSHA256 = login.AppCertificate.FingerprintSHA256
-	if login.AppCertificate.CertificatePEM == "" {
-		status.Reason = "login response missing app certificate"
-		material.Status = status
-		return material
-	}
 	if len(keyPEM) == 0 {
 		status.Status = "BLOCKED"
 		status.Reason = "existing app certificate returned but simulation has no matching private key"
 		material.Status = status
 		return material
 	}
-	certPEM := []byte(firstNonEmpty(login.AppCertificate.CertificateChainPEM, login.AppCertificate.CertificatePEM))
+	certPEMText, certSource := firstCertificatePEM(
+		"artifact_cert", user.AppCertificate.CertificatePEM,
+		"artifact_chain", user.AppCertificate.CertificateChainPEM,
+		"login_cert", login.AppCertificate.CertificatePEM,
+		"login_chain", login.AppCertificate.CertificateChainPEM,
+	)
+	status.CertificateSource = certSource
+	if certPEMText == "" {
+		status.Reason = "app certificate material missing valid PEM"
+		material.Status = status
+		return material
+	}
+	certPEM := []byte(certPEMText)
 	appCert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
 		status.Reason = redactedError(err)
@@ -1215,7 +1237,7 @@ func accountLoginAppCertificate(baseURL, tenantSlug string, user userCredential,
 }
 
 func generateAppCSR(subject string) (string, []byte, error) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	_, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return "", nil, err
 	}
@@ -1224,7 +1246,11 @@ func generateAppCSR(subject string) (string, []byte, error) {
 		return "", nil, err
 	}
 	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return "", nil, err
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
 	return string(csrPEM), keyPEM, nil
 }
 
@@ -2017,6 +2043,18 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstCertificatePEM(labelValuePairs ...string) (string, string) {
+	for i := 0; i+1 < len(labelValuePairs); i += 2 {
+		label := labelValuePairs[i]
+		value := labelValuePairs[i+1]
+		trimmed := strings.TrimSpace(value)
+		if strings.Contains(trimmed, "-----BEGIN CERTIFICATE-----") {
+			return trimmed, label
+		}
+	}
+	return "", ""
 }
 
 func valueOr(value, fallback string) string {

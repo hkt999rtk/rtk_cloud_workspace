@@ -1,8 +1,8 @@
 package main
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -165,11 +165,11 @@ func TestUserArtifactPreservesAppCredentials(t *testing.T) {
   "tenant_slug": "rtk-1234",
   "users": [{
     "email": "rtk+001@users.local",
-    "password": "secret",
-    "app_credentials": {
-      "private_key_pem": "-----BEGIN RSA PRIVATE KEY-----\nkey\n-----END RSA PRIVATE KEY-----",
-      "csr_pem": "-----BEGIN CERTIFICATE REQUEST-----\ncsr\n-----END CERTIFICATE REQUEST-----"
-    }
+	    "password": "secret",
+	    "app_credentials": {
+	      "private_key_pem": "-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----",
+	      "csr_pem": "-----BEGIN CERTIFICATE REQUEST-----\ncsr\n-----END CERTIFICATE REQUEST-----"
+	    }
   }]
 }`), &artifact); err != nil {
 		t.Fatal(err)
@@ -201,8 +201,8 @@ func TestRunAppCertificateBootstrapUsesArtifactKeyForIssuedCertificate(t *testin
 			"app_certificate": map[string]string{
 				"status":                "issued",
 				"subject":               "app-user:user-1",
-				"certificate_pem":       certPEM,
-				"certificate_chain_pem": certPEM,
+				"certificate_pem":       "issued",
+				"certificate_chain_pem": "issued",
 			},
 		})
 	}))
@@ -217,6 +217,10 @@ func TestRunAppCertificateBootstrapUsesArtifactKeyForIssuedCertificate(t *testin
 			PrivateKeyPEM: keyPEM,
 			CSRPem:        csrPEM,
 		},
+		AppCertificate: appCertificateSummary{
+			CertificatePEM:      certPEM,
+			CertificateChainPEM: certPEM,
+		},
 	}, "rtk-0041")
 
 	if status.Status != "PASS" || status.TokenScope != "app" {
@@ -224,6 +228,38 @@ func TestRunAppCertificateBootstrapUsesArtifactKeyForIssuedCertificate(t *testin
 	}
 	if !*sawClientCert {
 		t.Fatal("video token server did not receive an app client certificate")
+	}
+}
+
+func TestGenerateAppCSRUsesEd25519(t *testing.T) {
+	csrPEM, keyPEM, err := generateAppCSR("app-user:user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	csrBlock, _ := pem.Decode([]byte(csrPEM))
+	if csrBlock == nil {
+		t.Fatal("missing CSR PEM")
+	}
+	csr, err := x509.ParseCertificateRequest(csrBlock.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := csr.CheckSignature(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := csr.PublicKey.(ed25519.PublicKey); !ok {
+		t.Fatalf("CSR public key = %T, want ed25519.PublicKey", csr.PublicKey)
+	}
+	keyBlock, _ := pem.Decode(keyPEM)
+	if keyBlock == nil || keyBlock.Type != "PRIVATE KEY" {
+		t.Fatalf("key PEM block = %#v", keyBlock)
+	}
+	key, err := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := key.(ed25519.PrivateKey); !ok {
+		t.Fatalf("private key = %T, want ed25519.PrivateKey", key)
 	}
 }
 
@@ -866,7 +902,7 @@ func actorNameForClientID(clientID string) string {
 
 func testAppMaterial(t *testing.T, subject string) (certPEM, keyPEM, csrPEM string) {
 	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	_, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -882,12 +918,16 @@ func testAppMaterial(t *testing.T, subject string) (certPEM, keyPEM, csrPEM stri
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
-	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, key.Public(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})),
-		string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})),
+		string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})),
 		string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER}))
 }
 
@@ -904,7 +944,7 @@ func issueCertificateForCSR(t *testing.T, csrPEM string) string {
 	if err := csr.CheckSignature(); err != nil {
 		t.Fatal(err)
 	}
-	caKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	_, caKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
