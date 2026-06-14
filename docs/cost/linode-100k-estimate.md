@@ -4,7 +4,7 @@ Status: Planning estimate
 Region: `us-sea`
 Currency: USD
 Collected: 2026-06-12T06:45:00Z
-Sizing: 25,000 users, 4 devices per user, 100,000 registered devices, 100,000 usually-online MQTT devices
+Sizing: 10,000 users, 10 devices per user, 100,000 registered devices, 100,000 usually-online MQTT devices
 
 This is a Linode/Akamai Cloud planning profile for extending the current
 staging deployment shape to a 100,000-device commercial case. It is not a
@@ -51,10 +51,10 @@ new commercial sizing should be recalculated from the K8s deployment shape.
 
 ## Per-Unit View
 
-| Scenario | Per user | Per device | 1 user + 4 devices |
+| Scenario | Per user | Per device | 1 user + 10 devices |
 | --- | ---: | ---: | ---: |
-| Linode 100k self-managed cluster | 4,720.00 USD / 25,000 = 0.19 USD/user-month | 4,720.00 USD / 100,000 = 0.05 USD/device-month | 0.19 USD/month |
-| Linode 100k with optional Managed Service | 6,220.00 USD / 25,000 = 0.25 USD/user-month | 6,220.00 USD / 100,000 = 0.06 USD/device-month | 0.25 USD/month |
+| Linode 100k self-managed cluster | 4,720.00 USD / 10,000 = 0.47 USD/user-month | 4,720.00 USD / 100,000 = 0.05 USD/device-month | 0.47 USD/month |
+| Linode 100k with optional Managed Service | 6,220.00 USD / 10,000 = 0.62 USD/user-month | 6,220.00 USD / 100,000 = 0.06 USD/device-month | 0.62 USD/month |
 
 ## Caveats
 

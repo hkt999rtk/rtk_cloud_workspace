@@ -389,7 +389,9 @@ def collect_linode_scale_estimate() -> dict[str, object]:
     metadata = parse_markdown_metadata(text)
     config_rows = table_by_header(tables, ["Role", "Count", "Plan", "Monthly unit", "Monthly subtotal", "Rationale"])
     scenario_rows = table_by_header(tables, ["Scenario", "Calculation", "Monthly estimate"])
-    per_unit_rows = table_by_header(tables, ["Scenario", "Per user", "Per device", "1 user + 4 devices"])
+    per_unit_rows = table_by_header(tables, ["Scenario", "Per user", "Per device", "1 user + 10 devices"])
+    if not per_unit_rows:
+        per_unit_rows = table_by_header(tables, ["Scenario", "Per user", "Per device", "1 user + 4 devices"])
 
     scenarios = {row[0]: row[2] for row in scenario_rows if len(row) >= 3}
     per_unit = {row[0]: row for row in per_unit_rows if len(row) >= 4}
@@ -399,11 +401,11 @@ def collect_linode_scale_estimate() -> dict[str, object]:
     return {
         "status": "available",
         "source": str(LINODE_100K_ESTIMATE_PATH.relative_to(ROOT)),
-        "region": metadata.get("Region", "us-sea"),
-        "currency": metadata.get("Currency", "USD"),
-        "collected": metadata.get("Collected", "n/a"),
+        "region": metadata.get("region", "us-sea"),
+        "currency": metadata.get("currency", "USD"),
+        "collected": metadata.get("collected", "n/a"),
         "summary": "Linode/Akamai Cloud 100k-device self-managed cluster planning estimate; not current bill and not load-tested.",
-        "sizing": "25,000 users / 100,000 devices",
+        "sizing": metadata.get("sizing", "10,000 users / 100,000 devices"),
         "scenarios": {
             "selfManaged": scenarios.get(default_scenario, "n/a"),
             "withManagedService": scenarios.get(managed_scenario, "n/a"),
@@ -423,9 +425,11 @@ def collect_linode_scale_estimate() -> dict[str, object]:
         "perUnit": {
             "selfManagedPerUser": per_unit.get(default_scenario, ["", "n/a", "n/a", "n/a"])[1],
             "selfManagedPerDevice": per_unit.get(default_scenario, ["", "n/a", "n/a", "n/a"])[2],
+            "selfManagedUserWithTenDevices": per_unit.get(default_scenario, ["", "n/a", "n/a", "n/a"])[3],
             "selfManagedUserWithFourDevices": per_unit.get(default_scenario, ["", "n/a", "n/a", "n/a"])[3],
             "managedServicePerUser": per_unit.get(managed_scenario, ["", "n/a", "n/a", "n/a"])[1],
             "managedServicePerDevice": per_unit.get(managed_scenario, ["", "n/a", "n/a", "n/a"])[2],
+            "managedServiceUserWithTenDevices": per_unit.get(managed_scenario, ["", "n/a", "n/a", "n/a"])[3],
             "managedServiceUserWithFourDevices": per_unit.get(managed_scenario, ["", "n/a", "n/a", "n/a"])[3],
         },
         "caveats": [
@@ -524,7 +528,9 @@ def collect_aws_cost_estimate() -> dict[str, object]:
     metadata = parse_markdown_metadata(text)
     scenario_rows = table_by_header(tables, ["Scenario", "Estimated monthly cost"])
     per_unit_rows = table_by_header(tables, ["Scenario", "Calculation", "Estimate"])
-    weighted_unit_rows = table_by_header(tables, ["Scenario", "User pool", "Device pool", "Per user", "Per device", "Effective 1 user + 4 devices"])
+    weighted_unit_rows = table_by_header(tables, ["Scenario", "User pool", "Device pool", "Per user", "Per device", "Effective 1 user + 10 devices"])
+    if not weighted_unit_rows:
+        weighted_unit_rows = table_by_header(tables, ["Scenario", "User pool", "Device pool", "Per user", "Per device", "Effective 1 user + 4 devices"])
     top_driver_rows = table_by_header(tables, ["Rank", "Cost item", "Monthly estimate"])
     assumption_rows = table_by_header(tables, ["Assumption", "Value"])
     cost_area_rows = table_by_header(tables, ["Cost area", "Monthly estimate", "Notes"])
@@ -552,7 +558,7 @@ def collect_aws_cost_estimate() -> dict[str, object]:
     robust_without_hsm = scenarios.get("Robust redundant design, excluding CloudHSM", "n/a")
     robust_with_hsm = scenarios.get("Robust redundant design with two CloudHSMs", "n/a")
     weighted_units = {row[0]: row for row in weighted_unit_rows if len(row) >= 6}
-    end_user_count = 25000
+    end_user_count = 10000
     registered_device_count = 100000
 
     raw_unit_costs = [
@@ -593,6 +599,7 @@ def collect_aws_cost_estimate() -> dict[str, object]:
             "devicePool": row[2],
             "perUserMonth": row[3],
             "perDeviceMonth": row[4],
+            "effectiveUserWithTenDevices": row[5],
             "effectiveUserWithFourDevices": row[5],
         }
         for scenario, row in weighted_units.items()
@@ -738,17 +745,17 @@ def collect_aws_cost_estimate() -> dict[str, object]:
             },
             {
                 "item": "Frontend CloudFront/Lambda/S3",
-                "quantity": "1,000 GB egress + 600k requests + 30,720 GB-sec + 1 GB S3",
+                "quantity": "400 GB egress + 240k requests + 12,288 GB-sec + 1 GB S3",
                 "unitPrice": "0.120/GB; 0.012/10k HTTPS; Lambda request/duration rates",
-                "formula": "120.72 CDN + 0.63 Lambda + 0.03 S3",
-                "estimate": "121.38",
+                "formula": "48.29 CDN + 0.25 Lambda + 0.03 S3",
+                "estimate": "48.57",
             },
             {
                 "item": "Amazon Cognito User Pools",
-                "quantity": "25,000 direct/social MAUs",
+                "quantity": "10,000 direct/social MAUs",
                 "unitPrice": "10,000 MAUs free; 0.015/MAU above free tier",
-                "formula": "max(0, 25,000 - 10,000) * 0.015",
-                "estimate": "225.00",
+                "formula": "max(0, 10,000 - 10,000) * 0.015",
+                "estimate": "0.00",
             },
             {
                 "item": "S3 storage and PUT requests",
@@ -823,9 +830,9 @@ def collect_aws_cost_estimate() -> dict[str, object]:
         },
         "unitCosts": {
             "basis": {
-                "endUsers": "25,000",
+                "endUsers": "10,000",
                 "registeredDevices": "100,000",
-                "devicesPerUser": "4",
+                "devicesPerUser": "10",
                 "weightedUserPool": "10%",
                 "weightedDevicePool": "90%",
             },
