@@ -14,6 +14,8 @@ type ReportInput struct {
 	LoadGeneratorHealthy bool
 	StageResults         []StageResult
 	ServerEvidence       ServerEvidence
+	ServerCorrelation    ServerCorrelation
+	SyncTelemetry        SyncTelemetry
 	Notes                []string
 }
 
@@ -32,6 +34,21 @@ func RenderReport(input ReportInput) string {
 		status = "INCOMPLETE"
 		reasons = append(reasons, "Load-generator saturation invalidated server-capacity conclusion")
 	}
+	switch strings.ToLower(strings.TrimSpace(input.ServerCorrelation.Status)) {
+	case "fail":
+		if status != "INCOMPLETE" {
+			status = "FAIL"
+		}
+		reasons = append(reasons, "Server/client counter correlation mismatch")
+	case "incomplete":
+		status = "INCOMPLETE"
+		if len(input.ServerCorrelation.Reasons) == 0 {
+			reasons = append(reasons, "Server/client counter correlation is incomplete")
+		}
+		for _, reason := range input.ServerCorrelation.Reasons {
+			reasons = append(reasons, "Server/client counter correlation incomplete: "+reason)
+		}
+	}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "# 100K Home IoT Device Shadow Load Test Report\n\n")
@@ -39,6 +56,19 @@ func RenderReport(input ReportInput) string {
 	fmt.Fprintf(&b, "- Status: %s\n", status)
 	for _, reason := range reasons {
 		fmt.Fprintf(&b, "- %s\n", reason)
+	}
+	fmt.Fprintln(&b)
+
+	fmt.Fprintln(&b, "## Status Summary")
+	if len(reasons) == 0 {
+		fmt.Fprintln(&b, "- status gate: passed")
+	} else {
+		for _, reason := range reasons {
+			fmt.Fprintf(&b, "- status gate: %s\n", reason)
+		}
+	}
+	if strings.TrimSpace(input.ServerCorrelation.Status) != "" {
+		fmt.Fprintf(&b, "- server correlation: %s\n", input.ServerCorrelation.Status)
 	}
 	fmt.Fprintln(&b)
 
@@ -107,6 +137,50 @@ func RenderReport(input ReportInput) string {
 			)
 		}
 		fmt.Fprintln(&b)
+
+		fmt.Fprintln(&b, "## Device MQTT Totals")
+		fmt.Fprintln(&b, "| Stage | Connect attempts | Connect success | Connect fail | Subscribes | Publishes | Received | Delta received | Reported publishes | Rejected publishes | Bytes sent | Bytes received |")
+		fmt.Fprintln(&b, "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+		var deviceTotal DeviceMQTTTotals
+		for _, stage := range input.StageResults {
+			deviceTotal = addDeviceMQTTTotals(deviceTotal, stage.DeviceMQTTTotals)
+			t := stage.DeviceMQTTTotals
+			fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d |\n",
+				stage.Name, t.ConnectAttempts, t.ConnectSuccess, t.ConnectFail, t.Subscribes, t.Publishes, t.ReceivedMessages, t.DeltaReceived, t.ReportedPublishes, t.RejectedPublishes, t.BytesSent, t.BytesReceived)
+		}
+		fmt.Fprintf(&b, "| total | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d |\n",
+			deviceTotal.ConnectAttempts, deviceTotal.ConnectSuccess, deviceTotal.ConnectFail, deviceTotal.Subscribes, deviceTotal.Publishes, deviceTotal.ReceivedMessages, deviceTotal.DeltaReceived, deviceTotal.ReportedPublishes, deviceTotal.RejectedPublishes, deviceTotal.BytesSent, deviceTotal.BytesReceived)
+		fmt.Fprintln(&b)
+
+		fmt.Fprintln(&b, "## APP/User Totals")
+		fmt.Fprintln(&b, "| Stage | Login attempts | Login success | Login fail | List devices | Read shadow | Desired writes | Received ACKs | Bytes sent | Bytes received |")
+		fmt.Fprintln(&b, "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+		var appTotal AppUserTotals
+		for _, stage := range input.StageResults {
+			appTotal = addAppUserTotals(appTotal, stage.AppUserTotals)
+			t := stage.AppUserTotals
+			fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d | %d | %d | %d | %d |\n",
+				stage.Name, t.LoginAttempts, t.LoginSuccess, t.LoginFail, t.ListDevicesRequests, t.ReadShadowRequests, t.DesiredWrites, t.ReceivedAcks, t.BytesSent, t.BytesReceived)
+		}
+		fmt.Fprintf(&b, "| total | %d | %d | %d | %d | %d | %d | %d | %d | %d |\n",
+			appTotal.LoginAttempts, appTotal.LoginSuccess, appTotal.LoginFail, appTotal.ListDevicesRequests, appTotal.ReadShadowRequests, appTotal.DesiredWrites, appTotal.ReceivedAcks, appTotal.BytesSent, appTotal.BytesReceived)
+		fmt.Fprintln(&b)
+	}
+
+	if strings.TrimSpace(input.ServerCorrelation.Status) != "" || len(input.ServerCorrelation.Checks) > 0 || len(input.ServerCorrelation.Reasons) > 0 {
+		fmt.Fprintln(&b, "## Server Log Correlation")
+		fmt.Fprintf(&b, "- status: %s\n", firstNonEmpty(input.ServerCorrelation.Status, "unknown"))
+		for _, reason := range input.ServerCorrelation.Reasons {
+			fmt.Fprintf(&b, "- reason: %s\n", redact(reason))
+		}
+		if len(input.ServerCorrelation.Checks) > 0 {
+			fmt.Fprintln(&b, "| Source | Counter | Client total | Server total | Delta | Tolerance | Status |")
+			fmt.Fprintln(&b, "| --- | --- | ---: | ---: | ---: | ---: | --- |")
+			for _, check := range input.ServerCorrelation.Checks {
+				fmt.Fprintf(&b, "| %s | %s | %d | %d | %d | %d | %s |\n", check.Source, check.Counter, check.ClientTotal, check.ServerTotal, check.Delta, check.Tolerance, check.Status)
+			}
+		}
+		fmt.Fprintln(&b)
 	}
 
 	fmt.Fprintln(&b, "## Load Generator Health")
@@ -136,6 +210,16 @@ func RenderReport(input ReportInput) string {
 				fmt.Fprintf(&b, " detail=%s", redact(source.Detail))
 			}
 			fmt.Fprintln(&b)
+		}
+		fmt.Fprintln(&b)
+	}
+
+	if len(input.SyncTelemetry.VMs) > 0 {
+		fmt.Fprintln(&b, "## Sync/Provision Telemetry")
+		fmt.Fprintln(&b, "| VM | Files transferred | Bytes transferred | Elapsed ms | Remote disk before | Remote disk after |")
+		fmt.Fprintln(&b, "| --- | ---: | ---: | ---: | --- | --- |")
+		for _, vm := range input.SyncTelemetry.VMs {
+			fmt.Fprintf(&b, "| %s | %d | %d | %d | %s | %s |\n", vm.Label, vm.FilesTransferred, vm.BytesTransferred, vm.ElapsedMS, firstNonEmpty(vm.RemoteDiskBefore, "-"), firstNonEmpty(vm.RemoteDiskAfter, "-"))
 		}
 		fmt.Fprintln(&b)
 	}

@@ -11,10 +11,12 @@ carry the same sections.
 - `device_mix`
 - `presence_mix`
 - `stages`
-- `device_metrics`
-- `user_metrics`
+- `device_mqtt_totals`
+- `app_user_totals`
 - `shadow_metrics`
 - `server_evidence`
+- `server_correlation`
+- `sync_telemetry`
 - `load_generator_health`
 - `bottleneck_assessment`
 - `client_token_correlation_count`
@@ -42,10 +44,16 @@ Shard `results.json` files under `shards/<vm-label>/` must include:
 `aggregate` reads all shard `load_generator_health` sections. Any saturated
 shard forces the run-level status to `INCOMPLETE`.
 
+`aggregate` also reads `sync-telemetry.json` and any fetched
+`sync-telemetry.d/*.json` files. Per-VM telemetry files override the initial
+placeholder rows created before sync.
+
 ## Required Stage Metrics
 
 Each stage result must include:
 
+- `device_mqtt_totals`
+- `app_user_totals`
 - `mqtt_connect_success_rate_percent`
 - `mqtt_reconnect_count`
 - `shadow_get_p50_ms`
@@ -64,10 +72,75 @@ Each stage result must include:
 - `authorization_violation_count`
 - `client_token_correlation_count`
 
+## Required Device MQTT Totals
+
+`device_mqtt_totals` must be present per stage and at the run level:
+
+- `connect_attempts`
+- `connect_success`
+- `connect_fail`
+- `subscribes`
+- `publishes`
+- `received_messages`
+- `delta_received`
+- `reported_publishes`
+- `rejected_publishes`
+- `bytes_sent`
+- `bytes_received`
+
+## Required APP/User Totals
+
+`app_user_totals` must be present per stage and at the run level:
+
+- `login_attempts`
+- `login_success`
+- `login_fail`
+- `list_devices_requests`
+- `read_shadow_requests`
+- `desired_writes`
+- `received_acks`
+- `bytes_sent`
+- `bytes_received`
+
+## Required Server Correlation
+
+`server_correlation` must include:
+
+- `status`: `pass`, `fail`, or `incomplete`
+- `checks[]`
+- `checks[].source`
+- `checks[].counter`
+- `checks[].client_total`
+- `checks[].server_total`
+- `checks[].delta`
+- `checks[].tolerance`
+- `checks[].status`
+- `reasons[]` when status is not `pass`
+
+Default tolerance is `0`. Any non-zero tolerance must be explicitly justified
+for a broker duplicate/redelivery class.
+
+## Required Sync Telemetry
+
+`sync_telemetry.vms[]` must include:
+
+- `label`
+- `files_transferred`
+- `bytes_transferred`
+- `elapsed_ms`
+- `remote_disk_before`
+- `remote_disk_after`
+
 ## Required Status Rules
 
 - Missing IoT Device Shadow evidence sets `status=INCOMPLETE`.
 - Missing server evidence sets `status=INCOMPLETE`.
+- Missing non-zero device MQTT totals sets `status=INCOMPLETE`.
+- Missing non-zero APP/User totals sets `status=INCOMPLETE`.
+- Missing parsed MQTT broker, APP/API, or IoT Device Shadow server counters
+  sets `status=INCOMPLETE`.
+- Server/client counter mismatch outside configured tolerance sets
+  `status=FAIL`.
 - Load-generator saturation sets `status=INCOMPLETE`.
 - Shadow convergence below the selected threshold sets `status=FAIL`.
 - Authorization bypass or cross-user access success sets `status=FAIL`.

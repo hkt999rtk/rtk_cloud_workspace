@@ -8,22 +8,36 @@ import (
 	"testing"
 )
 
+func correlatedEvidenceForStages(runID string, stages []StageResult) ServerEvidence {
+	device, app := summarizeStageTotals(stages)
+	sources := requiredEvidenceSources(true)
+	sources["emqx"] = EvidenceSource{Available: true, Counters: map[string]int64{
+		"device_mqtt.connect_success":   device.ConnectSuccess,
+		"device_mqtt.publishes":         device.Publishes,
+		"device_mqtt.received_messages": device.ReceivedMessages,
+	}}
+	sources["video_cloud_api"] = EvidenceSource{Available: true, Counters: map[string]int64{
+		"app_user.desired_writes": app.DesiredWrites,
+	}}
+	sources["iot_device_shadow"] = EvidenceSource{Available: true, Counters: map[string]int64{
+		"device_mqtt.reported_publishes": device.ReportedPublishes,
+		"app_user.received_acks":         app.ReceivedAcks,
+	}}
+	return ServerEvidence{RunID: runID, Complete: true, Sources: sources}
+}
+
 func TestRunWritesPlanResultsEvidenceAndReportArtifacts(t *testing.T) {
 	outDir := t.TempDir()
 	evidenceFile := filepath.Join(outDir, "input-server-evidence.json")
-	if err := os.WriteFile(evidenceFile, []byte(`{
-		"run_id": "run-fixed",
-		"complete": true,
-		"sources": {
-			"emqx": {"available": true},
-			"video_cloud_api": {"available": true},
-			"iot_device_shadow": {"available": true},
-			"postgres": {"available": true},
-			"redis_valkey": {"available": true},
-			"ingress_nginx": {"available": true},
-			"host_pod_resources": {"available": true}
-		}
-	}`), 0o644); err != nil {
+	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stages, err := ExecuteStages(plan, StageExecutionOptions{SampleFlowsPerPresence: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(evidenceFile, correlatedEvidenceForStages("run-fixed", stages)); err != nil {
 		t.Fatalf("write evidence fixture: %v", err)
 	}
 
@@ -119,11 +133,7 @@ func TestAggregateCollectedRunWritesRunLevelArtifacts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := writeJSONFile(filepath.Join(outDir, "server-evidence.json"), ServerEvidence{
-		RunID:    "run-agg",
-		Complete: true,
-		Sources:  requiredEvidenceSources(true),
-	}); err != nil {
+	if err := writeJSONFile(filepath.Join(outDir, "server-evidence.json"), correlatedEvidenceForStages("run-agg", append(stages, stages...))); err != nil {
 		t.Fatal(err)
 	}
 
@@ -206,11 +216,7 @@ func TestAggregateCollectedRunMarksLoadGeneratorSaturationIncomplete(t *testing.
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeJSONFile(filepath.Join(outDir, "server-evidence.json"), ServerEvidence{
-		RunID:    "run-agg-saturated",
-		Complete: true,
-		Sources:  requiredEvidenceSources(true),
-	}); err != nil {
+	if err := writeJSONFile(filepath.Join(outDir, "server-evidence.json"), correlatedEvidenceForStages("run-agg-saturated", stages)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -231,5 +237,105 @@ func TestAggregateCollectedRunMarksLoadGeneratorSaturationIncomplete(t *testing.
 	}
 	if !strings.Contains(string(report), "Load-generator saturation invalidated server-capacity conclusion") || !strings.Contains(string(report), "cpu p95 above 90%") {
 		t.Fatalf("aggregate report missing saturation evidence:\n%s", string(report))
+	}
+}
+
+func TestAggregateCollectedRunMergesFetchedSyncTelemetry(t *testing.T) {
+	outDir := t.TempDir()
+	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stages, err := ExecuteStages(plan, StageExecutionOptions{SampleFlowsPerPresence: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(filepath.Join(outDir, "shards", "home-100k-mixed-000", "results.json"), map[string]any{
+		"run_id":        "run-agg-sync",
+		"role":          "mixed",
+		"shard_index":   0,
+		"stage_results": stages,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(filepath.Join(outDir, "server-evidence.json"), correlatedEvidenceForStages("run-agg-sync", stages)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(filepath.Join(outDir, "sync-telemetry.json"), SyncTelemetry{VMs: []VMSyncTelemetry{{Label: "home-100k-mixed-000"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(filepath.Join(outDir, "sync-telemetry.d", "home-100k-mixed-000.json"), VMSyncTelemetry{
+		Label:            "home-100k-mixed-000",
+		FilesTransferred: 9,
+		BytesTransferred: 123456,
+		RemoteDiskBefore: "before",
+		RemoteDiskAfter:  "after",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := AggregateCollectedRun(AggregateOptions{
+		PlanOptions: PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea"},
+		RunID:       "run-agg-sync",
+		OutDir:      outDir,
+	})
+	if err != nil {
+		t.Fatalf("AggregateCollectedRun() error = %v", err)
+	}
+	if len(result.SyncTelemetry.VMs) != 1 || result.SyncTelemetry.VMs[0].BytesTransferred != 123456 {
+		t.Fatalf("sync telemetry = %#v, want fetched per-VM bytes", result.SyncTelemetry)
+	}
+	report, err := os.ReadFile(result.ReportFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(report), "## Sync/Provision Telemetry") || !strings.Contains(string(report), "123456") {
+		t.Fatalf("report missing sync telemetry:\n%s", string(report))
+	}
+}
+
+func TestAggregateCollectedRunWithAvailableEvidenceButMissingCountersIsIncomplete(t *testing.T) {
+	outDir := t.TempDir()
+	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stages, err := ExecuteStages(plan, StageExecutionOptions{SampleFlowsPerPresence: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(filepath.Join(outDir, "shards", "home-100k-mixed-000", "results.json"), map[string]any{
+		"run_id":        "run-agg-no-counters",
+		"role":          "mixed",
+		"shard_index":   0,
+		"stage_results": stages,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(filepath.Join(outDir, "server-evidence.json"), ServerEvidence{
+		RunID:    "run-agg-no-counters",
+		Complete: true,
+		Sources:  requiredEvidenceSources(true),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := AggregateCollectedRun(AggregateOptions{
+		PlanOptions: PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea"},
+		RunID:       "run-agg-no-counters",
+		OutDir:      outDir,
+	})
+	if err != nil {
+		t.Fatalf("AggregateCollectedRun() error = %v", err)
+	}
+	if result.Status != "INCOMPLETE" {
+		t.Fatalf("status = %s, want INCOMPLETE", result.Status)
+	}
+	report, err := os.ReadFile(result.ReportFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(report), "Server/client counter correlation incomplete") {
+		t.Fatalf("report missing missing-counter reason:\n%s", string(report))
 	}
 }

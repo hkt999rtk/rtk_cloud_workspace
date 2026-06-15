@@ -276,9 +276,13 @@ Required behavior:
 - `provision-vms` creates ephemeral Linode VMs in the selected region. It is a
   dry-run by default; live provisioning requires `--live --confirm-live` and a
   Linode token from `--linode-token` or `LINODE_TOKEN`.
-- `sync` copies only required runner code and env-root artifacts.
-- `run-stages` starts device and user shards with a shared `run_id`.
-- `collect` retrieves per-VM results and local load-generator telemetry.
+- `sync` generates an Ansible inventory from `vms.json`, writes one shard
+  manifest per VM, and copies only the Linux runner binary, the VM's manifest,
+  and minimal env-root artifacts.
+- `run-stages` uses the generated Ansible inventory to start device and user
+  shards with a shared `run_id`.
+- `collect` uses the generated Ansible inventory to retrieve per-VM results,
+  sync telemetry, and local load-generator telemetry.
 - `collect-server-evidence` queries server metrics/logs for the same `run_id`
   and stage time windows.
 - `aggregate` reads collected shard results plus `server-evidence.json` and
@@ -289,6 +293,33 @@ Required behavior:
 
 If a run fails before cleanup, the tooling must be able to list and destroy
 leftover load-generator VMs by tag/run id.
+
+### Device/User Shard Assignment
+
+The default baseline creates 10 mixed VM assignments. Each assignment owns one
+device shard and one user shard:
+
+| VM label | Device range | User range |
+| --- | ---: | ---: |
+| `home-100k-mixed-000` | `0..9999` | `0..499` |
+| `home-100k-mixed-001` | `10000..19999` | `500..999` |
+| `...` | `...` | `...` |
+| `home-100k-mixed-009` | `90000..99999` | `4500..4999` |
+
+The plan's `vm_assignments` array is the source of truth. After
+`provision-vms --live` writes `vms.json`, `sync --live` combines those VM
+labels and IPs with the deterministic plan, then writes:
+
+```text
+<out-dir>/ansible/inventory.json
+<out-dir>/ansible/extra-vars.json
+<out-dir>/shard-manifests/<vm-label>.json
+```
+
+The Ansible inventory binds each provisioned VM IP to exactly one
+`local_shard_manifest`. The remote runner receives only its own manifest at
+`loadtests/home-100k/shard-manifests/current.json`, so a VM does not receive or
+execute every device/user range.
 
 ## Public CLI Shape
 
@@ -449,13 +480,19 @@ Live provision accepts `--linode-type`, `--linode-image`, `--root-pass`, and
 `--authorized-key-file`. The root password is sent only to the Linode create
 API and is not written into `vms.json`, `results.json`, or the report.
 `sync --live` reads the same `vms.json` and requires `--remote-workspace`,
-`--remote-env-root`, and SSH options; it uses SSH plus rsync to copy only
-`loadtests/home-100k`, `go.work`, and the selected env-root to each VM.
-`run-stages --live` reads `vms.json` and dispatches `shard-run` over SSH. Each
-VM writes shard artifacts under `--remote-out-root/<run-id>/<vm-label>/`.
-`collect --live` reads `vms.json` and uses scp to copy each VM's
-`results.json` and `TEST_REPORT.md` from that remote shard directory into
-`--out-dir/shards/<vm-label>/`.
+`--remote-env-root`, and SSH options. It builds a Linux runner binary locally,
+generates the Ansible inventory from provisioned VM IPs, writes per-VM shard
+manifests, and runs `loadtests/home-100k/ansible/sync.yml`. The playbook copies
+only the runner binary, the assigned shard manifest, and selected env-root
+artifacts; it does not upload `reports/**`, `plans/**`, or the whole
+load-test source tree.
+`run-stages --live` reads `vms.json`, regenerates the same inventory, and runs
+`loadtests/home-100k/ansible/run-stages.yml`. Each VM writes shard artifacts
+under `--remote-out-root/<run-id>/<vm-label>/`.
+`collect --live` reads `vms.json`, regenerates the same inventory, and runs
+`loadtests/home-100k/ansible/collect.yml` to fetch each VM's `results.json`,
+`TEST_REPORT.md`, resource snapshot, and sync telemetry into
+`--out-dir/shards/<vm-label>/` and `--out-dir/sync-telemetry.d/`.
 `collect-server-evidence --live` runs Kubernetes evidence probes with `kubectl`
 for EMQX, Video Cloud API, IoT Device Shadow, PostgreSQL, Redis/Valkey,
 ingress/nginx, and host/pod resources. It writes `server-evidence.json` when
@@ -497,6 +534,8 @@ Every report must include:
 - user scenario
 - IoT Device Shadow scenario
 - per-stage results
+- Device MQTT totals by stage and total
+- APP/User totals by stage and total
 - per-stage shadow latency p50/p95/p99
 - desired/reported convergence rate
 - offline desired convergence rate
@@ -507,10 +546,13 @@ Every report must include:
 - authorization violation count
 - load-generator CPU, memory, network, and file-descriptor saturation
 - server-side metrics/log evidence
+- server/client counter correlation
+- sync/provision telemetry with per-VM transfer bytes and remote disk snapshots
 - bottleneck assessment
 
-If IoT Device Shadow evidence cannot be collected, the report status must be
-`INCOMPLETE`, not `PASS`.
+If IoT Device Shadow evidence, MQTT broker evidence, APP/API evidence, parsed
+server counters, or non-zero client totals cannot be collected, the report
+status must be `INCOMPLETE`, not `PASS`.
 
 If load-generator saturation invalidates the run, the report must say so
 instead of attributing the bottleneck to the server.

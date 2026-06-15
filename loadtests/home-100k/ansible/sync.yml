@@ -1,0 +1,93 @@
+---
+- name: Sync Home 100K load-test runner and per-VM manifests
+  hosts: home_100k
+  gather_facts: false
+  become: true
+  vars:
+    remote_home_100k_dir: "{{ remote_workspace }}/loadtests/home-100k"
+    remote_bin_dir: "{{ remote_home_100k_dir }}/bin"
+    remote_manifest_dir: "{{ remote_home_100k_dir }}/shard-manifests"
+    remote_telemetry_dir: "{{ remote_out_root }}/{{ run_id }}/sync-telemetry.d"
+  tasks:
+    - name: Wait for SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Install required sync/runtime packages
+      ansible.builtin.apt:
+        name:
+          - rsync
+          - ca-certificates
+        update_cache: true
+        state: present
+
+    - name: Read remote disk before sync
+      ansible.builtin.command: df -B1 --output=used,avail,target /
+      register: disk_before
+      changed_when: false
+
+    - name: Create remote load-test directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ remote_bin_dir }}"
+        - "{{ remote_manifest_dir }}"
+        - "{{ remote_env_root }}"
+        - "{{ remote_out_dir }}"
+        - "{{ remote_telemetry_dir }}"
+
+    - name: Upload runner binary
+      ansible.builtin.copy:
+        src: "{{ local_runner }}"
+        dest: "{{ remote_bin_dir }}/home-100k"
+        mode: "0755"
+      register: runner_copy
+
+    - name: Upload this VM shard manifest
+      ansible.builtin.copy:
+        src: "{{ local_shard_manifest }}"
+        dest: "{{ remote_shard_manifest }}"
+        mode: "0644"
+      register: manifest_copy
+
+    - name: Sync minimal env-root artifacts
+      ansible.posix.synchronize:
+        src: "{{ local_env_root }}/"
+        dest: "{{ remote_env_root }}/"
+        archive: true
+        delete: false
+        rsync_opts:
+          - "--stats"
+          - "--include=/env/***"
+          - "--include=/services/***"
+          - "--include=/devices/"
+          - "--include=/devices/test_device/"
+          - "--include=/devices/test_device/loadtest.env"
+          - "--include=/devices/test_device/summary.json"
+          - "--include=/artifacts/"
+          - "--include=/artifacts/users/"
+          - "--include=/artifacts/users/*.json"
+          - "--include=/artifacts/device-bind/"
+          - "--include=/artifacts/device-bind/*.json"
+          - "--exclude=*"
+      register: env_sync
+
+    - name: Read remote disk after sync
+      ansible.builtin.command: df -B1 --output=used,avail,target /
+      register: disk_after
+      changed_when: false
+
+    - name: Write remote sync telemetry
+      ansible.builtin.copy:
+        dest: "{{ remote_telemetry_dir }}/{{ vm_label }}.json"
+        mode: "0644"
+        content: |
+          {
+            "label": "{{ vm_label }}",
+            "files_transferred": {{ ((env_sync.stdout | default('') | regex_search('Number of regular files transferred: ([0-9,]+)', '\\1') | first | default('0')) | replace(',', '') | int) + (1 if runner_copy.changed else 0) + (1 if manifest_copy.changed else 0) }},
+            "bytes_transferred": {{ (env_sync.stdout | default('') | regex_search('Total transferred file size: ([0-9,]+) bytes', '\\1') | first | default('0') | replace(',', '') | int) }},
+            "remote_disk_before": {{ disk_before.stdout | to_json }},
+            "remote_disk_after": {{ disk_after.stdout | to_json }}
+          }

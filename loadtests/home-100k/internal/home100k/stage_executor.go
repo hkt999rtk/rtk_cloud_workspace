@@ -113,6 +113,28 @@ func aggregateFlowResults(stage Stage, flows []ActorFlowResult) StageResult {
 		if flow.DeltaCleared {
 			deltaCleared++
 		}
+		result.DeviceMQTTTotals.ConnectAttempts++
+		result.DeviceMQTTTotals.ConnectSuccess++
+		result.DeviceMQTTTotals.Subscribes++
+		result.DeviceMQTTTotals.Publishes++
+		result.DeviceMQTTTotals.ReceivedMessages++
+		result.DeviceMQTTTotals.BytesSent += 256
+		result.DeviceMQTTTotals.BytesReceived += 256
+		result.AppUserTotals.LoginAttempts++
+		result.AppUserTotals.LoginSuccess++
+		result.AppUserTotals.ListDevicesRequests++
+		result.AppUserTotals.ReadShadowRequests++
+		result.AppUserTotals.DesiredWrites++
+		result.AppUserTotals.BytesSent += 512
+		result.AppUserTotals.BytesReceived += 512
+		if flow.DeltaCleared {
+			result.DeviceMQTTTotals.DeltaReceived++
+			result.DeviceMQTTTotals.ReportedPublishes++
+			result.AppUserTotals.ReceivedAcks++
+		}
+		if flow.RejectedUpdateCount > 0 {
+			result.DeviceMQTTTotals.RejectedPublishes += int64(flow.RejectedUpdateCount)
+		}
 		result.DuplicateApplyCount += flow.DuplicateApplyCount
 		result.VersionConflictCount += flow.VersionConflictCount
 		result.RejectedUpdateCount += flow.RejectedUpdateCount

@@ -381,7 +381,7 @@ func TestExecuteSyncDefaultsToDryRun(t *testing.T) {
 	}
 }
 
-func TestExecuteSyncLiveRunsSSHAndRsyncForVMState(t *testing.T) {
+func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T) {
 	outDir := t.TempDir()
 	stateFile := filepath.Join(outDir, "vms.json")
 	state := map[string]any{
@@ -428,20 +428,48 @@ func TestExecuteSyncLiveRunsSSHAndRsyncForVMState(t *testing.T) {
 		t.Fatalf("Execute(sync live) code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 	joined := strings.Join(calls, "\n")
-	knownHosts := filepath.Join(outDir, "ssh_known_hosts")
-	sshBase := "-i /tmp/test-key -o UserKnownHostsFile=" + knownHosts
 	for _, want := range []string{
 		"bash -lc GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o '" + filepath.Join(outDir, "bin", "home-100k-linux-amd64") + "' ./loadtests/home-100k/cmd/home-100k",
-		"ssh " + sshBase + " -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new root@203.0.113.101 true",
-		"ssh " + sshBase + " root@203.0.113.101 bash -lc command -v rsync >/dev/null 2>&1 || (apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y rsync)",
-		"ssh " + sshBase + " root@203.0.113.101 mkdir -p /root/rtk_cloud_workspace /root/rtk_cloud_workspace/cloud_env/staging/lke /root/rtk_cloud_workspace/loadtests/home-100k/shard-manifests /root/rtk_cloud_workspace/loadtests/home-100k/bin",
-		"rsync -az -e ssh " + sshBase + " loadtests/home-100k go.work root@203.0.113.101:/root/rtk_cloud_workspace/",
-		"rsync -az -e ssh " + sshBase + " " + filepath.Join(outDir, "bin", "home-100k-linux-amd64") + " root@203.0.113.101:/root/rtk_cloud_workspace/loadtests/home-100k/bin/home-100k",
-		"rsync -az -e ssh " + sshBase + " " + filepath.Join(outDir, "shard-manifests", "home-100k-mixed-000.json") + " root@203.0.113.101:/root/rtk_cloud_workspace/loadtests/home-100k/shard-manifests/current.json",
-		"rsync -az -e ssh " + sshBase + " --include /env/*** --include /services/*** --include /devices/ --include /devices/test_device/ --include /devices/test_device/loadtest.env --include /devices/test_device/summary.json --include /artifacts/ --include /artifacts/users/ --include /artifacts/users/*.json --include /artifacts/device-bind/ --include /artifacts/device-bind/*.json --exclude * cloud_env/staging/lke/ root@203.0.113.102:/root/rtk_cloud_workspace/cloud_env/staging/lke/",
+		"ansible-playbook -i " + filepath.Join(outDir, "ansible", "inventory.json") + " loadtests/home-100k/ansible/sync.yml",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("sync live commands missing %q:\n%s", want, joined)
+		}
+	}
+	inventoryRaw, err := os.ReadFile(filepath.Join(outDir, "ansible", "inventory.json"))
+	if err != nil {
+		t.Fatalf("missing generated ansible inventory: %v", err)
+	}
+	inventory := string(inventoryRaw)
+	for _, want := range []string{`"ansible_host": "203.0.113.101"`, `"shard_index": 0`, `"run_id": "run-cli"`, `"role": "mixed"`} {
+		if !strings.Contains(inventory, want) {
+			t.Fatalf("inventory missing %q:\n%s", want, inventory)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "ansible", "extra-vars.json")); err != nil {
+		t.Fatalf("missing generated ansible extra vars: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "sync-telemetry.json")); err != nil {
+		t.Fatalf("missing sync telemetry placeholder: %v", err)
+	}
+	manifest0Raw, err := os.ReadFile(filepath.Join(outDir, "shard-manifests", "home-100k-mixed-000.json"))
+	if err != nil {
+		t.Fatalf("missing mixed-000 manifest: %v", err)
+	}
+	manifest1Raw, err := os.ReadFile(filepath.Join(outDir, "shard-manifests", "home-100k-mixed-001.json"))
+	if err != nil {
+		t.Fatalf("missing mixed-001 manifest: %v", err)
+	}
+	manifest0 := string(manifest0Raw)
+	manifest1 := string(manifest1Raw)
+	for _, want := range []string{`"role": "device-mqtt"`, `"start": 0`, `"end": 10000`, `"role": "user-app"`, `"start": 0`, `"end": 500`} {
+		if !strings.Contains(manifest0, want) {
+			t.Fatalf("mixed-000 manifest missing %q:\n%s", want, manifest0)
+		}
+	}
+	for _, want := range []string{`"role": "device-mqtt"`, `"start": 10000`, `"end": 20000`, `"role": "user-app"`, `"start": 500`, `"end": 1000`} {
+		if !strings.Contains(manifest1, want) {
+			t.Fatalf("mixed-001 manifest missing %q:\n%s", want, manifest1)
 		}
 	}
 	if !strings.Contains(stdout.String(), `"synced"`) || !strings.Contains(stdout.String(), `"id": 101`) {
@@ -475,7 +503,8 @@ func TestExecuteRunStagesProducesStageMetrics(t *testing.T) {
 }
 
 func TestExecuteRunStagesLiveDispatchesShardCommands(t *testing.T) {
-	stateFile := filepath.Join(t.TempDir(), "vms.json")
+	outDir := t.TempDir()
+	stateFile := filepath.Join(outDir, "vms.json")
 	state := map[string]any{
 		"created": []LinodeVM{
 			{ID: 101, Label: "home-100k-mixed-000", PublicIPv4: "203.0.113.101"},
@@ -508,6 +537,7 @@ func TestExecuteRunStagesLiveDispatchesShardCommands(t *testing.T) {
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
+		"--out-dir", outDir,
 		"--live",
 		"--vm-state-file", stateFile,
 		"--remote-workspace", "/root/rtk_cloud_workspace",
@@ -520,10 +550,9 @@ func TestExecuteRunStagesLiveDispatchesShardCommands(t *testing.T) {
 		t.Fatalf("Execute(run-stages live) code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 	joined := strings.Join(calls, "\n")
-	sshBase := "-i /tmp/test-key -o UserKnownHostsFile=loadtests/home-100k/reports/run-cli/ssh_known_hosts"
 	for _, want := range []string{
-		"ssh " + sshBase + " root@203.0.113.101 cd /root/rtk_cloud_workspace && /root/rtk_cloud_workspace/loadtests/home-100k/bin/home-100k shard-run --env-root /root/rtk_cloud_workspace/cloud_env/staging/lke --brandname RTK --region us-sea --stage-warm-up 1m --stage-steady 2m --stage-cool-down 45s --run-id run-cli --role mixed --shard-index 0 --shard-manifest /root/rtk_cloud_workspace/loadtests/home-100k/shard-manifests/current.json --honor-stage-durations --out-dir /var/lib/home-100k/run-cli/home-100k-mixed-000",
-		"ssh " + sshBase + " root@203.0.113.102 cd /root/rtk_cloud_workspace && /root/rtk_cloud_workspace/loadtests/home-100k/bin/home-100k shard-run --env-root /root/rtk_cloud_workspace/cloud_env/staging/lke --brandname RTK --region us-sea --stage-warm-up 1m --stage-steady 2m --stage-cool-down 45s --run-id run-cli --role mixed --shard-index 1 --shard-manifest /root/rtk_cloud_workspace/loadtests/home-100k/shard-manifests/current.json --honor-stage-durations --out-dir /var/lib/home-100k/run-cli/home-100k-mixed-001",
+		"ansible-playbook -i " + filepath.Join(outDir, "ansible", "inventory.json") + " loadtests/home-100k/ansible/run-stages.yml",
+		"--extra-vars @" + filepath.Join(outDir, "ansible", "extra-vars.json"),
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("run-stages live commands missing %q:\n%s", want, joined)
@@ -656,10 +685,9 @@ func TestExecuteCollectLiveCopiesShardArtifacts(t *testing.T) {
 		t.Fatalf("Execute(collect live) code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 	joined := strings.Join(calls, "\n")
-	sshBase := "-i /tmp/test-key -o UserKnownHostsFile=" + filepath.Join(outDir, "ssh_known_hosts")
 	for _, want := range []string{
-		"scp " + sshBase + " root@203.0.113.101:/var/lib/home-100k/run-cli/home-100k-mixed-000/results.json",
-		"scp " + sshBase + " root@203.0.113.102:/var/lib/home-100k/run-cli/home-100k-mixed-001/TEST_REPORT.md",
+		"ansible-playbook -i " + filepath.Join(outDir, "ansible", "inventory.json") + " loadtests/home-100k/ansible/collect.yml",
+		"--extra-vars @" + filepath.Join(outDir, "ansible", "extra-vars.json"),
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("collect live commands missing %q:\n%s", want, joined)
@@ -828,11 +856,7 @@ func TestExecuteAggregateWritesRunLevelReport(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeJSONFile(filepath.Join(outDir, "server-evidence.json"), ServerEvidence{
-		RunID:    "run-cli",
-		Complete: true,
-		Sources:  requiredEvidenceSources(true),
-	}); err != nil {
+	if err := writeJSONFile(filepath.Join(outDir, "server-evidence.json"), correlatedEvidenceForStages("run-cli", stages)); err != nil {
 		t.Fatal(err)
 	}
 

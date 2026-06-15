@@ -1,0 +1,51 @@
+---
+- name: Run Home 100K per-VM shard stages
+  hosts: home_100k
+  gather_facts: false
+  become: true
+  vars:
+    remote_home_100k_dir: "{{ remote_workspace }}/loadtests/home-100k"
+  tasks:
+    - name: Ensure shard output directory exists
+      ansible.builtin.file:
+        path: "{{ remote_out_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Run shard actor workload
+      ansible.builtin.command:
+        argv:
+          - "{{ remote_home_100k_dir }}/bin/home-100k"
+          - shard-run
+          - --env-root
+          - "{{ remote_env_root }}"
+          - --brandname
+          - "{{ brandname }}"
+          - --region
+          - "{{ region }}"
+          - --run-id
+          - "{{ run_id }}"
+          - --role
+          - "{{ role }}"
+          - --shard-index
+          - "{{ shard_index | string }}"
+          - --shard-manifest
+          - "{{ remote_shard_manifest }}"
+          - --out-dir
+          - "{{ remote_out_dir }}"
+          - --stage-warm-up
+          - "{{ stage_warm_up }}"
+          - --stage-steady
+          - "{{ stage_steady }}"
+          - --stage-cool-down
+          - "{{ stage_cool_down }}"
+          - --honor-stage-durations
+      async: 7200
+      poll: 30
+      register: shard_run
+
+    - name: Write shard command log
+      ansible.builtin.copy:
+        dest: "{{ remote_out_dir }}/runner-command.json"
+        mode: "0644"
+        content: "{{ shard_run | to_nice_json }}"

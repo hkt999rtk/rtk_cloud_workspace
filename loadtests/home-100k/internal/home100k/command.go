@@ -473,7 +473,7 @@ func executeCollect(args []string, stdout io.Writer, stderr io.Writer) int {
 			return 1
 		}
 		remoteOutRoot := firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k")
-		if err := collectRemoteVMs(vms, runID, remoteOutRoot, outDir, values); err != nil {
+		if err := collectRemoteVMs(vms, plan, runID, remoteOutRoot, outDir, values); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
@@ -947,6 +947,16 @@ func mergeEvidenceSource(current EvidenceSource, next EvidenceSource) EvidenceSo
 	merged := EvidenceSource{
 		Available: current.Available && next.Available,
 		Detail:    current.Detail + "; " + next.Detail,
+		Counters:  map[string]int64{},
+	}
+	for key, value := range current.Counters {
+		merged.Counters[key] = value
+	}
+	for key, value := range next.Counters {
+		merged.Counters[key] = value
+	}
+	if len(merged.Counters) == 0 {
+		merged.Counters = nil
 	}
 	return merged
 }
@@ -1002,63 +1012,14 @@ func syncRemoteVMs(vms []LinodeVM, plan Plan, values workflowFlagValues) error {
 	if err != nil {
 		return err
 	}
-	knownHosts := workflowKnownHostsFile(values)
-	if err := prepareKnownHostsPath(knownHosts); err != nil {
+	manifestBase := workflowOutDir(values)
+	if err := writeAnsibleInputs(vms, plan, values, runnerBinary); err != nil {
 		return err
 	}
-	return forEachVMParallel(vms, func(vm LinodeVM) error {
-		if strings.TrimSpace(vm.PublicIPv4) == "" {
-			return fmt.Errorf("VM %s has no public IPv4 for sync", vm.Label)
-		}
-		target := values.sshUser + "@" + vm.PublicIPv4
-		sshBase := sshArgs(values.sshKey, knownHosts)
-		if err := waitForRemoteSSH(target, sshBase); err != nil {
-			return fmt.Errorf("wait for SSH on %s: %w", vm.Label, err)
-		}
-		if err := bootstrapRemoteVM(target, sshBase); err != nil {
-			return fmt.Errorf("bootstrap remote dependencies on %s: %w", vm.Label, err)
-		}
-		remoteManifestDir := strings.TrimRight(values.remoteWorkspace, "/") + "/loadtests/home-100k/shard-manifests"
-		remoteBinDir := strings.TrimRight(values.remoteWorkspace, "/") + "/loadtests/home-100k/bin"
-		mkdirArgs := append(append([]string{}, sshBase...), target, "mkdir", "-p", values.remoteWorkspace, values.remoteEnvRoot, remoteManifestDir, remoteBinDir)
-		if err := commandRunner("ssh", mkdirArgs...); err != nil {
-			return fmt.Errorf("prepare remote directories on %s: %w", vm.Label, err)
-		}
-		rsyncSSH := strings.Join(append([]string{"ssh"}, sshBase...), " ")
-		if err := commandRunner("rsync", "-az", "-e", rsyncSSH, "loadtests/home-100k", "go.work", target+":"+strings.TrimRight(values.remoteWorkspace, "/")+"/"); err != nil {
-			return fmt.Errorf("sync runner to %s: %w", vm.Label, err)
-		}
-		remoteRunner := target + ":" + remoteBinDir + "/home-100k"
-		if err := commandRunner("rsync", "-az", "-e", rsyncSSH, runnerBinary, remoteRunner); err != nil {
-			return fmt.Errorf("sync runner binary to %s: %w", vm.Label, err)
-		}
-		localEnvRoot := strings.TrimRight(plan.Conditions.EnvRoot, "/") + "/"
-		remoteEnvRoot := target + ":" + strings.TrimRight(values.remoteEnvRoot, "/") + "/"
-		envArgs := append([]string{"-az", "-e", rsyncSSH},
-			envRootRsyncFilters()...,
-		)
-		envArgs = append(envArgs, localEnvRoot, remoteEnvRoot)
-		if err := commandRunner("rsync", envArgs...); err != nil {
-			return fmt.Errorf("sync env-root to %s: %w", vm.Label, err)
-		}
-		assignment, ok := findAssignmentByLabel(plan, vm.Label)
-		if !ok {
-			return fmt.Errorf("shard not found for VM %s", vm.Label)
-		}
-		manifestBase := strings.TrimSpace(values.outDir)
-		if manifestBase == "" {
-			manifestBase = filepath.Join("loadtests", "home-100k", "reports", normalizedRunID(values.runID))
-		}
-		manifestPath := filepath.Join(manifestBase, "shard-manifests", vm.Label+".json")
-		if err := writeJSONFile(manifestPath, assignment); err != nil {
-			return fmt.Errorf("write shard manifest for %s: %w", vm.Label, err)
-		}
-		remoteManifest := target + ":" + strings.TrimRight(values.remoteWorkspace, "/") + "/loadtests/home-100k/shard-manifests/current.json"
-		if err := commandRunner("rsync", "-az", "-e", rsyncSSH, manifestPath, remoteManifest); err != nil {
-			return fmt.Errorf("sync shard manifest to %s: %w", vm.Label, err)
-		}
-		return nil
-	})
+	if err := writeJSONFile(filepath.Join(manifestBase, "sync-telemetry.json"), SyncTelemetry{VMs: initialSyncTelemetry(vms)}); err != nil {
+		return err
+	}
+	return runAnsiblePlaybook(values, "sync.yml")
 }
 
 func envRootRsyncFilters() []string {
@@ -1076,6 +1037,117 @@ func envRootRsyncFilters() []string {
 		"--include", "/artifacts/device-bind/*.json",
 		"--exclude", "*",
 	}
+}
+
+func writeAnsibleInputs(vms []LinodeVM, plan Plan, values workflowFlagValues, runnerBinary string) error {
+	base := workflowOutDir(values)
+	for _, vm := range vms {
+		assignment, ok := findAssignmentByLabel(plan, vm.Label)
+		if !ok {
+			return fmt.Errorf("shard not found for VM %s", vm.Label)
+		}
+		manifestPath := filepath.Join(base, "shard-manifests", vm.Label+".json")
+		if err := writeJSONFile(manifestPath, assignment); err != nil {
+			return fmt.Errorf("write shard manifest for %s: %w", vm.Label, err)
+		}
+	}
+	return writeAnsibleInventoryAndVars(vms, plan, values, runnerBinary)
+}
+
+func writeAnsibleInputsForExistingManifests(vms []LinodeVM, plan Plan, values workflowFlagValues) error {
+	return writeAnsibleInventoryAndVars(vms, plan, values, filepath.Join(workflowOutDir(values), "bin", "home-100k-linux-amd64"))
+}
+
+func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlagValues, runnerBinary string) error {
+	base := workflowOutDir(values)
+	ansibleDir := filepath.Join(base, "ansible")
+	if err := os.MkdirAll(ansibleDir, 0o755); err != nil {
+		return err
+	}
+	hosts := map[string]any{}
+	for _, vm := range vms {
+		if strings.TrimSpace(vm.PublicIPv4) == "" {
+			return fmt.Errorf("VM %s has no public IPv4 for ansible inventory", vm.Label)
+		}
+		role, shardIndex, err := shardFromVMLabel(vm.Label)
+		if err != nil {
+			return err
+		}
+		hosts[vm.Label] = map[string]any{
+			"ansible_host":                 vm.PublicIPv4,
+			"ansible_user":                 values.sshUser,
+			"ansible_ssh_private_key_file": values.sshKey,
+			"ansible_ssh_common_args":      "-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=" + workflowKnownHostsFile(values),
+			"run_id":                       normalizedRunID(values.runID),
+			"role":                         role,
+			"shard_index":                  shardIndex,
+			"vm_label":                     vm.Label,
+			"local_shard_manifest":         filepath.Join(base, "shard-manifests", vm.Label+".json"),
+			"remote_shard_manifest":        strings.TrimRight(values.remoteWorkspace, "/") + "/loadtests/home-100k/shard-manifests/current.json",
+			"remote_out_dir":               strings.TrimRight(firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k"), "/") + "/" + normalizedRunID(values.runID) + "/" + vm.Label,
+		}
+	}
+	inventory := map[string]any{
+		"all": map[string]any{
+			"children": map[string]any{
+				"home_100k": map[string]any{
+					"hosts": hosts,
+				},
+			},
+		},
+	}
+	if err := writeJSONFile(filepath.Join(ansibleDir, "inventory.json"), inventory); err != nil {
+		return err
+	}
+	stageWarmUp := DefaultStageWarmUp
+	stageSteady := DefaultStageSteady
+	stageCoolDown := DefaultStageCoolDown
+	if len(plan.Stages) > 0 {
+		stageWarmUp = plan.Stages[0].WarmUp
+		stageSteady = plan.Stages[0].SteadyState
+		stageCoolDown = plan.Stages[0].CoolDown
+	}
+	extraVars := map[string]any{
+		"run_id":           normalizedRunID(values.runID),
+		"local_out_dir":    base,
+		"local_runner":     runnerBinary,
+		"local_env_root":   strings.TrimRight(plan.Conditions.EnvRoot, "/"),
+		"remote_workspace": strings.TrimRight(values.remoteWorkspace, "/"),
+		"remote_env_root":  strings.TrimRight(values.remoteEnvRoot, "/"),
+		"remote_out_root":  strings.TrimRight(firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k"), "/"),
+		"brandname":        plan.Conditions.Brandname,
+		"region":           plan.Conditions.Region,
+		"stage_warm_up":    stageWarmUp,
+		"stage_steady":     stageSteady,
+		"stage_cool_down":  stageCoolDown,
+	}
+	return writeJSONFile(filepath.Join(ansibleDir, "extra-vars.json"), extraVars)
+}
+
+func runAnsiblePlaybook(values workflowFlagValues, playbook string) error {
+	base := workflowOutDir(values)
+	args := []string{
+		"-i", filepath.Join(base, "ansible", "inventory.json"),
+		filepath.Join("loadtests", "home-100k", "ansible", playbook),
+		"--extra-vars", "@" + filepath.Join(base, "ansible", "extra-vars.json"),
+	}
+	return commandRunner("ansible-playbook", args...)
+}
+
+func initialSyncTelemetry(vms []LinodeVM) []VMSyncTelemetry {
+	items := make([]VMSyncTelemetry, 0, len(vms))
+	for _, vm := range vms {
+		items = append(items, VMSyncTelemetry{Label: vm.Label})
+	}
+	return items
+}
+
+func workflowOutDir(values workflowFlagValues) string {
+	base := strings.TrimSpace(values.outDir)
+	if base == "" {
+		base = filepath.Join("loadtests", "home-100k", "reports", normalizedRunID(values.runID))
+	}
+	return base
 }
 
 func forEachVMParallel(vms []LinodeVM, fn func(LinodeVM) error) error {
@@ -1136,70 +1208,24 @@ func bootstrapRemoteVM(target string, sshBase []string) error {
 	return commandRunner("ssh", args...)
 }
 
-func collectRemoteVMs(vms []LinodeVM, runID string, remoteOutRoot string, outDir string, values workflowFlagValues) error {
-	knownHosts := workflowKnownHostsFile(values)
-	if err := prepareKnownHostsPath(knownHosts); err != nil {
+func collectRemoteVMs(vms []LinodeVM, plan Plan, runID string, remoteOutRoot string, outDir string, values workflowFlagValues) error {
+	if err := writeAnsibleInputsForExistingManifests(vms, plan, values); err != nil {
 		return err
 	}
-	return forEachVMParallel(vms, func(vm LinodeVM) error {
-		if strings.TrimSpace(vm.PublicIPv4) == "" {
-			return fmt.Errorf("VM %s has no public IPv4 for collect", vm.Label)
-		}
-		target := values.sshUser + "@" + vm.PublicIPv4
+	for _, vm := range vms {
 		shardDir := filepath.Join(outDir, "shards", vm.Label)
 		if err := os.MkdirAll(shardDir, 0o755); err != nil {
 			return err
 		}
-		remoteBase := target + ":" + strings.TrimRight(remoteOutRoot, "/") + "/" + runID + "/" + vm.Label
-		scpBase := sshArgs(values.sshKey, knownHosts)
-		if err := commandRunner("scp", append(append([]string{}, scpBase...), remoteBase+"/results.json", filepath.Join(shardDir, "results.json"))...); err != nil {
-			return fmt.Errorf("collect results from %s: %w", vm.Label, err)
-		}
-		if err := commandRunner("scp", append(append([]string{}, scpBase...), remoteBase+"/TEST_REPORT.md", filepath.Join(shardDir, "TEST_REPORT.md"))...); err != nil {
-			return fmt.Errorf("collect report from %s: %w", vm.Label, err)
-		}
-		return nil
-	})
+	}
+	return runAnsiblePlaybook(values, "collect.yml")
 }
 
 func dispatchRemoteShards(vms []LinodeVM, plan Plan, runID string, remoteOutRoot string, values workflowFlagValues) error {
-	knownHosts := workflowKnownHostsFile(values)
-	if err := prepareKnownHostsPath(knownHosts); err != nil {
+	if err := writeAnsibleInputsForExistingManifests(vms, plan, values); err != nil {
 		return err
 	}
-	return forEachVMParallel(vms, func(vm LinodeVM) error {
-		assignment, ok := findAssignmentByLabel(plan, vm.Label)
-		if !ok {
-			return fmt.Errorf("assignment not found for VM %s", vm.Label)
-		}
-		if strings.TrimSpace(vm.PublicIPv4) == "" {
-			return fmt.Errorf("VM %s has no public IPv4 for run-stages", vm.Label)
-		}
-		target := values.sshUser + "@" + vm.PublicIPv4
-		remoteOutDir := strings.TrimRight(remoteOutRoot, "/") + "/" + runID + "/" + vm.Label
-		remoteRunner := strings.TrimRight(values.remoteWorkspace, "/") + "/loadtests/home-100k/bin/home-100k"
-		remoteCommand := strings.Join([]string{
-			"cd", values.remoteWorkspace, "&&",
-			remoteRunner, "shard-run",
-			"--env-root", values.remoteEnvRoot,
-			"--brandname", plan.Conditions.Brandname,
-			"--region", plan.Conditions.Region,
-			"--stage-warm-up", plan.Stages[0].WarmUp,
-			"--stage-steady", plan.Stages[0].SteadyState,
-			"--stage-cool-down", plan.Stages[0].CoolDown,
-			"--run-id", runID,
-			"--role", assignment.Role,
-			"--shard-index", fmt.Sprintf("%d", assignment.Index),
-			"--shard-manifest", strings.TrimRight(values.remoteWorkspace, "/") + "/loadtests/home-100k/shard-manifests/current.json",
-			"--honor-stage-durations",
-			"--out-dir", remoteOutDir,
-		}, " ")
-		args := append(append([]string{}, sshArgs(values.sshKey, knownHosts)...), target, remoteCommand)
-		if err := commandRunner("ssh", args...); err != nil {
-			return fmt.Errorf("dispatch shard %s: %w", vm.Label, err)
-		}
-		return nil
-	})
+	return runAnsiblePlaybook(values, "run-stages.yml")
 }
 
 func shardFromVMLabel(label string) (string, int, error) {
