@@ -1598,41 +1598,44 @@ func TestStartK8SE2EPortForwardsStartsAllBeforeWaiting(t *testing.T) {
 	}
 }
 
-func TestStagingE2EDataSetupForLKEProvidesK8SFactoryEnrollEnv(t *testing.T) {
+func TestRunStagingE2EDataSetupForLKEStartsPortForwards(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	kubectlLog := fakeKubectlForK8SE2EPortForwards(t)
-	writeTestFile(t, filepath.Join(envRoot, "state", "lke-kubeconfig.yaml"), "apiVersion: v1\n")
-	writeTestFile(t, filepath.Join(envRoot, "services", "video-cloud", "video-cloud.env"), "FACTORY_ENROLL_AUTH_KEY=test-key\n")
-	outDir := filepath.Join(t.TempDir(), "data-setup")
 	commandLog := filepath.Join(t.TempDir(), "commands.log")
+	writeTestFile(t, filepath.Join(envRoot, "state", "lke-kubeconfig.yaml"), "apiVersion: v1\n")
+	t.Setenv("CLOUD_PROVIDER", "lke")
+	t.Setenv("CLOUD_STAGING_E2E_ACCOUNT_MANAGER_PORT", freeTCPPort(t))
+	t.Setenv("CLOUD_STAGING_E2E_VIDEO_CLOUD_PORT", freeTCPPort(t))
+	t.Setenv("CLOUD_STAGING_E2E_FACTORY_ENROLL_PORT", freeTCPPort(t))
+	t.Setenv("CLOUD_STAGING_E2E_MQTT_PORT", freeTCPPort(t))
+	t.Setenv("CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-brand", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-users", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "generate-devices", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "bind-devices", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT", fakeE2EDataCommand(t, commandLog, "validate-bind", envRoot))
 
-	t.Setenv("RTK_CLOUD_LKE_PORT_FORWARD_WAIT", "0s")
-	t.Setenv("CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT", writeDataSetupStub(t, "create-brand", commandLog, envRoot))
-	t.Setenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT", writeDataSetupStub(t, "create-users", commandLog, envRoot))
-	t.Setenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT", writeDataSetupStub(t, "generate-devices", commandLog, envRoot))
-	t.Setenv("CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT", writeDataSetupStub(t, "bind-devices", commandLog, envRoot))
-	t.Setenv("CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT", writeDataSetupStub(t, "validate-bind", commandLog, envRoot))
-
-	err := runStagingE2EDataSetup([]string{
+	if err := runStagingE2EDataSetup([]string{
 		"--workspace", workspace,
 		"--env-root", envRoot,
 		"--brandname", "RTK",
-		"--user-count", "1",
-		"--device-count", "1",
-		"--out-dir", outDir,
+		"--user-count", "2",
+		"--device-count", "4",
+		"--out-dir", filepath.Join(t.TempDir(), "out"),
 		"--quiet",
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
 
+	kubectlCalls := readTestFile(t, kubectlLog)
+	if !strings.Contains(kubectlCalls, "PF_START svc/factoryenroll") {
+		t.Fatalf("expected standalone data setup to start factoryenroll port-forward, got:\n%s", kubectlCalls)
+	}
 	commands := readTestFile(t, commandLog)
-	if !strings.Contains(commands, "FACTORY_ENROLL_URL=http://127.0.0.1:") {
+	if !strings.Contains(commands, "generate-devices FACTORY_ENROLL_URL=http://127.0.0.1:") {
 		t.Fatalf("expected generate-devices to receive FACTORY_ENROLL_URL, got:\n%s", commands)
 	}
-	kubectlCalls := readTestFile(t, kubectlLog)
-	if !strings.Contains(kubectlCalls, "port-forward") || !strings.Contains(kubectlCalls, "svc/factoryenroll") {
-		t.Fatalf("expected factoryenroll port-forward, got:\n%s", readTestFile(t, kubectlLog))
+	if !strings.Contains(commands, "generate-devices FACTORY_ENROLL_AUTH_KEY=set") {
+		t.Fatalf("expected generate-devices to receive FACTORY_ENROLL_AUTH_KEY, got:\n%s", commands)
 	}
 }
 
@@ -2044,6 +2047,52 @@ fi
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return logPath
+}
+
+func fakeE2EDataCommand(t *testing.T, logPath, name, envRoot string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, name)
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+case "` + name + `" in
+  create-users)
+    mkdir -p "` + envRoot + `/artifacts/users"
+    printf '{"brandname":"RTK","users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}\n' > "` + envRoot + `/artifacts/users/rtk-users-test.json"
+    ;;
+  generate-devices)
+    if [[ -z "${FACTORY_ENROLL_URL:-}" ]]; then
+      echo "missing FACTORY_ENROLL_URL" >&2
+      exit 1
+    fi
+    if [[ -z "${FACTORY_ENROLL_AUTH_KEY:-}" ]]; then
+      echo "missing FACTORY_ENROLL_AUTH_KEY" >&2
+      exit 1
+    fi
+    mkdir -p "` + envRoot + `/devices/test_device/manifests"
+    printf '[]\n' > "` + envRoot + `/devices/test_device/manifests/devices.json"
+    ;;
+  bind-devices)
+    mkdir -p "` + envRoot + `/artifacts/device-bind"
+    printf '{"brandname":"RTK","count":4,"assignments":[{"device_id":"dev-1"}]}\n' > "` + envRoot + `/artifacts/device-bind/rtk-device-bind-test.json"
+    ;;
+  validate-bind)
+    printf '{"overall":"pass","report_file":"validate-report.md"}\n'
+    ;;
+esac
+factory_key_state=unset
+if [[ -n "${FACTORY_ENROLL_AUTH_KEY:-}" ]]; then
+  factory_key_state=set
+fi
+{
+  printf '%s FACTORY_ENROLL_URL=%s\n' "` + name + `" "${FACTORY_ENROLL_URL:-}"
+  printf '%s FACTORY_ENROLL_AUTH_KEY=%s\n' "` + name + `" "$factory_key_state"
+} >> "` + logPath + `"
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func freeTCPPort(t *testing.T) string {

@@ -1079,9 +1079,6 @@ func runGenerateLoadDevices(args []string) error {
 		if !*force {
 			return fmt.Errorf("%s already exists; use --force to replace it", *outDir)
 		}
-		if err := os.RemoveAll(*outDir); err != nil {
-			return err
-		}
 	}
 	if err := os.MkdirAll(*outDir, 0o755); err != nil {
 		return err
@@ -1514,10 +1511,12 @@ func runCreateUsers(args []string) error {
 		return json.NewEncoder(os.Stdout).Encode(map[string]any{"action": "dry_run", "brand_cloud": brandCloud, "role": *role, "users": planned})
 	}
 	existingAppCredentials := loadExistingUserAppCredentials(ctx.EnvRoot, slug)
+	reusableLocalUsers := loadReusableLocalUsers(ctx.EnvRoot, slug)
 	type createUserResult struct {
 		user     map[string]any
 		created  bool
 		assigned bool
+		reused   bool
 	}
 	var sessionMu sync.Mutex
 	var logMu sync.Mutex
@@ -1560,6 +1559,11 @@ func runCreateUsers(args []string) error {
 			return createUserResult{}, err
 		}
 		safeLog("ensuring brand user: email=%s role=%s", email, *role)
+		if reusable := reusableLocalUsers[email]; reusable != nil {
+			safeLog("reusing local user artifact: email=%s", email)
+			reusable["action"] = "reused"
+			return createUserResult{user: reusable, reused: true}, nil
+		}
 		createResult, err := safeAccountCreateUser(email, displayName, password)
 		if err != nil {
 			return createUserResult{}, err
@@ -1611,12 +1615,16 @@ func runCreateUsers(args []string) error {
 	users := []map[string]any{}
 	created := 0
 	assigned := 0
+	reused := 0
 	for _, result := range results {
 		if result.created {
 			created++
 		}
 		if result.assigned {
 			assigned++
+		}
+		if result.reused {
+			reused++
 		}
 		users = append(users, result.user)
 	}
@@ -1639,6 +1647,7 @@ func runCreateUsers(args []string) error {
 		"count":            *count,
 		"created":          created,
 		"assigned":         assigned,
+		"reused":           reused,
 		"app_certificates": *count,
 		"credentials_file": credentialsFile,
 	})
@@ -1711,6 +1720,7 @@ func runStagingE2EDataSetup(args []string) error {
 	if err != nil {
 		return err
 	}
+	provider := firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), os.Getenv("RTK_CLOUD_STAGING_PROVIDER"), envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER"))
 	scripts := map[string]string{
 		"create-brand":     firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT"), selfCommandPath("create-brandname-cloud")),
 		"create-users":     firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT"), selfCommandPath("create-users")),
@@ -1728,6 +1738,15 @@ func runStagingE2EDataSetup(args []string) error {
 	logsDir := filepath.Join(*outDir, "logs")
 	if err := os.MkdirAll(logsDir, 0o755); err != nil {
 		return err
+	}
+	childEnv := []string{}
+	if provider == "lke" {
+		portForwardEnv, cleanup, err := startK8SE2EPortForwards(workspace, envRoot)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		childEnv = append(childEnv, portForwardEnv...)
 	}
 	steps := []e2eStep{}
 	childEnv, cleanup, err := startK8SE2EDataSetupPortForwardsIfNeeded(workspace, envRoot)
@@ -3695,6 +3714,63 @@ func loadExistingUserAppCredentials(envRoot, slug string) map[string]map[string]
 	return out
 }
 
+func loadReusableLocalUsers(envRoot, slug string) map[string]map[string]any {
+	out := map[string]map[string]any{}
+	dir := filepath.Join(envRoot, "artifacts", "users")
+	matches, _ := filepath.Glob(filepath.Join(dir, slug+"-users-*.json"))
+	sort.Strings(matches)
+	for i := len(matches) - 1; i >= 0; i-- {
+		raw, err := os.ReadFile(matches[i])
+		if err != nil {
+			continue
+		}
+		var artifact struct {
+			Users []map[string]any `json:"users"`
+		}
+		if err := json.Unmarshal(raw, &artifact); err != nil {
+			continue
+		}
+		for _, user := range artifact.Users {
+			email := strings.ToLower(strings.TrimSpace(stringValue(user["email"])))
+			if email == "" || out[email] != nil || !hasReusableLocalUser(user) {
+				continue
+			}
+			out[email] = cloneJSONMap(user)
+		}
+	}
+	return out
+}
+
+func hasReusableLocalUser(user map[string]any) bool {
+	if strings.TrimSpace(stringValue(user["email"])) == "" || strings.TrimSpace(stringValue(user["password"])) == "" {
+		return false
+	}
+	appCredentials, _ := user["app_credentials"].(map[string]any)
+	if !hasLocalAppCredentials(appCredentials) {
+		return false
+	}
+	appCertificate, _ := user["app_certificate"].(map[string]any)
+	if strings.ToLower(strings.TrimSpace(stringValue(appCertificate["status"]))) != "issued" {
+		return false
+	}
+	if strings.TrimSpace(firstNonEmpty(stringValue(appCertificate["certificate_pem"]), stringValue(appCertificate["certificate_chain_pem"]))) == "" {
+		return false
+	}
+	return strings.TrimSpace(stringValue(appCertificate["fingerprint_sha256"])) != ""
+}
+
+func cloneJSONMap(in map[string]any) map[string]any {
+	raw, err := json.Marshal(in)
+	if err != nil {
+		return map[string]any{}
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return map[string]any{}
+	}
+	return out
+}
+
 func uniqueUserCredentialsFile(artifactDir, slug string) string {
 	base := fmt.Sprintf("%s-users-%s", slug, time.Now().UTC().Format("20060102T150405Z"))
 	path := filepath.Join(artifactDir, base+".json")
@@ -4416,6 +4492,13 @@ func writeLoadDevice(in loadDeviceInput) (generatedDevice, bool, error) {
 	profile := "factory-enrolled-device-mtls-client"
 	warning := "Factory-enrolled staging load-test credential. Keep private key material out of source control."
 	keyAlgorithm := "ed25519"
+	if device, serial, requestID, ok := reusableLocalLoadDevice(in, deviceID, display, deviceDir, keyPath, csrPath, certPath, chainPath, filepath.Join(bundleDir, deviceID+".pem")); ok {
+		logLoad("reusing local device artifact: index=%03d device=%s type=%s service_options=%s", in.Index, deviceID, in.Type.Name, strings.Join(in.Type.ServiceOptions, ","))
+		if !in.GenerateOnly {
+			recordEnrollResult(in.ResultsPath, "reused", in.Index, deviceID, in.Type.Name, in.Type.ServiceOptions, "local", requestID, serial, "")
+		}
+		return device, true, nil
+	}
 	key, err := writeDeviceKeyAndCSR(keyPath, csrPath, deviceID, in.Type.Name, keyAlgorithm)
 	if err != nil {
 		return generatedDevice{}, false, err
@@ -4497,6 +4580,108 @@ func writeLoadDevice(in loadDeviceInput) (generatedDevice, bool, error) {
 		return generatedDevice{}, false, err
 	}
 	return device, true, nil
+}
+
+func reusableLocalLoadDevice(in loadDeviceInput, deviceID, display, deviceDir, keyPath, csrPath, certPath, chainPath, bundlePath string) (generatedDevice, string, string, bool) {
+	metadataPath := filepath.Join(deviceDir, "metadata.json")
+	raw, err := os.ReadFile(metadataPath)
+	if err != nil {
+		return generatedDevice{}, "", "", false
+	}
+	var device generatedDevice
+	if err := json.Unmarshal(raw, &device); err != nil {
+		return generatedDevice{}, "", "", false
+	}
+	expectedProfile := "factory-enrolled-device-mtls-client"
+	if in.GenerateOnly {
+		expectedProfile = "simulation-device-mtls-client"
+	}
+	if device.DeviceID != deviceID ||
+		device.DeviceType != in.Type.Name ||
+		device.MQTTCapability != in.Type.Capability ||
+		device.Model != in.Type.Model ||
+		device.DisplayName != display ||
+		device.CertificateProfile != expectedProfile ||
+		device.Production ||
+		!stringSlicesEqual(device.ServiceOptions, in.Type.ServiceOptions) ||
+		!stringSlicesEqual(device.Capabilities, in.Type.Capabilities) {
+		return generatedDevice{}, "", "", false
+	}
+	if device.CertificatePath != relSlash(in.OutDir, certPath) ||
+		device.CertificateChainPath != relSlash(in.OutDir, chainPath) ||
+		device.KeyPath != relSlash(in.OutDir, keyPath) ||
+		device.CSRPath != relSlash(in.OutDir, csrPath) ||
+		device.BundlePath != relSlash(in.OutDir, bundlePath) {
+		return generatedDevice{}, "", "", false
+	}
+	if !fileHasPEMBlock(keyPath, "PRIVATE KEY") ||
+		!fileHasPEMBlock(csrPath, "CERTIFICATE REQUEST") ||
+		!fileHasPEMBlock(certPath, "CERTIFICATE") ||
+		!fileHasPEMBlock(chainPath, "CERTIFICATE") ||
+		!fileHasPEMBlock(bundlePath, "CERTIFICATE") ||
+		!fileHasPEMBlock(bundlePath, "PRIVATE KEY") {
+		return generatedDevice{}, "", "", false
+	}
+	if in.GenerateOnly {
+		return device, "", "", true
+	}
+	var response struct {
+		RequestID    string `json:"request_id"`
+		SerialNumber string `json:"serial_number"`
+	}
+	responseRaw, err := os.ReadFile(filepath.Join(deviceDir, "factory-enroll-response.redacted.json"))
+	if err != nil {
+		return generatedDevice{}, "", "", false
+	}
+	if err := json.Unmarshal(responseRaw, &response); err != nil {
+		return generatedDevice{}, "", "", false
+	}
+	if strings.TrimSpace(response.SerialNumber) == "" {
+		return generatedDevice{}, "", "", false
+	}
+	if strings.TrimSpace(response.RequestID) == "" {
+		var request struct {
+			RequestID string `json:"request_id"`
+		}
+		requestRaw, err := os.ReadFile(filepath.Join(deviceDir, "factory-enroll-request.json"))
+		if err != nil {
+			return generatedDevice{}, "", "", false
+		}
+		if err := json.Unmarshal(requestRaw, &request); err != nil || strings.TrimSpace(request.RequestID) == "" {
+			return generatedDevice{}, "", "", false
+		}
+		response.RequestID = request.RequestID
+	}
+	return device, response.SerialNumber, response.RequestID, true
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func fileHasPEMBlock(path, blockType string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 {
+		return false
+	}
+	for {
+		block, rest := pem.Decode(data)
+		if block == nil {
+			return false
+		}
+		if block.Type == blockType || strings.HasSuffix(block.Type, " "+blockType) {
+			return true
+		}
+		data = rest
+	}
 }
 
 func writeDeviceKeyAndCSR(keyPath, csrPath, deviceID, deviceType, algorithm string) (crypto.Signer, error) {
