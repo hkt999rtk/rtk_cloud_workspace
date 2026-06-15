@@ -46,9 +46,14 @@
           - --runner-mode
           - "{{ runner_mode | default('sample') }}"
           - --honor-stage-durations
+      environment:
+        KUBECONFIG: "{{ remote_env_root }}/state/lke-kubeconfig.yaml"
+        RTK_CLOUD_LKE_KUBECONFIG: "{{ remote_env_root }}/state/lke-kubeconfig.yaml"
+        CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT: "{{ remote_home_100k_dir }}/bin/cloud-mqtt-test"
       async: 7200
       poll: 30
       register: shard_run
+      failed_when: false
 
     - name: Write shard command log
       ansible.builtin.copy:

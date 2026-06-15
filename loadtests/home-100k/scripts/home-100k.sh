@@ -86,6 +86,7 @@ Commands:
   destroy-vms             Review or live-destroy VMs by state file.
   workflow-dry-run        Run plan plus dry-run lifecycle review commands.
   workflow-live           Create VMs and run the live lifecycle through aggregate.
+  workflow-resume-live    Resume an existing live run from sync using <out-dir>/vms.json.
 
 Defaults can be overridden with:
   HOME100K_DESCRIPTION_FILE default: loadtests/home-100k/scenarios/default.description.env
@@ -114,6 +115,7 @@ Defaults can be overridden with:
 Examples:
   $(basename "$0")
   $(basename "$0") workflow-live
+  HOME100K_RUN_ID=<run-id> $(basename "$0") workflow-resume-live
   $(basename "$0") plan
   $(basename "$0") dry-run
   HOME100K_REGION=us-southeast $(basename "$0") provision-vms --live --confirm-live
@@ -194,7 +196,7 @@ node_resource_status() {
       continue
     fi
     local sample
-    sample="$(ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$ssh_known_hosts_file" -i "$ssh_key" "${ssh_user}@${ip}" \
+    sample="$(ssh -n -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$ssh_known_hosts_file" -i "$ssh_key" "${ssh_user}@${ip}" \
       'read _ u n s i w irq sirq steal guest guestn < /proc/stat; total1=$((u+n+s+i+w+irq+sirq+steal)); idle1=$((i+w)); sleep 1; read _ u n s i w irq sirq steal guest guestn < /proc/stat; total2=$((u+n+s+i+w+irq+sirq+steal)); idle2=$((i+w)); awk -v t1=$total1 -v t2=$total2 -v i1=$idle1 -v i2=$idle2 "BEGIN {dt=t2-t1; di=i2-i1; if (dt>0) printf \"cpu_pct=%.1f \", 100*(dt-di)/dt; else printf \"cpu_pct=unknown \"}"; awk "{printf \"load1=%s \", \$1}" /proc/loadavg; free -m | awk "/^Mem:/ {printf \"mem_used_mb=%s mem_total_mb=%s \", \$3, \$2}"; df -h / | awk "NR==2 {printf \"disk_used=%s disk_total=%s disk_pct=%s\", \$3, \$2, \$5}"' 2>/dev/null || true)"
     if [[ -z "$sample" ]]; then
       sample="unreachable"
@@ -444,7 +446,11 @@ case "$command" in
     run_home100k sync "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
     workflow_status
     set_phase "run-stages"
-    run_home100k run-stages "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key" --runner-mode "$runner_mode"
+    workflow_rc=0
+    run_home100k run-stages "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key" --runner-mode "$runner_mode" || workflow_rc=$?
+    if [[ "$workflow_rc" -ne 0 ]]; then
+      echo "run-stages returned rc=$workflow_rc; continuing to collect artifacts and generate report" >&2
+    fi
     workflow_status
     set_phase "collect"
     run_home100k collect "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
@@ -461,6 +467,46 @@ case "$command" in
     stop_status_monitor
     echo "live workflow artifacts: $out_dir"
     echo "cleanup command: HOME100K_RUN_ID=$run_id $(basename "$0") destroy-vms --live --confirm-live"
+    exit "$workflow_rc"
+    ;;
+  workflow-resume-live)
+    if [[ -z "${LINODE_TOKEN:-}" ]]; then
+      echo "workflow-resume-live requires LINODE_TOKEN" >&2
+      exit 2
+    fi
+    if [[ ! -f "$repo_root/$out_dir/vms.json" ]]; then
+      echo "workflow-resume-live requires existing VM state: $out_dir/vms.json" >&2
+      exit 2
+    fi
+    mkdir -p "$repo_root/$out_dir"
+    write_nodes_file
+    start_status_monitor
+    set_phase "sync"
+    run_home100k sync "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
+    workflow_status
+    set_phase "run-stages"
+    workflow_rc=0
+    run_home100k run-stages "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key" --runner-mode "$runner_mode" || workflow_rc=$?
+    if [[ "$workflow_rc" -ne 0 ]]; then
+      echo "run-stages returned rc=$workflow_rc; continuing to collect artifacts and generate report" >&2
+    fi
+    workflow_status
+    set_phase "collect"
+    run_home100k collect "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
+    workflow_status
+    set_phase "collect-server-evidence"
+    export_kubeconfig_if_available
+    run_home100k collect-server-evidence "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --live
+    workflow_status
+    set_phase "aggregate"
+    run_home100k aggregate "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir"
+    generate_report_from_artifacts
+    set_phase "complete"
+    workflow_status
+    stop_status_monitor
+    echo "live workflow artifacts: $out_dir"
+    echo "cleanup command: HOME100K_RUN_ID=$run_id $(basename "$0") destroy-vms --live --confirm-live"
+    exit "$workflow_rc"
     ;;
   *)
     echo "unknown command: $command" >&2

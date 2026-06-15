@@ -1550,8 +1550,8 @@ CLOUD_STACK_NAME=video-cloud-staging
 	for _, want := range []string{
 		"RTK_CLOUD_MQTT_TEST_MQTT_HOST=127.0.0.1",
 		"RTK_CLOUD_MQTT_TEST_MQTT_PORT=",
-		"RTK_CLOUD_MQTT_TEST_VIDEO_BASE_URL=http://127.0.0.1:",
-		"RTK_CLOUD_MQTT_TEST_ACCOUNT_BASE_URL=http://127.0.0.1:",
+		"VIDEO_CLOUD_BASE_URL=http://127.0.0.1:",
+		"ACCOUNT_MANAGER_BASE_URL=http://127.0.0.1:",
 	} {
 		if !strings.Contains(goCalls, want) {
 			t.Fatalf("expected %q in fake go env, got:\n%s", want, goCalls)
@@ -2194,7 +2194,7 @@ set -euo pipefail
     printf ' %s' "$arg"
   done
   printf '\n'
-  env | grep '^RTK_CLOUD_MQTT_TEST_' | sort
+  env | grep -E '^(RTK_CLOUD_MQTT_TEST_|VIDEO_CLOUD_BASE_URL=|ACCOUNT_MANAGER_BASE_URL=)' | sort
 } >> "` + logPath + `"
 `
 	if err := os.WriteFile(goPath, []byte(script), 0o755); err != nil {

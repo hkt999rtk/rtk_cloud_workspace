@@ -85,6 +85,25 @@ deploy:
 	}
 }
 
+func TestVideoCloudMTLSBaseURLUsesConfiguredDeviceDomain(t *testing.T) {
+	got := videoCloudMTLSBaseURL(t.TempDir(), map[string]string{
+		"VIDEO_CLOUD_DOMAIN":        "video-cloud-staging.realtekconnect.com",
+		"VIDEO_CLOUD_DEVICE_DOMAIN": "device.video-cloud-staging.realtekconnect.com",
+	}, "https://video-cloud-staging.realtekconnect.com")
+	if got != "https://device.video-cloud-staging.realtekconnect.com" {
+		t.Fatalf("videoCloudMTLSBaseURL = %q, want configured device domain", got)
+	}
+}
+
+func TestVideoCloudMTLSBaseURLDefaultsToDeviceSubdomain(t *testing.T) {
+	got := videoCloudMTLSBaseURL(t.TempDir(), map[string]string{
+		"VIDEO_CLOUD_DOMAIN": "video-cloud-staging.realtekconnect.com",
+	}, "https://video-cloud-staging.realtekconnect.com")
+	if got != "https://device.video-cloud-staging.realtekconnect.com" {
+		t.Fatalf("videoCloudMTLSBaseURL = %q, want default device subdomain", got)
+	}
+}
+
 func TestMQTTEndpointUsesLKEPortForwardOverrides(t *testing.T) {
 	t.Setenv("RTK_CLOUD_MQTT_TEST_MQTT_HOST", "127.0.0.1")
 	t.Setenv("RTK_CLOUD_MQTT_TEST_MQTT_PORT", "39123")
@@ -636,6 +655,43 @@ func TestRenderConsoleShowsRuntimeMQTTTraceData(t *testing.T) {
 	none := renderConsole(base)
 	if strings.Contains(none, "Runtime MQTT Trace") {
 		t.Fatalf("none console should hide runtime trace:\n%s", none)
+	}
+}
+
+func TestAggregateMQTTIOTotalsFromTraceChain(t *testing.T) {
+	rows := []deviceResult{{
+		DeviceID:   "rtk-0041",
+		DeviceType: "light",
+		TraceChain: []traceStep{
+			{Phase: "mqtt_connect", Actor: "device_client", Action: "mqtt_connect", Status: "PASS"},
+			{Phase: "command", Actor: "device_client", Action: "subscribe", Topic: "devices/rtk-0041/down/commands", Status: "PASS"},
+			{Phase: "telemetry", Actor: "device_client", Action: "publish", Topic: "devices/rtk-0041/up/messages", Status: "PASS", Data: "message_type=status_report"},
+			{Phase: "telemetry", Actor: "app_observer", Action: "receive", Topic: "devices/rtk-0041/up/messages", Status: "PASS", Data: "message_type=status_report"},
+			{Phase: "command", Actor: "app_controller", Action: "publish", Topic: "devices/rtk-0041/down/commands", Status: "PASS", Data: "message_type=command"},
+			{Phase: "command", Actor: "device_client", Action: "receive", Topic: "devices/rtk-0041/down/commands", Status: "PASS", Data: "message_type=command"},
+			{Phase: "command_ack", Actor: "device_client", Action: "publish", Topic: "devices/rtk-0041/up/messages", Status: "PASS", Data: "message_type=command_result"},
+			{Phase: "command_ack", Actor: "app_observer", Action: "receive", Topic: "devices/rtk-0041/up/messages", Status: "PASS", Data: "message_type=command_result"},
+		},
+	}}
+
+	totals := aggregateMQTTIOTotals(rows, appBootstrapStatus{Status: "PASS"}, 2, 1)
+	if totals.ConnectAttempts != 1 || totals.ConnectSuccesses != 1 || totals.SubscribeSuccesses != 1 {
+		t.Fatalf("unexpected connection totals: %#v", totals)
+	}
+	if totals.PublishSuccesses != 2 || totals.MessagesReceived != 1 || totals.ReportedEvents != 1 {
+		t.Fatalf("unexpected MQTT IO totals: %#v", totals)
+	}
+	if totals.HTTPRequests != 2 || totals.HTTPSuccesses != 1 || totals.HTTPFailures != 1 {
+		t.Fatalf("unexpected app totals: %#v", totals)
+	}
+
+	result := map[string]any{}
+	attachMQTTIOTotals(result, totals)
+	if result["connect_attempts"] != int64(1) {
+		t.Fatalf("top-level counters not attached: %#v", result)
+	}
+	if result["device_mqtt_totals"] == nil || result["app_user_totals"] == nil {
+		t.Fatalf("structured totals not attached: %#v", result)
 	}
 }
 

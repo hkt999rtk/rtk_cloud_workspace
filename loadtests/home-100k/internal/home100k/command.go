@@ -1,15 +1,19 @@
 package home100k
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"encoding/csv"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -490,6 +494,7 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		return fmt.Errorf("plan has no device-mqtt shards")
 	}
 	stageResults := make([]StageResult, 0, len(plan.Stages))
+	var runErr error
 	for _, stage := range plan.Stages {
 		durationSeconds, err := stageWindowSeconds(stage)
 		if err != nil {
@@ -518,13 +523,19 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 			args = append([]string{args[0], "--workspace", values.workspace}, args[1:]...)
 		}
 		if err := commandRunner(rtkCloud, args...); err != nil {
-			return fmt.Errorf("stage %s live mqtt-test failed: %w", stage.Name, err)
+			runErr = fmt.Errorf("stage %s live mqtt-test failed: %w", stage.Name, err)
 		}
 		stageResult, err := loadLiveMQTTStageResult(filepath.Join(stageOut, "results.json"), stage, maxConnected)
 		if err != nil {
+			if runErr != nil {
+				return fmt.Errorf("%w; stage %s live result: %v", runErr, stage.Name, err)
+			}
 			return fmt.Errorf("stage %s live result: %w", stage.Name, err)
 		}
 		stageResults = append(stageResults, stageResult)
+		if runErr != nil {
+			break
+		}
 	}
 	resultFile := filepath.Join(outDir, "results.json")
 	reportFile := filepath.Join(outDir, "TEST_REPORT.md")
@@ -547,7 +558,10 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		LoadGeneratorHealthy: true,
 		StageResults:         stageResults,
 	})
-	return os.WriteFile(reportFile, []byte(report), 0o644)
+	if err := os.WriteFile(reportFile, []byte(report), 0o644); err != nil {
+		return err
+	}
+	return runErr
 }
 
 func stageWindowSeconds(stage Stage) (int, error) {
@@ -1296,8 +1310,9 @@ func envRootRsyncFilters() []string {
 }
 
 type remoteRunnerBinaries struct {
-	Home100K string
-	RTKCloud string
+	Home100K      string
+	RTKCloud      string
+	CloudMQTTTest string
 }
 
 func writeAnsibleInputs(vms []LinodeVM, plan Plan, values workflowFlagValues, binaries remoteRunnerBinaries) error {
@@ -1315,14 +1330,19 @@ func writeAnsibleInputs(vms []LinodeVM, plan Plan, values workflowFlagValues, bi
 		if err := writeEnvRsyncFilter(filterPath, plan.Conditions.EnvRoot, assignment); err != nil {
 			return fmt.Errorf("write env rsync filter for %s: %w", vm.Label, err)
 		}
+		archivePath := filepath.Join(base, "env-archives", vm.Label+".tar.gz")
+		if err := writeEnvArchive(archivePath, plan, assignment); err != nil {
+			return fmt.Errorf("write env archive for %s: %w", vm.Label, err)
+		}
 	}
 	return writeAnsibleInventoryAndVars(vms, plan, values, binaries)
 }
 
 func writeAnsibleInputsForExistingManifests(vms []LinodeVM, plan Plan, values workflowFlagValues) error {
 	return writeAnsibleInventoryAndVars(vms, plan, values, remoteRunnerBinaries{
-		Home100K: filepath.Join(workflowOutDir(values), "bin", "home-100k-linux-amd64"),
-		RTKCloud: filepath.Join(workflowOutDir(values), "bin", "rtk-cloud-linux-amd64"),
+		Home100K:      filepath.Join(workflowOutDir(values), "bin", "home-100k-linux-amd64"),
+		RTKCloud:      filepath.Join(workflowOutDir(values), "bin", "rtk-cloud-linux-amd64"),
+		CloudMQTTTest: filepath.Join(workflowOutDir(values), "bin", "cloud-mqtt-test-linux-amd64"),
 	})
 }
 
@@ -1347,6 +1367,9 @@ func writeEnvRsyncFilter(path string, envRoot string, assignment VMAssignment) e
 		"+ /artifacts/device-bind/*.json",
 	}
 	deviceRows, err := readDeviceManifestRows(filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.csv"))
+	if err == nil && len(deviceRows) == 0 {
+		deviceRows, err = readDeviceManifestRowsFromJSON(filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.json"))
+	}
 	if err == nil {
 		for _, shard := range assignment.TaskShards {
 			if shard.Role != "device-mqtt" {
@@ -1373,6 +1396,24 @@ func writeEnvRsyncFilter(path string, envRoot string, assignment VMAssignment) e
 type deviceManifestRow struct {
 	DeviceID   string
 	DeviceType string
+}
+
+type shardUserArtifact struct {
+	Users []struct {
+		Email string `json:"email"`
+	} `json:"users"`
+}
+
+type shardBindArtifact struct {
+	Brandname   string                `json:"brandname"`
+	Assignments []shardBindAssignment `json:"assignments"`
+}
+
+type shardBindAssignment struct {
+	AssignedEmail  string   `json:"assigned_email"`
+	DeviceID       string   `json:"device_id"`
+	DeviceType     string   `json:"device_type"`
+	ServiceOptions []string `json:"service_options"`
 }
 
 func readDeviceManifestRows(path string) ([]deviceManifestRow, error) {
@@ -1417,6 +1458,377 @@ func readDeviceManifestRows(path string) ([]deviceManifestRow, error) {
 	return out, nil
 }
 
+func readDeviceManifestRowsFromJSON(path string) ([]deviceManifestRow, error) {
+	var rows []struct {
+		DeviceID   string `json:"device_id"`
+		DeviceType string `json:"device_type"`
+	}
+	if err := readJSON(path, &rows); err != nil {
+		return nil, err
+	}
+	out := make([]deviceManifestRow, 0, len(rows))
+	for _, row := range rows {
+		deviceID := strings.TrimSpace(row.DeviceID)
+		deviceType := strings.TrimSpace(row.DeviceType)
+		if deviceID == "" || deviceType == "" {
+			continue
+		}
+		out = append(out, deviceManifestRow{DeviceID: deviceID, DeviceType: deviceType})
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("devices JSON manifest has no usable rows: %s", path)
+	}
+	return out, nil
+}
+
+func loadDeviceManifestRows(envRoot string) ([]deviceManifestRow, error) {
+	rows, err := readDeviceManifestRows(filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.csv"))
+	if err == nil && len(rows) > 0 {
+		return rows, nil
+	}
+	jsonRows, jsonErr := readDeviceManifestRowsFromJSON(filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.json"))
+	if jsonErr == nil {
+		return jsonRows, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return nil, jsonErr
+}
+
+func writeEnvArchive(path string, plan Plan, assignment VMAssignment) error {
+	envRoot := plan.Conditions.EnvRoot
+	deviceRows, err := loadDeviceManifestRows(envRoot)
+	if err != nil {
+		return err
+	}
+	relPaths := []string{
+		"env",
+		"state/lke.env",
+		"state/lke-kubeconfig.yaml",
+		"state/video-cloud-staging.state.json",
+		"services",
+		"devices/test_device/loadtest.env",
+		"devices/test_device/summary.json",
+		"devices/test_device/manifests/devices.csv",
+		"devices/test_device/manifests/devices.json",
+		"devices/test_device/manifests/device_ids.txt",
+		"artifacts/users",
+		"artifacts/device-bind",
+	}
+	if stackState := stackStateRelPath(envRoot); stackState != "" {
+		relPaths = append(relPaths, stackState)
+	}
+	shardRows, shardErr := loadShardDeviceRowsFromArtifacts(envRoot, plan, assignment)
+	if shardErr == nil && len(shardRows) > 0 {
+		deviceRows = shardRows
+	}
+	for _, shard := range assignment.TaskShards {
+		if shard.Role != "device-mqtt" {
+			continue
+		}
+		if shardErr == nil && len(shardRows) > 0 {
+			for _, row := range shardRows {
+				relPaths = append(relPaths, deviceCredentialRelPaths(row)...)
+			}
+			continue
+		}
+		for idx := shard.Start; idx < shard.End && idx < len(deviceRows); idx++ {
+			relPaths = append(relPaths, deviceCredentialRelPaths(deviceRows[idx])...)
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmpPath := path + ".tmp"
+	if err := createTarGzFromRelPaths(tmpPath, envRoot, deduplicateLines(relPaths)); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+func deviceCredentialRelPaths(row deviceManifestRow) []string {
+	return []string{
+		filepath.Join("devices", "test_device", "devices", row.DeviceType, row.DeviceID),
+		filepath.Join("devices", "test_device", "bundles", row.DeviceType, row.DeviceID+".pem"),
+	}
+}
+
+func stackStateRelPath(envRoot string) string {
+	values := parseEnvFile(filepath.Join(envRoot, "env", "stack.env"))
+	stack := strings.TrimSpace(values["CLOUD_STACK_NAME"])
+	if stack == "" {
+		return ""
+	}
+	rel := filepath.Join("state", stack+".state.json")
+	if _, err := os.Stat(filepath.Join(envRoot, rel)); err == nil {
+		return rel
+	}
+	return ""
+}
+
+func loadShardDeviceRowsFromArtifacts(envRoot string, plan Plan, assignment VMAssignment) ([]deviceManifestRow, error) {
+	deviceShardCount := 0
+	for _, shard := range assignment.TaskShards {
+		if shard.Role == "device-mqtt" {
+			deviceShardCount++
+		}
+	}
+	if deviceShardCount == 0 {
+		return nil, fmt.Errorf("assignment has no device shard")
+	}
+	brandLower := "rtk"
+	usersPath := latestFile(filepath.Join(envRoot, "artifacts", "users", brandLower+"-users-*.json"))
+	bindPath := latestHomeBindArtifact(filepath.Join(envRoot, "artifacts", "device-bind", brandLower+"-device-bind-*.json"), brandLower)
+	if usersPath == "" || bindPath == "" {
+		return nil, fmt.Errorf("missing users or device-bind artifact")
+	}
+	users := shardUserArtifact{}
+	if err := readJSON(usersPath, &users); err != nil {
+		return nil, err
+	}
+	bind := shardBindArtifact{}
+	if err := readJSON(bindPath, &bind); err != nil {
+		return nil, err
+	}
+	userEmails := map[string]bool{}
+	for _, user := range users.Users {
+		email := strings.TrimSpace(user.Email)
+		if email != "" {
+			userEmails[email] = true
+		}
+	}
+	selectedByUser := map[string][]shardBindAssignment{}
+	for _, item := range bind.Assignments {
+		if !homeDeviceType(item.DeviceType) || !stringSliceContains(item.ServiceOptions, "mqtt") || !userEmails[item.AssignedEmail] {
+			continue
+		}
+		selectedByUser[item.AssignedEmail] = append(selectedByUser[item.AssignedEmail], item)
+	}
+	selectedUsers := sortedMapKeys(selectedByUser)
+	selected := []shardBindAssignment{}
+	for _, email := range selectedUsers {
+		selected = append(selected, selectedByUser[email]...)
+	}
+	shardCount := len(plan.ShardsByRole("device-mqtt"))
+	if shardCount <= 0 {
+		shardCount = 1
+	}
+	shardIndex := assignment.Index
+	rows := []deviceManifestRow{}
+	maxConnected := maxAssignmentConnectedDevices(assignment)
+	for idx, item := range selected {
+		if idx%shardCount != shardIndex {
+			continue
+		}
+		rows = append(rows, deviceManifestRow{DeviceID: item.DeviceID, DeviceType: item.DeviceType})
+		if maxConnected > 0 && len(rows) >= maxConnected {
+			break
+		}
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("no selected devices for shard %d/%d", shardIndex, shardCount)
+	}
+	return rows, nil
+}
+
+func maxAssignmentConnectedDevices(assignment VMAssignment) int {
+	maxConnected := 0
+	for _, shard := range assignment.TaskShards {
+		if shard.Role != "device-mqtt" {
+			continue
+		}
+		if shard.Count > maxConnected {
+			maxConnected = shard.Count
+		}
+	}
+	return maxConnected
+}
+
+func latestFile(pattern string) string {
+	matches, _ := filepath.Glob(pattern)
+	sort.Slice(matches, func(i, j int) bool {
+		ai, _ := os.Stat(matches[i])
+		aj, _ := os.Stat(matches[j])
+		if ai == nil || aj == nil {
+			return matches[i] < matches[j]
+		}
+		return ai.ModTime().After(aj.ModTime())
+	})
+	if len(matches) == 0 {
+		return ""
+	}
+	return matches[0]
+}
+
+func latestHomeBindArtifact(pattern string, brandLower string) string {
+	matches, _ := filepath.Glob(pattern)
+	sort.Slice(matches, func(i, j int) bool {
+		ai, _ := os.Stat(matches[i])
+		aj, _ := os.Stat(matches[j])
+		if ai == nil || aj == nil {
+			return matches[i] < matches[j]
+		}
+		return ai.ModTime().After(aj.ModTime())
+	})
+	for _, path := range matches {
+		bind := shardBindArtifact{}
+		if err := readJSON(path, &bind); err != nil {
+			continue
+		}
+		if strings.ToLower(bind.Brandname) != brandLower {
+			continue
+		}
+		found := map[string]bool{}
+		for _, item := range bind.Assignments {
+			if homeDeviceType(item.DeviceType) && stringSliceContains(item.ServiceOptions, "mqtt") {
+				found[item.DeviceType] = true
+			}
+		}
+		if found["light"] && found["air_conditioner"] && found["smart_meter"] {
+			return path
+		}
+	}
+	if len(matches) == 0 {
+		return ""
+	}
+	return matches[0]
+}
+
+func homeDeviceType(value string) bool {
+	switch value {
+	case "light", "air_conditioner", "smart_meter":
+		return true
+	default:
+		return false
+	}
+}
+
+func stringSliceContains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func sortedMapKeys[T any](values map[string]T) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func parseEnvFile(path string) map[string]string {
+	out := map[string]string{}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return out
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || !strings.Contains(line, "=") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		out[strings.TrimSpace(key)] = strings.Trim(strings.TrimSpace(value), `"'`)
+	}
+	return out
+}
+
+func createTarGzFromRelPaths(path string, root string, relPaths []string) error {
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	gz := gzip.NewWriter(file)
+	defer gz.Close()
+	tw := tar.NewWriter(gz)
+	defer tw.Close()
+	added := map[string]bool{}
+	for _, rel := range relPaths {
+		cleanRel := filepath.Clean(rel)
+		if cleanRel == "." || strings.HasPrefix(cleanRel, "..") || filepath.IsAbs(cleanRel) {
+			return fmt.Errorf("invalid archive path: %s", rel)
+		}
+		abs := filepath.Join(root, cleanRel)
+		info, err := os.Lstat(abs)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		if info.IsDir() {
+			if err := filepath.WalkDir(abs, func(path string, entry fs.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					return walkErr
+				}
+				return addPathToTar(tw, root, path, added)
+			}); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := addPathToTar(tw, root, abs, added); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func addPathToTar(tw *tar.Writer, root string, path string, added map[string]bool) error {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return err
+	}
+	rel = filepath.ToSlash(filepath.Clean(rel))
+	if rel == "." || strings.HasPrefix(rel, "../") || rel == ".." {
+		return fmt.Errorf("invalid archive path: %s", path)
+	}
+	if added[rel] {
+		return nil
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	header, err := tar.FileInfoHeader(info, "")
+	if err != nil {
+		return err
+	}
+	header.Name = rel
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(path)
+		if err != nil {
+			return err
+		}
+		header.Linkname = target
+	}
+	if err := tw.WriteHeader(header); err != nil {
+		return err
+	}
+	added[rel] = true
+	if !info.Mode().IsRegular() {
+		return nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = io.Copy(tw, file)
+	return err
+}
+
 func deduplicateLines(lines []string) []string {
 	seen := map[string]bool{}
 	out := make([]string, 0, len(lines))
@@ -1441,6 +1853,10 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 		return err
 	}
 	localRTKCloud, err := filepath.Abs(binaries.RTKCloud)
+	if err != nil {
+		return err
+	}
+	localCloudMQTTTest, err := filepath.Abs(binaries.CloudMQTTTest)
 	if err != nil {
 		return err
 	}
@@ -1469,6 +1885,10 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 		if err != nil {
 			return err
 		}
+		localEnvArchive, err := filepath.Abs(filepath.Join(base, "env-archives", vm.Label+".tar.gz"))
+		if err != nil {
+			return err
+		}
 		hosts[vm.Label] = map[string]any{
 			"ansible_host":                 vm.PublicIPv4,
 			"ansible_user":                 values.sshUser,
@@ -1480,6 +1900,7 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 			"vm_label":                     vm.Label,
 			"local_shard_manifest":         localShardManifest,
 			"local_env_rsync_filter":       localEnvRsyncFilter,
+			"local_env_archive":            localEnvArchive,
 			"remote_shard_manifest":        strings.TrimRight(values.remoteWorkspace, "/") + "/loadtests/home-100k/shard-manifests/current.json",
 			"remote_out_dir":               strings.TrimRight(firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k"), "/") + "/" + normalizedRunID(values.runID) + "/" + vm.Label,
 		}
@@ -1505,20 +1926,21 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 		stageCoolDown = plan.Stages[0].CoolDown
 	}
 	extraVars := map[string]any{
-		"run_id":           normalizedRunID(values.runID),
-		"local_out_dir":    localOutDir,
-		"local_runner":     localRunner,
-		"local_rtk_cloud":  localRTKCloud,
-		"local_env_root":   strings.TrimRight(localEnvRoot, "/"),
-		"remote_workspace": strings.TrimRight(values.remoteWorkspace, "/"),
-		"remote_env_root":  strings.TrimRight(values.remoteEnvRoot, "/"),
-		"remote_out_root":  strings.TrimRight(firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k"), "/"),
-		"brandname":        plan.Conditions.Brandname,
-		"region":           plan.Conditions.Region,
-		"stage_warm_up":    stageWarmUp,
-		"stage_steady":     stageSteady,
-		"stage_cool_down":  stageCoolDown,
-		"runner_mode":      firstNonEmpty(values.runnerMode, "sample"),
+		"run_id":                normalizedRunID(values.runID),
+		"local_out_dir":         localOutDir,
+		"local_runner":          localRunner,
+		"local_rtk_cloud":       localRTKCloud,
+		"local_cloud_mqtt_test": localCloudMQTTTest,
+		"local_env_root":        strings.TrimRight(localEnvRoot, "/"),
+		"remote_workspace":      strings.TrimRight(values.remoteWorkspace, "/"),
+		"remote_env_root":       strings.TrimRight(values.remoteEnvRoot, "/"),
+		"remote_out_root":       strings.TrimRight(firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k"), "/"),
+		"brandname":             plan.Conditions.Brandname,
+		"region":                plan.Conditions.Region,
+		"stage_warm_up":         stageWarmUp,
+		"stage_steady":          stageSteady,
+		"stage_cool_down":       stageCoolDown,
+		"runner_mode":           firstNonEmpty(values.runnerMode, "sample"),
 	}
 	return writeJSONFile(filepath.Join(ansibleDir, "extra-vars.json"), extraVars)
 }
@@ -1590,7 +2012,12 @@ func buildRemoteRunnerBinaries(values workflowFlagValues) (remoteRunnerBinaries,
 	if err := commandRunner("bash", "-lc", cmd); err != nil {
 		return remoteRunnerBinaries{}, fmt.Errorf("build linux rtk-cloud runner binary: %w", err)
 	}
-	return remoteRunnerBinaries{Home100K: home100K, RTKCloud: rtkCloud}, nil
+	cloudMQTTTest := filepath.Join(binDir, "cloud-mqtt-test-linux-amd64")
+	cmd = fmt.Sprintf("GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o %s ./scripts/go/cloud-mqtt-test", shellQuote(cloudMQTTTest))
+	if err := commandRunner("bash", "-lc", cmd); err != nil {
+		return remoteRunnerBinaries{}, fmt.Errorf("build linux cloud-mqtt-test runner binary: %w", err)
+	}
+	return remoteRunnerBinaries{Home100K: home100K, RTKCloud: rtkCloud, CloudMQTTTest: cloudMQTTTest}, nil
 }
 
 func waitForRemoteSSH(target string, sshBase []string) error {

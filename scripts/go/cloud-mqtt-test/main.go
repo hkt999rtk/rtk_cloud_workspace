@@ -136,6 +136,25 @@ type traceStep struct {
 	Detail    string `json:"detail,omitempty"`
 }
 
+type mqttIOTotals struct {
+	ConnectAttempts        int64 `json:"connect_attempts"`
+	ConnectSuccesses       int64 `json:"connect_successes"`
+	ConnectFailures        int64 `json:"connect_failures"`
+	SubscribeSuccesses     int64 `json:"subscribe_successes"`
+	PublishSuccesses       int64 `json:"publish_successes"`
+	PublishFailures        int64 `json:"publish_failures"`
+	MessagesReceived       int64 `json:"messages_received"`
+	ReportedEvents         int64 `json:"reported_events"`
+	TotalBytesSent         int64 `json:"total_bytes_sent"`
+	TotalBytesReceived     int64 `json:"total_bytes_received"`
+	AuthViolations         int64 `json:"auth_violations"`
+	HTTPRequests           int64 `json:"http_requests"`
+	HTTPSuccesses          int64 `json:"http_successes"`
+	HTTPFailures           int64 `json:"http_failures"`
+	TotalHTTPBytesSent     int64 `json:"total_http_bytes_sent"`
+	TotalHTTPBytesReceived int64 `json:"total_http_bytes_received"`
+}
+
 type appBootstrapStatus struct {
 	Status            string `json:"status"`
 	Reason            string `json:"reason,omitempty"`
@@ -551,6 +570,8 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 		"command_latency_p99_ms":     percentile(latencies, 99),
 		"telemetry_freshness_max_ms": maxLatency(perDevice, "smart_meter"),
 	}
+	ioTotals := aggregateMQTTIOTotals(perDevice, appBootstrap, totalCommands, totalPassed)
+	attachMQTTIOTotals(result, ioTotals)
 	result["capability_metrics"] = capMetrics
 	result["negative_checks"] = []any{}
 	result["mqtt"] = map[string]any{
@@ -964,6 +985,119 @@ func renumberTrace(chain []traceStep) []traceStep {
 		chain[i].Detail = traceDetail(chain[i].Detail)
 	}
 	return chain
+}
+
+func aggregateMQTTIOTotals(rows []deviceResult, appBootstrap appBootstrapStatus, commandsAttempted int, commandsPassed int) mqttIOTotals {
+	var totals mqttIOTotals
+	for _, row := range rows {
+		for _, step := range row.TraceChain {
+			statusPass := strings.EqualFold(step.Status, "PASS")
+			statusFail := strings.EqualFold(step.Status, "FAIL")
+			switch step.Actor {
+			case "device_client":
+				switch step.Action {
+				case "mqtt_connect":
+					totals.ConnectAttempts++
+					if statusPass {
+						totals.ConnectSuccesses++
+					} else if statusFail {
+						totals.ConnectFailures++
+					}
+				case "subscribe":
+					if statusPass {
+						totals.SubscribeSuccesses++
+					}
+				case "publish":
+					if statusPass {
+						totals.PublishSuccesses++
+						totals.TotalBytesSent += tracePayloadBytes(step)
+						if step.Phase == "command_ack" {
+							totals.ReportedEvents++
+						}
+					} else if statusFail {
+						totals.PublishFailures++
+					}
+				case "receive":
+					if statusPass {
+						totals.MessagesReceived++
+						totals.TotalBytesReceived += tracePayloadBytes(step)
+					}
+				}
+			case "app_controller":
+				if step.Action == "publish" {
+					if statusPass {
+						totals.TotalHTTPBytesSent += tracePayloadBytes(step)
+					} else if statusFail {
+						totals.HTTPFailures++
+					}
+				}
+			case "app_observer":
+				if step.Action == "receive" && statusPass {
+					totals.TotalHTTPBytesReceived += tracePayloadBytes(step)
+				}
+			}
+		}
+	}
+	totals.HTTPRequests = int64(commandsAttempted)
+	totals.HTTPSuccesses = int64(commandsPassed)
+	if totals.HTTPFailures == 0 && commandsAttempted > commandsPassed {
+		totals.HTTPFailures = int64(commandsAttempted - commandsPassed)
+	}
+	if strings.EqualFold(appBootstrap.Status, "FAIL") {
+		totals.AuthViolations = 1
+	}
+	return totals
+}
+
+func tracePayloadBytes(step traceStep) int64 {
+	size := len(step.Topic) + len(step.Data)
+	if size <= 0 {
+		return 0
+	}
+	return int64(size)
+}
+
+func attachMQTTIOTotals(result map[string]any, totals mqttIOTotals) {
+	result["connect_attempts"] = totals.ConnectAttempts
+	result["connect_successes"] = totals.ConnectSuccesses
+	result["connect_failures"] = totals.ConnectFailures
+	result["subscribe_successes"] = totals.SubscribeSuccesses
+	result["publish_successes"] = totals.PublishSuccesses
+	result["publish_failures"] = totals.PublishFailures
+	result["messages_received"] = totals.MessagesReceived
+	result["reported_events"] = totals.ReportedEvents
+	result["total_bytes_sent"] = totals.TotalBytesSent
+	result["total_bytes_received"] = totals.TotalBytesReceived
+	result["auth_violations"] = totals.AuthViolations
+	result["http_requests"] = totals.HTTPRequests
+	result["http_successes"] = totals.HTTPSuccesses
+	result["http_failures"] = totals.HTTPFailures
+	result["total_http_bytes_sent"] = totals.TotalHTTPBytesSent
+	result["total_http_bytes_received"] = totals.TotalHTTPBytesReceived
+	result["device_mqtt_totals"] = map[string]any{
+		"connect_attempts":   totals.ConnectAttempts,
+		"connect_success":    totals.ConnectSuccesses,
+		"connect_fail":       totals.ConnectFailures,
+		"subscribes":         totals.SubscribeSuccesses,
+		"publishes":          totals.PublishSuccesses + totals.PublishFailures,
+		"received_messages":  totals.MessagesReceived,
+		"delta_received":     totals.MessagesReceived,
+		"reported_publishes": totals.ReportedEvents,
+		"rejected_publishes": totals.PublishFailures,
+		"bytes_sent":         totals.TotalBytesSent,
+		"bytes_received":     totals.TotalBytesReceived,
+	}
+	result["app_user_totals"] = map[string]any{
+		"login_attempts":        totals.HTTPRequests,
+		"login_success":         totals.HTTPSuccesses,
+		"login_fail":            totals.HTTPFailures,
+		"list_devices_requests": totals.HTTPRequests,
+		"read_shadow_requests":  totals.HTTPRequests,
+		"desired_writes":        totals.HTTPRequests,
+		"received_acks":         totals.HTTPSuccesses,
+		"bytes_sent":            totals.TotalHTTPBytesSent,
+		"bytes_received":        totals.TotalHTTPBytesReceived,
+	}
 }
 
 func traceDataSummary(doc map[string]any) string {
@@ -1908,11 +2042,17 @@ func videoCloudMTLSBaseURL(envRoot string, stackValues map[string]string, fallba
 	host := firstNonEmpty(
 		stackValues["VIDEO_CLOUD_MTLS_DOMAIN"],
 		stackValues["VIDEO_CLOUD_DEVICE_CLIENT_DOMAIN"],
+		stackValues["VIDEO_CLOUD_DEVICE_DOMAIN"],
 		topologyDeployValue(firstExisting(
 			filepath.Join(envRoot, "topology", "video-cloud.yaml"),
 			filepath.Join(envRoot, "topology", "video-cloud-staging.yaml"),
 		), "device_client_domain"),
 	)
+	if host == "" {
+		if publicHost := strings.TrimSpace(stackValues["VIDEO_CLOUD_DOMAIN"]); publicHost != "" {
+			host = "device." + publicHost
+		}
+	}
 	if host == "" {
 		return fallback
 	}

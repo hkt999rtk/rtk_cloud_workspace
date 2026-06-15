@@ -1,9 +1,12 @@
 package home100k
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +15,75 @@ import (
 	"sync"
 	"testing"
 )
+
+func writeTinyEnvRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	files := map[string]string{
+		"env/stack.env":                                                             "STACK=test\n",
+		"state/lke.env":                                                             "LKE_CLUSTER_ID=123\n",
+		"state/lke-kubeconfig.yaml":                                                 "apiVersion: v1\nkind: Config\n",
+		"state/video-cloud-staging.state.json":                                      `{"mqtt":{"host":"mqtt.example.invalid","tls_port":8883}}`,
+		"services/video-cloud.env":                                                  "VIDEO_CLOUD_BASE_URL=http://example.invalid\n",
+		"devices/test_device/loadtest.env":                                          "LOADTEST=1\n",
+		"devices/test_device/summary.json":                                          `{"count":2}`,
+		"devices/test_device/manifests/devices.csv":                                 "device_id,device_type\n",
+		"devices/test_device/manifests/device_ids.txt":                              "load-device-0001\nload-device-0002\n",
+		"devices/test_device/devices/light/load-device-0001/device.cert.pem":        "cert\n",
+		"devices/test_device/devices/light/load-device-0001/device.key.pem":         "key\n",
+		"devices/test_device/devices/light/load-device-0001/device.chain.pem":       "chain\n",
+		"devices/test_device/bundles/light/load-device-0001.pem":                    "bundle\n",
+		"devices/test_device/devices/smart_meter/load-device-0002/device.cert.pem":  "cert\n",
+		"devices/test_device/devices/smart_meter/load-device-0002/device.key.pem":   "key\n",
+		"devices/test_device/devices/smart_meter/load-device-0002/device.chain.pem": "chain\n",
+		"devices/test_device/bundles/smart_meter/load-device-0002.pem":              "bundle\n",
+		"artifacts/users/rtk-users-test.json":                                       `{"users":[]}`,
+		"artifacts/device-bind/rtk-device-bind-test.json":                           `{"assignments":[]}`,
+	}
+	for rel, body := range files {
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	devicesJSON := []map[string]any{
+		{"device_id": "load-device-0001", "device_type": "light"},
+		{"device_id": "load-device-0002", "device_type": "smart_meter"},
+	}
+	if err := writeJSONFile(filepath.Join(root, "devices/test_device/manifests/devices.json"), devicesJSON); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func readTarGzNames(t *testing.T, path string) map[string]bool {
+	t.Helper()
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	gz, err := gzip.NewReader(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	names := map[string]bool{}
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			return names
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		names[header.Name] = true
+	}
+}
 
 func TestExecutePlanPrintsDeterministicRunPlan(t *testing.T) {
 	var stdout, stderr bytes.Buffer
@@ -383,6 +455,7 @@ func TestExecuteSyncDefaultsToDryRun(t *testing.T) {
 
 func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T) {
 	outDir := t.TempDir()
+	envRoot := writeTinyEnvRoot(t)
 	stateFile := filepath.Join(outDir, "vms.json")
 	state := map[string]any{
 		"created": []LinodeVM{
@@ -412,7 +485,7 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"sync",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", envRoot,
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -430,6 +503,7 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 	joined := strings.Join(calls, "\n")
 	for _, want := range []string{
 		"bash -lc GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o '" + filepath.Join(outDir, "bin", "home-100k-linux-amd64") + "' ./loadtests/home-100k/cmd/home-100k",
+		"bash -lc GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o '" + filepath.Join(outDir, "bin", "cloud-mqtt-test-linux-amd64") + "' ./scripts/go/cloud-mqtt-test",
 		"ansible-playbook --forks 20 -i " + filepath.Join(outDir, "ansible", "inventory.json") + " loadtests/home-100k/ansible/sync.yml",
 	} {
 		if !strings.Contains(joined, want) {
@@ -465,6 +539,9 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 	if !filepath.IsAbs(extraVars["local_rtk_cloud"]) {
 		t.Fatalf("extra vars local_rtk_cloud = %q, want absolute path", extraVars["local_rtk_cloud"])
 	}
+	if !filepath.IsAbs(extraVars["local_cloud_mqtt_test"]) {
+		t.Fatalf("extra vars local_cloud_mqtt_test = %q, want absolute path", extraVars["local_cloud_mqtt_test"])
+	}
 	var inventoryDoc struct {
 		All struct {
 			Children map[string]struct {
@@ -479,17 +556,17 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 	if !filepath.IsAbs(localManifest) {
 		t.Fatalf("inventory local_shard_manifest = %q, want absolute path", localManifest)
 	}
-	localFilter, _ := inventoryDoc.All.Children["home_100k"].Hosts["home-100k-mixed-000"]["local_env_rsync_filter"].(string)
-	if !filepath.IsAbs(localFilter) {
-		t.Fatalf("inventory local_env_rsync_filter = %q, want absolute path", localFilter)
+	localArchive, _ := inventoryDoc.All.Children["home_100k"].Hosts["home-100k-mixed-000"]["local_env_archive"].(string)
+	if !filepath.IsAbs(localArchive) {
+		t.Fatalf("inventory local_env_archive = %q, want absolute path", localArchive)
 	}
-	filterRaw, err := os.ReadFile(localFilter)
-	if err != nil {
-		t.Fatalf("missing env rsync filter: %v", err)
+	if _, err := os.Stat(localArchive); err != nil {
+		t.Fatalf("missing env archive: %v", err)
 	}
-	for _, want := range []string{"+ /devices/test_device/devices/", "+ /artifacts/users/*.json", "- *"} {
-		if !strings.Contains(string(filterRaw), want) {
-			t.Fatalf("env rsync filter missing %q:\n%s", want, string(filterRaw))
+	archiveNames := readTarGzNames(t, localArchive)
+	for _, want := range []string{"env/stack.env", "state/lke.env", "state/lke-kubeconfig.yaml", "state/video-cloud-staging.state.json", "services/video-cloud.env", "devices/test_device/manifests/devices.json", "devices/test_device/devices/light/load-device-0001/device.cert.pem", "devices/test_device/devices/light/load-device-0001/device.key.pem", "devices/test_device/devices/light/load-device-0001/device.chain.pem", "devices/test_device/bundles/light/load-device-0001.pem", "artifacts/users/rtk-users-test.json", "artifacts/device-bind/rtk-device-bind-test.json"} {
+		if !archiveNames[want] {
+			t.Fatalf("env archive missing %q", want)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "sync-telemetry.json")); err != nil {
@@ -517,6 +594,158 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 	}
 	if !strings.Contains(stdout.String(), `"synced"`) || !strings.Contains(stdout.String(), `"id": 101`) {
 		t.Fatalf("stdout missing synced VMs:\n%s", stdout.String())
+	}
+}
+
+func TestWriteEnvRsyncFilterFallsBackToDevicesJSONWhenCSVHasOnlyHeader(t *testing.T) {
+	envRoot := t.TempDir()
+	manifestDir := filepath.Join(envRoot, "devices", "test_device", "manifests")
+	if err := os.MkdirAll(manifestDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(manifestDir, "devices.csv"), []byte("device_id,device_type\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	devicesJSON := []map[string]any{
+		{"device_id": "load-device-0001", "device_type": "light"},
+		{"device_id": "load-device-0002", "device_type": "smart_meter"},
+	}
+	if err := writeJSONFile(filepath.Join(manifestDir, "devices.json"), devicesJSON); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "filter")
+	assignment := VMAssignment{
+		Label: "home-100k-mixed-000",
+		Index: 0,
+		Role:  "mixed",
+		TaskShards: []Shard{{
+			Role:  "device-mqtt",
+			Start: 0,
+			End:   2,
+			Count: 2,
+		}},
+	}
+	if err := writeEnvRsyncFilter(out, envRoot, assignment); err != nil {
+		t.Fatalf("writeEnvRsyncFilter: %v", err)
+	}
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filter := string(raw)
+	for _, want := range []string{
+		"+ /devices/test_device/devices/light/load-device-0001/***",
+		"+ /devices/test_device/bundles/light/load-device-0001.pem",
+		"+ /devices/test_device/devices/smart_meter/load-device-0002/***",
+		"+ /devices/test_device/bundles/smart_meter/load-device-0002.pem",
+	} {
+		if !strings.Contains(filter, want) {
+			t.Fatalf("filter missing %q:\n%s", want, filter)
+		}
+	}
+}
+
+func TestAnsibleSyncUsesCompressedEnvArchive(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "ansible", "sync.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, want := range []string{`local_env_archive`, `Upload compressed env-root shard archive`, `Extract env-root shard archive`, `env-root.tar.gz`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("sync.yml missing %q:\n%s", want, body)
+		}
+	}
+	for _, forbidden := range []string{`ansible.posix.synchronize`, `--filter=merge`} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("sync.yml still contains %q:\n%s", forbidden, body)
+		}
+	}
+}
+
+func TestEnvArchiveUsesBoundDeviceShardSelection(t *testing.T) {
+	envRoot := writeTinyEnvRoot(t)
+	users := map[string]any{"users": []map[string]any{
+		{"email": "user-00@example.test"},
+		{"email": "user-01@example.test"},
+		{"email": "user-02@example.test"},
+	}}
+	if err := writeJSONFile(filepath.Join(envRoot, "artifacts", "users", "rtk-users-20260615.json"), users); err != nil {
+		t.Fatal(err)
+	}
+	bind := map[string]any{
+		"brandname": "rtk",
+		"assignments": []map[string]any{
+			{"assigned_email": "user-00@example.test", "device_id": "load-device-0001", "device_type": "light", "service_options": []string{"mqtt"}},
+			{"assigned_email": "user-01@example.test", "device_id": "load-device-0002", "device_type": "smart_meter", "service_options": []string{"mqtt"}},
+			{"assigned_email": "user-02@example.test", "device_id": "load-device-0003", "device_type": "air_conditioner", "service_options": []string{"mqtt"}},
+		},
+	}
+	if err := writeJSONFile(filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-20260615.json"), bind); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{
+		"devices/test_device/devices/air_conditioner/load-device-0003/device.cert.pem",
+		"devices/test_device/devices/air_conditioner/load-device-0003/device.key.pem",
+		"devices/test_device/devices/air_conditioner/load-device-0003/device.chain.pem",
+		"devices/test_device/bundles/air_conditioner/load-device-0003.pem",
+	} {
+		path := filepath.Join(envRoot, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("pem\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plan, err := NewPlan(PlanOptions{EnvRoot: envRoot, Brandname: "RTK", Region: "us-sea"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assignment := plan.Assignments[1]
+	archivePath := filepath.Join(t.TempDir(), "env.tar.gz")
+	if err := writeEnvArchive(archivePath, plan, assignment); err != nil {
+		t.Fatalf("writeEnvArchive: %v", err)
+	}
+	names := readTarGzNames(t, archivePath)
+	for _, want := range []string{
+		"devices/test_device/devices/smart_meter/load-device-0002/device.cert.pem",
+		"devices/test_device/devices/smart_meter/load-device-0002/device.key.pem",
+		"devices/test_device/devices/smart_meter/load-device-0002/device.chain.pem",
+		"devices/test_device/bundles/smart_meter/load-device-0002.pem",
+	} {
+		if !names[want] {
+			t.Fatalf("archive missing shard-selected device credential %q", want)
+		}
+	}
+	if names["devices/test_device/devices/light/load-device-0001/device.cert.pem"] {
+		t.Fatalf("archive included shard 0 device credential")
+	}
+}
+
+func TestAnsibleSyncInstallsKubectlForLiveRunner(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "ansible", "sync.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, want := range []string{"Install kubectl for staging service port-forwarding", "https://dl.k8s.io/release/{{ kubectl_version | default('v1.35.3') }}/bin/linux/amd64/kubectl", "/usr/local/bin/kubectl"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("sync.yml missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestAnsibleRunStagesUsesPrebuiltCloudMQTTTest(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "ansible", "run-stages.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, want := range []string{"CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT", "{{ remote_home_100k_dir }}/bin/cloud-mqtt-test"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("run-stages.yml missing %q:\n%s", want, body)
+		}
 	}
 }
 
@@ -758,6 +987,82 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 	}
 	if first.AppUserTotals.ReadShadowRequests != 700 || first.AppUserTotals.ReceivedAcks != 690 || first.AppUserTotals.BytesReceived != 2222 {
 		t.Fatalf("app/user totals not preserved from live results: %#v", first.AppUserTotals)
+	}
+}
+
+func TestExecuteShardRunLiveWritesShardResultsWhenMQTTTestFails(t *testing.T) {
+	outDir := t.TempDir()
+	oldRunner := commandRunner
+	commandRunner = func(name string, args ...string) error {
+		childOutDir := ""
+		for idx := 0; idx < len(args)-1; idx++ {
+			if args[idx] == "--out-dir" {
+				childOutDir = args[idx+1]
+			}
+		}
+		if childOutDir == "" {
+			t.Fatalf("missing child --out-dir in args: %v", args)
+		}
+		payload := map[string]any{
+			"overall": "fail",
+			"metrics": map[string]any{
+				"devices_selected":   2500,
+				"commands_attempted": 5000,
+				"commands_passed":    100,
+			},
+			"connect_attempts":          2500,
+			"connect_successes":         2400,
+			"connect_failures":          100,
+			"subscribe_successes":       2400,
+			"publish_successes":         200,
+			"publish_failures":          10,
+			"messages_received":         100,
+			"reported_events":           90,
+			"total_bytes_sent":          1234,
+			"total_bytes_received":      5678,
+			"http_requests":             5000,
+			"http_successes":            100,
+			"http_failures":             4900,
+			"total_http_bytes_sent":     111,
+			"total_http_bytes_received": 222,
+		}
+		if err := writeJSONFile(filepath.Join(childOutDir, "results.json"), payload); err != nil {
+			t.Fatal(err)
+		}
+		return errors.New("mqtt test failed")
+	}
+	defer func() { commandRunner = oldRunner }()
+
+	var stdout, stderr bytes.Buffer
+	code := Execute([]string{
+		"shard-run",
+		"--env-root", "cloud_env/staging/lke",
+		"--brandname", "RTK",
+		"--region", "us-sea",
+		"--run-id", "run-cli",
+		"--role", "device-mqtt",
+		"--shard-index", "0",
+		"--out-dir", outDir,
+		"--runner-mode", "live",
+		"--rtk-cloud-binary", "rtk-cloud",
+		"--stage-warm-up", "1s",
+		"--stage-steady", "1s",
+		"--stage-cool-down", "1s",
+	}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("Execute(shard-run live) code = 0, want failure")
+	}
+	var result struct {
+		StageResults []StageResult `json:"stage_results"`
+	}
+	if err := readJSON(filepath.Join(outDir, "results.json"), &result); err != nil {
+		t.Fatalf("missing converted failed shard results: %v stderr=%s", err, stderr.String())
+	}
+	if len(result.StageResults) != 1 {
+		t.Fatalf("stage results len = %d, want 1", len(result.StageResults))
+	}
+	if result.StageResults[0].DeviceMQTTTotals.ConnectAttempts != 2500 || result.StageResults[0].AppUserTotals.DesiredWrites != 5000 {
+		t.Fatalf("failed shard counters not preserved: %#v", result.StageResults[0])
 	}
 }
 

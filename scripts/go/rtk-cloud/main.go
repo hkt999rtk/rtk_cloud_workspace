@@ -262,14 +262,10 @@ func runMQTTTest(args []string) error {
 		defer accountCleanup()
 		childEnv["RTK_CLOUD_MQTT_TEST_MQTT_HOST"] = "127.0.0.1"
 		childEnv["RTK_CLOUD_MQTT_TEST_MQTT_PORT"] = strconv.Itoa(mqttPort)
-		childEnv["RTK_CLOUD_MQTT_TEST_VIDEO_BASE_URL"] = videoURL
-		childEnv["RTK_CLOUD_MQTT_TEST_ACCOUNT_BASE_URL"] = accountURL
+		childEnv["VIDEO_CLOUD_BASE_URL"] = videoURL
+		childEnv["ACCOUNT_MANAGER_BASE_URL"] = accountURL
 	}
-	goCmd, err := exec.LookPath("go")
-	if err != nil {
-		return errors.New("go is required")
-	}
-	cmd := exec.Command(goCmd, "run", "./cloud-mqtt-test",
+	childArgs := []string{
 		"--root", workspace,
 		"--env-root", resolvedEnv,
 		"--brandname", *brandname,
@@ -288,8 +284,19 @@ func runMQTTTest(args []string) error {
 		"--command-rate-per-device-per-day", *commandRate,
 		"--concurrency", strconv.Itoa(*concurrency),
 		"--max-connected-devices", strconv.Itoa(*maxConnectedDevices),
-	)
-	cmd.Dir = filepath.Join(workspace, "scripts", "go")
+	}
+	childScript := strings.TrimSpace(os.Getenv("CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT"))
+	var cmd *exec.Cmd
+	if childScript != "" {
+		cmd = exec.Command(childScript, childArgs...)
+	} else {
+		goCmd, err := exec.LookPath("go")
+		if err != nil {
+			return errors.New("go is required")
+		}
+		cmd = exec.Command(goCmd, append([]string{"run", "./cloud-mqtt-test"}, childArgs...)...)
+		cmd.Dir = filepath.Join(workspace, "scripts", "go")
+	}
 	cmd.Env = withEnv(os.Environ(), childEnv)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

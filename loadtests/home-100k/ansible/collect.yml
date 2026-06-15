@@ -28,6 +28,7 @@
         src: "{{ remote_out_dir }}/results.json"
         dest: "{{ local_out_dir }}/shards/{{ vm_label }}/results.json"
         flat: true
+        fail_on_missing: false
 
     - name: Fetch shard report
       ansible.builtin.fetch:
