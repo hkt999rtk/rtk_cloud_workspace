@@ -87,9 +87,21 @@ waits for the loopback message. WebRTC, relay, storage, clips, and snapshots are
 disabled for this profile. The design and developer issue breakdown live in
 `docs/home-mqtt-loadtest-simulation.md`.
 
-For the 10,000-device MQTT-only capacity baseline, use the two-phase
-`mqtt-loadtest` wrapper. It prepares 2,500 users and 10,000 non-camera devices
-once, then runs repeatable local or distributed shards:
+For the 100,000-device Home IoT Device Shadow capacity baseline, use the
+`home-100k` suite. It owns the 100K home scenario, IoT Device Shadow desired /
+reported / delta convergence, offline-device coverage, report contract, and
+review-time ephemeral Linode VM lifecycle commands:
+
+```sh
+go run ./loadtests/home-100k/cmd/home-100k -- plan \
+  --env-root cloud_env/staging/lke \
+  --brandname RTK \
+  --region us-sea
+```
+
+The older 10,000-device MQTT-only `mqtt-loadtest` wrapper remains a lower-level
+shard and aggregation reference. It prepares 2,500 users and 10,000 non-camera
+devices once, then runs repeatable local or distributed shards:
 
 ```sh
 go run ./scripts/go/rtk-cloud -- mqtt-loadtest prepare \
@@ -107,7 +119,8 @@ camera/WebRTC/TURN/media, uses telemetry every 5 minutes, and writes shard
 results under `<env-root>/artifacts/mqtt-loadtest/<timestamp>/`. For multiple
 load-generator VMs, pass `--hosts-file`; the wrapper assigns one shard per SSH
 host and aggregates the copied shard results. See
-`docs/linode-10k-mqtt-loadtest.md`.
+`docs/linode-100k-home-iot-shadow-loadtest.md` for the current capacity-test
+direction.
 
 For a destructive staging reset followed by the full onboarding and MQTT smoke,
 use the one-stop orchestrator from the workspace root:

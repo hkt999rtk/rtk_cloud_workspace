@@ -525,7 +525,7 @@ go run ./scripts/go/rtk-cloud -- mqtt-loadtest run \
 
 如果 load-generator VM 尚未有 runner 和 env-root，可加 `--sync-remote`。這會透過 SSH 複製 `scripts/go` 和 env-root；env-root 內含 user artifact、device private key 和 certificate，load-generator VM 必須視為帶 secret 的測試基礎設施。
 
-詳細 runbook 見 `docs/linode-10k-mqtt-loadtest.md`。
+這個指令現在是 100K Home IoT Device Shadow load test 的低階 shard/aggregate 參考；正式容量測試方向見 `docs/linode-100k-home-iot-shadow-loadtest.md` 與 `loadtests/home-100k/`。
 
 可用 `./stg.sh video RTK` 執行 staging WebRTC RTP relay smoke。這個測試只選最新 bind artifact 內具備 `video_streaming` service option 的 camera device，使用 device certificate mTLS 換 device token，使用 users artifact 內 app private key + app certificate mTLS 換 device-bound app token，然後重用 `e2e_test/video_cloud/load` runner。PASS 代表 device websocket owner online、viewer 建立 WebRTC session、server 回 SDP offer 與 ICE servers、device 送 SDP answer、ICE connected/completed、device 以 2s 1080p `testsrc2` Annex-B H.264 fixture loop 10 次送出 20s H.264 RTP，payload validation 看到 SPS/PPS/IDR/non-IDR NAL types，且 session close 成功。這不是 legacy raw RTP relay 測試；PASS 來源是 WebRTC signaling + H.264 RTP payload evidence。輸出在 `<env-root>/artifacts/video-relay-test/<timestamp>/results.json` 與 `TEST_REPORT.md`，console/report 會 redacted bearer token、TURN credential、private key、CSR 與 certificate PEM。
 

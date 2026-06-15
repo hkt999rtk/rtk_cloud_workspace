@@ -1,0 +1,201 @@
+package home100k
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
+
+type ReportInput struct {
+	Plan                 Plan
+	RunID                string
+	ShadowEvidenceFound  bool
+	ServerEvidenceFound  bool
+	LoadGeneratorHealthy bool
+	StageResults         []StageResult
+	ServerEvidence       ServerEvidence
+	Notes                []string
+}
+
+func RenderReport(input ReportInput) string {
+	status := "PASS"
+	reasons := []string{}
+	if !input.ShadowEvidenceFound {
+		status = "INCOMPLETE"
+		reasons = append(reasons, "Missing IoT Device Shadow evidence")
+	}
+	if !input.ServerEvidenceFound {
+		status = "INCOMPLETE"
+		reasons = append(reasons, "Missing server evidence")
+	}
+	if !input.LoadGeneratorHealthy {
+		status = "INCOMPLETE"
+		reasons = append(reasons, "Load-generator saturation invalidated server-capacity conclusion")
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "# 100K Home IoT Device Shadow Load Test Report\n\n")
+	fmt.Fprintf(&b, "- Run ID: %s\n", firstNonEmpty(input.RunID, "<run_id>"))
+	fmt.Fprintf(&b, "- Status: %s\n", status)
+	for _, reason := range reasons {
+		fmt.Fprintf(&b, "- %s\n", reason)
+	}
+	fmt.Fprintln(&b)
+
+	fmt.Fprintln(&b, "## Test Conditions")
+	fmt.Fprintf(&b, "- Env root: `%s`\n", input.Plan.Conditions.EnvRoot)
+	fmt.Fprintf(&b, "- Brand: `%s`\n", input.Plan.Conditions.Brandname)
+	fmt.Fprintf(&b, "- Region: `%s`\n", input.Plan.Conditions.Region)
+	fmt.Fprintf(&b, "- Devices: %d\n", input.Plan.Conditions.Devices)
+	fmt.Fprintf(&b, "- Users: %d\n", input.Plan.Conditions.Users)
+	fmt.Fprintf(&b, "- Devices per user: %d\n", input.Plan.Conditions.DevicesPerUser)
+	fmt.Fprintln(&b)
+
+	fmt.Fprintln(&b, "## Scenario Mix")
+	renderMap(&b, "Device mix", input.Plan.DeviceMix)
+	renderMap(&b, "Presence mix", input.Plan.PresenceMix)
+	fmt.Fprintln(&b)
+
+	fmt.Fprintln(&b, "## Device Scenario")
+	fmt.Fprintln(&b, "- Online steady devices subscribe to shadow delta, apply desired state, and write reported state.")
+	fmt.Fprintln(&b, "- Offline desired queue devices reconnect, call shadow get, apply queued desired state, and clear delta.")
+	fmt.Fprintln(&b, "- Flapping reconnect devices verify reconnect sync, version handling, and duplicate-apply prevention.")
+	fmt.Fprintln(&b)
+
+	fmt.Fprintln(&b, "## User Scenario")
+	fmt.Fprintln(&b, "- App users login, bootstrap app certificates when needed, list authorized devices, read shadows, and write desired state.")
+	fmt.Fprintln(&b, "- Users wait for reported state to match desired state and for delta to clear.")
+	fmt.Fprintln(&b)
+
+	fmt.Fprintln(&b, "## IoT Device Shadow Scenario")
+	fmt.Fprintln(&b, "- Canonical path: app writes desired -> cloud computes delta -> device receives delta or reads shadow after reconnect -> device writes reported -> delta clears.")
+	fmt.Fprintln(&b, "- Offline desired queue is required coverage, not an optional scenario.")
+	fmt.Fprintln(&b, "- Device desired writes must be rejected; stale versions must be counted as conflicts.")
+	fmt.Fprintln(&b)
+
+	fmt.Fprintln(&b, "## Stages")
+	for _, stage := range input.Plan.Stages {
+		fmt.Fprintf(&b, "- %s: %d connected devices, warm-up %s, steady %s, cool-down %s\n", stage.Name, stage.ConnectedDevices, stage.WarmUp, stage.SteadyState, stage.CoolDown)
+	}
+	fmt.Fprintln(&b)
+
+	if len(input.StageResults) > 0 {
+		fmt.Fprintln(&b, "## Stage Results")
+		fmt.Fprintln(&b, "| Stage | Devices | MQTT connect | Reconnects | Shadow get p50 | Shadow get p95 | Shadow get p99 | Desired update p95 | Delta receive p95 | Desired->reported p95 | Offline desired p95 | desired/reported convergence | offline desired convergence | Delta clear | Conflicts | Rejected | Auth violations | Client tokens | Duplicate apply |")
+		fmt.Fprintln(&b, "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+		for _, stage := range input.StageResults {
+			fmt.Fprintf(&b, "| %s | %d | %.2f%% | %d | %.2f ms | %.2f ms | %.2f ms | %.2f ms | %.2f ms | %.2f ms | %.2f ms | %.2f%% | %.2f%% | %.2f%% | %d | %d | %d | %d | %d |\n",
+				stage.Name,
+				stage.ConnectedDevices,
+				stage.MQTTConnectSuccessRatePercent,
+				stage.MQTTReconnectCount,
+				stage.ShadowGetP50MS,
+				stage.ShadowGetP95MS,
+				stage.ShadowGetP99MS,
+				stage.DesiredUpdateP95MS,
+				stage.DeltaReceiveP95MS,
+				stage.DesiredReportedP95MS,
+				stage.OfflineDesiredP95MS,
+				stage.DesiredReportedConvergenceRate,
+				stage.OfflineDesiredConvergenceRate,
+				stage.DeltaClearSuccessRatePercent,
+				stage.VersionConflictCount,
+				stage.RejectedUpdateCount,
+				stage.AuthorizationViolationCount,
+				stage.ClientTokenCorrelationCount,
+				stage.DuplicateApplyCount,
+			)
+		}
+		fmt.Fprintln(&b)
+	}
+
+	fmt.Fprintln(&b, "## Load Generator Health")
+	if input.LoadGeneratorHealthy {
+		fmt.Fprintln(&b, "- load-generator healthy: true")
+	} else {
+		fmt.Fprintln(&b, "- load-generator saturated: true")
+	}
+	fmt.Fprintln(&b)
+
+	if input.ServerEvidence.Sources != nil {
+		fmt.Fprintln(&b, "## Server Evidence")
+		if input.ServerEvidence.Complete {
+			fmt.Fprintln(&b, "- server evidence: complete")
+		} else {
+			fmt.Fprintln(&b, "- server evidence: incomplete")
+		}
+		keys := make([]string, 0, len(input.ServerEvidence.Sources))
+		for key := range input.ServerEvidence.Sources {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			source := input.ServerEvidence.Sources[key]
+			fmt.Fprintf(&b, "- %s: available=%t", key, source.Available)
+			if strings.TrimSpace(source.Detail) != "" {
+				fmt.Fprintf(&b, " detail=%s", redact(source.Detail))
+			}
+			fmt.Fprintln(&b)
+		}
+		fmt.Fprintln(&b)
+	}
+
+	if len(input.Notes) > 0 {
+		fmt.Fprintln(&b, "## Notes")
+		for _, note := range input.Notes {
+			fmt.Fprintf(&b, "- %s\n", redact(note))
+		}
+		fmt.Fprintln(&b)
+	}
+	return b.String()
+}
+
+func renderMap(b *strings.Builder, title string, values map[string]int) {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	fmt.Fprintf(b, "- %s:\n", title)
+	for _, key := range keys {
+		fmt.Fprintf(b, "  - %s: %d\n", displayName(key), values[key])
+	}
+}
+
+func redact(value string) string {
+	lower := strings.ToLower(value)
+	for _, marker := range []string{"bearer ", "password", "private_key", "private key", "-----begin", "certificate_pem", "access_token", "refresh_token", "token=", "secret"} {
+		if strings.Contains(lower, marker) {
+			return "redacted sensitive detail"
+		}
+	}
+	return value
+}
+
+func displayName(value string) string {
+	switch value {
+	case "light":
+		return "Light"
+	case "online_steady":
+		return "Online steady"
+	case "offline_desired_queue":
+		return "Offline desired queue"
+	case "flapping_reconnect":
+		return "Flapping reconnect"
+	case "air_conditioner":
+		return "Air conditioner"
+	case "smart_meter":
+		return "Smart meter"
+	default:
+		return strings.ReplaceAll(value, "_", " ")
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}

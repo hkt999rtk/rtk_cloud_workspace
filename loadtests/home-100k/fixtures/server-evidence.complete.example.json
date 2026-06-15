@@ -1,0 +1,34 @@
+{
+  "run_id": "example-run",
+  "complete": true,
+  "sources": {
+    "emqx": {
+      "available": true,
+      "detail": "connected clients, churn, dropped clients, message rate, CPU, memory, and network throughput collected"
+    },
+    "video_cloud_api": {
+      "available": true,
+      "detail": "API latency, error rate, request-token latency, and route health collected"
+    },
+    "iot_device_shadow": {
+      "available": true,
+      "detail": "shadow get/update latency, accepted/rejected counts, delta throughput, and convergence windows collected"
+    },
+    "postgres": {
+      "available": true,
+      "detail": "connections, CPU, locks, slow queries, write I/O, and shadow table write pressure collected"
+    },
+    "redis_valkey": {
+      "available": true,
+      "detail": "cache hit rate, command latency, memory pressure, evictions, and connection count collected when enabled"
+    },
+    "ingress_nginx": {
+      "available": true,
+      "detail": "TLS handshakes, upstream latency, HTTP status counts, and network throughput collected"
+    },
+    "host_pod_resources": {
+      "available": true,
+      "detail": "node and pod CPU, memory, disk I/O, network throughput, and file descriptor pressure collected"
+    }
+  }
+}
