@@ -510,7 +510,18 @@ data:
   CLOUD_ADMIN_DOMAIN: %q
   CLOUD_LOGGER_DOMAIN: %q
 `, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_ENV_NAME"], env["CLOUD_REGION"], env["CLOUD_STACK_NAME"], env["VIDEO_CLOUD_DOMAIN"], env["VIDEO_CLOUD_CERTISSUER_DOMAIN"], env["ACCOUNT_MANAGER_DOMAIN"], env["CLOUD_ADMIN_DOMAIN"], env["CLOUD_LOGGER_DOMAIN"])
-	return kubectlApply(config)
+	if err := kubectlApply(config); err != nil {
+		return err
+	}
+	return lkeInstallMetricsServer()
+}
+
+func lkeInstallMetricsServer() error {
+	version := firstNonEmpty(os.Getenv("LKE_METRICS_SERVER_VERSION"), "v0.8.1")
+	if err := runKubectl("apply", "-f", "https://github.com/kubernetes-sigs/metrics-server/releases/download/"+version+"/components.yaml"); err != nil {
+		return err
+	}
+	return runKubectl("-n", "kube-system", "rollout", "status", "deployment/metrics-server", "--timeout", firstNonEmpty(os.Getenv("LKE_METRICS_SERVER_ROLLOUT_TIMEOUT"), "5m"))
 }
 
 type lkePublicHTTPSRoute struct {

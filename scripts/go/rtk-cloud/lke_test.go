@@ -36,6 +36,25 @@ func TestRunProvisionLKEApplyUsesKubectl(t *testing.T) {
 	}
 }
 
+func TestRunProvisionLKEApplyInstallsMetricsServer(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	logPath := fakeKubectl(t)
+
+	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--apply"}); err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, logPath)
+	for _, want := range []string{
+		"ARGS apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.8.1/components.yaml",
+		"ARGS -n kube-system rollout status deployment/metrics-server --timeout 5m",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("expected metrics-server install to include %q, got:\n%s", want, log)
+		}
+	}
+}
+
 func TestRunProvisionLKEApplyFetchesKubeconfigWhenNoContext(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	writeTestFile(t, filepath.Join(envRoot, "state", "lke.env"), "LKE_CLUSTER_ID=12345\n")

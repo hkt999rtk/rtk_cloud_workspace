@@ -327,6 +327,8 @@ Linode staging runtime 只支援 K8s。`provision-k8s` 不建立 VM，也不部�
 
 Provider-aware `provision`/`deploy` command 仍保留給 legacy VM 與 LKE image/runtime tooling；完整 staging E2E 目前走 `provision-k8s`，不走 VM deploy hooks。
 
+LKE `provision --apply` 預設會安裝 Kubernetes metrics-server 到 `kube-system`，版本由 `LKE_METRICS_SERVER_VERSION` 控制，預設 `v0.8.1`。metrics-server 提供 `metrics.k8s.io`，讓 `kubectl top nodes` / `kubectl top pods` 與 Kubernetes HPA resource metrics 可用；它不取代 Prometheus 的長期觀測、dashboard 或 alert 用途。
+
 常用用法：
 
 ```sh
