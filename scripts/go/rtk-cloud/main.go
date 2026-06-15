@@ -5556,10 +5556,10 @@ func waitBindProvisioned(workspaceFlag, envRootFlag string, artifact bindArtifac
 			userSessions[assignment.AssignedEmail] = &brandCloudUserSession{Email: assignment.AssignedEmail, Password: user.Password, Session: user.Tokens}
 		}
 	}
-	for _, userSession := range userSessions {
-		if _, err := brandCloudUserAccessToken(ctx, artifact.TenantSlug, userSession, func(string, ...any) {}); err != nil {
-			return bindProvisionWaitResult{}, err
-		}
+	if err := prepareBindProvisionUserSessions(ctx, artifact.TenantSlug, userSessions, concurrency, func(format string, args ...any) {
+		fmt.Fprintf(os.Stderr, "[validate-device-bind] "+format+"\n", args...)
+	}); err != nil {
+		return bindProvisionWaitResult{}, err
 	}
 	defer func() {
 		_, _ = updateUsersArtifactTokens(artifact.Inputs.UsersFile, userSessions)
@@ -5697,6 +5697,58 @@ func bindTimeoutFailures(states map[string]bindProvisioningStateSnapshot) []stri
 	}
 	sort.Strings(failures)
 	return failures
+}
+
+func prepareBindProvisionUserSessions(ctx accountManagerContext, tenantSlug string, userSessions map[string]*brandCloudUserSession, concurrency int, logf func(string, ...any)) error {
+	if len(userSessions) == 0 {
+		return nil
+	}
+	if logf == nil {
+		logf = func(string, ...any) {}
+	}
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+	emails := make([]string, 0, len(userSessions))
+	for email := range userSessions {
+		emails = append(emails, email)
+	}
+	sort.Strings(emails)
+	workerCount := concurrency
+	if workerCount > len(emails) {
+		workerCount = len(emails)
+	}
+	var logMu sync.Mutex
+	safeLog := func(format string, args ...any) {
+		logMu.Lock()
+		defer logMu.Unlock()
+		logf(format, args...)
+	}
+	safeLog("preparing bind validation user tokens: users=%d concurrency=%d", len(emails), workerCount)
+
+	var progressMu sync.Mutex
+	done := 0
+	lastProgressLog := time.Now()
+	logProgress := func(force bool) {
+		progressMu.Lock()
+		defer progressMu.Unlock()
+		done++
+		if !force && done < len(emails) && done%100 != 0 && time.Since(lastProgressLog) < 10*time.Second {
+			return
+		}
+		lastProgressLog = time.Now()
+		safeLog("bind validation user token progress: done=%d/%d", done, len(emails))
+	}
+	_, err := boundedParallelMap(len(emails), workerCount, func(i int) (struct{}, error) {
+		email := emails[i]
+		if _, err := brandCloudUserAccessToken(ctx, tenantSlug, userSessions[email], safeLog); err != nil {
+			logProgress(false)
+			return struct{}{}, err
+		}
+		logProgress(false)
+		return struct{}{}, nil
+	})
+	return err
 }
 
 func fetchBindProvisioningState(ctx accountManagerContext, bearer, brandCloudID string, assignment bindAssignment) (bindProvisioningStateSnapshot, error) {

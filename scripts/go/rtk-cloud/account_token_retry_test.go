@@ -4,12 +4,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -514,6 +517,50 @@ func TestRepairExistingBoundDeviceCompletesPendingProvisioning(t *testing.T) {
 	}
 	if !provisionSeen || !activationSeen || !resultSeen {
 		t.Fatalf("provisionSeen=%v activationSeen=%v resultSeen=%v", provisionSeen, activationSeen, resultSeen)
+	}
+}
+
+func TestPrepareBindProvisionUserSessionsLogsProgressAndRunsConcurrently(t *testing.T) {
+	var mu sync.Mutex
+	active := 0
+	maxActive := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/brand-clouds/rtk-test/auth/login" {
+			http.NotFound(w, r)
+			return
+		}
+		mu.Lock()
+		active++
+		if active > maxActive {
+			maxActive = active
+		}
+		mu.Unlock()
+		time.Sleep(20 * time.Millisecond)
+		mu.Lock()
+		active--
+		mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": testJWT(time.Now().Add(time.Hour))}})
+	}))
+	defer server.Close()
+
+	sessions := map[string]*brandCloudUserSession{}
+	for i := 0; i < 8; i++ {
+		email := fmt.Sprintf("rtk+%03d@users.local", i)
+		sessions[email] = &brandCloudUserSession{Email: email, Password: "pass"}
+	}
+	logs := []string{}
+	err := prepareBindProvisionUserSessions(accountManagerContext{BaseURL: server.URL}, "rtk-test", sessions, 4, func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	})
+	if err != nil {
+		t.Fatalf("prepareBindProvisionUserSessions() error = %v", err)
+	}
+	if maxActive <= 1 {
+		t.Fatalf("expected concurrent token preparation, maxActive=%d", maxActive)
+	}
+	joined := strings.Join(logs, "\n")
+	if !strings.Contains(joined, "preparing bind validation user tokens") || !strings.Contains(joined, "bind validation user token progress") {
+		t.Fatalf("expected user token progress logs, got:\n%s", joined)
 	}
 }
 
