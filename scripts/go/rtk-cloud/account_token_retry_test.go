@@ -4,12 +4,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -397,6 +400,167 @@ func TestStartProvisionRefreshesBrandCloudUserTokenOnUnauthorized(t *testing.T) 
 	}
 	if refreshCount != 1 || provisionAttempts != 2 || user.Session.AccessToken != newAccessToken {
 		t.Fatalf("refreshCount=%d provisionAttempts=%d session=%+v", refreshCount, provisionAttempts, user.Session)
+	}
+}
+
+func TestProvisionInputFromExistingBoundDeviceUsesMetadata(t *testing.T) {
+	assignment := bindAssignment{
+		DeviceID:       "load-device-4541",
+		ServiceOptions: []string{"mqtt"},
+	}
+	prov, opID := provisionInputFromExistingBoundDevice(map[string]any{
+		"metadata": map[string]any{
+			"video_cloud_devid":           "video-device-4541",
+			"video_cloud_activity_id":     "activity-4541",
+			"video_cloud_clip_public_key": "clip-key-4541",
+			"service_options":             []any{"mqtt", "video_streaming", "video_storage"},
+		},
+	}, assignment, "20260615T071311Z")
+
+	if opID != "activity-4541" {
+		t.Fatalf("operation id = %q", opID)
+	}
+	want := map[string]any{
+		"video_cloud_devid": "video-device-4541",
+		"activity_id":       "activity-4541",
+		"clip_public_key":   "clip-key-4541",
+		"service_options":   []string{"mqtt", "video_streaming", "video_storage"},
+	}
+	if !reflect.DeepEqual(prov, want) {
+		t.Fatalf("provision input = %#v, want %#v", prov, want)
+	}
+}
+
+func TestRepairExistingBoundDeviceCompletesPendingProvisioning(t *testing.T) {
+	provisionSeen := false
+	activationSeen := false
+	resultSeen := false
+	accessToken := testJWT(time.Now().Add(time.Hour))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/orgs/brand-1/devices/account-device-4541/provisioning":
+			if r.Header.Get("authorization") != "Bearer "+accessToken {
+				t.Fatalf("provisioning authorization header = %q", r.Header.Get("authorization"))
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operation": map[string]string{"status": "pending"},
+				"readiness": map[string]any{
+					"state":         "activation_pending",
+					"product_state": "cloud_activation_pending",
+					"sources": map[string]string{
+						"provisioning_operation_status": "pending",
+						"video_cloud_activation_status": "pending",
+					},
+				},
+			})
+		case "/v1/orgs/brand-1/devices/account-device-4541/provision":
+			provisionSeen = true
+			var req map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode provision request: %v", err)
+			}
+			if req["operation_id"] != "activity-4541" || req["video_cloud_devid"] != "load-device-4541" {
+				t.Fatalf("unexpected provision request: %#v", req)
+			}
+			w.WriteHeader(http.StatusAccepted)
+		case "/v1/internal/account-manager/devices/load-device-4541/activate":
+			activationSeen = true
+			var req map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode activation request: %v", err)
+			}
+			if req["activityid"] != "activity-4541" || req["account_device_id"] != "account-device-4541" {
+				t.Fatalf("unexpected activation request: %#v", req)
+			}
+			w.WriteHeader(http.StatusOK)
+		case "/v1/internal/device-provisioning-results":
+			resultSeen = true
+			var req map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode provisioning result request: %v", err)
+			}
+			if req["operation_id"] != "activity-4541" || req["account_device_id"] != "account-device-4541" {
+				t.Fatalf("unexpected provisioning result request: %#v", req)
+			}
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	assignment := bindAssignment{
+		AssignedEmail:   "rtk+541@users.local",
+		DeviceID:        "load-device-4541",
+		DeviceType:      "camera",
+		Category:        "ip_camera",
+		ServiceOptions:  []string{"mqtt", "video_streaming", "video_storage"},
+		AccountDeviceID: "account-device-4541",
+		Status:          "already_bound",
+	}
+	got, repaired, err := repairExistingBoundDeviceProvisioning(
+		accountManagerContext{BaseURL: server.URL},
+		"rtk-test",
+		"brand-1",
+		assignment,
+		map[string]any{"metadata": map[string]any{"video_cloud_activity_id": "activity-4541"}},
+		"20260615T071311Z",
+		stagingProvisionBridge{Enabled: true, AccountBaseURL: server.URL, AccountToken: "account-token", VideoBaseURL: server.URL, VideoToken: "video-token"},
+		&brandCloudUserSession{Email: "rtk+541@users.local", Password: "pass", Session: accountPlatformSession{AccessToken: accessToken}},
+		func(string, ...any) {},
+	)
+	if err != nil {
+		t.Fatalf("repairExistingBoundDeviceProvisioning() error = %v", err)
+	}
+	if !repaired || got.Status != "provisioned" || got.OperationID != "activity-4541" {
+		t.Fatalf("got assignment=%+v repaired=%v", got, repaired)
+	}
+	if !provisionSeen || !activationSeen || !resultSeen {
+		t.Fatalf("provisionSeen=%v activationSeen=%v resultSeen=%v", provisionSeen, activationSeen, resultSeen)
+	}
+}
+
+func TestPrepareBindProvisionUserSessionsLogsProgressAndRunsConcurrently(t *testing.T) {
+	var mu sync.Mutex
+	active := 0
+	maxActive := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/brand-clouds/rtk-test/auth/login" {
+			http.NotFound(w, r)
+			return
+		}
+		mu.Lock()
+		active++
+		if active > maxActive {
+			maxActive = active
+		}
+		mu.Unlock()
+		time.Sleep(20 * time.Millisecond)
+		mu.Lock()
+		active--
+		mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": testJWT(time.Now().Add(time.Hour))}})
+	}))
+	defer server.Close()
+
+	sessions := map[string]*brandCloudUserSession{}
+	for i := 0; i < 8; i++ {
+		email := fmt.Sprintf("rtk+%03d@users.local", i)
+		sessions[email] = &brandCloudUserSession{Email: email, Password: "pass"}
+	}
+	logs := []string{}
+	err := prepareBindProvisionUserSessions(accountManagerContext{BaseURL: server.URL}, "rtk-test", sessions, 4, func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	})
+	if err != nil {
+		t.Fatalf("prepareBindProvisionUserSessions() error = %v", err)
+	}
+	if maxActive <= 1 {
+		t.Fatalf("expected concurrent token preparation, maxActive=%d", maxActive)
+	}
+	joined := strings.Join(logs, "\n")
+	if !strings.Contains(joined, "preparing bind validation user tokens") || !strings.Contains(joined, "bind validation user token progress") {
+		t.Fatalf("expected user token progress logs, got:\n%s", joined)
 	}
 }
 

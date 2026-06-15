@@ -1835,7 +1835,8 @@ func runStagingE2EDataSetup(args []string) error {
 			bindFile = latestMatchingFile(filepath.Join(envRoot, "artifacts", "device-bind"), slug+"-device-bind-*.json")
 		}
 	}
-	if shouldRunStep("bind_devices") && !(*resume && bindArtifactCount(bindFile) == *deviceCount) {
+	bindSkippedForResume := false
+	runBindStep := func() error {
 		args := []string{"--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--users-file", usersFile, "--devices-dir", devicesDir, "--count", strconv.Itoa(*deviceCount), "--concurrency", strconv.Itoa(*bindConcurrency)}
 		if boolishEnv("CLOUD_STAGING_E2E_SKIP_BOOTSTRAP") {
 			args = append(args, "--skip-bootstrap")
@@ -1844,10 +1845,17 @@ func runStagingE2EDataSetup(args []string) error {
 			return err
 		}
 		bindFile = latestMatchingFile(filepath.Join(envRoot, "artifacts", "device-bind"), slug+"-device-bind-*.json")
+		return nil
+	}
+	if shouldRunStep("bind_devices") && !(*resume && bindArtifactCount(bindFile) == *deviceCount) {
+		if err := runBindStep(); err != nil {
+			return err
+		}
 	} else {
 		reason := "--from-step"
 		if shouldRunStep("bind_devices") {
 			reason = fmt.Sprintf("--resume bind artifact count=%d", bindArtifactCount(bindFile))
+			bindSkippedForResume = true
 		}
 		skipStep("bind_devices", reason)
 	}
@@ -1857,15 +1865,35 @@ func runStagingE2EDataSetup(args []string) error {
 	expectedPerUser := (*deviceCount + *userCount - 1) / *userCount
 	bindValidationDir := filepath.Join(*outDir, "bind-validation")
 	if shouldRunStep("validate_bind") {
-		if err := runStep("validate_bind", commandWithArgs(scripts["validate-bind"], "--workspace", workspace, "--env-root", envRoot, "--bind-artifact", bindFile, "--out-dir", bindValidationDir, "--expected-count", strconv.Itoa(*deviceCount), "--expected-devices-per-user", strconv.Itoa(expectedPerUser), "--wait-provisioned-timeout", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_PROVISION_TIMEOUT"), "10m"), "--wait-provisioned-poll", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_PROVISION_POLL"), "10s"), "--wait-provisioned-concurrency", strconv.Itoa(*bindConcurrency))...); err != nil {
-			return err
+		runValidateStep := func() error {
+			return runStep("validate_bind", commandWithArgs(scripts["validate-bind"], "--workspace", workspace, "--env-root", envRoot, "--bind-artifact", bindFile, "--out-dir", bindValidationDir, "--expected-count", strconv.Itoa(*deviceCount), "--expected-devices-per-user", strconv.Itoa(expectedPerUser), "--wait-provisioned-timeout", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_PROVISION_TIMEOUT"), "10m"), "--wait-provisioned-poll", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_PROVISION_POLL"), "10s"), "--wait-provisioned-concurrency", strconv.Itoa(*bindConcurrency))...)
+		}
+		if err := runValidateStep(); err != nil {
+			if bindSkippedForResume && shouldRunStep("bind_devices") && validationFailureCategoryCount(bindValidationDir, "already_bound_not_ready") > 0 {
+				fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] repair: validate_bind failure_category=%q; rerunning bind_devices\n", "already_bound_not_ready")
+				if len(steps) > 0 && steps[len(steps)-1].Name == "validate_bind" {
+					steps[len(steps)-1].Status = "RETRY"
+					steps[len(steps)-1].ExitCode = 0
+				}
+				if err := runBindStep(); err != nil {
+					return err
+				}
+				if bindFile == "" {
+					return fmt.Errorf("no device-bind artifact found after bind repair for brand slug %s", slug)
+				}
+				if err := runValidateStep(); err != nil {
+					return err
+				}
+			} else {
+				return err
+			}
 		}
 	} else {
 		skipStep("validate_bind", "--from-step")
 	}
 	overall := "pass"
 	for _, step := range steps {
-		if step.Status != "PASS" && step.Status != "SKIP" {
+		if step.Status != "PASS" && step.Status != "SKIP" && step.Status != "RETRY" {
 			overall = "fail"
 		}
 	}
@@ -1995,6 +2023,22 @@ func bindArtifactCount(path string) int {
 	if raw, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(raw, &artifact); err == nil {
 			return len(artifact.Assignments)
+		}
+	}
+	return 0
+}
+
+func validationFailureCategoryCount(outDir, category string) int {
+	if outDir == "" || category == "" {
+		return 0
+	}
+	var result struct {
+		FailureCategories map[string]int `json:"failure_categories"`
+	}
+	path := filepath.Join(outDir, "bulk-device-bind-validation-results.json")
+	if raw, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(raw, &result); err == nil {
+			return result.FailureCategories[category]
 		}
 	}
 	return 0
@@ -5556,10 +5600,10 @@ func waitBindProvisioned(workspaceFlag, envRootFlag string, artifact bindArtifac
 			userSessions[assignment.AssignedEmail] = &brandCloudUserSession{Email: assignment.AssignedEmail, Password: user.Password, Session: user.Tokens}
 		}
 	}
-	for _, userSession := range userSessions {
-		if _, err := brandCloudUserAccessToken(ctx, artifact.TenantSlug, userSession, func(string, ...any) {}); err != nil {
-			return bindProvisionWaitResult{}, err
-		}
+	if err := prepareBindProvisionUserSessions(ctx, artifact.TenantSlug, userSessions, concurrency, func(format string, args ...any) {
+		fmt.Fprintf(os.Stderr, "[validate-device-bind] "+format+"\n", args...)
+	}); err != nil {
+		return bindProvisionWaitResult{}, err
 	}
 	defer func() {
 		_, _ = updateUsersArtifactTokens(artifact.Inputs.UsersFile, userSessions)
@@ -5697,6 +5741,58 @@ func bindTimeoutFailures(states map[string]bindProvisioningStateSnapshot) []stri
 	}
 	sort.Strings(failures)
 	return failures
+}
+
+func prepareBindProvisionUserSessions(ctx accountManagerContext, tenantSlug string, userSessions map[string]*brandCloudUserSession, concurrency int, logf func(string, ...any)) error {
+	if len(userSessions) == 0 {
+		return nil
+	}
+	if logf == nil {
+		logf = func(string, ...any) {}
+	}
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+	emails := make([]string, 0, len(userSessions))
+	for email := range userSessions {
+		emails = append(emails, email)
+	}
+	sort.Strings(emails)
+	workerCount := concurrency
+	if workerCount > len(emails) {
+		workerCount = len(emails)
+	}
+	var logMu sync.Mutex
+	safeLog := func(format string, args ...any) {
+		logMu.Lock()
+		defer logMu.Unlock()
+		logf(format, args...)
+	}
+	safeLog("preparing bind validation user tokens: users=%d concurrency=%d", len(emails), workerCount)
+
+	var progressMu sync.Mutex
+	done := 0
+	lastProgressLog := time.Now()
+	logProgress := func(force bool) {
+		progressMu.Lock()
+		defer progressMu.Unlock()
+		done++
+		if !force && done < len(emails) && done%100 != 0 && time.Since(lastProgressLog) < 10*time.Second {
+			return
+		}
+		lastProgressLog = time.Now()
+		safeLog("bind validation user token progress: done=%d/%d", done, len(emails))
+	}
+	_, err := boundedParallelMap(len(emails), workerCount, func(i int) (struct{}, error) {
+		email := emails[i]
+		if _, err := brandCloudUserAccessToken(ctx, tenantSlug, userSessions[email], safeLog); err != nil {
+			logProgress(false)
+			return struct{}{}, err
+		}
+		logProgress(false)
+		return struct{}{}, nil
+	})
+	return err
 }
 
 func fetchBindProvisioningState(ctx accountManagerContext, bearer, brandCloudID string, assignment bindAssignment) (bindProvisioningStateSnapshot, error) {
@@ -6063,12 +6159,8 @@ func runBindDevices(args []string) error {
 	existingDeviceIndex := map[string]map[string]any{}
 	if len(assignments) > 0 {
 		indexUserSession := userSessions[assignments[0].AssignedEmail]
-		indexToken, err := brandCloudUserAccessToken(ctx, tenantSlug, indexUserSession, safeLog)
-		if err != nil {
-			return err
-		}
 		safeLog("indexing existing account devices: brand_cloud_id=%s", brandCloudID)
-		index, indexed, err := accountIndexDevicesByVideoCloudDevid(ctx, indexToken, brandCloudID)
+		index, indexed, err := accountIndexDevicesByVideoCloudDevidWithBrandCloudUserRetry(ctx, tenantSlug, brandCloudID, indexUserSession, safeLog)
 		if err != nil {
 			return err
 		}
@@ -6099,9 +6191,20 @@ func runBindDevices(args []string) error {
 		if exists {
 			assignment.AccountDeviceID = stringValue(existingDevice["id"])
 			assignment.Status = "already_bound"
-			safeLog("device already bound; skipping claim: device=%s account_device=%s", assignment.DeviceID, assignment.AccountDeviceID)
-			progress(1, 0, 0, 0)
-			return assignment, nil
+			userSession := userSessions[assignment.AssignedEmail]
+			if userSession == nil {
+				return bindAssignment{}, fmt.Errorf("missing assigned user session: %s", assignment.AssignedEmail)
+			}
+			repaired, provisioned, err := repairExistingBoundDeviceProvisioning(ctx, tenantSlug, brandCloudID, assignment, existingDevice, runID, provisionBridge, userSession, safeLog)
+			if err != nil {
+				return bindAssignment{}, err
+			}
+			if provisioned {
+				progress(0, 0, 0, 1)
+			} else {
+				progress(1, 0, 0, 0)
+			}
+			return repaired, nil
 		}
 		safeLog("creating claim token: device=%s", assignment.DeviceID)
 		claim, err := safeCreateClaimToken(assignment)
@@ -6354,10 +6457,24 @@ func accountFindDeviceByVideoCloudDevid(ctx accountManagerContext, token, brandC
 }
 
 func accountIndexDevicesByVideoCloudDevid(ctx accountManagerContext, token, brandCloudID string) (map[string]map[string]any, int, error) {
+	return accountIndexDevicesByVideoCloudDevidWithCall(ctx, brandCloudID, func(endpoint string) ([]byte, int, error) {
+		return curlJSONStatus(endpoint, token, nil)
+	})
+}
+
+func accountIndexDevicesByVideoCloudDevidWithBrandCloudUserRetry(ctx accountManagerContext, tenantSlug, brandCloudID string, user *brandCloudUserSession, logf func(string, ...any)) (map[string]map[string]any, int, error) {
+	return accountIndexDevicesByVideoCloudDevidWithCall(ctx, brandCloudID, func(endpoint string) ([]byte, int, error) {
+		return curlJSONStatusWithBrandCloudUserRetryLocked(ctx, tenantSlug, user, logf, "device index", func(token string) ([]byte, int, error) {
+			return curlJSONStatus(endpoint, token, nil)
+		})
+	})
+}
+
+func accountIndexDevicesByVideoCloudDevidWithCall(ctx accountManagerContext, brandCloudID string, call func(string) ([]byte, int, error)) (map[string]map[string]any, int, error) {
 	const limit = 100
 	index := map[string]map[string]any{}
 	for offset := 0; ; offset += limit {
-		body, status, err := curlJSONStatus(fmt.Sprintf("%s/v1/orgs/%s/devices?limit=%d&offset=%d", ctx.BaseURL, brandCloudID, limit, offset), token, nil)
+		body, status, err := call(fmt.Sprintf("%s/v1/orgs/%s/devices?limit=%d&offset=%d", ctx.BaseURL, brandCloudID, limit, offset))
 		if err != nil {
 			return nil, 0, err
 		}
@@ -6382,6 +6499,71 @@ func accountIndexDevicesByVideoCloudDevid(ctx accountManagerContext, token, bran
 		if len(devices) < limit {
 			return index, len(index), nil
 		}
+	}
+}
+
+func repairExistingBoundDeviceProvisioning(ctx accountManagerContext, tenantSlug, brandCloudID string, assignment bindAssignment, existingDevice map[string]any, runID string, bridge stagingProvisionBridge, user *brandCloudUserSession, logf func(string, ...any)) (bindAssignment, bool, error) {
+	token, err := brandCloudUserAccessToken(ctx, tenantSlug, user, logf)
+	if err != nil {
+		return bindAssignment{}, false, err
+	}
+	snapshot, err := fetchBindProvisioningState(ctx, token, brandCloudID, assignment)
+	if err != nil {
+		return bindAssignment{}, false, fmt.Errorf("check existing bound provisioning state failed: device=%s account_device=%s: %w", assignment.DeviceID, assignment.AccountDeviceID, err)
+	}
+	if snapshotReady(snapshot) {
+		logf("device already bound and provisioned; skipping claim: device=%s account_device=%s readiness=%s product=%s activation=%s", assignment.DeviceID, assignment.AccountDeviceID, snapshot.ReadinessState, snapshot.ProductState, snapshot.ActivationStatus)
+		return assignment, false, nil
+	}
+
+	prov, opID := provisionInputFromExistingBoundDevice(existingDevice, assignment, runID)
+	logf("device already bound but not provisioned; repairing provision: device=%s account_device=%s readiness=%s product=%s operation=%s activation=%s", assignment.DeviceID, assignment.AccountDeviceID, snapshot.ReadinessState, snapshot.ProductState, snapshot.OperationStatus, snapshot.ActivationStatus)
+	if err := startProvisionWithBrandCloudUserRetry(ctx, tenantSlug, brandCloudID, assignment, opID, prov, user, logf); err != nil {
+		return bindAssignment{}, false, err
+	}
+	assignment.OperationID = opID
+	assignment.Status = "provision_requested"
+	if bridge.Enabled {
+		logf("completing staging direct provisioning bridge for existing bound device: device=%s account_device=%s", assignment.DeviceID, assignment.AccountDeviceID)
+		if err := completeStagingProvisionBridge(bridge, brandCloudID, assignment, opID, prov); err != nil {
+			return bindAssignment{}, false, err
+		}
+		assignment.Status = "provisioned"
+	}
+	return assignment, true, nil
+}
+
+func provisionInputFromExistingBoundDevice(existingDevice map[string]any, assignment bindAssignment, runID string) (map[string]any, string) {
+	metadata, _ := existingDevice["metadata"].(map[string]any)
+	videoCloudDevid := firstNonEmpty(stringValue(metadata["video_cloud_devid"]), assignment.DeviceID)
+	activityID := firstNonEmpty(stringValue(metadata["video_cloud_activity_id"]), "bulk-bind-"+runID+"-"+assignment.DeviceID)
+	clipPublicKey := firstNonEmpty(stringValue(metadata["video_cloud_clip_public_key"]), "bulk-bind-placeholder-public-key")
+	serviceOptions := assignment.ServiceOptions
+	if fromMetadata := stringSliceValue(metadata["service_options"]); len(fromMetadata) > 0 {
+		serviceOptions = fromMetadata
+	}
+	return map[string]any{
+		"video_cloud_devid": videoCloudDevid,
+		"activity_id":       activityID,
+		"clip_public_key":   clipPublicKey,
+		"service_options":   serviceOptions,
+	}, activityID
+}
+
+func stringSliceValue(value any) []string {
+	switch items := value.(type) {
+	case []string:
+		return append([]string(nil), items...)
+	case []any:
+		out := make([]string, 0, len(items))
+		for _, item := range items {
+			if s := strings.TrimSpace(stringValue(item)); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
 	}
 }
 
