@@ -1686,7 +1686,8 @@ func runStagingE2EDataSetup(args []string) error {
 	bindConcurrency := fs.Int("bind-concurrency", envInt("CLOUD_STAGING_E2E_BIND_CONCURRENCY", 64), "device bind concurrency")
 	outDir := fs.String("out-dir", "", "out dir")
 	quiet := fs.Bool("quiet", false, "suppress periodic progress output")
-	resume := fs.Bool("resume", false, "reuse completed artifacts for matching steps")
+	resume := fs.Bool("resume", true, "reuse completed artifacts for matching steps")
+	noResume := fs.Bool("no-resume", false, "recreate artifacts even when matching completed artifacts exist")
 	fromStep := fs.String("from-step", "", "start from step: create_brand, create_users, create_devices, bind_devices, or validate_bind")
 	usersFileFlag := fs.String("users-file", "", "existing users artifact for bind/validate resume")
 	bindArtifactFlag := fs.String("bind-artifact", "", "existing bind artifact for validate resume")
@@ -1707,6 +1708,9 @@ func runStagingE2EDataSetup(args []string) error {
 	}
 	if *fromStep != "" && e2eStepIndex(*fromStep) < 0 {
 		return fmt.Errorf("--from-step must be one of: %s", strings.Join(e2eStepOrder(), ", "))
+	}
+	if *noResume {
+		*resume = false
 	}
 	workspace := *workspaceFlag
 	var err error
@@ -1780,7 +1784,14 @@ func runStagingE2EDataSetup(args []string) error {
 	slug := brandSlug(*brandname)
 	usersFile := *usersFileFlag
 	if usersFile == "" {
-		usersFile = latestMatchingFile(filepath.Join(envRoot, "artifacts", "users"), slug+"-users-*.json")
+		if *resume {
+			usersFile = latestMatchingFileWhere(filepath.Join(envRoot, "artifacts", "users"), slug+"-users-*.json", func(path string) bool {
+				return usersArtifactCount(path) == *userCount
+			})
+		}
+		if usersFile == "" {
+			usersFile = latestMatchingFile(filepath.Join(envRoot, "artifacts", "users"), slug+"-users-*.json")
+		}
 	}
 	if shouldRunStep("create_users") && !(*resume && usersArtifactCount(usersFile) == *userCount) {
 		args := []string{"--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--count", strconv.Itoa(*userCount), "--rotate-password", "--concurrency", strconv.Itoa(*userConcurrency)}
@@ -1815,7 +1826,14 @@ func runStagingE2EDataSetup(args []string) error {
 	}
 	bindFile := *bindArtifactFlag
 	if bindFile == "" {
-		bindFile = latestMatchingFile(filepath.Join(envRoot, "artifacts", "device-bind"), slug+"-device-bind-*.json")
+		if *resume {
+			bindFile = latestMatchingFileWhere(filepath.Join(envRoot, "artifacts", "device-bind"), slug+"-device-bind-*.json", func(path string) bool {
+				return bindArtifactCount(path) == *deviceCount
+			})
+		}
+		if bindFile == "" {
+			bindFile = latestMatchingFile(filepath.Join(envRoot, "artifacts", "device-bind"), slug+"-device-bind-*.json")
+		}
 	}
 	if shouldRunStep("bind_devices") && !(*resume && bindArtifactCount(bindFile) == *deviceCount) {
 		args := []string{"--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--users-file", usersFile, "--devices-dir", devicesDir, "--count", strconv.Itoa(*deviceCount), "--concurrency", strconv.Itoa(*bindConcurrency)}
@@ -3256,6 +3274,17 @@ func latestMatchingFile(dir, pattern string) string {
 		return ""
 	}
 	return matches[len(matches)-1]
+}
+
+func latestMatchingFileWhere(dir, pattern string, match func(string) bool) string {
+	matches, _ := filepath.Glob(filepath.Join(dir, pattern))
+	sort.Strings(matches)
+	for i := len(matches) - 1; i >= 0; i-- {
+		if match(matches[i]) {
+			return matches[i]
+		}
+	}
+	return ""
 }
 
 func renderE2EReport(overall, envRoot, stack, brandname, usersFile, bindFile, bindValidationDir, dataSetupSummaryFile, mqttDir, mqttLogVerifySummaryFile string, steps []e2eStep) string {

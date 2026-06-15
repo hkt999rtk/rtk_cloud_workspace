@@ -1639,6 +1639,55 @@ func TestRunStagingE2EDataSetupForLKEStartsPortForwards(t *testing.T) {
 	}
 }
 
+func TestRunStagingE2EDataSetupDefaultsToResumeCompleteArtifacts(t *testing.T) {
+	workspace := t.TempDir()
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "linode")
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=linode\nCLOUD_STACK_NAME=video-cloud-staging\n")
+	writeTestFile(t, filepath.Join(envRoot, "artifacts", "users", "rtk-users-complete.json"), `{"brandname":"RTK","users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}`)
+	writeTestFile(t, filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.json"), `[
+{"device_id":"load-device-0001"},
+{"device_id":"load-device-0002"},
+{"device_id":"load-device-0003"},
+{"device_id":"load-device-0004"}
+]`)
+	writeTestFile(t, filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-complete.json"), `{"brandname":"RTK","assignments":[
+{"device_id":"load-device-0001"},
+{"device_id":"load-device-0002"},
+{"device_id":"load-device-0003"},
+{"device_id":"load-device-0004"}
+]}`)
+	commandLog := filepath.Join(t.TempDir(), "commands.log")
+	t.Setenv("CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-brand", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-users", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "generate-devices", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "bind-devices", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT", fakeE2EDataCommand(t, commandLog, "validate-bind", envRoot))
+
+	if err := runStagingE2EDataSetup([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--brandname", "RTK",
+		"--user-count", "2",
+		"--device-count", "4",
+		"--out-dir", filepath.Join(t.TempDir(), "out"),
+		"--quiet",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	commands := readTestFile(t, commandLog)
+	for _, unexpected := range []string{"create-users ", "generate-devices ", "bind-devices "} {
+		if strings.Contains(commands, unexpected) {
+			t.Fatalf("default data setup should reuse complete artifacts, got:\n%s", commands)
+		}
+	}
+	for _, expected := range []string{"create-brand ", "validate-bind "} {
+		if !strings.Contains(commands, expected) {
+			t.Fatalf("expected %s command, got:\n%s", expected, commands)
+		}
+	}
+}
+
 func TestK8SE2EPortForwardOutputFilterSuppressesKubectlNoise(t *testing.T) {
 	for _, line := range []string{
 		"Forwarding from 127.0.0.1:18080 -> 8080",

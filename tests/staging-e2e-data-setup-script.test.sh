@@ -85,6 +85,71 @@ if grep -F '[cloud-staging-e2e] progress:' "$TMP/run.err" >/dev/null; then
 	exit 1
 fi
 
+: > "$COMMAND_LOG"
+cat > "$ENV_ROOT/artifacts/users/rtk-users-complete.json" <<'EOF_USERS'
+{"brandname":"RTK","users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}
+EOF_USERS
+cat > "$ENV_ROOT/devices/test_device/manifests/devices.json" <<'EOF_DEVICES'
+[
+  {"device_id":"load-device-0001"},
+  {"device_id":"load-device-0002"},
+  {"device_id":"load-device-0003"},
+  {"device_id":"load-device-0004"}
+]
+EOF_DEVICES
+cat > "$ENV_ROOT/artifacts/device-bind/rtk-device-bind-complete.json" <<'EOF_BIND'
+{"brandname":"RTK","assignments":[
+  {"device_id":"load-device-0001"},
+  {"device_id":"load-device-0002"},
+  {"device_id":"load-device-0003"},
+  {"device_id":"load-device-0004"}
+]}
+EOF_BIND
+CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT="$TMP/create-brand.sh" \
+CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT="$TMP/create-users.sh" \
+CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT="$TMP/generate-devices.sh" \
+CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT="$TMP/bind-devices.sh" \
+CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT="$TMP/validate-bind.sh" \
+	"$ROOT/scripts/setup-staging-e2e-data.sh" \
+	--workspace "$WORKSPACE" \
+	--env-root "$WORKSPACE/cloud_env/staging" \
+	--brandname RTK \
+	--user-count 2 \
+	--device-count 4 \
+	--device-mix camera=2,light=2 \
+	--out-dir "$TMP/data-setup-resume-default" \
+	--quiet > "$TMP/resume-default.out" 2> "$TMP/resume-default.err"
+expected=$'create-brand\nvalidate-bind'
+actual="$(cut -f1 "$COMMAND_LOG")"
+[[ "$actual" == "$expected" ]] || {
+	printf 'default data setup should reuse complete artifacts; command order:\n%s\n' "$actual" >&2
+	exit 1
+}
+grep -F 'skip: create_devices reason="--resume device manifest count=4"' "$TMP/resume-default.err" >/dev/null
+
+: > "$COMMAND_LOG"
+CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT="$TMP/create-brand.sh" \
+CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT="$TMP/create-users.sh" \
+CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT="$TMP/generate-devices.sh" \
+CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT="$TMP/bind-devices.sh" \
+CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT="$TMP/validate-bind.sh" \
+	"$ROOT/scripts/setup-staging-e2e-data.sh" \
+	--workspace "$WORKSPACE" \
+	--env-root "$WORKSPACE/cloud_env/staging" \
+	--brandname RTK \
+	--user-count 2 \
+	--device-count 4 \
+	--device-mix camera=2,light=2 \
+	--out-dir "$TMP/data-setup-no-resume" \
+	--no-resume \
+	--quiet > "$TMP/no-resume.out" 2> "$TMP/no-resume.err"
+expected=$'create-brand\ncreate-users\ngenerate-devices\nbind-devices\nvalidate-bind'
+actual="$(cut -f1 "$COMMAND_LOG")"
+[[ "$actual" == "$expected" ]] || {
+	printf '--no-resume should recreate artifacts; command order:\n%s\n' "$actual" >&2
+	exit 1
+}
+
 if CLOUD_PROVIDER=aws "$ROOT/scripts/setup-staging-e2e-data.sh" --workspace "$WORKSPACE" --env-root "$WORKSPACE/cloud_env/staging" --plan >"$TMP/provider.out" 2>"$TMP/provider.err"; then
 	echo "expected unsupported provider to fail" >&2
 	exit 1
