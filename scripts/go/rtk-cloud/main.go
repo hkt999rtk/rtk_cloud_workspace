@@ -1683,7 +1683,7 @@ func runStagingE2EDataSetup(args []string) error {
 	devicePrefix := fs.String("device-prefix", "load-device", "device prefix")
 	userConcurrency := fs.Int("user-concurrency", envInt("CLOUD_STAGING_E2E_USER_CONCURRENCY", 16), "user creation concurrency")
 	deviceConcurrency := fs.Int("device-concurrency", envInt("CLOUD_STAGING_E2E_DEVICE_CONCURRENCY", 16), "device generation concurrency")
-	bindConcurrency := fs.Int("bind-concurrency", envInt("CLOUD_STAGING_E2E_BIND_CONCURRENCY", 16), "device bind concurrency")
+	bindConcurrency := fs.Int("bind-concurrency", envInt("CLOUD_STAGING_E2E_BIND_CONCURRENCY", 64), "device bind concurrency")
 	outDir := fs.String("out-dir", "", "out dir")
 	quiet := fs.Bool("quiet", false, "suppress periodic progress output")
 	resume := fs.Bool("resume", false, "reuse completed artifacts for matching steps")
@@ -2471,7 +2471,7 @@ func runStagingE2ETest(args []string) error {
 	devicePrefix := fs.String("device-prefix", "load-device", "device prefix")
 	userConcurrency := fs.Int("user-concurrency", envInt("CLOUD_STAGING_E2E_USER_CONCURRENCY", 16), "user creation concurrency")
 	deviceConcurrency := fs.Int("device-concurrency", envInt("CLOUD_STAGING_E2E_DEVICE_CONCURRENCY", 16), "device generation concurrency")
-	bindConcurrency := fs.Int("bind-concurrency", envInt("CLOUD_STAGING_E2E_BIND_CONCURRENCY", 16), "device bind concurrency")
+	bindConcurrency := fs.Int("bind-concurrency", envInt("CLOUD_STAGING_E2E_BIND_CONCURRENCY", 64), "device bind concurrency")
 	outDir := fs.String("out-dir", "", "out dir")
 	skipMQTTProbe := fs.Bool("skip-mqtt-probe", false, "skip mqtt probe")
 	quiet := fs.Bool("quiet", false, "suppress periodic progress output")
@@ -4159,73 +4159,71 @@ func accountCreateBrandCloud(ctx accountManagerContext, token, brandname string)
 	return parsed, status, nil
 }
 
+var rtkJSONHTTPClient = &http.Client{
+	Transport: &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			timeout := time.Duration(envInt("RTK_CLOUD_CURL_CONNECT_TIMEOUT", 10)) * time.Second
+			dialer := net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second}
+			return dialer.DialContext(ctx, network, address)
+		},
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          256,
+		MaxIdleConnsPerHost:   256,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	},
+}
+
 func curlJSONStatus(url, bearer string, payload []byte) ([]byte, int, error) {
-	tmp, err := os.CreateTemp("", "rtk-curl-json-*")
-	if err != nil {
-		return nil, 0, err
-	}
-	tmp.Close()
-	defer os.Remove(tmp.Name())
-	connectTimeout := firstNonEmpty(os.Getenv("RTK_CLOUD_CURL_CONNECT_TIMEOUT"), "10")
-	maxTime := firstNonEmpty(os.Getenv("RTK_CLOUD_CURL_MAX_TIME"), "60")
-	args := []string{"-sS", "--connect-timeout", connectTimeout, "--max-time", maxTime, "-o", tmp.Name(), "-w", "%{http_code}"}
-	var payloadPath string
-	if payload != nil {
-		payloadFile, err := os.CreateTemp("", "rtk-curl-payload-*")
-		if err != nil {
-			return nil, 0, err
-		}
-		payloadPath = payloadFile.Name()
-		if _, err := payloadFile.Write(payload); err != nil {
-			payloadFile.Close()
-			os.Remove(payloadPath)
-			return nil, 0, err
-		}
-		payloadFile.Close()
-		defer os.Remove(payloadPath)
-		args = append(args, "-H", "content-type: application/json")
-		if bearer != "" {
-			args = append(args, "-H", "authorization: Bearer "+bearer)
-		}
-		args = append(args, "--data-binary", "@"+payloadPath)
-	} else if bearer != "" {
-		args = append(args, "-H", "authorization: Bearer "+bearer)
-	}
-	args = append(args, url)
 	retries := envInt("RTK_CLOUD_CURL_RETRIES", 3)
 	if retries < 1 {
 		retries = 1
 	}
-	var statusBytes []byte
+	maxTime := time.Duration(envInt("RTK_CLOUD_CURL_MAX_TIME", 60)) * time.Second
+	method := http.MethodGet
+	if payload != nil {
+		method = http.MethodPost
+	}
 	var lastErr error
 	for attempt := 1; attempt <= retries; attempt++ {
-		var stderr bytes.Buffer
-		cmd := exec.Command("curl", args...)
-		cmd.Stderr = &stderr
-		statusBytes, err = cmd.Output()
+		reqCtx, cancel := context.WithTimeout(context.Background(), maxTime)
+		var bodyReader io.Reader
+		if payload != nil {
+			bodyReader = bytes.NewReader(payload)
+		}
+		req, err := http.NewRequestWithContext(reqCtx, method, url, bodyReader)
+		if err != nil {
+			cancel()
+			return nil, 0, err
+		}
+		if payload != nil {
+			req.Header.Set("content-type", "application/json")
+		}
+		if bearer != "" {
+			req.Header.Set("authorization", "Bearer "+bearer)
+		}
+		resp, err := rtkJSONHTTPClient.Do(req)
 		if err == nil {
-			lastErr = nil
-			break
+			body, readErr := io.ReadAll(resp.Body)
+			closeErr := resp.Body.Close()
+			cancel()
+			if readErr != nil {
+				return nil, resp.StatusCode, readErr
+			}
+			if closeErr != nil {
+				return nil, resp.StatusCode, closeErr
+			}
+			return body, resp.StatusCode, nil
 		}
-		errText := strings.TrimSpace(stderr.String())
-		if errText != "" {
-			lastErr = fmt.Errorf("curl failed for %s: %w: %s", url, err, errText)
-		} else {
-			lastErr = fmt.Errorf("curl failed for %s: %w", url, err)
-		}
+		cancel()
+		lastErr = fmt.Errorf("HTTP request failed for %s: %w", url, err)
 		if attempt < retries {
 			time.Sleep(time.Duration(250*attempt*attempt) * time.Millisecond)
 		}
 	}
-	if lastErr != nil {
-		return nil, 0, lastErr
-	}
-	body, err := os.ReadFile(tmp.Name())
-	if err != nil {
-		return nil, 0, err
-	}
-	status, _ := strconv.Atoi(strings.TrimSpace(string(statusBytes)))
-	return body, status, nil
+	return nil, 0, lastErr
 }
 
 func curlJSONStatusWithPlatformRetry(ctx accountManagerContext, session *accountPlatformSession, logf func(string, ...any), operation string, call func(string) ([]byte, int, error)) ([]byte, int, error) {
@@ -5885,7 +5883,7 @@ func runBindDevices(args []string) error {
 	devicesDir := fs.String("devices-dir", "", "devices dir")
 	count := fs.Int("count", 0, "count")
 	claimTTL := fs.Int("claim-ttl-hours", 24, "claim TTL hours")
-	concurrency := fs.Int("concurrency", envInt("CLOUD_BIND_DEVICES_CONCURRENCY", 16), "device binding concurrency")
+	concurrency := fs.Int("concurrency", envInt("CLOUD_BIND_DEVICES_CONCURRENCY", 64), "device binding concurrency")
 	dryRun := fs.Bool("dry-run", false, "dry run")
 	skipBootstrap := fs.Bool("skip-bootstrap", false, "skip bootstrap")
 	skipDirectProvisionBridge := fs.Bool("skip-direct-provision-bridge", false, "skip staging direct provisioning bridge")

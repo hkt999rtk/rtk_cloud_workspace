@@ -12,7 +12,7 @@ DEVICE_MIX="camera=40,light=25,air_conditioner=20,smart_meter=15"
 DEVICE_PREFIX="load-device"
 USER_CONCURRENCY="16"
 DEVICE_CONCURRENCY="16"
-BIND_CONCURRENCY="16"
+BIND_CONCURRENCY="64"
 PLAN=0
 OUT_DIR=""
 QUIET=0
@@ -49,7 +49,7 @@ Options:
   --device-prefix PREFIX          Device prefix. Default: load-device.
   --user-concurrency N            Concurrent user creation workers. Default: 16.
   --device-concurrency N          Concurrent device generation workers. Default: 16.
-  --bind-concurrency N            Concurrent device binding workers. Default: 16.
+  --bind-concurrency N            Concurrent device binding workers. Default: 64.
   --out-dir PATH                  Output directory for logs and summary.
   --quiet                         Suppress periodic progress lines.
   --resume                        Reuse matching completed artifacts.

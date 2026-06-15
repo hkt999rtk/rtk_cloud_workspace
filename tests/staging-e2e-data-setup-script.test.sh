@@ -73,7 +73,7 @@ actual="$(cut -f1 "$COMMAND_LOG")"
 }
 grep -F $'create-users\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --brandname RTK --count 2 --rotate-password --concurrency 16' "$COMMAND_LOG" >/dev/null
 grep -F $'generate-devices\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --count 4 --mix camera=2,light=2 --prefix load-device --force --concurrency 16' "$COMMAND_LOG" >/dev/null
-grep -F $'bind-devices\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --brandname RTK --users-file '"$ENV_ROOT/artifacts/users/rtk-users-test.json"$' --devices-dir '"$ENV_ROOT/devices/test_device"$' --count 4 --concurrency 16' "$COMMAND_LOG" >/dev/null
+grep -F $'bind-devices\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --brandname RTK --users-file '"$ENV_ROOT/artifacts/users/rtk-users-test.json"$' --devices-dir '"$ENV_ROOT/devices/test_device"$' --count 4 --concurrency 64' "$COMMAND_LOG" >/dev/null
 
 SUMMARY="$(jq -r '.summary_file' "$TMP/run.out")"
 test "$SUMMARY" = "$OUT_DIR/summary.json"

@@ -92,7 +92,7 @@ Options:
   --device-prefix PREFIX          Override generated device prefix.
   --user-concurrency N            Concurrent user creation workers. Default: 16.
   --device-concurrency N          Concurrent device generation workers. Default: 16.
-  --bind-concurrency N            Concurrent device binding workers. Default: 16.
+  --bind-concurrency N            Concurrent device binding workers. Default: 64.
   --skip-mqtt-probe               Run MQTT test without live broker probe.
   --quiet                         Suppress periodic progress lines.
   -h, --help                      Show this help.
