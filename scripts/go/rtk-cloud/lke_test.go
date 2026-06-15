@@ -582,6 +582,38 @@ func TestRunProvisionLKEPublicHTTPSStartsDNSUpsertsBeforeWaiting(t *testing.T) {
 	}
 }
 
+func TestLKEPublicHTTPSNetworkPolicyAllowsBackendTargetPorts(t *testing.T) {
+	env := map[string]string{
+		"CLOUD_STACK_NAME":              "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN":            "video-cloud-staging.realtekconnect.com",
+		"VIDEO_CLOUD_CERTISSUER_DOMAIN": "certissuer.video-cloud-staging.realtekconnect.com",
+		"ACCOUNT_MANAGER_DOMAIN":        "account-manager.video-cloud-staging.realtekconnect.com",
+		"CLOUD_ADMIN_DOMAIN":            "admin.video-cloud-staging.realtekconnect.com",
+		"FRONTEND_DOMAIN":               "frontend.video-cloud-staging.realtekconnect.com",
+		"VIDEO_CLOUD_DEVICE_DOMAIN":     "device.video-cloud-staging.realtekconnect.com",
+	}
+	manifests := strings.Join(lkePublicHTTPSNetworkPolicyManifests(env, lkePublicHTTPSRoutes(env)), "\n---\n")
+	for _, namespace := range []string{
+		"video-cloud-staging-video-cloud",
+		"video-cloud-staging-account-manager",
+		"video-cloud-staging-admin",
+		"video-cloud-staging-frontend",
+	} {
+		needle := "name: allow-public-ingress\n  namespace: " + namespace
+		idx := strings.Index(manifests, needle)
+		if idx < 0 {
+			t.Fatalf("expected allow-public-ingress policy for %s, got:\n%s", namespace, manifests)
+		}
+		chunk := manifests[idx:]
+		if next := strings.Index(chunk, "\n---\n"); next >= 0 {
+			chunk = chunk[:next]
+		}
+		if !strings.Contains(chunk, "port: 8080") {
+			t.Fatalf("public ingress policy for %s must allow backend pod port 8080, got:\n%s", namespace, chunk)
+		}
+	}
+}
+
 func TestLKEEnsureOpenBaoSkipsRestartWhenTLSSecretUnchanged(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	_ = workspace
