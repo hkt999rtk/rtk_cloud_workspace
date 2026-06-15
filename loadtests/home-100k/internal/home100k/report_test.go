@@ -25,6 +25,8 @@ func TestReportRendersRequiredScenariosAndIncompleteEvidence(t *testing.T) {
 	for _, want := range []string{
 		"Status: INCOMPLETE",
 		"## Test Conditions",
+		"## Counter Scope",
+		"synthetic actor sample counters",
 		"## Device Scenario",
 		"## User Scenario",
 		"## IoT Device Shadow Scenario",
@@ -150,6 +152,7 @@ func TestReportRendersRequiredStageMetrics(t *testing.T) {
 	})
 	for _, want := range []string{
 		"## Status Summary",
+		"## Counter Scope",
 		"## Device MQTT Totals",
 		"## APP/User Totals",
 		"## Server Log Correlation",

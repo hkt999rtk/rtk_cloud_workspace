@@ -430,7 +430,7 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 	joined := strings.Join(calls, "\n")
 	for _, want := range []string{
 		"bash -lc GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o '" + filepath.Join(outDir, "bin", "home-100k-linux-amd64") + "' ./loadtests/home-100k/cmd/home-100k",
-		"ansible-playbook -i " + filepath.Join(outDir, "ansible", "inventory.json") + " loadtests/home-100k/ansible/sync.yml",
+		"ansible-playbook --forks 20 -i " + filepath.Join(outDir, "ansible", "inventory.json") + " loadtests/home-100k/ansible/sync.yml",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("sync live commands missing %q:\n%s", want, joined)
@@ -448,6 +448,33 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "ansible", "extra-vars.json")); err != nil {
 		t.Fatalf("missing generated ansible extra vars: %v", err)
+	}
+	extraVarsRaw, err := os.ReadFile(filepath.Join(outDir, "ansible", "extra-vars.json"))
+	if err != nil {
+		t.Fatalf("read extra vars: %v", err)
+	}
+	var extraVars map[string]string
+	if err := json.Unmarshal(extraVarsRaw, &extraVars); err != nil {
+		t.Fatalf("decode extra vars: %v", err)
+	}
+	for _, key := range []string{"local_runner", "local_env_root", "local_out_dir"} {
+		if !filepath.IsAbs(extraVars[key]) {
+			t.Fatalf("extra vars %s = %q, want absolute path", key, extraVars[key])
+		}
+	}
+	var inventoryDoc struct {
+		All struct {
+			Children map[string]struct {
+				Hosts map[string]map[string]any `json:"hosts"`
+			} `json:"children"`
+		} `json:"all"`
+	}
+	if err := json.Unmarshal(inventoryRaw, &inventoryDoc); err != nil {
+		t.Fatalf("decode inventory: %v", err)
+	}
+	localManifest, _ := inventoryDoc.All.Children["home_100k"].Hosts["home-100k-mixed-000"]["local_shard_manifest"].(string)
+	if !filepath.IsAbs(localManifest) {
+		t.Fatalf("inventory local_shard_manifest = %q, want absolute path", localManifest)
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "sync-telemetry.json")); err != nil {
 		t.Fatalf("missing sync telemetry placeholder: %v", err)
@@ -551,7 +578,7 @@ func TestExecuteRunStagesLiveDispatchesShardCommands(t *testing.T) {
 	}
 	joined := strings.Join(calls, "\n")
 	for _, want := range []string{
-		"ansible-playbook -i " + filepath.Join(outDir, "ansible", "inventory.json") + " loadtests/home-100k/ansible/run-stages.yml",
+		"ansible-playbook --forks 20 -i " + filepath.Join(outDir, "ansible", "inventory.json") + " loadtests/home-100k/ansible/run-stages.yml",
 		"--extra-vars @" + filepath.Join(outDir, "ansible", "extra-vars.json"),
 	} {
 		if !strings.Contains(joined, want) {
@@ -686,7 +713,7 @@ func TestExecuteCollectLiveCopiesShardArtifacts(t *testing.T) {
 	}
 	joined := strings.Join(calls, "\n")
 	for _, want := range []string{
-		"ansible-playbook -i " + filepath.Join(outDir, "ansible", "inventory.json") + " loadtests/home-100k/ansible/collect.yml",
+		"ansible-playbook --forks 20 -i " + filepath.Join(outDir, "ansible", "inventory.json") + " loadtests/home-100k/ansible/collect.yml",
 		"--extra-vars @" + filepath.Join(outDir, "ansible", "extra-vars.json"),
 	} {
 		if !strings.Contains(joined, want) {

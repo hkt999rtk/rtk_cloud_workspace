@@ -81,6 +81,12 @@ func RenderReport(input ReportInput) string {
 	fmt.Fprintf(&b, "- Devices per user: %d\n", input.Plan.Conditions.DevicesPerUser)
 	fmt.Fprintln(&b)
 
+	fmt.Fprintln(&b, "## Counter Scope")
+	fmt.Fprintln(&b, "- Device MQTT totals and APP/User totals are client-side runner counters.")
+	fmt.Fprintln(&b, "- The current runner records synthetic actor sample counters; these totals are not proof that 100,000 real MQTT devices or 5,000 real app users exchanged traffic.")
+	fmt.Fprintln(&b, "- A capacity `PASS` requires parsed server-side MQTT, APP/API, and IoT Device Shadow counters to correlate with client counters inside tolerance.")
+	fmt.Fprintln(&b)
+
 	fmt.Fprintln(&b, "## Scenario Mix")
 	renderMap(&b, "Device mix", input.Plan.DeviceMix)
 	renderMap(&b, "Presence mix", input.Plan.PresenceMix)

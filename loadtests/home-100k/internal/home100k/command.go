@@ -1060,6 +1060,18 @@ func writeAnsibleInputsForExistingManifests(vms []LinodeVM, plan Plan, values wo
 
 func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlagValues, runnerBinary string) error {
 	base := workflowOutDir(values)
+	localOutDir, err := filepath.Abs(base)
+	if err != nil {
+		return err
+	}
+	localRunner, err := filepath.Abs(runnerBinary)
+	if err != nil {
+		return err
+	}
+	localEnvRoot, err := filepath.Abs(plan.Conditions.EnvRoot)
+	if err != nil {
+		return err
+	}
 	ansibleDir := filepath.Join(base, "ansible")
 	if err := os.MkdirAll(ansibleDir, 0o755); err != nil {
 		return err
@@ -1073,6 +1085,10 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 		if err != nil {
 			return err
 		}
+		localShardManifest, err := filepath.Abs(filepath.Join(base, "shard-manifests", vm.Label+".json"))
+		if err != nil {
+			return err
+		}
 		hosts[vm.Label] = map[string]any{
 			"ansible_host":                 vm.PublicIPv4,
 			"ansible_user":                 values.sshUser,
@@ -1082,7 +1098,7 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 			"role":                         role,
 			"shard_index":                  shardIndex,
 			"vm_label":                     vm.Label,
-			"local_shard_manifest":         filepath.Join(base, "shard-manifests", vm.Label+".json"),
+			"local_shard_manifest":         localShardManifest,
 			"remote_shard_manifest":        strings.TrimRight(values.remoteWorkspace, "/") + "/loadtests/home-100k/shard-manifests/current.json",
 			"remote_out_dir":               strings.TrimRight(firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k"), "/") + "/" + normalizedRunID(values.runID) + "/" + vm.Label,
 		}
@@ -1109,9 +1125,9 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 	}
 	extraVars := map[string]any{
 		"run_id":           normalizedRunID(values.runID),
-		"local_out_dir":    base,
-		"local_runner":     runnerBinary,
-		"local_env_root":   strings.TrimRight(plan.Conditions.EnvRoot, "/"),
+		"local_out_dir":    localOutDir,
+		"local_runner":     localRunner,
+		"local_env_root":   strings.TrimRight(localEnvRoot, "/"),
 		"remote_workspace": strings.TrimRight(values.remoteWorkspace, "/"),
 		"remote_env_root":  strings.TrimRight(values.remoteEnvRoot, "/"),
 		"remote_out_root":  strings.TrimRight(firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k"), "/"),
@@ -1127,6 +1143,7 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 func runAnsiblePlaybook(values workflowFlagValues, playbook string) error {
 	base := workflowOutDir(values)
 	args := []string{
+		"--forks", "20",
 		"-i", filepath.Join(base, "ansible", "inventory.json"),
 		filepath.Join("loadtests", "home-100k", "ansible", playbook),
 		"--extra-vars", "@" + filepath.Join(base, "ansible", "extra-vars.json"),
