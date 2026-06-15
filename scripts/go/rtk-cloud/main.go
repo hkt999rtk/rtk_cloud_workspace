@@ -6099,9 +6099,20 @@ func runBindDevices(args []string) error {
 		if exists {
 			assignment.AccountDeviceID = stringValue(existingDevice["id"])
 			assignment.Status = "already_bound"
-			safeLog("device already bound; skipping claim: device=%s account_device=%s", assignment.DeviceID, assignment.AccountDeviceID)
-			progress(1, 0, 0, 0)
-			return assignment, nil
+			userSession := userSessions[assignment.AssignedEmail]
+			if userSession == nil {
+				return bindAssignment{}, fmt.Errorf("missing assigned user session: %s", assignment.AssignedEmail)
+			}
+			repaired, provisioned, err := repairExistingBoundDeviceProvisioning(ctx, tenantSlug, brandCloudID, assignment, existingDevice, runID, provisionBridge, userSession, safeLog)
+			if err != nil {
+				return bindAssignment{}, err
+			}
+			if provisioned {
+				progress(0, 0, 0, 1)
+			} else {
+				progress(1, 0, 0, 0)
+			}
+			return repaired, nil
 		}
 		safeLog("creating claim token: device=%s", assignment.DeviceID)
 		claim, err := safeCreateClaimToken(assignment)
@@ -6382,6 +6393,71 @@ func accountIndexDevicesByVideoCloudDevid(ctx accountManagerContext, token, bran
 		if len(devices) < limit {
 			return index, len(index), nil
 		}
+	}
+}
+
+func repairExistingBoundDeviceProvisioning(ctx accountManagerContext, tenantSlug, brandCloudID string, assignment bindAssignment, existingDevice map[string]any, runID string, bridge stagingProvisionBridge, user *brandCloudUserSession, logf func(string, ...any)) (bindAssignment, bool, error) {
+	token, err := brandCloudUserAccessToken(ctx, tenantSlug, user, logf)
+	if err != nil {
+		return bindAssignment{}, false, err
+	}
+	snapshot, err := fetchBindProvisioningState(ctx, token, brandCloudID, assignment)
+	if err != nil {
+		return bindAssignment{}, false, fmt.Errorf("check existing bound provisioning state failed: device=%s account_device=%s: %w", assignment.DeviceID, assignment.AccountDeviceID, err)
+	}
+	if snapshotReady(snapshot) {
+		logf("device already bound and provisioned; skipping claim: device=%s account_device=%s readiness=%s product=%s activation=%s", assignment.DeviceID, assignment.AccountDeviceID, snapshot.ReadinessState, snapshot.ProductState, snapshot.ActivationStatus)
+		return assignment, false, nil
+	}
+
+	prov, opID := provisionInputFromExistingBoundDevice(existingDevice, assignment, runID)
+	logf("device already bound but not provisioned; repairing provision: device=%s account_device=%s readiness=%s product=%s operation=%s activation=%s", assignment.DeviceID, assignment.AccountDeviceID, snapshot.ReadinessState, snapshot.ProductState, snapshot.OperationStatus, snapshot.ActivationStatus)
+	if err := startProvisionWithBrandCloudUserRetry(ctx, tenantSlug, brandCloudID, assignment, opID, prov, user, logf); err != nil {
+		return bindAssignment{}, false, err
+	}
+	assignment.OperationID = opID
+	assignment.Status = "provision_requested"
+	if bridge.Enabled {
+		logf("completing staging direct provisioning bridge for existing bound device: device=%s account_device=%s", assignment.DeviceID, assignment.AccountDeviceID)
+		if err := completeStagingProvisionBridge(bridge, brandCloudID, assignment, opID, prov); err != nil {
+			return bindAssignment{}, false, err
+		}
+		assignment.Status = "provisioned"
+	}
+	return assignment, true, nil
+}
+
+func provisionInputFromExistingBoundDevice(existingDevice map[string]any, assignment bindAssignment, runID string) (map[string]any, string) {
+	metadata, _ := existingDevice["metadata"].(map[string]any)
+	videoCloudDevid := firstNonEmpty(stringValue(metadata["video_cloud_devid"]), assignment.DeviceID)
+	activityID := firstNonEmpty(stringValue(metadata["video_cloud_activity_id"]), "bulk-bind-"+runID+"-"+assignment.DeviceID)
+	clipPublicKey := firstNonEmpty(stringValue(metadata["video_cloud_clip_public_key"]), "bulk-bind-placeholder-public-key")
+	serviceOptions := assignment.ServiceOptions
+	if fromMetadata := stringSliceValue(metadata["service_options"]); len(fromMetadata) > 0 {
+		serviceOptions = fromMetadata
+	}
+	return map[string]any{
+		"video_cloud_devid": videoCloudDevid,
+		"activity_id":       activityID,
+		"clip_public_key":   clipPublicKey,
+		"service_options":   serviceOptions,
+	}, activityID
+}
+
+func stringSliceValue(value any) []string {
+	switch items := value.(type) {
+	case []string:
+		return append([]string(nil), items...)
+	case []any:
+		out := make([]string, 0, len(items))
+		for _, item := range items {
+			if s := strings.TrimSpace(stringValue(item)); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
 	}
 }
 
