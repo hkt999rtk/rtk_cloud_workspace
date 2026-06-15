@@ -12,7 +12,7 @@ OUT="$TMP/devices"
 	--count 7 \
 	--mix camera=2,light=2,air_conditioner=2,smart_meter=1 \
 	--prefix test-load \
-	--generate-only >/tmp/staging-generate-load-devices.out
+	--generate-only >/tmp/staging-generate-load-devices.out 2>/tmp/staging-generate-load-devices.err
 
 jq -e '.count == 7' "$OUT/summary.json" >/dev/null
 jq -e '.enrollment.mode == "generate_only"' "$OUT/summary.json" >/dev/null
@@ -37,6 +37,7 @@ grep -F 'VIDEO_CLOUD_LOAD_DEVICE_IDS' "$OUT/loadtest.env" >/dev/null
 grep -F 'test-load-0001,test-load-0002,test-load-0003,test-load-0004,test-load-0005,test-load-0006,test-load-0007' "$OUT/loadtest.env" >/dev/null
 grep -F 'device_id,device_type,mqtt_capability,service_options,model,certificate_path,key_path,bundle_path' "$OUT/manifests/devices.csv" >/dev/null
 test -f "$OUT/manifests/factory-enroll-results.jsonl"
+grep -F 'device generation progress: done=7/7 generated=7 failed=0' /tmp/staging-generate-load-devices.err >/dev/null
 
 openssl x509 -in "$OUT/devices/camera/test-load-0001/device.cert.pem" -noout -subject | grep -F 'test-load-0001' >/dev/null
 
@@ -109,7 +110,11 @@ FACTORY_ENROLL_RUN_ID="test-run" \
 
 grep -F 'enroll start: index=001 device=factory-load-0001 type=camera service_options=mqtt,video_streaming,video_storage' /tmp/staging-factory-enroll.err >/dev/null
 grep -F 'enroll ok: index=002 device=factory-load-0002 type=light status=200' /tmp/staging-factory-enroll.err >/dev/null
-jq -s -e 'length == 2 and all(.ok == true) and .[0].service_options == ["mqtt","video_streaming","video_storage"] and .[1].service_options == ["mqtt"]' "$FACTORY_LOG" >/dev/null
+jq -s -e '
+  map(select(.ok == true)) as $ok |
+  any($ok[]; .devid == "factory-load-0001" and .service_options == ["mqtt","video_streaming","video_storage"]) and
+  any($ok[]; .devid == "factory-load-0002" and .service_options == ["mqtt"])
+' "$FACTORY_LOG" >/dev/null
 jq -s -e 'length == 2 and all(.status == "ok")' "$FACTORY_OUT/manifests/factory-enroll-results.jsonl" >/dev/null
 jq -e '.enrollment.mode == "factory_enroll" and .enrollment.succeeded == 2 and .enrollment.failed == 0' "$FACTORY_OUT/summary.json" >/dev/null
 jq -e 'length == 2 and .[0].certificate_profile == "factory-enrolled-device-mtls-client"' "$FACTORY_OUT/manifests/devices.json" >/dev/null

@@ -12,6 +12,60 @@ import (
 	"time"
 )
 
+func TestAccountEnsureUserAppCertificateUsesExtendedTransientRetryBudget(t *testing.T) {
+	t.Setenv("CLOUD_CREATE_USERS_APP_CERT_RETRIES", "8")
+	origSleep := appCertificateRetrySleep
+	appCertificateRetrySleep = func(time.Duration) {}
+	t.Cleanup(func() {
+		appCertificateRetrySleep = origSleep
+	})
+
+	loginAttempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/brand-clouds/rtk-test/auth/login" {
+			http.NotFound(w, r)
+			return
+		}
+		loginAttempts++
+		var req map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if req["app_csr_pem"] == "" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"user":            map[string]string{"id": "user-1", "email": "rtk+001@users.local"},
+				"tokens":          map[string]string{"access_token": testJWT(time.Now().Add(time.Hour))},
+				"app_certificate": map[string]string{"status": "csr_required"},
+			})
+			return
+		}
+		if loginAttempts <= 9 {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": "internal_error", "message": "Internal server error"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"user":   map[string]string{"id": "user-1", "email": "rtk+001@users.local"},
+			"tokens": map[string]string{"access_token": testJWT(time.Now().Add(time.Hour))},
+			"app_certificate": map[string]string{
+				"status":             "issued",
+				"fingerprint_sha256": "new-fingerprint",
+				"certificate_pem":    "new-cert",
+			},
+		})
+	}))
+	defer server.Close()
+
+	ctx := accountManagerContext{BaseURL: server.URL}
+	_, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", "app-brand-cloud-user:brand-user-1", nil, nil)
+	if err != nil {
+		t.Fatalf("accountEnsureUserAppCertificate() error = %v", err)
+	}
+	if stringValue(certificate["fingerprint_sha256"]) != "new-fingerprint" || loginAttempts != 10 {
+		t.Fatalf("certificate=%v loginAttempts=%d", certificate, loginAttempts)
+	}
+}
+
 func TestJWTExpiresAtUsesExpClaim(t *testing.T) {
 	want := time.Now().Add(10 * time.Minute).Truncate(time.Second)
 	got, ok := jwtExpiresAt(testJWT(want))
