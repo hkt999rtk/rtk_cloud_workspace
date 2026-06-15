@@ -64,6 +64,7 @@ resource_samples_dir="$repo_root/$out_dir/resource-samples"
 load_vm_resource_file="$resource_samples_dir/load-vms.tsv"
 k8s_node_resource_file="$resource_samples_dir/k8s-nodes.tsv"
 workflow_status_log="$repo_root/$out_dir/workflow-status.log"
+cleanup_live_vms_on_exit=0
 
 usage() {
   cat <<EOF
@@ -344,7 +345,7 @@ start_status_monitor() {
     done
   ) &
   status_monitor_pid="$!"
-  trap 'kill "$status_monitor_pid" 2>/dev/null || true' EXIT
+  trap 'on_script_exit $?' EXIT
 }
 
 stop_status_monitor() {
@@ -353,6 +354,25 @@ stop_status_monitor() {
     wait "$status_monitor_pid" 2>/dev/null || true
     trap - EXIT
   fi
+}
+
+destroy_live_vms() {
+  if [[ -f "$repo_root/$out_dir/vms.json" ]]; then
+    run_home100k destroy-vms "${common_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json" --live --confirm-live
+  fi
+}
+
+on_script_exit() {
+  local rc="${1:-0}"
+  if [[ -n "${status_monitor_pid:-}" ]]; then
+    kill "$status_monitor_pid" 2>/dev/null || true
+    wait "$status_monitor_pid" 2>/dev/null || true
+  fi
+  if [[ "$cleanup_live_vms_on_exit" == "1" ]]; then
+    set_phase "destroy-vms"
+    destroy_live_vms >/dev/null 2>&1 || true
+  fi
+  exit "$rc"
 }
 
 common_args=(
@@ -419,7 +439,7 @@ case "$command" in
     run_home100k plan "${common_args[@]}"
     run_home100k provision-vms "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir"
     run_home100k sync "${common_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json"
-    run_home100k run-stages "${common_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json" --runner-mode "$runner_mode"
+    run_home100k run-stages "${common_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json" --runner-mode sample
     run_home100k collect "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json"
     run_home100k collect-server-evidence "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir"
     ;;
@@ -438,6 +458,7 @@ case "$command" in
     fi
     mkdir -p "$repo_root/$out_dir"
     rm -f "$ssh_known_hosts_file"
+    cleanup_live_vms_on_exit=1
     start_status_monitor
     set_phase "provision-vms"
     run_home100k provision-vms "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --live --confirm-live --authorized-key-file "$authorized_key_file" "$@"
@@ -462,12 +483,17 @@ case "$command" in
     set_phase "aggregate"
     run_home100k aggregate "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir"
     generate_report_from_artifacts
+    set_phase "destroy-vms"
+    cleanup_rc=0
+    destroy_live_vms || cleanup_rc=$?
+    cleanup_live_vms_on_exit=0
     set_phase "complete"
-    workflow_status
     stop_status_monitor
     echo "live workflow artifacts: $out_dir"
-    echo "cleanup command: HOME100K_RUN_ID=$run_id $(basename "$0") destroy-vms --live --confirm-live"
-    exit "$workflow_rc"
+    if [[ "$workflow_rc" -ne 0 ]]; then
+      exit "$workflow_rc"
+    fi
+    exit "$cleanup_rc"
     ;;
   workflow-resume-live)
     if [[ -z "${LINODE_TOKEN:-}" ]]; then
@@ -480,6 +506,7 @@ case "$command" in
     fi
     mkdir -p "$repo_root/$out_dir"
     write_nodes_file
+    cleanup_live_vms_on_exit=1
     start_status_monitor
     set_phase "sync"
     run_home100k sync "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
@@ -501,12 +528,17 @@ case "$command" in
     set_phase "aggregate"
     run_home100k aggregate "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir"
     generate_report_from_artifacts
+    set_phase "destroy-vms"
+    cleanup_rc=0
+    destroy_live_vms || cleanup_rc=$?
+    cleanup_live_vms_on_exit=0
     set_phase "complete"
-    workflow_status
     stop_status_monitor
     echo "live workflow artifacts: $out_dir"
-    echo "cleanup command: HOME100K_RUN_ID=$run_id $(basename "$0") destroy-vms --live --confirm-live"
-    exit "$workflow_rc"
+    if [[ "$workflow_rc" -ne 0 ]]; then
+      exit "$workflow_rc"
+    fi
+    exit "$cleanup_rc"
     ;;
   *)
     echo "unknown command: $command" >&2

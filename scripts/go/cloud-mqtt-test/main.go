@@ -144,7 +144,13 @@ type mqttIOTotals struct {
 	PublishSuccesses       int64 `json:"publish_successes"`
 	PublishFailures        int64 `json:"publish_failures"`
 	MessagesReceived       int64 `json:"messages_received"`
+	DeltaReceived          int64 `json:"delta_received"`
 	ReportedEvents         int64 `json:"reported_events"`
+	AppLoginAttempts       int64 `json:"app_login_attempts"`
+	AppLoginSuccesses      int64 `json:"app_login_successes"`
+	AppLoginFailures       int64 `json:"app_login_failures"`
+	AppDesiredWrites       int64 `json:"app_desired_writes"`
+	AppReceivedAcks        int64 `json:"app_received_acks"`
 	TotalBytesSent         int64 `json:"total_bytes_sent"`
 	TotalBytesReceived     int64 `json:"total_bytes_received"`
 	AuthViolations         int64 `json:"auth_violations"`
@@ -177,6 +183,7 @@ type mqttActorProbe struct {
 	DeviceID    string
 	DeviceType  string
 	Brandname   string
+	RunID       string
 	DeviceToken string
 	AppToken    string
 	Dial        func() (io.ReadWriteCloser, error)
@@ -185,7 +192,7 @@ type mqttActorProbe struct {
 }
 
 func main() {
-	var root, envRoot, brandname, outDir, profile, maxUsersRaw, mqttProbeRaw, traceDetail string
+	var root, envRoot, brandname, outDir, profile, maxUsersRaw, mqttProbeRaw, traceDetail, runID string
 	var rampUp, telemetryInterval, stateInterval, commandRate string
 	var duration, seed, shardIndex, shardCount, concurrency, maxConnectedDevices int
 	flag.StringVar(&root, "root", "", "workspace root")
@@ -193,6 +200,7 @@ func main() {
 	flag.StringVar(&brandname, "brandname", "", "brand name")
 	flag.StringVar(&outDir, "out-dir", "", "output directory")
 	flag.StringVar(&profile, "profile", "smoke", "profile")
+	flag.StringVar(&runID, "run-id", os.Getenv("HOME100K_RUN_ID"), "run id for log correlation")
 	flag.IntVar(&duration, "duration-seconds", 120, "duration seconds")
 	flag.StringVar(&maxUsersRaw, "max-users", "", "max users")
 	flag.IntVar(&seed, "seed", 20260531, "seed")
@@ -226,6 +234,7 @@ func main() {
 		CommandRatePerDevicePerDay:  commandRate,
 		Concurrency:                 concurrency,
 		MaxConnectedDevicesPerShard: maxConnectedDevices,
+		RunID:                       runID,
 	}
 	if err := run(root, envRoot, brandname, outDir, profile, duration, maxUsers, seed, mqttProbe, traceDetail, opts); err != nil {
 		fatal(err)
@@ -240,6 +249,7 @@ func fatal(err error) {
 type loadOptions struct {
 	ShardIndex                  int    `json:"shard_index"`
 	ShardCount                  int    `json:"shard_count"`
+	RunID                       string `json:"run_id,omitempty"`
 	RampUp                      string `json:"ramp_up"`
 	TelemetryInterval           string `json:"telemetry_interval"`
 	StateInterval               string `json:"state_interval"`
@@ -249,6 +259,7 @@ type loadOptions struct {
 }
 
 func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, seed int, mqttProbe bool, traceDetail string, opts loadOptions) error {
+	opts.RunID = sanitizeCorrelationID(opts.RunID)
 	traceDetail = strings.ToLower(strings.TrimSpace(traceDetail))
 	if traceDetail == "" {
 		traceDetail = "summary"
@@ -515,7 +526,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 		mqttProbeResult = appMaterial.Status.Status + ": app MQTT actor unavailable"
 	} else {
 		mqttProbeResult = "PASS"
-		outcomes := runSelectedDeviceProbes(selectedAssignments, certRecords, brandname, endpoints["video_cloud_base_url"].(string), mqttHost, mqttPort, appMaterial.Certificate, opts.Concurrency)
+		outcomes := runSelectedDeviceProbes(selectedAssignments, certRecords, brandname, opts.RunID, endpoints["video_cloud_base_url"].(string), mqttHost, mqttPort, appMaterial.Certificate, opts.Concurrency)
 		for _, item := range selectedAssignments {
 			row := capCounts[item.DeviceType]
 			row["devices"]++
@@ -596,7 +607,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	return writeOutputs(outDir, result)
 }
 
-func runDeviceActorSeparatedEnvelope(record certRecord, brandname, apiBaseURL, host string, port int, appCert tls.Certificate) deviceResult {
+func runDeviceActorSeparatedEnvelope(record certRecord, brandname, runID, apiBaseURL, host string, port int, appCert tls.Certificate) deviceResult {
 	cert, err := loadLeafFirstX509KeyPair(record.CertPath, record.ChainPath, record.KeyPath)
 	if err != nil {
 		return failedActorResult(record.DeviceID, record.DeviceType, redactedError(err))
@@ -616,6 +627,7 @@ func runDeviceActorSeparatedEnvelope(record certRecord, brandname, apiBaseURL, h
 		DeviceID:    record.DeviceID,
 		DeviceType:  record.DeviceType,
 		Brandname:   brandname,
+		RunID:       runID,
 		DeviceToken: deviceToken,
 		AppToken:    appToken.AccessToken,
 		Dial: func() (io.ReadWriteCloser, error) {
@@ -677,7 +689,7 @@ func shardAssignments(items []assignment, shardIndex, shardCount int) []assignme
 	return out
 }
 
-func runSelectedDeviceProbes(assignments []assignment, certs []certRecord, brandname, apiBaseURL, host string, port int, appCert tls.Certificate, concurrency int) map[string]deviceResult {
+func runSelectedDeviceProbes(assignments []assignment, certs []certRecord, brandname, runID, apiBaseURL, host string, port int, appCert tls.Certificate, concurrency int) map[string]deviceResult {
 	if concurrency <= 0 {
 		concurrency = 25
 	}
@@ -696,7 +708,7 @@ func runSelectedDeviceProbes(assignments []assignment, certs []certRecord, brand
 		go func() {
 			defer wg.Done()
 			for item := range jobs {
-				results <- runDeviceActorSeparatedEnvelope(item.Cert, brandname, apiBaseURL, host, port, appCert)
+				results <- runDeviceActorSeparatedEnvelope(item.Cert, brandname, runID, apiBaseURL, host, port, appCert)
 			}
 		}()
 	}
@@ -727,7 +739,12 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 	start := time.Now()
 	upTopic := "devices/" + probe.DeviceID + "/up/messages"
 	downTopic := "devices/" + probe.DeviceID + "/down/commands"
-	logStreamID := fmt.Sprintf("mqtt-e2e-%d-%s", probe.Now().Unix(), probe.DeviceID)
+	shadowUpdateTopic := "$vc/devices/" + probe.DeviceID + "/shadow/update"
+	shadowAcceptedTopic := shadowUpdateTopic + "/accepted"
+	shadowDocumentsTopic := shadowUpdateTopic + "/documents"
+	shadowDeltaTopic := shadowUpdateTopic + "/delta"
+	correlationID := probeCorrelationID(probe.RunID, probe.Now())
+	logStreamID := fmt.Sprintf("mqtt-e2e-%s-%s", correlationID, probe.DeviceID)
 	result := deviceResult{
 		DeviceID:                probe.DeviceID,
 		DeviceType:              probe.DeviceType,
@@ -746,7 +763,7 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 		TelemetryTopic:          upTopic,
 		CommandPublishActor:     "app_controller",
 		CommandSubscribeActor:   "device_client",
-		CommandTopic:            downTopic,
+		CommandTopic:            shadowUpdateTopic,
 		AckTopic:                upTopic,
 		RuntimeLogStreamID:      logStreamID,
 	}
@@ -804,8 +821,26 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 		return result
 	}
 	result.TraceChain = appendTrace(result.TraceChain, "command", "device_client", "subscribe", downTopic, "PASS", "")
+	if err := mqttSubscribe(appObserver, 2, shadowAcceptedTopic); err != nil {
+		result.Error = "app shadow accepted subscribe failed: " + redactedError(err)
+		result.TraceChain = appendTrace(result.TraceChain, "shadow_desired", "app_observer", "subscribe", shadowAcceptedTopic, "FAIL", "")
+		return result
+	}
+	result.TraceChain = appendTrace(result.TraceChain, "shadow_desired", "app_observer", "subscribe", shadowAcceptedTopic, "PASS", "")
+	if err := mqttSubscribe(appObserver, 3, shadowDocumentsTopic); err != nil {
+		result.Error = "app shadow documents subscribe failed: " + redactedError(err)
+		result.TraceChain = appendTrace(result.TraceChain, "shadow_reported", "app_observer", "subscribe", shadowDocumentsTopic, "FAIL", "")
+		return result
+	}
+	result.TraceChain = appendTrace(result.TraceChain, "shadow_reported", "app_observer", "subscribe", shadowDocumentsTopic, "PASS", "")
+	if err := mqttSubscribe(device, 4, shadowDeltaTopic); err != nil {
+		result.Error = "device shadow delta subscribe failed: " + redactedError(err)
+		result.TraceChain = appendTrace(result.TraceChain, "shadow_delta", "device_client", "subscribe", shadowDeltaTopic, "FAIL", "")
+		return result
+	}
+	result.TraceChain = appendTrace(result.TraceChain, "shadow_delta", "device_client", "subscribe", shadowDeltaTopic, "PASS", "")
 
-	messageID := fmt.Sprintf("msg-mqtt-e2e-%d-%s", probe.Now().Unix(), probe.DeviceID)
+	messageID := fmt.Sprintf("msg-mqtt-e2e-%s-%s", correlationID, probe.DeviceID)
 	_, telemetryPayload, err := sampleHomeStatusReport(probe.DeviceID, probe.DeviceType, probe.Brandname, messageID, probe.Now().UTC())
 	if err != nil {
 		result.Error = redactedError(err)
@@ -839,65 +874,87 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 	result.TelemetryStatus = "PASS"
 	telemetryLatency := float64(time.Since(start).Milliseconds())
 
-	commandID := fmt.Sprintf("cmd-mqtt-e2e-%d-%s", probe.Now().Unix(), probe.DeviceID)
-	commandPayload, err := sampleHomeCommand(probe.DeviceID, probe.DeviceType, commandID, probe.Now().UTC())
+	commandID := fmt.Sprintf("cmd-mqtt-e2e-%s-%s", correlationID, probe.DeviceID)
+	legacyCommandPayload, err := sampleHomeCommand(probe.DeviceID, probe.DeviceType, commandID, probe.Now().UTC())
+	if err != nil {
+		result.Error = redactedError(err)
+		return result
+	}
+	desiredState := desiredStateForCapability(probe.DeviceType)
+	reportedState := reportedStateForCapability(probe.DeviceType)
+	commandPayload, err := json.Marshal(map[string]any{
+		"state":       map[string]any{"desired": desiredState},
+		"clientToken": commandID,
+	})
 	if err != nil {
 		result.Error = redactedError(err)
 		return result
 	}
 	commandStart := time.Now()
-	if err := mqttPublish(appController, downTopic, commandPayload); err != nil {
-		result.Error = "app command publish failed: " + redactedError(err)
-		result.TraceChain = appendTrace(result.TraceChain, "command", "app_controller", "publish", downTopic, "FAIL", "")
+	if err := mqttPublish(appController, shadowUpdateTopic, commandPayload); err != nil {
+		result.Error = "app shadow desired publish failed: " + redactedError(err)
+		result.TraceChain = appendTrace(result.TraceChain, "shadow_desired", "app_controller", "publish", shadowUpdateTopic, "FAIL", "")
 		return result
 	}
-	commandData := traceDataSummaryFromPayload(commandPayload, "app_to_device")
-	result.TraceChain = appendTraceData(result.TraceChain, "command", "app_controller", "publish", downTopic, "PASS", commandData, "")
-	if err := recordRuntimeLog(appController, "command", "app_controller", "publish", downTopic, map[string]any{"direction": "app_to_device", "command_id": commandID}); err != nil {
+	commandData := traceDataSummaryFromPayload(legacyCommandPayload, "app_to_device")
+	result.TraceChain = appendTraceData(result.TraceChain, "shadow_desired", "app_controller", "publish", shadowUpdateTopic, "PASS", commandData, "")
+	if err := recordRuntimeLog(appController, "shadow_desired", "app_controller", "publish", shadowUpdateTopic, map[string]any{"direction": "app_to_device", "command_id": commandID}); err != nil {
 		result.Error = "app command runtime log publish failed: " + redactedError(err)
 		return result
 	}
-	commandDoc, err := waitForMQTTPublish(device, downTopic, probe.Timeout, func(doc map[string]any) bool {
-		return doc["sample_type"] == "home_device_message" && doc["message_type"] == "command" && doc["command_id"] == commandID
-	})
-	if err != nil {
-		result.Error = "device did not receive app command: " + redactedError(err)
+	if _, err := waitForMQTTPublish(appObserver, shadowAcceptedTopic, probe.Timeout, func(doc map[string]any) bool {
+		return doc["clientToken"] == commandID
+	}); err != nil {
+		result.Error = "app observer did not receive shadow desired accepted: " + redactedError(err)
 		result.LatencyMS = []float64{telemetryLatency, float64(time.Since(commandStart).Milliseconds())}
-		result.TraceChain = appendTrace(result.TraceChain, "command", "device_client", "receive", downTopic, "FAIL", "")
+		result.TraceChain = appendTrace(result.TraceChain, "shadow_desired", "app_observer", "receive", shadowAcceptedTopic, "FAIL", "")
 		return result
 	}
-	result.TraceChain = appendTraceData(result.TraceChain, "command", "device_client", "receive", downTopic, "PASS", traceDataSummary(commandDoc), "")
-	if err := recordRuntimeLog(device, "command", "device_client", "receive", downTopic, map[string]any{"direction": "app_to_device", "command_id": commandID}); err != nil {
+	result.TraceChain = appendTrace(result.TraceChain, "shadow_desired", "app_observer", "receive", shadowAcceptedTopic, "PASS", "")
+	deltaDoc, err := waitForMQTTPublish(device, shadowDeltaTopic, probe.Timeout, func(doc map[string]any) bool {
+		return doc["clientToken"] == commandID
+	})
+	if err != nil {
+		result.Error = "device did not receive shadow delta: " + redactedError(err)
+		result.LatencyMS = []float64{telemetryLatency, float64(time.Since(commandStart).Milliseconds())}
+		result.TraceChain = appendTrace(result.TraceChain, "shadow_delta", "device_client", "receive", shadowDeltaTopic, "FAIL", "")
+		return result
+	}
+	result.TraceChain = appendTraceData(result.TraceChain, "shadow_delta", "device_client", "receive", shadowDeltaTopic, "PASS", traceDataSummary(deltaDoc), "")
+	if err := recordRuntimeLog(device, "shadow_delta", "device_client", "receive", shadowDeltaTopic, map[string]any{"direction": "app_to_device", "command_id": commandID}); err != nil {
 		result.Error = "device command runtime log publish failed: " + redactedError(err)
 		return result
 	}
-	ackPayload, err := sampleHomeCommandResult(probe.DeviceID, probe.DeviceType, commandID, probe.Now().UTC())
+	ackPayload, err := json.Marshal(map[string]any{
+		"state":       map[string]any{"reported": reportedState},
+		"clientToken": "reported-" + commandID,
+	})
 	if err != nil {
 		result.Error = redactedError(err)
 		return result
 	}
-	if err := mqttPublish(device, upTopic, ackPayload); err != nil {
-		result.Error = "device command ack publish failed: " + redactedError(err)
-		result.TraceChain = appendTrace(result.TraceChain, "command_ack", "device_client", "publish", upTopic, "FAIL", "")
+	if err := mqttPublish(device, shadowUpdateTopic, ackPayload); err != nil {
+		result.Error = "device shadow reported publish failed: " + redactedError(err)
+		result.TraceChain = appendTrace(result.TraceChain, "shadow_reported", "device_client", "publish", shadowUpdateTopic, "FAIL", "")
 		return result
 	}
 	ackData := traceDataSummaryFromPayload(ackPayload, "device_to_app")
-	result.TraceChain = appendTraceData(result.TraceChain, "command_ack", "device_client", "publish", upTopic, "PASS", ackData, "")
-	if err := recordRuntimeLog(device, "command_ack", "device_client", "publish", upTopic, map[string]any{"direction": "device_to_app", "command_id": commandID}); err != nil {
+	result.TraceChain = appendTraceData(result.TraceChain, "shadow_reported", "device_client", "publish", shadowUpdateTopic, "PASS", ackData, "")
+	if err := recordRuntimeLog(device, "shadow_reported", "device_client", "publish", shadowUpdateTopic, map[string]any{"direction": "device_to_app", "command_id": commandID}); err != nil {
 		result.Error = "device command ack runtime log publish failed: " + redactedError(err)
 		return result
 	}
-	ackDoc, err := waitForMQTTPublish(appObserver, upTopic, probe.Timeout, func(doc map[string]any) bool {
-		return doc["sample_type"] == "home_device_message" && doc["message_type"] == "command_result" && doc["command_id"] == commandID
+	ackDoc, err := waitForMQTTPublish(appObserver, shadowDocumentsTopic, probe.Timeout, func(doc map[string]any) bool {
+		return doc["clientToken"] == "reported-"+commandID && shadowDocumentsDeltaCleared(doc)
 	})
 	if err != nil {
-		result.Error = "app observer did not receive device command ack: " + redactedError(err)
+		result.Error = "app observer did not receive shadow reported documents: " + redactedError(err)
 		result.LatencyMS = []float64{telemetryLatency, float64(time.Since(commandStart).Milliseconds())}
-		result.TraceChain = appendTrace(result.TraceChain, "command_ack", "app_observer", "receive", upTopic, "FAIL", "")
+		result.TraceChain = appendTrace(result.TraceChain, "shadow_reported", "app_observer", "receive", shadowDocumentsTopic, "FAIL", "")
 		return result
 	}
-	result.TraceChain = appendTraceData(result.TraceChain, "command_ack", "app_observer", "receive", upTopic, "PASS", traceDataSummary(ackDoc), "")
-	if err := recordRuntimeLog(appObserver, "command_ack", "app_observer", "receive", upTopic, map[string]any{"direction": "device_to_app", "command_id": commandID}); err != nil {
+	result.TraceChain = appendTraceData(result.TraceChain, "shadow_reported", "app_observer", "receive", shadowDocumentsTopic, "PASS", traceDataSummary(ackDoc), "")
+	if err := recordRuntimeLog(appObserver, "shadow_reported", "app_observer", "receive", shadowDocumentsTopic, map[string]any{"direction": "device_to_app", "command_id": commandID}); err != nil {
 		result.Error = "app command ack runtime log publish failed: " + redactedError(err)
 		return result
 	}
@@ -919,12 +976,44 @@ func connectMQTTActor(probe mqttActorProbe, actor, username, password string) (i
 	if setter, ok := conn.(interface{ SetDeadline(time.Time) error }); ok {
 		_ = setter.SetDeadline(time.Now().Add(probe.Timeout))
 	}
-	clientID := fmt.Sprintf("rtk-e2e-%s-%s-%d", probe.DeviceID, actor, os.Getpid())
+	clientID := fmt.Sprintf("rtk-e2e-%s-%s-%s-%d", probeCorrelationID(probe.RunID, probe.Now()), probe.DeviceID, actor, os.Getpid())
 	if err := mqttConnect(conn, clientID, username, password); err != nil {
 		_ = conn.Close()
 		return nil, err
 	}
 	return conn, nil
+}
+
+func probeCorrelationID(runID string, now time.Time) string {
+	runID = sanitizeCorrelationID(runID)
+	if runID != "" {
+		return runID
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	return strconv.FormatInt(now.Unix(), 10)
+}
+
+func sanitizeCorrelationID(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range raw {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-' || r == '_':
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func waitForMQTTPublish(conn io.Reader, topic string, timeout time.Duration, match func(map[string]any) bool) (map[string]any, error) {
@@ -1021,11 +1110,18 @@ func aggregateMQTTIOTotals(rows []deviceResult, appBootstrap appBootstrapStatus,
 					if statusPass {
 						totals.MessagesReceived++
 						totals.TotalBytesReceived += tracePayloadBytes(step)
+						if step.Phase == "shadow_delta" {
+							totals.DeltaReceived++
+						}
 					}
+				}
+				if step.Phase == "shadow_reported" && step.Action == "publish" && statusPass {
+					totals.ReportedEvents++
 				}
 			case "app_controller":
 				if step.Action == "publish" {
 					if statusPass {
+						totals.AppDesiredWrites++
 						totals.TotalHTTPBytesSent += tracePayloadBytes(step)
 					} else if statusFail {
 						totals.HTTPFailures++
@@ -1033,15 +1129,26 @@ func aggregateMQTTIOTotals(rows []deviceResult, appBootstrap appBootstrapStatus,
 				}
 			case "app_observer":
 				if step.Action == "receive" && statusPass {
+					if step.Phase == "shadow_reported" || step.Phase == "command_ack" {
+						totals.AppReceivedAcks++
+					}
 					totals.TotalHTTPBytesReceived += tracePayloadBytes(step)
 				}
 			}
 		}
 	}
-	totals.HTTPRequests = int64(commandsAttempted)
-	totals.HTTPSuccesses = int64(commandsPassed)
-	if totals.HTTPFailures == 0 && commandsAttempted > commandsPassed {
-		totals.HTTPFailures = int64(commandsAttempted - commandsPassed)
+	if strings.EqualFold(appBootstrap.Status, "PASS") || strings.EqualFold(appBootstrap.Status, "FAIL") {
+		totals.AppLoginAttempts = 1
+		if strings.EqualFold(appBootstrap.Status, "PASS") {
+			totals.AppLoginSuccesses = 1
+		} else {
+			totals.AppLoginFailures = 1
+		}
+	}
+	totals.HTTPRequests = totals.AppDesiredWrites
+	totals.HTTPSuccesses = totals.AppReceivedAcks
+	if totals.HTTPFailures == 0 && totals.AppDesiredWrites > totals.AppReceivedAcks {
+		totals.HTTPFailures = totals.AppDesiredWrites - totals.AppReceivedAcks
 	}
 	if strings.EqualFold(appBootstrap.Status, "FAIL") {
 		totals.AuthViolations = 1
@@ -1081,20 +1188,20 @@ func attachMQTTIOTotals(result map[string]any, totals mqttIOTotals) {
 		"subscribes":         totals.SubscribeSuccesses,
 		"publishes":          totals.PublishSuccesses + totals.PublishFailures,
 		"received_messages":  totals.MessagesReceived,
-		"delta_received":     totals.MessagesReceived,
+		"delta_received":     totals.DeltaReceived,
 		"reported_publishes": totals.ReportedEvents,
 		"rejected_publishes": totals.PublishFailures,
 		"bytes_sent":         totals.TotalBytesSent,
 		"bytes_received":     totals.TotalBytesReceived,
 	}
 	result["app_user_totals"] = map[string]any{
-		"login_attempts":        totals.HTTPRequests,
-		"login_success":         totals.HTTPSuccesses,
-		"login_fail":            totals.HTTPFailures,
-		"list_devices_requests": totals.HTTPRequests,
-		"read_shadow_requests":  totals.HTTPRequests,
-		"desired_writes":        totals.HTTPRequests,
-		"received_acks":         totals.HTTPSuccesses,
+		"login_attempts":        totals.AppLoginAttempts,
+		"login_success":         totals.AppLoginSuccesses,
+		"login_fail":            totals.AppLoginFailures,
+		"list_devices_requests": 0,
+		"read_shadow_requests":  0,
+		"desired_writes":        totals.AppDesiredWrites,
+		"received_acks":         totals.AppReceivedAcks,
 		"bytes_sent":            totals.TotalHTTPBytesSent,
 		"bytes_received":        totals.TotalHTTPBytesReceived,
 	}
@@ -1133,7 +1240,36 @@ func traceDataSummary(doc map[string]any) string {
 			}
 		}
 	}
+	if state, ok := doc["state"].(map[string]any); ok {
+		for _, section := range []string{"desired", "reported", "delta"} {
+			values, ok := state[section].(map[string]any)
+			if !ok {
+				if section == "delta" {
+					values = state
+				} else {
+					continue
+				}
+			}
+			for _, key := range []string{"power", "mode", "target_temperature_c", "fan", "reading", "telemetry_report_requested"} {
+				value := strings.TrimSpace(fmt.Sprint(values[key]))
+				if value == "" || value == "<nil>" {
+					continue
+				}
+				parts = append(parts, section+"."+key+"="+value)
+			}
+			if section == "delta" {
+				break
+			}
+		}
+	}
 	return strings.Join(parts, " ")
+}
+
+func shadowDocumentsDeltaCleared(doc map[string]any) bool {
+	current, _ := doc["current"].(map[string]any)
+	state, _ := current["state"].(map[string]any)
+	delta, ok := state["delta"].(map[string]any)
+	return ok && len(delta) == 0
 }
 
 func traceDataSummaryFromPayload(payload []byte, direction string) string {

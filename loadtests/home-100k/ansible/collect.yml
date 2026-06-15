@@ -44,6 +44,13 @@
         flat: true
         fail_on_missing: false
 
+    - name: Fetch shard command log
+      ansible.builtin.fetch:
+        src: "{{ remote_out_dir }}/runner-command.json"
+        dest: "{{ local_out_dir }}/shards/{{ vm_label }}/runner-command.json"
+        flat: true
+        fail_on_missing: false
+
     - name: Fetch sync telemetry
       ansible.builtin.fetch:
         src: "{{ remote_telemetry_dir }}/{{ vm_label }}.json"

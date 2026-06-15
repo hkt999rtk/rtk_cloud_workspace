@@ -145,8 +145,9 @@ HOME100K_RUN_ID=20260615T100000Z \
 The default command is `workflow-live`: it creates the load-generator VMs,
 syncs the runner binaries plus minimal env-root artifacts, dispatches shards,
 collects shard artifacts, collects server evidence, and aggregates the report.
-VM destruction remains a separate explicit command. During the live workflow
-the script prints status immediately and every 30 seconds with the current
+It then destroys the provisioned VMs. If the workflow is interrupted, rerun
+`destroy-vms --live --confirm-live` with the same `HOME100K_RUN_ID` to clean any
+leftovers. During the live workflow the script prints status immediately and every 30 seconds with the current
 phase, VM count, collected shard count, server evidence state, report status,
 per load-generator VM resource samples, and per Kubernetes node resource
 samples. Provisioned node inventory is written to

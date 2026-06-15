@@ -135,6 +135,7 @@ type ServerEvidence struct {
 
 type EvidenceSource struct {
 	Available bool             `json:"available"`
+	Optional  bool             `json:"optional,omitempty"`
 	Detail    string           `json:"detail,omitempty"`
 	Counters  map[string]int64 `json:"counters,omitempty"`
 }
@@ -245,7 +246,7 @@ func AggregateCollectedRun(opts AggregateOptions) (RunResult, error) {
 		evidence = ServerEvidence{
 			RunID:    runID,
 			Complete: false,
-			Sources:  requiredEvidenceSources(false),
+			Sources:  evidenceSourceCatalog(false),
 			Notes:    []string{"server evidence file was not found in collected artifacts"},
 		}
 	}
@@ -302,7 +303,7 @@ func loadServerEvidence(path string, runID string) (ServerEvidence, error) {
 		return ServerEvidence{
 			RunID:    runID,
 			Complete: false,
-			Sources:  requiredEvidenceSources(false),
+			Sources:  evidenceSourceCatalog(false),
 			Notes:    []string{"server evidence file was not provided"},
 		}, nil
 	}
@@ -320,9 +321,10 @@ func loadServerEvidence(path string, runID string) (ServerEvidence, error) {
 	if evidence.Sources == nil {
 		evidence.Sources = map[string]EvidenceSource{}
 	}
-	for key := range requiredEvidenceSources(false) {
+	for key, source := range evidenceSourceCatalog(false) {
 		if _, ok := evidence.Sources[key]; !ok {
-			evidence.Sources[key] = EvidenceSource{Available: false, Detail: "missing source"}
+			source.Detail = "missing source"
+			evidence.Sources[key] = source
 		}
 	}
 	evidence.Complete = evidence.Complete && allEvidenceSourcesAvailable(evidence.Sources)
@@ -510,10 +512,23 @@ func requiredEvidenceSources(available bool) map[string]EvidenceSource {
 		"video_cloud_api":    {Available: available},
 		"iot_device_shadow":  {Available: available},
 		"postgres":           {Available: available},
-		"redis_valkey":       {Available: available},
 		"ingress_nginx":      {Available: available},
 		"host_pod_resources": {Available: available},
 	}
+}
+
+func optionalEvidenceSources(available bool) map[string]EvidenceSource {
+	return map[string]EvidenceSource{
+		"redis_valkey": {Available: available, Optional: true},
+	}
+}
+
+func evidenceSourceCatalog(available bool) map[string]EvidenceSource {
+	sources := requiredEvidenceSources(available)
+	for key, source := range optionalEvidenceSources(available) {
+		sources[key] = source
+	}
+	return sources
 }
 
 func allEvidenceSourcesAvailable(sources map[string]EvidenceSource) bool {
@@ -567,9 +582,8 @@ func correlateServerEvidence(evidence ServerEvidence, device DeviceMQTTTotals, a
 	}
 	checks := []CorrelationCheck{
 		newCorrelationCheck("emqx", "device_mqtt.connect_success", device.ConnectSuccess, evidenceCounter(evidence, "emqx", "device_mqtt.connect_success")),
-		newCorrelationCheck("emqx", "device_mqtt.publishes", device.Publishes, evidenceCounter(evidence, "emqx", "device_mqtt.publishes")),
-		newCorrelationCheck("emqx", "device_mqtt.received_messages", device.ReceivedMessages, evidenceCounter(evidence, "emqx", "device_mqtt.received_messages")),
-		newCorrelationCheck("video_cloud_api", "app_user.desired_writes", app.DesiredWrites, evidenceCounter(evidence, "video_cloud_api", "app_user.desired_writes")),
+		newCorrelationCheck("iot_device_shadow", "app_user.desired_writes", app.DesiredWrites, evidenceCounter(evidence, "iot_device_shadow", "app_user.desired_writes")),
+		newCorrelationCheck("iot_device_shadow", "device_mqtt.delta_received", device.DeltaReceived, evidenceCounter(evidence, "iot_device_shadow", "device_mqtt.delta_received")),
 		newCorrelationCheck("iot_device_shadow", "device_mqtt.reported_publishes", device.ReportedPublishes, evidenceCounter(evidence, "iot_device_shadow", "device_mqtt.reported_publishes")),
 		newCorrelationCheck("iot_device_shadow", "app_user.received_acks", app.ReceivedAcks, evidenceCounter(evidence, "iot_device_shadow", "app_user.received_acks")),
 	}
@@ -617,7 +631,6 @@ func clientTotalsPresent(device DeviceMQTTTotals, app AppUserTotals) bool {
 	return device.ConnectAttempts > 0 &&
 		device.Publishes > 0 &&
 		device.ReceivedMessages > 0 &&
-		app.LoginAttempts > 0 &&
 		app.DesiredWrites > 0 &&
 		app.ReceivedAcks > 0
 }
@@ -634,7 +647,8 @@ func clientTargetCoverageComplete(stages []StageResult) bool {
 		if stage.DeviceMQTTTotals.ConnectAttempts < int64(stage.ConnectedDevices) ||
 			stage.DeviceMQTTTotals.ConnectSuccess < int64(stage.ConnectedDevices) ||
 			stage.DeviceMQTTTotals.Subscribes < int64(stage.ConnectedDevices) ||
-			stage.AppUserTotals.LoginAttempts < int64(expectedUsers) {
+			stage.AppUserTotals.DesiredWrites < int64(expectedUsers) ||
+			stage.AppUserTotals.ReceivedAcks < int64(expectedUsers) {
 			return false
 		}
 	}

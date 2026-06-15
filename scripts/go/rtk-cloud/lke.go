@@ -1202,6 +1202,9 @@ spec:
     - from:
         - podSelector:
             matchLabels:
+              app.kubernetes.io/name: video-cloud-api
+        - podSelector:
+            matchLabels:
               app.kubernetes.io/name: video-cloud-logingester
         - podSelector:
             matchLabels:
@@ -4028,7 +4031,15 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
               value: %q
             - name: VIDEO_CLOUD_AUTH_TRUSTED_CLIENT_CERT_HEADERS
               value: "true"
-`, lkeNamespaceName(env, "platform"), lkeAccountManagerInternalURL(env))
+            - name: VIDEO_CLOUD_MQTT_ENABLED
+              value: "true"
+            - name: VIDEO_CLOUD_MQTT_ADDR
+              value: %q
+            - name: VIDEO_CLOUD_MQTT_CLIENT_ID
+              value: "video-cloud-api"
+            - name: VIDEO_CLOUD_MQTT_TOPIC_ROOT
+              value: "devices"
+`, lkeNamespaceName(env, "platform"), lkeAccountManagerInternalURL(env), lkeMQTTInternalAddr(env))
 	}
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment

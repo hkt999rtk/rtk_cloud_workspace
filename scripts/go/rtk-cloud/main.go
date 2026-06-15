@@ -192,6 +192,7 @@ func runMQTTTest(args []string) error {
 	brandname := fs.String("brandname", "", "brand name")
 	outDir := fs.String("out-dir", "", "output directory")
 	profile := fs.String("profile", "smoke", "profile")
+	runID := fs.String("run-id", os.Getenv("HOME100K_RUN_ID"), "run id for log correlation")
 	duration := fs.Int("duration-seconds", 120, "duration seconds")
 	maxUsers := fs.String("max-users", "", "max users")
 	seed := fs.Int("seed", 20260531, "seed")
@@ -271,6 +272,7 @@ func runMQTTTest(args []string) error {
 		"--brandname", *brandname,
 		"--out-dir", *outDir,
 		"--profile", *profile,
+		"--run-id", *runID,
 		"--duration-seconds", strconv.Itoa(*duration),
 		"--max-users", *maxUsers,
 		"--seed", strconv.Itoa(*seed),

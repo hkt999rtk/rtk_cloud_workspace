@@ -498,11 +498,11 @@ func TestActorSeparatedCommandRequiresDeviceReceiveAndAppAck(t *testing.T) {
 	if result.CommandPublishActor != "app_controller" || result.CommandSubscribeActor != "device_client" {
 		t.Fatalf("command actors = %q/%q", result.CommandPublishActor, result.CommandSubscribeActor)
 	}
-	if broker.PublishCount("app-controller", "devices/rtk-0041/down/commands") == 0 {
-		t.Fatal("app controller did not publish command")
+	if broker.PublishCount("app-controller", "$vc/devices/rtk-0041/shadow/update") == 0 {
+		t.Fatal("app controller did not publish shadow desired")
 	}
-	if broker.PublishCount("device", "devices/rtk-0041/up/messages") < 2 {
-		t.Fatal("device did not publish telemetry and command ack on up topic")
+	if broker.PublishCount("device", "$vc/devices/rtk-0041/shadow/update") == 0 {
+		t.Fatal("device did not publish shadow reported")
 	}
 }
 
@@ -681,7 +681,8 @@ func TestAggregateMQTTIOTotalsFromTraceChain(t *testing.T) {
 	if totals.PublishSuccesses != 2 || totals.MessagesReceived != 1 || totals.ReportedEvents != 1 {
 		t.Fatalf("unexpected MQTT IO totals: %#v", totals)
 	}
-	if totals.HTTPRequests != 2 || totals.HTTPSuccesses != 1 || totals.HTTPFailures != 1 {
+	if totals.HTTPRequests != 1 || totals.HTTPSuccesses != 1 || totals.HTTPFailures != 0 ||
+		totals.AppLoginAttempts != 1 || totals.AppDesiredWrites != 1 || totals.AppReceivedAcks != 1 {
 		t.Fatalf("unexpected app totals: %#v", totals)
 	}
 
@@ -724,13 +725,13 @@ func TestActorSeparatedProbeRecordsTraceChain(t *testing.T) {
 	foundDesiredState := false
 	foundReportedState := false
 	for _, step := range result.TraceChain {
-		if step.Phase == "command_ack" && step.Actor == "app_observer" && step.Action == "receive" && step.Status == "PASS" {
+		if step.Phase == "shadow_reported" && step.Actor == "app_observer" && step.Action == "receive" && step.Status == "PASS" {
 			foundCommandAck = true
 		}
-		if step.Phase == "command" && step.Actor == "app_controller" && step.Action == "publish" && strings.Contains(step.Data, "desired.power=true") {
+		if step.Phase == "shadow_desired" && step.Actor == "app_controller" && step.Action == "publish" && strings.Contains(step.Data, "desired.power=true") {
 			foundDesiredState = true
 		}
-		if step.Phase == "command_ack" && step.Actor == "app_observer" && step.Action == "receive" && strings.Contains(step.Data, "reported.power=true") {
+		if step.Phase == "shadow_reported" && step.Actor == "device_client" && step.Action == "publish" && strings.Contains(step.Data, "reported.power=true") {
 			foundReportedState = true
 		}
 		if strings.Contains(strings.ToLower(step.Detail), "token") || strings.Contains(step.Detail, "BEGIN ") {
@@ -890,9 +891,65 @@ func (b *fakeMQTTBroker) handle(conn net.Conn) {
 			for _, target := range targets {
 				_ = mqttPublish(target, topic, payload)
 			}
+			b.publishShadowResponses(topic, payload)
 		default:
 			return
 		}
+	}
+}
+
+func (b *fakeMQTTBroker) publishShadowResponses(topic string, payload []byte) {
+	if !strings.HasPrefix(topic, "$vc/devices/") || !strings.HasSuffix(topic, "/shadow/update") {
+		return
+	}
+	var req struct {
+		State map[string]map[string]any `json:"state"`
+		Token string                    `json:"clientToken"`
+	}
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return
+	}
+	acceptedTopic := topic + "/accepted"
+	documentsTopic := topic + "/documents"
+	deltaTopic := topic + "/delta"
+	accepted := map[string]any{"clientToken": req.Token, "version": 1, "state": req.State}
+	b.publishToSubscribers(acceptedTopic, accepted)
+	if desired := req.State["desired"]; len(desired) > 0 {
+		b.publishToSubscribers(deltaTopic, map[string]any{"clientToken": req.Token, "version": 1, "state": desired})
+		b.publishToSubscribers(documentsTopic, map[string]any{
+			"clientToken": req.Token,
+			"version":     1,
+			"current": map[string]any{"state": map[string]any{
+				"desired":  desired,
+				"reported": map[string]any{},
+				"delta":    desired,
+			}},
+		})
+		return
+	}
+	if reported := req.State["reported"]; len(reported) > 0 {
+		b.publishToSubscribers(documentsTopic, map[string]any{
+			"clientToken": req.Token,
+			"version":     2,
+			"current": map[string]any{"state": map[string]any{
+				"desired":  reported,
+				"reported": reported,
+				"delta":    map[string]any{},
+			}},
+		})
+	}
+}
+
+func (b *fakeMQTTBroker) publishToSubscribers(topic string, doc map[string]any) {
+	payload, err := json.Marshal(doc)
+	if err != nil {
+		return
+	}
+	b.mu.Lock()
+	targets := append([]net.Conn(nil), b.subscribers[topic]...)
+	b.mu.Unlock()
+	for _, target := range targets {
+		_ = mqttPublish(target, topic, payload)
 	}
 }
 

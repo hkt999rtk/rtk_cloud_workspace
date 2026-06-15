@@ -985,7 +985,7 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 	if first.DeviceMQTTTotals.Publishes != 2103 || first.DeviceMQTTTotals.ReceivedMessages != 2050 || first.DeviceMQTTTotals.BytesSent != 123456 {
 		t.Fatalf("device MQTT totals not preserved from live results: %#v", first.DeviceMQTTTotals)
 	}
-	if first.AppUserTotals.ReadShadowRequests != 700 || first.AppUserTotals.ReceivedAcks != 690 || first.AppUserTotals.BytesReceived != 2222 {
+	if first.AppUserTotals.DesiredWrites != 700 || first.AppUserTotals.ReceivedAcks != 690 || first.AppUserTotals.BytesReceived != 2222 {
 		t.Fatalf("app/user totals not preserved from live results: %#v", first.AppUserTotals)
 	}
 }
@@ -1199,12 +1199,22 @@ func TestExecuteCollectServerEvidenceDefaultsToIncompleteSourcePlan(t *testing.T
 func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 	outDir := t.TempDir()
 	calls := []string{}
-	oldRunner := commandRunner
-	commandRunner = func(name string, args ...string) error {
+	oldRunner := commandOutputRunner
+	commandOutputRunner = func(name string, args ...string) (string, error) {
 		calls = append(calls, name+" "+strings.Join(args, " "))
-		return nil
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "device_runtime_logs"):
+			return "app_user.desired_writes\t10\ndevice_mqtt.delta_received\t10\ndevice_mqtt.reported_publishes\t10\napp_user.received_acks\t10\n", nil
+		case strings.Contains(joined, "device_shadows"):
+			return "device_shadow.reported_converged\t10\n", nil
+		case strings.Contains(joined, "app.kubernetes.io/name=mqtt"):
+			return "client.connected rtk-e2e-run-cli-home-device-000001-device-1\n", nil
+		default:
+			return "", nil
+		}
 	}
-	defer func() { commandRunner = oldRunner }()
+	defer func() { commandOutputRunner = oldRunner }()
 
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
@@ -1222,6 +1232,9 @@ func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 	out := stdout.String()
 	if !strings.Contains(out, `"complete": true`) || !strings.Contains(out, `"host_pod_resources"`) {
 		t.Fatalf("stdout missing complete evidence:\n%s", out)
+	}
+	if !strings.Contains(out, `"app_user.desired_writes": 10`) || !strings.Contains(out, `"device_shadow.reported_converged": 10`) {
+		t.Fatalf("stdout missing parsed counters:\n%s", out)
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "server-evidence.json")); err != nil {
 		t.Fatalf("missing server-evidence.json: %v", err)
@@ -1241,14 +1254,14 @@ func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 
 func TestExecuteCollectServerEvidenceLiveWritesIncompleteEvidenceOnProbeFailure(t *testing.T) {
 	outDir := t.TempDir()
-	oldRunner := commandRunner
-	commandRunner = func(name string, args ...string) error {
+	oldRunner := commandOutputRunner
+	commandOutputRunner = func(name string, args ...string) (string, error) {
 		if strings.Contains(strings.Join(args, " "), "postgres") {
-			return errors.New("postgres probe failed")
+			return "", errors.New("postgres probe failed")
 		}
-		return nil
+		return "", nil
 	}
-	defer func() { commandRunner = oldRunner }()
+	defer func() { commandOutputRunner = oldRunner }()
 
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
@@ -1277,14 +1290,14 @@ func TestExecuteCollectServerEvidenceLiveWritesIncompleteEvidenceOnProbeFailure(
 }
 
 func TestExecuteCollectServerEvidenceLivePreservesFailureForRepeatedSource(t *testing.T) {
-	oldRunner := commandRunner
-	commandRunner = func(name string, args ...string) error {
+	oldRunner := commandOutputRunner
+	commandOutputRunner = func(name string, args ...string) (string, error) {
 		if strings.Join(args, " ") == "get pods -A -o wide" {
-			return errors.New("pod inventory failed")
+			return "", errors.New("pod inventory failed")
 		}
-		return nil
+		return "", nil
 	}
-	defer func() { commandRunner = oldRunner }()
+	defer func() { commandOutputRunner = oldRunner }()
 
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{

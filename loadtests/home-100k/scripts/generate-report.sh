@@ -301,8 +301,8 @@ def client_target_coverage():
     total_devices = num(((result.get("plan") or {}).get("conditions") or {}).get("devices"), 100000)
     total_users = num(((result.get("plan") or {}).get("conditions") or {}).get("users"), 5000)
     lines = [
-        "| Stage | Target devices | Device connect attempts | Device connect success | Device subscribes | Target users | APP login attempts | Coverage status |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+        "| Stage | Target devices | Device connect attempts | Device connect success | Device subscribes | Target users | APP desired writes | APP received ACKs | Coverage status |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for stage in stages:
         target_devices = int(num(stage.get("connected_devices"), 0))
@@ -312,17 +312,19 @@ def client_target_coverage():
         connect_attempts = int(num(device.get("connect_attempts"), 0))
         connect_success = int(num(device.get("connect_success"), 0))
         subscribes = int(num(device.get("subscribes"), 0))
-        login_attempts = int(num(app.get("login_attempts"), 0))
+        desired_writes = int(num(app.get("desired_writes"), 0))
+        received_acks = int(num(app.get("received_acks"), 0))
         ok = (
             connect_attempts >= target_devices and
             connect_success >= target_devices and
             subscribes >= target_devices and
-            login_attempts >= target_users
+            desired_writes >= target_users and
+            received_acks >= target_users
         )
         status = "ok" if ok else "insufficient-client-load"
         lines.append(
             f"| {md(stage.get('name'))} | {target_devices} | {connect_attempts} | {connect_success} | "
-            f"{subscribes} | {target_users} | {login_attempts} | {status} |"
+            f"{subscribes} | {target_users} | {desired_writes} | {received_acks} | {status} |"
         )
     return "\n".join(lines)
 

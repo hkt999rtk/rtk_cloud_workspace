@@ -27,6 +27,12 @@ var commandRunner = func(name string, args ...string) error {
 	return cmd.Run()
 }
 
+var commandOutputRunner = func(name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
 func Execute(args []string, stdout io.Writer, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "--" {
 		args = args[1:]
@@ -510,6 +516,7 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 			"--duration-seconds", strconv.Itoa(durationSeconds),
 			"--out-dir", stageOut,
 			"--mqtt-probe",
+			"--run-id", runID,
 			"--shard-index", strconv.Itoa(assignment.Index),
 			"--shard-count", strconv.Itoa(deviceShardCount),
 			"--ramp-up", stage.WarmUp,
@@ -607,29 +614,27 @@ func loadLiveMQTTStageResult(path string, stage Stage, maxConnected int) (StageR
 			CommandsAttempted int `json:"commands_attempted"`
 			CommandsPassed    int `json:"commands_passed"`
 		} `json:"metrics"`
-		ConnectAttempts        int64 `json:"connect_attempts"`
-		ConnectSuccesses       int64 `json:"connect_successes"`
-		ConnectFailures        int64 `json:"connect_failures"`
-		SubscribeSuccesses     int64 `json:"subscribe_successes"`
-		PublishSuccesses       int64 `json:"publish_successes"`
-		PublishFailures        int64 `json:"publish_failures"`
-		MessagesReceived       int64 `json:"messages_received"`
-		ReportedEvents         int64 `json:"reported_events"`
-		TotalBytesSent         int64 `json:"total_bytes_sent"`
-		TotalBytesReceived     int64 `json:"total_bytes_received"`
-		AuthViolations         int64 `json:"auth_violations"`
-		HTTPRequests           int64 `json:"http_requests"`
-		HTTPSuccesses          int64 `json:"http_successes"`
-		HTTPFailures           int64 `json:"http_failures"`
-		TotalHTTPBytesSent     int64 `json:"total_http_bytes_sent"`
-		TotalHTTPBytesReceived int64 `json:"total_http_bytes_received"`
+		ConnectAttempts        int64            `json:"connect_attempts"`
+		ConnectSuccesses       int64            `json:"connect_successes"`
+		ConnectFailures        int64            `json:"connect_failures"`
+		SubscribeSuccesses     int64            `json:"subscribe_successes"`
+		PublishSuccesses       int64            `json:"publish_successes"`
+		PublishFailures        int64            `json:"publish_failures"`
+		MessagesReceived       int64            `json:"messages_received"`
+		ReportedEvents         int64            `json:"reported_events"`
+		TotalBytesSent         int64            `json:"total_bytes_sent"`
+		TotalBytesReceived     int64            `json:"total_bytes_received"`
+		AuthViolations         int64            `json:"auth_violations"`
+		HTTPRequests           int64            `json:"http_requests"`
+		HTTPSuccesses          int64            `json:"http_successes"`
+		HTTPFailures           int64            `json:"http_failures"`
+		TotalHTTPBytesSent     int64            `json:"total_http_bytes_sent"`
+		TotalHTTPBytesReceived int64            `json:"total_http_bytes_received"`
+		DeviceMQTTTotals       DeviceMQTTTotals `json:"device_mqtt_totals"`
+		AppUserTotals          AppUserTotals    `json:"app_user_totals"`
 	}
 	if err := readJSON(path, &raw); err != nil {
 		return StageResult{}, err
-	}
-	devices := raw.Metrics.DevicesSelected
-	if devices <= 0 {
-		devices = maxConnected
 	}
 	commandsAttempted := raw.Metrics.CommandsAttempted
 	commandsPassed := raw.Metrics.CommandsPassed
@@ -637,26 +642,27 @@ func loadLiveMQTTStageResult(path string, stage Stage, maxConnected int) (StageR
 	if strings.EqualFold(raw.Overall, "fail") {
 		connectRate = 0
 	}
-	stageUsers := expectedStageUsers(stage.ConnectedDevices) / DefaultUserShards
-	if stageUsers <= 0 && stage.ConnectedDevices > 0 {
-		stageUsers = 1
-	}
-	connectAttempts := nonZeroInt64(raw.ConnectAttempts, int64(devices))
-	connectSuccess := nonZeroInt64(raw.ConnectSuccesses, int64(devices))
+	connectAttempts := nonZeroInt64(raw.DeviceMQTTTotals.ConnectAttempts, raw.ConnectAttempts)
+	connectSuccess := nonZeroInt64(raw.DeviceMQTTTotals.ConnectSuccess, raw.ConnectSuccesses)
 	connectFail := raw.ConnectFailures
+	if raw.DeviceMQTTTotals.ConnectFail != 0 {
+		connectFail = raw.DeviceMQTTTotals.ConnectFail
+	}
 	if connectFail == 0 && connectAttempts > connectSuccess {
 		connectFail = connectAttempts - connectSuccess
 	}
-	subscribes := nonZeroInt64(raw.SubscribeSuccesses, int64(devices))
-	publishes := raw.PublishSuccesses + raw.PublishFailures
-	if publishes == 0 {
-		publishes = int64(commandsAttempted)
-	}
-	receivedMessages := nonZeroInt64(raw.MessagesReceived, int64(commandsPassed))
-	reportedPublishes := nonZeroInt64(raw.ReportedEvents, int64(commandsPassed))
-	httpRequests := nonZeroInt64(raw.HTTPRequests, int64(commandsAttempted))
-	httpSuccesses := nonZeroInt64(raw.HTTPSuccesses, int64(commandsPassed))
+	subscribes := nonZeroInt64(raw.DeviceMQTTTotals.Subscribes, raw.SubscribeSuccesses)
+	publishes := nonZeroInt64(raw.DeviceMQTTTotals.Publishes, raw.PublishSuccesses+raw.PublishFailures)
+	receivedMessages := nonZeroInt64(raw.DeviceMQTTTotals.ReceivedMessages, raw.MessagesReceived)
+	deltaReceived := nonZeroInt64(raw.DeviceMQTTTotals.DeltaReceived, receivedMessages)
+	reportedPublishes := nonZeroInt64(raw.DeviceMQTTTotals.ReportedPublishes, raw.ReportedEvents)
+	rejectedPublishes := nonZeroInt64(raw.DeviceMQTTTotals.RejectedPublishes, raw.PublishFailures)
+	httpRequests := nonZeroInt64(raw.AppUserTotals.DesiredWrites, raw.HTTPRequests)
+	httpSuccesses := nonZeroInt64(raw.AppUserTotals.ReceivedAcks, raw.HTTPSuccesses)
 	httpFailures := raw.HTTPFailures
+	if raw.AppUserTotals.LoginFail != 0 {
+		httpFailures = raw.AppUserTotals.LoginFail
+	}
 	if httpFailures == 0 && httpRequests > httpSuccesses {
 		httpFailures = httpRequests - httpSuccesses
 	}
@@ -670,27 +676,28 @@ func loadLiveMQTTStageResult(path string, stage Stage, maxConnected int) (StageR
 			Subscribes:        subscribes,
 			Publishes:         publishes,
 			ReceivedMessages:  receivedMessages,
-			DeltaReceived:     receivedMessages,
+			DeltaReceived:     deltaReceived,
 			ReportedPublishes: reportedPublishes,
-			RejectedPublishes: raw.PublishFailures,
-			BytesSent:         raw.TotalBytesSent,
-			BytesReceived:     raw.TotalBytesReceived,
+			RejectedPublishes: rejectedPublishes,
+			BytesSent:         nonZeroInt64(raw.DeviceMQTTTotals.BytesSent, raw.TotalBytesSent),
+			BytesReceived:     nonZeroInt64(raw.DeviceMQTTTotals.BytesReceived, raw.TotalBytesReceived),
 		},
 		AppUserTotals: AppUserTotals{
-			LoginAttempts:       int64(stageUsers),
-			LoginSuccess:        int64(stageUsers),
-			ListDevicesRequests: int64(stageUsers),
-			ReadShadowRequests:  httpRequests,
+			LoginAttempts:       raw.AppUserTotals.LoginAttempts,
+			LoginSuccess:        raw.AppUserTotals.LoginSuccess,
+			LoginFail:           raw.AppUserTotals.LoginFail,
+			ListDevicesRequests: raw.AppUserTotals.ListDevicesRequests,
+			ReadShadowRequests:  raw.AppUserTotals.ReadShadowRequests,
 			DesiredWrites:       httpRequests,
 			ReceivedAcks:        httpSuccesses,
-			BytesSent:           raw.TotalHTTPBytesSent,
-			BytesReceived:       raw.TotalHTTPBytesReceived,
+			BytesSent:           nonZeroInt64(raw.AppUserTotals.BytesSent, raw.TotalHTTPBytesSent),
+			BytesReceived:       nonZeroInt64(raw.AppUserTotals.BytesReceived, raw.TotalHTTPBytesReceived),
 		},
 		MQTTConnectSuccessRatePercent:  connectRate,
 		DesiredReportedConvergenceRate: percent(commandsPassed, commandsAttempted),
 		OfflineDesiredConvergenceRate:  100,
 		DeltaClearSuccessRatePercent:   percent(commandsPassed, commandsAttempted),
-		RejectedUpdateCount:            int(raw.HTTPFailures),
+		RejectedUpdateCount:            int(httpFailures),
 		AuthorizationViolationCount:    int(raw.AuthViolations),
 		ClientTokenCorrelationCount:    int(httpSuccesses),
 	}, nil
@@ -1189,17 +1196,20 @@ func collectLiveServerEvidence(runID string) ServerEvidence {
 	sources := map[string]EvidenceSource{}
 	notes := []string{}
 	for _, probe := range serverEvidenceProbes(runID) {
-		err := commandRunner(probe.command, probe.args...)
+		out, err := commandOutputRunner(probe.command, probe.args...)
 		if err != nil {
-			sources[probe.source] = mergeEvidenceSource(sources[probe.source], EvidenceSource{Available: false, Detail: err.Error()})
+			detail := strings.TrimSpace(err.Error() + " " + redactEvidenceOutput(out))
+			sources[probe.source] = mergeEvidenceSource(sources[probe.source], EvidenceSource{Available: false, Detail: detail})
 			notes = append(notes, fmt.Sprintf("%s evidence probe failed: %s", probe.source, err.Error()))
 			continue
 		}
-		sources[probe.source] = mergeEvidenceSource(sources[probe.source], EvidenceSource{Available: true, Detail: probe.detail})
+		counters := parseEvidenceCounters(probe.source, runID, out)
+		sources[probe.source] = mergeEvidenceSource(sources[probe.source], EvidenceSource{Available: true, Detail: probe.detail, Counters: counters})
 	}
-	for key := range requiredEvidenceSources(false) {
+	for key, source := range evidenceSourceCatalog(false) {
 		if _, ok := sources[key]; !ok {
-			sources[key] = EvidenceSource{Available: false, Detail: "probe not configured"}
+			source.Detail = "probe not configured"
+			sources[key] = source
 		}
 	}
 	return ServerEvidence{
@@ -1210,12 +1220,51 @@ func collectLiveServerEvidence(runID string) ServerEvidence {
 	}
 }
 
+func parseEvidenceCounters(source string, runID string, out string) map[string]int64 {
+	counters := map[string]int64{}
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) == 2 && strings.Contains(parts[0], ".") {
+			value, err := strconv.ParseInt(parts[1], 10, 64)
+			if err == nil {
+				counters[parts[0]] += value
+			}
+			continue
+		}
+		if source == "emqx" && strings.Contains(line, runID) && strings.Contains(line, "-device-") {
+			if strings.Contains(line, "New client connected") || strings.Contains(line, "client.connected") {
+				counters["device_mqtt.connect_success"]++
+			}
+		}
+	}
+	if len(counters) == 0 {
+		return nil
+	}
+	return counters
+}
+
+func redactEvidenceOutput(out string) string {
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return ""
+	}
+	if len(out) > 400 {
+		out = out[:400] + "...(truncated)"
+	}
+	return redact(out)
+}
+
 func mergeEvidenceSource(current EvidenceSource, next EvidenceSource) EvidenceSource {
 	if current.Detail == "" {
 		return next
 	}
 	merged := EvidenceSource{
 		Available: current.Available && next.Available,
+		Optional:  current.Optional || next.Optional,
 		Detail:    current.Detail + "; " + next.Detail,
 		Counters:  map[string]int64{},
 	}
@@ -1248,22 +1297,81 @@ func serverEvidenceProbes(runID string) []serverEvidenceProbe {
 		},
 		{
 			source:  "host_pod_resources",
-			command: "kubectl",
-			args:    []string{"top", "pods", "-A"},
+			command: "bash",
+			args:    []string{"-lc", "kubectl top pods -A || true"},
 			detail:  "pod resource usage captured",
 		},
 		kubectlLogsProbe("emqx", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=mqtt", "MQTT broker logs and client churn evidence captured for run_id "+runID),
 		kubectlLogsProbe("video_cloud_api", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=video-cloud-api", "Video Cloud API logs captured for run_id "+runID),
-		kubectlLogsProbe("iot_device_shadow", "video-cloud-staging-video-cloud", "app.kubernetes.io/component=iot-device-shadow", "IoT Device Shadow HTTP path logs captured for run_id "+runID),
+		postgresCounterProbe("iot_device_shadow", runID, shadowRuntimeLogCounterSQL(runID), "IoT Device Shadow MQTT path counters parsed from persisted runtime logs for run_id "+runID),
+		postgresCounterProbe("postgres", runID, shadowStoreCounterSQL(runID), "PostgreSQL device shadow convergence counters parsed for run_id "+runID),
 		kubectlLogsProbe("postgres", "video-cloud-staging-platform", "app.kubernetes.io/name=postgresql", "PostgreSQL logs captured"),
 		kubectlLogsProbe("redis_valkey", "video-cloud-staging-platform", "app.kubernetes.io/name=redis", "Redis/Valkey logs captured when enabled"),
 		kubectlLogsProbe("ingress_nginx", "video-cloud-staging-ingress", "app.kubernetes.io/name=ingress-nginx", "Ingress/nginx logs captured for run_id "+runID),
 	}
 }
 
+func postgresCounterProbe(source string, runID string, sql string, detail string) serverEvidenceProbe {
+	script := fmt.Sprintf(
+		`set -euo pipefail; kubectl -n video-cloud-staging-platform exec postgresql-0 -- psql -U postgres -d video_cloud -At -F '	' -c %s`,
+		shellQuote(sql),
+	)
+	return serverEvidenceProbe{source: source, command: "bash", args: []string{"-lc", script}, detail: detail}
+}
+
+func shadowRuntimeLogCounterSQL(runID string) string {
+	prefix := "mqtt-e2e-" + sanitizeEvidenceRunID(runID) + "-%"
+	return `
+WITH logs AS (
+	SELECT source, message
+	FROM device_runtime_logs
+	WHERE stream_id LIKE ` + sqlLiteral(prefix) + `
+)
+SELECT 'app_user.desired_writes', COUNT(*) FROM logs WHERE source = 'app_controller' AND message = 'mqtt_e2e shadow_desired app_controller publish'
+UNION ALL SELECT 'device_mqtt.delta_received', COUNT(*) FROM logs WHERE source = 'device_client' AND message = 'mqtt_e2e shadow_delta device_client receive'
+UNION ALL SELECT 'device_mqtt.reported_publishes', COUNT(*) FROM logs WHERE source = 'device_client' AND message = 'mqtt_e2e shadow_reported device_client publish'
+UNION ALL SELECT 'app_user.received_acks', COUNT(*) FROM logs WHERE source = 'app_observer' AND message = 'mqtt_e2e shadow_reported app_observer receive'
+`
+}
+
+func shadowStoreCounterSQL(runID string) string {
+	return `
+SELECT 'device_shadow.rows_current_converged', COUNT(*)
+FROM device_shadows
+WHERE shadow_name = ''
+  AND desired = reported
+  AND deleted_at IS NULL
+`
+}
+
+func sanitizeEvidenceRunID(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range raw {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-' || r == '_':
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func sqlLiteral(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
 func kubectlLogsProbe(source string, namespace string, selector string, detail string) serverEvidenceProbe {
 	script := fmt.Sprintf(
-		`set -euo pipefail; pods="$(kubectl -n %s get pods --selector %s -o name)"; test -n "$pods"; kubectl -n %s logs --since=30m --selector %s --tail=1000`,
+		`set -euo pipefail; pods="$(kubectl -n %s get pods --selector %s -o name)"; test -n "$pods"; kubectl -n %s logs --since=30m --selector %s --tail=-1`,
 		shellQuote(namespace),
 		shellQuote(selector),
 		shellQuote(namespace),

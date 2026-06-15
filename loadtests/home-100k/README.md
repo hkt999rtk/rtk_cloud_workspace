@@ -382,10 +382,11 @@ HOME100K_RUN_ID=20260615T100000Z \
   loadtests/home-100k/scripts/home-100k.sh destroy-vms --live --confirm-live
 ```
 
-The default command is `workflow-live`. It intentionally does not destroy VMs
-automatically. Review the collected artifacts first, then run
-`destroy-vms --live --confirm-live`. During the live workflow the script prints
-status immediately and every 30 seconds with the current phase, VM count,
+The default command is `workflow-live`. It runs the full paid/destructive VM
+lifecycle and destroys the provisioned VMs after report generation. If the
+workflow is interrupted, rerun `destroy-vms --live --confirm-live` with the same
+`HOME100K_RUN_ID` to clean any leftovers. During the live workflow the script
+prints status immediately and every 30 seconds with the current phase, VM count,
 collected shard count, server evidence state, report status, per load-generator
 VM resource samples, and per Kubernetes node resource samples. Provisioned node
 inventory is written to `loadtests/home-100k/reports/<run-id>/nodes.tsv`. The
