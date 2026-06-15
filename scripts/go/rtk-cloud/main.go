@@ -1167,8 +1167,28 @@ func runGenerateLoadDevices(args []string) error {
 		}
 	}
 	logLoad("device generation concurrency=%d", *concurrency)
+	var progressMu sync.Mutex
+	progressDone := 0
+	progressGenerated := 0
+	progressFailed := 0
+	progress := func(ok bool) {
+		progressMu.Lock()
+		defer progressMu.Unlock()
+		progressDone++
+		if ok {
+			progressGenerated++
+		} else {
+			progressFailed++
+		}
+		if shouldLogCountedProgress(progressDone, len(tasks)) {
+			logLoad("device generation progress: done=%d/%d generated=%d failed=%d", progressDone, len(tasks), progressGenerated, progressFailed)
+		}
+	}
 	deviceResults, err := boundedParallelMap(len(tasks), *concurrency, func(i int) (deviceResult, error) {
 		device, ok, err := writeLoadDevice(tasks[i].input)
+		if err == nil {
+			progress(ok)
+		}
 		return deviceResult{device: device, ok: ok}, err
 	})
 	if err != nil {
@@ -1516,6 +1536,20 @@ func runCreateUsers(args []string) error {
 		defer sessionMu.Unlock()
 		return accountRevokeBrandCloudUserAppCertificate(ctx, &session, safeLog, brandCloudID, brandCloudUserID)
 	}
+	var progressMu sync.Mutex
+	progressDone := 0
+	progressCreated := 0
+	progressAssigned := 0
+	progress := func(created, assigned int) {
+		progressMu.Lock()
+		defer progressMu.Unlock()
+		progressDone++
+		progressCreated += created
+		progressAssigned += assigned
+		if shouldLogCountedProgress(progressDone, len(planned)) {
+			safeLog("user creation progress: done=%d/%d created=%d assigned=%d app_certificates=%d", progressDone, len(planned), progressCreated, progressAssigned, progressDone)
+		}
+	}
 	safeLog("user creation concurrency=%d", *concurrency)
 	results, err := boundedParallelMap(len(planned), *concurrency, func(i int) (createUserResult, error) {
 		plan := planned[i]
@@ -1560,6 +1594,15 @@ func runCreateUsers(args []string) error {
 			"app_certificate": appCertificate,
 			"tokens":          userSession,
 		}
+		createdDelta := 0
+		if result.created {
+			createdDelta = 1
+		}
+		assignedDelta := 0
+		if result.assigned {
+			assignedDelta = 1
+		}
+		progress(createdDelta, assignedDelta)
 		return result, nil
 	})
 	if err != nil {
@@ -2877,12 +2920,12 @@ func runE2ECommandWithProgress(cmd *exec.Cmd, name, logPath string, start time.T
 		case err := <-done:
 			return err
 		case <-ticker.C:
-			line := latestLogLine(logPath)
+			elapsed := time.Since(start)
+			line := latestProgressLogLine(logPath, elapsed)
 			if line == "" || line == lastPrinted {
 				continue
 			}
 			lastPrinted = line
-			elapsed := time.Since(start)
 			fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] progress: %s elapsed=%s%s latest=%q log=%s\n", name, formatDurationSeconds(int64(elapsed.Seconds())), e2eProgressMetrics(line, elapsed), line, logPath)
 		}
 	}
@@ -2915,14 +2958,24 @@ func e2eProgressInterval() time.Duration {
 }
 
 func latestLogLine(path string) string {
+	line, _ := latestLogLineFromTail(path, false, 0)
+	return line
+}
+
+func latestProgressLogLine(path string, elapsed time.Duration) string {
+	line, _ := latestLogLineFromTail(path, true, elapsed)
+	return line
+}
+
+func latestLogLineFromTail(path string, preferProgress bool, elapsed time.Duration) (string, bool) {
 	f, err := os.Open(path)
 	if err != nil {
-		return ""
+		return "", false
 	}
 	defer f.Close()
 	st, err := f.Stat()
 	if err != nil || st.Size() == 0 {
-		return ""
+		return "", false
 	}
 	const maxTail = int64(64 * 1024)
 	offset := int64(0)
@@ -2930,24 +2983,33 @@ func latestLogLine(path string) string {
 		offset = st.Size() - maxTail
 	}
 	if _, err := f.Seek(offset, io.SeekStart); err != nil {
-		return ""
+		return "", false
 	}
 	buf, err := io.ReadAll(f)
 	if err != nil {
-		return ""
+		return "", false
 	}
 	buf = bytes.TrimSpace(buf)
 	if len(buf) == 0 {
-		return ""
+		return "", false
 	}
-	if idx := bytes.LastIndexByte(buf, '\n'); idx >= 0 {
-		buf = bytes.TrimSpace(buf[idx+1:])
+	lines := bytes.Split(buf, []byte{'\n'})
+	latest := ""
+	latestProgress := ""
+	for _, raw := range lines {
+		line := redactProgressLogLine(strings.TrimSpace(string(raw)))
+		if line == "" {
+			continue
+		}
+		latest = line
+		if preferProgress && e2eProgressMetrics(line, elapsed) != "" {
+			latestProgress = line
+		}
 	}
-	line := strings.TrimSpace(string(buf))
-	if line == "" {
-		return ""
+	if latestProgress != "" {
+		return latestProgress, true
 	}
-	return redactProgressLogLine(line)
+	return latest, false
 }
 
 func latestLogLines(path string, count int) []string {
@@ -3010,6 +3072,23 @@ func e2eProgressMetrics(line string, elapsed time.Duration) string {
 		eta = int64(float64(remaining) / rate)
 	}
 	return fmt.Sprintf(" done=%d/%d rate=%.2f/s eta=%s", done, total, rate, formatDurationSeconds(eta))
+}
+
+func shouldLogCountedProgress(done, total int) bool {
+	if done <= 0 || total <= 0 {
+		return false
+	}
+	if done == 1 || done == total {
+		return true
+	}
+	interval := 1
+	switch {
+	case total > 10000:
+		interval = 100
+	case total > 1000:
+		interval = 10
+	}
+	return done%interval == 0
 }
 
 func progressLineElapsed(line string) (time.Duration, bool) {
