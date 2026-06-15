@@ -3531,6 +3531,8 @@ type accountAppCertificate struct {
 	NotAfter            string `json:"not_after,omitempty"`
 }
 
+var appCertificateRetrySleep = time.Sleep
+
 func accountEnsureUserAppCertificate(ctx accountManagerContext, tenantSlug, email, password, subject string, existingAppCredentials map[string]any, recoverMissingLocalCredentials func() error) (map[string]any, map[string]any, accountPlatformSession, error) {
 	initial, err := accountLoginUserFull(ctx, tenantSlug, email, password, "")
 	if err != nil {
@@ -3572,9 +3574,10 @@ func accountEnsureUserAppCertificate(ctx accountManagerContext, tenantSlug, emai
 		return nil, nil, accountPlatformSession{}, err
 	}
 	issued, err := accountLoginUserFull(ctx, tenantSlug, email, password, csrPEM)
-	for attempt := 1; shouldRetrySameAppCertificateSubject(err, subject) && attempt <= 5; attempt++ {
+	retryBudget := envInt("CLOUD_CREATE_USERS_APP_CERT_RETRIES", 12)
+	for attempt := 1; shouldRetrySameAppCertificateSubject(err, subject) && attempt <= retryBudget; attempt++ {
 		logCreateUsers("retrying app certificate after transient error: email=%s attempt=%d", email, attempt)
-		time.Sleep(time.Duration(2*attempt) * time.Second)
+		appCertificateRetrySleep(time.Duration(2*attempt) * time.Second)
 		issued, err = accountLoginUserFull(ctx, tenantSlug, email, password, csrPEM)
 	}
 	if shouldFallbackAppCertificateAlgorithm(err, keyAlgorithm) {
@@ -3585,9 +3588,9 @@ func accountEnsureUserAppCertificate(ctx accountManagerContext, tenantSlug, emai
 			return nil, nil, accountPlatformSession{}, err
 		}
 		issued, err = accountLoginUserFull(ctx, tenantSlug, email, password, csrPEM)
-		for attempt := 1; shouldRetrySameAppCertificateSubject(err, subject) && attempt <= 5; attempt++ {
+		for attempt := 1; shouldRetrySameAppCertificateSubject(err, subject) && attempt <= retryBudget; attempt++ {
 			logCreateUsers("retrying app certificate after transient error: email=%s algorithm=%s attempt=%d", email, keyAlgorithm, attempt)
-			time.Sleep(time.Duration(2*attempt) * time.Second)
+			appCertificateRetrySleep(time.Duration(2*attempt) * time.Second)
 			issued, err = accountLoginUserFull(ctx, tenantSlug, email, password, csrPEM)
 		}
 	}
