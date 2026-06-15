@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 )
 
 func TestValidateDeviceBindAllowsMissingClaimIDWhenProvisionIdentifiersExist(t *testing.T) {
@@ -133,6 +134,51 @@ func TestAccountIndexDevicesByVideoCloudDevidPaginatesThroughServerCappedPages(t
 	}
 	if len(requests) != 3 {
 		t.Fatalf("requests=%v, want 3 pages", requests)
+	}
+}
+
+func TestAccountIndexDevicesByVideoCloudDevidRefreshesBrandCloudUserTokenOnUnauthorized(t *testing.T) {
+	oldAccessToken := testJWT(time.Now().Add(time.Hour))
+	newAccessToken := testJWT(time.Now().Add(2 * time.Hour))
+	refreshCount := 0
+	indexAttempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/brand-clouds/rtk-test/auth/refresh":
+			refreshCount++
+			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": newAccessToken, "refresh_token": testJWT(time.Now().Add(24 * time.Hour))}})
+		case "/v1/orgs/brand-1/devices":
+			indexAttempts++
+			switch r.Header.Get("authorization") {
+			case "Bearer " + oldAccessToken:
+				http.Error(w, `{"code":"invalid_token","message":"Invalid bearer token"}`, http.StatusUnauthorized)
+			case "Bearer " + newAccessToken:
+				_ = json.NewEncoder(w).Encode(map[string]any{"devices": makeIndexedDevices(1, 1)})
+			default:
+				t.Fatalf("authorization header = %q", r.Header.Get("authorization"))
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	user := &brandCloudUserSession{
+		Email: "rtk+001@users.local",
+		Session: accountPlatformSession{
+			AccessToken:  oldAccessToken,
+			RefreshToken: testJWT(time.Now().Add(time.Hour)),
+		},
+	}
+	index, count, err := accountIndexDevicesByVideoCloudDevidWithBrandCloudUserRetry(accountManagerContext{BaseURL: server.URL}, "rtk-test", "brand-1", user, func(string, ...any) {})
+	if err != nil {
+		t.Fatalf("accountIndexDevicesByVideoCloudDevidWithBrandCloudUserRetry() error = %v", err)
+	}
+	if refreshCount != 1 || indexAttempts != 2 || user.Session.AccessToken != newAccessToken {
+		t.Fatalf("refreshCount=%d indexAttempts=%d session=%+v", refreshCount, indexAttempts, user.Session)
+	}
+	if count != 1 || index["load-device-0001"] == nil {
+		t.Fatalf("count=%d index=%v", count, index)
 	}
 }
 

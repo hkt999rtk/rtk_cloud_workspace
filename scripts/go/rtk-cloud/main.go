@@ -6159,12 +6159,8 @@ func runBindDevices(args []string) error {
 	existingDeviceIndex := map[string]map[string]any{}
 	if len(assignments) > 0 {
 		indexUserSession := userSessions[assignments[0].AssignedEmail]
-		indexToken, err := brandCloudUserAccessToken(ctx, tenantSlug, indexUserSession, safeLog)
-		if err != nil {
-			return err
-		}
 		safeLog("indexing existing account devices: brand_cloud_id=%s", brandCloudID)
-		index, indexed, err := accountIndexDevicesByVideoCloudDevid(ctx, indexToken, brandCloudID)
+		index, indexed, err := accountIndexDevicesByVideoCloudDevidWithBrandCloudUserRetry(ctx, tenantSlug, brandCloudID, indexUserSession, safeLog)
 		if err != nil {
 			return err
 		}
@@ -6461,10 +6457,24 @@ func accountFindDeviceByVideoCloudDevid(ctx accountManagerContext, token, brandC
 }
 
 func accountIndexDevicesByVideoCloudDevid(ctx accountManagerContext, token, brandCloudID string) (map[string]map[string]any, int, error) {
+	return accountIndexDevicesByVideoCloudDevidWithCall(ctx, brandCloudID, func(endpoint string) ([]byte, int, error) {
+		return curlJSONStatus(endpoint, token, nil)
+	})
+}
+
+func accountIndexDevicesByVideoCloudDevidWithBrandCloudUserRetry(ctx accountManagerContext, tenantSlug, brandCloudID string, user *brandCloudUserSession, logf func(string, ...any)) (map[string]map[string]any, int, error) {
+	return accountIndexDevicesByVideoCloudDevidWithCall(ctx, brandCloudID, func(endpoint string) ([]byte, int, error) {
+		return curlJSONStatusWithBrandCloudUserRetryLocked(ctx, tenantSlug, user, logf, "device index", func(token string) ([]byte, int, error) {
+			return curlJSONStatus(endpoint, token, nil)
+		})
+	})
+}
+
+func accountIndexDevicesByVideoCloudDevidWithCall(ctx accountManagerContext, brandCloudID string, call func(string) ([]byte, int, error)) (map[string]map[string]any, int, error) {
 	const limit = 100
 	index := map[string]map[string]any{}
 	for offset := 0; ; offset += limit {
-		body, status, err := curlJSONStatus(fmt.Sprintf("%s/v1/orgs/%s/devices?limit=%d&offset=%d", ctx.BaseURL, brandCloudID, limit, offset), token, nil)
+		body, status, err := call(fmt.Sprintf("%s/v1/orgs/%s/devices?limit=%d&offset=%d", ctx.BaseURL, brandCloudID, limit, offset))
 		if err != nil {
 			return nil, 0, err
 		}
