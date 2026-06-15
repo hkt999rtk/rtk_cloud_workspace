@@ -418,6 +418,28 @@ Runner mode also belongs in the non-secret description file. The default is
 env-root. It must not fall back to sampled in-memory actor flows. Use
 `HOME100K_RUNNER_MODE=sample` only for local developer smoke tests.
 
+### LKE Capacity Placement
+
+The shadow load path is PostgreSQL-heavy. For 100K runs, keep PostgreSQL on a
+dedicated higher-capacity node pool and keep MQTT/API/worker pods on separate
+general nodes. Do not horizontally scale `mqtt` or `video-cloud-api` until the
+broker/client-id and shared-subscription semantics are explicitly changed; the
+safe default is one replica for each. `account-manager` is stateless for this
+test path and can run multiple replicas.
+
+For the current staging/LKE tuning, the live cluster uses:
+
+- one `g6-standard-6` node pool for PostgreSQL
+- eight `g6-standard-4` general nodes for API, MQTT, workers, ingress, and
+  account-manager
+- `account-manager` scaled to 3 replicas with topology spread
+- resource requests on PostgreSQL, API, MQTT, logingester, mqttusage, and
+  account-manager so the scheduler has enough information to distribute pods
+
+When re-applying LKE manifests for this capacity profile, set
+`LKE_POSTGRES_NODE_POOL_ID=<postgres-pool-id>` so PostgreSQL keeps its
+nodeSelector/toleration placement.
+
 The Go CLI remains the implementation entrypoint underneath the script:
 
 ```sh

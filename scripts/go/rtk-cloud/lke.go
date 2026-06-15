@@ -2002,6 +2002,7 @@ func lkePostgresStatefulSetManifest(env map[string]string) string {
             storage: %s
 `, firstNonEmpty(os.Getenv("LKE_POSTGRES_STORAGE"), env["LKE_POSTGRES_STORAGE"], "20Gi"))
 	}
+	placement := lkePostgresPlacementManifest(env)
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -2026,6 +2027,7 @@ spec:
         rtk.realtek.com/provider: lke
         rtk.realtek.com/stack: %s
     spec:
+%s
       containers:
         - name: postgres
           image: %s
@@ -2040,12 +2042,33 @@ spec:
                   key: POSTGRES_PASSWORD
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
+          resources:
+            requests:
+              cpu: "4"
+              memory: "2Gi"
+            limits:
+              memory: "6Gi"
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
             - name: initdb
               mountPath: /docker-entrypoint-initdb.d
-%s%s`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkePostgresImage(), storage, volumeClaims)
+%s%s`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], placement, lkePostgresImage(), storage, volumeClaims)
+}
+
+func lkePostgresPlacementManifest(env map[string]string) string {
+	poolID := firstNonEmpty(os.Getenv("LKE_POSTGRES_NODE_POOL_ID"), env["LKE_POSTGRES_NODE_POOL_ID"])
+	if poolID == "" {
+		return ""
+	}
+	return fmt.Sprintf(`      nodeSelector:
+        lke.linode.com/pool-id: %q
+      tolerations:
+        - key: "rtk.realtek.com/workload"
+          operator: "Equal"
+          value: "postgres"
+          effect: "NoSchedule"
+`, poolID)
 }
 
 func lkeApplyPostgresStatefulSet(env map[string]string) error {
@@ -3100,6 +3123,7 @@ spec:
           image: %s
           imagePullPolicy: IfNotPresent
           args: ["mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
+%s
           ports:
             - name: mqtt
               containerPort: 1883
@@ -3119,7 +3143,7 @@ spec:
         - name: mqtt-runtime
           secret:
             secretName: mqtt-runtime
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_MQTT_IMAGE"), "eclipse-mosquitto:2"))
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_MQTT_IMAGE"), "eclipse-mosquitto:2"), lkeContainerResourcesManifest("mqtt"))
 }
 
 func lkeMQTTServiceManifest(env map[string]string) string {
@@ -3345,6 +3369,7 @@ spec:
           image: %s
           imagePullPolicy: IfNotPresent
           command: ["/app/%s"]
+%s
 %s          env:
             - name: POSTGRES_PASSWORD
               valueFrom:
@@ -3383,7 +3408,7 @@ spec:
                 secretKeyRef:
                   name: video-cloud-workers-runtime
                   key: VIDEO_CLOUD_MQTT_USAGE_INGEST_TOKEN
-`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeVideoCloudImage(env), service.Binary, ports, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeNamespaceName(env, "platform"), lkeMQTTInternalAddr(env), service.Name)
+`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(service.Name), ports, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeNamespaceName(env, "platform"), lkeMQTTInternalAddr(env), service.Name)
 }
 
 func lkeVideoCloudAuxiliaryServiceManifest(env map[string]string, service lkeVideoCloudAuxiliaryService) string {
@@ -3979,6 +4004,8 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 	envFrom := ""
 	extraEnv := ""
 	templateAnnotations := ""
+	topologySpread := lkeTopologySpreadManifest(workload.Name)
+	replicas := lkeWorkloadReplicas(env, workload)
 	volumeMounts := ""
 	volumes := ""
 	if workload.Key == "account-manager" {
@@ -4052,7 +4079,7 @@ metadata:
     rtk.realtek.com/provider: lke
     rtk.realtek.com/stack: %s
 spec:
-  replicas: 1
+  replicas: %s
   selector:
     matchLabels:
       app.kubernetes.io/name: %s
@@ -4065,10 +4092,12 @@ spec:
         rtk.realtek.com/provider: lke
         rtk.realtek.com/stack: %s
     spec:
+%s
       containers:
         - name: app
           image: %s
           imagePullPolicy: IfNotPresent
+%s
           ports:
             - name: http
               containerPort: %d
@@ -4079,7 +4108,56 @@ spec:
               value: %q
             - name: SERVICE_PUBLIC_HOST
               value: %q
-%s%s%s%s`, workload.Name, workload.Namespace, workload.Name, env["CLOUD_STACK_NAME"], workload.Name, templateAnnotations, workload.Name, env["CLOUD_STACK_NAME"], workload.Image, workload.Port, env["CLOUD_STACK_NAME"], workload.Host, extraEnv, envFrom, volumeMounts, volumes)
+%s%s%s%s`, workload.Name, workload.Namespace, workload.Name, env["CLOUD_STACK_NAME"], replicas, workload.Name, templateAnnotations, workload.Name, env["CLOUD_STACK_NAME"], topologySpread, workload.Image, lkeContainerResourcesManifest(workload.Name), workload.Port, env["CLOUD_STACK_NAME"], workload.Host, extraEnv, envFrom, volumeMounts, volumes)
+}
+
+func lkeWorkloadReplicas(env map[string]string, workload lkeWorkload) string {
+	if workload.Key == "account-manager" {
+		return firstNonEmpty(os.Getenv("LKE_ACCOUNT_MANAGER_REPLICAS"), env["LKE_ACCOUNT_MANAGER_REPLICAS"], "3")
+	}
+	return "1"
+}
+
+func lkeTopologySpreadManifest(name string) string {
+	switch name {
+	case "account-manager", "video-cloud-api":
+		return fmt.Sprintf(`      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: %s
+`, name)
+	default:
+		return ""
+	}
+}
+
+func lkeContainerResourcesManifest(name string) string {
+	type resources struct {
+		requestCPU    string
+		requestMemory string
+		limitMemory   string
+	}
+	profiles := map[string]resources{
+		"account-manager":         {requestCPU: "250m", requestMemory: "256Mi", limitMemory: "1Gi"},
+		"mqtt":                    {requestCPU: "500m", requestMemory: "512Mi", limitMemory: "1Gi"},
+		"video-cloud-api":         {requestCPU: "1", requestMemory: "1Gi", limitMemory: "2Gi"},
+		"video-cloud-logingester": {requestCPU: "500m", requestMemory: "512Mi", limitMemory: "1Gi"},
+		"video-cloud-mqttusage":   {requestCPU: "250m", requestMemory: "256Mi", limitMemory: "1Gi"},
+	}
+	profile, ok := profiles[name]
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf(`          resources:
+            requests:
+              cpu: %q
+              memory: %q
+            limits:
+              memory: %q
+`, profile.requestCPU, profile.requestMemory, profile.limitMemory)
 }
 
 func lkeAccountManagerInternalURL(env map[string]string) string {

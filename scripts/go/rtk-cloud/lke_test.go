@@ -1005,6 +1005,74 @@ func TestLKEPostgresStatefulSetUsesPostgresImageOverride(t *testing.T) {
 	}
 }
 
+func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
+	t.Setenv("LKE_POSTGRES_NODE_POOL_ID", "906225")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":   "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN": "video-cloud-staging.realtekconnect.com",
+	}
+
+	postgres := lkePostgresStatefulSetManifest(env)
+	for _, want := range []string{
+		`lke.linode.com/pool-id: "906225"`,
+		`value: "postgres"`,
+		`cpu: "4"`,
+		`memory: "6Gi"`,
+	} {
+		if !strings.Contains(postgres, want) {
+			t.Fatalf("expected %q in postgres manifest, got:\n%s", want, postgres)
+		}
+	}
+
+	account := lkeDeploymentManifest(env, lkeWorkload{
+		Key:       "account-manager",
+		Name:      "account-manager",
+		Namespace: lkeNamespaceName(env, "account-manager"),
+		Image:     "account-manager:test",
+		Port:      8080,
+		Host:      "account-manager.video-cloud-staging.realtekconnect.com",
+	}, nil)
+	for _, want := range []string{
+		"replicas: 3",
+		"topologySpreadConstraints:",
+		`cpu: "250m"`,
+		`memory: "1Gi"`,
+	} {
+		if !strings.Contains(account, want) {
+			t.Fatalf("expected %q in account-manager manifest, got:\n%s", want, account)
+		}
+	}
+
+	video := lkeDeploymentManifest(env, lkeWorkload{
+		Key:       "video-cloud",
+		Name:      "video-cloud-api",
+		Namespace: lkeNamespaceName(env, "video-cloud"),
+		Image:     "video-cloud:test",
+		Port:      8080,
+		Host:      "video-cloud-staging.realtekconnect.com",
+	}, nil)
+	for _, want := range []string{
+		"replicas: 1",
+		"topologySpreadConstraints:",
+		`cpu: "1"`,
+		`memory: "2Gi"`,
+	} {
+		if !strings.Contains(video, want) {
+			t.Fatalf("expected %q in video-cloud-api manifest, got:\n%s", want, video)
+		}
+	}
+
+	mqtt := lkeMQTTDeploymentManifest(env)
+	for _, want := range []string{
+		`cpu: "500m"`,
+		`memory: "1Gi"`,
+	} {
+		if !strings.Contains(mqtt, want) {
+			t.Fatalf("expected %q in mqtt manifest, got:\n%s", want, mqtt)
+		}
+	}
+}
+
 func TestRunProvisionLKEDeployAppliesVideoCloudAuxiliaryServices(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)
