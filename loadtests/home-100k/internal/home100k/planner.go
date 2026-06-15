@@ -15,9 +15,9 @@ const (
 	DefaultUserShards       = 10
 	DefaultServerTarget     = "staging/lke"
 	DefaultLoadGeneratorRun = "ephemeral-linode-vm"
-	DefaultStageWarmUp      = "5m"
-	DefaultStageSteady      = "15m"
-	DefaultStageCoolDown    = "3m"
+	DefaultStageWarmUp      = "1m"
+	DefaultStageSteady      = "2m"
+	DefaultStageCoolDown    = "45s"
 )
 
 type PlanOptions struct {

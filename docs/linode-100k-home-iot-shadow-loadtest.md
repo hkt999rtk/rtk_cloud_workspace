@@ -103,9 +103,9 @@ Defaults:
 | `HOME100K_SSH_USER` | `root` |
 | `HOME100K_AUTHORIZED_KEY_FILE` | `<HOME100K_SSH_KEY>.pub` |
 | `HOME100K_STATUS_INTERVAL_SECONDS` | `30` |
-| `HOME100K_STAGE_WARM_UP` | `5m` |
-| `HOME100K_STAGE_STEADY` | `15m` |
-| `HOME100K_STAGE_COOL_DOWN` | `3m` |
+| `HOME100K_STAGE_WARM_UP` | `1m` |
+| `HOME100K_STAGE_STEADY` | `2m` |
+| `HOME100K_STAGE_COOL_DOWN` | `45s` |
 | `HOME100K_NODE_RESOURCE_STATUS` | `1` |
 | `HOME100K_K8S_NODE_RESOURCE_STATUS` | `1` |
 | `HOME100K_KUBECONFIG` | unset; falls back to existing LKE kubeconfig env or `<env-root>/state/lke-kubeconfig.yaml` |
@@ -157,9 +157,9 @@ Kubernetes node resource samples use `kubectl top nodes --no-headers` and print
 `HOME100K_K8S_NODE_RESOURCE_STATUS=0` to disable K8s node probing.
 
 Stage duration is part of the non-secret description file. The default profile
-uses `HOME100K_STAGE_WARM_UP=5m`, `HOME100K_STAGE_STEADY=15m`, and
-`HOME100K_STAGE_COOL_DOWN=3m`, which plans 23 minutes per stage and 92 minutes
-for the four load stages before VM lifecycle and evidence overhead. Use a
+uses `HOME100K_STAGE_WARM_UP=1m`, `HOME100K_STAGE_STEADY=2m`, and
+`HOME100K_STAGE_COOL_DOWN=45s`, which plans 3 minutes 45 seconds per stage and
+15 minutes for the four load stages before VM lifecycle and evidence overhead. Use a
 custom `HOME100K_DESCRIPTION_FILE` or edit
 `loadtests/home-100k/scenarios/default.description.env` for shorter or longer
 runs.

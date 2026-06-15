@@ -97,6 +97,9 @@ func TestDefaultPlanCreatesDeterministicShardsAndStages(t *testing.T) {
 		if plan.Stages[idx].ConnectedDevices != want {
 			t.Fatalf("stage %d devices = %d, want %d", idx, plan.Stages[idx].ConnectedDevices, want)
 		}
+		if plan.Stages[idx].WarmUp != "1m" || plan.Stages[idx].SteadyState != "2m" || plan.Stages[idx].CoolDown != "45s" {
+			t.Fatalf("stage %d durations = warm-up %s steady %s cool-down %s, want 1m/2m/45s", idx, plan.Stages[idx].WarmUp, plan.Stages[idx].SteadyState, plan.Stages[idx].CoolDown)
+		}
 	}
 }
 

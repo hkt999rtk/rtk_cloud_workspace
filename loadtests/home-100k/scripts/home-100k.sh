@@ -53,9 +53,9 @@ ssh_key="${HOME100K_SSH_KEY:-$HOME/.ssh/id_ed25519}"
 ssh_user="${HOME100K_SSH_USER:-root}"
 authorized_key_file="${HOME100K_AUTHORIZED_KEY_FILE:-${ssh_key}.pub}"
 status_interval_seconds="${HOME100K_STATUS_INTERVAL_SECONDS:-30}"
-stage_warm_up="${HOME100K_STAGE_WARM_UP:-5m}"
-stage_steady="${HOME100K_STAGE_STEADY:-15m}"
-stage_cool_down="${HOME100K_STAGE_COOL_DOWN:-3m}"
+stage_warm_up="${HOME100K_STAGE_WARM_UP:-1m}"
+stage_steady="${HOME100K_STAGE_STEADY:-2m}"
+stage_cool_down="${HOME100K_STAGE_COOL_DOWN:-45s}"
 status_file="$repo_root/$out_dir/.workflow-status"
 nodes_file="$repo_root/$out_dir/nodes.tsv"
 
@@ -95,9 +95,9 @@ Defaults can be overridden with:
   HOME100K_SSH_KEY          default: ~/.ssh/id_ed25519
   HOME100K_AUTHORIZED_KEY_FILE default: <HOME100K_SSH_KEY>.pub
   HOME100K_STATUS_INTERVAL_SECONDS default: 30
-  HOME100K_STAGE_WARM_UP default: 5m
-  HOME100K_STAGE_STEADY default: 15m
-  HOME100K_STAGE_COOL_DOWN default: 3m
+  HOME100K_STAGE_WARM_UP default: 1m
+  HOME100K_STAGE_STEADY default: 2m
+  HOME100K_STAGE_COOL_DOWN default: 45s
   HOME100K_NODE_RESOURCE_STATUS default: 1
   HOME100K_K8S_NODE_RESOURCE_STATUS default: 1
   HOME100K_KUBECONFIG default: RTK_CLOUD_LKE_KUBECONFIG, LKE_KUBECONFIG, CLOUD_STAGING_K8S_KUBECONFIG, or <env-root>/state/lke-kubeconfig.yaml

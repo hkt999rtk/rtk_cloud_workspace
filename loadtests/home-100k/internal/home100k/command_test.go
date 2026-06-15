@@ -508,8 +508,8 @@ func TestExecuteRunStagesLiveDispatchesShardCommands(t *testing.T) {
 	}
 	joined := strings.Join(calls, "\n")
 	for _, want := range []string{
-		"ssh -i /tmp/test-key root@203.0.113.101 cd /root/rtk_cloud_workspace && go run ./loadtests/home-100k/cmd/home-100k -- shard-run --env-root /root/rtk_cloud_workspace/cloud_env/staging/lke --brandname RTK --region us-sea --stage-warm-up 5m --stage-steady 15m --stage-cool-down 3m --run-id run-cli --role mixed --shard-index 0 --shard-manifest /root/rtk_cloud_workspace/loadtests/home-100k/shard-manifests/current.json --out-dir /var/lib/home-100k/run-cli/home-100k-mixed-000",
-		"ssh -i /tmp/test-key root@203.0.113.102 cd /root/rtk_cloud_workspace && go run ./loadtests/home-100k/cmd/home-100k -- shard-run --env-root /root/rtk_cloud_workspace/cloud_env/staging/lke --brandname RTK --region us-sea --stage-warm-up 5m --stage-steady 15m --stage-cool-down 3m --run-id run-cli --role mixed --shard-index 1 --shard-manifest /root/rtk_cloud_workspace/loadtests/home-100k/shard-manifests/current.json --out-dir /var/lib/home-100k/run-cli/home-100k-mixed-001",
+		"ssh -i /tmp/test-key root@203.0.113.101 cd /root/rtk_cloud_workspace && go run ./loadtests/home-100k/cmd/home-100k -- shard-run --env-root /root/rtk_cloud_workspace/cloud_env/staging/lke --brandname RTK --region us-sea --stage-warm-up 1m --stage-steady 2m --stage-cool-down 45s --run-id run-cli --role mixed --shard-index 0 --shard-manifest /root/rtk_cloud_workspace/loadtests/home-100k/shard-manifests/current.json --out-dir /var/lib/home-100k/run-cli/home-100k-mixed-000",
+		"ssh -i /tmp/test-key root@203.0.113.102 cd /root/rtk_cloud_workspace && go run ./loadtests/home-100k/cmd/home-100k -- shard-run --env-root /root/rtk_cloud_workspace/cloud_env/staging/lke --brandname RTK --region us-sea --stage-warm-up 1m --stage-steady 2m --stage-cool-down 45s --run-id run-cli --role mixed --shard-index 1 --shard-manifest /root/rtk_cloud_workspace/loadtests/home-100k/shard-manifests/current.json --out-dir /var/lib/home-100k/run-cli/home-100k-mixed-001",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("run-stages live commands missing %q:\n%s", want, joined)
