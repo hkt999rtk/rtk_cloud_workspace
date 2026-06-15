@@ -6327,7 +6327,7 @@ func accountFindDeviceByVideoCloudDevid(ctx accountManagerContext, token, brandC
 }
 
 func accountIndexDevicesByVideoCloudDevid(ctx accountManagerContext, token, brandCloudID string) (map[string]map[string]any, int, error) {
-	const limit = 200
+	const limit = 100
 	index := map[string]map[string]any{}
 	for offset := 0; ; offset += limit {
 		body, status, err := curlJSONStatus(fmt.Sprintf("%s/v1/orgs/%s/devices?limit=%d&offset=%d", ctx.BaseURL, brandCloudID, limit, offset), token, nil)
