@@ -3,11 +3,15 @@ package home100k
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 type StageExecutionOptions struct {
 	SampleFlowsPerPresence int
+	HonorStageDurations    bool
 }
+
+var stageSleep = time.Sleep
 
 func ExecuteStages(plan Plan, opts StageExecutionOptions) ([]StageResult, error) {
 	samples := opts.SampleFlowsPerPresence
@@ -16,9 +20,22 @@ func ExecuteStages(plan Plan, opts StageExecutionOptions) ([]StageResult, error)
 	}
 	results := make([]StageResult, 0, len(plan.Stages))
 	for idx, stage := range plan.Stages {
+		if opts.HonorStageDurations {
+			if err := sleepStageDuration(stage.WarmUp); err != nil {
+				return nil, fmt.Errorf("stage %s warm-up: %w", stage.Name, err)
+			}
+		}
 		flows, err := runSampleFlows(samples)
 		if err != nil {
 			return nil, fmt.Errorf("stage %s actor flows: %w", stage.Name, err)
+		}
+		if opts.HonorStageDurations {
+			if err := sleepStageDuration(stage.SteadyState); err != nil {
+				return nil, fmt.Errorf("stage %s steady-state: %w", stage.Name, err)
+			}
+			if err := sleepStageDuration(stage.CoolDown); err != nil {
+				return nil, fmt.Errorf("stage %s cool-down: %w", stage.Name, err)
+			}
 		}
 		result := aggregateFlowResults(stage, flows)
 		scale := float64(idx + 1)
@@ -33,6 +50,18 @@ func ExecuteStages(plan Plan, opts StageExecutionOptions) ([]StageResult, error)
 		results = append(results, result)
 	}
 	return results, nil
+}
+
+func sleepStageDuration(value string) error {
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return err
+	}
+	if duration <= 0 {
+		return fmt.Errorf("duration must be positive, got %s", value)
+	}
+	stageSleep(duration)
+	return nil
 }
 
 func runSampleFlows(samples int) ([]ActorFlowResult, error) {

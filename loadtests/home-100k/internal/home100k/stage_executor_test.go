@@ -1,6 +1,9 @@
 package home100k
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestExecuteStagesUsesActorFlowsForShadowMetrics(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea"})
@@ -61,5 +64,40 @@ func TestAggregateFlowResultsCountsClientTokenCorrelation(t *testing.T) {
 	})
 	if result.ClientTokenCorrelationCount != 3 {
 		t.Fatalf("client token correlation count = %d, want 3", result.ClientTokenCorrelationCount)
+	}
+}
+
+func TestExecuteStagesCanHonorConfiguredStageDurations(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:       "cloud_env/staging/lke",
+		Brandname:     "RTK",
+		Region:        "us-sea",
+		StageWarmUp:   "1ms",
+		StageSteady:   "2ms",
+		StageCoolDown: "3ms",
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+	plan.Stages = plan.Stages[:1]
+
+	sleeps := []time.Duration{}
+	oldSleep := stageSleep
+	stageSleep = func(duration time.Duration) {
+		sleeps = append(sleeps, duration)
+	}
+	defer func() { stageSleep = oldSleep }()
+
+	if _, err := ExecuteStages(plan, StageExecutionOptions{SampleFlowsPerPresence: 1, HonorStageDurations: true}); err != nil {
+		t.Fatalf("ExecuteStages() error = %v", err)
+	}
+	want := []time.Duration{time.Millisecond, 2 * time.Millisecond, 3 * time.Millisecond}
+	if len(sleeps) != len(want) {
+		t.Fatalf("sleeps = %#v, want %#v", sleeps, want)
+	}
+	for idx := range want {
+		if sleeps[idx] != want[idx] {
+			t.Fatalf("sleeps = %#v, want %#v", sleeps, want)
+		}
 	}
 }

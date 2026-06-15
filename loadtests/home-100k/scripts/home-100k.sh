@@ -58,6 +58,7 @@ stage_steady="${HOME100K_STAGE_STEADY:-2m}"
 stage_cool_down="${HOME100K_STAGE_COOL_DOWN:-45s}"
 status_file="$repo_root/$out_dir/.workflow-status"
 nodes_file="$repo_root/$out_dir/nodes.tsv"
+ssh_known_hosts_file="$repo_root/$out_dir/ssh_known_hosts"
 
 usage() {
   cat <<EOF
@@ -94,6 +95,7 @@ Defaults can be overridden with:
   HOME100K_SSH_USER         default: root
   HOME100K_SSH_KEY          default: ~/.ssh/id_ed25519
   HOME100K_AUTHORIZED_KEY_FILE default: <HOME100K_SSH_KEY>.pub
+  SSH known_hosts is isolated per run at <out-dir>/ssh_known_hosts
   HOME100K_STATUS_INTERVAL_SECONDS default: 30
   HOME100K_STAGE_WARM_UP default: 1m
   HOME100K_STAGE_STEADY default: 2m
@@ -155,8 +157,8 @@ node_resource_status() {
       continue
     fi
     local sample
-    sample="$(ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -i "$ssh_key" "${ssh_user}@${ip}" \
-      "read _ u n s i w irq sirq steal guest guestn < /proc/stat; total1=\$((u+n+s+i+w+irq+sirq+steal)); idle1=\$((i+w)); sleep 1; read _ u n s i w irq sirq steal guest guestn < /proc/stat; total2=\$((u+n+s+i+w+irq+sirq+steal)); idle2=\$((i+w)); awk -v t1=\$total1 -v t2=\$total2 -v i1=\$idle1 -v i2=\$idle2 'BEGIN {dt=t2-t1; di=i2-i1; if (dt>0) printf \"cpu_pct=%.1f \", 100*(dt-di)/dt; else printf \"cpu_pct=unknown \"}'; awk '{printf \"load1=%s \", \\$1}' /proc/loadavg; free -m | awk '/^Mem:/ {printf \"mem_used_mb=%s mem_total_mb=%s \", \\$3, \\$2}'; df -h / | awk 'NR==2 {printf \"disk_used=%s disk_total=%s disk_pct=%s\", \\$3, \\$2, \\$5}'" 2>/dev/null || true)"
+    sample="$(ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$ssh_known_hosts_file" -i "$ssh_key" "${ssh_user}@${ip}" \
+      'read _ u n s i w irq sirq steal guest guestn < /proc/stat; total1=$((u+n+s+i+w+irq+sirq+steal)); idle1=$((i+w)); sleep 1; read _ u n s i w irq sirq steal guest guestn < /proc/stat; total2=$((u+n+s+i+w+irq+sirq+steal)); idle2=$((i+w)); awk -v t1=$total1 -v t2=$total2 -v i1=$idle1 -v i2=$idle2 "BEGIN {dt=t2-t1; di=i2-i1; if (dt>0) printf \"cpu_pct=%.1f \", 100*(dt-di)/dt; else printf \"cpu_pct=unknown \"}"; awk "{printf \"load1=%s \", \$1}" /proc/loadavg; free -m | awk "/^Mem:/ {printf \"mem_used_mb=%s mem_total_mb=%s \", \$3, \$2}"; df -h / | awk "NR==2 {printf \"disk_used=%s disk_total=%s disk_pct=%s\", \$3, \$2, \$5}"' 2>/dev/null || true)"
     if [[ -z "$sample" ]]; then
       sample="unreachable"
     fi
@@ -178,6 +180,14 @@ k8s_kubeconfig() {
     fi
   done
   return 1
+}
+
+export_kubeconfig_if_available() {
+  local kubeconfig
+  kubeconfig="$(k8s_kubeconfig || true)"
+  if [[ -n "$kubeconfig" ]]; then
+    export KUBECONFIG="$kubeconfig"
+  fi
 }
 
 k8s_node_resource_status() {
@@ -308,7 +318,7 @@ case "$command" in
     run_home100k sync "${common_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json" "$@"
     ;;
   run-stages)
-    run_home100k run-stages "${common_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json" "$@"
+    run_home100k run-stages "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" "$@"
     ;;
   collect)
     mkdir -p "$repo_root/$out_dir"
@@ -316,6 +326,7 @@ case "$command" in
     ;;
   collect-server-evidence)
     mkdir -p "$repo_root/$out_dir"
+    export_kubeconfig_if_available
     run_home100k collect-server-evidence "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" "$@"
     ;;
   aggregate)
@@ -350,6 +361,7 @@ case "$command" in
       exit 2
     fi
     mkdir -p "$repo_root/$out_dir"
+    rm -f "$ssh_known_hosts_file"
     start_status_monitor
     set_phase "provision-vms"
     run_home100k provision-vms "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --live --confirm-live --authorized-key-file "$authorized_key_file" "$@"
@@ -358,12 +370,13 @@ case "$command" in
     run_home100k sync "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
     workflow_status
     set_phase "run-stages"
-    run_home100k run-stages "${common_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
+    run_home100k run-stages "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
     workflow_status
     set_phase "collect"
     run_home100k collect "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
     workflow_status
     set_phase "collect-server-evidence"
+    export_kubeconfig_if_available
     run_home100k collect-server-evidence "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --live
     workflow_status
     set_phase "aggregate"

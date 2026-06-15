@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -397,9 +398,12 @@ func TestExecuteSyncLiveRunsSSHAndRsyncForVMState(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var callsMu sync.Mutex
 	calls := []string{}
 	oldRunner := commandRunner
 	commandRunner = func(name string, args ...string) error {
+		callsMu.Lock()
+		defer callsMu.Unlock()
 		calls = append(calls, name+" "+strings.Join(args, " "))
 		return nil
 	}
@@ -424,11 +428,17 @@ func TestExecuteSyncLiveRunsSSHAndRsyncForVMState(t *testing.T) {
 		t.Fatalf("Execute(sync live) code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 	joined := strings.Join(calls, "\n")
+	knownHosts := filepath.Join(outDir, "ssh_known_hosts")
+	sshBase := "-i /tmp/test-key -o UserKnownHostsFile=" + knownHosts
 	for _, want := range []string{
-		"ssh -i /tmp/test-key root@203.0.113.101 mkdir -p /root/rtk_cloud_workspace /root/rtk_cloud_workspace/cloud_env/staging/lke",
-		"rsync -az -e ssh -i /tmp/test-key loadtests/home-100k go.work root@203.0.113.101:/root/rtk_cloud_workspace/",
-		"rsync -az -e ssh -i /tmp/test-key " + filepath.Join(outDir, "shard-manifests", "home-100k-mixed-000.json") + " root@203.0.113.101:/root/rtk_cloud_workspace/loadtests/home-100k/shard-manifests/current.json",
-		"rsync -az -e ssh -i /tmp/test-key cloud_env/staging/lke/ root@203.0.113.102:/root/rtk_cloud_workspace/cloud_env/staging/lke/",
+		"bash -lc GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o '" + filepath.Join(outDir, "bin", "home-100k-linux-amd64") + "' ./loadtests/home-100k/cmd/home-100k",
+		"ssh " + sshBase + " -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new root@203.0.113.101 true",
+		"ssh " + sshBase + " root@203.0.113.101 bash -lc command -v rsync >/dev/null 2>&1 || (apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y rsync)",
+		"ssh " + sshBase + " root@203.0.113.101 mkdir -p /root/rtk_cloud_workspace /root/rtk_cloud_workspace/cloud_env/staging/lke /root/rtk_cloud_workspace/loadtests/home-100k/shard-manifests /root/rtk_cloud_workspace/loadtests/home-100k/bin",
+		"rsync -az -e ssh " + sshBase + " loadtests/home-100k go.work root@203.0.113.101:/root/rtk_cloud_workspace/",
+		"rsync -az -e ssh " + sshBase + " " + filepath.Join(outDir, "bin", "home-100k-linux-amd64") + " root@203.0.113.101:/root/rtk_cloud_workspace/loadtests/home-100k/bin/home-100k",
+		"rsync -az -e ssh " + sshBase + " " + filepath.Join(outDir, "shard-manifests", "home-100k-mixed-000.json") + " root@203.0.113.101:/root/rtk_cloud_workspace/loadtests/home-100k/shard-manifests/current.json",
+		"rsync -az -e ssh " + sshBase + " --include /env/*** --include /services/*** --include /devices/ --include /devices/test_device/ --include /devices/test_device/loadtest.env --include /devices/test_device/summary.json --include /artifacts/ --include /artifacts/users/ --include /artifacts/users/*.json --include /artifacts/device-bind/ --include /artifacts/device-bind/*.json --exclude * cloud_env/staging/lke/ root@203.0.113.102:/root/rtk_cloud_workspace/cloud_env/staging/lke/",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("sync live commands missing %q:\n%s", want, joined)
@@ -480,9 +490,12 @@ func TestExecuteRunStagesLiveDispatchesShardCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var callsMu sync.Mutex
 	calls := []string{}
 	oldRunner := commandRunner
 	commandRunner = func(name string, args ...string) error {
+		callsMu.Lock()
+		defer callsMu.Unlock()
 		calls = append(calls, name+" "+strings.Join(args, " "))
 		return nil
 	}
@@ -507,9 +520,10 @@ func TestExecuteRunStagesLiveDispatchesShardCommands(t *testing.T) {
 		t.Fatalf("Execute(run-stages live) code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 	joined := strings.Join(calls, "\n")
+	sshBase := "-i /tmp/test-key -o UserKnownHostsFile=loadtests/home-100k/reports/run-cli/ssh_known_hosts"
 	for _, want := range []string{
-		"ssh -i /tmp/test-key root@203.0.113.101 cd /root/rtk_cloud_workspace && go run ./loadtests/home-100k/cmd/home-100k -- shard-run --env-root /root/rtk_cloud_workspace/cloud_env/staging/lke --brandname RTK --region us-sea --stage-warm-up 1m --stage-steady 2m --stage-cool-down 45s --run-id run-cli --role mixed --shard-index 0 --shard-manifest /root/rtk_cloud_workspace/loadtests/home-100k/shard-manifests/current.json --out-dir /var/lib/home-100k/run-cli/home-100k-mixed-000",
-		"ssh -i /tmp/test-key root@203.0.113.102 cd /root/rtk_cloud_workspace && go run ./loadtests/home-100k/cmd/home-100k -- shard-run --env-root /root/rtk_cloud_workspace/cloud_env/staging/lke --brandname RTK --region us-sea --stage-warm-up 1m --stage-steady 2m --stage-cool-down 45s --run-id run-cli --role mixed --shard-index 1 --shard-manifest /root/rtk_cloud_workspace/loadtests/home-100k/shard-manifests/current.json --out-dir /var/lib/home-100k/run-cli/home-100k-mixed-001",
+		"ssh " + sshBase + " root@203.0.113.101 cd /root/rtk_cloud_workspace && /root/rtk_cloud_workspace/loadtests/home-100k/bin/home-100k shard-run --env-root /root/rtk_cloud_workspace/cloud_env/staging/lke --brandname RTK --region us-sea --stage-warm-up 1m --stage-steady 2m --stage-cool-down 45s --run-id run-cli --role mixed --shard-index 0 --shard-manifest /root/rtk_cloud_workspace/loadtests/home-100k/shard-manifests/current.json --honor-stage-durations --out-dir /var/lib/home-100k/run-cli/home-100k-mixed-000",
+		"ssh " + sshBase + " root@203.0.113.102 cd /root/rtk_cloud_workspace && /root/rtk_cloud_workspace/loadtests/home-100k/bin/home-100k shard-run --env-root /root/rtk_cloud_workspace/cloud_env/staging/lke --brandname RTK --region us-sea --stage-warm-up 1m --stage-steady 2m --stage-cool-down 45s --run-id run-cli --role mixed --shard-index 1 --shard-manifest /root/rtk_cloud_workspace/loadtests/home-100k/shard-manifests/current.json --honor-stage-durations --out-dir /var/lib/home-100k/run-cli/home-100k-mixed-001",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("run-stages live commands missing %q:\n%s", want, joined)
@@ -613,9 +627,12 @@ func TestExecuteCollectLiveCopiesShardArtifacts(t *testing.T) {
 	}
 
 	outDir := t.TempDir()
+	var callsMu sync.Mutex
 	calls := []string{}
 	oldRunner := commandRunner
 	commandRunner = func(name string, args ...string) error {
+		callsMu.Lock()
+		defer callsMu.Unlock()
 		calls = append(calls, name+" "+strings.Join(args, " "))
 		return nil
 	}
@@ -639,9 +656,10 @@ func TestExecuteCollectLiveCopiesShardArtifacts(t *testing.T) {
 		t.Fatalf("Execute(collect live) code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 	joined := strings.Join(calls, "\n")
+	sshBase := "-i /tmp/test-key -o UserKnownHostsFile=" + filepath.Join(outDir, "ssh_known_hosts")
 	for _, want := range []string{
-		"scp -i /tmp/test-key root@203.0.113.101:/var/lib/home-100k/run-cli/home-100k-mixed-000/results.json",
-		"scp -i /tmp/test-key root@203.0.113.102:/var/lib/home-100k/run-cli/home-100k-mixed-001/TEST_REPORT.md",
+		"scp " + sshBase + " root@203.0.113.101:/var/lib/home-100k/run-cli/home-100k-mixed-000/results.json",
+		"scp " + sshBase + " root@203.0.113.102:/var/lib/home-100k/run-cli/home-100k-mixed-001/TEST_REPORT.md",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("collect live commands missing %q:\n%s", want, joined)
@@ -717,8 +735,9 @@ func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 	joined := strings.Join(calls, "\n")
 	for _, want := range []string{
 		"kubectl get pods -A",
-		"kubectl logs -A --since=30m --selector app.kubernetes.io/name=emqx",
-		"run-cli",
+		"kubectl -n 'video-cloud-staging-video-cloud' get pods --selector 'app.kubernetes.io/name=mqtt' -o name",
+		"kubectl -n 'video-cloud-staging-video-cloud' logs --since=30m --selector 'app.kubernetes.io/name=video-cloud-api'",
+		"kubectl -n 'video-cloud-staging-platform' logs --since=30m --selector 'app.kubernetes.io/name=postgresql'",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("live evidence commands missing %q:\n%s", want, joined)

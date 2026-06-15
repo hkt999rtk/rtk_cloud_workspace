@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 )
 
 var commandRunner = func(name string, args ...string) error {
@@ -223,11 +225,12 @@ type workflowFlagValues struct {
 }
 
 type shardRunFlagValues struct {
-	runID         string
-	outDir        string
-	role          string
-	shardIndex    int
-	shardManifest string
+	runID               string
+	outDir              string
+	role                string
+	shardIndex          int
+	shardManifest       string
+	honorStageDurations bool
 }
 
 func executeProvisionVMs(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -410,7 +413,7 @@ func executeShardRun(args []string, stdout io.Writer, stderr io.Writer) int {
 		assignment = manifest
 	}
 	runID := normalizedRunID(values.runID)
-	results, err := ExecuteStages(plan, StageExecutionOptions{SampleFlowsPerPresence: 2})
+	results, err := ExecuteStages(plan, StageExecutionOptions{SampleFlowsPerPresence: 2, HonorStageDurations: values.honorStageDurations})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -780,6 +783,7 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	role := fs.String("role", "", "shard role")
 	shardIndex := fs.Int("shard-index", 0, "shard index")
 	shardManifest := fs.String("shard-manifest", "", "shard manifest JSON path")
+	honorStageDurations := fs.Bool("honor-stage-durations", false, "sleep through configured stage warm-up, steady, and cool-down windows")
 	if err := fs.Parse(args); err != nil {
 		return PlanOptions{}, shardRunFlagValues{}, err
 	}
@@ -789,11 +793,12 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	return opts, shardRunFlagValues{
-		runID:         *runID,
-		outDir:        *outDir,
-		role:          *role,
-		shardIndex:    *shardIndex,
-		shardManifest: *shardManifest,
+		runID:               *runID,
+		outDir:              *outDir,
+		role:                *role,
+		shardIndex:          *shardIndex,
+		shardManifest:       *shardManifest,
+		honorStageDurations: *honorStageDurations,
 	}, nil
 }
 
@@ -967,54 +972,55 @@ func serverEvidenceProbes(runID string) []serverEvidenceProbe {
 			args:    []string{"top", "pods", "-A"},
 			detail:  "pod resource usage captured",
 		},
-		{
-			source:  "emqx",
-			command: "kubectl",
-			args:    []string{"logs", "-A", "--since=30m", "--selector", "app.kubernetes.io/name=emqx,loadtest.run_id=" + runID, "--tail=1000"},
-			detail:  "EMQX logs and client churn evidence captured for run_id " + runID,
-		},
-		{
-			source:  "video_cloud_api",
-			command: "kubectl",
-			args:    []string{"logs", "-A", "--since=30m", "--selector", "app.kubernetes.io/name=video-cloud,loadtest.run_id=" + runID, "--tail=1000"},
-			detail:  "Video Cloud API logs captured for run_id " + runID,
-		},
-		{
-			source:  "iot_device_shadow",
-			command: "kubectl",
-			args:    []string{"logs", "-A", "--since=30m", "--selector", "app.kubernetes.io/component=iot-device-shadow,loadtest.run_id=" + runID, "--tail=1000"},
-			detail:  "IoT Device Shadow HTTP path logs captured for run_id " + runID,
-		},
-		{
-			source:  "postgres",
-			command: "kubectl",
-			args:    []string{"logs", "-A", "--since=30m", "--selector", "app.kubernetes.io/name=postgres", "--tail=1000"},
-			detail:  "PostgreSQL logs captured",
-		},
-		{
-			source:  "redis_valkey",
-			command: "kubectl",
-			args:    []string{"logs", "-A", "--since=30m", "--selector", "app.kubernetes.io/name=redis", "--tail=1000"},
-			detail:  "Redis/Valkey logs captured when enabled",
-		},
-		{
-			source:  "ingress_nginx",
-			command: "kubectl",
-			args:    []string{"logs", "-A", "--since=30m", "--selector", "app.kubernetes.io/name=ingress-nginx,loadtest.run_id=" + runID, "--tail=1000"},
-			detail:  "Ingress/nginx logs captured for run_id " + runID,
-		},
+		kubectlLogsProbe("emqx", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=mqtt", "MQTT broker logs and client churn evidence captured for run_id "+runID),
+		kubectlLogsProbe("video_cloud_api", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=video-cloud-api", "Video Cloud API logs captured for run_id "+runID),
+		kubectlLogsProbe("iot_device_shadow", "video-cloud-staging-video-cloud", "app.kubernetes.io/component=iot-device-shadow", "IoT Device Shadow HTTP path logs captured for run_id "+runID),
+		kubectlLogsProbe("postgres", "video-cloud-staging-platform", "app.kubernetes.io/name=postgresql", "PostgreSQL logs captured"),
+		kubectlLogsProbe("redis_valkey", "video-cloud-staging-platform", "app.kubernetes.io/name=redis", "Redis/Valkey logs captured when enabled"),
+		kubectlLogsProbe("ingress_nginx", "video-cloud-staging-ingress", "app.kubernetes.io/name=ingress-nginx", "Ingress/nginx logs captured for run_id "+runID),
+	}
+}
+
+func kubectlLogsProbe(source string, namespace string, selector string, detail string) serverEvidenceProbe {
+	script := fmt.Sprintf(
+		`set -euo pipefail; pods="$(kubectl -n %s get pods --selector %s -o name)"; test -n "$pods"; kubectl -n %s logs --since=30m --selector %s --tail=1000`,
+		shellQuote(namespace),
+		shellQuote(selector),
+		shellQuote(namespace),
+		shellQuote(selector),
+	)
+	return serverEvidenceProbe{
+		source:  source,
+		command: "bash",
+		args:    []string{"-lc", script},
+		detail:  detail,
 	}
 }
 
 func syncRemoteVMs(vms []LinodeVM, plan Plan, values workflowFlagValues) error {
-	for _, vm := range vms {
+	runnerBinary, err := buildRemoteRunnerBinary(values)
+	if err != nil {
+		return err
+	}
+	knownHosts := workflowKnownHostsFile(values)
+	if err := prepareKnownHostsPath(knownHosts); err != nil {
+		return err
+	}
+	return forEachVMParallel(vms, func(vm LinodeVM) error {
 		if strings.TrimSpace(vm.PublicIPv4) == "" {
 			return fmt.Errorf("VM %s has no public IPv4 for sync", vm.Label)
 		}
 		target := values.sshUser + "@" + vm.PublicIPv4
-		sshBase := sshArgs(values.sshKey)
+		sshBase := sshArgs(values.sshKey, knownHosts)
+		if err := waitForRemoteSSH(target, sshBase); err != nil {
+			return fmt.Errorf("wait for SSH on %s: %w", vm.Label, err)
+		}
+		if err := bootstrapRemoteVM(target, sshBase); err != nil {
+			return fmt.Errorf("bootstrap remote dependencies on %s: %w", vm.Label, err)
+		}
 		remoteManifestDir := strings.TrimRight(values.remoteWorkspace, "/") + "/loadtests/home-100k/shard-manifests"
-		mkdirArgs := append(append([]string{}, sshBase...), target, "mkdir", "-p", values.remoteWorkspace, values.remoteEnvRoot, remoteManifestDir)
+		remoteBinDir := strings.TrimRight(values.remoteWorkspace, "/") + "/loadtests/home-100k/bin"
+		mkdirArgs := append(append([]string{}, sshBase...), target, "mkdir", "-p", values.remoteWorkspace, values.remoteEnvRoot, remoteManifestDir, remoteBinDir)
 		if err := commandRunner("ssh", mkdirArgs...); err != nil {
 			return fmt.Errorf("prepare remote directories on %s: %w", vm.Label, err)
 		}
@@ -1022,9 +1028,17 @@ func syncRemoteVMs(vms []LinodeVM, plan Plan, values workflowFlagValues) error {
 		if err := commandRunner("rsync", "-az", "-e", rsyncSSH, "loadtests/home-100k", "go.work", target+":"+strings.TrimRight(values.remoteWorkspace, "/")+"/"); err != nil {
 			return fmt.Errorf("sync runner to %s: %w", vm.Label, err)
 		}
+		remoteRunner := target + ":" + remoteBinDir + "/home-100k"
+		if err := commandRunner("rsync", "-az", "-e", rsyncSSH, runnerBinary, remoteRunner); err != nil {
+			return fmt.Errorf("sync runner binary to %s: %w", vm.Label, err)
+		}
 		localEnvRoot := strings.TrimRight(plan.Conditions.EnvRoot, "/") + "/"
 		remoteEnvRoot := target + ":" + strings.TrimRight(values.remoteEnvRoot, "/") + "/"
-		if err := commandRunner("rsync", "-az", "-e", rsyncSSH, localEnvRoot, remoteEnvRoot); err != nil {
+		envArgs := append([]string{"-az", "-e", rsyncSSH},
+			envRootRsyncFilters()...,
+		)
+		envArgs = append(envArgs, localEnvRoot, remoteEnvRoot)
+		if err := commandRunner("rsync", envArgs...); err != nil {
 			return fmt.Errorf("sync env-root to %s: %w", vm.Label, err)
 		}
 		assignment, ok := findAssignmentByLabel(plan, vm.Label)
@@ -1043,12 +1057,91 @@ func syncRemoteVMs(vms []LinodeVM, plan Plan, values workflowFlagValues) error {
 		if err := commandRunner("rsync", "-az", "-e", rsyncSSH, manifestPath, remoteManifest); err != nil {
 			return fmt.Errorf("sync shard manifest to %s: %w", vm.Label, err)
 		}
+		return nil
+	})
+}
+
+func envRootRsyncFilters() []string {
+	return []string{
+		"--include", "/env/***",
+		"--include", "/services/***",
+		"--include", "/devices/",
+		"--include", "/devices/test_device/",
+		"--include", "/devices/test_device/loadtest.env",
+		"--include", "/devices/test_device/summary.json",
+		"--include", "/artifacts/",
+		"--include", "/artifacts/users/",
+		"--include", "/artifacts/users/*.json",
+		"--include", "/artifacts/device-bind/",
+		"--include", "/artifacts/device-bind/*.json",
+		"--exclude", "*",
+	}
+}
+
+func forEachVMParallel(vms []LinodeVM, fn func(LinodeVM) error) error {
+	var wg sync.WaitGroup
+	errs := make(chan error, len(vms))
+	for _, vm := range vms {
+		vm := vm
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := fn(vm); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		return err
 	}
 	return nil
 }
 
+func buildRemoteRunnerBinary(values workflowFlagValues) (string, error) {
+	base := strings.TrimSpace(values.outDir)
+	if base == "" {
+		base = filepath.Join("loadtests", "home-100k", "reports", normalizedRunID(values.runID))
+	}
+	binDir := filepath.Join(base, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		return "", err
+	}
+	out := filepath.Join(binDir, "home-100k-linux-amd64")
+	cmd := fmt.Sprintf("GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o %s ./loadtests/home-100k/cmd/home-100k", shellQuote(out))
+	if err := commandRunner("bash", "-lc", cmd); err != nil {
+		return "", fmt.Errorf("build linux runner binary: %w", err)
+	}
+	return out, nil
+}
+
+func waitForRemoteSSH(target string, sshBase []string) error {
+	args := append(append([]string{}, sshBase...), "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new", target, "true")
+	var lastErr error
+	for attempt := 1; attempt <= 30; attempt++ {
+		if err := commandRunner("ssh", args...); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		time.Sleep(10 * time.Second)
+	}
+	return lastErr
+}
+
+func bootstrapRemoteVM(target string, sshBase []string) error {
+	script := "command -v rsync >/dev/null 2>&1 || (apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y rsync)"
+	args := append(append([]string{}, sshBase...), target, "bash", "-lc", script)
+	return commandRunner("ssh", args...)
+}
+
 func collectRemoteVMs(vms []LinodeVM, runID string, remoteOutRoot string, outDir string, values workflowFlagValues) error {
-	for _, vm := range vms {
+	knownHosts := workflowKnownHostsFile(values)
+	if err := prepareKnownHostsPath(knownHosts); err != nil {
+		return err
+	}
+	return forEachVMParallel(vms, func(vm LinodeVM) error {
 		if strings.TrimSpace(vm.PublicIPv4) == "" {
 			return fmt.Errorf("VM %s has no public IPv4 for collect", vm.Label)
 		}
@@ -1058,19 +1151,23 @@ func collectRemoteVMs(vms []LinodeVM, runID string, remoteOutRoot string, outDir
 			return err
 		}
 		remoteBase := target + ":" + strings.TrimRight(remoteOutRoot, "/") + "/" + runID + "/" + vm.Label
-		scpBase := sshArgs(values.sshKey)
+		scpBase := sshArgs(values.sshKey, knownHosts)
 		if err := commandRunner("scp", append(append([]string{}, scpBase...), remoteBase+"/results.json", filepath.Join(shardDir, "results.json"))...); err != nil {
 			return fmt.Errorf("collect results from %s: %w", vm.Label, err)
 		}
 		if err := commandRunner("scp", append(append([]string{}, scpBase...), remoteBase+"/TEST_REPORT.md", filepath.Join(shardDir, "TEST_REPORT.md"))...); err != nil {
 			return fmt.Errorf("collect report from %s: %w", vm.Label, err)
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func dispatchRemoteShards(vms []LinodeVM, plan Plan, runID string, remoteOutRoot string, values workflowFlagValues) error {
-	for _, vm := range vms {
+	knownHosts := workflowKnownHostsFile(values)
+	if err := prepareKnownHostsPath(knownHosts); err != nil {
+		return err
+	}
+	return forEachVMParallel(vms, func(vm LinodeVM) error {
 		assignment, ok := findAssignmentByLabel(plan, vm.Label)
 		if !ok {
 			return fmt.Errorf("assignment not found for VM %s", vm.Label)
@@ -1080,9 +1177,10 @@ func dispatchRemoteShards(vms []LinodeVM, plan Plan, runID string, remoteOutRoot
 		}
 		target := values.sshUser + "@" + vm.PublicIPv4
 		remoteOutDir := strings.TrimRight(remoteOutRoot, "/") + "/" + runID + "/" + vm.Label
+		remoteRunner := strings.TrimRight(values.remoteWorkspace, "/") + "/loadtests/home-100k/bin/home-100k"
 		remoteCommand := strings.Join([]string{
 			"cd", values.remoteWorkspace, "&&",
-			"go", "run", "./loadtests/home-100k/cmd/home-100k", "--", "shard-run",
+			remoteRunner, "shard-run",
 			"--env-root", values.remoteEnvRoot,
 			"--brandname", plan.Conditions.Brandname,
 			"--region", plan.Conditions.Region,
@@ -1093,14 +1191,15 @@ func dispatchRemoteShards(vms []LinodeVM, plan Plan, runID string, remoteOutRoot
 			"--role", assignment.Role,
 			"--shard-index", fmt.Sprintf("%d", assignment.Index),
 			"--shard-manifest", strings.TrimRight(values.remoteWorkspace, "/") + "/loadtests/home-100k/shard-manifests/current.json",
+			"--honor-stage-durations",
 			"--out-dir", remoteOutDir,
 		}, " ")
-		args := append(append([]string{}, sshArgs(values.sshKey)...), target, remoteCommand)
+		args := append(append([]string{}, sshArgs(values.sshKey, knownHosts)...), target, remoteCommand)
 		if err := commandRunner("ssh", args...); err != nil {
 			return fmt.Errorf("dispatch shard %s: %w", vm.Label, err)
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func shardFromVMLabel(label string) (string, int, error) {
@@ -1121,11 +1220,35 @@ func shardFromVMLabel(label string) (string, int, error) {
 	return role, shardIndex, nil
 }
 
-func sshArgs(sshKey string) []string {
-	if strings.TrimSpace(sshKey) == "" {
+func workflowKnownHostsFile(values workflowFlagValues) string {
+	base := strings.TrimSpace(values.outDir)
+	if base == "" {
+		base = filepath.Join("loadtests", "home-100k", "reports", normalizedRunID(values.runID))
+	}
+	return filepath.Join(base, "ssh_known_hosts")
+}
+
+func prepareKnownHostsPath(path string) error {
+	if strings.TrimSpace(path) == "" {
 		return nil
 	}
-	return []string{"-i", sshKey}
+	return os.MkdirAll(filepath.Dir(path), 0o755)
+}
+
+func sshArgs(sshKey string, knownHostsFile string) []string {
+	args := make([]string, 0, 6)
+	if strings.TrimSpace(sshKey) == "" {
+		return args
+	}
+	args = append(args, "-i", sshKey)
+	if strings.TrimSpace(knownHostsFile) != "" {
+		args = append(args, "-o", "UserKnownHostsFile="+knownHostsFile)
+	}
+	return args
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func writeJSONTo(stdout io.Writer, stderr io.Writer, value any) int {
