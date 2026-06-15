@@ -529,6 +529,7 @@ type lkePublicHTTPSRoute struct {
 	Service     string
 	Namespace   string
 	ServicePort int
+	TargetPort  int
 	Protocol    string
 }
 
@@ -667,12 +668,12 @@ func lkePublicHTTPSRoutes(env map[string]string) []lkePublicHTTPSRoute {
 	videoNS := lkeNamespaceName(env, "video-cloud")
 	videoDomain := env["VIDEO_CLOUD_DOMAIN"]
 	routes := []lkePublicHTTPSRoute{
-		{Host: videoDomain, Namespace: videoNS, Service: "video-cloud-api", ServicePort: 80},
-		{Host: firstNonEmpty(os.Getenv("LKE_DEVICE_DOMAIN"), env["VIDEO_CLOUD_DEVICE_DOMAIN"], "device."+videoDomain), Namespace: videoNS, Service: "video-cloud-api", ServicePort: 80},
-		{Host: env["VIDEO_CLOUD_CERTISSUER_DOMAIN"], Namespace: videoNS, Service: "certissuer", ServicePort: 9443, Protocol: "HTTPS"},
-		{Host: env["ACCOUNT_MANAGER_DOMAIN"], Namespace: lkeNamespaceName(env, "account-manager"), Service: "account-manager", ServicePort: 80},
-		{Host: env["CLOUD_ADMIN_DOMAIN"], Namespace: lkeNamespaceName(env, "admin"), Service: "cloud-admin", ServicePort: 80},
-		{Host: firstNonEmpty(os.Getenv("LKE_FRONTEND_DOMAIN"), env["FRONTEND_DOMAIN"], "frontend."+videoDomain), Namespace: lkeNamespaceName(env, "frontend"), Service: "frontend", ServicePort: 80},
+		{Host: videoDomain, Namespace: videoNS, Service: "video-cloud-api", ServicePort: 80, TargetPort: envIntDefault("LKE_VIDEO_CLOUD_PORT", 8080)},
+		{Host: firstNonEmpty(os.Getenv("LKE_DEVICE_DOMAIN"), env["VIDEO_CLOUD_DEVICE_DOMAIN"], "device."+videoDomain), Namespace: videoNS, Service: "video-cloud-api", ServicePort: 80, TargetPort: envIntDefault("LKE_VIDEO_CLOUD_PORT", 8080)},
+		{Host: env["VIDEO_CLOUD_CERTISSUER_DOMAIN"], Namespace: videoNS, Service: "certissuer", ServicePort: 9443, TargetPort: 9443, Protocol: "HTTPS"},
+		{Host: env["ACCOUNT_MANAGER_DOMAIN"], Namespace: lkeNamespaceName(env, "account-manager"), Service: "account-manager", ServicePort: 80, TargetPort: envIntDefault("LKE_ACCOUNT_MANAGER_PORT", 8080)},
+		{Host: env["CLOUD_ADMIN_DOMAIN"], Namespace: lkeNamespaceName(env, "admin"), Service: "cloud-admin", ServicePort: 80, TargetPort: envIntDefault("LKE_CLOUD_ADMIN_PORT", 8080)},
+		{Host: firstNonEmpty(os.Getenv("LKE_FRONTEND_DOMAIN"), env["FRONTEND_DOMAIN"], "frontend."+videoDomain), Namespace: lkeNamespaceName(env, "frontend"), Service: "frontend", ServicePort: 80, TargetPort: envIntDefault("LKE_FRONTEND_PORT", 8080)},
 	}
 	if logger := lkeCloudLoggerRoute(env); logger.Host != "" {
 		routes = append(routes, logger)
@@ -691,7 +692,8 @@ func lkeCloudLoggerRoute(env map[string]string) lkePublicHTTPSRoute {
 	if err != nil || strings.TrimSpace(string(out)) == "" {
 		return lkePublicHTTPSRoute{}
 	}
-	return lkePublicHTTPSRoute{Host: host, Namespace: namespace, Service: service, ServicePort: envIntDefault("LKE_CLOUD_LOGGER_SERVICE_PORT", 80)}
+	servicePort := envIntDefault("LKE_CLOUD_LOGGER_SERVICE_PORT", 80)
+	return lkePublicHTTPSRoute{Host: host, Namespace: namespace, Service: service, ServicePort: servicePort, TargetPort: envIntDefault("LKE_CLOUD_LOGGER_TARGET_PORT", servicePort)}
 }
 
 func lkePublicHTTPSBridgeServiceManifests(env map[string]string, routes []lkePublicHTTPSRoute) []string {
@@ -987,7 +989,7 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 	}
 	byNamespace := map[string][]int{}
 	for _, route := range routes {
-		byNamespace[route.Namespace] = append(byNamespace[route.Namespace], route.ServicePort)
+		byNamespace[route.Namespace] = append(byNamespace[route.Namespace], firstNonZero(route.TargetPort, route.ServicePort))
 	}
 	for namespace, ports := range byNamespace {
 		manifests = append(manifests, lkeAllowPublicIngressNetworkPolicyManifest(env, namespace, ports))
@@ -998,6 +1000,15 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 	manifests = append(manifests, lkeAllowVideoCloudAccountManagerNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudMQTTClientsNetworkPolicyManifest(env))
 	return manifests
+}
+
+func firstNonZero(values ...int) int {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func lkeDefaultDenyIngressNetworkPolicyManifest(env map[string]string, namespace string) string {
