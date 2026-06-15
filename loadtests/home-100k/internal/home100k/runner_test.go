@@ -55,8 +55,8 @@ func TestRunWritesPlanResultsEvidenceAndReportArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if result.Status != "PASS" {
-		t.Fatalf("status = %s, want PASS", result.Status)
+	if result.Status != "INCOMPLETE" {
+		t.Fatalf("status = %s, want INCOMPLETE because sampled client counters do not cover stage targets", result.Status)
 	}
 	for _, path := range []string{result.PlanFile, result.ResultsFile, result.ServerEvidenceFile, result.ReportFile} {
 		if _, err := os.Stat(path); err != nil {
@@ -69,7 +69,7 @@ func TestRunWritesPlanResultsEvidenceAndReportArtifacts(t *testing.T) {
 		t.Fatalf("read report: %v", err)
 	}
 	for _, want := range []string{
-		"Status: PASS",
+		"Status: INCOMPLETE",
 		"## Stage Results",
 		"desired/reported convergence",
 		"offline desired convergence",
@@ -145,8 +145,8 @@ func TestAggregateCollectedRunWritesRunLevelArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AggregateCollectedRun() error = %v", err)
 	}
-	if result.Status != "PASS" {
-		t.Fatalf("status = %s, want PASS", result.Status)
+	if result.Status != "INCOMPLETE" {
+		t.Fatalf("status = %s, want INCOMPLETE because sampled client counters do not cover stage targets", result.Status)
 	}
 	for _, path := range []string{result.PlanFile, result.ResultsFile, result.ReportFile} {
 		if _, err := os.Stat(path); err != nil {
@@ -157,8 +157,8 @@ func TestAggregateCollectedRunWritesRunLevelArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(report), "Status: PASS") || !strings.Contains(string(report), "server evidence: complete") {
-		t.Fatalf("aggregate report missing PASS evidence:\n%s", string(report))
+	if !strings.Contains(string(report), "Status: INCOMPLETE") || !strings.Contains(string(report), "server evidence: complete") {
+		t.Fatalf("aggregate report missing INCOMPLETE evidence:\n%s", string(report))
 	}
 }
 
@@ -337,5 +337,35 @@ func TestAggregateCollectedRunWithAvailableEvidenceButMissingCountersIsIncomplet
 	}
 	if !strings.Contains(string(report), "Server/client counter correlation incomplete") {
 		t.Fatalf("report missing missing-counter reason:\n%s", string(report))
+	}
+}
+
+func TestRunStatusWithCorrelationRequiresClientTargetCoverage(t *testing.T) {
+	stages := []StageResult{{
+		Name:             "25k",
+		ConnectedDevices: 25000,
+		DeviceMQTTTotals: DeviceMQTTTotals{
+			ConnectAttempts:   60,
+			ConnectSuccess:    60,
+			Publishes:         60,
+			ReceivedMessages:  60,
+			DeltaReceived:     60,
+			ReportedPublishes: 60,
+		},
+		AppUserTotals: AppUserTotals{
+			LoginAttempts: 60,
+			DesiredWrites: 60,
+			ReceivedAcks:  60,
+		},
+		DesiredReportedConvergenceRate: 100,
+		OfflineDesiredConvergenceRate:  100,
+		DeltaClearSuccessRatePercent:   100,
+	}}
+	evidence := ServerEvidence{Complete: true, Sources: requiredEvidenceSources(true)}
+	correlation := ServerCorrelation{Status: "pass"}
+
+	status := runStatusWithCorrelation(evidence, stages, LoadGeneratorHealth{}, correlation)
+	if status != "INCOMPLETE" {
+		t.Fatalf("status = %s, want INCOMPLETE for 60 connect attempts against 25k target", status)
 	}
 }

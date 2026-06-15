@@ -526,7 +526,7 @@ func allEvidenceSourcesAvailable(sources map[string]EvidenceSource) bool {
 }
 
 func runStatus(evidence ServerEvidence, stages []StageResult) string {
-	if !evidence.Complete || !shadowEvidenceComplete(stages) {
+	if !evidence.Complete || !shadowEvidenceComplete(stages) || !clientTargetCoverageComplete(stages) {
 		return "INCOMPLETE"
 	}
 	for _, stage := range stages {
@@ -620,6 +620,36 @@ func clientTotalsPresent(device DeviceMQTTTotals, app AppUserTotals) bool {
 		app.LoginAttempts > 0 &&
 		app.DesiredWrites > 0 &&
 		app.ReceivedAcks > 0
+}
+
+func clientTargetCoverageComplete(stages []StageResult) bool {
+	if len(stages) == 0 {
+		return false
+	}
+	for _, stage := range stages {
+		if stage.ConnectedDevices <= 0 {
+			return false
+		}
+		expectedUsers := expectedStageUsers(stage.ConnectedDevices)
+		if stage.DeviceMQTTTotals.ConnectAttempts < int64(stage.ConnectedDevices) ||
+			stage.DeviceMQTTTotals.ConnectSuccess < int64(stage.ConnectedDevices) ||
+			stage.DeviceMQTTTotals.Subscribes < int64(stage.ConnectedDevices) ||
+			stage.AppUserTotals.LoginAttempts < int64(expectedUsers) {
+			return false
+		}
+	}
+	return true
+}
+
+func expectedStageUsers(connectedDevices int) int {
+	if connectedDevices <= 0 {
+		return 0
+	}
+	users := connectedDevices * DefaultUserCount / DefaultDeviceCount
+	if users <= 0 {
+		return 1
+	}
+	return users
 }
 
 func shadowEvidenceComplete(stages []StageResult) bool {

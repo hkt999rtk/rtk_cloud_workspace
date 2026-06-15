@@ -27,11 +27,11 @@ repositories. Shared wire and payload contracts belong in
 | [product-level-evidence.md](product-level-evidence.md) | Supporting note | Workspace evidence wrapper for private-cloud readiness sign-off and canonical report aggregation. |
 | [linode-staging-deployment-snapshot.md](linode-staging-deployment-snapshot.md) | Supporting note | Current Linode staging deployment snapshot, live endpoints, PR state, and remaining production-readiness work. |
 | [linode-ci-runners.md](linode-ci-runners.md) | Source | Linode self-hosted CI runner VM topology, lifecycle, artifact archive, and shutdown policy. |
-| [linode-100k-home-iot-shadow-loadtest.md](linode-100k-home-iot-shadow-loadtest.md) | Supporting note | 100,000-device home IoT Device Shadow load-test design, review-time runner, scenario mix, offline-device coverage, and report contract. |
+| [linode-100k-home-iot-shadow-loadtest.md](linode-100k-home-iot-shadow-loadtest.md) | Pointer | Moved pointer for the 100,000-device Home IoT Device Shadow load-test package under `loadtests/home-100k/`. |
 | [status-reports/README.md](status-reports/README.md) | Source | Reusable weekly status report framework, material index, and builder workflow. |
 | [webrtc-only-streaming-migration.md](webrtc-only-streaming-migration.md) | Supporting note | WebRTC-only video migration issue roadmap and validation checklist. |
 | [video-cloud-load-test-roadmap.md](video-cloud-load-test-roadmap.md) | Supporting note | API-level video cloud E2E load test roadmap, issue owner matrix, and validation checklist. |
-| [home-mqtt-loadtest-simulation.md](home-mqtt-loadtest-simulation.md) | Supporting note | Env-root driven home daily-use MQTT load simulation plan and developer issue breakdown. |
+| [home-mqtt-loadtest-simulation.md](home-mqtt-loadtest-simulation.md) | Pointer | Moved pointer for the home MQTT simulation reference now centralized under `loadtests/home-100k/docs/`. |
 | [cross-service-broker-packaging.md](cross-service-broker-packaging.md) | Supporting note | Retired cross-service broker packaging decision and future reintroduction bar. |
 | [provisioning-issue-roadmap.md](provisioning-issue-roadmap.md) | Supporting note | Interface-first provisioning issue plan and repository ownership matrix. |
 | [ota-issue-roadmap.md](ota-issue-roadmap.md) | Supporting note | Interface-first OTA campaign issue plan and repository ownership matrix. |

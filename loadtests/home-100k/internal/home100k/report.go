@@ -34,6 +34,10 @@ func RenderReport(input ReportInput) string {
 		status = "INCOMPLETE"
 		reasons = append(reasons, "Load-generator saturation invalidated server-capacity conclusion")
 	}
+	if !clientTargetCoverageComplete(input.StageResults) {
+		status = "INCOMPLETE"
+		reasons = append(reasons, "Client target coverage is incomplete; sampled counters do not satisfy stage device/user targets")
+	}
 	switch strings.ToLower(strings.TrimSpace(input.ServerCorrelation.Status)) {
 	case "fail":
 		if status != "INCOMPLETE" {

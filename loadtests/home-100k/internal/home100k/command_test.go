@@ -462,6 +462,9 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 			t.Fatalf("extra vars %s = %q, want absolute path", key, extraVars[key])
 		}
 	}
+	if !filepath.IsAbs(extraVars["local_rtk_cloud"]) {
+		t.Fatalf("extra vars local_rtk_cloud = %q, want absolute path", extraVars["local_rtk_cloud"])
+	}
 	var inventoryDoc struct {
 		All struct {
 			Children map[string]struct {
@@ -475,6 +478,19 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 	localManifest, _ := inventoryDoc.All.Children["home_100k"].Hosts["home-100k-mixed-000"]["local_shard_manifest"].(string)
 	if !filepath.IsAbs(localManifest) {
 		t.Fatalf("inventory local_shard_manifest = %q, want absolute path", localManifest)
+	}
+	localFilter, _ := inventoryDoc.All.Children["home_100k"].Hosts["home-100k-mixed-000"]["local_env_rsync_filter"].(string)
+	if !filepath.IsAbs(localFilter) {
+		t.Fatalf("inventory local_env_rsync_filter = %q, want absolute path", localFilter)
+	}
+	filterRaw, err := os.ReadFile(localFilter)
+	if err != nil {
+		t.Fatalf("missing env rsync filter: %v", err)
+	}
+	for _, want := range []string{"+ /devices/test_device/devices/", "+ /artifacts/users/*.json", "- *"} {
+		if !strings.Contains(string(filterRaw), want) {
+			t.Fatalf("env rsync filter missing %q:\n%s", want, string(filterRaw))
+		}
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "sync-telemetry.json")); err != nil {
 		t.Fatalf("missing sync telemetry placeholder: %v", err)
@@ -526,6 +542,24 @@ func TestExecuteRunStagesProducesStageMetrics(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("run-stages output missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestExecuteRunStagesLiveRunnerModeRefusesSampleFallback(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Execute([]string{
+		"run-stages",
+		"--env-root", "cloud_env/staging/lke",
+		"--brandname", "RTK",
+		"--region", "us-sea",
+		"--run-id", "run-cli",
+		"--runner-mode", "live",
+	}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("Execute(run-stages --runner-mode live) code = 0 stdout=%s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "refusing to run sampled actor executor") {
+		t.Fatalf("stderr missing sampled fallback refusal: %s", stderr.String())
 	}
 }
 
@@ -624,6 +658,106 @@ func TestExecuteShardRunWritesShardArtifacts(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), `"role": "device-mqtt"`) || !strings.Contains(stdout.String(), `"shard_index": 0`) {
 		t.Fatalf("stdout missing shard metadata:\n%s", stdout.String())
+	}
+}
+
+func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
+	outDir := t.TempDir()
+	oldRunner := commandRunner
+	calls := []string{}
+	commandRunner = func(name string, args ...string) error {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		if name != "rtk-cloud" {
+			t.Fatalf("unexpected command %s %v", name, args)
+		}
+		childOutDir := ""
+		for idx := 0; idx < len(args)-1; idx++ {
+			if args[idx] == "--out-dir" {
+				childOutDir = args[idx+1]
+			}
+		}
+		if childOutDir == "" {
+			t.Fatalf("missing child --out-dir in args: %v", args)
+		}
+		payload := map[string]any{
+			"overall": "pass",
+			"metrics": map[string]any{
+				"devices_selected":   2500,
+				"commands_attempted": 2500,
+				"commands_passed":    2500,
+			},
+			"publish_successes":         2100,
+			"publish_failures":          3,
+			"messages_received":         2050,
+			"reported_events":           2000,
+			"total_bytes_sent":          123456,
+			"total_bytes_received":      654321,
+			"http_requests":             700,
+			"http_successes":            690,
+			"http_failures":             10,
+			"total_http_bytes_sent":     1111,
+			"total_http_bytes_received": 2222,
+		}
+		if err := writeJSONFile(filepath.Join(childOutDir, "results.json"), payload); err != nil {
+			t.Fatal(err)
+		}
+		return nil
+	}
+	defer func() { commandRunner = oldRunner }()
+
+	var stdout, stderr bytes.Buffer
+	code := Execute([]string{
+		"shard-run",
+		"--env-root", "cloud_env/staging/lke",
+		"--brandname", "RTK",
+		"--region", "us-sea",
+		"--run-id", "run-cli",
+		"--role", "device-mqtt",
+		"--shard-index", "0",
+		"--out-dir", outDir,
+		"--runner-mode", "live",
+		"--rtk-cloud-binary", "rtk-cloud",
+		"--workspace", "/root/rtk_cloud_workspace",
+		"--stage-warm-up", "1s",
+		"--stage-steady", "1s",
+		"--stage-cool-down", "1s",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Execute(shard-run live) code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	joined := strings.Join(calls, "\n")
+	for _, want := range []string{
+		"rtk-cloud mqtt-test",
+		"--workspace /root/rtk_cloud_workspace",
+		"--env-root cloud_env/staging/lke",
+		"--brandname RTK",
+		"--duration-seconds 3",
+		"--max-connected-devices 2500",
+		"--shard-index 0",
+		"--shard-count 10",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("live shard command missing %q:\n%s", want, joined)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "results.json")); err != nil {
+		t.Fatalf("missing converted shard results: %v", err)
+	}
+	var result struct {
+		StageResults []StageResult `json:"stage_results"`
+	}
+	if err := readJSON(filepath.Join(outDir, "results.json"), &result); err != nil {
+		t.Fatalf("read converted shard results: %v", err)
+	}
+	if len(result.StageResults) == 0 {
+		t.Fatalf("missing stage results")
+	}
+	first := result.StageResults[0]
+	if first.DeviceMQTTTotals.Publishes != 2103 || first.DeviceMQTTTotals.ReceivedMessages != 2050 || first.DeviceMQTTTotals.BytesSent != 123456 {
+		t.Fatalf("device MQTT totals not preserved from live results: %#v", first.DeviceMQTTTotals)
+	}
+	if first.AppUserTotals.ReadShadowRequests != 700 || first.AppUserTotals.ReceivedAcks != 690 || first.AppUserTotals.BytesReceived != 2222 {
+		t.Fatalf("app/user totals not preserved from live results: %#v", first.AppUserTotals)
 	}
 }
 
@@ -899,8 +1033,8 @@ func TestExecuteAggregateWritesRunLevelReport(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("Execute(aggregate) code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
-	if !strings.Contains(stdout.String(), `"status": "PASS"`) || !strings.Contains(stdout.String(), `"report_file"`) {
-		t.Fatalf("aggregate stdout missing PASS/report path:\n%s", stdout.String())
+	if !strings.Contains(stdout.String(), `"status": "INCOMPLETE"`) || !strings.Contains(stdout.String(), `"report_file"`) {
+		t.Fatalf("aggregate stdout missing INCOMPLETE/report path:\n%s", stdout.String())
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "TEST_REPORT.md")); err != nil {
 		t.Fatalf("missing aggregate report: %v", err)

@@ -45,6 +45,13 @@
       become: false
       register: local_runner_stat
 
+    - name: Inspect local rtk-cloud binary
+      ansible.builtin.stat:
+        path: "{{ local_rtk_cloud }}"
+      delegate_to: localhost
+      become: false
+      register: local_rtk_cloud_stat
+
     - name: Inspect local shard manifest
       ansible.builtin.stat:
         path: "{{ local_shard_manifest }}"
@@ -58,6 +65,13 @@
         dest: "{{ remote_bin_dir }}/home-100k"
         mode: "0755"
       register: runner_copy
+
+    - name: Upload rtk-cloud binary
+      ansible.builtin.copy:
+        src: "{{ local_rtk_cloud }}"
+        dest: "{{ remote_bin_dir }}/rtk-cloud"
+        mode: "0755"
+      register: rtk_cloud_copy
 
     - name: Upload this VM shard manifest
       ansible.builtin.copy:
@@ -74,18 +88,7 @@
         delete: false
         rsync_opts:
           - "--stats"
-          - "--include=/env/***"
-          - "--include=/services/***"
-          - "--include=/devices/"
-          - "--include=/devices/test_device/"
-          - "--include=/devices/test_device/loadtest.env"
-          - "--include=/devices/test_device/summary.json"
-          - "--include=/artifacts/"
-          - "--include=/artifacts/users/"
-          - "--include=/artifacts/users/*.json"
-          - "--include=/artifacts/device-bind/"
-          - "--include=/artifacts/device-bind/*.json"
-          - "--exclude=*"
+          - "--filter=merge {{ local_env_rsync_filter }}"
       register: env_sync
 
     - name: Read remote disk after sync
@@ -100,8 +103,8 @@
         content: |
           {
             "label": "{{ vm_label }}",
-            "files_transferred": {{ ((env_sync.stdout | default('') | regex_findall('Number of regular files transferred: ([0-9,]+)') | first | default('0')) | replace(',', '') | int) + (1 if runner_copy.changed else 0) + (1 if manifest_copy.changed else 0) }},
-            "bytes_transferred": {{ ((env_sync.stdout | default('') | regex_findall('Total transferred file size: ([0-9,]+) bytes') | first | default('0') | replace(',', '') | int) + ((local_runner_stat.stat.size | default(0) | int) if runner_copy.changed else 0) + ((local_manifest_stat.stat.size | default(0) | int) if manifest_copy.changed else 0)) }},
+            "files_transferred": {{ ((env_sync.stdout | default('') | regex_findall('Number of regular files transferred: ([0-9,]+)') | first | default('0')) | replace(',', '') | int) + (1 if runner_copy.changed else 0) + (1 if rtk_cloud_copy.changed else 0) + (1 if manifest_copy.changed else 0) }},
+            "bytes_transferred": {{ ((env_sync.stdout | default('') | regex_findall('Total transferred file size: ([0-9,]+) bytes') | first | default('0') | replace(',', '') | int) + ((local_runner_stat.stat.size | default(0) | int) if runner_copy.changed else 0) + ((local_rtk_cloud_stat.stat.size | default(0) | int) if rtk_cloud_copy.changed else 0) + ((local_manifest_stat.stat.size | default(0) | int) if manifest_copy.changed else 0)) }},
             "remote_disk_before": {{ disk_before.stdout | to_json }},
             "remote_disk_after": {{ disk_after.stdout | to_json }}
           }

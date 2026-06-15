@@ -280,13 +280,17 @@ Required behavior:
   manifest per VM, and copies only the Linux runner binary, the VM's manifest,
   and minimal env-root artifacts.
 - `run-stages` uses the generated Ansible inventory to start device and user
-  shards with a shared `run_id`.
+  shards with a shared `run_id`. Formal runs must use `runner_mode=live`;
+  sampled actor execution is allowed only for developer smoke tests and must
+  not be reported as capacity evidence.
 - `collect` uses the generated Ansible inventory to retrieve per-VM results,
   sync telemetry, and local load-generator telemetry.
 - `collect-server-evidence` queries server metrics/logs for the same `run_id`
   and stage time windows.
 - `aggregate` reads collected shard results plus `server-evidence.json` and
-  writes run-level `plan.json`, `results.json`, and `TEST_REPORT.md`.
+  writes run-level `plan.json` and `results.json`. The public script then runs
+  `scripts/generate-report.sh` to render `TEST_REPORT.md` from the fixed
+  template and collected artifacts.
 - `list-vms` lists leftover load-generator VMs by `home-100k` and `run_id`
   tags when cleanup needs review.
 - `destroy-vms` scrubs and deletes load-generator VMs.
@@ -383,8 +387,13 @@ automatically. Review the collected artifacts first, then run
 `destroy-vms --live --confirm-live`. During the live workflow the script prints
 status immediately and every 30 seconds with the current phase, VM count,
 collected shard count, server evidence state, report status, per load-generator
-VM resource samples, and per Kubernetes node resource samples. Provisioned node inventory is written to
-`loadtests/home-100k/reports/<run-id>/nodes.tsv`.
+VM resource samples, and per Kubernetes node resource samples. Provisioned node
+inventory is written to `loadtests/home-100k/reports/<run-id>/nodes.tsv`. The
+same 30-second samples are persisted for report generation:
+
+- `workflow-status.log`
+- `resource-samples/load-vms.tsv`
+- `resource-samples/k8s-nodes.tsv`
 
 Kubernetes node resource samples use `kubectl top nodes --no-headers` and print
 `[home-100k k8s-node]` lines. Kubeconfig resolution order is
@@ -394,13 +403,19 @@ Kubernetes node resource samples use `kubectl top nodes --no-headers` and print
 `HOME100K_K8S_NODE_RESOURCE_STATUS=0` to disable K8s node probing.
 
 Stage duration belongs in the non-secret description file, not in `~/.env`.
-The default profile uses `HOME100K_STAGE_WARM_UP=1m`,
-`HOME100K_STAGE_STEADY=2m`, and `HOME100K_STAGE_COOL_DOWN=45s`, so the planned
-window is 3 minutes 45 seconds per stage and 15 minutes across the 25K, 50K,
-75K, and 100K stages before provisioning, sync, collection, and evidence overhead.
+The default debug profile uses `HOME100K_STAGE_WARM_UP=15s`,
+`HOME100K_STAGE_STEADY=45s`, and `HOME100K_STAGE_COOL_DOWN=15s`, so the planned
+window is 75 seconds per stage and 5 minutes across the 25K, 50K, 75K, and
+100K stages before provisioning, sync, collection, and evidence overhead.
 Short review runs can lower these values in
 `loadtests/home-100k/scenarios/default.description.env` or a custom
 `HOME100K_DESCRIPTION_FILE`.
+
+Runner mode also belongs in the non-secret description file. The default is
+`HOME100K_RUNNER_MODE=live`. In live mode, each shard invokes the copied
+`rtk-cloud` runner and executes live `mqtt-test` traffic against the selected
+env-root. It must not fall back to sampled in-memory actor flows. Use
+`HOME100K_RUNNER_MODE=sample` only for local developer smoke tests.
 
 The Go CLI remains the implementation entrypoint underneath the script:
 
@@ -481,14 +496,17 @@ Live provision accepts `--linode-type`, `--linode-image`, `--root-pass`, and
 API and is not written into `vms.json`, `results.json`, or the report.
 `sync --live` reads the same `vms.json` and requires `--remote-workspace`,
 `--remote-env-root`, and SSH options. It builds a Linux runner binary locally,
-generates the Ansible inventory from provisioned VM IPs, writes per-VM shard
-manifests, and runs `loadtests/home-100k/ansible/sync.yml`. The playbook copies
-only the runner binary, the assigned shard manifest, and selected env-root
-artifacts; it does not upload `reports/**`, `plans/**`, or the whole
-load-test source tree.
+builds a Linux `rtk-cloud` binary for live MQTT/API traffic, generates the
+Ansible inventory from provisioned VM IPs, writes per-VM shard manifests, and
+runs `loadtests/home-100k/ansible/sync.yml`. The playbook copies only the
+runner binaries, the assigned shard manifest, and selected env-root artifacts;
+it does not upload `reports/**`, `plans/**`, or the whole load-test source
+tree.
 `run-stages --live` reads `vms.json`, regenerates the same inventory, and runs
 `loadtests/home-100k/ansible/run-stages.yml`. Each VM writes shard artifacts
-under `--remote-out-root/<run-id>/<vm-label>/`.
+under `--remote-out-root/<run-id>/<vm-label>/`. The Ansible vars include
+`runner_mode`; `live` mode invokes `rtk-cloud mqtt-test` for real MQTT/API
+traffic and refuses sampled actor fallback.
 `collect --live` reads `vms.json`, regenerates the same inventory, and runs
 `loadtests/home-100k/ansible/collect.yml` to fetch each VM's `results.json`,
 `TEST_REPORT.md`, resource snapshot, and sync telemetry into
@@ -499,9 +517,14 @@ ingress/nginx, and host/pod resources. It writes `server-evidence.json` when
 `--out-dir` is set. Partial probe failure is preserved as
 `complete=false`, so the final report cannot become a false `PASS`.
 `aggregate` reads `--out-dir/shards/*/results.json` plus
-`--out-dir/server-evidence.json`, then renders the final run-level report. Any
-shard with `load_generator_health.saturated=true` forces `INCOMPLETE` so
-load-generator saturation cannot be mistaken for server capacity.
+`--out-dir/server-evidence.json`, then writes run-level JSON artifacts. The
+operator-facing `home-100k.sh aggregate` command runs
+`scripts/generate-report.sh`, which reads `results.json`, server evidence,
+sync telemetry, workflow status logs, and resource sample TSV files to render
+the fixed-format `TEST_REPORT.md` from
+`reports/templates/TEST_REPORT.md.tmpl`. Any shard with
+`load_generator_health.saturated=true` forces `INCOMPLETE` so load-generator
+saturation cannot be mistaken for server capacity.
 `cleanup-home-100k-vms.sh` is the emergency cleanup helper for leftover Linode
 test nodes. It scans Linode for VMs whose label starts with `home-100k` or
 whose tags include `home-100k`, prints id, label, region, status, IPv4
@@ -534,6 +557,8 @@ Every report must include:
 - user scenario
 - IoT Device Shadow scenario
 - per-stage results
+- client target coverage by stage, including target devices, actual MQTT
+  connect/subscription counts, target users, and actual APP login counts
 - Device MQTT totals by stage and total
 - APP/User totals by stage and total
 - per-stage shadow latency p50/p95/p99
@@ -548,11 +573,15 @@ Every report must include:
 - server-side metrics/log evidence
 - server/client counter correlation
 - sync/provision telemetry with per-VM transfer bytes and remote disk snapshots
+- load-generator VM resource timeline summary from
+  `resource-samples/load-vms.tsv`
+- per-Kubernetes-node resource timeline summary from
+  `resource-samples/k8s-nodes.tsv`
 - bottleneck assessment
 
 If IoT Device Shadow evidence, MQTT broker evidence, APP/API evidence, parsed
-server counters, or non-zero client totals cannot be collected, the report
-status must be `INCOMPLETE`, not `PASS`.
+server counters, non-zero client totals, or stage target coverage cannot be
+collected, the report status must be `INCOMPLETE`, not `PASS`.
 
 If load-generator saturation invalidates the run, the report must say so
 instead of attributing the bottleneck to the server.

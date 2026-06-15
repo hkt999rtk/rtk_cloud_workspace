@@ -58,39 +58,11 @@ cross-cloud video load runner. `rtk_video_cloud` owns server prerequisites,
 metrics expectations, TURN/WebRTC setup notes, and cleanup policy for these E2E
 runs.
 
-The home MQTT simulation profile extends the workspace load runner with an
-env-root driven real user case. Operators should start it from the same local
-environment directory used by cloud provisioning:
-
-```sh
-go run ./scripts/go/rtk-cloud -- mqtt-test \
-  --env-root cloud_env/staging \
-  --brandname RTK
-```
-
-`go run ./scripts/go/rtk-cloud -- mqtt-test` is the direct entry point and writes sanitized
-`results.json` plus `TEST_REPORT.md` under
-`<env-root>/artifacts/home-mqtt-loadtest/<timestamp>/`. The wrapper discovers
-user credentials, device inventory, bind artifacts,
-service endpoints, and per-device mTLS cert/key material from the resolved
-environment root. APP actors use user credentials and Cloud APIs; device actors
-use their per-device certificate only to bootstrap a device token over mutual
-TLS. Production-like APP actors must model first-login app key generation, CSR
-submission through Account Manager, certissuer-backed app certificate
-pinning, and use the pinned certificate to bootstrap a subject-bound Video
-Cloud `app` token before sending commands or subscribing to device data.
-The default run is live MQTT E2E: each selected device calls
-`POST /request_token` with its mTLS certificate, connects to the staging MQTT
-broker with the issued token credential, subscribes to
-`devices/<device_id>/up/messages`, publishes a sample home-device envelope, and
-waits for the loopback message. WebRTC, relay, storage, clips, and snapshots are
-disabled for this profile. The design and developer issue breakdown live in
-`docs/home-mqtt-loadtest-simulation.md`.
-
-For the 100,000-device Home IoT Device Shadow capacity baseline, use the
-`home-100k` suite. It owns the 100K home scenario, IoT Device Shadow desired /
-reported / delta convergence, offline-device coverage, report contract, and
-review-time ephemeral Linode VM lifecycle commands:
+Home loading-test material is centralized under `loadtests/home-100k/`. For the
+100,000-device Home IoT Device Shadow capacity baseline, use the `home-100k`
+suite. It owns the 100K home scenario, IoT Device Shadow desired / reported /
+delta convergence, offline-device coverage, report contract, and ephemeral
+Linode VM lifecycle commands:
 
 ```sh
 go run ./loadtests/home-100k/cmd/home-100k -- plan \
@@ -99,28 +71,10 @@ go run ./loadtests/home-100k/cmd/home-100k -- plan \
   --region us-sea
 ```
 
-The older 10,000-device MQTT-only `mqtt-loadtest` wrapper remains a lower-level
-shard and aggregation reference. It prepares 2,500 users and 10,000 non-camera
-devices once, then runs repeatable local or distributed shards:
-
-```sh
-go run ./scripts/go/rtk-cloud -- mqtt-loadtest prepare \
-  --env-root cloud_env/staging \
-  --brandname RTK \
-  --plan
-
-go run ./scripts/go/rtk-cloud -- mqtt-loadtest run \
-  --env-root cloud_env/staging \
-  --brandname RTK
-```
-
-The default `baseline-10k` profile uses 100% connected MQTT devices, excludes
-camera/WebRTC/TURN/media, uses telemetry every 5 minutes, and writes shard
-results under `<env-root>/artifacts/mqtt-loadtest/<timestamp>/`. For multiple
-load-generator VMs, pass `--hosts-file`; the wrapper assigns one shard per SSH
-host and aggregates the copied shard results. See
-`docs/linode-100k-home-iot-shadow-loadtest.md` for the current capacity-test
-direction.
+See `loadtests/home-100k/README.md` and `loadtests/home-100k/docs/` for the
+operator guide, scenario notes, report schema, scripts, and legacy MQTT
+reference. Workspace-level testing docs should link there instead of duplicating
+Home loading-test commands.
 
 For a destructive staging reset followed by the full onboarding and MQTT smoke,
 use the one-stop orchestrator from the workspace root:

@@ -33,12 +33,18 @@
           - "{{ remote_shard_manifest }}"
           - --out-dir
           - "{{ remote_out_dir }}"
+          - --workspace
+          - "{{ remote_workspace }}"
+          - --rtk-cloud-binary
+          - "{{ remote_home_100k_dir }}/bin/rtk-cloud"
           - --stage-warm-up
           - "{{ stage_warm_up }}"
           - --stage-steady
           - "{{ stage_steady }}"
           - --stage-cool-down
           - "{{ stage_cool_down }}"
+          - --runner-mode
+          - "{{ runner_mode | default('sample') }}"
           - --honor-stage-durations
       async: 7200
       poll: 30

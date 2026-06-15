@@ -474,58 +474,20 @@ scripts/setup-staging-e2e-data.sh \
 
 輸出 `summary.json` 會包含 `users_file`、`device_bind_file`、`bind_validation_dir`，以及 create brand、create users、create devices、bind devices、validate bind 每段的 status、exit code、duration seconds 和 log path。這個腳本支援 `CLOUD_PROVIDER=linode` 與 `CLOUD_PROVIDER=lke`；其他 provider 會在任何 mutation 前 fail fast。
 
-### `go run ./scripts/go/rtk-cloud -- mqtt-loadtest`
+### Home loading test
 
-10,000 MQTT-only device capacity test 編排指令。它是兩階段流程，不會自動建立或刪除 Linode VM：
+Home loading test 相關的 scenario、operator guide、report schema、template、
+Ansible、scripts 與 legacy MQTT reference 已集中在：
 
-1. `prepare`：建立或驗證 2,500 users、10,000 MQTT-only devices、device bind artifact 與 bind validation。
-2. `run`：對已準備好的 fleet 執行 baseline shard load test。
-3. `aggregate`：合併多個 shard 的 `results.json`，輸出總報告。
-
-預設 baseline 對齊第一版 AWS cost/capacity 假設：2,500 users、每 user 4 devices、10,000 devices 100% MQTT connected，不含 camera/WebRTC/TURN/media。預設 mix 是 `light=3334,air_conditioner=3333,smart_meter=3333`。
-
-先看 prepare plan：
-
-```sh
-go run ./scripts/go/rtk-cloud -- mqtt-loadtest prepare \
-  --env-root cloud_env/staging \
-  --brandname RTK \
-  --plan
+```text
+loadtests/home-100k/
+loadtests/home-100k/docs/
 ```
 
-執行 prepare：
-
-```sh
-go run ./scripts/go/rtk-cloud -- mqtt-loadtest prepare \
-  --env-root cloud_env/staging \
-  --brandname RTK \
-  --run
-```
-
-本機單 shard 執行：
-
-```sh
-go run ./scripts/go/rtk-cloud -- mqtt-loadtest run \
-  --env-root cloud_env/staging \
-  --brandname RTK \
-  --shard-index 0 \
-  --shard-count 1
-```
-
-多台 load-generator VM 執行時，`--hosts-file` 每行一個 SSH target；script 會一台 host 對應一個 shard，跑完後拉回各 shard `results.json` 並 aggregate：
-
-```sh
-go run ./scripts/go/rtk-cloud -- mqtt-loadtest run \
-  --env-root cloud_env/staging \
-  --brandname RTK \
-  --hosts-file load-hosts.txt \
-  --remote-workspace /root/rtk_cloud_workspace \
-  --remote-env-root /root/rtk_cloud_workspace/cloud_env/staging/linode
-```
-
-如果 load-generator VM 尚未有 runner 和 env-root，可加 `--sync-remote`。這會透過 SSH 複製 `scripts/go` 和 env-root；env-root 內含 user artifact、device private key 和 certificate，load-generator VM 必須視為帶 secret 的測試基礎設施。
-
-這個指令現在是 100K Home IoT Device Shadow load test 的低階 shard/aggregate 參考；正式容量測試方向見 `docs/linode-100k-home-iot-shadow-loadtest.md` 與 `loadtests/home-100k/`。
+`go run ./scripts/go/rtk-cloud -- mqtt-loadtest` 仍是低階 MQTT transport
+參考，但 100K Home IoT Device Shadow 容量測試的文件與操作入口都以
+`loadtests/home-100k/` 為準。請不要在 `scripts/README.zh-TW.md` 內新增
+Home loading test 的詳細操作步驟。
 
 可用 `./stg.sh video RTK` 執行 staging WebRTC RTP relay smoke。這個測試只選最新 bind artifact 內具備 `video_streaming` service option 的 camera device，使用 device certificate mTLS 換 device token，使用 users artifact 內 app private key + app certificate mTLS 換 device-bound app token，然後重用 `e2e_test/video_cloud/load` runner。PASS 代表 device websocket owner online、viewer 建立 WebRTC session、server 回 SDP offer 與 ICE servers、device 送 SDP answer、ICE connected/completed、device 以 2s 1080p `testsrc2` Annex-B H.264 fixture loop 10 次送出 20s H.264 RTP，payload validation 看到 SPS/PPS/IDR/non-IDR NAL types，且 session close 成功。這不是 legacy raw RTP relay 測試；PASS 來源是 WebRTC signaling + H.264 RTP payload evidence。輸出在 `<env-root>/artifacts/video-relay-test/<timestamp>/results.json` 與 `TEST_REPORT.md`，console/report 會 redacted bearer token、TURN credential、private key、CSR 與 certificate PEM。
 

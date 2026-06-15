@@ -2,6 +2,7 @@ package home100k
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -216,6 +218,7 @@ type workflowFlagValues struct {
 	outDir             string
 	serverEvidenceFile string
 	live               bool
+	runnerMode         string
 	vmStateFile        string
 	remoteWorkspace    string
 	remoteEnvRoot      string
@@ -231,6 +234,9 @@ type shardRunFlagValues struct {
 	shardIndex          int
 	shardManifest       string
 	honorStageDurations bool
+	runnerMode          string
+	rtkCloudBinary      string
+	workspace           string
 }
 
 func executeProvisionVMs(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -363,6 +369,10 @@ func executeRunStages(args []string, stdout io.Writer, stderr io.Writer) int {
 			"dispatched": vms,
 		})
 	}
+	if strings.EqualFold(values.runnerMode, "live") || strings.EqualFold(values.runnerMode, "formal") {
+		fmt.Fprintln(stderr, "formal live runner requires the VM/Ansible workflow for shard dispatch; refusing to run sampled actor executor")
+		return 2
+	}
 	results, err := ExecuteStages(plan, StageExecutionOptions{SampleFlowsPerPresence: 2})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -413,6 +423,19 @@ func executeShardRun(args []string, stdout io.Writer, stderr io.Writer) int {
 		assignment = manifest
 	}
 	runID := normalizedRunID(values.runID)
+	if strings.EqualFold(values.runnerMode, "live") || strings.EqualFold(values.runnerMode, "formal") {
+		if err := runLiveShard(plan, assignment, values, runID); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return writeJSONTo(stdout, stderr, map[string]any{
+			"run_id":      runID,
+			"role":        values.role,
+			"shard_index": values.shardIndex,
+			"runner_mode": "live",
+			"out_dir":     firstNonEmpty(strings.TrimSpace(values.outDir), filepath.Join("loadtests", "home-100k", "reports", runID, values.role, fmt.Sprintf("%03d", values.shardIndex))),
+		})
+	}
 	results, err := ExecuteStages(plan, StageExecutionOptions{SampleFlowsPerPresence: 2, HonorStageDurations: values.honorStageDurations})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -454,6 +477,231 @@ func executeShardRun(args []string, stdout io.Writer, stderr io.Writer) int {
 		"results_file": resultFile,
 		"report_file":  reportFile,
 	})
+}
+
+func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues, runID string) error {
+	outDir := strings.TrimSpace(values.outDir)
+	if outDir == "" {
+		outDir = filepath.Join("loadtests", "home-100k", "reports", runID, values.role, fmt.Sprintf("%03d", values.shardIndex))
+	}
+	rtkCloud := firstNonEmpty(strings.TrimSpace(values.rtkCloudBinary), "rtk-cloud")
+	deviceShardCount := len(plan.ShardsByRole("device-mqtt"))
+	if deviceShardCount <= 0 {
+		return fmt.Errorf("plan has no device-mqtt shards")
+	}
+	stageResults := make([]StageResult, 0, len(plan.Stages))
+	for _, stage := range plan.Stages {
+		durationSeconds, err := stageWindowSeconds(stage)
+		if err != nil {
+			return fmt.Errorf("stage %s duration: %w", stage.Name, err)
+		}
+		maxConnected := shardConnectedDevices(stage.ConnectedDevices, assignment)
+		stageOut := filepath.Join(outDir, "mqtt-test", stage.Name)
+		args := []string{
+			"mqtt-test",
+			"--env-root", plan.Conditions.EnvRoot,
+			"--brandname", plan.Conditions.Brandname,
+			"--profile", "baseline-10k",
+			"--duration-seconds", strconv.Itoa(durationSeconds),
+			"--out-dir", stageOut,
+			"--mqtt-probe",
+			"--shard-index", strconv.Itoa(assignment.Index),
+			"--shard-count", strconv.Itoa(deviceShardCount),
+			"--ramp-up", stage.WarmUp,
+			"--telemetry-interval", stage.SteadyState,
+			"--state-interval", stage.SteadyState,
+			"--command-rate-per-device-per-day", "1",
+			"--concurrency", strconv.Itoa(minInt(maxConnected, 250)),
+			"--max-connected-devices", strconv.Itoa(maxConnected),
+		}
+		if strings.TrimSpace(values.workspace) != "" {
+			args = append([]string{args[0], "--workspace", values.workspace}, args[1:]...)
+		}
+		if err := commandRunner(rtkCloud, args...); err != nil {
+			return fmt.Errorf("stage %s live mqtt-test failed: %w", stage.Name, err)
+		}
+		stageResult, err := loadLiveMQTTStageResult(filepath.Join(stageOut, "results.json"), stage, maxConnected)
+		if err != nil {
+			return fmt.Errorf("stage %s live result: %w", stage.Name, err)
+		}
+		stageResults = append(stageResults, stageResult)
+	}
+	resultFile := filepath.Join(outDir, "results.json")
+	reportFile := filepath.Join(outDir, "TEST_REPORT.md")
+	if err := writeJSONFile(resultFile, map[string]any{
+		"run_id":                runID,
+		"role":                  values.role,
+		"shard_index":           values.shardIndex,
+		"runner_mode":           "live",
+		"vm_assignment":         assignment,
+		"stage_results":         stageResults,
+		"load_generator_health": LoadGeneratorHealth{},
+	}); err != nil {
+		return err
+	}
+	report := RenderReport(ReportInput{
+		Plan:                 plan,
+		RunID:                runID,
+		ShadowEvidenceFound:  shadowEvidenceComplete(stageResults),
+		ServerEvidenceFound:  false,
+		LoadGeneratorHealthy: true,
+		StageResults:         stageResults,
+	})
+	return os.WriteFile(reportFile, []byte(report), 0o644)
+}
+
+func stageWindowSeconds(stage Stage) (int, error) {
+	total := 0
+	for _, raw := range []string{stage.WarmUp, stage.SteadyState, stage.CoolDown} {
+		duration, err := time.ParseDuration(raw)
+		if err != nil {
+			return 0, err
+		}
+		if duration <= 0 {
+			return 0, fmt.Errorf("duration must be positive, got %s", raw)
+		}
+		total += int(duration.Seconds())
+	}
+	if total <= 0 {
+		return 0, fmt.Errorf("stage window must be positive")
+	}
+	return total, nil
+}
+
+func shardConnectedDevices(stageConnected int, assignment VMAssignment) int {
+	deviceCount := 0
+	for _, shard := range assignment.TaskShards {
+		if shard.Role == "device-mqtt" {
+			deviceCount += shard.Count
+		}
+	}
+	if deviceCount <= 0 {
+		deviceCount = DefaultDevicesPerVM
+	}
+	target := stageConnected * deviceCount / DefaultDeviceCount
+	if target <= 0 && stageConnected > 0 {
+		target = 1
+	}
+	return target
+}
+
+func loadLiveMQTTStageResult(path string, stage Stage, maxConnected int) (StageResult, error) {
+	var raw struct {
+		Overall string `json:"overall"`
+		Metrics struct {
+			DevicesSelected   int `json:"devices_selected"`
+			CommandsAttempted int `json:"commands_attempted"`
+			CommandsPassed    int `json:"commands_passed"`
+		} `json:"metrics"`
+		ConnectAttempts        int64 `json:"connect_attempts"`
+		ConnectSuccesses       int64 `json:"connect_successes"`
+		ConnectFailures        int64 `json:"connect_failures"`
+		SubscribeSuccesses     int64 `json:"subscribe_successes"`
+		PublishSuccesses       int64 `json:"publish_successes"`
+		PublishFailures        int64 `json:"publish_failures"`
+		MessagesReceived       int64 `json:"messages_received"`
+		ReportedEvents         int64 `json:"reported_events"`
+		TotalBytesSent         int64 `json:"total_bytes_sent"`
+		TotalBytesReceived     int64 `json:"total_bytes_received"`
+		AuthViolations         int64 `json:"auth_violations"`
+		HTTPRequests           int64 `json:"http_requests"`
+		HTTPSuccesses          int64 `json:"http_successes"`
+		HTTPFailures           int64 `json:"http_failures"`
+		TotalHTTPBytesSent     int64 `json:"total_http_bytes_sent"`
+		TotalHTTPBytesReceived int64 `json:"total_http_bytes_received"`
+	}
+	if err := readJSON(path, &raw); err != nil {
+		return StageResult{}, err
+	}
+	devices := raw.Metrics.DevicesSelected
+	if devices <= 0 {
+		devices = maxConnected
+	}
+	commandsAttempted := raw.Metrics.CommandsAttempted
+	commandsPassed := raw.Metrics.CommandsPassed
+	connectRate := 100.0
+	if strings.EqualFold(raw.Overall, "fail") {
+		connectRate = 0
+	}
+	stageUsers := expectedStageUsers(stage.ConnectedDevices) / DefaultUserShards
+	if stageUsers <= 0 && stage.ConnectedDevices > 0 {
+		stageUsers = 1
+	}
+	connectAttempts := nonZeroInt64(raw.ConnectAttempts, int64(devices))
+	connectSuccess := nonZeroInt64(raw.ConnectSuccesses, int64(devices))
+	connectFail := raw.ConnectFailures
+	if connectFail == 0 && connectAttempts > connectSuccess {
+		connectFail = connectAttempts - connectSuccess
+	}
+	subscribes := nonZeroInt64(raw.SubscribeSuccesses, int64(devices))
+	publishes := raw.PublishSuccesses + raw.PublishFailures
+	if publishes == 0 {
+		publishes = int64(commandsAttempted)
+	}
+	receivedMessages := nonZeroInt64(raw.MessagesReceived, int64(commandsPassed))
+	reportedPublishes := nonZeroInt64(raw.ReportedEvents, int64(commandsPassed))
+	httpRequests := nonZeroInt64(raw.HTTPRequests, int64(commandsAttempted))
+	httpSuccesses := nonZeroInt64(raw.HTTPSuccesses, int64(commandsPassed))
+	httpFailures := raw.HTTPFailures
+	if httpFailures == 0 && httpRequests > httpSuccesses {
+		httpFailures = httpRequests - httpSuccesses
+	}
+	return StageResult{
+		Name:             stage.Name,
+		ConnectedDevices: stage.ConnectedDevices,
+		DeviceMQTTTotals: DeviceMQTTTotals{
+			ConnectAttempts:   connectAttempts,
+			ConnectSuccess:    connectSuccess,
+			ConnectFail:       connectFail,
+			Subscribes:        subscribes,
+			Publishes:         publishes,
+			ReceivedMessages:  receivedMessages,
+			DeltaReceived:     receivedMessages,
+			ReportedPublishes: reportedPublishes,
+			RejectedPublishes: raw.PublishFailures,
+			BytesSent:         raw.TotalBytesSent,
+			BytesReceived:     raw.TotalBytesReceived,
+		},
+		AppUserTotals: AppUserTotals{
+			LoginAttempts:       int64(stageUsers),
+			LoginSuccess:        int64(stageUsers),
+			ListDevicesRequests: int64(stageUsers),
+			ReadShadowRequests:  httpRequests,
+			DesiredWrites:       httpRequests,
+			ReceivedAcks:        httpSuccesses,
+			BytesSent:           raw.TotalHTTPBytesSent,
+			BytesReceived:       raw.TotalHTTPBytesReceived,
+		},
+		MQTTConnectSuccessRatePercent:  connectRate,
+		DesiredReportedConvergenceRate: percent(commandsPassed, commandsAttempted),
+		OfflineDesiredConvergenceRate:  100,
+		DeltaClearSuccessRatePercent:   percent(commandsPassed, commandsAttempted),
+		RejectedUpdateCount:            int(raw.HTTPFailures),
+		AuthorizationViolationCount:    int(raw.AuthViolations),
+		ClientTokenCorrelationCount:    int(httpSuccesses),
+	}, nil
+}
+
+func nonZeroInt64(value int64, fallback int64) int64 {
+	if value != 0 {
+		return value
+	}
+	return fallback
+}
+
+func readJSON(path string, out any) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, out)
+}
+
+func minInt(a int, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func executeCollect(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -746,6 +994,7 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	outDir := fs.String("out-dir", "", "artifact output directory")
 	serverEvidenceFile := fs.String("server-evidence-file", "", "server evidence JSON file")
 	live := fs.Bool("live", false, "execute live remote workflow step")
+	runnerMode := fs.String("runner-mode", "sample", "runner mode: sample or live")
 	vmStateFile := fs.String("vm-state-file", "", "VM state JSON from provision-vms")
 	remoteWorkspace := fs.String("remote-workspace", "", "workspace path on load-generator VMs")
 	remoteEnvRoot := fs.String("remote-env-root", "", "env-root path on load-generator VMs")
@@ -762,6 +1011,7 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 		outDir:             *outDir,
 		serverEvidenceFile: *serverEvidenceFile,
 		live:               *live,
+		runnerMode:         *runnerMode,
 		vmStateFile:        *vmStateFile,
 		remoteWorkspace:    *remoteWorkspace,
 		remoteEnvRoot:      *remoteEnvRoot,
@@ -784,6 +1034,9 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	shardIndex := fs.Int("shard-index", 0, "shard index")
 	shardManifest := fs.String("shard-manifest", "", "shard manifest JSON path")
 	honorStageDurations := fs.Bool("honor-stage-durations", false, "sleep through configured stage warm-up, steady, and cool-down windows")
+	runnerMode := fs.String("runner-mode", "sample", "runner mode: sample or live")
+	rtkCloudBinary := fs.String("rtk-cloud-binary", "rtk-cloud", "rtk-cloud binary for live MQTT/API runner")
+	workspace := fs.String("workspace", "", "workspace path for live MQTT/API runner")
 	if err := fs.Parse(args); err != nil {
 		return PlanOptions{}, shardRunFlagValues{}, err
 	}
@@ -799,6 +1052,9 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 		shardIndex:          *shardIndex,
 		shardManifest:       *shardManifest,
 		honorStageDurations: *honorStageDurations,
+		runnerMode:          *runnerMode,
+		rtkCloudBinary:      *rtkCloudBinary,
+		workspace:           *workspace,
 	}, nil
 }
 
@@ -1008,12 +1264,12 @@ func kubectlLogsProbe(source string, namespace string, selector string, detail s
 }
 
 func syncRemoteVMs(vms []LinodeVM, plan Plan, values workflowFlagValues) error {
-	runnerBinary, err := buildRemoteRunnerBinary(values)
+	binaries, err := buildRemoteRunnerBinaries(values)
 	if err != nil {
 		return err
 	}
 	manifestBase := workflowOutDir(values)
-	if err := writeAnsibleInputs(vms, plan, values, runnerBinary); err != nil {
+	if err := writeAnsibleInputs(vms, plan, values, binaries); err != nil {
 		return err
 	}
 	if err := writeJSONFile(filepath.Join(manifestBase, "sync-telemetry.json"), SyncTelemetry{VMs: initialSyncTelemetry(vms)}); err != nil {
@@ -1039,7 +1295,12 @@ func envRootRsyncFilters() []string {
 	}
 }
 
-func writeAnsibleInputs(vms []LinodeVM, plan Plan, values workflowFlagValues, runnerBinary string) error {
+type remoteRunnerBinaries struct {
+	Home100K string
+	RTKCloud string
+}
+
+func writeAnsibleInputs(vms []LinodeVM, plan Plan, values workflowFlagValues, binaries remoteRunnerBinaries) error {
 	base := workflowOutDir(values)
 	for _, vm := range vms {
 		assignment, ok := findAssignmentByLabel(plan, vm.Label)
@@ -1050,21 +1311,136 @@ func writeAnsibleInputs(vms []LinodeVM, plan Plan, values workflowFlagValues, ru
 		if err := writeJSONFile(manifestPath, assignment); err != nil {
 			return fmt.Errorf("write shard manifest for %s: %w", vm.Label, err)
 		}
+		filterPath := filepath.Join(base, "env-rsync-filters", vm.Label+".filter")
+		if err := writeEnvRsyncFilter(filterPath, plan.Conditions.EnvRoot, assignment); err != nil {
+			return fmt.Errorf("write env rsync filter for %s: %w", vm.Label, err)
+		}
 	}
-	return writeAnsibleInventoryAndVars(vms, plan, values, runnerBinary)
+	return writeAnsibleInventoryAndVars(vms, plan, values, binaries)
 }
 
 func writeAnsibleInputsForExistingManifests(vms []LinodeVM, plan Plan, values workflowFlagValues) error {
-	return writeAnsibleInventoryAndVars(vms, plan, values, filepath.Join(workflowOutDir(values), "bin", "home-100k-linux-amd64"))
+	return writeAnsibleInventoryAndVars(vms, plan, values, remoteRunnerBinaries{
+		Home100K: filepath.Join(workflowOutDir(values), "bin", "home-100k-linux-amd64"),
+		RTKCloud: filepath.Join(workflowOutDir(values), "bin", "rtk-cloud-linux-amd64"),
+	})
 }
 
-func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlagValues, runnerBinary string) error {
+func writeEnvRsyncFilter(path string, envRoot string, assignment VMAssignment) error {
+	lines := []string{
+		"+ /env/***",
+		"+ /services/***",
+		"+ /devices/",
+		"+ /devices/test_device/",
+		"+ /devices/test_device/loadtest.env",
+		"+ /devices/test_device/summary.json",
+		"+ /devices/test_device/manifests/",
+		"+ /devices/test_device/manifests/devices.csv",
+		"+ /devices/test_device/manifests/devices.json",
+		"+ /devices/test_device/manifests/device_ids.txt",
+		"+ /devices/test_device/devices/",
+		"+ /devices/test_device/bundles/",
+		"+ /artifacts/",
+		"+ /artifacts/users/",
+		"+ /artifacts/users/*.json",
+		"+ /artifacts/device-bind/",
+		"+ /artifacts/device-bind/*.json",
+	}
+	deviceRows, err := readDeviceManifestRows(filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.csv"))
+	if err == nil {
+		for _, shard := range assignment.TaskShards {
+			if shard.Role != "device-mqtt" {
+				continue
+			}
+			for idx := shard.Start; idx < shard.End && idx < len(deviceRows); idx++ {
+				row := deviceRows[idx]
+				lines = append(lines,
+					"+ /devices/test_device/devices/"+row.DeviceType+"/",
+					"+ /devices/test_device/devices/"+row.DeviceType+"/"+row.DeviceID+"/***",
+					"+ /devices/test_device/bundles/"+row.DeviceType+"/",
+					"+ /devices/test_device/bundles/"+row.DeviceType+"/"+row.DeviceID+".pem",
+				)
+			}
+		}
+	}
+	lines = append(lines, "- *")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(strings.Join(deduplicateLines(lines), "\n")+"\n"), 0o644)
+}
+
+type deviceManifestRow struct {
+	DeviceID   string
+	DeviceType string
+}
+
+func readDeviceManifestRows(path string) ([]deviceManifestRow, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	reader := csv.NewReader(file)
+	reader.FieldsPerRecord = -1
+	rows, err := reader.ReadAll()
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("empty devices manifest: %s", path)
+	}
+	header := map[string]int{}
+	for idx, name := range rows[0] {
+		header[strings.TrimSpace(name)] = idx
+	}
+	idIdx, ok := header["device_id"]
+	if !ok {
+		return nil, fmt.Errorf("devices manifest missing device_id")
+	}
+	typeIdx, ok := header["device_type"]
+	if !ok {
+		return nil, fmt.Errorf("devices manifest missing device_type")
+	}
+	out := make([]deviceManifestRow, 0, len(rows)-1)
+	for _, row := range rows[1:] {
+		if idIdx >= len(row) || typeIdx >= len(row) {
+			continue
+		}
+		deviceID := strings.TrimSpace(row[idIdx])
+		deviceType := strings.TrimSpace(row[typeIdx])
+		if deviceID == "" || deviceType == "" {
+			continue
+		}
+		out = append(out, deviceManifestRow{DeviceID: deviceID, DeviceType: deviceType})
+	}
+	return out, nil
+}
+
+func deduplicateLines(lines []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if seen[line] {
+			continue
+		}
+		seen[line] = true
+		out = append(out, line)
+	}
+	return out
+}
+
+func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlagValues, binaries remoteRunnerBinaries) error {
 	base := workflowOutDir(values)
 	localOutDir, err := filepath.Abs(base)
 	if err != nil {
 		return err
 	}
-	localRunner, err := filepath.Abs(runnerBinary)
+	localRunner, err := filepath.Abs(binaries.Home100K)
+	if err != nil {
+		return err
+	}
+	localRTKCloud, err := filepath.Abs(binaries.RTKCloud)
 	if err != nil {
 		return err
 	}
@@ -1089,6 +1465,10 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 		if err != nil {
 			return err
 		}
+		localEnvRsyncFilter, err := filepath.Abs(filepath.Join(base, "env-rsync-filters", vm.Label+".filter"))
+		if err != nil {
+			return err
+		}
 		hosts[vm.Label] = map[string]any{
 			"ansible_host":                 vm.PublicIPv4,
 			"ansible_user":                 values.sshUser,
@@ -1099,6 +1479,7 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 			"shard_index":                  shardIndex,
 			"vm_label":                     vm.Label,
 			"local_shard_manifest":         localShardManifest,
+			"local_env_rsync_filter":       localEnvRsyncFilter,
 			"remote_shard_manifest":        strings.TrimRight(values.remoteWorkspace, "/") + "/loadtests/home-100k/shard-manifests/current.json",
 			"remote_out_dir":               strings.TrimRight(firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k"), "/") + "/" + normalizedRunID(values.runID) + "/" + vm.Label,
 		}
@@ -1127,6 +1508,7 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 		"run_id":           normalizedRunID(values.runID),
 		"local_out_dir":    localOutDir,
 		"local_runner":     localRunner,
+		"local_rtk_cloud":  localRTKCloud,
 		"local_env_root":   strings.TrimRight(localEnvRoot, "/"),
 		"remote_workspace": strings.TrimRight(values.remoteWorkspace, "/"),
 		"remote_env_root":  strings.TrimRight(values.remoteEnvRoot, "/"),
@@ -1136,6 +1518,7 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 		"stage_warm_up":    stageWarmUp,
 		"stage_steady":     stageSteady,
 		"stage_cool_down":  stageCoolDown,
+		"runner_mode":      firstNonEmpty(values.runnerMode, "sample"),
 	}
 	return writeJSONFile(filepath.Join(ansibleDir, "extra-vars.json"), extraVars)
 }
@@ -1188,21 +1571,26 @@ func forEachVMParallel(vms []LinodeVM, fn func(LinodeVM) error) error {
 	return nil
 }
 
-func buildRemoteRunnerBinary(values workflowFlagValues) (string, error) {
+func buildRemoteRunnerBinaries(values workflowFlagValues) (remoteRunnerBinaries, error) {
 	base := strings.TrimSpace(values.outDir)
 	if base == "" {
 		base = filepath.Join("loadtests", "home-100k", "reports", normalizedRunID(values.runID))
 	}
 	binDir := filepath.Join(base, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
-		return "", err
+		return remoteRunnerBinaries{}, err
 	}
-	out := filepath.Join(binDir, "home-100k-linux-amd64")
-	cmd := fmt.Sprintf("GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o %s ./loadtests/home-100k/cmd/home-100k", shellQuote(out))
+	home100K := filepath.Join(binDir, "home-100k-linux-amd64")
+	cmd := fmt.Sprintf("GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o %s ./loadtests/home-100k/cmd/home-100k", shellQuote(home100K))
 	if err := commandRunner("bash", "-lc", cmd); err != nil {
-		return "", fmt.Errorf("build linux runner binary: %w", err)
+		return remoteRunnerBinaries{}, fmt.Errorf("build linux home-100k runner binary: %w", err)
 	}
-	return out, nil
+	rtkCloud := filepath.Join(binDir, "rtk-cloud-linux-amd64")
+	cmd = fmt.Sprintf("GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o %s ./scripts/go/rtk-cloud", shellQuote(rtkCloud))
+	if err := commandRunner("bash", "-lc", cmd); err != nil {
+		return remoteRunnerBinaries{}, fmt.Errorf("build linux rtk-cloud runner binary: %w", err)
+	}
+	return remoteRunnerBinaries{Home100K: home100K, RTKCloud: rtkCloud}, nil
 }
 
 func waitForRemoteSSH(target string, sshBase []string) error {

@@ -56,9 +56,14 @@ status_interval_seconds="${HOME100K_STATUS_INTERVAL_SECONDS:-30}"
 stage_warm_up="${HOME100K_STAGE_WARM_UP:-1m}"
 stage_steady="${HOME100K_STAGE_STEADY:-2m}"
 stage_cool_down="${HOME100K_STAGE_COOL_DOWN:-45s}"
+runner_mode="${HOME100K_RUNNER_MODE:-live}"
 status_file="$repo_root/$out_dir/.workflow-status"
 nodes_file="$repo_root/$out_dir/nodes.tsv"
 ssh_known_hosts_file="$repo_root/$out_dir/ssh_known_hosts"
+resource_samples_dir="$repo_root/$out_dir/resource-samples"
+load_vm_resource_file="$resource_samples_dir/load-vms.tsv"
+k8s_node_resource_file="$resource_samples_dir/k8s-nodes.tsv"
+workflow_status_log="$repo_root/$out_dir/workflow-status.log"
 
 usage() {
   cat <<EOF
@@ -76,6 +81,7 @@ Commands:
   collect                 Review or live-collect shard artifacts.
   collect-server-evidence Review or live-collect server evidence.
   aggregate               Aggregate collected shards and server evidence.
+  generate-report         Generate TEST_REPORT.md from collected artifacts and template.
   list-vms                Review or live-list leftover VMs by run id.
   destroy-vms             Review or live-destroy VMs by state file.
   workflow-dry-run        Run plan plus dry-run lifecycle review commands.
@@ -100,6 +106,7 @@ Defaults can be overridden with:
   HOME100K_STAGE_WARM_UP default: 1m
   HOME100K_STAGE_STEADY default: 2m
   HOME100K_STAGE_COOL_DOWN default: 45s
+  HOME100K_RUNNER_MODE default: live; use sample only for local developer smoke tests
   HOME100K_NODE_RESOURCE_STATUS default: 1
   HOME100K_K8S_NODE_RESOURCE_STATUS default: 1
   HOME100K_KUBECONFIG default: RTK_CLOUD_LKE_KUBECONFIG, LKE_KUBECONFIG, CLOUD_STAGING_K8S_KUBECONFIG, or <env-root>/state/lke-kubeconfig.yaml
@@ -120,6 +127,29 @@ run_home100k() {
 set_phase() {
   mkdir -p "$(dirname "$status_file")"
   printf '%s\n' "$1" > "$status_file"
+}
+
+ensure_resource_logs() {
+  mkdir -p "$resource_samples_dir"
+  if [[ ! -f "$load_vm_resource_file" ]]; then
+    printf 'time\trun_id\tphase\tlabel\tip\trole\tid\tstatus\tcpu_pct\tload1\tmem_used_mb\tmem_total_mb\tdisk_used\tdisk_total\tdisk_pct\n' > "$load_vm_resource_file"
+  fi
+  if [[ ! -f "$k8s_node_resource_file" ]]; then
+    printf 'time\trun_id\tphase\tname\tstatus\tcpu\tcpu_pct\tmem\tmem_pct\treason\n' > "$k8s_node_resource_file"
+  fi
+  if [[ ! -f "$workflow_status_log" ]]; then
+    printf 'time\trun_id\telapsed\tphase\tvms\tshard_results\tserver_evidence\treport_status\n' > "$workflow_status_log"
+  fi
+}
+
+kv_field() {
+  local sample="$1"
+  local key="$2"
+  printf '%s\n' "$sample" | tr ' ' '\n' | awk -F= -v key="$key" '$1 == key {print $2; found=1; exit} END {if (!found) print ""}'
+}
+
+generate_report_from_artifacts() {
+  "$repo_root/loadtests/home-100k/scripts/generate-report.sh" --out-dir "$repo_root/$out_dir"
 }
 
 write_nodes_file() {
@@ -152,6 +182,13 @@ node_resource_status() {
   if [[ "${HOME100K_NODE_RESOURCE_STATUS:-1}" == "0" || ! -f "$nodes_file" ]]; then
     return
   fi
+  ensure_resource_logs
+  local now phase
+  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  phase="starting"
+  if [[ -f "$status_file" ]]; then
+    phase="$(cat "$status_file")"
+  fi
   while IFS=$'\t' read -r label ip role id; do
     if [[ "$label" == "label" || -z "$ip" ]]; then
       continue
@@ -163,6 +200,19 @@ node_resource_status() {
       sample="unreachable"
     fi
     printf '[home-100k node] label=%s ip=%s role=%s id=%s %s\n' "$label" "$ip" "$role" "$id" "$sample" >&2
+    if [[ "$sample" == "unreachable" ]]; then
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\tunreachable\t\t\t\t\t\t\t\n' "$now" "$run_id" "$phase" "$label" "$ip" "$role" "$id" >> "$load_vm_resource_file"
+    else
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\tok\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$now" "$run_id" "$phase" "$label" "$ip" "$role" "$id" \
+        "$(kv_field "$sample" cpu_pct)" \
+        "$(kv_field "$sample" load1)" \
+        "$(kv_field "$sample" mem_used_mb)" \
+        "$(kv_field "$sample" mem_total_mb)" \
+        "$(kv_field "$sample" disk_used)" \
+        "$(kv_field "$sample" disk_total)" \
+        "$(kv_field "$sample" disk_pct | tr -d '%')" >> "$load_vm_resource_file"
+    fi
   done < "$nodes_file"
 }
 
@@ -194,9 +244,17 @@ k8s_node_resource_status() {
   if [[ "${HOME100K_K8S_NODE_RESOURCE_STATUS:-1}" == "0" ]]; then
     return
   fi
+  ensure_resource_logs
+  local now phase
+  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  phase="starting"
+  if [[ -f "$status_file" ]]; then
+    phase="$(cat "$status_file")"
+  fi
   local kubectl_bin="${HOME100K_KUBECTL:-${RTK_CLOUD_KUBECTL:-kubectl}}"
   if ! command -v "$kubectl_bin" >/dev/null 2>&1; then
     printf '[home-100k k8s-node] unavailable reason=kubectl-not-found\n' >&2
+    printf '%s\t%s\t%s\t%s\tunavailable\t\t\t\t\tkubectl-not-found\n' "$now" "$run_id" "$phase" "all" >> "$k8s_node_resource_file"
     return
   fi
   local kubeconfig="" output rc
@@ -209,10 +267,12 @@ k8s_node_resource_status() {
   if [[ -n "${rc:-}" ]]; then
     output="$(printf '%s' "$output" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/[[:space:]]$//')"
     printf '[home-100k k8s-node] unavailable reason=%s\n' "${output:-kubectl-top-nodes-failed}" >&2
+    printf '%s\t%s\t%s\t%s\tunavailable\t\t\t\t\t%s\n' "$now" "$run_id" "$phase" "all" "${output:-kubectl-top-nodes-failed}" >> "$k8s_node_resource_file"
     return
   fi
   if [[ -z "$output" ]]; then
     printf '[home-100k k8s-node] unavailable reason=no-node-metrics\n' >&2
+    printf '%s\t%s\t%s\t%s\tunavailable\t\t\t\t\tno-node-metrics\n' "$now" "$run_id" "$phase" "all" >> "$k8s_node_resource_file"
     return
   fi
   printf '%s\n' "$output" | awk '
@@ -220,6 +280,13 @@ k8s_node_resource_status() {
       printf("[home-100k k8s-node] name=%s cpu=%s cpu_pct=%s mem=%s mem_pct=%s\n", $1, $2, $3, $4, $5)
     }
   ' >&2
+  printf '%s\n' "$output" | awk -v now="$now" -v run_id="$run_id" -v phase="$phase" '
+    NF >= 5 {
+      gsub(/%$/, "", $3)
+      gsub(/%$/, "", $5)
+      printf("%s\t%s\t%s\t%s\tok\t%s\t%s\t%s\t%s\t\n", now, run_id, phase, $1, $2, $3, $4, $5)
+    }
+  ' >> "$k8s_node_resource_file"
 }
 
 workflow_status() {
@@ -258,6 +325,8 @@ workflow_status() {
     printf '[home-100k status] time=%s elapsed=%s run_id=%s phase=%s\n' "$now" "$elapsed" "$run_id" "$phase"
     printf '[home-100k status] out_dir=%s vms=%s/10 shard_results=%s server_evidence=%s report_status=%s stage_window=warm_up:%s,steady:%s,cool_down:%s\n' "$out_dir" "$vm_count" "$shard_count" "$evidence_status" "$report_status" "$stage_warm_up" "$stage_steady" "$stage_cool_down"
   } >&2
+  ensure_resource_logs
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$now" "$run_id" "$elapsed" "$phase" "$vm_count" "$shard_count" "$evidence_status" "$report_status" >> "$workflow_status_log"
   node_resource_status
   k8s_node_resource_status
 }
@@ -318,7 +387,7 @@ case "$command" in
     run_home100k sync "${common_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json" "$@"
     ;;
   run-stages)
-    run_home100k run-stages "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" "$@"
+    run_home100k run-stages "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --runner-mode "$runner_mode" "$@"
     ;;
   collect)
     mkdir -p "$repo_root/$out_dir"
@@ -332,6 +401,11 @@ case "$command" in
   aggregate)
     mkdir -p "$repo_root/$out_dir"
     run_home100k aggregate "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" "$@"
+    generate_report_from_artifacts
+    ;;
+  generate-report)
+    mkdir -p "$repo_root/$out_dir"
+    generate_report_from_artifacts
     ;;
   list-vms)
     run_home100k list-vms "${common_args[@]}" --run-id "$run_id" "$@"
@@ -343,7 +417,7 @@ case "$command" in
     run_home100k plan "${common_args[@]}"
     run_home100k provision-vms "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir"
     run_home100k sync "${common_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json"
-    run_home100k run-stages "${common_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json"
+    run_home100k run-stages "${common_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json" --runner-mode "$runner_mode"
     run_home100k collect "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json"
     run_home100k collect-server-evidence "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir"
     ;;
@@ -370,7 +444,7 @@ case "$command" in
     run_home100k sync "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
     workflow_status
     set_phase "run-stages"
-    run_home100k run-stages "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
+    run_home100k run-stages "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key" --runner-mode "$runner_mode"
     workflow_status
     set_phase "collect"
     run_home100k collect "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
@@ -381,6 +455,7 @@ case "$command" in
     workflow_status
     set_phase "aggregate"
     run_home100k aggregate "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir"
+    generate_report_from_artifacts
     set_phase "complete"
     workflow_status
     stop_status_monitor
