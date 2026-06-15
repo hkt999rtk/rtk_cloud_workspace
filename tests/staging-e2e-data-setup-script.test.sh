@@ -150,6 +150,78 @@ actual="$(cut -f1 "$COMMAND_LOG")"
 	exit 1
 }
 
+: > "$COMMAND_LOG"
+cat > "$ENV_ROOT/devices/test_device/manifests/devices.json" <<'EOF_DEVICES'
+[
+  {"device_id":"load-device-0001"},
+  {"device_id":"load-device-0002"},
+  {"device_id":"load-device-0003"},
+  {"device_id":"load-device-0004"}
+]
+EOF_DEVICES
+cat > "$ENV_ROOT/artifacts/device-bind/rtk-device-bind-complete.json" <<'EOF_BIND'
+{"brandname":"RTK","assignments":[
+  {"device_id":"load-device-0001"},
+  {"device_id":"load-device-0002"},
+  {"device_id":"load-device-0003"},
+  {"device_id":"load-device-0004"}
+]}
+EOF_BIND
+cat > "$TMP/validate-bind-repair.sh" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\t%s\\n' "validate-bind" "\$*" >> "$COMMAND_LOG"
+out_dir=""
+while [[ \$# -gt 0 ]]; do
+	case "\$1" in
+		--out-dir)
+			out_dir="\$2"
+			shift 2
+			;;
+		*)
+			shift
+			;;
+	esac
+done
+mkdir -p "\$out_dir"
+count_file="$TMP/validate-repair-count"
+count=0
+if [[ -f "\$count_file" ]]; then
+	count="\$(cat "\$count_file")"
+fi
+count=\$((count + 1))
+printf '%s\\n' "\$count" > "\$count_file"
+if [[ "\$count" -eq 1 ]]; then
+	printf '{"overall":"fail","failure_categories":{"already_bound_not_ready":4}}\\n' > "\$out_dir/bulk-device-bind-validation-results.json"
+	printf '{"overall":"fail","failure_categories":{"already_bound_not_ready":4}}\\n'
+	exit 1
+fi
+printf '{"overall":"pass","failure_categories":{}}\\n' > "\$out_dir/bulk-device-bind-validation-results.json"
+printf '{"overall":"pass","failure_categories":{}}\\n'
+SH
+chmod +x "$TMP/validate-bind-repair.sh"
+CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT="$TMP/create-brand.sh" \
+CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT="$TMP/create-users.sh" \
+CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT="$TMP/generate-devices.sh" \
+CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT="$TMP/bind-devices.sh" \
+CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT="$TMP/validate-bind-repair.sh" \
+	"$ROOT/scripts/setup-staging-e2e-data.sh" \
+	--workspace "$WORKSPACE" \
+	--env-root "$WORKSPACE/cloud_env/staging" \
+	--brandname RTK \
+	--user-count 2 \
+	--device-count 4 \
+	--device-mix camera=2,light=2 \
+	--out-dir "$TMP/data-setup-repair-bind" \
+	--quiet > "$TMP/repair-bind.out" 2> "$TMP/repair-bind.err"
+expected=$'create-brand\nvalidate-bind\nbind-devices\nvalidate-bind'
+actual="$(cut -f1 "$COMMAND_LOG")"
+[[ "$actual" == "$expected" ]] || {
+	printf 'already_bound_not_ready should repair bind and validate again; command order:\n%s\n' "$actual" >&2
+	exit 1
+}
+grep -F 'repair: validate_bind failure_category="already_bound_not_ready"; rerunning bind_devices' "$TMP/repair-bind.err" >/dev/null
+
 if CLOUD_PROVIDER=aws "$ROOT/scripts/setup-staging-e2e-data.sh" --workspace "$WORKSPACE" --env-root "$WORKSPACE/cloud_env/staging" --plan >"$TMP/provider.out" 2>"$TMP/provider.err"; then
 	echo "expected unsupported provider to fail" >&2
 	exit 1

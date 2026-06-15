@@ -1835,7 +1835,8 @@ func runStagingE2EDataSetup(args []string) error {
 			bindFile = latestMatchingFile(filepath.Join(envRoot, "artifacts", "device-bind"), slug+"-device-bind-*.json")
 		}
 	}
-	if shouldRunStep("bind_devices") && !(*resume && bindArtifactCount(bindFile) == *deviceCount) {
+	bindSkippedForResume := false
+	runBindStep := func() error {
 		args := []string{"--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--users-file", usersFile, "--devices-dir", devicesDir, "--count", strconv.Itoa(*deviceCount), "--concurrency", strconv.Itoa(*bindConcurrency)}
 		if boolishEnv("CLOUD_STAGING_E2E_SKIP_BOOTSTRAP") {
 			args = append(args, "--skip-bootstrap")
@@ -1844,10 +1845,17 @@ func runStagingE2EDataSetup(args []string) error {
 			return err
 		}
 		bindFile = latestMatchingFile(filepath.Join(envRoot, "artifacts", "device-bind"), slug+"-device-bind-*.json")
+		return nil
+	}
+	if shouldRunStep("bind_devices") && !(*resume && bindArtifactCount(bindFile) == *deviceCount) {
+		if err := runBindStep(); err != nil {
+			return err
+		}
 	} else {
 		reason := "--from-step"
 		if shouldRunStep("bind_devices") {
 			reason = fmt.Sprintf("--resume bind artifact count=%d", bindArtifactCount(bindFile))
+			bindSkippedForResume = true
 		}
 		skipStep("bind_devices", reason)
 	}
@@ -1857,15 +1865,35 @@ func runStagingE2EDataSetup(args []string) error {
 	expectedPerUser := (*deviceCount + *userCount - 1) / *userCount
 	bindValidationDir := filepath.Join(*outDir, "bind-validation")
 	if shouldRunStep("validate_bind") {
-		if err := runStep("validate_bind", commandWithArgs(scripts["validate-bind"], "--workspace", workspace, "--env-root", envRoot, "--bind-artifact", bindFile, "--out-dir", bindValidationDir, "--expected-count", strconv.Itoa(*deviceCount), "--expected-devices-per-user", strconv.Itoa(expectedPerUser), "--wait-provisioned-timeout", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_PROVISION_TIMEOUT"), "10m"), "--wait-provisioned-poll", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_PROVISION_POLL"), "10s"), "--wait-provisioned-concurrency", strconv.Itoa(*bindConcurrency))...); err != nil {
-			return err
+		runValidateStep := func() error {
+			return runStep("validate_bind", commandWithArgs(scripts["validate-bind"], "--workspace", workspace, "--env-root", envRoot, "--bind-artifact", bindFile, "--out-dir", bindValidationDir, "--expected-count", strconv.Itoa(*deviceCount), "--expected-devices-per-user", strconv.Itoa(expectedPerUser), "--wait-provisioned-timeout", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_PROVISION_TIMEOUT"), "10m"), "--wait-provisioned-poll", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_PROVISION_POLL"), "10s"), "--wait-provisioned-concurrency", strconv.Itoa(*bindConcurrency))...)
+		}
+		if err := runValidateStep(); err != nil {
+			if bindSkippedForResume && shouldRunStep("bind_devices") && validationFailureCategoryCount(bindValidationDir, "already_bound_not_ready") > 0 {
+				fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] repair: validate_bind failure_category=%q; rerunning bind_devices\n", "already_bound_not_ready")
+				if len(steps) > 0 && steps[len(steps)-1].Name == "validate_bind" {
+					steps[len(steps)-1].Status = "RETRY"
+					steps[len(steps)-1].ExitCode = 0
+				}
+				if err := runBindStep(); err != nil {
+					return err
+				}
+				if bindFile == "" {
+					return fmt.Errorf("no device-bind artifact found after bind repair for brand slug %s", slug)
+				}
+				if err := runValidateStep(); err != nil {
+					return err
+				}
+			} else {
+				return err
+			}
 		}
 	} else {
 		skipStep("validate_bind", "--from-step")
 	}
 	overall := "pass"
 	for _, step := range steps {
-		if step.Status != "PASS" && step.Status != "SKIP" {
+		if step.Status != "PASS" && step.Status != "SKIP" && step.Status != "RETRY" {
 			overall = "fail"
 		}
 	}
@@ -1995,6 +2023,22 @@ func bindArtifactCount(path string) int {
 	if raw, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(raw, &artifact); err == nil {
 			return len(artifact.Assignments)
+		}
+	}
+	return 0
+}
+
+func validationFailureCategoryCount(outDir, category string) int {
+	if outDir == "" || category == "" {
+		return 0
+	}
+	var result struct {
+		FailureCategories map[string]int `json:"failure_categories"`
+	}
+	path := filepath.Join(outDir, "bulk-device-bind-validation-results.json")
+	if raw, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(raw, &result); err == nil {
+			return result.FailureCategories[category]
 		}
 	}
 	return 0
