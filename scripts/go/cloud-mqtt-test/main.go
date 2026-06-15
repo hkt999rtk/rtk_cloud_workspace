@@ -880,8 +880,8 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 		result.Error = redactedError(err)
 		return result
 	}
-	desiredState := desiredStateForCapability(probe.DeviceType)
-	reportedState := reportedStateForCapability(probe.DeviceType)
+	desiredState := shadowStateWithLoadTestMarker(desiredStateForCapability(probe.DeviceType), correlationID, commandID)
+	reportedState := shadowStateWithLoadTestMarker(reportedStateForCapability(probe.DeviceType), correlationID, commandID)
 	commandPayload, err := json.Marshal(map[string]any{
 		"state":       map[string]any{"desired": desiredState},
 		"clientToken": commandID,
@@ -1705,6 +1705,16 @@ func reportedStateForCapability(capability string) map[string]any {
 	default:
 		return desiredStateForCapability(capability)
 	}
+}
+
+func shadowStateWithLoadTestMarker(base map[string]any, runID, commandID string) map[string]any {
+	state := make(map[string]any, len(base)+2)
+	for key, value := range base {
+		state[key] = value
+	}
+	state["_loadtest_run_id"] = runID
+	state["_loadtest_command_id"] = commandID
+	return state
 }
 
 func mqttConnect(w io.ReadWriter, clientID, username, password string) error {

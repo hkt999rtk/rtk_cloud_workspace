@@ -506,6 +506,19 @@ func TestActorSeparatedCommandRequiresDeviceReceiveAndAppAck(t *testing.T) {
 	}
 }
 
+func TestShadowStateWithLoadTestMarkerForcesFreshDeltaAndReportedClear(t *testing.T) {
+	base := map[string]any{"power": true}
+
+	got := shadowStateWithLoadTestMarker(base, "run-1", "cmd-1")
+
+	if got["power"] != true || got["_loadtest_run_id"] != "run-1" || got["_loadtest_command_id"] != "cmd-1" {
+		t.Fatalf("shadowStateWithLoadTestMarker = %#v, want base state plus marker", got)
+	}
+	if _, ok := base["_loadtest_run_id"]; ok {
+		t.Fatalf("shadowStateWithLoadTestMarker mutated base state: %#v", base)
+	}
+}
+
 func TestActorSeparatedProbePublishesRuntimeLogsForDeviceAndAppActors(t *testing.T) {
 	broker := newFakeMQTTBroker(t)
 	defer broker.Close()

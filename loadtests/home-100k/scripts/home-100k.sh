@@ -105,9 +105,9 @@ Defaults can be overridden with:
   HOME100K_AUTHORIZED_KEY_FILE default: <HOME100K_SSH_KEY>.pub
   SSH known_hosts is isolated per run at <out-dir>/ssh_known_hosts
   HOME100K_STATUS_INTERVAL_SECONDS default: 30
-  HOME100K_STAGE_WARM_UP default: 1m
-  HOME100K_STAGE_STEADY default: 2m
-  HOME100K_STAGE_COOL_DOWN default: 45s
+  HOME100K_STAGE_WARM_UP default: 15s from the default description file
+  HOME100K_STAGE_STEADY default: 45s from the default description file
+  HOME100K_STAGE_COOL_DOWN default: 15s from the default description file
   HOME100K_RUNNER_MODE default: live; use sample only for local developer smoke tests
   HOME100K_NODE_RESOURCE_STATUS default: 1
   HOME100K_K8S_NODE_RESOURCE_STATUS default: 1

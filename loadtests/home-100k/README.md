@@ -365,9 +365,9 @@ The script keeps non-secret defaults in one place:
 | `HOME100K_SSH_USER` | `root` |
 | `HOME100K_AUTHORIZED_KEY_FILE` | `<HOME100K_SSH_KEY>.pub` |
 | `HOME100K_STATUS_INTERVAL_SECONDS` | `30` |
-| `HOME100K_STAGE_WARM_UP` | `1m` |
-| `HOME100K_STAGE_STEADY` | `2m` |
-| `HOME100K_STAGE_COOL_DOWN` | `45s` |
+| `HOME100K_STAGE_WARM_UP` | `15s` from the default description file |
+| `HOME100K_STAGE_STEADY` | `45s` from the default description file |
+| `HOME100K_STAGE_COOL_DOWN` | `15s` from the default description file |
 | `HOME100K_NODE_RESOURCE_STATUS` | `1` |
 | `HOME100K_K8S_NODE_RESOURCE_STATUS` | `1` |
 | `HOME100K_KUBECONFIG` | unset; falls back to existing LKE kubeconfig env or `<env-root>/state/lke-kubeconfig.yaml` |
