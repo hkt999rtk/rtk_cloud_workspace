@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -93,6 +95,60 @@ func TestValidateDeviceBindAllowsAlreadyBoundDevicesWithoutOperationID(t *testin
 	if err != nil {
 		t.Fatalf("runValidateDeviceBind() error = %v", err)
 	}
+}
+
+func TestAccountIndexDevicesByVideoCloudDevidPaginatesThroughServerCappedPages(t *testing.T) {
+	requests := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.RawQuery)
+		limit := r.URL.Query().Get("limit")
+		offset := r.URL.Query().Get("offset")
+		if limit != "100" {
+			t.Fatalf("limit = %q, want 100", limit)
+		}
+		devices := []map[string]any{}
+		switch offset {
+		case "0":
+			devices = makeIndexedDevices(1, 100)
+		case "100":
+			devices = makeIndexedDevices(101, 100)
+		case "200":
+			devices = makeIndexedDevices(201, 3)
+		default:
+			t.Fatalf("unexpected offset %q", offset)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"devices": devices})
+	}))
+	defer server.Close()
+
+	index, count, err := accountIndexDevicesByVideoCloudDevid(accountManagerContext{BaseURL: server.URL}, "token", "brand-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 203 || len(index) != 203 {
+		t.Fatalf("count=%d len(index)=%d, want 203", count, len(index))
+	}
+	if index["load-device-0001"] == nil || index["load-device-0101"] == nil || index["load-device-0203"] == nil {
+		t.Fatalf("index did not include devices from every page: keys=%d", len(index))
+	}
+	if len(requests) != 3 {
+		t.Fatalf("requests=%v, want 3 pages", requests)
+	}
+}
+
+func makeIndexedDevices(start, count int) []map[string]any {
+	devices := make([]map[string]any, count)
+	for i := 0; i < count; i++ {
+		id := start + i
+		devices[i] = map[string]any{
+			"id":          "account-device-" + strconv.Itoa(id),
+			"disabled_at": nil,
+			"metadata": map[string]any{
+				"video_cloud_devid": fmt.Sprintf("load-device-%04d", id),
+			},
+		}
+	}
+	return devices
 }
 
 func TestValidateDeviceBindWaitsForProvisionedState(t *testing.T) {

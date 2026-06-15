@@ -12,11 +12,11 @@ DEVICE_MIX="camera=40,light=25,air_conditioner=20,smart_meter=15"
 DEVICE_PREFIX="load-device"
 USER_CONCURRENCY="16"
 DEVICE_CONCURRENCY="16"
-BIND_CONCURRENCY="16"
+BIND_CONCURRENCY="64"
 PLAN=0
 OUT_DIR=""
 QUIET=0
-RESUME=0
+RESUME=1
 FROM_STEP=""
 USERS_FILE=""
 BIND_ARTIFACT=""
@@ -49,10 +49,11 @@ Options:
   --device-prefix PREFIX          Device prefix. Default: load-device.
   --user-concurrency N            Concurrent user creation workers. Default: 16.
   --device-concurrency N          Concurrent device generation workers. Default: 16.
-  --bind-concurrency N            Concurrent device binding workers. Default: 16.
+  --bind-concurrency N            Concurrent device binding workers. Default: 64.
   --out-dir PATH                  Output directory for logs and summary.
   --quiet                         Suppress periodic progress lines.
-  --resume                        Reuse matching completed artifacts.
+  --resume                        Reuse matching completed artifacts. Default.
+  --no-resume                     Recreate users/devices/bind artifacts even when local artifacts are complete.
   --from-step STEP                Start from create_brand, create_users, create_devices, bind_devices, or validate_bind.
   --users-file PATH               Existing users artifact for bind/validate resume.
   --bind-artifact PATH            Existing bind artifact for validate resume.
@@ -162,6 +163,10 @@ while [[ $# -gt 0 ]]; do
 			RESUME=1
 			shift
 			;;
+		--no-resume)
+			RESUME=0
+			shift
+			;;
 		--from-step)
 			FROM_STEP="${2:-}"
 			if [[ -z "$FROM_STEP" ]]; then
@@ -243,6 +248,8 @@ if [[ "$QUIET" -eq 1 ]]; then
 fi
 if [[ "$RESUME" -eq 1 ]]; then
 	run_args+=(--resume)
+else
+	run_args+=(--no-resume)
 fi
 if [[ -n "$FROM_STEP" ]]; then
 	run_args+=(--from-step "$FROM_STEP")

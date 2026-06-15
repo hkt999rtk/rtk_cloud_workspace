@@ -1079,9 +1079,6 @@ func runGenerateLoadDevices(args []string) error {
 		if !*force {
 			return fmt.Errorf("%s already exists; use --force to replace it", *outDir)
 		}
-		if err := os.RemoveAll(*outDir); err != nil {
-			return err
-		}
 	}
 	if err := os.MkdirAll(*outDir, 0o755); err != nil {
 		return err
@@ -1514,10 +1511,12 @@ func runCreateUsers(args []string) error {
 		return json.NewEncoder(os.Stdout).Encode(map[string]any{"action": "dry_run", "brand_cloud": brandCloud, "role": *role, "users": planned})
 	}
 	existingAppCredentials := loadExistingUserAppCredentials(ctx.EnvRoot, slug)
+	reusableLocalUsers := loadReusableLocalUsers(ctx.EnvRoot, slug)
 	type createUserResult struct {
 		user     map[string]any
 		created  bool
 		assigned bool
+		reused   bool
 	}
 	var sessionMu sync.Mutex
 	var logMu sync.Mutex
@@ -1560,6 +1559,11 @@ func runCreateUsers(args []string) error {
 			return createUserResult{}, err
 		}
 		safeLog("ensuring brand user: email=%s role=%s", email, *role)
+		if reusable := reusableLocalUsers[email]; reusable != nil {
+			safeLog("reusing local user artifact: email=%s", email)
+			reusable["action"] = "reused"
+			return createUserResult{user: reusable, reused: true}, nil
+		}
 		createResult, err := safeAccountCreateUser(email, displayName, password)
 		if err != nil {
 			return createUserResult{}, err
@@ -1611,12 +1615,16 @@ func runCreateUsers(args []string) error {
 	users := []map[string]any{}
 	created := 0
 	assigned := 0
+	reused := 0
 	for _, result := range results {
 		if result.created {
 			created++
 		}
 		if result.assigned {
 			assigned++
+		}
+		if result.reused {
+			reused++
 		}
 		users = append(users, result.user)
 	}
@@ -1639,6 +1647,7 @@ func runCreateUsers(args []string) error {
 		"count":            *count,
 		"created":          created,
 		"assigned":         assigned,
+		"reused":           reused,
 		"app_certificates": *count,
 		"credentials_file": credentialsFile,
 	})
@@ -1674,10 +1683,11 @@ func runStagingE2EDataSetup(args []string) error {
 	devicePrefix := fs.String("device-prefix", "load-device", "device prefix")
 	userConcurrency := fs.Int("user-concurrency", envInt("CLOUD_STAGING_E2E_USER_CONCURRENCY", 16), "user creation concurrency")
 	deviceConcurrency := fs.Int("device-concurrency", envInt("CLOUD_STAGING_E2E_DEVICE_CONCURRENCY", 16), "device generation concurrency")
-	bindConcurrency := fs.Int("bind-concurrency", envInt("CLOUD_STAGING_E2E_BIND_CONCURRENCY", 16), "device bind concurrency")
+	bindConcurrency := fs.Int("bind-concurrency", envInt("CLOUD_STAGING_E2E_BIND_CONCURRENCY", 64), "device bind concurrency")
 	outDir := fs.String("out-dir", "", "out dir")
 	quiet := fs.Bool("quiet", false, "suppress periodic progress output")
-	resume := fs.Bool("resume", false, "reuse completed artifacts for matching steps")
+	resume := fs.Bool("resume", true, "reuse completed artifacts for matching steps")
+	noResume := fs.Bool("no-resume", false, "recreate artifacts even when matching completed artifacts exist")
 	fromStep := fs.String("from-step", "", "start from step: create_brand, create_users, create_devices, bind_devices, or validate_bind")
 	usersFileFlag := fs.String("users-file", "", "existing users artifact for bind/validate resume")
 	bindArtifactFlag := fs.String("bind-artifact", "", "existing bind artifact for validate resume")
@@ -1699,6 +1709,9 @@ func runStagingE2EDataSetup(args []string) error {
 	if *fromStep != "" && e2eStepIndex(*fromStep) < 0 {
 		return fmt.Errorf("--from-step must be one of: %s", strings.Join(e2eStepOrder(), ", "))
 	}
+	if *noResume {
+		*resume = false
+	}
 	workspace := *workspaceFlag
 	var err error
 	if workspace == "" {
@@ -1711,6 +1724,7 @@ func runStagingE2EDataSetup(args []string) error {
 	if err != nil {
 		return err
 	}
+	provider := firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), os.Getenv("RTK_CLOUD_STAGING_PROVIDER"), envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER"))
 	scripts := map[string]string{
 		"create-brand":     firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT"), selfCommandPath("create-brandname-cloud")),
 		"create-users":     firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT"), selfCommandPath("create-users")),
@@ -1728,6 +1742,15 @@ func runStagingE2EDataSetup(args []string) error {
 	logsDir := filepath.Join(*outDir, "logs")
 	if err := os.MkdirAll(logsDir, 0o755); err != nil {
 		return err
+	}
+	childEnv := []string{}
+	if provider == "lke" {
+		portForwardEnv, cleanup, err := startK8SE2EPortForwards(workspace, envRoot)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		childEnv = append(childEnv, portForwardEnv...)
 	}
 	steps := []e2eStep{}
 	childEnv, cleanup, err := startK8SE2EDataSetupPortForwardsIfNeeded(workspace, envRoot)
@@ -1761,7 +1784,14 @@ func runStagingE2EDataSetup(args []string) error {
 	slug := brandSlug(*brandname)
 	usersFile := *usersFileFlag
 	if usersFile == "" {
-		usersFile = latestMatchingFile(filepath.Join(envRoot, "artifacts", "users"), slug+"-users-*.json")
+		if *resume {
+			usersFile = latestMatchingFileWhere(filepath.Join(envRoot, "artifacts", "users"), slug+"-users-*.json", func(path string) bool {
+				return usersArtifactCount(path) == *userCount
+			})
+		}
+		if usersFile == "" {
+			usersFile = latestMatchingFile(filepath.Join(envRoot, "artifacts", "users"), slug+"-users-*.json")
+		}
 	}
 	if shouldRunStep("create_users") && !(*resume && usersArtifactCount(usersFile) == *userCount) {
 		args := []string{"--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--count", strconv.Itoa(*userCount), "--rotate-password", "--concurrency", strconv.Itoa(*userConcurrency)}
@@ -1796,7 +1826,14 @@ func runStagingE2EDataSetup(args []string) error {
 	}
 	bindFile := *bindArtifactFlag
 	if bindFile == "" {
-		bindFile = latestMatchingFile(filepath.Join(envRoot, "artifacts", "device-bind"), slug+"-device-bind-*.json")
+		if *resume {
+			bindFile = latestMatchingFileWhere(filepath.Join(envRoot, "artifacts", "device-bind"), slug+"-device-bind-*.json", func(path string) bool {
+				return bindArtifactCount(path) == *deviceCount
+			})
+		}
+		if bindFile == "" {
+			bindFile = latestMatchingFile(filepath.Join(envRoot, "artifacts", "device-bind"), slug+"-device-bind-*.json")
+		}
 	}
 	if shouldRunStep("bind_devices") && !(*resume && bindArtifactCount(bindFile) == *deviceCount) {
 		args := []string{"--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--users-file", usersFile, "--devices-dir", devicesDir, "--count", strconv.Itoa(*deviceCount), "--concurrency", strconv.Itoa(*bindConcurrency)}
@@ -2452,7 +2489,7 @@ func runStagingE2ETest(args []string) error {
 	devicePrefix := fs.String("device-prefix", "load-device", "device prefix")
 	userConcurrency := fs.Int("user-concurrency", envInt("CLOUD_STAGING_E2E_USER_CONCURRENCY", 16), "user creation concurrency")
 	deviceConcurrency := fs.Int("device-concurrency", envInt("CLOUD_STAGING_E2E_DEVICE_CONCURRENCY", 16), "device generation concurrency")
-	bindConcurrency := fs.Int("bind-concurrency", envInt("CLOUD_STAGING_E2E_BIND_CONCURRENCY", 16), "device bind concurrency")
+	bindConcurrency := fs.Int("bind-concurrency", envInt("CLOUD_STAGING_E2E_BIND_CONCURRENCY", 64), "device bind concurrency")
 	outDir := fs.String("out-dir", "", "out dir")
 	skipMQTTProbe := fs.Bool("skip-mqtt-probe", false, "skip mqtt probe")
 	quiet := fs.Bool("quiet", false, "suppress periodic progress output")
@@ -3239,6 +3276,17 @@ func latestMatchingFile(dir, pattern string) string {
 	return matches[len(matches)-1]
 }
 
+func latestMatchingFileWhere(dir, pattern string, match func(string) bool) string {
+	matches, _ := filepath.Glob(filepath.Join(dir, pattern))
+	sort.Strings(matches)
+	for i := len(matches) - 1; i >= 0; i-- {
+		if match(matches[i]) {
+			return matches[i]
+		}
+	}
+	return ""
+}
+
 func renderE2EReport(overall, envRoot, stack, brandname, usersFile, bindFile, bindValidationDir, dataSetupSummaryFile, mqttDir, mqttLogVerifySummaryFile string, steps []e2eStep) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, "# Staging E2E Test Report")
@@ -3695,6 +3743,63 @@ func loadExistingUserAppCredentials(envRoot, slug string) map[string]map[string]
 	return out
 }
 
+func loadReusableLocalUsers(envRoot, slug string) map[string]map[string]any {
+	out := map[string]map[string]any{}
+	dir := filepath.Join(envRoot, "artifacts", "users")
+	matches, _ := filepath.Glob(filepath.Join(dir, slug+"-users-*.json"))
+	sort.Strings(matches)
+	for i := len(matches) - 1; i >= 0; i-- {
+		raw, err := os.ReadFile(matches[i])
+		if err != nil {
+			continue
+		}
+		var artifact struct {
+			Users []map[string]any `json:"users"`
+		}
+		if err := json.Unmarshal(raw, &artifact); err != nil {
+			continue
+		}
+		for _, user := range artifact.Users {
+			email := strings.ToLower(strings.TrimSpace(stringValue(user["email"])))
+			if email == "" || out[email] != nil || !hasReusableLocalUser(user) {
+				continue
+			}
+			out[email] = cloneJSONMap(user)
+		}
+	}
+	return out
+}
+
+func hasReusableLocalUser(user map[string]any) bool {
+	if strings.TrimSpace(stringValue(user["email"])) == "" || strings.TrimSpace(stringValue(user["password"])) == "" {
+		return false
+	}
+	appCredentials, _ := user["app_credentials"].(map[string]any)
+	if !hasLocalAppCredentials(appCredentials) {
+		return false
+	}
+	appCertificate, _ := user["app_certificate"].(map[string]any)
+	if strings.ToLower(strings.TrimSpace(stringValue(appCertificate["status"]))) != "issued" {
+		return false
+	}
+	if strings.TrimSpace(firstNonEmpty(stringValue(appCertificate["certificate_pem"]), stringValue(appCertificate["certificate_chain_pem"]))) == "" {
+		return false
+	}
+	return strings.TrimSpace(stringValue(appCertificate["fingerprint_sha256"])) != ""
+}
+
+func cloneJSONMap(in map[string]any) map[string]any {
+	raw, err := json.Marshal(in)
+	if err != nil {
+		return map[string]any{}
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return map[string]any{}
+	}
+	return out
+}
+
 func uniqueUserCredentialsFile(artifactDir, slug string) string {
 	base := fmt.Sprintf("%s-users-%s", slug, time.Now().UTC().Format("20060102T150405Z"))
 	path := filepath.Join(artifactDir, base+".json")
@@ -4083,73 +4188,71 @@ func accountCreateBrandCloud(ctx accountManagerContext, token, brandname string)
 	return parsed, status, nil
 }
 
+var rtkJSONHTTPClient = &http.Client{
+	Transport: &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			timeout := time.Duration(envInt("RTK_CLOUD_CURL_CONNECT_TIMEOUT", 10)) * time.Second
+			dialer := net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second}
+			return dialer.DialContext(ctx, network, address)
+		},
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          256,
+		MaxIdleConnsPerHost:   256,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	},
+}
+
 func curlJSONStatus(url, bearer string, payload []byte) ([]byte, int, error) {
-	tmp, err := os.CreateTemp("", "rtk-curl-json-*")
-	if err != nil {
-		return nil, 0, err
-	}
-	tmp.Close()
-	defer os.Remove(tmp.Name())
-	connectTimeout := firstNonEmpty(os.Getenv("RTK_CLOUD_CURL_CONNECT_TIMEOUT"), "10")
-	maxTime := firstNonEmpty(os.Getenv("RTK_CLOUD_CURL_MAX_TIME"), "60")
-	args := []string{"-sS", "--connect-timeout", connectTimeout, "--max-time", maxTime, "-o", tmp.Name(), "-w", "%{http_code}"}
-	var payloadPath string
-	if payload != nil {
-		payloadFile, err := os.CreateTemp("", "rtk-curl-payload-*")
-		if err != nil {
-			return nil, 0, err
-		}
-		payloadPath = payloadFile.Name()
-		if _, err := payloadFile.Write(payload); err != nil {
-			payloadFile.Close()
-			os.Remove(payloadPath)
-			return nil, 0, err
-		}
-		payloadFile.Close()
-		defer os.Remove(payloadPath)
-		args = append(args, "-H", "content-type: application/json")
-		if bearer != "" {
-			args = append(args, "-H", "authorization: Bearer "+bearer)
-		}
-		args = append(args, "--data-binary", "@"+payloadPath)
-	} else if bearer != "" {
-		args = append(args, "-H", "authorization: Bearer "+bearer)
-	}
-	args = append(args, url)
 	retries := envInt("RTK_CLOUD_CURL_RETRIES", 3)
 	if retries < 1 {
 		retries = 1
 	}
-	var statusBytes []byte
+	maxTime := time.Duration(envInt("RTK_CLOUD_CURL_MAX_TIME", 60)) * time.Second
+	method := http.MethodGet
+	if payload != nil {
+		method = http.MethodPost
+	}
 	var lastErr error
 	for attempt := 1; attempt <= retries; attempt++ {
-		var stderr bytes.Buffer
-		cmd := exec.Command("curl", args...)
-		cmd.Stderr = &stderr
-		statusBytes, err = cmd.Output()
+		reqCtx, cancel := context.WithTimeout(context.Background(), maxTime)
+		var bodyReader io.Reader
+		if payload != nil {
+			bodyReader = bytes.NewReader(payload)
+		}
+		req, err := http.NewRequestWithContext(reqCtx, method, url, bodyReader)
+		if err != nil {
+			cancel()
+			return nil, 0, err
+		}
+		if payload != nil {
+			req.Header.Set("content-type", "application/json")
+		}
+		if bearer != "" {
+			req.Header.Set("authorization", "Bearer "+bearer)
+		}
+		resp, err := rtkJSONHTTPClient.Do(req)
 		if err == nil {
-			lastErr = nil
-			break
+			body, readErr := io.ReadAll(resp.Body)
+			closeErr := resp.Body.Close()
+			cancel()
+			if readErr != nil {
+				return nil, resp.StatusCode, readErr
+			}
+			if closeErr != nil {
+				return nil, resp.StatusCode, closeErr
+			}
+			return body, resp.StatusCode, nil
 		}
-		errText := strings.TrimSpace(stderr.String())
-		if errText != "" {
-			lastErr = fmt.Errorf("curl failed for %s: %w: %s", url, err, errText)
-		} else {
-			lastErr = fmt.Errorf("curl failed for %s: %w", url, err)
-		}
+		cancel()
+		lastErr = fmt.Errorf("HTTP request failed for %s: %w", url, err)
 		if attempt < retries {
 			time.Sleep(time.Duration(250*attempt*attempt) * time.Millisecond)
 		}
 	}
-	if lastErr != nil {
-		return nil, 0, lastErr
-	}
-	body, err := os.ReadFile(tmp.Name())
-	if err != nil {
-		return nil, 0, err
-	}
-	status, _ := strconv.Atoi(strings.TrimSpace(string(statusBytes)))
-	return body, status, nil
+	return nil, 0, lastErr
 }
 
 func curlJSONStatusWithPlatformRetry(ctx accountManagerContext, session *accountPlatformSession, logf func(string, ...any), operation string, call func(string) ([]byte, int, error)) ([]byte, int, error) {
@@ -4416,6 +4519,13 @@ func writeLoadDevice(in loadDeviceInput) (generatedDevice, bool, error) {
 	profile := "factory-enrolled-device-mtls-client"
 	warning := "Factory-enrolled staging load-test credential. Keep private key material out of source control."
 	keyAlgorithm := "ed25519"
+	if device, serial, requestID, ok := reusableLocalLoadDevice(in, deviceID, display, deviceDir, keyPath, csrPath, certPath, chainPath, filepath.Join(bundleDir, deviceID+".pem")); ok {
+		logLoad("reusing local device artifact: index=%03d device=%s type=%s service_options=%s", in.Index, deviceID, in.Type.Name, strings.Join(in.Type.ServiceOptions, ","))
+		if !in.GenerateOnly {
+			recordEnrollResult(in.ResultsPath, "reused", in.Index, deviceID, in.Type.Name, in.Type.ServiceOptions, "local", requestID, serial, "")
+		}
+		return device, true, nil
+	}
 	key, err := writeDeviceKeyAndCSR(keyPath, csrPath, deviceID, in.Type.Name, keyAlgorithm)
 	if err != nil {
 		return generatedDevice{}, false, err
@@ -4497,6 +4607,108 @@ func writeLoadDevice(in loadDeviceInput) (generatedDevice, bool, error) {
 		return generatedDevice{}, false, err
 	}
 	return device, true, nil
+}
+
+func reusableLocalLoadDevice(in loadDeviceInput, deviceID, display, deviceDir, keyPath, csrPath, certPath, chainPath, bundlePath string) (generatedDevice, string, string, bool) {
+	metadataPath := filepath.Join(deviceDir, "metadata.json")
+	raw, err := os.ReadFile(metadataPath)
+	if err != nil {
+		return generatedDevice{}, "", "", false
+	}
+	var device generatedDevice
+	if err := json.Unmarshal(raw, &device); err != nil {
+		return generatedDevice{}, "", "", false
+	}
+	expectedProfile := "factory-enrolled-device-mtls-client"
+	if in.GenerateOnly {
+		expectedProfile = "simulation-device-mtls-client"
+	}
+	if device.DeviceID != deviceID ||
+		device.DeviceType != in.Type.Name ||
+		device.MQTTCapability != in.Type.Capability ||
+		device.Model != in.Type.Model ||
+		device.DisplayName != display ||
+		device.CertificateProfile != expectedProfile ||
+		device.Production ||
+		!stringSlicesEqual(device.ServiceOptions, in.Type.ServiceOptions) ||
+		!stringSlicesEqual(device.Capabilities, in.Type.Capabilities) {
+		return generatedDevice{}, "", "", false
+	}
+	if device.CertificatePath != relSlash(in.OutDir, certPath) ||
+		device.CertificateChainPath != relSlash(in.OutDir, chainPath) ||
+		device.KeyPath != relSlash(in.OutDir, keyPath) ||
+		device.CSRPath != relSlash(in.OutDir, csrPath) ||
+		device.BundlePath != relSlash(in.OutDir, bundlePath) {
+		return generatedDevice{}, "", "", false
+	}
+	if !fileHasPEMBlock(keyPath, "PRIVATE KEY") ||
+		!fileHasPEMBlock(csrPath, "CERTIFICATE REQUEST") ||
+		!fileHasPEMBlock(certPath, "CERTIFICATE") ||
+		!fileHasPEMBlock(chainPath, "CERTIFICATE") ||
+		!fileHasPEMBlock(bundlePath, "CERTIFICATE") ||
+		!fileHasPEMBlock(bundlePath, "PRIVATE KEY") {
+		return generatedDevice{}, "", "", false
+	}
+	if in.GenerateOnly {
+		return device, "", "", true
+	}
+	var response struct {
+		RequestID    string `json:"request_id"`
+		SerialNumber string `json:"serial_number"`
+	}
+	responseRaw, err := os.ReadFile(filepath.Join(deviceDir, "factory-enroll-response.redacted.json"))
+	if err != nil {
+		return generatedDevice{}, "", "", false
+	}
+	if err := json.Unmarshal(responseRaw, &response); err != nil {
+		return generatedDevice{}, "", "", false
+	}
+	if strings.TrimSpace(response.SerialNumber) == "" {
+		return generatedDevice{}, "", "", false
+	}
+	if strings.TrimSpace(response.RequestID) == "" {
+		var request struct {
+			RequestID string `json:"request_id"`
+		}
+		requestRaw, err := os.ReadFile(filepath.Join(deviceDir, "factory-enroll-request.json"))
+		if err != nil {
+			return generatedDevice{}, "", "", false
+		}
+		if err := json.Unmarshal(requestRaw, &request); err != nil || strings.TrimSpace(request.RequestID) == "" {
+			return generatedDevice{}, "", "", false
+		}
+		response.RequestID = request.RequestID
+	}
+	return device, response.SerialNumber, response.RequestID, true
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func fileHasPEMBlock(path, blockType string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 {
+		return false
+	}
+	for {
+		block, rest := pem.Decode(data)
+		if block == nil {
+			return false
+		}
+		if block.Type == blockType || strings.HasSuffix(block.Type, " "+blockType) {
+			return true
+		}
+		data = rest
+	}
 }
 
 func writeDeviceKeyAndCSR(keyPath, csrPath, deviceID, deviceType, algorithm string) (crypto.Signer, error) {
@@ -5700,7 +5912,7 @@ func runBindDevices(args []string) error {
 	devicesDir := fs.String("devices-dir", "", "devices dir")
 	count := fs.Int("count", 0, "count")
 	claimTTL := fs.Int("claim-ttl-hours", 24, "claim TTL hours")
-	concurrency := fs.Int("concurrency", envInt("CLOUD_BIND_DEVICES_CONCURRENCY", 16), "device binding concurrency")
+	concurrency := fs.Int("concurrency", envInt("CLOUD_BIND_DEVICES_CONCURRENCY", 64), "device binding concurrency")
 	dryRun := fs.Bool("dry-run", false, "dry run")
 	skipBootstrap := fs.Bool("skip-bootstrap", false, "skip bootstrap")
 	skipDirectProvisionBridge := fs.Bool("skip-direct-provision-bridge", false, "skip staging direct provisioning bridge")
@@ -6142,7 +6354,7 @@ func accountFindDeviceByVideoCloudDevid(ctx accountManagerContext, token, brandC
 }
 
 func accountIndexDevicesByVideoCloudDevid(ctx accountManagerContext, token, brandCloudID string) (map[string]map[string]any, int, error) {
-	const limit = 200
+	const limit = 100
 	index := map[string]map[string]any{}
 	for offset := 0; ; offset += limit {
 		body, status, err := curlJSONStatus(fmt.Sprintf("%s/v1/orgs/%s/devices?limit=%d&offset=%d", ctx.BaseURL, brandCloudID, limit, offset), token, nil)

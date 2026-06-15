@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -82,5 +83,122 @@ func TestFactoryEnrollDeviceUsesDistinctP256FallbackRequestID(t *testing.T) {
 	}
 	if gotRequestID != "run-1-load-device-0001-p256" || outcome.RequestID != gotRequestID {
 		t.Fatalf("request_id = %q outcome=%q", gotRequestID, outcome.RequestID)
+	}
+}
+
+func TestWriteLoadDeviceReusesCompleteLocalFactoryArtifact(t *testing.T) {
+	outDir := t.TempDir()
+	_, caCert, err := writeGeneratedCA(filepath.Join(t.TempDir(), "ca"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests > 1 {
+			http.Error(w, "factory enroll should not be called for a complete local device", http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"certificate_pem":       string(caCert),
+			"certificate_chain_pem": string(caCert),
+			"serial_number":         "test-serial",
+		})
+	}))
+	defer server.Close()
+
+	in := loadDeviceInput{
+		Index:          1,
+		Ordinal:        1,
+		Type:           loadDeviceTypes[0],
+		Prefix:         "load-device",
+		OutDir:         outDir,
+		FactoryURL:     server.URL,
+		FactoryAuthKey: "test-key",
+		FactoryID:      "factory",
+		LineID:         "line",
+		StationID:      "station",
+		FixtureID:      "fixture",
+		OperatorID:     "operator",
+		BatchID:        "batch",
+		SerialPrefix:   "LOAD",
+		RunID:          "run-1",
+		Timeout:        time.Second,
+		ResultsPath:    filepath.Join(outDir, "factory-enroll-results.jsonl"),
+	}
+	first, ok, err := writeLoadDevice(in)
+	if err != nil || !ok {
+		t.Fatalf("first writeLoadDevice() device=%+v ok=%v err=%v", first, ok, err)
+	}
+
+	second, ok, err := writeLoadDevice(in)
+	if err != nil || !ok {
+		t.Fatalf("second writeLoadDevice() device=%+v ok=%v err=%v", second, ok, err)
+	}
+	if requests != 1 {
+		t.Fatalf("factory enroll requests = %d, want 1", requests)
+	}
+	if second.DeviceID != first.DeviceID || second.CertificatePath != first.CertificatePath || second.KeyPath != first.KeyPath {
+		t.Fatalf("reused device mismatch: first=%+v second=%+v", first, second)
+	}
+}
+
+func TestGenerateLoadDevicesForceReusesCompleteLocalFactoryArtifact(t *testing.T) {
+	envRoot := t.TempDir()
+	outDir := filepath.Join(t.TempDir(), "devices")
+	_, caCert, err := writeGeneratedCA(filepath.Join(t.TempDir(), "ca"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests > 1 {
+			http.Error(w, "factory enroll should not be called during force reuse", http.StatusInternalServerError)
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"certificate_pem":       string(caCert),
+			"certificate_chain_pem": string(caCert),
+			"request_id":            stringValue(body["request_id"]),
+			"serial_number":         "test-serial",
+		})
+	}))
+	defer server.Close()
+
+	args := []string{
+		"--workspace", t.TempDir(),
+		"--env-root", envRoot,
+		"--out-dir", outDir,
+		"--count", "1",
+		"--mix", "camera=1",
+		"--prefix", "load-device",
+		"--factory-url", server.URL,
+		"--factory-auth-key", "test-key",
+		"--run-id", "run-1",
+		"--force",
+		"--concurrency", "1",
+	}
+	if err := runGenerateLoadDevices(args); err != nil {
+		t.Fatalf("first runGenerateLoadDevices() error = %v", err)
+	}
+	if err := runGenerateLoadDevices(args); err != nil {
+		t.Fatalf("second runGenerateLoadDevices() error = %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("factory enroll requests = %d, want 1", requests)
+	}
+	results, err := os.ReadFile(filepath.Join(outDir, "manifests", "factory-enroll-results.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(results), `"status":"reused"`) {
+		t.Fatalf("second run should record reused result, got:\n%s", results)
 	}
 }
