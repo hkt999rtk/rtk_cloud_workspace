@@ -1547,6 +1547,44 @@ func TestStartK8SE2EPortForwardsStartsAllBeforeWaiting(t *testing.T) {
 	}
 }
 
+func TestStagingE2EDataSetupForLKEProvidesK8SFactoryEnrollEnv(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	kubectlLog := fakeKubectlForK8SE2EPortForwards(t)
+	writeTestFile(t, filepath.Join(envRoot, "state", "lke-kubeconfig.yaml"), "apiVersion: v1\n")
+	writeTestFile(t, filepath.Join(envRoot, "services", "video-cloud", "video-cloud.env"), "FACTORY_ENROLL_AUTH_KEY=test-key\n")
+	outDir := filepath.Join(t.TempDir(), "data-setup")
+	commandLog := filepath.Join(t.TempDir(), "commands.log")
+
+	t.Setenv("RTK_CLOUD_LKE_PORT_FORWARD_WAIT", "0s")
+	t.Setenv("CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT", writeDataSetupStub(t, "create-brand", commandLog, envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT", writeDataSetupStub(t, "create-users", commandLog, envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT", writeDataSetupStub(t, "generate-devices", commandLog, envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT", writeDataSetupStub(t, "bind-devices", commandLog, envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT", writeDataSetupStub(t, "validate-bind", commandLog, envRoot))
+
+	err := runStagingE2EDataSetup([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--brandname", "RTK",
+		"--user-count", "1",
+		"--device-count", "1",
+		"--out-dir", outDir,
+		"--quiet",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	commands := readTestFile(t, commandLog)
+	if !strings.Contains(commands, "FACTORY_ENROLL_URL=http://127.0.0.1:") {
+		t.Fatalf("expected generate-devices to receive FACTORY_ENROLL_URL, got:\n%s", commands)
+	}
+	kubectlCalls := readTestFile(t, kubectlLog)
+	if !strings.Contains(kubectlCalls, "port-forward") || !strings.Contains(kubectlCalls, "svc/factoryenroll") {
+		t.Fatalf("expected factoryenroll port-forward, got:\n%s", readTestFile(t, kubectlLog))
+	}
+}
+
 func TestK8SE2EPortForwardOutputFilterSuppressesKubectlNoise(t *testing.T) {
 	for _, line := range []string{
 		"Forwarding from 127.0.0.1:18080 -> 8080",
@@ -1567,6 +1605,41 @@ func TestK8SE2EPortForwardOutputFilterSuppressesKubectlNoise(t *testing.T) {
 			t.Fatalf("expected actionable port-forward output to be logged: %q", line)
 		}
 	}
+}
+
+func writeDataSetupStub(t *testing.T, name, commandLog, envRoot string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, name+".sh")
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+{
+  printf '%s\t%s\n' "` + name + `" "$*"
+  env | grep -E '^(ACCOUNT_MANAGER_BASE_URL|VIDEO_CLOUD_BASE_URL|FACTORY_ENROLL_URL|FACTORY_ENROLL_AUTH_KEY)=' | sort || true
+} >> "` + commandLog + `"
+case "` + name + `" in
+  create-users)
+    mkdir -p "` + envRoot + `/artifacts/users"
+    printf '{"brandname":"RTK","users":[{"email":"rtk+001@users.local"}]}\n' > "` + envRoot + `/artifacts/users/rtk-users-test.json"
+    ;;
+  generate-devices)
+    test -n "${FACTORY_ENROLL_URL:-}"
+    mkdir -p "` + envRoot + `/devices/test_device/manifests"
+    printf '[{"device_id":"dev-1","device_type":"camera","display_name":"Device 1","service_options":["mqtt"]}]\n' > "` + envRoot + `/devices/test_device/manifests/devices.json"
+    ;;
+  bind-devices)
+    mkdir -p "` + envRoot + `/artifacts/device-bind"
+    printf '{"brandname":"RTK","count":1,"assignments":[{"device_id":"dev-1"}]}\n' > "` + envRoot + `/artifacts/device-bind/rtk-device-bind-test.json"
+    ;;
+  validate-bind)
+    printf '{"overall":"pass","report_file":"validate-report.md"}\n'
+    ;;
+esac
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestAccountBootstrapNoopsForLKEPortForwardContext(t *testing.T) {

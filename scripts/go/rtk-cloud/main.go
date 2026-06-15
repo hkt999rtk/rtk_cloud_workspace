@@ -1730,8 +1730,13 @@ func runStagingE2EDataSetup(args []string) error {
 		return err
 	}
 	steps := []e2eStep{}
+	childEnv, cleanup, err := startK8SE2EDataSetupPortForwardsIfNeeded(workspace, envRoot)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 	runStep := func(name string, argv ...string) error {
-		step, err := runE2EStepWithOptions(name, filepath.Join(logsDir, name+".log"), e2eStepOptions{Quiet: *quiet}, argv...)
+		step, err := runE2EStepWithOptions(name, filepath.Join(logsDir, name+".log"), e2eStepOptions{Quiet: *quiet, Env: childEnv}, argv...)
 		steps = append(steps, step)
 		return err
 	}
@@ -1860,6 +1865,17 @@ func runStagingE2EDataSetup(args []string) error {
 		return exitCode(1)
 	}
 	return nil
+}
+
+func startK8SE2EDataSetupPortForwardsIfNeeded(workspace, envRoot string) ([]string, func(), error) {
+	stackEnv, _ := readEnvFile(filepath.Join(envRoot, "env", "stack.env"))
+	if firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), stackEnv["CLOUD_PROVIDER"]) != "lke" {
+		return nil, func() {}, nil
+	}
+	if os.Getenv("FACTORY_ENROLL_URL") != "" && os.Getenv("ACCOUNT_MANAGER_BASE_URL") != "" && os.Getenv("VIDEO_CLOUD_BASE_URL") != "" {
+		return nil, func() {}, nil
+	}
+	return startK8SE2EPortForwardsForServices(workspace, envRoot, false)
 }
 
 func printE2EDataSetupPlan(workspace, envRoot, brandname string, userCount, deviceCount int, deviceMix string, userConcurrency, deviceConcurrency, bindConcurrency int, scripts map[string]string) {
@@ -2235,6 +2251,10 @@ func k8sServicePort(kubeconfig, namespace, service, portName string) (int, error
 }
 
 func startK8SE2EPortForwards(workspace, envRoot string) ([]string, func(), error) {
+	return startK8SE2EPortForwardsForServices(workspace, envRoot, true)
+}
+
+func startK8SE2EPortForwardsForServices(workspace, envRoot string, includeMQTT bool) ([]string, func(), error) {
 	portForward := strings.ToLower(strings.TrimSpace(os.Getenv("CLOUD_STAGING_E2E_K8S_PORT_FORWARD")))
 	if portForward == "0" || portForward == "false" || portForward == "off" {
 		return nil, func() {}, nil
@@ -2258,7 +2278,15 @@ func startK8SE2EPortForwards(workspace, envRoot string) ([]string, func(), error
 		{ns: stack + "-account-manager", service: "account-manager", port: "http", local: accountPort},
 		{ns: stack + "-video-cloud", service: "video-cloud-api", port: "http", local: videoPort},
 		{ns: stack + "-video-cloud", service: "factoryenroll", port: "http", local: factoryPort},
-		{ns: stack + "-video-cloud", service: "mqtt", port: "mqtts", local: mqttPort},
+	}
+	if includeMQTT {
+		forwards = append(forwards, struct {
+			ns          string
+			service     string
+			port        string
+			local       string
+			servicePort int
+		}{ns: stack + "-video-cloud", service: "mqtt", port: "mqtts", local: mqttPort})
 	}
 	cmds := []*exec.Cmd{}
 	cleanup := func() {
@@ -2312,10 +2340,12 @@ func startK8SE2EPortForwards(workspace, envRoot string) ([]string, func(), error
 		"ACCOUNT_MANAGER_BASE_URL=http://127.0.0.1:" + accountPort,
 		"VIDEO_CLOUD_BASE_URL=http://127.0.0.1:" + videoPort,
 		"FACTORY_ENROLL_URL=http://127.0.0.1:" + factoryPort,
-		"VIDEO_CLOUD_MQTT_ADDR=127.0.0.1:" + mqttPort,
 		"VIDEO_CLOUD_LOAD_MQTT_SET=broker",
 		"CLOUD_STAGING_E2E_SKIP_BOOTSTRAP=1",
 		"CLOUD_STAGING_E2E_ENDPOINT_SOURCE=k8s-service",
+	}
+	if includeMQTT {
+		env = append(env, "VIDEO_CLOUD_MQTT_ADDR=127.0.0.1:"+mqttPort)
 	}
 	if secretEnv, err := readK8SSecretEnv(kubeconfig, stack+"-account-manager", "account-manager-runtime", "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL", "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD", "ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN"); err == nil {
 		env = append(env, secretEnv...)
