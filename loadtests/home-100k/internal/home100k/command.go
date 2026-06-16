@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -618,7 +620,7 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		"--shard-index", strconv.Itoa(assignment.Index),
 		"--shard-count", strconv.Itoa(deviceShardCount),
 		"--ramp-up", plan.Stages[0].WarmUp,
-		"--telemetry-interval", plan.Stages[0].SteadyState,
+		"--telemetry-interval", "off",
 		"--state-interval", plan.Stages[0].SteadyState,
 		"--command-rate-per-device-per-day", maxCommandRatePerDeviceDay(stageCommandRates),
 		"--load-model", "home-100k-sustained",
@@ -842,6 +844,7 @@ type rawLiveMQTTResult struct {
 	AppUserTotals          AppUserTotals               `json:"app_user_totals"`
 	FailureReasons         map[string]int64            `json:"failure_reasons"`
 	FailureDetails         map[string]map[string]int64 `json:"failure_details"`
+	StageDiagnostics       map[string]any              `json:"stage_diagnostics"`
 }
 
 func loadLiveMQTTShardResults(path string, stages []Stage, stageTargets []string) ([]StageResult, error) {
@@ -925,8 +928,9 @@ func convertLiveMQTTStageResult(raw rawLiveMQTTResult, stage Stage, maxConnected
 	httpRequests := nonZeroInt64(raw.AppUserTotals.DesiredWrites, raw.HTTPRequests)
 	httpSuccesses := nonZeroInt64(raw.AppUserTotals.ReceivedAcks, raw.HTTPSuccesses)
 	return StageResult{
-		Name:             stage.Name,
-		ConnectedDevices: stage.ConnectedDevices,
+		Name:                  stage.Name,
+		ConnectedDevices:      stage.ConnectedDevices,
+		ShardConnectedDevices: maxConnected,
 		DeviceMQTTTotals: DeviceMQTTTotals{
 			ConnectAttempts:     connectAttempts,
 			ConnectSuccess:      connectSuccess,
@@ -962,7 +966,15 @@ func convertLiveMQTTStageResult(raw rawLiveMQTTResult, stage Stage, maxConnected
 		ClientTokenCorrelationCount:    int(httpSuccesses),
 		FailureReasons:                 raw.FailureReasons,
 		FailureDetails:                 raw.FailureDetails,
+		StageDiagnostics:               liveStageDiagnostics(raw.StageDiagnostics),
 	}
+}
+
+func liveStageDiagnostics(raw map[string]any) []map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	return []map[string]any{raw}
 }
 
 func nonZeroInt64(value int64, fallback int64) int64 {
@@ -1030,13 +1042,13 @@ func executeCollect(args []string, stdout io.Writer, stderr io.Writer) int {
 }
 
 func executeCollectServerEvidence(args []string, stdout io.Writer, stderr io.Writer) int {
-	_, values, code := buildWorkflowPlan("home-100k collect-server-evidence", args, stderr)
+	plan, values, code := buildWorkflowPlan("home-100k collect-server-evidence", args, stderr)
 	if code != 0 {
 		return code
 	}
 	runID := normalizedRunID(values.runID)
 	if values.live {
-		evidence := collectLiveServerEvidence(runID)
+		evidence := collectLiveServerEvidence(plan.Conditions.EnvRoot, runID)
 		if strings.TrimSpace(values.outDir) != "" {
 			if err := writeJSONFile(filepath.Join(values.outDir, "server-evidence.json"), evidence); err != nil {
 				fmt.Fprintln(stderr, err)
@@ -1472,7 +1484,7 @@ func loadVMAssignment(path string) (VMAssignment, error) {
 	return assignment, nil
 }
 
-func collectLiveServerEvidence(runID string) ServerEvidence {
+func collectLiveServerEvidence(envRoot string, runID string) ServerEvidence {
 	sources := map[string]EvidenceSource{}
 	notes := []string{}
 	for _, probe := range serverEvidenceProbes(runID) {
@@ -1486,6 +1498,11 @@ func collectLiveServerEvidence(runID string) ServerEvidence {
 		counters := parseEvidenceCounters(probe.source, runID, out)
 		sources[probe.source] = mergeEvidenceSource(sources[probe.source], EvidenceSource{Available: true, Detail: probe.detail, Counters: counters})
 	}
+	loggerSource, loggerNote := collectCentralLoggerEvidence(envRoot, runID)
+	sources["central_logger"] = loggerSource
+	if loggerNote != "" {
+		notes = append(notes, loggerNote)
+	}
 	for key, source := range evidenceSourceCatalog(false) {
 		if _, ok := sources[key]; !ok {
 			source.Detail = "probe not configured"
@@ -1498,6 +1515,89 @@ func collectLiveServerEvidence(runID string) ServerEvidence {
 		Sources:  sources,
 		Notes:    notes,
 	}
+}
+
+func collectCentralLoggerEvidence(envRoot string, runID string) (EvidenceSource, string) {
+	values := centralLoggerEnvValues(envRoot)
+	endpoint := strings.TrimRight(strings.TrimSpace(firstNonEmpty(values["CLOUD_LOGGER_ENDPOINT"], os.Getenv("CLOUD_LOGGER_ENDPOINT"))), "/")
+	token := strings.TrimSpace(firstNonEmpty(values["CLOUD_LOGGER_INGEST_TOKEN"], os.Getenv("CLOUD_LOGGER_INGEST_TOKEN")))
+	if endpoint == "" || token == "" {
+		return EvidenceSource{Available: false, Optional: true, Detail: "central logger endpoint or token missing"}, "central_logger evidence probe skipped: endpoint/token missing"
+	}
+	counters := map[string]int64{}
+	queries := []struct {
+		label string
+		key   string
+		value string
+	}{
+		{label: "trace_id", key: "trace_id", value: runID},
+		{label: "request_id", key: "request_id", value: runID},
+		{label: "operation_id", key: "operation_id", value: runID},
+		{label: "home_mqtt_operation", key: "operation_id", value: "home-mqtt-loadtest"},
+	}
+	for _, query := range queries {
+		count, err := queryCentralLoggerCount(endpoint, token, query.key, query.value)
+		if err != nil {
+			return EvidenceSource{Available: false, Optional: true, Detail: "central logger query failed: " + redact(err.Error())}, "central_logger evidence probe failed: " + err.Error()
+		}
+		counters["central_logger."+query.label+".events"] = int64(count)
+	}
+	return EvidenceSource{
+		Available: true,
+		Optional:  true,
+		Detail:    "central logger /v1/logs queried by run_id trace_id/request_id/operation_id and home-mqtt-loadtest operation_id",
+		Counters:  counters,
+	}, ""
+}
+
+func centralLoggerEnvValues(envRoot string) map[string]string {
+	candidates := []string{}
+	if override := strings.TrimSpace(os.Getenv("HOME100K_CLOUD_LOGGER_ENV")); override != "" {
+		candidates = append(candidates, override)
+	}
+	candidates = append(candidates, filepath.Join(envRoot, "services", "cloud-logger", "logger.env"))
+	for _, path := range candidates {
+		if fileReadable(path) {
+			return parseEnvFile(path)
+		}
+	}
+	return map[string]string{}
+}
+
+func queryCentralLoggerCount(endpoint string, token string, key string, value string) (int, error) {
+	base, err := url.Parse(endpoint + "/v1/logs")
+	if err != nil {
+		return 0, err
+	}
+	values := base.Query()
+	values.Set(key, value)
+	base.RawQuery = values.Encode()
+	req, err := http.NewRequest(http.MethodGet, base.String(), nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	client := http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return 0, fmt.Errorf("logger query status=%d", resp.StatusCode)
+	}
+	var decoded struct {
+		Events []json.RawMessage `json:"events"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return 0, err
+	}
+	return len(decoded.Events), nil
+}
+
+func fileReadable(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 func parseEvidenceCounters(source string, runID string, out string) map[string]int64 {
@@ -1520,11 +1620,69 @@ func parseEvidenceCounters(source string, runID string, out string) map[string]i
 				counters["device_mqtt.connect_success"]++
 			}
 		}
+		if source == "emqx_listener_stats" {
+			parseEMQXListenerCounterLine(counters, line)
+		}
+		if source == "video_cloud_api" {
+			parseVideoCloudAPILogCounterLine(counters, line)
+		}
 	}
 	if len(counters) == 0 {
 		return nil
 	}
 	return counters
+}
+
+func parseEMQXListenerCounterLine(counters map[string]int64, line string) {
+	fields := strings.Fields(line)
+	if len(fields) != 3 {
+		return
+	}
+	listener := strings.ReplaceAll(fields[0], ":", "_")
+	key := strings.TrimSuffix(fields[1], ":")
+	value, err := strconv.ParseInt(fields[2], 10, 64)
+	if err != nil {
+		return
+	}
+	switch key {
+	case "acceptors", "current_conn", "max_conns":
+		counters["emqx."+listener+"."+key] += value
+	case "ssl_closed", "tcp_closed", "discarded":
+		counters["emqx."+listener+".shutdown_"+key] += value
+	}
+}
+
+func parseVideoCloudAPILogCounterLine(counters map[string]int64, line string) {
+	jsonStart := strings.Index(line, "{")
+	if jsonStart > 0 {
+		line = line[jsonStart:]
+	}
+	var entry struct {
+		Path       string  `json:"path"`
+		Status     int     `json:"status"`
+		DurationMS float64 `json:"duration_ms"`
+	}
+	if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		return
+	}
+	if entry.Path != "/request_token" {
+		return
+	}
+	counters["video_cloud_api.request_token.total"]++
+	counters[fmt.Sprintf("video_cloud_api.request_token.status_%d", entry.Status)]++
+	duration := int64(entry.DurationMS)
+	if duration > counters["video_cloud_api.request_token.max_ms"] {
+		counters["video_cloud_api.request_token.max_ms"] = duration
+	}
+	if entry.DurationMS > 1000 {
+		counters["video_cloud_api.request_token.gt1s"]++
+	}
+	if entry.DurationMS > 5000 {
+		counters["video_cloud_api.request_token.gt5s"]++
+	}
+	if entry.DurationMS > 10000 {
+		counters["video_cloud_api.request_token.gt10s"]++
+	}
 }
 
 func redactEvidenceOutput(out string) string {
@@ -1582,6 +1740,8 @@ func serverEvidenceProbes(runID string) []serverEvidenceProbe {
 			detail:  "pod resource usage captured",
 		},
 		kubectlLogsProbe("emqx", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=mqtt", "MQTT broker logs and client churn evidence captured for run_id "+runID),
+		emqxListenerStatsProbe(runID),
+		videoCloudAPIRequestTokenCounterProbe(runID),
 		kubectlLogsProbe("video_cloud_api", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=video-cloud-api", "Video Cloud API logs captured for run_id "+runID),
 		postgresCounterProbe("iot_device_shadow", runID, shadowRuntimeLogCounterSQL(runID), "IoT Device Shadow MQTT path counters parsed from persisted runtime logs for run_id "+runID),
 		postgresCounterProbe("postgres", runID, shadowStoreCounterSQL(runID), "PostgreSQL device shadow convergence counters parsed for run_id "+runID),
@@ -1662,6 +1822,54 @@ func kubectlLogsProbe(source string, namespace string, selector string, detail s
 		command: "bash",
 		args:    []string{"-lc", script},
 		detail:  detail,
+	}
+}
+
+func emqxListenerStatsProbe(runID string) serverEvidenceProbe {
+	script := `set -euo pipefail
+pods="$(kubectl -n video-cloud-staging-video-cloud get pods --selector app.kubernetes.io/name=mqtt -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}')"
+test -n "$pods"
+for pod in $pods; do
+  kubectl -n video-cloud-staging-video-cloud exec "$pod" -- emqx ctl listeners | awk '
+    /^[a-z]+:default/ {listener=$1}
+    /^[[:space:]]+(acceptors|current_conn|max_conns)[[:space:]]*:/ {
+      gsub(":", "", $2); print listener, $2, $3
+    }
+    /^[[:space:]]+shutdown_count[[:space:]]*:/ {
+      if ($0 ~ /ssl_closed/) {s=$0; sub(/^.*ssl_closed,/, "", s); sub(/[^0-9].*$/, "", s); if (s != "") print listener, "ssl_closed", s}
+      if ($0 ~ /tcp_closed/) {s=$0; sub(/^.*tcp_closed,/, "", s); sub(/[^0-9].*$/, "", s); if (s != "") print listener, "tcp_closed", s}
+      if ($0 ~ /discarded/) {s=$0; sub(/^.*discarded,/, "", s); sub(/[^0-9].*$/, "", s); if (s != "") print listener, "discarded", s}
+    }
+  '
+done`
+	return serverEvidenceProbe{
+		source:  "emqx_listener_stats",
+		command: "bash",
+		args:    []string{"-lc", script},
+		detail:  "EMQX listener acceptor, current connection, max connection, and shutdown counters captured for run_id " + runID,
+	}
+}
+
+func videoCloudAPIRequestTokenCounterProbe(runID string) serverEvidenceProbe {
+	script := `set -euo pipefail
+kubectl -n video-cloud-staging-video-cloud logs --since=30m --selector app.kubernetes.io/name=video-cloud-api --tail=-1 \
+  | jq -sr '
+      [.[] | select(.path == "/request_token")] as $rt
+      | [
+          "video_cloud_api.request_token.total \($rt | length)",
+          "video_cloud_api.request_token.status_200 \(($rt | map(select(.status == 200)) | length))",
+          "video_cloud_api.request_token.status_500 \(($rt | map(select(.status == 500)) | length))",
+          "video_cloud_api.request_token.gt1s \(($rt | map(select(.duration_ms > 1000)) | length))",
+          "video_cloud_api.request_token.gt5s \(($rt | map(select(.duration_ms > 5000)) | length))",
+          "video_cloud_api.request_token.gt10s \(($rt | map(select(.duration_ms > 10000)) | length))"
+        ]
+      | .[]'
+`
+	return serverEvidenceProbe{
+		source:  "video_cloud_api",
+		command: "bash",
+		args:    []string{"-lc", script},
+		detail:  "Video Cloud API /request_token counters parsed from logs for run_id " + runID,
 	}
 }
 

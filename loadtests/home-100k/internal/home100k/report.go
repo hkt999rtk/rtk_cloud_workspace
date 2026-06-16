@@ -1,6 +1,7 @@
 package home100k
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -149,6 +150,30 @@ func RenderReport(input ReportInput) string {
 		}
 		fmt.Fprintln(&b)
 
+		diagnosticRows := stageDiagnosticRows(input.StageResults)
+		if len(diagnosticRows) > 0 {
+			fmt.Fprintln(&b, "## Stage Diagnostics")
+			fmt.Fprintln(&b, "| Stage | Shard | Target | Before | After | Connect attempts | Connect success | Connect fail | Commands scheduled | Commands attempted | Commands passed | Skip reason |")
+			fmt.Fprintln(&b, "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |")
+			for _, row := range diagnosticRows {
+				fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %s |\n",
+					row.Stage,
+					row.Shard,
+					row.Target,
+					row.Before,
+					row.After,
+					row.ConnectAttempts,
+					row.ConnectSuccess,
+					row.ConnectFail,
+					row.CommandsScheduled,
+					row.CommandsAttempted,
+					row.CommandsPassed,
+					firstNonEmpty(row.SkipReason, "-"),
+				)
+			}
+			fmt.Fprintln(&b)
+		}
+
 		fmt.Fprintln(&b, "## Device MQTT Totals")
 		fmt.Fprintln(&b, "| Stage | Connect attempts | Connect success | Connect fail | New subscribes | Active connections | Active subscriptions | Publishes | Received | Delta received | Reported publishes | Rejected publishes | Bytes sent | Bytes received |")
 		fmt.Fprintln(&b, "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
@@ -272,6 +297,16 @@ func RenderReport(input ReportInput) string {
 			fmt.Fprintln(&b)
 		}
 		fmt.Fprintln(&b)
+		counterRows := serverEvidenceCounterRows(input.ServerEvidence)
+		if len(counterRows) > 0 {
+			fmt.Fprintln(&b, "## Server Evidence Counters")
+			fmt.Fprintln(&b, "| Source | Counter | Value |")
+			fmt.Fprintln(&b, "| --- | --- | ---: |")
+			for _, row := range counterRows {
+				fmt.Fprintf(&b, "| %s | %s | %d |\n", row.Source, row.Counter, row.Value)
+			}
+			fmt.Fprintln(&b)
+		}
 	}
 
 	if len(input.SyncTelemetry.VMs) > 0 {
@@ -292,6 +327,94 @@ func RenderReport(input ReportInput) string {
 		fmt.Fprintln(&b)
 	}
 	return b.String()
+}
+
+type serverEvidenceCounterRow struct {
+	Source  string
+	Counter string
+	Value   int64
+}
+
+type stageDiagnosticRow struct {
+	Stage             string
+	Shard             int
+	Target            int64
+	Before            int64
+	After             int64
+	ConnectAttempts   int64
+	ConnectSuccess    int64
+	ConnectFail       int64
+	CommandsScheduled int64
+	CommandsAttempted int64
+	CommandsPassed    int64
+	SkipReason        string
+}
+
+func stageDiagnosticRows(stages []StageResult) []stageDiagnosticRow {
+	rows := []stageDiagnosticRow{}
+	for _, stage := range stages {
+		for idx, item := range stage.StageDiagnostics {
+			rows = append(rows, stageDiagnosticRow{
+				Stage:             stage.Name,
+				Shard:             idx,
+				Target:            diagnosticInt64(item, "connected_target"),
+				Before:            diagnosticInt64(item, "connected_before"),
+				After:             diagnosticInt64(item, "connected_after"),
+				ConnectAttempts:   diagnosticInt64(item, "connect_attempts"),
+				ConnectSuccess:    diagnosticInt64(item, "connect_successes"),
+				ConnectFail:       diagnosticInt64(item, "connect_failures"),
+				CommandsScheduled: diagnosticInt64(item, "commands_scheduled"),
+				CommandsAttempted: diagnosticInt64(item, "commands_attempted"),
+				CommandsPassed:    diagnosticInt64(item, "commands_passed"),
+				SkipReason:        diagnosticString(item, "skip_reason"),
+			})
+		}
+	}
+	return rows
+}
+
+func diagnosticString(values map[string]any, key string) string {
+	if value, ok := values[key].(string); ok {
+		return value
+	}
+	return ""
+}
+
+func diagnosticInt64(values map[string]any, key string) int64 {
+	switch value := values[key].(type) {
+	case int:
+		return int64(value)
+	case int64:
+		return value
+	case float64:
+		return int64(value)
+	case json.Number:
+		parsed, _ := value.Int64()
+		return parsed
+	default:
+		return 0
+	}
+}
+
+func serverEvidenceCounterRows(evidence ServerEvidence) []serverEvidenceCounterRow {
+	rows := []serverEvidenceCounterRow{}
+	sources := make([]string, 0, len(evidence.Sources))
+	for source := range evidence.Sources {
+		sources = append(sources, source)
+	}
+	sort.Strings(sources)
+	for _, source := range sources {
+		counters := evidence.Sources[source].Counters
+		keys := make([]string, 0, len(counters))
+		for key := range counters {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			rows = append(rows, serverEvidenceCounterRow{Source: source, Counter: key, Value: counters[key]})
+		}
+	}
+	return rows
 }
 
 func renderMap(b *strings.Builder, title string, values map[string]int) {

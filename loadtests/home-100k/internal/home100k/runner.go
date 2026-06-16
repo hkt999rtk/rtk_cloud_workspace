@@ -46,6 +46,7 @@ type AggregateOptions struct {
 type StageResult struct {
 	Name                           string                      `json:"name"`
 	ConnectedDevices               int                         `json:"connected_devices"`
+	ShardConnectedDevices          int                         `json:"shard_connected_devices,omitempty"`
 	DeviceMQTTTotals               DeviceMQTTTotals            `json:"device_mqtt_totals"`
 	AppUserTotals                  AppUserTotals               `json:"app_user_totals"`
 	MQTTConnectSuccessRatePercent  float64                     `json:"mqtt_connect_success_rate_percent"`
@@ -67,6 +68,7 @@ type StageResult struct {
 	ClientTokenCorrelationCount    int                         `json:"client_token_correlation_count"`
 	FailureReasons                 map[string]int64            `json:"failure_reasons,omitempty"`
 	FailureDetails                 map[string]map[string]int64 `json:"failure_details,omitempty"`
+	StageDiagnostics               []map[string]any            `json:"stage_diagnostics,omitempty"`
 }
 
 type DeviceMQTTTotals struct {
@@ -432,6 +434,7 @@ func aggregateStageResults(items []StageResult) StageResult {
 		if item.ConnectedDevices > result.ConnectedDevices {
 			result.ConnectedDevices = item.ConnectedDevices
 		}
+		result.ShardConnectedDevices += item.ShardConnectedDevices
 		result.MQTTConnectSuccessRatePercent += item.MQTTConnectSuccessRatePercent
 		result.DeviceMQTTTotals = addDeviceMQTTTotals(result.DeviceMQTTTotals, item.DeviceMQTTTotals)
 		result.AppUserTotals = addAppUserTotals(result.AppUserTotals, item.AppUserTotals)
@@ -453,6 +456,7 @@ func aggregateStageResults(items []StageResult) StageResult {
 		result.ClientTokenCorrelationCount += item.ClientTokenCorrelationCount
 		result.FailureReasons = addFailureReasons(result.FailureReasons, item.FailureReasons)
 		result.FailureDetails = addFailureDetails(result.FailureDetails, item.FailureDetails)
+		result.StageDiagnostics = append(result.StageDiagnostics, item.StageDiagnostics...)
 	}
 	count := float64(len(items))
 	result.MQTTConnectSuccessRatePercent = connectSuccessPercent(result.DeviceMQTTTotals)
@@ -622,7 +626,8 @@ func requiredEvidenceSources(available bool) map[string]EvidenceSource {
 
 func optionalEvidenceSources(available bool) map[string]EvidenceSource {
 	return map[string]EvidenceSource{
-		"redis_valkey": {Available: available, Optional: true},
+		"central_logger": {Available: available, Optional: true},
+		"redis_valkey":   {Available: available, Optional: true},
 	}
 }
 

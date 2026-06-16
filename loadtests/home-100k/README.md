@@ -611,8 +611,13 @@ and sync telemetry into
 `--out-dir/shards/<vm-label>/` and `--out-dir/sync-telemetry.d/`.
 `collect-server-evidence --live` runs Kubernetes evidence probes with `kubectl`
 for EMQX, Video Cloud API, IoT Device Shadow, PostgreSQL, Redis/Valkey,
-ingress/nginx, and host/pod resources. It writes `server-evidence.json` when
-`--out-dir` is set. Partial probe failure is preserved as
+ingress/nginx, host/pod resources, and the central logger `/v1/logs` query API
+when `services/cloud-logger/logger.env` is available in the selected env-root.
+For LKE environments where the logger config is intentionally stored elsewhere,
+set `HOME100K_CLOUD_LOGGER_ENV` to the logger env file path or export
+`CLOUD_LOGGER_ENDPOINT` and `CLOUD_LOGGER_INGEST_TOKEN` before evidence
+collection; do not put logger tokens directly in the description file.
+It writes `server-evidence.json` when `--out-dir` is set. Partial probe failure is preserved as
 `complete=false`, so the final report cannot become a false `PASS`.
 `aggregate` reads `--out-dir/shards/*/results.json` plus
 `--out-dir/server-evidence.json`, then writes run-level JSON artifacts. The
@@ -655,6 +660,9 @@ Every report must include:
 - user scenario
 - IoT Device Shadow scenario
 - per-stage results
+- per-stage diagnostics, including connect window, action window, connected
+  before/after counts, command schedule counts, and skip reason when shadow
+  actions were not attempted
 - client target coverage by stage, including target devices, actual MQTT
   connect/subscription counts, target users, and actual APP login counts
 - Device MQTT totals by stage and total
@@ -669,6 +677,7 @@ Every report must include:
 - authorization violation count
 - load-generator CPU, memory, network, and file-descriptor saturation
 - server-side metrics/log evidence
+- central logger query evidence when the logger endpoint is configured
 - server/client counter correlation
 - sync/provision telemetry with per-VM transfer bytes and remote disk snapshots
 - load-generator VM resource timeline summary from

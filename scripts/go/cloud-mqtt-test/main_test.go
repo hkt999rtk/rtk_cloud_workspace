@@ -18,6 +18,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -305,6 +306,80 @@ func TestRunAppCertificateBootstrapUsesArtifactKeyForIssuedCertificate(t *testin
 	}
 	if !*sawClientCert {
 		t.Fatal("video token server did not receive an app client certificate")
+	}
+}
+
+func TestSustainedEventsTelemetryCanBeDisabled(t *testing.T) {
+	events := sustainedEvents([]sustainedDeviceSession{
+		{Record: certRecord{DeviceID: "device-1", DeviceType: "light"}},
+	}, loadOptions{
+		TelemetryInterval:          "off",
+		CommandRatePerDevicePerDay: "0",
+	}, 1234, time.Minute)
+	if len(events) != 0 {
+		t.Fatalf("events = %#v, want no telemetry when interval is off", events)
+	}
+}
+
+func TestPrepareAppCertificateBootstrapForAssignmentsFallsBackToNextCandidate(t *testing.T) {
+	certPEM, keyPEM, csrPEM := testAppMaterial(t, "app-user:user-1")
+	account := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, map[string]any{
+			"user": map[string]string{"id": "user-1"},
+			"app_certificate": map[string]string{
+				"status":                "issued",
+				"subject":               "app-user:user-1",
+				"certificate_pem":       "issued",
+				"certificate_chain_pem": "issued",
+			},
+		})
+	}))
+	defer account.Close()
+	videoCalls := 0
+	video := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		videoCalls++
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["devid"] == "device-1" {
+			http.Error(w, "try another candidate", http.StatusServiceUnavailable)
+			return
+		}
+		writeJSON(t, w, map[string]string{"scope": "app", "access_token": "app-token-" + body["devid"]})
+	}))
+	defer video.Close()
+
+	user := userCredential{
+		Email:    "rtk+001@users.local",
+		Password: "secret",
+		AppCredentials: appCertificateKeys{
+			PrivateKeyPEM: keyPEM,
+			CSRPem:        csrPEM,
+		},
+		AppCertificate: appCertificateSummary{
+			CertificatePEM:      certPEM,
+			CertificateChainPEM: certPEM,
+		},
+	}
+	material := prepareAppCertificateBootstrapForAssignments(account.URL, video.URL, "rtk-1234", map[string]userCredential{
+		user.Email: user,
+	}, []assignment{
+		{AssignedEmail: user.Email, DeviceID: "device-1"},
+		{AssignedEmail: user.Email, DeviceID: "device-2"},
+	}, 10)
+
+	if material.Status.Status != "PASS" || material.Status.DeviceID != "device-2" || material.Status.AccessToken != "app-token-device-2" {
+		t.Fatalf("status = %#v, want PASS on second candidate", material.Status)
+	}
+	if videoCalls != 2 {
+		t.Fatalf("videoCalls = %d, want 2", videoCalls)
+	}
+	if len(material.Status.Attempts) != 2 {
+		t.Fatalf("attempts = %#v, want 2 entries", material.Status.Attempts)
+	}
+	if material.Status.Attempts[0].Status != "FAIL" || material.Status.Attempts[1].Status != "PASS" {
+		t.Fatalf("attempts = %#v, want FAIL then PASS", material.Status.Attempts)
 	}
 }
 
@@ -609,6 +684,126 @@ func TestActorSeparatedProbePublishesRuntimeLogsForDeviceAndAppActors(t *testing
 	}
 }
 
+func TestSustainedShadowCommandPublishesRuntimeLogsForServerCorrelation(t *testing.T) {
+	broker := newFakeTLSMQTTBroker(t)
+	defer broker.Close()
+	certPEM, keyPEM, _ := testAppMaterial(t, "app-user:user-1")
+	appCert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, map[string]string{"scope": "app", "access_token": "app-token"})
+	}))
+	defer tokenServer.Close()
+
+	deviceConn, err := connectMQTTActor(mqttActorProbe{
+		DeviceID:    "rtk-0041",
+		DeviceType:  "light",
+		Brandname:   "RTK",
+		RunID:       "run-sustained-logs",
+		DeviceToken: "device-token",
+		Dial:        broker.TLSDial,
+		Timeout:     time.Second,
+		Now:         fixedProbeTime,
+	}, "device", "rtk-0041", "device-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer deviceConn.Close()
+	if err := mqttSubscribe(deviceConn, 1, "$vc/devices/rtk-0041/shadow/update/delta"); err != nil {
+		t.Fatal(err)
+	}
+	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(rawPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var totals mqttIOTotals
+	err = runSustainedShadowCommand(sustainedDeviceSession{
+		Record: certRecord{DeviceID: "rtk-0041", DeviceType: "light"},
+		Conn:   deviceConn,
+	}, "RTK", "run-sustained-logs", tokenServer.URL, host, port, appCert, &totals)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if totals.AppDesiredWrites != 1 || totals.DeltaReceived != 1 || totals.ReportedEvents != 1 || totals.AppReceivedAcks != 1 {
+		t.Fatalf("totals = %+v, want desired/delta/reported/ack", totals)
+	}
+
+	var payloads [][]byte
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		payloads = append(
+			broker.PublishPayloads("app-controller", "devices/rtk-0041/logs"),
+			broker.PublishPayloads("device", "devices/rtk-0041/logs")...,
+		)
+		if len(payloads) >= 4 {
+			break
+		}
+	}
+	got := map[string]int{}
+	for _, payload := range payloads {
+		var row struct {
+			Source  string `json:"source"`
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal(payload, &row); err != nil {
+			t.Fatal(err)
+		}
+		got[row.Source+"\x00"+row.Message]++
+	}
+	for _, want := range []struct {
+		source  string
+		message string
+	}{
+		{"app_controller", "mqtt_e2e shadow_desired app_controller publish"},
+		{"device_client", "mqtt_e2e shadow_delta device_client receive"},
+		{"device_client", "mqtt_e2e shadow_reported device_client publish"},
+		{"app_observer", "mqtt_e2e shadow_reported app_observer receive"},
+	} {
+		if got[want.source+"\x00"+want.message] != 1 {
+			t.Fatalf("runtime logs = %#v, missing %s %s", got, want.source, want.message)
+		}
+	}
+}
+
+func TestSustainedActorsUseLongMQTTKeepAlive(t *testing.T) {
+	broker := newFakeTLSMQTTBroker(t)
+	defer broker.Close()
+	certPEM, keyPEM, _ := testAppMaterial(t, "rtk-0041")
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, map[string]string{"access_token": "device-token"})
+	}))
+	defer tokenServer.Close()
+	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(rawPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := connectSustainedDevice(certRecord{
+		DeviceID:   "rtk-0041",
+		DeviceType: "light",
+		CertPEM:    certPEM,
+		KeyPEM:     keyPEM,
+	}, "RTK", "run-sustained-keepalive", tokenServer.URL, host, port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	clientID := fmt.Sprintf("rtk-e2e-run-sustained-keepalive-rtk-0041-device-%d", os.Getpid())
+	if got := broker.KeepAlive(clientID); got != sustainedMQTTKeepAliveSeconds {
+		t.Fatalf("sustained device keepalive = %d, want %d", got, sustainedMQTTKeepAliveSeconds)
+	}
+}
+
 func TestActorSeparatedProbeFailsWhenAppMQTTAuthRejected(t *testing.T) {
 	broker := newFakeMQTTBroker(t)
 	broker.RejectUsername = "app-user:rtk-0041"
@@ -785,6 +980,42 @@ func TestAttachMQTTIOTotalsIncludesFailureReasons(t *testing.T) {
 	}
 }
 
+func TestNormalizeSustainedFailureDetailsPreservesConnectionPhase(t *testing.T) {
+	tests := []struct {
+		name string
+		err  string
+		want string
+	}{
+		{
+			name: "device token deadline",
+			err:  "device request_token: Post \"https://device.example/request_token\": context deadline exceeded",
+			want: "device request_token context deadline exceeded",
+		},
+		{
+			name: "mqtt tls dial timeout",
+			err:  "mqtt dial: mqtt tls dial: dial tcp 203.0.113.10:8883: i/o timeout",
+			want: "mqtt tls dial timeout",
+		},
+		{
+			name: "mqtt connack timeout",
+			err:  "mqtt connack read: read tcp 192.0.2.10:40000->203.0.113.10:8883: i/o timeout",
+			want: "mqtt connack read failed",
+		},
+		{
+			name: "mqtt connect write",
+			err:  "mqtt connect write: write tcp 192.0.2.10:40000->203.0.113.10:8883: broken pipe",
+			want: "mqtt connect write failed",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeFailureDetail(tt.err); got != tt.want {
+				t.Fatalf("normalizeFailureDetail(%q) = %q, want %q", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseSustainedStagesRequiresMonotonicTargets(t *testing.T) {
 	stages, err := parseSustainedStages(loadOptions{
 		StageNames:            "25k,50k,75k,100k",
@@ -803,6 +1034,35 @@ func TestParseSustainedStagesRequiresMonotonicTargets(t *testing.T) {
 		StageDurationsSeconds: "75,75",
 	}); err == nil {
 		t.Fatal("expected decreasing stage target to fail")
+	}
+}
+
+func TestSustainedStageResultsJSONIncludesStageDiagnostics(t *testing.T) {
+	rows := sustainedStageResultsJSON([]sustainedStageResult{{
+		Name:              "25k",
+		ConnectedTarget:   2500,
+		ActiveConnections: 1000,
+		Status:            "FAIL",
+		Diagnostics: sustainedStageDiagnostics{
+			ConnectedTarget:  2500,
+			ConnectedBefore:  0,
+			ConnectedAfter:   1000,
+			NewAssignments:   2500,
+			ConnectAttempts:  1200,
+			ConnectSuccesses: 1000,
+			ConnectFailures:  200,
+			SkipReason:       "device_connect_target_missed",
+		},
+	}}, appBootstrapStatus{})
+	if len(rows) != 1 {
+		t.Fatalf("rows len = %d, want 1", len(rows))
+	}
+	diag, ok := rows[0]["stage_diagnostics"].(sustainedStageDiagnostics)
+	if !ok {
+		t.Fatalf("stage_diagnostics type = %T, want sustainedStageDiagnostics", rows[0]["stage_diagnostics"])
+	}
+	if diag.SkipReason != "device_connect_target_missed" || diag.ConnectAttempts != 1200 {
+		t.Fatalf("unexpected diagnostics: %+v", diag)
 	}
 }
 
@@ -979,13 +1239,15 @@ func fixedProbeTime() time.Time {
 }
 
 type fakeMQTTBroker struct {
-	t              *testing.T
-	listener       net.Listener
-	mu             sync.Mutex
-	subscribers    map[string][]net.Conn
-	clientNames    map[net.Conn]string
-	publishCounts  map[string]int
-	RejectUsername string
+	t               *testing.T
+	listener        net.Listener
+	mu              sync.Mutex
+	subscribers     map[string][]net.Conn
+	clientNames     map[net.Conn]string
+	keepAlives      map[string]uint16
+	publishCounts   map[string]int
+	publishPayloads map[string][][]byte
+	RejectUsername  string
 }
 
 func newFakeMQTTBroker(t *testing.T) *fakeMQTTBroker {
@@ -994,12 +1256,33 @@ func newFakeMQTTBroker(t *testing.T) *fakeMQTTBroker {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return newFakeMQTTBrokerWithListener(t, ln)
+}
+
+func newFakeTLSMQTTBroker(t *testing.T) *fakeMQTTBroker {
+	t.Helper()
+	certPEM, keyPEM, _ := testAppMaterial(t, "mqtt.test")
+	cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{cert}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return newFakeMQTTBrokerWithListener(t, ln)
+}
+
+func newFakeMQTTBrokerWithListener(t *testing.T, ln net.Listener) *fakeMQTTBroker {
+	t.Helper()
 	broker := &fakeMQTTBroker{
-		t:             t,
-		listener:      ln,
-		subscribers:   map[string][]net.Conn{},
-		clientNames:   map[net.Conn]string{},
-		publishCounts: map[string]int{},
+		t:               t,
+		listener:        ln,
+		subscribers:     map[string][]net.Conn{},
+		clientNames:     map[net.Conn]string{},
+		keepAlives:      map[string]uint16{},
+		publishCounts:   map[string]int{},
+		publishPayloads: map[string][][]byte{},
 	}
 	go broker.serve()
 	return broker
@@ -1013,10 +1296,31 @@ func (b *fakeMQTTBroker) Dial() (io.ReadWriteCloser, error) {
 	return net.Dial("tcp", b.listener.Addr().String())
 }
 
+func (b *fakeMQTTBroker) TLSDial() (io.ReadWriteCloser, error) {
+	return tls.Dial("tcp", b.listener.Addr().String(), &tls.Config{InsecureSkipVerify: true})
+}
+
 func (b *fakeMQTTBroker) PublishCount(actor, topic string) int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.publishCounts[actor+"\x00"+topic]
+}
+
+func (b *fakeMQTTBroker) PublishPayloads(actor, topic string) [][]byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	key := actor + "\x00" + topic
+	payloads := make([][]byte, 0, len(b.publishPayloads[key]))
+	for _, payload := range b.publishPayloads[key] {
+		payloads = append(payloads, append([]byte(nil), payload...))
+	}
+	return payloads
+}
+
+func (b *fakeMQTTBroker) KeepAlive(clientID string) uint16 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.keepAlives[clientID]
 }
 
 func TestConnectSustainedDevicesUntilReturnsWhenDeadlineAlreadyExpired(t *testing.T) {
@@ -1090,7 +1394,7 @@ func (b *fakeMQTTBroker) handle(conn net.Conn) {
 		}
 		switch packetType >> 4 {
 		case 1:
-			clientID, username, ok := decodeMQTTConnectForTest(body)
+			clientID, username, keepAlive, ok := decodeMQTTConnectForTest(body)
 			if !ok {
 				return
 			}
@@ -1100,6 +1404,7 @@ func (b *fakeMQTTBroker) handle(conn net.Conn) {
 			}
 			b.mu.Lock()
 			b.clientNames[conn] = actorNameForClientID(clientID)
+			b.keepAlives[clientID] = keepAlive
 			b.mu.Unlock()
 			_ = mqttWritePacket(conn, 0x20, []byte{0, 0})
 		case 8:
@@ -1118,7 +1423,9 @@ func (b *fakeMQTTBroker) handle(conn net.Conn) {
 			}
 			b.mu.Lock()
 			actor := b.clientNames[conn]
-			b.publishCounts[actor+"\x00"+topic]++
+			key := actor + "\x00" + topic
+			b.publishCounts[key]++
+			b.publishPayloads[key] = append(b.publishPayloads[key], append([]byte(nil), payload...))
 			targets := append([]net.Conn(nil), b.subscribers[topic]...)
 			b.mu.Unlock()
 			for _, target := range targets {
@@ -1186,29 +1493,30 @@ func (b *fakeMQTTBroker) publishToSubscribers(topic string, doc map[string]any) 
 	}
 }
 
-func decodeMQTTConnectForTest(body []byte) (clientID, username string, ok bool) {
+func decodeMQTTConnectForTest(body []byte) (clientID, username string, keepAlive uint16, ok bool) {
 	pos := 0
 	if _, next, ok := readMQTTStringForTest(body, pos); !ok {
-		return "", "", false
+		return "", "", 0, false
 	} else {
 		pos = next
 	}
 	if len(body) < pos+4 {
-		return "", "", false
+		return "", "", 0, false
 	}
 	flags := body[pos+1]
+	keepAlive = uint16(body[pos+2])<<8 | uint16(body[pos+3])
 	pos += 4
 	clientID, pos, ok = readMQTTStringForTest(body, pos)
 	if !ok {
-		return "", "", false
+		return "", "", 0, false
 	}
 	if flags&0x80 != 0 {
 		username, _, ok = readMQTTStringForTest(body, pos)
 		if !ok {
-			return "", "", false
+			return "", "", 0, false
 		}
 	}
-	return clientID, username, true
+	return clientID, username, keepAlive, true
 }
 
 func decodeMQTTSubscribeForTest(body []byte) (uint16, string, bool) {

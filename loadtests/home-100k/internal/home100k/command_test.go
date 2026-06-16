@@ -1614,6 +1614,7 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 		"--env-root cloud_env/staging/lke",
 		"--brandname RTK",
 		"--duration-seconds 12",
+		"--telemetry-interval off",
 		"--command-rate-per-device-per-day 1800.00",
 		"--stage-names 25k,50k,75k,100k",
 		"--stage-connected-devices 5000,10000,15000,20000",
@@ -1641,6 +1642,9 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 	first := result.StageResults[0]
 	if first.DeviceMQTTTotals.Publishes != 2103 || first.DeviceMQTTTotals.ReceivedMessages != 2050 || first.DeviceMQTTTotals.BytesSent != 123456 {
 		t.Fatalf("device MQTT totals not preserved from live results: %#v", first.DeviceMQTTTotals)
+	}
+	if first.ConnectedDevices != 25000 || first.ShardConnectedDevices != 5000 {
+		t.Fatalf("stage targets not preserved: global=%d shard=%d", first.ConnectedDevices, first.ShardConnectedDevices)
 	}
 	if first.AppUserTotals.DesiredWrites != 700 || first.AppUserTotals.ReceivedAcks != 690 || first.AppUserTotals.BytesReceived != 2222 {
 		t.Fatalf("app/user totals not preserved from live results: %#v", first.AppUserTotals)
@@ -2063,6 +2067,50 @@ func TestExecuteCollectServerEvidenceDefaultsToIncompleteSourcePlan(t *testing.T
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("server evidence output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestCollectCentralLoggerEvidenceQueriesRunIDIndexes(t *testing.T) {
+	seen := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer logger-token" {
+			t.Fatalf("Authorization = %q, want bearer token", got)
+		}
+		seen = append(seen, r.URL.RawQuery)
+		events := []map[string]string{{"event_id": "evt-1"}}
+		if r.URL.Query().Get("operation_id") == "home-mqtt-loadtest" {
+			events = append(events, map[string]string{"event_id": "evt-2"})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"events": events})
+	}))
+	defer server.Close()
+
+	envRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(envRoot, "services", "cloud-logger"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envRoot, "services", "cloud-logger", "logger.env"), []byte("CLOUD_LOGGER_ENDPOINT="+server.URL+"\nCLOUD_LOGGER_INGEST_TOKEN=logger-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	source, note := collectCentralLoggerEvidence(envRoot, "run-logger")
+	if note != "" {
+		t.Fatalf("unexpected note: %s", note)
+	}
+	if !source.Available || !source.Optional {
+		t.Fatalf("central logger source flags = %+v, want available optional", source)
+	}
+	if source.Counters["central_logger.trace_id.events"] != 1 ||
+		source.Counters["central_logger.request_id.events"] != 1 ||
+		source.Counters["central_logger.operation_id.events"] != 1 ||
+		source.Counters["central_logger.home_mqtt_operation.events"] != 2 {
+		t.Fatalf("unexpected counters: %+v", source.Counters)
+	}
+	joined := strings.Join(seen, "\n")
+	for _, want := range []string{"trace_id=run-logger", "request_id=run-logger", "operation_id=run-logger", "operation_id=home-mqtt-loadtest"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("central logger query missing %q in:\n%s", want, joined)
 		}
 	}
 }

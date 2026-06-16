@@ -1102,6 +1102,7 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 	manifests = append(manifests, lkeAllowAccountManagerCertIssuerNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudAccountManagerNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudMQTTClientsNetworkPolicyManifest(env))
+	manifests = append(manifests, lkeAllowEMQXClusterNetworkPolicyManifest(env))
 	return manifests
 }
 
@@ -1324,6 +1325,37 @@ spec:
       ports:
         - protocol: TCP
           port: 1883
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
+}
+
+func lkeAllowEMQXClusterNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-emqx-cluster
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: mqtt
+    app.kubernetes.io/component: cluster-discovery
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mqtt
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mqtt
+      ports:
+        - protocol: TCP
+          port: 4369
+        - protocol: TCP
+          port: 4370
 `, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
 }
 
@@ -1830,6 +1862,12 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 		if err := kubectlApply(lkeMQTTServiceManifest(env)); err != nil {
 			return err
 		}
+		if err := kubectlApply(lkeMQTTHeadlessServiceManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeAllowEMQXClusterNetworkPolicyManifest(env)); err != nil {
+			return err
+		}
 		if lkeEnvBool("LKE_PUBLIC_MQTT_LOADBALANCER") {
 			if err := kubectlApply(lkeMQTTPublicServiceManifest(env)); err != nil {
 				return err
@@ -1842,6 +1880,9 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 			return err
 		}
 		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/mqtt", "--timeout", firstNonEmpty(os.Getenv("LKE_MQTT_ROLLOUT_TIMEOUT"), "5m")); err != nil {
+			return err
+		}
+		if err := lkeEnsureEMQXCluster(env); err != nil {
 			return err
 		}
 		if err := lkeApplyCoturnRuntime(env); err != nil {
@@ -3225,6 +3266,7 @@ data:
 }
 
 func lkeMQTTDeploymentManifest(env map[string]string) string {
+	placement := lkeMQTTPlacementManifest(env)
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -3236,7 +3278,7 @@ metadata:
     rtk.realtek.com/provider: lke
     rtk.realtek.com/stack: %s
 spec:
-  replicas: 1
+  replicas: %d
   selector:
     matchLabels:
       app.kubernetes.io/name: mqtt
@@ -3248,23 +3290,50 @@ spec:
         rtk.realtek.com/provider: lke
         rtk.realtek.com/stack: %s
     spec:
+%s
       containers:
         - name: mqtt
           image: %s
           imagePullPolicy: IfNotPresent
           env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: EMQX_NODE__NAME
+              value: "emqx@$(POD_IP)"
+            - name: EMQX_NODE__COOKIE
+              value: "%s"
+            - name: EMQX_CLUSTER__DISCOVERY_STRATEGY
+              value: "manual"
+            - name: EMQX_CLUSTER__DNS__NAME
+              value: "mqtt-headless.%s.svc.cluster.local"
+            - name: EMQX_CLUSTER__DNS__RECORD_TYPE
+              value: "a"
             - name: EMQX_LISTENERS__TCP__DEFAULT__BIND
               value: "0.0.0.0:1883"
             - name: EMQX_LISTENERS__TCP__DEFAULT__ENABLE_AUTHN
               value: "false"
+            - name: EMQX_LISTENERS__TCP__DEFAULT__ACCEPTORS
+              value: "%s"
+            - name: EMQX_LISTENERS__TCP__DEFAULT__TCP_OPTIONS__BACKLOG
+              value: "%s"
             - name: EMQX_LISTENERS__SSL__DEFAULT__BIND
               value: "0.0.0.0:8883"
             - name: EMQX_LISTENERS__SSL__DEFAULT__ENABLE_AUTHN
               value: "false"
+            - name: EMQX_LISTENERS__SSL__DEFAULT__ACCEPTORS
+              value: "%s"
+            - name: EMQX_LISTENERS__SSL__DEFAULT__TCP_OPTIONS__BACKLOG
+              value: "%s"
             - name: EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__CERTFILE
               value: /opt/emqx/etc/certs/tls.crt
             - name: EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__KEYFILE
               value: /opt/emqx/etc/certs/tls.key
+            - name: EMQX_FORCE_SHUTDOWN__MAX_MAILBOX_SIZE
+              value: "%s"
+            - name: EMQX_FORCE_SHUTDOWN__MAX_HEAP_SIZE
+              value: "%s"
 %s
           ports:
             - name: mqtt
@@ -3279,7 +3348,133 @@ spec:
         - name: mqtt-runtime
           secret:
             secretName: mqtt-runtime
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_MQTT_IMAGE"), "emqx/emqx:5.8.7"), lkeContainerResourcesManifest("mqtt"))
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeMQTTReplicas(env), env["CLOUD_STACK_NAME"], placement, firstNonEmpty(os.Getenv("LKE_MQTT_IMAGE"), "emqx/emqx:5.8.7"), lkeEMQXNodeCookie(env), lkeNamespaceName(env, "video-cloud"), lkeEMQXListenerAcceptors(env), lkeEMQXListenerBacklog(env), lkeEMQXListenerAcceptors(env), lkeEMQXListenerBacklog(env), firstNonEmpty(os.Getenv("LKE_EMQX_FORCE_SHUTDOWN_MAX_MAILBOX_SIZE"), env["LKE_EMQX_FORCE_SHUTDOWN_MAX_MAILBOX_SIZE"], "16384"), firstNonEmpty(os.Getenv("LKE_EMQX_FORCE_SHUTDOWN_MAX_HEAP_SIZE"), env["LKE_EMQX_FORCE_SHUTDOWN_MAX_HEAP_SIZE"], "256MB"), lkeContainerResourcesManifest("mqtt"))
+}
+
+func lkeMQTTReplicas(env map[string]string) int {
+	raw := strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_MQTT_REPLICAS"), env["LKE_MQTT_REPLICAS"], "3"))
+	replicas, err := strconv.Atoi(raw)
+	if err != nil || replicas < 1 {
+		return 3
+	}
+	return replicas
+}
+
+func lkeEMQXNodeCookie(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_EMQX_NODE_COOKIE"), env["LKE_EMQX_NODE_COOKIE"], "rtk-home100k-emqx-cookie")
+}
+
+func lkeEMQXListenerAcceptors(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_EMQX_LISTENER_ACCEPTORS"), env["LKE_EMQX_LISTENER_ACCEPTORS"], "128")
+}
+
+func lkeEMQXListenerBacklog(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_EMQX_LISTENER_BACKLOG"), env["LKE_EMQX_LISTENER_BACKLOG"], "8192")
+}
+
+type lkeMQTTPod struct {
+	Name string
+	IP   string
+}
+
+func lkeEnsureEMQXCluster(env map[string]string) error {
+	namespace := lkeNamespaceName(env, "video-cloud")
+	var lastErr error
+	for attempt := 1; attempt <= 12; attempt++ {
+		lastErr = nil
+		pods, err := lkeMQTTPods(env)
+		if err != nil {
+			lastErr = err
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		if len(pods) <= 1 {
+			return nil
+		}
+		seed := "emqx@" + pods[0].IP
+		for _, pod := range pods[1:] {
+			out, err := runKubectlOutput("-n", namespace, "exec", pod.Name, "--", "emqx", "ctl", "cluster", "join", seed)
+			lowerOut := strings.ToLower(out)
+			if strings.Contains(lowerOut, "already_in_cluster") {
+				continue
+			}
+			if err != nil {
+				lastErr = fmt.Errorf("join EMQX pod %s to %s: %w", pod.Name, seed, err)
+				break
+			}
+			if strings.Contains(lowerOut, "failed") || strings.Contains(lowerOut, "node_down") {
+				lastErr = fmt.Errorf("join EMQX pod %s to %s failed: %s", pod.Name, seed, strings.TrimSpace(out))
+				break
+			}
+		}
+		if lastErr != nil {
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		status, err := runKubectlOutput("-n", namespace, "exec", pods[0].Name, "--", "emqx", "ctl", "cluster", "status")
+		if err != nil {
+			lastErr = fmt.Errorf("verify EMQX cluster status: %w", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		if count := strings.Count(status, "emqx@"); count < len(pods) {
+			lastErr = fmt.Errorf("EMQX cluster status has %d/%d nodes: %s", count, len(pods), strings.TrimSpace(status))
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		fmt.Print(status)
+		return nil
+	}
+	return lastErr
+}
+
+func lkeMQTTPods(env map[string]string) ([]lkeMQTTPod, error) {
+	namespace := lkeNamespaceName(env, "video-cloud")
+	args := lkeKubectlArgs("-n", namespace, "get", "pods", "-l", "app.kubernetes.io/name=mqtt", "-o", `jsonpath={range .items[?(@.status.phase=="Running")]}{.metadata.name}{"	"}{.status.podIP}{"\n"}{end}`)
+	out, err := exec.Command(lkeKubectl(), args...).CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("list MQTT pods: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	pods := []lkeMQTTPod{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		pods = append(pods, lkeMQTTPod{Name: fields[0], IP: fields[1]})
+	}
+	sort.Slice(pods, func(i, j int) bool {
+		return pods[i].Name < pods[j].Name
+	})
+	return pods, nil
+}
+
+func lkeMQTTPlacementManifest(env map[string]string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, `      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: mqtt
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: mqtt
+`)
+	poolID := firstNonEmpty(os.Getenv("LKE_MQTT_NODE_POOL_ID"), env["LKE_MQTT_NODE_POOL_ID"])
+	if poolID != "" {
+		fmt.Fprintf(&b, `      nodeSelector:
+        lke.linode.com/pool-id: %q
+`, poolID)
+	}
+	return b.String()
 }
 
 func lkeMQTTServiceManifest(env map[string]string) string {
@@ -3295,6 +3490,33 @@ metadata:
     rtk.realtek.com/stack: %s
 spec:
   type: ClusterIP
+  selector:
+    app.kubernetes.io/name: mqtt
+  ports:
+    - name: mqtt
+      port: 1883
+      targetPort: 1883
+    - name: mqtts
+      port: 8883
+      targetPort: 8883
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
+}
+
+func lkeMQTTHeadlessServiceManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Service
+metadata:
+  name: mqtt-headless
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: mqtt
+    app.kubernetes.io/component: cluster-discovery
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
   selector:
     app.kubernetes.io/name: mqtt
   ports:
@@ -4301,8 +4523,11 @@ spec:
 }
 
 func lkeWorkloadReplicas(env map[string]string, workload lkeWorkload) string {
-	if workload.Key == "account-manager" {
+	switch workload.Key {
+	case "account-manager":
 		return firstNonEmpty(os.Getenv("LKE_ACCOUNT_MANAGER_REPLICAS"), env["LKE_ACCOUNT_MANAGER_REPLICAS"], "3")
+	case "video-cloud":
+		return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_REPLICAS"), env["LKE_VIDEO_CLOUD_REPLICAS"], "3")
 	}
 	return "1"
 }
@@ -4331,8 +4556,8 @@ func lkeContainerResourcesManifest(name string) string {
 	}
 	profiles := map[string]resources{
 		"account-manager":         {requestCPU: "250m", requestMemory: "256Mi", limitMemory: "1Gi"},
-		"mqtt":                    {requestCPU: "500m", requestMemory: "512Mi", limitMemory: "1Gi"},
-		"video-cloud-api":         {requestCPU: "1", requestMemory: "1Gi", limitMemory: "2Gi"},
+		"mqtt":                    {requestCPU: "2", requestMemory: "2Gi", limitMemory: "6Gi"},
+		"video-cloud-api":         {requestCPU: "2", requestMemory: "2Gi", limitMemory: "4Gi"},
 		"video-cloud-logingester": {requestCPU: "500m", requestMemory: "512Mi", limitMemory: "1Gi"},
 		"video-cloud-mqttusage":   {requestCPU: "250m", requestMemory: "256Mi", limitMemory: "1Gi"},
 	}
@@ -4340,6 +4565,10 @@ func lkeContainerResourcesManifest(name string) string {
 	if !ok {
 		return ""
 	}
+	envPrefix := "LKE_" + strings.ToUpper(strings.NewReplacer("-", "_").Replace(name)) + "_"
+	profile.requestCPU = firstNonEmpty(os.Getenv(envPrefix+"REQUEST_CPU"), profile.requestCPU)
+	profile.requestMemory = firstNonEmpty(os.Getenv(envPrefix+"REQUEST_MEMORY"), profile.requestMemory)
+	profile.limitMemory = firstNonEmpty(os.Getenv(envPrefix+"LIMIT_MEMORY"), profile.limitMemory)
 	return fmt.Sprintf(`          resources:
             requests:
               cpu: %q
@@ -4398,6 +4627,16 @@ func runKubectl(args ...string) error {
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 	return cmd.Run()
+}
+
+func runKubectlOutput(args ...string) (string, error) {
+	cmd := exec.Command(lkeKubectl(), lkeKubectlArgs(args...)...)
+	cmd.Stdin = os.Stdin
+	out, err := cmd.CombinedOutput()
+	if len(out) > 0 {
+		_, _ = os.Stdout.Write(out)
+	}
+	return string(out), err
 }
 
 func lkeKubectl() string {

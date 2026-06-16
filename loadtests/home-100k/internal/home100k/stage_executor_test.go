@@ -76,8 +76,9 @@ func TestAggregateFlowResultsCountsClientTokenCorrelation(t *testing.T) {
 func TestAggregateStageResultsSumsDeviceAndAppTotals(t *testing.T) {
 	result := aggregateStageResults([]StageResult{
 		{
-			Name:             "25k",
-			ConnectedDevices: 10000,
+			Name:                  "25k",
+			ConnectedDevices:      10000,
+			ShardConnectedDevices: 4000,
 			DeviceMQTTTotals: DeviceMQTTTotals{
 				ConnectAttempts: 10,
 				Publishes:       20,
@@ -91,10 +92,12 @@ func TestAggregateStageResultsSumsDeviceAndAppTotals(t *testing.T) {
 			FailureReasons: map[string]int64{
 				"app_desired_publish_failed": 3,
 			},
+			StageDiagnostics: []map[string]any{{"skip_reason": "device_connect_target_missed"}},
 		},
 		{
-			Name:             "25k",
-			ConnectedDevices: 10000,
+			Name:                  "25k",
+			ConnectedDevices:      10000,
+			ShardConnectedDevices: 6000,
 			DeviceMQTTTotals: DeviceMQTTTotals{
 				ConnectAttempts: 11,
 				Publishes:       21,
@@ -109,16 +112,23 @@ func TestAggregateStageResultsSumsDeviceAndAppTotals(t *testing.T) {
 				"app_desired_publish_failed": 5,
 				"device_delta_wait_failed":   7,
 			},
+			StageDiagnostics: []map[string]any{{"skip_reason": "zero_desired_writes_scheduled_or_attempted"}},
 		},
 	})
 	if result.DeviceMQTTTotals.ConnectAttempts != 21 || result.DeviceMQTTTotals.Publishes != 41 || result.DeviceMQTTTotals.BytesSent != 201 {
 		t.Fatalf("device totals not summed: %+v", result.DeviceMQTTTotals)
+	}
+	if result.ShardConnectedDevices != 10000 {
+		t.Fatalf("shard connected devices = %d, want 10000", result.ShardConnectedDevices)
 	}
 	if result.AppUserTotals.LoginAttempts != 5 || result.AppUserTotals.DesiredWrites != 11 || result.AppUserTotals.BytesReceived != 101 {
 		t.Fatalf("app totals not summed: %+v", result.AppUserTotals)
 	}
 	if result.FailureReasons["app_desired_publish_failed"] != 8 || result.FailureReasons["device_delta_wait_failed"] != 7 {
 		t.Fatalf("failure reasons not summed: %+v", result.FailureReasons)
+	}
+	if len(result.StageDiagnostics) != 2 {
+		t.Fatalf("stage diagnostics len = %d, want 2", len(result.StageDiagnostics))
 	}
 }
 

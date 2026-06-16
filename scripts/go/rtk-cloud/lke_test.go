@@ -425,13 +425,29 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"kind: ConfigMap\nmetadata:\n  name: mqtt-config",
 		"broker: emqx",
 		"kind: Deployment\nmetadata:\n  name: mqtt",
+		"replicas: 3",
 		"image: emqx/emqx:",
+		"EMQX_NODE__NAME",
+		"EMQX_CLUSTER__DISCOVERY_STRATEGY",
+		`value: "manual"`,
+		"EMQX_CLUSTER__DNS__NAME",
+		"mqtt-headless.video-cloud-staging-video-cloud.svc.cluster.local",
+		"EMQX_LISTENERS__SSL__DEFAULT__ACCEPTORS",
+		`value: "128"`,
+		"EMQX_LISTENERS__SSL__DEFAULT__TCP_OPTIONS__BACKLOG",
+		`value: "8192"`,
+		"emqx ctl cluster join emqx@10.2.0.1",
+		"emqx ctl cluster status",
 		"EMQX_LISTENERS__TCP__DEFAULT__BIND",
 		"EMQX_LISTENERS__SSL__DEFAULT__BIND",
 		"EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__CERTFILE",
 		"mountPath: /opt/emqx/etc/certs",
 		"containerPort: 8883",
 		"kind: Service\nmetadata:\n  name: mqtt",
+		"kind: Service\nmetadata:\n  name: mqtt-headless",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-emqx-cluster",
+		"port: 4369",
+		"port: 4370",
 	} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("expected %q in kubectl manifests, got:\n%s", want, log)
@@ -1060,6 +1076,7 @@ func TestLKEPostgresStatefulSetUsesPostgresImageOverride(t *testing.T) {
 
 func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 	t.Setenv("LKE_POSTGRES_NODE_POOL_ID", "906225")
+	t.Setenv("LKE_MQTT_NODE_POOL_ID", "906225")
 	env := map[string]string{
 		"CLOUD_STACK_NAME":   "video-cloud-staging",
 		"VIDEO_CLOUD_DOMAIN": "video-cloud-staging.realtekconnect.com",
@@ -1105,10 +1122,10 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 		Host:      "video-cloud-staging.realtekconnect.com",
 	}, nil)
 	for _, want := range []string{
-		"replicas: 1",
+		"replicas: 3",
 		"topologySpreadConstraints:",
-		`cpu: "1"`,
-		`memory: "2Gi"`,
+		`cpu: "2"`,
+		`memory: "4Gi"`,
 	} {
 		if !strings.Contains(video, want) {
 			t.Fatalf("expected %q in video-cloud-api manifest, got:\n%s", want, video)
@@ -1117,11 +1134,80 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 
 	mqtt := lkeMQTTDeploymentManifest(env)
 	for _, want := range []string{
-		`cpu: "500m"`,
-		`memory: "1Gi"`,
+		"replicas: 3",
+		`lke.linode.com/pool-id: "906225"`,
+		"EMQX_NODE__NAME",
+		`value: "emqx@$(POD_IP)"`,
+		"EMQX_CLUSTER__DISCOVERY_STRATEGY",
+		`value: "manual"`,
+		"EMQX_CLUSTER__DNS__NAME",
+		"mqtt-headless.video-cloud-staging-video-cloud.svc.cluster.local",
+		"topologySpreadConstraints:",
+		"podAntiAffinity:",
+		"EMQX_LISTENERS__SSL__DEFAULT__ACCEPTORS",
+		`value: "128"`,
+		"EMQX_LISTENERS__SSL__DEFAULT__TCP_OPTIONS__BACKLOG",
+		`value: "8192"`,
+		"EMQX_FORCE_SHUTDOWN__MAX_MAILBOX_SIZE",
+		`value: "16384"`,
+		"EMQX_FORCE_SHUTDOWN__MAX_HEAP_SIZE",
+		`value: "256MB"`,
+		`cpu: "2"`,
+		`memory: "6Gi"`,
 	} {
 		if !strings.Contains(mqtt, want) {
 			t.Fatalf("expected %q in mqtt manifest, got:\n%s", want, mqtt)
+		}
+	}
+}
+
+func TestLKEMQTTReplicasCanBeOverridden(t *testing.T) {
+	t.Setenv("LKE_MQTT_REPLICAS", "5")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":   "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN": "video-cloud-staging.realtekconnect.com",
+	}
+	manifest := lkeMQTTDeploymentManifest(env)
+	if !strings.Contains(manifest, "replicas: 5") {
+		t.Fatalf("expected MQTT replica override in manifest, got:\n%s", manifest)
+	}
+}
+
+func TestLKEVideoCloudReplicasCanBeOverridden(t *testing.T) {
+	t.Setenv("LKE_VIDEO_CLOUD_REPLICAS", "5")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":   "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN": "video-cloud-staging.realtekconnect.com",
+	}
+
+	manifest := lkeDeploymentManifest(env, lkeWorkload{
+		Key:       "video-cloud",
+		Name:      "video-cloud-api",
+		Namespace: lkeNamespaceName(env, "video-cloud"),
+		Image:     "video-cloud:test",
+		Port:      8080,
+		Host:      "video-cloud-staging.realtekconnect.com",
+	}, nil)
+	if !strings.Contains(manifest, "replicas: 5") {
+		t.Fatalf("video-cloud-api replicas override missing:\n%s", manifest)
+	}
+}
+
+func TestLKEMQTTResourcesCanBeOverridden(t *testing.T) {
+	t.Setenv("LKE_MQTT_REQUEST_CPU", "3")
+	t.Setenv("LKE_MQTT_REQUEST_MEMORY", "4Gi")
+	t.Setenv("LKE_MQTT_LIMIT_MEMORY", "8Gi")
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+
+	manifest := lkeMQTTDeploymentManifest(env)
+
+	for _, want := range []string{
+		`cpu: "3"`,
+		`memory: "4Gi"`,
+		`memory: "8Gi"`,
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("expected %q in mqtt manifest, got:\n%s", want, manifest)
 		}
 	}
 }
@@ -2283,6 +2369,28 @@ data = {
 }
 print(json.dumps({"data": {k: base64.b64encode(v.encode()).decode() for k, v in data.items()}}))
 PY
+  exit 0
+fi
+if [[ "$*" == *"get pods -l app.kubernetes.io/name=mqtt -o jsonpath="* ]]; then
+  printf 'mqtt-aaa\t10.2.0.1\nmqtt-bbb\t10.2.0.2\nmqtt-ccc\t10.2.0.3\n'
+  exit 0
+fi
+if [[ "$*" == *"exec mqtt-"* && "$*" == *" emqx ctl cluster join emqx@10.2.0.1"* ]]; then
+  line='ARGS'
+  for arg in "$@"; do
+    line="$line $arg"
+  done
+  printf '%s\n' "$line" >> "` + logPath + `"
+  printf 'Join the cluster successfully.\n'
+  exit 0
+fi
+if [[ "$*" == *"exec mqtt-aaa -- emqx ctl cluster status"* ]]; then
+  line='ARGS'
+  for arg in "$@"; do
+    line="$line $arg"
+  done
+  printf '%s\n' "$line" >> "` + logPath + `"
+  printf 'Cluster status: #{running_nodes => [emqx@10.2.0.1,emqx@10.2.0.2,emqx@10.2.0.3]}\n'
   exit 0
 fi
 if [[ "$*" == *"rollout status"* ]]; then

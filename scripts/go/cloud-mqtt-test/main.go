@@ -188,16 +188,24 @@ type mqttIOTotals struct {
 }
 
 type appBootstrapStatus struct {
-	Status            string `json:"status"`
-	Reason            string `json:"reason,omitempty"`
-	UserEmail         string `json:"user_email,omitempty"`
-	DeviceID          string `json:"device_id,omitempty"`
-	CertificateStatus string `json:"certificate_status,omitempty"`
-	Subject           string `json:"subject,omitempty"`
-	FingerprintSHA256 string `json:"fingerprint_sha256,omitempty"`
-	TokenScope        string `json:"token_scope,omitempty"`
-	AccessToken       string `json:"-"`
-	CertificateSource string `json:"certificate_source,omitempty"`
+	Status            string                `json:"status"`
+	Reason            string                `json:"reason,omitempty"`
+	UserEmail         string                `json:"user_email,omitempty"`
+	DeviceID          string                `json:"device_id,omitempty"`
+	Attempts          []appBootstrapAttempt `json:"attempts,omitempty"`
+	CertificateStatus string                `json:"certificate_status,omitempty"`
+	Subject           string                `json:"subject,omitempty"`
+	FingerprintSHA256 string                `json:"fingerprint_sha256,omitempty"`
+	TokenScope        string                `json:"token_scope,omitempty"`
+	AccessToken       string                `json:"-"`
+	CertificateSource string                `json:"certificate_source,omitempty"`
+}
+
+type appBootstrapAttempt struct {
+	UserEmail string `json:"user_email,omitempty"`
+	DeviceID  string `json:"device_id,omitempty"`
+	Status    string `json:"status"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 type appBootstrapMaterial struct {
@@ -206,15 +214,16 @@ type appBootstrapMaterial struct {
 }
 
 type mqttActorProbe struct {
-	DeviceID    string
-	DeviceType  string
-	Brandname   string
-	RunID       string
-	DeviceToken string
-	AppToken    string
-	Dial        func() (io.ReadWriteCloser, error)
-	Timeout     time.Duration
-	Now         func() time.Time
+	DeviceID         string
+	DeviceType       string
+	Brandname        string
+	RunID            string
+	DeviceToken      string
+	AppToken         string
+	Dial             func() (io.ReadWriteCloser, error)
+	Timeout          time.Duration
+	KeepAliveSeconds uint16
+	Now              func() time.Time
 }
 
 func main() {
@@ -565,8 +574,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	appBootstrap := appBootstrapStatus{Status: "BLOCKED", Reason: "no selected assignment"}
 	appMaterial := appBootstrapMaterial{Status: appBootstrap}
 	if len(selectedAssignments) > 0 {
-		first := selectedAssignments[0]
-		appMaterial = prepareAppCertificateBootstrap(endpoints["account_manager_base_url"].(string), endpoints["video_cloud_token_base_url"].(string), users.TenantSlug, usersByEmail[first.AssignedEmail], first.DeviceID)
+		appMaterial = prepareAppCertificateBootstrapForAssignments(endpoints["account_manager_base_url"].(string), endpoints["video_cloud_token_base_url"].(string), users.TenantSlug, usersByEmail, selectedAssignments, 10)
 		appBootstrap = appMaterial.Status
 		if appBootstrap.Status == "FAIL" {
 			base["status"] = "FAIL"
@@ -600,11 +608,15 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 		base["overall"] = "blocked"
 		base["blockers"] = []string{"missing MQTT endpoint"}
 		mqttProbeResult = "BLOCKED: missing MQTT endpoint"
-	} else if appMaterial.Status.Status != "PASS" {
+	} else if appMaterial.Status.Status != "PASS" && opts.LoadModel != "home-100k-sustained" {
 		mqttProbeResult = appMaterial.Status.Status + ": app MQTT actor unavailable"
 	} else {
 		mqttProbeResult = "PASS"
 		if opts.LoadModel == "home-100k-sustained" {
+			if appMaterial.Status.Status != "PASS" {
+				mqttProbeResult = "FAIL: app MQTT actor unavailable; device sustained path still executed"
+				resultNotes = append(resultNotes, "app bootstrap unavailable; device sustained connect/subscribe/telemetry path still executed")
+			}
 			var sustained sustainedLoadResult
 			var staged []sustainedStageResult
 			if stages, err := parseSustainedStages(opts); err != nil {
@@ -797,6 +809,31 @@ type sustainedStageResult struct {
 	CommandsAttempted int
 	CommandsPassed    int
 	Notes             []string
+	Diagnostics       sustainedStageDiagnostics
+}
+
+type sustainedStageDiagnostics struct {
+	StageStartedAt       string  `json:"stage_started_at,omitempty"`
+	StageDeadlineAt      string  `json:"stage_deadline_at,omitempty"`
+	ConnectStartedAt     string  `json:"connect_started_at,omitempty"`
+	ConnectDeadlineAt    string  `json:"connect_deadline_at,omitempty"`
+	ConnectFinishedAt    string  `json:"connect_finished_at,omitempty"`
+	ActionStartedAt      string  `json:"action_started_at,omitempty"`
+	StageDurationSeconds int     `json:"stage_duration_seconds,omitempty"`
+	ConnectWindowSeconds float64 `json:"connect_window_seconds,omitempty"`
+	ActionWindowSeconds  float64 `json:"action_window_seconds,omitempty"`
+	ConnectedBefore      int     `json:"connected_before"`
+	ConnectedAfter       int     `json:"connected_after"`
+	ConnectedTarget      int     `json:"connected_target"`
+	NewAssignments       int     `json:"new_assignments"`
+	ConnectAttempts      int64   `json:"connect_attempts"`
+	ConnectSuccesses     int64   `json:"connect_successes"`
+	ConnectFailures      int64   `json:"connect_failures"`
+	SubscribeSuccesses   int64   `json:"subscribe_successes"`
+	CommandsScheduled    int     `json:"commands_scheduled"`
+	CommandsAttempted    int     `json:"commands_attempted"`
+	CommandsPassed       int     `json:"commands_passed"`
+	SkipReason           string  `json:"skip_reason,omitempty"`
 }
 
 func parseSustainedStages(opts loadOptions) ([]sustainedStage, error) {
@@ -947,9 +984,17 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 		stageWindow := time.Duration(stage.DurationSeconds) * time.Second
 		stageStart := time.Now()
 		stageDeadline := stageStart.Add(stageWindow)
+		stageResult.Diagnostics = sustainedStageDiagnostics{
+			StageStartedAt:       stageStart.UTC().Format(time.RFC3339Nano),
+			StageDeadlineAt:      stageDeadline.UTC().Format(time.RFC3339Nano),
+			StageDurationSeconds: stage.DurationSeconds,
+			ConnectedBefore:      len(sessions),
+			ConnectedTarget:      stage.ConnectedTarget,
+		}
 		if stage.ConnectedTarget > len(assignments) {
 			stageResult.Status = "FAIL"
 			stageResult.Notes = append(stageResult.Notes, fmt.Sprintf("stage target %d exceeds selected assignments %d", stage.ConnectedTarget, len(assignments)))
+			stageResult.Diagnostics.SkipReason = "target_exceeds_selected_assignments"
 			overall.Status = "FAIL"
 			results = append(results, stageResult)
 			break
@@ -957,28 +1002,55 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 		if stage.ConnectedTarget > len(sessions) {
 			newAssignments := assignments[len(sessions):stage.ConnectedTarget]
 			connectDeadline := stagedConnectDeadline(stageStart, stageDeadline)
+			connectStarted := time.Now()
+			before := stageResult.Totals
+			stageResult.Diagnostics.ConnectStartedAt = connectStarted.UTC().Format(time.RFC3339Nano)
+			stageResult.Diagnostics.ConnectDeadlineAt = connectDeadline.UTC().Format(time.RFC3339Nano)
+			stageResult.Diagnostics.ConnectWindowSeconds = connectDeadline.Sub(connectStarted).Seconds()
+			stageResult.Diagnostics.NewAssignments = len(newAssignments)
 			newSessions := connectSustainedDevicesUntil(newAssignments, certByID, brandname, runID, apiBaseURL, host, port, opts.Concurrency, connectDeadline, &stageResult.Totals)
+			stageResult.Diagnostics.ConnectFinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
+			stageResult.Diagnostics.ConnectAttempts = stageResult.Totals.ConnectAttempts - before.ConnectAttempts
+			stageResult.Diagnostics.ConnectSuccesses = stageResult.Totals.ConnectSuccesses - before.ConnectSuccesses
+			stageResult.Diagnostics.ConnectFailures = stageResult.Totals.ConnectFailures - before.ConnectFailures
+			stageResult.Diagnostics.SubscribeSuccesses = stageResult.Totals.SubscribeSuccesses - before.SubscribeSuccesses
 			sessions = append(sessions, newSessions...)
 			if len(sessions) < stage.ConnectedTarget {
 				stageResult.Status = "FAIL"
 				stageResult.Notes = append(stageResult.Notes, fmt.Sprintf("stage %s did not reach connected target before action window: active=%d target=%d", stage.Name, len(sessions), stage.ConnectedTarget))
+				stageResult.Diagnostics.SkipReason = "device_connect_target_missed"
+				recordSyntheticFailure(&stageResult.Totals, "device_connect_target_missed", fmt.Sprintf("active=%d target=%d", len(sessions), stage.ConnectedTarget))
 			}
 		}
 		stageResult.ActiveConnections = len(sessions)
+		stageResult.Diagnostics.ConnectedAfter = len(sessions)
 		stageResult.Totals.ActiveConnections = int64(len(sessions))
 		stageResult.Totals.ActiveSubscriptions = int64(len(sessions))
 		if len(sessions) == 0 {
 			stageResult.Status = "FAIL"
 			stageResult.Notes = append(stageResult.Notes, "no sustained device MQTT sessions connected")
+			stageResult.Diagnostics.SkipReason = "no_sustained_device_mqtt_sessions_connected"
 			overall.Status = "FAIL"
 			results = append(results, stageResult)
 			break
 		}
+		if len(sessions) < stage.ConnectedTarget {
+			stageResult.Notes = append(stageResult.Notes, fmt.Sprintf("stage %s skipped shadow action because connected target was not reached", stage.Name))
+			stageResult.Diagnostics.SkipReason = firstNonEmptyString(stageResult.Diagnostics.SkipReason, "connected_target_not_reached")
+			overall.Status = "FAIL"
+			overall.Totals = addMQTTIOTotals(overall.Totals, stageResult.Totals)
+			overall.Notes = append(overall.Notes, prefixedNotes(stage.Name, stageResult.Notes)...)
+			results = append(results, stageResult)
+			continue
+		}
 		actionStart := time.Now()
 		actionWindow := time.Until(stageDeadline)
+		stageResult.Diagnostics.ActionStartedAt = actionStart.UTC().Format(time.RFC3339Nano)
+		stageResult.Diagnostics.ActionWindowSeconds = actionWindow.Seconds()
 		if actionWindow <= 0 {
 			stageResult.Status = "FAIL"
 			stageResult.Notes = append(stageResult.Notes, fmt.Sprintf("stage %s deadline reached before action window", stage.Name))
+			stageResult.Diagnostics.SkipReason = "deadline_reached_before_action_window"
 			overall.Status = "FAIL"
 			results = append(results, stageResult)
 			continue
@@ -986,6 +1058,11 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 		stageOpts := opts
 		stageOpts.MaxConnectedDevicesPerShard = stage.ConnectedTarget
 		events := sustainedEvents(sessions, stageOpts, seed+idx, actionWindow)
+		for _, event := range events {
+			if event.Kind == "command" {
+				stageResult.Diagnostics.CommandsScheduled++
+			}
+		}
 		for _, event := range events {
 			if !time.Now().Before(stageDeadline) {
 				stageResult.Status = "FAIL"
@@ -1013,6 +1090,7 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 				if time.Until(stageDeadline) < 15*time.Second {
 					stageResult.Status = "FAIL"
 					stageResult.Notes = append(stageResult.Notes, fmt.Sprintf("stage %s skipped desired write because remaining time was below command budget", stage.Name))
+					stageResult.Diagnostics.SkipReason = "remaining_time_below_command_budget"
 					continue
 				}
 				stageResult.CommandsAttempted++
@@ -1026,7 +1104,10 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 		if stageResult.CommandsAttempted == 0 {
 			stageResult.Status = "FAIL"
 			stageResult.Notes = append(stageResult.Notes, "sustained user command schedule produced zero desired writes")
+			stageResult.Diagnostics.SkipReason = firstNonEmptyString(stageResult.Diagnostics.SkipReason, "zero_desired_writes_scheduled_or_attempted")
 		}
+		stageResult.Diagnostics.CommandsAttempted = stageResult.CommandsAttempted
+		stageResult.Diagnostics.CommandsPassed = stageResult.CommandsPassed
 		if stageResult.Status != "PASS" {
 			overall.Status = "FAIL"
 		}
@@ -1037,6 +1118,15 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 		results = append(results, stageResult)
 	}
 	return overall, results
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func stagedConnectDeadline(stageStart time.Time, stageDeadline time.Time) time.Time {
@@ -1089,6 +1179,7 @@ func connectSustainedDevicesUntil(assignments []assignment, certByID map[string]
 				if err != nil {
 					mu.Lock()
 					totals.ConnectFailures++
+					recordFailure(totals, "device_mqtt_connect_failed", err)
 					mu.Unlock()
 					continue
 				}
@@ -1097,6 +1188,7 @@ func connectSustainedDevicesUntil(assignments []assignment, certByID map[string]
 					_ = conn.Close()
 					mu.Lock()
 					totals.ConnectFailures++
+					recordFailure(totals, "device_delta_subscribe_failed", err)
 					mu.Unlock()
 					continue
 				}
@@ -1176,7 +1268,7 @@ func connectSustainedDevice(record certRecord, brandname, runID, apiBaseURL, hos
 	}
 	deviceToken, err := requestDeviceToken(apiBaseURL, cert, record.DeviceID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("device request_token: %w", err)
 	}
 	return connectMQTTActor(mqttActorProbe{
 		DeviceID:    record.DeviceID,
@@ -1185,10 +1277,15 @@ func connectSustainedDevice(record certRecord, brandname, runID, apiBaseURL, hos
 		RunID:       runID,
 		DeviceToken: deviceToken,
 		Dial: func() (io.ReadWriteCloser, error) {
-			return tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", net.JoinHostPort(host, strconv.Itoa(port)), &tls.Config{InsecureSkipVerify: true})
+			conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", net.JoinHostPort(host, strconv.Itoa(port)), &tls.Config{InsecureSkipVerify: true})
+			if err != nil {
+				return nil, fmt.Errorf("mqtt tls dial: %w", err)
+			}
+			return conn, nil
 		},
-		Timeout: 10 * time.Second,
-		Now:     time.Now,
+		Timeout:          10 * time.Second,
+		KeepAliveSeconds: sustainedMQTTKeepAliveSeconds,
+		Now:              time.Now,
 	}, "device", record.DeviceID, deviceToken)
 }
 
@@ -1243,10 +1340,15 @@ func runSustainedShadowCommand(session sustainedDeviceSession, brandname, runID,
 		RunID:      runID,
 		AppToken:   appToken.AccessToken,
 		Dial: func() (io.ReadWriteCloser, error) {
-			return tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", net.JoinHostPort(host, strconv.Itoa(port)), &tls.Config{InsecureSkipVerify: true})
+			conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", net.JoinHostPort(host, strconv.Itoa(port)), &tls.Config{InsecureSkipVerify: true})
+			if err != nil {
+				return nil, fmt.Errorf("mqtt tls dial: %w", err)
+			}
+			return conn, nil
 		},
-		Timeout: 10 * time.Second,
-		Now:     time.Now,
+		Timeout:          10 * time.Second,
+		KeepAliveSeconds: sustainedMQTTKeepAliveSeconds,
+		Now:              time.Now,
 	}, "app-controller", appMQTTUsername(session.Record.DeviceID), appToken.AccessToken)
 	if err != nil {
 		totals.HTTPFailures++
@@ -1281,6 +1383,12 @@ func runSustainedShadowCommand(session sustainedDeviceSession, brandname, runID,
 		recordFailure(totals, "app_desired_publish_failed", err)
 		return err
 	}
+	recorder := newRuntimeLogRecorder(session.Record.DeviceID, runID, time.Now)
+	if err := recorder.Record(appConn, "shadow_desired", "app_controller", "publish", shadowUpdateTopic, map[string]any{"direction": "app_to_device", "command_id": commandID}); err != nil {
+		totals.HTTPFailures++
+		recordFailure(totals, "app_desired_runtime_log_failed", err)
+		return err
+	}
 	totals.AppDesiredWrites++
 	totals.HTTPRequests++
 	totals.TotalHTTPBytesSent += int64(len(shadowUpdateTopic) + len(desiredPayload))
@@ -1293,6 +1401,11 @@ func runSustainedShadowCommand(session sustainedDeviceSession, brandname, runID,
 	}
 	totals.MessagesReceived++
 	totals.DeltaReceived++
+	if err := recorder.Record(session.Conn, "shadow_delta", "device_client", "receive", deltaTopic, map[string]any{"direction": "app_to_device", "command_id": commandID}); err != nil {
+		totals.HTTPFailures++
+		recordFailure(totals, "device_delta_runtime_log_failed", err)
+		return err
+	}
 	reportedPayload, err := json.Marshal(map[string]any{
 		"state":       map[string]any{"reported": reportedState},
 		"clientToken": "reported-" + commandID,
@@ -1310,11 +1423,21 @@ func runSustainedShadowCommand(session sustainedDeviceSession, brandname, runID,
 	totals.PublishSuccesses++
 	totals.ReportedEvents++
 	totals.TotalBytesSent += int64(len(shadowUpdateTopic) + len(reportedPayload))
+	if err := recorder.Record(session.Conn, "shadow_reported", "device_client", "publish", shadowUpdateTopic, map[string]any{"direction": "device_to_app", "command_id": commandID}); err != nil {
+		totals.PublishFailures++
+		recordFailure(totals, "device_reported_runtime_log_failed", err)
+		return err
+	}
 	if _, err := waitForMQTTPublishWithDeadline(appConn, documentsTopic, 10*time.Second, func(doc map[string]any) bool {
 		return doc["clientToken"] == "reported-"+commandID && shadowDocumentsDeltaCleared(doc)
 	}); err != nil {
 		totals.HTTPFailures++
 		recordFailure(totals, "app_delta_clear_wait_failed", err)
+		return err
+	}
+	if err := recorder.Record(appConn, "shadow_reported", "app_observer", "receive", documentsTopic, map[string]any{"direction": "device_to_app", "command_id": commandID}); err != nil {
+		totals.HTTPFailures++
+		recordFailure(totals, "app_reported_runtime_log_failed", err)
 		return err
 	}
 	totals.AppReceivedAcks++
@@ -1323,6 +1446,10 @@ func runSustainedShadowCommand(session sustainedDeviceSession, brandname, runID,
 }
 
 func parseDurationDefault(raw string, fallback time.Duration) time.Duration {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "0", "off", "none", "disabled", "false":
+		return 0
+	}
 	if duration, err := time.ParseDuration(strings.TrimSpace(raw)); err == nil && duration > 0 {
 		return duration
 	}
@@ -1599,21 +1726,13 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 		AckTopic:                upTopic,
 		RuntimeLogStreamID:      logStreamID,
 	}
-	logSeq := 0
+	recorder := runtimeLogRecorder{deviceID: probe.DeviceID, streamID: logStreamID, now: probe.Now}
 	recordRuntimeLog := func(conn io.ReadWriter, phase, actor, action, topic string, attrs map[string]any) error {
-		logSeq++
-		message := fmt.Sprintf("mqtt_e2e %s %s %s", phase, actor, action)
-		if attrs == nil {
-			attrs = map[string]any{}
-		}
-		attrs["phase"] = phase
-		attrs["actor"] = actor
-		attrs["action"] = action
-		attrs["topic"] = topic
-		if err := mqttPublishRuntimeLog(conn, probe.DeviceID, logStreamID, logSeq, actor, message, attrs, probe.Now().UTC()); err != nil {
+		expect, err := recorder.RecordWithExpectation(conn, phase, actor, action, topic, attrs)
+		if err != nil {
 			return err
 		}
-		result.RuntimeLogExpectations = append(result.RuntimeLogExpectations, logExpect{Seq: logSeq, Source: actor, Message: message})
+		result.RuntimeLogExpectations = append(result.RuntimeLogExpectations, expect)
 		return nil
 	}
 	appObserver, err := connectMQTTActor(probe, "app-observer", appMQTTUsername(probe.DeviceID), probe.AppToken)
@@ -1797,19 +1916,25 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 	return result
 }
 
+const sustainedMQTTKeepAliveSeconds uint16 = 900
+
 func connectMQTTActor(probe mqttActorProbe, actor, username, password string) (io.ReadWriteCloser, error) {
 	if probe.Dial == nil {
 		return nil, errors.New("missing MQTT dialer")
 	}
 	conn, err := probe.Dial()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("mqtt dial: %w", err)
 	}
 	if setter, ok := conn.(interface{ SetDeadline(time.Time) error }); ok {
 		_ = setter.SetDeadline(time.Now().Add(probe.Timeout))
 	}
 	clientID := fmt.Sprintf("rtk-e2e-%s-%s-%s-%d", probeCorrelationID(probe.RunID, probe.Now()), probe.DeviceID, actor, os.Getpid())
-	if err := mqttConnect(conn, clientID, username, password); err != nil {
+	keepAliveSeconds := probe.KeepAliveSeconds
+	if keepAliveSeconds == 0 {
+		keepAliveSeconds = 30
+	}
+	if err := mqttConnect(conn, clientID, username, password, keepAliveSeconds); err != nil {
 		_ = conn.Close()
 		return nil, err
 	}
@@ -2122,6 +2247,7 @@ func sustainedStageResultsJSON(stages []sustainedStageResult, appBootstrap appBo
 			"commands_passed":           stage.CommandsPassed,
 			"success_rate_percent":      percentInt(stage.CommandsPassed, stage.CommandsAttempted),
 			"notes":                     stage.Notes,
+			"stage_diagnostics":         stage.Diagnostics,
 			"device_mqtt_totals":        map[string]any{},
 			"app_user_totals":           map[string]any{},
 			"failure_reasons":           totals.FailureReasons,
@@ -2195,12 +2321,49 @@ func recordFailure(totals *mqttIOTotals, reason string, err error) {
 	totals.FailureDetails[reason][detail]++
 }
 
+func recordSyntheticFailure(totals *mqttIOTotals, reason string, detail string) {
+	recordFailureReason(totals, reason)
+	if totals == nil {
+		return
+	}
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return
+	}
+	if totals.FailureDetails == nil {
+		totals.FailureDetails = map[string]map[string]int64{}
+	}
+	if totals.FailureDetails[reason] == nil {
+		totals.FailureDetails[reason] = map[string]int64{}
+	}
+	totals.FailureDetails[reason][detail]++
+}
+
 func normalizeFailureDetail(detail string) string {
 	detail = strings.TrimSpace(detail)
 	lower := strings.ToLower(detail)
 	switch {
 	case detail == "":
 		return ""
+	case strings.Contains(lower, "mqtt connack read:"):
+		return "mqtt connack read failed"
+	case strings.Contains(lower, "mqtt connect write:"):
+		return "mqtt connect write failed"
+	case strings.Contains(lower, "mqtt tls dial:"):
+		if strings.Contains(lower, "i/o timeout") {
+			return "mqtt tls dial timeout"
+		}
+		return "mqtt tls dial failed"
+	case strings.Contains(lower, "mqtt dial:"):
+		return "mqtt dial failed"
+	case strings.Contains(lower, "device request_token:"):
+		if strings.Contains(lower, "context deadline exceeded") {
+			return "device request_token context deadline exceeded"
+		}
+		if strings.Contains(lower, "i/o timeout") {
+			return "device request_token i/o timeout"
+		}
+		return "device request_token failed"
 	case strings.Contains(lower, "write: broken pipe"):
 		return "mqtt write broken pipe"
 	case strings.Contains(lower, "read: connection reset by peer") || strings.Contains(lower, "write: connection reset by peer"):
@@ -2360,6 +2523,66 @@ func requestDeviceToken(apiBaseURL string, cert tls.Certificate, deviceID string
 
 func runAppCertificateBootstrap(accountBaseURL, videoBaseURL, tenantSlug string, user userCredential, deviceID string) appBootstrapStatus {
 	return prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL, tenantSlug, user, deviceID).Status
+}
+
+func prepareAppCertificateBootstrapForAssignments(accountBaseURL, videoBaseURL, tenantSlug string, usersByEmail map[string]userCredential, assignments []assignment, maxCandidates int) appBootstrapMaterial {
+	candidates := appBootstrapCandidates(assignments, maxCandidates)
+	if len(candidates) == 0 {
+		return appBootstrapMaterial{Status: appBootstrapStatus{Status: "BLOCKED", Reason: "no app bootstrap candidates"}}
+	}
+	attempts := make([]appBootstrapAttempt, 0, len(candidates))
+	var last appBootstrapMaterial
+	for _, candidate := range candidates {
+		user, ok := usersByEmail[candidate.AssignedEmail]
+		if !ok {
+			attempts = append(attempts, appBootstrapAttempt{
+				UserEmail: candidate.AssignedEmail,
+				DeviceID:  candidate.DeviceID,
+				Status:    "BLOCKED",
+				Reason:    "selected assignment user missing from users artifact",
+			})
+			continue
+		}
+		material := prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL, tenantSlug, user, candidate.DeviceID)
+		material.Status.Attempts = append([]appBootstrapAttempt{}, attempts...)
+		material.Status.Attempts = append(material.Status.Attempts, appBootstrapAttempt{
+			UserEmail: user.Email,
+			DeviceID:  candidate.DeviceID,
+			Status:    material.Status.Status,
+			Reason:    material.Status.Reason,
+		})
+		if material.Status.Status == "PASS" {
+			return material
+		}
+		attempts = material.Status.Attempts
+		last = material
+	}
+	if last.Status.Status == "" {
+		return appBootstrapMaterial{Status: appBootstrapStatus{Status: "BLOCKED", Reason: "no valid app bootstrap candidates", Attempts: attempts}}
+	}
+	last.Status.Attempts = attempts
+	last.Status.Reason = "all app bootstrap candidates failed; last: " + strings.TrimSpace(last.Status.Reason)
+	return last
+}
+
+func appBootstrapCandidates(assignments []assignment, maxCandidates int) []assignment {
+	if maxCandidates <= 0 {
+		maxCandidates = 1
+	}
+	candidates := make([]assignment, 0, maxCandidates)
+	seen := map[string]bool{}
+	for _, item := range assignments {
+		key := item.AssignedEmail + "\x00" + item.DeviceID
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		candidates = append(candidates, item)
+		if len(candidates) >= maxCandidates {
+			break
+		}
+	}
+	return candidates
 }
 
 func prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL, tenantSlug string, user userCredential, deviceID string) appBootstrapMaterial {
@@ -2737,7 +2960,7 @@ func shadowStateWithLoadTestMarker(base map[string]any, runID, commandID string)
 	return state
 }
 
-func mqttConnect(w io.ReadWriter, clientID, username, password string) error {
+func mqttConnect(w io.ReadWriter, clientID, username, password string, keepAliveSeconds uint16) error {
 	flags := byte(2)
 	if username != "" {
 		flags |= 0x80
@@ -2745,7 +2968,7 @@ func mqttConnect(w io.ReadWriter, clientID, username, password string) error {
 	if password != "" {
 		flags |= 0x40
 	}
-	body := append(mqttString("MQTT"), 4, flags, 0, 30)
+	body := append(mqttString("MQTT"), 4, flags, byte(keepAliveSeconds>>8), byte(keepAliveSeconds))
 	body = append(body, mqttString(clientID)...)
 	if username != "" {
 		body = append(body, mqttString(username)...)
@@ -2754,11 +2977,11 @@ func mqttConnect(w io.ReadWriter, clientID, username, password string) error {
 		body = append(body, mqttString(password)...)
 	}
 	if err := mqttWritePacket(w, 0x10, body); err != nil {
-		return err
+		return fmt.Errorf("mqtt connect write: %w", err)
 	}
 	packetType, response, err := mqttReadPacket(w)
 	if err != nil {
-		return err
+		return fmt.Errorf("mqtt connack read: %w", err)
 	}
 	if packetType != 0x20 || len(response) < 2 || response[1] != 0 {
 		return errors.New("mqtt connack failed")
@@ -2786,6 +3009,53 @@ func mqttSubscribe(w io.ReadWriter, packetID uint16, topic string) error {
 func mqttPublish(w io.ReadWriter, topic string, payload []byte) error {
 	body := append(mqttString(topic), payload...)
 	return mqttWritePacket(w, 0x30, body)
+}
+
+type runtimeLogRecorder struct {
+	deviceID string
+	streamID string
+	seq      int
+	now      func() time.Time
+}
+
+func newRuntimeLogRecorder(deviceID string, runID string, now func() time.Time) *runtimeLogRecorder {
+	if now == nil {
+		now = time.Now
+	}
+	correlationID := probeCorrelationID(runID, now())
+	return &runtimeLogRecorder{
+		deviceID: deviceID,
+		streamID: fmt.Sprintf("mqtt-e2e-%s-%s", correlationID, deviceID),
+		now:      now,
+	}
+}
+
+func (r *runtimeLogRecorder) Record(conn io.ReadWriter, phase, actor, action, topic string, attrs map[string]any) error {
+	_, err := r.RecordWithExpectation(conn, phase, actor, action, topic, attrs)
+	return err
+}
+
+func (r *runtimeLogRecorder) RecordWithExpectation(conn io.ReadWriter, phase, actor, action, topic string, attrs map[string]any) (logExpect, error) {
+	if r == nil {
+		return logExpect{}, errors.New("missing runtime log recorder")
+	}
+	r.seq++
+	message := fmt.Sprintf("mqtt_e2e %s %s %s", phase, actor, action)
+	if attrs == nil {
+		attrs = map[string]any{}
+	}
+	attrs["phase"] = phase
+	attrs["actor"] = actor
+	attrs["action"] = action
+	attrs["topic"] = topic
+	at := time.Now().UTC()
+	if r.now != nil {
+		at = r.now().UTC()
+	}
+	if err := mqttPublishRuntimeLog(conn, r.deviceID, r.streamID, r.seq, actor, message, attrs, at); err != nil {
+		return logExpect{}, err
+	}
+	return logExpect{Seq: r.seq, Source: actor, Message: message}, nil
 }
 
 func mqttPublishRuntimeLog(w io.ReadWriter, deviceID, streamID string, seq int, source, message string, attrs map[string]any, at time.Time) error {

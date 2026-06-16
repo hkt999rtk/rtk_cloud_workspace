@@ -51,6 +51,13 @@ Shard `results.json` files under `shards/<vm-label>/` must include:
 - `stage_results`
 - `load_generator_health`
 
+Live `stage_results` should include `stage_diagnostics` rows from the shard
+runner. These rows are diagnostic evidence for the measured stage window:
+connect start/deadline/finish timestamps, action start/window, connected
+before/after counts, new assignment count, connect/subscribe counters, command
+schedule/attempt/pass counters, and the skip reason when the shadow action path
+was not reached.
+
 `aggregate` reads all shard `load_generator_health` sections. Any saturated
 shard forces the run-level status to `INCOMPLETE`.
 
@@ -88,6 +95,7 @@ Each stage result must include:
 - `desired_reported_p95_ms`
 - `offline_desired_p95_ms`
 - `desired_reported_convergence_rate_percent`
+- `stage_diagnostics` when produced by live shard runners
 - `offline_desired_convergence_rate_percent`
 - `delta_clear_success_rate_percent`
 - `duplicate_apply_count`
@@ -230,6 +238,17 @@ must be rendered explicitly as missing data.
 - `redis_valkey`
 - `ingress_nginx`
 - `host_pod_resources`
+
+Optional server evidence sources:
+
+- `central_logger`
+
+`central_logger` is queried through `/v1/logs` when
+`services/cloud-logger/logger.env` is present, when
+`HOME100K_CLOUD_LOGGER_ENV` points at a logger env file, or when
+`CLOUD_LOGGER_ENDPOINT` and `CLOUD_LOGGER_INGEST_TOKEN` are exported. The query
+must not expose the logger token in shell arguments or reports; reports show
+only availability, details, and parsed counters.
 
 ## Required Redaction
 

@@ -230,6 +230,33 @@ def stage_results():
         )
     return "\n".join(lines)
 
+def stage_diagnostics():
+    stages = result.get("stage_results") or []
+    lines = [
+        "| Stage | Shard | Target | Before | After | New assignments | Connect window | Action window | Connect attempts | Connect success | Connect fail | Subscribes | Commands scheduled | Commands attempted | Commands passed | Skip reason |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+    ]
+    for stage in stages:
+        diagnostics = stage.get("stage_diagnostics") or []
+        if isinstance(diagnostics, dict):
+            diagnostics = [diagnostics]
+        for idx, diag in enumerate(diagnostics):
+            if not isinstance(diag, dict):
+                continue
+            lines.append(
+                f"| {md(stage.get('name'))} | {idx} | {num(diag.get('connected_target'), 0)} | "
+                f"{num(diag.get('connected_before'), 0)} | {num(diag.get('connected_after'), 0)} | "
+                f"{num(diag.get('new_assignments'), 0)} | {fmt_float(num(diag.get('connect_window_seconds'), 0))}s | "
+                f"{fmt_float(num(diag.get('action_window_seconds'), 0))}s | "
+                f"{num(diag.get('connect_attempts'), 0)} | {num(diag.get('connect_successes'), 0)} | "
+                f"{num(diag.get('connect_failures'), 0)} | {num(diag.get('subscribe_successes'), 0)} | "
+                f"{num(diag.get('commands_scheduled'), 0)} | {num(diag.get('commands_attempted'), 0)} | "
+                f"{num(diag.get('commands_passed'), 0)} | {md(diag.get('skip_reason', '-'))} |"
+            )
+    if len(lines) == 2:
+        return "- no stage diagnostics"
+    return "\n".join(lines)
+
 def device_mqtt_totals():
     stages = result.get("stage_results") or []
     lines = [
@@ -302,6 +329,20 @@ def normalize_failure_detail(detail):
     lower = text.lower()
     if not text:
         return ""
+    if "mqtt connack read:" in lower:
+        return "mqtt connack read failed"
+    if "mqtt connect write:" in lower:
+        return "mqtt connect write failed"
+    if "mqtt tls dial:" in lower:
+        return "mqtt tls dial timeout" if "i/o timeout" in lower else "mqtt tls dial failed"
+    if "mqtt dial:" in lower:
+        return "mqtt dial failed"
+    if "device request_token:" in lower:
+        if "context deadline exceeded" in lower:
+            return "device request_token context deadline exceeded"
+        if "i/o timeout" in lower:
+            return "device request_token i/o timeout"
+        return "device request_token failed"
     if "write: broken pipe" in lower:
         return "mqtt write broken pipe"
     if "connection reset by peer" in lower:
@@ -397,11 +438,12 @@ def client_target_coverage():
     total_devices = num(((result.get("plan") or {}).get("conditions") or {}).get("devices"), 100000)
     total_users = num(((result.get("plan") or {}).get("conditions") or {}).get("users"), 5000)
     lines = [
-        "| Stage | Target devices | Device connect attempts | Device connect success | Device subscribes | Target users | APP desired writes | APP received ACKs | Coverage status |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+        "| Stage | Target devices | Shard target | Device connect attempts | Device connect success | Device subscribes | Target users | APP desired writes | APP received ACKs | Coverage status |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for stage in stages:
         target_devices = int(num(stage.get("connected_devices"), 0))
+        shard_target = int(num(stage.get("shard_connected_devices"), 0))
         target_users = max(1, int(target_devices * total_users / total_devices)) if target_devices > 0 and total_devices > 0 else 0
         device = stage.get("device_mqtt_totals") or {}
         app = stage.get("app_user_totals") or {}
@@ -419,7 +461,7 @@ def client_target_coverage():
         )
         status = "ok" if ok else "insufficient-client-load"
         lines.append(
-            f"| {md(stage.get('name'))} | {target_devices} | {connect_attempts} | {connect_success} | "
+            f"| {md(stage.get('name'))} | {target_devices} | {shard_target or '-'} | {connect_attempts} | {connect_success} | "
             f"{subscribes} | {target_users} | {desired_writes} | {received_acks} | {status} |"
         )
     return "\n".join(lines)
@@ -538,6 +580,7 @@ replacements = {
     "SCENARIO_MIX": scenario_mix(),
     "STAGES": stages_section(),
     "STAGE_RESULTS": stage_results(),
+    "STAGE_DIAGNOSTICS": stage_diagnostics(),
     "CLIENT_TARGET_COVERAGE": client_target_coverage(),
     "DEVICE_MQTT_TOTALS": device_mqtt_totals(),
     "APP_USER_TOTALS": app_user_totals(),
