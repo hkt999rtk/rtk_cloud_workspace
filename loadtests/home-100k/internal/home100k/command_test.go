@@ -995,10 +995,12 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 	joined := strings.Join(calls, "\n")
 	for _, want := range []string{
 		"rtk-cloud mqtt-test",
+		"--load-model home-100k-sustained",
 		"--workspace /root/rtk_cloud_workspace",
 		"--env-root cloud_env/staging/lke",
 		"--brandname RTK",
 		"--duration-seconds 3",
+		"--command-rate-per-device-per-day 3600.00",
 		"--max-connected-devices 2500",
 		"--shard-index 0",
 		"--shard-count 10",
@@ -1101,6 +1103,39 @@ func TestExecuteShardRunLiveWritesShardResultsWhenMQTTTestFails(t *testing.T) {
 	}
 	if result.StageResults[0].DeviceMQTTTotals.ConnectAttempts != 2500 || result.StageResults[0].AppUserTotals.DesiredWrites != 5000 {
 		t.Fatalf("failed shard counters not preserved: %#v", result.StageResults[0])
+	}
+}
+
+func TestLoadLiveMQTTStageResultDoesNotClassifyTimeoutsAsRejectedUpdates(t *testing.T) {
+	outDir := t.TempDir()
+	payload := map[string]any{
+		"overall": "fail",
+		"metrics": map[string]any{
+			"commands_attempted": 100,
+			"commands_passed":    10,
+		},
+		"device_mqtt_totals": map[string]any{
+			"connect_attempts":  100,
+			"connect_success":   100,
+			"subscribes":        100,
+			"publishes":         100,
+			"received_messages": 10,
+		},
+		"app_user_totals": map[string]any{
+			"desired_writes": 100,
+			"received_acks":  10,
+		},
+		"http_failures": 90,
+	}
+	if err := writeJSONFile(filepath.Join(outDir, "results.json"), payload); err != nil {
+		t.Fatal(err)
+	}
+	result, err := loadLiveMQTTStageResult(filepath.Join(outDir, "results.json"), Stage{Name: "25k", ConnectedDevices: 25000}, 2500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RejectedUpdateCount != 0 {
+		t.Fatalf("RejectedUpdateCount = %d, want 0 for timeout/missing ack failures", result.RejectedUpdateCount)
 	}
 }
 

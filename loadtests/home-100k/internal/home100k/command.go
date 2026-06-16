@@ -528,7 +528,8 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 			"--ramp-up", stage.WarmUp,
 			"--telemetry-interval", stage.SteadyState,
 			"--state-interval", stage.SteadyState,
-			"--command-rate-per-device-per-day", "1",
+			"--command-rate-per-device-per-day", commandRatePerDeviceDay(maxConnected, durationSeconds),
+			"--load-model", "home-100k-sustained",
 			"--concurrency", strconv.Itoa(minInt(maxConnected, 250)),
 			"--max-connected-devices", strconv.Itoa(maxConnected),
 		}
@@ -612,6 +613,21 @@ func shardConnectedDevices(stageConnected int, assignment VMAssignment) int {
 	return target
 }
 
+func commandRatePerDeviceDay(maxConnected int, durationSeconds int) string {
+	if maxConnected <= 0 || durationSeconds <= 0 {
+		return "1.00"
+	}
+	expectedUserWrites := maxConnected / 10
+	if expectedUserWrites <= 0 {
+		expectedUserWrites = 1
+	}
+	rate := float64(expectedUserWrites) / float64(maxConnected) * 86400.0 / float64(durationSeconds) * 1.25
+	if rate < 1 {
+		rate = 1
+	}
+	return fmt.Sprintf("%.2f", rate)
+}
+
 func loadLiveMQTTStageResult(path string, stage Stage, maxConnected int) (StageResult, error) {
 	var raw struct {
 		Overall string `json:"overall"`
@@ -636,6 +652,7 @@ func loadLiveMQTTStageResult(path string, stage Stage, maxConnected int) (StageR
 		HTTPFailures           int64            `json:"http_failures"`
 		TotalHTTPBytesSent     int64            `json:"total_http_bytes_sent"`
 		TotalHTTPBytesReceived int64            `json:"total_http_bytes_received"`
+		RejectedUpdates        int64            `json:"rejected_updates"`
 		DeviceMQTTTotals       DeviceMQTTTotals `json:"device_mqtt_totals"`
 		AppUserTotals          AppUserTotals    `json:"app_user_totals"`
 	}
@@ -665,13 +682,6 @@ func loadLiveMQTTStageResult(path string, stage Stage, maxConnected int) (StageR
 	rejectedPublishes := nonZeroInt64(raw.DeviceMQTTTotals.RejectedPublishes, raw.PublishFailures)
 	httpRequests := nonZeroInt64(raw.AppUserTotals.DesiredWrites, raw.HTTPRequests)
 	httpSuccesses := nonZeroInt64(raw.AppUserTotals.ReceivedAcks, raw.HTTPSuccesses)
-	httpFailures := raw.HTTPFailures
-	if raw.AppUserTotals.LoginFail != 0 {
-		httpFailures = raw.AppUserTotals.LoginFail
-	}
-	if httpFailures == 0 && httpRequests > httpSuccesses {
-		httpFailures = httpRequests - httpSuccesses
-	}
 	return StageResult{
 		Name:             stage.Name,
 		ConnectedDevices: stage.ConnectedDevices,
@@ -703,7 +713,7 @@ func loadLiveMQTTStageResult(path string, stage Stage, maxConnected int) (StageR
 		DesiredReportedConvergenceRate: percent(commandsPassed, commandsAttempted),
 		OfflineDesiredConvergenceRate:  100,
 		DeltaClearSuccessRatePercent:   percent(commandsPassed, commandsAttempted),
-		RejectedUpdateCount:            int(httpFailures),
+		RejectedUpdateCount:            int(raw.RejectedUpdates),
 		AuthorizationViolationCount:    int(raw.AuthViolations),
 		ClientTokenCorrelationCount:    int(httpSuccesses),
 	}, nil

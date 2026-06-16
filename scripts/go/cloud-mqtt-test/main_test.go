@@ -177,6 +177,17 @@ func TestRedactedErrorPreservesRequestTokenHTTPStatus(t *testing.T) {
 	}
 }
 
+func TestRedactedErrorPreservesMissingAccessTokenDiagnostics(t *testing.T) {
+	for _, raw := range []string{
+		"request_token response missing access_token",
+		"app request_token response missing access_token",
+	} {
+		if got := redactedErrorString(raw); got != raw {
+			t.Fatalf("redactedErrorString(%q) = %q", raw, got)
+		}
+	}
+}
+
 func TestUserArtifactPreservesAppCredentials(t *testing.T) {
 	var artifact userArtifact
 	if err := json.Unmarshal([]byte(`{
