@@ -57,6 +57,10 @@ stage_warm_up="${HOME100K_STAGE_WARM_UP:-1m}"
 stage_steady="${HOME100K_STAGE_STEADY:-2m}"
 stage_cool_down="${HOME100K_STAGE_COOL_DOWN:-45s}"
 runner_mode="${HOME100K_RUNNER_MODE:-live}"
+coordinator_start_delay_ms="${HOME100K_COORDINATOR_START_DELAY_MS:-3000}"
+mqtt_addr="${HOME100K_MQTT_ADDR:-}"
+video_cloud_base_url="${HOME100K_VIDEO_CLOUD_BASE_URL:-}"
+account_manager_base_url="${HOME100K_ACCOUNT_MANAGER_BASE_URL:-}"
 status_file="$repo_root/$out_dir/.workflow-status"
 nodes_file="$repo_root/$out_dir/nodes.tsv"
 ssh_known_hosts_file="$repo_root/$out_dir/ssh_known_hosts"
@@ -109,6 +113,10 @@ Defaults can be overridden with:
   HOME100K_STAGE_STEADY default: 45s from the default description file
   HOME100K_STAGE_COOL_DOWN default: 15s from the default description file
   HOME100K_RUNNER_MODE default: live; use sample only for local developer smoke tests
+  HOME100K_COORDINATOR_START_DELAY_MS default: 3000
+  HOME100K_MQTT_ADDR public MQTT endpoint for remote Linode generators; required for live VM MQTT tests
+  HOME100K_VIDEO_CLOUD_BASE_URL optional public/direct Video Cloud base URL for remote generators
+  HOME100K_ACCOUNT_MANAGER_BASE_URL optional Account Manager base URL for remote generators
   HOME100K_NODE_RESOURCE_STATUS default: 1
   HOME100K_K8S_NODE_RESOURCE_STATUS default: 1
   HOME100K_KUBECONFIG default: RTK_CLOUD_LKE_KUBECONFIG, LKE_KUBECONFIG, CLOUD_STAGING_K8S_KUBECONFIG, or <env-root>/state/lke-kubeconfig.yaml
@@ -358,7 +366,7 @@ stop_status_monitor() {
 
 destroy_live_vms() {
   if [[ -f "$repo_root/$out_dir/vms.json" ]]; then
-    run_home100k destroy-vms "${common_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json" --live --confirm-live
+    run_home100k destroy-vms "${base_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json" --live --confirm-live
   fi
 }
 
@@ -375,7 +383,7 @@ on_script_exit() {
   exit "$rc"
 }
 
-common_args=(
+base_args=(
   "--env-root" "$env_root"
   "--brandname" "$brandname"
   "--region" "$region"
@@ -383,6 +391,19 @@ common_args=(
   "--stage-steady" "$stage_steady"
   "--stage-cool-down" "$stage_cool_down"
 )
+workflow_args=("${base_args[@]}")
+coordinator_args=(
+  "--coordinator-start-delay-ms" "$coordinator_start_delay_ms"
+)
+if [[ -n "$mqtt_addr" ]]; then
+  workflow_args+=("--mqtt-addr" "$mqtt_addr")
+fi
+if [[ -n "$video_cloud_base_url" ]]; then
+  workflow_args+=("--video-cloud-base-url" "$video_cloud_base_url")
+fi
+if [[ -n "$account_manager_base_url" ]]; then
+  workflow_args+=("--account-manager-base-url" "$account_manager_base_url")
+fi
 
 command="${1:-workflow-live}"
 if [[ "$command" == "-h" || "$command" == "--help" ]]; then
@@ -395,34 +416,34 @@ fi
 
 case "$command" in
   plan)
-    run_home100k plan "${common_args[@]}" "$@"
+    run_home100k plan "${base_args[@]}" "$@"
     ;;
   dry-run)
     mkdir -p "$repo_root/$out_dir"
-    run_home100k run "${common_args[@]}" --ephemeral-vms --run-id "$run_id" --out-dir "$out_dir" "$@"
+    run_home100k run "${base_args[@]}" --ephemeral-vms --run-id "$run_id" --out-dir "$out_dir" "$@"
     ;;
   provision-vms)
     mkdir -p "$repo_root/$out_dir"
-    run_home100k provision-vms "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" "$@"
+    run_home100k provision-vms "${base_args[@]}" --run-id "$run_id" --out-dir "$out_dir" "$@"
     ;;
   sync)
-    run_home100k sync "${common_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json" "$@"
+    run_home100k sync "${workflow_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json" "$@"
     ;;
   run-stages)
-    run_home100k run-stages "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --runner-mode "$runner_mode" "$@"
+    run_home100k run-stages "${workflow_args[@]}" "${coordinator_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --runner-mode "$runner_mode" "$@"
     ;;
   collect)
     mkdir -p "$repo_root/$out_dir"
-    run_home100k collect "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" "$@"
+    run_home100k collect "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" "$@"
     ;;
   collect-server-evidence)
     mkdir -p "$repo_root/$out_dir"
     export_kubeconfig_if_available
-    run_home100k collect-server-evidence "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" "$@"
+    run_home100k collect-server-evidence "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" "$@"
     ;;
   aggregate)
     mkdir -p "$repo_root/$out_dir"
-    run_home100k aggregate "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" "$@"
+    run_home100k aggregate "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" "$@"
     generate_report_from_artifacts
     ;;
   generate-report)
@@ -430,18 +451,18 @@ case "$command" in
     generate_report_from_artifacts
     ;;
   list-vms)
-    run_home100k list-vms "${common_args[@]}" --run-id "$run_id" "$@"
+    run_home100k list-vms "${base_args[@]}" --run-id "$run_id" "$@"
     ;;
   destroy-vms)
-    run_home100k destroy-vms "${common_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json" "$@"
+    run_home100k destroy-vms "${base_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json" "$@"
     ;;
   workflow-dry-run)
-    run_home100k plan "${common_args[@]}"
-    run_home100k provision-vms "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir"
-    run_home100k sync "${common_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json"
-    run_home100k run-stages "${common_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json" --runner-mode sample
-    run_home100k collect "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json"
-    run_home100k collect-server-evidence "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir"
+    run_home100k plan "${base_args[@]}"
+    run_home100k provision-vms "${base_args[@]}" --run-id "$run_id" --out-dir "$out_dir"
+    run_home100k sync "${workflow_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json"
+    run_home100k run-stages "${workflow_args[@]}" "${coordinator_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json" --runner-mode sample
+    run_home100k collect "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json"
+    run_home100k collect-server-evidence "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir"
     ;;
   workflow-live)
     if [[ -z "${LINODE_TOKEN:-}" ]]; then
@@ -461,27 +482,27 @@ case "$command" in
     cleanup_live_vms_on_exit=1
     start_status_monitor
     set_phase "provision-vms"
-    run_home100k provision-vms "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --live --confirm-live --authorized-key-file "$authorized_key_file" "$@"
+    run_home100k provision-vms "${base_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --live --confirm-live --authorized-key-file "$authorized_key_file" "$@"
     workflow_status
     set_phase "sync"
-    run_home100k sync "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
+    run_home100k sync "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
     workflow_status
     set_phase "run-stages"
     workflow_rc=0
-    run_home100k run-stages "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key" --runner-mode "$runner_mode" || workflow_rc=$?
+    run_home100k run-stages "${workflow_args[@]}" "${coordinator_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key" --runner-mode "$runner_mode" || workflow_rc=$?
     if [[ "$workflow_rc" -ne 0 ]]; then
       echo "run-stages returned rc=$workflow_rc; continuing to collect artifacts and generate report" >&2
     fi
     workflow_status
     set_phase "collect"
-    run_home100k collect "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
+    run_home100k collect "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
     workflow_status
     set_phase "collect-server-evidence"
     export_kubeconfig_if_available
-    run_home100k collect-server-evidence "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --live
+    run_home100k collect-server-evidence "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --live
     workflow_status
     set_phase "aggregate"
-    run_home100k aggregate "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir"
+    run_home100k aggregate "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir"
     generate_report_from_artifacts
     set_phase "destroy-vms"
     cleanup_rc=0
@@ -509,24 +530,24 @@ case "$command" in
     cleanup_live_vms_on_exit=1
     start_status_monitor
     set_phase "sync"
-    run_home100k sync "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
+    run_home100k sync "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
     workflow_status
     set_phase "run-stages"
     workflow_rc=0
-    run_home100k run-stages "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key" --runner-mode "$runner_mode" || workflow_rc=$?
+    run_home100k run-stages "${workflow_args[@]}" "${coordinator_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key" --runner-mode "$runner_mode" || workflow_rc=$?
     if [[ "$workflow_rc" -ne 0 ]]; then
       echo "run-stages returned rc=$workflow_rc; continuing to collect artifacts and generate report" >&2
     fi
     workflow_status
     set_phase "collect"
-    run_home100k collect "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
+    run_home100k collect "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
     workflow_status
     set_phase "collect-server-evidence"
     export_kubeconfig_if_available
-    run_home100k collect-server-evidence "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --live
+    run_home100k collect-server-evidence "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --live
     workflow_status
     set_phase "aggregate"
-    run_home100k aggregate "${common_args[@]}" --run-id "$run_id" --out-dir "$out_dir"
+    run_home100k aggregate "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir"
     generate_report_from_artifacts
     set_phase "destroy-vms"
     cleanup_rc=0

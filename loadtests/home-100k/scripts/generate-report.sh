@@ -294,6 +294,31 @@ def server_correlation():
             )
     return "\n".join(lines)
 
+def start_coordination():
+    coordination = result.get("start_coordination") or {}
+    vms = coordination.get("vms") or []
+    lines = [
+        f"- mode: {md(coordination.get('mode', 'unknown'))}",
+        f"- ready barrier: {md(coordination.get('ready_barrier', '-'))}",
+        f"- start delay ms: {num(coordination.get('start_delay_ms'), 0)}",
+        f"- max start skew ms: {num(coordination.get('max_skew_ms'), 0)}",
+    ]
+    if not vms:
+        lines.append("- no runner coordination telemetry")
+        return "\n".join(lines)
+    lines.extend([
+        "| VM | IP | Status | Ready at | Start signal received | Stage started | First connect | Stage completed | Disconnects | Error |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | ---: | --- |",
+    ])
+    for vm in vms:
+        lines.append(
+            f"| {md(vm.get('label'))} | {md(vm.get('ip', '-'))} | {md(vm.get('status', '-'))} | "
+            f"{md(vm.get('ready_at', '-'))} | {md(vm.get('start_signal_received_at', '-'))} | "
+            f"{md(vm.get('stage_started_at', '-'))} | {md(vm.get('first_connect_at', '-'))} | "
+            f"{md(vm.get('stage_completed_at', '-'))} | {num(vm.get('coordinator_disconnect_count'), 0)} | {md(vm.get('error', '-'))} |"
+        )
+    return "\n".join(lines)
+
 def client_target_coverage():
     stages = result.get("stage_results") or []
     if not stages:
@@ -421,6 +446,7 @@ def report_source_artifacts():
     candidates = [
         "results.json",
         "server-evidence.json",
+        "start-coordination.json",
         "sync-telemetry.json",
         "workflow-status.log",
         "resource-samples/load-vms.tsv",
@@ -445,6 +471,7 @@ replacements = {
     "DEVICE_MQTT_TOTALS": device_mqtt_totals(),
     "APP_USER_TOTALS": app_user_totals(),
     "SERVER_CORRELATION": server_correlation(),
+    "START_COORDINATION": start_coordination(),
     "LOAD_MACHINE_RESOURCE_USAGE": load_machine_resource_usage(),
     "K8S_NODE_RESOURCE_USAGE": k8s_node_resource_usage(),
     "SYNC_TELEMETRY": sync_telemetry(),

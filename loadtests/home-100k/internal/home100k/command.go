@@ -48,6 +48,8 @@ func Execute(args []string, stdout io.Writer, stderr io.Writer) int {
 		return executeRun(args[1:], stdout, stderr)
 	case "shard-run":
 		return executeShardRun(args[1:], stdout, stderr)
+	case "runner-daemon":
+		return executeRunnerDaemon(args[1:], stdout, stderr)
 	case "provision-vms":
 		return executeProvisionVMs(args[1:], stdout, stderr)
 	case "sync":
@@ -145,7 +147,7 @@ func parseCommonFlags(name string, args []string, stderr io.Writer) (PlanOptions
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, `usage: home-100k <plan|run|provision-vms|sync|run-stages|collect|collect-server-evidence|aggregate|list-vms|destroy-vms> --env-root PATH --brandname NAME --region LINODE_REGION [--ephemeral-vms]`)
+	fmt.Fprintln(w, `usage: home-100k <plan|run|provision-vms|sync|run-stages|collect|collect-server-evidence|aggregate|list-vms|destroy-vms|runner-daemon> --env-root PATH --brandname NAME --region LINODE_REGION [--ephemeral-vms]`)
 }
 
 type runFlagValues struct {
@@ -235,6 +237,10 @@ type workflowFlagValues struct {
 	remoteOutRoot      string
 	sshUser            string
 	sshKey             string
+	coordinatorDelayMS int
+	mqttAddr           string
+	videoCloudBaseURL  string
+	accountManagerURL  string
 }
 
 type shardRunFlagValues struct {
@@ -1022,6 +1028,10 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	remoteOutRoot := fs.String("remote-out-root", "", "output root on load-generator VMs")
 	sshUser := fs.String("ssh-user", "root", "SSH user for load-generator VMs")
 	sshKey := fs.String("ssh-key", "", "SSH private key for load-generator VMs")
+	coordinatorDelayMS := fs.Int("coordinator-start-delay-ms", defaultCoordinatorStartDelayMS, "host coordinator delay between START ack and local monotonic runner start")
+	mqttAddr := fs.String("mqtt-addr", "", "public MQTT host:port for remote load-generator VMs")
+	videoCloudBaseURL := fs.String("video-cloud-base-url", "", "Video Cloud base URL for remote load-generator VMs")
+	accountManagerURL := fs.String("account-manager-base-url", "", "Account Manager base URL for remote load-generator VMs")
 	if err := fs.Parse(args); err != nil {
 		return PlanOptions{}, workflowFlagValues{}, err
 	}
@@ -1039,6 +1049,10 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 		remoteOutRoot:      *remoteOutRoot,
 		sshUser:            *sshUser,
 		sshKey:             *sshKey,
+		coordinatorDelayMS: *coordinatorDelayMS,
+		mqttAddr:           *mqttAddr,
+		videoCloudBaseURL:  *videoCloudBaseURL,
+		accountManagerURL:  *accountManagerURL,
 	}, nil
 }
 
@@ -2049,6 +2063,9 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 		"stage_steady":          stageSteady,
 		"stage_cool_down":       stageCoolDown,
 		"runner_mode":           firstNonEmpty(values.runnerMode, "sample"),
+		"mqtt_addr":             strings.TrimSpace(values.mqttAddr),
+		"video_cloud_base_url":  strings.TrimSpace(values.videoCloudBaseURL),
+		"account_manager_url":   strings.TrimSpace(values.accountManagerURL),
 	}
 	return writeJSONFile(filepath.Join(ansibleDir, "extra-vars.json"), extraVars)
 }
@@ -2165,7 +2182,14 @@ func dispatchRemoteShards(vms []LinodeVM, plan Plan, runID string, remoteOutRoot
 	if err := writeAnsibleInputsForExistingManifests(vms, plan, values); err != nil {
 		return err
 	}
-	return runAnsiblePlaybook(values, "run-stages.yml")
+	if err := runAnsiblePlaybook(values, "start-runner.yml"); err != nil {
+		return err
+	}
+	coordination, err := runHostCoordinator(vms, plan, runID, values)
+	if err != nil {
+		return err
+	}
+	return writeJSONFile(filepath.Join(workflowOutDir(values), "start-coordination.json"), coordination)
 }
 
 func shardFromVMLabel(label string) (string, int, error) {

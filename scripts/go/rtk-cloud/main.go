@@ -244,27 +244,29 @@ func runMQTTTest(args []string) error {
 	childEnv := map[string]string{"GOWORK": "off"}
 	stackEnv, _ := readEnvFile(filepath.Join(resolvedEnv, "env", "stack.env"))
 	if firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), stackEnv["CLOUD_PROVIDER"]) == "lke" {
-		stack := firstNonEmpty(stackEnv["CLOUD_STACK_NAME"], "video-cloud-staging")
-		env := map[string]string{"CLOUD_STACK_NAME": stack}
-		mqttPort, mqttCleanup, err := lkeTCPServicePortForward(resolvedEnv, env, "video-cloud", "mqtt", 8883, "mqtt")
-		if err != nil {
-			return err
+		if os.Getenv("ACCOUNT_MANAGER_BASE_URL") == "" || os.Getenv("VIDEO_CLOUD_BASE_URL") == "" || os.Getenv("VIDEO_CLOUD_MQTT_ADDR") == "" {
+			stack := firstNonEmpty(stackEnv["CLOUD_STACK_NAME"], "video-cloud-staging")
+			env := map[string]string{"CLOUD_STACK_NAME": stack}
+			mqttPort, mqttCleanup, err := lkeTCPServicePortForward(resolvedEnv, env, "video-cloud", "mqtt", 8883, "mqtt")
+			if err != nil {
+				return err
+			}
+			defer mqttCleanup()
+			videoURL, videoCleanup, err := lkeVideoCloudAPIPortForward(resolvedEnv, env)
+			if err != nil {
+				return err
+			}
+			defer videoCleanup()
+			accountURL, accountCleanup, err := lkeAccountManagerPortForward(resolvedEnv, env)
+			if err != nil {
+				return err
+			}
+			defer accountCleanup()
+			childEnv["RTK_CLOUD_MQTT_TEST_MQTT_HOST"] = "127.0.0.1"
+			childEnv["RTK_CLOUD_MQTT_TEST_MQTT_PORT"] = strconv.Itoa(mqttPort)
+			childEnv["VIDEO_CLOUD_BASE_URL"] = videoURL
+			childEnv["ACCOUNT_MANAGER_BASE_URL"] = accountURL
 		}
-		defer mqttCleanup()
-		videoURL, videoCleanup, err := lkeVideoCloudAPIPortForward(resolvedEnv, env)
-		if err != nil {
-			return err
-		}
-		defer videoCleanup()
-		accountURL, accountCleanup, err := lkeAccountManagerPortForward(resolvedEnv, env)
-		if err != nil {
-			return err
-		}
-		defer accountCleanup()
-		childEnv["RTK_CLOUD_MQTT_TEST_MQTT_HOST"] = "127.0.0.1"
-		childEnv["RTK_CLOUD_MQTT_TEST_MQTT_PORT"] = strconv.Itoa(mqttPort)
-		childEnv["VIDEO_CLOUD_BASE_URL"] = videoURL
-		childEnv["ACCOUNT_MANAGER_BASE_URL"] = accountURL
 	}
 	childArgs := []string{
 		"--root", workspace,

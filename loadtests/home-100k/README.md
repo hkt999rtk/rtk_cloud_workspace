@@ -279,10 +279,11 @@ Required behavior:
 - `sync` generates an Ansible inventory from `vms.json`, writes one shard
   manifest per VM, and copies only the Linux runner binary, the VM's manifest,
   and minimal env-root artifacts.
-- `run-stages` uses the generated Ansible inventory to start device and user
-  shards with a shared `run_id`. Formal runs must use `runner_mode=live`;
-  sampled actor execution is allowed only for developer smoke tests and must
-  not be reported as capacity evidence.
+- `run-stages` uses the generated Ansible inventory only to start per-VM
+  runner daemons in `READY_WAIT`. The host coordinator then waits for all VMs
+  to report ready, sends a shared `START` command, and polls completion. Formal
+  runs must use `runner_mode=live`; sampled actor execution is allowed only for
+  developer smoke tests and must not be reported as capacity evidence.
 - `collect` uses the generated Ansible inventory to retrieve per-VM results,
   sync telemetry, and local load-generator telemetry.
 - `collect-server-evidence` queries server metrics/logs for the same `run_id`
@@ -418,6 +419,13 @@ Runner mode also belongs in the non-secret description file. The default is
 env-root. It must not fall back to sampled in-memory actor flows. Use
 `HOME100K_RUNNER_MODE=sample` only for local developer smoke tests.
 
+Load-generator start coordination is controlled by
+`HOME100K_COORDINATOR_START_DELAY_MS`, default `3000`. This is not an absolute
+wall-clock start time. The host coordinator first waits until every VM daemon is
+ready, then sends the same START command to all VMs. Each VM waits the
+configured delay using its local monotonic clock and records its actual stage
+start and first-connect timestamps for report-time start skew calculation.
+
 ### LKE Capacity Placement
 
 The shadow load path is PostgreSQL-heavy. For 100K runs, keep PostgreSQL on a
@@ -526,13 +534,18 @@ runner binaries, the assigned shard manifest, and selected env-root artifacts;
 it does not upload `reports/**`, `plans/**`, or the whole load-test source
 tree.
 `run-stages --live` reads `vms.json`, regenerates the same inventory, and runs
-`loadtests/home-100k/ansible/run-stages.yml`. Each VM writes shard artifacts
-under `--remote-out-root/<run-id>/<vm-label>/`. The Ansible vars include
-`runner_mode`; `live` mode invokes `rtk-cloud mqtt-test` for real MQTT/API
-traffic and refuses sampled actor fallback.
+`loadtests/home-100k/ansible/start-runner.yml`. The playbook starts a
+`home-100k runner-daemon` on each VM and waits only until the daemon reports
+`READY_WAIT`. After that, the host coordinator waits for the full ready barrier,
+sends `START(run_id, sequence, delay_ms)` to every VM, and each runner uses its
+local monotonic clock for the final delay before opening MQTT/API traffic. Each
+VM writes shard artifacts under `--remote-out-root/<run-id>/<vm-label>/`. The
+run-level `start-coordination.json` records ready barrier, configured start
+delay, per-VM start timestamps, and max start skew.
 `collect --live` reads `vms.json`, regenerates the same inventory, and runs
 `loadtests/home-100k/ansible/collect.yml` to fetch each VM's `results.json`,
-`TEST_REPORT.md`, resource snapshot, and sync telemetry into
+`TEST_REPORT.md`, `coordination.json`, runner daemon log, resource snapshot,
+and sync telemetry into
 `--out-dir/shards/<vm-label>/` and `--out-dir/sync-telemetry.d/`.
 `collect-server-evidence --live` runs Kubernetes evidence probes with `kubectl`
 for EMQX, Video Cloud API, IoT Device Shadow, PostgreSQL, Redis/Valkey,

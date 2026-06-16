@@ -28,6 +28,7 @@ type RunResult struct {
 	AppUserTotals       AppUserTotals       `json:"app_user_totals"`
 	ServerEvidence      ServerEvidence      `json:"server_evidence"`
 	ServerCorrelation   ServerCorrelation   `json:"server_correlation"`
+	StartCoordination   StartCoordination   `json:"start_coordination"`
 	SyncTelemetry       SyncTelemetry       `json:"sync_telemetry"`
 	LoadGeneratorHealth LoadGeneratorHealth `json:"load_generator_health"`
 	PlanFile            string              `json:"plan_file"`
@@ -124,6 +125,27 @@ type VMSyncTelemetry struct {
 type LoadGeneratorHealth struct {
 	Saturated bool     `json:"saturated"`
 	Reasons   []string `json:"reasons,omitempty"`
+}
+
+type StartCoordination struct {
+	Mode         string             `json:"mode,omitempty"`
+	ReadyBarrier string             `json:"ready_barrier,omitempty"`
+	StartDelayMS int                `json:"start_delay_ms,omitempty"`
+	MaxSkewMS    int64              `json:"max_skew_ms,omitempty"`
+	VMs          []VMStartTelemetry `json:"vms,omitempty"`
+}
+
+type VMStartTelemetry struct {
+	Label                  string `json:"label"`
+	IP                     string `json:"ip,omitempty"`
+	ReadyAt                string `json:"ready_at,omitempty"`
+	StartSignalReceivedAt  string `json:"start_signal_received_at,omitempty"`
+	StageStartedAt         string `json:"stage_started_at,omitempty"`
+	FirstConnectAt         string `json:"first_connect_at,omitempty"`
+	StageCompletedAt       string `json:"stage_completed_at,omitempty"`
+	CoordinatorDisconnects int    `json:"coordinator_disconnect_count,omitempty"`
+	Status                 string `json:"status,omitempty"`
+	Error                  string `json:"error,omitempty"`
 }
 
 type ServerEvidence struct {
@@ -241,6 +263,7 @@ func AggregateCollectedRun(opts AggregateOptions) (RunResult, error) {
 	stages := collected.StageResults
 	loadHealth := collected.LoadGeneratorHealth
 	syncTelemetry := loadSyncTelemetry(filepath.Join(outDir, "sync-telemetry.json"))
+	startCoordination := loadStartCoordination(filepath.Join(outDir, "start-coordination.json"))
 	evidence, err := loadServerEvidence(filepath.Join(outDir, "server-evidence.json"), runID)
 	if err != nil {
 		evidence = ServerEvidence{
@@ -262,6 +285,7 @@ func AggregateCollectedRun(opts AggregateOptions) (RunResult, error) {
 		AppUserTotals:       appTotals,
 		ServerEvidence:      evidence,
 		ServerCorrelation:   correlation,
+		StartCoordination:   startCoordination,
 		SyncTelemetry:       syncTelemetry,
 		LoadGeneratorHealth: loadHealth,
 		PlanFile:            filepath.Join(outDir, "plan.json"),
@@ -289,6 +313,7 @@ func AggregateCollectedRun(opts AggregateOptions) (RunResult, error) {
 		StageResults:         stages,
 		ServerEvidence:       evidence,
 		ServerCorrelation:    correlation,
+		StartCoordination:    startCoordination,
 		SyncTelemetry:        syncTelemetry,
 		Notes:                loadHealth.Reasons,
 	})
@@ -334,6 +359,14 @@ func loadServerEvidence(path string, runID string) (ServerEvidence, error) {
 type collectedShardResults struct {
 	StageResults        []StageResult
 	LoadGeneratorHealth LoadGeneratorHealth
+}
+
+func loadStartCoordination(path string) StartCoordination {
+	var coordination StartCoordination
+	if raw, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(raw, &coordination)
+	}
+	return coordination
 }
 
 func loadCollectedShardResults(shardsDir string) (collectedShardResults, error) {

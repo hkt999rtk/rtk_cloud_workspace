@@ -51,6 +51,37 @@
         flat: true
         fail_on_missing: false
 
+    - name: Fetch runner coordination telemetry
+      ansible.builtin.fetch:
+        src: "{{ remote_out_dir }}/coordination.json"
+        dest: "{{ local_out_dir }}/shards/{{ vm_label }}/coordination.json"
+        flat: true
+        fail_on_missing: false
+
+    - name: Fetch runner daemon log
+      ansible.builtin.fetch:
+        src: "{{ remote_out_dir }}/runner-daemon.log"
+        dest: "{{ local_out_dir }}/shards/{{ vm_label }}/runner-daemon.log"
+        flat: true
+        fail_on_missing: false
+
+    - name: Archive nested MQTT test artifacts
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if [ -d "{{ remote_out_dir }}/mqtt-test" ]; then
+          tar -C "{{ remote_out_dir }}" -czf "{{ remote_out_dir }}/mqtt-test-artifacts.tar.gz" mqtt-test
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Fetch nested MQTT test artifacts
+      ansible.builtin.fetch:
+        src: "{{ remote_out_dir }}/mqtt-test-artifacts.tar.gz"
+        dest: "{{ local_out_dir }}/shards/{{ vm_label }}/mqtt-test-artifacts.tar.gz"
+        flat: true
+        fail_on_missing: false
+
     - name: Fetch sync telemetry
       ansible.builtin.fetch:
         src: "{{ remote_telemetry_dir }}/{{ vm_label }}.json"

@@ -736,15 +736,20 @@ func TestAnsibleSyncInstallsKubectlForLiveRunner(t *testing.T) {
 	}
 }
 
-func TestAnsibleRunStagesUsesPrebuiltCloudMQTTTest(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "ansible", "run-stages.yml"))
+func TestAnsibleStartRunnerUsesPrebuiltCloudMQTTTestAndDaemonWait(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "ansible", "start-runner.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := string(raw)
-	for _, want := range []string{"CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT", "{{ remote_home_100k_dir }}/bin/cloud-mqtt-test"} {
+	for _, want := range []string{
+		"runner-daemon",
+		"CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT",
+		"{{ remote_home_100k_dir }}/bin/cloud-mqtt-test",
+		"READY_WAIT",
+	} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("run-stages.yml missing %q:\n%s", want, body)
+			t.Fatalf("start-runner.yml missing %q:\n%s", want, body)
 		}
 	}
 }
@@ -792,7 +797,7 @@ func TestExecuteRunStagesLiveRunnerModeRefusesSampleFallback(t *testing.T) {
 	}
 }
 
-func TestExecuteRunStagesLiveDispatchesShardCommands(t *testing.T) {
+func TestExecuteRunStagesLiveStartsRunnerDaemonsThenHostCoordinator(t *testing.T) {
 	outDir := t.TempDir()
 	stateFile := filepath.Join(outDir, "vms.json")
 	state := map[string]any{
@@ -812,13 +817,40 @@ func TestExecuteRunStagesLiveDispatchesShardCommands(t *testing.T) {
 	var callsMu sync.Mutex
 	calls := []string{}
 	oldRunner := commandRunner
+	oldCoordinator := runHostCoordinator
 	commandRunner = func(name string, args ...string) error {
 		callsMu.Lock()
 		defer callsMu.Unlock()
 		calls = append(calls, name+" "+strings.Join(args, " "))
 		return nil
 	}
-	defer func() { commandRunner = oldRunner }()
+	coordinatorCalled := false
+	runHostCoordinator = func(vms []LinodeVM, plan Plan, runID string, values workflowFlagValues) (StartCoordination, error) {
+		coordinatorCalled = true
+		if len(vms) != 2 {
+			t.Fatalf("coordinator vms len = %d, want 2", len(vms))
+		}
+		return StartCoordination{
+			Mode:         "host-coordinator",
+			ReadyBarrier: "2/2",
+			StartDelayMS: 3000,
+			MaxSkewMS:    25,
+			VMs: []VMStartTelemetry{{
+				Label:                  "home-100k-mixed-000",
+				IP:                     "203.0.113.101",
+				ReadyAt:                "2026-06-15T00:00:00Z",
+				StartSignalReceivedAt:  "2026-06-15T00:00:01Z",
+				StageStartedAt:         "2026-06-15T00:00:04Z",
+				FirstConnectAt:         "2026-06-15T00:00:04.010Z",
+				CoordinatorDisconnects: 0,
+				Status:                 "completed",
+			}},
+		}, nil
+	}
+	defer func() {
+		commandRunner = oldRunner
+		runHostCoordinator = oldCoordinator
+	}()
 
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
@@ -841,12 +873,18 @@ func TestExecuteRunStagesLiveDispatchesShardCommands(t *testing.T) {
 	}
 	joined := strings.Join(calls, "\n")
 	for _, want := range []string{
-		"ansible-playbook --forks 20 -i " + filepath.Join(outDir, "ansible", "inventory.json") + " loadtests/home-100k/ansible/run-stages.yml",
+		"ansible-playbook --forks 20 -i " + filepath.Join(outDir, "ansible", "inventory.json") + " loadtests/home-100k/ansible/start-runner.yml",
 		"--extra-vars @" + filepath.Join(outDir, "ansible", "extra-vars.json"),
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("run-stages live commands missing %q:\n%s", want, joined)
 		}
+	}
+	if !coordinatorCalled {
+		t.Fatalf("host coordinator was not called")
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "start-coordination.json")); err != nil {
+		t.Fatalf("missing start coordination artifact: %v", err)
 	}
 	if !strings.Contains(stdout.String(), `"dispatched"`) || !strings.Contains(stdout.String(), `"id": 101`) {
 		t.Fatalf("stdout missing dispatched VMs:\n%s", stdout.String())

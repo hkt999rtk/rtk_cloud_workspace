@@ -199,12 +199,19 @@ IPs, writes one shard manifest per VM, and runs
 runner binary, assigned shard manifest, and minimal env-root artifacts; it does
 not copy the full generated device tree or report history.
 Live run-stages reads `vms.json`, regenerates the same inventory, and runs
-`loadtests/home-100k/ansible/run-stages.yml`. Each VM writes shard artifacts
-under `--remote-out-root/<run_id>/<vm-label>/`. In `runner_mode=live`, each VM
-calls the copied `rtk-cloud` binary to run the assigned MQTT/API shard.
+`loadtests/home-100k/ansible/start-runner.yml`. Ansible starts a
+`home-100k runner-daemon` on each VM and waits for `READY_WAIT`; it does not
+perform the synchronized stage start. The host coordinator waits for the full
+ready barrier, sends `START(run_id, sequence, delay_ms)` to every VM, and each
+runner uses its local monotonic clock for the final delay before opening
+MQTT/API traffic. The run writes `start-coordination.json` with ready barrier,
+per-VM start timestamps, and max start skew. In `runner_mode=live`, each VM
+calls the copied `rtk-cloud` binary to run the assigned MQTT/API shard only
+after START is received.
 Live collect reads `vms.json`, regenerates the inventory, and runs
 `loadtests/home-100k/ansible/collect.yml` to fetch shard `results.json`, shard
-reports, resource snapshots, and sync telemetry.
+reports, runner coordination telemetry, daemon logs, resource snapshots, and
+sync telemetry.
 Live server evidence collection runs `kubectl` probes for EMQX, Video Cloud API,
 IoT Device Shadow, PostgreSQL, Redis/Valkey, ingress/nginx, and host/pod
 resources. Partial probe failure is written as `complete=false` evidence so the

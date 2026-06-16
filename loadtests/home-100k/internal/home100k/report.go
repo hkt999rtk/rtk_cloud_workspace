@@ -15,6 +15,7 @@ type ReportInput struct {
 	StageResults         []StageResult
 	ServerEvidence       ServerEvidence
 	ServerCorrelation    ServerCorrelation
+	StartCoordination    StartCoordination
 	SyncTelemetry        SyncTelemetry
 	Notes                []string
 }
@@ -188,6 +189,33 @@ func RenderReport(input ReportInput) string {
 			fmt.Fprintln(&b, "| --- | --- | ---: | ---: | ---: | ---: | --- |")
 			for _, check := range input.ServerCorrelation.Checks {
 				fmt.Fprintf(&b, "| %s | %s | %d | %d | %d | %d | %s |\n", check.Source, check.Counter, check.ClientTotal, check.ServerTotal, check.Delta, check.Tolerance, check.Status)
+			}
+		}
+		fmt.Fprintln(&b)
+	}
+
+	if len(input.StartCoordination.VMs) > 0 || input.StartCoordination.Mode != "" {
+		fmt.Fprintln(&b, "## Load Generator Start Coordination")
+		fmt.Fprintf(&b, "- mode: %s\n", firstNonEmpty(input.StartCoordination.Mode, "unknown"))
+		fmt.Fprintf(&b, "- ready barrier: %s\n", firstNonEmpty(input.StartCoordination.ReadyBarrier, "-"))
+		fmt.Fprintf(&b, "- start delay ms: %d\n", input.StartCoordination.StartDelayMS)
+		fmt.Fprintf(&b, "- max start skew ms: %d\n", input.StartCoordination.MaxSkewMS)
+		if len(input.StartCoordination.VMs) > 0 {
+			fmt.Fprintln(&b, "| VM | IP | Status | Ready at | Start signal received | Stage started | First connect | Stage completed | Disconnects | Error |")
+			fmt.Fprintln(&b, "| --- | --- | --- | --- | --- | --- | --- | --- | ---: | --- |")
+			for _, vm := range input.StartCoordination.VMs {
+				fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %s | %d | %s |\n",
+					vm.Label,
+					firstNonEmpty(vm.IP, "-"),
+					firstNonEmpty(vm.Status, "-"),
+					firstNonEmpty(vm.ReadyAt, "-"),
+					firstNonEmpty(vm.StartSignalReceivedAt, "-"),
+					firstNonEmpty(vm.StageStartedAt, "-"),
+					firstNonEmpty(vm.FirstConnectAt, "-"),
+					firstNonEmpty(vm.StageCompletedAt, "-"),
+					vm.CoordinatorDisconnects,
+					redact(firstNonEmpty(vm.Error, "-")),
+				)
 			}
 		}
 		fmt.Fprintln(&b)

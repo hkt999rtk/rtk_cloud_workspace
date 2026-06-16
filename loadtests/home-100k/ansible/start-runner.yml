@@ -1,0 +1,87 @@
+---
+- name: Start Home 100K per-VM runner daemons
+  hosts: home_100k
+  gather_facts: false
+  become: true
+  vars:
+    remote_home_100k_dir: "{{ remote_workspace }}/loadtests/home-100k"
+  tasks:
+    - name: Ensure shard output directory exists
+      ansible.builtin.file:
+        path: "{{ remote_out_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Stop previous runner daemon if present
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if [ -f "{{ remote_out_dir }}/runner-daemon.pid" ]; then
+          old_pid="$(cat "{{ remote_out_dir }}/runner-daemon.pid" || true)"
+          if [ -n "$old_pid" ] && kill -0 "$old_pid" >/dev/null 2>&1; then
+            kill "$old_pid" || true
+          fi
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Start runner daemon in READY_WAIT
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export KUBECONFIG="{{ remote_env_root }}/state/lke-kubeconfig.yaml"
+        export RTK_CLOUD_LKE_KUBECONFIG="{{ remote_env_root }}/state/lke-kubeconfig.yaml"
+        export CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT="{{ remote_home_100k_dir }}/bin/cloud-mqtt-test"
+        account_domain="$(awk -F= '/^ACCOUNT_MANAGER_DOMAIN=/ {print $2}' "{{ remote_env_root }}/env/stack.env" | tail -n 1)"
+        video_domain="$(awk -F= '/^VIDEO_CLOUD_DOMAIN=/ {print $2}' "{{ remote_env_root }}/env/stack.env" | tail -n 1)"
+        if [ -n "$account_domain" ]; then
+          export ACCOUNT_MANAGER_BASE_URL="https://${account_domain}"
+        fi
+        if [ -n "$video_domain" ]; then
+          export VIDEO_CLOUD_BASE_URL="https://${video_domain}"
+        fi
+        if [ -n "{{ account_manager_url | default('') }}" ]; then
+          export ACCOUNT_MANAGER_BASE_URL="{{ account_manager_url }}"
+        fi
+        if [ -n "{{ video_cloud_base_url | default('') }}" ]; then
+          export VIDEO_CLOUD_BASE_URL="{{ video_cloud_base_url }}"
+        fi
+        if [ -n "{{ mqtt_addr | default('') }}" ]; then
+          export VIDEO_CLOUD_MQTT_ADDR="{{ mqtt_addr }}"
+        fi
+        nohup "{{ remote_home_100k_dir }}/bin/home-100k" runner-daemon \
+          --env-root "{{ remote_env_root }}" \
+          --brandname "{{ brandname }}" \
+          --region "{{ region }}" \
+          --run-id "{{ run_id }}" \
+          --role "{{ role }}" \
+          --shard-index "{{ shard_index | string }}" \
+          --shard-manifest "{{ remote_shard_manifest }}" \
+          --out-dir "{{ remote_out_dir }}" \
+          --workspace "{{ remote_workspace }}" \
+          --rtk-cloud-binary "{{ remote_home_100k_dir }}/bin/rtk-cloud" \
+          --stage-warm-up "{{ stage_warm_up }}" \
+          --stage-steady "{{ stage_steady }}" \
+          --stage-cool-down "{{ stage_cool_down }}" \
+          --runner-mode "{{ runner_mode | default('live') }}" \
+          --listen ":18080" \
+          > "{{ remote_out_dir }}/runner-daemon.log" 2>&1 &
+        echo "$!" > "{{ remote_out_dir }}/runner-daemon.pid"
+      args:
+        executable: /bin/bash
+
+    - name: Wait until runner daemon enters READY_WAIT
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:18080/ready"
+        method: GET
+        return_content: true
+        status_code: 200
+      register: runner_ready
+      retries: 60
+      delay: 1
+      until: (runner_ready.content | from_json).status == "READY_WAIT"
+
+    - name: Write runner daemon command log
+      ansible.builtin.copy:
+        dest: "{{ remote_out_dir }}/runner-command.json"
+        mode: "0644"
+        content: "{{ runner_ready | to_nice_json }}"
