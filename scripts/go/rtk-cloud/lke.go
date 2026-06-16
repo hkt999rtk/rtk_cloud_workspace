@@ -3202,7 +3202,10 @@ type: Opaque
 stringData:
   tls.crt: %q
   tls.key: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], material.ServerCert, material.ServerKey)
+  cert.pem: %q
+  key.pem: %q
+  cacert.pem: %q
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], material.ServerCert, material.ServerKey, material.ServerCert, material.ServerKey, material.ServerCert)
 }
 
 func lkeMQTTConfigManifest(env map[string]string) string {
@@ -3217,16 +3220,7 @@ metadata:
     rtk.realtek.com/provider: lke
     rtk.realtek.com/stack: %s
 data:
-  mosquitto.conf: |
-    listener 1883 0.0.0.0
-    allow_anonymous true
-
-    listener 8883 0.0.0.0
-    allow_anonymous true
-    persistence false
-    log_dest stdout
-    certfile /mosquitto/certs/tls.crt
-    keyfile /mosquitto/certs/tls.key
+  broker: emqx
 `, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
 }
 
@@ -3258,7 +3252,19 @@ spec:
         - name: mqtt
           image: %s
           imagePullPolicy: IfNotPresent
-          args: ["mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
+          env:
+            - name: EMQX_LISTENERS__TCP__DEFAULT__BIND
+              value: "0.0.0.0:1883"
+            - name: EMQX_LISTENERS__TCP__DEFAULT__ENABLE_AUTHN
+              value: "false"
+            - name: EMQX_LISTENERS__SSL__DEFAULT__BIND
+              value: "0.0.0.0:8883"
+            - name: EMQX_LISTENERS__SSL__DEFAULT__ENABLE_AUTHN
+              value: "false"
+            - name: EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__CERTFILE
+              value: /opt/emqx/etc/certs/tls.crt
+            - name: EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__KEYFILE
+              value: /opt/emqx/etc/certs/tls.key
 %s
           ports:
             - name: mqtt
@@ -3266,20 +3272,14 @@ spec:
             - name: mqtts
               containerPort: 8883
           volumeMounts:
-            - name: mqtt-config
-              mountPath: /mosquitto/config
-              readOnly: true
             - name: mqtt-runtime
-              mountPath: /mosquitto/certs
+              mountPath: /opt/emqx/etc/certs
               readOnly: true
       volumes:
-        - name: mqtt-config
-          configMap:
-            name: mqtt-config
         - name: mqtt-runtime
           secret:
             secretName: mqtt-runtime
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_MQTT_IMAGE"), "eclipse-mosquitto:2"), lkeContainerResourcesManifest("mqtt"))
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_MQTT_IMAGE"), "emqx/emqx:5.8.7"), lkeContainerResourcesManifest("mqtt"))
 }
 
 func lkeMQTTServiceManifest(env map[string]string) string {
