@@ -10,9 +10,10 @@ import (
 const (
 	DefaultDeviceCount      = 100000
 	DefaultUserCount        = 5000
-	DefaultDevicesPerUser   = 10
-	DefaultDevicesPerVM     = 10000
-	DefaultUserShards       = 10
+	DefaultDevicesPerUser   = 20
+	DefaultVMCount          = 5
+	DefaultDevicesPerVM     = DefaultDeviceCount / DefaultVMCount
+	DefaultUserShards       = DefaultVMCount
 	DefaultServerTarget     = "staging/lke"
 	DefaultLoadGeneratorRun = "ephemeral-linode-vm"
 	DefaultStageWarmUp      = "1m"
@@ -184,7 +185,7 @@ func validateDuration(label string, value string) error {
 
 func deviceShards(region string) []Shard {
 	shards := []Shard{}
-	for idx := 0; idx < DefaultDeviceCount/DefaultDevicesPerVM; idx++ {
+	for idx := 0; idx < DefaultVMCount; idx++ {
 		start := idx * DefaultDevicesPerVM
 		end := start + DefaultDevicesPerVM
 		shards = append(shards, Shard{
@@ -200,8 +201,8 @@ func deviceShards(region string) []Shard {
 }
 
 func mixedAssignments(region string, shards []Shard) []VMAssignment {
-	assignments := make([]VMAssignment, 0, DefaultDeviceCount/DefaultDevicesPerVM)
-	for idx := 0; idx < DefaultDeviceCount/DefaultDevicesPerVM; idx++ {
+	assignments := make([]VMAssignment, 0, DefaultVMCount)
+	for idx := 0; idx < DefaultVMCount; idx++ {
 		tasks := []Shard{}
 		if shard, ok := findShardInList(shards, "device-mqtt", idx); ok {
 			tasks = append(tasks, shard)
@@ -264,11 +265,11 @@ func (p Plan) Validate() error {
 	if p.Conditions.Devices != sumMap(p.PresenceMix) {
 		return fmt.Errorf("presence mix sums to %d, want %d", sumMap(p.PresenceMix), p.Conditions.Devices)
 	}
-	if len(p.ShardsByRole("device-mqtt")) < 10 {
-		return errors.New("100K baseline requires at least 10 device-mqtt shards")
+	if len(p.ShardsByRole("device-mqtt")) != DefaultVMCount {
+		return fmt.Errorf("100K mixed baseline requires %d device-mqtt shards, got %d", DefaultVMCount, len(p.ShardsByRole("device-mqtt")))
 	}
-	if len(p.Assignments) != 10 {
-		return fmt.Errorf("100K mixed baseline requires 10 VM assignments, got %d", len(p.Assignments))
+	if len(p.Assignments) != DefaultVMCount {
+		return fmt.Errorf("100K mixed baseline requires %d VM assignments, got %d", DefaultVMCount, len(p.Assignments))
 	}
 	return nil
 }

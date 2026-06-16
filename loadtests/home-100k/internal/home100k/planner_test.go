@@ -21,8 +21,8 @@ func TestDefaultPlanResolves100KHomeBaseline(t *testing.T) {
 	if plan.Conditions.Users != 5000 {
 		t.Fatalf("users = %d, want 5000", plan.Conditions.Users)
 	}
-	if plan.Conditions.DevicesPerUser != 10 {
-		t.Fatalf("devices per user = %d, want 10", plan.Conditions.DevicesPerUser)
+	if plan.Conditions.DevicesPerUser != 20 {
+		t.Fatalf("devices per user = %d, want 20", plan.Conditions.DevicesPerUser)
 	}
 	if got := plan.DeviceMix["light"]; got != 50000 {
 		t.Fatalf("light count = %d, want 50000", got)
@@ -55,27 +55,27 @@ func TestDefaultPlanCreatesDeterministicShardsAndStages(t *testing.T) {
 	}
 
 	deviceShards := plan.ShardsByRole("device-mqtt")
-	if len(deviceShards) != 10 {
-		t.Fatalf("device shards = %d, want 10", len(deviceShards))
+	if len(deviceShards) != 5 {
+		t.Fatalf("device shards = %d, want 5", len(deviceShards))
 	}
 	for idx, shard := range deviceShards {
 		if shard.Index != idx {
 			t.Fatalf("device shard index = %d, want %d", shard.Index, idx)
 		}
-		if shard.Start != idx*10000 || shard.End != (idx+1)*10000 {
-			t.Fatalf("device shard %d range = [%d,%d), want [%d,%d)", idx, shard.Start, shard.End, idx*10000, (idx+1)*10000)
+		if shard.Start != idx*20000 || shard.End != (idx+1)*20000 {
+			t.Fatalf("device shard %d range = [%d,%d), want [%d,%d)", idx, shard.Start, shard.End, idx*20000, (idx+1)*20000)
 		}
 	}
 
 	userShards := plan.ShardsByRole("user-app")
-	if len(userShards) != 10 {
-		t.Fatalf("user shards = %d, want 10", len(userShards))
+	if len(userShards) != 5 {
+		t.Fatalf("user shards = %d, want 5", len(userShards))
 	}
-	if userShards[0].Start != 0 || userShards[0].End != 500 || userShards[9].Start != 4500 || userShards[9].End != 5000 {
+	if userShards[0].Start != 0 || userShards[0].End != 1000 || userShards[4].Start != 4000 || userShards[4].End != 5000 {
 		t.Fatalf("unexpected user shards: %#v", userShards)
 	}
-	if len(plan.Assignments) != 10 {
-		t.Fatalf("VM assignments = %d, want 10", len(plan.Assignments))
+	if len(plan.Assignments) != 5 {
+		t.Fatalf("VM assignments = %d, want 5", len(plan.Assignments))
 	}
 	for idx, assignment := range plan.Assignments {
 		if assignment.Label != "home-100k-mixed-"+fmt.Sprintf("%03d", idx) {

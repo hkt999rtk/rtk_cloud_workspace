@@ -54,6 +54,9 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 			},
 			ShadowGetP95MS:       42,
 			DesiredReportedP95MS: 88,
+			FailureReasons: map[string]int64{
+				"app_desired_publish_failed": 2,
+			},
 		}},
 		DeviceMQTTTotals: DeviceMQTTTotals{
 			ConnectAttempts: 10,
@@ -125,6 +128,8 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 		"## Report Source Artifacts",
 		"resource-samples/load-vms.tsv",
 		"resource-samples/k8s-nodes.tsv",
+		"## Failure Reasons",
+		"app_desired_publish_failed",
 	} {
 		if !strings.Contains(report, want) {
 			t.Fatalf("generated report missing %q:\n%s", want, report)

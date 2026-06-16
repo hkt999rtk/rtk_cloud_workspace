@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"database/sql"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -28,6 +30,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 var homeTypes = map[string]bool{
@@ -90,6 +94,23 @@ type certRecord struct {
 	CertPath   string `json:"cert_path"`
 	KeyPath    string `json:"key_path"`
 	ChainPath  string `json:"chain_path"`
+	CertPEM    string `json:"-"`
+	KeyPEM     string `json:"-"`
+	ChainPEM   string `json:"-"`
+}
+
+type home100KCredentialBundle struct {
+	Devices map[string]home100KCredentialDevice
+	Source  string
+}
+
+type home100KCredentialDevice struct {
+	DeviceID   string
+	DeviceType string
+	CertPEM    string
+	KeyPEM     string
+	ChainPEM   string
+	BundlePEM  string
 }
 
 type deviceResult struct {
@@ -138,28 +159,32 @@ type traceStep struct {
 }
 
 type mqttIOTotals struct {
-	ConnectAttempts        int64 `json:"connect_attempts"`
-	ConnectSuccesses       int64 `json:"connect_successes"`
-	ConnectFailures        int64 `json:"connect_failures"`
-	SubscribeSuccesses     int64 `json:"subscribe_successes"`
-	PublishSuccesses       int64 `json:"publish_successes"`
-	PublishFailures        int64 `json:"publish_failures"`
-	MessagesReceived       int64 `json:"messages_received"`
-	DeltaReceived          int64 `json:"delta_received"`
-	ReportedEvents         int64 `json:"reported_events"`
-	AppLoginAttempts       int64 `json:"app_login_attempts"`
-	AppLoginSuccesses      int64 `json:"app_login_successes"`
-	AppLoginFailures       int64 `json:"app_login_failures"`
-	AppDesiredWrites       int64 `json:"app_desired_writes"`
-	AppReceivedAcks        int64 `json:"app_received_acks"`
-	TotalBytesSent         int64 `json:"total_bytes_sent"`
-	TotalBytesReceived     int64 `json:"total_bytes_received"`
-	AuthViolations         int64 `json:"auth_violations"`
-	HTTPRequests           int64 `json:"http_requests"`
-	HTTPSuccesses          int64 `json:"http_successes"`
-	HTTPFailures           int64 `json:"http_failures"`
-	TotalHTTPBytesSent     int64 `json:"total_http_bytes_sent"`
-	TotalHTTPBytesReceived int64 `json:"total_http_bytes_received"`
+	ConnectAttempts        int64                       `json:"connect_attempts"`
+	ConnectSuccesses       int64                       `json:"connect_successes"`
+	ConnectFailures        int64                       `json:"connect_failures"`
+	SubscribeSuccesses     int64                       `json:"subscribe_successes"`
+	ActiveConnections      int64                       `json:"active_connections,omitempty"`
+	ActiveSubscriptions    int64                       `json:"active_subscriptions,omitempty"`
+	PublishSuccesses       int64                       `json:"publish_successes"`
+	PublishFailures        int64                       `json:"publish_failures"`
+	MessagesReceived       int64                       `json:"messages_received"`
+	DeltaReceived          int64                       `json:"delta_received"`
+	ReportedEvents         int64                       `json:"reported_events"`
+	AppLoginAttempts       int64                       `json:"app_login_attempts"`
+	AppLoginSuccesses      int64                       `json:"app_login_successes"`
+	AppLoginFailures       int64                       `json:"app_login_failures"`
+	AppDesiredWrites       int64                       `json:"app_desired_writes"`
+	AppReceivedAcks        int64                       `json:"app_received_acks"`
+	TotalBytesSent         int64                       `json:"total_bytes_sent"`
+	TotalBytesReceived     int64                       `json:"total_bytes_received"`
+	AuthViolations         int64                       `json:"auth_violations"`
+	HTTPRequests           int64                       `json:"http_requests"`
+	HTTPSuccesses          int64                       `json:"http_successes"`
+	HTTPFailures           int64                       `json:"http_failures"`
+	TotalHTTPBytesSent     int64                       `json:"total_http_bytes_sent"`
+	TotalHTTPBytesReceived int64                       `json:"total_http_bytes_received"`
+	FailureReasons         map[string]int64            `json:"failure_reasons,omitempty"`
+	FailureDetails         map[string]map[string]int64 `json:"failure_details,omitempty"`
 }
 
 type appBootstrapStatus struct {
@@ -195,6 +220,7 @@ type mqttActorProbe struct {
 func main() {
 	var root, envRoot, brandname, outDir, profile, maxUsersRaw, mqttProbeRaw, traceDetail, runID string
 	var rampUp, telemetryInterval, stateInterval, commandRate, loadModel string
+	var stageNamesRaw, stageTargetsRaw, stageDurationsRaw string
 	var duration, seed, shardIndex, shardCount, concurrency, maxConnectedDevices int
 	flag.StringVar(&root, "root", "", "workspace root")
 	flag.StringVar(&envRoot, "env-root", "", "environment root")
@@ -214,6 +240,9 @@ func main() {
 	flag.StringVar(&stateInterval, "state-interval", "", "load-test state interval")
 	flag.StringVar(&commandRate, "command-rate-per-device-per-day", "", "load-test command rate per device per day")
 	flag.StringVar(&loadModel, "load-model", "", "load model: actor-separated-probe or home-100k-sustained")
+	flag.StringVar(&stageNamesRaw, "stage-names", "", "comma-separated staged sustained load stage names")
+	flag.StringVar(&stageTargetsRaw, "stage-connected-devices", "", "comma-separated staged sustained per-shard connected device targets")
+	flag.StringVar(&stageDurationsRaw, "stage-durations-seconds", "", "comma-separated staged sustained stage durations in seconds")
 	flag.IntVar(&concurrency, "concurrency", 25, "load-test MQTT probe concurrency")
 	flag.IntVar(&maxConnectedDevices, "max-connected-devices", 0, "load-test max connected devices in this shard")
 	flag.Parse()
@@ -235,6 +264,9 @@ func main() {
 		StateInterval:               stateInterval,
 		CommandRatePerDevicePerDay:  commandRate,
 		LoadModel:                   loadModel,
+		StageNames:                  stageNamesRaw,
+		StageConnectedDevices:       stageTargetsRaw,
+		StageDurationsSeconds:       stageDurationsRaw,
 		Concurrency:                 concurrency,
 		MaxConnectedDevicesPerShard: maxConnectedDevices,
 		RunID:                       runID,
@@ -258,6 +290,9 @@ type loadOptions struct {
 	StateInterval               string `json:"state_interval"`
 	CommandRatePerDevicePerDay  string `json:"command_rate_per_device_per_day"`
 	LoadModel                   string `json:"load_model"`
+	StageNames                  string `json:"stage_names,omitempty"`
+	StageConnectedDevices       string `json:"stage_connected_devices,omitempty"`
+	StageDurationsSeconds       string `json:"stage_durations_seconds,omitempty"`
 	Concurrency                 int    `json:"concurrency"`
 	MaxConnectedDevicesPerShard int    `json:"max_connected_devices_per_shard"`
 }
@@ -355,16 +390,14 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	stackValues := envValues(stackEnv)
 	accountValues := envValues(accountEnv)
 	loadValues := envValues(filepath.Join(testDevicesDir, "loadtest.env"))
-	videoPublicBaseURL := "https://" + firstNonEmpty(stackValues["VIDEO_CLOUD_DOMAIN"], "unknown")
-	videoMTLSBaseURL := videoCloudMTLSBaseURL(envRoot, stackValues, videoPublicBaseURL)
+	videoEndpoints := resolveVideoCloudEndpoints(envRoot, stackValues)
 	accountBaseURL := strings.TrimRight(firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_BASE_URL"), "https://"+firstNonEmpty(stackValues["ACCOUNT_MANAGER_DOMAIN"], accountValues["ACCOUNT_MANAGER_DOMAIN"], "unknown")), "/")
-	videoBaseURL := strings.TrimRight(firstNonEmpty(os.Getenv("VIDEO_CLOUD_BASE_URL"), videoMTLSBaseURL), "/")
 	endpoints := map[string]any{
-		"account_manager_base_url": accountBaseURL,
-		"video_cloud_base_url":     videoBaseURL,
-	}
-	if videoBaseURL != videoPublicBaseURL {
-		endpoints["video_cloud_public_base_url"] = videoPublicBaseURL
+		"account_manager_base_url":       accountBaseURL,
+		"video_cloud_base_url":           videoEndpoints.PublicBaseURL,
+		"video_cloud_mtls_base_url":      videoEndpoints.MTLSBaseURL,
+		"video_cloud_token_base_url":     videoEndpoints.TokenBootstrapBaseURL,
+		"video_cloud_token_endpoint_src": videoEndpoints.TokenBootstrapSource,
 	}
 	mqttHost, mqttPort := mqttEndpoint(videoState, loadValues)
 	if override := strings.TrimSpace(os.Getenv("VIDEO_CLOUD_MQTT_ADDR")); override != "" {
@@ -454,12 +487,28 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	if len(selectedAssignments) == 0 && totalEligibleAssignments > 0 {
 		blockers = append(blockers, fmt.Sprintf("shard %d/%d has no selected MQTT devices", opts.ShardIndex, opts.ShardCount))
 	}
+	credentialBundle, err := loadHome100KCredentialBundle(envRoot)
+	if err != nil {
+		blockers = append(blockers, "invalid home-100k credential bundle: "+redactedError(err))
+	}
 	certRecords := []certRecord{}
 	for _, item := range selectedAssignments {
 		record, ok := manifestByID[item.DeviceID]
 		if !ok {
 			blockers = append(blockers, fmt.Sprintf("device %s missing from manifest", item.DeviceID))
 			continue
+		}
+		if credentialBundle != nil {
+			if bundled, ok := credentialBundle.Devices[item.DeviceID]; ok {
+				certRecords = append(certRecords, certRecord{
+					DeviceID:   item.DeviceID,
+					DeviceType: item.DeviceType,
+					CertPEM:    bundled.CertPEM,
+					KeyPEM:     bundled.KeyPEM,
+					ChainPEM:   bundled.ChainPEM,
+				})
+				continue
+			}
 		}
 		certRel := firstNonEmpty(record.CertificatePath, filepath.Join("devices", item.DeviceType, item.DeviceID, "device.cert.pem"))
 		keyRel := firstNonEmpty(record.KeyPath, filepath.Join("devices", item.DeviceType, item.DeviceID, "device.key.pem"))
@@ -496,6 +545,9 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 			"state_interval":              opts.StateInterval,
 			"command_rate_per_device_day": opts.CommandRatePerDevicePerDay,
 			"load_model":                  opts.LoadModel,
+			"stage_names":                 opts.StageNames,
+			"stage_connected_devices":     opts.StageConnectedDevices,
+			"stage_durations_seconds":     opts.StageDurationsSeconds,
 			"concurrency":                 opts.Concurrency,
 			"max_connected_devices":       opts.MaxConnectedDevicesPerShard,
 		},
@@ -514,7 +566,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	appMaterial := appBootstrapMaterial{Status: appBootstrap}
 	if len(selectedAssignments) > 0 {
 		first := selectedAssignments[0]
-		appMaterial = prepareAppCertificateBootstrap(endpoints["account_manager_base_url"].(string), endpoints["video_cloud_base_url"].(string), users.TenantSlug, usersByEmail[first.AssignedEmail], first.DeviceID)
+		appMaterial = prepareAppCertificateBootstrap(endpoints["account_manager_base_url"].(string), endpoints["video_cloud_token_base_url"].(string), users.TenantSlug, usersByEmail[first.AssignedEmail], first.DeviceID)
 		appBootstrap = appMaterial.Status
 		if appBootstrap.Status == "FAIL" {
 			base["status"] = "FAIL"
@@ -553,7 +605,15 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	} else {
 		mqttProbeResult = "PASS"
 		if opts.LoadModel == "home-100k-sustained" {
-			sustained := runSustainedHome100KLoad(selectedAssignments, certRecords, brandname, opts.RunID, endpoints["video_cloud_base_url"].(string), mqttHost, mqttPort, appMaterial.Certificate, duration, seed, opts)
+			var sustained sustainedLoadResult
+			var staged []sustainedStageResult
+			if stages, err := parseSustainedStages(opts); err != nil {
+				sustained = sustainedLoadResult{Status: "FAIL", Notes: []string{err.Error()}}
+			} else if len(stages) > 0 {
+				sustained, staged = runStagedSustainedHome100KLoad(selectedAssignments, certRecords, brandname, opts.RunID, endpoints["video_cloud_token_base_url"].(string), mqttHost, mqttPort, appMaterial.Certificate, seed, opts, stages)
+			} else {
+				sustained = runSustainedHome100KLoad(selectedAssignments, certRecords, brandname, opts.RunID, endpoints["video_cloud_token_base_url"].(string), mqttHost, mqttPort, appMaterial.Certificate, duration, seed, opts)
+			}
 			attachAppBootstrapTotals(&sustained.Totals, appBootstrap)
 			for _, item := range selectedAssignments {
 				row := capCounts[item.DeviceType]
@@ -570,8 +630,11 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 				base["status"] = "FAIL"
 				base["overall"] = "fail"
 			}
+			if len(staged) > 0 {
+				base["stage_results"] = sustainedStageResultsJSON(staged, appBootstrap)
+			}
 		} else {
-			outcomes := runSelectedDeviceProbes(selectedAssignments, certRecords, brandname, opts.RunID, endpoints["video_cloud_base_url"].(string), mqttHost, mqttPort, appMaterial.Certificate, opts.Concurrency)
+			outcomes := runSelectedDeviceProbes(selectedAssignments, certRecords, brandname, opts.RunID, endpoints["video_cloud_token_base_url"].(string), mqttHost, mqttPort, appMaterial.Certificate, opts.Concurrency)
 			for _, item := range selectedAssignments {
 				row := capCounts[item.DeviceType]
 				row["devices"]++
@@ -656,7 +719,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 }
 
 func runDeviceActorSeparatedEnvelope(record certRecord, brandname, runID, apiBaseURL, host string, port int, appCert tls.Certificate) deviceResult {
-	cert, err := loadLeafFirstX509KeyPair(record.CertPath, record.ChainPath, record.KeyPath)
+	cert, err := loadLeafFirstX509KeyPairForRecord(record)
 	if err != nil {
 		return failedActorResult(record.DeviceID, record.DeviceType, redactedError(err))
 	}
@@ -719,6 +782,82 @@ type sustainedEvent struct {
 	Index  int
 }
 
+type sustainedStage struct {
+	Name            string
+	ConnectedTarget int
+	DurationSeconds int
+}
+
+type sustainedStageResult struct {
+	Name              string
+	ConnectedTarget   int
+	ActiveConnections int
+	Status            string
+	Totals            mqttIOTotals
+	CommandsAttempted int
+	CommandsPassed    int
+	Notes             []string
+}
+
+func parseSustainedStages(opts loadOptions) ([]sustainedStage, error) {
+	if strings.TrimSpace(opts.StageNames) == "" && strings.TrimSpace(opts.StageConnectedDevices) == "" && strings.TrimSpace(opts.StageDurationsSeconds) == "" {
+		return nil, nil
+	}
+	names := splitCSV(opts.StageNames)
+	targets, err := parseCSVInts(opts.StageConnectedDevices)
+	if err != nil {
+		return nil, fmt.Errorf("--stage-connected-devices: %w", err)
+	}
+	durations, err := parseCSVInts(opts.StageDurationsSeconds)
+	if err != nil {
+		return nil, fmt.Errorf("--stage-durations-seconds: %w", err)
+	}
+	if len(names) == 0 || len(targets) == 0 || len(durations) == 0 || len(names) != len(targets) || len(names) != len(durations) {
+		return nil, errors.New("--stage-names, --stage-connected-devices, and --stage-durations-seconds must have the same non-zero length")
+	}
+	stages := make([]sustainedStage, 0, len(names))
+	lastTarget := 0
+	for idx := range names {
+		if targets[idx] <= 0 {
+			return nil, fmt.Errorf("stage %s connected target must be positive", names[idx])
+		}
+		if targets[idx] < lastTarget {
+			return nil, fmt.Errorf("stage %s connected target must not decrease", names[idx])
+		}
+		if durations[idx] <= 0 {
+			return nil, fmt.Errorf("stage %s duration must be positive", names[idx])
+		}
+		stages = append(stages, sustainedStage{Name: names[idx], ConnectedTarget: targets[idx], DurationSeconds: durations[idx]})
+		lastTarget = targets[idx]
+	}
+	return stages, nil
+}
+
+func splitCSV(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := []string{}
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func parseCSVInts(raw string) ([]int, error) {
+	parts := splitCSV(raw)
+	out := make([]int, 0, len(parts))
+	for _, part := range parts {
+		value, err := strconv.Atoi(part)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, value)
+	}
+	return out, nil
+}
+
 func runSustainedHome100KLoad(assignments []assignment, certs []certRecord, brandname, runID, apiBaseURL, host string, port int, appCert tls.Certificate, durationSeconds int, seed int, opts loadOptions) sustainedLoadResult {
 	result := sustainedLoadResult{Status: "PASS"}
 	window := time.Duration(durationSeconds) * time.Second
@@ -731,7 +870,9 @@ func runSustainedHome100KLoad(assignments []assignment, certs []certRecord, bran
 	for _, cert := range certs {
 		certByID[cert.DeviceID] = cert
 	}
-	sessions := connectSustainedDevices(assignments, certByID, brandname, runID, apiBaseURL, host, port, opts.Concurrency, &result.Totals)
+	start := time.Now()
+	deadline := start.Add(window)
+	sessions := connectSustainedDevicesUntil(assignments, certByID, brandname, runID, apiBaseURL, host, port, opts.Concurrency, deadline, &result.Totals)
 	defer func() {
 		for _, session := range sessions {
 			_ = session.Conn.Close()
@@ -744,13 +885,22 @@ func runSustainedHome100KLoad(assignments []assignment, certs []certRecord, bran
 	}
 
 	events := sustainedEvents(sessions, opts, seed, window)
-	start := time.Now()
 	for _, event := range events {
+		if !time.Now().Before(deadline) {
+			result.Status = "FAIL"
+			result.Notes = append(result.Notes, "sustained load deadline reached before all scheduled events completed")
+			break
+		}
 		if event.Offset > 0 {
 			waitUntil := start.Add(event.Offset)
 			if delay := time.Until(waitUntil); delay > 0 {
-				time.Sleep(delay)
+				sleepUntilDeadline(delay, deadline)
 			}
+		}
+		if !time.Now().Before(deadline) {
+			result.Status = "FAIL"
+			result.Notes = append(result.Notes, "sustained load deadline reached before all scheduled events completed")
+			break
 		}
 		session := sessions[event.Index%len(sessions)]
 		switch event.Kind {
@@ -759,6 +909,11 @@ func runSustainedHome100KLoad(assignments []assignment, certs []certRecord, bran
 				result.Status = "FAIL"
 			}
 		case "command":
+			if time.Until(deadline) < 25*time.Second {
+				result.Status = "FAIL"
+				result.Notes = append(result.Notes, "skipped desired write because remaining stage time was below command budget")
+				continue
+			}
 			result.CommandsAttempted++
 			if runSustainedShadowCommand(session, brandname, runID, apiBaseURL, host, port, appCert, &result.Totals) == nil {
 				result.CommandsPassed++
@@ -774,7 +929,139 @@ func runSustainedHome100KLoad(assignments []assignment, certs []certRecord, bran
 	return result
 }
 
+func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord, brandname, runID, apiBaseURL, host string, port int, appCert tls.Certificate, seed int, opts loadOptions, stages []sustainedStage) (sustainedLoadResult, []sustainedStageResult) {
+	overall := sustainedLoadResult{Status: "PASS"}
+	certByID := map[string]certRecord{}
+	for _, cert := range certs {
+		certByID[cert.DeviceID] = cert
+	}
+	sessions := []sustainedDeviceSession{}
+	defer func() {
+		for _, session := range sessions {
+			_ = session.Conn.Close()
+		}
+	}()
+	results := make([]sustainedStageResult, 0, len(stages))
+	for idx, stage := range stages {
+		stageResult := sustainedStageResult{Name: stage.Name, ConnectedTarget: stage.ConnectedTarget, Status: "PASS"}
+		stageWindow := time.Duration(stage.DurationSeconds) * time.Second
+		stageStart := time.Now()
+		stageDeadline := stageStart.Add(stageWindow)
+		if stage.ConnectedTarget > len(assignments) {
+			stageResult.Status = "FAIL"
+			stageResult.Notes = append(stageResult.Notes, fmt.Sprintf("stage target %d exceeds selected assignments %d", stage.ConnectedTarget, len(assignments)))
+			overall.Status = "FAIL"
+			results = append(results, stageResult)
+			break
+		}
+		if stage.ConnectedTarget > len(sessions) {
+			newAssignments := assignments[len(sessions):stage.ConnectedTarget]
+			connectDeadline := stagedConnectDeadline(stageStart, stageDeadline)
+			newSessions := connectSustainedDevicesUntil(newAssignments, certByID, brandname, runID, apiBaseURL, host, port, opts.Concurrency, connectDeadline, &stageResult.Totals)
+			sessions = append(sessions, newSessions...)
+			if len(sessions) < stage.ConnectedTarget {
+				stageResult.Status = "FAIL"
+				stageResult.Notes = append(stageResult.Notes, fmt.Sprintf("stage %s did not reach connected target before action window: active=%d target=%d", stage.Name, len(sessions), stage.ConnectedTarget))
+			}
+		}
+		stageResult.ActiveConnections = len(sessions)
+		stageResult.Totals.ActiveConnections = int64(len(sessions))
+		stageResult.Totals.ActiveSubscriptions = int64(len(sessions))
+		if len(sessions) == 0 {
+			stageResult.Status = "FAIL"
+			stageResult.Notes = append(stageResult.Notes, "no sustained device MQTT sessions connected")
+			overall.Status = "FAIL"
+			results = append(results, stageResult)
+			break
+		}
+		actionStart := time.Now()
+		actionWindow := time.Until(stageDeadline)
+		if actionWindow <= 0 {
+			stageResult.Status = "FAIL"
+			stageResult.Notes = append(stageResult.Notes, fmt.Sprintf("stage %s deadline reached before action window", stage.Name))
+			overall.Status = "FAIL"
+			results = append(results, stageResult)
+			continue
+		}
+		stageOpts := opts
+		stageOpts.MaxConnectedDevicesPerShard = stage.ConnectedTarget
+		events := sustainedEvents(sessions, stageOpts, seed+idx, actionWindow)
+		for _, event := range events {
+			if !time.Now().Before(stageDeadline) {
+				stageResult.Status = "FAIL"
+				stageResult.Notes = append(stageResult.Notes, fmt.Sprintf("stage %s deadline reached before all scheduled events completed", stage.Name))
+				break
+			}
+			if event.Offset > 0 {
+				waitUntil := actionStart.Add(event.Offset)
+				if delay := time.Until(waitUntil); delay > 0 {
+					sleepUntilDeadline(delay, stageDeadline)
+				}
+			}
+			if !time.Now().Before(stageDeadline) {
+				stageResult.Status = "FAIL"
+				stageResult.Notes = append(stageResult.Notes, fmt.Sprintf("stage %s deadline reached before all scheduled events completed", stage.Name))
+				break
+			}
+			session := sessions[event.Index%len(sessions)]
+			switch event.Kind {
+			case "telemetry":
+				if publishSustainedTelemetry(session, brandname, runID, &stageResult.Totals) != nil {
+					stageResult.Status = "FAIL"
+				}
+			case "command":
+				if time.Until(stageDeadline) < 15*time.Second {
+					stageResult.Status = "FAIL"
+					stageResult.Notes = append(stageResult.Notes, fmt.Sprintf("stage %s skipped desired write because remaining time was below command budget", stage.Name))
+					continue
+				}
+				stageResult.CommandsAttempted++
+				if runSustainedShadowCommand(session, brandname, runID, apiBaseURL, host, port, appCert, &stageResult.Totals) == nil {
+					stageResult.CommandsPassed++
+				} else {
+					stageResult.Status = "FAIL"
+				}
+			}
+		}
+		if stageResult.CommandsAttempted == 0 {
+			stageResult.Status = "FAIL"
+			stageResult.Notes = append(stageResult.Notes, "sustained user command schedule produced zero desired writes")
+		}
+		if stageResult.Status != "PASS" {
+			overall.Status = "FAIL"
+		}
+		overall.Totals = addMQTTIOTotals(overall.Totals, stageResult.Totals)
+		overall.CommandsAttempted += stageResult.CommandsAttempted
+		overall.CommandsPassed += stageResult.CommandsPassed
+		overall.Notes = append(overall.Notes, prefixedNotes(stage.Name, stageResult.Notes)...)
+		results = append(results, stageResult)
+	}
+	return overall, results
+}
+
+func stagedConnectDeadline(stageStart time.Time, stageDeadline time.Time) time.Time {
+	if stageStart.IsZero() || stageDeadline.IsZero() || !stageDeadline.After(stageStart) {
+		return stageDeadline
+	}
+	window := stageDeadline.Sub(stageStart)
+	actionReserve := window / 2
+	if actionReserve < 30*time.Second {
+		actionReserve = 30 * time.Second
+	}
+	if actionReserve > 90*time.Second {
+		actionReserve = 90 * time.Second
+	}
+	if actionReserve >= window {
+		return stageDeadline
+	}
+	return stageDeadline.Add(-actionReserve)
+}
+
 func connectSustainedDevices(assignments []assignment, certByID map[string]certRecord, brandname, runID, apiBaseURL, host string, port int, concurrency int, totals *mqttIOTotals) []sustainedDeviceSession {
+	return connectSustainedDevicesUntil(assignments, certByID, brandname, runID, apiBaseURL, host, port, concurrency, time.Time{}, totals)
+}
+
+func connectSustainedDevicesUntil(assignments []assignment, certByID map[string]certRecord, brandname, runID, apiBaseURL, host string, port int, concurrency int, deadline time.Time, totals *mqttIOTotals) []sustainedDeviceSession {
 	if concurrency <= 0 {
 		concurrency = 25
 	}
@@ -791,6 +1078,9 @@ func connectSustainedDevices(assignments []assignment, certByID map[string]certR
 		go func() {
 			defer wg.Done()
 			for item := range jobs {
+				if deadlineReached(deadline) {
+					return
+				}
 				record := certByID[item.Assignment.DeviceID]
 				mu.Lock()
 				totals.ConnectAttempts++
@@ -820,12 +1110,36 @@ func connectSustainedDevices(assignments []assignment, certByID map[string]certR
 		}()
 	}
 	go func() {
+		defer func() {
+			close(jobs)
+			wg.Wait()
+			close(results)
+		}()
 		for idx, assignment := range assignments {
-			jobs <- job{Index: idx, Assignment: assignment}
+			if deadlineReached(deadline) {
+				break
+			}
+			if deadline.IsZero() {
+				jobs <- job{Index: idx, Assignment: assignment}
+				continue
+			}
+			wait := time.Until(deadline)
+			if wait <= 0 {
+				break
+			}
+			timer := time.NewTimer(wait)
+			select {
+			case jobs <- job{Index: idx, Assignment: assignment}:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+			case <-timer.C:
+				return
+			}
 		}
-		close(jobs)
-		wg.Wait()
-		close(results)
 	}()
 	sessions := []sustainedDeviceSession{}
 	for session := range results {
@@ -837,8 +1151,26 @@ func connectSustainedDevices(assignments []assignment, certByID map[string]certR
 	return sessions
 }
 
+func deadlineReached(deadline time.Time) bool {
+	return !deadline.IsZero() && !time.Now().Before(deadline)
+}
+
+func sleepUntilDeadline(delay time.Duration, deadline time.Time) {
+	if delay <= 0 {
+		return
+	}
+	if !deadline.IsZero() {
+		if remaining := time.Until(deadline); remaining <= 0 {
+			return
+		} else if delay > remaining {
+			delay = remaining
+		}
+	}
+	time.Sleep(delay)
+}
+
 func connectSustainedDevice(record certRecord, brandname, runID, apiBaseURL, host string, port int) (io.ReadWriteCloser, error) {
-	cert, err := loadLeafFirstX509KeyPair(record.CertPath, record.ChainPath, record.KeyPath)
+	cert, err := loadLeafFirstX509KeyPairForRecord(record)
 	if err != nil {
 		return nil, err
 	}
@@ -889,6 +1221,7 @@ func publishSustainedTelemetry(session sustainedDeviceSession, brandname string,
 	}
 	if err := mqttPublish(session.Conn, topic, payload); err != nil {
 		totals.PublishFailures++
+		recordFailure(totals, "device_telemetry_publish_failed", err)
 		return err
 	}
 	totals.PublishSuccesses++
@@ -900,6 +1233,7 @@ func runSustainedShadowCommand(session sustainedDeviceSession, brandname, runID,
 	appToken, err := requestAppToken(apiBaseURL, appCert, session.Record.DeviceID)
 	if err != nil {
 		totals.HTTPFailures++
+		recordFailure(totals, "app_token_request_failed", err)
 		return err
 	}
 	appConn, err := connectMQTTActor(mqttActorProbe{
@@ -916,6 +1250,7 @@ func runSustainedShadowCommand(session sustainedDeviceSession, brandname, runID,
 	}, "app-controller", appMQTTUsername(session.Record.DeviceID), appToken.AccessToken)
 	if err != nil {
 		totals.HTTPFailures++
+		recordFailure(totals, "app_mqtt_connect_failed", err)
 		return err
 	}
 	defer appConn.Close()
@@ -926,6 +1261,7 @@ func runSustainedShadowCommand(session sustainedDeviceSession, brandname, runID,
 	deltaTopic := shadowUpdateTopic + "/delta"
 	if err := mqttSubscribe(appConn, 1, documentsTopic); err != nil {
 		totals.HTTPFailures++
+		recordFailure(totals, "app_shadow_documents_subscribe_failed", err)
 		return err
 	}
 	commandID := fmt.Sprintf("cmd-home100k-%s-%s-%d", probeCorrelationID(runID, time.Now()), session.Record.DeviceID, time.Now().UnixNano())
@@ -937,10 +1273,12 @@ func runSustainedShadowCommand(session sustainedDeviceSession, brandname, runID,
 	})
 	if err != nil {
 		totals.HTTPFailures++
+		recordFailure(totals, "desired_payload_encode_failed", err)
 		return err
 	}
 	if err := mqttPublish(appConn, shadowUpdateTopic, desiredPayload); err != nil {
 		totals.HTTPFailures++
+		recordFailure(totals, "app_desired_publish_failed", err)
 		return err
 	}
 	totals.AppDesiredWrites++
@@ -950,6 +1288,7 @@ func runSustainedShadowCommand(session sustainedDeviceSession, brandname, runID,
 		return doc["clientToken"] == commandID
 	}); err != nil {
 		totals.HTTPFailures++
+		recordFailure(totals, "device_delta_wait_failed", err)
 		return err
 	}
 	totals.MessagesReceived++
@@ -960,10 +1299,12 @@ func runSustainedShadowCommand(session sustainedDeviceSession, brandname, runID,
 	})
 	if err != nil {
 		totals.HTTPFailures++
+		recordFailure(totals, "reported_payload_encode_failed", err)
 		return err
 	}
 	if err := mqttPublish(session.Conn, shadowUpdateTopic, reportedPayload); err != nil {
 		totals.PublishFailures++
+		recordFailure(totals, "device_reported_publish_failed", err)
 		return err
 	}
 	totals.PublishSuccesses++
@@ -973,6 +1314,7 @@ func runSustainedShadowCommand(session sustainedDeviceSession, brandname, runID,
 		return doc["clientToken"] == "reported-"+commandID && shadowDocumentsDeltaCleared(doc)
 	}); err != nil {
 		totals.HTTPFailures++
+		recordFailure(totals, "app_delta_clear_wait_failed", err)
 		return err
 	}
 	totals.AppReceivedAcks++
@@ -1015,6 +1357,101 @@ func loadLeafFirstX509KeyPair(certPath, chainPath, keyPath string) (tls.Certific
 		}
 	}
 	return tls.LoadX509KeyPair(chainPath, keyPath)
+}
+
+func loadLeafFirstX509KeyPairForRecord(record certRecord) (tls.Certificate, error) {
+	if strings.TrimSpace(record.CertPEM) != "" || strings.TrimSpace(record.ChainPEM) != "" || strings.TrimSpace(record.KeyPEM) != "" {
+		certPEM := strings.TrimSpace(record.CertPEM)
+		if certPEM == "" {
+			certPEM = strings.TrimSpace(record.ChainPEM)
+		}
+		if certPEM != "" && strings.TrimSpace(record.KeyPEM) != "" {
+			cert, err := tls.X509KeyPair([]byte(certPEM), []byte(strings.TrimSpace(record.KeyPEM)))
+			if err == nil {
+				return cert, nil
+			}
+			if strings.TrimSpace(record.ChainPEM) == "" || strings.TrimSpace(record.ChainPEM) == certPEM {
+				return tls.Certificate{}, err
+			}
+		}
+		return tls.X509KeyPair([]byte(strings.TrimSpace(record.ChainPEM)), []byte(strings.TrimSpace(record.KeyPEM)))
+	}
+	return loadLeafFirstX509KeyPair(record.CertPath, record.ChainPath, record.KeyPath)
+}
+
+func loadHome100KCredentialBundle(envRoot string) (*home100KCredentialBundle, error) {
+	matches, err := filepath.Glob(filepath.Join(envRoot, "loadtests", "home-100k", "credentials", "*.sqlite.gz"))
+	if err != nil {
+		return nil, err
+	}
+	if len(matches) == 0 {
+		return nil, nil
+	}
+	sort.Strings(matches)
+	source := matches[0]
+	sqlitePath, cleanup, err := gunzipToTempFile(source)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	db, err := sql.Open("sqlite", sqlitePath)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	rows, err := db.Query(`select device_id, device_type, cert_pem, key_pem, chain_pem, bundle_pem from devices`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	bundle := &home100KCredentialBundle{Devices: map[string]home100KCredentialDevice{}, Source: source}
+	for rows.Next() {
+		var device home100KCredentialDevice
+		var certPEM, keyPEM, chainPEM, bundlePEM sql.NullString
+		if err := rows.Scan(&device.DeviceID, &device.DeviceType, &certPEM, &keyPEM, &chainPEM, &bundlePEM); err != nil {
+			return nil, err
+		}
+		device.CertPEM = certPEM.String
+		device.KeyPEM = keyPEM.String
+		device.ChainPEM = chainPEM.String
+		device.BundlePEM = bundlePEM.String
+		if strings.TrimSpace(device.DeviceID) != "" {
+			bundle.Devices[device.DeviceID] = device
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return bundle, nil
+}
+
+func gunzipToTempFile(path string) (string, func(), error) {
+	in, err := os.Open(path)
+	if err != nil {
+		return "", func() {}, err
+	}
+	defer in.Close()
+	gz, err := gzip.NewReader(in)
+	if err != nil {
+		return "", func() {}, err
+	}
+	defer gz.Close()
+	tmp, err := os.CreateTemp("", "home-100k-credentials-*.sqlite")
+	if err != nil {
+		return "", func() {}, err
+	}
+	tmpPath := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpPath) }
+	if _, err := io.Copy(tmp, gz); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return "", func() {}, err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	return tmpPath, cleanup, nil
 }
 
 func baseline10KDefaults(opts loadOptions) loadOptions {
@@ -1564,6 +2001,8 @@ func attachMQTTIOTotals(result map[string]any, totals mqttIOTotals) {
 	result["connect_successes"] = totals.ConnectSuccesses
 	result["connect_failures"] = totals.ConnectFailures
 	result["subscribe_successes"] = totals.SubscribeSuccesses
+	result["active_connections"] = totals.ActiveConnections
+	result["active_subscriptions"] = totals.ActiveSubscriptions
 	result["publish_successes"] = totals.PublishSuccesses
 	result["publish_failures"] = totals.PublishFailures
 	result["messages_received"] = totals.MessagesReceived
@@ -1576,18 +2015,26 @@ func attachMQTTIOTotals(result map[string]any, totals mqttIOTotals) {
 	result["http_failures"] = totals.HTTPFailures
 	result["total_http_bytes_sent"] = totals.TotalHTTPBytesSent
 	result["total_http_bytes_received"] = totals.TotalHTTPBytesReceived
+	if len(totals.FailureReasons) > 0 {
+		result["failure_reasons"] = totals.FailureReasons
+	}
+	if len(totals.FailureDetails) > 0 {
+		result["failure_details"] = totals.FailureDetails
+	}
 	result["device_mqtt_totals"] = map[string]any{
-		"connect_attempts":   totals.ConnectAttempts,
-		"connect_success":    totals.ConnectSuccesses,
-		"connect_fail":       totals.ConnectFailures,
-		"subscribes":         totals.SubscribeSuccesses,
-		"publishes":          totals.PublishSuccesses + totals.PublishFailures,
-		"received_messages":  totals.MessagesReceived,
-		"delta_received":     totals.DeltaReceived,
-		"reported_publishes": totals.ReportedEvents,
-		"rejected_publishes": totals.PublishFailures,
-		"bytes_sent":         totals.TotalBytesSent,
-		"bytes_received":     totals.TotalBytesReceived,
+		"connect_attempts":     totals.ConnectAttempts,
+		"connect_success":      totals.ConnectSuccesses,
+		"connect_fail":         totals.ConnectFailures,
+		"subscribes":           totals.SubscribeSuccesses,
+		"active_connections":   totals.ActiveConnections,
+		"active_subscriptions": totals.ActiveSubscriptions,
+		"publishes":            totals.PublishSuccesses + totals.PublishFailures,
+		"received_messages":    totals.MessagesReceived,
+		"delta_received":       totals.DeltaReceived,
+		"reported_publishes":   totals.ReportedEvents,
+		"rejected_publishes":   totals.PublishFailures,
+		"bytes_sent":           totals.TotalBytesSent,
+		"bytes_received":       totals.TotalBytesReceived,
 	}
 	result["app_user_totals"] = map[string]any{
 		"login_attempts":        totals.AppLoginAttempts,
@@ -1602,6 +2049,113 @@ func attachMQTTIOTotals(result map[string]any, totals mqttIOTotals) {
 	}
 }
 
+func addMQTTIOTotals(a mqttIOTotals, b mqttIOTotals) mqttIOTotals {
+	a.ConnectAttempts += b.ConnectAttempts
+	a.ConnectSuccesses += b.ConnectSuccesses
+	a.ConnectFailures += b.ConnectFailures
+	a.SubscribeSuccesses += b.SubscribeSuccesses
+	a.ActiveConnections = b.ActiveConnections
+	a.ActiveSubscriptions = b.ActiveSubscriptions
+	a.PublishSuccesses += b.PublishSuccesses
+	a.PublishFailures += b.PublishFailures
+	a.MessagesReceived += b.MessagesReceived
+	a.DeltaReceived += b.DeltaReceived
+	a.ReportedEvents += b.ReportedEvents
+	a.AppLoginAttempts += b.AppLoginAttempts
+	a.AppLoginSuccesses += b.AppLoginSuccesses
+	a.AppLoginFailures += b.AppLoginFailures
+	a.AppDesiredWrites += b.AppDesiredWrites
+	a.AppReceivedAcks += b.AppReceivedAcks
+	a.TotalBytesSent += b.TotalBytesSent
+	a.TotalBytesReceived += b.TotalBytesReceived
+	a.AuthViolations += b.AuthViolations
+	a.HTTPRequests += b.HTTPRequests
+	a.HTTPSuccesses += b.HTTPSuccesses
+	a.HTTPFailures += b.HTTPFailures
+	a.TotalHTTPBytesSent += b.TotalHTTPBytesSent
+	a.TotalHTTPBytesReceived += b.TotalHTTPBytesReceived
+	if len(b.FailureReasons) > 0 {
+		if a.FailureReasons == nil {
+			a.FailureReasons = map[string]int64{}
+		}
+		for reason, count := range b.FailureReasons {
+			a.FailureReasons[reason] += count
+		}
+	}
+	if len(b.FailureDetails) > 0 {
+		if a.FailureDetails == nil {
+			a.FailureDetails = map[string]map[string]int64{}
+		}
+		for reason, details := range b.FailureDetails {
+			if a.FailureDetails[reason] == nil {
+				a.FailureDetails[reason] = map[string]int64{}
+			}
+			for detail, count := range details {
+				a.FailureDetails[reason][detail] += count
+			}
+		}
+	}
+	return a
+}
+
+func prefixedNotes(prefix string, notes []string) []string {
+	out := make([]string, 0, len(notes))
+	for _, note := range notes {
+		out = append(out, prefix+": "+note)
+	}
+	return out
+}
+
+func sustainedStageResultsJSON(stages []sustainedStageResult, appBootstrap appBootstrapStatus) []map[string]any {
+	out := make([]map[string]any, 0, len(stages))
+	for idx, stage := range stages {
+		totals := stage.Totals
+		if idx == 0 {
+			attachAppBootstrapTotals(&totals, appBootstrap)
+		}
+		row := map[string]any{
+			"name":                      stage.Name,
+			"connected_devices":         stage.ConnectedTarget,
+			"active_connections":        stage.ActiveConnections,
+			"status":                    stage.Status,
+			"commands_attempted":        stage.CommandsAttempted,
+			"commands_passed":           stage.CommandsPassed,
+			"success_rate_percent":      percentInt(stage.CommandsPassed, stage.CommandsAttempted),
+			"notes":                     stage.Notes,
+			"device_mqtt_totals":        map[string]any{},
+			"app_user_totals":           map[string]any{},
+			"failure_reasons":           totals.FailureReasons,
+			"failure_details":           totals.FailureDetails,
+			"connect_attempts":          totals.ConnectAttempts,
+			"connect_successes":         totals.ConnectSuccesses,
+			"connect_failures":          totals.ConnectFailures,
+			"subscribe_successes":       totals.SubscribeSuccesses,
+			"active_subscriptions":      totals.ActiveSubscriptions,
+			"publish_successes":         totals.PublishSuccesses,
+			"publish_failures":          totals.PublishFailures,
+			"messages_received":         totals.MessagesReceived,
+			"reported_events":           totals.ReportedEvents,
+			"total_bytes_sent":          totals.TotalBytesSent,
+			"total_bytes_received":      totals.TotalBytesReceived,
+			"http_requests":             totals.HTTPRequests,
+			"http_successes":            totals.HTTPSuccesses,
+			"http_failures":             totals.HTTPFailures,
+			"total_http_bytes_sent":     totals.TotalHTTPBytesSent,
+			"total_http_bytes_received": totals.TotalHTTPBytesReceived,
+		}
+		attachMQTTIOTotals(row, totals)
+		out = append(out, row)
+	}
+	return out
+}
+
+func percentInt(numerator int, denominator int) float64 {
+	if denominator <= 0 {
+		return 0
+	}
+	return float64(numerator) / float64(denominator) * 100
+}
+
 func attachAppBootstrapTotals(totals *mqttIOTotals, appBootstrap appBootstrapStatus) {
 	if strings.EqualFold(appBootstrap.Status, "PASS") || strings.EqualFold(appBootstrap.Status, "FAIL") {
 		totals.AppLoginAttempts = 1
@@ -1610,6 +2164,66 @@ func attachAppBootstrapTotals(totals *mqttIOTotals, appBootstrap appBootstrapSta
 		} else {
 			totals.AppLoginFailures = 1
 		}
+	}
+}
+
+func recordFailureReason(totals *mqttIOTotals, reason string) {
+	if totals == nil || strings.TrimSpace(reason) == "" {
+		return
+	}
+	if totals.FailureReasons == nil {
+		totals.FailureReasons = map[string]int64{}
+	}
+	totals.FailureReasons[reason]++
+}
+
+func recordFailure(totals *mqttIOTotals, reason string, err error) {
+	recordFailureReason(totals, reason)
+	if totals == nil || err == nil {
+		return
+	}
+	detail := normalizeFailureDetail(redactedError(err))
+	if detail == "" {
+		return
+	}
+	if totals.FailureDetails == nil {
+		totals.FailureDetails = map[string]map[string]int64{}
+	}
+	if totals.FailureDetails[reason] == nil {
+		totals.FailureDetails[reason] = map[string]int64{}
+	}
+	totals.FailureDetails[reason][detail]++
+}
+
+func normalizeFailureDetail(detail string) string {
+	detail = strings.TrimSpace(detail)
+	lower := strings.ToLower(detail)
+	switch {
+	case detail == "":
+		return ""
+	case strings.Contains(lower, "write: broken pipe"):
+		return "mqtt write broken pipe"
+	case strings.Contains(lower, "read: connection reset by peer") || strings.Contains(lower, "write: connection reset by peer"):
+		return "mqtt connection reset by peer"
+	case strings.Contains(lower, "use of closed network connection"):
+		return "mqtt closed network connection"
+	case strings.Contains(lower, "i/o timeout"):
+		if strings.Contains(lower, "request_token") {
+			return "request_token i/o timeout"
+		}
+		return "network i/o timeout"
+	case strings.Contains(lower, "context deadline exceeded"):
+		if strings.Contains(lower, "request_token") {
+			return "request_token context deadline exceeded"
+		}
+		return "context deadline exceeded"
+	case strings.Contains(lower, "unexpected eof") || lower == "eof":
+		if strings.Contains(lower, "request_token") {
+			return "request_token EOF"
+		}
+		return "network EOF"
+	default:
+		return detail
 	}
 }
 
@@ -2566,11 +3180,7 @@ func readable(path string) bool {
 
 func latest(pattern string) string {
 	matches, _ := filepath.Glob(pattern)
-	sort.Slice(matches, func(i, j int) bool {
-		ai, _ := os.Stat(matches[i])
-		aj, _ := os.Stat(matches[j])
-		return ai.ModTime().After(aj.ModTime())
-	})
+	sortArtifactPathsNewestFirst(matches)
 	if len(matches) == 0 {
 		return ""
 	}
@@ -2611,6 +3221,56 @@ func videoCloudMTLSBaseURL(envRoot string, stackValues map[string]string, fallba
 	return "https://" + strings.TrimRight(strings.TrimSpace(host), "/")
 }
 
+type videoCloudEndpointSet struct {
+	PublicBaseURL         string
+	MTLSBaseURL           string
+	TokenBootstrapBaseURL string
+	TokenBootstrapSource  string
+}
+
+func resolveVideoCloudEndpoints(envRoot string, stackValues map[string]string) videoCloudEndpointSet {
+	defaultPublicBaseURL := trimBaseURL(firstNonEmpty(
+		stackValues["VIDEO_CLOUD_PUBLIC_BASE_URL"],
+		stackValues["VIDEO_CLOUD_BASE_URL"],
+		"https://"+firstNonEmpty(stackValues["VIDEO_CLOUD_DOMAIN"], "unknown"),
+	))
+	publicBaseURL := trimBaseURL(firstNonEmpty(
+		os.Getenv("VIDEO_CLOUD_PUBLIC_BASE_URL"),
+		os.Getenv("VIDEO_CLOUD_BASE_URL"),
+		defaultPublicBaseURL,
+	))
+	defaultMTLSBaseURL := videoCloudMTLSBaseURL(envRoot, stackValues, defaultPublicBaseURL)
+	mtlsBaseURL := trimBaseURL(firstNonEmpty(
+		os.Getenv("VIDEO_CLOUD_MTLS_BASE_URL"),
+		os.Getenv("VIDEO_CLOUD_DEVICE_CLIENT_BASE_URL"),
+		stackValues["VIDEO_CLOUD_MTLS_BASE_URL"],
+		stackValues["VIDEO_CLOUD_DEVICE_CLIENT_BASE_URL"],
+		defaultMTLSBaseURL,
+	))
+	tokenBaseURL := trimBaseURL(firstNonEmpty(
+		os.Getenv("VIDEO_CLOUD_TOKEN_BASE_URL"),
+		stackValues["VIDEO_CLOUD_TOKEN_BASE_URL"],
+	))
+	tokenSource := "VIDEO_CLOUD_MTLS_BASE_URL"
+	if strings.TrimSpace(os.Getenv("VIDEO_CLOUD_TOKEN_BASE_URL")) != "" {
+		tokenSource = "VIDEO_CLOUD_TOKEN_BASE_URL"
+	} else if strings.TrimSpace(stackValues["VIDEO_CLOUD_TOKEN_BASE_URL"]) != "" {
+		tokenSource = "env_root:VIDEO_CLOUD_TOKEN_BASE_URL"
+	} else {
+		tokenBaseURL = mtlsBaseURL
+	}
+	return videoCloudEndpointSet{
+		PublicBaseURL:         publicBaseURL,
+		MTLSBaseURL:           mtlsBaseURL,
+		TokenBootstrapBaseURL: tokenBaseURL,
+		TokenBootstrapSource:  tokenSource,
+	}
+}
+
+func trimBaseURL(raw string) string {
+	return strings.TrimRight(strings.TrimSpace(raw), "/")
+}
+
 func topologyDeployValue(path, key string) string {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -2640,11 +3300,7 @@ func topologyDeployValue(path, key string) string {
 
 func latestHomeMQTTBindArtifact(pattern, brandLower string) string {
 	matches, _ := filepath.Glob(pattern)
-	sort.Slice(matches, func(i, j int) bool {
-		ai, _ := os.Stat(matches[i])
-		aj, _ := os.Stat(matches[j])
-		return ai.ModTime().After(aj.ModTime())
-	})
+	sortArtifactPathsNewestFirst(matches)
 	for _, path := range matches {
 		bind := bindArtifact{}
 		if err := readJSON(path, &bind); err != nil {
@@ -2667,6 +3323,52 @@ func latestHomeMQTTBindArtifact(pattern, brandLower string) string {
 		return ""
 	}
 	return matches[0]
+}
+
+func sortArtifactPathsNewestFirst(paths []string) {
+	sort.Slice(paths, func(i, j int) bool {
+		ti := artifactFilenameTimestamp(paths[i])
+		tj := artifactFilenameTimestamp(paths[j])
+		if ti != "" || tj != "" {
+			if ti != tj {
+				return ti > tj
+			}
+			return filepath.Base(paths[i]) > filepath.Base(paths[j])
+		}
+		ai, _ := os.Stat(paths[i])
+		aj, _ := os.Stat(paths[j])
+		if ai == nil || aj == nil {
+			return paths[i] < paths[j]
+		}
+		if !ai.ModTime().Equal(aj.ModTime()) {
+			return ai.ModTime().After(aj.ModTime())
+		}
+		return filepath.Base(paths[i]) > filepath.Base(paths[j])
+	})
+}
+
+func artifactFilenameTimestamp(path string) string {
+	base := filepath.Base(path)
+	for i := 0; i+16 <= len(base); i++ {
+		candidate := base[i : i+16]
+		if candidate[8] != 'T' || candidate[15] != 'Z' {
+			continue
+		}
+		ok := true
+		for idx, ch := range candidate {
+			if idx == 8 || idx == 15 {
+				continue
+			}
+			if ch < '0' || ch > '9' {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func readJSON(path string, dest any) error {
@@ -2793,7 +3495,13 @@ func redactedErrorString(message string) string {
 		(strings.Contains(lower, "http ") ||
 			strings.Contains(lower, "status=") ||
 			strings.Contains(lower, "failed with") ||
-			strings.Contains(lower, "missing access_token")) {
+			strings.Contains(lower, "missing access_token") ||
+			strings.Contains(lower, "i/o timeout") ||
+			strings.Contains(lower, "context deadline exceeded") ||
+			strings.Contains(lower, "connection refused") ||
+			strings.Contains(lower, "connection reset by peer") ||
+			strings.Contains(lower, "unexpected eof") ||
+			strings.HasSuffix(lower, "eof")) {
 		return message
 	}
 	for _, word := range []string{"password", "token", "secret", "private", "bearer", "device.key", "-----begin"} {

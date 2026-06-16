@@ -10,9 +10,9 @@ This scenario is the default first baseline for `home-100k`.
 - Devices: 100,000.
 - Users: 5,000.
 - Devices per user: 10.
-- Load-generator VMs: 10 total `mixed` VMs.
-- Each `mixed` VM owns one `device-mqtt` task shard with 10,000 devices and
-  one `user-app` task shard with 500 users.
+- Load-generator VMs: 5 total `mixed` VMs.
+- Each `mixed` VM owns one `device-mqtt` task shard with 20,000 devices and
+  one `user-app` task shard with 1,000 users.
 - Stages: 25K, 50K, 75K, 100K connected devices.
 
 ## Device Mix

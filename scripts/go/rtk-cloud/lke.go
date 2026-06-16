@@ -560,6 +560,9 @@ func lkeApplyPublicHTTPS(paths provisionPaths, env map[string]string, opts provi
 			return err
 		}
 	}
+	if err := lkeCopyExistingDeviceMTLSAppCASecret(env); err != nil {
+		return err
+	}
 	for _, manifest := range lkePublicHTTPSBridgeServiceManifests(env, routes) {
 		if err := kubectlApply(manifest); err != nil {
 			return err
@@ -657,6 +660,8 @@ func lkeInstallIngressNginx(env map[string]string) error {
 		"--set", "controller.service.ports.https=443",
 		"--set", "controller.service.targetPorts.https=https",
 		"--set", "controller.service.enableHttp=false",
+		"--set", "controller.allowSnippetAnnotations=true",
+		"--set", "controller.config.annotations-risk-level=Critical",
 		"--set", "controller.ingressClassResource.default=false",
 	); err != nil {
 		return err
@@ -899,27 +904,124 @@ data:
 `, lkePublicHTTPSTLSSecretName(env), lkeIngressNamespace(env), lkePublicHTTPSTLSSecretName(env), env["CLOUD_STACK_NAME"], base64.StdEncoding.EncodeToString([]byte(certPEM)), base64.StdEncoding.EncodeToString([]byte(keyPEM)))
 }
 
+func lkeDeviceMTLSAppCASecretName(env map[string]string) string {
+	return lkeName(firstNonEmpty(env["CLOUD_STACK_NAME"], "video-cloud-staging")) + "-app-client-ca"
+}
+
+func lkeDeviceMTLSAppCASecretManifest(env map[string]string, appCACertPEM string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: %s
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+type: Opaque
+stringData:
+  ca.crt: %q
+`, lkeDeviceMTLSAppCASecretName(env), lkeIngressNamespace(env), lkeDeviceMTLSAppCASecretName(env), env["CLOUD_STACK_NAME"], appCACertPEM)
+}
+
+func lkeCopyExistingDeviceMTLSAppCASecret(env map[string]string) error {
+	out, err := exec.Command(lkeKubectl(), lkeKubectlArgs("-n", lkeNamespaceName(env, "video-cloud"), "get", "secret", "certissuer-runtime", "-o", "json")...).CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) == "" {
+		return nil
+	}
+	var secret struct {
+		Data map[string]string `json:"data"`
+	}
+	if err := json.Unmarshal(out, &secret); err != nil {
+		return fmt.Errorf("decode existing certissuer-runtime secret for device mTLS ingress: %w", err)
+	}
+	rootCA, err := decodeSecretPEM(secret.Data, "root-ca.crt")
+	if err != nil {
+		return err
+	}
+	deviceCA, err := decodeSecretPEM(secret.Data, "device-ca.crt")
+	if err != nil {
+		return err
+	}
+	appCA, err := decodeSecretPEM(secret.Data, "app-ca.crt")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(rootCA) == "" || strings.TrimSpace(deviceCA) == "" || strings.TrimSpace(appCA) == "" {
+		return nil
+	}
+	return kubectlApply(lkeDeviceMTLSAppCASecretManifest(env, lkeClientCABundle(rootCA, deviceCA, appCA)))
+}
+
+func decodeSecretPEM(data map[string]string, key string) (string, error) {
+	raw := strings.TrimSpace(data[key])
+	if raw == "" {
+		return "", nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		return "", fmt.Errorf("decode existing %s for device mTLS ingress: %w", key, err)
+	}
+	return string(decoded), nil
+}
+
+func lkeClientCABundle(rootCA string, deviceCA string, appCA string) string {
+	parts := []string{}
+	for _, cert := range []string{rootCA, deviceCA, appCA} {
+		cert = strings.TrimSpace(cert)
+		if cert != "" {
+			parts = append(parts, cert+"\n")
+		}
+	}
+	return strings.Join(parts, "")
+}
+
 func lkePublicHTTPSIngressManifests(env map[string]string, routes []lkePublicHTTPSRoute) []string {
 	httpRoutes := []lkePublicHTTPSRoute{}
+	deviceMTLSRoutes := []lkePublicHTTPSRoute{}
 	httpsRoutes := []lkePublicHTTPSRoute{}
 	for _, route := range routes {
 		if strings.EqualFold(route.Protocol, "HTTPS") {
 			httpsRoutes = append(httpsRoutes, route)
 			continue
 		}
+		if lkeIsDeviceMTLSRoute(env, route) {
+			deviceMTLSRoutes = append(deviceMTLSRoutes, route)
+			continue
+		}
 		httpRoutes = append(httpRoutes, route)
 	}
 	manifests := []string{}
 	if len(httpRoutes) > 0 {
-		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-public", httpRoutes, ""))
+		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-public", httpRoutes, "", ""))
+	}
+	if len(deviceMTLSRoutes) > 0 {
+		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-device-mtls", deviceMTLSRoutes, "", lkeDeviceMTLSIngressAnnotations(env)))
 	}
 	if len(httpsRoutes) > 0 {
-		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-certissuer", httpsRoutes, "HTTPS"))
+		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-certissuer", httpsRoutes, "HTTPS", ""))
 	}
 	return manifests
 }
 
-func lkePublicHTTPSIngressManifest(env map[string]string, name string, routes []lkePublicHTTPSRoute, backendProtocol string) string {
+func lkeIsDeviceMTLSRoute(env map[string]string, route lkePublicHTTPSRoute) bool {
+	videoDomain := env["VIDEO_CLOUD_DOMAIN"]
+	deviceHost := firstNonEmpty(os.Getenv("LKE_DEVICE_DOMAIN"), env["VIDEO_CLOUD_DEVICE_DOMAIN"], "device."+videoDomain)
+	return route.Host != "" && route.Host == deviceHost && route.Service == "video-cloud-api"
+}
+
+func lkeDeviceMTLSIngressAnnotations(env map[string]string) string {
+	return fmt.Sprintf(`    nginx.ingress.kubernetes.io/auth-tls-secret: %q
+    nginx.ingress.kubernetes.io/auth-tls-verify-client: "on"
+    nginx.ingress.kubernetes.io/auth-tls-verify-depth: "2"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header X-Client-Verify $ssl_client_verify;
+      proxy_set_header X-Client-S-DN $ssl_client_s_dn_legacy;
+`, lkeIngressNamespace(env)+"/"+lkeDeviceMTLSAppCASecretName(env))
+}
+
+func lkePublicHTTPSIngressManifest(env map[string]string, name string, routes []lkePublicHTTPSRoute, backendProtocol string, extraAnnotations string) string {
 	var rules strings.Builder
 	for _, route := range routes {
 		if route.Host == "" {
@@ -941,6 +1043,7 @@ func lkePublicHTTPSIngressManifest(env map[string]string, name string, routes []
 	if backendProtocol != "" {
 		backendAnnotation = fmt.Sprintf("    nginx.ingress.kubernetes.io/backend-protocol: %q\n", backendProtocol)
 	}
+	annotations := backendAnnotation + extraAnnotations
 	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -962,7 +1065,7 @@ spec:
       hosts:
 %s
   rules:
-%s`, name, lkeIngressNamespace(env), name, env["CLOUD_STACK_NAME"], backendAnnotation, lkePublicHTTPSTLSHostsYAML(routes), rules.String())
+%s`, name, lkeIngressNamespace(env), name, env["CLOUD_STACK_NAME"], annotations, lkePublicHTTPSTLSHostsYAML(routes), rules.String())
 }
 
 func lkePublicHTTPSTLSHostsYAML(routes []lkePublicHTTPSRoute) string {
@@ -1009,6 +1112,15 @@ func firstNonZero(values ...int) int {
 		}
 	}
 	return 0
+}
+
+func lkeEnvBool(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func lkeDefaultDenyIngressNetworkPolicyManifest(env map[string]string, namespace string) string {
@@ -1659,6 +1771,7 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 		if err != nil {
 			return err
 		}
+		material.RootCACert = openBao.RootCACert
 		material.DeviceCACert = openBao.DeviceCACert
 		material.AppCACert = openBao.AppCACert
 		materialReady = true
@@ -1672,6 +1785,9 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 			return err
 		}
 		if err := kubectlApply(lkeCertIssuerRuntimeSecretManifest(env, material)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeDeviceMTLSAppCASecretManifest(env, lkeClientCABundle(material.RootCACert, material.DeviceCACert, material.AppCACert))); err != nil {
 			return err
 		}
 		if err := kubectlApply(lkeCertIssuerOpenBaoAuthSecretManifest(env, openBao)); err != nil {
@@ -1713,6 +1829,14 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 		}
 		if err := kubectlApply(lkeMQTTServiceManifest(env)); err != nil {
 			return err
+		}
+		if lkeEnvBool("LKE_PUBLIC_MQTT_LOADBALANCER") {
+			if err := kubectlApply(lkeMQTTPublicServiceManifest(env)); err != nil {
+				return err
+			}
+			if err := kubectlApply(lkeAllowPublicMQTTLoadTestNetworkPolicyManifest(env)); err != nil {
+				return err
+			}
 		}
 		if err := kubectlApply(lkeMQTTDeploymentManifest(env)); err != nil {
 			return err
@@ -2113,6 +2237,7 @@ type lkeCertIssuerMaterial struct {
 	ClientKey    string
 	FactoryCert  string
 	FactoryKey   string
+	RootCACert   string
 	DeviceCACert string
 	AppCACert    string
 }
@@ -2132,6 +2257,7 @@ type lkeOpenBaoBootstrapResult struct {
 	RoleID       string
 	SecretID     string
 	TLSCACert    string
+	RootCACert   string
 	DeviceCACert string
 	AppCACert    string
 }
@@ -2737,7 +2863,7 @@ func lkeBootstrapOpenBao(paths provisionPaths, env map[string]string) (lkeOpenBa
 	if err != nil {
 		return lkeOpenBaoBootstrapResult{}, err
 	}
-	if result.RoleID == "" || result.SecretID == "" || result.DeviceCACert == "" || result.AppCACert == "" {
+	if result.RoleID == "" || result.SecretID == "" || result.RootCACert == "" || result.DeviceCACert == "" || result.AppCACert == "" {
 		return lkeOpenBaoBootstrapResult{}, errors.New("OpenBao bootstrap output missing role_id, secret_id, or CA certificate")
 	}
 	return result, nil
@@ -2828,6 +2954,7 @@ path "pki/device/sign/gateway-server" { capabilities = ["update"] }
 path "pki/app/sign/app-user" { capabilities = ["update"] }
 path "pki/device/cert/ca" { capabilities = ["read"] }
 path "pki/app/cert/ca" { capabilities = ["read"] }
+path "pki/root/cert/ca" { capabilities = ["read"] }
 path "pki/device/ca_chain" { capabilities = ["read"] }
 path "pki/app/ca_chain" { capabilities = ["read"] }
 POLICY
@@ -2837,10 +2964,12 @@ bao write auth/approle/role/video-cloud-certissuer \
   secret_id_ttl=0 secret_id_num_uses=0 >/dev/null
 role_id="$(bao read -field=role_id auth/approle/role/video-cloud-certissuer/role-id)"
 secret_id="$(bao write -f -field=secret_id auth/approle/role/video-cloud-certissuer/secret-id)"
+root_ca="$(bao read -field=certificate pki/root/cert/ca | base64 | tr -d '\n')"
 device_ca="$(bao read -field=certificate pki/device/cert/ca | base64 | tr -d '\n')"
 app_ca="$(bao read -field=certificate pki/app/cert/ca | base64 | tr -d '\n')"
 printf 'ROLE_ID=%%s\n' "$role_id"
 printf 'SECRET_ID=%%s\n' "$secret_id"
+printf 'ROOT_CA_CERT_B64=%%s\n' "$root_ca"
 printf 'DEVICE_CA_CERT_B64=%%s\n' "$device_ca"
 printf 'APP_CA_CERT_B64=%%s\n' "$app_ca"
 `, strconv.Quote(rootCN), strconv.Quote(deviceCN), strconv.Quote(deviceCN), strconv.Quote(appCN), strconv.Quote(appCN))
@@ -2859,6 +2988,10 @@ func parseLKEOpenBaoBootstrapOutput(out string) (lkeOpenBaoBootstrapResult, erro
 	if err != nil {
 		return lkeOpenBaoBootstrapResult{}, fmt.Errorf("decode OpenBao device CA certificate: %w", err)
 	}
+	rootCA, err := base64.StdEncoding.DecodeString(values["ROOT_CA_CERT_B64"])
+	if err != nil {
+		return lkeOpenBaoBootstrapResult{}, fmt.Errorf("decode OpenBao root CA certificate: %w", err)
+	}
 	appCA, err := base64.StdEncoding.DecodeString(values["APP_CA_CERT_B64"])
 	if err != nil {
 		return lkeOpenBaoBootstrapResult{}, fmt.Errorf("decode OpenBao app CA certificate: %w", err)
@@ -2866,6 +2999,7 @@ func parseLKEOpenBaoBootstrapOutput(out string) (lkeOpenBaoBootstrapResult, erro
 	return lkeOpenBaoBootstrapResult{
 		RoleID:       values["ROLE_ID"],
 		SecretID:     values["SECRET_ID"],
+		RootCACert:   string(rootCA),
 		DeviceCACert: string(deviceCA),
 		AppCACert:    string(appCA),
 	}, nil
@@ -2972,9 +3106,11 @@ stringData:
   tls.crt: %q
   tls.key: %q
   client-ca.crt: %q
+  root-ca.crt: %q
   device-ca.crt: %q
   app-ca.crt: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), material.ServerCert, material.ServerKey, material.ServiceCA, material.DeviceCACert, material.AppCACert)
+  ca.crt: %q
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), material.ServerCert, material.ServerKey, material.ServiceCA, material.RootCACert, material.DeviceCACert, material.AppCACert, lkeClientCABundle(material.RootCACert, material.DeviceCACert, material.AppCACert))
 }
 
 func lkeCertIssuerOpenBaoAuthSecretManifest(env map[string]string, openBao lkeOpenBaoBootstrapResult) string {
@@ -3168,6 +3304,54 @@ spec:
     - name: mqtts
       port: 8883
       targetPort: 8883
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
+}
+
+func lkeMQTTPublicServiceManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Service
+metadata:
+  name: mqtt-public
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: mqtt
+    app.kubernetes.io/component: public-mqtt
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: mqtt
+  ports:
+    - name: mqtts
+      port: 8883
+      targetPort: 8883
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
+}
+
+func lkeAllowPublicMQTTLoadTestNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-public-mqtt-loadtest
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: mqtt
+    app.kubernetes.io/component: public-mqtt
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mqtt
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 8883
 `, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
 }
 
@@ -3605,6 +3789,7 @@ func lkeCertIssuerDeploymentManifest(env map[string]string, material lkeCertIssu
 	checksum := lkeConfigChecksum(
 		material.ServerCert,
 		material.ServiceCA,
+		material.RootCACert,
 		material.DeviceCACert,
 		material.AppCACert,
 		openBao.RoleID,
@@ -4062,8 +4247,12 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
               value: "true"
             - name: VIDEO_CLOUD_MQTT_ADDR
               value: %q
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
             - name: VIDEO_CLOUD_MQTT_CLIENT_ID
-              value: "video-cloud-api"
+              value: "video-cloud-api-$(POD_NAME)"
             - name: VIDEO_CLOUD_MQTT_TOPIC_ROOT
               value: "devices"
 `, lkeNamespaceName(env, "platform"), lkeAccountManagerInternalURL(env), lkeMQTTInternalAddr(env))

@@ -88,6 +88,9 @@ func TestAggregateStageResultsSumsDeviceAndAppTotals(t *testing.T) {
 				DesiredWrites: 5,
 				BytesReceived: 50,
 			},
+			FailureReasons: map[string]int64{
+				"app_desired_publish_failed": 3,
+			},
 		},
 		{
 			Name:             "25k",
@@ -102,6 +105,10 @@ func TestAggregateStageResultsSumsDeviceAndAppTotals(t *testing.T) {
 				DesiredWrites: 6,
 				BytesReceived: 51,
 			},
+			FailureReasons: map[string]int64{
+				"app_desired_publish_failed": 5,
+				"device_delta_wait_failed":   7,
+			},
 		},
 	})
 	if result.DeviceMQTTTotals.ConnectAttempts != 21 || result.DeviceMQTTTotals.Publishes != 41 || result.DeviceMQTTTotals.BytesSent != 201 {
@@ -109,6 +116,9 @@ func TestAggregateStageResultsSumsDeviceAndAppTotals(t *testing.T) {
 	}
 	if result.AppUserTotals.LoginAttempts != 5 || result.AppUserTotals.DesiredWrites != 11 || result.AppUserTotals.BytesReceived != 101 {
 		t.Fatalf("app totals not summed: %+v", result.AppUserTotals)
+	}
+	if result.FailureReasons["app_desired_publish_failed"] != 8 || result.FailureReasons["device_delta_wait_failed"] != 7 {
+		t.Fatalf("failure reasons not summed: %+v", result.FailureReasons)
 	}
 }
 

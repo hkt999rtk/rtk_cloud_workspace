@@ -44,41 +44,45 @@ type AggregateOptions struct {
 }
 
 type StageResult struct {
-	Name                           string           `json:"name"`
-	ConnectedDevices               int              `json:"connected_devices"`
-	DeviceMQTTTotals               DeviceMQTTTotals `json:"device_mqtt_totals"`
-	AppUserTotals                  AppUserTotals    `json:"app_user_totals"`
-	MQTTConnectSuccessRatePercent  float64          `json:"mqtt_connect_success_rate_percent"`
-	MQTTReconnectCount             int              `json:"mqtt_reconnect_count"`
-	ShadowGetP50MS                 float64          `json:"shadow_get_p50_ms"`
-	ShadowGetP95MS                 float64          `json:"shadow_get_p95_ms"`
-	ShadowGetP99MS                 float64          `json:"shadow_get_p99_ms"`
-	DesiredUpdateP95MS             float64          `json:"desired_update_p95_ms"`
-	DeltaReceiveP95MS              float64          `json:"delta_receive_p95_ms"`
-	DesiredReportedP95MS           float64          `json:"desired_reported_p95_ms"`
-	OfflineDesiredP95MS            float64          `json:"offline_desired_p95_ms"`
-	DeltaClearSuccessRatePercent   float64          `json:"delta_clear_success_rate_percent"`
-	DesiredReportedConvergenceRate float64          `json:"desired_reported_convergence_rate_percent"`
-	OfflineDesiredConvergenceRate  float64          `json:"offline_desired_convergence_rate_percent"`
-	DuplicateApplyCount            int              `json:"duplicate_apply_count"`
-	VersionConflictCount           int              `json:"version_conflict_count"`
-	RejectedUpdateCount            int              `json:"rejected_update_count"`
-	AuthorizationViolationCount    int              `json:"authorization_violation_count"`
-	ClientTokenCorrelationCount    int              `json:"client_token_correlation_count"`
+	Name                           string                      `json:"name"`
+	ConnectedDevices               int                         `json:"connected_devices"`
+	DeviceMQTTTotals               DeviceMQTTTotals            `json:"device_mqtt_totals"`
+	AppUserTotals                  AppUserTotals               `json:"app_user_totals"`
+	MQTTConnectSuccessRatePercent  float64                     `json:"mqtt_connect_success_rate_percent"`
+	MQTTReconnectCount             int                         `json:"mqtt_reconnect_count"`
+	ShadowGetP50MS                 float64                     `json:"shadow_get_p50_ms"`
+	ShadowGetP95MS                 float64                     `json:"shadow_get_p95_ms"`
+	ShadowGetP99MS                 float64                     `json:"shadow_get_p99_ms"`
+	DesiredUpdateP95MS             float64                     `json:"desired_update_p95_ms"`
+	DeltaReceiveP95MS              float64                     `json:"delta_receive_p95_ms"`
+	DesiredReportedP95MS           float64                     `json:"desired_reported_p95_ms"`
+	OfflineDesiredP95MS            float64                     `json:"offline_desired_p95_ms"`
+	DeltaClearSuccessRatePercent   float64                     `json:"delta_clear_success_rate_percent"`
+	DesiredReportedConvergenceRate float64                     `json:"desired_reported_convergence_rate_percent"`
+	OfflineDesiredConvergenceRate  float64                     `json:"offline_desired_convergence_rate_percent"`
+	DuplicateApplyCount            int                         `json:"duplicate_apply_count"`
+	VersionConflictCount           int                         `json:"version_conflict_count"`
+	RejectedUpdateCount            int                         `json:"rejected_update_count"`
+	AuthorizationViolationCount    int                         `json:"authorization_violation_count"`
+	ClientTokenCorrelationCount    int                         `json:"client_token_correlation_count"`
+	FailureReasons                 map[string]int64            `json:"failure_reasons,omitempty"`
+	FailureDetails                 map[string]map[string]int64 `json:"failure_details,omitempty"`
 }
 
 type DeviceMQTTTotals struct {
-	ConnectAttempts   int64 `json:"connect_attempts"`
-	ConnectSuccess    int64 `json:"connect_success"`
-	ConnectFail       int64 `json:"connect_fail"`
-	Subscribes        int64 `json:"subscribes"`
-	Publishes         int64 `json:"publishes"`
-	ReceivedMessages  int64 `json:"received_messages"`
-	DeltaReceived     int64 `json:"delta_received"`
-	ReportedPublishes int64 `json:"reported_publishes"`
-	RejectedPublishes int64 `json:"rejected_publishes"`
-	BytesSent         int64 `json:"bytes_sent"`
-	BytesReceived     int64 `json:"bytes_received"`
+	ConnectAttempts     int64 `json:"connect_attempts"`
+	ConnectSuccess      int64 `json:"connect_success"`
+	ConnectFail         int64 `json:"connect_fail"`
+	Subscribes          int64 `json:"subscribes"`
+	ActiveConnections   int64 `json:"active_connections,omitempty"`
+	ActiveSubscriptions int64 `json:"active_subscriptions,omitempty"`
+	Publishes           int64 `json:"publishes"`
+	ReceivedMessages    int64 `json:"received_messages"`
+	DeltaReceived       int64 `json:"delta_received"`
+	ReportedPublishes   int64 `json:"reported_publishes"`
+	RejectedPublishes   int64 `json:"rejected_publishes"`
+	BytesSent           int64 `json:"bytes_sent"`
+	BytesReceived       int64 `json:"bytes_received"`
 }
 
 type AppUserTotals struct {
@@ -138,6 +142,7 @@ type StartCoordination struct {
 type VMStartTelemetry struct {
 	Label                  string `json:"label"`
 	IP                     string `json:"ip,omitempty"`
+	RunID                  string `json:"run_id,omitempty"`
 	ReadyAt                string `json:"ready_at,omitempty"`
 	StartSignalReceivedAt  string `json:"start_signal_received_at,omitempty"`
 	StageStartedAt         string `json:"stage_started_at,omitempty"`
@@ -446,9 +451,11 @@ func aggregateStageResults(items []StageResult) StageResult {
 		result.RejectedUpdateCount += item.RejectedUpdateCount
 		result.AuthorizationViolationCount += item.AuthorizationViolationCount
 		result.ClientTokenCorrelationCount += item.ClientTokenCorrelationCount
+		result.FailureReasons = addFailureReasons(result.FailureReasons, item.FailureReasons)
+		result.FailureDetails = addFailureDetails(result.FailureDetails, item.FailureDetails)
 	}
 	count := float64(len(items))
-	result.MQTTConnectSuccessRatePercent /= count
+	result.MQTTConnectSuccessRatePercent = connectSuccessPercent(result.DeviceMQTTTotals)
 	result.ShadowGetP50MS /= count
 	result.ShadowGetP95MS /= count
 	result.ShadowGetP99MS /= count
@@ -460,6 +467,67 @@ func aggregateStageResults(items []StageResult) StageResult {
 	result.DesiredReportedConvergenceRate /= count
 	result.OfflineDesiredConvergenceRate /= count
 	return result
+}
+
+func connectSuccessPercent(totals DeviceMQTTTotals) float64 {
+	if totals.ConnectAttempts <= 0 {
+		return 0
+	}
+	return float64(totals.ConnectSuccess) / float64(totals.ConnectAttempts) * 100
+}
+
+func addFailureReasons(left, right map[string]int64) map[string]int64 {
+	if len(left) == 0 && len(right) == 0 {
+		return nil
+	}
+	merged := map[string]int64{}
+	for key, value := range left {
+		if value != 0 {
+			merged[key] += value
+		}
+	}
+	for key, value := range right {
+		if value != 0 {
+			merged[key] += value
+		}
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
+}
+
+func addFailureDetails(left, right map[string]map[string]int64) map[string]map[string]int64 {
+	if len(left) == 0 && len(right) == 0 {
+		return nil
+	}
+	merged := map[string]map[string]int64{}
+	for reason, details := range left {
+		for detail, count := range details {
+			if count == 0 {
+				continue
+			}
+			if merged[reason] == nil {
+				merged[reason] = map[string]int64{}
+			}
+			merged[reason][detail] += count
+		}
+	}
+	for reason, details := range right {
+		for detail, count := range details {
+			if count == 0 {
+				continue
+			}
+			if merged[reason] == nil {
+				merged[reason] = map[string]int64{}
+			}
+			merged[reason][detail] += count
+		}
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
 }
 
 func summarizeStageTotals(stages []StageResult) (DeviceMQTTTotals, AppUserTotals) {
@@ -477,6 +545,8 @@ func addDeviceMQTTTotals(a DeviceMQTTTotals, b DeviceMQTTTotals) DeviceMQTTTotal
 	a.ConnectSuccess += b.ConnectSuccess
 	a.ConnectFail += b.ConnectFail
 	a.Subscribes += b.Subscribes
+	a.ActiveConnections += b.ActiveConnections
+	a.ActiveSubscriptions += b.ActiveSubscriptions
 	a.Publishes += b.Publishes
 	a.ReceivedMessages += b.ReceivedMessages
 	a.DeltaReceived += b.DeltaReceived
@@ -677,9 +747,10 @@ func clientTargetCoverageComplete(stages []StageResult) bool {
 			return false
 		}
 		expectedUsers := expectedStageUsers(stage.ConnectedDevices)
-		if stage.DeviceMQTTTotals.ConnectAttempts < int64(stage.ConnectedDevices) ||
-			stage.DeviceMQTTTotals.ConnectSuccess < int64(stage.ConnectedDevices) ||
-			stage.DeviceMQTTTotals.Subscribes < int64(stage.ConnectedDevices) ||
+		activeConnections := nonZeroInt64(stage.DeviceMQTTTotals.ActiveConnections, stage.DeviceMQTTTotals.ConnectSuccess)
+		activeSubscriptions := nonZeroInt64(stage.DeviceMQTTTotals.ActiveSubscriptions, stage.DeviceMQTTTotals.Subscribes)
+		if activeConnections < int64(stage.ConnectedDevices) ||
+			activeSubscriptions < int64(stage.ConnectedDevices) ||
 			stage.AppUserTotals.DesiredWrites < int64(expectedUsers) ||
 			stage.AppUserTotals.ReceivedAcks < int64(expectedUsers) {
 			return false

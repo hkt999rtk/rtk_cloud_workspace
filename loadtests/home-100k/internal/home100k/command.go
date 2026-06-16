@@ -4,8 +4,11 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -25,6 +28,24 @@ var commandRunner = func(name string, args ...string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+var commandRunnerWithTimeout = func(timeout time.Duration, name string, args ...string) error {
+	if timeout <= 0 {
+		return commandRunner(name, args...)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("%s timed out after %s", name, timeout)
+		}
+		return err
+	}
+	return nil
 }
 
 var commandOutputRunner = func(name string, args ...string) (string, error) {
@@ -226,21 +247,24 @@ type listVMFlagValues struct {
 }
 
 type workflowFlagValues struct {
-	runID              string
-	outDir             string
-	serverEvidenceFile string
-	live               bool
-	runnerMode         string
-	vmStateFile        string
-	remoteWorkspace    string
-	remoteEnvRoot      string
-	remoteOutRoot      string
-	sshUser            string
-	sshKey             string
-	coordinatorDelayMS int
-	mqttAddr           string
-	videoCloudBaseURL  string
-	accountManagerURL  string
+	runID                  string
+	outDir                 string
+	serverEvidenceFile     string
+	live                   bool
+	runnerMode             string
+	vmStateFile            string
+	remoteWorkspace        string
+	remoteEnvRoot          string
+	remoteOutRoot          string
+	sshUser                string
+	sshKey                 string
+	coordinatorDelayMS     int
+	mqttAddr               string
+	videoCloudBaseURL      string
+	videoCloudPublicURL    string
+	videoCloudTokenURL     string
+	accountManagerURL      string
+	credentialBundleFormat string
 }
 
 type shardRunFlagValues struct {
@@ -292,7 +316,30 @@ func executeProvisionVMs(args []string, stdout io.Writer, stderr io.Writer) int 
 	}
 	client := NewLinodeClient(firstNonEmpty(values.linodeEndpoint, "https://api.linode.com/v4"), values.linodeToken)
 	created := []LinodeVM{}
+	reused := []LinodeVM{}
+	existingByLabel := map[string]LinodeVM{}
+	if existing, err := client.ListVMs(context.Background(), []string{"home-100k"}); err == nil {
+		for _, vm := range existing {
+			if strings.TrimSpace(vm.Label) != "" {
+				existingByLabel[vm.Label] = vm
+			}
+		}
+	} else {
+		fmt.Fprintf(stderr, "warning: unable to list existing home-100k Linode VMs for reuse: %v\n", err)
+	}
 	for _, action := range actions {
+		if vm, ok := existingByLabel[action.Label]; ok {
+			if shouldBootLinodeVM(vm.Status) {
+				if err := client.BootVM(context.Background(), vm.ID); err != nil {
+					fmt.Fprintln(stderr, err)
+					return 1
+				}
+				vm.Status = "booting"
+			}
+			reused = append(reused, vm)
+			created = append(created, vm)
+			continue
+		}
 		vm, err := client.ProvisionVM(context.Background(), action, vmConfig)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
@@ -306,6 +353,7 @@ func executeProvisionVMs(args []string, stdout io.Writer, stderr io.Writer) int 
 		if err := writeJSONFile(vmStateFile, map[string]any{
 			"run_id":  runID,
 			"created": created,
+			"reused":  reused,
 		}); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
@@ -315,8 +363,18 @@ func executeProvisionVMs(args []string, stdout io.Writer, stderr io.Writer) int 
 		"dry_run":       false,
 		"run_id":        runID,
 		"created":       created,
+		"reused":        reused,
 		"vm_state_file": vmStateFile,
 	})
+}
+
+func shouldBootLinodeVM(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "", "running", "booting", "provisioning", "rebooting", "migrating":
+		return false
+	default:
+		return true
+	}
 }
 
 func executeSync(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -335,6 +393,11 @@ func executeSync(args []string, stdout io.Writer, stderr io.Writer) int {
 		if strings.TrimSpace(values.remoteWorkspace) == "" || strings.TrimSpace(values.remoteEnvRoot) == "" {
 			fmt.Fprintln(stderr, "--remote-workspace and --remote-env-root are required with sync --live")
 			return 2
+		}
+		if err := validatePlanDataCoverage(plan.Conditions.EnvRoot, plan); err != nil {
+			writePreflightFailure(values.outDir, err)
+			fmt.Fprintln(stderr, err)
+			return 1
 		}
 		if err := syncRemoteVMs(vms, plan, values); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -374,6 +437,15 @@ func executeRunStages(args []string, stdout io.Writer, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "--remote-workspace and --remote-env-root are required with run-stages --live")
 			return 2
 		}
+		if usesFormalRunner(values.runnerMode) && strings.TrimSpace(values.mqttAddr) == "" {
+			fmt.Fprintln(stderr, "public MQTT endpoint is required for run-stages --live --runner-mode live; set --mqtt-addr or HOME100K_MQTT_ADDR so remote VMs do not fall back to kubectl port-forward")
+			return 2
+		}
+		if err := validatePlanDataCoverage(plan.Conditions.EnvRoot, plan); err != nil {
+			writePreflightFailure(values.outDir, err)
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 		remoteOutRoot := firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k")
 		if err := dispatchRemoteShards(vms, plan, runID, remoteOutRoot, values); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -385,7 +457,7 @@ func executeRunStages(args []string, stdout io.Writer, stderr io.Writer) int {
 			"dispatched": vms,
 		})
 	}
-	if strings.EqualFold(values.runnerMode, "live") || strings.EqualFold(values.runnerMode, "formal") {
+	if usesFormalRunner(values.runnerMode) {
 		fmt.Fprintln(stderr, "formal live runner requires the VM/Ansible workflow for shard dispatch; refusing to run sampled actor executor")
 		return 2
 	}
@@ -398,6 +470,10 @@ func executeRunStages(args []string, stdout io.Writer, stderr io.Writer) int {
 		"run_id":        runID,
 		"stage_results": results,
 	})
+}
+
+func usesFormalRunner(mode string) bool {
+	return strings.EqualFold(mode, "live") || strings.EqualFold(mode, "formal")
 }
 
 func executeShardRun(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -505,59 +581,85 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 	if deviceShardCount <= 0 {
 		return fmt.Errorf("plan has no device-mqtt shards")
 	}
-	stageResults := make([]StageResult, 0, len(plan.Stages))
-	var runErr error
+	stageNames := make([]string, 0, len(plan.Stages))
+	stageTargets := make([]string, 0, len(plan.Stages))
+	stageDurations := make([]string, 0, len(plan.Stages))
+	stageCommandRates := []string{}
+	maxTarget := 0
 	for _, stage := range plan.Stages {
 		durationSeconds, err := stageWindowSeconds(stage)
 		if err != nil {
 			return fmt.Errorf("stage %s duration: %w", stage.Name, err)
 		}
 		maxConnected := shardConnectedDevices(stage.ConnectedDevices, assignment)
-		stageOut := filepath.Join(outDir, "mqtt-test", stage.Name)
-		args := []string{
-			"mqtt-test",
-			"--env-root", plan.Conditions.EnvRoot,
-			"--brandname", plan.Conditions.Brandname,
-			"--profile", "baseline-10k",
-			"--duration-seconds", strconv.Itoa(durationSeconds),
-			"--out-dir", stageOut,
-			"--mqtt-probe",
-			"--run-id", runID,
-			"--shard-index", strconv.Itoa(assignment.Index),
-			"--shard-count", strconv.Itoa(deviceShardCount),
-			"--ramp-up", stage.WarmUp,
-			"--telemetry-interval", stage.SteadyState,
-			"--state-interval", stage.SteadyState,
-			"--command-rate-per-device-per-day", commandRatePerDeviceDay(maxConnected, durationSeconds),
-			"--load-model", "home-100k-sustained",
-			"--concurrency", strconv.Itoa(minInt(maxConnected, 250)),
-			"--max-connected-devices", strconv.Itoa(maxConnected),
+		if maxConnected > maxTarget {
+			maxTarget = maxConnected
 		}
-		if strings.TrimSpace(values.workspace) != "" {
-			args = append([]string{args[0], "--workspace", values.workspace}, args[1:]...)
-		}
-		if err := commandRunner(rtkCloud, args...); err != nil {
-			runErr = fmt.Errorf("stage %s live mqtt-test failed: %w", stage.Name, err)
-		}
-		stageResult, err := loadLiveMQTTStageResult(filepath.Join(stageOut, "results.json"), stage, maxConnected)
-		if err != nil {
-			if runErr != nil {
-				return fmt.Errorf("%w; stage %s live result: %v", runErr, stage.Name, err)
-			}
-			return fmt.Errorf("stage %s live result: %w", stage.Name, err)
-		}
-		stageResults = append(stageResults, stageResult)
-		if runErr != nil {
-			break
-		}
+		stageNames = append(stageNames, stage.Name)
+		stageTargets = append(stageTargets, strconv.Itoa(maxConnected))
+		stageDurations = append(stageDurations, strconv.Itoa(durationSeconds))
+		stageCommandRates = append(stageCommandRates, commandRatePerDeviceDay(maxConnected, durationSeconds, plan.Conditions.DevicesPerUser))
+	}
+	totalDuration := 0
+	for _, raw := range stageDurations {
+		seconds, _ := strconv.Atoi(raw)
+		totalDuration += seconds
+	}
+	stageOut := filepath.Join(outDir, "mqtt-test", "staged")
+	args := []string{
+		"mqtt-test",
+		"--env-root", plan.Conditions.EnvRoot,
+		"--brandname", plan.Conditions.Brandname,
+		"--profile", "baseline-10k",
+		"--duration-seconds", strconv.Itoa(totalDuration),
+		"--out-dir", stageOut,
+		"--mqtt-probe",
+		"--run-id", runID,
+		"--shard-index", strconv.Itoa(assignment.Index),
+		"--shard-count", strconv.Itoa(deviceShardCount),
+		"--ramp-up", plan.Stages[0].WarmUp,
+		"--telemetry-interval", plan.Stages[0].SteadyState,
+		"--state-interval", plan.Stages[0].SteadyState,
+		"--command-rate-per-device-per-day", maxCommandRatePerDeviceDay(stageCommandRates),
+		"--load-model", "home-100k-sustained",
+		"--stage-names", strings.Join(stageNames, ","),
+		"--stage-connected-devices", strings.Join(stageTargets, ","),
+		"--stage-durations-seconds", strings.Join(stageDurations, ","),
+		"--concurrency", strconv.Itoa(minInt(maxTarget, 250)),
+		"--max-connected-devices", strconv.Itoa(maxTarget),
+	}
+	if strings.TrimSpace(values.workspace) != "" {
+		args = append([]string{args[0], "--workspace", values.workspace}, args[1:]...)
+	}
+	runErr := commandRunnerWithTimeout(time.Duration(totalDuration)*time.Second+90*time.Second, rtkCloud, args...)
+	stageResults, err := loadLiveMQTTShardResults(filepath.Join(stageOut, "results.json"), plan.Stages, stageTargets)
+	if err != nil && len(stageResults) == 0 {
+		stageResults = fallbackFailedLiveStageResults(plan.Stages, stageTargets, liveShardErrorText(runErr, err))
 	}
 	resultFile := filepath.Join(outDir, "results.json")
 	reportFile := filepath.Join(outDir, "TEST_REPORT.md")
+	status := "completed"
+	partial := false
+	errorText := ""
+	if err != nil || runErr != nil {
+		status = "failed"
+		partial = err != nil
+		if err != nil && runErr != nil {
+			errorText = fmt.Sprintf("live staged mqtt-test failed: %v; staged live result: %v", runErr, err)
+		} else if err != nil {
+			errorText = fmt.Sprintf("staged live result: %v", err)
+		} else {
+			errorText = fmt.Sprintf("live staged mqtt-test failed: %v", runErr)
+		}
+	}
 	if err := writeJSONFile(resultFile, map[string]any{
 		"run_id":                runID,
 		"role":                  values.role,
 		"shard_index":           values.shardIndex,
 		"runner_mode":           "live",
+		"status":                status,
+		"partial":               partial,
+		"error":                 errorText,
 		"vm_assignment":         assignment,
 		"stage_results":         stageResults,
 		"load_generator_health": LoadGeneratorHealth{},
@@ -575,7 +677,70 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 	if err := os.WriteFile(reportFile, []byte(report), 0o644); err != nil {
 		return err
 	}
-	return runErr
+	if err != nil {
+		if runErr != nil {
+			return fmt.Errorf("live staged mqtt-test failed: %w; staged live result: %v", runErr, err)
+		}
+		return fmt.Errorf("staged live result: %w", err)
+	}
+	if runErr != nil {
+		return fmt.Errorf("live staged mqtt-test failed: %w", runErr)
+	}
+	return nil
+}
+
+func fallbackFailedLiveStageResults(stages []Stage, stageTargets []string, detail string) []StageResult {
+	results := make([]StageResult, 0, len(stages))
+	for idx, stage := range stages {
+		reasons := map[string]int64{"runner_failed": 1}
+		details := map[string]map[string]int64{}
+		if normalized := normalizeLiveShardFailureDetail(detail); normalized != "" {
+			details["runner_failed"] = map[string]int64{normalized: 1}
+		}
+		results = append(results, StageResult{
+			Name:             stage.Name,
+			ConnectedDevices: stage.ConnectedDevices,
+			DeviceMQTTTotals: DeviceMQTTTotals{
+				ActiveConnections:   int64(parseStageTarget(stageTargets, idx)),
+				ActiveSubscriptions: int64(parseStageTarget(stageTargets, idx)),
+			},
+			FailureReasons: reasons,
+			FailureDetails: details,
+		})
+	}
+	return results
+}
+
+func normalizeLiveShardFailureDetail(detail string) string {
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return ""
+	}
+	detail = strings.ToLower(detail)
+	replacer := strings.NewReplacer("\n", " ", "\r", " ", "\t", " ")
+	detail = replacer.Replace(detail)
+	fields := strings.Fields(detail)
+	if len(fields) == 0 {
+		return ""
+	}
+	detail = strings.Join(fields, "_")
+	if len(detail) > 160 {
+		detail = detail[:160]
+	}
+	return detail
+}
+
+func liveShardErrorText(runErr error, resultErr error) string {
+	switch {
+	case runErr != nil && resultErr != nil:
+		return fmt.Sprintf("live staged mqtt-test failed: %v; staged live result: %v", runErr, resultErr)
+	case runErr != nil:
+		return fmt.Sprintf("live staged mqtt-test failed: %v", runErr)
+	case resultErr != nil:
+		return fmt.Sprintf("staged live result: %v", resultErr)
+	default:
+		return ""
+	}
 }
 
 func stageWindowSeconds(stage Stage) (int, error) {
@@ -613,11 +778,14 @@ func shardConnectedDevices(stageConnected int, assignment VMAssignment) int {
 	return target
 }
 
-func commandRatePerDeviceDay(maxConnected int, durationSeconds int) string {
+func commandRatePerDeviceDay(maxConnected int, durationSeconds int, devicesPerUser int) string {
 	if maxConnected <= 0 || durationSeconds <= 0 {
 		return "1.00"
 	}
-	expectedUserWrites := maxConnected / 10
+	if devicesPerUser <= 0 {
+		devicesPerUser = DefaultDevicesPerUser
+	}
+	expectedUserWrites := maxConnected / devicesPerUser
 	if expectedUserWrites <= 0 {
 		expectedUserWrites = 1
 	}
@@ -628,42 +796,108 @@ func commandRatePerDeviceDay(maxConnected int, durationSeconds int) string {
 	return fmt.Sprintf("%.2f", rate)
 }
 
-func loadLiveMQTTStageResult(path string, stage Stage, maxConnected int) (StageResult, error) {
-	var raw struct {
-		Overall string `json:"overall"`
-		Metrics struct {
-			DevicesSelected   int `json:"devices_selected"`
-			CommandsAttempted int `json:"commands_attempted"`
-			CommandsPassed    int `json:"commands_passed"`
-		} `json:"metrics"`
-		ConnectAttempts        int64            `json:"connect_attempts"`
-		ConnectSuccesses       int64            `json:"connect_successes"`
-		ConnectFailures        int64            `json:"connect_failures"`
-		SubscribeSuccesses     int64            `json:"subscribe_successes"`
-		PublishSuccesses       int64            `json:"publish_successes"`
-		PublishFailures        int64            `json:"publish_failures"`
-		MessagesReceived       int64            `json:"messages_received"`
-		ReportedEvents         int64            `json:"reported_events"`
-		TotalBytesSent         int64            `json:"total_bytes_sent"`
-		TotalBytesReceived     int64            `json:"total_bytes_received"`
-		AuthViolations         int64            `json:"auth_violations"`
-		HTTPRequests           int64            `json:"http_requests"`
-		HTTPSuccesses          int64            `json:"http_successes"`
-		HTTPFailures           int64            `json:"http_failures"`
-		TotalHTTPBytesSent     int64            `json:"total_http_bytes_sent"`
-		TotalHTTPBytesReceived int64            `json:"total_http_bytes_received"`
-		RejectedUpdates        int64            `json:"rejected_updates"`
-		DeviceMQTTTotals       DeviceMQTTTotals `json:"device_mqtt_totals"`
-		AppUserTotals          AppUserTotals    `json:"app_user_totals"`
+func maxCommandRatePerDeviceDay(values []string) string {
+	maxRate := 1.0
+	for _, raw := range values {
+		rate, err := strconv.ParseFloat(raw, 64)
+		if err == nil && rate > maxRate {
+			maxRate = rate
+		}
 	}
+	return fmt.Sprintf("%.2f", maxRate)
+}
+
+type rawLiveMQTTResult struct {
+	Name    string `json:"name"`
+	Overall string `json:"overall"`
+	Status  string `json:"status"`
+	Metrics struct {
+		DevicesSelected   int `json:"devices_selected"`
+		CommandsAttempted int `json:"commands_attempted"`
+		CommandsPassed    int `json:"commands_passed"`
+	} `json:"metrics"`
+	ConnectedDevices       int                         `json:"connected_devices"`
+	ActiveConnections      int                         `json:"active_connections"`
+	CommandsAttempted      int                         `json:"commands_attempted"`
+	CommandsPassed         int                         `json:"commands_passed"`
+	ConnectAttempts        int64                       `json:"connect_attempts"`
+	ConnectSuccesses       int64                       `json:"connect_successes"`
+	ConnectFailures        int64                       `json:"connect_failures"`
+	SubscribeSuccesses     int64                       `json:"subscribe_successes"`
+	ActiveSubscriptions    int64                       `json:"active_subscriptions"`
+	PublishSuccesses       int64                       `json:"publish_successes"`
+	PublishFailures        int64                       `json:"publish_failures"`
+	MessagesReceived       int64                       `json:"messages_received"`
+	ReportedEvents         int64                       `json:"reported_events"`
+	TotalBytesSent         int64                       `json:"total_bytes_sent"`
+	TotalBytesReceived     int64                       `json:"total_bytes_received"`
+	AuthViolations         int64                       `json:"auth_violations"`
+	HTTPRequests           int64                       `json:"http_requests"`
+	HTTPSuccesses          int64                       `json:"http_successes"`
+	HTTPFailures           int64                       `json:"http_failures"`
+	TotalHTTPBytesSent     int64                       `json:"total_http_bytes_sent"`
+	TotalHTTPBytesReceived int64                       `json:"total_http_bytes_received"`
+	RejectedUpdates        int64                       `json:"rejected_updates"`
+	DeviceMQTTTotals       DeviceMQTTTotals            `json:"device_mqtt_totals"`
+	AppUserTotals          AppUserTotals               `json:"app_user_totals"`
+	FailureReasons         map[string]int64            `json:"failure_reasons"`
+	FailureDetails         map[string]map[string]int64 `json:"failure_details"`
+}
+
+func loadLiveMQTTShardResults(path string, stages []Stage, stageTargets []string) ([]StageResult, error) {
+	var root struct {
+		StageResults []rawLiveMQTTResult `json:"stage_results"`
+	}
+	if err := readJSON(path, &root); err != nil {
+		return nil, err
+	}
+	if len(root.StageResults) == 0 {
+		if len(stages) == 0 {
+			return nil, fmt.Errorf("no stages configured")
+		}
+		result, err := loadLiveMQTTStageResult(path, stages[0], parseStageTarget(stageTargets, 0))
+		if err != nil {
+			return nil, err
+		}
+		return []StageResult{result}, nil
+	}
+	results := make([]StageResult, 0, len(root.StageResults))
+	for idx, raw := range root.StageResults {
+		if idx >= len(stages) {
+			break
+		}
+		results = append(results, convertLiveMQTTStageResult(raw, stages[idx], parseStageTarget(stageTargets, idx)))
+	}
+	if len(root.StageResults) != len(stages) {
+		return results, fmt.Errorf("stage_results len = %d, want %d", len(root.StageResults), len(stages))
+	}
+	return results, nil
+}
+
+func parseStageTarget(values []string, idx int) int {
+	if idx < 0 || idx >= len(values) {
+		return 0
+	}
+	value, _ := strconv.Atoi(values[idx])
+	return value
+}
+
+func loadLiveMQTTStageResult(path string, stage Stage, maxConnected int) (StageResult, error) {
+	var raw rawLiveMQTTResult
 	if err := readJSON(path, &raw); err != nil {
 		return StageResult{}, err
 	}
+	return convertLiveMQTTStageResult(raw, stage, maxConnected), nil
+}
+
+func convertLiveMQTTStageResult(raw rawLiveMQTTResult, stage Stage, maxConnected int) StageResult {
 	commandsAttempted := raw.Metrics.CommandsAttempted
+	if commandsAttempted == 0 {
+		commandsAttempted = raw.CommandsAttempted
+	}
 	commandsPassed := raw.Metrics.CommandsPassed
-	connectRate := 100.0
-	if strings.EqualFold(raw.Overall, "fail") {
-		connectRate = 0
+	if commandsPassed == 0 {
+		commandsPassed = raw.CommandsPassed
 	}
 	connectAttempts := nonZeroInt64(raw.DeviceMQTTTotals.ConnectAttempts, raw.ConnectAttempts)
 	connectSuccess := nonZeroInt64(raw.DeviceMQTTTotals.ConnectSuccess, raw.ConnectSuccesses)
@@ -680,23 +914,33 @@ func loadLiveMQTTStageResult(path string, stage Stage, maxConnected int) (StageR
 	deltaReceived := nonZeroInt64(raw.DeviceMQTTTotals.DeltaReceived, receivedMessages)
 	reportedPublishes := nonZeroInt64(raw.DeviceMQTTTotals.ReportedPublishes, raw.ReportedEvents)
 	rejectedPublishes := nonZeroInt64(raw.DeviceMQTTTotals.RejectedPublishes, raw.PublishFailures)
+	activeConnections := nonZeroInt64(raw.DeviceMQTTTotals.ActiveConnections, int64(raw.ActiveConnections))
+	activeSubscriptions := nonZeroInt64(raw.DeviceMQTTTotals.ActiveSubscriptions, raw.ActiveSubscriptions)
+	if activeConnections == 0 {
+		activeConnections = connectSuccess
+	}
+	if activeSubscriptions == 0 {
+		activeSubscriptions = subscribes
+	}
 	httpRequests := nonZeroInt64(raw.AppUserTotals.DesiredWrites, raw.HTTPRequests)
 	httpSuccesses := nonZeroInt64(raw.AppUserTotals.ReceivedAcks, raw.HTTPSuccesses)
 	return StageResult{
 		Name:             stage.Name,
 		ConnectedDevices: stage.ConnectedDevices,
 		DeviceMQTTTotals: DeviceMQTTTotals{
-			ConnectAttempts:   connectAttempts,
-			ConnectSuccess:    connectSuccess,
-			ConnectFail:       connectFail,
-			Subscribes:        subscribes,
-			Publishes:         publishes,
-			ReceivedMessages:  receivedMessages,
-			DeltaReceived:     deltaReceived,
-			ReportedPublishes: reportedPublishes,
-			RejectedPublishes: rejectedPublishes,
-			BytesSent:         nonZeroInt64(raw.DeviceMQTTTotals.BytesSent, raw.TotalBytesSent),
-			BytesReceived:     nonZeroInt64(raw.DeviceMQTTTotals.BytesReceived, raw.TotalBytesReceived),
+			ConnectAttempts:     connectAttempts,
+			ConnectSuccess:      connectSuccess,
+			ConnectFail:         connectFail,
+			Subscribes:          subscribes,
+			ActiveConnections:   activeConnections,
+			ActiveSubscriptions: activeSubscriptions,
+			Publishes:           publishes,
+			ReceivedMessages:    receivedMessages,
+			DeltaReceived:       deltaReceived,
+			ReportedPublishes:   reportedPublishes,
+			RejectedPublishes:   rejectedPublishes,
+			BytesSent:           nonZeroInt64(raw.DeviceMQTTTotals.BytesSent, raw.TotalBytesSent),
+			BytesReceived:       nonZeroInt64(raw.DeviceMQTTTotals.BytesReceived, raw.TotalBytesReceived),
 		},
 		AppUserTotals: AppUserTotals{
 			LoginAttempts:       raw.AppUserTotals.LoginAttempts,
@@ -709,14 +953,16 @@ func loadLiveMQTTStageResult(path string, stage Stage, maxConnected int) (StageR
 			BytesSent:           nonZeroInt64(raw.AppUserTotals.BytesSent, raw.TotalHTTPBytesSent),
 			BytesReceived:       nonZeroInt64(raw.AppUserTotals.BytesReceived, raw.TotalHTTPBytesReceived),
 		},
-		MQTTConnectSuccessRatePercent:  connectRate,
+		MQTTConnectSuccessRatePercent:  connectSuccessPercent(DeviceMQTTTotals{ConnectAttempts: connectAttempts, ConnectSuccess: connectSuccess}),
 		DesiredReportedConvergenceRate: percent(commandsPassed, commandsAttempted),
 		OfflineDesiredConvergenceRate:  100,
 		DeltaClearSuccessRatePercent:   percent(commandsPassed, commandsAttempted),
 		RejectedUpdateCount:            int(raw.RejectedUpdates),
 		AuthorizationViolationCount:    int(raw.AuthViolations),
 		ClientTokenCorrelationCount:    int(httpSuccesses),
-	}, nil
+		FailureReasons:                 raw.FailureReasons,
+		FailureDetails:                 raw.FailureDetails,
+	}
 }
 
 func nonZeroInt64(value int64, fallback int64) int64 {
@@ -918,6 +1164,7 @@ func executeDestroyVMs(args []string, stdout io.Writer, stderr io.Writer) int {
 func buildWorkflowPlan(name string, args []string, stderr io.Writer) (Plan, workflowFlagValues, int) {
 	opts, values, err := parseWorkflowFlags(name, args, stderr)
 	if err != nil {
+		fmt.Fprintln(stderr, err)
 		return Plan{}, workflowFlagValues{}, 2
 	}
 	plan, err := NewPlan(opts)
@@ -1040,29 +1287,38 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	sshKey := fs.String("ssh-key", "", "SSH private key for load-generator VMs")
 	coordinatorDelayMS := fs.Int("coordinator-start-delay-ms", defaultCoordinatorStartDelayMS, "host coordinator delay between START ack and local monotonic runner start")
 	mqttAddr := fs.String("mqtt-addr", "", "public MQTT host:port for remote load-generator VMs")
-	videoCloudBaseURL := fs.String("video-cloud-base-url", "", "Video Cloud base URL for remote load-generator VMs")
+	videoCloudBaseURL := fs.String("video-cloud-base-url", "", "legacy alias for --video-cloud-public-base-url")
+	videoCloudPublicURL := fs.String("video-cloud-public-base-url", "", "Video Cloud public API base URL for remote load-generator VMs")
+	videoCloudTokenURL := fs.String("video-cloud-token-base-url", "", "Video Cloud mTLS token bootstrap base URL for remote load-generator VMs")
 	accountManagerURL := fs.String("account-manager-base-url", "", "Account Manager base URL for remote load-generator VMs")
+	credentialBundleFormat := fs.String("credential-bundle-format", "sqlite-gzip", "credential bundle format: sqlite-gzip")
 	if err := fs.Parse(args); err != nil {
 		return PlanOptions{}, workflowFlagValues{}, err
+	}
+	if strings.TrimSpace(*credentialBundleFormat) != "sqlite-gzip" {
+		return PlanOptions{}, workflowFlagValues{}, fmt.Errorf("unsupported --credential-bundle-format %q; only sqlite-gzip is supported", *credentialBundleFormat)
 	}
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	return opts, workflowFlagValues{
-		runID:              *runID,
-		outDir:             *outDir,
-		serverEvidenceFile: *serverEvidenceFile,
-		live:               *live,
-		runnerMode:         *runnerMode,
-		vmStateFile:        *vmStateFile,
-		remoteWorkspace:    *remoteWorkspace,
-		remoteEnvRoot:      *remoteEnvRoot,
-		remoteOutRoot:      *remoteOutRoot,
-		sshUser:            *sshUser,
-		sshKey:             *sshKey,
-		coordinatorDelayMS: *coordinatorDelayMS,
-		mqttAddr:           *mqttAddr,
-		videoCloudBaseURL:  *videoCloudBaseURL,
-		accountManagerURL:  *accountManagerURL,
+		runID:                  *runID,
+		outDir:                 *outDir,
+		serverEvidenceFile:     *serverEvidenceFile,
+		live:                   *live,
+		runnerMode:             *runnerMode,
+		vmStateFile:            *vmStateFile,
+		remoteWorkspace:        *remoteWorkspace,
+		remoteEnvRoot:          *remoteEnvRoot,
+		remoteOutRoot:          *remoteOutRoot,
+		sshUser:                *sshUser,
+		sshKey:                 *sshKey,
+		coordinatorDelayMS:     *coordinatorDelayMS,
+		mqttAddr:               *mqttAddr,
+		videoCloudBaseURL:      *videoCloudBaseURL,
+		videoCloudPublicURL:    *videoCloudPublicURL,
+		videoCloudTokenURL:     *videoCloudTokenURL,
+		accountManagerURL:      *accountManagerURL,
+		credentialBundleFormat: strings.TrimSpace(*credentialBundleFormat),
 	}, nil
 }
 
@@ -1449,6 +1705,9 @@ type remoteRunnerBinaries struct {
 
 func writeAnsibleInputs(vms []LinodeVM, plan Plan, values workflowFlagValues, binaries remoteRunnerBinaries) error {
 	base := workflowOutDir(values)
+	if err := writeCommonEnvArchive(filepath.Join(base, "env-common", "env-common.tar.gz"), plan); err != nil {
+		return fmt.Errorf("write common env archive: %w", err)
+	}
 	for _, vm := range vms {
 		assignment, ok := findAssignmentByLabel(plan, vm.Label)
 		if !ok {
@@ -1467,7 +1726,7 @@ func writeAnsibleInputs(vms []LinodeVM, plan Plan, values workflowFlagValues, bi
 			return fmt.Errorf("write env archive for %s: %w", vm.Label, err)
 		}
 	}
-	return writeAnsibleInventoryAndVars(vms, plan, values, binaries)
+	return writeAnsibleInventoryAndVars(vms, plan, values, binaries, true)
 }
 
 func writeAnsibleInputsForExistingManifests(vms []LinodeVM, plan Plan, values workflowFlagValues) error {
@@ -1475,7 +1734,7 @@ func writeAnsibleInputsForExistingManifests(vms []LinodeVM, plan Plan, values wo
 		Home100K:      filepath.Join(workflowOutDir(values), "bin", "home-100k-linux-amd64"),
 		RTKCloud:      filepath.Join(workflowOutDir(values), "bin", "rtk-cloud-linux-amd64"),
 		CloudMQTTTest: filepath.Join(workflowOutDir(values), "bin", "cloud-mqtt-test-linux-amd64"),
-	})
+	}, false)
 }
 
 func writeEnvRsyncFilter(path string, envRoot string, assignment VMAssignment) error {
@@ -1630,10 +1889,27 @@ func loadDeviceManifestRows(envRoot string) ([]deviceManifestRow, error) {
 
 func writeEnvArchive(path string, plan Plan, assignment VMAssignment) error {
 	envRoot := plan.Conditions.EnvRoot
-	deviceRows, err := loadDeviceManifestRows(envRoot)
+	bundle, err := writeShardCredentialBundle(filepath.Join(filepath.Dir(filepath.Dir(path)), "credential-bundles"), envRoot, plan, assignment)
 	if err != nil {
 		return err
 	}
+	extraFiles := []archiveExtraFile{
+		{Path: bundle.CompressedPath, Name: filepath.ToSlash(filepath.Join("loadtests", "home-100k", "credentials", assignment.Label+".sqlite.gz"))},
+		{Path: bundle.ManifestPath, Name: filepath.ToSlash(filepath.Join("loadtests", "home-100k", "credentials", assignment.Label+".manifest.json"))},
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmpPath := path + ".tmp"
+	if err := createTarGzFromRelPaths(tmpPath, envRoot, nil, extraFiles); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+func writeCommonEnvArchive(path string, plan Plan) error {
+	envRoot := plan.Conditions.EnvRoot
 	relPaths := []string{
 		"env",
 		"state/lke.env",
@@ -1645,39 +1921,138 @@ func writeEnvArchive(path string, plan Plan, assignment VMAssignment) error {
 		"devices/test_device/manifests/devices.csv",
 		"devices/test_device/manifests/devices.json",
 		"devices/test_device/manifests/device_ids.txt",
-		"artifacts/users",
-		"artifacts/device-bind",
 	}
 	if stackState := stackStateRelPath(envRoot); stackState != "" {
 		relPaths = append(relPaths, stackState)
 	}
-	shardRows, shardErr := loadShardDeviceRowsFromArtifacts(envRoot, plan, assignment)
-	if shardErr == nil && len(shardRows) > 0 {
-		deviceRows = shardRows
-	}
-	for _, shard := range assignment.TaskShards {
-		if shard.Role != "device-mqtt" {
-			continue
-		}
-		if shardErr == nil && len(shardRows) > 0 {
-			for _, row := range shardRows {
-				relPaths = append(relPaths, deviceCredentialRelPaths(row)...)
-			}
-			continue
-		}
-		for idx := shard.Start; idx < shard.End && idx < len(deviceRows); idx++ {
-			relPaths = append(relPaths, deviceCredentialRelPaths(deviceRows[idx])...)
-		}
+	extraFiles := []archiveExtraFile{}
+	for _, artifact := range latestHome100KArtifactFiles(envRoot, plan.Conditions.Brandname) {
+		extraFiles = append(extraFiles, archiveExtraFile{Path: artifact.Path, Name: artifact.Name})
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	tmpPath := path + ".tmp"
-	if err := createTarGzFromRelPaths(tmpPath, envRoot, deduplicateLines(relPaths)); err != nil {
+	if err := createTarGzFromRelPaths(tmpPath, envRoot, deduplicateLines(relPaths), extraFiles); err != nil {
 		_ = os.Remove(tmpPath)
 		return err
 	}
 	return os.Rename(tmpPath, path)
+}
+
+func latestHome100KArtifactFiles(envRoot string, brandname string) []archiveExtraFile {
+	brandLower := strings.ToLower(strings.TrimSpace(brandname))
+	if brandLower == "" {
+		brandLower = "rtk"
+	}
+	candidates := []archiveExtraFile{}
+	if usersPath := latestFile(filepath.Join(envRoot, "artifacts", "users", brandLower+"-users-*.json")); usersPath != "" {
+		candidates = append(candidates, archiveExtraFile{
+			Path: usersPath,
+			Name: filepath.ToSlash(filepath.Join("artifacts", "users", filepath.Base(usersPath))),
+		})
+	}
+	if bindPath := latestHomeBindArtifact(filepath.Join(envRoot, "artifacts", "device-bind", brandLower+"-device-bind-*.json"), brandLower); bindPath != "" {
+		candidates = append(candidates, archiveExtraFile{
+			Path: bindPath,
+			Name: filepath.ToSlash(filepath.Join("artifacts", "device-bind", filepath.Base(bindPath))),
+		})
+	}
+	return candidates
+}
+
+type planDataCoverage struct {
+	UsersPath        string         `json:"users_path"`
+	DeviceBindPath   string         `json:"device_bind_path"`
+	UsersAvailable   int            `json:"users_available"`
+	EligibleUsers    int            `json:"eligible_users"`
+	DevicesAvailable int            `json:"devices_available"`
+	DeviceMix        map[string]int `json:"device_mix"`
+}
+
+func validatePlanDataCoverage(envRoot string, plan Plan) error {
+	coverage, err := inspectPlanDataCoverage(envRoot, plan)
+	if err != nil {
+		return err
+	}
+	problems := []string{}
+	if coverage.UsersAvailable < plan.Conditions.Users {
+		problems = append(problems, fmt.Sprintf("users available=%d required=%d", coverage.UsersAvailable, plan.Conditions.Users))
+	}
+	if coverage.EligibleUsers < plan.Conditions.Users {
+		problems = append(problems, fmt.Sprintf("eligible users available=%d required=%d", coverage.EligibleUsers, plan.Conditions.Users))
+	}
+	if coverage.DevicesAvailable < plan.Conditions.Devices {
+		problems = append(problems, fmt.Sprintf("eligible devices available=%d required=%d", coverage.DevicesAvailable, plan.Conditions.Devices))
+	}
+	for _, deviceType := range sortedMapKeys(plan.DeviceMix) {
+		required := plan.DeviceMix[deviceType]
+		available := coverage.DeviceMix[deviceType]
+		if available < required {
+			problems = append(problems, fmt.Sprintf("%s available=%d required=%d", deviceType, available, required))
+		}
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("home-100k data preflight failed: %s (users=%s device_bind=%s)", strings.Join(problems, "; "), coverage.UsersPath, coverage.DeviceBindPath)
+	}
+	return nil
+}
+
+func inspectPlanDataCoverage(envRoot string, plan Plan) (planDataCoverage, error) {
+	brandLower := strings.ToLower(strings.TrimSpace(plan.Conditions.Brandname))
+	if brandLower == "" {
+		brandLower = "rtk"
+	}
+	usersPath := latestFile(filepath.Join(envRoot, "artifacts", "users", brandLower+"-users-*.json"))
+	bindPath := latestHomeBindArtifact(filepath.Join(envRoot, "artifacts", "device-bind", brandLower+"-device-bind-*.json"), brandLower)
+	if usersPath == "" || bindPath == "" {
+		return planDataCoverage{}, fmt.Errorf("home-100k data preflight failed: missing users or device-bind artifact (users=%s device_bind=%s)", usersPath, bindPath)
+	}
+	users := shardUserArtifact{}
+	if err := readJSON(usersPath, &users); err != nil {
+		return planDataCoverage{}, fmt.Errorf("read users artifact: %w", err)
+	}
+	bind := shardBindArtifact{}
+	if err := readJSON(bindPath, &bind); err != nil {
+		return planDataCoverage{}, fmt.Errorf("read device-bind artifact: %w", err)
+	}
+	userEmails := map[string]bool{}
+	for _, user := range users.Users {
+		email := strings.TrimSpace(user.Email)
+		if email != "" {
+			userEmails[email] = true
+		}
+	}
+	coverage := planDataCoverage{
+		UsersPath:      usersPath,
+		DeviceBindPath: bindPath,
+		UsersAvailable: len(userEmails),
+		DeviceMix:      map[string]int{},
+	}
+	eligibleUsers := map[string]bool{}
+	for _, item := range bind.Assignments {
+		email := strings.TrimSpace(item.AssignedEmail)
+		if !homeDeviceType(item.DeviceType) || !stringSliceContains(item.ServiceOptions, "mqtt") || !userEmails[email] {
+			continue
+		}
+		coverage.DevicesAvailable++
+		coverage.DeviceMix[item.DeviceType]++
+		if email != "" {
+			eligibleUsers[email] = true
+		}
+	}
+	coverage.EligibleUsers = len(eligibleUsers)
+	return coverage, nil
+}
+
+func writePreflightFailure(outDir string, err error) {
+	if strings.TrimSpace(outDir) == "" {
+		return
+	}
+	_ = writeJSONFile(filepath.Join(outDir, "preflight.json"), map[string]any{
+		"status": "failed",
+		"error":  err.Error(),
+	})
 }
 
 func deviceCredentialRelPaths(row deviceManifestRow) []string {
@@ -1710,7 +2085,10 @@ func loadShardDeviceRowsFromArtifacts(envRoot string, plan Plan, assignment VMAs
 	if deviceShardCount == 0 {
 		return nil, fmt.Errorf("assignment has no device shard")
 	}
-	brandLower := "rtk"
+	brandLower := strings.ToLower(strings.TrimSpace(plan.Conditions.Brandname))
+	if brandLower == "" {
+		brandLower = "rtk"
+	}
 	usersPath := latestFile(filepath.Join(envRoot, "artifacts", "users", brandLower+"-users-*.json"))
 	bindPath := latestHomeBindArtifact(filepath.Join(envRoot, "artifacts", "device-bind", brandLower+"-device-bind-*.json"), brandLower)
 	if usersPath == "" || bindPath == "" {
@@ -1780,14 +2158,7 @@ func maxAssignmentConnectedDevices(assignment VMAssignment) int {
 
 func latestFile(pattern string) string {
 	matches, _ := filepath.Glob(pattern)
-	sort.Slice(matches, func(i, j int) bool {
-		ai, _ := os.Stat(matches[i])
-		aj, _ := os.Stat(matches[j])
-		if ai == nil || aj == nil {
-			return matches[i] < matches[j]
-		}
-		return ai.ModTime().After(aj.ModTime())
-	})
+	sortArtifactPathsNewestFirst(matches)
 	if len(matches) == 0 {
 		return ""
 	}
@@ -1796,14 +2167,7 @@ func latestFile(pattern string) string {
 
 func latestHomeBindArtifact(pattern string, brandLower string) string {
 	matches, _ := filepath.Glob(pattern)
-	sort.Slice(matches, func(i, j int) bool {
-		ai, _ := os.Stat(matches[i])
-		aj, _ := os.Stat(matches[j])
-		if ai == nil || aj == nil {
-			return matches[i] < matches[j]
-		}
-		return ai.ModTime().After(aj.ModTime())
-	})
+	sortArtifactPathsNewestFirst(matches)
 	for _, path := range matches {
 		bind := shardBindArtifact{}
 		if err := readJSON(path, &bind); err != nil {
@@ -1826,6 +2190,52 @@ func latestHomeBindArtifact(pattern string, brandLower string) string {
 		return ""
 	}
 	return matches[0]
+}
+
+func sortArtifactPathsNewestFirst(paths []string) {
+	sort.Slice(paths, func(i, j int) bool {
+		ti := artifactFilenameTimestamp(paths[i])
+		tj := artifactFilenameTimestamp(paths[j])
+		if ti != "" || tj != "" {
+			if ti != tj {
+				return ti > tj
+			}
+			return filepath.Base(paths[i]) > filepath.Base(paths[j])
+		}
+		ai, _ := os.Stat(paths[i])
+		aj, _ := os.Stat(paths[j])
+		if ai == nil || aj == nil {
+			return paths[i] < paths[j]
+		}
+		if !ai.ModTime().Equal(aj.ModTime()) {
+			return ai.ModTime().After(aj.ModTime())
+		}
+		return filepath.Base(paths[i]) > filepath.Base(paths[j])
+	})
+}
+
+func artifactFilenameTimestamp(path string) string {
+	base := filepath.Base(path)
+	for i := 0; i+16 <= len(base); i++ {
+		candidate := base[i : i+16]
+		if candidate[8] != 'T' || candidate[15] != 'Z' {
+			continue
+		}
+		ok := true
+		for idx, ch := range candidate {
+			if idx == 8 || idx == 15 {
+				continue
+			}
+			if ch < '0' || ch > '9' {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func homeDeviceType(value string) bool {
@@ -1875,13 +2285,19 @@ func parseEnvFile(path string) map[string]string {
 	return out
 }
 
-func createTarGzFromRelPaths(path string, root string, relPaths []string) error {
+type archiveExtraFile struct {
+	Path string
+	Name string
+}
+
+func createTarGzFromRelPaths(path string, root string, relPaths []string, extraFiles []archiveExtraFile) error {
 	file, err := os.Create(path)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 	gz := gzip.NewWriter(file)
+	gz.Header.ModTime = time.Unix(0, 0)
 	defer gz.Close()
 	tw := tar.NewWriter(gz)
 	defer tw.Close()
@@ -1914,6 +2330,47 @@ func createTarGzFromRelPaths(path string, root string, relPaths []string) error 
 			return err
 		}
 	}
+	for _, extra := range extraFiles {
+		if err := addExtraPathToTar(tw, extra.Path, extra.Name, added); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func addExtraPathToTar(tw *tar.Writer, path string, name string, added map[string]bool) error {
+	name = filepath.ToSlash(filepath.Clean(name))
+	if name == "." || strings.HasPrefix(name, "../") || name == ".." || filepath.IsAbs(name) {
+		return fmt.Errorf("invalid archive extra path: %s", name)
+	}
+	if added[name] {
+		return nil
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("archive extra path is not a regular file: %s", path)
+	}
+	header, err := tar.FileInfoHeader(info, "")
+	if err != nil {
+		return err
+	}
+	header.Name = name
+	normalizeArchiveHeader(header)
+	if err := tw.WriteHeader(header); err != nil {
+		return err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if _, err := io.Copy(tw, file); err != nil {
+		return err
+	}
+	added[name] = true
 	return nil
 }
 
@@ -1945,6 +2402,7 @@ func addPathToTar(tw *tar.Writer, root string, path string, added map[string]boo
 		}
 		header.Linkname = target
 	}
+	normalizeArchiveHeader(header)
 	if err := tw.WriteHeader(header); err != nil {
 		return err
 	}
@@ -1961,6 +2419,16 @@ func addPathToTar(tw *tar.Writer, root string, path string, added map[string]boo
 	return err
 }
 
+func normalizeArchiveHeader(header *tar.Header) {
+	header.ModTime = time.Unix(0, 0)
+	header.AccessTime = time.Unix(0, 0)
+	header.ChangeTime = time.Unix(0, 0)
+	header.Uid = 0
+	header.Gid = 0
+	header.Uname = ""
+	header.Gname = ""
+}
+
 func deduplicateLines(lines []string) []string {
 	seen := map[string]bool{}
 	out := make([]string, 0, len(lines))
@@ -1974,7 +2442,7 @@ func deduplicateLines(lines []string) []string {
 	return out
 }
 
-func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlagValues, binaries remoteRunnerBinaries) error {
+func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlagValues, binaries remoteRunnerBinaries, prepareArtifacts bool) error {
 	base := workflowOutDir(values)
 	localOutDir, err := filepath.Abs(base)
 	if err != nil {
@@ -1996,11 +2464,31 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 	if err != nil {
 		return err
 	}
+	localArtifactStore, err := filepath.Abs(filepath.Join(base, "artifact-store"))
+	if err != nil {
+		return err
+	}
+	fanoutPrivateKey, err := filepath.Abs(filepath.Join(base, "ansible", "fanout_ed25519"))
+	if err != nil {
+		return err
+	}
+	if prepareArtifacts {
+		localArtifactStore, err = prepareLocalArtifactStore(base, vms, binaries)
+		if err != nil {
+			return err
+		}
+		fanoutPrivateKey, err = ensureFanoutKey(base)
+		if err != nil {
+			return err
+		}
+	}
+	fanoutPublicKey := fanoutPrivateKey + ".pub"
 	ansibleDir := filepath.Join(base, "ansible")
 	if err := os.MkdirAll(ansibleDir, 0o755); err != nil {
 		return err
 	}
 	hosts := map[string]any{}
+	orchestraHosts := map[string]any{}
 	for _, vm := range vms {
 		if strings.TrimSpace(vm.PublicIPv4) == "" {
 			return fmt.Errorf("VM %s has no public IPv4 for ansible inventory", vm.Label)
@@ -2033,15 +2521,24 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 			"local_shard_manifest":         localShardManifest,
 			"local_env_rsync_filter":       localEnvRsyncFilter,
 			"local_env_archive":            localEnvArchive,
+			"artifact_env_archive":         filepath.Base(localEnvArchive),
+			"artifact_shard_manifest":      filepath.Base(localShardManifest),
 			"remote_shard_manifest":        strings.TrimRight(values.remoteWorkspace, "/") + "/loadtests/home-100k/shard-manifests/current.json",
 			"remote_out_dir":               strings.TrimRight(firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k"), "/") + "/" + normalizedRunID(values.runID) + "/" + vm.Label,
 		}
 	}
+	if len(vms) == 0 {
+		return errors.New("no VMs available for ansible inventory")
+	}
+	orchestraHosts[vms[0].Label] = hosts[vms[0].Label]
 	inventory := map[string]any{
 		"all": map[string]any{
 			"children": map[string]any{
 				"home_100k": map[string]any{
 					"hosts": hosts,
+				},
+				"home_100k_orchestra": map[string]any{
+					"hosts": orchestraHosts,
 				},
 			},
 		},
@@ -2058,37 +2555,199 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 		stageCoolDown = plan.Stages[0].CoolDown
 	}
 	extraVars := map[string]any{
-		"run_id":                normalizedRunID(values.runID),
-		"local_out_dir":         localOutDir,
-		"local_runner":          localRunner,
-		"local_rtk_cloud":       localRTKCloud,
-		"local_cloud_mqtt_test": localCloudMQTTTest,
-		"local_env_root":        strings.TrimRight(localEnvRoot, "/"),
-		"remote_workspace":      strings.TrimRight(values.remoteWorkspace, "/"),
-		"remote_env_root":       strings.TrimRight(values.remoteEnvRoot, "/"),
-		"remote_out_root":       strings.TrimRight(firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k"), "/"),
-		"brandname":             plan.Conditions.Brandname,
-		"region":                plan.Conditions.Region,
-		"stage_warm_up":         stageWarmUp,
-		"stage_steady":          stageSteady,
-		"stage_cool_down":       stageCoolDown,
-		"runner_mode":           firstNonEmpty(values.runnerMode, "sample"),
-		"mqtt_addr":             strings.TrimSpace(values.mqttAddr),
-		"video_cloud_base_url":  strings.TrimSpace(values.videoCloudBaseURL),
-		"account_manager_url":   strings.TrimSpace(values.accountManagerURL),
+		"run_id":                   normalizedRunID(values.runID),
+		"local_out_dir":            localOutDir,
+		"local_runner":             localRunner,
+		"local_rtk_cloud":          localRTKCloud,
+		"local_cloud_mqtt_test":    localCloudMQTTTest,
+		"local_artifact_store":     localArtifactStore,
+		"fanout_private_key":       fanoutPrivateKey,
+		"fanout_public_key":        fanoutPublicKey,
+		"local_env_root":           strings.TrimRight(localEnvRoot, "/"),
+		"remote_workspace":         strings.TrimRight(values.remoteWorkspace, "/"),
+		"remote_env_root":          strings.TrimRight(values.remoteEnvRoot, "/"),
+		"remote_out_root":          strings.TrimRight(firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k"), "/"),
+		"brandname":                plan.Conditions.Brandname,
+		"region":                   plan.Conditions.Region,
+		"stage_warm_up":            stageWarmUp,
+		"stage_steady":             stageSteady,
+		"stage_cool_down":          stageCoolDown,
+		"runner_mode":              firstNonEmpty(values.runnerMode, "sample"),
+		"mqtt_addr":                strings.TrimSpace(values.mqttAddr),
+		"video_cloud_public_url":   strings.TrimSpace(firstNonEmpty(values.videoCloudPublicURL, values.videoCloudBaseURL)),
+		"video_cloud_token_url":    strings.TrimSpace(values.videoCloudTokenURL),
+		"account_manager_url":      strings.TrimSpace(values.accountManagerURL),
+		"credential_bundle_format": firstNonEmpty(values.credentialBundleFormat, "sqlite-gzip"),
 	}
 	return writeJSONFile(filepath.Join(ansibleDir, "extra-vars.json"), extraVars)
 }
 
+func prepareLocalArtifactStore(base string, vms []LinodeVM, binaries remoteRunnerBinaries) (string, error) {
+	store := filepath.Join(base, "artifact-store")
+	paths := []string{
+		filepath.Join(store, "bin"),
+		filepath.Join(store, "common"),
+		filepath.Join(store, "env-archives"),
+		filepath.Join(store, "shard-manifests"),
+	}
+	for _, path := range paths {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			return "", err
+		}
+	}
+	links := []struct {
+		src  string
+		dest string
+	}{
+		{binaries.Home100K, filepath.Join(store, "bin", "home-100k")},
+		{binaries.RTKCloud, filepath.Join(store, "bin", "rtk-cloud")},
+		{binaries.CloudMQTTTest, filepath.Join(store, "bin", "cloud-mqtt-test")},
+		{filepath.Join(base, "env-common", "env-common.tar.gz"), filepath.Join(store, "common", "env-common.tar.gz")},
+	}
+	for _, vm := range vms {
+		links = append(links,
+			struct {
+				src  string
+				dest string
+			}{filepath.Join(base, "env-archives", vm.Label+".tar.gz"), filepath.Join(store, "env-archives", vm.Label+".tar.gz")},
+			struct {
+				src  string
+				dest string
+			}{filepath.Join(base, "shard-manifests", vm.Label+".json"), filepath.Join(store, "shard-manifests", vm.Label+".json")},
+		)
+	}
+	for _, item := range links {
+		if err := linkOrCopyFile(item.src, item.dest); err != nil {
+			return "", err
+		}
+	}
+	if err := writeArtifactStoreManifest(store); err != nil {
+		return "", err
+	}
+	return filepath.Abs(store)
+}
+
+func writeArtifactStoreManifest(store string) error {
+	type artifactFile struct {
+		Path   string `json:"path"`
+		Size   int64  `json:"size"`
+		SHA256 string `json:"sha256"`
+	}
+	files := []artifactFile{}
+	if err := filepath.WalkDir(store, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(store, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if rel == "manifest.json" {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		sum, err := sha256File(path)
+		if err != nil {
+			return err
+		}
+		files = append(files, artifactFile{Path: rel, Size: info.Size(), SHA256: sum})
+		return nil
+	}); err != nil {
+		return err
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	digestInput := strings.Builder{}
+	for _, file := range files {
+		digestInput.WriteString(file.Path)
+		digestInput.WriteByte('\x00')
+		digestInput.WriteString(strconv.FormatInt(file.Size, 10))
+		digestInput.WriteByte('\x00')
+		digestInput.WriteString(file.SHA256)
+		digestInput.WriteByte('\n')
+	}
+	digest := sha256.Sum256([]byte(digestInput.String()))
+	return writeJSONFile(filepath.Join(store, "manifest.json"), map[string]any{
+		"schema":       "home-100k-artifact-store/v1",
+		"generated_at": time.Now().UTC().Format(time.RFC3339),
+		"digest":       hex.EncodeToString(digest[:]),
+		"files":        files,
+	})
+}
+
+func sha256File(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func linkOrCopyFile(src, dest string) error {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	_ = os.Remove(dest)
+	if err := os.Link(src, dest); err == nil {
+		return nil
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
+}
+
+func ensureFanoutKey(base string) (string, error) {
+	keyPath, err := filepath.Abs(filepath.Join(base, "ansible", "fanout_ed25519"))
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(keyPath); err == nil {
+		return keyPath, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(keyPath), 0o700); err != nil {
+		return "", err
+	}
+	if err := commandRunner("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", keyPath); err != nil {
+		return "", fmt.Errorf("generate per-run fanout ssh key: %w", err)
+	}
+	_ = os.Chmod(keyPath, 0o600)
+	return keyPath, nil
+}
+
 func runAnsiblePlaybook(values workflowFlagValues, playbook string) error {
 	base := workflowOutDir(values)
+	ansibleConfig := filepath.Join("loadtests", "home-100k", "ansible", "ansible.cfg")
 	args := []string{
+		"ANSIBLE_CONFIG=" + ansibleConfig,
+		"ansible-playbook",
 		"--forks", "20",
 		"-i", filepath.Join(base, "ansible", "inventory.json"),
 		filepath.Join("loadtests", "home-100k", "ansible", playbook),
 		"--extra-vars", "@" + filepath.Join(base, "ansible", "extra-vars.json"),
 	}
-	return commandRunner("ansible-playbook", args...)
+	return commandRunner("env", args...)
 }
 
 func initialSyncTelemetry(vms []LinodeVM) []VMSyncTelemetry {

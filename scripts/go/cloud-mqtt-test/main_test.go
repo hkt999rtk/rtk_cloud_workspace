@@ -1,13 +1,16 @@
 package main
 
 import (
+	"compress/gzip"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"database/sql"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -69,6 +72,35 @@ func TestLatestHomeMQTTBindArtifactSkipsIncompleteLatestArtifact(t *testing.T) {
 	}
 }
 
+func TestLatestHomeMQTTBindArtifactPrefersFilenameTimestampOverMTime(t *testing.T) {
+	root := t.TempDir()
+	older := filepath.Join(root, "rtk-device-bind-20260615T010000Z.json")
+	newer := filepath.Join(root, "rtk-device-bind-20260615T020000Z.json")
+	complete := `{
+  "brandname": "RTK",
+  "assignments": [
+    {"device_type": "light", "service_options": ["mqtt"]},
+    {"device_type": "air_conditioner", "service_options": ["mqtt"]},
+    {"device_type": "smart_meter", "service_options": ["mqtt"]}
+  ]
+}`
+	write(t, older, complete)
+	write(t, newer, complete)
+	oldTime := time.Now()
+	newTime := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(older, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(newer, newTime, newTime); err != nil {
+		t.Fatal(err)
+	}
+
+	got := latestHomeMQTTBindArtifact(filepath.Join(root, "rtk-device-bind-*.json"), "rtk")
+	if got != newer {
+		t.Fatalf("latestHomeMQTTBindArtifact = %q, want %q", got, newer)
+	}
+}
+
 func TestVideoCloudMTLSBaseURLUsesDeviceClientDomainFromTopology(t *testing.T) {
 	root := t.TempDir()
 	mkdir(t, filepath.Join(root, "topology"))
@@ -101,6 +133,21 @@ func TestVideoCloudMTLSBaseURLDefaultsToDeviceSubdomain(t *testing.T) {
 	}, "https://video-cloud-staging.realtekconnect.com")
 	if got != "https://device.video-cloud-staging.realtekconnect.com" {
 		t.Fatalf("videoCloudMTLSBaseURL = %q, want default device subdomain", got)
+	}
+}
+
+func TestResolveVideoCloudEndpointsKeepsTokenBootstrapOnDeviceMTLSURL(t *testing.T) {
+	t.Setenv("VIDEO_CLOUD_BASE_URL", "https://video-cloud-staging.realtekconnect.com")
+
+	endpoints := resolveVideoCloudEndpoints(t.TempDir(), map[string]string{
+		"VIDEO_CLOUD_DOMAIN": "video-cloud-staging.realtekconnect.com",
+	})
+
+	if endpoints.PublicBaseURL != "https://video-cloud-staging.realtekconnect.com" {
+		t.Fatalf("PublicBaseURL = %q, want public API URL", endpoints.PublicBaseURL)
+	}
+	if endpoints.TokenBootstrapBaseURL != "https://device.video-cloud-staging.realtekconnect.com" {
+		t.Fatalf("TokenBootstrapBaseURL = %q, want device mTLS URL", endpoints.TokenBootstrapBaseURL)
 	}
 }
 
@@ -720,6 +767,95 @@ func TestAggregateMQTTIOTotalsFromTraceChain(t *testing.T) {
 	}
 }
 
+func TestAttachMQTTIOTotalsIncludesFailureReasons(t *testing.T) {
+	totals := mqttIOTotals{
+		HTTPFailures: 2,
+		FailureReasons: map[string]int64{
+			"app_desired_publish_failed": 2,
+		},
+	}
+	result := map[string]any{}
+	attachMQTTIOTotals(result, totals)
+	reasons, ok := result["failure_reasons"].(map[string]int64)
+	if !ok {
+		t.Fatalf("failure_reasons missing or wrong type: %#v", result["failure_reasons"])
+	}
+	if reasons["app_desired_publish_failed"] != 2 {
+		t.Fatalf("failure_reasons = %#v", reasons)
+	}
+}
+
+func TestParseSustainedStagesRequiresMonotonicTargets(t *testing.T) {
+	stages, err := parseSustainedStages(loadOptions{
+		StageNames:            "25k,50k,75k,100k",
+		StageConnectedDevices: "2500,5000,7500,10000",
+		StageDurationsSeconds: "75,75,75,75",
+	})
+	if err != nil {
+		t.Fatalf("parseSustainedStages() error = %v", err)
+	}
+	if len(stages) != 4 || stages[0].ConnectedTarget != 2500 || stages[3].ConnectedTarget != 10000 {
+		t.Fatalf("unexpected stages: %#v", stages)
+	}
+	if _, err := parseSustainedStages(loadOptions{
+		StageNames:            "50k,25k",
+		StageConnectedDevices: "5000,2500",
+		StageDurationsSeconds: "75,75",
+	}); err == nil {
+		t.Fatal("expected decreasing stage target to fail")
+	}
+}
+
+func TestLoadLeafFirstX509KeyPairUsesInlineSQLiteBundleMaterial(t *testing.T) {
+	certPEM, keyPEM, chainPEM := testAppMaterial(t, "device-1")
+	cert, err := loadLeafFirstX509KeyPairForRecord(certRecord{
+		DeviceID: "device-1",
+		CertPEM:  certPEM,
+		KeyPEM:   keyPEM,
+		ChainPEM: chainPEM,
+	})
+	if err != nil {
+		t.Fatalf("load inline cert material: %v", err)
+	}
+	if len(cert.Certificate) == 0 {
+		t.Fatal("expected certificate chain")
+	}
+}
+
+func TestLoadHome100KCredentialBundleReadsGzippedSQLiteDevices(t *testing.T) {
+	envRoot := t.TempDir()
+	credentialsDir := filepath.Join(envRoot, "loadtests", "home-100k", "credentials")
+	mkdir(t, credentialsDir)
+	sqlitePath := filepath.Join(t.TempDir(), "home-100k-mixed-000.sqlite")
+	db, err := sql.Open("sqlite", sqlitePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`create table devices(device_id text primary key, device_type text not null, cert_pem text, key_pem text, chain_pem text, bundle_pem text, metadata_json text, factory_enroll_request_json text, factory_enroll_response_redacted_json text)`); err != nil {
+		t.Fatal(err)
+	}
+	certPEM, keyPEM, chainPEM := testAppMaterial(t, "device-1")
+	if _, err := db.Exec(`insert into devices(device_id, device_type, cert_pem, key_pem, chain_pem) values(?, ?, ?, ?, ?)`, "device-1", "light", certPEM, keyPEM, chainPEM); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	gzipTestFile(t, sqlitePath, filepath.Join(credentialsDir, "home-100k-mixed-000.sqlite.gz"))
+
+	bundle, err := loadHome100KCredentialBundle(envRoot)
+	if err != nil {
+		t.Fatalf("load credential bundle: %v", err)
+	}
+	device, ok := bundle.Devices["device-1"]
+	if !ok {
+		t.Fatalf("bundle missing device-1: %#v", bundle.Devices)
+	}
+	if device.CertPEM != certPEM || device.KeyPEM != keyPEM || device.ChainPEM != chainPEM {
+		t.Fatalf("bundle device PEM mismatch: %#v", device)
+	}
+}
+
 func TestActorSeparatedProbeRecordsTraceChain(t *testing.T) {
 	broker := newFakeMQTTBroker(t)
 	defer broker.Close()
@@ -780,6 +916,27 @@ func mkdir(t *testing.T, path string) {
 func write(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func gzipTestFile(t *testing.T, src, dst string) {
+	t.Helper()
+	in, err := os.Open(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	gz := gzip.NewWriter(out)
+	if _, err := io.Copy(gz, in); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -860,6 +1017,58 @@ func (b *fakeMQTTBroker) PublishCount(actor, topic string) int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.publishCounts[actor+"\x00"+topic]
+}
+
+func TestConnectSustainedDevicesUntilReturnsWhenDeadlineAlreadyExpired(t *testing.T) {
+	assignments := make([]assignment, 100)
+	for idx := range assignments {
+		assignments[idx] = assignment{DeviceID: fmt.Sprintf("device-%03d", idx)}
+	}
+	done := make(chan []sustainedDeviceSession, 1)
+	go func() {
+		var totals mqttIOTotals
+		done <- connectSustainedDevicesUntil(assignments, nil, "RTK", "run-deadline", "http://127.0.0.1:1", "127.0.0.1", 1, 32, time.Now().Add(-time.Millisecond), &totals)
+	}()
+	select {
+	case sessions := <-done:
+		if len(sessions) != 0 {
+			t.Fatalf("sessions = %d, want 0", len(sessions))
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("connectSustainedDevicesUntil deadlocked after expired deadline")
+	}
+}
+
+func TestConnectSustainedDevicesUntilReturnsWhenDeadlineExpiresDuringDispatch(t *testing.T) {
+	assignments := make([]assignment, 10000)
+	for idx := range assignments {
+		assignments[idx] = assignment{DeviceID: fmt.Sprintf("device-%05d", idx)}
+	}
+	done := make(chan []sustainedDeviceSession, 1)
+	go func() {
+		var totals mqttIOTotals
+		done <- connectSustainedDevicesUntil(assignments, nil, "RTK", "run-deadline", "http://127.0.0.1:1", "127.0.0.1", 1, 1, time.Now().Add(10*time.Millisecond), &totals)
+	}()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("connectSustainedDevicesUntil deadlocked when deadline expired during dispatch")
+	}
+}
+
+func TestStagedConnectDeadlineReservesActionWindow(t *testing.T) {
+	start := time.Unix(1000, 0)
+	deadline := start.Add(75 * time.Second)
+	got := stagedConnectDeadline(start, deadline)
+	if got.Sub(start) != 37500*time.Millisecond {
+		t.Fatalf("connect deadline offset = %s, want 37.5s", got.Sub(start))
+	}
+
+	longDeadline := start.Add(10 * time.Minute)
+	got = stagedConnectDeadline(start, longDeadline)
+	if longDeadline.Sub(got) != 90*time.Second {
+		t.Fatalf("long stage action reserve = %s, want 90s", longDeadline.Sub(got))
+	}
 }
 
 func (b *fakeMQTTBroker) serve() {

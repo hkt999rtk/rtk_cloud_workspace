@@ -150,17 +150,17 @@ func RenderReport(input ReportInput) string {
 		fmt.Fprintln(&b)
 
 		fmt.Fprintln(&b, "## Device MQTT Totals")
-		fmt.Fprintln(&b, "| Stage | Connect attempts | Connect success | Connect fail | Subscribes | Publishes | Received | Delta received | Reported publishes | Rejected publishes | Bytes sent | Bytes received |")
-		fmt.Fprintln(&b, "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+		fmt.Fprintln(&b, "| Stage | Connect attempts | Connect success | Connect fail | New subscribes | Active connections | Active subscriptions | Publishes | Received | Delta received | Reported publishes | Rejected publishes | Bytes sent | Bytes received |")
+		fmt.Fprintln(&b, "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
 		var deviceTotal DeviceMQTTTotals
 		for _, stage := range input.StageResults {
 			deviceTotal = addDeviceMQTTTotals(deviceTotal, stage.DeviceMQTTTotals)
 			t := stage.DeviceMQTTTotals
-			fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d |\n",
-				stage.Name, t.ConnectAttempts, t.ConnectSuccess, t.ConnectFail, t.Subscribes, t.Publishes, t.ReceivedMessages, t.DeltaReceived, t.ReportedPublishes, t.RejectedPublishes, t.BytesSent, t.BytesReceived)
+			fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d |\n",
+				stage.Name, t.ConnectAttempts, t.ConnectSuccess, t.ConnectFail, t.Subscribes, t.ActiveConnections, t.ActiveSubscriptions, t.Publishes, t.ReceivedMessages, t.DeltaReceived, t.ReportedPublishes, t.RejectedPublishes, t.BytesSent, t.BytesReceived)
 		}
-		fmt.Fprintf(&b, "| total | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d |\n",
-			deviceTotal.ConnectAttempts, deviceTotal.ConnectSuccess, deviceTotal.ConnectFail, deviceTotal.Subscribes, deviceTotal.Publishes, deviceTotal.ReceivedMessages, deviceTotal.DeltaReceived, deviceTotal.ReportedPublishes, deviceTotal.RejectedPublishes, deviceTotal.BytesSent, deviceTotal.BytesReceived)
+		fmt.Fprintf(&b, "| total | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d |\n",
+			deviceTotal.ConnectAttempts, deviceTotal.ConnectSuccess, deviceTotal.ConnectFail, deviceTotal.Subscribes, deviceTotal.ActiveConnections, deviceTotal.ActiveSubscriptions, deviceTotal.Publishes, deviceTotal.ReceivedMessages, deviceTotal.DeltaReceived, deviceTotal.ReportedPublishes, deviceTotal.RejectedPublishes, deviceTotal.BytesSent, deviceTotal.BytesReceived)
 		fmt.Fprintln(&b)
 
 		fmt.Fprintln(&b, "## APP/User Totals")
@@ -176,6 +176,28 @@ func RenderReport(input ReportInput) string {
 		fmt.Fprintf(&b, "| total | %d | %d | %d | %d | %d | %d | %d | %d | %d |\n",
 			appTotal.LoginAttempts, appTotal.LoginSuccess, appTotal.LoginFail, appTotal.ListDevicesRequests, appTotal.ReadShadowRequests, appTotal.DesiredWrites, appTotal.ReceivedAcks, appTotal.BytesSent, appTotal.BytesReceived)
 		fmt.Fprintln(&b)
+
+		reasonRows := failureReasonRows(input.StageResults)
+		if len(reasonRows) > 0 {
+			fmt.Fprintln(&b, "## Failure Reasons")
+			fmt.Fprintln(&b, "| Stage | Reason | Count |")
+			fmt.Fprintln(&b, "| --- | --- | ---: |")
+			for _, row := range reasonRows {
+				fmt.Fprintf(&b, "| %s | %s | %d |\n", row.Stage, row.Reason, row.Count)
+			}
+			fmt.Fprintln(&b)
+		}
+
+		detailRows := failureDetailRows(input.StageResults)
+		if len(detailRows) > 0 {
+			fmt.Fprintln(&b, "## Failure Details")
+			fmt.Fprintln(&b, "| Stage | Reason | Detail | Count |")
+			fmt.Fprintln(&b, "| --- | --- | --- | ---: |")
+			for _, row := range detailRows {
+				fmt.Fprintf(&b, "| %s | %s | %s | %d |\n", row.Stage, row.Reason, redact(row.Detail), row.Count)
+			}
+			fmt.Fprintln(&b)
+		}
 	}
 
 	if strings.TrimSpace(input.ServerCorrelation.Status) != "" || len(input.ServerCorrelation.Checks) > 0 || len(input.ServerCorrelation.Reasons) > 0 {
@@ -282,6 +304,86 @@ func renderMap(b *strings.Builder, title string, values map[string]int) {
 	for _, key := range keys {
 		fmt.Fprintf(b, "  - %s: %d\n", displayName(key), values[key])
 	}
+}
+
+type failureReasonRow struct {
+	Stage  string
+	Reason string
+	Count  int64
+}
+
+type failureDetailRow struct {
+	Stage  string
+	Reason string
+	Detail string
+	Count  int64
+}
+
+func failureReasonRows(stages []StageResult) []failureReasonRow {
+	rows := []failureReasonRow{}
+	total := map[string]int64{}
+	for _, stage := range stages {
+		for _, reason := range sortedKeys(stage.FailureReasons) {
+			count := stage.FailureReasons[reason]
+			if count == 0 {
+				continue
+			}
+			rows = append(rows, failureReasonRow{Stage: stage.Name, Reason: reason, Count: count})
+			total[reason] += count
+		}
+	}
+	for _, reason := range sortedKeys(total) {
+		if total[reason] != 0 {
+			rows = append(rows, failureReasonRow{Stage: "total", Reason: reason, Count: total[reason]})
+		}
+	}
+	return rows
+}
+
+func failureDetailRows(stages []StageResult) []failureDetailRow {
+	rows := []failureDetailRow{}
+	total := map[string]map[string]int64{}
+	for _, stage := range stages {
+		for _, reason := range sortedNestedKeys(stage.FailureDetails) {
+			for _, detail := range sortedKeys(stage.FailureDetails[reason]) {
+				count := stage.FailureDetails[reason][detail]
+				if count == 0 {
+					continue
+				}
+				rows = append(rows, failureDetailRow{Stage: stage.Name, Reason: reason, Detail: detail, Count: count})
+				if total[reason] == nil {
+					total[reason] = map[string]int64{}
+				}
+				total[reason][detail] += count
+			}
+		}
+	}
+	for _, reason := range sortedNestedKeys(total) {
+		for _, detail := range sortedKeys(total[reason]) {
+			if total[reason][detail] != 0 {
+				rows = append(rows, failureDetailRow{Stage: "total", Reason: reason, Detail: detail, Count: total[reason][detail]})
+			}
+		}
+	}
+	return rows
+}
+
+func sortedKeys(values map[string]int64) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedNestedKeys(values map[string]map[string]int64) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func redact(value string) string {

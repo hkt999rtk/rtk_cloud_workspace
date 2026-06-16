@@ -14,8 +14,8 @@ func TestBuildLifecycleActionsTagsEphemeralVMsByRunID(t *testing.T) {
 	actions := BuildLifecycleActions(plan, "run-123")
 
 	createMixed := filterActions(actions, "provision-vm", "mixed")
-	if len(createMixed) != 10 {
-		t.Fatalf("mixed provision actions = %d, want 10", len(createMixed))
+	if len(createMixed) != 5 {
+		t.Fatalf("mixed provision actions = %d, want 5", len(createMixed))
 	}
 	for _, action := range createMixed {
 		if action.RunID != "run-123" {

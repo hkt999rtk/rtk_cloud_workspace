@@ -84,11 +84,11 @@ Default baseline:
 | Server target | Current staging/LKE env-root |
 | Load-generator runtime | Ephemeral Linode VMs |
 | First baseline region model | Single Linode region |
-| Device-generator density | Up to 10,000 devices per VM |
-| Load-generator VM count | 10 `mixed` VMs |
-| Per-VM device task | 10,000 devices |
-| Per-VM user task | 500 users |
-| Total load-generator VM count | 10 for the default 100K-device/5K-user mixed baseline |
+| Device-generator density | Up to 20,000 devices per VM |
+| Load-generator VM count | 5 `mixed` VMs |
+| Per-VM device task | 20,000 devices |
+| Per-VM user task | 1,000 users |
+| Total load-generator VM count | 5 for the default 100K-device/5K-user mixed baseline |
 | Stage windows | 25K, 50K, 75K, 100K connected devices |
 
 The test should use deterministic sharding. Each stage must have its own
@@ -189,7 +189,10 @@ from the env-root are used only for token bootstrap.
 ### Online Steady Devices
 
 - Connect to MQTT and remain online during the selected stage window.
-- Subscribe to shadow delta topics before user desired writes.
+- Subscribe to shadow delta topics immediately after MQTT connect and keep that
+  subscription for the whole device lifetime. Stage transitions must add newly
+  online devices; they must not disconnect and resubscribe devices that were
+  already online in an earlier stage.
 - Call shadow `get` on startup to establish initial version and state.
 - Apply desired changes and publish reported state.
 - Confirm that delta clears after reported matches desired.
@@ -266,19 +269,20 @@ credentials.
 The first implementation should provide a single workflow:
 
 ```text
-plan -> provision-vms -> sync -> run-stages -> collect -> collect-server-evidence -> aggregate -> destroy-vms
+plan -> provision-vms/reuse-vms -> sync -> run-stages -> collect -> collect-server-evidence -> aggregate -> shutdown-vms-or-preserve-vms
 ```
 
 Required behavior:
 
 - `plan` prints VM count, role layout, shard ranges, stage windows, scenario
   mix, expected artifacts, server evidence queries, and cleanup plan.
-- `provision-vms` creates ephemeral Linode VMs in the selected region. It is a
+- `provision-vms` creates or reuses Linode VMs in the selected region. It is a
   dry-run by default; live provisioning requires `--live --confirm-live` and a
   Linode token from `--linode-token` or `LINODE_TOKEN`.
 - `sync` generates an Ansible inventory from `vms.json`, writes one shard
-  manifest per VM, and copies only the Linux runner binary, the VM's manifest,
-  and minimal env-root artifacts.
+  manifest per VM, builds one compressed SQLite credential bundle per VM, and
+  copies only the Linux runner binary, the VM's manifest, the compressed
+  credential bundle, and minimal env-root artifacts.
 - `run-stages` uses the generated Ansible inventory only to start per-VM
   runner daemons in `READY_WAIT`. The host coordinator then waits for all VMs
   to report ready, sends a shared `START` command, and polls completion. Formal
@@ -294,22 +298,29 @@ Required behavior:
   template and collected artifacts.
 - `list-vms` lists leftover load-generator VMs by `home-100k` and `run_id`
   tags when cleanup needs review.
-- `destroy-vms` scrubs and deletes load-generator VMs.
+- `shutdown-vms` powers off reusable load-generator VMs after collection. Use
+  the cleanup script only when the operator intentionally wants to delete the
+  VM pool.
+- `workflow-live` and `workflow-resume-live` automatically shut down VMs only
+  when the workflow return code is `0` and the rendered report status is
+  `PASS`. Failed, `FAIL`, or `INCOMPLETE` runs preserve VMs by default for
+  resume/debug. Set `HOME100K_SHUTDOWN_ON_ERROR=1` only when the operator wants
+  automatic shutdown even after a failed or incomplete run.
 
-If a run fails before cleanup, the tooling must be able to list and destroy
-leftover load-generator VMs by tag/run id.
+If a run fails before cleanup, the tooling must be able to list, shut down, or
+explicitly delete leftover load-generator VMs by tag/run id.
 
 ### Device/User Shard Assignment
 
-The default baseline creates 10 mixed VM assignments. Each assignment owns one
+The current debug baseline creates 5 mixed VM assignments. Each assignment owns one
 device shard and one user shard:
 
 | VM label | Device range | User range |
 | --- | ---: | ---: |
-| `home-100k-mixed-000` | `0..9999` | `0..499` |
-| `home-100k-mixed-001` | `10000..19999` | `500..999` |
+| `home-100k-mixed-000` | `0..19999` | `0..999` |
+| `home-100k-mixed-001` | `20000..39999` | `1000..1999` |
 | `...` | `...` | `...` |
-| `home-100k-mixed-009` | `90000..99999` | `4500..4999` |
+| `home-100k-mixed-004` | `80000..99999` | `4000..4999` |
 
 The plan's `vm_assignments` array is the source of truth. After
 `provision-vms --live` writes `vms.json`, `sync --live` combines those VM
@@ -319,12 +330,36 @@ labels and IPs with the deterministic plan, then writes:
 <out-dir>/ansible/inventory.json
 <out-dir>/ansible/extra-vars.json
 <out-dir>/shard-manifests/<vm-label>.json
+<out-dir>/credential-bundles/<vm-label>.sqlite.gz
+<out-dir>/credential-bundles/<vm-label>.manifest.json
 ```
 
 The Ansible inventory binds each provisioned VM IP to exactly one
 `local_shard_manifest`. The remote runner receives only its own manifest at
 `loadtests/home-100k/shard-manifests/current.json`, so a VM does not receive or
 execute every device/user range.
+
+### SQLite Credential Bundles
+
+Per-device PEM fan-out is not used for Home 100K sync. Before Ansible runs,
+`sync --live` creates one SQLite database per VM shard, compresses it as
+`<vm-label>.sqlite.gz`, and writes a sha256 manifest next to it. The database
+contains only the devices assigned to that VM plus the users/device-bind
+artifacts needed by that shard. It is extracted on the VM under
+`<remote-env-root>/loadtests/home-100k/credentials/`.
+
+The runner reads device certificate/key/chain material directly from SQLite and
+constructs TLS certificates from bytes. It must not require
+`devices/test_device/devices/<type>/<id>/*.pem` or
+`devices/test_device/bundles/<type>/<id>.pem` to exist on the load VM. This
+keeps each VM sync to a small number of files, avoids tens of thousands of
+inodes per shard, and lets future orchestra/coordinator reuse skip uploads when
+the bundle sha256 has not changed.
+
+Users and device-bind source artifacts are selected by the timestamp embedded in
+their filenames, for example `20260615T094325Z`, not by filesystem mtime. This
+keeps local bundle generation and remote runner behavior identical after tar or
+rsync normalizes mtimes.
 
 ## Public CLI Shape
 
@@ -384,9 +419,11 @@ HOME100K_RUN_ID=20260615T100000Z \
 ```
 
 The default command is `workflow-live`. It runs the full paid/destructive VM
-lifecycle and destroys the provisioned VMs after report generation. If the
-workflow is interrupted, rerun `destroy-vms --live --confirm-live` with the same
-`HOME100K_RUN_ID` to clean any leftovers. During the live workflow the script
+lifecycle and powers off reusable VMs only after a successful `PASS` report.
+If the workflow fails, or the final report is `FAIL`/`INCOMPLETE`, VMs stay
+available for inspection and `workflow-resume-live`. Run `shutdown-vms` when
+debugging is finished, or `destroy-vms --live --confirm-live` only when the VM
+pool should be deleted. During the live workflow the script
 prints status immediately and every 30 seconds with the current phase, VM count,
 collected shard count, server evidence state, report status, per load-generator
 VM resource samples, and per Kubernetes node resource samples. Provisioned node
@@ -419,12 +456,31 @@ Runner mode also belongs in the non-secret description file. The default is
 env-root. It must not fall back to sampled in-memory actor flows. Use
 `HOME100K_RUNNER_MODE=sample` only for local developer smoke tests.
 
+Credential bundle format also belongs in the non-secret description file. The
+only supported value is `HOME100K_CREDENTIAL_BUNDLE_FORMAT=sqlite-gzip`, which
+means local sync preparation writes one per-VM SQLite database and uploads the
+compressed database plus manifest instead of expanded per-device credential
+files.
+
+The device session model belongs in the same description file. The supported
+live value is `HOME100K_DEVICE_SESSION_MODEL=lifetime-subscription`: devices
+subscribe once after MQTT connect and keep their shadow delta subscription
+until the shard runner exits, except for explicit offline/flapping scenarios.
+
 Load-generator start coordination is controlled by
 `HOME100K_COORDINATOR_START_DELAY_MS`, default `3000`. This is not an absolute
 wall-clock start time. The host coordinator first waits until every VM daemon is
 ready, then sends the same START command to all VMs. Each VM waits the
 configured delay using its local monotonic clock and records its actual stage
 start and first-connect timestamps for report-time start skew calculation.
+
+Device MQTT subscriptions are lifetime state, not scheduled publish events. In
+live mode, each shard runner keeps one device session pool across the 25K,
+50K, 75K, and 100K stages. The 50K stage adds only the devices needed beyond
+25K, the 75K stage adds only the next increment, and existing device
+connections and delta-topic subscriptions remain open. The report tracks both
+new subscribe packets and active connection/subscription gauges by stage;
+capacity gates use the active gauges.
 
 ### LKE Capacity Placement
 
@@ -519,9 +575,11 @@ go run ./loadtests/home-100k/cmd/home-100k -- run \
 ```
 
 The lifecycle commands are dry-run/review-time commands by default. Live Linode
-VM creation and deletion require `--live --confirm-live` plus a Linode token.
+VM creation, shutdown, and deletion require `--live --confirm-live` plus a
+Linode token.
 When `provision-vms --live` receives `--out-dir`, it writes `vms.json`; pass
-that file to `destroy-vms --live --vm-state-file` for cleanup.
+that file to `shutdown-vms --live --vm-state-file` after a normal run, or to
+`destroy-vms --live --vm-state-file` only for intentional pool deletion.
 Live provision accepts `--linode-type`, `--linode-image`, `--root-pass`, and
 `--authorized-key-file`. The root password is sent only to the Linode create
 API and is not written into `vms.json`, `results.json`, or the report.
@@ -530,16 +588,20 @@ API and is not written into `vms.json`, `results.json`, or the report.
 builds a Linux `rtk-cloud` binary for live MQTT/API traffic, generates the
 Ansible inventory from provisioned VM IPs, writes per-VM shard manifests, and
 runs `loadtests/home-100k/ansible/sync.yml`. The playbook copies only the
-runner binaries, the assigned shard manifest, and selected env-root artifacts;
-it does not upload `reports/**`, `plans/**`, or the whole load-test source
-tree.
+runner binaries, the assigned shard manifest, a per-shard
+`home-100k/credentials/*.sqlite.gz` bundle, its sha256 manifest, and selected
+env-root runtime metadata; it does not upload `reports/**`, `plans/**`, the
+whole load-test source tree, or expanded per-device PEM directories.
 `run-stages --live` reads `vms.json`, regenerates the same inventory, and runs
 `loadtests/home-100k/ansible/start-runner.yml`. The playbook starts a
 `home-100k runner-daemon` on each VM and waits only until the daemon reports
 `READY_WAIT`. After that, the host coordinator waits for the full ready barrier,
 sends `START(run_id, sequence, delay_ms)` to every VM, and each runner uses its
 local monotonic clock for the final delay before opening MQTT/API traffic. Each
-VM writes shard artifacts under `--remote-out-root/<run-id>/<vm-label>/`. The
+VM starts one staged `rtk-cloud mqtt-test` process for the whole stage list, so
+device MQTT sessions and shadow delta subscriptions remain alive across stage
+transitions. Each VM writes shard artifacts under
+`--remote-out-root/<run-id>/<vm-label>/`. The
 run-level `start-coordination.json` records ready barrier, configured start
 delay, per-VM start timestamps, and max start skew.
 `collect --live` reads `vms.json`, regenerates the same inventory, and runs
@@ -664,9 +726,9 @@ Server-side evidence:
 
 ## Security And Secret Handling
 
-The synced env-root contains user credentials, device private keys,
-certificates, and tokens. Load-generator VMs must be treated as secret-bearing
-infrastructure.
+The synced env-root contains user credentials and the per-shard SQLite
+credential bundle with device private keys and certificates. Load-generator VMs
+must be treated as secret-bearing infrastructure.
 
 Requirements:
 
@@ -682,9 +744,9 @@ Requirements:
 
 Planner tests:
 
-- 100K devices produce 10 device task shards.
-- 5K users produce 10 deterministic user task shards.
-- Planner creates 10 mixed VM assignments, each with one device task and one
+- 100K devices produce 5 device task shards.
+- 5K users produce 5 deterministic user task shards.
+- Planner creates 5 mixed VM assignments, each with one device task and one
   user task.
 - Device mix resolves to 50K lights, 20K air conditioners, and 30K smart
   meters.

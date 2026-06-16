@@ -276,6 +276,77 @@ def app_user_totals():
     )
     return "\n".join(lines)
 
+def failure_reasons():
+    stages = result.get("stage_results") or []
+    totals = defaultdict(int)
+    lines = [
+        "| Stage | Reason | Count |",
+        "| --- | --- | ---: |",
+    ]
+    for stage in stages:
+        reasons = stage.get("failure_reasons") or {}
+        for reason in sorted(reasons):
+            count = int(num(reasons.get(reason), 0))
+            if count == 0:
+                continue
+            totals[reason] += count
+            lines.append(f"| {md(stage.get('name'))} | {md(reason)} | {count} |")
+    for reason in sorted(totals):
+        lines.append(f"| total | {md(reason)} | {totals[reason]} |")
+    if len(lines) == 2:
+        return "- no classified client failure reasons"
+    return "\n".join(lines)
+
+def normalize_failure_detail(detail):
+    text = "" if detail is None else str(detail).strip()
+    lower = text.lower()
+    if not text:
+        return ""
+    if "write: broken pipe" in lower:
+        return "mqtt write broken pipe"
+    if "connection reset by peer" in lower:
+        return "mqtt connection reset by peer"
+    if "use of closed network connection" in lower:
+        return "mqtt closed network connection"
+    if "i/o timeout" in lower:
+        return "request_token i/o timeout" if "request_token" in lower else "network i/o timeout"
+    if "context deadline exceeded" in lower:
+        return "request_token context deadline exceeded" if "request_token" in lower else "context deadline exceeded"
+    if "unexpected eof" in lower or lower == "eof":
+        return "request_token EOF" if "request_token" in lower else "network EOF"
+    if "access_token" in lower or "bearer " in lower or "-----begin" in lower or "private key" in lower:
+        return "redacted sensitive detail"
+    return text
+
+def failure_details():
+    stages = result.get("stage_results") or []
+    totals = defaultdict(lambda: defaultdict(int))
+    lines = [
+        "| Stage | Reason | Detail | Count |",
+        "| --- | --- | --- | ---: |",
+    ]
+    for stage in stages:
+        stage_rows = defaultdict(lambda: defaultdict(int))
+        for reason, details in (stage.get("failure_details") or {}).items():
+            for detail, count in (details or {}).items():
+                normalized = normalize_failure_detail(detail)
+                if not normalized:
+                    continue
+                value = int(num(count, 0))
+                if value == 0:
+                    continue
+                stage_rows[reason][normalized] += value
+                totals[reason][normalized] += value
+        for reason in sorted(stage_rows):
+            for detail, count in sorted(stage_rows[reason].items(), key=lambda item: (-item[1], item[0])):
+                lines.append(f"| {md(stage.get('name'))} | {md(reason)} | {md(detail)} | {count} |")
+    for reason in sorted(totals):
+        for detail, count in sorted(totals[reason].items(), key=lambda item: (-item[1], item[0])):
+            lines.append(f"| total | {md(reason)} | {md(detail)} | {count} |")
+    if len(lines) == 2:
+        return "- no classified client failure details"
+    return "\n".join(lines)
+
 def server_correlation():
     correlation = result.get("server_correlation") or {}
     lines = [f"- status: {md(correlation.get('status', 'unknown'))}"]
@@ -470,6 +541,8 @@ replacements = {
     "CLIENT_TARGET_COVERAGE": client_target_coverage(),
     "DEVICE_MQTT_TOTALS": device_mqtt_totals(),
     "APP_USER_TOTALS": app_user_totals(),
+    "FAILURE_REASONS": failure_reasons(),
+    "FAILURE_DETAILS": failure_details(),
     "SERVER_CORRELATION": server_correlation(),
     "START_COORDINATION": start_coordination(),
     "LOAD_MACHINE_RESOURCE_USAGE": load_machine_resource_usage(),

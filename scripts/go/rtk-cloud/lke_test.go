@@ -379,6 +379,7 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"PGDATA\n              value: /var/lib/postgresql/data/pgdata",
 		"name: postgresql-runtime\n                  key: POSTGRES_PASSWORD",
 		"kind: Secret\nmetadata:\n  name: certissuer-runtime",
+		"root-ca.crt: \"-----BEGIN CERTIFICATE-----\\ntest-root-ca\\n-----END CERTIFICATE-----\\n\"",
 		"device-ca.crt: \"-----BEGIN CERTIFICATE-----\\ntest-device-ca\\n-----END CERTIFICATE-----\\n\"",
 		"app-ca.crt: \"-----BEGIN CERTIFICATE-----\\ntest-app-ca\\n-----END CERTIFICATE-----\\n\"",
 		"kind: Secret\nmetadata:\n  name: certissuer-openbao-auth",
@@ -413,7 +414,9 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_URL\n              value: \"http://account-manager.video-cloud-staging-account-manager.svc.cluster.local:80\"",
 		"VIDEO_CLOUD_MQTT_ENABLED\n              value: \"true\"",
 		"VIDEO_CLOUD_MQTT_ADDR\n              value: \"mqtt.video-cloud-staging-video-cloud.svc.cluster.local:1883\"",
-		"VIDEO_CLOUD_MQTT_CLIENT_ID\n              value: \"video-cloud-api\"",
+		"POD_NAME\n              valueFrom:",
+		"fieldPath: metadata.name",
+		"VIDEO_CLOUD_MQTT_CLIENT_ID\n              value: \"video-cloud-api-$(POD_NAME)\"",
 		"VIDEO_CLOUD_MQTT_TOPIC_ROOT\n              value: \"devices\"",
 		"kind: Secret\nmetadata:\n  name: mqtt-runtime",
 		"kind: ConfigMap\nmetadata:\n  name: mqtt-config",
@@ -435,6 +438,33 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 	certIssuerIndex := strings.Index(log, "name: certissuer-runtime")
 	if openBaoIndex < 0 || certIssuerIndex < 0 || openBaoIndex > certIssuerIndex {
 		t.Fatalf("expected OpenBao resources before certissuer runtime secret, got:\n%s", log)
+	}
+}
+
+func TestRunProvisionLKEDeployCanExposePublicMQTTLoadBalancer(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	logPath := fakeKubectl(t)
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
+	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
+	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
+	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
+	t.Setenv("LKE_PUBLIC_MQTT_LOADBALANCER", "1")
+
+	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, logPath)
+	for _, want := range []string{
+		"kind: Service\nmetadata:\n  name: mqtt-public",
+		"type: LoadBalancer",
+		"name: mqtts\n      port: 8883",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-public-mqtt-loadtest",
+		"port: 8883",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("expected %q in kubectl manifests, got:\n%s", want, log)
+		}
 	}
 }
 
@@ -466,6 +496,8 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"--set controller.service.ports.https=443",
 		"--set controller.service.targetPorts.https=https",
 		"--set controller.service.enableHttp=false",
+		"--set controller.allowSnippetAnnotations=true",
+		"--set controller.config.annotations-risk-level=Critical",
 	} {
 		if !strings.Contains(helmCalls, want) {
 			t.Fatalf("expected %q in helm calls, got:\n%s", want, helmCalls)
@@ -481,7 +513,13 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"kind: Service\nmetadata:\n  name: public-certissuer-video-cloud",
 		"externalName: certissuer.video-cloud-staging-video-cloud.svc.cluster.local",
 		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-public",
+		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-device-mtls",
 		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-certissuer",
+		"nginx.ingress.kubernetes.io/auth-tls-secret: \"video-cloud-staging-ingress/video-cloud-staging-app-client-ca\"",
+		"nginx.ingress.kubernetes.io/auth-tls-verify-client: \"on\"",
+		"proxy_set_header X-Client-Verify $ssl_client_verify;",
+		"proxy_set_header X-Client-S-DN $ssl_client_s_dn_legacy;",
+		"ca.crt: \"-----BEGIN CERTIFICATE-----\\ntest-root-ca\\n-----END CERTIFICATE-----\\n-----BEGIN CERTIFICATE-----\\ntest-device-ca\\n-----END CERTIFICATE-----\\n-----BEGIN CERTIFICATE-----\\ntest-app-ca\\n-----END CERTIFICATE-----\\n\"",
 		"nginx.ingress.kubernetes.io/backend-protocol: \"HTTPS\"",
 		"ingressClassName: nginx",
 		"host: video-cloud-staging.realtekconnect.com",
@@ -517,6 +555,15 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		if !strings.Contains(kubectlCalls, want) {
 			t.Fatalf("expected %q in kubectl calls, got:\n%s", want, kubectlCalls)
 		}
+	}
+	publicIdx := strings.Index(kubectlCalls, "kind: Ingress\nmetadata:\n  name: video-cloud-staging-public")
+	deviceIdx := strings.Index(kubectlCalls, "kind: Ingress\nmetadata:\n  name: video-cloud-staging-device-mtls")
+	if publicIdx < 0 || deviceIdx < 0 || publicIdx >= deviceIdx {
+		t.Fatalf("expected public ingress before separate device mTLS ingress, got:\n%s", kubectlCalls)
+	}
+	publicIngress := kubectlCalls[publicIdx:deviceIdx]
+	if strings.Contains(publicIngress, "host: device.video-cloud-staging.realtekconnect.com") {
+		t.Fatalf("general public ingress must not include mTLS device host:\n%s", publicIngress)
 	}
 	for _, forbidden := range []string{
 		"nodePort:",
@@ -1632,6 +1679,82 @@ CLOUD_STACK_NAME=video-cloud-staging
 	}
 }
 
+func TestRunMQTTTestPassesLoadModelToChildScript(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	childLog := filepath.Join(t.TempDir(), "child.log")
+	childScript := filepath.Join(t.TempDir(), "cloud-mqtt-test")
+	writeTestFile(t, childScript, `#!/usr/bin/env bash
+set -euo pipefail
+printf 'ARGS' >> "`+childLog+`"
+for arg in "$@"; do
+  printf ' %s' "$arg" >> "`+childLog+`"
+done
+printf '\n' >> "`+childLog+`"
+`)
+	if err := os.Chmod(childScript, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT", childScript)
+
+	if err := runMQTTTest([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--brandname", "RTK",
+		"--duration-seconds", "1",
+		"--load-model", "home-100k-sustained",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := readTestFile(t, childLog)
+	if !strings.Contains(got, "--load-model home-100k-sustained") {
+		t.Fatalf("child args missing load model:\n%s", got)
+	}
+}
+
+func TestRunMQTTTestPassesStagedSustainedFlagsToChildScript(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	childLog := filepath.Join(t.TempDir(), "child.log")
+	childScript := filepath.Join(t.TempDir(), "cloud-mqtt-test")
+	writeTestFile(t, childScript, `#!/usr/bin/env bash
+set -euo pipefail
+printf 'ARGS' >> "`+childLog+`"
+for arg in "$@"; do
+  printf ' %s' "$arg" >> "`+childLog+`"
+done
+printf '\n' >> "`+childLog+`"
+`)
+	if err := os.Chmod(childScript, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT", childScript)
+
+	err := runMQTTTest([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--brandname", "RTK",
+		"--duration-seconds", "300",
+		"--load-model", "home-100k-sustained",
+		"--stage-names", "25k,50k,75k,100k",
+		"--stage-connected-devices", "2500,5000,7500,10000",
+		"--stage-durations-seconds", "75,75,75,75",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := readTestFile(t, childLog)
+	for _, want := range []string{
+		"--stage-names 25k,50k,75k,100k",
+		"--stage-connected-devices 2500,5000,7500,10000",
+		"--stage-durations-seconds 75,75,75,75",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("child args missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestStartK8SE2EPortForwardsStartsAllBeforeWaiting(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	kubectlLog := fakeKubectlForK8SE2EPortForwards(t)
@@ -1703,6 +1826,11 @@ func TestRunStagingE2EDataSetupForLKEStartsPortForwards(t *testing.T) {
 	if !strings.Contains(kubectlCalls, "PF_START svc/factoryenroll") {
 		t.Fatalf("expected standalone data setup to start factoryenroll port-forward, got:\n%s", kubectlCalls)
 	}
+	for _, service := range []string{"svc/account-manager", "svc/video-cloud-api", "svc/factoryenroll"} {
+		if got := strings.Count(kubectlCalls, "PF_START "+service); got != 1 {
+			t.Fatalf("expected one port-forward for %s, got %d:\n%s", service, got, kubectlCalls)
+		}
+	}
 	commands := readTestFile(t, commandLog)
 	if !strings.Contains(commands, "generate-devices FACTORY_ENROLL_URL=http://127.0.0.1:") {
 		t.Fatalf("expected generate-devices to receive FACTORY_ENROLL_URL, got:\n%s", commands)
@@ -1718,16 +1846,16 @@ func TestRunStagingE2EDataSetupDefaultsToResumeCompleteArtifacts(t *testing.T) {
 	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=linode\nCLOUD_STACK_NAME=video-cloud-staging\n")
 	writeTestFile(t, filepath.Join(envRoot, "artifacts", "users", "rtk-users-complete.json"), `{"brandname":"RTK","users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}`)
 	writeTestFile(t, filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.json"), `[
-{"device_id":"load-device-0001"},
-{"device_id":"load-device-0002"},
-{"device_id":"load-device-0003"},
-{"device_id":"load-device-0004"}
+{"device_id":"load-device-0001","device_type":"camera"},
+{"device_id":"load-device-0002","device_type":"camera"},
+{"device_id":"load-device-0003","device_type":"light"},
+{"device_id":"load-device-0004","device_type":"air_conditioner"}
 ]`)
 	writeTestFile(t, filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-complete.json"), `{"brandname":"RTK","assignments":[
-{"device_id":"load-device-0001"},
-{"device_id":"load-device-0002"},
-{"device_id":"load-device-0003"},
-{"device_id":"load-device-0004"}
+{"assigned_email":"rtk+001@users.local","device_id":"load-device-0001","device_type":"camera","service_options":["mqtt","video_streaming","video_storage"]},
+{"assigned_email":"rtk+002@users.local","device_id":"load-device-0002","device_type":"camera","service_options":["mqtt","video_streaming","video_storage"]},
+{"assigned_email":"rtk+001@users.local","device_id":"load-device-0003","device_type":"light","service_options":["mqtt"]},
+{"assigned_email":"rtk+002@users.local","device_id":"load-device-0004","device_type":"air_conditioner","service_options":["mqtt"]}
 ]}`)
 	commandLog := filepath.Join(t.TempDir(), "commands.log")
 	t.Setenv("CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-brand", envRoot))
@@ -1758,6 +1886,160 @@ func TestRunStagingE2EDataSetupDefaultsToResumeCompleteArtifacts(t *testing.T) {
 		if !strings.Contains(commands, expected) {
 			t.Fatalf("expected %s command, got:\n%s", expected, commands)
 		}
+	}
+}
+
+func TestRunStagingE2EDataSetupDoesNotResumeDeviceManifestWithWrongMix(t *testing.T) {
+	workspace := t.TempDir()
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "linode")
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=linode\nCLOUD_STACK_NAME=video-cloud-staging\n")
+	writeTestFile(t, filepath.Join(envRoot, "artifacts", "users", "rtk-users-complete.json"), `{"brandname":"RTK","users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}`)
+	writeTestFile(t, filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.json"), `[
+{"device_id":"load-device-0001","device_type":"camera"},
+{"device_id":"load-device-0002","device_type":"camera"},
+{"device_id":"load-device-0003","device_type":"light"},
+{"device_id":"load-device-0004","device_type":"smart_meter"}
+]`)
+	writeTestFile(t, filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-complete.json"), `{"brandname":"RTK","assignments":[
+{"assigned_email":"rtk+001@users.local","device_id":"load-device-0001","device_type":"camera","service_options":["mqtt"]},
+{"assigned_email":"rtk+002@users.local","device_id":"load-device-0002","device_type":"camera","service_options":["mqtt"]},
+{"assigned_email":"rtk+001@users.local","device_id":"load-device-0003","device_type":"light","service_options":["mqtt"]},
+{"assigned_email":"rtk+002@users.local","device_id":"load-device-0004","device_type":"smart_meter","service_options":["mqtt"]}
+]}`)
+	commandLog := filepath.Join(t.TempDir(), "commands.log")
+	t.Setenv("FACTORY_ENROLL_URL", "http://127.0.0.1:1")
+	t.Setenv("FACTORY_ENROLL_AUTH_KEY", "test-key")
+	t.Setenv("CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-brand", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-users", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "generate-devices", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "bind-devices", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT", fakeE2EDataCommand(t, commandLog, "validate-bind", envRoot))
+
+	if err := runStagingE2EDataSetup([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--brandname", "RTK",
+		"--user-count", "2",
+		"--device-count", "4",
+		"--device-mix", "light=2,smart_meter=2",
+		"--out-dir", filepath.Join(t.TempDir(), "out"),
+		"--quiet",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	commands := readTestFile(t, commandLog)
+	for _, expected := range []string{"generate-devices ", "bind-devices "} {
+		if !strings.Contains(commands, expected) {
+			t.Fatalf("expected %s command when device mix mismatches, got:\n%s", expected, commands)
+		}
+	}
+}
+
+func TestRunStagingE2EDataSetupDoesNotResumeBindArtifactWithWrongUsers(t *testing.T) {
+	workspace := t.TempDir()
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "linode")
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=linode\nCLOUD_STACK_NAME=video-cloud-staging\n")
+	writeTestFile(t, filepath.Join(envRoot, "artifacts", "users", "rtk-users-complete.json"), `{"brandname":"RTK","users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}`)
+	writeTestFile(t, filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.json"), `[
+{"device_id":"load-device-0001","device_type":"light"},
+{"device_id":"load-device-0002","device_type":"light"},
+{"device_id":"load-device-0003","device_type":"smart_meter"},
+{"device_id":"load-device-0004","device_type":"smart_meter"}
+]`)
+	writeTestFile(t, filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-complete.json"), `{"brandname":"RTK","assignments":[
+{"assigned_email":"rtk+001@users.local","device_id":"load-device-0001","device_type":"light","service_options":["mqtt"]},
+{"assigned_email":"rtk+001@users.local","device_id":"load-device-0002","device_type":"light","service_options":["mqtt"]},
+{"assigned_email":"rtk+001@users.local","device_id":"load-device-0003","device_type":"smart_meter","service_options":["mqtt"]},
+{"assigned_email":"rtk+001@users.local","device_id":"load-device-0004","device_type":"smart_meter","service_options":["mqtt"]}
+]}`)
+	commandLog := filepath.Join(t.TempDir(), "commands.log")
+	t.Setenv("CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-brand", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-users", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "generate-devices", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "bind-devices", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT", fakeE2EDataCommand(t, commandLog, "validate-bind", envRoot))
+
+	if err := runStagingE2EDataSetup([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--brandname", "RTK",
+		"--user-count", "2",
+		"--device-count", "4",
+		"--device-mix", "light=2,smart_meter=2",
+		"--out-dir", filepath.Join(t.TempDir(), "out"),
+		"--quiet",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	commands := readTestFile(t, commandLog)
+	if strings.Contains(commands, "generate-devices ") {
+		t.Fatalf("device manifest mix matches; generate-devices should be skipped, got:\n%s", commands)
+	}
+	if !strings.Contains(commands, "bind-devices ") {
+		t.Fatalf("expected bind-devices when bind artifact does not cover all users, got:\n%s", commands)
+	}
+}
+
+func TestBindArtifactDoesNotResumeAllAlreadyBoundWithoutProvisionEvidence(t *testing.T) {
+	dir := t.TempDir()
+	usersPath := filepath.Join(dir, "users.json")
+	bindPath := filepath.Join(dir, "bind.json")
+	writeTestFile(t, usersPath, `{"users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}`)
+	writeTestFile(t, bindPath, `{"assignments":[
+{"assigned_email":"rtk+001@users.local","device_id":"load-device-0001","device_type":"light","service_options":["mqtt"],"status":"already_bound"},
+{"assigned_email":"rtk+002@users.local","device_id":"load-device-0002","device_type":"light","service_options":["mqtt"],"status":"already_bound"},
+{"assigned_email":"rtk+001@users.local","device_id":"load-device-0003","device_type":"smart_meter","service_options":["mqtt"],"status":"already_bound"},
+{"assigned_email":"rtk+002@users.local","device_id":"load-device-0004","device_type":"smart_meter","service_options":["mqtt"],"status":"already_bound"}
+]}`)
+
+	if bindArtifactMatchesSetup(bindPath, usersPath, 2, 4, "light=2,smart_meter=2") {
+		t.Fatal("all already_bound artifact without operation evidence must not be resumed")
+	}
+}
+
+func TestExistingBoundDeviceMustMatchCurrentAssignment(t *testing.T) {
+	assignment := bindAssignment{
+		DeviceID:       "load-device-0001",
+		DeviceType:     "light",
+		Category:       "mqtt_device",
+		ServiceOptions: []string{"mqtt"},
+	}
+	existingDevice := map[string]any{
+		"id":       "account-device-1",
+		"category": "ip_camera",
+		"metadata": map[string]any{
+			"video_cloud_devid": "load-device-0001",
+			"device_type":       "camera",
+			"service_options":   []any{"mqtt", "video_streaming", "video_storage"},
+		},
+	}
+
+	if err := validateExistingBoundDeviceCompatible(existingDevice, assignment); err == nil {
+		t.Fatal("expected existing camera binding to be incompatible with current light assignment")
+	}
+}
+
+func TestExistingBoundDeviceCanBeReusedWhenItMatchesCurrentAssignment(t *testing.T) {
+	assignment := bindAssignment{
+		DeviceID:       "load-device-0001",
+		DeviceType:     "light",
+		Category:       "mqtt_device",
+		ServiceOptions: []string{"mqtt"},
+	}
+	existingDevice := map[string]any{
+		"id":       "account-device-1",
+		"category": "mqtt_device",
+		"metadata": map[string]any{
+			"video_cloud_devid": "load-device-0001",
+			"device_type":       "light",
+			"service_options":   []any{"mqtt"},
+		},
+	}
+
+	if err := validateExistingBoundDeviceCompatible(existingDevice, assignment); err != nil {
+		t.Fatalf("expected matching existing binding to be reusable: %v", err)
 	}
 }
 
@@ -1985,6 +2267,18 @@ if [[ "$*" == *"get secret openbao-tls -o json"* && -n "${FAKE_OPENBAO_TLS_SECRE
   printf '%s\n' "$FAKE_OPENBAO_TLS_SECRET_JSON"
   exit 0
 fi
+if [[ "$*" == *"get secret certissuer-runtime -o json"* ]]; then
+  python3 - <<'PY'
+import base64, json
+data = {
+  "root-ca.crt": "-----BEGIN CERTIFICATE-----\ntest-root-ca\n-----END CERTIFICATE-----\n",
+  "device-ca.crt": "-----BEGIN CERTIFICATE-----\ntest-device-ca\n-----END CERTIFICATE-----\n",
+  "app-ca.crt": "-----BEGIN CERTIFICATE-----\ntest-app-ca\n-----END CERTIFICATE-----\n",
+}
+print(json.dumps({"data": {k: base64.b64encode(v.encode()).decode() for k, v in data.items()}}))
+PY
+  exit 0
+fi
 if [[ "$*" == *"rollout status"* ]]; then
   line='ARGS'
   for arg in "$@"; do
@@ -2000,6 +2294,10 @@ if [[ "$*" == *"exec -i openbao-0 -- sh -s"* ]]; then
   fi
   printf 'ROLE_ID=test-role-id\n'
   printf 'SECRET_ID=test-secret-id\n'
+  printf 'ROOT_CA_CERT_B64=%s\n' "$(printf '%s' '-----BEGIN CERTIFICATE-----
+test-root-ca
+-----END CERTIFICATE-----
+' | base64 | tr -d '\n')"
   printf 'DEVICE_CA_CERT_B64=%s\n' "$(printf '%s' '-----BEGIN CERTIFICATE-----
 test-device-ca
 -----END CERTIFICATE-----
@@ -2066,6 +2364,18 @@ if [[ "$*" == *"get secret openbao-tls -o json"* && -n "${FAKE_OPENBAO_TLS_SECRE
   printf '%s\n' "$FAKE_OPENBAO_TLS_SECRET_JSON"
   exit 0
 fi
+if [[ "$*" == *"get secret certissuer-runtime -o json"* ]]; then
+  python3 - <<'PY'
+import base64, json
+data = {
+  "root-ca.crt": "-----BEGIN CERTIFICATE-----\ntest-root-ca\n-----END CERTIFICATE-----\n",
+  "device-ca.crt": "-----BEGIN CERTIFICATE-----\ntest-device-ca\n-----END CERTIFICATE-----\n",
+  "app-ca.crt": "-----BEGIN CERTIFICATE-----\ntest-app-ca\n-----END CERTIFICATE-----\n",
+}
+print(json.dumps({"data": {k: base64.b64encode(v.encode()).decode() for k, v in data.items()}}))
+PY
+  exit 0
+fi
 if [[ "$*" == *"rollout status"* ]]; then
   line='ARGS'
   for arg in "$@"; do
@@ -2081,6 +2391,10 @@ if [[ "$*" == *"exec -i openbao-0 -- sh -s"* ]]; then
   fi
   printf 'ROLE_ID=test-role-id\n'
   printf 'SECRET_ID=test-secret-id\n'
+  printf 'ROOT_CA_CERT_B64=%s\n' "$(printf '%s' '-----BEGIN CERTIFICATE-----
+test-root-ca
+-----END CERTIFICATE-----
+' | base64 | tr -d '\n')"
   printf 'DEVICE_CA_CERT_B64=%s\n' "$(printf '%s' '-----BEGIN CERTIFICATE-----
 test-device-ca
 -----END CERTIFICATE-----

@@ -58,8 +58,10 @@ stage_steady="${HOME100K_STAGE_STEADY:-2m}"
 stage_cool_down="${HOME100K_STAGE_COOL_DOWN:-45s}"
 runner_mode="${HOME100K_RUNNER_MODE:-live}"
 coordinator_start_delay_ms="${HOME100K_COORDINATOR_START_DELAY_MS:-3000}"
+credential_bundle_format="${HOME100K_CREDENTIAL_BUNDLE_FORMAT:-sqlite-gzip}"
 mqtt_addr="${HOME100K_MQTT_ADDR:-}"
-video_cloud_base_url="${HOME100K_VIDEO_CLOUD_BASE_URL:-}"
+video_cloud_public_url="${HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL:-${HOME100K_VIDEO_CLOUD_BASE_URL:-}}"
+video_cloud_token_url="${HOME100K_VIDEO_CLOUD_TOKEN_BASE_URL:-}"
 account_manager_base_url="${HOME100K_ACCOUNT_MANAGER_BASE_URL:-}"
 status_file="$repo_root/$out_dir/.workflow-status"
 nodes_file="$repo_root/$out_dir/nodes.tsv"
@@ -68,7 +70,8 @@ resource_samples_dir="$repo_root/$out_dir/resource-samples"
 load_vm_resource_file="$resource_samples_dir/load-vms.tsv"
 k8s_node_resource_file="$resource_samples_dir/k8s-nodes.tsv"
 workflow_status_log="$repo_root/$out_dir/workflow-status.log"
-cleanup_live_vms_on_exit=0
+shutdown_live_vms_on_exit=0
+shutdown_on_error="${HOME100K_SHUTDOWN_ON_ERROR:-0}"
 
 usage() {
   cat <<EOF
@@ -78,7 +81,7 @@ Default command:
   workflow-live           Create VMs and run the live lifecycle through aggregate.
 
 Commands:
-  plan                    Print the deterministic 100K/5K/10-VM mixed run plan.
+  plan                    Print the deterministic 100K/5K/5-VM mixed run plan.
   dry-run                 Render local review artifacts; does not create VMs.
   provision-vms           Review or live-create Linode VMs.
   sync                    Review or live-sync runner/env-root to VMs.
@@ -88,7 +91,8 @@ Commands:
   aggregate               Aggregate collected shards and server evidence.
   generate-report         Generate TEST_REPORT.md from collected artifacts and template.
   list-vms                Review or live-list leftover VMs by run id.
-  destroy-vms             Review or live-destroy VMs by state file.
+  shutdown-vms            Live-shutdown VMs by state file for reuse.
+  destroy-vms             Review or live-destroy VMs by state file; manual cleanup only.
   workflow-dry-run        Run plan plus dry-run lifecycle review commands.
   workflow-live           Create VMs and run the live lifecycle through aggregate.
   workflow-resume-live    Resume an existing live run from sync using <out-dir>/vms.json.
@@ -114,11 +118,15 @@ Defaults can be overridden with:
   HOME100K_STAGE_COOL_DOWN default: 15s from the default description file
   HOME100K_RUNNER_MODE default: live; use sample only for local developer smoke tests
   HOME100K_COORDINATOR_START_DELAY_MS default: 3000
+  HOME100K_CREDENTIAL_BUNDLE_FORMAT default: sqlite-gzip; only supported format
   HOME100K_MQTT_ADDR public MQTT endpoint for remote Linode generators; required for live VM MQTT tests
-  HOME100K_VIDEO_CLOUD_BASE_URL optional public/direct Video Cloud base URL for remote generators
+  HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL optional public Video Cloud API base URL for remote generators
+  HOME100K_VIDEO_CLOUD_TOKEN_BASE_URL optional mTLS/device Video Cloud token bootstrap base URL
+  HOME100K_VIDEO_CLOUD_BASE_URL legacy alias for HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL
   HOME100K_ACCOUNT_MANAGER_BASE_URL optional Account Manager base URL for remote generators
   HOME100K_NODE_RESOURCE_STATUS default: 1
   HOME100K_K8S_NODE_RESOURCE_STATUS default: 1
+  HOME100K_SHUTDOWN_ON_ERROR default: 0; keep VMs running after failures for resume/debug
   HOME100K_KUBECONFIG default: RTK_CLOUD_LKE_KUBECONFIG, LKE_KUBECONFIG, CLOUD_STAGING_K8S_KUBECONFIG, or <env-root>/state/lke-kubeconfig.yaml
 
 Examples:
@@ -311,7 +319,14 @@ workflow_status() {
   vm_count="0"
   if [[ -f "$repo_root/$out_dir/vms.json" ]]; then
     write_nodes_file
-    vm_count="$( (grep -o '"label"' "$repo_root/$out_dir/vms.json" || true) | wc -l | tr -d ' ')"
+    vm_count="$(python3 - "$repo_root/$out_dir/vms.json" <<'PY'
+import json, sys
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    data = json.load(f)
+vms = data.get("created") or data.get("vms") or []
+print(len({vm.get("label", "") for vm in vms if vm.get("label")}))
+PY
+)"
   fi
   shard_count="0"
   if [[ -d "$repo_root/$out_dir/shards" ]]; then
@@ -334,12 +349,21 @@ workflow_status() {
   fi
   {
     printf '[home-100k status] time=%s elapsed=%s run_id=%s phase=%s\n' "$now" "$elapsed" "$run_id" "$phase"
-    printf '[home-100k status] out_dir=%s vms=%s/10 shard_results=%s server_evidence=%s report_status=%s stage_window=warm_up:%s,steady:%s,cool_down:%s\n' "$out_dir" "$vm_count" "$shard_count" "$evidence_status" "$report_status" "$stage_warm_up" "$stage_steady" "$stage_cool_down"
+    printf '[home-100k status] out_dir=%s vms=%s/5 shard_results=%s server_evidence=%s report_status=%s stage_window=warm_up:%s,steady:%s,cool_down:%s\n' "$out_dir" "$vm_count" "$shard_count" "$evidence_status" "$report_status" "$stage_warm_up" "$stage_steady" "$stage_cool_down"
   } >&2
   ensure_resource_logs
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$now" "$run_id" "$elapsed" "$phase" "$vm_count" "$shard_count" "$evidence_status" "$report_status" >> "$workflow_status_log"
   node_resource_status
   k8s_node_resource_status
+}
+
+current_report_status() {
+  local report="$repo_root/$out_dir/TEST_REPORT.md"
+  local status=""
+  if [[ -f "$report" ]]; then
+    status="$( (grep -m1 '^- Status:' "$report" || true) | sed 's/^- Status: //')"
+  fi
+  printf '%s\n' "${status:-not-written}"
 }
 
 start_status_monitor() {
@@ -364,10 +388,37 @@ stop_status_monitor() {
   fi
 }
 
-destroy_live_vms() {
-  if [[ -f "$repo_root/$out_dir/vms.json" ]]; then
-    run_home100k destroy-vms "${base_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json" --live --confirm-live
+shutdown_live_vms() {
+  local vms_file="$repo_root/$out_dir/vms.json"
+  if [[ ! -f "$vms_file" || -z "${LINODE_TOKEN:-}" ]]; then
+    return
   fi
+  python3 - "$vms_file" <<'PY' | while IFS= read -r id; do
+import json
+import sys
+
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+for vm in data.get("created") or data.get("vms") or []:
+    if vm.get("id"):
+        print(vm["id"])
+PY
+    [[ -n "$id" ]] || continue
+    curl -fsS -X POST \
+      -H "Authorization: Bearer $LINODE_TOKEN" \
+      -H "Content-Type: application/json" \
+      "https://api.linode.com/v4/linode/instances/${id}/shutdown" >/dev/null || true
+  done
+}
+
+should_shutdown_after_workflow() {
+  if [[ "$shutdown_on_error" == "1" ]]; then
+    return 0
+  fi
+  if [[ "$workflow_rc" != "0" ]]; then
+    return 1
+  fi
+  [[ "$(current_report_status)" == "PASS" ]]
 }
 
 on_script_exit() {
@@ -376,9 +427,9 @@ on_script_exit() {
     kill "$status_monitor_pid" 2>/dev/null || true
     wait "$status_monitor_pid" 2>/dev/null || true
   fi
-  if [[ "$cleanup_live_vms_on_exit" == "1" ]]; then
-    set_phase "destroy-vms"
-    destroy_live_vms >/dev/null 2>&1 || true
+  if [[ "$shutdown_live_vms_on_exit" == "1" && ( "$rc" == "0" || "$shutdown_on_error" == "1" ) ]]; then
+    set_phase "shutdown-vms"
+    shutdown_live_vms >/dev/null 2>&1 || true
   fi
   exit "$rc"
 }
@@ -395,11 +446,15 @@ workflow_args=("${base_args[@]}")
 coordinator_args=(
   "--coordinator-start-delay-ms" "$coordinator_start_delay_ms"
 )
+workflow_args+=("--credential-bundle-format" "$credential_bundle_format")
 if [[ -n "$mqtt_addr" ]]; then
   workflow_args+=("--mqtt-addr" "$mqtt_addr")
 fi
-if [[ -n "$video_cloud_base_url" ]]; then
-  workflow_args+=("--video-cloud-base-url" "$video_cloud_base_url")
+if [[ -n "$video_cloud_public_url" ]]; then
+  workflow_args+=("--video-cloud-public-base-url" "$video_cloud_public_url")
+fi
+if [[ -n "$video_cloud_token_url" ]]; then
+  workflow_args+=("--video-cloud-token-base-url" "$video_cloud_token_url")
 fi
 if [[ -n "$account_manager_base_url" ]]; then
   workflow_args+=("--account-manager-base-url" "$account_manager_base_url")
@@ -456,6 +511,9 @@ case "$command" in
   destroy-vms)
     run_home100k destroy-vms "${base_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json" "$@"
     ;;
+  shutdown-vms)
+    shutdown_live_vms
+    ;;
   workflow-dry-run)
     run_home100k plan "${base_args[@]}"
     run_home100k provision-vms "${base_args[@]}" --run-id "$run_id" --out-dir "$out_dir"
@@ -479,7 +537,7 @@ case "$command" in
     fi
     mkdir -p "$repo_root/$out_dir"
     rm -f "$ssh_known_hosts_file"
-    cleanup_live_vms_on_exit=1
+    shutdown_live_vms_on_exit=1
     start_status_monitor
     set_phase "provision-vms"
     run_home100k provision-vms "${base_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --live --confirm-live --authorized-key-file "$authorized_key_file" "$@"
@@ -504,10 +562,20 @@ case "$command" in
     set_phase "aggregate"
     run_home100k aggregate "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir"
     generate_report_from_artifacts
-    set_phase "destroy-vms"
+    report_status="$(current_report_status)"
+    if [[ "$report_status" != "PASS" && "$workflow_rc" -eq 0 ]]; then
+      workflow_rc=1
+      echo "report status is $report_status; preserving VMs for investigation" >&2
+    fi
     cleanup_rc=0
-    destroy_live_vms || cleanup_rc=$?
-    cleanup_live_vms_on_exit=0
+    if should_shutdown_after_workflow; then
+      set_phase "shutdown-vms"
+      shutdown_live_vms || cleanup_rc=$?
+    else
+      set_phase "preserve-vms"
+      echo "preserving live VMs for resume/debug; run shutdown-vms when finished" >&2
+    fi
+    shutdown_live_vms_on_exit=0
     set_phase "complete"
     stop_status_monitor
     echo "live workflow artifacts: $out_dir"
@@ -521,13 +589,20 @@ case "$command" in
       echo "workflow-resume-live requires LINODE_TOKEN" >&2
       exit 2
     fi
+    if [[ ! -f "$ssh_key" ]]; then
+      echo "workflow-resume-live SSH key not found: $ssh_key" >&2
+      exit 2
+    fi
+    if [[ ! -f "$authorized_key_file" ]]; then
+      echo "workflow-resume-live authorized public key not found: $authorized_key_file" >&2
+      exit 2
+    fi
     if [[ ! -f "$repo_root/$out_dir/vms.json" ]]; then
       echo "workflow-resume-live requires existing VM state: $out_dir/vms.json" >&2
       exit 2
     fi
     mkdir -p "$repo_root/$out_dir"
-    write_nodes_file
-    cleanup_live_vms_on_exit=1
+    shutdown_live_vms_on_exit=1
     start_status_monitor
     set_phase "sync"
     run_home100k sync "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
@@ -549,10 +624,20 @@ case "$command" in
     set_phase "aggregate"
     run_home100k aggregate "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir"
     generate_report_from_artifacts
-    set_phase "destroy-vms"
+    report_status="$(current_report_status)"
+    if [[ "$report_status" != "PASS" && "$workflow_rc" -eq 0 ]]; then
+      workflow_rc=1
+      echo "report status is $report_status; preserving VMs for investigation" >&2
+    fi
     cleanup_rc=0
-    destroy_live_vms || cleanup_rc=$?
-    cleanup_live_vms_on_exit=0
+    if should_shutdown_after_workflow; then
+      set_phase "shutdown-vms"
+      shutdown_live_vms || cleanup_rc=$?
+    else
+      set_phase "preserve-vms"
+      echo "preserving live VMs for resume/debug; run shutdown-vms when finished" >&2
+    fi
+    shutdown_live_vms_on_exit=0
     set_phase "complete"
     stop_status_monitor
     echo "live workflow artifacts: $out_dir"

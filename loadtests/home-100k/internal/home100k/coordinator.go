@@ -130,6 +130,7 @@ func runRunnerDaemon(plan Plan, assignment VMAssignment, values shardRunFlagValu
 		done:       make(chan struct{}),
 		telemetry: VMStartTelemetry{
 			Label:   assignment.Label,
+			RunID:   runID,
 			ReadyAt: time.Now().UTC().Format(time.RFC3339Nano),
 			Status:  "READY_WAIT",
 		},
@@ -243,7 +244,7 @@ func coordinateRemoteRunnerStart(vms []LinodeVM, plan Plan, runID string, values
 				continue
 			}
 			telemetry, err := getRunnerTelemetry(client, vm, "/ready")
-			if err == nil && telemetry.Status == "READY_WAIT" {
+			if err == nil && telemetry.Status == "READY_WAIT" && strings.TrimSpace(telemetry.RunID) == runID {
 				telemetry.IP = vm.PublicIPv4
 				ready[vm.Label] = telemetry
 			}
@@ -279,7 +280,7 @@ func coordinateRemoteRunnerStart(vms []LinodeVM, plan Plan, runID string, values
 				continue
 			}
 			telemetry.IP = vm.PublicIPv4
-			if telemetry.Status == "completed" || telemetry.Status == "failed" {
+			if strings.TrimSpace(telemetry.RunID) == runID && (telemetry.Status == "completed" || telemetry.Status == "failed") {
 				completed[vm.Label] = telemetry
 			}
 		}

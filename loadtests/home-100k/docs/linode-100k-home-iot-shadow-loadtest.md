@@ -108,6 +108,7 @@ Defaults:
 | `HOME100K_STAGE_STEADY` | `45s` |
 | `HOME100K_STAGE_COOL_DOWN` | `15s` |
 | `HOME100K_RUNNER_MODE` | `live` |
+| `HOME100K_CREDENTIAL_BUNDLE_FORMAT` | `sqlite-gzip` |
 | `HOME100K_NODE_RESOURCE_STATUS` | `1` |
 | `HOME100K_K8S_NODE_RESOURCE_STATUS` | `1` |
 | `HOME100K_KUBECONFIG` | unset; falls back to existing LKE kubeconfig env or `<env-root>/state/lke-kubeconfig.yaml` |
@@ -145,9 +146,12 @@ HOME100K_RUN_ID=20260615T100000Z \
 The default command is `workflow-live`: it creates the load-generator VMs,
 syncs the runner binaries plus minimal env-root artifacts, dispatches shards,
 collects shard artifacts, collects server evidence, and aggregates the report.
-It then destroys the provisioned VMs. If the workflow is interrupted, rerun
-`destroy-vms --live --confirm-live` with the same `HOME100K_RUN_ID` to clean any
-leftovers. During the live workflow the script prints status immediately and every 30 seconds with the current
+It then powers off reusable VMs only after a successful `PASS` report. If the
+workflow fails, or the final report is `FAIL`/`INCOMPLETE`, the VMs remain
+available for inspection and `workflow-resume-live`; run `shutdown-vms` when
+debugging is finished, or `destroy-vms --live --confirm-live` only when the pool
+should be deleted. During the live workflow the script prints status immediately
+and every 30 seconds with the current
 phase, VM count, collected shard count, server evidence state, report status,
 per load-generator VM resource samples, and per Kubernetes node resource
 samples. Provisioned node inventory is written to
@@ -196,8 +200,18 @@ artifacts.
 Live sync reads `vms.json`, generates an Ansible inventory from provisioned VM
 IPs, writes one shard manifest per VM, and runs
 `loadtests/home-100k/ansible/sync.yml`. The playbook copies only the Linux
-runner binary, assigned shard manifest, and minimal env-root artifacts; it does
-not copy the full generated device tree or report history.
+runner binary, assigned shard manifest, one compressed SQLite credential bundle
+for that VM shard, and minimal env-root artifacts; it does not copy the full
+generated device tree or report history.
+
+The credential bundle format is fixed by
+`HOME100K_CREDENTIAL_BUNDLE_FORMAT=sqlite-gzip`. Before Ansible sync, the host
+builds `<out-dir>/credential-bundles/<vm-label>.sqlite.gz` plus a manifest for
+each VM. The archive uploaded to that VM includes only
+`loadtests/home-100k/credentials/<vm-label>.sqlite.gz` and the manifest, not
+the expanded `devices/test_device/devices/**` and
+`devices/test_device/bundles/**` PEM fan-out. This avoids tens of thousands of
+inodes per shard and makes future VM/orchestra reuse checkable by sha256.
 Live run-stages reads `vms.json`, regenerates the same inventory, and runs
 `loadtests/home-100k/ansible/start-runner.yml`. Ansible starts a
 `home-100k runner-daemon` on each VM and waits for `READY_WAIT`; it does not
@@ -206,8 +220,12 @@ ready barrier, sends `START(run_id, sequence, delay_ms)` to every VM, and each
 runner uses its local monotonic clock for the final delay before opening
 MQTT/API traffic. The run writes `start-coordination.json` with ready barrier,
 per-VM start timestamps, and max start skew. In `runner_mode=live`, each VM
-calls the copied `rtk-cloud` binary to run the assigned MQTT/API shard only
-after START is received.
+calls the copied `rtk-cloud` binary once to run the assigned staged MQTT/API
+shard only after START is received. Device MQTT delta subscriptions are
+lifetime state: the 50K, 75K, and 100K stages add new device sessions without
+disconnecting and resubscribing devices that were already online in earlier
+stages. Reports must show both new subscribe packets and active
+connection/subscription gauges.
 Live collect reads `vms.json`, regenerates the inventory, and runs
 `loadtests/home-100k/ansible/collect.yml` to fetch shard `results.json`, shard
 reports, runner coordination telemetry, daemon logs, resource snapshots, and

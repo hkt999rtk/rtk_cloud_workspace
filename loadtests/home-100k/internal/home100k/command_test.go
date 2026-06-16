@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func writeTinyEnvRoot(t *testing.T) string {
@@ -57,6 +59,36 @@ func writeTinyEnvRoot(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return root
+}
+
+func writeHome100KCoverageArtifacts(t *testing.T, envRoot string) {
+	t.Helper()
+	users := make([]map[string]any, 0, DefaultUserCount)
+	for idx := 0; idx < DefaultUserCount; idx++ {
+		users = append(users, map[string]any{"email": fmt.Sprintf("user-%04d@example.test", idx)})
+	}
+	if err := writeJSONFile(filepath.Join(envRoot, "artifacts", "users", "rtk-users-20260616T000000Z.json"), map[string]any{"brandname": "RTK", "users": users}); err != nil {
+		t.Fatal(err)
+	}
+	assignments := make([]map[string]any, 0, DefaultDeviceCount)
+	for idx := 0; idx < DefaultDeviceCount; idx++ {
+		deviceType := "smart_meter"
+		switch {
+		case idx < 50000:
+			deviceType = "light"
+		case idx < 70000:
+			deviceType = "air_conditioner"
+		}
+		assignments = append(assignments, map[string]any{
+			"assigned_email":  fmt.Sprintf("user-%04d@example.test", idx%DefaultUserCount),
+			"device_id":       fmt.Sprintf("load-device-%06d", idx),
+			"device_type":     deviceType,
+			"service_options": []string{"mqtt"},
+		})
+	}
+	if err := writeJSONFile(filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-20260616T000000Z.json"), map[string]any{"brandname": "rtk", "assignments": assignments}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func readTarGzNames(t *testing.T, path string) map[string]bool {
@@ -227,6 +259,11 @@ func TestExecuteProvisionVMsLiveWritesVMStateFile(t *testing.T) {
 	outDir := t.TempDir()
 	created := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[],"page":1,"pages":1,"results":0}`))
+			return
+		}
 		if r.Method != http.MethodPost {
 			t.Fatalf("method = %s, want POST", r.Method)
 		}
@@ -253,14 +290,83 @@ func TestExecuteProvisionVMsLiveWritesVMStateFile(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("Execute(provision-vms live) code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
-	if created != 10 {
-		t.Fatalf("created requests = %d, want 10", created)
+	if created != 5 {
+		t.Fatalf("created requests = %d, want 5", created)
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "vms.json")); err != nil {
 		t.Fatalf("missing vms.json: %v", err)
 	}
 	if !strings.Contains(stdout.String(), `"vm_state_file"`) {
 		t.Fatalf("stdout missing vm_state_file:\n%s", stdout.String())
+	}
+}
+
+func TestExecuteProvisionVMsLiveReusesExistingLabelPoolAndBootsPoweredOffVMs(t *testing.T) {
+	outDir := t.TempDir()
+	posts := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v4/linode/instances":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[
+				{"id":101,"label":"home-100k-mixed-000","status":"offline","ipv4":["203.0.113.101"]},
+				{"id":102,"label":"home-100k-mixed-001","status":"running","ipv4":["203.0.113.102"]}
+			],"page":1,"pages":1,"results":2}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/boot"):
+			posts = append(posts, r.URL.Path)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v4/linode/instances":
+			var got map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			label, _ := got["label"].(string)
+			posts = append(posts, "create:"+label)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":200,"label":"` + label + `","ipv4":["203.0.113.200"]}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := Execute([]string{
+		"provision-vms",
+		"--env-root", "cloud_env/staging/lke",
+		"--brandname", "RTK",
+		"--region", "us-sea",
+		"--run-id", "run-cli",
+		"--out-dir", outDir,
+		"--live",
+		"--confirm-live",
+		"--linode-token", "test-token",
+		"--linode-endpoint", server.URL + "/v4",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Execute(provision-vms live reuse) code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	joinedPosts := strings.Join(posts, "\n")
+	if !strings.Contains(joinedPosts, "/v4/linode/instances/101/boot") {
+		t.Fatalf("offline reused VM was not booted; posts:\n%s", joinedPosts)
+	}
+	if strings.Contains(joinedPosts, "create:home-100k-mixed-000") || strings.Contains(joinedPosts, "create:home-100k-mixed-001") {
+		t.Fatalf("reused labels were recreated; posts:\n%s", joinedPosts)
+	}
+	if strings.Count(joinedPosts, "create:") != 3 {
+		t.Fatalf("created count = %d, want 3; posts:\n%s", strings.Count(joinedPosts, "create:"), joinedPosts)
+	}
+	raw, err := os.ReadFile(filepath.Join(outDir, "vms.json"))
+	if err != nil {
+		t.Fatalf("read vms.json: %v", err)
+	}
+	if !strings.Contains(string(raw), `"id": 101`) || !strings.Contains(string(raw), `"id": 102`) {
+		t.Fatalf("vms.json missing reused VMs:\n%s", raw)
+	}
+	if !strings.Contains(stdout.String(), `"reused"`) {
+		t.Fatalf("stdout missing reused list:\n%s", stdout.String())
 	}
 }
 
@@ -272,6 +378,11 @@ func TestExecuteProvisionVMsLiveUsesVMConfigFlagsWithoutLeakingRootPass(t *testi
 	}
 	var got map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[],"page":1,"pages":1,"results":0}`))
+			return
+		}
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
@@ -453,9 +564,28 @@ func TestExecuteSyncDefaultsToDryRun(t *testing.T) {
 	}
 }
 
+func TestExecuteSyncRejectsUnsupportedCredentialBundleFormat(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Execute([]string{
+		"sync",
+		"--env-root", "cloud_env/staging/lke",
+		"--brandname", "RTK",
+		"--region", "us-sea",
+		"--run-id", "run-cli",
+		"--credential-bundle-format", "expanded-pem",
+	}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("Execute(sync) code = 0, want failure; stdout=%s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), `unsupported --credential-bundle-format "expanded-pem"`) {
+		t.Fatalf("stderr missing unsupported format error:\n%s", stderr.String())
+	}
+}
+
 func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T) {
 	outDir := t.TempDir()
 	envRoot := writeTinyEnvRoot(t)
+	writeHome100KCoverageArtifacts(t, envRoot)
 	stateFile := filepath.Join(outDir, "vms.json")
 	state := map[string]any{
 		"created": []LinodeVM{
@@ -478,6 +608,27 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 		callsMu.Lock()
 		defer callsMu.Unlock()
 		calls = append(calls, name+" "+strings.Join(args, " "))
+		if name == "bash" && len(args) >= 2 && args[0] == "-lc" {
+			if before, after, ok := strings.Cut(args[1], "go build -o '"); ok {
+				_ = before
+				if out, _, ok := strings.Cut(after, "'"); ok {
+					if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+						return err
+					}
+					return os.WriteFile(out, []byte("test-binary\n"), 0o755)
+				}
+			}
+		}
+		if name == "ssh-keygen" {
+			keyPath := args[len(args)-1]
+			if err := os.MkdirAll(filepath.Dir(keyPath), 0o700); err != nil {
+				return err
+			}
+			if err := os.WriteFile(keyPath, []byte("PRIVATE\n"), 0o600); err != nil {
+				return err
+			}
+			return os.WriteFile(keyPath+".pub", []byte("ssh-ed25519 test\n"), 0o644)
+		}
 		return nil
 	}
 	defer func() { commandRunner = oldRunner }()
@@ -504,7 +655,7 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 	for _, want := range []string{
 		"bash -lc GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o '" + filepath.Join(outDir, "bin", "home-100k-linux-amd64") + "' ./loadtests/home-100k/cmd/home-100k",
 		"bash -lc GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o '" + filepath.Join(outDir, "bin", "cloud-mqtt-test-linux-amd64") + "' ./scripts/go/cloud-mqtt-test",
-		"ansible-playbook --forks 20 -i " + filepath.Join(outDir, "ansible", "inventory.json") + " loadtests/home-100k/ansible/sync.yml",
+		"env ANSIBLE_CONFIG=loadtests/home-100k/ansible/ansible.cfg ansible-playbook --forks 20 -i " + filepath.Join(outDir, "ansible", "inventory.json") + " loadtests/home-100k/ansible/sync.yml",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("sync live commands missing %q:\n%s", want, joined)
@@ -536,11 +687,19 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 			t.Fatalf("extra vars %s = %q, want absolute path", key, extraVars[key])
 		}
 	}
+	for _, key := range []string{"local_artifact_store", "fanout_private_key"} {
+		if !filepath.IsAbs(extraVars[key]) {
+			t.Fatalf("extra vars %s = %q, want absolute path", key, extraVars[key])
+		}
+	}
 	if !filepath.IsAbs(extraVars["local_rtk_cloud"]) {
 		t.Fatalf("extra vars local_rtk_cloud = %q, want absolute path", extraVars["local_rtk_cloud"])
 	}
 	if !filepath.IsAbs(extraVars["local_cloud_mqtt_test"]) {
 		t.Fatalf("extra vars local_cloud_mqtt_test = %q, want absolute path", extraVars["local_cloud_mqtt_test"])
+	}
+	if extraVars["credential_bundle_format"] != "sqlite-gzip" {
+		t.Fatalf("extra vars credential_bundle_format = %q, want sqlite-gzip", extraVars["credential_bundle_format"])
 	}
 	var inventoryDoc struct {
 		All struct {
@@ -551,6 +710,13 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 	}
 	if err := json.Unmarshal(inventoryRaw, &inventoryDoc); err != nil {
 		t.Fatalf("decode inventory: %v", err)
+	}
+	orchestraHosts := inventoryDoc.All.Children["home_100k_orchestra"].Hosts
+	if len(orchestraHosts) != 1 {
+		t.Fatalf("home_100k_orchestra hosts = %#v, want exactly one orchestra", orchestraHosts)
+	}
+	if _, ok := orchestraHosts["home-100k-mixed-000"]; !ok {
+		t.Fatalf("home_100k_orchestra = %#v, want first VM home-100k-mixed-000", orchestraHosts)
 	}
 	localManifest, _ := inventoryDoc.All.Children["home_100k"].Hosts["home-100k-mixed-000"]["local_shard_manifest"].(string)
 	if !filepath.IsAbs(localManifest) {
@@ -564,9 +730,30 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 		t.Fatalf("missing env archive: %v", err)
 	}
 	archiveNames := readTarGzNames(t, localArchive)
-	for _, want := range []string{"env/stack.env", "state/lke.env", "state/lke-kubeconfig.yaml", "state/video-cloud-staging.state.json", "services/video-cloud.env", "devices/test_device/manifests/devices.json", "devices/test_device/devices/light/load-device-0001/device.cert.pem", "devices/test_device/devices/light/load-device-0001/device.key.pem", "devices/test_device/devices/light/load-device-0001/device.chain.pem", "devices/test_device/bundles/light/load-device-0001.pem", "artifacts/users/rtk-users-test.json", "artifacts/device-bind/rtk-device-bind-test.json"} {
+	for _, want := range []string{"loadtests/home-100k/credentials/home-100k-mixed-000.sqlite.gz", "loadtests/home-100k/credentials/home-100k-mixed-000.manifest.json"} {
 		if !archiveNames[want] {
-			t.Fatalf("env archive missing %q", want)
+			t.Fatalf("shard env archive missing %q", want)
+		}
+	}
+	commonArchive := filepath.Join(outDir, "artifact-store", "common", "env-common.tar.gz")
+	if _, err := os.Stat(commonArchive); err != nil {
+		t.Fatalf("missing common env archive: %v", err)
+	}
+	commonNames := readTarGzNames(t, commonArchive)
+	for _, want := range []string{"env/stack.env", "state/lke.env", "state/lke-kubeconfig.yaml", "state/video-cloud-staging.state.json", "services/video-cloud.env", "devices/test_device/manifests/devices.json", "artifacts/users/rtk-users-20260616T000000Z.json", "artifacts/device-bind/rtk-device-bind-20260616T000000Z.json"} {
+		if !commonNames[want] {
+			t.Fatalf("common env archive missing %q", want)
+		}
+	}
+	forbiddenPrefixes := []string{
+		"devices/test_device/devices/",
+		"devices/test_device/bundles/",
+	}
+	for name := range archiveNames {
+		for _, prefix := range forbiddenPrefixes {
+			if strings.HasPrefix(name, prefix) {
+				t.Fatalf("env archive must use sqlite credential bundle, found expanded credential path %q", name)
+			}
 		}
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "sync-telemetry.json")); err != nil {
@@ -582,12 +769,12 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 	}
 	manifest0 := string(manifest0Raw)
 	manifest1 := string(manifest1Raw)
-	for _, want := range []string{`"role": "device-mqtt"`, `"start": 0`, `"end": 10000`, `"role": "user-app"`, `"start": 0`, `"end": 500`} {
+	for _, want := range []string{`"role": "device-mqtt"`, `"start": 0`, `"end": 20000`, `"role": "user-app"`, `"start": 0`, `"end": 1000`} {
 		if !strings.Contains(manifest0, want) {
 			t.Fatalf("mixed-000 manifest missing %q:\n%s", want, manifest0)
 		}
 	}
-	for _, want := range []string{`"role": "device-mqtt"`, `"start": 10000`, `"end": 20000`, `"role": "user-app"`, `"start": 500`, `"end": 1000`} {
+	for _, want := range []string{`"role": "device-mqtt"`, `"start": 20000`, `"end": 40000`, `"role": "user-app"`, `"start": 1000`, `"end": 2000`} {
 		if !strings.Contains(manifest1, want) {
 			t.Fatalf("mixed-001 manifest missing %q:\n%s", want, manifest1)
 		}
@@ -651,14 +838,69 @@ func TestAnsibleSyncUsesCompressedEnvArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(raw)
-	for _, want := range []string{`local_env_archive`, `Upload compressed env-root shard archive`, `Extract env-root shard archive`, `env-root.tar.gz`} {
+	for _, want := range []string{`artifact_env_archive`, `Fan out compressed env-root shard archive from orchestra`, `ansible.posix.synchronize`, `Extract env-root shard archive`, `env-root.tar.gz`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("sync.yml missing %q:\n%s", want, body)
 		}
 	}
-	for _, forbidden := range []string{`ansible.posix.synchronize`, `--filter=merge`} {
+	for _, forbidden := range []string{`--filter=merge`} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("sync.yml still contains %q:\n%s", forbidden, body)
+		}
+	}
+	if strings.Contains(body, `--no-compress`) {
+		t.Fatalf("sync.yml uses macOS-incompatible rsync option --no-compress:\n%s", body)
+	}
+	if strings.Contains(body, `--inplace`) {
+		t.Fatalf("sync.yml uses rsync --inplace, which conflicts with ansible synchronize delay-updates:\n%s", body)
+	}
+	if strings.Contains(body, `--info=progress2`) {
+		t.Fatalf("sync.yml uses GNU-only rsync --info=progress2; macOS /usr/bin/rsync does not support it:\n%s", body)
+	}
+	if !strings.Contains(body, `compress: false`) {
+		t.Fatalf("sync.yml should disable rsync compression through ansible synchronize, not raw rsync opts:\n%s", body)
+	}
+}
+
+func TestAnsibleSyncSkipsUnchangedArtifactsByChecksum(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "ansible", "sync.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, want := range []string{
+		"remote_runner_stat",
+		"remote_env_archive_stat",
+		"runner_needs_upload",
+		"env_archive_needs_upload",
+		"Extract env-root shard archive when changed",
+		"files_skipped",
+		"bytes_skipped",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("sync.yml missing checksum-cache marker %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestAnsibleSyncUsesOrchestraFanout(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "ansible", "sync.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, want := range []string{
+		"hosts: home_100k_orchestra",
+		"Upload artifact store to orchestra",
+		"Install per-run fanout SSH key on orchestra",
+		"Rebuild fanout known_hosts on orchestra",
+		"ssh-keyscan",
+		"Fan out runner binary from orchestra",
+		"delegate_to: \"{{ groups['home_100k_orchestra'][0] }}\"",
+		"rsync_timeout",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("sync.yml missing orchestra fanout marker %q:\n%s", want, body)
 		}
 	}
 }
@@ -709,17 +951,267 @@ func TestEnvArchiveUsesBoundDeviceShardSelection(t *testing.T) {
 	}
 	names := readTarGzNames(t, archivePath)
 	for _, want := range []string{
-		"devices/test_device/devices/smart_meter/load-device-0002/device.cert.pem",
-		"devices/test_device/devices/smart_meter/load-device-0002/device.key.pem",
-		"devices/test_device/devices/smart_meter/load-device-0002/device.chain.pem",
-		"devices/test_device/bundles/smart_meter/load-device-0002.pem",
+		"loadtests/home-100k/credentials/home-100k-mixed-001.sqlite.gz",
+		"loadtests/home-100k/credentials/home-100k-mixed-001.manifest.json",
 	} {
 		if !names[want] {
-			t.Fatalf("archive missing shard-selected device credential %q", want)
+			t.Fatalf("archive missing shard-selected credential bundle %q", want)
 		}
 	}
-	if names["devices/test_device/devices/light/load-device-0001/device.cert.pem"] {
-		t.Fatalf("archive included shard 0 device credential")
+	for name := range names {
+		if strings.HasPrefix(name, "devices/test_device/devices/") || strings.HasPrefix(name, "devices/test_device/bundles/") {
+			t.Fatalf("archive included expanded device credential %q", name)
+		}
+	}
+}
+
+func TestValidatePlanDataCoverageRejectsInsufficientUsersAndBoundDevices(t *testing.T) {
+	envRoot := writeTinyEnvRoot(t)
+	users := map[string]any{"users": []map[string]any{
+		{"email": "user-00@example.test"},
+		{"email": "user-01@example.test"},
+	}}
+	if err := writeJSONFile(filepath.Join(envRoot, "artifacts", "users", "rtk-users-20260615.json"), users); err != nil {
+		t.Fatal(err)
+	}
+	bind := map[string]any{
+		"brandname": "rtk",
+		"assignments": []map[string]any{
+			{"assigned_email": "user-00@example.test", "device_id": "load-device-0001", "device_type": "light", "service_options": []string{"mqtt"}},
+			{"assigned_email": "user-01@example.test", "device_id": "load-device-0002", "device_type": "smart_meter", "service_options": []string{"mqtt"}},
+		},
+	}
+	if err := writeJSONFile(filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-20260615.json"), bind); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := NewPlan(PlanOptions{EnvRoot: envRoot, Brandname: "RTK", Region: "us-sea"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = validatePlanDataCoverage(envRoot, plan)
+	if err == nil {
+		t.Fatalf("validatePlanDataCoverage succeeded, want insufficient data error")
+	}
+	for _, want := range []string{
+		"users available=2 required=5000",
+		"eligible devices available=2 required=100000",
+		"light available=1 required=50000",
+		"air_conditioner available=0 required=20000",
+		"smart_meter available=1 required=30000",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("coverage error missing %q:\n%v", want, err)
+		}
+	}
+}
+
+func TestValidatePlanDataCoverageAcceptsMatchingUsersAndBoundDevices(t *testing.T) {
+	envRoot := writeTinyEnvRoot(t)
+	users := map[string]any{"users": []map[string]any{
+		{"email": "user-00@example.test"},
+		{"email": "user-01@example.test"},
+	}}
+	if err := writeJSONFile(filepath.Join(envRoot, "artifacts", "users", "rtk-users-20260615.json"), users); err != nil {
+		t.Fatal(err)
+	}
+	bind := map[string]any{
+		"brandname": "rtk",
+		"assignments": []map[string]any{
+			{"assigned_email": "user-00@example.test", "device_id": "load-device-0001", "device_type": "light", "service_options": []string{"mqtt"}},
+			{"assigned_email": "user-01@example.test", "device_id": "load-device-0002", "device_type": "smart_meter", "service_options": []string{"mqtt"}},
+		},
+	}
+	if err := writeJSONFile(filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-20260615.json"), bind); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := NewPlan(PlanOptions{EnvRoot: envRoot, Brandname: "RTK", Region: "us-sea"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Conditions.Users = 2
+	plan.Conditions.Devices = 2
+	plan.DeviceMix = map[string]int{"light": 1, "smart_meter": 1}
+
+	if err := validatePlanDataCoverage(envRoot, plan); err != nil {
+		t.Fatalf("validatePlanDataCoverage() error = %v", err)
+	}
+}
+
+func TestEnvArchiveOnlyIncludesLatestUsersAndDeviceBindArtifacts(t *testing.T) {
+	envRoot := writeTinyEnvRoot(t)
+	oldUsers := filepath.Join(envRoot, "artifacts", "users", "rtk-users-20260614T010000Z.json")
+	newUsers := filepath.Join(envRoot, "artifacts", "users", "rtk-users-20260615T010000Z.json")
+	for _, path := range []string{oldUsers, newUsers} {
+		if err := writeJSONFile(path, map[string]any{"brandname": "RTK", "users": []map[string]any{{"email": "user-00@example.test"}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldBind := filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-20260614T010000Z.json")
+	newBind := filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-20260615T010000Z.json")
+	completeBind := map[string]any{
+		"brandname": "RTK",
+		"assignments": []map[string]any{
+			{"assigned_email": "user-00@example.test", "device_id": "load-device-0001", "device_type": "light", "service_options": []string{"mqtt"}},
+			{"assigned_email": "user-00@example.test", "device_id": "load-device-0002", "device_type": "air_conditioner", "service_options": []string{"mqtt"}},
+			{"assigned_email": "user-00@example.test", "device_id": "load-device-0003", "device_type": "smart_meter", "service_options": []string{"mqtt"}},
+		},
+	}
+	for _, path := range []string{oldBind, newBind} {
+		if err := writeJSONFile(path, completeBind); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, rel := range []string{
+		"devices/test_device/devices/light/load-device-0001/device.cert.pem",
+		"devices/test_device/devices/light/load-device-0001/device.key.pem",
+		"devices/test_device/devices/light/load-device-0001/device.chain.pem",
+		"devices/test_device/bundles/light/load-device-0001.pem",
+	} {
+		path := filepath.Join(envRoot, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("pem\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plan, err := NewPlan(PlanOptions{EnvRoot: envRoot, Brandname: "RTK", Region: "us-sea"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(t.TempDir(), "env-common.tar.gz")
+	if err := writeCommonEnvArchive(archivePath, plan); err != nil {
+		t.Fatal(err)
+	}
+	names := readTarGzNames(t, archivePath)
+	for _, want := range []string{
+		"artifacts/users/rtk-users-20260615T010000Z.json",
+		"artifacts/device-bind/rtk-device-bind-20260615T010000Z.json",
+	} {
+		if !names[want] {
+			t.Fatalf("archive missing latest artifact %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		"artifacts/users/rtk-users-20260614T010000Z.json",
+		"artifacts/device-bind/rtk-device-bind-20260614T010000Z.json",
+	} {
+		if names[forbidden] {
+			t.Fatalf("archive included stale artifact %q", forbidden)
+		}
+	}
+}
+
+func TestEnvArchiveSelectsArtifactsByFilenameTimestampNotMTime(t *testing.T) {
+	envRoot := writeTinyEnvRoot(t)
+	oldUsers := map[string]any{"users": []map[string]any{
+		{"email": "old-user@example.test"},
+	}}
+	newUsers := map[string]any{"users": []map[string]any{
+		{"email": "new-user@example.test"},
+	}}
+	oldUsersPath := filepath.Join(envRoot, "artifacts", "users", "rtk-users-20260615T010000Z.json")
+	newUsersPath := filepath.Join(envRoot, "artifacts", "users", "rtk-users-20260615T020000Z.json")
+	if err := writeJSONFile(oldUsersPath, oldUsers); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(newUsersPath, newUsers); err != nil {
+		t.Fatal(err)
+	}
+	oldBind := map[string]any{
+		"brandname": "rtk",
+		"assignments": []map[string]any{
+			{"assigned_email": "old-user@example.test", "device_id": "load-device-0001", "device_type": "light", "service_options": []string{"mqtt"}},
+			{"assigned_email": "old-user@example.test", "device_id": "load-device-0002", "device_type": "air_conditioner", "service_options": []string{"mqtt"}},
+			{"assigned_email": "old-user@example.test", "device_id": "load-device-0003", "device_type": "smart_meter", "service_options": []string{"mqtt"}},
+		},
+	}
+	newBind := map[string]any{
+		"brandname": "rtk",
+		"assignments": []map[string]any{
+			{"assigned_email": "new-user@example.test", "device_id": "load-device-9001", "device_type": "light", "service_options": []string{"mqtt"}},
+			{"assigned_email": "new-user@example.test", "device_id": "load-device-9002", "device_type": "air_conditioner", "service_options": []string{"mqtt"}},
+			{"assigned_email": "new-user@example.test", "device_id": "load-device-9003", "device_type": "smart_meter", "service_options": []string{"mqtt"}},
+		},
+	}
+	oldBindPath := filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-20260615T010000Z.json")
+	newBindPath := filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-20260615T020000Z.json")
+	if err := writeJSONFile(oldBindPath, oldBind); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(newBindPath, newBind); err != nil {
+		t.Fatal(err)
+	}
+	newTime := time.Now().Add(-time.Hour)
+	oldTime := time.Now()
+	for _, path := range []string{newUsersPath, newBindPath} {
+		if err := os.Chtimes(path, newTime, newTime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, path := range []string{oldUsersPath, oldBindPath} {
+		if err := os.Chtimes(path, oldTime, oldTime); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rows, err := loadShardDeviceRowsFromArtifacts(envRoot, Plan{Conditions: TestConditions{Brandname: "RTK"}}, VMAssignment{
+		Index:      0,
+		TaskShards: []Shard{{Role: "device-mqtt", Count: 3}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := []string{}
+	for _, row := range rows {
+		got = append(got, row.DeviceID)
+	}
+	want := []string{"load-device-9001", "load-device-9002", "load-device-9003"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("selected devices = %v, want %v", got, want)
+	}
+}
+
+func TestEnvArchiveIsDeterministicForUnchangedShardInputs(t *testing.T) {
+	envRoot := writeTinyEnvRoot(t)
+	users := map[string]any{"users": []map[string]any{
+		{"email": "user-00@example.test"},
+	}}
+	bind := map[string]any{"assignments": []map[string]any{
+		{"device_id": "load-device-0001", "device_type": "light", "assigned_email": "user-00@example.test", "service_options": []string{"mqtt"}},
+	}}
+	if err := writeJSONFile(filepath.Join(envRoot, "artifacts", "users", "rtk-users-20260615.json"), users); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-20260615.json"), bind); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := NewPlan(PlanOptions{EnvRoot: envRoot, Brandname: "RTK", Region: "us-sea"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assignment := plan.Assignments[0]
+	outDir := t.TempDir()
+	first := filepath.Join(outDir, "first.tar.gz")
+	second := filepath.Join(outDir, "second.tar.gz")
+	if err := writeEnvArchive(first, plan, assignment); err != nil {
+		t.Fatalf("write first archive: %v", err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	if err := writeEnvArchive(second, plan, assignment); err != nil {
+		t.Fatalf("write second archive: %v", err)
+	}
+	firstSHA, err := fileSHA256(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondSHA, err := fileSHA256(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstSHA != secondSHA {
+		t.Fatalf("archive sha differs for unchanged inputs: first=%s second=%s", firstSHA, secondSHA)
 	}
 }
 
@@ -736,6 +1228,64 @@ func TestAnsibleSyncInstallsKubectlForLiveRunner(t *testing.T) {
 	}
 }
 
+func TestAnsibleConfigDisablesSSHCompressionForPreCompressedArtifacts(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "ansible", "ansible.cfg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, want := range []string{`ssh_args`, `Compression=no`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("ansible.cfg missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, ` -C`) {
+		t.Fatalf("ansible.cfg should not enable SSH compression for gzip artifacts:\n%s", body)
+	}
+}
+
+func TestHome100KScriptKeepsVMsForFailedOrIncompleteRunsByDefault(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "home-100k.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, want := range []string{
+		"should_shutdown_after_workflow()",
+		"[[ \"$shutdown_on_error\" == \"1\" ]]",
+		"[[ \"$workflow_rc\" != \"0\" ]]",
+		"[[ \"$(current_report_status)\" == \"PASS\" ]]",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("home-100k.sh missing shutdown gate marker %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestHome100KResumeLiveSkipsProvisionWhenVMStateExists(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "home-100k.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	_, resume, ok := strings.Cut(body, "workflow-resume-live)")
+	if !ok {
+		t.Fatal("home-100k.sh missing workflow-resume-live case")
+	}
+	resume, _, ok = strings.Cut(resume, "    ;;")
+	if !ok {
+		t.Fatal("home-100k.sh workflow-resume-live case is not terminated")
+	}
+	if strings.Contains(resume, "run_home100k provision-vms") {
+		t.Fatalf("workflow-resume-live must reuse existing vms.json and skip provision-vms:\n%s", resume)
+	}
+	for _, want := range []string{`requires existing VM state`, `set_phase "sync"`, `run_home100k sync`} {
+		if !strings.Contains(resume, want) {
+			t.Fatalf("workflow-resume-live missing %q:\n%s", want, resume)
+		}
+	}
+}
+
 func TestAnsibleStartRunnerUsesPrebuiltCloudMQTTTestAndDaemonWait(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "ansible", "start-runner.yml"))
 	if err != nil {
@@ -744,6 +1294,9 @@ func TestAnsibleStartRunnerUsesPrebuiltCloudMQTTTestAndDaemonWait(t *testing.T) 
 	body := string(raw)
 	for _, want := range []string{
 		"runner-daemon",
+		`$2 == "home-100k" && index($0, "runner-daemon")`,
+		"ss -ltnp 'sport = :18080'",
+		"runner daemon listen port :18080 is still in use after cleanup",
 		"CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT",
 		"{{ remote_home_100k_dir }}/bin/cloud-mqtt-test",
 		"READY_WAIT",
@@ -797,8 +1350,48 @@ func TestExecuteRunStagesLiveRunnerModeRefusesSampleFallback(t *testing.T) {
 	}
 }
 
+func TestExecuteRunStagesLiveRequiresPublicMQTTEndpoint(t *testing.T) {
+	outDir := t.TempDir()
+	stateFile := filepath.Join(outDir, "vms.json")
+	state := map[string]any{
+		"created": []LinodeVM{
+			{ID: 101, Label: "home-100k-mixed-000", PublicIPv4: "203.0.113.101"},
+		},
+	}
+	body, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stateFile, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Execute([]string{
+		"run-stages",
+		"--env-root", "cloud_env/staging/lke",
+		"--brandname", "RTK",
+		"--region", "us-sea",
+		"--run-id", "run-cli",
+		"--out-dir", outDir,
+		"--live",
+		"--runner-mode", "live",
+		"--vm-state-file", stateFile,
+		"--remote-workspace", "/root/rtk_cloud_workspace",
+		"--remote-env-root", "/root/rtk_cloud_workspace/cloud_env/staging/lke",
+	}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("Execute(run-stages live without mqtt addr) code = 0 stdout=%s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "public MQTT endpoint") {
+		t.Fatalf("stderr missing public MQTT endpoint refusal: %s", stderr.String())
+	}
+}
+
 func TestExecuteRunStagesLiveStartsRunnerDaemonsThenHostCoordinator(t *testing.T) {
 	outDir := t.TempDir()
+	envRoot := writeTinyEnvRoot(t)
+	writeHome100KCoverageArtifacts(t, envRoot)
 	stateFile := filepath.Join(outDir, "vms.json")
 	state := map[string]any{
 		"created": []LinodeVM{
@@ -855,7 +1448,7 @@ func TestExecuteRunStagesLiveStartsRunnerDaemonsThenHostCoordinator(t *testing.T
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"run-stages",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", envRoot,
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -867,13 +1460,14 @@ func TestExecuteRunStagesLiveStartsRunnerDaemonsThenHostCoordinator(t *testing.T
 		"--remote-out-root", "/var/lib/home-100k",
 		"--ssh-user", "root",
 		"--ssh-key", "/tmp/test-key",
+		"--mqtt-addr", "mqtt-public.example.test:8883",
 	}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("Execute(run-stages live) code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 	joined := strings.Join(calls, "\n")
 	for _, want := range []string{
-		"ansible-playbook --forks 20 -i " + filepath.Join(outDir, "ansible", "inventory.json") + " loadtests/home-100k/ansible/start-runner.yml",
+		"env ANSIBLE_CONFIG=loadtests/home-100k/ansible/ansible.cfg ansible-playbook --forks 20 -i " + filepath.Join(outDir, "ansible", "inventory.json") + " loadtests/home-100k/ansible/start-runner.yml",
 		"--extra-vars @" + filepath.Join(outDir, "ansible", "extra-vars.json"),
 	} {
 		if !strings.Contains(joined, want) {
@@ -920,7 +1514,7 @@ func TestExecuteShardRunWritesShardArtifacts(t *testing.T) {
 	if !strings.Contains(string(raw), `"load_generator_health"`) {
 		t.Fatalf("shard results missing load_generator_health:\n%s", string(raw))
 	}
-	if !strings.Contains(string(raw), `"vm_assignment"`) || !strings.Contains(string(raw), `"start": 0`) || !strings.Contains(string(raw), `"end": 10000`) {
+	if !strings.Contains(string(raw), `"vm_assignment"`) || !strings.Contains(string(raw), `"start": 0`) || !strings.Contains(string(raw), `"end": 20000`) {
 		t.Fatalf("shard results missing shard range:\n%s", string(raw))
 	}
 	if !strings.Contains(stdout.String(), `"role": "device-mqtt"`) || !strings.Contains(stdout.String(), `"shard_index": 0`) {
@@ -931,6 +1525,7 @@ func TestExecuteShardRunWritesShardArtifacts(t *testing.T) {
 func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 	outDir := t.TempDir()
 	oldRunner := commandRunner
+	oldTimeoutRunner := commandRunnerWithTimeout
 	calls := []string{}
 	commandRunner = func(name string, args ...string) error {
 		calls = append(calls, name+" "+strings.Join(args, " "))
@@ -948,29 +1543,48 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 		}
 		payload := map[string]any{
 			"overall": "pass",
-			"metrics": map[string]any{
-				"devices_selected":   2500,
-				"commands_attempted": 2500,
-				"commands_passed":    2500,
+			"stage_results": []map[string]any{
+				{
+					"name":                      "25k",
+					"connected_devices":         2500,
+					"active_connections":        2500,
+					"active_subscriptions":      2500,
+					"status":                    "PASS",
+					"commands_attempted":        2500,
+					"commands_passed":           2500,
+					"publish_successes":         2100,
+					"publish_failures":          3,
+					"messages_received":         2050,
+					"reported_events":           2000,
+					"total_bytes_sent":          123456,
+					"total_bytes_received":      654321,
+					"http_requests":             700,
+					"http_successes":            690,
+					"http_failures":             10,
+					"total_http_bytes_sent":     1111,
+					"total_http_bytes_received": 2222,
+					"device_mqtt_totals": map[string]any{
+						"active_connections":   2500,
+						"active_subscriptions": 2500,
+					},
+				},
+				{"name": "50k", "connected_devices": 10000, "active_connections": 10000, "active_subscriptions": 10000, "status": "PASS", "commands_attempted": 500, "commands_passed": 500, "http_requests": 500, "http_successes": 500},
+				{"name": "75k", "connected_devices": 15000, "active_connections": 15000, "active_subscriptions": 15000, "status": "PASS", "commands_attempted": 750, "commands_passed": 750, "http_requests": 750, "http_successes": 750},
+				{"name": "100k", "connected_devices": 20000, "active_connections": 20000, "active_subscriptions": 20000, "status": "PASS", "commands_attempted": 1000, "commands_passed": 1000, "http_requests": 1000, "http_successes": 1000},
 			},
-			"publish_successes":         2100,
-			"publish_failures":          3,
-			"messages_received":         2050,
-			"reported_events":           2000,
-			"total_bytes_sent":          123456,
-			"total_bytes_received":      654321,
-			"http_requests":             700,
-			"http_successes":            690,
-			"http_failures":             10,
-			"total_http_bytes_sent":     1111,
-			"total_http_bytes_received": 2222,
 		}
 		if err := writeJSONFile(filepath.Join(childOutDir, "results.json"), payload); err != nil {
 			t.Fatal(err)
 		}
 		return nil
 	}
-	defer func() { commandRunner = oldRunner }()
+	commandRunnerWithTimeout = func(_ time.Duration, name string, args ...string) error {
+		return commandRunner(name, args...)
+	}
+	defer func() {
+		commandRunner = oldRunner
+		commandRunnerWithTimeout = oldTimeoutRunner
+	}()
 
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
@@ -999,11 +1613,14 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 		"--workspace /root/rtk_cloud_workspace",
 		"--env-root cloud_env/staging/lke",
 		"--brandname RTK",
-		"--duration-seconds 3",
-		"--command-rate-per-device-per-day 3600.00",
-		"--max-connected-devices 2500",
+		"--duration-seconds 12",
+		"--command-rate-per-device-per-day 1800.00",
+		"--stage-names 25k,50k,75k,100k",
+		"--stage-connected-devices 5000,10000,15000,20000",
+		"--stage-durations-seconds 3,3,3,3",
+		"--max-connected-devices 20000",
 		"--shard-index 0",
-		"--shard-count 10",
+		"--shard-count 5",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("live shard command missing %q:\n%s", want, joined)
@@ -1033,6 +1650,7 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 func TestExecuteShardRunLiveWritesShardResultsWhenMQTTTestFails(t *testing.T) {
 	outDir := t.TempDir()
 	oldRunner := commandRunner
+	oldTimeoutRunner := commandRunnerWithTimeout
 	commandRunner = func(name string, args ...string) error {
 		childOutDir := ""
 		for idx := 0; idx < len(args)-1; idx++ {
@@ -1071,7 +1689,13 @@ func TestExecuteShardRunLiveWritesShardResultsWhenMQTTTestFails(t *testing.T) {
 		}
 		return errors.New("mqtt test failed")
 	}
-	defer func() { commandRunner = oldRunner }()
+	commandRunnerWithTimeout = func(_ time.Duration, name string, args ...string) error {
+		return commandRunner(name, args...)
+	}
+	defer func() {
+		commandRunner = oldRunner
+		commandRunnerWithTimeout = oldTimeoutRunner
+	}()
 
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
@@ -1106,6 +1730,159 @@ func TestExecuteShardRunLiveWritesShardResultsWhenMQTTTestFails(t *testing.T) {
 	}
 }
 
+func TestExecuteShardRunLiveWritesFallbackStageResultsWhenMQTTTestProducesNoResults(t *testing.T) {
+	outDir := t.TempDir()
+	oldTimeoutRunner := commandRunnerWithTimeout
+	commandRunnerWithTimeout = func(_ time.Duration, name string, args ...string) error {
+		return errors.New("mqtt test crashed before writing results")
+	}
+	defer func() {
+		commandRunnerWithTimeout = oldTimeoutRunner
+	}()
+
+	var stdout, stderr bytes.Buffer
+	code := Execute([]string{
+		"shard-run",
+		"--env-root", "cloud_env/staging/lke",
+		"--brandname", "RTK",
+		"--region", "us-sea",
+		"--run-id", "run-cli",
+		"--role", "device-mqtt",
+		"--shard-index", "0",
+		"--out-dir", outDir,
+		"--runner-mode", "live",
+		"--rtk-cloud-binary", "rtk-cloud",
+		"--stage-warm-up", "1s",
+		"--stage-steady", "1s",
+		"--stage-cool-down", "1s",
+	}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("Execute(shard-run live no results) code = 0, want failure")
+	}
+	var result struct {
+		Status       string        `json:"status"`
+		Error        string        `json:"error"`
+		StageResults []StageResult `json:"stage_results"`
+	}
+	if err := readJSON(filepath.Join(outDir, "results.json"), &result); err != nil {
+		t.Fatalf("missing fallback shard results: %v stderr=%s", err, stderr.String())
+	}
+	if result.Status != "failed" || !strings.Contains(result.Error, "mqtt test crashed before writing results") {
+		t.Fatalf("fallback status/error not preserved: %#v", result)
+	}
+	if len(result.StageResults) != 4 {
+		t.Fatalf("fallback stage results len = %d, want 4", len(result.StageResults))
+	}
+	if got := result.StageResults[0].FailureReasons["runner_failed"]; got != 1 {
+		t.Fatalf("fallback failure reason = %d, want 1; first stage=%#v", got, result.StageResults[0])
+	}
+	if result.StageResults[0].ConnectedDevices != 25000 {
+		t.Fatalf("fallback connected devices = %d, want 25000", result.StageResults[0].ConnectedDevices)
+	}
+}
+
+func TestExecuteShardRunLivePreservesPartialStagedResultsWhenMQTTTestFails(t *testing.T) {
+	outDir := t.TempDir()
+	oldRunner := commandRunner
+	oldTimeoutRunner := commandRunnerWithTimeout
+	commandRunner = func(name string, args ...string) error {
+		childOutDir := ""
+		for idx := 0; idx < len(args)-1; idx++ {
+			if args[idx] == "--out-dir" {
+				childOutDir = args[idx+1]
+			}
+		}
+		if childOutDir == "" {
+			t.Fatalf("missing child --out-dir in args: %v", args)
+		}
+		payload := map[string]any{
+			"status": "FAIL",
+			"stage_results": []map[string]any{
+				{
+					"name":                "25k",
+					"status":              "PASS",
+					"connect_attempts":    2500,
+					"connect_successes":   2000,
+					"subscribe_successes": 2000,
+					"publish_successes":   1000,
+					"messages_received":   900,
+					"http_requests":       250,
+					"http_successes":      240,
+					"failure_reasons":     map[string]any{"app_token_request_failed": 10},
+					"device_mqtt_totals":  map[string]any{"bytes_sent": 12345},
+					"app_user_totals":     map[string]any{"bytes_received": 67890},
+				},
+				{
+					"name":              "50k",
+					"status":            "FAIL",
+					"connect_attempts":  5000,
+					"connect_successes": 3000,
+					"http_requests":     500,
+					"http_successes":    300,
+				},
+				{
+					"name":             "75k",
+					"status":           "FAIL",
+					"failure_reasons":  map[string]any{"insufficient_shard_devices": 1},
+					"connect_attempts": 0,
+				},
+			},
+		}
+		if err := writeJSONFile(filepath.Join(childOutDir, "results.json"), payload); err != nil {
+			t.Fatal(err)
+		}
+		return errors.New("mqtt test failed")
+	}
+	commandRunnerWithTimeout = func(_ time.Duration, name string, args ...string) error {
+		return commandRunner(name, args...)
+	}
+	defer func() {
+		commandRunner = oldRunner
+		commandRunnerWithTimeout = oldTimeoutRunner
+	}()
+
+	var stdout, stderr bytes.Buffer
+	code := Execute([]string{
+		"shard-run",
+		"--env-root", "cloud_env/staging/lke",
+		"--brandname", "RTK",
+		"--region", "us-sea",
+		"--run-id", "run-cli",
+		"--role", "device-mqtt",
+		"--shard-index", "0",
+		"--out-dir", outDir,
+		"--runner-mode", "live",
+		"--rtk-cloud-binary", "rtk-cloud",
+		"--stage-warm-up", "1s",
+		"--stage-steady", "1s",
+		"--stage-cool-down", "1s",
+	}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("Execute(shard-run live) code = 0, want failure")
+	}
+	var result struct {
+		Status       string        `json:"status"`
+		Error        string        `json:"error"`
+		Partial      bool          `json:"partial"`
+		StageResults []StageResult `json:"stage_results"`
+	}
+	if err := readJSON(filepath.Join(outDir, "results.json"), &result); err != nil {
+		t.Fatalf("missing converted partial shard results: %v stderr=%s", err, stderr.String())
+	}
+	if result.Status != "failed" || !result.Partial || !strings.Contains(result.Error, "stage_results len = 3, want 4") {
+		t.Fatalf("partial failure metadata not preserved: %#v stderr=%s", result, stderr.String())
+	}
+	if len(result.StageResults) != 3 {
+		t.Fatalf("stage results len = %d, want 3", len(result.StageResults))
+	}
+	if result.StageResults[0].DeviceMQTTTotals.ConnectAttempts != 2500 || result.StageResults[0].DeviceMQTTTotals.BytesSent != 12345 {
+		t.Fatalf("partial device counters not preserved: %#v", result.StageResults[0].DeviceMQTTTotals)
+	}
+	if result.StageResults[0].AppUserTotals.DesiredWrites != 250 || result.StageResults[0].AppUserTotals.BytesReceived != 67890 {
+		t.Fatalf("partial app counters not preserved: %#v", result.StageResults[0].AppUserTotals)
+	}
+}
+
 func TestLoadLiveMQTTStageResultDoesNotClassifyTimeoutsAsRejectedUpdates(t *testing.T) {
 	outDir := t.TempDir()
 	payload := map[string]any{
@@ -1136,6 +1913,27 @@ func TestLoadLiveMQTTStageResultDoesNotClassifyTimeoutsAsRejectedUpdates(t *test
 	}
 	if result.RejectedUpdateCount != 0 {
 		t.Fatalf("RejectedUpdateCount = %d, want 0 for timeout/missing ack failures", result.RejectedUpdateCount)
+	}
+}
+
+func TestLoadLiveMQTTStageResultPreservesFailureReasons(t *testing.T) {
+	outDir := t.TempDir()
+	payload := map[string]any{
+		"overall": "fail",
+		"failure_reasons": map[string]any{
+			"app_desired_publish_failed": float64(7),
+			"device_delta_wait_failed":   float64(3),
+		},
+	}
+	if err := writeJSONFile(filepath.Join(outDir, "results.json"), payload); err != nil {
+		t.Fatal(err)
+	}
+	result, err := loadLiveMQTTStageResult(filepath.Join(outDir, "results.json"), Stage{Name: "25k", ConnectedDevices: 25000}, 2500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.FailureReasons["app_desired_publish_failed"] != 7 || result.FailureReasons["device_delta_wait_failed"] != 3 {
+		t.Fatalf("failure reasons not preserved: %#v", result.FailureReasons)
 	}
 }
 
@@ -1225,7 +2023,7 @@ func TestExecuteCollectLiveCopiesShardArtifacts(t *testing.T) {
 	}
 	joined := strings.Join(calls, "\n")
 	for _, want := range []string{
-		"ansible-playbook --forks 20 -i " + filepath.Join(outDir, "ansible", "inventory.json") + " loadtests/home-100k/ansible/collect.yml",
+		"env ANSIBLE_CONFIG=loadtests/home-100k/ansible/ansible.cfg ansible-playbook --forks 20 -i " + filepath.Join(outDir, "ansible", "inventory.json") + " loadtests/home-100k/ansible/collect.yml",
 		"--extra-vars @" + filepath.Join(outDir, "ansible", "extra-vars.json"),
 	} {
 		if !strings.Contains(joined, want) {

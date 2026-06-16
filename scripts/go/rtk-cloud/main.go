@@ -203,6 +203,10 @@ func runMQTTTest(args []string) error {
 	telemetryInterval := fs.String("telemetry-interval", "", "load-test telemetry interval")
 	stateInterval := fs.String("state-interval", "", "load-test state interval")
 	commandRate := fs.String("command-rate-per-device-per-day", "", "load-test command rate per device per day")
+	loadModel := fs.String("load-model", "", "load model passed through to cloud-mqtt-test")
+	stageNames := fs.String("stage-names", "", "comma-separated staged sustained load stage names")
+	stageConnectedDevices := fs.String("stage-connected-devices", "", "comma-separated staged sustained per-shard connected device targets")
+	stageDurationsSeconds := fs.String("stage-durations-seconds", "", "comma-separated staged sustained stage durations in seconds")
 	concurrency := fs.Int("concurrency", 25, "load-test MQTT probe concurrency")
 	maxConnectedDevices := fs.Int("max-connected-devices", 0, "load-test max connected devices in this shard")
 	mqttProbe := true
@@ -244,7 +248,14 @@ func runMQTTTest(args []string) error {
 	childEnv := map[string]string{"GOWORK": "off"}
 	stackEnv, _ := readEnvFile(filepath.Join(resolvedEnv, "env", "stack.env"))
 	if firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), stackEnv["CLOUD_PROVIDER"]) == "lke" {
-		if os.Getenv("ACCOUNT_MANAGER_BASE_URL") == "" || os.Getenv("VIDEO_CLOUD_BASE_URL") == "" || os.Getenv("VIDEO_CLOUD_MQTT_ADDR") == "" {
+		videoBaseURL := firstNonEmpty(os.Getenv("VIDEO_CLOUD_BASE_URL"), os.Getenv("VIDEO_CLOUD_PUBLIC_BASE_URL"))
+		if videoBaseURL != "" {
+			childEnv["VIDEO_CLOUD_BASE_URL"] = videoBaseURL
+			if os.Getenv("VIDEO_CLOUD_PUBLIC_BASE_URL") != "" {
+				childEnv["VIDEO_CLOUD_PUBLIC_BASE_URL"] = os.Getenv("VIDEO_CLOUD_PUBLIC_BASE_URL")
+			}
+		}
+		if os.Getenv("ACCOUNT_MANAGER_BASE_URL") == "" || videoBaseURL == "" || os.Getenv("VIDEO_CLOUD_MQTT_ADDR") == "" {
 			stack := firstNonEmpty(stackEnv["CLOUD_STACK_NAME"], "video-cloud-staging")
 			env := map[string]string{"CLOUD_STACK_NAME": stack}
 			mqttPort, mqttCleanup, err := lkeTCPServicePortForward(resolvedEnv, env, "video-cloud", "mqtt", 8883, "mqtt")
@@ -265,6 +276,7 @@ func runMQTTTest(args []string) error {
 			childEnv["RTK_CLOUD_MQTT_TEST_MQTT_HOST"] = "127.0.0.1"
 			childEnv["RTK_CLOUD_MQTT_TEST_MQTT_PORT"] = strconv.Itoa(mqttPort)
 			childEnv["VIDEO_CLOUD_BASE_URL"] = videoURL
+			childEnv["VIDEO_CLOUD_TOKEN_BASE_URL"] = videoURL
 			childEnv["ACCOUNT_MANAGER_BASE_URL"] = accountURL
 		}
 	}
@@ -286,6 +298,10 @@ func runMQTTTest(args []string) error {
 		"--telemetry-interval", *telemetryInterval,
 		"--state-interval", *stateInterval,
 		"--command-rate-per-device-per-day", *commandRate,
+		"--load-model", *loadModel,
+		"--stage-names", *stageNames,
+		"--stage-connected-devices", *stageConnectedDevices,
+		"--stage-durations-seconds", *stageDurationsSeconds,
 		"--concurrency", strconv.Itoa(*concurrency),
 		"--max-connected-devices", strconv.Itoa(*maxConnectedDevices),
 	}
@@ -1735,7 +1751,6 @@ func runStagingE2EDataSetup(args []string) error {
 	if err != nil {
 		return err
 	}
-	provider := firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), os.Getenv("RTK_CLOUD_STAGING_PROVIDER"), envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER"))
 	scripts := map[string]string{
 		"create-brand":     firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT"), selfCommandPath("create-brandname-cloud")),
 		"create-users":     firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT"), selfCommandPath("create-users")),
@@ -1753,15 +1768,6 @@ func runStagingE2EDataSetup(args []string) error {
 	logsDir := filepath.Join(*outDir, "logs")
 	if err := os.MkdirAll(logsDir, 0o755); err != nil {
 		return err
-	}
-	childEnv := []string{}
-	if provider == "lke" {
-		portForwardEnv, cleanup, err := startK8SE2EPortForwards(workspace, envRoot)
-		if err != nil {
-			return err
-		}
-		defer cleanup()
-		childEnv = append(childEnv, portForwardEnv...)
 	}
 	steps := []e2eStep{}
 	childEnv, cleanup, err := startK8SE2EDataSetupPortForwardsIfNeeded(workspace, envRoot)
@@ -1821,14 +1827,14 @@ func runStagingE2EDataSetup(args []string) error {
 		skipStep("create_users", reason)
 	}
 	devicesDir := filepath.Join(envRoot, "devices", "test_device")
-	if shouldRunStep("create_devices") && !(*resume && deviceManifestCount(devicesDir) == *deviceCount) {
+	if shouldRunStep("create_devices") && !(*resume && deviceManifestMatchesSetup(devicesDir, *deviceCount, *deviceMix)) {
 		if err := runStep("create_devices", commandWithArgs(scripts["generate-devices"], "--workspace", workspace, "--env-root", envRoot, "--count", strconv.Itoa(*deviceCount), "--mix", *deviceMix, "--prefix", *devicePrefix, "--force", "--concurrency", strconv.Itoa(*deviceConcurrency))...); err != nil {
 			return err
 		}
 	} else {
 		reason := "--from-step"
 		if shouldRunStep("create_devices") {
-			reason = fmt.Sprintf("--resume device manifest count=%d", deviceManifestCount(devicesDir))
+			reason = fmt.Sprintf("--resume device manifest count=%d mix=%s", deviceManifestCount(devicesDir), *deviceMix)
 		}
 		skipStep("create_devices", reason)
 	}
@@ -1839,7 +1845,7 @@ func runStagingE2EDataSetup(args []string) error {
 	if bindFile == "" {
 		if *resume {
 			bindFile = latestMatchingFileWhere(filepath.Join(envRoot, "artifacts", "device-bind"), slug+"-device-bind-*.json", func(path string) bool {
-				return bindArtifactCount(path) == *deviceCount
+				return bindArtifactMatchesSetup(path, usersFile, *userCount, *deviceCount, *deviceMix)
 			})
 		}
 		if bindFile == "" {
@@ -1858,14 +1864,14 @@ func runStagingE2EDataSetup(args []string) error {
 		bindFile = latestMatchingFile(filepath.Join(envRoot, "artifacts", "device-bind"), slug+"-device-bind-*.json")
 		return nil
 	}
-	if shouldRunStep("bind_devices") && !(*resume && bindArtifactCount(bindFile) == *deviceCount) {
+	if shouldRunStep("bind_devices") && !(*resume && bindArtifactMatchesSetup(bindFile, usersFile, *userCount, *deviceCount, *deviceMix)) {
 		if err := runBindStep(); err != nil {
 			return err
 		}
 	} else {
 		reason := "--from-step"
 		if shouldRunStep("bind_devices") {
-			reason = fmt.Sprintf("--resume bind artifact count=%d", bindArtifactCount(bindFile))
+			reason = fmt.Sprintf("--resume bind artifact count=%d users=%d mix=%s", bindArtifactCount(bindFile), bindArtifactAssignedUserCount(bindFile), *deviceMix)
 			bindSkippedForResume = true
 		}
 		skipStep("bind_devices", reason)
@@ -2024,6 +2030,30 @@ func deviceManifestCount(devicesDir string) int {
 	return 0
 }
 
+func deviceManifestMatchesSetup(devicesDir string, expectedCount int, expectedMix string) bool {
+	if devicesDir == "" || expectedCount <= 0 {
+		return false
+	}
+	devices, err := readDeviceManifest(filepath.Join(devicesDir, "manifests", "devices.json"))
+	if err != nil || len(devices) != expectedCount {
+		return false
+	}
+	expected, err := allocateDeviceMix(expectedCount, expectedMix)
+	if err != nil {
+		return false
+	}
+	actual := map[string]int{}
+	for _, device := range devices {
+		actual[device.DeviceType]++
+	}
+	for deviceType, want := range expected {
+		if actual[deviceType] != want {
+			return false
+		}
+	}
+	return true
+}
+
 func bindArtifactCount(path string) int {
 	if path == "" {
 		return 0
@@ -2037,6 +2067,77 @@ func bindArtifactCount(path string) int {
 		}
 	}
 	return 0
+}
+
+func bindArtifactMatchesSetup(path, usersPath string, expectedUsers, expectedDevices int, expectedMix string) bool {
+	if path == "" || usersPath == "" || expectedUsers <= 0 || expectedDevices <= 0 {
+		return false
+	}
+	var artifact struct {
+		Assignments []struct {
+			AssignedEmail  string   `json:"assigned_email"`
+			DeviceType     string   `json:"device_type"`
+			ServiceOptions []string `json:"service_options"`
+			OperationID    string   `json:"operation_id"`
+			Status         string   `json:"status"`
+		} `json:"assignments"`
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil || json.Unmarshal(raw, &artifact) != nil || len(artifact.Assignments) != expectedDevices {
+		return false
+	}
+	if usersArtifactCount(usersPath) != expectedUsers {
+		return false
+	}
+	expected, err := allocateDeviceMix(expectedDevices, expectedMix)
+	if err != nil {
+		return false
+	}
+	actual := map[string]int{}
+	assignedUsers := map[string]bool{}
+	hasProvisionEvidence := false
+	for _, assignment := range artifact.Assignments {
+		actual[assignment.DeviceType]++
+		email := strings.TrimSpace(assignment.AssignedEmail)
+		if email != "" {
+			assignedUsers[email] = true
+		}
+		if strings.TrimSpace(assignment.OperationID) != "" || strings.TrimSpace(assignment.Status) != "already_bound" {
+			hasProvisionEvidence = true
+		}
+	}
+	if !hasProvisionEvidence {
+		return false
+	}
+	for deviceType, want := range expected {
+		if actual[deviceType] != want {
+			return false
+		}
+	}
+	return len(assignedUsers) == expectedUsers
+}
+
+func bindArtifactAssignedUserCount(path string) int {
+	if path == "" {
+		return 0
+	}
+	var artifact struct {
+		Assignments []struct {
+			AssignedEmail string `json:"assigned_email"`
+		} `json:"assignments"`
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil || json.Unmarshal(raw, &artifact) != nil {
+		return 0
+	}
+	assigned := map[string]bool{}
+	for _, item := range artifact.Assignments {
+		email := strings.TrimSpace(item.AssignedEmail)
+		if email != "" {
+			assigned[email] = true
+		}
+	}
+	return len(assigned)
 }
 
 func validationFailureCategoryCount(outDir, category string) int {
@@ -6195,28 +6296,7 @@ func runBindDevices(args []string) error {
 		safeLog("bind progress: done=%d/%d created_claims=%d resolved_claims=%d provision_started=%d skipped=%d", done, len(assignments), createdClaims, resolvedClaims, provisionStarted, skipped)
 	}
 	safeLog("device bind concurrency=%d", *concurrency)
-	results, err := boundedParallelMap(len(assignments), *concurrency, func(i int) (bindAssignment, error) {
-		assignment := assignments[i]
-		safeLog("binding device %d/%d: device=%s user=%s services=%s", i+1, len(assignments), assignment.DeviceID, assignment.AssignedEmail, strings.Join(assignment.ServiceOptions, ","))
-		existingDevice, exists := existingDeviceIndex[assignment.DeviceID]
-		if exists {
-			assignment.AccountDeviceID = stringValue(existingDevice["id"])
-			assignment.Status = "already_bound"
-			userSession := userSessions[assignment.AssignedEmail]
-			if userSession == nil {
-				return bindAssignment{}, fmt.Errorf("missing assigned user session: %s", assignment.AssignedEmail)
-			}
-			repaired, provisioned, err := repairExistingBoundDeviceProvisioning(ctx, tenantSlug, brandCloudID, assignment, existingDevice, runID, provisionBridge, userSession, safeLog)
-			if err != nil {
-				return bindAssignment{}, err
-			}
-			if provisioned {
-				progress(0, 0, 0, 1)
-			} else {
-				progress(1, 0, 0, 0)
-			}
-			return repaired, nil
-		}
+	bindFresh := func(assignment bindAssignment, userSession *brandCloudUserSession) (bindAssignment, error) {
 		safeLog("creating claim token: device=%s", assignment.DeviceID)
 		claim, err := safeCreateClaimToken(assignment)
 		if err != nil {
@@ -6224,10 +6304,6 @@ func runBindDevices(args []string) error {
 		}
 		claimToken := stringValue(claim["claim_token"])
 		assignment.ClaimID = stringValue(firstPresent(claim, "claim_id", "id"))
-		userSession := userSessions[assignment.AssignedEmail]
-		if userSession == nil {
-			return bindAssignment{}, fmt.Errorf("missing assigned user session: %s", assignment.AssignedEmail)
-		}
 		safeLog("resolving claim: device=%s user=%s", assignment.DeviceID, assignment.AssignedEmail)
 		resolve, err := resolveClaimWithBrandCloudUserRetry(ctx, tenantSlug, brandCloudID, assignment, claimToken, userSession, safeLog)
 		if err != nil {
@@ -6250,6 +6326,52 @@ func runBindDevices(args []string) error {
 				return bindAssignment{}, err
 			}
 			assignment.Status = "provisioned"
+		}
+		return assignment, nil
+	}
+	results, err := boundedParallelMap(len(assignments), *concurrency, func(i int) (bindAssignment, error) {
+		assignment := assignments[i]
+		safeLog("binding device %d/%d: device=%s user=%s services=%s", i+1, len(assignments), assignment.DeviceID, assignment.AssignedEmail, strings.Join(assignment.ServiceOptions, ","))
+		userSession := userSessions[assignment.AssignedEmail]
+		if userSession == nil {
+			return bindAssignment{}, fmt.Errorf("missing assigned user session: %s", assignment.AssignedEmail)
+		}
+		existingDevice, exists := existingDeviceIndex[assignment.DeviceID]
+		if exists {
+			assignment.AccountDeviceID = stringValue(existingDevice["id"])
+			if err := validateExistingBoundDeviceCompatible(existingDevice, assignment); err != nil {
+				safeLog("device already bound but incompatible with current assignment; unprovisioning before fresh bind: device=%s account_device=%s reason=%s", assignment.DeviceID, assignment.AccountDeviceID, err)
+				token, err := brandCloudUserAccessToken(ctx, tenantSlug, userSession, safeLog)
+				if err != nil {
+					return bindAssignment{}, err
+				}
+				if _, err := unprovisionOne(ctx, brandCloudID, assignment, token); err != nil {
+					return bindAssignment{}, err
+				}
+				assignment.AccountDeviceID = ""
+				assignment.Status = ""
+				rebound, err := bindFresh(assignment, userSession)
+				if err != nil {
+					return bindAssignment{}, err
+				}
+				progress(0, 1, 1, 1)
+				return rebound, nil
+			}
+			assignment.Status = "already_bound"
+			repaired, provisioned, err := repairExistingBoundDeviceProvisioning(ctx, tenantSlug, brandCloudID, assignment, existingDevice, runID, provisionBridge, userSession, safeLog)
+			if err != nil {
+				return bindAssignment{}, err
+			}
+			if provisioned {
+				progress(0, 0, 0, 1)
+			} else {
+				progress(1, 0, 0, 0)
+			}
+			return repaired, nil
+		}
+		assignment, err := bindFresh(assignment, userSession)
+		if err != nil {
+			return bindAssignment{}, err
 		}
 		progress(0, 1, 1, 1)
 		return assignment, nil
@@ -6482,7 +6604,10 @@ func accountIndexDevicesByVideoCloudDevidWithBrandCloudUserRetry(ctx accountMana
 }
 
 func accountIndexDevicesByVideoCloudDevidWithCall(ctx accountManagerContext, brandCloudID string, call func(string) ([]byte, int, error)) (map[string]map[string]any, int, error) {
-	const limit = 100
+	limit := envInt("CLOUD_ACCOUNT_DEVICE_INDEX_PAGE_SIZE", 200)
+	if limit <= 0 || limit > 200 {
+		limit = 200
+	}
 	index := map[string]map[string]any{}
 	for offset := 0; ; offset += limit {
 		body, status, err := call(fmt.Sprintf("%s/v1/orgs/%s/devices?limit=%d&offset=%d", ctx.BaseURL, brandCloudID, limit, offset))
@@ -6506,6 +6631,9 @@ func accountIndexDevicesByVideoCloudDevidWithCall(ctx accountManagerContext, bra
 					index[videoCloudDevid] = device
 				}
 			}
+		}
+		if offset == 0 || offset%(limit*50) == 0 {
+			fmt.Fprintf(os.Stderr, "[cloud-bind-devices %s +%03ds] indexing existing account devices progress: offset=%d indexed=%d page_count=%d\n", time.Now().Format("15:04:05"), 0, offset, len(index), len(devices))
 		}
 		if len(devices) < limit {
 			return index, len(index), nil
@@ -6542,6 +6670,49 @@ func repairExistingBoundDeviceProvisioning(ctx accountManagerContext, tenantSlug
 		assignment.Status = "provisioned"
 	}
 	return assignment, true, nil
+}
+
+func validateExistingBoundDeviceCompatible(existingDevice map[string]any, assignment bindAssignment) error {
+	metadata, _ := existingDevice["metadata"].(map[string]any)
+	if got := stringValue(metadata["video_cloud_devid"]); got != "" && got != assignment.DeviceID {
+		return fmt.Errorf("video_cloud_devid mismatch: existing=%s assignment=%s", got, assignment.DeviceID)
+	}
+	if got := stringValue(existingDevice["category"]); got != "" && got != assignment.Category {
+		return fmt.Errorf("category mismatch: existing=%s assignment=%s", got, assignment.Category)
+	}
+	if got := stringValue(metadata["device_type"]); got != "" && got != assignment.DeviceType {
+		return fmt.Errorf("device_type mismatch: existing=%s assignment=%s", got, assignment.DeviceType)
+	}
+	if existingOptions := stringSliceValue(metadata["service_options"]); len(existingOptions) > 0 && !sameStringSet(existingOptions, assignment.ServiceOptions) {
+		return fmt.Errorf("service_options mismatch: existing=%s assignment=%s", strings.Join(sortedStrings(existingOptions), ","), strings.Join(sortedStrings(assignment.ServiceOptions), ","))
+	}
+	return nil
+}
+
+func sameStringSet(a, b []string) bool {
+	a = sortedStrings(a)
+	b = sortedStrings(b)
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func sortedStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func provisionInputFromExistingBoundDevice(existingDevice map[string]any, assignment bindAssignment, runID string) (map[string]any, string) {
@@ -6752,6 +6923,15 @@ func completeStagingProvisionBridge(bridge stagingProvisionBridge, brandCloudID 
 	if err != nil {
 		return fmt.Errorf("video direct activation failed: device=%s account_device=%s: %w", assignment.DeviceID, assignment.AccountDeviceID, err)
 	}
+	if status == http.StatusConflict && isVideoCloudIdentityMismatch(body) {
+		if err := completeStagingVideoUnprovisionBridge(bridge, videoCloudDevid); err != nil {
+			return fmt.Errorf("video direct activation failed: device=%s account_device=%s HTTP %d%s; video unprovision before retry failed: %w", assignment.DeviceID, assignment.AccountDeviceID, status, errorBodySuffix(body), err)
+		}
+		body, status, err = curlJSONStatus(videoURL, bridge.VideoToken, videoPayload)
+		if err != nil {
+			return fmt.Errorf("video direct activation retry failed after unprovision: device=%s account_device=%s: %w", assignment.DeviceID, assignment.AccountDeviceID, err)
+		}
+	}
 	if status != http.StatusOK {
 		return fmt.Errorf("video direct activation failed: device=%s account_device=%s HTTP %d%s", assignment.DeviceID, assignment.AccountDeviceID, status, errorBodySuffix(body))
 	}
@@ -6773,6 +6953,24 @@ func completeStagingProvisionBridge(bridge stagingProvisionBridge, brandCloudID 
 		return fmt.Errorf("account direct provisioning result failed: device=%s account_device=%s HTTP %d%s", assignment.DeviceID, assignment.AccountDeviceID, status, errorBodySuffix(body))
 	}
 	return nil
+}
+
+func completeStagingVideoUnprovisionBridge(bridge stagingProvisionBridge, videoCloudDevid string) error {
+	payload, _ := json.Marshal(map[string]any{"devid": videoCloudDevid})
+	videoURL := fmt.Sprintf("%s/v1/internal/account-manager/devices/%s/unprovision", bridge.VideoBaseURL, url.PathEscape(videoCloudDevid))
+	body, status, err := curlJSONStatus(videoURL, bridge.VideoToken, payload)
+	if err != nil {
+		return err
+	}
+	if status >= 200 && status < 300 {
+		return nil
+	}
+	return fmt.Errorf("HTTP %d%s", status, errorBodySuffix(body))
+}
+
+func isVideoCloudIdentityMismatch(body []byte) bool {
+	text := strings.ToLower(string(body))
+	return strings.Contains(text, "different account identity") || strings.Contains(text, strings.ToLower("reactivate camera with different account identity"))
 }
 
 func startProvision(ctx accountManagerContext, token, brandCloudID string, assignment bindAssignment, operationID string, provisionInput map[string]any) error {
@@ -6940,7 +7138,7 @@ func unprovisionOne(ctx accountManagerContext, brandCloudID string, assignment b
 		return nil, err
 	}
 	if status != 200 {
-		return nil, fmt.Errorf("unprovision failed: device=%s account_device=%s HTTP %d", assignment.DeviceID, assignment.AccountDeviceID, status)
+		return nil, fmt.Errorf("unprovision failed: device=%s account_device=%s HTTP %d%s", assignment.DeviceID, assignment.AccountDeviceID, status, errorBodySuffix(body))
 	}
 	var parsed map[string]any
 	if err := json.Unmarshal(body, &parsed); err != nil {
