@@ -564,6 +564,70 @@ func TestPrepareBindProvisionUserSessionsLogsProgressAndRunsConcurrently(t *test
 	}
 }
 
+func TestCompleteStagingProvisionBridgeUnprovisionsVideoCloudIdentityMismatchAndRetries(t *testing.T) {
+	activationCalls := 0
+	unprovisionSeen := false
+	resultSeen := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/internal/account-manager/devices/load-device-1/activate":
+			activationCalls++
+			if got := r.Header.Get("Authorization"); got != "Bearer video-token" {
+				t.Fatalf("activation Authorization = %q", got)
+			}
+			var req map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode activation request: %v", err)
+			}
+			if req["account_device_id"] != "account-device-1" {
+				t.Fatalf("unexpected activation request: %#v", req)
+			}
+			if activationCalls == 1 {
+				w.WriteHeader(http.StatusConflict)
+				_, _ = w.Write([]byte(`{"status":"fail","reason":"You try to reactivate camera with different account identity. Please deactivate first."}`))
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		case "/v1/internal/account-manager/devices/load-device-1/unprovision":
+			unprovisionSeen = true
+			if got := r.Header.Get("Authorization"); got != "Bearer video-token" {
+				t.Fatalf("unprovision Authorization = %q", got)
+			}
+			var req map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode unprovision request: %v", err)
+			}
+			if req["devid"] != "load-device-1" {
+				t.Fatalf("unexpected unprovision request: %#v", req)
+			}
+			w.WriteHeader(http.StatusOK)
+		case "/v1/internal/device-provisioning-results":
+			resultSeen = true
+			if got := r.Header.Get("Authorization"); got != "Bearer account-token" {
+				t.Fatalf("result Authorization = %q", got)
+			}
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	err := completeStagingProvisionBridge(
+		stagingProvisionBridge{Enabled: true, AccountBaseURL: server.URL, AccountToken: "account-token", VideoBaseURL: server.URL, VideoToken: "video-token"},
+		"brand-1",
+		bindAssignment{DeviceID: "load-device-1", AccountDeviceID: "account-device-1", DeviceType: "mqtt_device", Category: "light"},
+		"op-1",
+		map[string]any{"video_cloud_devid": "load-device-1", "activity_id": "activity-1", "clip_public_key": "public-key"},
+	)
+	if err != nil {
+		t.Fatalf("completeStagingProvisionBridge() error = %v", err)
+	}
+	if activationCalls != 2 || !unprovisionSeen || !resultSeen {
+		t.Fatalf("activationCalls=%d unprovisionSeen=%v resultSeen=%v", activationCalls, unprovisionSeen, resultSeen)
+	}
+}
+
 func TestBrandCloudUserAccessTokenReusesArtifactTokenWithoutLogin(t *testing.T) {
 	loginCount := 0
 	refreshCount := 0

@@ -104,17 +104,17 @@ func TestAccountIndexDevicesByVideoCloudDevidPaginatesThroughServerCappedPages(t
 		requests = append(requests, r.URL.RawQuery)
 		limit := r.URL.Query().Get("limit")
 		offset := r.URL.Query().Get("offset")
-		if limit != "100" {
-			t.Fatalf("limit = %q, want 100", limit)
+		if limit != "200" {
+			t.Fatalf("limit = %q, want 200", limit)
 		}
 		devices := []map[string]any{}
 		switch offset {
 		case "0":
-			devices = makeIndexedDevices(1, 100)
-		case "100":
-			devices = makeIndexedDevices(101, 100)
+			devices = makeIndexedDevices(1, 200)
 		case "200":
-			devices = makeIndexedDevices(201, 3)
+			devices = makeIndexedDevices(201, 200)
+		case "400":
+			devices = makeIndexedDevices(401, 3)
 		default:
 			t.Fatalf("unexpected offset %q", offset)
 		}
@@ -126,10 +126,10 @@ func TestAccountIndexDevicesByVideoCloudDevidPaginatesThroughServerCappedPages(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count != 203 || len(index) != 203 {
-		t.Fatalf("count=%d len(index)=%d, want 203", count, len(index))
+	if count != 403 || len(index) != 403 {
+		t.Fatalf("count=%d len(index)=%d, want 403", count, len(index))
 	}
-	if index["load-device-0001"] == nil || index["load-device-0101"] == nil || index["load-device-0203"] == nil {
+	if index["load-device-0001"] == nil || index["load-device-0201"] == nil || index["load-device-0403"] == nil {
 		t.Fatalf("index did not include devices from every page: keys=%d", len(index))
 	}
 	if len(requests) != 3 {

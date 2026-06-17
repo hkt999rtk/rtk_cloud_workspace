@@ -412,6 +412,25 @@ deploy:
 	}
 }
 
+func TestVideoRelayMTLSBaseURLUsesConfiguredDeviceDomain(t *testing.T) {
+	got := videoCloudMTLSBaseURLForRelay(t.TempDir(), map[string]string{
+		"VIDEO_CLOUD_DOMAIN":        "video.example.test",
+		"VIDEO_CLOUD_DEVICE_DOMAIN": "device.video.example.test",
+	}, "https://video.example.test")
+	if got != "https://device.video.example.test" {
+		t.Fatalf("mTLS base URL = %q, want configured device domain", got)
+	}
+}
+
+func TestVideoRelayMTLSBaseURLDefaultsToDeviceSubdomain(t *testing.T) {
+	got := videoCloudMTLSBaseURLForRelay(t.TempDir(), map[string]string{
+		"VIDEO_CLOUD_DOMAIN": "video.example.test",
+	}, "https://video.example.test")
+	if got != "https://device.video.example.test" {
+		t.Fatalf("mTLS base URL = %q, want default device subdomain", got)
+	}
+}
+
 func deviceIDs(devices []videoRelaySelectedDevice) []string {
 	out := make([]string, 0, len(devices))
 	for _, device := range devices {

@@ -21,7 +21,7 @@ It starts from the same local environment directory used by
 `go run ./scripts/go/rtk-cloud -- provision-k8s`, loads existing users, device fixtures, bind
 artifacts, and device mTLS material for token bootstrap, then models a real home
 user operating lights, air conditioners, and smart meters through Cloud APIs. See
-[`home-mqtt-loadtest-simulation.md`](home-mqtt-loadtest-simulation.md).
+[`loadtests/home-100k/docs/home-mqtt-loadtest-simulation.md`](../loadtests/home-100k/docs/home-mqtt-loadtest-simulation.md).
 
 ## Source-of-Truth Boundaries
 
