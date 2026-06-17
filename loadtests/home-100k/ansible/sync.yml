@@ -1,0 +1,378 @@
+---
+- name: Bootstrap Home 100K load-generator VMs for orchestra fanout
+  hosts: home_100k
+  gather_facts: false
+  become: true
+  vars:
+    remote_home_100k_dir: "{{ remote_workspace }}/loadtests/home-100k"
+    remote_bin_dir: "{{ remote_home_100k_dir }}/bin"
+    remote_manifest_dir: "{{ remote_home_100k_dir }}/shard-manifests"
+    remote_telemetry_dir: "{{ remote_out_root }}/{{ run_id }}/sync-telemetry.d"
+  tasks:
+    - name: Wait for SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Install required sync/runtime packages
+      ansible.builtin.apt:
+        name:
+          - rsync
+          - ca-certificates
+          - curl
+          - openssh-client
+        update_cache: true
+        state: present
+
+    - name: Install kubectl for staging service port-forwarding
+      ansible.builtin.get_url:
+        url: "https://dl.k8s.io/release/{{ kubectl_version | default('v1.35.3') }}/bin/linux/amd64/kubectl"
+        dest: /usr/local/bin/kubectl
+        mode: "0755"
+
+    - name: Install per-run fanout authorized key on generators
+      ansible.posix.authorized_key:
+        user: root
+        key: "{{ lookup('file', fanout_public_key) }}"
+        state: present
+
+    - name: Read remote disk before sync
+      ansible.builtin.shell: df -B1 --output=used,avail,pcent,target / | awk 'NR==2 {printf "used_bytes=%s avail_bytes=%s used_pct=%s mount=%s", $1, $2, $3, $4}'
+      register: disk_before
+      changed_when: false
+
+    - name: Create remote load-test directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ remote_bin_dir }}"
+        - "{{ remote_manifest_dir }}"
+        - "{{ remote_env_root }}"
+        - "{{ remote_out_dir }}"
+        - "{{ remote_telemetry_dir }}"
+
+- name: Upload Home 100K artifact store to orchestra
+  hosts: home_100k_orchestra
+  gather_facts: false
+  become: true
+  vars:
+    remote_artifact_store: "{{ remote_out_root }}/{{ run_id }}/orchestra/artifact-store"
+  tasks:
+    - name: Create orchestra artifact store
+      ansible.builtin.file:
+        path: "{{ remote_artifact_store }}"
+        state: directory
+        mode: "0755"
+
+    - name: Install per-run fanout SSH key on orchestra
+      ansible.builtin.copy:
+        src: "{{ fanout_private_key }}"
+        dest: "/root/.ssh/home100k_fanout_{{ run_id }}"
+        mode: "0600"
+
+    - name: Rebuild fanout known_hosts on orchestra
+      ansible.builtin.shell: |
+        set -eu
+        : > /root/.ssh/home100k_fanout_known_hosts
+        {% for host in groups['home_100k'] %}
+        ssh-keyscan -T 10 -H {{ hostvars[host].ansible_host }} >> /root/.ssh/home100k_fanout_known_hosts
+        {% endfor %}
+        chmod 0600 /root/.ssh/home100k_fanout_known_hosts
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Inspect local artifact store manifest
+      ansible.builtin.stat:
+        path: "{{ local_artifact_store }}/manifest.json"
+        checksum_algorithm: sha256
+      delegate_to: localhost
+      become: false
+      register: local_artifact_manifest_stat
+
+    - name: Inspect orchestra artifact store manifest
+      ansible.builtin.stat:
+        path: "{{ remote_artifact_store }}/manifest.json"
+        checksum_algorithm: sha256
+      register: remote_artifact_manifest_stat
+
+    - name: Decide orchestra artifact cache state
+      ansible.builtin.set_fact:
+        orchestra_artifact_store_needs_upload: "{{ (not remote_artifact_manifest_stat.stat.exists) or ((remote_artifact_manifest_stat.stat.checksum | default('')) != (local_artifact_manifest_stat.stat.checksum | default(''))) }}"
+
+    - name: Upload artifact store to orchestra
+      ansible.posix.synchronize:
+        src: "{{ local_artifact_store }}/"
+        dest: "{{ remote_artifact_store }}/"
+        mode: push
+        use_ssh_args: true
+        compress: false
+        rsync_opts:
+          - "--timeout={{ rsync_timeout | default(90) }}"
+          - "--progress"
+      when: orchestra_artifact_store_needs_upload
+      register: orchestra_artifact_copy
+
+    - name: Write orchestra artifact cache telemetry
+      ansible.builtin.copy:
+        dest: "{{ remote_out_root }}/{{ run_id }}/orchestra/artifact-cache.json"
+        mode: "0644"
+        content: |
+          {
+            "sync_mode": "orchestra_artifact_store",
+            "uploaded": {{ orchestra_artifact_copy.changed | default(false) | to_json }},
+            "local_manifest_checksum": {{ local_artifact_manifest_stat.stat.checksum | default("") | to_json }},
+            "remote_manifest_checksum_before": {{ remote_artifact_manifest_stat.stat.checksum | default("") | to_json }}
+          }
+
+- name: Fan out Home 100K artifacts from orchestra to generators
+  hosts: home_100k
+  gather_facts: false
+  become: true
+  vars:
+    remote_home_100k_dir: "{{ remote_workspace }}/loadtests/home-100k"
+    remote_bin_dir: "{{ remote_home_100k_dir }}/bin"
+    remote_manifest_dir: "{{ remote_home_100k_dir }}/shard-manifests"
+    remote_telemetry_dir: "{{ remote_out_root }}/{{ run_id }}/sync-telemetry.d"
+    remote_artifact_store: "{{ remote_out_root }}/{{ run_id }}/orchestra/artifact-store"
+    fanout_ssh: "ssh -i /root/.ssh/home100k_fanout_{{ run_id }} -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/root/.ssh/home100k_fanout_known_hosts -o ConnectTimeout=10"
+  tasks:
+    - name: Inspect artifact runner binary on orchestra
+      ansible.builtin.stat:
+        path: "{{ remote_artifact_store }}/bin/home-100k"
+        checksum_algorithm: sha256
+      delegate_to: "{{ groups['home_100k_orchestra'][0] }}"
+      run_once: true
+      register: artifact_runner_stat
+
+    - name: Inspect artifact rtk-cloud binary on orchestra
+      ansible.builtin.stat:
+        path: "{{ remote_artifact_store }}/bin/rtk-cloud"
+        checksum_algorithm: sha256
+      delegate_to: "{{ groups['home_100k_orchestra'][0] }}"
+      run_once: true
+      register: artifact_rtk_cloud_stat
+
+    - name: Inspect artifact cloud-mqtt-test binary on orchestra
+      ansible.builtin.stat:
+        path: "{{ remote_artifact_store }}/bin/cloud-mqtt-test"
+        checksum_algorithm: sha256
+      delegate_to: "{{ groups['home_100k_orchestra'][0] }}"
+      run_once: true
+      register: artifact_cloud_mqtt_test_stat
+
+    - name: Inspect artifact common env archive on orchestra
+      ansible.builtin.stat:
+        path: "{{ remote_artifact_store }}/common/env-common.tar.gz"
+        checksum_algorithm: sha256
+      delegate_to: "{{ groups['home_100k_orchestra'][0] }}"
+      run_once: true
+      register: artifact_common_env_archive_stat
+
+    - name: Inspect artifact shard manifest on orchestra
+      ansible.builtin.stat:
+        path: "{{ remote_artifact_store }}/shard-manifests/{{ artifact_shard_manifest }}"
+        checksum_algorithm: sha256
+      delegate_to: "{{ groups['home_100k_orchestra'][0] }}"
+      register: artifact_manifest_stat
+
+    - name: Inspect artifact env archive on orchestra
+      ansible.builtin.stat:
+        path: "{{ remote_artifact_store }}/env-archives/{{ artifact_env_archive }}"
+        checksum_algorithm: sha256
+      delegate_to: "{{ groups['home_100k_orchestra'][0] }}"
+      register: artifact_env_archive_stat
+
+    - name: Inspect remote runner binary
+      ansible.builtin.stat:
+        path: "{{ remote_bin_dir }}/home-100k"
+        checksum_algorithm: sha256
+      register: remote_runner_stat
+
+    - name: Inspect remote rtk-cloud binary
+      ansible.builtin.stat:
+        path: "{{ remote_bin_dir }}/rtk-cloud"
+        checksum_algorithm: sha256
+      register: remote_rtk_cloud_stat
+
+    - name: Inspect remote cloud-mqtt-test binary
+      ansible.builtin.stat:
+        path: "{{ remote_bin_dir }}/cloud-mqtt-test"
+        checksum_algorithm: sha256
+      register: remote_cloud_mqtt_test_stat
+
+    - name: Inspect remote shard manifest
+      ansible.builtin.stat:
+        path: "{{ remote_shard_manifest }}"
+        checksum_algorithm: sha256
+      register: remote_manifest_stat
+
+    - name: Inspect remote env archive
+      ansible.builtin.stat:
+        path: "{{ remote_out_dir }}/env-root.tar.gz"
+        checksum_algorithm: sha256
+      register: remote_env_archive_stat
+
+    - name: Inspect remote common env archive
+      ansible.builtin.stat:
+        path: "{{ remote_out_dir }}/env-common.tar.gz"
+        checksum_algorithm: sha256
+      register: remote_common_env_archive_stat
+
+    - name: Decide fanout cache state
+      ansible.builtin.set_fact:
+        runner_needs_upload: "{{ (not remote_runner_stat.stat.exists) or ((remote_runner_stat.stat.checksum | default('')) != (artifact_runner_stat.stat.checksum | default(''))) }}"
+        rtk_cloud_needs_upload: "{{ (not remote_rtk_cloud_stat.stat.exists) or ((remote_rtk_cloud_stat.stat.checksum | default('')) != (artifact_rtk_cloud_stat.stat.checksum | default(''))) }}"
+        cloud_mqtt_test_needs_upload: "{{ (not remote_cloud_mqtt_test_stat.stat.exists) or ((remote_cloud_mqtt_test_stat.stat.checksum | default('')) != (artifact_cloud_mqtt_test_stat.stat.checksum | default(''))) }}"
+        common_env_archive_needs_upload: "{{ (not remote_common_env_archive_stat.stat.exists) or ((remote_common_env_archive_stat.stat.checksum | default('')) != (artifact_common_env_archive_stat.stat.checksum | default(''))) }}"
+        manifest_needs_upload: "{{ (not remote_manifest_stat.stat.exists) or ((remote_manifest_stat.stat.checksum | default('')) != (artifact_manifest_stat.stat.checksum | default(''))) }}"
+        env_archive_needs_upload: "{{ (not remote_env_archive_stat.stat.exists) or ((remote_env_archive_stat.stat.checksum | default('')) != (artifact_env_archive_stat.stat.checksum | default(''))) }}"
+
+    - name: Fan out runner binary from orchestra
+      ansible.builtin.shell: >
+        rsync --delay-updates --archive
+        --rsync-path='sudo -u root rsync'
+        -e {{ fanout_ssh | quote }}
+        --timeout={{ rsync_timeout | default(90) }}
+        --out-format='<<CHANGED>>%i %n%L'
+        {{ remote_artifact_store }}/bin/home-100k
+        root@{{ ansible_host }}:{{ remote_bin_dir }}/home-100k
+      delegate_to: "{{ groups['home_100k_orchestra'][0] }}"
+      when: runner_needs_upload
+      changed_when: true
+      register: runner_copy
+
+    - name: Ensure runner binary mode
+      ansible.builtin.file:
+        path: "{{ remote_bin_dir }}/home-100k"
+        mode: "0755"
+      when: runner_needs_upload
+
+    - name: Fan out rtk-cloud binary from orchestra
+      ansible.builtin.shell: >
+        rsync --delay-updates --archive
+        --rsync-path='sudo -u root rsync'
+        -e {{ fanout_ssh | quote }}
+        --timeout={{ rsync_timeout | default(90) }}
+        --out-format='<<CHANGED>>%i %n%L'
+        {{ remote_artifact_store }}/bin/rtk-cloud
+        root@{{ ansible_host }}:{{ remote_bin_dir }}/rtk-cloud
+      delegate_to: "{{ groups['home_100k_orchestra'][0] }}"
+      when: rtk_cloud_needs_upload
+      changed_when: true
+      register: rtk_cloud_copy
+
+    - name: Ensure rtk-cloud binary mode
+      ansible.builtin.file:
+        path: "{{ remote_bin_dir }}/rtk-cloud"
+        mode: "0755"
+      when: rtk_cloud_needs_upload
+
+    - name: Fan out cloud-mqtt-test binary from orchestra
+      ansible.builtin.shell: >
+        rsync --delay-updates --archive
+        --rsync-path='sudo -u root rsync'
+        -e {{ fanout_ssh | quote }}
+        --timeout={{ rsync_timeout | default(90) }}
+        --out-format='<<CHANGED>>%i %n%L'
+        {{ remote_artifact_store }}/bin/cloud-mqtt-test
+        root@{{ ansible_host }}:{{ remote_bin_dir }}/cloud-mqtt-test
+      delegate_to: "{{ groups['home_100k_orchestra'][0] }}"
+      when: cloud_mqtt_test_needs_upload
+      changed_when: true
+      register: cloud_mqtt_test_copy
+
+    - name: Ensure cloud-mqtt-test binary mode
+      ansible.builtin.file:
+        path: "{{ remote_bin_dir }}/cloud-mqtt-test"
+        mode: "0755"
+      when: cloud_mqtt_test_needs_upload
+
+    - name: Fan out this VM shard manifest from orchestra
+      ansible.builtin.shell: >
+        rsync --delay-updates --archive
+        --rsync-path='sudo -u root rsync'
+        -e {{ fanout_ssh | quote }}
+        --timeout={{ rsync_timeout | default(90) }}
+        --out-format='<<CHANGED>>%i %n%L'
+        {{ remote_artifact_store }}/shard-manifests/{{ artifact_shard_manifest }}
+        root@{{ ansible_host }}:{{ remote_shard_manifest }}
+      delegate_to: "{{ groups['home_100k_orchestra'][0] }}"
+      when: manifest_needs_upload
+      changed_when: true
+      register: manifest_copy
+
+    - name: Fan out common env archive from orchestra
+      ansible.builtin.shell: >
+        rsync --delay-updates --archive
+        --rsync-path='sudo -u root rsync'
+        -e {{ fanout_ssh | quote }}
+        --timeout={{ rsync_timeout | default(90) }}
+        --out-format='<<CHANGED>>%i %n%L'
+        {{ remote_artifact_store }}/common/env-common.tar.gz
+        root@{{ ansible_host }}:{{ remote_out_dir }}/env-common.tar.gz
+      delegate_to: "{{ groups['home_100k_orchestra'][0] }}"
+      when: common_env_archive_needs_upload
+      changed_when: true
+      register: common_env_archive_copy
+
+    - name: Extract common env archive when changed
+      ansible.builtin.unarchive:
+        src: "{{ remote_out_dir }}/env-common.tar.gz"
+        dest: "{{ remote_env_root }}"
+        remote_src: true
+      when: common_env_archive_needs_upload
+      register: common_env_extract
+
+    - name: Fan out compressed env-root shard archive from orchestra
+      ansible.builtin.shell: >
+        rsync --delay-updates --archive
+        --rsync-path='sudo -u root rsync'
+        -e {{ fanout_ssh | quote }}
+        --timeout={{ rsync_timeout | default(90) }}
+        --out-format='<<CHANGED>>%i %n%L'
+        {{ remote_artifact_store }}/env-archives/{{ artifact_env_archive }}
+        root@{{ ansible_host }}:{{ remote_out_dir }}/env-root.tar.gz
+      delegate_to: "{{ groups['home_100k_orchestra'][0] }}"
+      when: env_archive_needs_upload
+      changed_when: true
+      register: env_archive_copy
+
+    - name: Ensure compressed env-root shard archive mode
+      ansible.builtin.file:
+        path: "{{ remote_out_dir }}/env-root.tar.gz"
+        mode: "0600"
+      when: env_archive_needs_upload
+
+    - name: Extract env-root shard archive when changed
+      ansible.builtin.unarchive:
+        src: "{{ remote_out_dir }}/env-root.tar.gz"
+        dest: "{{ remote_env_root }}"
+        remote_src: true
+      when: env_archive_needs_upload
+      register: env_extract
+
+    - name: Read remote disk after sync
+      ansible.builtin.shell: df -B1 --output=used,avail,pcent,target / | awk 'NR==2 {printf "used_bytes=%s avail_bytes=%s used_pct=%s mount=%s", $1, $2, $3, $4}'
+      register: disk_after
+      changed_when: false
+
+    - name: Write remote sync telemetry
+      ansible.builtin.copy:
+        dest: "{{ remote_telemetry_dir }}/{{ vm_label }}.json"
+        mode: "0644"
+        content: |
+          {
+            "label": "{{ vm_label }}",
+            "sync_mode": "orchestra_fanout",
+            "orchestra": "{{ groups['home_100k_orchestra'][0] }}",
+            "files_transferred": {{ (1 if (common_env_archive_copy.changed | default(false)) else 0) + (1 if (env_archive_copy.changed | default(false)) else 0) + (1 if (runner_copy.changed | default(false)) else 0) + (1 if (rtk_cloud_copy.changed | default(false)) else 0) + (1 if (cloud_mqtt_test_copy.changed | default(false)) else 0) + (1 if (manifest_copy.changed | default(false)) else 0) }},
+            "files_skipped": {{ (0 if common_env_archive_needs_upload else 1) + (0 if env_archive_needs_upload else 1) + (0 if runner_needs_upload else 1) + (0 if rtk_cloud_needs_upload else 1) + (0 if cloud_mqtt_test_needs_upload else 1) + (0 if manifest_needs_upload else 1) }},
+            "bytes_transferred": {{ ((artifact_common_env_archive_stat.stat.size | default(0) | int) if (common_env_archive_copy.changed | default(false)) else 0) + ((artifact_env_archive_stat.stat.size | default(0) | int) if (env_archive_copy.changed | default(false)) else 0) + ((artifact_runner_stat.stat.size | default(0) | int) if (runner_copy.changed | default(false)) else 0) + ((artifact_rtk_cloud_stat.stat.size | default(0) | int) if (rtk_cloud_copy.changed | default(false)) else 0) + ((artifact_cloud_mqtt_test_stat.stat.size | default(0) | int) if (cloud_mqtt_test_copy.changed | default(false)) else 0) + ((artifact_manifest_stat.stat.size | default(0) | int) if (manifest_copy.changed | default(false)) else 0) }},
+            "bytes_skipped": {{ ((artifact_common_env_archive_stat.stat.size | default(0) | int) if (not common_env_archive_needs_upload) else 0) + ((artifact_env_archive_stat.stat.size | default(0) | int) if (not env_archive_needs_upload) else 0) + ((artifact_runner_stat.stat.size | default(0) | int) if (not runner_needs_upload) else 0) + ((artifact_rtk_cloud_stat.stat.size | default(0) | int) if (not rtk_cloud_needs_upload) else 0) + ((artifact_cloud_mqtt_test_stat.stat.size | default(0) | int) if (not cloud_mqtt_test_needs_upload) else 0) + ((artifact_manifest_stat.stat.size | default(0) | int) if (not manifest_needs_upload) else 0) }},
+            "common_env_archive_extracted": {{ common_env_extract.changed | default(false) | to_json }},
+            "env_archive_extracted": {{ env_extract.changed | default(false) | to_json }},
+            "remote_disk_before": {{ disk_before.stdout | to_json }},
+            "remote_disk_after": {{ disk_after.stdout | to_json }}
+          }

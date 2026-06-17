@@ -1,0 +1,90 @@
+---
+- name: Collect Home 100K per-VM shard artifacts
+  hosts: home_100k
+  gather_facts: false
+  become: true
+  vars:
+    remote_telemetry_dir: "{{ remote_out_root }}/{{ run_id }}/sync-telemetry.d"
+  tasks:
+    - name: Read VM resource snapshot
+      ansible.builtin.shell: |
+        set -euo pipefail
+        {
+          echo "== uptime =="
+          uptime
+          echo "== memory =="
+          free -m
+          echo "== disk =="
+          df -h /
+          echo "== top =="
+          ps -eo pid,ppid,pcpu,pmem,comm,args --sort=-pcpu | head -25
+        } > "{{ remote_out_dir }}/node-resource-snapshot.txt"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Fetch shard results
+      ansible.builtin.fetch:
+        src: "{{ remote_out_dir }}/results.json"
+        dest: "{{ local_out_dir }}/shards/{{ vm_label }}/results.json"
+        flat: true
+        fail_on_missing: false
+
+    - name: Fetch shard report
+      ansible.builtin.fetch:
+        src: "{{ remote_out_dir }}/TEST_REPORT.md"
+        dest: "{{ local_out_dir }}/shards/{{ vm_label }}/TEST_REPORT.md"
+        flat: true
+        fail_on_missing: false
+
+    - name: Fetch shard resource snapshot
+      ansible.builtin.fetch:
+        src: "{{ remote_out_dir }}/node-resource-snapshot.txt"
+        dest: "{{ local_out_dir }}/shards/{{ vm_label }}/node-resource-snapshot.txt"
+        flat: true
+        fail_on_missing: false
+
+    - name: Fetch shard command log
+      ansible.builtin.fetch:
+        src: "{{ remote_out_dir }}/runner-command.json"
+        dest: "{{ local_out_dir }}/shards/{{ vm_label }}/runner-command.json"
+        flat: true
+        fail_on_missing: false
+
+    - name: Fetch runner coordination telemetry
+      ansible.builtin.fetch:
+        src: "{{ remote_out_dir }}/coordination.json"
+        dest: "{{ local_out_dir }}/shards/{{ vm_label }}/coordination.json"
+        flat: true
+        fail_on_missing: false
+
+    - name: Fetch runner daemon log
+      ansible.builtin.fetch:
+        src: "{{ remote_out_dir }}/runner-daemon.log"
+        dest: "{{ local_out_dir }}/shards/{{ vm_label }}/runner-daemon.log"
+        flat: true
+        fail_on_missing: false
+
+    - name: Archive nested MQTT test artifacts
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if [ -d "{{ remote_out_dir }}/mqtt-test" ]; then
+          tar -C "{{ remote_out_dir }}" -czf "{{ remote_out_dir }}/mqtt-test-artifacts.tar.gz" mqtt-test
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Fetch nested MQTT test artifacts
+      ansible.builtin.fetch:
+        src: "{{ remote_out_dir }}/mqtt-test-artifacts.tar.gz"
+        dest: "{{ local_out_dir }}/shards/{{ vm_label }}/mqtt-test-artifacts.tar.gz"
+        flat: true
+        fail_on_missing: false
+
+    - name: Fetch sync telemetry
+      ansible.builtin.fetch:
+        src: "{{ remote_telemetry_dir }}/{{ vm_label }}.json"
+        dest: "{{ local_out_dir }}/sync-telemetry.d/{{ vm_label }}.json"
+        flat: true
+        fail_on_missing: false

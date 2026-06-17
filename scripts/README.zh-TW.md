@@ -45,6 +45,11 @@ LKE Prometheus targets 由 workspace Go deployer 的 workload metrics registry
 `/metrics/prometheus` path；`provision --deploy` 會用這份 registry 產生
 `video-cloud-prometheus-config`。第一版維持 workspace-managed Prometheus
 ConfigMap，不導入 Prometheus Operator、ServiceMonitor 或 PodMonitor。
+Grafana 會部署在 observability namespace 作為 private `ClusterIP` dashboard
+layer，讀取 internal Prometheus Service；它不會透過 `provision --dns` 建立
+public hostname、Ingress 或 TLS SAN。Platform 管理員要從 Cloud Admin 的
+Platform View 分頁透過 same-origin iframe 觀看 Grafana，Cloud Admin BFF 會
+以 platform-admin session 保護 `/api/admin/grafana/*` proxy 路徑。
 
 可用 `--env-root PATH` 指向另一份 environment directory。舊的 `--secrets-root PATH` 仍保留為相容 alias，但新的操作與文件都應使用 `--env-root`。
 
@@ -329,6 +334,22 @@ Provider-aware `provision`/`deploy` command 仍保留給 legacy VM 與 LKE image
 
 LKE `provision --apply` 預設會安裝 Kubernetes metrics-server 到 `kube-system`，版本由 `LKE_METRICS_SERVER_VERSION` 控制，預設 `v0.8.1`。metrics-server 提供 `metrics.k8s.io`，讓 `kubectl top nodes` / `kubectl top pods` 與 Kubernetes HPA resource metrics 可用；它不取代 Prometheus 的長期觀測、dashboard 或 alert 用途。
 
+LKE `provision --deploy` 會部署 workspace-managed Prometheus 與 private
+Grafana。Grafana 常用環境變數：
+
+- `LKE_GRAFANA_IMAGE`：Grafana image，預設 `grafana/grafana:13.0.2`。
+- `LKE_GRAFANA_ADMIN_PASSWORD`：Grafana admin 密碼；未設定時由 runtime secret material 產生。
+- `LKE_GRAFANA_STORAGE`：Grafana PVC 大小，預設 `5Gi`。
+- `CLOUD_ADMIN_GRAFANA_BASE_URL`：Cloud Admin 連到 Grafana 的 cluster-internal base URL，例如 `http://video-cloud-grafana.video-cloud-staging-observability.svc.cluster.local:3000`。
+
+Grafana 第一版 dashboard 會優先呈現平台管理者關心的穩定度與流量：
+targets down/up、每個 `brand_cloud_id` 的 MQTT publish/delivery rate 與
+delivery/publish ratio、device online/offline/connected/attached、API request
+rate/5xx/latency、runtime log queue/drop/write failures、cross-service backlog
+與 dead letters、TURN registry active/expired nodes、blob capacity 與 clips
+總量。MQTT `mqtt_brand_*` counters 只作 dashboard 用；billing source of truth
+仍是 PostgreSQL `mqtt_usage_windows` ledger。
+
 常用用法：
 
 ```sh
@@ -384,6 +405,13 @@ curl -fsS https://admin.video-cloud-staging.realtekconnect.com/healthz
 ```
 
 MQTT、TURN、Postgres、OpenBao、Prometheus 不會因 `--dns` 對外公開；MQTT/TURN 需要另行設計 TCP/UDP exposure。
+Grafana 也不會因 `--dns` 對外公開；Platform 管理員從 Cloud Admin iframe
+入口使用，operator debug 可用：
+
+```sh
+kubectl -n video-cloud-staging-observability port-forward svc/video-cloud-grafana 3000:3000
+curl -fsS http://127.0.0.1:3000/api/health
+```
 
 Kubeconfig 來源順序：
 
@@ -474,58 +502,20 @@ scripts/setup-staging-e2e-data.sh \
 
 輸出 `summary.json` 會包含 `users_file`、`device_bind_file`、`bind_validation_dir`，以及 create brand、create users、create devices、bind devices、validate bind 每段的 status、exit code、duration seconds 和 log path。這個腳本支援 `CLOUD_PROVIDER=linode` 與 `CLOUD_PROVIDER=lke`；其他 provider 會在任何 mutation 前 fail fast。
 
-### `go run ./scripts/go/rtk-cloud -- mqtt-loadtest`
+### Home loading test
 
-10,000 MQTT-only device capacity test 編排指令。它是兩階段流程，不會自動建立或刪除 Linode VM：
+Home loading test 相關的 scenario、operator guide、report schema、template、
+Ansible、scripts 與 legacy MQTT reference 已集中在：
 
-1. `prepare`：建立或驗證 2,500 users、10,000 MQTT-only devices、device bind artifact 與 bind validation。
-2. `run`：對已準備好的 fleet 執行 baseline shard load test。
-3. `aggregate`：合併多個 shard 的 `results.json`，輸出總報告。
-
-預設 baseline 對齊第一版 AWS cost/capacity 假設：2,500 users、每 user 4 devices、10,000 devices 100% MQTT connected，不含 camera/WebRTC/TURN/media。預設 mix 是 `light=3334,air_conditioner=3333,smart_meter=3333`。
-
-先看 prepare plan：
-
-```sh
-go run ./scripts/go/rtk-cloud -- mqtt-loadtest prepare \
-  --env-root cloud_env/staging \
-  --brandname RTK \
-  --plan
+```text
+loadtests/home-100k/
+loadtests/home-100k/docs/
 ```
 
-執行 prepare：
-
-```sh
-go run ./scripts/go/rtk-cloud -- mqtt-loadtest prepare \
-  --env-root cloud_env/staging \
-  --brandname RTK \
-  --run
-```
-
-本機單 shard 執行：
-
-```sh
-go run ./scripts/go/rtk-cloud -- mqtt-loadtest run \
-  --env-root cloud_env/staging \
-  --brandname RTK \
-  --shard-index 0 \
-  --shard-count 1
-```
-
-多台 load-generator VM 執行時，`--hosts-file` 每行一個 SSH target；script 會一台 host 對應一個 shard，跑完後拉回各 shard `results.json` 並 aggregate：
-
-```sh
-go run ./scripts/go/rtk-cloud -- mqtt-loadtest run \
-  --env-root cloud_env/staging \
-  --brandname RTK \
-  --hosts-file load-hosts.txt \
-  --remote-workspace /root/rtk_cloud_workspace \
-  --remote-env-root /root/rtk_cloud_workspace/cloud_env/staging/linode
-```
-
-如果 load-generator VM 尚未有 runner 和 env-root，可加 `--sync-remote`。這會透過 SSH 複製 `scripts/go` 和 env-root；env-root 內含 user artifact、device private key 和 certificate，load-generator VM 必須視為帶 secret 的測試基礎設施。
-
-詳細 runbook 見 `docs/linode-10k-mqtt-loadtest.md`。
+`go run ./scripts/go/rtk-cloud -- mqtt-loadtest` 仍是低階 MQTT transport
+參考，但 100K Home IoT Device Shadow 容量測試的文件與操作入口都以
+`loadtests/home-100k/` 為準。請不要在 `scripts/README.zh-TW.md` 內新增
+Home loading test 的詳細操作步驟。
 
 可用 `./stg.sh video RTK` 執行 staging WebRTC RTP relay smoke。這個測試只選最新 bind artifact 內具備 `video_streaming` service option 的 camera device，使用 device certificate mTLS 換 device token，使用 users artifact 內 app private key + app certificate mTLS 換 device-bound app token，然後重用 `e2e_test/video_cloud/load` runner。PASS 代表 device websocket owner online、viewer 建立 WebRTC session、server 回 SDP offer 與 ICE servers、device 送 SDP answer、ICE connected/completed、device 以 2s 1080p `testsrc2` Annex-B H.264 fixture loop 10 次送出 20s H.264 RTP，payload validation 看到 SPS/PPS/IDR/non-IDR NAL types，且 session close 成功。這不是 legacy raw RTP relay 測試；PASS 來源是 WebRTC signaling + H.264 RTP payload evidence。輸出在 `<env-root>/artifacts/video-relay-test/<timestamp>/results.json` 與 `TEST_REPORT.md`，console/report 會 redacted bearer token、TURN credential、private key、CSR 與 certificate PEM。
 

@@ -1,0 +1,3559 @@
+package home100k
+
+import (
+	"archive/tar"
+	"compress/gzip"
+	"context"
+	"crypto/sha256"
+	"encoding/csv"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"io/fs"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+var commandRunner = func(name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+var commandRunnerWithTimeout = func(timeout time.Duration, name string, args ...string) error {
+	if timeout <= 0 {
+		return commandRunner(name, args...)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("%s timed out after %s", name, timeout)
+		}
+		return err
+	}
+	return nil
+}
+
+var commandOutputRunner = func(name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func Execute(args []string, stdout io.Writer, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "--" {
+		args = args[1:]
+	}
+	if len(args) == 0 {
+		printUsage(stderr)
+		return 2
+	}
+	switch args[0] {
+	case "plan":
+		return executePlan(args[1:], stdout, stderr)
+	case "run":
+		return executeRun(args[1:], stdout, stderr)
+	case "shard-run":
+		return executeShardRun(args[1:], stdout, stderr)
+	case "runner-daemon":
+		return executeRunnerDaemon(args[1:], stdout, stderr)
+	case "provision-vms":
+		return executeProvisionVMs(args[1:], stdout, stderr)
+	case "sync":
+		return executeSync(args[1:], stdout, stderr)
+	case "run-stages":
+		return executeRunStages(args[1:], stdout, stderr)
+	case "collect":
+		return executeCollect(args[1:], stdout, stderr)
+	case "collect-server-evidence":
+		return executeCollectServerEvidence(args[1:], stdout, stderr)
+	case "aggregate":
+		return executeAggregate(args[1:], stdout, stderr)
+	case "list-vms":
+		return executeListVMs(args[1:], stdout, stderr)
+	case "destroy-vms":
+		return executeDestroyVMs(args[1:], stdout, stderr)
+	default:
+		fmt.Fprintf(stderr, "unknown command: %s\n", args[0])
+		printUsage(stderr)
+		return 2
+	}
+}
+
+func executePlan(args []string, stdout io.Writer, stderr io.Writer) int {
+	opts, _, err := parseCommonFlags("home-100k plan", args, stderr)
+	if err != nil {
+		return 2
+	}
+	plan, err := NewPlan(opts)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	if err := plan.Validate(); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(plan); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	return 0
+}
+
+func executeRun(args []string, stdout io.Writer, stderr io.Writer) int {
+	opts, ephemeral, runOpts, err := parseRunFlags("home-100k run", args, stderr)
+	if err != nil {
+		return 2
+	}
+	if !ephemeral {
+		fmt.Fprintln(stderr, "--ephemeral-vms is required for 100K secret-bearing load-generator runs")
+		return 2
+	}
+	result, err := Run(RunOptions{
+		PlanOptions:        opts,
+		RunID:              runOpts.runID,
+		OutDir:             runOpts.outDir,
+		EphemeralVMs:       ephemeral,
+		ServerEvidenceFile: runOpts.serverEvidenceFile,
+	})
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	report, err := os.ReadFile(result.ReportFile)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	fmt.Fprint(stdout, string(report))
+	fmt.Fprintf(stderr, "artifacts: %s\n", result.ReportFile)
+	return 0
+}
+
+func parseCommonFlags(name string, args []string, stderr io.Writer) (PlanOptions, bool, error) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	envRoot := fs.String("env-root", "", "staging/LKE env-root")
+	brandname := fs.String("brandname", "", "brand name")
+	region := fs.String("region", "", "Linode region for load-generator VMs")
+	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
+	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
+	runnerNofile, sessionModel, readModel := addRuntimeConditionFlags(fs)
+	ephemeral := fs.Bool("ephemeral-vms", false, "require ephemeral VM lifecycle")
+	if err := fs.Parse(args); err != nil {
+		return PlanOptions{}, false, err
+	}
+	opts := PlanOptions{
+		EnvRoot:   *envRoot,
+		Brandname: *brandname,
+		Region:    *region,
+	}
+	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
+	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel)
+	return opts, *ephemeral, nil
+}
+
+func printUsage(w io.Writer) {
+	fmt.Fprintln(w, `usage: home-100k <plan|run|provision-vms|sync|run-stages|collect|collect-server-evidence|aggregate|list-vms|destroy-vms|runner-daemon> --env-root PATH --brandname NAME --region LINODE_REGION [--ephemeral-vms]`)
+}
+
+type runFlagValues struct {
+	runID              string
+	outDir             string
+	serverEvidenceFile string
+}
+
+func parseRunFlags(name string, args []string, stderr io.Writer) (PlanOptions, bool, runFlagValues, error) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	envRoot := fs.String("env-root", "", "staging/LKE env-root")
+	brandname := fs.String("brandname", "", "brand name")
+	region := fs.String("region", "", "Linode region for load-generator VMs")
+	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
+	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
+	runnerNofile, sessionModel, readModel := addRuntimeConditionFlags(fs)
+	ephemeral := fs.Bool("ephemeral-vms", false, "require ephemeral VM lifecycle")
+	runID := fs.String("run-id", "", "run id for artifact correlation")
+	outDir := fs.String("out-dir", "", "artifact output directory")
+	serverEvidenceFile := fs.String("server-evidence-file", "", "server evidence JSON file")
+	if err := fs.Parse(args); err != nil {
+		return PlanOptions{}, false, runFlagValues{}, err
+	}
+	opts := PlanOptions{
+		EnvRoot:   *envRoot,
+		Brandname: *brandname,
+		Region:    *region,
+	}
+	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
+	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel)
+	return opts, *ephemeral, runFlagValues{
+		runID:              *runID,
+		outDir:             *outDir,
+		serverEvidenceFile: *serverEvidenceFile,
+	}, nil
+}
+
+func addStageDurationFlags(fs *flag.FlagSet) (*string, *string, *string) {
+	stageWarmUp := fs.String("stage-warm-up", "", "stage warm-up duration")
+	stageSteady := fs.String("stage-steady", "", "stage steady-state duration")
+	stageCoolDown := fs.String("stage-cool-down", "", "stage cool-down duration")
+	return stageWarmUp, stageSteady, stageCoolDown
+}
+
+func addSizingFlags(fs *flag.FlagSet) (*int, *int, *int) {
+	deviceCount := fs.Int("devices", 0, "total simulated device count")
+	userCount := fs.Int("users", 0, "total simulated app user count")
+	devicesPerUser := fs.Int("devices-per-user", 0, "target devices per app user when --users is omitted")
+	return deviceCount, userCount, devicesPerUser
+}
+
+func addRuntimeConditionFlags(fs *flag.FlagSet) (*int, *string, *string) {
+	runnerNofile := fs.Int("runner-nofile-limit", DefaultRunnerNofile, "remote runner nofile limit for MQTT sockets")
+	sessionModel := fs.String("device-session-model", DefaultDeviceSession, "device MQTT session model")
+	readModel := fs.String("runner-read-model", DefaultRunnerReadModel, "runner MQTT read model")
+	return runnerNofile, sessionModel, readModel
+}
+
+func applyStageDurationFlags(opts *PlanOptions, stageWarmUp *string, stageSteady *string, stageCoolDown *string) {
+	opts.StageWarmUp = *stageWarmUp
+	opts.StageSteady = *stageSteady
+	opts.StageCoolDown = *stageCoolDown
+}
+
+func applySizingFlags(opts *PlanOptions, deviceCount *int, userCount *int, devicesPerUser *int) {
+	opts.DeviceCount = *deviceCount
+	opts.UserCount = *userCount
+	opts.DevicesPerUser = *devicesPerUser
+}
+
+func applyRuntimeConditionFlags(opts *PlanOptions, runnerNofile *int, sessionModel *string, readModel *string) {
+	opts.RunnerNofile = *runnerNofile
+	opts.SessionModel = *sessionModel
+	opts.RunnerReadModel = *readModel
+}
+
+type provisionVMFlagValues struct {
+	runID             string
+	outDir            string
+	live              bool
+	confirmLive       bool
+	linodeToken       string
+	linodeEndpoint    string
+	linodeType        string
+	linodeImage       string
+	rootPass          string
+	authorizedKeyFile string
+}
+
+type destroyVMFlagValues struct {
+	runID          string
+	live           bool
+	confirmLive    bool
+	linodeToken    string
+	linodeEndpoint string
+	vmStateFile    string
+}
+
+type listVMFlagValues struct {
+	runID          string
+	live           bool
+	linodeToken    string
+	linodeEndpoint string
+}
+
+type workflowFlagValues struct {
+	runID                  string
+	outDir                 string
+	serverEvidenceFile     string
+	live                   bool
+	runnerMode             string
+	vmStateFile            string
+	remoteWorkspace        string
+	remoteEnvRoot          string
+	remoteOutRoot          string
+	sshUser                string
+	sshKey                 string
+	coordinatorDelayMS     int
+	mqttAddr               string
+	videoCloudBaseURL      string
+	videoCloudPublicURL    string
+	videoCloudTokenURL     string
+	accountManagerURL      string
+	credentialBundleFormat string
+	runnerNofileLimit      int
+}
+
+type shardRunFlagValues struct {
+	runID               string
+	outDir              string
+	role                string
+	shardIndex          int
+	shardManifest       string
+	honorStageDurations bool
+	runnerMode          string
+	rtkCloudBinary      string
+	workspace           string
+}
+
+func executeProvisionVMs(args []string, stdout io.Writer, stderr io.Writer) int {
+	opts, values, err := parseProvisionVMFlags("home-100k provision-vms", args, stderr)
+	if err != nil {
+		return 2
+	}
+	plan, err := NewPlan(opts)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	runID := strings.TrimSpace(values.runID)
+	if runID == "" {
+		runID = "<run_id>"
+	}
+	actions := filterLifecycleActions(BuildLifecycleActions(plan, runID), "provision-vm")
+	if !values.live {
+		return writeJSONTo(stdout, stderr, map[string]any{
+			"dry_run": true,
+			"run_id":  runID,
+			"actions": actions,
+		})
+	}
+	if !values.confirmLive {
+		fmt.Fprintln(stderr, "--confirm-live is required with --live before creating Linode VMs")
+		return 2
+	}
+	if strings.TrimSpace(values.linodeToken) == "" {
+		fmt.Fprintln(stderr, "--linode-token or LINODE_TOKEN is required with --live")
+		return 2
+	}
+	vmConfig, err := buildLinodeVMConfig(values)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	client := NewLinodeClient(firstNonEmpty(values.linodeEndpoint, "https://api.linode.com/v4"), values.linodeToken)
+	created := []LinodeVM{}
+	reused := []LinodeVM{}
+	existingByLabel := map[string]LinodeVM{}
+	if existing, err := client.ListVMs(context.Background(), []string{"home-100k"}); err == nil {
+		for _, vm := range existing {
+			if strings.TrimSpace(vm.Label) != "" {
+				existingByLabel[vm.Label] = vm
+			}
+		}
+	} else {
+		fmt.Fprintf(stderr, "warning: unable to list existing home-100k Linode VMs for reuse: %v\n", err)
+	}
+	for _, action := range actions {
+		if vm, ok := existingByLabel[action.Label]; ok {
+			if shouldBootLinodeVM(vm.Status) {
+				if err := client.BootVM(context.Background(), vm.ID); err != nil {
+					fmt.Fprintln(stderr, err)
+					return 1
+				}
+				vm.Status = "booting"
+			}
+			reused = append(reused, vm)
+			created = append(created, vm)
+			continue
+		}
+		vm, err := client.ProvisionVM(context.Background(), action, vmConfig)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		created = append(created, vm)
+	}
+	vmStateFile := ""
+	if strings.TrimSpace(values.outDir) != "" {
+		vmStateFile = filepath.Join(values.outDir, "vms.json")
+		if err := writeJSONFile(vmStateFile, map[string]any{
+			"run_id":  runID,
+			"created": created,
+			"reused":  reused,
+		}); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
+	return writeJSONTo(stdout, stderr, map[string]any{
+		"dry_run":       false,
+		"run_id":        runID,
+		"created":       created,
+		"reused":        reused,
+		"vm_state_file": vmStateFile,
+	})
+}
+
+func shouldBootLinodeVM(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "", "running", "booting", "provisioning", "rebooting", "migrating":
+		return false
+	default:
+		return true
+	}
+}
+
+func executeSync(args []string, stdout io.Writer, stderr io.Writer) int {
+	plan, values, code := buildWorkflowPlan("home-100k sync", args, stderr)
+	if code != 0 {
+		return code
+	}
+	runID := normalizedRunID(values.runID)
+	actions := filterLifecycleActions(BuildLifecycleActions(plan, runID), "sync")
+	if values.live {
+		vms, err := readVMStateFile(values.vmStateFile)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if strings.TrimSpace(values.remoteWorkspace) == "" || strings.TrimSpace(values.remoteEnvRoot) == "" {
+			fmt.Fprintln(stderr, "--remote-workspace and --remote-env-root are required with sync --live")
+			return 2
+		}
+		if err := validatePlanDataCoverage(plan.Conditions.EnvRoot, plan); err != nil {
+			writePreflightFailure(values.outDir, err)
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if err := syncRemoteVMs(vms, plan, values); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return writeJSONTo(stdout, stderr, map[string]any{
+			"dry_run": false,
+			"run_id":  runID,
+			"synced":  vms,
+		})
+	}
+	return writeJSONTo(stdout, stderr, map[string]any{
+		"dry_run": true,
+		"run_id":  runID,
+		"actions": actions,
+		"sync_inputs": []string{
+			"loadtests/home-100k runner source",
+			"selected env-root artifacts only",
+			"run plan and shard assignments",
+		},
+	})
+}
+
+func executeRunStages(args []string, stdout io.Writer, stderr io.Writer) int {
+	plan, values, code := buildWorkflowPlan("home-100k run-stages", args, stderr)
+	if code != 0 {
+		return code
+	}
+	runID := normalizedRunID(values.runID)
+	if values.live {
+		vms, err := readVMStateFile(values.vmStateFile)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if strings.TrimSpace(values.remoteWorkspace) == "" || strings.TrimSpace(values.remoteEnvRoot) == "" {
+			fmt.Fprintln(stderr, "--remote-workspace and --remote-env-root are required with run-stages --live")
+			return 2
+		}
+		if usesFormalRunner(values.runnerMode) && strings.TrimSpace(values.mqttAddr) == "" {
+			fmt.Fprintln(stderr, "public MQTT endpoint is required for run-stages --live --runner-mode live; set --mqtt-addr or HOME100K_MQTT_ADDR so remote VMs do not fall back to kubectl port-forward")
+			return 2
+		}
+		if err := validatePlanDataCoverage(plan.Conditions.EnvRoot, plan); err != nil {
+			writePreflightFailure(values.outDir, err)
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		remoteOutRoot := firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k")
+		if err := dispatchRemoteShards(vms, plan, runID, remoteOutRoot, values); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return writeJSONTo(stdout, stderr, map[string]any{
+			"dry_run":    false,
+			"run_id":     runID,
+			"dispatched": vms,
+		})
+	}
+	if usesFormalRunner(values.runnerMode) {
+		fmt.Fprintln(stderr, "formal live runner requires the VM/Ansible workflow for shard dispatch; refusing to run sampled actor executor")
+		return 2
+	}
+	results, err := ExecuteStages(plan, StageExecutionOptions{SampleFlowsPerPresence: 2})
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	return writeJSONTo(stdout, stderr, map[string]any{
+		"run_id":        runID,
+		"stage_results": results,
+	})
+}
+
+func usesFormalRunner(mode string) bool {
+	return strings.EqualFold(mode, "live") || strings.EqualFold(mode, "formal")
+}
+
+func executeShardRun(args []string, stdout io.Writer, stderr io.Writer) int {
+	opts, values, err := parseShardRunFlags("home-100k shard-run", args, stderr)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	plan, err := NewPlan(opts)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	assignment, ok := findAssignment(plan, values.role, values.shardIndex)
+	if !ok {
+		shard, shardOK := findShard(plan, values.role, values.shardIndex)
+		if !shardOK {
+			fmt.Fprintf(stderr, "shard not found: role=%s index=%d\n", values.role, values.shardIndex)
+			return 2
+		}
+		assignment = VMAssignment{
+			Label:      fmt.Sprintf("home-100k-%s-%03d", shard.Role, shard.Index),
+			Index:      shard.Index,
+			Role:       shard.Role,
+			Region:     shard.Region,
+			TaskShards: []Shard{shard},
+		}
+	}
+	if strings.TrimSpace(values.shardManifest) != "" {
+		manifest, err := loadVMAssignment(values.shardManifest)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 2
+		}
+		if manifest.Role != assignment.Role || manifest.Index != assignment.Index || manifest.Label != assignment.Label {
+			fmt.Fprintf(stderr, "assignment manifest mismatch: manifest=%+v plan=%+v\n", manifest, assignment)
+			return 2
+		}
+		assignment = manifest
+	}
+	runID := normalizedRunID(values.runID)
+	if strings.EqualFold(values.runnerMode, "live") || strings.EqualFold(values.runnerMode, "formal") {
+		if err := runLiveShard(plan, assignment, values, runID); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return writeJSONTo(stdout, stderr, map[string]any{
+			"run_id":      runID,
+			"role":        values.role,
+			"shard_index": values.shardIndex,
+			"runner_mode": "live",
+			"out_dir":     firstNonEmpty(strings.TrimSpace(values.outDir), filepath.Join("loadtests", "home-100k", "reports", runID, values.role, fmt.Sprintf("%03d", values.shardIndex))),
+		})
+	}
+	results, err := ExecuteStages(plan, StageExecutionOptions{SampleFlowsPerPresence: 2, HonorStageDurations: values.honorStageDurations})
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	outDir := strings.TrimSpace(values.outDir)
+	if outDir == "" {
+		outDir = filepath.Join("loadtests", "home-100k", "reports", runID, values.role, fmt.Sprintf("%03d", values.shardIndex))
+	}
+	resultFile := filepath.Join(outDir, "results.json")
+	reportFile := filepath.Join(outDir, "TEST_REPORT.md")
+	if err := writeJSONFile(resultFile, map[string]any{
+		"run_id":                runID,
+		"role":                  values.role,
+		"shard_index":           values.shardIndex,
+		"vm_assignment":         assignment,
+		"stage_results":         results,
+		"load_generator_health": LoadGeneratorHealth{},
+	}); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	report := RenderReport(ReportInput{
+		Plan:                 plan,
+		RunID:                runID,
+		ShadowEvidenceFound:  shadowEvidenceComplete(results),
+		ServerEvidenceFound:  false,
+		LoadGeneratorHealthy: true,
+		StageResults:         results,
+	})
+	if err := os.WriteFile(reportFile, []byte(report), 0o644); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	return writeJSONTo(stdout, stderr, map[string]any{
+		"run_id":       runID,
+		"role":         values.role,
+		"shard_index":  values.shardIndex,
+		"results_file": resultFile,
+		"report_file":  reportFile,
+	})
+}
+
+func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues, runID string) error {
+	outDir := strings.TrimSpace(values.outDir)
+	if outDir == "" {
+		outDir = filepath.Join("loadtests", "home-100k", "reports", runID, values.role, fmt.Sprintf("%03d", values.shardIndex))
+	}
+	rtkCloud := firstNonEmpty(strings.TrimSpace(values.rtkCloudBinary), "rtk-cloud")
+	deviceShardCount := len(plan.ShardsByRole("device-mqtt"))
+	if deviceShardCount <= 0 {
+		return fmt.Errorf("plan has no device-mqtt shards")
+	}
+	stageNames := make([]string, 0, len(plan.Stages))
+	stageTargets := make([]string, 0, len(plan.Stages))
+	stageDurations := make([]string, 0, len(plan.Stages))
+	stageCommandRates := []string{}
+	stageMinCommands := []string{}
+	maxTarget := 0
+	for _, stage := range plan.Stages {
+		durationSeconds, err := stageWindowSeconds(stage)
+		if err != nil {
+			return fmt.Errorf("stage %s duration: %w", stage.Name, err)
+		}
+		maxConnected := shardConnectedDevices(stage.ConnectedDevices, plan.Conditions.Devices, assignment)
+		if maxConnected > maxTarget {
+			maxTarget = maxConnected
+		}
+		stageNames = append(stageNames, stage.Name)
+		stageTargets = append(stageTargets, strconv.Itoa(maxConnected))
+		stageDurations = append(stageDurations, strconv.Itoa(durationSeconds))
+		stageCommandRates = append(stageCommandRates, commandRatePerDeviceDay(maxConnected, durationSeconds, plan.Conditions.DevicesPerUser))
+		stageMinCommands = append(stageMinCommands, strconv.Itoa(ceilDiv(maxConnected, plan.Conditions.DevicesPerUser)))
+	}
+	totalDuration := 0
+	for _, raw := range stageDurations {
+		seconds, _ := strconv.Atoi(raw)
+		totalDuration += seconds
+	}
+	stageOut := filepath.Join(outDir, "mqtt-test", "staged")
+	args := []string{
+		"mqtt-test",
+		"--env-root", plan.Conditions.EnvRoot,
+		"--brandname", plan.Conditions.Brandname,
+		"--profile", "baseline-10k",
+		"--duration-seconds", strconv.Itoa(totalDuration),
+		"--out-dir", stageOut,
+		"--mqtt-probe",
+		"--run-id", runID,
+		"--shard-index", strconv.Itoa(assignment.Index),
+		"--shard-count", strconv.Itoa(deviceShardCount),
+		"--ramp-up", plan.Stages[0].WarmUp,
+		"--telemetry-interval", "off",
+		"--state-interval", plan.Stages[0].SteadyState,
+		"--command-rate-per-device-per-day", maxCommandRatePerDeviceDay(stageCommandRates),
+		"--load-model", "home-100k-sustained",
+		"--stage-names", strings.Join(stageNames, ","),
+		"--stage-connected-devices", strings.Join(stageTargets, ","),
+		"--stage-durations-seconds", strings.Join(stageDurations, ","),
+		"--stage-min-commands", strings.Join(stageMinCommands, ","),
+		"--concurrency", strconv.Itoa(minInt(maxTarget, 250)),
+		"--max-connected-devices", strconv.Itoa(maxTarget),
+	}
+	if strings.TrimSpace(values.workspace) != "" {
+		args = append([]string{args[0], "--workspace", values.workspace}, args[1:]...)
+	}
+	runErr := commandRunnerWithTimeout(time.Duration(totalDuration)*time.Second+90*time.Second, rtkCloud, args...)
+	stageResults, err := loadLiveMQTTShardResults(filepath.Join(stageOut, "results.json"), plan.Stages, stageTargets)
+	if err != nil && len(stageResults) == 0 {
+		stageResults = fallbackFailedLiveStageResults(plan.Stages, stageTargets, liveShardErrorText(runErr, err))
+	}
+	resultFile := filepath.Join(outDir, "results.json")
+	reportFile := filepath.Join(outDir, "TEST_REPORT.md")
+	status := "completed"
+	partial := false
+	errorText := ""
+	if err != nil || runErr != nil {
+		status = "failed"
+		partial = err != nil
+		if err != nil && runErr != nil {
+			errorText = fmt.Sprintf("live staged mqtt-test failed: %v; staged live result: %v", runErr, err)
+		} else if err != nil {
+			errorText = fmt.Sprintf("staged live result: %v", err)
+		} else {
+			errorText = fmt.Sprintf("live staged mqtt-test failed: %v", runErr)
+		}
+	}
+	if err := writeJSONFile(resultFile, map[string]any{
+		"run_id":                runID,
+		"role":                  values.role,
+		"shard_index":           values.shardIndex,
+		"runner_mode":           "live",
+		"status":                status,
+		"partial":               partial,
+		"error":                 errorText,
+		"vm_assignment":         assignment,
+		"stage_results":         stageResults,
+		"load_generator_health": LoadGeneratorHealth{},
+	}); err != nil {
+		return err
+	}
+	report := RenderReport(ReportInput{
+		Plan:                 plan,
+		RunID:                runID,
+		ShadowEvidenceFound:  shadowEvidenceComplete(stageResults),
+		ServerEvidenceFound:  false,
+		LoadGeneratorHealthy: true,
+		StageResults:         stageResults,
+	})
+	if err := os.WriteFile(reportFile, []byte(report), 0o644); err != nil {
+		return err
+	}
+	if err != nil {
+		if runErr != nil {
+			return fmt.Errorf("live staged mqtt-test failed: %w; staged live result: %v", runErr, err)
+		}
+		return fmt.Errorf("staged live result: %w", err)
+	}
+	if runErr != nil {
+		return fmt.Errorf("live staged mqtt-test failed: %w", runErr)
+	}
+	return nil
+}
+
+func fallbackFailedLiveStageResults(stages []Stage, stageTargets []string, detail string) []StageResult {
+	results := make([]StageResult, 0, len(stages))
+	for idx, stage := range stages {
+		reasons := map[string]int64{"runner_failed": 1}
+		details := map[string]map[string]int64{}
+		if normalized := normalizeLiveShardFailureDetail(detail); normalized != "" {
+			details["runner_failed"] = map[string]int64{normalized: 1}
+		}
+		results = append(results, StageResult{
+			Name:             stage.Name,
+			ConnectedDevices: stage.ConnectedDevices,
+			DeviceMQTTTotals: DeviceMQTTTotals{
+				ActiveConnections:   int64(parseStageTarget(stageTargets, idx)),
+				ActiveSubscriptions: int64(parseStageTarget(stageTargets, idx)),
+			},
+			FailureReasons: reasons,
+			FailureDetails: details,
+		})
+	}
+	return results
+}
+
+func normalizeLiveShardFailureDetail(detail string) string {
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return ""
+	}
+	detail = strings.ToLower(detail)
+	replacer := strings.NewReplacer("\n", " ", "\r", " ", "\t", " ")
+	detail = replacer.Replace(detail)
+	fields := strings.Fields(detail)
+	if len(fields) == 0 {
+		return ""
+	}
+	detail = strings.Join(fields, "_")
+	if len(detail) > 160 {
+		detail = detail[:160]
+	}
+	return detail
+}
+
+func liveShardErrorText(runErr error, resultErr error) string {
+	switch {
+	case runErr != nil && resultErr != nil:
+		return fmt.Sprintf("live staged mqtt-test failed: %v; staged live result: %v", runErr, resultErr)
+	case runErr != nil:
+		return fmt.Sprintf("live staged mqtt-test failed: %v", runErr)
+	case resultErr != nil:
+		return fmt.Sprintf("staged live result: %v", resultErr)
+	default:
+		return ""
+	}
+}
+
+func stageWindowSeconds(stage Stage) (int, error) {
+	total := 0
+	for _, raw := range []string{stage.WarmUp, stage.SteadyState, stage.CoolDown} {
+		duration, err := time.ParseDuration(raw)
+		if err != nil {
+			return 0, err
+		}
+		if duration <= 0 {
+			return 0, fmt.Errorf("duration must be positive, got %s", raw)
+		}
+		total += int(duration.Seconds())
+	}
+	if total <= 0 {
+		return 0, fmt.Errorf("stage window must be positive")
+	}
+	return total, nil
+}
+
+func shardConnectedDevices(stageConnected int, totalDevices int, assignment VMAssignment) int {
+	deviceCount := 0
+	for _, shard := range assignment.TaskShards {
+		if shard.Role == "device-mqtt" {
+			deviceCount += shard.Count
+		}
+	}
+	if deviceCount <= 0 {
+		deviceCount = ceilDiv(totalDevices, DefaultVMCount)
+	}
+	if totalDevices <= 0 {
+		totalDevices = DefaultDeviceCount
+	}
+	target := stageConnected * deviceCount / totalDevices
+	if target <= 0 && stageConnected > 0 {
+		target = 1
+	}
+	return target
+}
+
+func commandRatePerDeviceDay(maxConnected int, durationSeconds int, devicesPerUser int) string {
+	if maxConnected <= 0 || durationSeconds <= 0 {
+		return "1.00"
+	}
+	if devicesPerUser <= 0 {
+		devicesPerUser = DefaultDevicesPerUser
+	}
+	expectedUserWrites := maxConnected / devicesPerUser
+	if expectedUserWrites <= 0 {
+		expectedUserWrites = 1
+	}
+	rate := float64(expectedUserWrites) / float64(maxConnected) * 86400.0 / float64(durationSeconds) * 1.25
+	if rate < 1 {
+		rate = 1
+	}
+	return fmt.Sprintf("%.2f", rate)
+}
+
+func maxCommandRatePerDeviceDay(values []string) string {
+	maxRate := 1.0
+	for _, raw := range values {
+		rate, err := strconv.ParseFloat(raw, 64)
+		if err == nil && rate > maxRate {
+			maxRate = rate
+		}
+	}
+	return fmt.Sprintf("%.2f", maxRate)
+}
+
+type rawLiveMQTTResult struct {
+	Name    string `json:"name"`
+	Overall string `json:"overall"`
+	Status  string `json:"status"`
+	Metrics struct {
+		DevicesSelected   int `json:"devices_selected"`
+		CommandsAttempted int `json:"commands_attempted"`
+		CommandsPassed    int `json:"commands_passed"`
+	} `json:"metrics"`
+	ConnectedDevices           int                         `json:"connected_devices"`
+	ActiveConnections          int                         `json:"active_connections"`
+	CommandsAttempted          int                         `json:"commands_attempted"`
+	CommandsPassed             int                         `json:"commands_passed"`
+	ConnectAttempts            int64                       `json:"connect_attempts"`
+	ConnectSuccesses           int64                       `json:"connect_successes"`
+	ConnectFailures            int64                       `json:"connect_failures"`
+	DeviceTokenAttempts        int64                       `json:"device_token_attempts"`
+	DeviceTokenSuccesses       int64                       `json:"device_token_successes"`
+	DeviceTokenFailures        int64                       `json:"device_token_failures"`
+	DeviceMQTTDialAttempts     int64                       `json:"device_mqtt_dial_attempts"`
+	DeviceMQTTDialSuccesses    int64                       `json:"device_mqtt_dial_successes"`
+	DeviceMQTTDialFailures     int64                       `json:"device_mqtt_dial_failures"`
+	DeviceMQTTConnackAttempts  int64                       `json:"device_mqtt_connack_attempts"`
+	DeviceMQTTConnackSuccesses int64                       `json:"device_mqtt_connack_successes"`
+	DeviceMQTTConnackFailures  int64                       `json:"device_mqtt_connack_failures"`
+	DeviceSubscribeAttempts    int64                       `json:"device_subscribe_attempts"`
+	DeviceSubscribeFailures    int64                       `json:"device_subscribe_failures"`
+	SubscribeSuccesses         int64                       `json:"subscribe_successes"`
+	ActiveSubscriptions        int64                       `json:"active_subscriptions"`
+	PublishSuccesses           int64                       `json:"publish_successes"`
+	PublishFailures            int64                       `json:"publish_failures"`
+	MessagesReceived           int64                       `json:"messages_received"`
+	ReportedEvents             int64                       `json:"reported_events"`
+	TotalBytesSent             int64                       `json:"total_bytes_sent"`
+	TotalBytesReceived         int64                       `json:"total_bytes_received"`
+	AuthViolations             int64                       `json:"auth_violations"`
+	HTTPRequests               int64                       `json:"http_requests"`
+	HTTPSuccesses              int64                       `json:"http_successes"`
+	HTTPFailures               int64                       `json:"http_failures"`
+	AppTokenAttempts           int64                       `json:"app_token_attempts"`
+	AppTokenSuccesses          int64                       `json:"app_token_successes"`
+	AppTokenFailures           int64                       `json:"app_token_failures"`
+	AppMQTTDialAttempts        int64                       `json:"app_mqtt_dial_attempts"`
+	AppMQTTDialSuccesses       int64                       `json:"app_mqtt_dial_successes"`
+	AppMQTTDialFailures        int64                       `json:"app_mqtt_dial_failures"`
+	AppMQTTConnackAttempts     int64                       `json:"app_mqtt_connack_attempts"`
+	AppMQTTConnackSuccesses    int64                       `json:"app_mqtt_connack_successes"`
+	AppMQTTConnackFailures     int64                       `json:"app_mqtt_connack_failures"`
+	TotalHTTPBytesSent         int64                       `json:"total_http_bytes_sent"`
+	TotalHTTPBytesReceived     int64                       `json:"total_http_bytes_received"`
+	RejectedUpdates            int64                       `json:"rejected_updates"`
+	DeviceMQTTTotals           DeviceMQTTTotals            `json:"device_mqtt_totals"`
+	AppUserTotals              AppUserTotals               `json:"app_user_totals"`
+	FailureReasons             map[string]int64            `json:"failure_reasons"`
+	FailureDetails             map[string]map[string]int64 `json:"failure_details"`
+	FailureEvents              []FailureEvent              `json:"failure_events"`
+	CommandEvents              []CommandEvent              `json:"command_events"`
+	StageDiagnostics           map[string]any              `json:"stage_diagnostics"`
+}
+
+func loadLiveMQTTShardResults(path string, stages []Stage, stageTargets []string) ([]StageResult, error) {
+	var root struct {
+		StageResults []rawLiveMQTTResult `json:"stage_results"`
+	}
+	if err := readJSON(path, &root); err != nil {
+		return nil, err
+	}
+	if len(root.StageResults) == 0 {
+		if len(stages) == 0 {
+			return nil, fmt.Errorf("no stages configured")
+		}
+		result, err := loadLiveMQTTStageResult(path, stages[0], parseStageTarget(stageTargets, 0))
+		if err != nil {
+			return nil, err
+		}
+		return []StageResult{result}, nil
+	}
+	results := make([]StageResult, 0, len(root.StageResults))
+	for idx, raw := range root.StageResults {
+		if idx >= len(stages) {
+			break
+		}
+		results = append(results, convertLiveMQTTStageResult(raw, stages[idx], parseStageTarget(stageTargets, idx)))
+	}
+	if len(root.StageResults) != len(stages) {
+		return results, fmt.Errorf("stage_results len = %d, want %d", len(root.StageResults), len(stages))
+	}
+	return results, nil
+}
+
+func parseStageTarget(values []string, idx int) int {
+	if idx < 0 || idx >= len(values) {
+		return 0
+	}
+	value, _ := strconv.Atoi(values[idx])
+	return value
+}
+
+func loadLiveMQTTStageResult(path string, stage Stage, maxConnected int) (StageResult, error) {
+	var raw rawLiveMQTTResult
+	if err := readJSON(path, &raw); err != nil {
+		return StageResult{}, err
+	}
+	return convertLiveMQTTStageResult(raw, stage, maxConnected), nil
+}
+
+func convertLiveMQTTStageResult(raw rawLiveMQTTResult, stage Stage, maxConnected int) StageResult {
+	commandsAttempted := raw.Metrics.CommandsAttempted
+	if commandsAttempted == 0 {
+		commandsAttempted = raw.CommandsAttempted
+	}
+	commandsPassed := raw.Metrics.CommandsPassed
+	if commandsPassed == 0 {
+		commandsPassed = raw.CommandsPassed
+	}
+	connectAttempts := nonZeroInt64(raw.DeviceMQTTTotals.ConnectAttempts, raw.ConnectAttempts)
+	connectSuccess := nonZeroInt64(raw.DeviceMQTTTotals.ConnectSuccess, raw.ConnectSuccesses)
+	connectFail := raw.ConnectFailures
+	if raw.DeviceMQTTTotals.ConnectFail != 0 {
+		connectFail = raw.DeviceMQTTTotals.ConnectFail
+	}
+	if connectFail == 0 && connectAttempts > connectSuccess {
+		connectFail = connectAttempts - connectSuccess
+	}
+	subscribes := nonZeroInt64(raw.DeviceMQTTTotals.Subscribes, raw.SubscribeSuccesses)
+	publishes := nonZeroInt64(raw.DeviceMQTTTotals.Publishes, raw.PublishSuccesses+raw.PublishFailures)
+	receivedMessages := nonZeroInt64(raw.DeviceMQTTTotals.ReceivedMessages, raw.MessagesReceived)
+	deltaReceived := nonZeroInt64(raw.DeviceMQTTTotals.DeltaReceived, receivedMessages)
+	reportedPublishes := nonZeroInt64(raw.DeviceMQTTTotals.ReportedPublishes, raw.ReportedEvents)
+	rejectedPublishes := nonZeroInt64(raw.DeviceMQTTTotals.RejectedPublishes, raw.PublishFailures)
+	activeConnections := nonZeroInt64(raw.DeviceMQTTTotals.ActiveConnections, int64(raw.ActiveConnections))
+	activeSubscriptions := nonZeroInt64(raw.DeviceMQTTTotals.ActiveSubscriptions, raw.ActiveSubscriptions)
+	if activeConnections == 0 {
+		activeConnections = connectSuccess
+	}
+	if activeSubscriptions == 0 {
+		activeSubscriptions = subscribes
+	}
+	httpRequests := nonZeroInt64(raw.AppUserTotals.DesiredWrites, raw.HTTPRequests)
+	httpSuccesses := nonZeroInt64(raw.AppUserTotals.ReceivedAcks, raw.HTTPSuccesses)
+	return StageResult{
+		Name:                  stage.Name,
+		ConnectedDevices:      stage.ConnectedDevices,
+		ShardConnectedDevices: maxConnected,
+		DeviceMQTTTotals: DeviceMQTTTotals{
+			ConnectAttempts:     connectAttempts,
+			ConnectSuccess:      connectSuccess,
+			ConnectFail:         connectFail,
+			TokenAttempts:       nonZeroInt64(raw.DeviceMQTTTotals.TokenAttempts, raw.DeviceTokenAttempts),
+			TokenSuccess:        nonZeroInt64(raw.DeviceMQTTTotals.TokenSuccess, raw.DeviceTokenSuccesses),
+			TokenFail:           nonZeroInt64(raw.DeviceMQTTTotals.TokenFail, raw.DeviceTokenFailures),
+			MQTTDialAttempts:    nonZeroInt64(raw.DeviceMQTTTotals.MQTTDialAttempts, raw.DeviceMQTTDialAttempts),
+			MQTTDialSuccess:     nonZeroInt64(raw.DeviceMQTTTotals.MQTTDialSuccess, raw.DeviceMQTTDialSuccesses),
+			MQTTDialFail:        nonZeroInt64(raw.DeviceMQTTTotals.MQTTDialFail, raw.DeviceMQTTDialFailures),
+			MQTTConnackAttempts: nonZeroInt64(raw.DeviceMQTTTotals.MQTTConnackAttempts, raw.DeviceMQTTConnackAttempts),
+			MQTTConnackSuccess:  nonZeroInt64(raw.DeviceMQTTTotals.MQTTConnackSuccess, raw.DeviceMQTTConnackSuccesses),
+			MQTTConnackFail:     nonZeroInt64(raw.DeviceMQTTTotals.MQTTConnackFail, raw.DeviceMQTTConnackFailures),
+			SubscribeAttempts:   nonZeroInt64(raw.DeviceMQTTTotals.SubscribeAttempts, raw.DeviceSubscribeAttempts),
+			SubscribeFail:       nonZeroInt64(raw.DeviceMQTTTotals.SubscribeFail, raw.DeviceSubscribeFailures),
+			Subscribes:          subscribes,
+			ActiveConnections:   activeConnections,
+			ActiveSubscriptions: activeSubscriptions,
+			Publishes:           publishes,
+			ReceivedMessages:    receivedMessages,
+			DeltaReceived:       deltaReceived,
+			ReportedPublishes:   reportedPublishes,
+			RejectedPublishes:   rejectedPublishes,
+			BytesSent:           nonZeroInt64(raw.DeviceMQTTTotals.BytesSent, raw.TotalBytesSent),
+			BytesReceived:       nonZeroInt64(raw.DeviceMQTTTotals.BytesReceived, raw.TotalBytesReceived),
+		},
+		AppUserTotals: AppUserTotals{
+			LoginAttempts:       raw.AppUserTotals.LoginAttempts,
+			LoginSuccess:        raw.AppUserTotals.LoginSuccess,
+			LoginFail:           raw.AppUserTotals.LoginFail,
+			TokenAttempts:       nonZeroInt64(raw.AppUserTotals.TokenAttempts, raw.AppTokenAttempts),
+			TokenSuccess:        nonZeroInt64(raw.AppUserTotals.TokenSuccess, raw.AppTokenSuccesses),
+			TokenFail:           nonZeroInt64(raw.AppUserTotals.TokenFail, raw.AppTokenFailures),
+			MQTTDialAttempts:    nonZeroInt64(raw.AppUserTotals.MQTTDialAttempts, raw.AppMQTTDialAttempts),
+			MQTTDialSuccess:     nonZeroInt64(raw.AppUserTotals.MQTTDialSuccess, raw.AppMQTTDialSuccesses),
+			MQTTDialFail:        nonZeroInt64(raw.AppUserTotals.MQTTDialFail, raw.AppMQTTDialFailures),
+			MQTTConnackAttempts: nonZeroInt64(raw.AppUserTotals.MQTTConnackAttempts, raw.AppMQTTConnackAttempts),
+			MQTTConnackSuccess:  nonZeroInt64(raw.AppUserTotals.MQTTConnackSuccess, raw.AppMQTTConnackSuccesses),
+			MQTTConnackFail:     nonZeroInt64(raw.AppUserTotals.MQTTConnackFail, raw.AppMQTTConnackFailures),
+			ListDevicesRequests: raw.AppUserTotals.ListDevicesRequests,
+			ReadShadowRequests:  raw.AppUserTotals.ReadShadowRequests,
+			DesiredWrites:       httpRequests,
+			ReceivedAcks:        httpSuccesses,
+			BytesSent:           nonZeroInt64(raw.AppUserTotals.BytesSent, raw.TotalHTTPBytesSent),
+			BytesReceived:       nonZeroInt64(raw.AppUserTotals.BytesReceived, raw.TotalHTTPBytesReceived),
+		},
+		MQTTConnectSuccessRatePercent:  connectSuccessPercent(DeviceMQTTTotals{ConnectAttempts: connectAttempts, ConnectSuccess: connectSuccess}),
+		DesiredReportedConvergenceRate: percent(commandsPassed, commandsAttempted),
+		OfflineDesiredConvergenceRate:  100,
+		DeltaClearSuccessRatePercent:   percent(commandsPassed, commandsAttempted),
+		RejectedUpdateCount:            int(raw.RejectedUpdates),
+		AuthorizationViolationCount:    int(raw.AuthViolations),
+		ClientTokenCorrelationCount:    int(httpSuccesses),
+		FailureReasons:                 raw.FailureReasons,
+		FailureDetails:                 raw.FailureDetails,
+		FailureEvents:                  raw.FailureEvents,
+		CommandEvents:                  raw.CommandEvents,
+		StageDiagnostics:               liveStageDiagnostics(raw.StageDiagnostics),
+	}
+}
+
+func liveStageDiagnostics(raw map[string]any) []map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	return []map[string]any{raw}
+}
+
+func nonZeroInt64(value int64, fallback int64) int64 {
+	if value != 0 {
+		return value
+	}
+	return fallback
+}
+
+func readJSON(path string, out any) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, out)
+}
+
+func minInt(a int, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func executeCollect(args []string, stdout io.Writer, stderr io.Writer) int {
+	plan, values, code := buildWorkflowPlan("home-100k collect", args, stderr)
+	if code != 0 {
+		return code
+	}
+	runID := normalizedRunID(values.runID)
+	outDir := strings.TrimSpace(values.outDir)
+	if outDir == "" {
+		outDir = filepath.Join("loadtests", "home-100k", "reports", runID)
+	}
+	if values.live {
+		vms, err := readVMStateFile(values.vmStateFile)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		remoteOutRoot := firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k")
+		if err := collectRemoteVMs(vms, plan, runID, remoteOutRoot, outDir, values); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return writeJSONTo(stdout, stderr, map[string]any{
+			"dry_run":   false,
+			"run_id":    runID,
+			"collected": vms,
+			"out_dir":   outDir,
+		})
+	}
+	return writeJSONTo(stdout, stderr, map[string]any{
+		"dry_run":             true,
+		"run_id":              runID,
+		"action":              firstLifecycleAction(BuildLifecycleActions(plan, runID), "collect"),
+		"remote_results_glob": "/var/lib/home-100k/" + runID + "/*",
+		"local_artifacts": []string{
+			filepath.Join(outDir, "plan.json"),
+			filepath.Join(outDir, "results.json"),
+			filepath.Join(outDir, "server-evidence.json"),
+			filepath.Join(outDir, "TEST_REPORT.md"),
+		},
+	})
+}
+
+func executeCollectServerEvidence(args []string, stdout io.Writer, stderr io.Writer) int {
+	plan, values, code := buildWorkflowPlan("home-100k collect-server-evidence", args, stderr)
+	if code != 0 {
+		return code
+	}
+	runID := normalizedRunID(values.runID)
+	if values.live {
+		evidence := collectLiveServerEvidence(plan.Conditions.EnvRoot, runID, values.outDir)
+		outputPath := strings.TrimSpace(values.serverEvidenceFile)
+		if outputPath == "" && strings.TrimSpace(values.outDir) != "" {
+			outputPath = filepath.Join(values.outDir, "server-evidence.json")
+		}
+		if outputPath != "" {
+			if err := writeJSONFile(outputPath, evidence); err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
+			}
+		}
+		return writeJSONTo(stdout, stderr, evidence)
+	}
+	evidence, err := loadServerEvidence(values.serverEvidenceFile, runID)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	return writeJSONTo(stdout, stderr, evidence)
+}
+
+func executeAggregate(args []string, stdout io.Writer, stderr io.Writer) int {
+	opts, values, err := parseWorkflowFlags("home-100k aggregate", args, stderr)
+	if err != nil {
+		return 2
+	}
+	result, err := AggregateCollectedRun(AggregateOptions{
+		PlanOptions: opts,
+		RunID:       values.runID,
+		OutDir:      values.outDir,
+	})
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	return writeJSONTo(stdout, stderr, result)
+}
+
+func executeListVMs(args []string, stdout io.Writer, stderr io.Writer) int {
+	opts, values, err := parseListVMFlags("home-100k list-vms", args, stderr)
+	if err != nil {
+		return 2
+	}
+	if _, err := NewPlan(opts); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	runID := normalizedRunID(values.runID)
+	tags := []string{"home-100k", runID}
+	if !values.live {
+		return writeJSONTo(stdout, stderr, map[string]any{
+			"dry_run": true,
+			"run_id":  runID,
+			"tags":    tags,
+		})
+	}
+	if strings.TrimSpace(values.linodeToken) == "" {
+		fmt.Fprintln(stderr, "--linode-token or LINODE_TOKEN is required with --live")
+		return 2
+	}
+	client := NewLinodeClient(firstNonEmpty(values.linodeEndpoint, "https://api.linode.com/v4"), values.linodeToken)
+	vms, err := client.ListVMs(context.Background(), tags)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	return writeJSONTo(stdout, stderr, map[string]any{
+		"dry_run": false,
+		"run_id":  runID,
+		"tags":    tags,
+		"vms":     vms,
+	})
+}
+
+func executeDestroyVMs(args []string, stdout io.Writer, stderr io.Writer) int {
+	opts, values, err := parseDestroyVMFlags("home-100k destroy-vms", args, stderr)
+	if err != nil {
+		return 2
+	}
+	plan, err := NewPlan(opts)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	runID := strings.TrimSpace(values.runID)
+	if runID == "" {
+		runID = "<run_id>"
+	}
+	actions := filterLifecycleActions(BuildLifecycleActions(plan, runID), "destroy-vm")
+	if !values.live {
+		return writeJSONTo(stdout, stderr, map[string]any{
+			"dry_run": true,
+			"run_id":  runID,
+			"actions": actions,
+		})
+	}
+	if !values.confirmLive {
+		fmt.Fprintln(stderr, "--confirm-live is required with --live before destroying Linode VMs")
+		return 2
+	}
+	if strings.TrimSpace(values.linodeToken) == "" {
+		fmt.Fprintln(stderr, "--linode-token or LINODE_TOKEN is required with --live")
+		return 2
+	}
+	if strings.TrimSpace(values.vmStateFile) == "" {
+		fmt.Fprintln(stderr, "--vm-state-file is required with destroy-vms --live")
+		return 2
+	}
+	vms, err := readVMStateFile(values.vmStateFile)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	client := NewLinodeClient(firstNonEmpty(values.linodeEndpoint, "https://api.linode.com/v4"), values.linodeToken)
+	destroyed := []LinodeVM{}
+	for _, vm := range vms {
+		if err := client.DestroyVM(context.Background(), vm.ID); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		destroyed = append(destroyed, vm)
+	}
+	return writeJSONTo(stdout, stderr, map[string]any{
+		"dry_run":   false,
+		"run_id":    runID,
+		"destroyed": destroyed,
+	})
+}
+
+func buildWorkflowPlan(name string, args []string, stderr io.Writer) (Plan, workflowFlagValues, int) {
+	opts, values, err := parseWorkflowFlags(name, args, stderr)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return Plan{}, workflowFlagValues{}, 2
+	}
+	plan, err := NewPlan(opts)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return Plan{}, workflowFlagValues{}, 2
+	}
+	if err := plan.Validate(); err != nil {
+		fmt.Fprintln(stderr, err)
+		return Plan{}, workflowFlagValues{}, 2
+	}
+	return plan, values, 0
+}
+
+func parseProvisionVMFlags(name string, args []string, stderr io.Writer) (PlanOptions, provisionVMFlagValues, error) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	envRoot := fs.String("env-root", "", "staging/LKE env-root")
+	brandname := fs.String("brandname", "", "brand name")
+	region := fs.String("region", "", "Linode region for load-generator VMs")
+	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
+	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
+	runID := fs.String("run-id", "", "run id for VM tags")
+	outDir := fs.String("out-dir", "", "artifact output directory")
+	live := fs.Bool("live", false, "create Linode VMs")
+	confirmLive := fs.Bool("confirm-live", false, "confirm live Linode VM creation")
+	linodeToken := fs.String("linode-token", os.Getenv("LINODE_TOKEN"), "Linode API token")
+	linodeEndpoint := fs.String("linode-endpoint", "", "Linode API endpoint")
+	linodeType := fs.String("linode-type", "", "Linode instance type")
+	linodeImage := fs.String("linode-image", "", "Linode image")
+	rootPass := fs.String("root-pass", "", "Linode root password")
+	authorizedKeyFile := fs.String("authorized-key-file", "", "SSH public key file for Linode authorized_keys")
+	if err := fs.Parse(args); err != nil {
+		return PlanOptions{}, provisionVMFlagValues{}, err
+	}
+	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
+	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
+	return opts, provisionVMFlagValues{
+		runID:             *runID,
+		outDir:            *outDir,
+		live:              *live,
+		confirmLive:       *confirmLive,
+		linodeToken:       *linodeToken,
+		linodeEndpoint:    *linodeEndpoint,
+		linodeType:        *linodeType,
+		linodeImage:       *linodeImage,
+		rootPass:          *rootPass,
+		authorizedKeyFile: *authorizedKeyFile,
+	}, nil
+}
+
+func parseDestroyVMFlags(name string, args []string, stderr io.Writer) (PlanOptions, destroyVMFlagValues, error) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	envRoot := fs.String("env-root", "", "staging/LKE env-root")
+	brandname := fs.String("brandname", "", "brand name")
+	region := fs.String("region", "", "Linode region for load-generator VMs")
+	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
+	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
+	runID := fs.String("run-id", "", "run id for VM tags")
+	live := fs.Bool("live", false, "destroy Linode VMs")
+	confirmLive := fs.Bool("confirm-live", false, "confirm live Linode VM destruction")
+	linodeToken := fs.String("linode-token", os.Getenv("LINODE_TOKEN"), "Linode API token")
+	linodeEndpoint := fs.String("linode-endpoint", "", "Linode API endpoint")
+	vmStateFile := fs.String("vm-state-file", "", "VM state JSON from provision-vms")
+	if err := fs.Parse(args); err != nil {
+		return PlanOptions{}, destroyVMFlagValues{}, err
+	}
+	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
+	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
+	return opts, destroyVMFlagValues{
+		runID:          *runID,
+		live:           *live,
+		confirmLive:    *confirmLive,
+		linodeToken:    *linodeToken,
+		linodeEndpoint: *linodeEndpoint,
+		vmStateFile:    *vmStateFile,
+	}, nil
+}
+
+func parseListVMFlags(name string, args []string, stderr io.Writer) (PlanOptions, listVMFlagValues, error) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	envRoot := fs.String("env-root", "", "staging/LKE env-root")
+	brandname := fs.String("brandname", "", "brand name")
+	region := fs.String("region", "", "Linode region for load-generator VMs")
+	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
+	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
+	runID := fs.String("run-id", "", "run id for VM tags")
+	live := fs.Bool("live", false, "query Linode VMs")
+	linodeToken := fs.String("linode-token", os.Getenv("LINODE_TOKEN"), "Linode API token")
+	linodeEndpoint := fs.String("linode-endpoint", "", "Linode API endpoint")
+	if err := fs.Parse(args); err != nil {
+		return PlanOptions{}, listVMFlagValues{}, err
+	}
+	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
+	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
+	return opts, listVMFlagValues{
+		runID:          *runID,
+		live:           *live,
+		linodeToken:    *linodeToken,
+		linodeEndpoint: *linodeEndpoint,
+	}, nil
+}
+
+func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptions, workflowFlagValues, error) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	envRoot := fs.String("env-root", "", "staging/LKE env-root")
+	brandname := fs.String("brandname", "", "brand name")
+	region := fs.String("region", "", "Linode region for load-generator VMs")
+	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
+	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
+	runnerNofile, sessionModel, readModel := addRuntimeConditionFlags(fs)
+	runID := fs.String("run-id", "", "run id for artifact correlation")
+	outDir := fs.String("out-dir", "", "artifact output directory")
+	serverEvidenceFile := fs.String("server-evidence-file", "", "server evidence JSON file")
+	live := fs.Bool("live", false, "execute live remote workflow step")
+	runnerMode := fs.String("runner-mode", "sample", "runner mode: sample or live")
+	vmStateFile := fs.String("vm-state-file", "", "VM state JSON from provision-vms")
+	remoteWorkspace := fs.String("remote-workspace", "", "workspace path on load-generator VMs")
+	remoteEnvRoot := fs.String("remote-env-root", "", "env-root path on load-generator VMs")
+	remoteOutRoot := fs.String("remote-out-root", "", "output root on load-generator VMs")
+	sshUser := fs.String("ssh-user", "root", "SSH user for load-generator VMs")
+	sshKey := fs.String("ssh-key", "", "SSH private key for load-generator VMs")
+	coordinatorDelayMS := fs.Int("coordinator-start-delay-ms", defaultCoordinatorStartDelayMS, "host coordinator delay between START ack and local monotonic runner start")
+	mqttAddr := fs.String("mqtt-addr", "", "public MQTT host:port for remote load-generator VMs")
+	videoCloudBaseURL := fs.String("video-cloud-base-url", "", "legacy alias for --video-cloud-public-base-url")
+	videoCloudPublicURL := fs.String("video-cloud-public-base-url", "", "Video Cloud public API base URL for remote load-generator VMs")
+	videoCloudTokenURL := fs.String("video-cloud-token-base-url", "", "Video Cloud mTLS token bootstrap base URL for remote load-generator VMs")
+	accountManagerURL := fs.String("account-manager-base-url", "", "Account Manager base URL for remote load-generator VMs")
+	credentialBundleFormat := fs.String("credential-bundle-format", "sqlite-gzip", "credential bundle format: sqlite-gzip")
+	if err := fs.Parse(args); err != nil {
+		return PlanOptions{}, workflowFlagValues{}, err
+	}
+	if strings.TrimSpace(*credentialBundleFormat) != "sqlite-gzip" {
+		return PlanOptions{}, workflowFlagValues{}, fmt.Errorf("unsupported --credential-bundle-format %q; only sqlite-gzip is supported", *credentialBundleFormat)
+	}
+	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
+	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
+	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel)
+	return opts, workflowFlagValues{
+		runID:                  *runID,
+		outDir:                 *outDir,
+		serverEvidenceFile:     *serverEvidenceFile,
+		live:                   *live,
+		runnerMode:             *runnerMode,
+		vmStateFile:            *vmStateFile,
+		remoteWorkspace:        *remoteWorkspace,
+		remoteEnvRoot:          *remoteEnvRoot,
+		remoteOutRoot:          *remoteOutRoot,
+		sshUser:                *sshUser,
+		sshKey:                 *sshKey,
+		coordinatorDelayMS:     *coordinatorDelayMS,
+		mqttAddr:               *mqttAddr,
+		videoCloudBaseURL:      *videoCloudBaseURL,
+		videoCloudPublicURL:    *videoCloudPublicURL,
+		videoCloudTokenURL:     *videoCloudTokenURL,
+		accountManagerURL:      *accountManagerURL,
+		credentialBundleFormat: strings.TrimSpace(*credentialBundleFormat),
+		runnerNofileLimit:      *runnerNofile,
+	}, nil
+}
+
+func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptions, shardRunFlagValues, error) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	envRoot := fs.String("env-root", "", "staging/LKE env-root")
+	brandname := fs.String("brandname", "", "brand name")
+	region := fs.String("region", "", "Linode region for load-generator VMs")
+	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
+	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
+	runID := fs.String("run-id", "", "run id for artifact correlation")
+	outDir := fs.String("out-dir", "", "artifact output directory")
+	role := fs.String("role", "", "shard role")
+	shardIndex := fs.Int("shard-index", 0, "shard index")
+	shardManifest := fs.String("shard-manifest", "", "shard manifest JSON path")
+	honorStageDurations := fs.Bool("honor-stage-durations", false, "sleep through configured stage warm-up, steady, and cool-down windows")
+	runnerMode := fs.String("runner-mode", "sample", "runner mode: sample or live")
+	rtkCloudBinary := fs.String("rtk-cloud-binary", "rtk-cloud", "rtk-cloud binary for live MQTT/API runner")
+	workspace := fs.String("workspace", "", "workspace path for live MQTT/API runner")
+	if err := fs.Parse(args); err != nil {
+		return PlanOptions{}, shardRunFlagValues{}, err
+	}
+	if strings.TrimSpace(*role) == "" {
+		return PlanOptions{}, shardRunFlagValues{}, fmt.Errorf("--role is required")
+	}
+	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
+	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
+	return opts, shardRunFlagValues{
+		runID:               *runID,
+		outDir:              *outDir,
+		role:                *role,
+		shardIndex:          *shardIndex,
+		shardManifest:       *shardManifest,
+		honorStageDurations: *honorStageDurations,
+		runnerMode:          *runnerMode,
+		rtkCloudBinary:      *rtkCloudBinary,
+		workspace:           *workspace,
+	}, nil
+}
+
+func readVMStateFile(path string) ([]LinodeVM, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var state struct {
+		Created []LinodeVM `json:"created"`
+		VMs     []LinodeVM `json:"vms"`
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, err
+	}
+	vms := state.Created
+	if len(vms) == 0 {
+		vms = state.VMs
+	}
+	if len(vms) == 0 {
+		return nil, fmt.Errorf("VM state file %s does not contain created VMs", path)
+	}
+	for _, vm := range vms {
+		if vm.ID <= 0 {
+			return nil, fmt.Errorf("VM state file %s contains VM without positive id", path)
+		}
+	}
+	return vms, nil
+}
+
+func normalizedRunID(runID string) string {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return "<run_id>"
+	}
+	return runID
+}
+
+func filterLifecycleActions(actions []LifecycleAction, action string) []LifecycleAction {
+	out := []LifecycleAction{}
+	for _, item := range actions {
+		if item.Action == action {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func firstLifecycleAction(actions []LifecycleAction, action string) LifecycleAction {
+	for _, item := range actions {
+		if item.Action == action {
+			return item
+		}
+	}
+	return LifecycleAction{}
+}
+
+func buildLinodeVMConfig(values provisionVMFlagValues) (LinodeVMConfig, error) {
+	cfg := LinodeVMConfig{
+		Type:     values.linodeType,
+		Image:    values.linodeImage,
+		RootPass: values.rootPass,
+	}
+	if strings.TrimSpace(values.authorizedKeyFile) != "" {
+		raw, err := os.ReadFile(values.authorizedKeyFile)
+		if err != nil {
+			return LinodeVMConfig{}, err
+		}
+		key := strings.TrimSpace(string(raw))
+		if key == "" {
+			return LinodeVMConfig{}, fmt.Errorf("authorized key file %s is empty", values.authorizedKeyFile)
+		}
+		cfg.AuthorizedKeys = []string{key}
+	}
+	return cfg, nil
+}
+
+func findShard(plan Plan, role string, index int) (Shard, bool) {
+	for _, shard := range plan.Shards {
+		if shard.Role == role && shard.Index == index {
+			return shard, true
+		}
+	}
+	return Shard{}, false
+}
+
+func findAssignment(plan Plan, role string, index int) (VMAssignment, bool) {
+	for _, assignment := range plan.Assignments {
+		if assignment.Role == role && assignment.Index == index {
+			return assignment, true
+		}
+	}
+	return VMAssignment{}, false
+}
+
+func findAssignmentByLabel(plan Plan, label string) (VMAssignment, bool) {
+	for _, assignment := range plan.Assignments {
+		if assignment.Label == label {
+			return assignment, true
+		}
+	}
+	return VMAssignment{}, false
+}
+
+func loadVMAssignment(path string) (VMAssignment, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return VMAssignment{}, err
+	}
+	var assignment VMAssignment
+	if err := json.Unmarshal(raw, &assignment); err != nil {
+		return VMAssignment{}, err
+	}
+	return assignment, nil
+}
+
+func collectLiveServerEvidence(envRoot string, runID string, outDir string) ServerEvidence {
+	sources := map[string]EvidenceSource{}
+	notes := []string{}
+	windowStart := evidenceWindowStart(outDir)
+	windowMode := "fallback_since_30m"
+	logsSinceArg := "--since=30m"
+	if windowStart != "" {
+		windowMode = "run_scoped_since_time"
+		logsSinceArg = "--since-time=" + windowStart
+	}
+	for _, probe := range serverEvidenceProbes(runID, logsSinceArg) {
+		out, err := commandOutputRunner(probe.command, probe.args...)
+		if err != nil {
+			detail := strings.TrimSpace(err.Error() + " " + redactEvidenceOutput(out))
+			sources[probe.source] = mergeEvidenceSource(sources[probe.source], EvidenceSource{Available: false, Detail: detail})
+			notes = append(notes, fmt.Sprintf("%s evidence probe failed: %s", probe.source, err.Error()))
+			continue
+		}
+		counters := parseEvidenceCounters(probe.source, runID, out)
+		sources[probe.source] = mergeEvidenceSource(sources[probe.source], EvidenceSource{Available: true, Detail: probe.detail, Counters: counters})
+	}
+	loggerSource, loggerNote := collectCentralLoggerEvidence(envRoot, runID)
+	sources["central_logger"] = loggerSource
+	if loggerNote != "" {
+		notes = append(notes, loggerNote)
+	}
+	normalizeEvidenceSourceCatalogMetadata(sources)
+	evidence := ServerEvidence{
+		RunID:               runID,
+		EvidenceWindowStart: windowStart,
+		EvidenceWindowMode:  windowMode,
+		Complete:            allEvidenceSourcesAvailable(sources),
+		Sources:             sources,
+		Notes:               notes,
+	}
+	applyServerEvidenceBaselineDeltas(&evidence, runID, outDir, &notes)
+	evidence.Notes = notes
+	return evidence
+}
+
+func normalizeEvidenceSourceCatalogMetadata(sources map[string]EvidenceSource) {
+	if sources == nil {
+		return
+	}
+	for key, catalogSource := range evidenceSourceCatalog(false) {
+		source, ok := sources[key]
+		if !ok {
+			catalogSource.Detail = "probe not configured"
+			sources[key] = catalogSource
+			continue
+		}
+		source.Optional = source.Optional || catalogSource.Optional
+		sources[key] = source
+	}
+}
+
+func collectCentralLoggerEvidence(envRoot string, runID string) (EvidenceSource, string) {
+	values := centralLoggerEnvValues(envRoot)
+	endpoint := strings.TrimRight(strings.TrimSpace(firstNonEmpty(values["CLOUD_LOGGER_ENDPOINT"], os.Getenv("CLOUD_LOGGER_ENDPOINT"))), "/")
+	token := strings.TrimSpace(firstNonEmpty(values["CLOUD_LOGGER_INGEST_TOKEN"], os.Getenv("CLOUD_LOGGER_INGEST_TOKEN")))
+	if endpoint == "" || token == "" {
+		return EvidenceSource{Available: false, Optional: true, Detail: "central logger endpoint or token missing"}, "central_logger evidence probe skipped: endpoint/token missing"
+	}
+	counters := map[string]int64{}
+	queries := []struct {
+		label string
+		key   string
+		value string
+	}{
+		{label: "trace_id", key: "trace_id", value: runID},
+		{label: "request_id", key: "request_id", value: runID},
+		{label: "operation_id", key: "operation_id", value: runID},
+		{label: "home_mqtt_operation", key: "operation_id", value: "home-mqtt-loadtest"},
+	}
+	for _, query := range queries {
+		count, err := queryCentralLoggerCount(endpoint, token, query.key, query.value)
+		if err != nil {
+			return EvidenceSource{Available: false, Optional: true, Detail: "central logger query failed: " + redact(err.Error())}, "central_logger evidence probe failed: " + err.Error()
+		}
+		counters["central_logger."+query.label+".events"] = int64(count)
+	}
+	return EvidenceSource{
+		Available: true,
+		Optional:  true,
+		Detail:    "central logger /v1/logs queried by run_id trace_id/request_id/operation_id and home-mqtt-loadtest operation_id",
+		Counters:  counters,
+	}, ""
+}
+
+func centralLoggerEnvValues(envRoot string) map[string]string {
+	candidates := []string{}
+	if override := strings.TrimSpace(os.Getenv("HOME100K_CLOUD_LOGGER_ENV")); override != "" {
+		candidates = append(candidates, override)
+	}
+	candidates = append(candidates,
+		filepath.Join(envRoot, "services", "cloud-logger", "logger.env"),
+		filepath.Join(envRoot, "state", "cloud-logger.env"),
+	)
+	if parent := filepath.Dir(strings.TrimRight(envRoot, string(os.PathSeparator))); parent != "." && parent != "" {
+		candidates = append(candidates,
+			filepath.Join(parent, "linode", "services", "cloud-logger", "logger.env"),
+			filepath.Join(parent, "linode", "state", "cloud-logger.env"),
+		)
+	}
+	for _, path := range candidates {
+		if fileReadable(path) {
+			return parseEnvFile(path)
+		}
+	}
+	return map[string]string{}
+}
+
+func evidenceWindowStart(outDir string) string {
+	outDir = strings.TrimSpace(outDir)
+	if outDir == "" {
+		return ""
+	}
+	coordination := loadStartCoordination(filepath.Join(outDir, "start-coordination.json"))
+	var earliest time.Time
+	for _, vm := range coordination.VMs {
+		for _, raw := range []string{vm.StartSignalReceivedAt, vm.StageStartedAt, vm.FirstConnectAt} {
+			parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(raw))
+			if err != nil {
+				continue
+			}
+			if earliest.IsZero() || parsed.Before(earliest) {
+				earliest = parsed
+			}
+		}
+	}
+	if earliest.IsZero() {
+		return ""
+	}
+	return earliest.Add(-5 * time.Second).UTC().Format(time.RFC3339Nano)
+}
+
+func queryCentralLoggerCount(endpoint string, token string, key string, value string) (int, error) {
+	base, err := url.Parse(endpoint + "/v1/logs")
+	if err != nil {
+		return 0, err
+	}
+	values := base.Query()
+	values.Set(key, value)
+	base.RawQuery = values.Encode()
+	req, err := http.NewRequest(http.MethodGet, base.String(), nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	client := http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return 0, fmt.Errorf("logger query status=%d", resp.StatusCode)
+	}
+	var decoded struct {
+		Events []json.RawMessage `json:"events"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return 0, err
+	}
+	return len(decoded.Events), nil
+}
+
+func fileReadable(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func parseEvidenceCounters(source string, runID string, out string) map[string]int64 {
+	counters := map[string]int64{}
+	if source == "emqx_listener_stats" && (strings.Contains(out, "tcp:default") || strings.Contains(out, "ssl:default")) {
+		counters["emqx.broker.identity"] = 1
+	}
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) == 2 && strings.Contains(parts[0], ".") {
+			value, err := strconv.ParseInt(parts[1], 10, 64)
+			if err == nil {
+				counters[parts[0]] += value
+			}
+			continue
+		}
+		if source == "emqx" && strings.Contains(line, runID) && strings.Contains(line, "-device-") {
+			if strings.Contains(line, "New client connected") || strings.Contains(line, "client.connected") {
+				counters["device_mqtt.connect_success"]++
+			}
+		}
+		if source == "emqx_listener_stats" {
+			parseEMQXListenerCounterLine(counters, line)
+		}
+		if source == "video_cloud_api" {
+			parseVideoCloudAPILogCounterLine(counters, line)
+		}
+		if source == "ingress_nginx" {
+			parseIngressRequestTokenCounterLine(counters, line)
+		}
+		if source == "postgres" {
+			parsePostgresCounterLine(counters, line)
+		}
+	}
+	if len(counters) == 0 {
+		return nil
+	}
+	return counters
+}
+
+func applyServerEvidenceBaselineDeltas(evidence *ServerEvidence, runID string, outDir string, notes *[]string) {
+	if evidence == nil || strings.TrimSpace(outDir) == "" {
+		return
+	}
+	baselinePath := filepath.Join(outDir, "server-evidence-baseline.json")
+	if !fileReadable(baselinePath) {
+		return
+	}
+	baseline, err := loadServerEvidence(baselinePath, runID)
+	if err != nil {
+		if notes != nil {
+			*notes = append(*notes, "server evidence baseline ignored: "+err.Error())
+		}
+		return
+	}
+	applyEMQXMetricDelta(evidence, baseline)
+	applySourceCounterBaselineDelta(evidence, baseline, "ingress_nginx")
+	applySourceCounterBaselineDelta(evidence, baseline, "postgres")
+	applySourceCounterBaselineDelta(evidence, baseline, "video_cloud_api")
+	recomputeVideoCloudAPITopLevelCounters(evidence)
+}
+
+func applyEMQXMetricDelta(evidence *ServerEvidence, baseline ServerEvidence) {
+	if evidence == nil || evidence.Sources == nil {
+		return
+	}
+	source := evidence.Sources["emqx"]
+	if source.Counters == nil {
+		source.Counters = map[string]int64{}
+	}
+	deltaConnected := source.Counters["emqx.metric.client.connected"] - evidenceCounter(baseline, "emqx", "emqx.metric.client.connected")
+	if deltaConnected > 0 {
+		source.Counters["mqtt.total_connect_success"] = deltaConnected
+		source.Counters["device_mqtt.connect_success"] = deltaConnected
+	}
+	deltaConnectReceived := source.Counters["emqx.metric.packets.connect.received"] - evidenceCounter(baseline, "emqx", "emqx.metric.packets.connect.received")
+	if deltaConnectReceived > 0 {
+		source.Counters["mqtt.total_connect_attempts"] = deltaConnectReceived
+		source.Counters["device_mqtt.connect_attempts"] = deltaConnectReceived
+	}
+	evidence.Sources["emqx"] = source
+}
+
+func applySourceCounterBaselineDelta(evidence *ServerEvidence, baseline ServerEvidence, sourceName string) {
+	if evidence == nil || evidence.Sources == nil || strings.TrimSpace(sourceName) == "" {
+		return
+	}
+	source, ok := evidence.Sources[sourceName]
+	if !ok || source.Counters == nil {
+		return
+	}
+	baselineSource, ok := baseline.Sources[sourceName]
+	if !ok || baselineSource.Counters == nil {
+		return
+	}
+	for counter, value := range source.Counters {
+		base, ok := baselineSource.Counters[counter]
+		if !ok {
+			continue
+		}
+		delta := value - base
+		if delta < 0 {
+			delta = 0
+		}
+		source.Counters[counter] = delta
+	}
+	evidence.Sources[sourceName] = source
+}
+
+func recomputeVideoCloudAPITopLevelCounters(evidence *ServerEvidence) {
+	if evidence == nil || evidence.Sources == nil {
+		return
+	}
+	source, ok := evidence.Sources["video_cloud_api"]
+	if !ok || source.Counters == nil {
+		return
+	}
+	fields := []string{"total", "status_200", "status_500", "gt1s", "gt5s", "gt10s"}
+	sums := map[string]int64{}
+	foundPodCounters := false
+	for counter, value := range source.Counters {
+		if !strings.HasPrefix(counter, "video_cloud_api.request_token.pod_") {
+			continue
+		}
+		for _, field := range fields {
+			if strings.HasSuffix(counter, "."+field) {
+				sums[field] += value
+				foundPodCounters = true
+				break
+			}
+		}
+	}
+	if !foundPodCounters {
+		return
+	}
+	for _, field := range fields {
+		source.Counters["video_cloud_api.request_token."+field] = sums[field]
+	}
+	evidence.Sources["video_cloud_api"] = source
+}
+
+func parsePostgresCounterLine(counters map[string]int64, line string) {
+	lower := strings.ToLower(line)
+	if strings.Contains(lower, "fatal:") {
+		counters["postgres.fatal"]++
+	}
+	if strings.Contains(lower, "too many clients already") {
+		counters["postgres.too_many_clients"]++
+	}
+	if strings.Contains(lower, "canceling statement due to user request") {
+		counters["postgres.statement_canceled"]++
+	}
+}
+
+func parseEMQXListenerCounterLine(counters map[string]int64, line string) {
+	fields := strings.Fields(line)
+	if len(fields) != 3 {
+		return
+	}
+	listener := strings.ReplaceAll(fields[0], ":", "_")
+	key := strings.TrimSuffix(fields[1], ":")
+	value, err := strconv.ParseInt(fields[2], 10, 64)
+	if err != nil {
+		return
+	}
+	switch key {
+	case "acceptors", "current_conn", "max_conns":
+		counters["emqx."+listener+"."+key] += value
+	case "ssl_closed", "tcp_closed", "discarded":
+		counters["emqx."+listener+".shutdown_"+key] += value
+	}
+}
+
+func parseVideoCloudAPILogCounterLine(counters map[string]int64, line string) {
+	jsonStart := strings.Index(line, "{")
+	if jsonStart > 0 {
+		line = line[jsonStart:]
+	}
+	var entry struct {
+		Path       string  `json:"path"`
+		Status     int     `json:"status"`
+		DurationMS float64 `json:"duration_ms"`
+	}
+	if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		return
+	}
+	if entry.Path != "/request_token" {
+		return
+	}
+	counters["video_cloud_api.request_token.total"]++
+	counters[fmt.Sprintf("video_cloud_api.request_token.status_%d", entry.Status)]++
+	duration := int64(entry.DurationMS)
+	if duration > counters["video_cloud_api.request_token.max_ms"] {
+		counters["video_cloud_api.request_token.max_ms"] = duration
+	}
+	if entry.DurationMS > 1000 {
+		counters["video_cloud_api.request_token.gt1s"]++
+	}
+	if entry.DurationMS > 5000 {
+		counters["video_cloud_api.request_token.gt5s"]++
+	}
+	if entry.DurationMS > 10000 {
+		counters["video_cloud_api.request_token.gt10s"]++
+	}
+}
+
+var ingressAccessLogPattern = regexp.MustCompile(`\[[0-9]{2}/[A-Za-z]+/[0-9]{4}:[0-9]{2}:[0-9]{2}:[0-9]{2} \+0000\] "([A-Z]+) ([^ ]+) [^"]+" ([0-9]{3}) [0-9]+ "[^"]*" "[^"]*" [0-9]+ ([0-9.]+) \[[^\]]*\] \[\] [^ ]+ [^ ]+ ([0-9.]+|-|,) ([0-9]{3}|-)`)
+
+func parseIngressRequestTokenCounterLine(counters map[string]int64, line string) {
+	matches := ingressAccessLogPattern.FindStringSubmatch(line)
+	if len(matches) != 7 {
+		return
+	}
+	if matches[1] != http.MethodPost || matches[2] != "/request_token" {
+		return
+	}
+	status, err := strconv.Atoi(matches[3])
+	if err != nil {
+		return
+	}
+	requestTime, err := strconv.ParseFloat(matches[4], 64)
+	if err != nil {
+		return
+	}
+	counters["ingress_nginx.request_token.total"]++
+	counters[fmt.Sprintf("ingress_nginx.request_token.status_%d", status)]++
+	ms := int64(requestTime * 1000)
+	if ms > counters["ingress_nginx.request_token.max_ms"] {
+		counters["ingress_nginx.request_token.max_ms"] = ms
+	}
+	if requestTime > 1 {
+		counters["ingress_nginx.request_token.gt1s"]++
+	}
+	if requestTime > 5 {
+		counters["ingress_nginx.request_token.gt5s"]++
+	}
+	if requestTime > 10 {
+		counters["ingress_nginx.request_token.gt10s"]++
+	}
+	if upstreamStatus, err := strconv.Atoi(matches[6]); err == nil {
+		counters[fmt.Sprintf("ingress_nginx.request_token.upstream_%d", upstreamStatus)]++
+	}
+}
+
+func redactEvidenceOutput(out string) string {
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return ""
+	}
+	if len(out) > 400 {
+		out = out[:400] + "...(truncated)"
+	}
+	return redact(out)
+}
+
+func mergeEvidenceSource(current EvidenceSource, next EvidenceSource) EvidenceSource {
+	if current.Detail == "" {
+		return next
+	}
+	merged := EvidenceSource{
+		Available: current.Available && next.Available,
+		Optional:  current.Optional || next.Optional,
+		Detail:    current.Detail + "; " + next.Detail,
+		Counters:  map[string]int64{},
+	}
+	for key, value := range current.Counters {
+		merged.Counters[key] = value
+	}
+	for key, value := range next.Counters {
+		merged.Counters[key] = value
+	}
+	if len(merged.Counters) == 0 {
+		merged.Counters = nil
+	}
+	return merged
+}
+
+type serverEvidenceProbe struct {
+	source  string
+	command string
+	args    []string
+	detail  string
+}
+
+func serverEvidenceProbes(runID string, logsSinceArg string) []serverEvidenceProbe {
+	if strings.TrimSpace(logsSinceArg) == "" {
+		logsSinceArg = "--since=30m"
+	}
+	return []serverEvidenceProbe{
+		{
+			source:  "host_pod_resources",
+			command: "kubectl",
+			args:    []string{"get", "pods", "-A", "-o", "wide"},
+			detail:  "pod placement and readiness captured",
+		},
+		{
+			source:  "host_pod_resources",
+			command: "bash",
+			args:    []string{"-lc", "kubectl top pods -A || true"},
+			detail:  "pod resource usage captured",
+		},
+		kubectlLogsProbe("emqx", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=mqtt", logsSinceArg, "MQTT broker logs and client churn evidence captured for run_id "+runID),
+		emqxBrokerMetricsProbe(runID),
+		emqxListenerStatsProbe(runID),
+		mqttNodeBalancerProbe(runID),
+		videoCloudAPIRequestTokenCounterProbe(runID, logsSinceArg),
+		kubectlLogsProbe("video_cloud_api", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=video-cloud-api", logsSinceArg, "Video Cloud API logs captured for run_id "+runID),
+		postgresCounterProbe("iot_device_shadow", runID, shadowRuntimeLogCounterSQL(runID), "IoT Device Shadow MQTT path counters parsed from persisted runtime logs for run_id "+runID),
+		postgresCounterProbe("iot_device_shadow_streams", runID, shadowRuntimeLogStreamSQL(runID), "IoT Device Shadow runtime log stream evidence parsed from persisted runtime logs for run_id "+runID),
+		postgresCounterProbe("postgres", runID, shadowStoreCounterSQL(runID), "PostgreSQL device shadow convergence counters parsed for run_id "+runID),
+		kubectlLogsProbe("postgres", "video-cloud-staging-platform", "app.kubernetes.io/name=postgresql", logsSinceArg, "PostgreSQL logs captured"),
+		kubectlLogsProbe("redis_valkey", "video-cloud-staging-platform", "app.kubernetes.io/name=redis", logsSinceArg, "Redis/Valkey logs captured when enabled"),
+		kubectlLogsProbe("ingress_nginx", "video-cloud-staging-ingress", "app.kubernetes.io/name=ingress-nginx", logsSinceArg, "Ingress/nginx logs captured for run_id "+runID),
+	}
+}
+
+func postgresCounterProbe(source string, runID string, sql string, detail string) serverEvidenceProbe {
+	script := fmt.Sprintf(
+		`set -euo pipefail; kubectl -n video-cloud-staging-platform exec postgresql-0 -- psql -U postgres -d video_cloud -At -F '	' -c %s`,
+		shellQuote(sql),
+	)
+	return serverEvidenceProbe{source: source, command: "bash", args: []string{"-lc", script}, detail: detail}
+}
+
+func shadowRuntimeLogCounterSQL(runID string) string {
+	prefix := "mqtt-e2e-" + sanitizeEvidenceRunID(runID) + "-%"
+	return `
+WITH logs AS (
+	SELECT source, message
+	FROM device_runtime_logs
+	WHERE stream_id LIKE ` + sqlLiteral(prefix) + `
+)
+SELECT 'app_user.desired_writes', COUNT(*) FROM logs WHERE source = 'app_controller' AND message = 'mqtt_e2e shadow_desired app_controller publish'
+UNION ALL SELECT 'device_mqtt.delta_received', COUNT(*) FROM logs WHERE source = 'device_client' AND message = 'mqtt_e2e shadow_delta device_client receive'
+UNION ALL SELECT 'device_mqtt.reported_publishes', COUNT(*) FROM logs WHERE source = 'device_client' AND message = 'mqtt_e2e shadow_reported device_client publish'
+UNION ALL SELECT 'app_user.received_acks', COUNT(*) FROM logs WHERE source = 'app_observer' AND message = 'mqtt_e2e shadow_reported app_observer receive'
+`
+}
+
+func shadowRuntimeLogStreamSQL(runID string) string {
+	prefix := "mqtt-e2e-" + sanitizeEvidenceRunID(runID) + "-%"
+	return `
+WITH logs AS (
+	SELECT stream_id, seq
+	FROM device_runtime_logs
+	WHERE stream_id LIKE ` + sqlLiteral(prefix) + `
+),
+stream_counts AS (
+	SELECT stream_id, COUNT(*) AS entries
+	FROM logs
+	GROUP BY stream_id
+),
+seq_counts AS (
+	SELECT stream_id, seq, COUNT(*) AS entries
+	FROM logs
+	GROUP BY stream_id, seq
+)
+SELECT 'runtime_log_streams.total', COUNT(*) FROM stream_counts
+UNION ALL
+SELECT 'runtime_log_stream.' || stream_id || '.entries', entries FROM stream_counts
+UNION ALL
+SELECT 'runtime_log_stream.' || stream_id || '.seq.' || seq, entries FROM seq_counts
+`
+}
+
+func shadowStoreCounterSQL(runID string) string {
+	return `
+SELECT 'device_shadow.rows_current_converged', COUNT(*)
+FROM device_shadows
+WHERE shadow_name = ''
+  AND desired = reported
+  AND deleted_at IS NULL
+`
+}
+
+func sanitizeEvidenceRunID(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range raw {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-' || r == '_':
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func sqlLiteral(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
+func kubectlLogsProbe(source string, namespace string, selector string, logsSinceArg string, detail string) serverEvidenceProbe {
+	script := fmt.Sprintf(
+		`set -euo pipefail; pods="$(kubectl -n %s get pods --selector %s -o name)"; test -n "$pods"; kubectl -n %s logs %s --selector %s --tail=-1`,
+		shellQuote(namespace),
+		shellQuote(selector),
+		shellQuote(namespace),
+		shellQuote(logsSinceArg),
+		shellQuote(selector),
+	)
+	return serverEvidenceProbe{
+		source:  source,
+		command: "bash",
+		args:    []string{"-lc", script},
+		detail:  detail,
+	}
+}
+
+func emqxListenerStatsProbe(runID string) serverEvidenceProbe {
+	script := `set -euo pipefail
+pods="$(kubectl -n video-cloud-staging-video-cloud get pods --selector app.kubernetes.io/name=mqtt -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}')"
+test -n "$pods"
+for pod in $pods; do
+  safe_pod="$(printf '%s' "$pod" | tr -c 'A-Za-z0-9_' '_')"
+  kubectl -n video-cloud-staging-video-cloud exec "$pod" -- emqx ctl listeners | awk -v pod="$safe_pod" '
+    /^[a-z]+:default/ {listener=$1}
+    /^[[:space:]]+(acceptors|current_conn|max_conns)[[:space:]]*:/ {
+      key=$1; value=$3; safe_listener=listener; gsub(":", "_", safe_listener)
+      print listener, key, value; print "emqx.pod_" pod "." safe_listener "." key, value
+    }
+    /^[[:space:]]+shutdown_count[[:space:]]*:/ {
+      safe_listener=listener; gsub(":", "_", safe_listener)
+      if ($0 ~ /ssl_closed/) {s=$0; sub(/^.*ssl_closed,/, "", s); sub(/[^0-9].*$/, "", s); if (s != "") {print listener, "ssl_closed", s; print "emqx.pod_" pod "." safe_listener ".shutdown_ssl_closed", s}}
+      if ($0 ~ /tcp_closed/) {s=$0; sub(/^.*tcp_closed,/, "", s); sub(/[^0-9].*$/, "", s); if (s != "") {print listener, "tcp_closed", s; print "emqx.pod_" pod "." safe_listener ".shutdown_tcp_closed", s}}
+      if ($0 ~ /discarded/) {s=$0; sub(/^.*discarded,/, "", s); sub(/[^0-9].*$/, "", s); if (s != "") {print listener, "discarded", s; print "emqx.pod_" pod "." safe_listener ".shutdown_discarded", s}}
+    }
+  '
+done`
+	return serverEvidenceProbe{
+		source:  "emqx_listener_stats",
+		command: "bash",
+		args:    []string{"-lc", script},
+		detail:  "EMQX listener acceptor, current connection, max connection, and shutdown counters captured for run_id " + runID,
+	}
+}
+
+func emqxBrokerMetricsProbe(runID string) serverEvidenceProbe {
+	script := `set -euo pipefail
+pods="$(kubectl -n video-cloud-staging-video-cloud get pods --selector app.kubernetes.io/name=mqtt -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}')"
+test -n "$pods"
+for pod in $pods; do
+  safe_pod="$(printf '%s' "$pod" | tr -c 'A-Za-z0-9_' '_')"
+  metrics="$(kubectl -n video-cloud-staging-video-cloud exec "$pod" -- emqx ctl broker metrics 2>/dev/null || true)"
+  test -n "$metrics"
+  printf '%s\n' "$metrics" | awk -F ':' -v pod="$safe_pod" '
+    {
+      key=$1; value=$2
+      gsub(/[[:space:]]/, "", key)
+      gsub(/[[:space:]]/, "", value)
+    }
+    key ~ /^(client\.connected|client\.connack|packets\.connect\.received|packets\.connack\.sent|packets\.pingreq\.received|packets\.pingresp\.sent)$/ && value ~ /^[0-9]+$/ {
+      print "emqx.metric." key, value
+      print "emqx.pod_" pod ".metric." key, value
+    }
+  '
+done`
+	return serverEvidenceProbe{
+		source:  "emqx",
+		command: "bash",
+		args:    []string{"-lc", script},
+		detail:  "EMQX broker metrics captured for run_id " + runID + "; run-scoped connect counters require server-evidence-baseline.json delta",
+	}
+}
+
+func mqttNodeBalancerProbe(runID string) serverEvidenceProbe {
+	script := `set -euo pipefail
+test -n "${LINODE_TOKEN:-}"
+ip="$(kubectl -n video-cloud-staging-video-cloud get svc mqtt-public -o jsonpath='{.status.loadBalancer.ingress[0].ip}')"
+test -n "$ip"
+nodebalancers="$(curl -fsS -H "Authorization: Bearer ${LINODE_TOKEN}" https://api.linode.com/v4/nodebalancers)"
+nb_id="$(printf '%s' "$nodebalancers" | jq -r --arg ip "$ip" '.data[] | select(.ipv4 == $ip) | .id' | head -n1)"
+test -n "$nb_id"
+configs="$(curl -fsS -H "Authorization: Bearer ${LINODE_TOKEN}" "https://api.linode.com/v4/nodebalancers/${nb_id}/configs")"
+cfg="$(printf '%s' "$configs" | jq -r '.data[] | select(.port == 8883) | [.id, .nodes_status.up, .nodes_status.down, .algorithm, .stickiness] | @tsv' | head -n1)"
+test -n "$cfg"
+cfg_id="$(printf '%s' "$cfg" | awk '{print $1}')"
+printf '%s\n' "$cfg" | awk '{print "mqtt_nodebalancer.configs 1"; print "mqtt_nodebalancer.nodes_up " $2; print "mqtt_nodebalancer.nodes_down " $3}'
+nodes="$(curl -fsS -H "Authorization: Bearer ${LINODE_TOKEN}" "https://api.linode.com/v4/nodebalancers/${nb_id}/configs/${cfg_id}/nodes")"
+printf '%s' "$nodes" | jq -r '
+  .data[]
+  | (.label | gsub("[^A-Za-z0-9_]"; "_")) as $label
+  | [
+      "mqtt_nodebalancer.node_\($label).status_\(.status | ascii_downcase) 1",
+      "mqtt_nodebalancer.node_\($label).weight \(.weight)"
+    ]
+  | .[]'
+`
+	return serverEvidenceProbe{
+		source:  "mqtt_nodebalancer",
+		command: "bash",
+		args:    []string{"-lc", script},
+		detail:  "Linode NodeBalancer health for mqtt-public 8883 captured for run_id " + runID,
+	}
+}
+
+func videoCloudAPIRequestTokenCounterProbe(runID string, logsSinceArg string) serverEvidenceProbe {
+	script := `set -euo pipefail
+pods="$(kubectl -n video-cloud-staging-video-cloud get pods --selector app.kubernetes.io/name=video-cloud-api -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}')"
+test -n "$pods"
+for pod in $pods; do
+  safe_pod="$(printf '%s' "$pod" | tr -c 'A-Za-z0-9_' '_')"
+  kubectl -n video-cloud-staging-video-cloud logs ` + shellQuote(logsSinceArg) + ` "$pod" --tail=-1 \
+    | jq -sr --arg pod "$safe_pod" '
+        [.[] | select(.path == "/request_token")] as $rt
+        | [
+            "video_cloud_api.request_token.total \($rt | length)",
+            "video_cloud_api.request_token.status_200 \(($rt | map(select(.status == 200)) | length))",
+            "video_cloud_api.request_token.status_500 \(($rt | map(select(.status == 500)) | length))",
+            "video_cloud_api.request_token.gt1s \(($rt | map(select(.duration_ms > 1000)) | length))",
+            "video_cloud_api.request_token.gt5s \(($rt | map(select(.duration_ms > 5000)) | length))",
+            "video_cloud_api.request_token.gt10s \(($rt | map(select(.duration_ms > 10000)) | length))",
+            "video_cloud_api.request_token.pod_\($pod).total \($rt | length)",
+            "video_cloud_api.request_token.pod_\($pod).status_200 \(($rt | map(select(.status == 200)) | length))",
+            "video_cloud_api.request_token.pod_\($pod).status_500 \(($rt | map(select(.status == 500)) | length))",
+            "video_cloud_api.request_token.pod_\($pod).gt1s \(($rt | map(select(.duration_ms > 1000)) | length))",
+            "video_cloud_api.request_token.pod_\($pod).gt5s \(($rt | map(select(.duration_ms > 5000)) | length))",
+            "video_cloud_api.request_token.pod_\($pod).gt10s \(($rt | map(select(.duration_ms > 10000)) | length))"
+          ]
+        | .[]'
+done
+`
+	return serverEvidenceProbe{
+		source:  "video_cloud_api",
+		command: "bash",
+		args:    []string{"-lc", script},
+		detail:  "Video Cloud API /request_token counters parsed from logs for run_id " + runID,
+	}
+}
+
+func syncRemoteVMs(vms []LinodeVM, plan Plan, values workflowFlagValues) error {
+	binaries, err := buildRemoteRunnerBinaries(values)
+	if err != nil {
+		return err
+	}
+	manifestBase := workflowOutDir(values)
+	if err := writeAnsibleInputs(vms, plan, values, binaries); err != nil {
+		return err
+	}
+	if err := writeJSONFile(filepath.Join(manifestBase, "sync-telemetry.json"), SyncTelemetry{VMs: initialSyncTelemetry(vms)}); err != nil {
+		return err
+	}
+	return runAnsiblePlaybook(values, "sync.yml")
+}
+
+func envRootRsyncFilters() []string {
+	return []string{
+		"--include", "/env/***",
+		"--include", "/services/***",
+		"--include", "/devices/",
+		"--include", "/devices/test_device/",
+		"--include", "/devices/test_device/loadtest.env",
+		"--include", "/devices/test_device/summary.json",
+		"--include", "/artifacts/",
+		"--include", "/artifacts/users/",
+		"--include", "/artifacts/users/*.json",
+		"--include", "/artifacts/device-bind/",
+		"--include", "/artifacts/device-bind/*.json",
+		"--exclude", "*",
+	}
+}
+
+type remoteRunnerBinaries struct {
+	Home100K      string
+	RTKCloud      string
+	CloudMQTTTest string
+}
+
+func writeAnsibleInputs(vms []LinodeVM, plan Plan, values workflowFlagValues, binaries remoteRunnerBinaries) error {
+	base := workflowOutDir(values)
+	if err := writeCommonEnvArchive(filepath.Join(base, "env-common", "env-common.tar.gz"), plan); err != nil {
+		return fmt.Errorf("write common env archive: %w", err)
+	}
+	for _, vm := range vms {
+		assignment, ok := findAssignmentByLabel(plan, vm.Label)
+		if !ok {
+			return fmt.Errorf("shard not found for VM %s", vm.Label)
+		}
+		manifestPath := filepath.Join(base, "shard-manifests", vm.Label+".json")
+		if err := writeJSONFile(manifestPath, assignment); err != nil {
+			return fmt.Errorf("write shard manifest for %s: %w", vm.Label, err)
+		}
+		filterPath := filepath.Join(base, "env-rsync-filters", vm.Label+".filter")
+		if err := writeEnvRsyncFilter(filterPath, plan.Conditions.EnvRoot, assignment); err != nil {
+			return fmt.Errorf("write env rsync filter for %s: %w", vm.Label, err)
+		}
+		archivePath := filepath.Join(base, "env-archives", vm.Label+".tar.gz")
+		if err := writeEnvArchive(archivePath, plan, assignment); err != nil {
+			return fmt.Errorf("write env archive for %s: %w", vm.Label, err)
+		}
+	}
+	return writeAnsibleInventoryAndVars(vms, plan, values, binaries, true)
+}
+
+func writeAnsibleInputsForExistingManifests(vms []LinodeVM, plan Plan, values workflowFlagValues) error {
+	return writeAnsibleInventoryAndVars(vms, plan, values, remoteRunnerBinaries{
+		Home100K:      filepath.Join(workflowOutDir(values), "bin", "home-100k-linux-amd64"),
+		RTKCloud:      filepath.Join(workflowOutDir(values), "bin", "rtk-cloud-linux-amd64"),
+		CloudMQTTTest: filepath.Join(workflowOutDir(values), "bin", "cloud-mqtt-test-linux-amd64"),
+	}, false)
+}
+
+func writeEnvRsyncFilter(path string, envRoot string, assignment VMAssignment) error {
+	lines := []string{
+		"+ /env/***",
+		"+ /services/***",
+		"+ /devices/",
+		"+ /devices/test_device/",
+		"+ /devices/test_device/loadtest.env",
+		"+ /devices/test_device/summary.json",
+		"+ /devices/test_device/manifests/",
+		"+ /devices/test_device/manifests/devices.csv",
+		"+ /devices/test_device/manifests/devices.json",
+		"+ /devices/test_device/manifests/device_ids.txt",
+		"+ /devices/test_device/devices/",
+		"+ /devices/test_device/bundles/",
+		"+ /artifacts/",
+		"+ /artifacts/users/",
+		"+ /artifacts/users/*.json",
+		"+ /artifacts/device-bind/",
+		"+ /artifacts/device-bind/*.json",
+	}
+	deviceRows, err := readDeviceManifestRows(filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.csv"))
+	if err == nil && len(deviceRows) == 0 {
+		deviceRows, err = readDeviceManifestRowsFromJSON(filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.json"))
+	}
+	if err == nil {
+		for _, shard := range assignment.TaskShards {
+			if shard.Role != "device-mqtt" {
+				continue
+			}
+			for idx := shard.Start; idx < shard.End && idx < len(deviceRows); idx++ {
+				row := deviceRows[idx]
+				lines = append(lines,
+					"+ /devices/test_device/devices/"+row.DeviceType+"/",
+					"+ /devices/test_device/devices/"+row.DeviceType+"/"+row.DeviceID+"/***",
+					"+ /devices/test_device/bundles/"+row.DeviceType+"/",
+					"+ /devices/test_device/bundles/"+row.DeviceType+"/"+row.DeviceID+".pem",
+				)
+			}
+		}
+	}
+	lines = append(lines, "- *")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(strings.Join(deduplicateLines(lines), "\n")+"\n"), 0o644)
+}
+
+type deviceManifestRow struct {
+	DeviceID   string
+	DeviceType string
+}
+
+type shardUserArtifact struct {
+	Users []struct {
+		Email string `json:"email"`
+	} `json:"users"`
+}
+
+type shardBindArtifact struct {
+	Brandname   string                `json:"brandname"`
+	Assignments []shardBindAssignment `json:"assignments"`
+}
+
+type shardBindAssignment struct {
+	AssignedEmail  string   `json:"assigned_email"`
+	DeviceID       string   `json:"device_id"`
+	DeviceType     string   `json:"device_type"`
+	ServiceOptions []string `json:"service_options"`
+}
+
+func readDeviceManifestRows(path string) ([]deviceManifestRow, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	reader := csv.NewReader(file)
+	reader.FieldsPerRecord = -1
+	rows, err := reader.ReadAll()
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("empty devices manifest: %s", path)
+	}
+	header := map[string]int{}
+	for idx, name := range rows[0] {
+		header[strings.TrimSpace(name)] = idx
+	}
+	idIdx, ok := header["device_id"]
+	if !ok {
+		return nil, fmt.Errorf("devices manifest missing device_id")
+	}
+	typeIdx, ok := header["device_type"]
+	if !ok {
+		return nil, fmt.Errorf("devices manifest missing device_type")
+	}
+	out := make([]deviceManifestRow, 0, len(rows)-1)
+	for _, row := range rows[1:] {
+		if idIdx >= len(row) || typeIdx >= len(row) {
+			continue
+		}
+		deviceID := strings.TrimSpace(row[idIdx])
+		deviceType := strings.TrimSpace(row[typeIdx])
+		if deviceID == "" || deviceType == "" {
+			continue
+		}
+		out = append(out, deviceManifestRow{DeviceID: deviceID, DeviceType: deviceType})
+	}
+	return out, nil
+}
+
+func readDeviceManifestRowsFromJSON(path string) ([]deviceManifestRow, error) {
+	var rows []struct {
+		DeviceID   string `json:"device_id"`
+		DeviceType string `json:"device_type"`
+	}
+	if err := readJSON(path, &rows); err != nil {
+		return nil, err
+	}
+	out := make([]deviceManifestRow, 0, len(rows))
+	for _, row := range rows {
+		deviceID := strings.TrimSpace(row.DeviceID)
+		deviceType := strings.TrimSpace(row.DeviceType)
+		if deviceID == "" || deviceType == "" {
+			continue
+		}
+		out = append(out, deviceManifestRow{DeviceID: deviceID, DeviceType: deviceType})
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("devices JSON manifest has no usable rows: %s", path)
+	}
+	return out, nil
+}
+
+func loadDeviceManifestRows(envRoot string) ([]deviceManifestRow, error) {
+	rows, err := readDeviceManifestRows(filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.csv"))
+	if err == nil && len(rows) > 0 {
+		return rows, nil
+	}
+	jsonRows, jsonErr := readDeviceManifestRowsFromJSON(filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.json"))
+	if jsonErr == nil {
+		return jsonRows, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return nil, jsonErr
+}
+
+func writeEnvArchive(path string, plan Plan, assignment VMAssignment) error {
+	envRoot := plan.Conditions.EnvRoot
+	bundle, err := writeShardCredentialBundle(filepath.Join(filepath.Dir(filepath.Dir(path)), "credential-bundles"), envRoot, plan, assignment)
+	if err != nil {
+		return err
+	}
+	extraFiles := []archiveExtraFile{
+		{Path: bundle.CompressedPath, Name: filepath.ToSlash(filepath.Join("loadtests", "home-100k", "credentials", assignment.Label+".sqlite.gz"))},
+		{Path: bundle.ManifestPath, Name: filepath.ToSlash(filepath.Join("loadtests", "home-100k", "credentials", assignment.Label+".manifest.json"))},
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmpPath := path + ".tmp"
+	if err := createTarGzFromRelPaths(tmpPath, envRoot, nil, extraFiles); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+func writeCommonEnvArchive(path string, plan Plan) error {
+	envRoot := plan.Conditions.EnvRoot
+	relPaths := []string{
+		"env",
+		"state/lke.env",
+		"state/lke-kubeconfig.yaml",
+		"state/video-cloud-staging.state.json",
+		"services",
+		"devices/test_device/loadtest.env",
+		"devices/test_device/summary.json",
+		"devices/test_device/manifests/devices.csv",
+		"devices/test_device/manifests/devices.json",
+		"devices/test_device/manifests/device_ids.txt",
+	}
+	if stackState := stackStateRelPath(envRoot); stackState != "" {
+		relPaths = append(relPaths, stackState)
+	}
+	extraFiles := []archiveExtraFile{}
+	for _, artifact := range latestHome100KArtifactFiles(envRoot, plan.Conditions.Brandname) {
+		extraFiles = append(extraFiles, archiveExtraFile{Path: artifact.Path, Name: artifact.Name})
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmpPath := path + ".tmp"
+	if err := createTarGzFromRelPaths(tmpPath, envRoot, deduplicateLines(relPaths), extraFiles); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+func latestHome100KArtifactFiles(envRoot string, brandname string) []archiveExtraFile {
+	brandLower := strings.ToLower(strings.TrimSpace(brandname))
+	if brandLower == "" {
+		brandLower = "rtk"
+	}
+	candidates := []archiveExtraFile{}
+	if usersPath := latestFile(filepath.Join(envRoot, "artifacts", "users", brandLower+"-users-*.json")); usersPath != "" {
+		candidates = append(candidates, archiveExtraFile{
+			Path: usersPath,
+			Name: filepath.ToSlash(filepath.Join("artifacts", "users", filepath.Base(usersPath))),
+		})
+	}
+	if bindPath := latestHomeBindArtifact(filepath.Join(envRoot, "artifacts", "device-bind", brandLower+"-device-bind-*.json"), brandLower); bindPath != "" {
+		candidates = append(candidates, archiveExtraFile{
+			Path: bindPath,
+			Name: filepath.ToSlash(filepath.Join("artifacts", "device-bind", filepath.Base(bindPath))),
+		})
+	}
+	return candidates
+}
+
+type planDataCoverage struct {
+	UsersPath        string         `json:"users_path"`
+	DeviceBindPath   string         `json:"device_bind_path"`
+	UsersAvailable   int            `json:"users_available"`
+	EligibleUsers    int            `json:"eligible_users"`
+	DevicesAvailable int            `json:"devices_available"`
+	DeviceMix        map[string]int `json:"device_mix"`
+}
+
+func validatePlanDataCoverage(envRoot string, plan Plan) error {
+	coverage, err := inspectPlanDataCoverage(envRoot, plan)
+	if err != nil {
+		return err
+	}
+	problems := []string{}
+	if coverage.UsersAvailable < plan.Conditions.Users {
+		problems = append(problems, fmt.Sprintf("users available=%d required=%d", coverage.UsersAvailable, plan.Conditions.Users))
+	}
+	if coverage.EligibleUsers < plan.Conditions.Users {
+		problems = append(problems, fmt.Sprintf("eligible users available=%d required=%d", coverage.EligibleUsers, plan.Conditions.Users))
+	}
+	if coverage.DevicesAvailable < plan.Conditions.Devices {
+		problems = append(problems, fmt.Sprintf("eligible devices available=%d required=%d", coverage.DevicesAvailable, plan.Conditions.Devices))
+	}
+	for _, deviceType := range sortedMapKeys(plan.DeviceMix) {
+		required := plan.DeviceMix[deviceType]
+		available := coverage.DeviceMix[deviceType]
+		if available < required {
+			problems = append(problems, fmt.Sprintf("%s available=%d required=%d", deviceType, available, required))
+		}
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("home-100k data preflight failed: %s (users=%s device_bind=%s)", strings.Join(problems, "; "), coverage.UsersPath, coverage.DeviceBindPath)
+	}
+	return nil
+}
+
+func inspectPlanDataCoverage(envRoot string, plan Plan) (planDataCoverage, error) {
+	brandLower := strings.ToLower(strings.TrimSpace(plan.Conditions.Brandname))
+	if brandLower == "" {
+		brandLower = "rtk"
+	}
+	usersPath := latestFile(filepath.Join(envRoot, "artifacts", "users", brandLower+"-users-*.json"))
+	bindPath := latestHomeBindArtifact(filepath.Join(envRoot, "artifacts", "device-bind", brandLower+"-device-bind-*.json"), brandLower)
+	if usersPath == "" || bindPath == "" {
+		return planDataCoverage{}, fmt.Errorf("home-100k data preflight failed: missing users or device-bind artifact (users=%s device_bind=%s)", usersPath, bindPath)
+	}
+	users := shardUserArtifact{}
+	if err := readJSON(usersPath, &users); err != nil {
+		return planDataCoverage{}, fmt.Errorf("read users artifact: %w", err)
+	}
+	bind := shardBindArtifact{}
+	if err := readJSON(bindPath, &bind); err != nil {
+		return planDataCoverage{}, fmt.Errorf("read device-bind artifact: %w", err)
+	}
+	userEmails := map[string]bool{}
+	for _, user := range users.Users {
+		email := strings.TrimSpace(user.Email)
+		if email != "" {
+			userEmails[email] = true
+		}
+	}
+	coverage := planDataCoverage{
+		UsersPath:      usersPath,
+		DeviceBindPath: bindPath,
+		UsersAvailable: len(userEmails),
+		DeviceMix:      map[string]int{},
+	}
+	eligibleUsers := map[string]bool{}
+	for _, item := range bind.Assignments {
+		email := strings.TrimSpace(item.AssignedEmail)
+		if !homeDeviceType(item.DeviceType) || !stringSliceContains(item.ServiceOptions, "mqtt") || !userEmails[email] {
+			continue
+		}
+		coverage.DevicesAvailable++
+		coverage.DeviceMix[item.DeviceType]++
+		if email != "" {
+			eligibleUsers[email] = true
+		}
+	}
+	coverage.EligibleUsers = len(eligibleUsers)
+	return coverage, nil
+}
+
+func writePreflightFailure(outDir string, err error) {
+	if strings.TrimSpace(outDir) == "" {
+		return
+	}
+	_ = writeJSONFile(filepath.Join(outDir, "preflight.json"), map[string]any{
+		"status": "failed",
+		"error":  err.Error(),
+	})
+}
+
+func deviceCredentialRelPaths(row deviceManifestRow) []string {
+	return []string{
+		filepath.Join("devices", "test_device", "devices", row.DeviceType, row.DeviceID),
+		filepath.Join("devices", "test_device", "bundles", row.DeviceType, row.DeviceID+".pem"),
+	}
+}
+
+func stackStateRelPath(envRoot string) string {
+	values := parseEnvFile(filepath.Join(envRoot, "env", "stack.env"))
+	stack := strings.TrimSpace(values["CLOUD_STACK_NAME"])
+	if stack == "" {
+		return ""
+	}
+	rel := filepath.Join("state", stack+".state.json")
+	if _, err := os.Stat(filepath.Join(envRoot, rel)); err == nil {
+		return rel
+	}
+	return ""
+}
+
+func loadShardDeviceRowsFromArtifacts(envRoot string, plan Plan, assignment VMAssignment) ([]deviceManifestRow, error) {
+	deviceShardCount := 0
+	for _, shard := range assignment.TaskShards {
+		if shard.Role == "device-mqtt" {
+			deviceShardCount++
+		}
+	}
+	if deviceShardCount == 0 {
+		return nil, fmt.Errorf("assignment has no device shard")
+	}
+	brandLower := strings.ToLower(strings.TrimSpace(plan.Conditions.Brandname))
+	if brandLower == "" {
+		brandLower = "rtk"
+	}
+	usersPath := latestFile(filepath.Join(envRoot, "artifacts", "users", brandLower+"-users-*.json"))
+	bindPath := latestHomeBindArtifact(filepath.Join(envRoot, "artifacts", "device-bind", brandLower+"-device-bind-*.json"), brandLower)
+	if usersPath == "" || bindPath == "" {
+		return nil, fmt.Errorf("missing users or device-bind artifact")
+	}
+	users := shardUserArtifact{}
+	if err := readJSON(usersPath, &users); err != nil {
+		return nil, err
+	}
+	bind := shardBindArtifact{}
+	if err := readJSON(bindPath, &bind); err != nil {
+		return nil, err
+	}
+	userEmails := map[string]bool{}
+	for _, user := range users.Users {
+		email := strings.TrimSpace(user.Email)
+		if email != "" {
+			userEmails[email] = true
+		}
+	}
+	selectedByUser := map[string][]shardBindAssignment{}
+	for _, item := range bind.Assignments {
+		if !homeDeviceType(item.DeviceType) || !stringSliceContains(item.ServiceOptions, "mqtt") || !userEmails[item.AssignedEmail] {
+			continue
+		}
+		selectedByUser[item.AssignedEmail] = append(selectedByUser[item.AssignedEmail], item)
+	}
+	selectedUsers := sortedMapKeys(selectedByUser)
+	selected := []shardBindAssignment{}
+	for _, email := range selectedUsers {
+		selected = append(selected, selectedByUser[email]...)
+	}
+	shardCount := len(plan.ShardsByRole("device-mqtt"))
+	if shardCount <= 0 {
+		shardCount = 1
+	}
+	shardIndex := assignment.Index
+	rows := []deviceManifestRow{}
+	maxConnected := maxAssignmentConnectedDevices(assignment)
+	for idx, item := range selected {
+		if idx%shardCount != shardIndex {
+			continue
+		}
+		rows = append(rows, deviceManifestRow{DeviceID: item.DeviceID, DeviceType: item.DeviceType})
+		if maxConnected > 0 && len(rows) >= maxConnected {
+			break
+		}
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("no selected devices for shard %d/%d", shardIndex, shardCount)
+	}
+	return rows, nil
+}
+
+func maxAssignmentConnectedDevices(assignment VMAssignment) int {
+	maxConnected := 0
+	for _, shard := range assignment.TaskShards {
+		if shard.Role != "device-mqtt" {
+			continue
+		}
+		if shard.Count > maxConnected {
+			maxConnected = shard.Count
+		}
+	}
+	return maxConnected
+}
+
+func latestFile(pattern string) string {
+	matches, _ := filepath.Glob(pattern)
+	sortArtifactPathsNewestFirst(matches)
+	if len(matches) == 0 {
+		return ""
+	}
+	return matches[0]
+}
+
+func latestHomeBindArtifact(pattern string, brandLower string) string {
+	matches, _ := filepath.Glob(pattern)
+	sortArtifactPathsNewestFirst(matches)
+	for _, path := range matches {
+		bind := shardBindArtifact{}
+		if err := readJSON(path, &bind); err != nil {
+			continue
+		}
+		if strings.ToLower(bind.Brandname) != brandLower {
+			continue
+		}
+		found := map[string]bool{}
+		for _, item := range bind.Assignments {
+			if homeDeviceType(item.DeviceType) && stringSliceContains(item.ServiceOptions, "mqtt") {
+				found[item.DeviceType] = true
+			}
+		}
+		if found["light"] && found["air_conditioner"] && found["smart_meter"] {
+			return path
+		}
+	}
+	if len(matches) == 0 {
+		return ""
+	}
+	return matches[0]
+}
+
+func sortArtifactPathsNewestFirst(paths []string) {
+	sort.Slice(paths, func(i, j int) bool {
+		ti := artifactFilenameTimestamp(paths[i])
+		tj := artifactFilenameTimestamp(paths[j])
+		if ti != "" || tj != "" {
+			if ti != tj {
+				return ti > tj
+			}
+			return filepath.Base(paths[i]) > filepath.Base(paths[j])
+		}
+		ai, _ := os.Stat(paths[i])
+		aj, _ := os.Stat(paths[j])
+		if ai == nil || aj == nil {
+			return paths[i] < paths[j]
+		}
+		if !ai.ModTime().Equal(aj.ModTime()) {
+			return ai.ModTime().After(aj.ModTime())
+		}
+		return filepath.Base(paths[i]) > filepath.Base(paths[j])
+	})
+}
+
+func artifactFilenameTimestamp(path string) string {
+	base := filepath.Base(path)
+	for i := 0; i+16 <= len(base); i++ {
+		candidate := base[i : i+16]
+		if candidate[8] != 'T' || candidate[15] != 'Z' {
+			continue
+		}
+		ok := true
+		for idx, ch := range candidate {
+			if idx == 8 || idx == 15 {
+				continue
+			}
+			if ch < '0' || ch > '9' {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func homeDeviceType(value string) bool {
+	switch value {
+	case "light", "air_conditioner", "smart_meter":
+		return true
+	default:
+		return false
+	}
+}
+
+func stringSliceContains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func sortedMapKeys[T any](values map[string]T) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func parseEnvFile(path string) map[string]string {
+	out := map[string]string{}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return out
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || !strings.Contains(line, "=") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		out[strings.TrimSpace(key)] = strings.Trim(strings.TrimSpace(value), `"'`)
+	}
+	return out
+}
+
+type archiveExtraFile struct {
+	Path string
+	Name string
+}
+
+func createTarGzFromRelPaths(path string, root string, relPaths []string, extraFiles []archiveExtraFile) error {
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	gz := gzip.NewWriter(file)
+	gz.Header.ModTime = time.Unix(0, 0)
+	defer gz.Close()
+	tw := tar.NewWriter(gz)
+	defer tw.Close()
+	added := map[string]bool{}
+	for _, rel := range relPaths {
+		cleanRel := filepath.Clean(rel)
+		if cleanRel == "." || strings.HasPrefix(cleanRel, "..") || filepath.IsAbs(cleanRel) {
+			return fmt.Errorf("invalid archive path: %s", rel)
+		}
+		abs := filepath.Join(root, cleanRel)
+		info, err := os.Lstat(abs)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		if info.IsDir() {
+			if err := filepath.WalkDir(abs, func(path string, entry fs.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					return walkErr
+				}
+				return addPathToTar(tw, root, path, added)
+			}); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := addPathToTar(tw, root, abs, added); err != nil {
+			return err
+		}
+	}
+	for _, extra := range extraFiles {
+		if err := addExtraPathToTar(tw, extra.Path, extra.Name, added); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func addExtraPathToTar(tw *tar.Writer, path string, name string, added map[string]bool) error {
+	name = filepath.ToSlash(filepath.Clean(name))
+	if name == "." || strings.HasPrefix(name, "../") || name == ".." || filepath.IsAbs(name) {
+		return fmt.Errorf("invalid archive extra path: %s", name)
+	}
+	if added[name] {
+		return nil
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("archive extra path is not a regular file: %s", path)
+	}
+	header, err := tar.FileInfoHeader(info, "")
+	if err != nil {
+		return err
+	}
+	header.Name = name
+	normalizeArchiveHeader(header)
+	if err := tw.WriteHeader(header); err != nil {
+		return err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if _, err := io.Copy(tw, file); err != nil {
+		return err
+	}
+	added[name] = true
+	return nil
+}
+
+func addPathToTar(tw *tar.Writer, root string, path string, added map[string]bool) error {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return err
+	}
+	rel = filepath.ToSlash(filepath.Clean(rel))
+	if rel == "." || strings.HasPrefix(rel, "../") || rel == ".." {
+		return fmt.Errorf("invalid archive path: %s", path)
+	}
+	if added[rel] {
+		return nil
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	header, err := tar.FileInfoHeader(info, "")
+	if err != nil {
+		return err
+	}
+	header.Name = rel
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(path)
+		if err != nil {
+			return err
+		}
+		header.Linkname = target
+	}
+	normalizeArchiveHeader(header)
+	if err := tw.WriteHeader(header); err != nil {
+		return err
+	}
+	added[rel] = true
+	if !info.Mode().IsRegular() {
+		return nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = io.Copy(tw, file)
+	return err
+}
+
+func normalizeArchiveHeader(header *tar.Header) {
+	header.ModTime = time.Unix(0, 0)
+	header.AccessTime = time.Unix(0, 0)
+	header.ChangeTime = time.Unix(0, 0)
+	header.Uid = 0
+	header.Gid = 0
+	header.Uname = ""
+	header.Gname = ""
+}
+
+func deduplicateLines(lines []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if seen[line] {
+			continue
+		}
+		seen[line] = true
+		out = append(out, line)
+	}
+	return out
+}
+
+func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlagValues, binaries remoteRunnerBinaries, prepareArtifacts bool) error {
+	base := workflowOutDir(values)
+	localOutDir, err := filepath.Abs(base)
+	if err != nil {
+		return err
+	}
+	localRunner, err := filepath.Abs(binaries.Home100K)
+	if err != nil {
+		return err
+	}
+	localRTKCloud, err := filepath.Abs(binaries.RTKCloud)
+	if err != nil {
+		return err
+	}
+	localCloudMQTTTest, err := filepath.Abs(binaries.CloudMQTTTest)
+	if err != nil {
+		return err
+	}
+	localEnvRoot, err := filepath.Abs(plan.Conditions.EnvRoot)
+	if err != nil {
+		return err
+	}
+	localArtifactStore, err := filepath.Abs(filepath.Join(base, "artifact-store"))
+	if err != nil {
+		return err
+	}
+	fanoutPrivateKey, err := filepath.Abs(filepath.Join(base, "ansible", "fanout_ed25519"))
+	if err != nil {
+		return err
+	}
+	if prepareArtifacts {
+		localArtifactStore, err = prepareLocalArtifactStore(base, vms, binaries)
+		if err != nil {
+			return err
+		}
+		fanoutPrivateKey, err = ensureFanoutKey(base)
+		if err != nil {
+			return err
+		}
+	}
+	fanoutPublicKey := fanoutPrivateKey + ".pub"
+	ansibleDir := filepath.Join(base, "ansible")
+	if err := os.MkdirAll(ansibleDir, 0o755); err != nil {
+		return err
+	}
+	hosts := map[string]any{}
+	orchestraHosts := map[string]any{}
+	for _, vm := range vms {
+		if strings.TrimSpace(vm.PublicIPv4) == "" {
+			return fmt.Errorf("VM %s has no public IPv4 for ansible inventory", vm.Label)
+		}
+		role, shardIndex, err := shardFromVMLabel(vm.Label)
+		if err != nil {
+			return err
+		}
+		localShardManifest, err := filepath.Abs(filepath.Join(base, "shard-manifests", vm.Label+".json"))
+		if err != nil {
+			return err
+		}
+		localEnvRsyncFilter, err := filepath.Abs(filepath.Join(base, "env-rsync-filters", vm.Label+".filter"))
+		if err != nil {
+			return err
+		}
+		localEnvArchive, err := filepath.Abs(filepath.Join(base, "env-archives", vm.Label+".tar.gz"))
+		if err != nil {
+			return err
+		}
+		hosts[vm.Label] = map[string]any{
+			"ansible_host":                 vm.PublicIPv4,
+			"ansible_user":                 values.sshUser,
+			"ansible_ssh_private_key_file": values.sshKey,
+			"ansible_ssh_common_args":      "-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=" + workflowKnownHostsFile(values),
+			"run_id":                       normalizedRunID(values.runID),
+			"role":                         role,
+			"shard_index":                  shardIndex,
+			"vm_label":                     vm.Label,
+			"local_shard_manifest":         localShardManifest,
+			"local_env_rsync_filter":       localEnvRsyncFilter,
+			"local_env_archive":            localEnvArchive,
+			"artifact_env_archive":         filepath.Base(localEnvArchive),
+			"artifact_shard_manifest":      filepath.Base(localShardManifest),
+			"remote_shard_manifest":        strings.TrimRight(values.remoteWorkspace, "/") + "/loadtests/home-100k/shard-manifests/current.json",
+			"remote_out_dir":               strings.TrimRight(firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k"), "/") + "/" + normalizedRunID(values.runID) + "/" + vm.Label,
+		}
+	}
+	if len(vms) == 0 {
+		return errors.New("no VMs available for ansible inventory")
+	}
+	orchestraHosts[vms[0].Label] = hosts[vms[0].Label]
+	inventory := map[string]any{
+		"all": map[string]any{
+			"children": map[string]any{
+				"home_100k": map[string]any{
+					"hosts": hosts,
+				},
+				"home_100k_orchestra": map[string]any{
+					"hosts": orchestraHosts,
+				},
+			},
+		},
+	}
+	if err := writeJSONFile(filepath.Join(ansibleDir, "inventory.json"), inventory); err != nil {
+		return err
+	}
+	stageWarmUp := DefaultStageWarmUp
+	stageSteady := DefaultStageSteady
+	stageCoolDown := DefaultStageCoolDown
+	if len(plan.Stages) > 0 {
+		stageWarmUp = plan.Stages[0].WarmUp
+		stageSteady = plan.Stages[0].SteadyState
+		stageCoolDown = plan.Stages[0].CoolDown
+	}
+	extraVars := map[string]any{
+		"run_id":                   normalizedRunID(values.runID),
+		"local_out_dir":            localOutDir,
+		"local_runner":             localRunner,
+		"local_rtk_cloud":          localRTKCloud,
+		"local_cloud_mqtt_test":    localCloudMQTTTest,
+		"local_artifact_store":     localArtifactStore,
+		"fanout_private_key":       fanoutPrivateKey,
+		"fanout_public_key":        fanoutPublicKey,
+		"local_env_root":           strings.TrimRight(localEnvRoot, "/"),
+		"remote_workspace":         strings.TrimRight(values.remoteWorkspace, "/"),
+		"remote_env_root":          strings.TrimRight(values.remoteEnvRoot, "/"),
+		"remote_out_root":          strings.TrimRight(firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k"), "/"),
+		"brandname":                plan.Conditions.Brandname,
+		"region":                   plan.Conditions.Region,
+		"device_count":             plan.Conditions.Devices,
+		"user_count":               plan.Conditions.Users,
+		"devices_per_user":         plan.Conditions.DevicesPerUser,
+		"stage_warm_up":            stageWarmUp,
+		"stage_steady":             stageSteady,
+		"stage_cool_down":          stageCoolDown,
+		"runner_mode":              firstNonEmpty(values.runnerMode, "sample"),
+		"runner_nofile_limit":      values.runnerNofileLimit,
+		"mqtt_addr":                strings.TrimSpace(values.mqttAddr),
+		"video_cloud_public_url":   strings.TrimSpace(firstNonEmpty(values.videoCloudPublicURL, values.videoCloudBaseURL)),
+		"video_cloud_token_url":    strings.TrimSpace(values.videoCloudTokenURL),
+		"account_manager_url":      strings.TrimSpace(values.accountManagerURL),
+		"credential_bundle_format": firstNonEmpty(values.credentialBundleFormat, "sqlite-gzip"),
+	}
+	return writeJSONFile(filepath.Join(ansibleDir, "extra-vars.json"), extraVars)
+}
+
+func prepareLocalArtifactStore(base string, vms []LinodeVM, binaries remoteRunnerBinaries) (string, error) {
+	store := filepath.Join(base, "artifact-store")
+	paths := []string{
+		filepath.Join(store, "bin"),
+		filepath.Join(store, "common"),
+		filepath.Join(store, "env-archives"),
+		filepath.Join(store, "shard-manifests"),
+	}
+	for _, path := range paths {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			return "", err
+		}
+	}
+	links := []struct {
+		src  string
+		dest string
+	}{
+		{binaries.Home100K, filepath.Join(store, "bin", "home-100k")},
+		{binaries.RTKCloud, filepath.Join(store, "bin", "rtk-cloud")},
+		{binaries.CloudMQTTTest, filepath.Join(store, "bin", "cloud-mqtt-test")},
+		{filepath.Join(base, "env-common", "env-common.tar.gz"), filepath.Join(store, "common", "env-common.tar.gz")},
+	}
+	for _, vm := range vms {
+		links = append(links,
+			struct {
+				src  string
+				dest string
+			}{filepath.Join(base, "env-archives", vm.Label+".tar.gz"), filepath.Join(store, "env-archives", vm.Label+".tar.gz")},
+			struct {
+				src  string
+				dest string
+			}{filepath.Join(base, "shard-manifests", vm.Label+".json"), filepath.Join(store, "shard-manifests", vm.Label+".json")},
+		)
+	}
+	for _, item := range links {
+		if err := linkOrCopyFile(item.src, item.dest); err != nil {
+			return "", err
+		}
+	}
+	if err := writeArtifactStoreManifest(store); err != nil {
+		return "", err
+	}
+	return filepath.Abs(store)
+}
+
+func writeArtifactStoreManifest(store string) error {
+	type artifactFile struct {
+		Path   string `json:"path"`
+		Size   int64  `json:"size"`
+		SHA256 string `json:"sha256"`
+	}
+	files := []artifactFile{}
+	if err := filepath.WalkDir(store, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(store, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if rel == "manifest.json" {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		sum, err := sha256File(path)
+		if err != nil {
+			return err
+		}
+		files = append(files, artifactFile{Path: rel, Size: info.Size(), SHA256: sum})
+		return nil
+	}); err != nil {
+		return err
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	digestInput := strings.Builder{}
+	for _, file := range files {
+		digestInput.WriteString(file.Path)
+		digestInput.WriteByte('\x00')
+		digestInput.WriteString(strconv.FormatInt(file.Size, 10))
+		digestInput.WriteByte('\x00')
+		digestInput.WriteString(file.SHA256)
+		digestInput.WriteByte('\n')
+	}
+	digest := sha256.Sum256([]byte(digestInput.String()))
+	return writeJSONFile(filepath.Join(store, "manifest.json"), map[string]any{
+		"schema":       "home-100k-artifact-store/v1",
+		"generated_at": time.Now().UTC().Format(time.RFC3339),
+		"digest":       hex.EncodeToString(digest[:]),
+		"files":        files,
+	})
+}
+
+func sha256File(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func linkOrCopyFile(src, dest string) error {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	_ = os.Remove(dest)
+	if err := os.Link(src, dest); err == nil {
+		return nil
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
+}
+
+func ensureFanoutKey(base string) (string, error) {
+	keyPath, err := filepath.Abs(filepath.Join(base, "ansible", "fanout_ed25519"))
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(keyPath); err == nil {
+		return keyPath, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(keyPath), 0o700); err != nil {
+		return "", err
+	}
+	if err := commandRunner("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", keyPath); err != nil {
+		return "", fmt.Errorf("generate per-run fanout ssh key: %w", err)
+	}
+	_ = os.Chmod(keyPath, 0o600)
+	return keyPath, nil
+}
+
+func runAnsiblePlaybook(values workflowFlagValues, playbook string) error {
+	base := workflowOutDir(values)
+	ansibleConfig := filepath.Join("loadtests", "home-100k", "ansible", "ansible.cfg")
+	args := []string{
+		"ANSIBLE_CONFIG=" + ansibleConfig,
+		"ansible-playbook",
+		"--forks", "20",
+		"-i", filepath.Join(base, "ansible", "inventory.json"),
+		filepath.Join("loadtests", "home-100k", "ansible", playbook),
+		"--extra-vars", "@" + filepath.Join(base, "ansible", "extra-vars.json"),
+	}
+	return commandRunner("env", args...)
+}
+
+func initialSyncTelemetry(vms []LinodeVM) []VMSyncTelemetry {
+	items := make([]VMSyncTelemetry, 0, len(vms))
+	for _, vm := range vms {
+		items = append(items, VMSyncTelemetry{Label: vm.Label})
+	}
+	return items
+}
+
+func workflowOutDir(values workflowFlagValues) string {
+	base := strings.TrimSpace(values.outDir)
+	if base == "" {
+		base = filepath.Join("loadtests", "home-100k", "reports", normalizedRunID(values.runID))
+	}
+	return base
+}
+
+func forEachVMParallel(vms []LinodeVM, fn func(LinodeVM) error) error {
+	var wg sync.WaitGroup
+	errs := make(chan error, len(vms))
+	for _, vm := range vms {
+		vm := vm
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := fn(vm); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		return err
+	}
+	return nil
+}
+
+func buildRemoteRunnerBinaries(values workflowFlagValues) (remoteRunnerBinaries, error) {
+	base := strings.TrimSpace(values.outDir)
+	if base == "" {
+		base = filepath.Join("loadtests", "home-100k", "reports", normalizedRunID(values.runID))
+	}
+	binDir := filepath.Join(base, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		return remoteRunnerBinaries{}, err
+	}
+	home100K := filepath.Join(binDir, "home-100k-linux-amd64")
+	cmd := fmt.Sprintf("GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o %s ./loadtests/home-100k/cmd/home-100k", shellQuote(home100K))
+	if err := commandRunner("bash", "-lc", cmd); err != nil {
+		return remoteRunnerBinaries{}, fmt.Errorf("build linux home-100k runner binary: %w", err)
+	}
+	rtkCloud := filepath.Join(binDir, "rtk-cloud-linux-amd64")
+	cmd = fmt.Sprintf("GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o %s ./scripts/go/rtk-cloud", shellQuote(rtkCloud))
+	if err := commandRunner("bash", "-lc", cmd); err != nil {
+		return remoteRunnerBinaries{}, fmt.Errorf("build linux rtk-cloud runner binary: %w", err)
+	}
+	cloudMQTTTest := filepath.Join(binDir, "cloud-mqtt-test-linux-amd64")
+	cmd = fmt.Sprintf("GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o %s ./scripts/go/cloud-mqtt-test", shellQuote(cloudMQTTTest))
+	if err := commandRunner("bash", "-lc", cmd); err != nil {
+		return remoteRunnerBinaries{}, fmt.Errorf("build linux cloud-mqtt-test runner binary: %w", err)
+	}
+	return remoteRunnerBinaries{Home100K: home100K, RTKCloud: rtkCloud, CloudMQTTTest: cloudMQTTTest}, nil
+}
+
+func waitForRemoteSSH(target string, sshBase []string) error {
+	args := append(append([]string{}, sshBase...), "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new", target, "true")
+	var lastErr error
+	for attempt := 1; attempt <= 30; attempt++ {
+		if err := commandRunner("ssh", args...); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		time.Sleep(10 * time.Second)
+	}
+	return lastErr
+}
+
+func bootstrapRemoteVM(target string, sshBase []string) error {
+	script := "command -v rsync >/dev/null 2>&1 || (apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y rsync)"
+	args := append(append([]string{}, sshBase...), target, "bash", "-lc", script)
+	return commandRunner("ssh", args...)
+}
+
+func collectRemoteVMs(vms []LinodeVM, plan Plan, runID string, remoteOutRoot string, outDir string, values workflowFlagValues) error {
+	if err := writeAnsibleInputsForExistingManifests(vms, plan, values); err != nil {
+		return err
+	}
+	for _, vm := range vms {
+		shardDir := filepath.Join(outDir, "shards", vm.Label)
+		if err := os.MkdirAll(shardDir, 0o755); err != nil {
+			return err
+		}
+	}
+	return runAnsiblePlaybook(values, "collect.yml")
+}
+
+func dispatchRemoteShards(vms []LinodeVM, plan Plan, runID string, remoteOutRoot string, values workflowFlagValues) error {
+	if err := writeAnsibleInputsForExistingManifests(vms, plan, values); err != nil {
+		return err
+	}
+	if err := runAnsiblePlaybook(values, "start-runner.yml"); err != nil {
+		return err
+	}
+	coordination, err := runHostCoordinator(vms, plan, runID, values)
+	if err != nil {
+		return err
+	}
+	return writeJSONFile(filepath.Join(workflowOutDir(values), "start-coordination.json"), coordination)
+}
+
+func shardFromVMLabel(label string) (string, int, error) {
+	const prefix = "home-100k-"
+	if !strings.HasPrefix(label, prefix) {
+		return "", 0, fmt.Errorf("VM label %s does not have %s prefix", label, prefix)
+	}
+	rest := strings.TrimPrefix(label, prefix)
+	idx := strings.LastIndex(rest, "-")
+	if idx <= 0 || idx == len(rest)-1 {
+		return "", 0, fmt.Errorf("VM label %s does not contain shard index", label)
+	}
+	role := rest[:idx]
+	var shardIndex int
+	if _, err := fmt.Sscanf(rest[idx+1:], "%d", &shardIndex); err != nil {
+		return "", 0, fmt.Errorf("VM label %s has invalid shard index: %w", label, err)
+	}
+	return role, shardIndex, nil
+}
+
+func workflowKnownHostsFile(values workflowFlagValues) string {
+	base := strings.TrimSpace(values.outDir)
+	if base == "" {
+		base = filepath.Join("loadtests", "home-100k", "reports", normalizedRunID(values.runID))
+	}
+	return filepath.Join(base, "ssh_known_hosts")
+}
+
+func prepareKnownHostsPath(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	return os.MkdirAll(filepath.Dir(path), 0o755)
+}
+
+func sshArgs(sshKey string, knownHostsFile string) []string {
+	args := make([]string, 0, 6)
+	if strings.TrimSpace(sshKey) == "" {
+		return args
+	}
+	args = append(args, "-i", sshKey)
+	if strings.TrimSpace(knownHostsFile) != "" {
+		args = append(args, "-o", "UserKnownHostsFile="+knownHostsFile)
+	}
+	return args
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func writeJSONTo(stdout io.Writer, stderr io.Writer, value any) int {
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(value); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	return 0
+}

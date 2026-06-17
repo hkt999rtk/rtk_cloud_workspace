@@ -285,6 +285,7 @@ Recommended defaults:
 | MQTT | Prefer MQTTS, auth, and explicit NetworkPolicy/firewall rules; expose only broker listeners required by devices through LoadBalancer/NodeBalancer or TCP-capable ingress. |
 | TURN | Keep UDP/TCP relay exposure explicit; do not assume HTTP ingress can carry TURN traffic. |
 | Prometheus metrics | Private cluster scrape path only. The workspace-managed LKE Prometheus ConfigMap is generated from workload metrics metadata; ServiceMonitor/PodMonitor is a later operator-gated option. |
+| Grafana dashboards | Private `ClusterIP` only. Platform Admins view Grafana through the Cloud Admin BFF iframe proxy; no public Grafana DNS, Ingress, or TLS SAN is created. |
 | EMQX dashboard | Private/admin network only. |
 | PostgreSQL | Private Service or external private endpoint only. |
 

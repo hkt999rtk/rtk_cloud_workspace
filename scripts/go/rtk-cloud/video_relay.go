@@ -1193,11 +1193,17 @@ func videoCloudMTLSBaseURLForRelay(envRoot string, stackValues map[string]string
 	host := firstNonEmpty(
 		stackValues["VIDEO_CLOUD_MTLS_DOMAIN"],
 		stackValues["VIDEO_CLOUD_DEVICE_CLIENT_DOMAIN"],
+		stackValues["VIDEO_CLOUD_DEVICE_DOMAIN"],
 		videoRelayTopologyDeployValue(firstExistingPath(
 			filepath.Join(envRoot, "topology", "video-cloud.yaml"),
 			filepath.Join(envRoot, "topology", "video-cloud-staging.yaml"),
 		), "device_client_domain"),
 	)
+	if host == "" {
+		if publicHost := strings.TrimSpace(stackValues["VIDEO_CLOUD_DOMAIN"]); publicHost != "" {
+			host = "device." + publicHost
+		}
+	}
 	if host != "" {
 		return "https://" + strings.TrimRight(strings.TrimSpace(host), "/")
 	}

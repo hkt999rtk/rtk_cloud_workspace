@@ -379,6 +379,7 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"PGDATA\n              value: /var/lib/postgresql/data/pgdata",
 		"name: postgresql-runtime\n                  key: POSTGRES_PASSWORD",
 		"kind: Secret\nmetadata:\n  name: certissuer-runtime",
+		"root-ca.crt: \"-----BEGIN CERTIFICATE-----\\ntest-root-ca\\n-----END CERTIFICATE-----\\n\"",
 		"device-ca.crt: \"-----BEGIN CERTIFICATE-----\\ntest-device-ca\\n-----END CERTIFICATE-----\\n\"",
 		"app-ca.crt: \"-----BEGIN CERTIFICATE-----\\ntest-app-ca\\n-----END CERTIFICATE-----\\n\"",
 		"kind: Secret\nmetadata:\n  name: certissuer-openbao-auth",
@@ -411,14 +412,47 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"VIDEO_CLOUD_API_ADDR\n              value: \":8080\"",
 		"VIDEO_CLOUD_AUTH_TRUSTED_CLIENT_CERT_HEADERS\n              value: \"true\"",
 		"VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_URL\n              value: \"http://account-manager.video-cloud-staging-account-manager.svc.cluster.local:80\"",
+		"VIDEO_CLOUD_MQTT_ENABLED\n              value: \"true\"",
+		"VIDEO_CLOUD_MQTT_ADDR\n              value: \"mqtt.video-cloud-staging-video-cloud.svc.cluster.local:1883\"",
+		"POD_NAME\n              valueFrom:",
+		"fieldPath: metadata.name",
+		"VIDEO_CLOUD_MQTT_CLIENT_ID\n              value: \"video-cloud-api-$(POD_NAME)\"",
+		"VIDEO_CLOUD_MQTT_TOPIC_ROOT\n              value: \"devices\"",
 		"kind: Secret\nmetadata:\n  name: mqtt-runtime",
+		"cert.pem:",
+		"key.pem:",
+		"cacert.pem:",
 		"kind: ConfigMap\nmetadata:\n  name: mqtt-config",
-		"listener 8883 0.0.0.0",
-		"allow_anonymous true",
+		"broker: emqx",
 		"kind: Deployment\nmetadata:\n  name: mqtt",
-		"image: eclipse-mosquitto:",
+		"replicas: 9",
+		"maxSurge: 0",
+		"maxUnavailable: 1",
+		"image: emqx/emqx:",
+		"EMQX_NODE__NAME",
+		"EMQX_CLUSTER__DISCOVERY_STRATEGY",
+		`value: "manual"`,
+		"EMQX_CLUSTER__DNS__NAME",
+		"mqtt-headless.video-cloud-staging-video-cloud.svc.cluster.local",
+		"whenUnsatisfiable: DoNotSchedule",
+		"requiredDuringSchedulingIgnoredDuringExecution:",
+		"EMQX_LISTENERS__SSL__DEFAULT__ACCEPTORS",
+		`value: "128"`,
+		"EMQX_LISTENERS__SSL__DEFAULT__TCP_OPTIONS__BACKLOG",
+		`value: "8192"`,
+		"emqx ctl cluster join emqx@10.2.0.1",
+		"emqx ctl cluster status",
+		"EMQX_LISTENERS__TCP__DEFAULT__BIND",
+		"EMQX_LISTENERS__SSL__DEFAULT__BIND",
+		"EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__CERTFILE",
+		"mountPath: /opt/emqx/etc/certs",
 		"containerPort: 8883",
 		"kind: Service\nmetadata:\n  name: mqtt",
+		"kind: Service\nmetadata:\n  name: mqtt-headless",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-emqx-cluster",
+		"port: 4369",
+		"port: 4370",
+		"port: 5369",
 	} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("expected %q in kubectl manifests, got:\n%s", want, log)
@@ -431,6 +465,79 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 	certIssuerIndex := strings.Index(log, "name: certissuer-runtime")
 	if openBaoIndex < 0 || certIssuerIndex < 0 || openBaoIndex > certIssuerIndex {
 		t.Fatalf("expected OpenBao resources before certissuer runtime secret, got:\n%s", log)
+	}
+}
+
+func TestRunProvisionLKEDeployCanExposePublicMQTTLoadBalancer(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	logPath := fakeKubectl(t)
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
+	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
+	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
+	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
+	t.Setenv("LKE_PUBLIC_MQTT_LOADBALANCER", "1")
+
+	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, logPath)
+	for _, want := range []string{
+		"kind: Service\nmetadata:\n  name: mqtt-public",
+		"type: LoadBalancer",
+		"externalTrafficPolicy: Local",
+		"name: mqtts\n      port: 8883",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-public-mqtt-loadtest",
+		"port: 8883",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("expected %q in kubectl manifests, got:\n%s", want, log)
+		}
+	}
+}
+
+func TestLKEAllowEMQXClusterNetworkPolicyManifestIsValidYAMLShape(t *testing.T) {
+	manifest := lkeAllowEMQXClusterNetworkPolicyManifest(map[string]string{
+		"CLOUD_STACK_NAME": "video-cloud-staging",
+	})
+	if strings.Contains(manifest, "\t") {
+		t.Fatalf("EMQX cluster network policy must not contain tabs:\n%s", manifest)
+	}
+	for _, want := range []string{
+		"        - protocol: TCP\n          port: 4369",
+		"        - protocol: TCP\n          port: 4370",
+		"        - protocol: TCP\n          port: 5369",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("expected EMQX cluster port entry %q, got:\n%s", want, manifest)
+		}
+	}
+}
+
+func TestRunProvisionLKEDeployCanExposeMultiplePublicMQTTLoadBalancers(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	logPath := fakeKubectl(t)
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
+	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
+	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
+	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
+	t.Setenv("LKE_PUBLIC_MQTT_LOADBALANCER", "1")
+	t.Setenv("LKE_PUBLIC_MQTT_LOADBALANCER_COUNT", "3")
+
+	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, logPath)
+	for _, want := range []string{
+		"kind: Service\nmetadata:\n  name: mqtt-public",
+		"kind: Service\nmetadata:\n  name: mqtt-public-01",
+		"kind: Service\nmetadata:\n  name: mqtt-public-02",
+		"externalTrafficPolicy: Local",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("expected %q in kubectl manifests, got:\n%s", want, log)
+		}
 	}
 }
 
@@ -462,6 +569,13 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"--set controller.service.ports.https=443",
 		"--set controller.service.targetPorts.https=https",
 		"--set controller.service.enableHttp=false",
+		"--set controller.allowSnippetAnnotations=true",
+		"--set controller.config.annotations-risk-level=Critical",
+		"--set controller.replicaCount=3",
+		"--set controller.resources.requests.cpu=500m",
+		"--set controller.resources.requests.memory=512Mi",
+		"--set controller.resources.limits.memory=1Gi",
+		"--set-json controller.topologySpreadConstraints=",
 	} {
 		if !strings.Contains(helmCalls, want) {
 			t.Fatalf("expected %q in helm calls, got:\n%s", want, helmCalls)
@@ -477,7 +591,13 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"kind: Service\nmetadata:\n  name: public-certissuer-video-cloud",
 		"externalName: certissuer.video-cloud-staging-video-cloud.svc.cluster.local",
 		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-public",
+		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-device-mtls",
 		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-certissuer",
+		"nginx.ingress.kubernetes.io/auth-tls-secret: \"video-cloud-staging-ingress/video-cloud-staging-app-client-ca\"",
+		"nginx.ingress.kubernetes.io/auth-tls-verify-client: \"on\"",
+		"proxy_set_header X-Client-Verify $ssl_client_verify;",
+		"proxy_set_header X-Client-S-DN $ssl_client_s_dn_legacy;",
+		"ca.crt: \"-----BEGIN CERTIFICATE-----\\ntest-root-ca\\n-----END CERTIFICATE-----\\n-----BEGIN CERTIFICATE-----\\ntest-device-ca\\n-----END CERTIFICATE-----\\n-----BEGIN CERTIFICATE-----\\ntest-app-ca\\n-----END CERTIFICATE-----\\n\"",
 		"nginx.ingress.kubernetes.io/backend-protocol: \"HTTPS\"",
 		"ingressClassName: nginx",
 		"host: video-cloud-staging.realtekconnect.com",
@@ -505,6 +625,7 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"port: 8080",
 		"kind: NetworkPolicy\nmetadata:\n  name: allow-video-cloud-mqtt-clients",
 		"app.kubernetes.io/name: mqtt",
+		"app.kubernetes.io/name: video-cloud-api",
 		"app.kubernetes.io/name: video-cloud-logingester",
 		"app.kubernetes.io/name: video-cloud-mqttusage",
 		"port: 1883",
@@ -512,6 +633,15 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		if !strings.Contains(kubectlCalls, want) {
 			t.Fatalf("expected %q in kubectl calls, got:\n%s", want, kubectlCalls)
 		}
+	}
+	publicIdx := strings.Index(kubectlCalls, "kind: Ingress\nmetadata:\n  name: video-cloud-staging-public")
+	deviceIdx := strings.Index(kubectlCalls, "kind: Ingress\nmetadata:\n  name: video-cloud-staging-device-mtls")
+	if publicIdx < 0 || deviceIdx < 0 || publicIdx >= deviceIdx {
+		t.Fatalf("expected public ingress before separate device mTLS ingress, got:\n%s", kubectlCalls)
+	}
+	publicIngress := kubectlCalls[publicIdx:deviceIdx]
+	if strings.Contains(publicIngress, "host: device.video-cloud-staging.realtekconnect.com") {
+		t.Fatalf("general public ingress must not include mTLS device host:\n%s", publicIngress)
 	}
 	for _, forbidden := range []string{
 		"nodePort:",
@@ -1000,6 +1130,167 @@ func TestLKEPostgresStatefulSetUsesPostgresImageOverride(t *testing.T) {
 	}
 }
 
+func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
+	t.Setenv("LKE_POSTGRES_NODE_POOL_ID", "906225")
+	t.Setenv("LKE_MQTT_NODE_POOL_ID", "906225")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":   "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN": "video-cloud-staging.realtekconnect.com",
+	}
+
+	postgres := lkePostgresStatefulSetManifest(env)
+	for _, want := range []string{
+		`lke.linode.com/pool-id: "906225"`,
+		`value: "postgres"`,
+		`cpu: "4"`,
+		`memory: "6Gi"`,
+	} {
+		if !strings.Contains(postgres, want) {
+			t.Fatalf("expected %q in postgres manifest, got:\n%s", want, postgres)
+		}
+	}
+
+	account := lkeDeploymentManifest(env, lkeWorkload{
+		Key:       "account-manager",
+		Name:      "account-manager",
+		Namespace: lkeNamespaceName(env, "account-manager"),
+		Image:     "account-manager:test",
+		Port:      8080,
+		Host:      "account-manager.video-cloud-staging.realtekconnect.com",
+	}, nil)
+	for _, want := range []string{
+		"replicas: 3",
+		"topologySpreadConstraints:",
+		`cpu: "250m"`,
+		`memory: "1Gi"`,
+	} {
+		if !strings.Contains(account, want) {
+			t.Fatalf("expected %q in account-manager manifest, got:\n%s", want, account)
+		}
+	}
+
+	video := lkeDeploymentManifest(env, lkeWorkload{
+		Key:       "video-cloud",
+		Name:      "video-cloud-api",
+		Namespace: lkeNamespaceName(env, "video-cloud"),
+		Image:     "video-cloud:test",
+		Port:      8080,
+		Host:      "video-cloud-staging.realtekconnect.com",
+	}, nil)
+	for _, want := range []string{
+		"replicas: 3",
+		"topologySpreadConstraints:",
+		`cpu: "2"`,
+		`memory: "4Gi"`,
+		"name: VIDEO_CLOUD_DB_MAX_OPEN_CONNS\n              value: \"20\"",
+		"name: VIDEO_CLOUD_DB_MAX_IDLE_CONNS\n              value: \"10\"",
+		"name: VIDEO_CLOUD_DB_CONN_MAX_LIFETIME\n              value: \"5m\"",
+	} {
+		if !strings.Contains(video, want) {
+			t.Fatalf("expected %q in video-cloud-api manifest, got:\n%s", want, video)
+		}
+	}
+
+	worker := lkeVideoCloudAuxiliaryDeploymentManifest(env, lkeVideoCloudAuxiliaryService{Name: "video-cloud-logingester", Binary: "logingester"})
+	for _, want := range []string{
+		"name: VIDEO_CLOUD_DB_MAX_OPEN_CONNS\n              value: \"4\"",
+		"name: VIDEO_CLOUD_DB_MAX_IDLE_CONNS\n              value: \"2\"",
+		"name: VIDEO_CLOUD_DB_CONN_MAX_LIFETIME\n              value: \"5m\"",
+		"name: VIDEO_CLOUD_MQTT_CLEAN_SESSION\n              value: \"false\"",
+	} {
+		if !strings.Contains(worker, want) {
+			t.Fatalf("expected %q in video-cloud worker manifest, got:\n%s", want, worker)
+		}
+	}
+	mqttUsageWorker := lkeVideoCloudAuxiliaryDeploymentManifest(env, lkeVideoCloudAuxiliaryService{Name: "video-cloud-mqttusage", Binary: "mqttusage"})
+	if !strings.Contains(mqttUsageWorker, "name: VIDEO_CLOUD_MQTT_CLEAN_SESSION\n              value: \"true\"") {
+		t.Fatalf("expected mqttusage worker to keep clean MQTT session, got:\n%s", mqttUsageWorker)
+	}
+
+	mqtt := lkeMQTTDeploymentManifest(env)
+	for _, want := range []string{
+		"replicas: 9",
+		"maxSurge: 0",
+		"maxUnavailable: 1",
+		`lke.linode.com/pool-id: "906225"`,
+		"EMQX_NODE__NAME",
+		`value: "emqx@$(POD_IP)"`,
+		"EMQX_CLUSTER__DISCOVERY_STRATEGY",
+		`value: "manual"`,
+		"EMQX_CLUSTER__DNS__NAME",
+		"mqtt-headless.video-cloud-staging-video-cloud.svc.cluster.local",
+		"topologySpreadConstraints:",
+		"whenUnsatisfiable: DoNotSchedule",
+		"podAntiAffinity:",
+		"requiredDuringSchedulingIgnoredDuringExecution:",
+		"EMQX_LISTENERS__SSL__DEFAULT__ACCEPTORS",
+		`value: "128"`,
+		"EMQX_LISTENERS__SSL__DEFAULT__TCP_OPTIONS__BACKLOG",
+		`value: "8192"`,
+		"EMQX_FORCE_SHUTDOWN__MAX_MAILBOX_SIZE",
+		`value: "16384"`,
+		"EMQX_FORCE_SHUTDOWN__MAX_HEAP_SIZE",
+		`value: "256MB"`,
+		`cpu: "1"`,
+		`memory: "6Gi"`,
+	} {
+		if !strings.Contains(mqtt, want) {
+			t.Fatalf("expected %q in mqtt manifest, got:\n%s", want, mqtt)
+		}
+	}
+}
+
+func TestLKEMQTTReplicasCanBeOverridden(t *testing.T) {
+	t.Setenv("LKE_MQTT_REPLICAS", "5")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":   "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN": "video-cloud-staging.realtekconnect.com",
+	}
+	manifest := lkeMQTTDeploymentManifest(env)
+	if !strings.Contains(manifest, "replicas: 5") {
+		t.Fatalf("expected MQTT replica override in manifest, got:\n%s", manifest)
+	}
+}
+
+func TestLKEVideoCloudReplicasCanBeOverridden(t *testing.T) {
+	t.Setenv("LKE_VIDEO_CLOUD_REPLICAS", "5")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":   "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN": "video-cloud-staging.realtekconnect.com",
+	}
+
+	manifest := lkeDeploymentManifest(env, lkeWorkload{
+		Key:       "video-cloud",
+		Name:      "video-cloud-api",
+		Namespace: lkeNamespaceName(env, "video-cloud"),
+		Image:     "video-cloud:test",
+		Port:      8080,
+		Host:      "video-cloud-staging.realtekconnect.com",
+	}, nil)
+	if !strings.Contains(manifest, "replicas: 5") {
+		t.Fatalf("video-cloud-api replicas override missing:\n%s", manifest)
+	}
+}
+
+func TestLKEMQTTResourcesCanBeOverridden(t *testing.T) {
+	t.Setenv("LKE_MQTT_REQUEST_CPU", "3")
+	t.Setenv("LKE_MQTT_REQUEST_MEMORY", "4Gi")
+	t.Setenv("LKE_MQTT_LIMIT_MEMORY", "8Gi")
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+
+	manifest := lkeMQTTDeploymentManifest(env)
+
+	for _, want := range []string{
+		`cpu: "3"`,
+		`memory: "4Gi"`,
+		`memory: "8Gi"`,
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("expected %q in mqtt manifest, got:\n%s", want, manifest)
+		}
+	}
+}
+
 func TestRunProvisionLKEDeployAppliesVideoCloudAuxiliaryServices(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)
@@ -1066,6 +1357,59 @@ func TestRunProvisionLKEDeployAppliesVideoCloudAuxiliaryServices(t *testing.T) {
 	}
 }
 
+func TestRunProvisionLKEDeployAppliesPrivateGrafana(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	logPath := fakeKubectl(t)
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
+	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
+	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
+	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
+
+	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, logPath)
+	for _, want := range []string{
+		"kind: Secret\nmetadata:\n  name: video-cloud-grafana-admin",
+		"GF_SECURITY_ALLOW_EMBEDDING\n              value: \"true\"",
+		"GF_AUTH_ANONYMOUS_ENABLED\n              value: \"false\"",
+		"GF_AUTH_PROXY_ENABLED\n              value: \"true\"",
+		"GF_SERVER_ROOT_URL\n              value: \"%(protocol)s://%(domain)s/api/admin/grafana/\"",
+		"kind: ConfigMap\nmetadata:\n  name: video-cloud-grafana-datasources",
+		"url: http://video-cloud-prometheus.video-cloud-staging-observability.svc.cluster.local:9090",
+		"kind: ConfigMap\nmetadata:\n  name: video-cloud-grafana-dashboards",
+		"RTK LKE Staging Overview",
+		"sum by(brand_cloud_id) (rate(mqtt_brand_publish_total[$__rate_interval]))",
+		"kind: PersistentVolumeClaim\nmetadata:\n  name: video-cloud-grafana-data",
+		"storage: 5Gi",
+		"kind: Deployment\nmetadata:\n  name: video-cloud-grafana",
+		"image: grafana/grafana:13.0.2",
+		"kind: Service\nmetadata:\n  name: video-cloud-grafana",
+		"type: ClusterIP",
+		"CLOUD_ADMIN_GRAFANA_BASE_URL\n              value: \"http://video-cloud-grafana.video-cloud-staging-observability.svc.cluster.local:3000\"",
+		"CLOUD_ADMIN_GRAFANA_DASHBOARD_PATH\n              value: \"/d/rtk-lke-staging/rtk-lke-staging-overview\"",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-cloud-admin-grafana",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-grafana-prometheus",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-prometheus-grafana",
+		"ARGS -n video-cloud-staging-observability rollout status deployment/video-cloud-grafana",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("expected %q in Grafana manifests, got:\n%s", want, log)
+		}
+	}
+	for _, forbidden := range []string{
+		"host: grafana.video-cloud-staging.realtekconnect.com",
+		"name: public-video-cloud-grafana",
+		"video-cloud-staging-public-tls",
+	} {
+		if strings.Contains(log, forbidden) {
+			t.Fatalf("private Grafana must not create public resource %q, got:\n%s", forbidden, log)
+		}
+	}
+}
+
 func TestLKEPrometheusConfigIsGeneratedFromMetricsRegistry(t *testing.T) {
 	manifest := lkeVideoCloudPrometheusConfigManifest(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}, provisionOptions{})
 
@@ -1088,6 +1432,11 @@ func TestLKEPrometheusConfigIsGeneratedFromMetricsRegistry(t *testing.T) {
 		"targets: [\"video-cloud-mqttusage.video-cloud-staging-video-cloud.svc.cluster.local:19400\"]",
 		"job_name: video-cloud-factoryenroll",
 		"targets: [\"factoryenroll.video-cloud-staging-video-cloud.svc.cluster.local:80\"]",
+		"job_name: video-cloud-prometheus",
+		"targets: [\"video-cloud-prometheus.video-cloud-staging-observability.svc.cluster.local:9090\"]",
+		"job_name: video-cloud-grafana",
+		"targets: [\"video-cloud-grafana.video-cloud-staging-observability.svc.cluster.local:3000\"]",
+		"metrics_path: /metrics",
 	} {
 		if !strings.Contains(manifest, want) {
 			t.Fatalf("expected %q in Prometheus config manifest, got:\n%s", want, manifest)
@@ -1095,6 +1444,9 @@ func TestLKEPrometheusConfigIsGeneratedFromMetricsRegistry(t *testing.T) {
 	}
 	if got, want := strings.Count(manifest, "metrics_path: /metrics/prometheus"), 9; got != want {
 		t.Fatalf("metrics_path count = %d, want %d in manifest:\n%s", got, want, manifest)
+	}
+	if got, want := strings.Count(manifest, "metrics_path: /metrics"), 11; got != want {
+		t.Fatalf("all metrics_path count = %d, want %d in manifest:\n%s", got, want, manifest)
 	}
 }
 
@@ -1550,11 +1902,89 @@ CLOUD_STACK_NAME=video-cloud-staging
 	for _, want := range []string{
 		"RTK_CLOUD_MQTT_TEST_MQTT_HOST=127.0.0.1",
 		"RTK_CLOUD_MQTT_TEST_MQTT_PORT=",
-		"RTK_CLOUD_MQTT_TEST_VIDEO_BASE_URL=http://127.0.0.1:",
-		"RTK_CLOUD_MQTT_TEST_ACCOUNT_BASE_URL=http://127.0.0.1:",
+		"VIDEO_CLOUD_BASE_URL=http://127.0.0.1:",
+		"ACCOUNT_MANAGER_BASE_URL=http://127.0.0.1:",
 	} {
 		if !strings.Contains(goCalls, want) {
 			t.Fatalf("expected %q in fake go env, got:\n%s", want, goCalls)
+		}
+	}
+}
+
+func TestRunMQTTTestPassesLoadModelToChildScript(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	childLog := filepath.Join(t.TempDir(), "child.log")
+	childScript := filepath.Join(t.TempDir(), "cloud-mqtt-test")
+	writeTestFile(t, childScript, `#!/usr/bin/env bash
+set -euo pipefail
+printf 'ARGS' >> "`+childLog+`"
+for arg in "$@"; do
+  printf ' %s' "$arg" >> "`+childLog+`"
+done
+printf '\n' >> "`+childLog+`"
+`)
+	if err := os.Chmod(childScript, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT", childScript)
+
+	if err := runMQTTTest([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--brandname", "RTK",
+		"--duration-seconds", "1",
+		"--load-model", "home-100k-sustained",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := readTestFile(t, childLog)
+	if !strings.Contains(got, "--load-model home-100k-sustained") {
+		t.Fatalf("child args missing load model:\n%s", got)
+	}
+}
+
+func TestRunMQTTTestPassesStagedSustainedFlagsToChildScript(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	childLog := filepath.Join(t.TempDir(), "child.log")
+	childScript := filepath.Join(t.TempDir(), "cloud-mqtt-test")
+	writeTestFile(t, childScript, `#!/usr/bin/env bash
+set -euo pipefail
+printf 'ARGS' >> "`+childLog+`"
+for arg in "$@"; do
+  printf ' %s' "$arg" >> "`+childLog+`"
+done
+printf '\n' >> "`+childLog+`"
+`)
+	if err := os.Chmod(childScript, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT", childScript)
+
+	err := runMQTTTest([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--brandname", "RTK",
+		"--duration-seconds", "300",
+		"--load-model", "home-100k-sustained",
+		"--stage-names", "25k,50k,75k,100k",
+		"--stage-connected-devices", "2500,5000,7500,10000",
+		"--stage-durations-seconds", "75,75,75,75",
+		"--stage-min-commands", "125,250,375,500",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := readTestFile(t, childLog)
+	for _, want := range []string{
+		"--stage-names 25k,50k,75k,100k",
+		"--stage-connected-devices 2500,5000,7500,10000",
+		"--stage-durations-seconds 75,75,75,75",
+		"--stage-min-commands 125,250,375,500",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("child args missing %q:\n%s", want, got)
 		}
 	}
 }
@@ -1630,6 +2060,11 @@ func TestRunStagingE2EDataSetupForLKEStartsPortForwards(t *testing.T) {
 	if !strings.Contains(kubectlCalls, "PF_START svc/factoryenroll") {
 		t.Fatalf("expected standalone data setup to start factoryenroll port-forward, got:\n%s", kubectlCalls)
 	}
+	for _, service := range []string{"svc/account-manager", "svc/video-cloud-api", "svc/factoryenroll"} {
+		if got := strings.Count(kubectlCalls, "PF_START "+service); got != 1 {
+			t.Fatalf("expected one port-forward for %s, got %d:\n%s", service, got, kubectlCalls)
+		}
+	}
 	commands := readTestFile(t, commandLog)
 	if !strings.Contains(commands, "generate-devices FACTORY_ENROLL_URL=http://127.0.0.1:") {
 		t.Fatalf("expected generate-devices to receive FACTORY_ENROLL_URL, got:\n%s", commands)
@@ -1645,16 +2080,16 @@ func TestRunStagingE2EDataSetupDefaultsToResumeCompleteArtifacts(t *testing.T) {
 	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=linode\nCLOUD_STACK_NAME=video-cloud-staging\n")
 	writeTestFile(t, filepath.Join(envRoot, "artifacts", "users", "rtk-users-complete.json"), `{"brandname":"RTK","users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}`)
 	writeTestFile(t, filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.json"), `[
-{"device_id":"load-device-0001"},
-{"device_id":"load-device-0002"},
-{"device_id":"load-device-0003"},
-{"device_id":"load-device-0004"}
+{"device_id":"load-device-0001","device_type":"camera"},
+{"device_id":"load-device-0002","device_type":"camera"},
+{"device_id":"load-device-0003","device_type":"light"},
+{"device_id":"load-device-0004","device_type":"air_conditioner"}
 ]`)
 	writeTestFile(t, filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-complete.json"), `{"brandname":"RTK","assignments":[
-{"device_id":"load-device-0001"},
-{"device_id":"load-device-0002"},
-{"device_id":"load-device-0003"},
-{"device_id":"load-device-0004"}
+{"assigned_email":"rtk+001@users.local","device_id":"load-device-0001","device_type":"camera","service_options":["mqtt","video_streaming","video_storage"]},
+{"assigned_email":"rtk+002@users.local","device_id":"load-device-0002","device_type":"camera","service_options":["mqtt","video_streaming","video_storage"]},
+{"assigned_email":"rtk+001@users.local","device_id":"load-device-0003","device_type":"light","service_options":["mqtt"]},
+{"assigned_email":"rtk+002@users.local","device_id":"load-device-0004","device_type":"air_conditioner","service_options":["mqtt"]}
 ]}`)
 	commandLog := filepath.Join(t.TempDir(), "commands.log")
 	t.Setenv("CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-brand", envRoot))
@@ -1685,6 +2120,160 @@ func TestRunStagingE2EDataSetupDefaultsToResumeCompleteArtifacts(t *testing.T) {
 		if !strings.Contains(commands, expected) {
 			t.Fatalf("expected %s command, got:\n%s", expected, commands)
 		}
+	}
+}
+
+func TestRunStagingE2EDataSetupDoesNotResumeDeviceManifestWithWrongMix(t *testing.T) {
+	workspace := t.TempDir()
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "linode")
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=linode\nCLOUD_STACK_NAME=video-cloud-staging\n")
+	writeTestFile(t, filepath.Join(envRoot, "artifacts", "users", "rtk-users-complete.json"), `{"brandname":"RTK","users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}`)
+	writeTestFile(t, filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.json"), `[
+{"device_id":"load-device-0001","device_type":"camera"},
+{"device_id":"load-device-0002","device_type":"camera"},
+{"device_id":"load-device-0003","device_type":"light"},
+{"device_id":"load-device-0004","device_type":"smart_meter"}
+]`)
+	writeTestFile(t, filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-complete.json"), `{"brandname":"RTK","assignments":[
+{"assigned_email":"rtk+001@users.local","device_id":"load-device-0001","device_type":"camera","service_options":["mqtt"]},
+{"assigned_email":"rtk+002@users.local","device_id":"load-device-0002","device_type":"camera","service_options":["mqtt"]},
+{"assigned_email":"rtk+001@users.local","device_id":"load-device-0003","device_type":"light","service_options":["mqtt"]},
+{"assigned_email":"rtk+002@users.local","device_id":"load-device-0004","device_type":"smart_meter","service_options":["mqtt"]}
+]}`)
+	commandLog := filepath.Join(t.TempDir(), "commands.log")
+	t.Setenv("FACTORY_ENROLL_URL", "http://127.0.0.1:1")
+	t.Setenv("FACTORY_ENROLL_AUTH_KEY", "test-key")
+	t.Setenv("CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-brand", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-users", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "generate-devices", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "bind-devices", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT", fakeE2EDataCommand(t, commandLog, "validate-bind", envRoot))
+
+	if err := runStagingE2EDataSetup([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--brandname", "RTK",
+		"--user-count", "2",
+		"--device-count", "4",
+		"--device-mix", "light=2,smart_meter=2",
+		"--out-dir", filepath.Join(t.TempDir(), "out"),
+		"--quiet",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	commands := readTestFile(t, commandLog)
+	for _, expected := range []string{"generate-devices ", "bind-devices "} {
+		if !strings.Contains(commands, expected) {
+			t.Fatalf("expected %s command when device mix mismatches, got:\n%s", expected, commands)
+		}
+	}
+}
+
+func TestRunStagingE2EDataSetupDoesNotResumeBindArtifactWithWrongUsers(t *testing.T) {
+	workspace := t.TempDir()
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "linode")
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=linode\nCLOUD_STACK_NAME=video-cloud-staging\n")
+	writeTestFile(t, filepath.Join(envRoot, "artifacts", "users", "rtk-users-complete.json"), `{"brandname":"RTK","users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}`)
+	writeTestFile(t, filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.json"), `[
+{"device_id":"load-device-0001","device_type":"light"},
+{"device_id":"load-device-0002","device_type":"light"},
+{"device_id":"load-device-0003","device_type":"smart_meter"},
+{"device_id":"load-device-0004","device_type":"smart_meter"}
+]`)
+	writeTestFile(t, filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-complete.json"), `{"brandname":"RTK","assignments":[
+{"assigned_email":"rtk+001@users.local","device_id":"load-device-0001","device_type":"light","service_options":["mqtt"]},
+{"assigned_email":"rtk+001@users.local","device_id":"load-device-0002","device_type":"light","service_options":["mqtt"]},
+{"assigned_email":"rtk+001@users.local","device_id":"load-device-0003","device_type":"smart_meter","service_options":["mqtt"]},
+{"assigned_email":"rtk+001@users.local","device_id":"load-device-0004","device_type":"smart_meter","service_options":["mqtt"]}
+]}`)
+	commandLog := filepath.Join(t.TempDir(), "commands.log")
+	t.Setenv("CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-brand", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-users", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "generate-devices", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "bind-devices", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT", fakeE2EDataCommand(t, commandLog, "validate-bind", envRoot))
+
+	if err := runStagingE2EDataSetup([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--brandname", "RTK",
+		"--user-count", "2",
+		"--device-count", "4",
+		"--device-mix", "light=2,smart_meter=2",
+		"--out-dir", filepath.Join(t.TempDir(), "out"),
+		"--quiet",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	commands := readTestFile(t, commandLog)
+	if strings.Contains(commands, "generate-devices ") {
+		t.Fatalf("device manifest mix matches; generate-devices should be skipped, got:\n%s", commands)
+	}
+	if !strings.Contains(commands, "bind-devices ") {
+		t.Fatalf("expected bind-devices when bind artifact does not cover all users, got:\n%s", commands)
+	}
+}
+
+func TestBindArtifactDoesNotResumeAllAlreadyBoundWithoutProvisionEvidence(t *testing.T) {
+	dir := t.TempDir()
+	usersPath := filepath.Join(dir, "users.json")
+	bindPath := filepath.Join(dir, "bind.json")
+	writeTestFile(t, usersPath, `{"users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}`)
+	writeTestFile(t, bindPath, `{"assignments":[
+{"assigned_email":"rtk+001@users.local","device_id":"load-device-0001","device_type":"light","service_options":["mqtt"],"status":"already_bound"},
+{"assigned_email":"rtk+002@users.local","device_id":"load-device-0002","device_type":"light","service_options":["mqtt"],"status":"already_bound"},
+{"assigned_email":"rtk+001@users.local","device_id":"load-device-0003","device_type":"smart_meter","service_options":["mqtt"],"status":"already_bound"},
+{"assigned_email":"rtk+002@users.local","device_id":"load-device-0004","device_type":"smart_meter","service_options":["mqtt"],"status":"already_bound"}
+]}`)
+
+	if bindArtifactMatchesSetup(bindPath, usersPath, 2, 4, "light=2,smart_meter=2") {
+		t.Fatal("all already_bound artifact without operation evidence must not be resumed")
+	}
+}
+
+func TestExistingBoundDeviceMustMatchCurrentAssignment(t *testing.T) {
+	assignment := bindAssignment{
+		DeviceID:       "load-device-0001",
+		DeviceType:     "light",
+		Category:       "mqtt_device",
+		ServiceOptions: []string{"mqtt"},
+	}
+	existingDevice := map[string]any{
+		"id":       "account-device-1",
+		"category": "ip_camera",
+		"metadata": map[string]any{
+			"video_cloud_devid": "load-device-0001",
+			"device_type":       "camera",
+			"service_options":   []any{"mqtt", "video_streaming", "video_storage"},
+		},
+	}
+
+	if err := validateExistingBoundDeviceCompatible(existingDevice, assignment); err == nil {
+		t.Fatal("expected existing camera binding to be incompatible with current light assignment")
+	}
+}
+
+func TestExistingBoundDeviceCanBeReusedWhenItMatchesCurrentAssignment(t *testing.T) {
+	assignment := bindAssignment{
+		DeviceID:       "load-device-0001",
+		DeviceType:     "light",
+		Category:       "mqtt_device",
+		ServiceOptions: []string{"mqtt"},
+	}
+	existingDevice := map[string]any{
+		"id":       "account-device-1",
+		"category": "mqtt_device",
+		"metadata": map[string]any{
+			"video_cloud_devid": "load-device-0001",
+			"device_type":       "light",
+			"service_options":   []any{"mqtt"},
+		},
+	}
+
+	if err := validateExistingBoundDeviceCompatible(existingDevice, assignment); err != nil {
+		t.Fatalf("expected matching existing binding to be reusable: %v", err)
 	}
 }
 
@@ -1912,6 +2501,40 @@ if [[ "$*" == *"get secret openbao-tls -o json"* && -n "${FAKE_OPENBAO_TLS_SECRE
   printf '%s\n' "$FAKE_OPENBAO_TLS_SECRET_JSON"
   exit 0
 fi
+if [[ "$*" == *"get secret certissuer-runtime -o json"* ]]; then
+  python3 - <<'PY'
+import base64, json
+data = {
+  "root-ca.crt": "-----BEGIN CERTIFICATE-----\ntest-root-ca\n-----END CERTIFICATE-----\n",
+  "device-ca.crt": "-----BEGIN CERTIFICATE-----\ntest-device-ca\n-----END CERTIFICATE-----\n",
+  "app-ca.crt": "-----BEGIN CERTIFICATE-----\ntest-app-ca\n-----END CERTIFICATE-----\n",
+}
+print(json.dumps({"data": {k: base64.b64encode(v.encode()).decode() for k, v in data.items()}}))
+PY
+  exit 0
+fi
+if [[ "$*" == *"get pods -l app.kubernetes.io/name=mqtt -o jsonpath="* ]]; then
+  printf 'mqtt-aaa\t10.2.0.1\nmqtt-bbb\t10.2.0.2\nmqtt-ccc\t10.2.0.3\n'
+  exit 0
+fi
+if [[ "$*" == *"exec mqtt-"* && "$*" == *" emqx ctl cluster join emqx@10.2.0.1"* ]]; then
+  line='ARGS'
+  for arg in "$@"; do
+    line="$line $arg"
+  done
+  printf '%s\n' "$line" >> "` + logPath + `"
+  printf 'Join the cluster successfully.\n'
+  exit 0
+fi
+if [[ "$*" == *"exec mqtt-aaa -- emqx ctl cluster status"* ]]; then
+  line='ARGS'
+  for arg in "$@"; do
+    line="$line $arg"
+  done
+  printf '%s\n' "$line" >> "` + logPath + `"
+  printf 'Cluster status: #{running_nodes => [emqx@10.2.0.1,emqx@10.2.0.2,emqx@10.2.0.3]}\n'
+  exit 0
+fi
 if [[ "$*" == *"rollout status"* ]]; then
   line='ARGS'
   for arg in "$@"; do
@@ -1927,6 +2550,10 @@ if [[ "$*" == *"exec -i openbao-0 -- sh -s"* ]]; then
   fi
   printf 'ROLE_ID=test-role-id\n'
   printf 'SECRET_ID=test-secret-id\n'
+  printf 'ROOT_CA_CERT_B64=%s\n' "$(printf '%s' '-----BEGIN CERTIFICATE-----
+test-root-ca
+-----END CERTIFICATE-----
+' | base64 | tr -d '\n')"
   printf 'DEVICE_CA_CERT_B64=%s\n' "$(printf '%s' '-----BEGIN CERTIFICATE-----
 test-device-ca
 -----END CERTIFICATE-----
@@ -1993,6 +2620,18 @@ if [[ "$*" == *"get secret openbao-tls -o json"* && -n "${FAKE_OPENBAO_TLS_SECRE
   printf '%s\n' "$FAKE_OPENBAO_TLS_SECRET_JSON"
   exit 0
 fi
+if [[ "$*" == *"get secret certissuer-runtime -o json"* ]]; then
+  python3 - <<'PY'
+import base64, json
+data = {
+  "root-ca.crt": "-----BEGIN CERTIFICATE-----\ntest-root-ca\n-----END CERTIFICATE-----\n",
+  "device-ca.crt": "-----BEGIN CERTIFICATE-----\ntest-device-ca\n-----END CERTIFICATE-----\n",
+  "app-ca.crt": "-----BEGIN CERTIFICATE-----\ntest-app-ca\n-----END CERTIFICATE-----\n",
+}
+print(json.dumps({"data": {k: base64.b64encode(v.encode()).decode() for k, v in data.items()}}))
+PY
+  exit 0
+fi
 if [[ "$*" == *"rollout status"* ]]; then
   line='ARGS'
   for arg in "$@"; do
@@ -2008,6 +2647,10 @@ if [[ "$*" == *"exec -i openbao-0 -- sh -s"* ]]; then
   fi
   printf 'ROLE_ID=test-role-id\n'
   printf 'SECRET_ID=test-secret-id\n'
+  printf 'ROOT_CA_CERT_B64=%s\n' "$(printf '%s' '-----BEGIN CERTIFICATE-----
+test-root-ca
+-----END CERTIFICATE-----
+' | base64 | tr -d '\n')"
   printf 'DEVICE_CA_CERT_B64=%s\n' "$(printf '%s' '-----BEGIN CERTIFICATE-----
 test-device-ca
 -----END CERTIFICATE-----
@@ -2194,7 +2837,7 @@ set -euo pipefail
     printf ' %s' "$arg"
   done
   printf '\n'
-  env | grep '^RTK_CLOUD_MQTT_TEST_' | sort
+  env | grep -E '^(RTK_CLOUD_MQTT_TEST_|VIDEO_CLOUD_BASE_URL=|ACCOUNT_MANAGER_BASE_URL=)' | sort
 } >> "` + logPath + `"
 `
 	if err := os.WriteFile(goPath, []byte(script), 0o755); err != nil {

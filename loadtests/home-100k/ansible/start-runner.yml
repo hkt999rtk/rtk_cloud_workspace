@@ -1,0 +1,120 @@
+---
+- name: Start Home 100K per-VM runner daemons
+  hosts: home_100k
+  gather_facts: false
+  become: true
+  vars:
+    remote_home_100k_dir: "{{ remote_workspace }}/loadtests/home-100k"
+  tasks:
+    - name: Ensure shard output directory exists
+      ansible.builtin.file:
+        path: "{{ remote_out_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Stop previous runner daemon if present
+      ansible.builtin.shell: |
+        set -euo pipefail
+        stopped=0
+        if [ -f "{{ remote_out_dir }}/runner-daemon.pid" ]; then
+          old_pid="$(cat "{{ remote_out_dir }}/runner-daemon.pid" || true)"
+          if [ -n "$old_pid" ] && kill -0 "$old_pid" >/dev/null 2>&1; then
+            kill "$old_pid" || true
+            stopped=1
+          fi
+        fi
+        for pid in $(ps -eo pid=,comm=,args= | awk -v self="$$" '$1 != self && $2 == "home-100k" && index($0, "runner-daemon") { print $1 }'); do
+          if kill -0 "$pid" >/dev/null 2>&1; then
+            kill "$pid" || true
+            stopped=1
+          fi
+        done
+        if command -v ss >/dev/null 2>&1; then
+          for pid in $(ss -ltnp 'sport = :18080' 2>/dev/null | sed -nE 's/.*pid=([0-9]+).*/\1/p' | sort -u); do
+            if kill -0 "$pid" >/dev/null 2>&1; then
+              kill "$pid" || true
+              stopped=1
+            fi
+          done
+        fi
+        if [ "$stopped" = "1" ]; then
+          sleep 1
+        fi
+        if command -v ss >/dev/null 2>&1 && ss -ltn 'sport = :18080' | awk 'NR > 1 { found=1 } END { exit found ? 0 : 1 }'; then
+          echo "runner daemon listen port :18080 is still in use after cleanup" >&2
+          ss -ltnp 'sport = :18080' >&2 || true
+          exit 1
+        fi
+        rm -f "{{ remote_out_dir }}/runner-daemon.pid"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Start runner daemon in READY_WAIT
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export KUBECONFIG="{{ remote_env_root }}/state/lke-kubeconfig.yaml"
+        export RTK_CLOUD_LKE_KUBECONFIG="{{ remote_env_root }}/state/lke-kubeconfig.yaml"
+        export CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT="{{ remote_home_100k_dir }}/bin/cloud-mqtt-test"
+        account_domain="$(awk -F= '/^ACCOUNT_MANAGER_DOMAIN=/ {print $2}' "{{ remote_env_root }}/env/stack.env" | tail -n 1)"
+        if [ -n "$account_domain" ]; then
+          export ACCOUNT_MANAGER_BASE_URL="https://${account_domain}"
+        fi
+        if [ -n "{{ account_manager_url | default('') }}" ]; then
+          export ACCOUNT_MANAGER_BASE_URL="{{ account_manager_url }}"
+        fi
+        if [ -n "{{ video_cloud_public_url | default('') }}" ]; then
+          export VIDEO_CLOUD_PUBLIC_BASE_URL="{{ video_cloud_public_url }}"
+          export VIDEO_CLOUD_BASE_URL="{{ video_cloud_public_url }}"
+        fi
+        if [ -n "{{ video_cloud_token_url | default('') }}" ]; then
+          export VIDEO_CLOUD_TOKEN_BASE_URL="{{ video_cloud_token_url }}"
+        fi
+        if [ -n "{{ mqtt_addr | default('') }}" ]; then
+          export VIDEO_CLOUD_MQTT_ADDR="{{ mqtt_addr }}"
+        fi
+        runner_nofile_limit="{{ runner_nofile_limit | default(1048576) }}"
+        if [ -n "$runner_nofile_limit" ]; then
+          ulimit -n "$runner_nofile_limit"
+        fi
+        export CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0
+        nohup "{{ remote_home_100k_dir }}/bin/home-100k" runner-daemon \
+          --env-root "{{ remote_env_root }}" \
+          --brandname "{{ brandname }}" \
+          --region "{{ region }}" \
+          --devices "{{ device_count }}" \
+          --users "{{ user_count }}" \
+          --devices-per-user "{{ devices_per_user }}" \
+          --run-id "{{ run_id }}" \
+          --role "{{ role }}" \
+          --shard-index "{{ shard_index | string }}" \
+          --shard-manifest "{{ remote_shard_manifest }}" \
+          --out-dir "{{ remote_out_dir }}" \
+          --workspace "{{ remote_workspace }}" \
+          --rtk-cloud-binary "{{ remote_home_100k_dir }}/bin/rtk-cloud" \
+          --stage-warm-up "{{ stage_warm_up }}" \
+          --stage-steady "{{ stage_steady }}" \
+          --stage-cool-down "{{ stage_cool_down }}" \
+          --runner-mode "{{ runner_mode | default('live') }}" \
+          --listen ":18080" \
+          > "{{ remote_out_dir }}/runner-daemon.log" 2>&1 &
+        echo "$!" > "{{ remote_out_dir }}/runner-daemon.pid"
+      args:
+        executable: /bin/bash
+
+    - name: Wait until runner daemon enters READY_WAIT
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:18080/ready"
+        method: GET
+        return_content: true
+        status_code: 200
+      register: runner_ready
+      retries: 60
+      delay: 1
+      until: (runner_ready.content | from_json).status == "READY_WAIT"
+
+    - name: Write runner daemon command log
+      ansible.builtin.copy:
+        dest: "{{ remote_out_dir }}/runner-command.json"
+        mode: "0644"
+        content: "{{ runner_ready | to_nice_json }}"

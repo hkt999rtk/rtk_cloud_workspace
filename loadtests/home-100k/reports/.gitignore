@@ -1,0 +1,5 @@
+*
+!/.gitignore
+!/schema.md
+!/example-baseline/
+!/example-baseline/**
