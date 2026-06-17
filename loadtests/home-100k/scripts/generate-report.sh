@@ -125,7 +125,11 @@ def first_last(rows):
 
 def total_device_totals(stages):
     keys = [
-        "connect_attempts", "connect_success", "connect_fail", "subscribes",
+        "connect_attempts", "connect_success", "connect_fail",
+        "token_attempts", "token_success", "token_fail",
+        "mqtt_dial_attempts", "mqtt_dial_success", "mqtt_dial_fail",
+        "mqtt_connack_attempts", "mqtt_connack_success", "mqtt_connack_fail",
+        "subscribe_attempts", "subscribe_fail", "subscribes",
         "publishes", "received_messages", "delta_received",
         "reported_publishes", "rejected_publishes", "bytes_sent",
         "bytes_received",
@@ -140,6 +144,9 @@ def total_device_totals(stages):
 def total_app_totals(stages):
     keys = [
         "login_attempts", "login_success", "login_fail",
+        "token_attempts", "token_success", "token_fail",
+        "mqtt_dial_attempts", "mqtt_dial_success", "mqtt_dial_fail",
+        "mqtt_connack_attempts", "mqtt_connack_success", "mqtt_connack_fail",
         "list_devices_requests", "read_shadow_requests", "desired_writes",
         "received_acks", "bytes_sent", "bytes_received",
     ]
@@ -157,6 +164,14 @@ def status_summary():
         lines.append(f"- server correlation: {md(correlation.get('status'))}")
     for reason in correlation.get("reasons") or []:
         lines.append(f"- incomplete reason: {md(reason)}")
+    runtime = result.get("runtime_log_correlation") or {}
+    if runtime.get("status"):
+        lines.append(f"- runtime log stream correlation: {md(runtime.get('status'))}")
+        if num(runtime.get("missing_stream_count"), 0) or num(runtime.get("missing_sequence_count"), 0):
+            lines.append(
+                f"- runtime log missing streams/sequences: {num(runtime.get('missing_stream_count'), 0)}/"
+                f"{num(runtime.get('missing_sequence_count'), 0)}"
+            )
     health = result.get("load_generator_health") or {}
     if health.get("saturated"):
         lines.append("- load-generator saturated: true")
@@ -176,6 +191,10 @@ def test_conditions():
         f"- Devices: {num(conditions.get('devices'), 0)}",
         f"- Users: {num(conditions.get('users'), 0)}",
         f"- Devices per user: {num(conditions.get('devices_per_user'), 0)}",
+        f"- Runner nofile limit: {num(conditions.get('runner_nofile_limit'), 0)}",
+        f"- Device session model: `{md(conditions.get('device_session_model', '-'))}`",
+        f"- Runner read model: `{md(conditions.get('runner_read_model', '-'))}`",
+        "- Runner read requirement: sustained MQTT reads through Go netpoll-backed connections and bounded per-device reader goroutines; command-time one-shot reads are not valid for capacity conclusions.",
     ]
     return "\n".join(lines)
 
@@ -260,21 +279,27 @@ def stage_diagnostics():
 def device_mqtt_totals():
     stages = result.get("stage_results") or []
     lines = [
-        "| Stage | Connect attempts | Connect success | Connect fail | Subscribes | Publishes | Received | Delta received | Reported publishes | Rejected publishes | Bytes sent | Bytes received |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Stage | Connect attempts | Connect success | Connect fail | Token ok/fail | Dial ok/fail | CONNACK ok/fail | Subscribe ok/fail | Publishes | Received | Delta received | Reported publishes | Rejected publishes | Bytes sent | Bytes received |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for s in stages:
         t = s.get("device_mqtt_totals") or {}
         lines.append(
             f"| {md(s.get('name'))} | {num(t.get('connect_attempts'), 0)} | {num(t.get('connect_success'), 0)} | "
-            f"{num(t.get('connect_fail'), 0)} | {num(t.get('subscribes'), 0)} | {num(t.get('publishes'), 0)} | "
+            f"{num(t.get('connect_fail'), 0)} | {num(t.get('token_success'), 0)}/{num(t.get('token_fail'), 0)} | "
+            f"{num(t.get('mqtt_dial_success'), 0)}/{num(t.get('mqtt_dial_fail'), 0)} | "
+            f"{num(t.get('mqtt_connack_success'), 0)}/{num(t.get('mqtt_connack_fail'), 0)} | "
+            f"{num(t.get('subscribes'), 0)}/{num(t.get('subscribe_fail'), 0)} | {num(t.get('publishes'), 0)} | "
             f"{num(t.get('received_messages'), 0)} | {num(t.get('delta_received'), 0)} | {num(t.get('reported_publishes'), 0)} | "
             f"{num(t.get('rejected_publishes'), 0)} | {num(t.get('bytes_sent'), 0)} | {num(t.get('bytes_received'), 0)} |"
         )
     total = result.get("device_mqtt_totals") or total_device_totals(stages)
     lines.append(
         f"| total | {num(total.get('connect_attempts'), 0)} | {num(total.get('connect_success'), 0)} | "
-        f"{num(total.get('connect_fail'), 0)} | {num(total.get('subscribes'), 0)} | {num(total.get('publishes'), 0)} | "
+        f"{num(total.get('connect_fail'), 0)} | {num(total.get('token_success'), 0)}/{num(total.get('token_fail'), 0)} | "
+        f"{num(total.get('mqtt_dial_success'), 0)}/{num(total.get('mqtt_dial_fail'), 0)} | "
+        f"{num(total.get('mqtt_connack_success'), 0)}/{num(total.get('mqtt_connack_fail'), 0)} | "
+        f"{num(total.get('subscribes'), 0)}/{num(total.get('subscribe_fail'), 0)} | {num(total.get('publishes'), 0)} | "
         f"{num(total.get('received_messages'), 0)} | {num(total.get('delta_received'), 0)} | {num(total.get('reported_publishes'), 0)} | "
         f"{num(total.get('rejected_publishes'), 0)} | {num(total.get('bytes_sent'), 0)} | {num(total.get('bytes_received'), 0)} |"
     )
@@ -283,21 +308,27 @@ def device_mqtt_totals():
 def app_user_totals():
     stages = result.get("stage_results") or []
     lines = [
-        "| Stage | Login attempts | Login success | Login fail | List devices | Read shadow | Desired writes | Received ACKs | Bytes sent | Bytes received |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Stage | Login attempts | Login success | Login fail | Token ok/fail | Dial ok/fail | CONNACK ok/fail | List devices | Read shadow | Desired writes | Received ACKs | Bytes sent | Bytes received |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for s in stages:
         t = s.get("app_user_totals") or {}
         lines.append(
             f"| {md(s.get('name'))} | {num(t.get('login_attempts'), 0)} | {num(t.get('login_success'), 0)} | "
-            f"{num(t.get('login_fail'), 0)} | {num(t.get('list_devices_requests'), 0)} | "
+            f"{num(t.get('login_fail'), 0)} | {num(t.get('token_success'), 0)}/{num(t.get('token_fail'), 0)} | "
+            f"{num(t.get('mqtt_dial_success'), 0)}/{num(t.get('mqtt_dial_fail'), 0)} | "
+            f"{num(t.get('mqtt_connack_success'), 0)}/{num(t.get('mqtt_connack_fail'), 0)} | "
+            f"{num(t.get('list_devices_requests'), 0)} | "
             f"{num(t.get('read_shadow_requests'), 0)} | {num(t.get('desired_writes'), 0)} | "
             f"{num(t.get('received_acks'), 0)} | {num(t.get('bytes_sent'), 0)} | {num(t.get('bytes_received'), 0)} |"
         )
     total = result.get("app_user_totals") or total_app_totals(stages)
     lines.append(
         f"| total | {num(total.get('login_attempts'), 0)} | {num(total.get('login_success'), 0)} | "
-        f"{num(total.get('login_fail'), 0)} | {num(total.get('list_devices_requests'), 0)} | "
+        f"{num(total.get('login_fail'), 0)} | {num(total.get('token_success'), 0)}/{num(total.get('token_fail'), 0)} | "
+        f"{num(total.get('mqtt_dial_success'), 0)}/{num(total.get('mqtt_dial_fail'), 0)} | "
+        f"{num(total.get('mqtt_connack_success'), 0)}/{num(total.get('mqtt_connack_fail'), 0)} | "
+        f"{num(total.get('list_devices_requests'), 0)} | "
         f"{num(total.get('read_shadow_requests'), 0)} | {num(total.get('desired_writes'), 0)} | "
         f"{num(total.get('received_acks'), 0)} | {num(total.get('bytes_sent'), 0)} | {num(total.get('bytes_received'), 0)} |"
     )
@@ -333,6 +364,8 @@ def normalize_failure_detail(detail):
         return "mqtt connack read failed"
     if "mqtt connect write:" in lower:
         return "mqtt connect write failed"
+    if "mqtt tls dial host=" in lower:
+        return text
     if "mqtt tls dial:" in lower:
         return "mqtt tls dial timeout" if "i/o timeout" in lower else "mqtt tls dial failed"
     if "mqtt dial:" in lower:
@@ -343,6 +376,8 @@ def normalize_failure_detail(detail):
         if "i/o timeout" in lower:
             return "device request_token i/o timeout"
         return "device request_token failed"
+    if "app request_token base_url=" in lower:
+        return normalize_app_request_token_detail(text)
     if "write: broken pipe" in lower:
         return "mqtt write broken pipe"
     if "connection reset by peer" in lower:
@@ -358,6 +393,31 @@ def normalize_failure_detail(detail):
     if "access_token" in lower or "bearer " in lower or "-----begin" in lower or "private key" in lower:
         return "redacted sensitive detail"
     return text
+
+def extract_failure_field(detail, name):
+    prefix = name + "="
+    for field in str(detail).split():
+        if field.startswith(prefix):
+            return field[len(prefix):].rstrip(":")
+    return ""
+
+def normalize_app_request_token_detail(detail):
+    base_url = extract_failure_field(detail, "base_url")
+    timeout = extract_failure_field(detail, "timeout")
+    parts = ["app request_token"]
+    if base_url:
+        parts.append(f"base_url={base_url}")
+    if timeout:
+        parts.append(f"timeout={timeout}")
+    prefix = " ".join(parts)
+    lower = str(detail).lower()
+    if "context deadline exceeded" in lower:
+        return prefix + ": context deadline exceeded"
+    if "i/o timeout" in lower:
+        return prefix + ": i/o timeout"
+    if "connection refused" in lower:
+        return prefix + ": connection refused"
+    return prefix + ": failed"
 
 def failure_details():
     stages = result.get("stage_results") or []
@@ -406,6 +466,42 @@ def server_correlation():
             )
     return "\n".join(lines)
 
+def runtime_log_correlation():
+    correlation = result.get("runtime_log_correlation") or {}
+    if not correlation:
+        return "- no runtime log stream correlation"
+    lines = [
+        f"- status: {md(correlation.get('status', 'unknown'))}",
+        f"- client command events: {num(correlation.get('client_command_events'), 0)}",
+        f"- server runtime streams: {num(correlation.get('server_runtime_streams'), 0)}",
+        f"- missing streams: {num(correlation.get('missing_stream_count'), 0)}",
+        f"- missing expected log sequences: {num(correlation.get('missing_sequence_count'), 0)}",
+    ]
+    missing_streams = correlation.get("missing_stream_samples") or []
+    if missing_streams:
+        lines.extend([
+            "| Missing stream stage | Device | Command | Runtime log stream |",
+            "| --- | --- | --- | --- |",
+        ])
+        for row in missing_streams:
+            lines.append(
+                f"| {md(row.get('stage'))} | {md(row.get('device_id'))} | {md(row.get('command_id'))} | "
+                f"{md(row.get('runtime_log_stream_id'))} |"
+            )
+    missing_seqs = correlation.get("missing_sequence_samples") or []
+    if missing_seqs:
+        lines.extend([
+            "| Missing seq stage | Device | Command | Runtime log stream | Seq | Source | Message |",
+            "| --- | --- | --- | --- | ---: | --- | --- |",
+        ])
+        for row in missing_seqs:
+            lines.append(
+                f"| {md(row.get('stage'))} | {md(row.get('device_id'))} | {md(row.get('command_id'))} | "
+                f"{md(row.get('runtime_log_stream_id'))} | {num(row.get('seq'), 0)} | "
+                f"{md(row.get('source'))} | {md(row.get('message'))} |"
+            )
+    return "\n".join(lines)
+
 def start_coordination():
     coordination = result.get("start_coordination") or {}
     vms = coordination.get("vms") or []
@@ -419,6 +515,7 @@ def start_coordination():
         lines.append("- no runner coordination telemetry")
         return "\n".join(lines)
     lines.extend([
+        "",
         "| VM | IP | Status | Ready at | Start signal received | Stage started | First connect | Stage completed | Disconnects | Error |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | ---: | --- |",
     ])
@@ -438,8 +535,8 @@ def client_target_coverage():
     total_devices = num(((result.get("plan") or {}).get("conditions") or {}).get("devices"), 100000)
     total_users = num(((result.get("plan") or {}).get("conditions") or {}).get("users"), 5000)
     lines = [
-        "| Stage | Target devices | Shard target | Device connect attempts | Device connect success | Device subscribes | Target users | APP desired writes | APP received ACKs | Coverage status |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+        "| Stage | Target devices | Shard target | New connect attempts | New connect success | Active connections | Active subscriptions | Target users | APP desired writes | APP received ACKs | Coverage status |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for stage in stages:
         target_devices = int(num(stage.get("connected_devices"), 0))
@@ -449,20 +546,21 @@ def client_target_coverage():
         app = stage.get("app_user_totals") or {}
         connect_attempts = int(num(device.get("connect_attempts"), 0))
         connect_success = int(num(device.get("connect_success"), 0))
+        active_connections = int(num(device.get("active_connections"), 0))
+        active_subscriptions = int(num(device.get("active_subscriptions"), 0))
         subscribes = int(num(device.get("subscribes"), 0))
         desired_writes = int(num(app.get("desired_writes"), 0))
         received_acks = int(num(app.get("received_acks"), 0))
         ok = (
-            connect_attempts >= target_devices and
-            connect_success >= target_devices and
-            subscribes >= target_devices and
+            active_connections >= target_devices and
+            active_subscriptions >= target_devices and
             desired_writes >= target_users and
             received_acks >= target_users
         )
         status = "ok" if ok else "insufficient-client-load"
         lines.append(
             f"| {md(stage.get('name'))} | {target_devices} | {shard_target or '-'} | {connect_attempts} | {connect_success} | "
-            f"{subscribes} | {target_users} | {desired_writes} | {received_acks} | {status} |"
+            f"{active_connections} | {active_subscriptions} | {target_users} | {desired_writes} | {received_acks} | {status} |"
         )
     return "\n".join(lines)
 
@@ -476,6 +574,7 @@ def load_machine_resource_usage():
     first, last = first_last(rows)
     lines = [
         f"- sample window: {md(first)} -> {md(last)}",
+        "",
         "| VM | Role | IP | Samples | CPU p95 | CPU max | Load1 max | Mem max | Disk max | Unreachable |",
         "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
@@ -509,6 +608,7 @@ def k8s_node_resource_usage():
     first, last = first_last(rows)
     lines = [
         f"- sample window: {md(first)} -> {md(last)}",
+        "",
         "| Node | Samples | CPU p95 | CPU max | Mem p95 | Mem max | Unavailable |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
@@ -549,7 +649,12 @@ def server_evidence():
         counters = source.get("counters") or {}
         counter_text = ""
         if counters:
-            counter_text = " counters=" + ", ".join(f"{k}:{v}" for k, v in sorted(counters.items()))
+            stream_counter_count = sum(1 for k in counters if str(k).startswith("runtime_log_stream."))
+            visible = {k: v for k, v in counters.items() if not str(k).startswith("runtime_log_stream.")}
+            counter_bits = [f"{k}:{v}" for k, v in sorted(visible.items())]
+            if stream_counter_count:
+                counter_bits.append(f"runtime_log_stream.*:{stream_counter_count} counters")
+            counter_text = " counters=" + ", ".join(counter_bits)
         lines.append(f"- {md(name)}: available={str(bool(source.get('available'))).lower()}{detail}{counter_text}")
     for note in evidence.get("notes") or []:
         lines.append(f"- note: {md(note)}")
@@ -587,6 +692,7 @@ replacements = {
     "FAILURE_REASONS": failure_reasons(),
     "FAILURE_DETAILS": failure_details(),
     "SERVER_CORRELATION": server_correlation(),
+    "RUNTIME_LOG_CORRELATION": runtime_log_correlation(),
     "START_COORDINATION": start_coordination(),
     "LOAD_MACHINE_RESOURCE_USAGE": load_machine_resource_usage(),
     "K8S_NODE_RESOURCE_USAGE": k8s_node_resource_usage(),

@@ -80,9 +80,11 @@ func TestAggregateStageResultsSumsDeviceAndAppTotals(t *testing.T) {
 			ConnectedDevices:      10000,
 			ShardConnectedDevices: 4000,
 			DeviceMQTTTotals: DeviceMQTTTotals{
-				ConnectAttempts: 10,
-				Publishes:       20,
-				BytesSent:       100,
+				ConnectAttempts:     10,
+				ActiveConnections:   4000,
+				ActiveSubscriptions: 4000,
+				Publishes:           20,
+				BytesSent:           100,
 			},
 			AppUserTotals: AppUserTotals{
 				LoginAttempts: 2,
@@ -99,9 +101,11 @@ func TestAggregateStageResultsSumsDeviceAndAppTotals(t *testing.T) {
 			ConnectedDevices:      10000,
 			ShardConnectedDevices: 6000,
 			DeviceMQTTTotals: DeviceMQTTTotals{
-				ConnectAttempts: 11,
-				Publishes:       21,
-				BytesSent:       101,
+				ConnectAttempts:     11,
+				ActiveConnections:   6000,
+				ActiveSubscriptions: 6000,
+				Publishes:           21,
+				BytesSent:           101,
 			},
 			AppUserTotals: AppUserTotals{
 				LoginAttempts: 3,
@@ -117,6 +121,9 @@ func TestAggregateStageResultsSumsDeviceAndAppTotals(t *testing.T) {
 	})
 	if result.DeviceMQTTTotals.ConnectAttempts != 21 || result.DeviceMQTTTotals.Publishes != 41 || result.DeviceMQTTTotals.BytesSent != 201 {
 		t.Fatalf("device totals not summed: %+v", result.DeviceMQTTTotals)
+	}
+	if result.DeviceMQTTTotals.ActiveConnections != 10000 || result.DeviceMQTTTotals.ActiveSubscriptions != 10000 {
+		t.Fatalf("active gauges not summed across shards: %+v", result.DeviceMQTTTotals)
 	}
 	if result.ShardConnectedDevices != 10000 {
 		t.Fatalf("shard connected devices = %d, want 10000", result.ShardConnectedDevices)

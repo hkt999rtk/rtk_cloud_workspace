@@ -83,6 +83,7 @@ func parseRunnerDaemonFlags(name string, args []string, stderr io.Writer) (PlanO
 	brandname := fs.String("brandname", "", "brand name")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
+	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
 	runID := fs.String("run-id", "", "run id for artifact correlation")
 	outDir := fs.String("out-dir", "", "artifact output directory")
 	role := fs.String("role", "", "shard role")
@@ -100,6 +101,7 @@ func parseRunnerDaemonFlags(name string, args []string, stderr io.Writer) (PlanO
 	}
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
 	return opts, runnerDaemonFlagValues{
 		shardRunFlagValues: shardRunFlagValues{
 			runID:               *runID,

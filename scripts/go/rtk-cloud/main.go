@@ -207,6 +207,7 @@ func runMQTTTest(args []string) error {
 	stageNames := fs.String("stage-names", "", "comma-separated staged sustained load stage names")
 	stageConnectedDevices := fs.String("stage-connected-devices", "", "comma-separated staged sustained per-shard connected device targets")
 	stageDurationsSeconds := fs.String("stage-durations-seconds", "", "comma-separated staged sustained stage durations in seconds")
+	stageMinCommands := fs.String("stage-min-commands", "", "comma-separated staged sustained minimum command events")
 	concurrency := fs.Int("concurrency", 25, "load-test MQTT probe concurrency")
 	maxConnectedDevices := fs.Int("max-connected-devices", 0, "load-test max connected devices in this shard")
 	mqttProbe := true
@@ -302,6 +303,7 @@ func runMQTTTest(args []string) error {
 		"--stage-names", *stageNames,
 		"--stage-connected-devices", *stageConnectedDevices,
 		"--stage-durations-seconds", *stageDurationsSeconds,
+		"--stage-min-commands", *stageMinCommands,
 		"--concurrency", strconv.Itoa(*concurrency),
 		"--max-connected-devices", strconv.Itoa(*maxConnectedDevices),
 	}

@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -156,6 +157,8 @@ func parseCommonFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	brandname := fs.String("brandname", "", "brand name")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
+	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
+	runnerNofile, sessionModel, readModel := addRuntimeConditionFlags(fs)
 	ephemeral := fs.Bool("ephemeral-vms", false, "require ephemeral VM lifecycle")
 	if err := fs.Parse(args); err != nil {
 		return PlanOptions{}, false, err
@@ -166,6 +169,8 @@ func parseCommonFlags(name string, args []string, stderr io.Writer) (PlanOptions
 		Region:    *region,
 	}
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
+	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel)
 	return opts, *ephemeral, nil
 }
 
@@ -186,6 +191,8 @@ func parseRunFlags(name string, args []string, stderr io.Writer) (PlanOptions, b
 	brandname := fs.String("brandname", "", "brand name")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
+	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
+	runnerNofile, sessionModel, readModel := addRuntimeConditionFlags(fs)
 	ephemeral := fs.Bool("ephemeral-vms", false, "require ephemeral VM lifecycle")
 	runID := fs.String("run-id", "", "run id for artifact correlation")
 	outDir := fs.String("out-dir", "", "artifact output directory")
@@ -199,6 +206,8 @@ func parseRunFlags(name string, args []string, stderr io.Writer) (PlanOptions, b
 		Region:    *region,
 	}
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
+	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel)
 	return opts, *ephemeral, runFlagValues{
 		runID:              *runID,
 		outDir:             *outDir,
@@ -213,10 +222,36 @@ func addStageDurationFlags(fs *flag.FlagSet) (*string, *string, *string) {
 	return stageWarmUp, stageSteady, stageCoolDown
 }
 
+func addSizingFlags(fs *flag.FlagSet) (*int, *int, *int) {
+	deviceCount := fs.Int("devices", 0, "total simulated device count")
+	userCount := fs.Int("users", 0, "total simulated app user count")
+	devicesPerUser := fs.Int("devices-per-user", 0, "target devices per app user when --users is omitted")
+	return deviceCount, userCount, devicesPerUser
+}
+
+func addRuntimeConditionFlags(fs *flag.FlagSet) (*int, *string, *string) {
+	runnerNofile := fs.Int("runner-nofile-limit", DefaultRunnerNofile, "remote runner nofile limit for MQTT sockets")
+	sessionModel := fs.String("device-session-model", DefaultDeviceSession, "device MQTT session model")
+	readModel := fs.String("runner-read-model", DefaultRunnerReadModel, "runner MQTT read model")
+	return runnerNofile, sessionModel, readModel
+}
+
 func applyStageDurationFlags(opts *PlanOptions, stageWarmUp *string, stageSteady *string, stageCoolDown *string) {
 	opts.StageWarmUp = *stageWarmUp
 	opts.StageSteady = *stageSteady
 	opts.StageCoolDown = *stageCoolDown
+}
+
+func applySizingFlags(opts *PlanOptions, deviceCount *int, userCount *int, devicesPerUser *int) {
+	opts.DeviceCount = *deviceCount
+	opts.UserCount = *userCount
+	opts.DevicesPerUser = *devicesPerUser
+}
+
+func applyRuntimeConditionFlags(opts *PlanOptions, runnerNofile *int, sessionModel *string, readModel *string) {
+	opts.RunnerNofile = *runnerNofile
+	opts.SessionModel = *sessionModel
+	opts.RunnerReadModel = *readModel
 }
 
 type provisionVMFlagValues struct {
@@ -267,6 +302,7 @@ type workflowFlagValues struct {
 	videoCloudTokenURL     string
 	accountManagerURL      string
 	credentialBundleFormat string
+	runnerNofileLimit      int
 }
 
 type shardRunFlagValues struct {
@@ -587,13 +623,14 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 	stageTargets := make([]string, 0, len(plan.Stages))
 	stageDurations := make([]string, 0, len(plan.Stages))
 	stageCommandRates := []string{}
+	stageMinCommands := []string{}
 	maxTarget := 0
 	for _, stage := range plan.Stages {
 		durationSeconds, err := stageWindowSeconds(stage)
 		if err != nil {
 			return fmt.Errorf("stage %s duration: %w", stage.Name, err)
 		}
-		maxConnected := shardConnectedDevices(stage.ConnectedDevices, assignment)
+		maxConnected := shardConnectedDevices(stage.ConnectedDevices, plan.Conditions.Devices, assignment)
 		if maxConnected > maxTarget {
 			maxTarget = maxConnected
 		}
@@ -601,6 +638,7 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		stageTargets = append(stageTargets, strconv.Itoa(maxConnected))
 		stageDurations = append(stageDurations, strconv.Itoa(durationSeconds))
 		stageCommandRates = append(stageCommandRates, commandRatePerDeviceDay(maxConnected, durationSeconds, plan.Conditions.DevicesPerUser))
+		stageMinCommands = append(stageMinCommands, strconv.Itoa(ceilDiv(maxConnected, plan.Conditions.DevicesPerUser)))
 	}
 	totalDuration := 0
 	for _, raw := range stageDurations {
@@ -627,6 +665,7 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		"--stage-names", strings.Join(stageNames, ","),
 		"--stage-connected-devices", strings.Join(stageTargets, ","),
 		"--stage-durations-seconds", strings.Join(stageDurations, ","),
+		"--stage-min-commands", strings.Join(stageMinCommands, ","),
 		"--concurrency", strconv.Itoa(minInt(maxTarget, 250)),
 		"--max-connected-devices", strconv.Itoa(maxTarget),
 	}
@@ -763,7 +802,7 @@ func stageWindowSeconds(stage Stage) (int, error) {
 	return total, nil
 }
 
-func shardConnectedDevices(stageConnected int, assignment VMAssignment) int {
+func shardConnectedDevices(stageConnected int, totalDevices int, assignment VMAssignment) int {
 	deviceCount := 0
 	for _, shard := range assignment.TaskShards {
 		if shard.Role == "device-mqtt" {
@@ -771,9 +810,12 @@ func shardConnectedDevices(stageConnected int, assignment VMAssignment) int {
 		}
 	}
 	if deviceCount <= 0 {
-		deviceCount = DefaultDevicesPerVM
+		deviceCount = ceilDiv(totalDevices, DefaultVMCount)
 	}
-	target := stageConnected * deviceCount / DefaultDeviceCount
+	if totalDevices <= 0 {
+		totalDevices = DefaultDeviceCount
+	}
+	target := stageConnected * deviceCount / totalDevices
 	if target <= 0 && stageConnected > 0 {
 		target = 1
 	}
@@ -818,33 +860,55 @@ type rawLiveMQTTResult struct {
 		CommandsAttempted int `json:"commands_attempted"`
 		CommandsPassed    int `json:"commands_passed"`
 	} `json:"metrics"`
-	ConnectedDevices       int                         `json:"connected_devices"`
-	ActiveConnections      int                         `json:"active_connections"`
-	CommandsAttempted      int                         `json:"commands_attempted"`
-	CommandsPassed         int                         `json:"commands_passed"`
-	ConnectAttempts        int64                       `json:"connect_attempts"`
-	ConnectSuccesses       int64                       `json:"connect_successes"`
-	ConnectFailures        int64                       `json:"connect_failures"`
-	SubscribeSuccesses     int64                       `json:"subscribe_successes"`
-	ActiveSubscriptions    int64                       `json:"active_subscriptions"`
-	PublishSuccesses       int64                       `json:"publish_successes"`
-	PublishFailures        int64                       `json:"publish_failures"`
-	MessagesReceived       int64                       `json:"messages_received"`
-	ReportedEvents         int64                       `json:"reported_events"`
-	TotalBytesSent         int64                       `json:"total_bytes_sent"`
-	TotalBytesReceived     int64                       `json:"total_bytes_received"`
-	AuthViolations         int64                       `json:"auth_violations"`
-	HTTPRequests           int64                       `json:"http_requests"`
-	HTTPSuccesses          int64                       `json:"http_successes"`
-	HTTPFailures           int64                       `json:"http_failures"`
-	TotalHTTPBytesSent     int64                       `json:"total_http_bytes_sent"`
-	TotalHTTPBytesReceived int64                       `json:"total_http_bytes_received"`
-	RejectedUpdates        int64                       `json:"rejected_updates"`
-	DeviceMQTTTotals       DeviceMQTTTotals            `json:"device_mqtt_totals"`
-	AppUserTotals          AppUserTotals               `json:"app_user_totals"`
-	FailureReasons         map[string]int64            `json:"failure_reasons"`
-	FailureDetails         map[string]map[string]int64 `json:"failure_details"`
-	StageDiagnostics       map[string]any              `json:"stage_diagnostics"`
+	ConnectedDevices           int                         `json:"connected_devices"`
+	ActiveConnections          int                         `json:"active_connections"`
+	CommandsAttempted          int                         `json:"commands_attempted"`
+	CommandsPassed             int                         `json:"commands_passed"`
+	ConnectAttempts            int64                       `json:"connect_attempts"`
+	ConnectSuccesses           int64                       `json:"connect_successes"`
+	ConnectFailures            int64                       `json:"connect_failures"`
+	DeviceTokenAttempts        int64                       `json:"device_token_attempts"`
+	DeviceTokenSuccesses       int64                       `json:"device_token_successes"`
+	DeviceTokenFailures        int64                       `json:"device_token_failures"`
+	DeviceMQTTDialAttempts     int64                       `json:"device_mqtt_dial_attempts"`
+	DeviceMQTTDialSuccesses    int64                       `json:"device_mqtt_dial_successes"`
+	DeviceMQTTDialFailures     int64                       `json:"device_mqtt_dial_failures"`
+	DeviceMQTTConnackAttempts  int64                       `json:"device_mqtt_connack_attempts"`
+	DeviceMQTTConnackSuccesses int64                       `json:"device_mqtt_connack_successes"`
+	DeviceMQTTConnackFailures  int64                       `json:"device_mqtt_connack_failures"`
+	DeviceSubscribeAttempts    int64                       `json:"device_subscribe_attempts"`
+	DeviceSubscribeFailures    int64                       `json:"device_subscribe_failures"`
+	SubscribeSuccesses         int64                       `json:"subscribe_successes"`
+	ActiveSubscriptions        int64                       `json:"active_subscriptions"`
+	PublishSuccesses           int64                       `json:"publish_successes"`
+	PublishFailures            int64                       `json:"publish_failures"`
+	MessagesReceived           int64                       `json:"messages_received"`
+	ReportedEvents             int64                       `json:"reported_events"`
+	TotalBytesSent             int64                       `json:"total_bytes_sent"`
+	TotalBytesReceived         int64                       `json:"total_bytes_received"`
+	AuthViolations             int64                       `json:"auth_violations"`
+	HTTPRequests               int64                       `json:"http_requests"`
+	HTTPSuccesses              int64                       `json:"http_successes"`
+	HTTPFailures               int64                       `json:"http_failures"`
+	AppTokenAttempts           int64                       `json:"app_token_attempts"`
+	AppTokenSuccesses          int64                       `json:"app_token_successes"`
+	AppTokenFailures           int64                       `json:"app_token_failures"`
+	AppMQTTDialAttempts        int64                       `json:"app_mqtt_dial_attempts"`
+	AppMQTTDialSuccesses       int64                       `json:"app_mqtt_dial_successes"`
+	AppMQTTDialFailures        int64                       `json:"app_mqtt_dial_failures"`
+	AppMQTTConnackAttempts     int64                       `json:"app_mqtt_connack_attempts"`
+	AppMQTTConnackSuccesses    int64                       `json:"app_mqtt_connack_successes"`
+	AppMQTTConnackFailures     int64                       `json:"app_mqtt_connack_failures"`
+	TotalHTTPBytesSent         int64                       `json:"total_http_bytes_sent"`
+	TotalHTTPBytesReceived     int64                       `json:"total_http_bytes_received"`
+	RejectedUpdates            int64                       `json:"rejected_updates"`
+	DeviceMQTTTotals           DeviceMQTTTotals            `json:"device_mqtt_totals"`
+	AppUserTotals              AppUserTotals               `json:"app_user_totals"`
+	FailureReasons             map[string]int64            `json:"failure_reasons"`
+	FailureDetails             map[string]map[string]int64 `json:"failure_details"`
+	FailureEvents              []FailureEvent              `json:"failure_events"`
+	CommandEvents              []CommandEvent              `json:"command_events"`
+	StageDiagnostics           map[string]any              `json:"stage_diagnostics"`
 }
 
 func loadLiveMQTTShardResults(path string, stages []Stage, stageTargets []string) ([]StageResult, error) {
@@ -935,6 +999,17 @@ func convertLiveMQTTStageResult(raw rawLiveMQTTResult, stage Stage, maxConnected
 			ConnectAttempts:     connectAttempts,
 			ConnectSuccess:      connectSuccess,
 			ConnectFail:         connectFail,
+			TokenAttempts:       nonZeroInt64(raw.DeviceMQTTTotals.TokenAttempts, raw.DeviceTokenAttempts),
+			TokenSuccess:        nonZeroInt64(raw.DeviceMQTTTotals.TokenSuccess, raw.DeviceTokenSuccesses),
+			TokenFail:           nonZeroInt64(raw.DeviceMQTTTotals.TokenFail, raw.DeviceTokenFailures),
+			MQTTDialAttempts:    nonZeroInt64(raw.DeviceMQTTTotals.MQTTDialAttempts, raw.DeviceMQTTDialAttempts),
+			MQTTDialSuccess:     nonZeroInt64(raw.DeviceMQTTTotals.MQTTDialSuccess, raw.DeviceMQTTDialSuccesses),
+			MQTTDialFail:        nonZeroInt64(raw.DeviceMQTTTotals.MQTTDialFail, raw.DeviceMQTTDialFailures),
+			MQTTConnackAttempts: nonZeroInt64(raw.DeviceMQTTTotals.MQTTConnackAttempts, raw.DeviceMQTTConnackAttempts),
+			MQTTConnackSuccess:  nonZeroInt64(raw.DeviceMQTTTotals.MQTTConnackSuccess, raw.DeviceMQTTConnackSuccesses),
+			MQTTConnackFail:     nonZeroInt64(raw.DeviceMQTTTotals.MQTTConnackFail, raw.DeviceMQTTConnackFailures),
+			SubscribeAttempts:   nonZeroInt64(raw.DeviceMQTTTotals.SubscribeAttempts, raw.DeviceSubscribeAttempts),
+			SubscribeFail:       nonZeroInt64(raw.DeviceMQTTTotals.SubscribeFail, raw.DeviceSubscribeFailures),
 			Subscribes:          subscribes,
 			ActiveConnections:   activeConnections,
 			ActiveSubscriptions: activeSubscriptions,
@@ -950,6 +1025,15 @@ func convertLiveMQTTStageResult(raw rawLiveMQTTResult, stage Stage, maxConnected
 			LoginAttempts:       raw.AppUserTotals.LoginAttempts,
 			LoginSuccess:        raw.AppUserTotals.LoginSuccess,
 			LoginFail:           raw.AppUserTotals.LoginFail,
+			TokenAttempts:       nonZeroInt64(raw.AppUserTotals.TokenAttempts, raw.AppTokenAttempts),
+			TokenSuccess:        nonZeroInt64(raw.AppUserTotals.TokenSuccess, raw.AppTokenSuccesses),
+			TokenFail:           nonZeroInt64(raw.AppUserTotals.TokenFail, raw.AppTokenFailures),
+			MQTTDialAttempts:    nonZeroInt64(raw.AppUserTotals.MQTTDialAttempts, raw.AppMQTTDialAttempts),
+			MQTTDialSuccess:     nonZeroInt64(raw.AppUserTotals.MQTTDialSuccess, raw.AppMQTTDialSuccesses),
+			MQTTDialFail:        nonZeroInt64(raw.AppUserTotals.MQTTDialFail, raw.AppMQTTDialFailures),
+			MQTTConnackAttempts: nonZeroInt64(raw.AppUserTotals.MQTTConnackAttempts, raw.AppMQTTConnackAttempts),
+			MQTTConnackSuccess:  nonZeroInt64(raw.AppUserTotals.MQTTConnackSuccess, raw.AppMQTTConnackSuccesses),
+			MQTTConnackFail:     nonZeroInt64(raw.AppUserTotals.MQTTConnackFail, raw.AppMQTTConnackFailures),
 			ListDevicesRequests: raw.AppUserTotals.ListDevicesRequests,
 			ReadShadowRequests:  raw.AppUserTotals.ReadShadowRequests,
 			DesiredWrites:       httpRequests,
@@ -966,6 +1050,8 @@ func convertLiveMQTTStageResult(raw rawLiveMQTTResult, stage Stage, maxConnected
 		ClientTokenCorrelationCount:    int(httpSuccesses),
 		FailureReasons:                 raw.FailureReasons,
 		FailureDetails:                 raw.FailureDetails,
+		FailureEvents:                  raw.FailureEvents,
+		CommandEvents:                  raw.CommandEvents,
 		StageDiagnostics:               liveStageDiagnostics(raw.StageDiagnostics),
 	}
 }
@@ -1048,9 +1134,13 @@ func executeCollectServerEvidence(args []string, stdout io.Writer, stderr io.Wri
 	}
 	runID := normalizedRunID(values.runID)
 	if values.live {
-		evidence := collectLiveServerEvidence(plan.Conditions.EnvRoot, runID)
-		if strings.TrimSpace(values.outDir) != "" {
-			if err := writeJSONFile(filepath.Join(values.outDir, "server-evidence.json"), evidence); err != nil {
+		evidence := collectLiveServerEvidence(plan.Conditions.EnvRoot, runID, values.outDir)
+		outputPath := strings.TrimSpace(values.serverEvidenceFile)
+		if outputPath == "" && strings.TrimSpace(values.outDir) != "" {
+			outputPath = filepath.Join(values.outDir, "server-evidence.json")
+		}
+		if outputPath != "" {
+			if err := writeJSONFile(outputPath, evidence); err != nil {
 				fmt.Fprintln(stderr, err)
 				return 1
 			}
@@ -1198,6 +1288,7 @@ func parseProvisionVMFlags(name string, args []string, stderr io.Writer) (PlanOp
 	brandname := fs.String("brandname", "", "brand name")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
+	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
 	runID := fs.String("run-id", "", "run id for VM tags")
 	outDir := fs.String("out-dir", "", "artifact output directory")
 	live := fs.Bool("live", false, "create Linode VMs")
@@ -1213,6 +1304,7 @@ func parseProvisionVMFlags(name string, args []string, stderr io.Writer) (PlanOp
 	}
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
 	return opts, provisionVMFlagValues{
 		runID:             *runID,
 		outDir:            *outDir,
@@ -1234,6 +1326,7 @@ func parseDestroyVMFlags(name string, args []string, stderr io.Writer) (PlanOpti
 	brandname := fs.String("brandname", "", "brand name")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
+	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
 	runID := fs.String("run-id", "", "run id for VM tags")
 	live := fs.Bool("live", false, "destroy Linode VMs")
 	confirmLive := fs.Bool("confirm-live", false, "confirm live Linode VM destruction")
@@ -1245,6 +1338,7 @@ func parseDestroyVMFlags(name string, args []string, stderr io.Writer) (PlanOpti
 	}
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
 	return opts, destroyVMFlagValues{
 		runID:          *runID,
 		live:           *live,
@@ -1262,6 +1356,7 @@ func parseListVMFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	brandname := fs.String("brandname", "", "brand name")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
+	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
 	runID := fs.String("run-id", "", "run id for VM tags")
 	live := fs.Bool("live", false, "query Linode VMs")
 	linodeToken := fs.String("linode-token", os.Getenv("LINODE_TOKEN"), "Linode API token")
@@ -1271,6 +1366,7 @@ func parseListVMFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	}
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
 	return opts, listVMFlagValues{
 		runID:          *runID,
 		live:           *live,
@@ -1286,6 +1382,8 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	brandname := fs.String("brandname", "", "brand name")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
+	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
+	runnerNofile, sessionModel, readModel := addRuntimeConditionFlags(fs)
 	runID := fs.String("run-id", "", "run id for artifact correlation")
 	outDir := fs.String("out-dir", "", "artifact output directory")
 	serverEvidenceFile := fs.String("server-evidence-file", "", "server evidence JSON file")
@@ -1312,6 +1410,8 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	}
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
+	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel)
 	return opts, workflowFlagValues{
 		runID:                  *runID,
 		outDir:                 *outDir,
@@ -1331,6 +1431,7 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 		videoCloudTokenURL:     *videoCloudTokenURL,
 		accountManagerURL:      *accountManagerURL,
 		credentialBundleFormat: strings.TrimSpace(*credentialBundleFormat),
+		runnerNofileLimit:      *runnerNofile,
 	}, nil
 }
 
@@ -1341,6 +1442,7 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	brandname := fs.String("brandname", "", "brand name")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
+	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
 	runID := fs.String("run-id", "", "run id for artifact correlation")
 	outDir := fs.String("out-dir", "", "artifact output directory")
 	role := fs.String("role", "", "shard role")
@@ -1358,6 +1460,7 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	}
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
 	return opts, shardRunFlagValues{
 		runID:               *runID,
 		outDir:              *outDir,
@@ -1484,10 +1587,17 @@ func loadVMAssignment(path string) (VMAssignment, error) {
 	return assignment, nil
 }
 
-func collectLiveServerEvidence(envRoot string, runID string) ServerEvidence {
+func collectLiveServerEvidence(envRoot string, runID string, outDir string) ServerEvidence {
 	sources := map[string]EvidenceSource{}
 	notes := []string{}
-	for _, probe := range serverEvidenceProbes(runID) {
+	windowStart := evidenceWindowStart(outDir)
+	windowMode := "fallback_since_30m"
+	logsSinceArg := "--since=30m"
+	if windowStart != "" {
+		windowMode = "run_scoped_since_time"
+		logsSinceArg = "--since-time=" + windowStart
+	}
+	for _, probe := range serverEvidenceProbes(runID, logsSinceArg) {
 		out, err := commandOutputRunner(probe.command, probe.args...)
 		if err != nil {
 			detail := strings.TrimSpace(err.Error() + " " + redactEvidenceOutput(out))
@@ -1503,17 +1613,33 @@ func collectLiveServerEvidence(envRoot string, runID string) ServerEvidence {
 	if loggerNote != "" {
 		notes = append(notes, loggerNote)
 	}
-	for key, source := range evidenceSourceCatalog(false) {
-		if _, ok := sources[key]; !ok {
-			source.Detail = "probe not configured"
-			sources[key] = source
-		}
+	normalizeEvidenceSourceCatalogMetadata(sources)
+	evidence := ServerEvidence{
+		RunID:               runID,
+		EvidenceWindowStart: windowStart,
+		EvidenceWindowMode:  windowMode,
+		Complete:            allEvidenceSourcesAvailable(sources),
+		Sources:             sources,
+		Notes:               notes,
 	}
-	return ServerEvidence{
-		RunID:    runID,
-		Complete: allEvidenceSourcesAvailable(sources),
-		Sources:  sources,
-		Notes:    notes,
+	applyServerEvidenceBaselineDeltas(&evidence, runID, outDir, &notes)
+	evidence.Notes = notes
+	return evidence
+}
+
+func normalizeEvidenceSourceCatalogMetadata(sources map[string]EvidenceSource) {
+	if sources == nil {
+		return
+	}
+	for key, catalogSource := range evidenceSourceCatalog(false) {
+		source, ok := sources[key]
+		if !ok {
+			catalogSource.Detail = "probe not configured"
+			sources[key] = catalogSource
+			continue
+		}
+		source.Optional = source.Optional || catalogSource.Optional
+		sources[key] = source
 	}
 }
 
@@ -1555,13 +1681,46 @@ func centralLoggerEnvValues(envRoot string) map[string]string {
 	if override := strings.TrimSpace(os.Getenv("HOME100K_CLOUD_LOGGER_ENV")); override != "" {
 		candidates = append(candidates, override)
 	}
-	candidates = append(candidates, filepath.Join(envRoot, "services", "cloud-logger", "logger.env"))
+	candidates = append(candidates,
+		filepath.Join(envRoot, "services", "cloud-logger", "logger.env"),
+		filepath.Join(envRoot, "state", "cloud-logger.env"),
+	)
+	if parent := filepath.Dir(strings.TrimRight(envRoot, string(os.PathSeparator))); parent != "." && parent != "" {
+		candidates = append(candidates,
+			filepath.Join(parent, "linode", "services", "cloud-logger", "logger.env"),
+			filepath.Join(parent, "linode", "state", "cloud-logger.env"),
+		)
+	}
 	for _, path := range candidates {
 		if fileReadable(path) {
 			return parseEnvFile(path)
 		}
 	}
 	return map[string]string{}
+}
+
+func evidenceWindowStart(outDir string) string {
+	outDir = strings.TrimSpace(outDir)
+	if outDir == "" {
+		return ""
+	}
+	coordination := loadStartCoordination(filepath.Join(outDir, "start-coordination.json"))
+	var earliest time.Time
+	for _, vm := range coordination.VMs {
+		for _, raw := range []string{vm.StartSignalReceivedAt, vm.StageStartedAt, vm.FirstConnectAt} {
+			parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(raw))
+			if err != nil {
+				continue
+			}
+			if earliest.IsZero() || parsed.Before(earliest) {
+				earliest = parsed
+			}
+		}
+	}
+	if earliest.IsZero() {
+		return ""
+	}
+	return earliest.Add(-5 * time.Second).UTC().Format(time.RFC3339Nano)
 }
 
 func queryCentralLoggerCount(endpoint string, token string, key string, value string) (int, error) {
@@ -1602,6 +1761,9 @@ func fileReadable(path string) bool {
 
 func parseEvidenceCounters(source string, runID string, out string) map[string]int64 {
 	counters := map[string]int64{}
+	if source == "emqx_listener_stats" && (strings.Contains(out, "tcp:default") || strings.Contains(out, "ssl:default")) {
+		counters["emqx.broker.identity"] = 1
+	}
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -1626,11 +1788,131 @@ func parseEvidenceCounters(source string, runID string, out string) map[string]i
 		if source == "video_cloud_api" {
 			parseVideoCloudAPILogCounterLine(counters, line)
 		}
+		if source == "ingress_nginx" {
+			parseIngressRequestTokenCounterLine(counters, line)
+		}
+		if source == "postgres" {
+			parsePostgresCounterLine(counters, line)
+		}
 	}
 	if len(counters) == 0 {
 		return nil
 	}
 	return counters
+}
+
+func applyServerEvidenceBaselineDeltas(evidence *ServerEvidence, runID string, outDir string, notes *[]string) {
+	if evidence == nil || strings.TrimSpace(outDir) == "" {
+		return
+	}
+	baselinePath := filepath.Join(outDir, "server-evidence-baseline.json")
+	if !fileReadable(baselinePath) {
+		return
+	}
+	baseline, err := loadServerEvidence(baselinePath, runID)
+	if err != nil {
+		if notes != nil {
+			*notes = append(*notes, "server evidence baseline ignored: "+err.Error())
+		}
+		return
+	}
+	applyEMQXMetricDelta(evidence, baseline)
+	applySourceCounterBaselineDelta(evidence, baseline, "ingress_nginx")
+	applySourceCounterBaselineDelta(evidence, baseline, "postgres")
+	applySourceCounterBaselineDelta(evidence, baseline, "video_cloud_api")
+	recomputeVideoCloudAPITopLevelCounters(evidence)
+}
+
+func applyEMQXMetricDelta(evidence *ServerEvidence, baseline ServerEvidence) {
+	if evidence == nil || evidence.Sources == nil {
+		return
+	}
+	source := evidence.Sources["emqx"]
+	if source.Counters == nil {
+		source.Counters = map[string]int64{}
+	}
+	deltaConnected := source.Counters["emqx.metric.client.connected"] - evidenceCounter(baseline, "emqx", "emqx.metric.client.connected")
+	if deltaConnected > 0 {
+		source.Counters["mqtt.total_connect_success"] = deltaConnected
+		source.Counters["device_mqtt.connect_success"] = deltaConnected
+	}
+	deltaConnectReceived := source.Counters["emqx.metric.packets.connect.received"] - evidenceCounter(baseline, "emqx", "emqx.metric.packets.connect.received")
+	if deltaConnectReceived > 0 {
+		source.Counters["mqtt.total_connect_attempts"] = deltaConnectReceived
+		source.Counters["device_mqtt.connect_attempts"] = deltaConnectReceived
+	}
+	evidence.Sources["emqx"] = source
+}
+
+func applySourceCounterBaselineDelta(evidence *ServerEvidence, baseline ServerEvidence, sourceName string) {
+	if evidence == nil || evidence.Sources == nil || strings.TrimSpace(sourceName) == "" {
+		return
+	}
+	source, ok := evidence.Sources[sourceName]
+	if !ok || source.Counters == nil {
+		return
+	}
+	baselineSource, ok := baseline.Sources[sourceName]
+	if !ok || baselineSource.Counters == nil {
+		return
+	}
+	for counter, value := range source.Counters {
+		base, ok := baselineSource.Counters[counter]
+		if !ok {
+			continue
+		}
+		delta := value - base
+		if delta < 0 {
+			delta = 0
+		}
+		source.Counters[counter] = delta
+	}
+	evidence.Sources[sourceName] = source
+}
+
+func recomputeVideoCloudAPITopLevelCounters(evidence *ServerEvidence) {
+	if evidence == nil || evidence.Sources == nil {
+		return
+	}
+	source, ok := evidence.Sources["video_cloud_api"]
+	if !ok || source.Counters == nil {
+		return
+	}
+	fields := []string{"total", "status_200", "status_500", "gt1s", "gt5s", "gt10s"}
+	sums := map[string]int64{}
+	foundPodCounters := false
+	for counter, value := range source.Counters {
+		if !strings.HasPrefix(counter, "video_cloud_api.request_token.pod_") {
+			continue
+		}
+		for _, field := range fields {
+			if strings.HasSuffix(counter, "."+field) {
+				sums[field] += value
+				foundPodCounters = true
+				break
+			}
+		}
+	}
+	if !foundPodCounters {
+		return
+	}
+	for _, field := range fields {
+		source.Counters["video_cloud_api.request_token."+field] = sums[field]
+	}
+	evidence.Sources["video_cloud_api"] = source
+}
+
+func parsePostgresCounterLine(counters map[string]int64, line string) {
+	lower := strings.ToLower(line)
+	if strings.Contains(lower, "fatal:") {
+		counters["postgres.fatal"]++
+	}
+	if strings.Contains(lower, "too many clients already") {
+		counters["postgres.too_many_clients"]++
+	}
+	if strings.Contains(lower, "canceling statement due to user request") {
+		counters["postgres.statement_canceled"]++
+	}
 }
 
 func parseEMQXListenerCounterLine(counters map[string]int64, line string) {
@@ -1685,6 +1967,44 @@ func parseVideoCloudAPILogCounterLine(counters map[string]int64, line string) {
 	}
 }
 
+var ingressAccessLogPattern = regexp.MustCompile(`\[[0-9]{2}/[A-Za-z]+/[0-9]{4}:[0-9]{2}:[0-9]{2}:[0-9]{2} \+0000\] "([A-Z]+) ([^ ]+) [^"]+" ([0-9]{3}) [0-9]+ "[^"]*" "[^"]*" [0-9]+ ([0-9.]+) \[[^\]]*\] \[\] [^ ]+ [^ ]+ ([0-9.]+|-|,) ([0-9]{3}|-)`)
+
+func parseIngressRequestTokenCounterLine(counters map[string]int64, line string) {
+	matches := ingressAccessLogPattern.FindStringSubmatch(line)
+	if len(matches) != 7 {
+		return
+	}
+	if matches[1] != http.MethodPost || matches[2] != "/request_token" {
+		return
+	}
+	status, err := strconv.Atoi(matches[3])
+	if err != nil {
+		return
+	}
+	requestTime, err := strconv.ParseFloat(matches[4], 64)
+	if err != nil {
+		return
+	}
+	counters["ingress_nginx.request_token.total"]++
+	counters[fmt.Sprintf("ingress_nginx.request_token.status_%d", status)]++
+	ms := int64(requestTime * 1000)
+	if ms > counters["ingress_nginx.request_token.max_ms"] {
+		counters["ingress_nginx.request_token.max_ms"] = ms
+	}
+	if requestTime > 1 {
+		counters["ingress_nginx.request_token.gt1s"]++
+	}
+	if requestTime > 5 {
+		counters["ingress_nginx.request_token.gt5s"]++
+	}
+	if requestTime > 10 {
+		counters["ingress_nginx.request_token.gt10s"]++
+	}
+	if upstreamStatus, err := strconv.Atoi(matches[6]); err == nil {
+		counters[fmt.Sprintf("ingress_nginx.request_token.upstream_%d", upstreamStatus)]++
+	}
+}
+
 func redactEvidenceOutput(out string) string {
 	out = strings.TrimSpace(out)
 	if out == "" {
@@ -1725,7 +2045,10 @@ type serverEvidenceProbe struct {
 	detail  string
 }
 
-func serverEvidenceProbes(runID string) []serverEvidenceProbe {
+func serverEvidenceProbes(runID string, logsSinceArg string) []serverEvidenceProbe {
+	if strings.TrimSpace(logsSinceArg) == "" {
+		logsSinceArg = "--since=30m"
+	}
 	return []serverEvidenceProbe{
 		{
 			source:  "host_pod_resources",
@@ -1739,15 +2062,18 @@ func serverEvidenceProbes(runID string) []serverEvidenceProbe {
 			args:    []string{"-lc", "kubectl top pods -A || true"},
 			detail:  "pod resource usage captured",
 		},
-		kubectlLogsProbe("emqx", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=mqtt", "MQTT broker logs and client churn evidence captured for run_id "+runID),
+		kubectlLogsProbe("emqx", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=mqtt", logsSinceArg, "MQTT broker logs and client churn evidence captured for run_id "+runID),
+		emqxBrokerMetricsProbe(runID),
 		emqxListenerStatsProbe(runID),
-		videoCloudAPIRequestTokenCounterProbe(runID),
-		kubectlLogsProbe("video_cloud_api", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=video-cloud-api", "Video Cloud API logs captured for run_id "+runID),
+		mqttNodeBalancerProbe(runID),
+		videoCloudAPIRequestTokenCounterProbe(runID, logsSinceArg),
+		kubectlLogsProbe("video_cloud_api", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=video-cloud-api", logsSinceArg, "Video Cloud API logs captured for run_id "+runID),
 		postgresCounterProbe("iot_device_shadow", runID, shadowRuntimeLogCounterSQL(runID), "IoT Device Shadow MQTT path counters parsed from persisted runtime logs for run_id "+runID),
+		postgresCounterProbe("iot_device_shadow_streams", runID, shadowRuntimeLogStreamSQL(runID), "IoT Device Shadow runtime log stream evidence parsed from persisted runtime logs for run_id "+runID),
 		postgresCounterProbe("postgres", runID, shadowStoreCounterSQL(runID), "PostgreSQL device shadow convergence counters parsed for run_id "+runID),
-		kubectlLogsProbe("postgres", "video-cloud-staging-platform", "app.kubernetes.io/name=postgresql", "PostgreSQL logs captured"),
-		kubectlLogsProbe("redis_valkey", "video-cloud-staging-platform", "app.kubernetes.io/name=redis", "Redis/Valkey logs captured when enabled"),
-		kubectlLogsProbe("ingress_nginx", "video-cloud-staging-ingress", "app.kubernetes.io/name=ingress-nginx", "Ingress/nginx logs captured for run_id "+runID),
+		kubectlLogsProbe("postgres", "video-cloud-staging-platform", "app.kubernetes.io/name=postgresql", logsSinceArg, "PostgreSQL logs captured"),
+		kubectlLogsProbe("redis_valkey", "video-cloud-staging-platform", "app.kubernetes.io/name=redis", logsSinceArg, "Redis/Valkey logs captured when enabled"),
+		kubectlLogsProbe("ingress_nginx", "video-cloud-staging-ingress", "app.kubernetes.io/name=ingress-nginx", logsSinceArg, "Ingress/nginx logs captured for run_id "+runID),
 	}
 }
 
@@ -1771,6 +2097,32 @@ SELECT 'app_user.desired_writes', COUNT(*) FROM logs WHERE source = 'app_control
 UNION ALL SELECT 'device_mqtt.delta_received', COUNT(*) FROM logs WHERE source = 'device_client' AND message = 'mqtt_e2e shadow_delta device_client receive'
 UNION ALL SELECT 'device_mqtt.reported_publishes', COUNT(*) FROM logs WHERE source = 'device_client' AND message = 'mqtt_e2e shadow_reported device_client publish'
 UNION ALL SELECT 'app_user.received_acks', COUNT(*) FROM logs WHERE source = 'app_observer' AND message = 'mqtt_e2e shadow_reported app_observer receive'
+`
+}
+
+func shadowRuntimeLogStreamSQL(runID string) string {
+	prefix := "mqtt-e2e-" + sanitizeEvidenceRunID(runID) + "-%"
+	return `
+WITH logs AS (
+	SELECT stream_id, seq
+	FROM device_runtime_logs
+	WHERE stream_id LIKE ` + sqlLiteral(prefix) + `
+),
+stream_counts AS (
+	SELECT stream_id, COUNT(*) AS entries
+	FROM logs
+	GROUP BY stream_id
+),
+seq_counts AS (
+	SELECT stream_id, seq, COUNT(*) AS entries
+	FROM logs
+	GROUP BY stream_id, seq
+)
+SELECT 'runtime_log_streams.total', COUNT(*) FROM stream_counts
+UNION ALL
+SELECT 'runtime_log_stream.' || stream_id || '.entries', entries FROM stream_counts
+UNION ALL
+SELECT 'runtime_log_stream.' || stream_id || '.seq.' || seq, entries FROM seq_counts
 `
 }
 
@@ -1809,12 +2161,13 @@ func sqlLiteral(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
-func kubectlLogsProbe(source string, namespace string, selector string, detail string) serverEvidenceProbe {
+func kubectlLogsProbe(source string, namespace string, selector string, logsSinceArg string, detail string) serverEvidenceProbe {
 	script := fmt.Sprintf(
-		`set -euo pipefail; pods="$(kubectl -n %s get pods --selector %s -o name)"; test -n "$pods"; kubectl -n %s logs --since=30m --selector %s --tail=-1`,
+		`set -euo pipefail; pods="$(kubectl -n %s get pods --selector %s -o name)"; test -n "$pods"; kubectl -n %s logs %s --selector %s --tail=-1`,
 		shellQuote(namespace),
 		shellQuote(selector),
 		shellQuote(namespace),
+		shellQuote(logsSinceArg),
 		shellQuote(selector),
 	)
 	return serverEvidenceProbe{
@@ -1830,15 +2183,18 @@ func emqxListenerStatsProbe(runID string) serverEvidenceProbe {
 pods="$(kubectl -n video-cloud-staging-video-cloud get pods --selector app.kubernetes.io/name=mqtt -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}')"
 test -n "$pods"
 for pod in $pods; do
-  kubectl -n video-cloud-staging-video-cloud exec "$pod" -- emqx ctl listeners | awk '
+  safe_pod="$(printf '%s' "$pod" | tr -c 'A-Za-z0-9_' '_')"
+  kubectl -n video-cloud-staging-video-cloud exec "$pod" -- emqx ctl listeners | awk -v pod="$safe_pod" '
     /^[a-z]+:default/ {listener=$1}
     /^[[:space:]]+(acceptors|current_conn|max_conns)[[:space:]]*:/ {
-      gsub(":", "", $2); print listener, $2, $3
+      key=$1; value=$3; safe_listener=listener; gsub(":", "_", safe_listener)
+      print listener, key, value; print "emqx.pod_" pod "." safe_listener "." key, value
     }
     /^[[:space:]]+shutdown_count[[:space:]]*:/ {
-      if ($0 ~ /ssl_closed/) {s=$0; sub(/^.*ssl_closed,/, "", s); sub(/[^0-9].*$/, "", s); if (s != "") print listener, "ssl_closed", s}
-      if ($0 ~ /tcp_closed/) {s=$0; sub(/^.*tcp_closed,/, "", s); sub(/[^0-9].*$/, "", s); if (s != "") print listener, "tcp_closed", s}
-      if ($0 ~ /discarded/) {s=$0; sub(/^.*discarded,/, "", s); sub(/[^0-9].*$/, "", s); if (s != "") print listener, "discarded", s}
+      safe_listener=listener; gsub(":", "_", safe_listener)
+      if ($0 ~ /ssl_closed/) {s=$0; sub(/^.*ssl_closed,/, "", s); sub(/[^0-9].*$/, "", s); if (s != "") {print listener, "ssl_closed", s; print "emqx.pod_" pod "." safe_listener ".shutdown_ssl_closed", s}}
+      if ($0 ~ /tcp_closed/) {s=$0; sub(/^.*tcp_closed,/, "", s); sub(/[^0-9].*$/, "", s); if (s != "") {print listener, "tcp_closed", s; print "emqx.pod_" pod "." safe_listener ".shutdown_tcp_closed", s}}
+      if ($0 ~ /discarded/) {s=$0; sub(/^.*discarded,/, "", s); sub(/[^0-9].*$/, "", s); if (s != "") {print listener, "discarded", s; print "emqx.pod_" pod "." safe_listener ".shutdown_discarded", s}}
     }
   '
 done`
@@ -1850,20 +2206,90 @@ done`
 	}
 }
 
-func videoCloudAPIRequestTokenCounterProbe(runID string) serverEvidenceProbe {
+func emqxBrokerMetricsProbe(runID string) serverEvidenceProbe {
 	script := `set -euo pipefail
-kubectl -n video-cloud-staging-video-cloud logs --since=30m --selector app.kubernetes.io/name=video-cloud-api --tail=-1 \
-  | jq -sr '
-      [.[] | select(.path == "/request_token")] as $rt
-      | [
-          "video_cloud_api.request_token.total \($rt | length)",
-          "video_cloud_api.request_token.status_200 \(($rt | map(select(.status == 200)) | length))",
-          "video_cloud_api.request_token.status_500 \(($rt | map(select(.status == 500)) | length))",
-          "video_cloud_api.request_token.gt1s \(($rt | map(select(.duration_ms > 1000)) | length))",
-          "video_cloud_api.request_token.gt5s \(($rt | map(select(.duration_ms > 5000)) | length))",
-          "video_cloud_api.request_token.gt10s \(($rt | map(select(.duration_ms > 10000)) | length))"
-        ]
-      | .[]'
+pods="$(kubectl -n video-cloud-staging-video-cloud get pods --selector app.kubernetes.io/name=mqtt -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}')"
+test -n "$pods"
+for pod in $pods; do
+  safe_pod="$(printf '%s' "$pod" | tr -c 'A-Za-z0-9_' '_')"
+  metrics="$(kubectl -n video-cloud-staging-video-cloud exec "$pod" -- emqx ctl broker metrics 2>/dev/null || true)"
+  test -n "$metrics"
+  printf '%s\n' "$metrics" | awk -F ':' -v pod="$safe_pod" '
+    {
+      key=$1; value=$2
+      gsub(/[[:space:]]/, "", key)
+      gsub(/[[:space:]]/, "", value)
+    }
+    key ~ /^(client\.connected|client\.connack|packets\.connect\.received|packets\.connack\.sent|packets\.pingreq\.received|packets\.pingresp\.sent)$/ && value ~ /^[0-9]+$/ {
+      print "emqx.metric." key, value
+      print "emqx.pod_" pod ".metric." key, value
+    }
+  '
+done`
+	return serverEvidenceProbe{
+		source:  "emqx",
+		command: "bash",
+		args:    []string{"-lc", script},
+		detail:  "EMQX broker metrics captured for run_id " + runID + "; run-scoped connect counters require server-evidence-baseline.json delta",
+	}
+}
+
+func mqttNodeBalancerProbe(runID string) serverEvidenceProbe {
+	script := `set -euo pipefail
+test -n "${LINODE_TOKEN:-}"
+ip="$(kubectl -n video-cloud-staging-video-cloud get svc mqtt-public -o jsonpath='{.status.loadBalancer.ingress[0].ip}')"
+test -n "$ip"
+nodebalancers="$(curl -fsS -H "Authorization: Bearer ${LINODE_TOKEN}" https://api.linode.com/v4/nodebalancers)"
+nb_id="$(printf '%s' "$nodebalancers" | jq -r --arg ip "$ip" '.data[] | select(.ipv4 == $ip) | .id' | head -n1)"
+test -n "$nb_id"
+configs="$(curl -fsS -H "Authorization: Bearer ${LINODE_TOKEN}" "https://api.linode.com/v4/nodebalancers/${nb_id}/configs")"
+cfg="$(printf '%s' "$configs" | jq -r '.data[] | select(.port == 8883) | [.id, .nodes_status.up, .nodes_status.down, .algorithm, .stickiness] | @tsv' | head -n1)"
+test -n "$cfg"
+cfg_id="$(printf '%s' "$cfg" | awk '{print $1}')"
+printf '%s\n' "$cfg" | awk '{print "mqtt_nodebalancer.configs 1"; print "mqtt_nodebalancer.nodes_up " $2; print "mqtt_nodebalancer.nodes_down " $3}'
+nodes="$(curl -fsS -H "Authorization: Bearer ${LINODE_TOKEN}" "https://api.linode.com/v4/nodebalancers/${nb_id}/configs/${cfg_id}/nodes")"
+printf '%s' "$nodes" | jq -r '
+  .data[]
+  | (.label | gsub("[^A-Za-z0-9_]"; "_")) as $label
+  | [
+      "mqtt_nodebalancer.node_\($label).status_\(.status | ascii_downcase) 1",
+      "mqtt_nodebalancer.node_\($label).weight \(.weight)"
+    ]
+  | .[]'
+`
+	return serverEvidenceProbe{
+		source:  "mqtt_nodebalancer",
+		command: "bash",
+		args:    []string{"-lc", script},
+		detail:  "Linode NodeBalancer health for mqtt-public 8883 captured for run_id " + runID,
+	}
+}
+
+func videoCloudAPIRequestTokenCounterProbe(runID string, logsSinceArg string) serverEvidenceProbe {
+	script := `set -euo pipefail
+pods="$(kubectl -n video-cloud-staging-video-cloud get pods --selector app.kubernetes.io/name=video-cloud-api -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}')"
+test -n "$pods"
+for pod in $pods; do
+  safe_pod="$(printf '%s' "$pod" | tr -c 'A-Za-z0-9_' '_')"
+  kubectl -n video-cloud-staging-video-cloud logs ` + shellQuote(logsSinceArg) + ` "$pod" --tail=-1 \
+    | jq -sr --arg pod "$safe_pod" '
+        [.[] | select(.path == "/request_token")] as $rt
+        | [
+            "video_cloud_api.request_token.total \($rt | length)",
+            "video_cloud_api.request_token.status_200 \(($rt | map(select(.status == 200)) | length))",
+            "video_cloud_api.request_token.status_500 \(($rt | map(select(.status == 500)) | length))",
+            "video_cloud_api.request_token.gt1s \(($rt | map(select(.duration_ms > 1000)) | length))",
+            "video_cloud_api.request_token.gt5s \(($rt | map(select(.duration_ms > 5000)) | length))",
+            "video_cloud_api.request_token.gt10s \(($rt | map(select(.duration_ms > 10000)) | length))",
+            "video_cloud_api.request_token.pod_\($pod).total \($rt | length)",
+            "video_cloud_api.request_token.pod_\($pod).status_200 \(($rt | map(select(.status == 200)) | length))",
+            "video_cloud_api.request_token.pod_\($pod).status_500 \(($rt | map(select(.status == 500)) | length))",
+            "video_cloud_api.request_token.pod_\($pod).gt1s \(($rt | map(select(.duration_ms > 1000)) | length))",
+            "video_cloud_api.request_token.pod_\($pod).gt5s \(($rt | map(select(.duration_ms > 5000)) | length))",
+            "video_cloud_api.request_token.pod_\($pod).gt10s \(($rt | map(select(.duration_ms > 10000)) | length))"
+          ]
+        | .[]'
+done
 `
 	return serverEvidenceProbe{
 		source:  "video_cloud_api",
@@ -2777,10 +3203,14 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 		"remote_out_root":          strings.TrimRight(firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k"), "/"),
 		"brandname":                plan.Conditions.Brandname,
 		"region":                   plan.Conditions.Region,
+		"device_count":             plan.Conditions.Devices,
+		"user_count":               plan.Conditions.Users,
+		"devices_per_user":         plan.Conditions.DevicesPerUser,
 		"stage_warm_up":            stageWarmUp,
 		"stage_steady":             stageSteady,
 		"stage_cool_down":          stageCoolDown,
 		"runner_mode":              firstNonEmpty(values.runnerMode, "sample"),
+		"runner_nofile_limit":      values.runnerNofileLimit,
 		"mqtt_addr":                strings.TrimSpace(values.mqttAddr),
 		"video_cloud_public_url":   strings.TrimSpace(firstNonEmpty(values.videoCloudPublicURL, values.videoCloudBaseURL)),
 		"video_cloud_token_url":    strings.TrimSpace(values.videoCloudTokenURL),

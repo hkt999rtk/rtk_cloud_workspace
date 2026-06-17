@@ -31,10 +31,13 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 		StageResults: []StageResult{{
 			Name:             "25k",
 			ConnectedDevices: 25000,
+			ShardConnectedDevices: 25000,
 			DeviceMQTTTotals: DeviceMQTTTotals{
 				ConnectAttempts:   10,
 				ConnectSuccess:    10,
 				Subscribes:        10,
+				ActiveConnections: 25000,
+				ActiveSubscriptions: 25000,
 				Publishes:         20,
 				ReceivedMessages:  20,
 				DeltaReceived:     10,
@@ -57,6 +60,25 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 			FailureReasons: map[string]int64{
 				"app_desired_publish_failed": 2,
 			},
+		}, {
+			Name:             "50k",
+			ConnectedDevices: 50000,
+			ShardConnectedDevices: 50000,
+			DeviceMQTTTotals: DeviceMQTTTotals{
+				ConnectAttempts:      25000,
+				ConnectSuccess:       25000,
+				Subscribes:           25000,
+				ActiveConnections:    50000,
+				ActiveSubscriptions:  50000,
+				Publishes:            2500,
+				ReceivedMessages:     2500,
+				DeltaReceived:        2500,
+				ReportedPublishes:    2500,
+			},
+			AppUserTotals: AppUserTotals{
+				DesiredWrites: 2500,
+				ReceivedAcks:  2500,
+			},
 		}},
 		DeviceMQTTTotals: DeviceMQTTTotals{
 			ConnectAttempts: 10,
@@ -76,6 +98,17 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 			BytesTransferred: 4096,
 			ElapsedMS:        1200,
 		}}},
+		StartCoordination: StartCoordination{
+			Mode:         "host-coordinator",
+			ReadyBarrier: "1/1",
+			StartDelayMS: 3000,
+			MaxSkewMS:    12,
+			VMs: []VMStartTelemetry{{
+				Label:  "home-100k-mixed-000",
+				IP:     "192.0.2.10",
+				Status: "completed",
+			}},
+		},
 		ReportFile: filepath.Join(outDir, "TEST_REPORT.md"),
 	}
 	raw, err := json.MarshalIndent(result, "", "  ")
@@ -120,20 +153,28 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 	report := string(reportRaw)
 	for _, want := range []string{
 		"## Load Machine Resource Usage",
+		"- sample window: 2026-06-15T00:00:00Z -> 2026-06-15T00:00:30Z\n\n| VM | Role | IP | Samples |",
 		"home-100k-mixed-000",
 		"CPU p95",
 		"## K8s Node Resource Usage During Test",
+		"- sample window: 2026-06-15T00:00:00Z -> 2026-06-15T00:00:30Z\n\n| Node | Samples | CPU p95 |",
 		"lke-node-a",
 		"Mem max",
+		"## Load Generator Start Coordination",
+		"- max start skew ms: 12\n\n| VM | IP | Status | Ready at |",
 		"## Report Source Artifacts",
 		"resource-samples/load-vms.tsv",
 		"resource-samples/k8s-nodes.tsv",
 		"## Failure Reasons",
 		"app_desired_publish_failed",
+		"| 50k | 50000 | 50000 | 25000 | 25000 | 50000 | 50000 | 2500 | 2500 | 2500 | ok |",
 	} {
 		if !strings.Contains(report, want) {
 			t.Fatalf("generated report missing %q:\n%s", want, report)
 		}
+	}
+	if strings.Contains(report, "| 50k | 50000 | 50000 | 25000 | 25000 | 2500 | 2500 | insufficient-client-load |") {
+		t.Fatalf("generated report used per-stage connect attempts instead of active subscription coverage:\n%s", report)
 	}
 	if strings.Contains(report, "{{") {
 		t.Fatalf("generated report still contains template marker:\n%s", report)

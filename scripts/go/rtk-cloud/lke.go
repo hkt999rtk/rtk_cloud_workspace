@@ -651,7 +651,7 @@ metadata:
 
 func lkeInstallIngressNginx(env map[string]string) error {
 	ns := lkeIngressNamespace(env)
-	if err := runHelm(
+	args := []string{
 		"upgrade", "--install", "ingress-nginx", "ingress-nginx",
 		"--repo", "https://kubernetes.github.io/ingress-nginx",
 		"--namespace", ns,
@@ -663,10 +663,25 @@ func lkeInstallIngressNginx(env map[string]string) error {
 		"--set", "controller.allowSnippetAnnotations=true",
 		"--set", "controller.config.annotations-risk-level=Critical",
 		"--set", "controller.ingressClassResource.default=false",
-	); err != nil {
+		"--set", "controller.replicaCount=" + lkeIngressReplicas(env),
+		"--set", "controller.resources.requests.cpu=" + firstNonEmpty(os.Getenv("LKE_INGRESS_REQUEST_CPU"), env["LKE_INGRESS_REQUEST_CPU"], "500m"),
+		"--set", "controller.resources.requests.memory=" + firstNonEmpty(os.Getenv("LKE_INGRESS_REQUEST_MEMORY"), env["LKE_INGRESS_REQUEST_MEMORY"], "512Mi"),
+		"--set", "controller.resources.limits.memory=" + firstNonEmpty(os.Getenv("LKE_INGRESS_LIMIT_MEMORY"), env["LKE_INGRESS_LIMIT_MEMORY"], "1Gi"),
+		"--set-json", `controller.topologySpreadConstraints=[{"maxSkew":1,"topologyKey":"kubernetes.io/hostname","whenUnsatisfiable":"ScheduleAnyway","labelSelector":{"matchLabels":{"app.kubernetes.io/name":"ingress-nginx","app.kubernetes.io/component":"controller"}}}]`,
+	}
+	if err := runHelm(args...); err != nil {
 		return err
 	}
 	return runKubectl("-n", ns, "rollout", "status", "deployment/ingress-nginx-controller", "--timeout", firstNonEmpty(os.Getenv("LKE_INGRESS_ROLLOUT_TIMEOUT"), "5m"))
+}
+
+func lkeIngressReplicas(env map[string]string) string {
+	raw := strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_INGRESS_REPLICAS"), env["LKE_INGRESS_REPLICAS"], "3"))
+	replicas, err := strconv.Atoi(raw)
+	if err != nil || replicas < 1 {
+		return "3"
+	}
+	return strconv.Itoa(replicas)
 }
 
 func lkePublicHTTPSRoutes(env map[string]string) []lkePublicHTTPSRoute {
@@ -1356,6 +1371,8 @@ spec:
           port: 4369
         - protocol: TCP
           port: 4370
+        - protocol: TCP
+          port: 5369
 `, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
 }
 
@@ -1869,8 +1886,10 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 			return err
 		}
 		if lkeEnvBool("LKE_PUBLIC_MQTT_LOADBALANCER") {
-			if err := kubectlApply(lkeMQTTPublicServiceManifest(env)); err != nil {
-				return err
+			for _, manifest := range lkeMQTTPublicServiceManifests(env) {
+				if err := kubectlApply(manifest); err != nil {
+					return err
+				}
 			}
 			if err := kubectlApply(lkeAllowPublicMQTTLoadTestNetworkPolicyManifest(env)); err != nil {
 				return err
@@ -3279,6 +3298,11 @@ metadata:
     rtk.realtek.com/stack: %s
 spec:
   replicas: %d
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: mqtt
@@ -3352,10 +3376,10 @@ spec:
 }
 
 func lkeMQTTReplicas(env map[string]string) int {
-	raw := strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_MQTT_REPLICAS"), env["LKE_MQTT_REPLICAS"], "3"))
+	raw := strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_MQTT_REPLICAS"), env["LKE_MQTT_REPLICAS"], "9"))
 	replicas, err := strconv.Atoi(raw)
 	if err != nil || replicas < 1 {
-		return 3
+		return 9
 	}
 	return replicas
 }
@@ -3454,19 +3478,17 @@ func lkeMQTTPlacementManifest(env map[string]string) string {
 	fmt.Fprintf(&b, `      topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
+          whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
               app.kubernetes.io/name: mqtt
       affinity:
         podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                topologyKey: kubernetes.io/hostname
-                labelSelector:
-                  matchLabels:
-                    app.kubernetes.io/name: mqtt
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: mqtt
 `)
 	poolID := firstNonEmpty(os.Getenv("LKE_MQTT_NODE_POOL_ID"), env["LKE_MQTT_NODE_POOL_ID"])
 	if poolID != "" {
@@ -3529,11 +3551,39 @@ spec:
 `, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
 }
 
-func lkeMQTTPublicServiceManifest(env map[string]string) string {
+func lkeMQTTPublicServiceManifests(env map[string]string) []string {
+	count := lkePublicMQTTLoadBalancerCount(env)
+	manifests := make([]string, 0, count)
+	for idx := 0; idx < count; idx++ {
+		manifests = append(manifests, lkeMQTTPublicServiceManifest(env, idx))
+	}
+	return manifests
+}
+
+func lkePublicMQTTLoadBalancerCount(env map[string]string) int {
+	raw := strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_PUBLIC_MQTT_LOADBALANCER_COUNT"), env["LKE_PUBLIC_MQTT_LOADBALANCER_COUNT"], "1"))
+	count, err := strconv.Atoi(raw)
+	if err != nil || count < 1 {
+		return 1
+	}
+	if count > 20 {
+		return 20
+	}
+	return count
+}
+
+func lkeMQTTPublicServiceName(index int) string {
+	if index <= 0 {
+		return "mqtt-public"
+	}
+	return fmt.Sprintf("mqtt-public-%02d", index)
+}
+
+func lkeMQTTPublicServiceManifest(env map[string]string, index int) string {
 	return fmt.Sprintf(`apiVersion: v1
 kind: Service
 metadata:
-  name: mqtt-public
+  name: %s
   namespace: %s
   labels:
     app.kubernetes.io/name: mqtt
@@ -3543,13 +3593,14 @@ metadata:
     rtk.realtek.com/stack: %s
 spec:
   type: LoadBalancer
+  externalTrafficPolicy: Local
   selector:
     app.kubernetes.io/name: mqtt
   ports:
     - name: mqtts
       port: 8883
       targetPort: 8883
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
+`, lkeMQTTPublicServiceName(index), lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
 }
 
 func lkeAllowPublicMQTTLoadTestNetworkPolicyManifest(env map[string]string) string {
@@ -3790,12 +3841,20 @@ spec:
               value: "postgres://postgres:$(POSTGRES_PASSWORD)@postgresql.%s.svc.cluster.local:5432/video_cloud?sslmode=disable"
             - name: VIDEO_CLOUD_LOG_DB_DSN
               value: "postgres://postgres:$(POSTGRES_PASSWORD)@postgresql.%s.svc.cluster.local:5432/video_cloud?sslmode=disable"
+            - name: VIDEO_CLOUD_DB_MAX_OPEN_CONNS
+              value: %q
+            - name: VIDEO_CLOUD_DB_MAX_IDLE_CONNS
+              value: %q
+            - name: VIDEO_CLOUD_DB_CONN_MAX_LIFETIME
+              value: %q
             - name: VIDEO_CLOUD_MQTT_ADDR
               value: %q
             - name: VIDEO_CLOUD_MQTT_CLIENT_ID
               value: %q
             - name: VIDEO_CLOUD_MQTT_TOPIC_ROOT
               value: "devices"
+            - name: VIDEO_CLOUD_MQTT_CLEAN_SESSION
+              value: %q
             - name: VIDEO_CLOUD_METRICS_EXPORTER_ADDR
               value: "0.0.0.0:19200"
             - name: VIDEO_CLOUD_TURN_REGISTRY_ADDR
@@ -3814,7 +3873,14 @@ spec:
                 secretKeyRef:
                   name: video-cloud-workers-runtime
                   key: VIDEO_CLOUD_MQTT_USAGE_INGEST_TOKEN
-`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(service.Name), ports, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeNamespaceName(env, "platform"), lkeMQTTInternalAddr(env), service.Name)
+`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(service.Name), ports, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeNamespaceName(env, "platform"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(service))
+}
+
+func lkeVideoCloudAuxiliaryMQTTCleanSession(service lkeVideoCloudAuxiliaryService) string {
+	if service.Name == "video-cloud-logingester" {
+		return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_LOGINGESTER_MQTT_CLEAN_SESSION"), "false")
+	}
+	return "true"
 }
 
 func lkeVideoCloudAuxiliaryServiceManifest(env map[string]string, service lkeVideoCloudAuxiliaryService) string {
@@ -4456,6 +4522,12 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
               value: ":8080"
             - name: VIDEO_CLOUD_DB_DSN
               value: "postgres://postgres:$(POSTGRES_PASSWORD)@postgresql.%s.svc.cluster.local:5432/video_cloud?sslmode=disable"
+            - name: VIDEO_CLOUD_DB_MAX_OPEN_CONNS
+              value: %q
+            - name: VIDEO_CLOUD_DB_MAX_IDLE_CONNS
+              value: %q
+            - name: VIDEO_CLOUD_DB_CONN_MAX_LIFETIME
+              value: %q
             - name: VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -4477,7 +4549,7 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
               value: "video-cloud-api-$(POD_NAME)"
             - name: VIDEO_CLOUD_MQTT_TOPIC_ROOT
               value: "devices"
-`, lkeNamespaceName(env, "platform"), lkeAccountManagerInternalURL(env), lkeMQTTInternalAddr(env))
+`, lkeNamespaceName(env, "platform"), lkeVideoCloudAPIDBMaxOpenConns(env), lkeVideoCloudAPIDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeAccountManagerInternalURL(env), lkeMQTTInternalAddr(env))
 	}
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
@@ -4556,7 +4628,7 @@ func lkeContainerResourcesManifest(name string) string {
 	}
 	profiles := map[string]resources{
 		"account-manager":         {requestCPU: "250m", requestMemory: "256Mi", limitMemory: "1Gi"},
-		"mqtt":                    {requestCPU: "2", requestMemory: "2Gi", limitMemory: "6Gi"},
+		"mqtt":                    {requestCPU: "1", requestMemory: "2Gi", limitMemory: "6Gi"},
 		"video-cloud-api":         {requestCPU: "2", requestMemory: "2Gi", limitMemory: "4Gi"},
 		"video-cloud-logingester": {requestCPU: "500m", requestMemory: "512Mi", limitMemory: "1Gi"},
 		"video-cloud-mqttusage":   {requestCPU: "250m", requestMemory: "256Mi", limitMemory: "1Gi"},
@@ -4576,6 +4648,26 @@ func lkeContainerResourcesManifest(name string) string {
             limits:
               memory: %q
 `, profile.requestCPU, profile.requestMemory, profile.limitMemory)
+}
+
+func lkeVideoCloudAPIDBMaxOpenConns(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_API_DB_MAX_OPEN_CONNS"), env["LKE_VIDEO_CLOUD_API_DB_MAX_OPEN_CONNS"], "20")
+}
+
+func lkeVideoCloudAPIDBMaxIdleConns(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_API_DB_MAX_IDLE_CONNS"), env["LKE_VIDEO_CLOUD_API_DB_MAX_IDLE_CONNS"], "10")
+}
+
+func lkeVideoCloudWorkerDBMaxOpenConns(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_WORKER_DB_MAX_OPEN_CONNS"), env["LKE_VIDEO_CLOUD_WORKER_DB_MAX_OPEN_CONNS"], "4")
+}
+
+func lkeVideoCloudWorkerDBMaxIdleConns(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_WORKER_DB_MAX_IDLE_CONNS"), env["LKE_VIDEO_CLOUD_WORKER_DB_MAX_IDLE_CONNS"], "2")
+}
+
+func lkeVideoCloudDBConnMaxLifetime(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_DB_CONN_MAX_LIFETIME"), env["LKE_VIDEO_CLOUD_DB_CONN_MAX_LIFETIME"], "5m")
 }
 
 func lkeAccountManagerInternalURL(env map[string]string) string {

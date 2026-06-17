@@ -73,11 +73,18 @@
         if [ -n "{{ mqtt_addr | default('') }}" ]; then
           export VIDEO_CLOUD_MQTT_ADDR="{{ mqtt_addr }}"
         fi
+        runner_nofile_limit="{{ runner_nofile_limit | default(1048576) }}"
+        if [ -n "$runner_nofile_limit" ]; then
+          ulimit -n "$runner_nofile_limit"
+        fi
         export CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0
         nohup "{{ remote_home_100k_dir }}/bin/home-100k" runner-daemon \
           --env-root "{{ remote_env_root }}" \
           --brandname "{{ brandname }}" \
           --region "{{ region }}" \
+          --devices "{{ device_count }}" \
+          --users "{{ user_count }}" \
+          --devices-per-user "{{ devices_per_user }}" \
           --run-id "{{ run_id }}" \
           --role "{{ role }}" \
           --shard-index "{{ shard_index | string }}" \

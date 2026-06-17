@@ -24,6 +24,15 @@ func TestDefaultPlanResolves100KHomeBaseline(t *testing.T) {
 	if plan.Conditions.DevicesPerUser != 20 {
 		t.Fatalf("devices per user = %d, want 20", plan.Conditions.DevicesPerUser)
 	}
+	if plan.Conditions.RunnerNofileLimit != 1048576 {
+		t.Fatalf("runner nofile limit = %d, want 1048576", plan.Conditions.RunnerNofileLimit)
+	}
+	if plan.Conditions.DeviceSessionModel != "lifetime-subscription" {
+		t.Fatalf("device session model = %q, want lifetime-subscription", plan.Conditions.DeviceSessionModel)
+	}
+	if plan.Conditions.RunnerReadModel != "go-netpoll-bounded-reader-goroutine" {
+		t.Fatalf("runner read model = %q, want go-netpoll-bounded-reader-goroutine", plan.Conditions.RunnerReadModel)
+	}
 	if got := plan.DeviceMix["light"]; got != 50000 {
 		t.Fatalf("light count = %d, want 50000", got)
 	}
@@ -99,6 +108,72 @@ func TestDefaultPlanCreatesDeterministicShardsAndStages(t *testing.T) {
 		}
 		if plan.Stages[idx].WarmUp != "1m" || plan.Stages[idx].SteadyState != "2m" || plan.Stages[idx].CoolDown != "45s" {
 			t.Fatalf("stage %d durations = warm-up %s steady %s cool-down %s, want 1m/2m/45s", idx, plan.Stages[idx].WarmUp, plan.Stages[idx].SteadyState, plan.Stages[idx].CoolDown)
+		}
+	}
+}
+
+func TestPlanUsesConfiguredDeviceCount(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:     "cloud_env/staging/lke",
+		Brandname:   "RTK",
+		Region:      "us-sea",
+		DeviceCount: 9000,
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+
+	if plan.Conditions.Devices != 9000 {
+		t.Fatalf("devices = %d, want 9000", plan.Conditions.Devices)
+	}
+	if plan.Conditions.Users != 450 {
+		t.Fatalf("users = %d, want 450", plan.Conditions.Users)
+	}
+	if got := plan.DeviceMix["light"]; got != 4500 {
+		t.Fatalf("light count = %d, want 4500", got)
+	}
+	if got := plan.DeviceMix["air_conditioner"]; got != 1800 {
+		t.Fatalf("air conditioner count = %d, want 1800", got)
+	}
+	if got := plan.DeviceMix["smart_meter"]; got != 2700 {
+		t.Fatalf("smart meter count = %d, want 2700", got)
+	}
+	if got := plan.PresenceMix["online_steady"]; got != 7650 {
+		t.Fatalf("online steady count = %d, want 7650", got)
+	}
+	if got := plan.PresenceMix["offline_desired_queue"]; got != 900 {
+		t.Fatalf("offline desired queue count = %d, want 900", got)
+	}
+	if got := plan.PresenceMix["flapping_reconnect"]; got != 450 {
+		t.Fatalf("flapping reconnect count = %d, want 450", got)
+	}
+
+	deviceShards := plan.ShardsByRole("device-mqtt")
+	if len(deviceShards) != 5 {
+		t.Fatalf("device shards = %d, want 5", len(deviceShards))
+	}
+	for idx, shard := range deviceShards {
+		if shard.Start != idx*1800 || shard.End != (idx+1)*1800 || shard.Count != 1800 {
+			t.Fatalf("device shard %d = [%d,%d) count=%d, want [%d,%d) count=1800", idx, shard.Start, shard.End, shard.Count, idx*1800, (idx+1)*1800)
+		}
+	}
+	userShards := plan.ShardsByRole("user-app")
+	if userShards[0].Start != 0 || userShards[0].End != 90 || userShards[4].Start != 360 || userShards[4].End != 450 {
+		t.Fatalf("unexpected user shards: %#v", userShards)
+	}
+
+	wantStages := []struct {
+		name    string
+		devices int
+	}{
+		{"25pct", 2250},
+		{"50pct", 4500},
+		{"75pct", 6750},
+		{"100pct", 9000},
+	}
+	for idx, want := range wantStages {
+		if plan.Stages[idx].Name != want.name || plan.Stages[idx].ConnectedDevices != want.devices {
+			t.Fatalf("stage %d = %s/%d, want %s/%d", idx, plan.Stages[idx].Name, plan.Stages[idx].ConnectedDevices, want.name, want.devices)
 		}
 	}
 }

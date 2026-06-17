@@ -8,8 +8,10 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -176,6 +178,13 @@ func TestRequestDeviceTokenSendsTrustedCertHeadersForHTTPPortForward(t *testing.
 		if got := r.Header.Get("X-Client-S-DN"); got != "/CN=device-1/O=VideoCloud" {
 			t.Fatalf("X-Client-S-DN = %q, want device subject", got)
 		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["access_token_only"] != true {
+			t.Fatalf("access_token_only = %#v, want true", body["access_token_only"])
+		}
 		writeJSON(t, w, map[string]string{"access_token": "device-token"})
 	}))
 	defer server.Close()
@@ -201,6 +210,13 @@ func TestRequestAppTokenSendsTrustedCertHeadersForHTTPPortForward(t *testing.T) 
 		}
 		if got := r.Header.Get("X-Client-S-DN"); got != "/CN=app-user:user-1/O=VideoCloud" {
 			t.Fatalf("X-Client-S-DN = %q, want app subject", got)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["access_token_only"] != true {
+			t.Fatalf("access_token_only = %#v, want true", body["access_token_only"])
 		}
 		writeJSON(t, w, map[string]string{"scope": "app", "access_token": "app-token"})
 	}))
@@ -233,6 +249,12 @@ func TestRedactedErrorPreservesMissingAccessTokenDiagnostics(t *testing.T) {
 		if got := redactedErrorString(raw); got != raw {
 			t.Fatalf("redactedErrorString(%q) = %q", raw, got)
 		}
+	}
+}
+
+func TestRedactedErrorHandlesNilError(t *testing.T) {
+	if got := redactedError(nil); got != "" {
+		t.Fatalf("redactedError(nil) = %q, want empty string", got)
 	}
 }
 
@@ -321,6 +343,39 @@ func TestSustainedEventsTelemetryCanBeDisabled(t *testing.T) {
 	}
 }
 
+func TestSustainedEventsUseExecutableCommandWindow(t *testing.T) {
+	sessions := make([]sustainedDeviceSession, 450)
+	for idx := range sessions {
+		sessions[idx] = sustainedDeviceSession{Record: certRecord{DeviceID: fmt.Sprintf("device-%04d", idx), DeviceType: "light"}}
+	}
+	events := sustainedEventsWithCommandWindow(sessions, loadOptions{
+		TelemetryInterval:          "off",
+		CommandRatePerDevicePerDay: "86400000",
+	}, 1234, 75*time.Second, 60*time.Second)
+	if len(events) == 0 {
+		t.Fatal("expected command events")
+	}
+	for _, event := range events {
+		if event.Kind != "command" {
+			continue
+		}
+		if event.Offset >= 60*time.Second {
+			t.Fatalf("command event offset %s falls outside executable command window", event.Offset)
+		}
+	}
+}
+
+func TestSustainedCommandRuntimeLogStreamsAreUniquePerCommand(t *testing.T) {
+	first := newRuntimeLogRecorderForCommand("rtk-0041", "run-1", "cmd-1", time.Now)
+	second := newRuntimeLogRecorderForCommand("rtk-0041", "run-1", "cmd-2", time.Now)
+	if first.streamID == second.streamID {
+		t.Fatalf("stream IDs should differ per command: %s", first.streamID)
+	}
+	if !strings.HasPrefix(first.streamID, "mqtt-e2e-run-1-") || !strings.HasPrefix(second.streamID, "mqtt-e2e-run-1-") {
+		t.Fatalf("stream IDs must keep run prefix for server evidence SQL: %q %q", first.streamID, second.streamID)
+	}
+}
+
 func TestPrepareAppCertificateBootstrapForAssignmentsFallsBackToNextCandidate(t *testing.T) {
 	certPEM, keyPEM, csrPEM := testAppMaterial(t, "app-user:user-1")
 	account := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -338,15 +393,16 @@ func TestPrepareAppCertificateBootstrapForAssignmentsFallsBackToNextCandidate(t 
 	videoCalls := 0
 	video := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		videoCalls++
-		var body map[string]string
+		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body["devid"] == "device-1" {
+		deviceID, _ := body["devid"].(string)
+		if deviceID == "device-1" {
 			http.Error(w, "try another candidate", http.StatusServiceUnavailable)
 			return
 		}
-		writeJSON(t, w, map[string]string{"scope": "app", "access_token": "app-token-" + body["devid"]})
+		writeJSON(t, w, map[string]string{"scope": "app", "access_token": "app-token-" + deviceID})
 	}))
 	defer video.Close()
 
@@ -454,12 +510,15 @@ func TestRequestDeviceTokenUsesTrustedHeadersForHTTPBaseURL(t *testing.T) {
 		if got := r.Header.Get("X-Client-S-DN"); got != "/CN=device-1/O=VideoCloud" {
 			t.Fatalf("X-Client-S-DN = %q", got)
 		}
-		var body map[string]string
+		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
 		if body["scope"] != "device" || body["devid"] != "device-1" || body["service"] != "mqtt" {
 			t.Fatalf("body = %#v", body)
+		}
+		if body["access_token_only"] != true {
+			t.Fatalf("access_token_only = %#v, want true", body["access_token_only"])
 		}
 		writeJSON(t, w, map[string]string{"access_token": "device-token"})
 	}))
@@ -724,10 +783,14 @@ func TestSustainedShadowCommandPublishesRuntimeLogsForServerCorrelation(t *testi
 	}
 
 	var totals mqttIOTotals
+	reader := startSustainedDeviceReader(deviceConn)
+	defer reader.Close()
 	err = runSustainedShadowCommand(sustainedDeviceSession{
-		Record: certRecord{DeviceID: "rtk-0041", DeviceType: "light"},
-		Conn:   deviceConn,
-	}, "RTK", "run-sustained-logs", tokenServer.URL, host, port, appCert, &totals)
+		Record:     certRecord{DeviceID: "rtk-0041", DeviceType: "light"},
+		Conn:       deviceConn,
+		Reader:     reader,
+		MQTTTarget: mqttEndpointTarget{Host: host, Port: port},
+	}, "RTK", "run-sustained-logs", tokenServer.URL, appCert, &totals)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -771,6 +834,44 @@ func TestSustainedShadowCommandPublishesRuntimeLogsForServerCorrelation(t *testi
 	}
 }
 
+func TestSustainedStageResultsJSONIncludesSuccessfulCommandEvents(t *testing.T) {
+	rows := sustainedStageResultsJSON([]sustainedStageResult{{
+		Name:              "25pct",
+		ConnectedTarget:   2250,
+		ActiveConnections: 2250,
+		Status:            "PASS",
+		Totals: mqttIOTotals{
+			AppDesiredWrites: 1,
+			CommandEvents: []sustainedCommandEvent{{
+				Stage:              "25pct",
+				DeviceID:           "rtk-0041",
+				CommandID:          "cmd-0041",
+				RuntimeLogStreamID: "mqtt-e2e-run-rtk-0041-abcd",
+				EventIndex:         7,
+				SessionSlot:        3,
+				MQTTTarget:         "127.0.0.1:8883",
+				ExpectedLogs: []logExpect{
+					{Seq: 1, Source: "app_controller", Message: "mqtt_e2e shadow_desired app_controller publish"},
+					{Seq: 2, Source: "device_client", Message: "mqtt_e2e shadow_delta device_client receive"},
+					{Seq: 3, Source: "device_client", Message: "mqtt_e2e shadow_reported device_client publish"},
+					{Seq: 4, Source: "app_observer", Message: "mqtt_e2e shadow_reported app_observer receive"},
+				},
+				OccurredAt: "2026-06-17T04:00:00Z",
+			}},
+		},
+		CommandsAttempted: 1,
+		CommandsPassed:    1,
+	}}, appBootstrapStatus{})
+
+	events, ok := rows[0]["command_events"].([]sustainedCommandEvent)
+	if !ok || len(events) != 1 {
+		t.Fatalf("command events = %#v, want one successful command event", rows[0]["command_events"])
+	}
+	if events[0].RuntimeLogStreamID != "mqtt-e2e-run-rtk-0041-abcd" || len(events[0].ExpectedLogs) != 4 {
+		t.Fatalf("unexpected command event: %#v", events[0])
+	}
+}
+
 func TestSustainedActorsUseLongMQTTKeepAlive(t *testing.T) {
 	broker := newFakeTLSMQTTBroker(t)
 	defer broker.Close()
@@ -787,20 +888,85 @@ func TestSustainedActorsUseLongMQTTKeepAlive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var totals mqttIOTotals
 	conn, err := connectSustainedDevice(certRecord{
 		DeviceID:   "rtk-0041",
 		DeviceType: "light",
 		CertPEM:    certPEM,
 		KeyPEM:     keyPEM,
-	}, "RTK", "run-sustained-keepalive", tokenServer.URL, host, port)
+	}, "RTK", "run-sustained-keepalive", tokenServer.URL, mqttEndpointTarget{Host: host, Port: port}, func(update func(*mqttIOTotals)) {
+		update(&totals)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close()
+	if totals.DeviceTokenAttempts != 1 || totals.DeviceTokenSuccesses != 1 ||
+		totals.DeviceMQTTDialAttempts != 1 || totals.DeviceMQTTDialSuccesses != 1 ||
+		totals.DeviceMQTTConnackAttempts != 1 || totals.DeviceMQTTConnackSuccesses != 1 {
+		t.Fatalf("unexpected sustained device phase counters: %#v", totals)
+	}
 
 	clientID := fmt.Sprintf("rtk-e2e-run-sustained-keepalive-rtk-0041-device-%d", os.Getpid())
 	if got := broker.KeepAlive(clientID); got != sustainedMQTTKeepAliveSeconds {
 		t.Fatalf("sustained device keepalive = %d, want %d", got, sustainedMQTTKeepAliveSeconds)
+	}
+}
+
+func TestSustainedDeviceReaderSendsMQTTKeepAlivePing(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	reader := startSustainedDeviceReaderWithKeepAlive(&lockedReadWriteCloser{ReadWriteCloser: client}, 20*time.Millisecond)
+	defer reader.Close()
+
+	_ = server.SetReadDeadline(time.Now().Add(250 * time.Millisecond))
+	packetType, body, err := mqttReadPacket(server)
+	if err != nil {
+		t.Fatalf("read keepalive packet: %v", err)
+	}
+	if packetType != 0xc0 || len(body) != 0 {
+		t.Fatalf("keepalive packet type=%#x body_len=%d, want PINGREQ", packetType, len(body))
+	}
+}
+
+func TestRuntimeLogRecorderQoS1WaitsForPubAck(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	recorder := newRuntimeLogRecorderForCommand("rtk-0041", "run-qos1", "cmd-1", fixedProbeTime)
+	done := make(chan error, 1)
+	go func() {
+		_, err := recorder.RecordWithExpectationQoS1(client, "shadow_reported", "app_observer", "receive", "$vc/devices/rtk-0041/shadow/update/documents", map[string]any{"command_id": "cmd-1"})
+		done <- err
+	}()
+
+	packetType, body, err := mqttReadPacket(server)
+	if err != nil {
+		t.Fatalf("read runtime log publish: %v", err)
+	}
+	if packetType != 0x32 {
+		t.Fatalf("runtime log packet type = %#x, want QoS1 PUBLISH", packetType)
+	}
+	packetID := mqttPublishPacketIDForTest(packetType&0x0f, body)
+	if packetID == 0 {
+		t.Fatal("runtime log QoS1 publish missing packet id")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("RecordWithExpectationQoS1 returned before PUBACK: %v", err)
+	default:
+	}
+	if err := mqttWritePacket(server, 0x40, []byte{byte(packetID >> 8), byte(packetID)}); err != nil {
+		t.Fatalf("write puback: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RecordWithExpectationQoS1 returned error: %v", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("RecordWithExpectationQoS1 did not return after PUBACK")
 	}
 }
 
@@ -980,6 +1146,75 @@ func TestAttachMQTTIOTotalsIncludesFailureReasons(t *testing.T) {
 	}
 }
 
+func TestAttachMQTTIOTotalsIncludesBoundedFailureEvents(t *testing.T) {
+	totals := mqttIOTotals{}
+	for idx := 0; idx < maxFailureEvents+5; idx++ {
+		recordFailureEvent(&totals, sustainedFailureEvent{
+			Stage:       "75pct",
+			Reason:      "device_delta_wait_failed",
+			Detail:      "network EOF",
+			Phase:       "device_delta_wait",
+			DeviceID:    fmt.Sprintf("rtk-%04d", idx),
+			CommandID:   fmt.Sprintf("cmd-%04d", idx),
+			EventIndex:  idx,
+			SessionSlot: idx,
+		})
+	}
+	result := map[string]any{}
+	attachMQTTIOTotals(result, totals)
+	events, ok := result["failure_events"].([]sustainedFailureEvent)
+	if !ok {
+		t.Fatalf("failure_events missing or wrong type: %#v", result["failure_events"])
+	}
+	if len(events) != maxFailureEvents {
+		t.Fatalf("failure_events len = %d, want %d", len(events), maxFailureEvents)
+	}
+	if events[0].DeviceID != "rtk-0000" || events[len(events)-1].DeviceID != fmt.Sprintf("rtk-%04d", maxFailureEvents-1) {
+		t.Fatalf("failure_events should keep the first bounded samples: %#v", events)
+	}
+}
+
+func TestAttachMQTTIOTotalsIncludesConnectionPhaseCounters(t *testing.T) {
+	totals := mqttIOTotals{
+		ConnectAttempts:            3,
+		ConnectFailures:            1,
+		DeviceTokenAttempts:        3,
+		DeviceTokenSuccesses:       2,
+		DeviceTokenFailures:        1,
+		DeviceMQTTDialAttempts:     2,
+		DeviceMQTTDialSuccesses:    2,
+		DeviceMQTTDialFailures:     0,
+		DeviceMQTTConnackAttempts:  2,
+		DeviceMQTTConnackSuccesses: 1,
+		DeviceMQTTConnackFailures:  1,
+		DeviceSubscribeAttempts:    1,
+		SubscribeSuccesses:         1,
+		AppTokenAttempts:           2,
+		AppTokenSuccesses:          1,
+		AppTokenFailures:           1,
+		AppMQTTDialAttempts:        1,
+		AppMQTTDialSuccesses:       1,
+		AppMQTTConnackAttempts:     1,
+		AppMQTTConnackSuccesses:    1,
+	}
+	result := map[string]any{}
+	attachMQTTIOTotals(result, totals)
+	deviceTotals, ok := result["device_mqtt_totals"].(map[string]any)
+	if !ok {
+		t.Fatalf("device_mqtt_totals missing: %#v", result)
+	}
+	appTotals, ok := result["app_user_totals"].(map[string]any)
+	if !ok {
+		t.Fatalf("app_user_totals missing: %#v", result)
+	}
+	if deviceTotals["token_attempts"] != int64(3) || deviceTotals["mqtt_connack_fail"] != int64(1) || deviceTotals["subscribe_attempts"] != int64(1) {
+		t.Fatalf("device phase counters missing: %#v", deviceTotals)
+	}
+	if appTotals["token_attempts"] != int64(2) || appTotals["mqtt_dial_success"] != int64(1) || appTotals["mqtt_connack_success"] != int64(1) {
+		t.Fatalf("app phase counters missing: %#v", appTotals)
+	}
+}
+
 func TestNormalizeSustainedFailureDetailsPreservesConnectionPhase(t *testing.T) {
 	tests := []struct {
 		name string
@@ -995,6 +1230,16 @@ func TestNormalizeSustainedFailureDetailsPreservesConnectionPhase(t *testing.T) 
 			name: "mqtt tls dial timeout",
 			err:  "mqtt dial: mqtt tls dial: dial tcp 203.0.113.10:8883: i/o timeout",
 			want: "mqtt tls dial timeout",
+		},
+		{
+			name: "app mqtt tls dial includes safe endpoint and timeout",
+			err:  "mqtt dial: mqtt tls dial host=172.238.59.219 port=8883 timeout=4.5s: dial tcp 172.238.59.219:8883: i/o timeout",
+			want: "mqtt dial: mqtt tls dial host=172.238.59.219 port=8883 timeout=4.5s: dial tcp 172.238.59.219:8883: i/o timeout",
+		},
+		{
+			name: "app token includes safe base URL and timeout",
+			err:  `app request_token base_url=https://video-cloud-staging.realtekconnect.com timeout=4.5s: Post "https://video-cloud-staging.realtekconnect.com/request_token": context deadline exceeded`,
+			want: "app request_token base_url=https://video-cloud-staging.realtekconnect.com timeout=4.5s: context deadline exceeded",
 		},
 		{
 			name: "mqtt connack timeout",
@@ -1013,6 +1258,39 @@ func TestNormalizeSustainedFailureDetailsPreservesConnectionPhase(t *testing.T) 
 				t.Fatalf("normalizeFailureDetail(%q) = %q, want %q", tt.err, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSustainedDeviceReaderDispatchesMatchingDeltaAfterUnrelatedPublish(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+	reader := startSustainedDeviceReader(client)
+	defer reader.Close()
+	topic := "$vc/devices/rtk-0041/shadow/update/delta"
+	go func() {
+		_ = mqttWritePacket(server, 0x30, append(mqttString(topic), []byte(`{"clientToken":"other"}`)...))
+		_ = mqttWritePacket(server, 0x30, append(mqttString(topic), []byte(`{"clientToken":"cmd-1"}`)...))
+	}()
+
+	doc, err := reader.WaitForPublish(topic, 500*time.Millisecond, func(doc map[string]any) bool {
+		return doc["clientToken"] == "cmd-1"
+	})
+	if err != nil {
+		t.Fatalf("WaitForPublish() error = %v", err)
+	}
+	if doc["clientToken"] != "cmd-1" {
+		t.Fatalf("clientToken = %#v, want cmd-1", doc["clientToken"])
+	}
+}
+
+func TestConnectFailureReasonSeparatesWindowExpiry(t *testing.T) {
+	deadline := time.Now().Add(-time.Second)
+
+	reason := connectFailureReason(errors.New(`device request_token: Post "https://device.example/request_token": context deadline exceeded`), deadline)
+
+	if reason != "connect_window_expired" {
+		t.Fatalf("reason = %q, want connect_window_expired", reason)
 	}
 }
 
@@ -1063,6 +1341,113 @@ func TestSustainedStageResultsJSONIncludesStageDiagnostics(t *testing.T) {
 	}
 	if diag.SkipReason != "device_connect_target_missed" || diag.ConnectAttempts != 1200 {
 		t.Fatalf("unexpected diagnostics: %+v", diag)
+	}
+}
+
+func TestParseSustainedStagesIncludesMinimumCommands(t *testing.T) {
+	stages, err := parseSustainedStages(loadOptions{
+		StageNames:            "25pct,50pct",
+		StageConnectedDevices: "450,900",
+		StageDurationsSeconds: "75,75",
+		StageMinCommands:      "23,45",
+	})
+	if err != nil {
+		t.Fatalf("parseSustainedStages: %v", err)
+	}
+	if stages[0].MinCommands != 23 || stages[1].MinCommands != 45 {
+		t.Fatalf("min commands = %d/%d, want 23/45", stages[0].MinCommands, stages[1].MinCommands)
+	}
+}
+
+func TestUserCommandScheduleHonorsMinimumCommands(t *testing.T) {
+	offsets := userCommandScheduleWithMin(900, 1, 50*time.Second, 1234, 68)
+	if len(offsets) < 68 {
+		t.Fatalf("offset count = %d, want at least 68", len(offsets))
+	}
+	for idx, offset := range offsets {
+		if offset <= 0 || offset >= 50*time.Second {
+			t.Fatalf("offset[%d] = %s outside command window", idx, offset)
+		}
+	}
+}
+
+func TestSustainedStageResultsJSONIncludesFailureEvents(t *testing.T) {
+	rows := sustainedStageResultsJSON([]sustainedStageResult{{
+		Name:              "75pct",
+		ConnectedTarget:   6750,
+		ActiveConnections: 6750,
+		Status:            "FAIL",
+		Totals: mqttIOTotals{
+			FailureEvents: []sustainedFailureEvent{{
+				Stage:       "75pct",
+				Reason:      "device_delta_wait_failed",
+				Detail:      "network EOF",
+				Phase:       "device_delta_wait",
+				DeviceID:    "rtk-0041",
+				CommandID:   "cmd-0041",
+				EventIndex:  61,
+				SessionSlot: 61,
+			}},
+		},
+	}}, appBootstrapStatus{})
+	events, ok := rows[0]["failure_events"].([]sustainedFailureEvent)
+	if !ok {
+		t.Fatalf("failure_events missing or wrong type: %#v", rows[0]["failure_events"])
+	}
+	if len(events) != 1 || events[0].DeviceID != "rtk-0041" || events[0].EventIndex != 61 {
+		t.Fatalf("unexpected failure_events: %#v", events)
+	}
+}
+
+func TestStagedSustainedLoadRunsPartialShadowActionWhenTargetMissed(t *testing.T) {
+	broker := newFakeTLSMQTTBroker(t)
+	defer broker.Close()
+	deviceCertPEM, deviceKeyPEM, _ := testAppMaterial(t, "rtk-0041")
+	appCertPEM, appKeyPEM, _ := testAppMaterial(t, "app-user:user-1")
+	appCert, err := tls.X509KeyPair([]byte(appCertPEM), []byte(appKeyPEM))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, map[string]string{"access_token": "load-test-token"})
+	}))
+	defer tokenServer.Close()
+	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(rawPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	overall, stages := runStagedSustainedHome100KLoad(
+		[]assignment{{DeviceID: "rtk-0041"}, {DeviceID: "rtk-missing-cert"}},
+		[]certRecord{{DeviceID: "rtk-0041", DeviceType: "light", CertPEM: deviceCertPEM, KeyPEM: deviceKeyPEM}},
+		"RTK",
+		"run-partial-shadow",
+		tokenServer.URL,
+		[]mqttEndpointTarget{{Host: host, Port: port}},
+		appCert,
+		20260616,
+		loadOptions{Concurrency: 1, CommandRatePerDevicePerDay: "86400000"},
+		[]sustainedStage{{Name: "partial", ConnectedTarget: 2, DurationSeconds: 1}},
+	)
+	if len(stages) != 1 {
+		t.Fatalf("stages len = %d, want 1", len(stages))
+	}
+	stage := stages[0]
+	if overall.Status != "FAIL" || stage.Status != "FAIL" {
+		t.Fatalf("status overall=%s stage=%s, want FAIL due target miss", overall.Status, stage.Status)
+	}
+	if !stage.Diagnostics.TargetMissed || stage.Diagnostics.SkipReason != "device_connect_target_missed" {
+		t.Fatalf("target miss diagnostics not preserved: %+v", stage.Diagnostics)
+	}
+	if stage.CommandsAttempted == 0 || stage.Totals.AppDesiredWrites == 0 || stage.Totals.ReportedEvents == 0 {
+		t.Fatalf("partial shadow action did not run: commands=%d totals=%+v notes=%v", stage.CommandsAttempted, stage.Totals, stage.Notes)
+	}
+	if stage.ActiveConnections != 1 {
+		t.Fatalf("active connections = %d, want 1", stage.ActiveConnections)
 	}
 }
 
@@ -1223,11 +1608,12 @@ func newAppTokenServer(t *testing.T, wantSubject string) (*httptest.Server, *boo
 			t.Fatalf("client certificate subject = %q, want %q", got, wantSubject)
 		}
 		sawClientCert = true
-		var body map[string]string
+		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode app token request: %v", err)
 		}
-		writeJSON(t, w, map[string]string{"scope": "app", "access_token": "app-token-" + body["devid"]})
+		deviceID, _ := body["devid"].(string)
+		writeJSON(t, w, map[string]string{"scope": "app", "access_token": "app-token-" + deviceID})
 	}))
 	server.TLS = &tls.Config{ClientAuth: tls.RequireAnyClientCert}
 	server.StartTLS()
@@ -1331,7 +1717,7 @@ func TestConnectSustainedDevicesUntilReturnsWhenDeadlineAlreadyExpired(t *testin
 	done := make(chan []sustainedDeviceSession, 1)
 	go func() {
 		var totals mqttIOTotals
-		done <- connectSustainedDevicesUntil(assignments, nil, "RTK", "run-deadline", "http://127.0.0.1:1", "127.0.0.1", 1, 32, time.Now().Add(-time.Millisecond), &totals)
+		done <- connectSustainedDevicesUntil(assignments, nil, "RTK", "run-deadline", "http://127.0.0.1:1", []mqttEndpointTarget{{Host: "127.0.0.1", Port: 1}}, 32, time.Now().Add(-time.Millisecond), &totals)
 	}()
 	select {
 	case sessions := <-done:
@@ -1351,7 +1737,7 @@ func TestConnectSustainedDevicesUntilReturnsWhenDeadlineExpiresDuringDispatch(t 
 	done := make(chan []sustainedDeviceSession, 1)
 	go func() {
 		var totals mqttIOTotals
-		done <- connectSustainedDevicesUntil(assignments, nil, "RTK", "run-deadline", "http://127.0.0.1:1", "127.0.0.1", 1, 1, time.Now().Add(10*time.Millisecond), &totals)
+		done <- connectSustainedDevicesUntil(assignments, nil, "RTK", "run-deadline", "http://127.0.0.1:1", []mqttEndpointTarget{{Host: "127.0.0.1", Port: 1}}, 1, time.Now().Add(10*time.Millisecond), &totals)
 	}()
 	select {
 	case <-done:
@@ -1372,6 +1758,32 @@ func TestStagedConnectDeadlineReservesActionWindow(t *testing.T) {
 	got = stagedConnectDeadline(start, longDeadline)
 	if longDeadline.Sub(got) != 90*time.Second {
 		t.Fatalf("long stage action reserve = %s, want 90s", longDeadline.Sub(got))
+	}
+}
+
+func TestDesiredWriteRemainingBudgetScalesForShortDebugStages(t *testing.T) {
+	if got := desiredWriteRemainingBudget(75 * time.Second); got != 15*time.Second {
+		t.Fatalf("75s stage budget = %s, want 15s", got)
+	}
+	if got := desiredWriteRemainingBudget(1 * time.Second); got != 250*time.Millisecond {
+		t.Fatalf("1s stage budget = %s, want 250ms", got)
+	}
+}
+
+func TestTimeoutUntilDeadlineBoundsCommandPhases(t *testing.T) {
+	got, err := timeoutUntilDeadline(time.Time{}, 10*time.Second, "phase")
+	if err != nil || got != 10*time.Second {
+		t.Fatalf("zero deadline timeout=%s err=%v, want 10s nil", got, err)
+	}
+	got, err = timeoutUntilDeadline(time.Now().Add(200*time.Millisecond), 10*time.Second, "phase")
+	if err != nil {
+		t.Fatalf("near deadline returned error: %v", err)
+	}
+	if got <= 0 || got > 250*time.Millisecond {
+		t.Fatalf("near deadline timeout = %s, want bounded remaining duration", got)
+	}
+	if _, err := timeoutUntilDeadline(time.Now().Add(-time.Millisecond), 10*time.Second, "app_mqtt_connect"); err == nil || !strings.Contains(err.Error(), "app_mqtt_connect") {
+		t.Fatalf("expired deadline err = %v, want phase-specific error", err)
 	}
 }
 
@@ -1417,6 +1829,7 @@ func (b *fakeMQTTBroker) handle(conn net.Conn) {
 			b.mu.Unlock()
 			_ = mqttWritePacket(conn, 0x90, []byte{byte(packetID >> 8), byte(packetID), 0})
 		case 3:
+			packetID := mqttPublishPacketIDForTest(packetType&0x0f, body)
 			topic, payload, err := mqttDecodePublish(packetType&0x0f, body)
 			if err != nil {
 				return
@@ -1432,10 +1845,28 @@ func (b *fakeMQTTBroker) handle(conn net.Conn) {
 				_ = mqttPublish(target, topic, payload)
 			}
 			b.publishShadowResponses(topic, payload)
+			if packetID > 0 {
+				_ = mqttWritePacket(conn, 0x40, []byte{byte(packetID >> 8), byte(packetID)})
+			}
+		case 12:
+			_ = mqttWritePacket(conn, 0xd0, nil)
 		default:
 			return
 		}
 	}
+}
+
+func mqttPublishPacketIDForTest(flags byte, body []byte) uint16 {
+	qos := (flags >> 1) & 0x03
+	if qos == 0 || len(body) < 2 {
+		return 0
+	}
+	topicLen := int(binary.BigEndian.Uint16(body[:2]))
+	pos := 2 + topicLen
+	if len(body) < pos+2 {
+		return 0
+	}
+	return binary.BigEndian.Uint16(body[pos : pos+2])
 }
 
 func (b *fakeMQTTBroker) publishShadowResponses(topic string, payload []byte) {
@@ -1615,4 +2046,18 @@ func issueCertificateForCSR(t *testing.T, csrPEM string) string {
 		t.Fatal(err)
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}))
+}
+
+func TestParseMQTTEndpointTargetsAcceptsCommaSeparatedLoadBalancers(t *testing.T) {
+	targets := parseMQTTEndpointTargets(" 172.238.1.10:8883, mqtt-a.example.test:8883, bad-value,172.238.1.10:8883 ")
+
+	if len(targets) != 2 {
+		t.Fatalf("len(targets) = %d, want 2: %#v", len(targets), targets)
+	}
+	if targets[0] != (mqttEndpointTarget{Host: "172.238.1.10", Port: 8883}) {
+		t.Fatalf("target[0] = %#v", targets[0])
+	}
+	if targets[1] != (mqttEndpointTarget{Host: "mqtt-a.example.test", Port: 8883}) {
+		t.Fatalf("target[1] = %#v", targets[1])
+	}
 }

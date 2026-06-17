@@ -81,7 +81,14 @@ Secrets and non-secret test descriptions are intentionally separate:
 - `~/.env` supplies only `LINODE_TOKEN`.
 - `loadtests/home-100k/scenarios/default.description.env` supplies the
   non-secret test description: env-root, brand, region, remote paths, SSH key
-  path, and status interval.
+  path, status interval, stage durations, and target load size.
+
+The `home-100k` name is the package/VM-label prefix only. The active test size
+is configured in the description file with `HOME100K_DEVICES`, optional
+`HOME100K_USERS`, and `HOME100K_DEVICES_PER_USER`. The current debug profile is
+`HOME100K_DEVICES=9000`; changing between 9K and 100K must be a single
+description-file/profile change, not edits spread across script names, docs,
+Ansible, and Go code.
 
 The default description file points at the existing provision-server staging
 environment:
@@ -89,6 +96,26 @@ environment:
 ```text
 cloud_env/staging/lke
 ```
+
+## EMQX Capacity And Placement
+
+The server target is EMQX on LKE. Before a formal 100K run, verify that the
+staging server deployment has enough broker capacity and that broker pods are
+spread across nodes:
+
+- `LKE_MQTT_REPLICAS=9`.
+- `LKE_MQTT_NODE_POOL_ID=<pool-id>` points EMQX at a node pool with at least 9
+  schedulable nodes.
+- The EMQX deployment uses hard pod anti-affinity by
+  `kubernetes.io/hostname`.
+- `mqtt-public` uses `externalTrafficPolicy: Local`.
+- Linode NodeBalancer health for port `8883` must show the expected EMQX nodes
+  as up before the load test starts.
+
+Do not use `externalTrafficPolicy: Cluster` to compensate for uneven EMQX
+placement. It can route public MQTT traffic through kube-proxy on nodes without
+broker pods, which makes one node appear as the bottleneck instead of measuring
+EMQX capacity.
 
 Defaults:
 
@@ -107,8 +134,14 @@ Defaults:
 | `HOME100K_STAGE_WARM_UP` | `15s` |
 | `HOME100K_STAGE_STEADY` | `45s` |
 | `HOME100K_STAGE_COOL_DOWN` | `15s` |
+| `HOME100K_DEVICES` | `9000` |
+| `HOME100K_USERS` | unset; planner derives `ceil(devices / devices-per-user)` |
+| `HOME100K_DEVICES_PER_USER` | `20` |
 | `HOME100K_RUNNER_MODE` | `live` |
+| `HOME100K_RUNNER_NOFILE_LIMIT` | `1048576`; remote runner daemon file-descriptor limit for MQTT sockets |
 | `HOME100K_CREDENTIAL_BUNDLE_FORMAT` | `sqlite-gzip` |
+| `HOME100K_MQTT_ADDR` | `auto-public-mqtt`; live commands discover public MQTT LoadBalancer IPs |
+| `HOME100K_MQTT_PUBLIC_LB_COUNT` | `1`; limits auto-discovered MQTT LoadBalancers for the current 9K profile |
 | `HOME100K_NODE_RESOURCE_STATUS` | `1` |
 | `HOME100K_K8S_NODE_RESOURCE_STATUS` | `1` |
 | `HOME100K_KUBECONFIG` | unset; falls back to existing LKE kubeconfig env or `<env-root>/state/lke-kubeconfig.yaml` |
@@ -167,10 +200,10 @@ Kubernetes node resource samples use `kubectl top nodes --no-headers` and print
 Stage duration is part of the non-secret description file. The default profile
 uses `HOME100K_STAGE_WARM_UP=15s`, `HOME100K_STAGE_STEADY=45s`, and
 `HOME100K_STAGE_COOL_DOWN=15s`, which plans 75 seconds per stage and 5 minutes
-for the four load stages before VM lifecycle and evidence overhead. Use a
-custom `HOME100K_DESCRIPTION_FILE` or edit
-`loadtests/home-100k/scenarios/default.description.env` for shorter or longer
-runs.
+for the four load stages before VM lifecycle and evidence overhead. Use explicit
+shell environment overrides for longer baseline runs, or a custom
+`HOME100K_DESCRIPTION_FILE` for a reusable alternate profile. Explicit shell
+environment variables take precedence over the description file.
 
 Runner mode is also part of the non-secret description file. The default is
 `HOME100K_RUNNER_MODE=live`. Live mode invokes the copied `rtk-cloud` runner to
@@ -226,6 +259,23 @@ lifetime state: the 50K, 75K, and 100K stages add new device sessions without
 disconnecting and resubscribing devices that were already online in earlier
 stages. Reports must show both new subscribe packets and active
 connection/subscription gauges.
+
+Load-generator runtime limits are part of the test conditions:
+
+- The remote runner daemon sets `ulimit -n` from
+  `HOME100K_RUNNER_NOFILE_LIMIT`, default `1048576`. This value is file
+  descriptor headroom, not a target connection count. It prevents a 9K or 100K
+  run from being invalidated by the generator's OS FD ceiling before EMQX,
+  NodeBalancer, IoT Device Shadow, or the Kubernetes nodes are actually tested.
+  If any generator hits `too many open files`, the report must classify the run
+  as `INCOMPLETE` because the load generator saturated first.
+- Device MQTT reads are sustained for the whole device online lifetime. The
+  runner uses Go's normal network poller and one bounded reader goroutine per
+  active device MQTT connection to dispatch subscribed shadow delta publishes.
+  A command-time one-shot blocking read is not an acceptable live model because
+  it can create client-side read starvation and falsely look like missing
+  server-side deltas.
+
 Live collect reads `vms.json`, regenerates the inventory, and runs
 `loadtests/home-100k/ansible/collect.yml` to fetch shard `results.json`, shard
 reports, runner coordination telemetry, daemon logs, resource snapshots, and

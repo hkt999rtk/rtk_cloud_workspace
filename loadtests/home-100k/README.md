@@ -95,6 +95,25 @@ The test should use deterministic sharding. Each stage must have its own
 warm-up, steady-state, and cool-down windows, and each stage must have an
 independent pass/fail/incomplete result.
 
+## Server-Side Capacity Prerequisites
+
+The staging/LKE target must run MQTT on EMQX. Public MQTT load testing should
+use an EMQX node pool sized so each broker pod can land on a different
+Kubernetes node. For the 100K baseline this means:
+
+- `LKE_MQTT_REPLICAS=9`.
+- A dedicated or otherwise uncongested node pool with at least 9 schedulable
+  nodes.
+- `LKE_MQTT_NODE_POOL_ID=<pool-id>` when EMQX should be pinned to that pool.
+- EMQX pod hard anti-affinity on `kubernetes.io/hostname`.
+- `mqtt-public` service `externalTrafficPolicy: Local`, so the Linode
+  NodeBalancer only sends MQTT traffic to nodes with a local EMQX endpoint.
+
+Using `externalTrafficPolicy: Cluster` can hide missing broker placement by
+forwarding traffic through kube-proxy on nodes without EMQX. That makes node
+CPU and conntrack pressure look like broker capacity and is not the desired
+baseline for this test.
+
 ## Home Device Mix
 
 Each simulated 10-device home uses this mix:
@@ -378,7 +397,14 @@ Secrets and non-secret test descriptions are intentionally separate:
 - `~/.env` supplies only `LINODE_TOKEN`.
 - `loadtests/home-100k/scenarios/default.description.env` supplies the
   non-secret test description: env-root, brand, region, remote paths, SSH key
-  path, and status interval.
+  path, status interval, stage durations, and target load size.
+
+The `home-100k` directory, command, VM label prefix, and remote path are package
+names. They do not define the active load size. The canonical target size is
+configured by `HOME100K_DEVICES`, optional `HOME100K_USERS`, and
+`HOME100K_DEVICES_PER_USER` in the description file. For example, the current
+debug profile uses `HOME100K_DEVICES=9000`; switching back to a 100K run should
+be a description-file change, not a filename or code change.
 
 The default description file points at the existing provision-server staging
 environment:
@@ -404,6 +430,12 @@ The script keeps non-secret defaults in one place:
 | `HOME100K_STAGE_WARM_UP` | `15s` from the default description file |
 | `HOME100K_STAGE_STEADY` | `45s` from the default description file |
 | `HOME100K_STAGE_COOL_DOWN` | `15s` from the default description file |
+| `HOME100K_DEVICES` | `9000` from the default description file |
+| `HOME100K_USERS` | unset; planner derives `ceil(devices / devices-per-user)` |
+| `HOME100K_DEVICES_PER_USER` | `20` from the default description file |
+| `HOME100K_RUNNER_NOFILE_LIMIT` | `1048576`; remote runner daemon file-descriptor limit for MQTT sockets |
+| `HOME100K_MQTT_ADDR` | `auto-public-mqtt`; live commands discover public MQTT LoadBalancer IPs |
+| `HOME100K_MQTT_PUBLIC_LB_COUNT` | `1`; limits auto-discovered MQTT LoadBalancers for the current 9K profile |
 | `HOME100K_NODE_RESOURCE_STATUS` | `1` |
 | `HOME100K_K8S_NODE_RESOURCE_STATUS` | `1` |
 | `HOME100K_KUBECONFIG` | unset; falls back to existing LKE kubeconfig env or `<env-root>/state/lke-kubeconfig.yaml` |
@@ -444,11 +476,11 @@ Kubernetes node resource samples use `kubectl top nodes --no-headers` and print
 Stage duration belongs in the non-secret description file, not in `~/.env`.
 The default debug profile uses `HOME100K_STAGE_WARM_UP=15s`,
 `HOME100K_STAGE_STEADY=45s`, and `HOME100K_STAGE_COOL_DOWN=15s`, so the planned
-window is 75 seconds per stage and 5 minutes across the 25K, 50K, 75K, and
-100K stages before provisioning, sync, collection, and evidence overhead.
-Short review runs can lower these values in
-`loadtests/home-100k/scenarios/default.description.env` or a custom
-`HOME100K_DESCRIPTION_FILE`.
+window is 75 seconds per stage and 5 minutes across the 25%, 50%, 75%, and 100%
+stages before provisioning, sync, collection, and evidence overhead.
+Short debug runs can lower these values with explicit shell environment
+overrides or a custom `HOME100K_DESCRIPTION_FILE`; explicit shell environment
+variables take precedence over the description file.
 
 Runner mode also belongs in the non-secret description file. The default is
 `HOME100K_RUNNER_MODE=live`. In live mode, each shard invokes the copied
@@ -466,6 +498,36 @@ The device session model belongs in the same description file. The supported
 live value is `HOME100K_DEVICE_SESSION_MODEL=lifetime-subscription`: devices
 subscribe once after MQTT connect and keep their shadow delta subscription
 until the shard runner exits, except for explicit offline/flapping scenarios.
+The runner uses Go's network poller through normal `net.Conn` operations; it
+does not hand-roll Linux `epoll`. Each active device MQTT connection owns one
+bounded reader goroutine that dispatches subscribed shadow delta publishes to
+the command flow. The goroutine lifetime is the device session lifetime, so the
+upper bound is the shard's connected-device target plus a small number of
+connect/app workers. `HOME100K_RUNNER_NOFILE_LIMIT` must be high enough for the
+planned device and app MQTT sockets, and load-generator CPU, memory, disk, and
+resource telemetry are part of the report gate.
+
+Two load-generator runtime constraints are real capacity-test requirements, not
+implementation preferences:
+
+- File descriptor headroom: every live MQTT TCP/TLS connection consumes at
+  least one file descriptor on the load generator. A 9K-device / 5-VM debug
+  profile only needs thousands of FDs per VM, but a 100K-device profile can
+  require tens of thousands per VM once device sessions, app MQTT sessions,
+  logs, files, DNS, and SSH sockets are included. The default
+  `HOME100K_RUNNER_NOFILE_LIMIT=1048576` is a `2^20` high-water limit used to
+  keep the generator OS ceiling out of the server-capacity result. It does not
+  create 1,048,576 connections; actual connection count is still controlled by
+  the plan's device/user shard assignments. Operators may lower it for small
+  profiles, but a run that hits `too many open files` is a load-generator
+  failure and must be reported as `INCOMPLETE`.
+- Sustained asynchronous reads: subscribed device sessions must keep reading
+  MQTT traffic for their full online lifetime. The runner must not wait until a
+  command is issued and then perform a one-shot blocking read on a shared MQTT
+  connection. In Go this is implemented with the runtime netpoller plus one
+  bounded reader goroutine per active device MQTT connection. This is required
+  to model real shadow delta delivery and to avoid client-side read starvation
+  being mistaken for EMQX, NodeBalancer, or IoT Device Shadow failure.
 
 Load-generator start coordination is controlled by
 `HOME100K_COORDINATOR_START_DELAY_MS`, default `3000`. This is not an absolute

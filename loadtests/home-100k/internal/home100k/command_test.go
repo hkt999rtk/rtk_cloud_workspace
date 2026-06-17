@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -226,6 +227,7 @@ func TestExecuteProvisionVMsDefaultsToDryRun(t *testing.T) {
 		"--env-root", "cloud_env/staging/lke",
 		"--brandname", "RTK",
 		"--region", "us-sea",
+		"--devices", "9000",
 		"--run-id", "run-cli",
 	}, &stdout, &stderr)
 	if code != 0 {
@@ -244,6 +246,7 @@ func TestExecuteProvisionVMsRequiresConfirmForLive(t *testing.T) {
 		"--env-root", "cloud_env/staging/lke",
 		"--brandname", "RTK",
 		"--region", "us-sea",
+		"--devices", "9000",
 		"--run-id", "run-cli",
 		"--live",
 	}, &stdout, &stderr)
@@ -639,6 +642,7 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 		"--env-root", envRoot,
 		"--brandname", "RTK",
 		"--region", "us-sea",
+		"--devices", "9000",
 		"--run-id", "run-cli",
 		"--out-dir", outDir,
 		"--live",
@@ -678,28 +682,44 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 	if err != nil {
 		t.Fatalf("read extra vars: %v", err)
 	}
-	var extraVars map[string]string
+	var extraVars map[string]any
 	if err := json.Unmarshal(extraVarsRaw, &extraVars); err != nil {
 		t.Fatalf("decode extra vars: %v", err)
 	}
 	for _, key := range []string{"local_runner", "local_env_root", "local_out_dir"} {
-		if !filepath.IsAbs(extraVars[key]) {
+		value, _ := extraVars[key].(string)
+		if !filepath.IsAbs(value) {
 			t.Fatalf("extra vars %s = %q, want absolute path", key, extraVars[key])
 		}
 	}
 	for _, key := range []string{"local_artifact_store", "fanout_private_key"} {
-		if !filepath.IsAbs(extraVars[key]) {
+		value, _ := extraVars[key].(string)
+		if !filepath.IsAbs(value) {
 			t.Fatalf("extra vars %s = %q, want absolute path", key, extraVars[key])
 		}
 	}
-	if !filepath.IsAbs(extraVars["local_rtk_cloud"]) {
+	localRTKCloud, _ := extraVars["local_rtk_cloud"].(string)
+	if !filepath.IsAbs(localRTKCloud) {
 		t.Fatalf("extra vars local_rtk_cloud = %q, want absolute path", extraVars["local_rtk_cloud"])
 	}
-	if !filepath.IsAbs(extraVars["local_cloud_mqtt_test"]) {
+	localCloudMQTTTest, _ := extraVars["local_cloud_mqtt_test"].(string)
+	if !filepath.IsAbs(localCloudMQTTTest) {
 		t.Fatalf("extra vars local_cloud_mqtt_test = %q, want absolute path", extraVars["local_cloud_mqtt_test"])
 	}
 	if extraVars["credential_bundle_format"] != "sqlite-gzip" {
 		t.Fatalf("extra vars credential_bundle_format = %q, want sqlite-gzip", extraVars["credential_bundle_format"])
+	}
+	if extraVars["device_count"] != float64(9000) {
+		t.Fatalf("extra vars device_count = %#v, want 9000", extraVars["device_count"])
+	}
+	if extraVars["user_count"] != float64(450) {
+		t.Fatalf("extra vars user_count = %#v, want 450", extraVars["user_count"])
+	}
+	if extraVars["devices_per_user"] != float64(20) {
+		t.Fatalf("extra vars devices_per_user = %#v, want 20", extraVars["devices_per_user"])
+	}
+	if extraVars["runner_nofile_limit"] != float64(1048576) {
+		t.Fatalf("extra vars runner_nofile_limit = %#v, want 1048576", extraVars["runner_nofile_limit"])
 	}
 	var inventoryDoc struct {
 		All struct {
@@ -769,12 +789,12 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 	}
 	manifest0 := string(manifest0Raw)
 	manifest1 := string(manifest1Raw)
-	for _, want := range []string{`"role": "device-mqtt"`, `"start": 0`, `"end": 20000`, `"role": "user-app"`, `"start": 0`, `"end": 1000`} {
+	for _, want := range []string{`"role": "device-mqtt"`, `"start": 0`, `"end": 1800`, `"role": "user-app"`, `"start": 0`, `"end": 90`} {
 		if !strings.Contains(manifest0, want) {
 			t.Fatalf("mixed-000 manifest missing %q:\n%s", want, manifest0)
 		}
 	}
-	for _, want := range []string{`"role": "device-mqtt"`, `"start": 20000`, `"end": 40000`, `"role": "user-app"`, `"start": 1000`, `"end": 2000`} {
+	for _, want := range []string{`"role": "device-mqtt"`, `"start": 1800`, `"end": 3600`, `"role": "user-app"`, `"start": 90`, `"end": 180`} {
 		if !strings.Contains(manifest1, want) {
 			t.Fatalf("mixed-001 manifest missing %q:\n%s", want, manifest1)
 		}
@@ -1268,11 +1288,11 @@ func TestHome100KResumeLiveSkipsProvisionWhenVMStateExists(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(raw)
-	_, resume, ok := strings.Cut(body, "workflow-resume-live)")
+	_, resume, ok := strings.Cut(body, "\n  workflow-resume-live)")
 	if !ok {
 		t.Fatal("home-100k.sh missing workflow-resume-live case")
 	}
-	resume, _, ok = strings.Cut(resume, "    ;;")
+	resume, _, ok = strings.Cut(resume, "\n  *)")
 	if !ok {
 		t.Fatal("home-100k.sh workflow-resume-live case is not terminated")
 	}
@@ -1284,6 +1304,135 @@ func TestHome100KResumeLiveSkipsProvisionWhenVMStateExists(t *testing.T) {
 			t.Fatalf("workflow-resume-live missing %q:\n%s", want, resume)
 		}
 	}
+}
+
+func TestHome100KScriptEnvOverridesDescriptionStageDurations(t *testing.T) {
+	outDir := t.TempDir()
+	descriptionFile := filepath.Join(outDir, "description.env")
+	if err := os.WriteFile(descriptionFile, []byte(strings.Join([]string{
+		"HOME100K_STAGE_WARM_UP=9m",
+		"HOME100K_STAGE_STEADY=9m",
+		"HOME100K_STAGE_COOL_DOWN=9m",
+		"HOME100K_DEVICES=12000",
+		"HOME100K_DEVICES_PER_USER=10",
+		"HOME100K_MQTT_ADDR=127.0.0.1:8883",
+		"",
+	}, "\n")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join("..", "..", "scripts", "home-100k.sh")
+	cmd := exec.Command("bash", script, "plan")
+	cmd.Env = append(os.Environ(),
+		"HOME100K_DESCRIPTION_FILE="+descriptionFile,
+		"HOME100K_RUN_ID=test-env-priority",
+		"HOME100K_OUT_DIR="+filepath.Join(outDir, "report"),
+		"HOME100K_STAGE_WARM_UP=15s",
+		"HOME100K_STAGE_STEADY=45s",
+		"HOME100K_STAGE_COOL_DOWN=15s",
+		"HOME100K_DEVICES=9000",
+		"HOME100K_DEVICES_PER_USER=20",
+	)
+	raw, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("home-100k.sh plan failed: %v\n%s", err, raw)
+	}
+	body := string(raw)
+	for _, want := range []string{`"warm_up": "15s"`, `"steady_state": "45s"`, `"cool_down": "15s"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("plan missing env override %q:\n%s", want, body)
+		}
+	}
+	for _, want := range []string{`"devices": 9000`, `"users": 450`, `"connected_devices": 9000`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("plan missing size override %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, `"steady_state": "9m"`) {
+		t.Fatalf("description file overrode explicit env:\n%s", body)
+	}
+	if strings.Contains(body, `"devices": 12000`) {
+		t.Fatalf("description file size overrode explicit env:\n%s", body)
+	}
+}
+
+func TestHome100KScriptAutoDiscoversPublicMQTTOnlyForLiveCommands(t *testing.T) {
+	outDir := t.TempDir()
+	descriptionFile := filepath.Join(outDir, "description.env")
+	if err := os.WriteFile(descriptionFile, []byte(strings.Join([]string{
+		"HOME100K_ENV_ROOT=cloud_env/staging/lke",
+		"HOME100K_BRANDNAME=RTK",
+		"HOME100K_REGION=us-sea",
+		"HOME100K_MQTT_ADDR=auto-public-mqtt",
+		"HOME100K_MQTT_PUBLIC_LB_COUNT=1",
+		"",
+	}, "\n")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	binDir := filepath.Join(outDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	goLog := filepath.Join(outDir, "go.log")
+	goStub := filepath.Join(binDir, "go")
+	if err := os.WriteFile(goStub, []byte("#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> "+shellQuoteForTest(goLog)+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	kubectlLog := filepath.Join(outDir, "kubectl.log")
+	kubectlStub := filepath.Join(binDir, "kubectl")
+	kubectlBody := `#!/usr/bin/env bash
+printf '%s\n' "$*" >> ` + shellQuoteForTest(kubectlLog) + `
+cat <<'JSON'
+{"items":[
+  {"status":{"loadBalancer":{"ingress":[{"ip":"203.0.113.20"}]}}},
+  {"status":{"loadBalancer":{"ingress":[{"ip":"203.0.113.10"}]}}}
+]}
+JSON
+`
+	if err := os.WriteFile(kubectlStub, []byte(kubectlBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join("..", "..", "scripts", "home-100k.sh")
+	commonEnv := append(os.Environ(),
+		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"HOME100K_DESCRIPTION_FILE="+descriptionFile,
+		"HOME100K_RUN_ID=test-auto-mqtt",
+		"HOME100K_OUT_DIR="+filepath.Join(outDir, "report"),
+	)
+	planCmd := exec.Command("bash", script, "plan")
+	planCmd.Env = commonEnv
+	if raw, err := planCmd.CombinedOutput(); err != nil {
+		t.Fatalf("plan failed: %v\n%s", err, raw)
+	}
+	if _, err := os.Stat(kubectlLog); err == nil {
+		t.Fatal("plan should not call kubectl for HOME100K_MQTT_ADDR=auto-public-mqtt")
+	}
+
+	stateFile := filepath.Join(outDir, "report", "vms.json")
+	if err := os.MkdirAll(filepath.Dir(stateFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stateFile, []byte(`{"created":[{"id":101,"label":"home-100k-mixed-000","ipv4":["203.0.113.101"]}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	syncCmd := exec.Command("bash", script, "sync", "--live", "--remote-workspace", "/root/ws", "--remote-env-root", "/root/ws/cloud_env/staging/lke", "--ssh-key", "/tmp/key")
+	syncCmd.Env = commonEnv
+	if raw, err := syncCmd.CombinedOutput(); err != nil {
+		t.Fatalf("sync failed: %v\n%s", err, raw)
+	}
+	goRaw, err := os.ReadFile(goLog)
+	if err != nil {
+		t.Fatalf("read go log: %v", err)
+	}
+	if !strings.Contains(string(goRaw), "--mqtt-addr 203.0.113.10:8883") {
+		t.Fatalf("sync did not pass discovered mqtt addr:\n%s", goRaw)
+	}
+	if strings.Contains(string(goRaw), "203.0.113.20:8883") {
+		t.Fatalf("sync should limit auto-discovered mqtt addr count to 1:\n%s", goRaw)
+	}
+}
+
+func shellQuoteForTest(path string) string {
+	return "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
 }
 
 func TestAnsibleStartRunnerUsesPrebuiltCloudMQTTTestAndDaemonWait(t *testing.T) {
@@ -1299,6 +1448,11 @@ func TestAnsibleStartRunnerUsesPrebuiltCloudMQTTTestAndDaemonWait(t *testing.T) 
 		"runner daemon listen port :18080 is still in use after cleanup",
 		"CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT",
 		"{{ remote_home_100k_dir }}/bin/cloud-mqtt-test",
+		`--devices "{{ device_count }}"`,
+		`--users "{{ user_count }}"`,
+		`--devices-per-user "{{ devices_per_user }}"`,
+		`runner_nofile_limit="{{ runner_nofile_limit | default(1048576) }}"`,
+		`ulimit -n "$runner_nofile_limit"`,
 		"READY_WAIT",
 	} {
 		if !strings.Contains(body, want) {
@@ -1482,6 +1636,200 @@ func TestExecuteRunStagesLiveStartsRunnerDaemonsThenHostCoordinator(t *testing.T
 	}
 	if !strings.Contains(stdout.String(), `"dispatched"`) || !strings.Contains(stdout.String(), `"id": 101`) {
 		t.Fatalf("stdout missing dispatched VMs:\n%s", stdout.String())
+	}
+}
+
+func TestParseEMQXEvidenceRequiresBrokerIdentity(t *testing.T) {
+	out := `tcp:default acceptors 128
+tcp:default current_conn 2
+tcp:default max_conns 1048576
+ssl:default acceptors 128
+ssl:default current_conn 10000
+ssl:default max_conns 1048576
+ssl:default ssl_closed 14482
+`
+	counters := parseEvidenceCounters("emqx_listener_stats", "run-fixed", out)
+	if counters["emqx.broker.identity"] != 1 {
+		t.Fatalf("missing EMQX broker identity counter: %#v", counters)
+	}
+	if counters["emqx.ssl_default.current_conn"] != 10000 {
+		t.Fatalf("ssl current_conn = %d, want 10000", counters["emqx.ssl_default.current_conn"])
+	}
+	if counters["emqx.ssl_default.shutdown_ssl_closed"] != 14482 {
+		t.Fatalf("ssl shutdown counter = %d, want 14482", counters["emqx.ssl_default.shutdown_ssl_closed"])
+	}
+}
+
+func TestApplyEMQXMetricDeltaFromBaseline(t *testing.T) {
+	evidence := ServerEvidence{Sources: map[string]EvidenceSource{
+		"emqx": {Available: true, Counters: map[string]int64{
+			"emqx.metric.client.connected":         110,
+			"emqx.metric.packets.connect.received": 111,
+		}},
+	}}
+	baseline := ServerEvidence{Sources: map[string]EvidenceSource{
+		"emqx": {Available: true, Counters: map[string]int64{
+			"emqx.metric.client.connected":         100,
+			"emqx.metric.packets.connect.received": 101,
+		}},
+	}}
+
+	applyEMQXMetricDelta(&evidence, baseline)
+
+	counters := evidence.Sources["emqx"].Counters
+	if counters["mqtt.total_connect_success"] != 10 {
+		t.Fatalf("total_connect_success delta = %d, want 10", counters["mqtt.total_connect_success"])
+	}
+	if counters["device_mqtt.connect_success"] != 10 {
+		t.Fatalf("connect_success delta = %d, want 10", counters["device_mqtt.connect_success"])
+	}
+	if counters["mqtt.total_connect_attempts"] != 10 {
+		t.Fatalf("total_connect_attempts delta = %d, want 10", counters["mqtt.total_connect_attempts"])
+	}
+	if counters["device_mqtt.connect_attempts"] != 10 {
+		t.Fatalf("connect_attempts delta = %d, want 10", counters["device_mqtt.connect_attempts"])
+	}
+}
+
+func TestApplySourceCounterBaselineDelta(t *testing.T) {
+	evidence := ServerEvidence{Sources: map[string]EvidenceSource{
+		"ingress_nginx": {Available: true, Counters: map[string]int64{
+			"ingress_nginx.request_token.status_200": 120,
+			"ingress_nginx.request_token.status_500": 14,
+			"ingress_nginx.request_token.max_ms":     600,
+		}},
+		"postgres": {Available: true, Counters: map[string]int64{
+			"postgres.too_many_clients": 34,
+		}},
+	}}
+	baseline := ServerEvidence{Sources: map[string]EvidenceSource{
+		"ingress_nginx": {Available: true, Counters: map[string]int64{
+			"ingress_nginx.request_token.status_200": 100,
+			"ingress_nginx.request_token.status_500": 14,
+			"ingress_nginx.request_token.max_ms":     900,
+		}},
+		"postgres": {Available: true, Counters: map[string]int64{
+			"postgres.too_many_clients": 34,
+		}},
+	}}
+
+	applySourceCounterBaselineDelta(&evidence, baseline, "ingress_nginx")
+	applySourceCounterBaselineDelta(&evidence, baseline, "postgres")
+
+	ingress := evidence.Sources["ingress_nginx"].Counters
+	if ingress["ingress_nginx.request_token.status_200"] != 20 {
+		t.Fatalf("status_200 delta = %d, want 20", ingress["ingress_nginx.request_token.status_200"])
+	}
+	if ingress["ingress_nginx.request_token.status_500"] != 0 {
+		t.Fatalf("status_500 delta = %d, want 0", ingress["ingress_nginx.request_token.status_500"])
+	}
+	if ingress["ingress_nginx.request_token.max_ms"] != 0 {
+		t.Fatalf("max_ms negative delta = %d, want 0", ingress["ingress_nginx.request_token.max_ms"])
+	}
+	if got := evidence.Sources["postgres"].Counters["postgres.too_many_clients"]; got != 0 {
+		t.Fatalf("postgres too_many_clients delta = %d, want 0", got)
+	}
+}
+
+func TestNormalizeEvidenceSourceCatalogMetadataPreservesOptionalSources(t *testing.T) {
+	sources := requiredEvidenceSources(true)
+	sources["redis_valkey"] = EvidenceSource{Available: false, Detail: "exit status 1"}
+
+	normalizeEvidenceSourceCatalogMetadata(sources)
+
+	if !sources["redis_valkey"].Optional {
+		t.Fatalf("redis_valkey optional = false, want true")
+	}
+	if !allEvidenceSourcesAvailable(sources) {
+		t.Fatalf("optional redis_valkey should not make required evidence incomplete")
+	}
+}
+
+func TestRecomputeVideoCloudAPITopLevelCountersFromPodDeltas(t *testing.T) {
+	evidence := ServerEvidence{Sources: map[string]EvidenceSource{
+		"video_cloud_api": {Available: true, Counters: map[string]int64{
+			"video_cloud_api.request_token.total":                    0,
+			"video_cloud_api.request_token.status_200":               0,
+			"video_cloud_api.request_token.status_500":               0,
+			"video_cloud_api.request_token.pod_video_cloud_api_a.total":      300,
+			"video_cloud_api.request_token.pod_video_cloud_api_a.status_200": 299,
+			"video_cloud_api.request_token.pod_video_cloud_api_a.status_500": 1,
+			"video_cloud_api.request_token.pod_video_cloud_api_b.total":      269,
+			"video_cloud_api.request_token.pod_video_cloud_api_b.status_200": 269,
+			"video_cloud_api.request_token.pod_video_cloud_api_b.status_500": 0,
+		}},
+	}}
+
+	recomputeVideoCloudAPITopLevelCounters(&evidence)
+
+	counters := evidence.Sources["video_cloud_api"].Counters
+	if counters["video_cloud_api.request_token.total"] != 569 {
+		t.Fatalf("top-level total = %d, want 569", counters["video_cloud_api.request_token.total"])
+	}
+	if counters["video_cloud_api.request_token.status_200"] != 568 {
+		t.Fatalf("top-level status_200 = %d, want 568", counters["video_cloud_api.request_token.status_200"])
+	}
+	if counters["video_cloud_api.request_token.status_500"] != 1 {
+		t.Fatalf("top-level status_500 = %d, want 1", counters["video_cloud_api.request_token.status_500"])
+	}
+}
+
+func TestParseEMQXBrokerMetricsCounters(t *testing.T) {
+	out := strings.Join([]string{
+		"emqx.metric.client.connected 4525",
+		"emqx.metric.packets.connect.received 4525",
+		"emqx.pod_mqtt_abc.metric.client.connected 1001",
+	}, "\n")
+	counters := parseEvidenceCounters("emqx", "run-fixed", out)
+	if counters["emqx.metric.client.connected"] != 4525 {
+		t.Fatalf("client.connected = %d, want 4525", counters["emqx.metric.client.connected"])
+	}
+	if counters["emqx.metric.packets.connect.received"] != 4525 {
+		t.Fatalf("packets.connect.received = %d, want 4525", counters["emqx.metric.packets.connect.received"])
+	}
+	if counters["emqx.pod_mqtt_abc.metric.client.connected"] != 1001 {
+		t.Fatalf("pod client.connected = %d, want 1001", counters["emqx.pod_mqtt_abc.metric.client.connected"])
+	}
+}
+
+func TestParseIngressRequestTokenAccessLogCounters(t *testing.T) {
+	out := strings.Join([]string{
+		`198.51.100.10 - - [16/Jun/2026:19:44:34 +0000] "POST /request_token HTTP/1.1" 200 517 "-" "Go-http-client/1.1" 255 0.186 [video-cloud-staging-video-cloud-video-cloud-api-8080] [] 10.128.218.139:80 517 0.186 200 abc`,
+		`198.51.100.11 - - [16/Jun/2026:19:44:35 +0000] "POST /request_token HTTP/1.1" 500 51 "-" "Go-http-client/1.1" 255 7.255 [video-cloud-staging-video-cloud-video-cloud-api-8080] [] 10.128.218.139:80 51 7.255 500 def`,
+		`198.51.100.12 - - [16/Jun/2026:19:44:36 +0000] "GET /healthz HTTP/1.1" 200 2 "-" "kube-probe" 80 0.001 [upstream] [] 10.128.218.139:80 2 0.001 200 ghi`,
+	}, "\n")
+
+	counters := parseEvidenceCounters("ingress_nginx", "run-fixed", out)
+
+	for key, want := range map[string]int64{
+		"ingress_nginx.request_token.total":        2,
+		"ingress_nginx.request_token.status_200":   1,
+		"ingress_nginx.request_token.status_500":   1,
+		"ingress_nginx.request_token.gt1s":         1,
+		"ingress_nginx.request_token.gt5s":         1,
+		"ingress_nginx.request_token.max_ms":       7255,
+		"ingress_nginx.request_token.upstream_500": 1,
+	} {
+		if counters[key] != want {
+			t.Fatalf("%s = %d, want %d; counters=%#v", key, counters[key], want, counters)
+		}
+	}
+}
+
+func TestParsePostgresTooManyClientsCounters(t *testing.T) {
+	out := strings.Join([]string{
+		`2026-06-16 20:35:30.861 UTC [2642219] FATAL:  sorry, too many clients already`,
+		`2026-06-16 20:35:30.862 UTC [2642235] FATAL:  sorry, too many clients already`,
+		`2026-06-16 20:35:39.197 UTC [27] LOG:  checkpoint starting: time`,
+	}, "\n")
+
+	counters := parseEvidenceCounters("postgres", "run-fixed", out)
+
+	if counters["postgres.too_many_clients"] != 2 {
+		t.Fatalf("postgres.too_many_clients = %d, want 2; counters=%#v", counters["postgres.too_many_clients"], counters)
+	}
+	if counters["postgres.fatal"] != 2 {
+		t.Fatalf("postgres.fatal = %d, want 2; counters=%#v", counters["postgres.fatal"], counters)
 	}
 }
 
@@ -1941,6 +2289,82 @@ func TestLoadLiveMQTTStageResultPreservesFailureReasons(t *testing.T) {
 	}
 }
 
+func TestLoadLiveMQTTStageResultPreservesFailureEvents(t *testing.T) {
+	outDir := t.TempDir()
+	payload := map[string]any{
+		"overall": "fail",
+		"failure_events": []map[string]any{
+			{
+				"stage":        "75pct",
+				"reason":       "device_delta_wait_failed",
+				"detail":       "network EOF",
+				"phase":        "device_delta_wait",
+				"device_id":    "rtk-0041",
+				"command_id":   "cmd-0041",
+				"event_index":  float64(61),
+				"session_slot": float64(61),
+				"remaining_ms": float64(12000),
+				"mqtt_target":  "172.238.59.219:8883",
+				"reader_error": "network EOF",
+				"occurred_at":  "2026-06-17T02:59:00Z",
+			},
+		},
+	}
+	if err := writeJSONFile(filepath.Join(outDir, "results.json"), payload); err != nil {
+		t.Fatal(err)
+	}
+	result, err := loadLiveMQTTStageResult(filepath.Join(outDir, "results.json"), Stage{Name: "75pct", ConnectedDevices: 6750}, 6750)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.FailureEvents) != 1 {
+		t.Fatalf("failure events not preserved: %#v", result.FailureEvents)
+	}
+	event := result.FailureEvents[0]
+	if event.DeviceID != "rtk-0041" || event.EventIndex != 61 || event.ReaderError != "network EOF" {
+		t.Fatalf("unexpected failure event: %#v", event)
+	}
+}
+
+func TestLoadLiveMQTTStageResultPreservesCommandEvents(t *testing.T) {
+	outDir := t.TempDir()
+	payload := map[string]any{
+		"overall": "pass",
+		"command_events": []map[string]any{
+			{
+				"stage":                 "25pct",
+				"device_id":             "rtk-0041",
+				"command_id":            "cmd-0041",
+				"runtime_log_stream_id": "mqtt-e2e-run-rtk-0041-abcd",
+				"event_index":           float64(7),
+				"session_slot":          float64(3),
+				"mqtt_target":           "127.0.0.1:8883",
+				"expected_logs": []map[string]any{
+					{"seq": float64(1), "source": "app_controller", "message": "mqtt_e2e shadow_desired app_controller publish"},
+					{"seq": float64(2), "source": "device_client", "message": "mqtt_e2e shadow_delta device_client receive"},
+					{"seq": float64(3), "source": "device_client", "message": "mqtt_e2e shadow_reported device_client publish"},
+					{"seq": float64(4), "source": "app_observer", "message": "mqtt_e2e shadow_reported app_observer receive"},
+				},
+				"occurred_at": "2026-06-17T04:00:00Z",
+			},
+		},
+	}
+	if err := writeJSONFile(filepath.Join(outDir, "results.json"), payload); err != nil {
+		t.Fatal(err)
+	}
+	result, err := loadLiveMQTTStageResult(filepath.Join(outDir, "results.json"), Stage{Name: "25pct", ConnectedDevices: 2250}, 2250)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.CommandEvents) != 1 {
+		t.Fatalf("command events not preserved: %#v", result.CommandEvents)
+	}
+	event := result.CommandEvents[0]
+	if event.RuntimeLogStreamID != "mqtt-e2e-run-rtk-0041-abcd" || len(event.ExpectedLogs) != 4 {
+		t.Fatalf("unexpected command event: %#v", event)
+	}
+}
+
 func TestExecuteShardRunRejectsUnknownShard(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
@@ -2115,8 +2539,37 @@ func TestCollectCentralLoggerEvidenceQueriesRunIDIndexes(t *testing.T) {
 	}
 }
 
+func TestCentralLoggerEnvValuesFindsSiblingLinodeEnv(t *testing.T) {
+	root := t.TempDir()
+	lkeRoot := filepath.Join(root, "lke")
+	loggerDir := filepath.Join(root, "linode", "services", "cloud-logger")
+	if err := os.MkdirAll(lkeRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(loggerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(loggerDir, "logger.env"), []byte("CLOUD_LOGGER_ENDPOINT=https://logger.example\nCLOUD_LOGGER_INGEST_TOKEN=secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	values := centralLoggerEnvValues(lkeRoot)
+	if values["CLOUD_LOGGER_ENDPOINT"] != "https://logger.example" || values["CLOUD_LOGGER_INGEST_TOKEN"] != "secret" {
+		t.Fatalf("centralLoggerEnvValues() = %#v, want sibling linode logger env", values)
+	}
+}
+
 func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 	outDir := t.TempDir()
+	if err := writeJSONFile(filepath.Join(outDir, "start-coordination.json"), StartCoordination{
+		VMs: []VMStartTelemetry{{
+			Label:                 "home-100k-mixed-000",
+			StartSignalReceivedAt: "2026-06-16T21:06:10Z",
+			StageStartedAt:        "2026-06-16T21:06:13Z",
+		}},
+	}); err != nil {
+		t.Fatalf("write start coordination: %v", err)
+	}
 	calls := []string{}
 	oldRunner := commandOutputRunner
 	commandOutputRunner = func(name string, args ...string) (string, error) {
@@ -2152,6 +2605,9 @@ func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 	if !strings.Contains(out, `"complete": true`) || !strings.Contains(out, `"host_pod_resources"`) {
 		t.Fatalf("stdout missing complete evidence:\n%s", out)
 	}
+	if !strings.Contains(out, `"evidence_window_mode": "run_scoped_since_time"`) || !strings.Contains(out, `"evidence_window_start": "2026-06-16T21:06:05Z"`) {
+		t.Fatalf("stdout missing run-scoped evidence window:\n%s", out)
+	}
 	if !strings.Contains(out, `"app_user.desired_writes": 10`) || !strings.Contains(out, `"device_shadow.reported_converged": 10`) {
 		t.Fatalf("stdout missing parsed counters:\n%s", out)
 	}
@@ -2162,13 +2618,30 @@ func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 	for _, want := range []string{
 		"kubectl get pods -A",
 		"kubectl -n 'video-cloud-staging-video-cloud' get pods --selector 'app.kubernetes.io/name=mqtt' -o name",
-		"kubectl -n 'video-cloud-staging-video-cloud' logs --since=30m --selector 'app.kubernetes.io/name=video-cloud-api'",
-		"kubectl -n 'video-cloud-staging-platform' logs --since=30m --selector 'app.kubernetes.io/name=postgresql'",
+		"kubectl -n 'video-cloud-staging-video-cloud' logs '--since-time=2026-06-16T21:06:05Z' --selector 'app.kubernetes.io/name=video-cloud-api'",
+		"kubectl -n 'video-cloud-staging-platform' logs '--since-time=2026-06-16T21:06:05Z' --selector 'app.kubernetes.io/name=postgresql'",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("live evidence commands missing %q:\n%s", want, joined)
 		}
 	}
+}
+
+func TestServerEvidenceProbesIncludeMQTTNodeBalancerHealth(t *testing.T) {
+	probes := serverEvidenceProbes("run-nb", "--since=1m")
+	for _, probe := range probes {
+		if probe.source != "mqtt_nodebalancer" {
+			continue
+		}
+		joined := strings.Join(append([]string{probe.command}, probe.args...), " ")
+		for _, want := range []string{"LINODE_TOKEN", "mqtt-public", "nodebalancers", "mqtt_nodebalancer.nodes_up"} {
+			if !strings.Contains(joined, want) {
+				t.Fatalf("mqtt_nodebalancer probe missing %q in:\n%s", want, joined)
+			}
+		}
+		return
+	}
+	t.Fatal("serverEvidenceProbes() missing mqtt_nodebalancer probe")
 }
 
 func TestExecuteCollectServerEvidenceLiveWritesIncompleteEvidenceOnProbeFailure(t *testing.T) {

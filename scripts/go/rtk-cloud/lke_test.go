@@ -425,13 +425,17 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"kind: ConfigMap\nmetadata:\n  name: mqtt-config",
 		"broker: emqx",
 		"kind: Deployment\nmetadata:\n  name: mqtt",
-		"replicas: 3",
+		"replicas: 9",
+		"maxSurge: 0",
+		"maxUnavailable: 1",
 		"image: emqx/emqx:",
 		"EMQX_NODE__NAME",
 		"EMQX_CLUSTER__DISCOVERY_STRATEGY",
 		`value: "manual"`,
 		"EMQX_CLUSTER__DNS__NAME",
 		"mqtt-headless.video-cloud-staging-video-cloud.svc.cluster.local",
+		"whenUnsatisfiable: DoNotSchedule",
+		"requiredDuringSchedulingIgnoredDuringExecution:",
 		"EMQX_LISTENERS__SSL__DEFAULT__ACCEPTORS",
 		`value: "128"`,
 		"EMQX_LISTENERS__SSL__DEFAULT__TCP_OPTIONS__BACKLOG",
@@ -448,6 +452,7 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"kind: NetworkPolicy\nmetadata:\n  name: allow-emqx-cluster",
 		"port: 4369",
 		"port: 4370",
+		"port: 5369",
 	} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("expected %q in kubectl manifests, got:\n%s", want, log)
@@ -480,9 +485,55 @@ func TestRunProvisionLKEDeployCanExposePublicMQTTLoadBalancer(t *testing.T) {
 	for _, want := range []string{
 		"kind: Service\nmetadata:\n  name: mqtt-public",
 		"type: LoadBalancer",
+		"externalTrafficPolicy: Local",
 		"name: mqtts\n      port: 8883",
 		"kind: NetworkPolicy\nmetadata:\n  name: allow-public-mqtt-loadtest",
 		"port: 8883",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("expected %q in kubectl manifests, got:\n%s", want, log)
+		}
+	}
+}
+
+func TestLKEAllowEMQXClusterNetworkPolicyManifestIsValidYAMLShape(t *testing.T) {
+	manifest := lkeAllowEMQXClusterNetworkPolicyManifest(map[string]string{
+		"CLOUD_STACK_NAME": "video-cloud-staging",
+	})
+	if strings.Contains(manifest, "\t") {
+		t.Fatalf("EMQX cluster network policy must not contain tabs:\n%s", manifest)
+	}
+	for _, want := range []string{
+		"        - protocol: TCP\n          port: 4369",
+		"        - protocol: TCP\n          port: 4370",
+		"        - protocol: TCP\n          port: 5369",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("expected EMQX cluster port entry %q, got:\n%s", want, manifest)
+		}
+	}
+}
+
+func TestRunProvisionLKEDeployCanExposeMultiplePublicMQTTLoadBalancers(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	logPath := fakeKubectl(t)
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
+	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
+	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
+	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
+	t.Setenv("LKE_PUBLIC_MQTT_LOADBALANCER", "1")
+	t.Setenv("LKE_PUBLIC_MQTT_LOADBALANCER_COUNT", "3")
+
+	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, logPath)
+	for _, want := range []string{
+		"kind: Service\nmetadata:\n  name: mqtt-public",
+		"kind: Service\nmetadata:\n  name: mqtt-public-01",
+		"kind: Service\nmetadata:\n  name: mqtt-public-02",
+		"externalTrafficPolicy: Local",
 	} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("expected %q in kubectl manifests, got:\n%s", want, log)
@@ -520,6 +571,11 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"--set controller.service.enableHttp=false",
 		"--set controller.allowSnippetAnnotations=true",
 		"--set controller.config.annotations-risk-level=Critical",
+		"--set controller.replicaCount=3",
+		"--set controller.resources.requests.cpu=500m",
+		"--set controller.resources.requests.memory=512Mi",
+		"--set controller.resources.limits.memory=1Gi",
+		"--set-json controller.topologySpreadConstraints=",
 	} {
 		if !strings.Contains(helmCalls, want) {
 			t.Fatalf("expected %q in helm calls, got:\n%s", want, helmCalls)
@@ -1126,15 +1182,36 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 		"topologySpreadConstraints:",
 		`cpu: "2"`,
 		`memory: "4Gi"`,
+		"name: VIDEO_CLOUD_DB_MAX_OPEN_CONNS\n              value: \"20\"",
+		"name: VIDEO_CLOUD_DB_MAX_IDLE_CONNS\n              value: \"10\"",
+		"name: VIDEO_CLOUD_DB_CONN_MAX_LIFETIME\n              value: \"5m\"",
 	} {
 		if !strings.Contains(video, want) {
 			t.Fatalf("expected %q in video-cloud-api manifest, got:\n%s", want, video)
 		}
 	}
 
+	worker := lkeVideoCloudAuxiliaryDeploymentManifest(env, lkeVideoCloudAuxiliaryService{Name: "video-cloud-logingester", Binary: "logingester"})
+	for _, want := range []string{
+		"name: VIDEO_CLOUD_DB_MAX_OPEN_CONNS\n              value: \"4\"",
+		"name: VIDEO_CLOUD_DB_MAX_IDLE_CONNS\n              value: \"2\"",
+		"name: VIDEO_CLOUD_DB_CONN_MAX_LIFETIME\n              value: \"5m\"",
+		"name: VIDEO_CLOUD_MQTT_CLEAN_SESSION\n              value: \"false\"",
+	} {
+		if !strings.Contains(worker, want) {
+			t.Fatalf("expected %q in video-cloud worker manifest, got:\n%s", want, worker)
+		}
+	}
+	mqttUsageWorker := lkeVideoCloudAuxiliaryDeploymentManifest(env, lkeVideoCloudAuxiliaryService{Name: "video-cloud-mqttusage", Binary: "mqttusage"})
+	if !strings.Contains(mqttUsageWorker, "name: VIDEO_CLOUD_MQTT_CLEAN_SESSION\n              value: \"true\"") {
+		t.Fatalf("expected mqttusage worker to keep clean MQTT session, got:\n%s", mqttUsageWorker)
+	}
+
 	mqtt := lkeMQTTDeploymentManifest(env)
 	for _, want := range []string{
-		"replicas: 3",
+		"replicas: 9",
+		"maxSurge: 0",
+		"maxUnavailable: 1",
 		`lke.linode.com/pool-id: "906225"`,
 		"EMQX_NODE__NAME",
 		`value: "emqx@$(POD_IP)"`,
@@ -1143,7 +1220,9 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 		"EMQX_CLUSTER__DNS__NAME",
 		"mqtt-headless.video-cloud-staging-video-cloud.svc.cluster.local",
 		"topologySpreadConstraints:",
+		"whenUnsatisfiable: DoNotSchedule",
 		"podAntiAffinity:",
+		"requiredDuringSchedulingIgnoredDuringExecution:",
 		"EMQX_LISTENERS__SSL__DEFAULT__ACCEPTORS",
 		`value: "128"`,
 		"EMQX_LISTENERS__SSL__DEFAULT__TCP_OPTIONS__BACKLOG",
@@ -1152,7 +1231,7 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 		`value: "16384"`,
 		"EMQX_FORCE_SHUTDOWN__MAX_HEAP_SIZE",
 		`value: "256MB"`,
-		`cpu: "2"`,
+		`cpu: "1"`,
 		`memory: "6Gi"`,
 	} {
 		if !strings.Contains(mqtt, want) {
@@ -1830,6 +1909,7 @@ printf '\n' >> "`+childLog+`"
 		"--stage-names", "25k,50k,75k,100k",
 		"--stage-connected-devices", "2500,5000,7500,10000",
 		"--stage-durations-seconds", "75,75,75,75",
+		"--stage-min-commands", "125,250,375,500",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1840,6 +1920,7 @@ printf '\n' >> "`+childLog+`"
 		"--stage-names 25k,50k,75k,100k",
 		"--stage-connected-devices 2500,5000,7500,10000",
 		"--stage-durations-seconds 75,75,75,75",
+		"--stage-min-commands 125,250,375,500",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("child args missing %q:\n%s", want, got)

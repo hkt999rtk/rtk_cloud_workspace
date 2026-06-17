@@ -4,6 +4,17 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 description_file="${HOME100K_DESCRIPTION_FILE:-$repo_root/loadtests/home-100k/scenarios/default.description.env}"
 
+capture_home100k_env_overrides() {
+  local name
+  env | while IFS='=' read -r name _; do
+    case "$name" in
+      HOME100K_*)
+        printf '%s=%q\n' "$name" "${!name-}"
+        ;;
+    esac
+  done
+}
+
 load_linode_token_from_env_file() {
   local env_file="${HOME100K_SECRET_ENV_FILE:-$HOME/.env}"
   local line value
@@ -27,12 +38,16 @@ load_linode_token_from_env_file() {
   done < "$env_file"
 }
 
+explicit_home100k_env="$(capture_home100k_env_overrides)"
 preexisting_linode_token="${LINODE_TOKEN:-}"
 if [[ -f "$description_file" ]]; then
   set -a
   # shellcheck source=/dev/null
   source "$description_file"
   set +a
+fi
+if [[ -n "$explicit_home100k_env" ]]; then
+  eval "$explicit_home100k_env"
 fi
 if [[ -n "$preexisting_linode_token" ]]; then
   export LINODE_TOKEN="$preexisting_linode_token"
@@ -56,10 +71,17 @@ status_interval_seconds="${HOME100K_STATUS_INTERVAL_SECONDS:-30}"
 stage_warm_up="${HOME100K_STAGE_WARM_UP:-1m}"
 stage_steady="${HOME100K_STAGE_STEADY:-2m}"
 stage_cool_down="${HOME100K_STAGE_COOL_DOWN:-45s}"
+device_count="${HOME100K_DEVICES:-}"
+user_count="${HOME100K_USERS:-}"
+devices_per_user="${HOME100K_DEVICES_PER_USER:-}"
 runner_mode="${HOME100K_RUNNER_MODE:-live}"
+runner_nofile_limit="${HOME100K_RUNNER_NOFILE_LIMIT:-1048576}"
+device_session_model="${HOME100K_DEVICE_SESSION_MODEL:-lifetime-subscription}"
+runner_read_model="${HOME100K_RUNNER_READ_MODEL:-go-netpoll-bounded-reader-goroutine}"
 coordinator_start_delay_ms="${HOME100K_COORDINATOR_START_DELAY_MS:-3000}"
 credential_bundle_format="${HOME100K_CREDENTIAL_BUNDLE_FORMAT:-sqlite-gzip}"
 mqtt_addr="${HOME100K_MQTT_ADDR:-}"
+mqtt_public_lb_count="${HOME100K_MQTT_PUBLIC_LB_COUNT:-}"
 video_cloud_public_url="${HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL:-${HOME100K_VIDEO_CLOUD_BASE_URL:-}}"
 video_cloud_token_url="${HOME100K_VIDEO_CLOUD_TOKEN_BASE_URL:-}"
 account_manager_base_url="${HOME100K_ACCOUNT_MANAGER_BASE_URL:-}"
@@ -81,7 +103,7 @@ Default command:
   workflow-live           Create VMs and run the live lifecycle through aggregate.
 
 Commands:
-  plan                    Print the deterministic 100K/5K/5-VM mixed run plan.
+  plan                    Print the deterministic configured-size mixed run plan.
   dry-run                 Render local review artifacts; does not create VMs.
   provision-vms           Review or live-create Linode VMs.
   sync                    Review or live-sync runner/env-root to VMs.
@@ -116,10 +138,17 @@ Defaults can be overridden with:
   HOME100K_STAGE_WARM_UP default: 15s from the default description file
   HOME100K_STAGE_STEADY default: 45s from the default description file
   HOME100K_STAGE_COOL_DOWN default: 15s from the default description file
+  HOME100K_DEVICES configured in the description file; current default description uses 9000
+  HOME100K_USERS optional; when omitted, the planner derives users from devices/devices-per-user
+  HOME100K_DEVICES_PER_USER configured in the description file; current default description uses 20
   HOME100K_RUNNER_MODE default: live; use sample only for local developer smoke tests
+  HOME100K_RUNNER_NOFILE_LIMIT default: 1048576; remote daemon nofile limit for MQTT sockets
+  HOME100K_DEVICE_SESSION_MODEL default: lifetime-subscription; device MQTT subscriptions stay open for device lifetime
+  HOME100K_RUNNER_READ_MODEL default: go-netpoll-bounded-reader-goroutine; sustained async MQTT reads
   HOME100K_COORDINATOR_START_DELAY_MS default: 3000
   HOME100K_CREDENTIAL_BUNDLE_FORMAT default: sqlite-gzip; only supported format
-  HOME100K_MQTT_ADDR public MQTT endpoint for remote Linode generators; required for live VM MQTT tests
+  HOME100K_MQTT_ADDR public MQTT endpoints for remote Linode generators; use auto-public-mqtt to discover mqtt-public* services
+  HOME100K_MQTT_PUBLIC_LB_COUNT limits auto-public-mqtt endpoint count; current 9K profile uses 1
   HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL optional public Video Cloud API base URL for remote generators
   HOME100K_VIDEO_CLOUD_TOKEN_BASE_URL optional mTLS/device Video Cloud token bootstrap base URL
   HOME100K_VIDEO_CLOUD_BASE_URL legacy alias for HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL
@@ -259,6 +288,66 @@ export_kubeconfig_if_available() {
   fi
 }
 
+command_needs_public_mqtt_addr() {
+  case "$1" in
+    sync|run-stages|workflow-live|workflow-resume-live)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+discover_public_mqtt_addr() {
+  local kubectl_bin="${HOME100K_KUBECTL:-${RTK_CLOUD_KUBECTL:-kubectl}}"
+  if ! command -v "$kubectl_bin" >/dev/null 2>&1; then
+    echo "HOME100K_MQTT_ADDR=auto-public-mqtt requires kubectl" >&2
+    return 1
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "HOME100K_MQTT_ADDR=auto-public-mqtt requires jq" >&2
+    return 1
+  fi
+  local kubeconfig output addrs
+  kubeconfig="$(k8s_kubeconfig || true)"
+  if [[ -n "$kubeconfig" ]]; then
+    output="$(KUBECONFIG="$kubeconfig" "$kubectl_bin" -n video-cloud-staging-video-cloud get svc -l app.kubernetes.io/component=public-mqtt -o json)"
+  else
+    output="$("$kubectl_bin" -n video-cloud-staging-video-cloud get svc -l app.kubernetes.io/component=public-mqtt -o json)"
+  fi
+  local lb_count="${mqtt_public_lb_count:-0}"
+  if ! [[ "$lb_count" =~ ^[0-9]+$ ]]; then
+    echo "HOME100K_MQTT_PUBLIC_LB_COUNT must be a non-negative integer, got: $mqtt_public_lb_count" >&2
+    return 1
+  fi
+  addrs="$(printf '%s' "$output" | jq -r --argjson limit "$lb_count" '
+    [.items[] | select(.status.loadBalancer.ingress[0].ip != null) | .status.loadBalancer.ingress[0].ip + ":8883"]
+    | sort
+    | if $limit > 0 then .[:$limit] else . end
+    | join(",")
+  ')"
+  if [[ -z "$addrs" ]]; then
+    echo "HOME100K_MQTT_ADDR=auto-public-mqtt found no public MQTT LoadBalancer IPs" >&2
+    return 1
+  fi
+  printf '%s\n' "$addrs"
+}
+
+resolve_mqtt_addr_for_command() {
+  local command_name="$1"
+  case "$mqtt_addr" in
+    auto|auto-public-mqtt)
+      if command_needs_public_mqtt_addr "$command_name"; then
+        mqtt_addr="$(discover_public_mqtt_addr)"
+        printf '[home-100k config] resolved HOME100K_MQTT_ADDR=%s\n' "$mqtt_addr" >&2
+      else
+        mqtt_addr=""
+      fi
+      ;;
+  esac
+}
+
 k8s_node_resource_status() {
   if [[ "${HOME100K_K8S_NODE_RESOURCE_STATUS:-1}" == "0" ]]; then
     return
@@ -349,7 +438,7 @@ PY
   fi
   {
     printf '[home-100k status] time=%s elapsed=%s run_id=%s phase=%s\n' "$now" "$elapsed" "$run_id" "$phase"
-    printf '[home-100k status] out_dir=%s vms=%s/5 shard_results=%s server_evidence=%s report_status=%s stage_window=warm_up:%s,steady:%s,cool_down:%s\n' "$out_dir" "$vm_count" "$shard_count" "$evidence_status" "$report_status" "$stage_warm_up" "$stage_steady" "$stage_cool_down"
+    printf '[home-100k status] out_dir=%s vms=%s/5 shard_results=%s server_evidence=%s report_status=%s target_devices=%s target_users=%s devices_per_user=%s stage_window=warm_up:%s,steady:%s,cool_down:%s\n' "$out_dir" "$vm_count" "$shard_count" "$evidence_status" "$report_status" "${device_count:-planner-default}" "${user_count:-derived}" "${devices_per_user:-planner-default}" "$stage_warm_up" "$stage_steady" "$stage_cool_down"
   } >&2
   ensure_resource_logs
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$now" "$run_id" "$elapsed" "$phase" "$vm_count" "$shard_count" "$evidence_status" "$report_status" >> "$workflow_status_log"
@@ -434,6 +523,16 @@ on_script_exit() {
   exit "$rc"
 }
 
+command="${1:-workflow-live}"
+if [[ "$command" == "-h" || "$command" == "--help" ]]; then
+  usage
+  exit 0
+fi
+if [[ "$#" -gt 0 ]]; then
+  shift
+fi
+resolve_mqtt_addr_for_command "$command"
+
 base_args=(
   "--env-root" "$env_root"
   "--brandname" "$brandname"
@@ -442,11 +541,29 @@ base_args=(
   "--stage-steady" "$stage_steady"
   "--stage-cool-down" "$stage_cool_down"
 )
+if [[ -n "$device_count" ]]; then
+  base_args+=("--devices" "$device_count")
+fi
+if [[ -n "$user_count" ]]; then
+  base_args+=("--users" "$user_count")
+fi
+if [[ -n "$devices_per_user" ]]; then
+  base_args+=("--devices-per-user" "$devices_per_user")
+fi
+plan_condition_args=(
+  "${base_args[@]}"
+  "--runner-nofile-limit" "$runner_nofile_limit"
+  "--device-session-model" "$device_session_model"
+  "--runner-read-model" "$runner_read_model"
+)
 workflow_args=("${base_args[@]}")
 coordinator_args=(
   "--coordinator-start-delay-ms" "$coordinator_start_delay_ms"
 )
 workflow_args+=("--credential-bundle-format" "$credential_bundle_format")
+workflow_args+=("--runner-nofile-limit" "$runner_nofile_limit")
+workflow_args+=("--device-session-model" "$device_session_model")
+workflow_args+=("--runner-read-model" "$runner_read_model")
 if [[ -n "$mqtt_addr" ]]; then
   workflow_args+=("--mqtt-addr" "$mqtt_addr")
 fi
@@ -460,22 +577,13 @@ if [[ -n "$account_manager_base_url" ]]; then
   workflow_args+=("--account-manager-base-url" "$account_manager_base_url")
 fi
 
-command="${1:-workflow-live}"
-if [[ "$command" == "-h" || "$command" == "--help" ]]; then
-  usage
-  exit 0
-fi
-if [[ "$#" -gt 0 ]]; then
-  shift
-fi
-
 case "$command" in
   plan)
-    run_home100k plan "${base_args[@]}" "$@"
+    run_home100k plan "${plan_condition_args[@]}" "$@"
     ;;
   dry-run)
     mkdir -p "$repo_root/$out_dir"
-    run_home100k run "${base_args[@]}" --ephemeral-vms --run-id "$run_id" --out-dir "$out_dir" "$@"
+    run_home100k run "${plan_condition_args[@]}" --ephemeral-vms --run-id "$run_id" --out-dir "$out_dir" "$@"
     ;;
   provision-vms)
     mkdir -p "$repo_root/$out_dir"
@@ -515,7 +623,7 @@ case "$command" in
     shutdown_live_vms
     ;;
   workflow-dry-run)
-    run_home100k plan "${base_args[@]}"
+    run_home100k plan "${plan_condition_args[@]}"
     run_home100k provision-vms "${base_args[@]}" --run-id "$run_id" --out-dir "$out_dir"
     run_home100k sync "${workflow_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json"
     run_home100k run-stages "${workflow_args[@]}" "${coordinator_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json" --runner-mode sample
@@ -544,6 +652,11 @@ case "$command" in
     workflow_status
     set_phase "sync"
     run_home100k sync "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
+    workflow_status
+    set_phase "collect-server-baseline"
+    export_kubeconfig_if_available
+    rm -f "$repo_root/$out_dir/server-evidence-baseline.json"
+    run_home100k collect-server-evidence "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --server-evidence-file "$out_dir/server-evidence-baseline.json" --live
     workflow_status
     set_phase "run-stages"
     workflow_rc=0
@@ -606,6 +719,11 @@ case "$command" in
     start_status_monitor
     set_phase "sync"
     run_home100k sync "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
+    workflow_status
+    set_phase "collect-server-baseline"
+    export_kubeconfig_if_available
+    rm -f "$repo_root/$out_dir/server-evidence-baseline.json"
+    run_home100k collect-server-evidence "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --server-evidence-file "$out_dir/server-evidence-baseline.json" --live
     workflow_status
     set_phase "run-stages"
     workflow_rc=0

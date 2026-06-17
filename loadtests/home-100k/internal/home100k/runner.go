@@ -20,21 +20,22 @@ type RunOptions struct {
 }
 
 type RunResult struct {
-	RunID               string              `json:"run_id"`
-	Status              string              `json:"status"`
-	Plan                Plan                `json:"plan"`
-	StageResults        []StageResult       `json:"stage_results"`
-	DeviceMQTTTotals    DeviceMQTTTotals    `json:"device_mqtt_totals"`
-	AppUserTotals       AppUserTotals       `json:"app_user_totals"`
-	ServerEvidence      ServerEvidence      `json:"server_evidence"`
-	ServerCorrelation   ServerCorrelation   `json:"server_correlation"`
-	StartCoordination   StartCoordination   `json:"start_coordination"`
-	SyncTelemetry       SyncTelemetry       `json:"sync_telemetry"`
-	LoadGeneratorHealth LoadGeneratorHealth `json:"load_generator_health"`
-	PlanFile            string              `json:"plan_file"`
-	ResultsFile         string              `json:"results_file"`
-	ServerEvidenceFile  string              `json:"server_evidence_file"`
-	ReportFile          string              `json:"report_file"`
+	RunID                 string                `json:"run_id"`
+	Status                string                `json:"status"`
+	Plan                  Plan                  `json:"plan"`
+	StageResults          []StageResult         `json:"stage_results"`
+	DeviceMQTTTotals      DeviceMQTTTotals      `json:"device_mqtt_totals"`
+	AppUserTotals         AppUserTotals         `json:"app_user_totals"`
+	ServerEvidence        ServerEvidence        `json:"server_evidence"`
+	ServerCorrelation     ServerCorrelation     `json:"server_correlation"`
+	RuntimeLogCorrelation RuntimeLogCorrelation `json:"runtime_log_correlation,omitempty"`
+	StartCoordination     StartCoordination     `json:"start_coordination"`
+	SyncTelemetry         SyncTelemetry         `json:"sync_telemetry"`
+	LoadGeneratorHealth   LoadGeneratorHealth   `json:"load_generator_health"`
+	PlanFile              string                `json:"plan_file"`
+	ResultsFile           string                `json:"results_file"`
+	ServerEvidenceFile    string                `json:"server_evidence_file"`
+	ReportFile            string                `json:"report_file"`
 }
 
 type AggregateOptions struct {
@@ -68,13 +69,59 @@ type StageResult struct {
 	ClientTokenCorrelationCount    int                         `json:"client_token_correlation_count"`
 	FailureReasons                 map[string]int64            `json:"failure_reasons,omitempty"`
 	FailureDetails                 map[string]map[string]int64 `json:"failure_details,omitempty"`
+	FailureEvents                  []FailureEvent              `json:"failure_events,omitempty"`
+	CommandEvents                  []CommandEvent              `json:"command_events,omitempty"`
 	StageDiagnostics               []map[string]any            `json:"stage_diagnostics,omitempty"`
+}
+
+type FailureEvent struct {
+	Stage       string `json:"stage,omitempty"`
+	Reason      string `json:"reason"`
+	Detail      string `json:"detail,omitempty"`
+	Phase       string `json:"phase,omitempty"`
+	DeviceID    string `json:"device_id,omitempty"`
+	CommandID   string `json:"command_id,omitempty"`
+	EventIndex  int    `json:"event_index,omitempty"`
+	SessionSlot int    `json:"session_slot,omitempty"`
+	RemainingMS int64  `json:"remaining_ms,omitempty"`
+	MQTTTarget  string `json:"mqtt_target,omitempty"`
+	ReaderError string `json:"reader_error,omitempty"`
+	OccurredAt  string `json:"occurred_at,omitempty"`
+}
+
+type CommandEvent struct {
+	Stage              string      `json:"stage,omitempty"`
+	DeviceID           string      `json:"device_id"`
+	CommandID          string      `json:"command_id"`
+	RuntimeLogStreamID string      `json:"runtime_log_stream_id"`
+	EventIndex         int         `json:"event_index,omitempty"`
+	SessionSlot        int         `json:"session_slot,omitempty"`
+	MQTTTarget         string      `json:"mqtt_target,omitempty"`
+	ExpectedLogs       []LogExpect `json:"expected_logs,omitempty"`
+	OccurredAt         string      `json:"occurred_at,omitempty"`
+}
+
+type LogExpect struct {
+	Seq     int    `json:"seq"`
+	Source  string `json:"source"`
+	Message string `json:"message"`
 }
 
 type DeviceMQTTTotals struct {
 	ConnectAttempts     int64 `json:"connect_attempts"`
 	ConnectSuccess      int64 `json:"connect_success"`
 	ConnectFail         int64 `json:"connect_fail"`
+	TokenAttempts       int64 `json:"token_attempts,omitempty"`
+	TokenSuccess        int64 `json:"token_success,omitempty"`
+	TokenFail           int64 `json:"token_fail,omitempty"`
+	MQTTDialAttempts    int64 `json:"mqtt_dial_attempts,omitempty"`
+	MQTTDialSuccess     int64 `json:"mqtt_dial_success,omitempty"`
+	MQTTDialFail        int64 `json:"mqtt_dial_fail,omitempty"`
+	MQTTConnackAttempts int64 `json:"mqtt_connack_attempts,omitempty"`
+	MQTTConnackSuccess  int64 `json:"mqtt_connack_success,omitempty"`
+	MQTTConnackFail     int64 `json:"mqtt_connack_fail,omitempty"`
+	SubscribeAttempts   int64 `json:"subscribe_attempts,omitempty"`
+	SubscribeFail       int64 `json:"subscribe_fail,omitempty"`
 	Subscribes          int64 `json:"subscribes"`
 	ActiveConnections   int64 `json:"active_connections,omitempty"`
 	ActiveSubscriptions int64 `json:"active_subscriptions,omitempty"`
@@ -91,6 +138,15 @@ type AppUserTotals struct {
 	LoginAttempts       int64 `json:"login_attempts"`
 	LoginSuccess        int64 `json:"login_success"`
 	LoginFail           int64 `json:"login_fail"`
+	TokenAttempts       int64 `json:"token_attempts,omitempty"`
+	TokenSuccess        int64 `json:"token_success,omitempty"`
+	TokenFail           int64 `json:"token_fail,omitempty"`
+	MQTTDialAttempts    int64 `json:"mqtt_dial_attempts,omitempty"`
+	MQTTDialSuccess     int64 `json:"mqtt_dial_success,omitempty"`
+	MQTTDialFail        int64 `json:"mqtt_dial_fail,omitempty"`
+	MQTTConnackAttempts int64 `json:"mqtt_connack_attempts,omitempty"`
+	MQTTConnackSuccess  int64 `json:"mqtt_connack_success,omitempty"`
+	MQTTConnackFail     int64 `json:"mqtt_connack_fail,omitempty"`
 	ListDevicesRequests int64 `json:"list_devices_requests"`
 	ReadShadowRequests  int64 `json:"read_shadow_requests"`
 	DesiredWrites       int64 `json:"desired_writes"`
@@ -113,6 +169,33 @@ type CorrelationCheck struct {
 	Delta       int64  `json:"delta"`
 	Tolerance   int64  `json:"tolerance"`
 	Status      string `json:"status"`
+}
+
+type RuntimeLogCorrelation struct {
+	Status                 string                    `json:"status,omitempty"`
+	ClientCommandEvents    int                       `json:"client_command_events"`
+	ServerRuntimeStreams   int64                     `json:"server_runtime_streams"`
+	MissingStreamCount     int                       `json:"missing_stream_count"`
+	MissingSequenceCount   int                       `json:"missing_sequence_count"`
+	MissingStreamSamples   []RuntimeLogMissingStream `json:"missing_stream_samples,omitempty"`
+	MissingSequenceSamples []RuntimeLogMissingSeq    `json:"missing_sequence_samples,omitempty"`
+}
+
+type RuntimeLogMissingStream struct {
+	Stage              string `json:"stage,omitempty"`
+	DeviceID           string `json:"device_id"`
+	CommandID          string `json:"command_id"`
+	RuntimeLogStreamID string `json:"runtime_log_stream_id"`
+}
+
+type RuntimeLogMissingSeq struct {
+	Stage              string `json:"stage,omitempty"`
+	DeviceID           string `json:"device_id"`
+	CommandID          string `json:"command_id"`
+	RuntimeLogStreamID string `json:"runtime_log_stream_id"`
+	Seq                int    `json:"seq"`
+	Source             string `json:"source,omitempty"`
+	Message            string `json:"message,omitempty"`
 }
 
 type SyncTelemetry struct {
@@ -156,10 +239,12 @@ type VMStartTelemetry struct {
 }
 
 type ServerEvidence struct {
-	RunID    string                    `json:"run_id"`
-	Complete bool                      `json:"complete"`
-	Sources  map[string]EvidenceSource `json:"sources"`
-	Notes    []string                  `json:"notes,omitempty"`
+	RunID               string                    `json:"run_id"`
+	EvidenceWindowStart string                    `json:"evidence_window_start,omitempty"`
+	EvidenceWindowMode  string                    `json:"evidence_window_mode,omitempty"`
+	Complete            bool                      `json:"complete"`
+	Sources             map[string]EvidenceSource `json:"sources"`
+	Notes               []string                  `json:"notes,omitempty"`
 }
 
 type EvidenceSource struct {
@@ -203,22 +288,25 @@ func Run(opts RunOptions) (RunResult, error) {
 	}
 	deviceTotals, appTotals := summarizeStageTotals(stageResults)
 	correlation := correlateServerEvidence(evidence, deviceTotals, appTotals)
-	status := runStatusWithCorrelation(evidence, stageResults, LoadGeneratorHealth{}, correlation)
+	runtimeLogCorrelation := correlateRuntimeLogs(evidence, stageResults)
+	status := runStatusWithCorrelation(plan.Conditions, evidence, stageResults, LoadGeneratorHealth{}, correlation)
+	status = statusWithRuntimeLogCorrelation(status, runtimeLogCorrelation)
 
 	result := RunResult{
-		RunID:               runID,
-		Status:              status,
-		Plan:                plan,
-		StageResults:        stageResults,
-		DeviceMQTTTotals:    deviceTotals,
-		AppUserTotals:       appTotals,
-		ServerEvidence:      evidence,
-		ServerCorrelation:   correlation,
-		LoadGeneratorHealth: LoadGeneratorHealth{},
-		PlanFile:            filepath.Join(outDir, "plan.json"),
-		ResultsFile:         filepath.Join(outDir, "results.json"),
-		ServerEvidenceFile:  filepath.Join(outDir, "server-evidence.json"),
-		ReportFile:          filepath.Join(outDir, "TEST_REPORT.md"),
+		RunID:                 runID,
+		Status:                status,
+		Plan:                  plan,
+		StageResults:          stageResults,
+		DeviceMQTTTotals:      deviceTotals,
+		AppUserTotals:         appTotals,
+		ServerEvidence:        evidence,
+		ServerCorrelation:     correlation,
+		RuntimeLogCorrelation: runtimeLogCorrelation,
+		LoadGeneratorHealth:   LoadGeneratorHealth{},
+		PlanFile:              filepath.Join(outDir, "plan.json"),
+		ResultsFile:           filepath.Join(outDir, "results.json"),
+		ServerEvidenceFile:    filepath.Join(outDir, "server-evidence.json"),
+		ReportFile:            filepath.Join(outDir, "TEST_REPORT.md"),
 	}
 	if err := writeJSONFile(result.PlanFile, plan); err != nil {
 		return RunResult{}, err
@@ -230,15 +318,16 @@ func Run(opts RunOptions) (RunResult, error) {
 		return RunResult{}, err
 	}
 	report := RenderReport(ReportInput{
-		Plan:                 plan,
-		RunID:                runID,
-		ShadowEvidenceFound:  shadowEvidenceComplete(stageResults),
-		ServerEvidenceFound:  evidence.Complete,
-		LoadGeneratorHealthy: true,
-		StageResults:         stageResults,
-		ServerEvidence:       evidence,
-		ServerCorrelation:    correlation,
-		SyncTelemetry:        SyncTelemetry{},
+		Plan:                  plan,
+		RunID:                 runID,
+		ShadowEvidenceFound:   shadowEvidenceComplete(stageResults),
+		ServerEvidenceFound:   evidence.Complete,
+		LoadGeneratorHealthy:  true,
+		StageResults:          stageResults,
+		ServerEvidence:        evidence,
+		ServerCorrelation:     correlation,
+		RuntimeLogCorrelation: runtimeLogCorrelation,
+		SyncTelemetry:         SyncTelemetry{},
 	})
 	if err := os.WriteFile(result.ReportFile, []byte(report), 0o644); err != nil {
 		return RunResult{}, err
@@ -263,7 +352,7 @@ func AggregateCollectedRun(opts AggregateOptions) (RunResult, error) {
 	if outDir == "" {
 		outDir = filepath.Join("loadtests", "home-100k", "reports", runID)
 	}
-	collected, err := loadCollectedShardResults(filepath.Join(outDir, "shards"))
+	collected, err := loadCollectedShardResults(filepath.Join(outDir, "shards"), plan.Stages)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -282,23 +371,26 @@ func AggregateCollectedRun(opts AggregateOptions) (RunResult, error) {
 	}
 	deviceTotals, appTotals := summarizeStageTotals(stages)
 	correlation := correlateServerEvidence(evidence, deviceTotals, appTotals)
-	status := runStatusWithCorrelation(evidence, stages, loadHealth, correlation)
+	runtimeLogCorrelation := correlateRuntimeLogs(evidence, stages)
+	status := runStatusWithCorrelation(plan.Conditions, evidence, stages, loadHealth, correlation)
+	status = statusWithRuntimeLogCorrelation(status, runtimeLogCorrelation)
 	result := RunResult{
-		RunID:               runID,
-		Status:              status,
-		Plan:                plan,
-		StageResults:        stages,
-		DeviceMQTTTotals:    deviceTotals,
-		AppUserTotals:       appTotals,
-		ServerEvidence:      evidence,
-		ServerCorrelation:   correlation,
-		StartCoordination:   startCoordination,
-		SyncTelemetry:       syncTelemetry,
-		LoadGeneratorHealth: loadHealth,
-		PlanFile:            filepath.Join(outDir, "plan.json"),
-		ResultsFile:         filepath.Join(outDir, "results.json"),
-		ServerEvidenceFile:  filepath.Join(outDir, "server-evidence.json"),
-		ReportFile:          filepath.Join(outDir, "TEST_REPORT.md"),
+		RunID:                 runID,
+		Status:                status,
+		Plan:                  plan,
+		StageResults:          stages,
+		DeviceMQTTTotals:      deviceTotals,
+		AppUserTotals:         appTotals,
+		ServerEvidence:        evidence,
+		ServerCorrelation:     correlation,
+		RuntimeLogCorrelation: runtimeLogCorrelation,
+		StartCoordination:     startCoordination,
+		SyncTelemetry:         syncTelemetry,
+		LoadGeneratorHealth:   loadHealth,
+		PlanFile:              filepath.Join(outDir, "plan.json"),
+		ResultsFile:           filepath.Join(outDir, "results.json"),
+		ServerEvidenceFile:    filepath.Join(outDir, "server-evidence.json"),
+		ReportFile:            filepath.Join(outDir, "TEST_REPORT.md"),
 	}
 	if err := writeJSONFile(result.PlanFile, plan); err != nil {
 		return RunResult{}, err
@@ -312,17 +404,18 @@ func AggregateCollectedRun(opts AggregateOptions) (RunResult, error) {
 		}
 	}
 	report := RenderReport(ReportInput{
-		Plan:                 plan,
-		RunID:                runID,
-		ShadowEvidenceFound:  shadowEvidenceComplete(stages),
-		ServerEvidenceFound:  evidence.Complete,
-		LoadGeneratorHealthy: !loadHealth.Saturated,
-		StageResults:         stages,
-		ServerEvidence:       evidence,
-		ServerCorrelation:    correlation,
-		StartCoordination:    startCoordination,
-		SyncTelemetry:        syncTelemetry,
-		Notes:                loadHealth.Reasons,
+		Plan:                  plan,
+		RunID:                 runID,
+		ShadowEvidenceFound:   shadowEvidenceComplete(stages),
+		ServerEvidenceFound:   evidence.Complete,
+		LoadGeneratorHealthy:  !loadHealth.Saturated,
+		StageResults:          stages,
+		ServerEvidence:        evidence,
+		ServerCorrelation:     correlation,
+		RuntimeLogCorrelation: runtimeLogCorrelation,
+		StartCoordination:     startCoordination,
+		SyncTelemetry:         syncTelemetry,
+		Notes:                 loadHealth.Reasons,
 	})
 	if err := os.WriteFile(result.ReportFile, []byte(report), 0o644); err != nil {
 		return RunResult{}, err
@@ -353,12 +446,8 @@ func loadServerEvidence(path string, runID string) (ServerEvidence, error) {
 	if evidence.Sources == nil {
 		evidence.Sources = map[string]EvidenceSource{}
 	}
-	for key, source := range evidenceSourceCatalog(false) {
-		if _, ok := evidence.Sources[key]; !ok {
-			source.Detail = "missing source"
-			evidence.Sources[key] = source
-		}
-	}
+	normalizeEvidenceSourceCatalogMetadata(evidence.Sources)
+	recomputeVideoCloudAPITopLevelCounters(&evidence)
 	evidence.Complete = evidence.Complete && allEvidenceSourcesAvailable(evidence.Sources)
 	return evidence, nil
 }
@@ -376,7 +465,7 @@ func loadStartCoordination(path string) StartCoordination {
 	return coordination
 }
 
-func loadCollectedShardResults(shardsDir string) (collectedShardResults, error) {
+func loadCollectedShardResults(shardsDir string, stages []Stage) (collectedShardResults, error) {
 	matches, err := filepath.Glob(filepath.Join(shardsDir, "*", "results.json"))
 	if err != nil {
 		return collectedShardResults{}, err
@@ -413,10 +502,9 @@ func loadCollectedShardResults(shardsDir string) (collectedShardResults, error) 
 		}
 		health.Reasons = append(health.Reasons, shard.LoadGeneratorHealth.Reasons...)
 	}
-	order := []string{"25k", "50k", "75k", "100k"}
 	results := []StageResult{}
-	for _, name := range order {
-		items := byStage[name]
+	for _, stage := range stages {
+		items := byStage[stage.Name]
 		if len(items) == 0 {
 			continue
 		}
@@ -436,7 +524,7 @@ func aggregateStageResults(items []StageResult) StageResult {
 		}
 		result.ShardConnectedDevices += item.ShardConnectedDevices
 		result.MQTTConnectSuccessRatePercent += item.MQTTConnectSuccessRatePercent
-		result.DeviceMQTTTotals = addDeviceMQTTTotals(result.DeviceMQTTTotals, item.DeviceMQTTTotals)
+		result.DeviceMQTTTotals = addDeviceMQTTShardTotals(result.DeviceMQTTTotals, item.DeviceMQTTTotals)
 		result.AppUserTotals = addAppUserTotals(result.AppUserTotals, item.AppUserTotals)
 		result.MQTTReconnectCount += item.MQTTReconnectCount
 		result.ShadowGetP50MS += item.ShadowGetP50MS
@@ -456,6 +544,8 @@ func aggregateStageResults(items []StageResult) StageResult {
 		result.ClientTokenCorrelationCount += item.ClientTokenCorrelationCount
 		result.FailureReasons = addFailureReasons(result.FailureReasons, item.FailureReasons)
 		result.FailureDetails = addFailureDetails(result.FailureDetails, item.FailureDetails)
+		result.FailureEvents = appendStageFailureEvents(result.FailureEvents, item.FailureEvents)
+		result.CommandEvents = append(result.CommandEvents, item.CommandEvents...)
 		result.StageDiagnostics = append(result.StageDiagnostics, item.StageDiagnostics...)
 	}
 	count := float64(len(items))
@@ -534,6 +624,21 @@ func addFailureDetails(left, right map[string]map[string]int64) map[string]map[s
 	return merged
 }
 
+const maxAggregatedFailureEvents = 128
+
+func appendStageFailureEvents(left, right []FailureEvent) []FailureEvent {
+	if len(right) == 0 || len(left) >= maxAggregatedFailureEvents {
+		return left
+	}
+	for _, event := range right {
+		if len(left) >= maxAggregatedFailureEvents {
+			break
+		}
+		left = append(left, event)
+	}
+	return left
+}
+
 func summarizeStageTotals(stages []StageResult) (DeviceMQTTTotals, AppUserTotals) {
 	var device DeviceMQTTTotals
 	var app AppUserTotals
@@ -548,9 +653,20 @@ func addDeviceMQTTTotals(a DeviceMQTTTotals, b DeviceMQTTTotals) DeviceMQTTTotal
 	a.ConnectAttempts += b.ConnectAttempts
 	a.ConnectSuccess += b.ConnectSuccess
 	a.ConnectFail += b.ConnectFail
+	a.TokenAttempts += b.TokenAttempts
+	a.TokenSuccess += b.TokenSuccess
+	a.TokenFail += b.TokenFail
+	a.MQTTDialAttempts += b.MQTTDialAttempts
+	a.MQTTDialSuccess += b.MQTTDialSuccess
+	a.MQTTDialFail += b.MQTTDialFail
+	a.MQTTConnackAttempts += b.MQTTConnackAttempts
+	a.MQTTConnackSuccess += b.MQTTConnackSuccess
+	a.MQTTConnackFail += b.MQTTConnackFail
+	a.SubscribeAttempts += b.SubscribeAttempts
+	a.SubscribeFail += b.SubscribeFail
 	a.Subscribes += b.Subscribes
-	a.ActiveConnections += b.ActiveConnections
-	a.ActiveSubscriptions += b.ActiveSubscriptions
+	a.ActiveConnections = maxInt64(a.ActiveConnections, b.ActiveConnections)
+	a.ActiveSubscriptions = maxInt64(a.ActiveSubscriptions, b.ActiveSubscriptions)
 	a.Publishes += b.Publishes
 	a.ReceivedMessages += b.ReceivedMessages
 	a.DeltaReceived += b.DeltaReceived
@@ -561,16 +677,41 @@ func addDeviceMQTTTotals(a DeviceMQTTTotals, b DeviceMQTTTotals) DeviceMQTTTotal
 	return a
 }
 
+func addDeviceMQTTShardTotals(a DeviceMQTTTotals, b DeviceMQTTTotals) DeviceMQTTTotals {
+	activeConnections := a.ActiveConnections + nonZeroInt64(b.ActiveConnections, b.ConnectSuccess)
+	activeSubscriptions := a.ActiveSubscriptions + nonZeroInt64(b.ActiveSubscriptions, b.Subscribes)
+	a = addDeviceMQTTTotals(a, b)
+	a.ActiveConnections = activeConnections
+	a.ActiveSubscriptions = activeSubscriptions
+	return a
+}
+
 func addAppUserTotals(a AppUserTotals, b AppUserTotals) AppUserTotals {
 	a.LoginAttempts += b.LoginAttempts
 	a.LoginSuccess += b.LoginSuccess
 	a.LoginFail += b.LoginFail
+	a.TokenAttempts += b.TokenAttempts
+	a.TokenSuccess += b.TokenSuccess
+	a.TokenFail += b.TokenFail
+	a.MQTTDialAttempts += b.MQTTDialAttempts
+	a.MQTTDialSuccess += b.MQTTDialSuccess
+	a.MQTTDialFail += b.MQTTDialFail
+	a.MQTTConnackAttempts += b.MQTTConnackAttempts
+	a.MQTTConnackSuccess += b.MQTTConnackSuccess
+	a.MQTTConnackFail += b.MQTTConnackFail
 	a.ListDevicesRequests += b.ListDevicesRequests
 	a.ReadShadowRequests += b.ReadShadowRequests
 	a.DesiredWrites += b.DesiredWrites
 	a.ReceivedAcks += b.ReceivedAcks
 	a.BytesSent += b.BytesSent
 	a.BytesReceived += b.BytesReceived
+	return a
+}
+
+func maxInt64(a, b int64) int64 {
+	if b > a {
+		return b
+	}
 	return a
 }
 
@@ -615,19 +756,21 @@ func loadSyncTelemetry(path string) SyncTelemetry {
 
 func requiredEvidenceSources(available bool) map[string]EvidenceSource {
 	return map[string]EvidenceSource{
-		"emqx":               {Available: available},
-		"video_cloud_api":    {Available: available},
-		"iot_device_shadow":  {Available: available},
-		"postgres":           {Available: available},
-		"ingress_nginx":      {Available: available},
-		"host_pod_resources": {Available: available},
+		"emqx":                      {Available: available},
+		"video_cloud_api":           {Available: available},
+		"iot_device_shadow":         {Available: available},
+		"iot_device_shadow_streams": {Available: available},
+		"postgres":                  {Available: available},
+		"ingress_nginx":             {Available: available},
+		"host_pod_resources":        {Available: available},
 	}
 }
 
 func optionalEvidenceSources(available bool) map[string]EvidenceSource {
 	return map[string]EvidenceSource{
-		"central_logger": {Available: available, Optional: true},
-		"redis_valkey":   {Available: available, Optional: true},
+		"central_logger":    {Available: available, Optional: true},
+		"mqtt_nodebalancer": {Available: available, Optional: true},
+		"redis_valkey":      {Available: available, Optional: true},
 	}
 }
 
@@ -648,8 +791,8 @@ func allEvidenceSourcesAvailable(sources map[string]EvidenceSource) bool {
 	return true
 }
 
-func runStatus(evidence ServerEvidence, stages []StageResult) string {
-	if !evidence.Complete || !shadowEvidenceComplete(stages) || !clientTargetCoverageComplete(stages) {
+func runStatus(conditions TestConditions, evidence ServerEvidence, stages []StageResult) string {
+	if !evidence.Complete || !shadowEvidenceComplete(stages) || !clientTargetCoverageComplete(conditions, stages) {
 		return "INCOMPLETE"
 	}
 	for _, stage := range stages {
@@ -663,20 +806,20 @@ func runStatus(evidence ServerEvidence, stages []StageResult) string {
 	return "PASS"
 }
 
-func runStatusWithLoadGenerator(evidence ServerEvidence, stages []StageResult, health LoadGeneratorHealth) string {
+func runStatusWithLoadGenerator(conditions TestConditions, evidence ServerEvidence, stages []StageResult, health LoadGeneratorHealth) string {
 	if health.Saturated {
 		return "INCOMPLETE"
 	}
-	return runStatus(evidence, stages)
+	return runStatus(conditions, evidence, stages)
 }
 
-func runStatusWithCorrelation(evidence ServerEvidence, stages []StageResult, health LoadGeneratorHealth, correlation ServerCorrelation) string {
+func runStatusWithCorrelation(conditions TestConditions, evidence ServerEvidence, stages []StageResult, health LoadGeneratorHealth, correlation ServerCorrelation) string {
 	if health.Saturated {
 		return "INCOMPLETE"
 	}
 	switch strings.ToLower(correlation.Status) {
 	case "pass":
-		return runStatus(evidence, stages)
+		return runStatus(conditions, evidence, stages)
 	case "fail":
 		return "FAIL"
 	default:
@@ -684,19 +827,44 @@ func runStatusWithCorrelation(evidence ServerEvidence, stages []StageResult, hea
 	}
 }
 
+func statusWithRuntimeLogCorrelation(status string, correlation RuntimeLogCorrelation) string {
+	switch strings.ToLower(strings.TrimSpace(correlation.Status)) {
+	case "fail":
+		if status == "INCOMPLETE" {
+			return status
+		}
+		return "FAIL"
+	case "incomplete":
+		return "INCOMPLETE"
+	default:
+		return status
+	}
+}
+
 func correlateServerEvidence(evidence ServerEvidence, device DeviceMQTTTotals, app AppUserTotals) ServerCorrelation {
-	if !clientTotalsPresent(device, app) {
-		return ServerCorrelation{Status: "incomplete", Reasons: []string{"client device/app totals are missing or zero"}}
+	if reasons := missingClientCounterReasons(device, app); len(reasons) > 0 {
+		return ServerCorrelation{Status: "incomplete", Reasons: reasons}
+	}
+	reasons := []string{}
+	if evidenceCounterAny(evidence, "emqx.broker.identity", "emqx", "emqx_listener_stats") == 0 {
+		reasons = append(reasons, "EMQX broker identity missing from server evidence")
+	}
+	totalMQTTConnectSuccess := device.ConnectSuccess + app.MQTTConnackSuccess
+	serverTotalMQTTConnectSuccess := evidenceCounter(evidence, "emqx", "mqtt.total_connect_success")
+	if serverTotalMQTTConnectSuccess == 0 {
+		serverTotalMQTTConnectSuccess = evidenceCounter(evidence, "emqx", "device_mqtt.connect_success")
 	}
 	checks := []CorrelationCheck{
-		newCorrelationCheck("emqx", "device_mqtt.connect_success", device.ConnectSuccess, evidenceCounter(evidence, "emqx", "device_mqtt.connect_success")),
+		newCorrelationCheck("emqx", "mqtt.total_connect_success", totalMQTTConnectSuccess, serverTotalMQTTConnectSuccess),
 		newCorrelationCheck("iot_device_shadow", "app_user.desired_writes", app.DesiredWrites, evidenceCounter(evidence, "iot_device_shadow", "app_user.desired_writes")),
 		newCorrelationCheck("iot_device_shadow", "device_mqtt.delta_received", device.DeltaReceived, evidenceCounter(evidence, "iot_device_shadow", "device_mqtt.delta_received")),
 		newCorrelationCheck("iot_device_shadow", "device_mqtt.reported_publishes", device.ReportedPublishes, evidenceCounter(evidence, "iot_device_shadow", "device_mqtt.reported_publishes")),
 		newCorrelationCheck("iot_device_shadow", "app_user.received_acks", app.ReceivedAcks, evidenceCounter(evidence, "iot_device_shadow", "app_user.received_acks")),
 	}
 	status := "pass"
-	reasons := []string{}
+	if len(reasons) > 0 {
+		status = "incomplete"
+	}
 	for _, check := range checks {
 		if check.Status == "incomplete" {
 			status = "incomplete"
@@ -708,6 +876,63 @@ func correlateServerEvidence(evidence ServerEvidence, device DeviceMQTTTotals, a
 		}
 	}
 	return ServerCorrelation{Status: status, Checks: checks, Reasons: reasons}
+}
+
+func correlateRuntimeLogs(evidence ServerEvidence, stages []StageResult) RuntimeLogCorrelation {
+	events := []CommandEvent{}
+	for _, stage := range stages {
+		events = append(events, stage.CommandEvents...)
+	}
+	source := evidence.Sources["iot_device_shadow_streams"]
+	result := RuntimeLogCorrelation{
+		Status:               "pass",
+		ClientCommandEvents:  len(events),
+		ServerRuntimeStreams: evidenceCounter(evidence, "iot_device_shadow_streams", "runtime_log_streams.total"),
+	}
+	if len(events) == 0 {
+		result.Status = "incomplete"
+		return result
+	}
+	if !source.Available || len(source.Counters) == 0 {
+		result.Status = "incomplete"
+		return result
+	}
+	for _, event := range events {
+		streamKey := "runtime_log_stream." + event.RuntimeLogStreamID + ".entries"
+		if source.Counters[streamKey] == 0 {
+			result.MissingStreamCount++
+			if len(result.MissingStreamSamples) < 20 {
+				result.MissingStreamSamples = append(result.MissingStreamSamples, RuntimeLogMissingStream{
+					Stage:              event.Stage,
+					DeviceID:           event.DeviceID,
+					CommandID:          event.CommandID,
+					RuntimeLogStreamID: event.RuntimeLogStreamID,
+				})
+			}
+			continue
+		}
+		for _, expected := range event.ExpectedLogs {
+			seqKey := fmt.Sprintf("runtime_log_stream.%s.seq.%d", event.RuntimeLogStreamID, expected.Seq)
+			if source.Counters[seqKey] == 0 {
+				result.MissingSequenceCount++
+				if len(result.MissingSequenceSamples) < 20 {
+					result.MissingSequenceSamples = append(result.MissingSequenceSamples, RuntimeLogMissingSeq{
+						Stage:              event.Stage,
+						DeviceID:           event.DeviceID,
+						CommandID:          event.CommandID,
+						RuntimeLogStreamID: event.RuntimeLogStreamID,
+						Seq:                expected.Seq,
+						Source:             expected.Source,
+						Message:            expected.Message,
+					})
+				}
+			}
+		}
+	}
+	if result.MissingStreamCount > 0 || result.MissingSequenceCount > 0 {
+		result.Status = "fail"
+	}
+	return result
 }
 
 func newCorrelationCheck(source string, counter string, clientTotal int64, serverTotal int64) CorrelationCheck {
@@ -735,15 +960,44 @@ func evidenceCounter(evidence ServerEvidence, source string, counter string) int
 	return evidence.Sources[source].Counters[counter]
 }
 
-func clientTotalsPresent(device DeviceMQTTTotals, app AppUserTotals) bool {
-	return device.ConnectAttempts > 0 &&
-		device.Publishes > 0 &&
-		device.ReceivedMessages > 0 &&
-		app.DesiredWrites > 0 &&
-		app.ReceivedAcks > 0
+func evidenceCounterAny(evidence ServerEvidence, counter string, sources ...string) int64 {
+	var total int64
+	for _, source := range sources {
+		total += evidenceCounter(evidence, source, counter)
+	}
+	return total
 }
 
-func clientTargetCoverageComplete(stages []StageResult) bool {
+func missingClientCounterReasons(device DeviceMQTTTotals, app AppUserTotals) []string {
+	var reasons []string
+	if device.ConnectAttempts == 0 {
+		reasons = append(reasons, "client device MQTT connect attempts are zero")
+	}
+	if device.ConnectSuccess == 0 {
+		reasons = append(reasons, "client device MQTT connect successes are zero")
+	}
+	if device.Subscribes == 0 {
+		reasons = append(reasons, "client device MQTT subscribes are zero")
+	}
+	if device.Publishes == 0 {
+		reasons = append(reasons, "client device MQTT publishes are zero; shadow reported path did not run")
+	}
+	if device.ReceivedMessages == 0 {
+		reasons = append(reasons, "client device MQTT received messages are zero; shadow delta path did not run")
+	}
+	if app.TokenAttempts == 0 {
+		reasons = append(reasons, "client app token attempts are zero")
+	}
+	if app.DesiredWrites == 0 {
+		reasons = append(reasons, "client app desired writes are zero; shadow desired path did not run")
+	}
+	if app.ReceivedAcks == 0 {
+		reasons = append(reasons, "client app received ACKs are zero; app-side shadow confirmation did not run")
+	}
+	return reasons
+}
+
+func clientTargetCoverageComplete(conditions TestConditions, stages []StageResult) bool {
 	if len(stages) == 0 {
 		return false
 	}
@@ -751,7 +1005,7 @@ func clientTargetCoverageComplete(stages []StageResult) bool {
 		if stage.ConnectedDevices <= 0 {
 			return false
 		}
-		expectedUsers := expectedStageUsers(stage.ConnectedDevices)
+		expectedUsers := expectedStageUsers(conditions, stage.ConnectedDevices)
 		activeConnections := nonZeroInt64(stage.DeviceMQTTTotals.ActiveConnections, stage.DeviceMQTTTotals.ConnectSuccess)
 		activeSubscriptions := nonZeroInt64(stage.DeviceMQTTTotals.ActiveSubscriptions, stage.DeviceMQTTTotals.Subscribes)
 		if activeConnections < int64(stage.ConnectedDevices) ||
@@ -764,11 +1018,19 @@ func clientTargetCoverageComplete(stages []StageResult) bool {
 	return true
 }
 
-func expectedStageUsers(connectedDevices int) int {
+func expectedStageUsers(conditions TestConditions, connectedDevices int) int {
 	if connectedDevices <= 0 {
 		return 0
 	}
-	users := connectedDevices * DefaultUserCount / DefaultDeviceCount
+	totalDevices := conditions.Devices
+	if totalDevices <= 0 {
+		totalDevices = DefaultDeviceCount
+	}
+	totalUsers := conditions.Users
+	if totalUsers <= 0 {
+		totalUsers = DefaultUserCount
+	}
+	users := connectedDevices * totalUsers / totalDevices
 	if users <= 0 {
 		return 1
 	}

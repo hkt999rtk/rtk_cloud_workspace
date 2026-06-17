@@ -25,6 +25,10 @@ func TestReportRendersRequiredScenariosAndIncompleteEvidence(t *testing.T) {
 	for _, want := range []string{
 		"Status: INCOMPLETE",
 		"## Test Conditions",
+		"Runner nofile limit: 1048576",
+		"Device session model: `lifetime-subscription`",
+		"Runner read model: `go-netpoll-bounded-reader-goroutine`",
+		"sustained MQTT reads",
 		"## Counter Scope",
 		"synthetic actor sample counters",
 		"## Device Scenario",
@@ -72,6 +76,53 @@ func TestReportRedactsSecretsAndMarksLoadGeneratorSaturation(t *testing.T) {
 	}
 	if !strings.Contains(report, "redacted sensitive detail") || !strings.Contains(report, "normal note") {
 		t.Fatalf("report did not retain redacted/non-secret notes:\n%s", report)
+	}
+}
+
+func TestReportRendersFailureEventSamples(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:   "cloud_env/staging/lke",
+		Brandname: "RTK",
+		Region:    "us-sea",
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+	report := RenderReport(ReportInput{
+		Plan:                 plan,
+		RunID:                "run-failure-events",
+		ShadowEvidenceFound:  true,
+		ServerEvidenceFound:  true,
+		LoadGeneratorHealthy: true,
+		StageResults: []StageResult{{
+			Name: "75pct",
+			FailureEvents: []FailureEvent{{
+				Stage:       "75pct",
+				Reason:      "device_delta_wait_failed",
+				Detail:      "network EOF",
+				Phase:       "device_delta_wait",
+				DeviceID:    "rtk-0041",
+				CommandID:   "cmd-0041",
+				EventIndex:  61,
+				SessionSlot: 61,
+				RemainingMS: 12000,
+				MQTTTarget:  "172.238.59.219:8883",
+				ReaderError: "network EOF",
+				OccurredAt:  "2026-06-17T02:59:00Z",
+			}},
+		}},
+	})
+	for _, want := range []string{
+		"## Failure Event Samples",
+		"device_delta_wait_failed",
+		"rtk-0041",
+		"cmd-0041",
+		"network EOF",
+		"172.238.59.219:8883",
+	} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("report missing %q:\n%s", want, report)
+		}
 	}
 }
 
@@ -157,6 +208,17 @@ func TestReportRendersRequiredStageMetrics(t *testing.T) {
 				RemoteDiskAfter:  "2.5G",
 			}},
 		},
+		StartCoordination: StartCoordination{
+			Mode:         "host-coordinator",
+			ReadyBarrier: "1/1",
+			StartDelayMS: 3000,
+			MaxSkewMS:    12,
+			VMs: []VMStartTelemetry{{
+				Label:  "home-100k-mixed-000",
+				IP:     "192.0.2.10",
+				Status: "completed",
+			}},
+		},
 	})
 	for _, want := range []string{
 		"## Status Summary",
@@ -166,6 +228,8 @@ func TestReportRendersRequiredStageMetrics(t *testing.T) {
 		"## Server Log Correlation",
 		"## Stage Diagnostics",
 		"## Sync/Provision Telemetry",
+		"## Load Generator Start Coordination",
+		"- max start skew ms: 12\n\n| VM | IP | Status | Ready at |",
 		"device_connect_target_missed",
 		"device_mqtt.publishes",
 		"home-100k-mixed-000",

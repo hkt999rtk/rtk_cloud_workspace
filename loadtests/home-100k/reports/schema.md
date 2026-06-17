@@ -79,6 +79,18 @@ The public `home-100k.sh` workflow also persists:
 The report generator must summarize load-generator VM and per-Kubernetes-node
 resource usage from those files.
 
+Live reports must also render the generator runtime limits used for the run:
+
+- `HOME100K_RUNNER_NOFILE_LIMIT` or the equivalent `runner_nofile_limit`
+  workflow value. The report must describe this as file-descriptor headroom for
+  MQTT sockets, not as the intended connection count.
+- `HOME100K_DEVICE_SESSION_MODEL`. The live-supported value is
+  `lifetime-subscription`, where device MQTT delta subscriptions stay open for
+  the whole device online lifetime.
+- The runner read model. Live runs require sustained asynchronous MQTT reads
+  using Go's network poller and bounded per-device reader goroutines. A
+  command-time one-shot blocking read is not valid for capacity conclusions.
+
 ## Required Stage Metrics
 
 Each stage result must include:
@@ -226,6 +238,10 @@ must be rendered explicitly as missing data.
 - Server/client counter mismatch outside configured tolerance sets
   `status=FAIL`.
 - Load-generator saturation sets `status=INCOMPLETE`.
+- Load-generator file descriptor exhaustion, including `too many open files`,
+  sets `status=INCOMPLETE`.
+- A live run that does not use lifetime device subscriptions with sustained
+  MQTT reads sets `status=INCOMPLETE`.
 - Shadow convergence below the selected threshold sets `status=FAIL`.
 - Authorization bypass or cross-user access success sets `status=FAIL`.
 

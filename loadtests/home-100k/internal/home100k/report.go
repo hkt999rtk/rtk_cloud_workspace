@@ -8,17 +8,18 @@ import (
 )
 
 type ReportInput struct {
-	Plan                 Plan
-	RunID                string
-	ShadowEvidenceFound  bool
-	ServerEvidenceFound  bool
-	LoadGeneratorHealthy bool
-	StageResults         []StageResult
-	ServerEvidence       ServerEvidence
-	ServerCorrelation    ServerCorrelation
-	StartCoordination    StartCoordination
-	SyncTelemetry        SyncTelemetry
-	Notes                []string
+	Plan                  Plan
+	RunID                 string
+	ShadowEvidenceFound   bool
+	ServerEvidenceFound   bool
+	LoadGeneratorHealthy  bool
+	StageResults          []StageResult
+	ServerEvidence        ServerEvidence
+	ServerCorrelation     ServerCorrelation
+	RuntimeLogCorrelation RuntimeLogCorrelation
+	StartCoordination     StartCoordination
+	SyncTelemetry         SyncTelemetry
+	Notes                 []string
 }
 
 func RenderReport(input ReportInput) string {
@@ -36,7 +37,7 @@ func RenderReport(input ReportInput) string {
 		status = "INCOMPLETE"
 		reasons = append(reasons, "Load-generator saturation invalidated server-capacity conclusion")
 	}
-	if !clientTargetCoverageComplete(input.StageResults) {
+	if !clientTargetCoverageComplete(input.Plan.Conditions, input.StageResults) {
 		status = "INCOMPLETE"
 		reasons = append(reasons, "Client target coverage is incomplete; sampled counters do not satisfy stage device/user targets")
 	}
@@ -54,6 +55,16 @@ func RenderReport(input ReportInput) string {
 		for _, reason := range input.ServerCorrelation.Reasons {
 			reasons = append(reasons, "Server/client counter correlation incomplete: "+reason)
 		}
+	}
+	switch strings.ToLower(strings.TrimSpace(input.RuntimeLogCorrelation.Status)) {
+	case "fail":
+		if status != "INCOMPLETE" {
+			status = "FAIL"
+		}
+		reasons = append(reasons, "Runtime log stream correlation mismatch")
+	case "incomplete":
+		status = "INCOMPLETE"
+		reasons = append(reasons, "Runtime log stream correlation is incomplete")
 	}
 
 	var b strings.Builder
@@ -85,6 +96,10 @@ func RenderReport(input ReportInput) string {
 	fmt.Fprintf(&b, "- Devices: %d\n", input.Plan.Conditions.Devices)
 	fmt.Fprintf(&b, "- Users: %d\n", input.Plan.Conditions.Users)
 	fmt.Fprintf(&b, "- Devices per user: %d\n", input.Plan.Conditions.DevicesPerUser)
+	fmt.Fprintf(&b, "- Runner nofile limit: %d\n", input.Plan.Conditions.RunnerNofileLimit)
+	fmt.Fprintf(&b, "- Device session model: `%s`\n", firstNonEmpty(input.Plan.Conditions.DeviceSessionModel, DefaultDeviceSession))
+	fmt.Fprintf(&b, "- Runner read model: `%s`\n", firstNonEmpty(input.Plan.Conditions.RunnerReadModel, DefaultRunnerReadModel))
+	fmt.Fprintln(&b, "- Runner read requirement: sustained MQTT reads through Go netpoll-backed connections and bounded per-device reader goroutines; command-time one-shot reads are not valid for capacity conclusions.")
 	fmt.Fprintln(&b)
 
 	fmt.Fprintln(&b, "## Counter Scope")
@@ -223,6 +238,31 @@ func RenderReport(input ReportInput) string {
 			}
 			fmt.Fprintln(&b)
 		}
+
+		eventRows := failureEventRows(input.StageResults)
+		if len(eventRows) > 0 {
+			fmt.Fprintln(&b, "## Failure Event Samples")
+			fmt.Fprintln(&b, "| Stage | Reason | Detail | Phase | Device | Command | Event index | Session slot | Remaining ms | MQTT target | Reader error | At |")
+			fmt.Fprintln(&b, "| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- | --- | --- |")
+			for _, event := range eventRows {
+				stage := firstNonEmpty(event.Stage, "unknown")
+				fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %d | %d | %d | %s | %s | %s |\n",
+					stage,
+					redact(event.Reason),
+					redact(event.Detail),
+					redact(event.Phase),
+					redact(event.DeviceID),
+					redact(event.CommandID),
+					event.EventIndex,
+					event.SessionSlot,
+					event.RemainingMS,
+					redact(event.MQTTTarget),
+					redact(event.ReaderError),
+					redact(event.OccurredAt),
+				)
+			}
+			fmt.Fprintln(&b)
+		}
 	}
 
 	if strings.TrimSpace(input.ServerCorrelation.Status) != "" || len(input.ServerCorrelation.Checks) > 0 || len(input.ServerCorrelation.Reasons) > 0 {
@@ -241,6 +281,30 @@ func RenderReport(input ReportInput) string {
 		fmt.Fprintln(&b)
 	}
 
+	if input.RuntimeLogCorrelation.ClientCommandEvents > 0 || input.RuntimeLogCorrelation.ServerRuntimeStreams > 0 || input.RuntimeLogCorrelation.Status != "" {
+		fmt.Fprintln(&b, "## Runtime Log Stream Correlation")
+		fmt.Fprintf(&b, "- status: %s\n", firstNonEmpty(input.RuntimeLogCorrelation.Status, "unknown"))
+		fmt.Fprintf(&b, "- client command events: %d\n", input.RuntimeLogCorrelation.ClientCommandEvents)
+		fmt.Fprintf(&b, "- server runtime streams: %d\n", input.RuntimeLogCorrelation.ServerRuntimeStreams)
+		fmt.Fprintf(&b, "- missing streams: %d\n", input.RuntimeLogCorrelation.MissingStreamCount)
+		fmt.Fprintf(&b, "- missing expected log sequences: %d\n", input.RuntimeLogCorrelation.MissingSequenceCount)
+		if len(input.RuntimeLogCorrelation.MissingStreamSamples) > 0 {
+			fmt.Fprintln(&b, "| Missing stream stage | Device | Command | Runtime log stream |")
+			fmt.Fprintln(&b, "| --- | --- | --- | --- |")
+			for _, missing := range input.RuntimeLogCorrelation.MissingStreamSamples {
+				fmt.Fprintf(&b, "| %s | %s | %s | %s |\n", redact(missing.Stage), redact(missing.DeviceID), redact(missing.CommandID), redact(missing.RuntimeLogStreamID))
+			}
+		}
+		if len(input.RuntimeLogCorrelation.MissingSequenceSamples) > 0 {
+			fmt.Fprintln(&b, "| Missing seq stage | Device | Command | Runtime log stream | Seq | Source | Message |")
+			fmt.Fprintln(&b, "| --- | --- | --- | --- | ---: | --- | --- |")
+			for _, missing := range input.RuntimeLogCorrelation.MissingSequenceSamples {
+				fmt.Fprintf(&b, "| %s | %s | %s | %s | %d | %s | %s |\n", redact(missing.Stage), redact(missing.DeviceID), redact(missing.CommandID), redact(missing.RuntimeLogStreamID), missing.Seq, redact(missing.Source), redact(missing.Message))
+			}
+		}
+		fmt.Fprintln(&b)
+	}
+
 	if len(input.StartCoordination.VMs) > 0 || input.StartCoordination.Mode != "" {
 		fmt.Fprintln(&b, "## Load Generator Start Coordination")
 		fmt.Fprintf(&b, "- mode: %s\n", firstNonEmpty(input.StartCoordination.Mode, "unknown"))
@@ -248,6 +312,7 @@ func RenderReport(input ReportInput) string {
 		fmt.Fprintf(&b, "- start delay ms: %d\n", input.StartCoordination.StartDelayMS)
 		fmt.Fprintf(&b, "- max start skew ms: %d\n", input.StartCoordination.MaxSkewMS)
 		if len(input.StartCoordination.VMs) > 0 {
+			fmt.Fprintln(&b)
 			fmt.Fprintln(&b, "| VM | IP | Status | Ready at | Start signal received | Stage started | First connect | Stage completed | Disconnects | Error |")
 			fmt.Fprintln(&b, "| --- | --- | --- | --- | --- | --- | --- | --- | ---: | --- |")
 			for _, vm := range input.StartCoordination.VMs {
@@ -411,6 +476,9 @@ func serverEvidenceCounterRows(evidence ServerEvidence) []serverEvidenceCounterR
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
+			if strings.HasPrefix(key, "runtime_log_stream.") {
+				continue
+			}
 			rows = append(rows, serverEvidenceCounterRow{Source: source, Counter: key, Value: counters[key]})
 		}
 	}
@@ -486,6 +554,19 @@ func failureDetailRows(stages []StageResult) []failureDetailRow {
 			if total[reason][detail] != 0 {
 				rows = append(rows, failureDetailRow{Stage: "total", Reason: reason, Detail: detail, Count: total[reason][detail]})
 			}
+		}
+	}
+	return rows
+}
+
+func failureEventRows(stages []StageResult) []FailureEvent {
+	rows := []FailureEvent{}
+	for _, stage := range stages {
+		for _, event := range stage.FailureEvents {
+			if strings.TrimSpace(event.Stage) == "" {
+				event.Stage = stage.Name
+			}
+			rows = append(rows, event)
 		}
 	}
 	return rows
