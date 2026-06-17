@@ -59,12 +59,21 @@ pointer change in this workspace repository.
 
 ## Staging Shortcuts
 
-Use `./stg.sh` for the Linode K8s staging environment. It forwards to the Go CLI
-and sets `--env-root cloud_env/staging` automatically.
+Use `scripts/run-staging-e2e.sh` as the LKE staging acceptance entrypoint. Load
+operator secrets from a local shell environment first; do not commit them.
+For LKE, the script resolves missing `LKE_*_IMAGE` values from pinned submodule
+commits, deploys those GHCR images, then runs the K8s E2E flow.
+
+```sh
+set -a; . ~/.env; set +a
+scripts/run-staging-e2e.sh --plan
+scripts/run-staging-e2e.sh --confirm video-cloud-staging
+```
+
+`./stg.sh` remains available for focused K8s operations and data helpers:
 
 ```sh
 ./stg.sh e2e --plan
-scripts/run-staging-e2e.sh --plan
 ./stg.sh provision --confirm video-cloud-staging
 ./stg.sh brand RTK
 ./stg.sh brands

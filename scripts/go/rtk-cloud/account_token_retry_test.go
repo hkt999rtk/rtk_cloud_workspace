@@ -236,7 +236,7 @@ func TestCreateUsersReusesCompleteLocalArtifact(t *testing.T) {
 	t.Setenv("ACCOUNT_MANAGER_BASE_URL", server.URL)
 	t.Setenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL", "admin@example.test")
 	t.Setenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD", "password")
-	if err := runCreateUsers([]string{"--workspace", workspace, "--env-root", envRoot, "--brandname", "RTK", "--count", "1", "--rotate-password"}); err != nil {
+	if err := runCreateUsers([]string{"--workspace", workspace, "--env-root", envRoot, "--brandname", "RTK", "--count", "1"}); err != nil {
 		t.Fatalf("runCreateUsers() error = %v", err)
 	}
 	if createAttempts != 0 || brandLoginAttempts != 0 {
@@ -253,6 +253,128 @@ func TestCreateUsersReusesCompleteLocalArtifact(t *testing.T) {
 	}
 	if len(generated.Users) != 1 || stringValue(generated.Users[0]["action"]) != "reused" || stringValue(generated.Users[0]["password"]) != "existing-password" {
 		t.Fatalf("unexpected generated users artifact: %+v", generated.Users)
+	}
+}
+
+func TestCreateUsersRotatePasswordBypassesCompleteLocalArtifact(t *testing.T) {
+	createAttempts := 0
+	brandLoginAttempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/auth/login":
+			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": testJWT(time.Now().Add(time.Hour)), "refresh_token": testJWT(time.Now().Add(time.Hour))}})
+		case "/v1/admin/brand-clouds":
+			_ = json.NewEncoder(w).Encode(map[string]any{"brand_clouds": []map[string]any{{
+				"id":          "brand-1",
+				"name":        "RTK",
+				"tenant_slug": "rtk-test",
+				"metadata":    map[string]string{"brandname": "RTK"},
+			}}})
+		case "/v1/admin/brand-clouds/brand-1/users":
+			createAttempts++
+			var req map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode create user request: %v", err)
+			}
+			if req["rotate_password"] != true {
+				t.Fatalf("rotate_password = %v, want true", req["rotate_password"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"action":           "assigned",
+				"brand_cloud_user": map[string]string{"id": "brand-user-1"},
+			})
+		case "/v1/admin/brand-clouds/brand-1/users/brand-user-1/app-certificate/revoke":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "revoked"})
+		case "/v1/brand-clouds/rtk-test/auth/login":
+			brandLoginAttempts++
+			var req map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode brand login request: %v", err)
+			}
+			if req["app_csr_pem"] == "" {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"user":            map[string]string{"id": "user-1", "email": "rtk+001@users.local"},
+					"tokens":          map[string]string{"access_token": testJWT(time.Now().Add(time.Hour))},
+					"app_certificate": map[string]string{"status": "csr_required"},
+				})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"user":   map[string]string{"id": "user-1", "email": "rtk+001@users.local"},
+				"tokens": map[string]string{"access_token": testJWT(time.Now().Add(time.Hour))},
+				"app_certificate": map[string]string{
+					"status":             "issued",
+					"fingerprint_sha256": "rotated-fingerprint",
+					"certificate_pem":    "rotated-cert",
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	workspace := t.TempDir()
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "linode")
+	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envRoot, "env", "stack.env"), []byte("CLOUD_PROVIDER=linode\nCLOUD_STACK_NAME=video-cloud-staging\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	artifactDir := filepath.Join(envRoot, "artifacts", "users")
+	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(filepath.Join(artifactDir, "rtk-users-20200101T000000Z.json"), map[string]any{
+		"brandname":      "RTK",
+		"brand_cloud_id": "brand-1",
+		"tenant_slug":    "rtk-test",
+		"role":           "member",
+		"users": []map[string]any{{
+			"email":    "rtk+001@users.local",
+			"password": "existing-password",
+			"app_credentials": map[string]any{
+				"private_key_pem": "-----BEGIN PRIVATE KEY-----\nlocal-key\n-----END PRIVATE KEY-----",
+				"csr_pem":         "-----BEGIN CERTIFICATE REQUEST-----\nlocal-csr\n-----END CERTIFICATE REQUEST-----",
+			},
+			"app_certificate": map[string]any{
+				"status":             "issued",
+				"certificate_pem":    "-----BEGIN CERTIFICATE-----\nlocal-cert\n-----END CERTIFICATE-----",
+				"fingerprint_sha256": "local-fingerprint",
+			},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("ACCOUNT_MANAGER_BASE_URL", server.URL)
+	t.Setenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL", "admin@example.test")
+	t.Setenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD", "password")
+	if err := runCreateUsers([]string{"--workspace", workspace, "--env-root", envRoot, "--brandname", "RTK", "--count", "1", "--rotate-password"}); err != nil {
+		t.Fatalf("runCreateUsers() error = %v", err)
+	}
+	if createAttempts != 1 || brandLoginAttempts != 2 {
+		t.Fatalf("createAttempts=%d brandLoginAttempts=%d", createAttempts, brandLoginAttempts)
+	}
+	latest := latestMatchingFile(artifactDir, "rtk-users-*.json")
+	var generated struct {
+		Users []map[string]any `json:"users"`
+	}
+	if raw, err := os.ReadFile(latest); err != nil {
+		t.Fatal(err)
+	} else if err := json.Unmarshal(raw, &generated); err != nil {
+		t.Fatal(err)
+	}
+	if len(generated.Users) != 1 || stringValue(generated.Users[0]["action"]) != "assigned" || stringValue(generated.Users[0]["password"]) == "existing-password" {
+		t.Fatalf("unexpected generated users artifact: %+v", generated.Users)
+	}
+	appCertificate, ok := generated.Users[0]["app_certificate"].(map[string]any)
+	if !ok {
+		t.Fatalf("app_certificate missing: %+v", generated.Users[0])
+	}
+	if got := stringValue(appCertificate["fingerprint_sha256"]); got != "rotated-fingerprint" {
+		t.Fatalf("fingerprint = %q, want rotated-fingerprint", got)
 	}
 }
 
