@@ -36,7 +36,8 @@ manifest workflow。PR 會先跑不需要 secret 的 tooling validation；
 規則解析各 service repo 應發布的 GHCR image、驗證 image manifest 存在，
 並上傳 `lke-image-manifest.json` 與 `lke-image-env.sh`。workflow 需要 repo
 secret `CI_RUNNER_GITHUB_WORK_KEY` 來讀取 `git@github.com-work:` private
-submodules；產出的 `lke-image-env.sh` 可用來設定後續
+submodules，並用 `GHCR_PULL_USERNAME` / `GHCR_PULL_TOKEN` 登入 GHCR 驗證
+private package manifest；產出的 `lke-image-env.sh` 可用來設定後續
 `run-staging-e2e.sh` / `rtk-cloud provision --deploy` 需要的 `LKE_*_IMAGE`。
 
 LKE Prometheus targets 由 workspace Go deployer 的 workload metrics registry
@@ -74,6 +75,17 @@ go run ./scripts/go/rtk-cloud -- lke-resolve-images \
 `LKE_ACCOUNT_MANAGER_IMAGE`、`LKE_CLOUD_ADMIN_IMAGE`、`LKE_FRONTEND_IMAGE`
 mapping。使用這些 image 跑 LKE staging e2e 時，可先把 mapping export 到 shell
 環境，再執行 `scripts/run-staging-e2e.sh`。
+
+GHCR private service images 需要 centralized read-only deploy token：
+
+- `GHCR_PULL_USERNAME`：dedicated machine user，例如 `rtk-ghcr-deploy-bot`。
+- `GHCR_PULL_TOKEN`：classic PAT，只給 `read:packages` 與必要 package access。
+- `LKE_IMAGE_PULL_SECRET_NAME`：Kubernetes pull secret 名稱，預設 `ghcr-pull`。
+
+`CI_RUNNER_GITHUB_WORK_KEY` 只用於 checkout private submodules，不用於 GHCR
+image pull。`provision --deploy` 偵測到 selected service image 使用 `ghcr.io/`
+時會要求上述 GHCR credentials，並在每個 private service namespace 建立
+`kubernetes.io/dockerconfigjson` pull secret。
 
 ### `go run ./scripts/go/rtk-cloud -- lke-build-images`
 

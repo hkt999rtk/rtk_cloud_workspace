@@ -1443,6 +1443,26 @@ func validateLKEDeployInputs(env map[string]string, opts provisionOptions) error
 		sort.Strings(missing)
 		return fmt.Errorf("LKE deploy requires container image environment variables; generate them with lke-resolve-images: %s", strings.Join(missing, ", "))
 	}
+	if err := validateLKEImagePullSecretInputs(env, opts); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateLKEImagePullSecretInputs(env map[string]string, opts provisionOptions) error {
+	if !lkeSelectedWorkloadsNeedImagePullSecret(env, opts) {
+		return nil
+	}
+	missing := []string{}
+	if firstNonEmpty(os.Getenv("GHCR_PULL_USERNAME"), env["GHCR_PULL_USERNAME"]) == "" {
+		missing = append(missing, "GHCR_PULL_USERNAME")
+	}
+	if firstNonEmpty(os.Getenv("GHCR_PULL_TOKEN"), env["GHCR_PULL_TOKEN"]) == "" {
+		missing = append(missing, "GHCR_PULL_TOKEN")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("LKE deploy requires GHCR pull credentials for private ghcr.io service images: %s", strings.Join(missing, ", "))
+	}
 	return nil
 }
 
@@ -1454,6 +1474,19 @@ func lkeMissingDeployImageWorkloads(env map[string]string, opts provisionOptions
 		}
 	}
 	return missing
+}
+
+func lkeSelectedWorkloadsNeedImagePullSecret(env map[string]string, opts provisionOptions) bool {
+	for _, workload := range lkeSelectedWorkloads(env, opts) {
+		if lkeImageNeedsPullSecret(workload.Image) {
+			return true
+		}
+	}
+	return false
+}
+
+func lkeImageNeedsPullSecret(image string) bool {
+	return strings.HasPrefix(strings.TrimSpace(image), "ghcr.io/")
 }
 
 func lkeMissingBuildImageWorkloads(env map[string]string, opts provisionOptions) []lkeWorkload {
@@ -1784,6 +1817,9 @@ func lkeSelectedWorkloads(env map[string]string, opts provisionOptions) []lkeWor
 }
 
 func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, opts provisionOptions) error {
+	if err := lkeApplyImagePullSecrets(env, opts); err != nil {
+		return err
+	}
 	if err := kubectlApply(lkePostgresSecretManifest(env)); err != nil {
 		return err
 	}
@@ -1938,6 +1974,65 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 		return err
 	}
 	return runKubectl("-n", lkeNamespaceName(env, "account-manager"), "wait", "--for=condition=complete", "job/account-manager-migrate", "--timeout", firstNonEmpty(os.Getenv("LKE_MIGRATION_JOB_TIMEOUT"), "5m"))
+}
+
+func lkeApplyImagePullSecrets(env map[string]string, opts provisionOptions) error {
+	seen := map[string]bool{}
+	for _, workload := range lkeSelectedWorkloads(env, opts) {
+		if !lkeImageNeedsPullSecret(workload.Image) || seen[workload.Namespace] {
+			continue
+		}
+		if err := kubectlApply(lkeImagePullSecretManifest(env, workload.Namespace)); err != nil {
+			return err
+		}
+		seen[workload.Namespace] = true
+	}
+	return nil
+}
+
+func lkeImagePullSecretName(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_IMAGE_PULL_SECRET_NAME"), env["LKE_IMAGE_PULL_SECRET_NAME"], "ghcr-pull")
+}
+
+func lkeImagePullSecretManifest(env map[string]string, namespace string) string {
+	username := firstNonEmpty(os.Getenv("GHCR_PULL_USERNAME"), env["GHCR_PULL_USERNAME"])
+	token := firstNonEmpty(os.Getenv("GHCR_PULL_TOKEN"), env["GHCR_PULL_TOKEN"])
+	auth := base64.StdEncoding.EncodeToString([]byte(username + ":" + token))
+	config := map[string]any{
+		"auths": map[string]any{
+			"ghcr.io": map[string]string{
+				"username": username,
+				"password": token,
+				"auth":     auth,
+			},
+		},
+	}
+	body, err := json.Marshal(config)
+	if err != nil {
+		panic(err)
+	}
+	return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+  labels:
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+type: kubernetes.io/dockerconfigjson
+data:
+  .dockerconfigjson: %s
+`, lkeImagePullSecretName(env), namespace, env["CLOUD_STACK_NAME"], base64.StdEncoding.EncodeToString(body))
+}
+
+func lkeImagePullSecretsManifest(env map[string]string, image string) string {
+	if !lkeImageNeedsPullSecret(image) {
+		return ""
+	}
+	return fmt.Sprintf(`      imagePullSecrets:
+        - name: %s
+`, lkeImagePullSecretName(env))
 }
 
 func lkeApplyCoturnRuntime(env map[string]string) error {
@@ -3847,6 +3942,7 @@ spec:
         rtk.realtek.com/provider: lke
         rtk.realtek.com/stack: %s
     spec:
+%s
       containers:
         - name: app
           image: %s
@@ -3899,7 +3995,7 @@ spec:
                 secretKeyRef:
                   name: video-cloud-workers-runtime
                   key: VIDEO_CLOUD_MQTT_USAGE_INGEST_TOKEN
-`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(service.Name), ports, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeNamespaceName(env, "platform"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(service))
+	`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeImagePullSecretsManifest(env, lkeVideoCloudImage(env)), lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(service.Name), ports, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeNamespaceName(env, "platform"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(service))
 }
 
 func lkeVideoCloudAuxiliaryMQTTCleanSession(service lkeVideoCloudAuxiliaryService) string {
@@ -4505,6 +4601,7 @@ spec:
         rtk.realtek.com/provider: lke
         rtk.realtek.com/stack: %s
     spec:
+%s
       containers:
         - name: certissuer
           image: %s
@@ -4571,7 +4668,7 @@ spec:
         - name: certissuer-openbao-auth
           secret:
             secretName: certissuer-openbao-auth
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], lkeVideoCloudImage(env), lkeOpenBaoAddr(env), lkeNamespaceName(env, "platform"))
+	`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], lkeImagePullSecretsManifest(env, lkeVideoCloudImage(env)), lkeVideoCloudImage(env), lkeOpenBaoAddr(env), lkeNamespaceName(env, "platform"))
 }
 
 func lkeFactoryEnrollDeploymentManifest(env map[string]string, material lkeCertIssuerMaterial) string {
@@ -4607,6 +4704,7 @@ spec:
         rtk.realtek.com/provider: lke
         rtk.realtek.com/stack: %s
     spec:
+%s
       containers:
         - name: factoryenroll
           image: %s
@@ -4646,7 +4744,7 @@ spec:
         - name: factoryenroll-certissuer-client
           secret:
             secretName: factoryenroll-certissuer-client
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], lkeVideoCloudImage(env), lkeCertIssuerBaseURL(env), lkeNamespaceName(env, "platform"))
+	`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], lkeImagePullSecretsManifest(env, lkeVideoCloudImage(env)), lkeVideoCloudImage(env), lkeCertIssuerBaseURL(env), lkeNamespaceName(env, "platform"))
 }
 
 func lkeCertIssuerServiceManifest(env map[string]string) string {
@@ -4772,6 +4870,7 @@ spec:
         rtk.realtek.com/provider: lke
         rtk.realtek.com/stack: %s
     spec:
+%s
       restartPolicy: OnFailure
       containers:
         - name: migrate
@@ -4781,7 +4880,7 @@ spec:
           envFrom:
             - secretRef:
                 name: account-manager-runtime
-`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], image)
+	`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeImagePullSecretsManifest(env, image), image)
 }
 
 func lkeAccountManagerDatabaseURL(env map[string]string) string {
@@ -4978,6 +5077,7 @@ spec:
         rtk.realtek.com/stack: %s
     spec:
 %s
+%s
       containers:
         - name: app
           image: %s
@@ -4993,7 +5093,7 @@ spec:
               value: %q
             - name: SERVICE_PUBLIC_HOST
               value: %q
-%s%s%s%s`, workload.Name, workload.Namespace, workload.Name, env["CLOUD_STACK_NAME"], replicas, workload.Name, templateAnnotations, workload.Name, env["CLOUD_STACK_NAME"], topologySpread, workload.Image, lkeContainerResourcesManifest(workload.Name), workload.Port, env["CLOUD_STACK_NAME"], workload.Host, extraEnv, envFrom, volumeMounts, volumes)
+	%s%s%s%s`, workload.Name, workload.Namespace, workload.Name, env["CLOUD_STACK_NAME"], replicas, workload.Name, templateAnnotations, workload.Name, env["CLOUD_STACK_NAME"], topologySpread, lkeImagePullSecretsManifest(env, workload.Image), workload.Image, lkeContainerResourcesManifest(workload.Name), workload.Port, env["CLOUD_STACK_NAME"], workload.Host, extraEnv, envFrom, volumeMounts, volumes)
 }
 
 func lkeWorkloadReplicas(env map[string]string, workload lkeWorkload) string {

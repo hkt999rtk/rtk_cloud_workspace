@@ -215,6 +215,69 @@ func TestRunProvisionLKEDeployUsesImageManifestDefaults(t *testing.T) {
 	}
 }
 
+func TestRunProvisionLKEDeployRequiresGHCRPullCredentials(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	fakeKubectl(t)
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api:sha-test")
+	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
+	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
+	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
+
+	err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"})
+	if err == nil || !strings.Contains(err.Error(), "GHCR_PULL_USERNAME, GHCR_PULL_TOKEN") {
+		t.Fatalf("expected missing GHCR pull credentials error, got %v", err)
+	}
+}
+
+func TestRunProvisionLKEDeployAppliesGHCRPullSecrets(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	logPath := fakeKubectl(t)
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api:sha-test")
+	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "ghcr.io/hkt999rtk/rtk_account_manager/account-manager:sha-test")
+	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin:sha-test")
+	t.Setenv("LKE_FRONTEND_IMAGE", "ghcr.io/hkt999rtk/rtk_cloud_frontend/frontend:sha-test")
+	t.Setenv("GHCR_PULL_USERNAME", "rtk-ghcr-deploy-bot")
+	t.Setenv("GHCR_PULL_TOKEN", "test-read-packages-token")
+	t.Setenv("LKE_IMAGE_PULL_SECRET_NAME", "test-ghcr-pull")
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
+
+	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, logPath)
+	for _, ns := range []string{
+		"video-cloud-staging-video-cloud",
+		"video-cloud-staging-account-manager",
+		"video-cloud-staging-admin",
+		"video-cloud-staging-frontend",
+	} {
+		want := "kind: Secret\nmetadata:\n  name: test-ghcr-pull\n  namespace: " + ns
+		if !strings.Contains(log, want) {
+			t.Fatalf("expected GHCR pull secret in namespace %s, got:\n%s", ns, log)
+		}
+	}
+	if count := strings.Count(log, "imagePullSecrets:\n        - name: test-ghcr-pull"); count < 6 {
+		t.Fatalf("expected GHCR pull secret references in private service pods, got %d:\n%s", count, log)
+	}
+	for _, want := range []string{
+		"image: ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api:sha-test",
+		"image: ghcr.io/hkt999rtk/rtk_account_manager/account-manager:sha-test",
+		"image: ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin:sha-test",
+		"image: ghcr.io/hkt999rtk/rtk_cloud_frontend/frontend:sha-test",
+		"command: [\"/app/certissuer\"]",
+		"command: [\"/app/factoryenroll\"]",
+		"command: [\"/app/rtk-account-manager-migrate\"]",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("expected manifest snippet %q, got:\n%s", want, log)
+		}
+	}
+	if !strings.Contains(log, "type: kubernetes.io/dockerconfigjson") || !strings.Contains(log, ".dockerconfigjson:") {
+		t.Fatalf("expected dockerconfigjson pull secret, got:\n%s", log)
+	}
+}
+
 func TestRunProvisionLKEDeployDoesNotBuildServiceImagesWhenRegistryConfigured(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	dockerLog := fakeDocker(t)
