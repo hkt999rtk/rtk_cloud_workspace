@@ -2996,50 +2996,82 @@ func queryMissingK8SMQTTRuntimeLogs(kubeconfig, stack string, expectations []mqt
 	if len(expectations) == 0 {
 		return nil, nil
 	}
-	values := make([]string, 0, len(expectations))
-	for _, item := range expectations {
-		values = append(values, fmt.Sprintf("(%s,%s,%d,%s,%s)", sqlLiteral(item.DeviceID), sqlLiteral(item.StreamID), item.Seq, sqlLiteral(item.Source), sqlLiteral(item.Message)))
+	_ = kubeconfig
+	_ = stack
+	endpoint := strings.TrimRight(firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_ENDPOINT"), os.Getenv("CLOUD_LOGGER_ENDPOINT")), "/")
+	if endpoint == "" {
+		return expectations, fmt.Errorf("logger endpoint is required to verify MQTT runtime logs")
 	}
-	sql := `
-WITH expected(device_id, stream_id, seq, source, message) AS (
-	VALUES ` + strings.Join(values, ",") + `
-)
-SELECT e.device_id, e.stream_id, e.seq, e.source, e.message
-FROM expected e
-LEFT JOIN device_runtime_logs l
-  ON l.device_id = e.device_id
- AND l.stream_id = e.stream_id
- AND l.seq = e.seq
- AND l.source = e.source
- AND l.message = e.message
-WHERE l.id IS NULL
-ORDER BY e.device_id, e.stream_id, e.seq`
-	cmd := exec.Command("kubectl", "-n", stack+"-platform", "exec", "postgresql-0", "--", "psql", "-U", "postgres", "-d", "video_cloud", "-At", "-F", "\t", "-c", sql)
-	cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfig)
-	out, err := cmd.Output()
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("query MQTT runtime logs: %s", strings.TrimSpace(string(exitErr.Stderr)))
-		}
-		return nil, err
-	}
-	out = bytes.TrimSpace(out)
-	if len(out) == 0 {
-		return nil, nil
-	}
-	missing := []mqttLogExpectation{}
-	for _, line := range strings.Split(string(out), "\n") {
-		parts := strings.Split(line, "\t")
-		if len(parts) != 5 {
-			return nil, fmt.Errorf("unexpected MQTT log verification row: %q", line)
-		}
-		seq, err := strconv.Atoi(parts[2])
+	token := firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_TOKEN"), os.Getenv("CLOUD_LOGGER_INGEST_TOKEN"))
+	client := &http.Client{Timeout: 10 * time.Second}
+	found := map[string]struct{}{}
+	for _, expected := range expectations {
+		values := url.Values{}
+		values.Set("device_id", expected.DeviceID)
+		values.Set("component", "device_runtime_log")
+		values.Set("source", "device-runtime")
+		values.Set("limit", "1000")
+		req, err := http.NewRequest(http.MethodGet, endpoint+"/v1/logs?"+values.Encode(), nil)
 		if err != nil {
 			return nil, err
 		}
-		missing = append(missing, mqttLogExpectation{DeviceID: parts[0], StreamID: parts[1], Seq: seq, Source: parts[3], Message: parts[4]})
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		var parsed struct {
+			Events []struct {
+				Message string         `json:"msg"`
+				Fields  map[string]any `json:"fields"`
+			} `json:"events"`
+		}
+		decodeErr := json.NewDecoder(resp.Body).Decode(&parsed)
+		_ = resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("logger query status %d", resp.StatusCode)
+		}
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		for _, event := range parsed.Events {
+			streamID, _ := event.Fields["stream_id"].(string)
+			source, _ := event.Fields["source"].(string)
+			seq := intFromJSONNumber(event.Fields["seq"])
+			if streamID == expected.StreamID && source == expected.Source && seq == expected.Seq && event.Message == expected.Message {
+				found[expected.key()] = struct{}{}
+				break
+			}
+		}
+	}
+	missing := []mqttLogExpectation{}
+	for _, expected := range expectations {
+		if _, ok := found[expected.key()]; !ok {
+			missing = append(missing, expected)
+		}
 	}
 	return missing, nil
+}
+
+func (e mqttLogExpectation) key() string {
+	return strings.Join([]string{e.DeviceID, e.StreamID, strconv.Itoa(e.Seq), e.Source, e.Message}, "\x00")
+}
+
+func intFromJSONNumber(value any) int {
+	switch v := value.(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case uint64:
+		return int(v)
+	default:
+		return 0
+	}
 }
 
 func sqlLiteral(value string) string {
