@@ -1066,6 +1066,59 @@ func TestRunProvisionLKEDeployAppliesVideoCloudAuxiliaryServices(t *testing.T) {
 	}
 }
 
+func TestRunProvisionLKEDeployAppliesPrivateGrafana(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	logPath := fakeKubectl(t)
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
+	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
+	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
+	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
+
+	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, logPath)
+	for _, want := range []string{
+		"kind: Secret\nmetadata:\n  name: video-cloud-grafana-admin",
+		"GF_SECURITY_ALLOW_EMBEDDING\n              value: \"true\"",
+		"GF_AUTH_ANONYMOUS_ENABLED\n              value: \"false\"",
+		"GF_AUTH_PROXY_ENABLED\n              value: \"true\"",
+		"GF_SERVER_ROOT_URL\n              value: \"%(protocol)s://%(domain)s/api/admin/grafana/\"",
+		"kind: ConfigMap\nmetadata:\n  name: video-cloud-grafana-datasources",
+		"url: http://video-cloud-prometheus.video-cloud-staging-observability.svc.cluster.local:9090",
+		"kind: ConfigMap\nmetadata:\n  name: video-cloud-grafana-dashboards",
+		"RTK LKE Staging Overview",
+		"sum by(brand_cloud_id) (rate(mqtt_brand_publish_total[$__rate_interval]))",
+		"kind: PersistentVolumeClaim\nmetadata:\n  name: video-cloud-grafana-data",
+		"storage: 5Gi",
+		"kind: Deployment\nmetadata:\n  name: video-cloud-grafana",
+		"image: grafana/grafana:13.0.2",
+		"kind: Service\nmetadata:\n  name: video-cloud-grafana",
+		"type: ClusterIP",
+		"CLOUD_ADMIN_GRAFANA_BASE_URL\n              value: \"http://video-cloud-grafana.video-cloud-staging-observability.svc.cluster.local:3000\"",
+		"CLOUD_ADMIN_GRAFANA_DASHBOARD_PATH\n              value: \"/d/rtk-lke-staging/rtk-lke-staging-overview\"",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-cloud-admin-grafana",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-grafana-prometheus",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-prometheus-grafana",
+		"ARGS -n video-cloud-staging-observability rollout status deployment/video-cloud-grafana",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("expected %q in Grafana manifests, got:\n%s", want, log)
+		}
+	}
+	for _, forbidden := range []string{
+		"host: grafana.video-cloud-staging.realtekconnect.com",
+		"name: public-video-cloud-grafana",
+		"video-cloud-staging-public-tls",
+	} {
+		if strings.Contains(log, forbidden) {
+			t.Fatalf("private Grafana must not create public resource %q, got:\n%s", forbidden, log)
+		}
+	}
+}
+
 func TestLKEPrometheusConfigIsGeneratedFromMetricsRegistry(t *testing.T) {
 	manifest := lkeVideoCloudPrometheusConfigManifest(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}, provisionOptions{})
 
@@ -1088,6 +1141,11 @@ func TestLKEPrometheusConfigIsGeneratedFromMetricsRegistry(t *testing.T) {
 		"targets: [\"video-cloud-mqttusage.video-cloud-staging-video-cloud.svc.cluster.local:19400\"]",
 		"job_name: video-cloud-factoryenroll",
 		"targets: [\"factoryenroll.video-cloud-staging-video-cloud.svc.cluster.local:80\"]",
+		"job_name: video-cloud-prometheus",
+		"targets: [\"video-cloud-prometheus.video-cloud-staging-observability.svc.cluster.local:9090\"]",
+		"job_name: video-cloud-grafana",
+		"targets: [\"video-cloud-grafana.video-cloud-staging-observability.svc.cluster.local:3000\"]",
+		"metrics_path: /metrics",
 	} {
 		if !strings.Contains(manifest, want) {
 			t.Fatalf("expected %q in Prometheus config manifest, got:\n%s", want, manifest)
@@ -1095,6 +1153,9 @@ func TestLKEPrometheusConfigIsGeneratedFromMetricsRegistry(t *testing.T) {
 	}
 	if got, want := strings.Count(manifest, "metrics_path: /metrics/prometheus"), 9; got != want {
 		t.Fatalf("metrics_path count = %d, want %d in manifest:\n%s", got, want, manifest)
+	}
+	if got, want := strings.Count(manifest, "metrics_path: /metrics"), 11; got != want {
+		t.Fatalf("all metrics_path count = %d, want %d in manifest:\n%s", got, want, manifest)
 	}
 }
 

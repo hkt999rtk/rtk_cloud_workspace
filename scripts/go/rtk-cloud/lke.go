@@ -1801,7 +1801,33 @@ func lkeApplyVideoCloudAuxiliaryServices(env map[string]string, opts provisionOp
 	if err := kubectlApply(lkeVideoCloudPrometheusServiceManifest(env)); err != nil {
 		return err
 	}
-	return runKubectl("-n", lkeNamespaceName(env, "observability"), "rollout", "status", "deployment/video-cloud-prometheus", "--timeout", firstNonEmpty(os.Getenv("LKE_PROMETHEUS_ROLLOUT_TIMEOUT"), "5m"))
+	if err := runKubectl("-n", lkeNamespaceName(env, "observability"), "rollout", "status", "deployment/video-cloud-prometheus", "--timeout", firstNonEmpty(os.Getenv("LKE_PROMETHEUS_ROLLOUT_TIMEOUT"), "5m")); err != nil {
+		return err
+	}
+	if !lkeWorkloadSelected(env, opts, "cloud-admin") {
+		return nil
+	}
+	return lkeApplyGrafana(env)
+}
+
+func lkeApplyGrafana(env map[string]string) error {
+	for _, manifest := range []string{
+		lkeGrafanaAdminSecretManifest(env),
+		lkeGrafanaDatasourcesConfigManifest(env),
+		lkeGrafanaDashboardProvidersConfigManifest(env),
+		lkeGrafanaDashboardsConfigManifest(env),
+		lkeGrafanaPVCManifest(env),
+		lkeGrafanaDeploymentManifest(env),
+		lkeGrafanaServiceManifest(env),
+		lkeAllowCloudAdminGrafanaNetworkPolicyManifest(env),
+		lkeAllowGrafanaPrometheusNetworkPolicyManifest(env),
+		lkeAllowPrometheusGrafanaNetworkPolicyManifest(env),
+	} {
+		if err := kubectlApply(manifest); err != nil {
+			return err
+		}
+	}
+	return runKubectl("-n", lkeNamespaceName(env, "observability"), "rollout", "status", "deployment/video-cloud-grafana", "--timeout", firstNonEmpty(os.Getenv("LKE_GRAFANA_ROLLOUT_TIMEOUT"), "5m"))
 }
 
 func lkeWaitForRollouts(targets []lkeRolloutTarget) error {
@@ -3445,6 +3471,23 @@ func lkePrometheusTargets(env map[string]string, opts provisionOptions) []lkePro
 			Path:      "/metrics/prometheus",
 		})
 	}
+	observabilityNS := lkeNamespaceName(env, "observability")
+	targets = append(targets,
+		lkePrometheusTarget{
+			Job:       "video-cloud-prometheus",
+			Namespace: observabilityNS,
+			Service:   "video-cloud-prometheus",
+			Port:      9090,
+			Path:      "/metrics",
+		},
+		lkePrometheusTarget{
+			Job:       "video-cloud-grafana",
+			Namespace: observabilityNS,
+			Service:   "video-cloud-grafana",
+			Port:      3000,
+			Path:      "/metrics",
+		},
+	)
 	return targets
 }
 
@@ -3547,6 +3590,358 @@ spec:
     - name: http
       port: 9090
       targetPort: 9090
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"])
+}
+
+func lkeGrafanaAdminSecretManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: video-cloud-grafana-admin
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-grafana
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+type: Opaque
+stringData:
+  admin-password: %q
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("grafana-admin-password"))
+}
+
+func lkeGrafanaDatasourcesConfigManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: video-cloud-grafana-datasources
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-grafana
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        isDefault: true
+        url: http://video-cloud-prometheus.%s.svc.cluster.local:9090
+        editable: false
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "observability"))
+}
+
+func lkeGrafanaDashboardProvidersConfigManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: video-cloud-grafana-dashboard-providers
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-grafana
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: rtk-lke-staging
+        orgId: 1
+        folder: RTK Cloud
+        type: file
+        disableDeletion: true
+        updateIntervalSeconds: 30
+        options:
+          path: /etc/grafana/provisioned-dashboards
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"])
+}
+
+func lkeGrafanaDashboardsConfigManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: video-cloud-grafana-dashboards
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-grafana
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+data:
+  rtk-lke-staging-overview.json: |
+    {
+      "uid": "rtk-lke-staging",
+      "title": "RTK LKE Staging Overview",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "30s",
+      "time": { "from": "now-1h", "to": "now" },
+      "templating": {
+        "list": [
+          { "name": "job", "type": "query", "datasource": { "type": "prometheus", "uid": "Prometheus" }, "query": "label_values(up, job)", "refresh": 1 },
+          { "name": "service", "type": "query", "datasource": { "type": "prometheus", "uid": "Prometheus" }, "query": "label_values(http_requests_total, service)", "refresh": 1 },
+          { "name": "path", "type": "query", "datasource": { "type": "prometheus", "uid": "Prometheus" }, "query": "label_values(http_requests_total, path)", "refresh": 1 }
+        ]
+      },
+      "panels": [
+        { "type": "row", "title": "Platform Stability Overview", "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 } },
+        { "type": "stat", "title": "Targets Down", "gridPos": { "x": 0, "y": 1, "w": 6, "h": 4 }, "targets": [{ "expr": "sum(up == bool 0)" }] },
+        { "type": "stat", "title": "Targets Up", "gridPos": { "x": 6, "y": 1, "w": 6, "h": 4 }, "targets": [{ "expr": "sum(up == bool 1)" }] },
+        { "type": "stat", "title": "Metrics Snapshot Age", "gridPos": { "x": 12, "y": 1, "w": 6, "h": 4 }, "targets": [{ "expr": "time() - video_cloud_exporter_last_collect_timestamp_seconds" }] },
+        { "type": "timeseries", "title": "Scrape Duration", "gridPos": { "x": 18, "y": 1, "w": 6, "h": 4 }, "targets": [{ "expr": "scrape_duration_seconds" }] },
+        { "type": "row", "title": "Per-Platform MQTT", "gridPos": { "x": 0, "y": 5, "w": 24, "h": 1 } },
+        { "type": "timeseries", "title": "MQTT Publish Rate", "description": "Dashboard-only MQTT counter. Billing uses mqtt_usage_windows.", "gridPos": { "x": 0, "y": 6, "w": 8, "h": 6 }, "targets": [{ "expr": "sum by(brand_cloud_id) (rate(mqtt_brand_publish_total[$__rate_interval]))" }] },
+        { "type": "timeseries", "title": "MQTT Delivery Rate", "description": "Dashboard-only MQTT counter. Billing uses mqtt_usage_windows.", "gridPos": { "x": 8, "y": 6, "w": 8, "h": 6 }, "targets": [{ "expr": "sum by(brand_cloud_id) (rate(mqtt_brand_delivery_total[$__rate_interval]))" }] },
+        { "type": "table", "title": "Top MQTT Brand Clouds 24h", "description": "Dashboard-only MQTT counter. Billing uses mqtt_usage_windows.", "gridPos": { "x": 16, "y": 6, "w": 8, "h": 6 }, "targets": [{ "expr": "topk(10, sum by(brand_cloud_id) (increase(mqtt_brand_publish_total[24h])))" }] },
+        { "type": "row", "title": "Device Fleet", "gridPos": { "x": 0, "y": 12, "w": 24, "h": 1 } },
+        { "type": "stat", "title": "Online Devices", "gridPos": { "x": 0, "y": 13, "w": 6, "h": 4 }, "targets": [{ "expr": "video_cloud_devices_online" }] },
+        { "type": "stat", "title": "Offline Devices", "gridPos": { "x": 6, "y": 13, "w": 6, "h": 4 }, "targets": [{ "expr": "video_cloud_devices_offline" }] },
+        { "type": "timeseries", "title": "Device State Trend", "gridPos": { "x": 12, "y": 13, "w": 12, "h": 4 }, "targets": [{ "expr": "video_cloud_devices_online" }, { "expr": "video_cloud_devices_offline" }, { "expr": "video_cloud_devices_connected" }, { "expr": "video_cloud_devices_attached" }, { "expr": "video_cloud_devices_activated" }] },
+        { "type": "row", "title": "API Health", "gridPos": { "x": 0, "y": 17, "w": 24, "h": 1 } },
+        { "type": "timeseries", "title": "Request Rate", "gridPos": { "x": 0, "y": 18, "w": 6, "h": 5 }, "targets": [{ "expr": "sum by(service) (rate(http_requests_total[$__rate_interval]))" }] },
+        { "type": "timeseries", "title": "5xx Rate", "gridPos": { "x": 6, "y": 18, "w": 6, "h": 5 }, "targets": [{ "expr": "sum by(service) (rate(http_status_group_total{status=\"5xx\"}[$__rate_interval]))" }] },
+        { "type": "timeseries", "title": "Average Latency", "gridPos": { "x": 12, "y": 18, "w": 6, "h": 5 }, "targets": [{ "expr": "sum by(service) (rate(http_request_duration_seconds_sum[$__rate_interval])) / clamp_min(sum by(service) (rate(http_request_duration_seconds_count[$__rate_interval])), 1)" }] },
+        { "type": "table", "title": "Top Error Routes", "gridPos": { "x": 18, "y": 18, "w": 6, "h": 5 }, "targets": [{ "expr": "topk(10, sum by(service, method, path, status) (rate(http_status_group_total{status=~\"4xx|5xx\"}[$__rate_interval])))" }] },
+        { "type": "row", "title": "Runtime Pipeline", "gridPos": { "x": 0, "y": 23, "w": 24, "h": 1 } },
+        { "type": "timeseries", "title": "Log Queue Depth", "gridPos": { "x": 0, "y": 24, "w": 6, "h": 5 }, "targets": [{ "expr": "device_log_queue_depth" }] },
+        { "type": "timeseries", "title": "Log Drops and Failures", "gridPos": { "x": 6, "y": 24, "w": 6, "h": 5 }, "targets": [{ "expr": "rate(device_log_dropped_total[$__rate_interval])" }, { "expr": "rate(device_log_write_failures_total[$__rate_interval])" }, { "expr": "rate(device_log_sequence_gap_total[$__rate_interval])" }] },
+        { "type": "timeseries", "title": "Cross-Service Backlog", "gridPos": { "x": 12, "y": 24, "w": 6, "h": 5 }, "targets": [{ "expr": "crossservice_bus_consumer_pending_messages" }] },
+        { "type": "timeseries", "title": "Dead Letters", "gridPos": { "x": 18, "y": 24, "w": 6, "h": 5 }, "targets": [{ "expr": "sum by(worker, error_code, retryable) (rate(crossservice_worker_dead_letters_total[$__rate_interval]))" }] },
+        { "type": "row", "title": "Video Runtime / TURN", "gridPos": { "x": 0, "y": 29, "w": 24, "h": 1 } },
+        { "type": "stat", "title": "Active TURN Nodes", "gridPos": { "x": 0, "y": 30, "w": 6, "h": 4 }, "targets": [{ "expr": "turn_registry_active_nodes" }] },
+        { "type": "stat", "title": "Expired TURN Nodes", "gridPos": { "x": 6, "y": 30, "w": 6, "h": 4 }, "targets": [{ "expr": "turn_registry_expired_nodes" }] },
+        { "type": "timeseries", "title": "TURN Heartbeats", "gridPos": { "x": 12, "y": 30, "w": 6, "h": 4 }, "targets": [{ "expr": "rate(turn_registry_heartbeat_total[$__rate_interval])" }] },
+        { "type": "timeseries", "title": "TURN Failures", "gridPos": { "x": 18, "y": 30, "w": 6, "h": 4 }, "targets": [{ "expr": "rate(turn_registry_register_failures_total[$__rate_interval])" }, { "expr": "rate(turn_registry_heartbeat_failures_total[$__rate_interval])" }] },
+        { "type": "row", "title": "Capacity", "gridPos": { "x": 0, "y": 34, "w": 24, "h": 1 } },
+        { "type": "gauge", "title": "Blob Capacity Utilization", "gridPos": { "x": 0, "y": 35, "w": 8, "h": 5 }, "targets": [{ "expr": "video_cloud_blob_capacity_utilization_percent" }] },
+        { "type": "stat", "title": "Blob Consumed Bytes", "gridPos": { "x": 8, "y": 35, "w": 8, "h": 5 }, "targets": [{ "expr": "video_cloud_blob_capacity_consumed_bytes" }] },
+        { "type": "stat", "title": "Clips Total", "gridPos": { "x": 16, "y": 35, "w": 8, "h": 5 }, "targets": [{ "expr": "video_cloud_clips_total" }] }
+      ]
+    }
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"])
+}
+
+func lkeGrafanaPVCManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: video-cloud-grafana-data
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-grafana
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: %s
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_GRAFANA_STORAGE"), env["LKE_GRAFANA_STORAGE"], "5Gi"))
+}
+
+func lkeGrafanaDeploymentManifest(env map[string]string) string {
+	checksum := lkeConfigChecksum(lkeRuntimeSecretValue("grafana-admin-password"), lkeGrafanaDatasourceURL(env))
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: video-cloud-grafana
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-grafana
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: video-cloud-grafana
+  template:
+    metadata:
+      annotations:
+        rtk.realtek.com/runtime-checksum: %q
+      labels:
+        app.kubernetes.io/name: video-cloud-grafana
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+    spec:
+      containers:
+        - name: grafana
+          image: %s
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: "admin"
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-grafana-admin
+                  key: admin-password
+            - name: GF_SECURITY_ALLOW_EMBEDDING
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "false"
+            - name: GF_AUTH_PROXY_ENABLED
+              value: "true"
+            - name: GF_AUTH_PROXY_HEADER_NAME
+              value: "X-WEBAUTH-USER"
+            - name: GF_AUTH_PROXY_AUTO_SIGN_UP
+              value: "true"
+            - name: GF_AUTH_PROXY_HEADERS
+              value: "Email:X-WEBAUTH-EMAIL Role:X-WEBAUTH-ROLE"
+            - name: GF_SERVER_ROOT_URL
+              value: "%%(protocol)s://%%(domain)s/api/admin/grafana/"
+            - name: GF_SERVER_SERVE_FROM_SUB_PATH
+              value: "true"
+            - name: GF_METRICS_ENABLED
+              value: "true"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/grafana
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+              readOnly: true
+            - name: dashboard-providers
+              mountPath: /etc/grafana/provisioning/dashboards
+              readOnly: true
+            - name: dashboards
+              mountPath: /etc/grafana/provisioned-dashboards
+              readOnly: true
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: video-cloud-grafana-data
+        - name: datasources
+          configMap:
+            name: video-cloud-grafana-datasources
+        - name: dashboard-providers
+          configMap:
+            name: video-cloud-grafana-dashboard-providers
+        - name: dashboards
+          configMap:
+            name: video-cloud-grafana-dashboards
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_GRAFANA_IMAGE"), env["LKE_GRAFANA_IMAGE"], "grafana/grafana:13.0.2"))
+}
+
+func lkeGrafanaDatasourceURL(env map[string]string) string {
+	return "http://video-cloud-prometheus." + lkeNamespaceName(env, "observability") + ".svc.cluster.local:9090"
+}
+
+func lkeGrafanaServiceManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Service
+metadata:
+  name: video-cloud-grafana
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-grafana
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: video-cloud-grafana
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"])
+}
+
+func lkeAllowCloudAdminGrafanaNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cloud-admin-grafana
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-grafana
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: video-cloud-grafana
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloud-admin
+      ports:
+        - protocol: TCP
+          port: 3000
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "admin"))
+}
+
+func lkeAllowGrafanaPrometheusNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-grafana-prometheus
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-grafana
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: video-cloud-grafana
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: video-cloud-prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"])
+}
+
+func lkeAllowPrometheusGrafanaNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-grafana
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-prometheus
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: video-cloud-grafana
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: video-cloud-prometheus
+      ports:
+        - protocol: TCP
+          port: 3000
 `, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"])
 }
 
@@ -4030,6 +4425,13 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
               value: "true"
 `, lkeNamespaceName(env, "platform"), lkeAccountManagerInternalURL(env))
 	}
+	if workload.Key == "cloud-admin" {
+		extraEnv = fmt.Sprintf(`            - name: CLOUD_ADMIN_GRAFANA_BASE_URL
+              value: %q
+            - name: CLOUD_ADMIN_GRAFANA_DASHBOARD_PATH
+              value: %q
+`, lkeGrafanaInternalURL(env), lkeGrafanaDashboardPath(env))
+	}
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -4073,6 +4475,14 @@ spec:
 
 func lkeAccountManagerInternalURL(env map[string]string) string {
 	return "http://account-manager." + lkeNamespaceName(env, "account-manager") + ".svc.cluster.local:80"
+}
+
+func lkeGrafanaInternalURL(env map[string]string) string {
+	return "http://video-cloud-grafana." + lkeNamespaceName(env, "observability") + ".svc.cluster.local:3000"
+}
+
+func lkeGrafanaDashboardPath(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("CLOUD_ADMIN_GRAFANA_DASHBOARD_PATH"), env["CLOUD_ADMIN_GRAFANA_DASHBOARD_PATH"], "/d/rtk-lke-staging/rtk-lke-staging-overview")
 }
 
 func lkeServiceManifest(env map[string]string, workload lkeWorkload) string {
