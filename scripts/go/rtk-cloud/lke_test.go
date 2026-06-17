@@ -176,6 +176,29 @@ func TestRunProvisionLKEPlanWithoutStackUsesProviderEnv(t *testing.T) {
 	}
 }
 
+func TestRunStagingE2ETestPlanShowsNativeLKEProvisionArgs(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+
+	output := captureStdout(t, func() {
+		if err := runStagingE2ETest([]string{
+			"--workspace", workspace,
+			"--env-root", envRoot,
+			"--plan",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	for _, want := range []string{
+		"provision K8s staging with ",
+		"provision args: --workspace " + workspace + " --env-root " + envRoot + " --preflight --plan --apply --deploy --dns --artifacts --confirm video-cloud-staging",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected %q in LKE staging E2E plan, got:\n%s", want, output)
+		}
+	}
+}
+
 func TestRunProvisionLKEDeployRequiresImages(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 
@@ -212,6 +235,73 @@ func TestRunProvisionLKEDeployUsesImageManifestDefaults(t *testing.T) {
 		if !strings.Contains(log, want) {
 			t.Fatalf("expected %q from image manifest defaults, got:\n%s", want, log)
 		}
+	}
+}
+
+func TestRunProvisionLKEDeployRequiresGHCRPullCredentials(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	fakeKubectl(t)
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api:sha-test")
+	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
+	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
+	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
+
+	err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"})
+	if err == nil || !strings.Contains(err.Error(), "GHCR_PULL_USERNAME, GHCR_PULL_TOKEN") {
+		t.Fatalf("expected missing GHCR pull credentials error, got %v", err)
+	}
+}
+
+func TestRunProvisionLKEDeployAppliesGHCRPullSecrets(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	logPath := fakeKubectl(t)
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api:sha-test")
+	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "ghcr.io/hkt999rtk/rtk_account_manager/account-manager:sha-test")
+	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin:sha-test")
+	t.Setenv("LKE_FRONTEND_IMAGE", "ghcr.io/hkt999rtk/rtk_cloud_frontend/frontend:sha-test")
+	t.Setenv("GHCR_PULL_USERNAME", "rtk-ghcr-deploy-bot")
+	t.Setenv("GHCR_PULL_TOKEN", "test-read-packages-token")
+	t.Setenv("LKE_IMAGE_PULL_SECRET_NAME", "test-ghcr-pull")
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
+
+	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, logPath)
+	if strings.Contains(log, "\t") {
+		t.Fatalf("expected generated Kubernetes manifests to avoid tab characters, got:\n%s", log)
+	}
+	for _, ns := range []string{
+		"video-cloud-staging-video-cloud",
+		"video-cloud-staging-account-manager",
+		"video-cloud-staging-admin",
+		"video-cloud-staging-frontend",
+	} {
+		want := "kind: Secret\nmetadata:\n  name: test-ghcr-pull\n  namespace: " + ns
+		if !strings.Contains(log, want) {
+			t.Fatalf("expected GHCR pull secret in namespace %s, got:\n%s", ns, log)
+		}
+	}
+	if count := strings.Count(log, "imagePullSecrets:\n        - name: test-ghcr-pull"); count < 6 {
+		t.Fatalf("expected GHCR pull secret references in private service pods, got %d:\n%s", count, log)
+	}
+	for _, want := range []string{
+		"kind: Namespace\nmetadata:\n  name: video-cloud-staging-ingress",
+		"image: ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api:sha-test",
+		"image: ghcr.io/hkt999rtk/rtk_account_manager/account-manager:sha-test",
+		"image: ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin:sha-test",
+		"image: ghcr.io/hkt999rtk/rtk_cloud_frontend/frontend:sha-test",
+		"command: [\"/app/certissuer\"]",
+		"command: [\"/app/factoryenroll\"]",
+		"command: [\"/app/rtk-account-manager-migrate\"]",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("expected manifest snippet %q, got:\n%s", want, log)
+		}
+	}
+	if !strings.Contains(log, "type: kubernetes.io/dockerconfigjson") || !strings.Contains(log, ".dockerconfigjson:") {
+		t.Fatalf("expected dockerconfigjson pull secret, got:\n%s", log)
 	}
 }
 
@@ -843,6 +933,7 @@ func TestCertbotDNSHooksUseBoundedNetworkCalls(t *testing.T) {
 	for _, want := range []string{
 		"curl --connect-timeout 10 --max-time 30 -fsS -X PUT",
 		"dig +time=5 +tries=1 +short TXT",
+		`grep -Fx -- "$CERTBOT_VALIDATION"`,
 	} {
 		if !strings.Contains(auth, want) {
 			t.Fatalf("expected auth hook to contain %q, got:\n%s", want, auth)
@@ -1130,6 +1221,27 @@ func TestLKEPostgresStatefulSetUsesPostgresImageOverride(t *testing.T) {
 	}
 }
 
+func TestLKEPostgresStatefulSetSupportsResourceOverrides(t *testing.T) {
+	t.Setenv("LKE_POSTGRES_REQUEST_CPU", "500m")
+	t.Setenv("LKE_POSTGRES_REQUEST_MEMORY", "512Mi")
+	t.Setenv("LKE_POSTGRES_LIMIT_MEMORY", "1Gi")
+
+	manifest := lkePostgresStatefulSetManifest(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})
+
+	for _, want := range []string{
+		`cpu: "500m"`,
+		`memory: "512Mi"`,
+		`memory: "1Gi"`,
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("expected %q in PostgreSQL resource override manifest, got:\n%s", want, manifest)
+		}
+	}
+	if strings.Contains(manifest, `cpu: "4"`) || strings.Contains(manifest, `memory: "6Gi"`) {
+		t.Fatalf("expected PostgreSQL resource defaults to be overridden, got:\n%s", manifest)
+	}
+}
+
 func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 	t.Setenv("LKE_POSTGRES_NODE_POOL_ID", "906225")
 	t.Setenv("LKE_MQTT_NODE_POOL_ID", "906225")
@@ -1163,6 +1275,9 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 		"topologySpreadConstraints:",
 		`cpu: "250m"`,
 		`memory: "1Gi"`,
+		"              value: \"account-manager.video-cloud-staging.realtekconnect.com\"\n          envFrom:",
+		"          volumeMounts:\n            - name: account-manager-certissuer-client",
+		"      volumes:\n        - name: account-manager-certissuer-client",
 	} {
 		if !strings.Contains(account, want) {
 			t.Fatalf("expected %q in account-manager manifest, got:\n%s", want, account)
@@ -1385,6 +1500,10 @@ func TestRunProvisionLKEDeployAppliesPrivateGrafana(t *testing.T) {
 		"kind: PersistentVolumeClaim\nmetadata:\n  name: video-cloud-grafana-data",
 		"storage: 5Gi",
 		"kind: Deployment\nmetadata:\n  name: video-cloud-grafana",
+		"fsGroup: 472",
+		"fsGroupChangePolicy: OnRootMismatch",
+		"runAsUser: 472",
+		"runAsGroup: 472",
 		"image: grafana/grafana:13.0.2",
 		"kind: Service\nmetadata:\n  name: video-cloud-grafana",
 		"type: ClusterIP",

@@ -1588,7 +1588,7 @@ func runCreateUsers(args []string) error {
 			return createUserResult{}, err
 		}
 		safeLog("ensuring brand user: email=%s role=%s", email, *role)
-		if reusable := reusableLocalUsers[email]; reusable != nil {
+		if reusable := reusableLocalUsers[email]; reusable != nil && !*rotatePassword {
 			safeLog("reusing local user artifact: email=%s", email)
 			reusable["action"] = "reused"
 			return createUserResult{user: reusable, reused: true}, nil
@@ -2715,8 +2715,14 @@ func runStagingE2ETest(args []string) error {
 	if useLKEProvision {
 		scripts["provision-k8s"] = selfCommandPath("provision")
 	}
+	k8sProvisionArgs := []string{"--workspace", workspace, "--env-root", envRoot, "--confirm", stackName}
+	if useLKEProvision {
+		k8sProvisionArgs = []string{"--workspace", workspace, "--env-root", envRoot, "--preflight", "--plan", "--apply", "--deploy", "--dns", "--artifacts", "--confirm", stackName}
+	} else if useLegacyLKEProvision {
+		k8sProvisionArgs = []string{"--workspace", workspace, "--env-root", envRoot, "--all", "--confirm", stackName}
+	}
 	if !*runMode {
-		printE2EPlan(workspace, envRoot, stackName, *brandname, *userCount, *deviceCount, *deviceMix, *userConcurrency, *deviceConcurrency, *bindConcurrency, *skipRemove, scripts)
+		printE2EPlan(workspace, envRoot, stackName, *brandname, *userCount, *deviceCount, *deviceMix, *userConcurrency, *deviceConcurrency, *bindConcurrency, *skipRemove, scripts, k8sProvisionArgs)
 		return nil
 	}
 	if *confirm != stackName {
@@ -2741,12 +2747,6 @@ func runStagingE2ETest(args []string) error {
 			return err
 		}
 	}
-	k8sProvisionArgs := []string{"--workspace", workspace, "--env-root", envRoot, "--confirm", stackName}
-	if useLKEProvision {
-		k8sProvisionArgs = []string{"--workspace", workspace, "--env-root", envRoot, "--preflight", "--plan", "--apply", "--deploy", "--dns", "--artifacts", "--confirm", stackName}
-	} else if useLegacyLKEProvision {
-		k8sProvisionArgs = []string{"--workspace", workspace, "--env-root", envRoot, "--all", "--confirm", stackName}
-	}
 	if err := runStep("provision_k8s", commandWithArgs(scripts["provision-k8s"], k8sProvisionArgs...)...); err != nil {
 		return err
 	}
@@ -2757,7 +2757,7 @@ func runStagingE2ETest(args []string) error {
 	defer cleanup()
 	childEnv = append(childEnv, portForwardEnv...)
 	dataSetupDir := filepath.Join(*outDir, "data-setup")
-	dataSetupArgs := []string{"--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--user-count", strconv.Itoa(*userCount), "--device-count", strconv.Itoa(*deviceCount), "--device-mix", *deviceMix, "--device-prefix", *devicePrefix, "--user-concurrency", strconv.Itoa(*userConcurrency), "--device-concurrency", strconv.Itoa(*deviceConcurrency), "--bind-concurrency", strconv.Itoa(*bindConcurrency), "--out-dir", dataSetupDir}
+	dataSetupArgs := []string{"--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--user-count", strconv.Itoa(*userCount), "--device-count", strconv.Itoa(*deviceCount), "--device-mix", *deviceMix, "--device-prefix", *devicePrefix, "--user-concurrency", strconv.Itoa(*userConcurrency), "--device-concurrency", strconv.Itoa(*deviceConcurrency), "--bind-concurrency", strconv.Itoa(*bindConcurrency), "--out-dir", dataSetupDir, "--no-resume"}
 	if *quiet {
 		dataSetupArgs = append(dataSetupArgs, "--quiet")
 	}
@@ -3078,7 +3078,7 @@ func sqlLiteral(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
-func printE2EPlan(workspace, envRoot, stack, brandname string, userCount, deviceCount int, deviceMix string, userConcurrency, deviceConcurrency, bindConcurrency int, skipRemove bool, scripts map[string]string) {
+func printE2EPlan(workspace, envRoot, stack, brandname string, userCount, deviceCount int, deviceMix string, userConcurrency, deviceConcurrency, bindConcurrency int, skipRemove bool, scripts map[string]string, k8sProvisionArgs []string) {
 	fmt.Fprintln(os.Stdout, "cloud-staging-e2e-test plan")
 	fmt.Fprintf(os.Stdout, "workspace: %s\n", workspace)
 	fmt.Fprintf(os.Stdout, "env_root: %s\n", envRoot)
@@ -3097,6 +3097,7 @@ func printE2EPlan(workspace, envRoot, stack, brandname string, userCount, device
 		fmt.Fprintf(os.Stdout, "  - reset K8s staging with %s\n", scripts["remove-k8s"])
 	}
 	fmt.Fprintf(os.Stdout, "  - provision K8s staging with %s\n", scripts["provision-k8s"])
+	fmt.Fprintf(os.Stdout, "    provision args: %s\n", strings.Join(k8sProvisionArgs, " "))
 	fmt.Fprintf(os.Stdout, "  - setup brand/users/devices with %s\n", scripts["setup-data"])
 	fmt.Fprintf(os.Stdout, "  - run live home MQTT E2E with %s\n", scripts["mqtt-test"])
 	fmt.Fprintf(os.Stdout, "  - verify persisted MQTT runtime logs with %s\n", scripts["mqtt-log-verify"])
