@@ -62,6 +62,64 @@ PLAN=0
 OUT_DIR=""
 SKIP_MQTT_PROBE=0
 QUIET=0
+LKE_SERVICE_IMAGE_ENV_KEYS=(
+	LKE_VIDEO_CLOUD_IMAGE
+	LKE_ACCOUNT_MANAGER_IMAGE
+	LKE_CLOUD_ADMIN_IMAGE
+	LKE_FRONTEND_IMAGE
+)
+
+lke_missing_service_image_env() {
+	local key
+	for key in "${LKE_SERVICE_IMAGE_ENV_KEYS[@]}"; do
+		if [[ -z "${!key:-}" ]]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+resolve_lke_images_if_needed() {
+	if [[ "$PROVIDER" != "lke" ]]; then
+		return 0
+	fi
+	if ! lke_missing_service_image_env; then
+		return 0
+	fi
+	if ! command -v jq >/dev/null 2>&1; then
+		printf 'error: jq is required to export lke-resolve-images output for LKE staging E2E\n' >&2
+		return 1
+	fi
+
+	local artifact_dir timestamp manifest_file env_file
+	local -a resolve_args
+	timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+	artifact_dir="$ROOT/.artifacts/lke-images/$timestamp"
+	if [[ -e "$artifact_dir" ]]; then
+		artifact_dir="$ROOT/.artifacts/lke-images/${timestamp}-$$"
+	fi
+	manifest_file="$artifact_dir/lke-image-manifest.json"
+	env_file="$artifact_dir/lke-image-env.sh"
+	mkdir -p "$artifact_dir"
+
+	resolve_args=(
+		run ./scripts/go/rtk-cloud -- lke-resolve-images
+		--workspace "$ROOT"
+		--env-root "$RTK_CLOUD_STAGING_ENV_ROOT"
+	)
+	if [[ -n "${LKE_IMAGE_REGISTRY_HOST:-}" ]]; then
+		resolve_args+=(--registry-host "$LKE_IMAGE_REGISTRY_HOST")
+	fi
+	if [[ -n "${LKE_IMAGE_OWNER:-}" ]]; then
+		resolve_args+=(--owner "$LKE_IMAGE_OWNER")
+	fi
+	resolve_args+=(--out "$manifest_file")
+
+	go "${resolve_args[@]}"
+	jq -r '.env | to_entries[] | "export \(.key)=\(.value|@sh)"' "$manifest_file" >"$env_file"
+	# shellcheck disable=SC1090
+	. "$env_file"
+}
 
 usage() {
 	cat <<'USAGE'
@@ -284,6 +342,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$PLAN" -eq 1 ]]; then
+	if [[ "$PROVIDER" == "lke" ]]; then
+		printf 'LKE image resolve: automatic when service image env vars are missing\n'
+	fi
 	plan_args=(e2e --plan)
 	if [[ -n "$BRANDNAME" ]]; then
 		plan_args+=(--brandname "$BRANDNAME")
@@ -326,6 +387,8 @@ if [[ "$CONFIRM" != "$STACK_NAME" ]]; then
 	fi
 	exit 2
 fi
+
+resolve_lke_images_if_needed
 
 run_args=(
 	e2e

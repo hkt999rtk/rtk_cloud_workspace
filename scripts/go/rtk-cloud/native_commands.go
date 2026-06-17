@@ -872,7 +872,7 @@ propagation_seconds="${GODADDY_DNS_PROPAGATION_SECONDS:-60}"
 while [ "$SECONDS" -lt "$deadline" ]; do
   found=1
   for resolver in $resolvers; do
-    if ! dig +time=5 +tries=1 +short TXT "$fqdn" "@$resolver" | tr -d '"' | grep -Fx "$CERTBOT_VALIDATION" >/dev/null; then
+    if ! dig +time=5 +tries=1 +short TXT "$fqdn" "@$resolver" | tr -d '"' | grep -Fx -- "$CERTBOT_VALIDATION" >/dev/null; then
       found=0
       break
     fi

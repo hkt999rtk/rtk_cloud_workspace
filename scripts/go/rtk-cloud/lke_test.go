@@ -176,6 +176,29 @@ func TestRunProvisionLKEPlanWithoutStackUsesProviderEnv(t *testing.T) {
 	}
 }
 
+func TestRunStagingE2ETestPlanShowsNativeLKEProvisionArgs(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+
+	output := captureStdout(t, func() {
+		if err := runStagingE2ETest([]string{
+			"--workspace", workspace,
+			"--env-root", envRoot,
+			"--plan",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	for _, want := range []string{
+		"provision K8s staging with ",
+		"provision args: --workspace " + workspace + " --env-root " + envRoot + " --preflight --plan --apply --deploy --dns --artifacts --confirm video-cloud-staging",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected %q in LKE staging E2E plan, got:\n%s", want, output)
+		}
+	}
+}
+
 func TestRunProvisionLKEDeployRequiresImages(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 
@@ -910,6 +933,7 @@ func TestCertbotDNSHooksUseBoundedNetworkCalls(t *testing.T) {
 	for _, want := range []string{
 		"curl --connect-timeout 10 --max-time 30 -fsS -X PUT",
 		"dig +time=5 +tries=1 +short TXT",
+		`grep -Fx -- "$CERTBOT_VALIDATION"`,
 	} {
 		if !strings.Contains(auth, want) {
 			t.Fatalf("expected auth hook to contain %q, got:\n%s", want, auth)
