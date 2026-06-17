@@ -246,6 +246,9 @@ func TestRunProvisionLKEDeployAppliesGHCRPullSecrets(t *testing.T) {
 	}
 
 	log := readTestFile(t, logPath)
+	if strings.Contains(log, "\t") {
+		t.Fatalf("expected generated Kubernetes manifests to avoid tab characters, got:\n%s", log)
+	}
 	for _, ns := range []string{
 		"video-cloud-staging-video-cloud",
 		"video-cloud-staging-account-manager",
@@ -261,6 +264,7 @@ func TestRunProvisionLKEDeployAppliesGHCRPullSecrets(t *testing.T) {
 		t.Fatalf("expected GHCR pull secret references in private service pods, got %d:\n%s", count, log)
 	}
 	for _, want := range []string{
+		"kind: Namespace\nmetadata:\n  name: video-cloud-staging-ingress",
 		"image: ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api:sha-test",
 		"image: ghcr.io/hkt999rtk/rtk_account_manager/account-manager:sha-test",
 		"image: ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin:sha-test",
@@ -1193,6 +1197,27 @@ func TestLKEPostgresStatefulSetUsesPostgresImageOverride(t *testing.T) {
 	}
 }
 
+func TestLKEPostgresStatefulSetSupportsResourceOverrides(t *testing.T) {
+	t.Setenv("LKE_POSTGRES_REQUEST_CPU", "500m")
+	t.Setenv("LKE_POSTGRES_REQUEST_MEMORY", "512Mi")
+	t.Setenv("LKE_POSTGRES_LIMIT_MEMORY", "1Gi")
+
+	manifest := lkePostgresStatefulSetManifest(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})
+
+	for _, want := range []string{
+		`cpu: "500m"`,
+		`memory: "512Mi"`,
+		`memory: "1Gi"`,
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("expected %q in PostgreSQL resource override manifest, got:\n%s", want, manifest)
+		}
+	}
+	if strings.Contains(manifest, `cpu: "4"`) || strings.Contains(manifest, `memory: "6Gi"`) {
+		t.Fatalf("expected PostgreSQL resource defaults to be overridden, got:\n%s", manifest)
+	}
+}
+
 func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 	t.Setenv("LKE_POSTGRES_NODE_POOL_ID", "906225")
 	t.Setenv("LKE_MQTT_NODE_POOL_ID", "906225")
@@ -1226,6 +1251,9 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 		"topologySpreadConstraints:",
 		`cpu: "250m"`,
 		`memory: "1Gi"`,
+		"              value: \"account-manager.video-cloud-staging.realtekconnect.com\"\n          envFrom:",
+		"          volumeMounts:\n            - name: account-manager-certissuer-client",
+		"      volumes:\n        - name: account-manager-certissuer-client",
 	} {
 		if !strings.Contains(account, want) {
 			t.Fatalf("expected %q in account-manager manifest, got:\n%s", want, account)
@@ -1448,6 +1476,10 @@ func TestRunProvisionLKEDeployAppliesPrivateGrafana(t *testing.T) {
 		"kind: PersistentVolumeClaim\nmetadata:\n  name: video-cloud-grafana-data",
 		"storage: 5Gi",
 		"kind: Deployment\nmetadata:\n  name: video-cloud-grafana",
+		"fsGroup: 472",
+		"fsGroupChangePolicy: OnRootMismatch",
+		"runAsUser: 472",
+		"runAsGroup: 472",
 		"image: grafana/grafana:13.0.2",
 		"kind: Service\nmetadata:\n  name: video-cloud-grafana",
 		"type: ClusterIP",

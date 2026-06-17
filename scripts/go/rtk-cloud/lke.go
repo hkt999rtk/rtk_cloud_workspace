@@ -1817,6 +1817,9 @@ func lkeSelectedWorkloads(env map[string]string, opts provisionOptions) []lkeWor
 }
 
 func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, opts provisionOptions) error {
+	if err := kubectlApply(lkeIngressNamespaceManifest(env)); err != nil {
+		return err
+	}
 	if err := lkeApplyImagePullSecrets(env, opts); err != nil {
 		return err
 	}
@@ -2308,6 +2311,9 @@ func lkePostgresStatefulSetManifest(env map[string]string) string {
 `, firstNonEmpty(os.Getenv("LKE_POSTGRES_STORAGE"), env["LKE_POSTGRES_STORAGE"], "20Gi"))
 	}
 	placement := lkePostgresPlacementManifest(env)
+	requestCPU := firstNonEmpty(os.Getenv("LKE_POSTGRES_REQUEST_CPU"), env["LKE_POSTGRES_REQUEST_CPU"], "4")
+	requestMemory := firstNonEmpty(os.Getenv("LKE_POSTGRES_REQUEST_MEMORY"), env["LKE_POSTGRES_REQUEST_MEMORY"], "2Gi")
+	limitMemory := firstNonEmpty(os.Getenv("LKE_POSTGRES_LIMIT_MEMORY"), env["LKE_POSTGRES_LIMIT_MEMORY"], "6Gi")
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -2349,16 +2355,16 @@ spec:
               value: /var/lib/postgresql/data/pgdata
           resources:
             requests:
-              cpu: "4"
-              memory: "2Gi"
+              cpu: %q
+              memory: %q
             limits:
-              memory: "6Gi"
+              memory: %q
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
             - name: initdb
               mountPath: /docker-entrypoint-initdb.d
-%s%s`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], placement, lkePostgresImage(), storage, volumeClaims)
+%s%s`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], placement, lkePostgresImage(), requestCPU, requestMemory, limitMemory, storage, volumeClaims)
 }
 
 func lkePostgresPlacementManifest(env map[string]string) string {
@@ -4367,10 +4373,16 @@ spec:
         rtk.realtek.com/provider: lke
         rtk.realtek.com/stack: %s
     spec:
+      securityContext:
+        fsGroup: 472
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: grafana
           image: %s
           imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsUser: 472
+            runAsGroup: 472
           ports:
             - name: http
               containerPort: 3000
@@ -5093,7 +5105,7 @@ spec:
               value: %q
             - name: SERVICE_PUBLIC_HOST
               value: %q
-	%s%s%s%s`, workload.Name, workload.Namespace, workload.Name, env["CLOUD_STACK_NAME"], replicas, workload.Name, templateAnnotations, workload.Name, env["CLOUD_STACK_NAME"], topologySpread, lkeImagePullSecretsManifest(env, workload.Image), workload.Image, lkeContainerResourcesManifest(workload.Name), workload.Port, env["CLOUD_STACK_NAME"], workload.Host, extraEnv, envFrom, volumeMounts, volumes)
+%s%s%s%s`, workload.Name, workload.Namespace, workload.Name, env["CLOUD_STACK_NAME"], replicas, workload.Name, templateAnnotations, workload.Name, env["CLOUD_STACK_NAME"], topologySpread, lkeImagePullSecretsManifest(env, workload.Image), workload.Image, lkeContainerResourcesManifest(workload.Name), workload.Port, env["CLOUD_STACK_NAME"], workload.Host, extraEnv, envFrom, volumeMounts, volumes)
 }
 
 func lkeWorkloadReplicas(env map[string]string, workload lkeWorkload) string {
@@ -5207,6 +5219,7 @@ spec:
 }
 
 func kubectlApply(manifest string) error {
+	manifest = strings.ReplaceAll(manifest, "\t", "  ")
 	cmd := exec.Command(lkeKubectl(), lkeKubectlArgs("apply", "-f", "-")...)
 	cmd.Stdin = strings.NewReader(manifest)
 	out, err := cmd.CombinedOutput()
