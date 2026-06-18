@@ -41,6 +41,12 @@ type lkeEdgeHAProxyPlan struct {
 	ProxyProtocol bool                     `json:"proxy_protocol"`
 }
 
+type lkeEdgeHAProxySSHAccess struct {
+	User          string `json:"user"`
+	KeyPath       string `json:"key_path"`
+	PublicKeyPath string `json:"public_key_path"`
+}
+
 func lkeValidatePublicEdge(env map[string]string) error {
 	mode := firstNonEmpty(os.Getenv("LKE_PUBLIC_EDGE_MODE"), env["LKE_PUBLIC_EDGE_MODE"], "external-haproxy")
 	if mode != "external-haproxy" {
@@ -97,14 +103,16 @@ func lkeEnsureExternalHAProxyEdge(paths provisionPaths, env map[string]string, o
 	}
 	cfg := renderLKEEdgeHAProxyConfig(plan)
 	install := renderLKEEdgeHAProxyInstallScript(plan, cfg)
+	sshAccess := lkeEdgeHAProxySSHAccessFor(opts)
 	validation := map[string]any{
 		"schema":         "rtk-cloud-workspace.edge-haproxy-validation/v1",
 		"generated_at":   time.Now().UTC().Format(time.RFC3339),
 		"install_mode":   installMode,
 		"edge_public_ip": edge.PublicIP,
 		"edge_vms":       plan.EdgeVMs,
+		"ssh_access":     sshAccess,
 	}
-	if err := writeLKEEdgeHAProxyArtifacts(paths, plan, cfg, install, validation); err != nil {
+	if err := writeLKEEdgeHAProxyArtifacts(paths, plan, cfg, install, validation, sshAccess); err != nil {
 		return lkeEdgeHAProxyVM{}, err
 	}
 	if installMode == "skip-existing-ip" {
@@ -296,7 +304,19 @@ func renderLKEEdgeHAProxyInstallScript(plan lkeEdgeHAProxyPlan, cfg string) stri
 	return b.String()
 }
 
-func writeLKEEdgeHAProxyArtifacts(paths provisionPaths, plan lkeEdgeHAProxyPlan, cfg, install string, validation map[string]any) error {
+func lkeEdgeHAProxySSHAccessFor(opts provisionOptions) lkeEdgeHAProxySSHAccess {
+	keyPath := opts.sshKey
+	if keyPath == "" {
+		keyPath = defaultStagingSSHKey()
+	}
+	return lkeEdgeHAProxySSHAccess{
+		User:          "root",
+		KeyPath:       keyPath,
+		PublicKeyPath: keyPath + ".pub",
+	}
+}
+
+func writeLKEEdgeHAProxyArtifacts(paths provisionPaths, plan lkeEdgeHAProxyPlan, cfg, install string, validation map[string]any, sshAccess lkeEdgeHAProxySSHAccess) error {
 	dir := filepath.Join(paths.EnvRoot, "artifacts", "edge-haproxy")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -306,6 +326,7 @@ func writeLKEEdgeHAProxyArtifacts(paths provisionPaths, plan lkeEdgeHAProxyPlan,
 		"generated_at":   time.Now().UTC().Format(time.RFC3339),
 		"mode":           plan.Mode,
 		"edge_vms":       plan.EdgeVMs,
+		"ssh_access":     sshAccess,
 		"proxy_protocol": plan.ProxyProtocol,
 	}); err != nil {
 		return err
