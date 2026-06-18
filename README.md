@@ -59,21 +59,15 @@ pointer change in this workspace repository.
 
 ## Staging Shortcuts
 
-Use `scripts/run-staging-e2e.sh` as the LKE staging acceptance entrypoint. Load
-operator secrets from a local shell environment first; do not commit them.
-For LKE, the script resolves missing `LKE_*_IMAGE` values from pinned submodule
-commits, deploys those GHCR images, then runs the K8s E2E flow.
-
-```sh
-set -a; . ~/.env; set +a
-scripts/run-staging-e2e.sh --plan
-scripts/run-staging-e2e.sh --confirm video-cloud-staging
-```
-
-`./stg.sh` remains available for focused K8s operations and data helpers:
+Use `scripts/run-staging-e2e.sh` for the full Linode K8s staging acceptance
+flow. The wrapper forwards to the Go CLI, resolves missing LKE GHCR image
+mapping automatically, and then runs reset/provision/data/MQTT/log verification.
+Use `./stg.sh` for lower-level debug shortcuts.
 
 ```sh
 ./stg.sh e2e --plan
+scripts/run-staging-e2e.sh --plan
+scripts/run-staging-e2e.sh --confirm video-cloud-staging
 ./stg.sh provision --confirm video-cloud-staging
 ./stg.sh brand RTK
 ./stg.sh brands
