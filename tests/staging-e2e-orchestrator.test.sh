@@ -276,7 +276,7 @@ actual="$(cut -f1 "$COMMAND_LOG")"
 }
 grep -F $'remove-k8s\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --yes' "$COMMAND_LOG" >/dev/null
 grep -F $'provision-k8s\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --confirm video-cloud-staging' "$COMMAND_LOG" >/dev/null
-grep -F $'setup-data\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --brandname RTK --user-count 1 --device-count 3 --device-mix camera=1,light=1,smart_meter=1 --device-prefix load-device --user-concurrency 16 --device-concurrency 16 --bind-concurrency 64 --out-dir ' "$COMMAND_LOG" >/dev/null
+grep -F $'setup-data\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --brandname RTK --user-count 1 --device-count 3 --device-mix camera=1,light=1,smart_meter=1 --device-prefix load-device --user-concurrency 64 --device-concurrency 64 --bind-concurrency 64 --out-dir ' "$COMMAND_LOG" >/dev/null
 grep -F $'setup-data\t' "$COMMAND_LOG" | grep -F -- '--no-resume' >/dev/null
 if grep -E '(^|[[:space:]])(remove-all-vm|provision|deploy|remove_vm|provision_all)([[:space:]]|$)' "$COMMAND_LOG" >/dev/null; then
 	echo "staging-e2e-test should not invoke retired VM runtime commands" >&2
@@ -324,7 +324,7 @@ CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0 \
 	--skip-mqtt-probe \
 	--quiet > "$QUIET_OUT" 2> "$QUIET_ERR"
 
-grep -F $'setup-data\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --brandname RTK --user-count 1 --device-count 3 --device-mix camera=1,light=1,smart_meter=1 --device-prefix load-device --user-concurrency 16 --device-concurrency 16 --bind-concurrency 64 --out-dir ' "$COMMAND_LOG" | grep -F -- '--quiet' >/dev/null
+grep -F $'setup-data\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --brandname RTK --user-count 1 --device-count 3 --device-mix camera=1,light=1,smart_meter=1 --device-prefix load-device --user-concurrency 64 --device-concurrency 64 --bind-concurrency 64 --out-dir ' "$COMMAND_LOG" | grep -F -- '--quiet' >/dev/null
 grep -F $'setup-data\t' "$COMMAND_LOG" | grep -F -- '--no-resume' >/dev/null
 grep -E "\\[cloud-staging-e2e\\] start: provision_k8s log=.*/logs/provision_k8s.log" "$QUIET_ERR" >/dev/null
 if grep -F '[cloud-staging-e2e] progress:' "$QUIET_ERR" >/dev/null; then
