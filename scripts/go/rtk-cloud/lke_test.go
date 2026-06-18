@@ -1340,7 +1340,7 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 		Host:      "video-cloud-staging.realtekconnect.com",
 	}, nil)
 	for _, want := range []string{
-		"replicas: 3",
+		"replicas: 1",
 		"topologySpreadConstraints:",
 		`cpu: "1"`,
 		`memory: "2Gi"`,

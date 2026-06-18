@@ -5715,7 +5715,7 @@ func lkeWorkloadReplicas(env map[string]string, workload lkeWorkload) string {
 	case "account-manager":
 		return firstNonEmpty(os.Getenv("LKE_ACCOUNT_MANAGER_REPLICAS"), env["LKE_ACCOUNT_MANAGER_REPLICAS"], "1")
 	case "video-cloud":
-		return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_REPLICAS"), env["LKE_VIDEO_CLOUD_REPLICAS"], "3")
+		return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_REPLICAS"), env["LKE_VIDEO_CLOUD_REPLICAS"], "1")
 	}
 	return "1"
 }
