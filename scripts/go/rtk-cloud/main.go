@@ -1559,7 +1559,7 @@ func runCreateUsers(args []string) error {
 	}
 	existingAppCredentials := loadExistingUserAppCredentials(ctx.EnvRoot, slug)
 	reusableLocalUsers := map[string]map[string]any{}
-	if *reuseLocalUsers {
+	if *reuseLocalUsers && !*rotatePassword {
 		reusableLocalUsers = loadReusableLocalUsers(ctx.EnvRoot, slug)
 	}
 	type createUserResult struct {

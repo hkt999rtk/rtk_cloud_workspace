@@ -1,6 +1,6 @@
-# Linode Staging Deployment Snapshot
+# Legacy Linode VM Staging Deployment Snapshot
 
-Status: supporting-note.
+Status: historical-note.
 
 Owner: `rtk_cloud_workspace`.
 
@@ -8,10 +8,11 @@ Snapshot time: 2026-05-15 11:03 UTC.
 
 ## Purpose
 
-This document records the current cross-service Linode staging deployment after
-bringing up the main Realtek Connect+ backend systems. It is a workspace-level
-snapshot for coordination and deployment handoff. It does not replace the
-service-owned deployment runbooks, release reports, or production monitors.
+This document records the retired cross-service Linode VM staging deployment
+from May 2026 after bringing up the main Realtek Connect+ backend systems. It
+is a workspace-level historical snapshot for migration context only. Current
+staging runtime is K8s/LKE and is documented through `scripts/run-staging-e2e.sh`
+and `docs/lke-migration-inventory.md`.
 
 ## Deployment Order Used
 
@@ -38,7 +39,7 @@ ready until `/api/service-health` reports selected upstreams as `ok`.
 | Account Manager API | `rtk_account_manager` | `https://account-manager.video-cloud-staging.realtekconnect.com` | `codex/account-manager-linode-public-vm`, PR `hkt999rtk/rtk_account_manager#160` | `PASS` `/v1/health`; register/login/`/v1/me` smoke previously passed |
 | Admin dashboard | `rtk_cloud_admin` | `https://admin.video-cloud-staging.realtekconnect.com` | `codex/admin-linode-deploy`, PR `hkt999rtk/rtk_cloud_admin#116` | `PASS` `/healthz`; `/api/service-health` reports Account Manager, Video Cloud, and SQLite as `ok` |
 
-## Current Linode Runtime Shape
+## Retired Linode VM Runtime Shape
 
 | Component | VM / placement | Runtime shape | Notes |
 | --- | --- | --- | --- |

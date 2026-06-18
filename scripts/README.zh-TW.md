@@ -14,10 +14,9 @@ environment directory；script 會依 `CLOUD_PROVIDER`、`RTK_CLOUD_STAGING_PROV
 `cloud_env/staging/lke`。這個目錄集中保存 operator env、topology、service
 env、state、keys/certificates、device fixtures、artifacts 與 backups。
 
-目前 workspace provision routing 支援 `CLOUD_PROVIDER=linode` 與
-`CLOUD_PROVIDER=lke`。Linode provider 仍 dispatch 到 Video Cloud、Account
-Manager、Cloud Admin、Cloud Logger 的 VM scripts。LKE provider 會先使用
-Linode LKE API 取得 kubeconfig；若沒有 `KUBECONFIG` / current context，會依
+目前 workspace 的正式 staging runtime 是 K8s/LKE。`CLOUD_PROVIDER=lke`
+會先使用 Linode LKE API 取得 kubeconfig；若沒有 `KUBECONFIG` / current
+context，會依
 `LKE_CLUSTER_ID`、`state/lke.env` 或 cluster label `<CLOUD_STACK_NAME>-lke`
 尋找既有 cluster，`provision --apply` 找不到時會建立 LKE cluster，再把
 kubeconfig 寫到 git-ignored `<env-root>/state/lke-kubeconfig.yaml`。之後才走
@@ -27,7 +26,9 @@ kubectl namespace/apply/delete/rollout path。`deploy` 需要 container image；
 `LKE_CLOUD_LOGGER_IMAGE`。
 Service images 由各 service repo 的 release workflow 發布到 GHCR；
 workspace 只解析 pinned submodule commit、驗證對應 image 是否存在，並輸出
-後續 deploy/e2e 需要的 `LKE_*_IMAGE` mapping。AWS、GCP 和 Azure 仍是
+後續 deploy/e2e 需要的 `LKE_*_IMAGE` mapping。Legacy
+`CLOUD_PROVIDER=linode` routing 只保留給舊 VM toolkit 參考，不是目前 staging
+路徑。AWS、GCP 和 Azure 仍是
 後續 provider abstraction 目標，現階段應 fail fast，不可呼叫 live API、
 SSH、DNS 或寫 state。
 
@@ -46,6 +47,8 @@ LKE Prometheus targets 由 workspace Go deployer 的 workload metrics registry
 `/metrics/prometheus` path；`provision --deploy` 會用這份 registry 產生
 `video-cloud-prometheus-config`。第一版維持 workspace-managed Prometheus
 ConfigMap，不導入 Prometheus Operator、ServiceMonitor 或 PodMonitor。
+Redis/Valkey engine metrics 由 LKE 內建 `redis-exporter` Service 暴露，
+Prometheus 會 scrape `redis-exporter.<platform namespace>:9121/metrics`。
 Grafana 會部署在 observability namespace 作為 private `ClusterIP` dashboard
 layer，讀取 internal Prometheus Service；它不會透過 `provision --dns` 建立
 public hostname、Ingress 或 TLS SAN。Platform 管理員要從 Cloud Admin 的
@@ -339,7 +342,16 @@ Provider-aware `provision`/`deploy` command 仍保留給 legacy VM 與 LKE image
 LKE `provision --apply` 預設會安裝 Kubernetes metrics-server 到 `kube-system`，版本由 `LKE_METRICS_SERVER_VERSION` 控制，預設 `v0.8.1`。metrics-server 提供 `metrics.k8s.io`，讓 `kubectl top nodes` / `kubectl top pods` 與 Kubernetes HPA resource metrics 可用；它不取代 Prometheus 的長期觀測、dashboard 或 alert 用途。
 
 LKE `provision --deploy` 會部署 workspace-managed Prometheus 與 private
-Grafana。Grafana 常用環境變數：
+Grafana，也會在 platform namespace 部署 staging 內建 Valkey 與 Redis
+exporter。常用環境變數：
+
+- `LKE_REDIS_IMAGE`：Redis-compatible/Valkey image，預設 `valkey/valkey:8-alpine`。
+- `LKE_REDIS_EXPORTER_IMAGE`：Redis exporter image，預設 `oliver006/redis_exporter:v1.74.0`。
+- `LKE_REDIS_REQUEST_CPU` / `LKE_REDIS_REQUEST_MEMORY` / `LKE_REDIS_LIMIT_MEMORY`：
+  Valkey pod 資源 override，預設 `100m` / `128Mi` / `512Mi`。
+- `LKE_REDIS_EXPORTER_REQUEST_CPU` / `LKE_REDIS_EXPORTER_REQUEST_MEMORY` /
+  `LKE_REDIS_EXPORTER_LIMIT_MEMORY`：Redis exporter 資源 override，預設
+  `50m` / `64Mi` / `256Mi`。
 
 - `LKE_GRAFANA_IMAGE`：Grafana image，預設 `grafana/grafana:13.0.2`。
 - `LKE_GRAFANA_ADMIN_PASSWORD`：Grafana admin 密碼；未設定時由 runtime secret material 產生。

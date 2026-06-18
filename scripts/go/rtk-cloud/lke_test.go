@@ -371,6 +371,17 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 	log := readTestFile(t, logPath)
 	for _, want := range []string{
 		"kind: StatefulSet\nmetadata:\n  name: postgresql",
+		"kind: Deployment\nmetadata:\n  name: redis",
+		"image: valkey/valkey:8-alpine",
+		"containerPort: 6379",
+		"kind: Service\nmetadata:\n  name: redis",
+		"kind: Deployment\nmetadata:\n  name: redis-exporter",
+		"image: oliver006/redis_exporter:v1.74.0",
+		"REDIS_ADDR\n              value: \"redis://redis.video-cloud-staging-platform.svc.cluster.local:6379\"",
+		"containerPort: 9121",
+		"kind: Service\nmetadata:\n  name: redis-exporter",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-redis-clients",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-prometheus-scrape",
 		"kind: Secret\nmetadata:\n  name: openbao-tls",
 		"namespace: video-cloud-staging-secrets",
 		"ca.crt:",
@@ -466,6 +477,14 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 	}
 	if strings.Contains(log, "device-ca.key") || strings.Contains(log, "app-ca.key") {
 		t.Fatalf("certissuer runtime must not mount CA private keys, got:\n%s", log)
+	}
+	for _, want := range []string{
+		"ARGS -n video-cloud-staging-platform rollout status deployment/redis",
+		"ARGS -n video-cloud-staging-platform rollout status deployment/redis-exporter",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("expected rollout check %q in kubectl calls, got:\n%s", want, log)
+		}
 	}
 	openBaoIndex := strings.Index(log, "name: openbao-tls")
 	certIssuerIndex := strings.Index(log, "name: certissuer-runtime")
@@ -767,6 +786,97 @@ func TestLKEPublicHTTPSNetworkPolicyAllowsBackendTargetPorts(t *testing.T) {
 		}
 		if !strings.Contains(chunk, "port: 8080") {
 			t.Fatalf("public ingress policy for %s must allow backend pod port 8080, got:\n%s", namespace, chunk)
+		}
+	}
+}
+
+func TestLKERedisAndExporterManifestsUsePrivatePlatformServices(t *testing.T) {
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+
+	redisDeployment := lkeRedisDeploymentManifest(env)
+	for _, want := range []string{
+		"kind: Deployment\nmetadata:\n  name: redis",
+		"namespace: video-cloud-staging-platform",
+		"app.kubernetes.io/name: redis",
+		"image: valkey/valkey:8-alpine",
+		"containerPort: 6379",
+		"emptyDir: {}",
+	} {
+		if !strings.Contains(redisDeployment, want) {
+			t.Fatalf("expected %q in Redis deployment manifest, got:\n%s", want, redisDeployment)
+		}
+	}
+
+	redisService := lkeRedisServiceManifest(env)
+	for _, want := range []string{
+		"kind: Service\nmetadata:\n  name: redis",
+		"type: ClusterIP",
+		"port: 6379",
+		"targetPort: 6379",
+	} {
+		if !strings.Contains(redisService, want) {
+			t.Fatalf("expected %q in Redis service manifest, got:\n%s", want, redisService)
+		}
+	}
+
+	exporterDeployment := lkeRedisExporterDeploymentManifest(env)
+	for _, want := range []string{
+		"kind: Deployment\nmetadata:\n  name: redis-exporter",
+		"namespace: video-cloud-staging-platform",
+		"app.kubernetes.io/name: redis-exporter",
+		"image: oliver006/redis_exporter:v1.74.0",
+		"REDIS_ADDR\n              value: \"redis://redis.video-cloud-staging-platform.svc.cluster.local:6379\"",
+		"containerPort: 9121",
+	} {
+		if !strings.Contains(exporterDeployment, want) {
+			t.Fatalf("expected %q in Redis exporter deployment manifest, got:\n%s", want, exporterDeployment)
+		}
+	}
+
+	exporterService := lkeRedisExporterServiceManifest(env)
+	for _, want := range []string{
+		"kind: Service\nmetadata:\n  name: redis-exporter",
+		"type: ClusterIP",
+		"port: 9121",
+		"targetPort: 9121",
+	} {
+		if !strings.Contains(exporterService, want) {
+			t.Fatalf("expected %q in Redis exporter service manifest, got:\n%s", want, exporterService)
+		}
+	}
+}
+
+func TestLKENetworkPoliciesAllowRedisAndPrometheusScrapes(t *testing.T) {
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+
+	redisPolicy := lkeAllowRedisClientsNetworkPolicyManifest(env)
+	for _, want := range []string{
+		"name: allow-redis-clients",
+		"namespace: video-cloud-staging-platform",
+		"app.kubernetes.io/name: redis",
+		"kubernetes.io/metadata.name: video-cloud-staging-video-cloud",
+		"kubernetes.io/metadata.name: video-cloud-staging-account-manager",
+		"app.kubernetes.io/name: redis-exporter",
+		"port: 6379",
+	} {
+		if !strings.Contains(redisPolicy, want) {
+			t.Fatalf("expected %q in Redis client NetworkPolicy, got:\n%s", want, redisPolicy)
+		}
+	}
+
+	scrapePolicy := lkeAllowPrometheusScrapeNetworkPolicyManifest(env)
+	for _, want := range []string{
+		"name: allow-prometheus-scrape",
+		"kubernetes.io/metadata.name: video-cloud-staging-observability",
+		"app.kubernetes.io/name: video-cloud-prometheus",
+		"- redis-exporter",
+		"port: 9121",
+		"port: 8080",
+		"port: 19200",
+		"port: 19300",
+	} {
+		if !strings.Contains(scrapePolicy, want) {
+			t.Fatalf("expected %q in Prometheus scrape NetworkPolicy, got:\n%s", want, scrapePolicy)
 		}
 	}
 }
@@ -1340,6 +1450,7 @@ func TestRunProvisionLKEDeployAppliesVideoCloudAuxiliaryServices(t *testing.T) {
 		"kind: ConfigMap\nmetadata:\n  name: video-cloud-prometheus-config",
 		"kind: Deployment\nmetadata:\n  name: video-cloud-prometheus",
 		"image: prom/prometheus:",
+		"rtk.realtek.com/config-checksum",
 		"targets: [\"video-cloud-api.video-cloud-staging-video-cloud.svc.cluster.local:80\"]",
 		"targets: [\"account-manager.video-cloud-staging-account-manager.svc.cluster.local:80\"]",
 		"targets: [\"cloud-admin.video-cloud-staging-admin.svc.cluster.local:80\"]",
@@ -1363,6 +1474,31 @@ func TestRunProvisionLKEDeployAppliesVideoCloudAuxiliaryServices(t *testing.T) {
 		if !strings.Contains(log, want) {
 			t.Fatalf("expected rollout check %q in kubectl calls, got:\n%s", want, log)
 		}
+	}
+}
+
+func TestLKEPrometheusDeploymentChecksumTracksScrapeConfig(t *testing.T) {
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+
+	allConfig := lkeVideoCloudPrometheusConfigManifest(env, provisionOptions{})
+	videoOnlyConfig := lkeVideoCloudPrometheusConfigManifest(env, provisionOptions{videoOnly: true})
+	allWorkloads := lkeVideoCloudPrometheusDeploymentManifest(env, provisionOptions{})
+	videoOnly := lkeVideoCloudPrometheusDeploymentManifest(env, provisionOptions{videoOnly: true})
+
+	if !strings.Contains(allWorkloads, "rtk.realtek.com/config-checksum") {
+		t.Fatalf("expected Prometheus deployment to include config checksum annotation, got:\n%s", allWorkloads)
+	}
+	if !strings.Contains(allConfig, "job_name: account-manager") {
+		t.Fatalf("expected all-workload config to include account-manager scrape config, got:\n%s", allConfig)
+	}
+	if strings.Contains(videoOnlyConfig, "job_name: account-manager") {
+		t.Fatalf("expected video-only config to exclude account-manager scrape config, got:\n%s", videoOnlyConfig)
+	}
+	if allWorkloads == videoOnly {
+		t.Fatalf("expected Prometheus deployment checksum to change with scrape targets")
+	}
+	if strings.Contains(allWorkloads, "job_name: account-manager") || strings.Contains(videoOnly, "job_name: account-manager") {
+		t.Fatalf("expected Prometheus deployment to carry only checksum, not embedded scrape config")
 	}
 }
 
@@ -1461,6 +1597,8 @@ func TestLKEPrometheusConfigIsGeneratedFromMetricsRegistry(t *testing.T) {
 		"targets: [\"video-cloud-mqttusage.video-cloud-staging-video-cloud.svc.cluster.local:19400\"]",
 		"job_name: video-cloud-factoryenroll",
 		"targets: [\"factoryenroll.video-cloud-staging-video-cloud.svc.cluster.local:80\"]",
+		"job_name: redis-exporter",
+		"targets: [\"redis-exporter.video-cloud-staging-platform.svc.cluster.local:9121\"]",
 		"job_name: video-cloud-prometheus",
 		"targets: [\"video-cloud-prometheus.video-cloud-staging-observability.svc.cluster.local:9090\"]",
 		"job_name: video-cloud-grafana",
@@ -1474,7 +1612,7 @@ func TestLKEPrometheusConfigIsGeneratedFromMetricsRegistry(t *testing.T) {
 	if got, want := strings.Count(manifest, "metrics_path: /metrics/prometheus"), 9; got != want {
 		t.Fatalf("metrics_path count = %d, want %d in manifest:\n%s", got, want, manifest)
 	}
-	if got, want := strings.Count(manifest, "metrics_path: /metrics"), 11; got != want {
+	if got, want := strings.Count(manifest, "metrics_path: /metrics"), 12; got != want {
 		t.Fatalf("all metrics_path count = %d, want %d in manifest:\n%s", got, want, manifest)
 	}
 }

@@ -57,10 +57,11 @@ frontend
 e2e
 ```
 
-Production is currently Linode VM-based, so existing production secrets use
-`.secrets/production/linode/<service>/`. The LKE migration uses
-`.secrets/<environment>/lke/<service>/` only for bootstrap pointers, manifests,
-public certificates, rollback material, and operator-local recovery references.
+Production-like and staging runtime are now LKE/K8s-based, so active runtime
+secrets use `.secrets/<environment>/lke/<service>/` for bootstrap pointers,
+manifests, public certificates, rollback material, and operator-local recovery
+references. Older `.secrets/production/linode/<service>/` material is legacy VM
+reference only and must not be treated as the current deployment path.
 If a future deployment uses AWS or GCP, add a parallel provider directory such
 as `.secrets/production/aws/video-cloud/` without changing the service directory
 shape.
@@ -73,7 +74,7 @@ owned by one deployable service. It is not a deployment environment.
 OpenBao is the target secret manager for staging and production. The local
 `.secrets/<environment>/<provider>/<service>/` tree remains the operator
 bootstrap and rollback interface, but long-lived runtime secrets should be
-stored in OpenBao after migration.
+stored in OpenBao once the selected K8s secret-injection path is approved.
 
 V1 OpenBao responsibilities:
 
@@ -117,13 +118,14 @@ OpenBao policies must be least-privilege:
 - `video-cloud-certissuer` may sign only approved PKI roles and read only the
   runtime values needed by `cmd/certissuer`.
 - `video-cloud-env-renderer` may read only the KV paths needed to render the
-  target host's systemd environment files.
+  target workload runtime environment. Legacy VM/systemd env rendering remains
+  reference-only.
 - `factoryenroll` may not sign certificates directly in OpenBao; it continues
   to call `cmd/certissuer` over the existing issuer boundary.
 - Operators may write or rotate secrets through explicit administrative policy;
   service roles must not have write access to production runtime secrets.
 
-For current Linode/systemd deployments, service authentication to OpenBao uses
+For legacy Linode/systemd deployments, service authentication to OpenBao used
 AppRole:
 
 ```text
@@ -132,7 +134,8 @@ AppRole:
 ```
 
 Both files must be root-owned, mode `0600`, and excluded from readiness
-reports. Kubernetes auth is reserved for a future Kubernetes deployment path.
+reports when inspecting legacy hosts. Current K8s runtime should use Kubernetes
+auth or an approved External Secrets-style injection path instead of AppRole.
 
 Runtime services should continue to consume env files initially. A deployment
 render step reads OpenBao KV entries and writes root-owned files under

@@ -1168,6 +1168,8 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 	manifests = append(manifests, lkeAllowVideoCloudMQTTClientsNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowEMQXClusterNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudLoggerNetworkPolicyManifest(env))
+	manifests = append(manifests, lkeAllowRedisClientsNetworkPolicyManifest(env))
+	manifests = append(manifests, lkeAllowPrometheusScrapeNetworkPolicyManifest(env))
 	return manifests
 }
 
@@ -1452,6 +1454,104 @@ spec:
         - protocol: TCP
           port: 18090
 `, lkeNamespaceName(env, "logger"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "video-cloud"))
+}
+
+func lkeAllowRedisClientsNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-redis-clients
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis-exporter
+      ports:
+        - protocol: TCP
+          port: 6379
+`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "video-cloud"), lkeNamespaceName(env, "account-manager"))
+}
+
+func lkeAllowPrometheusScrapeNetworkPolicyManifest(env map[string]string) string {
+	type scrapePolicy struct {
+		namespace string
+		apps      []string
+		ports     []int
+	}
+	policies := []scrapePolicy{
+		{namespace: lkeNamespaceName(env, "platform"), apps: []string{"redis-exporter"}, ports: []int{9121}},
+		{namespace: lkeNamespaceName(env, "account-manager"), apps: []string{"account-manager"}, ports: []int{8080}},
+		{namespace: lkeNamespaceName(env, "admin"), apps: []string{"cloud-admin"}, ports: []int{8080}},
+		{namespace: lkeNamespaceName(env, "frontend"), apps: []string{"frontend"}, ports: []int{8080}},
+		{namespace: lkeNamespaceName(env, "video-cloud"), apps: []string{"video-cloud-api", "factoryenroll", "video-cloud-metricsexporter", "video-cloud-turnregistry", "video-cloud-logingester", "video-cloud-mqttusage"}, ports: []int{8080, 18190, 18443, 19200, 19300, 19400}},
+	}
+	var b strings.Builder
+	for idx, policy := range policies {
+		if idx > 0 {
+			b.WriteString("---\n")
+		}
+		b.WriteString(lkePrometheusScrapeNetworkPolicyForNamespace(env, policy.namespace, policy.apps, policy.ports))
+	}
+	return b.String()
+}
+
+func lkePrometheusScrapeNetworkPolicyForNamespace(env map[string]string, namespace string, apps []string, ports []int) string {
+	var appValues strings.Builder
+	for _, app := range apps {
+		fmt.Fprintf(&appValues, "          - %s\n", app)
+	}
+	var portValues strings.Builder
+	for _, port := range ports {
+		fmt.Fprintf(&portValues, `        - protocol: TCP
+          port: %d
+`, port)
+	}
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: prometheus-scrape
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+%s  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: video-cloud-prometheus
+      ports:
+%s`, namespace, env["CLOUD_STACK_NAME"], appValues.String(), lkeNamespaceName(env, "observability"), portValues.String())
 }
 
 func lkeWaitForIngressExternalIP(env map[string]string) (string, error) {
@@ -1902,6 +2002,9 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 	if err := runKubectl("-n", lkeNamespaceName(env, "platform"), "rollout", "status", "statefulset/postgresql", "--timeout", firstNonEmpty(os.Getenv("LKE_POSTGRES_ROLLOUT_TIMEOUT"), "5m")); err != nil {
 		return err
 	}
+	if err := lkeApplyRedisRuntime(env); err != nil {
+		return err
+	}
 	var material lkeCertIssuerMaterial
 	materialReady := false
 	if lkeWorkloadSelected(env, opts, "video-cloud") {
@@ -2038,6 +2141,25 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 	return runKubectl("-n", lkeNamespaceName(env, "account-manager"), "wait", "--for=condition=complete", "job/account-manager-migrate", "--timeout", firstNonEmpty(os.Getenv("LKE_MIGRATION_JOB_TIMEOUT"), "5m"))
 }
 
+func lkeApplyRedisRuntime(env map[string]string) error {
+	for _, manifest := range []string{
+		lkeRedisDeploymentManifest(env),
+		lkeRedisServiceManifest(env),
+		lkeRedisExporterDeploymentManifest(env),
+		lkeRedisExporterServiceManifest(env),
+		lkeAllowRedisClientsNetworkPolicyManifest(env),
+		lkeAllowPrometheusScrapeNetworkPolicyManifest(env),
+	} {
+		if err := kubectlApply(manifest); err != nil {
+			return err
+		}
+	}
+	if err := runKubectl("-n", lkeNamespaceName(env, "platform"), "rollout", "status", "deployment/redis", "--timeout", firstNonEmpty(os.Getenv("LKE_REDIS_ROLLOUT_TIMEOUT"), "5m")); err != nil {
+		return err
+	}
+	return runKubectl("-n", lkeNamespaceName(env, "platform"), "rollout", "status", "deployment/redis-exporter", "--timeout", firstNonEmpty(os.Getenv("LKE_REDIS_EXPORTER_ROLLOUT_TIMEOUT"), "5m"))
+}
+
 func lkeApplyCloudLogger(env map[string]string, opts provisionOptions) error {
 	if !lkeWorkloadSelected(env, opts, "cloud-logger") {
 		return nil
@@ -2099,7 +2221,7 @@ func lkeApplyVideoCloudAuxiliaryServices(env map[string]string, opts provisionOp
 	if err := kubectlApply(lkeVideoCloudPrometheusConfigManifest(env, opts)); err != nil {
 		return err
 	}
-	if err := kubectlApply(lkeVideoCloudPrometheusDeploymentManifest(env)); err != nil {
+	if err := kubectlApply(lkeVideoCloudPrometheusDeploymentManifest(env, opts)); err != nil {
 		return err
 	}
 	if err := kubectlApply(lkeVideoCloudPrometheusServiceManifest(env)); err != nil {
@@ -2438,6 +2560,151 @@ func lkeWaitForPostgresPVC(env map[string]string) error {
 
 func lkePostgresImage() string {
 	return firstNonEmpty(os.Getenv("LKE_POSTGRES_IMAGE"), "postgres:16-alpine")
+}
+
+func lkeRedisImage() string {
+	return firstNonEmpty(os.Getenv("LKE_REDIS_IMAGE"), "valkey/valkey:8-alpine")
+}
+
+func lkeRedisExporterImage() string {
+	return firstNonEmpty(os.Getenv("LKE_REDIS_EXPORTER_IMAGE"), "oliver006/redis_exporter:v1.74.0")
+}
+
+func lkeRedisServiceHost(env map[string]string) string {
+	return "redis." + lkeNamespaceName(env, "platform") + ".svc.cluster.local"
+}
+
+func lkeRedisDeploymentManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+    spec:
+      containers:
+        - name: redis
+          image: %s
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: redis
+              containerPort: 6379
+          resources:
+            requests:
+              cpu: %q
+              memory: %q
+            limits:
+              memory: %q
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}
+`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeRedisImage(), firstNonEmpty(os.Getenv("LKE_REDIS_REQUEST_CPU"), env["LKE_REDIS_REQUEST_CPU"], "100m"), firstNonEmpty(os.Getenv("LKE_REDIS_REQUEST_MEMORY"), env["LKE_REDIS_REQUEST_MEMORY"], "128Mi"), firstNonEmpty(os.Getenv("LKE_REDIS_LIMIT_MEMORY"), env["LKE_REDIS_LIMIT_MEMORY"], "512Mi"))
+}
+
+func lkeRedisServiceManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"])
+}
+
+func lkeRedisExporterDeploymentManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-exporter
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: redis-exporter
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis-exporter
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+    spec:
+      containers:
+        - name: redis-exporter
+          image: %s
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: metrics
+              containerPort: 9121
+          env:
+            - name: REDIS_ADDR
+              value: %q
+          resources:
+            requests:
+              cpu: %q
+              memory: %q
+            limits:
+              memory: %q
+`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeRedisExporterImage(), "redis://"+lkeRedisServiceHost(env)+":6379", firstNonEmpty(os.Getenv("LKE_REDIS_EXPORTER_REQUEST_CPU"), env["LKE_REDIS_EXPORTER_REQUEST_CPU"], "50m"), firstNonEmpty(os.Getenv("LKE_REDIS_EXPORTER_REQUEST_MEMORY"), env["LKE_REDIS_EXPORTER_REQUEST_MEMORY"], "64Mi"), firstNonEmpty(os.Getenv("LKE_REDIS_EXPORTER_LIMIT_MEMORY"), env["LKE_REDIS_EXPORTER_LIMIT_MEMORY"], "256Mi"))
+}
+
+func lkeRedisExporterServiceManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Service
+metadata:
+  name: redis-exporter
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: redis-exporter
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: redis-exporter
+  ports:
+    - name: metrics
+      port: 9121
+      targetPort: 9121
+`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"])
 }
 
 type lkeCertIssuerMaterial struct {
@@ -4199,6 +4466,13 @@ func lkePrometheusTargets(env map[string]string, opts provisionOptions) []lkePro
 			Path:      "/metrics/prometheus",
 		})
 	}
+	targets = append(targets, lkePrometheusTarget{
+		Job:       "redis-exporter",
+		Namespace: lkeNamespaceName(env, "platform"),
+		Service:   "redis-exporter",
+		Port:      9121,
+		Path:      "/metrics",
+	})
 	observabilityNS := lkeNamespaceName(env, "observability")
 	targets = append(targets,
 		lkePrometheusTarget{
@@ -4248,7 +4522,8 @@ data:
 %s`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], scrape.String())
 }
 
-func lkeVideoCloudPrometheusDeploymentManifest(env map[string]string) string {
+func lkeVideoCloudPrometheusDeploymentManifest(env map[string]string, opts provisionOptions) string {
+	checksum := lkeConfigChecksum(lkeVideoCloudPrometheusConfigManifest(env, opts))
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -4266,6 +4541,8 @@ spec:
       app.kubernetes.io/name: video-cloud-prometheus
   template:
     metadata:
+      annotations:
+        rtk.realtek.com/config-checksum: %q
       labels:
         app.kubernetes.io/name: video-cloud-prometheus
         app.kubernetes.io/part-of: rtk-cloud
@@ -4296,7 +4573,7 @@ spec:
             name: video-cloud-prometheus-config
         - name: data
           emptyDir: {}
-`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_PROMETHEUS_IMAGE"), "prom/prometheus:v2.53.1"), firstNonEmpty(os.Getenv("LKE_PROMETHEUS_RETENTION"), "24h"))
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_PROMETHEUS_IMAGE"), "prom/prometheus:v2.53.1"), firstNonEmpty(os.Getenv("LKE_PROMETHEUS_RETENTION"), "24h"))
 }
 
 func lkeVideoCloudPrometheusServiceManifest(env map[string]string) string {

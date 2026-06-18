@@ -224,10 +224,11 @@ degraded` while keeping service health checks independent.
 
 ## Current Staging Implementation Status
 
-The staging implementation now includes native logger resource provisioning,
-Loki-backed backend deployment, per-host forwarder installation, readiness
-checks, logger artifact redaction, cleanup coverage, and Cloud Admin dashboard
-wiring. `CLOUD_LOGGER_SCRIPT` remains available only as an override/debug hook.
+Legacy VM staging included native logger resource provisioning, Loki-backed
+backend deployment, per-host forwarder installation, readiness checks, logger
+artifact redaction, cleanup coverage, and Cloud Admin dashboard wiring. Current
+staging is K8s-only; `CLOUD_LOGGER_SCRIPT` remains available only as an
+override/debug hook for legacy diagnostics.
 
 Current status:
 
