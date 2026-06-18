@@ -513,7 +513,7 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 	}
 }
 
-func TestRunProvisionLKEDeployCanExposePublicMQTTLoadBalancer(t *testing.T) {
+func TestRunProvisionLKEDeployCanExposePublicMQTTNodePort(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
@@ -530,15 +530,19 @@ func TestRunProvisionLKEDeployCanExposePublicMQTTLoadBalancer(t *testing.T) {
 	log := readTestFile(t, logPath)
 	for _, want := range []string{
 		"kind: Service\nmetadata:\n  name: mqtt-public",
-		"type: LoadBalancer",
+		"type: NodePort",
 		"externalTrafficPolicy: Local",
 		"name: mqtts\n      port: 8883",
+		"nodePort: 31883",
 		"kind: NetworkPolicy\nmetadata:\n  name: allow-public-mqtt-loadtest",
 		"port: 8883",
 	} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("expected %q in kubectl manifests, got:\n%s", want, log)
 		}
+	}
+	if strings.Contains(log, "type: LoadBalancer") {
+		t.Fatalf("public MQTT must not render a LoadBalancer service, got:\n%s", log)
 	}
 }
 
@@ -560,9 +564,9 @@ func TestLKEAllowEMQXClusterNetworkPolicyManifestIsValidYAMLShape(t *testing.T) 
 	}
 }
 
-func TestRunProvisionLKEDeployCanExposeMultiplePublicMQTTLoadBalancers(t *testing.T) {
+func TestRunProvisionLKEDeployRejectsMultiplePublicMQTTNodePortsForV1(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
-	logPath := fakeKubectl(t)
+	fakeKubectl(t)
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
 	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
 	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
@@ -571,20 +575,9 @@ func TestRunProvisionLKEDeployCanExposeMultiplePublicMQTTLoadBalancers(t *testin
 	t.Setenv("LKE_PUBLIC_MQTT_LOADBALANCER", "1")
 	t.Setenv("LKE_PUBLIC_MQTT_LOADBALANCER_COUNT", "3")
 
-	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
-		t.Fatal(err)
-	}
-
-	log := readTestFile(t, logPath)
-	for _, want := range []string{
-		"kind: Service\nmetadata:\n  name: mqtt-public",
-		"kind: Service\nmetadata:\n  name: mqtt-public-01",
-		"kind: Service\nmetadata:\n  name: mqtt-public-02",
-		"externalTrafficPolicy: Local",
-	} {
-		if !strings.Contains(log, want) {
-			t.Fatalf("expected %q in kubectl manifests, got:\n%s", want, log)
-		}
+	err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"})
+	if err == nil || !strings.Contains(err.Error(), "LKE_PUBLIC_MQTT_LOADBALANCER_COUNT>1 is not supported") {
+		t.Fatalf("expected unsupported multiple public MQTT NodePorts error, got %v", err)
 	}
 }
 
@@ -597,9 +590,11 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 	helmLog := fakeHelm(t)
 	goLog := fakeGoForDNS(t)
 	certbotLog := fakeCertbot(t)
-	digLog := fakeDig(t, "203.0.113.42")
+	digLog := fakeDig(t, "198.51.100.10")
 	t.Setenv("LKE_PUBLIC_HTTPS_ISSUE_EMAIL", "ops@example.test")
 	t.Setenv("LKE_PUBLIC_HTTPS_ACME_SERVER", "https://acme-staging-v02.api.letsencrypt.org/directory")
+	t.Setenv("LKE_EDGE_HAPROXY_PUBLIC_IP", "198.51.100.10")
+	t.Setenv("LKE_EDGE_HAPROXY_PRIVATE_IP", "10.2.1.5")
 	t.Setenv("GODADDY_KEY", "test-key")
 	t.Setenv("GODADDY_SECRET", "test-secret")
 	t.Setenv("GODADDY_ENV", "prod")
@@ -612,9 +607,10 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 	for _, want := range []string{
 		"upgrade --install ingress-nginx ingress-nginx",
 		"--namespace video-cloud-staging-ingress",
-		"--set controller.service.type=LoadBalancer",
+		"--set controller.service.type=NodePort",
 		"--set controller.service.ports.https=443",
 		"--set controller.service.targetPorts.https=https",
+		"--set controller.service.nodePorts.https=30443",
 		"--set controller.service.enableHttp=false",
 		"--set controller.allowSnippetAnnotations=true",
 		"--set controller.config.annotations-risk-level=Critical",
@@ -691,10 +687,9 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		t.Fatalf("general public ingress must not include mTLS device host:\n%s", publicIngress)
 	}
 	for _, forbidden := range []string{
-		"nodePort:",
 		"controller.service.ports.http=80",
-		"port: 8883",
 		"port: 3478",
+		"status.loadBalancer.ingress",
 	} {
 		if strings.Contains(kubectlCalls, forbidden) {
 			t.Fatalf("public HTTPS edge must not expose %q, got:\n%s", forbidden, kubectlCalls)
@@ -703,12 +698,12 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 
 	goCalls := readTestFile(t, goLog)
 	for _, want := range []string{
-		"--name video-cloud-staging --data 203.0.113.42 --ttl 600",
-		"--name device.video-cloud-staging --data 203.0.113.42 --ttl 600",
-		"--name certissuer.video-cloud-staging --data 203.0.113.42 --ttl 600",
-		"--name account-manager.video-cloud-staging --data 203.0.113.42 --ttl 600",
-		"--name admin.video-cloud-staging --data 203.0.113.42 --ttl 600",
-		"--name frontend.video-cloud-staging --data 203.0.113.42 --ttl 600",
+		"--name video-cloud-staging --data 198.51.100.10 --ttl 600",
+		"--name device.video-cloud-staging --data 198.51.100.10 --ttl 600",
+		"--name certissuer.video-cloud-staging --data 198.51.100.10 --ttl 600",
+		"--name account-manager.video-cloud-staging --data 198.51.100.10 --ttl 600",
+		"--name admin.video-cloud-staging --data 198.51.100.10 --ttl 600",
+		"--name frontend.video-cloud-staging --data 198.51.100.10 --ttl 600",
 	} {
 		if !strings.Contains(goCalls, want) {
 			t.Fatalf("expected %q in GoDaddy calls, got:\n%s", want, goCalls)
@@ -726,6 +721,28 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 	if !strings.Contains(readTestFile(t, digLog), "video-cloud-staging.realtekconnect.com") {
 		t.Fatalf("expected DNS convergence checks, got:\n%s", readTestFile(t, digLog))
 	}
+	edgeDir := filepath.Join(envRoot, "artifacts", "edge-haproxy")
+	for _, name := range []string{"edge-vms.json", "upstreams.json", "haproxy.cfg", "install.sh", "validation.json"} {
+		if _, err := os.Stat(filepath.Join(edgeDir, name)); err != nil {
+			t.Fatalf("expected edge HAProxy artifact %s: %v", name, err)
+		}
+	}
+	cfg := readTestFile(t, filepath.Join(edgeDir, "haproxy.cfg"))
+	for _, want := range []string{
+		"maxconn 200000",
+		"frontend public_https_443",
+		"bind *:443",
+		"backend k8s_ingress_https",
+		"server lke-node-1 10.2.1.10:30443 check",
+		"frontend public_mqtts_8883",
+		"bind *:8883",
+		"backend k8s_mqtts",
+		"server lke-node-1 10.2.1.10:31883 check",
+	} {
+		if !strings.Contains(cfg, want) {
+			t.Fatalf("expected %q in HAProxy config, got:\n%s", want, cfg)
+		}
+	}
 }
 
 func TestRunProvisionLKEPublicHTTPSStartsDNSUpsertsBeforeWaiting(t *testing.T) {
@@ -735,7 +752,7 @@ func TestRunProvisionLKEPublicHTTPSStartsDNSUpsertsBeforeWaiting(t *testing.T) {
 	}
 	fakeKubectl(t)
 	fakeHelm(t)
-	eventLog := fakeDNSCommandsWithGoDelay(t, "203.0.113.42", "0.2")
+	eventLog := fakeDNSCommandsWithGoDelay(t, "198.51.100.10", "0.2")
 	fakeCertbot(t)
 	t.Setenv("LKE_PUBLIC_HTTPS_ISSUE_EMAIL", "ops@example.test")
 	t.Setenv("LKE_PUBLIC_HTTPS_ACME_SERVER", "https://acme-staging-v02.api.letsencrypt.org/directory")
@@ -1847,6 +1864,59 @@ func TestRunProvisionLKEDeployWritesLegacyStackAndVideoState(t *testing.T) {
 	}
 }
 
+func TestRunProvisionLKEDeployPreservesOperatorStackOverrides(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	fakeKubectl(t)
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), `CLOUD_ENV_NAME=staging
+CLOUD_PROVIDER=lke
+CLOUD_REGION=us-sea
+CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+LKE_INGRESS_REPLICAS=1
+LKE_MQTT_REPLICAS=1
+LKE_ACCOUNT_MANAGER_REPLICAS=1
+LKE_VIDEO_CLOUD_REPLICAS=1
+LKE_POSTGRES_REQUEST_CPU=500m
+LKE_POSTGRES_REQUEST_MEMORY=512Mi
+LKE_POSTGRES_LIMIT_MEMORY=1Gi
+LKE_MQTT_REQUEST_CPU=250m
+LKE_MQTT_REQUEST_MEMORY=512Mi
+LKE_MQTT_LIMIT_MEMORY=1Gi
+LKE_EDGE_HAPROXY_MAXCONN=200000
+LKE_EDGE_HAPROXY_TOKEN=must-not-be-written
+`)
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
+	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
+	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
+	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
+	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
+
+	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+		t.Fatal(err)
+	}
+
+	stack := readTestFile(t, filepath.Join(envRoot, "env", "stack.env"))
+	for _, want := range []string{
+		"LKE_INGRESS_REPLICAS=1",
+		"LKE_MQTT_REPLICAS=1",
+		"LKE_ACCOUNT_MANAGER_REPLICAS=1",
+		"LKE_VIDEO_CLOUD_REPLICAS=1",
+		"LKE_POSTGRES_REQUEST_CPU=500m",
+		"LKE_POSTGRES_REQUEST_MEMORY=512Mi",
+		"LKE_POSTGRES_LIMIT_MEMORY=1Gi",
+		"LKE_MQTT_REQUEST_CPU=250m",
+		"LKE_MQTT_REQUEST_MEMORY=512Mi",
+		"LKE_MQTT_LIMIT_MEMORY=1Gi",
+		"LKE_EDGE_HAPROXY_MAXCONN=200000",
+	} {
+		if !strings.Contains(stack, want) {
+			t.Fatalf("expected %q in stack.env, got:\n%s", want, stack)
+		}
+	}
+	if strings.Contains(stack, "must-not-be-written") || strings.Contains(stack, "LKE_EDGE_HAPROXY_TOKEN") {
+		t.Fatalf("stack.env should not persist secret-like override keys, got:\n%s", stack)
+	}
+}
+
 func TestRunProvisionLKEDeployWritesPlatformAdminEnv(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	fakeKubectl(t)
@@ -2807,6 +2877,8 @@ func makeLKETestEnv(t *testing.T) (string, string) {
 	t.Cleanup(func() {
 		_ = os.Unsetenv("RTK_CLOUD_LKE_KUBECONFIG")
 	})
+	t.Setenv("LKE_EDGE_HAPROXY_PUBLIC_IP", "198.51.100.10")
+	t.Setenv("LKE_EDGE_HAPROXY_PRIVATE_IP", "10.2.1.5")
 	fakeHelm(t)
 	workspace := t.TempDir()
 	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")
@@ -2896,6 +2968,10 @@ if [[ "$*" == *"get service ingress-nginx-controller -o jsonpath={.status.loadBa
 fi
 if [[ "$*" == *"get service cloud-logger -o name"* && "${FAKE_CLOUD_LOGGER_SERVICE:-}" == "1" ]]; then
   printf 'service/cloud-logger\n'
+  exit 0
+fi
+if [[ "$*" == *"get nodes -o json"* ]]; then
+  printf '{"items":[{"status":{"addresses":[{"type":"InternalIP","address":"10.2.1.10"},{"type":"Hostname","address":"lke-node-1"}]}},{"status":{"addresses":[{"type":"InternalIP","address":"10.2.1.11"}]}}]}\n'
   exit 0
 fi
 if [[ "$*" == *"get secret openbao-tls -o json"* && -n "${FAKE_OPENBAO_TLS_SECRET_JSON:-}" ]]; then
@@ -3015,6 +3091,10 @@ if [[ "$*" == *"get pod/openbao-0 -o jsonpath={.status.phase}"* ]]; then
 fi
 if [[ "$*" == *"get service ingress-nginx-controller -o jsonpath={.status.loadBalancer.ingress[0].ip}"* ]]; then
   printf '203.0.113.42'
+  exit 0
+fi
+if [[ "$*" == *"get nodes -o json"* ]]; then
+  printf '{"items":[{"status":{"addresses":[{"type":"InternalIP","address":"10.2.1.10"}]}}]}\n'
   exit 0
 fi
 if [[ "$*" == *"get secret openbao-tls -o json"* && -n "${FAKE_OPENBAO_TLS_SECRET_JSON:-}" ]]; then
