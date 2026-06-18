@@ -137,10 +137,19 @@ func Load(root, dnsOverride string) (Environment, error) {
 			return Environment{}, fmt.Errorf("required environment metadata missing: %s", key)
 		}
 	}
-	if values["CLOUD_PROVIDER"] != "linode" && values["CLOUD_PROVIDER"] != "lke" {
+	if !supportedCloudProvider(values["CLOUD_PROVIDER"]) {
 		return Environment{}, fmt.Errorf("unsupported CLOUD_PROVIDER=%s", values["CLOUD_PROVIDER"])
 	}
 	return Environment{Values: values}, nil
+}
+
+func supportedCloudProvider(provider string) bool {
+	switch provider {
+	case "linode", "lke", "gke", "aks", "eks":
+		return true
+	default:
+		return false
+	}
 }
 
 func Derive(values map[string]string) map[string]string {

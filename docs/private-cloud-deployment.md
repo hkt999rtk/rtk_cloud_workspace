@@ -401,12 +401,15 @@ and frontend still own their service-local smoke/evidence commands; the
 workspace wrapper records them as `SKIP` until configured or implemented.
 
 The current `scripts/run-staging-e2e.sh` remains the workspace acceptance
-reference. It is provider-aware for `linode` and `lke`; LKE execution requires
-an approved kubeconfig context. When image env vars are not provided, the Go
-wrapper resolves the pinned submodule commits to private GHCR image tags and
-verifies those images before provisioning. Explicit `LKE_*_IMAGE` env vars are
-operator overrides, not the normal path. A future in-cluster LKE smoke Job still
-requires the gates in `docs/lke-migration-inventory.md`.
+reference. Provisioning is split into provider adapter plus runtime: `linode`
+keeps the legacy VM runtime, while `lke` uses the shared Kubernetes runtime with
+Linode LKE cluster/kubeconfig handling. GKE, AKS, and EKS provider ids are
+reserved only as fail-fast interfaces until their adapters are implemented and
+reviewed. When image env vars are not provided, the Go wrapper resolves the
+pinned submodule commits to private GHCR image tags and verifies those images
+before provisioning. Explicit `LKE_*_IMAGE` env vars are operator overrides, not
+the normal path. A future in-cluster LKE smoke Job still requires the gates in
+`docs/lke-migration-inventory.md`.
 
 ## Support Boundaries
 

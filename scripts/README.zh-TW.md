@@ -14,23 +14,40 @@ environment directory；script 會依 `CLOUD_PROVIDER`、`RTK_CLOUD_STAGING_PROV
 `cloud_env/staging/lke`。這個目錄集中保存 operator env、topology、service
 env、state、keys/certificates、device fixtures、artifacts 與 backups。
 
-目前 workspace 的正式 staging runtime 是 K8s/LKE。`CLOUD_PROVIDER=lke`
-會先使用 Linode LKE API 取得 kubeconfig；若沒有 `KUBECONFIG` / current
-context，會依
-`LKE_CLUSTER_ID`、`state/lke.env` 或 cluster label `<CLOUD_STACK_NAME>-lke`
-尋找既有 cluster，`provision --apply` 找不到時會建立 LKE cluster，再把
-kubeconfig 寫到 git-ignored `<env-root>/state/lke-kubeconfig.yaml`。之後才走
-kubectl namespace/apply/delete/rollout path。`deploy` 需要 container image；
+目前 workspace provision routing 分成 cloud provider adapter 與 runtime
+兩層。`CLOUD_PROVIDER=linode` 保留 legacy VM runtime，仍 dispatch 到 Video
+Cloud、Account Manager、Cloud Admin、Cloud Logger 的 VM scripts。
+`CLOUD_PROVIDER=lke` 走 Kubernetes runtime，provider adapter 只負責 Linode
+LKE cluster discovery/create/kubeconfig；RTK workloads、Namespace、Secret、
+Deployment、Service、Ingress、NetworkPolicy、rollout 與 E2E orchestration
+由共用 Kubernetes runtime 處理。若沒有 `KUBECONFIG` / current context，LKE
+adapter 會依 `LKE_CLUSTER_ID`、`state/lke.env` 或 cluster label
+`<CLOUD_STACK_NAME>-lke` 尋找既有 cluster，`provision --apply` 找不到時會建立
+LKE cluster，再把 kubeconfig 寫到 git-ignored
+`<env-root>/state/lke-kubeconfig.yaml`。之後才走 kubectl
+namespace/apply/delete/rollout path。`deploy` 需要 container image；
 可以明確提供 `LKE_POSTGRES_IMAGE`、`LKE_VIDEO_CLOUD_IMAGE`、
 `LKE_ACCOUNT_MANAGER_IMAGE`、`LKE_CLOUD_ADMIN_IMAGE`、`LKE_FRONTEND_IMAGE`、
 `LKE_CLOUD_LOGGER_IMAGE`。
 Service images 由各 service repo 的 release workflow 發布到 GHCR；
 workspace 只解析 pinned submodule commit、驗證對應 image 是否存在，並輸出
-後續 deploy/e2e 需要的 `LKE_*_IMAGE` mapping。Legacy
-`CLOUD_PROVIDER=linode` routing 只保留給舊 VM toolkit 參考，不是目前 staging
-路徑。AWS、GCP 和 Azure 仍是
-後續 provider abstraction 目標，現階段應 fail fast，不可呼叫 live API、
-SSH、DNS 或寫 state。
+後續 deploy/e2e 需要的 `LKE_*_IMAGE` mapping。GCP/Azure/AWS 的 Kubernetes
+service provider id 分別預留為 `gke`、`aks`、`eks`；目前只有 fail-fast
+adapter，會在任何 kubectl、cloud API、SSH、DNS 或 state mutation 前停止。
+現階段唯一應被 live 驗證的 Kubernetes provider 仍是 `lke`。
+
+Kubernetes runtime manifest 的新增規則：非 secret YAML 優先放在
+`scripts/go/rtk-cloud/templates/k8s/*.yaml.tmpl`，透過 Go template renderer
+產生；共用 labels/selectors/namespace/imagePullSecret metadata 由 Go helper
+提供。Secret 不應用 `fmt.Sprintf` 直接拼 YAML string；新 secret path 應建立
+typed Kubernetes object，透過 JSON `kubectl apply -f -` 套用，並避免錯誤訊息
+或測試 log 暴露 raw token/password。
+
+Kubernetes workload 的新增規則：先更新 provider-neutral workload registry，
+不要分別手寫 deployment list、service list、image validation、rollout target
+或 Prometheus target。Registry 是 image env key、namespace、port、metrics
+path、resource override prefix 與 rollout timeout 的來源；LKE 只是目前 live
+validated provider，未來 GKE/AKS/EKS 應重用同一份 workload registry。
 
 `.github/workflows/lke-image-artifacts.yml` 是 workspace 的 LKE image
 manifest workflow。PR 會先跑不需要 secret 的 tooling validation；
@@ -41,10 +58,10 @@ secret `CI_RUNNER_GITHUB_WORK_KEY` 來讀取 `git@github.com-work:` private
 submodules；產出的 `lke-image-env.sh` 可用來設定後續
 `run-staging-e2e.sh` / `rtk-cloud provision --deploy` 需要的 `LKE_*_IMAGE`。
 
-LKE Prometheus targets 由 workspace Go deployer 的 workload metrics registry
-產生，不直接手寫 Prometheus `scrape_configs`。新增 LKE workload 或 exporter
-時，必須在 workload metadata 宣告 metrics service、namespace、port 與
-`/metrics/prometheus` path；`provision --deploy` 會用這份 registry 產生
+LKE Prometheus targets 由 workspace Go deployer 的 Kubernetes workload
+registry 產生，不直接手寫 Prometheus `scrape_configs`。新增 Kubernetes
+workload 或 exporter 時，必須在 workload metadata 宣告 metrics service、
+namespace、port 與 `/metrics/prometheus` path；`provision --deploy` 會用這份 registry 產生
 `video-cloud-prometheus-config`。第一版維持 workspace-managed Prometheus
 ConfigMap，不導入 Prometheus Operator、ServiceMonitor 或 PodMonitor。
 Redis/Valkey engine metrics 由 LKE 內建 `redis-exporter` Service 暴露，

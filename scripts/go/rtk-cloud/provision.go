@@ -102,9 +102,18 @@ func runProvision(args []string) error {
 			return err
 		}
 	}
-	if env.Values["CLOUD_PROVIDER"] == "lke" {
-		return runLKEProvision(paths, env.Values, opts)
+	provider, err := newCloudProvider(env.Values["CLOUD_PROVIDER"])
+	if err != nil {
+		return err
 	}
+	ctx := provisionContext{Paths: paths, Env: env.Values, Opts: opts}
+	if provider.Runtime() == provisionRuntimeKubernetes {
+		return provider.RunProvision(ctx)
+	}
+	return provider.RunProvision(ctx)
+}
+
+func runLinodeVMProvision(paths provisionPaths, envValues map[string]string, opts provisionOptions) error {
 	if opts.mode.artifacts && !opts.mode.preflight && !opts.mode.plan && !opts.mode.reset && !opts.mode.apply && !opts.mode.dns && !opts.mode.deploy && !opts.mode.e2e {
 		dir, err := writeProvisionArtifacts(paths, "")
 		if err != nil {
@@ -113,8 +122,8 @@ func runProvision(args []string) error {
 		fmt.Fprintln(os.Stdout, dir)
 		return nil
 	}
-	if _, statErr := os.Stat(filepath.Join(envRoot, "env", "stack.env")); statErr == nil {
-		if err := envroot.Validate(envRoot, env); err != nil {
+	if _, statErr := os.Stat(filepath.Join(paths.EnvRoot, "env", "stack.env")); statErr == nil {
+		if err := envroot.Validate(paths.EnvRoot, envroot.Environment{Values: envValues}); err != nil {
 			return err
 		}
 	} else if !errors.Is(statErr, os.ErrNotExist) {
@@ -127,8 +136,7 @@ func runProvision(args []string) error {
 	if opts.sshKey == "" {
 		opts.sshKey = filepath.Join(os.Getenv("HOME"), ".ssh", "id_ed25519_rtkcloud")
 	}
-	envValues := env.Values
-	paths.VideoState = provisionCloudVideoStatePath(envRoot, envValues["CLOUD_STACK_NAME"], paths.VideoState)
+	paths.VideoState = provisionCloudVideoStatePath(paths.EnvRoot, envValues["CLOUD_STACK_NAME"], paths.VideoState)
 	if opts.mode.preflight {
 		if err := provisionPreflight(paths, &opts); err != nil {
 			return err
