@@ -35,9 +35,17 @@ import (
 )
 
 var homeTypes = map[string]bool{
-	"light":           true,
-	"air_conditioner": true,
-	"smart_meter":     true,
+	"light":              true,
+	"switch":             true,
+	"smart_plug":         true,
+	"air_conditioner":    true,
+	"environment_sensor": true,
+	"security_sensor":    true,
+	"smart_meter":        true,
+	"camera_status":      true,
+	"door_lock":          true,
+	"appliance":          true,
+	"gateway":            true,
 }
 
 type userArtifact struct {
@@ -296,6 +304,7 @@ func main() {
 	var root, envRoot, brandname, outDir, profile, maxUsersRaw, mqttProbeRaw, traceDetail, runID string
 	var rampUp, telemetryInterval, stateInterval, commandRate, loadModel string
 	var stageNamesRaw, stageTargetsRaw, stageDurationsRaw, stageMinCommandsRaw string
+	var deviceTrafficProfile, stageUsageWindowsRaw string
 	var duration, seed, shardIndex, shardCount, concurrency, maxConnectedDevices int
 	flag.StringVar(&root, "root", "", "workspace root")
 	flag.StringVar(&envRoot, "env-root", "", "environment root")
@@ -319,6 +328,8 @@ func main() {
 	flag.StringVar(&stageTargetsRaw, "stage-connected-devices", "", "comma-separated staged sustained per-shard connected device targets")
 	flag.StringVar(&stageDurationsRaw, "stage-durations-seconds", "", "comma-separated staged sustained stage durations in seconds")
 	flag.StringVar(&stageMinCommandsRaw, "stage-min-commands", "", "comma-separated staged sustained minimum command events")
+	flag.StringVar(&deviceTrafficProfile, "device-traffic-profile", "", "home MQTT device traffic profile")
+	flag.StringVar(&stageUsageWindowsRaw, "stage-usage-windows", "", "comma-separated usage window per sustained stage")
 	flag.IntVar(&concurrency, "concurrency", 25, "load-test MQTT probe concurrency")
 	flag.IntVar(&maxConnectedDevices, "max-connected-devices", 0, "load-test max connected devices in this shard")
 	flag.Parse()
@@ -344,6 +355,8 @@ func main() {
 		StageConnectedDevices:       stageTargetsRaw,
 		StageDurationsSeconds:       stageDurationsRaw,
 		StageMinCommands:            stageMinCommandsRaw,
+		DeviceTrafficProfile:        deviceTrafficProfile,
+		StageUsageWindows:           stageUsageWindowsRaw,
 		Concurrency:                 concurrency,
 		MaxConnectedDevicesPerShard: maxConnectedDevices,
 		RunID:                       runID,
@@ -371,6 +384,9 @@ type loadOptions struct {
 	StageConnectedDevices       string `json:"stage_connected_devices,omitempty"`
 	StageDurationsSeconds       string `json:"stage_durations_seconds,omitempty"`
 	StageMinCommands            string `json:"stage_min_commands,omitempty"`
+	DeviceTrafficProfile        string `json:"device_traffic_profile,omitempty"`
+	StageUsageWindows           string `json:"stage_usage_windows,omitempty"`
+	StageUsageWindow            string `json:"stage_usage_window,omitempty"`
 	Concurrency                 int    `json:"concurrency"`
 	MaxConnectedDevicesPerShard int    `json:"max_connected_devices_per_shard"`
 }
@@ -383,9 +399,14 @@ type mqttEndpointTarget struct {
 func (opts loadOptions) validateLoadModel() error {
 	switch strings.TrimSpace(opts.LoadModel) {
 	case "", "actor-separated-probe", "home-100k-sustained":
-		return nil
 	default:
 		return errors.New("--load-model must be actor-separated-probe or home-100k-sustained")
+	}
+	switch strings.TrimSpace(opts.DeviceTrafficProfile) {
+	case "", "home-diverse-v1":
+		return nil
+	default:
+		return errors.New("--device-traffic-profile must be home-diverse-v1")
 	}
 }
 
@@ -634,6 +655,8 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 			"stage_names":                 opts.StageNames,
 			"stage_connected_devices":     opts.StageConnectedDevices,
 			"stage_durations_seconds":     opts.StageDurationsSeconds,
+			"device_traffic_profile":      opts.DeviceTrafficProfile,
+			"stage_usage_windows":         opts.StageUsageWindows,
 			"concurrency":                 opts.Concurrency,
 			"max_connected_devices":       opts.MaxConnectedDevicesPerShard,
 		},
@@ -1032,9 +1055,10 @@ func (c *lockedReadWriteCloser) Write(p []byte) (int, error) {
 }
 
 type sustainedEvent struct {
-	Offset time.Duration
-	Kind   string
-	Index  int
+	Offset     time.Duration
+	Kind       string
+	Index      int
+	UserAction string
 }
 
 type sustainedStage struct {
@@ -1042,6 +1066,7 @@ type sustainedStage struct {
 	ConnectedTarget int
 	DurationSeconds int
 	MinCommands     int
+	UsageWindow     string
 }
 
 type sustainedStageResult struct {
@@ -1054,6 +1079,19 @@ type sustainedStageResult struct {
 	CommandsPassed    int
 	Notes             []string
 	Diagnostics       sustainedStageDiagnostics
+	DeviceTypeTotals  map[string]sustainedDeviceTypeTotals
+	UserActionTotals  map[string]int64
+	UsageWindowTotals map[string]int64
+}
+
+type sustainedDeviceTypeTotals struct {
+	TelemetryPublishes int64 `json:"telemetry_publishes"`
+	EventPublishes     int64 `json:"event_publishes"`
+	DesiredWrites      int64 `json:"desired_writes"`
+	DeltaReceived      int64 `json:"delta_received"`
+	ReportedPublishes  int64 `json:"reported_publishes"`
+	BytesSent          int64 `json:"bytes_sent"`
+	BytesReceived      int64 `json:"bytes_received"`
 }
 
 type sustainedStageDiagnostics struct {
@@ -1107,6 +1145,10 @@ func parseSustainedStages(opts loadOptions) ([]sustainedStage, error) {
 	if len(names) == 0 || len(targets) == 0 || len(durations) == 0 || len(names) != len(targets) || len(names) != len(durations) {
 		return nil, errors.New("--stage-names, --stage-connected-devices, and --stage-durations-seconds must have the same non-zero length")
 	}
+	usageWindows := splitCSV(opts.StageUsageWindows)
+	if len(usageWindows) > 0 && len(usageWindows) != len(names) {
+		return nil, errors.New("--stage-usage-windows must have the same length as --stage-names")
+	}
 	stages := make([]sustainedStage, 0, len(names))
 	lastTarget := 0
 	for idx := range names {
@@ -1126,7 +1168,11 @@ func parseSustainedStages(opts loadOptions) ([]sustainedStage, error) {
 		if durations[idx] <= 0 {
 			return nil, fmt.Errorf("stage %s duration must be positive", names[idx])
 		}
-		stages = append(stages, sustainedStage{Name: names[idx], ConnectedTarget: targets[idx], DurationSeconds: durations[idx], MinCommands: minCommand})
+		usageWindow := ""
+		if len(usageWindows) > 0 {
+			usageWindow = usageWindows[idx]
+		}
+		stages = append(stages, sustainedStage{Name: names[idx], ConnectedTarget: targets[idx], DurationSeconds: durations[idx], MinCommands: minCommand, UsageWindow: usageWindow})
 		lastTarget = targets[idx]
 	}
 	return stages, nil
@@ -1201,7 +1247,7 @@ func runSustainedHome100KLoad(assignments []assignment, certs []certRecord, bran
 		session := sessions[sessionSlot]
 		switch event.Kind {
 		case "telemetry":
-			if publishSustainedTelemetry(session, brandname, runID, &result.Totals) != nil {
+			if _, err := publishSustainedTelemetry(session, brandname, runID, &result.Totals); err != nil {
 				result.Status = "FAIL"
 			}
 		case "command":
@@ -1239,7 +1285,14 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 	defer closeSustainedSessions(sessions)
 	results := make([]sustainedStageResult, 0, len(stages))
 	for idx, stage := range stages {
-		stageResult := sustainedStageResult{Name: stage.Name, ConnectedTarget: stage.ConnectedTarget, Status: "PASS"}
+		stageResult := sustainedStageResult{
+			Name:              stage.Name,
+			ConnectedTarget:   stage.ConnectedTarget,
+			Status:            "PASS",
+			DeviceTypeTotals:  map[string]sustainedDeviceTypeTotals{},
+			UserActionTotals:  map[string]int64{},
+			UsageWindowTotals: map[string]int64{},
+		}
 		stageWindow := time.Duration(stage.DurationSeconds) * time.Second
 		stageStart := time.Now()
 		stageDeadline := stageStart.Add(stageWindow)
@@ -1314,6 +1367,7 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 		stageOpts := opts
 		stageOpts.MaxConnectedDevicesPerShard = stage.ConnectedTarget
 		stageOpts.StageMinCommands = strconv.Itoa(stage.MinCommands)
+		stageOpts.StageUsageWindow = stage.UsageWindow
 		commandBudget := desiredWriteRemainingBudget(stageWindow)
 		commandWindow := actionWindow - commandBudget
 		if commandWindow < 0 {
@@ -1345,9 +1399,12 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 			sessionSlot := event.Index % len(sessions)
 			session := sessions[sessionSlot]
 			switch event.Kind {
-			case "telemetry":
-				if publishSustainedTelemetry(session, brandname, runID, &stageResult.Totals) != nil {
+			case "telemetry", "event":
+				bytesSent, err := publishSustainedTelemetry(session, brandname, runID, &stageResult.Totals)
+				if err != nil {
 					stageResult.Status = "FAIL"
+				} else {
+					recordStageReportEvent(&stageResult, session.Record.DeviceType, event.Kind, stage.UsageWindow, bytesSent)
 				}
 			case "command":
 				if time.Until(stageDeadline) < commandBudget {
@@ -1357,6 +1414,7 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 					continue
 				}
 				stageResult.CommandsAttempted++
+				recordStageUserAction(&stageResult, firstNonEmptyString(event.UserAction, "single_device_command"), stage.UsageWindow)
 				if runSustainedShadowCommandWithContext(session, brandname, runID, apiBaseURL, appCert, &stageResult.Totals, sustainedCommandContext{
 					Stage:       stage.Name,
 					EventIndex:  event.Index,
@@ -1364,6 +1422,7 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 					Deadline:    stageDeadline,
 				}) == nil {
 					stageResult.CommandsPassed++
+					recordStageCommandSuccess(&stageResult, session.Record.DeviceType)
 				} else {
 					stageResult.Status = "FAIL"
 				}
@@ -1393,6 +1452,60 @@ func closeSustainedSessions(sessions []sustainedDeviceSession) {
 		session.Reader.Close()
 		_ = session.Conn.Close()
 	}
+}
+
+func recordStageReportEvent(stage *sustainedStageResult, deviceType string, kind string, usageWindow string, bytesSent int64) {
+	if stage == nil {
+		return
+	}
+	if stage.DeviceTypeTotals == nil {
+		stage.DeviceTypeTotals = map[string]sustainedDeviceTypeTotals{}
+	}
+	total := stage.DeviceTypeTotals[deviceType]
+	switch kind {
+	case "event":
+		total.EventPublishes++
+	default:
+		total.TelemetryPublishes++
+	}
+	total.BytesSent += bytesSent
+	stage.DeviceTypeTotals[deviceType] = total
+	recordStageUsageWindow(stage, usageWindow)
+}
+
+func recordStageUserAction(stage *sustainedStageResult, action string, usageWindow string) {
+	if stage == nil {
+		return
+	}
+	if stage.UserActionTotals == nil {
+		stage.UserActionTotals = map[string]int64{}
+	}
+	stage.UserActionTotals[firstNonEmptyString(action, "single_device_command")]++
+	recordStageUsageWindow(stage, usageWindow)
+}
+
+func recordStageCommandSuccess(stage *sustainedStageResult, deviceType string) {
+	if stage == nil {
+		return
+	}
+	if stage.DeviceTypeTotals == nil {
+		stage.DeviceTypeTotals = map[string]sustainedDeviceTypeTotals{}
+	}
+	total := stage.DeviceTypeTotals[deviceType]
+	total.DesiredWrites++
+	total.DeltaReceived++
+	total.ReportedPublishes++
+	stage.DeviceTypeTotals[deviceType] = total
+}
+
+func recordStageUsageWindow(stage *sustainedStageResult, usageWindow string) {
+	if stage == nil || strings.TrimSpace(usageWindow) == "" {
+		return
+	}
+	if stage.UsageWindowTotals == nil {
+		stage.UsageWindowTotals = map[string]int64{}
+	}
+	stage.UsageWindowTotals[usageWindow]++
 }
 
 func desiredWriteRemainingBudget(stageWindow time.Duration) time.Duration {
@@ -1611,6 +1724,9 @@ func sustainedEvents(sessions []sustainedDeviceSession, opts loadOptions, seed i
 }
 
 func sustainedEventsWithCommandWindow(sessions []sustainedDeviceSession, opts loadOptions, seed int, telemetryWindow, commandWindow time.Duration) []sustainedEvent {
+	if strings.TrimSpace(opts.DeviceTrafficProfile) == "home-diverse-v1" {
+		return sustainedHomeDiverseEvents(sessions, opts, seed, telemetryWindow, commandWindow)
+	}
 	telemetryInterval := parseDurationDefault(opts.TelemetryInterval, telemetryWindow)
 	events := []sustainedEvent{}
 	for idx, session := range sessions {
@@ -1632,20 +1748,179 @@ func sustainedEventsWithCommandWindow(sessions []sustainedDeviceSession, opts lo
 	return events
 }
 
-func publishSustainedTelemetry(session sustainedDeviceSession, brandname string, runID string, totals *mqttIOTotals) error {
+func sustainedHomeDiverseEvents(sessions []sustainedDeviceSession, opts loadOptions, seed int, telemetryWindow, commandWindow time.Duration) []sustainedEvent {
+	if len(sessions) == 0 {
+		return nil
+	}
+	window := firstNonEmptyString(strings.TrimSpace(opts.StageUsageWindow), "steady")
+	events := []sustainedEvent{}
+	for idx, session := range sessions {
+		reportCount := homeDiverseReportCount(session.Record.DeviceType, window)
+		for eventIdx, offset := range deterministicCommandOffsets(reportCount, telemetryWindow) {
+			kind := "telemetry"
+			if homeDiverseTrafficProfile(session.Record.DeviceType) == "event_burst" && eventIdx%2 == 0 {
+				kind = "event"
+			}
+			events = append(events, sustainedEvent{Offset: jitterOffset(offset, session.Record.DeviceID, seed, telemetryWindow), Kind: kind, Index: idx})
+		}
+	}
+
+	minCommands, _ := strconv.Atoi(strings.TrimSpace(opts.StageMinCommands))
+	commandSlots := weightedHomeDiverseCommandSlots(sessions, window, minCommands)
+	offsets := deterministicCommandOffsets(len(commandSlots), commandWindow)
+	for idx, slot := range commandSlots {
+		offset := time.Duration(0)
+		if idx < len(offsets) {
+			offset = offsets[idx]
+		}
+		events = append(events, sustainedEvent{Offset: offset, Kind: "command", Index: slot, UserAction: homeDiverseUserAction(sessions[slot].Record.DeviceType, window)})
+	}
+	sort.Slice(events, func(i, j int) bool {
+		if events[i].Offset == events[j].Offset {
+			return events[i].Kind < events[j].Kind
+		}
+		return events[i].Offset < events[j].Offset
+	})
+	return events
+}
+
+func homeDiverseTrafficProfile(deviceType string) string {
+	switch strings.TrimSpace(deviceType) {
+	case "light", "switch", "smart_plug":
+		return "command_heavy"
+	case "air_conditioner":
+		return "hvac_slow_converge"
+	case "environment_sensor", "smart_meter":
+		return "periodic_reported"
+	case "security_sensor", "camera_status":
+		return "event_burst"
+	case "door_lock":
+		return "strict_access"
+	case "appliance":
+		return "state_machine"
+	case "gateway":
+		return "gateway_batch_sync"
+	default:
+		return "balanced"
+	}
+}
+
+func homeDiverseReportCount(deviceType string, usageWindow string) int {
+	switch homeDiverseTrafficProfile(deviceType) {
+	case "periodic_reported":
+		return 2
+	case "event_burst":
+		if usageWindow == "away" || usageWindow == "evening_peak" {
+			return 2
+		}
+		return 1
+	case "gateway_batch_sync":
+		if usageWindow == "return_home" {
+			return 3
+		}
+		return 1
+	case "state_machine":
+		return 1
+	default:
+		if usageWindow == "evening_peak" {
+			return 1
+		}
+		return 0
+	}
+}
+
+func homeDiverseCommandWeight(deviceType string, usageWindow string) int {
+	switch homeDiverseTrafficProfile(deviceType) {
+	case "command_heavy":
+		if usageWindow == "evening_peak" || usageWindow == "return_home" {
+			return 5
+		}
+		return 3
+	case "hvac_slow_converge":
+		if usageWindow == "return_home" || usageWindow == "evening_peak" {
+			return 4
+		}
+		return 1
+	case "strict_access":
+		return 2
+	case "state_machine":
+		return 2
+	case "gateway_batch_sync":
+		if usageWindow == "return_home" {
+			return 2
+		}
+		return 1
+	case "periodic_reported", "event_burst":
+		return 0
+	default:
+		return 1
+	}
+}
+
+func weightedHomeDiverseCommandSlots(sessions []sustainedDeviceSession, usageWindow string, minCommands int) []int {
+	if minCommands <= 0 {
+		return nil
+	}
+	weighted := []int{}
+	for idx, session := range sessions {
+		for n := 0; n < homeDiverseCommandWeight(session.Record.DeviceType, usageWindow); n++ {
+			weighted = append(weighted, idx)
+		}
+	}
+	if len(weighted) == 0 {
+		return nil
+	}
+	slots := make([]int, 0, minCommands)
+	for idx := 0; idx < minCommands; idx++ {
+		slots = append(slots, weighted[idx%len(weighted)])
+	}
+	return slots
+}
+
+func homeDiverseUserAction(deviceType string, usageWindow string) string {
+	switch homeDiverseTrafficProfile(deviceType) {
+	case "command_heavy":
+		if usageWindow == "return_home" || usageWindow == "evening_peak" {
+			return "scene_command"
+		}
+		return "single_device_command"
+	case "hvac_slow_converge":
+		return "automation_command"
+	case "strict_access":
+		return "negative_permission"
+	default:
+		return "single_device_command"
+	}
+}
+
+func jitterOffset(offset time.Duration, deviceID string, seed int, window time.Duration) time.Duration {
+	if window <= 0 {
+		return 0
+	}
+	hash := sha256.Sum256([]byte(fmt.Sprintf("%d:%s:jitter", seed, deviceID)))
+	jitter := time.Duration(int64(binary.BigEndian.Uint64(hash[:8]) % uint64((250 * time.Millisecond).Nanoseconds())))
+	out := offset + jitter
+	if out >= window {
+		return window - time.Nanosecond
+	}
+	return out
+}
+
+func publishSustainedTelemetry(session sustainedDeviceSession, brandname string, runID string, totals *mqttIOTotals) (int64, error) {
 	messageID := fmt.Sprintf("msg-home100k-%s-%s-%d", probeCorrelationID(runID, time.Now()), session.Record.DeviceID, time.Now().UnixNano())
 	topic, payload, err := sampleHomeStatusReport(session.Record.DeviceID, session.Record.DeviceType, brandname, messageID, time.Now().UTC())
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if err := mqttPublish(session.Conn, topic, payload); err != nil {
 		totals.PublishFailures++
 		recordFailure(totals, "device_telemetry_publish_failed", err)
-		return err
+		return 0, err
 	}
+	bytesSent := int64(len(topic) + len(payload))
 	totals.PublishSuccesses++
-	totals.TotalBytesSent += int64(len(topic) + len(payload))
-	return nil
+	totals.TotalBytesSent += bytesSent
+	return bytesSent, nil
 }
 
 func runSustainedShadowCommand(session sustainedDeviceSession, brandname, runID, apiBaseURL string, appCert tls.Certificate, totals *mqttIOTotals) error {
@@ -2765,6 +3040,9 @@ func sustainedStageResultsJSON(stages []sustainedStageResult, appBootstrap appBo
 			"failure_details":           totals.FailureDetails,
 			"failure_events":            totals.FailureEvents,
 			"command_events":            totals.CommandEvents,
+			"device_type_totals":        stage.DeviceTypeTotals,
+			"user_action_totals":        stage.UserActionTotals,
+			"usage_window_totals":       stage.UsageWindowTotals,
 			"connect_attempts":          totals.ConnectAttempts,
 			"connect_successes":         totals.ConnectSuccesses,
 			"connect_failures":          totals.ConnectFailures,
@@ -3535,10 +3813,26 @@ func commandActionForCapability(capability string) string {
 	switch strings.TrimSpace(strings.ToLower(capability)) {
 	case "light", "smart_light":
 		return "set_power"
+	case "switch":
+		return "set_switch"
+	case "smart_plug":
+		return "set_plug"
 	case "air_conditioner", "ac", "hvac":
 		return "set_hvac"
+	case "environment_sensor":
+		return "read_environment"
+	case "security_sensor":
+		return "read_security"
 	case "smart_meter", "meter":
 		return "read_meter"
+	case "camera_status":
+		return "set_camera_status"
+	case "door_lock":
+		return "set_lock"
+	case "appliance":
+		return "set_appliance_mode"
+	case "gateway":
+		return "sync_gateway"
 	default:
 		return "probe_command"
 	}
@@ -3548,10 +3842,26 @@ func desiredStateForCapability(capability string) map[string]any {
 	switch strings.TrimSpace(strings.ToLower(capability)) {
 	case "light", "smart_light":
 		return map[string]any{"power": true}
+	case "switch":
+		return map[string]any{"power": true}
+	case "smart_plug":
+		return map[string]any{"power": true, "energy_reporting": true}
 	case "air_conditioner", "ac", "hvac":
 		return map[string]any{"mode": "cool", "target_temperature_c": 24, "fan": "auto"}
+	case "environment_sensor":
+		return map[string]any{"report_interval_seconds": 300}
+	case "security_sensor":
+		return map[string]any{"armed": true}
 	case "smart_meter", "meter":
 		return map[string]any{"reading": "instantaneous"}
+	case "camera_status":
+		return map[string]any{"privacy_mode": false, "motion_detection": true}
+	case "door_lock":
+		return map[string]any{"locked": true}
+	case "appliance":
+		return map[string]any{"mode": "auto", "run_state": "active"}
+	case "gateway":
+		return map[string]any{"sync_children": true}
 	default:
 		return map[string]any{"command": "probe"}
 	}
@@ -3559,8 +3869,20 @@ func desiredStateForCapability(capability string) map[string]any {
 
 func reportedStateForCapability(capability string) map[string]any {
 	switch strings.TrimSpace(strings.ToLower(capability)) {
+	case "environment_sensor":
+		return map[string]any{"temperature_c": 25.2, "humidity_percent": 58, "report_interval_seconds": 300}
+	case "security_sensor":
+		return map[string]any{"armed": true, "motion": false, "open": false}
 	case "smart_meter", "meter":
 		return map[string]any{"reading": "instantaneous", "telemetry_report_requested": true}
+	case "camera_status":
+		return map[string]any{"privacy_mode": false, "motion_detection": true, "online": true}
+	case "door_lock":
+		return map[string]any{"locked": true, "battery_percent": 86}
+	case "appliance":
+		return map[string]any{"mode": "auto", "run_state": "active", "remaining_minutes": 42}
+	case "gateway":
+		return map[string]any{"sync_children": true, "child_device_count": 8, "network_status": "online"}
 	default:
 		return desiredStateForCapability(capability)
 	}
@@ -4263,7 +4585,7 @@ func latestHomeMQTTBindArtifact(pattern, brandLower string) string {
 				found[item.DeviceType] = true
 			}
 		}
-		if found["light"] && found["air_conditioner"] && found["smart_meter"] {
+		if containsAllHomeMQTTTypes(found) {
 			return path
 		}
 	}
@@ -4271,6 +4593,15 @@ func latestHomeMQTTBindArtifact(pattern, brandLower string) string {
 		return ""
 	}
 	return matches[0]
+}
+
+func containsAllHomeMQTTTypes(found map[string]bool) bool {
+	for _, typ := range []string{"light", "switch", "smart_plug", "air_conditioner", "environment_sensor", "security_sensor", "smart_meter", "camera_status", "door_lock", "appliance", "gateway"} {
+		if !found[typ] {
+			return false
+		}
+	}
+	return true
 }
 
 func sortArtifactPathsNewestFirst(paths []string) {

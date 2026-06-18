@@ -18,6 +18,10 @@ printf 'ACCOUNT_RELEASE=%s\n' "${ACCOUNT_RELEASE:-}" >> "$STG_LOG"
 printf 'ADMIN_RELEASE=%s\n' "${ADMIN_RELEASE:-}" >> "$STG_LOG"
 printf 'CLOUD_PROVIDER=%s\n' "${CLOUD_PROVIDER:-}" >> "$STG_LOG"
 printf 'RTK_CLOUD_STAGING_ENV_ROOT=%s\n' "${RTK_CLOUD_STAGING_ENV_ROOT:-}" >> "$STG_LOG"
+printf 'LKE_VIDEO_CLOUD_IMAGE=%s\n' "${LKE_VIDEO_CLOUD_IMAGE:-}" >> "$STG_LOG"
+printf 'LKE_ACCOUNT_MANAGER_IMAGE=%s\n' "${LKE_ACCOUNT_MANAGER_IMAGE:-}" >> "$STG_LOG"
+printf 'LKE_CLOUD_ADMIN_IMAGE=%s\n' "${LKE_CLOUD_ADMIN_IMAGE:-}" >> "$STG_LOG"
+printf 'LKE_FRONTEND_IMAGE=%s\n' "${LKE_FRONTEND_IMAGE:-}" >> "$STG_LOG"
 if [[ "$*" == *"--plan"* ]]; then
 	printf 'cloud-staging-e2e-test plan\n'
 	exit 0
@@ -61,6 +65,47 @@ printf '{"overall":"pass","summary_file":"%s","report_file":"%s"}\n' "$TMP/summa
 SH
 chmod +x "$TMP/stg-stub.sh"
 
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/go" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'go\t%s\n' "$*" >> "$GO_LOG"
+if [[ "$1" != "run" || "$2" != "./scripts/go/rtk-cloud" || "$3" != "--" || "$4" != "lke-resolve-images" ]]; then
+	echo "unexpected go invocation: $*" >&2
+	exit 1
+fi
+out=""
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--out)
+			out="${2:-}"
+			shift 2
+			;;
+		*)
+			shift
+			;;
+	esac
+done
+if [[ -z "$out" ]]; then
+	echo "missing --out" >&2
+	exit 1
+fi
+mkdir -p "$(dirname "$out")"
+cat > "$out" <<'JSON'
+{
+  "env": {
+    "LKE_POSTGRES_IMAGE": "postgres:16-alpine",
+    "LKE_VIDEO_CLOUD_IMAGE": "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api:sha-testvideo",
+    "LKE_ACCOUNT_MANAGER_IMAGE": "ghcr.io/hkt999rtk/rtk_account_manager/account-manager:sha-testaccount",
+    "LKE_CLOUD_ADMIN_IMAGE": "ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin:sha-testadmin",
+    "LKE_FRONTEND_IMAGE": "ghcr.io/hkt999rtk/rtk_cloud_frontend/frontend:sha-testfront"
+  }
+}
+JSON
+SH
+chmod +x "$TMP/bin/go"
+export GO_LOG="$TMP/go.log"
+
 cat > "$TMP/stack.env" <<'EOF'
 CLOUD_PROVIDER=linode
 CLOUD_STACK_NAME=video-cloud-staging
@@ -102,9 +147,40 @@ RTK_CLOUD_STACK_FILE="$TMP/lke/env/stack.env" \
 RTK_CLOUD_STG_SH="$TMP/stg-stub.sh" \
 	"$ROOT/scripts/run-staging-e2e.sh" --plan >"$TMP/lke-plan.out"
 grep -F 'cloud-staging-e2e-test plan' "$TMP/lke-plan.out" >/dev/null
+grep -F 'LKE image resolve: automatic when service image env vars are missing' "$TMP/lke-plan.out" >/dev/null
 grep -F 'args=e2e --plan' "$STG_LOG" >/dev/null
 grep -F 'CLOUD_PROVIDER=lke' "$STG_LOG" >/dev/null
 grep -F 'RTK_CLOUD_STAGING_ENV_ROOT='"$TMP/lke" "$STG_LOG" >/dev/null
+test ! -e "$GO_LOG"
+
+rm "$STG_LOG"
+PATH="$TMP/bin:$PATH" \
+RTK_CLOUD_STACK_FILE="$TMP/lke/env/stack.env" \
+RTK_CLOUD_STG_SH="$TMP/stg-stub.sh" \
+	"$ROOT/scripts/run-staging-e2e.sh" \
+	--confirm video-cloud-staging >"$TMP/lke-run.out"
+grep -F $'go\trun ./scripts/go/rtk-cloud -- lke-resolve-images --workspace '"$ROOT"$' --env-root '"$TMP/lke" "$GO_LOG" >/dev/null
+grep -F 'LKE_VIDEO_CLOUD_IMAGE=ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api:sha-testvideo' "$STG_LOG" >/dev/null
+grep -F 'LKE_ACCOUNT_MANAGER_IMAGE=ghcr.io/hkt999rtk/rtk_account_manager/account-manager:sha-testaccount' "$STG_LOG" >/dev/null
+grep -F 'LKE_CLOUD_ADMIN_IMAGE=ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin:sha-testadmin' "$STG_LOG" >/dev/null
+grep -F 'LKE_FRONTEND_IMAGE=ghcr.io/hkt999rtk/rtk_cloud_frontend/frontend:sha-testfront' "$STG_LOG" >/dev/null
+grep -R -F "LKE_VIDEO_CLOUD_IMAGE='ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api:sha-testvideo'" "$ROOT/.artifacts/lke-images" >/dev/null
+
+rm "$STG_LOG" "$GO_LOG"
+PATH="$TMP/bin:$PATH" \
+LKE_VIDEO_CLOUD_IMAGE=manual-video \
+LKE_ACCOUNT_MANAGER_IMAGE=manual-account \
+LKE_CLOUD_ADMIN_IMAGE=manual-admin \
+LKE_FRONTEND_IMAGE=manual-frontend \
+RTK_CLOUD_STACK_FILE="$TMP/lke/env/stack.env" \
+RTK_CLOUD_STG_SH="$TMP/stg-stub.sh" \
+	"$ROOT/scripts/run-staging-e2e.sh" \
+	--confirm video-cloud-staging >"$TMP/lke-manual-run.out"
+test ! -e "$GO_LOG"
+grep -F 'LKE_VIDEO_CLOUD_IMAGE=manual-video' "$STG_LOG" >/dev/null
+grep -F 'LKE_ACCOUNT_MANAGER_IMAGE=manual-account' "$STG_LOG" >/dev/null
+grep -F 'LKE_CLOUD_ADMIN_IMAGE=manual-admin' "$STG_LOG" >/dev/null
+grep -F 'LKE_FRONTEND_IMAGE=manual-frontend' "$STG_LOG" >/dev/null
 
 rm "$STG_LOG"
 CLOUD_PROVIDER=linode \

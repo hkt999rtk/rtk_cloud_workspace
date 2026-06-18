@@ -436,9 +436,56 @@ func TestRunStatusWithCorrelationRequiresClientTargetCoverage(t *testing.T) {
 	evidence := ServerEvidence{Complete: true, Sources: requiredEvidenceSources(true)}
 	correlation := ServerCorrelation{Status: "pass"}
 
-	status := runStatusWithCorrelation(TestConditions{Devices: 100000, Users: 5000}, evidence, stages, LoadGeneratorHealth{}, correlation)
+	plan := Plan{
+		Conditions: TestConditions{Devices: 100000, Users: 5000},
+		DeviceMix:  map[string]int{"light": 1},
+	}
+	status := runStatusWithCorrelation(plan, evidence, stages, LoadGeneratorHealth{}, correlation)
 	if status != "INCOMPLETE" {
 		t.Fatalf("status = %s, want INCOMPLETE for 60 connect attempts against 25k target", status)
+	}
+}
+
+func TestRunStatusMarksMissingPerTypeEvidenceIncomplete(t *testing.T) {
+	plan := Plan{
+		Conditions: TestConditions{Devices: 1, Users: 1},
+		DeviceMix:  map[string]int{"light": 1, "smart_meter": 1},
+	}
+	stages := []StageResult{{
+		Name:             "1",
+		ConnectedDevices: 1,
+		DeviceMQTTTotals: DeviceMQTTTotals{
+			ConnectAttempts:     1,
+			ConnectSuccess:      1,
+			Subscribes:          1,
+			ActiveConnections:   1,
+			ActiveSubscriptions: 1,
+			Publishes:           1,
+			ReceivedMessages:    1,
+			DeltaReceived:       1,
+			ReportedPublishes:   1,
+		},
+		AppUserTotals: AppUserTotals{
+			LoginAttempts: 1,
+			LoginSuccess:  1,
+			DesiredWrites: 1,
+			ReceivedAcks:  1,
+		},
+		DesiredReportedConvergenceRate: 100,
+		OfflineDesiredConvergenceRate:  100,
+		DeltaClearSuccessRatePercent:   100,
+		DeviceTypeTotals: map[string]DeviceTypeTotals{
+			"light": {TelemetryPublishes: 1},
+		},
+	}}
+	evidence := correlatedEvidenceForStages("run-missing-type", stages)
+	correlation := ServerCorrelation{Status: "pass"}
+	if status := runStatusWithCorrelation(plan, evidence, stages, LoadGeneratorHealth{}, correlation); status != "INCOMPLETE" {
+		t.Fatalf("status = %s, want INCOMPLETE for missing smart_meter per-type evidence", status)
+	}
+	stages[0].DeviceTypeTotals["smart_meter"] = DeviceTypeTotals{TelemetryPublishes: 1}
+	if status := runStatusWithCorrelation(plan, evidence, stages, LoadGeneratorHealth{}, correlation); status != "PASS" {
+		t.Fatalf("status = %s, want PASS after all plan device types have evidence", status)
 	}
 }
 

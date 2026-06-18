@@ -52,6 +52,13 @@ func TestLoadOptionsAcceptsSustainedHome100KModel(t *testing.T) {
 	}
 }
 
+func TestLoadOptionsAcceptsHomeDiverseTrafficProfile(t *testing.T) {
+	opts := loadOptions{LoadModel: "home-100k-sustained", DeviceTrafficProfile: "home-diverse-v1"}
+	if err := opts.validateLoadModel(); err != nil {
+		t.Fatalf("validateLoadModel() error = %v", err)
+	}
+}
+
 func TestTelemetryScheduleUsesDeterministicDevicePhaseJitter(t *testing.T) {
 	first := telemetrySchedule("device-a", 20260616, 5*time.Minute, 15*time.Minute)
 	second := telemetrySchedule("device-a", 20260616, 5*time.Minute, 15*time.Minute)
@@ -95,5 +102,40 @@ func TestUserCommandScheduleCoversShortHome100KStageUsers(t *testing.T) {
 	got := userCommandSchedule(2500, 3600, 3*time.Second, int64(20260531)+int64(2500)*7919)
 	if len(got) < 250 {
 		t.Fatalf("command arrivals = %d, want at least 250 user writes", len(got))
+	}
+}
+
+func TestHomeDiverseEventsDependOnDeviceTypeAndUsageWindow(t *testing.T) {
+	sessions := []sustainedDeviceSession{}
+	for idx, typ := range []string{"light", "light", "light", "light", "environment_sensor", "environment_sensor", "security_sensor", "camera_status"} {
+		sessions = append(sessions, sustainedDeviceSession{Record: certRecord{DeviceID: fmt.Sprintf("device-%02d", idx), DeviceType: typ}})
+	}
+	opts := loadOptions{
+		TelemetryInterval:          "off",
+		CommandRatePerDevicePerDay: "0",
+		DeviceTrafficProfile:       "home-diverse-v1",
+		StageUsageWindow:           "evening_peak",
+		StageMinCommands:           "12",
+	}
+	events := sustainedEventsWithCommandWindow(sessions, opts, 1234, 2*time.Minute, 90*time.Second)
+	commandsByType := map[string]int{}
+	telemetryByType := map[string]int{}
+	for _, event := range events {
+		typ := sessions[event.Index].Record.DeviceType
+		switch event.Kind {
+		case "command":
+			commandsByType[typ]++
+		case "telemetry", "event":
+			telemetryByType[typ]++
+		}
+	}
+	if commandsByType["light"] <= commandsByType["environment_sensor"] {
+		t.Fatalf("light commands = %d, environment_sensor commands = %d, want command-heavy lights in evening peak", commandsByType["light"], commandsByType["environment_sensor"])
+	}
+	if telemetryByType["environment_sensor"] == 0 {
+		t.Fatalf("environment sensors should still report telemetry/events: commands=%#v telemetry=%#v events=%#v", commandsByType, telemetryByType, events)
+	}
+	if telemetryByType["security_sensor"] == 0 && telemetryByType["camera_status"] == 0 {
+		t.Fatalf("security/camera status devices should produce event-style reports: telemetry=%#v events=%#v", telemetryByType, events)
 	}
 }

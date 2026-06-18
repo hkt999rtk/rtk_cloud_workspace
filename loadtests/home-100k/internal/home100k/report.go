@@ -41,6 +41,10 @@ func RenderReport(input ReportInput) string {
 		status = "INCOMPLETE"
 		reasons = append(reasons, "Client target coverage is incomplete; sampled counters do not satisfy stage device/user targets")
 	}
+	if missing := missingDeviceTypeEvidence(input.Plan, input.StageResults); len(missing) > 0 {
+		status = "INCOMPLETE"
+		reasons = append(reasons, "Missing per-device-type MQTT evidence: "+strings.Join(missing, ", "))
+	}
 	switch strings.ToLower(strings.TrimSpace(input.ServerCorrelation.Status)) {
 	case "fail":
 		if status != "INCOMPLETE" {
@@ -109,8 +113,35 @@ func RenderReport(input ReportInput) string {
 	fmt.Fprintln(&b)
 
 	fmt.Fprintln(&b, "## Scenario Mix")
+	fmt.Fprintf(&b, "- Scenario profile: `%s`\n", firstNonEmpty(input.Plan.ScenarioProfile, DefaultScenarioProfile))
 	renderMap(&b, "Device mix", input.Plan.DeviceMix)
 	renderMap(&b, "Presence mix", input.Plan.PresenceMix)
+	if len(input.Plan.StageUsageWindows) > 0 {
+		fmt.Fprintf(&b, "- Stage usage windows: `%s`\n", strings.Join(input.Plan.StageUsageWindows, "`, `"))
+	}
+	fmt.Fprintln(&b)
+
+	if len(input.Plan.DeviceProfiles) > 0 {
+		fmt.Fprintln(&b, "## Device Traffic Profiles")
+		fmt.Fprintln(&b, "| Device type | Ratio weight | Traffic profile | Payload class |")
+		fmt.Fprintln(&b, "| --- | ---: | --- | --- |")
+		for _, name := range sortedDeviceProfileKeys(input.Plan.DeviceProfiles) {
+			profile := input.Plan.DeviceProfiles[name]
+			fmt.Fprintf(&b, "| %s | %d | %s | %s |\n", name, profile.RatioWeight, profile.TrafficProfile, profile.PayloadClass)
+		}
+		fmt.Fprintln(&b)
+	}
+
+	if len(input.Plan.UserProfiles) > 0 {
+		fmt.Fprintln(&b, "## User Scenario Profiles")
+		fmt.Fprintln(&b, "| User profile | Ratio weight | Action profile |")
+		fmt.Fprintln(&b, "| --- | ---: | --- |")
+		for _, name := range sortedUserProfileKeys(input.Plan.UserProfiles) {
+			profile := input.Plan.UserProfiles[name]
+			fmt.Fprintf(&b, "| %s | %d | %s |\n", name, profile.RatioWeight, profile.ActionProfile)
+		}
+		fmt.Fprintln(&b)
+	}
 	fmt.Fprintln(&b)
 
 	fmt.Fprintln(&b, "## Device Scenario")
@@ -132,7 +163,11 @@ func RenderReport(input ReportInput) string {
 
 	fmt.Fprintln(&b, "## Stages")
 	for _, stage := range input.Plan.Stages {
-		fmt.Fprintf(&b, "- %s: %d connected devices, warm-up %s, steady %s, cool-down %s\n", stage.Name, stage.ConnectedDevices, stage.WarmUp, stage.SteadyState, stage.CoolDown)
+		window := ""
+		if strings.TrimSpace(stage.UsageWindow) != "" {
+			window = ", usage window " + stage.UsageWindow
+		}
+		fmt.Fprintf(&b, "- %s: %d connected devices, warm-up %s, steady %s, cool-down %s%s\n", stage.Name, stage.ConnectedDevices, stage.WarmUp, stage.SteadyState, stage.CoolDown, window)
 	}
 	fmt.Fprintln(&b)
 
@@ -216,6 +251,40 @@ func RenderReport(input ReportInput) string {
 		fmt.Fprintf(&b, "| total | %d | %d | %d | %d | %d | %d | %d | %d | %d |\n",
 			appTotal.LoginAttempts, appTotal.LoginSuccess, appTotal.LoginFail, appTotal.ListDevicesRequests, appTotal.ReadShadowRequests, appTotal.DesiredWrites, appTotal.ReceivedAcks, appTotal.BytesSent, appTotal.BytesReceived)
 		fmt.Fprintln(&b)
+
+		deviceTypeTotals := aggregateDeviceTypeTotals(input.StageResults)
+		if len(deviceTypeTotals) > 0 {
+			fmt.Fprintln(&b, "## Per-Type MQTT Totals")
+			fmt.Fprintln(&b, "| Device type | Telemetry publishes | Event publishes | Desired writes | Delta received | Reported publishes | Bytes sent | Bytes received |")
+			fmt.Fprintln(&b, "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+			for _, name := range sortedDeviceTypeTotalKeys(deviceTypeTotals) {
+				t := deviceTypeTotals[name]
+				fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d | %d | %d |\n", name, t.TelemetryPublishes, t.EventPublishes, t.DesiredWrites, t.DeltaReceived, t.ReportedPublishes, t.BytesSent, t.BytesReceived)
+			}
+			fmt.Fprintln(&b)
+		}
+
+		userActionTotals := aggregateInt64Maps(input.StageResults, func(stage StageResult) map[string]int64 { return stage.UserActionTotals })
+		if len(userActionTotals) > 0 {
+			fmt.Fprintln(&b, "## User Action Totals")
+			fmt.Fprintln(&b, "| Action | Count |")
+			fmt.Fprintln(&b, "| --- | ---: |")
+			for _, name := range sortedKeys(userActionTotals) {
+				fmt.Fprintf(&b, "| %s | %d |\n", name, userActionTotals[name])
+			}
+			fmt.Fprintln(&b)
+		}
+
+		usageWindowTotals := aggregateInt64Maps(input.StageResults, func(stage StageResult) map[string]int64 { return stage.UsageWindowTotals })
+		if len(usageWindowTotals) > 0 {
+			fmt.Fprintln(&b, "## Usage Window Totals")
+			fmt.Fprintln(&b, "| Usage window | Count |")
+			fmt.Fprintln(&b, "| --- | ---: |")
+			for _, name := range sortedKeys(usageWindowTotals) {
+				fmt.Fprintf(&b, "| %s | %d |\n", name, usageWindowTotals[name])
+			}
+			fmt.Fprintln(&b)
+		}
 
 		reasonRows := failureReasonRows(input.StageResults)
 		if len(reasonRows) > 0 {
@@ -495,6 +564,93 @@ func renderMap(b *strings.Builder, title string, values map[string]int) {
 	for _, key := range keys {
 		fmt.Fprintf(b, "  - %s: %d\n", displayName(key), values[key])
 	}
+}
+
+func sortedDeviceProfileKeys(values map[string]DeviceProfile) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedUserProfileKeys(values map[string]UserProfile) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedDeviceTypeTotalKeys(values map[string]DeviceTypeTotals) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func aggregateDeviceTypeTotals(stages []StageResult) map[string]DeviceTypeTotals {
+	out := map[string]DeviceTypeTotals{}
+	for _, stage := range stages {
+		for name, value := range stage.DeviceTypeTotals {
+			total := out[name]
+			total.TelemetryPublishes += value.TelemetryPublishes
+			total.EventPublishes += value.EventPublishes
+			total.DesiredWrites += value.DesiredWrites
+			total.DeltaReceived += value.DeltaReceived
+			total.ReportedPublishes += value.ReportedPublishes
+			total.BytesSent += value.BytesSent
+			total.BytesReceived += value.BytesReceived
+			out[name] = total
+		}
+	}
+	return out
+}
+
+func missingDeviceTypeEvidence(plan Plan, stages []StageResult) []string {
+	required := requiredDeviceTypesForPlan(plan)
+	if len(required) == 0 {
+		return nil
+	}
+	totals := aggregateDeviceTypeTotals(stages)
+	missing := []string{}
+	for _, name := range required {
+		if _, ok := totals[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	return missing
+}
+
+func requiredDeviceTypesForPlan(plan Plan) []string {
+	required := []string{}
+	if len(plan.DeviceMix) > 0 {
+		for name, count := range plan.DeviceMix {
+			if count > 0 {
+				required = append(required, name)
+			}
+		}
+	} else {
+		for _, bucket := range homeDiverseDeviceMixBuckets() {
+			required = append(required, bucket.Name)
+		}
+	}
+	sort.Strings(required)
+	return required
+}
+
+func aggregateInt64Maps(stages []StageResult, selectMap func(StageResult) map[string]int64) map[string]int64 {
+	out := map[string]int64{}
+	for _, stage := range stages {
+		for name, value := range selectMap(stage) {
+			out[name] += value
+		}
+	}
+	return out
 }
 
 type failureReasonRow struct {

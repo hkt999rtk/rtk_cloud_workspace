@@ -22,6 +22,7 @@ const (
 	DefaultStageWarmUp      = "1m"
 	DefaultStageSteady      = "2m"
 	DefaultStageCoolDown    = "45s"
+	DefaultScenarioProfile  = "home-diverse-v1"
 )
 
 type PlanOptions struct {
@@ -37,19 +38,24 @@ type PlanOptions struct {
 	RunnerNofile    int    `json:"runner_nofile_limit,omitempty"`
 	SessionModel    string `json:"device_session_model,omitempty"`
 	RunnerReadModel string `json:"runner_read_model,omitempty"`
+	ScenarioProfile string `json:"scenario_profile,omitempty"`
 }
 
 type Plan struct {
-	Conditions  TestConditions    `json:"conditions"`
-	DeviceMix   map[string]int    `json:"device_mix"`
-	PresenceMix map[string]int    `json:"presence_mix"`
-	Stages      []Stage           `json:"stages"`
-	Shards      []Shard           `json:"shards"`
-	Assignments []VMAssignment    `json:"vm_assignments"`
-	Lifecycle   []LifecycleAction `json:"lifecycle_actions"`
-	Workflow    []string          `json:"workflow"`
-	Artifacts   Artifacts         `json:"artifacts"`
-	CleanupPlan []string          `json:"cleanup_plan"`
+	Conditions        TestConditions           `json:"conditions"`
+	ScenarioProfile   string                   `json:"scenario_profile"`
+	DeviceMix         map[string]int           `json:"device_mix"`
+	DeviceProfiles    map[string]DeviceProfile `json:"device_profiles"`
+	UserProfiles      map[string]UserProfile   `json:"user_profiles"`
+	StageUsageWindows []string                 `json:"stage_usage_windows"`
+	PresenceMix       map[string]int           `json:"presence_mix"`
+	Stages            []Stage                  `json:"stages"`
+	Shards            []Shard                  `json:"shards"`
+	Assignments       []VMAssignment           `json:"vm_assignments"`
+	Lifecycle         []LifecycleAction        `json:"lifecycle_actions"`
+	Workflow          []string                 `json:"workflow"`
+	Artifacts         Artifacts                `json:"artifacts"`
+	CleanupPlan       []string                 `json:"cleanup_plan"`
 }
 
 type TestConditions struct {
@@ -74,6 +80,18 @@ type Stage struct {
 	WarmUp           string `json:"warm_up"`
 	SteadyState      string `json:"steady_state"`
 	CoolDown         string `json:"cool_down"`
+	UsageWindow      string `json:"usage_window,omitempty"`
+}
+
+type DeviceProfile struct {
+	RatioWeight    int    `json:"ratio_weight"`
+	TrafficProfile string `json:"traffic_profile"`
+	PayloadClass   string `json:"payload_class"`
+}
+
+type UserProfile struct {
+	RatioWeight   int    `json:"ratio_weight"`
+	ActionProfile string `json:"action_profile"`
 }
 
 type Shard struct {
@@ -162,6 +180,10 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	if readModel == "" {
 		readModel = DefaultRunnerReadModel
 	}
+	scenarioProfile := strings.TrimSpace(opts.ScenarioProfile)
+	if scenarioProfile == "" {
+		scenarioProfile = DefaultScenarioProfile
+	}
 
 	plan := Plan{
 		Conditions: TestConditions{
@@ -179,10 +201,14 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 			DeviceSessionModel:   sessionModel,
 			RunnerReadModel:      readModel,
 		},
-		DeviceMix:   proportionalMix(devices, []ratioBucket{{Name: "light", Weight: 50}, {Name: "air_conditioner", Weight: 20}, {Name: "smart_meter", Weight: 30}}),
-		PresenceMix: proportionalMix(devices, []ratioBucket{{Name: "online_steady", Weight: 85}, {Name: "offline_desired_queue", Weight: 10}, {Name: "flapping_reconnect", Weight: 5}}),
-		Stages:      stagePlan(devices, opts.StageWarmUp, opts.StageSteady, opts.StageCoolDown),
-		Workflow:    []string{"plan", "provision-vms", "sync", "run-stages", "collect", "collect-server-evidence", "aggregate", "destroy-vms"},
+		ScenarioProfile:   scenarioProfile,
+		DeviceMix:         proportionalMix(devices, homeDiverseDeviceMixBuckets()),
+		DeviceProfiles:    homeDiverseDeviceProfiles(),
+		UserProfiles:      homeDiverseUserProfiles(),
+		StageUsageWindows: homeDiverseUsageWindows(),
+		PresenceMix:       proportionalMix(devices, []ratioBucket{{Name: "online_steady", Weight: 85}, {Name: "offline_desired_queue", Weight: 10}, {Name: "flapping_reconnect", Weight: 5}}),
+		Stages:            stagePlan(devices, opts.StageWarmUp, opts.StageSteady, opts.StageCoolDown, homeDiverseUsageWindows()),
+		Workflow:          []string{"plan", "provision-vms", "sync", "run-stages", "collect", "collect-server-evidence", "aggregate", "destroy-vms"},
 		Artifacts: Artifacts{
 			RunPlan:         "loadtests/home-100k/plans/<run_id>/plan.json",
 			ShardResults:    "loadtests/home-100k/reports/<run_id>/shards/",
@@ -201,6 +227,51 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	plan.Assignments = mixedAssignments(opts.Region, plan.Shards)
 	plan.Lifecycle = BuildLifecycleActions(plan, "<run_id>")
 	return plan, nil
+}
+
+func homeDiverseDeviceMixBuckets() []ratioBucket {
+	return []ratioBucket{
+		{Name: "light", Weight: 18},
+		{Name: "switch", Weight: 7},
+		{Name: "smart_plug", Weight: 12},
+		{Name: "air_conditioner", Weight: 10},
+		{Name: "environment_sensor", Weight: 12},
+		{Name: "security_sensor", Weight: 10},
+		{Name: "smart_meter", Weight: 8},
+		{Name: "camera_status", Weight: 7},
+		{Name: "door_lock", Weight: 4},
+		{Name: "appliance", Weight: 7},
+		{Name: "gateway", Weight: 5},
+	}
+}
+
+func homeDiverseDeviceProfiles() map[string]DeviceProfile {
+	return map[string]DeviceProfile{
+		"light":              {RatioWeight: 18, TrafficProfile: "command_heavy", PayloadClass: "power"},
+		"switch":             {RatioWeight: 7, TrafficProfile: "command_heavy", PayloadClass: "power"},
+		"smart_plug":         {RatioWeight: 12, TrafficProfile: "command_heavy", PayloadClass: "power_energy"},
+		"air_conditioner":    {RatioWeight: 10, TrafficProfile: "hvac_slow_converge", PayloadClass: "hvac"},
+		"environment_sensor": {RatioWeight: 12, TrafficProfile: "periodic_reported", PayloadClass: "environment"},
+		"security_sensor":    {RatioWeight: 10, TrafficProfile: "event_burst", PayloadClass: "security"},
+		"smart_meter":        {RatioWeight: 8, TrafficProfile: "periodic_reported", PayloadClass: "energy"},
+		"camera_status":      {RatioWeight: 7, TrafficProfile: "event_burst", PayloadClass: "camera_status"},
+		"door_lock":          {RatioWeight: 4, TrafficProfile: "strict_access", PayloadClass: "lock"},
+		"appliance":          {RatioWeight: 7, TrafficProfile: "state_machine", PayloadClass: "appliance"},
+		"gateway":            {RatioWeight: 5, TrafficProfile: "gateway_batch_sync", PayloadClass: "gateway"},
+	}
+}
+
+func homeDiverseUserProfiles() map[string]UserProfile {
+	return map[string]UserProfile{
+		"owner_admin":    {RatioWeight: 15, ActionProfile: "scene_command"},
+		"daily_user":     {RatioWeight: 45, ActionProfile: "single_device_command"},
+		"background_app": {RatioWeight: 25, ActionProfile: "open_home_refresh"},
+		"automation":     {RatioWeight: 15, ActionProfile: "automation_command"},
+	}
+}
+
+func homeDiverseUsageWindows() []string {
+	return []string{"morning", "away", "return_home", "evening_peak"}
 }
 
 func defaultDuration(value string, fallback string) string {
@@ -250,10 +321,10 @@ func proportionalMix(total int, buckets []ratioBucket) map[string]int {
 	return out
 }
 
-func stagePlan(devices int, warmUp string, steady string, coolDown string) []Stage {
+func stagePlan(devices int, warmUp string, steady string, coolDown string, usageWindows []string) []Stage {
 	percentages := []int{25, 50, 75, 100}
 	out := make([]Stage, 0, len(percentages))
-	for _, pct := range percentages {
+	for idx, pct := range percentages {
 		connected := devices * pct / 100
 		if connected <= 0 && devices > 0 {
 			connected = 1
@@ -262,7 +333,11 @@ func stagePlan(devices int, warmUp string, steady string, coolDown string) []Sta
 		if devices == DefaultDeviceCount {
 			name = fmt.Sprintf("%dk", connected/1000)
 		}
-		out = append(out, Stage{Name: name, ConnectedDevices: connected, WarmUp: warmUp, SteadyState: steady, CoolDown: coolDown})
+		usageWindow := ""
+		if idx < len(usageWindows) {
+			usageWindow = usageWindows[idx]
+		}
+		out = append(out, Stage{Name: name, ConnectedDevices: connected, WarmUp: warmUp, SteadyState: steady, CoolDown: coolDown, UsageWindow: usageWindow})
 	}
 	return out
 }

@@ -34,9 +34,48 @@ func TestReportRendersRequiredScenariosAndIncompleteEvidence(t *testing.T) {
 		"## Device Scenario",
 		"## User Scenario",
 		"## IoT Device Shadow Scenario",
-		"Light: 50000",
+		"Scenario profile: `home-diverse-v1`",
+		"## Device Traffic Profiles",
+		"camera_status",
+		"## User Scenario Profiles",
+		"owner_admin",
+		"Light: 18000",
 		"Offline desired queue",
 		"Missing server evidence",
+	} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("report missing %q:\n%s", want, report)
+		}
+	}
+}
+
+func TestReportMarksMissingPerTypeEvidenceIncomplete(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:   "cloud_env/staging/lke",
+		Brandname: "RTK",
+		Region:    "us-sea",
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+	plan.DeviceMix = map[string]int{"light": 1, "smart_meter": 1}
+	report := RenderReport(ReportInput{
+		Plan:                 plan,
+		RunID:                "run-missing-type-evidence",
+		ShadowEvidenceFound:  true,
+		ServerEvidenceFound:  true,
+		LoadGeneratorHealthy: true,
+		StageResults: []StageResult{{
+			Name:             "1",
+			ConnectedDevices: 1,
+			DeviceTypeTotals: map[string]DeviceTypeTotals{
+				"light": {TelemetryPublishes: 1},
+			},
+		}},
+	})
+	for _, want := range []string{
+		"Status: INCOMPLETE",
+		"Missing per-device-type MQTT evidence: smart_meter",
 	} {
 		if !strings.Contains(report, want) {
 			t.Fatalf("report missing %q:\n%s", want, report)
@@ -180,6 +219,27 @@ func TestReportRendersRequiredStageMetrics(t *testing.T) {
 			RejectedUpdateCount:            2,
 			AuthorizationViolationCount:    3,
 			ClientTokenCorrelationCount:    4,
+			DeviceTypeTotals: map[string]DeviceTypeTotals{
+				"light": {
+					TelemetryPublishes: 10,
+					DesiredWrites:      7,
+					ReportedPublishes:  7,
+					EventPublishes:     1,
+				},
+				"environment_sensor": {
+					TelemetryPublishes: 30,
+					DesiredWrites:      0,
+					ReportedPublishes:  0,
+					EventPublishes:     2,
+				},
+			},
+			UserActionTotals: map[string]int64{
+				"open_home_refresh": 6,
+				"scene_command":     3,
+			},
+			UsageWindowTotals: map[string]int64{
+				"evening_peak": 9,
+			},
 			StageDiagnostics: []map[string]any{{
 				"connected_target":   25000,
 				"connected_after":    10000,
@@ -225,6 +285,12 @@ func TestReportRendersRequiredStageMetrics(t *testing.T) {
 		"## Counter Scope",
 		"## Device MQTT Totals",
 		"## APP/User Totals",
+		"## Per-Type MQTT Totals",
+		"environment_sensor",
+		"## User Action Totals",
+		"scene_command",
+		"## Usage Window Totals",
+		"evening_peak",
 		"## Server Log Correlation",
 		"## Stage Diagnostics",
 		"## Sync/Provision Telemetry",

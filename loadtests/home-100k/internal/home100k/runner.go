@@ -71,7 +71,20 @@ type StageResult struct {
 	FailureDetails                 map[string]map[string]int64 `json:"failure_details,omitempty"`
 	FailureEvents                  []FailureEvent              `json:"failure_events,omitempty"`
 	CommandEvents                  []CommandEvent              `json:"command_events,omitempty"`
+	DeviceTypeTotals               map[string]DeviceTypeTotals `json:"device_type_totals,omitempty"`
+	UserActionTotals               map[string]int64            `json:"user_action_totals,omitempty"`
+	UsageWindowTotals              map[string]int64            `json:"usage_window_totals,omitempty"`
 	StageDiagnostics               []map[string]any            `json:"stage_diagnostics,omitempty"`
+}
+
+type DeviceTypeTotals struct {
+	TelemetryPublishes int64 `json:"telemetry_publishes"`
+	EventPublishes     int64 `json:"event_publishes"`
+	DesiredWrites      int64 `json:"desired_writes"`
+	DeltaReceived      int64 `json:"delta_received"`
+	ReportedPublishes  int64 `json:"reported_publishes"`
+	BytesSent          int64 `json:"bytes_sent"`
+	BytesReceived      int64 `json:"bytes_received"`
 }
 
 type FailureEvent struct {
@@ -289,7 +302,7 @@ func Run(opts RunOptions) (RunResult, error) {
 	deviceTotals, appTotals := summarizeStageTotals(stageResults)
 	correlation := correlateServerEvidence(evidence, deviceTotals, appTotals)
 	runtimeLogCorrelation := correlateRuntimeLogs(evidence, stageResults)
-	status := runStatusWithCorrelation(plan.Conditions, evidence, stageResults, LoadGeneratorHealth{}, correlation)
+	status := runStatusWithCorrelation(plan, evidence, stageResults, LoadGeneratorHealth{}, correlation)
 	status = statusWithRuntimeLogCorrelation(status, runtimeLogCorrelation)
 
 	result := RunResult{
@@ -372,7 +385,7 @@ func AggregateCollectedRun(opts AggregateOptions) (RunResult, error) {
 	deviceTotals, appTotals := summarizeStageTotals(stages)
 	correlation := correlateServerEvidence(evidence, deviceTotals, appTotals)
 	runtimeLogCorrelation := correlateRuntimeLogs(evidence, stages)
-	status := runStatusWithCorrelation(plan.Conditions, evidence, stages, loadHealth, correlation)
+	status := runStatusWithCorrelation(plan, evidence, stages, loadHealth, correlation)
 	status = statusWithRuntimeLogCorrelation(status, runtimeLogCorrelation)
 	result := RunResult{
 		RunID:                 runID,
@@ -791,8 +804,8 @@ func allEvidenceSourcesAvailable(sources map[string]EvidenceSource) bool {
 	return true
 }
 
-func runStatus(conditions TestConditions, evidence ServerEvidence, stages []StageResult) string {
-	if !evidence.Complete || !shadowEvidenceComplete(stages) || !clientTargetCoverageComplete(conditions, stages) {
+func runStatus(plan Plan, evidence ServerEvidence, stages []StageResult) string {
+	if !evidence.Complete || !shadowEvidenceComplete(stages) || !clientTargetCoverageComplete(plan.Conditions, stages) || len(missingDeviceTypeEvidence(plan, stages)) > 0 {
 		return "INCOMPLETE"
 	}
 	for _, stage := range stages {
@@ -806,20 +819,20 @@ func runStatus(conditions TestConditions, evidence ServerEvidence, stages []Stag
 	return "PASS"
 }
 
-func runStatusWithLoadGenerator(conditions TestConditions, evidence ServerEvidence, stages []StageResult, health LoadGeneratorHealth) string {
+func runStatusWithLoadGenerator(plan Plan, evidence ServerEvidence, stages []StageResult, health LoadGeneratorHealth) string {
 	if health.Saturated {
 		return "INCOMPLETE"
 	}
-	return runStatus(conditions, evidence, stages)
+	return runStatus(plan, evidence, stages)
 }
 
-func runStatusWithCorrelation(conditions TestConditions, evidence ServerEvidence, stages []StageResult, health LoadGeneratorHealth, correlation ServerCorrelation) string {
+func runStatusWithCorrelation(plan Plan, evidence ServerEvidence, stages []StageResult, health LoadGeneratorHealth, correlation ServerCorrelation) string {
 	if health.Saturated {
 		return "INCOMPLETE"
 	}
 	switch strings.ToLower(correlation.Status) {
 	case "pass":
-		return runStatus(conditions, evidence, stages)
+		return runStatus(plan, evidence, stages)
 	case "fail":
 		return "FAIL"
 	default:
