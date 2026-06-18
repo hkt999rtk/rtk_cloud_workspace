@@ -365,9 +365,10 @@ func lkePlan(env map[string]string) {
 	for _, ns := range lkeNamespaces(env) {
 		fmt.Fprintf(os.Stdout, "  - %s=%s\n", ns.Key, ns.Name)
 	}
-	fmt.Fprintln(os.Stdout, "- public HTTPS: Linode NodeBalancer :443 -> ingress-nginx -> ClusterIP services")
+	fmt.Fprintln(os.Stdout, "- public edge: external HAProxy VM :443/:8883 -> LKE node private IP NodePorts")
 	fmt.Fprintln(os.Stdout, "- public HTTP :80 is not exposed; TLS issuance uses GoDaddy DNS-01")
-	fmt.Fprintln(os.Stdout, "- non-HTTP: MQTT/TURN remain internal until explicitly exposed in a separate design")
+	fmt.Fprintln(os.Stdout, "- public MQTT: HAProxy TCP passthrough :8883 -> EMQX/MQTT NodePort")
+	fmt.Fprintln(os.Stdout, "- public TURN remains out of scope for HAProxy edge v1")
 	fmt.Fprintln(os.Stdout, "- secrets: OpenBao standalone/AppRole for staging PKI; certissuer delegates device/app signing to OpenBao and Kubernetes Secrets do not carry CA private keys")
 	fmt.Fprintln(os.Stdout, "- deploy images:")
 	for _, workload := range lkeWorkloads(env) {
@@ -451,6 +452,9 @@ type lkePublicHTTPSRoute struct {
 }
 
 func lkeApplyPublicHTTPS(paths provisionPaths, env map[string]string, opts provisionOptions) error {
+	if err := lkeValidatePublicEdge(env); err != nil {
+		return err
+	}
 	routes := lkePublicHTTPSRoutes(env)
 	if len(routes) == 0 {
 		return errors.New("no public HTTPS routes configured")
@@ -495,11 +499,14 @@ func lkeApplyPublicHTTPS(paths provisionPaths, env map[string]string, opts provi
 			return err
 		}
 	}
-	ip, err := lkeWaitForIngressExternalIP(env)
+	if err := lkeApplyPublicMQTTNodePort(env); err != nil {
+		return err
+	}
+	edge, err := lkeEnsureExternalHAProxyEdge(paths, env, opts)
 	if err != nil {
 		return err
 	}
-	return lkeSyncPublicHTTPSDNS(paths, env, opts, hosts, ip)
+	return lkeSyncPublicHTTPSDNS(paths, env, opts, hosts, edge.PublicIP)
 }
 
 func lkeSyncPublicHTTPSDNS(paths provisionPaths, env map[string]string, opts provisionOptions, hosts []string, ip string) error {
@@ -573,9 +580,10 @@ func lkeInstallIngressNginx(env map[string]string) error {
 		"--repo", "https://kubernetes.github.io/ingress-nginx",
 		"--namespace", ns,
 		"--create-namespace",
-		"--set", "controller.service.type=LoadBalancer",
+		"--set", "controller.service.type=NodePort",
 		"--set", "controller.service.ports.https=443",
 		"--set", "controller.service.targetPorts.https=https",
+		"--set", "controller.service.nodePorts.https=" + strconv.Itoa(lkeIngressHTTPSNodePort(env)),
 		"--set", "controller.service.enableHttp=false",
 		"--set", "controller.allowSnippetAnnotations=true",
 		"--set", "controller.config.annotations-risk-level=Critical",
@@ -1800,12 +1808,7 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 			return err
 		}
 		if lkeEnvBool("LKE_PUBLIC_MQTT_LOADBALANCER") {
-			for _, manifest := range lkeMQTTPublicServiceManifests(env) {
-				if err := kubectlApply(manifest); err != nil {
-					return err
-				}
-			}
-			if err := kubectlApply(lkeAllowPublicMQTTLoadTestNetworkPolicyManifest(env)); err != nil {
+			if err := lkeApplyPublicMQTTNodePort(env); err != nil {
 				return err
 			}
 		}
@@ -1982,12 +1985,18 @@ func writeLKECompatibilityArtifacts(paths provisionPaths, env map[string]string)
 	if err := os.MkdirAll(filepath.Join(paths.EnvRoot, "state"), 0o755); err != nil {
 		return err
 	}
-	stackBody := renderStackEnv(map[string]string{
+	rawStack := map[string]string{
 		"CLOUD_ENV_NAME":        firstNonEmpty(env["CLOUD_ENV_NAME"], "staging"),
 		"CLOUD_PROVIDER":        "lke",
 		"CLOUD_REGION":          firstNonEmpty(env["CLOUD_REGION"], "us-sea"),
 		"CLOUD_DNS_ROOT_DOMAIN": firstNonEmpty(env["CLOUD_DNS_ROOT_DOMAIN"], "realtekconnect.com"),
-	}, env)
+	}
+	for key, value := range env {
+		if value != "" && isSafeLKEOperatorStackOverride(key) {
+			rawStack[key] = value
+		}
+	}
+	stackBody := renderStackEnv(rawStack, env)
 	if err := os.WriteFile(filepath.Join(paths.EnvRoot, "env", "stack.env"), []byte(stackBody), 0o644); err != nil {
 		return err
 	}
@@ -2005,6 +2014,20 @@ func writeLKECompatibilityArtifacts(paths provisionPaths, env map[string]string)
 		}
 	}
 	return nil
+}
+
+func isSafeLKEOperatorStackOverride(key string) bool {
+	if !strings.HasPrefix(key, "LKE_") {
+		return false
+	}
+	secretMarkers := []string{"TOKEN", "SECRET", "PASSWORD", "KEY", "DSN", "CREDENTIAL"}
+	upper := strings.ToUpper(key)
+	for _, marker := range secretMarkers {
+		if strings.Contains(upper, marker) {
+			return false
+		}
+	}
+	return true
 }
 
 func lkeCompatibilityVideoState(env map[string]string) map[string]any {
@@ -3514,25 +3537,41 @@ spec:
 `, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
 }
 
-func lkeMQTTPublicServiceManifests(env map[string]string) []string {
-	count := lkePublicMQTTLoadBalancerCount(env)
+func lkeApplyPublicMQTTNodePort(env map[string]string) error {
+	manifests, err := lkeMQTTPublicServiceManifests(env)
+	if err != nil {
+		return err
+	}
+	for _, manifest := range manifests {
+		if err := kubectlApply(manifest); err != nil {
+			return err
+		}
+	}
+	return kubectlApply(lkeAllowPublicMQTTLoadTestNetworkPolicyManifest(env))
+}
+
+func lkeMQTTPublicServiceManifests(env map[string]string) ([]string, error) {
+	count, err := lkePublicMQTTNodePortCount(env)
+	if err != nil {
+		return nil, err
+	}
 	manifests := make([]string, 0, count)
 	for idx := 0; idx < count; idx++ {
 		manifests = append(manifests, lkeMQTTPublicServiceManifest(env, idx))
 	}
-	return manifests
+	return manifests, nil
 }
 
-func lkePublicMQTTLoadBalancerCount(env map[string]string) int {
+func lkePublicMQTTNodePortCount(env map[string]string) (int, error) {
 	raw := strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_PUBLIC_MQTT_LOADBALANCER_COUNT"), env["LKE_PUBLIC_MQTT_LOADBALANCER_COUNT"], "1"))
 	count, err := strconv.Atoi(raw)
 	if err != nil || count < 1 {
-		return 1
+		return 1, nil
 	}
-	if count > 20 {
-		return 20
+	if count > 1 {
+		return 0, errors.New("LKE_PUBLIC_MQTT_LOADBALANCER_COUNT>1 is not supported by external HAProxy edge v1")
 	}
-	return count
+	return count, nil
 }
 
 func lkeMQTTPublicServiceName(index int) string {
@@ -3555,7 +3594,7 @@ metadata:
     rtk.realtek.com/provider: lke
     rtk.realtek.com/stack: %s
 spec:
-  type: LoadBalancer
+  type: NodePort
   externalTrafficPolicy: Local
   selector:
     app.kubernetes.io/name: mqtt
@@ -3563,7 +3602,8 @@ spec:
     - name: mqtts
       port: 8883
       targetPort: 8883
-`, lkeMQTTPublicServiceName(index), lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
+      nodePort: %d
+`, lkeMQTTPublicServiceName(index), lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeMQTTPublicNodePort(env))
 }
 
 func lkeAllowPublicMQTTLoadTestNetworkPolicyManifest(env map[string]string) string {

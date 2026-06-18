@@ -393,10 +393,12 @@ go run ./scripts/go/rtk-cloud -- provision-k8s \
 
 ### `go run ./scripts/go/rtk-cloud -- provision --dns`
 
-LKE `--dns` 會建立 public HTTPS entry，不再是 no-op。流程是：
+LKE public edge 目標 contract 是 external HAProxy VM，不再使用 Linode
+NodeBalancer。本文件先固定這個 contract；後續 deployer 會把
+`--dns` / `staging-provision` 實作改成同一個路徑。目標流程是：
 
 1. 用 Helm 安裝或更新 `ingress-nginx` 到 `<stack>-ingress` namespace。
-2. ingress-nginx controller service 使用 Linode `LoadBalancer` / NodeBalancer，只開 `443/TCP`，不建立 public `80/TCP` listener。
+2. ingress-nginx controller service 使用 `NodePort`，不是 `LoadBalancer`。
 3. 透過 certbot manual DNS-01 hook 與 GoDaddy TXT record 簽一張 staging multi-SAN certificate，寫入 Kubernetes TLS secret `video-cloud-staging-public-tls`。
 4. 建立 ingress namespace 內的 ExternalName bridge services，讓 Ingress 合法轉到各 namespace 的 internal `ClusterIP` services。
 5. 建立 HTTPS Ingress rules：
@@ -406,8 +408,10 @@ LKE `--dns` 會建立 public HTTPS entry，不再是 no-op。流程是：
    - `account-manager.video-cloud-staging.realtekconnect.com` -> `account-manager`
    - `admin.video-cloud-staging.realtekconnect.com` -> `cloud-admin`
    - `frontend.video-cloud-staging.realtekconnect.com` -> `frontend`
-6. 等待 NodeBalancer public IP，並用 GoDaddy A records 指向該 IP。
-7. 套用 default-deny ingress NetworkPolicy 與必要 allow rules。
+6. provision 或更新 host-installed HAProxy edge VM；HAProxy 用 TCP mode 將 public `443/TCP` forward 到 ingress-nginx NodePort，將 `8883/TCP` forward 到 EMQX/MQTT NodePort。
+7. GoDaddy A records 指向 HAProxy edge VM public IP，不等待 NodeBalancer IP。
+8. MQTT public exposure 使用 `NodePort`，不是 `LoadBalancer`。
+9. 套用 default-deny ingress NetworkPolicy 與必要 allow rules。
 
 必要輸入：
 
@@ -415,6 +419,8 @@ LKE `--dns` 會建立 public HTTPS entry，不再是 no-op。流程是：
 - `CLOUD_DNS_ROOT_DOMAIN`，staging 預設是 `realtekconnect.com`。
 - `certbot` CLI，或用 `RTK_CLOUD_CERTBOT` 指到指定 binary。
 - `helm` 與 `kubectl` 可操作目標 LKE cluster。
+- `LKE_PUBLIC_EDGE_MODE=external-haproxy`，這是唯一支援的 public edge mode。
+- HAProxy edge VM operator inputs，包含 VM label/region/type、SSH key、operator CIDR，以及 `LKE_EDGE_HAPROXY_MAXCONN`。`maxconn` 預設從 `200000` 開始，loading test 時再依 memory/FD/CPU 使用量調整。
 
 常用驗證：
 
@@ -422,11 +428,17 @@ LKE `--dns` 會建立 public HTTPS entry，不再是 no-op。流程是：
 kubectl -n video-cloud-staging-ingress get svc ingress-nginx-controller
 kubectl get ingress -A
 dig +short A video-cloud-staging.realtekconnect.com @ns23.domaincontrol.com
-nc -vz video-cloud-staging.realtekconnect.com 80
+nc -vz video-cloud-staging.realtekconnect.com 443
+nc -vz video-cloud-staging.realtekconnect.com 8883
 curl -fsS https://video-cloud-staging.realtekconnect.com/healthz
 curl -fsS https://account-manager.video-cloud-staging.realtekconnect.com/v1/health
 curl -fsS https://admin.video-cloud-staging.realtekconnect.com/healthz
 ```
+
+HAProxy edge VM 不跑 Docker。它是 host package + systemd service，只做 L4
+TCP passthrough；TLS/mTLS/SNI/HTTP routing 留在 K8s 內的 ingress-nginx /
+EMQX / service pod。詳細 design contract 見
+`docs/lke-external-haproxy-edge.md`。
 
 MQTT、TURN、Postgres、OpenBao、Prometheus 不會因 `--dns` 對外公開；MQTT/TURN 需要另行設計 TCP/UDP exposure。
 Grafana 也不會因 `--dns` 對外公開；Platform 管理員從 Cloud Admin iframe

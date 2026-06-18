@@ -116,7 +116,9 @@ environment where operations, rollback, and support commitments matter.
 Required infrastructure:
 
 - LKE cluster with documented region, node pools, upgrade policy, and ownership
-- Linode NodeBalancer plus Kubernetes Ingress or Gateway API for public HTTPS
+- External HAProxy edge VM for public TCP passthrough to Kubernetes NodePorts.
+  HAProxy is installed on the VM host with systemd, not Docker. TLS, mTLS, SNI,
+  and HTTP routing remain inside Kubernetes.
 - DNS-01 TLS automation for public hostnames. The workspace-managed LKE staging
   bridge uses GoDaddy DNS-01 plus certbot to create a Kubernetes TLS Secret;
   cert-manager remains the production operator path when an approved DNS
@@ -136,12 +138,12 @@ Recommended separation:
 
 | Layer | Production-like expectation |
 | --- | --- |
-| Edge | NodeBalancer in front of ingress-nginx/Gateway for frontend, account API, video API, and required mTLS hostnames; public `80/TCP` remains closed. |
+| Edge | External HAProxy VM in TCP mode forwards public `443/TCP` and `8883/TCP` to LKE node private IPs and NodePorts. Public `80/TCP` remains closed. |
 | Frontend | Deployment with persistent lead storage or migrated production database. |
 | Account manager | Deployment with Service/Ingress; database migrations controlled by release. |
 | Video cloud API/workers | Deployments for API, certissuer/factory enrollment, and long-running workers; Jobs/CronJobs only for explicitly one-shot or scheduled flows. |
 | MQTT | EMQX operator/StatefulSet or external broker with explicit TCP exposure, auth/TLS policy, logs, and health checks. |
-| TURN | LKE staging can run coturn as a Kubernetes Deployment/Service; production public TURN still requires explicit Linode LoadBalancer/NodeBalancer UDP/TCP exposure, scaling, TLS, and rollback approval. |
+| TURN | LKE staging can run coturn as a Kubernetes Deployment/Service; production public TURN still requires explicit UDP/TCP edge design, scaling, TLS, and rollback approval. |
 | Storage | PostgreSQL restore-tested before migration; object storage lifecycle/replication according to customer policy. |
 | Observability | Prometheus-compatible metrics scraped from the LKE workload metrics registry, Loki/logger service logs, broker logs, dead-letter evidence, alert routing. |
 
@@ -277,12 +279,12 @@ Recommended defaults:
 
 | Surface | Exposure guidance |
 | --- | --- |
-| Frontend website | Public HTTPS through LKE Ingress/Gateway behind Linode NodeBalancer; use DNS-01 rather than HTTP-01 so public `80/TCP` stays closed. |
+| Frontend website | Public HTTPS through HAProxy TCP passthrough to LKE ingress-nginx NodePort; use DNS-01 rather than HTTP-01 so public `80/TCP` stays closed. |
 | Account manager API | HTTPS through Ingress/Gateway; scope CORS and auth policy deliberately. |
 | Video cloud API | HTTPS through Ingress/Gateway; route only required external APIs. |
 | mTLS device / certissuer hostnames | Separate hostname or Gateway listener with the same CA separation currently enforced by nginx SNI. |
 | WebSocket device transport | HTTPS/WSS through Ingress/Gateway only if device runtime requires external owner transport. |
-| MQTT | Prefer MQTTS, auth, and explicit NetworkPolicy/firewall rules; expose only broker listeners required by devices through LoadBalancer/NodeBalancer or TCP-capable ingress. |
+| MQTT | Prefer MQTTS, auth, and explicit NetworkPolicy/firewall rules; expose only broker listeners required by devices through HAProxy TCP passthrough to EMQX/MQTT NodePort. |
 | TURN | Keep UDP/TCP relay exposure explicit; do not assume HTTP ingress can carry TURN traffic. |
 | Prometheus metrics | Private cluster scrape path only. The workspace-managed LKE Prometheus ConfigMap is generated from workload metrics metadata; ServiceMonitor/PodMonitor is a later operator-gated option. |
 | Grafana dashboards | Private `ClusterIP` only. Platform Admins view Grafana through the Cloud Admin BFF iframe proxy; no public Grafana DNS, Ingress, or TLS SAN is created. |
@@ -413,6 +415,9 @@ private GHCR image tags and verifies those images before provisioning. Explicit
 `reset-staging-k8s` preserves PV/PVC/provider storage by default; use
 `--purge-storage` only for an intentional data-layer wipe. A future in-cluster
 LKE smoke Job still requires the gates in `docs/lke-migration-inventory.md`.
+The public edge design contract is documented in
+`docs/lke-external-haproxy-edge.md`; NodeBalancer is no longer the target public
+edge path.
 
 ## Support Boundaries
 

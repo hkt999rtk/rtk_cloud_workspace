@@ -1699,7 +1699,7 @@ func godaddyUpsert(paths provisionPaths, rootDomain, godaddyEnv, operatorEnv, do
 	name := recordNameForDomain(rootDomain, domain)
 	goCmd := firstNonEmpty(os.Getenv("RTK_CLOUD_GO"), "go")
 	cmd := exec.Command(goCmd, "run", "./cmd/godaddy-dns", "--env-file", operatorEnv, "records", "upsert", rootDomain, "--type", "A", "--name", name, "--data", ip, "--ttl", ttl)
-	cmd.Dir = filepath.Join(paths.Workspace, "repos", "rtk_video_cloud", "tools", "godaddy-dns")
+	cmd.Dir = firstNonEmpty(os.Getenv("RTK_CLOUD_GODADDY_DNS_DIR"), filepath.Join(paths.Workspace, "repos", "rtk_video_cloud", "tools", "godaddy-dns"))
 	cmd.Env = append(os.Environ(), "GODADDY_ENV="+godaddyEnv)
 	cmd.Env = append(cmd.Env, "GOWORK=off")
 	cmd.Stdout = os.Stdout

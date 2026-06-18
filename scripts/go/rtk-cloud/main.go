@@ -2959,6 +2959,7 @@ func runStagingE2ETest(args []string) error {
 	outDir := fs.String("out-dir", "", "out dir")
 	skipMQTTProbe := fs.Bool("skip-mqtt-probe", false, "skip mqtt probe")
 	quiet := fs.Bool("quiet", false, "suppress periodic progress output")
+	purgeStorage := fs.Bool("purge-storage", false, "also delete staging PVC/PV/provider storage during reset")
 	resume := fs.Bool("resume", true, "reuse completed data setup artifacts")
 	noResume := fs.Bool("no-resume", false, "recreate data setup artifacts")
 	skipProvision := fs.Bool("skip-provision", false, "skip K8s provision and run only acceptance checks")
@@ -3058,7 +3059,13 @@ func runStagingE2ETest(args []string) error {
 	}
 	childEnv := []string{}
 	if !*skipRemove {
-		if err := runStep("reset_k8s", append(commandWithArgs(scripts["remove-k8s"], "--workspace", workspace, "--env-root", envRoot), "--yes")...); err != nil {
+		resetArgs := append(commandWithArgs(scripts["remove-k8s"], "--workspace", workspace, "--env-root", envRoot), "--yes")
+		if *purgeStorage {
+			resetArgs = append(resetArgs, "--purge-storage")
+		}
+		step, err := runE2EStepWithOptions("reset_k8s", filepath.Join(logsDir, "reset_k8s.log"), e2eStepOptions{Quiet: *quiet, Env: []string{"CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET=1"}}, resetArgs...)
+		steps = append(steps, step)
+		if err != nil {
 			return err
 		}
 	}
@@ -3188,6 +3195,7 @@ func runStagingE2E(args []string) error {
 	bindConcurrency := fs.Int("bind-concurrency", envInt("CLOUD_STAGING_E2E_BIND_CONCURRENCY", 64), "device bind concurrency")
 	skipMQTTProbe := fs.Bool("skip-mqtt-probe", false, "run MQTT test without live broker probe")
 	skipRemove := fs.Bool("skip-remove", false, "skip K8s reset and keep existing cluster state")
+	purgeStorage := fs.Bool("purge-storage", false, "also delete staging PVC/PV/provider storage during reset")
 	quiet := fs.Bool("quiet", false, "suppress periodic progress lines")
 	resume := fs.Bool("resume", true, "reuse completed data setup artifacts")
 	noResume := fs.Bool("no-resume", false, "recreate users/devices/bind artifacts")
@@ -3216,7 +3224,7 @@ func runStagingE2E(args []string) error {
 			workspace: ctx.workspace, envRoot: ctx.envRoot, stackName: ctx.stackName, run: false, plan: true,
 			brandname: *brandname, userCount: *userCount, deviceCount: *deviceCount, deviceMix: *deviceMix, devicePrefix: *devicePrefix,
 			userConcurrency: *userConcurrency, deviceConcurrency: *deviceConcurrency, bindConcurrency: *bindConcurrency,
-			outDir: *outDir, skipMQTTProbe: *skipMQTTProbe, skipRemove: *skipRemove, quiet: *quiet, resume: *resume,
+			outDir: *outDir, skipMQTTProbe: *skipMQTTProbe, skipRemove: *skipRemove, purgeStorage: *purgeStorage, quiet: *quiet, resume: *resume,
 		}))
 	}
 	if *confirm != ctx.stackName {
@@ -3238,7 +3246,7 @@ func runStagingE2E(args []string) error {
 		workspace: ctx.workspace, envRoot: ctx.envRoot, stackName: ctx.stackName, run: true, plan: false,
 		brandname: *brandname, userCount: *userCount, deviceCount: *deviceCount, deviceMix: *deviceMix, devicePrefix: *devicePrefix,
 		userConcurrency: *userConcurrency, deviceConcurrency: *deviceConcurrency, bindConcurrency: *bindConcurrency,
-		outDir: runOutDir, skipMQTTProbe: *skipMQTTProbe, skipRemove: *skipRemove, quiet: *quiet, resume: *resume,
+		outDir: runOutDir, skipMQTTProbe: *skipMQTTProbe, skipRemove: *skipRemove, purgeStorage: *purgeStorage, quiet: *quiet, resume: *resume,
 	}))
 	if reportErr := writeStagingInstallReport(ctx.provider, filepath.Join(runOutDir, "summary.json"), filepath.Join(runOutDir, "TEST_REPORT.md"), runOutDir); reportErr != nil && err == nil {
 		err = reportErr
@@ -3266,6 +3274,7 @@ type stagingE2EArgs struct {
 	outDir            string
 	skipMQTTProbe     bool
 	skipRemove        bool
+	purgeStorage      bool
 	skipProvision     bool
 	quiet             bool
 	resume            bool
@@ -3299,6 +3308,9 @@ func stagingE2ETestArgs(cfg stagingE2EArgs) []string {
 	}
 	if cfg.skipRemove {
 		out = append(out, "--skip-remove")
+	}
+	if cfg.purgeStorage {
+		out = append(out, "--purge-storage")
 	}
 	if cfg.skipProvision {
 		out = append(out, "--skip-provision")

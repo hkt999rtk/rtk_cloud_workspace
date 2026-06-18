@@ -65,6 +65,8 @@ resolves missing LKE GHCR image mapping automatically, and `acceptance` creates
 test users/devices and runs smoke/MQTT/log verification without changing the
 deployment. `scripts/run-staging-e2e.sh` remains the full reset + provision +
 acceptance convenience entrypoint.
+The target LKE public edge contract is external HAProxy TCP passthrough, not
+Linode NodeBalancer; see `docs/lke-external-haproxy-edge.md`.
 
 ```sh
 scripts/reset-staging-k8s.sh --plan
