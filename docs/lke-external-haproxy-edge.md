@@ -103,6 +103,11 @@ directory:
 logic accepts the multi-VM shape, but v1 writes one A record target because
 failover automation is intentionally deferred.
 
+`edge-vms.json` and `validation.json` also include `ssh_access` with the
+operator SSH user and local key paths, for example `root` and
+`~/.ssh/id_ed25519_rtkcloud`. These artifacts record paths only; they must not
+contain private key material.
+
 ## Security
 
 - Public firewall allows only required public ports, initially `443/TCP` and

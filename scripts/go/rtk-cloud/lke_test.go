@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"net"
@@ -687,6 +688,15 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(edgeDir, name)); err != nil {
 			t.Fatalf("expected edge HAProxy artifact %s: %v", name, err)
 		}
+	}
+	var edgeVMs struct {
+		SSHAccess lkeEdgeHAProxySSHAccess `json:"ssh_access"`
+	}
+	if err := json.Unmarshal([]byte(readTestFile(t, filepath.Join(edgeDir, "edge-vms.json"))), &edgeVMs); err != nil {
+		t.Fatalf("read edge-vms.json: %v", err)
+	}
+	if edgeVMs.SSHAccess.User != "root" || edgeVMs.SSHAccess.KeyPath == "" || edgeVMs.SSHAccess.PublicKeyPath == "" {
+		t.Fatalf("expected edge-vms.json to include SSH access paths, got: %+v", edgeVMs.SSHAccess)
 	}
 	cfg := readTestFile(t, filepath.Join(edgeDir, "haproxy.cfg"))
 	for _, want := range []string{
