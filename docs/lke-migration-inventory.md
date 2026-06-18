@@ -1,6 +1,6 @@
-# Linode Kubernetes Engine Migration Inventory
+# Linode Kubernetes Engine Runtime Inventory
 
-Status: provider-aware staging bridge with production migration gates.
+Status: current K8s/LKE staging runtime with production hardening gates.
 
 Owner: `rtk_cloud_workspace`.
 
@@ -8,64 +8,66 @@ Last reviewed: 2026-06-14.
 
 ## Purpose
 
-This document is the source-of-truth inventory and gate checklist for migrating
-the current Linode VM deployment model to Linode Kubernetes Engine (LKE). It
-does not define production Kubernetes manifests, Helm charts, Dockerfiles, or
-CI/CD deployment pipelines. Those implementation artifacts are blocked until
-the gates in this document are reviewed and approved.
+This document is the source-of-truth inventory and gate checklist for the
+current Linode Kubernetes Engine (LKE) staging runtime and the remaining
+production hardening work. The old Linode VM deployment model is retained only
+as legacy migration context. This document does not define production
+Kubernetes manifests, Helm charts, Dockerfiles, or CI/CD deployment pipelines.
+Those implementation artifacts are blocked until the gates in this document are
+reviewed and approved.
 
-Existing service behavior should be preserved unless the Kubernetes migration
+Existing service behavior should be preserved unless the Kubernetes runtime
 requires a documented change. When this document cannot confirm a detail from
 the repository, it marks the gap as `TODO:`.
 
-This is the only workspace migration inventory and gate checklist for LKE. Do
+This is the only workspace LKE runtime inventory and gate checklist. Do
 not create a parallel LKE architecture document unless this file explicitly
 routes a service-owned detail there.
 
-## Current Architecture Review
+## Architecture Review
 
 Reviewed workspace documents and configuration:
 
 | File | Classification | Notes |
 | --- | --- | --- |
 | `docs/private-cloud-deployment.md` | Source | Workspace deployment BOM, orchestration order, upgrade, rollback, backup, support boundaries. |
-| `docs/linode-staging-deployment-snapshot.md` | Supporting note | Snapshot of current staging endpoints and VM placement. |
+| `docs/linode-staging-deployment-snapshot.md` | Historical note | Snapshot of retired VM staging endpoints and placement. |
 | `docs/deployment-secrets-governance.md` | Source | Deployment secret layout and handling rules. |
 | `docs/service-logging-architecture.md` | Source | Central logging target, forwarder behavior, Loki/logger boundaries. |
-| `repos/rtk_video_cloud/linode_deploy/docs/ARCHITECTURE.md` | Source | Current five-role Linode VM topology and network boundary. |
-| `repos/rtk_video_cloud/linode_deploy/docs/RUNBOOK.md` | Source | Video Cloud provision/deploy/verify operating model. |
-| `repos/rtk_video_cloud/linode_deploy/configs/*.yaml.example` | Config evidence | Linode region, VPC, role labels, ports, and deploy manifest shape. |
-| `repos/rtk_video_cloud/deploy/systemd/`, `deploy/docker-compose.*.yml`, `deploy/prometheus/` | Config evidence | Installed services, EMQX/coturn/PostgreSQL/Prometheus packaging. |
-| `repos/rtk_account_manager/linode_deploy/docs/RUNBOOK.md` | Source | Account Manager public VM deployment, local PostgreSQL, nginx/TLS, backup. |
-| `repos/rtk_cloud_admin/docs/private-cloud-deployment.md` | Source | Cloud Admin VM deployment, upstream dependencies, SQLite persistence, backup. |
-| `scripts/run-staging-e2e.sh`, `stg.sh`, `tests/staging-*.test.sh` | Operational evidence | Current staging orchestration, validation, and E2E acceptance paths. |
+| `repos/rtk_video_cloud/linode_deploy/docs/ARCHITECTURE.md` | Legacy source | Retired five-role Linode VM topology and network boundary. |
+| `repos/rtk_video_cloud/linode_deploy/docs/RUNBOOK.md` | Legacy source | Retired Video Cloud VM provision/deploy/verify operating model. |
+| `repos/rtk_video_cloud/linode_deploy/configs/*.yaml.example` | Legacy config evidence | Retired Linode VM region, VPC, role labels, ports, and deploy manifest shape. |
+| `repos/rtk_video_cloud/deploy/systemd/`, `deploy/docker-compose.*.yml`, `deploy/prometheus/` | Legacy config evidence | Historical systemd, EMQX/coturn/PostgreSQL/Prometheus packaging. |
+| `repos/rtk_account_manager/linode_deploy/docs/RUNBOOK.md` | Legacy source | Retired Account Manager public VM deployment, local PostgreSQL, nginx/TLS, backup. |
+| `repos/rtk_cloud_admin/docs/private-cloud-deployment.md` | Legacy source | Retired Cloud Admin VM deployment, upstream dependencies, SQLite persistence, backup. |
+| `scripts/run-staging-e2e.sh`, `stg.sh`, `tests/staging-*.test.sh` | Operational evidence | Current K8s/LKE staging orchestration, validation, and E2E acceptance paths. |
 
-Current Linode VM model:
+Legacy Linode VM model:
 
 - Video Cloud uses five Linode roles: `edge`, `api`, `infra`, `mqtt`, and
   `coturn`.
 - Public HTTPS enters through VM-local nginx on `edge`; certbot uses DNS-01.
-- Account Manager and Cloud Admin currently have their own public VM profiles
-  with nginx TLS termination.
+- Account Manager and Cloud Admin had their own public VM profiles with nginx
+  TLS termination.
 - Video Cloud `infra` owns PostgreSQL, Redis-compatible/Valkey, and Prometheus.
 - EMQX MQTT is deployed on the `mqtt` VM through Docker Compose.
 - coturn runs on a public-only TURN VM.
-- Central logging is Loki-backed and currently documented around journald
-  forwarders on VMs.
+- Central logging had Loki-backed VM journald forwarders in the legacy flow.
 - Deployment secrets are operator-local or GitHub Environment secrets today,
   with OpenBao documented as the staging/production target where available.
-- Current staging acceptance is driven by workspace scripts such as
-  `scripts/run-staging-e2e.sh`; an LKE replacement must be documented before the
-  VM-era acceptance path is retired.
+- The VM-era acceptance path is retired. Current staging acceptance is driven by
+  the workspace K8s/LKE path in `scripts/run-staging-e2e.sh`.
 
 Conflicts and outdated areas:
 
-- Workspace production-like deployment language still describes Linux
-  hosts/systemd as the main production path.
+- Some workspace and service-owned docs may still describe Linux hosts/systemd
+  as the active path; those references should be corrected to legacy/historical
+  context when encountered.
 - Service-owned runbooks still describe VM-local nginx, certbot, systemd units,
   env files, local data paths, and VM backup scripts as primary deployment
   operations.
-- No prior LKE migration inventory or migration gate checklist was found.
+- This file supersedes the earlier VM migration checklist language; keep future
+  updates focused on the active LKE runtime.
 - Kubernetes auth for OpenBao, LKE storage choices, PostgreSQL HA, EMQX
   clustering, Redis persistence, and production HSM strategy are not confirmed.
 
@@ -90,21 +92,21 @@ The target is Linode Kubernetes Engine, not generic Kubernetes.
 
 | Service / surface | Current method | Exposure / ports | Persistent data | Target Kubernetes model | Storage / ingress target | Risk | Rollback / TODO |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Video Cloud public API | `cmd/api` on `api` VM behind `edge` nginx | Public HTTPS via `edge:443`, private app `18080` | PostgreSQL, object/blob storage | Runtime-generated LKE staging bridge deploys Deployment + ClusterIP Service | ingress-nginx behind NodeBalancer via `--dns`; preserve `/healthz`, `/version`, API routes | Medium | Remove GoDaddy A records or point them back to VM release bundle until LKE cutover is approved. |
-| Video Cloud workers | systemd units on `api` VM (`cleaner`, `statistics`, `metricsexporter`, `mqttusage`, `logingester`) | Private metrics endpoints | PostgreSQL and runtime stores | Runtime-generated LKE staging bridge deploys the long-running workers as Deployments; production manifests remain gated | ClusterIP Services for metrics where needed | Medium | Validate worker startup and metrics in `scripts/run-staging-e2e.sh`; classify any future one-shot/scheduled worker before converting to Job/CronJob. |
-| CRS / certissuer | `cmd/certissuer` on `api` VM, edge mTLS trusted headers | `certissuer.<domain>:443` via nginx SNI to private `9443` | CA public chains, signing audit DB state | Runtime-generated LKE staging bridge deploys Deployment + ClusterIP Service | Separate ingress-nginx hostname with HTTPS backend protocol; mTLS policy still requires follow-up before production | High | Preserve CSR validation and audit behavior; signer migration blocked on key-management gate. |
-| Factory enrollment | Optional systemd service and smoke script | Factory/API HTTP surface, mTLS through certissuer boundary | Enrollment audit and generated device material | Deployment, or Job for controlled factory batch flows if confirmed | Internal Service plus explicit external route only when required | High | TODO: confirm factory/MES network source and auth model. |
-| EMQX MQTT | Docker Compose on `mqtt` VM | MQTT `1883`, MQTTS `8883`, dashboard private | Broker config, retained/session state if enabled | EMQX operator/StatefulSet, or external broker | LoadBalancer/NodeBalancer for MQTT(S); not normal HTTP-only Ingress | High | TODO: confirm retained messages/session persistence and cluster requirements. |
-| coturn | public-only VM | `3478/tcp+udp`, `5349/tcp`, relay UDP range | Config and TLS material | Runtime-generated LKE staging bridge deploys coturn as a Deployment/Service with internal ClusterIP by default; production public TURN needs approved exposure and scaling design | `LKE_COTURN_SERVICE_TYPE=LoadBalancer` is available for explicit public exposure testing; Linode UDP/TCP behavior and relay range must be confirmed before production | High | Prove LKE TURN data-plane behavior and rollback before removing VM coturn fallback. |
-| PostgreSQL | Local VM databases for Video Cloud infra and Account Manager | Private `5432` | Primary relational state | Runtime-generated LKE staging bridge deploys PostgreSQL as a Kubernetes StatefulSet using a Docker image from `LKE_POSTGRES_IMAGE`, or the default `postgres:16-alpine`; `LKE_IMAGE_REGISTRY` / `rtk-cloud lke-build-images` can build and publish the `postgresql` image artifact. Staging uses ephemeral `emptyDir` by default and `LKE_POSTGRES_STORAGE_MODE=pvc` opt-in; production must compare external/VM retention, operator, StatefulSet, or managed/external PostgreSQL | Production requires PVC or external database plus Object Storage backup target | High | Do not move production data before backup restore drill and rollback plan. |
-| Redis / Valkey | `infra` VM Redis-compatible service | Private `6379` | TODO: cache vs queue vs persistent store | Deployment/StatefulSet or external cache depending on persistence | PVC only if persistence is required | Medium | TODO: confirm usage from config/code before selecting HA mode. |
-| Prometheus | `infra` VM | Private `9090`; scrapes node/nginx/postgres/redis/EMQX/app targets | TSDB | Runtime-generated LKE staging bridge deploys a Prometheus Deployment/Service with scrape config generated from the LKE metrics registry. V1 scrape scope is Video Cloud API, Video Cloud auxiliary exporters, factory enrollment, Account Manager, Cloud Admin, Frontend, Prometheus self-scrape, and Grafana self metrics. Prometheus Operator, ServiceMonitor, and PodMonitor remain gated to avoid adding CRD/operator lifecycle before the LKE runtime is stable. | Staging bridge uses ephemeral storage; production requires PVC/retention and private-only operator access | Medium | Preserve private-only access and readiness evidence; add PVC/alerting only after observability gate approval. |
-| Grafana | Optional VM or operator workstation | Private dashboard access | Grafana SQLite/PVC plus provisioned dashboards | Runtime-generated LKE staging bridge deploys Grafana as a private observability Deployment/Service/PVC. It reads the internal Prometheus Service and is embedded for Platform Admins through Cloud Admin's same-origin BFF proxy. | `ClusterIP` only; no public DNS, Ingress, or TLS SAN. Cloud Admin is the only browser-facing path. | Medium | First dashboard covers platform stability, per-brand-cloud MQTT publish/delivery, device fleet health, API RED metrics, runtime log ingestion, cross-service backlog/dead letters, TURN registry health, capacity, and basic infrastructure when exporters exist. |
-| Central logger / Loki | Logger VM/backend plus journald forwarders | Private ingest/query; Cloud Admin BFF reads query path | Loki/log store, forwarder cursor/spool | Loki/logger backend Deployment/StatefulSet plus log agent DaemonSet or sidecar-free stdout collection | PVC/Object Storage per retention policy | Medium | VM journald forwarder remains legacy reference. |
-| Account Manager API | Public VM, nginx, local PostgreSQL, systemd | Public HTTPS `443`, app `18081` | PostgreSQL | Deployment + Service | Ingress/Gateway hostname; private metrics Service | Medium | Keep existing VM path until DB migration and smoke pass. |
-| Cloud Admin | Public+VPC VM, nginx, Go app, SQLite | Public HTTPS `443`, app `8080`, private Prometheus upstream | SQLite sessions/cache/audit | Deployment + PVC for SQLite, or TODO migration to production DB | Ingress/Gateway hostname | Medium | Restore SQLite PVC snapshot with known-good release. |
+| Video Cloud public API | K8s Deployment/ClusterIP Service through ingress-nginx; legacy reference was `cmd/api` on `api` VM behind `edge` nginx | Public HTTPS via ingress/NodeBalancer, app service `18080` | PostgreSQL, object/blob storage | Runtime-generated LKE staging bridge deploys Deployment + ClusterIP Service | ingress-nginx behind NodeBalancer via `--dns`; preserve `/healthz`, `/version`, API routes | Medium | Keep DNS rollback notes, but do not reintroduce VM release bundles as the normal staging path. |
+| Video Cloud workers | K8s Deployments for long-running workers; legacy reference was systemd units on `api` VM (`cleaner`, `statistics`, `metricsexporter`, `mqttusage`, `logingester`) | Private metrics endpoints | PostgreSQL and runtime stores | Runtime-generated LKE staging bridge deploys the long-running workers as Deployments; production manifests remain gated | ClusterIP Services for metrics where needed | Medium | Validate worker startup and metrics in `scripts/run-staging-e2e.sh`; classify any future one-shot/scheduled worker before converting to Job/CronJob. |
+| CRS / certissuer | K8s Deployment/ClusterIP Service; legacy reference was `cmd/certissuer` on `api` VM with edge mTLS trusted headers | `certissuer.<domain>:443` through ingress, backend service `9443` | CA public chains, signing audit DB state | Runtime-generated LKE staging bridge deploys Deployment + ClusterIP Service | Separate ingress-nginx hostname with HTTPS backend protocol; mTLS policy still requires follow-up before production | High | Preserve CSR validation and audit behavior; signer migration blocked on key-management gate. |
+| Factory enrollment | K8s Deployment/Service in staging; legacy reference was optional systemd service and smoke script | Factory/API HTTP surface, mTLS through certissuer boundary | Enrollment audit and generated device material | Deployment, or Job for controlled factory batch flows if confirmed | Internal Service plus explicit external route only when required | High | TODO: confirm factory/MES network source and auth model. |
+| EMQX MQTT | K8s workload in staging; legacy reference was Docker Compose on `mqtt` VM | MQTT `1883`, MQTTS `8883`, dashboard private | Broker config, retained/session state if enabled | EMQX operator/StatefulSet, or external broker | LoadBalancer/NodeBalancer for MQTT(S); not normal HTTP-only Ingress | High | TODO: confirm retained messages/session persistence and cluster requirements. |
+| coturn | K8s Deployment/Service in staging; legacy reference was public-only VM | `3478/tcp+udp`, `5349/tcp`, relay UDP range when explicitly exposed | Config and TLS material | Runtime-generated LKE staging bridge deploys coturn as a Deployment/Service with internal ClusterIP by default; production public TURN needs approved exposure and scaling design | `LKE_COTURN_SERVICE_TYPE=LoadBalancer` is available for explicit public exposure testing; Linode UDP/TCP behavior and relay range must be confirmed before production | High | Prove LKE TURN data-plane behavior and rollback before production public exposure. |
+| PostgreSQL | K8s StatefulSet in staging or external database in production-like deployments; legacy reference was local VM databases for Video Cloud infra and Account Manager | Private `5432` | Primary relational state | Runtime-generated LKE staging bridge deploys PostgreSQL as a Kubernetes StatefulSet using a Docker image from `LKE_POSTGRES_IMAGE`, or the default `postgres:16-alpine`; `LKE_IMAGE_REGISTRY` / `rtk-cloud lke-build-images` can build and publish the `postgresql` image artifact. Staging uses ephemeral `emptyDir` by default and `LKE_POSTGRES_STORAGE_MODE=pvc` opt-in; production must compare external retention, operator, StatefulSet, or managed/external PostgreSQL | Production requires PVC or external database plus Object Storage backup target | High | Do not move production data before backup restore drill and rollback plan. |
+| Redis / Valkey | K8s Valkey Deployment plus Redis exporter in the platform namespace; legacy reference was `infra` VM Redis-compatible service | Private `6379`; exporter private `9121` | Staging uses ephemeral `emptyDir`; production can switch to external/managed cache or persistent StatefulSet after HA decision | Runtime-generated LKE staging bridge deploys `redis` and `redis-exporter` ClusterIP Services. Prometheus scrapes the exporter for `redis_*` engine metrics. | Production requires external/managed cache or PVC/HA design if Redis becomes durable state | Medium | Keep exporter private and validate `up{job="redis-exporter"} == 1` before relying on Redis dashboard/alerts. |
+| Prometheus | Workspace-managed K8s Deployment/Service | Private `9090`; scrape config generated from workload metrics registry | TSDB | Runtime-generated LKE staging bridge deploys a Prometheus Deployment/Service with scrape config generated from the LKE metrics registry. V1 scrape scope is Video Cloud API, Video Cloud auxiliary exporters, factory enrollment, Account Manager, Cloud Admin, Frontend, Redis exporter, Prometheus self-scrape, and Grafana self metrics. Prometheus Operator, ServiceMonitor, and PodMonitor remain gated to avoid adding CRD/operator lifecycle before the LKE runtime is stable. | Staging bridge uses ephemeral storage; production requires PVC/retention and private-only operator access | Medium | Preserve private-only access and readiness evidence; add PVC/alerting only after observability gate approval. |
+| Grafana | Private K8s observability Deployment/Service; legacy reference was optional VM or operator workstation | Private dashboard access | Grafana SQLite/PVC plus provisioned dashboards | Runtime-generated LKE staging bridge deploys Grafana as a private observability Deployment/Service/PVC. It reads the internal Prometheus Service and is embedded for Platform Admins through Cloud Admin's same-origin BFF proxy. | `ClusterIP` only; no public DNS, Ingress, or TLS SAN. Cloud Admin is the only browser-facing path. | Medium | First dashboard covers platform stability, per-brand-cloud MQTT publish/delivery, device fleet health, API RED metrics, runtime log ingestion, cross-service backlog/dead letters, TURN registry health, capacity, and basic infrastructure when exporters exist. |
+| Central logger / Loki | K8s logger backend/service integration; legacy reference was Logger VM/backend plus journald forwarders | Private ingest/query; Cloud Admin BFF reads query path | Loki/log store, forwarder cursor/spool | Loki/logger backend Deployment/StatefulSet plus log agent DaemonSet or sidecar-free stdout collection | PVC/Object Storage per retention policy | Medium | VM journald forwarder remains legacy reference. |
+| Account Manager API | K8s Deployment/Service/Ingress; legacy reference was public VM, nginx, local PostgreSQL, systemd | Public HTTPS `443`, app service `18081` | PostgreSQL | Deployment + Service | Ingress/Gateway hostname; private metrics Service | Medium | Verify DB migration and smoke on the current K8s route before promotion. |
+| Cloud Admin | K8s Deployment/Service/Ingress; legacy reference was public+VPC VM, nginx, Go app, SQLite | Public HTTPS `443`, app service `8080`, private Prometheus upstream | SQLite sessions/cache/audit | Deployment + PVC for SQLite, or TODO migration to production DB | Ingress/Gateway hostname | Medium | Restore SQLite PVC snapshot with known-good release. |
 | Frontend | Container recipe with SQLite lead storage | Public HTTPS | SQLite lead DB or migrated store | Deployment + PVC, or migrate lead persistence to database | Ingress/Gateway hostname | Medium | TODO: confirm production persistence target. |
-| Nginx / TLS edge | VM-local nginx and certbot DNS-01 | Public HTTPS and mTLS SNI hostnames | Certificates on VM disk | ingress-nginx in LKE with ExternalName bridge Services and Kubernetes TLS Secret generated by workspace DNS-01 flow | NodeBalancer + ingress-nginx; cert-manager/webhook remains a later operator-owned option | High | VM nginx may remain temporary bridge during DNS cutover only. |
+| Nginx / TLS edge | ingress-nginx in LKE with Kubernetes TLS Secret generated by workspace DNS-01 flow; legacy reference was VM-local nginx and certbot DNS-01 | Public HTTPS and mTLS SNI hostnames | Kubernetes TLS Secret | ingress-nginx in LKE with Kubernetes TLS Secret generated by workspace DNS-01 flow | NodeBalancer + ingress-nginx; cert-manager/webhook remains a later operator-owned option | High | Keep public `80/TCP` closed and verify DNS/TLS through the K8s ingress path. |
 | OpenBao | Target secret manager; VM details not fully confirmed in main docs | Internal HTTPS | Storage backend, audit logs, PKI state | StatefulSet/operator or external OpenBao | PVC/storage backend; Kubernetes auth | High | TODO: confirm storage backend, HA, seal/unseal, audit, backup, policy migration. |
 | SoftHSM / PKCS#11 | VM-local SoftHSM/PKCS#11 documented in service configs | Local library/token access | Token DB/private keys | Development/staging only unless explicit production risk approval; external signer/HSM preferred | PVC-backed token storage only for non-production or approved risk | High | Never put PINs/tokens/private keys in images or Git. |
 | Backup jobs | VM scripts and manual artifact collection | Operator initiated | Database dumps, SQLite, object storage, manifests | CronJob/Job only after storage targets and retention are confirmed | Linode Object Storage or approved backup target | High | Restore drill required before production cutover. |

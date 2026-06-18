@@ -14,19 +14,21 @@ environment directory；script 會依 `CLOUD_PROVIDER`、`RTK_CLOUD_STAGING_PROV
 `cloud_env/staging/lke`。這個目錄集中保存 operator env、topology、service
 env、state、keys/certificates、device fixtures、artifacts 與 backups。
 
-目前 workspace provision routing 支援 `CLOUD_PROVIDER=linode` 與
-`CLOUD_PROVIDER=lke`。Linode provider 仍 dispatch 到 Video Cloud、Account
-Manager、Cloud Admin、Cloud Logger 的 VM scripts。LKE provider 會先使用
-Linode LKE API 取得 kubeconfig；若沒有 `KUBECONFIG` / current context，會依
+目前 workspace 的正式 staging runtime 是 K8s/LKE。`CLOUD_PROVIDER=lke`
+會先使用 Linode LKE API 取得 kubeconfig；若沒有 `KUBECONFIG` / current
+context，會依
 `LKE_CLUSTER_ID`、`state/lke.env` 或 cluster label `<CLOUD_STACK_NAME>-lke`
 尋找既有 cluster，`provision --apply` 找不到時會建立 LKE cluster，再把
 kubeconfig 寫到 git-ignored `<env-root>/state/lke-kubeconfig.yaml`。之後才走
 kubectl namespace/apply/delete/rollout path。`deploy` 需要 container image；
 可以明確提供 `LKE_POSTGRES_IMAGE`、`LKE_VIDEO_CLOUD_IMAGE`、
-`LKE_ACCOUNT_MANAGER_IMAGE`、`LKE_CLOUD_ADMIN_IMAGE`、`LKE_FRONTEND_IMAGE`。
+`LKE_ACCOUNT_MANAGER_IMAGE`、`LKE_CLOUD_ADMIN_IMAGE`、`LKE_FRONTEND_IMAGE`、
+`LKE_CLOUD_LOGGER_IMAGE`。
 Service images 由各 service repo 的 release workflow 發布到 GHCR；
 workspace 只解析 pinned submodule commit、驗證對應 image 是否存在，並輸出
-後續 deploy/e2e 需要的 `LKE_*_IMAGE` mapping。AWS、GCP 和 Azure 仍是
+後續 deploy/e2e 需要的 `LKE_*_IMAGE` mapping。Legacy
+`CLOUD_PROVIDER=linode` routing 只保留給舊 VM toolkit 參考，不是目前 staging
+路徑。AWS、GCP 和 Azure 仍是
 後續 provider abstraction 目標，現階段應 fail fast，不可呼叫 live API、
 SSH、DNS 或寫 state。
 
@@ -45,6 +47,8 @@ LKE Prometheus targets 由 workspace Go deployer 的 workload metrics registry
 `/metrics/prometheus` path；`provision --deploy` 會用這份 registry 產生
 `video-cloud-prometheus-config`。第一版維持 workspace-managed Prometheus
 ConfigMap，不導入 Prometheus Operator、ServiceMonitor 或 PodMonitor。
+Redis/Valkey engine metrics 由 LKE 內建 `redis-exporter` Service 暴露，
+Prometheus 會 scrape `redis-exporter.<platform namespace>:9121/metrics`。
 Grafana 會部署在 observability namespace 作為 private `ClusterIP` dashboard
 layer，讀取 internal Prometheus Service；它不會透過 `provision --dns` 建立
 public hostname、Ingress 或 TLS SAN。Platform 管理員要從 Cloud Admin 的
@@ -71,9 +75,12 @@ go run ./scripts/go/rtk-cloud -- lke-resolve-images \
 ```
 
 輸出的 manifest 會包含 `LKE_POSTGRES_IMAGE`、`LKE_VIDEO_CLOUD_IMAGE`、
-`LKE_ACCOUNT_MANAGER_IMAGE`、`LKE_CLOUD_ADMIN_IMAGE`、`LKE_FRONTEND_IMAGE`
-mapping。使用這些 image 跑 LKE staging e2e 時，可先把 mapping export 到 shell
-環境，再執行 `scripts/run-staging-e2e.sh`。
+`LKE_ACCOUNT_MANAGER_IMAGE`、`LKE_CLOUD_ADMIN_IMAGE`、`LKE_FRONTEND_IMAGE`、
+`LKE_CLOUD_LOGGER_IMAGE` mapping。`scripts/run-staging-e2e.sh` 在 LKE provider
+且缺少任一 `LKE_*_IMAGE` 時會自動執行 image resolve，寫入
+`<env-root>/artifacts/lke-images/<timestamp>/`，並同步 latest manifest 到
+`<env-root>/artifacts/lke-images/lke-image-manifest.json`。手動 export
+`LKE_*_IMAGE` 只作為 override。
 
 ### `go run ./scripts/go/rtk-cloud -- lke-build-images`
 
@@ -335,11 +342,22 @@ Provider-aware `provision`/`deploy` command 仍保留給 legacy VM 與 LKE image
 LKE `provision --apply` 預設會安裝 Kubernetes metrics-server 到 `kube-system`，版本由 `LKE_METRICS_SERVER_VERSION` 控制，預設 `v0.8.1`。metrics-server 提供 `metrics.k8s.io`，讓 `kubectl top nodes` / `kubectl top pods` 與 Kubernetes HPA resource metrics 可用；它不取代 Prometheus 的長期觀測、dashboard 或 alert 用途。
 
 LKE `provision --deploy` 會部署 workspace-managed Prometheus 與 private
-Grafana。Grafana 常用環境變數：
+Grafana，也會在 platform namespace 部署 staging 內建 Valkey 與 Redis
+exporter。常用環境變數：
+
+- `LKE_REDIS_IMAGE`：Redis-compatible/Valkey image，預設 `valkey/valkey:8-alpine`。
+- `LKE_REDIS_EXPORTER_IMAGE`：Redis exporter image，預設 `oliver006/redis_exporter:v1.74.0`。
+- `LKE_REDIS_REQUEST_CPU` / `LKE_REDIS_REQUEST_MEMORY` / `LKE_REDIS_LIMIT_MEMORY`：
+  Valkey pod 資源 override，預設 `100m` / `128Mi` / `512Mi`。
+- `LKE_REDIS_EXPORTER_REQUEST_CPU` / `LKE_REDIS_EXPORTER_REQUEST_MEMORY` /
+  `LKE_REDIS_EXPORTER_LIMIT_MEMORY`：Redis exporter 資源 override，預設
+  `50m` / `64Mi` / `256Mi`。
 
 - `LKE_GRAFANA_IMAGE`：Grafana image，預設 `grafana/grafana:13.0.2`。
 - `LKE_GRAFANA_ADMIN_PASSWORD`：Grafana admin 密碼；未設定時由 runtime secret material 產生。
-- `LKE_GRAFANA_STORAGE`：Grafana PVC 大小，預設 `5Gi`。
+- `LKE_GRAFANA_PERSISTENCE=true`：啟用 Grafana PVC。預設使用 `emptyDir`，
+  staging acceptance 不消耗 Linode block volume quota。
+- `LKE_GRAFANA_STORAGE`：啟用 persistence 時的 Grafana PVC 大小，預設 `5Gi`。
 - `CLOUD_ADMIN_GRAFANA_BASE_URL`：Cloud Admin 連到 Grafana 的 cluster-internal base URL，例如 `http://video-cloud-grafana.video-cloud-staging-observability.svc.cluster.local:3000`。
 
 Grafana 第一版 dashboard 會優先呈現平台管理者關心的穩定度與流量：
@@ -431,6 +449,31 @@ go run ./scripts/go/rtk-cloud -- remove-k8s --env-root cloud_env/staging --yes
 ### `go run ./scripts/go/rtk-cloud -- staging-e2e-test`
 
 Linode K8s staging 一站式整合測試編排腳本。它把 K8s reset、K8s rollout readiness、K8s service query/port-forward、staging E2E data setup、home MQTT simulation，以及 persisted MQTT runtime log verification 串成單一流程，最後輸出 sanitized `summary.json` 與 `TEST_REPORT.md`。建立 RTK brand cloud、建立測試 users、產生並 factory-enroll devices、device bind/provision、bulk bind validation 已拆到 `scripts/setup-staging-e2e-data.sh` / `rtk-cloud staging-e2e-data-setup`，完整 E2E 會呼叫這個獨立步驟。
+
+正式 operator 入口是 `scripts/run-staging-e2e.sh`。這個 shell 檔只是一層
+POSIX wrapper，實際流程在 Go command `rtk-cloud run-staging-e2e`：它會解析
+provider/stack/env-root，在 LKE provider 缺少 image env 時自動執行
+`lke-resolve-images`，再呼叫 `staging-e2e-test`。因此一般 staging acceptance
+可直接執行：
+
+```sh
+scripts/run-staging-e2e.sh --plan
+scripts/run-staging-e2e.sh --confirm video-cloud-staging
+```
+
+LKE acceptance profile 預設以單節點可排程為優先：`mqtt`、
+`account-manager`、`video-cloud-api` replicas 都是 `1`。容量測試或
+production-like smoke 可用 `LKE_MQTT_REPLICAS`、
+`LKE_ACCOUNT_MANAGER_REPLICAS`、`LKE_VIDEO_CLOUD_REPLICAS` 拉高；常用資源
+override 包含 `LKE_POSTGRES_REQUEST_CPU`、`LKE_POSTGRES_REQUEST_MEMORY`、
+`LKE_POSTGRES_LIMIT_MEMORY`、`LKE_VIDEO_CLOUD_API_REQUEST_CPU`、
+`LKE_VIDEO_CLOUD_API_REQUEST_MEMORY`、`LKE_VIDEO_CLOUD_API_LIMIT_MEMORY`、
+`LKE_INGRESS_REPLICAS` 與 `LKE_INGRESS_REQUEST_CPU`。
+
+`run-staging-e2e.sh --confirm` 預設會先 reset K8s，因此也預設重建
+users/devices/bind artifacts，不重用舊本機 artifact；這可避免 fresh database
+搭配舊 bind artifact 造成 validation 失敗。只有在明確加 `--skip-remove` 或
+手動傳 `--resume` 時才會重用既有 artifact。
 
 預設是 safe plan，不會 reset K8s、不會呼叫 API：
 

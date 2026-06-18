@@ -14,6 +14,7 @@ repositories. Shared wire and payload contracts belong in
 | [documentation-governance.md](documentation-governance.md) | Source | Documentation ownership, status, and review rules. |
 | [contracts-submodule-governance.md](contracts-submodule-governance.md) | Source | Contracts submodule path, URL, and commit alignment policy. |
 | [artifact-release-governance.md](artifact-release-governance.md) | Source | Linode Object Storage artifact source-of-truth policy and adoption matrix. |
+| [dependency-failure-policy.md](dependency-failure-policy.md) | Source | Cross-service dependency failure policy for startup-critical dependencies, request-scoped upstreams, durable async delivery, observability, and optional features. |
 | [backend-release-readiness.md](backend-release-readiness.md) | Supporting note | Backend foundation closeout checklist, validation commands, report status, and remaining release-evidence items. |
 | [deployment-secrets-governance.md](deployment-secrets-governance.md) | Source | Local deployment secret layout, environment/provider/service taxonomy, and handling rules. |
 | [lke-migration-inventory.md](lke-migration-inventory.md) | Source | Documentation-first LKE migration inventory, current architecture review, target summary, and implementation gates. |
