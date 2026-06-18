@@ -33,14 +33,41 @@ func TestDefaultPlanResolves100KHomeBaseline(t *testing.T) {
 	if plan.Conditions.RunnerReadModel != "go-netpoll-bounded-reader-goroutine" {
 		t.Fatalf("runner read model = %q, want go-netpoll-bounded-reader-goroutine", plan.Conditions.RunnerReadModel)
 	}
-	if got := plan.DeviceMix["light"]; got != 50000 {
-		t.Fatalf("light count = %d, want 50000", got)
+	if plan.ScenarioProfile != "home-diverse-v1" {
+		t.Fatalf("scenario profile = %q, want home-diverse-v1", plan.ScenarioProfile)
 	}
-	if got := plan.DeviceMix["air_conditioner"]; got != 20000 {
-		t.Fatalf("air conditioner count = %d, want 20000", got)
+	if got := plan.DeviceMix["light"]; got != 18000 {
+		t.Fatalf("light count = %d, want 18000", got)
 	}
-	if got := plan.DeviceMix["smart_meter"]; got != 30000 {
-		t.Fatalf("smart meter count = %d, want 30000", got)
+	if got := plan.DeviceMix["switch"]; got != 7000 {
+		t.Fatalf("switch count = %d, want 7000", got)
+	}
+	if got := plan.DeviceMix["smart_plug"]; got != 12000 {
+		t.Fatalf("smart plug count = %d, want 12000", got)
+	}
+	if got := plan.DeviceMix["air_conditioner"]; got != 10000 {
+		t.Fatalf("air conditioner count = %d, want 10000", got)
+	}
+	if got := plan.DeviceMix["environment_sensor"]; got != 12000 {
+		t.Fatalf("environment sensor count = %d, want 12000", got)
+	}
+	if got := plan.DeviceMix["security_sensor"]; got != 10000 {
+		t.Fatalf("security sensor count = %d, want 10000", got)
+	}
+	if got := plan.DeviceMix["smart_meter"]; got != 8000 {
+		t.Fatalf("smart meter count = %d, want 8000", got)
+	}
+	if got := plan.DeviceMix["camera_status"]; got != 7000 {
+		t.Fatalf("camera status count = %d, want 7000", got)
+	}
+	if got := plan.DeviceMix["door_lock"]; got != 4000 {
+		t.Fatalf("door lock count = %d, want 4000", got)
+	}
+	if got := plan.DeviceMix["appliance"]; got != 7000 {
+		t.Fatalf("appliance count = %d, want 7000", got)
+	}
+	if got := plan.DeviceMix["gateway"]; got != 5000 {
+		t.Fatalf("gateway count = %d, want 5000", got)
 	}
 	if got := plan.PresenceMix["online_steady"]; got != 85000 {
 		t.Fatalf("online steady count = %d, want 85000", got)
@@ -50,6 +77,47 @@ func TestDefaultPlanResolves100KHomeBaseline(t *testing.T) {
 	}
 	if got := plan.PresenceMix["flapping_reconnect"]; got != 5000 {
 		t.Fatalf("flapping reconnect count = %d, want 5000", got)
+	}
+}
+
+func TestDefaultPlanIncludesDiverseDeviceAndUserProfiles(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:     "cloud_env/staging/lke",
+		Brandname:   "RTK",
+		Region:      "us-sea",
+		DeviceCount: 37,
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+
+	if sumMap(plan.DeviceMix) != 37 {
+		t.Fatalf("device mix sum = %d, want 37: %#v", sumMap(plan.DeviceMix), plan.DeviceMix)
+	}
+	for _, name := range []string{"light", "switch", "smart_plug", "air_conditioner", "environment_sensor", "security_sensor", "smart_meter", "camera_status", "door_lock", "appliance", "gateway"} {
+		if _, ok := plan.DeviceProfiles[name]; !ok {
+			t.Fatalf("missing device profile %s in %#v", name, plan.DeviceProfiles)
+		}
+	}
+	for _, name := range []string{"owner_admin", "daily_user", "background_app", "automation"} {
+		if _, ok := plan.UserProfiles[name]; !ok {
+			t.Fatalf("missing user profile %s in %#v", name, plan.UserProfiles)
+		}
+	}
+	wantWindows := []string{"morning", "away", "return_home", "evening_peak"}
+	if len(plan.StageUsageWindows) != len(wantWindows) {
+		t.Fatalf("usage windows = %#v, want %#v", plan.StageUsageWindows, wantWindows)
+	}
+	for idx, want := range wantWindows {
+		if plan.StageUsageWindows[idx] != want || plan.Stages[idx].UsageWindow != want {
+			t.Fatalf("stage window %d = plan %q stage %q, want %q", idx, plan.StageUsageWindows[idx], plan.Stages[idx].UsageWindow, want)
+		}
+	}
+	if plan.DeviceProfiles["camera_status"].TrafficProfile != "event_burst" {
+		t.Fatalf("camera_status traffic profile = %#v", plan.DeviceProfiles["camera_status"])
+	}
+	if plan.UserProfiles["automation"].ActionProfile != "automation_command" {
+		t.Fatalf("automation user profile = %#v", plan.UserProfiles["automation"])
 	}
 }
 
@@ -129,14 +197,17 @@ func TestPlanUsesConfiguredDeviceCount(t *testing.T) {
 	if plan.Conditions.Users != 450 {
 		t.Fatalf("users = %d, want 450", plan.Conditions.Users)
 	}
-	if got := plan.DeviceMix["light"]; got != 4500 {
-		t.Fatalf("light count = %d, want 4500", got)
+	if got := plan.DeviceMix["light"]; got != 1620 {
+		t.Fatalf("light count = %d, want 1620", got)
 	}
-	if got := plan.DeviceMix["air_conditioner"]; got != 1800 {
-		t.Fatalf("air conditioner count = %d, want 1800", got)
+	if got := plan.DeviceMix["air_conditioner"]; got != 900 {
+		t.Fatalf("air conditioner count = %d, want 900", got)
 	}
-	if got := plan.DeviceMix["smart_meter"]; got != 2700 {
-		t.Fatalf("smart meter count = %d, want 2700", got)
+	if got := plan.DeviceMix["smart_meter"]; got != 720 {
+		t.Fatalf("smart meter count = %d, want 720", got)
+	}
+	if got := plan.DeviceMix["gateway"]; got != 450 {
+		t.Fatalf("gateway count = %d, want 450", got)
 	}
 	if got := plan.PresenceMix["online_steady"]; got != 7650 {
 		t.Fatalf("online steady count = %d, want 7650", got)

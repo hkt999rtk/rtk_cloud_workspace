@@ -208,6 +208,8 @@ func runMQTTTest(args []string) error {
 	stageConnectedDevices := fs.String("stage-connected-devices", "", "comma-separated staged sustained per-shard connected device targets")
 	stageDurationsSeconds := fs.String("stage-durations-seconds", "", "comma-separated staged sustained stage durations in seconds")
 	stageMinCommands := fs.String("stage-min-commands", "", "comma-separated staged sustained minimum command events")
+	deviceTrafficProfile := fs.String("device-traffic-profile", "", "home MQTT device traffic profile")
+	stageUsageWindows := fs.String("stage-usage-windows", "", "comma-separated usage window per sustained stage")
 	concurrency := fs.Int("concurrency", 25, "load-test MQTT probe concurrency")
 	maxConnectedDevices := fs.Int("max-connected-devices", 0, "load-test max connected devices in this shard")
 	mqttProbe := true
@@ -304,6 +306,8 @@ func runMQTTTest(args []string) error {
 		"--stage-connected-devices", *stageConnectedDevices,
 		"--stage-durations-seconds", *stageDurationsSeconds,
 		"--stage-min-commands", *stageMinCommands,
+		"--device-traffic-profile", *deviceTrafficProfile,
+		"--stage-usage-windows", *stageUsageWindows,
 		"--concurrency", strconv.Itoa(*concurrency),
 		"--max-connected-devices", strconv.Itoa(*maxConnectedDevices),
 	}
@@ -1000,8 +1004,16 @@ type loadDeviceType struct {
 var loadDeviceTypes = []loadDeviceType{
 	{"camera", "RTC-CAM-PRO2-SIM", "camera", []string{"mqtt", "video_streaming", "video_storage"}, []string{"camera_event", "status_report", "snapshot", "websocket_owner", "webrtc", "recording_clip", "mqtt_legacy_snapshot"}},
 	{"light", "RTC-LIGHT-SIM", "light", []string{"mqtt"}, []string{"mqtt", "power", "brightness", "color_temperature", "state_report", "command_result"}},
+	{"switch", "RTC-SWITCH-SIM", "switch", []string{"mqtt"}, []string{"mqtt", "power", "state_report", "command_result"}},
+	{"smart_plug", "RTC-PLUG-SIM", "smart_plug", []string{"mqtt"}, []string{"mqtt", "power", "energy_watts", "state_report", "command_result"}},
 	{"air_conditioner", "RTC-AC-SIM", "air_conditioner", []string{"mqtt"}, []string{"mqtt", "power", "target_temperature", "mode", "fan", "state_report", "command_result"}},
+	{"environment_sensor", "RTC-ENV-SENSOR-SIM", "environment_sensor", []string{"mqtt"}, []string{"mqtt", "temperature_c", "humidity_percent", "telemetry_report", "state_report"}},
+	{"security_sensor", "RTC-SECURITY-SENSOR-SIM", "security_sensor", []string{"mqtt"}, []string{"mqtt", "open_closed", "motion", "event_report", "state_report"}},
 	{"smart_meter", "RTC-METER-SIM", "smart_meter", []string{"mqtt"}, []string{"mqtt", "status_report", "telemetry_report", "power_watts", "energy_kwh", "voltage", "current"}},
+	{"camera_status", "RTC-CAM-STATUS-SIM", "camera_status", []string{"mqtt"}, []string{"mqtt", "status_report", "motion_event", "privacy_mode", "command_result"}},
+	{"door_lock", "RTC-LOCK-SIM", "door_lock", []string{"mqtt"}, []string{"mqtt", "locked", "battery_percent", "state_report", "command_result"}},
+	{"appliance", "RTC-APPLIANCE-SIM", "appliance", []string{"mqtt"}, []string{"mqtt", "run_state", "mode", "remaining_minutes", "state_report", "command_result"}},
+	{"gateway", "RTC-GATEWAY-SIM", "gateway", []string{"mqtt"}, []string{"mqtt", "child_device_count", "network_status", "batch_state_report", "command_result"}},
 }
 
 type generatedDevice struct {
@@ -5020,7 +5032,10 @@ func factoryEnrollDevice(in loadDeviceInput, deviceID, display, csrPath, certPat
 }
 
 func allocateDeviceMix(count int, raw string) (map[string]int, error) {
-	weights := map[string]int{"camera": 0, "light": 0, "air_conditioner": 0, "smart_meter": 0}
+	weights := map[string]int{}
+	for _, dt := range loadDeviceTypes {
+		weights[dt.Name] = 0
+	}
 	for _, item := range strings.Split(raw, ",") {
 		item = strings.TrimSpace(item)
 		if item == "" {
@@ -5193,10 +5208,26 @@ func loadDisplayName(deviceType string, ordinal int) string {
 		return fmt.Sprintf("PRO2 Camera Simulator %03d", ordinal)
 	case "light":
 		return fmt.Sprintf("Light Simulator %03d", ordinal)
+	case "switch":
+		return fmt.Sprintf("Switch Simulator %03d", ordinal)
+	case "smart_plug":
+		return fmt.Sprintf("Smart Plug Simulator %03d", ordinal)
 	case "air_conditioner":
 		return fmt.Sprintf("Air Conditioner Simulator %03d", ordinal)
+	case "environment_sensor":
+		return fmt.Sprintf("Environment Sensor Simulator %03d", ordinal)
+	case "security_sensor":
+		return fmt.Sprintf("Security Sensor Simulator %03d", ordinal)
 	case "smart_meter":
 		return fmt.Sprintf("Smart Meter Simulator %03d", ordinal)
+	case "camera_status":
+		return fmt.Sprintf("Camera Status Simulator %03d", ordinal)
+	case "door_lock":
+		return fmt.Sprintf("Door Lock Simulator %03d", ordinal)
+	case "appliance":
+		return fmt.Sprintf("Appliance Simulator %03d", ordinal)
+	case "gateway":
+		return fmt.Sprintf("Gateway Simulator %03d", ordinal)
 	default:
 		return fmt.Sprintf("Device Simulator %03d", ordinal)
 	}
@@ -6573,7 +6604,7 @@ func readDeviceManifest(path string) ([]bindDeviceManifest, error) {
 func buildBindAssignments(devices []bindDeviceManifest, users []userCredential) []bindAssignment {
 	out := make([]bindAssignment, len(devices))
 	offset := 0
-	for _, typ := range []string{"camera", "light", "air_conditioner", "smart_meter"} {
+	for _, typ := range loadDeviceTypeNames() {
 		indexes := []int{}
 		for i, device := range devices {
 			if device.DeviceType == typ {
@@ -6594,6 +6625,14 @@ func buildBindAssignments(devices []bindDeviceManifest, users []userCredential) 
 		}
 	}
 	return out
+}
+
+func loadDeviceTypeNames() []string {
+	names := make([]string, 0, len(loadDeviceTypes))
+	for _, typ := range loadDeviceTypes {
+		names = append(names, typ.Name)
+	}
+	return names
 }
 
 func accountFindBrandCloudForLog(ctx accountManagerContext, token, brandname string, logf func(string, ...any)) (map[string]any, error) {

@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -71,21 +72,23 @@ func writeHome100KCoverageArtifacts(t *testing.T, envRoot string) {
 	if err := writeJSONFile(filepath.Join(envRoot, "artifacts", "users", "rtk-users-20260616T000000Z.json"), map[string]any{"brandname": "RTK", "users": users}); err != nil {
 		t.Fatal(err)
 	}
+	mix := proportionalMix(DefaultDeviceCount, homeDiverseDeviceMixBuckets())
+	deviceTypes := make([]string, 0, len(mix))
+	for deviceType := range mix {
+		deviceTypes = append(deviceTypes, deviceType)
+	}
+	sort.Strings(deviceTypes)
 	assignments := make([]map[string]any, 0, DefaultDeviceCount)
-	for idx := 0; idx < DefaultDeviceCount; idx++ {
-		deviceType := "smart_meter"
-		switch {
-		case idx < 50000:
-			deviceType = "light"
-		case idx < 70000:
-			deviceType = "air_conditioner"
+	for _, deviceType := range deviceTypes {
+		for idx := 0; idx < mix[deviceType]; idx++ {
+			deviceIndex := len(assignments)
+			assignments = append(assignments, map[string]any{
+				"assigned_email":  fmt.Sprintf("user-%04d@example.test", deviceIndex%DefaultUserCount),
+				"device_id":       fmt.Sprintf("load-device-%06d", deviceIndex),
+				"device_type":     deviceType,
+				"service_options": []string{"mqtt"},
+			})
 		}
-		assignments = append(assignments, map[string]any{
-			"assigned_email":  fmt.Sprintf("user-%04d@example.test", idx%DefaultUserCount),
-			"device_id":       fmt.Sprintf("load-device-%06d", idx),
-			"device_type":     deviceType,
-			"service_options": []string{"mqtt"},
-		})
 	}
 	if err := writeJSONFile(filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-20260616T000000Z.json"), map[string]any{"brandname": "rtk", "assignments": assignments}); err != nil {
 		t.Fatal(err)
@@ -1016,9 +1019,10 @@ func TestValidatePlanDataCoverageRejectsInsufficientUsersAndBoundDevices(t *test
 	for _, want := range []string{
 		"users available=2 required=5000",
 		"eligible devices available=2 required=100000",
-		"light available=1 required=50000",
-		"air_conditioner available=0 required=20000",
-		"smart_meter available=1 required=30000",
+		"light available=1 required=18000",
+		"air_conditioner available=0 required=10000",
+		"smart_meter available=1 required=8000",
+		"smart_plug available=0 required=12000",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("coverage error missing %q:\n%v", want, err)
@@ -1748,9 +1752,9 @@ func TestNormalizeEvidenceSourceCatalogMetadataPreservesOptionalSources(t *testi
 func TestRecomputeVideoCloudAPITopLevelCountersFromPodDeltas(t *testing.T) {
 	evidence := ServerEvidence{Sources: map[string]EvidenceSource{
 		"video_cloud_api": {Available: true, Counters: map[string]int64{
-			"video_cloud_api.request_token.total":                    0,
-			"video_cloud_api.request_token.status_200":               0,
-			"video_cloud_api.request_token.status_500":               0,
+			"video_cloud_api.request_token.total":                            0,
+			"video_cloud_api.request_token.status_200":                       0,
+			"video_cloud_api.request_token.status_500":                       0,
 			"video_cloud_api.request_token.pod_video_cloud_api_a.total":      300,
 			"video_cloud_api.request_token.pod_video_cloud_api_a.status_200": 299,
 			"video_cloud_api.request_token.pod_video_cloud_api_a.status_500": 1,
@@ -1967,6 +1971,8 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 		"--stage-names 25k,50k,75k,100k",
 		"--stage-connected-devices 5000,10000,15000,20000",
 		"--stage-durations-seconds 3,3,3,3",
+		"--device-traffic-profile home-diverse-v1",
+		"--stage-usage-windows morning,away,return_home,evening_peak",
 		"--max-connected-devices 20000",
 		"--shard-index 0",
 		"--shard-count 5",

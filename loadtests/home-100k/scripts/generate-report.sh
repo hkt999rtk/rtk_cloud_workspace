@@ -206,19 +206,56 @@ def render_map(title, values):
 
 def scenario_mix():
     plan = result.get("plan") or {}
-    lines = []
+    lines = [f"- Scenario profile: `{md(plan.get('scenario_profile') or 'home-diverse-v1')}`"]
     lines.extend(render_map("Device mix", plan.get("device_mix") or {}))
     lines.extend(render_map("Presence mix", plan.get("presence_mix") or {}))
+    windows = plan.get("stage_usage_windows") or []
+    if windows:
+        lines.append("- Stage usage windows: `" + "`, `".join(md(window) for window in windows) + "`")
+    return "\n".join(lines)
+
+def device_traffic_profiles():
+    profiles = ((result.get("plan") or {}).get("device_profiles") or {})
+    if not profiles:
+        return "- no device traffic profiles"
+    lines = [
+        "| Device type | Ratio weight | Traffic profile | Payload class |",
+        "| --- | ---: | --- | --- |",
+    ]
+    for name in sorted(profiles):
+        profile = profiles.get(name) or {}
+        lines.append(
+            f"| {md(name)} | {num(profile.get('ratio_weight'), 0)} | "
+            f"{md(profile.get('traffic_profile', '-'))} | {md(profile.get('payload_class', '-'))} |"
+        )
+    return "\n".join(lines)
+
+def user_scenario_profiles():
+    profiles = ((result.get("plan") or {}).get("user_profiles") or {})
+    if not profiles:
+        return "- no user scenario profiles"
+    lines = [
+        "| User profile | Ratio weight | Action profile |",
+        "| --- | ---: | --- |",
+    ]
+    for name in sorted(profiles):
+        profile = profiles.get(name) or {}
+        lines.append(
+            f"| {md(name)} | {num(profile.get('ratio_weight'), 0)} | "
+            f"{md(profile.get('action_profile', '-'))} |"
+        )
     return "\n".join(lines)
 
 def stages_section():
     plan = result.get("plan") or {}
     rows = []
     for stage in plan.get("stages") or []:
+        usage_window = stage.get("usage_window") or ""
+        suffix = f", usage window {md(usage_window)}" if usage_window else ""
         rows.append(
             f"- {md(stage.get('name'))}: {num(stage.get('connected_devices'), 0)} connected devices, "
             f"warm-up {md(stage.get('warm_up', '-'))}, steady {md(stage.get('steady_state', '-'))}, "
-            f"cool-down {md(stage.get('cool_down', '-'))}"
+            f"cool-down {md(stage.get('cool_down', '-'))}{suffix}"
         )
     return lines_or_dash(rows)
 
@@ -332,6 +369,62 @@ def app_user_totals():
         f"{num(total.get('read_shadow_requests'), 0)} | {num(total.get('desired_writes'), 0)} | "
         f"{num(total.get('received_acks'), 0)} | {num(total.get('bytes_sent'), 0)} | {num(total.get('bytes_received'), 0)} |"
     )
+    return "\n".join(lines)
+
+def per_type_mqtt_totals():
+    totals = defaultdict(lambda: defaultdict(int))
+    for stage in result.get("stage_results") or []:
+        for name, values in (stage.get("device_type_totals") or {}).items():
+            for key in [
+                "telemetry_publishes", "event_publishes", "desired_writes",
+                "delta_received", "reported_publishes", "bytes_sent", "bytes_received",
+            ]:
+                totals[name][key] += int(num((values or {}).get(key), 0))
+    if not totals:
+        return "- no per-device-type MQTT totals"
+    lines = [
+        "| Device type | Telemetry publishes | Event publishes | Desired writes | Delta received | Reported publishes | Bytes sent | Bytes received |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for name in sorted(totals):
+        t = totals[name]
+        lines.append(
+            f"| {md(name)} | {num(t.get('telemetry_publishes'), 0)} | {num(t.get('event_publishes'), 0)} | "
+            f"{num(t.get('desired_writes'), 0)} | {num(t.get('delta_received'), 0)} | "
+            f"{num(t.get('reported_publishes'), 0)} | {num(t.get('bytes_sent'), 0)} | "
+            f"{num(t.get('bytes_received'), 0)} |"
+        )
+    return "\n".join(lines)
+
+def sum_stage_int_maps(field):
+    totals = defaultdict(int)
+    for stage in result.get("stage_results") or []:
+        for name, count in (stage.get(field) or {}).items():
+            totals[name] += int(num(count, 0))
+    return totals
+
+def user_action_totals():
+    totals = sum_stage_int_maps("user_action_totals")
+    if not totals:
+        return "- no user action totals"
+    lines = [
+        "| Action | Count |",
+        "| --- | ---: |",
+    ]
+    for name in sorted(totals):
+        lines.append(f"| {md(name)} | {totals[name]} |")
+    return "\n".join(lines)
+
+def usage_window_totals():
+    totals = sum_stage_int_maps("usage_window_totals")
+    if not totals:
+        return "- no usage window totals"
+    lines = [
+        "| Usage window | Count |",
+        "| --- | ---: |",
+    ]
+    for name in sorted(totals):
+        lines.append(f"| {md(name)} | {totals[name]} |")
     return "\n".join(lines)
 
 def failure_reasons():
@@ -683,12 +776,17 @@ replacements = {
     "STATUS_SUMMARY": status_summary(),
     "TEST_CONDITIONS": test_conditions(),
     "SCENARIO_MIX": scenario_mix(),
+    "DEVICE_TRAFFIC_PROFILES": device_traffic_profiles(),
+    "USER_SCENARIO_PROFILES": user_scenario_profiles(),
     "STAGES": stages_section(),
     "STAGE_RESULTS": stage_results(),
     "STAGE_DIAGNOSTICS": stage_diagnostics(),
     "CLIENT_TARGET_COVERAGE": client_target_coverage(),
     "DEVICE_MQTT_TOTALS": device_mqtt_totals(),
     "APP_USER_TOTALS": app_user_totals(),
+    "PER_TYPE_MQTT_TOTALS": per_type_mqtt_totals(),
+    "USER_ACTION_TOTALS": user_action_totals(),
+    "USAGE_WINDOW_TOTALS": usage_window_totals(),
     "FAILURE_REASONS": failure_reasons(),
     "FAILURE_DETAILS": failure_details(),
     "SERVER_CORRELATION": server_correlation(),

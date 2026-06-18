@@ -18,7 +18,7 @@ import (
 const (
 	mqttLoadDefaultUsers       = 2500
 	mqttLoadDefaultDevices     = 10000
-	mqttLoadDefaultMix         = "light=3334,air_conditioner=3333,smart_meter=3333"
+	mqttLoadDefaultMix         = "light=18,switch=7,smart_plug=12,air_conditioner=10,environment_sensor=12,security_sensor=10,smart_meter=8,camera_status=7,door_lock=4,appliance=7,gateway=5"
 	mqttLoadDefaultProfile     = "baseline-10k"
 	mqttLoadDefaultRampUp      = "10m"
 	mqttLoadDefaultDuration    = "30m"
