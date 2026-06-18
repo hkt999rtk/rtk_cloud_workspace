@@ -111,8 +111,8 @@ spread across nodes:
 - The EMQX deployment uses hard pod anti-affinity by
   `kubernetes.io/hostname`.
 - `mqtt-public` uses `externalTrafficPolicy: Local`.
-- Linode NodeBalancer health for port `8883` must show the expected EMQX nodes
-  as up before the load test starts.
+- External HAProxy edge evidence must show HAProxy running with the expected
+  NodePort upstreams for public `8883/TCP` before the load test starts.
 
 Do not use `externalTrafficPolicy: Cluster` to compensate for uneven EMQX
 placement. It can route public MQTT traffic through kube-proxy on nodes without
@@ -291,9 +291,9 @@ Live collect reads `vms.json`, regenerates the inventory, and runs
 reports, runner coordination telemetry, daemon logs, resource snapshots, and
 sync telemetry.
 Live server evidence collection runs `kubectl` probes for EMQX, Video Cloud API,
-IoT Device Shadow, PostgreSQL, Redis/Valkey, ingress/nginx, and host/pod
-resources. Partial probe failure is written as `complete=false` evidence so the
-final report remains `INCOMPLETE`.
+PostgreSQL, required Redis/Valkey cache, ingress/nginx, host/pod resources, and
+optional external HAProxy edge evidence. Partial required-probe failure is
+written as `complete=false` evidence so the final report remains `INCOMPLETE`.
 Aggregate reads collected shard results plus `server-evidence.json` and writes
 run-level `plan.json` and `results.json`. The public `home-100k.sh aggregate`
 path then calls `scripts/generate-report.sh` to render fixed-format

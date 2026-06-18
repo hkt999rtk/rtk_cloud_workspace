@@ -1925,15 +1925,15 @@ func TestApplySourceCounterBaselineDelta(t *testing.T) {
 
 func TestNormalizeEvidenceSourceCatalogMetadataPreservesOptionalSources(t *testing.T) {
 	sources := requiredEvidenceSources(true)
-	sources["redis_valkey"] = EvidenceSource{Available: false, Detail: "exit status 1"}
+	sources["edge_haproxy"] = EvidenceSource{Available: false, Detail: "exit status 1"}
 
 	normalizeEvidenceSourceCatalogMetadata(sources)
 
-	if !sources["redis_valkey"].Optional {
-		t.Fatalf("redis_valkey optional = false, want true")
+	if !sources["edge_haproxy"].Optional {
+		t.Fatalf("edge_haproxy optional = false, want true")
 	}
 	if !allEvidenceSourcesAvailable(sources) {
-		t.Fatalf("optional redis_valkey should not make required evidence incomplete")
+		t.Fatalf("optional edge_haproxy should not make required evidence incomplete")
 	}
 }
 
@@ -2709,7 +2709,7 @@ func TestExecuteCollectServerEvidenceDefaultsToIncompleteSourcePlan(t *testing.T
 	for _, want := range []string{
 		`"complete": false`,
 		`"emqx"`,
-		`"iot_device_shadow"`,
+		`"edge_haproxy"`,
 		`"redis_valkey"`,
 		`"ingress_nginx"`,
 		`"host_pod_resources"`,
@@ -3039,6 +3039,8 @@ func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 		calls = append(calls, name+" "+strings.Join(args, " "))
 		joined := strings.Join(args, " ")
 		switch {
+		case strings.Contains(joined, "edge-vms.json"):
+			return "edge_haproxy.ssh_ok 1\nedge_haproxy.vm_count 1\nedge_haproxy.process.fd_count 128\nedge_haproxy.tcp.established_8883 10000\n", nil
 		case strings.Contains(joined, "device_runtime_logs"):
 			t.Fatalf("collect-server-evidence queried legacy device_runtime_logs table: %s %s", name, joined)
 		case strings.Contains(joined, "device_shadows"):
@@ -3071,7 +3073,7 @@ func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 	if !strings.Contains(out, `"evidence_window_mode": "run_scoped_since_time"`) || !strings.Contains(out, `"evidence_window_start": "2026-06-16T21:06:05Z"`) {
 		t.Fatalf("stdout missing run-scoped evidence window:\n%s", out)
 	}
-	if !strings.Contains(out, `"app_user.desired_writes": 10`) || !strings.Contains(out, `"device_shadow.reported_converged": 10`) {
+	if !strings.Contains(out, `"edge_haproxy.tcp.established_8883": 10000`) || !strings.Contains(out, `"device_shadow.reported_converged": 10`) {
 		t.Fatalf("stdout missing parsed counters:\n%s", out)
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "server-evidence.json")); err != nil {
@@ -3090,21 +3092,21 @@ func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 	}
 }
 
-func TestServerEvidenceProbesIncludeMQTTNodeBalancerHealth(t *testing.T) {
-	probes := serverEvidenceProbes("run-nb", "--since=1m")
+func TestServerEvidenceProbesIncludeExternalHAProxyHealth(t *testing.T) {
+	probes := serverEvidenceProbes("cloud_env/staging/lke", "run-edge", "--since=1m")
 	for _, probe := range probes {
-		if probe.source != "mqtt_nodebalancer" {
+		if probe.source != "edge_haproxy" {
 			continue
 		}
 		joined := strings.Join(append([]string{probe.command}, probe.args...), " ")
-		for _, want := range []string{"LINODE_TOKEN", "mqtt-public", "nodebalancers", "mqtt_nodebalancer.nodes_up"} {
+		for _, want := range []string{"edge-vms.json", "ssh_access.key_path", "edge_haproxy.process.fd_count", "edge_haproxy.tcp.established_8883"} {
 			if !strings.Contains(joined, want) {
-				t.Fatalf("mqtt_nodebalancer probe missing %q in:\n%s", want, joined)
+				t.Fatalf("edge_haproxy probe missing %q in:\n%s", want, joined)
 			}
 		}
 		return
 	}
-	t.Fatal("serverEvidenceProbes() missing mqtt_nodebalancer probe")
+	t.Fatal("serverEvidenceProbes() missing edge_haproxy probe")
 }
 
 func TestKubectlLogEvidenceProbesBoundLogCollectionTime(t *testing.T) {

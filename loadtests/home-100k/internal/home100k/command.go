@@ -1739,7 +1739,7 @@ func collectLiveServerEvidence(envRoot string, runID string, outDir string) Serv
 		windowMode = "run_scoped_since_time"
 		logsSinceArg = "--since-time=" + windowStart
 	}
-	for _, probe := range serverEvidenceProbes(runID, logsSinceArg) {
+	for _, probe := range serverEvidenceProbes(envRoot, runID, logsSinceArg) {
 		timeout := probe.timeout
 		if timeout <= 0 {
 			timeout = defaultServerEvidenceProbeTimeout
@@ -2684,7 +2684,7 @@ const (
 	serverEvidenceLogTailLines        = "120000"
 )
 
-func serverEvidenceProbes(runID string, logsSinceArg string) []serverEvidenceProbe {
+func serverEvidenceProbes(envRoot string, runID string, logsSinceArg string) []serverEvidenceProbe {
 	if strings.TrimSpace(logsSinceArg) == "" {
 		logsSinceArg = "--since=30m"
 	}
@@ -2704,12 +2704,14 @@ func serverEvidenceProbes(runID string, logsSinceArg string) []serverEvidencePro
 		kubectlLogsProbe("emqx", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=mqtt", logsSinceArg, "MQTT broker logs and client churn evidence captured for run_id "+runID),
 		emqxBrokerMetricsProbe(runID),
 		emqxListenerStatsProbe(runID),
-		mqttNodeBalancerProbe(runID),
+		edgeHAProxyProbe(envRoot, runID),
 		videoCloudAPIRequestTokenCounterProbe(runID, logsSinceArg),
 		videoCloudAPIMetricsProbe(runID),
 		kubectlLogsProbe("video_cloud_api", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=video-cloud-api", logsSinceArg, "Video Cloud API logs captured for run_id "+runID),
 		postgresCounterProbe("postgres", runID, shadowStoreCounterSQL(runID), "PostgreSQL device shadow convergence counters parsed for run_id "+runID),
 		kubectlLogsProbe("postgres", "video-cloud-staging-platform", "app.kubernetes.io/name=postgresql", logsSinceArg, "PostgreSQL logs captured"),
+		redisInfoProbe(runID),
+		kubectlLogsProbe("redis_valkey", "video-cloud-staging-platform", "app.kubernetes.io/name=redis", logsSinceArg, "Redis/Valkey logs captured when enabled"),
 		redisInfoProbe(runID),
 		kubectlLogsProbe("redis_valkey", "video-cloud-staging-platform", "app.kubernetes.io/name=redis", logsSinceArg, "Redis/Valkey logs captured when enabled"),
 		kubectlLogsProbe("ingress_nginx", "video-cloud-staging-ingress", "app.kubernetes.io/name=ingress-nginx", logsSinceArg, "Ingress/nginx logs captured for run_id "+runID),
@@ -2774,7 +2776,6 @@ func sanitizeEvidenceRunID(raw string) string {
 func sqlLiteral(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
-
 func kubectlLogsProbe(source string, namespace string, selector string, logsSinceArg string, detail string) serverEvidenceProbe {
 	script := fmt.Sprintf(
 		`set -euo pipefail; pods="$(kubectl -n %s get pods --selector %s -o name)"; test -n "$pods"; timeout 20s kubectl -n %s logs %s --selector %s --tail=%s || true`,
@@ -2849,34 +2850,47 @@ done`
 	}
 }
 
-func mqttNodeBalancerProbe(runID string) serverEvidenceProbe {
-	script := `set -euo pipefail
-test -n "${LINODE_TOKEN:-}"
-ip="$(kubectl -n video-cloud-staging-video-cloud get svc mqtt-public -o jsonpath='{.status.loadBalancer.ingress[0].ip}')"
+func edgeHAProxyProbe(envRoot string, runID string) serverEvidenceProbe {
+	artifact := filepath.Join(envRoot, "artifacts", "edge-haproxy", "edge-vms.json")
+	script := strings.ReplaceAll(`set -euo pipefail
+artifact=__EDGE_HAPROXY_ARTIFACT__
+test -r "$artifact"
+ip="$(jq -r '.edge_vms[0].public_ip // ""' "$artifact")"
+user="$(jq -r '.ssh_access.user // "root"' "$artifact")"
+key="$(jq -r '.ssh_access.key_path // ""' "$artifact")"
 test -n "$ip"
-nodebalancers="$(curl -fsS -H "Authorization: Bearer ${LINODE_TOKEN}" https://api.linode.com/v4/nodebalancers)"
-nb_id="$(printf '%s' "$nodebalancers" | jq -r --arg ip "$ip" '.data[] | select(.ipv4 == $ip) | .id' | head -n1)"
-test -n "$nb_id"
-configs="$(curl -fsS -H "Authorization: Bearer ${LINODE_TOKEN}" "https://api.linode.com/v4/nodebalancers/${nb_id}/configs")"
-cfg="$(printf '%s' "$configs" | jq -r '.data[] | select(.port == 8883) | [.id, .nodes_status.up, .nodes_status.down, .algorithm, .stickiness] | @tsv' | head -n1)"
-test -n "$cfg"
-cfg_id="$(printf '%s' "$cfg" | awk '{print $1}')"
-printf '%s\n' "$cfg" | awk '{print "mqtt_nodebalancer.configs 1"; print "mqtt_nodebalancer.nodes_up " $2; print "mqtt_nodebalancer.nodes_down " $3}'
-nodes="$(curl -fsS -H "Authorization: Bearer ${LINODE_TOKEN}" "https://api.linode.com/v4/nodebalancers/${nb_id}/configs/${cfg_id}/nodes")"
-printf '%s' "$nodes" | jq -r '
-  .data[]
-  | (.label | gsub("[^A-Za-z0-9_]"; "_")) as $label
-  | [
-      "mqtt_nodebalancer.node_\($label).status_\(.status | ascii_downcase) 1",
-      "mqtt_nodebalancer.node_\($label).weight \(.weight)"
-    ]
-  | .[]'
-`
+test -n "$key"
+ssh -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR "$user@$ip" 'bash -s' <<'REMOTE'
+set -euo pipefail
+pids="$(pgrep -x haproxy || true)"
+printf 'edge_haproxy.ssh_ok 1\n'
+printf 'edge_haproxy.vm_count 1\n'
+printf 'edge_haproxy.process.count %s\n' "$(printf '%s\n' "$pids" | awk 'NF{c++} END{print c+0}')"
+fd_total=0
+rss_total=0
+for pid in $pids; do
+  if [ -d "/proc/$pid/fd" ]; then
+    fd="$(find "/proc/$pid/fd" -maxdepth 1 -type l 2>/dev/null | wc -l | tr -d ' ')"
+    fd_total=$((fd_total + fd))
+  fi
+  if [ -r "/proc/$pid/status" ]; then
+    rss="$(awk '/^VmRSS:/ {print $2}' "/proc/$pid/status")"
+    rss_total=$((rss_total + ${rss:-0}))
+  fi
+done
+printf 'edge_haproxy.process.fd_count %s\n' "$fd_total"
+printf 'edge_haproxy.process.rss_kb %s\n' "$rss_total"
+ss -Htan state established '( sport = :443 or dport = :443 )' 2>/dev/null | awk 'END{print "edge_haproxy.tcp.established_443", NR+0}'
+ss -Htan state established '( sport = :8883 or dport = :8883 )' 2>/dev/null | awk 'END{print "edge_haproxy.tcp.established_8883", NR+0}'
+limit="$(systemctl show haproxy -p LimitNOFILE --value 2>/dev/null || true)"
+case "$limit" in ''|*[!0-9]*) ;; *) printf 'edge_haproxy.systemd.limit_nofile %s\n' "$limit" ;; esac
+REMOTE
+`, "__EDGE_HAPROXY_ARTIFACT__", shellQuote(artifact))
 	return serverEvidenceProbe{
-		source:  "mqtt_nodebalancer",
+		source:  "edge_haproxy",
 		command: "bash",
 		args:    []string{"-lc", script},
-		detail:  "Linode NodeBalancer health for mqtt-public 8883 captured for run_id " + runID,
+		detail:  "External HAProxy edge VM process, socket, and systemd limit evidence captured for run_id " + runID,
 	}
 }
 

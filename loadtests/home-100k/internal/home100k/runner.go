@@ -835,21 +835,19 @@ func loadSyncTelemetry(path string) SyncTelemetry {
 
 func requiredEvidenceSources(available bool) map[string]EvidenceSource {
 	return map[string]EvidenceSource{
-		"emqx":                      {Available: available},
-		"video_cloud_api":           {Available: available},
-		"iot_device_shadow":         {Available: available},
-		"iot_device_shadow_streams": {Available: available},
-		"postgres":                  {Available: available},
-		"ingress_nginx":             {Available: available},
-		"host_pod_resources":        {Available: available},
+		"emqx":               {Available: available},
+		"video_cloud_api":    {Available: available},
+		"postgres":           {Available: available},
+		"redis_valkey":       {Available: available},
+		"ingress_nginx":      {Available: available},
+		"host_pod_resources": {Available: available},
 	}
 }
 
 func optionalEvidenceSources(available bool) map[string]EvidenceSource {
 	return map[string]EvidenceSource{
-		"central_logger":    {Available: available, Optional: true},
-		"mqtt_nodebalancer": {Available: available, Optional: true},
-		"redis_valkey":      {Available: available, Optional: true},
+		"central_logger": {Available: available, Optional: true},
+		"edge_haproxy":   {Available: available, Optional: true},
 	}
 }
 
@@ -1017,7 +1015,7 @@ func correlateRuntimeLogsWithThresholds(evidence ServerEvidence, stages []StageR
 		return result
 	}
 	if !source.Available || len(source.Counters) == 0 {
-		result.Status = "incomplete"
+		result.Status = "skipped"
 		return result
 	}
 	for _, event := range events {

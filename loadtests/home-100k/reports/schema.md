@@ -266,7 +266,6 @@ only from counters or log availability.
 
 - `emqx`
 - `video_cloud_api`
-- `iot_device_shadow`
 - `postgres`
 - `redis_valkey`
 - `ingress_nginx`
@@ -275,6 +274,7 @@ only from counters or log availability.
 Optional server evidence sources:
 
 - `central_logger`
+- `edge_haproxy`
 
 `iot_device_shadow` and `iot_device_shadow_streams` runtime-log evidence is
 queried from central logger `device_runtime_log` events. Legacy deployments may
