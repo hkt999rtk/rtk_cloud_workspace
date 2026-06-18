@@ -3,7 +3,14 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-for path in "$ROOT/scripts/run-staging-e2e.sh" "$ROOT/bin/stg.sh" "$ROOT/README.md" "$ROOT/scripts/README.zh-TW.md"; do
+for path in \
+	"$ROOT/scripts/run-staging-e2e.sh" \
+	"$ROOT/scripts/reset-staging-k8s.sh" \
+	"$ROOT/scripts/provision-staging.sh" \
+	"$ROOT/scripts/run-staging-acceptance.sh" \
+	"$ROOT/bin/stg.sh" \
+	"$ROOT/README.md" \
+	"$ROOT/scripts/README.zh-TW.md"; do
 	if rg -n -- '--target vm|CLOUD_STAGING_E2E_TARGET|remove-all-vm|remove_vm|provision_all|update-ssh-whitelist' "$path" >/tmp/staging-k8s-static.out; then
 		cat /tmp/staging-k8s-static.out >&2
 		echo "staging runtime docs/scripts must stay K8s-only" >&2

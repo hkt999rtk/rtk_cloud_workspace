@@ -446,21 +446,50 @@ Kubeconfig 來源順序：
 
 ### `go run ./scripts/go/rtk-cloud -- remove-k8s`
 
-K8s staging reset helper。預設是 non-destructive reset，只輸出狀態，不刪 namespace。若需要刪除 staging namespaces，必須設定 `CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET=1` 並傳 `--yes`。
+Low-level K8s reset compatibility helper。正式 operator 入口請使用
+`scripts/reset-staging-k8s.sh` / `rtk-cloud staging-reset-k8s`。`remove-k8s`
+只有在 `CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET=1` 且傳 `--yes` 時才會刪除
+staging namespaces；`--purge-storage` 會先刪 namespace 內 PVC，再刪 namespace。
 
 ```sh
 go run ./scripts/go/rtk-cloud -- remove-k8s --env-root cloud_env/staging --yes
 ```
 
+### Staging K8s lifecycle phases
+
+正式 staging runtime 已拆成三個可獨立執行的 K8s lifecycle phase。Shell
+檔只做 POSIX thin wrapper，實際邏輯在 Go command 內：
+
+```sh
+# 1. Reset K8s resources. Default preserves PV/PVC/provider storage.
+scripts/reset-staging-k8s.sh --plan
+scripts/reset-staging-k8s.sh --confirm video-cloud-staging
+
+# Only when the data layer must be wiped too.
+scripts/reset-staging-k8s.sh --confirm video-cloud-staging --purge-storage
+
+# 2. Provision or update server workloads. LKE resolves missing GHCR images automatically.
+scripts/provision-staging.sh --plan
+scripts/provision-staging.sh --confirm video-cloud-staging
+
+# 3. Acceptance only: create/update test users/devices and run smoke/MQTT/log verification.
+scripts/run-staging-acceptance.sh --plan
+scripts/run-staging-acceptance.sh --confirm video-cloud-staging
+```
+
+`staging-reset-k8s` 是 destructive phase，必須 `--confirm <CLOUD_STACK_NAME>`。
+預設只清 staging K8s resources，不主動 purge storage；只有明確加
+`--purge-storage` 才會清 PVC/PV/provider volume 類資料層。`staging-provision`
+負責新安裝或停機升級：解析 image、套用 manifests、DNS/artifacts、rollout
+readiness。`staging-acceptance` 不 reset、不 deploy，只驗證已部署好的 stack。
+
 ### `go run ./scripts/go/rtk-cloud -- staging-e2e-test`
 
-Linode K8s staging 一站式整合測試編排腳本。它把 K8s reset、K8s rollout readiness、K8s service query/port-forward、staging E2E data setup、home MQTT simulation，以及 persisted MQTT runtime log verification 串成單一流程，最後輸出 sanitized `summary.json` 與 `TEST_REPORT.md`。建立 RTK brand cloud、建立測試 users、產生並 factory-enroll devices、device bind/provision、bulk bind validation 已拆到 `scripts/setup-staging-e2e-data.sh` / `rtk-cloud staging-e2e-data-setup`，完整 E2E 會呼叫這個獨立步驟。
+Linode K8s staging E2E compatibility orchestrator。它仍可把 K8s reset、K8s rollout readiness、K8s service query/port-forward、staging E2E data setup、home MQTT simulation，以及 persisted MQTT runtime log verification 串成單一流程，最後輸出 sanitized `summary.json` 與 `TEST_REPORT.md`。建立 RTK brand cloud、建立測試 users、產生並 factory-enroll devices、device bind/provision、bulk bind validation 已拆到 `scripts/setup-staging-e2e-data.sh` / `rtk-cloud staging-e2e-data-setup`，完整 E2E 會呼叫這個獨立步驟。
 
 正式 operator 入口是 `scripts/run-staging-e2e.sh`。這個 shell 檔只是一層
-POSIX wrapper，實際流程在 Go command `rtk-cloud run-staging-e2e`：它會解析
-provider/stack/env-root，在 LKE provider 缺少 image env 時自動執行
-`lke-resolve-images`，再呼叫 `staging-e2e-test`。因此一般 staging acceptance
-可直接執行：
+POSIX wrapper，實際流程在 Go command `rtk-cloud run-staging-e2e`：它會依序
+執行 reset、provision、acceptance phase。因此完整 staging acceptance 可直接執行：
 
 ```sh
 scripts/run-staging-e2e.sh --plan
@@ -506,6 +535,7 @@ go run ./scripts/go/rtk-cloud -- staging-e2e-test \
 - `--plan`：只列出將執行的步驟，預設模式。
 - `--run --confirm STACK`：執行完整流程。`STACK` 必須符合 `CLOUD_STACK_NAME`，避免刪錯 staging stack。
 - `--skip-remove`：不先執行 `rtk-cloud remove-k8s`，直接走 `rtk-cloud provision-k8s` 與後續流程。
+- `--skip-provision`：只跑 acceptance/data/MQTT/log verification，不更新 K8s workloads；正式入口通常使用 `scripts/run-staging-acceptance.sh`。
 - `--out-dir PATH`：指定報告輸出目錄；預設在 `<env-root>/artifacts/staging-e2e/<timestamp>/`。
 - `--skip-mqtt-probe`：略過 live MQTT broker probe；MQTT flow 仍會產生 E2E artifact 供 log verification 使用。
 
