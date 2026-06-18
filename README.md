@@ -59,15 +59,23 @@ pointer change in this workspace repository.
 
 ## Staging Shortcuts
 
-Use `scripts/run-staging-e2e.sh` for the full Linode K8s staging acceptance
-flow. The wrapper forwards to the Go CLI, resolves missing LKE GHCR image
-mapping automatically, and then runs reset/provision/data/MQTT/log verification.
-Use `./stg.sh` for lower-level debug shortcuts.
+Use the staging K8s lifecycle wrappers when you want explicit phase control.
+`reset` clears K8s resources, `provision` installs or updates workloads and
+resolves missing LKE GHCR image mapping automatically, and `acceptance` creates
+test users/devices and runs smoke/MQTT/log verification without changing the
+deployment. `scripts/run-staging-e2e.sh` remains the full reset + provision +
+acceptance convenience entrypoint.
 
 ```sh
-./stg.sh e2e --plan
+scripts/reset-staging-k8s.sh --plan
+scripts/provision-staging.sh --plan
+scripts/run-staging-acceptance.sh --plan
 scripts/run-staging-e2e.sh --plan
+scripts/reset-staging-k8s.sh --confirm video-cloud-staging
+scripts/provision-staging.sh --confirm video-cloud-staging
+scripts/run-staging-acceptance.sh --confirm video-cloud-staging
 scripts/run-staging-e2e.sh --confirm video-cloud-staging
+./stg.sh e2e --plan
 ./stg.sh provision --confirm video-cloud-staging
 ./stg.sh brand RTK
 ./stg.sh brands
