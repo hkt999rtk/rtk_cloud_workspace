@@ -63,10 +63,15 @@ Use the staging K8s lifecycle wrappers when you want explicit phase control.
 `reset` clears K8s resources, `provision` installs or updates workloads and
 resolves missing LKE GHCR image mapping automatically, and `acceptance` creates
 test users/devices and runs smoke/MQTT/log verification without changing the
-deployment. `scripts/run-staging-e2e.sh` remains the full reset + provision +
-acceptance convenience entrypoint.
+deployment. Reset preserves PV/PVC/provider storage by default; use
+`--purge-storage` only for an intentional data-layer wipe.
+`scripts/run-staging-e2e.sh` remains the full reset + provision + acceptance
+convenience entrypoint. The default acceptance profile is `10` users and `100`
+devices.
 The target LKE public edge contract is external HAProxy TCP passthrough, not
-Linode NodeBalancer; see `docs/lke-external-haproxy-edge.md`.
+Linode NodeBalancer; staging currently forwards public `443/TCP` to ingress
+NodePort `30443` and public `8883/TCP` to MQTT NodePort `31883`. See
+`docs/lke-external-haproxy-edge.md`.
 
 ```sh
 scripts/reset-staging-k8s.sh --plan

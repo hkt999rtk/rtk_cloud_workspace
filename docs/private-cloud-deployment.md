@@ -413,11 +413,18 @@ vars are not provided, the Go wrapper resolves the pinned submodule commits to
 private GHCR image tags and verifies those images before provisioning. Explicit
 `LKE_*_IMAGE` env vars are operator overrides, not the normal path.
 `reset-staging-k8s` preserves PV/PVC/provider storage by default; use
-`--purge-storage` only for an intentional data-layer wipe. A future in-cluster
-LKE smoke Job still requires the gates in `docs/lke-migration-inventory.md`.
+`--purge-storage` only for an intentional data-layer wipe. The default full
+E2E run still clears Kubernetes runtime resources and rebuilds pods before
+provisioning. A future in-cluster LKE smoke Job still requires the gates in
+`docs/lke-migration-inventory.md`.
 The public edge design contract is documented in
 `docs/lke-external-haproxy-edge.md`; NodeBalancer is no longer the target public
 edge path.
+
+The current validated staging acceptance profile is `10` users and `100`
+devices with mix `camera=40`, `light=25`, `air_conditioner=20`, and
+`smart_meter=15`. The HAProxy edge VM handles public `443/TCP` and `8883/TCP`
+and forwards to ingress-nginx NodePort `30443` and MQTT NodePort `31883`.
 
 ## Support Boundaries
 
