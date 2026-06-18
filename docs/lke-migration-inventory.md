@@ -69,13 +69,20 @@ Conflicts and outdated areas:
 - Kubernetes auth for OpenBao, LKE storage choices, PostgreSQL HA, EMQX
   clustering, Redis persistence, and production HSM strategy are not confirmed.
 
-## LKE Target Summary
+## Kubernetes Runtime Target Summary
 
-The target is Linode Kubernetes Engine, not generic Kubernetes.
+The current validated staging target is Linode Kubernetes Engine (LKE). The
+workspace deployer is now structured as provider adapter plus shared
+Kubernetes runtime: LKE owns cluster discovery/create/kubeconfig and Linode
+API behavior, while the runtime owns RTK workload manifests, secret handling,
+rollouts, and E2E orchestration. GKE, AKS, and EKS are reserved provider ids
+for future GCP/Azure/AWS adapters; they intentionally fail fast before any
+mutation until real provider credentials, cluster semantics, and rollout gates
+are implemented.
 
 | Area | Target direction |
 | --- | --- |
-| Cluster | LKE cluster with environment-specific node pools. TODO: confirm region, node types, autoscaling limits, and maintenance window. |
+| Cluster | Provider adapter supplies a Kubernetes cluster and kubeconfig. LKE is the only live adapter today and uses environment-specific node pools. TODO: confirm region, node types, autoscaling limits, and maintenance window for production. |
 | Namespaces | `platform`, `video-cloud`, `account-manager`, `admin`, `frontend`, `observability`, and `secrets` unless a later platform standard chooses different names. |
 | Public HTTP(S) | Linode NodeBalancer fronting ingress-nginx for public `443/TCP`; public `80/TCP` remains closed. |
 | DNS | Workspace LKE `--dns` provisions GoDaddy A records after the NodeBalancer IP is assigned and uses GoDaddy DNS-01 for ACME TLS issuance. |
@@ -83,7 +90,9 @@ The target is Linode Kubernetes Engine, not generic Kubernetes.
 | Stateful storage | Linode Block Storage-backed PVCs where in-cluster persistence is selected. |
 | Object storage | Linode Object Storage remains the preferred artifact/media/backup target where applicable. |
 | Secrets | OpenBao plus Kubernetes auth or an External Secrets-style sync/injection path. Kubernetes Secrets hold only runtime material, never root tokens, unseal keys, HSM PINs, or private signing keys in Git. |
-| Observability | LKE workload metrics registry generates Prometheus scrape config for private `/metrics/prometheus` targets; Loki/logger integration, Kubernetes probes, alerts, and readiness evidence remain operator-owned. |
+| Workloads | Shared Kubernetes runtime owns a provider-neutral workload registry. Image env keys, namespace keys, ports, rollout targets, resource override prefixes, Services, and Prometheus scrape targets should be derived from that registry rather than separate handwritten lists. |
+| Manifests | Shared Kubernetes runtime should use provider-neutral templates and metadata helpers for non-secret YAML. New secret paths should use typed Kubernetes objects instead of formatting secret payloads into raw YAML strings. |
+| Observability | Kubernetes workload registry generates Prometheus scrape config for private `/metrics/prometheus` targets; Loki/logger integration, Kubernetes probes, alerts, and readiness evidence remain operator-owned. |
 | Rollback | Roll back by pinned release/image plus data restore procedure; no production cutover without a tested restore path. |
 
 ## Migration Inventory

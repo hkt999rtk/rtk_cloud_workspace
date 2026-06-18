@@ -36,44 +36,6 @@ type lkeNamespace struct {
 	Name string
 }
 
-type lkeWorkload struct {
-	Key            string
-	Name           string
-	EnvKey         string
-	Image          string
-	Namespace      string
-	Port           int
-	Host           string
-	MetricsEnabled bool
-	MetricsPath    string
-	MetricsJob     string
-	MetricsService string
-	MetricsPort    int
-}
-
-type lkeVideoCloudAuxiliaryService struct {
-	Name        string
-	Binary      string
-	Port        int
-	PortName    string
-	MetricsPath string
-	MetricsJob  string
-}
-
-type lkePrometheusTarget struct {
-	Job       string
-	Namespace string
-	Service   string
-	Port      int
-	Path      string
-}
-
-type lkeRolloutTarget struct {
-	Namespace string
-	Resource  string
-	Timeout   string
-}
-
 type lkeImageArtifact struct {
 	Key          string `json:"key"`
 	Name         string `json:"name"`
@@ -374,67 +336,7 @@ func shortGitCommit(dir string) string {
 }
 
 func runLKEProvision(paths provisionPaths, env map[string]string, opts provisionOptions) error {
-	lkeRuntimeSecretStateDir = filepath.Join(paths.EnvRoot, "state", "secrets")
-	if err := loadLKEImageManifestDefaults(paths.EnvRoot, env); err != nil {
-		return err
-	}
-	if opts.mode.reset {
-		return errors.New("LKE provision reset is not implemented; use remove-all-vm for namespace teardown")
-	}
-	if opts.mode.apply || opts.mode.dns || opts.mode.deploy || opts.mode.artifacts || opts.mode.e2e {
-		if err := writeLKECompatibilityArtifacts(paths, env); err != nil {
-			return err
-		}
-	}
-	if opts.mode.preflight {
-		if err := lkePreflight(paths, env); err != nil {
-			return err
-		}
-	}
-	if opts.mode.plan {
-		lkePlan(env)
-	}
-	if opts.mode.deploy {
-		if err := ensureLKEDeployImages(env, opts); err != nil {
-			return err
-		}
-	}
-	if opts.mode.apply || opts.mode.dns || opts.mode.deploy || opts.mode.e2e {
-		if err := ensureLKEKubeAccess(paths, env, opts.mode.apply); err != nil {
-			return err
-		}
-	}
-	if opts.mode.apply {
-		if err := lkeApplyBase(env); err != nil {
-			return err
-		}
-		if !opts.mode.deploy {
-			fmt.Fprintln(os.Stderr, "[lke-provision] apply complete without deploy; service images were not installed")
-		}
-	}
-	if opts.mode.dns {
-		if err := lkeApplyPublicHTTPS(paths, env, opts); err != nil {
-			return err
-		}
-	}
-	if opts.mode.deploy {
-		if err := lkeDeployWorkloads(paths, env, opts); err != nil {
-			return err
-		}
-	}
-	if opts.mode.artifacts {
-		dir, err := writeLKEProvisionArtifacts(paths, env)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintln(os.Stdout, dir)
-	}
-	if opts.mode.e2e {
-		if err := lkeProvisionE2E(env, opts); err != nil {
-			return err
-		}
-	}
-	return nil
+	return runKubernetesProvision(lkeCloudProvider{}, provisionContext{Paths: paths, Env: env, Opts: opts})
 }
 
 func lkePreflight(paths provisionPaths, env map[string]string) error {
@@ -479,15 +381,10 @@ func lkePlan(env map[string]string) {
 
 func lkeApplyBase(env map[string]string) error {
 	for _, ns := range lkeNamespaces(env) {
-		manifest := fmt.Sprintf(`apiVersion: v1
-kind: Namespace
-metadata:
-  name: %s
-  labels:
-    app.kubernetes.io/part-of: rtk-cloud
-    rtk.realtek.com/provider: lke
-    rtk.realtek.com/stack: %s
-`, ns.Name, env["CLOUD_STACK_NAME"])
+		manifest, err := renderK8SNamespaceManifest(ns.Name, env["CLOUD_STACK_NAME"])
+		if err != nil {
+			return err
+		}
 		if err := kubectlApply(manifest); err != nil {
 			return err
 		}
@@ -532,44 +429,16 @@ func lkeInstallMetricsServer() error {
 }
 
 func lkeApplyImagePullSecret(env map[string]string, namespace string) error {
-	manifest := lkeImagePullSecretManifest(env, namespace)
-	if manifest == "" {
-		return nil
-	}
-	return kubectlApply(manifest)
-}
-
-func lkeImagePullSecretManifest(env map[string]string, namespace string) string {
 	username := firstNonEmpty(os.Getenv("GHCR_PULL_USERNAME"), env["GHCR_PULL_USERNAME"])
 	token := firstNonEmpty(os.Getenv("GHCR_PULL_TOKEN"), env["GHCR_PULL_TOKEN"])
 	if username == "" || token == "" {
-		return ""
+		return nil
 	}
-	config, err := json.Marshal(map[string]any{
-		"auths": map[string]any{
-			"ghcr.io": map[string]string{
-				"username": username,
-				"password": token,
-				"auth":     base64.StdEncoding.EncodeToString([]byte(username + ":" + token)),
-			},
-		},
-	})
+	secret, err := newK8SDockerConfigSecretObject(namespace, lkeImagePullSecretName(env), username, token)
 	if err != nil {
-		return ""
+		return err
 	}
-	return fmt.Sprintf(`apiVersion: v1
-kind: Secret
-metadata:
-  name: %s
-  namespace: %s
-  labels:
-    app.kubernetes.io/part-of: rtk-cloud
-    rtk.realtek.com/provider: lke
-    rtk.realtek.com/stack: %s
-type: kubernetes.io/dockerconfigjson
-stringData:
-  .dockerconfigjson: %q
-`, lkeImagePullSecretName(env), namespace, env["CLOUD_STACK_NAME"], string(config))
+	return applyKubernetesObjectJSON(secret)
 }
 
 type lkePublicHTTPSRoute struct {
@@ -1496,8 +1365,8 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 		}
 		certIssuerMaterial = &material
 	}
-	rollouts := []lkeRolloutTarget{}
-	for _, workload := range lkeSelectedWorkloads(env, opts) {
+	selectedWorkloads := lkeSelectedWorkloads(env, opts)
+	for _, workload := range selectedWorkloads {
 		if workload.Key == "cloud-logger" {
 			continue
 		}
@@ -1507,13 +1376,8 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 		if err := kubectlApply(lkeServiceManifest(env, workload)); err != nil {
 			return err
 		}
-		rollouts = append(rollouts, lkeRolloutTarget{
-			Namespace: workload.Namespace,
-			Resource:  "deployment/" + workload.Name,
-			Timeout:   firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "5m"),
-		})
 	}
-	return lkeWaitForRollouts(rollouts)
+	return lkeWaitForRollouts(k8sRolloutTargetsFromEnv(selectedWorkloads))
 }
 
 func ensureLKEDeployImages(env map[string]string, opts provisionOptions) error {
@@ -1534,23 +1398,11 @@ func validateLKEDeployInputs(env map[string]string, opts provisionOptions) error
 }
 
 func lkeMissingDeployImageWorkloads(env map[string]string, opts provisionOptions) []lkeWorkload {
-	missing := []lkeWorkload{}
-	for _, workload := range lkeSelectedWorkloads(env, opts) {
-		if firstNonEmpty(os.Getenv(workload.EnvKey), workload.Image) == "" {
-			missing = append(missing, workload)
-		}
-	}
-	return missing
+	return k8sMissingDeployImageWorkloads(env, opts)
 }
 
 func lkeMissingBuildImageWorkloads(env map[string]string, opts provisionOptions) []lkeWorkload {
-	missing := []lkeWorkload{}
-	for _, workload := range lkeImageWorkloads(env, opts) {
-		if firstNonEmpty(os.Getenv(workload.EnvKey), workload.Image) == "" {
-			missing = append(missing, workload)
-		}
-	}
-	return missing
+	return k8sMissingBuildImageWorkloads(env, opts)
 }
 
 func buildLKEImage(workload lkeWorkload, image string) error {
@@ -1830,55 +1682,19 @@ func lkeNamespaceName(env map[string]string, key string) string {
 }
 
 func lkeWorkloads(env map[string]string) []lkeWorkload {
-	return []lkeWorkload{
-		{Key: "video-cloud", Name: "video-cloud-api", EnvKey: "LKE_VIDEO_CLOUD_IMAGE", Image: lkeEnvValue(env, "LKE_VIDEO_CLOUD_IMAGE"), Namespace: lkeNamespaceName(env, "video-cloud"), Port: envIntDefault("LKE_VIDEO_CLOUD_PORT", 8080), Host: env["VIDEO_CLOUD_DOMAIN"], MetricsEnabled: true, MetricsPath: "/metrics/prometheus", MetricsPort: 80},
-		{Key: "account-manager", Name: "account-manager", EnvKey: "LKE_ACCOUNT_MANAGER_IMAGE", Image: lkeEnvValue(env, "LKE_ACCOUNT_MANAGER_IMAGE"), Namespace: lkeNamespaceName(env, "account-manager"), Port: envIntDefault("LKE_ACCOUNT_MANAGER_PORT", 8080), Host: env["ACCOUNT_MANAGER_DOMAIN"], MetricsEnabled: true, MetricsPath: "/metrics/prometheus", MetricsPort: 80},
-		{Key: "cloud-admin", Name: "cloud-admin", EnvKey: "LKE_CLOUD_ADMIN_IMAGE", Image: lkeEnvValue(env, "LKE_CLOUD_ADMIN_IMAGE"), Namespace: lkeNamespaceName(env, "admin"), Port: envIntDefault("LKE_CLOUD_ADMIN_PORT", 8080), Host: env["CLOUD_ADMIN_DOMAIN"], MetricsEnabled: true, MetricsPath: "/metrics/prometheus", MetricsPort: 80},
-		{Key: "frontend", Name: "frontend", EnvKey: "LKE_FRONTEND_IMAGE", Image: lkeEnvValue(env, "LKE_FRONTEND_IMAGE"), Namespace: lkeNamespaceName(env, "frontend"), Port: envIntDefault("LKE_FRONTEND_PORT", 8080), Host: firstNonEmpty(os.Getenv("LKE_FRONTEND_DOMAIN"), env["CLOUD_ADMIN_DOMAIN"]), MetricsEnabled: true, MetricsPath: "/metrics/prometheus", MetricsPort: 80},
-		{Key: "cloud-logger", Name: "cloud-logger", EnvKey: "LKE_CLOUD_LOGGER_IMAGE", Image: lkeEnvValue(env, "LKE_CLOUD_LOGGER_IMAGE"), Namespace: lkeNamespaceName(env, "logger"), Port: envIntDefault("LKE_CLOUD_LOGGER_PORT", 18090), Host: env["CLOUD_LOGGER_DOMAIN"]},
-	}
+	return k8sWorkloads(env)
 }
 
 func lkeVideoCloudAuxiliaryServices() []lkeVideoCloudAuxiliaryService {
-	return []lkeVideoCloudAuxiliaryService{
-		{Name: "video-cloud-cleaner", Binary: "cleaner"},
-		{Name: "video-cloud-statistics", Binary: "statistics"},
-		{Name: "video-cloud-metricsexporter", Binary: "metricsexporter", Port: 19200, PortName: "http", MetricsPath: "/metrics/prometheus", MetricsJob: "video-cloud-metrics-exporter"},
-		{Name: "video-cloud-turnregistry", Binary: "turnregistry", Port: 18190, PortName: "http", MetricsPath: "/metrics/prometheus"},
-		{Name: "video-cloud-logingester", Binary: "logingester", Port: 19300, PortName: "http", MetricsPath: "/metrics/prometheus"},
-		{Name: "video-cloud-mqttusage", Binary: "mqttusage", Port: 19400, PortName: "http", MetricsPath: "/metrics/prometheus"},
-	}
+	return k8sAuxiliaryWorkloads()
 }
 
 func lkeImageWorkloads(env map[string]string, opts provisionOptions) []lkeWorkload {
-	workloads := []lkeWorkload{
-		{Key: "postgres", Name: "postgresql", EnvKey: "LKE_POSTGRES_IMAGE", Image: lkeEnvValue(env, "LKE_POSTGRES_IMAGE"), Namespace: lkeNamespaceName(env, "platform"), Port: 5432},
-	}
-	workloads = append(workloads, lkeSelectedWorkloads(env, opts)...)
-	return workloads
+	return k8sImageWorkloads(env, opts)
 }
 
 func lkeSelectedWorkloads(env map[string]string, opts provisionOptions) []lkeWorkload {
-	workloads := lkeWorkloads(env)
-	if opts.loggerOnly {
-		selected := []lkeWorkload{}
-		for _, workload := range workloads {
-			if workload.Key == "cloud-logger" {
-				selected = append(selected, workload)
-			}
-		}
-		return selected
-	}
-	if !opts.videoOnly {
-		return workloads
-	}
-	selected := []lkeWorkload{}
-	for _, workload := range workloads {
-		if workload.Key == "video-cloud" || workload.Key == "cloud-logger" {
-			selected = append(selected, workload)
-		}
-	}
-	return selected
+	return k8sSelectedWorkloads(env, opts)
 }
 
 func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, opts provisionOptions) error {
@@ -2243,12 +2059,7 @@ func lkeCompatibilityVideoState(env map[string]string) map[string]any {
 }
 
 func lkeWorkloadSelected(env map[string]string, opts provisionOptions, key string) bool {
-	for _, workload := range lkeSelectedWorkloads(env, opts) {
-		if workload.Key == key {
-			return true
-		}
-	}
-	return false
+	return k8sWorkloadSelected(env, opts, key)
 }
 
 func lkePostgresSecretManifest(env map[string]string) string {
@@ -4160,63 +3971,7 @@ spec:
 }
 
 func lkePrometheusTargets(env map[string]string, opts provisionOptions) []lkePrometheusTarget {
-	targets := []lkePrometheusTarget{}
-	for _, workload := range lkeSelectedWorkloads(env, opts) {
-		if !workload.MetricsEnabled {
-			continue
-		}
-		port := workload.MetricsPort
-		if port == 0 {
-			port = 80
-		}
-		targets = append(targets, lkePrometheusTarget{
-			Job:       firstNonEmpty(workload.MetricsJob, workload.Name),
-			Namespace: workload.Namespace,
-			Service:   firstNonEmpty(workload.MetricsService, workload.Name),
-			Port:      port,
-			Path:      firstNonEmpty(workload.MetricsPath, "/metrics/prometheus"),
-		})
-	}
-	if lkeWorkloadSelected(env, opts, "video-cloud") {
-		videoNS := lkeNamespaceName(env, "video-cloud")
-		for _, service := range lkeVideoCloudAuxiliaryServices() {
-			if service.Port == 0 || service.MetricsPath == "" {
-				continue
-			}
-			targets = append(targets, lkePrometheusTarget{
-				Job:       firstNonEmpty(service.MetricsJob, service.Name),
-				Namespace: videoNS,
-				Service:   service.Name,
-				Port:      service.Port,
-				Path:      service.MetricsPath,
-			})
-		}
-		targets = append(targets, lkePrometheusTarget{
-			Job:       "video-cloud-factoryenroll",
-			Namespace: videoNS,
-			Service:   "factoryenroll",
-			Port:      80,
-			Path:      "/metrics/prometheus",
-		})
-	}
-	observabilityNS := lkeNamespaceName(env, "observability")
-	targets = append(targets,
-		lkePrometheusTarget{
-			Job:       "video-cloud-prometheus",
-			Namespace: observabilityNS,
-			Service:   "video-cloud-prometheus",
-			Port:      9090,
-			Path:      "/metrics",
-		},
-		lkePrometheusTarget{
-			Job:       "video-cloud-grafana",
-			Namespace: observabilityNS,
-			Service:   "video-cloud-grafana",
-			Port:      3000,
-			Path:      "/metrics",
-		},
-	)
-	return targets
+	return k8sPrometheusTargets(env, opts)
 }
 
 func lkeVideoCloudPrometheusConfigManifest(env map[string]string, opts provisionOptions) string {
@@ -5405,52 +5160,6 @@ spec:
       port: 80
       targetPort: %d
 `, workload.Name, workload.Namespace, workload.Name, env["CLOUD_STACK_NAME"], workload.Name, workload.Port)
-}
-
-func kubectlApply(manifest string) error {
-	cmd := exec.Command(lkeKubectl(), lkeKubectlArgs("apply", "-f", "-")...)
-	cmd.Stdin = strings.NewReader(manifest)
-	out, err := cmd.CombinedOutput()
-	if len(out) > 0 {
-		fmt.Fprint(os.Stdout, string(out))
-	}
-	if err != nil {
-		return fmt.Errorf("kubectl apply failed: %w: %s", err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-func kubectlDeleteSecret(namespace, name string) error {
-	return runKubectl("-n", namespace, "delete", "secret/"+name, "--ignore-not-found=true")
-}
-
-func runKubectl(args ...string) error {
-	cmd := exec.Command(lkeKubectl(), lkeKubectlArgs(args...)...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-	return cmd.Run()
-}
-
-func runKubectlOutput(args ...string) (string, error) {
-	cmd := exec.Command(lkeKubectl(), lkeKubectlArgs(args...)...)
-	cmd.Stdin = os.Stdin
-	out, err := cmd.CombinedOutput()
-	if len(out) > 0 {
-		_, _ = os.Stdout.Write(out)
-	}
-	return string(out), err
-}
-
-func lkeKubectl() string {
-	return firstNonEmpty(os.Getenv("RTK_CLOUD_KUBECTL"), "kubectl")
-}
-
-func lkeKubectlArgs(args ...string) []string {
-	if kubeconfig := os.Getenv("RTK_CLOUD_LKE_KUBECONFIG"); kubeconfig != "" {
-		return append([]string{"--kubeconfig", kubeconfig}, args...)
-	}
-	return args
 }
 
 func ensureLKEKubeAccess(paths provisionPaths, env map[string]string, allowCreate bool) error {
