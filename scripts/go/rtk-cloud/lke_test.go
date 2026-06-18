@@ -2006,6 +2006,8 @@ printf '\n' >> "`+childLog+`"
 		"--stage-connected-devices", "2500,5000,7500,10000",
 		"--stage-durations-seconds", "75,75,75,75",
 		"--stage-min-commands", "125,250,375,500",
+		"--device-traffic-profile", "home-diverse-v1",
+		"--stage-usage-windows", "morning,away,return_home,evening_peak",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2017,6 +2019,8 @@ printf '\n' >> "`+childLog+`"
 		"--stage-connected-devices 2500,5000,7500,10000",
 		"--stage-durations-seconds 75,75,75,75",
 		"--stage-min-commands 125,250,375,500",
+		"--device-traffic-profile home-diverse-v1",
+		"--stage-usage-windows morning,away,return_home,evening_peak",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("child args missing %q:\n%s", want, got)
@@ -2293,6 +2297,39 @@ func TestRunStagingE2EDataSetupDoesNotResumeBindArtifactWithWrongUsers(t *testin
 	}
 	if !strings.Contains(commands, "bind-devices ") {
 		t.Fatalf("expected bind-devices when bind artifact does not cover all users, got:\n%s", commands)
+	}
+}
+
+func TestBuildBindAssignmentsIncludesHomeDiverseDeviceTypes(t *testing.T) {
+	devices := []bindDeviceManifest{
+		{DeviceID: "dev-light", DeviceType: "light", ServiceOptions: []string{"mqtt"}},
+		{DeviceID: "dev-switch", DeviceType: "switch", ServiceOptions: []string{"mqtt"}},
+		{DeviceID: "dev-plug", DeviceType: "smart_plug", ServiceOptions: []string{"mqtt"}},
+		{DeviceID: "dev-env", DeviceType: "environment_sensor", ServiceOptions: []string{"mqtt"}},
+		{DeviceID: "dev-security", DeviceType: "security_sensor", ServiceOptions: []string{"mqtt"}},
+		{DeviceID: "dev-camera-status", DeviceType: "camera_status", ServiceOptions: []string{"mqtt"}},
+		{DeviceID: "dev-lock", DeviceType: "door_lock", ServiceOptions: []string{"mqtt"}},
+		{DeviceID: "dev-appliance", DeviceType: "appliance", ServiceOptions: []string{"mqtt"}},
+		{DeviceID: "dev-gateway", DeviceType: "gateway", ServiceOptions: []string{"mqtt"}},
+	}
+	users := []userCredential{{Email: "u1@example.test"}, {Email: "u2@example.test"}}
+
+	assignments := buildBindAssignments(devices, users)
+	byID := map[string]bindAssignment{}
+	for _, assignment := range assignments {
+		byID[assignment.DeviceID] = assignment
+	}
+	for _, device := range devices {
+		assignment, ok := byID[device.DeviceID]
+		if !ok {
+			t.Fatalf("missing assignment for %s in %#v", device.DeviceID, assignments)
+		}
+		if assignment.Category != "mqtt_device" {
+			t.Fatalf("%s category = %q, want mqtt_device", device.DeviceType, assignment.Category)
+		}
+		if assignment.AssignedEmail == "" {
+			t.Fatalf("%s missing assigned email", device.DeviceType)
+		}
 	}
 }
 

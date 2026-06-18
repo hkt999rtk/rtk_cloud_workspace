@@ -69,7 +69,7 @@ func TestMQTTLoadPreparePlanUsesBaselineDefaults(t *testing.T) {
 		"mqtt-loadtest prepare plan",
 		"user_count: 2500",
 		"device_count: 10000",
-		"device_mix: light=3334,air_conditioner=3333,smart_meter=3333",
+		"device_mix: light=18,switch=7,smart_plug=12,air_conditioner=10,environment_sensor=12,security_sensor=10,smart_meter=8,camera_status=7,door_lock=4,appliance=7,gateway=5",
 		"go run ./scripts/go/rtk-cloud -- create-users",
 		"go run ./scripts/go/rtk-cloud -- generate-load-devices",
 		"bind-devices uses latest rtk-users-*.json",
@@ -81,6 +81,41 @@ func TestMQTTLoadPreparePlanUsesBaselineDefaults(t *testing.T) {
 	}
 	if strings.Contains(output, "go-build") {
 		t.Fatalf("prepare plan should not expose temporary go-build executable path:\n%s", output)
+	}
+}
+
+func TestAllocateDeviceMixAcceptsHomeDiverseV1Types(t *testing.T) {
+	mix := "light=18,switch=7,smart_plug=12,air_conditioner=10,environment_sensor=12,security_sensor=10,smart_meter=8,camera_status=7,door_lock=4,appliance=7,gateway=5"
+	got, err := allocateDeviceMix(100, mix)
+	if err != nil {
+		t.Fatalf("allocateDeviceMix() error = %v", err)
+	}
+	for _, name := range []string{"light", "switch", "smart_plug", "air_conditioner", "environment_sensor", "security_sensor", "smart_meter", "camera_status", "door_lock", "appliance", "gateway"} {
+		if got[name] == 0 {
+			t.Fatalf("mix missing %s: %#v", name, got)
+		}
+	}
+	if got["camera"] != 0 {
+		t.Fatalf("home diverse MQTT mix should not allocate video camera devices: %#v", got)
+	}
+}
+
+func TestHomeDiverseDeviceTypesAreMQTTOnly(t *testing.T) {
+	types := map[string]loadDeviceType{}
+	for _, typ := range loadDeviceTypes {
+		types[typ.Name] = typ
+	}
+	for _, name := range []string{"switch", "smart_plug", "environment_sensor", "security_sensor", "camera_status", "door_lock", "appliance", "gateway"} {
+		typ, ok := types[name]
+		if !ok {
+			t.Fatalf("missing load device type %s", name)
+		}
+		if !contains(typ.ServiceOptions, "mqtt") {
+			t.Fatalf("%s service options = %#v, want mqtt", name, typ.ServiceOptions)
+		}
+		if contains(typ.ServiceOptions, "video_streaming") || contains(typ.ServiceOptions, "video_storage") {
+			t.Fatalf("%s must stay MQTT-only, got service options %#v", name, typ.ServiceOptions)
+		}
 	}
 }
 

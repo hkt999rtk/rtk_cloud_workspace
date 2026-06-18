@@ -169,7 +169,7 @@ EOF
 }
 
 run_home100k() {
-  (cd "$repo_root" && go run ./loadtests/home-100k/cmd/home-100k -- "$@")
+  (cd "$repo_root/loadtests/home-100k" && go run ./cmd/home-100k -- "$@")
 }
 
 set_phase() {

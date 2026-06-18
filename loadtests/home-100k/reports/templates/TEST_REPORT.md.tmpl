@@ -1,0 +1,94 @@
+# 100K Home IoT Device Shadow Load Test Report
+
+- Run ID: {{RUN_ID}}
+- Status: {{STATUS}}
+
+## Status Summary
+{{STATUS_SUMMARY}}
+
+## Test Conditions
+{{TEST_CONDITIONS}}
+
+## Counter Scope
+- Device MQTT totals and APP/User totals are client-side runner counters.
+- A capacity `PASS` requires parsed server-side MQTT, APP/API, and IoT Device Shadow counters to correlate with client counters inside tolerance.
+
+## Scenario Mix
+{{SCENARIO_MIX}}
+
+## Device Traffic Profiles
+{{DEVICE_TRAFFIC_PROFILES}}
+
+## User Scenario Profiles
+{{USER_SCENARIO_PROFILES}}
+
+## Device Scenario
+- Online steady devices subscribe to shadow delta, apply desired state, and write reported state.
+- Offline desired queue devices reconnect, call shadow get, apply queued desired state, and clear delta.
+- Flapping reconnect devices verify reconnect sync, version handling, and duplicate-apply prevention.
+
+## User Scenario
+- App users login, bootstrap app certificates when needed, list authorized devices, read shadows, and write desired state.
+- Users wait for reported state to match desired state and for delta to clear.
+
+## IoT Device Shadow Scenario
+- Canonical path: app writes desired -> cloud computes delta -> device receives delta or reads shadow after reconnect -> device writes reported -> delta clears.
+- Offline desired queue is required coverage, not an optional scenario.
+- Device desired writes must be rejected; stale versions must be counted as conflicts.
+
+## Stages
+{{STAGES}}
+
+## Stage Results
+{{STAGE_RESULTS}}
+
+## Stage Diagnostics
+{{STAGE_DIAGNOSTICS}}
+
+## Client Target Coverage
+{{CLIENT_TARGET_COVERAGE}}
+
+## Device MQTT Totals
+{{DEVICE_MQTT_TOTALS}}
+
+## APP/User Totals
+{{APP_USER_TOTALS}}
+
+## Per-Type MQTT Totals
+{{PER_TYPE_MQTT_TOTALS}}
+
+## User Action Totals
+{{USER_ACTION_TOTALS}}
+
+## Usage Window Totals
+{{USAGE_WINDOW_TOTALS}}
+
+## Failure Reasons
+{{FAILURE_REASONS}}
+
+## Failure Details
+{{FAILURE_DETAILS}}
+
+## Server Log Correlation
+{{SERVER_CORRELATION}}
+
+## Runtime Log Stream Correlation
+{{RUNTIME_LOG_CORRELATION}}
+
+## Load Generator Start Coordination
+{{START_COORDINATION}}
+
+## Load Machine Resource Usage
+{{LOAD_MACHINE_RESOURCE_USAGE}}
+
+## K8s Node Resource Usage During Test
+{{K8S_NODE_RESOURCE_USAGE}}
+
+## Sync/Provision Telemetry
+{{SYNC_TELEMETRY}}
+
+## Server Evidence
+{{SERVER_EVIDENCE}}
+
+## Report Source Artifacts
+{{REPORT_SOURCE_ARTIFACTS}}

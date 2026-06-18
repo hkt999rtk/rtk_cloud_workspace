@@ -46,14 +46,7 @@ func TestLatestHomeMQTTBindArtifactSkipsIncompleteLatestArtifact(t *testing.T) {
 	root := t.TempDir()
 	older := filepath.Join(root, "rtk-device-bind-older.json")
 	newer := filepath.Join(root, "rtk-device-bind-newer.json")
-	write(t, older, `{
-  "brandname": "RTK",
-  "assignments": [
-    {"device_type": "light", "service_options": ["mqtt"]},
-    {"device_type": "air_conditioner", "service_options": ["mqtt"]},
-    {"device_type": "smart_meter", "service_options": ["mqtt"]}
-  ]
-}`)
+	write(t, older, completeHomeDiverseMQTTBindJSON())
 	write(t, newer, `{
   "brandname": "RTK",
   "assignments": [
@@ -79,14 +72,7 @@ func TestLatestHomeMQTTBindArtifactPrefersFilenameTimestampOverMTime(t *testing.
 	root := t.TempDir()
 	older := filepath.Join(root, "rtk-device-bind-20260615T010000Z.json")
 	newer := filepath.Join(root, "rtk-device-bind-20260615T020000Z.json")
-	complete := `{
-  "brandname": "RTK",
-  "assignments": [
-    {"device_type": "light", "service_options": ["mqtt"]},
-    {"device_type": "air_conditioner", "service_options": ["mqtt"]},
-    {"device_type": "smart_meter", "service_options": ["mqtt"]}
-  ]
-}`
+	complete := completeHomeDiverseMQTTBindJSON()
 	write(t, older, complete)
 	write(t, newer, complete)
 	oldTime := time.Now()
@@ -102,6 +88,25 @@ func TestLatestHomeMQTTBindArtifactPrefersFilenameTimestampOverMTime(t *testing.
 	if got != newer {
 		t.Fatalf("latestHomeMQTTBindArtifact = %q, want %q", got, newer)
 	}
+}
+
+func completeHomeDiverseMQTTBindJSON() string {
+	return `{
+  "brandname": "RTK",
+  "assignments": [
+    {"device_type": "light", "service_options": ["mqtt"]},
+    {"device_type": "switch", "service_options": ["mqtt"]},
+    {"device_type": "smart_plug", "service_options": ["mqtt"]},
+    {"device_type": "air_conditioner", "service_options": ["mqtt"]},
+    {"device_type": "environment_sensor", "service_options": ["mqtt"]},
+    {"device_type": "security_sensor", "service_options": ["mqtt"]},
+    {"device_type": "smart_meter", "service_options": ["mqtt"]},
+    {"device_type": "camera_status", "service_options": ["mqtt"]},
+    {"device_type": "door_lock", "service_options": ["mqtt"]},
+    {"device_type": "appliance", "service_options": ["mqtt"]},
+    {"device_type": "gateway", "service_options": ["mqtt"]}
+  ]
+}`
 }
 
 func TestVideoCloudMTLSBaseURLUsesDeviceClientDomainFromTopology(t *testing.T) {

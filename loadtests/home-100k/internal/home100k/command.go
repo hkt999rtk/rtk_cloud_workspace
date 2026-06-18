@@ -622,6 +622,7 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 	stageNames := make([]string, 0, len(plan.Stages))
 	stageTargets := make([]string, 0, len(plan.Stages))
 	stageDurations := make([]string, 0, len(plan.Stages))
+	stageUsageWindows := make([]string, 0, len(plan.Stages))
 	stageCommandRates := []string{}
 	stageMinCommands := []string{}
 	maxTarget := 0
@@ -637,6 +638,7 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		stageNames = append(stageNames, stage.Name)
 		stageTargets = append(stageTargets, strconv.Itoa(maxConnected))
 		stageDurations = append(stageDurations, strconv.Itoa(durationSeconds))
+		stageUsageWindows = append(stageUsageWindows, firstNonEmpty(stage.UsageWindow, "steady"))
 		stageCommandRates = append(stageCommandRates, commandRatePerDeviceDay(maxConnected, durationSeconds, plan.Conditions.DevicesPerUser))
 		stageMinCommands = append(stageMinCommands, strconv.Itoa(ceilDiv(maxConnected, plan.Conditions.DevicesPerUser)))
 	}
@@ -666,6 +668,8 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		"--stage-connected-devices", strings.Join(stageTargets, ","),
 		"--stage-durations-seconds", strings.Join(stageDurations, ","),
 		"--stage-min-commands", strings.Join(stageMinCommands, ","),
+		"--device-traffic-profile", firstNonEmpty(plan.ScenarioProfile, DefaultScenarioProfile),
+		"--stage-usage-windows", strings.Join(stageUsageWindows, ","),
 		"--concurrency", strconv.Itoa(minInt(maxTarget, 250)),
 		"--max-connected-devices", strconv.Itoa(maxTarget),
 	}
@@ -908,6 +912,9 @@ type rawLiveMQTTResult struct {
 	FailureDetails             map[string]map[string]int64 `json:"failure_details"`
 	FailureEvents              []FailureEvent              `json:"failure_events"`
 	CommandEvents              []CommandEvent              `json:"command_events"`
+	DeviceTypeTotals           map[string]DeviceTypeTotals `json:"device_type_totals"`
+	UserActionTotals           map[string]int64            `json:"user_action_totals"`
+	UsageWindowTotals          map[string]int64            `json:"usage_window_totals"`
 	StageDiagnostics           map[string]any              `json:"stage_diagnostics"`
 }
 
@@ -1052,6 +1059,9 @@ func convertLiveMQTTStageResult(raw rawLiveMQTTResult, stage Stage, maxConnected
 		FailureDetails:                 raw.FailureDetails,
 		FailureEvents:                  raw.FailureEvents,
 		CommandEvents:                  raw.CommandEvents,
+		DeviceTypeTotals:               raw.DeviceTypeTotals,
+		UserActionTotals:               raw.UserActionTotals,
+		UsageWindowTotals:              raw.UsageWindowTotals,
 		StageDiagnostics:               liveStageDiagnostics(raw.StageDiagnostics),
 	}
 }
@@ -2816,7 +2826,7 @@ func latestHomeBindArtifact(pattern string, brandLower string) string {
 				found[item.DeviceType] = true
 			}
 		}
-		if found["light"] && found["air_conditioner"] && found["smart_meter"] {
+		if containsAllHomeDeviceTypes(found) {
 			return path
 		}
 	}
@@ -2824,6 +2834,15 @@ func latestHomeBindArtifact(pattern string, brandLower string) string {
 		return ""
 	}
 	return matches[0]
+}
+
+func containsAllHomeDeviceTypes(found map[string]bool) bool {
+	for _, typ := range []string{"light", "switch", "smart_plug", "air_conditioner", "environment_sensor", "security_sensor", "smart_meter", "camera_status", "door_lock", "appliance", "gateway"} {
+		if !found[typ] {
+			return false
+		}
+	}
+	return true
 }
 
 func sortArtifactPathsNewestFirst(paths []string) {
@@ -2874,7 +2893,7 @@ func artifactFilenameTimestamp(path string) string {
 
 func homeDeviceType(value string) bool {
 	switch value {
-	case "light", "air_conditioner", "smart_meter":
+	case "light", "switch", "smart_plug", "air_conditioner", "environment_sensor", "security_sensor", "smart_meter", "camera_status", "door_lock", "appliance", "gateway":
 		return true
 	default:
 		return false
