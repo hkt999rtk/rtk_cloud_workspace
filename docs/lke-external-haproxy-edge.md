@@ -1,6 +1,8 @@
 # LKE External HAProxy Edge
 
-Status: design contract for the next deployer implementation PR.
+Status: implemented for LKE staging in PR #181. This document is the current
+deployment contract plus the failover-ready shape for future multi-VM edge
+work.
 
 The public LKE edge target is an external HAProxy VM, not a Linode
 NodeBalancer. HAProxy runs directly on the VM OS as a systemd service and does
@@ -17,8 +19,8 @@ Internet
   -> Kubernetes pod
 ```
 
-First implementation supports one HAProxy VM operationally. The config and
-artifacts must still use array-shaped data for edge VMs so active-active DNS,
+The current implementation supports one HAProxy VM operationally. The config
+and artifacts use array-shaped data for edge VMs so active-active DNS,
 active-standby failover, or external DNS health checks can be added without
 changing the public contract.
 
@@ -30,8 +32,9 @@ changing the public contract.
   the target public edge path.
 - Public ports for v1 are `443/TCP` and `8883/TCP`.
 - DNS A records point at HAProxy edge VM public IPs.
-- `443/TCP` forwards to the ingress-nginx NodePort.
-- `8883/TCP` forwards to the EMQX/MQTT NodePort.
+- `443/TCP` forwards to the ingress-nginx NodePort. Staging default:
+  `30443`.
+- `8883/TCP` forwards to the EMQX/MQTT NodePort. Staging default: `31883`.
 - PROXY protocol is off by default. Enable it only with
   `LKE_EDGE_HAPROXY_ENABLE_PROXY_PROTOCOL=true` after the Kubernetes backend is
   explicitly configured to accept it.
@@ -66,10 +69,29 @@ Default high-concurrency settings:
 Validate every update with `haproxy -c -f /etc/haproxy/haproxy.cfg` before
 graceful reload. HAProxy stats and exporter ports must not be public.
 
+## Implemented Staging State
+
+The live staging deployment validated on 2026-06-18 uses:
+
+- HAProxy edge VM label: `video-cloud-staging-edge-haproxy-01`
+- HAProxy edge VM public IP: `172.232.190.230`
+- HAProxy edge VM private IP: `192.168.136.46`
+- ingress-nginx Service: `NodePort` `443:30443/TCP`
+- MQTT public Service: `NodePort` `8883:31883/TCP`
+- DNS A records for staging public hostnames point to the HAProxy edge VM.
+- Full `scripts/run-staging-e2e.sh --confirm video-cloud-staging` passed with
+  the default `10` users and `100` devices acceptance profile.
+
+The live report for that run is:
+
+```text
+cloud_env/staging/lke/artifacts/staging-e2e/20260618T085249Z/TEST_REPORT.md
+```
+
 ## Artifacts
 
-The deployer implementation should write these redacted artifacts under the
-environment artifact directory:
+The deployer writes these redacted artifacts under the environment artifact
+directory:
 
 - `edge-haproxy/edge-vms.json`
 - `edge-haproxy/upstreams.json`
@@ -78,8 +100,8 @@ environment artifact directory:
 - `edge-haproxy/validation.json`
 
 `edge-vms.json` uses `edge_vms: []` even when there is only one VM. DNS update
-logic should accept multiple edge VM public IPs, but v1 writes one A record
-target because failover automation is intentionally deferred.
+logic accepts the multi-VM shape, but v1 writes one A record target because
+failover automation is intentionally deferred.
 
 ## Security
 
@@ -94,18 +116,22 @@ target because failover automation is intentionally deferred.
 
 ## Validation
 
-Provisioning validation must record:
+Provisioning validation records or should be checked with:
 
 - `haproxy -vv`
 - `haproxy -c -f /etc/haproxy/haproxy.cfg`
 - `systemctl status haproxy`
-- effective `ulimit -n`
+- systemd `LimitNOFILE` for `haproxy.service`
 - effective sysctl values
 - `ss -s`
 - HAProxy current sessions and max sessions
 - HAProxy process RSS and file descriptor usage
 - HTTPS `/healthz` or `/version` smoke through HAProxy
 - MQTTS smoke through HAProxy
+
+For the validated staging deployment, `haproxy -c` returned valid config,
+`systemctl is-active haproxy` returned `active`, systemd reported
+`LimitNOFILE=1048576`, and HAProxy listened on public `443` and `8883`.
 
 Load testing should start with `maxconn 200000` and measure memory, file
 descriptors, CPU, socket summary, and connection saturation before changing the

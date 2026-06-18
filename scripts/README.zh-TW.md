@@ -415,12 +415,11 @@ go run ./scripts/go/rtk-cloud -- provision-k8s \
 
 ### `go run ./scripts/go/rtk-cloud -- provision --dns`
 
-LKE public edge 目標 contract 是 external HAProxy VM，不再使用 Linode
-NodeBalancer。本文件先固定這個 contract；後續 deployer 會把
-`--dns` / `staging-provision` 實作改成同一個路徑。目標流程是：
+LKE public edge 目前已實作為 external HAProxy VM，不再使用 Linode
+NodeBalancer。`--dns` / `staging-provision` 都走同一條 HAProxy edge 路徑：
 
 1. 用 Helm 安裝或更新 `ingress-nginx` 到 `<stack>-ingress` namespace。
-2. ingress-nginx controller service 使用 `NodePort`，不是 `LoadBalancer`。
+2. ingress-nginx controller service 使用 `NodePort`，不是 `LoadBalancer`；目前 HTTPS NodePort 預設為 `30443`。
 3. 透過 certbot manual DNS-01 hook 與 GoDaddy TXT record 簽一張 staging multi-SAN certificate，寫入 Kubernetes TLS secret `video-cloud-staging-public-tls`。
 4. 建立 ingress namespace 內的 ExternalName bridge services，讓 Ingress 合法轉到各 namespace 的 internal `ClusterIP` services。
 5. 建立 HTTPS Ingress rules：
@@ -432,7 +431,7 @@ NodeBalancer。本文件先固定這個 contract；後續 deployer 會把
    - `frontend.video-cloud-staging.realtekconnect.com` -> `frontend`
 6. provision 或更新 host-installed HAProxy edge VM；HAProxy 用 TCP mode 將 public `443/TCP` forward 到 ingress-nginx NodePort，將 `8883/TCP` forward 到 EMQX/MQTT NodePort。
 7. GoDaddy A records 指向 HAProxy edge VM public IP，不等待 NodeBalancer IP。
-8. MQTT public exposure 使用 `NodePort`，不是 `LoadBalancer`。
+8. MQTT public exposure 使用 `NodePort`，不是 `LoadBalancer`；目前 MQTTS NodePort 預設為 `31883`。
 9. 套用 default-deny ingress NetworkPolicy 與必要 allow rules。
 
 必要輸入：
@@ -442,12 +441,13 @@ NodeBalancer。本文件先固定這個 contract；後續 deployer 會把
 - `certbot` CLI，或用 `RTK_CLOUD_CERTBOT` 指到指定 binary。
 - `helm` 與 `kubectl` 可操作目標 LKE cluster。
 - `LKE_PUBLIC_EDGE_MODE=external-haproxy`，這是唯一支援的 public edge mode。
-- HAProxy edge VM operator inputs，包含 VM label/region/type、SSH key、operator CIDR，以及 `LKE_EDGE_HAPROXY_MAXCONN`。`maxconn` 預設從 `200000` 開始，loading test 時再依 memory/FD/CPU 使用量調整。
+- HAProxy edge VM operator inputs，包含 VM label/region/type、SSH key，以及 `LKE_EDGE_HAPROXY_MAXCONN`。`maxconn` 預設從 `200000` 開始，loading test 時再依 memory/FD/CPU 使用量調整。
 
 常用驗證：
 
 ```sh
 kubectl -n video-cloud-staging-ingress get svc ingress-nginx-controller
+kubectl -n video-cloud-staging-video-cloud get svc mqtt-public
 kubectl get ingress -A
 dig +short A video-cloud-staging.realtekconnect.com @ns23.domaincontrol.com
 nc -vz video-cloud-staging.realtekconnect.com 443
@@ -462,7 +462,9 @@ TCP passthrough；TLS/mTLS/SNI/HTTP routing 留在 K8s 內的 ingress-nginx /
 EMQX / service pod。詳細 design contract 見
 `docs/lke-external-haproxy-edge.md`。
 
-MQTT、TURN、Postgres、OpenBao、Prometheus 不會因 `--dns` 對外公開；MQTT/TURN 需要另行設計 TCP/UDP exposure。
+TURN、Postgres、OpenBao、Prometheus 不會因 `--dns` 對外公開。MQTT
+v1 只公開 MQTTS `8883/TCP`，經 HAProxy TCP passthrough 到 EMQX/MQTT
+NodePort；TURN 仍需要另行設計 TCP/UDP exposure。
 Grafana 也不會因 `--dns` 對外公開；Platform 管理員從 Cloud Admin iframe
 入口使用，operator debug 可用：
 
@@ -482,8 +484,10 @@ Kubeconfig 來源順序：
 
 Low-level K8s reset compatibility helper。正式 operator 入口請使用
 `scripts/reset-staging-k8s.sh` / `rtk-cloud staging-reset-k8s`。`remove-k8s`
-只有在 `CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET=1` 且傳 `--yes` 時才會刪除
-staging namespaces；`--purge-storage` 會先刪 namespace 內 PVC，再刪 namespace。
+只有在 `CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET=1` 且傳 `--yes` 時才會清除
+staging K8s resources。預設會刪除 workload/service/config/secret/policy
+等 runtime resources，但保留 namespace 與 PVC/PV/provider storage；
+`--purge-storage` 才會先刪 namespace 內 PVC，再刪 namespace。
 
 ```sh
 go run ./scripts/go/rtk-cloud -- remove-k8s --env-root cloud_env/staging --yes
@@ -526,8 +530,9 @@ scripts/run-staging-acceptance.sh --confirm video-cloud-staging
 ```
 
 `staging-reset-k8s` 是 destructive phase，必須 `--confirm <CLOUD_STACK_NAME>`。
-預設只清 staging K8s resources，不主動 purge storage；只有明確加
-`--purge-storage` 才會清 PVC/PV/provider volume 類資料層。`staging-provision`
+預設會清 staging K8s runtime resources 並讓後續 provision 重建 pods，
+但不主動 purge storage；只有明確加 `--purge-storage` 才會清
+PVC/PV/provider volume 類資料層。`staging-provision`
 負責新安裝或停機升級：解析 image、套用 manifests、DNS/artifacts、rollout
 readiness。`staging-acceptance` 不 reset、不 deploy，只驗證已部署好的 stack。
 
@@ -553,10 +558,15 @@ override 包含 `LKE_POSTGRES_REQUEST_CPU`、`LKE_POSTGRES_REQUEST_MEMORY`、
 `LKE_VIDEO_CLOUD_API_REQUEST_MEMORY`、`LKE_VIDEO_CLOUD_API_LIMIT_MEMORY`、
 `LKE_INGRESS_REPLICAS` 與 `LKE_INGRESS_REQUEST_CPU`。
 
-`run-staging-e2e.sh --confirm` 預設會先 reset K8s，因此也預設重建
-users/devices/bind artifacts，不重用舊本機 artifact；這可避免 fresh database
-搭配舊 bind artifact 造成 validation 失敗。只有在明確加 `--skip-remove` 或
-手動傳 `--resume` 時才會重用既有 artifact。
+`run-staging-e2e.sh --confirm` 預設會先 reset K8s runtime resources，因此也
+預設重建 users/devices/bind artifacts，不重用舊本機 artifact；這可避免
+fresh deployment 搭配舊 bind artifact 造成 validation 失敗。只有在明確加
+`--skip-remove` 或手動傳 `--resume` 時才會重用既有 artifact。
+
+目前 live staging 驗證使用預設 acceptance 規模：`10` 個 users、`100` 個
+devices，device mix 為 `camera=40`、`light=25`、`air_conditioner=20`、
+`smart_meter=15`。最近一次完整驗證通過的 report 路徑為
+`cloud_env/staging/lke/artifacts/staging-e2e/20260618T085249Z/TEST_REPORT.md`。
 
 預設是 safe plan，不會 reset K8s、不會呼叫 API：
 
