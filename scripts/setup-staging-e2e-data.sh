@@ -10,8 +10,8 @@ USER_COUNT="10"
 DEVICE_COUNT="100"
 DEVICE_MIX="camera=40,light=25,air_conditioner=20,smart_meter=15"
 DEVICE_PREFIX="load-device"
-USER_CONCURRENCY="16"
-DEVICE_CONCURRENCY="16"
+USER_CONCURRENCY="64"
+DEVICE_CONCURRENCY="64"
 BIND_CONCURRENCY="64"
 PLAN=0
 OUT_DIR=""
@@ -47,8 +47,8 @@ Options:
   --device-count N                Devices to create and bind. Default: 100.
   --device-mix MIX                Device mix for generate-load-devices.
   --device-prefix PREFIX          Device prefix. Default: load-device.
-  --user-concurrency N            Concurrent user creation workers. Default: 16.
-  --device-concurrency N          Concurrent device generation workers. Default: 16.
+  --user-concurrency N            Concurrent user creation workers. Default: 64.
+  --device-concurrency N          Concurrent device generation workers. Default: 64.
   --bind-concurrency N            Concurrent device binding workers. Default: 64.
   --out-dir PATH                  Output directory for logs and summary.
   --quiet                         Suppress periodic progress lines.
