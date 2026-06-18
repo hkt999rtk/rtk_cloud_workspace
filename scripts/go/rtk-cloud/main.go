@@ -3172,7 +3172,6 @@ func runE2ECommandWithProgress(cmd *exec.Cmd, name, logPath string, start time.T
 	interval := e2eProgressInterval()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	lastPrinted := ""
 	for {
 		select {
 		case err := <-done:
@@ -3180,10 +3179,9 @@ func runE2ECommandWithProgress(cmd *exec.Cmd, name, logPath string, start time.T
 		case <-ticker.C:
 			elapsed := time.Since(start)
 			line := latestProgressLogLine(logPath, elapsed)
-			if line == "" || line == lastPrinted {
+			if line == "" {
 				continue
 			}
-			lastPrinted = line
 			fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] progress: %s elapsed=%s%s latest=%q log=%s\n", name, formatDurationSeconds(int64(elapsed.Seconds())), e2eProgressMetrics(line, elapsed), line, logPath)
 		}
 	}
