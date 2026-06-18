@@ -1,37 +1,33 @@
 # scripts 目錄說明
 
-這個目錄放的是 workspace 層級的操作腳本，主要用途包含文件檢查、部署證據收集、Linode LKE staging provision/deploy、brand cloud 建立，以及 GitHub Actions self-hosted runner 管理。
+這個目錄放的是 workspace 層級的操作腳本，主要用途包含文件檢查、部署證據收集、Linode staging provision/deploy、brand cloud 建立，以及 GitHub Actions self-hosted runner 管理。
 
 除非特別註明，以下指令都建議從 workspace 根目錄執行。
 
 ## Cloud Environment Root
 
-Environment root 採 `cloud_env/<env>/<provider>` 形式。staging runtime 主路徑是
-本機、git ignored 的 `cloud_env/staging/lke`；`cloud_env/staging/linode` 只保留
-legacy VM reference 與少數相容資料。操作時可用 `--env-root cloud_env/staging`
-指定 staging environment directory；script 會依 `CLOUD_PROVIDER`、
-`RTK_CLOUD_STAGING_PROVIDER` 或 provider stack file 自動解析到
-`cloud_env/staging/lke` 或 legacy `cloud_env/staging/linode`。這個目錄集中保存
-operator env、topology、service env、state、keys/certificates、device fixtures、
-artifacts 與 backups。
+Environment root 採 `cloud_env/<env>/<provider>` 形式。staging scripts
+預設使用本機、git ignored 的 `cloud_env/staging/linode` 作為實際 Linode
+environment root。操作時可用 `--env-root cloud_env/staging` 指定 staging
+environment directory；script 會依 `CLOUD_PROVIDER`、`RTK_CLOUD_STAGING_PROVIDER`
+或 provider stack file 自動解析到 `cloud_env/staging/linode` 或
+`cloud_env/staging/lke`。這個目錄集中保存 operator env、topology、service
+env、state、keys/certificates、device fixtures、artifacts 與 backups。
 
 目前 workspace provision routing 支援 `CLOUD_PROVIDER=linode` 與
-`CLOUD_PROVIDER=lke`，但 staging runtime 應使用 `lke`。Linode provider 只作為
-legacy VM dispatch/reference。LKE provider 會先使用 Linode LKE API 取得
-kubeconfig；若沒有 `KUBECONFIG` / current context，會依 `LKE_CLUSTER_ID`、
-`state/lke.env` 或 cluster label `<CLOUD_STACK_NAME>-lke` 尋找既有 cluster，
-`provision --apply` 找不到時會建立 LKE cluster，再把 kubeconfig 寫到
-git-ignored `<env-root>/state/lke-kubeconfig.yaml`。之後才走 kubectl
-namespace/apply/delete/rollout path。
-
-LKE `deploy` 需要 container image。Service images 由各 service repo 的 release
-workflow 發布到 private GHCR；workspace 只解析 pinned submodule commit、驗證
-對應 image 是否存在，並輸出 `LKE_*_IMAGE` mapping。`scripts/run-staging-e2e.sh`
-在 `CLOUD_PROVIDER=lke` 且缺少 service image env 時會自動執行
-`lke-resolve-images`，產出 `.artifacts/lke-images/<timestamp>/`，source 其中的
-`lke-image-env.sh` 後再 provision/deploy/E2E。若 operator 已明確提供全部
-`LKE_VIDEO_CLOUD_IMAGE`、`LKE_ACCOUNT_MANAGER_IMAGE`、`LKE_CLOUD_ADMIN_IMAGE`、
-`LKE_FRONTEND_IMAGE`，script 會尊重手動 override，不重新 resolve。AWS、GCP 和 Azure 仍是
+`CLOUD_PROVIDER=lke`。Linode provider 仍 dispatch 到 Video Cloud、Account
+Manager、Cloud Admin、Cloud Logger 的 VM scripts。LKE provider 會先使用
+Linode LKE API 取得 kubeconfig；若沒有 `KUBECONFIG` / current context，會依
+`LKE_CLUSTER_ID`、`state/lke.env` 或 cluster label `<CLOUD_STACK_NAME>-lke`
+尋找既有 cluster，`provision --apply` 找不到時會建立 LKE cluster，再把
+kubeconfig 寫到 git-ignored `<env-root>/state/lke-kubeconfig.yaml`。之後才走
+kubectl namespace/apply/delete/rollout path。`deploy` 需要 container image；
+可以明確提供 `LKE_POSTGRES_IMAGE`、`LKE_VIDEO_CLOUD_IMAGE`、
+`LKE_ACCOUNT_MANAGER_IMAGE`、`LKE_CLOUD_ADMIN_IMAGE`、`LKE_FRONTEND_IMAGE`、
+`LKE_CLOUD_LOGGER_IMAGE`。
+Service images 由各 service repo 的 release workflow 發布到 GHCR；
+workspace 只解析 pinned submodule commit、驗證對應 image 是否存在，並輸出
+後續 deploy/e2e 需要的 `LKE_*_IMAGE` mapping。AWS、GCP 和 Azure 仍是
 後續 provider abstraction 目標，現階段應 fail fast，不可呼叫 live API、
 SSH、DNS 或寫 state。
 
@@ -41,9 +37,8 @@ manifest workflow。PR 會先跑不需要 secret 的 tooling validation；
 規則解析各 service repo 應發布的 GHCR image、驗證 image manifest 存在，
 並上傳 `lke-image-manifest.json` 與 `lke-image-env.sh`。workflow 需要 repo
 secret `CI_RUNNER_GITHUB_WORK_KEY` 來讀取 `git@github.com-work:` private
-submodules，並用 `GHCR_PULL_USERNAME` / `GHCR_PULL_TOKEN` 登入 GHCR 驗證
-private package manifest；產出的 `lke-image-env.sh` 可用來重現或手動 override
-`run-staging-e2e.sh` / `rtk-cloud provision --deploy` 使用的 `LKE_*_IMAGE`。
+submodules；產出的 `lke-image-env.sh` 可用來設定後續
+`run-staging-e2e.sh` / `rtk-cloud provision --deploy` 需要的 `LKE_*_IMAGE`。
 
 LKE Prometheus targets 由 workspace Go deployer 的 workload metrics registry
 產生，不直接手寫 Prometheus `scrape_configs`。新增 LKE workload 或 exporter
@@ -77,34 +72,18 @@ go run ./scripts/go/rtk-cloud -- lke-resolve-images \
 ```
 
 輸出的 manifest 會包含 `LKE_POSTGRES_IMAGE`、`LKE_VIDEO_CLOUD_IMAGE`、
-`LKE_ACCOUNT_MANAGER_IMAGE`、`LKE_CLOUD_ADMIN_IMAGE`、`LKE_FRONTEND_IMAGE`
-mapping。一般 LKE staging E2E 不需要手動執行此 command；`scripts/run-staging-e2e.sh`
-會在缺少 service image env 時自動執行。若要 debug 或固定一組 image，可手動
-source 產出的 `lke-image-env.sh` 再跑 `rtk-cloud provision --deploy`。
-
-GHCR private service images 需要 centralized read-only deploy token：
-
-- `GHCR_PULL_USERNAME`：dedicated machine user，例如 `rtk-ghcr-deploy-bot`。
-- `GHCR_PULL_TOKEN`：classic PAT，只給 `read:packages` 與必要 package access。
-- `LKE_IMAGE_PULL_SECRET_NAME`：Kubernetes pull secret 名稱，預設 `ghcr-pull`。
-
-`CI_RUNNER_GITHUB_WORK_KEY` 只用於 checkout private submodules，不用於 GHCR
-image pull。`provision --deploy` 偵測到 selected service image 使用 `ghcr.io/`
-時會要求上述 GHCR credentials，並在每個 private service namespace 建立
-`kubernetes.io/dockerconfigjson` pull secret。
-
-本機執行 `lke-resolve-images` 會透過 Docker 檢查 GHCR manifest；若 package 是
-private，請先用同一組 read-only token 登入 GHCR：
-
-```sh
-printf '%s' "$GHCR_PULL_TOKEN" | docker login ghcr.io -u "$GHCR_PULL_USERNAME" --password-stdin
-```
+`LKE_ACCOUNT_MANAGER_IMAGE`、`LKE_CLOUD_ADMIN_IMAGE`、`LKE_FRONTEND_IMAGE`、
+`LKE_CLOUD_LOGGER_IMAGE` mapping。`scripts/run-staging-e2e.sh` 在 LKE provider
+且缺少任一 `LKE_*_IMAGE` 時會自動執行 image resolve，寫入
+`<env-root>/artifacts/lke-images/<timestamp>/`，並同步 latest manifest 到
+`<env-root>/artifacts/lke-images/lke-image-manifest.json`。手動 export
+`LKE_*_IMAGE` 只作為 override。
 
 ### `go run ./scripts/go/rtk-cloud -- lke-build-images`
 
 Legacy helper。只保留 PostgreSQL staging image build/push 能力；service
-images 不再由 workspace build。正常 LKE staging flow 由 service repo CI 發布
-GHCR image，再由 `run-staging-e2e.sh` 自動呼叫 `lke-resolve-images` 取得。
+images 不再由 workspace build。正常 LKE staging flow 應使用
+`lke-resolve-images` 取得各 service repo 已發布的 GHCR images。
 
 ## Runtime 依賴政策
 
@@ -364,7 +343,9 @@ Grafana。Grafana 常用環境變數：
 
 - `LKE_GRAFANA_IMAGE`：Grafana image，預設 `grafana/grafana:13.0.2`。
 - `LKE_GRAFANA_ADMIN_PASSWORD`：Grafana admin 密碼；未設定時由 runtime secret material 產生。
-- `LKE_GRAFANA_STORAGE`：Grafana PVC 大小，預設 `5Gi`。
+- `LKE_GRAFANA_PERSISTENCE=true`：啟用 Grafana PVC。預設使用 `emptyDir`，
+  staging acceptance 不消耗 Linode block volume quota。
+- `LKE_GRAFANA_STORAGE`：啟用 persistence 時的 Grafana PVC 大小，預設 `5Gi`。
 - `CLOUD_ADMIN_GRAFANA_BASE_URL`：Cloud Admin 連到 Grafana 的 cluster-internal base URL，例如 `http://video-cloud-grafana.video-cloud-staging-observability.svc.cluster.local:3000`。
 
 Grafana 第一版 dashboard 會優先呈現平台管理者關心的穩定度與流量：
@@ -455,7 +436,32 @@ go run ./scripts/go/rtk-cloud -- remove-k8s --env-root cloud_env/staging --yes
 
 ### `go run ./scripts/go/rtk-cloud -- staging-e2e-test`
 
-Linode K8s staging 一站式整合測試編排腳本。它把 K8s reset、K8s rollout readiness、K8s service query/port-forward、staging E2E data setup、home MQTT simulation，以及 persisted MQTT runtime log verification 串成單一流程，最後輸出 sanitized `summary.json` 與 `TEST_REPORT.md`。建立 RTK brand cloud、建立測試 users、產生並 factory-enroll devices、device bind/provision、bulk bind validation 已拆到 `scripts/setup-staging-e2e-data.sh` / `rtk-cloud staging-e2e-data-setup`，完整 E2E 會呼叫這個獨立步驟。因為完整 E2E 會先 reset staging，data setup 會以 `--no-resume` 重建 users/bind artifacts；若要針對單一步驟 debug resume，請改用 `./stg.sh e2e-data --resume` 或 `./stg.sh e2e-data --from-step ...`。
+Linode K8s staging 一站式整合測試編排腳本。它把 K8s reset、K8s rollout readiness、K8s service query/port-forward、staging E2E data setup、home MQTT simulation，以及 persisted MQTT runtime log verification 串成單一流程，最後輸出 sanitized `summary.json` 與 `TEST_REPORT.md`。建立 RTK brand cloud、建立測試 users、產生並 factory-enroll devices、device bind/provision、bulk bind validation 已拆到 `scripts/setup-staging-e2e-data.sh` / `rtk-cloud staging-e2e-data-setup`，完整 E2E 會呼叫這個獨立步驟。
+
+正式 operator 入口是 `scripts/run-staging-e2e.sh`。這個 shell 檔只是一層
+POSIX wrapper，實際流程在 Go command `rtk-cloud run-staging-e2e`：它會解析
+provider/stack/env-root，在 LKE provider 缺少 image env 時自動執行
+`lke-resolve-images`，再呼叫 `staging-e2e-test`。因此一般 staging acceptance
+可直接執行：
+
+```sh
+scripts/run-staging-e2e.sh --plan
+scripts/run-staging-e2e.sh --confirm video-cloud-staging
+```
+
+LKE acceptance profile 預設以單節點可排程為優先：`mqtt`、
+`account-manager`、`video-cloud-api` replicas 都是 `1`。容量測試或
+production-like smoke 可用 `LKE_MQTT_REPLICAS`、
+`LKE_ACCOUNT_MANAGER_REPLICAS`、`LKE_VIDEO_CLOUD_REPLICAS` 拉高；常用資源
+override 包含 `LKE_POSTGRES_REQUEST_CPU`、`LKE_POSTGRES_REQUEST_MEMORY`、
+`LKE_POSTGRES_LIMIT_MEMORY`、`LKE_VIDEO_CLOUD_API_REQUEST_CPU`、
+`LKE_VIDEO_CLOUD_API_REQUEST_MEMORY`、`LKE_VIDEO_CLOUD_API_LIMIT_MEMORY`、
+`LKE_INGRESS_REPLICAS` 與 `LKE_INGRESS_REQUEST_CPU`。
+
+`run-staging-e2e.sh --confirm` 預設會先 reset K8s，因此也預設重建
+users/devices/bind artifacts，不重用舊本機 artifact；這可避免 fresh database
+搭配舊 bind artifact 造成 validation 失敗。只有在明確加 `--skip-remove` 或
+手動傳 `--resume` 時才會重用既有 artifact。
 
 預設是 safe plan，不會 reset K8s、不會呼叫 API：
 
@@ -466,33 +472,10 @@ go run ./scripts/go/rtk-cloud -- staging-e2e-test --env-root cloud_env/staging -
 真正執行完整 staging reset + E2E 需要顯式 `--run`，且 `--confirm` 必須等於 env root 內的 `CLOUD_STACK_NAME`：
 
 ```sh
-set -a; . ~/.env; set +a
-export CLOUD_PROVIDER=lke
-export LKE_INGRESS_REPLICAS=1
-export LKE_MQTT_REPLICAS=3
-export LKE_MQTT_REQUEST_CPU=250m
-export LKE_MQTT_REQUEST_MEMORY=512Mi
-export LKE_MQTT_LIMIT_MEMORY=1Gi
-export LKE_POSTGRES_REQUEST_CPU=500m
-export LKE_POSTGRES_REQUEST_MEMORY=512Mi
-export LKE_POSTGRES_LIMIT_MEMORY=1Gi
-export LKE_ACCOUNT_MANAGER_REQUEST_CPU=100m
-export LKE_ACCOUNT_MANAGER_REQUEST_MEMORY=192Mi
-export LKE_ACCOUNT_MANAGER_LIMIT_MEMORY=512Mi
-export LKE_VIDEO_CLOUD_API_REQUEST_CPU=250m
-export LKE_VIDEO_CLOUD_API_REQUEST_MEMORY=384Mi
-export LKE_VIDEO_CLOUD_API_LIMIT_MEMORY=1Gi
-
-scripts/run-staging-e2e.sh --confirm video-cloud-staging
-```
-
-若要直接呼叫 Go orchestrator，等價流程是：
-
-```sh
 go run ./scripts/go/rtk-cloud -- staging-e2e-test \
   --env-root cloud_env/staging \
   --run \
-  --confirm video-cloud-staging \
+  --confirm video-cloud-stg-0529 \
   --brandname RTK \
   --user-count 10 \
   --device-count 100 \
@@ -507,10 +490,6 @@ go run ./scripts/go/rtk-cloud -- staging-e2e-test \
 - `--skip-remove`：不先執行 `rtk-cloud remove-k8s`，直接走 `rtk-cloud provision-k8s` 與後續流程。
 - `--out-dir PATH`：指定報告輸出目錄；預設在 `<env-root>/artifacts/staging-e2e/<timestamp>/`。
 - `--skip-mqtt-probe`：略過 live MQTT broker probe；MQTT flow 仍會產生 E2E artifact 供 log verification 使用。
-
-目前 3-node small LKE staging profile 建議保留上述 request overrides；它們只調整
-Kubernetes scheduler requests/limits，不改 image tag 或 service config。若使用較大
-node pool，可逐步提高 request 或移除 override。
 
 輸出：
 

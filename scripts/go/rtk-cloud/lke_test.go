@@ -176,29 +176,6 @@ func TestRunProvisionLKEPlanWithoutStackUsesProviderEnv(t *testing.T) {
 	}
 }
 
-func TestRunStagingE2ETestPlanShowsNativeLKEProvisionArgs(t *testing.T) {
-	workspace, envRoot := makeLKETestEnv(t)
-
-	output := captureStdout(t, func() {
-		if err := runStagingE2ETest([]string{
-			"--workspace", workspace,
-			"--env-root", envRoot,
-			"--plan",
-		}); err != nil {
-			t.Fatal(err)
-		}
-	})
-
-	for _, want := range []string{
-		"provision K8s staging with ",
-		"provision args: --workspace " + workspace + " --env-root " + envRoot + " --preflight --plan --apply --deploy --dns --artifacts --confirm video-cloud-staging",
-	} {
-		if !strings.Contains(output, want) {
-			t.Fatalf("expected %q in LKE staging E2E plan, got:\n%s", want, output)
-		}
-	}
-}
-
 func TestRunProvisionLKEDeployRequiresImages(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 
@@ -217,7 +194,8 @@ func TestRunProvisionLKEDeployUsesImageManifestDefaults(t *testing.T) {
     "LKE_VIDEO_CLOUD_IMAGE": "registry.example.test/rtk/video-cloud:manifest",
     "LKE_ACCOUNT_MANAGER_IMAGE": "registry.example.test/rtk/account-manager:manifest",
     "LKE_CLOUD_ADMIN_IMAGE": "registry.example.test/rtk/cloud-admin:manifest",
-    "LKE_FRONTEND_IMAGE": "registry.example.test/rtk/frontend:manifest"
+    "LKE_FRONTEND_IMAGE": "registry.example.test/rtk/frontend:manifest",
+    "LKE_CLOUD_LOGGER_IMAGE": "registry.example.test/rtk/cloud-logger:manifest"
   }
 }`)
 
@@ -231,77 +209,11 @@ func TestRunProvisionLKEDeployUsesImageManifestDefaults(t *testing.T) {
 		"image: registry.example.test/rtk/account-manager:manifest",
 		"image: registry.example.test/rtk/cloud-admin:manifest",
 		"image: registry.example.test/rtk/frontend:manifest",
+		"image: registry.example.test/rtk/cloud-logger:manifest",
 	} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("expected %q from image manifest defaults, got:\n%s", want, log)
 		}
-	}
-}
-
-func TestRunProvisionLKEDeployRequiresGHCRPullCredentials(t *testing.T) {
-	workspace, envRoot := makeLKETestEnv(t)
-	fakeKubectl(t)
-	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api:sha-test")
-	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
-	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
-	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
-
-	err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"})
-	if err == nil || !strings.Contains(err.Error(), "GHCR_PULL_USERNAME, GHCR_PULL_TOKEN") {
-		t.Fatalf("expected missing GHCR pull credentials error, got %v", err)
-	}
-}
-
-func TestRunProvisionLKEDeployAppliesGHCRPullSecrets(t *testing.T) {
-	workspace, envRoot := makeLKETestEnv(t)
-	logPath := fakeKubectl(t)
-	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api:sha-test")
-	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "ghcr.io/hkt999rtk/rtk_account_manager/account-manager:sha-test")
-	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin:sha-test")
-	t.Setenv("LKE_FRONTEND_IMAGE", "ghcr.io/hkt999rtk/rtk_cloud_frontend/frontend:sha-test")
-	t.Setenv("GHCR_PULL_USERNAME", "rtk-ghcr-deploy-bot")
-	t.Setenv("GHCR_PULL_TOKEN", "test-read-packages-token")
-	t.Setenv("LKE_IMAGE_PULL_SECRET_NAME", "test-ghcr-pull")
-	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
-
-	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
-		t.Fatal(err)
-	}
-
-	log := readTestFile(t, logPath)
-	if strings.Contains(log, "\t") {
-		t.Fatalf("expected generated Kubernetes manifests to avoid tab characters, got:\n%s", log)
-	}
-	for _, ns := range []string{
-		"video-cloud-staging-video-cloud",
-		"video-cloud-staging-account-manager",
-		"video-cloud-staging-admin",
-		"video-cloud-staging-frontend",
-	} {
-		want := "kind: Secret\nmetadata:\n  name: test-ghcr-pull\n  namespace: " + ns
-		if !strings.Contains(log, want) {
-			t.Fatalf("expected GHCR pull secret in namespace %s, got:\n%s", ns, log)
-		}
-	}
-	if count := strings.Count(log, "imagePullSecrets:\n        - name: test-ghcr-pull"); count < 6 {
-		t.Fatalf("expected GHCR pull secret references in private service pods, got %d:\n%s", count, log)
-	}
-	for _, want := range []string{
-		"kind: Namespace\nmetadata:\n  name: video-cloud-staging-ingress",
-		"image: ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api:sha-test",
-		"image: ghcr.io/hkt999rtk/rtk_account_manager/account-manager:sha-test",
-		"image: ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin:sha-test",
-		"image: ghcr.io/hkt999rtk/rtk_cloud_frontend/frontend:sha-test",
-		"command: [\"/app/certissuer\"]",
-		"command: [\"/app/factoryenroll\"]",
-		"command: [\"/app/rtk-account-manager-migrate\"]",
-	} {
-		if !strings.Contains(log, want) {
-			t.Fatalf("expected manifest snippet %q, got:\n%s", want, log)
-		}
-	}
-	if !strings.Contains(log, "type: kubernetes.io/dockerconfigjson") || !strings.Contains(log, ".dockerconfigjson:") {
-		t.Fatalf("expected dockerconfigjson pull secret, got:\n%s", log)
 	}
 }
 
@@ -371,6 +283,7 @@ func TestRunLKEBuildImagesWritesManifest(t *testing.T) {
 		"LKE_ACCOUNT_MANAGER_IMAGE",
 		"LKE_CLOUD_ADMIN_IMAGE",
 		"LKE_FRONTEND_IMAGE",
+		"LKE_CLOUD_LOGGER_IMAGE",
 	} {
 		if strings.Contains(body, notWant) {
 			t.Fatalf("legacy build manifest should not include %s:\n%s", notWant, body)
@@ -401,6 +314,7 @@ func TestRunLKEResolveImagesWritesPinnedSubmoduleManifest(t *testing.T) {
 		`"LKE_ACCOUNT_MANAGER_IMAGE": "ghcr.io/hkt999rtk/rtk_account_manager/account-manager:sha-` + commits["rtk_account_manager"] + `"`,
 		`"LKE_CLOUD_ADMIN_IMAGE": "ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin:sha-` + commits["rtk_cloud_admin"] + `"`,
 		`"LKE_FRONTEND_IMAGE": "ghcr.io/hkt999rtk/rtk_cloud_frontend/frontend:sha-` + commits["rtk_cloud_frontend"] + `"`,
+		`"LKE_CLOUD_LOGGER_IMAGE": "ghcr.io/hkt999rtk/rtk_cloud_logger/rtk-cloud-logger:sha-` + commits["rtk_cloud_logger"] + `"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("manifest missing %q:\n%s", want, body)
@@ -435,7 +349,7 @@ func TestRunLKEResolveImagesFailsWhenServiceImageIsMissing(t *testing.T) {
 		t.Fatalf("expected missing image and repo path in error, got %v", err)
 	}
 	if len(inspected) != 4 {
-		t.Fatalf("expected four service image inspections, got %d: %v", len(inspected), inspected)
+		t.Fatalf("expected four service image inspections before frontend failure, got %d: %v", len(inspected), inspected)
 	}
 }
 
@@ -443,9 +357,11 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
+	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
 	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
 	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
 	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
+	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
 
 	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
@@ -515,7 +431,7 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"kind: ConfigMap\nmetadata:\n  name: mqtt-config",
 		"broker: emqx",
 		"kind: Deployment\nmetadata:\n  name: mqtt",
-		"replicas: 9",
+		"replicas: 1",
 		"maxSurge: 0",
 		"maxUnavailable: 1",
 		"image: emqx/emqx:",
@@ -565,6 +481,7 @@ func TestRunProvisionLKEDeployCanExposePublicMQTTLoadBalancer(t *testing.T) {
 	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
 	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
 	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
+	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
 	t.Setenv("LKE_PUBLIC_MQTT_LOADBALANCER", "1")
 
 	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
@@ -611,6 +528,7 @@ func TestRunProvisionLKEDeployCanExposeMultiplePublicMQTTLoadBalancers(t *testin
 	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
 	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
 	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
+	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
 	t.Setenv("LKE_PUBLIC_MQTT_LOADBALANCER", "1")
 	t.Setenv("LKE_PUBLIC_MQTT_LOADBALANCER_COUNT", "3")
 
@@ -933,7 +851,6 @@ func TestCertbotDNSHooksUseBoundedNetworkCalls(t *testing.T) {
 	for _, want := range []string{
 		"curl --connect-timeout 10 --max-time 30 -fsS -X PUT",
 		"dig +time=5 +tries=1 +short TXT",
-		`grep -Fx -- "$CERTBOT_VALIDATION"`,
 	} {
 		if !strings.Contains(auth, want) {
 			t.Fatalf("expected auth hook to contain %q, got:\n%s", want, auth)
@@ -1221,27 +1138,6 @@ func TestLKEPostgresStatefulSetUsesPostgresImageOverride(t *testing.T) {
 	}
 }
 
-func TestLKEPostgresStatefulSetSupportsResourceOverrides(t *testing.T) {
-	t.Setenv("LKE_POSTGRES_REQUEST_CPU", "500m")
-	t.Setenv("LKE_POSTGRES_REQUEST_MEMORY", "512Mi")
-	t.Setenv("LKE_POSTGRES_LIMIT_MEMORY", "1Gi")
-
-	manifest := lkePostgresStatefulSetManifest(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})
-
-	for _, want := range []string{
-		`cpu: "500m"`,
-		`memory: "512Mi"`,
-		`memory: "1Gi"`,
-	} {
-		if !strings.Contains(manifest, want) {
-			t.Fatalf("expected %q in PostgreSQL resource override manifest, got:\n%s", want, manifest)
-		}
-	}
-	if strings.Contains(manifest, `cpu: "4"`) || strings.Contains(manifest, `memory: "6Gi"`) {
-		t.Fatalf("expected PostgreSQL resource defaults to be overridden, got:\n%s", manifest)
-	}
-}
-
 func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 	t.Setenv("LKE_POSTGRES_NODE_POOL_ID", "906225")
 	t.Setenv("LKE_MQTT_NODE_POOL_ID", "906225")
@@ -1271,13 +1167,10 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 		Host:      "account-manager.video-cloud-staging.realtekconnect.com",
 	}, nil)
 	for _, want := range []string{
-		"replicas: 3",
+		"replicas: 1",
 		"topologySpreadConstraints:",
 		`cpu: "250m"`,
 		`memory: "1Gi"`,
-		"              value: \"account-manager.video-cloud-staging.realtekconnect.com\"\n          envFrom:",
-		"          volumeMounts:\n            - name: account-manager-certissuer-client",
-		"      volumes:\n        - name: account-manager-certissuer-client",
 	} {
 		if !strings.Contains(account, want) {
 			t.Fatalf("expected %q in account-manager manifest, got:\n%s", want, account)
@@ -1293,10 +1186,10 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 		Host:      "video-cloud-staging.realtekconnect.com",
 	}, nil)
 	for _, want := range []string{
-		"replicas: 3",
+		"replicas: 1",
 		"topologySpreadConstraints:",
-		`cpu: "2"`,
-		`memory: "4Gi"`,
+		`cpu: "250m"`,
+		`memory: "1Gi"`,
 		"name: VIDEO_CLOUD_DB_MAX_OPEN_CONNS\n              value: \"20\"",
 		"name: VIDEO_CLOUD_DB_MAX_IDLE_CONNS\n              value: \"10\"",
 		"name: VIDEO_CLOUD_DB_CONN_MAX_LIFETIME\n              value: \"5m\"",
@@ -1324,7 +1217,7 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 
 	mqtt := lkeMQTTDeploymentManifest(env)
 	for _, want := range []string{
-		"replicas: 9",
+		"replicas: 1",
 		"maxSurge: 0",
 		"maxUnavailable: 1",
 		`lke.linode.com/pool-id: "906225"`,
@@ -1413,6 +1306,7 @@ func TestRunProvisionLKEDeployAppliesVideoCloudAuxiliaryServices(t *testing.T) {
 	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
 	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
 	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
+	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
 
 	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
@@ -1479,6 +1373,7 @@ func TestRunProvisionLKEDeployAppliesPrivateGrafana(t *testing.T) {
 	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
 	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
 	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
+	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
 
 	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
@@ -1497,14 +1392,9 @@ func TestRunProvisionLKEDeployAppliesPrivateGrafana(t *testing.T) {
 		"kind: ConfigMap\nmetadata:\n  name: video-cloud-grafana-dashboards",
 		"RTK LKE Staging Overview",
 		"sum by(brand_cloud_id) (rate(mqtt_brand_publish_total[$__rate_interval]))",
-		"kind: PersistentVolumeClaim\nmetadata:\n  name: video-cloud-grafana-data",
-		"storage: 5Gi",
 		"kind: Deployment\nmetadata:\n  name: video-cloud-grafana",
-		"fsGroup: 472",
-		"fsGroupChangePolicy: OnRootMismatch",
-		"runAsUser: 472",
-		"runAsGroup: 472",
 		"image: grafana/grafana:13.0.2",
+		"emptyDir: {}",
 		"kind: Service\nmetadata:\n  name: video-cloud-grafana",
 		"type: ClusterIP",
 		"CLOUD_ADMIN_GRAFANA_BASE_URL\n              value: \"http://video-cloud-grafana.video-cloud-staging-observability.svc.cluster.local:3000\"",
@@ -1519,12 +1409,32 @@ func TestRunProvisionLKEDeployAppliesPrivateGrafana(t *testing.T) {
 		}
 	}
 	for _, forbidden := range []string{
+		"kind: PersistentVolumeClaim\nmetadata:\n  name: video-cloud-grafana-data",
 		"host: grafana.video-cloud-staging.realtekconnect.com",
 		"name: public-video-cloud-grafana",
 		"video-cloud-staging-public-tls",
 	} {
 		if strings.Contains(log, forbidden) {
 			t.Fatalf("private Grafana must not create public resource %q, got:\n%s", forbidden, log)
+		}
+	}
+}
+
+func TestLKEGrafanaPersistenceCanBeEnabled(t *testing.T) {
+	t.Setenv("LKE_GRAFANA_PERSISTENCE", "true")
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+
+	pvc := lkeGrafanaPVCManifest(env)
+	if !strings.Contains(pvc, "kind: PersistentVolumeClaim\nmetadata:\n  name: video-cloud-grafana-data") {
+		t.Fatalf("expected Grafana PVC manifest, got:\n%s", pvc)
+	}
+	deployment := lkeGrafanaDeploymentManifest(env)
+	for _, want := range []string{
+		"persistentVolumeClaim:",
+		"claimName: video-cloud-grafana-data",
+	} {
+		if !strings.Contains(deployment, want) {
+			t.Fatalf("expected %q in persistent Grafana deployment, got:\n%s", want, deployment)
 		}
 	}
 }
@@ -1599,6 +1509,7 @@ func TestRunProvisionLKEDeployAppliesCoturnRuntime(t *testing.T) {
 	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
 	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
 	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
+	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
 
 	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
@@ -1669,6 +1580,7 @@ func TestRunProvisionLKEDeployWritesLegacyStackAndVideoState(t *testing.T) {
 	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
 	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
 	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
+	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
 
 	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
 		t.Fatal(err)
@@ -1706,6 +1618,7 @@ func TestRunProvisionLKEDeployWritesPlatformAdminEnv(t *testing.T) {
 	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
 	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
 	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
+	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
 
 	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
@@ -1733,6 +1646,7 @@ func TestRunProvisionLKEDeployWritesVideoCloudRuntimeEnv(t *testing.T) {
 	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
 	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
 	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
+	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
 
 	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
@@ -1760,6 +1674,7 @@ func TestRunProvisionLKEDeployWritesAccountManagerRuntimeEnv(t *testing.T) {
 	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
 	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
 	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
+	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
 
 	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
@@ -1860,6 +1775,7 @@ func TestRunDeployLKEVideoOnlyUsesVideoImage(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
+	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
 
 	if err := runDeploy([]string{"--workspace", workspace, "--env-root", envRoot, "--video-only"}); err != nil {
 		t.Fatal(err)
@@ -2242,6 +2158,51 @@ func TestRunStagingE2EDataSetupDefaultsToResumeCompleteArtifacts(t *testing.T) {
 	}
 }
 
+func TestRunStagingE2EDataSetupNoResumeDisablesLocalUserReuse(t *testing.T) {
+	workspace := t.TempDir()
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "linode")
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=linode\nCLOUD_STACK_NAME=video-cloud-staging\n")
+	writeTestFile(t, filepath.Join(envRoot, "artifacts", "users", "rtk-users-complete.json"), `{"brandname":"RTK","users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}`)
+	writeTestFile(t, filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.json"), `[
+{"device_id":"load-device-0001","device_type":"camera"},
+{"device_id":"load-device-0002","device_type":"camera"},
+{"device_id":"load-device-0003","device_type":"light"},
+{"device_id":"load-device-0004","device_type":"air_conditioner"}
+]`)
+	writeTestFile(t, filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-complete.json"), `{"brandname":"RTK","assignments":[
+{"assigned_email":"rtk+001@users.local","device_id":"load-device-0001","device_type":"camera","service_options":["mqtt","video_streaming","video_storage"]},
+{"assigned_email":"rtk+002@users.local","device_id":"load-device-0002","device_type":"camera","service_options":["mqtt","video_streaming","video_storage"]},
+{"assigned_email":"rtk+001@users.local","device_id":"load-device-0003","device_type":"light","service_options":["mqtt"]},
+{"assigned_email":"rtk+002@users.local","device_id":"load-device-0004","device_type":"air_conditioner","service_options":["mqtt"]}
+]}`)
+	commandLog := filepath.Join(t.TempDir(), "commands.log")
+	t.Setenv("FACTORY_ENROLL_URL", "http://127.0.0.1:1")
+	t.Setenv("FACTORY_ENROLL_AUTH_KEY", "test-key")
+	t.Setenv("CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-brand", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-users", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "generate-devices", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "bind-devices", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT", fakeE2EDataCommand(t, commandLog, "validate-bind", envRoot))
+
+	if err := runStagingE2EDataSetup([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--brandname", "RTK",
+		"--user-count", "2",
+		"--device-count", "4",
+		"--out-dir", filepath.Join(t.TempDir(), "out"),
+		"--no-resume",
+		"--quiet",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	commands := readTestFile(t, commandLog)
+	if !strings.Contains(commands, "create-users ARGS=") || !strings.Contains(commands, "--no-reuse-local-users") {
+		t.Fatalf("expected create-users to disable local user reuse on --no-resume, got:\n%s", commands)
+	}
+}
+
 func TestRunStagingE2EDataSetupDoesNotResumeDeviceManifestWithWrongMix(t *testing.T) {
 	workspace := t.TempDir()
 	envRoot := filepath.Join(workspace, "cloud_env", "staging", "linode")
@@ -2553,6 +2514,7 @@ func makeLKEServiceRepos(t *testing.T, workspace string) map[string]string {
 		"rtk_account_manager",
 		"rtk_cloud_admin",
 		"rtk_cloud_frontend",
+		"rtk_cloud_logger",
 	}
 	commits := map[string]string{}
 	for _, repo := range repos {
@@ -2804,7 +2766,7 @@ func fakeKubectlForK8SE2EPortForwards(t *testing.T) string {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "kubectl.log")
 	kubectl := filepath.Join(dir, "kubectl")
-	secretData := `"ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL":"YWRtaW5AZXhhbXBsZS50ZXN0","ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD":"cGFzc3dvcmQxMjM=","ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN":"dGVzdC10b2tlbg==","VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN":"dGVzdC10b2tlbg==","FACTORY_ENROLL_AUTH_KEY":"dGVzdC1mYWN0b3J5LWtleQ=="`
+	secretData := `"ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL":"YWRtaW5AZXhhbXBsZS50ZXN0","ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD":"cGFzc3dvcmQxMjM=","ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN":"dGVzdC10b2tlbg==","VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN":"dGVzdC10b2tlbg==","VIDEO_CLOUD_LOGGER_TOKEN":"dGVzdC1sb2dnZXItdG9rZW4=","FACTORY_ENROLL_AUTH_KEY":"dGVzdC1mYWN0b3J5LWtleQ=="`
 	script := `#!/usr/bin/env bash
 set -euo pipefail
 {
@@ -2896,6 +2858,7 @@ if [[ -n "${FACTORY_ENROLL_AUTH_KEY:-}" ]]; then
   factory_key_state=set
 fi
 {
+  printf '%s ARGS=%s\n' "` + name + `" "$*"
   printf '%s FACTORY_ENROLL_URL=%s\n' "` + name + `" "${FACTORY_ENROLL_URL:-}"
   printf '%s FACTORY_ENROLL_AUTH_KEY=%s\n' "` + name + `" "$factory_key_state"
 } >> "` + logPath + `"

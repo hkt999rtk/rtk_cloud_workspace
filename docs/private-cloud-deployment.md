@@ -163,9 +163,9 @@ Production-like acceptance bar:
 
 ### Legacy Linode VM Migration Reference
 
-Linode VM/systemd deployment is retained only as legacy migration/reference
-material. Staging runtime acceptance now targets LKE/K8s; do not use the VM
-toolkits as the normal staging deploy path.
+The current VM/systemd deployment remains useful for staging, rollback, and
+architecture discovery while the LKE migration is being designed. It must not be
+treated as the final production target after the LKE gates are approved.
 
 Legacy VM reference shape:
 
@@ -201,8 +201,8 @@ Account Manager API ---/
 ```
 
 `rtk_cloud_admin` must use service DNS names or public HTTPS upstream domains,
-not raw VM IPs or private app ports. LKE staging public routes use these HTTPS
-upstream domains:
+not raw VM IPs or private app ports. During VM-to-LKE migration, the current
+Linode staging profile still uses these public HTTPS upstreams:
 
 ```env
 ACCOUNT_MANAGER_BASE_URL=https://account-manager.video-cloud-staging.realtekconnect.com
@@ -213,7 +213,7 @@ VIDEO_CLOUD_BASE_URL=https://video-cloud-staging.realtekconnect.com
 
 | Order | Component | Owner repo | Gate before next step | LKE target / current bridge |
 | --- | --- | --- | --- | --- |
-| 0 | Platform prerequisites | platform/operator | LKE cluster, node pools, namespaces, RBAC, NetworkPolicy, DNS, cert-manager issuer, OpenBao/secret injection, storage classes, and backup target are documented and approved. | Staging uses `cloud_env/staging/lke`, Linode token or kubeconfig, DNS credentials, GHCR pull credentials, and K8s runtime secrets. |
+| 0 | Platform prerequisites | platform/operator | LKE cluster, node pools, namespaces, RBAC, NetworkPolicy, DNS, cert-manager issuer, OpenBao/secret injection, storage classes, and backup target are documented and approved. | Current VM bridge still requires Linode token, DNS credentials, SSH key, operator CIDR, and service secrets. |
 | 1 | Video Cloud runtime | `rtk_video_cloud` | Public API health/version pass; PostgreSQL, MQTT broker, coturn/TURN, certissuer/factory path, Prometheus scrape path, and selected workers are healthy for the chosen profile. | Runtime-generated LKE staging resources now cover API, certissuer, factory enrollment, workers, MQTT broker, coturn, ephemeral PostgreSQL, and Prometheus; production Ingress, persistent database/storage, MQTT/TURN public exposure, and OpenBao remain gated. |
 | 2 | Account Manager API | `rtk_account_manager` | `GET /v1/health` passes; auth/register/login/`/v1/me` smoke passes; database migration and public TLS route are valid. | Target is Deployment/Service/Ingress; current bridge is `https://account-manager.video-cloud-staging.realtekconnect.com`. |
 | 3 | Admin dashboard | `rtk_cloud_admin` | `/healthz` passes and `/api/service-health` reports Account Manager, Video Cloud, and local persistence as `ok`. | Target is Deployment with PVC or approved database migration; current bridge is `https://admin.video-cloud-staging.realtekconnect.com`. |
@@ -400,13 +400,12 @@ and frontend still own their service-local smoke/evidence commands; the
 workspace wrapper records them as `SKIP` until configured or implemented.
 
 The current `scripts/run-staging-e2e.sh` remains the workspace acceptance
-reference. It is provider-aware, but staging runtime should use `CLOUD_PROVIDER=lke`.
-For LKE, the wrapper uses an approved kubeconfig context or Linode LKE lookup,
-automatically resolves missing service image env vars from pinned submodule
-commits through `lke-resolve-images`, deploys the resulting GHCR images, and
-then runs the K8s E2E flow. Explicit `LKE_*_IMAGE` values remain supported as
-operator overrides. A future in-cluster LKE smoke Job still requires the gates
-in `docs/lke-migration-inventory.md`.
+reference. It is provider-aware for `linode` and `lke`; LKE execution requires
+an approved kubeconfig context. When image env vars are not provided, the Go
+wrapper resolves the pinned submodule commits to private GHCR image tags and
+verifies those images before provisioning. Explicit `LKE_*_IMAGE` env vars are
+operator overrides, not the normal path. A future in-cluster LKE smoke Job still
+requires the gates in `docs/lke-migration-inventory.md`.
 
 ## Support Boundaries
 
