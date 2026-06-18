@@ -3771,7 +3771,8 @@ stringData:
   POSTGRES_PASSWORD: %q
   VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY: %q
   VIDEO_CLOUD_MQTT_USAGE_INGEST_TOKEN: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("turn-registry-node-auth"), lkeRuntimeSecretValue("mqtt-usage-ingest"))
+  VIDEO_CLOUD_LOGGER_TOKEN: %q
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("turn-registry-node-auth"), lkeRuntimeSecretValue("mqtt-usage-ingest"), lkeRuntimeSecretValue("cloud-logger-ingest-token"))
 }
 
 func lkeCoturnRuntimeSecretManifest(env map[string]string) string {
@@ -3955,7 +3956,10 @@ spec:
           imagePullPolicy: IfNotPresent
           command: ["/app/%s"]
 %s
-%s          env:
+%s          volumeMounts:
+            - name: logger-spool
+              mountPath: /var/lib/video_cloud/logger-spool
+          env:
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -3967,8 +3971,17 @@ spec:
               value: %q
             - name: VIDEO_CLOUD_DB_DSN
               value: "postgres://postgres:$(POSTGRES_PASSWORD)@postgresql.%s.svc.cluster.local:5432/video_cloud?sslmode=disable"
-            - name: VIDEO_CLOUD_LOG_DB_DSN
-              value: "postgres://postgres:$(POSTGRES_PASSWORD)@postgresql.%s.svc.cluster.local:5432/video_cloud?sslmode=disable"
+            - name: VIDEO_CLOUD_LOGGER_ENDPOINT
+              value: %q
+            - name: VIDEO_CLOUD_LOGGER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-workers-runtime
+                  key: VIDEO_CLOUD_LOGGER_TOKEN
+            - name: VIDEO_CLOUD_LOGGER_SPOOL_DIR
+              value: "/var/lib/video_cloud/logger-spool"
+            - name: VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES
+              value: %q
             - name: VIDEO_CLOUD_DB_MAX_OPEN_CONNS
               value: %q
             - name: VIDEO_CLOUD_DB_MAX_IDLE_CONNS
@@ -4001,7 +4014,10 @@ spec:
                 secretKeyRef:
                   name: video-cloud-workers-runtime
                   key: VIDEO_CLOUD_MQTT_USAGE_INGEST_TOKEN
-	`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeImagePullSecretsManifest(env, lkeVideoCloudImage(env)), lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(service.Name), ports, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeNamespaceName(env, "platform"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(service))
+      volumes:
+        - name: logger-spool
+          emptyDir: {}
+`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeImagePullSecretsManifest(env, lkeVideoCloudImage(env)), lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(service.Name), ports, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), firstNonEmpty(env["CLOUD_LOGGER_ENDPOINT"], "https://"+env["CLOUD_LOGGER_DOMAIN"]), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(service))
 }
 
 func lkeVideoCloudAuxiliaryMQTTCleanSession(service lkeVideoCloudAuxiliaryService) string {
