@@ -761,7 +761,8 @@ func lkeCloudLoggerRoute(env map[string]string) lkePublicHTTPSRoute {
 		return lkePublicHTTPSRoute{}
 	}
 	servicePort := envIntDefault("LKE_CLOUD_LOGGER_SERVICE_PORT", 80)
-	return lkePublicHTTPSRoute{Host: host, Namespace: namespace, Service: service, ServicePort: servicePort, TargetPort: envIntDefault("LKE_CLOUD_LOGGER_TARGET_PORT", servicePort)}
+	targetPortDefault := envIntDefault("LKE_CLOUD_LOGGER_PORT", 18090)
+	return lkePublicHTTPSRoute{Host: host, Namespace: namespace, Service: service, ServicePort: servicePort, TargetPort: envIntDefault("LKE_CLOUD_LOGGER_TARGET_PORT", targetPortDefault)}
 }
 
 func lkePublicHTTPSBridgeServiceManifests(env map[string]string, routes []lkePublicHTTPSRoute) []string {

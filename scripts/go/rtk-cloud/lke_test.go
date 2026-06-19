@@ -761,6 +761,8 @@ func TestRunProvisionLKEPublicHTTPSStartsDNSUpsertsBeforeWaiting(t *testing.T) {
 }
 
 func TestLKEPublicHTTPSNetworkPolicyAllowsBackendTargetPorts(t *testing.T) {
+	fakeKubectl(t)
+	t.Setenv("FAKE_CLOUD_LOGGER_SERVICE", "1")
 	env := map[string]string{
 		"CLOUD_STACK_NAME":              "video-cloud-staging",
 		"VIDEO_CLOUD_DOMAIN":            "video-cloud-staging.realtekconnect.com",
@@ -769,13 +771,15 @@ func TestLKEPublicHTTPSNetworkPolicyAllowsBackendTargetPorts(t *testing.T) {
 		"CLOUD_ADMIN_DOMAIN":            "admin.video-cloud-staging.realtekconnect.com",
 		"FRONTEND_DOMAIN":               "frontend.video-cloud-staging.realtekconnect.com",
 		"VIDEO_CLOUD_DEVICE_DOMAIN":     "device.video-cloud-staging.realtekconnect.com",
+		"CLOUD_LOGGER_DOMAIN":           "logger.video-cloud-staging.realtekconnect.com",
 	}
 	manifests := strings.Join(lkePublicHTTPSNetworkPolicyManifests(env, lkePublicHTTPSRoutes(env)), "\n---\n")
-	for _, namespace := range []string{
-		"video-cloud-staging-video-cloud",
-		"video-cloud-staging-account-manager",
-		"video-cloud-staging-admin",
-		"video-cloud-staging-frontend",
+	for namespace, wantPort := range map[string]string{
+		"video-cloud-staging-video-cloud":     "8080",
+		"video-cloud-staging-account-manager": "8080",
+		"video-cloud-staging-admin":           "8080",
+		"video-cloud-staging-frontend":        "8080",
+		"video-cloud-staging-logger":          "18090",
 	} {
 		needle := "name: allow-public-ingress\n  namespace: " + namespace
 		idx := strings.Index(manifests, needle)
@@ -786,8 +790,8 @@ func TestLKEPublicHTTPSNetworkPolicyAllowsBackendTargetPorts(t *testing.T) {
 		if next := strings.Index(chunk, "\n---\n"); next >= 0 {
 			chunk = chunk[:next]
 		}
-		if !strings.Contains(chunk, "port: 8080") {
-			t.Fatalf("public ingress policy for %s must allow backend pod port 8080, got:\n%s", namespace, chunk)
+		if !strings.Contains(chunk, "port: "+wantPort) {
+			t.Fatalf("public ingress policy for %s must allow backend pod port %s, got:\n%s", namespace, wantPort, chunk)
 		}
 	}
 }
@@ -2755,6 +2759,10 @@ if [[ "$*" == *"get pod/openbao-0 -o jsonpath={.status.phase}"* ]]; then
 fi
 if [[ "$*" == *"get service ingress-nginx-controller -o jsonpath={.status.loadBalancer.ingress[0].ip}"* ]]; then
   printf '203.0.113.42'
+  exit 0
+fi
+if [[ "$*" == *"get service cloud-logger -o name"* && "${FAKE_CLOUD_LOGGER_SERVICE:-}" == "1" ]]; then
+  printf 'service/cloud-logger\n'
   exit 0
 fi
 if [[ "$*" == *"get secret openbao-tls -o json"* && -n "${FAKE_OPENBAO_TLS_SECRET_JSON:-}" ]]; then
