@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"database/sql"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"encoding/pem"
@@ -187,10 +188,10 @@ func TestRequestDeviceTokenSendsTrustedCertHeadersForHTTPPortForward(t *testing.
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body["access_token_only"] != true {
-			t.Fatalf("access_token_only = %#v, want true", body["access_token_only"])
+		if _, ok := body["access_token_only"]; ok {
+			t.Fatalf("access_token_only = %#v, want omitted for refreshable token pair", body["access_token_only"])
 		}
-		writeJSON(t, w, map[string]string{"access_token": "device-token"})
+		writeJSON(t, w, map[string]string{"access_token": "device-token", "refresh_token": "device-refresh"})
 	}))
 	defer server.Close()
 
@@ -220,10 +221,10 @@ func TestRequestAppTokenSendsTrustedCertHeadersForHTTPPortForward(t *testing.T) 
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body["access_token_only"] != true {
-			t.Fatalf("access_token_only = %#v, want true", body["access_token_only"])
+		if _, ok := body["access_token_only"]; ok {
+			t.Fatalf("access_token_only = %#v, want omitted for refreshable token pair", body["access_token_only"])
 		}
-		writeJSON(t, w, map[string]string{"scope": "app", "access_token": "app-token"})
+		writeJSON(t, w, map[string]string{"scope": "app", "access_token": "app-token", "refresh_token": "app-refresh"})
 	}))
 	defer server.Close()
 
@@ -233,6 +234,161 @@ func TestRequestAppTokenSendsTrustedCertHeadersForHTTPPortForward(t *testing.T) 
 	}
 	if token.AccessToken != "app-token" || token.Scope != "app" {
 		t.Fatalf("token = %#v, want app-token", token)
+	}
+	if token.RefreshToken != "app-refresh" {
+		t.Fatalf("refresh token = %q, want app-refresh", token.RefreshToken)
+	}
+}
+
+func TestManagedTokenRefreshesAtHalfLifetimeBeforeUse(t *testing.T) {
+	certPEM, keyPEM, _ := testAppMaterial(t, "app-user:user-1")
+	cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuedAt := time.Unix(1_800_000_000, 0)
+	now := issuedAt
+	requests := 0
+	refreshes := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/request_token":
+			requests++
+			if got := r.Header.Get("X-Client-Verify"); got != "SUCCESS" {
+				t.Fatalf("X-Client-Verify = %q, want SUCCESS", got)
+			}
+			writeJSON(t, w, map[string]string{
+				"scope":         "app",
+				"access_token":  testJWT(t, issuedAt, issuedAt.Add(100*time.Second)),
+				"refresh_token": "refresh-1",
+			})
+		case "/refresh_token":
+			refreshes++
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body["scope"] != "app" || body["devid"] != "device-1" || body["refresh_token"] != "refresh-1" {
+				t.Fatalf("refresh body = %#v", body)
+			}
+			writeJSON(t, w, map[string]string{
+				"scope":         "app",
+				"access_token":  testJWT(t, now, now.Add(100*time.Second)),
+				"refresh_token": "refresh-2",
+			})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	manager := newAppTokenManager(server.URL, cert, "device-1")
+	manager.now = func() time.Time { return now }
+	first, err := manager.Token(time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = issuedAt.Add(60 * time.Second)
+	second, err := manager.Token(time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("manager returned cached token after half lifetime instead of refreshed token")
+	}
+	if requests != 1 || refreshes != 1 {
+		t.Fatalf("requests=%d refreshes=%d, want 1/1", requests, refreshes)
+	}
+	if manager.bundle.RefreshToken != "refresh-2" {
+		t.Fatalf("refresh token = %q, want refresh-2", manager.bundle.RefreshToken)
+	}
+}
+
+func TestManagedTokenRequestsWithClientCertificateWhenExpired(t *testing.T) {
+	certPEM, keyPEM, _ := testAppMaterial(t, "device-1")
+	cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuedAt := time.Unix(1_800_000_000, 0)
+	now := issuedAt.Add(2 * time.Minute)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/refresh_token" {
+			t.Fatal("expired access token should use client certificate request_token, not refresh_token")
+		}
+		if r.URL.Path != "/request_token" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		requests++
+		if got := r.Header.Get("X-Client-Verify"); got != "SUCCESS" {
+			t.Fatalf("X-Client-Verify = %q, want SUCCESS", got)
+		}
+		writeJSON(t, w, map[string]string{
+			"scope":         "device",
+			"access_token":  testJWT(t, now, now.Add(100*time.Second)),
+			"refresh_token": "refresh-new",
+		})
+	}))
+	defer server.Close()
+
+	manager := newDeviceTokenManager(server.URL, cert, "device-1")
+	manager.now = func() time.Time { return now }
+	manager.bundle = tokenBundle{
+		Scope:        "device",
+		AccessToken:  testJWT(t, issuedAt, issuedAt.Add(10*time.Second)),
+		RefreshToken: "refresh-expired",
+		issuedAt:     issuedAt,
+	}
+	token, err := manager.Token(time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token == "" || requests != 1 {
+		t.Fatalf("token=%q requests=%d, want new token and one request_token call", token, requests)
+	}
+}
+
+func TestDeviceManagedTokenRenewsWithClientCertificateAtHalfLifetime(t *testing.T) {
+	certPEM, keyPEM, _ := testAppMaterial(t, "device-1")
+	cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuedAt := time.Unix(1_800_000_000, 0)
+	now := issuedAt
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/refresh_token" {
+			t.Fatal("device token renewal should use client certificate request_token, not refresh_token")
+		}
+		if r.URL.Path != "/request_token" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		requests++
+		writeJSON(t, w, map[string]string{
+			"scope":        "device",
+			"access_token": testJWT(t, now, now.Add(100*time.Second)),
+		})
+	}))
+	defer server.Close()
+
+	manager := newDeviceTokenManager(server.URL, cert, "device-1")
+	manager.now = func() time.Time { return now }
+	first, err := manager.Token(time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = issuedAt.Add(60 * time.Second)
+	second, err := manager.Token(time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("manager returned cached token after half lifetime instead of requesting a new device token")
+	}
+	if requests != 2 {
+		t.Fatalf("request_token calls = %d, want 2", requests)
 	}
 }
 
@@ -522,10 +678,10 @@ func TestRequestDeviceTokenUsesTrustedHeadersForHTTPBaseURL(t *testing.T) {
 		if body["scope"] != "device" || body["devid"] != "device-1" || body["service"] != "mqtt" {
 			t.Fatalf("body = %#v", body)
 		}
-		if body["access_token_only"] != true {
-			t.Fatalf("access_token_only = %#v, want true", body["access_token_only"])
+		if _, ok := body["access_token_only"]; ok {
+			t.Fatalf("access_token_only = %#v, want omitted for refreshable token pair", body["access_token_only"])
 		}
-		writeJSON(t, w, map[string]string{"access_token": "device-token"})
+		writeJSON(t, w, map[string]string{"access_token": "device-token", "refresh_token": "device-refresh"})
 	}))
 	defer server.Close()
 
@@ -836,6 +992,66 @@ func TestSustainedShadowCommandPublishesRuntimeLogsForServerCorrelation(t *testi
 		if got[want.source+"\x00"+want.message] != 1 {
 			t.Fatalf("runtime logs = %#v, missing %s %s", got, want.source, want.message)
 		}
+	}
+}
+
+func TestSustainedShadowCommandFailsBeforeDeltaWhenAcceptedIsMissing(t *testing.T) {
+	broker := newFakeTLSMQTTBroker(t)
+	broker.SuppressShadowAccepted = true
+	defer broker.Close()
+	certPEM, keyPEM, _ := testAppMaterial(t, "app-user:user-1")
+	appCert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, map[string]string{"scope": "app", "access_token": "app-token"})
+	}))
+	defer tokenServer.Close()
+
+	deviceConn, err := connectMQTTActor(mqttActorProbe{
+		DeviceID:    "rtk-0041",
+		DeviceType:  "light",
+		Brandname:   "RTK",
+		RunID:       "run-missing-accepted",
+		DeviceToken: "device-token",
+		Dial:        broker.TLSDial,
+		Timeout:     time.Second,
+		Now:         fixedProbeTime,
+	}, "device", "rtk-0041", "device-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer deviceConn.Close()
+	if err := mqttSubscribe(deviceConn, 1, "$vc/devices/rtk-0041/shadow/update/delta"); err != nil {
+		t.Fatal(err)
+	}
+	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(rawPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var totals mqttIOTotals
+	reader := startSustainedDeviceReader(deviceConn)
+	defer reader.Close()
+	err = runSustainedShadowCommandUntil(sustainedDeviceSession{
+		Record:     certRecord{DeviceID: "rtk-0041", DeviceType: "light"},
+		Conn:       deviceConn,
+		Reader:     reader,
+		MQTTTarget: mqttEndpointTarget{Host: host, Port: port},
+	}, "RTK", "run-missing-accepted", tokenServer.URL, appCert, time.Now().Add(250*time.Millisecond), &totals)
+	if err == nil {
+		t.Fatal("runSustainedShadowCommandUntil succeeded without shadow accepted")
+	}
+	if totals.FailureReasons["app_shadow_accepted_wait_failed"] != 1 {
+		t.Fatalf("failure reasons = %#v, want app_shadow_accepted_wait_failed", totals.FailureReasons)
+	}
+	if totals.FailureReasons["device_delta_wait_failed"] != 0 {
+		t.Fatalf("failure reasons = %#v, should not report device_delta_wait_failed before accepted", totals.FailureReasons)
 	}
 }
 
@@ -1629,16 +1845,30 @@ func fixedProbeTime() time.Time {
 	return time.Date(2026, 6, 4, 8, 0, 0, 0, time.UTC)
 }
 
+func testJWT(t *testing.T, issuedAt time.Time, expiresAt time.Time) string {
+	t.Helper()
+	header, err := json.Marshal(map[string]string{"alg": "none", "typ": "JWT"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(map[string]int64{"iat": issuedAt.Unix(), "exp": expiresAt.Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload) + "."
+}
+
 type fakeMQTTBroker struct {
-	t               *testing.T
-	listener        net.Listener
-	mu              sync.Mutex
-	subscribers     map[string][]net.Conn
-	clientNames     map[net.Conn]string
-	keepAlives      map[string]uint16
-	publishCounts   map[string]int
-	publishPayloads map[string][][]byte
-	RejectUsername  string
+	t                      *testing.T
+	listener               net.Listener
+	mu                     sync.Mutex
+	subscribers            map[string][]net.Conn
+	clientNames            map[net.Conn]string
+	keepAlives             map[string]uint16
+	publishCounts          map[string]int
+	publishPayloads        map[string][][]byte
+	RejectUsername         string
+	SuppressShadowAccepted bool
 }
 
 func newFakeMQTTBroker(t *testing.T) *fakeMQTTBroker {
@@ -1889,7 +2119,9 @@ func (b *fakeMQTTBroker) publishShadowResponses(topic string, payload []byte) {
 	documentsTopic := topic + "/documents"
 	deltaTopic := topic + "/delta"
 	accepted := map[string]any{"clientToken": req.Token, "version": 1, "state": req.State}
-	b.publishToSubscribers(acceptedTopic, accepted)
+	if !b.SuppressShadowAccepted {
+		b.publishToSubscribers(acceptedTopic, accepted)
+	}
 	if desired := req.State["desired"]; len(desired) > 0 {
 		b.publishToSubscribers(deltaTopic, map[string]any{"clientToken": req.Token, "version": 1, "state": desired})
 		b.publishToSubscribers(documentsTopic, map[string]any{

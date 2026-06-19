@@ -5459,6 +5459,17 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 `
 	}
 	if workload.Key == "video-cloud" {
+		mqttHandlerConcurrency := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY"), env["LKE_VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY"], "16")
+		mqttShadowHandlerConcurrency := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_SHADOW_HANDLER_CONCURRENCY"), env["LKE_VIDEO_CLOUD_MQTT_SHADOW_HANDLER_CONCURRENCY"], "16")
+		mqttShadowQueueSize := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_SHADOW_QUEUE_SIZE"), env["LKE_VIDEO_CLOUD_MQTT_SHADOW_QUEUE_SIZE"], "4096")
+		mqttMessageHandlerConcurrency := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_MESSAGE_HANDLER_CONCURRENCY"), env["LKE_VIDEO_CLOUD_MQTT_MESSAGE_HANDLER_CONCURRENCY"], "64")
+		mqttMessageQueueSize := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_MESSAGE_QUEUE_SIZE"), env["LKE_VIDEO_CLOUD_MQTT_MESSAGE_QUEUE_SIZE"], "4096")
+		mqttLogHandlerConcurrency := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_LOG_HANDLER_CONCURRENCY"), env["LKE_VIDEO_CLOUD_MQTT_LOG_HANDLER_CONCURRENCY"], "16")
+		mqttLogQueueSize := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_LOG_QUEUE_SIZE"), env["LKE_VIDEO_CLOUD_MQTT_LOG_QUEUE_SIZE"], "4096")
+		mqttOutboundConnections := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_OUTBOUND_CONNECTIONS"), env["LKE_VIDEO_CLOUD_MQTT_OUTBOUND_CONNECTIONS"], "8")
+		mqttOutboundQueueSize := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_OUTBOUND_QUEUE_SIZE"), env["LKE_VIDEO_CLOUD_MQTT_OUTBOUND_QUEUE_SIZE"], "4096")
+		mqttOutboundWriteTimeout := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_OUTBOUND_WRITE_TIMEOUT"), env["LKE_VIDEO_CLOUD_MQTT_OUTBOUND_WRITE_TIMEOUT"], "5s")
+		shadowCacheTTL := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_SHADOW_CACHE_TTL"), env["LKE_VIDEO_CLOUD_SHADOW_CACHE_TTL"], "24h")
 		extraEnv = fmt.Sprintf(`            - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -5506,7 +5517,54 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
               value: "video-cloud-api-$(POD_NAME)"
             - name: VIDEO_CLOUD_MQTT_TOPIC_ROOT
               value: "devices"
-`, lkeNamespaceName(env, "platform"), lkeVideoCloudAPIDBMaxOpenConns(env), lkeVideoCloudAPIDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeAccountManagerInternalURL(env), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeMQTTInternalAddr(env))
+            - name: VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY
+              value: %q
+            - name: VIDEO_CLOUD_MQTT_SHADOW_HANDLER_CONCURRENCY
+              value: %q
+            - name: VIDEO_CLOUD_MQTT_SHADOW_QUEUE_SIZE
+              value: %q
+            - name: VIDEO_CLOUD_MQTT_MESSAGE_HANDLER_CONCURRENCY
+              value: %q
+            - name: VIDEO_CLOUD_MQTT_MESSAGE_QUEUE_SIZE
+              value: %q
+            - name: VIDEO_CLOUD_MQTT_LOG_HANDLER_CONCURRENCY
+              value: %q
+            - name: VIDEO_CLOUD_MQTT_LOG_QUEUE_SIZE
+              value: %q
+            - name: VIDEO_CLOUD_MQTT_OUTBOUND_CONNECTIONS
+              value: %q
+            - name: VIDEO_CLOUD_MQTT_OUTBOUND_QUEUE_SIZE
+              value: %q
+            - name: VIDEO_CLOUD_MQTT_OUTBOUND_WRITE_TIMEOUT
+              value: %q
+            - name: VIDEO_CLOUD_SHADOW_CACHE_ENABLED
+              value: "true"
+            - name: VIDEO_CLOUD_SHADOW_CACHE_ADDR
+              value: "redis.%s.svc.cluster.local:6379"
+            - name: VIDEO_CLOUD_SHADOW_CACHE_TTL
+              value: %q
+`,
+			lkeNamespaceName(env, "platform"),
+			lkeVideoCloudAPIDBMaxOpenConns(env),
+			lkeVideoCloudAPIDBMaxIdleConns(env),
+			lkeVideoCloudDBConnMaxLifetime(env),
+			lkeAccountManagerInternalURL(env),
+			lkeCloudLoggerEndpoint(env),
+			firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"),
+			lkeMQTTInternalAddr(env),
+			mqttHandlerConcurrency,
+			mqttShadowHandlerConcurrency,
+			mqttShadowQueueSize,
+			mqttMessageHandlerConcurrency,
+			mqttMessageQueueSize,
+			mqttLogHandlerConcurrency,
+			mqttLogQueueSize,
+			mqttOutboundConnections,
+			mqttOutboundQueueSize,
+			mqttOutboundWriteTimeout,
+			lkeNamespaceName(env, "platform"),
+			shadowCacheTTL,
+		)
 		volumeMounts = `          volumeMounts:
             - name: logger-spool
               mountPath: /var/lib/video_cloud/logger-spool

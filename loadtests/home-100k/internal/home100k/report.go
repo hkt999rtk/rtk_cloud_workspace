@@ -441,6 +441,16 @@ func RenderReport(input ReportInput) string {
 			}
 			fmt.Fprintln(&b)
 		}
+		postgresRows := postgresPodResourceRows(input.ServerEvidence)
+		if len(postgresRows) > 0 {
+			fmt.Fprintln(&b, "## Postgres Pod Resource Usage")
+			fmt.Fprintln(&b, "| Namespace | Pod | Samples | CPU p95 | Memory p95 |")
+			fmt.Fprintln(&b, "| --- | --- | ---: | ---: | ---: |")
+			for _, row := range postgresRows {
+				fmt.Fprintf(&b, "| %s | %s | %d | %dm | %s |\n", row.Namespace, row.Pod, row.Samples, row.CPUP95Mil, formatBytesMi(row.MemoryP95Bytes))
+			}
+			fmt.Fprintln(&b)
+		}
 	}
 
 	if len(input.SyncTelemetry.VMs) > 0 {
@@ -467,6 +477,14 @@ type serverEvidenceCounterRow struct {
 	Source  string
 	Counter string
 	Value   int64
+}
+
+type postgresPodResourceRow struct {
+	Namespace      string
+	Pod            string
+	Samples        int
+	CPUP95Mil      int64
+	MemoryP95Bytes int64
 }
 
 type stageDiagnosticRow struct {
@@ -552,6 +570,67 @@ func serverEvidenceCounterRows(evidence ServerEvidence) []serverEvidenceCounterR
 		}
 	}
 	return rows
+}
+
+func postgresPodResourceRows(evidence ServerEvidence) []postgresPodResourceRow {
+	type resourceSeries struct {
+		cpu    []int64
+		memory []int64
+	}
+	series := map[string]resourceSeries{}
+	for _, source := range evidence.Sources {
+		for _, sample := range source.Samples {
+			if sample.Kind != "k8s_pod_top" {
+				continue
+			}
+			if !strings.Contains(strings.ToLower(sample.Pod), "postgres") {
+				continue
+			}
+			key := sample.Namespace + "\x00" + sample.Pod
+			current := series[key]
+			current.cpu = append(current.cpu, sample.CPUCoreMil)
+			current.memory = append(current.memory, sample.MemoryBytes)
+			series[key] = current
+		}
+	}
+	keys := make([]string, 0, len(series))
+	for key := range series {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	rows := make([]postgresPodResourceRow, 0, len(keys))
+	for _, key := range keys {
+		parts := strings.SplitN(key, "\x00", 2)
+		item := series[key]
+		rows = append(rows, postgresPodResourceRow{
+			Namespace:      parts[0],
+			Pod:            parts[1],
+			Samples:        len(item.cpu),
+			CPUP95Mil:      percentile95Int64(item.cpu),
+			MemoryP95Bytes: percentile95Int64(item.memory),
+		})
+	}
+	return rows
+}
+
+func percentile95Int64(values []int64) int64 {
+	if len(values) == 0 {
+		return 0
+	}
+	sorted := append([]int64{}, values...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	idx := (95*len(sorted) + 99) / 100
+	if idx < 1 {
+		idx = 1
+	}
+	if idx > len(sorted) {
+		idx = len(sorted)
+	}
+	return sorted[idx-1]
+}
+
+func formatBytesMi(value int64) string {
+	return fmt.Sprintf("%dMi", (value+(1024*1024)-1)/(1024*1024))
 }
 
 func renderMap(b *strings.Builder, title string, values map[string]int) {

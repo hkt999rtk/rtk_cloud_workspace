@@ -226,6 +226,11 @@ unavailable reason when collection fails.
 Reports must include summary tables for both files. Missing resource timelines
 must be rendered explicitly as missing data.
 
+`host_pod_resources` server evidence must preserve parsed `kubectl top pods -A`
+samples. Reports must include a Postgres pod resource table with namespace, pod,
+sample count, CPU p95, and memory p95 so PostgreSQL capacity cannot be inferred
+only from counters or log availability.
+
 ## Required Status Rules
 
 - Missing IoT Device Shadow evidence sets `status=INCOMPLETE`.
@@ -259,12 +264,27 @@ Optional server evidence sources:
 
 - `central_logger`
 
+`iot_device_shadow` and `iot_device_shadow_streams` runtime-log evidence is
+queried from central logger `device_runtime_log` events. Legacy deployments may
+still have PostgreSQL `device_runtime_logs`, but the 10K/100K load-test report
+must not require that legacy table.
+
 `central_logger` is queried through `/v1/logs` when
 `services/cloud-logger/logger.env` is present, when
 `HOME100K_CLOUD_LOGGER_ENV` points at a logger env file, or when
 `CLOUD_LOGGER_ENDPOINT` and `CLOUD_LOGGER_INGEST_TOKEN` are exported. The query
 must not expose the logger token in shell arguments or reports; reports show
 only availability, details, and parsed counters.
+
+`host_pod_resources` includes Kubernetes pod placement/readiness and pod CPU and
+memory samples. The report renders Postgres pod CPU/memory p95 from these
+samples.
+
+`redis_valkey` must include Redis/Valkey `INFO` counters when the service is
+enabled. Useful evidence includes total commands processed, keyspace
+hits/misses, connected clients, memory usage, key counts, and commandstats calls
+for read/write commands; log capture alone is not enough to prove the shadow
+hot-state or `/request_token` token-projection paths used Redis.
 
 ## Required Redaction
 
