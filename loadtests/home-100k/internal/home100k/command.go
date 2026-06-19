@@ -2100,9 +2100,50 @@ func applyServerEvidenceBaselineDeltas(evidence *ServerEvidence, runID string, o
 	applyEMQXMetricDelta(evidence, baseline)
 	applySourceCounterBaselineDelta(evidence, baseline, "ingress_nginx")
 	applySourceCounterBaselineDelta(evidence, baseline, "postgres")
-	applySourceCounterBaselineDelta(evidence, baseline, "redis_valkey")
+	applyRedisValkeyCounterBaselineDelta(evidence, baseline)
 	applySourceCounterBaselineDelta(evidence, baseline, "video_cloud_api")
 	recomputeVideoCloudAPITopLevelCounters(evidence)
+}
+
+func applyRedisValkeyCounterBaselineDelta(evidence *ServerEvidence, baseline ServerEvidence) {
+	if evidence == nil || evidence.Sources == nil {
+		return
+	}
+	source := evidence.Sources["redis_valkey"]
+	gauges := map[string]int64{}
+	for key, value := range source.Counters {
+		if redisValkeyGaugeCounter(key) {
+			gauges[key] = value
+		}
+	}
+	applySourceCounterBaselineDelta(evidence, baseline, "redis_valkey")
+	source = evidence.Sources["redis_valkey"]
+	if source.Counters == nil {
+		source.Counters = map[string]int64{}
+	}
+	for key, value := range gauges {
+		source.Counters[key] = value
+	}
+	evidence.Sources["redis_valkey"] = source
+}
+
+func redisValkeyGaugeCounter(key string) bool {
+	switch {
+	case key == "redis_valkey.shadow.docs",
+		key == "redis_valkey.shadow.named_indexes",
+		key == "redis_valkey.shadow.keys",
+		key == "redis_valkey.connected_clients",
+		key == "redis_valkey.used_memory",
+		key == "redis_valkey.used_memory_peak":
+		return true
+	case strings.HasPrefix(key, "redis_valkey.keyspace.") &&
+		(strings.HasSuffix(key, ".keys") ||
+			strings.HasSuffix(key, ".expires") ||
+			strings.HasSuffix(key, ".avg_ttl")):
+		return true
+	default:
+		return false
+	}
 }
 
 func applyEMQXMetricDelta(evidence *ServerEvidence, baseline ServerEvidence) {
@@ -2469,6 +2510,9 @@ test -n "$pods"
 for pod in $pods; do
   echo "pod:$pod"
   kubectl -n video-cloud-staging-platform exec "$pod" -- redis-cli INFO stats clients memory keyspace commandstats
+  echo "redis_valkey.shadow.docs $(kubectl -n video-cloud-staging-platform exec "$pod" -- sh -c "redis-cli --scan --pattern 'video_cloud:shadow:doc:*' | wc -l" | tr -d '[:space:]')"
+  echo "redis_valkey.shadow.named_indexes $(kubectl -n video-cloud-staging-platform exec "$pod" -- sh -c "redis-cli --scan --pattern 'video_cloud:shadow:names:*' | wc -l" | tr -d '[:space:]')"
+  echo "redis_valkey.shadow.keys $(kubectl -n video-cloud-staging-platform exec "$pod" -- sh -c "redis-cli --scan --pattern 'video_cloud:shadow:*' | wc -l" | tr -d '[:space:]')"
 done`
 	return serverEvidenceProbe{
 		source:  "redis_valkey",

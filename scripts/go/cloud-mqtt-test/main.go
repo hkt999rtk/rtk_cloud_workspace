@@ -969,9 +969,19 @@ func (r *sustainedDeviceReader) run() {
 		if packetType>>4 != 3 {
 			continue
 		}
-		topic, payload, err := mqttDecodePublish(packetType&0x0f, body)
+		topic, payload, packetID, qos, err := mqttDecodePublishPacket(packetType&0x0f, body)
 		if err != nil {
 			continue
+		}
+		if qos == 1 {
+			if err := mqttWritePuback(r.conn, packetID); err != nil {
+				r.setLastError(err)
+				select {
+				case r.errs <- err:
+				default:
+				}
+				return
+			}
 		}
 		doc := map[string]any{}
 		if err := json.Unmarshal(payload, &doc); err != nil {
@@ -1650,7 +1660,7 @@ func connectSustainedDevicesUntil(assignments []assignment, certByID map[string]
 				mu.Lock()
 				totals.DeviceSubscribeAttempts++
 				mu.Unlock()
-				if err := mqttSubscribe(conn, uint16((item.Index%60000)+1), deltaTopic); err != nil {
+				if err := mqttSubscribeWithQoS(conn, uint16((item.Index%60000)+1), deltaTopic, 1); err != nil {
 					_ = conn.Close()
 					mu.Lock()
 					totals.ConnectFailures++
@@ -2060,45 +2070,55 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		totals.HTTPFailures++
 		return fail("app_mqtt_connect", "app_mqtt_connect_failed", err)
 	}
-	appConn, err := connectMQTTActor(mqttActorProbe{
-		DeviceID:   session.Record.DeviceID,
-		DeviceType: session.Record.DeviceType,
-		Brandname:  brandname,
-		RunID:      runID,
-		AppToken:   appToken,
-		Dial: func() (io.ReadWriteCloser, error) {
-			conn, err := tls.DialWithDialer(&net.Dialer{Timeout: appMQTTTimeout}, "tcp", net.JoinHostPort(target.Host, strconv.Itoa(target.Port)), &tls.Config{InsecureSkipVerify: true})
-			if err != nil {
-				return nil, fmt.Errorf("mqtt tls dial host=%s port=%d timeout=%s: %w", target.Host, target.Port, appMQTTTimeout, err)
-			}
-			return conn, nil
-		},
-		Timeout:          appMQTTTimeout,
-		KeepAliveSeconds: sustainedMQTTKeepAliveSeconds,
-		Now:              time.Now,
-		OnDialAttempt:    func() { totals.AppMQTTDialAttempts++ },
-		OnDialSuccess:    func() { totals.AppMQTTDialSuccesses++ },
-		OnDialFailure:    func(error) { totals.AppMQTTDialFailures++ },
-		OnConnackAttempt: func() { totals.AppMQTTConnackAttempts++ },
-		OnConnackSuccess: func() { totals.AppMQTTConnackSuccesses++ },
-		OnConnackFailure: func(error) { totals.AppMQTTConnackFailures++ },
-	}, "app-controller", appMQTTUsername(session.Record.DeviceID), appToken)
+	connectApp := func(role string) (io.ReadWriteCloser, error) {
+		return connectMQTTActor(mqttActorProbe{
+			DeviceID:   session.Record.DeviceID,
+			DeviceType: session.Record.DeviceType,
+			Brandname:  brandname,
+			RunID:      runID,
+			AppToken:   appToken,
+			Dial: func() (io.ReadWriteCloser, error) {
+				conn, err := tls.DialWithDialer(&net.Dialer{Timeout: appMQTTTimeout}, "tcp", net.JoinHostPort(target.Host, strconv.Itoa(target.Port)), &tls.Config{InsecureSkipVerify: true})
+				if err != nil {
+					return nil, fmt.Errorf("mqtt tls dial host=%s port=%d timeout=%s: %w", target.Host, target.Port, appMQTTTimeout, err)
+				}
+				return conn, nil
+			},
+			Timeout:          appMQTTTimeout,
+			KeepAliveSeconds: sustainedMQTTKeepAliveSeconds,
+			Now:              time.Now,
+			OnDialAttempt:    func() { totals.AppMQTTDialAttempts++ },
+			OnDialSuccess:    func() { totals.AppMQTTDialSuccesses++ },
+			OnDialFailure:    func(error) { totals.AppMQTTDialFailures++ },
+			OnConnackAttempt: func() { totals.AppMQTTConnackAttempts++ },
+			OnConnackSuccess: func() { totals.AppMQTTConnackSuccesses++ },
+			OnConnackFailure: func(error) { totals.AppMQTTConnackFailures++ },
+		}, role, appMQTTUsername(session.Record.DeviceID), appToken)
+	}
+	appObserverConn, err := connectApp("app-observer")
 	if err != nil {
 		totals.HTTPFailures++
 		return fail("app_mqtt_connect", "app_mqtt_connect_failed", err)
 	}
-	defer appConn.Close()
-	clearConnDeadline(appConn)
+	defer appObserverConn.Close()
+	clearConnDeadline(appObserverConn)
+	appPublisherConn, err := connectApp("app-controller")
+	if err != nil {
+		totals.HTTPFailures++
+		return fail("app_mqtt_connect", "app_mqtt_connect_failed", err)
+	}
+	defer appPublisherConn.Close()
+	clearConnDeadline(appPublisherConn)
 
 	shadowUpdateTopic := "$vc/devices/" + session.Record.DeviceID + "/shadow/update"
 	acceptedTopic := shadowUpdateTopic + "/accepted"
 	documentsTopic := shadowUpdateTopic + "/documents"
 	deltaTopic := shadowUpdateTopic + "/delta"
-	if err := mqttSubscribe(appConn, 1, acceptedTopic); err != nil {
+	if err := mqttSubscribeWithQoS(appObserverConn, 1, acceptedTopic, 1); err != nil {
 		totals.HTTPFailures++
 		return fail("app_shadow_accepted_subscribe", "app_shadow_accepted_subscribe_failed", err)
 	}
-	if err := mqttSubscribe(appConn, 2, documentsTopic); err != nil {
+	if err := mqttSubscribeWithQoS(appObserverConn, 2, documentsTopic, 1); err != nil {
 		totals.HTTPFailures++
 		return fail("app_shadow_documents_subscribe", "app_shadow_documents_subscribe_failed", err)
 	}
@@ -2114,7 +2134,7 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		totals.HTTPFailures++
 		return fail("desired_payload_encode", "desired_payload_encode_failed", err)
 	}
-	if err := mqttPublish(appConn, shadowUpdateTopic, desiredPayload); err != nil {
+	if err := mqttPublishQoS1AndWaitPuback(appPublisherConn, 1, shadowUpdateTopic, desiredPayload); err != nil {
 		totals.HTTPFailures++
 		return fail("app_desired_publish", "app_desired_publish_failed", err)
 	}
@@ -2129,7 +2149,7 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		MQTTTarget:         mqttTargetString(session.MQTTTarget),
 		OccurredAt:         time.Now().UTC().Format(time.RFC3339Nano),
 	}
-	expect, err := recorder.RecordWithExpectation(appConn, "shadow_desired", "app_controller", "publish", shadowUpdateTopic, map[string]any{"direction": "app_to_device", "command_id": commandID})
+	expect, err := recorder.RecordWithExpectation(appPublisherConn, "shadow_desired", "app_controller", "publish", shadowUpdateTopic, map[string]any{"direction": "app_to_device", "command_id": commandID})
 	if err != nil {
 		totals.HTTPFailures++
 		return fail("app_desired_runtime_log", "app_desired_runtime_log_failed", err)
@@ -2143,7 +2163,7 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		totals.HTTPFailures++
 		return fail("app_shadow_accepted_wait", "app_shadow_accepted_wait_failed", err)
 	}
-	if _, err := waitForMQTTPublishWithDeadline(appConn, acceptedTopic, acceptedTimeout, func(doc map[string]any) bool {
+	if _, err := waitForMQTTPublishWithDeadline(appObserverConn, acceptedTopic, acceptedTimeout, func(doc map[string]any) bool {
 		return doc["clientToken"] == commandID
 	}); err != nil {
 		totals.HTTPFailures++
@@ -2194,7 +2214,7 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		totals.HTTPFailures++
 		return fail("app_delta_clear_wait", "app_delta_clear_wait_failed", err)
 	}
-	if _, err := waitForMQTTPublishWithDeadline(appConn, documentsTopic, documentsTimeout, func(doc map[string]any) bool {
+	if _, err := waitForMQTTPublishWithDeadline(appObserverConn, documentsTopic, documentsTimeout, func(doc map[string]any) bool {
 		return doc["clientToken"] == "reported-"+commandID && shadowDocumentsDeltaCleared(doc)
 	}); err != nil {
 		totals.HTTPFailures++
@@ -2205,16 +2225,16 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		totals.HTTPFailures++
 		return fail("app_reported_runtime_log", "app_reported_runtime_log_failed", err)
 	}
-	if setter, ok := appConn.(interface{ SetDeadline(time.Time) error }); ok {
+	if setter, ok := appObserverConn.(interface{ SetDeadline(time.Time) error }); ok {
 		_ = setter.SetDeadline(time.Now().Add(runtimeLogTimeout))
-		defer clearConnDeadline(appConn)
+		defer clearConnDeadline(appObserverConn)
 	}
-	expect, err = recorder.RecordWithExpectationQoS1(appConn, "shadow_reported", "app_observer", "receive", documentsTopic, map[string]any{"direction": "device_to_app", "command_id": commandID})
+	expect, err = recorder.RecordWithExpectationQoS1(appObserverConn, "shadow_reported", "app_observer", "receive", documentsTopic, map[string]any{"direction": "device_to_app", "command_id": commandID})
 	if err != nil {
 		totals.HTTPFailures++
 		return fail("app_reported_runtime_log", "app_reported_runtime_log_failed", err)
 	}
-	clearConnDeadline(appConn)
+	clearConnDeadline(appObserverConn)
 	commandEvent.ExpectedLogs = append(commandEvent.ExpectedLogs, expect)
 	totals.AppReceivedAcks++
 	totals.HTTPSuccesses++
@@ -2253,7 +2273,7 @@ func parseDurationDefault(raw string, fallback time.Duration) time.Duration {
 	return time.Minute
 }
 
-func waitForMQTTPublishWithDeadline(conn io.Reader, topic string, timeout time.Duration, match func(map[string]any) bool) (map[string]any, error) {
+func waitForMQTTPublishWithDeadline(conn io.ReadWriter, topic string, timeout time.Duration, match func(map[string]any) bool) (map[string]any, error) {
 	if setter, ok := conn.(interface{ SetReadDeadline(time.Time) error }); ok {
 		_ = setter.SetReadDeadline(time.Now().Add(timeout))
 		defer setter.SetReadDeadline(time.Time{})
@@ -2588,19 +2608,19 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 		return result
 	}
 	result.TraceChain = appendTrace(result.TraceChain, "command", "device_client", "subscribe", downTopic, "PASS", "")
-	if err := mqttSubscribe(appObserver, 2, shadowAcceptedTopic); err != nil {
+	if err := mqttSubscribeWithQoS(appObserver, 2, shadowAcceptedTopic, 1); err != nil {
 		result.Error = "app shadow accepted subscribe failed: " + redactedError(err)
 		result.TraceChain = appendTrace(result.TraceChain, "shadow_desired", "app_observer", "subscribe", shadowAcceptedTopic, "FAIL", "")
 		return result
 	}
 	result.TraceChain = appendTrace(result.TraceChain, "shadow_desired", "app_observer", "subscribe", shadowAcceptedTopic, "PASS", "")
-	if err := mqttSubscribe(appObserver, 3, shadowDocumentsTopic); err != nil {
+	if err := mqttSubscribeWithQoS(appObserver, 3, shadowDocumentsTopic, 1); err != nil {
 		result.Error = "app shadow documents subscribe failed: " + redactedError(err)
 		result.TraceChain = appendTrace(result.TraceChain, "shadow_reported", "app_observer", "subscribe", shadowDocumentsTopic, "FAIL", "")
 		return result
 	}
 	result.TraceChain = appendTrace(result.TraceChain, "shadow_reported", "app_observer", "subscribe", shadowDocumentsTopic, "PASS", "")
-	if err := mqttSubscribe(device, 4, shadowDeltaTopic); err != nil {
+	if err := mqttSubscribeWithQoS(device, 4, shadowDeltaTopic, 1); err != nil {
 		result.Error = "device shadow delta subscribe failed: " + redactedError(err)
 		result.TraceChain = appendTrace(result.TraceChain, "shadow_delta", "device_client", "subscribe", shadowDeltaTopic, "FAIL", "")
 		return result
@@ -2807,7 +2827,7 @@ func sanitizeCorrelationID(raw string) string {
 	return b.String()
 }
 
-func waitForMQTTPublish(conn io.Reader, topic string, timeout time.Duration, match func(map[string]any) bool) (map[string]any, error) {
+func waitForMQTTPublish(conn io.ReadWriter, topic string, timeout time.Duration, match func(map[string]any) bool) (map[string]any, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		packetType, body, err := mqttReadPacket(conn)
@@ -2817,8 +2837,16 @@ func waitForMQTTPublish(conn io.Reader, topic string, timeout time.Duration, mat
 		if packetType>>4 != 3 {
 			continue
 		}
-		gotTopic, message, err := mqttDecodePublish(packetType&0x0f, body)
-		if err != nil || gotTopic != topic {
+		gotTopic, message, packetID, qos, err := mqttDecodePublishPacket(packetType&0x0f, body)
+		if err != nil {
+			continue
+		}
+		if qos == 1 {
+			if err := mqttWritePuback(conn, packetID); err != nil {
+				return nil, err
+			}
+		}
+		if gotTopic != topic {
 			continue
 		}
 		doc := map[string]any{}
@@ -4255,9 +4283,16 @@ func mqttConnect(w io.ReadWriter, clientID, username, password string, keepAlive
 }
 
 func mqttSubscribe(w io.ReadWriter, packetID uint16, topic string) error {
+	return mqttSubscribeWithQoS(w, packetID, topic, 0)
+}
+
+func mqttSubscribeWithQoS(w io.ReadWriter, packetID uint16, topic string, qos byte) error {
+	if qos > 1 {
+		return fmt.Errorf("unsupported mqtt subscribe qos %d", qos)
+	}
 	body := []byte{byte(packetID >> 8), byte(packetID)}
 	body = append(body, mqttString(topic)...)
-	body = append(body, 0)
+	body = append(body, qos)
 	if err := mqttWritePacket(w, 0x82, body); err != nil {
 		return err
 	}
@@ -4440,20 +4475,37 @@ func mqttReadPacket(r io.Reader) (byte, []byte, error) {
 }
 
 func mqttDecodePublish(flags byte, body []byte) (string, []byte, error) {
+	topic, payload, _, _, err := mqttDecodePublishPacket(flags, body)
+	return topic, payload, err
+}
+
+func mqttDecodePublishPacket(flags byte, body []byte) (string, []byte, uint16, byte, error) {
 	if len(body) < 2 {
-		return "", nil, errors.New("publish body too short")
+		return "", nil, 0, 0, errors.New("publish body too short")
 	}
 	topicLen := int(binary.BigEndian.Uint16(body[:2]))
 	topicEnd := 2 + topicLen
 	if len(body) < topicEnd {
-		return "", nil, errors.New("publish topic truncated")
+		return "", nil, 0, 0, errors.New("publish topic truncated")
 	}
 	pos := topicEnd
 	qos := (flags >> 1) & 0x03
+	var packetID uint16
 	if qos > 0 {
+		if len(body) < pos+2 {
+			return "", nil, 0, qos, errors.New("publish packet id truncated")
+		}
+		packetID = binary.BigEndian.Uint16(body[pos : pos+2])
 		pos += 2
 	}
-	return string(body[2:topicEnd]), body[pos:], nil
+	return string(body[2:topicEnd]), body[pos:], packetID, qos, nil
+}
+
+func mqttWritePuback(w io.Writer, packetID uint16) error {
+	if packetID == 0 {
+		return errors.New("mqtt puback missing packet id")
+	}
+	return mqttWritePacket(w, 0x40, []byte{byte(packetID >> 8), byte(packetID)})
 }
 
 func mqttString(value string) []byte {

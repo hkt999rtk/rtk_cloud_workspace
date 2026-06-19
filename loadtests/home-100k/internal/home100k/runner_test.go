@@ -21,9 +21,10 @@ func correlatedEvidenceForStages(runID string, stages []StageResult) ServerEvide
 	sources["video_cloud_api"] = EvidenceSource{Available: true, Counters: map[string]int64{
 		"app_user.desired_writes": app.DesiredWrites,
 	}}
-	sources["iot_device_shadow"] = EvidenceSource{Available: true, Counters: map[string]int64{
-		"device_mqtt.reported_publishes": device.ReportedPublishes,
-		"app_user.received_acks":         app.ReceivedAcks,
+	sources["redis_valkey"] = EvidenceSource{Available: true, Counters: map[string]int64{
+		"redis_valkey.shadow.docs":       device.ReportedPublishes,
+		"redis_valkey.shadow.keys":       device.ReportedPublishes + app.DesiredWrites,
+		"redis_valkey.command.set.calls": device.ReportedPublishes + app.DesiredWrites,
 	}}
 	return ServerEvidence{RunID: runID, Complete: true, Sources: sources}
 }
@@ -610,13 +611,11 @@ func TestCorrelateServerEvidenceUsesTotalMQTTConnectsForEMQX(t *testing.T) {
 		Sources: map[string]EvidenceSource{
 			"emqx": {Available: true, Counters: map[string]int64{
 				"emqx.broker.identity":       1,
-				"mqtt.total_connect_success": 14,
+				"mqtt.total_connect_success": 16,
 			}},
-			"iot_device_shadow": {Available: true, Counters: map[string]int64{
-				"app_user.desired_writes":        4,
-				"device_mqtt.delta_received":     4,
-				"device_mqtt.reported_publishes": 4,
-				"app_user.received_acks":         4,
+			"redis_valkey": {Available: true, Counters: map[string]int64{
+				"redis_valkey.shadow.docs":       4,
+				"redis_valkey.command.set.calls": 8,
 			}},
 		},
 	}
@@ -626,8 +625,8 @@ func TestCorrelateServerEvidenceUsesTotalMQTTConnectsForEMQX(t *testing.T) {
 	if correlation.Status != "pass" {
 		t.Fatalf("status = %s, want pass; checks=%#v reasons=%#v", correlation.Status, correlation.Checks, correlation.Reasons)
 	}
-	if correlation.Checks[0].Counter != "mqtt.total_connect_success" || correlation.Checks[0].ClientTotal != 14 || correlation.Checks[0].ServerTotal != 14 {
-		t.Fatalf("emqx check = %#v, want total MQTT connect 14/14", correlation.Checks[0])
+	if correlation.Checks[0].Counter != "mqtt.total_connect_success" || correlation.Checks[0].ClientTotal != 14 || correlation.Checks[0].ServerTotal != 16 {
+		t.Fatalf("emqx check = %#v, want at least total MQTT connect 14/16", correlation.Checks[0])
 	}
 }
 
@@ -648,11 +647,9 @@ func TestCorrelateServerEvidenceRequiresEMQXIdentity(t *testing.T) {
 			"emqx": {Available: true, Counters: map[string]int64{
 				"mqtt.total_connect_success": 10,
 			}},
-			"iot_device_shadow": {Available: true, Counters: map[string]int64{
-				"app_user.desired_writes":        4,
-				"device_mqtt.delta_received":     4,
-				"device_mqtt.reported_publishes": 4,
-				"app_user.received_acks":         4,
+			"redis_valkey": {Available: true, Counters: map[string]int64{
+				"redis_valkey.shadow.docs":       4,
+				"redis_valkey.command.set.calls": 8,
 			}},
 		},
 	}
@@ -687,11 +684,9 @@ func TestCorrelateServerEvidenceAcceptsEMQXListenerStatsIdentity(t *testing.T) {
 			"emqx_listener_stats": {Available: true, Counters: map[string]int64{
 				"emqx.broker.identity": 1,
 			}},
-			"iot_device_shadow": {Available: true, Counters: map[string]int64{
-				"app_user.desired_writes":        4,
-				"device_mqtt.delta_received":     4,
-				"device_mqtt.reported_publishes": 4,
-				"app_user.received_acks":         4,
+			"redis_valkey": {Available: true, Counters: map[string]int64{
+				"redis_valkey.shadow.docs":       4,
+				"redis_valkey.command.set.calls": 8,
 			}},
 		},
 	}

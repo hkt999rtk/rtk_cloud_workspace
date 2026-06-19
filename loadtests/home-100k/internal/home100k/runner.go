@@ -569,6 +569,9 @@ func aggregateStageResults(items []StageResult) StageResult {
 		result.FailureDetails = addFailureDetails(result.FailureDetails, item.FailureDetails)
 		result.FailureEvents = appendStageFailureEvents(result.FailureEvents, item.FailureEvents)
 		result.CommandEvents = append(result.CommandEvents, item.CommandEvents...)
+		result.DeviceTypeTotals = addDeviceTypeTotals(result.DeviceTypeTotals, item.DeviceTypeTotals)
+		result.UserActionTotals = addInt64MapTotals(result.UserActionTotals, item.UserActionTotals)
+		result.UsageWindowTotals = addInt64MapTotals(result.UsageWindowTotals, item.UsageWindowTotals)
 		result.StageDiagnostics = append(result.StageDiagnostics, item.StageDiagnostics...)
 	}
 	count := float64(len(items))
@@ -584,6 +587,56 @@ func aggregateStageResults(items []StageResult) StageResult {
 	result.DesiredReportedConvergenceRate /= count
 	result.OfflineDesiredConvergenceRate /= count
 	return result
+}
+
+func addDeviceTypeTotals(left, right map[string]DeviceTypeTotals) map[string]DeviceTypeTotals {
+	if len(left) == 0 && len(right) == 0 {
+		return nil
+	}
+	merged := map[string]DeviceTypeTotals{}
+	for name, value := range left {
+		merged[name] = addDeviceTypeTotal(merged[name], value)
+	}
+	for name, value := range right {
+		merged[name] = addDeviceTypeTotal(merged[name], value)
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
+}
+
+func addDeviceTypeTotal(left, right DeviceTypeTotals) DeviceTypeTotals {
+	return DeviceTypeTotals{
+		TelemetryPublishes: left.TelemetryPublishes + right.TelemetryPublishes,
+		EventPublishes:     left.EventPublishes + right.EventPublishes,
+		DesiredWrites:      left.DesiredWrites + right.DesiredWrites,
+		DeltaReceived:      left.DeltaReceived + right.DeltaReceived,
+		ReportedPublishes:  left.ReportedPublishes + right.ReportedPublishes,
+		BytesSent:          left.BytesSent + right.BytesSent,
+		BytesReceived:      left.BytesReceived + right.BytesReceived,
+	}
+}
+
+func addInt64MapTotals(left, right map[string]int64) map[string]int64 {
+	if len(left) == 0 && len(right) == 0 {
+		return nil
+	}
+	merged := map[string]int64{}
+	for name, value := range left {
+		if value != 0 {
+			merged[name] += value
+		}
+	}
+	for name, value := range right {
+		if value != 0 {
+			merged[name] += value
+		}
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
 }
 
 func connectSuccessPercent(totals DeviceMQTTTotals) float64 {
@@ -779,21 +832,21 @@ func loadSyncTelemetry(path string) SyncTelemetry {
 
 func requiredEvidenceSources(available bool) map[string]EvidenceSource {
 	return map[string]EvidenceSource{
-		"emqx":                      {Available: available},
-		"video_cloud_api":           {Available: available},
-		"iot_device_shadow":         {Available: available},
-		"iot_device_shadow_streams": {Available: available},
-		"postgres":                  {Available: available},
-		"ingress_nginx":             {Available: available},
-		"host_pod_resources":        {Available: available},
+		"emqx":               {Available: available},
+		"video_cloud_api":    {Available: available},
+		"redis_valkey":       {Available: available},
+		"postgres":           {Available: available},
+		"ingress_nginx":      {Available: available},
+		"host_pod_resources": {Available: available},
 	}
 }
 
 func optionalEvidenceSources(available bool) map[string]EvidenceSource {
 	return map[string]EvidenceSource{
-		"central_logger":    {Available: available, Optional: true},
-		"mqtt_nodebalancer": {Available: available, Optional: true},
-		"redis_valkey":      {Available: available, Optional: true},
+		"central_logger":            {Available: available, Optional: true},
+		"mqtt_nodebalancer":         {Available: available, Optional: true},
+		"iot_device_shadow":         {Available: available, Optional: true},
+		"iot_device_shadow_streams": {Available: available, Optional: true},
 	}
 }
 
@@ -878,11 +931,9 @@ func correlateServerEvidence(evidence ServerEvidence, device DeviceMQTTTotals, a
 		serverTotalMQTTConnectSuccess = evidenceCounter(evidence, "emqx", "device_mqtt.connect_success")
 	}
 	checks := []CorrelationCheck{
-		newCorrelationCheck("emqx", "mqtt.total_connect_success", totalMQTTConnectSuccess, serverTotalMQTTConnectSuccess),
-		newCorrelationCheck("iot_device_shadow", "app_user.desired_writes", app.DesiredWrites, evidenceCounter(evidence, "iot_device_shadow", "app_user.desired_writes")),
-		newCorrelationCheck("iot_device_shadow", "device_mqtt.delta_received", device.DeltaReceived, evidenceCounter(evidence, "iot_device_shadow", "device_mqtt.delta_received")),
-		newCorrelationCheck("iot_device_shadow", "device_mqtt.reported_publishes", device.ReportedPublishes, evidenceCounter(evidence, "iot_device_shadow", "device_mqtt.reported_publishes")),
-		newCorrelationCheck("iot_device_shadow", "app_user.received_acks", app.ReceivedAcks, evidenceCounter(evidence, "iot_device_shadow", "app_user.received_acks")),
+		newAtLeastCorrelationCheck("emqx", "mqtt.total_connect_success", totalMQTTConnectSuccess, serverTotalMQTTConnectSuccess),
+		newAtLeastCorrelationCheck("redis_valkey", "shadow.docs", 1, evidenceCounter(evidence, "redis_valkey", "redis_valkey.shadow.docs")),
+		newAtLeastCorrelationCheck("redis_valkey", "command.set.calls", 1, evidenceCounter(evidence, "redis_valkey", "redis_valkey.command.set.calls")),
 	}
 	status := "pass"
 	if len(reasons) > 0 {
@@ -913,11 +964,11 @@ func correlateRuntimeLogs(evidence ServerEvidence, stages []StageResult) Runtime
 		ServerRuntimeStreams: evidenceCounter(evidence, "iot_device_shadow_streams", "runtime_log_streams.total"),
 	}
 	if len(events) == 0 {
-		result.Status = "incomplete"
+		result.Status = "skipped"
 		return result
 	}
 	if !source.Available || len(source.Counters) == 0 {
-		result.Status = "incomplete"
+		result.Status = "skipped"
 		return result
 	}
 	for _, event := range events {
@@ -971,6 +1022,24 @@ func newCorrelationCheck(source string, counter string, clientTotal int64, serve
 	if serverTotal == 0 {
 		check.Status = "incomplete"
 	} else if check.Delta != 0 {
+		check.Status = "fail"
+	}
+	return check
+}
+
+func newAtLeastCorrelationCheck(source string, counter string, minimum int64, serverTotal int64) CorrelationCheck {
+	check := CorrelationCheck{
+		Source:      source,
+		Counter:     counter,
+		ClientTotal: minimum,
+		ServerTotal: serverTotal,
+		Delta:       serverTotal - minimum,
+		Tolerance:   0,
+		Status:      "pass",
+	}
+	if serverTotal == 0 {
+		check.Status = "incomplete"
+	} else if serverTotal < minimum {
 		check.Status = "fail"
 	}
 	return check

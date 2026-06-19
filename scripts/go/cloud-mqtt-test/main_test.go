@@ -965,6 +965,7 @@ func TestSustainedShadowCommandPublishesRuntimeLogsForServerCorrelation(t *testi
 			broker.PublishPayloads("app-controller", "devices/rtk-0041/logs"),
 			broker.PublishPayloads("device", "devices/rtk-0041/logs")...,
 		)
+		payloads = append(payloads, broker.PublishPayloads("app-observer", "devices/rtk-0041/logs")...)
 		if len(payloads) >= 4 {
 			break
 		}
@@ -2019,6 +2020,103 @@ func TestTimeoutUntilDeadlineBoundsCommandPhases(t *testing.T) {
 	}
 	if _, err := timeoutUntilDeadline(time.Now().Add(-time.Millisecond), 10*time.Second, "app_mqtt_connect"); err == nil || !strings.Contains(err.Error(), "app_mqtt_connect") {
 		t.Fatalf("expired deadline err = %v, want phase-specific error", err)
+	}
+}
+
+func TestWaitForMQTTPublishAcksInboundQoS1(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	topic := "$vc/devices/rtk-0041/shadow/update/accepted"
+	payload := []byte(`{"clientToken":"cmd-1"}`)
+	done := make(chan error, 1)
+	go func() {
+		body := append(mqttString(topic), 0, 7)
+		body = append(body, payload...)
+		if err := mqttWritePacket(server, 0x32, body); err != nil {
+			done <- err
+			return
+		}
+		packetType, response, err := mqttReadPacket(server)
+		if err != nil {
+			done <- err
+			return
+		}
+		if packetType != 0x40 || len(response) < 2 || binary.BigEndian.Uint16(response[:2]) != 7 {
+			done <- fmt.Errorf("PUBACK packet type/body = 0x%x %x, want packet id 7", packetType, response)
+			return
+		}
+		done <- nil
+	}()
+
+	doc, err := waitForMQTTPublish(client, topic, time.Second, func(doc map[string]any) bool {
+		return doc["clientToken"] == "cmd-1"
+	})
+	if err != nil {
+		t.Fatalf("waitForMQTTPublish error = %v", err)
+	}
+	if doc["clientToken"] != "cmd-1" {
+		t.Fatalf("clientToken = %v, want cmd-1", doc["clientToken"])
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("server side error = %v", err)
+	}
+}
+
+func TestWaitForMQTTPublishAcksInboundQoS1BeforeTopicFilter(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	wantedTopic := "$vc/devices/rtk-0041/shadow/update/documents"
+	otherTopic := "$vc/devices/rtk-0041/shadow/update/accepted"
+	done := make(chan error, 1)
+	go func() {
+		body := append(mqttString(otherTopic), 0, 7)
+		body = append(body, []byte(`{"clientToken":"reported-cmd-1"}`)...)
+		if err := mqttWritePacket(server, 0x32, body); err != nil {
+			done <- err
+			return
+		}
+		packetType, response, err := mqttReadPacket(server)
+		if err != nil {
+			done <- err
+			return
+		}
+		if packetType != 0x40 || len(response) < 2 || binary.BigEndian.Uint16(response[:2]) != 7 {
+			done <- fmt.Errorf("PUBACK packet type/body = 0x%x %x, want packet id 7", packetType, response)
+			return
+		}
+		body = append(mqttString(wantedTopic), 0, 8)
+		body = append(body, []byte(`{"clientToken":"reported-cmd-1"}`)...)
+		if err := mqttWritePacket(server, 0x32, body); err != nil {
+			done <- err
+			return
+		}
+		packetType, response, err = mqttReadPacket(server)
+		if err != nil {
+			done <- err
+			return
+		}
+		if packetType != 0x40 || len(response) < 2 || binary.BigEndian.Uint16(response[:2]) != 8 {
+			done <- fmt.Errorf("PUBACK packet type/body = 0x%x %x, want packet id 8", packetType, response)
+			return
+		}
+		done <- nil
+	}()
+
+	doc, err := waitForMQTTPublish(client, wantedTopic, time.Second, func(doc map[string]any) bool {
+		return doc["clientToken"] == "reported-cmd-1"
+	})
+	if err != nil {
+		t.Fatalf("waitForMQTTPublish error = %v", err)
+	}
+	if doc["clientToken"] != "reported-cmd-1" {
+		t.Fatalf("clientToken = %v, want reported-cmd-1", doc["clientToken"])
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("server side error = %v", err)
 	}
 }
 

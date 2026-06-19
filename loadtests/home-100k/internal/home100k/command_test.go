@@ -1757,17 +1757,20 @@ func TestApplySourceCounterBaselineDelta(t *testing.T) {
 	}
 }
 
-func TestNormalizeEvidenceSourceCatalogMetadataPreservesOptionalSources(t *testing.T) {
+func TestNormalizeEvidenceSourceCatalogMetadataRequiresRedisValkey(t *testing.T) {
 	sources := requiredEvidenceSources(true)
 	sources["redis_valkey"] = EvidenceSource{Available: false, Detail: "exit status 1"}
 
 	normalizeEvidenceSourceCatalogMetadata(sources)
 
-	if !sources["redis_valkey"].Optional {
-		t.Fatalf("redis_valkey optional = false, want true")
+	if sources["redis_valkey"].Optional {
+		t.Fatalf("redis_valkey optional = true, want false")
 	}
-	if !allEvidenceSourcesAvailable(sources) {
-		t.Fatalf("optional redis_valkey should not make required evidence incomplete")
+	if allEvidenceSourcesAvailable(sources) {
+		t.Fatalf("unavailable redis_valkey should make required evidence incomplete")
+	}
+	if !sources["iot_device_shadow"].Optional || !sources["iot_device_shadow_streams"].Optional {
+		t.Fatalf("legacy shadow runtime sources should be optional diagnostics: %+v %+v", sources["iot_device_shadow"], sources["iot_device_shadow_streams"])
 	}
 }
 
@@ -2984,6 +2987,9 @@ used_memory:1048576
 db0:keys=42,expires=3,avg_ttl=1000
 cmdstat_get:calls=50,usec=100,usec_per_call=2.00
 cmdstat_set:calls=12,usec=24,usec_per_call=2.00
+redis_valkey.shadow.docs 40
+redis_valkey.shadow.named_indexes 20
+redis_valkey.shadow.keys 60
 `
 	counters := parseEvidenceCounters("redis_valkey", "run-cli", out)
 	for key, want := range map[string]int64{
@@ -2996,6 +3002,9 @@ cmdstat_set:calls=12,usec=24,usec_per_call=2.00
 		"redis_valkey.keyspace.db0.expires":     3,
 		"redis_valkey.command.get.calls":        50,
 		"redis_valkey.command.set.calls":        12,
+		"redis_valkey.shadow.docs":              40,
+		"redis_valkey.shadow.named_indexes":     20,
+		"redis_valkey.shadow.keys":              60,
 	} {
 		if counters[key] != want {
 			t.Fatalf("%s = %d, want %d in %+v", key, counters[key], want, counters)
