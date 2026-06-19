@@ -371,8 +371,15 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 	log := readTestFile(t, logPath)
 	for _, want := range []string{
 		"kind: StatefulSet\nmetadata:\n  name: postgresql",
-		"kind: Deployment\nmetadata:\n  name: redis",
+		"kind: StatefulSet\nmetadata:\n  name: redis",
 		"image: valkey/valkey:8-alpine",
+		"--appendonly",
+		"- \"yes\"",
+		"--appendfsync",
+		"- \"everysec\"",
+		"--maxmemory-policy",
+		"- \"noeviction\"",
+		"volumeClaimTemplates:",
 		"containerPort: 6379",
 		"kind: Service\nmetadata:\n  name: redis",
 		"kind: Deployment\nmetadata:\n  name: redis-exporter",
@@ -491,7 +498,8 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		t.Fatalf("certissuer runtime must not mount CA private keys, got:\n%s", log)
 	}
 	for _, want := range []string{
-		"ARGS -n video-cloud-staging-platform rollout status deployment/redis",
+		"ARGS -n video-cloud-staging-platform delete deployment/redis --ignore-not-found=true",
+		"ARGS -n video-cloud-staging-platform rollout status statefulset/redis",
 		"ARGS -n video-cloud-staging-platform rollout status deployment/redis-exporter",
 	} {
 		if !strings.Contains(log, want) {
@@ -805,18 +813,33 @@ func TestLKEPublicHTTPSNetworkPolicyAllowsBackendTargetPorts(t *testing.T) {
 func TestLKERedisAndExporterManifestsUsePrivatePlatformServices(t *testing.T) {
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
 
-	redisDeployment := lkeRedisDeploymentManifest(env)
+	redisStatefulSet := lkeRedisStatefulSetManifest(env)
 	for _, want := range []string{
-		"kind: Deployment\nmetadata:\n  name: redis",
+		"kind: StatefulSet\nmetadata:\n  name: redis",
 		"namespace: video-cloud-staging-platform",
 		"app.kubernetes.io/name: redis",
 		"image: valkey/valkey:8-alpine",
+		"serviceName: redis",
+		"--appendonly",
+		"- \"yes\"",
+		"--appendfsync",
+		"- \"everysec\"",
+		"--dir",
+		"- \"/data\"",
+		"--maxmemory-policy",
+		"- \"noeviction\"",
 		"containerPort: 6379",
-		"emptyDir: {}",
+		"mountPath: /data",
+		"volumeClaimTemplates:",
+		"accessModes: [\"ReadWriteOnce\"]",
+		"storage: 5Gi",
 	} {
-		if !strings.Contains(redisDeployment, want) {
-			t.Fatalf("expected %q in Redis deployment manifest, got:\n%s", want, redisDeployment)
+		if !strings.Contains(redisStatefulSet, want) {
+			t.Fatalf("expected %q in Redis StatefulSet manifest, got:\n%s", want, redisStatefulSet)
 		}
+	}
+	if strings.Contains(redisStatefulSet, "emptyDir: {}") {
+		t.Fatalf("Redis StatefulSet must use PVC storage, got:\n%s", redisStatefulSet)
 	}
 
 	redisService := lkeRedisServiceManifest(env)

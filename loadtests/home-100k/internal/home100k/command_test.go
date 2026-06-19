@@ -2700,7 +2700,7 @@ func TestCollectLiveServerEvidenceFallsBackToCentralLoggerRuntimeLogs(t *testing
 		case strings.Contains(joined, "device_runtime_logs"):
 			t.Fatalf("collectLiveServerEvidence queried legacy device_runtime_logs table: %s %s", name, joined)
 		case strings.Contains(joined, "device_shadows"):
-			return "device_shadow.rows_current_converged\t1\n", nil
+			t.Fatalf("collectLiveServerEvidence queried removed device_shadows table: %s %s", name, joined)
 		default:
 			return "", nil
 		}
@@ -2820,7 +2820,7 @@ func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 		case strings.Contains(joined, "device_runtime_logs"):
 			t.Fatalf("collect-server-evidence queried legacy device_runtime_logs table: %s %s", name, joined)
 		case strings.Contains(joined, "device_shadows"):
-			return "device_shadow.reported_converged\t10\n", nil
+			t.Fatalf("collect-server-evidence queried removed device_shadows table: %s %s", name, joined)
 		case strings.Contains(joined, "app.kubernetes.io/name=mqtt"):
 			return "client.connected rtk-e2e-run-cli-home-device-000001-device-1\n", nil
 		default:
@@ -2850,7 +2850,7 @@ func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 	if !strings.Contains(out, `"evidence_window_mode": "run_scoped_since_time"`) || !strings.Contains(out, `"evidence_window_start": "2026-06-16T21:06:05Z"`) {
 		t.Fatalf("stdout missing run-scoped evidence window:\n%s", out)
 	}
-	if !strings.Contains(out, `"app_user.desired_writes": 10`) || !strings.Contains(out, `"device_shadow.reported_converged": 10`) {
+	if !strings.Contains(out, `"app_user.desired_writes": 10`) || !strings.Contains(out, `"device_mqtt.reported_publishes": 10`) {
 		t.Fatalf("stdout missing parsed counters:\n%s", out)
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "server-evidence.json")); err != nil {

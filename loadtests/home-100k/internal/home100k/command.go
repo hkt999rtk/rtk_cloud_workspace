@@ -2447,7 +2447,6 @@ func serverEvidenceProbes(runID string, logsSinceArg string) []serverEvidencePro
 		mqttNodeBalancerProbe(runID),
 		videoCloudAPIRequestTokenCounterProbe(runID, logsSinceArg),
 		kubectlLogsProbe("video_cloud_api", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=video-cloud-api", logsSinceArg, "Video Cloud API logs captured for run_id "+runID),
-		postgresCounterProbe("postgres", runID, shadowStoreCounterSQL(runID), "PostgreSQL device shadow convergence counters parsed for run_id "+runID),
 		kubectlLogsProbe("postgres", "video-cloud-staging-platform", "app.kubernetes.io/name=postgresql", logsSinceArg, "PostgreSQL logs captured"),
 		redisInfoProbe(runID),
 		kubectlLogsProbe("redis_valkey", "video-cloud-staging-platform", "app.kubernetes.io/name=redis", logsSinceArg, "Redis/Valkey logs captured when enabled"),
@@ -2461,16 +2460,6 @@ func postgresCounterProbe(source string, runID string, sql string, detail string
 		shellQuote(sql),
 	)
 	return serverEvidenceProbe{source: source, command: "bash", args: []string{"-lc", script}, detail: detail}
-}
-
-func shadowStoreCounterSQL(runID string) string {
-	return `
-SELECT 'device_shadow.rows_current_converged', COUNT(*)
-FROM device_shadows
-WHERE shadow_name = ''
-  AND desired = reported
-  AND deleted_at IS NULL
-`
 }
 
 func redisInfoProbe(runID string) serverEvidenceProbe {
