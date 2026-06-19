@@ -279,6 +279,13 @@ func TestReportRendersRequiredStageMetrics(t *testing.T) {
 				Status: "completed",
 			}},
 		},
+		ServerEvidence: ServerEvidence{Sources: map[string]EvidenceSource{
+			"host_pod_resources": {Available: true, Samples: []EvidenceResourceSample{
+				{Kind: "k8s_pod_top", Namespace: "video-cloud-staging-platform", Pod: "postgresql-0", CPUCoreMil: 120, MemoryBytes: 235 * 1024 * 1024},
+				{Kind: "k8s_pod_top", Namespace: "video-cloud-staging-platform", Pod: "postgresql-0", CPUCoreMil: 220, MemoryBytes: 236 * 1024 * 1024},
+				{Kind: "k8s_pod_top", Namespace: "video-cloud-staging-platform", Pod: "postgresql-0", CPUCoreMil: 180, MemoryBytes: 234 * 1024 * 1024},
+			}},
+		}},
 	})
 	for _, want := range []string{
 		"## Status Summary",
@@ -309,6 +316,12 @@ func TestReportRendersRequiredStageMetrics(t *testing.T) {
 		"Rejected",
 		"Auth violations",
 		"Client tokens",
+		"## Postgres Pod Resource Usage",
+		"CPU p95",
+		"Memory p95",
+		"postgresql-0",
+		"220m",
+		"236Mi",
 	} {
 		if !strings.Contains(report, want) {
 			t.Fatalf("report missing %q:\n%s", want, report)

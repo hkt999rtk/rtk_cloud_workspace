@@ -100,6 +100,11 @@ def fmt_float(value):
         return "-"
     return f"{value:.1f}"
 
+def fmt_mi(value):
+    if value is None:
+        return "-"
+    return f"{math.ceil(float(value) / (1024 * 1024))}Mi"
+
 def percentile(values, p):
     values = sorted(v for v in values if v is not None)
     if not values:
@@ -751,6 +756,30 @@ def server_evidence():
         lines.append(f"- {md(name)}: available={str(bool(source.get('available'))).lower()}{detail}{counter_text}")
     for note in evidence.get("notes") or []:
         lines.append(f"- note: {md(note)}")
+    postgres_samples = defaultdict(lambda: {"cpu": [], "memory": []})
+    for source in sources.values():
+        for sample in (source or {}).get("samples") or []:
+            if sample.get("kind") != "k8s_pod_top":
+                continue
+            pod = sample.get("pod") or ""
+            if "postgres" not in pod.lower():
+                continue
+            key = (sample.get("namespace") or "-", pod)
+            postgres_samples[key]["cpu"].append(num(sample.get("cpu_millicores"), None))
+            postgres_samples[key]["memory"].append(num(sample.get("memory_bytes"), None))
+    if postgres_samples:
+        lines.extend([
+            "",
+            "### Postgres Pod Resource Usage",
+            "| Namespace | Pod | Samples | CPU p95 | Memory p95 |",
+            "| --- | --- | ---: | ---: | ---: |",
+        ])
+        for namespace, pod in sorted(postgres_samples):
+            group = postgres_samples[(namespace, pod)]
+            lines.append(
+                f"| {md(namespace)} | {md(pod)} | {len(group['cpu'])} | "
+                f"{num(percentile(group['cpu'], 95), 0)}m | {fmt_mi(percentile(group['memory'], 95))} |"
+            )
     return "\n".join(lines)
 
 def report_source_artifacts():

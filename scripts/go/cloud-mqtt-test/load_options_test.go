@@ -139,3 +139,65 @@ func TestHomeDiverseEventsDependOnDeviceTypeAndUsageWindow(t *testing.T) {
 		t.Fatalf("security/camera status devices should produce event-style reports: telemetry=%#v events=%#v", telemetryByType, events)
 	}
 }
+
+func TestWeightedHomeDiverseCommandSlotsSpreadAcrossShard(t *testing.T) {
+	sessions := make([]sustainedDeviceSession, 2000)
+	for idx := range sessions {
+		sessions[idx] = sustainedDeviceSession{Record: certRecord{DeviceID: fmt.Sprintf("device-%04d", idx), DeviceType: "light"}}
+	}
+
+	slots := weightedHomeDiverseCommandSlots(sessions, "evening_peak", 100)
+	unique := map[int]bool{}
+	minSlot := len(sessions)
+	maxSlot := 0
+	for _, slot := range slots {
+		unique[slot] = true
+		if slot < minSlot {
+			minSlot = slot
+		}
+		if slot > maxSlot {
+			maxSlot = slot
+		}
+	}
+
+	if len(slots) != 100 {
+		t.Fatalf("slots = %d, want 100", len(slots))
+	}
+	if len(unique) < 95 {
+		t.Fatalf("unique command slots = %d, want broad spread; slots=%v", len(unique), slots)
+	}
+	if minSlot > 50 || maxSlot < 1900 {
+		t.Fatalf("slot range = %d..%d, want coverage across the shard", minSlot, maxSlot)
+	}
+}
+
+func TestJitteredCommandOffsetsSpreadAcrossShardSeeds(t *testing.T) {
+	sessions := make([]sustainedDeviceSession, 2000)
+	for idx := range sessions {
+		sessions[idx] = sustainedDeviceSession{Record: certRecord{DeviceID: fmt.Sprintf("device-%04d", idx), DeviceType: "light"}}
+	}
+	slots := weightedHomeDiverseCommandSlots(sessions, "evening_peak", 100)
+	window := 4 * time.Minute
+
+	first := jitteredCommandOffsets(slots, sessions, 20260531, window)
+	second := jitteredCommandOffsets(slots, sessions, 20260532, window)
+
+	if len(first) != 100 || len(second) != 100 {
+		t.Fatalf("offset lengths = %d/%d, want 100/100", len(first), len(second))
+	}
+	same := 0
+	for idx := range first {
+		if first[idx] < 0 || first[idx] >= window {
+			t.Fatalf("first[%d] = %s outside window %s", idx, first[idx], window)
+		}
+		if second[idx] < 0 || second[idx] >= window {
+			t.Fatalf("second[%d] = %s outside window %s", idx, second[idx], window)
+		}
+		if first[idx] == second[idx] {
+			same++
+		}
+	}
+	if same > 5 {
+		t.Fatalf("jittered offsets are still mostly aligned across seeds: same=%d first=%v second=%v", same, first, second)
+	}
+}
