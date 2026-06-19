@@ -1254,6 +1254,26 @@ func TestLKEPostgresStatefulSetUsesPostgresImageOverride(t *testing.T) {
 	}
 }
 
+func TestLKEPostgresStatefulSetCanOverrideMaxConnections(t *testing.T) {
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+	manifest := lkePostgresStatefulSetManifest(env)
+	if strings.Contains(manifest, "max_connections=") {
+		t.Fatalf("unexpected default max_connections override in PostgreSQL manifest:\n%s", manifest)
+	}
+
+	t.Setenv("LKE_POSTGRES_MAX_CONNECTIONS", "300")
+	manifest = lkePostgresStatefulSetManifest(env)
+	for _, want := range []string{
+		`args:`,
+		`- "-c"`,
+		`- "max_connections=300"`,
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("expected %q in PostgreSQL manifest, got:\n%s", want, manifest)
+		}
+	}
+}
+
 func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 	t.Setenv("LKE_POSTGRES_NODE_POOL_ID", "906225")
 	t.Setenv("LKE_MQTT_NODE_POOL_ID", "906225")

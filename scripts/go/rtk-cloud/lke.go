@@ -2461,6 +2461,7 @@ func lkePostgresStatefulSetManifest(env map[string]string) string {
 	requestCPU := firstNonEmpty(os.Getenv("LKE_POSTGRES_REQUEST_CPU"), env["LKE_POSTGRES_REQUEST_CPU"], "4")
 	requestMemory := firstNonEmpty(os.Getenv("LKE_POSTGRES_REQUEST_MEMORY"), env["LKE_POSTGRES_REQUEST_MEMORY"], "2Gi")
 	limitMemory := firstNonEmpty(os.Getenv("LKE_POSTGRES_LIMIT_MEMORY"), env["LKE_POSTGRES_LIMIT_MEMORY"], "6Gi")
+	args := lkePostgresArgsManifest(env)
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -2489,6 +2490,7 @@ spec:
       containers:
         - name: postgres
           image: %s
+%s
           ports:
             - name: postgres
               containerPort: 5432
@@ -2511,7 +2513,17 @@ spec:
               mountPath: /var/lib/postgresql/data
             - name: initdb
               mountPath: /docker-entrypoint-initdb.d
-%s%s`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], placement, lkePostgresImage(), requestCPU, requestMemory, limitMemory, storage, volumeClaims)
+%s%s`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], placement, lkePostgresImage(), args, requestCPU, requestMemory, limitMemory, storage, volumeClaims)
+}
+
+func lkePostgresArgsManifest(env map[string]string) string {
+	maxConnections := strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_POSTGRES_MAX_CONNECTIONS"), env["LKE_POSTGRES_MAX_CONNECTIONS"]))
+	if maxConnections == "" {
+		return ""
+	}
+	return fmt.Sprintf(`          args:
+            - "-c"
+            - "max_connections=%s"`, maxConnections)
 }
 
 func lkePostgresPlacementManifest(env map[string]string) string {
