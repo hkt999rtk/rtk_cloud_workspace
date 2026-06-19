@@ -5506,7 +5506,21 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
               value: "video-cloud-api-$(POD_NAME)"
             - name: VIDEO_CLOUD_MQTT_TOPIC_ROOT
               value: "devices"
-`, lkeNamespaceName(env, "platform"), lkeVideoCloudAPIDBMaxOpenConns(env), lkeVideoCloudAPIDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeAccountManagerInternalURL(env), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeMQTTInternalAddr(env))
+            - name: VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY
+              value: %q
+            - name: VIDEO_CLOUD_MQTT_OUTBOUND_CONNECTIONS
+              value: %q
+            - name: VIDEO_CLOUD_MQTT_OUTBOUND_QUEUE_SIZE
+              value: %q
+            - name: VIDEO_CLOUD_MQTT_OUTBOUND_WRITE_TIMEOUT
+              value: %q
+            - name: VIDEO_CLOUD_SHADOW_CACHE_ENABLED
+              value: "true"
+            - name: VIDEO_CLOUD_SHADOW_CACHE_ADDR
+              value: "redis.%s.svc.cluster.local:6379"
+            - name: VIDEO_CLOUD_SHADOW_CACHE_TTL
+              value: %q
+`, lkeNamespaceName(env, "platform"), lkeVideoCloudAPIDBMaxOpenConns(env), lkeVideoCloudAPIDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeAccountManagerInternalURL(env), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeMQTTInternalAddr(env), firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY"), env["LKE_VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY"], "16"), firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_OUTBOUND_CONNECTIONS"), env["LKE_VIDEO_CLOUD_MQTT_OUTBOUND_CONNECTIONS"], "8"), firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_OUTBOUND_QUEUE_SIZE"), env["LKE_VIDEO_CLOUD_MQTT_OUTBOUND_QUEUE_SIZE"], "4096"), firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_OUTBOUND_WRITE_TIMEOUT"), env["LKE_VIDEO_CLOUD_MQTT_OUTBOUND_WRITE_TIMEOUT"], "5s"), lkeNamespaceName(env, "platform"), firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_SHADOW_CACHE_TTL"), env["LKE_VIDEO_CLOUD_SHADOW_CACHE_TTL"], "24h"))
 		volumeMounts = `          volumeMounts:
             - name: logger-spool
               mountPath: /var/lib/video_cloud/logger-spool

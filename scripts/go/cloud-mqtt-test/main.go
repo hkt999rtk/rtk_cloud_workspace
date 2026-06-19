@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"database/sql"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -883,11 +884,12 @@ func (r sustainedLoadResult) SuccessRate() float64 {
 }
 
 type sustainedDeviceSession struct {
-	Assignment assignment
-	Record     certRecord
-	Conn       io.ReadWriteCloser
-	MQTTTarget mqttEndpointTarget
-	Reader     *sustainedDeviceReader
+	Assignment      assignment
+	Record          certRecord
+	Conn            io.ReadWriteCloser
+	MQTTTarget      mqttEndpointTarget
+	Reader          *sustainedDeviceReader
+	AppTokenManager *tokenManager
 }
 
 type sustainedMQTTPublish struct {
@@ -1218,6 +1220,7 @@ func runSustainedHome100KLoad(assignments []assignment, certs []certRecord, bran
 	start := time.Now()
 	deadline := start.Add(window)
 	sessions := connectSustainedDevicesUntil(assignments, certByID, brandname, runID, apiBaseURL, mqttTargets, opts.Concurrency, deadline, &result.Totals)
+	attachAppTokenManagers(sessions, apiBaseURL, appCert)
 	defer closeSustainedSessions(sessions)
 	if len(sessions) == 0 {
 		result.Status = "FAIL"
@@ -1321,6 +1324,7 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 			stageResult.Diagnostics.ConnectWindowSeconds = connectDeadline.Sub(connectStarted).Seconds()
 			stageResult.Diagnostics.NewAssignments = len(newAssignments)
 			newSessions := connectSustainedDevicesUntil(newAssignments, certByID, brandname, runID, apiBaseURL, mqttTargets, opts.Concurrency, connectDeadline, &stageResult.Totals)
+			attachAppTokenManagers(newSessions, apiBaseURL, appCert)
 			stageResult.Diagnostics.ConnectFinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
 			stageResult.Diagnostics.ConnectAttempts = stageResult.Totals.ConnectAttempts - before.ConnectAttempts
 			stageResult.Diagnostics.ConnectSuccesses = stageResult.Totals.ConnectSuccesses - before.ConnectSuccesses
@@ -1379,6 +1383,30 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 				stageResult.Diagnostics.CommandsScheduled++
 			}
 		}
+		var eventMu sync.Mutex
+		var eventWG sync.WaitGroup
+		commandLimit := opts.Concurrency
+		if commandLimit <= 0 {
+			commandLimit = 25
+		}
+		if commandLimit > len(sessions) {
+			commandLimit = len(sessions)
+		}
+		if commandLimit <= 0 {
+			commandLimit = 1
+		}
+		commandSlots := make(chan struct{}, commandLimit)
+		sessionLocks := make([]sync.Mutex, len(sessions))
+		mergeTotals := func(totals mqttIOTotals) {
+			if isZeroMQTTIOTotals(totals) {
+				return
+			}
+			activeConnections := stageResult.Totals.ActiveConnections
+			activeSubscriptions := stageResult.Totals.ActiveSubscriptions
+			stageResult.Totals = addMQTTIOTotals(stageResult.Totals, totals)
+			stageResult.Totals.ActiveConnections = activeConnections
+			stageResult.Totals.ActiveSubscriptions = activeSubscriptions
+		}
 		for _, event := range events {
 			if !time.Now().Before(stageDeadline) {
 				stageResult.Status = "FAIL"
@@ -1400,34 +1428,54 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 			session := sessions[sessionSlot]
 			switch event.Kind {
 			case "telemetry", "event":
-				bytesSent, err := publishSustainedTelemetry(session, brandname, runID, &stageResult.Totals)
+				var eventTotals mqttIOTotals
+				bytesSent, err := publishSustainedTelemetry(session, brandname, runID, &eventTotals)
+				eventMu.Lock()
+				mergeTotals(eventTotals)
 				if err != nil {
 					stageResult.Status = "FAIL"
 				} else {
 					recordStageReportEvent(&stageResult, session.Record.DeviceType, event.Kind, stage.UsageWindow, bytesSent)
 				}
+				eventMu.Unlock()
 			case "command":
 				if time.Until(stageDeadline) < commandBudget {
+					eventMu.Lock()
 					stageResult.Status = "FAIL"
 					stageResult.Notes = append(stageResult.Notes, fmt.Sprintf("stage %s skipped desired write because remaining time was below command budget %s", stage.Name, commandBudget))
 					stageResult.Diagnostics.SkipReason = firstNonEmptyString(stageResult.Diagnostics.SkipReason, "remaining_time_below_command_budget")
+					eventMu.Unlock()
 					continue
 				}
-				stageResult.CommandsAttempted++
-				recordStageUserAction(&stageResult, firstNonEmptyString(event.UserAction, "single_device_command"), stage.UsageWindow)
-				if runSustainedShadowCommandWithContext(session, brandname, runID, apiBaseURL, appCert, &stageResult.Totals, sustainedCommandContext{
-					Stage:       stage.Name,
-					EventIndex:  event.Index,
-					SessionSlot: sessionSlot,
-					Deadline:    stageDeadline,
-				}) == nil {
-					stageResult.CommandsPassed++
-					recordStageCommandSuccess(&stageResult, session.Record.DeviceType)
-				} else {
-					stageResult.Status = "FAIL"
-				}
+				eventWG.Add(1)
+				commandSlots <- struct{}{}
+				go func(event sustainedEvent, session sustainedDeviceSession, sessionSlot int) {
+					defer eventWG.Done()
+					defer func() { <-commandSlots }()
+					sessionLocks[sessionSlot].Lock()
+					defer sessionLocks[sessionSlot].Unlock()
+					var commandTotals mqttIOTotals
+					err := runSustainedShadowCommandWithContext(session, brandname, runID, apiBaseURL, appCert, &commandTotals, sustainedCommandContext{
+						Stage:       stage.Name,
+						EventIndex:  event.Index,
+						SessionSlot: sessionSlot,
+						Deadline:    stageDeadline,
+					})
+					eventMu.Lock()
+					defer eventMu.Unlock()
+					mergeTotals(commandTotals)
+					stageResult.CommandsAttempted++
+					recordStageUserAction(&stageResult, firstNonEmptyString(event.UserAction, "single_device_command"), stage.UsageWindow)
+					if err == nil {
+						stageResult.CommandsPassed++
+						recordStageCommandSuccess(&stageResult, session.Record.DeviceType)
+					} else {
+						stageResult.Status = "FAIL"
+					}
+				}(event, session, sessionSlot)
 			}
 		}
+		eventWG.Wait()
 		if stageResult.CommandsAttempted == 0 {
 			stageResult.Status = "FAIL"
 			stageResult.Notes = append(stageResult.Notes, "sustained user command schedule produced zero desired writes")
@@ -1551,6 +1599,12 @@ func stagedConnectDeadline(stageStart time.Time, stageDeadline time.Time) time.T
 
 func connectSustainedDevices(assignments []assignment, certByID map[string]certRecord, brandname, runID, apiBaseURL string, mqttTargets []mqttEndpointTarget, concurrency int, totals *mqttIOTotals) []sustainedDeviceSession {
 	return connectSustainedDevicesUntil(assignments, certByID, brandname, runID, apiBaseURL, mqttTargets, concurrency, time.Time{}, totals)
+}
+
+func attachAppTokenManagers(sessions []sustainedDeviceSession, apiBaseURL string, appCert tls.Certificate) {
+	for idx := range sessions {
+		sessions[idx].AppTokenManager = newAppTokenManager(apiBaseURL, appCert, sessions[idx].Record.DeviceID)
+	}
 }
 
 func connectSustainedDevicesUntil(assignments []assignment, certByID map[string]certRecord, brandname, runID, apiBaseURL string, mqttTargets []mqttEndpointTarget, concurrency int, deadline time.Time, totals *mqttIOTotals) []sustainedDeviceSession {
@@ -1767,7 +1821,7 @@ func sustainedHomeDiverseEvents(sessions []sustainedDeviceSession, opts loadOpti
 
 	minCommands, _ := strconv.Atoi(strings.TrimSpace(opts.StageMinCommands))
 	commandSlots := weightedHomeDiverseCommandSlots(sessions, window, minCommands)
-	offsets := deterministicCommandOffsets(len(commandSlots), commandWindow)
+	offsets := jitteredCommandOffsets(commandSlots, sessions, seed, commandWindow)
 	for idx, slot := range commandSlots {
 		offset := time.Duration(0)
 		if idx < len(offsets) {
@@ -1872,7 +1926,11 @@ func weightedHomeDiverseCommandSlots(sessions []sustainedDeviceSession, usageWin
 	}
 	slots := make([]int, 0, minCommands)
 	for idx := 0; idx < minCommands; idx++ {
-		slots = append(slots, weighted[idx%len(weighted)])
+		position := int(math.Floor((float64(idx) + 0.5) * float64(len(weighted)) / float64(minCommands)))
+		if position >= len(weighted) {
+			position = len(weighted) - 1
+		}
+		slots = append(slots, weighted[position])
 	}
 	return slots
 }
@@ -1904,6 +1962,44 @@ func jitterOffset(offset time.Duration, deviceID string, seed int, window time.D
 		return window - time.Nanosecond
 	}
 	return out
+}
+
+func jitteredCommandOffsets(slots []int, sessions []sustainedDeviceSession, seed int, window time.Duration) []time.Duration {
+	if len(slots) == 0 || window <= 0 {
+		return nil
+	}
+	base := deterministicCommandOffsets(len(slots), window)
+	if len(base) == 0 {
+		return nil
+	}
+	spacing := window / time.Duration(len(slots)+1)
+	jitterLimit := spacing / 3
+	if jitterLimit <= 0 {
+		jitterLimit = time.Millisecond
+	}
+	offsets := make([]time.Duration, 0, len(slots))
+	for idx, slot := range slots {
+		deviceID := ""
+		if slot >= 0 && slot < len(sessions) {
+			deviceID = sessions[slot].Record.DeviceID
+		}
+		hash := sha256.Sum256([]byte(fmt.Sprintf("%d:%d:%d:%s:command-jitter", seed, idx, slot, deviceID)))
+		jitterRange := uint64((2 * jitterLimit).Nanoseconds())
+		jitter := time.Duration(0)
+		if jitterRange > 0 {
+			jitter = time.Duration(int64(binary.BigEndian.Uint64(hash[:8])%jitterRange)) - jitterLimit
+		}
+		offset := base[idx] + jitter
+		if offset < 0 {
+			offset = 0
+		}
+		if offset >= window {
+			offset = window - time.Nanosecond
+		}
+		offsets = append(offsets, offset)
+	}
+	sort.Slice(offsets, func(i, j int) bool { return offsets[i] < offsets[j] })
+	return offsets
 }
 
 func publishSustainedTelemetry(session sustainedDeviceSession, brandname string, runID string, totals *mqttIOTotals) (int64, error) {
@@ -1944,7 +2040,11 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		return fail("app_token", "app_token_request_failed", err)
 	}
 	totals.AppTokenAttempts++
-	appToken, err := requestAppTokenWithTimeout(apiBaseURL, appCert, session.Record.DeviceID, tokenTimeout)
+	appTokenManager := session.AppTokenManager
+	if appTokenManager == nil {
+		appTokenManager = newAppTokenManager(apiBaseURL, appCert, session.Record.DeviceID)
+	}
+	appToken, err := appTokenManager.Token(tokenTimeout)
 	if err != nil {
 		totals.AppTokenFailures++
 		totals.HTTPFailures++
@@ -1965,7 +2065,7 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		DeviceType: session.Record.DeviceType,
 		Brandname:  brandname,
 		RunID:      runID,
-		AppToken:   appToken.AccessToken,
+		AppToken:   appToken,
 		Dial: func() (io.ReadWriteCloser, error) {
 			conn, err := tls.DialWithDialer(&net.Dialer{Timeout: appMQTTTimeout}, "tcp", net.JoinHostPort(target.Host, strconv.Itoa(target.Port)), &tls.Config{InsecureSkipVerify: true})
 			if err != nil {
@@ -1982,7 +2082,7 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		OnConnackAttempt: func() { totals.AppMQTTConnackAttempts++ },
 		OnConnackSuccess: func() { totals.AppMQTTConnackSuccesses++ },
 		OnConnackFailure: func(error) { totals.AppMQTTConnackFailures++ },
-	}, "app-controller", appMQTTUsername(session.Record.DeviceID), appToken.AccessToken)
+	}, "app-controller", appMQTTUsername(session.Record.DeviceID), appToken)
 	if err != nil {
 		totals.HTTPFailures++
 		return fail("app_mqtt_connect", "app_mqtt_connect_failed", err)
@@ -1991,9 +2091,14 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 	clearConnDeadline(appConn)
 
 	shadowUpdateTopic := "$vc/devices/" + session.Record.DeviceID + "/shadow/update"
+	acceptedTopic := shadowUpdateTopic + "/accepted"
 	documentsTopic := shadowUpdateTopic + "/documents"
 	deltaTopic := shadowUpdateTopic + "/delta"
-	if err := mqttSubscribe(appConn, 1, documentsTopic); err != nil {
+	if err := mqttSubscribe(appConn, 1, acceptedTopic); err != nil {
+		totals.HTTPFailures++
+		return fail("app_shadow_accepted_subscribe", "app_shadow_accepted_subscribe_failed", err)
+	}
+	if err := mqttSubscribe(appConn, 2, documentsTopic); err != nil {
 		totals.HTTPFailures++
 		return fail("app_shadow_documents_subscribe", "app_shadow_documents_subscribe_failed", err)
 	}
@@ -2033,6 +2138,17 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 	totals.AppDesiredWrites++
 	totals.HTTPRequests++
 	totals.TotalHTTPBytesSent += int64(len(shadowUpdateTopic) + len(desiredPayload))
+	acceptedTimeout, err := timeoutUntilDeadline(deadline, 10*time.Second, "app_shadow_accepted_wait")
+	if err != nil {
+		totals.HTTPFailures++
+		return fail("app_shadow_accepted_wait", "app_shadow_accepted_wait_failed", err)
+	}
+	if _, err := waitForMQTTPublishWithDeadline(appConn, acceptedTopic, acceptedTimeout, func(doc map[string]any) bool {
+		return doc["clientToken"] == commandID
+	}); err != nil {
+		totals.HTTPFailures++
+		return fail("app_shadow_accepted_wait", "app_shadow_accepted_wait_failed", err)
+	}
 	deltaTimeout, err := timeoutUntilDeadline(deadline, 10*time.Second, "device_delta_wait")
 	if err != nil {
 		totals.HTTPFailures++
@@ -3009,6 +3125,57 @@ func addMQTTIOTotals(a mqttIOTotals, b mqttIOTotals) mqttIOTotals {
 	return a
 }
 
+func isZeroMQTTIOTotals(t mqttIOTotals) bool {
+	return t.ConnectAttempts == 0 &&
+		t.ConnectSuccesses == 0 &&
+		t.ConnectFailures == 0 &&
+		t.DeviceTokenAttempts == 0 &&
+		t.DeviceTokenSuccesses == 0 &&
+		t.DeviceTokenFailures == 0 &&
+		t.DeviceMQTTDialAttempts == 0 &&
+		t.DeviceMQTTDialSuccesses == 0 &&
+		t.DeviceMQTTDialFailures == 0 &&
+		t.DeviceMQTTConnackAttempts == 0 &&
+		t.DeviceMQTTConnackSuccesses == 0 &&
+		t.DeviceMQTTConnackFailures == 0 &&
+		t.DeviceSubscribeAttempts == 0 &&
+		t.DeviceSubscribeFailures == 0 &&
+		t.SubscribeSuccesses == 0 &&
+		t.ActiveConnections == 0 &&
+		t.ActiveSubscriptions == 0 &&
+		t.PublishSuccesses == 0 &&
+		t.PublishFailures == 0 &&
+		t.MessagesReceived == 0 &&
+		t.DeltaReceived == 0 &&
+		t.ReportedEvents == 0 &&
+		t.AppLoginAttempts == 0 &&
+		t.AppLoginSuccesses == 0 &&
+		t.AppLoginFailures == 0 &&
+		t.AppTokenAttempts == 0 &&
+		t.AppTokenSuccesses == 0 &&
+		t.AppTokenFailures == 0 &&
+		t.AppMQTTDialAttempts == 0 &&
+		t.AppMQTTDialSuccesses == 0 &&
+		t.AppMQTTDialFailures == 0 &&
+		t.AppMQTTConnackAttempts == 0 &&
+		t.AppMQTTConnackSuccesses == 0 &&
+		t.AppMQTTConnackFailures == 0 &&
+		t.AppDesiredWrites == 0 &&
+		t.AppReceivedAcks == 0 &&
+		t.TotalBytesSent == 0 &&
+		t.TotalBytesReceived == 0 &&
+		t.AuthViolations == 0 &&
+		t.HTTPRequests == 0 &&
+		t.HTTPSuccesses == 0 &&
+		t.HTTPFailures == 0 &&
+		t.TotalHTTPBytesSent == 0 &&
+		t.TotalHTTPBytesReceived == 0 &&
+		len(t.FailureReasons) == 0 &&
+		len(t.FailureDetails) == 0 &&
+		len(t.FailureEvents) == 0 &&
+		len(t.CommandEvents) == 0
+}
+
 func prefixedNotes(prefix string, notes []string) []string {
 	out := make([]string, 0, len(notes))
 	for _, note := range notes {
@@ -3358,54 +3525,255 @@ func traceDetail(detail string) string {
 	return redactedErrorString(detail)
 }
 
-func requestDeviceToken(apiBaseURL string, cert tls.Certificate, deviceID string) (string, error) {
-	apiBaseURL = strings.TrimRight(strings.TrimSpace(apiBaseURL), "/")
-	if apiBaseURL == "" || strings.Contains(apiBaseURL, "unknown") {
-		return "", errors.New("missing video cloud API base URL for mTLS token bootstrap")
+type tokenBundle struct {
+	Scope        string    `json:"scope"`
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token"`
+	issuedAt     time.Time `json:"-"`
+}
+
+type tokenManager struct {
+	apiBaseURL string
+	cert       tls.Certificate
+	deviceID   string
+	scope      string
+	service    string
+	now        func() time.Time
+	timeout    time.Duration
+
+	mu     sync.Mutex
+	bundle tokenBundle
+}
+
+func newDeviceTokenManager(apiBaseURL string, cert tls.Certificate, deviceID string) *tokenManager {
+	return &tokenManager{apiBaseURL: apiBaseURL, cert: cert, deviceID: deviceID, scope: "device", service: "mqtt", now: time.Now, timeout: 10 * time.Second}
+}
+
+func newAppTokenManager(apiBaseURL string, cert tls.Certificate, deviceID string) *tokenManager {
+	return &tokenManager{apiBaseURL: apiBaseURL, cert: cert, deviceID: deviceID, scope: "app", now: time.Now, timeout: 10 * time.Second}
+}
+
+func (m *tokenManager) Token(timeout time.Duration) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.now == nil {
+		m.now = time.Now
 	}
-	raw, err := json.Marshal(map[string]any{"scope": "device", "devid": deviceID, "service": "mqtt", "access_token_only": true})
+	if timeout <= 0 {
+		timeout = m.timeout
+	}
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	now := m.now()
+	if strings.TrimSpace(m.bundle.AccessToken) == "" {
+		return m.requestWithClientCertificate(timeout)
+	}
+	if accessTokenExpired(m.bundle.AccessToken, now) {
+		return m.requestWithClientCertificate(timeout)
+	}
+	if accessTokenPastHalfLife(m.bundle, now) && m.renewsWithClientCertificate() {
+		return m.requestWithClientCertificate(timeout)
+	}
+	if strings.TrimSpace(m.bundle.RefreshToken) != "" && accessTokenPastHalfLife(m.bundle, now) {
+		if token, err := m.refresh(timeout); err == nil {
+			return token, nil
+		}
+		return m.requestWithClientCertificate(timeout)
+	}
+	return m.bundle.AccessToken, nil
+}
+
+func (m *tokenManager) requestWithClientCertificate(timeout time.Duration) (string, error) {
+	bundle, err := requestTokenBundleWithTimeout(m.apiBaseURL, m.cert, m.deviceID, m.scope, m.service, timeout)
 	if err != nil {
 		return "", err
+	}
+	m.bundle = bundle
+	return bundle.AccessToken, nil
+}
+
+func (m *tokenManager) renewsWithClientCertificate() bool {
+	switch strings.ToLower(strings.TrimSpace(m.scope)) {
+	case "device", "camera":
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *tokenManager) refresh(timeout time.Duration) (string, error) {
+	bundle, err := refreshTokenBundleWithTimeout(m.apiBaseURL, m.cert, m.deviceID, m.scope, m.bundle.RefreshToken, timeout)
+	if err != nil {
+		return "", err
+	}
+	m.bundle = bundle
+	return bundle.AccessToken, nil
+}
+
+func accessTokenExpired(token string, now time.Time) bool {
+	exp, ok := jwtUnixTimeClaim(token, "exp")
+	return ok && !now.Before(exp)
+}
+
+func accessTokenPastHalfLife(bundle tokenBundle, now time.Time) bool {
+	exp, ok := jwtUnixTimeClaim(bundle.AccessToken, "exp")
+	if !ok || !now.Before(exp) {
+		return false
+	}
+	iat, ok := jwtUnixTimeClaim(bundle.AccessToken, "iat")
+	if !ok || !iat.Before(exp) {
+		iat = bundle.issuedAt
+	}
+	if iat.IsZero() || !iat.Before(exp) {
+		return false
+	}
+	lifetime := exp.Sub(iat)
+	return now.Sub(iat) >= lifetime/2
+}
+
+func jwtUnixTimeClaim(token string, claim string) (time.Time, bool) {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return time.Time{}, false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return time.Time{}, false
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return time.Time{}, false
+	}
+	value, ok := claims[claim]
+	if !ok {
+		return time.Time{}, false
+	}
+	switch v := value.(type) {
+	case float64:
+		return time.Unix(int64(v), 0), true
+	case json.Number:
+		n, err := v.Int64()
+		if err != nil {
+			return time.Time{}, false
+		}
+		return time.Unix(n, 0), true
+	default:
+		return time.Time{}, false
+	}
+}
+
+func requestDeviceToken(apiBaseURL string, cert tls.Certificate, deviceID string) (string, error) {
+	token, err := newDeviceTokenManager(apiBaseURL, cert, deviceID).Token(10 * time.Second)
+	if err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+func requestTokenBundleWithTimeout(apiBaseURL string, cert tls.Certificate, deviceID, scope, service string, timeout time.Duration) (tokenBundle, error) {
+	apiBaseURL = strings.TrimRight(strings.TrimSpace(apiBaseURL), "/")
+	if apiBaseURL == "" || strings.Contains(apiBaseURL, "unknown") {
+		return tokenBundle{}, errors.New("missing video cloud API base URL for mTLS token bootstrap")
+	}
+	if timeout <= 0 {
+		return tokenBundle{}, errors.New("request_token timeout exhausted before request")
+	}
+	bodyFields := map[string]any{"scope": scope, "devid": deviceID}
+	if strings.TrimSpace(service) != "" {
+		bodyFields["service"] = service
+	}
+	raw, err := json.Marshal(bodyFields)
+	if err != nil {
+		return tokenBundle{}, err
 	}
 	body := bytes.NewBuffer(raw)
 	req, err := http.NewRequest(http.MethodPost, apiBaseURL+"/request_token", body)
 	if err != nil {
-		return "", err
+		return tokenBundle{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if isHTTPBaseURL(apiBaseURL) {
 		if err := setTrustedClientCertHeaders(req, cert); err != nil {
-			return "", err
+			return tokenBundle{}, err
 		}
 	}
 	client := &http.Client{
-		Timeout: 10 * time.Second,
+		Timeout: timeout,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{Certificates: []tls.Certificate{cert}, InsecureSkipVerify: true},
 		},
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return tokenBundle{}, err
 	}
 	defer resp.Body.Close()
 	payload, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return "", err
+		return tokenBundle{}, err
 	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("request_token failed with HTTP %d", resp.StatusCode)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return tokenBundle{}, fmt.Errorf("request_token failed with HTTP %d", resp.StatusCode)
 	}
-	var token struct {
-		AccessToken string `json:"access_token"`
-	}
+	var token tokenBundle
 	if err := json.Unmarshal(payload, &token); err != nil {
-		return "", err
+		return tokenBundle{}, err
 	}
 	if strings.TrimSpace(token.AccessToken) == "" {
-		return "", errors.New("request_token response missing access_token")
+		return tokenBundle{}, errors.New("request_token response missing access_token")
 	}
-	return token.AccessToken, nil
+	token.issuedAt = time.Now()
+	return token, nil
+}
+
+func refreshTokenBundleWithTimeout(apiBaseURL string, cert tls.Certificate, deviceID, scope, refreshToken string, timeout time.Duration) (tokenBundle, error) {
+	apiBaseURL = strings.TrimRight(strings.TrimSpace(apiBaseURL), "/")
+	if apiBaseURL == "" || strings.Contains(apiBaseURL, "unknown") {
+		return tokenBundle{}, errors.New("missing video cloud API base URL for token refresh")
+	}
+	if timeout <= 0 {
+		return tokenBundle{}, errors.New("refresh_token timeout exhausted before request")
+	}
+	if strings.TrimSpace(refreshToken) == "" {
+		return tokenBundle{}, errors.New("missing refresh_token")
+	}
+	raw, err := json.Marshal(map[string]any{"scope": scope, "devid": deviceID, "refresh_token": refreshToken})
+	if err != nil {
+		return tokenBundle{}, err
+	}
+	req, err := http.NewRequest(http.MethodPost, apiBaseURL+"/refresh_token", bytes.NewReader(raw))
+	if err != nil {
+		return tokenBundle{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{Certificates: []tls.Certificate{cert}, InsecureSkipVerify: true},
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return tokenBundle{}, err
+	}
+	defer resp.Body.Close()
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return tokenBundle{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return tokenBundle{}, fmt.Errorf("refresh_token failed with HTTP %d", resp.StatusCode)
+	}
+	var token tokenBundle
+	if err := json.Unmarshal(payload, &token); err != nil {
+		return tokenBundle{}, err
+	}
+	if strings.TrimSpace(token.AccessToken) == "" {
+		return tokenBundle{}, errors.New("refresh_token response missing access_token")
+	}
+	token.issuedAt = time.Now()
+	return token, nil
 }
 
 func runAppCertificateBootstrap(accountBaseURL, videoBaseURL, tenantSlug string, user userCredential, deviceID string) appBootstrapStatus {
@@ -3655,8 +4023,9 @@ func generateAppCSR(subject string) (string, []byte, error) {
 }
 
 type appTokenResponse struct {
-	Scope       string `json:"scope"`
-	AccessToken string `json:"access_token"`
+	Scope        string `json:"scope"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
 }
 
 func requestAppToken(apiBaseURL string, cert tls.Certificate, deviceID string) (appTokenResponse, error) {
@@ -3664,53 +4033,11 @@ func requestAppToken(apiBaseURL string, cert tls.Certificate, deviceID string) (
 }
 
 func requestAppTokenWithTimeout(apiBaseURL string, cert tls.Certificate, deviceID string, timeout time.Duration) (appTokenResponse, error) {
-	apiBaseURL = strings.TrimRight(strings.TrimSpace(apiBaseURL), "/")
-	if apiBaseURL == "" || strings.Contains(apiBaseURL, "unknown") {
-		return appTokenResponse{}, errors.New("missing video cloud API base URL for app token bootstrap")
-	}
-	if timeout <= 0 {
-		return appTokenResponse{}, errors.New("app request_token timeout exhausted before request")
-	}
-	raw, err := json.Marshal(map[string]any{"scope": "app", "devid": deviceID, "access_token_only": true})
+	token, err := requestTokenBundleWithTimeout(apiBaseURL, cert, deviceID, "app", "", timeout)
 	if err != nil {
 		return appTokenResponse{}, err
 	}
-	req, err := http.NewRequest(http.MethodPost, apiBaseURL+"/request_token", bytes.NewReader(raw))
-	if err != nil {
-		return appTokenResponse{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if isHTTPBaseURL(apiBaseURL) {
-		if err := setTrustedClientCertHeaders(req, cert); err != nil {
-			return appTokenResponse{}, err
-		}
-	}
-	client := &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{Certificates: []tls.Certificate{cert}, InsecureSkipVerify: true},
-		},
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return appTokenResponse{}, fmt.Errorf("app request_token base_url=%s timeout=%s: %w", apiBaseURL, timeout, err)
-	}
-	defer resp.Body.Close()
-	payload, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return appTokenResponse{}, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return appTokenResponse{}, fmt.Errorf("app request_token status=%d", resp.StatusCode)
-	}
-	var out appTokenResponse
-	if err := json.Unmarshal(payload, &out); err != nil {
-		return appTokenResponse{}, err
-	}
-	if strings.TrimSpace(out.AccessToken) == "" {
-		return appTokenResponse{}, errors.New("app request_token response missing access_token")
-	}
-	return out, nil
+	return appTokenResponse{Scope: token.Scope, AccessToken: token.AccessToken, RefreshToken: token.RefreshToken}, nil
 }
 
 func isHTTPBaseURL(raw string) bool {

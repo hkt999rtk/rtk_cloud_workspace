@@ -1286,6 +1286,28 @@ func TestHome100KScriptKeepsVMsForFailedOrIncompleteRunsByDefault(t *testing.T) 
 	}
 }
 
+func TestHome100KScriptIncludesK8SRuntimeHealthProbe(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "home-100k.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, want := range []string{
+		"k8s-runtime-health.log",
+		"HOME100K_K8S_RUNTIME_HEALTH_STATUS",
+		"HOME100K_K8S_RUNTIME_HEALTH_SINCE",
+		"k8s_runtime_health_status()",
+		"kubectl_prefix=(env \"KUBECONFIG=$kubeconfig\" \"$kubectl_bin\")",
+		"logs deploy/video-cloud-api",
+		"emqx ctl listeners",
+		"k8s_runtime_health_status",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("home-100k.sh missing k8s runtime health marker %q:\n%s", want, body)
+		}
+	}
+}
+
 func TestHome100KResumeLiveSkipsProvisionWhenVMStateExists(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "home-100k.sh"))
 	if err != nil {
@@ -2545,6 +2567,174 @@ func TestCollectCentralLoggerEvidenceQueriesRunIDIndexes(t *testing.T) {
 	}
 }
 
+func TestCollectLiveServerEvidenceFallsBackToCentralLoggerRuntimeLogs(t *testing.T) {
+	outDir := t.TempDir()
+	if err := writeJSONFile(filepath.Join(outDir, "start-coordination.json"), StartCoordination{
+		VMs: []VMStartTelemetry{{
+			Label:                 "home-100k-mixed-000",
+			StartSignalReceivedAt: "2026-06-16T21:06:10Z",
+			StageStartedAt:        "2026-06-16T21:06:13Z",
+		}},
+	}); err != nil {
+		t.Fatalf("write start coordination: %v", err)
+	}
+
+	requests := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer logger-token" {
+			t.Fatalf("Authorization = %q, want bearer token", got)
+		}
+		requests = append(requests, r.URL.RawQuery)
+		query := r.URL.Query()
+		events := []map[string]any{{"event_id": "evt-generic"}}
+		if query.Get("component") == "device_runtime_log" && query.Get("source") == "device-runtime" {
+			events = []map[string]any{
+				{
+					"event_id":  "evt-1",
+					"ts":        "2026-06-16T21:06:20Z",
+					"level":     "info",
+					"msg":       "mqtt_e2e shadow_desired app_controller publish",
+					"service":   "video-cloud",
+					"env":       "staging",
+					"version":   "test",
+					"host":      "host",
+					"unit":      "unit",
+					"source":    "device-runtime",
+					"component": "device_runtime_log",
+					"fields": map[string]any{
+						"stream_id": "mqtt-e2e-run-cli-device-000001",
+						"seq":       1,
+						"source":    "app_controller",
+					},
+				},
+				{
+					"event_id":  "evt-2",
+					"ts":        "2026-06-16T21:06:21Z",
+					"level":     "info",
+					"msg":       "mqtt_e2e shadow_delta device_client receive",
+					"service":   "video-cloud",
+					"env":       "staging",
+					"version":   "test",
+					"host":      "host",
+					"unit":      "unit",
+					"source":    "device-runtime",
+					"component": "device_runtime_log",
+					"fields": map[string]any{
+						"stream_id": "mqtt-e2e-run-cli-device-000001",
+						"seq":       2,
+						"source":    "device_client",
+					},
+				},
+				{
+					"event_id":  "evt-3",
+					"ts":        "2026-06-16T21:06:22Z",
+					"level":     "info",
+					"msg":       "mqtt_e2e shadow_reported device_client publish",
+					"service":   "video-cloud",
+					"env":       "staging",
+					"version":   "test",
+					"host":      "host",
+					"unit":      "unit",
+					"source":    "device-runtime",
+					"component": "device_runtime_log",
+					"fields": map[string]any{
+						"stream_id": "mqtt-e2e-run-cli-device-000001",
+						"seq":       3,
+						"source":    "device_client",
+					},
+				},
+				{
+					"event_id":  "evt-4",
+					"ts":        "2026-06-16T21:06:23Z",
+					"level":     "info",
+					"msg":       "mqtt_e2e shadow_reported app_observer receive",
+					"service":   "video-cloud",
+					"env":       "staging",
+					"version":   "test",
+					"host":      "host",
+					"unit":      "unit",
+					"source":    "device-runtime",
+					"component": "device_runtime_log",
+					"fields": map[string]any{
+						"stream_id": "mqtt-e2e-run-cli-device-000001",
+						"seq":       4,
+						"source":    "app_observer",
+					},
+				},
+				{
+					"event_id":  "evt-other",
+					"ts":        "2026-06-16T21:06:24Z",
+					"level":     "info",
+					"msg":       "mqtt_e2e shadow_desired app_controller publish",
+					"service":   "video-cloud",
+					"env":       "staging",
+					"version":   "test",
+					"host":      "host",
+					"unit":      "unit",
+					"source":    "device-runtime",
+					"component": "device_runtime_log",
+					"fields": map[string]any{
+						"stream_id": "mqtt-e2e-other-run-device-000001",
+						"seq":       1,
+						"source":    "app_controller",
+					},
+				},
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"events": events})
+	}))
+	defer server.Close()
+
+	envRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(envRoot, "services", "cloud-logger"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envRoot, "services", "cloud-logger", "logger.env"), []byte("CLOUD_LOGGER_ENDPOINT="+server.URL+"\nCLOUD_LOGGER_INGEST_TOKEN=logger-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	oldRunner := commandOutputRunner
+	commandOutputRunner = func(name string, args ...string) (string, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "device_runtime_logs"):
+			t.Fatalf("collectLiveServerEvidence queried legacy device_runtime_logs table: %s %s", name, joined)
+		case strings.Contains(joined, "device_shadows"):
+			return "device_shadow.rows_current_converged\t1\n", nil
+		default:
+			return "", nil
+		}
+		return "", nil
+	}
+	defer func() { commandOutputRunner = oldRunner }()
+
+	evidence := collectLiveServerEvidence(envRoot, "run-cli", outDir)
+	shadow := evidence.Sources["iot_device_shadow"]
+	if !shadow.Available {
+		t.Fatalf("iot_device_shadow source unavailable after central logger fallback: %+v notes=%v", shadow, evidence.Notes)
+	}
+	for _, counter := range []string{"app_user.desired_writes", "device_mqtt.delta_received", "device_mqtt.reported_publishes", "app_user.received_acks"} {
+		if shadow.Counters[counter] != 1 {
+			t.Fatalf("%s = %d, want 1 in counters %+v", counter, shadow.Counters[counter], shadow.Counters)
+		}
+	}
+	streams := evidence.Sources["iot_device_shadow_streams"]
+	if !streams.Available {
+		t.Fatalf("iot_device_shadow_streams source unavailable after central logger fallback: %+v notes=%v", streams, evidence.Notes)
+	}
+	if streams.Counters["runtime_log_streams.total"] != 1 ||
+		streams.Counters["runtime_log_stream.mqtt-e2e-run-cli-device-000001.entries"] != 4 ||
+		streams.Counters["runtime_log_stream.mqtt-e2e-run-cli-device-000001.seq.4"] != 1 {
+		t.Fatalf("unexpected stream counters: %+v", streams.Counters)
+	}
+	joined := strings.Join(requests, "\n")
+	for _, want := range []string{"component=device_runtime_log", "source=device-runtime", "since=2026-06-16T21%3A06%3A05Z", "limit=1000"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("central logger runtime query missing %q in:\n%s", want, joined)
+		}
+	}
+}
+
 func TestCentralLoggerEnvValuesFindsSiblingLinodeEnv(t *testing.T) {
 	root := t.TempDir()
 	lkeRoot := filepath.Join(root, "lke")
@@ -2576,6 +2766,51 @@ func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("write start coordination: %v", err)
 	}
+	logger := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer logger-token" {
+			t.Fatalf("Authorization = %q, want bearer token", got)
+		}
+		events := []map[string]any{{"event_id": "evt-generic"}}
+		query := r.URL.Query()
+		if query.Get("component") == "device_runtime_log" && query.Get("source") == "device-runtime" {
+			events = []map[string]any{}
+			for idx := 0; idx < 10; idx++ {
+				streamID := fmt.Sprintf("mqtt-e2e-run-cli-device-%06d", idx)
+				for seq, row := range []struct {
+					source  string
+					message string
+				}{
+					{"app_controller", "mqtt_e2e shadow_desired app_controller publish"},
+					{"device_client", "mqtt_e2e shadow_delta device_client receive"},
+					{"device_client", "mqtt_e2e shadow_reported device_client publish"},
+					{"app_observer", "mqtt_e2e shadow_reported app_observer receive"},
+				} {
+					events = append(events, map[string]any{
+						"event_id":  fmt.Sprintf("evt-%d-%d", idx, seq+1),
+						"ts":        "2026-06-16T21:06:20Z",
+						"msg":       row.message,
+						"source":    "device-runtime",
+						"component": "device_runtime_log",
+						"fields": map[string]any{
+							"stream_id": streamID,
+							"seq":       seq + 1,
+							"source":    row.source,
+						},
+					})
+				}
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"events": events})
+	}))
+	defer logger.Close()
+	envRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(envRoot, "services", "cloud-logger"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envRoot, "services", "cloud-logger", "logger.env"), []byte("CLOUD_LOGGER_ENDPOINT="+logger.URL+"\nCLOUD_LOGGER_INGEST_TOKEN=logger-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	calls := []string{}
 	oldRunner := commandOutputRunner
 	commandOutputRunner = func(name string, args ...string) (string, error) {
@@ -2583,7 +2818,7 @@ func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 		joined := strings.Join(args, " ")
 		switch {
 		case strings.Contains(joined, "device_runtime_logs"):
-			return "app_user.desired_writes\t10\ndevice_mqtt.delta_received\t10\ndevice_mqtt.reported_publishes\t10\napp_user.received_acks\t10\n", nil
+			t.Fatalf("collect-server-evidence queried legacy device_runtime_logs table: %s %s", name, joined)
 		case strings.Contains(joined, "device_shadows"):
 			return "device_shadow.reported_converged\t10\n", nil
 		case strings.Contains(joined, "app.kubernetes.io/name=mqtt"):
@@ -2591,13 +2826,14 @@ func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 		default:
 			return "", nil
 		}
+		return "", nil
 	}
 	defer func() { commandOutputRunner = oldRunner }()
 
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"collect-server-evidence",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", envRoot,
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -2675,7 +2911,11 @@ func TestExecuteCollectServerEvidenceLiveWritesIncompleteEvidenceOnProbeFailure(
 		t.Fatalf("Execute(collect-server-evidence partial live) code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 	out := stdout.String()
-	if !strings.Contains(out, `"complete": false`) || !strings.Contains(out, `"postgres probe failed"`) {
+	var evidence ServerEvidence
+	if err := json.Unmarshal([]byte(out), &evidence); err != nil {
+		t.Fatalf("decode server evidence stdout: %v\n%s", err, out)
+	}
+	if evidence.Complete || !strings.Contains(evidence.Sources["postgres"].Detail, "postgres probe failed") {
 		t.Fatalf("stdout missing incomplete postgres evidence:\n%s", out)
 	}
 	raw, err := os.ReadFile(filepath.Join(outDir, "server-evidence.json"))
@@ -2712,6 +2952,54 @@ func TestExecuteCollectServerEvidenceLivePreservesFailureForRepeatedSource(t *te
 	out := stdout.String()
 	if !strings.Contains(out, `"complete": false`) || !strings.Contains(out, `"host_pod_resources"`) || !strings.Contains(out, "pod inventory failed") {
 		t.Fatalf("stdout did not preserve repeated-source failure:\n%s", out)
+	}
+}
+
+func TestParseEvidenceSamplesCapturesPostgresTopPods(t *testing.T) {
+	out := `NAMESPACE                          NAME                                           CPU(cores)   MEMORY(bytes)
+video-cloud-staging-platform       postgresql-0                                   189m         236Mi
+video-cloud-staging-video-cloud    video-cloud-api-6bb7d87f5b-qcclw              21m          42Mi
+`
+	samples := parseEvidenceSamples("host_pod_resources", out)
+	if len(samples) != 2 {
+		t.Fatalf("samples len = %d, want 2: %+v", len(samples), samples)
+	}
+	postgres := samples[0]
+	if postgres.Kind != "k8s_pod_top" ||
+		postgres.Namespace != "video-cloud-staging-platform" ||
+		postgres.Pod != "postgresql-0" ||
+		postgres.CPUCoreMil != 189 ||
+		postgres.MemoryBytes != 236*1024*1024 {
+		t.Fatalf("unexpected postgres sample: %+v", postgres)
+	}
+}
+
+func TestParseEvidenceCountersCapturesRedisInfo(t *testing.T) {
+	out := `# Stats
+total_commands_processed:120
+keyspace_hits:80
+keyspace_misses:5
+connected_clients:7
+used_memory:1048576
+db0:keys=42,expires=3,avg_ttl=1000
+cmdstat_get:calls=50,usec=100,usec_per_call=2.00
+cmdstat_set:calls=12,usec=24,usec_per_call=2.00
+`
+	counters := parseEvidenceCounters("redis_valkey", "run-cli", out)
+	for key, want := range map[string]int64{
+		"redis_valkey.total_commands_processed": 120,
+		"redis_valkey.keyspace_hits":            80,
+		"redis_valkey.keyspace_misses":          5,
+		"redis_valkey.connected_clients":        7,
+		"redis_valkey.used_memory":              1048576,
+		"redis_valkey.keyspace.db0.keys":        42,
+		"redis_valkey.keyspace.db0.expires":     3,
+		"redis_valkey.command.get.calls":        50,
+		"redis_valkey.command.set.calls":        12,
+	} {
+		if counters[key] != want {
+			t.Fatalf("%s = %d, want %d in %+v", key, counters[key], want, counters)
+		}
 	}
 }
 

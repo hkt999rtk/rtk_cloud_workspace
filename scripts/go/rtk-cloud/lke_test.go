@@ -435,6 +435,12 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"fieldPath: metadata.name",
 		"VIDEO_CLOUD_MQTT_CLIENT_ID\n              value: \"video-cloud-api-$(POD_NAME)\"",
 		"VIDEO_CLOUD_MQTT_TOPIC_ROOT\n              value: \"devices\"",
+		"VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY\n              value: \"16\"",
+		"VIDEO_CLOUD_MQTT_OUTBOUND_CONNECTIONS\n              value: \"8\"",
+		"VIDEO_CLOUD_MQTT_OUTBOUND_QUEUE_SIZE\n              value: \"4096\"",
+		"VIDEO_CLOUD_MQTT_OUTBOUND_WRITE_TIMEOUT\n              value: \"5s\"",
+		"VIDEO_CLOUD_SHADOW_CACHE_ENABLED\n              value: \"true\"",
+		"VIDEO_CLOUD_SHADOW_CACHE_ADDR\n              value: \"redis.video-cloud-staging-platform.svc.cluster.local:6379\"",
 		"kind: Secret\nmetadata:\n  name: mqtt-runtime",
 		"cert.pem:",
 		"key.pem:",
@@ -1303,6 +1309,12 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 		"name: VIDEO_CLOUD_DB_MAX_OPEN_CONNS\n              value: \"20\"",
 		"name: VIDEO_CLOUD_DB_MAX_IDLE_CONNS\n              value: \"10\"",
 		"name: VIDEO_CLOUD_DB_CONN_MAX_LIFETIME\n              value: \"5m\"",
+		"name: VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY\n              value: \"16\"",
+		"name: VIDEO_CLOUD_MQTT_OUTBOUND_CONNECTIONS\n              value: \"8\"",
+		"name: VIDEO_CLOUD_MQTT_OUTBOUND_QUEUE_SIZE\n              value: \"4096\"",
+		"name: VIDEO_CLOUD_MQTT_OUTBOUND_WRITE_TIMEOUT\n              value: \"5s\"",
+		"name: VIDEO_CLOUD_SHADOW_CACHE_ENABLED\n              value: \"true\"",
+		"name: VIDEO_CLOUD_SHADOW_CACHE_ADDR\n              value: \"redis.video-cloud-staging-platform.svc.cluster.local:6379\"",
 	} {
 		if !strings.Contains(video, want) {
 			t.Fatalf("expected %q in video-cloud-api manifest, got:\n%s", want, video)

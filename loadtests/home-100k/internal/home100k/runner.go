@@ -261,10 +261,20 @@ type ServerEvidence struct {
 }
 
 type EvidenceSource struct {
-	Available bool             `json:"available"`
-	Optional  bool             `json:"optional,omitempty"`
-	Detail    string           `json:"detail,omitempty"`
-	Counters  map[string]int64 `json:"counters,omitempty"`
+	Available bool                     `json:"available"`
+	Optional  bool                     `json:"optional,omitempty"`
+	Detail    string                   `json:"detail,omitempty"`
+	Counters  map[string]int64         `json:"counters,omitempty"`
+	Samples   []EvidenceResourceSample `json:"samples,omitempty"`
+}
+
+type EvidenceResourceSample struct {
+	Kind        string `json:"kind"`
+	Namespace   string `json:"namespace,omitempty"`
+	Pod         string `json:"pod,omitempty"`
+	Container   string `json:"container,omitempty"`
+	CPUCoreMil  int64  `json:"cpu_millicores,omitempty"`
+	MemoryBytes int64  `json:"memory_bytes,omitempty"`
 }
 
 func Run(opts RunOptions) (RunResult, error) {

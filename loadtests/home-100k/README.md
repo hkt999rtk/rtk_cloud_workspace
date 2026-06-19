@@ -672,9 +672,20 @@ delay, per-VM start timestamps, and max start skew.
 and sync telemetry into
 `--out-dir/shards/<vm-label>/` and `--out-dir/sync-telemetry.d/`.
 `collect-server-evidence --live` runs Kubernetes evidence probes with `kubectl`
-for EMQX, Video Cloud API, IoT Device Shadow, PostgreSQL, Redis/Valkey,
-ingress/nginx, host/pod resources, and the central logger `/v1/logs` query API
-when `services/cloud-logger/logger.env` is available in the selected env-root.
+for EMQX, Video Cloud API, PostgreSQL, Redis/Valkey, ingress/nginx, and
+host/pod resources. Pod resource samples from `kubectl top pods -A` are parsed
+into server evidence so the final report can list Postgres pod CPU/memory p95
+by namespace and pod. Redis/Valkey evidence includes `INFO` counters such as
+commands processed, keyspace hits/misses, connected clients, memory, keyspace
+keys, and commandstats GET/SET calls when the cache is enabled. These counters
+are required evidence for Redis-backed shadow hot state and `/request_token`
+device/camera projection reads. IoT Device Shadow runtime-log
+evidence comes from central
+logger `/v1/logs` `device_runtime_log` events; the old PostgreSQL
+`device_runtime_logs` table is a legacy deployment detail and is not required by
+current 10K/100K reports.
+The central logger query API is used when `services/cloud-logger/logger.env` is
+available in the selected env-root.
 For LKE environments where the logger config is intentionally stored elsewhere,
 set `HOME100K_CLOUD_LOGGER_ENV` to the logger env file path or export
 `CLOUD_LOGGER_ENDPOINT` and `CLOUD_LOGGER_INGEST_TOKEN` before evidence
@@ -739,13 +750,16 @@ Every report must include:
 - authorization violation count
 - load-generator CPU, memory, network, and file-descriptor saturation
 - server-side metrics/log evidence
-- central logger query evidence when the logger endpoint is configured
+- central logger runtime-log evidence for IoT Device Shadow stream correlation
 - server/client counter correlation
 - sync/provision telemetry with per-VM transfer bytes and remote disk snapshots
 - load-generator VM resource timeline summary from
   `resource-samples/load-vms.tsv`
 - per-Kubernetes-node resource timeline summary from
   `resource-samples/k8s-nodes.tsv`
+- Postgres pod CPU/memory p95 from server `host_pod_resources` evidence
+- Redis/Valkey INFO counters when shadow hot-state or token projection cache is
+  enabled
 - bottleneck assessment
 
 If IoT Device Shadow evidence, MQTT broker evidence, APP/API evidence, parsed
@@ -790,7 +804,7 @@ Server-side evidence:
 - IoT Device Shadow HTTP latency and error rate.
 - Shadow update/delta/reported throughput.
 - PostgreSQL CPU, connections, locks, slow queries, and write I/O.
-- Redis/Valkey shadow hot-state metrics if enabled.
+- Redis/Valkey shadow hot-state and token projection metrics if enabled.
 - NATS/queue latency and pending messages if involved in the runtime path.
 - Ingress/nginx upstream latency and errors.
 - Host/pod CPU, memory, disk I/O, and network throughput.
