@@ -1616,7 +1616,18 @@ func collectLiveServerEvidence(envRoot string, runID string, outDir string) Serv
 			continue
 		}
 		counters := parseEvidenceCounters(probe.source, runID, out)
-		sources[probe.source] = mergeEvidenceSource(sources[probe.source], EvidenceSource{Available: true, Detail: probe.detail, Counters: counters})
+		samples := parseEvidenceSamples(probe.source, out)
+		sources[probe.source] = mergeEvidenceSource(sources[probe.source], EvidenceSource{Available: true, Detail: probe.detail, Counters: counters, Samples: samples})
+	}
+	shadowSource, streamSource, runtimeNote := collectCentralLoggerRuntimeLogEvidence(envRoot, runID, windowStart)
+	if shadowSource.Available {
+		sources["iot_device_shadow"] = shadowSource
+	}
+	if streamSource.Available {
+		sources["iot_device_shadow_streams"] = streamSource
+	}
+	if runtimeNote != "" {
+		notes = append(notes, runtimeNote)
 	}
 	loggerSource, loggerNote := collectCentralLoggerEvidence(envRoot, runID)
 	sources["central_logger"] = loggerSource
@@ -1688,8 +1699,10 @@ func collectCentralLoggerEvidence(envRoot string, runID string) (EvidenceSource,
 
 func centralLoggerEnvValues(envRoot string) map[string]string {
 	candidates := []string{}
+	explicitOverride := false
 	if override := strings.TrimSpace(os.Getenv("HOME100K_CLOUD_LOGGER_ENV")); override != "" {
 		candidates = append(candidates, override)
+		explicitOverride = true
 	}
 	candidates = append(candidates,
 		filepath.Join(envRoot, "services", "cloud-logger", "logger.env"),
@@ -1701,12 +1714,27 @@ func centralLoggerEnvValues(envRoot string) map[string]string {
 			filepath.Join(parent, "linode", "state", "cloud-logger.env"),
 		)
 	}
+	values := map[string]string{}
 	for _, path := range candidates {
 		if fileReadable(path) {
-			return parseEnvFile(path)
+			values = parseEnvFile(path)
+			break
 		}
 	}
-	return map[string]string{}
+	if !explicitOverride {
+		if token := readTrimmedFile(filepath.Join(envRoot, "state", "secrets", "cloud-logger-ingest-token")); token != "" {
+			values["CLOUD_LOGGER_INGEST_TOKEN"] = token
+		}
+	}
+	return values
+}
+
+func readTrimmedFile(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
 }
 
 func evidenceWindowStart(outDir string) string {
@@ -1764,6 +1792,219 @@ func queryCentralLoggerCount(endpoint string, token string, key string, value st
 	return len(decoded.Events), nil
 }
 
+type centralLoggerRuntimeEvent struct {
+	EventID   string         `json:"event_id"`
+	Time      time.Time      `json:"ts"`
+	Message   string         `json:"msg"`
+	Source    string         `json:"source"`
+	Component string         `json:"component"`
+	Fields    map[string]any `json:"fields"`
+}
+
+func collectCentralLoggerRuntimeLogEvidence(envRoot string, runID string, windowStart string) (EvidenceSource, EvidenceSource, string) {
+	values := centralLoggerEnvValues(envRoot)
+	endpoint := strings.TrimRight(strings.TrimSpace(firstNonEmpty(values["CLOUD_LOGGER_ENDPOINT"], os.Getenv("CLOUD_LOGGER_ENDPOINT"))), "/")
+	token := strings.TrimSpace(firstNonEmpty(values["CLOUD_LOGGER_INGEST_TOKEN"], os.Getenv("CLOUD_LOGGER_INGEST_TOKEN")))
+	if endpoint == "" || token == "" {
+		return EvidenceSource{}, EvidenceSource{}, ""
+	}
+	since := time.Now().UTC().Add(-30 * time.Minute)
+	if strings.TrimSpace(windowStart) != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, windowStart)
+		if err != nil {
+			return EvidenceSource{}, EvidenceSource{}, "central_logger runtime evidence skipped: invalid evidence window start " + redact(err.Error())
+		}
+		since = parsed.UTC()
+	}
+	until := time.Now().UTC()
+	if until.Before(since) {
+		until = since.Add(30 * time.Minute)
+	}
+	events, err := queryCentralLoggerRuntimeEventsWindowed(endpoint, token, since, until, 0)
+	if err != nil {
+		return EvidenceSource{}, EvidenceSource{}, "central_logger runtime evidence probe failed: " + err.Error()
+	}
+	shadowCounters, streamCounters := centralLoggerRuntimeCounters(runID, events)
+	if len(shadowCounters) == 0 && len(streamCounters) == 0 {
+		return EvidenceSource{}, EvidenceSource{}, "central_logger runtime evidence probe found no matching runtime log events for run_id " + runID
+	}
+	detail := "IoT Device Shadow runtime evidence parsed from central logger device_runtime_log events for run_id " + runID
+	return EvidenceSource{Available: true, Detail: detail, Counters: shadowCounters},
+		EvidenceSource{Available: true, Detail: detail, Counters: streamCounters},
+		"central_logger runtime evidence used for iot_device_shadow and iot_device_shadow_streams"
+}
+
+func queryCentralLoggerRuntimeEventsWindowed(endpoint string, token string, since time.Time, until time.Time, depth int) ([]centralLoggerRuntimeEvent, error) {
+	events, err := queryCentralLoggerRuntimeEvents(endpoint, token, since, until)
+	if err != nil {
+		if depth >= 20 || until.Sub(since) <= time.Second {
+			return nil, err
+		}
+		mid := since.Add(until.Sub(since) / 2)
+		left, leftErr := queryCentralLoggerRuntimeEventsWindowed(endpoint, token, since, mid, depth+1)
+		if leftErr != nil {
+			return nil, leftErr
+		}
+		right, rightErr := queryCentralLoggerRuntimeEventsWindowed(endpoint, token, mid, until, depth+1)
+		if rightErr != nil {
+			return nil, rightErr
+		}
+		return dedupeCentralLoggerRuntimeEvents(append(left, right...)), nil
+	}
+	if len(events) < 1000 || depth >= 20 || until.Sub(since) <= time.Second {
+		return dedupeCentralLoggerRuntimeEvents(events), nil
+	}
+	mid := since.Add(until.Sub(since) / 2)
+	left, err := queryCentralLoggerRuntimeEventsWindowed(endpoint, token, since, mid, depth+1)
+	if err != nil {
+		return nil, err
+	}
+	right, err := queryCentralLoggerRuntimeEventsWindowed(endpoint, token, mid, until, depth+1)
+	if err != nil {
+		return nil, err
+	}
+	return dedupeCentralLoggerRuntimeEvents(append(left, right...)), nil
+}
+
+func queryCentralLoggerRuntimeEvents(endpoint string, token string, since time.Time, until time.Time) ([]centralLoggerRuntimeEvent, error) {
+	base, err := url.Parse(endpoint + "/v1/logs")
+	if err != nil {
+		return nil, err
+	}
+	values := base.Query()
+	values.Set("component", "device_runtime_log")
+	values.Set("source", "device-runtime")
+	values.Set("limit", "1000")
+	values.Set("order", "asc")
+	values.Set("since", since.UTC().Format(time.RFC3339Nano))
+	values.Set("until", until.UTC().Format(time.RFC3339Nano))
+	base.RawQuery = values.Encode()
+	req, err := http.NewRequest(http.MethodGet, base.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	client := http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("logger runtime query status=%d", resp.StatusCode)
+	}
+	var decoded struct {
+		Events []centralLoggerRuntimeEvent `json:"events"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return nil, err
+	}
+	return decoded.Events, nil
+}
+
+func dedupeCentralLoggerRuntimeEvents(events []centralLoggerRuntimeEvent) []centralLoggerRuntimeEvent {
+	if len(events) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]centralLoggerRuntimeEvent, 0, len(events))
+	for _, event := range events {
+		key := strings.TrimSpace(event.EventID)
+		if key == "" {
+			key = event.Time.UTC().Format(time.RFC3339Nano) + "\x00" + event.Message + "\x00" + centralLoggerEventFieldString(event, "stream_id") + "\x00" + centralLoggerEventFieldString(event, "seq")
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, event)
+	}
+	return out
+}
+
+func centralLoggerRuntimeCounters(runID string, events []centralLoggerRuntimeEvent) (map[string]int64, map[string]int64) {
+	prefix := "mqtt-e2e-" + sanitizeEvidenceRunID(runID) + "-"
+	shadowCounters := map[string]int64{}
+	streamEntries := map[string]int64{}
+	streamSeqEntries := map[string]map[string]int64{}
+	for _, event := range dedupeCentralLoggerRuntimeEvents(events) {
+		if event.Component != "" && event.Component != "device_runtime_log" {
+			continue
+		}
+		if event.Source != "" && event.Source != "device-runtime" {
+			continue
+		}
+		streamID := centralLoggerEventFieldString(event, "stream_id")
+		if !strings.HasPrefix(streamID, prefix) {
+			continue
+		}
+		source := centralLoggerEventFieldString(event, "source")
+		switch {
+		case source == "app_controller" && event.Message == "mqtt_e2e shadow_desired app_controller publish":
+			shadowCounters["app_user.desired_writes"]++
+		case source == "device_client" && event.Message == "mqtt_e2e shadow_delta device_client receive":
+			shadowCounters["device_mqtt.delta_received"]++
+		case source == "device_client" && event.Message == "mqtt_e2e shadow_reported device_client publish":
+			shadowCounters["device_mqtt.reported_publishes"]++
+		case source == "app_observer" && event.Message == "mqtt_e2e shadow_reported app_observer receive":
+			shadowCounters["app_user.received_acks"]++
+		}
+		streamEntries[streamID]++
+		seq := centralLoggerEventFieldString(event, "seq")
+		if seq == "" {
+			continue
+		}
+		if streamSeqEntries[streamID] == nil {
+			streamSeqEntries[streamID] = map[string]int64{}
+		}
+		streamSeqEntries[streamID][seq]++
+	}
+	streamCounters := map[string]int64{}
+	if len(streamEntries) > 0 {
+		streamCounters["runtime_log_streams.total"] = int64(len(streamEntries))
+	}
+	for streamID, entries := range streamEntries {
+		streamCounters["runtime_log_stream."+streamID+".entries"] = entries
+		for seq, count := range streamSeqEntries[streamID] {
+			streamCounters["runtime_log_stream."+streamID+".seq."+seq] = count
+		}
+	}
+	if len(shadowCounters) == 0 {
+		shadowCounters = nil
+	}
+	if len(streamCounters) == 0 {
+		streamCounters = nil
+	}
+	return shadowCounters, streamCounters
+}
+
+func centralLoggerEventFieldString(event centralLoggerRuntimeEvent, key string) string {
+	if event.Fields == nil {
+		return ""
+	}
+	value, ok := event.Fields[key]
+	if !ok || value == nil {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case float64:
+		if typed == float64(int64(typed)) {
+			return strconv.FormatInt(int64(typed), 10)
+		}
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	case int:
+		return strconv.Itoa(typed)
+	case int64:
+		return strconv.FormatInt(typed, 10)
+	case json.Number:
+		return typed.String()
+	default:
+		return strings.TrimSpace(fmt.Sprint(typed))
+	}
+}
+
 func fileReadable(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
@@ -1804,11 +2045,58 @@ func parseEvidenceCounters(source string, runID string, out string) map[string]i
 		if source == "postgres" {
 			parsePostgresCounterLine(counters, line)
 		}
+		if source == "redis_valkey" {
+			parseRedisInfoCounterLine(counters, line)
+		}
 	}
 	if len(counters) == 0 {
 		return nil
 	}
 	return counters
+}
+
+func parseRedisInfoCounterLine(counters map[string]int64, line string) {
+	line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+	if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "pod:") {
+		return
+	}
+	key, value, ok := strings.Cut(line, ":")
+	if !ok {
+		return
+	}
+	key = strings.TrimSpace(key)
+	value = strings.TrimSpace(value)
+	switch key {
+	case "total_commands_processed", "keyspace_hits", "keyspace_misses", "connected_clients", "used_memory", "used_memory_peak", "expired_keys", "evicted_keys":
+		if parsed, err := strconv.ParseInt(value, 10, 64); err == nil {
+			counters["redis_valkey."+key] += parsed
+		}
+	default:
+		if strings.HasPrefix(key, "db") {
+			for _, part := range strings.Split(value, ",") {
+				name, raw, ok := strings.Cut(part, "=")
+				if !ok {
+					continue
+				}
+				if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
+					counters["redis_valkey.keyspace."+key+"."+name] += parsed
+				}
+			}
+			return
+		}
+		if strings.HasPrefix(key, "cmdstat_") {
+			command := strings.TrimPrefix(key, "cmdstat_")
+			for _, part := range strings.Split(value, ",") {
+				name, raw, ok := strings.Cut(part, "=")
+				if !ok || name != "calls" {
+					continue
+				}
+				if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
+					counters["redis_valkey.command."+command+".calls"] += parsed
+				}
+			}
+		}
+	}
 }
 
 func applyServerEvidenceBaselineDeltas(evidence *ServerEvidence, runID string, outDir string, notes *[]string) {
@@ -1829,6 +2117,7 @@ func applyServerEvidenceBaselineDeltas(evidence *ServerEvidence, runID string, o
 	applyEMQXMetricDelta(evidence, baseline)
 	applySourceCounterBaselineDelta(evidence, baseline, "ingress_nginx")
 	applySourceCounterBaselineDelta(evidence, baseline, "postgres")
+	applySourceCounterBaselineDelta(evidence, baseline, "redis_valkey")
 	applySourceCounterBaselineDelta(evidence, baseline, "video_cloud_api")
 	recomputeVideoCloudAPITopLevelCounters(evidence)
 }
@@ -2026,6 +2315,99 @@ func redactEvidenceOutput(out string) string {
 	return redact(out)
 }
 
+func parseEvidenceSamples(source string, out string) []EvidenceResourceSample {
+	if source != "host_pod_resources" {
+		return nil
+	}
+	samples := []EvidenceResourceSample{}
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+		if strings.EqualFold(fields[0], "NAMESPACE") {
+			continue
+		}
+		cpu, ok := parseCPUMillicores(fields[2])
+		if !ok {
+			continue
+		}
+		memory, ok := parseMemoryBytes(fields[3])
+		if !ok {
+			continue
+		}
+		samples = append(samples, EvidenceResourceSample{
+			Kind:        "k8s_pod_top",
+			Namespace:   fields[0],
+			Pod:         fields[1],
+			CPUCoreMil:  cpu,
+			MemoryBytes: memory,
+		})
+	}
+	return samples
+}
+
+func parseCPUMillicores(value string) (int64, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+	switch {
+	case strings.HasSuffix(value, "m"):
+		parsed, err := strconv.ParseInt(strings.TrimSuffix(value, "m"), 10, 64)
+		return parsed, err == nil
+	case strings.HasSuffix(value, "u"):
+		parsed, err := strconv.ParseInt(strings.TrimSuffix(value, "u"), 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return (parsed + 999) / 1000, true
+	case strings.HasSuffix(value, "n"):
+		parsed, err := strconv.ParseInt(strings.TrimSuffix(value, "n"), 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return (parsed + 999999) / 1000000, true
+	default:
+		parsed, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return 0, false
+		}
+		return int64(parsed * 1000), true
+	}
+}
+
+func parseMemoryBytes(value string) (int64, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+	units := []struct {
+		suffix string
+		scale  int64
+	}{
+		{"Ki", 1024},
+		{"Mi", 1024 * 1024},
+		{"Gi", 1024 * 1024 * 1024},
+		{"Ti", 1024 * 1024 * 1024 * 1024},
+		{"K", 1000},
+		{"M", 1000 * 1000},
+		{"G", 1000 * 1000 * 1000},
+		{"T", 1000 * 1000 * 1000 * 1000},
+	}
+	for _, unit := range units {
+		if strings.HasSuffix(value, unit.suffix) {
+			parsed, err := strconv.ParseFloat(strings.TrimSuffix(value, unit.suffix), 64)
+			if err != nil {
+				return 0, false
+			}
+			return int64(parsed * float64(unit.scale)), true
+		}
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	return parsed, err == nil
+}
+
 func mergeEvidenceSource(current EvidenceSource, next EvidenceSource) EvidenceSource {
 	if current.Detail == "" {
 		return next
@@ -2035,6 +2417,7 @@ func mergeEvidenceSource(current EvidenceSource, next EvidenceSource) EvidenceSo
 		Optional:  current.Optional || next.Optional,
 		Detail:    current.Detail + "; " + next.Detail,
 		Counters:  map[string]int64{},
+		Samples:   append(append([]EvidenceResourceSample{}, current.Samples...), next.Samples...),
 	}
 	for key, value := range current.Counters {
 		merged.Counters[key] = value
@@ -2044,6 +2427,9 @@ func mergeEvidenceSource(current EvidenceSource, next EvidenceSource) EvidenceSo
 	}
 	if len(merged.Counters) == 0 {
 		merged.Counters = nil
+	}
+	if len(merged.Samples) == 0 {
+		merged.Samples = nil
 	}
 	return merged
 }
@@ -2078,10 +2464,9 @@ func serverEvidenceProbes(runID string, logsSinceArg string) []serverEvidencePro
 		mqttNodeBalancerProbe(runID),
 		videoCloudAPIRequestTokenCounterProbe(runID, logsSinceArg),
 		kubectlLogsProbe("video_cloud_api", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=video-cloud-api", logsSinceArg, "Video Cloud API logs captured for run_id "+runID),
-		postgresCounterProbe("iot_device_shadow", runID, shadowRuntimeLogCounterSQL(runID), "IoT Device Shadow MQTT path counters parsed from persisted runtime logs for run_id "+runID),
-		postgresCounterProbe("iot_device_shadow_streams", runID, shadowRuntimeLogStreamSQL(runID), "IoT Device Shadow runtime log stream evidence parsed from persisted runtime logs for run_id "+runID),
 		postgresCounterProbe("postgres", runID, shadowStoreCounterSQL(runID), "PostgreSQL device shadow convergence counters parsed for run_id "+runID),
 		kubectlLogsProbe("postgres", "video-cloud-staging-platform", "app.kubernetes.io/name=postgresql", logsSinceArg, "PostgreSQL logs captured"),
+		redisInfoProbe(runID),
 		kubectlLogsProbe("redis_valkey", "video-cloud-staging-platform", "app.kubernetes.io/name=redis", logsSinceArg, "Redis/Valkey logs captured when enabled"),
 		kubectlLogsProbe("ingress_nginx", "video-cloud-staging-ingress", "app.kubernetes.io/name=ingress-nginx", logsSinceArg, "Ingress/nginx logs captured for run_id "+runID),
 	}
@@ -2095,47 +2480,6 @@ func postgresCounterProbe(source string, runID string, sql string, detail string
 	return serverEvidenceProbe{source: source, command: "bash", args: []string{"-lc", script}, detail: detail}
 }
 
-func shadowRuntimeLogCounterSQL(runID string) string {
-	prefix := "mqtt-e2e-" + sanitizeEvidenceRunID(runID) + "-%"
-	return `
-WITH logs AS (
-	SELECT source, message
-	FROM device_runtime_logs
-	WHERE stream_id LIKE ` + sqlLiteral(prefix) + `
-)
-SELECT 'app_user.desired_writes', COUNT(*) FROM logs WHERE source = 'app_controller' AND message = 'mqtt_e2e shadow_desired app_controller publish'
-UNION ALL SELECT 'device_mqtt.delta_received', COUNT(*) FROM logs WHERE source = 'device_client' AND message = 'mqtt_e2e shadow_delta device_client receive'
-UNION ALL SELECT 'device_mqtt.reported_publishes', COUNT(*) FROM logs WHERE source = 'device_client' AND message = 'mqtt_e2e shadow_reported device_client publish'
-UNION ALL SELECT 'app_user.received_acks', COUNT(*) FROM logs WHERE source = 'app_observer' AND message = 'mqtt_e2e shadow_reported app_observer receive'
-`
-}
-
-func shadowRuntimeLogStreamSQL(runID string) string {
-	prefix := "mqtt-e2e-" + sanitizeEvidenceRunID(runID) + "-%"
-	return `
-WITH logs AS (
-	SELECT stream_id, seq
-	FROM device_runtime_logs
-	WHERE stream_id LIKE ` + sqlLiteral(prefix) + `
-),
-stream_counts AS (
-	SELECT stream_id, COUNT(*) AS entries
-	FROM logs
-	GROUP BY stream_id
-),
-seq_counts AS (
-	SELECT stream_id, seq, COUNT(*) AS entries
-	FROM logs
-	GROUP BY stream_id, seq
-)
-SELECT 'runtime_log_streams.total', COUNT(*) FROM stream_counts
-UNION ALL
-SELECT 'runtime_log_stream.' || stream_id || '.entries', entries FROM stream_counts
-UNION ALL
-SELECT 'runtime_log_stream.' || stream_id || '.seq.' || seq, entries FROM seq_counts
-`
-}
-
 func shadowStoreCounterSQL(runID string) string {
 	return `
 SELECT 'device_shadow.rows_current_converged', COUNT(*)
@@ -2144,6 +2488,22 @@ WHERE shadow_name = ''
   AND desired = reported
   AND deleted_at IS NULL
 `
+}
+
+func redisInfoProbe(runID string) serverEvidenceProbe {
+	script := `set -euo pipefail
+pods="$(kubectl -n video-cloud-staging-platform get pods --selector app.kubernetes.io/name=redis -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}')"
+test -n "$pods"
+for pod in $pods; do
+  echo "pod:$pod"
+  kubectl -n video-cloud-staging-platform exec "$pod" -- redis-cli INFO stats clients memory keyspace commandstats
+done`
+	return serverEvidenceProbe{
+		source:  "redis_valkey",
+		command: "bash",
+		args:    []string{"-lc", script},
+		detail:  "Redis/Valkey INFO counters captured for run_id " + runID,
+	}
 }
 
 func sanitizeEvidenceRunID(raw string) string {

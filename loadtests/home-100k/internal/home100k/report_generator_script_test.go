@@ -131,6 +131,12 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 			Status:  "incomplete",
 			Reasons: []string{"missing server counters"},
 		},
+		ServerEvidence: ServerEvidence{Complete: true, Sources: map[string]EvidenceSource{
+			"host_pod_resources": {Available: true, Samples: []EvidenceResourceSample{
+				{Kind: "k8s_pod_top", Namespace: "video-cloud-staging-platform", Pod: "postgresql-0", CPUCoreMil: 110, MemoryBytes: 235 * 1024 * 1024},
+				{Kind: "k8s_pod_top", Namespace: "video-cloud-staging-platform", Pod: "postgresql-0", CPUCoreMil: 190, MemoryBytes: 236 * 1024 * 1024},
+			}},
+		}},
 		SyncTelemetry: SyncTelemetry{VMs: []VMSyncTelemetry{{
 			Label:            "home-100k-mixed-000",
 			FilesTransferred: 3,
@@ -204,6 +210,8 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 		"## Report Source Artifacts",
 		"resource-samples/load-vms.tsv",
 		"resource-samples/k8s-nodes.tsv",
+		"### Postgres Pod Resource Usage",
+		"| video-cloud-staging-platform | postgresql-0 | 2 | 190m | 236Mi |",
 		"## Failure Reasons",
 		"app_desired_publish_failed",
 		"Scenario profile: `home-diverse-v1`",

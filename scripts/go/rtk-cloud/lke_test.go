@@ -435,6 +435,8 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"fieldPath: metadata.name",
 		"VIDEO_CLOUD_MQTT_CLIENT_ID\n              value: \"video-cloud-api-$(POD_NAME)\"",
 		"VIDEO_CLOUD_MQTT_TOPIC_ROOT\n              value: \"devices\"",
+		"VIDEO_CLOUD_SHADOW_CACHE_ENABLED\n              value: \"true\"",
+		"VIDEO_CLOUD_SHADOW_CACHE_ADDR\n              value: \"redis.video-cloud-staging-platform.svc.cluster.local:6379\"",
 		"kind: Secret\nmetadata:\n  name: mqtt-runtime",
 		"cert.pem:",
 		"key.pem:",
@@ -759,6 +761,8 @@ func TestRunProvisionLKEPublicHTTPSStartsDNSUpsertsBeforeWaiting(t *testing.T) {
 }
 
 func TestLKEPublicHTTPSNetworkPolicyAllowsBackendTargetPorts(t *testing.T) {
+	fakeKubectl(t)
+	t.Setenv("FAKE_CLOUD_LOGGER_SERVICE", "1")
 	env := map[string]string{
 		"CLOUD_STACK_NAME":              "video-cloud-staging",
 		"VIDEO_CLOUD_DOMAIN":            "video-cloud-staging.realtekconnect.com",
@@ -767,13 +771,15 @@ func TestLKEPublicHTTPSNetworkPolicyAllowsBackendTargetPorts(t *testing.T) {
 		"CLOUD_ADMIN_DOMAIN":            "admin.video-cloud-staging.realtekconnect.com",
 		"FRONTEND_DOMAIN":               "frontend.video-cloud-staging.realtekconnect.com",
 		"VIDEO_CLOUD_DEVICE_DOMAIN":     "device.video-cloud-staging.realtekconnect.com",
+		"CLOUD_LOGGER_DOMAIN":           "logger.video-cloud-staging.realtekconnect.com",
 	}
 	manifests := strings.Join(lkePublicHTTPSNetworkPolicyManifests(env, lkePublicHTTPSRoutes(env)), "\n---\n")
-	for _, namespace := range []string{
-		"video-cloud-staging-video-cloud",
-		"video-cloud-staging-account-manager",
-		"video-cloud-staging-admin",
-		"video-cloud-staging-frontend",
+	for namespace, wantPort := range map[string]string{
+		"video-cloud-staging-video-cloud":     "8080",
+		"video-cloud-staging-account-manager": "8080",
+		"video-cloud-staging-admin":           "8080",
+		"video-cloud-staging-frontend":        "8080",
+		"video-cloud-staging-logger":          "18090",
 	} {
 		needle := "name: allow-public-ingress\n  namespace: " + namespace
 		idx := strings.Index(manifests, needle)
@@ -784,8 +790,8 @@ func TestLKEPublicHTTPSNetworkPolicyAllowsBackendTargetPorts(t *testing.T) {
 		if next := strings.Index(chunk, "\n---\n"); next >= 0 {
 			chunk = chunk[:next]
 		}
-		if !strings.Contains(chunk, "port: 8080") {
-			t.Fatalf("public ingress policy for %s must allow backend pod port 8080, got:\n%s", namespace, chunk)
+		if !strings.Contains(chunk, "port: "+wantPort) {
+			t.Fatalf("public ingress policy for %s must allow backend pod port %s, got:\n%s", namespace, wantPort, chunk)
 		}
 	}
 }
@@ -1248,6 +1254,26 @@ func TestLKEPostgresStatefulSetUsesPostgresImageOverride(t *testing.T) {
 	}
 }
 
+func TestLKEPostgresStatefulSetCanOverrideMaxConnections(t *testing.T) {
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+	manifest := lkePostgresStatefulSetManifest(env)
+	if strings.Contains(manifest, "max_connections=") {
+		t.Fatalf("unexpected default max_connections override in PostgreSQL manifest:\n%s", manifest)
+	}
+
+	t.Setenv("LKE_POSTGRES_MAX_CONNECTIONS", "300")
+	manifest = lkePostgresStatefulSetManifest(env)
+	for _, want := range []string{
+		`args:`,
+		`- "-c"`,
+		`- "max_connections=300"`,
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("expected %q in PostgreSQL manifest, got:\n%s", want, manifest)
+		}
+	}
+}
+
 func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 	t.Setenv("LKE_POSTGRES_NODE_POOL_ID", "906225")
 	t.Setenv("LKE_MQTT_NODE_POOL_ID", "906225")
@@ -1303,6 +1329,8 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 		"name: VIDEO_CLOUD_DB_MAX_OPEN_CONNS\n              value: \"20\"",
 		"name: VIDEO_CLOUD_DB_MAX_IDLE_CONNS\n              value: \"10\"",
 		"name: VIDEO_CLOUD_DB_CONN_MAX_LIFETIME\n              value: \"5m\"",
+		"name: VIDEO_CLOUD_SHADOW_CACHE_ENABLED\n              value: \"true\"",
+		"name: VIDEO_CLOUD_SHADOW_CACHE_ADDR\n              value: \"redis.video-cloud-staging-platform.svc.cluster.local:6379\"",
 	} {
 		if !strings.Contains(video, want) {
 			t.Fatalf("expected %q in video-cloud-api manifest, got:\n%s", want, video)
@@ -2751,6 +2779,10 @@ if [[ "$*" == *"get pod/openbao-0 -o jsonpath={.status.phase}"* ]]; then
 fi
 if [[ "$*" == *"get service ingress-nginx-controller -o jsonpath={.status.loadBalancer.ingress[0].ip}"* ]]; then
   printf '203.0.113.42'
+  exit 0
+fi
+if [[ "$*" == *"get service cloud-logger -o name"* && "${FAKE_CLOUD_LOGGER_SERVICE:-}" == "1" ]]; then
+  printf 'service/cloud-logger\n'
   exit 0
 fi
 if [[ "$*" == *"get secret openbao-tls -o json"* && -n "${FAKE_OPENBAO_TLS_SECRET_JSON:-}" ]]; then

@@ -761,7 +761,8 @@ func lkeCloudLoggerRoute(env map[string]string) lkePublicHTTPSRoute {
 		return lkePublicHTTPSRoute{}
 	}
 	servicePort := envIntDefault("LKE_CLOUD_LOGGER_SERVICE_PORT", 80)
-	return lkePublicHTTPSRoute{Host: host, Namespace: namespace, Service: service, ServicePort: servicePort, TargetPort: envIntDefault("LKE_CLOUD_LOGGER_TARGET_PORT", servicePort)}
+	targetPortDefault := envIntDefault("LKE_CLOUD_LOGGER_PORT", 18090)
+	return lkePublicHTTPSRoute{Host: host, Namespace: namespace, Service: service, ServicePort: servicePort, TargetPort: envIntDefault("LKE_CLOUD_LOGGER_TARGET_PORT", targetPortDefault)}
 }
 
 func lkePublicHTTPSBridgeServiceManifests(env map[string]string, routes []lkePublicHTTPSRoute) []string {
@@ -2460,6 +2461,7 @@ func lkePostgresStatefulSetManifest(env map[string]string) string {
 	requestCPU := firstNonEmpty(os.Getenv("LKE_POSTGRES_REQUEST_CPU"), env["LKE_POSTGRES_REQUEST_CPU"], "4")
 	requestMemory := firstNonEmpty(os.Getenv("LKE_POSTGRES_REQUEST_MEMORY"), env["LKE_POSTGRES_REQUEST_MEMORY"], "2Gi")
 	limitMemory := firstNonEmpty(os.Getenv("LKE_POSTGRES_LIMIT_MEMORY"), env["LKE_POSTGRES_LIMIT_MEMORY"], "6Gi")
+	args := lkePostgresArgsManifest(env)
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -2488,6 +2490,7 @@ spec:
       containers:
         - name: postgres
           image: %s
+%s
           ports:
             - name: postgres
               containerPort: 5432
@@ -2510,7 +2513,17 @@ spec:
               mountPath: /var/lib/postgresql/data
             - name: initdb
               mountPath: /docker-entrypoint-initdb.d
-%s%s`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], placement, lkePostgresImage(), requestCPU, requestMemory, limitMemory, storage, volumeClaims)
+%s%s`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], placement, lkePostgresImage(), args, requestCPU, requestMemory, limitMemory, storage, volumeClaims)
+}
+
+func lkePostgresArgsManifest(env map[string]string) string {
+	maxConnections := strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_POSTGRES_MAX_CONNECTIONS"), env["LKE_POSTGRES_MAX_CONNECTIONS"]))
+	if maxConnections == "" {
+		return ""
+	}
+	return fmt.Sprintf(`          args:
+            - "-c"
+            - "max_connections=%s"`, maxConnections)
 }
 
 func lkePostgresPlacementManifest(env map[string]string) string {
@@ -5506,7 +5519,13 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
               value: "video-cloud-api-$(POD_NAME)"
             - name: VIDEO_CLOUD_MQTT_TOPIC_ROOT
               value: "devices"
-`, lkeNamespaceName(env, "platform"), lkeVideoCloudAPIDBMaxOpenConns(env), lkeVideoCloudAPIDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeAccountManagerInternalURL(env), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeMQTTInternalAddr(env))
+            - name: VIDEO_CLOUD_SHADOW_CACHE_ENABLED
+              value: "true"
+            - name: VIDEO_CLOUD_SHADOW_CACHE_ADDR
+              value: "redis.%s.svc.cluster.local:6379"
+            - name: VIDEO_CLOUD_SHADOW_CACHE_TTL
+              value: %q
+`, lkeNamespaceName(env, "platform"), lkeVideoCloudAPIDBMaxOpenConns(env), lkeVideoCloudAPIDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeAccountManagerInternalURL(env), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeMQTTInternalAddr(env), lkeNamespaceName(env, "platform"), firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_SHADOW_CACHE_TTL"), env["LKE_VIDEO_CLOUD_SHADOW_CACHE_TTL"], "24h"))
 		volumeMounts = `          volumeMounts:
             - name: logger-spool
               mountPath: /var/lib/video_cloud/logger-spool

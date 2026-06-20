@@ -91,6 +91,7 @@ ssh_known_hosts_file="$repo_root/$out_dir/ssh_known_hosts"
 resource_samples_dir="$repo_root/$out_dir/resource-samples"
 load_vm_resource_file="$resource_samples_dir/load-vms.tsv"
 k8s_node_resource_file="$resource_samples_dir/k8s-nodes.tsv"
+k8s_runtime_health_file="$resource_samples_dir/k8s-runtime-health.log"
 workflow_status_log="$repo_root/$out_dir/workflow-status.log"
 shutdown_live_vms_on_exit=0
 shutdown_on_error="${HOME100K_SHUTDOWN_ON_ERROR:-0}"
@@ -155,6 +156,8 @@ Defaults can be overridden with:
   HOME100K_ACCOUNT_MANAGER_BASE_URL optional Account Manager base URL for remote generators
   HOME100K_NODE_RESOURCE_STATUS default: 1
   HOME100K_K8S_NODE_RESOURCE_STATUS default: 1
+  HOME100K_K8S_RUNTIME_HEALTH_STATUS default: 1 during run-stages; set 0 to disable API/EMQX health snapshots
+  HOME100K_K8S_RUNTIME_HEALTH_SINCE default: 2m; log lookback window for API/EMQX error snapshots
   HOME100K_SHUTDOWN_ON_ERROR default: 0; keep VMs running after failures for resume/debug
   HOME100K_KUBECONFIG default: RTK_CLOUD_LKE_KUBECONFIG, LKE_KUBECONFIG, CLOUD_STAGING_K8S_KUBECONFIG, or <env-root>/state/lke-kubeconfig.yaml
 
@@ -169,7 +172,7 @@ EOF
 }
 
 run_home100k() {
-  (cd "$repo_root/loadtests/home-100k" && go run ./cmd/home-100k -- "$@")
+  (cd "$repo_root" && GOWORK=auto go run ./loadtests/home-100k/cmd/home-100k -- "$@")
 }
 
 set_phase() {
@@ -187,6 +190,9 @@ ensure_resource_logs() {
   fi
   if [[ ! -f "$workflow_status_log" ]]; then
     printf 'time\trun_id\telapsed\tphase\tvms\tshard_results\tserver_evidence\treport_status\n' > "$workflow_status_log"
+  fi
+  if [[ ! -f "$k8s_runtime_health_file" ]]; then
+    printf '# Kubernetes runtime health snapshots for run_id=%s\n' "$run_id" > "$k8s_runtime_health_file"
   fi
 }
 
@@ -397,6 +403,81 @@ k8s_node_resource_status() {
   ' >> "$k8s_node_resource_file"
 }
 
+k8s_runtime_health_status() {
+  if [[ "${HOME100K_K8S_RUNTIME_HEALTH_STATUS:-1}" == "0" ]]; then
+    return
+  fi
+  local phase
+  phase="starting"
+  if [[ -f "$status_file" ]]; then
+    phase="$(cat "$status_file")"
+  fi
+  if [[ "$phase" != "run-stages" ]]; then
+    return
+  fi
+  ensure_resource_logs
+  local kubectl_bin="${HOME100K_KUBECTL:-${RTK_CLOUD_KUBECTL:-kubectl}}"
+  local since="${HOME100K_K8S_RUNTIME_HEALTH_SINCE:-2m}"
+  local now kubeconfig ns
+  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  ns="video-cloud-staging-video-cloud"
+  if ! command -v "$kubectl_bin" >/dev/null 2>&1; then
+    printf '[home-100k k8s-health] unavailable reason=kubectl-not-found\n' >&2
+    printf '\n## %s phase=%s\nunavailable: kubectl-not-found\n' "$now" "$phase" >> "$k8s_runtime_health_file"
+    return
+  fi
+  kubeconfig="$(k8s_kubeconfig || true)"
+  local kubectl_prefix=()
+  if [[ -n "$kubeconfig" ]]; then
+    kubectl_prefix=(env "KUBECONFIG=$kubeconfig" "$kubectl_bin")
+  else
+    kubectl_prefix=("$kubectl_bin")
+  fi
+
+  local top_output api_errors emqx_errors listener_output mqtt_pods pod
+  top_output="$("${kubectl_prefix[@]}" top pods -A --containers --request-timeout=5s 2>&1 | grep -E 'mqtt|video-cloud-api|postgres|redis|ingress' || true)"
+  api_errors="$("${kubectl_prefix[@]}" -n "$ns" logs deploy/video-cloud-api --since="$since" --tail=300 2>&1 | grep -Ei 'broken pipe|connection reset|socket_error|congest|timeout' || true)"
+  mqtt_pods="$("${kubectl_prefix[@]}" -n "$ns" get pods --selector app.kubernetes.io/name=mqtt -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)"
+  listener_output=""
+  emqx_errors=""
+  while IFS= read -r pod; do
+    [[ -n "$pod" ]] || continue
+    listener_output+="$(
+      "${kubectl_prefix[@]}" -n "$ns" exec "$pod" -- emqx ctl listeners 2>/dev/null |
+        awk -v pod="$pod" '/ssl:default/{flag=1} flag && /current_conn|max_conns|shutdown_count/{gsub(/^ +/,""); printf "%s %s; ", pod, $0} flag && /ws:default/{flag=0} END{print ""}'
+    )"
+    listener_output+=$'\n'
+    emqx_errors+="$(
+      "${kubectl_prefix[@]}" -n "$ns" logs "$pod" --since="$since" --tail=200 2>&1 |
+        grep -Ei 'video-cloud-api|congest|socket_error|timeout|broken|reset' |
+        sed "s/^/$pod /" || true
+    )"
+    emqx_errors+=$'\n'
+  done <<< "$mqtt_pods"
+
+  {
+    printf '\n## %s phase=%s since=%s\n' "$now" "$phase" "$since"
+    printf '\n### top pods\n%s\n' "${top_output:-none}"
+    printf '\n### emqx listeners\n%s\n' "${listener_output:-none}"
+    printf '\n### api errors\n%s\n' "${api_errors:-none}"
+    printf '\n### emqx errors\n%s\n' "${emqx_errors:-none}"
+  } >> "$k8s_runtime_health_file"
+
+  local api_error_count emqx_error_count
+  api_error_count="$(printf '%s\n' "$api_errors" | awk 'NF {count++} END {print count+0}')"
+  emqx_error_count="$(printf '%s\n' "$emqx_errors" | awk 'NF {count++} END {print count+0}')"
+  printf '[home-100k k8s-health] phase=%s since=%s api_errors=%s emqx_errors=%s log=%s\n' "$phase" "$since" "$api_error_count" "$emqx_error_count" "$k8s_runtime_health_file" >&2
+  if [[ -n "$listener_output" ]]; then
+    printf '%s\n' "$listener_output" | sed '/^[[:space:]]*$/d; s/^/[home-100k k8s-health] listener /' >&2
+  fi
+  if [[ "$api_error_count" != "0" ]]; then
+    printf '%s\n' "$api_errors" | tail -20 | sed 's/^/[home-100k k8s-health] api-error /' >&2
+  fi
+  if [[ "$emqx_error_count" != "0" ]]; then
+    printf '%s\n' "$emqx_errors" | tail -20 | sed 's/^/[home-100k k8s-health] emqx-error /' >&2
+  fi
+}
+
 workflow_status() {
   local now elapsed phase vm_count shard_count report_status evidence_status
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -444,6 +525,7 @@ PY
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$now" "$run_id" "$elapsed" "$phase" "$vm_count" "$shard_count" "$evidence_status" "$report_status" >> "$workflow_status_log"
   node_resource_status
   k8s_node_resource_status
+  k8s_runtime_health_status
 }
 
 current_report_status() {
