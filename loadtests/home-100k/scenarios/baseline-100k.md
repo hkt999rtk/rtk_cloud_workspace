@@ -13,7 +13,12 @@ This scenario is the default first baseline for `home-100k`.
 - Load-generator VMs: 5 total `mixed` VMs.
 - Each `mixed` VM owns one `device-mqtt` task shard with 20,000 devices and
   one `user-app` task shard with 1,000 users.
-- Stages: 25K, 50K, 75K, 100K connected devices.
+- Stage: one target stage named from the requested connected-device count,
+  for example `100k`. Intermediate percentages such as 25%, 50%, and 75% are
+  ramp progress, not separate capacity targets.
+- Ramp: stage warm-up spreads `/request_token`, TLS, MQTT CONNECT, and shadow
+  subscription work before the steady window. Warm-up must be shorter than
+  steady plus cool-down so the report contains full-load evidence.
 
 ## Device Mix
 
