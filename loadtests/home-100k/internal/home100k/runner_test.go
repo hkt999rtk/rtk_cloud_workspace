@@ -230,8 +230,8 @@ func TestAggregateCollectedRunUsesConfiguredStageNames(t *testing.T) {
 	if len(result.StageResults) != len(plan.Stages) {
 		t.Fatalf("stage results len = %d, want %d", len(result.StageResults), len(plan.Stages))
 	}
-	if result.StageResults[0].Name != "25pct" {
-		t.Fatalf("first stage name = %q, want 25pct", result.StageResults[0].Name)
+	if result.StageResults[0].Name != "9k" {
+		t.Fatalf("first stage name = %q, want 9k", result.StageResults[0].Name)
 	}
 }
 

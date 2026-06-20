@@ -89,11 +89,12 @@ Default baseline:
 | Per-VM device task | 20,000 devices |
 | Per-VM user task | 1,000 users |
 | Total load-generator VM count | 5 for the default 100K-device/5K-user mixed baseline |
-| Stage windows | 25K, 50K, 75K, 100K connected devices |
+| Stage window | Single target stage at the requested connected-device count |
 
-The test should use deterministic sharding. Each stage must have its own
-warm-up, steady-state, and cool-down windows, and each stage must have an
-independent pass/fail/incomplete result.
+The test should use deterministic sharding. The target stage has warm-up,
+steady-state, and cool-down windows; warm-up is the ramp process, not a
+separate capacity target. The report has an independent pass/fail/incomplete
+result for the requested target.
 
 ## Server-Side Capacity Prerequisites
 
@@ -476,8 +477,13 @@ Kubernetes node resource samples use `kubectl top nodes --no-headers` and print
 Stage duration belongs in the non-secret description file, not in `~/.env`.
 The default debug profile uses `HOME100K_STAGE_WARM_UP=15s`,
 `HOME100K_STAGE_STEADY=45s`, and `HOME100K_STAGE_COOL_DOWN=15s`, so the planned
-window is 75 seconds per stage and 5 minutes across the 25%, 50%, 75%, and 100%
-stages before provisioning, sync, collection, and evidence overhead.
+target-stage window is 75 seconds before provisioning, sync, collection, and
+evidence overhead. The load target is a single stage named for the requested
+device count, for example `50k` or `100k`; warm-up is the ramp period used to
+spread device token bootstrap and MQTT connects before the steady window.
+`HOME100K_STAGE_WARM_UP` must be less than
+`HOME100K_STAGE_STEADY + HOME100K_STAGE_COOL_DOWN` so the run reserves time at
+the full requested target.
 Short debug runs can lower these values with explicit shell environment
 overrides or a custom `HOME100K_DESCRIPTION_FILE`; explicit shell environment
 variables take precedence over the description file.
@@ -537,12 +543,14 @@ configured delay using its local monotonic clock and records its actual stage
 start and first-connect timestamps for report-time start skew calculation.
 
 Device MQTT subscriptions are lifetime state, not scheduled publish events. In
-live mode, each shard runner keeps one device session pool across the 25K,
-50K, 75K, and 100K stages. The 50K stage adds only the devices needed beyond
-25K, the 75K stage adds only the next increment, and existing device
-connections and delta-topic subscriptions remain open. The report tracks both
-new subscribe packets and active connection/subscription gauges by stage;
-capacity gates use the active gauges.
+live mode, each shard runner builds one device session pool for the single
+target stage. The stage warm-up duration is the connect ramp: assigned devices
+are ordered deterministically and jittered across the ramp interval so
+`/request_token`, TLS, MQTT CONNECT, and shadow-delta subscription load are not
+all emitted at the same instant. Existing device connections and delta-topic
+subscriptions remain open through the steady and cool-down windows. The report
+tracks both new subscribe packets and active connection/subscription gauges;
+capacity gates use the active gauges at the requested target.
 
 ### LKE Capacity Placement
 
@@ -837,7 +845,8 @@ Planner tests:
   meters.
 - Presence mix resolves to 85K online steady, 10K offline desired queue, and
   5K flapping reconnect.
-- Stages resolve to 25K, 50K, 75K, and 100K windows.
+- Stages resolve to one target window named from the requested device count,
+  for example `100k`.
 
 IoT Device Shadow scenario tests:
 

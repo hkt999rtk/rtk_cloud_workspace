@@ -110,6 +110,7 @@
         compress: false
         rsync_opts:
           - "--timeout={{ rsync_timeout | default(90) }}"
+          - "--checksum"
           - "--progress"
       when: orchestra_artifact_store_needs_upload
       register: orchestra_artifact_copy
@@ -232,6 +233,7 @@
     - name: Fan out runner binary from orchestra
       ansible.builtin.shell: >
         rsync --delay-updates --archive
+        --checksum
         --rsync-path='sudo -u root rsync'
         -e {{ fanout_ssh | quote }}
         --timeout={{ rsync_timeout | default(90) }}
@@ -252,6 +254,7 @@
     - name: Fan out rtk-cloud binary from orchestra
       ansible.builtin.shell: >
         rsync --delay-updates --archive
+        --checksum
         --rsync-path='sudo -u root rsync'
         -e {{ fanout_ssh | quote }}
         --timeout={{ rsync_timeout | default(90) }}
@@ -272,6 +275,7 @@
     - name: Fan out cloud-mqtt-test binary from orchestra
       ansible.builtin.shell: >
         rsync --delay-updates --archive
+        --checksum
         --rsync-path='sudo -u root rsync'
         -e {{ fanout_ssh | quote }}
         --timeout={{ rsync_timeout | default(90) }}
@@ -292,6 +296,7 @@
     - name: Fan out this VM shard manifest from orchestra
       ansible.builtin.shell: >
         rsync --delay-updates --archive
+        --checksum
         --rsync-path='sudo -u root rsync'
         -e {{ fanout_ssh | quote }}
         --timeout={{ rsync_timeout | default(90) }}
@@ -306,6 +311,7 @@
     - name: Fan out common env archive from orchestra
       ansible.builtin.shell: >
         rsync --delay-updates --archive
+        --checksum
         --rsync-path='sudo -u root rsync'
         -e {{ fanout_ssh | quote }}
         --timeout={{ rsync_timeout | default(90) }}
@@ -328,6 +334,7 @@
     - name: Fan out compressed env-root shard archive from orchestra
       ansible.builtin.shell: >
         rsync --delay-updates --archive
+        --checksum
         --rsync-path='sudo -u root rsync'
         -e {{ fanout_ssh | quote }}
         --timeout={{ rsync_timeout | default(90) }}
@@ -367,10 +374,19 @@
             "label": "{{ vm_label }}",
             "sync_mode": "orchestra_fanout",
             "orchestra": "{{ groups['home_100k_orchestra'][0] }}",
+            "checksum_algorithm": "sha256",
             "files_transferred": {{ (1 if (common_env_archive_copy.changed | default(false)) else 0) + (1 if (env_archive_copy.changed | default(false)) else 0) + (1 if (runner_copy.changed | default(false)) else 0) + (1 if (rtk_cloud_copy.changed | default(false)) else 0) + (1 if (cloud_mqtt_test_copy.changed | default(false)) else 0) + (1 if (manifest_copy.changed | default(false)) else 0) }},
             "files_skipped": {{ (0 if common_env_archive_needs_upload else 1) + (0 if env_archive_needs_upload else 1) + (0 if runner_needs_upload else 1) + (0 if rtk_cloud_needs_upload else 1) + (0 if cloud_mqtt_test_needs_upload else 1) + (0 if manifest_needs_upload else 1) }},
             "bytes_transferred": {{ ((artifact_common_env_archive_stat.stat.size | default(0) | int) if (common_env_archive_copy.changed | default(false)) else 0) + ((artifact_env_archive_stat.stat.size | default(0) | int) if (env_archive_copy.changed | default(false)) else 0) + ((artifact_runner_stat.stat.size | default(0) | int) if (runner_copy.changed | default(false)) else 0) + ((artifact_rtk_cloud_stat.stat.size | default(0) | int) if (rtk_cloud_copy.changed | default(false)) else 0) + ((artifact_cloud_mqtt_test_stat.stat.size | default(0) | int) if (cloud_mqtt_test_copy.changed | default(false)) else 0) + ((artifact_manifest_stat.stat.size | default(0) | int) if (manifest_copy.changed | default(false)) else 0) }},
             "bytes_skipped": {{ ((artifact_common_env_archive_stat.stat.size | default(0) | int) if (not common_env_archive_needs_upload) else 0) + ((artifact_env_archive_stat.stat.size | default(0) | int) if (not env_archive_needs_upload) else 0) + ((artifact_runner_stat.stat.size | default(0) | int) if (not runner_needs_upload) else 0) + ((artifact_rtk_cloud_stat.stat.size | default(0) | int) if (not rtk_cloud_needs_upload) else 0) + ((artifact_cloud_mqtt_test_stat.stat.size | default(0) | int) if (not cloud_mqtt_test_needs_upload) else 0) + ((artifact_manifest_stat.stat.size | default(0) | int) if (not manifest_needs_upload) else 0) }},
+            "checksums": {
+              "home_100k": {"artifact": {{ artifact_runner_stat.stat.checksum | default("") | to_json }}, "remote_before": {{ remote_runner_stat.stat.checksum | default("") | to_json }}, "matched": {{ ((remote_runner_stat.stat.checksum | default("")) == (artifact_runner_stat.stat.checksum | default(""))) | to_json }}},
+              "rtk_cloud": {"artifact": {{ artifact_rtk_cloud_stat.stat.checksum | default("") | to_json }}, "remote_before": {{ remote_rtk_cloud_stat.stat.checksum | default("") | to_json }}, "matched": {{ ((remote_rtk_cloud_stat.stat.checksum | default("")) == (artifact_rtk_cloud_stat.stat.checksum | default(""))) | to_json }}},
+              "cloud_mqtt_test": {"artifact": {{ artifact_cloud_mqtt_test_stat.stat.checksum | default("") | to_json }}, "remote_before": {{ remote_cloud_mqtt_test_stat.stat.checksum | default("") | to_json }}, "matched": {{ ((remote_cloud_mqtt_test_stat.stat.checksum | default("")) == (artifact_cloud_mqtt_test_stat.stat.checksum | default(""))) | to_json }}},
+              "shard_manifest": {"artifact": {{ artifact_manifest_stat.stat.checksum | default("") | to_json }}, "remote_before": {{ remote_manifest_stat.stat.checksum | default("") | to_json }}, "matched": {{ ((remote_manifest_stat.stat.checksum | default("")) == (artifact_manifest_stat.stat.checksum | default(""))) | to_json }}},
+              "common_env_archive": {"artifact": {{ artifact_common_env_archive_stat.stat.checksum | default("") | to_json }}, "remote_before": {{ remote_common_env_archive_stat.stat.checksum | default("") | to_json }}, "matched": {{ ((remote_common_env_archive_stat.stat.checksum | default("")) == (artifact_common_env_archive_stat.stat.checksum | default(""))) | to_json }}},
+              "env_archive": {"artifact": {{ artifact_env_archive_stat.stat.checksum | default("") | to_json }}, "remote_before": {{ remote_env_archive_stat.stat.checksum | default("") | to_json }}, "matched": {{ ((remote_env_archive_stat.stat.checksum | default("")) == (artifact_env_archive_stat.stat.checksum | default(""))) | to_json }}}
+            },
             "common_env_archive_extracted": {{ common_env_extract.changed | default(false) | to_json }},
             "env_archive_extracted": {{ env_extract.changed | default(false) | to_json }},
             "remote_disk_before": {{ disk_before.stdout | to_json }},

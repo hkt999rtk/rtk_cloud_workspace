@@ -143,6 +143,9 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	if err := validateDuration("stage cool-down", opts.StageCoolDown); err != nil {
 		return Plan{}, err
 	}
+	if err := validateRampLeavesFullLoadWindow(opts.StageWarmUp, opts.StageSteady, opts.StageCoolDown); err != nil {
+		return Plan{}, err
+	}
 	devices := opts.DeviceCount
 	if devices <= 0 {
 		devices = DefaultDeviceCount
@@ -205,9 +208,9 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 		DeviceMix:         proportionalMix(devices, homeDiverseDeviceMixBuckets()),
 		DeviceProfiles:    homeDiverseDeviceProfiles(),
 		UserProfiles:      homeDiverseUserProfiles(),
-		StageUsageWindows: homeDiverseUsageWindows(),
+		StageUsageWindows: targetRampUsageWindows(),
 		PresenceMix:       proportionalMix(devices, []ratioBucket{{Name: "online_steady", Weight: 85}, {Name: "offline_desired_queue", Weight: 10}, {Name: "flapping_reconnect", Weight: 5}}),
-		Stages:            stagePlan(devices, opts.StageWarmUp, opts.StageSteady, opts.StageCoolDown, homeDiverseUsageWindows()),
+		Stages:            stagePlan(devices, opts.StageWarmUp, opts.StageSteady, opts.StageCoolDown, targetRampUsageWindows()),
 		Workflow:          []string{"plan", "provision-vms", "sync", "run-stages", "collect", "collect-server-evidence", "aggregate", "destroy-vms"},
 		Artifacts: Artifacts{
 			RunPlan:         "loadtests/home-100k/plans/<run_id>/plan.json",
@@ -274,6 +277,10 @@ func homeDiverseUsageWindows() []string {
 	return []string{"morning", "away", "return_home", "evening_peak"}
 }
 
+func targetRampUsageWindows() []string {
+	return []string{"ramp_to_target"}
+}
+
 func defaultDuration(value string, fallback string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -289,6 +296,26 @@ func validateDuration(label string, value string) error {
 	}
 	if duration <= 0 {
 		return fmt.Errorf("%s duration must be positive, got %q", label, value)
+	}
+	return nil
+}
+
+func validateRampLeavesFullLoadWindow(warmUp string, steady string, coolDown string) error {
+	warmUpDuration, err := time.ParseDuration(warmUp)
+	if err != nil {
+		return err
+	}
+	steadyDuration, err := time.ParseDuration(steady)
+	if err != nil {
+		return err
+	}
+	coolDownDuration, err := time.ParseDuration(coolDown)
+	if err != nil {
+		return err
+	}
+	fullLoadWindow := steadyDuration + coolDownDuration
+	if warmUpDuration >= fullLoadWindow {
+		return fmt.Errorf("stage warm-up/ramp duration %s must be less than full-load test window %s (stage steady + cool-down)", warmUp, fullLoadWindow)
 	}
 	return nil
 }
@@ -322,24 +349,21 @@ func proportionalMix(total int, buckets []ratioBucket) map[string]int {
 }
 
 func stagePlan(devices int, warmUp string, steady string, coolDown string, usageWindows []string) []Stage {
-	percentages := []int{25, 50, 75, 100}
-	out := make([]Stage, 0, len(percentages))
-	for idx, pct := range percentages {
-		connected := devices * pct / 100
-		if connected <= 0 && devices > 0 {
-			connected = 1
-		}
-		name := fmt.Sprintf("%dpct", pct)
-		if devices == DefaultDeviceCount {
-			name = fmt.Sprintf("%dk", connected/1000)
-		}
-		usageWindow := ""
-		if idx < len(usageWindows) {
-			usageWindow = usageWindows[idx]
-		}
-		out = append(out, Stage{Name: name, ConnectedDevices: connected, WarmUp: warmUp, SteadyState: steady, CoolDown: coolDown, UsageWindow: usageWindow})
+	if devices <= 0 {
+		return nil
 	}
-	return out
+	usageWindow := ""
+	if len(usageWindows) > 0 {
+		usageWindow = usageWindows[0]
+	}
+	return []Stage{{Name: targetStageName(devices), ConnectedDevices: devices, WarmUp: warmUp, SteadyState: steady, CoolDown: coolDown, UsageWindow: usageWindow}}
+}
+
+func targetStageName(devices int) string {
+	if devices > 0 && devices%1000 == 0 {
+		return fmt.Sprintf("%dk", devices/1000)
+	}
+	return fmt.Sprintf("%d", devices)
 }
 
 func deviceShards(region string, totalDevices int) []Shard {

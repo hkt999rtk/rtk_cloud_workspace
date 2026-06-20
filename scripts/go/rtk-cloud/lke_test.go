@@ -1456,6 +1456,124 @@ func TestLKEMQTTResourcesCanBeOverridden(t *testing.T) {
 	}
 }
 
+func TestLKEContainerResourcesCanBeOverriddenFromEnvMap(t *testing.T) {
+	env := map[string]string{
+		"CLOUD_STACK_NAME":                   "video-cloud-staging",
+		"LKE_VIDEO_CLOUD_API_REQUEST_CPU":    "750m",
+		"LKE_VIDEO_CLOUD_API_REQUEST_MEMORY": "1536Mi",
+		"LKE_VIDEO_CLOUD_API_LIMIT_MEMORY":   "4Gi",
+		"LKE_MQTT_REQUEST_MEMORY":            "1536Mi",
+		"LKE_MQTT_LIMIT_MEMORY":              "4Gi",
+		"LKE_CLOUD_LOGGER_REQUEST_MEMORY":    "256Mi",
+		"LKE_CLOUD_LOGGER_LIMIT_MEMORY":      "1Gi",
+	}
+
+	video := lkeDeploymentManifest(env, lkeWorkload{
+		Key:       "video-cloud",
+		Name:      "video-cloud-api",
+		Namespace: lkeNamespaceName(env, "video-cloud"),
+		Image:     "video-cloud:test",
+		Port:      8080,
+		Host:      "video-cloud-staging.realtekconnect.com",
+	}, nil)
+	for _, want := range []string{
+		`cpu: "750m"`,
+		`memory: "1536Mi"`,
+		`memory: "4Gi"`,
+	} {
+		if !strings.Contains(video, want) {
+			t.Fatalf("expected %q in video-cloud-api manifest, got:\n%s", want, video)
+		}
+	}
+
+	mqtt := lkeMQTTDeploymentManifest(env)
+	for _, want := range []string{
+		`cpu: "1"`,
+		`memory: "1536Mi"`,
+		`memory: "4Gi"`,
+	} {
+		if !strings.Contains(mqtt, want) {
+			t.Fatalf("expected %q in mqtt manifest, got:\n%s", want, mqtt)
+		}
+	}
+
+	logger := lkeCloudLoggerDeploymentManifest(env)
+	for _, want := range []string{
+		`memory: "256Mi"`,
+		`memory: "1Gi"`,
+	} {
+		if !strings.Contains(logger, want) {
+			t.Fatalf("expected %q in cloud-logger manifest, got:\n%s", want, logger)
+		}
+	}
+}
+
+func TestLKECompatibilityArtifactsPreserveResourceOverrides(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	t.Setenv("LKE_POSTGRES_REQUEST_CPU", "3500m")
+
+	paths := newProvisionPaths(workspace, envRoot, provisionOptions{})
+	env := map[string]string{
+		"CLOUD_ENV_NAME":                    "staging",
+		"CLOUD_REGION":                      "us-sea",
+		"CLOUD_STACK_NAME":                  "video-cloud-staging",
+		"CLOUD_DNS_ROOT_DOMAIN":             "realtekconnect.com",
+		"LKE_MQTT_REQUEST_MEMORY":           "1536Mi",
+		"LKE_MQTT_LIMIT_MEMORY":             "4Gi",
+		"LKE_VIDEO_CLOUD_API_LIMIT_MEMORY":  "4Gi",
+		"LKE_POSTGRES_REQUEST_MEMORY":       "2Gi",
+		"LKE_POSTGRES_LIMIT_MEMORY":         "4Gi",
+		"LKE_REDIS_REQUEST_MEMORY":          "256Mi",
+		"LKE_REDIS_LIMIT_MEMORY":            "1Gi",
+		"LKE_REDIS_EXPORTER_REQUEST_MEMORY": "128Mi",
+	}
+
+	if err := writeLKECompatibilityArtifacts(paths, env); err != nil {
+		t.Fatal(err)
+	}
+
+	stack := readTestFile(t, filepath.Join(envRoot, "env", "stack.env"))
+	for _, want := range []string{
+		"LKE_MQTT_REQUEST_MEMORY=1536Mi",
+		"LKE_MQTT_LIMIT_MEMORY=4Gi",
+		"LKE_VIDEO_CLOUD_API_LIMIT_MEMORY=4Gi",
+		"LKE_POSTGRES_REQUEST_CPU=3500m",
+		"LKE_POSTGRES_REQUEST_MEMORY=2Gi",
+		"LKE_POSTGRES_LIMIT_MEMORY=4Gi",
+		"LKE_REDIS_REQUEST_MEMORY=256Mi",
+		"LKE_REDIS_LIMIT_MEMORY=1Gi",
+		"LKE_REDIS_EXPORTER_REQUEST_MEMORY=128Mi",
+	} {
+		if !strings.Contains(stack, want) {
+			t.Fatalf("expected %q in stack.env, got:\n%s", want, stack)
+		}
+	}
+}
+
+func TestLKEEnvBoolReadsEnvMap(t *testing.T) {
+	if !lkeEnvBool(map[string]string{"LKE_PUBLIC_MQTT_LOADBALANCER": "true"}, "LKE_PUBLIC_MQTT_LOADBALANCER") {
+		t.Fatal("expected env map boolean override to be enabled")
+	}
+}
+
+func TestLKEMQTTPublicServiceCanUseNodePort(t *testing.T) {
+	manifest := lkeMQTTPublicServiceManifest(map[string]string{
+		"CLOUD_STACK_NAME":             "video-cloud-staging",
+		"LKE_PUBLIC_MQTT_SERVICE_TYPE": "NodePort",
+		"LKE_PUBLIC_MQTT_NODE_PORT":    "31883",
+	}, 0)
+
+	for _, want := range []string{
+		"type: NodePort",
+		"nodePort: 31883",
+		"name: mqtt-public",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("expected %q in public mqtt service manifest, got:\n%s", want, manifest)
+		}
+	}
+}
+
 func TestRunProvisionLKEDeployAppliesVideoCloudAuxiliaryServices(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)
@@ -2187,12 +2305,13 @@ printf '\n' >> "`+childLog+`"
 		"--brandname", "RTK",
 		"--duration-seconds", "300",
 		"--load-model", "home-100k-sustained",
-		"--stage-names", "25k,50k,75k,100k",
-		"--stage-connected-devices", "2500,5000,7500,10000",
-		"--stage-durations-seconds", "75,75,75,75",
-		"--stage-min-commands", "125,250,375,500",
+		"--stage-names", "50k",
+		"--stage-connected-devices", "10000",
+		"--stage-durations-seconds", "960",
+		"--stage-ramp-seconds", "300",
+		"--stage-min-commands", "500",
 		"--device-traffic-profile", "home-diverse-v1",
-		"--stage-usage-windows", "morning,away,return_home,evening_peak",
+		"--stage-usage-windows", "ramp_to_target",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2200,12 +2319,13 @@ printf '\n' >> "`+childLog+`"
 
 	got := readTestFile(t, childLog)
 	for _, want := range []string{
-		"--stage-names 25k,50k,75k,100k",
-		"--stage-connected-devices 2500,5000,7500,10000",
-		"--stage-durations-seconds 75,75,75,75",
-		"--stage-min-commands 125,250,375,500",
+		"--stage-names 50k",
+		"--stage-connected-devices 10000",
+		"--stage-durations-seconds 960",
+		"--stage-ramp-seconds 300",
+		"--stage-min-commands 500",
 		"--device-traffic-profile home-diverse-v1",
-		"--stage-usage-windows morning,away,return_home,evening_peak",
+		"--stage-usage-windows ramp_to_target",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("child args missing %q:\n%s", want, got)

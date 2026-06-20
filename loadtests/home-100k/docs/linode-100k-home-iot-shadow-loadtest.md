@@ -42,7 +42,7 @@ Default first baseline:
 | Server target | Current staging/LKE env-root |
 | Load generators | Ephemeral Linode VMs |
 | Region model | Single Linode region |
-| Stages | 25K, 50K, 75K, 100K connected devices |
+| Stage window | Single target stage at the requested connected-device count |
 | VM layout | 10 `mixed` VMs |
 | Per-VM device task | Up to 10K simulated devices |
 | Per-VM user task | 500 simulated app users |
@@ -199,8 +199,10 @@ Kubernetes node resource samples use `kubectl top nodes --no-headers` and print
 
 Stage duration is part of the non-secret description file. The default profile
 uses `HOME100K_STAGE_WARM_UP=15s`, `HOME100K_STAGE_STEADY=45s`, and
-`HOME100K_STAGE_COOL_DOWN=15s`, which plans 75 seconds per stage and 5 minutes
-for the four load stages before VM lifecycle and evidence overhead. Use explicit
+`HOME100K_STAGE_COOL_DOWN=15s`, which plans a 75-second single target stage
+before VM lifecycle and evidence overhead. The warm-up value is the connect
+ramp and must be less than the full-load test window
+`HOME100K_STAGE_STEADY + HOME100K_STAGE_COOL_DOWN`. Use explicit
 shell environment overrides for longer baseline runs, or a custom
 `HOME100K_DESCRIPTION_FILE` for a reusable alternate profile. Explicit shell
 environment variables take precedence over the description file.
@@ -255,10 +257,12 @@ MQTT/API traffic. The run writes `start-coordination.json` with ready barrier,
 per-VM start timestamps, and max start skew. In `runner_mode=live`, each VM
 calls the copied `rtk-cloud` binary once to run the assigned staged MQTT/API
 shard only after START is received. Device MQTT delta subscriptions are
-lifetime state: the 50K, 75K, and 100K stages add new device sessions without
-disconnecting and resubscribing devices that were already online in earlier
-stages. Reports must show both new subscribe packets and active
-connection/subscription gauges.
+lifetime state for the single target stage. The stage warm-up spreads
+`/request_token`, TLS, MQTT CONNECT, and shadow-delta subscription work across
+the ramp interval; after ramp, existing device connections and subscriptions
+remain open through the steady and cool-down windows. Reports must show both
+new subscribe packets and active connection/subscription gauges for the
+requested target.
 
 Load-generator runtime limits are part of the test conditions:
 

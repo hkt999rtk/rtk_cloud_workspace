@@ -897,6 +897,9 @@ func TestAnsibleSyncSkipsUnchangedArtifactsByChecksum(t *testing.T) {
 		"runner_needs_upload",
 		"env_archive_needs_upload",
 		"Extract env-root shard archive when changed",
+		"--checksum",
+		"checksum_algorithm",
+		`"checksums"`,
 		"files_skipped",
 		"bytes_skipped",
 	} {
@@ -1825,19 +1828,57 @@ func TestParseIngressRequestTokenAccessLogCounters(t *testing.T) {
 	out := strings.Join([]string{
 		`198.51.100.10 - - [16/Jun/2026:19:44:34 +0000] "POST /request_token HTTP/1.1" 200 517 "-" "Go-http-client/1.1" 255 0.186 [video-cloud-staging-video-cloud-video-cloud-api-8080] [] 10.128.218.139:80 517 0.186 200 abc`,
 		`198.51.100.11 - - [16/Jun/2026:19:44:35 +0000] "POST /request_token HTTP/1.1" 500 51 "-" "Go-http-client/1.1" 255 7.255 [video-cloud-staging-video-cloud-video-cloud-api-8080] [] 10.128.218.139:80 51 7.255 500 def`,
+		`198.51.100.13 - - [16/Jun/2026:19:44:37 +0000] "POST /request_token HTTP/1.1" 429 51 "-" "Go-http-client/1.1" 255 12.500 [video-cloud-staging-video-cloud-video-cloud-api-8080] [] 10.128.218.139:80 51 12.500 429 xyz`,
 		`198.51.100.12 - - [16/Jun/2026:19:44:36 +0000] "GET /healthz HTTP/1.1" 200 2 "-" "kube-probe" 80 0.001 [upstream] [] 10.128.218.139:80 2 0.001 200 ghi`,
 	}, "\n")
 
 	counters := parseEvidenceCounters("ingress_nginx", "run-fixed", out)
 
 	for key, want := range map[string]int64{
-		"ingress_nginx.request_token.total":        2,
-		"ingress_nginx.request_token.status_200":   1,
-		"ingress_nginx.request_token.status_500":   1,
-		"ingress_nginx.request_token.gt1s":         1,
-		"ingress_nginx.request_token.gt5s":         1,
-		"ingress_nginx.request_token.max_ms":       7255,
-		"ingress_nginx.request_token.upstream_500": 1,
+		"ingress_nginx.request_token.total":           3,
+		"ingress_nginx.request_token.status_200":      1,
+		"ingress_nginx.request_token.status_4xx":      1,
+		"ingress_nginx.request_token.status_500":      1,
+		"ingress_nginx.request_token.status_5xx":      1,
+		"ingress_nginx.request_token.gt1s":            2,
+		"ingress_nginx.request_token.gt5s":            2,
+		"ingress_nginx.request_token.gt10s":           1,
+		"ingress_nginx.request_token.max_ms":          12500,
+		"ingress_nginx.request_token.duration_p50_ms": 7255,
+		"ingress_nginx.request_token.duration_p95_ms": 12500,
+		"ingress_nginx.request_token.duration_p99_ms": 12500,
+		"ingress_nginx.request_token.upstream_4xx":    1,
+		"ingress_nginx.request_token.upstream_500":    1,
+		"ingress_nginx.request_token.upstream_5xx":    1,
+	} {
+		if counters[key] != want {
+			t.Fatalf("%s = %d, want %d; counters=%#v", key, counters[key], want, counters)
+		}
+	}
+}
+
+func TestParseVideoCloudAPIRequestTokenCounters(t *testing.T) {
+	out := strings.Join([]string{
+		`{"path":"/request_token","status":200,"duration_ms":180}`,
+		`{"path":"/request_token","status":429,"duration_ms":7255}`,
+		`{"path":"/request_token","status":500,"duration_ms":12500,"error":"socket_error timeout conn_congestion"}`,
+		`{"path":"/healthz","status":200,"duration_ms":1}`,
+	}, "\n")
+
+	counters := parseEvidenceCounters("video_cloud_api", "run-fixed", out)
+
+	for key, want := range map[string]int64{
+		"video_cloud_api.request_token.total":           3,
+		"video_cloud_api.request_token.status_2xx":      1,
+		"video_cloud_api.request_token.status_4xx":      1,
+		"video_cloud_api.request_token.status_5xx":      1,
+		"video_cloud_api.request_token.duration_p50_ms": 7255,
+		"video_cloud_api.request_token.duration_p95_ms": 12500,
+		"video_cloud_api.request_token.duration_p99_ms": 12500,
+		"video_cloud_api.request_token.max_ms":          12500,
+		"video_cloud_api.socket_error":                  1,
+		"video_cloud_api.timeout":                       1,
+		"video_cloud_api.conn_congestion":               1,
 	} {
 		if counters[key] != want {
 			t.Fatalf("%s = %d, want %d; counters=%#v", key, counters[key], want, counters)
@@ -1922,10 +1963,10 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 			"overall": "pass",
 			"stage_results": []map[string]any{
 				{
-					"name":                      "25k",
-					"connected_devices":         2500,
-					"active_connections":        2500,
-					"active_subscriptions":      2500,
+					"name":                      "100k",
+					"connected_devices":         20000,
+					"active_connections":        20000,
+					"active_subscriptions":      20000,
 					"status":                    "PASS",
 					"commands_attempted":        2500,
 					"commands_passed":           2500,
@@ -1941,13 +1982,10 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 					"total_http_bytes_sent":     1111,
 					"total_http_bytes_received": 2222,
 					"device_mqtt_totals": map[string]any{
-						"active_connections":   2500,
-						"active_subscriptions": 2500,
+						"active_connections":   20000,
+						"active_subscriptions": 20000,
 					},
 				},
-				{"name": "50k", "connected_devices": 10000, "active_connections": 10000, "active_subscriptions": 10000, "status": "PASS", "commands_attempted": 500, "commands_passed": 500, "http_requests": 500, "http_successes": 500},
-				{"name": "75k", "connected_devices": 15000, "active_connections": 15000, "active_subscriptions": 15000, "status": "PASS", "commands_attempted": 750, "commands_passed": 750, "http_requests": 750, "http_successes": 750},
-				{"name": "100k", "connected_devices": 20000, "active_connections": 20000, "active_subscriptions": 20000, "status": "PASS", "commands_attempted": 1000, "commands_passed": 1000, "http_requests": 1000, "http_successes": 1000},
 			},
 		}
 		if err := writeJSONFile(filepath.Join(childOutDir, "results.json"), payload); err != nil {
@@ -1990,14 +2028,15 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 		"--workspace /root/rtk_cloud_workspace",
 		"--env-root cloud_env/staging/lke",
 		"--brandname RTK",
-		"--duration-seconds 12",
+		"--duration-seconds 3",
 		"--telemetry-interval off",
 		"--command-rate-per-device-per-day 1800.00",
-		"--stage-names 25k,50k,75k,100k",
-		"--stage-connected-devices 5000,10000,15000,20000",
-		"--stage-durations-seconds 3,3,3,3",
+		"--stage-names 100k",
+		"--stage-connected-devices 20000",
+		"--stage-durations-seconds 3",
+		"--stage-ramp-seconds 1",
 		"--device-traffic-profile home-diverse-v1",
-		"--stage-usage-windows morning,away,return_home,evening_peak",
+		"--stage-usage-windows ramp_to_target",
 		"--max-connected-devices 20000",
 		"--shard-index 0",
 		"--shard-count 5",
@@ -2022,7 +2061,7 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 	if first.DeviceMQTTTotals.Publishes != 2103 || first.DeviceMQTTTotals.ReceivedMessages != 2050 || first.DeviceMQTTTotals.BytesSent != 123456 {
 		t.Fatalf("device MQTT totals not preserved from live results: %#v", first.DeviceMQTTTotals)
 	}
-	if first.ConnectedDevices != 25000 || first.ShardConnectedDevices != 5000 {
+	if first.ConnectedDevices != 100000 || first.ShardConnectedDevices != 20000 {
 		t.Fatalf("stage targets not preserved: global=%d shard=%d", first.ConnectedDevices, first.ShardConnectedDevices)
 	}
 	if first.AppUserTotals.DesiredWrites != 700 || first.AppUserTotals.ReceivedAcks != 690 || first.AppUserTotals.BytesReceived != 2222 {
@@ -2153,14 +2192,14 @@ func TestExecuteShardRunLiveWritesFallbackStageResultsWhenMQTTTestProducesNoResu
 	if result.Status != "failed" || !strings.Contains(result.Error, "mqtt test crashed before writing results") {
 		t.Fatalf("fallback status/error not preserved: %#v", result)
 	}
-	if len(result.StageResults) != 4 {
-		t.Fatalf("fallback stage results len = %d, want 4", len(result.StageResults))
+	if len(result.StageResults) != 1 {
+		t.Fatalf("fallback stage results len = %d, want 1", len(result.StageResults))
 	}
 	if got := result.StageResults[0].FailureReasons["runner_failed"]; got != 1 {
 		t.Fatalf("fallback failure reason = %d, want 1; first stage=%#v", got, result.StageResults[0])
 	}
-	if result.StageResults[0].ConnectedDevices != 25000 {
-		t.Fatalf("fallback connected devices = %d, want 25000", result.StageResults[0].ConnectedDevices)
+	if result.StageResults[0].ConnectedDevices != 100000 {
+		t.Fatalf("fallback connected devices = %d, want 100000", result.StageResults[0].ConnectedDevices)
 	}
 }
 
@@ -2182,7 +2221,7 @@ func TestExecuteShardRunLivePreservesPartialStagedResultsWhenMQTTTestFails(t *te
 			"status": "FAIL",
 			"stage_results": []map[string]any{
 				{
-					"name":                "25k",
+					"name":                "100k",
 					"status":              "PASS",
 					"connect_attempts":    2500,
 					"connect_successes":   2000,
@@ -2194,20 +2233,6 @@ func TestExecuteShardRunLivePreservesPartialStagedResultsWhenMQTTTestFails(t *te
 					"failure_reasons":     map[string]any{"app_token_request_failed": 10},
 					"device_mqtt_totals":  map[string]any{"bytes_sent": 12345},
 					"app_user_totals":     map[string]any{"bytes_received": 67890},
-				},
-				{
-					"name":              "50k",
-					"status":            "FAIL",
-					"connect_attempts":  5000,
-					"connect_successes": 3000,
-					"http_requests":     500,
-					"http_successes":    300,
-				},
-				{
-					"name":             "75k",
-					"status":           "FAIL",
-					"failure_reasons":  map[string]any{"insufficient_shard_devices": 1},
-					"connect_attempts": 0,
 				},
 			},
 		}
@@ -2252,11 +2277,11 @@ func TestExecuteShardRunLivePreservesPartialStagedResultsWhenMQTTTestFails(t *te
 	if err := readJSON(filepath.Join(outDir, "results.json"), &result); err != nil {
 		t.Fatalf("missing converted partial shard results: %v stderr=%s", err, stderr.String())
 	}
-	if result.Status != "failed" || !result.Partial || !strings.Contains(result.Error, "stage_results len = 3, want 4") {
+	if result.Status != "failed" || !result.Partial || !strings.Contains(result.Error, "mqtt test failed") {
 		t.Fatalf("partial failure metadata not preserved: %#v stderr=%s", result, stderr.String())
 	}
-	if len(result.StageResults) != 3 {
-		t.Fatalf("stage results len = %d, want 3", len(result.StageResults))
+	if len(result.StageResults) != 1 {
+		t.Fatalf("stage results len = %d, want 1", len(result.StageResults))
 	}
 	if result.StageResults[0].DeviceMQTTTotals.ConnectAttempts != 2500 || result.StageResults[0].DeviceMQTTTotals.BytesSent != 12345 {
 		t.Fatalf("partial device counters not preserved: %#v", result.StageResults[0].DeviceMQTTTotals)
@@ -2570,6 +2595,32 @@ func TestCollectCentralLoggerEvidenceQueriesRunIDIndexes(t *testing.T) {
 	}
 }
 
+func TestCentralLoggerEvidenceCanBeSkipped(t *testing.T) {
+	t.Setenv("HOME100K_SKIP_CENTRAL_LOGGER", "1")
+	envRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(envRoot, "services", "cloud-logger"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envRoot, "services", "cloud-logger", "logger.env"), []byte("CLOUD_LOGGER_ENDPOINT=https://logger.invalid\nCLOUD_LOGGER_INGEST_TOKEN=logger-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	source, note := collectCentralLoggerEvidence(envRoot, "run-logger")
+	if source.Available || !source.Optional {
+		t.Fatalf("central logger source = %+v, want unavailable optional", source)
+	}
+	if !strings.Contains(note, "HOME100K_SKIP_CENTRAL_LOGGER") {
+		t.Fatalf("skip note = %q", note)
+	}
+	shadow, streams, runtimeNote := collectCentralLoggerRuntimeLogEvidence(envRoot, "run-logger", "")
+	if shadow.Available || streams.Available {
+		t.Fatalf("runtime sources should be unavailable when skipped: shadow=%+v streams=%+v", shadow, streams)
+	}
+	if !strings.Contains(runtimeNote, "HOME100K_SKIP_CENTRAL_LOGGER") {
+		t.Fatalf("runtime skip note = %q", runtimeNote)
+	}
+}
+
 func TestCollectLiveServerEvidenceFallsBackToCentralLoggerRuntimeLogs(t *testing.T) {
 	outDir := t.TempDir()
 	if err := writeJSONFile(filepath.Join(outDir, "start-coordination.json"), StartCoordination{
@@ -2697,6 +2748,7 @@ func TestCollectLiveServerEvidenceFallsBackToCentralLoggerRuntimeLogs(t *testing
 	}
 
 	oldRunner := commandOutputRunner
+	oldTimeoutRunner := commandOutputRunnerWithTimeout
 	commandOutputRunner = func(name string, args ...string) (string, error) {
 		joined := strings.Join(args, " ")
 		switch {
@@ -2709,7 +2761,13 @@ func TestCollectLiveServerEvidenceFallsBackToCentralLoggerRuntimeLogs(t *testing
 		}
 		return "", nil
 	}
-	defer func() { commandOutputRunner = oldRunner }()
+	commandOutputRunnerWithTimeout = func(timeout time.Duration, name string, args ...string) (string, error) {
+		return commandOutputRunner(name, args...)
+	}
+	defer func() {
+		commandOutputRunner = oldRunner
+		commandOutputRunnerWithTimeout = oldTimeoutRunner
+	}()
 
 	evidence := collectLiveServerEvidence(envRoot, "run-cli", outDir)
 	shadow := evidence.Sources["iot_device_shadow"]
@@ -2816,6 +2874,7 @@ func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 
 	calls := []string{}
 	oldRunner := commandOutputRunner
+	oldTimeoutRunner := commandOutputRunnerWithTimeout
 	commandOutputRunner = func(name string, args ...string) (string, error) {
 		calls = append(calls, name+" "+strings.Join(args, " "))
 		joined := strings.Join(args, " ")
@@ -2831,7 +2890,13 @@ func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 		}
 		return "", nil
 	}
-	defer func() { commandOutputRunner = oldRunner }()
+	commandOutputRunnerWithTimeout = func(timeout time.Duration, name string, args ...string) (string, error) {
+		return commandOutputRunner(name, args...)
+	}
+	defer func() {
+		commandOutputRunner = oldRunner
+		commandOutputRunnerWithTimeout = oldTimeoutRunner
+	}()
 
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
@@ -2889,16 +2954,45 @@ func TestServerEvidenceProbesIncludeMQTTNodeBalancerHealth(t *testing.T) {
 	t.Fatal("serverEvidenceProbes() missing mqtt_nodebalancer probe")
 }
 
+func TestServerEvidenceProbesIncludePostgresActivityAndWarningCounters(t *testing.T) {
+	probes := serverEvidenceProbes("run-bottleneck", "--since=1m")
+	joined := ""
+	for _, probe := range probes {
+		joined += strings.Join(append([]string{probe.command}, probe.args...), " ") + "\n"
+	}
+	for _, want := range []string{
+		"postgres.activity.active",
+		"postgres.activity.idle_in_transaction",
+		"postgres.locks.waiting",
+		"video_cloud_api.socket_error",
+		"video_cloud_api.timeout",
+		"emqx.conn_congestion",
+		"duration_p95_ms",
+		"status_5xx",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("server evidence probes missing %q:\n%s", want, joined)
+		}
+	}
+}
+
 func TestExecuteCollectServerEvidenceLiveWritesIncompleteEvidenceOnProbeFailure(t *testing.T) {
 	outDir := t.TempDir()
 	oldRunner := commandOutputRunner
+	oldTimeoutRunner := commandOutputRunnerWithTimeout
 	commandOutputRunner = func(name string, args ...string) (string, error) {
 		if strings.Contains(strings.Join(args, " "), "postgres") {
 			return "", errors.New("postgres probe failed")
 		}
 		return "", nil
 	}
-	defer func() { commandOutputRunner = oldRunner }()
+	commandOutputRunnerWithTimeout = func(timeout time.Duration, name string, args ...string) (string, error) {
+		return commandOutputRunner(name, args...)
+	}
+	defer func() {
+		commandOutputRunner = oldRunner
+		commandOutputRunnerWithTimeout = oldTimeoutRunner
+	}()
 
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
@@ -2932,13 +3026,20 @@ func TestExecuteCollectServerEvidenceLiveWritesIncompleteEvidenceOnProbeFailure(
 
 func TestExecuteCollectServerEvidenceLivePreservesFailureForRepeatedSource(t *testing.T) {
 	oldRunner := commandOutputRunner
+	oldTimeoutRunner := commandOutputRunnerWithTimeout
 	commandOutputRunner = func(name string, args ...string) (string, error) {
 		if strings.Join(args, " ") == "get pods -A -o wide" {
 			return "", errors.New("pod inventory failed")
 		}
 		return "", nil
 	}
-	defer func() { commandOutputRunner = oldRunner }()
+	commandOutputRunnerWithTimeout = func(timeout time.Duration, name string, args ...string) (string, error) {
+		return commandOutputRunner(name, args...)
+	}
+	defer func() {
+		commandOutputRunner = oldRunner
+		commandOutputRunnerWithTimeout = oldTimeoutRunner
+	}()
 
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{

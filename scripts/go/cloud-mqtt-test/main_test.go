@@ -349,6 +349,26 @@ func TestManagedTokenRequestsWithClientCertificateWhenExpired(t *testing.T) {
 	}
 }
 
+func TestAccessTokenLifetimeUsesStandardJWTClaimsOnly(t *testing.T) {
+	issuedAt := time.Unix(1_800_000_000, 0)
+	now := issuedAt.Add(2 * time.Minute)
+	standard := testJWT(t, issuedAt, issuedAt.Add(time.Minute))
+	if !accessTokenExpired(standard, now) {
+		t.Fatal("standard JWT exp should mark token expired")
+	}
+	if !accessTokenPastHalfLife(tokenBundle{AccessToken: standard, issuedAt: issuedAt}, issuedAt.Add(45*time.Second)) {
+		t.Fatal("standard JWT iat/exp should mark token past half life")
+	}
+
+	legacy := testLegacySignedPayloadToken(t, issuedAt, issuedAt.Add(time.Minute))
+	if accessTokenExpired(legacy, now) {
+		t.Fatal("legacy two-segment token must not be parsed as a standard JWT")
+	}
+	if accessTokenPastHalfLife(tokenBundle{AccessToken: legacy, issuedAt: issuedAt}, issuedAt.Add(45*time.Second)) {
+		t.Fatal("legacy expires_at/issued_at claims must not drive JWT renewal")
+	}
+}
+
 func TestDeviceManagedTokenRenewsWithClientCertificateAtHalfLifetime(t *testing.T) {
 	certPEM, keyPEM, _ := testAppMaterial(t, "device-1")
 	cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
@@ -1135,6 +1155,62 @@ func TestSustainedActorsUseLongMQTTKeepAlive(t *testing.T) {
 	}
 }
 
+func TestConnectSustainedDevicesRetriesRequestTokenBeforeMQTT(t *testing.T) {
+	broker := newFakeTLSMQTTBroker(t)
+	defer broker.Close()
+	certPEM, keyPEM, _ := testAppMaterial(t, "rtk-0041")
+	var tokenRequests int
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/request_token" {
+			t.Fatalf("unexpected token path: %s", r.URL.Path)
+		}
+		tokenRequests++
+		if tokenRequests == 1 {
+			http.Error(w, "temporary overload", http.StatusServiceUnavailable)
+			return
+		}
+		writeJSON(t, w, map[string]string{"access_token": "device-token"})
+	}))
+	defer tokenServer.Close()
+	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(rawPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var totals mqttIOTotals
+	sessions := connectSustainedDevicesUntil(
+		[]assignment{{DeviceID: "rtk-0041"}},
+		map[string]certRecord{"rtk-0041": {DeviceID: "rtk-0041", DeviceType: "light", CertPEM: certPEM, KeyPEM: keyPEM}},
+		"RTK",
+		"run-token-retry",
+		tokenServer.URL,
+		[]mqttEndpointTarget{{Host: host, Port: port}},
+		1,
+		time.Now().Add(time.Minute),
+		&totals,
+	)
+	defer closeSustainedSessions(sessions)
+	if len(sessions) != 1 {
+		t.Fatalf("sessions = %d, want 1; totals=%#v", len(sessions), totals)
+	}
+	if tokenRequests != 2 {
+		t.Fatalf("token requests = %d, want 2", tokenRequests)
+	}
+	if totals.ConnectAttempts != 1 || totals.ConnectSuccesses != 1 || totals.ConnectFailures != 0 {
+		t.Fatalf("connect totals = attempts/success/fail %d/%d/%d, want 1/1/0", totals.ConnectAttempts, totals.ConnectSuccesses, totals.ConnectFailures)
+	}
+	if totals.DeviceTokenAttempts != 2 || totals.DeviceTokenSuccesses != 1 || totals.DeviceTokenFailures != 1 {
+		t.Fatalf("token totals = attempts/success/fail %d/%d/%d, want 2/1/1", totals.DeviceTokenAttempts, totals.DeviceTokenSuccesses, totals.DeviceTokenFailures)
+	}
+	if totals.DeviceTokenFirstAttemptFailures != 1 || totals.DeviceTokenRetryAttempts != 1 ||
+		totals.DeviceTokenRetrySuccesses != 1 || totals.DeviceTokenRetryExhausted != 0 {
+		t.Fatalf("retry counters not preserved: %#v", totals)
+	}
+}
+
 func TestSustainedDeviceReaderSendsMQTTKeepAlivePing(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()
@@ -1393,6 +1469,49 @@ func TestAttachMQTTIOTotalsIncludesBoundedFailureEvents(t *testing.T) {
 	}
 	if events[0].DeviceID != "rtk-0000" || events[len(events)-1].DeviceID != fmt.Sprintf("rtk-%04d", maxFailureEvents-1) {
 		t.Fatalf("failure_events should keep the first bounded samples: %#v", events)
+	}
+}
+
+func TestAttachMQTTIOTotalsIncludesPhaseMetricsAndBoundedBottleneckEvents(t *testing.T) {
+	totals := mqttIOTotals{}
+	recordPhaseMetric(&totals, "device_request_token", 1200*time.Millisecond, nil)
+	recordPhaseMetric(&totals, "device_request_token", 11*time.Second, errors.New("request_token failed with access_token=secret"))
+	for idx := 0; idx < maxBottleneckEvents+5; idx++ {
+		recordBottleneckEvent(&totals, bottleneckEvent{
+			Stage:       "50k",
+			Phase:       "device_request_token",
+			Actor:       "device",
+			DeviceID:    fmt.Sprintf("rtk-%04d", idx),
+			Detail:      "request_token failed Authorization: Bearer secret access_token=secret",
+			ElapsedMS:   11000,
+			RemainingMS: 9000,
+			Attempt:     2,
+			IsRetry:     true,
+			MQTTTarget:  "203.0.113.10:8883",
+		})
+	}
+	result := map[string]any{}
+	attachMQTTIOTotals(result, totals)
+	metrics, ok := result["phase_metrics"].(map[string]phaseMetric)
+	if !ok {
+		t.Fatalf("phase_metrics missing or wrong type: %#v", result["phase_metrics"])
+	}
+	got := metrics["device_request_token"]
+	if got.Attempts != 2 || got.Success != 1 || got.Fail != 1 || got.GT1S != 2 || got.GT5S != 1 || got.GT10S != 1 || got.MaxMS != 11000 {
+		t.Fatalf("device_request_token metric = %#v", got)
+	}
+	events, ok := result["bottleneck_events"].([]bottleneckEvent)
+	if !ok {
+		t.Fatalf("bottleneck_events missing or wrong type: %#v", result["bottleneck_events"])
+	}
+	if len(events) != maxBottleneckEvents {
+		t.Fatalf("bottleneck_events len = %d, want %d", len(events), maxBottleneckEvents)
+	}
+	if strings.Contains(events[0].Detail, "secret") || strings.Contains(events[0].Detail, "Bearer") || strings.Contains(events[0].Detail, "access_token") {
+		t.Fatalf("bottleneck event detail leaked sensitive value: %#v", events[0])
+	}
+	if events[0].DeviceID != "rtk-0000" || events[len(events)-1].DeviceID != fmt.Sprintf("rtk-%04d", maxBottleneckEvents-1) {
+		t.Fatalf("bottleneck_events should keep the first bounded samples: %#v", events)
 	}
 }
 
@@ -1859,6 +1978,18 @@ func testJWT(t *testing.T, issuedAt time.Time, expiresAt time.Time) string {
 	return base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload) + "."
 }
 
+func testLegacySignedPayloadToken(t *testing.T, issuedAt time.Time, expiresAt time.Time) string {
+	t.Helper()
+	payload, err := json.Marshal(map[string]string{
+		"issued_at":  issuedAt.Format(time.RFC3339Nano),
+		"expires_at": expiresAt.Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(payload) + ".signature"
+}
+
 type fakeMQTTBroker struct {
 	t                      *testing.T
 	listener               net.Listener
@@ -1979,6 +2110,57 @@ func TestConnectSustainedDevicesUntilReturnsWhenDeadlineExpiresDuringDispatch(t 
 	case <-done:
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("connectSustainedDevicesUntil deadlocked when deadline expired during dispatch")
+	}
+}
+
+func TestStagedConnectScheduleSpreadsDevicesDeterministically(t *testing.T) {
+	assignments := make([]assignment, 100)
+	for idx := range assignments {
+		assignments[idx] = assignment{DeviceID: fmt.Sprintf("device-%03d", idx)}
+	}
+	start := time.Unix(1000, 0)
+	window := 100 * time.Second
+	first := stagedConnectSchedule(assignments, start, window, 1234, "50pct")
+	second := stagedConnectSchedule(assignments, start, window, 1234, "50pct")
+	if len(first) != len(assignments) || len(second) != len(assignments) {
+		t.Fatalf("schedule lens = %d/%d, want %d", len(first), len(second), len(assignments))
+	}
+	for idx := range first {
+		if !first[idx].At.Equal(second[idx].At) || first[idx].Assignment.DeviceID != second[idx].Assignment.DeviceID {
+			t.Fatalf("schedule is not deterministic at %d: %#v vs %#v", idx, first[idx], second[idx])
+		}
+		if idx > 0 && first[idx].At.Before(first[idx-1].At) {
+			t.Fatalf("schedule not sorted at %d: %s before %s", idx, first[idx].At, first[idx-1].At)
+		}
+		if first[idx].At.Before(start) || !first[idx].At.Before(start.Add(window)) {
+			t.Fatalf("schedule offset out of window at %d: %s", idx, first[idx].At.Sub(start))
+		}
+	}
+	if first[0].At.Sub(start) > 2*time.Second {
+		t.Fatalf("first scheduled connect offset = %s, want near start", first[0].At.Sub(start))
+	}
+	lastOffset := first[len(first)-1].At.Sub(start)
+	if lastOffset < 95*time.Second {
+		t.Fatalf("last scheduled connect offset = %s, want spread across most of window", lastOffset)
+	}
+	inOrder := 0
+	for idx, item := range first {
+		if item.Index == idx {
+			inOrder++
+		}
+	}
+	if inOrder > len(first)/2 {
+		t.Fatalf("schedule preserved too much original order: %d/%d", inOrder, len(first))
+	}
+}
+
+func TestStagedConnectRampWindowLeavesTailBudget(t *testing.T) {
+	start := time.Unix(1000, 0)
+	if got := stagedConnectRampWindow(start, start.Add(2*time.Minute)); got != 105*time.Second {
+		t.Fatalf("ramp window = %s, want 105s", got)
+	}
+	if got := stagedConnectRampWindow(start, start.Add(10*time.Second)); got != 0 {
+		t.Fatalf("short ramp window = %s, want immediate dispatch", got)
 	}
 }
 
