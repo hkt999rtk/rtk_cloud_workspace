@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -54,6 +55,24 @@ var commandRunnerWithTimeout = func(timeout time.Duration, name string, args ...
 var commandOutputRunner = func(name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+var commandOutputRunnerWithTimeout = func(timeout time.Duration, name string, args ...string) (string, error) {
+	if timeout <= 0 {
+		return commandOutputRunner(name, args...)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		return string(out), fmt.Errorf("%s timed out after %s", name, timeout)
+	}
 	return string(out), err
 }
 
@@ -622,6 +641,7 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 	stageNames := make([]string, 0, len(plan.Stages))
 	stageTargets := make([]string, 0, len(plan.Stages))
 	stageDurations := make([]string, 0, len(plan.Stages))
+	stageRampSeconds := make([]string, 0, len(plan.Stages))
 	stageUsageWindows := make([]string, 0, len(plan.Stages))
 	stageCommandRates := []string{}
 	stageMinCommands := []string{}
@@ -631,6 +651,10 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		if err != nil {
 			return fmt.Errorf("stage %s duration: %w", stage.Name, err)
 		}
+		rampSeconds, err := positiveDurationSeconds(stage.WarmUp)
+		if err != nil {
+			return fmt.Errorf("stage %s warm-up: %w", stage.Name, err)
+		}
 		maxConnected := shardConnectedDevices(stage.ConnectedDevices, plan.Conditions.Devices, assignment)
 		if maxConnected > maxTarget {
 			maxTarget = maxConnected
@@ -638,6 +662,7 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		stageNames = append(stageNames, stage.Name)
 		stageTargets = append(stageTargets, strconv.Itoa(maxConnected))
 		stageDurations = append(stageDurations, strconv.Itoa(durationSeconds))
+		stageRampSeconds = append(stageRampSeconds, strconv.Itoa(rampSeconds))
 		stageUsageWindows = append(stageUsageWindows, firstNonEmpty(stage.UsageWindow, "steady"))
 		stageCommandRates = append(stageCommandRates, commandRatePerDeviceDay(maxConnected, durationSeconds, plan.Conditions.DevicesPerUser))
 		stageMinCommands = append(stageMinCommands, strconv.Itoa(ceilDiv(maxConnected, plan.Conditions.DevicesPerUser)))
@@ -667,6 +692,7 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		"--stage-names", strings.Join(stageNames, ","),
 		"--stage-connected-devices", strings.Join(stageTargets, ","),
 		"--stage-durations-seconds", strings.Join(stageDurations, ","),
+		"--stage-ramp-seconds", strings.Join(stageRampSeconds, ","),
 		"--stage-min-commands", strings.Join(stageMinCommands, ","),
 		"--device-traffic-profile", firstNonEmpty(plan.ScenarioProfile, DefaultScenarioProfile),
 		"--stage-usage-windows", strings.Join(stageUsageWindows, ","),
@@ -688,7 +714,7 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 	errorText := ""
 	if err != nil || runErr != nil {
 		status = "failed"
-		partial = err != nil
+		partial = true
 		if err != nil && runErr != nil {
 			errorText = fmt.Sprintf("live staged mqtt-test failed: %v; staged live result: %v", runErr, err)
 		} else if err != nil {
@@ -791,19 +817,27 @@ func liveShardErrorText(runErr error, resultErr error) string {
 func stageWindowSeconds(stage Stage) (int, error) {
 	total := 0
 	for _, raw := range []string{stage.WarmUp, stage.SteadyState, stage.CoolDown} {
-		duration, err := time.ParseDuration(raw)
+		seconds, err := positiveDurationSeconds(raw)
 		if err != nil {
 			return 0, err
 		}
-		if duration <= 0 {
-			return 0, fmt.Errorf("duration must be positive, got %s", raw)
-		}
-		total += int(duration.Seconds())
+		total += seconds
 	}
 	if total <= 0 {
 		return 0, fmt.Errorf("stage window must be positive")
 	}
 	return total, nil
+}
+
+func positiveDurationSeconds(raw string) (int, error) {
+	duration, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, err
+	}
+	if duration <= 0 {
+		return 0, fmt.Errorf("duration must be positive, got %s", raw)
+	}
+	return int(duration.Seconds()), nil
 }
 
 func shardConnectedDevices(stageConnected int, totalDevices int, assignment VMAssignment) int {
@@ -864,58 +898,70 @@ type rawLiveMQTTResult struct {
 		CommandsAttempted int `json:"commands_attempted"`
 		CommandsPassed    int `json:"commands_passed"`
 	} `json:"metrics"`
-	ConnectedDevices           int                         `json:"connected_devices"`
-	ActiveConnections          int                         `json:"active_connections"`
-	CommandsAttempted          int                         `json:"commands_attempted"`
-	CommandsPassed             int                         `json:"commands_passed"`
-	ConnectAttempts            int64                       `json:"connect_attempts"`
-	ConnectSuccesses           int64                       `json:"connect_successes"`
-	ConnectFailures            int64                       `json:"connect_failures"`
-	DeviceTokenAttempts        int64                       `json:"device_token_attempts"`
-	DeviceTokenSuccesses       int64                       `json:"device_token_successes"`
-	DeviceTokenFailures        int64                       `json:"device_token_failures"`
-	DeviceMQTTDialAttempts     int64                       `json:"device_mqtt_dial_attempts"`
-	DeviceMQTTDialSuccesses    int64                       `json:"device_mqtt_dial_successes"`
-	DeviceMQTTDialFailures     int64                       `json:"device_mqtt_dial_failures"`
-	DeviceMQTTConnackAttempts  int64                       `json:"device_mqtt_connack_attempts"`
-	DeviceMQTTConnackSuccesses int64                       `json:"device_mqtt_connack_successes"`
-	DeviceMQTTConnackFailures  int64                       `json:"device_mqtt_connack_failures"`
-	DeviceSubscribeAttempts    int64                       `json:"device_subscribe_attempts"`
-	DeviceSubscribeFailures    int64                       `json:"device_subscribe_failures"`
-	SubscribeSuccesses         int64                       `json:"subscribe_successes"`
-	ActiveSubscriptions        int64                       `json:"active_subscriptions"`
-	PublishSuccesses           int64                       `json:"publish_successes"`
-	PublishFailures            int64                       `json:"publish_failures"`
-	MessagesReceived           int64                       `json:"messages_received"`
-	ReportedEvents             int64                       `json:"reported_events"`
-	TotalBytesSent             int64                       `json:"total_bytes_sent"`
-	TotalBytesReceived         int64                       `json:"total_bytes_received"`
-	AuthViolations             int64                       `json:"auth_violations"`
-	HTTPRequests               int64                       `json:"http_requests"`
-	HTTPSuccesses              int64                       `json:"http_successes"`
-	HTTPFailures               int64                       `json:"http_failures"`
-	AppTokenAttempts           int64                       `json:"app_token_attempts"`
-	AppTokenSuccesses          int64                       `json:"app_token_successes"`
-	AppTokenFailures           int64                       `json:"app_token_failures"`
-	AppMQTTDialAttempts        int64                       `json:"app_mqtt_dial_attempts"`
-	AppMQTTDialSuccesses       int64                       `json:"app_mqtt_dial_successes"`
-	AppMQTTDialFailures        int64                       `json:"app_mqtt_dial_failures"`
-	AppMQTTConnackAttempts     int64                       `json:"app_mqtt_connack_attempts"`
-	AppMQTTConnackSuccesses    int64                       `json:"app_mqtt_connack_successes"`
-	AppMQTTConnackFailures     int64                       `json:"app_mqtt_connack_failures"`
-	TotalHTTPBytesSent         int64                       `json:"total_http_bytes_sent"`
-	TotalHTTPBytesReceived     int64                       `json:"total_http_bytes_received"`
-	RejectedUpdates            int64                       `json:"rejected_updates"`
-	DeviceMQTTTotals           DeviceMQTTTotals            `json:"device_mqtt_totals"`
-	AppUserTotals              AppUserTotals               `json:"app_user_totals"`
-	FailureReasons             map[string]int64            `json:"failure_reasons"`
-	FailureDetails             map[string]map[string]int64 `json:"failure_details"`
-	FailureEvents              []FailureEvent              `json:"failure_events"`
-	CommandEvents              []CommandEvent              `json:"command_events"`
-	DeviceTypeTotals           map[string]DeviceTypeTotals `json:"device_type_totals"`
-	UserActionTotals           map[string]int64            `json:"user_action_totals"`
-	UsageWindowTotals          map[string]int64            `json:"usage_window_totals"`
-	StageDiagnostics           map[string]any              `json:"stage_diagnostics"`
+	ConnectedDevices                 int                         `json:"connected_devices"`
+	ActiveConnections                int                         `json:"active_connections"`
+	CommandsAttempted                int                         `json:"commands_attempted"`
+	CommandsPassed                   int                         `json:"commands_passed"`
+	ConnectAttempts                  int64                       `json:"connect_attempts"`
+	ConnectSuccesses                 int64                       `json:"connect_successes"`
+	ConnectFailures                  int64                       `json:"connect_failures"`
+	DeviceTokenAttempts              int64                       `json:"device_token_attempts"`
+	DeviceTokenSuccesses             int64                       `json:"device_token_successes"`
+	DeviceTokenFailures              int64                       `json:"device_token_failures"`
+	DeviceTokenFirstAttemptSuccesses int64                       `json:"device_token_first_attempt_successes"`
+	DeviceTokenFirstAttemptFailures  int64                       `json:"device_token_first_attempt_failures"`
+	DeviceTokenRetryAttempts         int64                       `json:"device_token_retry_attempts"`
+	DeviceTokenRetrySuccesses        int64                       `json:"device_token_retry_successes"`
+	DeviceTokenRetryExhausted        int64                       `json:"device_token_retry_exhausted"`
+	DeviceMQTTDialAttempts           int64                       `json:"device_mqtt_dial_attempts"`
+	DeviceMQTTDialSuccesses          int64                       `json:"device_mqtt_dial_successes"`
+	DeviceMQTTDialFailures           int64                       `json:"device_mqtt_dial_failures"`
+	DeviceMQTTConnackAttempts        int64                       `json:"device_mqtt_connack_attempts"`
+	DeviceMQTTConnackSuccesses       int64                       `json:"device_mqtt_connack_successes"`
+	DeviceMQTTConnackFailures        int64                       `json:"device_mqtt_connack_failures"`
+	DeviceSubscribeAttempts          int64                       `json:"device_subscribe_attempts"`
+	DeviceSubscribeFailures          int64                       `json:"device_subscribe_failures"`
+	SubscribeSuccesses               int64                       `json:"subscribe_successes"`
+	ActiveSubscriptions              int64                       `json:"active_subscriptions"`
+	PublishSuccesses                 int64                       `json:"publish_successes"`
+	PublishFailures                  int64                       `json:"publish_failures"`
+	MessagesReceived                 int64                       `json:"messages_received"`
+	ReportedEvents                   int64                       `json:"reported_events"`
+	TotalBytesSent                   int64                       `json:"total_bytes_sent"`
+	TotalBytesReceived               int64                       `json:"total_bytes_received"`
+	AuthViolations                   int64                       `json:"auth_violations"`
+	HTTPRequests                     int64                       `json:"http_requests"`
+	HTTPSuccesses                    int64                       `json:"http_successes"`
+	HTTPFailures                     int64                       `json:"http_failures"`
+	AppTokenAttempts                 int64                       `json:"app_token_attempts"`
+	AppTokenSuccesses                int64                       `json:"app_token_successes"`
+	AppTokenFailures                 int64                       `json:"app_token_failures"`
+	AppTokenFirstAttemptSuccesses    int64                       `json:"app_token_first_attempt_successes"`
+	AppTokenFirstAttemptFailures     int64                       `json:"app_token_first_attempt_failures"`
+	AppTokenRetryAttempts            int64                       `json:"app_token_retry_attempts"`
+	AppTokenRetrySuccesses           int64                       `json:"app_token_retry_successes"`
+	AppTokenRetryExhausted           int64                       `json:"app_token_retry_exhausted"`
+	AppMQTTDialAttempts              int64                       `json:"app_mqtt_dial_attempts"`
+	AppMQTTDialSuccesses             int64                       `json:"app_mqtt_dial_successes"`
+	AppMQTTDialFailures              int64                       `json:"app_mqtt_dial_failures"`
+	AppMQTTConnackAttempts           int64                       `json:"app_mqtt_connack_attempts"`
+	AppMQTTConnackSuccesses          int64                       `json:"app_mqtt_connack_successes"`
+	AppMQTTConnackFailures           int64                       `json:"app_mqtt_connack_failures"`
+	TotalHTTPBytesSent               int64                       `json:"total_http_bytes_sent"`
+	TotalHTTPBytesReceived           int64                       `json:"total_http_bytes_received"`
+	RejectedUpdates                  int64                       `json:"rejected_updates"`
+	DeviceMQTTTotals                 DeviceMQTTTotals            `json:"device_mqtt_totals"`
+	AppUserTotals                    AppUserTotals               `json:"app_user_totals"`
+	FailureReasons                   map[string]int64            `json:"failure_reasons"`
+	FailureDetails                   map[string]map[string]int64 `json:"failure_details"`
+	FailureEvents                    []FailureEvent              `json:"failure_events"`
+	CommandEvents                    []CommandEvent              `json:"command_events"`
+	DeviceTypeTotals                 map[string]DeviceTypeTotals `json:"device_type_totals"`
+	UserActionTotals                 map[string]int64            `json:"user_action_totals"`
+	UsageWindowTotals                map[string]int64            `json:"usage_window_totals"`
+	StageDiagnostics                 map[string]any              `json:"stage_diagnostics"`
+	PhaseMetrics                     map[string]PhaseMetric      `json:"phase_metrics"`
+	BottleneckEvents                 []BottleneckEvent           `json:"bottleneck_events"`
 }
 
 func loadLiveMQTTShardResults(path string, stages []Stage, stageTargets []string) ([]StageResult, error) {
@@ -1003,50 +1049,60 @@ func convertLiveMQTTStageResult(raw rawLiveMQTTResult, stage Stage, maxConnected
 		ConnectedDevices:      stage.ConnectedDevices,
 		ShardConnectedDevices: maxConnected,
 		DeviceMQTTTotals: DeviceMQTTTotals{
-			ConnectAttempts:     connectAttempts,
-			ConnectSuccess:      connectSuccess,
-			ConnectFail:         connectFail,
-			TokenAttempts:       nonZeroInt64(raw.DeviceMQTTTotals.TokenAttempts, raw.DeviceTokenAttempts),
-			TokenSuccess:        nonZeroInt64(raw.DeviceMQTTTotals.TokenSuccess, raw.DeviceTokenSuccesses),
-			TokenFail:           nonZeroInt64(raw.DeviceMQTTTotals.TokenFail, raw.DeviceTokenFailures),
-			MQTTDialAttempts:    nonZeroInt64(raw.DeviceMQTTTotals.MQTTDialAttempts, raw.DeviceMQTTDialAttempts),
-			MQTTDialSuccess:     nonZeroInt64(raw.DeviceMQTTTotals.MQTTDialSuccess, raw.DeviceMQTTDialSuccesses),
-			MQTTDialFail:        nonZeroInt64(raw.DeviceMQTTTotals.MQTTDialFail, raw.DeviceMQTTDialFailures),
-			MQTTConnackAttempts: nonZeroInt64(raw.DeviceMQTTTotals.MQTTConnackAttempts, raw.DeviceMQTTConnackAttempts),
-			MQTTConnackSuccess:  nonZeroInt64(raw.DeviceMQTTTotals.MQTTConnackSuccess, raw.DeviceMQTTConnackSuccesses),
-			MQTTConnackFail:     nonZeroInt64(raw.DeviceMQTTTotals.MQTTConnackFail, raw.DeviceMQTTConnackFailures),
-			SubscribeAttempts:   nonZeroInt64(raw.DeviceMQTTTotals.SubscribeAttempts, raw.DeviceSubscribeAttempts),
-			SubscribeFail:       nonZeroInt64(raw.DeviceMQTTTotals.SubscribeFail, raw.DeviceSubscribeFailures),
-			Subscribes:          subscribes,
-			ActiveConnections:   activeConnections,
-			ActiveSubscriptions: activeSubscriptions,
-			Publishes:           publishes,
-			ReceivedMessages:    receivedMessages,
-			DeltaReceived:       deltaReceived,
-			ReportedPublishes:   reportedPublishes,
-			RejectedPublishes:   rejectedPublishes,
-			BytesSent:           nonZeroInt64(raw.DeviceMQTTTotals.BytesSent, raw.TotalBytesSent),
-			BytesReceived:       nonZeroInt64(raw.DeviceMQTTTotals.BytesReceived, raw.TotalBytesReceived),
+			ConnectAttempts:          connectAttempts,
+			ConnectSuccess:           connectSuccess,
+			ConnectFail:              connectFail,
+			TokenAttempts:            nonZeroInt64(raw.DeviceMQTTTotals.TokenAttempts, raw.DeviceTokenAttempts),
+			TokenSuccess:             nonZeroInt64(raw.DeviceMQTTTotals.TokenSuccess, raw.DeviceTokenSuccesses),
+			TokenFail:                nonZeroInt64(raw.DeviceMQTTTotals.TokenFail, raw.DeviceTokenFailures),
+			TokenFirstAttemptSuccess: nonZeroInt64(raw.DeviceMQTTTotals.TokenFirstAttemptSuccess, raw.DeviceTokenFirstAttemptSuccesses),
+			TokenFirstAttemptFail:    nonZeroInt64(raw.DeviceMQTTTotals.TokenFirstAttemptFail, raw.DeviceTokenFirstAttemptFailures),
+			TokenRetryAttempts:       nonZeroInt64(raw.DeviceMQTTTotals.TokenRetryAttempts, raw.DeviceTokenRetryAttempts),
+			TokenRetrySuccess:        nonZeroInt64(raw.DeviceMQTTTotals.TokenRetrySuccess, raw.DeviceTokenRetrySuccesses),
+			TokenRetryExhausted:      nonZeroInt64(raw.DeviceMQTTTotals.TokenRetryExhausted, raw.DeviceTokenRetryExhausted),
+			MQTTDialAttempts:         nonZeroInt64(raw.DeviceMQTTTotals.MQTTDialAttempts, raw.DeviceMQTTDialAttempts),
+			MQTTDialSuccess:          nonZeroInt64(raw.DeviceMQTTTotals.MQTTDialSuccess, raw.DeviceMQTTDialSuccesses),
+			MQTTDialFail:             nonZeroInt64(raw.DeviceMQTTTotals.MQTTDialFail, raw.DeviceMQTTDialFailures),
+			MQTTConnackAttempts:      nonZeroInt64(raw.DeviceMQTTTotals.MQTTConnackAttempts, raw.DeviceMQTTConnackAttempts),
+			MQTTConnackSuccess:       nonZeroInt64(raw.DeviceMQTTTotals.MQTTConnackSuccess, raw.DeviceMQTTConnackSuccesses),
+			MQTTConnackFail:          nonZeroInt64(raw.DeviceMQTTTotals.MQTTConnackFail, raw.DeviceMQTTConnackFailures),
+			SubscribeAttempts:        nonZeroInt64(raw.DeviceMQTTTotals.SubscribeAttempts, raw.DeviceSubscribeAttempts),
+			SubscribeFail:            nonZeroInt64(raw.DeviceMQTTTotals.SubscribeFail, raw.DeviceSubscribeFailures),
+			Subscribes:               subscribes,
+			ActiveConnections:        activeConnections,
+			ActiveSubscriptions:      activeSubscriptions,
+			Publishes:                publishes,
+			ReceivedMessages:         receivedMessages,
+			DeltaReceived:            deltaReceived,
+			ReportedPublishes:        reportedPublishes,
+			RejectedPublishes:        rejectedPublishes,
+			BytesSent:                nonZeroInt64(raw.DeviceMQTTTotals.BytesSent, raw.TotalBytesSent),
+			BytesReceived:            nonZeroInt64(raw.DeviceMQTTTotals.BytesReceived, raw.TotalBytesReceived),
 		},
 		AppUserTotals: AppUserTotals{
-			LoginAttempts:       raw.AppUserTotals.LoginAttempts,
-			LoginSuccess:        raw.AppUserTotals.LoginSuccess,
-			LoginFail:           raw.AppUserTotals.LoginFail,
-			TokenAttempts:       nonZeroInt64(raw.AppUserTotals.TokenAttempts, raw.AppTokenAttempts),
-			TokenSuccess:        nonZeroInt64(raw.AppUserTotals.TokenSuccess, raw.AppTokenSuccesses),
-			TokenFail:           nonZeroInt64(raw.AppUserTotals.TokenFail, raw.AppTokenFailures),
-			MQTTDialAttempts:    nonZeroInt64(raw.AppUserTotals.MQTTDialAttempts, raw.AppMQTTDialAttempts),
-			MQTTDialSuccess:     nonZeroInt64(raw.AppUserTotals.MQTTDialSuccess, raw.AppMQTTDialSuccesses),
-			MQTTDialFail:        nonZeroInt64(raw.AppUserTotals.MQTTDialFail, raw.AppMQTTDialFailures),
-			MQTTConnackAttempts: nonZeroInt64(raw.AppUserTotals.MQTTConnackAttempts, raw.AppMQTTConnackAttempts),
-			MQTTConnackSuccess:  nonZeroInt64(raw.AppUserTotals.MQTTConnackSuccess, raw.AppMQTTConnackSuccesses),
-			MQTTConnackFail:     nonZeroInt64(raw.AppUserTotals.MQTTConnackFail, raw.AppMQTTConnackFailures),
-			ListDevicesRequests: raw.AppUserTotals.ListDevicesRequests,
-			ReadShadowRequests:  raw.AppUserTotals.ReadShadowRequests,
-			DesiredWrites:       httpRequests,
-			ReceivedAcks:        httpSuccesses,
-			BytesSent:           nonZeroInt64(raw.AppUserTotals.BytesSent, raw.TotalHTTPBytesSent),
-			BytesReceived:       nonZeroInt64(raw.AppUserTotals.BytesReceived, raw.TotalHTTPBytesReceived),
+			LoginAttempts:            raw.AppUserTotals.LoginAttempts,
+			LoginSuccess:             raw.AppUserTotals.LoginSuccess,
+			LoginFail:                raw.AppUserTotals.LoginFail,
+			TokenAttempts:            nonZeroInt64(raw.AppUserTotals.TokenAttempts, raw.AppTokenAttempts),
+			TokenSuccess:             nonZeroInt64(raw.AppUserTotals.TokenSuccess, raw.AppTokenSuccesses),
+			TokenFail:                nonZeroInt64(raw.AppUserTotals.TokenFail, raw.AppTokenFailures),
+			TokenFirstAttemptSuccess: nonZeroInt64(raw.AppUserTotals.TokenFirstAttemptSuccess, raw.AppTokenFirstAttemptSuccesses),
+			TokenFirstAttemptFail:    nonZeroInt64(raw.AppUserTotals.TokenFirstAttemptFail, raw.AppTokenFirstAttemptFailures),
+			TokenRetryAttempts:       nonZeroInt64(raw.AppUserTotals.TokenRetryAttempts, raw.AppTokenRetryAttempts),
+			TokenRetrySuccess:        nonZeroInt64(raw.AppUserTotals.TokenRetrySuccess, raw.AppTokenRetrySuccesses),
+			TokenRetryExhausted:      nonZeroInt64(raw.AppUserTotals.TokenRetryExhausted, raw.AppTokenRetryExhausted),
+			MQTTDialAttempts:         nonZeroInt64(raw.AppUserTotals.MQTTDialAttempts, raw.AppMQTTDialAttempts),
+			MQTTDialSuccess:          nonZeroInt64(raw.AppUserTotals.MQTTDialSuccess, raw.AppMQTTDialSuccesses),
+			MQTTDialFail:             nonZeroInt64(raw.AppUserTotals.MQTTDialFail, raw.AppMQTTDialFailures),
+			MQTTConnackAttempts:      nonZeroInt64(raw.AppUserTotals.MQTTConnackAttempts, raw.AppMQTTConnackAttempts),
+			MQTTConnackSuccess:       nonZeroInt64(raw.AppUserTotals.MQTTConnackSuccess, raw.AppMQTTConnackSuccesses),
+			MQTTConnackFail:          nonZeroInt64(raw.AppUserTotals.MQTTConnackFail, raw.AppMQTTConnackFailures),
+			ListDevicesRequests:      raw.AppUserTotals.ListDevicesRequests,
+			ReadShadowRequests:       raw.AppUserTotals.ReadShadowRequests,
+			DesiredWrites:            httpRequests,
+			ReceivedAcks:             httpSuccesses,
+			BytesSent:                nonZeroInt64(raw.AppUserTotals.BytesSent, raw.TotalHTTPBytesSent),
+			BytesReceived:            nonZeroInt64(raw.AppUserTotals.BytesReceived, raw.TotalHTTPBytesReceived),
 		},
 		MQTTConnectSuccessRatePercent:  connectSuccessPercent(DeviceMQTTTotals{ConnectAttempts: connectAttempts, ConnectSuccess: connectSuccess}),
 		DesiredReportedConvergenceRate: percent(commandsPassed, commandsAttempted),
@@ -1063,6 +1119,8 @@ func convertLiveMQTTStageResult(raw rawLiveMQTTResult, stage Stage, maxConnected
 		UserActionTotals:               raw.UserActionTotals,
 		UsageWindowTotals:              raw.UsageWindowTotals,
 		StageDiagnostics:               liveStageDiagnostics(raw.StageDiagnostics),
+		PhaseMetrics:                   raw.PhaseMetrics,
+		BottleneckEvents:               raw.BottleneckEvents,
 	}
 }
 
@@ -1608,7 +1666,11 @@ func collectLiveServerEvidence(envRoot string, runID string, outDir string) Serv
 		logsSinceArg = "--since-time=" + windowStart
 	}
 	for _, probe := range serverEvidenceProbes(runID, logsSinceArg) {
-		out, err := commandOutputRunner(probe.command, probe.args...)
+		timeout := probe.timeout
+		if timeout <= 0 {
+			timeout = defaultServerEvidenceProbeTimeout
+		}
+		out, err := commandOutputRunnerWithTimeout(timeout, probe.command, probe.args...)
 		if err != nil {
 			detail := strings.TrimSpace(err.Error() + " " + redactEvidenceOutput(out))
 			sources[probe.source] = mergeEvidenceSource(sources[probe.source], EvidenceSource{Available: false, Detail: detail})
@@ -1665,6 +1727,9 @@ func normalizeEvidenceSourceCatalogMetadata(sources map[string]EvidenceSource) {
 }
 
 func collectCentralLoggerEvidence(envRoot string, runID string) (EvidenceSource, string) {
+	if centralLoggerSkipped() {
+		return EvidenceSource{Available: false, Optional: true, Detail: "central logger probe skipped by HOME100K_SKIP_CENTRAL_LOGGER"}, "central_logger evidence probe skipped by HOME100K_SKIP_CENTRAL_LOGGER"
+	}
 	values := centralLoggerEnvValues(envRoot)
 	endpoint := strings.TrimRight(strings.TrimSpace(firstNonEmpty(values["CLOUD_LOGGER_ENDPOINT"], os.Getenv("CLOUD_LOGGER_ENDPOINT"))), "/")
 	token := strings.TrimSpace(firstNonEmpty(values["CLOUD_LOGGER_INGEST_TOKEN"], os.Getenv("CLOUD_LOGGER_INGEST_TOKEN")))
@@ -1695,6 +1760,11 @@ func collectCentralLoggerEvidence(envRoot string, runID string) (EvidenceSource,
 		Detail:    "central logger /v1/logs queried by run_id trace_id/request_id/operation_id and home-mqtt-loadtest operation_id",
 		Counters:  counters,
 	}, ""
+}
+
+func centralLoggerSkipped() bool {
+	raw := strings.TrimSpace(strings.ToLower(os.Getenv("HOME100K_SKIP_CENTRAL_LOGGER")))
+	return raw == "1" || raw == "true" || raw == "yes"
 }
 
 func centralLoggerEnvValues(envRoot string) map[string]string {
@@ -1785,6 +1855,9 @@ type centralLoggerRuntimeEvent struct {
 }
 
 func collectCentralLoggerRuntimeLogEvidence(envRoot string, runID string, windowStart string) (EvidenceSource, EvidenceSource, string) {
+	if centralLoggerSkipped() {
+		return EvidenceSource{}, EvidenceSource{}, "central_logger runtime evidence probe skipped by HOME100K_SKIP_CENTRAL_LOGGER"
+	}
 	values := centralLoggerEnvValues(envRoot)
 	endpoint := strings.TrimRight(strings.TrimSpace(firstNonEmpty(values["CLOUD_LOGGER_ENDPOINT"], os.Getenv("CLOUD_LOGGER_ENDPOINT"))), "/")
 	token := strings.TrimSpace(firstNonEmpty(values["CLOUD_LOGGER_INGEST_TOKEN"], os.Getenv("CLOUD_LOGGER_INGEST_TOKEN")))
@@ -1995,6 +2068,8 @@ func fileReadable(path string) bool {
 
 func parseEvidenceCounters(source string, runID string, out string) map[string]int64 {
 	counters := map[string]int64{}
+	var requestTokenDurations []int64
+	var ingressRequestTokenDurations []int64
 	if source == "emqx_listener_stats" && (strings.Contains(out, "tcp:default") || strings.Contains(out, "ssl:default")) {
 		counters["emqx.broker.identity"] = 1
 	}
@@ -2011,19 +2086,34 @@ func parseEvidenceCounters(source string, runID string, out string) map[string]i
 			}
 			continue
 		}
-		if source == "emqx" && strings.Contains(line, runID) && strings.Contains(line, "-device-") {
-			if strings.Contains(line, "New client connected") || strings.Contains(line, "client.connected") {
+		if source == "emqx" {
+			lower := strings.ToLower(line)
+			if strings.Contains(line, runID) && strings.Contains(line, "-device-") &&
+				(strings.Contains(line, "New client connected") || strings.Contains(line, "client.connected")) {
 				counters["device_mqtt.connect_success"]++
+			}
+			if strings.Contains(lower, "socket_error") {
+				counters["emqx.socket_error"]++
+			}
+			if strings.Contains(lower, "timeout") {
+				counters["emqx.timeout"]++
+			}
+			if strings.Contains(lower, "conn_congestion") {
+				counters["emqx.conn_congestion"]++
 			}
 		}
 		if source == "emqx_listener_stats" {
 			parseEMQXListenerCounterLine(counters, line)
 		}
 		if source == "video_cloud_api" {
-			parseVideoCloudAPILogCounterLine(counters, line)
+			if duration, ok := parseVideoCloudAPIRequestTokenCounterLine(counters, line); ok {
+				requestTokenDurations = append(requestTokenDurations, duration)
+			}
 		}
 		if source == "ingress_nginx" {
-			parseIngressRequestTokenCounterLine(counters, line)
+			if duration, ok := parseIngressRequestTokenCounterLine(counters, line); ok {
+				ingressRequestTokenDurations = append(ingressRequestTokenDurations, duration)
+			}
 		}
 		if source == "postgres" {
 			parsePostgresCounterLine(counters, line)
@@ -2032,6 +2122,8 @@ func parseEvidenceCounters(source string, runID string, out string) map[string]i
 			parseRedisInfoCounterLine(counters, line)
 		}
 	}
+	addDurationPercentiles(counters, "video_cloud_api.request_token", requestTokenDurations)
+	addDurationPercentiles(counters, "ingress_nginx.request_token", ingressRequestTokenDurations)
 	if len(counters) == 0 {
 		return nil
 	}
@@ -2100,9 +2192,50 @@ func applyServerEvidenceBaselineDeltas(evidence *ServerEvidence, runID string, o
 	applyEMQXMetricDelta(evidence, baseline)
 	applySourceCounterBaselineDelta(evidence, baseline, "ingress_nginx")
 	applySourceCounterBaselineDelta(evidence, baseline, "postgres")
-	applySourceCounterBaselineDelta(evidence, baseline, "redis_valkey")
+	applyRedisValkeyCounterBaselineDelta(evidence, baseline)
 	applySourceCounterBaselineDelta(evidence, baseline, "video_cloud_api")
 	recomputeVideoCloudAPITopLevelCounters(evidence)
+}
+
+func applyRedisValkeyCounterBaselineDelta(evidence *ServerEvidence, baseline ServerEvidence) {
+	if evidence == nil || evidence.Sources == nil {
+		return
+	}
+	source := evidence.Sources["redis_valkey"]
+	gauges := map[string]int64{}
+	for key, value := range source.Counters {
+		if redisValkeyGaugeCounter(key) {
+			gauges[key] = value
+		}
+	}
+	applySourceCounterBaselineDelta(evidence, baseline, "redis_valkey")
+	source = evidence.Sources["redis_valkey"]
+	if source.Counters == nil {
+		source.Counters = map[string]int64{}
+	}
+	for key, value := range gauges {
+		source.Counters[key] = value
+	}
+	evidence.Sources["redis_valkey"] = source
+}
+
+func redisValkeyGaugeCounter(key string) bool {
+	switch {
+	case key == "redis_valkey.shadow.docs",
+		key == "redis_valkey.shadow.named_indexes",
+		key == "redis_valkey.shadow.keys",
+		key == "redis_valkey.connected_clients",
+		key == "redis_valkey.used_memory",
+		key == "redis_valkey.used_memory_peak":
+		return true
+	case strings.HasPrefix(key, "redis_valkey.keyspace.") &&
+		(strings.HasSuffix(key, ".keys") ||
+			strings.HasSuffix(key, ".expires") ||
+			strings.HasSuffix(key, ".avg_ttl")):
+		return true
+	default:
+		return false
+	}
 }
 
 func applyEMQXMetricDelta(evidence *ServerEvidence, baseline ServerEvidence) {
@@ -2217,6 +2350,20 @@ func parseEMQXListenerCounterLine(counters map[string]int64, line string) {
 }
 
 func parseVideoCloudAPILogCounterLine(counters map[string]int64, line string) {
+	_, _ = parseVideoCloudAPIRequestTokenCounterLine(counters, line)
+}
+
+func parseVideoCloudAPIRequestTokenCounterLine(counters map[string]int64, line string) (int64, bool) {
+	lowerLine := strings.ToLower(line)
+	if strings.Contains(lowerLine, "socket_error") {
+		counters["video_cloud_api.socket_error"]++
+	}
+	if strings.Contains(lowerLine, "timeout") {
+		counters["video_cloud_api.timeout"]++
+	}
+	if strings.Contains(lowerLine, "conn_congestion") {
+		counters["video_cloud_api.conn_congestion"]++
+	}
 	jsonStart := strings.Index(line, "{")
 	if jsonStart > 0 {
 		line = line[jsonStart:]
@@ -2227,13 +2374,14 @@ func parseVideoCloudAPILogCounterLine(counters map[string]int64, line string) {
 		DurationMS float64 `json:"duration_ms"`
 	}
 	if err := json.Unmarshal([]byte(line), &entry); err != nil {
-		return
+		return 0, false
 	}
 	if entry.Path != "/request_token" {
-		return
+		return 0, false
 	}
 	counters["video_cloud_api.request_token.total"]++
 	counters[fmt.Sprintf("video_cloud_api.request_token.status_%d", entry.Status)]++
+	addStatusClassCounter(counters, "video_cloud_api.request_token.status", entry.Status)
 	duration := int64(entry.DurationMS)
 	if duration > counters["video_cloud_api.request_token.max_ms"] {
 		counters["video_cloud_api.request_token.max_ms"] = duration
@@ -2247,28 +2395,30 @@ func parseVideoCloudAPILogCounterLine(counters map[string]int64, line string) {
 	if entry.DurationMS > 10000 {
 		counters["video_cloud_api.request_token.gt10s"]++
 	}
+	return duration, true
 }
 
 var ingressAccessLogPattern = regexp.MustCompile(`\[[0-9]{2}/[A-Za-z]+/[0-9]{4}:[0-9]{2}:[0-9]{2}:[0-9]{2} \+0000\] "([A-Z]+) ([^ ]+) [^"]+" ([0-9]{3}) [0-9]+ "[^"]*" "[^"]*" [0-9]+ ([0-9.]+) \[[^\]]*\] \[\] [^ ]+ [^ ]+ ([0-9.]+|-|,) ([0-9]{3}|-)`)
 
-func parseIngressRequestTokenCounterLine(counters map[string]int64, line string) {
+func parseIngressRequestTokenCounterLine(counters map[string]int64, line string) (int64, bool) {
 	matches := ingressAccessLogPattern.FindStringSubmatch(line)
 	if len(matches) != 7 {
-		return
+		return 0, false
 	}
 	if matches[1] != http.MethodPost || matches[2] != "/request_token" {
-		return
+		return 0, false
 	}
 	status, err := strconv.Atoi(matches[3])
 	if err != nil {
-		return
+		return 0, false
 	}
 	requestTime, err := strconv.ParseFloat(matches[4], 64)
 	if err != nil {
-		return
+		return 0, false
 	}
 	counters["ingress_nginx.request_token.total"]++
 	counters[fmt.Sprintf("ingress_nginx.request_token.status_%d", status)]++
+	addStatusClassCounter(counters, "ingress_nginx.request_token.status", status)
 	ms := int64(requestTime * 1000)
 	if ms > counters["ingress_nginx.request_token.max_ms"] {
 		counters["ingress_nginx.request_token.max_ms"] = ms
@@ -2284,7 +2434,44 @@ func parseIngressRequestTokenCounterLine(counters map[string]int64, line string)
 	}
 	if upstreamStatus, err := strconv.Atoi(matches[6]); err == nil {
 		counters[fmt.Sprintf("ingress_nginx.request_token.upstream_%d", upstreamStatus)]++
+		addStatusClassCounter(counters, "ingress_nginx.request_token.upstream", upstreamStatus)
 	}
+	return ms, true
+}
+
+func addStatusClassCounter(counters map[string]int64, prefix string, status int) {
+	switch {
+	case status >= 200 && status < 300:
+		counters[prefix+"_2xx"]++
+	case status >= 400 && status < 500:
+		counters[prefix+"_4xx"]++
+	case status >= 500 && status < 600:
+		counters[prefix+"_5xx"]++
+	}
+}
+
+func addDurationPercentiles(counters map[string]int64, prefix string, durations []int64) {
+	if len(durations) == 0 {
+		return
+	}
+	sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
+	counters[prefix+".duration_p50_ms"] = nearestRankPercentile(durations, 50)
+	counters[prefix+".duration_p95_ms"] = nearestRankPercentile(durations, 95)
+	counters[prefix+".duration_p99_ms"] = nearestRankPercentile(durations, 99)
+}
+
+func nearestRankPercentile(values []int64, pct int) int64 {
+	if len(values) == 0 {
+		return 0
+	}
+	rank := (pct*len(values) + 99) / 100
+	if rank < 1 {
+		rank = 1
+	}
+	if rank > len(values) {
+		rank = len(values)
+	}
+	return values[rank-1]
 }
 
 func redactEvidenceOutput(out string) string {
@@ -2422,7 +2609,13 @@ type serverEvidenceProbe struct {
 	command string
 	args    []string
 	detail  string
+	timeout time.Duration
 }
+
+const (
+	defaultServerEvidenceProbeTimeout = 60 * time.Second
+	serverEvidenceLogTailLines        = "120000"
+)
 
 func serverEvidenceProbes(runID string, logsSinceArg string) []serverEvidenceProbe {
 	if strings.TrimSpace(logsSinceArg) == "" {
@@ -2442,12 +2635,14 @@ func serverEvidenceProbes(runID string, logsSinceArg string) []serverEvidencePro
 			detail:  "pod resource usage captured",
 		},
 		kubectlLogsProbe("emqx", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=mqtt", logsSinceArg, "MQTT broker logs and client churn evidence captured for run_id "+runID),
+		emqxWarningCounterProbe(runID, logsSinceArg),
 		emqxBrokerMetricsProbe(runID),
 		emqxListenerStatsProbe(runID),
 		mqttNodeBalancerProbe(runID),
 		videoCloudAPIRequestTokenCounterProbe(runID, logsSinceArg),
+		videoCloudAPIWarningCounterProbe(runID, logsSinceArg),
 		kubectlLogsProbe("video_cloud_api", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=video-cloud-api", logsSinceArg, "Video Cloud API logs captured for run_id "+runID),
-		postgresCounterProbe("postgres", runID, shadowStoreCounterSQL(runID), "PostgreSQL device shadow convergence counters parsed for run_id "+runID),
+		postgresActivityProbe(runID),
 		kubectlLogsProbe("postgres", "video-cloud-staging-platform", "app.kubernetes.io/name=postgresql", logsSinceArg, "PostgreSQL logs captured"),
 		redisInfoProbe(runID),
 		kubectlLogsProbe("redis_valkey", "video-cloud-staging-platform", "app.kubernetes.io/name=redis", logsSinceArg, "Redis/Valkey logs captured when enabled"),
@@ -2463,14 +2658,15 @@ func postgresCounterProbe(source string, runID string, sql string, detail string
 	return serverEvidenceProbe{source: source, command: "bash", args: []string{"-lc", script}, detail: detail}
 }
 
-func shadowStoreCounterSQL(runID string) string {
-	return `
-SELECT 'device_shadow.rows_current_converged', COUNT(*)
-FROM device_shadows
-WHERE shadow_name = ''
-  AND desired = reported
-  AND deleted_at IS NULL
+func postgresActivityProbe(runID string) serverEvidenceProbe {
+	sql := `
+select 'postgres.activity.active', count(*) filter (where state = 'active') from pg_stat_activity
+union all select 'postgres.activity.idle', count(*) filter (where state = 'idle') from pg_stat_activity
+union all select 'postgres.activity.idle_in_transaction', count(*) filter (where state = 'idle in transaction') from pg_stat_activity
+union all select 'postgres.activity.total', count(*) from pg_stat_activity
+union all select 'postgres.locks.waiting', count(*) from pg_locks where not granted
 `
+	return postgresCounterProbe("postgres_activity", runID, sql, "PostgreSQL activity and waiting-lock counters captured for run_id "+runID)
 }
 
 func redisInfoProbe(runID string) serverEvidenceProbe {
@@ -2480,6 +2676,9 @@ test -n "$pods"
 for pod in $pods; do
   echo "pod:$pod"
   kubectl -n video-cloud-staging-platform exec "$pod" -- redis-cli INFO stats clients memory keyspace commandstats
+  echo "redis_valkey.shadow.docs $(kubectl -n video-cloud-staging-platform exec "$pod" -- sh -c "redis-cli --scan --pattern 'video_cloud:shadow:doc:*' | wc -l" | tr -d '[:space:]')"
+  echo "redis_valkey.shadow.named_indexes $(kubectl -n video-cloud-staging-platform exec "$pod" -- sh -c "redis-cli --scan --pattern 'video_cloud:shadow:names:*' | wc -l" | tr -d '[:space:]')"
+  echo "redis_valkey.shadow.keys $(kubectl -n video-cloud-staging-platform exec "$pod" -- sh -c "redis-cli --scan --pattern 'video_cloud:shadow:*' | wc -l" | tr -d '[:space:]')"
 done`
 	return serverEvidenceProbe{
 		source:  "redis_valkey",
@@ -2516,12 +2715,13 @@ func sqlLiteral(value string) string {
 
 func kubectlLogsProbe(source string, namespace string, selector string, logsSinceArg string, detail string) serverEvidenceProbe {
 	script := fmt.Sprintf(
-		`set -euo pipefail; pods="$(kubectl -n %s get pods --selector %s -o name)"; test -n "$pods"; kubectl -n %s logs %s --selector %s --tail=-1`,
+		`set -euo pipefail; pods="$(kubectl -n %s get pods --selector %s -o name)"; test -n "$pods"; timeout 20s kubectl -n %s logs %s --selector %s --tail=%s || true`,
 		shellQuote(namespace),
 		shellQuote(selector),
 		shellQuote(namespace),
 		shellQuote(logsSinceArg),
 		shellQuote(selector),
+		serverEvidenceLogTailLines,
 	)
 	return serverEvidenceProbe{
 		source:  source,
@@ -2587,6 +2787,28 @@ done`
 	}
 }
 
+func emqxWarningCounterProbe(runID string, logsSinceArg string) serverEvidenceProbe {
+	script := `set -euo pipefail
+pods="$(kubectl -n video-cloud-staging-video-cloud get pods --selector app.kubernetes.io/name=mqtt -o name)"
+test -n "$pods"
+{ timeout 20s kubectl -n video-cloud-staging-video-cloud logs ` + shellQuote(logsSinceArg) + ` --selector app.kubernetes.io/name=mqtt --tail=` + serverEvidenceLogTailLines + ` || true; } \
+  | awk 'BEGIN{socket=0; timeout=0; congestion=0}
+    /socket_error/ {socket++}
+    /timeout/ {timeout++}
+    /conn_congestion/ {congestion++}
+    END{
+      print "emqx.socket_error", socket
+      print "emqx.timeout", timeout
+      print "emqx.conn_congestion", congestion
+    }'`
+	return serverEvidenceProbe{
+		source:  "emqx",
+		command: "bash",
+		args:    []string{"-lc", script},
+		detail:  "EMQX socket, timeout, and conn_congestion warning counters captured for run_id " + runID,
+	}
+}
+
 func mqttNodeBalancerProbe(runID string) serverEvidenceProbe {
 	script := `set -euo pipefail
 test -n "${LINODE_TOKEN:-}"
@@ -2624,23 +2846,43 @@ pods="$(kubectl -n video-cloud-staging-video-cloud get pods --selector app.kuber
 test -n "$pods"
 for pod in $pods; do
   safe_pod="$(printf '%s' "$pod" | tr -c 'A-Za-z0-9_' '_')"
-  kubectl -n video-cloud-staging-video-cloud logs ` + shellQuote(logsSinceArg) + ` "$pod" --tail=-1 \
+  { timeout 20s kubectl -n video-cloud-staging-video-cloud logs ` + shellQuote(logsSinceArg) + ` "$pod" --tail=` + serverEvidenceLogTailLines + ` || true; } \
     | jq -sr --arg pod "$safe_pod" '
         [.[] | select(.path == "/request_token")] as $rt
-        | [
+        | (def durations: ($rt | map((.duration_ms // 0) | floor) | sort);
+          def pct($p):
+            (durations) as $d
+            | if ($d | length) == 0 then 0
+              else ($d[((($p * ($d | length) + 99) / 100 | floor) - 1)])
+              end;
+          [
             "video_cloud_api.request_token.total \($rt | length)",
             "video_cloud_api.request_token.status_200 \(($rt | map(select(.status == 200)) | length))",
             "video_cloud_api.request_token.status_500 \(($rt | map(select(.status == 500)) | length))",
+            "video_cloud_api.request_token.status_2xx \(($rt | map(select((.status // 0) >= 200 and (.status // 0) < 300)) | length))",
+            "video_cloud_api.request_token.status_4xx \(($rt | map(select((.status // 0) >= 400 and (.status // 0) < 500)) | length))",
+            "video_cloud_api.request_token.status_5xx \(($rt | map(select((.status // 0) >= 500 and (.status // 0) < 600)) | length))",
+            "video_cloud_api.request_token.duration_p50_ms \(pct(50))",
+            "video_cloud_api.request_token.duration_p95_ms \(pct(95))",
+            "video_cloud_api.request_token.duration_p99_ms \(pct(99))",
+            "video_cloud_api.request_token.max_ms \((durations | last) // 0)",
             "video_cloud_api.request_token.gt1s \(($rt | map(select(.duration_ms > 1000)) | length))",
             "video_cloud_api.request_token.gt5s \(($rt | map(select(.duration_ms > 5000)) | length))",
             "video_cloud_api.request_token.gt10s \(($rt | map(select(.duration_ms > 10000)) | length))",
             "video_cloud_api.request_token.pod_\($pod).total \($rt | length)",
             "video_cloud_api.request_token.pod_\($pod).status_200 \(($rt | map(select(.status == 200)) | length))",
             "video_cloud_api.request_token.pod_\($pod).status_500 \(($rt | map(select(.status == 500)) | length))",
+            "video_cloud_api.request_token.pod_\($pod).status_2xx \(($rt | map(select((.status // 0) >= 200 and (.status // 0) < 300)) | length))",
+            "video_cloud_api.request_token.pod_\($pod).status_4xx \(($rt | map(select((.status // 0) >= 400 and (.status // 0) < 500)) | length))",
+            "video_cloud_api.request_token.pod_\($pod).status_5xx \(($rt | map(select((.status // 0) >= 500 and (.status // 0) < 600)) | length))",
+            "video_cloud_api.request_token.pod_\($pod).duration_p50_ms \(pct(50))",
+            "video_cloud_api.request_token.pod_\($pod).duration_p95_ms \(pct(95))",
+            "video_cloud_api.request_token.pod_\($pod).duration_p99_ms \(pct(99))",
+            "video_cloud_api.request_token.pod_\($pod).max_ms \((durations | last) // 0)",
             "video_cloud_api.request_token.pod_\($pod).gt1s \(($rt | map(select(.duration_ms > 1000)) | length))",
             "video_cloud_api.request_token.pod_\($pod).gt5s \(($rt | map(select(.duration_ms > 5000)) | length))",
             "video_cloud_api.request_token.pod_\($pod).gt10s \(($rt | map(select(.duration_ms > 10000)) | length))"
-          ]
+          ])
         | .[]'
 done
 `
@@ -2649,6 +2891,28 @@ done
 		command: "bash",
 		args:    []string{"-lc", script},
 		detail:  "Video Cloud API /request_token counters parsed from logs for run_id " + runID,
+	}
+}
+
+func videoCloudAPIWarningCounterProbe(runID string, logsSinceArg string) serverEvidenceProbe {
+	script := `set -euo pipefail
+pods="$(kubectl -n video-cloud-staging-video-cloud get pods --selector app.kubernetes.io/name=video-cloud-api -o name)"
+test -n "$pods"
+{ timeout 20s kubectl -n video-cloud-staging-video-cloud logs ` + shellQuote(logsSinceArg) + ` --selector app.kubernetes.io/name=video-cloud-api --tail=` + serverEvidenceLogTailLines + ` || true; } \
+  | awk 'BEGIN{socket=0; timeout=0; congestion=0}
+    /socket_error/ {socket++}
+    /timeout/ {timeout++}
+    /conn_congestion/ {congestion++}
+    END{
+      print "video_cloud_api.socket_error", socket
+      print "video_cloud_api.timeout", timeout
+      print "video_cloud_api.conn_congestion", congestion
+    }'`
+	return serverEvidenceProbe{
+		source:  "video_cloud_api",
+		command: "bash",
+		args:    []string{"-lc", script},
+		detail:  "Video Cloud API warning counters captured for run_id " + runID,
 	}
 }
 

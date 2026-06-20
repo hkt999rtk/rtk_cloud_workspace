@@ -2,6 +2,7 @@ package home100k
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -104,7 +105,7 @@ func TestDefaultPlanIncludesDiverseDeviceAndUserProfiles(t *testing.T) {
 			t.Fatalf("missing user profile %s in %#v", name, plan.UserProfiles)
 		}
 	}
-	wantWindows := []string{"morning", "away", "return_home", "evening_peak"}
+	wantWindows := []string{"ramp_to_target"}
 	if len(plan.StageUsageWindows) != len(wantWindows) {
 		t.Fatalf("usage windows = %#v, want %#v", plan.StageUsageWindows, wantWindows)
 	}
@@ -166,7 +167,7 @@ func TestDefaultPlanCreatesDeterministicShardsAndStages(t *testing.T) {
 		}
 	}
 
-	wantStages := []int{25000, 50000, 75000, 100000}
+	wantStages := []int{100000}
 	if len(plan.Stages) != len(wantStages) {
 		t.Fatalf("stages = %d, want %d", len(plan.Stages), len(wantStages))
 	}
@@ -237,10 +238,7 @@ func TestPlanUsesConfiguredDeviceCount(t *testing.T) {
 		name    string
 		devices int
 	}{
-		{"25pct", 2250},
-		{"50pct", 4500},
-		{"75pct", 6750},
-		{"100pct", 9000},
+		{"9k", 9000},
 	}
 	for idx, want := range wantStages {
 		if plan.Stages[idx].Name != want.name || plan.Stages[idx].ConnectedDevices != want.devices {
@@ -320,5 +318,22 @@ func TestPlanRequiresReviewCriticalInputs(t *testing.T) {
 	}
 	if _, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK"}); err == nil {
 		t.Fatal("NewPlan() without region succeeded, want error")
+	}
+}
+
+func TestPlanRequiresRampShorterThanFullLoadWindow(t *testing.T) {
+	_, err := NewPlan(PlanOptions{
+		EnvRoot:       "cloud_env/staging/lke",
+		Brandname:     "RTK",
+		Region:        "us-sea",
+		StageWarmUp:   "10m",
+		StageSteady:   "5m",
+		StageCoolDown: "1m",
+	})
+	if err == nil {
+		t.Fatal("NewPlan() with ramp >= full-load window succeeded, want error")
+	}
+	if !strings.Contains(err.Error(), "must be less than full-load test window") {
+		t.Fatalf("NewPlan() error = %v, want ramp/full-load validation", err)
 	}
 }

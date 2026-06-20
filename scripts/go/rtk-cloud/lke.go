@@ -2142,8 +2142,11 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 }
 
 func lkeApplyRedisRuntime(env map[string]string) error {
+	if err := runKubectl("-n", lkeNamespaceName(env, "platform"), "delete", "deployment/redis", "--ignore-not-found=true"); err != nil {
+		return err
+	}
 	for _, manifest := range []string{
-		lkeRedisDeploymentManifest(env),
+		lkeRedisStatefulSetManifest(env),
 		lkeRedisServiceManifest(env),
 		lkeRedisExporterDeploymentManifest(env),
 		lkeRedisExporterServiceManifest(env),
@@ -2154,7 +2157,7 @@ func lkeApplyRedisRuntime(env map[string]string) error {
 			return err
 		}
 	}
-	if err := runKubectl("-n", lkeNamespaceName(env, "platform"), "rollout", "status", "deployment/redis", "--timeout", firstNonEmpty(os.Getenv("LKE_REDIS_ROLLOUT_TIMEOUT"), "5m")); err != nil {
+	if err := runKubectl("-n", lkeNamespaceName(env, "platform"), "rollout", "status", "statefulset/redis", "--timeout", firstNonEmpty(os.Getenv("LKE_REDIS_ROLLOUT_TIMEOUT"), "5m")); err != nil {
 		return err
 	}
 	return runKubectl("-n", lkeNamespaceName(env, "platform"), "rollout", "status", "deployment/redis-exporter", "--timeout", firstNonEmpty(os.Getenv("LKE_REDIS_EXPORTER_ROLLOUT_TIMEOUT"), "5m"))
@@ -2574,9 +2577,9 @@ func lkeRedisServiceHost(env map[string]string) string {
 	return "redis." + lkeNamespaceName(env, "platform") + ".svc.cluster.local"
 }
 
-func lkeRedisDeploymentManifest(env map[string]string) string {
+func lkeRedisStatefulSetManifest(env map[string]string) string {
 	return fmt.Sprintf(`apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: redis
   namespace: %s
@@ -2586,6 +2589,7 @@ metadata:
     rtk.realtek.com/provider: lke
     rtk.realtek.com/stack: %s
 spec:
+  serviceName: redis
   replicas: 1
   selector:
     matchLabels:
@@ -2602,6 +2606,16 @@ spec:
         - name: redis
           image: %s
           imagePullPolicy: IfNotPresent
+          command: ["valkey-server"]
+          args:
+            - "--appendonly"
+            - "yes"
+            - "--appendfsync"
+            - "everysec"
+            - "--dir"
+            - "/data"
+            - "--maxmemory-policy"
+            - "noeviction"
           ports:
             - name: redis
               containerPort: 6379
@@ -2614,10 +2628,16 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-      volumes:
-        - name: data
-          emptyDir: {}
-`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeRedisImage(), firstNonEmpty(os.Getenv("LKE_REDIS_REQUEST_CPU"), env["LKE_REDIS_REQUEST_CPU"], "100m"), firstNonEmpty(os.Getenv("LKE_REDIS_REQUEST_MEMORY"), env["LKE_REDIS_REQUEST_MEMORY"], "128Mi"), firstNonEmpty(os.Getenv("LKE_REDIS_LIMIT_MEMORY"), env["LKE_REDIS_LIMIT_MEMORY"], "512Mi"))
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        volumeMode: Filesystem
+        resources:
+          requests:
+            storage: %s
+`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeRedisImage(), firstNonEmpty(os.Getenv("LKE_REDIS_REQUEST_CPU"), env["LKE_REDIS_REQUEST_CPU"], "100m"), firstNonEmpty(os.Getenv("LKE_REDIS_REQUEST_MEMORY"), env["LKE_REDIS_REQUEST_MEMORY"], "128Mi"), firstNonEmpty(os.Getenv("LKE_REDIS_LIMIT_MEMORY"), env["LKE_REDIS_LIMIT_MEMORY"], "512Mi"), firstNonEmpty(os.Getenv("LKE_REDIS_STORAGE"), env["LKE_REDIS_STORAGE"], "5Gi"))
 }
 
 func lkeRedisServiceManifest(env map[string]string) string {
