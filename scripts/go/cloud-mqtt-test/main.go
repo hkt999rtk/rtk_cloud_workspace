@@ -1392,15 +1392,7 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 		if stage.ConnectedTarget > len(sessions) {
 			newAssignments := assignments[len(sessions):stage.ConnectedTarget]
 			connectStarted := time.Now()
-			connectDeadline := stagedConnectDeadline(stageStart, stageDeadline)
-			connectRampWindow := stagedConnectRampWindow(connectStarted, connectDeadline)
-			if stage.RampSeconds > 0 {
-				connectRampWindow = time.Duration(stage.RampSeconds) * time.Second
-				connectDeadline = connectStarted.Add(connectRampWindow + stagedConnectTailBudget(connectRampWindow))
-				if connectDeadline.After(stageDeadline) {
-					connectDeadline = stageDeadline
-				}
-			}
+			connectDeadline, connectRampWindow := stagedConnectTiming(stageStart, stageDeadline, connectStarted, stage.RampSeconds)
 			before := stageResult.Totals
 			stageResult.Diagnostics.ConnectStartedAt = connectStarted.UTC().Format(time.RFC3339Nano)
 			stageResult.Diagnostics.ConnectDeadlineAt = connectDeadline.UTC().Format(time.RFC3339Nano)
@@ -1678,6 +1670,18 @@ func stagedConnectDeadline(stageStart time.Time, stageDeadline time.Time) time.T
 		return stageDeadline
 	}
 	return stageDeadline.Add(-actionReserve)
+}
+
+func stagedConnectTiming(stageStart time.Time, stageDeadline time.Time, connectStarted time.Time, rampSeconds int) (time.Time, time.Duration) {
+	connectDeadline := stagedConnectDeadline(stageStart, stageDeadline)
+	connectRampWindow := stagedConnectRampWindow(connectStarted, connectDeadline)
+	if rampSeconds > 0 {
+		connectRampWindow = time.Duration(rampSeconds) * time.Second
+		if connectRampWindow < 0 {
+			connectRampWindow = 0
+		}
+	}
+	return connectDeadline, connectRampWindow
 }
 
 func connectSustainedDevices(assignments []assignment, certByID map[string]certRecord, brandname, runID, apiBaseURL string, mqttTargets []mqttEndpointTarget, concurrency int, totals *mqttIOTotals) []sustainedDeviceSession {

@@ -92,6 +92,7 @@ func parseRunnerDaemonFlags(name string, args []string, stderr io.Writer) (PlanO
 	runnerMode := fs.String("runner-mode", "live", "runner mode: sample or live")
 	rtkCloudBinary := fs.String("rtk-cloud-binary", "rtk-cloud", "rtk-cloud binary for live MQTT/API runner")
 	workspace := fs.String("workspace", "", "workspace path for live MQTT/API runner")
+	runnerMQTTConcurrency := addRunnerMQTTConcurrencyFlag(fs)
 	listen := fs.String("listen", defaultRunnerDaemonListen, "runner daemon listen address")
 	if err := fs.Parse(args); err != nil {
 		return PlanOptions{}, runnerDaemonFlagValues{}, err
@@ -104,15 +105,16 @@ func parseRunnerDaemonFlags(name string, args []string, stderr io.Writer) (PlanO
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
 	return opts, runnerDaemonFlagValues{
 		shardRunFlagValues: shardRunFlagValues{
-			runID:               *runID,
-			outDir:              *outDir,
-			role:                *role,
-			shardIndex:          *shardIndex,
-			shardManifest:       *shardManifest,
-			honorStageDurations: true,
-			runnerMode:          *runnerMode,
-			rtkCloudBinary:      *rtkCloudBinary,
-			workspace:           *workspace,
+			runID:                 *runID,
+			outDir:                *outDir,
+			role:                  *role,
+			shardIndex:            *shardIndex,
+			shardManifest:         *shardManifest,
+			honorStageDurations:   true,
+			runnerMode:            *runnerMode,
+			rtkCloudBinary:        *rtkCloudBinary,
+			workspace:             *workspace,
+			runnerMQTTConcurrency: *runnerMQTTConcurrency,
 		},
 		listen: *listen,
 	}, nil

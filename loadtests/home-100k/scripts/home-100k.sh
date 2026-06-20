@@ -76,6 +76,7 @@ user_count="${HOME100K_USERS:-}"
 devices_per_user="${HOME100K_DEVICES_PER_USER:-}"
 runner_mode="${HOME100K_RUNNER_MODE:-live}"
 runner_nofile_limit="${HOME100K_RUNNER_NOFILE_LIMIT:-1048576}"
+runner_mqtt_concurrency="${HOME100K_RUNNER_MQTT_CONCURRENCY:-1000}"
 device_session_model="${HOME100K_DEVICE_SESSION_MODEL:-lifetime-subscription}"
 runner_read_model="${HOME100K_RUNNER_READ_MODEL:-go-netpoll-bounded-reader-goroutine}"
 coordinator_start_delay_ms="${HOME100K_COORDINATOR_START_DELAY_MS:-3000}"
@@ -144,6 +145,7 @@ Defaults can be overridden with:
   HOME100K_DEVICES_PER_USER configured in the description file; current default description uses 20
   HOME100K_RUNNER_MODE default: live; use sample only for local developer smoke tests
   HOME100K_RUNNER_NOFILE_LIMIT default: 1048576; remote daemon nofile limit for MQTT sockets
+  HOME100K_RUNNER_MQTT_CONCURRENCY default: 1000; cloud-mqtt-test connect/action concurrency per VM shard
   HOME100K_DEVICE_SESSION_MODEL default: lifetime-subscription; device MQTT subscriptions stay open for device lifetime
   HOME100K_RUNNER_READ_MODEL default: go-netpoll-bounded-reader-goroutine; sustained async MQTT reads
   HOME100K_COORDINATOR_START_DELAY_MS default: 3000
@@ -696,6 +698,7 @@ coordinator_args=(
 )
 workflow_args+=("--credential-bundle-format" "$credential_bundle_format")
 workflow_args+=("--runner-nofile-limit" "$runner_nofile_limit")
+workflow_args+=("--runner-mqtt-concurrency" "$runner_mqtt_concurrency")
 workflow_args+=("--device-session-model" "$device_session_model")
 workflow_args+=("--runner-read-model" "$runner_read_model")
 if [[ -n "$mqtt_addr" ]]; then
