@@ -45,6 +45,12 @@ func RenderReport(input ReportInput) string {
 		status = "INCOMPLETE"
 		reasons = append(reasons, "Missing per-device-type MQTT evidence: "+strings.Join(missing, ", "))
 	}
+	for _, reason := range stageFunctionalFailureReasons(input.Plan.Conditions, input.StageResults) {
+		if status != "INCOMPLETE" {
+			status = "FAIL"
+		}
+		reasons = append(reasons, "Functional success below threshold: "+reason)
+	}
 	switch strings.ToLower(strings.TrimSpace(input.ServerCorrelation.Status)) {
 	case "fail":
 		if status != "INCOMPLETE" {
@@ -106,10 +112,18 @@ func RenderReport(input ReportInput) string {
 	fmt.Fprintln(&b, "- Runner read requirement: sustained MQTT reads through Go netpoll-backed connections and bounded per-device reader goroutines; command-time one-shot reads are not valid for capacity conclusions.")
 	fmt.Fprintln(&b)
 
+	thresholds := gateThresholdsFromConditions(input.Plan.Conditions)
+	fmt.Fprintln(&b, "## Gate Standards")
+	fmt.Fprintf(&b, "- Functional success threshold: %.2f%%\n", thresholds.FunctionalSuccessThresholdPercent)
+	fmt.Fprintf(&b, "- Client target completeness threshold: %.2f%%\n", thresholds.ClientTargetCompletenessPercent)
+	fmt.Fprintf(&b, "- Exact event correlation threshold: %.2f%%\n", thresholds.ExactEventCorrelationPercent)
+	fmt.Fprintf(&b, "- Aggregate counter tolerance: max(%d, %.2f%%)\n", thresholds.AggregateCorrelationMinTolerance, thresholds.AggregateCorrelationTolerancePercent)
+	fmt.Fprintln(&b)
+
 	fmt.Fprintln(&b, "## Counter Scope")
 	fmt.Fprintln(&b, "- Device MQTT totals and APP/User totals are client-side runner counters.")
 	fmt.Fprintln(&b, "- The current runner records synthetic actor sample counters; these totals are not proof that 100,000 real MQTT devices or 5,000 real app users exchanged traffic.")
-	fmt.Fprintln(&b, "- A capacity `PASS` requires parsed server-side MQTT, APP/API, and IoT Device Shadow counters to correlate with client counters inside tolerance.")
+	fmt.Fprintln(&b, "- A capacity `PASS` requires functional success gates and exact event correlation to meet the configured thresholds; aggregate counter correlation inside tolerance is a sanity check, and small mismatches are warnings.")
 	fmt.Fprintln(&b)
 
 	fmt.Fprintln(&b, "## Scenario Mix")

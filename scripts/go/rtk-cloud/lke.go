@@ -5607,6 +5607,16 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
               value: "redis.%s.svc.cluster.local:6379"
             - name: VIDEO_CLOUD_SHADOW_CACHE_TTL
               value: %q
+            - name: VIDEO_CLOUD_SHADOW_CACHE_WRITE_BEHIND_ENABLED
+              value: %q
+            - name: VIDEO_CLOUD_SHADOW_CACHE_FLUSH_INTERVAL
+              value: %q
+            - name: VIDEO_CLOUD_SHADOW_CACHE_FLUSH_BATCH_SIZE
+              value: %q
+            - name: VIDEO_CLOUD_SHADOW_CACHE_BUFFER_MAX_DOCS
+              value: %q
+            - name: VIDEO_CLOUD_SHADOW_CACHE_RECOVERY_INTERVAL
+              value: %q
 `,
 			lkeNamespaceName(env, "platform"),
 			lkeVideoCloudAPIDBMaxOpenConns(env),
@@ -5628,6 +5638,11 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 			mqttOutboundWriteTimeout,
 			lkeNamespaceName(env, "platform"),
 			shadowCacheTTL,
+			lkeVideoCloudShadowCacheWriteBehindEnabled(env),
+			lkeVideoCloudShadowCacheFlushInterval(env),
+			lkeVideoCloudShadowCacheFlushBatchSize(env),
+			lkeVideoCloudShadowCacheBufferMaxDocs(env),
+			lkeVideoCloudShadowCacheRecoveryInterval(env),
 		)
 		volumeMounts = `          volumeMounts:
             - name: logger-spool
@@ -5758,6 +5773,30 @@ func lkeVideoCloudAPIDBMaxOpenConns(env map[string]string) string {
 
 func lkeVideoCloudAPIDBMaxIdleConns(env map[string]string) string {
 	return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_API_DB_MAX_IDLE_CONNS"), env["LKE_VIDEO_CLOUD_API_DB_MAX_IDLE_CONNS"], "40")
+}
+
+func lkeVideoCloudMQTTHandlerConcurrency(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY"), env["LKE_VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY"], "64")
+}
+
+func lkeVideoCloudShadowCacheWriteBehindEnabled(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_SHADOW_CACHE_WRITE_BEHIND_ENABLED"), env["LKE_VIDEO_CLOUD_SHADOW_CACHE_WRITE_BEHIND_ENABLED"], "true")
+}
+
+func lkeVideoCloudShadowCacheFlushInterval(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_SHADOW_CACHE_FLUSH_INTERVAL"), env["LKE_VIDEO_CLOUD_SHADOW_CACHE_FLUSH_INTERVAL"], "1s")
+}
+
+func lkeVideoCloudShadowCacheFlushBatchSize(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_SHADOW_CACHE_FLUSH_BATCH_SIZE"), env["LKE_VIDEO_CLOUD_SHADOW_CACHE_FLUSH_BATCH_SIZE"], "500")
+}
+
+func lkeVideoCloudShadowCacheBufferMaxDocs(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_SHADOW_CACHE_BUFFER_MAX_DOCS"), env["LKE_VIDEO_CLOUD_SHADOW_CACHE_BUFFER_MAX_DOCS"], "10000")
+}
+
+func lkeVideoCloudShadowCacheRecoveryInterval(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_SHADOW_CACHE_RECOVERY_INTERVAL"), env["LKE_VIDEO_CLOUD_SHADOW_CACHE_RECOVERY_INTERVAL"], "5s")
 }
 
 func lkeVideoCloudWorkerDBMaxOpenConns(env map[string]string) string {

@@ -29,6 +29,9 @@ func TestReportRendersRequiredScenariosAndIncompleteEvidence(t *testing.T) {
 		"Device session model: `lifetime-subscription`",
 		"Runner read model: `go-netpoll-bounded-reader-goroutine`",
 		"sustained MQTT reads",
+		"## Gate Standards",
+		"Functional success threshold: 99.50%",
+		"Aggregate counter tolerance: max(5, 0.10%)",
 		"## Counter Scope",
 		"synthetic actor sample counters",
 		"## Device Scenario",
@@ -76,6 +79,61 @@ func TestReportMarksMissingPerTypeEvidenceIncomplete(t *testing.T) {
 	for _, want := range []string{
 		"Status: INCOMPLETE",
 		"Missing per-device-type MQTT evidence: smart_meter",
+	} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("report missing %q:\n%s", want, report)
+		}
+	}
+}
+
+func TestReportMarksFunctionalThresholdFailure(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:     "cloud_env/staging/lke",
+		Brandname:   "RTK",
+		Region:      "us-sea",
+		DeviceCount: 20,
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+	plan.DeviceMix = map[string]int{"light": 20}
+	report := RenderReport(ReportInput{
+		Plan:                 plan,
+		RunID:                "run-functional-fail",
+		ShadowEvidenceFound:  true,
+		ServerEvidenceFound:  true,
+		LoadGeneratorHealthy: true,
+		ServerCorrelation:    ServerCorrelation{Status: "pass"},
+		RuntimeLogCorrelation: RuntimeLogCorrelation{
+			Status:              "pass",
+			ClientCommandEvents: 1,
+		},
+		StageResults: []StageResult{{
+			Name:             "100pct",
+			ConnectedDevices: 20,
+			DeviceMQTTTotals: DeviceMQTTTotals{
+				ActiveConnections:   20,
+				ActiveSubscriptions: 20,
+				ConnectSuccess:      20,
+			},
+			AppUserTotals: AppUserTotals{
+				DesiredWrites: 1,
+				ReceivedAcks:  0,
+			},
+			MQTTConnectSuccessRatePercent:  100,
+			DesiredReportedConvergenceRate: 100,
+			OfflineDesiredConvergenceRate:  100,
+			DeltaClearSuccessRatePercent:   100,
+			DeviceTypeTotals: map[string]DeviceTypeTotals{
+				"light": {TelemetryPublishes: 1},
+			},
+		}},
+	})
+
+	for _, want := range []string{
+		"Status: FAIL",
+		"Functional success below threshold",
+		"100pct app ACK success 0.00% < 99.50%",
 	} {
 		if !strings.Contains(report, want) {
 			t.Fatalf("report missing %q:\n%s", want, report)

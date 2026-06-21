@@ -153,7 +153,9 @@ func TestExecutePlanPrintsDeterministicRunPlan(t *testing.T) {
 		`"role": "mixed"`,
 		`"target": {`,
 		`"target_connects": 100000`,
-		`"ramp_up_time": "1m"`,
+		`"ramp_up_time": "30s"`,
+		`"stages": [`,
+		`"steady_state": "90s"`,
 		`"offline_desired_queue": 10000`,
 	} {
 		if !strings.Contains(out, want) {
@@ -164,15 +166,16 @@ func TestExecutePlanPrintsDeterministicRunPlan(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &decoded); err != nil {
 		t.Fatalf("plan output is not JSON: %v\n%s", err, out)
 	}
-	if _, ok := decoded["stages"]; ok {
-		t.Fatalf("plan output still exposes stages:\n%s", out)
-	}
 	target, ok := decoded["target"].(map[string]any)
 	if !ok {
 		t.Fatalf("plan output missing target object:\n%s", out)
 	}
-	if target["target_connects"] != float64(100000) || target["ramp_up_time"] != "1m" {
+	if target["target_connects"] != float64(100000) || target["ramp_up_time"] != "30s" {
 		t.Fatalf("unexpected target object: %#v", target)
+	}
+	stages, ok := decoded["stages"].([]any)
+	if !ok || len(stages) != 4 {
+		t.Fatalf("unexpected stages payload: %#v", decoded["stages"])
 	}
 }
 
@@ -191,16 +194,9 @@ func TestExecutePlanAcceptsConfiguredStageDurations(t *testing.T) {
 		t.Fatalf("Execute(plan) code = %d stderr=%s", code, stderr.String())
 	}
 	out := stdout.String()
-	for _, want := range []string{
-		`"ramp_up_time": "1m"`,
-	} {
+	for _, want := range []string{`"warm_up": "1m"`, `"steady_state": "3m"`, `"cool_down": "30s"`} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("plan output missing %q:\n%s", want, out)
-		}
-	}
-	for _, unwanted := range []string{`"steady_state"`, `"cool_down"`} {
-		if strings.Contains(out, unwanted) {
-			t.Fatalf("plan output still exposes %q:\n%s", unwanted, out)
 		}
 	}
 }
@@ -1485,9 +1481,9 @@ func TestHome100KScriptEnvOverridesDescriptionRampUpAndRuntimeWindows(t *testing
 		"HOME100K_DESCRIPTION_FILE="+descriptionFile,
 		"HOME100K_RUN_ID=test-env-priority",
 		"HOME100K_OUT_DIR="+filepath.Join(outDir, "report"),
-		"HOME100K_RAMP_UP_TIME=15s",
-		"HOME100K_MEASUREMENT_WINDOW=45s",
-		"HOME100K_POST_RUN_COLLECTION=15s",
+		"HOME100K_STAGE_WARM_UP=15s",
+		"HOME100K_STAGE_STEADY=45s",
+		"HOME100K_STAGE_COOL_DOWN=15s",
 		"HOME100K_DEVICES=9000",
 		"HOME100K_DEVICES_PER_USER=20",
 	)
@@ -1496,7 +1492,7 @@ func TestHome100KScriptEnvOverridesDescriptionRampUpAndRuntimeWindows(t *testing
 		t.Fatalf("home-100k.sh plan failed: %v\n%s", err, raw)
 	}
 	body := string(raw)
-	for _, want := range []string{`"ramp_up_time": "15s"`} {
+	for _, want := range []string{`"warm_up": "15s"`, `"steady_state": "45s"`, `"cool_down": "15s"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("plan missing env override %q:\n%s", want, body)
 		}
@@ -1506,14 +1502,31 @@ func TestHome100KScriptEnvOverridesDescriptionRampUpAndRuntimeWindows(t *testing
 			t.Fatalf("plan missing size override %q:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, `"steady_state"`) || strings.Contains(body, `"cool_down"`) {
-		t.Fatalf("plan exposed internal measurement timing:\n%s", body)
-	}
-	if strings.Contains(body, `"ramp_up_time": "9m"`) {
+	if strings.Contains(body, `"warm_up": "9m"`) || strings.Contains(body, `"steady_state": "9m"`) {
 		t.Fatalf("description file overrode explicit env:\n%s", body)
 	}
 	if strings.Contains(body, `"devices": 12000`) {
 		t.Fatalf("description file size overrode explicit env:\n%s", body)
+	}
+}
+
+func TestHome100KScriptDefaultDescriptionPlansTenMinuteLoadWindow(t *testing.T) {
+	outDir := t.TempDir()
+	script := filepath.Join("..", "..", "scripts", "home-100k.sh")
+	cmd := exec.Command("bash", script, "plan")
+	cmd.Env = home100KTestEnv(
+		"HOME100K_RUN_ID=test-default-duration",
+		"HOME100K_OUT_DIR="+filepath.Join(outDir, "report"),
+	)
+	raw, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("home-100k.sh plan failed: %v\n%s", err, raw)
+	}
+	body := string(raw)
+	for _, want := range []string{`"warm_up": "30s"`, `"steady_state": "90s"`, `"cool_down": "30s"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("plan missing default duration %q:\n%s", want, body)
+		}
 	}
 }
 
@@ -1593,6 +1606,17 @@ JSON
 	}
 }
 
+func home100KTestEnv(extra ...string) []string {
+	env := make([]string, 0, len(os.Environ())+len(extra))
+	for _, item := range os.Environ() {
+		if strings.HasPrefix(item, "HOME100K_") {
+			continue
+		}
+		env = append(env, item)
+	}
+	return append(env, extra...)
+}
+
 func shellQuoteForTest(path string) string {
 	return "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
 }
@@ -1644,7 +1668,7 @@ func TestExecuteRunStagesProducesStageMetrics(t *testing.T) {
 	out := stdout.String()
 	for _, want := range []string{
 		`"stage_results"`,
-		`"name": "target"`,
+		`"name": "25k"`,
 		`"desired_reported_convergence_rate_percent": 100`,
 		`"offline_desired_convergence_rate_percent": 100`,
 	} {
@@ -2089,10 +2113,10 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 			"overall": "pass",
 			"stage_results": []map[string]any{
 				{
-					"name":                      "target",
-					"connected_devices":         20000,
-					"active_connections":        20000,
-					"active_subscriptions":      20000,
+					"name":                      "25k",
+					"connected_devices":         5000,
+					"active_connections":        5000,
+					"active_subscriptions":      5000,
 					"status":                    "PASS",
 					"commands_attempted":        2500,
 					"commands_passed":           2500,
@@ -2108,10 +2132,13 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 					"total_http_bytes_sent":     1111,
 					"total_http_bytes_received": 2222,
 					"device_mqtt_totals": map[string]any{
-						"active_connections":   20000,
-						"active_subscriptions": 20000,
+						"active_connections":   5000,
+						"active_subscriptions": 5000,
 					},
 				},
+				{"name": "50k", "connected_devices": 10000, "status": "PASS"},
+				{"name": "75k", "connected_devices": 15000, "status": "PASS"},
+				{"name": "100k", "connected_devices": 20000, "status": "PASS"},
 			},
 		}
 		if err := writeJSONFile(filepath.Join(childOutDir, "results.json"), payload); err != nil {
@@ -2154,12 +2181,12 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 		"--workspace /root/rtk_cloud_workspace",
 		"--env-root cloud_env/staging/lke",
 		"--brandname RTK",
-		"--duration-seconds 3",
+		"--duration-seconds 12",
 		"--telemetry-interval off",
 		"--command-rate-per-device-per-day 1800.00",
-		"--stage-names target",
-		"--stage-connected-devices 20000",
-		"--stage-durations-seconds 3",
+		"--stage-names 25k,50k,75k,100k",
+		"--stage-connected-devices 5000,10000,15000,20000",
+		"--stage-durations-seconds 3,3,3,3",
 		"--device-traffic-profile home-diverse-v1",
 		"--concurrency 1000",
 		"--command-concurrency 100",
@@ -2191,7 +2218,7 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 	if first.DeviceMQTTTotals.Publishes != 2103 || first.DeviceMQTTTotals.ReceivedMessages != 2050 || first.DeviceMQTTTotals.BytesSent != 123456 {
 		t.Fatalf("device MQTT totals not preserved from live results: %#v", first.DeviceMQTTTotals)
 	}
-	if first.ConnectedDevices != 100000 || first.ShardConnectedDevices != 20000 {
+	if first.ConnectedDevices != 25000 || first.ShardConnectedDevices != 5000 {
 		t.Fatalf("stage targets not preserved: global=%d shard=%d", first.ConnectedDevices, first.ShardConnectedDevices)
 	}
 	if first.AppUserTotals.DesiredWrites != 700 || first.AppUserTotals.ReceivedAcks != 690 || first.AppUserTotals.BytesReceived != 2222 {
@@ -2322,14 +2349,14 @@ func TestExecuteShardRunLiveWritesFallbackStageResultsWhenMQTTTestProducesNoResu
 	if result.Status != "failed" || !strings.Contains(result.Error, "mqtt test crashed before writing results") {
 		t.Fatalf("fallback status/error not preserved: %#v", result)
 	}
-	if len(result.StageResults) != 1 {
-		t.Fatalf("fallback stage results len = %d, want 1", len(result.StageResults))
+	if len(result.StageResults) != 4 {
+		t.Fatalf("fallback stage results len = %d, want 4", len(result.StageResults))
 	}
 	if got := result.StageResults[0].FailureReasons["runner_failed"]; got != 1 {
 		t.Fatalf("fallback failure reason = %d, want 1; first stage=%#v", got, result.StageResults[0])
 	}
-	if result.StageResults[0].ConnectedDevices != 100000 {
-		t.Fatalf("fallback connected devices = %d, want 100000", result.StageResults[0].ConnectedDevices)
+	if result.StageResults[0].ConnectedDevices != 25000 {
+		t.Fatalf("fallback connected devices = %d, want 25000", result.StageResults[0].ConnectedDevices)
 	}
 }
 
@@ -2421,11 +2448,11 @@ func TestExecuteShardRunLivePreservesPartialStagedResultsWhenMQTTTestFails(t *te
 	if err := readJSON(filepath.Join(outDir, "results.json"), &result); err != nil {
 		t.Fatalf("missing converted partial shard results: %v stderr=%s", err, stderr.String())
 	}
-	if result.Status != "failed" || !result.Partial || !strings.Contains(result.Error, "stage_results len = 3, want 1") {
+	if result.Status != "failed" || !result.Partial || !strings.Contains(result.Error, "stage_results len = 3, want 4") {
 		t.Fatalf("partial failure metadata not preserved: %#v stderr=%s", result, stderr.String())
 	}
-	if len(result.StageResults) != 1 {
-		t.Fatalf("stage results len = %d, want 1", len(result.StageResults))
+	if len(result.StageResults) != 3 {
+		t.Fatalf("stage results len = %d, want 3", len(result.StageResults))
 	}
 	if result.StageResults[0].DeviceMQTTTotals.ConnectAttempts != 2500 || result.StageResults[0].DeviceMQTTTotals.BytesSent != 12345 {
 		t.Fatalf("partial device counters not preserved: %#v", result.StageResults[0].DeviceMQTTTotals)
