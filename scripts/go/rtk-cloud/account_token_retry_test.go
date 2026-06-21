@@ -62,12 +62,51 @@ func TestAccountEnsureUserAppCertificateUsesExtendedTransientRetryBudget(t *test
 	defer server.Close()
 
 	ctx := accountManagerContext{BaseURL: server.URL}
-	_, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", "app-brand-cloud-user:brand-user-1", nil, nil)
+	_, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", "app-brand-cloud-user:brand-user-1", false, nil, nil)
 	if err != nil {
 		t.Fatalf("accountEnsureUserAppCertificate() error = %v", err)
 	}
 	if stringValue(certificate["fingerprint_sha256"]) != "new-fingerprint" || loginAttempts != 10 {
 		t.Fatalf("certificate=%v loginAttempts=%d", certificate, loginAttempts)
+	}
+}
+
+func TestAccountEnsureUserAppCertificateBootstrapsWithCSRInFirstLogin(t *testing.T) {
+	loginAttempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/brand-clouds/rtk-test/auth/login" {
+			http.NotFound(w, r)
+			return
+		}
+		loginAttempts++
+		var req map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if strings.TrimSpace(req["app_csr_pem"]) == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": "missing_csr", "message": "CSR required on first login"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"user":   map[string]string{"id": "brand-user-1", "email": "rtk+001@users.local"},
+			"tokens": map[string]string{"access_token": testJWT(time.Now().Add(time.Hour))},
+			"app_certificate": map[string]string{
+				"status":             "issued",
+				"fingerprint_sha256": "new-fingerprint",
+				"certificate_pem":    "new-cert",
+			},
+		})
+	}))
+	defer server.Close()
+
+	ctx := accountManagerContext{BaseURL: server.URL}
+	credentials, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", "app-brand-cloud-user:brand-user-1", true, nil, nil)
+	if err != nil {
+		t.Fatalf("accountEnsureUserAppCertificate() error = %v", err)
+	}
+	if !hasLocalAppCredentials(credentials) || stringValue(certificate["fingerprint_sha256"]) != "new-fingerprint" || loginAttempts != 1 {
+		t.Fatalf("credentials=%v certificate=%v loginAttempts=%d", credentials, certificate, loginAttempts)
 	}
 }
 
@@ -354,7 +393,7 @@ func TestCreateUsersRotatePasswordBypassesCompleteLocalArtifact(t *testing.T) {
 	if err := runCreateUsers([]string{"--workspace", workspace, "--env-root", envRoot, "--brandname", "RTK", "--count", "1", "--rotate-password"}); err != nil {
 		t.Fatalf("runCreateUsers() error = %v", err)
 	}
-	if createAttempts != 1 || brandLoginAttempts != 2 {
+	if createAttempts != 1 || brandLoginAttempts != 1 {
 		t.Fatalf("createAttempts=%d brandLoginAttempts=%d", createAttempts, brandLoginAttempts)
 	}
 	latest := latestMatchingFile(artifactDir, "rtk-users-*.json")
@@ -970,7 +1009,7 @@ func TestAccountEnsureUserAppCertificateRecoversMissingLocalCredentials(t *testi
 	defer server.Close()
 
 	ctx := accountManagerContext{BaseURL: server.URL}
-	credentials, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", "app-brand-cloud-user:brand-user-1", nil, func() error {
+	credentials, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", "app-brand-cloud-user:brand-user-1", false, nil, func() error {
 		recovered = true
 		return nil
 	})
@@ -1117,7 +1156,7 @@ func TestAccountEnsureUserAppCertificateRecoversMismatchedLocalCredentials(t *te
 		"csr_pem":         "-----BEGIN CERTIFICATE REQUEST-----\nstale\n-----END CERTIFICATE REQUEST-----",
 	}
 	ctx := accountManagerContext{BaseURL: server.URL}
-	credentials, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", "app-brand-cloud-user:brand-user-1", staleCredentials, func() error {
+	credentials, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", "app-brand-cloud-user:brand-user-1", false, staleCredentials, func() error {
 		recovered = true
 		return nil
 	})
