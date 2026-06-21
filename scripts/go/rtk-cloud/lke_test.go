@@ -392,6 +392,9 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"postgres://postgres:test-seed-postgres@postgresql.video-cloud-staging-platform.svc.cluster.local:5432/rtk_account_manager?sslmode=disable",
 		"ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL: \"platform-admin@video-cloud-staging.local\"",
 		"ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD: \"test-seed-platform-admin\"",
+		"ACCOUNT_MANAGER_USER_CACHE_ENABLED: \"true\"",
+		"ACCOUNT_MANAGER_USER_CACHE_ADDR: \"redis.video-cloud-staging-platform.svc.cluster.local:6379\"",
+		"ACCOUNT_MANAGER_USER_CACHE_PREFIX: \"account_manager:user\"",
 		"command: [\"/app/rtk-account-manager-migrate\"]",
 		"PGDATA\n              value: /var/lib/postgresql/data/pgdata",
 		"name: postgresql-runtime\n                  key: POSTGRES_PASSWORD",
@@ -1965,7 +1968,9 @@ func TestAccountManagerDockerfileIncludesMigrateBinaryAndMigrations(t *testing.T
 	for _, want := range []string{
 		"go build -trimpath -o /out/rtk-account-manager ./cmd/server",
 		"go build -trimpath -o /out/rtk-account-manager-migrate ./cmd/migrate",
+		"go build -trimpath -o /out/rtk-account-manager-user-cache ./cmd/user-cache",
 		"COPY --from=builder /out/rtk-account-manager-migrate /app/rtk-account-manager-migrate",
+		"COPY --from=builder /out/rtk-account-manager-user-cache /app/rtk-account-manager-user-cache",
 		"COPY --from=builder /src/migrations /app/migrations",
 	} {
 		if !strings.Contains(body, want) {

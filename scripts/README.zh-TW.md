@@ -353,6 +353,17 @@ exporter。常用環境變數：
   `LKE_REDIS_EXPORTER_LIMIT_MEMORY`：Redis exporter 資源 override，預設
   `50m` / `64Mi` / `256Mi`。
 
+Account Manager 會重用同一個 platform namespace 的 Valkey endpoint 作為
+platform/developer、brand-cloud、end-user profile/auth read-through cache。LKE
+產生的 `account-manager-runtime` secret 會設定 `ACCOUNT_MANAGER_USER_CACHE_ENABLED=true`、
+`ACCOUNT_MANAGER_USER_CACHE_ADDR=redis.<platform namespace>.svc.cluster.local:6379`
+與 `ACCOUNT_MANAGER_USER_CACHE_PREFIX=account_manager:user`。Postgres 仍是
+user truth；Redis miss 或 Redis unavailable 時 API 會讀 Postgres 並在可用時
+回填 Redis。此 cache 不設定 TTL，因此 direct DB repair 後需要用
+Account Manager image 內的 `/app/rtk-account-manager-user-cache rebuild` 修復
+platform users，或刪除 brand-cloud/end-user 相關 Redis key 讓下一次 query
+回填。
+
 - `LKE_GRAFANA_IMAGE`：Grafana image，預設 `grafana/grafana:13.0.2`。
 - `LKE_GRAFANA_ADMIN_PASSWORD`：Grafana admin 密碼；未設定時由 runtime secret material 產生。
 - `LKE_GRAFANA_PERSISTENCE=true`：啟用 Grafana PVC。預設使用 `emptyDir`，
