@@ -210,6 +210,7 @@ func runMQTTTest(args []string) error {
 	stageNames := fs.String("stage-names", "", "comma-separated staged sustained load stage names")
 	stageConnectedDevices := fs.String("stage-connected-devices", "", "comma-separated staged sustained per-shard connected device targets")
 	stageDurationsSeconds := fs.String("stage-durations-seconds", "", "comma-separated staged sustained stage durations in seconds")
+	stageRampSeconds := fs.String("stage-ramp-seconds", "", "comma-separated staged sustained connect ramp durations in seconds")
 	stageMinCommands := fs.String("stage-min-commands", "", "comma-separated staged sustained minimum command events")
 	deviceTrafficProfile := fs.String("device-traffic-profile", "", "home MQTT device traffic profile")
 	stageUsageWindows := fs.String("stage-usage-windows", "", "comma-separated usage window per sustained stage")
@@ -310,6 +311,7 @@ func runMQTTTest(args []string) error {
 		"--stage-names", *stageNames,
 		"--stage-connected-devices", *stageConnectedDevices,
 		"--stage-durations-seconds", *stageDurationsSeconds,
+		"--stage-ramp-seconds", *stageRampSeconds,
 		"--stage-min-commands", *stageMinCommands,
 		"--device-traffic-profile", *deviceTrafficProfile,
 		"--concurrency", strconv.Itoa(*concurrency),

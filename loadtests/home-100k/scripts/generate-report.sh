@@ -132,6 +132,8 @@ def total_device_totals(stages):
     keys = [
         "connect_attempts", "connect_success", "connect_fail",
         "token_attempts", "token_success", "token_fail",
+        "token_first_attempt_success", "token_first_attempt_fail",
+        "token_retry_attempts", "token_retry_success", "token_retry_exhausted",
         "mqtt_dial_attempts", "mqtt_dial_success", "mqtt_dial_fail",
         "mqtt_connack_attempts", "mqtt_connack_success", "mqtt_connack_fail",
         "subscribe_attempts", "subscribe_fail", "subscribes",
@@ -150,6 +152,8 @@ def total_app_totals(stages):
     keys = [
         "login_attempts", "login_success", "login_fail",
         "token_attempts", "token_success", "token_fail",
+        "token_first_attempt_success", "token_first_attempt_fail",
+        "token_retry_attempts", "token_retry_success", "token_retry_exhausted",
         "mqtt_dial_attempts", "mqtt_dial_success", "mqtt_dial_fail",
         "mqtt_connack_attempts", "mqtt_connack_success", "mqtt_connack_fail",
         "list_devices_requests", "read_shadow_requests", "desired_writes",
@@ -349,6 +353,33 @@ def device_mqtt_totals():
     )
     return "\n".join(lines)
 
+def token_retry_totals(title, total_key, stage_key):
+    stages = result.get("stage_results") or []
+    lines = [
+        f"## {title}",
+        "",
+        "| Stage | First-attempt success | First-attempt fail | Retry attempts | Retry success | Retry exhausted | Token request total |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for s in stages:
+        t = s.get(stage_key) or {}
+        lines.append(
+            f"| {md(s.get('name'))} | {num(t.get('token_first_attempt_success'), 0)} | "
+            f"{num(t.get('token_first_attempt_fail'), 0)} | {num(t.get('token_retry_attempts'), 0)} | "
+            f"{num(t.get('token_retry_success'), 0)} | {num(t.get('token_retry_exhausted'), 0)} | "
+            f"{num(t.get('token_attempts'), 0)} |"
+        )
+    total = result.get(total_key) or {}
+    if not total:
+        total = total_device_totals(stages) if stage_key == "device_mqtt_totals" else total_app_totals(stages)
+    lines.append(
+        f"| total | {num(total.get('token_first_attempt_success'), 0)} | "
+        f"{num(total.get('token_first_attempt_fail'), 0)} | {num(total.get('token_retry_attempts'), 0)} | "
+        f"{num(total.get('token_retry_success'), 0)} | {num(total.get('token_retry_exhausted'), 0)} | "
+        f"{num(total.get('token_attempts'), 0)} |"
+    )
+    return "\n".join(lines)
+
 def app_user_totals():
     stages = result.get("stage_results") or []
     lines = [
@@ -376,6 +407,191 @@ def app_user_totals():
         f"{num(total.get('read_shadow_requests'), 0)} | {num(total.get('desired_writes'), 0)} | "
         f"{num(total.get('received_acks'), 0)} | {num(total.get('bytes_sent'), 0)} | {num(total.get('bytes_received'), 0)} |"
     )
+    return "\n".join(lines)
+
+def all_server_counters():
+    counters = defaultdict(int)
+    evidence = result.get("server_evidence") or {}
+    for source in (evidence.get("sources") or {}).values():
+        for key, value in ((source or {}).get("counters") or {}).items():
+            counters[str(key)] += int(num(value, 0))
+    return counters
+
+def all_phase_metrics():
+    stages = result.get("stage_results") or []
+    totals = defaultdict(lambda: defaultdict(int))
+    rows = []
+    for stage in stages:
+        stage_name = stage.get("name")
+        for phase, metric in sorted((stage.get("phase_metrics") or {}).items()):
+            m = metric or {}
+            attempts = int(num(m.get("attempts"), 0))
+            success = int(num(m.get("success"), 0))
+            fail = int(num(m.get("fail"), 0))
+            total_ms = int(num(m.get("total_ms"), 0))
+            avg_ms = int(total_ms / attempts) if attempts else 0
+            row = {
+                "stage": stage_name,
+                "phase": phase,
+                "attempts": attempts,
+                "success": success,
+                "fail": fail,
+                "total_ms": total_ms,
+                "avg_ms": avg_ms,
+                "max_ms": int(num(m.get("max_ms"), 0)),
+                "gt1s": int(num(m.get("gt1s"), 0)),
+                "gt5s": int(num(m.get("gt5s"), 0)),
+                "gt10s": int(num(m.get("gt10s"), 0)),
+            }
+            rows.append(row)
+            for key, value in row.items():
+                if key in {"stage", "phase", "max_ms"}:
+                    continue
+                else:
+                    totals[phase][key] += int(value)
+            totals[phase]["max_ms"] = max(totals[phase]["max_ms"], row["max_ms"])
+    return rows, totals
+
+def client_phase_metrics():
+    rows, totals = all_phase_metrics()
+    if not rows:
+        return "- no client phase metrics"
+    lines = [
+        "| Stage | Phase | Attempts | Success | Fail | Avg ms | Max ms | >1s | >5s | >10s |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for row in rows:
+        lines.append(
+            f"| {md(row['stage'])} | {md(row['phase'])} | {row['attempts']} | {row['success']} | {row['fail']} | "
+            f"{row['avg_ms']} | {row['max_ms']} | {row['gt1s']} | {row['gt5s']} | {row['gt10s']} |"
+        )
+    if len(rows) > 1:
+        for phase in sorted(totals):
+            t = totals[phase]
+            avg_ms = int(t["total_ms"] / t["attempts"]) if t["attempts"] else 0
+            lines.append(
+                f"| total | {md(phase)} | {t['attempts']} | {t['success']} | {t['fail']} | "
+                f"{avg_ms} | {t['max_ms']} | {t['gt1s']} | {t['gt5s']} | {t['gt10s']} |"
+            )
+    return "\n".join(lines)
+
+def bottleneck_events():
+    events = []
+    for stage in result.get("stage_results") or []:
+        for event in stage.get("bottleneck_events") or []:
+            copied = dict(event or {})
+            copied.setdefault("stage", stage.get("name"))
+            events.append(copied)
+    if not events:
+        return "- no bottleneck event samples"
+    lines = [
+        "| Stage | Phase | Actor | Device | Detail | Elapsed ms | Remaining ms | Attempt | Retry | MQTT target |",
+        "| --- | --- | --- | --- | --- | ---: | ---: | ---: | --- | --- |",
+    ]
+    for event in events[:20]:
+        lines.append(
+            f"| {md(event.get('stage'))} | {md(event.get('phase'))} | {md(event.get('actor'))} | "
+            f"{md(event.get('device_id'))} | {md(event.get('detail'))} | {num(event.get('elapsed_ms'), 0)} | "
+            f"{num(event.get('remaining_ms'), 0)} | {num(event.get('attempt'), 0)} | "
+            f"{str(bool(event.get('is_retry'))).lower()} | {md(event.get('mqtt_target'))} |"
+        )
+    if len(events) > 20:
+        lines.append(f"- omitted {len(events) - 20} additional bounded samples")
+    return "\n".join(lines)
+
+def metric_fail(totals, *phases):
+    return sum(int(num(totals.get(phase, {}).get("fail"), 0)) for phase in phases)
+
+def metric_gt(totals, key, *phases):
+    return sum(int(num(totals.get(phase, {}).get(key), 0)) for phase in phases)
+
+def counter_sum(counters, *names):
+    return sum(int(num(counters.get(name), 0)) for name in names)
+
+def bottleneck_summary():
+    _, phase_totals = all_phase_metrics()
+    counters = all_server_counters()
+    device_total = result.get("device_mqtt_totals") or total_device_totals(result.get("stage_results") or [])
+    app_total = result.get("app_user_totals") or total_app_totals(result.get("stage_results") or [])
+    health = result.get("load_generator_health") or {}
+    candidates = []
+
+    token_support = []
+    token_score = 0
+    token_fail = metric_fail(phase_totals, "device_request_token", "app_request_token")
+    retry_exhausted = int(num(device_total.get("token_retry_exhausted"), 0)) + int(num(app_total.get("token_retry_exhausted"), 0))
+    token_slow = metric_gt(phase_totals, "gt5s", "device_request_token", "app_request_token") + metric_gt(phase_totals, "gt10s", "device_request_token", "app_request_token") * 2
+    api_5xx = counter_sum(counters, "video_cloud_api.request_token.status_5xx", "ingress_nginx.request_token.status_5xx")
+    api_p95 = max(int(num(counters.get("video_cloud_api.request_token.duration_p95_ms"), 0)), int(num(counters.get("ingress_nginx.request_token.duration_p95_ms"), 0)))
+    token_score += token_fail * 3 + retry_exhausted * 5 + token_slow + api_5xx * 4
+    if api_p95 >= 5000:
+        token_score += 5
+    for label, value in [
+        ("token_phase_fail", token_fail),
+        ("token_retry_exhausted", retry_exhausted),
+        ("token_slow_gt5_gt10_weighted", token_slow),
+        ("video_cloud_api.request_token.status_5xx", int(num(counters.get("video_cloud_api.request_token.status_5xx"), 0))),
+        ("ingress_nginx.request_token.status_5xx", int(num(counters.get("ingress_nginx.request_token.status_5xx"), 0))),
+        ("request_token.duration_p95_ms", api_p95),
+    ]:
+        if value:
+            token_support.append(f"{label}={value}")
+    if token_score:
+        candidates.append(("token bootstrap", token_score, token_support))
+
+    shadow_support = []
+    shadow_fail = metric_fail(phase_totals, "app_shadow_accepted_wait", "device_delta_wait", "app_delta_clear_wait")
+    api_timeout = counter_sum(counters, "video_cloud_api.timeout", "video_cloud_api.socket_error", "emqx.conn_congestion")
+    shadow_score = shadow_fail * 3 + api_timeout * 2
+    for label, value in [
+        ("shadow_wait_fail", shadow_fail),
+        ("video_cloud_api.timeout", int(num(counters.get("video_cloud_api.timeout"), 0))),
+        ("video_cloud_api.socket_error", int(num(counters.get("video_cloud_api.socket_error"), 0))),
+        ("emqx.conn_congestion", int(num(counters.get("emqx.conn_congestion"), 0))),
+    ]:
+        if value:
+            shadow_support.append(f"{label}={value}")
+    if shadow_score:
+        candidates.append(("shadow/API-to-MQTT path", shadow_score, shadow_support))
+
+    broker_support = []
+    broker_fail = metric_fail(phase_totals, "device_mqtt_dial", "device_mqtt_connack", "device_subscribe_delta", "app_mqtt_dial", "app_mqtt_connack")
+    broker_pressure = 0
+    for key, value in counters.items():
+        if key.startswith("emqx.") and any(marker in key for marker in ["shutdown_discarded", "shutdown_ssl_closed", "shutdown_tcp_closed"]):
+            broker_pressure += int(num(value, 0))
+    broker_score = broker_fail * 3 + broker_pressure
+    for label, value in [("mqtt_phase_fail", broker_fail), ("emqx_shutdown_or_discarded", broker_pressure)]:
+        if value:
+            broker_support.append(f"{label}={value}")
+    if broker_score:
+        candidates.append(("broker path", broker_score, broker_support))
+
+    generator_support = []
+    generator_score = 0
+    if health.get("saturated"):
+        generator_score += 5
+        generator_support.append("load_generator_health.saturated=true")
+    for reason in health.get("reasons") or []:
+        generator_score += 2
+        generator_support.append(f"reason={reason}")
+    if not candidates and generator_score == 0:
+        coverage = client_target_coverage()
+        if "insufficient-client-load" in coverage:
+            generator_score = 1
+            generator_support.append("missing target coverage with low server-side pressure")
+    if generator_score:
+        candidates.append(("generator path", generator_score, generator_support))
+
+    if not candidates:
+        return "- no strong bottleneck candidate from available counters"
+    candidates.sort(key=lambda item: (-item[1], item[0]))
+    lines = [
+        "| Rank | Candidate | Score | Supporting counters |",
+        "| ---: | --- | ---: | --- |",
+    ]
+    for idx, (name, score, support) in enumerate(candidates[:3], start=1):
+        lines.append(f"| {idx} | {md(name)} | {score} | {md(', '.join(support[:8]) or 'counter signal present')} |")
     return "\n".join(lines)
 
 def per_type_mqtt_totals():
@@ -814,7 +1030,12 @@ replacements = {
     "STAGE_DIAGNOSTICS": stage_diagnostics(),
     "CLIENT_TARGET_COVERAGE": client_target_coverage(),
     "DEVICE_MQTT_TOTALS": device_mqtt_totals(),
+    "DEVICE_TOKEN_RETRY_TOTALS": token_retry_totals("Device Token Retry Totals", "device_mqtt_totals", "device_mqtt_totals"),
     "APP_USER_TOTALS": app_user_totals(),
+    "APP_TOKEN_RETRY_TOTALS": token_retry_totals("APP Token Retry Totals", "app_user_totals", "app_user_totals"),
+    "BOTTLENECK_SUMMARY": bottleneck_summary(),
+    "CLIENT_PHASE_METRICS": client_phase_metrics(),
+    "BOTTLENECK_EVENTS": bottleneck_events(),
     "PER_TYPE_MQTT_TOTALS": per_type_mqtt_totals(),
     "USER_ACTION_TOTALS": user_action_totals(),
     "USAGE_WINDOW_TOTALS": usage_window_totals(),

@@ -57,9 +57,8 @@ codebase.
 | Account manager API (`rtk_account_manager`) | Authoritative identity, tenants, RBAC, registry, provisioning intent, outbox/inbox. | ECS on Fargate plus Amazon RDS for PostgreSQL. | EC2/systemd plus RDS, EKS plus RDS, Lambda/API Gateway only after substantial handler and migration redesign. | API requests, task count, DB instance class, DB storage/IOPS, read/write rate, backup retention, NAT/VPC costs. |
 | Account manager workers | Outbox/inbox, lifecycle publication/consumption, cleanup jobs. | ECS Fargate service or scheduled ECS tasks. | EC2/systemd workers, Lambda consumers if broker is changed to SQS/EventBridge. | Always-on worker count, message throughput, retry/dead-letter volume, schedule frequency. |
 | Video cloud API (`rtk_video_cloud cmd/api`) | Device/app HTTP API, auth, activation, WebRTC signaling, firmware/media routes, MQTT adapter wiring. | ECS on Fargate or EC2 Auto Scaling behind ALB/NLB depending on long-lived connection needs. | EKS, EC2/systemd release bundle. Lambda is not a good first-cost default for websocket/MQTT-adjacent and long-lived runtime behavior. | Device count, connected sessions, HTTP/WebSocket request rate, vCPU/memory, egress, ALB/NLB, autoscaling headroom. |
-| Video cloud workers (`cleaner`, `statistics`, `metricsexporter`, `logingester`, `turnregistry`, `crossservice`, `certissuer`) | Background cleanup, metrics, log ingestion, TURN registry, cross-service gateway, certificate issuance. | ECS Fargate services for always-on workers; scheduled ECS tasks for batch cleanup. | EC2/systemd, EKS jobs/deployments, Lambda for narrow scheduled cleanup only after proving runtime fit. | Worker count, schedule frequency, MQTT/log volume, DB writes, metrics scrape frequency, certificate issuance rate. |
-| PostgreSQL for account manager and video cloud | Persistent account, registry, runtime, metadata, firmware, telemetry, outbox/inbox, logs depending on profile. | Amazon RDS for PostgreSQL, separate databases or instances by environment and isolation requirement. | Aurora PostgreSQL for higher availability/read scaling; self-managed PostgreSQL on EC2 for lowest managed-service spend but higher ops burden. | Instance class, Multi-AZ, storage GB, IOPS, backup retention, read replicas, connection count, data transfer. |
-| Optional Video Cloud log database | Separate DB for device runtime/debug logs when `VIDEO_CLOUD_LOG_DB_DSN` differs from primary DSN. | Separate RDS PostgreSQL instance or database when log volume justifies isolation. | CloudWatch Logs / OpenSearch for query-heavy logs after app adapter changes; same RDS DB for low volume. | Runtime log events/day, retention days, query frequency, write IOPS, storage growth. |
+| Video cloud workers (`cleaner`, `statistics`, `metricsexporter`, `logingester`, `turnregistry`, `crossservice`, `certissuer`) | Background cleanup, metrics, runtime log ingestion to central logger, TURN registry, cross-service gateway, certificate issuance. | ECS Fargate services for always-on workers; scheduled ECS tasks for batch cleanup. | EC2/systemd, EKS jobs/deployments, Lambda for narrow scheduled cleanup only after proving runtime fit. | Worker count, schedule frequency, MQTT/log volume, logger ingest volume, DB writes for metadata/billing, metrics scrape frequency, certificate issuance rate. |
+| PostgreSQL for account manager and video cloud | Persistent account, registry, runtime metadata, firmware, telemetry, outbox/inbox, shadow snapshots, and billing ledgers. Raw runtime/debug logs are not stored in PostgreSQL. | Amazon RDS for PostgreSQL, separate databases or instances by environment and isolation requirement. | Aurora PostgreSQL for higher availability/read scaling; self-managed PostgreSQL on EC2 for lowest managed-service spend but higher ops burden. | Instance class, Multi-AZ, storage GB, IOPS, backup retention, read replicas, connection count, data transfer. |
 | Object/blob storage | Clips, snapshots, firmware binaries, backups, release artifacts. | Amazon S3 with lifecycle policies. | S3 Intelligent-Tiering, Glacier classes for archive, EFS only for filesystem semantics. | Stored GB by object type, PUT/GET/list requests, lifecycle transitions, retrievals, cross-region replication, egress. |
 | EMQX MQTT broker | Device transport when MQTT is enabled; MQTT shadows/logs/snapshots/control. | AWS IoT Core for a managed MQTT/device messaging cost scenario, if topic/auth/shadow behavior is adapted and validated. | Self-managed EMQX on ECS/EC2/EKS, or AWS Marketplace EMQX, when protocol compatibility and current ACL behavior matter. | Connected devices, message count, payload size, rules/actions, retained/shadow traffic, TLS auth model, broker node count. |
 | Device shadow hot-state cache | Planned Redis-compatible/Valkey hot path for shadow desired/reported state with Postgres flush. | Amazon ElastiCache for Redis/Valkey. | MemoryDB for Redis if durable Redis-compatible semantics are required; self-managed Redis/Valkey on EC2. | Node class/count, memory used, write rate, replication/Multi-AZ, data transfer, backup retention. |
@@ -67,7 +66,7 @@ codebase.
 | Reverse proxy / TLS / routing | Public and internal HTTP routing, TLS termination, access logs, request size/security headers. | Application Load Balancer with ACM certificates and Route 53 DNS. | Network Load Balancer for TURN or TCP-heavy surfaces; CloudFront for public website/static caching; API Gateway only after route model review. | ALB/NLB hours, LCUs, TLS cert count, request rate, bandwidth, hosted zones, DNS queries. |
 | WebRTC TURN data plane | coturn relay for WebRTC media when direct connectivity fails or strict relay is required. | EC2 or ECS on EC2 with public IP/NLB; AWS Global Accelerator optional for global latency. | Managed third-party TURN provider; EKS DaemonSet/Deployment. | Relay minutes, media bandwidth, public IPs, cross-AZ/data egress, instance/network size, regional distribution. |
 | Metrics and alerting | Prometheus-compatible metrics, service health, dashboard queries, readiness evidence. | Amazon Managed Service for Prometheus plus Amazon Managed Grafana and CloudWatch alarms. | Self-managed Prometheus/Grafana on ECS/EC2; CloudWatch custom metrics for smaller deployments. | Samples/sec, metric cardinality, retention, dashboard users, alert evaluations, custom metric count. |
-| Central service logger | Queryable service logs from systemd/services and dashboard wiring. | CloudWatch Logs for first AWS cost model. | OpenSearch Service for richer query/search; self-managed Loki on ECS/EC2 if keeping current logger shape. | Log GB ingested/day, retention, query volume, indexes, dashboard users, export/archive to S3. |
+| Central logger (`rtk_cloud_logger`) | Queryable service logs and device runtime/debug logs from the log ingester. | CloudWatch Logs for first AWS cost model. | OpenSearch Service for richer query/search; self-managed Loki on ECS/EC2 if keeping current logger shape. | Log GB ingested/day, retention, query volume, indexes, dashboard users, export/archive to S3. |
 | Secrets | DSNs, auth secrets, MQTT credentials, webhook secrets, deploy keys, private keys. | AWS Secrets Manager. | SSM Parameter Store for lower-cost non-rotating parameters; AWS KMS for envelope encryption. | Number of secrets, API calls/month, rotation Lambda usage, KMS requests. |
 | Key and certificate management | Token signing, device/app CA, certissuer, factory enrollment mTLS, service certificates, public TLS, and revocation evidence. | AWS CloudHSM plus CloudHSM-backed `certissuer`, AWS KMS, ACM for public TLS, and Secrets Manager. | AWS Private CA only for an AWS-managed CA profile; KMS-only protection only where the signing model allows it. | HSM hours, certificates issued, KMS requests, service cert count, CRL/OCSP/revocation artifact storage. |
 | Backups | DB dumps, object backups, env/secrets escrow metadata, release manifests. | RDS automated backups/snapshots plus S3 backup bucket. | AWS Backup for centralized backup plans. | Backup storage GB-month, snapshot frequency, retention, cross-region copy, restore testing. |
@@ -251,7 +250,7 @@ Current shape:
   workers.
 - PostgreSQL stores activation, device state, clip metadata, runtime config,
   refresh tokens, firmware, telemetry, notification state, TURN registry, and
-  optional runtime/debug logs.
+  billing ledgers. Raw runtime/debug logs go through the central logger path.
 - Blob payloads for clips, snapshots, and firmware binaries use local or
   S3-backed adapters.
 - Device transport supports websocket and MQTT. WebRTC signaling is relayed
@@ -261,8 +260,9 @@ AWS costing choices:
 
 - ECS/Fargate or EC2 for API and workers, depending on long-lived connection and
   network behavior.
-- RDS PostgreSQL for primary runtime state; separate RDS/log store or CloudWatch
-  Logs/OpenSearch for high-volume runtime logs if query/write volume is high.
+- RDS PostgreSQL for primary runtime state and billing ledgers. Runtime/debug
+  logs go through the central logger path; use CloudWatch Logs/OpenSearch or
+  the chosen logger backend for high-volume retention and query.
 - S3 for clips, snapshots, and firmware objects.
 - EC2/ECS-on-EC2 for coturn/TURN due to public UDP/TCP relay behavior.
 - AWS IoT Core is a candidate for MQTT costing, but self-managed EMQX may be
@@ -423,8 +423,9 @@ Use these columns in the later spreadsheet or AWS Pricing Calculator export:
    are redesigned for SQS/EventBridge/MSK/Amazon MQ.
 4. Decide whether Admin and Frontend SQLite state is lifted to EFS/volumes or
    migrated to managed database storage.
-5. Decide whether device runtime/debug logs stay in PostgreSQL, move to
-   CloudWatch Logs/OpenSearch, or split by retention class.
+5. Decide the managed backend for central logger storage/query
+   (`rtk_cloud_logger`); runtime/debug logs are not a PostgreSQL workload in the
+   current architecture.
 6. Decide production availability level: single-AZ, Multi-AZ, multi-region, or
    customer-specific private region.
 7. Decide whether TURN relay is self-operated on AWS or delegated to a managed

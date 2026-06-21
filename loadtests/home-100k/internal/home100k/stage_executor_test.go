@@ -94,6 +94,15 @@ func TestAggregateStageResultsSumsDeviceAndAppTotals(t *testing.T) {
 			FailureReasons: map[string]int64{
 				"app_desired_publish_failed": 3,
 			},
+			DeviceTypeTotals: map[string]DeviceTypeTotals{
+				"light": {DesiredWrites: 2, DeltaReceived: 2, ReportedPublishes: 2},
+			},
+			UserActionTotals: map[string]int64{
+				"shadow_desired_write": 2,
+			},
+			UsageWindowTotals: map[string]int64{
+				"warm_up": 1,
+			},
 			StageDiagnostics: []map[string]any{{"skip_reason": "device_connect_target_missed"}},
 		},
 		{
@@ -116,6 +125,18 @@ func TestAggregateStageResultsSumsDeviceAndAppTotals(t *testing.T) {
 				"app_desired_publish_failed": 5,
 				"device_delta_wait_failed":   7,
 			},
+			DeviceTypeTotals: map[string]DeviceTypeTotals{
+				"light":      {DesiredWrites: 3, DeltaReceived: 3, ReportedPublishes: 3},
+				"smart_plug": {DesiredWrites: 1, DeltaReceived: 1, ReportedPublishes: 1},
+			},
+			UserActionTotals: map[string]int64{
+				"shadow_desired_write": 3,
+				"shadow_read":          4,
+			},
+			UsageWindowTotals: map[string]int64{
+				"warm_up": 2,
+				"steady":  4,
+			},
 			StageDiagnostics: []map[string]any{{"skip_reason": "zero_desired_writes_scheduled_or_attempted"}},
 		},
 	})
@@ -133,6 +154,18 @@ func TestAggregateStageResultsSumsDeviceAndAppTotals(t *testing.T) {
 	}
 	if result.FailureReasons["app_desired_publish_failed"] != 8 || result.FailureReasons["device_delta_wait_failed"] != 7 {
 		t.Fatalf("failure reasons not summed: %+v", result.FailureReasons)
+	}
+	if result.DeviceTypeTotals["light"].DesiredWrites != 5 || result.DeviceTypeTotals["light"].DeltaReceived != 5 {
+		t.Fatalf("device type totals not summed: %+v", result.DeviceTypeTotals)
+	}
+	if result.DeviceTypeTotals["smart_plug"].ReportedPublishes != 1 {
+		t.Fatalf("device type totals missing shard-only type: %+v", result.DeviceTypeTotals)
+	}
+	if result.UserActionTotals["shadow_desired_write"] != 5 || result.UserActionTotals["shadow_read"] != 4 {
+		t.Fatalf("user action totals not summed: %+v", result.UserActionTotals)
+	}
+	if result.UsageWindowTotals["warm_up"] != 3 || result.UsageWindowTotals["steady"] != 4 {
+		t.Fatalf("usage window totals not summed: %+v", result.UsageWindowTotals)
 	}
 	if len(result.StageDiagnostics) != 2 {
 		t.Fatalf("stage diagnostics len = %d, want 2", len(result.StageDiagnostics))

@@ -569,6 +569,9 @@ func aggregateStageResults(items []StageResult) StageResult {
 		result.FailureDetails = addFailureDetails(result.FailureDetails, item.FailureDetails)
 		result.FailureEvents = appendStageFailureEvents(result.FailureEvents, item.FailureEvents)
 		result.CommandEvents = append(result.CommandEvents, item.CommandEvents...)
+		result.DeviceTypeTotals = addDeviceTypeTotals(result.DeviceTypeTotals, item.DeviceTypeTotals)
+		result.UserActionTotals = addInt64MapTotals(result.UserActionTotals, item.UserActionTotals)
+		result.UsageWindowTotals = addInt64MapTotals(result.UsageWindowTotals, item.UsageWindowTotals)
 		result.StageDiagnostics = append(result.StageDiagnostics, item.StageDiagnostics...)
 	}
 	count := float64(len(items))
@@ -584,6 +587,56 @@ func aggregateStageResults(items []StageResult) StageResult {
 	result.DesiredReportedConvergenceRate /= count
 	result.OfflineDesiredConvergenceRate /= count
 	return result
+}
+
+func addDeviceTypeTotals(left, right map[string]DeviceTypeTotals) map[string]DeviceTypeTotals {
+	if len(left) == 0 && len(right) == 0 {
+		return nil
+	}
+	merged := map[string]DeviceTypeTotals{}
+	for name, value := range left {
+		merged[name] = addDeviceTypeTotal(merged[name], value)
+	}
+	for name, value := range right {
+		merged[name] = addDeviceTypeTotal(merged[name], value)
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
+}
+
+func addDeviceTypeTotal(left, right DeviceTypeTotals) DeviceTypeTotals {
+	return DeviceTypeTotals{
+		TelemetryPublishes: left.TelemetryPublishes + right.TelemetryPublishes,
+		EventPublishes:     left.EventPublishes + right.EventPublishes,
+		DesiredWrites:      left.DesiredWrites + right.DesiredWrites,
+		DeltaReceived:      left.DeltaReceived + right.DeltaReceived,
+		ReportedPublishes:  left.ReportedPublishes + right.ReportedPublishes,
+		BytesSent:          left.BytesSent + right.BytesSent,
+		BytesReceived:      left.BytesReceived + right.BytesReceived,
+	}
+}
+
+func addInt64MapTotals(left, right map[string]int64) map[string]int64 {
+	if len(left) == 0 && len(right) == 0 {
+		return nil
+	}
+	merged := map[string]int64{}
+	for name, value := range left {
+		if value != 0 {
+			merged[name] += value
+		}
+	}
+	for name, value := range right {
+		if value != 0 {
+			merged[name] += value
+		}
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
 }
 
 func connectSuccessPercent(totals DeviceMQTTTotals) float64 {
