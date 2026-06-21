@@ -1584,14 +1584,10 @@ func runCreateUsers(args []string) error {
 		logCreateUsers(format, args...)
 	}
 	safeAccountCreateUser := func(email, displayName, password string) (accountCreateUserResult, error) {
-		sessionMu.Lock()
-		defer sessionMu.Unlock()
-		return accountCreateUser(ctx, &session, safeLog, brandCloudID, email, displayName, password, *role, *rotatePassword)
+		return accountCreateUserWithSessionLock(ctx, &session, &sessionMu, safeLog, brandCloudID, email, displayName, password, *role, *rotatePassword)
 	}
 	safeRevokeAppCertificate := func(brandCloudUserID string) error {
-		sessionMu.Lock()
-		defer sessionMu.Unlock()
-		return accountRevokeBrandCloudUserAppCertificate(ctx, &session, safeLog, brandCloudID, brandCloudUserID)
+		return accountRevokeBrandCloudUserAppCertificateWithSessionLock(ctx, &session, &sessionMu, safeLog, brandCloudID, brandCloudUserID)
 	}
 	var progressMu sync.Mutex
 	progressDone := 0
@@ -1640,7 +1636,7 @@ func runCreateUsers(args []string) error {
 		}
 		appSubject := "app-brand-cloud-user:" + createResult.BrandCloudUserID
 		safeLog("bootstrapping app certificate: email=%s", email)
-		appCredentials, appCertificate, userSession, err := accountEnsureUserAppCertificate(ctx, tenantSlug, email, password, appSubject, existingAppCredentials[email], func() error {
+		appCredentials, appCertificate, userSession, err := accountEnsureUserAppCertificate(ctx, tenantSlug, email, password, appSubject, true, existingAppCredentials[email], func() error {
 			return safeRevokeAppCertificate(createResult.BrandCloudUserID)
 		})
 		if err != nil {
@@ -4147,8 +4143,12 @@ type accountCreateUserResult struct {
 }
 
 func accountCreateUser(ctx accountManagerContext, session *accountPlatformSession, logf func(string, ...any), brandCloudID, email, displayName, password, role string, rotate bool) (accountCreateUserResult, error) {
+	return accountCreateUserWithSessionLock(ctx, session, nil, logf, brandCloudID, email, displayName, password, role, rotate)
+}
+
+func accountCreateUserWithSessionLock(ctx accountManagerContext, session *accountPlatformSession, sessionMu *sync.Mutex, logf func(string, ...any), brandCloudID, email, displayName, password, role string, rotate bool) (accountCreateUserResult, error) {
 	payload, _ := json.Marshal(map[string]any{"email": email, "password": password, "display_name": displayName, "role": role, "rotate_password": rotate})
-	body, status, err := curlJSONStatusWithPlatformRetry(ctx, session, logf, "brand user create", func(platformToken string) ([]byte, int, error) {
+	body, status, err := curlJSONStatusWithPlatformRetryLocked(ctx, session, sessionMu, logf, "brand user create", func(platformToken string) ([]byte, int, error) {
 		return curlJSONStatus(fmt.Sprintf("%s/v1/admin/brand-clouds/%s/users", ctx.BaseURL, brandCloudID), platformToken, payload)
 	})
 	if err != nil {
@@ -4170,7 +4170,11 @@ func accountCreateUser(ctx accountManagerContext, session *accountPlatformSessio
 }
 
 func accountRevokeBrandCloudUserAppCertificate(ctx accountManagerContext, session *accountPlatformSession, logf func(string, ...any), brandCloudID, brandCloudUserID string) error {
-	body, status, err := curlJSONStatusWithPlatformRetry(ctx, session, logf, "brand user app certificate revoke", func(platformToken string) ([]byte, int, error) {
+	return accountRevokeBrandCloudUserAppCertificateWithSessionLock(ctx, session, nil, logf, brandCloudID, brandCloudUserID)
+}
+
+func accountRevokeBrandCloudUserAppCertificateWithSessionLock(ctx accountManagerContext, session *accountPlatformSession, sessionMu *sync.Mutex, logf func(string, ...any), brandCloudID, brandCloudUserID string) error {
+	body, status, err := curlJSONStatusWithPlatformRetryLocked(ctx, session, sessionMu, logf, "brand user app certificate revoke", func(platformToken string) ([]byte, int, error) {
 		endpoint := fmt.Sprintf("%s/v1/admin/brand-clouds/%s/users/%s/app-certificate/revoke", ctx.BaseURL, url.PathEscape(brandCloudID), url.PathEscape(brandCloudUserID))
 		return curlJSONStatus(endpoint, platformToken, []byte("{}"))
 	})
@@ -4209,7 +4213,14 @@ type accountAppCertificate struct {
 
 var appCertificateRetrySleep = time.Sleep
 
-func accountEnsureUserAppCertificate(ctx accountManagerContext, tenantSlug, email, password, subject string, existingAppCredentials map[string]any, recoverMissingLocalCredentials func() error) (map[string]any, map[string]any, accountPlatformSession, error) {
+func accountEnsureUserAppCertificate(ctx accountManagerContext, tenantSlug, email, password, subject string, bootstrapWithCSR bool, existingAppCredentials map[string]any, recoverMissingLocalCredentials func() error) (map[string]any, map[string]any, accountPlatformSession, error) {
+	if strings.TrimSpace(subject) == "" {
+		return nil, nil, accountPlatformSession{}, fmt.Errorf("app certificate subject is required for %s", email)
+	}
+	keyAlgorithm := "ed25519"
+	if bootstrapWithCSR {
+		return accountIssueUserAppCertificate(ctx, tenantSlug, email, password, subject, "", keyAlgorithm)
+	}
 	initial, err := accountLoginUserFull(ctx, tenantSlug, email, password, "")
 	if err != nil {
 		return nil, nil, accountPlatformSession{}, err
@@ -4241,10 +4252,10 @@ func accountEnsureUserAppCertificate(ctx accountManagerContext, tenantSlug, emai
 	if initial.User.ID == "" {
 		return nil, nil, accountPlatformSession{}, fmt.Errorf("login response did not include a user id for app certificate bootstrap: %s", email)
 	}
-	if strings.TrimSpace(subject) == "" {
-		return nil, nil, accountPlatformSession{}, fmt.Errorf("app certificate subject is required for %s", email)
-	}
-	keyAlgorithm := "ed25519"
+	return accountIssueUserAppCertificate(ctx, tenantSlug, email, password, subject, initial.User.ID, keyAlgorithm)
+}
+
+func accountIssueUserAppCertificate(ctx accountManagerContext, tenantSlug, email, password, subject, userID, keyAlgorithm string) (map[string]any, map[string]any, accountPlatformSession, error) {
 	privateKeyPEM, csrPEM, err := generateAppCertificateCSRWithAlgorithm(subject, keyAlgorithm)
 	if err != nil {
 		return nil, nil, accountPlatformSession{}, err
@@ -4270,8 +4281,8 @@ func accountEnsureUserAppCertificate(ctx accountManagerContext, tenantSlug, emai
 			issued, err = accountLoginUserFull(ctx, tenantSlug, email, password, csrPEM)
 		}
 	}
-	if shouldRetryLegacyAppCertificateSubject(err, subject, initial.User.ID) {
-		for _, legacySubject := range legacyAppCertificateSubjects(subject, initial.User.ID) {
+	if shouldRetryLegacyAppCertificateSubject(err, subject, userID) {
+		for _, legacySubject := range legacyAppCertificateSubjects(subject, userID) {
 			logCreateUsers("retrying app certificate with legacy subject: email=%s", email)
 			subject = legacySubject
 			privateKeyPEM, csrPEM, err = generateAppCertificateCSRWithAlgorithm(subject, keyAlgorithm)
