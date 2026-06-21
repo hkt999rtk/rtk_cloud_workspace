@@ -378,6 +378,106 @@ func TestCreateUsersRotatePasswordBypassesCompleteLocalArtifact(t *testing.T) {
 	}
 }
 
+func TestCreateUsersRunsAdminCreateRequestsConcurrently(t *testing.T) {
+	var mu sync.Mutex
+	inFlight := 0
+	maxInFlight := 0
+	createAttempts := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/auth/login":
+			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": testJWT(time.Now().Add(time.Hour)), "refresh_token": testJWT(time.Now().Add(time.Hour))}})
+		case r.URL.Path == "/v1/admin/brand-clouds":
+			_ = json.NewEncoder(w).Encode(map[string]any{"brand_clouds": []map[string]any{{
+				"id":          "brand-1",
+				"name":        "RTK",
+				"tenant_slug": "rtk-test",
+				"metadata":    map[string]string{"brandname": "RTK"},
+			}}})
+		case r.URL.Path == "/v1/admin/brand-clouds/brand-1/users":
+			mu.Lock()
+			inFlight++
+			if inFlight > maxInFlight {
+				maxInFlight = inFlight
+			}
+			createAttempts++
+			mu.Unlock()
+
+			time.Sleep(100 * time.Millisecond)
+
+			mu.Lock()
+			inFlight--
+			mu.Unlock()
+
+			var req map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode create user request: %v", err)
+			}
+			email := fmt.Sprint(req["email"])
+			userNumber := createUsersTestUserNumber(email)
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"action":           "created",
+				"brand_cloud_user": map[string]string{"id": "brand-user-" + userNumber},
+			})
+		case r.URL.Path == "/v1/brand-clouds/rtk-test/auth/login":
+			var req map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode brand login request: %v", err)
+			}
+			email := req["email"]
+			userNumber := createUsersTestUserNumber(email)
+			cert := map[string]string{"status": "csr_required"}
+			if strings.TrimSpace(req["app_csr_pem"]) != "" {
+				cert = map[string]string{
+					"status":             "issued",
+					"certificate_pem":    "new-cert",
+					"fingerprint_sha256": "fingerprint-" + userNumber,
+				}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"user":            map[string]string{"id": "user-" + userNumber, "email": email},
+				"tokens":          map[string]string{"access_token": testJWT(time.Now().Add(time.Hour)), "refresh_token": testJWT(time.Now().Add(time.Hour))},
+				"app_certificate": cert,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	workspace := t.TempDir()
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "linode")
+	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envRoot, "env", "stack.env"), []byte("CLOUD_PROVIDER=linode\nCLOUD_STACK_NAME=video-cloud-staging\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("ACCOUNT_MANAGER_BASE_URL", server.URL)
+	t.Setenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL", "admin@example.test")
+	t.Setenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD", "password")
+	if err := runCreateUsers([]string{"--workspace", workspace, "--env-root", envRoot, "--brandname", "RTK", "--count", "4", "--concurrency", "4", "--rotate-password", "--skip-bootstrap"}); err != nil {
+		t.Fatalf("runCreateUsers() error = %v", err)
+	}
+	if createAttempts != 4 {
+		t.Fatalf("createAttempts=%d, want 4", createAttempts)
+	}
+	if maxInFlight < 2 {
+		t.Fatalf("admin create requests were serialized: maxInFlight=%d", maxInFlight)
+	}
+}
+
+func createUsersTestUserNumber(email string) string {
+	userNumber := strings.TrimPrefix(strings.TrimSuffix(strings.TrimPrefix(email, "rtk+"), "@users.local"), "0")
+	if userNumber == "" {
+		return "0"
+	}
+	return userNumber
+}
+
 func TestReusableLocalUsersRequireCompleteCertificateMaterial(t *testing.T) {
 	envRoot := t.TempDir()
 	artifactDir := filepath.Join(envRoot, "artifacts", "users")

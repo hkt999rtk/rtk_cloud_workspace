@@ -1578,14 +1578,10 @@ func runCreateUsers(args []string) error {
 		logCreateUsers(format, args...)
 	}
 	safeAccountCreateUser := func(email, displayName, password string) (accountCreateUserResult, error) {
-		sessionMu.Lock()
-		defer sessionMu.Unlock()
-		return accountCreateUser(ctx, &session, safeLog, brandCloudID, email, displayName, password, *role, *rotatePassword)
+		return accountCreateUserWithSessionLock(ctx, &session, &sessionMu, safeLog, brandCloudID, email, displayName, password, *role, *rotatePassword)
 	}
 	safeRevokeAppCertificate := func(brandCloudUserID string) error {
-		sessionMu.Lock()
-		defer sessionMu.Unlock()
-		return accountRevokeBrandCloudUserAppCertificate(ctx, &session, safeLog, brandCloudID, brandCloudUserID)
+		return accountRevokeBrandCloudUserAppCertificateWithSessionLock(ctx, &session, &sessionMu, safeLog, brandCloudID, brandCloudUserID)
 	}
 	var progressMu sync.Mutex
 	progressDone := 0
@@ -4141,8 +4137,12 @@ type accountCreateUserResult struct {
 }
 
 func accountCreateUser(ctx accountManagerContext, session *accountPlatformSession, logf func(string, ...any), brandCloudID, email, displayName, password, role string, rotate bool) (accountCreateUserResult, error) {
+	return accountCreateUserWithSessionLock(ctx, session, nil, logf, brandCloudID, email, displayName, password, role, rotate)
+}
+
+func accountCreateUserWithSessionLock(ctx accountManagerContext, session *accountPlatformSession, sessionMu *sync.Mutex, logf func(string, ...any), brandCloudID, email, displayName, password, role string, rotate bool) (accountCreateUserResult, error) {
 	payload, _ := json.Marshal(map[string]any{"email": email, "password": password, "display_name": displayName, "role": role, "rotate_password": rotate})
-	body, status, err := curlJSONStatusWithPlatformRetry(ctx, session, logf, "brand user create", func(platformToken string) ([]byte, int, error) {
+	body, status, err := curlJSONStatusWithPlatformRetryLocked(ctx, session, sessionMu, logf, "brand user create", func(platformToken string) ([]byte, int, error) {
 		return curlJSONStatus(fmt.Sprintf("%s/v1/admin/brand-clouds/%s/users", ctx.BaseURL, brandCloudID), platformToken, payload)
 	})
 	if err != nil {
@@ -4164,7 +4164,11 @@ func accountCreateUser(ctx accountManagerContext, session *accountPlatformSessio
 }
 
 func accountRevokeBrandCloudUserAppCertificate(ctx accountManagerContext, session *accountPlatformSession, logf func(string, ...any), brandCloudID, brandCloudUserID string) error {
-	body, status, err := curlJSONStatusWithPlatformRetry(ctx, session, logf, "brand user app certificate revoke", func(platformToken string) ([]byte, int, error) {
+	return accountRevokeBrandCloudUserAppCertificateWithSessionLock(ctx, session, nil, logf, brandCloudID, brandCloudUserID)
+}
+
+func accountRevokeBrandCloudUserAppCertificateWithSessionLock(ctx accountManagerContext, session *accountPlatformSession, sessionMu *sync.Mutex, logf func(string, ...any), brandCloudID, brandCloudUserID string) error {
+	body, status, err := curlJSONStatusWithPlatformRetryLocked(ctx, session, sessionMu, logf, "brand user app certificate revoke", func(platformToken string) ([]byte, int, error) {
 		endpoint := fmt.Sprintf("%s/v1/admin/brand-clouds/%s/users/%s/app-certificate/revoke", ctx.BaseURL, url.PathEscape(brandCloudID), url.PathEscape(brandCloudUserID))
 		return curlJSONStatus(endpoint, platformToken, []byte("{}"))
 	})
