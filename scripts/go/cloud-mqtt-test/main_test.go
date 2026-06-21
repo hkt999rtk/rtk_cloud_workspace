@@ -1517,7 +1517,7 @@ func TestConnectFailureReasonSeparatesWindowExpiry(t *testing.T) {
 
 func TestParseSustainedStagesRequiresMonotonicTargets(t *testing.T) {
 	stages, err := parseSustainedStages(loadOptions{
-		StageNames:            "25k,50k,75k,100k",
+		StageNames:            "window-a,window-b,window-c,window-d",
 		StageConnectedDevices: "2500,5000,7500,10000",
 		StageDurationsSeconds: "75,75,75,75",
 	})
@@ -1528,7 +1528,7 @@ func TestParseSustainedStagesRequiresMonotonicTargets(t *testing.T) {
 		t.Fatalf("unexpected stages: %#v", stages)
 	}
 	if _, err := parseSustainedStages(loadOptions{
-		StageNames:            "50k,25k",
+		StageNames:            "window-b,window-a",
 		StageConnectedDevices: "5000,2500",
 		StageDurationsSeconds: "75,75",
 	}); err == nil {
@@ -1538,7 +1538,7 @@ func TestParseSustainedStagesRequiresMonotonicTargets(t *testing.T) {
 
 func TestSustainedStageResultsJSONIncludesStageDiagnostics(t *testing.T) {
 	rows := sustainedStageResultsJSON([]sustainedStageResult{{
-		Name:              "25k",
+		Name:              "target",
 		ConnectedTarget:   2500,
 		ActiveConnections: 1000,
 		Status:            "FAIL",
@@ -1996,6 +1996,31 @@ func TestStagedConnectDeadlineReservesActionWindow(t *testing.T) {
 	}
 }
 
+func TestConnectDispatchDelaySpreadsAcrossRampWindow(t *testing.T) {
+	window := 10 * time.Minute
+
+	if got := connectDispatchDelay(0, 20000, window); got != 0 {
+		t.Fatalf("first dispatch delay = %s, want 0", got)
+	}
+	if got := connectDispatchDelay(10000, 20000, window); got != 5*time.Minute {
+		t.Fatalf("mid dispatch delay = %s, want 5m", got)
+	}
+	if got := connectDispatchDelay(19999, 20000, window); got <= 0 || got >= window {
+		t.Fatalf("last dispatch delay = %s, want positive delay before %s", got, window)
+	}
+}
+
+func TestParsePositiveDurationRejectsEmptyAndInvalidValues(t *testing.T) {
+	if got := parsePositiveDuration("10m"); got != 10*time.Minute {
+		t.Fatalf("duration = %s, want 10m", got)
+	}
+	for _, raw := range []string{"", "0", "off", "-1s", "bogus"} {
+		if got := parsePositiveDuration(raw); got != 0 {
+			t.Fatalf("duration %q = %s, want 0", raw, got)
+		}
+	}
+}
+
 func TestDesiredWriteRemainingBudgetScalesForShortDebugStages(t *testing.T) {
 	if got := desiredWriteRemainingBudget(75 * time.Second); got != 15*time.Second {
 		t.Fatalf("75s stage budget = %s, want 15s", got)
@@ -2019,6 +2044,28 @@ func TestTimeoutUntilDeadlineBoundsCommandPhases(t *testing.T) {
 	}
 	if _, err := timeoutUntilDeadline(time.Now().Add(-time.Millisecond), 10*time.Second, "app_mqtt_connect"); err == nil || !strings.Contains(err.Error(), "app_mqtt_connect") {
 		t.Fatalf("expired deadline err = %v, want phase-specific error", err)
+	}
+}
+
+func TestShadowCommandTimeoutUsesConfiguredDuration(t *testing.T) {
+	if got := shadowCommandTimeout(loadOptions{ShadowCommandTimeout: "30s"}); got != 30*time.Second {
+		t.Fatalf("shadowCommandTimeout = %s, want 30s", got)
+	}
+	if got := shadowCommandTimeout(loadOptions{ShadowCommandTimeout: "bogus"}); got != 10*time.Second {
+		t.Fatalf("invalid shadowCommandTimeout = %s, want 10s fallback", got)
+	}
+}
+
+func TestSustainedCommandConcurrencyIsIndependentFromMQTTConcurrency(t *testing.T) {
+	opts := loadOptions{Concurrency: 1000, CommandConcurrency: 100}
+	if got := sustainedCommandConcurrency(opts, 20000); got != 100 {
+		t.Fatalf("sustainedCommandConcurrency = %d, want 100", got)
+	}
+	if got := sustainedCommandConcurrency(loadOptions{Concurrency: 1000, CommandConcurrency: 100}, 40); got != 40 {
+		t.Fatalf("sustainedCommandConcurrency capped by sessions = %d, want 40", got)
+	}
+	if got := sustainedCommandConcurrency(loadOptions{Concurrency: 7}, 100); got != 7 {
+		t.Fatalf("default sustainedCommandConcurrency = %d, want MQTT concurrency fallback", got)
 	}
 }
 

@@ -72,7 +72,7 @@ func TestRunWritesPlanResultsEvidenceAndReportArtifacts(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Status: INCOMPLETE",
-		"## Stage Results",
+		"## Target Results",
 		"desired/reported convergence",
 		"offline desired convergence",
 		"server evidence: complete",
@@ -229,8 +229,8 @@ func TestAggregateCollectedRunUsesConfiguredStageNames(t *testing.T) {
 	if len(result.StageResults) != len(plan.Stages) {
 		t.Fatalf("stage results len = %d, want %d", len(result.StageResults), len(plan.Stages))
 	}
-	if result.StageResults[0].Name != "25pct" {
-		t.Fatalf("first stage name = %q, want 25pct", result.StageResults[0].Name)
+	if result.StageResults[0].Name != "target" {
+		t.Fatalf("first stage name = %q, want target", result.StageResults[0].Name)
 	}
 }
 
@@ -525,7 +525,7 @@ func TestAggregateStageResultsSumsShardActiveSubscriptionGauges(t *testing.T) {
 	items := []StageResult{}
 	for i := 0; i < 5; i++ {
 		items = append(items, StageResult{
-			Name:                  "50pct",
+			Name:                  "target",
 			ConnectedDevices:      4500,
 			ShardConnectedDevices: 900,
 			DeviceMQTTTotals: DeviceMQTTTotals{
@@ -667,6 +667,82 @@ func TestCorrelateServerEvidenceRequiresEMQXIdentity(t *testing.T) {
 	}
 }
 
+func TestCorrelateServerEvidenceAllowsSmallEMQXConnectMetricDrift(t *testing.T) {
+	device := DeviceMQTTTotals{
+		ConnectAttempts:   100000,
+		ConnectSuccess:    100000,
+		Subscribes:        100000,
+		Publishes:         5000,
+		ReceivedMessages:  5000,
+		DeltaReceived:     5000,
+		ReportedPublishes: 5000,
+	}
+	app := AppUserTotals{TokenAttempts: 5000, MQTTConnackSuccess: 5000, DesiredWrites: 5000, ReceivedAcks: 5000}
+	evidence := ServerEvidence{
+		Complete: true,
+		Sources: map[string]EvidenceSource{
+			"emqx": {Available: true, Counters: map[string]int64{
+				"emqx.broker.identity":       1,
+				"mqtt.total_connect_success": 105087,
+			}},
+			"iot_device_shadow": {Available: true, Counters: map[string]int64{
+				"app_user.desired_writes":        5000,
+				"device_mqtt.delta_received":     5000,
+				"device_mqtt.reported_publishes": 5000,
+				"app_user.received_acks":         5000,
+			}},
+		},
+	}
+
+	correlation := correlateServerEvidence(evidence, device, app)
+
+	if correlation.Status != "pass" {
+		t.Fatalf("status = %s, want pass; checks=%#v reasons=%#v", correlation.Status, correlation.Checks, correlation.Reasons)
+	}
+	if check := correlation.Checks[0]; check.Counter != "mqtt.total_connect_success" || check.Delta != 87 || check.Tolerance != 105 || check.Status != "pass" {
+		t.Fatalf("emqx check = %#v, want delta 87 within tolerance 105", check)
+	}
+}
+
+func TestCorrelateServerEvidenceDoesNotTolerateShadowCounterDrift(t *testing.T) {
+	device := DeviceMQTTTotals{
+		ConnectAttempts:   10,
+		ConnectSuccess:    10,
+		Subscribes:        10,
+		Publishes:         4,
+		ReceivedMessages:  4,
+		DeltaReceived:     4,
+		ReportedPublishes: 4,
+	}
+	app := AppUserTotals{TokenAttempts: 4, MQTTConnackSuccess: 4, DesiredWrites: 4, ReceivedAcks: 4}
+	evidence := ServerEvidence{
+		Complete: true,
+		Sources: map[string]EvidenceSource{
+			"emqx": {Available: true, Counters: map[string]int64{
+				"emqx.broker.identity":       1,
+				"mqtt.total_connect_success": 14,
+			}},
+			"iot_device_shadow": {Available: true, Counters: map[string]int64{
+				"app_user.desired_writes":        4,
+				"device_mqtt.delta_received":     4,
+				"device_mqtt.reported_publishes": 4,
+				"app_user.received_acks":         3,
+			}},
+		},
+	}
+
+	correlation := correlateServerEvidence(evidence, device, app)
+
+	if correlation.Status != "fail" {
+		t.Fatalf("status = %s, want fail; checks=%#v", correlation.Status, correlation.Checks)
+	}
+	for _, check := range correlation.Checks {
+		if check.Counter == "app_user.received_acks" && (check.Status != "fail" || check.Tolerance != 0) {
+			t.Fatalf("shadow ack check = %#v, want strict failure", check)
+		}
+	}
+}
+
 func TestCorrelateServerEvidenceAcceptsEMQXListenerStatsIdentity(t *testing.T) {
 	device := DeviceMQTTTotals{
 		ConnectAttempts:   10,
@@ -705,10 +781,10 @@ func TestCorrelateServerEvidenceAcceptsEMQXListenerStatsIdentity(t *testing.T) {
 
 func TestCorrelateRuntimeLogsFindsMissingStreamsAndSequences(t *testing.T) {
 	stages := []StageResult{{
-		Name: "25pct",
+		Name: "target",
 		CommandEvents: []CommandEvent{
 			{
-				Stage:              "25pct",
+				Stage:              "target",
 				DeviceID:           "rtk-0001",
 				CommandID:          "cmd-1",
 				RuntimeLogStreamID: "stream-1",
@@ -718,7 +794,7 @@ func TestCorrelateRuntimeLogsFindsMissingStreamsAndSequences(t *testing.T) {
 				},
 			},
 			{
-				Stage:              "25pct",
+				Stage:              "target",
 				DeviceID:           "rtk-0002",
 				CommandID:          "cmd-2",
 				RuntimeLogStreamID: "stream-2",

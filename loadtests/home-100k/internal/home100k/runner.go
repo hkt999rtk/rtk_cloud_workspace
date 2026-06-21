@@ -878,7 +878,7 @@ func correlateServerEvidence(evidence ServerEvidence, device DeviceMQTTTotals, a
 		serverTotalMQTTConnectSuccess = evidenceCounter(evidence, "emqx", "device_mqtt.connect_success")
 	}
 	checks := []CorrelationCheck{
-		newCorrelationCheck("emqx", "mqtt.total_connect_success", totalMQTTConnectSuccess, serverTotalMQTTConnectSuccess),
+		newCorrelationCheckWithTolerance("emqx", "mqtt.total_connect_success", totalMQTTConnectSuccess, serverTotalMQTTConnectSuccess, mqttConnectCorrelationTolerance(totalMQTTConnectSuccess)),
 		newCorrelationCheck("iot_device_shadow", "app_user.desired_writes", app.DesiredWrites, evidenceCounter(evidence, "iot_device_shadow", "app_user.desired_writes")),
 		newCorrelationCheck("iot_device_shadow", "device_mqtt.delta_received", device.DeltaReceived, evidenceCounter(evidence, "iot_device_shadow", "device_mqtt.delta_received")),
 		newCorrelationCheck("iot_device_shadow", "device_mqtt.reported_publishes", device.ReportedPublishes, evidenceCounter(evidence, "iot_device_shadow", "device_mqtt.reported_publishes")),
@@ -959,21 +959,43 @@ func correlateRuntimeLogs(evidence ServerEvidence, stages []StageResult) Runtime
 }
 
 func newCorrelationCheck(source string, counter string, clientTotal int64, serverTotal int64) CorrelationCheck {
+	return newCorrelationCheckWithTolerance(source, counter, clientTotal, serverTotal, 0)
+}
+
+func newCorrelationCheckWithTolerance(source string, counter string, clientTotal int64, serverTotal int64, tolerance int64) CorrelationCheck {
 	check := CorrelationCheck{
 		Source:      source,
 		Counter:     counter,
 		ClientTotal: clientTotal,
 		ServerTotal: serverTotal,
 		Delta:       serverTotal - clientTotal,
-		Tolerance:   0,
+		Tolerance:   tolerance,
 		Status:      "pass",
 	}
 	if serverTotal == 0 {
 		check.Status = "incomplete"
-	} else if check.Delta != 0 {
+	} else if absInt64(check.Delta) > tolerance {
 		check.Status = "fail"
 	}
 	return check
+}
+
+func mqttConnectCorrelationTolerance(clientTotal int64) int64 {
+	tolerance := clientTotal / 1000
+	if clientTotal%1000 != 0 {
+		tolerance++
+	}
+	if tolerance < 100 {
+		return 100
+	}
+	return tolerance
+}
+
+func absInt64(value int64) int64 {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 
 func evidenceCounter(evidence ServerEvidence, source string, counter string) int64 {

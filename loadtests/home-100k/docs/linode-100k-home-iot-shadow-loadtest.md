@@ -42,11 +42,12 @@ Default first baseline:
 | Server target | Current staging/LKE env-root |
 | Load generators | Ephemeral Linode VMs |
 | Region model | Single Linode region |
-| Stages | 25K, 50K, 75K, 100K connected devices |
-| VM layout | 10 `mixed` VMs |
-| Per-VM device task | Up to 10K simulated devices |
-| Per-VM user task | 500 simulated app users |
-| Total load-generator VMs | 10 for the default 100K-device/5K-user mixed baseline |
+| Ramp-up time | Configured by `HOME100K_RAMP_UP_TIME` |
+| Target connects | Configured by `HOME100K_DEVICES` |
+| VM layout | 5 `mixed` VMs |
+| Per-VM device task | Up to 20K simulated devices |
+| Per-VM user task | 1,000 simulated app users |
+| Total load-generator VMs | 5 for the default 100K-device/5K-user mixed baseline |
 
 Device mix:
 
@@ -81,7 +82,7 @@ Secrets and non-secret test descriptions are intentionally separate:
 - `~/.env` supplies only `LINODE_TOKEN`.
 - `loadtests/home-100k/scenarios/default.description.env` supplies the
   non-secret test description: env-root, brand, region, remote paths, SSH key
-  path, status interval, stage durations, and target load size.
+  path, status interval, ramp-up time, and target load size.
 
 The `home-100k` name is the package/VM-label prefix only. The active test size
 is configured in the description file with `HOME100K_DEVICES`, optional
@@ -128,17 +129,19 @@ Defaults:
 | `HOME100K_REGION` | `us-sea` |
 | `HOME100K_RUN_ID` | Current UTC timestamp |
 | `HOME100K_OUT_DIR` | `loadtests/home-100k/reports/<run-id>` |
+| `HOME100K_SSH_KEY` | `~/.ssh/id_ed25519_rtkcloud` |
 | `HOME100K_SSH_USER` | `root` |
-| `HOME100K_AUTHORIZED_KEY_FILE` | `<HOME100K_SSH_KEY>.pub` |
+| `HOME100K_AUTHORIZED_KEY_FILE` | `~/.ssh/id_ed25519_rtkcloud.pub` |
 | `HOME100K_STATUS_INTERVAL_SECONDS` | `30` |
-| `HOME100K_STAGE_WARM_UP` | `15s` |
-| `HOME100K_STAGE_STEADY` | `45s` |
-| `HOME100K_STAGE_COOL_DOWN` | `15s` |
+| `HOME100K_RAMP_UP_TIME` | `15s` |
 | `HOME100K_DEVICES` | `9000` |
 | `HOME100K_USERS` | unset; planner derives `ceil(devices / devices-per-user)` |
 | `HOME100K_DEVICES_PER_USER` | `20` |
 | `HOME100K_RUNNER_MODE` | `live` |
 | `HOME100K_RUNNER_NOFILE_LIMIT` | `1048576`; remote runner daemon file-descriptor limit for MQTT sockets |
+| `HOME100K_MQTT_CONCURRENCY` | `1000`; per-VM-shard live MQTT connect worker concurrency |
+| `HOME100K_COMMAND_CONCURRENCY` | `100`; per-VM-shard live shadow command concurrency |
+| `HOME100K_SHADOW_COMMAND_TIMEOUT` | `30s`; per-phase shadow command wait timeout |
 | `HOME100K_CREDENTIAL_BUNDLE_FORMAT` | `sqlite-gzip` |
 | `HOME100K_MQTT_ADDR` | `auto-public-mqtt`; live commands discover public MQTT LoadBalancer IPs |
 | `HOME100K_MQTT_PUBLIC_LB_COUNT` | `1`; limits auto-discovered MQTT LoadBalancers for the current 9K profile |
@@ -197,13 +200,11 @@ Kubernetes node resource samples use `kubectl top nodes --no-headers` and print
 `<env-root>/state/lke-kubeconfig.yaml`. Set
 `HOME100K_K8S_NODE_RESOURCE_STATUS=0` to disable K8s node probing.
 
-Stage duration is part of the non-secret description file. The default profile
-uses `HOME100K_STAGE_WARM_UP=15s`, `HOME100K_STAGE_STEADY=45s`, and
-`HOME100K_STAGE_COOL_DOWN=15s`, which plans 75 seconds per stage and 5 minutes
-for the four load stages before VM lifecycle and evidence overhead. Use explicit
-shell environment overrides for longer baseline runs, or a custom
-`HOME100K_DESCRIPTION_FILE` for a reusable alternate profile. Explicit shell
-environment variables take precedence over the description file.
+Ramp-up time is part of the non-secret description file. The default profile
+uses `HOME100K_RAMP_UP_TIME=15s`; larger baseline runs should set a longer
+ramp-up explicitly, or use a custom `HOME100K_DESCRIPTION_FILE` for a reusable
+alternate profile. Explicit shell environment variables take precedence over
+the description file.
 
 Runner mode is also part of the non-secret description file. The default is
 `HOME100K_RUNNER_MODE=live`. Live mode invokes the copied `rtk-cloud` runner to
@@ -253,12 +254,11 @@ ready barrier, sends `START(run_id, sequence, delay_ms)` to every VM, and each
 runner uses its local monotonic clock for the final delay before opening
 MQTT/API traffic. The run writes `start-coordination.json` with ready barrier,
 per-VM start timestamps, and max start skew. In `runner_mode=live`, each VM
-calls the copied `rtk-cloud` binary once to run the assigned staged MQTT/API
-shard only after START is received. Device MQTT delta subscriptions are
-lifetime state: the 50K, 75K, and 100K stages add new device sessions without
-disconnecting and resubscribing devices that were already online in earlier
-stages. Reports must show both new subscribe packets and active
-connection/subscription gauges.
+calls the copied `rtk-cloud` binary once to run its assigned target-connect
+MQTT/API shard only after START is received. Device MQTT delta subscriptions
+are lifetime state: the runner ramps directly to the target connections and
+keeps those sessions active through the measurement window. Reports must show
+both new subscribe packets and active connection/subscription gauges.
 
 Load-generator runtime limits are part of the test conditions:
 

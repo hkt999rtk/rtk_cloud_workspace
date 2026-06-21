@@ -254,6 +254,7 @@ type sustainedCommandContext struct {
 	CommandID   string
 	Phase       string
 	Deadline    time.Time
+	Timeout     time.Duration
 }
 
 type appBootstrapStatus struct {
@@ -304,9 +305,10 @@ type mqttActorProbe struct {
 func main() {
 	var root, envRoot, brandname, outDir, profile, maxUsersRaw, mqttProbeRaw, traceDetail, runID string
 	var rampUp, telemetryInterval, stateInterval, commandRate, loadModel string
+	var shadowCommandTimeout string
 	var stageNamesRaw, stageTargetsRaw, stageDurationsRaw, stageMinCommandsRaw string
 	var deviceTrafficProfile, stageUsageWindowsRaw string
-	var duration, seed, shardIndex, shardCount, concurrency, maxConnectedDevices int
+	var duration, seed, shardIndex, shardCount, concurrency, commandConcurrency, maxConnectedDevices int
 	flag.StringVar(&root, "root", "", "workspace root")
 	flag.StringVar(&envRoot, "env-root", "", "environment root")
 	flag.StringVar(&brandname, "brandname", "", "brand name")
@@ -324,6 +326,8 @@ func main() {
 	flag.StringVar(&telemetryInterval, "telemetry-interval", "", "load-test telemetry interval")
 	flag.StringVar(&stateInterval, "state-interval", "", "load-test state interval")
 	flag.StringVar(&commandRate, "command-rate-per-device-per-day", "", "load-test command rate per device per day")
+	flag.IntVar(&commandConcurrency, "command-concurrency", 0, "load-test sustained shadow command concurrency; defaults to MQTT concurrency")
+	flag.StringVar(&shadowCommandTimeout, "shadow-command-timeout", "", "per-phase sustained shadow command timeout")
 	flag.StringVar(&loadModel, "load-model", "", "load model: actor-separated-probe or home-100k-sustained")
 	flag.StringVar(&stageNamesRaw, "stage-names", "", "comma-separated staged sustained load stage names")
 	flag.StringVar(&stageTargetsRaw, "stage-connected-devices", "", "comma-separated staged sustained per-shard connected device targets")
@@ -351,6 +355,8 @@ func main() {
 		TelemetryInterval:           telemetryInterval,
 		StateInterval:               stateInterval,
 		CommandRatePerDevicePerDay:  commandRate,
+		CommandConcurrency:          commandConcurrency,
+		ShadowCommandTimeout:        shadowCommandTimeout,
 		LoadModel:                   loadModel,
 		StageNames:                  stageNamesRaw,
 		StageConnectedDevices:       stageTargetsRaw,
@@ -380,6 +386,8 @@ type loadOptions struct {
 	TelemetryInterval           string `json:"telemetry_interval"`
 	StateInterval               string `json:"state_interval"`
 	CommandRatePerDevicePerDay  string `json:"command_rate_per_device_per_day"`
+	CommandConcurrency          int    `json:"command_concurrency,omitempty"`
+	ShadowCommandTimeout        string `json:"shadow_command_timeout,omitempty"`
 	LoadModel                   string `json:"load_model"`
 	StageNames                  string `json:"stage_names,omitempty"`
 	StageConnectedDevices       string `json:"stage_connected_devices,omitempty"`
@@ -1180,6 +1188,45 @@ func parseSustainedStages(opts loadOptions) ([]sustainedStage, error) {
 	return stages, nil
 }
 
+func parsePositiveDuration(raw string) time.Duration {
+	duration, err := time.ParseDuration(strings.TrimSpace(raw))
+	if err != nil || duration <= 0 {
+		return 0
+	}
+	return duration
+}
+
+func shadowCommandTimeout(opts loadOptions) time.Duration {
+	if timeout := parsePositiveDuration(opts.ShadowCommandTimeout); timeout > 0 {
+		return timeout
+	}
+	return 10 * time.Second
+}
+
+func sustainedCommandConcurrency(opts loadOptions, sessionCount int) int {
+	limit := opts.CommandConcurrency
+	if limit <= 0 {
+		limit = opts.Concurrency
+	}
+	if limit <= 0 {
+		limit = 25
+	}
+	if sessionCount > 0 && limit > sessionCount {
+		limit = sessionCount
+	}
+	if limit <= 0 {
+		return 1
+	}
+	return limit
+}
+
+func connectDispatchDelay(index int, total int, window time.Duration) time.Duration {
+	if index <= 0 || total <= 1 || window <= 0 {
+		return 0
+	}
+	return time.Duration(int64(window) * int64(index) / int64(total))
+}
+
 func splitCSV(raw string) []string {
 	parts := strings.Split(raw, ",")
 	out := []string{}
@@ -1219,7 +1266,16 @@ func runSustainedHome100KLoad(assignments []assignment, certs []certRecord, bran
 	}
 	start := time.Now()
 	deadline := start.Add(window)
-	sessions := connectSustainedDevicesUntil(assignments, certByID, brandname, runID, apiBaseURL, mqttTargets, opts.Concurrency, deadline, &result.Totals)
+	connectDeadline := deadline
+	rampWindow := parsePositiveDuration(opts.RampUp)
+	if rampWindow > 0 {
+		rampDeadline := start.Add(rampWindow)
+		if rampDeadline.Before(connectDeadline) {
+			connectDeadline = rampDeadline
+		}
+		rampWindow = connectDeadline.Sub(start)
+	}
+	sessions := connectSustainedDevicesPacedUntil(assignments, certByID, brandname, runID, apiBaseURL, mqttTargets, opts.Concurrency, connectDeadline, rampWindow, &result.Totals)
 	attachAppTokenManagers(sessions, apiBaseURL, appCert)
 	defer closeSustainedSessions(sessions)
 	if len(sessions) == 0 {
@@ -1264,6 +1320,7 @@ func runSustainedHome100KLoad(assignments []assignment, certs []certRecord, bran
 				EventIndex:  event.Index,
 				SessionSlot: sessionSlot,
 				Deadline:    deadline,
+				Timeout:     shadowCommandTimeout(opts),
 			}) == nil {
 				result.CommandsPassed++
 			} else {
@@ -1317,13 +1374,21 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 		if stage.ConnectedTarget > len(sessions) {
 			newAssignments := assignments[len(sessions):stage.ConnectedTarget]
 			connectDeadline := stagedConnectDeadline(stageStart, stageDeadline)
+			rampWindow := parsePositiveDuration(opts.RampUp)
+			if rampWindow > 0 {
+				rampDeadline := stageStart.Add(rampWindow)
+				if rampDeadline.Before(connectDeadline) {
+					connectDeadline = rampDeadline
+				}
+				rampWindow = connectDeadline.Sub(stageStart)
+			}
 			connectStarted := time.Now()
 			before := stageResult.Totals
 			stageResult.Diagnostics.ConnectStartedAt = connectStarted.UTC().Format(time.RFC3339Nano)
 			stageResult.Diagnostics.ConnectDeadlineAt = connectDeadline.UTC().Format(time.RFC3339Nano)
 			stageResult.Diagnostics.ConnectWindowSeconds = connectDeadline.Sub(connectStarted).Seconds()
 			stageResult.Diagnostics.NewAssignments = len(newAssignments)
-			newSessions := connectSustainedDevicesUntil(newAssignments, certByID, brandname, runID, apiBaseURL, mqttTargets, opts.Concurrency, connectDeadline, &stageResult.Totals)
+			newSessions := connectSustainedDevicesPacedUntil(newAssignments, certByID, brandname, runID, apiBaseURL, mqttTargets, opts.Concurrency, connectDeadline, rampWindow, &stageResult.Totals)
 			attachAppTokenManagers(newSessions, apiBaseURL, appCert)
 			stageResult.Diagnostics.ConnectFinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
 			stageResult.Diagnostics.ConnectAttempts = stageResult.Totals.ConnectAttempts - before.ConnectAttempts
@@ -1385,16 +1450,7 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 		}
 		var eventMu sync.Mutex
 		var eventWG sync.WaitGroup
-		commandLimit := opts.Concurrency
-		if commandLimit <= 0 {
-			commandLimit = 25
-		}
-		if commandLimit > len(sessions) {
-			commandLimit = len(sessions)
-		}
-		if commandLimit <= 0 {
-			commandLimit = 1
-		}
+		commandLimit := sustainedCommandConcurrency(opts, len(sessions))
 		commandSlots := make(chan struct{}, commandLimit)
 		sessionLocks := make([]sync.Mutex, len(sessions))
 		mergeTotals := func(totals mqttIOTotals) {
@@ -1460,6 +1516,7 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 						EventIndex:  event.Index,
 						SessionSlot: sessionSlot,
 						Deadline:    stageDeadline,
+						Timeout:     shadowCommandTimeout(opts),
 					})
 					eventMu.Lock()
 					defer eventMu.Unlock()
@@ -1608,6 +1665,10 @@ func attachAppTokenManagers(sessions []sustainedDeviceSession, apiBaseURL string
 }
 
 func connectSustainedDevicesUntil(assignments []assignment, certByID map[string]certRecord, brandname, runID, apiBaseURL string, mqttTargets []mqttEndpointTarget, concurrency int, deadline time.Time, totals *mqttIOTotals) []sustainedDeviceSession {
+	return connectSustainedDevicesPacedUntil(assignments, certByID, brandname, runID, apiBaseURL, mqttTargets, concurrency, deadline, 0, totals)
+}
+
+func connectSustainedDevicesPacedUntil(assignments []assignment, certByID map[string]certRecord, brandname, runID, apiBaseURL string, mqttTargets []mqttEndpointTarget, concurrency int, deadline time.Time, paceWindow time.Duration, totals *mqttIOTotals) []sustainedDeviceSession {
 	if concurrency <= 0 {
 		concurrency = 25
 	}
@@ -1670,6 +1731,7 @@ func connectSustainedDevicesUntil(assignments []assignment, certByID map[string]
 		}()
 	}
 	go func() {
+		dispatchStart := time.Now()
 		defer func() {
 			close(jobs)
 			wg.Wait()
@@ -1678,6 +1740,12 @@ func connectSustainedDevicesUntil(assignments []assignment, certByID map[string]
 		for idx, assignment := range assignments {
 			if deadlineReached(deadline) {
 				break
+			}
+			if delay := connectDispatchDelay(idx, len(assignments), paceWindow); delay > 0 {
+				sleepUntilDeadline(time.Until(dispatchStart.Add(delay)), deadline)
+				if deadlineReached(deadline) {
+					break
+				}
 			}
 			if deadline.IsZero() {
 				jobs <- job{Index: idx, Assignment: assignment}
@@ -1810,12 +1878,12 @@ func sustainedHomeDiverseEvents(sessions []sustainedDeviceSession, opts loadOpti
 	events := []sustainedEvent{}
 	for idx, session := range sessions {
 		reportCount := homeDiverseReportCount(session.Record.DeviceType, window)
-		for eventIdx, offset := range deterministicCommandOffsets(reportCount, telemetryWindow) {
+		for eventIdx := 0; eventIdx < reportCount; eventIdx++ {
 			kind := "telemetry"
 			if homeDiverseTrafficProfile(session.Record.DeviceType) == "event_burst" && eventIdx%2 == 0 {
 				kind = "event"
 			}
-			events = append(events, sustainedEvent{Offset: jitterOffset(offset, session.Record.DeviceID, seed, telemetryWindow), Kind: kind, Index: idx})
+			events = append(events, sustainedEvent{Offset: homeDiverseTelemetryOffset(eventIdx, reportCount, session.Record.DeviceID, seed, telemetryWindow), Kind: kind, Index: idx})
 		}
 	}
 
@@ -1951,13 +2019,27 @@ func homeDiverseUserAction(deviceType string, usageWindow string) string {
 	}
 }
 
-func jitterOffset(offset time.Duration, deviceID string, seed int, window time.Duration) time.Duration {
+func homeDiverseTelemetryOffset(eventIdx int, reportCount int, deviceID string, seed int, window time.Duration) time.Duration {
 	if window <= 0 {
 		return 0
 	}
-	hash := sha256.Sum256([]byte(fmt.Sprintf("%d:%s:jitter", seed, deviceID)))
-	jitter := time.Duration(int64(binary.BigEndian.Uint64(hash[:8]) % uint64((250 * time.Millisecond).Nanoseconds())))
-	out := offset + jitter
+	if reportCount <= 0 {
+		reportCount = 1
+	}
+	if eventIdx < 0 {
+		eventIdx = 0
+	}
+	if eventIdx >= reportCount {
+		eventIdx = reportCount - 1
+	}
+	slotWidth := window / time.Duration(reportCount)
+	if slotWidth <= 0 {
+		return 0
+	}
+	slotStart := time.Duration(eventIdx) * slotWidth
+	hash := sha256.Sum256([]byte(fmt.Sprintf("%d:%s:%d:%d:home-diverse-telemetry", seed, deviceID, eventIdx, reportCount)))
+	jitter := time.Duration(int64(binary.BigEndian.Uint64(hash[:8]) % uint64(slotWidth.Nanoseconds())))
+	out := slotStart + jitter
 	if out >= window {
 		return window - time.Nanosecond
 	}
@@ -2029,12 +2111,16 @@ func runSustainedShadowCommandUntil(session sustainedDeviceSession, brandname, r
 
 func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandname, runID, apiBaseURL string, appCert tls.Certificate, totals *mqttIOTotals, ctx sustainedCommandContext) error {
 	deadline := ctx.Deadline
+	commandTimeout := ctx.Timeout
+	if commandTimeout <= 0 {
+		commandTimeout = 10 * time.Second
+	}
 	fail := func(phase, reason string, err error) error {
 		ctx.Phase = phase
 		recordCommandFailure(totals, reason, err, session, ctx)
 		return err
 	}
-	tokenTimeout, err := timeoutUntilDeadline(deadline, 10*time.Second, "app_token")
+	tokenTimeout, err := timeoutUntilDeadline(deadline, commandTimeout, "app_token")
 	if err != nil {
 		totals.HTTPFailures++
 		return fail("app_token", "app_token_request_failed", err)
@@ -2055,7 +2141,7 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 	if target.Host == "" || target.Port <= 0 {
 		return fail("app_mqtt_target", "app_mqtt_connect_failed", errors.New("missing MQTT target for sustained app command"))
 	}
-	appMQTTTimeout, err := timeoutUntilDeadline(deadline, 10*time.Second, "app_mqtt_connect")
+	appMQTTTimeout, err := timeoutUntilDeadline(deadline, commandTimeout, "app_mqtt_connect")
 	if err != nil {
 		totals.HTTPFailures++
 		return fail("app_mqtt_connect", "app_mqtt_connect_failed", err)
@@ -2138,7 +2224,7 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 	totals.AppDesiredWrites++
 	totals.HTTPRequests++
 	totals.TotalHTTPBytesSent += int64(len(shadowUpdateTopic) + len(desiredPayload))
-	acceptedTimeout, err := timeoutUntilDeadline(deadline, 10*time.Second, "app_shadow_accepted_wait")
+	acceptedTimeout, err := timeoutUntilDeadline(deadline, commandTimeout, "app_shadow_accepted_wait")
 	if err != nil {
 		totals.HTTPFailures++
 		return fail("app_shadow_accepted_wait", "app_shadow_accepted_wait_failed", err)
@@ -2149,7 +2235,7 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		totals.HTTPFailures++
 		return fail("app_shadow_accepted_wait", "app_shadow_accepted_wait_failed", err)
 	}
-	deltaTimeout, err := timeoutUntilDeadline(deadline, 10*time.Second, "device_delta_wait")
+	deltaTimeout, err := timeoutUntilDeadline(deadline, commandTimeout, "device_delta_wait")
 	if err != nil {
 		totals.HTTPFailures++
 		return fail("device_delta_wait", "device_delta_wait_failed", err)
@@ -2189,7 +2275,7 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		return fail("device_reported_runtime_log", "device_reported_runtime_log_failed", err)
 	}
 	commandEvent.ExpectedLogs = append(commandEvent.ExpectedLogs, expect)
-	documentsTimeout, err := timeoutUntilDeadline(deadline, 10*time.Second, "app_delta_clear_wait")
+	documentsTimeout, err := timeoutUntilDeadline(deadline, commandTimeout, "app_delta_clear_wait")
 	if err != nil {
 		totals.HTTPFailures++
 		return fail("app_delta_clear_wait", "app_delta_clear_wait_failed", err)

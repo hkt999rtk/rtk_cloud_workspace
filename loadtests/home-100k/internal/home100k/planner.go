@@ -1,6 +1,7 @@
 package home100k
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,8 +13,6 @@ const (
 	DefaultUserCount        = 5000
 	DefaultDevicesPerUser   = 20
 	DefaultVMCount          = 5
-	DefaultDevicesPerVM     = DefaultDeviceCount / DefaultVMCount
-	DefaultUserShards       = DefaultVMCount
 	DefaultServerTarget     = "staging/lke"
 	DefaultLoadGeneratorRun = "ephemeral-linode-vm"
 	DefaultRunnerNofile     = 1048576
@@ -32,9 +31,10 @@ type PlanOptions struct {
 	DeviceCount     int    `json:"device_count,omitempty"`
 	UserCount       int    `json:"user_count,omitempty"`
 	DevicesPerUser  int    `json:"devices_per_user,omitempty"`
-	StageWarmUp     string `json:"stage_warm_up"`
-	StageSteady     string `json:"stage_steady"`
-	StageCoolDown   string `json:"stage_cool_down"`
+	VMCount         int    `json:"vm_count,omitempty"`
+	StageWarmUp     string `json:"-"`
+	StageSteady     string `json:"-"`
+	StageCoolDown   string `json:"-"`
 	RunnerNofile    int    `json:"runner_nofile_limit,omitempty"`
 	SessionModel    string `json:"device_session_model,omitempty"`
 	RunnerReadModel string `json:"runner_read_model,omitempty"`
@@ -47,15 +47,20 @@ type Plan struct {
 	DeviceMix         map[string]int           `json:"device_mix"`
 	DeviceProfiles    map[string]DeviceProfile `json:"device_profiles"`
 	UserProfiles      map[string]UserProfile   `json:"user_profiles"`
-	StageUsageWindows []string                 `json:"stage_usage_windows"`
 	PresenceMix       map[string]int           `json:"presence_mix"`
-	Stages            []Stage                  `json:"stages"`
+	Target            TargetWindow             `json:"target"`
+	Stages            []Stage                  `json:"-"`
 	Shards            []Shard                  `json:"shards"`
 	Assignments       []VMAssignment           `json:"vm_assignments"`
 	Lifecycle         []LifecycleAction        `json:"lifecycle_actions"`
 	Workflow          []string                 `json:"workflow"`
 	Artifacts         Artifacts                `json:"artifacts"`
 	CleanupPlan       []string                 `json:"cleanup_plan"`
+}
+
+type TargetWindow struct {
+	TargetConnects int    `json:"target_connects"`
+	RampUpTime     string `json:"ramp_up_time"`
 }
 
 type TestConditions struct {
@@ -69,6 +74,7 @@ type TestConditions struct {
 	LoadGeneratorRuntime string `json:"load_generator_runtime"`
 	FirstBaselineRegion  string `json:"first_baseline_region_model"`
 	DeviceGeneratorLimit int    `json:"device_generator_density"`
+	VMCount              int    `json:"vm_count"`
 	RunnerNofileLimit    int    `json:"runner_nofile_limit"`
 	DeviceSessionModel   string `json:"device_session_model"`
 	RunnerReadModel      string `json:"runner_read_model"`
@@ -80,7 +86,19 @@ type Stage struct {
 	WarmUp           string `json:"warm_up"`
 	SteadyState      string `json:"steady_state"`
 	CoolDown         string `json:"cool_down"`
-	UsageWindow      string `json:"usage_window,omitempty"`
+}
+
+func (s Stage) MarshalJSON() ([]byte, error) {
+	type stagePlanJSON struct {
+		Name           string `json:"name"`
+		TargetConnects int    `json:"target_connects"`
+		RampUpTime     string `json:"ramp_up_time"`
+	}
+	return json.Marshal(stagePlanJSON{
+		Name:           s.Name,
+		TargetConnects: s.ConnectedDevices,
+		RampUpTime:     s.WarmUp,
+	})
 }
 
 type DeviceProfile struct {
@@ -168,6 +186,13 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	if devicesPerUser <= 0 {
 		return Plan{}, fmt.Errorf("devices per user must be positive, got %d", devicesPerUser)
 	}
+	vmCount := opts.VMCount
+	if vmCount <= 0 {
+		vmCount = DefaultVMCount
+	}
+	if vmCount <= 0 {
+		return Plan{}, fmt.Errorf("VM count must be positive, got %d", vmCount)
+	}
 	runnerNofile := opts.RunnerNofile
 	if runnerNofile <= 0 {
 		runnerNofile = DefaultRunnerNofile
@@ -185,10 +210,11 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 		scenarioProfile = DefaultScenarioProfile
 	}
 
-	plan := Plan{
-		Conditions: TestConditions{
-			EnvRoot:              opts.EnvRoot,
-			Brandname:            opts.Brandname,
+		stages := stagePlan(devices, opts.StageWarmUp, opts.StageSteady, opts.StageCoolDown)
+		plan := Plan{
+			Conditions: TestConditions{
+				EnvRoot:              opts.EnvRoot,
+				Brandname:            opts.Brandname,
 			Region:               opts.Region,
 			Devices:              devices,
 			Users:                users,
@@ -196,21 +222,22 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 			ServerTarget:         DefaultServerTarget,
 			LoadGeneratorRuntime: DefaultLoadGeneratorRun,
 			FirstBaselineRegion:  "single-region",
-			DeviceGeneratorLimit: ceilDiv(devices, DefaultVMCount),
+			DeviceGeneratorLimit: ceilDiv(devices, vmCount),
+			VMCount:              vmCount,
 			RunnerNofileLimit:    runnerNofile,
 			DeviceSessionModel:   sessionModel,
 			RunnerReadModel:      readModel,
 		},
 		ScenarioProfile:   scenarioProfile,
 		DeviceMix:         proportionalMix(devices, homeDiverseDeviceMixBuckets()),
-		DeviceProfiles:    homeDiverseDeviceProfiles(),
-		UserProfiles:      homeDiverseUserProfiles(),
-		StageUsageWindows: homeDiverseUsageWindows(),
-		PresenceMix:       proportionalMix(devices, []ratioBucket{{Name: "online_steady", Weight: 85}, {Name: "offline_desired_queue", Weight: 10}, {Name: "flapping_reconnect", Weight: 5}}),
-		Stages:            stagePlan(devices, opts.StageWarmUp, opts.StageSteady, opts.StageCoolDown, homeDiverseUsageWindows()),
-		Workflow:          []string{"plan", "provision-vms", "sync", "run-stages", "collect", "collect-server-evidence", "aggregate", "destroy-vms"},
-		Artifacts: Artifacts{
-			RunPlan:         "loadtests/home-100k/plans/<run_id>/plan.json",
+			DeviceProfiles:    homeDiverseDeviceProfiles(),
+			UserProfiles:      homeDiverseUserProfiles(),
+			PresenceMix:       proportionalMix(devices, []ratioBucket{{Name: "online_steady", Weight: 85}, {Name: "offline_desired_queue", Weight: 10}, {Name: "flapping_reconnect", Weight: 5}}),
+			Target:            targetWindowFromStages(stages),
+			Stages:            stages,
+			Workflow:          []string{"plan", "provision-vms", "sync", "run-stages", "collect", "collect-server-evidence", "aggregate", "destroy-vms"},
+			Artifacts: Artifacts{
+				RunPlan:         "loadtests/home-100k/plans/<run_id>/plan.json",
 			ShardResults:    "loadtests/home-100k/reports/<run_id>/shards/",
 			AggregateReport: "loadtests/home-100k/reports/<run_id>/TEST_REPORT.md",
 			ServerEvidence:  "loadtests/home-100k/reports/<run_id>/server-evidence.json",
@@ -222,9 +249,9 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 			"destroy leftover VMs by run_id after operator confirmation",
 		},
 	}
-	plan.Shards = append(plan.Shards, deviceShards(opts.Region, devices)...)
-	plan.Shards = append(plan.Shards, userShards(opts.Region, users)...)
-	plan.Assignments = mixedAssignments(opts.Region, plan.Shards)
+	plan.Shards = append(plan.Shards, deviceShards(opts.Region, devices, vmCount)...)
+	plan.Shards = append(plan.Shards, userShards(opts.Region, users, vmCount)...)
+	plan.Assignments = mixedAssignments(opts.Region, plan.Shards, vmCount)
 	plan.Lifecycle = BuildLifecycleActions(plan, "<run_id>")
 	return plan, nil
 }
@@ -268,10 +295,6 @@ func homeDiverseUserProfiles() map[string]UserProfile {
 		"background_app": {RatioWeight: 25, ActionProfile: "open_home_refresh"},
 		"automation":     {RatioWeight: 15, ActionProfile: "automation_command"},
 	}
-}
-
-func homeDiverseUsageWindows() []string {
-	return []string{"morning", "away", "return_home", "evening_peak"}
 }
 
 func defaultDuration(value string, fallback string) string {
@@ -321,33 +344,26 @@ func proportionalMix(total int, buckets []ratioBucket) map[string]int {
 	return out
 }
 
-func stagePlan(devices int, warmUp string, steady string, coolDown string, usageWindows []string) []Stage {
-	percentages := []int{25, 50, 75, 100}
-	out := make([]Stage, 0, len(percentages))
-	for idx, pct := range percentages {
-		connected := devices * pct / 100
-		if connected <= 0 && devices > 0 {
-			connected = 1
-		}
-		name := fmt.Sprintf("%dpct", pct)
-		if devices == DefaultDeviceCount {
-			name = fmt.Sprintf("%dk", connected/1000)
-		}
-		usageWindow := ""
-		if idx < len(usageWindows) {
-			usageWindow = usageWindows[idx]
-		}
-		out = append(out, Stage{Name: name, ConnectedDevices: connected, WarmUp: warmUp, SteadyState: steady, CoolDown: coolDown, UsageWindow: usageWindow})
-	}
-	return out
+func stagePlan(devices int, warmUp string, steady string, coolDown string) []Stage {
+	return []Stage{{Name: "target", ConnectedDevices: devices, WarmUp: warmUp, SteadyState: steady, CoolDown: coolDown}}
 }
 
-func deviceShards(region string, totalDevices int) []Shard {
+func targetWindowFromStages(stages []Stage) TargetWindow {
+	if len(stages) == 0 {
+		return TargetWindow{}
+	}
+	return TargetWindow{
+		TargetConnects: stages[0].ConnectedDevices,
+		RampUpTime:     stages[0].WarmUp,
+	}
+}
+
+func deviceShards(region string, totalDevices int, vmCount int) []Shard {
 	shards := []Shard{}
-	base := totalDevices / DefaultVMCount
-	remainder := totalDevices % DefaultVMCount
+	base := totalDevices / vmCount
+	remainder := totalDevices % vmCount
 	start := 0
-	for idx := 0; idx < DefaultVMCount; idx++ {
+	for idx := 0; idx < vmCount; idx++ {
 		count := base
 		if idx < remainder {
 			count++
@@ -366,9 +382,9 @@ func deviceShards(region string, totalDevices int) []Shard {
 	return shards
 }
 
-func mixedAssignments(region string, shards []Shard) []VMAssignment {
-	assignments := make([]VMAssignment, 0, DefaultVMCount)
-	for idx := 0; idx < DefaultVMCount; idx++ {
+func mixedAssignments(region string, shards []Shard, vmCount int) []VMAssignment {
+	assignments := make([]VMAssignment, 0, vmCount)
+	for idx := 0; idx < vmCount; idx++ {
 		tasks := []Shard{}
 		if shard, ok := findShardInList(shards, "device-mqtt", idx); ok {
 			tasks = append(tasks, shard)
@@ -396,12 +412,12 @@ func findShardInList(shards []Shard, role string, index int) (Shard, bool) {
 	return Shard{}, false
 }
 
-func userShards(region string, totalUsers int) []Shard {
+func userShards(region string, totalUsers int, vmCount int) []Shard {
 	shards := []Shard{}
-	base := totalUsers / DefaultUserShards
-	remainder := totalUsers % DefaultUserShards
+	base := totalUsers / vmCount
+	remainder := totalUsers % vmCount
 	start := 0
-	for idx := 0; idx < DefaultUserShards; idx++ {
+	for idx := 0; idx < vmCount; idx++ {
 		count := base
 		if idx < remainder {
 			count++
@@ -437,11 +453,14 @@ func (p Plan) Validate() error {
 	if p.Conditions.Devices != sumMap(p.PresenceMix) {
 		return fmt.Errorf("presence mix sums to %d, want %d", sumMap(p.PresenceMix), p.Conditions.Devices)
 	}
-	if len(p.ShardsByRole("device-mqtt")) != DefaultVMCount {
-		return fmt.Errorf("100K mixed baseline requires %d device-mqtt shards, got %d", DefaultVMCount, len(p.ShardsByRole("device-mqtt")))
+	if p.Conditions.VMCount <= 0 {
+		return fmt.Errorf("VM count must be positive, got %d", p.Conditions.VMCount)
 	}
-	if len(p.Assignments) != DefaultVMCount {
-		return fmt.Errorf("100K mixed baseline requires %d VM assignments, got %d", DefaultVMCount, len(p.Assignments))
+	if len(p.ShardsByRole("device-mqtt")) != p.Conditions.VMCount {
+		return fmt.Errorf("100K mixed baseline requires %d device-mqtt shards, got %d", p.Conditions.VMCount, len(p.ShardsByRole("device-mqtt")))
+	}
+	if len(p.Assignments) != p.Conditions.VMCount {
+		return fmt.Errorf("100K mixed baseline requires %d VM assignments, got %d", p.Conditions.VMCount, len(p.Assignments))
 	}
 	return nil
 }

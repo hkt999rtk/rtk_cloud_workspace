@@ -214,9 +214,6 @@ def scenario_mix():
     lines = [f"- Scenario profile: `{md(plan.get('scenario_profile') or 'home-diverse-v1')}`"]
     lines.extend(render_map("Device mix", plan.get("device_mix") or {}))
     lines.extend(render_map("Presence mix", plan.get("presence_mix") or {}))
-    windows = plan.get("stage_usage_windows") or []
-    if windows:
-        lines.append("- Stage usage windows: `" + "`, `".join(md(window) for window in windows) + "`")
     return "\n".join(lines)
 
 def device_traffic_profiles():
@@ -251,25 +248,30 @@ def user_scenario_profiles():
         )
     return "\n".join(lines)
 
-def stages_section():
+def target_window_section():
     plan = result.get("plan") or {}
+    target = plan.get("target") or {}
+    if target:
+        return "\n".join([
+            f"- target connects: {num(target.get('target_connects'), 0)}",
+            f"- ramp-up time: {md(target.get('ramp_up_time', '-'))}",
+        ])
     rows = []
     for stage in plan.get("stages") or []:
-        usage_window = stage.get("usage_window") or ""
-        suffix = f", usage window {md(usage_window)}" if usage_window else ""
+        target_connects = stage.get("target_connects", stage.get("connected_devices", 0))
+        ramp_up_time = stage.get("ramp_up_time", stage.get("warm_up", "-"))
         rows.append(
-            f"- {md(stage.get('name'))}: {num(stage.get('connected_devices'), 0)} connected devices, "
-            f"warm-up {md(stage.get('warm_up', '-'))}, steady {md(stage.get('steady_state', '-'))}, "
-            f"cool-down {md(stage.get('cool_down', '-'))}{suffix}"
+            f"- {md(stage.get('name'))}: target connects {num(target_connects, 0)}, "
+            f"ramp-up time {md(ramp_up_time)}"
         )
     return lines_or_dash(rows)
 
 def stage_results():
     stages = result.get("stage_results") or []
     if not stages:
-        return "- no stage results"
+        return "- no target results"
     lines = [
-        "| Stage | Devices | MQTT connect | Reconnects | Shadow get p95 | Desired update p95 | Delta receive p95 | Desired->reported p95 | Offline desired p95 | Delta clear | Conflicts | Rejected | Auth violations | Client tokens | Duplicate apply |",
+        "| Window | Devices | MQTT connect | Reconnects | Shadow get p95 | Desired update p95 | Delta receive p95 | Desired->reported p95 | Offline desired p95 | Delta clear | Conflicts | Rejected | Auth violations | Client tokens | Duplicate apply |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for s in stages:
@@ -294,7 +296,7 @@ def stage_results():
 def stage_diagnostics():
     stages = result.get("stage_results") or []
     lines = [
-        "| Stage | Shard | Target | Before | After | New assignments | Connect window | Action window | Connect attempts | Connect success | Connect fail | Subscribes | Commands scheduled | Commands attempted | Commands passed | Skip reason |",
+        "| Window | Shard | Target | Before | After | New assignments | Connect window | Action window | Connect attempts | Connect success | Connect fail | Subscribes | Commands scheduled | Commands attempted | Commands passed | Skip reason |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for stage in stages:
@@ -315,13 +317,13 @@ def stage_diagnostics():
                 f"{num(diag.get('commands_passed'), 0)} | {md(diag.get('skip_reason', '-'))} |"
             )
     if len(lines) == 2:
-        return "- no stage diagnostics"
+        return "- no target diagnostics"
     return "\n".join(lines)
 
 def device_mqtt_totals():
     stages = result.get("stage_results") or []
     lines = [
-        "| Stage | Connect attempts | Connect success | Connect fail | Token ok/fail | Dial ok/fail | CONNACK ok/fail | Subscribe ok/fail | Publishes | Received | Delta received | Reported publishes | Rejected publishes | Bytes sent | Bytes received |",
+        "| Window | Connect attempts | Connect success | Connect fail | Token ok/fail | Dial ok/fail | CONNACK ok/fail | Subscribe ok/fail | Publishes | Received | Delta received | Reported publishes | Rejected publishes | Bytes sent | Bytes received |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for s in stages:
@@ -350,7 +352,7 @@ def device_mqtt_totals():
 def app_user_totals():
     stages = result.get("stage_results") or []
     lines = [
-        "| Stage | Login attempts | Login success | Login fail | Token ok/fail | Dial ok/fail | CONNACK ok/fail | List devices | Read shadow | Desired writes | Received ACKs | Bytes sent | Bytes received |",
+        "| Window | Login attempts | Login success | Login fail | Token ok/fail | Dial ok/fail | CONNACK ok/fail | List devices | Read shadow | Desired writes | Received ACKs | Bytes sent | Bytes received |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for s in stages:
@@ -436,7 +438,7 @@ def failure_reasons():
     stages = result.get("stage_results") or []
     totals = defaultdict(int)
     lines = [
-        "| Stage | Reason | Count |",
+        "| Window | Reason | Count |",
         "| --- | --- | ---: |",
     ]
     for stage in stages:
@@ -521,7 +523,7 @@ def failure_details():
     stages = result.get("stage_results") or []
     totals = defaultdict(lambda: defaultdict(int))
     lines = [
-        "| Stage | Reason | Detail | Count |",
+        "| Window | Reason | Detail | Count |",
         "| --- | --- | --- | ---: |",
     ]
     for stage in stages:
@@ -578,7 +580,7 @@ def runtime_log_correlation():
     missing_streams = correlation.get("missing_stream_samples") or []
     if missing_streams:
         lines.extend([
-            "| Missing stream stage | Device | Command | Runtime log stream |",
+            "| Missing stream window | Device | Command | Runtime log stream |",
             "| --- | --- | --- | --- |",
         ])
         for row in missing_streams:
@@ -589,7 +591,7 @@ def runtime_log_correlation():
     missing_seqs = correlation.get("missing_sequence_samples") or []
     if missing_seqs:
         lines.extend([
-            "| Missing seq stage | Device | Command | Runtime log stream | Seq | Source | Message |",
+            "| Missing seq window | Device | Command | Runtime log stream | Seq | Source | Message |",
             "| --- | --- | --- | --- | ---: | --- | --- |",
         ])
         for row in missing_seqs:
@@ -629,11 +631,11 @@ def start_coordination():
 def client_target_coverage():
     stages = result.get("stage_results") or []
     if not stages:
-        return "- no stage results"
+        return "- no target results"
     total_devices = num(((result.get("plan") or {}).get("conditions") or {}).get("devices"), 100000)
     total_users = num(((result.get("plan") or {}).get("conditions") or {}).get("users"), 5000)
     lines = [
-        "| Stage | Target devices | Shard target | New connect attempts | New connect success | Active connections | Active subscriptions | Target users | APP desired writes | APP received ACKs | Coverage status |",
+        "| Window | Target connects | Shard target | New connect attempts | New connect success | Active connections | Active subscriptions | Target users | APP desired writes | APP received ACKs | Coverage status |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for stage in stages:
@@ -807,7 +809,7 @@ replacements = {
     "SCENARIO_MIX": scenario_mix(),
     "DEVICE_TRAFFIC_PROFILES": device_traffic_profiles(),
     "USER_SCENARIO_PROFILES": user_scenario_profiles(),
-    "STAGES": stages_section(),
+    "STAGES": target_window_section(),
     "STAGE_RESULTS": stage_results(),
     "STAGE_DIAGNOSTICS": stage_diagnostics(),
     "CLIENT_TARGET_COVERAGE": client_target_coverage(),

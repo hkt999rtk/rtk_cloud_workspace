@@ -39,7 +39,7 @@ func RenderReport(input ReportInput) string {
 	}
 	if !clientTargetCoverageComplete(input.Plan.Conditions, input.StageResults) {
 		status = "INCOMPLETE"
-		reasons = append(reasons, "Client target coverage is incomplete; sampled counters do not satisfy stage device/user targets")
+		reasons = append(reasons, "Client target coverage is incomplete; sampled counters do not satisfy target connects or user targets")
 	}
 	if missing := missingDeviceTypeEvidence(input.Plan, input.StageResults); len(missing) > 0 {
 		status = "INCOMPLETE"
@@ -116,9 +116,6 @@ func RenderReport(input ReportInput) string {
 	fmt.Fprintf(&b, "- Scenario profile: `%s`\n", firstNonEmpty(input.Plan.ScenarioProfile, DefaultScenarioProfile))
 	renderMap(&b, "Device mix", input.Plan.DeviceMix)
 	renderMap(&b, "Presence mix", input.Plan.PresenceMix)
-	if len(input.Plan.StageUsageWindows) > 0 {
-		fmt.Fprintf(&b, "- Stage usage windows: `%s`\n", strings.Join(input.Plan.StageUsageWindows, "`, `"))
-	}
 	fmt.Fprintln(&b)
 
 	if len(input.Plan.DeviceProfiles) > 0 {
@@ -161,19 +158,18 @@ func RenderReport(input ReportInput) string {
 	fmt.Fprintln(&b, "- Device desired writes must be rejected; stale versions must be counted as conflicts.")
 	fmt.Fprintln(&b)
 
-	fmt.Fprintln(&b, "## Stages")
-	for _, stage := range input.Plan.Stages {
-		window := ""
-		if strings.TrimSpace(stage.UsageWindow) != "" {
-			window = ", usage window " + stage.UsageWindow
-		}
-		fmt.Fprintf(&b, "- %s: %d connected devices, warm-up %s, steady %s, cool-down %s%s\n", stage.Name, stage.ConnectedDevices, stage.WarmUp, stage.SteadyState, stage.CoolDown, window)
+	fmt.Fprintln(&b, "## Target Window")
+	target := input.Plan.Target
+	if target.TargetConnects == 0 {
+		target = targetWindowFromStages(input.Plan.Stages)
 	}
+	fmt.Fprintf(&b, "- target connects: %d\n", target.TargetConnects)
+	fmt.Fprintf(&b, "- ramp-up time: %s\n", target.RampUpTime)
 	fmt.Fprintln(&b)
 
 	if len(input.StageResults) > 0 {
-		fmt.Fprintln(&b, "## Stage Results")
-		fmt.Fprintln(&b, "| Stage | Devices | MQTT connect | Reconnects | Shadow get p50 | Shadow get p95 | Shadow get p99 | Desired update p95 | Delta receive p95 | Desired->reported p95 | Offline desired p95 | desired/reported convergence | offline desired convergence | Delta clear | Conflicts | Rejected | Auth violations | Client tokens | Duplicate apply |")
+		fmt.Fprintln(&b, "## Target Results")
+		fmt.Fprintln(&b, "| Window | Devices | MQTT connect | Reconnects | Shadow get p50 | Shadow get p95 | Shadow get p99 | Desired update p95 | Delta receive p95 | Desired->reported p95 | Offline desired p95 | desired/reported convergence | offline desired convergence | Delta clear | Conflicts | Rejected | Auth violations | Client tokens | Duplicate apply |")
 		fmt.Fprintln(&b, "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
 		for _, stage := range input.StageResults {
 			fmt.Fprintf(&b, "| %s | %d | %.2f%% | %d | %.2f ms | %.2f ms | %.2f ms | %.2f ms | %.2f ms | %.2f ms | %.2f ms | %.2f%% | %.2f%% | %.2f%% | %d | %d | %d | %d | %d |\n",
@@ -202,8 +198,8 @@ func RenderReport(input ReportInput) string {
 
 		diagnosticRows := stageDiagnosticRows(input.StageResults)
 		if len(diagnosticRows) > 0 {
-			fmt.Fprintln(&b, "## Stage Diagnostics")
-			fmt.Fprintln(&b, "| Stage | Shard | Target | Before | After | Connect attempts | Connect success | Connect fail | Commands scheduled | Commands attempted | Commands passed | Skip reason |")
+			fmt.Fprintln(&b, "## Target Diagnostics")
+			fmt.Fprintln(&b, "| Window | Shard | Target | Before | After | Connect attempts | Connect success | Connect fail | Commands scheduled | Commands attempted | Commands passed | Skip reason |")
 			fmt.Fprintln(&b, "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |")
 			for _, row := range diagnosticRows {
 				fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %s |\n",
@@ -225,7 +221,7 @@ func RenderReport(input ReportInput) string {
 		}
 
 		fmt.Fprintln(&b, "## Device MQTT Totals")
-		fmt.Fprintln(&b, "| Stage | Connect attempts | Connect success | Connect fail | New subscribes | Active connections | Active subscriptions | Publishes | Received | Delta received | Reported publishes | Rejected publishes | Bytes sent | Bytes received |")
+		fmt.Fprintln(&b, "| Window | Connect attempts | Connect success | Connect fail | New subscribes | Active connections | Active subscriptions | Publishes | Received | Delta received | Reported publishes | Rejected publishes | Bytes sent | Bytes received |")
 		fmt.Fprintln(&b, "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
 		var deviceTotal DeviceMQTTTotals
 		for _, stage := range input.StageResults {
@@ -239,7 +235,7 @@ func RenderReport(input ReportInput) string {
 		fmt.Fprintln(&b)
 
 		fmt.Fprintln(&b, "## APP/User Totals")
-		fmt.Fprintln(&b, "| Stage | Login attempts | Login success | Login fail | List devices | Read shadow | Desired writes | Received ACKs | Bytes sent | Bytes received |")
+		fmt.Fprintln(&b, "| Window | Login attempts | Login success | Login fail | List devices | Read shadow | Desired writes | Received ACKs | Bytes sent | Bytes received |")
 		fmt.Fprintln(&b, "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
 		var appTotal AppUserTotals
 		for _, stage := range input.StageResults {
@@ -289,7 +285,7 @@ func RenderReport(input ReportInput) string {
 		reasonRows := failureReasonRows(input.StageResults)
 		if len(reasonRows) > 0 {
 			fmt.Fprintln(&b, "## Failure Reasons")
-			fmt.Fprintln(&b, "| Stage | Reason | Count |")
+			fmt.Fprintln(&b, "| Window | Reason | Count |")
 			fmt.Fprintln(&b, "| --- | --- | ---: |")
 			for _, row := range reasonRows {
 				fmt.Fprintf(&b, "| %s | %s | %d |\n", row.Stage, row.Reason, row.Count)
@@ -300,7 +296,7 @@ func RenderReport(input ReportInput) string {
 		detailRows := failureDetailRows(input.StageResults)
 		if len(detailRows) > 0 {
 			fmt.Fprintln(&b, "## Failure Details")
-			fmt.Fprintln(&b, "| Stage | Reason | Detail | Count |")
+			fmt.Fprintln(&b, "| Window | Reason | Detail | Count |")
 			fmt.Fprintln(&b, "| --- | --- | --- | ---: |")
 			for _, row := range detailRows {
 				fmt.Fprintf(&b, "| %s | %s | %s | %d |\n", row.Stage, row.Reason, redact(row.Detail), row.Count)
@@ -311,7 +307,7 @@ func RenderReport(input ReportInput) string {
 		eventRows := failureEventRows(input.StageResults)
 		if len(eventRows) > 0 {
 			fmt.Fprintln(&b, "## Failure Event Samples")
-			fmt.Fprintln(&b, "| Stage | Reason | Detail | Phase | Device | Command | Event index | Session slot | Remaining ms | MQTT target | Reader error | At |")
+			fmt.Fprintln(&b, "| Window | Reason | Detail | Phase | Device | Command | Event index | Session slot | Remaining ms | MQTT target | Reader error | At |")
 			fmt.Fprintln(&b, "| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- | --- | --- |")
 			for _, event := range eventRows {
 				stage := firstNonEmpty(event.Stage, "unknown")
@@ -358,14 +354,14 @@ func RenderReport(input ReportInput) string {
 		fmt.Fprintf(&b, "- missing streams: %d\n", input.RuntimeLogCorrelation.MissingStreamCount)
 		fmt.Fprintf(&b, "- missing expected log sequences: %d\n", input.RuntimeLogCorrelation.MissingSequenceCount)
 		if len(input.RuntimeLogCorrelation.MissingStreamSamples) > 0 {
-			fmt.Fprintln(&b, "| Missing stream stage | Device | Command | Runtime log stream |")
+			fmt.Fprintln(&b, "| Missing stream window | Device | Command | Runtime log stream |")
 			fmt.Fprintln(&b, "| --- | --- | --- | --- |")
 			for _, missing := range input.RuntimeLogCorrelation.MissingStreamSamples {
 				fmt.Fprintf(&b, "| %s | %s | %s | %s |\n", redact(missing.Stage), redact(missing.DeviceID), redact(missing.CommandID), redact(missing.RuntimeLogStreamID))
 			}
 		}
 		if len(input.RuntimeLogCorrelation.MissingSequenceSamples) > 0 {
-			fmt.Fprintln(&b, "| Missing seq stage | Device | Command | Runtime log stream | Seq | Source | Message |")
+			fmt.Fprintln(&b, "| Missing seq window | Device | Command | Runtime log stream | Seq | Source | Message |")
 			fmt.Fprintln(&b, "| --- | --- | --- | --- | ---: | --- | --- |")
 			for _, missing := range input.RuntimeLogCorrelation.MissingSequenceSamples {
 				fmt.Fprintf(&b, "| %s | %s | %s | %s | %d | %s | %s |\n", redact(missing.Stage), redact(missing.DeviceID), redact(missing.CommandID), redact(missing.RuntimeLogStreamID), missing.Seq, redact(missing.Source), redact(missing.Message))

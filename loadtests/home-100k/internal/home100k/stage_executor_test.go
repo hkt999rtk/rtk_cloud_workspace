@@ -14,8 +14,8 @@ func TestExecuteStagesUsesActorFlowsForShadowMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExecuteStages() error = %v", err)
 	}
-	if len(results) != 4 {
-		t.Fatalf("stage results = %d, want 4", len(results))
+	if len(results) != 1 {
+		t.Fatalf("stage results = %d, want 1", len(results))
 	}
 	for _, result := range results {
 		if result.DesiredReportedConvergenceRate != 100 {

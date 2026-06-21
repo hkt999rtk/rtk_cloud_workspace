@@ -219,7 +219,6 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 		"| security_sensor | 10 | event_burst | security |",
 		"## User Scenario Profiles",
 		"| daily_user | 45 | single_device_command |",
-		"usage window morning",
 		"## Per-Type MQTT Totals",
 		"| light | 9 | 0 | 5 | 5 | 5 | 900 | 600 |",
 		"| security_sensor | 0 | 4 | 0 | 0 | 4 | 120 | 80 |",

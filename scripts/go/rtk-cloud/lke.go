@@ -2458,7 +2458,7 @@ func lkePostgresStatefulSetManifest(env map[string]string) string {
 `, firstNonEmpty(os.Getenv("LKE_POSTGRES_STORAGE"), env["LKE_POSTGRES_STORAGE"], "20Gi"))
 	}
 	placement := lkePostgresPlacementManifest(env)
-	requestCPU := firstNonEmpty(os.Getenv("LKE_POSTGRES_REQUEST_CPU"), env["LKE_POSTGRES_REQUEST_CPU"], "4")
+	requestCPU := firstNonEmpty(os.Getenv("LKE_POSTGRES_REQUEST_CPU"), env["LKE_POSTGRES_REQUEST_CPU"], "2")
 	requestMemory := firstNonEmpty(os.Getenv("LKE_POSTGRES_REQUEST_MEMORY"), env["LKE_POSTGRES_REQUEST_MEMORY"], "2Gi")
 	limitMemory := firstNonEmpty(os.Getenv("LKE_POSTGRES_LIMIT_MEMORY"), env["LKE_POSTGRES_LIMIT_MEMORY"], "6Gi")
 	args := lkePostgresArgsManifest(env)
@@ -3808,7 +3808,7 @@ spec:
 }
 
 func lkeMQTTReplicas(env map[string]string) int {
-	raw := strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_MQTT_REPLICAS"), env["LKE_MQTT_REPLICAS"], "1"))
+	raw := strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_MQTT_REPLICAS"), env["LKE_MQTT_REPLICAS"], "4"))
 	replicas, err := strconv.Atoi(raw)
 	if err != nil || replicas < 1 {
 		return 1
@@ -3873,8 +3873,30 @@ func lkeEnsureEMQXCluster(env map[string]string) error {
 			time.Sleep(5 * time.Second)
 			continue
 		}
-		if count := strings.Count(status, "emqx@"); count < len(pods) {
-			lastErr = fmt.Errorf("EMQX cluster status has %d/%d nodes: %s", count, len(pods), strings.TrimSpace(status))
+		running, stopped := lkeEMQXClusterStatusNodes(status)
+		for _, node := range stopped {
+			out, err := runKubectlOutput("-n", namespace, "exec", pods[0].Name, "--", "emqx", "ctl", "cluster", "force-leave", node)
+			lowerOut := strings.ToLower(out)
+			if err != nil || strings.Contains(lowerOut, "failed") || strings.Contains(lowerOut, "node_down") {
+				lastErr = fmt.Errorf("force-leave stopped EMQX node %s: %w: %s", node, err, strings.TrimSpace(out))
+				break
+			}
+		}
+		if lastErr != nil {
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		if len(stopped) > 0 {
+			status, err = runKubectlOutput("-n", namespace, "exec", pods[0].Name, "--", "emqx", "ctl", "cluster", "status")
+			if err != nil {
+				lastErr = fmt.Errorf("verify EMQX cluster status after force-leave: %w", err)
+				time.Sleep(5 * time.Second)
+				continue
+			}
+			running, stopped = lkeEMQXClusterStatusNodes(status)
+		}
+		if running < len(pods) || len(stopped) > 0 {
+			lastErr = fmt.Errorf("EMQX cluster status has running=%d/%d stopped=%d: %s", running, len(pods), len(stopped), strings.TrimSpace(status))
 			time.Sleep(5 * time.Second)
 			continue
 		}
@@ -3903,6 +3925,30 @@ func lkeMQTTPods(env map[string]string) ([]lkeMQTTPod, error) {
 		return pods[i].Name < pods[j].Name
 	})
 	return pods, nil
+}
+
+func lkeEMQXClusterStatusNodes(status string) (int, []string) {
+	runningSection := status
+	if idx := strings.Index(status, "running_nodes"); idx >= 0 {
+		runningSection = status[idx:]
+	}
+	if idx := strings.Index(runningSection, "stopped_nodes"); idx >= 0 {
+		runningSection = runningSection[:idx]
+	}
+	running := strings.Count(runningSection, "emqx@")
+	stoppedSection := ""
+	if idx := strings.Index(status, "stopped_nodes"); idx >= 0 {
+		stoppedSection = status[idx:]
+	}
+	stopped := []string{}
+	for _, field := range strings.FieldsFunc(stoppedSection, func(r rune) bool {
+		return r == '[' || r == ']' || r == ',' || r == '\'' || r == '"' || r == ' ' || r == '\n' || r == '\t' || r == '}'
+	}) {
+		if strings.HasPrefix(field, "emqx@") {
+			stopped = append(stopped, field)
+		}
+	}
+	return running, stopped
 }
 
 func lkeMQTTPlacementManifest(env map[string]string) string {
@@ -5472,6 +5518,17 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 `
 	}
 	if workload.Key == "video-cloud" {
+		mqttHandlerConcurrency := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY"), env["LKE_VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY"], "64")
+		mqttShadowHandlerConcurrency := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_SHADOW_HANDLER_CONCURRENCY"), env["LKE_VIDEO_CLOUD_MQTT_SHADOW_HANDLER_CONCURRENCY"], "64")
+		mqttShadowQueueSize := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_SHADOW_QUEUE_SIZE"), env["LKE_VIDEO_CLOUD_MQTT_SHADOW_QUEUE_SIZE"], "8192")
+		mqttMessageHandlerConcurrency := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_MESSAGE_HANDLER_CONCURRENCY"), env["LKE_VIDEO_CLOUD_MQTT_MESSAGE_HANDLER_CONCURRENCY"], "128")
+		mqttMessageQueueSize := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_MESSAGE_QUEUE_SIZE"), env["LKE_VIDEO_CLOUD_MQTT_MESSAGE_QUEUE_SIZE"], "16384")
+		mqttLogHandlerConcurrency := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_LOG_HANDLER_CONCURRENCY"), env["LKE_VIDEO_CLOUD_MQTT_LOG_HANDLER_CONCURRENCY"], "32")
+		mqttLogQueueSize := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_LOG_QUEUE_SIZE"), env["LKE_VIDEO_CLOUD_MQTT_LOG_QUEUE_SIZE"], "8192")
+		mqttOutboundConnections := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_OUTBOUND_CONNECTIONS"), env["LKE_VIDEO_CLOUD_MQTT_OUTBOUND_CONNECTIONS"], "16")
+		mqttOutboundQueueSize := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_OUTBOUND_QUEUE_SIZE"), env["LKE_VIDEO_CLOUD_MQTT_OUTBOUND_QUEUE_SIZE"], "8192")
+		mqttOutboundWriteTimeout := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_OUTBOUND_WRITE_TIMEOUT"), env["LKE_VIDEO_CLOUD_MQTT_OUTBOUND_WRITE_TIMEOUT"], "10s")
+		shadowCacheTTL := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_SHADOW_CACHE_TTL"), env["LKE_VIDEO_CLOUD_SHADOW_CACHE_TTL"], "24h")
 		extraEnv = fmt.Sprintf(`            - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -5521,6 +5578,18 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
               value: "devices"
             - name: VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY
               value: %q
+            - name: VIDEO_CLOUD_MQTT_SHADOW_HANDLER_CONCURRENCY
+              value: %q
+            - name: VIDEO_CLOUD_MQTT_SHADOW_QUEUE_SIZE
+              value: %q
+            - name: VIDEO_CLOUD_MQTT_MESSAGE_HANDLER_CONCURRENCY
+              value: %q
+            - name: VIDEO_CLOUD_MQTT_MESSAGE_QUEUE_SIZE
+              value: %q
+            - name: VIDEO_CLOUD_MQTT_LOG_HANDLER_CONCURRENCY
+              value: %q
+            - name: VIDEO_CLOUD_MQTT_LOG_QUEUE_SIZE
+              value: %q
             - name: VIDEO_CLOUD_MQTT_OUTBOUND_CONNECTIONS
               value: %q
             - name: VIDEO_CLOUD_MQTT_OUTBOUND_QUEUE_SIZE
@@ -5533,7 +5602,28 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
               value: "redis.%s.svc.cluster.local:6379"
             - name: VIDEO_CLOUD_SHADOW_CACHE_TTL
               value: %q
-`, lkeNamespaceName(env, "platform"), lkeVideoCloudAPIDBMaxOpenConns(env), lkeVideoCloudAPIDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeAccountManagerInternalURL(env), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeMQTTInternalAddr(env), firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY"), env["LKE_VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY"], "16"), firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_OUTBOUND_CONNECTIONS"), env["LKE_VIDEO_CLOUD_MQTT_OUTBOUND_CONNECTIONS"], "8"), firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_OUTBOUND_QUEUE_SIZE"), env["LKE_VIDEO_CLOUD_MQTT_OUTBOUND_QUEUE_SIZE"], "4096"), firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_OUTBOUND_WRITE_TIMEOUT"), env["LKE_VIDEO_CLOUD_MQTT_OUTBOUND_WRITE_TIMEOUT"], "5s"), lkeNamespaceName(env, "platform"), firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_SHADOW_CACHE_TTL"), env["LKE_VIDEO_CLOUD_SHADOW_CACHE_TTL"], "24h"))
+`,
+			lkeNamespaceName(env, "platform"),
+			lkeVideoCloudAPIDBMaxOpenConns(env),
+			lkeVideoCloudAPIDBMaxIdleConns(env),
+			lkeVideoCloudDBConnMaxLifetime(env),
+			lkeAccountManagerInternalURL(env),
+			lkeCloudLoggerEndpoint(env),
+			firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"),
+			lkeMQTTInternalAddr(env),
+			mqttHandlerConcurrency,
+			mqttShadowHandlerConcurrency,
+			mqttShadowQueueSize,
+			mqttMessageHandlerConcurrency,
+			mqttMessageQueueSize,
+			mqttLogHandlerConcurrency,
+			mqttLogQueueSize,
+			mqttOutboundConnections,
+			mqttOutboundQueueSize,
+			mqttOutboundWriteTimeout,
+			lkeNamespaceName(env, "platform"),
+			shadowCacheTTL,
+		)
 		volumeMounts = `          volumeMounts:
             - name: logger-spool
               mountPath: /var/lib/video_cloud/logger-spool
@@ -5605,7 +5695,7 @@ func lkeWorkloadReplicas(env map[string]string, workload lkeWorkload) string {
 	case "account-manager":
 		return firstNonEmpty(os.Getenv("LKE_ACCOUNT_MANAGER_REPLICAS"), env["LKE_ACCOUNT_MANAGER_REPLICAS"], "1")
 	case "video-cloud":
-		return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_REPLICAS"), env["LKE_VIDEO_CLOUD_REPLICAS"], "1")
+		return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_REPLICAS"), env["LKE_VIDEO_CLOUD_REPLICAS"], "3")
 	}
 	return "1"
 }
@@ -5635,8 +5725,8 @@ func lkeContainerResourcesManifest(name string) string {
 	profiles := map[string]resources{
 		"account-manager":         {requestCPU: "250m", requestMemory: "256Mi", limitMemory: "1Gi"},
 		"cloud-logger":            {requestCPU: "100m", requestMemory: "128Mi", limitMemory: "512Mi"},
-		"mqtt":                    {requestCPU: "1", requestMemory: "2Gi", limitMemory: "6Gi"},
-		"video-cloud-api":         {requestCPU: "250m", requestMemory: "384Mi", limitMemory: "1Gi"},
+		"mqtt":                    {requestCPU: "1", requestMemory: "4Gi", limitMemory: "6Gi"},
+		"video-cloud-api":         {requestCPU: "1", requestMemory: "1Gi", limitMemory: "2Gi"},
 		"video-cloud-logingester": {requestCPU: "500m", requestMemory: "512Mi", limitMemory: "1Gi"},
 		"video-cloud-mqttusage":   {requestCPU: "250m", requestMemory: "256Mi", limitMemory: "1Gi"},
 	}
@@ -5658,11 +5748,11 @@ func lkeContainerResourcesManifest(name string) string {
 }
 
 func lkeVideoCloudAPIDBMaxOpenConns(env map[string]string) string {
-	return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_API_DB_MAX_OPEN_CONNS"), env["LKE_VIDEO_CLOUD_API_DB_MAX_OPEN_CONNS"], "20")
+	return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_API_DB_MAX_OPEN_CONNS"), env["LKE_VIDEO_CLOUD_API_DB_MAX_OPEN_CONNS"], "80")
 }
 
 func lkeVideoCloudAPIDBMaxIdleConns(env map[string]string) string {
-	return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_API_DB_MAX_IDLE_CONNS"), env["LKE_VIDEO_CLOUD_API_DB_MAX_IDLE_CONNS"], "10")
+	return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_API_DB_MAX_IDLE_CONNS"), env["LKE_VIDEO_CLOUD_API_DB_MAX_IDLE_CONNS"], "40")
 }
 
 func lkeVideoCloudWorkerDBMaxOpenConns(env map[string]string) string {

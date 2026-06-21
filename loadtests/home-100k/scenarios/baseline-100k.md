@@ -13,7 +13,7 @@ This scenario is the default first baseline for `home-100k`.
 - Load-generator VMs: 5 total `mixed` VMs.
 - Each `mixed` VM owns one `device-mqtt` task shard with 20,000 devices and
   one `user-app` task shard with 1,000 users.
-- Stages: 25K, 50K, 75K, 100K connected devices.
+- Target window: ramp directly to 100,000 connected devices.
 
 ## Device Mix
 

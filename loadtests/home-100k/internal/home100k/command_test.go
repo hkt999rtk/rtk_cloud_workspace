@@ -121,6 +121,20 @@ func readTarGzNames(t *testing.T, path string) map[string]bool {
 	}
 }
 
+func stubCommandOutputRunner(t *testing.T, fn func(name string, args ...string) (string, error)) {
+	t.Helper()
+	oldRunner := commandOutputRunner
+	oldTimeoutRunner := commandOutputRunnerWithTimeout
+	commandOutputRunner = fn
+	commandOutputRunnerWithTimeout = func(_ time.Duration, name string, args ...string) (string, error) {
+		return fn(name, args...)
+	}
+	t.Cleanup(func() {
+		commandOutputRunner = oldRunner
+		commandOutputRunnerWithTimeout = oldTimeoutRunner
+	})
+}
+
 func TestExecutePlanPrintsDeterministicRunPlan(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
@@ -137,12 +151,28 @@ func TestExecutePlanPrintsDeterministicRunPlan(t *testing.T) {
 		`"devices": 100000`,
 		`"users": 5000`,
 		`"role": "mixed"`,
-		`"connected_devices": 100000`,
+		`"target": {`,
+		`"target_connects": 100000`,
+		`"ramp_up_time": "1m"`,
 		`"offline_desired_queue": 10000`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("plan output missing %q:\n%s", want, out)
 		}
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &decoded); err != nil {
+		t.Fatalf("plan output is not JSON: %v\n%s", err, out)
+	}
+	if _, ok := decoded["stages"]; ok {
+		t.Fatalf("plan output still exposes stages:\n%s", out)
+	}
+	target, ok := decoded["target"].(map[string]any)
+	if !ok {
+		t.Fatalf("plan output missing target object:\n%s", out)
+	}
+	if target["target_connects"] != float64(100000) || target["ramp_up_time"] != "1m" {
+		t.Fatalf("unexpected target object: %#v", target)
 	}
 }
 
@@ -162,13 +192,33 @@ func TestExecutePlanAcceptsConfiguredStageDurations(t *testing.T) {
 	}
 	out := stdout.String()
 	for _, want := range []string{
-		`"warm_up": "1m"`,
-		`"steady_state": "3m"`,
-		`"cool_down": "30s"`,
+		`"ramp_up_time": "1m"`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("plan output missing %q:\n%s", want, out)
 		}
+	}
+	for _, unwanted := range []string{`"steady_state"`, `"cool_down"`} {
+		if strings.Contains(out, unwanted) {
+			t.Fatalf("plan output still exposes %q:\n%s", unwanted, out)
+		}
+	}
+}
+
+func TestExecutePlanRejectsLegacyStageProfileFlag(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Execute([]string{
+		"--", "plan",
+		"--env-root", "cloud_env/staging/lke",
+		"--brandname", "RTK",
+		"--region", "us-sea",
+		"--stage-profile", "staged",
+	}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("Execute(plan --stage-profile staged) code = 0 stdout=%s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "flag provided but not defined: -stage-profile") {
+		t.Fatalf("stderr missing unsupported stage-profile error: %s", stderr.String())
 	}
 }
 
@@ -193,7 +243,7 @@ func TestExecuteRunWithoutLiveProvisionerProducesIncompleteReport(t *testing.T) 
 		"Missing server evidence",
 		"## IoT Device Shadow Scenario",
 		"Offline desired queue",
-		"## Stage Results",
+		"## Target Results",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("run output missing %q:\n%s", want, out)
@@ -654,6 +704,7 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 		"--remote-env-root", "/root/rtk_cloud_workspace/cloud_env/staging/lke",
 		"--ssh-user", "root",
 		"--ssh-key", "/tmp/test-key",
+		"--generator-hosts-override-ip", "172.232.190.230",
 	}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("Execute(sync live) code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
@@ -708,6 +759,20 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 	localCloudMQTTTest, _ := extraVars["local_cloud_mqtt_test"].(string)
 	if !filepath.IsAbs(localCloudMQTTTest) {
 		t.Fatalf("extra vars local_cloud_mqtt_test = %q, want absolute path", extraVars["local_cloud_mqtt_test"])
+	}
+	mqttConcurrency, ok := extraVars["mqtt_concurrency"].(float64)
+	if !ok || mqttConcurrency != DefaultLiveMQTTConcurrency {
+		t.Fatalf("extra vars mqtt_concurrency = %v, want %d", extraVars["mqtt_concurrency"], DefaultLiveMQTTConcurrency)
+	}
+	commandConcurrency, ok := extraVars["command_concurrency"].(float64)
+	if !ok || commandConcurrency != DefaultLiveCommandConcurrency {
+		t.Fatalf("extra vars command_concurrency = %v, want %d", extraVars["command_concurrency"], DefaultLiveCommandConcurrency)
+	}
+	if extraVars["shadow_command_timeout"] != DefaultShadowCommandTimeout {
+		t.Fatalf("extra vars shadow_command_timeout = %q, want %s", extraVars["shadow_command_timeout"], DefaultShadowCommandTimeout)
+	}
+	if extraVars["generator_hosts_override_ip"] != "172.232.190.230" {
+		t.Fatalf("extra vars generator_hosts_override_ip = %q, want 172.232.190.230", extraVars["generator_hosts_override_ip"])
 	}
 	if extraVars["credential_bundle_format"] != "sqlite-gzip" {
 		t.Fatalf("extra vars credential_bundle_format = %q, want sqlite-gzip", extraVars["credential_bundle_format"])
@@ -925,6 +990,32 @@ func TestAnsibleSyncUsesOrchestraFanout(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("sync.yml missing orchestra fanout marker %q:\n%s", want, body)
 		}
+	}
+}
+
+func TestAnsibleSyncRetriesTransientFanoutRsyncFailures(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "ansible", "sync.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, register := range []string{
+		"runner_copy",
+		"rtk_cloud_copy",
+		"cloud_mqtt_test_copy",
+		"manifest_copy",
+		"common_env_archive_copy",
+		"env_archive_copy",
+	} {
+		if !strings.Contains(body, "register: "+register) {
+			t.Fatalf("sync.yml missing fanout register %q:\n%s", register, body)
+		}
+		if !strings.Contains(body, "until: "+register+".rc == 0") {
+			t.Fatalf("sync.yml should retry fanout rsync for %s until rc == 0:\n%s", register, body)
+		}
+	}
+	if !strings.Contains(body, "retries: 3") || !strings.Contains(body, "delay: 5") {
+		t.Fatalf("sync.yml should retry transient fanout SSH/rsync failures with a short delay:\n%s", body)
 	}
 }
 
@@ -1332,13 +1423,13 @@ func TestHome100KResumeLiveSkipsProvisionWhenVMStateExists(t *testing.T) {
 	}
 }
 
-func TestHome100KScriptEnvOverridesDescriptionStageDurations(t *testing.T) {
+func TestHome100KScriptEnvOverridesDescriptionRampUpAndRuntimeWindows(t *testing.T) {
 	outDir := t.TempDir()
 	descriptionFile := filepath.Join(outDir, "description.env")
 	if err := os.WriteFile(descriptionFile, []byte(strings.Join([]string{
-		"HOME100K_STAGE_WARM_UP=9m",
-		"HOME100K_STAGE_STEADY=9m",
-		"HOME100K_STAGE_COOL_DOWN=9m",
+		"HOME100K_RAMP_UP_TIME=9m",
+		"HOME100K_MEASUREMENT_WINDOW=9m",
+		"HOME100K_POST_RUN_COLLECTION=9m",
 		"HOME100K_DEVICES=12000",
 		"HOME100K_DEVICES_PER_USER=10",
 		"HOME100K_MQTT_ADDR=127.0.0.1:8883",
@@ -1352,9 +1443,9 @@ func TestHome100KScriptEnvOverridesDescriptionStageDurations(t *testing.T) {
 		"HOME100K_DESCRIPTION_FILE="+descriptionFile,
 		"HOME100K_RUN_ID=test-env-priority",
 		"HOME100K_OUT_DIR="+filepath.Join(outDir, "report"),
-		"HOME100K_STAGE_WARM_UP=15s",
-		"HOME100K_STAGE_STEADY=45s",
-		"HOME100K_STAGE_COOL_DOWN=15s",
+		"HOME100K_RAMP_UP_TIME=15s",
+		"HOME100K_MEASUREMENT_WINDOW=45s",
+		"HOME100K_POST_RUN_COLLECTION=15s",
 		"HOME100K_DEVICES=9000",
 		"HOME100K_DEVICES_PER_USER=20",
 	)
@@ -1363,17 +1454,20 @@ func TestHome100KScriptEnvOverridesDescriptionStageDurations(t *testing.T) {
 		t.Fatalf("home-100k.sh plan failed: %v\n%s", err, raw)
 	}
 	body := string(raw)
-	for _, want := range []string{`"warm_up": "15s"`, `"steady_state": "45s"`, `"cool_down": "15s"`} {
+	for _, want := range []string{`"ramp_up_time": "15s"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("plan missing env override %q:\n%s", want, body)
 		}
 	}
-	for _, want := range []string{`"devices": 9000`, `"users": 450`, `"connected_devices": 9000`} {
+	for _, want := range []string{`"devices": 9000`, `"users": 450`, `"target_connects": 9000`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("plan missing size override %q:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, `"steady_state": "9m"`) {
+	if strings.Contains(body, `"steady_state"`) || strings.Contains(body, `"cool_down"`) {
+		t.Fatalf("plan exposed internal measurement timing:\n%s", body)
+	}
+	if strings.Contains(body, `"ramp_up_time": "9m"`) {
 		t.Fatalf("description file overrode explicit env:\n%s", body)
 	}
 	if strings.Contains(body, `"devices": 12000`) {
@@ -1474,9 +1568,14 @@ func TestAnsibleStartRunnerUsesPrebuiltCloudMQTTTestAndDaemonWait(t *testing.T) 
 		"runner daemon listen port :18080 is still in use after cleanup",
 		"CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT",
 		"{{ remote_home_100k_dir }}/bin/cloud-mqtt-test",
+		"generator_hosts_override_ip | default('')",
+		"video-cloud-staging.realtekconnect.com",
+		"device.video-cloud-staging.realtekconnect.com",
+		"account-manager.video-cloud-staging.realtekconnect.com",
 		`--devices "{{ device_count }}"`,
 		`--users "{{ user_count }}"`,
 		`--devices-per-user "{{ devices_per_user }}"`,
+		`--mqtt-concurrency "{{ mqtt_concurrency | default(1000) }}"`,
 		`runner_nofile_limit="{{ runner_nofile_limit | default(1048576) }}"`,
 		`ulimit -n "$runner_nofile_limit"`,
 		"READY_WAIT",
@@ -1502,7 +1601,7 @@ func TestExecuteRunStagesProducesStageMetrics(t *testing.T) {
 	out := stdout.String()
 	for _, want := range []string{
 		`"stage_results"`,
-		`"name": "100k"`,
+		`"name": "target"`,
 		`"desired_reported_convergence_rate_percent": 100`,
 		`"offline_desired_convergence_rate_percent": 100`,
 	} {
@@ -1842,6 +1941,34 @@ func TestParseIngressRequestTokenAccessLogCounters(t *testing.T) {
 	}
 }
 
+func TestParseVideoCloudAPIMQTTPressureCounters(t *testing.T) {
+	out := strings.Join([]string{
+		`{"level":"warn","msg":"mqtt inbound handler queue pressure","subscriber_role":"message-sub","topic_class":"device_message","queue_len":4096,"queue_cap":4096,"enqueue_wait":0.25}`,
+		`{"level":"warn","msg":"mqtt inbound handler slow","subscriber_role":"message-sub","topic_class":"device_message","handler_duration":6.633,"total_duration":53.048}`,
+		`{"level":"warn","msg":"mqtt shadow request slow","device_id":"load-device-0001","action":"update","duration":3.222}`,
+		`{"level":"warn","msg":"mqtt shadow request slow","device_id":"load-device-0002","action":"update","duration":"1.5s"}`,
+	}, "\n")
+
+	counters := parseEvidenceCounters("video_cloud_api", "run-fixed", out)
+
+	for key, want := range map[string]int64{
+		"video_cloud_api.mqtt.message_sub.queue_pressure":                1,
+		"video_cloud_api.mqtt.message_sub.queue_full":                    1,
+		"video_cloud_api.mqtt.message_sub.max_queue_len":                 4096,
+		"video_cloud_api.mqtt.message_sub.max_queue_cap":                 4096,
+		"video_cloud_api.mqtt.message_sub.device_message.queue_pressure": 1,
+		"video_cloud_api.mqtt.message_sub.handler_slow":                  1,
+		"video_cloud_api.mqtt.message_sub.max_handler_ms":                6633,
+		"video_cloud_api.mqtt.message_sub.max_total_ms":                  53048,
+		"video_cloud_api.mqtt.shadow_request_slow":                       2,
+		"video_cloud_api.mqtt.shadow_request.max_ms":                     3222,
+	} {
+		if counters[key] != want {
+			t.Fatalf("%s = %d, want %d; counters=%#v", key, counters[key], want, counters)
+		}
+	}
+}
+
 func TestParsePostgresTooManyClientsCounters(t *testing.T) {
 	out := strings.Join([]string{
 		`2026-06-16 20:35:30.861 UTC [2642219] FATAL:  sorry, too many clients already`,
@@ -1919,10 +2046,10 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 			"overall": "pass",
 			"stage_results": []map[string]any{
 				{
-					"name":                      "25k",
-					"connected_devices":         2500,
-					"active_connections":        2500,
-					"active_subscriptions":      2500,
+					"name":                      "target",
+					"connected_devices":         20000,
+					"active_connections":        20000,
+					"active_subscriptions":      20000,
 					"status":                    "PASS",
 					"commands_attempted":        2500,
 					"commands_passed":           2500,
@@ -1938,13 +2065,10 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 					"total_http_bytes_sent":     1111,
 					"total_http_bytes_received": 2222,
 					"device_mqtt_totals": map[string]any{
-						"active_connections":   2500,
-						"active_subscriptions": 2500,
+						"active_connections":   20000,
+						"active_subscriptions": 20000,
 					},
 				},
-				{"name": "50k", "connected_devices": 10000, "active_connections": 10000, "active_subscriptions": 10000, "status": "PASS", "commands_attempted": 500, "commands_passed": 500, "http_requests": 500, "http_successes": 500},
-				{"name": "75k", "connected_devices": 15000, "active_connections": 15000, "active_subscriptions": 15000, "status": "PASS", "commands_attempted": 750, "commands_passed": 750, "http_requests": 750, "http_successes": 750},
-				{"name": "100k", "connected_devices": 20000, "active_connections": 20000, "active_subscriptions": 20000, "status": "PASS", "commands_attempted": 1000, "commands_passed": 1000, "http_requests": 1000, "http_successes": 1000},
 			},
 		}
 		if err := writeJSONFile(filepath.Join(childOutDir, "results.json"), payload); err != nil {
@@ -1987,14 +2111,16 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 		"--workspace /root/rtk_cloud_workspace",
 		"--env-root cloud_env/staging/lke",
 		"--brandname RTK",
-		"--duration-seconds 12",
+		"--duration-seconds 3",
 		"--telemetry-interval off",
 		"--command-rate-per-device-per-day 1800.00",
-		"--stage-names 25k,50k,75k,100k",
-		"--stage-connected-devices 5000,10000,15000,20000",
-		"--stage-durations-seconds 3,3,3,3",
+		"--stage-names target",
+		"--stage-connected-devices 20000",
+		"--stage-durations-seconds 3",
 		"--device-traffic-profile home-diverse-v1",
-		"--stage-usage-windows morning,away,return_home,evening_peak",
+		"--concurrency 1000",
+		"--command-concurrency 100",
+		"--shadow-command-timeout 30s",
 		"--max-connected-devices 20000",
 		"--shard-index 0",
 		"--shard-count 5",
@@ -2002,6 +2128,9 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("live shard command missing %q:\n%s", want, joined)
 		}
+	}
+	if strings.Contains(joined, "--stage-usage-windows") {
+		t.Fatalf("live shard command still passes usage windows:\n%s", joined)
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "results.json")); err != nil {
 		t.Fatalf("missing converted shard results: %v", err)
@@ -2019,7 +2148,7 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 	if first.DeviceMQTTTotals.Publishes != 2103 || first.DeviceMQTTTotals.ReceivedMessages != 2050 || first.DeviceMQTTTotals.BytesSent != 123456 {
 		t.Fatalf("device MQTT totals not preserved from live results: %#v", first.DeviceMQTTTotals)
 	}
-	if first.ConnectedDevices != 25000 || first.ShardConnectedDevices != 5000 {
+	if first.ConnectedDevices != 100000 || first.ShardConnectedDevices != 20000 {
 		t.Fatalf("stage targets not preserved: global=%d shard=%d", first.ConnectedDevices, first.ShardConnectedDevices)
 	}
 	if first.AppUserTotals.DesiredWrites != 700 || first.AppUserTotals.ReceivedAcks != 690 || first.AppUserTotals.BytesReceived != 2222 {
@@ -2150,14 +2279,14 @@ func TestExecuteShardRunLiveWritesFallbackStageResultsWhenMQTTTestProducesNoResu
 	if result.Status != "failed" || !strings.Contains(result.Error, "mqtt test crashed before writing results") {
 		t.Fatalf("fallback status/error not preserved: %#v", result)
 	}
-	if len(result.StageResults) != 4 {
-		t.Fatalf("fallback stage results len = %d, want 4", len(result.StageResults))
+	if len(result.StageResults) != 1 {
+		t.Fatalf("fallback stage results len = %d, want 1", len(result.StageResults))
 	}
 	if got := result.StageResults[0].FailureReasons["runner_failed"]; got != 1 {
 		t.Fatalf("fallback failure reason = %d, want 1; first stage=%#v", got, result.StageResults[0])
 	}
-	if result.StageResults[0].ConnectedDevices != 25000 {
-		t.Fatalf("fallback connected devices = %d, want 25000", result.StageResults[0].ConnectedDevices)
+	if result.StageResults[0].ConnectedDevices != 100000 {
+		t.Fatalf("fallback connected devices = %d, want 100000", result.StageResults[0].ConnectedDevices)
 	}
 }
 
@@ -2249,11 +2378,11 @@ func TestExecuteShardRunLivePreservesPartialStagedResultsWhenMQTTTestFails(t *te
 	if err := readJSON(filepath.Join(outDir, "results.json"), &result); err != nil {
 		t.Fatalf("missing converted partial shard results: %v stderr=%s", err, stderr.String())
 	}
-	if result.Status != "failed" || !result.Partial || !strings.Contains(result.Error, "stage_results len = 3, want 4") {
+	if result.Status != "failed" || !result.Partial || !strings.Contains(result.Error, "stage_results len = 3, want 1") {
 		t.Fatalf("partial failure metadata not preserved: %#v stderr=%s", result, stderr.String())
 	}
-	if len(result.StageResults) != 3 {
-		t.Fatalf("stage results len = %d, want 3", len(result.StageResults))
+	if len(result.StageResults) != 1 {
+		t.Fatalf("stage results len = %d, want 1", len(result.StageResults))
 	}
 	if result.StageResults[0].DeviceMQTTTotals.ConnectAttempts != 2500 || result.StageResults[0].DeviceMQTTTotals.BytesSent != 12345 {
 		t.Fatalf("partial device counters not preserved: %#v", result.StageResults[0].DeviceMQTTTotals)
@@ -2323,7 +2452,7 @@ func TestLoadLiveMQTTStageResultPreservesFailureEvents(t *testing.T) {
 		"overall": "fail",
 		"failure_events": []map[string]any{
 			{
-				"stage":        "75pct",
+				"stage":        "target",
 				"reason":       "device_delta_wait_failed",
 				"detail":       "network EOF",
 				"phase":        "device_delta_wait",
@@ -2341,7 +2470,7 @@ func TestLoadLiveMQTTStageResultPreservesFailureEvents(t *testing.T) {
 	if err := writeJSONFile(filepath.Join(outDir, "results.json"), payload); err != nil {
 		t.Fatal(err)
 	}
-	result, err := loadLiveMQTTStageResult(filepath.Join(outDir, "results.json"), Stage{Name: "75pct", ConnectedDevices: 6750}, 6750)
+	result, err := loadLiveMQTTStageResult(filepath.Join(outDir, "results.json"), Stage{Name: "target", ConnectedDevices: 6750}, 6750)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2360,7 +2489,7 @@ func TestLoadLiveMQTTStageResultPreservesCommandEvents(t *testing.T) {
 		"overall": "pass",
 		"command_events": []map[string]any{
 			{
-				"stage":                 "25pct",
+				"stage":                 "target",
 				"device_id":             "rtk-0041",
 				"command_id":            "cmd-0041",
 				"runtime_log_stream_id": "mqtt-e2e-run-rtk-0041-abcd",
@@ -2380,7 +2509,7 @@ func TestLoadLiveMQTTStageResultPreservesCommandEvents(t *testing.T) {
 	if err := writeJSONFile(filepath.Join(outDir, "results.json"), payload); err != nil {
 		t.Fatal(err)
 	}
-	result, err := loadLiveMQTTStageResult(filepath.Join(outDir, "results.json"), Stage{Name: "25pct", ConnectedDevices: 2250}, 2250)
+	result, err := loadLiveMQTTStageResult(filepath.Join(outDir, "results.json"), Stage{Name: "target", ConnectedDevices: 2250}, 2250)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2836,8 +2965,7 @@ func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 	}
 
 	calls := []string{}
-	oldRunner := commandOutputRunner
-	commandOutputRunner = func(name string, args ...string) (string, error) {
+	stubCommandOutputRunner(t, func(name string, args ...string) (string, error) {
 		calls = append(calls, name+" "+strings.Join(args, " "))
 		joined := strings.Join(args, " ")
 		switch {
@@ -2851,8 +2979,7 @@ func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 			return "", nil
 		}
 		return "", nil
-	}
-	defer func() { commandOutputRunner = oldRunner }()
+	})
 
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
@@ -2910,16 +3037,29 @@ func TestServerEvidenceProbesIncludeMQTTNodeBalancerHealth(t *testing.T) {
 	t.Fatal("serverEvidenceProbes() missing mqtt_nodebalancer probe")
 }
 
+func TestKubectlLogEvidenceProbesBoundLogCollectionTime(t *testing.T) {
+	probe := kubectlLogsProbe("video_cloud_api", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=video-cloud-api", "--since=30m", "logs")
+	joined := strings.Join(append([]string{probe.command}, probe.args...), " ")
+	for _, want := range []string{
+		"timeout 20s kubectl",
+		"logs '--since=30m'",
+		"--tail=120000",
+		"|| true",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("kubectl log probe missing bounded-log marker %q:\n%s", want, joined)
+		}
+	}
+}
+
 func TestExecuteCollectServerEvidenceLiveWritesIncompleteEvidenceOnProbeFailure(t *testing.T) {
 	outDir := t.TempDir()
-	oldRunner := commandOutputRunner
-	commandOutputRunner = func(name string, args ...string) (string, error) {
+	stubCommandOutputRunner(t, func(name string, args ...string) (string, error) {
 		if strings.Contains(strings.Join(args, " "), "postgres") {
 			return "", errors.New("postgres probe failed")
 		}
 		return "", nil
-	}
-	defer func() { commandOutputRunner = oldRunner }()
+	})
 
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
@@ -2952,14 +3092,12 @@ func TestExecuteCollectServerEvidenceLiveWritesIncompleteEvidenceOnProbeFailure(
 }
 
 func TestExecuteCollectServerEvidenceLivePreservesFailureForRepeatedSource(t *testing.T) {
-	oldRunner := commandOutputRunner
-	commandOutputRunner = func(name string, args ...string) (string, error) {
+	stubCommandOutputRunner(t, func(name string, args ...string) (string, error) {
 		if strings.Join(args, " ") == "get pods -A -o wide" {
 			return "", errors.New("pod inventory failed")
 		}
 		return "", nil
-	}
-	defer func() { commandOutputRunner = oldRunner }()
+	})
 
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
@@ -2976,6 +3114,56 @@ func TestExecuteCollectServerEvidenceLivePreservesFailureForRepeatedSource(t *te
 	out := stdout.String()
 	if !strings.Contains(out, `"complete": false`) || !strings.Contains(out, `"host_pod_resources"`) || !strings.Contains(out, "pod inventory failed") {
 		t.Fatalf("stdout did not preserve repeated-source failure:\n%s", out)
+	}
+}
+
+func TestMergeEvidenceSourcePreservesExistingDataWhenLaterProbeFails(t *testing.T) {
+	current := EvidenceSource{
+		Available: true,
+		Detail:    "logs captured",
+		Counters: map[string]int64{
+			"video_cloud_api.mqtt.message_sub.queue_pressure": 10660,
+		},
+		Samples: []EvidenceResourceSample{{Kind: "k8s_pod_top", Pod: "video-cloud-api-0", CPUCoreMil: 1000}},
+	}
+	next := EvidenceSource{Available: false, Detail: "kubectl logs timed out"}
+
+	merged := mergeEvidenceSource(current, next)
+
+	if !merged.Available {
+		t.Fatalf("merged source should remain available when existing data is preserved: %#v", merged)
+	}
+	if merged.Counters["video_cloud_api.mqtt.message_sub.queue_pressure"] != 10660 {
+		t.Fatalf("merged counters = %#v, want preserved queue pressure", merged.Counters)
+	}
+	if len(merged.Samples) != 1 {
+		t.Fatalf("merged samples = %#v, want preserved samples", merged.Samples)
+	}
+	if !strings.Contains(merged.Detail, "kubectl logs timed out") {
+		t.Fatalf("merged detail missing later failure: %q", merged.Detail)
+	}
+}
+
+func TestMergeEvidenceSourceUsesLaterDataWhenEarlierProbeFailed(t *testing.T) {
+	current := EvidenceSource{Available: false, Detail: "first probe failed"}
+	next := EvidenceSource{
+		Available: true,
+		Detail:    "metrics captured",
+		Counters: map[string]int64{
+			"mqtt.total_connect_success": 105000,
+		},
+	}
+
+	merged := mergeEvidenceSource(current, next)
+
+	if !merged.Available {
+		t.Fatalf("merged source should become available when later data exists: %#v", merged)
+	}
+	if merged.Counters["mqtt.total_connect_success"] != 105000 {
+		t.Fatalf("merged counters = %#v, want later metrics", merged.Counters)
+	}
+	if !strings.Contains(merged.Detail, "first probe failed") || !strings.Contains(merged.Detail, "metrics captured") {
+		t.Fatalf("merged detail missing probe history: %q", merged.Detail)
 	}
 }
 

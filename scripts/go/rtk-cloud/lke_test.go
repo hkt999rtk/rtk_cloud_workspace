@@ -435,10 +435,16 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"fieldPath: metadata.name",
 		"VIDEO_CLOUD_MQTT_CLIENT_ID\n              value: \"video-cloud-api-$(POD_NAME)\"",
 		"VIDEO_CLOUD_MQTT_TOPIC_ROOT\n              value: \"devices\"",
-		"VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY\n              value: \"16\"",
-		"VIDEO_CLOUD_MQTT_OUTBOUND_CONNECTIONS\n              value: \"8\"",
-		"VIDEO_CLOUD_MQTT_OUTBOUND_QUEUE_SIZE\n              value: \"4096\"",
-		"VIDEO_CLOUD_MQTT_OUTBOUND_WRITE_TIMEOUT\n              value: \"5s\"",
+		"VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY\n              value: \"64\"",
+		"VIDEO_CLOUD_MQTT_SHADOW_HANDLER_CONCURRENCY\n              value: \"64\"",
+		"VIDEO_CLOUD_MQTT_SHADOW_QUEUE_SIZE\n              value: \"8192\"",
+		"VIDEO_CLOUD_MQTT_MESSAGE_HANDLER_CONCURRENCY\n              value: \"128\"",
+		"VIDEO_CLOUD_MQTT_MESSAGE_QUEUE_SIZE\n              value: \"16384\"",
+		"VIDEO_CLOUD_MQTT_LOG_HANDLER_CONCURRENCY\n              value: \"32\"",
+		"VIDEO_CLOUD_MQTT_LOG_QUEUE_SIZE\n              value: \"8192\"",
+		"VIDEO_CLOUD_MQTT_OUTBOUND_CONNECTIONS\n              value: \"16\"",
+		"VIDEO_CLOUD_MQTT_OUTBOUND_QUEUE_SIZE\n              value: \"8192\"",
+		"VIDEO_CLOUD_MQTT_OUTBOUND_WRITE_TIMEOUT\n              value: \"10s\"",
 		"VIDEO_CLOUD_SHADOW_CACHE_ENABLED\n              value: \"true\"",
 		"VIDEO_CLOUD_SHADOW_CACHE_ADDR\n              value: \"redis.video-cloud-staging-platform.svc.cluster.local:6379\"",
 		"kind: Secret\nmetadata:\n  name: mqtt-runtime",
@@ -1290,7 +1296,7 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 	for _, want := range []string{
 		`lke.linode.com/pool-id: "906225"`,
 		`value: "postgres"`,
-		`cpu: "4"`,
+		`cpu: "2"`,
 		`memory: "6Gi"`,
 	} {
 		if !strings.Contains(postgres, want) {
@@ -1326,17 +1332,23 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 		Host:      "video-cloud-staging.realtekconnect.com",
 	}, nil)
 	for _, want := range []string{
-		"replicas: 1",
+		"replicas: 3",
 		"topologySpreadConstraints:",
-		`cpu: "250m"`,
-		`memory: "1Gi"`,
-		"name: VIDEO_CLOUD_DB_MAX_OPEN_CONNS\n              value: \"20\"",
-		"name: VIDEO_CLOUD_DB_MAX_IDLE_CONNS\n              value: \"10\"",
+		`cpu: "1"`,
+		`memory: "2Gi"`,
+		"name: VIDEO_CLOUD_DB_MAX_OPEN_CONNS\n              value: \"80\"",
+		"name: VIDEO_CLOUD_DB_MAX_IDLE_CONNS\n              value: \"40\"",
 		"name: VIDEO_CLOUD_DB_CONN_MAX_LIFETIME\n              value: \"5m\"",
-		"name: VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY\n              value: \"16\"",
-		"name: VIDEO_CLOUD_MQTT_OUTBOUND_CONNECTIONS\n              value: \"8\"",
-		"name: VIDEO_CLOUD_MQTT_OUTBOUND_QUEUE_SIZE\n              value: \"4096\"",
-		"name: VIDEO_CLOUD_MQTT_OUTBOUND_WRITE_TIMEOUT\n              value: \"5s\"",
+		"name: VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY\n              value: \"64\"",
+		"name: VIDEO_CLOUD_MQTT_SHADOW_HANDLER_CONCURRENCY\n              value: \"64\"",
+		"name: VIDEO_CLOUD_MQTT_SHADOW_QUEUE_SIZE\n              value: \"8192\"",
+		"name: VIDEO_CLOUD_MQTT_MESSAGE_HANDLER_CONCURRENCY\n              value: \"128\"",
+		"name: VIDEO_CLOUD_MQTT_MESSAGE_QUEUE_SIZE\n              value: \"16384\"",
+		"name: VIDEO_CLOUD_MQTT_LOG_HANDLER_CONCURRENCY\n              value: \"32\"",
+		"name: VIDEO_CLOUD_MQTT_LOG_QUEUE_SIZE\n              value: \"8192\"",
+		"name: VIDEO_CLOUD_MQTT_OUTBOUND_CONNECTIONS\n              value: \"16\"",
+		"name: VIDEO_CLOUD_MQTT_OUTBOUND_QUEUE_SIZE\n              value: \"8192\"",
+		"name: VIDEO_CLOUD_MQTT_OUTBOUND_WRITE_TIMEOUT\n              value: \"10s\"",
 		"name: VIDEO_CLOUD_SHADOW_CACHE_ENABLED\n              value: \"true\"",
 		"name: VIDEO_CLOUD_SHADOW_CACHE_ADDR\n              value: \"redis.video-cloud-staging-platform.svc.cluster.local:6379\"",
 	} {
@@ -1363,7 +1375,7 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 
 	mqtt := lkeMQTTDeploymentManifest(env)
 	for _, want := range []string{
-		"replicas: 1",
+		"replicas: 4",
 		"maxSurge: 0",
 		"maxUnavailable: 1",
 		`lke.linode.com/pool-id: "906225"`,
@@ -1386,6 +1398,7 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 		"EMQX_FORCE_SHUTDOWN__MAX_HEAP_SIZE",
 		`value: "256MB"`,
 		`cpu: "1"`,
+		`memory: "4Gi"`,
 		`memory: "6Gi"`,
 	} {
 		if !strings.Contains(mqtt, want) {
@@ -1442,6 +1455,22 @@ func TestLKEMQTTResourcesCanBeOverridden(t *testing.T) {
 		if !strings.Contains(manifest, want) {
 			t.Fatalf("expected %q in mqtt manifest, got:\n%s", want, manifest)
 		}
+	}
+}
+
+func TestLKEEMQXClusterStatusNodesSeparatesRunningAndStoppedNodes(t *testing.T) {
+	status := `Cluster status: #{running_nodes =>
+                      ['emqx@10.2.2.153','emqx@10.2.3.163','emqx@10.2.3.33',
+                       'emqx@10.2.5.28'],
+                  stopped_nodes => ['emqx@10.2.3.162']}`
+
+	running, stopped := lkeEMQXClusterStatusNodes(status)
+
+	if running != 4 {
+		t.Fatalf("running = %d, want 4", running)
+	}
+	if len(stopped) != 1 || stopped[0] != "emqx@10.2.3.162" {
+		t.Fatalf("stopped = %#v, want emqx@10.2.3.162", stopped)
 	}
 }
 
@@ -2153,7 +2182,7 @@ printf '\n' >> "`+childLog+`"
 	}
 }
 
-func TestRunMQTTTestPassesStagedSustainedFlagsToChildScript(t *testing.T) {
+func TestRunMQTTTestPassesTargetWindowSustainedFlagsToChildScript(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	childLog := filepath.Join(t.TempDir(), "child.log")
 	childScript := filepath.Join(t.TempDir(), "cloud-mqtt-test")
@@ -2176,12 +2205,13 @@ printf '\n' >> "`+childLog+`"
 		"--brandname", "RTK",
 		"--duration-seconds", "300",
 		"--load-model", "home-100k-sustained",
-		"--stage-names", "25k,50k,75k,100k",
-		"--stage-connected-devices", "2500,5000,7500,10000",
-		"--stage-durations-seconds", "75,75,75,75",
-		"--stage-min-commands", "125,250,375,500",
+		"--stage-names", "target",
+		"--stage-connected-devices", "10000",
+		"--stage-durations-seconds", "300",
+		"--stage-min-commands", "500",
 		"--device-traffic-profile", "home-diverse-v1",
-		"--stage-usage-windows", "morning,away,return_home,evening_peak",
+		"--command-concurrency", "100",
+		"--shadow-command-timeout", "30s",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2189,16 +2219,56 @@ printf '\n' >> "`+childLog+`"
 
 	got := readTestFile(t, childLog)
 	for _, want := range []string{
-		"--stage-names 25k,50k,75k,100k",
-		"--stage-connected-devices 2500,5000,7500,10000",
-		"--stage-durations-seconds 75,75,75,75",
-		"--stage-min-commands 125,250,375,500",
+		"--stage-names target",
+		"--stage-connected-devices 10000",
+		"--stage-durations-seconds 300",
+		"--stage-min-commands 500",
 		"--device-traffic-profile home-diverse-v1",
-		"--stage-usage-windows morning,away,return_home,evening_peak",
+		"--command-concurrency 100",
+		"--shadow-command-timeout 30s",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("child args missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestRunMQTTTestOmitsEmptyStageUsageWindowsForTargetRuns(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	childLog := filepath.Join(t.TempDir(), "child.log")
+	childScript := filepath.Join(t.TempDir(), "cloud-mqtt-test")
+	writeTestFile(t, childScript, `#!/usr/bin/env bash
+set -euo pipefail
+printf 'ARGS' >> "`+childLog+`"
+for arg in "$@"; do
+  printf ' %s' "$arg" >> "`+childLog+`"
+done
+printf '\n' >> "`+childLog+`"
+`)
+	if err := os.Chmod(childScript, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT", childScript)
+
+	err := runMQTTTest([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--brandname", "RTK",
+		"--duration-seconds", "300",
+		"--load-model", "home-100k-sustained",
+		"--stage-names", "target",
+		"--stage-connected-devices", "20000",
+		"--stage-durations-seconds", "1845",
+		"--stage-min-commands", "1000",
+		"--device-traffic-profile", "home-diverse-v1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := readTestFile(t, childLog)
+	if strings.Contains(got, "--stage-usage-windows") {
+		t.Fatalf("child args should omit empty stage usage windows for target runs:\n%s", got)
 	}
 }
 
