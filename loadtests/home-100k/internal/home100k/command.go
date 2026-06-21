@@ -89,6 +89,10 @@ func Execute(args []string, stdout io.Writer, stderr io.Writer) int {
 		return executePlan(args[1:], stdout, stderr)
 	case "run":
 		return executeRun(args[1:], stdout, stderr)
+	case "token-only":
+		return executeTokenOnly(args[1:], stdout, stderr)
+	case "seed-token-projections":
+		return executeSeedTokenProjections(args[1:], stdout, stderr)
 	case "shard-run":
 		return executeShardRun(args[1:], stdout, stderr)
 	case "runner-daemon":
@@ -176,7 +180,7 @@ func parseCommonFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	brandname := fs.String("brandname", "", "brand name")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
-	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount := addSizingFlags(fs)
 	runnerNofile, sessionModel, readModel := addRuntimeConditionFlags(fs)
 	ephemeral := fs.Bool("ephemeral-vms", false, "require ephemeral VM lifecycle")
 	if err := fs.Parse(args); err != nil {
@@ -188,13 +192,13 @@ func parseCommonFlags(name string, args []string, stderr io.Writer) (PlanOptions
 		Region:    *region,
 	}
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
-	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount)
 	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel)
 	return opts, *ephemeral, nil
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, `usage: home-100k <plan|run|provision-vms|sync|run-stages|collect|collect-server-evidence|aggregate|list-vms|destroy-vms|runner-daemon> --env-root PATH --brandname NAME --region LINODE_REGION [--ephemeral-vms]`)
+	fmt.Fprintln(w, `usage: home-100k <plan|run|token-only|seed-token-projections|provision-vms|sync|run-stages|collect|collect-server-evidence|aggregate|list-vms|destroy-vms|runner-daemon> --env-root PATH --brandname NAME --region LINODE_REGION [--ephemeral-vms]`)
 }
 
 type runFlagValues struct {
@@ -210,7 +214,7 @@ func parseRunFlags(name string, args []string, stderr io.Writer) (PlanOptions, b
 	brandname := fs.String("brandname", "", "brand name")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
-	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount := addSizingFlags(fs)
 	runnerNofile, sessionModel, readModel := addRuntimeConditionFlags(fs)
 	ephemeral := fs.Bool("ephemeral-vms", false, "require ephemeral VM lifecycle")
 	runID := fs.String("run-id", "", "run id for artifact correlation")
@@ -225,7 +229,7 @@ func parseRunFlags(name string, args []string, stderr io.Writer) (PlanOptions, b
 		Region:    *region,
 	}
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
-	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount)
 	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel)
 	return opts, *ephemeral, runFlagValues{
 		runID:              *runID,
@@ -241,11 +245,12 @@ func addStageDurationFlags(fs *flag.FlagSet) (*string, *string, *string) {
 	return stageWarmUp, stageSteady, stageCoolDown
 }
 
-func addSizingFlags(fs *flag.FlagSet) (*int, *int, *int) {
+func addSizingFlags(fs *flag.FlagSet) (*int, *int, *int, *int) {
 	deviceCount := fs.Int("devices", 0, "total simulated device count")
 	userCount := fs.Int("users", 0, "total simulated app user count")
 	devicesPerUser := fs.Int("devices-per-user", 0, "target devices per app user when --users is omitted")
-	return deviceCount, userCount, devicesPerUser
+	vmCount := fs.Int("vm-count", 0, "number of mixed Linode generator VMs")
+	return deviceCount, userCount, devicesPerUser, vmCount
 }
 
 func addRuntimeConditionFlags(fs *flag.FlagSet) (*int, *string, *string) {
@@ -255,20 +260,17 @@ func addRuntimeConditionFlags(fs *flag.FlagSet) (*int, *string, *string) {
 	return runnerNofile, sessionModel, readModel
 }
 
-func addRunnerMQTTConcurrencyFlag(fs *flag.FlagSet) *int {
-	return fs.Int("runner-mqtt-concurrency", DefaultRunnerMQTTConcurrency, "cloud-mqtt-test MQTT connect/action concurrency per runner shard")
-}
-
 func applyStageDurationFlags(opts *PlanOptions, stageWarmUp *string, stageSteady *string, stageCoolDown *string) {
 	opts.StageWarmUp = *stageWarmUp
 	opts.StageSteady = *stageSteady
 	opts.StageCoolDown = *stageCoolDown
 }
 
-func applySizingFlags(opts *PlanOptions, deviceCount *int, userCount *int, devicesPerUser *int) {
+func applySizingFlags(opts *PlanOptions, deviceCount *int, userCount *int, devicesPerUser *int, vmCount *int) {
 	opts.DeviceCount = *deviceCount
 	opts.UserCount = *userCount
 	opts.DevicesPerUser = *devicesPerUser
+	opts.VMCount = *vmCount
 }
 
 func applyRuntimeConditionFlags(opts *PlanOptions, runnerNofile *int, sessionModel *string, readModel *string) {
@@ -307,40 +309,49 @@ type listVMFlagValues struct {
 }
 
 type workflowFlagValues struct {
-	runID                  string
-	outDir                 string
-	serverEvidenceFile     string
-	live                   bool
-	runnerMode             string
-	vmStateFile            string
-	remoteWorkspace        string
-	remoteEnvRoot          string
-	remoteOutRoot          string
-	sshUser                string
-	sshKey                 string
-	coordinatorDelayMS     int
-	mqttAddr               string
-	videoCloudBaseURL      string
-	videoCloudPublicURL    string
-	videoCloudTokenURL     string
-	accountManagerURL      string
-	credentialBundleFormat string
-	runnerNofileLimit      int
-	runnerMQTTConcurrency  int
+	runID                    string
+	outDir                   string
+	serverEvidenceFile       string
+	live                     bool
+	runnerMode               string
+	vmStateFile              string
+	remoteWorkspace          string
+	remoteEnvRoot            string
+	remoteOutRoot            string
+	sshUser                  string
+	sshKey                   string
+	coordinatorDelayMS       int
+	mqttAddr                 string
+	videoCloudBaseURL        string
+	videoCloudPublicURL      string
+	videoCloudTokenURL       string
+	accountManagerURL        string
+	generatorHostsOverrideIP string
+	credentialBundleFormat   string
+	runnerNofileLimit        int
+	mqttConcurrency          int
+	commandConcurrency       int
+	shadowCommandTimeout     string
 }
 
 type shardRunFlagValues struct {
-	runID                 string
-	outDir                string
-	role                  string
-	shardIndex            int
-	shardManifest         string
-	honorStageDurations   bool
-	runnerMode            string
-	rtkCloudBinary        string
-	workspace             string
-	runnerMQTTConcurrency int
+	runID                string
+	outDir               string
+	role                 string
+	shardIndex           int
+	shardManifest        string
+	honorStageDurations  bool
+	runnerMode           string
+	rtkCloudBinary       string
+	workspace            string
+	mqttConcurrency      int
+	commandConcurrency   int
+	shadowCommandTimeout string
 }
+
+const DefaultLiveMQTTConcurrency = 1000
+const DefaultLiveCommandConcurrency = 100
+const DefaultShadowCommandTimeout = "30s"
 
 func executeProvisionVMs(args []string, stdout io.Writer, stderr io.Writer) int {
 	opts, values, err := parseProvisionVMFlags("home-100k provision-vms", args, stderr)
@@ -647,8 +658,6 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 	stageNames := make([]string, 0, len(plan.Stages))
 	stageTargets := make([]string, 0, len(plan.Stages))
 	stageDurations := make([]string, 0, len(plan.Stages))
-	stageRampSeconds := make([]string, 0, len(plan.Stages))
-	stageUsageWindows := make([]string, 0, len(plan.Stages))
 	stageCommandRates := []string{}
 	stageMinCommands := []string{}
 	maxTarget := 0
@@ -657,10 +666,6 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		if err != nil {
 			return fmt.Errorf("stage %s duration: %w", stage.Name, err)
 		}
-		rampSeconds, err := positiveDurationSeconds(stage.WarmUp)
-		if err != nil {
-			return fmt.Errorf("stage %s warm-up: %w", stage.Name, err)
-		}
 		maxConnected := shardConnectedDevices(stage.ConnectedDevices, plan.Conditions.Devices, assignment)
 		if maxConnected > maxTarget {
 			maxTarget = maxConnected
@@ -668,8 +673,6 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		stageNames = append(stageNames, stage.Name)
 		stageTargets = append(stageTargets, strconv.Itoa(maxConnected))
 		stageDurations = append(stageDurations, strconv.Itoa(durationSeconds))
-		stageRampSeconds = append(stageRampSeconds, strconv.Itoa(rampSeconds))
-		stageUsageWindows = append(stageUsageWindows, firstNonEmpty(stage.UsageWindow, "steady"))
 		stageCommandRates = append(stageCommandRates, commandRatePerDeviceDay(maxConnected, durationSeconds, plan.Conditions.DevicesPerUser))
 		stageMinCommands = append(stageMinCommands, strconv.Itoa(ceilDiv(maxConnected, plan.Conditions.DevicesPerUser)))
 	}
@@ -678,14 +681,7 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		seconds, _ := strconv.Atoi(raw)
 		totalDuration += seconds
 	}
-	runnerMQTTConcurrency := values.runnerMQTTConcurrency
-	if runnerMQTTConcurrency <= 0 {
-		runnerMQTTConcurrency = DefaultRunnerMQTTConcurrency
-	}
-	if runnerMQTTConcurrency > maxTarget {
-		runnerMQTTConcurrency = maxTarget
-	}
-	stageOut := filepath.Join(outDir, "mqtt-test", "staged")
+	stageOut := filepath.Join(outDir, "mqtt-test", "target")
 	args := []string{
 		"mqtt-test",
 		"--env-root", plan.Conditions.EnvRoot,
@@ -705,11 +701,11 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		"--stage-names", strings.Join(stageNames, ","),
 		"--stage-connected-devices", strings.Join(stageTargets, ","),
 		"--stage-durations-seconds", strings.Join(stageDurations, ","),
-		"--stage-ramp-seconds", strings.Join(stageRampSeconds, ","),
 		"--stage-min-commands", strings.Join(stageMinCommands, ","),
 		"--device-traffic-profile", firstNonEmpty(plan.ScenarioProfile, DefaultScenarioProfile),
-		"--stage-usage-windows", strings.Join(stageUsageWindows, ","),
-		"--concurrency", strconv.Itoa(runnerMQTTConcurrency),
+		"--concurrency", strconv.Itoa(liveMQTTConcurrency(maxTarget, values.mqttConcurrency)),
+		"--command-concurrency", strconv.Itoa(liveCommandConcurrency(maxTarget, values.commandConcurrency)),
+		"--shadow-command-timeout", firstNonEmpty(values.shadowCommandTimeout, DefaultShadowCommandTimeout),
 		"--max-connected-devices", strconv.Itoa(maxTarget),
 	}
 	if strings.TrimSpace(values.workspace) != "" {
@@ -727,13 +723,13 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 	errorText := ""
 	if err != nil || runErr != nil {
 		status = "failed"
-		partial = true
+		partial = err != nil
 		if err != nil && runErr != nil {
-			errorText = fmt.Sprintf("live staged mqtt-test failed: %v; staged live result: %v", runErr, err)
+			errorText = fmt.Sprintf("live target mqtt-test failed: %v; target live result: %v", runErr, err)
 		} else if err != nil {
-			errorText = fmt.Sprintf("staged live result: %v", err)
+			errorText = fmt.Sprintf("target live result: %v", err)
 		} else {
-			errorText = fmt.Sprintf("live staged mqtt-test failed: %v", runErr)
+			errorText = fmt.Sprintf("live target mqtt-test failed: %v", runErr)
 		}
 	}
 	if err := writeJSONFile(resultFile, map[string]any{
@@ -763,12 +759,12 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 	}
 	if err != nil {
 		if runErr != nil {
-			return fmt.Errorf("live staged mqtt-test failed: %w; staged live result: %v", runErr, err)
+			return fmt.Errorf("live target mqtt-test failed: %w; target live result: %v", runErr, err)
 		}
-		return fmt.Errorf("staged live result: %w", err)
+		return fmt.Errorf("target live result: %w", err)
 	}
 	if runErr != nil {
-		return fmt.Errorf("live staged mqtt-test failed: %w", runErr)
+		return fmt.Errorf("live target mqtt-test failed: %w", runErr)
 	}
 	return nil
 }
@@ -817,11 +813,11 @@ func normalizeLiveShardFailureDetail(detail string) string {
 func liveShardErrorText(runErr error, resultErr error) string {
 	switch {
 	case runErr != nil && resultErr != nil:
-		return fmt.Sprintf("live staged mqtt-test failed: %v; staged live result: %v", runErr, resultErr)
+		return fmt.Sprintf("live target mqtt-test failed: %v; target live result: %v", runErr, resultErr)
 	case runErr != nil:
-		return fmt.Sprintf("live staged mqtt-test failed: %v", runErr)
+		return fmt.Sprintf("live target mqtt-test failed: %v", runErr)
 	case resultErr != nil:
-		return fmt.Sprintf("staged live result: %v", resultErr)
+		return fmt.Sprintf("target live result: %v", resultErr)
 	default:
 		return ""
 	}
@@ -830,27 +826,19 @@ func liveShardErrorText(runErr error, resultErr error) string {
 func stageWindowSeconds(stage Stage) (int, error) {
 	total := 0
 	for _, raw := range []string{stage.WarmUp, stage.SteadyState, stage.CoolDown} {
-		seconds, err := positiveDurationSeconds(raw)
+		duration, err := time.ParseDuration(raw)
 		if err != nil {
 			return 0, err
 		}
-		total += seconds
+		if duration <= 0 {
+			return 0, fmt.Errorf("duration must be positive, got %s", raw)
+		}
+		total += int(duration.Seconds())
 	}
 	if total <= 0 {
 		return 0, fmt.Errorf("stage window must be positive")
 	}
 	return total, nil
-}
-
-func positiveDurationSeconds(raw string) (int, error) {
-	duration, err := time.ParseDuration(raw)
-	if err != nil {
-		return 0, err
-	}
-	if duration <= 0 {
-		return 0, fmt.Errorf("duration must be positive, got %s", raw)
-	}
-	return int(duration.Seconds()), nil
 }
 
 func shardConnectedDevices(stageConnected int, totalDevices int, assignment VMAssignment) int {
@@ -891,6 +879,26 @@ func commandRatePerDeviceDay(maxConnected int, durationSeconds int, devicesPerUs
 	return fmt.Sprintf("%.2f", rate)
 }
 
+func liveMQTTConcurrency(maxTarget int, configured int) int {
+	if configured <= 0 {
+		configured = DefaultLiveMQTTConcurrency
+	}
+	if maxTarget > 0 && configured > maxTarget {
+		return maxTarget
+	}
+	return configured
+}
+
+func liveCommandConcurrency(maxTarget int, configured int) int {
+	if configured <= 0 {
+		configured = DefaultLiveCommandConcurrency
+	}
+	if maxTarget > 0 && configured > maxTarget {
+		return maxTarget
+	}
+	return configured
+}
+
 func maxCommandRatePerDeviceDay(values []string) string {
 	maxRate := 1.0
 	for _, raw := range values {
@@ -911,70 +919,58 @@ type rawLiveMQTTResult struct {
 		CommandsAttempted int `json:"commands_attempted"`
 		CommandsPassed    int `json:"commands_passed"`
 	} `json:"metrics"`
-	ConnectedDevices                 int                         `json:"connected_devices"`
-	ActiveConnections                int                         `json:"active_connections"`
-	CommandsAttempted                int                         `json:"commands_attempted"`
-	CommandsPassed                   int                         `json:"commands_passed"`
-	ConnectAttempts                  int64                       `json:"connect_attempts"`
-	ConnectSuccesses                 int64                       `json:"connect_successes"`
-	ConnectFailures                  int64                       `json:"connect_failures"`
-	DeviceTokenAttempts              int64                       `json:"device_token_attempts"`
-	DeviceTokenSuccesses             int64                       `json:"device_token_successes"`
-	DeviceTokenFailures              int64                       `json:"device_token_failures"`
-	DeviceTokenFirstAttemptSuccesses int64                       `json:"device_token_first_attempt_successes"`
-	DeviceTokenFirstAttemptFailures  int64                       `json:"device_token_first_attempt_failures"`
-	DeviceTokenRetryAttempts         int64                       `json:"device_token_retry_attempts"`
-	DeviceTokenRetrySuccesses        int64                       `json:"device_token_retry_successes"`
-	DeviceTokenRetryExhausted        int64                       `json:"device_token_retry_exhausted"`
-	DeviceMQTTDialAttempts           int64                       `json:"device_mqtt_dial_attempts"`
-	DeviceMQTTDialSuccesses          int64                       `json:"device_mqtt_dial_successes"`
-	DeviceMQTTDialFailures           int64                       `json:"device_mqtt_dial_failures"`
-	DeviceMQTTConnackAttempts        int64                       `json:"device_mqtt_connack_attempts"`
-	DeviceMQTTConnackSuccesses       int64                       `json:"device_mqtt_connack_successes"`
-	DeviceMQTTConnackFailures        int64                       `json:"device_mqtt_connack_failures"`
-	DeviceSubscribeAttempts          int64                       `json:"device_subscribe_attempts"`
-	DeviceSubscribeFailures          int64                       `json:"device_subscribe_failures"`
-	SubscribeSuccesses               int64                       `json:"subscribe_successes"`
-	ActiveSubscriptions              int64                       `json:"active_subscriptions"`
-	PublishSuccesses                 int64                       `json:"publish_successes"`
-	PublishFailures                  int64                       `json:"publish_failures"`
-	MessagesReceived                 int64                       `json:"messages_received"`
-	ReportedEvents                   int64                       `json:"reported_events"`
-	TotalBytesSent                   int64                       `json:"total_bytes_sent"`
-	TotalBytesReceived               int64                       `json:"total_bytes_received"`
-	AuthViolations                   int64                       `json:"auth_violations"`
-	HTTPRequests                     int64                       `json:"http_requests"`
-	HTTPSuccesses                    int64                       `json:"http_successes"`
-	HTTPFailures                     int64                       `json:"http_failures"`
-	AppTokenAttempts                 int64                       `json:"app_token_attempts"`
-	AppTokenSuccesses                int64                       `json:"app_token_successes"`
-	AppTokenFailures                 int64                       `json:"app_token_failures"`
-	AppTokenFirstAttemptSuccesses    int64                       `json:"app_token_first_attempt_successes"`
-	AppTokenFirstAttemptFailures     int64                       `json:"app_token_first_attempt_failures"`
-	AppTokenRetryAttempts            int64                       `json:"app_token_retry_attempts"`
-	AppTokenRetrySuccesses           int64                       `json:"app_token_retry_successes"`
-	AppTokenRetryExhausted           int64                       `json:"app_token_retry_exhausted"`
-	AppMQTTDialAttempts              int64                       `json:"app_mqtt_dial_attempts"`
-	AppMQTTDialSuccesses             int64                       `json:"app_mqtt_dial_successes"`
-	AppMQTTDialFailures              int64                       `json:"app_mqtt_dial_failures"`
-	AppMQTTConnackAttempts           int64                       `json:"app_mqtt_connack_attempts"`
-	AppMQTTConnackSuccesses          int64                       `json:"app_mqtt_connack_successes"`
-	AppMQTTConnackFailures           int64                       `json:"app_mqtt_connack_failures"`
-	TotalHTTPBytesSent               int64                       `json:"total_http_bytes_sent"`
-	TotalHTTPBytesReceived           int64                       `json:"total_http_bytes_received"`
-	RejectedUpdates                  int64                       `json:"rejected_updates"`
-	DeviceMQTTTotals                 DeviceMQTTTotals            `json:"device_mqtt_totals"`
-	AppUserTotals                    AppUserTotals               `json:"app_user_totals"`
-	FailureReasons                   map[string]int64            `json:"failure_reasons"`
-	FailureDetails                   map[string]map[string]int64 `json:"failure_details"`
-	FailureEvents                    []FailureEvent              `json:"failure_events"`
-	CommandEvents                    []CommandEvent              `json:"command_events"`
-	DeviceTypeTotals                 map[string]DeviceTypeTotals `json:"device_type_totals"`
-	UserActionTotals                 map[string]int64            `json:"user_action_totals"`
-	UsageWindowTotals                map[string]int64            `json:"usage_window_totals"`
-	StageDiagnostics                 map[string]any              `json:"stage_diagnostics"`
-	PhaseMetrics                     map[string]PhaseMetric      `json:"phase_metrics"`
-	BottleneckEvents                 []BottleneckEvent           `json:"bottleneck_events"`
+	ConnectedDevices           int                         `json:"connected_devices"`
+	ActiveConnections          int                         `json:"active_connections"`
+	CommandsAttempted          int                         `json:"commands_attempted"`
+	CommandsPassed             int                         `json:"commands_passed"`
+	ConnectAttempts            int64                       `json:"connect_attempts"`
+	ConnectSuccesses           int64                       `json:"connect_successes"`
+	ConnectFailures            int64                       `json:"connect_failures"`
+	DeviceTokenAttempts        int64                       `json:"device_token_attempts"`
+	DeviceTokenSuccesses       int64                       `json:"device_token_successes"`
+	DeviceTokenFailures        int64                       `json:"device_token_failures"`
+	DeviceMQTTDialAttempts     int64                       `json:"device_mqtt_dial_attempts"`
+	DeviceMQTTDialSuccesses    int64                       `json:"device_mqtt_dial_successes"`
+	DeviceMQTTDialFailures     int64                       `json:"device_mqtt_dial_failures"`
+	DeviceMQTTConnackAttempts  int64                       `json:"device_mqtt_connack_attempts"`
+	DeviceMQTTConnackSuccesses int64                       `json:"device_mqtt_connack_successes"`
+	DeviceMQTTConnackFailures  int64                       `json:"device_mqtt_connack_failures"`
+	DeviceSubscribeAttempts    int64                       `json:"device_subscribe_attempts"`
+	DeviceSubscribeFailures    int64                       `json:"device_subscribe_failures"`
+	SubscribeSuccesses         int64                       `json:"subscribe_successes"`
+	ActiveSubscriptions        int64                       `json:"active_subscriptions"`
+	PublishSuccesses           int64                       `json:"publish_successes"`
+	PublishFailures            int64                       `json:"publish_failures"`
+	MessagesReceived           int64                       `json:"messages_received"`
+	ReportedEvents             int64                       `json:"reported_events"`
+	TotalBytesSent             int64                       `json:"total_bytes_sent"`
+	TotalBytesReceived         int64                       `json:"total_bytes_received"`
+	AuthViolations             int64                       `json:"auth_violations"`
+	HTTPRequests               int64                       `json:"http_requests"`
+	HTTPSuccesses              int64                       `json:"http_successes"`
+	HTTPFailures               int64                       `json:"http_failures"`
+	AppTokenAttempts           int64                       `json:"app_token_attempts"`
+	AppTokenSuccesses          int64                       `json:"app_token_successes"`
+	AppTokenFailures           int64                       `json:"app_token_failures"`
+	AppMQTTDialAttempts        int64                       `json:"app_mqtt_dial_attempts"`
+	AppMQTTDialSuccesses       int64                       `json:"app_mqtt_dial_successes"`
+	AppMQTTDialFailures        int64                       `json:"app_mqtt_dial_failures"`
+	AppMQTTConnackAttempts     int64                       `json:"app_mqtt_connack_attempts"`
+	AppMQTTConnackSuccesses    int64                       `json:"app_mqtt_connack_successes"`
+	AppMQTTConnackFailures     int64                       `json:"app_mqtt_connack_failures"`
+	TotalHTTPBytesSent         int64                       `json:"total_http_bytes_sent"`
+	TotalHTTPBytesReceived     int64                       `json:"total_http_bytes_received"`
+	RejectedUpdates            int64                       `json:"rejected_updates"`
+	DeviceMQTTTotals           DeviceMQTTTotals            `json:"device_mqtt_totals"`
+	AppUserTotals              AppUserTotals               `json:"app_user_totals"`
+	FailureReasons             map[string]int64            `json:"failure_reasons"`
+	FailureDetails             map[string]map[string]int64 `json:"failure_details"`
+	FailureEvents              []FailureEvent              `json:"failure_events"`
+	CommandEvents              []CommandEvent              `json:"command_events"`
+	DeviceTypeTotals           map[string]DeviceTypeTotals `json:"device_type_totals"`
+	UserActionTotals           map[string]int64            `json:"user_action_totals"`
+	UsageWindowTotals          map[string]int64            `json:"usage_window_totals"`
+	StageDiagnostics           map[string]any              `json:"stage_diagnostics"`
 }
 
 func loadLiveMQTTShardResults(path string, stages []Stage, stageTargets []string) ([]StageResult, error) {
@@ -1062,60 +1058,50 @@ func convertLiveMQTTStageResult(raw rawLiveMQTTResult, stage Stage, maxConnected
 		ConnectedDevices:      stage.ConnectedDevices,
 		ShardConnectedDevices: maxConnected,
 		DeviceMQTTTotals: DeviceMQTTTotals{
-			ConnectAttempts:          connectAttempts,
-			ConnectSuccess:           connectSuccess,
-			ConnectFail:              connectFail,
-			TokenAttempts:            nonZeroInt64(raw.DeviceMQTTTotals.TokenAttempts, raw.DeviceTokenAttempts),
-			TokenSuccess:             nonZeroInt64(raw.DeviceMQTTTotals.TokenSuccess, raw.DeviceTokenSuccesses),
-			TokenFail:                nonZeroInt64(raw.DeviceMQTTTotals.TokenFail, raw.DeviceTokenFailures),
-			TokenFirstAttemptSuccess: nonZeroInt64(raw.DeviceMQTTTotals.TokenFirstAttemptSuccess, raw.DeviceTokenFirstAttemptSuccesses),
-			TokenFirstAttemptFail:    nonZeroInt64(raw.DeviceMQTTTotals.TokenFirstAttemptFail, raw.DeviceTokenFirstAttemptFailures),
-			TokenRetryAttempts:       nonZeroInt64(raw.DeviceMQTTTotals.TokenRetryAttempts, raw.DeviceTokenRetryAttempts),
-			TokenRetrySuccess:        nonZeroInt64(raw.DeviceMQTTTotals.TokenRetrySuccess, raw.DeviceTokenRetrySuccesses),
-			TokenRetryExhausted:      nonZeroInt64(raw.DeviceMQTTTotals.TokenRetryExhausted, raw.DeviceTokenRetryExhausted),
-			MQTTDialAttempts:         nonZeroInt64(raw.DeviceMQTTTotals.MQTTDialAttempts, raw.DeviceMQTTDialAttempts),
-			MQTTDialSuccess:          nonZeroInt64(raw.DeviceMQTTTotals.MQTTDialSuccess, raw.DeviceMQTTDialSuccesses),
-			MQTTDialFail:             nonZeroInt64(raw.DeviceMQTTTotals.MQTTDialFail, raw.DeviceMQTTDialFailures),
-			MQTTConnackAttempts:      nonZeroInt64(raw.DeviceMQTTTotals.MQTTConnackAttempts, raw.DeviceMQTTConnackAttempts),
-			MQTTConnackSuccess:       nonZeroInt64(raw.DeviceMQTTTotals.MQTTConnackSuccess, raw.DeviceMQTTConnackSuccesses),
-			MQTTConnackFail:          nonZeroInt64(raw.DeviceMQTTTotals.MQTTConnackFail, raw.DeviceMQTTConnackFailures),
-			SubscribeAttempts:        nonZeroInt64(raw.DeviceMQTTTotals.SubscribeAttempts, raw.DeviceSubscribeAttempts),
-			SubscribeFail:            nonZeroInt64(raw.DeviceMQTTTotals.SubscribeFail, raw.DeviceSubscribeFailures),
-			Subscribes:               subscribes,
-			ActiveConnections:        activeConnections,
-			ActiveSubscriptions:      activeSubscriptions,
-			Publishes:                publishes,
-			ReceivedMessages:         receivedMessages,
-			DeltaReceived:            deltaReceived,
-			ReportedPublishes:        reportedPublishes,
-			RejectedPublishes:        rejectedPublishes,
-			BytesSent:                nonZeroInt64(raw.DeviceMQTTTotals.BytesSent, raw.TotalBytesSent),
-			BytesReceived:            nonZeroInt64(raw.DeviceMQTTTotals.BytesReceived, raw.TotalBytesReceived),
+			ConnectAttempts:     connectAttempts,
+			ConnectSuccess:      connectSuccess,
+			ConnectFail:         connectFail,
+			TokenAttempts:       nonZeroInt64(raw.DeviceMQTTTotals.TokenAttempts, raw.DeviceTokenAttempts),
+			TokenSuccess:        nonZeroInt64(raw.DeviceMQTTTotals.TokenSuccess, raw.DeviceTokenSuccesses),
+			TokenFail:           nonZeroInt64(raw.DeviceMQTTTotals.TokenFail, raw.DeviceTokenFailures),
+			MQTTDialAttempts:    nonZeroInt64(raw.DeviceMQTTTotals.MQTTDialAttempts, raw.DeviceMQTTDialAttempts),
+			MQTTDialSuccess:     nonZeroInt64(raw.DeviceMQTTTotals.MQTTDialSuccess, raw.DeviceMQTTDialSuccesses),
+			MQTTDialFail:        nonZeroInt64(raw.DeviceMQTTTotals.MQTTDialFail, raw.DeviceMQTTDialFailures),
+			MQTTConnackAttempts: nonZeroInt64(raw.DeviceMQTTTotals.MQTTConnackAttempts, raw.DeviceMQTTConnackAttempts),
+			MQTTConnackSuccess:  nonZeroInt64(raw.DeviceMQTTTotals.MQTTConnackSuccess, raw.DeviceMQTTConnackSuccesses),
+			MQTTConnackFail:     nonZeroInt64(raw.DeviceMQTTTotals.MQTTConnackFail, raw.DeviceMQTTConnackFailures),
+			SubscribeAttempts:   nonZeroInt64(raw.DeviceMQTTTotals.SubscribeAttempts, raw.DeviceSubscribeAttempts),
+			SubscribeFail:       nonZeroInt64(raw.DeviceMQTTTotals.SubscribeFail, raw.DeviceSubscribeFailures),
+			Subscribes:          subscribes,
+			ActiveConnections:   activeConnections,
+			ActiveSubscriptions: activeSubscriptions,
+			Publishes:           publishes,
+			ReceivedMessages:    receivedMessages,
+			DeltaReceived:       deltaReceived,
+			ReportedPublishes:   reportedPublishes,
+			RejectedPublishes:   rejectedPublishes,
+			BytesSent:           nonZeroInt64(raw.DeviceMQTTTotals.BytesSent, raw.TotalBytesSent),
+			BytesReceived:       nonZeroInt64(raw.DeviceMQTTTotals.BytesReceived, raw.TotalBytesReceived),
 		},
 		AppUserTotals: AppUserTotals{
-			LoginAttempts:            raw.AppUserTotals.LoginAttempts,
-			LoginSuccess:             raw.AppUserTotals.LoginSuccess,
-			LoginFail:                raw.AppUserTotals.LoginFail,
-			TokenAttempts:            nonZeroInt64(raw.AppUserTotals.TokenAttempts, raw.AppTokenAttempts),
-			TokenSuccess:             nonZeroInt64(raw.AppUserTotals.TokenSuccess, raw.AppTokenSuccesses),
-			TokenFail:                nonZeroInt64(raw.AppUserTotals.TokenFail, raw.AppTokenFailures),
-			TokenFirstAttemptSuccess: nonZeroInt64(raw.AppUserTotals.TokenFirstAttemptSuccess, raw.AppTokenFirstAttemptSuccesses),
-			TokenFirstAttemptFail:    nonZeroInt64(raw.AppUserTotals.TokenFirstAttemptFail, raw.AppTokenFirstAttemptFailures),
-			TokenRetryAttempts:       nonZeroInt64(raw.AppUserTotals.TokenRetryAttempts, raw.AppTokenRetryAttempts),
-			TokenRetrySuccess:        nonZeroInt64(raw.AppUserTotals.TokenRetrySuccess, raw.AppTokenRetrySuccesses),
-			TokenRetryExhausted:      nonZeroInt64(raw.AppUserTotals.TokenRetryExhausted, raw.AppTokenRetryExhausted),
-			MQTTDialAttempts:         nonZeroInt64(raw.AppUserTotals.MQTTDialAttempts, raw.AppMQTTDialAttempts),
-			MQTTDialSuccess:          nonZeroInt64(raw.AppUserTotals.MQTTDialSuccess, raw.AppMQTTDialSuccesses),
-			MQTTDialFail:             nonZeroInt64(raw.AppUserTotals.MQTTDialFail, raw.AppMQTTDialFailures),
-			MQTTConnackAttempts:      nonZeroInt64(raw.AppUserTotals.MQTTConnackAttempts, raw.AppMQTTConnackAttempts),
-			MQTTConnackSuccess:       nonZeroInt64(raw.AppUserTotals.MQTTConnackSuccess, raw.AppMQTTConnackSuccesses),
-			MQTTConnackFail:          nonZeroInt64(raw.AppUserTotals.MQTTConnackFail, raw.AppMQTTConnackFailures),
-			ListDevicesRequests:      raw.AppUserTotals.ListDevicesRequests,
-			ReadShadowRequests:       raw.AppUserTotals.ReadShadowRequests,
-			DesiredWrites:            httpRequests,
-			ReceivedAcks:             httpSuccesses,
-			BytesSent:                nonZeroInt64(raw.AppUserTotals.BytesSent, raw.TotalHTTPBytesSent),
-			BytesReceived:            nonZeroInt64(raw.AppUserTotals.BytesReceived, raw.TotalHTTPBytesReceived),
+			LoginAttempts:       raw.AppUserTotals.LoginAttempts,
+			LoginSuccess:        raw.AppUserTotals.LoginSuccess,
+			LoginFail:           raw.AppUserTotals.LoginFail,
+			TokenAttempts:       nonZeroInt64(raw.AppUserTotals.TokenAttempts, raw.AppTokenAttempts),
+			TokenSuccess:        nonZeroInt64(raw.AppUserTotals.TokenSuccess, raw.AppTokenSuccesses),
+			TokenFail:           nonZeroInt64(raw.AppUserTotals.TokenFail, raw.AppTokenFailures),
+			MQTTDialAttempts:    nonZeroInt64(raw.AppUserTotals.MQTTDialAttempts, raw.AppMQTTDialAttempts),
+			MQTTDialSuccess:     nonZeroInt64(raw.AppUserTotals.MQTTDialSuccess, raw.AppMQTTDialSuccesses),
+			MQTTDialFail:        nonZeroInt64(raw.AppUserTotals.MQTTDialFail, raw.AppMQTTDialFailures),
+			MQTTConnackAttempts: nonZeroInt64(raw.AppUserTotals.MQTTConnackAttempts, raw.AppMQTTConnackAttempts),
+			MQTTConnackSuccess:  nonZeroInt64(raw.AppUserTotals.MQTTConnackSuccess, raw.AppMQTTConnackSuccesses),
+			MQTTConnackFail:     nonZeroInt64(raw.AppUserTotals.MQTTConnackFail, raw.AppMQTTConnackFailures),
+			ListDevicesRequests: raw.AppUserTotals.ListDevicesRequests,
+			ReadShadowRequests:  raw.AppUserTotals.ReadShadowRequests,
+			DesiredWrites:       httpRequests,
+			ReceivedAcks:        httpSuccesses,
+			BytesSent:           nonZeroInt64(raw.AppUserTotals.BytesSent, raw.TotalHTTPBytesSent),
+			BytesReceived:       nonZeroInt64(raw.AppUserTotals.BytesReceived, raw.TotalHTTPBytesReceived),
 		},
 		MQTTConnectSuccessRatePercent:  connectSuccessPercent(DeviceMQTTTotals{ConnectAttempts: connectAttempts, ConnectSuccess: connectSuccess}),
 		DesiredReportedConvergenceRate: percent(commandsPassed, commandsAttempted),
@@ -1132,8 +1118,6 @@ func convertLiveMQTTStageResult(raw rawLiveMQTTResult, stage Stage, maxConnected
 		UserActionTotals:               raw.UserActionTotals,
 		UsageWindowTotals:              raw.UsageWindowTotals,
 		StageDiagnostics:               liveStageDiagnostics(raw.StageDiagnostics),
-		PhaseMetrics:                   raw.PhaseMetrics,
-		BottleneckEvents:               raw.BottleneckEvents,
 	}
 }
 
@@ -1369,7 +1353,7 @@ func parseProvisionVMFlags(name string, args []string, stderr io.Writer) (PlanOp
 	brandname := fs.String("brandname", "", "brand name")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
-	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount := addSizingFlags(fs)
 	runID := fs.String("run-id", "", "run id for VM tags")
 	outDir := fs.String("out-dir", "", "artifact output directory")
 	live := fs.Bool("live", false, "create Linode VMs")
@@ -1385,7 +1369,7 @@ func parseProvisionVMFlags(name string, args []string, stderr io.Writer) (PlanOp
 	}
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
-	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount)
 	return opts, provisionVMFlagValues{
 		runID:             *runID,
 		outDir:            *outDir,
@@ -1407,7 +1391,7 @@ func parseDestroyVMFlags(name string, args []string, stderr io.Writer) (PlanOpti
 	brandname := fs.String("brandname", "", "brand name")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
-	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount := addSizingFlags(fs)
 	runID := fs.String("run-id", "", "run id for VM tags")
 	live := fs.Bool("live", false, "destroy Linode VMs")
 	confirmLive := fs.Bool("confirm-live", false, "confirm live Linode VM destruction")
@@ -1419,7 +1403,7 @@ func parseDestroyVMFlags(name string, args []string, stderr io.Writer) (PlanOpti
 	}
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
-	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount)
 	return opts, destroyVMFlagValues{
 		runID:          *runID,
 		live:           *live,
@@ -1437,7 +1421,7 @@ func parseListVMFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	brandname := fs.String("brandname", "", "brand name")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
-	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount := addSizingFlags(fs)
 	runID := fs.String("run-id", "", "run id for VM tags")
 	live := fs.Bool("live", false, "query Linode VMs")
 	linodeToken := fs.String("linode-token", os.Getenv("LINODE_TOKEN"), "Linode API token")
@@ -1447,7 +1431,7 @@ func parseListVMFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	}
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
-	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount)
 	return opts, listVMFlagValues{
 		runID:          *runID,
 		live:           *live,
@@ -1463,7 +1447,7 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	brandname := fs.String("brandname", "", "brand name")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
-	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount := addSizingFlags(fs)
 	runnerNofile, sessionModel, readModel := addRuntimeConditionFlags(fs)
 	runID := fs.String("run-id", "", "run id for artifact correlation")
 	outDir := fs.String("out-dir", "", "artifact output directory")
@@ -1477,12 +1461,15 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	sshUser := fs.String("ssh-user", "root", "SSH user for load-generator VMs")
 	sshKey := fs.String("ssh-key", "", "SSH private key for load-generator VMs")
 	coordinatorDelayMS := fs.Int("coordinator-start-delay-ms", defaultCoordinatorStartDelayMS, "host coordinator delay between START ack and local monotonic runner start")
-	runnerMQTTConcurrency := addRunnerMQTTConcurrencyFlag(fs)
+	mqttConcurrency := fs.Int("mqtt-concurrency", DefaultLiveMQTTConcurrency, "per-shard MQTT connect worker concurrency for live runner")
+	commandConcurrency := fs.Int("command-concurrency", DefaultLiveCommandConcurrency, "per-shard sustained shadow command concurrency for live runner")
+	shadowCommandTimeout := fs.String("shadow-command-timeout", DefaultShadowCommandTimeout, "per-phase sustained shadow command timeout")
 	mqttAddr := fs.String("mqtt-addr", "", "public MQTT host:port for remote load-generator VMs")
 	videoCloudBaseURL := fs.String("video-cloud-base-url", "", "legacy alias for --video-cloud-public-base-url")
 	videoCloudPublicURL := fs.String("video-cloud-public-base-url", "", "Video Cloud public API base URL for remote load-generator VMs")
 	videoCloudTokenURL := fs.String("video-cloud-token-base-url", "", "Video Cloud mTLS token bootstrap base URL for remote load-generator VMs")
 	accountManagerURL := fs.String("account-manager-base-url", "", "Account Manager base URL for remote load-generator VMs")
+	generatorHostsOverrideIP := fs.String("generator-hosts-override-ip", "", "optional IPv4 address to map staging HTTPS hostnames to on load-generator VMs")
 	credentialBundleFormat := fs.String("credential-bundle-format", "sqlite-gzip", "credential bundle format: sqlite-gzip")
 	if err := fs.Parse(args); err != nil {
 		return PlanOptions{}, workflowFlagValues{}, err
@@ -1492,29 +1479,32 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	}
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
-	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount)
 	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel)
 	return opts, workflowFlagValues{
-		runID:                  *runID,
-		outDir:                 *outDir,
-		serverEvidenceFile:     *serverEvidenceFile,
-		live:                   *live,
-		runnerMode:             *runnerMode,
-		vmStateFile:            *vmStateFile,
-		remoteWorkspace:        *remoteWorkspace,
-		remoteEnvRoot:          *remoteEnvRoot,
-		remoteOutRoot:          *remoteOutRoot,
-		sshUser:                *sshUser,
-		sshKey:                 *sshKey,
-		coordinatorDelayMS:     *coordinatorDelayMS,
-		mqttAddr:               *mqttAddr,
-		videoCloudBaseURL:      *videoCloudBaseURL,
-		videoCloudPublicURL:    *videoCloudPublicURL,
-		videoCloudTokenURL:     *videoCloudTokenURL,
-		accountManagerURL:      *accountManagerURL,
-		credentialBundleFormat: strings.TrimSpace(*credentialBundleFormat),
-		runnerNofileLimit:      *runnerNofile,
-		runnerMQTTConcurrency:  *runnerMQTTConcurrency,
+		runID:                    *runID,
+		outDir:                   *outDir,
+		serverEvidenceFile:       *serverEvidenceFile,
+		live:                     *live,
+		runnerMode:               *runnerMode,
+		vmStateFile:              *vmStateFile,
+		remoteWorkspace:          *remoteWorkspace,
+		remoteEnvRoot:            *remoteEnvRoot,
+		remoteOutRoot:            *remoteOutRoot,
+		sshUser:                  *sshUser,
+		sshKey:                   *sshKey,
+		coordinatorDelayMS:       *coordinatorDelayMS,
+		mqttAddr:                 *mqttAddr,
+		videoCloudBaseURL:        *videoCloudBaseURL,
+		videoCloudPublicURL:      *videoCloudPublicURL,
+		videoCloudTokenURL:       *videoCloudTokenURL,
+		accountManagerURL:        *accountManagerURL,
+		generatorHostsOverrideIP: strings.TrimSpace(*generatorHostsOverrideIP),
+		credentialBundleFormat:   strings.TrimSpace(*credentialBundleFormat),
+		runnerNofileLimit:        *runnerNofile,
+		mqttConcurrency:          *mqttConcurrency,
+		commandConcurrency:       *commandConcurrency,
+		shadowCommandTimeout:     strings.TrimSpace(*shadowCommandTimeout),
 	}, nil
 }
 
@@ -1525,7 +1515,7 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	brandname := fs.String("brandname", "", "brand name")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
-	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount := addSizingFlags(fs)
 	runID := fs.String("run-id", "", "run id for artifact correlation")
 	outDir := fs.String("out-dir", "", "artifact output directory")
 	role := fs.String("role", "", "shard role")
@@ -1535,7 +1525,9 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	runnerMode := fs.String("runner-mode", "sample", "runner mode: sample or live")
 	rtkCloudBinary := fs.String("rtk-cloud-binary", "rtk-cloud", "rtk-cloud binary for live MQTT/API runner")
 	workspace := fs.String("workspace", "", "workspace path for live MQTT/API runner")
-	runnerMQTTConcurrency := addRunnerMQTTConcurrencyFlag(fs)
+	mqttConcurrency := fs.Int("mqtt-concurrency", DefaultLiveMQTTConcurrency, "per-shard MQTT connect worker concurrency for live runner")
+	commandConcurrency := fs.Int("command-concurrency", DefaultLiveCommandConcurrency, "per-shard sustained shadow command concurrency for live runner")
+	shadowCommandTimeout := fs.String("shadow-command-timeout", DefaultShadowCommandTimeout, "per-phase sustained shadow command timeout")
 	if err := fs.Parse(args); err != nil {
 		return PlanOptions{}, shardRunFlagValues{}, err
 	}
@@ -1544,18 +1536,20 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	}
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
-	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount)
 	return opts, shardRunFlagValues{
-		runID:                 *runID,
-		outDir:                *outDir,
-		role:                  *role,
-		shardIndex:            *shardIndex,
-		shardManifest:         *shardManifest,
-		honorStageDurations:   *honorStageDurations,
-		runnerMode:            *runnerMode,
-		rtkCloudBinary:        *rtkCloudBinary,
-		workspace:             *workspace,
-		runnerMQTTConcurrency: *runnerMQTTConcurrency,
+		runID:                *runID,
+		outDir:               *outDir,
+		role:                 *role,
+		shardIndex:           *shardIndex,
+		shardManifest:        *shardManifest,
+		honorStageDurations:  *honorStageDurations,
+		runnerMode:           *runnerMode,
+		rtkCloudBinary:       *rtkCloudBinary,
+		workspace:            *workspace,
+		mqttConcurrency:      *mqttConcurrency,
+		commandConcurrency:   *commandConcurrency,
+		shadowCommandTimeout: strings.TrimSpace(*shadowCommandTimeout),
 	}, nil
 }
 
@@ -1744,8 +1738,8 @@ func normalizeEvidenceSourceCatalogMetadata(sources map[string]EvidenceSource) {
 }
 
 func collectCentralLoggerEvidence(envRoot string, runID string) (EvidenceSource, string) {
-	if centralLoggerSkipped() {
-		return EvidenceSource{Available: false, Optional: true, Detail: "central logger probe skipped by HOME100K_SKIP_CENTRAL_LOGGER"}, "central_logger evidence probe skipped by HOME100K_SKIP_CENTRAL_LOGGER"
+	if skipCentralLoggerEvidence() {
+		return EvidenceSource{Available: false, Optional: true, Detail: "central logger evidence skipped by HOME100K_SKIP_CENTRAL_LOGGER"}, "central_logger evidence probe skipped by HOME100K_SKIP_CENTRAL_LOGGER"
 	}
 	values := centralLoggerEnvValues(envRoot)
 	endpoint := strings.TrimRight(strings.TrimSpace(firstNonEmpty(values["CLOUD_LOGGER_ENDPOINT"], os.Getenv("CLOUD_LOGGER_ENDPOINT"))), "/")
@@ -1779,15 +1773,12 @@ func collectCentralLoggerEvidence(envRoot string, runID string) (EvidenceSource,
 	}, ""
 }
 
-func centralLoggerSkipped() bool {
-	raw := strings.TrimSpace(strings.ToLower(os.Getenv("HOME100K_SKIP_CENTRAL_LOGGER")))
-	return raw == "1" || raw == "true" || raw == "yes"
-}
-
 func centralLoggerEnvValues(envRoot string) map[string]string {
 	candidates := []string{}
+	explicitOverride := false
 	if override := strings.TrimSpace(os.Getenv("HOME100K_CLOUD_LOGGER_ENV")); override != "" {
 		candidates = append(candidates, override)
+		explicitOverride = true
 	}
 	candidates = append(candidates,
 		filepath.Join(envRoot, "services", "cloud-logger", "logger.env"),
@@ -1799,12 +1790,27 @@ func centralLoggerEnvValues(envRoot string) map[string]string {
 			filepath.Join(parent, "linode", "state", "cloud-logger.env"),
 		)
 	}
+	values := map[string]string{}
 	for _, path := range candidates {
 		if fileReadable(path) {
-			return parseEnvFile(path)
+			values = parseEnvFile(path)
+			break
 		}
 	}
-	return map[string]string{}
+	if !explicitOverride {
+		if token := readTrimmedFile(filepath.Join(envRoot, "state", "secrets", "cloud-logger-ingest-token")); token != "" {
+			values["CLOUD_LOGGER_INGEST_TOKEN"] = token
+		}
+	}
+	return values
+}
+
+func readTrimmedFile(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
 }
 
 func evidenceWindowStart(outDir string) string {
@@ -1872,7 +1878,7 @@ type centralLoggerRuntimeEvent struct {
 }
 
 func collectCentralLoggerRuntimeLogEvidence(envRoot string, runID string, windowStart string) (EvidenceSource, EvidenceSource, string) {
-	if centralLoggerSkipped() {
+	if skipCentralLoggerEvidence() {
 		return EvidenceSource{}, EvidenceSource{}, "central_logger runtime evidence probe skipped by HOME100K_SKIP_CENTRAL_LOGGER"
 	}
 	values := centralLoggerEnvValues(envRoot)
@@ -1905,6 +1911,11 @@ func collectCentralLoggerRuntimeLogEvidence(envRoot string, runID string, window
 	return EvidenceSource{Available: true, Detail: detail, Counters: shadowCounters},
 		EvidenceSource{Available: true, Detail: detail, Counters: streamCounters},
 		"central_logger runtime evidence used for iot_device_shadow and iot_device_shadow_streams"
+}
+
+func skipCentralLoggerEvidence() bool {
+	raw := strings.TrimSpace(strings.ToLower(os.Getenv("HOME100K_SKIP_CENTRAL_LOGGER")))
+	return raw == "1" || raw == "true" || raw == "yes"
 }
 
 func queryCentralLoggerRuntimeEventsWindowed(endpoint string, token string, since time.Time, until time.Time, depth int) ([]centralLoggerRuntimeEvent, error) {
@@ -2085,8 +2096,6 @@ func fileReadable(path string) bool {
 
 func parseEvidenceCounters(source string, runID string, out string) map[string]int64 {
 	counters := map[string]int64{}
-	var requestTokenDurations []int64
-	var ingressRequestTokenDurations []int64
 	if source == "emqx_listener_stats" && (strings.Contains(out, "tcp:default") || strings.Contains(out, "ssl:default")) {
 		counters["emqx.broker.identity"] = 1
 	}
@@ -2103,34 +2112,19 @@ func parseEvidenceCounters(source string, runID string, out string) map[string]i
 			}
 			continue
 		}
-		if source == "emqx" {
-			lower := strings.ToLower(line)
-			if strings.Contains(line, runID) && strings.Contains(line, "-device-") &&
-				(strings.Contains(line, "New client connected") || strings.Contains(line, "client.connected")) {
+		if source == "emqx" && strings.Contains(line, runID) && strings.Contains(line, "-device-") {
+			if strings.Contains(line, "New client connected") || strings.Contains(line, "client.connected") {
 				counters["device_mqtt.connect_success"]++
-			}
-			if strings.Contains(lower, "socket_error") {
-				counters["emqx.socket_error"]++
-			}
-			if strings.Contains(lower, "timeout") {
-				counters["emqx.timeout"]++
-			}
-			if strings.Contains(lower, "conn_congestion") {
-				counters["emqx.conn_congestion"]++
 			}
 		}
 		if source == "emqx_listener_stats" {
 			parseEMQXListenerCounterLine(counters, line)
 		}
 		if source == "video_cloud_api" {
-			if duration, ok := parseVideoCloudAPIRequestTokenCounterLine(counters, line); ok {
-				requestTokenDurations = append(requestTokenDurations, duration)
-			}
+			parseVideoCloudAPILogCounterLine(counters, line)
 		}
 		if source == "ingress_nginx" {
-			if duration, ok := parseIngressRequestTokenCounterLine(counters, line); ok {
-				ingressRequestTokenDurations = append(ingressRequestTokenDurations, duration)
-			}
+			parseIngressRequestTokenCounterLine(counters, line)
 		}
 		if source == "postgres" {
 			parsePostgresCounterLine(counters, line)
@@ -2139,8 +2133,6 @@ func parseEvidenceCounters(source string, runID string, out string) map[string]i
 			parseRedisInfoCounterLine(counters, line)
 		}
 	}
-	addDurationPercentiles(counters, "video_cloud_api.request_token", requestTokenDurations)
-	addDurationPercentiles(counters, "ingress_nginx.request_token", ingressRequestTokenDurations)
 	if len(counters) == 0 {
 		return nil
 	}
@@ -2209,50 +2201,9 @@ func applyServerEvidenceBaselineDeltas(evidence *ServerEvidence, runID string, o
 	applyEMQXMetricDelta(evidence, baseline)
 	applySourceCounterBaselineDelta(evidence, baseline, "ingress_nginx")
 	applySourceCounterBaselineDelta(evidence, baseline, "postgres")
-	applyRedisValkeyCounterBaselineDelta(evidence, baseline)
+	applySourceCounterBaselineDelta(evidence, baseline, "redis_valkey")
 	applySourceCounterBaselineDelta(evidence, baseline, "video_cloud_api")
 	recomputeVideoCloudAPITopLevelCounters(evidence)
-}
-
-func applyRedisValkeyCounterBaselineDelta(evidence *ServerEvidence, baseline ServerEvidence) {
-	if evidence == nil || evidence.Sources == nil {
-		return
-	}
-	source := evidence.Sources["redis_valkey"]
-	gauges := map[string]int64{}
-	for key, value := range source.Counters {
-		if redisValkeyGaugeCounter(key) {
-			gauges[key] = value
-		}
-	}
-	applySourceCounterBaselineDelta(evidence, baseline, "redis_valkey")
-	source = evidence.Sources["redis_valkey"]
-	if source.Counters == nil {
-		source.Counters = map[string]int64{}
-	}
-	for key, value := range gauges {
-		source.Counters[key] = value
-	}
-	evidence.Sources["redis_valkey"] = source
-}
-
-func redisValkeyGaugeCounter(key string) bool {
-	switch {
-	case key == "redis_valkey.shadow.docs",
-		key == "redis_valkey.shadow.named_indexes",
-		key == "redis_valkey.shadow.keys",
-		key == "redis_valkey.connected_clients",
-		key == "redis_valkey.used_memory",
-		key == "redis_valkey.used_memory_peak":
-		return true
-	case strings.HasPrefix(key, "redis_valkey.keyspace.") &&
-		(strings.HasSuffix(key, ".keys") ||
-			strings.HasSuffix(key, ".expires") ||
-			strings.HasSuffix(key, ".avg_ttl")):
-		return true
-	default:
-		return false
-	}
 }
 
 func applyEMQXMetricDelta(evidence *ServerEvidence, baseline ServerEvidence) {
@@ -2367,38 +2318,67 @@ func parseEMQXListenerCounterLine(counters map[string]int64, line string) {
 }
 
 func parseVideoCloudAPILogCounterLine(counters map[string]int64, line string) {
-	_, _ = parseVideoCloudAPIRequestTokenCounterLine(counters, line)
-}
-
-func parseVideoCloudAPIRequestTokenCounterLine(counters map[string]int64, line string) (int64, bool) {
-	lowerLine := strings.ToLower(line)
-	if strings.Contains(lowerLine, "socket_error") {
-		counters["video_cloud_api.socket_error"]++
-	}
-	if strings.Contains(lowerLine, "timeout") {
-		counters["video_cloud_api.timeout"]++
-	}
-	if strings.Contains(lowerLine, "conn_congestion") {
-		counters["video_cloud_api.conn_congestion"]++
-	}
 	jsonStart := strings.Index(line, "{")
 	if jsonStart > 0 {
 		line = line[jsonStart:]
 	}
 	var entry struct {
-		Path       string  `json:"path"`
-		Status     int     `json:"status"`
-		DurationMS float64 `json:"duration_ms"`
+		Message         string          `json:"msg"`
+		LegacyMessage   string          `json:"message"`
+		Path            string          `json:"path"`
+		Status          int             `json:"status"`
+		DurationMS      float64         `json:"duration_ms"`
+		SubscriberRole  string          `json:"subscriber_role"`
+		TopicClass      string          `json:"topic_class"`
+		QueueLen        int64           `json:"queue_len"`
+		QueueCap        int64           `json:"queue_cap"`
+		Duration        json.RawMessage `json:"duration"`
+		HandlerDuration json.RawMessage `json:"handler_duration"`
+		TotalDuration   json.RawMessage `json:"total_duration"`
 	}
 	if err := json.Unmarshal([]byte(line), &entry); err != nil {
-		return 0, false
+		return
+	}
+	message := firstNonEmpty(entry.Message, entry.LegacyMessage)
+	switch message {
+	case "mqtt inbound handler queue pressure":
+		role := videoCloudMQTTRoleKey(entry.SubscriberRole)
+		counters[fmt.Sprintf("video_cloud_api.mqtt.%s.queue_pressure", role)]++
+		if entry.QueueCap > 0 && entry.QueueLen >= entry.QueueCap {
+			counters[fmt.Sprintf("video_cloud_api.mqtt.%s.queue_full", role)]++
+		}
+		if entry.QueueLen > counters[fmt.Sprintf("video_cloud_api.mqtt.%s.max_queue_len", role)] {
+			counters[fmt.Sprintf("video_cloud_api.mqtt.%s.max_queue_len", role)] = entry.QueueLen
+		}
+		if entry.QueueCap > counters[fmt.Sprintf("video_cloud_api.mqtt.%s.max_queue_cap", role)] {
+			counters[fmt.Sprintf("video_cloud_api.mqtt.%s.max_queue_cap", role)] = entry.QueueCap
+		}
+		if topicClass := videoCloudMQTTRoleKey(entry.TopicClass); topicClass != "unknown" {
+			counters[fmt.Sprintf("video_cloud_api.mqtt.%s.%s.queue_pressure", role, topicClass)]++
+		}
+	case "mqtt inbound handler slow":
+		role := videoCloudMQTTRoleKey(entry.SubscriberRole)
+		counters[fmt.Sprintf("video_cloud_api.mqtt.%s.handler_slow", role)]++
+		handlerMS := parseVideoCloudAPIDurationMS(entry.HandlerDuration)
+		totalMS := parseVideoCloudAPIDurationMS(entry.TotalDuration)
+		if handlerMS > counters[fmt.Sprintf("video_cloud_api.mqtt.%s.max_handler_ms", role)] {
+			counters[fmt.Sprintf("video_cloud_api.mqtt.%s.max_handler_ms", role)] = handlerMS
+		}
+		if totalMS > counters[fmt.Sprintf("video_cloud_api.mqtt.%s.max_total_ms", role)] {
+			counters[fmt.Sprintf("video_cloud_api.mqtt.%s.max_total_ms", role)] = totalMS
+		}
+	case "mqtt shadow request slow":
+		counters["video_cloud_api.mqtt.shadow_request_slow"]++
+		durationMS := parseVideoCloudAPIDurationMS(entry.Duration)
+		if durationMS > counters["video_cloud_api.mqtt.shadow_request.max_ms"] {
+			counters["video_cloud_api.mqtt.shadow_request.max_ms"] = durationMS
+		}
 	}
 	if entry.Path != "/request_token" {
-		return 0, false
+		return
 	}
 	counters["video_cloud_api.request_token.total"]++
 	counters[fmt.Sprintf("video_cloud_api.request_token.status_%d", entry.Status)]++
-	addStatusClassCounter(counters, "video_cloud_api.request_token.status", entry.Status)
 	duration := int64(entry.DurationMS)
 	if duration > counters["video_cloud_api.request_token.max_ms"] {
 		counters["video_cloud_api.request_token.max_ms"] = duration
@@ -2412,30 +2392,63 @@ func parseVideoCloudAPIRequestTokenCounterLine(counters map[string]int64, line s
 	if entry.DurationMS > 10000 {
 		counters["video_cloud_api.request_token.gt10s"]++
 	}
-	return duration, true
+}
+
+func videoCloudMQTTRoleKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, "-", "_")
+	if value == "" {
+		return "unknown"
+	}
+	return value
+}
+
+func parseVideoCloudAPIDurationMS(raw json.RawMessage) int64 {
+	if len(raw) == 0 {
+		return 0
+	}
+	var seconds float64
+	if err := json.Unmarshal(raw, &seconds); err == nil {
+		if seconds > 1000000 {
+			return int64(seconds / 1000000)
+		}
+		return int64(seconds * 1000)
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err != nil || strings.TrimSpace(text) == "" {
+		return 0
+	}
+	duration, err := time.ParseDuration(text)
+	if err == nil {
+		return duration.Milliseconds()
+	}
+	parsed, err := strconv.ParseFloat(strings.TrimSuffix(strings.TrimSpace(text), "s"), 64)
+	if err != nil {
+		return 0
+	}
+	return int64(parsed * 1000)
 }
 
 var ingressAccessLogPattern = regexp.MustCompile(`\[[0-9]{2}/[A-Za-z]+/[0-9]{4}:[0-9]{2}:[0-9]{2}:[0-9]{2} \+0000\] "([A-Z]+) ([^ ]+) [^"]+" ([0-9]{3}) [0-9]+ "[^"]*" "[^"]*" [0-9]+ ([0-9.]+) \[[^\]]*\] \[\] [^ ]+ [^ ]+ ([0-9.]+|-|,) ([0-9]{3}|-)`)
 
-func parseIngressRequestTokenCounterLine(counters map[string]int64, line string) (int64, bool) {
+func parseIngressRequestTokenCounterLine(counters map[string]int64, line string) {
 	matches := ingressAccessLogPattern.FindStringSubmatch(line)
 	if len(matches) != 7 {
-		return 0, false
+		return
 	}
 	if matches[1] != http.MethodPost || matches[2] != "/request_token" {
-		return 0, false
+		return
 	}
 	status, err := strconv.Atoi(matches[3])
 	if err != nil {
-		return 0, false
+		return
 	}
 	requestTime, err := strconv.ParseFloat(matches[4], 64)
 	if err != nil {
-		return 0, false
+		return
 	}
 	counters["ingress_nginx.request_token.total"]++
 	counters[fmt.Sprintf("ingress_nginx.request_token.status_%d", status)]++
-	addStatusClassCounter(counters, "ingress_nginx.request_token.status", status)
 	ms := int64(requestTime * 1000)
 	if ms > counters["ingress_nginx.request_token.max_ms"] {
 		counters["ingress_nginx.request_token.max_ms"] = ms
@@ -2451,44 +2464,7 @@ func parseIngressRequestTokenCounterLine(counters map[string]int64, line string)
 	}
 	if upstreamStatus, err := strconv.Atoi(matches[6]); err == nil {
 		counters[fmt.Sprintf("ingress_nginx.request_token.upstream_%d", upstreamStatus)]++
-		addStatusClassCounter(counters, "ingress_nginx.request_token.upstream", upstreamStatus)
 	}
-	return ms, true
-}
-
-func addStatusClassCounter(counters map[string]int64, prefix string, status int) {
-	switch {
-	case status >= 200 && status < 300:
-		counters[prefix+"_2xx"]++
-	case status >= 400 && status < 500:
-		counters[prefix+"_4xx"]++
-	case status >= 500 && status < 600:
-		counters[prefix+"_5xx"]++
-	}
-}
-
-func addDurationPercentiles(counters map[string]int64, prefix string, durations []int64) {
-	if len(durations) == 0 {
-		return
-	}
-	sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
-	counters[prefix+".duration_p50_ms"] = nearestRankPercentile(durations, 50)
-	counters[prefix+".duration_p95_ms"] = nearestRankPercentile(durations, 95)
-	counters[prefix+".duration_p99_ms"] = nearestRankPercentile(durations, 99)
-}
-
-func nearestRankPercentile(values []int64, pct int) int64 {
-	if len(values) == 0 {
-		return 0
-	}
-	rank := (pct*len(values) + 99) / 100
-	if rank < 1 {
-		rank = 1
-	}
-	if rank > len(values) {
-		rank = len(values)
-	}
-	return values[rank-1]
 }
 
 func redactEvidenceOutput(out string) string {
@@ -2599,8 +2575,15 @@ func mergeEvidenceSource(current EvidenceSource, next EvidenceSource) EvidenceSo
 	if current.Detail == "" {
 		return next
 	}
+	available := current.Available && next.Available
+	if evidenceSourceHasData(current) && !next.Available && !evidenceSourceHasData(next) {
+		available = true
+	}
+	if evidenceSourceHasData(next) && !current.Available && !evidenceSourceHasData(current) {
+		available = true
+	}
 	merged := EvidenceSource{
-		Available: current.Available && next.Available,
+		Available: available,
 		Optional:  current.Optional || next.Optional,
 		Detail:    current.Detail + "; " + next.Detail,
 		Counters:  map[string]int64{},
@@ -2619,6 +2602,10 @@ func mergeEvidenceSource(current EvidenceSource, next EvidenceSource) EvidenceSo
 		merged.Samples = nil
 	}
 	return merged
+}
+
+func evidenceSourceHasData(source EvidenceSource) bool {
+	return len(source.Counters) > 0 || len(source.Samples) > 0
 }
 
 type serverEvidenceProbe struct {
@@ -2652,14 +2639,13 @@ func serverEvidenceProbes(runID string, logsSinceArg string) []serverEvidencePro
 			detail:  "pod resource usage captured",
 		},
 		kubectlLogsProbe("emqx", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=mqtt", logsSinceArg, "MQTT broker logs and client churn evidence captured for run_id "+runID),
-		emqxWarningCounterProbe(runID, logsSinceArg),
 		emqxBrokerMetricsProbe(runID),
 		emqxListenerStatsProbe(runID),
 		mqttNodeBalancerProbe(runID),
 		videoCloudAPIRequestTokenCounterProbe(runID, logsSinceArg),
-		videoCloudAPIWarningCounterProbe(runID, logsSinceArg),
+		videoCloudAPIMetricsProbe(runID),
 		kubectlLogsProbe("video_cloud_api", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=video-cloud-api", logsSinceArg, "Video Cloud API logs captured for run_id "+runID),
-		postgresActivityProbe(runID),
+		postgresCounterProbe("postgres", runID, shadowStoreCounterSQL(runID), "PostgreSQL device shadow convergence counters parsed for run_id "+runID),
 		kubectlLogsProbe("postgres", "video-cloud-staging-platform", "app.kubernetes.io/name=postgresql", logsSinceArg, "PostgreSQL logs captured"),
 		redisInfoProbe(runID),
 		kubectlLogsProbe("redis_valkey", "video-cloud-staging-platform", "app.kubernetes.io/name=redis", logsSinceArg, "Redis/Valkey logs captured when enabled"),
@@ -2675,15 +2661,14 @@ func postgresCounterProbe(source string, runID string, sql string, detail string
 	return serverEvidenceProbe{source: source, command: "bash", args: []string{"-lc", script}, detail: detail}
 }
 
-func postgresActivityProbe(runID string) serverEvidenceProbe {
-	sql := `
-select 'postgres.activity.active', count(*) filter (where state = 'active') from pg_stat_activity
-union all select 'postgres.activity.idle', count(*) filter (where state = 'idle') from pg_stat_activity
-union all select 'postgres.activity.idle_in_transaction', count(*) filter (where state = 'idle in transaction') from pg_stat_activity
-union all select 'postgres.activity.total', count(*) from pg_stat_activity
-union all select 'postgres.locks.waiting', count(*) from pg_locks where not granted
+func shadowStoreCounterSQL(runID string) string {
+	return `
+SELECT 'device_shadow.rows_current_converged', COUNT(*)
+FROM device_shadows
+WHERE shadow_name = ''
+  AND desired = reported
+  AND deleted_at IS NULL
 `
-	return postgresCounterProbe("postgres_activity", runID, sql, "PostgreSQL activity and waiting-lock counters captured for run_id "+runID)
 }
 
 func redisInfoProbe(runID string) serverEvidenceProbe {
@@ -2693,9 +2678,6 @@ test -n "$pods"
 for pod in $pods; do
   echo "pod:$pod"
   kubectl -n video-cloud-staging-platform exec "$pod" -- redis-cli INFO stats clients memory keyspace commandstats
-  echo "redis_valkey.shadow.docs $(kubectl -n video-cloud-staging-platform exec "$pod" -- sh -c "redis-cli --scan --pattern 'video_cloud:shadow:doc:*' | wc -l" | tr -d '[:space:]')"
-  echo "redis_valkey.shadow.named_indexes $(kubectl -n video-cloud-staging-platform exec "$pod" -- sh -c "redis-cli --scan --pattern 'video_cloud:shadow:names:*' | wc -l" | tr -d '[:space:]')"
-  echo "redis_valkey.shadow.keys $(kubectl -n video-cloud-staging-platform exec "$pod" -- sh -c "redis-cli --scan --pattern 'video_cloud:shadow:*' | wc -l" | tr -d '[:space:]')"
 done`
 	return serverEvidenceProbe{
 		source:  "redis_valkey",
@@ -2804,28 +2786,6 @@ done`
 	}
 }
 
-func emqxWarningCounterProbe(runID string, logsSinceArg string) serverEvidenceProbe {
-	script := `set -euo pipefail
-pods="$(kubectl -n video-cloud-staging-video-cloud get pods --selector app.kubernetes.io/name=mqtt -o name)"
-test -n "$pods"
-{ timeout 20s kubectl -n video-cloud-staging-video-cloud logs ` + shellQuote(logsSinceArg) + ` --selector app.kubernetes.io/name=mqtt --tail=` + serverEvidenceLogTailLines + ` || true; } \
-  | awk 'BEGIN{socket=0; timeout=0; congestion=0}
-    /socket_error/ {socket++}
-    /timeout/ {timeout++}
-    /conn_congestion/ {congestion++}
-    END{
-      print "emqx.socket_error", socket
-      print "emqx.timeout", timeout
-      print "emqx.conn_congestion", congestion
-    }'`
-	return serverEvidenceProbe{
-		source:  "emqx",
-		command: "bash",
-		args:    []string{"-lc", script},
-		detail:  "EMQX socket, timeout, and conn_congestion warning counters captured for run_id " + runID,
-	}
-}
-
 func mqttNodeBalancerProbe(runID string) serverEvidenceProbe {
 	script := `set -euo pipefail
 test -n "${LINODE_TOKEN:-}"
@@ -2866,40 +2826,20 @@ for pod in $pods; do
   { timeout 20s kubectl -n video-cloud-staging-video-cloud logs ` + shellQuote(logsSinceArg) + ` "$pod" --tail=` + serverEvidenceLogTailLines + ` || true; } \
     | jq -sr --arg pod "$safe_pod" '
         [.[] | select(.path == "/request_token")] as $rt
-        | (def durations: ($rt | map((.duration_ms // 0) | floor) | sort);
-          def pct($p):
-            (durations) as $d
-            | if ($d | length) == 0 then 0
-              else ($d[((($p * ($d | length) + 99) / 100 | floor) - 1)])
-              end;
-          [
+        | [
             "video_cloud_api.request_token.total \($rt | length)",
             "video_cloud_api.request_token.status_200 \(($rt | map(select(.status == 200)) | length))",
             "video_cloud_api.request_token.status_500 \(($rt | map(select(.status == 500)) | length))",
-            "video_cloud_api.request_token.status_2xx \(($rt | map(select((.status // 0) >= 200 and (.status // 0) < 300)) | length))",
-            "video_cloud_api.request_token.status_4xx \(($rt | map(select((.status // 0) >= 400 and (.status // 0) < 500)) | length))",
-            "video_cloud_api.request_token.status_5xx \(($rt | map(select((.status // 0) >= 500 and (.status // 0) < 600)) | length))",
-            "video_cloud_api.request_token.duration_p50_ms \(pct(50))",
-            "video_cloud_api.request_token.duration_p95_ms \(pct(95))",
-            "video_cloud_api.request_token.duration_p99_ms \(pct(99))",
-            "video_cloud_api.request_token.max_ms \((durations | last) // 0)",
             "video_cloud_api.request_token.gt1s \(($rt | map(select(.duration_ms > 1000)) | length))",
             "video_cloud_api.request_token.gt5s \(($rt | map(select(.duration_ms > 5000)) | length))",
             "video_cloud_api.request_token.gt10s \(($rt | map(select(.duration_ms > 10000)) | length))",
             "video_cloud_api.request_token.pod_\($pod).total \($rt | length)",
             "video_cloud_api.request_token.pod_\($pod).status_200 \(($rt | map(select(.status == 200)) | length))",
             "video_cloud_api.request_token.pod_\($pod).status_500 \(($rt | map(select(.status == 500)) | length))",
-            "video_cloud_api.request_token.pod_\($pod).status_2xx \(($rt | map(select((.status // 0) >= 200 and (.status // 0) < 300)) | length))",
-            "video_cloud_api.request_token.pod_\($pod).status_4xx \(($rt | map(select((.status // 0) >= 400 and (.status // 0) < 500)) | length))",
-            "video_cloud_api.request_token.pod_\($pod).status_5xx \(($rt | map(select((.status // 0) >= 500 and (.status // 0) < 600)) | length))",
-            "video_cloud_api.request_token.pod_\($pod).duration_p50_ms \(pct(50))",
-            "video_cloud_api.request_token.pod_\($pod).duration_p95_ms \(pct(95))",
-            "video_cloud_api.request_token.pod_\($pod).duration_p99_ms \(pct(99))",
-            "video_cloud_api.request_token.pod_\($pod).max_ms \((durations | last) // 0)",
             "video_cloud_api.request_token.pod_\($pod).gt1s \(($rt | map(select(.duration_ms > 1000)) | length))",
             "video_cloud_api.request_token.pod_\($pod).gt5s \(($rt | map(select(.duration_ms > 5000)) | length))",
             "video_cloud_api.request_token.pod_\($pod).gt10s \(($rt | map(select(.duration_ms > 10000)) | length))"
-          ])
+          ]
         | .[]'
 done
 `
@@ -2911,25 +2851,37 @@ done
 	}
 }
 
-func videoCloudAPIWarningCounterProbe(runID string, logsSinceArg string) serverEvidenceProbe {
+func videoCloudAPIMetricsProbe(runID string) serverEvidenceProbe {
 	script := `set -euo pipefail
-pods="$(kubectl -n video-cloud-staging-video-cloud get pods --selector app.kubernetes.io/name=video-cloud-api -o name)"
+pods="$(kubectl -n video-cloud-staging-video-cloud get pods --selector app.kubernetes.io/name=video-cloud-api -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}')"
 test -n "$pods"
-{ timeout 20s kubectl -n video-cloud-staging-video-cloud logs ` + shellQuote(logsSinceArg) + ` --selector app.kubernetes.io/name=video-cloud-api --tail=` + serverEvidenceLogTailLines + ` || true; } \
-  | awk 'BEGIN{socket=0; timeout=0; congestion=0}
-    /socket_error/ {socket++}
-    /timeout/ {timeout++}
-    /conn_congestion/ {congestion++}
-    END{
-      print "video_cloud_api.socket_error", socket
-      print "video_cloud_api.timeout", timeout
-      print "video_cloud_api.conn_congestion", congestion
-    }'`
+for pod in $pods; do
+  safe_pod="$(printf '%s' "$pod" | tr -c 'A-Za-z0-9_' '_')"
+  metrics="$(kubectl -n video-cloud-staging-video-cloud exec "$pod" -- sh -c 'wget -qO- http://127.0.0.1:8080/metrics/prometheus 2>/dev/null || curl -fsS http://127.0.0.1:8080/metrics/prometheus' 2>/dev/null || true)"
+  test -n "$metrics"
+  printf '%s\n' "$metrics" | awk -v pod="$safe_pod" '
+    /^request_token_step_duration_seconds_/ || /^pkcs11_sign_(wait|duration)_seconds_/ {
+      name=$1; value=$2
+      gsub(/\{.*\}/, "", name)
+      gsub(/[^A-Za-z0-9_]/, "_", name)
+      if (value ~ /^[0-9.]+$/) {
+        if (name ~ /_count$/) {
+          printf "video_cloud_api.metrics.%s %.0f\n", name, value
+          printf "video_cloud_api.metrics.pod_%s.%s %.0f\n", pod, name, value
+        } else if (name ~ /_max$/) {
+          printf "video_cloud_api.metrics.%s_ms %.0f\n", name, value * 1000
+          printf "video_cloud_api.metrics.pod_%s.%s_ms %.0f\n", pod, name, value * 1000
+        }
+      }
+    }
+  '
+done
+`
 	return serverEvidenceProbe{
 		source:  "video_cloud_api",
 		command: "bash",
 		args:    []string{"-lc", script},
-		detail:  "Video Cloud API warning counters captured for run_id " + runID,
+		detail:  "Video Cloud API /metrics/prometheus request_token and PKCS#11 timing metrics captured for run_id " + runID,
 	}
 }
 
@@ -3832,34 +3784,37 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 		stageCoolDown = plan.Stages[0].CoolDown
 	}
 	extraVars := map[string]any{
-		"run_id":                   normalizedRunID(values.runID),
-		"local_out_dir":            localOutDir,
-		"local_runner":             localRunner,
-		"local_rtk_cloud":          localRTKCloud,
-		"local_cloud_mqtt_test":    localCloudMQTTTest,
-		"local_artifact_store":     localArtifactStore,
-		"fanout_private_key":       fanoutPrivateKey,
-		"fanout_public_key":        fanoutPublicKey,
-		"local_env_root":           strings.TrimRight(localEnvRoot, "/"),
-		"remote_workspace":         strings.TrimRight(values.remoteWorkspace, "/"),
-		"remote_env_root":          strings.TrimRight(values.remoteEnvRoot, "/"),
-		"remote_out_root":          strings.TrimRight(firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k"), "/"),
-		"brandname":                plan.Conditions.Brandname,
-		"region":                   plan.Conditions.Region,
-		"device_count":             plan.Conditions.Devices,
-		"user_count":               plan.Conditions.Users,
-		"devices_per_user":         plan.Conditions.DevicesPerUser,
-		"stage_warm_up":            stageWarmUp,
-		"stage_steady":             stageSteady,
-		"stage_cool_down":          stageCoolDown,
-		"runner_mode":              firstNonEmpty(values.runnerMode, "sample"),
-		"runner_nofile_limit":      values.runnerNofileLimit,
-		"runner_mqtt_concurrency":  values.runnerMQTTConcurrency,
-		"mqtt_addr":                strings.TrimSpace(values.mqttAddr),
-		"video_cloud_public_url":   strings.TrimSpace(firstNonEmpty(values.videoCloudPublicURL, values.videoCloudBaseURL)),
-		"video_cloud_token_url":    strings.TrimSpace(values.videoCloudTokenURL),
-		"account_manager_url":      strings.TrimSpace(values.accountManagerURL),
-		"credential_bundle_format": firstNonEmpty(values.credentialBundleFormat, "sqlite-gzip"),
+		"run_id":                      normalizedRunID(values.runID),
+		"local_out_dir":               localOutDir,
+		"local_runner":                localRunner,
+		"local_rtk_cloud":             localRTKCloud,
+		"local_cloud_mqtt_test":       localCloudMQTTTest,
+		"local_artifact_store":        localArtifactStore,
+		"fanout_private_key":          fanoutPrivateKey,
+		"fanout_public_key":           fanoutPublicKey,
+		"local_env_root":              strings.TrimRight(localEnvRoot, "/"),
+		"remote_workspace":            strings.TrimRight(values.remoteWorkspace, "/"),
+		"remote_env_root":             strings.TrimRight(values.remoteEnvRoot, "/"),
+		"remote_out_root":             strings.TrimRight(firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k"), "/"),
+		"brandname":                   plan.Conditions.Brandname,
+		"region":                      plan.Conditions.Region,
+		"device_count":                plan.Conditions.Devices,
+		"user_count":                  plan.Conditions.Users,
+		"devices_per_user":            plan.Conditions.DevicesPerUser,
+		"target_ramp_up_time":         stageWarmUp,
+		"measurement_window":          stageSteady,
+		"post_run_collection":         stageCoolDown,
+		"runner_mode":                 firstNonEmpty(values.runnerMode, "sample"),
+		"runner_nofile_limit":         values.runnerNofileLimit,
+		"mqtt_concurrency":            values.mqttConcurrency,
+		"command_concurrency":         liveCommandConcurrency(plan.Conditions.DeviceGeneratorLimit, values.commandConcurrency),
+		"shadow_command_timeout":      firstNonEmpty(values.shadowCommandTimeout, DefaultShadowCommandTimeout),
+		"mqtt_addr":                   strings.TrimSpace(values.mqttAddr),
+		"video_cloud_public_url":      strings.TrimSpace(firstNonEmpty(values.videoCloudPublicURL, values.videoCloudBaseURL)),
+		"video_cloud_token_url":       strings.TrimSpace(values.videoCloudTokenURL),
+		"account_manager_url":         strings.TrimSpace(values.accountManagerURL),
+		"generator_hosts_override_ip": strings.TrimSpace(values.generatorHostsOverrideIP),
+		"credential_bundle_format":    firstNonEmpty(values.credentialBundleFormat, "sqlite-gzip"),
 	}
 	return writeJSONFile(filepath.Join(ansibleDir, "extra-vars.json"), extraVars)
 }

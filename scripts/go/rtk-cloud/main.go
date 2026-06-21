@@ -204,6 +204,8 @@ func runMQTTTest(args []string) error {
 	telemetryInterval := fs.String("telemetry-interval", "", "load-test telemetry interval")
 	stateInterval := fs.String("state-interval", "", "load-test state interval")
 	commandRate := fs.String("command-rate-per-device-per-day", "", "load-test command rate per device per day")
+	commandConcurrency := fs.Int("command-concurrency", 0, "load-test sustained shadow command concurrency")
+	shadowCommandTimeout := fs.String("shadow-command-timeout", "", "per-phase sustained shadow command timeout")
 	loadModel := fs.String("load-model", "", "load model passed through to cloud-mqtt-test")
 	stageNames := fs.String("stage-names", "", "comma-separated staged sustained load stage names")
 	stageConnectedDevices := fs.String("stage-connected-devices", "", "comma-separated staged sustained per-shard connected device targets")
@@ -303,6 +305,8 @@ func runMQTTTest(args []string) error {
 		"--telemetry-interval", *telemetryInterval,
 		"--state-interval", *stateInterval,
 		"--command-rate-per-device-per-day", *commandRate,
+		"--command-concurrency", strconv.Itoa(*commandConcurrency),
+		"--shadow-command-timeout", *shadowCommandTimeout,
 		"--load-model", *loadModel,
 		"--stage-names", *stageNames,
 		"--stage-connected-devices", *stageConnectedDevices,
@@ -310,9 +314,11 @@ func runMQTTTest(args []string) error {
 		"--stage-ramp-seconds", *stageRampSeconds,
 		"--stage-min-commands", *stageMinCommands,
 		"--device-traffic-profile", *deviceTrafficProfile,
-		"--stage-usage-windows", *stageUsageWindows,
 		"--concurrency", strconv.Itoa(*concurrency),
 		"--max-connected-devices", strconv.Itoa(*maxConnectedDevices),
+	}
+	if strings.TrimSpace(*stageUsageWindows) != "" {
+		childArgs = append(childArgs, "--stage-usage-windows", *stageUsageWindows)
 	}
 	childScript := strings.TrimSpace(os.Getenv("CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT"))
 	var cmd *exec.Cmd

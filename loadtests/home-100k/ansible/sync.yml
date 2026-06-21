@@ -244,6 +244,9 @@
       when: runner_needs_upload
       changed_when: true
       register: runner_copy
+      retries: 3
+      delay: 5
+      until: runner_copy.rc == 0
 
     - name: Ensure runner binary mode
       ansible.builtin.file:
@@ -265,6 +268,9 @@
       when: rtk_cloud_needs_upload
       changed_when: true
       register: rtk_cloud_copy
+      retries: 3
+      delay: 5
+      until: rtk_cloud_copy.rc == 0
 
     - name: Ensure rtk-cloud binary mode
       ansible.builtin.file:
@@ -286,6 +292,9 @@
       when: cloud_mqtt_test_needs_upload
       changed_when: true
       register: cloud_mqtt_test_copy
+      retries: 3
+      delay: 5
+      until: cloud_mqtt_test_copy.rc == 0
 
     - name: Ensure cloud-mqtt-test binary mode
       ansible.builtin.file:
@@ -307,6 +316,9 @@
       when: manifest_needs_upload
       changed_when: true
       register: manifest_copy
+      retries: 3
+      delay: 5
+      until: manifest_copy.rc == 0
 
     - name: Fan out common env archive from orchestra
       ansible.builtin.shell: >
@@ -322,6 +334,9 @@
       when: common_env_archive_needs_upload
       changed_when: true
       register: common_env_archive_copy
+      retries: 3
+      delay: 5
+      until: common_env_archive_copy.rc == 0
 
     - name: Extract common env archive when changed
       ansible.builtin.unarchive:
@@ -345,6 +360,9 @@
       when: env_archive_needs_upload
       changed_when: true
       register: env_archive_copy
+      retries: 3
+      delay: 5
+      until: env_archive_copy.rc == 0
 
     - name: Ensure compressed env-root shard archive mode
       ansible.builtin.file:

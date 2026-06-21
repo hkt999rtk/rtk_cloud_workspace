@@ -64,19 +64,22 @@ out_dir="${HOME100K_OUT_DIR:-loadtests/home-100k/reports/${run_id}}"
 remote_workspace="${HOME100K_REMOTE_WORKSPACE:-/root/rtk_cloud_workspace}"
 remote_env_root="${HOME100K_REMOTE_ENV_ROOT:-${remote_workspace}/${env_root}}"
 remote_out_root="${HOME100K_REMOTE_OUT_ROOT:-/var/lib/home-100k}"
-ssh_key="${HOME100K_SSH_KEY:-$HOME/.ssh/id_ed25519}"
+ssh_key="${HOME100K_SSH_KEY:-$HOME/.ssh/id_ed25519_rtkcloud}"
 ssh_user="${HOME100K_SSH_USER:-root}"
 authorized_key_file="${HOME100K_AUTHORIZED_KEY_FILE:-${ssh_key}.pub}"
 status_interval_seconds="${HOME100K_STATUS_INTERVAL_SECONDS:-30}"
-stage_warm_up="${HOME100K_STAGE_WARM_UP:-1m}"
-stage_steady="${HOME100K_STAGE_STEADY:-2m}"
-stage_cool_down="${HOME100K_STAGE_COOL_DOWN:-45s}"
+target_ramp_up_time="${HOME100K_RAMP_UP_TIME:-1m}"
+measurement_window="${HOME100K_MEASUREMENT_WINDOW:-2m}"
+post_run_collection="${HOME100K_POST_RUN_COLLECTION:-45s}"
 device_count="${HOME100K_DEVICES:-}"
 user_count="${HOME100K_USERS:-}"
 devices_per_user="${HOME100K_DEVICES_PER_USER:-}"
+vm_count="${HOME100K_VM_COUNT:-}"
 runner_mode="${HOME100K_RUNNER_MODE:-live}"
 runner_nofile_limit="${HOME100K_RUNNER_NOFILE_LIMIT:-1048576}"
-runner_mqtt_concurrency="${HOME100K_RUNNER_MQTT_CONCURRENCY:-1000}"
+mqtt_concurrency="${HOME100K_MQTT_CONCURRENCY:-1000}"
+command_concurrency="${HOME100K_COMMAND_CONCURRENCY:-100}"
+shadow_command_timeout="${HOME100K_SHADOW_COMMAND_TIMEOUT:-30s}"
 device_session_model="${HOME100K_DEVICE_SESSION_MODEL:-lifetime-subscription}"
 runner_read_model="${HOME100K_RUNNER_READ_MODEL:-go-netpoll-bounded-reader-goroutine}"
 coordinator_start_delay_ms="${HOME100K_COORDINATOR_START_DELAY_MS:-3000}"
@@ -86,6 +89,17 @@ mqtt_public_lb_count="${HOME100K_MQTT_PUBLIC_LB_COUNT:-}"
 video_cloud_public_url="${HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL:-${HOME100K_VIDEO_CLOUD_BASE_URL:-}}"
 video_cloud_token_url="${HOME100K_VIDEO_CLOUD_TOKEN_BASE_URL:-}"
 account_manager_base_url="${HOME100K_ACCOUNT_MANAGER_BASE_URL:-}"
+generator_hosts_override_ip="${HOME100K_GENERATOR_HOSTS_OVERRIDE_IP:-}"
+token_only_base_url="${HOME100K_TOKEN_ONLY_BASE_URL:-${video_cloud_token_url:-${video_cloud_public_url:-}}}"
+token_only_requests="${HOME100K_TOKEN_ONLY_REQUESTS:-1000}"
+token_only_concurrency="${HOME100K_TOKEN_ONLY_CONCURRENCY:-100}"
+token_only_profile="${HOME100K_TOKEN_ONLY_PROFILE:-}"
+token_only_timeout="${HOME100K_TOKEN_ONLY_TIMEOUT:-10s}"
+token_only_cert_file="${HOME100K_TOKEN_ONLY_CERT_FILE:-}"
+token_only_key_file="${HOME100K_TOKEN_ONLY_KEY_FILE:-}"
+token_seed_redis_addr="${HOME100K_TOKEN_SEED_REDIS_ADDR:-}"
+token_seed_device_prefix="${HOME100K_TOKEN_SEED_DEVICE_PREFIX:-load-device-}"
+token_seed_ttl="${HOME100K_TOKEN_SEED_TTL:-24h}"
 status_file="$repo_root/$out_dir/.workflow-status"
 nodes_file="$repo_root/$out_dir/nodes.tsv"
 ssh_known_hosts_file="$repo_root/$out_dir/ssh_known_hosts"
@@ -108,8 +122,10 @@ Commands:
   plan                    Print the deterministic configured-size mixed run plan.
   dry-run                 Render local review artifacts; does not create VMs.
   provision-vms           Review or live-create Linode VMs.
+  token-only              Run isolated /request_token load against an API base URL.
+  seed-token-projections  Seed Redis device + entitlement projections for token-only.
   sync                    Review or live-sync runner/env-root to VMs.
-  run-stages              Review or live-dispatch shard runners.
+  run-stages              Review or live-dispatch shard runners for the target window.
   collect                 Review or live-collect shard artifacts.
   collect-server-evidence Review or live-collect server evidence.
   aggregate               Aggregate collected shards and server evidence.
@@ -133,19 +149,20 @@ Defaults can be overridden with:
   HOME100K_REMOTE_ENV_ROOT  default: <remote-workspace>/<env-root>
   HOME100K_REMOTE_OUT_ROOT  default: /var/lib/home-100k
   HOME100K_SSH_USER         default: root
-  HOME100K_SSH_KEY          default: ~/.ssh/id_ed25519
+  HOME100K_SSH_KEY          default: ~/.ssh/id_ed25519_rtkcloud
   HOME100K_AUTHORIZED_KEY_FILE default: <HOME100K_SSH_KEY>.pub
   SSH known_hosts is isolated per run at <out-dir>/ssh_known_hosts
   HOME100K_STATUS_INTERVAL_SECONDS default: 30
-  HOME100K_STAGE_WARM_UP default: 15s from the default description file
-  HOME100K_STAGE_STEADY default: 45s from the default description file
-  HOME100K_STAGE_COOL_DOWN default: 15s from the default description file
-  HOME100K_DEVICES configured in the description file; current default description uses 9000
+  HOME100K_RAMP_UP_TIME default: 1m; connection ramp-up time
+  HOME100K_DEVICES configured in the description file; target connects
   HOME100K_USERS optional; when omitted, the planner derives users from devices/devices-per-user
   HOME100K_DEVICES_PER_USER configured in the description file; current default description uses 20
+  HOME100K_VM_COUNT optional; default planner value is 5 mixed generator VMs
   HOME100K_RUNNER_MODE default: live; use sample only for local developer smoke tests
   HOME100K_RUNNER_NOFILE_LIMIT default: 1048576; remote daemon nofile limit for MQTT sockets
-  HOME100K_RUNNER_MQTT_CONCURRENCY default: 1000; cloud-mqtt-test connect/action concurrency per VM shard
+  HOME100K_MQTT_CONCURRENCY default: 1000 per VM shard; live MQTT connect worker concurrency
+  HOME100K_COMMAND_CONCURRENCY default: 100 per VM shard; live shadow command concurrency
+  HOME100K_SHADOW_COMMAND_TIMEOUT default: 30s; per-phase shadow command wait timeout
   HOME100K_DEVICE_SESSION_MODEL default: lifetime-subscription; device MQTT subscriptions stay open for device lifetime
   HOME100K_RUNNER_READ_MODEL default: go-netpoll-bounded-reader-goroutine; sustained async MQTT reads
   HOME100K_COORDINATOR_START_DELAY_MS default: 3000
@@ -154,6 +171,10 @@ Defaults can be overridden with:
   HOME100K_MQTT_PUBLIC_LB_COUNT limits auto-public-mqtt endpoint count; current 9K profile uses 1
   HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL optional public Video Cloud API base URL for remote generators
   HOME100K_VIDEO_CLOUD_TOKEN_BASE_URL optional mTLS/device Video Cloud token bootstrap base URL
+  HOME100K_GENERATOR_HOSTS_OVERRIDE_IP optional /etc/hosts IPv4 override for staging HTTPS hostnames on generators
+  HOME100K_TOKEN_ONLY_BASE_URL optional base URL for token-only; defaults to token/public Video Cloud URL
+  HOME100K_TOKEN_ONLY_PROFILE optional comma-separated concurrency stages, e.g. 1000,5000,10000
+  HOME100K_TOKEN_SEED_REDIS_ADDR Redis/Valkey address for seed-token-projections
   HOME100K_VIDEO_CLOUD_BASE_URL legacy alias for HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL
   HOME100K_ACCOUNT_MANAGER_BASE_URL optional Account Manager base URL for remote generators
   HOME100K_NODE_RESOURCE_STATUS default: 1
@@ -208,6 +229,9 @@ PY
 }
 
 validate_stage_timing() {
+  local stage_warm_up="${1:-}"
+  local stage_steady="${2:-}"
+  local stage_cool_down="${3:-}"
   local warm_ms steady_ms cool_ms full_load_ms
   if ! warm_ms="$(duration_millis "$stage_warm_up")"; then
     echo "invalid HOME100K_STAGE_WARM_UP: $stage_warm_up" >&2
@@ -572,7 +596,7 @@ PY
   fi
   {
     printf '[home-100k status] time=%s elapsed=%s run_id=%s phase=%s\n' "$now" "$elapsed" "$run_id" "$phase"
-    printf '[home-100k status] out_dir=%s vms=%s/5 shard_results=%s server_evidence=%s report_status=%s target_devices=%s target_users=%s devices_per_user=%s stage_window=warm_up:%s,steady:%s,cool_down:%s\n' "$out_dir" "$vm_count" "$shard_count" "$evidence_status" "$report_status" "${device_count:-planner-default}" "${user_count:-derived}" "${devices_per_user:-planner-default}" "$stage_warm_up" "$stage_steady" "$stage_cool_down"
+    printf '[home-100k status] out_dir=%s vms=%s/5 shard_results=%s server_evidence=%s report_status=%s target_connects=%s target_users=%s devices_per_user=%s ramp_up_time=%s command_concurrency=%s shadow_command_timeout=%s\n' "$out_dir" "$vm_count" "$shard_count" "$evidence_status" "$report_status" "${device_count:-planner-default}" "${user_count:-derived}" "${devices_per_user:-planner-default}" "$target_ramp_up_time" "$command_concurrency" "$shadow_command_timeout"
   } >&2
   ensure_resource_logs
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$now" "$run_id" "$elapsed" "$phase" "$vm_count" "$shard_count" "$evidence_status" "$report_status" >> "$workflow_status_log"
@@ -666,16 +690,16 @@ fi
 if [[ "$#" -gt 0 ]]; then
   shift
 fi
-validate_stage_timing
+validate_stage_timing "$target_ramp_up_time" "$measurement_window" "$post_run_collection"
 resolve_mqtt_addr_for_command "$command"
 
 base_args=(
   "--env-root" "$env_root"
   "--brandname" "$brandname"
   "--region" "$region"
-  "--stage-warm-up" "$stage_warm_up"
-  "--stage-steady" "$stage_steady"
-  "--stage-cool-down" "$stage_cool_down"
+  "--stage-warm-up" "$target_ramp_up_time"
+  "--stage-steady" "$measurement_window"
+  "--stage-cool-down" "$post_run_collection"
 )
 if [[ -n "$device_count" ]]; then
   base_args+=("--devices" "$device_count")
@@ -685,6 +709,9 @@ if [[ -n "$user_count" ]]; then
 fi
 if [[ -n "$devices_per_user" ]]; then
   base_args+=("--devices-per-user" "$devices_per_user")
+fi
+if [[ -n "$vm_count" ]]; then
+  base_args+=("--vm-count" "$vm_count")
 fi
 plan_condition_args=(
   "${base_args[@]}"
@@ -698,7 +725,9 @@ coordinator_args=(
 )
 workflow_args+=("--credential-bundle-format" "$credential_bundle_format")
 workflow_args+=("--runner-nofile-limit" "$runner_nofile_limit")
-workflow_args+=("--runner-mqtt-concurrency" "$runner_mqtt_concurrency")
+workflow_args+=("--mqtt-concurrency" "$mqtt_concurrency")
+workflow_args+=("--command-concurrency" "$command_concurrency")
+workflow_args+=("--shadow-command-timeout" "$shadow_command_timeout")
 workflow_args+=("--device-session-model" "$device_session_model")
 workflow_args+=("--runner-read-model" "$runner_read_model")
 if [[ -n "$mqtt_addr" ]]; then
@@ -713,6 +742,9 @@ fi
 if [[ -n "$account_manager_base_url" ]]; then
   workflow_args+=("--account-manager-base-url" "$account_manager_base_url")
 fi
+if [[ -n "$generator_hosts_override_ip" ]]; then
+  workflow_args+=("--generator-hosts-override-ip" "$generator_hosts_override_ip")
+fi
 
 case "$command" in
   plan)
@@ -725,6 +757,32 @@ case "$command" in
   provision-vms)
     mkdir -p "$repo_root/$out_dir"
     run_home100k provision-vms "${base_args[@]}" --run-id "$run_id" --out-dir "$out_dir" "$@"
+    ;;
+  token-only)
+    mkdir -p "$repo_root/$out_dir"
+    token_only_args=(
+      "--base-url" "$token_only_base_url"
+      "--out-dir" "$out_dir"
+      "--requests" "$token_only_requests"
+      "--concurrency" "$token_only_concurrency"
+      "--timeout" "$token_only_timeout"
+    )
+    if [[ -n "$token_only_profile" ]]; then
+      token_only_args+=("--profile" "$token_only_profile")
+    fi
+    if [[ -n "$token_only_cert_file" || -n "$token_only_key_file" ]]; then
+      token_only_args+=("--cert-file" "$token_only_cert_file" "--key-file" "$token_only_key_file")
+    fi
+    run_home100k token-only "${token_only_args[@]}" "$@"
+    ;;
+  seed-token-projections)
+    seed_args=(
+      "--redis-addr" "$token_seed_redis_addr"
+      "--devices" "${device_count:-1000}"
+      "--device-prefix" "$token_seed_device_prefix"
+      "--ttl" "$token_seed_ttl"
+    )
+    run_home100k seed-token-projections "${seed_args[@]}" "$@"
     ;;
   sync)
     run_home100k sync "${workflow_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json" "$@"

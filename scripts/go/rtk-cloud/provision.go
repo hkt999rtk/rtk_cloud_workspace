@@ -1429,6 +1429,7 @@ func ensureProvisionPKCS11Signing(paths provisionPaths, env map[string]string) e
 	modulePath := "/usr/lib/softhsm/libsofthsm2.so"
 	tokenLabel := "video-cloud-signing"
 	setDefault("VIDEO_CLOUD_AUTH_TOKEN_SIGNER_PROVIDER", "pkcs11")
+	setDefault("VIDEO_CLOUD_PKCS11_SIGNER_SESSION_POOL_SIZE", "8")
 	setDefault("VIDEO_CLOUD_AUTH_TOKEN_PKCS11_MODULE_PATH", modulePath)
 	setDefault("VIDEO_CLOUD_AUTH_TOKEN_PKCS11_TOKEN_LABEL", tokenLabel)
 	setDefault("VIDEO_CLOUD_AUTH_TOKEN_PKCS11_PIN", pin)

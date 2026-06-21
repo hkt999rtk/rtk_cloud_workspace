@@ -41,7 +41,7 @@ func BuildLifecycleActions(plan Plan, runID string) []LifecycleAction {
 	actions = append(actions, LifecycleAction{
 		Action:      "run-stages",
 		RunID:       runID,
-		Description: "run device and user shards through 25K, 50K, 75K, and 100K stages with shared run_id",
+		Description: "run device and user shards to the configured target connects with shared run_id",
 	})
 	actions = append(actions, LifecycleAction{
 		Action:      "collect",
@@ -51,7 +51,7 @@ func BuildLifecycleActions(plan Plan, runID string) []LifecycleAction {
 	actions = append(actions, LifecycleAction{
 		Action:      "collect-server-evidence",
 		RunID:       runID,
-		Description: "collect server metrics and logs for each stage window using run_id",
+		Description: "collect server metrics and logs for the run window using run_id",
 	})
 	actions = append(actions, LifecycleAction{
 		Action:      "aggregate",

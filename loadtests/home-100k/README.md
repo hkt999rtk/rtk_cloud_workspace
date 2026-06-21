@@ -1,8 +1,8 @@
 # 100K Home IoT Device Shadow Load Test
 
-Status: live runner implemented; 50K staging PASS captured, 100K remains a target-specific capacity exercise
+Status: implemented review-time runner and live VM lifecycle scaffold
 Owner: rtk_cloud_workspace
-Last updated: 2026-06-20
+Last updated: 2026-06-15
 
 ## Summary
 
@@ -20,35 +20,6 @@ variance.
 The test must prove more than MQTT connectivity. It must prove that IoT Device
 Shadow desired, reported, delta, and version semantics still converge under
 online, offline, and reconnect load.
-
-## Current Staging Evidence
-
-The current 50K staging evidence is:
-
-| Field | Value |
-| --- | --- |
-| Run ID | `lt50k-api3-ramp15m-fallback-r4-20260620T045511Z` |
-| Target | 50,000 devices, 2,500 app users |
-| Stage window | 15m ramp, 20m steady, 2m cool-down |
-| Result | `PASS` |
-| Device coverage | 50,000 / 50,000 active connections and subscriptions |
-| Device token failures | 0 |
-| Token retry exhausted | 0 |
-| App desired writes / ACKs | 2,500 / 2,500 |
-| Server correlation | `pass` |
-
-The successful 50K run used five mixed load-generator VMs, each assigned 10K
-devices and 500 app users. Load-generator CPU, memory, and file descriptor
-headroom stayed below saturation. The report still captured residual
-API-to-MQTT evidence (`emqx.conn_congestion=2`, `emqx.socket_error=8`,
-`emqx.timeout=8`) on `video-cloud-api-*-message-sub` broker clients; this did
-not fail the 50K gate, but it is the next shadow-path signal to inspect before
-claiming larger targets.
-
-Do not extrapolate the 50K result into a 100K claim by changing only
-`HOME100K_DEVICES`. For 100K, re-plan EMQX placement, API/Postgres capacity,
-HAProxy headroom, prepared inventory, generator VM sizing, and ramp/steady
-windows, then require a fresh `PASS` report for the 100K run.
 
 ## Goals
 
@@ -118,12 +89,11 @@ Default baseline:
 | Per-VM device task | 20,000 devices |
 | Per-VM user task | 1,000 users |
 | Total load-generator VM count | 5 for the default 100K-device/5K-user mixed baseline |
-| Stage window | Single target stage at the requested connected-device count |
+| Ramp-up time | Configured by `HOME100K_RAMP_UP_TIME` |
+| Target connects | Configured by `HOME100K_DEVICES` |
 
-The test should use deterministic sharding. The target stage has warm-up,
-steady-state, and cool-down windows; warm-up is the ramp process, not a
-separate capacity target. The report has an independent pass/fail/incomplete
-result for the requested target.
+The test should use deterministic sharding. A run ramps directly to the target
+connection count; there is no staged 25%/50%/75%/100% load model.
 
 ## Server-Side Capacity Prerequisites
 
@@ -237,7 +207,7 @@ from the env-root are used only for token bootstrap.
 
 ### Online Steady Devices
 
-- Connect to MQTT and remain online during the selected stage window.
+- Connect to MQTT and remain online during the run window.
 - Subscribe to shadow delta topics immediately after MQTT connect and keep that
   subscription for the whole device lifetime. Stage transitions must add newly
   online devices; they must not disconnect and resubscribe devices that were
@@ -258,7 +228,7 @@ from the env-root are used only for token bootstrap.
 
 ### Flapping Reconnect Devices
 
-- Disconnect and reconnect during stage windows.
+- Disconnect and reconnect during the run window.
 - Call shadow `get` on each reconnect.
 - Avoid duplicate application of desired state that is already reflected in
   reported state.
@@ -323,7 +293,8 @@ plan -> provision-vms/reuse-vms -> sync -> run-stages -> collect -> collect-serv
 
 Required behavior:
 
-- `plan` prints VM count, role layout, shard ranges, stage windows, scenario
+- `plan` prints VM count, role layout, shard ranges, ramp-up time, target
+  connects, scenario
   mix, expected artifacts, server evidence queries, and cleanup plan.
 - `provision-vms` creates or reuses Linode VMs in the selected region. It is a
   dry-run by default; live provisioning requires `--live --confirm-live` and a
@@ -340,7 +311,7 @@ Required behavior:
 - `collect` uses the generated Ansible inventory to retrieve per-VM results,
   sync telemetry, and local load-generator telemetry.
 - `collect-server-evidence` queries server metrics/logs for the same `run_id`
-  and stage time windows.
+  and measured run window.
 - `aggregate` reads collected shard results plus `server-evidence.json` and
   writes run-level `plan.json` and `results.json`. The public script then runs
   `scripts/generate-report.sh` to render `TEST_REPORT.md` from the fixed
@@ -361,10 +332,8 @@ explicitly delete leftover load-generator VMs by tag/run id.
 
 ### Device/User Shard Assignment
 
-The default 100K baseline creates 5 mixed VM assignments. Each assignment owns
-one device shard and one user shard. Smaller targets keep the same mixed layout
-when the planner can fit the target into those assignments; the 50K staging
-PASS used the same 5 labels with 10K devices and 500 app users per VM.
+The current debug baseline creates 5 mixed VM assignments. Each assignment owns one
+device shard and one user shard:
 
 | VM label | Device range | User range |
 | --- | ---: | ---: |
@@ -429,15 +398,14 @@ Secrets and non-secret test descriptions are intentionally separate:
 - `~/.env` supplies only `LINODE_TOKEN`.
 - `loadtests/home-100k/scenarios/default.description.env` supplies the
   non-secret test description: env-root, brand, region, remote paths, SSH key
-  path, status interval, stage durations, and target load size.
+  path, status interval, ramp-up time, and target load size.
 
 The `home-100k` directory, command, VM label prefix, and remote path are package
 names. They do not define the active load size. The canonical target size is
 configured by `HOME100K_DEVICES`, optional `HOME100K_USERS`, and
-`HOME100K_DEVICES_PER_USER` in the description file or explicit shell
-environment. The checked-in default description is a short debug profile; formal
-10K, 50K, 100K, or custom runs must set the requested target explicitly rather
-than relying on package names or defaults.
+`HOME100K_DEVICES_PER_USER` in the description file. For example, the current
+debug profile uses `HOME100K_DEVICES=9000`; switching back to a 100K run should
+be a description-file change, not a filename or code change.
 
 The default description file points at the existing provision-server staging
 environment:
@@ -457,19 +425,20 @@ The script keeps non-secret defaults in one place:
 | `HOME100K_REGION` | `us-sea` |
 | `HOME100K_RUN_ID` | Current UTC timestamp |
 | `HOME100K_OUT_DIR` | `loadtests/home-100k/reports/<run-id>` |
+| `HOME100K_SSH_KEY` | `~/.ssh/id_ed25519_rtkcloud` from the default description file |
 | `HOME100K_SSH_USER` | `root` |
-| `HOME100K_AUTHORIZED_KEY_FILE` | `<HOME100K_SSH_KEY>.pub` |
+| `HOME100K_AUTHORIZED_KEY_FILE` | `~/.ssh/id_ed25519_rtkcloud.pub` from the default description file |
 | `HOME100K_STATUS_INTERVAL_SECONDS` | `30` |
-| `HOME100K_STAGE_WARM_UP` | `15s` from the default description file |
-| `HOME100K_STAGE_STEADY` | `45s` from the default description file |
-| `HOME100K_STAGE_COOL_DOWN` | `15s` from the default description file |
-| `HOME100K_DEVICES` | `9000` from the default debug description; formal runs must override it |
+| `HOME100K_RAMP_UP_TIME` | `15s` from the default description file |
+| `HOME100K_DEVICES` | `9000` from the default description file |
 | `HOME100K_USERS` | unset; planner derives `ceil(devices / devices-per-user)` |
 | `HOME100K_DEVICES_PER_USER` | `20` from the default description file |
 | `HOME100K_RUNNER_NOFILE_LIMIT` | `1048576`; remote runner daemon file-descriptor limit for MQTT sockets |
-| `HOME100K_RUNNER_MQTT_CONCURRENCY` | `1000`; per-VM `cloud-mqtt-test` connect/action concurrency |
+| `HOME100K_MQTT_CONCURRENCY` | `1000`; per-VM-shard live MQTT connect worker concurrency |
+| `HOME100K_COMMAND_CONCURRENCY` | `100`; per-VM-shard live shadow command concurrency |
+| `HOME100K_SHADOW_COMMAND_TIMEOUT` | `30s`; per-phase shadow command wait timeout |
 | `HOME100K_MQTT_ADDR` | `auto-public-mqtt`; live commands discover public MQTT LoadBalancer IPs |
-| `HOME100K_MQTT_PUBLIC_LB_COUNT` | `1`; limits auto-discovered MQTT LoadBalancers for the default debug profile |
+| `HOME100K_MQTT_PUBLIC_LB_COUNT` | `1`; limits auto-discovered MQTT LoadBalancers for the current 9K profile |
 | `HOME100K_NODE_RESOURCE_STATUS` | `1` |
 | `HOME100K_K8S_NODE_RESOURCE_STATUS` | `1` |
 | `HOME100K_KUBECONFIG` | unset; falls back to existing LKE kubeconfig env or `<env-root>/state/lke-kubeconfig.yaml` |
@@ -507,32 +476,10 @@ Kubernetes node resource samples use `kubectl top nodes --no-headers` and print
 `<env-root>/state/lke-kubeconfig.yaml`. Set
 `HOME100K_K8S_NODE_RESOURCE_STATUS=0` to disable K8s node probing.
 
-Stage duration belongs in the non-secret description file, not in `~/.env`.
-The default debug profile uses `HOME100K_STAGE_WARM_UP=15s`,
-`HOME100K_STAGE_STEADY=45s`, and `HOME100K_STAGE_COOL_DOWN=15s`, so the planned
-target-stage window is 75 seconds before provisioning, sync, collection, and
-evidence overhead. The load target is a single stage named for the requested
-device count, for example `50k` or `100k`; warm-up is the ramp period used to
-spread device token bootstrap and MQTT connects before the steady window.
-`HOME100K_STAGE_WARM_UP` must be less than
-`HOME100K_STAGE_STEADY + HOME100K_STAGE_COOL_DOWN` so the run reserves time at
-the full requested target.
-Short debug runs can lower these values with explicit shell environment
-overrides or a custom `HOME100K_DESCRIPTION_FILE`; explicit shell environment
-variables take precedence over the description file.
-
-For the 100K staging report profile, use a 30-minute warm-up ramp and a
-40-minute steady window. This keeps the `/request_token`, TLS, MQTT CONNECT,
-and shadow-delta subscribe arrival rate within the current staging token
-bootstrap path while still preserving a full-load evidence window. Use
-`HOME100K_STAGE_COOL_DOWN=1s` when no material cool-down evidence is needed,
-because stage durations must be positive.
-
-For the same 100K report profile, keep
-`HOME100K_RUNNER_MQTT_CONCURRENCY=1000`. The value gives each 20K-device VM
-shard enough pending connect work to absorb `/request_token`, TLS, MQTT
-CONNECT, and subscribe latency during the 30-minute ramp. It does not change
-the connected-device target; that is still controlled by the shard plan.
+Ramp-up time belongs in the non-secret description file, not in `~/.env`.
+Use `HOME100K_RAMP_UP_TIME` for new runs. Short debug runs can lower it with an
+explicit shell environment override or a custom `HOME100K_DESCRIPTION_FILE`;
+explicit shell environment variables take precedence over the description file.
 
 Runner mode also belongs in the non-secret description file. The default is
 `HOME100K_RUNNER_MODE=live`. In live mode, each shard invokes the copied
@@ -573,10 +520,6 @@ implementation preferences:
   the plan's device/user shard assignments. Operators may lower it for small
   profiles, but a run that hits `too many open files` is a load-generator
   failure and must be reported as `INCOMPLETE`.
-- Connect/action concurrency: 100K / 5-VM runs need each VM to ramp about 20K
-  device sessions in 10 minutes. `HOME100K_RUNNER_MQTT_CONCURRENCY=1000`
-  prevents the generator from under-filling the ramp when connect latency is
-  higher than the nominal schedule interval.
 - Sustained asynchronous reads: subscribed device sessions must keep reading
   MQTT traffic for their full online lifetime. The runner must not wait until a
   command is issued and then perform a one-shot blocking read on a shared MQTT
@@ -593,24 +536,15 @@ configured delay using its local monotonic clock and records its actual stage
 start and first-connect timestamps for report-time start skew calculation.
 
 Device MQTT subscriptions are lifetime state, not scheduled publish events. In
-live mode, each shard runner builds one device session pool for the single
-target stage. The stage warm-up duration is the connect ramp: assigned devices
-are ordered deterministically and jittered across the ramp interval so
-`/request_token`, TLS, MQTT CONNECT, and shadow-delta subscription load are not
-all emitted at the same instant. The ramp interval is a target arrival curve,
-not a hard stop: if connect latency leaves the shard below target when the ramp
-interval ends, the runner keeps opening remaining sessions until the target is
-reached or the stage's action-reserve deadline is hit. Existing device
-connections and delta-topic subscriptions remain open through the steady and
-cool-down windows. The report tracks both new subscribe packets and active
-connection/subscription gauges; capacity gates use the active gauges at the
-requested target.
-
-Token expiry is intentionally not self-defined by the load generator. The
-server signs standard JWT `iat` and `exp` claims and may apply deterministic
-negative TTL jitter to subject-bound access tokens. The runner decodes the
-returned JWT `exp` when it needs renewal timing; it must not assume the
-requested `expiry` value is exact.
+live mode, each shard runner opens one device session pool during ramp-up and
+keeps target connections and shadow delta subscriptions active through the
+measurement window. The report tracks both new subscribe packets and active
+connection/subscription gauges; capacity gates use the active gauges.
+`HOME100K_MQTT_CONCURRENCY` controls client-side connect workers per VM shard.
+It is a runner throughput knob, not a staged load target.
+`HOME100K_COMMAND_CONCURRENCY` separately controls concurrent app/user shadow
+commands per VM shard, and `HOME100K_SHADOW_COMMAND_TIMEOUT` controls each
+shadow command wait phase. These do not change target connects or ramp-up time.
 
 ### LKE Capacity Placement
 
@@ -728,9 +662,9 @@ whole load-test source tree, or expanded per-device PEM directories.
 `READY_WAIT`. After that, the host coordinator waits for the full ready barrier,
 sends `START(run_id, sequence, delay_ms)` to every VM, and each runner uses its
 local monotonic clock for the final delay before opening MQTT/API traffic. Each
-VM starts one staged `rtk-cloud mqtt-test` process for the whole stage list, so
-device MQTT sessions and shadow delta subscriptions remain alive across stage
-transitions. Each VM writes shard artifacts under
+VM starts one `rtk-cloud mqtt-test` process for its target-connect slice, so
+device MQTT sessions and shadow delta subscriptions remain alive for the run.
+Each VM writes shard artifacts under
 `--remote-out-root/<run-id>/<vm-label>/`. The
 run-level `start-coordination.json` records ready barrier, configured start
 delay, per-VM start timestamps, and max start skew.
@@ -800,15 +734,15 @@ Every report must include:
 - device scenario
 - user scenario
 - IoT Device Shadow scenario
-- per-stage results
-- per-stage diagnostics, including connect window, action window, connected
+- run-window results
+- run-window diagnostics, including connect window, action window, connected
   before/after counts, command schedule counts, and skip reason when shadow
   actions were not attempted
-- client target coverage by stage, including target devices, actual MQTT
+- client target coverage for target connects, including target devices, actual MQTT
   connect/subscription counts, target users, and actual APP login counts
-- Device MQTT totals by stage and total
-- APP/User totals by stage and total
-- per-stage shadow latency p50/p95/p99
+- Device MQTT totals
+- APP/User totals
+- shadow latency p50/p95/p99
 - desired/reported convergence rate
 - offline desired convergence rate
 - delta-clear success rate
@@ -831,7 +765,7 @@ Every report must include:
 - bottleneck assessment
 
 If IoT Device Shadow evidence, MQTT broker evidence, APP/API evidence, parsed
-server counters, non-zero client totals, or stage target coverage cannot be
+server counters, non-zero client totals, or target-connect coverage cannot be
 collected, the report status must be `INCOMPLETE`, not `PASS`.
 
 If load-generator saturation invalidates the run, the report must say so
@@ -901,12 +835,12 @@ Planner tests:
 - 5K users produce 5 deterministic user task shards.
 - Planner creates 5 mixed VM assignments, each with one device task and one
   user task.
-- Device mix resolves to 50K lights, 20K air conditioners, and 30K smart
-  meters.
+- Device mix resolves to the current `home-diverse-v1` profile, including
+  lights, switches, smart plugs, HVAC, sensors, meters, locks, appliances, and
+  gateways.
 - Presence mix resolves to 85K online steady, 10K offline desired queue, and
   5K flapping reconnect.
-- Stages resolve to one target window named from the requested device count,
-  for example `100k`.
+- Planner resolves one target-connect window for the configured device count.
 
 IoT Device Shadow scenario tests:
 
@@ -926,9 +860,6 @@ Report tests:
 - Missing shadow metrics marks report `INCOMPLETE`.
 - Load-generator saturation prevents a false server-capacity `PASS`.
 - Secrets are redacted.
-- Bottleneck Summary is rendered before Failure Reasons.
-- Phase metrics and bounded bottleneck events are aggregated across shards.
-- `/request_token` retry counters remain visible separately from phase latency.
 
 Dry-run acceptance:
 
@@ -938,12 +869,10 @@ Dry-run acceptance:
 
 ## Open Review Items
 
-- 100K-specific EMQX pod/node placement and HAProxy backend sizing.
-- 100K-specific API/Postgres bootstrap capacity after the 50K token path fix.
-- 100K stage duration, warm-up duration, and cool-down duration.
+- Exact Linode region for the first baseline.
+- VM instance type for `device-mqtt` and `user-app` roles.
+- Target-window measurement duration and post-run collection duration.
 - Offline duration distribution for the `offline desired queue` class.
-- User desired-write rate per stage.
+- User desired-write rate per target window.
 - Server-side metrics source for IoT Device Shadow hot path when Redis/Valkey is
   enabled or disabled.
-- API-to-MQTT `message-sub` congestion observed at 50K, before scaling the
-  shadow-path claim to 100K.

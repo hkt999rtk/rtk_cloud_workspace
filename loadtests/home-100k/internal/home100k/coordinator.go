@@ -83,7 +83,7 @@ func parseRunnerDaemonFlags(name string, args []string, stderr io.Writer) (PlanO
 	brandname := fs.String("brandname", "", "brand name")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
-	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount := addSizingFlags(fs)
 	runID := fs.String("run-id", "", "run id for artifact correlation")
 	outDir := fs.String("out-dir", "", "artifact output directory")
 	role := fs.String("role", "", "shard role")
@@ -92,7 +92,9 @@ func parseRunnerDaemonFlags(name string, args []string, stderr io.Writer) (PlanO
 	runnerMode := fs.String("runner-mode", "live", "runner mode: sample or live")
 	rtkCloudBinary := fs.String("rtk-cloud-binary", "rtk-cloud", "rtk-cloud binary for live MQTT/API runner")
 	workspace := fs.String("workspace", "", "workspace path for live MQTT/API runner")
-	runnerMQTTConcurrency := addRunnerMQTTConcurrencyFlag(fs)
+	mqttConcurrency := fs.Int("mqtt-concurrency", DefaultLiveMQTTConcurrency, "per-shard MQTT connect worker concurrency for live runner")
+	commandConcurrency := fs.Int("command-concurrency", DefaultLiveCommandConcurrency, "per-shard sustained shadow command concurrency for live runner")
+	shadowCommandTimeout := fs.String("shadow-command-timeout", DefaultShadowCommandTimeout, "per-phase sustained shadow command timeout")
 	listen := fs.String("listen", defaultRunnerDaemonListen, "runner daemon listen address")
 	if err := fs.Parse(args); err != nil {
 		return PlanOptions{}, runnerDaemonFlagValues{}, err
@@ -102,19 +104,21 @@ func parseRunnerDaemonFlags(name string, args []string, stderr io.Writer) (PlanO
 	}
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
-	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount)
 	return opts, runnerDaemonFlagValues{
 		shardRunFlagValues: shardRunFlagValues{
-			runID:                 *runID,
-			outDir:                *outDir,
-			role:                  *role,
-			shardIndex:            *shardIndex,
-			shardManifest:         *shardManifest,
-			honorStageDurations:   true,
-			runnerMode:            *runnerMode,
-			rtkCloudBinary:        *rtkCloudBinary,
-			workspace:             *workspace,
-			runnerMQTTConcurrency: *runnerMQTTConcurrency,
+			runID:                *runID,
+			outDir:               *outDir,
+			role:                 *role,
+			shardIndex:           *shardIndex,
+			shardManifest:        *shardManifest,
+			honorStageDurations:  true,
+			runnerMode:           *runnerMode,
+			rtkCloudBinary:       *rtkCloudBinary,
+			workspace:            *workspace,
+			mqttConcurrency:      *mqttConcurrency,
+			commandConcurrency:   *commandConcurrency,
+			shadowCommandTimeout: strings.TrimSpace(*shadowCommandTimeout),
 		},
 		listen: *listen,
 	}, nil

@@ -349,26 +349,6 @@ func TestManagedTokenRequestsWithClientCertificateWhenExpired(t *testing.T) {
 	}
 }
 
-func TestAccessTokenLifetimeUsesStandardJWTClaimsOnly(t *testing.T) {
-	issuedAt := time.Unix(1_800_000_000, 0)
-	now := issuedAt.Add(2 * time.Minute)
-	standard := testJWT(t, issuedAt, issuedAt.Add(time.Minute))
-	if !accessTokenExpired(standard, now) {
-		t.Fatal("standard JWT exp should mark token expired")
-	}
-	if !accessTokenPastHalfLife(tokenBundle{AccessToken: standard, issuedAt: issuedAt}, issuedAt.Add(45*time.Second)) {
-		t.Fatal("standard JWT iat/exp should mark token past half life")
-	}
-
-	legacy := testLegacySignedPayloadToken(t, issuedAt, issuedAt.Add(time.Minute))
-	if accessTokenExpired(legacy, now) {
-		t.Fatal("legacy two-segment token must not be parsed as a standard JWT")
-	}
-	if accessTokenPastHalfLife(tokenBundle{AccessToken: legacy, issuedAt: issuedAt}, issuedAt.Add(45*time.Second)) {
-		t.Fatal("legacy expires_at/issued_at claims must not drive JWT renewal")
-	}
-}
-
 func TestDeviceManagedTokenRenewsWithClientCertificateAtHalfLifetime(t *testing.T) {
 	certPEM, keyPEM, _ := testAppMaterial(t, "device-1")
 	cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
@@ -985,7 +965,6 @@ func TestSustainedShadowCommandPublishesRuntimeLogsForServerCorrelation(t *testi
 			broker.PublishPayloads("app-controller", "devices/rtk-0041/logs"),
 			broker.PublishPayloads("device", "devices/rtk-0041/logs")...,
 		)
-		payloads = append(payloads, broker.PublishPayloads("app-observer", "devices/rtk-0041/logs")...)
 		if len(payloads) >= 4 {
 			break
 		}
@@ -1152,62 +1131,6 @@ func TestSustainedActorsUseLongMQTTKeepAlive(t *testing.T) {
 	clientID := fmt.Sprintf("rtk-e2e-run-sustained-keepalive-rtk-0041-device-%d", os.Getpid())
 	if got := broker.KeepAlive(clientID); got != sustainedMQTTKeepAliveSeconds {
 		t.Fatalf("sustained device keepalive = %d, want %d", got, sustainedMQTTKeepAliveSeconds)
-	}
-}
-
-func TestConnectSustainedDevicesRetriesRequestTokenBeforeMQTT(t *testing.T) {
-	broker := newFakeTLSMQTTBroker(t)
-	defer broker.Close()
-	certPEM, keyPEM, _ := testAppMaterial(t, "rtk-0041")
-	var tokenRequests int
-	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/request_token" {
-			t.Fatalf("unexpected token path: %s", r.URL.Path)
-		}
-		tokenRequests++
-		if tokenRequests == 1 {
-			http.Error(w, "temporary overload", http.StatusServiceUnavailable)
-			return
-		}
-		writeJSON(t, w, map[string]string{"access_token": "device-token"})
-	}))
-	defer tokenServer.Close()
-	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	port, err := strconv.Atoi(rawPort)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var totals mqttIOTotals
-	sessions := connectSustainedDevicesUntil(
-		[]assignment{{DeviceID: "rtk-0041"}},
-		map[string]certRecord{"rtk-0041": {DeviceID: "rtk-0041", DeviceType: "light", CertPEM: certPEM, KeyPEM: keyPEM}},
-		"RTK",
-		"run-token-retry",
-		tokenServer.URL,
-		[]mqttEndpointTarget{{Host: host, Port: port}},
-		1,
-		time.Now().Add(time.Minute),
-		&totals,
-	)
-	defer closeSustainedSessions(sessions)
-	if len(sessions) != 1 {
-		t.Fatalf("sessions = %d, want 1; totals=%#v", len(sessions), totals)
-	}
-	if tokenRequests != 2 {
-		t.Fatalf("token requests = %d, want 2", tokenRequests)
-	}
-	if totals.ConnectAttempts != 1 || totals.ConnectSuccesses != 1 || totals.ConnectFailures != 0 {
-		t.Fatalf("connect totals = attempts/success/fail %d/%d/%d, want 1/1/0", totals.ConnectAttempts, totals.ConnectSuccesses, totals.ConnectFailures)
-	}
-	if totals.DeviceTokenAttempts != 2 || totals.DeviceTokenSuccesses != 1 || totals.DeviceTokenFailures != 1 {
-		t.Fatalf("token totals = attempts/success/fail %d/%d/%d, want 2/1/1", totals.DeviceTokenAttempts, totals.DeviceTokenSuccesses, totals.DeviceTokenFailures)
-	}
-	if totals.DeviceTokenFirstAttemptFailures != 1 || totals.DeviceTokenRetryAttempts != 1 ||
-		totals.DeviceTokenRetrySuccesses != 1 || totals.DeviceTokenRetryExhausted != 0 {
-		t.Fatalf("retry counters not preserved: %#v", totals)
 	}
 }
 
@@ -1472,49 +1395,6 @@ func TestAttachMQTTIOTotalsIncludesBoundedFailureEvents(t *testing.T) {
 	}
 }
 
-func TestAttachMQTTIOTotalsIncludesPhaseMetricsAndBoundedBottleneckEvents(t *testing.T) {
-	totals := mqttIOTotals{}
-	recordPhaseMetric(&totals, "device_request_token", 1200*time.Millisecond, nil)
-	recordPhaseMetric(&totals, "device_request_token", 11*time.Second, errors.New("request_token failed with access_token=secret"))
-	for idx := 0; idx < maxBottleneckEvents+5; idx++ {
-		recordBottleneckEvent(&totals, bottleneckEvent{
-			Stage:       "50k",
-			Phase:       "device_request_token",
-			Actor:       "device",
-			DeviceID:    fmt.Sprintf("rtk-%04d", idx),
-			Detail:      "request_token failed Authorization: Bearer secret access_token=secret",
-			ElapsedMS:   11000,
-			RemainingMS: 9000,
-			Attempt:     2,
-			IsRetry:     true,
-			MQTTTarget:  "203.0.113.10:8883",
-		})
-	}
-	result := map[string]any{}
-	attachMQTTIOTotals(result, totals)
-	metrics, ok := result["phase_metrics"].(map[string]phaseMetric)
-	if !ok {
-		t.Fatalf("phase_metrics missing or wrong type: %#v", result["phase_metrics"])
-	}
-	got := metrics["device_request_token"]
-	if got.Attempts != 2 || got.Success != 1 || got.Fail != 1 || got.GT1S != 2 || got.GT5S != 1 || got.GT10S != 1 || got.MaxMS != 11000 {
-		t.Fatalf("device_request_token metric = %#v", got)
-	}
-	events, ok := result["bottleneck_events"].([]bottleneckEvent)
-	if !ok {
-		t.Fatalf("bottleneck_events missing or wrong type: %#v", result["bottleneck_events"])
-	}
-	if len(events) != maxBottleneckEvents {
-		t.Fatalf("bottleneck_events len = %d, want %d", len(events), maxBottleneckEvents)
-	}
-	if strings.Contains(events[0].Detail, "secret") || strings.Contains(events[0].Detail, "Bearer") || strings.Contains(events[0].Detail, "access_token") {
-		t.Fatalf("bottleneck event detail leaked sensitive value: %#v", events[0])
-	}
-	if events[0].DeviceID != "rtk-0000" || events[len(events)-1].DeviceID != fmt.Sprintf("rtk-%04d", maxBottleneckEvents-1) {
-		t.Fatalf("bottleneck_events should keep the first bounded samples: %#v", events)
-	}
-}
-
 func TestAttachMQTTIOTotalsIncludesConnectionPhaseCounters(t *testing.T) {
 	totals := mqttIOTotals{
 		ConnectAttempts:            3,
@@ -1637,7 +1517,7 @@ func TestConnectFailureReasonSeparatesWindowExpiry(t *testing.T) {
 
 func TestParseSustainedStagesRequiresMonotonicTargets(t *testing.T) {
 	stages, err := parseSustainedStages(loadOptions{
-		StageNames:            "25k,50k,75k,100k",
+		StageNames:            "window-a,window-b,window-c,window-d",
 		StageConnectedDevices: "2500,5000,7500,10000",
 		StageDurationsSeconds: "75,75,75,75",
 	})
@@ -1648,7 +1528,7 @@ func TestParseSustainedStagesRequiresMonotonicTargets(t *testing.T) {
 		t.Fatalf("unexpected stages: %#v", stages)
 	}
 	if _, err := parseSustainedStages(loadOptions{
-		StageNames:            "50k,25k",
+		StageNames:            "window-b,window-a",
 		StageConnectedDevices: "5000,2500",
 		StageDurationsSeconds: "75,75",
 	}); err == nil {
@@ -1658,7 +1538,7 @@ func TestParseSustainedStagesRequiresMonotonicTargets(t *testing.T) {
 
 func TestSustainedStageResultsJSONIncludesStageDiagnostics(t *testing.T) {
 	rows := sustainedStageResultsJSON([]sustainedStageResult{{
-		Name:              "25k",
+		Name:              "target",
 		ConnectedTarget:   2500,
 		ActiveConnections: 1000,
 		Status:            "FAIL",
@@ -1978,18 +1858,6 @@ func testJWT(t *testing.T, issuedAt time.Time, expiresAt time.Time) string {
 	return base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload) + "."
 }
 
-func testLegacySignedPayloadToken(t *testing.T, issuedAt time.Time, expiresAt time.Time) string {
-	t.Helper()
-	payload, err := json.Marshal(map[string]string{
-		"issued_at":  issuedAt.Format(time.RFC3339Nano),
-		"expires_at": expiresAt.Format(time.RFC3339Nano),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return base64.RawURLEncoding.EncodeToString(payload) + ".signature"
-}
-
 type fakeMQTTBroker struct {
 	t                      *testing.T
 	listener               net.Listener
@@ -2113,57 +1981,6 @@ func TestConnectSustainedDevicesUntilReturnsWhenDeadlineExpiresDuringDispatch(t 
 	}
 }
 
-func TestStagedConnectScheduleSpreadsDevicesDeterministically(t *testing.T) {
-	assignments := make([]assignment, 100)
-	for idx := range assignments {
-		assignments[idx] = assignment{DeviceID: fmt.Sprintf("device-%03d", idx)}
-	}
-	start := time.Unix(1000, 0)
-	window := 100 * time.Second
-	first := stagedConnectSchedule(assignments, start, window, 1234, "50pct")
-	second := stagedConnectSchedule(assignments, start, window, 1234, "50pct")
-	if len(first) != len(assignments) || len(second) != len(assignments) {
-		t.Fatalf("schedule lens = %d/%d, want %d", len(first), len(second), len(assignments))
-	}
-	for idx := range first {
-		if !first[idx].At.Equal(second[idx].At) || first[idx].Assignment.DeviceID != second[idx].Assignment.DeviceID {
-			t.Fatalf("schedule is not deterministic at %d: %#v vs %#v", idx, first[idx], second[idx])
-		}
-		if idx > 0 && first[idx].At.Before(first[idx-1].At) {
-			t.Fatalf("schedule not sorted at %d: %s before %s", idx, first[idx].At, first[idx-1].At)
-		}
-		if first[idx].At.Before(start) || !first[idx].At.Before(start.Add(window)) {
-			t.Fatalf("schedule offset out of window at %d: %s", idx, first[idx].At.Sub(start))
-		}
-	}
-	if first[0].At.Sub(start) > 2*time.Second {
-		t.Fatalf("first scheduled connect offset = %s, want near start", first[0].At.Sub(start))
-	}
-	lastOffset := first[len(first)-1].At.Sub(start)
-	if lastOffset < 95*time.Second {
-		t.Fatalf("last scheduled connect offset = %s, want spread across most of window", lastOffset)
-	}
-	inOrder := 0
-	for idx, item := range first {
-		if item.Index == idx {
-			inOrder++
-		}
-	}
-	if inOrder > len(first)/2 {
-		t.Fatalf("schedule preserved too much original order: %d/%d", inOrder, len(first))
-	}
-}
-
-func TestStagedConnectRampWindowLeavesTailBudget(t *testing.T) {
-	start := time.Unix(1000, 0)
-	if got := stagedConnectRampWindow(start, start.Add(2*time.Minute)); got != 105*time.Second {
-		t.Fatalf("ramp window = %s, want 105s", got)
-	}
-	if got := stagedConnectRampWindow(start, start.Add(10*time.Second)); got != 0 {
-		t.Fatalf("short ramp window = %s, want immediate dispatch", got)
-	}
-}
-
 func TestStagedConnectDeadlineReservesActionWindow(t *testing.T) {
 	start := time.Unix(1000, 0)
 	deadline := start.Add(75 * time.Second)
@@ -2179,21 +1996,28 @@ func TestStagedConnectDeadlineReservesActionWindow(t *testing.T) {
 	}
 }
 
-func TestStagedConnectTimingUsesRampAsScheduleNotDeadline(t *testing.T) {
-	stageStart := time.Unix(1000, 0)
-	connectStarted := stageStart.Add(5 * time.Second)
-	stageDeadline := stageStart.Add(1801 * time.Second)
+func TestConnectDispatchDelaySpreadsAcrossRampWindow(t *testing.T) {
+	window := 10 * time.Minute
 
-	connectDeadline, rampWindow := stagedConnectTiming(stageStart, stageDeadline, connectStarted, 600)
+	if got := connectDispatchDelay(0, 20000, window); got != 0 {
+		t.Fatalf("first dispatch delay = %s, want 0", got)
+	}
+	if got := connectDispatchDelay(10000, 20000, window); got != 5*time.Minute {
+		t.Fatalf("mid dispatch delay = %s, want 5m", got)
+	}
+	if got := connectDispatchDelay(19999, 20000, window); got <= 0 || got >= window {
+		t.Fatalf("last dispatch delay = %s, want positive delay before %s", got, window)
+	}
+}
 
-	if rampWindow != 600*time.Second {
-		t.Fatalf("ramp window = %s, want 10m", rampWindow)
+func TestParsePositiveDurationRejectsEmptyAndInvalidValues(t *testing.T) {
+	if got := parsePositiveDuration("10m"); got != 10*time.Minute {
+		t.Fatalf("duration = %s, want 10m", got)
 	}
-	if !connectDeadline.Equal(stagedConnectDeadline(stageStart, stageDeadline)) {
-		t.Fatalf("connect deadline = %s, want stage action-reserve deadline %s", connectDeadline, stagedConnectDeadline(stageStart, stageDeadline))
-	}
-	if connectDeadline.Before(connectStarted.Add(rampWindow + stagedConnectTailBudget(rampWindow))) {
-		t.Fatalf("connect deadline = %s, want later than ramp tail %s", connectDeadline, connectStarted.Add(rampWindow+stagedConnectTailBudget(rampWindow)))
+	for _, raw := range []string{"", "0", "off", "-1s", "bogus"} {
+		if got := parsePositiveDuration(raw); got != 0 {
+			t.Fatalf("duration %q = %s, want 0", raw, got)
+		}
 	}
 }
 
@@ -2223,100 +2047,25 @@ func TestTimeoutUntilDeadlineBoundsCommandPhases(t *testing.T) {
 	}
 }
 
-func TestWaitForMQTTPublishAcksInboundQoS1(t *testing.T) {
-	server, client := net.Pipe()
-	defer server.Close()
-	defer client.Close()
-
-	topic := "$vc/devices/rtk-0041/shadow/update/accepted"
-	payload := []byte(`{"clientToken":"cmd-1"}`)
-	done := make(chan error, 1)
-	go func() {
-		body := append(mqttString(topic), 0, 7)
-		body = append(body, payload...)
-		if err := mqttWritePacket(server, 0x32, body); err != nil {
-			done <- err
-			return
-		}
-		packetType, response, err := mqttReadPacket(server)
-		if err != nil {
-			done <- err
-			return
-		}
-		if packetType != 0x40 || len(response) < 2 || binary.BigEndian.Uint16(response[:2]) != 7 {
-			done <- fmt.Errorf("PUBACK packet type/body = 0x%x %x, want packet id 7", packetType, response)
-			return
-		}
-		done <- nil
-	}()
-
-	doc, err := waitForMQTTPublish(client, topic, time.Second, func(doc map[string]any) bool {
-		return doc["clientToken"] == "cmd-1"
-	})
-	if err != nil {
-		t.Fatalf("waitForMQTTPublish error = %v", err)
+func TestShadowCommandTimeoutUsesConfiguredDuration(t *testing.T) {
+	if got := shadowCommandTimeout(loadOptions{ShadowCommandTimeout: "30s"}); got != 30*time.Second {
+		t.Fatalf("shadowCommandTimeout = %s, want 30s", got)
 	}
-	if doc["clientToken"] != "cmd-1" {
-		t.Fatalf("clientToken = %v, want cmd-1", doc["clientToken"])
-	}
-	if err := <-done; err != nil {
-		t.Fatalf("server side error = %v", err)
+	if got := shadowCommandTimeout(loadOptions{ShadowCommandTimeout: "bogus"}); got != 10*time.Second {
+		t.Fatalf("invalid shadowCommandTimeout = %s, want 10s fallback", got)
 	}
 }
 
-func TestWaitForMQTTPublishAcksInboundQoS1BeforeTopicFilter(t *testing.T) {
-	server, client := net.Pipe()
-	defer server.Close()
-	defer client.Close()
-
-	wantedTopic := "$vc/devices/rtk-0041/shadow/update/documents"
-	otherTopic := "$vc/devices/rtk-0041/shadow/update/accepted"
-	done := make(chan error, 1)
-	go func() {
-		body := append(mqttString(otherTopic), 0, 7)
-		body = append(body, []byte(`{"clientToken":"reported-cmd-1"}`)...)
-		if err := mqttWritePacket(server, 0x32, body); err != nil {
-			done <- err
-			return
-		}
-		packetType, response, err := mqttReadPacket(server)
-		if err != nil {
-			done <- err
-			return
-		}
-		if packetType != 0x40 || len(response) < 2 || binary.BigEndian.Uint16(response[:2]) != 7 {
-			done <- fmt.Errorf("PUBACK packet type/body = 0x%x %x, want packet id 7", packetType, response)
-			return
-		}
-		body = append(mqttString(wantedTopic), 0, 8)
-		body = append(body, []byte(`{"clientToken":"reported-cmd-1"}`)...)
-		if err := mqttWritePacket(server, 0x32, body); err != nil {
-			done <- err
-			return
-		}
-		packetType, response, err = mqttReadPacket(server)
-		if err != nil {
-			done <- err
-			return
-		}
-		if packetType != 0x40 || len(response) < 2 || binary.BigEndian.Uint16(response[:2]) != 8 {
-			done <- fmt.Errorf("PUBACK packet type/body = 0x%x %x, want packet id 8", packetType, response)
-			return
-		}
-		done <- nil
-	}()
-
-	doc, err := waitForMQTTPublish(client, wantedTopic, time.Second, func(doc map[string]any) bool {
-		return doc["clientToken"] == "reported-cmd-1"
-	})
-	if err != nil {
-		t.Fatalf("waitForMQTTPublish error = %v", err)
+func TestSustainedCommandConcurrencyIsIndependentFromMQTTConcurrency(t *testing.T) {
+	opts := loadOptions{Concurrency: 1000, CommandConcurrency: 100}
+	if got := sustainedCommandConcurrency(opts, 20000); got != 100 {
+		t.Fatalf("sustainedCommandConcurrency = %d, want 100", got)
 	}
-	if doc["clientToken"] != "reported-cmd-1" {
-		t.Fatalf("clientToken = %v, want reported-cmd-1", doc["clientToken"])
+	if got := sustainedCommandConcurrency(loadOptions{Concurrency: 1000, CommandConcurrency: 100}, 40); got != 40 {
+		t.Fatalf("sustainedCommandConcurrency capped by sessions = %d, want 40", got)
 	}
-	if err := <-done; err != nil {
-		t.Fatalf("server side error = %v", err)
+	if got := sustainedCommandConcurrency(loadOptions{Concurrency: 7}, 100); got != 7 {
+		t.Fatalf("default sustainedCommandConcurrency = %d, want MQTT concurrency fallback", got)
 	}
 }
 
