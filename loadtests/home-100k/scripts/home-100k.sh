@@ -175,6 +175,57 @@ run_home100k() {
   (cd "$repo_root" && GOWORK=auto go run ./loadtests/home-100k/cmd/home-100k -- "$@")
 }
 
+duration_millis() {
+  python3 - "$1" <<'PY'
+import re
+import sys
+
+raw = sys.argv[1].strip()
+if not raw:
+    raise SystemExit("empty duration")
+units = {
+    "h": 3600000,
+    "m": 60000,
+    "s": 1000,
+    "ms": 1,
+    "us": 0.001,
+    "µs": 0.001,
+    "ns": 0.000001,
+}
+pos = 0
+total = 0.0
+for match in re.finditer(r"([0-9]+(?:\.[0-9]+)?)(h|ms|us|µs|ns|m|s)", raw):
+    if match.start() != pos:
+        raise SystemExit(f"invalid duration {raw!r}")
+    total += float(match.group(1)) * units[match.group(2)]
+    pos = match.end()
+if pos != len(raw) or total <= 0:
+    raise SystemExit(f"invalid duration {raw!r}")
+print(int(total))
+PY
+}
+
+validate_stage_timing() {
+  local warm_ms steady_ms cool_ms full_load_ms
+  if ! warm_ms="$(duration_millis "$stage_warm_up")"; then
+    echo "invalid HOME100K_STAGE_WARM_UP: $stage_warm_up" >&2
+    exit 2
+  fi
+  if ! steady_ms="$(duration_millis "$stage_steady")"; then
+    echo "invalid HOME100K_STAGE_STEADY: $stage_steady" >&2
+    exit 2
+  fi
+  if ! cool_ms="$(duration_millis "$stage_cool_down")"; then
+    echo "invalid HOME100K_STAGE_COOL_DOWN: $stage_cool_down" >&2
+    exit 2
+  fi
+  full_load_ms=$((steady_ms + cool_ms))
+  if (( warm_ms >= full_load_ms )); then
+    echo "HOME100K_STAGE_WARM_UP ($stage_warm_up) must be less than the full-load test window HOME100K_STAGE_STEADY + HOME100K_STAGE_COOL_DOWN ($stage_steady + $stage_cool_down)" >&2
+    exit 2
+  fi
+}
+
 set_phase() {
   mkdir -p "$(dirname "$status_file")"
   printf '%s\n' "$1" > "$status_file"
@@ -613,6 +664,7 @@ fi
 if [[ "$#" -gt 0 ]]; then
   shift
 fi
+validate_stage_timing
 resolve_mqtt_addr_for_command "$command"
 
 base_args=(

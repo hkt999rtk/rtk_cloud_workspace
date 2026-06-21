@@ -23,6 +23,8 @@ carry the same sections.
 - `k8s_node_resource_usage`
 - `load_generator_health`
 - `bottleneck_assessment`
+- `phase_metrics`
+- `bottleneck_events`
 - `client_token_correlation_count`
 
 ## Current Artifact Files
@@ -93,6 +95,12 @@ Live reports must also render the generator runtime limits used for the run:
 
 ## Required Stage Metrics
 
+Live capacity runs use a single target stage named from the requested connected
+device count, for example `50k` or `100k`. Intermediate percentages are ramp
+progress, not separate capacity targets. The stage warm-up is the connect ramp
+and must be less than the full-load test window (`steady_state + cool_down`) so
+the report includes evidence after the requested target is reached.
+
 Each stage result must include:
 
 - `device_mqtt_totals`
@@ -115,6 +123,62 @@ Each stage result must include:
 - `rejected_update_count`
 - `authorization_violation_count`
 - `client_token_correlation_count`
+- `phase_metrics` when produced by live shard runners
+- `bottleneck_events` when produced by live shard runners
+
+## Optional Client Phase Metrics
+
+`phase_metrics` is additive and backward-compatible. It is keyed by phase name,
+for example:
+
+- `device_request_token`
+- `device_mqtt_dial`
+- `device_mqtt_connack`
+- `device_subscribe_delta`
+- `app_request_token`
+- `app_mqtt_dial`
+- `app_mqtt_connack`
+- `app_desired_publish`
+- `app_shadow_accepted_wait`
+- `device_delta_wait`
+- `device_reported_publish`
+- `app_delta_clear_wait`
+- `device_telemetry_publish`
+
+Each phase metric contains:
+
+- `attempts`
+- `success`
+- `fail`
+- `total_ms`
+- `max_ms`
+- `gt1s`
+- `gt5s`
+- `gt10s`
+
+Token retry counters remain in `device_mqtt_totals` and `app_user_totals`; the
+phase metrics add elapsed-time evidence for those attempts.
+
+## Optional Bottleneck Event Samples
+
+`bottleneck_events` is additive and bounded to 128 samples per shard. Samples
+are intended for slow-path and retry diagnosis, including events that eventually
+succeed. Fields are:
+
+- `stage`
+- `phase`
+- `actor`
+- `device_id`
+- `detail`
+- `elapsed_ms`
+- `remaining_ms`
+- `attempt`
+- `is_retry`
+- `mqtt_target`
+- `occurred_at`
+
+Samples must not include JWTs, client certificates, passwords, request bodies,
+full payloads, or raw headers.
 
 ## Required Device MQTT Totals
 
@@ -123,6 +187,14 @@ Each stage result must include:
 - `connect_attempts`
 - `connect_success`
 - `connect_fail`
+- `token_attempts`
+- `token_success`
+- `token_fail`
+- `token_first_attempt_success`
+- `token_first_attempt_fail`
+- `token_retry_attempts`
+- `token_retry_success`
+- `token_retry_exhausted`
 - `subscribes`
 - `publishes`
 - `received_messages`
@@ -139,12 +211,51 @@ Each stage result must include:
 - `login_attempts`
 - `login_success`
 - `login_fail`
+- `token_attempts`
+- `token_success`
+- `token_fail`
+- `token_first_attempt_success`
+- `token_first_attempt_fail`
+- `token_retry_attempts`
+- `token_retry_success`
+- `token_retry_exhausted`
 - `list_devices_requests`
 - `read_shadow_requests`
 - `desired_writes`
 - `received_acks`
 - `bytes_sent`
 - `bytes_received`
+
+## Required Token Retry Totals
+
+`TEST_REPORT.md` must render separate Device and APP token retry sections.
+First-attempt counters preserve the no-retry capacity signal, while retry
+counters show transient recovery or retry exhaustion:
+
+- first-attempt success
+- first-attempt fail
+- retry attempts
+- retry success
+- retry exhausted
+- token request total
+
+## Required Bottleneck Summary
+
+`TEST_REPORT.md` must render `Bottleneck Summary` before `Failure Reasons`.
+The section ranks the top three deterministic candidates with compact
+supporting counters:
+
+- token bootstrap: token phase failures, retry exhaustion, slow p95/p99, or
+  API/ingress 5xx counters.
+- shadow/API-to-MQTT path: APP ACK waits, device delta waits, socket/timeout
+  warnings, or EMQX congestion counters.
+- broker path: MQTT dial/CONNACK/subscription failures, EMQX shutdown or
+  discarded counters, or listener connection pressure.
+- generator path: load-generator saturation, high VM resource pressure, or
+  missing client target coverage without matching server pressure.
+
+The report must also render `Client Phase Metrics` and `Bottleneck Event
+Samples` when present.
 
 ## Required Client Target Coverage
 

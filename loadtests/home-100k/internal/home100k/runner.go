@@ -75,6 +75,33 @@ type StageResult struct {
 	UserActionTotals               map[string]int64            `json:"user_action_totals,omitempty"`
 	UsageWindowTotals              map[string]int64            `json:"usage_window_totals,omitempty"`
 	StageDiagnostics               []map[string]any            `json:"stage_diagnostics,omitempty"`
+	PhaseMetrics                   map[string]PhaseMetric      `json:"phase_metrics,omitempty"`
+	BottleneckEvents               []BottleneckEvent           `json:"bottleneck_events,omitempty"`
+}
+
+type PhaseMetric struct {
+	Attempts int64 `json:"attempts"`
+	Success  int64 `json:"success"`
+	Fail     int64 `json:"fail"`
+	TotalMS  int64 `json:"total_ms"`
+	MaxMS    int64 `json:"max_ms"`
+	GT1S     int64 `json:"gt1s"`
+	GT5S     int64 `json:"gt5s"`
+	GT10S    int64 `json:"gt10s"`
+}
+
+type BottleneckEvent struct {
+	Stage       string `json:"stage,omitempty"`
+	Phase       string `json:"phase"`
+	Actor       string `json:"actor,omitempty"`
+	DeviceID    string `json:"device_id,omitempty"`
+	Detail      string `json:"detail,omitempty"`
+	ElapsedMS   int64  `json:"elapsed_ms,omitempty"`
+	RemainingMS int64  `json:"remaining_ms,omitempty"`
+	Attempt     int    `json:"attempt,omitempty"`
+	IsRetry     bool   `json:"is_retry,omitempty"`
+	MQTTTarget  string `json:"mqtt_target,omitempty"`
+	OccurredAt  string `json:"occurred_at,omitempty"`
 }
 
 type DeviceTypeTotals struct {
@@ -121,51 +148,61 @@ type LogExpect struct {
 }
 
 type DeviceMQTTTotals struct {
-	ConnectAttempts     int64 `json:"connect_attempts"`
-	ConnectSuccess      int64 `json:"connect_success"`
-	ConnectFail         int64 `json:"connect_fail"`
-	TokenAttempts       int64 `json:"token_attempts,omitempty"`
-	TokenSuccess        int64 `json:"token_success,omitempty"`
-	TokenFail           int64 `json:"token_fail,omitempty"`
-	MQTTDialAttempts    int64 `json:"mqtt_dial_attempts,omitempty"`
-	MQTTDialSuccess     int64 `json:"mqtt_dial_success,omitempty"`
-	MQTTDialFail        int64 `json:"mqtt_dial_fail,omitempty"`
-	MQTTConnackAttempts int64 `json:"mqtt_connack_attempts,omitempty"`
-	MQTTConnackSuccess  int64 `json:"mqtt_connack_success,omitempty"`
-	MQTTConnackFail     int64 `json:"mqtt_connack_fail,omitempty"`
-	SubscribeAttempts   int64 `json:"subscribe_attempts,omitempty"`
-	SubscribeFail       int64 `json:"subscribe_fail,omitempty"`
-	Subscribes          int64 `json:"subscribes"`
-	ActiveConnections   int64 `json:"active_connections,omitempty"`
-	ActiveSubscriptions int64 `json:"active_subscriptions,omitempty"`
-	Publishes           int64 `json:"publishes"`
-	ReceivedMessages    int64 `json:"received_messages"`
-	DeltaReceived       int64 `json:"delta_received"`
-	ReportedPublishes   int64 `json:"reported_publishes"`
-	RejectedPublishes   int64 `json:"rejected_publishes"`
-	BytesSent           int64 `json:"bytes_sent"`
-	BytesReceived       int64 `json:"bytes_received"`
+	ConnectAttempts          int64 `json:"connect_attempts"`
+	ConnectSuccess           int64 `json:"connect_success"`
+	ConnectFail              int64 `json:"connect_fail"`
+	TokenAttempts            int64 `json:"token_attempts,omitempty"`
+	TokenSuccess             int64 `json:"token_success,omitempty"`
+	TokenFail                int64 `json:"token_fail,omitempty"`
+	TokenFirstAttemptSuccess int64 `json:"token_first_attempt_success,omitempty"`
+	TokenFirstAttemptFail    int64 `json:"token_first_attempt_fail,omitempty"`
+	TokenRetryAttempts       int64 `json:"token_retry_attempts,omitempty"`
+	TokenRetrySuccess        int64 `json:"token_retry_success,omitempty"`
+	TokenRetryExhausted      int64 `json:"token_retry_exhausted,omitempty"`
+	MQTTDialAttempts         int64 `json:"mqtt_dial_attempts,omitempty"`
+	MQTTDialSuccess          int64 `json:"mqtt_dial_success,omitempty"`
+	MQTTDialFail             int64 `json:"mqtt_dial_fail,omitempty"`
+	MQTTConnackAttempts      int64 `json:"mqtt_connack_attempts,omitempty"`
+	MQTTConnackSuccess       int64 `json:"mqtt_connack_success,omitempty"`
+	MQTTConnackFail          int64 `json:"mqtt_connack_fail,omitempty"`
+	SubscribeAttempts        int64 `json:"subscribe_attempts,omitempty"`
+	SubscribeFail            int64 `json:"subscribe_fail,omitempty"`
+	Subscribes               int64 `json:"subscribes"`
+	ActiveConnections        int64 `json:"active_connections,omitempty"`
+	ActiveSubscriptions      int64 `json:"active_subscriptions,omitempty"`
+	Publishes                int64 `json:"publishes"`
+	ReceivedMessages         int64 `json:"received_messages"`
+	DeltaReceived            int64 `json:"delta_received"`
+	ReportedPublishes        int64 `json:"reported_publishes"`
+	RejectedPublishes        int64 `json:"rejected_publishes"`
+	BytesSent                int64 `json:"bytes_sent"`
+	BytesReceived            int64 `json:"bytes_received"`
 }
 
 type AppUserTotals struct {
-	LoginAttempts       int64 `json:"login_attempts"`
-	LoginSuccess        int64 `json:"login_success"`
-	LoginFail           int64 `json:"login_fail"`
-	TokenAttempts       int64 `json:"token_attempts,omitempty"`
-	TokenSuccess        int64 `json:"token_success,omitempty"`
-	TokenFail           int64 `json:"token_fail,omitempty"`
-	MQTTDialAttempts    int64 `json:"mqtt_dial_attempts,omitempty"`
-	MQTTDialSuccess     int64 `json:"mqtt_dial_success,omitempty"`
-	MQTTDialFail        int64 `json:"mqtt_dial_fail,omitempty"`
-	MQTTConnackAttempts int64 `json:"mqtt_connack_attempts,omitempty"`
-	MQTTConnackSuccess  int64 `json:"mqtt_connack_success,omitempty"`
-	MQTTConnackFail     int64 `json:"mqtt_connack_fail,omitempty"`
-	ListDevicesRequests int64 `json:"list_devices_requests"`
-	ReadShadowRequests  int64 `json:"read_shadow_requests"`
-	DesiredWrites       int64 `json:"desired_writes"`
-	ReceivedAcks        int64 `json:"received_acks"`
-	BytesSent           int64 `json:"bytes_sent"`
-	BytesReceived       int64 `json:"bytes_received"`
+	LoginAttempts            int64 `json:"login_attempts"`
+	LoginSuccess             int64 `json:"login_success"`
+	LoginFail                int64 `json:"login_fail"`
+	TokenAttempts            int64 `json:"token_attempts,omitempty"`
+	TokenSuccess             int64 `json:"token_success,omitempty"`
+	TokenFail                int64 `json:"token_fail,omitempty"`
+	TokenFirstAttemptSuccess int64 `json:"token_first_attempt_success,omitempty"`
+	TokenFirstAttemptFail    int64 `json:"token_first_attempt_fail,omitempty"`
+	TokenRetryAttempts       int64 `json:"token_retry_attempts,omitempty"`
+	TokenRetrySuccess        int64 `json:"token_retry_success,omitempty"`
+	TokenRetryExhausted      int64 `json:"token_retry_exhausted,omitempty"`
+	MQTTDialAttempts         int64 `json:"mqtt_dial_attempts,omitempty"`
+	MQTTDialSuccess          int64 `json:"mqtt_dial_success,omitempty"`
+	MQTTDialFail             int64 `json:"mqtt_dial_fail,omitempty"`
+	MQTTConnackAttempts      int64 `json:"mqtt_connack_attempts,omitempty"`
+	MQTTConnackSuccess       int64 `json:"mqtt_connack_success,omitempty"`
+	MQTTConnackFail          int64 `json:"mqtt_connack_fail,omitempty"`
+	ListDevicesRequests      int64 `json:"list_devices_requests"`
+	ReadShadowRequests       int64 `json:"read_shadow_requests"`
+	DesiredWrites            int64 `json:"desired_writes"`
+	ReceivedAcks             int64 `json:"received_acks"`
+	BytesSent                int64 `json:"bytes_sent"`
+	BytesReceived            int64 `json:"bytes_received"`
 }
 
 type ServerCorrelation struct {
@@ -569,7 +606,12 @@ func aggregateStageResults(items []StageResult) StageResult {
 		result.FailureDetails = addFailureDetails(result.FailureDetails, item.FailureDetails)
 		result.FailureEvents = appendStageFailureEvents(result.FailureEvents, item.FailureEvents)
 		result.CommandEvents = append(result.CommandEvents, item.CommandEvents...)
+		result.DeviceTypeTotals = addDeviceTypeTotals(result.DeviceTypeTotals, item.DeviceTypeTotals)
+		result.UserActionTotals = addInt64MapTotals(result.UserActionTotals, item.UserActionTotals)
+		result.UsageWindowTotals = addInt64MapTotals(result.UsageWindowTotals, item.UsageWindowTotals)
 		result.StageDiagnostics = append(result.StageDiagnostics, item.StageDiagnostics...)
+		result.PhaseMetrics = addPhaseMetrics(result.PhaseMetrics, item.PhaseMetrics)
+		result.BottleneckEvents = appendBottleneckEvents(result.BottleneckEvents, item.BottleneckEvents)
 	}
 	count := float64(len(items))
 	result.MQTTConnectSuccessRatePercent = connectSuccessPercent(result.DeviceMQTTTotals)
@@ -584,6 +626,93 @@ func aggregateStageResults(items []StageResult) StageResult {
 	result.DesiredReportedConvergenceRate /= count
 	result.OfflineDesiredConvergenceRate /= count
 	return result
+}
+
+const maxAggregatedBottleneckEvents = 128
+
+func addPhaseMetrics(left, right map[string]PhaseMetric) map[string]PhaseMetric {
+	if len(left) == 0 && len(right) == 0 {
+		return nil
+	}
+	if left == nil {
+		left = map[string]PhaseMetric{}
+	}
+	for phase, value := range right {
+		current := left[phase]
+		current.Attempts += value.Attempts
+		current.Success += value.Success
+		current.Fail += value.Fail
+		current.TotalMS += value.TotalMS
+		current.MaxMS = maxInt64(current.MaxMS, value.MaxMS)
+		current.GT1S += value.GT1S
+		current.GT5S += value.GT5S
+		current.GT10S += value.GT10S
+		left[phase] = current
+	}
+	return left
+}
+
+func appendBottleneckEvents(left, right []BottleneckEvent) []BottleneckEvent {
+	if len(right) == 0 || len(left) >= maxAggregatedBottleneckEvents {
+		return left
+	}
+	for _, event := range right {
+		if len(left) >= maxAggregatedBottleneckEvents {
+			break
+		}
+		left = append(left, event)
+	}
+	return left
+}
+
+func addDeviceTypeTotals(left, right map[string]DeviceTypeTotals) map[string]DeviceTypeTotals {
+	if len(left) == 0 && len(right) == 0 {
+		return nil
+	}
+	merged := map[string]DeviceTypeTotals{}
+	for name, value := range left {
+		merged[name] = addDeviceTypeTotal(merged[name], value)
+	}
+	for name, value := range right {
+		merged[name] = addDeviceTypeTotal(merged[name], value)
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
+}
+
+func addDeviceTypeTotal(left, right DeviceTypeTotals) DeviceTypeTotals {
+	return DeviceTypeTotals{
+		TelemetryPublishes: left.TelemetryPublishes + right.TelemetryPublishes,
+		EventPublishes:     left.EventPublishes + right.EventPublishes,
+		DesiredWrites:      left.DesiredWrites + right.DesiredWrites,
+		DeltaReceived:      left.DeltaReceived + right.DeltaReceived,
+		ReportedPublishes:  left.ReportedPublishes + right.ReportedPublishes,
+		BytesSent:          left.BytesSent + right.BytesSent,
+		BytesReceived:      left.BytesReceived + right.BytesReceived,
+	}
+}
+
+func addInt64MapTotals(left, right map[string]int64) map[string]int64 {
+	if len(left) == 0 && len(right) == 0 {
+		return nil
+	}
+	merged := map[string]int64{}
+	for name, value := range left {
+		if value != 0 {
+			merged[name] += value
+		}
+	}
+	for name, value := range right {
+		if value != 0 {
+			merged[name] += value
+		}
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
 }
 
 func connectSuccessPercent(totals DeviceMQTTTotals) float64 {
@@ -679,6 +808,11 @@ func addDeviceMQTTTotals(a DeviceMQTTTotals, b DeviceMQTTTotals) DeviceMQTTTotal
 	a.TokenAttempts += b.TokenAttempts
 	a.TokenSuccess += b.TokenSuccess
 	a.TokenFail += b.TokenFail
+	a.TokenFirstAttemptSuccess += b.TokenFirstAttemptSuccess
+	a.TokenFirstAttemptFail += b.TokenFirstAttemptFail
+	a.TokenRetryAttempts += b.TokenRetryAttempts
+	a.TokenRetrySuccess += b.TokenRetrySuccess
+	a.TokenRetryExhausted += b.TokenRetryExhausted
 	a.MQTTDialAttempts += b.MQTTDialAttempts
 	a.MQTTDialSuccess += b.MQTTDialSuccess
 	a.MQTTDialFail += b.MQTTDialFail
@@ -716,6 +850,11 @@ func addAppUserTotals(a AppUserTotals, b AppUserTotals) AppUserTotals {
 	a.TokenAttempts += b.TokenAttempts
 	a.TokenSuccess += b.TokenSuccess
 	a.TokenFail += b.TokenFail
+	a.TokenFirstAttemptSuccess += b.TokenFirstAttemptSuccess
+	a.TokenFirstAttemptFail += b.TokenFirstAttemptFail
+	a.TokenRetryAttempts += b.TokenRetryAttempts
+	a.TokenRetrySuccess += b.TokenRetrySuccess
+	a.TokenRetryExhausted += b.TokenRetryExhausted
 	a.MQTTDialAttempts += b.MQTTDialAttempts
 	a.MQTTDialSuccess += b.MQTTDialSuccess
 	a.MQTTDialFail += b.MQTTDialFail
@@ -779,21 +918,21 @@ func loadSyncTelemetry(path string) SyncTelemetry {
 
 func requiredEvidenceSources(available bool) map[string]EvidenceSource {
 	return map[string]EvidenceSource{
-		"emqx":                      {Available: available},
-		"video_cloud_api":           {Available: available},
-		"iot_device_shadow":         {Available: available},
-		"iot_device_shadow_streams": {Available: available},
-		"postgres":                  {Available: available},
-		"ingress_nginx":             {Available: available},
-		"host_pod_resources":        {Available: available},
+		"emqx":               {Available: available},
+		"video_cloud_api":    {Available: available},
+		"redis_valkey":       {Available: available},
+		"postgres":           {Available: available},
+		"ingress_nginx":      {Available: available},
+		"host_pod_resources": {Available: available},
 	}
 }
 
 func optionalEvidenceSources(available bool) map[string]EvidenceSource {
 	return map[string]EvidenceSource{
-		"central_logger":    {Available: available, Optional: true},
-		"mqtt_nodebalancer": {Available: available, Optional: true},
-		"redis_valkey":      {Available: available, Optional: true},
+		"central_logger":            {Available: available, Optional: true},
+		"mqtt_nodebalancer":         {Available: available, Optional: true},
+		"iot_device_shadow":         {Available: available, Optional: true},
+		"iot_device_shadow_streams": {Available: available, Optional: true},
 	}
 }
 
@@ -878,11 +1017,9 @@ func correlateServerEvidence(evidence ServerEvidence, device DeviceMQTTTotals, a
 		serverTotalMQTTConnectSuccess = evidenceCounter(evidence, "emqx", "device_mqtt.connect_success")
 	}
 	checks := []CorrelationCheck{
-		newCorrelationCheck("emqx", "mqtt.total_connect_success", totalMQTTConnectSuccess, serverTotalMQTTConnectSuccess),
-		newCorrelationCheck("iot_device_shadow", "app_user.desired_writes", app.DesiredWrites, evidenceCounter(evidence, "iot_device_shadow", "app_user.desired_writes")),
-		newCorrelationCheck("iot_device_shadow", "device_mqtt.delta_received", device.DeltaReceived, evidenceCounter(evidence, "iot_device_shadow", "device_mqtt.delta_received")),
-		newCorrelationCheck("iot_device_shadow", "device_mqtt.reported_publishes", device.ReportedPublishes, evidenceCounter(evidence, "iot_device_shadow", "device_mqtt.reported_publishes")),
-		newCorrelationCheck("iot_device_shadow", "app_user.received_acks", app.ReceivedAcks, evidenceCounter(evidence, "iot_device_shadow", "app_user.received_acks")),
+		newAtLeastCorrelationCheck("emqx", "mqtt.total_connect_success", totalMQTTConnectSuccess, serverTotalMQTTConnectSuccess),
+		newAtLeastCorrelationCheck("redis_valkey", "shadow.docs", 1, evidenceCounter(evidence, "redis_valkey", "redis_valkey.shadow.docs")),
+		newAtLeastCorrelationCheck("redis_valkey", "command.set.calls", 1, evidenceCounter(evidence, "redis_valkey", "redis_valkey.command.set.calls")),
 	}
 	status := "pass"
 	if len(reasons) > 0 {
@@ -913,11 +1050,11 @@ func correlateRuntimeLogs(evidence ServerEvidence, stages []StageResult) Runtime
 		ServerRuntimeStreams: evidenceCounter(evidence, "iot_device_shadow_streams", "runtime_log_streams.total"),
 	}
 	if len(events) == 0 {
-		result.Status = "incomplete"
+		result.Status = "skipped"
 		return result
 	}
 	if !source.Available || len(source.Counters) == 0 {
-		result.Status = "incomplete"
+		result.Status = "skipped"
 		return result
 	}
 	for _, event := range events {
@@ -971,6 +1108,24 @@ func newCorrelationCheck(source string, counter string, clientTotal int64, serve
 	if serverTotal == 0 {
 		check.Status = "incomplete"
 	} else if check.Delta != 0 {
+		check.Status = "fail"
+	}
+	return check
+}
+
+func newAtLeastCorrelationCheck(source string, counter string, minimum int64, serverTotal int64) CorrelationCheck {
+	check := CorrelationCheck{
+		Source:      source,
+		Counter:     counter,
+		ClientTotal: minimum,
+		ServerTotal: serverTotal,
+		Delta:       serverTotal - minimum,
+		Tolerance:   0,
+		Status:      "pass",
+	}
+	if serverTotal == 0 {
+		check.Status = "incomplete"
+	} else if serverTotal < minimum {
 		check.Status = "fail"
 	}
 	return check

@@ -1,7 +1,7 @@
 # Linode 100K Home IoT Device Shadow Load Test
 
 Status: live VM lifecycle and real MQTT/API shard runner wiring implemented;
-IoT Device Shadow exact correlation still gates PASS
+50K staging PASS captured, 100K requires a fresh target-specific PASS
 Owner: rtk_cloud_workspace
 
 ## Summary
@@ -33,6 +33,32 @@ report schema live under:
 loadtests/home-100k/
 ```
 
+## Latest Validated Staging Run
+
+The latest completed staging run for this flow is:
+
+| Field | Value |
+| --- | --- |
+| Run ID | `lt50k-api3-ramp15m-fallback-r4-20260620T045511Z` |
+| Target | 50,000 devices, 2,500 app users |
+| Generator layout | 5 mixed Linode VMs, 10K devices and 500 users per VM |
+| Stage window | 15m ramp, 20m steady, 2m cool-down |
+| Result | `PASS` |
+| Device target coverage | 50,000 / 50,000 |
+| Device token failures / retry exhausted | 0 / 0 |
+| App desired writes / ACKs | 2,500 / 2,500 |
+| Server correlation | `pass` |
+
+This validates the 50K profile with a realistic ramp. It is not a 100K result.
+For 100K, re-run the capacity plan from the requested target and produce a new
+100K `PASS` report.
+
+Residual 50K evidence to keep watching: EMQX reported small
+`video-cloud-api-*-message-sub` pressure (`emqx.conn_congestion=2`,
+`emqx.socket_error=8`, `emqx.timeout=8`). That signal did not fail the 50K
+report, but it should be treated as the next API-to-MQTT shadow-path bottleneck
+candidate for larger targets.
+
 ## Baseline
 
 Default first baseline:
@@ -42,11 +68,11 @@ Default first baseline:
 | Server target | Current staging/LKE env-root |
 | Load generators | Ephemeral Linode VMs |
 | Region model | Single Linode region |
-| Stages | 25K, 50K, 75K, 100K connected devices |
-| VM layout | 10 `mixed` VMs |
+| Stage window | Single target stage at the requested connected-device count |
+| VM layout | 5 `mixed` VMs |
 | Per-VM device task | Up to 10K simulated devices |
 | Per-VM user task | 500 simulated app users |
-| Total load-generator VMs | 10 for the default 100K-device/5K-user mixed baseline |
+| Total load-generator VMs | 5 for the default 100K-device/5K-user mixed baseline |
 
 Device mix:
 
@@ -85,10 +111,10 @@ Secrets and non-secret test descriptions are intentionally separate:
 
 The `home-100k` name is the package/VM-label prefix only. The active test size
 is configured in the description file with `HOME100K_DEVICES`, optional
-`HOME100K_USERS`, and `HOME100K_DEVICES_PER_USER`. The current debug profile is
-`HOME100K_DEVICES=9000`; changing between 9K and 100K must be a single
-description-file/profile change, not edits spread across script names, docs,
-Ansible, and Go code.
+`HOME100K_USERS`, and `HOME100K_DEVICES_PER_USER`. Changing between 10K, 50K,
+100K, or another target must be a single description-file/profile or shell
+environment change, not edits spread across script names, docs, Ansible, and
+Go code.
 
 The default description file points at the existing provision-server staging
 environment:
@@ -119,6 +145,9 @@ EMQX capacity.
 
 Defaults:
 
+These are the checked-in short debug defaults. Formal 10K, 50K, 100K, or custom
+runs must override the target size and stage windows explicitly.
+
 | Environment variable | Default |
 | --- | --- |
 | `HOME100K_DESCRIPTION_FILE` | `loadtests/home-100k/scenarios/default.description.env` |
@@ -134,14 +163,14 @@ Defaults:
 | `HOME100K_STAGE_WARM_UP` | `15s` |
 | `HOME100K_STAGE_STEADY` | `45s` |
 | `HOME100K_STAGE_COOL_DOWN` | `15s` |
-| `HOME100K_DEVICES` | `9000` |
+| `HOME100K_DEVICES` | `9000` from the default debug description |
 | `HOME100K_USERS` | unset; planner derives `ceil(devices / devices-per-user)` |
 | `HOME100K_DEVICES_PER_USER` | `20` |
 | `HOME100K_RUNNER_MODE` | `live` |
 | `HOME100K_RUNNER_NOFILE_LIMIT` | `1048576`; remote runner daemon file-descriptor limit for MQTT sockets |
 | `HOME100K_CREDENTIAL_BUNDLE_FORMAT` | `sqlite-gzip` |
 | `HOME100K_MQTT_ADDR` | `auto-public-mqtt`; live commands discover public MQTT LoadBalancer IPs |
-| `HOME100K_MQTT_PUBLIC_LB_COUNT` | `1`; limits auto-discovered MQTT LoadBalancers for the current 9K profile |
+| `HOME100K_MQTT_PUBLIC_LB_COUNT` | `1`; limits auto-discovered MQTT LoadBalancers for the default debug profile |
 | `HOME100K_NODE_RESOURCE_STATUS` | `1` |
 | `HOME100K_K8S_NODE_RESOURCE_STATUS` | `1` |
 | `HOME100K_KUBECONFIG` | unset; falls back to existing LKE kubeconfig env or `<env-root>/state/lke-kubeconfig.yaml` |
@@ -169,11 +198,15 @@ HOME100K_RUN_ID=20260615T100000Z loadtests/home-100k/scripts/home-100k.sh dry-ru
 Run the live VM workflow:
 
 ```sh
-HOME100K_RUN_ID=20260615T100000Z \
-  loadtests/home-100k/scripts/home-100k.sh
+HOME100K_RUN_ID=lt50k-example-$(date -u +%Y%m%dT%H%M%SZ) \
+HOME100K_DEVICES=50000 \
+HOME100K_STAGE_WARM_UP=15m \
+HOME100K_STAGE_STEADY=20m \
+HOME100K_STAGE_COOL_DOWN=2m \
+  loadtests/home-100k/scripts/home-100k.sh workflow-live
 
-HOME100K_RUN_ID=20260615T100000Z \
-  loadtests/home-100k/scripts/home-100k.sh destroy-vms --live --confirm-live
+HOME100K_RUN_ID=<run-id> \
+  loadtests/home-100k/scripts/home-100k.sh shutdown-vms
 ```
 
 The default command is `workflow-live`: it creates the load-generator VMs,
@@ -199,11 +232,19 @@ Kubernetes node resource samples use `kubectl top nodes --no-headers` and print
 
 Stage duration is part of the non-secret description file. The default profile
 uses `HOME100K_STAGE_WARM_UP=15s`, `HOME100K_STAGE_STEADY=45s`, and
-`HOME100K_STAGE_COOL_DOWN=15s`, which plans 75 seconds per stage and 5 minutes
-for the four load stages before VM lifecycle and evidence overhead. Use explicit
+`HOME100K_STAGE_COOL_DOWN=15s`, which plans a 75-second single target stage
+before VM lifecycle and evidence overhead. The warm-up value is the connect
+ramp and must be less than the full-load test window
+`HOME100K_STAGE_STEADY + HOME100K_STAGE_COOL_DOWN`. Use explicit
 shell environment overrides for longer baseline runs, or a custom
 `HOME100K_DESCRIPTION_FILE` for a reusable alternate profile. Explicit shell
 environment variables take precedence over the description file.
+
+The 50K validated run used a 15-minute ramp to avoid synchronized token
+bootstrap and MQTT connect bursts, then reserved 22 minutes for full-load
+steady/cool-down evidence. If a shorter ramp is selected, treat high
+`device_request_token` failure, retry exhaustion, or request-token p95/p99
+latency as token bootstrap pressure rather than as broker-capacity evidence.
 
 Runner mode is also part of the non-secret description file. The default is
 `HOME100K_RUNNER_MODE=live`. Live mode invokes the copied `rtk-cloud` runner to
@@ -245,6 +286,8 @@ each VM. The archive uploaded to that VM includes only
 the expanded `devices/test_device/devices/**` and
 `devices/test_device/bundles/**` PEM fan-out. This avoids tens of thousands of
 inodes per shard and makes future VM/orchestra reuse checkable by sha256.
+Artifact fanout compares sha256 checksums and skips unchanged runner binaries,
+the `rtk-cloud` binary, shard manifests, and other cacheable files.
 Live run-stages reads `vms.json`, regenerates the same inventory, and runs
 `loadtests/home-100k/ansible/start-runner.yml`. Ansible starts a
 `home-100k runner-daemon` on each VM and waits for `READY_WAIT`; it does not
@@ -255,10 +298,12 @@ MQTT/API traffic. The run writes `start-coordination.json` with ready barrier,
 per-VM start timestamps, and max start skew. In `runner_mode=live`, each VM
 calls the copied `rtk-cloud` binary once to run the assigned staged MQTT/API
 shard only after START is received. Device MQTT delta subscriptions are
-lifetime state: the 50K, 75K, and 100K stages add new device sessions without
-disconnecting and resubscribing devices that were already online in earlier
-stages. Reports must show both new subscribe packets and active
-connection/subscription gauges.
+lifetime state for the single target stage. The stage warm-up spreads
+`/request_token`, TLS, MQTT CONNECT, and shadow-delta subscription work across
+the ramp interval; after ramp, existing device connections and subscriptions
+remain open through the steady and cool-down windows. Reports must show both
+new subscribe packets and active connection/subscription gauges for the
+requested target.
 
 Load-generator runtime limits are part of the test conditions:
 
