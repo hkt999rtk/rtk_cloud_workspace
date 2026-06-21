@@ -1699,8 +1699,10 @@ func collectCentralLoggerEvidence(envRoot string, runID string) (EvidenceSource,
 
 func centralLoggerEnvValues(envRoot string) map[string]string {
 	candidates := []string{}
+	explicitOverride := false
 	if override := strings.TrimSpace(os.Getenv("HOME100K_CLOUD_LOGGER_ENV")); override != "" {
 		candidates = append(candidates, override)
+		explicitOverride = true
 	}
 	candidates = append(candidates,
 		filepath.Join(envRoot, "services", "cloud-logger", "logger.env"),
@@ -1712,12 +1714,27 @@ func centralLoggerEnvValues(envRoot string) map[string]string {
 			filepath.Join(parent, "linode", "state", "cloud-logger.env"),
 		)
 	}
+	values := map[string]string{}
 	for _, path := range candidates {
 		if fileReadable(path) {
-			return parseEnvFile(path)
+			values = parseEnvFile(path)
+			break
 		}
 	}
-	return map[string]string{}
+	if !explicitOverride {
+		if token := readTrimmedFile(filepath.Join(envRoot, "state", "secrets", "cloud-logger-ingest-token")); token != "" {
+			values["CLOUD_LOGGER_INGEST_TOKEN"] = token
+		}
+	}
+	return values
+}
+
+func readTrimmedFile(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
 }
 
 func evidenceWindowStart(outDir string) string {

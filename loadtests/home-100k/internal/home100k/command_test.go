@@ -2755,6 +2755,30 @@ func TestCentralLoggerEnvValuesFindsSiblingLinodeEnv(t *testing.T) {
 	}
 }
 
+func TestCentralLoggerEnvValuesPrefersLKESecretToken(t *testing.T) {
+	root := t.TempDir()
+	lkeRoot := filepath.Join(root, "lke")
+	loggerDir := filepath.Join(root, "linode", "services", "cloud-logger")
+	secretDir := filepath.Join(lkeRoot, "state", "secrets")
+	if err := os.MkdirAll(loggerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(secretDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(loggerDir, "logger.env"), []byte("CLOUD_LOGGER_ENDPOINT=https://logger.example\nCLOUD_LOGGER_INGEST_TOKEN=stale-linode-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(secretDir, "cloud-logger-ingest-token"), []byte("current-lke-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	values := centralLoggerEnvValues(lkeRoot)
+	if values["CLOUD_LOGGER_ENDPOINT"] != "https://logger.example" || values["CLOUD_LOGGER_INGEST_TOKEN"] != "current-lke-token" {
+		t.Fatalf("centralLoggerEnvValues() = %#v, want endpoint from env and token from lke secret", values)
+	}
+}
+
 func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 	outDir := t.TempDir()
 	if err := writeJSONFile(filepath.Join(outDir, "start-coordination.json"), StartCoordination{
