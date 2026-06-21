@@ -1789,12 +1789,14 @@ WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account-manager ./cmd/server
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account-manager-migrate ./cmd/migrate
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account-manager-user-cache ./cmd/user-cache
 
 FROM debian:bookworm-slim
 WORKDIR /app
 RUN useradd -r -u 10001 app && chown app:app /app
 COPY --from=builder /out/rtk-account-manager /app/rtk-account-manager
 COPY --from=builder /out/rtk-account-manager-migrate /app/rtk-account-manager-migrate
+COPY --from=builder /out/rtk-account-manager-user-cache /app/rtk-account-manager-user-cache
 COPY --from=builder /src/migrations /app/migrations
 USER app
 EXPOSE 8080
@@ -5342,6 +5344,9 @@ stringData:
   ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN: %q
   ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL: %q
   ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD: %q
+  ACCOUNT_MANAGER_USER_CACHE_ENABLED: "true"
+  ACCOUNT_MANAGER_USER_CACHE_ADDR: %q
+  ACCOUNT_MANAGER_USER_CACHE_PREFIX: "account_manager:user"
   ACCOUNT_MANAGER_ENV: "staging"
   ACCOUNT_MANAGER_LOG_LEVEL: %q
   AUTH_TOKEN_DELIVERY: "log"
@@ -5350,7 +5355,7 @@ stringData:
   APP_CERT_ISSUER_CLIENT_CERT: "/etc/rtk-account-manager/certissuer/client.crt"
   APP_CERT_ISSUER_CLIENT_KEY: "/etc/rtk-account-manager/certissuer/client.key"
   APP_CERT_ISSUER_CA_FILE: "/etc/rtk-account-manager/certissuer/ca.crt"
-`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), lkeCertIssuerBaseURL(env))
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), lkeCertIssuerBaseURL(env))
 }
 
 func lkeAccountManagerMigrationJobManifest(env map[string]string) string {
