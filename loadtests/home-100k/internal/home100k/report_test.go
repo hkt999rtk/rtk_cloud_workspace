@@ -261,7 +261,7 @@ func TestReportRendersRequiredStageMetrics(t *testing.T) {
 		},
 		SyncTelemetry: SyncTelemetry{
 			VMs: []VMSyncTelemetry{{
-				Label:            "home-100k-mixed-000",
+				Label:            "lg01",
 				FilesTransferred: 6,
 				BytesTransferred: 1048576,
 				RemoteDiskBefore: "2.4G",
@@ -274,7 +274,7 @@ func TestReportRendersRequiredStageMetrics(t *testing.T) {
 			StartDelayMS: 3000,
 			MaxSkewMS:    12,
 			VMs: []VMStartTelemetry{{
-				Label:  "home-100k-mixed-000",
+				Label:  "lg01",
 				IP:     "192.0.2.10",
 				Status: "completed",
 			}},
@@ -305,7 +305,7 @@ func TestReportRendersRequiredStageMetrics(t *testing.T) {
 		"- max start skew ms: 12\n\n| VM | IP | Status | Ready at |",
 		"device_connect_target_missed",
 		"device_mqtt.publishes",
-		"home-100k-mixed-000",
+		"lg01",
 		"Desired update p95",
 		"Shadow get p50",
 		"Shadow get p99",

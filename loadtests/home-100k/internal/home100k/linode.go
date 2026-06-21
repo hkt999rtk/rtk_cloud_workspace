@@ -25,10 +25,11 @@ type LinodeVMConfig struct {
 }
 
 type LinodeVM struct {
-	ID         int    `json:"id"`
-	Label      string `json:"label"`
-	PublicIPv4 string `json:"public_ipv4,omitempty"`
-	Status     string `json:"status,omitempty"`
+	ID         int      `json:"id"`
+	Label      string   `json:"label"`
+	PublicIPv4 string   `json:"public_ipv4,omitempty"`
+	Status     string   `json:"status,omitempty"`
+	Tags       []string `json:"tags,omitempty"`
 }
 
 func NewLinodeClient(endpoint string, token string) *LinodeClient {
@@ -79,11 +80,12 @@ func (c *LinodeClient) ProvisionVM(ctx context.Context, action LifecycleAction, 
 		Label  string   `json:"label"`
 		Status string   `json:"status"`
 		IPv4   []string `json:"ipv4"`
+		Tags   []string `json:"tags"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
 		return LinodeVM{}, err
 	}
-	vm := LinodeVM{ID: parsed.ID, Label: parsed.Label, Status: parsed.Status}
+	vm := LinodeVM{ID: parsed.ID, Label: parsed.Label, Status: parsed.Status, Tags: parsed.Tags}
 	if len(parsed.IPv4) > 0 {
 		vm.PublicIPv4 = parsed.IPv4[0]
 	}
@@ -193,6 +195,7 @@ func (c *LinodeClient) ListVMs(ctx context.Context, tags []string) ([]LinodeVM, 
 			Label  string   `json:"label"`
 			Status string   `json:"status"`
 			IPv4   []string `json:"ipv4"`
+			Tags   []string `json:"tags"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
@@ -200,7 +203,7 @@ func (c *LinodeClient) ListVMs(ctx context.Context, tags []string) ([]LinodeVM, 
 	}
 	vms := make([]LinodeVM, 0, len(parsed.Data))
 	for _, item := range parsed.Data {
-		vm := LinodeVM{ID: item.ID, Label: item.Label, Status: item.Status}
+		vm := LinodeVM{ID: item.ID, Label: item.Label, Status: item.Status, Tags: item.Tags}
 		if len(item.IPv4) > 0 {
 			vm.PublicIPv4 = item.IPv4[0]
 		}

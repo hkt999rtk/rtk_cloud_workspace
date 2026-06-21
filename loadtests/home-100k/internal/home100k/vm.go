@@ -23,7 +23,7 @@ func BuildLifecycleActions(plan Plan, runID string) []LifecycleAction {
 			ShardIndex:  assignment.Index,
 			Region:      assignment.Region,
 			Label:       assignment.Label,
-			Tags:        []string{"home-100k", runID, assignment.Role},
+			Tags:        []string{"home-100k", runID, "load-generator", assignment.Role},
 			Description: fmt.Sprintf("create ephemeral %s load-generator VM for assignment %d", assignment.Role, assignment.Index),
 		})
 	}
@@ -66,7 +66,7 @@ func BuildLifecycleActions(plan Plan, runID string) []LifecycleAction {
 			ShardIndex:  assignment.Index,
 			Region:      assignment.Region,
 			Label:       assignment.Label,
-			Tags:        []string{"home-100k", runID, assignment.Role},
+			Tags:        []string{"home-100k", runID, "load-generator", assignment.Role},
 			Description: "scrub and destroy ephemeral load-generator VM",
 		})
 	}

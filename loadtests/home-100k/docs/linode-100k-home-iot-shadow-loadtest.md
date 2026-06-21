@@ -69,7 +69,7 @@ Default first baseline:
 | Load generators | Ephemeral Linode VMs |
 | Region model | Single Linode region |
 | Stage window | Single target stage at the requested connected-device count |
-| VM layout | 5 `mixed` VMs |
+| VM layout | 5 mixed execution shards labeled `lg01`..`lg05` by default |
 | Per-VM device task | Up to 10K simulated devices |
 | Per-VM user task | 500 simulated app users |
 | Total load-generator VMs | 5 for the default 100K-device/5K-user mixed baseline |
@@ -109,12 +109,13 @@ Secrets and non-secret test descriptions are intentionally separate:
   non-secret test description: env-root, brand, region, remote paths, SSH key
   path, status interval, stage durations, and target load size.
 
-The `home-100k` name is the package/VM-label prefix only. The active test size
-is configured in the description file with `HOME100K_DEVICES`, optional
-`HOME100K_USERS`, and `HOME100K_DEVICES_PER_USER`. Changing between 10K, 50K,
-100K, or another target must be a single description-file/profile or shell
-environment change, not edits spread across script names, docs, Ansible, and
-Go code.
+The `home-100k` name is the package name only; VM labels identify load-generator
+execution shards and default to `lg01`..`lg05` via `HOME100K_VM_LABEL_PREFIX=lg`.
+The active test size is configured in the description file with
+`HOME100K_DEVICES`, optional `HOME100K_USERS`, and
+`HOME100K_DEVICES_PER_USER`. Changing between 10K, 50K, 100K, or another target
+must be a single description-file/profile or shell environment change, not edits
+spread across script names, docs, Ansible, and Go code.
 
 The default description file points at the existing provision-server staging
 environment:
@@ -342,18 +343,19 @@ path then calls `scripts/generate-report.sh` to render fixed-format
 `TEST_REPORT.md`. Any shard with `load_generator_health.saturated=true` or
 insufficient client target coverage forces `INCOMPLETE`.
 Use `list-vms --live --run-id <run-id>` to inspect leftover load-generator VMs
-by tag before cleanup.
+by `home-100k`, `<run-id>`, and `load-generator` tags before cleanup.
 
 If a run fails before the normal cleanup path, use the emergency cleanup helper:
 
 ```sh
-loadtests/home-100k/scripts/cleanup-home-100k-vms.sh
-loadtests/home-100k/scripts/cleanup-home-100k-vms.sh --yes
+loadtests/home-100k/scripts/cleanup-home-100k-vms.sh --run-id <run-id>
+loadtests/home-100k/scripts/cleanup-home-100k-vms.sh --run-id <run-id> --yes
 ```
 
-The first command is dry-run and prints every matched Linode VM. The `--yes`
-form deletes VMs whose label starts with `home-100k` or whose tags include
-`home-100k`.
+The first command is dry-run and prints every matched Linode VM. The helper
+matches only VMs tagged with `home-100k`, the selected run id, and
+`load-generator`. Prefer run-scoped shutdown or destroy commands for normal
+cleanup.
 
 ## Report Rules
 

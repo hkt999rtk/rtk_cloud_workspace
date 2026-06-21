@@ -24,6 +24,7 @@ const (
 	DefaultStageSteady           = "2m"
 	DefaultStageCoolDown         = "45s"
 	DefaultScenarioProfile       = "home-diverse-v1"
+	DefaultVMLabelPrefix         = "lg"
 )
 
 type PlanOptions struct {
@@ -40,6 +41,7 @@ type PlanOptions struct {
 	SessionModel    string `json:"device_session_model,omitempty"`
 	RunnerReadModel string `json:"runner_read_model,omitempty"`
 	ScenarioProfile string `json:"scenario_profile,omitempty"`
+	VMLabelPrefix   string `json:"vm_label_prefix,omitempty"`
 }
 
 type Plan struct {
@@ -73,6 +75,7 @@ type TestConditions struct {
 	RunnerNofileLimit    int    `json:"runner_nofile_limit"`
 	DeviceSessionModel   string `json:"device_session_model"`
 	RunnerReadModel      string `json:"runner_read_model"`
+	VMLabelPrefix        string `json:"vm_label_prefix"`
 }
 
 type Stage struct {
@@ -188,6 +191,10 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	if scenarioProfile == "" {
 		scenarioProfile = DefaultScenarioProfile
 	}
+	vmLabelPrefix := strings.TrimSpace(opts.VMLabelPrefix)
+	if vmLabelPrefix == "" {
+		vmLabelPrefix = DefaultVMLabelPrefix
+	}
 
 	plan := Plan{
 		Conditions: TestConditions{
@@ -204,6 +211,7 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 			RunnerNofileLimit:    runnerNofile,
 			DeviceSessionModel:   sessionModel,
 			RunnerReadModel:      readModel,
+			VMLabelPrefix:        vmLabelPrefix,
 		},
 		ScenarioProfile:   scenarioProfile,
 		DeviceMix:         proportionalMix(devices, homeDiverseDeviceMixBuckets()),
@@ -228,7 +236,7 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	}
 	plan.Shards = append(plan.Shards, deviceShards(opts.Region, devices)...)
 	plan.Shards = append(plan.Shards, userShards(opts.Region, users)...)
-	plan.Assignments = mixedAssignments(opts.Region, plan.Shards)
+	plan.Assignments = mixedAssignments(opts.Region, plan.Shards, vmLabelPrefix)
 	plan.Lifecycle = BuildLifecycleActions(plan, "<run_id>")
 	return plan, nil
 }
@@ -391,8 +399,12 @@ func deviceShards(region string, totalDevices int) []Shard {
 	return shards
 }
 
-func mixedAssignments(region string, shards []Shard) []VMAssignment {
+func mixedAssignments(region string, shards []Shard, labelPrefix string) []VMAssignment {
 	assignments := make([]VMAssignment, 0, DefaultVMCount)
+	labelPrefix = strings.TrimSpace(labelPrefix)
+	if labelPrefix == "" {
+		labelPrefix = DefaultVMLabelPrefix
+	}
 	for idx := 0; idx < DefaultVMCount; idx++ {
 		tasks := []Shard{}
 		if shard, ok := findShardInList(shards, "device-mqtt", idx); ok {
@@ -402,7 +414,7 @@ func mixedAssignments(region string, shards []Shard) []VMAssignment {
 			tasks = append(tasks, shard)
 		}
 		assignments = append(assignments, VMAssignment{
-			Label:      fmt.Sprintf("home-100k-mixed-%03d", idx),
+			Label:      fmt.Sprintf("%s%02d", labelPrefix, idx+1),
 			Index:      idx,
 			Role:       "mixed",
 			Region:     region,

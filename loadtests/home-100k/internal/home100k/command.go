@@ -175,6 +175,7 @@ func parseCommonFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
+	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
 	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
 	runnerNofile, sessionModel, readModel := addRuntimeConditionFlags(fs)
@@ -187,6 +188,7 @@ func parseCommonFlags(name string, args []string, stderr io.Writer) (PlanOptions
 		Brandname: *brandname,
 		Region:    *region,
 	}
+	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
 	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel)
@@ -209,6 +211,7 @@ func parseRunFlags(name string, args []string, stderr io.Writer) (PlanOptions, b
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
+	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
 	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
 	runnerNofile, sessionModel, readModel := addRuntimeConditionFlags(fs)
@@ -224,6 +227,7 @@ func parseRunFlags(name string, args []string, stderr io.Writer) (PlanOptions, b
 		Brandname: *brandname,
 		Region:    *region,
 	}
+	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
 	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel)
@@ -246,6 +250,14 @@ func addSizingFlags(fs *flag.FlagSet) (*int, *int, *int) {
 	userCount := fs.Int("users", 0, "total simulated app user count")
 	devicesPerUser := fs.Int("devices-per-user", 0, "target devices per app user when --users is omitted")
 	return deviceCount, userCount, devicesPerUser
+}
+
+func addVMLabelPrefixFlag(fs *flag.FlagSet) *string {
+	return fs.String("vm-label-prefix", DefaultVMLabelPrefix, "load-generator VM label prefix")
+}
+
+func applyVMLabelPrefixFlag(opts *PlanOptions, vmLabelPrefix *string) {
+	opts.VMLabelPrefix = *vmLabelPrefix
 }
 
 func addRuntimeConditionFlags(fs *flag.FlagSet) (*int, *string, *string) {
@@ -381,17 +393,21 @@ func executeProvisionVMs(args []string, stdout io.Writer, stderr io.Writer) int 
 	created := []LinodeVM{}
 	reused := []LinodeVM{}
 	existingByLabel := map[string]LinodeVM{}
-	if existing, err := client.ListVMs(context.Background(), []string{"home-100k"}); err == nil {
+	if existing, err := client.ListVMs(context.Background(), nil); err == nil {
 		for _, vm := range existing {
 			if strings.TrimSpace(vm.Label) != "" {
 				existingByLabel[vm.Label] = vm
 			}
 		}
 	} else {
-		fmt.Fprintf(stderr, "warning: unable to list existing home-100k Linode VMs for reuse: %v\n", err)
+		fmt.Fprintf(stderr, "warning: unable to list existing Linode VMs for reuse/conflict checks: %v\n", err)
 	}
 	for _, action := range actions {
 		if vm, ok := existingByLabel[action.Label]; ok {
+			if !vmReusableForRun(vm, runID) {
+				fmt.Fprintf(stderr, "existing Linode VM label %s belongs to a different run or is missing required tags; expected tags home-100k, %s, load-generator\n", vm.Label, runID)
+				return 1
+			}
 			if shouldBootLinodeVM(vm.Status) {
 				if err := client.BootVM(context.Background(), vm.ID); err != nil {
 					fmt.Fprintln(stderr, err)
@@ -429,6 +445,12 @@ func executeProvisionVMs(args []string, stdout io.Writer, stderr io.Writer) int 
 		"reused":        reused,
 		"vm_state_file": vmStateFile,
 	})
+}
+
+func vmReusableForRun(vm LinodeVM, runID string) bool {
+	return stringSliceContains(vm.Tags, "home-100k") &&
+		stringSliceContains(vm.Tags, runID) &&
+		stringSliceContains(vm.Tags, "load-generator")
 }
 
 func shouldBootLinodeVM(status string) bool {
@@ -1263,7 +1285,7 @@ func executeListVMs(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 2
 	}
 	runID := normalizedRunID(values.runID)
-	tags := []string{"home-100k", runID}
+	tags := []string{"home-100k", runID, "load-generator"}
 	if !values.live {
 		return writeJSONTo(stdout, stderr, map[string]any{
 			"dry_run": true,
@@ -1368,6 +1390,7 @@ func parseProvisionVMFlags(name string, args []string, stderr io.Writer) (PlanOp
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
+	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
 	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
 	runID := fs.String("run-id", "", "run id for VM tags")
@@ -1384,6 +1407,7 @@ func parseProvisionVMFlags(name string, args []string, stderr io.Writer) (PlanOp
 		return PlanOptions{}, provisionVMFlagValues{}, err
 	}
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
+	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
 	return opts, provisionVMFlagValues{
@@ -1406,6 +1430,7 @@ func parseDestroyVMFlags(name string, args []string, stderr io.Writer) (PlanOpti
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
+	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
 	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
 	runID := fs.String("run-id", "", "run id for VM tags")
@@ -1418,6 +1443,7 @@ func parseDestroyVMFlags(name string, args []string, stderr io.Writer) (PlanOpti
 		return PlanOptions{}, destroyVMFlagValues{}, err
 	}
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
+	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
 	return opts, destroyVMFlagValues{
@@ -1436,6 +1462,7 @@ func parseListVMFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
+	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
 	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
 	runID := fs.String("run-id", "", "run id for VM tags")
@@ -1446,6 +1473,7 @@ func parseListVMFlags(name string, args []string, stderr io.Writer) (PlanOptions
 		return PlanOptions{}, listVMFlagValues{}, err
 	}
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
+	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
 	return opts, listVMFlagValues{
@@ -1462,6 +1490,7 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
+	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
 	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
 	runnerNofile, sessionModel, readModel := addRuntimeConditionFlags(fs)
@@ -1491,6 +1520,7 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 		return PlanOptions{}, workflowFlagValues{}, fmt.Errorf("unsupported --credential-bundle-format %q; only sqlite-gzip is supported", *credentialBundleFormat)
 	}
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
+	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
 	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel)
@@ -1524,6 +1554,7 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
+	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
 	deviceCount, userCount, devicesPerUser := addSizingFlags(fs)
 	runID := fs.String("run-id", "", "run id for artifact correlation")
@@ -1543,6 +1574,7 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 		return PlanOptions{}, shardRunFlagValues{}, fmt.Errorf("--role is required")
 	}
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
+	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
 	return opts, shardRunFlagValues{
@@ -3770,9 +3802,9 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 		if strings.TrimSpace(vm.PublicIPv4) == "" {
 			return fmt.Errorf("VM %s has no public IPv4 for ansible inventory", vm.Label)
 		}
-		role, shardIndex, err := shardFromVMLabel(vm.Label)
-		if err != nil {
-			return err
+		assignment, ok := findAssignmentByLabel(plan, vm.Label)
+		if !ok {
+			return fmt.Errorf("VM label %s does not match any plan assignment", vm.Label)
 		}
 		localShardManifest, err := filepath.Abs(filepath.Join(base, "shard-manifests", vm.Label+".json"))
 		if err != nil {
@@ -3792,8 +3824,8 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 			"ansible_ssh_private_key_file": values.sshKey,
 			"ansible_ssh_common_args":      "-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=" + workflowKnownHostsFile(values),
 			"run_id":                       normalizedRunID(values.runID),
-			"role":                         role,
-			"shard_index":                  shardIndex,
+			"role":                         assignment.Role,
+			"shard_index":                  assignment.Index,
 			"vm_label":                     vm.Label,
 			"local_shard_manifest":         localShardManifest,
 			"local_env_rsync_filter":       localEnvRsyncFilter,
@@ -3846,6 +3878,7 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 		"remote_out_root":          strings.TrimRight(firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k"), "/"),
 		"brandname":                plan.Conditions.Brandname,
 		"region":                   plan.Conditions.Region,
+		"vm_label_prefix":          plan.Conditions.VMLabelPrefix,
 		"device_count":             plan.Conditions.Devices,
 		"user_count":               plan.Conditions.Users,
 		"devices_per_user":         plan.Conditions.DevicesPerUser,
@@ -4141,24 +4174,6 @@ func dispatchRemoteShards(vms []LinodeVM, plan Plan, runID string, remoteOutRoot
 		return err
 	}
 	return writeJSONFile(filepath.Join(workflowOutDir(values), "start-coordination.json"), coordination)
-}
-
-func shardFromVMLabel(label string) (string, int, error) {
-	const prefix = "home-100k-"
-	if !strings.HasPrefix(label, prefix) {
-		return "", 0, fmt.Errorf("VM label %s does not have %s prefix", label, prefix)
-	}
-	rest := strings.TrimPrefix(label, prefix)
-	idx := strings.LastIndex(rest, "-")
-	if idx <= 0 || idx == len(rest)-1 {
-		return "", 0, fmt.Errorf("VM label %s does not contain shard index", label)
-	}
-	role := rest[:idx]
-	var shardIndex int
-	if _, err := fmt.Sscanf(rest[idx+1:], "%d", &shardIndex); err != nil {
-		return "", 0, fmt.Errorf("VM label %s has invalid shard index: %w", label, err)
-	}
-	return role, shardIndex, nil
 }
 
 func workflowKnownHostsFile(values workflowFlagValues) string {

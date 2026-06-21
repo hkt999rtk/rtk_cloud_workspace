@@ -114,7 +114,7 @@ Default baseline:
 | Load-generator runtime | Ephemeral Linode VMs |
 | First baseline region model | Single Linode region |
 | Device-generator density | Up to 20,000 devices per VM |
-| Load-generator VM count | 5 `mixed` VMs |
+| Load-generator VM count | 5 execution-shard VMs labeled `lg01`..`lg05` by default |
 | Per-VM device task | 20,000 devices |
 | Per-VM user task | 1,000 users |
 | Total load-generator VM count | 5 for the default 100K-device/5K-user mixed baseline |
@@ -345,8 +345,8 @@ Required behavior:
   writes run-level `plan.json` and `results.json`. The public script then runs
   `scripts/generate-report.sh` to render `TEST_REPORT.md` from the fixed
   template and collected artifacts.
-- `list-vms` lists leftover load-generator VMs by `home-100k` and `run_id`
-  tags when cleanup needs review.
+- `list-vms` lists leftover load-generator VMs by `home-100k`, `run_id`, and
+  `load-generator` tags when cleanup needs review.
 - `shutdown-vms` powers off reusable load-generator VMs after collection. Use
   the cleanup script only when the operator intentionally wants to delete the
   VM pool.
@@ -365,13 +365,15 @@ The default 100K baseline creates 5 mixed VM assignments. Each assignment owns
 one device shard and one user shard. Smaller targets keep the same mixed layout
 when the planner can fit the target into those assignments; the 50K staging
 PASS used the same 5 labels with 10K devices and 500 app users per VM.
+VM labels identify execution shards only; brand/cloud distribution remains in
+the plan and inventory metadata.
 
 | VM label | Device range | User range |
 | --- | ---: | ---: |
-| `home-100k-mixed-000` | `0..19999` | `0..999` |
-| `home-100k-mixed-001` | `20000..39999` | `1000..1999` |
+| `lg01` | `0..19999` | `0..999` |
+| `lg02` | `20000..39999` | `1000..1999` |
 | `...` | `...` | `...` |
-| `home-100k-mixed-004` | `80000..99999` | `4000..4999` |
+| `lg05` | `80000..99999` | `4000..4999` |
 
 The plan's `vm_assignments` array is the source of truth. After
 `provision-vms --live` writes `vms.json`, `sync --live` combines those VM
@@ -463,6 +465,7 @@ The script keeps non-secret defaults in one place:
 | `HOME100K_STAGE_WARM_UP` | `15s` from the default description file |
 | `HOME100K_STAGE_STEADY` | `45s` from the default description file |
 | `HOME100K_STAGE_COOL_DOWN` | `15s` from the default description file |
+| `HOME100K_VM_LABEL_PREFIX` | `lg`; load-generator VM labels are `<prefix>01..<prefix>NN` |
 | `HOME100K_DEVICES` | `9000` from the default debug description; formal runs must override it |
 | `HOME100K_USERS` | unset; planner derives `ceil(devices / devices-per-user)` |
 | `HOME100K_DEVICES_PER_USER` | `20` from the default description file |
@@ -770,17 +773,17 @@ the fixed-format `TEST_REPORT.md` from
 `load_generator_health.saturated=true` forces `INCOMPLETE` so load-generator
 saturation cannot be mistaken for server capacity.
 `cleanup-home-100k-vms.sh` is the emergency cleanup helper for leftover Linode
-test nodes. It scans Linode for VMs whose label starts with `home-100k` or
-whose tags include `home-100k`, prints id, label, region, status, IPv4
+test nodes. It scans Linode for VMs tagged with `home-100k`, the selected
+`run_id`, and `load-generator`, prints id, label, region, status, IPv4
 addresses, and tags, and is dry-run by default:
 
 ```sh
-loadtests/home-100k/scripts/cleanup-home-100k-vms.sh
-loadtests/home-100k/scripts/cleanup-home-100k-vms.sh --yes
+loadtests/home-100k/scripts/cleanup-home-100k-vms.sh --run-id <run-id>
+loadtests/home-100k/scripts/cleanup-home-100k-vms.sh --run-id <run-id> --yes
 ```
 
 Use `--prefix <value>` only when intentionally cleaning a different test
-prefix.
+tag family.
 `run` writes `plan.json`, `results.json`, `server-evidence.json`, and
 `TEST_REPORT.md` to the selected output directory. Without a server evidence
 file, the run is intentionally marked `INCOMPLETE`. The live shard execution may
