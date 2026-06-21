@@ -59,6 +59,7 @@ load_linode_token_from_env_file
 env_root="${HOME100K_ENV_ROOT:-cloud_env/staging/lke}"
 brandname="${HOME100K_BRANDNAME:-RTK}"
 region="${HOME100K_REGION:-us-sea}"
+vm_label_prefix="${HOME100K_VM_LABEL_PREFIX:-lg}"
 run_id="${HOME100K_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 out_dir="${HOME100K_OUT_DIR:-loadtests/home-100k/reports/${run_id}}"
 remote_workspace="${HOME100K_REMOTE_WORKSPACE:-/root/rtk_cloud_workspace}"
@@ -143,6 +144,7 @@ Defaults can be overridden with:
   HOME100K_ENV_ROOT       default: cloud_env/staging/lke
   HOME100K_BRANDNAME      default: RTK
   HOME100K_REGION         default: us-sea
+  HOME100K_VM_LABEL_PREFIX default: lg; load-generator VM labels are <prefix>01..<prefix>NN
   HOME100K_RUN_ID         default: current UTC timestamp
   HOME100K_OUT_DIR        default: loadtests/home-100k/reports/<run-id>
   HOME100K_REMOTE_WORKSPACE default: /root/rtk_cloud_workspace
@@ -697,6 +699,7 @@ base_args=(
   "--env-root" "$env_root"
   "--brandname" "$brandname"
   "--region" "$region"
+  "--vm-label-prefix" "$vm_label_prefix"
   "--stage-warm-up" "$target_ramp_up_time"
   "--stage-steady" "$measurement_window"
   "--stage-cool-down" "$post_run_collection"

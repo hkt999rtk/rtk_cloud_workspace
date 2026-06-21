@@ -124,7 +124,7 @@ func TestAggregateCollectedRunWritesRunLevelArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, label := range []string{"home-100k-mixed-000", "home-100k-mixed-001"} {
+	for _, label := range []string{"lg01", "lg02"} {
 		shardDir := filepath.Join(outDir, "shards", label)
 		if err := writeJSONFile(filepath.Join(shardDir, "results.json"), map[string]any{
 			"run_id":        "run-agg",
@@ -205,7 +205,7 @@ func TestAggregateCollectedRunUsesConfiguredStageNames(t *testing.T) {
 			DeltaClearSuccessRatePercent:   100,
 		})
 	}
-	for _, label := range []string{"home-100k-mixed-000", "home-100k-mixed-001"} {
+	for _, label := range []string{"lg01", "lg02"} {
 		if err := writeJSONFile(filepath.Join(outDir, "shards", label, "results.json"), map[string]any{
 			"run_id":        "run-agg-9k",
 			"role":          "mixed",
@@ -244,7 +244,7 @@ func TestAggregateCollectedRunWithoutServerEvidenceIsIncomplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeJSONFile(filepath.Join(outDir, "shards", "home-100k-mixed-000", "results.json"), map[string]any{
+	if err := writeJSONFile(filepath.Join(outDir, "shards", "lg01", "results.json"), map[string]any{
 		"run_id":        "run-agg-missing",
 		"role":          "device-mqtt",
 		"shard_index":   0,
@@ -276,7 +276,7 @@ func TestAggregateCollectedRunMarksLoadGeneratorSaturationIncomplete(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeJSONFile(filepath.Join(outDir, "shards", "home-100k-mixed-000", "results.json"), map[string]any{
+	if err := writeJSONFile(filepath.Join(outDir, "shards", "lg01", "results.json"), map[string]any{
 		"run_id":        "run-agg-saturated",
 		"role":          "device-mqtt",
 		"shard_index":   0,
@@ -322,7 +322,7 @@ func TestAggregateCollectedRunMergesFetchedSyncTelemetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeJSONFile(filepath.Join(outDir, "shards", "home-100k-mixed-000", "results.json"), map[string]any{
+	if err := writeJSONFile(filepath.Join(outDir, "shards", "lg01", "results.json"), map[string]any{
 		"run_id":        "run-agg-sync",
 		"role":          "mixed",
 		"shard_index":   0,
@@ -333,11 +333,11 @@ func TestAggregateCollectedRunMergesFetchedSyncTelemetry(t *testing.T) {
 	if err := writeJSONFile(filepath.Join(outDir, "server-evidence.json"), correlatedEvidenceForStages("run-agg-sync", stages)); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeJSONFile(filepath.Join(outDir, "sync-telemetry.json"), SyncTelemetry{VMs: []VMSyncTelemetry{{Label: "home-100k-mixed-000"}}}); err != nil {
+	if err := writeJSONFile(filepath.Join(outDir, "sync-telemetry.json"), SyncTelemetry{VMs: []VMSyncTelemetry{{Label: "lg01"}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeJSONFile(filepath.Join(outDir, "sync-telemetry.d", "home-100k-mixed-000.json"), VMSyncTelemetry{
-		Label:            "home-100k-mixed-000",
+	if err := writeJSONFile(filepath.Join(outDir, "sync-telemetry.d", "lg01.json"), VMSyncTelemetry{
+		Label:            "lg01",
 		FilesTransferred: 9,
 		BytesTransferred: 123456,
 		RemoteDiskBefore: "before",
@@ -376,7 +376,7 @@ func TestAggregateCollectedRunWithAvailableEvidenceButMissingCountersIsIncomplet
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeJSONFile(filepath.Join(outDir, "shards", "home-100k-mixed-000", "results.json"), map[string]any{
+	if err := writeJSONFile(filepath.Join(outDir, "shards", "lg01", "results.json"), map[string]any{
 		"run_id":        "run-agg-no-counters",
 		"role":          "mixed",
 		"shard_index":   0,

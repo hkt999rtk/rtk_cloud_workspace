@@ -82,6 +82,7 @@ func parseRunnerDaemonFlags(name string, args []string, stderr io.Writer) (PlanO
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
+	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
 	deviceCount, userCount, devicesPerUser, vmCount := addSizingFlags(fs)
 	runID := fs.String("run-id", "", "run id for artifact correlation")
@@ -103,6 +104,7 @@ func parseRunnerDaemonFlags(name string, args []string, stderr io.Writer) (PlanO
 		return PlanOptions{}, runnerDaemonFlagValues{}, fmt.Errorf("--role is required")
 	}
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
+	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount)
 	return opts, runnerDaemonFlagValues{

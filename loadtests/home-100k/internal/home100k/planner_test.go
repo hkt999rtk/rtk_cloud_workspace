@@ -1,9 +1,6 @@
 package home100k
 
-import (
-	"fmt"
-	"testing"
-)
+import "testing"
 
 func TestDefaultPlanResolves100KHomeBaseline(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
@@ -149,8 +146,12 @@ func TestDefaultPlanCreatesDeterministicShardsAndStages(t *testing.T) {
 		t.Fatalf("VM assignments = %d, want 5", len(plan.Assignments))
 	}
 	for idx, assignment := range plan.Assignments {
-		if assignment.Label != "home-100k-mixed-"+fmt.Sprintf("%03d", idx) {
-			t.Fatalf("assignment label = %q", assignment.Label)
+		wantLabel := []string{"lg01", "lg02", "lg03", "lg04", "lg05"}[idx]
+		if assignment.Label != wantLabel {
+			t.Fatalf("assignment label = %q, want %q", assignment.Label, wantLabel)
+		}
+		if assignment.Index != idx {
+			t.Fatalf("assignment index = %d, want %d", assignment.Index, idx)
 		}
 		if assignment.Role != "mixed" || len(assignment.TaskShards) != 2 {
 			t.Fatalf("assignment = %#v, want mixed device+user tasks", assignment)
@@ -169,6 +170,28 @@ func TestDefaultPlanCreatesDeterministicShardsAndStages(t *testing.T) {
 	}
 	if stage.WarmUp != "1m" || stage.SteadyState != "2m" || stage.CoolDown != "45s" {
 		t.Fatalf("stage durations = warm-up %s steady %s cool-down %s, want 1m/2m/45s", stage.WarmUp, stage.SteadyState, stage.CoolDown)
+	}
+}
+
+func TestPlanUsesConfiguredVMLabelPrefix(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:       "cloud_env/staging/lke",
+		Brandname:     "RTK",
+		Region:        "us-sea",
+		VMLabelPrefix: "loadgen",
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+
+	for idx, assignment := range plan.Assignments {
+		wantLabel := []string{"loadgen01", "loadgen02", "loadgen03", "loadgen04", "loadgen05"}[idx]
+		if assignment.Label != wantLabel {
+			t.Fatalf("assignment %d label = %q, want %q", idx, assignment.Label, wantLabel)
+		}
+		if assignment.Index != idx {
+			t.Fatalf("assignment %d index = %d, want %d", idx, assignment.Index, idx)
+		}
 	}
 }
 

@@ -138,7 +138,7 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 			}},
 		}},
 		SyncTelemetry: SyncTelemetry{VMs: []VMSyncTelemetry{{
-			Label:            "home-100k-mixed-000",
+			Label:            "lg01",
 			FilesTransferred: 3,
 			BytesTransferred: 4096,
 			ElapsedMS:        1200,
@@ -149,7 +149,7 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 			StartDelayMS: 3000,
 			MaxSkewMS:    12,
 			VMs: []VMStartTelemetry{{
-				Label:  "home-100k-mixed-000",
+				Label:  "lg01",
 				IP:     "192.0.2.10",
 				Status: "completed",
 			}},
@@ -169,8 +169,8 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 	}
 	loadRows := strings.Join([]string{
 		"time\trun_id\tphase\tlabel\tip\trole\tid\tstatus\tcpu_pct\tload1\tmem_used_mb\tmem_total_mb\tdisk_used\tdisk_total\tdisk_pct",
-		"2026-06-15T00:00:00Z\tscript-report-test\trun-stages\thome-100k-mixed-000\t192.0.2.10\tmixed\t123\tok\t10.0\t0.50\t100\t1000\t2G\t25G\t8",
-		"2026-06-15T00:00:30Z\tscript-report-test\trun-stages\thome-100k-mixed-000\t192.0.2.10\tmixed\t123\tok\t90.0\t1.50\t700\t1000\t3G\t25G\t12",
+		"2026-06-15T00:00:00Z\tscript-report-test\trun-stages\tlg01\t192.0.2.10\tmixed\t123\tok\t10.0\t0.50\t100\t1000\t2G\t25G\t8",
+		"2026-06-15T00:00:30Z\tscript-report-test\trun-stages\tlg01\t192.0.2.10\tmixed\t123\tok\t90.0\t1.50\t700\t1000\t3G\t25G\t12",
 		"",
 	}, "\n")
 	if err := os.WriteFile(filepath.Join(resourceDir, "load-vms.tsv"), []byte(loadRows), 0o644); err != nil {
@@ -199,7 +199,7 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 	for _, want := range []string{
 		"## Load Machine Resource Usage",
 		"- sample window: 2026-06-15T00:00:00Z -> 2026-06-15T00:00:30Z\n\n| VM | Role | IP | Samples |",
-		"home-100k-mixed-000",
+		"lg01",
 		"CPU p95",
 		"## K8s Node Resource Usage During Test",
 		"- sample window: 2026-06-15T00:00:00Z -> 2026-06-15T00:00:30Z\n\n| Node | Samples | CPU p95 |",

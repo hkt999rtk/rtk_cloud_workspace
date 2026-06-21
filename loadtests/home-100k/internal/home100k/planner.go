@@ -9,19 +9,23 @@ import (
 )
 
 const (
-	DefaultDeviceCount      = 100000
-	DefaultUserCount        = 5000
-	DefaultDevicesPerUser   = 20
-	DefaultVMCount          = 5
-	DefaultServerTarget     = "staging/lke"
-	DefaultLoadGeneratorRun = "ephemeral-linode-vm"
-	DefaultRunnerNofile     = 1048576
-	DefaultDeviceSession    = "lifetime-subscription"
-	DefaultRunnerReadModel  = "go-netpoll-bounded-reader-goroutine"
-	DefaultStageWarmUp      = "1m"
-	DefaultStageSteady      = "2m"
-	DefaultStageCoolDown    = "45s"
-	DefaultScenarioProfile  = "home-diverse-v1"
+	DefaultDeviceCount           = 100000
+	DefaultUserCount             = 5000
+	DefaultDevicesPerUser        = 20
+	DefaultVMCount               = 5
+	DefaultDevicesPerVM          = DefaultDeviceCount / DefaultVMCount
+	DefaultUserShards            = DefaultVMCount
+	DefaultServerTarget          = "staging/lke"
+	DefaultLoadGeneratorRun      = "ephemeral-linode-vm"
+	DefaultRunnerNofile          = 1048576
+	DefaultRunnerMQTTConcurrency = 1000
+	DefaultDeviceSession         = "lifetime-subscription"
+	DefaultRunnerReadModel       = "go-netpoll-bounded-reader-goroutine"
+	DefaultStageWarmUp           = "1m"
+	DefaultStageSteady           = "2m"
+	DefaultStageCoolDown         = "45s"
+	DefaultScenarioProfile       = "home-diverse-v1"
+	DefaultVMLabelPrefix         = "lg"
 )
 
 type PlanOptions struct {
@@ -39,23 +43,24 @@ type PlanOptions struct {
 	SessionModel    string `json:"device_session_model,omitempty"`
 	RunnerReadModel string `json:"runner_read_model,omitempty"`
 	ScenarioProfile string `json:"scenario_profile,omitempty"`
+	VMLabelPrefix   string `json:"vm_label_prefix,omitempty"`
 }
 
 type Plan struct {
-	Conditions        TestConditions           `json:"conditions"`
-	ScenarioProfile   string                   `json:"scenario_profile"`
-	DeviceMix         map[string]int           `json:"device_mix"`
-	DeviceProfiles    map[string]DeviceProfile `json:"device_profiles"`
-	UserProfiles      map[string]UserProfile   `json:"user_profiles"`
-	PresenceMix       map[string]int           `json:"presence_mix"`
-	Target            TargetWindow             `json:"target"`
-	Stages            []Stage                  `json:"-"`
-	Shards            []Shard                  `json:"shards"`
-	Assignments       []VMAssignment           `json:"vm_assignments"`
-	Lifecycle         []LifecycleAction        `json:"lifecycle_actions"`
-	Workflow          []string                 `json:"workflow"`
-	Artifacts         Artifacts                `json:"artifacts"`
-	CleanupPlan       []string                 `json:"cleanup_plan"`
+	Conditions      TestConditions           `json:"conditions"`
+	ScenarioProfile string                   `json:"scenario_profile"`
+	DeviceMix       map[string]int           `json:"device_mix"`
+	DeviceProfiles  map[string]DeviceProfile `json:"device_profiles"`
+	UserProfiles    map[string]UserProfile   `json:"user_profiles"`
+	PresenceMix     map[string]int           `json:"presence_mix"`
+	Target          TargetWindow             `json:"target"`
+	Stages          []Stage                  `json:"-"`
+	Shards          []Shard                  `json:"shards"`
+	Assignments     []VMAssignment           `json:"vm_assignments"`
+	Lifecycle       []LifecycleAction        `json:"lifecycle_actions"`
+	Workflow        []string                 `json:"workflow"`
+	Artifacts       Artifacts                `json:"artifacts"`
+	CleanupPlan     []string                 `json:"cleanup_plan"`
 }
 
 type TargetWindow struct {
@@ -78,6 +83,7 @@ type TestConditions struct {
 	RunnerNofileLimit    int    `json:"runner_nofile_limit"`
 	DeviceSessionModel   string `json:"device_session_model"`
 	RunnerReadModel      string `json:"runner_read_model"`
+	VMLabelPrefix        string `json:"vm_label_prefix"`
 }
 
 type Stage struct {
@@ -209,12 +215,16 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	if scenarioProfile == "" {
 		scenarioProfile = DefaultScenarioProfile
 	}
+	vmLabelPrefix := strings.TrimSpace(opts.VMLabelPrefix)
+	if vmLabelPrefix == "" {
+		vmLabelPrefix = DefaultVMLabelPrefix
+	}
 
-		stages := stagePlan(devices, opts.StageWarmUp, opts.StageSteady, opts.StageCoolDown)
-		plan := Plan{
-			Conditions: TestConditions{
-				EnvRoot:              opts.EnvRoot,
-				Brandname:            opts.Brandname,
+	stages := stagePlan(devices, opts.StageWarmUp, opts.StageSteady, opts.StageCoolDown)
+	plan := Plan{
+		Conditions: TestConditions{
+			EnvRoot:              opts.EnvRoot,
+			Brandname:            opts.Brandname,
 			Region:               opts.Region,
 			Devices:              devices,
 			Users:                users,
@@ -227,17 +237,18 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 			RunnerNofileLimit:    runnerNofile,
 			DeviceSessionModel:   sessionModel,
 			RunnerReadModel:      readModel,
+			VMLabelPrefix:        vmLabelPrefix,
 		},
-		ScenarioProfile:   scenarioProfile,
-		DeviceMix:         proportionalMix(devices, homeDiverseDeviceMixBuckets()),
-			DeviceProfiles:    homeDiverseDeviceProfiles(),
-			UserProfiles:      homeDiverseUserProfiles(),
-			PresenceMix:       proportionalMix(devices, []ratioBucket{{Name: "online_steady", Weight: 85}, {Name: "offline_desired_queue", Weight: 10}, {Name: "flapping_reconnect", Weight: 5}}),
-			Target:            targetWindowFromStages(stages),
-			Stages:            stages,
-			Workflow:          []string{"plan", "provision-vms", "sync", "run-stages", "collect", "collect-server-evidence", "aggregate", "destroy-vms"},
-			Artifacts: Artifacts{
-				RunPlan:         "loadtests/home-100k/plans/<run_id>/plan.json",
+		ScenarioProfile: scenarioProfile,
+		DeviceMix:       proportionalMix(devices, homeDiverseDeviceMixBuckets()),
+		DeviceProfiles:  homeDiverseDeviceProfiles(),
+		UserProfiles:    homeDiverseUserProfiles(),
+		PresenceMix:     proportionalMix(devices, []ratioBucket{{Name: "online_steady", Weight: 85}, {Name: "offline_desired_queue", Weight: 10}, {Name: "flapping_reconnect", Weight: 5}}),
+		Target:          targetWindowFromStages(stages),
+		Stages:          stages,
+		Workflow:        []string{"plan", "provision-vms", "sync", "run-stages", "collect", "collect-server-evidence", "aggregate", "destroy-vms"},
+		Artifacts: Artifacts{
+			RunPlan:         "loadtests/home-100k/plans/<run_id>/plan.json",
 			ShardResults:    "loadtests/home-100k/reports/<run_id>/shards/",
 			AggregateReport: "loadtests/home-100k/reports/<run_id>/TEST_REPORT.md",
 			ServerEvidence:  "loadtests/home-100k/reports/<run_id>/server-evidence.json",
@@ -251,7 +262,7 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	}
 	plan.Shards = append(plan.Shards, deviceShards(opts.Region, devices, vmCount)...)
 	plan.Shards = append(plan.Shards, userShards(opts.Region, users, vmCount)...)
-	plan.Assignments = mixedAssignments(opts.Region, plan.Shards, vmCount)
+	plan.Assignments = mixedAssignments(opts.Region, plan.Shards, vmCount, vmLabelPrefix)
 	plan.Lifecycle = BuildLifecycleActions(plan, "<run_id>")
 	return plan, nil
 }
@@ -382,8 +393,12 @@ func deviceShards(region string, totalDevices int, vmCount int) []Shard {
 	return shards
 }
 
-func mixedAssignments(region string, shards []Shard, vmCount int) []VMAssignment {
+func mixedAssignments(region string, shards []Shard, vmCount int, labelPrefix string) []VMAssignment {
 	assignments := make([]VMAssignment, 0, vmCount)
+	labelPrefix = strings.TrimSpace(labelPrefix)
+	if labelPrefix == "" {
+		labelPrefix = DefaultVMLabelPrefix
+	}
 	for idx := 0; idx < vmCount; idx++ {
 		tasks := []Shard{}
 		if shard, ok := findShardInList(shards, "device-mqtt", idx); ok {
@@ -393,7 +408,7 @@ func mixedAssignments(region string, shards []Shard, vmCount int) []VMAssignment
 			tasks = append(tasks, shard)
 		}
 		assignments = append(assignments, VMAssignment{
-			Label:      fmt.Sprintf("home-100k-mixed-%03d", idx),
+			Label:      fmt.Sprintf("%s%02d", labelPrefix, idx+1),
 			Index:      idx,
 			Role:       "mixed",
 			Region:     region,

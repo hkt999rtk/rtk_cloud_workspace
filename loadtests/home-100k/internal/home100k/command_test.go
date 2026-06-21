@@ -324,9 +324,14 @@ func TestExecuteProvisionVMsLiveWritesVMStateFile(t *testing.T) {
 			t.Fatalf("method = %s, want POST", r.Method)
 		}
 		created++
+		var got map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		label, _ := got["label"].(string)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"id":200,"label":"home-100k-mixed-000","ipv4":["203.0.113.200"]}`))
+		_, _ = w.Write([]byte(`{"id":200,"label":"` + label + `","ipv4":["203.0.113.200"],"tags":["home-100k","run-cli","load-generator","mixed"]}`))
 	}))
 	defer server.Close()
 
@@ -365,8 +370,8 @@ func TestExecuteProvisionVMsLiveReusesExistingLabelPoolAndBootsPoweredOffVMs(t *
 		case r.Method == http.MethodGet && r.URL.Path == "/v4/linode/instances":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"data":[
-				{"id":101,"label":"home-100k-mixed-000","status":"offline","ipv4":["203.0.113.101"]},
-				{"id":102,"label":"home-100k-mixed-001","status":"running","ipv4":["203.0.113.102"]}
+				{"id":101,"label":"lg01","status":"offline","ipv4":["203.0.113.101"],"tags":["home-100k","run-cli","load-generator","mixed"]},
+				{"id":102,"label":"lg02","status":"running","ipv4":["203.0.113.102"],"tags":["home-100k","run-cli","load-generator","mixed"]}
 			],"page":1,"pages":1,"results":2}`))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/boot"):
 			posts = append(posts, r.URL.Path)
@@ -381,7 +386,7 @@ func TestExecuteProvisionVMsLiveReusesExistingLabelPoolAndBootsPoweredOffVMs(t *
 			posts = append(posts, "create:"+label)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"id":200,"label":"` + label + `","ipv4":["203.0.113.200"]}`))
+			_, _ = w.Write([]byte(`{"id":200,"label":"` + label + `","ipv4":["203.0.113.200"],"tags":["home-100k","run-cli","load-generator","mixed"]}`))
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
@@ -408,7 +413,7 @@ func TestExecuteProvisionVMsLiveReusesExistingLabelPoolAndBootsPoweredOffVMs(t *
 	if !strings.Contains(joinedPosts, "/v4/linode/instances/101/boot") {
 		t.Fatalf("offline reused VM was not booted; posts:\n%s", joinedPosts)
 	}
-	if strings.Contains(joinedPosts, "create:home-100k-mixed-000") || strings.Contains(joinedPosts, "create:home-100k-mixed-001") {
+	if strings.Contains(joinedPosts, "create:lg01") || strings.Contains(joinedPosts, "create:lg02") {
 		t.Fatalf("reused labels were recreated; posts:\n%s", joinedPosts)
 	}
 	if strings.Count(joinedPosts, "create:") != 3 {
@@ -423,6 +428,40 @@ func TestExecuteProvisionVMsLiveReusesExistingLabelPoolAndBootsPoweredOffVMs(t *
 	}
 	if !strings.Contains(stdout.String(), `"reused"`) {
 		t.Fatalf("stdout missing reused list:\n%s", stdout.String())
+	}
+}
+
+func TestExecuteProvisionVMsLiveRejectsStaleFixedLabel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v4/linode/instances":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[
+				{"id":101,"label":"lg01","status":"running","ipv4":["203.0.113.101"],"tags":["home-100k","old-run","load-generator","mixed"]}
+			],"page":1,"pages":1,"results":1}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := Execute([]string{
+		"provision-vms",
+		"--env-root", "cloud_env/staging/lke",
+		"--brandname", "RTK",
+		"--region", "us-sea",
+		"--run-id", "run-cli",
+		"--live",
+		"--confirm-live",
+		"--linode-token", "test-token",
+		"--linode-endpoint", server.URL + "/v4",
+	}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("Execute(provision-vms live stale label) code = 0 stdout=%s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "existing Linode VM label lg01") {
+		t.Fatalf("stderr missing stale label failure: %s", stderr.String())
 	}
 }
 
@@ -444,7 +483,7 @@ func TestExecuteProvisionVMsLiveUsesVMConfigFlagsWithoutLeakingRootPass(t *testi
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"id":200,"label":"home-100k-mixed-000","ipv4":["203.0.113.200"]}`))
+		_, _ = w.Write([]byte(`{"id":200,"label":"lg01","ipv4":["203.0.113.200"],"tags":["home-100k","run-cli","load-generator","mixed"]}`))
 	}))
 	defer server.Close()
 
@@ -502,8 +541,8 @@ func TestExecuteDestroyVMsLiveReadsStateAndDeletesVMs(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "vms.json")
 	state := map[string]any{
 		"created": []LinodeVM{
-			{ID: 101, Label: "home-100k-mixed-000", PublicIPv4: "203.0.113.101"},
-			{ID: 102, Label: "home-100k-mixed-001", PublicIPv4: "203.0.113.102"},
+			{ID: 101, Label: "lg01", PublicIPv4: "203.0.113.101"},
+			{ID: 102, Label: "lg02", PublicIPv4: "203.0.113.102"},
 		},
 	}
 	body, err := json.Marshal(state)
@@ -565,7 +604,7 @@ func TestExecuteListVMsDefaultsToDryRun(t *testing.T) {
 		t.Fatalf("Execute(list-vms dry-run) code = %d stderr=%s", code, stderr.String())
 	}
 	out := stdout.String()
-	if !strings.Contains(out, `"dry_run": true`) || !strings.Contains(out, `"home-100k"`) || !strings.Contains(out, `"run-cli"`) {
+	if !strings.Contains(out, `"dry_run": true`) || !strings.Contains(out, `"home-100k"`) || !strings.Contains(out, `"run-cli"`) || !strings.Contains(out, `"load-generator"`) {
 		t.Fatalf("list-vms dry-run output missing tag filter:\n%s", out)
 	}
 }
@@ -575,11 +614,11 @@ func TestExecuteListVMsLiveReturnsTaggedVMs(t *testing.T) {
 		if r.Method != http.MethodGet {
 			t.Fatalf("method = %s, want GET", r.Method)
 		}
-		if !strings.Contains(r.Header.Get("X-Filter"), "run-cli") {
+		if !strings.Contains(r.Header.Get("X-Filter"), "run-cli") || !strings.Contains(r.Header.Get("X-Filter"), "load-generator") {
 			t.Fatalf("X-Filter = %q", r.Header.Get("X-Filter"))
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[{"id":101,"label":"home-100k-mixed-000","ipv4":["203.0.113.101"]}],"page":1,"pages":1,"results":1}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":101,"label":"lg01","ipv4":["203.0.113.101"]}],"page":1,"pages":1,"results":1}`))
 	}))
 	defer server.Close()
 
@@ -615,7 +654,7 @@ func TestExecuteSyncDefaultsToDryRun(t *testing.T) {
 		t.Fatalf("Execute(sync dry-run) code = %d stderr=%s", code, stderr.String())
 	}
 	out := stdout.String()
-	if !strings.Contains(out, `"dry_run": true`) || !strings.Contains(out, `"action": "sync"`) || !strings.Contains(out, `"home-100k-mixed-001"`) {
+	if !strings.Contains(out, `"dry_run": true`) || !strings.Contains(out, `"action": "sync"`) || !strings.Contains(out, `"lg02"`) {
 		t.Fatalf("sync dry-run output missing shard sync actions:\n%s", out)
 	}
 }
@@ -645,8 +684,8 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 	stateFile := filepath.Join(outDir, "vms.json")
 	state := map[string]any{
 		"created": []LinodeVM{
-			{ID: 101, Label: "home-100k-mixed-000", PublicIPv4: "203.0.113.101"},
-			{ID: 102, Label: "home-100k-mixed-001", PublicIPv4: "203.0.113.102"},
+			{ID: 101, Label: "lg01", PublicIPv4: "203.0.113.101"},
+			{ID: 102, Label: "lg02", PublicIPv4: "203.0.113.102"},
 		},
 	}
 	body, err := json.Marshal(state)
@@ -777,6 +816,9 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 	if extraVars["credential_bundle_format"] != "sqlite-gzip" {
 		t.Fatalf("extra vars credential_bundle_format = %q, want sqlite-gzip", extraVars["credential_bundle_format"])
 	}
+	if extraVars["vm_label_prefix"] != "lg" {
+		t.Fatalf("extra vars vm_label_prefix = %q, want lg", extraVars["vm_label_prefix"])
+	}
 	if extraVars["device_count"] != float64(9000) {
 		t.Fatalf("extra vars device_count = %#v, want 9000", extraVars["device_count"])
 	}
@@ -803,14 +845,14 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 	if len(orchestraHosts) != 1 {
 		t.Fatalf("home_100k_orchestra hosts = %#v, want exactly one orchestra", orchestraHosts)
 	}
-	if _, ok := orchestraHosts["home-100k-mixed-000"]; !ok {
-		t.Fatalf("home_100k_orchestra = %#v, want first VM home-100k-mixed-000", orchestraHosts)
+	if _, ok := orchestraHosts["lg01"]; !ok {
+		t.Fatalf("home_100k_orchestra = %#v, want first VM lg01", orchestraHosts)
 	}
-	localManifest, _ := inventoryDoc.All.Children["home_100k"].Hosts["home-100k-mixed-000"]["local_shard_manifest"].(string)
+	localManifest, _ := inventoryDoc.All.Children["home_100k"].Hosts["lg01"]["local_shard_manifest"].(string)
 	if !filepath.IsAbs(localManifest) {
 		t.Fatalf("inventory local_shard_manifest = %q, want absolute path", localManifest)
 	}
-	localArchive, _ := inventoryDoc.All.Children["home_100k"].Hosts["home-100k-mixed-000"]["local_env_archive"].(string)
+	localArchive, _ := inventoryDoc.All.Children["home_100k"].Hosts["lg01"]["local_env_archive"].(string)
 	if !filepath.IsAbs(localArchive) {
 		t.Fatalf("inventory local_env_archive = %q, want absolute path", localArchive)
 	}
@@ -818,7 +860,7 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 		t.Fatalf("missing env archive: %v", err)
 	}
 	archiveNames := readTarGzNames(t, localArchive)
-	for _, want := range []string{"loadtests/home-100k/credentials/home-100k-mixed-000.sqlite.gz", "loadtests/home-100k/credentials/home-100k-mixed-000.manifest.json"} {
+	for _, want := range []string{"loadtests/home-100k/credentials/lg01.sqlite.gz", "loadtests/home-100k/credentials/lg01.manifest.json"} {
 		if !archiveNames[want] {
 			t.Fatalf("shard env archive missing %q", want)
 		}
@@ -847,24 +889,24 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 	if _, err := os.Stat(filepath.Join(outDir, "sync-telemetry.json")); err != nil {
 		t.Fatalf("missing sync telemetry placeholder: %v", err)
 	}
-	manifest0Raw, err := os.ReadFile(filepath.Join(outDir, "shard-manifests", "home-100k-mixed-000.json"))
+	manifest0Raw, err := os.ReadFile(filepath.Join(outDir, "shard-manifests", "lg01.json"))
 	if err != nil {
-		t.Fatalf("missing mixed-000 manifest: %v", err)
+		t.Fatalf("missing lg01 manifest: %v", err)
 	}
-	manifest1Raw, err := os.ReadFile(filepath.Join(outDir, "shard-manifests", "home-100k-mixed-001.json"))
+	manifest1Raw, err := os.ReadFile(filepath.Join(outDir, "shard-manifests", "lg02.json"))
 	if err != nil {
-		t.Fatalf("missing mixed-001 manifest: %v", err)
+		t.Fatalf("missing lg02 manifest: %v", err)
 	}
 	manifest0 := string(manifest0Raw)
 	manifest1 := string(manifest1Raw)
 	for _, want := range []string{`"role": "device-mqtt"`, `"start": 0`, `"end": 1800`, `"role": "user-app"`, `"start": 0`, `"end": 90`} {
 		if !strings.Contains(manifest0, want) {
-			t.Fatalf("mixed-000 manifest missing %q:\n%s", want, manifest0)
+			t.Fatalf("lg01 manifest missing %q:\n%s", want, manifest0)
 		}
 	}
 	for _, want := range []string{`"role": "device-mqtt"`, `"start": 1800`, `"end": 3600`, `"role": "user-app"`, `"start": 90`, `"end": 180`} {
 		if !strings.Contains(manifest1, want) {
-			t.Fatalf("mixed-001 manifest missing %q:\n%s", want, manifest1)
+			t.Fatalf("lg02 manifest missing %q:\n%s", want, manifest1)
 		}
 	}
 	if !strings.Contains(stdout.String(), `"synced"`) || !strings.Contains(stdout.String(), `"id": 101`) {
@@ -890,7 +932,7 @@ func TestWriteEnvRsyncFilterFallsBackToDevicesJSONWhenCSVHasOnlyHeader(t *testin
 	}
 	out := filepath.Join(t.TempDir(), "filter")
 	assignment := VMAssignment{
-		Label: "home-100k-mixed-000",
+		Label: "lg01",
 		Index: 0,
 		Role:  "mixed",
 		TaskShards: []Shard{{
@@ -1065,8 +1107,8 @@ func TestEnvArchiveUsesBoundDeviceShardSelection(t *testing.T) {
 	}
 	names := readTarGzNames(t, archivePath)
 	for _, want := range []string{
-		"loadtests/home-100k/credentials/home-100k-mixed-001.sqlite.gz",
-		"loadtests/home-100k/credentials/home-100k-mixed-001.manifest.json",
+		"loadtests/home-100k/credentials/lg02.sqlite.gz",
+		"loadtests/home-100k/credentials/lg02.manifest.json",
 	} {
 		if !names[want] {
 			t.Fatalf("archive missing shard-selected credential bundle %q", want)
@@ -1531,7 +1573,7 @@ JSON
 	if err := os.MkdirAll(filepath.Dir(stateFile), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(stateFile, []byte(`{"created":[{"id":101,"label":"home-100k-mixed-000","ipv4":["203.0.113.101"]}]}`), 0o600); err != nil {
+	if err := os.WriteFile(stateFile, []byte(`{"created":[{"id":101,"label":"lg01","ipv4":["203.0.113.101"]}]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	syncCmd := exec.Command("bash", script, "sync", "--live", "--remote-workspace", "/root/ws", "--remote-env-root", "/root/ws/cloud_env/staging/lke", "--ssh-key", "/tmp/key")
@@ -1575,6 +1617,7 @@ func TestAnsibleStartRunnerUsesPrebuiltCloudMQTTTestAndDaemonWait(t *testing.T) 
 		`--devices "{{ device_count }}"`,
 		`--users "{{ user_count }}"`,
 		`--devices-per-user "{{ devices_per_user }}"`,
+		`--vm-label-prefix "{{ vm_label_prefix | default('lg') }}"`,
 		`--mqtt-concurrency "{{ mqtt_concurrency | default(1000) }}"`,
 		`runner_nofile_limit="{{ runner_nofile_limit | default(1048576) }}"`,
 		`ulimit -n "$runner_nofile_limit"`,
@@ -1634,7 +1677,7 @@ func TestExecuteRunStagesLiveRequiresPublicMQTTEndpoint(t *testing.T) {
 	stateFile := filepath.Join(outDir, "vms.json")
 	state := map[string]any{
 		"created": []LinodeVM{
-			{ID: 101, Label: "home-100k-mixed-000", PublicIPv4: "203.0.113.101"},
+			{ID: 101, Label: "lg01", PublicIPv4: "203.0.113.101"},
 		},
 	}
 	body, err := json.Marshal(state)
@@ -1674,8 +1717,8 @@ func TestExecuteRunStagesLiveStartsRunnerDaemonsThenHostCoordinator(t *testing.T
 	stateFile := filepath.Join(outDir, "vms.json")
 	state := map[string]any{
 		"created": []LinodeVM{
-			{ID: 101, Label: "home-100k-mixed-000", PublicIPv4: "203.0.113.101"},
-			{ID: 102, Label: "home-100k-mixed-001", PublicIPv4: "203.0.113.102"},
+			{ID: 101, Label: "lg01", PublicIPv4: "203.0.113.101"},
+			{ID: 102, Label: "lg02", PublicIPv4: "203.0.113.102"},
 		},
 	}
 	body, err := json.Marshal(state)
@@ -1708,7 +1751,7 @@ func TestExecuteRunStagesLiveStartsRunnerDaemonsThenHostCoordinator(t *testing.T
 			StartDelayMS: 3000,
 			MaxSkewMS:    25,
 			VMs: []VMStartTelemetry{{
-				Label:                  "home-100k-mixed-000",
+				Label:                  "lg01",
 				IP:                     "203.0.113.101",
 				ReadyAt:                "2026-06-15T00:00:00Z",
 				StartSignalReceivedAt:  "2026-06-15T00:00:01Z",
@@ -2565,8 +2608,8 @@ func TestExecuteCollectLiveCopiesShardArtifacts(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "vms.json")
 	state := map[string]any{
 		"created": []LinodeVM{
-			{ID: 101, Label: "home-100k-mixed-000", PublicIPv4: "203.0.113.101"},
-			{ID: 102, Label: "home-100k-mixed-001", PublicIPv4: "203.0.113.102"},
+			{ID: 101, Label: "lg01", PublicIPv4: "203.0.113.101"},
+			{ID: 102, Label: "lg02", PublicIPv4: "203.0.113.102"},
 		},
 	}
 	body, err := json.Marshal(state)
@@ -2615,7 +2658,7 @@ func TestExecuteCollectLiveCopiesShardArtifacts(t *testing.T) {
 			t.Fatalf("collect live commands missing %q:\n%s", want, joined)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(outDir, "shards", "home-100k-mixed-000")); err != nil {
+	if _, err := os.Stat(filepath.Join(outDir, "shards", "lg01")); err != nil {
 		t.Fatalf("missing shard output dir: %v", err)
 	}
 	if !strings.Contains(stdout.String(), `"collected"`) || !strings.Contains(stdout.String(), `"id": 101`) {
@@ -2700,7 +2743,7 @@ func TestCollectLiveServerEvidenceFallsBackToCentralLoggerRuntimeLogs(t *testing
 	outDir := t.TempDir()
 	if err := writeJSONFile(filepath.Join(outDir, "start-coordination.json"), StartCoordination{
 		VMs: []VMStartTelemetry{{
-			Label:                 "home-100k-mixed-000",
+			Label:                 "lg01",
 			StartSignalReceivedAt: "2026-06-16T21:06:10Z",
 			StageStartedAt:        "2026-06-16T21:06:13Z",
 		}},
@@ -2912,7 +2955,7 @@ func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 	outDir := t.TempDir()
 	if err := writeJSONFile(filepath.Join(outDir, "start-coordination.json"), StartCoordination{
 		VMs: []VMStartTelemetry{{
-			Label:                 "home-100k-mixed-000",
+			Label:                 "lg01",
 			StartSignalReceivedAt: "2026-06-16T21:06:10Z",
 			StageStartedAt:        "2026-06-16T21:06:13Z",
 		}},
@@ -3225,7 +3268,7 @@ func TestExecuteAggregateWritesRunLevelReport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeJSONFile(filepath.Join(outDir, "shards", "home-100k-mixed-000", "results.json"), map[string]any{
+	if err := writeJSONFile(filepath.Join(outDir, "shards", "lg01", "results.json"), map[string]any{
 		"run_id":        "run-cli",
 		"role":          "device-mqtt",
 		"shard_index":   0,

@@ -21,8 +21,8 @@ func TestBuildLifecycleActionsTagsEphemeralVMsByRunID(t *testing.T) {
 		if action.RunID != "run-123" {
 			t.Fatalf("action run id = %q, want run-123", action.RunID)
 		}
-		if !contains(action.Tags, "home-100k") || !contains(action.Tags, "run-123") || !contains(action.Tags, action.Role) {
-			t.Fatalf("action tags = %#v, want home-100k/run/role tags", action.Tags)
+		if !contains(action.Tags, "home-100k") || !contains(action.Tags, "run-123") || !contains(action.Tags, "load-generator") || !contains(action.Tags, action.Role) {
+			t.Fatalf("action tags = %#v, want home-100k/run/load-generator/role tags", action.Tags)
 		}
 	}
 }

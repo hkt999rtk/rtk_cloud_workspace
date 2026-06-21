@@ -23,7 +23,7 @@ func TestLinodeClientProvisionVMUsesLifecycleActionPayload(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"id":123,"label":"home-100k-mixed-000","ipv4":["203.0.113.10"]}`))
+		_, _ = w.Write([]byte(`{"id":123,"label":"lg01","ipv4":["203.0.113.10"],"tags":["home-100k","run-1","load-generator","device-mqtt"]}`))
 	}))
 	defer server.Close()
 
@@ -34,8 +34,8 @@ func TestLinodeClientProvisionVMUsesLifecycleActionPayload(t *testing.T) {
 		Role:       "device-mqtt",
 		ShardIndex: 0,
 		Region:     "us-sea",
-		Label:      "home-100k-mixed-000",
-		Tags:       []string{"home-100k", "run-1", "device-mqtt"},
+		Label:      "lg01",
+		Tags:       []string{"home-100k", "run-1", "load-generator", "device-mqtt"},
 	}, LinodeVMConfig{
 		Type:           "g6-standard-2",
 		Image:          "linode/ubuntu24.04",
@@ -52,7 +52,7 @@ func TestLinodeClientProvisionVMUsesLifecycleActionPayload(t *testing.T) {
 		t.Fatalf("unexpected payload: %#v", got)
 	}
 	tags, _ := got["tags"].([]any)
-	if len(tags) != 3 || tags[0] != "home-100k" || tags[1] != "run-1" || tags[2] != "device-mqtt" {
+	if len(tags) != 4 || tags[0] != "home-100k" || tags[1] != "run-1" || tags[2] != "load-generator" || tags[3] != "device-mqtt" {
 		t.Fatalf("tags = %#v", got["tags"])
 	}
 }
@@ -68,7 +68,7 @@ func TestLinodeClientProvisionVMIncludesFailureBody(t *testing.T) {
 	client := NewLinodeClient(server.URL+"/v4", "test-token")
 	_, err := client.ProvisionVM(context.Background(), LifecycleAction{
 		Region: "us-sea",
-		Label:  "home-100k-mixed-000",
+		Label:  "lg01",
 	}, LinodeVMConfig{})
 	if err == nil {
 		t.Fatal("ProvisionVM() succeeded, want error")
@@ -110,7 +110,7 @@ func TestLinodeClientListVMsUsesRunIDTagFilter(t *testing.T) {
 		}
 		gotFilter = r.Header.Get("X-Filter")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[{"id":123,"label":"home-100k-mixed-000","ipv4":["203.0.113.10"]}],"page":1,"pages":1,"results":1}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":123,"label":"lg01","ipv4":["203.0.113.10"],"tags":["home-100k","run-1","load-generator"]}],"page":1,"pages":1,"results":1}`))
 	}))
 	defer server.Close()
 
