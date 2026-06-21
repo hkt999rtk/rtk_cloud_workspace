@@ -59,15 +59,35 @@ pointer change in this workspace repository.
 
 ## Staging Shortcuts
 
-Use `scripts/run-staging-e2e.sh` for the full Linode K8s staging acceptance
-flow. The wrapper forwards to the Go CLI, resolves missing LKE GHCR image
-mapping automatically, and then runs reset/provision/data/MQTT/log verification.
-Use `./stg.sh` for lower-level debug shortcuts.
+Use the staging K8s lifecycle wrappers when you want explicit phase control.
+`reset` clears K8s resources, `provision` installs or updates workloads and
+resolves missing LKE GHCR image mapping automatically, and `acceptance` creates
+test users/devices and runs smoke/MQTT/log verification without changing the
+deployment. Reset preserves PV/PVC/provider storage by default; use
+`--purge-storage` only for an intentional data-layer wipe.
+`scripts/run-staging-e2e.sh` remains the full reset + provision + acceptance
+convenience entrypoint. The default acceptance profile is `10` users and `100`
+devices.
+The target LKE public edge contract is external HAProxy TCP passthrough, not
+Linode NodeBalancer; staging currently forwards public `443/TCP` to ingress
+NodePort `30443` and public `8883/TCP` to MQTT NodePort `31883` on each LKE
+node. The staging capacity baseline defaults to four LKE nodes, three
+`video-cloud-api` pods, one `account-manager` pod, and three MQTT replicas.
+MQTT uses anti-affinity so the HAProxy MQTT backend can round-robin across
+node-local NodePort backends; the broker runs as an EMQX StatefulSet cluster
+with stable `mqtt-0..2` pod DNS. See
+`docs/lke-external-haproxy-edge.md`.
 
 ```sh
-./stg.sh e2e --plan
+scripts/reset-staging-k8s.sh --plan
+scripts/provision-staging.sh --plan
+scripts/run-staging-acceptance.sh --plan
 scripts/run-staging-e2e.sh --plan
+scripts/reset-staging-k8s.sh --confirm video-cloud-staging
+scripts/provision-staging.sh --confirm video-cloud-staging
+scripts/run-staging-acceptance.sh --confirm video-cloud-staging
 scripts/run-staging-e2e.sh --confirm video-cloud-staging
+./stg.sh e2e --plan
 ./stg.sh provision --confirm video-cloud-staging
 ./stg.sh brand RTK
 ./stg.sh brands

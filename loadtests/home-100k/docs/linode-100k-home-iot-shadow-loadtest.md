@@ -111,8 +111,8 @@ spread across nodes:
 - The EMQX deployment uses hard pod anti-affinity by
   `kubernetes.io/hostname`.
 - `mqtt-public` uses `externalTrafficPolicy: Local`.
-- Linode NodeBalancer health for port `8883` must show the expected EMQX nodes
-  as up before the load test starts.
+- External HAProxy edge evidence must show HAProxy running with the expected
+  NodePort upstreams for public `8883/TCP` before the load test starts.
 
 Do not use `externalTrafficPolicy: Cluster` to compensate for uneven EMQX
 placement. It can route public MQTT traffic through kube-proxy on nodes without
@@ -291,14 +291,15 @@ Live collect reads `vms.json`, regenerates the inventory, and runs
 reports, runner coordination telemetry, daemon logs, resource snapshots, and
 sync telemetry.
 Live server evidence collection runs `kubectl` probes for EMQX, Video Cloud API,
-IoT Device Shadow, PostgreSQL, Redis/Valkey, ingress/nginx, and host/pod
-resources. Partial probe failure is written as `complete=false` evidence so the
-final report remains `INCOMPLETE`.
+PostgreSQL, required Redis/Valkey cache, ingress/nginx, host/pod resources, and
+optional external HAProxy edge evidence. Partial required-probe failure is
+written as `complete=false` evidence so the final report remains `INCOMPLETE`.
 Aggregate reads collected shard results plus `server-evidence.json` and writes
 run-level `plan.json` and `results.json`. The public `home-100k.sh aggregate`
 path then calls `scripts/generate-report.sh` to render fixed-format
-`TEST_REPORT.md`. Any shard with `load_generator_health.saturated=true` or
-insufficient client target coverage forces `INCOMPLETE`.
+`TEST_REPORT.md`. Any shard with `load_generator_health.saturated=true` still
+forces `INCOMPLETE`; insufficient client target coverage in an otherwise
+completed run now produces `status=COMPLETE` and `result=FAIL`.
 Use `list-vms --live --run-id <run-id>` to inspect leftover load-generator VMs
 by `home-100k`, `<run-id>`, and `load-generator` tags before cleanup.
 
@@ -338,9 +339,10 @@ The final report must include:
 - Sync/provision transfer telemetry.
 - Bottleneck assessment.
 
-If IoT Device Shadow evidence, server evidence, parsed MQTT/API counters,
-client target coverage, or resource telemetry is missing, the report status
-must be `INCOMPLETE`, not `PASS`.
+If IoT Device Shadow evidence, server evidence, parsed MQTT/API counters, or
+resource telemetry is missing, the report status must be `INCOMPLETE`, not
+`PASS`. If client target coverage is present but below the required `99.5%`
+success-rate threshold, the report status is `COMPLETE` and result is `FAIL`.
 
 If load-generator saturation invalidates the run, the report must say so
 instead of attributing the bottleneck to the server.

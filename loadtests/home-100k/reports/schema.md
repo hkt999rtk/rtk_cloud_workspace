@@ -6,7 +6,8 @@ carry the same sections.
 ## Required Top-Level Fields
 
 - `run_id`
-- `status`: `PASS`, `FAIL`, or `INCOMPLETE`
+- `status`: `COMPLETE` or `INCOMPLETE`
+- `result`: `SUCCESS`, `FAIL`, or `INCOMPLETE`
 - `conditions`
 - `device_mix`
 - `presence_mix`
@@ -172,6 +173,10 @@ Each run-window result must compare target connects to actual client counters:
 
 If device connect attempts, connect success, subscribes, or APP login attempts
 do not meet the target-connect count, the report status must be `INCOMPLETE`.
+If the run completes but device connection/subscription or APP command coverage
+does not meet the stage target, the report status remains `COMPLETE` and the
+result is evaluated by success-rate gates. The default staging success-rate
+threshold is `99.5%`.
 
 ## Required Server Correlation
 
@@ -243,30 +248,37 @@ samples. Reports must include a Postgres pod resource table with namespace, pod,
 sample count, CPU p95, and memory p95 so PostgreSQL capacity cannot be inferred
 only from counters or log availability.
 
-## Required Status Rules
+## Required Status And Result Rules
 
-- Missing IoT Device Shadow evidence sets `status=INCOMPLETE`.
-- Missing server evidence sets `status=INCOMPLETE`.
-- Missing non-zero device MQTT totals sets `status=INCOMPLETE`.
-- Missing non-zero APP/User totals sets `status=INCOMPLETE`.
-- Missing target-connect coverage sets `status=INCOMPLETE`.
-- Missing parsed MQTT broker, APP/API, or IoT Device Shadow server counters
-  sets `status=INCOMPLETE`.
-- Server/client counter mismatch outside configured tolerance sets
-  `status=FAIL`.
-- Load-generator saturation sets `status=INCOMPLETE`.
+- Missing IoT Device Shadow evidence sets `status=INCOMPLETE` and
+  `result=INCOMPLETE`.
+- Missing server evidence sets `status=INCOMPLETE` and `result=INCOMPLETE`.
+- Missing non-zero device MQTT totals sets `status=INCOMPLETE` and
+  `result=INCOMPLETE`.
+- Missing non-zero APP/User totals sets `status=INCOMPLETE` and
+  `result=INCOMPLETE`.
+- Missing parsed MQTT broker, APP/API, or IoT Device Shadow server counters set
+  `status=INCOMPLETE` and `result=INCOMPLETE`.
+- Load-generator saturation sets `status=INCOMPLETE` and `result=INCOMPLETE`.
 - Load-generator file descriptor exhaustion, including `too many open files`,
-  sets `status=INCOMPLETE`.
+  sets `status=INCOMPLETE` and `result=INCOMPLETE`.
 - A live run that does not use lifetime device subscriptions with sustained
-  MQTT reads sets `status=INCOMPLETE`.
-- Shadow convergence below the selected threshold sets `status=FAIL`.
-- Authorization bypass or cross-user access success sets `status=FAIL`.
+  MQTT reads sets `status=INCOMPLETE` and `result=INCOMPLETE`.
+- A completed run with stage target success rate below `99.5%` sets
+  `status=COMPLETE` and `result=FAIL`.
+- Server/client counter mismatch outside configured tolerance sets
+  `status=COMPLETE` and `result=FAIL`.
+- Shadow convergence below the selected threshold sets `status=COMPLETE` and
+  `result=FAIL`.
+- Authorization bypass or cross-user access success sets `status=COMPLETE` and
+  `result=FAIL`.
+- A completed run meeting the selected success threshold sets
+  `status=COMPLETE` and `result=SUCCESS`.
 
 ## Required Server Evidence Sources
 
 - `emqx`
 - `video_cloud_api`
-- `iot_device_shadow`
 - `postgres`
 - `redis_valkey`
 - `ingress_nginx`
@@ -275,6 +287,7 @@ only from counters or log availability.
 Optional server evidence sources:
 
 - `central_logger`
+- `edge_haproxy`
 
 `iot_device_shadow` and `iot_device_shadow_streams` runtime-log evidence is
 queried from central logger `device_runtime_log` events. Legacy deployments may

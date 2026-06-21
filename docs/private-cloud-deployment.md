@@ -116,7 +116,9 @@ environment where operations, rollback, and support commitments matter.
 Required infrastructure:
 
 - LKE cluster with documented region, node pools, upgrade policy, and ownership
-- Linode NodeBalancer plus Kubernetes Ingress or Gateway API for public HTTPS
+- External HAProxy edge VM for public TCP passthrough to Kubernetes NodePorts.
+  HAProxy is installed on the VM host with systemd, not Docker. TLS, mTLS, SNI,
+  and HTTP routing remain inside Kubernetes.
 - DNS-01 TLS automation for public hostnames. The workspace-managed LKE staging
   bridge uses GoDaddy DNS-01 plus certbot to create a Kubernetes TLS Secret;
   cert-manager remains the production operator path when an approved DNS
@@ -125,7 +127,7 @@ Required infrastructure:
   in-cluster operator, in-cluster StatefulSet, or managed/external service
 - Linode Object Storage or approved object storage for artifacts, media, and
   backups
-- EMQX MQTT deployment or external broker path when MQTT transport is enabled;
+- EMQX MQTT StatefulSet cluster or external broker path when MQTT transport is enabled;
   MQTT/MQTTS must not be treated as normal HTTP-only ingress
 - OpenBao plus Kubernetes auth, External Secrets, or reviewed secret injection
   path for runtime secrets
@@ -136,12 +138,12 @@ Recommended separation:
 
 | Layer | Production-like expectation |
 | --- | --- |
-| Edge | NodeBalancer in front of ingress-nginx/Gateway for frontend, account API, video API, and required mTLS hostnames; public `80/TCP` remains closed. |
+| Edge | External HAProxy VM in TCP mode forwards public `443/TCP` and `8883/TCP` to LKE node private IPs and NodePorts. Public `80/TCP` remains closed. |
 | Frontend | Deployment with persistent lead storage or migrated production database. |
 | Account manager | Deployment with Service/Ingress; database migrations controlled by release. |
 | Video cloud API/workers | Deployments for API, certissuer/factory enrollment, and long-running workers; Jobs/CronJobs only for explicitly one-shot or scheduled flows. |
 | MQTT | EMQX operator/StatefulSet or external broker with explicit TCP exposure, auth/TLS policy, logs, and health checks. |
-| TURN | LKE staging can run coturn as a Kubernetes Deployment/Service; production public TURN still requires explicit Linode LoadBalancer/NodeBalancer UDP/TCP exposure, scaling, TLS, and rollback approval. |
+| TURN | LKE staging can run coturn as a Kubernetes Deployment/Service; production public TURN still requires explicit UDP/TCP edge design, scaling, TLS, and rollback approval. |
 | Storage | PostgreSQL restore-tested before migration; object storage lifecycle/replication according to customer policy. |
 | Observability | Prometheus-compatible metrics scraped from the LKE workload metrics registry, Loki/logger service logs, broker logs, dead-letter evidence, alert routing. |
 
@@ -278,12 +280,12 @@ Recommended defaults:
 
 | Surface | Exposure guidance |
 | --- | --- |
-| Frontend website | Public HTTPS through LKE Ingress/Gateway behind Linode NodeBalancer; use DNS-01 rather than HTTP-01 so public `80/TCP` stays closed. |
+| Frontend website | Public HTTPS through HAProxy TCP passthrough to LKE ingress-nginx NodePort; use DNS-01 rather than HTTP-01 so public `80/TCP` stays closed. |
 | Account manager API | HTTPS through Ingress/Gateway; scope CORS and auth policy deliberately. |
 | Video cloud API | HTTPS through Ingress/Gateway; route only required external APIs. |
 | mTLS device / certissuer hostnames | Separate hostname or Gateway listener with the same CA separation currently enforced by nginx SNI. |
 | WebSocket device transport | HTTPS/WSS through Ingress/Gateway only if device runtime requires external owner transport. |
-| MQTT | Prefer MQTTS, auth, and explicit NetworkPolicy/firewall rules; expose only broker listeners required by devices through LoadBalancer/NodeBalancer or TCP-capable ingress. |
+| MQTT | Prefer MQTTS, auth, and explicit NetworkPolicy/firewall rules; expose only broker listeners required by devices through HAProxy TCP passthrough to EMQX/MQTT NodePort. |
 | TURN | Keep UDP/TCP relay exposure explicit; do not assume HTTP ingress can carry TURN traffic. |
 | Prometheus metrics | Private cluster scrape path only. The workspace-managed LKE Prometheus ConfigMap is generated from workload metrics metadata; ServiceMonitor/PodMonitor is a later operator-gated option. |
 | Grafana dashboards | Private `ClusterIP` only. Platform Admins view Grafana through the Cloud Admin BFF iframe proxy; no public Grafana DNS, Ingress, or TLS SAN is created. |
@@ -400,13 +402,38 @@ contract is documented in `docs/product-level-evidence.md`. Account manager, adm
 and frontend still own their service-local smoke/evidence commands; the
 workspace wrapper records them as `SKIP` until configured or implemented.
 
-The current `scripts/run-staging-e2e.sh` remains the workspace acceptance
-reference. It is provider-aware for `linode` and `lke`; LKE execution requires
-an approved kubeconfig context. When image env vars are not provided, the Go
-wrapper resolves the pinned submodule commits to private GHCR image tags and
-verifies those images before provisioning. Explicit `LKE_*_IMAGE` env vars are
-operator overrides, not the normal path. A future in-cluster LKE smoke Job still
-requires the gates in `docs/lke-migration-inventory.md`.
+The current staging path is split into explicit K8s lifecycle wrappers:
+`scripts/reset-staging-k8s.sh`, `scripts/provision-staging.sh`, and
+`scripts/run-staging-acceptance.sh`. Use `scripts/run-staging-e2e.sh` when a
+single full reset + provision + acceptance run is desired. Provisioning is split
+into provider adapter plus runtime: `linode` keeps the legacy VM runtime, while
+`lke` uses the shared Kubernetes runtime with Linode LKE cluster/kubeconfig
+handling. GKE, AKS, and EKS provider ids are reserved only as fail-fast
+interfaces until their adapters are implemented and reviewed. When image env
+vars are not provided, the Go wrapper resolves the pinned submodule commits to
+private GHCR image tags and verifies those images before provisioning. Explicit
+`LKE_*_IMAGE` env vars are operator overrides, not the normal path.
+`reset-staging-k8s` preserves PV/PVC/provider storage by default; use
+`--purge-storage` only for an intentional data-layer wipe. The default full
+E2E run still clears Kubernetes runtime resources and rebuilds pods before
+provisioning. A future in-cluster LKE smoke Job still requires the gates in
+`docs/lke-migration-inventory.md`.
+The public edge design contract is documented in
+`docs/lke-external-haproxy-edge.md`; NodeBalancer is no longer the target public
+edge path.
+
+The current validated staging acceptance profile is `10` users and `100`
+devices with mix `camera=40`, `light=25`, `air_conditioner=20`, and
+`smart_meter=15`. The HAProxy edge VM handles public `443/TCP` and `8883/TCP`
+and forwards to ingress-nginx NodePort `30443` and MQTT NodePort `31883`.
+MQTT defaults to three replicas with required pod anti-affinity, giving HAProxy
+one MQTTS NodePort backend on each staging node. Those pods form an EMQX
+StatefulSet cluster using stable `mqtt-0..2` pod DNS.
+For 10K staging load-test headroom, provision now defaults to four LKE nodes,
+three `video-cloud-api` pods, one `account-manager` pod, and increased
+PostgreSQL resource requests plus moderate API requests. Override with `LKE_NODE_COUNT`,
+`LKE_VIDEO_CLOUD_REPLICAS`, and the `LKE_*_REQUEST_*` resource environment
+variables when running a smaller smoke profile.
 
 ## Support Boundaries
 

@@ -14,23 +14,40 @@ environment directory；script 會依 `CLOUD_PROVIDER`、`RTK_CLOUD_STAGING_PROV
 `cloud_env/staging/lke`。這個目錄集中保存 operator env、topology、service
 env、state、keys/certificates、device fixtures、artifacts 與 backups。
 
-目前 workspace 的正式 staging runtime 是 K8s/LKE。`CLOUD_PROVIDER=lke`
-會先使用 Linode LKE API 取得 kubeconfig；若沒有 `KUBECONFIG` / current
-context，會依
-`LKE_CLUSTER_ID`、`state/lke.env` 或 cluster label `<CLOUD_STACK_NAME>-lke`
-尋找既有 cluster，`provision --apply` 找不到時會建立 LKE cluster，再把
-kubeconfig 寫到 git-ignored `<env-root>/state/lke-kubeconfig.yaml`。之後才走
-kubectl namespace/apply/delete/rollout path。`deploy` 需要 container image；
+目前 workspace provision routing 分成 cloud provider adapter 與 runtime
+兩層。`CLOUD_PROVIDER=linode` 保留 legacy VM runtime，仍 dispatch 到 Video
+Cloud、Account Manager、Cloud Admin、Cloud Logger 的 VM scripts。
+`CLOUD_PROVIDER=lke` 走 Kubernetes runtime，provider adapter 只負責 Linode
+LKE cluster discovery/create/kubeconfig；RTK workloads、Namespace、Secret、
+Deployment、Service、Ingress、NetworkPolicy、rollout 與 E2E orchestration
+由共用 Kubernetes runtime 處理。若沒有 `KUBECONFIG` / current context，LKE
+adapter 會依 `LKE_CLUSTER_ID`、`state/lke.env` 或 cluster label
+`<CLOUD_STACK_NAME>-lke` 尋找既有 cluster，`provision --apply` 找不到時會建立
+LKE cluster，再把 kubeconfig 寫到 git-ignored
+`<env-root>/state/lke-kubeconfig.yaml`。之後才走 kubectl
+namespace/apply/delete/rollout path。`deploy` 需要 container image；
 可以明確提供 `LKE_POSTGRES_IMAGE`、`LKE_VIDEO_CLOUD_IMAGE`、
 `LKE_ACCOUNT_MANAGER_IMAGE`、`LKE_CLOUD_ADMIN_IMAGE`、`LKE_FRONTEND_IMAGE`、
 `LKE_CLOUD_LOGGER_IMAGE`。
 Service images 由各 service repo 的 release workflow 發布到 GHCR；
 workspace 只解析 pinned submodule commit、驗證對應 image 是否存在，並輸出
-後續 deploy/e2e 需要的 `LKE_*_IMAGE` mapping。Legacy
-`CLOUD_PROVIDER=linode` routing 只保留給舊 VM toolkit 參考，不是目前 staging
-路徑。AWS、GCP 和 Azure 仍是
-後續 provider abstraction 目標，現階段應 fail fast，不可呼叫 live API、
-SSH、DNS 或寫 state。
+後續 deploy/e2e 需要的 `LKE_*_IMAGE` mapping。GCP/Azure/AWS 的 Kubernetes
+service provider id 分別預留為 `gke`、`aks`、`eks`；目前只有 fail-fast
+adapter，會在任何 kubectl、cloud API、SSH、DNS 或 state mutation 前停止。
+現階段唯一應被 live 驗證的 Kubernetes provider 仍是 `lke`。
+
+Kubernetes runtime manifest 的新增規則：非 secret YAML 優先放在
+`scripts/go/rtk-cloud/templates/k8s/*.yaml.tmpl`，透過 Go template renderer
+產生；共用 labels/selectors/namespace/imagePullSecret metadata 由 Go helper
+提供。Secret 不應用 `fmt.Sprintf` 直接拼 YAML string；新 secret path 應建立
+typed Kubernetes object，透過 JSON `kubectl apply -f -` 套用，並避免錯誤訊息
+或測試 log 暴露 raw token/password。
+
+Kubernetes workload 的新增規則：先更新 provider-neutral workload registry，
+不要分別手寫 deployment list、service list、image validation、rollout target
+或 Prometheus target。Registry 是 image env key、namespace、port、metrics
+path、resource override prefix 與 rollout timeout 的來源；LKE 只是目前 live
+validated provider，未來 GKE/AKS/EKS 應重用同一份 workload registry。
 
 `.github/workflows/lke-image-artifacts.yml` 是 workspace 的 LKE image
 manifest workflow。PR 會先跑不需要 secret 的 tooling validation；
@@ -41,10 +58,10 @@ secret `CI_RUNNER_GITHUB_WORK_KEY` 來讀取 `git@github.com-work:` private
 submodules；產出的 `lke-image-env.sh` 可用來設定後續
 `run-staging-e2e.sh` / `rtk-cloud provision --deploy` 需要的 `LKE_*_IMAGE`。
 
-LKE Prometheus targets 由 workspace Go deployer 的 workload metrics registry
-產生，不直接手寫 Prometheus `scrape_configs`。新增 LKE workload 或 exporter
-時，必須在 workload metadata 宣告 metrics service、namespace、port 與
-`/metrics/prometheus` path；`provision --deploy` 會用這份 registry 產生
+LKE Prometheus targets 由 workspace Go deployer 的 Kubernetes workload
+registry 產生，不直接手寫 Prometheus `scrape_configs`。新增 Kubernetes
+workload 或 exporter 時，必須在 workload metadata 宣告 metrics service、
+namespace、port 與 `/metrics/prometheus` path；`provision --deploy` 會用這份 registry 產生
 `video-cloud-prometheus-config`。第一版維持 workspace-managed Prometheus
 ConfigMap，不導入 Prometheus Operator、ServiceMonitor 或 PodMonitor。
 Redis/Valkey engine metrics 由 LKE 內建 `redis-exporter` Service 暴露，
@@ -398,10 +415,11 @@ go run ./scripts/go/rtk-cloud -- provision-k8s \
 
 ### `go run ./scripts/go/rtk-cloud -- provision --dns`
 
-LKE `--dns` 會建立 public HTTPS entry，不再是 no-op。流程是：
+LKE public edge 目前已實作為 external HAProxy VM，不再使用 Linode
+NodeBalancer。`--dns` / `staging-provision` 都走同一條 HAProxy edge 路徑：
 
 1. 用 Helm 安裝或更新 `ingress-nginx` 到 `<stack>-ingress` namespace。
-2. ingress-nginx controller service 使用 Linode `LoadBalancer` / NodeBalancer，只開 `443/TCP`，不建立 public `80/TCP` listener。
+2. ingress-nginx controller service 使用 `NodePort`，不是 `LoadBalancer`；目前 HTTPS NodePort 預設為 `30443`。
 3. 透過 certbot manual DNS-01 hook 與 GoDaddy TXT record 簽一張 staging multi-SAN certificate，寫入 Kubernetes TLS secret `video-cloud-staging-public-tls`。
 4. 建立 ingress namespace 內的 ExternalName bridge services，讓 Ingress 合法轉到各 namespace 的 internal `ClusterIP` services。
 5. 建立 HTTPS Ingress rules：
@@ -411,8 +429,10 @@ LKE `--dns` 會建立 public HTTPS entry，不再是 no-op。流程是：
    - `account-manager.video-cloud-staging.realtekconnect.com` -> `account-manager`
    - `admin.video-cloud-staging.realtekconnect.com` -> `cloud-admin`
    - `frontend.video-cloud-staging.realtekconnect.com` -> `frontend`
-6. 等待 NodeBalancer public IP，並用 GoDaddy A records 指向該 IP。
-7. 套用 default-deny ingress NetworkPolicy 與必要 allow rules。
+6. provision 或更新 host-installed HAProxy edge VM；HAProxy 用 TCP mode 與 `balance roundrobin` 將 public `443/TCP` forward 到 ingress-nginx NodePort，將 `8883/TCP` round-robin forward 到三台 LKE node 的 EMQX/MQTT NodePort。
+7. GoDaddy A records 指向 HAProxy edge VM public IP，不等待 NodeBalancer IP。
+8. MQTT public exposure 使用 `NodePort`，不是 `LoadBalancer`；目前 MQTTS NodePort 預設為 `31883`，`mqtt` 預設是 3 pod EMQX StatefulSet cluster，使用 stable `mqtt-0..2` pod DNS 與 required pod anti-affinity 分散到三台 node。
+9. 套用 default-deny ingress NetworkPolicy 與必要 allow rules。
 
 必要輸入：
 
@@ -420,20 +440,31 @@ LKE `--dns` 會建立 public HTTPS entry，不再是 no-op。流程是：
 - `CLOUD_DNS_ROOT_DOMAIN`，staging 預設是 `realtekconnect.com`。
 - `certbot` CLI，或用 `RTK_CLOUD_CERTBOT` 指到指定 binary。
 - `helm` 與 `kubectl` 可操作目標 LKE cluster。
+- `LKE_PUBLIC_EDGE_MODE=external-haproxy`，這是唯一支援的 public edge mode。
+- HAProxy edge VM operator inputs，包含 VM label/region/type、SSH key，以及 `LKE_EDGE_HAPROXY_MAXCONN`。`maxconn` 預設從 `200000` 開始，loading test 時再依 memory/FD/CPU 使用量調整。
 
 常用驗證：
 
 ```sh
 kubectl -n video-cloud-staging-ingress get svc ingress-nginx-controller
+kubectl -n video-cloud-staging-video-cloud get svc mqtt-public
 kubectl get ingress -A
 dig +short A video-cloud-staging.realtekconnect.com @ns23.domaincontrol.com
-nc -vz video-cloud-staging.realtekconnect.com 80
+nc -vz video-cloud-staging.realtekconnect.com 443
+nc -vz video-cloud-staging.realtekconnect.com 8883
 curl -fsS https://video-cloud-staging.realtekconnect.com/healthz
 curl -fsS https://account-manager.video-cloud-staging.realtekconnect.com/v1/health
 curl -fsS https://admin.video-cloud-staging.realtekconnect.com/healthz
 ```
 
-MQTT、TURN、Postgres、OpenBao、Prometheus 不會因 `--dns` 對外公開；MQTT/TURN 需要另行設計 TCP/UDP exposure。
+HAProxy edge VM 不跑 Docker。它是 host package + systemd service，只做 L4
+TCP passthrough；TLS/mTLS/SNI/HTTP routing 留在 K8s 內的 ingress-nginx /
+EMQX / service pod。詳細 design contract 見
+`docs/lke-external-haproxy-edge.md`。
+
+TURN、Postgres、OpenBao、Prometheus 不會因 `--dns` 對外公開。MQTT
+v1 只公開 MQTTS `8883/TCP`，經 HAProxy TCP passthrough 到 EMQX/MQTT
+NodePort；TURN 仍需要另行設計 TCP/UDP exposure。
 Grafana 也不會因 `--dns` 對外公開；Platform 管理員從 Cloud Admin iframe
 入口使用，operator debug 可用：
 
@@ -451,7 +482,12 @@ Kubeconfig 來源順序：
 
 ### `go run ./scripts/go/rtk-cloud -- remove-k8s`
 
-K8s staging reset helper。預設是 non-destructive reset，只輸出狀態，不刪 namespace。若需要刪除 staging namespaces，必須設定 `CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET=1` 並傳 `--yes`。
+Low-level K8s reset compatibility helper。正式 operator 入口請使用
+`scripts/reset-staging-k8s.sh` / `rtk-cloud staging-reset-k8s`。`remove-k8s`
+只有在 `CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET=1` 且傳 `--yes` 時才會清除
+staging K8s resources。預設會刪除 workload/service/config/secret/policy
+等 runtime resources，但保留 namespace 與 PVC/PV/provider storage；
+`--purge-storage` 才會先刪 namespace 內 PVC，再刪 namespace。
 
 ```sh
 go run ./scripts/go/rtk-cloud -- remove-k8s --env-root cloud_env/staging --yes
@@ -471,34 +507,73 @@ scripts/destroy-linode-staging-resources.sh --env-root cloud_env/staging/lke --y
 Object Storage buckets 會列出但預設略過。若確定 matched buckets 已清空且也要刪除，
 才加 `--include-object-storage`；Linode API 會拒絕刪除非空 bucket。
 
+### Staging K8s lifecycle phases
+
+正式 staging runtime 已拆成三個可獨立執行的 K8s lifecycle phase。Shell
+檔只做 POSIX thin wrapper，實際邏輯在 Go command 內：
+
+```sh
+# 1. Reset K8s resources. Default preserves PV/PVC/provider storage.
+scripts/reset-staging-k8s.sh --plan
+scripts/reset-staging-k8s.sh --confirm video-cloud-staging
+
+# Only when the data layer must be wiped too.
+scripts/reset-staging-k8s.sh --confirm video-cloud-staging --purge-storage
+
+# 2. Provision or update server workloads. LKE resolves missing GHCR images automatically.
+scripts/provision-staging.sh --plan
+scripts/provision-staging.sh --confirm video-cloud-staging
+
+# 3. Acceptance only: create/update test users/devices and run smoke/MQTT/log verification.
+scripts/run-staging-acceptance.sh --plan
+scripts/run-staging-acceptance.sh --confirm video-cloud-staging
+```
+
+`staging-reset-k8s` 是 destructive phase，必須 `--confirm <CLOUD_STACK_NAME>`。
+預設會清 staging K8s runtime resources 並讓後續 provision 重建 pods，
+但不主動 purge storage；只有明確加 `--purge-storage` 才會清
+PVC/PV/provider volume 類資料層。`staging-provision`
+負責新安裝或停機升級：解析 image、套用 manifests、DNS/artifacts、rollout
+readiness。`staging-acceptance` 不 reset、不 deploy，只驗證已部署好的 stack。
+
 ### `go run ./scripts/go/rtk-cloud -- staging-e2e-test`
 
-Linode K8s staging 一站式整合測試編排腳本。它把 K8s reset、K8s rollout readiness、K8s service query/port-forward、staging E2E data setup、home MQTT simulation，以及 persisted MQTT runtime log verification 串成單一流程，最後輸出 sanitized `summary.json` 與 `TEST_REPORT.md`。建立 RTK brand cloud、建立測試 users、產生並 factory-enroll devices、device bind/provision、bulk bind validation 已拆到 `scripts/setup-staging-e2e-data.sh` / `rtk-cloud staging-e2e-data-setup`，完整 E2E 會呼叫這個獨立步驟。
+Linode K8s staging E2E compatibility orchestrator。它仍可把 K8s reset、K8s rollout readiness、K8s service query/port-forward、staging E2E data setup、home MQTT simulation，以及 persisted MQTT runtime log verification 串成單一流程，最後輸出 sanitized `summary.json` 與 `TEST_REPORT.md`。建立 RTK brand cloud、建立測試 users、產生並 factory-enroll devices、device bind/provision、bulk bind validation 已拆到 `scripts/setup-staging-e2e-data.sh` / `rtk-cloud staging-e2e-data-setup`，完整 E2E 會呼叫這個獨立步驟。
 
 正式 operator 入口是 `scripts/run-staging-e2e.sh`。這個 shell 檔只是一層
-POSIX wrapper，實際流程在 Go command `rtk-cloud run-staging-e2e`：它會解析
-provider/stack/env-root，在 LKE provider 缺少 image env 時自動執行
-`lke-resolve-images`，再呼叫 `staging-e2e-test`。因此一般 staging acceptance
-可直接執行：
+POSIX wrapper，實際流程在 Go command `rtk-cloud run-staging-e2e`：它會依序
+執行 reset、provision、acceptance phase。因此完整 staging acceptance 可直接執行：
 
 ```sh
 scripts/run-staging-e2e.sh --plan
 scripts/run-staging-e2e.sh --confirm video-cloud-staging
 ```
 
-LKE acceptance profile 預設以單節點可排程為優先：`mqtt`、
-`account-manager`、`video-cloud-api` replicas 都是 `1`。容量測試或
-production-like smoke 可用 `LKE_MQTT_REPLICAS`、
-`LKE_ACCOUNT_MANAGER_REPLICAS`、`LKE_VIDEO_CLOUD_REPLICAS` 拉高；常用資源
+LKE staging capacity baseline 預設建立 `4` 台 node，保留
+`account-manager` replicas 為 `1`，`video-cloud-api` 預設為 `3` pods，
+MQTT 預設為 `3` pod EMQX StatefulSet cluster，分散到不同 node 以支援
+HAProxy MQTTS backend round-robin。PostgreSQL 預設 request/limit 提高為
+`1 CPU`、`2Gi` request memory、`4Gi` limit memory；`video-cloud-api`
+預設為 `500m` CPU request、`512Mi` memory request、`1Gi` memory limit。
+容量測試或 production-like smoke 可用
+`LKE_MQTT_REPLICAS`、`LKE_ACCOUNT_MANAGER_REPLICAS`、
+`LKE_VIDEO_CLOUD_REPLICAS`、`LKE_NODE_COUNT` 調整；常用資源
 override 包含 `LKE_POSTGRES_REQUEST_CPU`、`LKE_POSTGRES_REQUEST_MEMORY`、
 `LKE_POSTGRES_LIMIT_MEMORY`、`LKE_VIDEO_CLOUD_API_REQUEST_CPU`、
 `LKE_VIDEO_CLOUD_API_REQUEST_MEMORY`、`LKE_VIDEO_CLOUD_API_LIMIT_MEMORY`、
-`LKE_INGRESS_REPLICAS` 與 `LKE_INGRESS_REQUEST_CPU`。
+`LKE_MQTT_REQUEST_CPU`、`LKE_MQTT_REQUEST_MEMORY`、
+`LKE_MQTT_LIMIT_MEMORY`、`LKE_INGRESS_REPLICAS` 與
+`LKE_INGRESS_REQUEST_CPU`。
 
-`run-staging-e2e.sh --confirm` 預設會先 reset K8s，因此也預設重建
-users/devices/bind artifacts，不重用舊本機 artifact；這可避免 fresh database
-搭配舊 bind artifact 造成 validation 失敗。只有在明確加 `--skip-remove` 或
-手動傳 `--resume` 時才會重用既有 artifact。
+`run-staging-e2e.sh --confirm` 預設會先 reset K8s runtime resources，因此也
+預設重建 users/devices/bind artifacts，不重用舊本機 artifact；這可避免
+fresh deployment 搭配舊 bind artifact 造成 validation 失敗。只有在明確加
+`--skip-remove` 或手動傳 `--resume` 時才會重用既有 artifact。
+
+目前 live staging 驗證使用預設 acceptance 規模：`10` 個 users、`100` 個
+devices，device mix 為 `camera=40`、`light=25`、`air_conditioner=20`、
+`smart_meter=15`。最近一次完整驗證通過的 report 路徑為
+`cloud_env/staging/lke/artifacts/staging-e2e/20260618T085249Z/TEST_REPORT.md`。
 
 預設是 safe plan，不會 reset K8s、不會呼叫 API：
 
@@ -525,6 +600,7 @@ go run ./scripts/go/rtk-cloud -- staging-e2e-test \
 - `--plan`：只列出將執行的步驟，預設模式。
 - `--run --confirm STACK`：執行完整流程。`STACK` 必須符合 `CLOUD_STACK_NAME`，避免刪錯 staging stack。
 - `--skip-remove`：不先執行 `rtk-cloud remove-k8s`，直接走 `rtk-cloud provision-k8s` 與後續流程。
+- `--skip-provision`：只跑 acceptance/data/MQTT/log verification，不更新 K8s workloads；正式入口通常使用 `scripts/run-staging-acceptance.sh`。
 - `--out-dir PATH`：指定報告輸出目錄；預設在 `<env-root>/artifacts/staging-e2e/<timestamp>/`。
 - `--skip-mqtt-probe`：略過 live MQTT broker probe；MQTT flow 仍會產生 E2E artifact 供 log verification 使用。
 

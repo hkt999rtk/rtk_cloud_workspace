@@ -70,9 +70,12 @@ var commands = map[string]commandSpec{
 	"remove-k8s":                       {run: runRemoveK8s},
 	"run-staging-e2e":                  {run: runStagingE2E},
 	"secrets-check":                    {run: runSecretsCheck},
+	"staging-acceptance":               {run: runStagingAcceptance},
 	"staging-e2e-data-setup":           {run: runStagingE2EDataSetup},
 	"staging-e2e-mqtt-log-verify":      {run: runStagingE2EMQTTLogVerify},
 	"staging-e2e-test":                 {run: runStagingE2ETest},
+	"staging-provision":                {run: runStagingProvision},
+	"staging-reset-k8s":                {run: runStagingResetK8s},
 	"status-all":                       {run: runStatusAll},
 	"sync-env":                         {run: runSyncEnv},
 	"sync-all":                         {run: runSyncAll},
@@ -213,8 +216,8 @@ func runMQTTTest(args []string) error {
 	stageDurationsSeconds := fs.String("stage-durations-seconds", "", "comma-separated staged sustained stage durations in seconds")
 	stageRampSeconds := fs.String("stage-ramp-seconds", "", "comma-separated staged sustained connect ramp durations in seconds")
 	stageMinCommands := fs.String("stage-min-commands", "", "comma-separated staged sustained minimum command events")
-	deviceTrafficProfile := fs.String("device-traffic-profile", "", "home MQTT device traffic profile")
-	stageUsageWindows := fs.String("stage-usage-windows", "", "comma-separated usage window per sustained stage")
+	deviceTrafficProfile := fs.String("device-traffic-profile", "", "device traffic profile passed through to cloud-mqtt-test")
+	stageUsageWindows := fs.String("stage-usage-windows", "", "comma-separated staged sustained usage windows")
 	concurrency := fs.Int("concurrency", 25, "load-test MQTT probe concurrency")
 	maxConnectedDevices := fs.Int("max-connected-devices", 0, "load-test max connected devices in this shard")
 	mqttProbe := true
@@ -1069,7 +1072,7 @@ func runGenerateLoadDevices(args []string) error {
 	generateOnly := fs.Bool("generate-only", false, "generate only")
 	caValidDays := fs.Int("ca-valid-days", 365, "CA validity days")
 	deviceValidDays := fs.Int("device-valid-days", 180, "device validity days")
-	concurrency := fs.Int("concurrency", envInt("CLOUD_CREATE_DEVICES_CONCURRENCY", 16), "device generation concurrency")
+	concurrency := fs.Int("concurrency", envInt("CLOUD_CREATE_DEVICES_CONCURRENCY", 64), "device generation concurrency")
 	force := fs.Bool("force", false, "force")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -1510,7 +1513,7 @@ func runCreateUsers(args []string) error {
 	rotatePassword := fs.Bool("rotate-password", false, "rotate password")
 	reuseLocalUsers := fs.Bool("reuse-local-users", true, "reuse complete local user artifacts")
 	noReuseLocalUsers := fs.Bool("no-reuse-local-users", false, "do not reuse complete local user artifacts")
-	concurrency := fs.Int("concurrency", envInt("CLOUD_CREATE_USERS_CONCURRENCY", 16), "user creation concurrency")
+	concurrency := fs.Int("concurrency", envInt("CLOUD_CREATE_USERS_CONCURRENCY", 64), "user creation concurrency")
 	dryRun := fs.Bool("dry-run", false, "dry run")
 	skipBootstrap := fs.Bool("skip-bootstrap", false, "skip bootstrap")
 	if err := fs.Parse(args); err != nil {
@@ -1736,8 +1739,8 @@ func runStagingE2EDataSetup(args []string) error {
 	deviceCount := fs.Int("device-count", 100, "device count")
 	deviceMix := fs.String("device-mix", "camera=40,light=25,air_conditioner=20,smart_meter=15", "device mix")
 	devicePrefix := fs.String("device-prefix", "load-device", "device prefix")
-	userConcurrency := fs.Int("user-concurrency", envInt("CLOUD_STAGING_E2E_USER_CONCURRENCY", 16), "user creation concurrency")
-	deviceConcurrency := fs.Int("device-concurrency", envInt("CLOUD_STAGING_E2E_DEVICE_CONCURRENCY", 16), "device generation concurrency")
+	userConcurrency := fs.Int("user-concurrency", envInt("CLOUD_STAGING_E2E_USER_CONCURRENCY", 64), "user creation concurrency")
+	deviceConcurrency := fs.Int("device-concurrency", envInt("CLOUD_STAGING_E2E_DEVICE_CONCURRENCY", 64), "device generation concurrency")
 	bindConcurrency := fs.Int("bind-concurrency", envInt("CLOUD_STAGING_E2E_BIND_CONCURRENCY", 64), "device bind concurrency")
 	outDir := fs.String("out-dir", "", "out dir")
 	quiet := fs.Bool("quiet", false, "suppress periodic progress output")
@@ -2232,6 +2235,7 @@ func runRemoveK8s(args []string) error {
 	workspaceFlag := fs.String("workspace", "", "workspace")
 	envRootFlag := fs.String("env-root", "", "environment root")
 	yes := fs.Bool("yes", false, "confirm")
+	purgeStorage := fs.Bool("purge-storage", false, "delete staging PVC/PV storage before removing namespaces")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -2260,7 +2264,34 @@ func runRemoveK8s(args []string) error {
 		return err
 	}
 	for _, ns := range k8sStagingNamespaces(stack) {
-		if err := runK8SKubectl(kubeconfig, "delete", "namespace", ns, "--ignore-not-found=true"); err != nil {
+		if *purgeStorage {
+			if err := runK8SKubectl(kubeconfig, "-n", ns, "delete", "pvc", "--all", "--ignore-not-found=true"); err != nil {
+				return err
+			}
+			if err := runK8SKubectl(kubeconfig, "delete", "namespace", ns, "--ignore-not-found=true"); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := resetK8SNamespaceResources(kubeconfig, ns); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func resetK8SNamespaceResources(kubeconfig, ns string) error {
+	if err := runK8SKubectl(kubeconfig, "get", "namespace", ns); err != nil {
+		return nil
+	}
+	resourceGroups := []string{
+		"deployment,statefulset,daemonset,job,cronjob",
+		"service,ingress,networkpolicy",
+		"configmap,secret,serviceaccount,role,rolebinding",
+		"horizontalpodautoscaler,poddisruptionbudget",
+	}
+	for _, group := range resourceGroups {
+		if err := runK8SKubectl(kubeconfig, "-n", ns, "delete", group, "--all", "--ignore-not-found=true"); err != nil {
 			return err
 		}
 	}
@@ -2669,6 +2700,262 @@ func waitTCP(addr string, timeout time.Duration) error {
 	return fmt.Errorf("timeout waiting for %s: %w", addr, lastErr)
 }
 
+type stagingRuntimeContext struct {
+	workspace string
+	stackFile string
+	envRoot   string
+	provider  string
+	stackName string
+}
+
+func resolveStagingRuntimeContext(workspaceFlag, stackFileFlag, envRootFlag string) (stagingRuntimeContext, error) {
+	ctx := stagingRuntimeContext{}
+	workspace := workspaceFlag
+	var err error
+	if workspace == "" {
+		workspace, err = workspaceRoot()
+		if err != nil {
+			return ctx, err
+		}
+	}
+	ctx.workspace = workspace
+	stackFile := stackFileFlag
+	provider := firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), os.Getenv("RTK_CLOUD_STAGING_PROVIDER"))
+	if stackFile == "" {
+		switch {
+		case provider != "":
+			stackFile = filepath.Join(workspace, "cloud_env", "staging", provider, "env", "stack.env")
+		case envFileValue(filepath.Join(workspace, "cloud_env", "staging", "lke", "env", "stack.env"), "CLOUD_PROVIDER") == "lke":
+			stackFile = filepath.Join(workspace, "cloud_env", "staging", "lke", "env", "stack.env")
+		default:
+			stackFile = filepath.Join(workspace, "cloud_env", "staging", "linode", "env", "stack.env")
+		}
+	}
+	if !filepath.IsAbs(stackFile) {
+		stackFile = filepath.Join(workspace, stackFile)
+	}
+	ctx.stackFile = filepath.Clean(stackFile)
+	if provider == "" {
+		provider = envFileValue(ctx.stackFile, "CLOUD_PROVIDER")
+	}
+	provider = firstNonEmpty(provider, "linode")
+	if provider != "linode" && provider != "lke" {
+		return ctx, fmt.Errorf("unsupported CLOUD_PROVIDER=%s; staging E2E currently supports linode or lke", provider)
+	}
+	ctx.provider = provider
+	if err := os.Setenv("CLOUD_PROVIDER", provider); err != nil {
+		return ctx, err
+	}
+	if os.Getenv("CLOUD_DNS_ROOT_DOMAIN") == "" {
+		if value := envFileValue(ctx.stackFile, "CLOUD_DNS_ROOT_DOMAIN"); value != "" {
+			if err := os.Setenv("CLOUD_DNS_ROOT_DOMAIN", value); err != nil {
+				return ctx, err
+			}
+		}
+	}
+	envRoot := envRootFlag
+	if envRoot == "" {
+		envRoot = filepath.Join(filepath.Dir(ctx.stackFile), "..")
+	}
+	if !filepath.IsAbs(envRoot) {
+		envRoot = filepath.Join(workspace, envRoot)
+	}
+	envRoot = filepath.Clean(envRoot)
+	if filepath.Base(envRoot) == "staging" && provider == "lke" {
+		envRoot = filepath.Join(envRoot, "lke")
+	} else {
+		envRoot, err = resolveEnvRoot(workspace, envRoot)
+		if err != nil {
+			return ctx, err
+		}
+	}
+	ctx.envRoot = envRoot
+	ctx.stackName = firstNonEmpty(os.Getenv("RTK_CLOUD_STAGING_STACK_NAME"), envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_STACK_NAME"), envFileValue(ctx.stackFile, "CLOUD_STACK_NAME"), "video-cloud-staging")
+	return ctx, nil
+}
+
+func stagingResetCommand(ctx stagingRuntimeContext, purgeStorage bool) (string, []string) {
+	script := firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_REMOVE_K8S_SCRIPT"), selfCommandPath("remove-k8s"))
+	if ctx.provider == "lke" {
+		if v := os.Getenv("CLOUD_STAGING_E2E_REMOVE_SCRIPT"); v != "" {
+			script = v
+		}
+	}
+	args := []string{"--workspace", ctx.workspace, "--env-root", ctx.envRoot, "--yes"}
+	if purgeStorage {
+		args = append(args, "--purge-storage")
+	}
+	return script, args
+}
+
+func stagingProvisionCommand(ctx stagingRuntimeContext) (string, []string) {
+	lkeProvisionScript := os.Getenv("CLOUD_STAGING_E2E_PROVISION_SCRIPT")
+	script := firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_PROVISION_K8S_SCRIPT"), selfCommandPath("provision-k8s"))
+	args := []string{"--workspace", ctx.workspace, "--env-root", ctx.envRoot, "--confirm", ctx.stackName}
+	if ctx.provider == "lke" {
+		if lkeProvisionScript != "" {
+			return lkeProvisionScript, []string{"--workspace", ctx.workspace, "--env-root", ctx.envRoot, "--all", "--confirm", ctx.stackName}
+		}
+		if os.Getenv("CLOUD_STAGING_E2E_PROVISION_K8S_SCRIPT") == "" {
+			return selfCommandPath("provision"), []string{"--workspace", ctx.workspace, "--env-root", ctx.envRoot, "--preflight", "--plan", "--apply", "--deploy", "--dns", "--artifacts", "--confirm", ctx.stackName}
+		}
+	}
+	return script, args
+}
+
+func runStagingPhaseCommand(argv []string, extraEnv []string) error {
+	if len(argv) == 0 {
+		return errors.New("empty staging phase command")
+	}
+	cmd := exec.Command(argv[0], argv[1:]...)
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func runStagingResetK8s(args []string) error {
+	fs := flag.NewFlagSet("staging-reset-k8s", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	workspaceFlag := fs.String("workspace", "", "workspace root")
+	stackFileFlag := fs.String("stack-file", os.Getenv("RTK_CLOUD_STACK_FILE"), "stack.env path")
+	envRootFlag := fs.String("env-root", os.Getenv("RTK_CLOUD_STAGING_ENV_ROOT"), "staging environment root")
+	confirm := fs.String("confirm", "", "stack name confirmation")
+	planMode := fs.Bool("plan", false, "print reset plan")
+	purgeStorage := fs.Bool("purge-storage", false, "also delete staging PVC/PV/provider storage")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	ctx, err := resolveStagingRuntimeContext(*workspaceFlag, *stackFileFlag, *envRootFlag)
+	if err != nil {
+		return err
+	}
+	script, commandArgs := stagingResetCommand(ctx, *purgeStorage)
+	if *planMode {
+		fmt.Fprintln(os.Stdout, "cloud-staging-reset-k8s plan")
+		fmt.Fprintf(os.Stdout, "workspace: %s\n", ctx.workspace)
+		fmt.Fprintf(os.Stdout, "env_root: %s\n", ctx.envRoot)
+		fmt.Fprintf(os.Stdout, "stack: %s\n", ctx.stackName)
+		fmt.Fprintln(os.Stdout, "phase: reset")
+		fmt.Fprintf(os.Stdout, "purge_storage: %v\n", *purgeStorage)
+		if *purgeStorage {
+			fmt.Fprintln(os.Stdout, "storage: purge PV/PVC/provider volumes")
+		} else {
+			fmt.Fprintln(os.Stdout, "storage: preserve PV/PVC/provider volumes")
+		}
+		fmt.Fprintf(os.Stdout, "command: %s\n", displayCommand(script))
+		return nil
+	}
+	if *confirm != ctx.stackName {
+		if *confirm == "" {
+			return fmt.Errorf("--confirm %s is required before resetting staging K8s", ctx.stackName)
+		}
+		return fmt.Errorf("--confirm must be %s, got %s", ctx.stackName, *confirm)
+	}
+	if err := runStagingPhaseCommand(commandWithArgs(script, commandArgs...), []string{"CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET=1"}); err != nil {
+		return err
+	}
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{"overall": "pass", "phase": "reset", "stack": ctx.stackName, "purge_storage": *purgeStorage})
+}
+
+func runStagingProvision(args []string) error {
+	fs := flag.NewFlagSet("staging-provision", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	workspaceFlag := fs.String("workspace", "", "workspace root")
+	stackFileFlag := fs.String("stack-file", os.Getenv("RTK_CLOUD_STACK_FILE"), "stack.env path")
+	envRootFlag := fs.String("env-root", os.Getenv("RTK_CLOUD_STAGING_ENV_ROOT"), "staging environment root")
+	confirm := fs.String("confirm", "", "stack name confirmation")
+	planMode := fs.Bool("plan", false, "print provision plan")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	ctx, err := resolveStagingRuntimeContext(*workspaceFlag, *stackFileFlag, *envRootFlag)
+	if err != nil {
+		return err
+	}
+	script, commandArgs := stagingProvisionCommand(ctx)
+	if *planMode {
+		fmt.Fprintln(os.Stdout, "cloud-staging-provision plan")
+		fmt.Fprintf(os.Stdout, "workspace: %s\n", ctx.workspace)
+		fmt.Fprintf(os.Stdout, "env_root: %s\n", ctx.envRoot)
+		fmt.Fprintf(os.Stdout, "stack: %s\n", ctx.stackName)
+		fmt.Fprintln(os.Stdout, "phase: provision")
+		if ctx.provider == "lke" {
+			missing := missingLKEImageEnvKeys()
+			if len(missing) > 0 {
+				fmt.Fprintf(os.Stdout, "image_resolve: automatic (%s)\n", strings.Join(missing, ","))
+			} else {
+				fmt.Fprintln(os.Stdout, "image_resolve: skipped (all LKE image env vars provided)")
+			}
+		}
+		fmt.Fprintf(os.Stdout, "provision K8s staging with %s\n", displayCommand(script))
+		return nil
+	}
+	if *confirm != ctx.stackName {
+		if *confirm == "" {
+			return fmt.Errorf("--confirm %s is required before provisioning staging", ctx.stackName)
+		}
+		return fmt.Errorf("--confirm must be %s, got %s", ctx.stackName, *confirm)
+	}
+	if ctx.provider == "lke" {
+		if err := resolveLKEImagesIfNeeded(ctx.workspace, ctx.envRoot); err != nil {
+			return err
+		}
+	}
+	if err := runStagingPhaseCommand(commandWithArgs(script, commandArgs...), nil); err != nil {
+		return err
+	}
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{"overall": "pass", "phase": "provision", "stack": ctx.stackName})
+}
+
+func runStagingAcceptance(args []string) error {
+	fs := flag.NewFlagSet("staging-acceptance", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	workspaceFlag := fs.String("workspace", "", "workspace root")
+	stackFileFlag := fs.String("stack-file", os.Getenv("RTK_CLOUD_STACK_FILE"), "stack.env path")
+	envRootFlag := fs.String("env-root", os.Getenv("RTK_CLOUD_STAGING_ENV_ROOT"), "staging environment root")
+	confirm := fs.String("confirm", "", "stack name confirmation")
+	planMode := fs.Bool("plan", false, "print acceptance plan")
+	outDir := fs.String("out-dir", "", "override report output directory")
+	brandname := fs.String("brandname", "RTK", "brand cloud name")
+	userCount := fs.Int("user-count", 10, "user count")
+	deviceCount := fs.Int("device-count", 100, "device count")
+	deviceMix := fs.String("device-mix", "camera=40,light=25,air_conditioner=20,smart_meter=15", "device mix")
+	devicePrefix := fs.String("device-prefix", "load-device", "device prefix")
+	userConcurrency := fs.Int("user-concurrency", envInt("CLOUD_STAGING_E2E_USER_CONCURRENCY", 64), "user creation concurrency")
+	deviceConcurrency := fs.Int("device-concurrency", envInt("CLOUD_STAGING_E2E_DEVICE_CONCURRENCY", 64), "device generation concurrency")
+	bindConcurrency := fs.Int("bind-concurrency", envInt("CLOUD_STAGING_E2E_BIND_CONCURRENCY", 64), "device bind concurrency")
+	skipMQTTProbe := fs.Bool("skip-mqtt-probe", false, "run MQTT test without live broker probe")
+	quiet := fs.Bool("quiet", false, "suppress periodic progress lines")
+	resume := fs.Bool("resume", true, "reuse completed data setup artifacts")
+	noResume := fs.Bool("no-resume", false, "recreate users/devices/bind artifacts")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *noResume {
+		*resume = false
+	}
+	ctx, err := resolveStagingRuntimeContext(*workspaceFlag, *stackFileFlag, *envRootFlag)
+	if err != nil {
+		return err
+	}
+	if !*planMode && *confirm != ctx.stackName {
+		if *confirm == "" {
+			return fmt.Errorf("--confirm %s is required before running staging acceptance", ctx.stackName)
+		}
+		return fmt.Errorf("--confirm must be %s, got %s", ctx.stackName, *confirm)
+	}
+	return runStagingE2ETest(stagingE2ETestArgs(stagingE2EArgs{
+		workspace: ctx.workspace, envRoot: ctx.envRoot, stackName: ctx.stackName, run: !*planMode, plan: *planMode,
+		brandname: *brandname, userCount: *userCount, deviceCount: *deviceCount, deviceMix: *deviceMix, devicePrefix: *devicePrefix,
+		userConcurrency: *userConcurrency, deviceConcurrency: *deviceConcurrency, bindConcurrency: *bindConcurrency,
+		outDir: *outDir, skipMQTTProbe: *skipMQTTProbe, skipRemove: true, skipProvision: true, quiet: *quiet, resume: *resume,
+		confirmOverride: *confirm,
+	}))
+}
+
 func runStagingE2ETest(args []string) error {
 	fs := flag.NewFlagSet("staging-e2e-test", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -2683,14 +2970,16 @@ func runStagingE2ETest(args []string) error {
 	deviceCount := fs.Int("device-count", 100, "device count")
 	deviceMix := fs.String("device-mix", "camera=40,light=25,air_conditioner=20,smart_meter=15", "device mix")
 	devicePrefix := fs.String("device-prefix", "load-device", "device prefix")
-	userConcurrency := fs.Int("user-concurrency", envInt("CLOUD_STAGING_E2E_USER_CONCURRENCY", 16), "user creation concurrency")
-	deviceConcurrency := fs.Int("device-concurrency", envInt("CLOUD_STAGING_E2E_DEVICE_CONCURRENCY", 16), "device generation concurrency")
+	userConcurrency := fs.Int("user-concurrency", envInt("CLOUD_STAGING_E2E_USER_CONCURRENCY", 64), "user creation concurrency")
+	deviceConcurrency := fs.Int("device-concurrency", envInt("CLOUD_STAGING_E2E_DEVICE_CONCURRENCY", 64), "device generation concurrency")
 	bindConcurrency := fs.Int("bind-concurrency", envInt("CLOUD_STAGING_E2E_BIND_CONCURRENCY", 64), "device bind concurrency")
 	outDir := fs.String("out-dir", "", "out dir")
 	skipMQTTProbe := fs.Bool("skip-mqtt-probe", false, "skip mqtt probe")
 	quiet := fs.Bool("quiet", false, "suppress periodic progress output")
+	purgeStorage := fs.Bool("purge-storage", false, "also delete staging PVC/PV/provider storage during reset")
 	resume := fs.Bool("resume", true, "reuse completed data setup artifacts")
 	noResume := fs.Bool("no-resume", false, "recreate data setup artifacts")
+	skipProvision := fs.Bool("skip-provision", false, "skip K8s provision and run only acceptance checks")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -2698,6 +2987,9 @@ func runStagingE2ETest(args []string) error {
 		return errors.New("--env-root is required")
 	}
 	if *noResume {
+		*resume = false
+	}
+	if !*skipRemove && !hasFlag(args, "--resume") {
 		*resume = false
 	}
 	if *userCount <= 0 {
@@ -2759,7 +3051,11 @@ func runStagingE2ETest(args []string) error {
 		scripts["provision-k8s"] = selfCommandPath("provision")
 	}
 	if !*runMode {
-		printE2EPlan(workspace, envRoot, stackName, *brandname, *userCount, *deviceCount, *deviceMix, *userConcurrency, *deviceConcurrency, *bindConcurrency, *skipRemove, scripts)
+		phase := "full"
+		if *skipRemove && *skipProvision {
+			phase = "acceptance"
+		}
+		printE2EPlan(workspace, envRoot, stackName, phase, *brandname, *userCount, *deviceCount, *deviceMix, *userConcurrency, *deviceConcurrency, *bindConcurrency, *skipRemove, *skipProvision, scripts)
 		return nil
 	}
 	if *confirm != stackName {
@@ -2780,7 +3076,13 @@ func runStagingE2ETest(args []string) error {
 	}
 	childEnv := []string{}
 	if !*skipRemove {
-		if err := runStep("reset_k8s", append(commandWithArgs(scripts["remove-k8s"], "--workspace", workspace, "--env-root", envRoot), "--yes")...); err != nil {
+		resetArgs := append(commandWithArgs(scripts["remove-k8s"], "--workspace", workspace, "--env-root", envRoot), "--yes")
+		if *purgeStorage {
+			resetArgs = append(resetArgs, "--purge-storage")
+		}
+		step, err := runE2EStepWithOptions("reset_k8s", filepath.Join(logsDir, "reset_k8s.log"), e2eStepOptions{Quiet: *quiet, Env: []string{"CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET=1"}}, resetArgs...)
+		steps = append(steps, step)
+		if err != nil {
 			return err
 		}
 	}
@@ -2790,8 +3092,10 @@ func runStagingE2ETest(args []string) error {
 	} else if useLegacyLKEProvision {
 		k8sProvisionArgs = []string{"--workspace", workspace, "--env-root", envRoot, "--all", "--confirm", stackName}
 	}
-	if err := runStep("provision_k8s", commandWithArgs(scripts["provision-k8s"], k8sProvisionArgs...)...); err != nil {
-		return err
+	if !*skipProvision {
+		if err := runStep("provision_k8s", commandWithArgs(scripts["provision-k8s"], k8sProvisionArgs...)...); err != nil {
+			return err
+		}
 	}
 	portForwardEnv, cleanup, err := startK8SE2EPortForwards(workspace, envRoot)
 	if err != nil {
@@ -2903,11 +3207,12 @@ func runStagingE2E(args []string) error {
 	deviceCount := fs.Int("device-count", 100, "device count")
 	deviceMix := fs.String("device-mix", "camera=40,light=25,air_conditioner=20,smart_meter=15", "device mix")
 	devicePrefix := fs.String("device-prefix", "load-device", "device prefix")
-	userConcurrency := fs.Int("user-concurrency", envInt("CLOUD_STAGING_E2E_USER_CONCURRENCY", 16), "user creation concurrency")
-	deviceConcurrency := fs.Int("device-concurrency", envInt("CLOUD_STAGING_E2E_DEVICE_CONCURRENCY", 16), "device generation concurrency")
+	userConcurrency := fs.Int("user-concurrency", envInt("CLOUD_STAGING_E2E_USER_CONCURRENCY", 64), "user creation concurrency")
+	deviceConcurrency := fs.Int("device-concurrency", envInt("CLOUD_STAGING_E2E_DEVICE_CONCURRENCY", 64), "device generation concurrency")
 	bindConcurrency := fs.Int("bind-concurrency", envInt("CLOUD_STAGING_E2E_BIND_CONCURRENCY", 64), "device bind concurrency")
 	skipMQTTProbe := fs.Bool("skip-mqtt-probe", false, "run MQTT test without live broker probe")
 	skipRemove := fs.Bool("skip-remove", false, "skip K8s reset and keep existing cluster state")
+	purgeStorage := fs.Bool("purge-storage", false, "also delete staging PVC/PV/provider storage during reset")
 	quiet := fs.Bool("quiet", false, "suppress periodic progress lines")
 	resume := fs.Bool("resume", true, "reuse completed data setup artifacts")
 	noResume := fs.Bool("no-resume", false, "recreate users/devices/bind artifacts")
@@ -2920,92 +3225,47 @@ func runStagingE2E(args []string) error {
 	if !*skipRemove && !hasFlag(args, "--resume") {
 		*resume = false
 	}
-	workspace := *workspaceFlag
-	var err error
-	if workspace == "" {
-		workspace, err = workspaceRoot()
-		if err != nil {
-			return err
-		}
-	}
-	stackFile := *stackFileFlag
-	provider := firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), os.Getenv("RTK_CLOUD_STAGING_PROVIDER"))
-	if stackFile == "" {
-		switch {
-		case provider != "":
-			stackFile = filepath.Join(workspace, "cloud_env", "staging", provider, "env", "stack.env")
-		case envFileValue(filepath.Join(workspace, "cloud_env", "staging", "lke", "env", "stack.env"), "CLOUD_PROVIDER") == "lke":
-			stackFile = filepath.Join(workspace, "cloud_env", "staging", "lke", "env", "stack.env")
-		default:
-			stackFile = filepath.Join(workspace, "cloud_env", "staging", "linode", "env", "stack.env")
-		}
-	}
-	if !filepath.IsAbs(stackFile) {
-		stackFile = filepath.Join(workspace, stackFile)
-	}
-	if provider == "" {
-		provider = envFileValue(stackFile, "CLOUD_PROVIDER")
-	}
-	provider = firstNonEmpty(provider, "linode")
-	if provider != "linode" && provider != "lke" {
-		return fmt.Errorf("unsupported CLOUD_PROVIDER=%s; staging E2E currently supports linode or lke", provider)
-	}
-	if err := os.Setenv("CLOUD_PROVIDER", provider); err != nil {
-		return err
-	}
-	if os.Getenv("CLOUD_DNS_ROOT_DOMAIN") == "" {
-		if value := envFileValue(stackFile, "CLOUD_DNS_ROOT_DOMAIN"); value != "" {
-			if err := os.Setenv("CLOUD_DNS_ROOT_DOMAIN", value); err != nil {
-				return err
-			}
-		}
-	}
-	envRoot := *envRootFlag
-	if envRoot == "" {
-		envRoot = filepath.Join(filepath.Dir(stackFile), "..")
-	}
-	envRoot, err = resolveEnvRoot(workspace, envRoot)
+	ctx, err := resolveStagingRuntimeContext(*workspaceFlag, *stackFileFlag, *envRootFlag)
 	if err != nil {
 		return err
 	}
-	stackName := firstNonEmpty(os.Getenv("RTK_CLOUD_STAGING_STACK_NAME"), envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_STACK_NAME"), "video-cloud-staging")
 
 	if *planMode {
-		if provider == "lke" {
+		if ctx.provider == "lke" {
 			missing := missingLKEImageEnvKeys()
 			if len(missing) > 0 {
 				fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] plan: LKE image resolve will run before provision because these env vars are missing: %s\n", strings.Join(missing, ","))
 			}
 		}
 		return runStagingE2ETest(stagingE2ETestArgs(stagingE2EArgs{
-			workspace: workspace, envRoot: envRoot, stackName: stackName, run: false, plan: true,
+			workspace: ctx.workspace, envRoot: ctx.envRoot, stackName: ctx.stackName, run: false, plan: true,
 			brandname: *brandname, userCount: *userCount, deviceCount: *deviceCount, deviceMix: *deviceMix, devicePrefix: *devicePrefix,
 			userConcurrency: *userConcurrency, deviceConcurrency: *deviceConcurrency, bindConcurrency: *bindConcurrency,
-			outDir: *outDir, skipMQTTProbe: *skipMQTTProbe, skipRemove: *skipRemove, quiet: *quiet, resume: *resume,
+			outDir: *outDir, skipMQTTProbe: *skipMQTTProbe, skipRemove: *skipRemove, purgeStorage: *purgeStorage, quiet: *quiet, resume: *resume,
 		}))
 	}
-	if *confirm != stackName {
+	if *confirm != ctx.stackName {
 		if *confirm == "" {
-			return fmt.Errorf("--confirm %s is required before deleting and redeploying staging", stackName)
+			return fmt.Errorf("--confirm %s is required before deleting and redeploying staging", ctx.stackName)
 		}
-		return fmt.Errorf("--confirm must be %s, got %s", stackName, *confirm)
+		return fmt.Errorf("--confirm must be %s, got %s", ctx.stackName, *confirm)
 	}
-	if provider == "lke" {
-		if err := resolveLKEImagesIfNeeded(workspace, envRoot); err != nil {
+	if ctx.provider == "lke" {
+		if err := resolveLKEImagesIfNeeded(ctx.workspace, ctx.envRoot); err != nil {
 			return err
 		}
 	}
 	runOutDir := *outDir
 	if runOutDir == "" {
-		runOutDir = filepath.Join(envRoot, "artifacts", "staging-e2e", time.Now().UTC().Format("20060102T150405Z"))
+		runOutDir = filepath.Join(ctx.envRoot, "artifacts", "staging-e2e", time.Now().UTC().Format("20060102T150405Z"))
 	}
 	err = runStagingE2ETest(stagingE2ETestArgs(stagingE2EArgs{
-		workspace: workspace, envRoot: envRoot, stackName: stackName, run: true, plan: false,
+		workspace: ctx.workspace, envRoot: ctx.envRoot, stackName: ctx.stackName, run: true, plan: false,
 		brandname: *brandname, userCount: *userCount, deviceCount: *deviceCount, deviceMix: *deviceMix, devicePrefix: *devicePrefix,
 		userConcurrency: *userConcurrency, deviceConcurrency: *deviceConcurrency, bindConcurrency: *bindConcurrency,
-		outDir: runOutDir, skipMQTTProbe: *skipMQTTProbe, skipRemove: *skipRemove, quiet: *quiet, resume: *resume,
+		outDir: runOutDir, skipMQTTProbe: *skipMQTTProbe, skipRemove: *skipRemove, purgeStorage: *purgeStorage, quiet: *quiet, resume: *resume,
 	}))
-	if reportErr := writeStagingInstallReport(provider, filepath.Join(runOutDir, "summary.json"), filepath.Join(runOutDir, "TEST_REPORT.md"), runOutDir); reportErr != nil && err == nil {
+	if reportErr := writeStagingInstallReport(ctx.provider, filepath.Join(runOutDir, "summary.json"), filepath.Join(runOutDir, "TEST_REPORT.md"), runOutDir); reportErr != nil && err == nil {
 		err = reportErr
 	}
 	if err == nil {
@@ -3031,14 +3291,18 @@ type stagingE2EArgs struct {
 	outDir            string
 	skipMQTTProbe     bool
 	skipRemove        bool
+	purgeStorage      bool
+	skipProvision     bool
 	quiet             bool
 	resume            bool
+	confirmOverride   string
 }
 
 func stagingE2ETestArgs(cfg stagingE2EArgs) []string {
 	out := []string{"--workspace", cfg.workspace, "--env-root", cfg.envRoot}
 	if cfg.run {
-		out = append(out, "--run", "--confirm", cfg.stackName)
+		confirm := firstNonEmpty(cfg.confirmOverride, cfg.stackName)
+		out = append(out, "--run", "--confirm", confirm)
 	}
 	if cfg.plan {
 		out = append(out, "--plan")
@@ -3061,6 +3325,12 @@ func stagingE2ETestArgs(cfg stagingE2EArgs) []string {
 	}
 	if cfg.skipRemove {
 		out = append(out, "--skip-remove")
+	}
+	if cfg.purgeStorage {
+		out = append(out, "--purge-storage")
+	}
+	if cfg.skipProvision {
+		out = append(out, "--skip-provision")
 	}
 	if cfg.quiet {
 		out = append(out, "--quiet")
@@ -3511,12 +3781,13 @@ func sqlLiteral(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
-func printE2EPlan(workspace, envRoot, stack, brandname string, userCount, deviceCount int, deviceMix string, userConcurrency, deviceConcurrency, bindConcurrency int, skipRemove bool, scripts map[string]string) {
+func printE2EPlan(workspace, envRoot, stack, phase, brandname string, userCount, deviceCount int, deviceMix string, userConcurrency, deviceConcurrency, bindConcurrency int, skipRemove, skipProvision bool, scripts map[string]string) {
 	fmt.Fprintln(os.Stdout, "cloud-staging-e2e-test plan")
 	fmt.Fprintf(os.Stdout, "workspace: %s\n", workspace)
 	fmt.Fprintf(os.Stdout, "env_root: %s\n", envRoot)
 	fmt.Fprintf(os.Stdout, "stack: %s\n", stack)
 	fmt.Fprintln(os.Stdout, "target: k8s")
+	fmt.Fprintf(os.Stdout, "phase: %s\n", phase)
 	fmt.Fprintf(os.Stdout, "brandname: %s\n", brandname)
 	fmt.Fprintf(os.Stdout, "user_count: %d\n", userCount)
 	fmt.Fprintf(os.Stdout, "device_count: %d\n", deviceCount)
@@ -3525,11 +3796,14 @@ func printE2EPlan(workspace, envRoot, stack, brandname string, userCount, device
 	fmt.Fprintf(os.Stdout, "device_concurrency: %d\n", deviceConcurrency)
 	fmt.Fprintf(os.Stdout, "bind_concurrency: %d\n", bindConcurrency)
 	fmt.Fprintf(os.Stdout, "skip_remove: %v\n", skipRemove)
+	fmt.Fprintf(os.Stdout, "skip_provision: %v\n", skipProvision)
 	fmt.Fprintln(os.Stdout, "steps:")
 	if !skipRemove {
 		fmt.Fprintf(os.Stdout, "  - reset K8s staging with %s\n", displayCommand(scripts["remove-k8s"]))
 	}
-	fmt.Fprintf(os.Stdout, "  - provision K8s staging with %s\n", displayCommand(scripts["provision-k8s"]))
+	if !skipProvision {
+		fmt.Fprintf(os.Stdout, "  - provision K8s staging with %s\n", displayCommand(scripts["provision-k8s"]))
+	}
 	fmt.Fprintf(os.Stdout, "  - setup brand/users/devices with %s\n", displayCommand(scripts["setup-data"]))
 	fmt.Fprintf(os.Stdout, "  - run live home MQTT E2E with %s\n", displayCommand(scripts["mqtt-test"]))
 	fmt.Fprintf(os.Stdout, "  - verify persisted MQTT runtime logs with %s\n", displayCommand(scripts["mqtt-log-verify"]))
@@ -7043,10 +7317,10 @@ func readDeviceManifest(path string) ([]bindDeviceManifest, error) {
 func buildBindAssignments(devices []bindDeviceManifest, users []userCredential) []bindAssignment {
 	out := make([]bindAssignment, len(devices))
 	offset := 0
-	for _, typ := range loadDeviceTypeNames() {
+	for _, typ := range loadDeviceTypes {
 		indexes := []int{}
 		for i, device := range devices {
-			if device.DeviceType == typ {
+			if device.DeviceType == typ.Name {
 				indexes = append(indexes, i)
 			}
 		}

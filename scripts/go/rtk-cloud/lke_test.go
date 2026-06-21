@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"net"
@@ -60,9 +61,11 @@ func TestRunProvisionLKEApplyFetchesKubeconfigWhenNoContext(t *testing.T) {
 	writeTestFile(t, filepath.Join(envRoot, "state", "lke.env"), "LKE_CLUSTER_ID=12345\n")
 	curlLog := fakeLinodeCurl(t, map[string]string{
 		"/lke/clusters/12345/kubeconfig": `{"kubeconfig":"` + base64.StdEncoding.EncodeToString([]byte("apiVersion: v1\nclusters: []\n")) + `"}`,
+		"/lke/clusters/12345/pools":      `{"data":[{"id":907616,"type":"g6-standard-2","count":4}]}`,
 	})
 	kubectlLog := fakeKubectlWithoutCurrentContext(t)
 	t.Setenv("LINODE_TOKEN", "test-token")
+	t.Setenv("LKE_NODE_COUNT", "4")
 
 	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--apply"}); err != nil {
 		t.Fatal(err)
@@ -110,9 +113,11 @@ func TestRunProvisionLKEApplyDiscoversClusterByLabel(t *testing.T) {
 	curlLog := fakeLinodeCurl(t, map[string]string{
 		"/lke/clusters?page_size=500":    `{"data":[{"id":67890,"label":"video-cloud-staging-lke","region":"us-sea"}]}`,
 		"/lke/clusters/67890/kubeconfig": `{"kubeconfig":"` + encodedKubeconfig + `"}`,
+		"/lke/clusters/67890/pools":      `{"data":[{"id":907616,"type":"g6-standard-2","count":4}]}`,
 	})
 	kubectlLog := fakeKubectlWithoutCurrentContext(t)
 	t.Setenv("LINODE_TOKEN", "test-token")
+	t.Setenv("LKE_NODE_COUNT", "4")
 
 	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--apply"}); err != nil {
 		t.Fatal(err)
@@ -135,10 +140,12 @@ func TestRunProvisionLKEApplyCreatesClusterWhenMissing(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	encodedKubeconfig := base64.StdEncoding.EncodeToString([]byte("apiVersion: v1\nclusters: []\n"))
 	curlLog := fakeLinodeCurl(t, map[string]string{
-		"/lke/clusters?page_size=500":    `{"data":[]}`,
-		"/lke/versions":                  `{"data":[{"id":"1.33"}]}`,
-		"/lke/clusters":                  `{"id":24680,"label":"video-cloud-staging-lke","region":"us-sea","k8s_version":"1.33"}`,
-		"/lke/clusters/24680/kubeconfig": `{"kubeconfig":"` + encodedKubeconfig + `"}`,
+		"/lke/clusters?page_size=500":      `{"data":[]}`,
+		"/lke/versions":                    `{"data":[{"id":"1.33"}]}`,
+		"/lke/clusters":                    `{"id":24680,"label":"video-cloud-staging-lke","region":"us-sea","k8s_version":"1.33"}`,
+		"/lke/clusters/24680/kubeconfig":   `{"kubeconfig":"` + encodedKubeconfig + `"}`,
+		"/lke/clusters/24680/pools":        `{"data":[{"id":907616,"type":"g6-standard-2","count":3}]}`,
+		"/lke/clusters/24680/pools/907616": `{"id":907616,"type":"g6-standard-2","count":4}`,
 	})
 	fakeKubectlWithoutCurrentContext(t)
 	t.Setenv("LINODE_TOKEN", "test-token")
@@ -163,6 +170,52 @@ func TestRunProvisionLKEApplyCreatesClusterWhenMissing(t *testing.T) {
 	state := readTestFile(t, filepath.Join(envRoot, "state", "lke.env"))
 	if !strings.Contains(state, "LKE_CLUSTER_ID=24680") || !strings.Contains(state, "LKE_CLUSTER_VERSION=1.33") {
 		t.Fatalf("expected created cluster state, got:\n%s", state)
+	}
+}
+
+func TestLKENodeCountDefaultsToFiveForLoadTestHeadroom(t *testing.T) {
+	got, err := lkeNodeCount(map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 5 {
+		t.Fatalf("node count default got %d want 5", got)
+	}
+
+	t.Setenv("LKE_NODE_COUNT", "6")
+	got, err = lkeNodeCount(map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 6 {
+		t.Fatalf("node count override got %d want 6", got)
+	}
+}
+
+func TestEnsureLKENodePoolResizesExistingPoolToDesiredCount(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	curlLog := fakeLinodeCurl(t, map[string]string{
+		"/lke/clusters/12345/pools":        `{"data":[{"id":907616,"type":"g6-standard-2","count":3}]}`,
+		"/lke/clusters/12345/pools/907616": `{"id":907616,"type":"g6-standard-2","count":4}`,
+	})
+	writeTestFile(t, filepath.Join(envRoot, "state", "lke.env"), "LKE_CLUSTER_ID=12345\n")
+	t.Setenv("LINODE_TOKEN", "test-token")
+
+	err := ensureLKENodePool(provisionPaths{Workspace: workspace, EnvRoot: envRoot}, map[string]string{
+		"CLOUD_STACK_NAME": "video-cloud-staging",
+		"LKE_NODE_COUNT":   "4",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	curlCalls := readTestFile(t, curlLog)
+	for _, want := range []string{
+		"GET /lke/clusters/12345/pools",
+		"PUT /lke/clusters/12345/pools/907616",
+	} {
+		if !strings.Contains(curlCalls, want) {
+			t.Fatalf("expected %q in curl log, got:\n%s", want, curlCalls)
+		}
 	}
 }
 
@@ -461,23 +514,23 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"cacert.pem:",
 		"kind: ConfigMap\nmetadata:\n  name: mqtt-config",
 		"broker: emqx",
-		"kind: Deployment\nmetadata:\n  name: mqtt",
+		"kind: StatefulSet\nmetadata:\n  name: mqtt",
+		"serviceName: mqtt-headless",
 		"replicas: 1",
-		"maxSurge: 0",
-		"maxUnavailable: 1",
+		"podManagementPolicy: Parallel",
+		"updateStrategy:",
 		"image: emqx/emqx:",
 		"EMQX_NODE__NAME",
 		"EMQX_CLUSTER__DISCOVERY_STRATEGY",
-		`value: "manual"`,
-		"EMQX_CLUSTER__DNS__NAME",
-		"mqtt-headless.video-cloud-staging-video-cloud.svc.cluster.local",
+		`value: "static"`,
+		"EMQX_CLUSTER__STATIC__SEEDS",
+		"emqx@mqtt-0.mqtt-headless.video-cloud-staging-video-cloud.svc.cluster.local",
 		"whenUnsatisfiable: DoNotSchedule",
 		"requiredDuringSchedulingIgnoredDuringExecution:",
 		"EMQX_LISTENERS__SSL__DEFAULT__ACCEPTORS",
 		`value: "128"`,
 		"EMQX_LISTENERS__SSL__DEFAULT__TCP_OPTIONS__BACKLOG",
 		`value: "8192"`,
-		"emqx ctl cluster join emqx@10.2.0.1",
 		"emqx ctl cluster status",
 		"EMQX_LISTENERS__TCP__DEFAULT__BIND",
 		"EMQX_LISTENERS__SSL__DEFAULT__BIND",
@@ -513,7 +566,7 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 	}
 }
 
-func TestRunProvisionLKEDeployCanExposePublicMQTTLoadBalancer(t *testing.T) {
+func TestRunProvisionLKEDeployCanExposePublicMQTTNodePort(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
@@ -530,15 +583,19 @@ func TestRunProvisionLKEDeployCanExposePublicMQTTLoadBalancer(t *testing.T) {
 	log := readTestFile(t, logPath)
 	for _, want := range []string{
 		"kind: Service\nmetadata:\n  name: mqtt-public",
-		"type: LoadBalancer",
+		"type: NodePort",
 		"externalTrafficPolicy: Local",
 		"name: mqtts\n      port: 8883",
+		"nodePort: 31883",
 		"kind: NetworkPolicy\nmetadata:\n  name: allow-public-mqtt-loadtest",
 		"port: 8883",
 	} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("expected %q in kubectl manifests, got:\n%s", want, log)
 		}
+	}
+	if strings.Contains(log, "type: LoadBalancer") {
+		t.Fatalf("public MQTT must not render a LoadBalancer service, got:\n%s", log)
 	}
 }
 
@@ -560,9 +617,9 @@ func TestLKEAllowEMQXClusterNetworkPolicyManifestIsValidYAMLShape(t *testing.T) 
 	}
 }
 
-func TestRunProvisionLKEDeployCanExposeMultiplePublicMQTTLoadBalancers(t *testing.T) {
+func TestRunProvisionLKEDeployRejectsMultiplePublicMQTTNodePortsForV1(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
-	logPath := fakeKubectl(t)
+	fakeKubectl(t)
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
 	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
 	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
@@ -571,20 +628,9 @@ func TestRunProvisionLKEDeployCanExposeMultiplePublicMQTTLoadBalancers(t *testin
 	t.Setenv("LKE_PUBLIC_MQTT_LOADBALANCER", "1")
 	t.Setenv("LKE_PUBLIC_MQTT_LOADBALANCER_COUNT", "3")
 
-	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
-		t.Fatal(err)
-	}
-
-	log := readTestFile(t, logPath)
-	for _, want := range []string{
-		"kind: Service\nmetadata:\n  name: mqtt-public",
-		"kind: Service\nmetadata:\n  name: mqtt-public-01",
-		"kind: Service\nmetadata:\n  name: mqtt-public-02",
-		"externalTrafficPolicy: Local",
-	} {
-		if !strings.Contains(log, want) {
-			t.Fatalf("expected %q in kubectl manifests, got:\n%s", want, log)
-		}
+	err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"})
+	if err == nil || !strings.Contains(err.Error(), "LKE_PUBLIC_MQTT_LOADBALANCER_COUNT>1 is not supported") {
+		t.Fatalf("expected unsupported multiple public MQTT NodePorts error, got %v", err)
 	}
 }
 
@@ -597,9 +643,11 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 	helmLog := fakeHelm(t)
 	goLog := fakeGoForDNS(t)
 	certbotLog := fakeCertbot(t)
-	digLog := fakeDig(t, "203.0.113.42")
+	digLog := fakeDig(t, "198.51.100.10")
 	t.Setenv("LKE_PUBLIC_HTTPS_ISSUE_EMAIL", "ops@example.test")
 	t.Setenv("LKE_PUBLIC_HTTPS_ACME_SERVER", "https://acme-staging-v02.api.letsencrypt.org/directory")
+	t.Setenv("LKE_EDGE_HAPROXY_PUBLIC_IP", "198.51.100.10")
+	t.Setenv("LKE_EDGE_HAPROXY_PRIVATE_IP", "10.2.1.5")
 	t.Setenv("GODADDY_KEY", "test-key")
 	t.Setenv("GODADDY_SECRET", "test-secret")
 	t.Setenv("GODADDY_ENV", "prod")
@@ -612,13 +660,14 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 	for _, want := range []string{
 		"upgrade --install ingress-nginx ingress-nginx",
 		"--namespace video-cloud-staging-ingress",
-		"--set controller.service.type=LoadBalancer",
+		"--set controller.service.type=NodePort",
 		"--set controller.service.ports.https=443",
 		"--set controller.service.targetPorts.https=https",
+		"--set controller.service.nodePorts.https=30443",
 		"--set controller.service.enableHttp=false",
 		"--set controller.allowSnippetAnnotations=true",
 		"--set controller.config.annotations-risk-level=Critical",
-		"--set controller.replicaCount=3",
+		"--set controller.replicaCount=1",
 		"--set controller.resources.requests.cpu=500m",
 		"--set controller.resources.requests.memory=512Mi",
 		"--set controller.resources.limits.memory=1Gi",
@@ -691,10 +740,9 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		t.Fatalf("general public ingress must not include mTLS device host:\n%s", publicIngress)
 	}
 	for _, forbidden := range []string{
-		"nodePort:",
 		"controller.service.ports.http=80",
-		"port: 8883",
 		"port: 3478",
+		"status.loadBalancer.ingress",
 	} {
 		if strings.Contains(kubectlCalls, forbidden) {
 			t.Fatalf("public HTTPS edge must not expose %q, got:\n%s", forbidden, kubectlCalls)
@@ -703,12 +751,12 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 
 	goCalls := readTestFile(t, goLog)
 	for _, want := range []string{
-		"--name video-cloud-staging --data 203.0.113.42 --ttl 600",
-		"--name device.video-cloud-staging --data 203.0.113.42 --ttl 600",
-		"--name certissuer.video-cloud-staging --data 203.0.113.42 --ttl 600",
-		"--name account-manager.video-cloud-staging --data 203.0.113.42 --ttl 600",
-		"--name admin.video-cloud-staging --data 203.0.113.42 --ttl 600",
-		"--name frontend.video-cloud-staging --data 203.0.113.42 --ttl 600",
+		"--name video-cloud-staging --data 198.51.100.10 --ttl 600",
+		"--name device.video-cloud-staging --data 198.51.100.10 --ttl 600",
+		"--name certissuer.video-cloud-staging --data 198.51.100.10 --ttl 600",
+		"--name account-manager.video-cloud-staging --data 198.51.100.10 --ttl 600",
+		"--name admin.video-cloud-staging --data 198.51.100.10 --ttl 600",
+		"--name frontend.video-cloud-staging --data 198.51.100.10 --ttl 600",
 	} {
 		if !strings.Contains(goCalls, want) {
 			t.Fatalf("expected %q in GoDaddy calls, got:\n%s", want, goCalls)
@@ -726,6 +774,45 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 	if !strings.Contains(readTestFile(t, digLog), "video-cloud-staging.realtekconnect.com") {
 		t.Fatalf("expected DNS convergence checks, got:\n%s", readTestFile(t, digLog))
 	}
+	edgeDir := filepath.Join(envRoot, "artifacts", "edge-haproxy")
+	for _, name := range []string{"edge-vms.json", "upstreams.json", "haproxy.cfg", "install.sh", "validation.json"} {
+		if _, err := os.Stat(filepath.Join(edgeDir, name)); err != nil {
+			t.Fatalf("expected edge HAProxy artifact %s: %v", name, err)
+		}
+	}
+	var edgeVMs struct {
+		SSHAccess lkeEdgeHAProxySSHAccess `json:"ssh_access"`
+	}
+	if err := json.Unmarshal([]byte(readTestFile(t, filepath.Join(edgeDir, "edge-vms.json"))), &edgeVMs); err != nil {
+		t.Fatalf("read edge-vms.json: %v", err)
+	}
+	if edgeVMs.SSHAccess.User != "root" || edgeVMs.SSHAccess.KeyPath == "" || edgeVMs.SSHAccess.PublicKeyPath == "" {
+		t.Fatalf("expected edge-vms.json to include SSH access paths, got: %+v", edgeVMs.SSHAccess)
+	}
+	cfg := readTestFile(t, filepath.Join(edgeDir, "haproxy.cfg"))
+	for _, want := range []string{
+		"maxconn 200000",
+		"frontend public_https_443",
+		"bind *:443",
+		"backend k8s_ingress_https",
+		"backend k8s_ingress_https\n    balance roundrobin",
+		"server lke-node-1 10.2.1.10:30443 check",
+		"server lke-node-2 10.2.1.11:30443 check",
+		"server lke-node-3 10.2.1.12:30443 check",
+		"frontend public_mqtts_8883",
+		"bind *:8883",
+		"backend k8s_mqtts",
+		"backend k8s_mqtts\n    balance roundrobin",
+		"server mqtt-node-1 10.2.1.10:31883 check",
+		"server mqtt-node-2 10.2.1.12:31883 check",
+	} {
+		if !strings.Contains(cfg, want) {
+			t.Fatalf("expected %q in HAProxy config, got:\n%s", want, cfg)
+		}
+	}
+	if strings.Contains(cfg, "mqtt-node-3 10.2.1.11:31883") {
+		t.Fatalf("MQTT HAProxy backend must only include nodes with MQTT pods, got:\n%s", cfg)
+	}
 }
 
 func TestRunProvisionLKEPublicHTTPSStartsDNSUpsertsBeforeWaiting(t *testing.T) {
@@ -735,7 +822,7 @@ func TestRunProvisionLKEPublicHTTPSStartsDNSUpsertsBeforeWaiting(t *testing.T) {
 	}
 	fakeKubectl(t)
 	fakeHelm(t)
-	eventLog := fakeDNSCommandsWithGoDelay(t, "203.0.113.42", "0.2")
+	eventLog := fakeDNSCommandsWithGoDelay(t, "198.51.100.10", "0.2")
 	fakeCertbot(t)
 	t.Setenv("LKE_PUBLIC_HTTPS_ISSUE_EMAIL", "ops@example.test")
 	t.Setenv("LKE_PUBLIC_HTTPS_ACME_SERVER", "https://acme-staging-v02.api.letsencrypt.org/directory")
@@ -1272,19 +1359,12 @@ func TestLKEPostgresStatefulSetUsesPostgresImageOverride(t *testing.T) {
 	}
 }
 
-func TestLKEPostgresStatefulSetCanOverrideMaxConnections(t *testing.T) {
-	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
-	manifest := lkePostgresStatefulSetManifest(env)
-	if strings.Contains(manifest, "max_connections=") {
-		t.Fatalf("unexpected default max_connections override in PostgreSQL manifest:\n%s", manifest)
-	}
+func TestLKEPostgresStatefulSetSetsMaxConnections(t *testing.T) {
+	manifest := lkePostgresStatefulSetManifest(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})
 
-	t.Setenv("LKE_POSTGRES_MAX_CONNECTIONS", "300")
-	manifest = lkePostgresStatefulSetManifest(env)
 	for _, want := range []string{
-		`args:`,
 		`- "-c"`,
-		`- "max_connections=300"`,
+		`- "max_connections=800"`,
 	} {
 		if !strings.Contains(manifest, want) {
 			t.Fatalf("expected %q in PostgreSQL manifest, got:\n%s", want, manifest)
@@ -1292,6 +1372,15 @@ func TestLKEPostgresStatefulSetCanOverrideMaxConnections(t *testing.T) {
 	}
 }
 
+func TestLKEPostgresStatefulSetSupportsMaxConnectionsOverride(t *testing.T) {
+	t.Setenv("LKE_POSTGRES_MAX_CONNECTIONS", "500")
+
+	manifest := lkePostgresStatefulSetManifest(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})
+
+	if !strings.Contains(manifest, `- "max_connections=500"`) {
+		t.Fatalf("expected LKE_POSTGRES_MAX_CONNECTIONS override in PostgreSQL manifest, got:\n%s", manifest)
+	}
+}
 func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 	t.Setenv("LKE_POSTGRES_NODE_POOL_ID", "906225")
 	t.Setenv("LKE_MQTT_NODE_POOL_ID", "906225")
@@ -1304,8 +1393,9 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 	for _, want := range []string{
 		`lke.linode.com/pool-id: "906225"`,
 		`value: "postgres"`,
-		`cpu: "2"`,
-		`memory: "6Gi"`,
+		`cpu: "1"`,
+		`memory: "2Gi"`,
+		`memory: "4Gi"`,
 	} {
 		if !strings.Contains(postgres, want) {
 			t.Fatalf("expected %q in postgres manifest, got:\n%s", want, postgres)
@@ -1323,6 +1413,7 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 	for _, want := range []string{
 		"replicas: 1",
 		"topologySpreadConstraints:",
+		"whenUnsatisfiable: DoNotSchedule",
 		`cpu: "250m"`,
 		`memory: "1Gi"`,
 	} {
@@ -1340,12 +1431,17 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 		Host:      "video-cloud-staging.realtekconnect.com",
 	}, nil)
 	for _, want := range []string{
-		"replicas: 3",
+		"replicas: 2",
+		"strategy:",
+		"maxSurge: 0",
+		"maxUnavailable: 1",
 		"topologySpreadConstraints:",
-		`cpu: "1"`,
-		`memory: "2Gi"`,
-		"name: VIDEO_CLOUD_DB_MAX_OPEN_CONNS\n              value: \"80\"",
-		"name: VIDEO_CLOUD_DB_MAX_IDLE_CONNS\n              value: \"40\"",
+		"whenUnsatisfiable: DoNotSchedule",
+		`cpu: "500m"`,
+		`memory: "512Mi"`,
+		`memory: "1536Mi"`,
+		"name: VIDEO_CLOUD_DB_MAX_OPEN_CONNS\n              value: \"40\"",
+		"name: VIDEO_CLOUD_DB_MAX_IDLE_CONNS\n              value: \"20\"",
 		"name: VIDEO_CLOUD_DB_CONN_MAX_LIFETIME\n              value: \"5m\"",
 		"name: VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY\n              value: \"64\"",
 		"name: VIDEO_CLOUD_MQTT_SHADOW_HANDLER_CONCURRENCY\n              value: \"64\"",
@@ -1388,16 +1484,22 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 
 	mqtt := lkeMQTTDeploymentManifest(env)
 	for _, want := range []string{
+		"kind: StatefulSet",
+		"serviceName: mqtt-headless",
 		"replicas: 4",
-		"maxSurge: 0",
-		"maxUnavailable: 1",
+		"podManagementPolicy: Parallel",
+		"updateStrategy:",
 		`lke.linode.com/pool-id: "906225"`,
+		"fieldPath: metadata.name",
 		"EMQX_NODE__NAME",
-		`value: "emqx@$(POD_IP)"`,
+		`value: "emqx@$(POD_NAME).mqtt-headless.video-cloud-staging-video-cloud.svc.cluster.local"`,
 		"EMQX_CLUSTER__DISCOVERY_STRATEGY",
-		`value: "manual"`,
-		"EMQX_CLUSTER__DNS__NAME",
-		"mqtt-headless.video-cloud-staging-video-cloud.svc.cluster.local",
+		`value: "static"`,
+		"EMQX_CLUSTER__STATIC__SEEDS",
+		"emqx@mqtt-0.mqtt-headless.video-cloud-staging-video-cloud.svc.cluster.local",
+		"emqx@mqtt-1.mqtt-headless.video-cloud-staging-video-cloud.svc.cluster.local",
+		"emqx@mqtt-2.mqtt-headless.video-cloud-staging-video-cloud.svc.cluster.local",
+		"emqx@mqtt-3.mqtt-headless.video-cloud-staging-video-cloud.svc.cluster.local",
 		"topologySpreadConstraints:",
 		"whenUnsatisfiable: DoNotSchedule",
 		"podAntiAffinity:",
@@ -1407,16 +1509,19 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 		"EMQX_LISTENERS__SSL__DEFAULT__TCP_OPTIONS__BACKLOG",
 		`value: "8192"`,
 		"EMQX_FORCE_SHUTDOWN__MAX_MAILBOX_SIZE",
-		`value: "16384"`,
+		`value: "131072"`,
 		"EMQX_FORCE_SHUTDOWN__MAX_HEAP_SIZE",
-		`value: "256MB"`,
-		`cpu: "1"`,
-		`memory: "4Gi"`,
-		`memory: "6Gi"`,
+		`value: "512MB"`,
+		`cpu: "250m"`,
+		`memory: "512Mi"`,
+		`memory: "1536Mi"`,
 	} {
 		if !strings.Contains(mqtt, want) {
 			t.Fatalf("expected %q in mqtt manifest, got:\n%s", want, mqtt)
 		}
+	}
+	if strings.Contains(mqtt, "kind: Deployment") {
+		t.Fatalf("MQTT must be a StatefulSet, got Deployment:\n%s", mqtt)
 	}
 }
 
@@ -1429,6 +1534,24 @@ func TestLKEMQTTReplicasCanBeOverridden(t *testing.T) {
 	manifest := lkeMQTTDeploymentManifest(env)
 	if !strings.Contains(manifest, "replicas: 5") {
 		t.Fatalf("expected MQTT replica override in manifest, got:\n%s", manifest)
+	}
+}
+
+func TestLKEMQTTReplicasAreConfigurableCapacity(t *testing.T) {
+	t.Setenv("LKE_MQTT_REPLICAS", "6")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":   "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN": "video-cloud-staging.realtekconnect.com",
+	}
+	manifest := lkeMQTTDeploymentManifest(env)
+	if !strings.Contains(manifest, "replicas: 6") {
+		t.Fatalf("expected MQTT replicas to follow LKE_MQTT_REPLICAS, got:\n%s", manifest)
+	}
+	if !strings.Contains(manifest, "mqtt-5.mqtt-headless") {
+		t.Fatalf("expected EMQX seeds to scale through mqtt-5, got:\n%s", manifest)
+	}
+	if strings.Contains(manifest, "mqtt-6.mqtt-headless") {
+		t.Fatalf("EMQX seeds must not exceed requested replicas, got:\n%s", manifest)
 	}
 }
 
@@ -1844,6 +1967,59 @@ func TestRunProvisionLKEDeployWritesLegacyStackAndVideoState(t *testing.T) {
 		if !strings.Contains(state, want) {
 			t.Fatalf("expected %q in video state, got:\n%s", want, state)
 		}
+	}
+}
+
+func TestRunProvisionLKEDeployPreservesOperatorStackOverrides(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	fakeKubectl(t)
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), `CLOUD_ENV_NAME=staging
+CLOUD_PROVIDER=lke
+CLOUD_REGION=us-sea
+CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+LKE_INGRESS_REPLICAS=1
+LKE_MQTT_REPLICAS=1
+LKE_ACCOUNT_MANAGER_REPLICAS=1
+LKE_VIDEO_CLOUD_REPLICAS=1
+LKE_POSTGRES_REQUEST_CPU=500m
+LKE_POSTGRES_REQUEST_MEMORY=512Mi
+LKE_POSTGRES_LIMIT_MEMORY=1Gi
+LKE_MQTT_REQUEST_CPU=250m
+LKE_MQTT_REQUEST_MEMORY=512Mi
+LKE_MQTT_LIMIT_MEMORY=1Gi
+LKE_EDGE_HAPROXY_MAXCONN=200000
+LKE_EDGE_HAPROXY_TOKEN=must-not-be-written
+`)
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
+	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
+	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/rtk/cloud-admin:test")
+	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/rtk/frontend:test")
+	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
+
+	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+		t.Fatal(err)
+	}
+
+	stack := readTestFile(t, filepath.Join(envRoot, "env", "stack.env"))
+	for _, want := range []string{
+		"LKE_INGRESS_REPLICAS=1",
+		"LKE_MQTT_REPLICAS=1",
+		"LKE_ACCOUNT_MANAGER_REPLICAS=1",
+		"LKE_VIDEO_CLOUD_REPLICAS=1",
+		"LKE_POSTGRES_REQUEST_CPU=500m",
+		"LKE_POSTGRES_REQUEST_MEMORY=512Mi",
+		"LKE_POSTGRES_LIMIT_MEMORY=1Gi",
+		"LKE_MQTT_REQUEST_CPU=250m",
+		"LKE_MQTT_REQUEST_MEMORY=512Mi",
+		"LKE_MQTT_LIMIT_MEMORY=1Gi",
+		"LKE_EDGE_HAPROXY_MAXCONN=200000",
+	} {
+		if !strings.Contains(stack, want) {
+			t.Fatalf("expected %q in stack.env, got:\n%s", want, stack)
+		}
+	}
+	if strings.Contains(stack, "must-not-be-written") || strings.Contains(stack, "LKE_EDGE_HAPROXY_TOKEN") {
+		t.Fatalf("stack.env should not persist secret-like override keys, got:\n%s", stack)
 	}
 }
 
@@ -2807,6 +2983,8 @@ func makeLKETestEnv(t *testing.T) (string, string) {
 	t.Cleanup(func() {
 		_ = os.Unsetenv("RTK_CLOUD_LKE_KUBECONFIG")
 	})
+	t.Setenv("LKE_EDGE_HAPROXY_PUBLIC_IP", "198.51.100.10")
+	t.Setenv("LKE_EDGE_HAPROXY_PRIVATE_IP", "10.2.1.5")
 	fakeHelm(t)
 	workspace := t.TempDir()
 	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")
@@ -2898,6 +3076,10 @@ if [[ "$*" == *"get service cloud-logger -o name"* && "${FAKE_CLOUD_LOGGER_SERVI
   printf 'service/cloud-logger\n'
   exit 0
 fi
+if [[ "$*" == *"get nodes -o json"* ]]; then
+  printf '{"items":[{"metadata":{"name":"lke-node-a"},"status":{"addresses":[{"type":"InternalIP","address":"10.2.1.10"},{"type":"Hostname","address":"lke-node-1"}]}},{"metadata":{"name":"lke-node-b"},"status":{"addresses":[{"type":"InternalIP","address":"10.2.1.11"}]}},{"metadata":{"name":"lke-node-c"},"status":{"addresses":[{"type":"InternalIP","address":"10.2.1.12"}]}}]}\n'
+  exit 0
+fi
 if [[ "$*" == *"get secret openbao-tls -o json"* && -n "${FAKE_OPENBAO_TLS_SECRET_JSON:-}" ]]; then
   printf '%s\n' "$FAKE_OPENBAO_TLS_SECRET_JSON"
   exit 0
@@ -2914,26 +3096,17 @@ print(json.dumps({"data": {k: base64.b64encode(v.encode()).decode() for k, v in 
 PY
   exit 0
 fi
-if [[ "$*" == *"get pods -l app.kubernetes.io/name=mqtt -o jsonpath="* ]]; then
-  printf 'mqtt-aaa\t10.2.0.1\nmqtt-bbb\t10.2.0.2\nmqtt-ccc\t10.2.0.3\n'
+if [[ "$*" == *"get pods -l app.kubernetes.io/name=mqtt -o json"* ]]; then
+  printf '{"items":[{"metadata":{"name":"mqtt-0"},"spec":{"nodeName":"lke-node-a"},"status":{"phase":"Running"}},{"metadata":{"name":"mqtt-1"},"spec":{"nodeName":"lke-node-c"},"status":{"phase":"Running"}},{"metadata":{"name":"mqtt-pending"},"spec":{"nodeName":"lke-node-b"},"status":{"phase":"Pending"}}]}\n'
   exit 0
 fi
-if [[ "$*" == *"exec mqtt-"* && "$*" == *" emqx ctl cluster join emqx@10.2.0.1"* ]]; then
+if [[ "$*" == *"exec mqtt-0 -- emqx ctl cluster status"* ]]; then
   line='ARGS'
   for arg in "$@"; do
     line="$line $arg"
   done
   printf '%s\n' "$line" >> "` + logPath + `"
-  printf 'Join the cluster successfully.\n'
-  exit 0
-fi
-if [[ "$*" == *"exec mqtt-aaa -- emqx ctl cluster status"* ]]; then
-  line='ARGS'
-  for arg in "$@"; do
-    line="$line $arg"
-  done
-  printf '%s\n' "$line" >> "` + logPath + `"
-  printf 'Cluster status: #{running_nodes => [emqx@10.2.0.1,emqx@10.2.0.2,emqx@10.2.0.3]}\n'
+  printf 'Cluster status: #{running_nodes => [emqx@mqtt-0.mqtt-headless.video-cloud-staging-video-cloud.svc.cluster.local,emqx@mqtt-1.mqtt-headless.video-cloud-staging-video-cloud.svc.cluster.local,emqx@mqtt-2.mqtt-headless.video-cloud-staging-video-cloud.svc.cluster.local]}\n'
   exit 0
 fi
 if [[ "$*" == *"rollout status"* ]]; then
@@ -3015,6 +3188,10 @@ if [[ "$*" == *"get pod/openbao-0 -o jsonpath={.status.phase}"* ]]; then
 fi
 if [[ "$*" == *"get service ingress-nginx-controller -o jsonpath={.status.loadBalancer.ingress[0].ip}"* ]]; then
   printf '203.0.113.42'
+  exit 0
+fi
+if [[ "$*" == *"get nodes -o json"* ]]; then
+  printf '{"items":[{"status":{"addresses":[{"type":"InternalIP","address":"10.2.1.10"}]}}]}\n'
   exit 0
 fi
 if [[ "$*" == *"get secret openbao-tls -o json"* && -n "${FAKE_OPENBAO_TLS_SECRET_JSON:-}" ]]; then

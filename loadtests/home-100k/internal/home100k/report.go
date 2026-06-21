@@ -23,64 +23,17 @@ type ReportInput struct {
 }
 
 func RenderReport(input ReportInput) string {
-	status := "PASS"
-	reasons := []string{}
-	if !input.ShadowEvidenceFound {
-		status = "INCOMPLETE"
-		reasons = append(reasons, "Missing IoT Device Shadow evidence")
-	}
-	if !input.ServerEvidenceFound {
-		status = "INCOMPLETE"
-		reasons = append(reasons, "Missing server evidence")
-	}
-	if !input.LoadGeneratorHealthy {
-		status = "INCOMPLETE"
-		reasons = append(reasons, "Load-generator saturation invalidated server-capacity conclusion")
-	}
-	if !clientTargetCoverageComplete(input.Plan.Conditions, input.StageResults) {
-		status = "INCOMPLETE"
-		reasons = append(reasons, "Client target coverage is incomplete; sampled counters do not satisfy target connects or user targets")
-	}
-	if missing := missingDeviceTypeEvidence(input.Plan, input.StageResults); len(missing) > 0 {
-		status = "INCOMPLETE"
-		reasons = append(reasons, "Missing per-device-type MQTT evidence: "+strings.Join(missing, ", "))
-	}
-	for _, reason := range stageFunctionalFailureReasons(input.Plan.Conditions, input.StageResults) {
-		if status != "INCOMPLETE" {
-			status = "FAIL"
-		}
-		reasons = append(reasons, "Functional success below threshold: "+reason)
-	}
-	switch strings.ToLower(strings.TrimSpace(input.ServerCorrelation.Status)) {
-	case "fail":
-		if status != "INCOMPLETE" {
-			status = "FAIL"
-		}
-		reasons = append(reasons, "Server/client counter correlation mismatch")
-	case "incomplete":
-		status = "INCOMPLETE"
-		if len(input.ServerCorrelation.Reasons) == 0 {
-			reasons = append(reasons, "Server/client counter correlation is incomplete")
-		}
-		for _, reason := range input.ServerCorrelation.Reasons {
-			reasons = append(reasons, "Server/client counter correlation incomplete: "+reason)
-		}
-	}
-	switch strings.ToLower(strings.TrimSpace(input.RuntimeLogCorrelation.Status)) {
-	case "fail":
-		if status != "INCOMPLETE" {
-			status = "FAIL"
-		}
-		reasons = append(reasons, "Runtime log stream correlation mismatch")
-	case "incomplete":
-		status = "INCOMPLETE"
-		reasons = append(reasons, "Runtime log stream correlation is incomplete")
-	}
+	evidence := input.ServerEvidence
+	evidence.Complete = input.ServerEvidenceFound
+	health := LoadGeneratorHealth{Saturated: !input.LoadGeneratorHealthy}
+	outcome := evaluateRunOutcome(input.Plan, evidence, input.StageResults, health, input.ServerCorrelation, input.RuntimeLogCorrelation)
+	reasons := outcome.Reasons
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "# 100K Home IoT Device Shadow Load Test Report\n\n")
 	fmt.Fprintf(&b, "- Run ID: %s\n", firstNonEmpty(input.RunID, "<run_id>"))
-	fmt.Fprintf(&b, "- Status: %s\n", status)
+	fmt.Fprintf(&b, "- Status: %s\n", outcome.Status)
+	fmt.Fprintf(&b, "- Result: %s\n", firstNonEmpty(outcome.Result, "UNKNOWN"))
 	for _, reason := range reasons {
 		fmt.Fprintf(&b, "- %s\n", reason)
 	}
@@ -88,10 +41,14 @@ func RenderReport(input ReportInput) string {
 
 	fmt.Fprintln(&b, "## Status Summary")
 	if len(reasons) == 0 {
-		fmt.Fprintln(&b, "- status gate: passed")
+		fmt.Fprintln(&b, "- result gate: passed")
 	} else {
+		gateLabel := "result gate"
+		if outcome.Status == "INCOMPLETE" {
+			gateLabel = "status gate"
+		}
 		for _, reason := range reasons {
-			fmt.Fprintf(&b, "- status gate: %s\n", reason)
+			fmt.Fprintf(&b, "- %s: %s\n", gateLabel, reason)
 		}
 	}
 	if strings.TrimSpace(input.ServerCorrelation.Status) != "" {

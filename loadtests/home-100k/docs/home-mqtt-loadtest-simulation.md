@@ -217,7 +217,7 @@ Acceptance criteria:
   publish/subscribe traffic uses the issued device token.
 - Reports include per-user, per-device, and per-capability metrics.
 - Reports include command round-trip p95/p99.
-- MQTT/home-device coverage passes with success rate at least 95%.
+- MQTT/home-device coverage passes with success rate at least 99.5%.
 - WebRTC, relay, storage, clip, and snapshot are disabled or reported as
   `NOT_RUN`.
 - Reports redact passwords, bearer tokens, private keys, certificate bodies,

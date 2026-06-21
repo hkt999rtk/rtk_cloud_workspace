@@ -746,9 +746,10 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 	}
 	joined := strings.Join(calls, "\n")
 	for _, want := range []string{
-		"bash -lc GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o '" + filepath.Join(outDir, "bin", "home-100k-linux-amd64") + "' ./loadtests/home-100k/cmd/home-100k",
-		"bash -lc GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o '" + filepath.Join(outDir, "bin", "cloud-mqtt-test-linux-amd64") + "' ./scripts/go/cloud-mqtt-test",
-		"env ANSIBLE_CONFIG=loadtests/home-100k/ansible/ansible.cfg ansible-playbook --forks 20 -i " + filepath.Join(outDir, "ansible", "inventory.json") + " loadtests/home-100k/ansible/sync.yml",
+		"GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o '" + filepath.Join(outDir, "bin", "home-100k-linux-amd64") + "' ./loadtests/home-100k/cmd/home-100k",
+		"GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o '" + filepath.Join(outDir, "bin", "cloud-mqtt-test-linux-amd64") + "' ./scripts/go/cloud-mqtt-test",
+		"ansible-playbook --forks 20 -i " + filepath.Join(outDir, "ansible", "inventory.json"),
+		"ansible/sync.yml",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("sync live commands missing %q:\n%s", want, joined)
@@ -1024,6 +1025,14 @@ func TestAnsibleSyncUsesOrchestraFanout(t *testing.T) {
 		"Fan out runner binary from orchestra",
 		"delegate_to: \"{{ groups['home_100k_orchestra'][0] }}\"",
 		"rsync_timeout",
+		"rsync_retries",
+		"rsync_retry_delay",
+		"until: runner_copy.rc == 0",
+		"until: rtk_cloud_copy.rc == 0",
+		"until: cloud_mqtt_test_copy.rc == 0",
+		"until: manifest_copy.rc == 0",
+		"until: common_env_archive_copy.rc == 0",
+		"until: env_archive_copy.rc == 0",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("sync.yml missing orchestra fanout marker %q:\n%s", want, body)
@@ -1052,7 +1061,7 @@ func TestAnsibleSyncRetriesTransientFanoutRsyncFailures(t *testing.T) {
 			t.Fatalf("sync.yml should retry fanout rsync for %s until rc == 0:\n%s", register, body)
 		}
 	}
-	if !strings.Contains(body, "retries: 3") || !strings.Contains(body, "delay: 5") {
+	if !strings.Contains(body, "retries: \"{{ rsync_retries | default(6) }}\"") || !strings.Contains(body, "delay: \"{{ rsync_retry_delay | default(5) }}\"") {
 		t.Fatalf("sync.yml should retry transient fanout SSH/rsync failures with a short delay:\n%s", body)
 	}
 }
@@ -1407,7 +1416,8 @@ func TestHome100KScriptKeepsVMsForFailedOrIncompleteRunsByDefault(t *testing.T) 
 		"should_shutdown_after_workflow()",
 		"[[ \"$shutdown_on_error\" == \"1\" ]]",
 		"[[ \"$workflow_rc\" != \"0\" ]]",
-		"[[ \"$(current_report_status)\" == \"PASS\" ]]",
+		"current_report_result()",
+		"[[ \"$(current_report_status)\" == \"COMPLETE\" && \"$(current_report_result)\" == \"SUCCESS\" ]]",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("home-100k.sh missing shutdown gate marker %q:\n%s", want, body)
@@ -1813,7 +1823,8 @@ func TestExecuteRunStagesLiveStartsRunnerDaemonsThenHostCoordinator(t *testing.T
 	}
 	joined := strings.Join(calls, "\n")
 	for _, want := range []string{
-		"env ANSIBLE_CONFIG=loadtests/home-100k/ansible/ansible.cfg ansible-playbook --forks 20 -i " + filepath.Join(outDir, "ansible", "inventory.json") + " loadtests/home-100k/ansible/start-runner.yml",
+		"ansible-playbook --forks 20 -i " + filepath.Join(outDir, "ansible", "inventory.json"),
+		"ansible/start-runner.yml",
 		"--extra-vars @" + filepath.Join(outDir, "ansible", "extra-vars.json"),
 	} {
 		if !strings.Contains(joined, want) {
@@ -1828,6 +1839,76 @@ func TestExecuteRunStagesLiveStartsRunnerDaemonsThenHostCoordinator(t *testing.T
 	}
 	if !strings.Contains(stdout.String(), `"dispatched"`) || !strings.Contains(stdout.String(), `"id": 101`) {
 		t.Fatalf("stdout missing dispatched VMs:\n%s", stdout.String())
+	}
+}
+
+func TestExecuteRunStagesLiveRetriesStartRunnerPlaybook(t *testing.T) {
+	outDir := t.TempDir()
+	envRoot := writeTinyEnvRoot(t)
+	writeHome100KCoverageArtifacts(t, envRoot)
+	stateFile := filepath.Join(outDir, "vms.json")
+	body, err := json.Marshal(map[string]any{
+		"created": []LinodeVM{{ID: 101, Label: "lg01", PublicIPv4: "203.0.113.101"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stateFile, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	oldRunner := commandRunner
+	oldCoordinator := runHostCoordinator
+	oldDelay := ansibleRetryDelay
+	defer func() {
+		commandRunner = oldRunner
+		runHostCoordinator = oldCoordinator
+		ansibleRetryDelay = oldDelay
+	}()
+	ansibleRetryDelay = 0
+
+	startAttempts := 0
+	commandRunner = func(name string, args ...string) error {
+		joined := name + " " + strings.Join(args, " ")
+		if strings.Contains(joined, "ansible/start-runner.yml") {
+			startAttempts++
+			if startAttempts == 1 {
+				return errors.New("transient ssh close")
+			}
+		}
+		return nil
+	}
+	coordinatorCalled := false
+	runHostCoordinator = func(vms []LinodeVM, plan Plan, runID string, values workflowFlagValues) (StartCoordination, error) {
+		coordinatorCalled = true
+		return StartCoordination{Mode: "host-coordinator", ReadyBarrier: "1/1"}, nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Execute([]string{
+		"run-stages",
+		"--env-root", envRoot,
+		"--brandname", "RTK",
+		"--region", "us-sea",
+		"--run-id", "run-cli",
+		"--out-dir", outDir,
+		"--live",
+		"--vm-state-file", stateFile,
+		"--remote-workspace", "/root/rtk_cloud_workspace",
+		"--remote-env-root", "/root/rtk_cloud_workspace/cloud_env/staging/lke",
+		"--remote-out-root", "/var/lib/home-100k",
+		"--ssh-user", "root",
+		"--ssh-key", "/tmp/test-key",
+		"--mqtt-addr", "mqtt-public.example.test:8883",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Execute(run-stages live) code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if startAttempts != 2 {
+		t.Fatalf("start-runner attempts = %d, want 2", startAttempts)
+	}
+	if !coordinatorCalled {
+		t.Fatalf("host coordinator was not called after start-runner retry")
 	}
 }
 
@@ -1925,15 +2006,15 @@ func TestApplySourceCounterBaselineDelta(t *testing.T) {
 
 func TestNormalizeEvidenceSourceCatalogMetadataPreservesOptionalSources(t *testing.T) {
 	sources := requiredEvidenceSources(true)
-	sources["redis_valkey"] = EvidenceSource{Available: false, Detail: "exit status 1"}
+	sources["edge_haproxy"] = EvidenceSource{Available: false, Detail: "exit status 1"}
 
 	normalizeEvidenceSourceCatalogMetadata(sources)
 
-	if !sources["redis_valkey"].Optional {
-		t.Fatalf("redis_valkey optional = false, want true")
+	if !sources["edge_haproxy"].Optional {
+		t.Fatalf("edge_haproxy optional = false, want true")
 	}
 	if !allEvidenceSourcesAvailable(sources) {
-		t.Fatalf("optional redis_valkey should not make required evidence incomplete")
+		t.Fatalf("optional edge_haproxy should not make required evidence incomplete")
 	}
 }
 
@@ -2678,7 +2759,8 @@ func TestExecuteCollectLiveCopiesShardArtifacts(t *testing.T) {
 	}
 	joined := strings.Join(calls, "\n")
 	for _, want := range []string{
-		"env ANSIBLE_CONFIG=loadtests/home-100k/ansible/ansible.cfg ansible-playbook --forks 20 -i " + filepath.Join(outDir, "ansible", "inventory.json") + " loadtests/home-100k/ansible/collect.yml",
+		"ansible-playbook --forks 20 -i " + filepath.Join(outDir, "ansible", "inventory.json"),
+		"ansible/collect.yml",
 		"--extra-vars @" + filepath.Join(outDir, "ansible", "extra-vars.json"),
 	} {
 		if !strings.Contains(joined, want) {
@@ -2709,7 +2791,7 @@ func TestExecuteCollectServerEvidenceDefaultsToIncompleteSourcePlan(t *testing.T
 	for _, want := range []string{
 		`"complete": false`,
 		`"emqx"`,
-		`"iot_device_shadow"`,
+		`"edge_haproxy"`,
 		`"redis_valkey"`,
 		`"ingress_nginx"`,
 		`"host_pod_resources"`,
@@ -3039,6 +3121,8 @@ func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 		calls = append(calls, name+" "+strings.Join(args, " "))
 		joined := strings.Join(args, " ")
 		switch {
+		case strings.Contains(joined, "edge-vms.json"):
+			return "edge_haproxy.ssh_ok 1\nedge_haproxy.vm_count 1\nedge_haproxy.process.fd_count 128\nedge_haproxy.tcp.established_8883 10000\n", nil
 		case strings.Contains(joined, "device_runtime_logs"):
 			t.Fatalf("collect-server-evidence queried legacy device_runtime_logs table: %s %s", name, joined)
 		case strings.Contains(joined, "device_shadows"):
@@ -3071,7 +3155,7 @@ func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 	if !strings.Contains(out, `"evidence_window_mode": "run_scoped_since_time"`) || !strings.Contains(out, `"evidence_window_start": "2026-06-16T21:06:05Z"`) {
 		t.Fatalf("stdout missing run-scoped evidence window:\n%s", out)
 	}
-	if !strings.Contains(out, `"app_user.desired_writes": 10`) || !strings.Contains(out, `"device_shadow.reported_converged": 10`) {
+	if !strings.Contains(out, `"edge_haproxy.tcp.established_8883": 10000`) || !strings.Contains(out, `"device_shadow.reported_converged": 10`) {
 		t.Fatalf("stdout missing parsed counters:\n%s", out)
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "server-evidence.json")); err != nil {
@@ -3090,21 +3174,39 @@ func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 	}
 }
 
-func TestServerEvidenceProbesIncludeMQTTNodeBalancerHealth(t *testing.T) {
-	probes := serverEvidenceProbes("run-nb", "--since=1m")
+func TestLocalWorkflowArtifactPathResolvesRelativePathFromWorkspaceRoot(t *testing.T) {
+	workspace, err := localWorkspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel := filepath.Join("loadtests", "home-100k", "reports", "unit-relative-baseline", "server-evidence-baseline.json")
+
+	got, err := localWorkflowArtifactPath(rel)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := filepath.Join(workspace, rel)
+	if got != want {
+		t.Fatalf("resolved path = %q, want %q", got, want)
+	}
+}
+
+func TestServerEvidenceProbesIncludeExternalHAProxyHealth(t *testing.T) {
+	probes := serverEvidenceProbes("cloud_env/staging/lke", "run-edge", "--since=1m")
 	for _, probe := range probes {
-		if probe.source != "mqtt_nodebalancer" {
+		if probe.source != "edge_haproxy" {
 			continue
 		}
 		joined := strings.Join(append([]string{probe.command}, probe.args...), " ")
-		for _, want := range []string{"LINODE_TOKEN", "mqtt-public", "nodebalancers", "mqtt_nodebalancer.nodes_up"} {
+		for _, want := range []string{"edge-vms.json", "ssh_access.key_path", "edge_haproxy.process.fd_count", "edge_haproxy.tcp.established_8883"} {
 			if !strings.Contains(joined, want) {
-				t.Fatalf("mqtt_nodebalancer probe missing %q in:\n%s", want, joined)
+				t.Fatalf("edge_haproxy probe missing %q in:\n%s", want, joined)
 			}
 		}
 		return
 	}
-	t.Fatal("serverEvidenceProbes() missing mqtt_nodebalancer probe")
+	t.Fatal("serverEvidenceProbes() missing edge_haproxy probe")
 }
 
 func TestKubectlLogEvidenceProbesBoundLogCollectionTime(t *testing.T) {

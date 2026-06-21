@@ -23,6 +23,7 @@ type RunOptions struct {
 type RunResult struct {
 	RunID                 string                `json:"run_id"`
 	Status                string                `json:"status"`
+	Result                string                `json:"result,omitempty"`
 	Plan                  Plan                  `json:"plan"`
 	StageResults          []StageResult         `json:"stage_results"`
 	DeviceMQTTTotals      DeviceMQTTTotals      `json:"device_mqtt_totals"`
@@ -37,6 +38,12 @@ type RunResult struct {
 	ResultsFile           string                `json:"results_file"`
 	ServerEvidenceFile    string                `json:"server_evidence_file"`
 	ReportFile            string                `json:"report_file"`
+}
+
+type RunOutcome struct {
+	Status  string   `json:"status"`
+	Result  string   `json:"result,omitempty"`
+	Reasons []string `json:"reasons,omitempty"`
 }
 
 type AggregateOptions struct {
@@ -314,12 +321,12 @@ func Run(opts RunOptions) (RunResult, error) {
 	thresholds := gateThresholdsFromConditions(plan.Conditions)
 	correlation := correlateServerEvidenceWithThresholds(evidence, deviceTotals, appTotals, thresholds)
 	runtimeLogCorrelation := correlateRuntimeLogsWithThresholds(evidence, stageResults, thresholds)
-	status := runStatusWithCorrelation(plan, evidence, stageResults, LoadGeneratorHealth{}, correlation)
-	status = statusWithRuntimeLogCorrelation(status, runtimeLogCorrelation)
+	outcome := evaluateRunOutcome(plan, evidence, stageResults, LoadGeneratorHealth{}, correlation, runtimeLogCorrelation)
 
 	result := RunResult{
 		RunID:                 runID,
-		Status:                status,
+		Status:                outcome.Status,
+		Result:                outcome.Result,
 		Plan:                  plan,
 		StageResults:          stageResults,
 		DeviceMQTTTotals:      deviceTotals,
@@ -398,11 +405,11 @@ func AggregateCollectedRun(opts AggregateOptions) (RunResult, error) {
 	thresholds := gateThresholdsFromConditions(plan.Conditions)
 	correlation := correlateServerEvidenceWithThresholds(evidence, deviceTotals, appTotals, thresholds)
 	runtimeLogCorrelation := correlateRuntimeLogsWithThresholds(evidence, stages, thresholds)
-	status := runStatusWithCorrelation(plan, evidence, stages, loadHealth, correlation)
-	status = statusWithRuntimeLogCorrelation(status, runtimeLogCorrelation)
+	outcome := evaluateRunOutcome(plan, evidence, stages, loadHealth, correlation, runtimeLogCorrelation)
 	result := RunResult{
 		RunID:                 runID,
-		Status:                status,
+		Status:                outcome.Status,
+		Result:                outcome.Result,
 		Plan:                  plan,
 		StageResults:          stages,
 		DeviceMQTTTotals:      deviceTotals,
@@ -835,21 +842,19 @@ func loadSyncTelemetry(path string) SyncTelemetry {
 
 func requiredEvidenceSources(available bool) map[string]EvidenceSource {
 	return map[string]EvidenceSource{
-		"emqx":                      {Available: available},
-		"video_cloud_api":           {Available: available},
-		"iot_device_shadow":         {Available: available},
-		"iot_device_shadow_streams": {Available: available},
-		"postgres":                  {Available: available},
-		"ingress_nginx":             {Available: available},
-		"host_pod_resources":        {Available: available},
+		"emqx":               {Available: available},
+		"video_cloud_api":    {Available: available},
+		"postgres":           {Available: available},
+		"redis_valkey":       {Available: available},
+		"ingress_nginx":      {Available: available},
+		"host_pod_resources": {Available: available},
 	}
 }
 
 func optionalEvidenceSources(available bool) map[string]EvidenceSource {
 	return map[string]EvidenceSource{
-		"central_logger":    {Available: available, Optional: true},
-		"mqtt_nodebalancer": {Available: available, Optional: true},
-		"redis_valkey":      {Available: available, Optional: true},
+		"central_logger": {Available: available, Optional: true},
+		"edge_haproxy":   {Available: available, Optional: true},
 	}
 }
 
@@ -928,6 +933,133 @@ func runStatusWithCorrelation(plan Plan, evidence ServerEvidence, stages []Stage
 	}
 }
 
+const runSuccessRateThresholdPercent = 99.5
+
+func evaluateRunOutcome(plan Plan, evidence ServerEvidence, stages []StageResult, health LoadGeneratorHealth, correlation ServerCorrelation, runtimeLogCorrelation RuntimeLogCorrelation) RunOutcome {
+	outcome := RunOutcome{Status: "COMPLETE", Result: "SUCCESS"}
+	reasons := []string{}
+	incomplete := false
+	fail := false
+
+	if !evidence.Complete {
+		incomplete = true
+		reasons = append(reasons, "Missing server evidence")
+	}
+	if !shadowEvidenceComplete(stages) {
+		incomplete = true
+		reasons = append(reasons, "Missing IoT Device Shadow evidence")
+	}
+	if health.Saturated {
+		incomplete = true
+		reasons = append(reasons, "Load-generator saturation invalidated server-capacity conclusion")
+		for _, reason := range health.Reasons {
+			reasons = append(reasons, reason)
+		}
+	}
+	missingTypes := missingDeviceTypeEvidence(plan, stages)
+
+	switch strings.ToLower(strings.TrimSpace(correlation.Status)) {
+	case "pass":
+	case "fail":
+		fail = true
+		reasons = append(reasons, "Server/client counter correlation mismatch")
+	case "":
+		incomplete = true
+		reasons = append(reasons, "Server/client counter correlation is incomplete")
+	default:
+		incomplete = true
+		if len(correlation.Reasons) == 0 {
+			reasons = append(reasons, "Server/client counter correlation is incomplete")
+		}
+		for _, reason := range correlation.Reasons {
+			reasons = append(reasons, "Server/client counter correlation incomplete: "+reason)
+		}
+	}
+
+	switch strings.ToLower(strings.TrimSpace(runtimeLogCorrelation.Status)) {
+	case "", "pass", "skipped":
+	case "fail":
+		fail = true
+		reasons = append(reasons, "Runtime log stream correlation mismatch")
+	default:
+		incomplete = true
+		reasons = append(reasons, "Runtime log stream correlation is incomplete")
+	}
+
+	if !incomplete {
+		if len(missingTypes) > 0 {
+			fail = true
+			reasons = append(reasons, "Missing per-device-type MQTT evidence: "+strings.Join(missingTypes, ", "))
+		}
+		for _, stage := range stages {
+			if stage.AuthorizationViolationCount > 0 {
+				fail = true
+				reasons = append(reasons, fmt.Sprintf("stage %s authorization violations: %d", firstNonEmpty(stage.Name, "unknown"), stage.AuthorizationViolationCount))
+			}
+			if stage.DesiredReportedConvergenceRate < 95 {
+				fail = true
+				reasons = append(reasons, fmt.Sprintf("stage %s desired/reported convergence %.2f%% below 95.00%% threshold", firstNonEmpty(stage.Name, "unknown"), stage.DesiredReportedConvergenceRate))
+			}
+			if stage.OfflineDesiredConvergenceRate < 95 {
+				fail = true
+				reasons = append(reasons, fmt.Sprintf("stage %s offline desired convergence %.2f%% below 95.00%% threshold", firstNonEmpty(stage.Name, "unknown"), stage.OfflineDesiredConvergenceRate))
+			}
+			if stage.DeltaClearSuccessRatePercent < 95 {
+				fail = true
+				reasons = append(reasons, fmt.Sprintf("stage %s delta clear success %.2f%% below 95.00%% threshold", firstNonEmpty(stage.Name, "unknown"), stage.DeltaClearSuccessRatePercent))
+			}
+		}
+		for _, reason := range successRateFailureReasons(plan.Conditions, stages, runSuccessRateThresholdPercent) {
+			fail = true
+			reasons = append(reasons, reason)
+		}
+	}
+
+	if incomplete {
+		outcome.Status = "INCOMPLETE"
+		outcome.Result = "INCOMPLETE"
+	} else if fail {
+		outcome.Result = "FAIL"
+	}
+	outcome.Reasons = reasons
+	return outcome
+}
+
+func successRateFailureReasons(conditions TestConditions, stages []StageResult, threshold float64) []string {
+	reasons := []string{}
+	for _, stage := range stages {
+		stageName := firstNonEmpty(stage.Name, "unknown")
+		targetDevices := int64(stage.ConnectedDevices)
+		if targetDevices > 0 {
+			activeConnections := nonZeroInt64(stage.DeviceMQTTTotals.ActiveConnections, stage.DeviceMQTTTotals.ConnectSuccess)
+			activeSubscriptions := nonZeroInt64(stage.DeviceMQTTTotals.ActiveSubscriptions, stage.DeviceMQTTTotals.Subscribes)
+			if rate := percentInt64(activeConnections, targetDevices); rate < threshold {
+				reasons = append(reasons, fmt.Sprintf("stage %s connection success rate %.2f%% below %.2f%% threshold (%d/%d)", stageName, rate, threshold, activeConnections, targetDevices))
+			}
+			if rate := percentInt64(activeSubscriptions, targetDevices); rate < threshold {
+				reasons = append(reasons, fmt.Sprintf("stage %s subscription success rate %.2f%% below %.2f%% threshold (%d/%d)", stageName, rate, threshold, activeSubscriptions, targetDevices))
+			}
+		}
+		expectedUsers := int64(expectedStageUsers(conditions, stage.ConnectedDevices))
+		if expectedUsers > 0 {
+			if rate := percentInt64(stage.AppUserTotals.DesiredWrites, expectedUsers); rate < threshold {
+				reasons = append(reasons, fmt.Sprintf("stage %s app desired write success rate %.2f%% below %.2f%% threshold (%d/%d)", stageName, rate, threshold, stage.AppUserTotals.DesiredWrites, expectedUsers))
+			}
+			if rate := percentInt64(stage.AppUserTotals.ReceivedAcks, expectedUsers); rate < threshold {
+				reasons = append(reasons, fmt.Sprintf("stage %s app ACK success rate %.2f%% below %.2f%% threshold (%d/%d)", stageName, rate, threshold, stage.AppUserTotals.ReceivedAcks, expectedUsers))
+			}
+		}
+	}
+	return reasons
+}
+
+func percentInt64(value, total int64) float64 {
+	if total <= 0 {
+		return 0
+	}
+	return float64(value) * 100 / float64(total)
+}
+
 func statusWithRuntimeLogCorrelation(status string, correlation RuntimeLogCorrelation) string {
 	switch strings.ToLower(strings.TrimSpace(correlation.Status)) {
 	case "fail":
@@ -963,11 +1095,21 @@ func correlateServerEvidenceWithThresholds(evidence ServerEvidence, device Devic
 	}
 	totalMQTTConnectSuccess := device.ConnectSuccess + app.MQTTConnackSuccess
 	serverTotalMQTTConnectSuccess := evidenceCounter(evidence, "emqx", "mqtt.total_connect_success")
+	counterName := "mqtt.total_connect_success"
 	if serverTotalMQTTConnectSuccess == 0 {
 		serverTotalMQTTConnectSuccess = evidenceCounter(evidence, "emqx", "device_mqtt.connect_success")
+		counterName = "device_mqtt.connect_success"
+	}
+	if serverTotalMQTTConnectSuccess == 0 {
+		serverTotalMQTTConnectSuccess = evidenceCounter(evidence, "emqx", "emqx.metric.client.connack")
+		counterName = "emqx.metric.client.connack"
+	}
+	if serverTotalMQTTConnectSuccess == 0 {
+		serverTotalMQTTConnectSuccess = evidenceCounter(evidence, "emqx", "emqx.metric.client.connected")
+		counterName = "emqx.metric.client.connected"
 	}
 	checks := []CorrelationCheck{
-		newCorrelationCheck("emqx", "mqtt.total_connect_success", totalMQTTConnectSuccess, serverTotalMQTTConnectSuccess, aggregateCorrelationTolerance(totalMQTTConnectSuccess, serverTotalMQTTConnectSuccess, thresholds)),
+		newCorrelationCheck("emqx", counterName, totalMQTTConnectSuccess, serverTotalMQTTConnectSuccess, aggregateCorrelationTolerance(totalMQTTConnectSuccess, serverTotalMQTTConnectSuccess, thresholds)),
 		newCorrelationCheck("iot_device_shadow", "app_user.desired_writes", app.DesiredWrites, evidenceCounter(evidence, "iot_device_shadow", "app_user.desired_writes"), aggregateCorrelationTolerance(app.DesiredWrites, evidenceCounter(evidence, "iot_device_shadow", "app_user.desired_writes"), thresholds)),
 		newCorrelationCheck("iot_device_shadow", "device_mqtt.delta_received", device.DeltaReceived, evidenceCounter(evidence, "iot_device_shadow", "device_mqtt.delta_received"), aggregateCorrelationTolerance(device.DeltaReceived, evidenceCounter(evidence, "iot_device_shadow", "device_mqtt.delta_received"), thresholds)),
 		newCorrelationCheck("iot_device_shadow", "device_mqtt.reported_publishes", device.ReportedPublishes, evidenceCounter(evidence, "iot_device_shadow", "device_mqtt.reported_publishes"), aggregateCorrelationTolerance(device.ReportedPublishes, evidenceCounter(evidence, "iot_device_shadow", "device_mqtt.reported_publishes"), thresholds)),
@@ -1017,7 +1159,7 @@ func correlateRuntimeLogsWithThresholds(evidence ServerEvidence, stages []StageR
 		return result
 	}
 	if !source.Available || len(source.Counters) == 0 {
-		result.Status = "incomplete"
+		result.Status = "skipped"
 		return result
 	}
 	for _, event := range events {

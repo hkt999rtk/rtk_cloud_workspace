@@ -10,10 +10,6 @@
       "available": true,
       "detail": "API latency, error rate, request-token latency, and route health collected"
     },
-    "iot_device_shadow": {
-      "available": true,
-      "detail": "shadow get/update latency, accepted/rejected counts, delta throughput, and convergence windows collected"
-    },
     "postgres": {
       "available": true,
       "detail": "connections, CPU, locks, slow queries, write I/O, and shadow table write pressure collected"
@@ -29,6 +25,11 @@
     "host_pod_resources": {
       "available": true,
       "detail": "node and pod CPU, memory, disk I/O, network throughput, and file descriptor pressure collected"
+    },
+    "edge_haproxy": {
+      "available": true,
+      "optional": true,
+      "detail": "external HAProxy edge process, socket, and systemd limit evidence collected"
     }
   }
 }

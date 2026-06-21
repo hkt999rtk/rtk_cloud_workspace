@@ -734,8 +734,10 @@ evidence comes from central
 logger `/v1/logs` `device_runtime_log` events; the old PostgreSQL
 `device_runtime_logs` table is a legacy deployment detail and is not required by
 current 10K/100K reports.
-The central logger query API is used when `services/cloud-logger/logger.env` is
-available in the selected env-root.
+Optional external HAProxy edge evidence is also collected when the selected
+env-root contains `artifacts/edge-haproxy/edge-vms.json`. The central logger
+query API is used when `services/cloud-logger/logger.env` is available in the
+selected env-root.
 For LKE environments where the logger config is intentionally stored elsewhere,
 set `HOME100K_CLOUD_LOGGER_ENV` to the logger env file path or export
 `CLOUD_LOGGER_ENDPOINT` and `CLOUD_LOGGER_INGEST_TOKEN` before evidence
@@ -813,8 +815,13 @@ Every report must include:
 - bottleneck assessment
 
 If IoT Device Shadow evidence, MQTT broker evidence, APP/API evidence, parsed
-server counters, non-zero client totals, or target-connect coverage cannot be
-collected, the report status must be `INCOMPLETE`, not `PASS`.
+server counters, or non-zero client totals cannot be collected, the report
+status must be `INCOMPLETE`, not `PASS`. If the run completes but stage target
+coverage is below the required success-rate threshold, the report status is
+`COMPLETE` and the result is `FAIL`.
+
+The default staging success-rate threshold is `99.5%` for stage connection,
+subscription, APP desired-write, and APP ACK coverage.
 
 If load-generator saturation invalidates the run, the report must say so
 instead of attributing the bottleneck to the server.
@@ -855,6 +862,8 @@ Server-side evidence:
 - Shadow update/delta/reported throughput.
 - PostgreSQL CPU, connections, locks, slow queries, and write I/O.
 - Redis/Valkey shadow hot-state and token projection metrics if enabled.
+- Redis/Valkey shadow hot-state and token projection metrics if enabled.
+- External HAProxy edge process/socket evidence when edge artifacts are present.
 - NATS/queue latency and pending messages if involved in the runtime path.
 - Ingress/nginx upstream latency and errors.
 - Host/pod CPU, memory, disk I/O, and network throughput.

@@ -412,37 +412,56 @@ func TestAggregateCollectedRunWithAvailableEvidenceButMissingCountersIsIncomplet
 	}
 }
 
-func TestRunStatusWithCorrelationRequiresClientTargetCoverage(t *testing.T) {
+func TestEvaluateRunOutcomeSeparatesCompletionFromSuccessRate(t *testing.T) {
 	stages := []StageResult{{
-		Name:             "25k",
-		ConnectedDevices: 25000,
+		Name:             "100pct",
+		ConnectedDevices: 10000,
 		DeviceMQTTTotals: DeviceMQTTTotals{
-			ConnectAttempts:   60,
-			ConnectSuccess:    60,
-			Publishes:         60,
-			ReceivedMessages:  60,
-			DeltaReceived:     60,
-			ReportedPublishes: 60,
+			ConnectAttempts:     10000,
+			ConnectSuccess:      9900,
+			Subscribes:          9900,
+			ActiveConnections:   9900,
+			ActiveSubscriptions: 9900,
+			Publishes:           9900,
+			ReceivedMessages:    9900,
+			DeltaReceived:       9900,
+			ReportedPublishes:   9900,
 		},
 		AppUserTotals: AppUserTotals{
-			LoginAttempts: 60,
-			DesiredWrites: 60,
-			ReceivedAcks:  60,
+			LoginAttempts: 500,
+			LoginSuccess:  500,
+			DesiredWrites: 500,
+			ReceivedAcks:  500,
 		},
 		DesiredReportedConvergenceRate: 100,
 		OfflineDesiredConvergenceRate:  100,
 		DeltaClearSuccessRatePercent:   100,
+		DeviceTypeTotals: map[string]DeviceTypeTotals{
+			"light": {TelemetryPublishes: 9900},
+		},
 	}}
 	evidence := ServerEvidence{Complete: true, Sources: requiredEvidenceSources(true)}
 	correlation := ServerCorrelation{Status: "pass"}
 
 	plan := Plan{
-		Conditions: TestConditions{Devices: 100000, Users: 5000},
+		Conditions: TestConditions{Devices: 10000, Users: 500},
 		DeviceMix:  map[string]int{"light": 1},
 	}
-	status := runStatusWithCorrelation(plan, evidence, stages, LoadGeneratorHealth{}, correlation)
-	if status != "INCOMPLETE" {
-		t.Fatalf("status = %s, want INCOMPLETE for 60 connect attempts against 25k target", status)
+	outcome := evaluateRunOutcome(plan, evidence, stages, LoadGeneratorHealth{}, correlation, RuntimeLogCorrelation{})
+	if outcome.Status != "COMPLETE" || outcome.Result != "FAIL" {
+		t.Fatalf("outcome = %#v, want COMPLETE/FAIL for completed run below 99.5%% success", outcome)
+	}
+	if !strings.Contains(strings.Join(outcome.Reasons, "\n"), "99.00%") {
+		t.Fatalf("outcome reasons = %#v, want connection success rate detail", outcome.Reasons)
+	}
+
+	stages[0].DeviceMQTTTotals.ConnectSuccess = 9999
+	stages[0].DeviceMQTTTotals.Subscribes = 9999
+	stages[0].DeviceMQTTTotals.ActiveConnections = 9999
+	stages[0].DeviceMQTTTotals.ActiveSubscriptions = 9999
+	outcome = evaluateRunOutcome(plan, evidence, stages, LoadGeneratorHealth{}, correlation, RuntimeLogCorrelation{})
+	if outcome.Status != "COMPLETE" || outcome.Result != "SUCCESS" {
+		t.Fatalf("outcome = %#v, want COMPLETE/SUCCESS when success rate is above 99.5%%", outcome)
 	}
 }
 
@@ -737,6 +756,133 @@ func TestRunStatusUsesFunctionalSuccessThresholdForAppACKs(t *testing.T) {
 	stages[0].AppUserTotals.ReceivedAcks = 50
 	if status := runStatusWithCorrelation(plan, evidence, stages, LoadGeneratorHealth{}, correlation); status != "PASS" {
 		t.Fatalf("status = %s, want PASS once ACK success reaches threshold", status)
+	}
+}
+
+func TestCorrelateServerEvidenceFallsBackToNativeEMQXConnackMetric(t *testing.T) {
+	device := DeviceMQTTTotals{
+		ConnectAttempts:   10,
+		ConnectSuccess:    10,
+		Subscribes:        10,
+		Publishes:         4,
+		ReceivedMessages:  4,
+		DeltaReceived:     4,
+		ReportedPublishes: 4,
+	}
+	app := AppUserTotals{
+		TokenAttempts:      4,
+		TokenSuccess:       4,
+		MQTTConnackSuccess: 4,
+		DesiredWrites:      4,
+		ReceivedAcks:       4,
+	}
+	evidence := ServerEvidence{
+		Complete: true,
+		Sources: map[string]EvidenceSource{
+			"emqx": {Available: true, Counters: map[string]int64{
+				"emqx.broker.identity":       1,
+				"emqx.metric.client.connack": 14,
+			}},
+			"iot_device_shadow": {Available: true, Counters: map[string]int64{
+				"app_user.desired_writes":        4,
+				"device_mqtt.delta_received":     4,
+				"device_mqtt.reported_publishes": 4,
+				"app_user.received_acks":         4,
+			}},
+		},
+	}
+
+	correlation := correlateServerEvidence(evidence, device, app)
+
+	if correlation.Status != "pass" {
+		t.Fatalf("status = %s, want pass; checks=%#v reasons=%#v", correlation.Status, correlation.Checks, correlation.Reasons)
+	}
+	if correlation.Checks[0].Counter != "emqx.metric.client.connack" || correlation.Checks[0].ClientTotal != 14 || correlation.Checks[0].ServerTotal != 14 {
+		t.Fatalf("emqx check = %#v, want native connack 14/14", correlation.Checks[0])
+	}
+}
+
+func TestCorrelateServerEvidenceAllowsSmallEMQXCounterDeltaAt10KScale(t *testing.T) {
+	device := DeviceMQTTTotals{
+		ConnectAttempts:   10000,
+		ConnectSuccess:    9997,
+		Subscribes:        9997,
+		Publishes:         9997,
+		ReceivedMessages:  9997,
+		DeltaReceived:     9997,
+		ReportedPublishes: 9997,
+	}
+	app := AppUserTotals{
+		TokenAttempts:      1051,
+		TokenSuccess:       1051,
+		MQTTConnackSuccess: 1051,
+		DesiredWrites:      1051,
+		ReceivedAcks:       1005,
+	}
+	evidence := ServerEvidence{
+		Complete: true,
+		Sources: map[string]EvidenceSource{
+			"emqx": {Available: true, Counters: map[string]int64{
+				"emqx.broker.identity":       1,
+				"emqx.metric.client.connack": 11054,
+			}},
+			"iot_device_shadow": {Available: true, Counters: map[string]int64{
+				"app_user.desired_writes":        1051,
+				"device_mqtt.delta_received":     9997,
+				"device_mqtt.reported_publishes": 9997,
+				"app_user.received_acks":         1005,
+			}},
+		},
+	}
+
+	correlation := correlateServerEvidence(evidence, device, app)
+
+	if correlation.Status != "pass" {
+		t.Fatalf("status = %s, want pass; checks=%#v reasons=%#v", correlation.Status, correlation.Checks, correlation.Reasons)
+	}
+	check := correlation.Checks[0]
+	if check.ClientTotal != 11048 || check.ServerTotal != 11054 || check.Delta != 6 || check.Tolerance != 12 {
+		t.Fatalf("check = %#v, want client=11048 server=11054 delta=6 tolerance=12", check)
+	}
+}
+
+func TestCorrelateServerEvidenceRejectsLargeEMQXCounterDelta(t *testing.T) {
+	device := DeviceMQTTTotals{
+		ConnectAttempts:   10000,
+		ConnectSuccess:    9997,
+		Subscribes:        9997,
+		Publishes:         9997,
+		ReceivedMessages:  9997,
+		DeltaReceived:     9997,
+		ReportedPublishes: 9997,
+	}
+	app := AppUserTotals{
+		TokenAttempts:      1051,
+		TokenSuccess:       1051,
+		MQTTConnackSuccess: 1051,
+		DesiredWrites:      1051,
+		ReceivedAcks:       1005,
+	}
+	evidence := ServerEvidence{
+		Complete: true,
+		Sources: map[string]EvidenceSource{
+			"emqx": {Available: true, Counters: map[string]int64{
+				"emqx.broker.identity":       1,
+				"emqx.metric.client.connack": 11100,
+			}},
+			"iot_device_shadow": {Available: true, Counters: map[string]int64{
+				"app_user.desired_writes":        1051,
+				"device_mqtt.delta_received":     9997,
+				"device_mqtt.reported_publishes": 9997,
+				"app_user.received_acks":         1005,
+			}},
+		},
+	}
+
+	correlation := correlateServerEvidence(evidence, device, app)
+
+	if correlation.Status != "fail" {
+		t.Fatalf("status = %s, want fail; checks=%#v reasons=%#v", correlation.Status, correlation.Checks, correlation.Reasons)
 	}
 }
 

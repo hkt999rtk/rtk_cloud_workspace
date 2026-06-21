@@ -204,6 +204,27 @@ CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
 	}
 }
 
+func TestLoadAcceptsFutureKubernetesProviders(t *testing.T) {
+	for _, provider := range []string{"gke", "aks", "eks"} {
+		t.Run(provider, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "metadata", "staging", provider)
+			mkdir(t, filepath.Join(root, "env"))
+			write(t, filepath.Join(root, "env", "stack.env"), `CLOUD_ENV_NAME=staging
+CLOUD_PROVIDER=`+provider+`
+CLOUD_REGION=us-central1
+CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+`)
+			env, err := Load(root, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if env.Values["CLOUD_PROVIDER"] != provider {
+				t.Fatalf("provider got %s want %s", env.Values["CLOUD_PROVIDER"], provider)
+			}
+		})
+	}
+}
+
 func mkdir(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(path, 0o755); err != nil {
