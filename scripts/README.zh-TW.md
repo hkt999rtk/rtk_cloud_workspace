@@ -446,6 +446,20 @@ K8s staging reset helper。預設是 non-destructive reset，只輸出狀態，�
 go run ./scripts/go/rtk-cloud -- remove-k8s --env-root cloud_env/staging --yes
 ```
 
+### `scripts/destroy-linode-staging-resources.sh`
+
+危險的 Linode staging teardown helper。預設只做 dry-run：它會列出將刪除的
+LKE clusters、Linode instances、firewalls、VPCs，以及符合 stack/prefix 的
+Object Storage buckets；沒有 `--yes` 與正確確認字串時不會送出 DELETE。
+
+```sh
+scripts/destroy-linode-staging-resources.sh --env-root cloud_env/staging/lke
+scripts/destroy-linode-staging-resources.sh --env-root cloud_env/staging/lke --yes --confirm-text "destroy video-cloud-staging"
+```
+
+Object Storage buckets 會列出但預設略過。若確定 matched buckets 已清空且也要刪除，
+才加 `--include-object-storage`；Linode API 會拒絕刪除非空 bucket。
+
 ### `go run ./scripts/go/rtk-cloud -- staging-e2e-test`
 
 Linode K8s staging 一站式整合測試編排腳本。它把 K8s reset、K8s rollout readiness、K8s service query/port-forward、staging E2E data setup、home MQTT simulation，以及 persisted MQTT runtime log verification 串成單一流程，最後輸出 sanitized `summary.json` 與 `TEST_REPORT.md`。建立 RTK brand cloud、建立測試 users、產生並 factory-enroll devices、device bind/provision、bulk bind validation 已拆到 `scripts/setup-staging-e2e-data.sh` / `rtk-cloud staging-e2e-data-setup`，完整 E2E 會呼叫這個獨立步驟。
