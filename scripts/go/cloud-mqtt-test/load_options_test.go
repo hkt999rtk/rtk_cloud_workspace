@@ -140,6 +140,58 @@ func TestHomeDiverseEventsDependOnDeviceTypeAndUsageWindow(t *testing.T) {
 	}
 }
 
+func TestHomeDiverseTelemetryEventsAreSpreadAcrossWindow(t *testing.T) {
+	deviceTypes := []string{
+		"air_conditioner", "air_conditioner", "air_conditioner", "air_conditioner", "air_conditioner",
+		"air_conditioner", "air_conditioner", "air_conditioner", "air_conditioner", "air_conditioner",
+		"appliance", "appliance", "appliance", "appliance", "appliance", "appliance", "appliance",
+		"camera_status", "camera_status", "camera_status", "camera_status", "camera_status", "camera_status", "camera_status",
+		"door_lock", "door_lock", "door_lock", "door_lock",
+		"environment_sensor", "environment_sensor", "environment_sensor", "environment_sensor", "environment_sensor", "environment_sensor",
+		"environment_sensor", "environment_sensor", "environment_sensor", "environment_sensor", "environment_sensor", "environment_sensor",
+		"gateway", "gateway", "gateway", "gateway", "gateway",
+		"light", "light", "light", "light", "light", "light", "light", "light", "light",
+		"light", "light", "light", "light", "light", "light", "light", "light", "light",
+		"security_sensor", "security_sensor", "security_sensor", "security_sensor", "security_sensor",
+		"security_sensor", "security_sensor", "security_sensor", "security_sensor", "security_sensor",
+		"smart_meter", "smart_meter", "smart_meter", "smart_meter", "smart_meter", "smart_meter", "smart_meter", "smart_meter",
+		"smart_plug", "smart_plug", "smart_plug", "smart_plug", "smart_plug", "smart_plug",
+		"smart_plug", "smart_plug", "smart_plug", "smart_plug", "smart_plug", "smart_plug",
+		"switch", "switch", "switch", "switch", "switch", "switch", "switch",
+	}
+	sessions := make([]sustainedDeviceSession, 0, 10000)
+	for idx := 0; idx < 10000; idx++ {
+		sessions = append(sessions, sustainedDeviceSession{Record: certRecord{
+			DeviceID:   fmt.Sprintf("device-%05d", idx),
+			DeviceType: deviceTypes[idx%len(deviceTypes)],
+		}})
+	}
+	opts := loadOptions{
+		DeviceTrafficProfile: "home-diverse-v1",
+		StageUsageWindow:     "steady",
+		StageMinCommands:     "0",
+	}
+
+	events := sustainedEventsWithCommandWindow(sessions, opts, 20260621, 2*time.Minute, 2*time.Minute)
+
+	buckets := map[int]int{}
+	for _, event := range events {
+		if event.Kind != "telemetry" && event.Kind != "event" {
+			continue
+		}
+		buckets[int(event.Offset/time.Second)]++
+	}
+	maxBucket := 0
+	for _, count := range buckets {
+		if count > maxBucket {
+			maxBucket = count
+		}
+	}
+	if maxBucket > 200 {
+		t.Fatalf("home-diverse telemetry/event max one-second bucket = %d, want <= 200 to avoid API MQTT burst pressure", maxBucket)
+	}
+}
+
 func TestWeightedHomeDiverseCommandSlotsSpreadAcrossShard(t *testing.T) {
 	sessions := make([]sustainedDeviceSession, 2000)
 	for idx := range sessions {

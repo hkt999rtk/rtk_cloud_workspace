@@ -50,6 +50,26 @@
         executable: /bin/bash
       changed_when: false
 
+    - name: Override staging HTTPS hostnames on generator when requested
+      ansible.builtin.shell: |
+        set -euo pipefail
+        override_ip="{{ generator_hosts_override_ip | default('') }}"
+        if [ -z "$override_ip" ]; then
+          exit 0
+        fi
+        marker="# home-100k generator override"
+        hosts="video-cloud-staging.realtekconnect.com device.video-cloud-staging.realtekconnect.com account-manager.video-cloud-staging.realtekconnect.com"
+        sed -i '/# home-100k generator override$/d' /etc/hosts
+        for host in $hosts; do
+          printf '%s %s %s\n' "$override_ip" "$host" "$marker" >> /etc/hosts
+        done
+        getent ahostsv4 video-cloud-staging.realtekconnect.com
+        getent ahostsv4 device.video-cloud-staging.realtekconnect.com
+        getent ahostsv4 account-manager.video-cloud-staging.realtekconnect.com
+      args:
+        executable: /bin/bash
+      changed_when: (generator_hosts_override_ip | default('')) != ''
+
     - name: Start runner daemon in READY_WAIT
       ansible.builtin.shell: |
         set -euo pipefail
@@ -93,11 +113,13 @@
           --out-dir "{{ remote_out_dir }}" \
           --workspace "{{ remote_workspace }}" \
           --rtk-cloud-binary "{{ remote_home_100k_dir }}/bin/rtk-cloud" \
-          --stage-warm-up "{{ stage_warm_up }}" \
-          --stage-steady "{{ stage_steady }}" \
-          --stage-cool-down "{{ stage_cool_down }}" \
-          --runner-mqtt-concurrency "{{ runner_mqtt_concurrency | default(1000) }}" \
+          --stage-warm-up "{{ target_ramp_up_time }}" \
+          --stage-steady "{{ measurement_window }}" \
+          --stage-cool-down "{{ post_run_collection }}" \
           --runner-mode "{{ runner_mode | default('live') }}" \
+          --mqtt-concurrency "{{ mqtt_concurrency | default(1000) }}" \
+          --command-concurrency "{{ command_concurrency | default(100) }}" \
+          --shadow-command-timeout "{{ shadow_command_timeout | default('30s') }}" \
           --listen ":18080" \
           > "{{ remote_out_dir }}/runner-daemon.log" 2>&1 &
         echo "$!" > "{{ remote_out_dir }}/runner-daemon.pid"

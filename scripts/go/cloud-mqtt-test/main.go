@@ -18,7 +18,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"math"
 	mrand "math/rand"
@@ -169,95 +168,57 @@ type traceStep struct {
 }
 
 type mqttIOTotals struct {
-	ConnectAttempts                  int64                       `json:"connect_attempts"`
-	ConnectSuccesses                 int64                       `json:"connect_successes"`
-	ConnectFailures                  int64                       `json:"connect_failures"`
-	DeviceTokenAttempts              int64                       `json:"device_token_attempts"`
-	DeviceTokenSuccesses             int64                       `json:"device_token_successes"`
-	DeviceTokenFailures              int64                       `json:"device_token_failures"`
-	DeviceTokenFirstAttemptSuccesses int64                       `json:"device_token_first_attempt_successes"`
-	DeviceTokenFirstAttemptFailures  int64                       `json:"device_token_first_attempt_failures"`
-	DeviceTokenRetryAttempts         int64                       `json:"device_token_retry_attempts"`
-	DeviceTokenRetrySuccesses        int64                       `json:"device_token_retry_successes"`
-	DeviceTokenRetryExhausted        int64                       `json:"device_token_retry_exhausted"`
-	DeviceMQTTDialAttempts           int64                       `json:"device_mqtt_dial_attempts"`
-	DeviceMQTTDialSuccesses          int64                       `json:"device_mqtt_dial_successes"`
-	DeviceMQTTDialFailures           int64                       `json:"device_mqtt_dial_failures"`
-	DeviceMQTTConnackAttempts        int64                       `json:"device_mqtt_connack_attempts"`
-	DeviceMQTTConnackSuccesses       int64                       `json:"device_mqtt_connack_successes"`
-	DeviceMQTTConnackFailures        int64                       `json:"device_mqtt_connack_failures"`
-	DeviceSubscribeAttempts          int64                       `json:"device_subscribe_attempts"`
-	DeviceSubscribeFailures          int64                       `json:"device_subscribe_failures"`
-	SubscribeSuccesses               int64                       `json:"subscribe_successes"`
-	ActiveConnections                int64                       `json:"active_connections,omitempty"`
-	ActiveSubscriptions              int64                       `json:"active_subscriptions,omitempty"`
-	PublishSuccesses                 int64                       `json:"publish_successes"`
-	PublishFailures                  int64                       `json:"publish_failures"`
-	MessagesReceived                 int64                       `json:"messages_received"`
-	DeltaReceived                    int64                       `json:"delta_received"`
-	ReportedEvents                   int64                       `json:"reported_events"`
-	AppLoginAttempts                 int64                       `json:"app_login_attempts"`
-	AppLoginSuccesses                int64                       `json:"app_login_successes"`
-	AppLoginFailures                 int64                       `json:"app_login_failures"`
-	AppTokenAttempts                 int64                       `json:"app_token_attempts"`
-	AppTokenSuccesses                int64                       `json:"app_token_successes"`
-	AppTokenFailures                 int64                       `json:"app_token_failures"`
-	AppTokenFirstAttemptSuccesses    int64                       `json:"app_token_first_attempt_successes"`
-	AppTokenFirstAttemptFailures     int64                       `json:"app_token_first_attempt_failures"`
-	AppTokenRetryAttempts            int64                       `json:"app_token_retry_attempts"`
-	AppTokenRetrySuccesses           int64                       `json:"app_token_retry_successes"`
-	AppTokenRetryExhausted           int64                       `json:"app_token_retry_exhausted"`
-	AppMQTTDialAttempts              int64                       `json:"app_mqtt_dial_attempts"`
-	AppMQTTDialSuccesses             int64                       `json:"app_mqtt_dial_successes"`
-	AppMQTTDialFailures              int64                       `json:"app_mqtt_dial_failures"`
-	AppMQTTConnackAttempts           int64                       `json:"app_mqtt_connack_attempts"`
-	AppMQTTConnackSuccesses          int64                       `json:"app_mqtt_connack_successes"`
-	AppMQTTConnackFailures           int64                       `json:"app_mqtt_connack_failures"`
-	AppDesiredWrites                 int64                       `json:"app_desired_writes"`
-	AppReceivedAcks                  int64                       `json:"app_received_acks"`
-	TotalBytesSent                   int64                       `json:"total_bytes_sent"`
-	TotalBytesReceived               int64                       `json:"total_bytes_received"`
-	AuthViolations                   int64                       `json:"auth_violations"`
-	HTTPRequests                     int64                       `json:"http_requests"`
-	HTTPSuccesses                    int64                       `json:"http_successes"`
-	HTTPFailures                     int64                       `json:"http_failures"`
-	TotalHTTPBytesSent               int64                       `json:"total_http_bytes_sent"`
-	TotalHTTPBytesReceived           int64                       `json:"total_http_bytes_received"`
-	FailureReasons                   map[string]int64            `json:"failure_reasons,omitempty"`
-	FailureDetails                   map[string]map[string]int64 `json:"failure_details,omitempty"`
-	FailureEvents                    []sustainedFailureEvent     `json:"failure_events,omitempty"`
-	CommandEvents                    []sustainedCommandEvent     `json:"command_events,omitempty"`
-	PhaseMetrics                     map[string]phaseMetric      `json:"phase_metrics,omitempty"`
-	BottleneckEvents                 []bottleneckEvent           `json:"bottleneck_events,omitempty"`
+	ConnectAttempts            int64                       `json:"connect_attempts"`
+	ConnectSuccesses           int64                       `json:"connect_successes"`
+	ConnectFailures            int64                       `json:"connect_failures"`
+	DeviceTokenAttempts        int64                       `json:"device_token_attempts"`
+	DeviceTokenSuccesses       int64                       `json:"device_token_successes"`
+	DeviceTokenFailures        int64                       `json:"device_token_failures"`
+	DeviceMQTTDialAttempts     int64                       `json:"device_mqtt_dial_attempts"`
+	DeviceMQTTDialSuccesses    int64                       `json:"device_mqtt_dial_successes"`
+	DeviceMQTTDialFailures     int64                       `json:"device_mqtt_dial_failures"`
+	DeviceMQTTConnackAttempts  int64                       `json:"device_mqtt_connack_attempts"`
+	DeviceMQTTConnackSuccesses int64                       `json:"device_mqtt_connack_successes"`
+	DeviceMQTTConnackFailures  int64                       `json:"device_mqtt_connack_failures"`
+	DeviceSubscribeAttempts    int64                       `json:"device_subscribe_attempts"`
+	DeviceSubscribeFailures    int64                       `json:"device_subscribe_failures"`
+	SubscribeSuccesses         int64                       `json:"subscribe_successes"`
+	ActiveConnections          int64                       `json:"active_connections,omitempty"`
+	ActiveSubscriptions        int64                       `json:"active_subscriptions,omitempty"`
+	PublishSuccesses           int64                       `json:"publish_successes"`
+	PublishFailures            int64                       `json:"publish_failures"`
+	MessagesReceived           int64                       `json:"messages_received"`
+	DeltaReceived              int64                       `json:"delta_received"`
+	ReportedEvents             int64                       `json:"reported_events"`
+	AppLoginAttempts           int64                       `json:"app_login_attempts"`
+	AppLoginSuccesses          int64                       `json:"app_login_successes"`
+	AppLoginFailures           int64                       `json:"app_login_failures"`
+	AppTokenAttempts           int64                       `json:"app_token_attempts"`
+	AppTokenSuccesses          int64                       `json:"app_token_successes"`
+	AppTokenFailures           int64                       `json:"app_token_failures"`
+	AppMQTTDialAttempts        int64                       `json:"app_mqtt_dial_attempts"`
+	AppMQTTDialSuccesses       int64                       `json:"app_mqtt_dial_successes"`
+	AppMQTTDialFailures        int64                       `json:"app_mqtt_dial_failures"`
+	AppMQTTConnackAttempts     int64                       `json:"app_mqtt_connack_attempts"`
+	AppMQTTConnackSuccesses    int64                       `json:"app_mqtt_connack_successes"`
+	AppMQTTConnackFailures     int64                       `json:"app_mqtt_connack_failures"`
+	AppDesiredWrites           int64                       `json:"app_desired_writes"`
+	AppReceivedAcks            int64                       `json:"app_received_acks"`
+	TotalBytesSent             int64                       `json:"total_bytes_sent"`
+	TotalBytesReceived         int64                       `json:"total_bytes_received"`
+	AuthViolations             int64                       `json:"auth_violations"`
+	HTTPRequests               int64                       `json:"http_requests"`
+	HTTPSuccesses              int64                       `json:"http_successes"`
+	HTTPFailures               int64                       `json:"http_failures"`
+	TotalHTTPBytesSent         int64                       `json:"total_http_bytes_sent"`
+	TotalHTTPBytesReceived     int64                       `json:"total_http_bytes_received"`
+	FailureReasons             map[string]int64            `json:"failure_reasons,omitempty"`
+	FailureDetails             map[string]map[string]int64 `json:"failure_details,omitempty"`
+	FailureEvents              []sustainedFailureEvent     `json:"failure_events,omitempty"`
+	CommandEvents              []sustainedCommandEvent     `json:"command_events,omitempty"`
 }
 
 const maxFailureEvents = 64
-const maxBottleneckEvents = 128
-
-type phaseMetric struct {
-	Attempts int64 `json:"attempts"`
-	Success  int64 `json:"success"`
-	Fail     int64 `json:"fail"`
-	TotalMS  int64 `json:"total_ms"`
-	MaxMS    int64 `json:"max_ms"`
-	GT1S     int64 `json:"gt1s"`
-	GT5S     int64 `json:"gt5s"`
-	GT10S    int64 `json:"gt10s"`
-}
-
-type bottleneckEvent struct {
-	Stage       string `json:"stage,omitempty"`
-	Phase       string `json:"phase"`
-	Actor       string `json:"actor,omitempty"`
-	DeviceID    string `json:"device_id,omitempty"`
-	Detail      string `json:"detail,omitempty"`
-	ElapsedMS   int64  `json:"elapsed_ms,omitempty"`
-	RemainingMS int64  `json:"remaining_ms,omitempty"`
-	Attempt     int    `json:"attempt,omitempty"`
-	IsRetry     bool   `json:"is_retry,omitempty"`
-	MQTTTarget  string `json:"mqtt_target,omitempty"`
-	OccurredAt  string `json:"occurred_at,omitempty"`
-}
 
 type sustainedCommandEvent struct {
 	Stage              string      `json:"stage,omitempty"`
@@ -293,6 +254,7 @@ type sustainedCommandContext struct {
 	CommandID   string
 	Phase       string
 	Deadline    time.Time
+	Timeout     time.Duration
 }
 
 type appBootstrapStatus struct {
@@ -332,8 +294,6 @@ type mqttActorProbe struct {
 	Timeout          time.Duration
 	KeepAliveSeconds uint16
 	Now              func() time.Time
-	PhasePrefix      string
-	OnPhase          func(phase string, elapsed time.Duration, err error)
 	OnDialAttempt    func()
 	OnDialSuccess    func()
 	OnDialFailure    func(error)
@@ -345,9 +305,10 @@ type mqttActorProbe struct {
 func main() {
 	var root, envRoot, brandname, outDir, profile, maxUsersRaw, mqttProbeRaw, traceDetail, runID string
 	var rampUp, telemetryInterval, stateInterval, commandRate, loadModel string
-	var stageNamesRaw, stageTargetsRaw, stageDurationsRaw, stageRampSecondsRaw, stageMinCommandsRaw string
+	var shadowCommandTimeout string
+	var stageNamesRaw, stageTargetsRaw, stageDurationsRaw, stageMinCommandsRaw string
 	var deviceTrafficProfile, stageUsageWindowsRaw string
-	var duration, seed, shardIndex, shardCount, concurrency, maxConnectedDevices int
+	var duration, seed, shardIndex, shardCount, concurrency, commandConcurrency, maxConnectedDevices int
 	flag.StringVar(&root, "root", "", "workspace root")
 	flag.StringVar(&envRoot, "env-root", "", "environment root")
 	flag.StringVar(&brandname, "brandname", "", "brand name")
@@ -365,11 +326,12 @@ func main() {
 	flag.StringVar(&telemetryInterval, "telemetry-interval", "", "load-test telemetry interval")
 	flag.StringVar(&stateInterval, "state-interval", "", "load-test state interval")
 	flag.StringVar(&commandRate, "command-rate-per-device-per-day", "", "load-test command rate per device per day")
+	flag.IntVar(&commandConcurrency, "command-concurrency", 0, "load-test sustained shadow command concurrency; defaults to MQTT concurrency")
+	flag.StringVar(&shadowCommandTimeout, "shadow-command-timeout", "", "per-phase sustained shadow command timeout")
 	flag.StringVar(&loadModel, "load-model", "", "load model: actor-separated-probe or home-100k-sustained")
 	flag.StringVar(&stageNamesRaw, "stage-names", "", "comma-separated staged sustained load stage names")
 	flag.StringVar(&stageTargetsRaw, "stage-connected-devices", "", "comma-separated staged sustained per-shard connected device targets")
 	flag.StringVar(&stageDurationsRaw, "stage-durations-seconds", "", "comma-separated staged sustained stage durations in seconds")
-	flag.StringVar(&stageRampSecondsRaw, "stage-ramp-seconds", "", "comma-separated staged sustained connect ramp durations in seconds")
 	flag.StringVar(&stageMinCommandsRaw, "stage-min-commands", "", "comma-separated staged sustained minimum command events")
 	flag.StringVar(&deviceTrafficProfile, "device-traffic-profile", "", "home MQTT device traffic profile")
 	flag.StringVar(&stageUsageWindowsRaw, "stage-usage-windows", "", "comma-separated usage window per sustained stage")
@@ -393,11 +355,12 @@ func main() {
 		TelemetryInterval:           telemetryInterval,
 		StateInterval:               stateInterval,
 		CommandRatePerDevicePerDay:  commandRate,
+		CommandConcurrency:          commandConcurrency,
+		ShadowCommandTimeout:        shadowCommandTimeout,
 		LoadModel:                   loadModel,
 		StageNames:                  stageNamesRaw,
 		StageConnectedDevices:       stageTargetsRaw,
 		StageDurationsSeconds:       stageDurationsRaw,
-		StageRampSeconds:            stageRampSecondsRaw,
 		StageMinCommands:            stageMinCommandsRaw,
 		DeviceTrafficProfile:        deviceTrafficProfile,
 		StageUsageWindows:           stageUsageWindowsRaw,
@@ -423,11 +386,12 @@ type loadOptions struct {
 	TelemetryInterval           string `json:"telemetry_interval"`
 	StateInterval               string `json:"state_interval"`
 	CommandRatePerDevicePerDay  string `json:"command_rate_per_device_per_day"`
+	CommandConcurrency          int    `json:"command_concurrency,omitempty"`
+	ShadowCommandTimeout        string `json:"shadow_command_timeout,omitempty"`
 	LoadModel                   string `json:"load_model"`
 	StageNames                  string `json:"stage_names,omitempty"`
 	StageConnectedDevices       string `json:"stage_connected_devices,omitempty"`
 	StageDurationsSeconds       string `json:"stage_durations_seconds,omitempty"`
-	StageRampSeconds            string `json:"stage_ramp_seconds,omitempty"`
 	StageMinCommands            string `json:"stage_min_commands,omitempty"`
 	DeviceTrafficProfile        string `json:"device_traffic_profile,omitempty"`
 	StageUsageWindows           string `json:"stage_usage_windows,omitempty"`
@@ -1013,19 +977,9 @@ func (r *sustainedDeviceReader) run() {
 		if packetType>>4 != 3 {
 			continue
 		}
-		topic, payload, packetID, qos, err := mqttDecodePublishPacket(packetType&0x0f, body)
+		topic, payload, err := mqttDecodePublish(packetType&0x0f, body)
 		if err != nil {
 			continue
-		}
-		if qos == 1 {
-			if err := mqttWritePuback(r.conn, packetID); err != nil {
-				r.setLastError(err)
-				select {
-				case r.errs <- err:
-				default:
-				}
-				return
-			}
 		}
 		doc := map[string]any{}
 		if err := json.Unmarshal(payload, &doc); err != nil {
@@ -1121,7 +1075,6 @@ type sustainedStage struct {
 	Name            string
 	ConnectedTarget int
 	DurationSeconds int
-	RampSeconds     int
 	MinCommands     int
 	UsageWindow     string
 }
@@ -1189,16 +1142,6 @@ func parseSustainedStages(opts loadOptions) ([]sustainedStage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("--stage-durations-seconds: %w", err)
 	}
-	rampSeconds := []int{}
-	if strings.TrimSpace(opts.StageRampSeconds) != "" {
-		rampSeconds, err = parseCSVInts(opts.StageRampSeconds)
-		if err != nil {
-			return nil, fmt.Errorf("--stage-ramp-seconds: %w", err)
-		}
-		if len(rampSeconds) != len(names) {
-			return nil, errors.New("--stage-ramp-seconds must have the same length as --stage-names")
-		}
-	}
 	minCommands := []int{}
 	if strings.TrimSpace(opts.StageMinCommands) != "" {
 		minCommands, err = parseCSVInts(opts.StageMinCommands)
@@ -1235,24 +1178,53 @@ func parseSustainedStages(opts loadOptions) ([]sustainedStage, error) {
 		if durations[idx] <= 0 {
 			return nil, fmt.Errorf("stage %s duration must be positive", names[idx])
 		}
-		ramp := 0
-		if len(rampSeconds) > 0 {
-			ramp = rampSeconds[idx]
-			if ramp <= 0 {
-				return nil, fmt.Errorf("stage %s ramp duration must be positive", names[idx])
-			}
-			if ramp >= durations[idx] {
-				return nil, fmt.Errorf("stage %s ramp duration must be shorter than total duration", names[idx])
-			}
-		}
 		usageWindow := ""
 		if len(usageWindows) > 0 {
 			usageWindow = usageWindows[idx]
 		}
-		stages = append(stages, sustainedStage{Name: names[idx], ConnectedTarget: targets[idx], DurationSeconds: durations[idx], RampSeconds: ramp, MinCommands: minCommand, UsageWindow: usageWindow})
+		stages = append(stages, sustainedStage{Name: names[idx], ConnectedTarget: targets[idx], DurationSeconds: durations[idx], MinCommands: minCommand, UsageWindow: usageWindow})
 		lastTarget = targets[idx]
 	}
 	return stages, nil
+}
+
+func parsePositiveDuration(raw string) time.Duration {
+	duration, err := time.ParseDuration(strings.TrimSpace(raw))
+	if err != nil || duration <= 0 {
+		return 0
+	}
+	return duration
+}
+
+func shadowCommandTimeout(opts loadOptions) time.Duration {
+	if timeout := parsePositiveDuration(opts.ShadowCommandTimeout); timeout > 0 {
+		return timeout
+	}
+	return 10 * time.Second
+}
+
+func sustainedCommandConcurrency(opts loadOptions, sessionCount int) int {
+	limit := opts.CommandConcurrency
+	if limit <= 0 {
+		limit = opts.Concurrency
+	}
+	if limit <= 0 {
+		limit = 25
+	}
+	if sessionCount > 0 && limit > sessionCount {
+		limit = sessionCount
+	}
+	if limit <= 0 {
+		return 1
+	}
+	return limit
+}
+
+func connectDispatchDelay(index int, total int, window time.Duration) time.Duration {
+	if index <= 0 || total <= 1 || window <= 0 {
+		return 0
+	}
+	return time.Duration(int64(window) * int64(index) / int64(total))
 }
 
 func splitCSV(raw string) []string {
@@ -1294,7 +1266,16 @@ func runSustainedHome100KLoad(assignments []assignment, certs []certRecord, bran
 	}
 	start := time.Now()
 	deadline := start.Add(window)
-	sessions := connectSustainedDevicesUntil(assignments, certByID, brandname, runID, apiBaseURL, mqttTargets, opts.Concurrency, deadline, &result.Totals)
+	connectDeadline := deadline
+	rampWindow := parsePositiveDuration(opts.RampUp)
+	if rampWindow > 0 {
+		rampDeadline := start.Add(rampWindow)
+		if rampDeadline.Before(connectDeadline) {
+			connectDeadline = rampDeadline
+		}
+		rampWindow = connectDeadline.Sub(start)
+	}
+	sessions := connectSustainedDevicesPacedUntil(assignments, certByID, brandname, runID, apiBaseURL, mqttTargets, opts.Concurrency, connectDeadline, rampWindow, &result.Totals)
 	attachAppTokenManagers(sessions, apiBaseURL, appCert)
 	defer closeSustainedSessions(sessions)
 	if len(sessions) == 0 {
@@ -1339,6 +1320,7 @@ func runSustainedHome100KLoad(assignments []assignment, certs []certRecord, bran
 				EventIndex:  event.Index,
 				SessionSlot: sessionSlot,
 				Deadline:    deadline,
+				Timeout:     shadowCommandTimeout(opts),
 			}) == nil {
 				result.CommandsPassed++
 			} else {
@@ -1391,14 +1373,22 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 		}
 		if stage.ConnectedTarget > len(sessions) {
 			newAssignments := assignments[len(sessions):stage.ConnectedTarget]
+			connectDeadline := stagedConnectDeadline(stageStart, stageDeadline)
+			rampWindow := parsePositiveDuration(opts.RampUp)
+			if rampWindow > 0 {
+				rampDeadline := stageStart.Add(rampWindow)
+				if rampDeadline.Before(connectDeadline) {
+					connectDeadline = rampDeadline
+				}
+				rampWindow = connectDeadline.Sub(stageStart)
+			}
 			connectStarted := time.Now()
-			connectDeadline, connectRampWindow := stagedConnectTiming(stageStart, stageDeadline, connectStarted, stage.RampSeconds)
 			before := stageResult.Totals
 			stageResult.Diagnostics.ConnectStartedAt = connectStarted.UTC().Format(time.RFC3339Nano)
 			stageResult.Diagnostics.ConnectDeadlineAt = connectDeadline.UTC().Format(time.RFC3339Nano)
 			stageResult.Diagnostics.ConnectWindowSeconds = connectDeadline.Sub(connectStarted).Seconds()
 			stageResult.Diagnostics.NewAssignments = len(newAssignments)
-			newSessions := connectSustainedDevicesWithRamp(newAssignments, certByID, brandname, runID, apiBaseURL, mqttTargets, opts.Concurrency, connectDeadline, connectStarted, connectRampWindow, seed+idx, stage.Name, &stageResult.Totals)
+			newSessions := connectSustainedDevicesPacedUntil(newAssignments, certByID, brandname, runID, apiBaseURL, mqttTargets, opts.Concurrency, connectDeadline, rampWindow, &stageResult.Totals)
 			attachAppTokenManagers(newSessions, apiBaseURL, appCert)
 			stageResult.Diagnostics.ConnectFinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
 			stageResult.Diagnostics.ConnectAttempts = stageResult.Totals.ConnectAttempts - before.ConnectAttempts
@@ -1460,16 +1450,7 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 		}
 		var eventMu sync.Mutex
 		var eventWG sync.WaitGroup
-		commandLimit := opts.Concurrency
-		if commandLimit <= 0 {
-			commandLimit = 25
-		}
-		if commandLimit > len(sessions) {
-			commandLimit = len(sessions)
-		}
-		if commandLimit <= 0 {
-			commandLimit = 1
-		}
+		commandLimit := sustainedCommandConcurrency(opts, len(sessions))
 		commandSlots := make(chan struct{}, commandLimit)
 		sessionLocks := make([]sync.Mutex, len(sessions))
 		mergeTotals := func(totals mqttIOTotals) {
@@ -1535,6 +1516,7 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 						EventIndex:  event.Index,
 						SessionSlot: sessionSlot,
 						Deadline:    stageDeadline,
+						Timeout:     shadowCommandTimeout(opts),
 					})
 					eventMu.Lock()
 					defer eventMu.Unlock()
@@ -1672,24 +1654,8 @@ func stagedConnectDeadline(stageStart time.Time, stageDeadline time.Time) time.T
 	return stageDeadline.Add(-actionReserve)
 }
 
-func stagedConnectTiming(stageStart time.Time, stageDeadline time.Time, connectStarted time.Time, rampSeconds int) (time.Time, time.Duration) {
-	connectDeadline := stagedConnectDeadline(stageStart, stageDeadline)
-	connectRampWindow := stagedConnectRampWindow(connectStarted, connectDeadline)
-	if rampSeconds > 0 {
-		connectRampWindow = time.Duration(rampSeconds) * time.Second
-		if connectRampWindow < 0 {
-			connectRampWindow = 0
-		}
-	}
-	return connectDeadline, connectRampWindow
-}
-
 func connectSustainedDevices(assignments []assignment, certByID map[string]certRecord, brandname, runID, apiBaseURL string, mqttTargets []mqttEndpointTarget, concurrency int, totals *mqttIOTotals) []sustainedDeviceSession {
 	return connectSustainedDevicesUntil(assignments, certByID, brandname, runID, apiBaseURL, mqttTargets, concurrency, time.Time{}, totals)
-}
-
-func connectSustainedDevicesWithRamp(assignments []assignment, certByID map[string]certRecord, brandname, runID, apiBaseURL string, mqttTargets []mqttEndpointTarget, concurrency int, deadline time.Time, rampStart time.Time, rampWindow time.Duration, seed int, stageName string, totals *mqttIOTotals) []sustainedDeviceSession {
-	return connectSustainedDevicesScheduled(assignments, certByID, brandname, runID, apiBaseURL, mqttTargets, concurrency, deadline, stagedConnectSchedule(assignments, rampStart, rampWindow, seed, stageName), totals)
 }
 
 func attachAppTokenManagers(sessions []sustainedDeviceSession, apiBaseURL string, appCert tls.Certificate) {
@@ -1699,10 +1665,10 @@ func attachAppTokenManagers(sessions []sustainedDeviceSession, apiBaseURL string
 }
 
 func connectSustainedDevicesUntil(assignments []assignment, certByID map[string]certRecord, brandname, runID, apiBaseURL string, mqttTargets []mqttEndpointTarget, concurrency int, deadline time.Time, totals *mqttIOTotals) []sustainedDeviceSession {
-	return connectSustainedDevicesScheduled(assignments, certByID, brandname, runID, apiBaseURL, mqttTargets, concurrency, deadline, nil, totals)
+	return connectSustainedDevicesPacedUntil(assignments, certByID, brandname, runID, apiBaseURL, mqttTargets, concurrency, deadline, 0, totals)
 }
 
-func connectSustainedDevicesScheduled(assignments []assignment, certByID map[string]certRecord, brandname, runID, apiBaseURL string, mqttTargets []mqttEndpointTarget, concurrency int, deadline time.Time, schedule []connectScheduleEntry, totals *mqttIOTotals) []sustainedDeviceSession {
+func connectSustainedDevicesPacedUntil(assignments []assignment, certByID map[string]certRecord, brandname, runID, apiBaseURL string, mqttTargets []mqttEndpointTarget, concurrency int, deadline time.Time, paceWindow time.Duration, totals *mqttIOTotals) []sustainedDeviceSession {
 	if concurrency <= 0 {
 		concurrency = 25
 	}
@@ -1733,7 +1699,7 @@ func connectSustainedDevicesScheduled(assignments []assignment, certByID map[str
 					mu.Unlock()
 				}
 				target := mqttTargets[item.Index%len(mqttTargets)]
-				conn, err := connectSustainedDeviceUntil(record, brandname, runID, apiBaseURL, target, deadline, recordPhase)
+				conn, err := connectSustainedDevice(record, brandname, runID, apiBaseURL, target, recordPhase)
 				if err != nil {
 					mu.Lock()
 					totals.ConnectFailures++
@@ -1745,11 +1711,9 @@ func connectSustainedDevicesScheduled(assignments []assignment, certByID map[str
 				mu.Lock()
 				totals.DeviceSubscribeAttempts++
 				mu.Unlock()
-				subscribeStart := time.Now()
-				if err := mqttSubscribeWithQoS(conn, uint16((item.Index%60000)+1), deltaTopic, 1); err != nil {
+				if err := mqttSubscribe(conn, uint16((item.Index%60000)+1), deltaTopic); err != nil {
 					_ = conn.Close()
 					mu.Lock()
-					recordPhaseOutcome(totals, "device_subscribe_delta", "device", "", record.DeviceID, redactedError(err), time.Since(subscribeStart), err, deadline, 0, false, mqttTargetString(target))
 					totals.ConnectFailures++
 					totals.DeviceSubscribeFailures++
 					recordFailure(totals, "device_delta_subscribe_failed", err)
@@ -1759,7 +1723,6 @@ func connectSustainedDevicesScheduled(assignments []assignment, certByID map[str
 				clearConnDeadline(conn)
 				lockedConn := &lockedReadWriteCloser{ReadWriteCloser: conn}
 				mu.Lock()
-				recordPhaseOutcome(totals, "device_subscribe_delta", "device", "", record.DeviceID, "", time.Since(subscribeStart), nil, deadline, 0, false, mqttTargetString(target))
 				totals.ConnectSuccesses++
 				totals.SubscribeSuccesses++
 				mu.Unlock()
@@ -1768,31 +1731,33 @@ func connectSustainedDevicesScheduled(assignments []assignment, certByID map[str
 		}()
 	}
 	go func() {
+		dispatchStart := time.Now()
 		defer func() {
 			close(jobs)
 			wg.Wait()
 			close(results)
 		}()
-		if len(schedule) == 0 {
-			schedule = immediateConnectSchedule(assignments)
-		}
-		for _, scheduled := range schedule {
+		for idx, assignment := range assignments {
 			if deadlineReached(deadline) {
 				break
 			}
-			if !scheduled.At.IsZero() {
-				sleepUntilDeadline(time.Until(scheduled.At), deadline)
+			if delay := connectDispatchDelay(idx, len(assignments), paceWindow); delay > 0 {
+				sleepUntilDeadline(time.Until(dispatchStart.Add(delay)), deadline)
 				if deadlineReached(deadline) {
 					break
 				}
 			}
 			if deadline.IsZero() {
-				jobs <- job{Index: scheduled.Index, Assignment: scheduled.Assignment}
+				jobs <- job{Index: idx, Assignment: assignment}
 				continue
 			}
-			timer := time.NewTimer(time.Until(deadline))
+			wait := time.Until(deadline)
+			if wait <= 0 {
+				break
+			}
+			timer := time.NewTimer(wait)
 			select {
-			case jobs <- job{Index: scheduled.Index, Assignment: scheduled.Assignment}:
+			case jobs <- job{Index: idx, Assignment: assignment}:
 				if !timer.Stop() {
 					select {
 					case <-timer.C:
@@ -1812,93 +1777,6 @@ func connectSustainedDevicesScheduled(assignments []assignment, certByID map[str
 		return sessions[i].Assignment.DeviceID < sessions[j].Assignment.DeviceID
 	})
 	return sessions
-}
-
-type connectScheduleEntry struct {
-	Index      int
-	Assignment assignment
-	At         time.Time
-}
-
-func immediateConnectSchedule(assignments []assignment) []connectScheduleEntry {
-	schedule := make([]connectScheduleEntry, 0, len(assignments))
-	for idx, assignment := range assignments {
-		schedule = append(schedule, connectScheduleEntry{Index: idx, Assignment: assignment})
-	}
-	return schedule
-}
-
-func stagedConnectRampWindow(connectStart time.Time, connectDeadline time.Time) time.Duration {
-	if connectStart.IsZero() || connectDeadline.IsZero() || !connectDeadline.After(connectStart) {
-		return 0
-	}
-	window := connectDeadline.Sub(connectStart)
-	tailBudget := stagedConnectTailBudget(window)
-	if window <= tailBudget {
-		return 0
-	}
-	return window - tailBudget
-}
-
-func stagedConnectTailBudget(rampWindow time.Duration) time.Duration {
-	tailBudget := tokenRequestTimeout
-	if tailBudget < 15*time.Second {
-		tailBudget = 15 * time.Second
-	}
-	if rampWindow > 0 {
-		scaled := rampWindow / 10
-		if scaled > tailBudget {
-			tailBudget = scaled
-		}
-	}
-	if tailBudget > 30*time.Second {
-		return 30 * time.Second
-	}
-	return tailBudget
-}
-
-func stagedConnectSchedule(assignments []assignment, rampStart time.Time, rampWindow time.Duration, seed int, stageName string) []connectScheduleEntry {
-	if len(assignments) == 0 {
-		return nil
-	}
-	if rampStart.IsZero() || rampWindow <= 0 {
-		return immediateConnectSchedule(assignments)
-	}
-	type keyedAssignment struct {
-		index      int
-		assignment assignment
-		key        [32]byte
-	}
-	keyed := make([]keyedAssignment, 0, len(assignments))
-	for idx, assignment := range assignments {
-		key := sha256.Sum256([]byte(fmt.Sprintf("%d:%s:%s:connect-order", seed, stageName, assignment.DeviceID)))
-		keyed = append(keyed, keyedAssignment{index: idx, assignment: assignment, key: key})
-	}
-	sort.Slice(keyed, func(i, j int) bool {
-		return bytes.Compare(keyed[i].key[:], keyed[j].key[:]) < 0
-	})
-	schedule := make([]connectScheduleEntry, 0, len(assignments))
-	slot := rampWindow / time.Duration(len(assignments))
-	if slot <= 0 {
-		slot = time.Nanosecond
-	}
-	for order, item := range keyed {
-		jitterKey := sha256.Sum256([]byte(fmt.Sprintf("%d:%s:%s:connect-jitter", seed, stageName, item.assignment.DeviceID)))
-		jitterNanos := int64(0)
-		if slot > 0 {
-			jitterNanos = int64(binary.BigEndian.Uint64(jitterKey[:8]) % uint64(slot.Nanoseconds()))
-		}
-		offset := time.Duration(order)*slot + time.Duration(jitterNanos)
-		if offset >= rampWindow {
-			offset = rampWindow - time.Nanosecond
-		}
-		if offset < 0 {
-			offset = 0
-		}
-		schedule = append(schedule, connectScheduleEntry{Index: item.index, Assignment: item.assignment, At: rampStart.Add(offset)})
-	}
-	sort.Slice(schedule, func(i, j int) bool { return schedule[i].At.Before(schedule[j].At) })
-	return schedule
 }
 
 func connectFailureReason(err error, deadline time.Time) string {
@@ -1927,43 +1805,17 @@ func sleepUntilDeadline(delay time.Duration, deadline time.Time) {
 }
 
 func connectSustainedDevice(record certRecord, brandname, runID, apiBaseURL string, target mqttEndpointTarget, recordPhase func(func(*mqttIOTotals))) (io.ReadWriteCloser, error) {
-	return connectSustainedDeviceUntil(record, brandname, runID, apiBaseURL, target, time.Time{}, recordPhase)
-}
-
-func connectSustainedDeviceUntil(record certRecord, brandname, runID, apiBaseURL string, target mqttEndpointTarget, deadline time.Time, recordPhase func(func(*mqttIOTotals))) (io.ReadWriteCloser, error) {
 	cert, err := loadLeafFirstX509KeyPairForRecord(record)
 	if err != nil {
 		return nil, err
 	}
-	deviceToken, err := tokenWithRetry(newDeviceTokenManager(apiBaseURL, cert, record.DeviceID), deadline, func(attempt int, elapsed time.Duration, err error, exhausted bool) {
-		recordPhase(func(totals *mqttIOTotals) {
-			recordPhaseOutcome(totals, "device_request_token", "device", "", record.DeviceID, redactedError(err), elapsed, err, deadline, attempt, attempt > 1, mqttTargetString(target))
-			totals.DeviceTokenAttempts++
-			if attempt == 1 {
-				if err == nil {
-					totals.DeviceTokenFirstAttemptSuccesses++
-				} else {
-					totals.DeviceTokenFirstAttemptFailures++
-				}
-			} else {
-				totals.DeviceTokenRetryAttempts++
-				if err == nil {
-					totals.DeviceTokenRetrySuccesses++
-				}
-			}
-			if err == nil {
-				totals.DeviceTokenSuccesses++
-				return
-			}
-			totals.DeviceTokenFailures++
-			if exhausted {
-				totals.DeviceTokenRetryExhausted++
-			}
-		})
-	})
+	recordPhase(func(totals *mqttIOTotals) { totals.DeviceTokenAttempts++ })
+	deviceToken, err := requestDeviceToken(apiBaseURL, cert, record.DeviceID)
 	if err != nil {
+		recordPhase(func(totals *mqttIOTotals) { totals.DeviceTokenFailures++ })
 		return nil, fmt.Errorf("device request_token: %w", err)
 	}
+	recordPhase(func(totals *mqttIOTotals) { totals.DeviceTokenSuccesses++ })
 	return connectMQTTActor(mqttActorProbe{
 		DeviceID:    record.DeviceID,
 		DeviceType:  record.DeviceType,
@@ -1980,30 +1832,12 @@ func connectSustainedDeviceUntil(record certRecord, brandname, runID, apiBaseURL
 		Timeout:          10 * time.Second,
 		KeepAliveSeconds: sustainedMQTTKeepAliveSeconds,
 		Now:              time.Now,
-		PhasePrefix:      "device",
-		OnPhase: func(phase string, elapsed time.Duration, err error) {
-			recordPhase(func(totals *mqttIOTotals) {
-				recordPhaseOutcome(totals, phase, "device", "", record.DeviceID, redactedError(err), elapsed, err, deadline, 0, false, mqttTargetString(target))
-			})
-		},
-		OnDialAttempt: func() {
-			recordPhase(func(totals *mqttIOTotals) { totals.DeviceMQTTDialAttempts++ })
-		},
-		OnDialSuccess: func() {
-			recordPhase(func(totals *mqttIOTotals) { totals.DeviceMQTTDialSuccesses++ })
-		},
-		OnDialFailure: func(error) {
-			recordPhase(func(totals *mqttIOTotals) { totals.DeviceMQTTDialFailures++ })
-		},
-		OnConnackAttempt: func() {
-			recordPhase(func(totals *mqttIOTotals) { totals.DeviceMQTTConnackAttempts++ })
-		},
-		OnConnackSuccess: func() {
-			recordPhase(func(totals *mqttIOTotals) { totals.DeviceMQTTConnackSuccesses++ })
-		},
-		OnConnackFailure: func(error) {
-			recordPhase(func(totals *mqttIOTotals) { totals.DeviceMQTTConnackFailures++ })
-		},
+		OnDialAttempt:    func() { recordPhase(func(totals *mqttIOTotals) { totals.DeviceMQTTDialAttempts++ }) },
+		OnDialSuccess:    func() { recordPhase(func(totals *mqttIOTotals) { totals.DeviceMQTTDialSuccesses++ }) },
+		OnDialFailure:    func(error) { recordPhase(func(totals *mqttIOTotals) { totals.DeviceMQTTDialFailures++ }) },
+		OnConnackAttempt: func() { recordPhase(func(totals *mqttIOTotals) { totals.DeviceMQTTConnackAttempts++ }) },
+		OnConnackSuccess: func() { recordPhase(func(totals *mqttIOTotals) { totals.DeviceMQTTConnackSuccesses++ }) },
+		OnConnackFailure: func(error) { recordPhase(func(totals *mqttIOTotals) { totals.DeviceMQTTConnackFailures++ }) },
 	}, "device", record.DeviceID, deviceToken)
 }
 
@@ -2044,12 +1878,12 @@ func sustainedHomeDiverseEvents(sessions []sustainedDeviceSession, opts loadOpti
 	events := []sustainedEvent{}
 	for idx, session := range sessions {
 		reportCount := homeDiverseReportCount(session.Record.DeviceType, window)
-		for eventIdx, offset := range deterministicCommandOffsets(reportCount, telemetryWindow) {
+		for eventIdx := 0; eventIdx < reportCount; eventIdx++ {
 			kind := "telemetry"
 			if homeDiverseTrafficProfile(session.Record.DeviceType) == "event_burst" && eventIdx%2 == 0 {
 				kind = "event"
 			}
-			events = append(events, sustainedEvent{Offset: jitterOffset(offset, session.Record.DeviceID, seed, telemetryWindow), Kind: kind, Index: idx})
+			events = append(events, sustainedEvent{Offset: homeDiverseTelemetryOffset(eventIdx, reportCount, session.Record.DeviceID, seed, telemetryWindow), Kind: kind, Index: idx})
 		}
 	}
 
@@ -2185,13 +2019,27 @@ func homeDiverseUserAction(deviceType string, usageWindow string) string {
 	}
 }
 
-func jitterOffset(offset time.Duration, deviceID string, seed int, window time.Duration) time.Duration {
+func homeDiverseTelemetryOffset(eventIdx int, reportCount int, deviceID string, seed int, window time.Duration) time.Duration {
 	if window <= 0 {
 		return 0
 	}
-	hash := sha256.Sum256([]byte(fmt.Sprintf("%d:%s:jitter", seed, deviceID)))
-	jitter := time.Duration(int64(binary.BigEndian.Uint64(hash[:8]) % uint64((250 * time.Millisecond).Nanoseconds())))
-	out := offset + jitter
+	if reportCount <= 0 {
+		reportCount = 1
+	}
+	if eventIdx < 0 {
+		eventIdx = 0
+	}
+	if eventIdx >= reportCount {
+		eventIdx = reportCount - 1
+	}
+	slotWidth := window / time.Duration(reportCount)
+	if slotWidth <= 0 {
+		return 0
+	}
+	slotStart := time.Duration(eventIdx) * slotWidth
+	hash := sha256.Sum256([]byte(fmt.Sprintf("%d:%s:%d:%d:home-diverse-telemetry", seed, deviceID, eventIdx, reportCount)))
+	jitter := time.Duration(int64(binary.BigEndian.Uint64(hash[:8]) % uint64(slotWidth.Nanoseconds())))
+	out := slotStart + jitter
 	if out >= window {
 		return window - time.Nanosecond
 	}
@@ -2242,14 +2090,11 @@ func publishSustainedTelemetry(session sustainedDeviceSession, brandname string,
 	if err != nil {
 		return 0, err
 	}
-	start := time.Now()
 	if err := mqttPublish(session.Conn, topic, payload); err != nil {
 		totals.PublishFailures++
-		recordPhaseOutcome(totals, "device_telemetry_publish", "device", "", session.Record.DeviceID, redactedError(err), time.Since(start), err, time.Time{}, 0, false, mqttTargetString(session.MQTTTarget))
 		recordFailure(totals, "device_telemetry_publish_failed", err)
 		return 0, err
 	}
-	recordPhaseOutcome(totals, "device_telemetry_publish", "device", "", session.Record.DeviceID, "", time.Since(start), nil, time.Time{}, 0, false, mqttTargetString(session.MQTTTarget))
 	bytesSent := int64(len(topic) + len(payload))
 	totals.PublishSuccesses++
 	totals.TotalBytesSent += bytesSent
@@ -2266,108 +2111,80 @@ func runSustainedShadowCommandUntil(session sustainedDeviceSession, brandname, r
 
 func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandname, runID, apiBaseURL string, appCert tls.Certificate, totals *mqttIOTotals, ctx sustainedCommandContext) error {
 	deadline := ctx.Deadline
+	commandTimeout := ctx.Timeout
+	if commandTimeout <= 0 {
+		commandTimeout = 10 * time.Second
+	}
 	fail := func(phase, reason string, err error) error {
 		ctx.Phase = phase
 		recordCommandFailure(totals, reason, err, session, ctx)
 		return err
 	}
-	recordCommandPhase := func(phase, actor, detail string, started time.Time, err error) {
-		recordPhaseOutcome(totals, phase, actor, ctx.Stage, session.Record.DeviceID, detail, time.Since(started), err, deadline, 0, false, mqttTargetString(session.MQTTTarget))
-	}
-	appTokenManager := session.AppTokenManager
-	if appTokenManager == nil {
-		appTokenManager = newAppTokenManager(apiBaseURL, appCert, session.Record.DeviceID)
-	}
-	appToken, err := tokenWithRetry(appTokenManager, deadline, func(attempt int, elapsed time.Duration, err error, exhausted bool) {
-		recordPhaseOutcome(totals, "app_request_token", "app", ctx.Stage, session.Record.DeviceID, redactedError(err), elapsed, err, deadline, attempt, attempt > 1, mqttTargetString(session.MQTTTarget))
-		totals.AppTokenAttempts++
-		if attempt == 1 {
-			if err == nil {
-				totals.AppTokenFirstAttemptSuccesses++
-			} else {
-				totals.AppTokenFirstAttemptFailures++
-			}
-		} else {
-			totals.AppTokenRetryAttempts++
-			if err == nil {
-				totals.AppTokenRetrySuccesses++
-			}
-		}
-		if err == nil {
-			totals.AppTokenSuccesses++
-			return
-		}
-		totals.AppTokenFailures++
-		if exhausted {
-			totals.AppTokenRetryExhausted++
-		}
-	})
+	tokenTimeout, err := timeoutUntilDeadline(deadline, commandTimeout, "app_token")
 	if err != nil {
 		totals.HTTPFailures++
 		return fail("app_token", "app_token_request_failed", err)
 	}
+	totals.AppTokenAttempts++
+	appTokenManager := session.AppTokenManager
+	if appTokenManager == nil {
+		appTokenManager = newAppTokenManager(apiBaseURL, appCert, session.Record.DeviceID)
+	}
+	appToken, err := appTokenManager.Token(tokenTimeout)
+	if err != nil {
+		totals.AppTokenFailures++
+		totals.HTTPFailures++
+		return fail("app_token", "app_token_request_failed", err)
+	}
+	totals.AppTokenSuccesses++
 	target := session.MQTTTarget
 	if target.Host == "" || target.Port <= 0 {
 		return fail("app_mqtt_target", "app_mqtt_connect_failed", errors.New("missing MQTT target for sustained app command"))
 	}
-	appMQTTTimeout, err := timeoutUntilDeadline(deadline, 10*time.Second, "app_mqtt_connect")
+	appMQTTTimeout, err := timeoutUntilDeadline(deadline, commandTimeout, "app_mqtt_connect")
 	if err != nil {
 		totals.HTTPFailures++
 		return fail("app_mqtt_connect", "app_mqtt_connect_failed", err)
 	}
-	connectApp := func(role string) (io.ReadWriteCloser, error) {
-		return connectMQTTActor(mqttActorProbe{
-			DeviceID:   session.Record.DeviceID,
-			DeviceType: session.Record.DeviceType,
-			Brandname:  brandname,
-			RunID:      runID,
-			AppToken:   appToken,
-			Dial: func() (io.ReadWriteCloser, error) {
-				conn, err := tls.DialWithDialer(&net.Dialer{Timeout: appMQTTTimeout}, "tcp", net.JoinHostPort(target.Host, strconv.Itoa(target.Port)), &tls.Config{InsecureSkipVerify: true})
-				if err != nil {
-					return nil, fmt.Errorf("mqtt tls dial host=%s port=%d timeout=%s: %w", target.Host, target.Port, appMQTTTimeout, err)
-				}
-				return conn, nil
-			},
-			Timeout:          appMQTTTimeout,
-			KeepAliveSeconds: sustainedMQTTKeepAliveSeconds,
-			Now:              time.Now,
-			PhasePrefix:      "app",
-			OnPhase: func(phase string, elapsed time.Duration, err error) {
-				recordPhaseOutcome(totals, phase, "app", ctx.Stage, session.Record.DeviceID, redactedError(err), elapsed, err, deadline, 0, false, mqttTargetString(session.MQTTTarget))
-			},
-			OnDialAttempt:    func() { totals.AppMQTTDialAttempts++ },
-			OnDialSuccess:    func() { totals.AppMQTTDialSuccesses++ },
-			OnDialFailure:    func(error) { totals.AppMQTTDialFailures++ },
-			OnConnackAttempt: func() { totals.AppMQTTConnackAttempts++ },
-			OnConnackSuccess: func() { totals.AppMQTTConnackSuccesses++ },
-			OnConnackFailure: func(error) { totals.AppMQTTConnackFailures++ },
-		}, role, appMQTTUsername(session.Record.DeviceID), appToken)
-	}
-	appObserverConn, err := connectApp("app-observer")
+	appConn, err := connectMQTTActor(mqttActorProbe{
+		DeviceID:   session.Record.DeviceID,
+		DeviceType: session.Record.DeviceType,
+		Brandname:  brandname,
+		RunID:      runID,
+		AppToken:   appToken,
+		Dial: func() (io.ReadWriteCloser, error) {
+			conn, err := tls.DialWithDialer(&net.Dialer{Timeout: appMQTTTimeout}, "tcp", net.JoinHostPort(target.Host, strconv.Itoa(target.Port)), &tls.Config{InsecureSkipVerify: true})
+			if err != nil {
+				return nil, fmt.Errorf("mqtt tls dial host=%s port=%d timeout=%s: %w", target.Host, target.Port, appMQTTTimeout, err)
+			}
+			return conn, nil
+		},
+		Timeout:          appMQTTTimeout,
+		KeepAliveSeconds: sustainedMQTTKeepAliveSeconds,
+		Now:              time.Now,
+		OnDialAttempt:    func() { totals.AppMQTTDialAttempts++ },
+		OnDialSuccess:    func() { totals.AppMQTTDialSuccesses++ },
+		OnDialFailure:    func(error) { totals.AppMQTTDialFailures++ },
+		OnConnackAttempt: func() { totals.AppMQTTConnackAttempts++ },
+		OnConnackSuccess: func() { totals.AppMQTTConnackSuccesses++ },
+		OnConnackFailure: func(error) { totals.AppMQTTConnackFailures++ },
+	}, "app-controller", appMQTTUsername(session.Record.DeviceID), appToken)
 	if err != nil {
 		totals.HTTPFailures++
 		return fail("app_mqtt_connect", "app_mqtt_connect_failed", err)
 	}
-	defer appObserverConn.Close()
-	clearConnDeadline(appObserverConn)
-	appPublisherConn, err := connectApp("app-controller")
-	if err != nil {
-		totals.HTTPFailures++
-		return fail("app_mqtt_connect", "app_mqtt_connect_failed", err)
-	}
-	defer appPublisherConn.Close()
-	clearConnDeadline(appPublisherConn)
+	defer appConn.Close()
+	clearConnDeadline(appConn)
 
 	shadowUpdateTopic := "$vc/devices/" + session.Record.DeviceID + "/shadow/update"
 	acceptedTopic := shadowUpdateTopic + "/accepted"
 	documentsTopic := shadowUpdateTopic + "/documents"
 	deltaTopic := shadowUpdateTopic + "/delta"
-	if err := mqttSubscribeWithQoS(appObserverConn, 1, acceptedTopic, 1); err != nil {
+	if err := mqttSubscribe(appConn, 1, acceptedTopic); err != nil {
 		totals.HTTPFailures++
 		return fail("app_shadow_accepted_subscribe", "app_shadow_accepted_subscribe_failed", err)
 	}
-	if err := mqttSubscribeWithQoS(appObserverConn, 2, documentsTopic, 1); err != nil {
+	if err := mqttSubscribe(appConn, 2, documentsTopic); err != nil {
 		totals.HTTPFailures++
 		return fail("app_shadow_documents_subscribe", "app_shadow_documents_subscribe_failed", err)
 	}
@@ -2383,13 +2200,10 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		totals.HTTPFailures++
 		return fail("desired_payload_encode", "desired_payload_encode_failed", err)
 	}
-	desiredPublishStart := time.Now()
-	if err := mqttPublishQoS1AndWaitPuback(appPublisherConn, 1, shadowUpdateTopic, desiredPayload); err != nil {
-		recordCommandPhase("app_desired_publish", "app", redactedError(err), desiredPublishStart, err)
+	if err := mqttPublish(appConn, shadowUpdateTopic, desiredPayload); err != nil {
 		totals.HTTPFailures++
 		return fail("app_desired_publish", "app_desired_publish_failed", err)
 	}
-	recordCommandPhase("app_desired_publish", "app", "", desiredPublishStart, nil)
 	recorder := newRuntimeLogRecorderForCommand(session.Record.DeviceID, runID, commandID, time.Now)
 	commandEvent := sustainedCommandEvent{
 		Stage:              ctx.Stage,
@@ -2401,7 +2215,7 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		MQTTTarget:         mqttTargetString(session.MQTTTarget),
 		OccurredAt:         time.Now().UTC().Format(time.RFC3339Nano),
 	}
-	expect, err := recorder.RecordWithExpectation(appPublisherConn, "shadow_desired", "app_controller", "publish", shadowUpdateTopic, map[string]any{"direction": "app_to_device", "command_id": commandID})
+	expect, err := recorder.RecordWithExpectation(appConn, "shadow_desired", "app_controller", "publish", shadowUpdateTopic, map[string]any{"direction": "app_to_device", "command_id": commandID})
 	if err != nil {
 		totals.HTTPFailures++
 		return fail("app_desired_runtime_log", "app_desired_runtime_log_failed", err)
@@ -2410,34 +2224,28 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 	totals.AppDesiredWrites++
 	totals.HTTPRequests++
 	totals.TotalHTTPBytesSent += int64(len(shadowUpdateTopic) + len(desiredPayload))
-	acceptedTimeout, err := timeoutUntilDeadline(deadline, 10*time.Second, "app_shadow_accepted_wait")
+	acceptedTimeout, err := timeoutUntilDeadline(deadline, commandTimeout, "app_shadow_accepted_wait")
 	if err != nil {
 		totals.HTTPFailures++
 		return fail("app_shadow_accepted_wait", "app_shadow_accepted_wait_failed", err)
 	}
-	acceptedStart := time.Now()
-	if _, err := waitForMQTTPublishWithDeadline(appObserverConn, acceptedTopic, acceptedTimeout, func(doc map[string]any) bool {
+	if _, err := waitForMQTTPublishWithDeadline(appConn, acceptedTopic, acceptedTimeout, func(doc map[string]any) bool {
 		return doc["clientToken"] == commandID
 	}); err != nil {
-		recordCommandPhase("app_shadow_accepted_wait", "app", redactedError(err), acceptedStart, err)
 		totals.HTTPFailures++
 		return fail("app_shadow_accepted_wait", "app_shadow_accepted_wait_failed", err)
 	}
-	recordCommandPhase("app_shadow_accepted_wait", "app", "", acceptedStart, nil)
-	deltaTimeout, err := timeoutUntilDeadline(deadline, 10*time.Second, "device_delta_wait")
+	deltaTimeout, err := timeoutUntilDeadline(deadline, commandTimeout, "device_delta_wait")
 	if err != nil {
 		totals.HTTPFailures++
 		return fail("device_delta_wait", "device_delta_wait_failed", err)
 	}
-	deltaStart := time.Now()
 	if _, err := session.Reader.WaitForPublish(deltaTopic, deltaTimeout, func(doc map[string]any) bool {
 		return doc["clientToken"] == commandID
 	}); err != nil {
-		recordCommandPhase("device_delta_wait", "device", redactedError(err), deltaStart, err)
 		totals.HTTPFailures++
 		return fail("device_delta_wait", "device_delta_wait_failed", err)
 	}
-	recordCommandPhase("device_delta_wait", "device", "", deltaStart, nil)
 	totals.MessagesReceived++
 	totals.DeltaReceived++
 	expect, err = recorder.RecordWithExpectation(session.Conn, "shadow_delta", "device_client", "receive", deltaTopic, map[string]any{"direction": "app_to_device", "command_id": commandID})
@@ -2454,13 +2262,10 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		totals.HTTPFailures++
 		return fail("reported_payload_encode", "reported_payload_encode_failed", err)
 	}
-	reportedStart := time.Now()
 	if err := mqttPublish(session.Conn, shadowUpdateTopic, reportedPayload); err != nil {
-		recordCommandPhase("device_reported_publish", "device", redactedError(err), reportedStart, err)
 		totals.PublishFailures++
 		return fail("device_reported_publish", "device_reported_publish_failed", err)
 	}
-	recordCommandPhase("device_reported_publish", "device", "", reportedStart, nil)
 	totals.PublishSuccesses++
 	totals.ReportedEvents++
 	totals.TotalBytesSent += int64(len(shadowUpdateTopic) + len(reportedPayload))
@@ -2470,35 +2275,32 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		return fail("device_reported_runtime_log", "device_reported_runtime_log_failed", err)
 	}
 	commandEvent.ExpectedLogs = append(commandEvent.ExpectedLogs, expect)
-	documentsTimeout, err := timeoutUntilDeadline(deadline, 10*time.Second, "app_delta_clear_wait")
+	documentsTimeout, err := timeoutUntilDeadline(deadline, commandTimeout, "app_delta_clear_wait")
 	if err != nil {
 		totals.HTTPFailures++
 		return fail("app_delta_clear_wait", "app_delta_clear_wait_failed", err)
 	}
-	clearStart := time.Now()
-	if _, err := waitForMQTTPublishWithDeadline(appObserverConn, documentsTopic, documentsTimeout, func(doc map[string]any) bool {
+	if _, err := waitForMQTTPublishWithDeadline(appConn, documentsTopic, documentsTimeout, func(doc map[string]any) bool {
 		return doc["clientToken"] == "reported-"+commandID && shadowDocumentsDeltaCleared(doc)
 	}); err != nil {
-		recordCommandPhase("app_delta_clear_wait", "app", redactedError(err), clearStart, err)
 		totals.HTTPFailures++
 		return fail("app_delta_clear_wait", "app_delta_clear_wait_failed", err)
 	}
-	recordCommandPhase("app_delta_clear_wait", "app", "", clearStart, nil)
 	runtimeLogTimeout, err := timeoutUntilDeadline(deadline, 3*time.Second, "app_reported_runtime_log")
 	if err != nil {
 		totals.HTTPFailures++
 		return fail("app_reported_runtime_log", "app_reported_runtime_log_failed", err)
 	}
-	if setter, ok := appObserverConn.(interface{ SetDeadline(time.Time) error }); ok {
+	if setter, ok := appConn.(interface{ SetDeadline(time.Time) error }); ok {
 		_ = setter.SetDeadline(time.Now().Add(runtimeLogTimeout))
-		defer clearConnDeadline(appObserverConn)
+		defer clearConnDeadline(appConn)
 	}
-	expect, err = recorder.RecordWithExpectationQoS1(appObserverConn, "shadow_reported", "app_observer", "receive", documentsTopic, map[string]any{"direction": "device_to_app", "command_id": commandID})
+	expect, err = recorder.RecordWithExpectationQoS1(appConn, "shadow_reported", "app_observer", "receive", documentsTopic, map[string]any{"direction": "device_to_app", "command_id": commandID})
 	if err != nil {
 		totals.HTTPFailures++
 		return fail("app_reported_runtime_log", "app_reported_runtime_log_failed", err)
 	}
-	clearConnDeadline(appObserverConn)
+	clearConnDeadline(appConn)
 	commandEvent.ExpectedLogs = append(commandEvent.ExpectedLogs, expect)
 	totals.AppReceivedAcks++
 	totals.HTTPSuccesses++
@@ -2537,7 +2339,7 @@ func parseDurationDefault(raw string, fallback time.Duration) time.Duration {
 	return time.Minute
 }
 
-func waitForMQTTPublishWithDeadline(conn io.ReadWriter, topic string, timeout time.Duration, match func(map[string]any) bool) (map[string]any, error) {
+func waitForMQTTPublishWithDeadline(conn io.Reader, topic string, timeout time.Duration, match func(map[string]any) bool) (map[string]any, error) {
 	if setter, ok := conn.(interface{ SetReadDeadline(time.Time) error }); ok {
 		_ = setter.SetReadDeadline(time.Now().Add(timeout))
 		defer setter.SetReadDeadline(time.Time{})
@@ -2872,19 +2674,19 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 		return result
 	}
 	result.TraceChain = appendTrace(result.TraceChain, "command", "device_client", "subscribe", downTopic, "PASS", "")
-	if err := mqttSubscribeWithQoS(appObserver, 2, shadowAcceptedTopic, 1); err != nil {
+	if err := mqttSubscribe(appObserver, 2, shadowAcceptedTopic); err != nil {
 		result.Error = "app shadow accepted subscribe failed: " + redactedError(err)
 		result.TraceChain = appendTrace(result.TraceChain, "shadow_desired", "app_observer", "subscribe", shadowAcceptedTopic, "FAIL", "")
 		return result
 	}
 	result.TraceChain = appendTrace(result.TraceChain, "shadow_desired", "app_observer", "subscribe", shadowAcceptedTopic, "PASS", "")
-	if err := mqttSubscribeWithQoS(appObserver, 3, shadowDocumentsTopic, 1); err != nil {
+	if err := mqttSubscribe(appObserver, 3, shadowDocumentsTopic); err != nil {
 		result.Error = "app shadow documents subscribe failed: " + redactedError(err)
 		result.TraceChain = appendTrace(result.TraceChain, "shadow_reported", "app_observer", "subscribe", shadowDocumentsTopic, "FAIL", "")
 		return result
 	}
 	result.TraceChain = appendTrace(result.TraceChain, "shadow_reported", "app_observer", "subscribe", shadowDocumentsTopic, "PASS", "")
-	if err := mqttSubscribeWithQoS(device, 4, shadowDeltaTopic, 1); err != nil {
+	if err := mqttSubscribe(device, 4, shadowDeltaTopic); err != nil {
 		result.Error = "device shadow delta subscribe failed: " + redactedError(err)
 		result.TraceChain = appendTrace(result.TraceChain, "shadow_delta", "device_client", "subscribe", shadowDeltaTopic, "FAIL", "")
 		return result
@@ -3025,22 +2827,15 @@ func connectMQTTActor(probe mqttActorProbe, actor, username, password string) (i
 	if probe.OnDialAttempt != nil {
 		probe.OnDialAttempt()
 	}
-	dialStart := time.Now()
 	conn, err := probe.Dial()
 	if err != nil {
 		if probe.OnDialFailure != nil {
 			probe.OnDialFailure(err)
 		}
-		if probe.OnPhase != nil {
-			probe.OnPhase(probe.PhasePrefix+"_mqtt_dial", time.Since(dialStart), err)
-		}
 		return nil, fmt.Errorf("mqtt dial: %w", err)
 	}
 	if probe.OnDialSuccess != nil {
 		probe.OnDialSuccess()
-	}
-	if probe.OnPhase != nil {
-		probe.OnPhase(probe.PhasePrefix+"_mqtt_dial", time.Since(dialStart), nil)
 	}
 	if setter, ok := conn.(interface{ SetDeadline(time.Time) error }); ok {
 		_ = setter.SetDeadline(time.Now().Add(probe.Timeout))
@@ -3053,22 +2848,15 @@ func connectMQTTActor(probe mqttActorProbe, actor, username, password string) (i
 	if probe.OnConnackAttempt != nil {
 		probe.OnConnackAttempt()
 	}
-	connackStart := time.Now()
 	if err := mqttConnect(conn, clientID, username, password, keepAliveSeconds); err != nil {
 		_ = conn.Close()
 		if probe.OnConnackFailure != nil {
 			probe.OnConnackFailure(err)
 		}
-		if probe.OnPhase != nil {
-			probe.OnPhase(probe.PhasePrefix+"_mqtt_connack", time.Since(connackStart), err)
-		}
 		return nil, err
 	}
 	if probe.OnConnackSuccess != nil {
 		probe.OnConnackSuccess()
-	}
-	if probe.OnPhase != nil {
-		probe.OnPhase(probe.PhasePrefix+"_mqtt_connack", time.Since(connackStart), nil)
 	}
 	return conn, nil
 }
@@ -3105,7 +2893,7 @@ func sanitizeCorrelationID(raw string) string {
 	return b.String()
 }
 
-func waitForMQTTPublish(conn io.ReadWriter, topic string, timeout time.Duration, match func(map[string]any) bool) (map[string]any, error) {
+func waitForMQTTPublish(conn io.Reader, topic string, timeout time.Duration, match func(map[string]any) bool) (map[string]any, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		packetType, body, err := mqttReadPacket(conn)
@@ -3115,16 +2903,8 @@ func waitForMQTTPublish(conn io.ReadWriter, topic string, timeout time.Duration,
 		if packetType>>4 != 3 {
 			continue
 		}
-		gotTopic, message, packetID, qos, err := mqttDecodePublishPacket(packetType&0x0f, body)
-		if err != nil {
-			continue
-		}
-		if qos == 1 {
-			if err := mqttWritePuback(conn, packetID); err != nil {
-				return nil, err
-			}
-		}
-		if gotTopic != topic {
+		gotTopic, message, err := mqttDecodePublish(packetType&0x0f, body)
+		if err != nil || gotTopic != topic {
 			continue
 		}
 		doc := map[string]any{}
@@ -3268,11 +3048,6 @@ func attachMQTTIOTotals(result map[string]any, totals mqttIOTotals) {
 	result["device_token_attempts"] = totals.DeviceTokenAttempts
 	result["device_token_successes"] = totals.DeviceTokenSuccesses
 	result["device_token_failures"] = totals.DeviceTokenFailures
-	result["device_token_first_attempt_successes"] = totals.DeviceTokenFirstAttemptSuccesses
-	result["device_token_first_attempt_failures"] = totals.DeviceTokenFirstAttemptFailures
-	result["device_token_retry_attempts"] = totals.DeviceTokenRetryAttempts
-	result["device_token_retry_successes"] = totals.DeviceTokenRetrySuccesses
-	result["device_token_retry_exhausted"] = totals.DeviceTokenRetryExhausted
 	result["device_mqtt_dial_attempts"] = totals.DeviceMQTTDialAttempts
 	result["device_mqtt_dial_successes"] = totals.DeviceMQTTDialSuccesses
 	result["device_mqtt_dial_failures"] = totals.DeviceMQTTDialFailures
@@ -3297,11 +3072,6 @@ func attachMQTTIOTotals(result map[string]any, totals mqttIOTotals) {
 	result["app_token_attempts"] = totals.AppTokenAttempts
 	result["app_token_successes"] = totals.AppTokenSuccesses
 	result["app_token_failures"] = totals.AppTokenFailures
-	result["app_token_first_attempt_successes"] = totals.AppTokenFirstAttemptSuccesses
-	result["app_token_first_attempt_failures"] = totals.AppTokenFirstAttemptFailures
-	result["app_token_retry_attempts"] = totals.AppTokenRetryAttempts
-	result["app_token_retry_successes"] = totals.AppTokenRetrySuccesses
-	result["app_token_retry_exhausted"] = totals.AppTokenRetryExhausted
 	result["app_mqtt_dial_attempts"] = totals.AppMQTTDialAttempts
 	result["app_mqtt_dial_successes"] = totals.AppMQTTDialSuccesses
 	result["app_mqtt_dial_failures"] = totals.AppMQTTDialFailures
@@ -3322,67 +3092,51 @@ func attachMQTTIOTotals(result map[string]any, totals mqttIOTotals) {
 	if len(totals.CommandEvents) > 0 {
 		result["command_events"] = totals.CommandEvents
 	}
-	if len(totals.PhaseMetrics) > 0 {
-		result["phase_metrics"] = totals.PhaseMetrics
-	}
-	if len(totals.BottleneckEvents) > 0 {
-		result["bottleneck_events"] = totals.BottleneckEvents
-	}
 	result["device_mqtt_totals"] = map[string]any{
-		"connect_attempts":            totals.ConnectAttempts,
-		"connect_success":             totals.ConnectSuccesses,
-		"connect_fail":                totals.ConnectFailures,
-		"token_attempts":              totals.DeviceTokenAttempts,
-		"token_success":               totals.DeviceTokenSuccesses,
-		"token_fail":                  totals.DeviceTokenFailures,
-		"token_first_attempt_success": totals.DeviceTokenFirstAttemptSuccesses,
-		"token_first_attempt_fail":    totals.DeviceTokenFirstAttemptFailures,
-		"token_retry_attempts":        totals.DeviceTokenRetryAttempts,
-		"token_retry_success":         totals.DeviceTokenRetrySuccesses,
-		"token_retry_exhausted":       totals.DeviceTokenRetryExhausted,
-		"mqtt_dial_attempts":          totals.DeviceMQTTDialAttempts,
-		"mqtt_dial_success":           totals.DeviceMQTTDialSuccesses,
-		"mqtt_dial_fail":              totals.DeviceMQTTDialFailures,
-		"mqtt_connack_attempts":       totals.DeviceMQTTConnackAttempts,
-		"mqtt_connack_success":        totals.DeviceMQTTConnackSuccesses,
-		"mqtt_connack_fail":           totals.DeviceMQTTConnackFailures,
-		"subscribe_attempts":          totals.DeviceSubscribeAttempts,
-		"subscribe_fail":              totals.DeviceSubscribeFailures,
-		"subscribes":                  totals.SubscribeSuccesses,
-		"active_connections":          totals.ActiveConnections,
-		"active_subscriptions":        totals.ActiveSubscriptions,
-		"publishes":                   totals.PublishSuccesses + totals.PublishFailures,
-		"received_messages":           totals.MessagesReceived,
-		"delta_received":              totals.DeltaReceived,
-		"reported_publishes":          totals.ReportedEvents,
-		"rejected_publishes":          totals.PublishFailures,
-		"bytes_sent":                  totals.TotalBytesSent,
-		"bytes_received":              totals.TotalBytesReceived,
+		"connect_attempts":      totals.ConnectAttempts,
+		"connect_success":       totals.ConnectSuccesses,
+		"connect_fail":          totals.ConnectFailures,
+		"token_attempts":        totals.DeviceTokenAttempts,
+		"token_success":         totals.DeviceTokenSuccesses,
+		"token_fail":            totals.DeviceTokenFailures,
+		"mqtt_dial_attempts":    totals.DeviceMQTTDialAttempts,
+		"mqtt_dial_success":     totals.DeviceMQTTDialSuccesses,
+		"mqtt_dial_fail":        totals.DeviceMQTTDialFailures,
+		"mqtt_connack_attempts": totals.DeviceMQTTConnackAttempts,
+		"mqtt_connack_success":  totals.DeviceMQTTConnackSuccesses,
+		"mqtt_connack_fail":     totals.DeviceMQTTConnackFailures,
+		"subscribe_attempts":    totals.DeviceSubscribeAttempts,
+		"subscribe_fail":        totals.DeviceSubscribeFailures,
+		"subscribes":            totals.SubscribeSuccesses,
+		"active_connections":    totals.ActiveConnections,
+		"active_subscriptions":  totals.ActiveSubscriptions,
+		"publishes":             totals.PublishSuccesses + totals.PublishFailures,
+		"received_messages":     totals.MessagesReceived,
+		"delta_received":        totals.DeltaReceived,
+		"reported_publishes":    totals.ReportedEvents,
+		"rejected_publishes":    totals.PublishFailures,
+		"bytes_sent":            totals.TotalBytesSent,
+		"bytes_received":        totals.TotalBytesReceived,
 	}
 	result["app_user_totals"] = map[string]any{
-		"login_attempts":              totals.AppLoginAttempts,
-		"login_success":               totals.AppLoginSuccesses,
-		"login_fail":                  totals.AppLoginFailures,
-		"token_attempts":              totals.AppTokenAttempts,
-		"token_success":               totals.AppTokenSuccesses,
-		"token_fail":                  totals.AppTokenFailures,
-		"token_first_attempt_success": totals.AppTokenFirstAttemptSuccesses,
-		"token_first_attempt_fail":    totals.AppTokenFirstAttemptFailures,
-		"token_retry_attempts":        totals.AppTokenRetryAttempts,
-		"token_retry_success":         totals.AppTokenRetrySuccesses,
-		"token_retry_exhausted":       totals.AppTokenRetryExhausted,
-		"mqtt_dial_attempts":          totals.AppMQTTDialAttempts,
-		"mqtt_dial_success":           totals.AppMQTTDialSuccesses,
-		"mqtt_dial_fail":              totals.AppMQTTDialFailures,
-		"mqtt_connack_attempts":       totals.AppMQTTConnackAttempts,
-		"mqtt_connack_success":        totals.AppMQTTConnackSuccesses,
-		"mqtt_connack_fail":           totals.AppMQTTConnackFailures,
-		"list_devices_requests":       0,
-		"read_shadow_requests":        0,
-		"desired_writes":              totals.AppDesiredWrites,
-		"received_acks":               totals.AppReceivedAcks,
-		"bytes_sent":                  totals.TotalHTTPBytesSent,
-		"bytes_received":              totals.TotalHTTPBytesReceived,
+		"login_attempts":        totals.AppLoginAttempts,
+		"login_success":         totals.AppLoginSuccesses,
+		"login_fail":            totals.AppLoginFailures,
+		"token_attempts":        totals.AppTokenAttempts,
+		"token_success":         totals.AppTokenSuccesses,
+		"token_fail":            totals.AppTokenFailures,
+		"mqtt_dial_attempts":    totals.AppMQTTDialAttempts,
+		"mqtt_dial_success":     totals.AppMQTTDialSuccesses,
+		"mqtt_dial_fail":        totals.AppMQTTDialFailures,
+		"mqtt_connack_attempts": totals.AppMQTTConnackAttempts,
+		"mqtt_connack_success":  totals.AppMQTTConnackSuccesses,
+		"mqtt_connack_fail":     totals.AppMQTTConnackFailures,
+		"list_devices_requests": 0,
+		"read_shadow_requests":  0,
+		"desired_writes":        totals.AppDesiredWrites,
+		"received_acks":         totals.AppReceivedAcks,
+		"bytes_sent":            totals.TotalHTTPBytesSent,
+		"bytes_received":        totals.TotalHTTPBytesReceived,
 	}
 }
 
@@ -3393,11 +3147,6 @@ func addMQTTIOTotals(a mqttIOTotals, b mqttIOTotals) mqttIOTotals {
 	a.DeviceTokenAttempts += b.DeviceTokenAttempts
 	a.DeviceTokenSuccesses += b.DeviceTokenSuccesses
 	a.DeviceTokenFailures += b.DeviceTokenFailures
-	a.DeviceTokenFirstAttemptSuccesses += b.DeviceTokenFirstAttemptSuccesses
-	a.DeviceTokenFirstAttemptFailures += b.DeviceTokenFirstAttemptFailures
-	a.DeviceTokenRetryAttempts += b.DeviceTokenRetryAttempts
-	a.DeviceTokenRetrySuccesses += b.DeviceTokenRetrySuccesses
-	a.DeviceTokenRetryExhausted += b.DeviceTokenRetryExhausted
 	a.DeviceMQTTDialAttempts += b.DeviceMQTTDialAttempts
 	a.DeviceMQTTDialSuccesses += b.DeviceMQTTDialSuccesses
 	a.DeviceMQTTDialFailures += b.DeviceMQTTDialFailures
@@ -3420,11 +3169,6 @@ func addMQTTIOTotals(a mqttIOTotals, b mqttIOTotals) mqttIOTotals {
 	a.AppTokenAttempts += b.AppTokenAttempts
 	a.AppTokenSuccesses += b.AppTokenSuccesses
 	a.AppTokenFailures += b.AppTokenFailures
-	a.AppTokenFirstAttemptSuccesses += b.AppTokenFirstAttemptSuccesses
-	a.AppTokenFirstAttemptFailures += b.AppTokenFirstAttemptFailures
-	a.AppTokenRetryAttempts += b.AppTokenRetryAttempts
-	a.AppTokenRetrySuccesses += b.AppTokenRetrySuccesses
-	a.AppTokenRetryExhausted += b.AppTokenRetryExhausted
 	a.AppMQTTDialAttempts += b.AppMQTTDialAttempts
 	a.AppMQTTDialSuccesses += b.AppMQTTDialSuccesses
 	a.AppMQTTDialFailures += b.AppMQTTDialFailures
@@ -3464,8 +3208,6 @@ func addMQTTIOTotals(a mqttIOTotals, b mqttIOTotals) mqttIOTotals {
 	}
 	a.FailureEvents = appendFailureEvents(a.FailureEvents, b.FailureEvents)
 	a.CommandEvents = append(a.CommandEvents, b.CommandEvents...)
-	a.PhaseMetrics = addPhaseMetrics(a.PhaseMetrics, b.PhaseMetrics)
-	a.BottleneckEvents = appendBottleneckEvents(a.BottleneckEvents, b.BottleneckEvents)
 	return a
 }
 
@@ -3517,9 +3259,7 @@ func isZeroMQTTIOTotals(t mqttIOTotals) bool {
 		len(t.FailureReasons) == 0 &&
 		len(t.FailureDetails) == 0 &&
 		len(t.FailureEvents) == 0 &&
-		len(t.CommandEvents) == 0 &&
-		len(t.PhaseMetrics) == 0 &&
-		len(t.BottleneckEvents) == 0
+		len(t.CommandEvents) == 0
 }
 
 func prefixedNotes(prefix string, notes []string) []string {
@@ -3675,132 +3415,6 @@ func appendFailureEvents(left, right []sustainedFailureEvent) []sustainedFailure
 		left = append(left, event)
 	}
 	return left
-}
-
-func recordPhaseMetric(totals *mqttIOTotals, phase string, elapsed time.Duration, err error) {
-	if totals == nil || strings.TrimSpace(phase) == "" {
-		return
-	}
-	if totals.PhaseMetrics == nil {
-		totals.PhaseMetrics = map[string]phaseMetric{}
-	}
-	metric := totals.PhaseMetrics[phase]
-	metric.Attempts++
-	if err == nil {
-		metric.Success++
-	} else {
-		metric.Fail++
-	}
-	elapsedMS := elapsed.Milliseconds()
-	if elapsedMS < 0 {
-		elapsedMS = 0
-	}
-	metric.TotalMS += elapsedMS
-	if elapsedMS > metric.MaxMS {
-		metric.MaxMS = elapsedMS
-	}
-	if elapsedMS > 1000 {
-		metric.GT1S++
-	}
-	if elapsedMS > 5000 {
-		metric.GT5S++
-	}
-	if elapsedMS > 10000 {
-		metric.GT10S++
-	}
-	totals.PhaseMetrics[phase] = metric
-}
-
-func addPhaseMetrics(left, right map[string]phaseMetric) map[string]phaseMetric {
-	if len(left) == 0 && len(right) == 0 {
-		return nil
-	}
-	if left == nil {
-		left = map[string]phaseMetric{}
-	}
-	for phase, value := range right {
-		current := left[phase]
-		current.Attempts += value.Attempts
-		current.Success += value.Success
-		current.Fail += value.Fail
-		current.TotalMS += value.TotalMS
-		current.MaxMS = maxInt64(current.MaxMS, value.MaxMS)
-		current.GT1S += value.GT1S
-		current.GT5S += value.GT5S
-		current.GT10S += value.GT10S
-		left[phase] = current
-	}
-	return left
-}
-
-func recordBottleneckEvent(totals *mqttIOTotals, event bottleneckEvent) {
-	if totals == nil || strings.TrimSpace(event.Phase) == "" || len(totals.BottleneckEvents) >= maxBottleneckEvents {
-		return
-	}
-	event.Detail = sanitizeBottleneckDetail(event.Detail)
-	if event.OccurredAt == "" {
-		event.OccurredAt = time.Now().UTC().Format(time.RFC3339Nano)
-	}
-	totals.BottleneckEvents = append(totals.BottleneckEvents, event)
-}
-
-func appendBottleneckEvents(left, right []bottleneckEvent) []bottleneckEvent {
-	if len(right) == 0 || len(left) >= maxBottleneckEvents {
-		return left
-	}
-	for _, event := range right {
-		if len(left) >= maxBottleneckEvents {
-			break
-		}
-		left = append(left, event)
-	}
-	return left
-}
-
-func maxInt64(a, b int64) int64 {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func sanitizeBottleneckDetail(detail string) string {
-	detail = normalizeFailureDetail(redactedErrorString(detail))
-	lower := strings.ToLower(detail)
-	for _, marker := range []string{"access_token", "refresh_token", "authorization", "bearer", "password", "client_cert", "private", "-----begin"} {
-		if strings.Contains(lower, marker) {
-			return "redacted sensitive detail"
-		}
-	}
-	return detail
-}
-
-func recordPhaseOutcome(totals *mqttIOTotals, phase, actor, stage, deviceID, detail string, elapsed time.Duration, err error, deadline time.Time, attempt int, isRetry bool, mqttTarget string) {
-	recordPhaseMetric(totals, phase, elapsed, err)
-	if err == nil && elapsed < 5*time.Second {
-		return
-	}
-	event := bottleneckEvent{
-		Stage:      stage,
-		Phase:      phase,
-		Actor:      actor,
-		DeviceID:   deviceID,
-		Detail:     detail,
-		ElapsedMS:  elapsed.Milliseconds(),
-		Attempt:    attempt,
-		IsRetry:    isRetry,
-		MQTTTarget: mqttTarget,
-	}
-	if err != nil && strings.TrimSpace(event.Detail) == "" {
-		event.Detail = err.Error()
-	}
-	if !deadline.IsZero() {
-		remaining := time.Until(deadline)
-		if remaining > 0 {
-			event.RemainingMS = remaining.Milliseconds()
-		}
-	}
-	recordBottleneckEvent(totals, event)
 }
 
 func mqttTargetString(target mqttEndpointTarget) string {
@@ -4025,92 +3639,6 @@ func newAppTokenManager(apiBaseURL string, cert tls.Certificate, deviceID string
 	return &tokenManager{apiBaseURL: apiBaseURL, cert: cert, deviceID: deviceID, scope: "app", now: time.Now, timeout: 10 * time.Second}
 }
 
-const tokenRequestTimeout = 10 * time.Second
-const tokenRequestMaxAttempts = 3
-
-var tokenRequestRetryBackoffs = []time.Duration{500 * time.Millisecond, 2 * time.Second}
-
-type tokenAttemptRecorder func(attempt int, elapsed time.Duration, err error, exhausted bool)
-
-func tokenRetryBackoff(failedAttempt int, deviceID string) time.Duration {
-	if failedAttempt <= 0 {
-		failedAttempt = 1
-	}
-	idx := failedAttempt - 1
-	if idx >= len(tokenRequestRetryBackoffs) {
-		idx = len(tokenRequestRetryBackoffs) - 1
-	}
-	base := tokenRequestRetryBackoffs[idx]
-	jitterCap := base / 4
-	if jitterCap > 500*time.Millisecond {
-		jitterCap = 500 * time.Millisecond
-	}
-	if jitterCap <= 0 {
-		return base
-	}
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(deviceID))
-	_, _ = h.Write([]byte{byte(failedAttempt)})
-	return base + time.Duration(h.Sum32()%uint32(jitterCap))
-}
-
-func tokenAttemptTimeout(deadline time.Time, attempt int) (time.Duration, bool) {
-	if deadline.IsZero() {
-		return tokenRequestTimeout, true
-	}
-	remaining := time.Until(deadline)
-	if remaining <= 0 {
-		return 0, false
-	}
-	if attempt > 1 && remaining < tokenRequestTimeout {
-		return 0, false
-	}
-	if remaining < tokenRequestTimeout {
-		return remaining, true
-	}
-	return tokenRequestTimeout, true
-}
-
-func canRetryTokenAfter(deadline time.Time, backoff time.Duration) bool {
-	if deadline.IsZero() {
-		return true
-	}
-	return time.Until(deadline) >= backoff+tokenRequestTimeout
-}
-
-func tokenWithRetry(manager *tokenManager, deadline time.Time, recorder tokenAttemptRecorder) (string, error) {
-	var lastErr error
-	for attempt := 1; attempt <= tokenRequestMaxAttempts; attempt++ {
-		timeout, ok := tokenAttemptTimeout(deadline, attempt)
-		if !ok {
-			if lastErr != nil {
-				return "", lastErr
-			}
-			return "", errors.New("request_token timeout exhausted before request")
-		}
-		start := time.Now()
-		token, err := manager.Token(timeout)
-		elapsed := time.Since(start)
-		if err == nil {
-			if recorder != nil {
-				recorder(attempt, elapsed, nil, false)
-			}
-			return token, nil
-		}
-		lastErr = err
-		backoff := tokenRetryBackoff(attempt, manager.deviceID)
-		exhausted := attempt >= tokenRequestMaxAttempts || !canRetryTokenAfter(deadline, backoff)
-		if recorder != nil {
-			recorder(attempt, elapsed, err, exhausted)
-		}
-		if exhausted {
-			break
-		}
-		sleepUntilDeadline(backoff, deadline)
-	}
-	return "", lastErr
-}
-
 func (m *tokenManager) Token(timeout time.Duration) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -4191,34 +3719,22 @@ func accessTokenPastHalfLife(bundle tokenBundle, now time.Time) bool {
 }
 
 func jwtUnixTimeClaim(token string, claim string) (time.Time, bool) {
-	claims, ok := tokenClaims(token)
-	if !ok {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return time.Time{}, false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return time.Time{}, false
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil {
 		return time.Time{}, false
 	}
 	value, ok := claims[claim]
 	if !ok {
 		return time.Time{}, false
 	}
-	return claimTimeValue(value)
-}
-
-func tokenClaims(token string) (map[string]any, bool) {
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return nil, false
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return nil, false
-	}
-	var claims map[string]any
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		return nil, false
-	}
-	return claims, true
-}
-
-func claimTimeValue(value any) (time.Time, bool) {
 	switch v := value.(type) {
 	case float64:
 		return time.Unix(int64(v), 0), true
@@ -4228,12 +3744,6 @@ func claimTimeValue(value any) (time.Time, bool) {
 			return time.Time{}, false
 		}
 		return time.Unix(n, 0), true
-	case string:
-		t, err := time.Parse(time.RFC3339Nano, v)
-		if err != nil {
-			return time.Time{}, false
-		}
-		return t, true
 	default:
 		return time.Time{}, false
 	}
@@ -4831,16 +4341,9 @@ func mqttConnect(w io.ReadWriter, clientID, username, password string, keepAlive
 }
 
 func mqttSubscribe(w io.ReadWriter, packetID uint16, topic string) error {
-	return mqttSubscribeWithQoS(w, packetID, topic, 0)
-}
-
-func mqttSubscribeWithQoS(w io.ReadWriter, packetID uint16, topic string, qos byte) error {
-	if qos > 1 {
-		return fmt.Errorf("unsupported mqtt subscribe qos %d", qos)
-	}
 	body := []byte{byte(packetID >> 8), byte(packetID)}
 	body = append(body, mqttString(topic)...)
-	body = append(body, qos)
+	body = append(body, 0)
 	if err := mqttWritePacket(w, 0x82, body); err != nil {
 		return err
 	}
@@ -5023,37 +4526,20 @@ func mqttReadPacket(r io.Reader) (byte, []byte, error) {
 }
 
 func mqttDecodePublish(flags byte, body []byte) (string, []byte, error) {
-	topic, payload, _, _, err := mqttDecodePublishPacket(flags, body)
-	return topic, payload, err
-}
-
-func mqttDecodePublishPacket(flags byte, body []byte) (string, []byte, uint16, byte, error) {
 	if len(body) < 2 {
-		return "", nil, 0, 0, errors.New("publish body too short")
+		return "", nil, errors.New("publish body too short")
 	}
 	topicLen := int(binary.BigEndian.Uint16(body[:2]))
 	topicEnd := 2 + topicLen
 	if len(body) < topicEnd {
-		return "", nil, 0, 0, errors.New("publish topic truncated")
+		return "", nil, errors.New("publish topic truncated")
 	}
 	pos := topicEnd
 	qos := (flags >> 1) & 0x03
-	var packetID uint16
 	if qos > 0 {
-		if len(body) < pos+2 {
-			return "", nil, 0, qos, errors.New("publish packet id truncated")
-		}
-		packetID = binary.BigEndian.Uint16(body[pos : pos+2])
 		pos += 2
 	}
-	return string(body[2:topicEnd]), body[pos:], packetID, qos, nil
-}
-
-func mqttWritePuback(w io.Writer, packetID uint16) error {
-	if packetID == 0 {
-		return errors.New("mqtt puback missing packet id")
-	}
-	return mqttWritePacket(w, 0x40, []byte{byte(packetID >> 8), byte(packetID)})
+	return string(body[2:topicEnd]), body[pos:], nil
 }
 
 func mqttString(value string) []byte {

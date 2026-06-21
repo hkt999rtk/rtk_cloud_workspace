@@ -1,9 +1,6 @@
 package home100k
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 func TestDefaultPlanResolves100KHomeBaseline(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
@@ -104,14 +101,8 @@ func TestDefaultPlanIncludesDiverseDeviceAndUserProfiles(t *testing.T) {
 			t.Fatalf("missing user profile %s in %#v", name, plan.UserProfiles)
 		}
 	}
-	wantWindows := []string{"ramp_to_target"}
-	if len(plan.StageUsageWindows) != len(wantWindows) {
-		t.Fatalf("usage windows = %#v, want %#v", plan.StageUsageWindows, wantWindows)
-	}
-	for idx, want := range wantWindows {
-		if plan.StageUsageWindows[idx] != want || plan.Stages[idx].UsageWindow != want {
-			t.Fatalf("stage window %d = plan %q stage %q, want %q", idx, plan.StageUsageWindows[idx], plan.Stages[idx].UsageWindow, want)
-		}
+	if len(plan.Stages) != 1 || plan.Stages[0].Name != "target" {
+		t.Fatalf("default direct stage = %#v, want single target stage", plan.Stages)
 	}
 	if plan.DeviceProfiles["camera_status"].TrafficProfile != "event_burst" {
 		t.Fatalf("camera_status traffic profile = %#v", plan.DeviceProfiles["camera_status"])
@@ -170,17 +161,15 @@ func TestDefaultPlanCreatesDeterministicShardsAndStages(t *testing.T) {
 		}
 	}
 
-	wantStages := []int{100000}
-	if len(plan.Stages) != len(wantStages) {
-		t.Fatalf("stages = %d, want %d", len(plan.Stages), len(wantStages))
+	if len(plan.Stages) != 1 {
+		t.Fatalf("stages = %d, want 1", len(plan.Stages))
 	}
-	for idx, want := range wantStages {
-		if plan.Stages[idx].ConnectedDevices != want {
-			t.Fatalf("stage %d devices = %d, want %d", idx, plan.Stages[idx].ConnectedDevices, want)
-		}
-		if plan.Stages[idx].WarmUp != "1m" || plan.Stages[idx].SteadyState != "2m" || plan.Stages[idx].CoolDown != "45s" {
-			t.Fatalf("stage %d durations = warm-up %s steady %s cool-down %s, want 1m/2m/45s", idx, plan.Stages[idx].WarmUp, plan.Stages[idx].SteadyState, plan.Stages[idx].CoolDown)
-		}
+	stage := plan.Stages[0]
+	if stage.Name != "target" || stage.ConnectedDevices != 100000 {
+		t.Fatalf("stage = %s/%d, want target/100000", stage.Name, stage.ConnectedDevices)
+	}
+	if stage.WarmUp != "1m" || stage.SteadyState != "2m" || stage.CoolDown != "45s" {
+		t.Fatalf("stage durations = warm-up %s steady %s cool-down %s, want 1m/2m/45s", stage.WarmUp, stage.SteadyState, stage.CoolDown)
 	}
 }
 
@@ -259,16 +248,11 @@ func TestPlanUsesConfiguredDeviceCount(t *testing.T) {
 		t.Fatalf("unexpected user shards: %#v", userShards)
 	}
 
-	wantStages := []struct {
-		name    string
-		devices int
-	}{
-		{"9k", 9000},
+	if len(plan.Stages) != 1 {
+		t.Fatalf("stages = %d, want 1", len(plan.Stages))
 	}
-	for idx, want := range wantStages {
-		if plan.Stages[idx].Name != want.name || plan.Stages[idx].ConnectedDevices != want.devices {
-			t.Fatalf("stage %d = %s/%d, want %s/%d", idx, plan.Stages[idx].Name, plan.Stages[idx].ConnectedDevices, want.name, want.devices)
-		}
+	if plan.Stages[0].Name != "target" || plan.Stages[0].ConnectedDevices != 9000 {
+		t.Fatalf("stage = %s/%d, want target/9000", plan.Stages[0].Name, plan.Stages[0].ConnectedDevices)
 	}
 }
 
@@ -343,22 +327,5 @@ func TestPlanRequiresReviewCriticalInputs(t *testing.T) {
 	}
 	if _, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK"}); err == nil {
 		t.Fatal("NewPlan() without region succeeded, want error")
-	}
-}
-
-func TestPlanRequiresRampShorterThanFullLoadWindow(t *testing.T) {
-	_, err := NewPlan(PlanOptions{
-		EnvRoot:       "cloud_env/staging/lke",
-		Brandname:     "RTK",
-		Region:        "us-sea",
-		StageWarmUp:   "10m",
-		StageSteady:   "5m",
-		StageCoolDown: "1m",
-	})
-	if err == nil {
-		t.Fatal("NewPlan() with ramp >= full-load window succeeded, want error")
-	}
-	if !strings.Contains(err.Error(), "must be less than full-load test window") {
-		t.Fatalf("NewPlan() error = %v, want ramp/full-load validation", err)
 	}
 }

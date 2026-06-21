@@ -134,9 +134,9 @@ func TestReportRendersFailureEventSamples(t *testing.T) {
 		ServerEvidenceFound:  true,
 		LoadGeneratorHealthy: true,
 		StageResults: []StageResult{{
-			Name: "75pct",
+			Name: "target",
 			FailureEvents: []FailureEvent{{
-				Stage:       "75pct",
+				Stage:       "target",
 				Reason:      "device_delta_wait_failed",
 				Detail:      "network EOF",
 				Phase:       "device_delta_wait",
@@ -299,7 +299,7 @@ func TestReportRendersRequiredStageMetrics(t *testing.T) {
 		"## Usage Window Totals",
 		"evening_peak",
 		"## Server Log Correlation",
-		"## Stage Diagnostics",
+		"## Target Diagnostics",
 		"## Sync/Provision Telemetry",
 		"## Load Generator Start Coordination",
 		"- max start skew ms: 12\n\n| VM | IP | Status | Ready at |",
