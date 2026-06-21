@@ -81,6 +81,16 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 			},
 		},
 		{
+			Name:  "ensure-lke-node-pool",
+			Phase: "provider",
+			Enabled: func(ctx provisionContext) bool {
+				return provider.Name() == "lke" && (ctx.Opts.mode.apply || ctx.Opts.mode.deploy)
+			},
+			Run: func(ctx provisionContext) error {
+				return ensureLKENodePool(ctx.Paths, ctx.Env)
+			},
+		},
+		{
 			Name:    "apply-base",
 			Phase:   "runtime",
 			Enabled: func(ctx provisionContext) bool { return ctx.Opts.mode.apply },
@@ -107,7 +117,14 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 			Phase:   "runtime",
 			Enabled: func(ctx provisionContext) bool { return ctx.Opts.mode.deploy },
 			Run: func(ctx provisionContext) error {
-				return lkeDeployWorkloads(ctx.Paths, ctx.Env, ctx.Opts)
+				if err := lkeDeployWorkloads(ctx.Paths, ctx.Env, ctx.Opts); err != nil {
+					return err
+				}
+				if ctx.Opts.mode.dns {
+					_, err := lkeEnsureExternalHAProxyEdge(ctx.Paths, ctx.Env, ctx.Opts)
+					return err
+				}
+				return nil
 			},
 		},
 		{

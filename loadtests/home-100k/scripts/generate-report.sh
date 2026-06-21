@@ -175,7 +175,10 @@ def total_app_totals(stages):
     return totals
 
 def status_summary():
-    lines = [f"- status: {md(result.get('status', 'UNKNOWN'))}"]
+    lines = [
+        f"- status: {md(result.get('status', 'UNKNOWN'))}",
+        f"- result: {md(result.get('result', 'UNKNOWN'))}",
+    ]
     correlation = result.get("server_correlation") or {}
     if correlation.get("status"):
         lines.append(f"- server correlation: {md(correlation.get('status'))}")
@@ -1042,6 +1045,7 @@ def report_source_artifacts():
 replacements = {
     "RUN_ID": md(result.get("run_id", "")),
     "STATUS": md(result.get("status", "UNKNOWN")),
+    "RESULT": md(result.get("result", "UNKNOWN")),
     "STATUS_SUMMARY": status_summary(),
     "TEST_CONDITIONS": test_conditions(),
     "GATE_STANDARDS": gate_standards(),

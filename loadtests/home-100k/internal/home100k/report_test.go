@@ -52,7 +52,7 @@ func TestReportRendersRequiredScenariosAndIncompleteEvidence(t *testing.T) {
 	}
 }
 
-func TestReportMarksMissingPerTypeEvidenceIncomplete(t *testing.T) {
+func TestReportMarksMissingPerTypeEvidenceAsCompleteFailure(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
 		EnvRoot:   "cloud_env/staging/lke",
 		Brandname: "RTK",
@@ -68,16 +68,36 @@ func TestReportMarksMissingPerTypeEvidenceIncomplete(t *testing.T) {
 		ShadowEvidenceFound:  true,
 		ServerEvidenceFound:  true,
 		LoadGeneratorHealthy: true,
+		ServerEvidence:       ServerEvidence{Complete: true, Sources: requiredEvidenceSources(true)},
+		ServerCorrelation:    ServerCorrelation{Status: "pass"},
 		StageResults: []StageResult{{
 			Name:             "1",
 			ConnectedDevices: 1,
+			DeviceMQTTTotals: DeviceMQTTTotals{
+				ConnectSuccess:      1,
+				Subscribes:          1,
+				ActiveConnections:   1,
+				ActiveSubscriptions: 1,
+				Publishes:           1,
+				ReceivedMessages:    1,
+				DeltaReceived:       1,
+				ReportedPublishes:   1,
+			},
+			AppUserTotals: AppUserTotals{
+				DesiredWrites: 1,
+				ReceivedAcks:  1,
+			},
+			DesiredReportedConvergenceRate: 100,
+			OfflineDesiredConvergenceRate:  100,
+			DeltaClearSuccessRatePercent:   100,
 			DeviceTypeTotals: map[string]DeviceTypeTotals{
 				"light": {TelemetryPublishes: 1},
 			},
 		}},
 	})
 	for _, want := range []string{
-		"Status: INCOMPLETE",
+		"Status: COMPLETE",
+		"Result: FAIL",
 		"Missing per-device-type MQTT evidence: smart_meter",
 	} {
 		if !strings.Contains(report, want) {
@@ -131,9 +151,9 @@ func TestReportMarksFunctionalThresholdFailure(t *testing.T) {
 	})
 
 	for _, want := range []string{
-		"Status: FAIL",
-		"Functional success below threshold",
-		"100pct app ACK success 0.00% < 99.50%",
+		"Status: COMPLETE",
+		"Result: FAIL",
+		"stage 100pct app ACK success rate 0.00% below 99.50% threshold",
 	} {
 		if !strings.Contains(report, want) {
 			t.Fatalf("report missing %q:\n%s", want, report)
@@ -380,6 +400,55 @@ func TestReportRendersRequiredStageMetrics(t *testing.T) {
 		"postgresql-0",
 		"220m",
 		"236Mi",
+	} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("report missing %q:\n%s", want, report)
+		}
+	}
+}
+
+func TestReportRendersCompleteFailWhenSuccessRateBelowThreshold(t *testing.T) {
+	plan := Plan{
+		Conditions: TestConditions{Devices: 10000, Users: 500},
+		DeviceMix:  map[string]int{"light": 1},
+	}
+	report := RenderReport(ReportInput{
+		Plan:                 plan,
+		RunID:                "run-complete-fail",
+		ShadowEvidenceFound:  true,
+		ServerEvidenceFound:  true,
+		LoadGeneratorHealthy: true,
+		ServerEvidence:       ServerEvidence{Complete: true, Sources: requiredEvidenceSources(true)},
+		ServerCorrelation:    ServerCorrelation{Status: "pass"},
+		StageResults: []StageResult{{
+			Name:             "100pct",
+			ConnectedDevices: 10000,
+			DeviceMQTTTotals: DeviceMQTTTotals{
+				ConnectSuccess:      9900,
+				Subscribes:          9900,
+				ActiveConnections:   9900,
+				ActiveSubscriptions: 9900,
+				Publishes:           9900,
+				ReceivedMessages:    9900,
+				DeltaReceived:       9900,
+				ReportedPublishes:   9900,
+			},
+			AppUserTotals: AppUserTotals{
+				DesiredWrites: 500,
+				ReceivedAcks:  500,
+			},
+			DesiredReportedConvergenceRate: 100,
+			OfflineDesiredConvergenceRate:  100,
+			DeltaClearSuccessRatePercent:   100,
+			DeviceTypeTotals: map[string]DeviceTypeTotals{
+				"light": {TelemetryPublishes: 9900},
+			},
+		}},
+	})
+	for _, want := range []string{
+		"Status: COMPLETE",
+		"Result: FAIL",
+		"connection success rate 99.00% below 99.50% threshold",
 	} {
 		if !strings.Contains(report, want) {
 			t.Fatalf("report missing %q:\n%s", want, report)

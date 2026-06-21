@@ -429,9 +429,9 @@ NodeBalancer。`--dns` / `staging-provision` 都走同一條 HAProxy edge 路徑
    - `account-manager.video-cloud-staging.realtekconnect.com` -> `account-manager`
    - `admin.video-cloud-staging.realtekconnect.com` -> `cloud-admin`
    - `frontend.video-cloud-staging.realtekconnect.com` -> `frontend`
-6. provision 或更新 host-installed HAProxy edge VM；HAProxy 用 TCP mode 將 public `443/TCP` forward 到 ingress-nginx NodePort，將 `8883/TCP` forward 到 EMQX/MQTT NodePort。
+6. provision 或更新 host-installed HAProxy edge VM；HAProxy 用 TCP mode 與 `balance roundrobin` 將 public `443/TCP` forward 到 ingress-nginx NodePort，將 `8883/TCP` round-robin forward 到三台 LKE node 的 EMQX/MQTT NodePort。
 7. GoDaddy A records 指向 HAProxy edge VM public IP，不等待 NodeBalancer IP。
-8. MQTT public exposure 使用 `NodePort`，不是 `LoadBalancer`；目前 MQTTS NodePort 預設為 `31883`。
+8. MQTT public exposure 使用 `NodePort`，不是 `LoadBalancer`；目前 MQTTS NodePort 預設為 `31883`，`mqtt` 預設是 3 pod EMQX StatefulSet cluster，使用 stable `mqtt-0..2` pod DNS 與 required pod anti-affinity 分散到三台 node。
 9. 套用 default-deny ingress NetworkPolicy 與必要 allow rules。
 
 必要輸入：
@@ -549,14 +549,21 @@ scripts/run-staging-e2e.sh --plan
 scripts/run-staging-e2e.sh --confirm video-cloud-staging
 ```
 
-LKE acceptance profile 預設以單節點可排程為優先：`mqtt`、
-`account-manager`、`video-cloud-api` replicas 都是 `1`。容量測試或
-production-like smoke 可用 `LKE_MQTT_REPLICAS`、
-`LKE_ACCOUNT_MANAGER_REPLICAS`、`LKE_VIDEO_CLOUD_REPLICAS` 拉高；常用資源
+LKE staging capacity baseline 預設建立 `4` 台 node，保留
+`account-manager` replicas 為 `1`，`video-cloud-api` 預設為 `3` pods，
+MQTT 預設為 `3` pod EMQX StatefulSet cluster，分散到不同 node 以支援
+HAProxy MQTTS backend round-robin。PostgreSQL 預設 request/limit 提高為
+`1 CPU`、`2Gi` request memory、`4Gi` limit memory；`video-cloud-api`
+預設為 `500m` CPU request、`512Mi` memory request、`1Gi` memory limit。
+容量測試或 production-like smoke 可用
+`LKE_MQTT_REPLICAS`、`LKE_ACCOUNT_MANAGER_REPLICAS`、
+`LKE_VIDEO_CLOUD_REPLICAS`、`LKE_NODE_COUNT` 調整；常用資源
 override 包含 `LKE_POSTGRES_REQUEST_CPU`、`LKE_POSTGRES_REQUEST_MEMORY`、
 `LKE_POSTGRES_LIMIT_MEMORY`、`LKE_VIDEO_CLOUD_API_REQUEST_CPU`、
 `LKE_VIDEO_CLOUD_API_REQUEST_MEMORY`、`LKE_VIDEO_CLOUD_API_LIMIT_MEMORY`、
-`LKE_INGRESS_REPLICAS` 與 `LKE_INGRESS_REQUEST_CPU`。
+`LKE_MQTT_REQUEST_CPU`、`LKE_MQTT_REQUEST_MEMORY`、
+`LKE_MQTT_LIMIT_MEMORY`、`LKE_INGRESS_REPLICAS` 與
+`LKE_INGRESS_REQUEST_CPU`。
 
 `run-staging-e2e.sh --confirm` 預設會先 reset K8s runtime resources，因此也
 預設重建 users/devices/bind artifacts，不重用舊本機 artifact；這可避免

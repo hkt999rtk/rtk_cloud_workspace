@@ -34,7 +34,12 @@ changing the public contract.
 - DNS A records point at HAProxy edge VM public IPs.
 - `443/TCP` forwards to the ingress-nginx NodePort. Staging default:
   `30443`.
-- `8883/TCP` forwards to the EMQX/MQTT NodePort. Staging default: `31883`.
+- `8883/TCP` uses HAProxy `balance roundrobin` and forwards to the EMQX/MQTT
+  NodePort on each LKE node. Staging default: `31883`.
+- MQTT defaults to a three-pod EMQX StatefulSet cluster with stable
+  `mqtt-0..2` pod DNS and required pod anti-affinity, so one EMQX pod lands on
+  each of the three staging nodes and HAProxy can round-robin the MQTTS backend
+  across all nodes.
 - PROXY protocol is off by default. Enable it only with
   `LKE_EDGE_HAPROXY_ENABLE_PROXY_PROTOCOL=true` after the Kubernetes backend is
   explicitly configured to accept it.
@@ -78,6 +83,7 @@ The live staging deployment validated on 2026-06-18 uses:
 - HAProxy edge VM private IP: `192.168.136.46`
 - ingress-nginx Service: `NodePort` `443:30443/TCP`
 - MQTT public Service: `NodePort` `8883:31883/TCP`
+- MQTT StatefulSet: 3 clustered EMQX pods, spread one per LKE node.
 - DNS A records for staging public hostnames point to the HAProxy edge VM.
 - Full `scripts/run-staging-e2e.sh --confirm video-cloud-staging` passed with
   the default `10` users and `100` devices acceptance profile.

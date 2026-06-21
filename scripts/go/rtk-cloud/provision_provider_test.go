@@ -84,6 +84,7 @@ func TestKubernetesProvisionStepsExposeProviderNeutralOrder(t *testing.T) {
 		"preflight",
 		"plan",
 		"ensure-kube-access",
+		"ensure-lke-node-pool",
 		"apply-base",
 		"public-https",
 		"deploy-workloads",

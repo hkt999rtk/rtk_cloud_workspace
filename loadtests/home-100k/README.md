@@ -815,8 +815,13 @@ Every report must include:
 - bottleneck assessment
 
 If IoT Device Shadow evidence, MQTT broker evidence, APP/API evidence, parsed
-server counters, non-zero client totals, or target-connect coverage cannot be
-collected, the report status must be `INCOMPLETE`, not `PASS`.
+server counters, or non-zero client totals cannot be collected, the report
+status must be `INCOMPLETE`, not `PASS`. If the run completes but stage target
+coverage is below the required success-rate threshold, the report status is
+`COMPLETE` and the result is `FAIL`.
+
+The default staging success-rate threshold is `99.5%` for stage connection,
+subscription, APP desired-write, and APP ACK coverage.
 
 If load-generator saturation invalidates the run, the report must say so
 instead of attributing the bottleneck to the server.

@@ -216,8 +216,8 @@ func runMQTTTest(args []string) error {
 	stageDurationsSeconds := fs.String("stage-durations-seconds", "", "comma-separated staged sustained stage durations in seconds")
 	stageRampSeconds := fs.String("stage-ramp-seconds", "", "comma-separated staged sustained connect ramp durations in seconds")
 	stageMinCommands := fs.String("stage-min-commands", "", "comma-separated staged sustained minimum command events")
-	deviceTrafficProfile := fs.String("device-traffic-profile", "", "home MQTT device traffic profile")
-	stageUsageWindows := fs.String("stage-usage-windows", "", "comma-separated usage window per sustained stage")
+	deviceTrafficProfile := fs.String("device-traffic-profile", "", "device traffic profile passed through to cloud-mqtt-test")
+	stageUsageWindows := fs.String("stage-usage-windows", "", "comma-separated staged sustained usage windows")
 	concurrency := fs.Int("concurrency", 25, "load-test MQTT probe concurrency")
 	maxConnectedDevices := fs.Int("max-connected-devices", 0, "load-test max connected devices in this shard")
 	mqttProbe := true
@@ -7317,10 +7317,10 @@ func readDeviceManifest(path string) ([]bindDeviceManifest, error) {
 func buildBindAssignments(devices []bindDeviceManifest, users []userCredential) []bindAssignment {
 	out := make([]bindAssignment, len(devices))
 	offset := 0
-	for _, typ := range loadDeviceTypeNames() {
+	for _, typ := range loadDeviceTypes {
 		indexes := []int{}
 		for i, device := range devices {
-			if device.DeviceType == typ {
+			if device.DeviceType == typ.Name {
 				indexes = append(indexes, i)
 			}
 		}

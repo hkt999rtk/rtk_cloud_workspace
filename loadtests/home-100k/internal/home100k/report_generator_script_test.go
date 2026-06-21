@@ -27,6 +27,7 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 	result := RunResult{
 		RunID:  "script-report-test",
 		Status: "INCOMPLETE",
+		Result: "INCOMPLETE",
 		Plan:   plan,
 		StageResults: []StageResult{{
 			Name:                  "25k",
@@ -198,6 +199,7 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 	report := string(reportRaw)
 	for _, want := range []string{
 		"## Load Machine Resource Usage",
+		"Result: INCOMPLETE",
 		"- sample window: 2026-06-15T00:00:00Z -> 2026-06-15T00:00:30Z\n\n| VM | Role | IP | Samples |",
 		"lg01",
 		"CPU p95",

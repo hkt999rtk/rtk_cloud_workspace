@@ -31,6 +31,11 @@ type lkeEdgeHAProxyUpstream struct {
 	Kind    string `json:"kind"`
 }
 
+type lkeKubernetesNodeInternalIP struct {
+	Name string
+	IP   string
+}
+
 type lkeEdgeHAProxyPlan struct {
 	Mode          string                   `json:"mode"`
 	EdgeVMs       []lkeEdgeHAProxyVM       `json:"edge_vms"`
@@ -180,31 +185,54 @@ func lkeEdgeHAProxyLabel(env map[string]string) string {
 }
 
 func lkeEdgeHAProxyUpstreams(env map[string]string) ([]lkeEdgeHAProxyUpstream, error) {
-	nodes, err := lkeKubernetesNodeInternalIPs()
+	nodes, err := lkeKubernetesNodeInternalIPsByName()
 	if err != nil {
 		return nil, err
 	}
 	if len(nodes) == 0 {
 		return nil, errors.New("no LKE node InternalIP addresses found for HAProxy upstreams")
 	}
-	out := make([]lkeEdgeHAProxyUpstream, 0, len(nodes)*2)
-	for i, ip := range nodes {
+	mqttNodes, err := lkeMQTTNodeInternalIPs(env, nodes)
+	if err != nil {
+		return nil, err
+	}
+	if len(mqttNodes) == 0 {
+		mqttNodes = nodes
+	}
+	out := make([]lkeEdgeHAProxyUpstream, 0, len(nodes)+len(mqttNodes))
+	for i, node := range nodes {
 		name := fmt.Sprintf("lke-node-%d", i+1)
-		out = append(out,
-			lkeEdgeHAProxyUpstream{Name: name, Address: ip, Port: lkeIngressHTTPSNodePort(env), Kind: "https"},
-			lkeEdgeHAProxyUpstream{Name: name, Address: ip, Port: lkeMQTTPublicNodePort(env), Kind: "mqtts"},
-		)
+		out = append(out, lkeEdgeHAProxyUpstream{Name: name, Address: node.IP, Port: lkeIngressHTTPSNodePort(env), Kind: "https"})
+	}
+	for i, node := range mqttNodes {
+		name := fmt.Sprintf("mqtt-node-%d", i+1)
+		out = append(out, lkeEdgeHAProxyUpstream{Name: name, Address: node.IP, Port: lkeMQTTPublicNodePort(env), Kind: "mqtts"})
 	}
 	return out, nil
 }
 
 func lkeKubernetesNodeInternalIPs() ([]string, error) {
+	nodes, err := lkeKubernetesNodeInternalIPsByName()
+	if err != nil {
+		return nil, err
+	}
+	ips := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		ips = append(ips, node.IP)
+	}
+	return ips, nil
+}
+
+func lkeKubernetesNodeInternalIPsByName() ([]lkeKubernetesNodeInternalIP, error) {
 	out, err := exec.Command(lkeKubectl(), lkeKubectlArgs("get", "nodes", "-o", "json")...).CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("get LKE nodes for HAProxy upstreams: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	var parsed struct {
 		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
 			Status struct {
 				Addresses []struct {
 					Type    string `json:"type"`
@@ -217,18 +245,58 @@ func lkeKubernetesNodeInternalIPs() ([]string, error) {
 		return nil, err
 	}
 	seen := map[string]bool{}
-	var ips []string
+	var nodes []lkeKubernetesNodeInternalIP
 	for _, item := range parsed.Items {
 		for _, addr := range item.Status.Addresses {
 			if addr.Type != "InternalIP" || net.ParseIP(addr.Address) == nil || seen[addr.Address] {
 				continue
 			}
 			seen[addr.Address] = true
-			ips = append(ips, addr.Address)
+			nodes = append(nodes, lkeKubernetesNodeInternalIP{Name: item.Metadata.Name, IP: addr.Address})
 		}
 	}
-	sort.Strings(ips)
-	return ips, nil
+	sort.Slice(nodes, func(i, j int) bool {
+		if nodes[i].Name == nodes[j].Name {
+			return nodes[i].IP < nodes[j].IP
+		}
+		if nodes[i].Name == "" {
+			return false
+		}
+		if nodes[j].Name == "" {
+			return true
+		}
+		return nodes[i].Name < nodes[j].Name
+	})
+	return nodes, nil
+}
+
+func lkeMQTTNodeInternalIPs(env map[string]string, nodes []lkeKubernetesNodeInternalIP) ([]lkeKubernetesNodeInternalIP, error) {
+	pods, err := lkeMQTTPods(env)
+	if err != nil {
+		return nil, err
+	}
+	if len(pods) == 0 {
+		return nil, nil
+	}
+	byName := map[string]lkeKubernetesNodeInternalIP{}
+	for _, node := range nodes {
+		byName[node.Name] = node
+	}
+	seen := map[string]bool{}
+	var out []lkeKubernetesNodeInternalIP
+	for _, pod := range pods {
+		if pod.KubernetesNodeName == "" || seen[pod.KubernetesNodeName] {
+			continue
+		}
+		node, ok := byName[pod.KubernetesNodeName]
+		if !ok || node.IP == "" {
+			continue
+		}
+		seen[pod.KubernetesNodeName] = true
+		out = append(out, node)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
 }
 
 func renderLKEEdgeHAProxyConfig(plan lkeEdgeHAProxyPlan) string {
@@ -247,6 +315,7 @@ func renderLKEEdgeHAProxyConfig(plan lkeEdgeHAProxyPlan) string {
 	fmt.Fprintf(&b, "    bind *:443\n")
 	fmt.Fprintf(&b, "    default_backend k8s_ingress_https\n\n")
 	fmt.Fprintf(&b, "backend k8s_ingress_https\n")
+	fmt.Fprintf(&b, "    balance roundrobin\n")
 	for _, upstream := range plan.Upstreams {
 		if upstream.Kind == "https" {
 			fmt.Fprintf(&b, "    server %s %s:%d check%s\n", upstream.Name, upstream.Address, upstream.Port, proxyProtocolSuffix(plan))
@@ -256,6 +325,7 @@ func renderLKEEdgeHAProxyConfig(plan lkeEdgeHAProxyPlan) string {
 	fmt.Fprintf(&b, "    bind *:8883\n")
 	fmt.Fprintf(&b, "    default_backend k8s_mqtts\n\n")
 	fmt.Fprintf(&b, "backend k8s_mqtts\n")
+	fmt.Fprintf(&b, "    balance roundrobin\n")
 	for _, upstream := range plan.Upstreams {
 		if upstream.Kind == "mqtts" {
 			fmt.Fprintf(&b, "    server %s %s:%d check%s\n", upstream.Name, upstream.Address, upstream.Port, proxyProtocolSuffix(plan))

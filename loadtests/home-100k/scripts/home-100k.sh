@@ -106,14 +106,16 @@ token_only_key_file="${HOME100K_TOKEN_ONLY_KEY_FILE:-}"
 token_seed_redis_addr="${HOME100K_TOKEN_SEED_REDIS_ADDR:-}"
 token_seed_device_prefix="${HOME100K_TOKEN_SEED_DEVICE_PREFIX:-load-device-}"
 token_seed_ttl="${HOME100K_TOKEN_SEED_TTL:-24h}"
-status_file="$repo_root/$out_dir/.workflow-status"
-nodes_file="$repo_root/$out_dir/nodes.tsv"
-ssh_known_hosts_file="$repo_root/$out_dir/ssh_known_hosts"
-resource_samples_dir="$repo_root/$out_dir/resource-samples"
+local_out_dir="$repo_root/$out_dir"
+local_vm_state_file="$local_out_dir/vms.json"
+status_file="$local_out_dir/.workflow-status"
+nodes_file="$local_out_dir/nodes.tsv"
+ssh_known_hosts_file="$local_out_dir/ssh_known_hosts"
+resource_samples_dir="$local_out_dir/resource-samples"
 load_vm_resource_file="$resource_samples_dir/load-vms.tsv"
 k8s_node_resource_file="$resource_samples_dir/k8s-nodes.tsv"
+workflow_status_log="$local_out_dir/workflow-status.log"
 k8s_runtime_health_file="$resource_samples_dir/k8s-runtime-health.log"
-workflow_status_log="$repo_root/$out_dir/workflow-status.log"
 shutdown_live_vms_on_exit=0
 shutdown_on_error="${HOME100K_SHUTDOWN_ON_ERROR:-0}"
 
@@ -298,7 +300,7 @@ generate_report_from_artifacts() {
 }
 
 write_nodes_file() {
-  local vms_file="$repo_root/$out_dir/vms.json"
+  local vms_file="$local_vm_state_file"
   if [[ ! -f "$vms_file" ]]; then
     return
   fi
@@ -578,9 +580,9 @@ workflow_status() {
     phase="$(cat "$status_file")"
   fi
   vm_count="0"
-  if [[ -f "$repo_root/$out_dir/vms.json" ]]; then
+  if [[ -f "$local_vm_state_file" ]]; then
     write_nodes_file
-    vm_count="$(python3 - "$repo_root/$out_dir/vms.json" <<'PY'
+    vm_count="$(python3 - "$local_vm_state_file" <<'PY'
 import json, sys
 with open(sys.argv[1], "r", encoding="utf-8") as f:
     data = json.load(f)
@@ -590,19 +592,19 @@ PY
 )"
   fi
   shard_count="0"
-  if [[ -d "$repo_root/$out_dir/shards" ]]; then
-    shard_count="$(find "$repo_root/$out_dir/shards" -name results.json -type f | wc -l | tr -d ' ')"
+  if [[ -d "$local_out_dir/shards" ]]; then
+    shard_count="$(find "$local_out_dir/shards" -name results.json -type f | wc -l | tr -d ' ')"
   fi
   report_status="not-written"
-  if [[ -f "$repo_root/$out_dir/TEST_REPORT.md" ]]; then
-    report_status="$( (grep -m1 '^- Status:' "$repo_root/$out_dir/TEST_REPORT.md" || true) | sed 's/^- Status: //')"
+  if [[ -f "$local_out_dir/TEST_REPORT.md" ]]; then
+    report_status="$( (grep -m1 '^- Status:' "$local_out_dir/TEST_REPORT.md" || true) | sed 's/^- Status: //')"
     if [[ -z "$report_status" ]]; then
       report_status="unknown"
     fi
   fi
   evidence_status="not-written"
-  if [[ -f "$repo_root/$out_dir/server-evidence.json" ]]; then
-    if grep -q '"complete"[[:space:]]*:[[:space:]]*true' "$repo_root/$out_dir/server-evidence.json"; then
+  if [[ -f "$local_out_dir/server-evidence.json" ]]; then
+    if grep -q '"complete"[[:space:]]*:[[:space:]]*true' "$local_out_dir/server-evidence.json"; then
       evidence_status="complete"
     else
       evidence_status="incomplete"
@@ -620,12 +622,21 @@ PY
 }
 
 current_report_status() {
-  local report="$repo_root/$out_dir/TEST_REPORT.md"
+  local report="$local_out_dir/TEST_REPORT.md"
   local status=""
   if [[ -f "$report" ]]; then
     status="$( (grep -m1 '^- Status:' "$report" || true) | sed 's/^- Status: //')"
   fi
   printf '%s\n' "${status:-not-written}"
+}
+
+current_report_result() {
+  local report="$local_out_dir/TEST_REPORT.md"
+  local result=""
+  if [[ -f "$report" ]]; then
+    result="$( (grep -m1 '^- Result:' "$report" || true) | sed 's/^- Result: //')"
+  fi
+  printf '%s\n' "${result:-not-written}"
 }
 
 start_status_monitor() {
@@ -651,7 +662,7 @@ stop_status_monitor() {
 }
 
 shutdown_live_vms() {
-  local vms_file="$repo_root/$out_dir/vms.json"
+  local vms_file="$local_vm_state_file"
   if [[ ! -f "$vms_file" || -z "${LINODE_TOKEN:-}" ]]; then
     return
   fi
@@ -680,7 +691,7 @@ should_shutdown_after_workflow() {
   if [[ "$workflow_rc" != "0" ]]; then
     return 1
   fi
-  [[ "$(current_report_status)" == "PASS" ]]
+  [[ "$(current_report_status)" == "COMPLETE" && "$(current_report_result)" == "SUCCESS" ]]
 }
 
 on_script_exit() {
@@ -771,12 +782,12 @@ case "$command" in
     run_home100k plan "${plan_condition_args[@]}" "$@"
     ;;
   dry-run)
-    mkdir -p "$repo_root/$out_dir"
-    run_home100k run "${plan_condition_args[@]}" --ephemeral-vms --run-id "$run_id" --out-dir "$out_dir" "$@"
+    mkdir -p "$local_out_dir"
+    run_home100k run "${plan_condition_args[@]}" --ephemeral-vms --run-id "$run_id" --out-dir "$local_out_dir" "$@"
     ;;
   provision-vms)
-    mkdir -p "$repo_root/$out_dir"
-    run_home100k provision-vms "${base_args[@]}" --run-id "$run_id" --out-dir "$out_dir" "$@"
+    mkdir -p "$local_out_dir"
+    run_home100k provision-vms "${base_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" "$@"
     ;;
   token-only)
     mkdir -p "$repo_root/$out_dir"
@@ -805,45 +816,45 @@ case "$command" in
     run_home100k seed-token-projections "${seed_args[@]}" "$@"
     ;;
   sync)
-    run_home100k sync "${workflow_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json" "$@"
+    run_home100k sync "${workflow_args[@]}" --run-id "$run_id" --vm-state-file "$local_vm_state_file" "$@"
     ;;
   run-stages)
-    run_home100k run-stages "${workflow_args[@]}" "${coordinator_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --runner-mode "$runner_mode" "$@"
+    run_home100k run-stages "${workflow_args[@]}" "${coordinator_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --vm-state-file "$local_vm_state_file" --runner-mode "$runner_mode" "$@"
     ;;
   collect)
-    mkdir -p "$repo_root/$out_dir"
-    run_home100k collect "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" "$@"
+    mkdir -p "$local_out_dir"
+    run_home100k collect "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --vm-state-file "$local_vm_state_file" "$@"
     ;;
   collect-server-evidence)
-    mkdir -p "$repo_root/$out_dir"
+    mkdir -p "$local_out_dir"
     export_kubeconfig_if_available
-    run_home100k collect-server-evidence "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" "$@"
+    run_home100k collect-server-evidence "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" "$@"
     ;;
   aggregate)
-    mkdir -p "$repo_root/$out_dir"
-    run_home100k aggregate "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" "$@"
+    mkdir -p "$local_out_dir"
+    run_home100k aggregate "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" "$@"
     generate_report_from_artifacts
     ;;
   generate-report)
-    mkdir -p "$repo_root/$out_dir"
+    mkdir -p "$local_out_dir"
     generate_report_from_artifacts
     ;;
   list-vms)
     run_home100k list-vms "${base_args[@]}" --run-id "$run_id" "$@"
     ;;
   destroy-vms)
-    run_home100k destroy-vms "${base_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json" "$@"
+    run_home100k destroy-vms "${base_args[@]}" --run-id "$run_id" --vm-state-file "$local_vm_state_file" "$@"
     ;;
   shutdown-vms)
     shutdown_live_vms
     ;;
   workflow-dry-run)
     run_home100k plan "${plan_condition_args[@]}"
-    run_home100k provision-vms "${base_args[@]}" --run-id "$run_id" --out-dir "$out_dir"
-    run_home100k sync "${workflow_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json"
-    run_home100k run-stages "${workflow_args[@]}" "${coordinator_args[@]}" --run-id "$run_id" --vm-state-file "$out_dir/vms.json" --runner-mode sample
-    run_home100k collect "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json"
-    run_home100k collect-server-evidence "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir"
+    run_home100k provision-vms "${base_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir"
+    run_home100k sync "${workflow_args[@]}" --run-id "$run_id" --vm-state-file "$local_vm_state_file"
+    run_home100k run-stages "${workflow_args[@]}" "${coordinator_args[@]}" --run-id "$run_id" --vm-state-file "$local_vm_state_file" --runner-mode sample
+    run_home100k collect "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --vm-state-file "$local_vm_state_file"
+    run_home100k collect-server-evidence "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir"
     ;;
   workflow-live)
     if [[ -z "${LINODE_TOKEN:-}" ]]; then
@@ -858,42 +869,43 @@ case "$command" in
       echo "workflow-live authorized public key not found: $authorized_key_file" >&2
       exit 2
     fi
-    mkdir -p "$repo_root/$out_dir"
+    mkdir -p "$local_out_dir"
     rm -f "$ssh_known_hosts_file"
     shutdown_live_vms_on_exit=1
     start_status_monitor
     set_phase "provision-vms"
-    run_home100k provision-vms "${base_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --live --confirm-live --authorized-key-file "$authorized_key_file" "$@"
+    run_home100k provision-vms "${base_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --live --confirm-live --authorized-key-file "$authorized_key_file" "$@"
     workflow_status
     set_phase "sync"
-    run_home100k sync "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
+    run_home100k sync "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --vm-state-file "$local_vm_state_file" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
     workflow_status
     set_phase "collect-server-baseline"
     export_kubeconfig_if_available
-    rm -f "$repo_root/$out_dir/server-evidence-baseline.json"
-    run_home100k collect-server-evidence "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --server-evidence-file "$out_dir/server-evidence-baseline.json" --live
+    rm -f "$local_out_dir/server-evidence-baseline.json"
+    run_home100k collect-server-evidence "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --server-evidence-file "$local_out_dir/server-evidence-baseline.json" --live
     workflow_status
     set_phase "run-stages"
     workflow_rc=0
-    run_home100k run-stages "${workflow_args[@]}" "${coordinator_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key" --runner-mode "$runner_mode" || workflow_rc=$?
+    run_home100k run-stages "${workflow_args[@]}" "${coordinator_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --vm-state-file "$local_vm_state_file" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key" --runner-mode "$runner_mode" || workflow_rc=$?
     if [[ "$workflow_rc" -ne 0 ]]; then
       echo "run-stages returned rc=$workflow_rc; continuing to collect artifacts and generate report" >&2
     fi
     workflow_status
     set_phase "collect"
-    run_home100k collect "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
+    run_home100k collect "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --vm-state-file "$local_vm_state_file" --live --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
     workflow_status
     set_phase "collect-server-evidence"
     export_kubeconfig_if_available
-    run_home100k collect-server-evidence "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --live
+    run_home100k collect-server-evidence "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --live
     workflow_status
     set_phase "aggregate"
-    run_home100k aggregate "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir"
+    run_home100k aggregate "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir"
     generate_report_from_artifacts
     report_status="$(current_report_status)"
-    if [[ "$report_status" != "PASS" && "$workflow_rc" -eq 0 ]]; then
+    report_result="$(current_report_result)"
+    if [[ "$workflow_rc" -eq 0 && ( "$report_status" != "COMPLETE" || "$report_result" != "SUCCESS" ) ]]; then
       workflow_rc=1
-      echo "report status is $report_status; preserving VMs for investigation" >&2
+      echo "report status is $report_status result is $report_result; preserving VMs for investigation" >&2
     fi
     cleanup_rc=0
     if should_shutdown_after_workflow; then
@@ -925,42 +937,43 @@ case "$command" in
       echo "workflow-resume-live authorized public key not found: $authorized_key_file" >&2
       exit 2
     fi
-    if [[ ! -f "$repo_root/$out_dir/vms.json" ]]; then
+    if [[ ! -f "$local_vm_state_file" ]]; then
       echo "workflow-resume-live requires existing VM state: $out_dir/vms.json" >&2
       exit 2
     fi
-    mkdir -p "$repo_root/$out_dir"
+    mkdir -p "$local_out_dir"
     shutdown_live_vms_on_exit=1
     start_status_monitor
     set_phase "sync"
-    run_home100k sync "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
+    run_home100k sync "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --vm-state-file "$local_vm_state_file" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
     workflow_status
     set_phase "collect-server-baseline"
     export_kubeconfig_if_available
-    rm -f "$repo_root/$out_dir/server-evidence-baseline.json"
-    run_home100k collect-server-evidence "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --server-evidence-file "$out_dir/server-evidence-baseline.json" --live
+    rm -f "$local_out_dir/server-evidence-baseline.json"
+    run_home100k collect-server-evidence "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --server-evidence-file "$local_out_dir/server-evidence-baseline.json" --live
     workflow_status
     set_phase "run-stages"
     workflow_rc=0
-    run_home100k run-stages "${workflow_args[@]}" "${coordinator_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key" --runner-mode "$runner_mode" || workflow_rc=$?
+    run_home100k run-stages "${workflow_args[@]}" "${coordinator_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --vm-state-file "$local_vm_state_file" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key" --runner-mode "$runner_mode" || workflow_rc=$?
     if [[ "$workflow_rc" -ne 0 ]]; then
       echo "run-stages returned rc=$workflow_rc; continuing to collect artifacts and generate report" >&2
     fi
     workflow_status
     set_phase "collect"
-    run_home100k collect "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --vm-state-file "$out_dir/vms.json" --live --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
+    run_home100k collect "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --vm-state-file "$local_vm_state_file" --live --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
     workflow_status
     set_phase "collect-server-evidence"
     export_kubeconfig_if_available
-    run_home100k collect-server-evidence "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir" --live
+    run_home100k collect-server-evidence "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --live
     workflow_status
     set_phase "aggregate"
-    run_home100k aggregate "${workflow_args[@]}" --run-id "$run_id" --out-dir "$out_dir"
+    run_home100k aggregate "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir"
     generate_report_from_artifacts
     report_status="$(current_report_status)"
-    if [[ "$report_status" != "PASS" && "$workflow_rc" -eq 0 ]]; then
+    report_result="$(current_report_result)"
+    if [[ "$workflow_rc" -eq 0 && ( "$report_status" != "COMPLETE" || "$report_result" != "SUCCESS" ) ]]; then
       workflow_rc=1
-      echo "report status is $report_status; preserving VMs for investigation" >&2
+      echo "report status is $report_status result is $report_result; preserving VMs for investigation" >&2
     fi
     cleanup_rc=0
     if should_shutdown_after_workflow; then

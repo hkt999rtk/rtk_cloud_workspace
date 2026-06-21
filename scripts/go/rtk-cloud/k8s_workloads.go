@@ -215,6 +215,13 @@ func k8sPrometheusTargets(env map[string]string, opts provisionOptions) []k8sPro
 			Path:      "/metrics/prometheus",
 		})
 	}
+	targets = append(targets, k8sPrometheusTarget{
+		Job:       "redis-exporter",
+		Namespace: lkeNamespaceName(env, "platform"),
+		Service:   "redis-exporter",
+		Port:      9121,
+		Path:      "/metrics",
+	})
 	observabilityNS := lkeNamespaceName(env, "observability")
 	targets = append(targets,
 		k8sPrometheusTarget{

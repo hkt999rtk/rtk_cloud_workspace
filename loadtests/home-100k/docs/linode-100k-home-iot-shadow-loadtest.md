@@ -297,8 +297,9 @@ written as `complete=false` evidence so the final report remains `INCOMPLETE`.
 Aggregate reads collected shard results plus `server-evidence.json` and writes
 run-level `plan.json` and `results.json`. The public `home-100k.sh aggregate`
 path then calls `scripts/generate-report.sh` to render fixed-format
-`TEST_REPORT.md`. Any shard with `load_generator_health.saturated=true` or
-insufficient client target coverage forces `INCOMPLETE`.
+`TEST_REPORT.md`. Any shard with `load_generator_health.saturated=true` still
+forces `INCOMPLETE`; insufficient client target coverage in an otherwise
+completed run now produces `status=COMPLETE` and `result=FAIL`.
 Use `list-vms --live --run-id <run-id>` to inspect leftover load-generator VMs
 by `home-100k`, `<run-id>`, and `load-generator` tags before cleanup.
 
@@ -338,9 +339,10 @@ The final report must include:
 - Sync/provision transfer telemetry.
 - Bottleneck assessment.
 
-If IoT Device Shadow evidence, server evidence, parsed MQTT/API counters,
-client target coverage, or resource telemetry is missing, the report status
-must be `INCOMPLETE`, not `PASS`.
+If IoT Device Shadow evidence, server evidence, parsed MQTT/API counters, or
+resource telemetry is missing, the report status must be `INCOMPLETE`, not
+`PASS`. If client target coverage is present but below the required `99.5%`
+success-rate threshold, the report status is `COMPLETE` and result is `FAIL`.
 
 If load-generator saturation invalidates the run, the report must say so
 instead of attributing the bottleneck to the server.

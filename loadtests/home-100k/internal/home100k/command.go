@@ -34,6 +34,8 @@ var commandRunner = func(name string, args ...string) error {
 	return cmd.Run()
 }
 
+var ansibleRetryDelay = 5 * time.Second
+
 var commandRunnerWithTimeout = func(timeout time.Duration, name string, args ...string) error {
 	if timeout <= 0 {
 		return commandRunner(name, args...)
@@ -1199,9 +1201,10 @@ func executeCollect(args []string, stdout io.Writer, stderr io.Writer) int {
 		return code
 	}
 	runID := normalizedRunID(values.runID)
-	outDir := strings.TrimSpace(values.outDir)
-	if outDir == "" {
-		outDir = filepath.Join("loadtests", "home-100k", "reports", runID)
+	outDir, err := localWorkflowOutDir(values)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
 	}
 	if values.live {
 		vms, err := readVMStateFile(values.vmStateFile)
@@ -1242,12 +1245,27 @@ func executeCollectServerEvidence(args []string, stdout io.Writer, stderr io.Wri
 	}
 	runID := normalizedRunID(values.runID)
 	if values.live {
-		evidence := collectLiveServerEvidence(plan.Conditions.EnvRoot, runID, values.outDir)
+		outDir := strings.TrimSpace(values.outDir)
+		if outDir != "" {
+			resolved, err := localWorkflowOutDir(values)
+			if err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
+			}
+			outDir = resolved
+		}
+		evidence := collectLiveServerEvidence(plan.Conditions.EnvRoot, runID, outDir)
 		outputPath := strings.TrimSpace(values.serverEvidenceFile)
-		if outputPath == "" && strings.TrimSpace(values.outDir) != "" {
-			outputPath = filepath.Join(values.outDir, "server-evidence.json")
+		if outputPath == "" && outDir != "" {
+			outputPath = filepath.Join(outDir, "server-evidence.json")
 		}
 		if outputPath != "" {
+			resolved, err := localWorkflowArtifactPath(outputPath)
+			if err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
+			}
+			outputPath = resolved
 			if err := writeJSONFile(outputPath, evidence); err != nil {
 				fmt.Fprintln(stderr, err)
 				return 1
@@ -1268,10 +1286,15 @@ func executeAggregate(args []string, stdout io.Writer, stderr io.Writer) int {
 	if err != nil {
 		return 2
 	}
+	outDir, err := localWorkflowOutDir(values)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
 	result, err := AggregateCollectedRun(AggregateOptions{
 		PlanOptions: opts,
 		RunID:       values.runID,
-		OutDir:      values.outDir,
+		OutDir:      outDir,
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -2708,15 +2731,13 @@ func serverEvidenceProbes(envRoot string, runID string, logsSinceArg string) []s
 		videoCloudAPIRequestTokenCounterProbe(runID, logsSinceArg),
 		videoCloudAPIMetricsProbe(runID),
 		kubectlLogsProbe("video_cloud_api", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=video-cloud-api", logsSinceArg, "Video Cloud API logs captured for run_id "+runID),
-		postgresCounterProbe("postgres", runID, shadowStoreCounterSQL(runID), "PostgreSQL device shadow convergence counters parsed for run_id "+runID),
-		kubectlLogsProbe("postgres", "video-cloud-staging-platform", "app.kubernetes.io/name=postgresql", logsSinceArg, "PostgreSQL logs captured"),
-		redisInfoProbe(runID),
-		kubectlLogsProbe("redis_valkey", "video-cloud-staging-platform", "app.kubernetes.io/name=redis", logsSinceArg, "Redis/Valkey logs captured when enabled"),
-		redisInfoProbe(runID),
-		kubectlLogsProbe("redis_valkey", "video-cloud-staging-platform", "app.kubernetes.io/name=redis", logsSinceArg, "Redis/Valkey logs captured when enabled"),
-		kubectlLogsProbe("ingress_nginx", "video-cloud-staging-ingress", "app.kubernetes.io/name=ingress-nginx", logsSinceArg, "Ingress/nginx logs captured for run_id "+runID),
+			postgresCounterProbe("postgres", runID, shadowStoreCounterSQL(runID), "PostgreSQL device shadow convergence counters parsed for run_id "+runID),
+			kubectlLogsProbe("postgres", "video-cloud-staging-platform", "app.kubernetes.io/name=postgresql", logsSinceArg, "PostgreSQL logs captured"),
+			redisInfoProbe(runID),
+			kubectlLogsProbe("redis_valkey", "video-cloud-staging-platform", "app.kubernetes.io/name=redis", logsSinceArg, "Redis/Valkey logs captured when enabled"),
+			kubectlLogsProbe("ingress_nginx", "video-cloud-staging-ingress", "app.kubernetes.io/name=ingress-nginx", logsSinceArg, "Ingress/nginx logs captured for run_id "+runID),
+		}
 	}
-}
 
 func postgresCounterProbe(source string, runID string, sql string, detail string) serverEvidenceProbe {
 	script := fmt.Sprintf(
@@ -2898,6 +2919,25 @@ func videoCloudAPIRequestTokenCounterProbe(runID string, logsSinceArg string) se
 	script := `set -euo pipefail
 pods="$(kubectl -n video-cloud-staging-video-cloud get pods --selector app.kubernetes.io/name=video-cloud-api -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}')"
 test -n "$pods"
+bounded_logs() {
+  pod="$1"
+  tmp="$(mktemp)"
+  kubectl -n video-cloud-staging-video-cloud logs ` + shellQuote(logsSinceArg) + ` "$pod" --tail=5000 --request-timeout=30s >"$tmp" 2>&1 &
+  pid="$!"
+  for _ in $(seq 1 30); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      wait "$pid" 2>/dev/null || true
+      cat "$tmp"
+      rm -f "$tmp"
+      return 0
+    fi
+    sleep 1
+  done
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  cat "$tmp"
+  rm -f "$tmp"
+}
 for pod in $pods; do
   safe_pod="$(printf '%s' "$pod" | tr -c 'A-Za-z0-9_' '_')"
   { timeout 20s kubectl -n video-cloud-staging-video-cloud logs ` + shellQuote(logsSinceArg) + ` "$pod" --tail=` + serverEvidenceLogTailLines + ` || true; } \
@@ -2967,7 +3007,10 @@ func syncRemoteVMs(vms []LinodeVM, plan Plan, values workflowFlagValues) error {
 	if err != nil {
 		return err
 	}
-	manifestBase := workflowOutDir(values)
+	manifestBase, err := localWorkflowOutDir(values)
+	if err != nil {
+		return err
+	}
 	if err := writeAnsibleInputs(vms, plan, values, binaries); err != nil {
 		return err
 	}
@@ -3001,7 +3044,10 @@ type remoteRunnerBinaries struct {
 }
 
 func writeAnsibleInputs(vms []LinodeVM, plan Plan, values workflowFlagValues, binaries remoteRunnerBinaries) error {
-	base := workflowOutDir(values)
+	base, err := localWorkflowOutDir(values)
+	if err != nil {
+		return err
+	}
 	if err := writeCommonEnvArchive(filepath.Join(base, "env-common", "env-common.tar.gz"), plan); err != nil {
 		return fmt.Errorf("write common env archive: %w", err)
 	}
@@ -3027,10 +3073,14 @@ func writeAnsibleInputs(vms []LinodeVM, plan Plan, values workflowFlagValues, bi
 }
 
 func writeAnsibleInputsForExistingManifests(vms []LinodeVM, plan Plan, values workflowFlagValues) error {
+	base, err := localWorkflowOutDir(values)
+	if err != nil {
+		return err
+	}
 	return writeAnsibleInventoryAndVars(vms, plan, values, remoteRunnerBinaries{
-		Home100K:      filepath.Join(workflowOutDir(values), "bin", "home-100k-linux-amd64"),
-		RTKCloud:      filepath.Join(workflowOutDir(values), "bin", "rtk-cloud-linux-amd64"),
-		CloudMQTTTest: filepath.Join(workflowOutDir(values), "bin", "cloud-mqtt-test-linux-amd64"),
+		Home100K:      filepath.Join(base, "bin", "home-100k-linux-amd64"),
+		RTKCloud:      filepath.Join(base, "bin", "rtk-cloud-linux-amd64"),
+		CloudMQTTTest: filepath.Join(base, "bin", "cloud-mqtt-test-linux-amd64"),
 	}, false)
 }
 
@@ -3749,11 +3799,11 @@ func deduplicateLines(lines []string) []string {
 }
 
 func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlagValues, binaries remoteRunnerBinaries, prepareArtifacts bool) error {
-	base := workflowOutDir(values)
-	localOutDir, err := filepath.Abs(base)
+	base, err := localWorkflowOutDir(values)
 	if err != nil {
 		return err
 	}
+	localOutDir := base
 	localRunner, err := filepath.Abs(binaries.Home100K)
 	if err != nil {
 		return err
@@ -4052,17 +4102,47 @@ func ensureFanoutKey(base string) (string, error) {
 }
 
 func runAnsiblePlaybook(values workflowFlagValues, playbook string) error {
-	base := workflowOutDir(values)
-	ansibleConfig := filepath.Join("loadtests", "home-100k", "ansible", "ansible.cfg")
+	workspace, err := localWorkspaceRoot()
+	if err != nil {
+		return err
+	}
+	base, err := localWorkflowOutDir(values)
+	if err != nil {
+		return err
+	}
+	ansibleDir := filepath.Join(workspace, "loadtests", "home-100k", "ansible")
+	ansibleConfig := filepath.Join(ansibleDir, "ansible.cfg")
 	args := []string{
 		"ANSIBLE_CONFIG=" + ansibleConfig,
 		"ansible-playbook",
 		"--forks", "20",
 		"-i", filepath.Join(base, "ansible", "inventory.json"),
-		filepath.Join("loadtests", "home-100k", "ansible", playbook),
+		filepath.Join(ansibleDir, playbook),
 		"--extra-vars", "@" + filepath.Join(base, "ansible", "extra-vars.json"),
 	}
 	return commandRunner("env", args...)
+}
+
+func runAnsiblePlaybookWithRetry(values workflowFlagValues, playbook string, attempts int) error {
+	if attempts < 1 {
+		attempts = 1
+	}
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if err := runAnsiblePlaybook(values, playbook); err != nil {
+			lastErr = err
+			if attempt < attempts {
+				fmt.Fprintf(os.Stderr, "warning: ansible playbook %s failed on attempt %d/%d: %v; retrying\n", playbook, attempt, attempts, err)
+				if ansibleRetryDelay > 0 {
+					time.Sleep(ansibleRetryDelay)
+				}
+				continue
+			}
+			break
+		}
+		return nil
+	}
+	return lastErr
 }
 
 func initialSyncTelemetry(vms []LinodeVM) []VMSyncTelemetry {
@@ -4079,6 +4159,25 @@ func workflowOutDir(values workflowFlagValues) string {
 		base = filepath.Join("loadtests", "home-100k", "reports", normalizedRunID(values.runID))
 	}
 	return base
+}
+
+func localWorkflowOutDir(values workflowFlagValues) (string, error) {
+	base := workflowOutDir(values)
+	if filepath.IsAbs(base) {
+		return base, nil
+	}
+	return localWorkflowArtifactPath(base)
+}
+
+func localWorkflowArtifactPath(path string) (string, error) {
+	if filepath.IsAbs(path) {
+		return path, nil
+	}
+	workspace, err := localWorkspaceRoot()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(workspace, path), nil
 }
 
 func forEachVMParallel(vms []LinodeVM, fn func(LinodeVM) error) error {
@@ -4103,30 +4202,61 @@ func forEachVMParallel(vms []LinodeVM, fn func(LinodeVM) error) error {
 }
 
 func buildRemoteRunnerBinaries(values workflowFlagValues) (remoteRunnerBinaries, error) {
-	base := strings.TrimSpace(values.outDir)
-	if base == "" {
-		base = filepath.Join("loadtests", "home-100k", "reports", normalizedRunID(values.runID))
+	workspace, err := localWorkspaceRoot()
+	if err != nil {
+		return remoteRunnerBinaries{}, err
+	}
+	base, err := localWorkflowOutDir(values)
+	if err != nil {
+		return remoteRunnerBinaries{}, err
 	}
 	binDir := filepath.Join(base, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		return remoteRunnerBinaries{}, err
 	}
 	home100K := filepath.Join(binDir, "home-100k-linux-amd64")
-	cmd := fmt.Sprintf("GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o %s ./loadtests/home-100k/cmd/home-100k", shellQuote(home100K))
+	cmd := fmt.Sprintf("cd %s && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o %s ./loadtests/home-100k/cmd/home-100k", shellQuote(workspace), shellQuote(home100K))
 	if err := commandRunner("bash", "-lc", cmd); err != nil {
 		return remoteRunnerBinaries{}, fmt.Errorf("build linux home-100k runner binary: %w", err)
 	}
 	rtkCloud := filepath.Join(binDir, "rtk-cloud-linux-amd64")
-	cmd = fmt.Sprintf("GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o %s ./scripts/go/rtk-cloud", shellQuote(rtkCloud))
+	cmd = fmt.Sprintf("cd %s && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o %s ./scripts/go/rtk-cloud", shellQuote(workspace), shellQuote(rtkCloud))
 	if err := commandRunner("bash", "-lc", cmd); err != nil {
 		return remoteRunnerBinaries{}, fmt.Errorf("build linux rtk-cloud runner binary: %w", err)
 	}
 	cloudMQTTTest := filepath.Join(binDir, "cloud-mqtt-test-linux-amd64")
-	cmd = fmt.Sprintf("GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o %s ./scripts/go/cloud-mqtt-test", shellQuote(cloudMQTTTest))
+	cmd = fmt.Sprintf("cd %s && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o %s ./scripts/go/cloud-mqtt-test", shellQuote(workspace), shellQuote(cloudMQTTTest))
 	if err := commandRunner("bash", "-lc", cmd); err != nil {
 		return remoteRunnerBinaries{}, fmt.Errorf("build linux cloud-mqtt-test runner binary: %w", err)
 	}
 	return remoteRunnerBinaries{Home100K: home100K, RTKCloud: rtkCloud, CloudMQTTTest: cloudMQTTTest}, nil
+}
+
+func localWorkspaceRoot() (string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for {
+		if pathIsFile(filepath.Join(wd, "go.work")) && pathIsDir(filepath.Join(wd, "loadtests", "home-100k")) && pathIsDir(filepath.Join(wd, "scripts", "go")) {
+			return wd, nil
+		}
+		parent := filepath.Dir(wd)
+		if parent == wd {
+			return "", fmt.Errorf("workspace root not found from %s", wd)
+		}
+		wd = parent
+	}
+}
+
+func pathIsFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func pathIsDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func waitForRemoteSSH(target string, sshBase []string) error {
@@ -4166,14 +4296,18 @@ func dispatchRemoteShards(vms []LinodeVM, plan Plan, runID string, remoteOutRoot
 	if err := writeAnsibleInputsForExistingManifests(vms, plan, values); err != nil {
 		return err
 	}
-	if err := runAnsiblePlaybook(values, "start-runner.yml"); err != nil {
+	if err := runAnsiblePlaybookWithRetry(values, "start-runner.yml", 3); err != nil {
 		return err
 	}
 	coordination, err := runHostCoordinator(vms, plan, runID, values)
 	if err != nil {
 		return err
 	}
-	return writeJSONFile(filepath.Join(workflowOutDir(values), "start-coordination.json"), coordination)
+	outDir, err := localWorkflowOutDir(values)
+	if err != nil {
+		return err
+	}
+	return writeJSONFile(filepath.Join(outDir, "start-coordination.json"), coordination)
 }
 
 func workflowKnownHostsFile(values workflowFlagValues) string {

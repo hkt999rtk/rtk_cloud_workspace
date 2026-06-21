@@ -70,7 +70,12 @@ convenience entrypoint. The default acceptance profile is `10` users and `100`
 devices.
 The target LKE public edge contract is external HAProxy TCP passthrough, not
 Linode NodeBalancer; staging currently forwards public `443/TCP` to ingress
-NodePort `30443` and public `8883/TCP` to MQTT NodePort `31883`. See
+NodePort `30443` and public `8883/TCP` to MQTT NodePort `31883` on each LKE
+node. The staging capacity baseline defaults to four LKE nodes, three
+`video-cloud-api` pods, one `account-manager` pod, and three MQTT replicas.
+MQTT uses anti-affinity so the HAProxy MQTT backend can round-robin across
+node-local NodePort backends; the broker runs as an EMQX StatefulSet cluster
+with stable `mqtt-0..2` pod DNS. See
 `docs/lke-external-haproxy-edge.md`.
 
 ```sh
