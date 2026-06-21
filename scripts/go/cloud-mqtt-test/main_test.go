@@ -2179,6 +2179,24 @@ func TestStagedConnectDeadlineReservesActionWindow(t *testing.T) {
 	}
 }
 
+func TestStagedConnectTimingUsesRampAsScheduleNotDeadline(t *testing.T) {
+	stageStart := time.Unix(1000, 0)
+	connectStarted := stageStart.Add(5 * time.Second)
+	stageDeadline := stageStart.Add(1801 * time.Second)
+
+	connectDeadline, rampWindow := stagedConnectTiming(stageStart, stageDeadline, connectStarted, 600)
+
+	if rampWindow != 600*time.Second {
+		t.Fatalf("ramp window = %s, want 10m", rampWindow)
+	}
+	if !connectDeadline.Equal(stagedConnectDeadline(stageStart, stageDeadline)) {
+		t.Fatalf("connect deadline = %s, want stage action-reserve deadline %s", connectDeadline, stagedConnectDeadline(stageStart, stageDeadline))
+	}
+	if connectDeadline.Before(connectStarted.Add(rampWindow + stagedConnectTailBudget(rampWindow))) {
+		t.Fatalf("connect deadline = %s, want later than ramp tail %s", connectDeadline, connectStarted.Add(rampWindow+stagedConnectTailBudget(rampWindow)))
+	}
+}
+
 func TestDesiredWriteRemainingBudgetScalesForShortDebugStages(t *testing.T) {
 	if got := desiredWriteRemainingBudget(75 * time.Second); got != 15*time.Second {
 		t.Fatalf("75s stage budget = %s, want 15s", got)

@@ -95,6 +95,7 @@
           --stage-warm-up "{{ stage_warm_up }}" \
           --stage-steady "{{ stage_steady }}" \
           --stage-cool-down "{{ stage_cool_down }}" \
+          --runner-mqtt-concurrency "{{ runner_mqtt_concurrency | default(1000) }}" \
           --runner-mode "{{ runner_mode | default('live') }}" \
           --listen ":18080" \
           > "{{ remote_out_dir }}/runner-daemon.log" 2>&1 &

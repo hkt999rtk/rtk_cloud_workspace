@@ -724,6 +724,9 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 	if extraVars["runner_nofile_limit"] != float64(1048576) {
 		t.Fatalf("extra vars runner_nofile_limit = %#v, want 1048576", extraVars["runner_nofile_limit"])
 	}
+	if extraVars["runner_mqtt_concurrency"] != float64(1000) {
+		t.Fatalf("extra vars runner_mqtt_concurrency = %#v, want 1000", extraVars["runner_mqtt_concurrency"])
+	}
 	var inventoryDoc struct {
 		All struct {
 			Children map[string]struct {
@@ -2037,6 +2040,7 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 		"--stage-ramp-seconds 1",
 		"--device-traffic-profile home-diverse-v1",
 		"--stage-usage-windows ramp_to_target",
+		"--concurrency 1000",
 		"--max-connected-devices 20000",
 		"--shard-index 0",
 		"--shard-count 5",

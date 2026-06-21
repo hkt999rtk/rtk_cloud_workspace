@@ -168,6 +168,7 @@ runs must override the target size and stage windows explicitly.
 | `HOME100K_DEVICES_PER_USER` | `20` |
 | `HOME100K_RUNNER_MODE` | `live` |
 | `HOME100K_RUNNER_NOFILE_LIMIT` | `1048576`; remote runner daemon file-descriptor limit for MQTT sockets |
+| `HOME100K_RUNNER_MQTT_CONCURRENCY` | `1000`; per-VM `cloud-mqtt-test` connect/action concurrency |
 | `HOME100K_CREDENTIAL_BUNDLE_FORMAT` | `sqlite-gzip` |
 | `HOME100K_MQTT_ADDR` | `auto-public-mqtt`; live commands discover public MQTT LoadBalancer IPs |
 | `HOME100K_MQTT_PUBLIC_LB_COUNT` | `1`; limits auto-discovered MQTT LoadBalancers for the default debug profile |
@@ -198,11 +199,12 @@ HOME100K_RUN_ID=20260615T100000Z loadtests/home-100k/scripts/home-100k.sh dry-ru
 Run the live VM workflow:
 
 ```sh
-HOME100K_RUN_ID=lt50k-example-$(date -u +%Y%m%dT%H%M%SZ) \
-HOME100K_DEVICES=50000 \
-HOME100K_STAGE_WARM_UP=15m \
-HOME100K_STAGE_STEADY=20m \
-HOME100K_STAGE_COOL_DOWN=2m \
+HOME100K_RUN_ID=lt100k-example-$(date -u +%Y%m%dT%H%M%SZ) \
+HOME100K_DEVICES=100000 \
+HOME100K_STAGE_WARM_UP=30m \
+HOME100K_STAGE_STEADY=40m \
+HOME100K_STAGE_COOL_DOWN=1s \
+HOME100K_RUNNER_MQTT_CONCURRENCY=1000 \
   loadtests/home-100k/scripts/home-100k.sh workflow-live
 
 HOME100K_RUN_ID=<run-id> \
@@ -240,11 +242,13 @@ shell environment overrides for longer baseline runs, or a custom
 `HOME100K_DESCRIPTION_FILE` for a reusable alternate profile. Explicit shell
 environment variables take precedence over the description file.
 
-The 50K validated run used a 15-minute ramp to avoid synchronized token
-bootstrap and MQTT connect bursts, then reserved 22 minutes for full-load
-steady/cool-down evidence. If a shorter ramp is selected, treat high
-`device_request_token` failure, retry exhaustion, or request-token p95/p99
-latency as token bootstrap pressure rather than as broker-capacity evidence.
+The 100K report profile uses a 30-minute warm-up ramp and a 40-minute steady
+window, plus a minimal 1-second cool-down because duration values must be
+positive. This ramp avoids compressing token bootstrap into a short burst while
+preserving a full-load evidence window. If a shorter ramp is selected, treat
+high `device_request_token` failure, retry exhaustion, ingress 499/5xx, or
+request-token p95/p99 latency as token bootstrap pressure rather than as
+broker-capacity evidence.
 
 Runner mode is also part of the non-secret description file. The default is
 `HOME100K_RUNNER_MODE=live`. Live mode invokes the copied `rtk-cloud` runner to
@@ -300,7 +304,10 @@ calls the copied `rtk-cloud` binary once to run the assigned staged MQTT/API
 shard only after START is received. Device MQTT delta subscriptions are
 lifetime state for the single target stage. The stage warm-up spreads
 `/request_token`, TLS, MQTT CONNECT, and shadow-delta subscription work across
-the ramp interval; after ramp, existing device connections and subscriptions
+the ramp interval. The ramp interval is the target arrival curve, not a hard
+connect stop; if the shard is still below target when ramp ends, it keeps
+opening remaining sessions until target coverage is reached or the stage's
+action-reserve deadline is hit. Existing device connections and subscriptions
 remain open through the steady and cool-down windows. Reports must show both
 new subscribe packets and active connection/subscription gauges for the
 requested target.

@@ -255,6 +255,10 @@ func addRuntimeConditionFlags(fs *flag.FlagSet) (*int, *string, *string) {
 	return runnerNofile, sessionModel, readModel
 }
 
+func addRunnerMQTTConcurrencyFlag(fs *flag.FlagSet) *int {
+	return fs.Int("runner-mqtt-concurrency", DefaultRunnerMQTTConcurrency, "cloud-mqtt-test MQTT connect/action concurrency per runner shard")
+}
+
 func applyStageDurationFlags(opts *PlanOptions, stageWarmUp *string, stageSteady *string, stageCoolDown *string) {
 	opts.StageWarmUp = *stageWarmUp
 	opts.StageSteady = *stageSteady
@@ -322,18 +326,20 @@ type workflowFlagValues struct {
 	accountManagerURL      string
 	credentialBundleFormat string
 	runnerNofileLimit      int
+	runnerMQTTConcurrency  int
 }
 
 type shardRunFlagValues struct {
-	runID               string
-	outDir              string
-	role                string
-	shardIndex          int
-	shardManifest       string
-	honorStageDurations bool
-	runnerMode          string
-	rtkCloudBinary      string
-	workspace           string
+	runID                 string
+	outDir                string
+	role                  string
+	shardIndex            int
+	shardManifest         string
+	honorStageDurations   bool
+	runnerMode            string
+	rtkCloudBinary        string
+	workspace             string
+	runnerMQTTConcurrency int
 }
 
 func executeProvisionVMs(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -672,6 +678,13 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		seconds, _ := strconv.Atoi(raw)
 		totalDuration += seconds
 	}
+	runnerMQTTConcurrency := values.runnerMQTTConcurrency
+	if runnerMQTTConcurrency <= 0 {
+		runnerMQTTConcurrency = DefaultRunnerMQTTConcurrency
+	}
+	if runnerMQTTConcurrency > maxTarget {
+		runnerMQTTConcurrency = maxTarget
+	}
 	stageOut := filepath.Join(outDir, "mqtt-test", "staged")
 	args := []string{
 		"mqtt-test",
@@ -696,7 +709,7 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		"--stage-min-commands", strings.Join(stageMinCommands, ","),
 		"--device-traffic-profile", firstNonEmpty(plan.ScenarioProfile, DefaultScenarioProfile),
 		"--stage-usage-windows", strings.Join(stageUsageWindows, ","),
-		"--concurrency", strconv.Itoa(minInt(maxTarget, 250)),
+		"--concurrency", strconv.Itoa(runnerMQTTConcurrency),
 		"--max-connected-devices", strconv.Itoa(maxTarget),
 	}
 	if strings.TrimSpace(values.workspace) != "" {
@@ -1464,6 +1477,7 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	sshUser := fs.String("ssh-user", "root", "SSH user for load-generator VMs")
 	sshKey := fs.String("ssh-key", "", "SSH private key for load-generator VMs")
 	coordinatorDelayMS := fs.Int("coordinator-start-delay-ms", defaultCoordinatorStartDelayMS, "host coordinator delay between START ack and local monotonic runner start")
+	runnerMQTTConcurrency := addRunnerMQTTConcurrencyFlag(fs)
 	mqttAddr := fs.String("mqtt-addr", "", "public MQTT host:port for remote load-generator VMs")
 	videoCloudBaseURL := fs.String("video-cloud-base-url", "", "legacy alias for --video-cloud-public-base-url")
 	videoCloudPublicURL := fs.String("video-cloud-public-base-url", "", "Video Cloud public API base URL for remote load-generator VMs")
@@ -1500,6 +1514,7 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 		accountManagerURL:      *accountManagerURL,
 		credentialBundleFormat: strings.TrimSpace(*credentialBundleFormat),
 		runnerNofileLimit:      *runnerNofile,
+		runnerMQTTConcurrency:  *runnerMQTTConcurrency,
 	}, nil
 }
 
@@ -1520,6 +1535,7 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	runnerMode := fs.String("runner-mode", "sample", "runner mode: sample or live")
 	rtkCloudBinary := fs.String("rtk-cloud-binary", "rtk-cloud", "rtk-cloud binary for live MQTT/API runner")
 	workspace := fs.String("workspace", "", "workspace path for live MQTT/API runner")
+	runnerMQTTConcurrency := addRunnerMQTTConcurrencyFlag(fs)
 	if err := fs.Parse(args); err != nil {
 		return PlanOptions{}, shardRunFlagValues{}, err
 	}
@@ -1530,15 +1546,16 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser)
 	return opts, shardRunFlagValues{
-		runID:               *runID,
-		outDir:              *outDir,
-		role:                *role,
-		shardIndex:          *shardIndex,
-		shardManifest:       *shardManifest,
-		honorStageDurations: *honorStageDurations,
-		runnerMode:          *runnerMode,
-		rtkCloudBinary:      *rtkCloudBinary,
-		workspace:           *workspace,
+		runID:                 *runID,
+		outDir:                *outDir,
+		role:                  *role,
+		shardIndex:            *shardIndex,
+		shardManifest:         *shardManifest,
+		honorStageDurations:   *honorStageDurations,
+		runnerMode:            *runnerMode,
+		rtkCloudBinary:        *rtkCloudBinary,
+		workspace:             *workspace,
+		runnerMQTTConcurrency: *runnerMQTTConcurrency,
 	}, nil
 }
 
@@ -3837,6 +3854,7 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 		"stage_cool_down":          stageCoolDown,
 		"runner_mode":              firstNonEmpty(values.runnerMode, "sample"),
 		"runner_nofile_limit":      values.runnerNofileLimit,
+		"runner_mqtt_concurrency":  values.runnerMQTTConcurrency,
 		"mqtt_addr":                strings.TrimSpace(values.mqttAddr),
 		"video_cloud_public_url":   strings.TrimSpace(firstNonEmpty(values.videoCloudPublicURL, values.videoCloudBaseURL)),
 		"video_cloud_token_url":    strings.TrimSpace(values.videoCloudTokenURL),

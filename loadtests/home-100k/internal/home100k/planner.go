@@ -8,21 +8,22 @@ import (
 )
 
 const (
-	DefaultDeviceCount      = 100000
-	DefaultUserCount        = 5000
-	DefaultDevicesPerUser   = 20
-	DefaultVMCount          = 5
-	DefaultDevicesPerVM     = DefaultDeviceCount / DefaultVMCount
-	DefaultUserShards       = DefaultVMCount
-	DefaultServerTarget     = "staging/lke"
-	DefaultLoadGeneratorRun = "ephemeral-linode-vm"
-	DefaultRunnerNofile     = 1048576
-	DefaultDeviceSession    = "lifetime-subscription"
-	DefaultRunnerReadModel  = "go-netpoll-bounded-reader-goroutine"
-	DefaultStageWarmUp      = "1m"
-	DefaultStageSteady      = "2m"
-	DefaultStageCoolDown    = "45s"
-	DefaultScenarioProfile  = "home-diverse-v1"
+	DefaultDeviceCount           = 100000
+	DefaultUserCount             = 5000
+	DefaultDevicesPerUser        = 20
+	DefaultVMCount               = 5
+	DefaultDevicesPerVM          = DefaultDeviceCount / DefaultVMCount
+	DefaultUserShards            = DefaultVMCount
+	DefaultServerTarget          = "staging/lke"
+	DefaultLoadGeneratorRun      = "ephemeral-linode-vm"
+	DefaultRunnerNofile          = 1048576
+	DefaultRunnerMQTTConcurrency = 1000
+	DefaultDeviceSession         = "lifetime-subscription"
+	DefaultRunnerReadModel       = "go-netpoll-bounded-reader-goroutine"
+	DefaultStageWarmUp           = "1m"
+	DefaultStageSteady           = "2m"
+	DefaultStageCoolDown         = "45s"
+	DefaultScenarioProfile       = "home-diverse-v1"
 )
 
 type PlanOptions struct {

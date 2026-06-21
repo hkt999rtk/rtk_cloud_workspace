@@ -467,6 +467,7 @@ The script keeps non-secret defaults in one place:
 | `HOME100K_USERS` | unset; planner derives `ceil(devices / devices-per-user)` |
 | `HOME100K_DEVICES_PER_USER` | `20` from the default description file |
 | `HOME100K_RUNNER_NOFILE_LIMIT` | `1048576`; remote runner daemon file-descriptor limit for MQTT sockets |
+| `HOME100K_RUNNER_MQTT_CONCURRENCY` | `1000`; per-VM `cloud-mqtt-test` connect/action concurrency |
 | `HOME100K_MQTT_ADDR` | `auto-public-mqtt`; live commands discover public MQTT LoadBalancer IPs |
 | `HOME100K_MQTT_PUBLIC_LB_COUNT` | `1`; limits auto-discovered MQTT LoadBalancers for the default debug profile |
 | `HOME100K_NODE_RESOURCE_STATUS` | `1` |
@@ -520,6 +521,19 @@ Short debug runs can lower these values with explicit shell environment
 overrides or a custom `HOME100K_DESCRIPTION_FILE`; explicit shell environment
 variables take precedence over the description file.
 
+For the 100K staging report profile, use a 30-minute warm-up ramp and a
+40-minute steady window. This keeps the `/request_token`, TLS, MQTT CONNECT,
+and shadow-delta subscribe arrival rate within the current staging token
+bootstrap path while still preserving a full-load evidence window. Use
+`HOME100K_STAGE_COOL_DOWN=1s` when no material cool-down evidence is needed,
+because stage durations must be positive.
+
+For the same 100K report profile, keep
+`HOME100K_RUNNER_MQTT_CONCURRENCY=1000`. The value gives each 20K-device VM
+shard enough pending connect work to absorb `/request_token`, TLS, MQTT
+CONNECT, and subscribe latency during the 30-minute ramp. It does not change
+the connected-device target; that is still controlled by the shard plan.
+
 Runner mode also belongs in the non-secret description file. The default is
 `HOME100K_RUNNER_MODE=live`. In live mode, each shard invokes the copied
 `rtk-cloud` runner and executes live `mqtt-test` traffic against the selected
@@ -559,6 +573,10 @@ implementation preferences:
   the plan's device/user shard assignments. Operators may lower it for small
   profiles, but a run that hits `too many open files` is a load-generator
   failure and must be reported as `INCOMPLETE`.
+- Connect/action concurrency: 100K / 5-VM runs need each VM to ramp about 20K
+  device sessions in 10 minutes. `HOME100K_RUNNER_MQTT_CONCURRENCY=1000`
+  prevents the generator from under-filling the ramp when connect latency is
+  higher than the nominal schedule interval.
 - Sustained asynchronous reads: subscribed device sessions must keep reading
   MQTT traffic for their full online lifetime. The runner must not wait until a
   command is issued and then perform a one-shot blocking read on a shared MQTT
@@ -579,10 +597,14 @@ live mode, each shard runner builds one device session pool for the single
 target stage. The stage warm-up duration is the connect ramp: assigned devices
 are ordered deterministically and jittered across the ramp interval so
 `/request_token`, TLS, MQTT CONNECT, and shadow-delta subscription load are not
-all emitted at the same instant. Existing device connections and delta-topic
-subscriptions remain open through the steady and cool-down windows. The report
-tracks both new subscribe packets and active connection/subscription gauges;
-capacity gates use the active gauges at the requested target.
+all emitted at the same instant. The ramp interval is a target arrival curve,
+not a hard stop: if connect latency leaves the shard below target when the ramp
+interval ends, the runner keeps opening remaining sessions until the target is
+reached or the stage's action-reserve deadline is hit. Existing device
+connections and delta-topic subscriptions remain open through the steady and
+cool-down windows. The report tracks both new subscribe packets and active
+connection/subscription gauges; capacity gates use the active gauges at the
+requested target.
 
 Token expiry is intentionally not self-defined by the load generator. The
 server signs standard JWT `iat` and `exp` claims and may apply deterministic
