@@ -183,6 +183,7 @@ func parseCommonFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
 	deviceCount, userCount, devicesPerUser, vmCount := addSizingFlags(fs)
 	runnerNofile, sessionModel, readModel := addRuntimeConditionFlags(fs)
+	functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance := addGateThresholdFlags(fs)
 	ephemeral := fs.Bool("ephemeral-vms", false, "require ephemeral VM lifecycle")
 	if err := fs.Parse(args); err != nil {
 		return PlanOptions{}, false, err
@@ -196,6 +197,7 @@ func parseCommonFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount)
 	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel)
+	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
 	return opts, *ephemeral, nil
 }
 
@@ -219,6 +221,7 @@ func parseRunFlags(name string, args []string, stderr io.Writer) (PlanOptions, b
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
 	deviceCount, userCount, devicesPerUser, vmCount := addSizingFlags(fs)
 	runnerNofile, sessionModel, readModel := addRuntimeConditionFlags(fs)
+	functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance := addGateThresholdFlags(fs)
 	ephemeral := fs.Bool("ephemeral-vms", false, "require ephemeral VM lifecycle")
 	runID := fs.String("run-id", "", "run id for artifact correlation")
 	outDir := fs.String("out-dir", "", "artifact output directory")
@@ -235,6 +238,7 @@ func parseRunFlags(name string, args []string, stderr io.Writer) (PlanOptions, b
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount)
 	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel)
+	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
 	return opts, *ephemeral, runFlagValues{
 		runID:              *runID,
 		outDir:             *outDir,
@@ -272,6 +276,15 @@ func addRuntimeConditionFlags(fs *flag.FlagSet) (*int, *string, *string) {
 	return runnerNofile, sessionModel, readModel
 }
 
+func addGateThresholdFlags(fs *flag.FlagSet) (*float64, *float64, *float64, *float64, *int64) {
+	functionalThreshold := fs.Float64("functional-success-threshold-percent", DefaultFunctionalSuccessThresholdPercent, "functional pass threshold for MQTT connect, ACK, delta, and convergence rates")
+	targetThreshold := fs.Float64("client-target-completeness-percent", DefaultClientTargetCompletenessPercent, "target coverage threshold for active devices/subscriptions and desired-write attempts")
+	eventThreshold := fs.Float64("exact-event-correlation-percent", DefaultExactEventCorrelationPercent, "runtime event correlation threshold for command stream/sequence evidence")
+	aggregateTolerancePercent := fs.Float64("aggregate-correlation-tolerance-percent", DefaultAggregateCorrelationTolerancePercent, "aggregate server/client counter tolerance percentage")
+	aggregateMinTolerance := fs.Int64("aggregate-correlation-min-tolerance", DefaultAggregateCorrelationMinTolerance, "minimum aggregate server/client counter tolerance")
+	return functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance
+}
+
 func applyStageDurationFlags(opts *PlanOptions, stageWarmUp *string, stageSteady *string, stageCoolDown *string) {
 	opts.StageWarmUp = *stageWarmUp
 	opts.StageSteady = *stageSteady
@@ -289,6 +302,14 @@ func applyRuntimeConditionFlags(opts *PlanOptions, runnerNofile *int, sessionMod
 	opts.RunnerNofile = *runnerNofile
 	opts.SessionModel = *sessionModel
 	opts.RunnerReadModel = *readModel
+}
+
+func applyGateThresholdFlags(opts *PlanOptions, functionalThreshold *float64, targetThreshold *float64, eventThreshold *float64, aggregateTolerancePercent *float64, aggregateMinTolerance *int64) {
+	opts.FunctionalSuccessThresholdPercent = *functionalThreshold
+	opts.ClientTargetCompletenessPercent = *targetThreshold
+	opts.ExactEventCorrelationPercent = *eventThreshold
+	opts.AggregateCorrelationTolerancePercent = *aggregateTolerancePercent
+	opts.AggregateCorrelationMinTolerance = *aggregateMinTolerance
 }
 
 type provisionVMFlagValues struct {
@@ -1377,6 +1398,7 @@ func parseProvisionVMFlags(name string, args []string, stderr io.Writer) (PlanOp
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
 	deviceCount, userCount, devicesPerUser, vmCount := addSizingFlags(fs)
+	functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance := addGateThresholdFlags(fs)
 	runID := fs.String("run-id", "", "run id for VM tags")
 	outDir := fs.String("out-dir", "", "artifact output directory")
 	live := fs.Bool("live", false, "create Linode VMs")
@@ -1394,6 +1416,7 @@ func parseProvisionVMFlags(name string, args []string, stderr io.Writer) (PlanOp
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount)
+	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
 	return opts, provisionVMFlagValues{
 		runID:             *runID,
 		outDir:            *outDir,
@@ -1417,6 +1440,7 @@ func parseDestroyVMFlags(name string, args []string, stderr io.Writer) (PlanOpti
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
 	deviceCount, userCount, devicesPerUser, vmCount := addSizingFlags(fs)
+	functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance := addGateThresholdFlags(fs)
 	runID := fs.String("run-id", "", "run id for VM tags")
 	live := fs.Bool("live", false, "destroy Linode VMs")
 	confirmLive := fs.Bool("confirm-live", false, "confirm live Linode VM destruction")
@@ -1430,6 +1454,7 @@ func parseDestroyVMFlags(name string, args []string, stderr io.Writer) (PlanOpti
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount)
+	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
 	return opts, destroyVMFlagValues{
 		runID:          *runID,
 		live:           *live,
@@ -1449,6 +1474,7 @@ func parseListVMFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
 	deviceCount, userCount, devicesPerUser, vmCount := addSizingFlags(fs)
+	functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance := addGateThresholdFlags(fs)
 	runID := fs.String("run-id", "", "run id for VM tags")
 	live := fs.Bool("live", false, "query Linode VMs")
 	linodeToken := fs.String("linode-token", os.Getenv("LINODE_TOKEN"), "Linode API token")
@@ -1460,6 +1486,7 @@ func parseListVMFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount)
+	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
 	return opts, listVMFlagValues{
 		runID:          *runID,
 		live:           *live,
@@ -1478,6 +1505,7 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
 	deviceCount, userCount, devicesPerUser, vmCount := addSizingFlags(fs)
 	runnerNofile, sessionModel, readModel := addRuntimeConditionFlags(fs)
+	functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance := addGateThresholdFlags(fs)
 	runID := fs.String("run-id", "", "run id for artifact correlation")
 	outDir := fs.String("out-dir", "", "artifact output directory")
 	serverEvidenceFile := fs.String("server-evidence-file", "", "server evidence JSON file")
@@ -1511,6 +1539,7 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount)
 	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel)
+	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
 	return opts, workflowFlagValues{
 		runID:                    *runID,
 		outDir:                   *outDir,
@@ -1547,6 +1576,7 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
 	deviceCount, userCount, devicesPerUser, vmCount := addSizingFlags(fs)
+	functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance := addGateThresholdFlags(fs)
 	runID := fs.String("run-id", "", "run id for artifact correlation")
 	outDir := fs.String("out-dir", "", "artifact output directory")
 	role := fs.String("role", "", "shard role")
@@ -1569,6 +1599,7 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount)
+	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
 	return opts, shardRunFlagValues{
 		runID:                *runID,
 		outDir:               *outDir,

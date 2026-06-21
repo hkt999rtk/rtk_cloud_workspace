@@ -229,8 +229,8 @@ func TestAggregateCollectedRunUsesConfiguredStageNames(t *testing.T) {
 	if len(result.StageResults) != len(plan.Stages) {
 		t.Fatalf("stage results len = %d, want %d", len(result.StageResults), len(plan.Stages))
 	}
-	if result.StageResults[0].Name != "target" {
-		t.Fatalf("first stage name = %q, want target", result.StageResults[0].Name)
+	if result.StageResults[0].Name != plan.Stages[0].Name {
+		t.Fatalf("first stage name = %q, want %q", result.StageResults[0].Name, plan.Stages[0].Name)
 	}
 }
 
@@ -471,6 +471,7 @@ func TestRunStatusMarksMissingPerTypeEvidenceIncomplete(t *testing.T) {
 			DesiredWrites: 1,
 			ReceivedAcks:  1,
 		},
+		MQTTConnectSuccessRatePercent:  100,
 		DesiredReportedConvergenceRate: 100,
 		OfflineDesiredConvergenceRate:  100,
 		DeltaClearSuccessRatePercent:   100,
@@ -631,6 +632,114 @@ func TestCorrelateServerEvidenceUsesTotalMQTTConnectsForEMQX(t *testing.T) {
 	}
 }
 
+func TestCorrelateServerEvidenceTreatsSmallAggregateMismatchAsWarning(t *testing.T) {
+	device := DeviceMQTTTotals{
+		ConnectAttempts:   10000,
+		ConnectSuccess:    10000,
+		Subscribes:        10000,
+		Publishes:         996,
+		ReceivedMessages:  996,
+		DeltaReceived:     996,
+		ReportedPublishes: 996,
+	}
+	app := AppUserTotals{
+		TokenAttempts:      1250,
+		TokenSuccess:       1250,
+		MQTTConnackSuccess: 1250,
+		DesiredWrites:      1250,
+		ReceivedAcks:       996,
+	}
+	evidence := ServerEvidence{
+		Complete: true,
+		Sources: map[string]EvidenceSource{
+			"emqx": {Available: true, Counters: map[string]int64{
+				"emqx.broker.identity":       1,
+				"mqtt.total_connect_success": 11252,
+			}},
+			"iot_device_shadow": {Available: true, Counters: map[string]int64{
+				"app_user.desired_writes":        1231,
+				"device_mqtt.delta_received":     996,
+				"device_mqtt.reported_publishes": 996,
+				"app_user.received_acks":         996,
+			}},
+		},
+	}
+	thresholds := GateThresholds{
+		AggregateCorrelationTolerancePercent: 2,
+		AggregateCorrelationMinTolerance:     5,
+	}
+
+	correlation := correlateServerEvidenceWithThresholds(evidence, device, app, thresholds)
+
+	if correlation.Status != "pass" {
+		t.Fatalf("status = %s, want pass for aggregate warning-only mismatch; checks=%#v", correlation.Status, correlation.Checks)
+	}
+	warnings := 0
+	for _, check := range correlation.Checks {
+		if check.Status == "warning" {
+			warnings++
+		}
+		if check.Counter == "mqtt.total_connect_success" && check.Tolerance != 226 {
+			t.Fatalf("connect tolerance = %d, want 226", check.Tolerance)
+		}
+	}
+	if warnings != 2 {
+		t.Fatalf("warnings = %d, want 2; checks=%#v", warnings, correlation.Checks)
+	}
+}
+
+func TestRunStatusUsesFunctionalSuccessThresholdForAppACKs(t *testing.T) {
+	plan := Plan{
+		Conditions: TestConditions{
+			Devices:                           1000,
+			Users:                             50,
+			DevicesPerUser:                    20,
+			FunctionalSuccessThresholdPercent: 99.5,
+			ClientTargetCompletenessPercent:   100,
+		},
+		DeviceMix: map[string]int{"light": 1000},
+	}
+	stages := []StageResult{{
+		Name:             "100pct",
+		ConnectedDevices: 1000,
+		DeviceMQTTTotals: DeviceMQTTTotals{
+			ConnectAttempts:     1000,
+			ConnectSuccess:      1000,
+			Subscribes:          1000,
+			ActiveConnections:   1000,
+			ActiveSubscriptions: 1000,
+			Publishes:           50,
+			ReceivedMessages:    50,
+			DeltaReceived:       50,
+			ReportedPublishes:   50,
+		},
+		AppUserTotals: AppUserTotals{
+			TokenAttempts: 50,
+			DesiredWrites: 50,
+			ReceivedAcks:  49,
+		},
+		MQTTConnectSuccessRatePercent:  100,
+		DesiredReportedConvergenceRate: 100,
+		OfflineDesiredConvergenceRate:  100,
+		DeltaClearSuccessRatePercent:   100,
+		DeviceTypeTotals: map[string]DeviceTypeTotals{
+			"light": {TelemetryPublishes: 1},
+		},
+	}}
+	evidence := correlatedEvidenceForStages("run-ack-threshold", stages)
+	correlation := ServerCorrelation{Status: "pass"}
+
+	status := runStatusWithCorrelation(plan, evidence, stages, LoadGeneratorHealth{}, correlation)
+
+	if status != "FAIL" {
+		t.Fatalf("status = %s, want FAIL because 49/50 ACKs is below 99.5%% functional threshold", status)
+	}
+	stages[0].AppUserTotals.ReceivedAcks = 50
+	if status := runStatusWithCorrelation(plan, evidence, stages, LoadGeneratorHealth{}, correlation); status != "PASS" {
+		t.Fatalf("status = %s, want PASS once ACK success reaches threshold", status)
+	}
+}
+
 func TestCorrelateServerEvidenceRequiresEMQXIdentity(t *testing.T) {
 	device := DeviceMQTTTotals{
 		ConnectAttempts:   10,
@@ -699,8 +808,8 @@ func TestCorrelateServerEvidenceAllowsSmallEMQXConnectMetricDrift(t *testing.T) 
 	if correlation.Status != "pass" {
 		t.Fatalf("status = %s, want pass; checks=%#v reasons=%#v", correlation.Status, correlation.Checks, correlation.Reasons)
 	}
-	if check := correlation.Checks[0]; check.Counter != "mqtt.total_connect_success" || check.Delta != 87 || check.Tolerance != 105 || check.Status != "pass" {
-		t.Fatalf("emqx check = %#v, want delta 87 within tolerance 105", check)
+	if check := correlation.Checks[0]; check.Counter != "mqtt.total_connect_success" || check.Delta != 87 || check.Tolerance != 106 || check.Status != "warning" {
+		t.Fatalf("emqx check = %#v, want delta 87 within tolerance 106 as warning", check)
 	}
 }
 
@@ -733,12 +842,12 @@ func TestCorrelateServerEvidenceDoesNotTolerateShadowCounterDrift(t *testing.T) 
 
 	correlation := correlateServerEvidence(evidence, device, app)
 
-	if correlation.Status != "fail" {
-		t.Fatalf("status = %s, want fail; checks=%#v", correlation.Status, correlation.Checks)
+	if correlation.Status != "pass" {
+		t.Fatalf("status = %s, want pass; checks=%#v", correlation.Status, correlation.Checks)
 	}
 	for _, check := range correlation.Checks {
-		if check.Counter == "app_user.received_acks" && (check.Status != "fail" || check.Tolerance != 0) {
-			t.Fatalf("shadow ack check = %#v, want strict failure", check)
+		if check.Counter == "app_user.received_acks" && (check.Status != "warning" || check.Tolerance != 5) {
+			t.Fatalf("shadow ack check = %#v, want tolerated warning", check)
 		}
 	}
 }

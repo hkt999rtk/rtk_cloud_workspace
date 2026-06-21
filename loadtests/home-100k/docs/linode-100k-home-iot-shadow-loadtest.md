@@ -134,7 +134,9 @@ Defaults:
 | `HOME100K_SSH_USER` | `root` |
 | `HOME100K_AUTHORIZED_KEY_FILE` | `~/.ssh/id_ed25519_rtkcloud.pub` |
 | `HOME100K_STATUS_INTERVAL_SECONDS` | `30` |
-| `HOME100K_RAMP_UP_TIME` | `15s` |
+| `HOME100K_STAGE_WARM_UP` | `30s` |
+| `HOME100K_STAGE_STEADY` | `90s` |
+| `HOME100K_STAGE_COOL_DOWN` | `30s` |
 | `HOME100K_DEVICES` | `9000` |
 | `HOME100K_USERS` | unset; planner derives `ceil(devices / devices-per-user)` |
 | `HOME100K_DEVICES_PER_USER` | `20` |
@@ -143,6 +145,11 @@ Defaults:
 | `HOME100K_MQTT_CONCURRENCY` | `1000`; per-VM-shard live MQTT connect worker concurrency |
 | `HOME100K_COMMAND_CONCURRENCY` | `100`; per-VM-shard live shadow command concurrency |
 | `HOME100K_SHADOW_COMMAND_TIMEOUT` | `30s`; per-phase shadow command wait timeout |
+| `HOME100K_FUNCTIONAL_SUCCESS_THRESHOLD_PERCENT` | `99.5`; MQTT connect, app ACK, delta, and convergence success threshold |
+| `HOME100K_CLIENT_TARGET_COMPLETENESS_PERCENT` | `100`; active target devices/subscriptions and desired-write attempts must reach the planned target |
+| `HOME100K_EXACT_EVENT_CORRELATION_PERCENT` | `100`; command stream/sequence evidence correlation threshold |
+| `HOME100K_AGGREGATE_CORRELATION_TOLERANCE_PERCENT` | `0.1`; aggregate server/client counter sanity tolerance |
+| `HOME100K_AGGREGATE_CORRELATION_MIN_TOLERANCE` | `5`; minimum aggregate counter tolerance |
 | `HOME100K_CREDENTIAL_BUNDLE_FORMAT` | `sqlite-gzip` |
 | `HOME100K_MQTT_ADDR` | `auto-public-mqtt`; live commands discover public MQTT LoadBalancer IPs |
 | `HOME100K_MQTT_PUBLIC_LB_COUNT` | `1`; limits auto-discovered MQTT LoadBalancers for the current 9K profile |
@@ -201,11 +208,13 @@ Kubernetes node resource samples use `kubectl top nodes --no-headers` and print
 `<env-root>/state/lke-kubeconfig.yaml`. Set
 `HOME100K_K8S_NODE_RESOURCE_STATUS=0` to disable K8s node probing.
 
-Ramp-up time is part of the non-secret description file. The default profile
-uses `HOME100K_RAMP_UP_TIME=15s`; larger baseline runs should set a longer
-ramp-up explicitly, or use a custom `HOME100K_DESCRIPTION_FILE` for a reusable
-alternate profile. Explicit shell environment variables take precedence over
-the description file.
+Stage duration is part of the non-secret description file. The default profile
+uses `HOME100K_STAGE_WARM_UP=30s`, `HOME100K_STAGE_STEADY=90s`, and
+`HOME100K_STAGE_COOL_DOWN=30s`, which plans 150 seconds per stage and 10 minutes
+for the four load stages before VM lifecycle and evidence overhead. Use explicit
+shell environment overrides for longer baseline runs, or a custom
+`HOME100K_DESCRIPTION_FILE` for a reusable alternate profile. Explicit shell
+environment variables take precedence over the description file.
 
 Runner mode is also part of the non-secret description file. The default is
 `HOME100K_RUNNER_MODE=live`. Live mode invokes the copied `rtk-cloud` runner to

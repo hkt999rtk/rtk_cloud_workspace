@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -310,8 +311,9 @@ func Run(opts RunOptions) (RunResult, error) {
 		return RunResult{}, err
 	}
 	deviceTotals, appTotals := summarizeStageTotals(stageResults)
-	correlation := correlateServerEvidence(evidence, deviceTotals, appTotals)
-	runtimeLogCorrelation := correlateRuntimeLogs(evidence, stageResults)
+	thresholds := gateThresholdsFromConditions(plan.Conditions)
+	correlation := correlateServerEvidenceWithThresholds(evidence, deviceTotals, appTotals, thresholds)
+	runtimeLogCorrelation := correlateRuntimeLogsWithThresholds(evidence, stageResults, thresholds)
 	status := runStatusWithCorrelation(plan, evidence, stageResults, LoadGeneratorHealth{}, correlation)
 	status = statusWithRuntimeLogCorrelation(status, runtimeLogCorrelation)
 
@@ -393,8 +395,9 @@ func AggregateCollectedRun(opts AggregateOptions) (RunResult, error) {
 		}
 	}
 	deviceTotals, appTotals := summarizeStageTotals(stages)
-	correlation := correlateServerEvidence(evidence, deviceTotals, appTotals)
-	runtimeLogCorrelation := correlateRuntimeLogs(evidence, stages)
+	thresholds := gateThresholdsFromConditions(plan.Conditions)
+	correlation := correlateServerEvidenceWithThresholds(evidence, deviceTotals, appTotals, thresholds)
+	runtimeLogCorrelation := correlateRuntimeLogsWithThresholds(evidence, stages, thresholds)
 	status := runStatusWithCorrelation(plan, evidence, stages, loadHealth, correlation)
 	status = statusWithRuntimeLogCorrelation(status, runtimeLogCorrelation)
 	result := RunResult{
@@ -871,15 +874,37 @@ func runStatus(plan Plan, evidence ServerEvidence, stages []StageResult) string 
 	if !evidence.Complete || !shadowEvidenceComplete(stages) || !clientTargetCoverageComplete(plan.Conditions, stages) || len(missingDeviceTypeEvidence(plan, stages)) > 0 {
 		return "INCOMPLETE"
 	}
-	for _, stage := range stages {
-		if stage.AuthorizationViolationCount > 0 ||
-			stage.DesiredReportedConvergenceRate < 95 ||
-			stage.OfflineDesiredConvergenceRate < 95 ||
-			stage.DeltaClearSuccessRatePercent < 95 {
-			return "FAIL"
-		}
+	if len(stageFunctionalFailureReasons(plan.Conditions, stages)) > 0 {
+		return "FAIL"
 	}
 	return "PASS"
+}
+
+func stageFunctionalFailureReasons(conditions TestConditions, stages []StageResult) []string {
+	thresholds := gateThresholdsFromConditions(conditions)
+	reasons := []string{}
+	for _, stage := range stages {
+		if stage.AuthorizationViolationCount > 0 {
+			reasons = append(reasons, fmt.Sprintf("%s authorization violations %d > 0", stage.Name, stage.AuthorizationViolationCount))
+		}
+		if stage.MQTTConnectSuccessRatePercent < thresholds.FunctionalSuccessThresholdPercent {
+			reasons = append(reasons, fmt.Sprintf("%s MQTT connect success %.2f%% < %.2f%%", stage.Name, stage.MQTTConnectSuccessRatePercent, thresholds.FunctionalSuccessThresholdPercent))
+		}
+		ackRate := appACKSuccessRate(stage.AppUserTotals)
+		if ackRate < thresholds.FunctionalSuccessThresholdPercent {
+			reasons = append(reasons, fmt.Sprintf("%s app ACK success %.2f%% < %.2f%%", stage.Name, ackRate, thresholds.FunctionalSuccessThresholdPercent))
+		}
+		if stage.DesiredReportedConvergenceRate < thresholds.FunctionalSuccessThresholdPercent {
+			reasons = append(reasons, fmt.Sprintf("%s desired/reported convergence %.2f%% < %.2f%%", stage.Name, stage.DesiredReportedConvergenceRate, thresholds.FunctionalSuccessThresholdPercent))
+		}
+		if stage.OfflineDesiredConvergenceRate < thresholds.FunctionalSuccessThresholdPercent {
+			reasons = append(reasons, fmt.Sprintf("%s offline desired convergence %.2f%% < %.2f%%", stage.Name, stage.OfflineDesiredConvergenceRate, thresholds.FunctionalSuccessThresholdPercent))
+		}
+		if stage.DeltaClearSuccessRatePercent < thresholds.FunctionalSuccessThresholdPercent {
+			reasons = append(reasons, fmt.Sprintf("%s delta clear %.2f%% < %.2f%%", stage.Name, stage.DeltaClearSuccessRatePercent, thresholds.FunctionalSuccessThresholdPercent))
+		}
+	}
+	return reasons
 }
 
 func runStatusWithLoadGenerator(plan Plan, evidence ServerEvidence, stages []StageResult, health LoadGeneratorHealth) string {
@@ -918,6 +943,17 @@ func statusWithRuntimeLogCorrelation(status string, correlation RuntimeLogCorrel
 }
 
 func correlateServerEvidence(evidence ServerEvidence, device DeviceMQTTTotals, app AppUserTotals) ServerCorrelation {
+	return correlateServerEvidenceWithThresholds(evidence, device, app, GateThresholds{
+		FunctionalSuccessThresholdPercent:    DefaultFunctionalSuccessThresholdPercent,
+		ClientTargetCompletenessPercent:      DefaultClientTargetCompletenessPercent,
+		ExactEventCorrelationPercent:         DefaultExactEventCorrelationPercent,
+		AggregateCorrelationTolerancePercent: DefaultAggregateCorrelationTolerancePercent,
+		AggregateCorrelationMinTolerance:     DefaultAggregateCorrelationMinTolerance,
+	})
+}
+
+func correlateServerEvidenceWithThresholds(evidence ServerEvidence, device DeviceMQTTTotals, app AppUserTotals, thresholds GateThresholds) ServerCorrelation {
+	thresholds = normalizeGateThresholdsForRuntime(thresholds)
 	if reasons := missingClientCounterReasons(device, app); len(reasons) > 0 {
 		return ServerCorrelation{Status: "incomplete", Reasons: reasons}
 	}
@@ -931,11 +967,11 @@ func correlateServerEvidence(evidence ServerEvidence, device DeviceMQTTTotals, a
 		serverTotalMQTTConnectSuccess = evidenceCounter(evidence, "emqx", "device_mqtt.connect_success")
 	}
 	checks := []CorrelationCheck{
-		newCorrelationCheckWithTolerance("emqx", "mqtt.total_connect_success", totalMQTTConnectSuccess, serverTotalMQTTConnectSuccess, mqttConnectCorrelationTolerance(totalMQTTConnectSuccess)),
-		newCorrelationCheck("iot_device_shadow", "app_user.desired_writes", app.DesiredWrites, evidenceCounter(evidence, "iot_device_shadow", "app_user.desired_writes")),
-		newCorrelationCheck("iot_device_shadow", "device_mqtt.delta_received", device.DeltaReceived, evidenceCounter(evidence, "iot_device_shadow", "device_mqtt.delta_received")),
-		newCorrelationCheck("iot_device_shadow", "device_mqtt.reported_publishes", device.ReportedPublishes, evidenceCounter(evidence, "iot_device_shadow", "device_mqtt.reported_publishes")),
-		newCorrelationCheck("iot_device_shadow", "app_user.received_acks", app.ReceivedAcks, evidenceCounter(evidence, "iot_device_shadow", "app_user.received_acks")),
+		newCorrelationCheck("emqx", "mqtt.total_connect_success", totalMQTTConnectSuccess, serverTotalMQTTConnectSuccess, aggregateCorrelationTolerance(totalMQTTConnectSuccess, serverTotalMQTTConnectSuccess, thresholds)),
+		newCorrelationCheck("iot_device_shadow", "app_user.desired_writes", app.DesiredWrites, evidenceCounter(evidence, "iot_device_shadow", "app_user.desired_writes"), aggregateCorrelationTolerance(app.DesiredWrites, evidenceCounter(evidence, "iot_device_shadow", "app_user.desired_writes"), thresholds)),
+		newCorrelationCheck("iot_device_shadow", "device_mqtt.delta_received", device.DeltaReceived, evidenceCounter(evidence, "iot_device_shadow", "device_mqtt.delta_received"), aggregateCorrelationTolerance(device.DeltaReceived, evidenceCounter(evidence, "iot_device_shadow", "device_mqtt.delta_received"), thresholds)),
+		newCorrelationCheck("iot_device_shadow", "device_mqtt.reported_publishes", device.ReportedPublishes, evidenceCounter(evidence, "iot_device_shadow", "device_mqtt.reported_publishes"), aggregateCorrelationTolerance(device.ReportedPublishes, evidenceCounter(evidence, "iot_device_shadow", "device_mqtt.reported_publishes"), thresholds)),
+		newCorrelationCheck("iot_device_shadow", "app_user.received_acks", app.ReceivedAcks, evidenceCounter(evidence, "iot_device_shadow", "app_user.received_acks"), aggregateCorrelationTolerance(app.ReceivedAcks, evidenceCounter(evidence, "iot_device_shadow", "app_user.received_acks"), thresholds)),
 	}
 	status := "pass"
 	if len(reasons) > 0 {
@@ -955,6 +991,17 @@ func correlateServerEvidence(evidence ServerEvidence, device DeviceMQTTTotals, a
 }
 
 func correlateRuntimeLogs(evidence ServerEvidence, stages []StageResult) RuntimeLogCorrelation {
+	return correlateRuntimeLogsWithThresholds(evidence, stages, GateThresholds{
+		FunctionalSuccessThresholdPercent:    DefaultFunctionalSuccessThresholdPercent,
+		ClientTargetCompletenessPercent:      DefaultClientTargetCompletenessPercent,
+		ExactEventCorrelationPercent:         DefaultExactEventCorrelationPercent,
+		AggregateCorrelationTolerancePercent: DefaultAggregateCorrelationTolerancePercent,
+		AggregateCorrelationMinTolerance:     DefaultAggregateCorrelationMinTolerance,
+	})
+}
+
+func correlateRuntimeLogsWithThresholds(evidence ServerEvidence, stages []StageResult, thresholds GateThresholds) RuntimeLogCorrelation {
+	thresholds = normalizeGateThresholdsForRuntime(thresholds)
 	events := []CommandEvent{}
 	for _, stage := range stages {
 		events = append(events, stage.CommandEvents...)
@@ -1005,17 +1052,14 @@ func correlateRuntimeLogs(evidence ServerEvidence, stages []StageResult) Runtime
 			}
 		}
 	}
-	if result.MissingStreamCount > 0 || result.MissingSequenceCount > 0 {
+	allowedMissing := allowedMissingExactEvents(len(events), thresholds)
+	if result.MissingStreamCount+result.MissingSequenceCount > allowedMissing {
 		result.Status = "fail"
 	}
 	return result
 }
 
-func newCorrelationCheck(source string, counter string, clientTotal int64, serverTotal int64) CorrelationCheck {
-	return newCorrelationCheckWithTolerance(source, counter, clientTotal, serverTotal, 0)
-}
-
-func newCorrelationCheckWithTolerance(source string, counter string, clientTotal int64, serverTotal int64, tolerance int64) CorrelationCheck {
+func newCorrelationCheck(source string, counter string, clientTotal int64, serverTotal int64, tolerance int64) CorrelationCheck {
 	check := CorrelationCheck{
 		Source:      source,
 		Counter:     counter,
@@ -1027,21 +1071,58 @@ func newCorrelationCheckWithTolerance(source string, counter string, clientTotal
 	}
 	if serverTotal == 0 {
 		check.Status = "incomplete"
-	} else if absInt64(check.Delta) > tolerance {
+	} else if absInt64(check.Delta) > check.Tolerance {
 		check.Status = "fail"
+	} else if check.Delta != 0 {
+		check.Status = "warning"
 	}
 	return check
 }
 
-func mqttConnectCorrelationTolerance(clientTotal int64) int64 {
-	tolerance := clientTotal / 1000
-	if clientTotal%1000 != 0 {
-		tolerance++
+func aggregateCorrelationTolerance(clientTotal int64, serverTotal int64, thresholds GateThresholds) int64 {
+	thresholds = normalizeGateThresholdsForRuntime(thresholds)
+	basis := math.Max(math.Abs(float64(clientTotal)), math.Abs(float64(serverTotal)))
+	percentTolerance := int64(math.Ceil(basis * thresholds.AggregateCorrelationTolerancePercent / 100))
+	if percentTolerance < thresholds.AggregateCorrelationMinTolerance {
+		return thresholds.AggregateCorrelationMinTolerance
 	}
-	if tolerance < 100 {
-		return 100
+	return percentTolerance
+}
+
+func allowedMissingExactEvents(totalEvents int, thresholds GateThresholds) int {
+	thresholds = normalizeGateThresholdsForRuntime(thresholds)
+	if totalEvents <= 0 || thresholds.ExactEventCorrelationPercent >= 100 {
+		return 0
 	}
-	return tolerance
+	allowedRate := (100 - thresholds.ExactEventCorrelationPercent) / 100
+	return int(math.Floor(float64(totalEvents) * allowedRate))
+}
+
+func appACKSuccessRate(totals AppUserTotals) float64 {
+	if totals.DesiredWrites <= 0 {
+		return 0
+	}
+	return float64(totals.ReceivedAcks) * 100 / float64(totals.DesiredWrites)
+}
+
+func normalizeGateThresholdsForRuntime(thresholds GateThresholds) GateThresholds {
+	normalized, err := normalizeGateThresholds(PlanOptions{
+		FunctionalSuccessThresholdPercent:    thresholds.FunctionalSuccessThresholdPercent,
+		ClientTargetCompletenessPercent:      thresholds.ClientTargetCompletenessPercent,
+		ExactEventCorrelationPercent:         thresholds.ExactEventCorrelationPercent,
+		AggregateCorrelationTolerancePercent: thresholds.AggregateCorrelationTolerancePercent,
+		AggregateCorrelationMinTolerance:     thresholds.AggregateCorrelationMinTolerance,
+	})
+	if err != nil {
+		return GateThresholds{
+			FunctionalSuccessThresholdPercent:    DefaultFunctionalSuccessThresholdPercent,
+			ClientTargetCompletenessPercent:      DefaultClientTargetCompletenessPercent,
+			ExactEventCorrelationPercent:         DefaultExactEventCorrelationPercent,
+			AggregateCorrelationTolerancePercent: DefaultAggregateCorrelationTolerancePercent,
+			AggregateCorrelationMinTolerance:     DefaultAggregateCorrelationMinTolerance,
+		}
+	}
+	return normalized
 }
 
 func absInt64(value int64) int64 {
@@ -1099,6 +1180,7 @@ func clientTargetCoverageComplete(conditions TestConditions, stages []StageResul
 	if len(stages) == 0 {
 		return false
 	}
+	thresholds := gateThresholdsFromConditions(conditions)
 	for _, stage := range stages {
 		if stage.ConnectedDevices <= 0 {
 			return false
@@ -1106,14 +1188,22 @@ func clientTargetCoverageComplete(conditions TestConditions, stages []StageResul
 		expectedUsers := expectedStageUsers(conditions, stage.ConnectedDevices)
 		activeConnections := nonZeroInt64(stage.DeviceMQTTTotals.ActiveConnections, stage.DeviceMQTTTotals.ConnectSuccess)
 		activeSubscriptions := nonZeroInt64(stage.DeviceMQTTTotals.ActiveSubscriptions, stage.DeviceMQTTTotals.Subscribes)
-		if activeConnections < int64(stage.ConnectedDevices) ||
-			activeSubscriptions < int64(stage.ConnectedDevices) ||
-			stage.AppUserTotals.DesiredWrites < int64(expectedUsers) ||
-			stage.AppUserTotals.ReceivedAcks < int64(expectedUsers) {
+		requiredDevices := thresholdCount(int64(stage.ConnectedDevices), thresholds.ClientTargetCompletenessPercent)
+		requiredUsers := thresholdCount(int64(expectedUsers), thresholds.ClientTargetCompletenessPercent)
+		if activeConnections < requiredDevices ||
+			activeSubscriptions < requiredDevices ||
+			stage.AppUserTotals.DesiredWrites < requiredUsers {
 			return false
 		}
 	}
 	return true
+}
+
+func thresholdCount(total int64, percent float64) int64 {
+	if total <= 0 {
+		return 0
+	}
+	return int64(math.Ceil(float64(total) * percent / 100))
 }
 
 func expectedStageUsers(conditions TestConditions, connectedDevices int) int {

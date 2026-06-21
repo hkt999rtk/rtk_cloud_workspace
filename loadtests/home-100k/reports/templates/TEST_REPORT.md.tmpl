@@ -9,9 +9,12 @@
 ## Test Conditions
 {{TEST_CONDITIONS}}
 
+## Gate Standards
+{{GATE_STANDARDS}}
+
 ## Counter Scope
 - Device MQTT totals and APP/User totals are client-side runner counters.
-- A capacity `PASS` requires parsed server-side MQTT, APP/API, and IoT Device Shadow counters to correlate with client counters inside tolerance.
+- A capacity `PASS` requires functional success gates and exact event correlation to meet the configured thresholds; aggregate counter correlation inside tolerance is a sanity check, and small mismatches are warnings.
 
 ## Scenario Mix
 {{SCENARIO_MIX}}

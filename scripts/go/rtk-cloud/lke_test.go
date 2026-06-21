@@ -450,6 +450,11 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"VIDEO_CLOUD_MQTT_OUTBOUND_WRITE_TIMEOUT\n              value: \"10s\"",
 		"VIDEO_CLOUD_SHADOW_CACHE_ENABLED\n              value: \"true\"",
 		"VIDEO_CLOUD_SHADOW_CACHE_ADDR\n              value: \"redis.video-cloud-staging-platform.svc.cluster.local:6379\"",
+		"VIDEO_CLOUD_SHADOW_CACHE_WRITE_BEHIND_ENABLED\n              value: \"true\"",
+		"VIDEO_CLOUD_SHADOW_CACHE_FLUSH_INTERVAL\n              value: \"1s\"",
+		"VIDEO_CLOUD_SHADOW_CACHE_FLUSH_BATCH_SIZE\n              value: \"500\"",
+		"VIDEO_CLOUD_SHADOW_CACHE_BUFFER_MAX_DOCS\n              value: \"10000\"",
+		"VIDEO_CLOUD_SHADOW_CACHE_RECOVERY_INTERVAL\n              value: \"5s\"",
 		"kind: Secret\nmetadata:\n  name: mqtt-runtime",
 		"cert.pem:",
 		"key.pem:",
@@ -1354,6 +1359,11 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 		"name: VIDEO_CLOUD_MQTT_OUTBOUND_WRITE_TIMEOUT\n              value: \"10s\"",
 		"name: VIDEO_CLOUD_SHADOW_CACHE_ENABLED\n              value: \"true\"",
 		"name: VIDEO_CLOUD_SHADOW_CACHE_ADDR\n              value: \"redis.video-cloud-staging-platform.svc.cluster.local:6379\"",
+		"name: VIDEO_CLOUD_SHADOW_CACHE_WRITE_BEHIND_ENABLED\n              value: \"true\"",
+		"name: VIDEO_CLOUD_SHADOW_CACHE_FLUSH_INTERVAL\n              value: \"1s\"",
+		"name: VIDEO_CLOUD_SHADOW_CACHE_FLUSH_BATCH_SIZE\n              value: \"500\"",
+		"name: VIDEO_CLOUD_SHADOW_CACHE_BUFFER_MAX_DOCS\n              value: \"10000\"",
+		"name: VIDEO_CLOUD_SHADOW_CACHE_RECOVERY_INTERVAL\n              value: \"5s\"",
 	} {
 		if !strings.Contains(video, want) {
 			t.Fatalf("expected %q in video-cloud-api manifest, got:\n%s", want, video)
@@ -1439,6 +1449,26 @@ func TestLKEVideoCloudReplicasCanBeOverridden(t *testing.T) {
 	}, nil)
 	if !strings.Contains(manifest, "replicas: 5") {
 		t.Fatalf("video-cloud-api replicas override missing:\n%s", manifest)
+	}
+}
+
+func TestLKEVideoCloudMQTTHandlerConcurrencyCanBeOverridden(t *testing.T) {
+	t.Setenv("LKE_VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY", "1024")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":   "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN": "video-cloud-staging.realtekconnect.com",
+	}
+
+	manifest := lkeDeploymentManifest(env, lkeWorkload{
+		Key:       "video-cloud",
+		Name:      "video-cloud-api",
+		Namespace: lkeNamespaceName(env, "video-cloud"),
+		Image:     "video-cloud:test",
+		Port:      8080,
+		Host:      "video-cloud-staging.realtekconnect.com",
+	}, nil)
+	if !strings.Contains(manifest, "name: VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY\n              value: \"1024\"") {
+		t.Fatalf("video-cloud-api MQTT handler concurrency override missing:\n%s", manifest)
 	}
 }
 

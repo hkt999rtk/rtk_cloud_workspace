@@ -1,7 +1,6 @@
 package home100k
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -9,58 +8,69 @@ import (
 )
 
 const (
-	DefaultDeviceCount           = 100000
-	DefaultUserCount             = 5000
-	DefaultDevicesPerUser        = 20
-	DefaultVMCount               = 5
-	DefaultDevicesPerVM          = DefaultDeviceCount / DefaultVMCount
-	DefaultUserShards            = DefaultVMCount
-	DefaultServerTarget          = "staging/lke"
-	DefaultLoadGeneratorRun      = "ephemeral-linode-vm"
-	DefaultRunnerNofile          = 1048576
-	DefaultRunnerMQTTConcurrency = 1000
-	DefaultDeviceSession         = "lifetime-subscription"
-	DefaultRunnerReadModel       = "go-netpoll-bounded-reader-goroutine"
-	DefaultStageWarmUp           = "1m"
-	DefaultStageSteady           = "2m"
-	DefaultStageCoolDown         = "45s"
-	DefaultScenarioProfile       = "home-diverse-v1"
-	DefaultVMLabelPrefix         = "lg"
+	DefaultDeviceCount      = 100000
+	DefaultUserCount        = 5000
+	DefaultDevicesPerUser   = 20
+	DefaultVMCount          = 5
+	DefaultDevicesPerVM     = DefaultDeviceCount / DefaultVMCount
+	DefaultUserShards       = DefaultVMCount
+	DefaultServerTarget     = "staging/lke"
+	DefaultLoadGeneratorRun = "ephemeral-linode-vm"
+	DefaultRunnerNofile     = 1048576
+	DefaultDeviceSession    = "lifetime-subscription"
+	DefaultRunnerReadModel  = "go-netpoll-bounded-reader-goroutine"
+	DefaultStageWarmUp      = "30s"
+	DefaultStageSteady      = "90s"
+	DefaultStageCoolDown    = "30s"
+	DefaultScenarioProfile  = "home-diverse-v1"
+	DefaultVMLabelPrefix    = "lg"
+
+	DefaultFunctionalSuccessThresholdPercent    = 99.5
+	DefaultClientTargetCompletenessPercent      = 100.0
+	DefaultExactEventCorrelationPercent         = 100.0
+	DefaultAggregateCorrelationTolerancePercent = 0.1
+	DefaultAggregateCorrelationMinTolerance     = 5
 )
 
 type PlanOptions struct {
-	EnvRoot         string `json:"env_root"`
-	Brandname       string `json:"brandname"`
-	Region          string `json:"region"`
-	DeviceCount     int    `json:"device_count,omitempty"`
-	UserCount       int    `json:"user_count,omitempty"`
-	DevicesPerUser  int    `json:"devices_per_user,omitempty"`
-	VMCount         int    `json:"vm_count,omitempty"`
-	StageWarmUp     string `json:"-"`
-	StageSteady     string `json:"-"`
-	StageCoolDown   string `json:"-"`
-	RunnerNofile    int    `json:"runner_nofile_limit,omitempty"`
-	SessionModel    string `json:"device_session_model,omitempty"`
-	RunnerReadModel string `json:"runner_read_model,omitempty"`
-	ScenarioProfile string `json:"scenario_profile,omitempty"`
-	VMLabelPrefix   string `json:"vm_label_prefix,omitempty"`
+	EnvRoot                              string  `json:"env_root"`
+	Brandname                            string  `json:"brandname"`
+	Region                               string  `json:"region"`
+	DeviceCount                          int     `json:"device_count,omitempty"`
+	UserCount                            int     `json:"user_count,omitempty"`
+	DevicesPerUser                       int     `json:"devices_per_user,omitempty"`
+	VMCount                              int     `json:"vm_count,omitempty"`
+	StageWarmUp                          string  `json:"stage_warm_up"`
+	StageSteady                          string  `json:"stage_steady"`
+	StageCoolDown                        string  `json:"stage_cool_down"`
+	RunnerNofile                         int     `json:"runner_nofile_limit,omitempty"`
+	SessionModel                         string  `json:"device_session_model,omitempty"`
+	RunnerReadModel                      string  `json:"runner_read_model,omitempty"`
+	ScenarioProfile                      string  `json:"scenario_profile,omitempty"`
+	VMLabelPrefix                        string  `json:"vm_label_prefix,omitempty"`
+	FunctionalSuccessThresholdPercent    float64 `json:"functional_success_threshold_percent,omitempty"`
+	ClientTargetCompletenessPercent      float64 `json:"client_target_completeness_percent,omitempty"`
+	ExactEventCorrelationPercent         float64 `json:"exact_event_correlation_percent,omitempty"`
+	AggregateCorrelationTolerancePercent float64 `json:"aggregate_correlation_tolerance_percent,omitempty"`
+	AggregateCorrelationMinTolerance     int64   `json:"aggregate_correlation_min_tolerance,omitempty"`
 }
 
 type Plan struct {
-	Conditions      TestConditions           `json:"conditions"`
-	ScenarioProfile string                   `json:"scenario_profile"`
-	DeviceMix       map[string]int           `json:"device_mix"`
-	DeviceProfiles  map[string]DeviceProfile `json:"device_profiles"`
-	UserProfiles    map[string]UserProfile   `json:"user_profiles"`
-	PresenceMix     map[string]int           `json:"presence_mix"`
-	Target          TargetWindow             `json:"target"`
-	Stages          []Stage                  `json:"-"`
-	Shards          []Shard                  `json:"shards"`
-	Assignments     []VMAssignment           `json:"vm_assignments"`
-	Lifecycle       []LifecycleAction        `json:"lifecycle_actions"`
-	Workflow        []string                 `json:"workflow"`
-	Artifacts       Artifacts                `json:"artifacts"`
-	CleanupPlan     []string                 `json:"cleanup_plan"`
+	Conditions        TestConditions           `json:"conditions"`
+	ScenarioProfile   string                   `json:"scenario_profile"`
+	DeviceMix         map[string]int           `json:"device_mix"`
+	DeviceProfiles    map[string]DeviceProfile `json:"device_profiles"`
+	UserProfiles      map[string]UserProfile   `json:"user_profiles"`
+	StageUsageWindows []string                 `json:"stage_usage_windows,omitempty"`
+	PresenceMix       map[string]int           `json:"presence_mix"`
+	Target            TargetWindow             `json:"target"`
+	Stages            []Stage                  `json:"stages"`
+	Shards            []Shard                  `json:"shards"`
+	Assignments       []VMAssignment           `json:"vm_assignments"`
+	Lifecycle         []LifecycleAction        `json:"lifecycle_actions"`
+	Workflow          []string                 `json:"workflow"`
+	Artifacts         Artifacts                `json:"artifacts"`
+	CleanupPlan       []string                 `json:"cleanup_plan"`
 }
 
 type TargetWindow struct {
@@ -69,21 +79,26 @@ type TargetWindow struct {
 }
 
 type TestConditions struct {
-	EnvRoot              string `json:"env_root"`
-	Brandname            string `json:"brandname"`
-	Region               string `json:"region"`
-	Devices              int    `json:"devices"`
-	Users                int    `json:"users"`
-	DevicesPerUser       int    `json:"devices_per_user"`
-	ServerTarget         string `json:"server_target"`
-	LoadGeneratorRuntime string `json:"load_generator_runtime"`
-	FirstBaselineRegion  string `json:"first_baseline_region_model"`
-	DeviceGeneratorLimit int    `json:"device_generator_density"`
-	VMCount              int    `json:"vm_count"`
-	RunnerNofileLimit    int    `json:"runner_nofile_limit"`
-	DeviceSessionModel   string `json:"device_session_model"`
-	RunnerReadModel      string `json:"runner_read_model"`
-	VMLabelPrefix        string `json:"vm_label_prefix"`
+	EnvRoot                              string  `json:"env_root"`
+	Brandname                            string  `json:"brandname"`
+	Region                               string  `json:"region"`
+	Devices                              int     `json:"devices"`
+	Users                                int     `json:"users"`
+	DevicesPerUser                       int     `json:"devices_per_user"`
+	ServerTarget                         string  `json:"server_target"`
+	LoadGeneratorRuntime                 string  `json:"load_generator_runtime"`
+	FirstBaselineRegion                  string  `json:"first_baseline_region_model"`
+	DeviceGeneratorLimit                 int     `json:"device_generator_density"`
+	VMCount                              int     `json:"vm_count"`
+	RunnerNofileLimit                    int     `json:"runner_nofile_limit"`
+	DeviceSessionModel                   string  `json:"device_session_model"`
+	RunnerReadModel                      string  `json:"runner_read_model"`
+	VMLabelPrefix                        string  `json:"vm_label_prefix"`
+	FunctionalSuccessThresholdPercent    float64 `json:"functional_success_threshold_percent"`
+	ClientTargetCompletenessPercent      float64 `json:"client_target_completeness_percent"`
+	ExactEventCorrelationPercent         float64 `json:"exact_event_correlation_percent"`
+	AggregateCorrelationTolerancePercent float64 `json:"aggregate_correlation_tolerance_percent"`
+	AggregateCorrelationMinTolerance     int64   `json:"aggregate_correlation_min_tolerance"`
 }
 
 type Stage struct {
@@ -92,19 +107,15 @@ type Stage struct {
 	WarmUp           string `json:"warm_up"`
 	SteadyState      string `json:"steady_state"`
 	CoolDown         string `json:"cool_down"`
+	UsageWindow      string `json:"usage_window,omitempty"`
 }
 
-func (s Stage) MarshalJSON() ([]byte, error) {
-	type stagePlanJSON struct {
-		Name           string `json:"name"`
-		TargetConnects int    `json:"target_connects"`
-		RampUpTime     string `json:"ramp_up_time"`
-	}
-	return json.Marshal(stagePlanJSON{
-		Name:           s.Name,
-		TargetConnects: s.ConnectedDevices,
-		RampUpTime:     s.WarmUp,
-	})
+type GateThresholds struct {
+	FunctionalSuccessThresholdPercent    float64 `json:"functional_success_threshold_percent"`
+	ClientTargetCompletenessPercent      float64 `json:"client_target_completeness_percent"`
+	ExactEventCorrelationPercent         float64 `json:"exact_event_correlation_percent"`
+	AggregateCorrelationTolerancePercent float64 `json:"aggregate_correlation_tolerance_percent"`
+	AggregateCorrelationMinTolerance     int64   `json:"aggregate_correlation_min_tolerance"`
 }
 
 type DeviceProfile struct {
@@ -219,34 +230,45 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	if vmLabelPrefix == "" {
 		vmLabelPrefix = DefaultVMLabelPrefix
 	}
+	thresholds, err := normalizeGateThresholds(opts)
+	if err != nil {
+		return Plan{}, err
+	}
 
-	stages := stagePlan(devices, opts.StageWarmUp, opts.StageSteady, opts.StageCoolDown)
+	usageWindows := homeDiverseUsageWindows()
+	stages := stagePlan(devices, opts.StageWarmUp, opts.StageSteady, opts.StageCoolDown, usageWindows)
 	plan := Plan{
 		Conditions: TestConditions{
-			EnvRoot:              opts.EnvRoot,
-			Brandname:            opts.Brandname,
-			Region:               opts.Region,
-			Devices:              devices,
-			Users:                users,
-			DevicesPerUser:       devicesPerUser,
-			ServerTarget:         DefaultServerTarget,
-			LoadGeneratorRuntime: DefaultLoadGeneratorRun,
-			FirstBaselineRegion:  "single-region",
-			DeviceGeneratorLimit: ceilDiv(devices, vmCount),
-			VMCount:              vmCount,
-			RunnerNofileLimit:    runnerNofile,
-			DeviceSessionModel:   sessionModel,
-			RunnerReadModel:      readModel,
-			VMLabelPrefix:        vmLabelPrefix,
+			EnvRoot:                              opts.EnvRoot,
+			Brandname:                            opts.Brandname,
+			Region:                               opts.Region,
+			Devices:                              devices,
+			Users:                                users,
+			DevicesPerUser:                       devicesPerUser,
+			ServerTarget:                         DefaultServerTarget,
+			LoadGeneratorRuntime:                 DefaultLoadGeneratorRun,
+			FirstBaselineRegion:                  "single-region",
+			DeviceGeneratorLimit:                 ceilDiv(devices, vmCount),
+			VMCount:                              vmCount,
+			RunnerNofileLimit:                    runnerNofile,
+			DeviceSessionModel:                   sessionModel,
+			RunnerReadModel:                      readModel,
+			VMLabelPrefix:                        vmLabelPrefix,
+			FunctionalSuccessThresholdPercent:    thresholds.FunctionalSuccessThresholdPercent,
+			ClientTargetCompletenessPercent:      thresholds.ClientTargetCompletenessPercent,
+			ExactEventCorrelationPercent:         thresholds.ExactEventCorrelationPercent,
+			AggregateCorrelationTolerancePercent: thresholds.AggregateCorrelationTolerancePercent,
+			AggregateCorrelationMinTolerance:     thresholds.AggregateCorrelationMinTolerance,
 		},
-		ScenarioProfile: scenarioProfile,
-		DeviceMix:       proportionalMix(devices, homeDiverseDeviceMixBuckets()),
-		DeviceProfiles:  homeDiverseDeviceProfiles(),
-		UserProfiles:    homeDiverseUserProfiles(),
-		PresenceMix:     proportionalMix(devices, []ratioBucket{{Name: "online_steady", Weight: 85}, {Name: "offline_desired_queue", Weight: 10}, {Name: "flapping_reconnect", Weight: 5}}),
-		Target:          targetWindowFromStages(stages),
-		Stages:          stages,
-		Workflow:        []string{"plan", "provision-vms", "sync", "run-stages", "collect", "collect-server-evidence", "aggregate", "destroy-vms"},
+		ScenarioProfile:   scenarioProfile,
+		DeviceMix:         proportionalMix(devices, homeDiverseDeviceMixBuckets()),
+		DeviceProfiles:    homeDiverseDeviceProfiles(),
+		UserProfiles:      homeDiverseUserProfiles(),
+		StageUsageWindows: usageWindows,
+		PresenceMix:       proportionalMix(devices, []ratioBucket{{Name: "online_steady", Weight: 85}, {Name: "offline_desired_queue", Weight: 10}, {Name: "flapping_reconnect", Weight: 5}}),
+		Target:            targetWindowFromStages(stages),
+		Stages:            stages,
+		Workflow:          []string{"plan", "provision-vms", "sync", "run-stages", "collect", "collect-server-evidence", "aggregate", "destroy-vms"},
 		Artifacts: Artifacts{
 			RunPlan:         "loadtests/home-100k/plans/<run_id>/plan.json",
 			ShardResults:    "loadtests/home-100k/reports/<run_id>/shards/",
@@ -265,6 +287,62 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	plan.Assignments = mixedAssignments(opts.Region, plan.Shards, vmCount, vmLabelPrefix)
 	plan.Lifecycle = BuildLifecycleActions(plan, "<run_id>")
 	return plan, nil
+}
+
+func normalizeGateThresholds(opts PlanOptions) (GateThresholds, error) {
+	thresholds := GateThresholds{
+		FunctionalSuccessThresholdPercent:    defaultFloat(opts.FunctionalSuccessThresholdPercent, DefaultFunctionalSuccessThresholdPercent),
+		ClientTargetCompletenessPercent:      defaultFloat(opts.ClientTargetCompletenessPercent, DefaultClientTargetCompletenessPercent),
+		ExactEventCorrelationPercent:         defaultFloat(opts.ExactEventCorrelationPercent, DefaultExactEventCorrelationPercent),
+		AggregateCorrelationTolerancePercent: defaultFloat(opts.AggregateCorrelationTolerancePercent, DefaultAggregateCorrelationTolerancePercent),
+		AggregateCorrelationMinTolerance:     opts.AggregateCorrelationMinTolerance,
+	}
+	if thresholds.AggregateCorrelationMinTolerance <= 0 {
+		thresholds.AggregateCorrelationMinTolerance = DefaultAggregateCorrelationMinTolerance
+	}
+	for _, item := range []struct {
+		name  string
+		value float64
+	}{
+		{"functional success threshold", thresholds.FunctionalSuccessThresholdPercent},
+		{"client target completeness threshold", thresholds.ClientTargetCompletenessPercent},
+		{"exact event correlation threshold", thresholds.ExactEventCorrelationPercent},
+	} {
+		if item.value <= 0 || item.value > 100 {
+			return GateThresholds{}, fmt.Errorf("%s must be > 0 and <= 100, got %.2f", item.name, item.value)
+		}
+	}
+	if thresholds.AggregateCorrelationTolerancePercent < 0 || thresholds.AggregateCorrelationTolerancePercent > 100 {
+		return GateThresholds{}, fmt.Errorf("aggregate correlation tolerance percent must be >= 0 and <= 100, got %.2f", thresholds.AggregateCorrelationTolerancePercent)
+	}
+	return thresholds, nil
+}
+
+func defaultFloat(value float64, fallback float64) float64 {
+	if value == 0 {
+		return fallback
+	}
+	return value
+}
+
+func gateThresholdsFromConditions(conditions TestConditions) GateThresholds {
+	thresholds, err := normalizeGateThresholds(PlanOptions{
+		FunctionalSuccessThresholdPercent:    conditions.FunctionalSuccessThresholdPercent,
+		ClientTargetCompletenessPercent:      conditions.ClientTargetCompletenessPercent,
+		ExactEventCorrelationPercent:         conditions.ExactEventCorrelationPercent,
+		AggregateCorrelationTolerancePercent: conditions.AggregateCorrelationTolerancePercent,
+		AggregateCorrelationMinTolerance:     conditions.AggregateCorrelationMinTolerance,
+	})
+	if err != nil {
+		return GateThresholds{
+			FunctionalSuccessThresholdPercent:    DefaultFunctionalSuccessThresholdPercent,
+			ClientTargetCompletenessPercent:      DefaultClientTargetCompletenessPercent,
+			ExactEventCorrelationPercent:         DefaultExactEventCorrelationPercent,
+			AggregateCorrelationTolerancePercent: DefaultAggregateCorrelationTolerancePercent,
+			AggregateCorrelationMinTolerance:     DefaultAggregateCorrelationMinTolerance,
+		}
+	}
+	return thresholds
 }
 
 func homeDiverseDeviceMixBuckets() []ratioBucket {
@@ -306,6 +384,10 @@ func homeDiverseUserProfiles() map[string]UserProfile {
 		"background_app": {RatioWeight: 25, ActionProfile: "open_home_refresh"},
 		"automation":     {RatioWeight: 15, ActionProfile: "automation_command"},
 	}
+}
+
+func homeDiverseUsageWindows() []string {
+	return []string{"morning", "away", "return_home", "evening_peak"}
 }
 
 func defaultDuration(value string, fallback string) string {
@@ -355,17 +437,42 @@ func proportionalMix(total int, buckets []ratioBucket) map[string]int {
 	return out
 }
 
-func stagePlan(devices int, warmUp string, steady string, coolDown string) []Stage {
-	return []Stage{{Name: "target", ConnectedDevices: devices, WarmUp: warmUp, SteadyState: steady, CoolDown: coolDown}}
+func stagePlan(devices int, warmUp string, steady string, coolDown string, usageWindows []string) []Stage {
+	percentages := []int{25, 50, 75, 100}
+	out := make([]Stage, 0, len(percentages))
+	for idx, pct := range percentages {
+		connected := devices * pct / 100
+		if connected <= 0 && devices > 0 {
+			connected = 1
+		}
+		name := fmt.Sprintf("%dpct", pct)
+		if devices == DefaultDeviceCount {
+			name = fmt.Sprintf("%dk", connected/1000)
+		}
+		usageWindow := ""
+		if idx < len(usageWindows) {
+			usageWindow = usageWindows[idx]
+		}
+		out = append(out, Stage{
+			Name:             name,
+			ConnectedDevices: connected,
+			WarmUp:           warmUp,
+			SteadyState:      steady,
+			CoolDown:         coolDown,
+			UsageWindow:      usageWindow,
+		})
+	}
+	return out
 }
 
 func targetWindowFromStages(stages []Stage) TargetWindow {
 	if len(stages) == 0 {
 		return TargetWindow{}
 	}
+	target := stages[len(stages)-1]
 	return TargetWindow{
-		TargetConnects: stages[0].ConnectedDevices,
-		RampUpTime:     stages[0].WarmUp,
+		TargetConnects: target.ConnectedDevices,
+		RampUpTime:     target.WarmUp,
 	}
 }
 

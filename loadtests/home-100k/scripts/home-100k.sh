@@ -69,9 +69,9 @@ ssh_key="${HOME100K_SSH_KEY:-$HOME/.ssh/id_ed25519_rtkcloud}"
 ssh_user="${HOME100K_SSH_USER:-root}"
 authorized_key_file="${HOME100K_AUTHORIZED_KEY_FILE:-${ssh_key}.pub}"
 status_interval_seconds="${HOME100K_STATUS_INTERVAL_SECONDS:-30}"
-target_ramp_up_time="${HOME100K_RAMP_UP_TIME:-1m}"
-measurement_window="${HOME100K_MEASUREMENT_WINDOW:-2m}"
-post_run_collection="${HOME100K_POST_RUN_COLLECTION:-45s}"
+stage_warm_up="${HOME100K_STAGE_WARM_UP:-30s}"
+stage_steady="${HOME100K_STAGE_STEADY:-90s}"
+stage_cool_down="${HOME100K_STAGE_COOL_DOWN:-30s}"
 device_count="${HOME100K_DEVICES:-}"
 user_count="${HOME100K_USERS:-}"
 devices_per_user="${HOME100K_DEVICES_PER_USER:-}"
@@ -83,6 +83,11 @@ command_concurrency="${HOME100K_COMMAND_CONCURRENCY:-100}"
 shadow_command_timeout="${HOME100K_SHADOW_COMMAND_TIMEOUT:-30s}"
 device_session_model="${HOME100K_DEVICE_SESSION_MODEL:-lifetime-subscription}"
 runner_read_model="${HOME100K_RUNNER_READ_MODEL:-go-netpoll-bounded-reader-goroutine}"
+functional_success_threshold_percent="${HOME100K_FUNCTIONAL_SUCCESS_THRESHOLD_PERCENT:-99.5}"
+client_target_completeness_percent="${HOME100K_CLIENT_TARGET_COMPLETENESS_PERCENT:-100}"
+exact_event_correlation_percent="${HOME100K_EXACT_EVENT_CORRELATION_PERCENT:-100}"
+aggregate_correlation_tolerance_percent="${HOME100K_AGGREGATE_CORRELATION_TOLERANCE_PERCENT:-0.1}"
+aggregate_correlation_min_tolerance="${HOME100K_AGGREGATE_CORRELATION_MIN_TOLERANCE:-5}"
 coordinator_start_delay_ms="${HOME100K_COORDINATOR_START_DELAY_MS:-3000}"
 credential_bundle_format="${HOME100K_CREDENTIAL_BUNDLE_FORMAT:-sqlite-gzip}"
 mqtt_addr="${HOME100K_MQTT_ADDR:-}"
@@ -155,8 +160,10 @@ Defaults can be overridden with:
   HOME100K_AUTHORIZED_KEY_FILE default: <HOME100K_SSH_KEY>.pub
   SSH known_hosts is isolated per run at <out-dir>/ssh_known_hosts
   HOME100K_STATUS_INTERVAL_SECONDS default: 30
-  HOME100K_RAMP_UP_TIME default: 1m; connection ramp-up time
-  HOME100K_DEVICES configured in the description file; target connects
+  HOME100K_STAGE_WARM_UP default: 30s from the default description file
+  HOME100K_STAGE_STEADY default: 90s from the default description file
+  HOME100K_STAGE_COOL_DOWN default: 30s from the default description file
+  HOME100K_DEVICES configured in the description file; current default description uses 9000
   HOME100K_USERS optional; when omitted, the planner derives users from devices/devices-per-user
   HOME100K_DEVICES_PER_USER configured in the description file; current default description uses 20
   HOME100K_VM_COUNT optional; default planner value is 5 mixed generator VMs
@@ -167,6 +174,11 @@ Defaults can be overridden with:
   HOME100K_SHADOW_COMMAND_TIMEOUT default: 30s; per-phase shadow command wait timeout
   HOME100K_DEVICE_SESSION_MODEL default: lifetime-subscription; device MQTT subscriptions stay open for device lifetime
   HOME100K_RUNNER_READ_MODEL default: go-netpoll-bounded-reader-goroutine; sustained async MQTT reads
+  HOME100K_FUNCTIONAL_SUCCESS_THRESHOLD_PERCENT default: 99.5
+  HOME100K_CLIENT_TARGET_COMPLETENESS_PERCENT default: 100
+  HOME100K_EXACT_EVENT_CORRELATION_PERCENT default: 100
+  HOME100K_AGGREGATE_CORRELATION_TOLERANCE_PERCENT default: 0.1
+  HOME100K_AGGREGATE_CORRELATION_MIN_TOLERANCE default: 5
   HOME100K_COORDINATOR_START_DELAY_MS default: 3000
   HOME100K_CREDENTIAL_BUNDLE_FORMAT default: sqlite-gzip; only supported format
   HOME100K_MQTT_ADDR public MQTT endpoints for remote Linode generators; use auto-public-mqtt to discover mqtt-public* services
@@ -692,7 +704,7 @@ fi
 if [[ "$#" -gt 0 ]]; then
   shift
 fi
-validate_stage_timing "$target_ramp_up_time" "$measurement_window" "$post_run_collection"
+validate_stage_timing "$stage_warm_up" "$stage_steady" "$stage_cool_down"
 resolve_mqtt_addr_for_command "$command"
 
 base_args=(
@@ -700,9 +712,14 @@ base_args=(
   "--brandname" "$brandname"
   "--region" "$region"
   "--vm-label-prefix" "$vm_label_prefix"
-  "--stage-warm-up" "$target_ramp_up_time"
-  "--stage-steady" "$measurement_window"
-  "--stage-cool-down" "$post_run_collection"
+  "--stage-warm-up" "$stage_warm_up"
+  "--stage-steady" "$stage_steady"
+  "--stage-cool-down" "$stage_cool_down"
+  "--functional-success-threshold-percent" "$functional_success_threshold_percent"
+  "--client-target-completeness-percent" "$client_target_completeness_percent"
+  "--exact-event-correlation-percent" "$exact_event_correlation_percent"
+  "--aggregate-correlation-tolerance-percent" "$aggregate_correlation_tolerance_percent"
+  "--aggregate-correlation-min-tolerance" "$aggregate_correlation_min_tolerance"
 )
 if [[ -n "$device_count" ]]; then
   base_args+=("--devices" "$device_count")

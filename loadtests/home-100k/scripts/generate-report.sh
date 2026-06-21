@@ -84,6 +84,14 @@ def num(value, default=0):
         except (TypeError, ValueError):
             return default
 
+def float_num(value, default=0.0):
+    if value is None or value == "":
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
 def pct_value(value):
     if value is None:
         return None
@@ -206,6 +214,20 @@ def test_conditions():
         "- Runner read requirement: sustained MQTT reads through Go netpoll-backed connections and bounded per-device reader goroutines; command-time one-shot reads are not valid for capacity conclusions.",
     ]
     return "\n".join(lines)
+
+def gate_standards():
+    conditions = ((result.get("plan") or {}).get("conditions") or {})
+    functional = float_num(conditions.get("functional_success_threshold_percent"), 99.5)
+    target = float_num(conditions.get("client_target_completeness_percent"), 100)
+    exact = float_num(conditions.get("exact_event_correlation_percent"), 100)
+    aggregate_percent = float_num(conditions.get("aggregate_correlation_tolerance_percent"), 0.1)
+    aggregate_min = int(num(conditions.get("aggregate_correlation_min_tolerance"), 5))
+    return "\n".join([
+        f"- Functional success threshold: {functional:.2f}%",
+        f"- Client target completeness threshold: {target:.2f}%",
+        f"- Exact event correlation threshold: {exact:.2f}%",
+        f"- Aggregate counter tolerance: max({aggregate_min}, {aggregate_percent:.2f}%)",
+    ])
 
 def render_map(title, values):
     lines = [f"- {title}:"]
@@ -1022,6 +1044,7 @@ replacements = {
     "STATUS": md(result.get("status", "UNKNOWN")),
     "STATUS_SUMMARY": status_summary(),
     "TEST_CONDITIONS": test_conditions(),
+    "GATE_STANDARDS": gate_standards(),
     "SCENARIO_MIX": scenario_mix(),
     "DEVICE_TRAFFIC_PROFILES": device_traffic_profiles(),
     "USER_SCENARIO_PROFILES": user_scenario_profiles(),

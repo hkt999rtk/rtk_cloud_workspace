@@ -172,6 +172,38 @@ Required contract coverage:
 - MQTT shadow responses publish accepted/rejected/documents/delta events as
   applicable.
 
+Runtime cache and worker sizing notes:
+
+- The MQTT inbound queue is a short burst buffer between the broker read loop
+  and application handlers. It is not a capacity multiplier. Raising handler
+  worker count above downstream capacity only adds scheduler overhead and can
+  push pressure into database, Redis, or serialized MQTT writes.
+- Size Video Cloud MQTT handler workers conservatively against the slowest
+  downstream path. Shadow mutation handlers may write Redis and the backing
+  shadow store; accepted/documents/delta MQTT publishes are still serialized by
+  the runtime socket writer.
+- Shadow reads must prefer the Redis/Valkey hot document. When the Redis shadow
+  document is present, `get` must return from cache without reading the backing
+  store. Backing-store reads are only for cache miss hydration or explicit
+  mutation paths.
+- Successful shadow `update` and `delete` requests are document mutations even
+  when the value patch is idempotent: version, timestamp, metadata, and
+  client-token response fields can change. The hot path writes Redis first and
+  projects to PostgreSQL asynchronously.
+- Redis/Valkey is the authoritative API/runtime read path during shadow cache
+  operation. PostgreSQL is allowed to lag Redis by the configured write-behind
+  flush interval, normally 1s.
+- Shadow write-behind must use at least double buffering: while one batch is
+  flushing to PostgreSQL, new mutations continue entering a separate active
+  buffer. The buffer is keyed by shadow document key so repeated writes in one
+  flush window coalesce to the newest version.
+- Redis dirty-set membership is the crash-recovery source for write-behind
+  projection. A successful PostgreSQL batch flush removes dirty keys; failed
+  flushes keep dirty keys for retry.
+- Runtime logs, telemetry, and shadow commands must be interpreted separately
+  when diagnosing 100pct command bursts. If these share one FIFO handler queue,
+  increasing worker count does not guarantee shadow command latency.
+
 HTTP surface:
 
 ```text
@@ -433,8 +465,10 @@ The script keeps non-secret defaults in one place:
 | `HOME100K_SSH_USER` | `root` |
 | `HOME100K_AUTHORIZED_KEY_FILE` | `~/.ssh/id_ed25519_rtkcloud.pub` from the default description file |
 | `HOME100K_STATUS_INTERVAL_SECONDS` | `30` |
-| `HOME100K_RAMP_UP_TIME` | `15s` from the default description file |
 | `HOME100K_VM_LABEL_PREFIX` | `lg`; load-generator VM labels are `<prefix>01..<prefix>NN` |
+| `HOME100K_STAGE_WARM_UP` | `30s` from the default description file |
+| `HOME100K_STAGE_STEADY` | `90s` from the default description file |
+| `HOME100K_STAGE_COOL_DOWN` | `30s` from the default description file |
 | `HOME100K_DEVICES` | `9000` from the default description file |
 | `HOME100K_USERS` | unset; planner derives `ceil(devices / devices-per-user)` |
 | `HOME100K_DEVICES_PER_USER` | `20` from the default description file |
@@ -442,6 +476,11 @@ The script keeps non-secret defaults in one place:
 | `HOME100K_MQTT_CONCURRENCY` | `1000`; per-VM-shard live MQTT connect worker concurrency |
 | `HOME100K_COMMAND_CONCURRENCY` | `100`; per-VM-shard live shadow command concurrency |
 | `HOME100K_SHADOW_COMMAND_TIMEOUT` | `30s`; per-phase shadow command wait timeout |
+| `HOME100K_FUNCTIONAL_SUCCESS_THRESHOLD_PERCENT` | `99.5`; MQTT connect, app ACK, delta, and convergence success threshold |
+| `HOME100K_CLIENT_TARGET_COMPLETENESS_PERCENT` | `100`; active target devices/subscriptions and desired-write attempts must reach the planned target |
+| `HOME100K_EXACT_EVENT_CORRELATION_PERCENT` | `100`; command stream/sequence evidence correlation threshold |
+| `HOME100K_AGGREGATE_CORRELATION_TOLERANCE_PERCENT` | `0.1`; aggregate server/client counter sanity tolerance |
+| `HOME100K_AGGREGATE_CORRELATION_MIN_TOLERANCE` | `5`; minimum aggregate counter tolerance |
 | `HOME100K_MQTT_ADDR` | `auto-public-mqtt`; live commands discover public MQTT LoadBalancer IPs |
 | `HOME100K_MQTT_PUBLIC_LB_COUNT` | `1`; limits auto-discovered MQTT LoadBalancers for the current 9K profile |
 | `HOME100K_NODE_RESOURCE_STATUS` | `1` |
@@ -481,10 +520,14 @@ Kubernetes node resource samples use `kubectl top nodes --no-headers` and print
 `<env-root>/state/lke-kubeconfig.yaml`. Set
 `HOME100K_K8S_NODE_RESOURCE_STATUS=0` to disable K8s node probing.
 
-Ramp-up time belongs in the non-secret description file, not in `~/.env`.
-Use `HOME100K_RAMP_UP_TIME` for new runs. Short debug runs can lower it with an
-explicit shell environment override or a custom `HOME100K_DESCRIPTION_FILE`;
-explicit shell environment variables take precedence over the description file.
+Stage duration belongs in the non-secret description file, not in `~/.env`.
+The default profile uses `HOME100K_STAGE_WARM_UP=30s`,
+`HOME100K_STAGE_STEADY=90s`, and `HOME100K_STAGE_COOL_DOWN=30s`, so the planned
+load window is 150 seconds per stage and 10 minutes across the 25%, 50%, 75%,
+and 100% stages before provisioning, sync, collection, and evidence overhead.
+Short debug runs can lower these values with explicit shell environment
+overrides or a custom `HOME100K_DESCRIPTION_FILE`; explicit shell environment
+variables take precedence over the description file.
 
 Runner mode also belongs in the non-secret description file. The default is
 `HOME100K_RUNNER_MODE=live`. In live mode, each shard invokes the copied
