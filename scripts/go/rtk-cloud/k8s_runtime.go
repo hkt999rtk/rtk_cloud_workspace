@@ -13,7 +13,7 @@ func runKubernetesProvision(provider cloudProvider, ctx provisionContext) error 
 		return err
 	}
 	if ctx.Opts.mode.reset {
-		return errors.New("LKE provision reset is not implemented; use remove-all-vm for namespace teardown")
+		return errors.New("Kubernetes provision reset is not implemented; use remove-k8s for current staging teardown")
 	}
 	if ctx.Opts.mode.apply || ctx.Opts.mode.dns || ctx.Opts.mode.deploy || ctx.Opts.mode.artifacts || ctx.Opts.mode.e2e {
 		if err := writeLKECompatibilityArtifacts(ctx.Paths, ctx.Env); err != nil {

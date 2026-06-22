@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-ENV_ROOT="$TMP/cloud_env/staging/linode"
+ENV_ROOT="$TMP/cloud_env/staging/lke"
 mkdir -p \
 	"$ENV_ROOT/env" \
 	"$ENV_ROOT/services/account-manager" \
@@ -20,7 +20,7 @@ mkdir -p \
 
 cat > "$ENV_ROOT/env/stack.env" <<'EOF_ENV'
 CLOUD_ENV_NAME=staging
-CLOUD_PROVIDER=linode
+CLOUD_PROVIDER=lke
 CLOUD_REGION=us-sea
 CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
 CLOUD_STACK_NAME=video-cloud-staging

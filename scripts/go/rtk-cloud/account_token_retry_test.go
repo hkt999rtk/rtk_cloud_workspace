@@ -236,7 +236,7 @@ func TestCreateUsersReusesCompleteLocalArtifact(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(envRoot, "env", "stack.env"), []byte("CLOUD_PROVIDER=linode\nCLOUD_STACK_NAME=video-cloud-staging\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(envRoot, "env", "stack.env"), []byte("CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	artifactDir := filepath.Join(envRoot, "artifacts", "users")
@@ -358,7 +358,7 @@ func TestCreateUsersRotatePasswordBypassesCompleteLocalArtifact(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(envRoot, "env", "stack.env"), []byte("CLOUD_PROVIDER=linode\nCLOUD_STACK_NAME=video-cloud-staging\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(envRoot, "env", "stack.env"), []byte("CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	artifactDir := filepath.Join(envRoot, "artifacts", "users")
@@ -491,7 +491,7 @@ func TestCreateUsersRunsAdminCreateRequestsConcurrently(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(envRoot, "env", "stack.env"), []byte("CLOUD_PROVIDER=linode\nCLOUD_STACK_NAME=video-cloud-staging\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(envRoot, "env", "stack.env"), []byte("CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

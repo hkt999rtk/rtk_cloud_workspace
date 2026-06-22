@@ -6,7 +6,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
-ENV_ROOT="$WORKSPACE/cloud_env/staging/linode"
+ENV_ROOT="$WORKSPACE/cloud_env/staging/lke"
 DEVICES_DIR="$ENV_ROOT/devices/test_device"
 USERS_FILE="$ENV_ROOT/artifacts/users/rtk-users-test.json"
 FAKE_BIN="$TMP/bin"

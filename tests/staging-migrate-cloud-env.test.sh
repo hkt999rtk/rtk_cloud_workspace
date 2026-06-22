@@ -6,7 +6,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
-mkdir -p "$WORKSPACE/cloud_env/staging/linode"
+mkdir -p "$WORKSPACE/cloud_env/staging/lke"
 
 if "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- migrate-env --workspace "$WORKSPACE" > "$TMP/missing-env-root.out" 2>&1; then
 	echo "expected missing --env-root to fail" >&2

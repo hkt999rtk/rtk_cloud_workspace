@@ -6,7 +6,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
-ENV_ROOT="$WORKSPACE/cloud_env/staging/linode"
+ENV_ROOT="$WORKSPACE/cloud_env/staging/lke"
 USERS_FILE="$ENV_ROOT/artifacts/users/rtk-users-test.json"
 BIND_DIR="$ENV_ROOT/artifacts/device-bind"
 BIND_ARTIFACT="$BIND_DIR/rtk-device-bind-test.json"

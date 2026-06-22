@@ -9,10 +9,10 @@ type provisionRuntime string
 
 const (
 	provisionRuntimeKubernetes provisionRuntime = "kubernetes"
-	provisionRuntimeVM         provisionRuntime = "vm"
 )
 
 var errProviderUnsupported = errors.New("cloud provider not implemented")
+var errVMRuntimeRetired = errors.New("VM runtime deployment retired")
 
 type provisionContext struct {
 	Paths provisionPaths
@@ -29,13 +29,24 @@ type cloudProvider interface {
 
 func newCloudProvider(name string) (cloudProvider, error) {
 	switch name {
-	case "", "linode":
-		return linodeVMProvider{}, nil
+	case "":
+		return lkeCloudProvider{}, nil
+	case "linode":
+		return retiredVMProvider{name: name}, nil
 	case "lke":
 		return lkeCloudProvider{}, nil
-	case "gke", "aks", "eks":
+	case "k8s", "gke", "aks", "eks":
 		return unsupportedKubernetesProvider{name: name}, nil
 	default:
 		return nil, fmt.Errorf("unsupported CLOUD_PROVIDER %q", name)
+	}
+}
+
+func isKubernetesProviderName(name string) bool {
+	switch name {
+	case "lke", "k8s", "gke", "aks", "eks":
+		return true
+	default:
+		return false
 	}
 }

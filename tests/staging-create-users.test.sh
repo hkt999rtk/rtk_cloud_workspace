@@ -6,7 +6,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
-ENV_ROOT="$WORKSPACE/cloud_env/staging/linode"
+ENV_ROOT="$WORKSPACE/cloud_env/staging/lke"
 FAKE_BIN="$TMP/bin"
 CURL_LOG="$TMP/curl-log"
 mkdir -p \

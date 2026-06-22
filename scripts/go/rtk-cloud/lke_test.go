@@ -18,6 +18,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/envroot"
 )
 
 func TestRunProvisionLKEApplyUsesKubectl(t *testing.T) {
@@ -2207,11 +2209,15 @@ func TestRunDeployLKEVideoOnlyUsesVideoImage(t *testing.T) {
 	}
 }
 
-func TestRunRemoveAllVMLKERemovesNamespaces(t *testing.T) {
-	workspace, envRoot := makeLKETestEnv(t)
+func TestRunRemoveAllLKEDeletesNamespaces(t *testing.T) {
+	_, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)
+	envValues, err := envroot.Load(envRoot, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	if err := runRemoveAllVM([]string{"--workspace", workspace, "--env-root", envRoot, "--yes"}); err != nil {
+	if err := runRemoveAllLKE(envRoot, envValues.Values, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2224,15 +2230,19 @@ func TestRunRemoveAllVMLKERemovesNamespaces(t *testing.T) {
 	}
 }
 
-func TestRunRemoveAllVMLKEDoesNotCreateMissingCluster(t *testing.T) {
-	workspace, envRoot := makeLKETestEnv(t)
+func TestRunRemoveAllLKEDoesNotCreateMissingCluster(t *testing.T) {
+	_, envRoot := makeLKETestEnv(t)
 	curlLog := fakeLinodeCurl(t, map[string]string{
 		"/lke/clusters?page_size=500": `{"data":[]}`,
 	})
 	fakeKubectlWithoutCurrentContext(t)
 	t.Setenv("LINODE_TOKEN", "test-token")
+	envValues, err := envroot.Load(envRoot, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	if err := runRemoveAllVM([]string{"--workspace", workspace, "--env-root", envRoot, "--yes"}); err != nil {
+	if err := runRemoveAllLKE(envRoot, envValues.Values, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2242,6 +2252,18 @@ func TestRunRemoveAllVMLKEDoesNotCreateMissingCluster(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(envRoot, "state", "lke.env")); !os.IsNotExist(err) {
 		t.Fatalf("remove should not create LKE state when cluster is missing, stat err=%v", err)
+	}
+}
+
+func TestRunRemoveAllVMRetired(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+
+	err := runRemoveAllVM([]string{"--workspace", workspace, "--env-root", envRoot, "--yes"})
+	if err == nil {
+		t.Fatal("expected retired remove-all-vm error")
+	}
+	if !strings.Contains(err.Error(), "remove-all-vm is retired") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -2569,9 +2591,10 @@ func TestRunStagingE2EDataSetupForLKEStartsPortForwards(t *testing.T) {
 }
 
 func TestRunStagingE2EDataSetupDefaultsToResumeCompleteArtifacts(t *testing.T) {
+	t.Setenv("CLOUD_STAGING_E2E_K8S_PORT_FORWARD", "0")
 	workspace := t.TempDir()
-	envRoot := filepath.Join(workspace, "cloud_env", "staging", "linode")
-	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=linode\nCLOUD_STACK_NAME=video-cloud-staging\n")
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\n")
 	writeTestFile(t, filepath.Join(envRoot, "artifacts", "users", "rtk-users-complete.json"), `{"brandname":"RTK","users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}`)
 	writeTestFile(t, filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.json"), `[
 {"device_id":"load-device-0001","device_type":"camera"},
@@ -2618,9 +2641,10 @@ func TestRunStagingE2EDataSetupDefaultsToResumeCompleteArtifacts(t *testing.T) {
 }
 
 func TestRunStagingE2EDataSetupNoResumeDisablesLocalUserReuse(t *testing.T) {
+	t.Setenv("CLOUD_STAGING_E2E_K8S_PORT_FORWARD", "0")
 	workspace := t.TempDir()
-	envRoot := filepath.Join(workspace, "cloud_env", "staging", "linode")
-	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=linode\nCLOUD_STACK_NAME=video-cloud-staging\n")
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\n")
 	writeTestFile(t, filepath.Join(envRoot, "artifacts", "users", "rtk-users-complete.json"), `{"brandname":"RTK","users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}`)
 	writeTestFile(t, filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.json"), `[
 {"device_id":"load-device-0001","device_type":"camera"},
@@ -2663,9 +2687,10 @@ func TestRunStagingE2EDataSetupNoResumeDisablesLocalUserReuse(t *testing.T) {
 }
 
 func TestRunStagingE2EDataSetupDoesNotResumeDeviceManifestWithWrongMix(t *testing.T) {
+	t.Setenv("CLOUD_STAGING_E2E_K8S_PORT_FORWARD", "0")
 	workspace := t.TempDir()
-	envRoot := filepath.Join(workspace, "cloud_env", "staging", "linode")
-	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=linode\nCLOUD_STACK_NAME=video-cloud-staging\n")
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\n")
 	writeTestFile(t, filepath.Join(envRoot, "artifacts", "users", "rtk-users-complete.json"), `{"brandname":"RTK","users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}`)
 	writeTestFile(t, filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.json"), `[
 {"device_id":"load-device-0001","device_type":"camera"},
@@ -2710,9 +2735,10 @@ func TestRunStagingE2EDataSetupDoesNotResumeDeviceManifestWithWrongMix(t *testin
 }
 
 func TestRunStagingE2EDataSetupDoesNotResumeBindArtifactWithWrongUsers(t *testing.T) {
+	t.Setenv("CLOUD_STAGING_E2E_K8S_PORT_FORWARD", "0")
 	workspace := t.TempDir()
-	envRoot := filepath.Join(workspace, "cloud_env", "staging", "linode")
-	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=linode\nCLOUD_STACK_NAME=video-cloud-staging\n")
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\n")
 	writeTestFile(t, filepath.Join(envRoot, "artifacts", "users", "rtk-users-complete.json"), `{"brandname":"RTK","users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}`)
 	writeTestFile(t, filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.json"), `[
 {"device_id":"load-device-0001","device_type":"light"},

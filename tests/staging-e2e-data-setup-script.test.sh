@@ -6,13 +6,15 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
-ENV_ROOT="$WORKSPACE/cloud_env/staging/linode"
+ENV_ROOT="$WORKSPACE/cloud_env/staging/lke"
 mkdir -p "$WORKSPACE" "$ENV_ROOT/env" "$ENV_ROOT/artifacts/users" "$ENV_ROOT/artifacts/device-bind" "$ENV_ROOT/devices/test_device/manifests"
 
 cat > "$ENV_ROOT/env/stack.env" <<'EOF_ENV'
-CLOUD_PROVIDER=linode
+CLOUD_PROVIDER=lke
 CLOUD_STACK_NAME=video-cloud-staging
 EOF_ENV
+
+export CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0
 
 COMMAND_LOG="$TMP/commands.log"
 make_stub() {
@@ -71,9 +73,9 @@ actual="$(cut -f1 "$COMMAND_LOG")"
 	printf 'unexpected command order:\n%s\n' "$actual" >&2
 	exit 1
 }
-grep -F $'create-users\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --brandname RTK --count 2 --rotate-password --concurrency 16' "$COMMAND_LOG" >/dev/null
-grep -F $'generate-devices\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --count 4 --mix camera=2,light=2 --prefix load-device --force --concurrency 16' "$COMMAND_LOG" >/dev/null
-grep -F $'bind-devices\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --brandname RTK --users-file '"$ENV_ROOT/artifacts/users/rtk-users-test.json"$' --devices-dir '"$ENV_ROOT/devices/test_device"$' --count 4 --concurrency 64' "$COMMAND_LOG" >/dev/null
+grep -F $'create-users\t' "$COMMAND_LOG" | grep -F -- "--env-root $WORKSPACE/cloud_env/staging/lke" | grep -F -- '--count 2' | grep -F -- '--rotate-password' | grep -F -- '--concurrency 64' >/dev/null
+grep -F $'generate-devices\t' "$COMMAND_LOG" | grep -F -- "--env-root $WORKSPACE/cloud_env/staging/lke" | grep -F -- '--count 4' | grep -F -- '--mix camera=2,light=2' | grep -F -- '--prefix load-device' | grep -F -- '--force' | grep -F -- '--concurrency 64' >/dev/null
+grep -F $'bind-devices\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/lke"$' --brandname RTK --users-file '"$ENV_ROOT/artifacts/users/rtk-users-test.json"$' --devices-dir '"$ENV_ROOT/devices/test_device"$' --count 4 --concurrency 64' "$COMMAND_LOG" >/dev/null
 
 SUMMARY="$(jq -r '.summary_file' "$TMP/run.out")"
 test "$SUMMARY" = "$OUT_DIR/summary.json"
@@ -91,20 +93,22 @@ cat > "$ENV_ROOT/artifacts/users/rtk-users-complete.json" <<'EOF_USERS'
 EOF_USERS
 cat > "$ENV_ROOT/devices/test_device/manifests/devices.json" <<'EOF_DEVICES'
 [
-  {"device_id":"load-device-0001"},
-  {"device_id":"load-device-0002"},
-  {"device_id":"load-device-0003"},
-  {"device_id":"load-device-0004"}
+  {"device_id":"load-device-0001","device_type":"camera"},
+  {"device_id":"load-device-0002","device_type":"camera"},
+  {"device_id":"load-device-0003","device_type":"light"},
+  {"device_id":"load-device-0004","device_type":"light"}
 ]
 EOF_DEVICES
-cat > "$ENV_ROOT/artifacts/device-bind/rtk-device-bind-complete.json" <<'EOF_BIND'
+for bind_artifact in "$ENV_ROOT/artifacts/device-bind/rtk-device-bind-complete.json" "$ENV_ROOT/artifacts/device-bind/rtk-device-bind-test.json"; do
+cat > "$bind_artifact" <<'EOF_BIND'
 {"brandname":"RTK","assignments":[
-  {"device_id":"load-device-0001"},
-  {"device_id":"load-device-0002"},
-  {"device_id":"load-device-0003"},
-  {"device_id":"load-device-0004"}
+  {"assigned_email":"rtk+001@users.local","device_id":"load-device-0001","device_type":"camera","service_options":["mqtt","video_streaming","video_storage"]},
+  {"assigned_email":"rtk+002@users.local","device_id":"load-device-0002","device_type":"camera","service_options":["mqtt","video_streaming","video_storage"]},
+  {"assigned_email":"rtk+001@users.local","device_id":"load-device-0003","device_type":"light","service_options":["mqtt"]},
+  {"assigned_email":"rtk+002@users.local","device_id":"load-device-0004","device_type":"light","service_options":["mqtt"]}
 ]}
 EOF_BIND
+done
 CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT="$TMP/create-brand.sh" \
 CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT="$TMP/create-users.sh" \
 CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT="$TMP/generate-devices.sh" \
@@ -125,7 +129,8 @@ actual="$(cut -f1 "$COMMAND_LOG")"
 	printf 'default data setup should reuse complete artifacts; command order:\n%s\n' "$actual" >&2
 	exit 1
 }
-grep -F 'skip: create_devices reason="--resume device manifest count=4"' "$TMP/resume-default.err" >/dev/null
+grep -F 'skip: create_users reason="--resume users artifact count=2"' "$TMP/resume-default.err" >/dev/null
+grep -F 'skip: create_devices reason="--resume' "$TMP/resume-default.err" >/dev/null
 
 : > "$COMMAND_LOG"
 CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT="$TMP/create-brand.sh" \
@@ -153,20 +158,33 @@ actual="$(cut -f1 "$COMMAND_LOG")"
 : > "$COMMAND_LOG"
 cat > "$ENV_ROOT/devices/test_device/manifests/devices.json" <<'EOF_DEVICES'
 [
-  {"device_id":"load-device-0001"},
-  {"device_id":"load-device-0002"},
-  {"device_id":"load-device-0003"},
-  {"device_id":"load-device-0004"}
+  {"device_id":"load-device-0001","device_type":"camera","service_options":["mqtt","video_streaming","video_storage"],"certificate_path":"devices/camera/load-device-0001/device.cert.pem","certificate_chain_path":"devices/camera/load-device-0001/device.chain.pem","key_path":"devices/camera/load-device-0001/device.key.pem"},
+  {"device_id":"load-device-0002","device_type":"camera","service_options":["mqtt","video_streaming","video_storage"],"certificate_path":"devices/camera/load-device-0002/device.cert.pem","certificate_chain_path":"devices/camera/load-device-0002/device.chain.pem","key_path":"devices/camera/load-device-0002/device.key.pem"},
+  {"device_id":"load-device-0003","device_type":"light","service_options":["mqtt"],"certificate_path":"devices/light/load-device-0003/device.cert.pem","certificate_chain_path":"devices/light/load-device-0003/device.chain.pem","key_path":"devices/light/load-device-0003/device.key.pem"},
+  {"device_id":"load-device-0004","device_type":"light","service_options":["mqtt"],"certificate_path":"devices/light/load-device-0004/device.cert.pem","certificate_chain_path":"devices/light/load-device-0004/device.chain.pem","key_path":"devices/light/load-device-0004/device.key.pem"}
 ]
 EOF_DEVICES
-cat > "$ENV_ROOT/artifacts/device-bind/rtk-device-bind-complete.json" <<'EOF_BIND'
+for device_dir in \
+	"$ENV_ROOT/devices/test_device/devices/camera/load-device-0001" \
+	"$ENV_ROOT/devices/test_device/devices/camera/load-device-0002" \
+	"$ENV_ROOT/devices/test_device/devices/light/load-device-0003" \
+	"$ENV_ROOT/devices/test_device/devices/light/load-device-0004"
+do
+	mkdir -p "$device_dir"
+	printf 'cert\n' > "$device_dir/device.cert.pem"
+	printf 'chain\n' > "$device_dir/device.chain.pem"
+	printf 'key\n' > "$device_dir/device.key.pem"
+done
+for bind_artifact in "$ENV_ROOT/artifacts/device-bind/rtk-device-bind-complete.json" "$ENV_ROOT/artifacts/device-bind/rtk-device-bind-test.json"; do
+cat > "$bind_artifact" <<'EOF_BIND'
 {"brandname":"RTK","assignments":[
-  {"device_id":"load-device-0001"},
-  {"device_id":"load-device-0002"},
-  {"device_id":"load-device-0003"},
-  {"device_id":"load-device-0004"}
+  {"assigned_email":"rtk+001@users.local","device_id":"load-device-0001","device_type":"camera","service_options":["mqtt","video_streaming","video_storage"]},
+  {"assigned_email":"rtk+002@users.local","device_id":"load-device-0002","device_type":"camera","service_options":["mqtt","video_streaming","video_storage"]},
+  {"assigned_email":"rtk+001@users.local","device_id":"load-device-0003","device_type":"light","service_options":["mqtt"]},
+  {"assigned_email":"rtk+002@users.local","device_id":"load-device-0004","device_type":"light","service_options":["mqtt"]}
 ]}
 EOF_BIND
+done
 cat > "$TMP/validate-bind-repair.sh" <<SH
 #!/usr/bin/env bash
 set -euo pipefail

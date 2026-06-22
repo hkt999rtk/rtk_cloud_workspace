@@ -1707,13 +1707,13 @@ func runRemoveAllLKE(envRoot string, env map[string]string, confirmed bool) erro
 		var answer string
 		_, _ = fmt.Fscan(os.Stdin, &answer)
 		if answer != "yes" {
-			fmt.Fprintln(os.Stderr, "[cloud-remove-all-vm] cancelled")
+			fmt.Fprintln(os.Stderr, "[cloud-remove-k8s] cancelled")
 			return nil
 		}
 	}
 	if err := ensureLKEKubeAccess(provisionPaths{EnvRoot: envRoot}, env, false); err != nil {
 		if errors.Is(err, errLKEMissingCluster) {
-			fmt.Fprintf(os.Stderr, "[cloud-remove-all-vm] no LKE cluster found for stack %s\n", stack)
+			fmt.Fprintf(os.Stderr, "[cloud-remove-k8s] no LKE cluster found for stack %s\n", stack)
 			return nil
 		}
 		return err
@@ -1725,10 +1725,10 @@ func runRemoveAllLKE(envRoot string, env map[string]string, confirmed bool) erro
 	if err := runKubectl(args...); err != nil {
 		return err
 	}
-	if err := backupAndRemoveState(envRoot); err != nil {
+	if err := backupAndRemoveLKEState(envRoot); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "[cloud-remove-all-vm] LKE namespace delete requests submitted for stack %s\n", stack)
+	fmt.Fprintf(os.Stderr, "[cloud-remove-k8s] LKE namespace delete requests submitted for stack %s\n", stack)
 	return nil
 }
 

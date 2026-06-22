@@ -210,18 +210,26 @@ if [[ "$(basename "$ENV_ROOT")" == "staging" ]]; then
 	elif [[ "$(env_file_value "$ENV_ROOT/lke/env/stack.env" CLOUD_PROVIDER)" == "lke" ]]; then
 		ENV_ROOT="$ENV_ROOT/lke"
 	else
-		ENV_ROOT="$ENV_ROOT/linode"
+		ENV_ROOT="$ENV_ROOT/lke"
 	fi
 fi
 STACK_FILE="$ENV_ROOT/env/stack.env"
 if [[ -z "$PROVIDER" && -f "$STACK_FILE" ]]; then
 	PROVIDER="$(env_file_value "$STACK_FILE" CLOUD_PROVIDER)"
 fi
-PROVIDER="${PROVIDER:-linode}"
-if [[ "$PROVIDER" != "linode" && "$PROVIDER" != "lke" ]]; then
-	printf 'error: unsupported CLOUD_PROVIDER=%s; staging E2E data setup currently supports linode or lke\n' "$PROVIDER" >&2
-	exit 2
-fi
+PROVIDER="${PROVIDER:-lke}"
+case "$PROVIDER" in
+	lke|k8s|gke|eks|aks)
+		;;
+	linode)
+		printf 'error: CLOUD_PROVIDER=linode used the retired VM runtime; use CLOUD_PROVIDER=lke or another Kubernetes provider\n' >&2
+		exit 2
+		;;
+	*)
+		printf 'error: unsupported CLOUD_PROVIDER=%s; staging E2E data setup supports Kubernetes providers only\n' "$PROVIDER" >&2
+		exit 2
+		;;
+esac
 export CLOUD_PROVIDER="$PROVIDER"
 
 run_args=(

@@ -6,12 +6,12 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
-ENV_ROOT="$WORKSPACE/cloud_env/staging/linode"
+ENV_ROOT="$WORKSPACE/cloud_env/staging/lke"
 mkdir -p "$WORKSPACE" "$ENV_ROOT/env" "$ENV_ROOT/artifacts/users" "$ENV_ROOT/artifacts/device-bind" "$ENV_ROOT/devices/test_device/manifests"
 
 cat > "$ENV_ROOT/env/stack.env" <<'EOF_ENV'
 CLOUD_ENV_NAME=staging
-CLOUD_PROVIDER=linode
+CLOUD_PROVIDER=lke
 CLOUD_REGION=us-sea
 CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
 CLOUD_STACK_NAME=video-cloud-staging
@@ -128,6 +128,12 @@ make_stub "$TMP/setup-data.sh" setup-data
 make_stub "$TMP/mqtt-test.sh" mqtt-test
 make_stub "$TMP/mqtt-log-verify.sh" mqtt-log-verify
 
+export LKE_VIDEO_CLOUD_IMAGE=registry.example.test/rtk/video-cloud:test
+export LKE_ACCOUNT_MANAGER_IMAGE=registry.example.test/rtk/account-manager:test
+export LKE_CLOUD_ADMIN_IMAGE=registry.example.test/rtk/cloud-admin:test
+export LKE_FRONTEND_IMAGE=registry.example.test/rtk/frontend:test
+export LKE_CLOUD_LOGGER_IMAGE=registry.example.test/rtk/cloud-logger:test
+
 RESET_PLAN_OUT="$TMP/reset-plan.out"
 CLOUD_STAGING_E2E_REMOVE_K8S_SCRIPT="$TMP/remove-k8s.sh" \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-reset-k8s \
@@ -156,7 +162,7 @@ CLOUD_STAGING_E2E_REMOVE_K8S_SCRIPT="$TMP/remove-k8s.sh" \
 	--workspace "$WORKSPACE" \
 	--env-root "$WORKSPACE/cloud_env/staging" \
 	--confirm video-cloud-staging > "$RESET_RUN_OUT"
-grep -F $'remove-k8s\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --yes' "$COMMAND_LOG" >/dev/null
+grep -F $'remove-k8s\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/lke"$' --yes' "$COMMAND_LOG" >/dev/null
 grep -F '"overall":"pass"' "$RESET_RUN_OUT" >/dev/null
 
 : > "$COMMAND_LOG"
@@ -167,7 +173,7 @@ CLOUD_STAGING_E2E_REMOVE_K8S_SCRIPT="$TMP/remove-k8s.sh" \
 	--env-root "$WORKSPACE/cloud_env/staging" \
 	--confirm video-cloud-staging \
 	--purge-storage > "$RESET_PURGE_RUN_OUT"
-grep -F $'remove-k8s\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --yes --purge-storage' "$COMMAND_LOG" >/dev/null
+grep -F $'remove-k8s\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/lke"$' --yes --purge-storage' "$COMMAND_LOG" >/dev/null
 grep -F '"purge_storage":true' "$RESET_PURGE_RUN_OUT" >/dev/null
 
 : > "$COMMAND_LOG"
@@ -188,7 +194,7 @@ CLOUD_STAGING_E2E_PROVISION_K8S_SCRIPT="$TMP/provision-k8s.sh" \
 	--workspace "$WORKSPACE" \
 	--env-root "$WORKSPACE/cloud_env/staging" \
 	--confirm video-cloud-staging > "$PROVISION_RUN_OUT"
-grep -F $'provision-k8s\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --confirm video-cloud-staging' "$COMMAND_LOG" >/dev/null
+grep -F $'provision-k8s\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/lke"$' --confirm video-cloud-staging' "$COMMAND_LOG" >/dev/null
 grep -F '"overall":"pass"' "$PROVISION_RUN_OUT" >/dev/null
 
 : > "$COMMAND_LOG"
@@ -274,9 +280,9 @@ actual="$(cut -f1 "$COMMAND_LOG")"
 	printf 'unexpected command order:\n%s\n' "$actual" >&2
 	exit 1
 }
-grep -F $'remove-k8s\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --yes' "$COMMAND_LOG" >/dev/null
-grep -F $'provision-k8s\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --confirm video-cloud-staging' "$COMMAND_LOG" >/dev/null
-grep -F $'setup-data\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --brandname RTK --user-count 1 --device-count 3 --device-mix camera=1,light=1,smart_meter=1 --device-prefix load-device --user-concurrency 64 --device-concurrency 64 --bind-concurrency 64 --out-dir ' "$COMMAND_LOG" >/dev/null
+grep -F $'remove-k8s\t' "$COMMAND_LOG" >/dev/null
+grep -F $'provision-k8s\t' "$COMMAND_LOG" >/dev/null
+grep -F $'setup-data\t' "$COMMAND_LOG" | grep -F -- "--env-root $WORKSPACE/cloud_env/staging/lke" | grep -F -- '--brandname RTK' | grep -F -- '--user-count 1' | grep -F -- '--device-count 3' | grep -F -- '--device-mix camera=1,light=1,smart_meter=1' | grep -F -- '--user-concurrency 64' | grep -F -- '--device-concurrency 64' | grep -F -- '--bind-concurrency 64' | grep -F -- '--out-dir ' >/dev/null
 grep -F $'setup-data\t' "$COMMAND_LOG" | grep -F -- '--no-resume' >/dev/null
 if grep -E '(^|[[:space:]])(remove-all-vm|provision|deploy|remove_vm|provision_all)([[:space:]]|$)' "$COMMAND_LOG" >/dev/null; then
 	echo "staging-e2e-test should not invoke retired VM runtime commands" >&2
@@ -324,7 +330,7 @@ CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0 \
 	--skip-mqtt-probe \
 	--quiet > "$QUIET_OUT" 2> "$QUIET_ERR"
 
-grep -F $'setup-data\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/linode"$' --brandname RTK --user-count 1 --device-count 3 --device-mix camera=1,light=1,smart_meter=1 --device-prefix load-device --user-concurrency 64 --device-concurrency 64 --bind-concurrency 64 --out-dir ' "$COMMAND_LOG" | grep -F -- '--quiet' >/dev/null
+grep -F $'setup-data\t' "$COMMAND_LOG" | grep -F -- "--env-root $WORKSPACE/cloud_env/staging/lke" | grep -F -- '--brandname RTK' | grep -F -- '--user-count 1' | grep -F -- '--device-count 3' | grep -F -- '--device-mix camera=1,light=1,smart_meter=1' | grep -F -- '--quiet' >/dev/null
 grep -F $'setup-data\t' "$COMMAND_LOG" | grep -F -- '--no-resume' >/dev/null
 grep -E "\\[cloud-staging-e2e\\] start: provision_k8s log=.*/logs/provision_k8s.log" "$QUIET_ERR" >/dev/null
 if grep -F '[cloud-staging-e2e] progress:' "$QUIET_ERR" >/dev/null; then

@@ -13,7 +13,7 @@ func TestResolveAndPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectedDefault := filepath.Join(workspace, "cloud_env", "staging", "linode")
+	expectedDefault := filepath.Join(workspace, "cloud_env", "staging", "lke")
 	if defaultRoot != expectedDefault {
 		t.Fatalf("default root got %s want %s", defaultRoot, expectedDefault)
 	}
@@ -29,14 +29,16 @@ func TestResolveAndPaths(t *testing.T) {
 		t.Fatalf("override got %s want %s", override, custom)
 	}
 	staging := filepath.Join(workspace, "cloud_env", "staging")
-	if err := os.MkdirAll(filepath.Join(staging, "linode", "services"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(staging, "lke", "services"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	mkdir(t, filepath.Join(staging, "lke", "env"))
+	write(t, filepath.Join(staging, "lke", "env", "stack.env"), "CLOUD_PROVIDER=lke\n")
 	stagingRoot, err := Resolve(workspace, staging)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stagingRoot != filepath.Join(staging, "linode") {
+	if stagingRoot != filepath.Join(staging, "lke") {
 		t.Fatalf("staging root got %s", stagingRoot)
 	}
 	paths := NewPaths(defaultRoot)
@@ -69,12 +71,12 @@ func TestResolveStagingRootUsesLKEProvider(t *testing.T) {
 		t.Fatalf("staging root got %s", root)
 	}
 
-	t.Setenv("CLOUD_PROVIDER", "linode")
+	t.Setenv("CLOUD_PROVIDER", "gke")
 	root, err = Resolve(workspace, staging)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if root != filepath.Join(staging, "linode") {
+	if root != filepath.Join(staging, "gke") {
 		t.Fatalf("env override root got %s", root)
 	}
 }
@@ -156,7 +158,7 @@ CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
 func TestDeriveStackValuesFromEnvName(t *testing.T) {
 	values := Derive(map[string]string{
 		"CLOUD_ENV_NAME":        "stg",
-		"CLOUD_PROVIDER":        "linode",
+		"CLOUD_PROVIDER":        "lke",
 		"CLOUD_REGION":          "us-sea",
 		"CLOUD_DNS_ROOT_DOMAIN": "realtekconnect.com",
 	})
@@ -176,10 +178,10 @@ func TestDeriveStackValuesFromEnvName(t *testing.T) {
 }
 
 func TestLoadRejectsGeneratedMismatch(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "metadata", "staging", "linode")
+	root := filepath.Join(t.TempDir(), "metadata", "staging", "lke")
 	mkdir(t, filepath.Join(root, "env"))
 	write(t, filepath.Join(root, "env", "stack.env"), `CLOUD_ENV_NAME=stg
-CLOUD_PROVIDER=linode
+CLOUD_PROVIDER=lke
 CLOUD_REGION=us-sea
 CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
 CLOUD_STACK_NAME=video-cloud-stg-0529
@@ -205,7 +207,7 @@ CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
 }
 
 func TestLoadAcceptsFutureKubernetesProviders(t *testing.T) {
-	for _, provider := range []string{"gke", "aks", "eks"} {
+	for _, provider := range []string{"k8s", "gke", "aks", "eks"} {
 		t.Run(provider, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "metadata", "staging", provider)
 			mkdir(t, filepath.Join(root, "env"))

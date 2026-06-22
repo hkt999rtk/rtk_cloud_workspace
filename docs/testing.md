@@ -62,7 +62,8 @@ Home loading-test material is centralized under `loadtests/home-100k/`. For the
 100,000-device Home IoT Device Shadow capacity baseline, use the `home-100k`
 suite. It owns the 100K home scenario, IoT Device Shadow desired / reported /
 delta convergence, offline-device coverage, report contract, and ephemeral
-Linode VM lifecycle commands:
+Linode load-generator VM lifecycle commands. These VMs are test actors only and
+do not run application runtime services:
 
 ```sh
 go run ./loadtests/home-100k/cmd/home-100k -- plan \
@@ -110,7 +111,7 @@ lives under `e2e_test/provisioning/bulk_bind_validation/` and is invoked via:
 
 ```sh
 go run ./scripts/go/rtk-cloud -- validate-device-bind \
-  --bind-artifact cloud_env/staging/linode/artifacts/device-bind/rtk-device-bind-<timestamp>.json
+  --bind-artifact cloud_env/staging/lke/artifacts/device-bind/rtk-device-bind-<timestamp>.json
 ```
 
 This profile verifies API-level onboarding results without requiring live video
