@@ -458,7 +458,8 @@ func TestRunAppCertificateBootstrapUsesArtifactKeyForIssuedCertificate(t *testin
 			t.Fatal("issued app certificate path must not submit a new CSR")
 		}
 		writeJSON(t, w, map[string]any{
-			"user": map[string]string{"id": "user-1"},
+			"user":   map[string]string{"id": "user-1"},
+			"tokens": map[string]string{"access_token": "account-access", "refresh_token": "account-refresh"},
 			"app_certificate": map[string]string{
 				"status":                "issued",
 				"subject":               "app-user:user-1",
@@ -468,10 +469,8 @@ func TestRunAppCertificateBootstrapUsesArtifactKeyForIssuedCertificate(t *testin
 		})
 	}))
 	defer account.Close()
-	video, sawClientCert := newAppTokenServer(t, "app-user:user-1")
-	defer video.Close()
 
-	status := runAppCertificateBootstrap(account.URL, video.URL, "rtk-1234", userCredential{
+	status := runAppCertificateBootstrap(account.URL, "https://video.example.invalid", "rtk-1234", userCredential{
 		Email:    "rtk+001@users.local",
 		Password: "secret",
 		AppCredentials: appCertificateKeys{
@@ -484,11 +483,8 @@ func TestRunAppCertificateBootstrapUsesArtifactKeyForIssuedCertificate(t *testin
 		},
 	}, "rtk-0041")
 
-	if status.Status != "PASS" || status.TokenScope != "app" {
-		t.Fatalf("status = %#v, want PASS app", status)
-	}
-	if !*sawClientCert {
-		t.Fatal("video token server did not receive an app client certificate")
+	if status.Status != "PASS" || status.TokenScope != "account_manager_login" || status.AccessToken != "account-access" {
+		t.Fatalf("status = %#v, want PASS account_manager_login", status)
 	}
 }
 
@@ -537,11 +533,14 @@ func TestSustainedCommandRuntimeLogStreamsAreUniquePerCommand(t *testing.T) {
 	}
 }
 
-func TestPrepareAppCertificateBootstrapForAssignmentsFallsBackToNextCandidate(t *testing.T) {
+func TestPrepareAppCertificateBootstrapForAssignmentsUsesAccountLoginToken(t *testing.T) {
 	certPEM, keyPEM, csrPEM := testAppMaterial(t, "app-user:user-1")
+	loginCalls := 0
 	account := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		loginCalls++
 		writeJSON(t, w, map[string]any{
-			"user": map[string]string{"id": "user-1"},
+			"user":   map[string]string{"id": "user-1"},
+			"tokens": map[string]string{"access_token": "account-access", "refresh_token": "account-refresh"},
 			"app_certificate": map[string]string{
 				"status":                "issued",
 				"subject":               "app-user:user-1",
@@ -551,21 +550,6 @@ func TestPrepareAppCertificateBootstrapForAssignmentsFallsBackToNextCandidate(t 
 		})
 	}))
 	defer account.Close()
-	videoCalls := 0
-	video := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		videoCalls++
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		deviceID, _ := body["devid"].(string)
-		if deviceID == "device-1" {
-			http.Error(w, "try another candidate", http.StatusServiceUnavailable)
-			return
-		}
-		writeJSON(t, w, map[string]string{"scope": "app", "access_token": "app-token-" + deviceID})
-	}))
-	defer video.Close()
 
 	user := userCredential{
 		Email:    "rtk+001@users.local",
@@ -579,24 +563,24 @@ func TestPrepareAppCertificateBootstrapForAssignmentsFallsBackToNextCandidate(t 
 			CertificateChainPEM: certPEM,
 		},
 	}
-	material := prepareAppCertificateBootstrapForAssignments(account.URL, video.URL, "rtk-1234", map[string]userCredential{
+	material := prepareAppCertificateBootstrapForAssignments(account.URL, "https://video.example.invalid", "rtk-1234", map[string]userCredential{
 		user.Email: user,
 	}, []assignment{
 		{AssignedEmail: user.Email, DeviceID: "device-1"},
 		{AssignedEmail: user.Email, DeviceID: "device-2"},
 	}, 10)
 
-	if material.Status.Status != "PASS" || material.Status.DeviceID != "device-2" || material.Status.AccessToken != "app-token-device-2" {
-		t.Fatalf("status = %#v, want PASS on second candidate", material.Status)
+	if material.Status.Status != "PASS" || material.Status.DeviceID != "device-1" || material.Status.AccessToken != "account-access" {
+		t.Fatalf("status = %#v, want PASS from account login", material.Status)
 	}
-	if videoCalls != 2 {
-		t.Fatalf("videoCalls = %d, want 2", videoCalls)
+	if loginCalls != 1 {
+		t.Fatalf("loginCalls = %d, want 1 per assigned user", loginCalls)
 	}
-	if len(material.Status.Attempts) != 2 {
-		t.Fatalf("attempts = %#v, want 2 entries", material.Status.Attempts)
+	if got := material.TokensByEmail[user.Email].RefreshToken; got != "account-refresh" {
+		t.Fatalf("refresh token = %q, want account-refresh", got)
 	}
-	if material.Status.Attempts[0].Status != "FAIL" || material.Status.Attempts[1].Status != "PASS" {
-		t.Fatalf("attempts = %#v, want FAIL then PASS", material.Status.Attempts)
+	if material.ManagersByEmail[user.Email] == nil {
+		t.Fatal("manager missing for assigned user")
 	}
 }
 
@@ -694,11 +678,12 @@ func TestRequestDeviceTokenUsesTrustedHeadersForHTTPBaseURL(t *testing.T) {
 	}
 }
 
-func TestRunAppCertificateBootstrapBlocksIssuedCertificateWithoutArtifactKey(t *testing.T) {
+func TestRunAppCertificateBootstrapUsesLoginTokenWithoutArtifactKey(t *testing.T) {
 	certPEM, _, _ := testAppMaterial(t, "app-user:user-1")
 	account := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(t, w, map[string]any{
-			"user": map[string]string{"id": "user-1"},
+			"user":   map[string]string{"id": "user-1"},
+			"tokens": map[string]string{"access_token": "account-access", "refresh_token": "account-refresh"},
 			"app_certificate": map[string]string{
 				"status":          "issued",
 				"subject":         "app-user:user-1",
@@ -713,11 +698,8 @@ func TestRunAppCertificateBootstrapBlocksIssuedCertificateWithoutArtifactKey(t *
 		Password: "secret",
 	}, "rtk-0041")
 
-	if status.Status != "BLOCKED" {
-		t.Fatalf("status = %#v, want BLOCKED", status)
-	}
-	if status.Reason != "users artifact lacks local app credentials for issued app certificate" {
-		t.Fatalf("reason = %q", status.Reason)
+	if status.Status != "PASS" || status.AccessToken != "account-access" {
+		t.Fatalf("status = %#v, want PASS from account login", status)
 	}
 }
 
@@ -741,7 +723,8 @@ func TestRunAppCertificateBootstrapCSRRequiredStillGeneratesCSR(t *testing.T) {
 		}
 		certPEM := issueCertificateForCSR(t, body["app_csr_pem"])
 		writeJSON(t, w, map[string]any{
-			"user": map[string]string{"id": "user-1"},
+			"user":   map[string]string{"id": "user-1"},
+			"tokens": map[string]string{"access_token": "account-access", "refresh_token": "account-refresh"},
 			"app_certificate": map[string]string{
 				"status":                "issued",
 				"subject":               "app-user:user-1",
@@ -751,10 +734,8 @@ func TestRunAppCertificateBootstrapCSRRequiredStillGeneratesCSR(t *testing.T) {
 		})
 	}))
 	defer account.Close()
-	video, sawClientCert := newAppTokenServer(t, "app-user:user-1")
-	defer video.Close()
 
-	status := runAppCertificateBootstrap(account.URL, video.URL, "rtk-1234", userCredential{
+	status := runAppCertificateBootstrap(account.URL, "https://video.example.invalid", "rtk-1234", userCredential{
 		Email:    "rtk+001@users.local",
 		Password: "secret",
 	}, "rtk-0041")
@@ -765,8 +746,8 @@ func TestRunAppCertificateBootstrapCSRRequiredStillGeneratesCSR(t *testing.T) {
 	if loginCalls != 2 {
 		t.Fatalf("loginCalls = %d, want 2", loginCalls)
 	}
-	if !*sawClientCert {
-		t.Fatal("video token server did not receive generated app client certificate")
+	if status.AccessToken != "account-access" {
+		t.Fatalf("access token = %q, want account-access", status.AccessToken)
 	}
 }
 
@@ -796,6 +777,134 @@ func TestRequestAppTokenParsesAccessToken(t *testing.T) {
 	}
 	if token.Scope != "app" || token.AccessToken != "app-token-rtk-0041" {
 		t.Fatalf("token = %#v, want parsed app access token", token)
+	}
+}
+
+func TestAccountLoginTokenManagerKeepsValidAccessTokenPastHalfLife(t *testing.T) {
+	baseTime := time.Date(2026, 6, 22, 8, 0, 0, 0, time.UTC)
+	oldToken := testJWT(t, baseTime, baseTime.Add(2*time.Minute))
+	refreshCalls := 0
+	account := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		refreshCalls++
+		t.Fatalf("valid access token should not call %s", r.URL.Path)
+	}))
+	defer account.Close()
+
+	manager := newAccountLoginTokenManager(account.URL, "rtk-1234", userCredential{}, tokenBundle{
+		AccessToken:  oldToken,
+		RefreshToken: "old-refresh",
+		issuedAt:     baseTime,
+	})
+	manager.now = func() time.Time { return baseTime.Add(70 * time.Second) }
+
+	got, err := manager.Token(time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != oldToken {
+		t.Fatalf("token = %q, want cached access token", got)
+	}
+	if refreshCalls != 0 {
+		t.Fatalf("refreshCalls = %d, want 0", refreshCalls)
+	}
+}
+
+func TestAccountLoginTokenManagerRefreshesExpiredAccessToken(t *testing.T) {
+	baseTime := time.Date(2026, 6, 22, 8, 0, 0, 0, time.UTC)
+	oldToken := testJWT(t, baseTime, baseTime.Add(time.Minute))
+	newToken := testJWT(t, baseTime.Add(2*time.Minute), baseTime.Add(12*time.Minute))
+	refreshCalls := 0
+	loginCalls := 0
+	account := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/brand-clouds/rtk-1234/auth/refresh":
+			refreshCalls++
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body["refresh_token"] != "old-refresh" {
+				t.Fatalf("refresh_token = %q, want old-refresh", body["refresh_token"])
+			}
+			writeJSON(t, w, map[string]any{
+				"tokens": map[string]string{"access_token": newToken, "refresh_token": "new-refresh"},
+			})
+		case "/v1/brand-clouds/rtk-1234/auth/login":
+			loginCalls++
+			t.Fatal("expired access token with refresh token should refresh before login")
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer account.Close()
+
+	manager := newAccountLoginTokenManager(account.URL, "rtk-1234", userCredential{}, tokenBundle{
+		AccessToken:  oldToken,
+		RefreshToken: "old-refresh",
+		issuedAt:     baseTime,
+	})
+	manager.now = func() time.Time { return baseTime.Add(70 * time.Second) }
+
+	got, err := manager.Token(time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != newToken {
+		t.Fatalf("token = %q, want refreshed token", got)
+	}
+	if refreshCalls != 1 || loginCalls != 0 {
+		t.Fatalf("refreshCalls=%d loginCalls=%d, want 1/0", refreshCalls, loginCalls)
+	}
+	if manager.bundle.RefreshToken != "new-refresh" {
+		t.Fatalf("refresh token = %q, want new-refresh", manager.bundle.RefreshToken)
+	}
+}
+
+func TestAccountLoginTokenManagerFallsBackToLoginWhenRefreshFails(t *testing.T) {
+	baseTime := time.Date(2026, 6, 22, 8, 0, 0, 0, time.UTC)
+	oldToken := testJWT(t, baseTime, baseTime.Add(time.Minute))
+	loginToken := testJWT(t, baseTime.Add(2*time.Minute), baseTime.Add(12*time.Minute))
+	refreshCalls := 0
+	loginCalls := 0
+	account := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/brand-clouds/rtk-1234/auth/refresh":
+			refreshCalls++
+			http.Error(w, "expired refresh token", http.StatusUnauthorized)
+		case "/v1/brand-clouds/rtk-1234/auth/login":
+			loginCalls++
+			writeJSON(t, w, map[string]any{
+				"user":   map[string]string{"id": "user-1"},
+				"tokens": map[string]string{"access_token": loginToken, "refresh_token": "login-refresh"},
+			})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer account.Close()
+
+	manager := newAccountLoginTokenManager(account.URL, "rtk-1234", userCredential{
+		Email:    "rtk+001@users.local",
+		Password: "secret",
+	}, tokenBundle{
+		AccessToken:  oldToken,
+		RefreshToken: "old-refresh",
+		issuedAt:     baseTime,
+	})
+	manager.now = func() time.Time { return baseTime.Add(70 * time.Second) }
+
+	got, err := manager.Token(time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != loginToken {
+		t.Fatalf("token = %q, want login token", got)
+	}
+	if refreshCalls != 1 || loginCalls != 1 {
+		t.Fatalf("refreshCalls=%d loginCalls=%d, want 1/1", refreshCalls, loginCalls)
+	}
+	if manager.bundle.RefreshToken != "login-refresh" {
+		t.Fatalf("refresh token = %q, want login-refresh", manager.bundle.RefreshToken)
 	}
 }
 
@@ -907,16 +1016,6 @@ func TestActorSeparatedProbePublishesRuntimeLogsForDeviceAndAppActors(t *testing
 func TestSustainedShadowCommandPublishesRuntimeLogsForServerCorrelation(t *testing.T) {
 	broker := newFakeTLSMQTTBroker(t)
 	defer broker.Close()
-	certPEM, keyPEM, _ := testAppMaterial(t, "app-user:user-1")
-	appCert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
-	if err != nil {
-		t.Fatal(err)
-	}
-	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, map[string]string{"scope": "app", "access_token": "app-token"})
-	}))
-	defer tokenServer.Close()
-
 	deviceConn, err := connectMQTTActor(mqttActorProbe{
 		DeviceID:    "rtk-0041",
 		DeviceType:  "light",
@@ -947,11 +1046,12 @@ func TestSustainedShadowCommandPublishesRuntimeLogsForServerCorrelation(t *testi
 	reader := startSustainedDeviceReader(deviceConn)
 	defer reader.Close()
 	err = runSustainedShadowCommand(sustainedDeviceSession{
-		Record:     certRecord{DeviceID: "rtk-0041", DeviceType: "light"},
-		Conn:       deviceConn,
-		Reader:     reader,
-		MQTTTarget: mqttEndpointTarget{Host: host, Port: port},
-	}, "RTK", "run-sustained-logs", tokenServer.URL, appCert, &totals)
+		Record:          certRecord{DeviceID: "rtk-0041", DeviceType: "light"},
+		Conn:            deviceConn,
+		Reader:          reader,
+		MQTTTarget:      mqttEndpointTarget{Host: host, Port: port},
+		AppLoginManager: newAccountLoginTokenManager("", "", userCredential{}, tokenBundle{AccessToken: "app-token"}),
+	}, "RTK", "run-sustained-logs", "", &totals)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -999,16 +1099,6 @@ func TestSustainedShadowCommandFailsBeforeDeltaWhenAcceptedIsMissing(t *testing.
 	broker := newFakeTLSMQTTBroker(t)
 	broker.SuppressShadowAccepted = true
 	defer broker.Close()
-	certPEM, keyPEM, _ := testAppMaterial(t, "app-user:user-1")
-	appCert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
-	if err != nil {
-		t.Fatal(err)
-	}
-	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, map[string]string{"scope": "app", "access_token": "app-token"})
-	}))
-	defer tokenServer.Close()
-
 	deviceConn, err := connectMQTTActor(mqttActorProbe{
 		DeviceID:    "rtk-0041",
 		DeviceType:  "light",
@@ -1039,11 +1129,12 @@ func TestSustainedShadowCommandFailsBeforeDeltaWhenAcceptedIsMissing(t *testing.
 	reader := startSustainedDeviceReader(deviceConn)
 	defer reader.Close()
 	err = runSustainedShadowCommandUntil(sustainedDeviceSession{
-		Record:     certRecord{DeviceID: "rtk-0041", DeviceType: "light"},
-		Conn:       deviceConn,
-		Reader:     reader,
-		MQTTTarget: mqttEndpointTarget{Host: host, Port: port},
-	}, "RTK", "run-missing-accepted", tokenServer.URL, appCert, time.Now().Add(250*time.Millisecond), &totals)
+		Record:          certRecord{DeviceID: "rtk-0041", DeviceType: "light"},
+		Conn:            deviceConn,
+		Reader:          reader,
+		MQTTTarget:      mqttEndpointTarget{Host: host, Port: port},
+		AppLoginManager: newAccountLoginTokenManager("", "", userCredential{}, tokenBundle{AccessToken: "app-token"}),
+	}, "RTK", "run-missing-accepted", "", time.Now().Add(250*time.Millisecond), &totals)
 	if err == nil {
 		t.Fatal("runSustainedShadowCommandUntil succeeded without shadow accepted")
 	}
@@ -1244,7 +1335,7 @@ func TestRenderReportShowsMQTTE2ETraceChain(t *testing.T) {
 		"seed":             1,
 		"mqtt": map[string]any{
 			"probe_model":          "actor_separated_iot",
-			"client_identity_mode": "app_token_and_device_token",
+			"client_identity_mode": "account_login_token_and_device_token",
 			"telemetry_receiver":   "app_observer",
 			"command_receiver":     "device_client",
 		},
@@ -1252,7 +1343,7 @@ func TestRenderReportShowsMQTTE2ETraceChain(t *testing.T) {
 			DeviceID:   "rtk-0041",
 			DeviceType: "light",
 			TraceChain: []traceStep{
-				{Step: 1, Timestamp: "2026-06-04T08:00:00Z", Phase: "app_token", Actor: "app_actor", Action: "request_token", Status: "PASS"},
+				{Step: 1, Timestamp: "2026-06-04T08:00:00Z", Phase: "app_login", Actor: "app_actor", Action: "account_manager_login", Status: "PASS"},
 				{Step: 2, Timestamp: "2026-06-04T08:00:01Z", Phase: "telemetry", Actor: "app_observer", Action: "subscribe", Topic: "devices/rtk-0041/up/messages", Status: "PASS"},
 				{Step: 3, Timestamp: "2026-06-04T08:00:02Z", Phase: "telemetry", Actor: "device_client", Action: "publish", Topic: "devices/rtk-0041/up/messages", Status: "PASS", Data: "message_type=status_report message_id=msg-1 device_id=rtk-0041"},
 			},
@@ -1624,11 +1715,6 @@ func TestStagedSustainedLoadRunsPartialShadowActionWhenTargetMissed(t *testing.T
 	broker := newFakeTLSMQTTBroker(t)
 	defer broker.Close()
 	deviceCertPEM, deviceKeyPEM, _ := testAppMaterial(t, "rtk-0041")
-	appCertPEM, appKeyPEM, _ := testAppMaterial(t, "app-user:user-1")
-	appCert, err := tls.X509KeyPair([]byte(appCertPEM), []byte(appKeyPEM))
-	if err != nil {
-		t.Fatal(err)
-	}
 	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(t, w, map[string]string{"access_token": "load-test-token"})
 	}))
@@ -1643,13 +1729,13 @@ func TestStagedSustainedLoadRunsPartialShadowActionWhenTargetMissed(t *testing.T
 	}
 
 	overall, stages := runStagedSustainedHome100KLoad(
-		[]assignment{{DeviceID: "rtk-0041"}, {DeviceID: "rtk-missing-cert"}},
+		[]assignment{{AssignedEmail: "user@example.test", DeviceID: "rtk-0041"}, {AssignedEmail: "user@example.test", DeviceID: "rtk-missing-cert"}},
 		[]certRecord{{DeviceID: "rtk-0041", DeviceType: "light", CertPEM: deviceCertPEM, KeyPEM: deviceKeyPEM}},
 		"RTK",
 		"run-partial-shadow",
 		tokenServer.URL,
 		[]mqttEndpointTarget{{Host: host, Port: port}},
-		appCert,
+		map[string]*accountLoginTokenManager{"user@example.test": newAccountLoginTokenManager("", "", userCredential{}, tokenBundle{AccessToken: "app-token"})},
 		20260616,
 		loadOptions{Concurrency: 1, CommandRatePerDevicePerDay: "86400000"},
 		[]sustainedStage{{Name: "partial", ConnectedTarget: 2, DurationSeconds: 1}},

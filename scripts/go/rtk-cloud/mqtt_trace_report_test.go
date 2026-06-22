@@ -17,7 +17,7 @@ func TestRenderMQTTTraceReportFromResults(t *testing.T) {
 		Profile:     "smoke",
 		MQTT: mqttTraceSummary{
 			ProbeModel:         "actor_separated_iot",
-			ClientIdentityMode: "app_token_and_device_token",
+			ClientIdentityMode: "account_login_token_and_device_token",
 			TelemetryReceiver:  "app_observer",
 			CommandReceiver:    "device_client",
 			ProbeResult:        "PASS",
@@ -28,7 +28,7 @@ func TestRenderMQTTTraceReportFromResults(t *testing.T) {
 			DeviceType: "light",
 			MQTTStatus: "PASS",
 			TraceChain: []mqttTraceStep{
-				{Step: 1, Timestamp: "2026-06-04T09:12:30Z", Phase: "app_token", Actor: "app_actor", Action: "request_token", Status: "PASS", Detail: "scope=app"},
+				{Step: 1, Timestamp: "2026-06-04T09:12:30Z", Phase: "app_login", Actor: "app_actor", Action: "account_manager_login", Status: "PASS"},
 				{Step: 8, Timestamp: "2026-06-04T09:12:31Z", Phase: "telemetry", Actor: "device_client", Action: "publish", Topic: "devices/rtk-0041/up/messages", Status: "PASS", Data: "message_type=status_report message_id=msg-1"},
 				{Step: 9, Timestamp: "2026-06-04T09:12:32Z", Phase: "telemetry", Actor: "app_observer", Action: "receive", Topic: "devices/rtk-0041/up/messages", Status: "PASS", Data: "message_type=status_report message_id=msg-1"},
 				{Step: 10, Timestamp: "2026-06-04T09:12:33Z", Phase: "command", Actor: "app_controller", Action: "publish", Topic: "devices/rtk-0041/down/commands", Status: "PASS", Data: "message_type=command command_id=cmd-1"},

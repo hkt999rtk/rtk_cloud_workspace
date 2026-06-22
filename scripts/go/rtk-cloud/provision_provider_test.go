@@ -98,11 +98,13 @@ func TestKubernetesProvisionStepsExposeProviderNeutralOrder(t *testing.T) {
 	want := []string{
 		"preflight",
 		"plan",
+		"capacity-check",
 		"ensure-kube-access",
 		"ensure-lke-node-pool",
+		"wait-kube-api-ready",
 		"apply-base",
-		"public-https",
 		"deploy-workloads",
+		"public-https",
 		"write-artifacts",
 		"e2e",
 	}
@@ -114,6 +116,8 @@ func TestKubernetesProvisionStepsExposeProviderNeutralOrder(t *testing.T) {
 func TestLKEImagePullSecretApplyDoesNotLogRawToken(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LINODE_TOKEN", "")
 	t.Setenv("GHCR_PULL_USERNAME", "deploy-bot")
 	t.Setenv("GHCR_PULL_TOKEN", "raw-secret-token")
 

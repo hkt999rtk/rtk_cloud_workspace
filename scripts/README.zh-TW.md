@@ -515,6 +515,22 @@ scripts/destroy-linode-staging-resources.sh --env-root cloud_env/staging/lke --y
 Object Storage buckets 會列出但預設略過。若確定 matched buckets 已清空且也要刪除，
 才加 `--include-object-storage`；Linode API 會拒絕刪除非空 bucket。
 
+Linode CSI 可能留下 Kubernetes `Retain` policy 造成的 unattached `pvc-*`
+Block Storage volumes。這些 volume 也會列在 dry-run 裡，但預設一律 SKIP。
+若要刪除，必須先從 dry-run 輸出複製精確的 Linode volume id，再同時傳
+`--include-orphan-volumes` 與 `--orphan-volume-ids`。不要只靠 `pvc-*`
+名稱批次刪除，避免誤刪其他環境或其他 cluster 的 Retained PVC。
+
+```sh
+scripts/destroy-linode-staging-resources.sh --env-root cloud_env/staging/lke
+scripts/destroy-linode-staging-resources.sh \
+  --env-root cloud_env/staging/lke \
+  --yes \
+  --confirm-text "destroy video-cloud-staging" \
+  --include-orphan-volumes \
+  --orphan-volume-ids 16311688,16303493
+```
+
 ### Staging K8s lifecycle phases
 
 正式 staging runtime 已拆成三個可獨立執行的 K8s lifecycle phase。Shell
@@ -557,21 +573,23 @@ scripts/run-staging-e2e.sh --plan
 scripts/run-staging-e2e.sh --confirm video-cloud-staging
 ```
 
-LKE staging capacity baseline 預設建立 `4` 台 node，保留
-`account-manager` replicas 為 `1`，`video-cloud-api` 預設為 `3` pods，
-MQTT 預設為 `3` pod EMQX StatefulSet cluster，分散到不同 node 以支援
-HAProxy MQTTS backend round-robin。PostgreSQL 預設 request/limit 提高為
-`1 CPU`、`2Gi` request memory、`4Gi` limit memory；`video-cloud-api`
-預設為 `500m` CPU request、`512Mi` memory request、`1Gi` memory limit。
-容量測試或 production-like smoke 可用
-`LKE_MQTT_REPLICAS`、`LKE_ACCOUNT_MANAGER_REPLICAS`、
-`LKE_VIDEO_CLOUD_REPLICAS`、`LKE_NODE_COUNT` 調整；常用資源
-override 包含 `LKE_POSTGRES_REQUEST_CPU`、`LKE_POSTGRES_REQUEST_MEMORY`、
-`LKE_POSTGRES_LIMIT_MEMORY`、`LKE_VIDEO_CLOUD_API_REQUEST_CPU`、
-`LKE_VIDEO_CLOUD_API_REQUEST_MEMORY`、`LKE_VIDEO_CLOUD_API_LIMIT_MEMORY`、
-`LKE_MQTT_REQUEST_CPU`、`LKE_MQTT_REQUEST_MEMORY`、
-`LKE_MQTT_LIMIT_MEMORY`、`LKE_INGRESS_REPLICAS` 與
-`LKE_INGRESS_REQUEST_CPU`。
+LKE staging capacity 以 `cloud_env/staging/lke/env/stack.env` 為 source of
+truth。`rtk-cloud provision --plan` 會先印出 capacity plan；
+`--preflight`、`--apply`、`--deploy` 會在 mutation 前檢查：
+`required_mqtt_replicas = ceil(LKE_TARGET_CONNECTS / LKE_MQTT_CONNECTIONS_PER_POD)`，
+`usable_node_capacity = node_allocatable - per_node_system_reserved`，
+`required_nodes = max(cpu nodes, memory nodes, required_mqtt_replicas)`。
+目前 1K validation profile 在 `stack.env` 明確設定
+`LKE_TARGET_CONNECTS=1000`、`LKE_MQTT_CONNECTIONS_PER_POD=20000`、
+`LKE_MQTT_REPLICAS=2`、`LKE_NODE_COUNT=2`。100K 或更高目標應調整
+`LKE_TARGET_CONNECTS`、`LKE_MQTT_REPLICAS=auto` 或明確 replicas、
+`LKE_NODE_COUNT=auto` 或明確 node count，再用 plan/preflight review。
+常用資源 override 包含 `LKE_POSTGRES_REQUEST_CPU`、
+`LKE_POSTGRES_REQUEST_MEMORY`、`LKE_POSTGRES_LIMIT_MEMORY`、
+`LKE_VIDEO_CLOUD_API_REQUEST_CPU`、`LKE_VIDEO_CLOUD_API_REQUEST_MEMORY`、
+`LKE_VIDEO_CLOUD_API_LIMIT_MEMORY`、`LKE_MQTT_REQUEST_CPU`、
+`LKE_MQTT_REQUEST_MEMORY`、`LKE_MQTT_LIMIT_MEMORY`、
+`LKE_INGRESS_REPLICAS` 與 `LKE_INGRESS_REQUEST_CPU`。
 
 `run-staging-e2e.sh --confirm` 預設會先 reset K8s runtime resources，因此也
 預設重建 users/devices/bind artifacts，不重用舊本機 artifact；這可避免

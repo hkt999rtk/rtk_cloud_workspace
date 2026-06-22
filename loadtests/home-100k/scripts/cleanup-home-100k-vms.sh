@@ -6,12 +6,14 @@ prefix="${HOME100K_CLEANUP_PREFIX:-home-100k}"
 run_id="${HOME100K_RUN_ID:-}"
 endpoint="${LINODE_API_ENDPOINT:-https://api.linode.com/v4}"
 yes=0
+all_runs=0
 
 usage() {
   cat <<EOF
-usage: $(basename "$0") --run-id RUN_ID [--yes] [--prefix home-100k]
+usage: $(basename "$0") (--run-id RUN_ID | --all-runs) [--yes] [--prefix home-100k]
 
 Deletes Linode load-generator VMs whose tags include the prefix, run id, and
+load-generator. With --all-runs, matches every VM tagged with the prefix and
 load-generator. Dry-run is the default; pass --yes to delete.
 
 Secrets:
@@ -55,6 +57,10 @@ while [[ "$#" -gt 0 ]]; do
       run_id="${2:?--run-id requires a value}"
       shift 2
       ;;
+    --all-runs)
+      all_runs=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -67,8 +73,8 @@ while [[ "$#" -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$run_id" ]]; then
-  echo "--run-id or HOME100K_RUN_ID is required for run-scoped cleanup" >&2
+if [[ -z "$run_id" && "$all_runs" != "1" ]]; then
+  echo "--run-id, HOME100K_RUN_ID, or --all-runs is required" >&2
   usage >&2
   exit 2
 fi
@@ -94,18 +100,18 @@ while true; do
     "${endpoint%/}/linode/instances?page=${page}&page_size=100" \
     -o "$page_file"
 
-  python3 - "$page_file" "$prefix" "$run_id" "$matches_jsonl" <<'PY'
+  python3 - "$page_file" "$prefix" "$run_id" "$all_runs" "$matches_jsonl" <<'PY'
 import json
 import sys
 
-page_file, prefix, run_id, out_file = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+page_file, prefix, run_id, all_runs, out_file = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
 with open(page_file) as f:
     data = json.load(f)
 with open(out_file, "a") as out:
     for item in data.get("data", []):
         label = item.get("label", "")
         tags = item.get("tags") or []
-        if prefix in tags and run_id in tags and "load-generator" in tags:
+        if prefix in tags and "load-generator" in tags and (all_runs == "1" or run_id in tags):
             out.write(json.dumps({
                 "id": item.get("id"),
                 "label": label,
@@ -123,7 +129,11 @@ PY
 done
 
 count="$(wc -l < "$matches_jsonl" | tr -d ' ')"
-echo "matched ${count} Linode VM(s) for tags '${prefix}', '${run_id}', 'load-generator'"
+if [[ "$all_runs" == "1" ]]; then
+  echo "matched ${count} Linode VM(s) for tags '${prefix}', 'load-generator' across all runs"
+else
+  echo "matched ${count} Linode VM(s) for tags '${prefix}', '${run_id}', 'load-generator'"
+fi
 
 if [[ "$count" == "0" ]]; then
   exit 0

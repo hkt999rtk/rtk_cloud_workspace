@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"os"
-	"os/exec"
 )
 
 func newK8SSecretObject(namespace, name string, stringData map[string]string) map[string]any {
@@ -26,11 +25,11 @@ func applyKubernetesObjectJSON(obj any) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(lkeKubectl(), lkeKubectlArgs("apply", "-f", "-")...)
-	cmd.Stdin = bytes.NewReader(payload)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	out, err := kubectlCombinedOutput(bytes.NewReader(payload), "apply", "-f", "-")
+	if len(out) > 0 {
+		_, _ = os.Stdout.Write(out)
+	}
+	return err
 }
 
 func newK8SDockerConfigSecretObject(namespace, name, username, token string) (map[string]any, error) {

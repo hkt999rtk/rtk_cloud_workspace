@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/envroot"
 )
@@ -22,6 +23,7 @@ type linodeDestroyPlan struct {
 	Firewalls     []linodeDestroyResource
 	VPCs          []linodeDestroyResource
 	ObjectBuckets []linodeDestroyResource
+	OrphanVolumes []linodeDestroyResource
 }
 
 type linodeDestroyResource struct {
@@ -41,6 +43,8 @@ func runDestroyLinodeStagingResources(args []string) error {
 	yes := fs.Bool("yes", false, "delete resources after listing the plan")
 	confirmText := fs.String("confirm-text", "", "confirmation text; must equal: destroy <stack>")
 	includeObjectStorage := fs.Bool("include-object-storage", false, "delete matched Object Storage buckets too; buckets must already be empty")
+	includeOrphanVolumes := fs.Bool("include-orphan-volumes", false, "delete unattached orphan pvc-* Block Storage volumes listed by --orphan-volume-ids")
+	orphanVolumeIDs := fs.String("orphan-volume-ids", "", "comma-separated Linode volume IDs allowed for orphan pvc-* deletion")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -71,7 +75,11 @@ func runDestroyLinodeStagingResources(args []string) error {
 	if err != nil {
 		return err
 	}
-	printLinodeDestroyPlan(os.Stdout, plan, *includeObjectStorage)
+	orphanVolumeIDSet, err := parseDestroyIDSet(*orphanVolumeIDs)
+	if err != nil {
+		return err
+	}
+	printLinodeDestroyPlan(os.Stdout, plan, *includeObjectStorage, *includeOrphanVolumes, orphanVolumeIDSet)
 	if !*yes {
 		fmt.Fprintf(os.Stdout, "dry-run only; pass --yes --confirm-text %q to delete the listed non-skipped resources\n", plan.ConfirmText)
 		return nil
@@ -84,7 +92,7 @@ func runDestroyLinodeStagingResources(args []string) error {
 	if *confirmText != plan.ConfirmText {
 		return fmt.Errorf("confirmation text must be %q", plan.ConfirmText)
 	}
-	return executeLinodeDestroyPlan(token, plan, *includeObjectStorage)
+	return executeLinodeDestroyPlan(token, envRoot, plan, *includeObjectStorage, *includeOrphanVolumes, orphanVolumeIDSet)
 }
 
 func buildLinodeDestroyPlan(token string, env map[string]string, stack, loadTestPrefix string) (linodeDestroyPlan, error) {
@@ -117,6 +125,11 @@ func buildLinodeDestroyPlan(token string, env map[string]string, stack, loadTest
 		return plan, err
 	} else {
 		plan.ObjectBuckets = buckets
+	}
+	if volumes, err := listDestroyOrphanVolumes(token); err != nil {
+		return plan, err
+	} else {
+		plan.OrphanVolumes = volumes
 	}
 	return plan, nil
 }
@@ -273,6 +286,36 @@ func listDestroyObjectBuckets(token string, match func(string, []string) bool) (
 	return sortedDestroyResources(out), nil
 }
 
+func listDestroyOrphanVolumes(token string) ([]linodeDestroyResource, error) {
+	var listed struct {
+		Data []struct {
+			ID       int      `json:"id"`
+			Label    string   `json:"label"`
+			Region   string   `json:"region"`
+			Status   string   `json:"status"`
+			LinodeID *int     `json:"linode_id"`
+			Tags     []string `json:"tags"`
+		} `json:"data"`
+	}
+	if err := linodeDestroyList(token, "/volumes?page_size=500", &listed); err != nil {
+		return nil, err
+	}
+	out := []linodeDestroyResource{}
+	for _, item := range listed.Data {
+		if item.LinodeID != nil || item.Status != "active" || !strings.HasPrefix(item.Label, "pvc-") {
+			continue
+		}
+		out = append(out, linodeDestroyResource{
+			ID:     fmt.Sprint(item.ID),
+			Label:  item.Label,
+			Region: item.Region,
+			Status: "unattached",
+			Path:   fmt.Sprintf("/volumes/%d", item.ID),
+		})
+	}
+	return sortedDestroyResources(out), nil
+}
+
 func linodeDestroyList(token, path string, target any) error {
 	out, err := linodeRequestRaw(token, "GET", path, "")
 	if err != nil {
@@ -291,15 +334,36 @@ func sortedDestroyResources(resources []linodeDestroyResource) []linodeDestroyRe
 	return resources
 }
 
-func printLinodeDestroyPlan(w *os.File, plan linodeDestroyPlan, includeObjectStorage bool) {
+func parseDestroyIDSet(raw string) (map[string]bool, error) {
+	out := map[string]bool{}
+	for _, part := range strings.Split(raw, ",") {
+		id := strings.TrimSpace(part)
+		if id == "" {
+			continue
+		}
+		for _, ch := range id {
+			if ch < '0' || ch > '9' {
+				return nil, fmt.Errorf("--orphan-volume-ids must contain numeric ids only, got %q", id)
+			}
+		}
+		out[id] = true
+	}
+	return out, nil
+}
+
+func printLinodeDestroyPlan(w *os.File, plan linodeDestroyPlan, includeObjectStorage bool, includeOrphanVolumes bool, orphanVolumeIDs map[string]bool) {
 	fmt.Fprintf(w, "Linode destructive cleanup plan for stack %q\n", plan.Stack)
 	printDestroyGroup(w, "LKE clusters", plan.LKEClusters, false)
 	printDestroyGroup(w, "Linode instances", plan.Instances, false)
 	printDestroyGroup(w, "Firewalls", plan.Firewalls, false)
 	printDestroyGroup(w, "VPCs", plan.VPCs, false)
 	printDestroyGroup(w, "Object Storage buckets", plan.ObjectBuckets, !includeObjectStorage)
+	printDestroyVolumeGroup(w, "Unattached pvc-* Block Storage volumes", plan.OrphanVolumes, includeOrphanVolumes, orphanVolumeIDs)
 	if len(plan.ObjectBuckets) > 0 && !includeObjectStorage {
 		fmt.Fprintln(w, "Object Storage buckets are listed only; pass --include-object-storage to delete matched empty buckets.")
+	}
+	if len(plan.OrphanVolumes) > 0 {
+		fmt.Fprintln(w, "Unattached pvc-* Block Storage volumes are listed only; pass --include-orphan-volumes with --orphan-volume-ids <id,id> to delete exact volume IDs.")
 	}
 }
 
@@ -326,7 +390,30 @@ func printDestroyGroup(w *os.File, title string, resources []linodeDestroyResour
 	}
 }
 
-func executeLinodeDestroyPlan(token string, plan linodeDestroyPlan, includeObjectStorage bool) error {
+func printDestroyVolumeGroup(w *os.File, title string, resources []linodeDestroyResource, includeOrphanVolumes bool, orphanVolumeIDs map[string]bool) {
+	fmt.Fprintf(w, "\n%s (%d)\n", title, len(resources))
+	if len(resources) == 0 {
+		fmt.Fprintln(w, "- none")
+		return
+	}
+	for _, item := range resources {
+		status := item.Status
+		if status == "" {
+			status = "-"
+		}
+		region := item.Region
+		if region == "" {
+			region = "-"
+		}
+		if includeOrphanVolumes && orphanVolumeIDs[item.ID] {
+			fmt.Fprintf(w, "- DELETE id=%s label=%s region=%s status=%s\n", item.ID, item.Label, region, status)
+		} else {
+			fmt.Fprintf(w, "- SKIP id=%s label=%s region=%s status=%s\n", item.ID, item.Label, region, status)
+		}
+	}
+}
+
+func executeLinodeDestroyPlan(token, envRoot string, plan linodeDestroyPlan, includeObjectStorage bool, includeOrphanVolumes bool, orphanVolumeIDs map[string]bool) error {
 	for _, group := range [][]linodeDestroyResource{
 		plan.LKEClusters,
 		plan.Instances,
@@ -343,6 +430,9 @@ func executeLinodeDestroyPlan(token string, plan linodeDestroyPlan, includeObjec
 			}
 		}
 	}
+	if err := removeDestroyedLKEState(envRoot); err != nil {
+		return err
+	}
 	if includeObjectStorage {
 		for _, item := range plan.ObjectBuckets {
 			if item.Path == "" {
@@ -353,6 +443,51 @@ func executeLinodeDestroyPlan(token string, plan linodeDestroyPlan, includeObjec
 				return err
 			}
 		}
+	}
+	if includeOrphanVolumes {
+		if len(orphanVolumeIDs) == 0 {
+			return errors.New("--include-orphan-volumes requires --orphan-volume-ids with exact Linode volume IDs")
+		}
+		for _, item := range plan.OrphanVolumes {
+			if !orphanVolumeIDs[item.ID] {
+				continue
+			}
+			if item.Path == "" {
+				return fmt.Errorf("cannot delete orphan volume %q without an API path", item.Label)
+			}
+			fmt.Fprintf(os.Stdout, "deleting %s (%s)\n", item.Label, item.Path)
+			if _, err := linodeRequestRaw(token, "DELETE", item.Path, ""); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func removeDestroyedLKEState(envRoot string) error {
+	stateDir := filepath.Join(envRoot, "state")
+	backupDir := filepath.Join(envRoot, "backups", "destroy-lke-"+time.Now().UTC().Format("20060102T150405Z"), "state")
+	files := []string{"lke.env", "lke-kubeconfig.yaml"}
+	backedUp := false
+	for _, name := range files {
+		src := filepath.Join(stateDir, name)
+		if _, err := os.Stat(src); err != nil {
+			continue
+		}
+		if err := os.MkdirAll(backupDir, 0o755); err != nil {
+			return err
+		}
+		if err := copyFile(src, filepath.Join(backupDir, name)); err != nil {
+			return err
+		}
+		if err := os.Remove(src); err != nil {
+			return err
+		}
+		backedUp = true
+		fmt.Fprintf(os.Stdout, "removed local LKE state: %s\n", src)
+	}
+	if backedUp {
+		fmt.Fprintf(os.Stdout, "local LKE state backup: %s\n", filepath.Dir(backupDir))
 	}
 	return nil
 }

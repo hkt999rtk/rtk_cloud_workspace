@@ -42,12 +42,12 @@ Default first baseline:
 | Server target | Current staging/LKE env-root |
 | Load generators | Ephemeral Linode VMs |
 | Region model | Single Linode region |
-| Ramp-up time | Configured by `HOME100K_RAMP_UP_TIME` |
+| Ramp-up time | Configured by `HOME100K_STAGE_WARM_UP` |
 | Target connects | Configured by `HOME100K_DEVICES` |
-| VM layout | 5 mixed execution shards labeled `lg01`..`lg05` by default |
+| VM layout | Automatically planned as `ceil(HOME100K_DEVICES / HOME100K_LOAD_GENERATOR_DEVICES_PER_VM)` mixed execution shards unless `HOME100K_VM_COUNT` overrides it |
 | Per-VM device task | Up to 20K simulated devices |
-| Per-VM user task | 1,000 simulated app users |
-| Total load-generator VMs | 5 for the default 100K-device/5K-user mixed baseline |
+| Per-VM user task | Derived from the assigned device shard and `HOME100K_DEVICES_PER_USER` |
+| Total load-generator VMs | Derived from the target and per-VM capacity; with the default 20,000 devices per VM, 100K plans 5 VMs while 9K or 1K plans 1 VM |
 
 Device mix:
 
@@ -140,6 +140,8 @@ Defaults:
 | `HOME100K_DEVICES` | `9000` |
 | `HOME100K_USERS` | unset; planner derives `ceil(devices / devices-per-user)` |
 | `HOME100K_DEVICES_PER_USER` | `20` |
+| `HOME100K_LOAD_GENERATOR_DEVICES_PER_VM` | `20000`; per-VM capacity used by the planner |
+| `HOME100K_VM_COUNT` | unset; planner derives `ceil(HOME100K_DEVICES / HOME100K_LOAD_GENERATOR_DEVICES_PER_VM)` |
 | `HOME100K_RUNNER_MODE` | `live` |
 | `HOME100K_RUNNER_NOFILE_LIMIT` | `1048576`; remote runner daemon file-descriptor limit for MQTT sockets |
 | `HOME100K_MQTT_CONCURRENCY` | `1000`; per-VM-shard live MQTT connect worker concurrency |
@@ -274,8 +276,10 @@ Load-generator runtime limits are part of the test conditions:
 
 - The remote runner daemon sets `ulimit -n` from
   `HOME100K_RUNNER_NOFILE_LIMIT`, default `1048576`. This value is file
-  descriptor headroom, not a target connection count. It prevents a 9K or 100K
-  run from being invalidated by the generator's OS FD ceiling before EMQX,
+  descriptor headroom, not a target connection count. Small targets such as 9K
+  devices normally run on one automatically planned generator VM; 100K
+  automatically plans five. The limit prevents either run from being
+  invalidated by the generator's OS FD ceiling before EMQX,
   NodeBalancer, IoT Device Shadow, or the Kubernetes nodes are actually tested.
   If any generator hits `too many open files`, the report must classify the run
   as `INCOMPLETE` because the load generator saturated first.

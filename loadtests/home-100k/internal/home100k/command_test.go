@@ -174,7 +174,7 @@ func TestExecutePlanPrintsDeterministicRunPlan(t *testing.T) {
 		t.Fatalf("unexpected target object: %#v", target)
 	}
 	stages, ok := decoded["stages"].([]any)
-	if !ok || len(stages) != 4 {
+	if !ok || len(stages) != 1 {
 		t.Fatalf("unexpected stages payload: %#v", decoded["stages"])
 	}
 }
@@ -673,7 +673,7 @@ func TestExecuteSyncRejectsUnsupportedCredentialBundleFormat(t *testing.T) {
 	}
 }
 
-func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T) {
+func TestExecuteSyncLiveHonorsExplicitVMCountOverride(t *testing.T) {
 	outDir := t.TempDir()
 	envRoot := writeTinyEnvRoot(t)
 	writeHome100KCoverageArtifacts(t, envRoot)
@@ -731,6 +731,7 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--devices", "9000",
+		"--vm-count", "2",
 		"--run-id", "run-cli",
 		"--out-dir", outDir,
 		"--live",
@@ -849,6 +850,12 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 	if !filepath.IsAbs(localManifest) {
 		t.Fatalf("inventory local_shard_manifest = %q, want absolute path", localManifest)
 	}
+	lg02Manifest, _ := inventoryDoc.All.Children["home_100k"].Hosts["lg02"]["local_shard_manifest"].(string)
+	if !filepath.IsAbs(lg02Manifest) {
+		t.Fatalf("inventory lg02 local_shard_manifest = %q, want absolute path", lg02Manifest)
+	}
+	assertShardManifestRange(t, localManifest, "device-mqtt", 0, 4500)
+	assertShardManifestRange(t, lg02Manifest, "device-mqtt", 4500, 9000)
 	localArchive, _ := inventoryDoc.All.Children["home_100k"].Hosts["lg01"]["local_env_archive"].(string)
 	if !filepath.IsAbs(localArchive) {
 		t.Fatalf("inventory local_env_archive = %q, want absolute path", localArchive)
@@ -896,12 +903,12 @@ func TestExecuteSyncLiveGeneratesAnsibleInventoryFromProvisionedVMs(t *testing.T
 	}
 	manifest0 := string(manifest0Raw)
 	manifest1 := string(manifest1Raw)
-	for _, want := range []string{`"role": "device-mqtt"`, `"start": 0`, `"end": 1800`, `"role": "user-app"`, `"start": 0`, `"end": 90`} {
+	for _, want := range []string{`"role": "device-mqtt"`, `"start": 0`, `"end": 4500`, `"role": "user-app"`, `"start": 0`, `"end": 225`} {
 		if !strings.Contains(manifest0, want) {
 			t.Fatalf("lg01 manifest missing %q:\n%s", want, manifest0)
 		}
 	}
-	for _, want := range []string{`"role": "device-mqtt"`, `"start": 1800`, `"end": 3600`, `"role": "user-app"`, `"start": 90`, `"end": 180`} {
+	for _, want := range []string{`"role": "device-mqtt"`, `"start": 4500`, `"end": 9000`, `"role": "user-app"`, `"start": 225`, `"end": 450`} {
 		if !strings.Contains(manifest1, want) {
 			t.Fatalf("lg02 manifest missing %q:\n%s", want, manifest1)
 		}
@@ -1475,9 +1482,9 @@ func TestHome100KScriptEnvOverridesDescriptionRampUpAndRuntimeWindows(t *testing
 	outDir := t.TempDir()
 	descriptionFile := filepath.Join(outDir, "description.env")
 	if err := os.WriteFile(descriptionFile, []byte(strings.Join([]string{
-		"HOME100K_RAMP_UP_TIME=9m",
-		"HOME100K_MEASUREMENT_WINDOW=9m",
-		"HOME100K_POST_RUN_COLLECTION=9m",
+		"HOME100K_STAGE_WARM_UP=9m",
+		"HOME100K_STAGE_STEADY=9m",
+		"HOME100K_STAGE_COOL_DOWN=9m",
 		"HOME100K_DEVICES=12000",
 		"HOME100K_DEVICES_PER_USER=10",
 		"HOME100K_MQTT_ADDR=127.0.0.1:8883",
@@ -1616,6 +1623,70 @@ JSON
 	}
 }
 
+func TestHome100KScriptUsesAbsoluteEnvRootKubeconfigForServerEvidence(t *testing.T) {
+	outDir := t.TempDir()
+	envRoot := filepath.Join(outDir, "env-root")
+	kubeconfig := filepath.Join(envRoot, "state", "lke-kubeconfig.yaml")
+	if err := os.MkdirAll(filepath.Dir(kubeconfig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(kubeconfig, []byte("apiVersion: v1\nkind: Config\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	binDir := filepath.Join(outDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	goLog := filepath.Join(outDir, "go.log")
+	goStub := filepath.Join(binDir, "go")
+	goBody := `#!/usr/bin/env bash
+printf 'KUBECONFIG=%s\nARGS=%s\n' "${KUBECONFIG:-}" "$*" >> ` + shellQuoteForTest(goLog) + `
+`
+	if err := os.WriteFile(goStub, []byte(goBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	script := filepath.Join("..", "..", "scripts", "home-100k.sh")
+	cmd := exec.Command("bash", script, "collect-server-evidence", "--live")
+	cmd.Env = home100KTestEnv(
+		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"HOME100K_ENV_ROOT="+envRoot,
+		"HOME100K_RUN_ID=test-absolute-env-root",
+		"HOME100K_OUT_DIR="+filepath.Join(outDir, "report"),
+	)
+	if raw, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("collect-server-evidence failed: %v\n%s", err, raw)
+	}
+	logRaw, err := os.ReadFile(goLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := string(logRaw)
+	if !strings.Contains(log, "KUBECONFIG="+kubeconfig) {
+		t.Fatalf("script did not export absolute env-root kubeconfig:\n%s", log)
+	}
+	if !strings.Contains(log, "collect-server-evidence") || !strings.Contains(log, "--live") {
+		t.Fatalf("script did not invoke collect-server-evidence live:\n%s", log)
+	}
+}
+
+func TestHome100KScriptDocumentsCloudLoggerEvidenceOverrides(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "home-100k.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, want := range []string{
+		"HOME100K_CLOUD_LOGGER_ENV",
+		"HOME100K_CLOUD_LOGGER_ENDPOINT",
+		"HOME100K_CLOUD_LOGGER_INGEST_TOKEN",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("home-100k.sh missing logger override marker %q:\n%s", want, body)
+		}
+	}
+}
+
 func home100KTestEnv(extra ...string) []string {
 	env := make([]string, 0, len(os.Environ())+len(extra))
 	for _, item := range os.Environ() {
@@ -1678,7 +1749,7 @@ func TestExecuteRunStagesProducesStageMetrics(t *testing.T) {
 	out := stdout.String()
 	for _, want := range []string{
 		`"stage_results"`,
-		`"name": "25k"`,
+		`"name": "target"`,
 		`"desired_reported_convergence_rate_percent": 100`,
 		`"offline_desired_convergence_rate_percent": 100`,
 	} {
@@ -2194,10 +2265,10 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 			"overall": "pass",
 			"stage_results": []map[string]any{
 				{
-					"name":                      "25k",
-					"connected_devices":         5000,
-					"active_connections":        5000,
-					"active_subscriptions":      5000,
+					"name":                      "target",
+					"connected_devices":         20000,
+					"active_connections":        20000,
+					"active_subscriptions":      20000,
 					"status":                    "PASS",
 					"commands_attempted":        2500,
 					"commands_passed":           2500,
@@ -2213,13 +2284,10 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 					"total_http_bytes_sent":     1111,
 					"total_http_bytes_received": 2222,
 					"device_mqtt_totals": map[string]any{
-						"active_connections":   5000,
-						"active_subscriptions": 5000,
+						"active_connections":   20000,
+						"active_subscriptions": 20000,
 					},
 				},
-				{"name": "50k", "connected_devices": 10000, "status": "PASS"},
-				{"name": "75k", "connected_devices": 15000, "status": "PASS"},
-				{"name": "100k", "connected_devices": 20000, "status": "PASS"},
 			},
 		}
 		if err := writeJSONFile(filepath.Join(childOutDir, "results.json"), payload); err != nil {
@@ -2262,12 +2330,13 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 		"--workspace /root/rtk_cloud_workspace",
 		"--env-root cloud_env/staging/lke",
 		"--brandname RTK",
-		"--duration-seconds 12",
+		"--duration-seconds 3",
 		"--telemetry-interval off",
 		"--command-rate-per-device-per-day 1800.00",
-		"--stage-names 25k,50k,75k,100k",
-		"--stage-connected-devices 5000,10000,15000,20000",
-		"--stage-durations-seconds 3,3,3,3",
+		"--stage-names target",
+		"--stage-connected-devices 20000",
+		"--stage-durations-seconds 3",
+		"--stage-min-commands 1000",
 		"--device-traffic-profile home-diverse-v1",
 		"--concurrency 1000",
 		"--command-concurrency 100",
@@ -2299,7 +2368,7 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 	if first.DeviceMQTTTotals.Publishes != 2103 || first.DeviceMQTTTotals.ReceivedMessages != 2050 || first.DeviceMQTTTotals.BytesSent != 123456 {
 		t.Fatalf("device MQTT totals not preserved from live results: %#v", first.DeviceMQTTTotals)
 	}
-	if first.ConnectedDevices != 25000 || first.ShardConnectedDevices != 5000 {
+	if first.ConnectedDevices != 100000 || first.ShardConnectedDevices != 20000 {
 		t.Fatalf("stage targets not preserved: global=%d shard=%d", first.ConnectedDevices, first.ShardConnectedDevices)
 	}
 	if first.AppUserTotals.DesiredWrites != 700 || first.AppUserTotals.ReceivedAcks != 690 || first.AppUserTotals.BytesReceived != 2222 {
@@ -2430,14 +2499,14 @@ func TestExecuteShardRunLiveWritesFallbackStageResultsWhenMQTTTestProducesNoResu
 	if result.Status != "failed" || !strings.Contains(result.Error, "mqtt test crashed before writing results") {
 		t.Fatalf("fallback status/error not preserved: %#v", result)
 	}
-	if len(result.StageResults) != 4 {
-		t.Fatalf("fallback stage results len = %d, want 4", len(result.StageResults))
+	if len(result.StageResults) != 1 {
+		t.Fatalf("fallback stage results len = %d, want 1", len(result.StageResults))
 	}
 	if got := result.StageResults[0].FailureReasons["runner_failed"]; got != 1 {
 		t.Fatalf("fallback failure reason = %d, want 1; first stage=%#v", got, result.StageResults[0])
 	}
-	if result.StageResults[0].ConnectedDevices != 25000 {
-		t.Fatalf("fallback connected devices = %d, want 25000", result.StageResults[0].ConnectedDevices)
+	if result.StageResults[0].ConnectedDevices != 100000 {
+		t.Fatalf("fallback connected devices = %d, want 100000", result.StageResults[0].ConnectedDevices)
 	}
 }
 
@@ -2459,7 +2528,7 @@ func TestExecuteShardRunLivePreservesPartialStagedResultsWhenMQTTTestFails(t *te
 			"status": "FAIL",
 			"stage_results": []map[string]any{
 				{
-					"name":                "25k",
+					"name":                "target",
 					"status":              "PASS",
 					"connect_attempts":    2500,
 					"connect_successes":   2000,
@@ -2471,20 +2540,6 @@ func TestExecuteShardRunLivePreservesPartialStagedResultsWhenMQTTTestFails(t *te
 					"failure_reasons":     map[string]any{"app_token_request_failed": 10},
 					"device_mqtt_totals":  map[string]any{"bytes_sent": 12345},
 					"app_user_totals":     map[string]any{"bytes_received": 67890},
-				},
-				{
-					"name":              "50k",
-					"status":            "FAIL",
-					"connect_attempts":  5000,
-					"connect_successes": 3000,
-					"http_requests":     500,
-					"http_successes":    300,
-				},
-				{
-					"name":             "75k",
-					"status":           "FAIL",
-					"failure_reasons":  map[string]any{"insufficient_shard_devices": 1},
-					"connect_attempts": 0,
 				},
 			},
 		}
@@ -2529,11 +2584,11 @@ func TestExecuteShardRunLivePreservesPartialStagedResultsWhenMQTTTestFails(t *te
 	if err := readJSON(filepath.Join(outDir, "results.json"), &result); err != nil {
 		t.Fatalf("missing converted partial shard results: %v stderr=%s", err, stderr.String())
 	}
-	if result.Status != "failed" || !result.Partial || !strings.Contains(result.Error, "stage_results len = 3, want 4") {
+	if result.Status != "failed" || result.Partial || !strings.Contains(result.Error, "mqtt test failed") {
 		t.Fatalf("partial failure metadata not preserved: %#v stderr=%s", result, stderr.String())
 	}
-	if len(result.StageResults) != 3 {
-		t.Fatalf("stage results len = %d, want 3", len(result.StageResults))
+	if len(result.StageResults) != 1 {
+		t.Fatalf("stage results len = %d, want 1", len(result.StageResults))
 	}
 	if result.StageResults[0].DeviceMQTTTotals.ConnectAttempts != 2500 || result.StageResults[0].DeviceMQTTTotals.BytesSent != 12345 {
 		t.Fatalf("partial device counters not preserved: %#v", result.StageResults[0].DeviceMQTTTotals)
@@ -3060,6 +3115,43 @@ func TestCentralLoggerEnvValuesPrefersLKESecretToken(t *testing.T) {
 	}
 }
 
+func TestCentralLoggerEnvValuesDerivesLKEEndpointFromStackEnv(t *testing.T) {
+	envRoot := t.TempDir()
+	secretDir := filepath.Join(envRoot, "state", "secrets")
+	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(secretDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envRoot, "env", "stack.env"), []byte("CLOUD_PROVIDER=lke\nCLOUD_LOGGER_DOMAIN=logger.video-cloud-staging.realtekconnect.com\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(secretDir, "cloud-logger-ingest-token"), []byte("current-lke-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	values := centralLoggerEnvValues(envRoot)
+	if values["CLOUD_LOGGER_ENDPOINT"] != "https://logger.video-cloud-staging.realtekconnect.com" || values["CLOUD_LOGGER_INGEST_TOKEN"] != "current-lke-token" {
+		t.Fatalf("centralLoggerEnvValues() = %#v, want endpoint derived from LKE stack env and token from LKE secret", values)
+	}
+}
+
+func TestCentralLoggerEndpointAndTokenPrefersExplicitEnv(t *testing.T) {
+	t.Setenv("HOME100K_CLOUD_LOGGER_ENDPOINT", "http://127.0.0.1:18090/")
+	t.Setenv("HOME100K_CLOUD_LOGGER_INGEST_TOKEN", "override-token")
+	t.Setenv("CLOUD_LOGGER_ENDPOINT", "https://public-env.example")
+	t.Setenv("CLOUD_LOGGER_INGEST_TOKEN", "public-env-token")
+
+	endpoint, token := centralLoggerEndpointAndToken(map[string]string{
+		"CLOUD_LOGGER_ENDPOINT":     "https://logger.example",
+		"CLOUD_LOGGER_INGEST_TOKEN": "file-token",
+	})
+	if endpoint != "http://127.0.0.1:18090" || token != "override-token" {
+		t.Fatalf("centralLoggerEndpointAndToken() endpoint=%q token=%q, want explicit HOME100K env", endpoint, token)
+	}
+}
+
 func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 	outDir := t.TempDir()
 	if err := writeJSONFile(filepath.Join(outDir, "start-coordination.json"), StartCoordination{
@@ -3427,4 +3519,22 @@ func TestExecuteAggregateWritesRunLevelReport(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(outDir, "TEST_REPORT.md")); err != nil {
 		t.Fatalf("missing aggregate report: %v", err)
 	}
+}
+
+func assertShardManifestRange(t *testing.T, path string, role string, start int, end int) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read shard manifest %s: %v", path, err)
+	}
+	var assignment VMAssignment
+	if err := json.Unmarshal(raw, &assignment); err != nil {
+		t.Fatalf("decode shard manifest %s: %v", path, err)
+	}
+	for _, shard := range assignment.TaskShards {
+		if shard.Role == role && shard.Start == start && shard.End == end {
+			return
+		}
+	}
+	t.Fatalf("manifest %s missing %s shard [%d,%d): %#v", path, role, start, end, assignment.TaskShards)
 }

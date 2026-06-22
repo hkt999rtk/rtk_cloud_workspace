@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,6 +62,34 @@ func TestRunRemoveK8sPreservesStorageByDefault(t *testing.T) {
 	}
 }
 
+func TestRunRemoveK8sPlanPrintsCleanupScopeWithoutConfirmation(t *testing.T) {
+	workspace, envRoot := makeStagingResetTestEnv(t)
+	t.Setenv("CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET", "1")
+	stdout, stderr, err := captureOutput(func() error {
+		return runRemoveK8s([]string{"--workspace", workspace, "--env-root", envRoot, "--plan", "--purge-storage"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stderr != "" {
+		t.Fatalf("stderr = %q, want empty", stderr)
+	}
+	for _, want := range []string{
+		"cloud-remove-k8s plan",
+		"mode: destructive namespace cleanup",
+		"purge_storage: true",
+		"delete PVCs then namespace video-cloud-staging-platform",
+		"delete PVCs then namespace video-cloud-staging-video-cloud",
+		"delete PVCs then namespace video-cloud-staging-ingress",
+		"delete PVCs then namespace video-cloud-staging-secrets",
+		"delete PVCs then namespace video-cloud-staging-logger",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("plan missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
 func TestRunRemoveK8sPurgeStorageDeletesPVCAndNamespaces(t *testing.T) {
 	workspace, envRoot := makeStagingResetTestEnv(t)
 	kubectlLog := fakeKubectlForStagingReset(t)
@@ -77,6 +106,102 @@ func TestRunRemoveK8sPurgeStorageDeletesPVCAndNamespaces(t *testing.T) {
 	}
 	if !strings.Contains(log, "delete namespace video-cloud-staging-platform --ignore-not-found=true") {
 		t.Fatalf("purge reset should delete staging namespaces, got:\n%s", log)
+	}
+	if !strings.Contains(log, "delete namespace video-cloud-staging-logger --ignore-not-found=true") {
+		t.Fatalf("purge reset should delete logger namespace, got:\n%s", log)
+	}
+}
+
+func captureOutput(fn func() error) (string, string, error) {
+	oldStdout := os.Stdout
+	oldStderr := os.Stderr
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		return "", "", err
+	}
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
+		return "", "", err
+	}
+	os.Stdout = stdoutW
+	os.Stderr = stderrW
+	runErr := fn()
+	_ = stdoutW.Close()
+	_ = stderrW.Close()
+	stdout, readStdoutErr := io.ReadAll(stdoutR)
+	stderr, readStderrErr := io.ReadAll(stderrR)
+	_ = stdoutR.Close()
+	_ = stderrR.Close()
+	os.Stdout = oldStdout
+	os.Stderr = oldStderr
+	if readStdoutErr != nil {
+		return "", "", readStdoutErr
+	}
+	if readStderrErr != nil {
+		return "", "", readStderrErr
+	}
+	return string(stdout), string(stderr), runErr
+}
+
+func TestResolveLKEImagesUsesExistingEnvRootManifest(t *testing.T) {
+	_, envRoot := makeStagingResetTestEnv(t)
+	clearLKEImageEnvForTest(t)
+	writeTestFile(t, filepath.Join(envRoot, "artifacts", "lke-images", "lke-image-manifest.json"), `{
+  "env": {
+    "LKE_POSTGRES_IMAGE": "postgres:16-alpine",
+    "LKE_VIDEO_CLOUD_IMAGE": "registry.example.test/rtk/video-cloud:manifest",
+    "LKE_ACCOUNT_MANAGER_IMAGE": "registry.example.test/rtk/account-manager:manifest",
+    "LKE_CLOUD_ADMIN_IMAGE": "registry.example.test/rtk/cloud-admin:manifest",
+    "LKE_FRONTEND_IMAGE": "registry.example.test/rtk/frontend:manifest",
+    "LKE_CLOUD_LOGGER_IMAGE": "registry.example.test/rtk/cloud-logger:manifest"
+  }
+}`)
+
+	if err := resolveLKEImagesIfNeeded(t.TempDir(), envRoot); err != nil {
+		t.Fatal(err)
+	}
+	if got := os.Getenv("LKE_VIDEO_CLOUD_IMAGE"); got != "registry.example.test/rtk/video-cloud:manifest" {
+		t.Fatalf("expected video image from existing manifest, got %q", got)
+	}
+}
+
+func TestRunStagingProvisionPlanReportsExistingLKEImageArtifact(t *testing.T) {
+	workspace, envRoot := makeStagingResetTestEnv(t)
+	clearLKEImageEnvForTest(t)
+	manifest := filepath.Join(envRoot, "artifacts", "lke-images", "lke-image-manifest.json")
+	writeTestFile(t, manifest, `{
+  "env": {
+    "LKE_POSTGRES_IMAGE": "postgres:16-alpine",
+    "LKE_VIDEO_CLOUD_IMAGE": "registry.example.test/rtk/video-cloud:manifest",
+    "LKE_ACCOUNT_MANAGER_IMAGE": "registry.example.test/rtk/account-manager:manifest",
+    "LKE_CLOUD_ADMIN_IMAGE": "registry.example.test/rtk/cloud-admin:manifest",
+    "LKE_FRONTEND_IMAGE": "registry.example.test/rtk/frontend:manifest",
+    "LKE_CLOUD_LOGGER_IMAGE": "registry.example.test/rtk/cloud-logger:manifest"
+  }
+}`)
+
+	out := captureStdout(t, func() {
+		if err := runStagingProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--plan"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(out, "image_resolve: existing artifact ("+manifest+")") {
+		t.Fatalf("expected existing image artifact in plan, got:\n%s", out)
+	}
+}
+
+func clearLKEImageEnvForTest(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"LKE_VIDEO_CLOUD_IMAGE",
+		"LKE_ACCOUNT_MANAGER_IMAGE",
+		"LKE_CLOUD_ADMIN_IMAGE",
+		"LKE_FRONTEND_IMAGE",
+		"LKE_CLOUD_LOGGER_IMAGE",
+	} {
+		t.Setenv(key, "")
 	}
 }
 

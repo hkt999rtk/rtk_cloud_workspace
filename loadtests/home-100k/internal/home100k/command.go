@@ -183,7 +183,7 @@ func parseCommonFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
-	deviceCount, userCount, devicesPerUser, vmCount := addSizingFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM := addSizingFlags(fs)
 	runnerNofile, sessionModel, readModel := addRuntimeConditionFlags(fs)
 	functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance := addGateThresholdFlags(fs)
 	ephemeral := fs.Bool("ephemeral-vms", false, "require ephemeral VM lifecycle")
@@ -197,7 +197,7 @@ func parseCommonFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
-	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
 	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel)
 	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
 	return opts, *ephemeral, nil
@@ -221,7 +221,7 @@ func parseRunFlags(name string, args []string, stderr io.Writer) (PlanOptions, b
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
-	deviceCount, userCount, devicesPerUser, vmCount := addSizingFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM := addSizingFlags(fs)
 	runnerNofile, sessionModel, readModel := addRuntimeConditionFlags(fs)
 	functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance := addGateThresholdFlags(fs)
 	ephemeral := fs.Bool("ephemeral-vms", false, "require ephemeral VM lifecycle")
@@ -238,7 +238,7 @@ func parseRunFlags(name string, args []string, stderr io.Writer) (PlanOptions, b
 	}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
-	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
 	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel)
 	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
 	return opts, *ephemeral, runFlagValues{
@@ -255,12 +255,13 @@ func addStageDurationFlags(fs *flag.FlagSet) (*string, *string, *string) {
 	return stageWarmUp, stageSteady, stageCoolDown
 }
 
-func addSizingFlags(fs *flag.FlagSet) (*int, *int, *int, *int) {
+func addSizingFlags(fs *flag.FlagSet) (*int, *int, *int, *int, *int) {
 	deviceCount := fs.Int("devices", 0, "total simulated device count")
 	userCount := fs.Int("users", 0, "total simulated app user count")
 	devicesPerUser := fs.Int("devices-per-user", 0, "target devices per app user when --users is omitted")
 	vmCount := fs.Int("vm-count", 0, "number of mixed Linode generator VMs")
-	return deviceCount, userCount, devicesPerUser, vmCount
+	loadGeneratorDevicesPerVM := fs.Int("load-generator-devices-per-vm", 0, "maximum simulated devices per load-generator VM")
+	return deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM
 }
 
 func addVMLabelPrefixFlag(fs *flag.FlagSet) *string {
@@ -293,11 +294,12 @@ func applyStageDurationFlags(opts *PlanOptions, stageWarmUp *string, stageSteady
 	opts.StageCoolDown = *stageCoolDown
 }
 
-func applySizingFlags(opts *PlanOptions, deviceCount *int, userCount *int, devicesPerUser *int, vmCount *int) {
+func applySizingFlags(opts *PlanOptions, deviceCount *int, userCount *int, devicesPerUser *int, vmCount *int, loadGeneratorDevicesPerVM *int) {
 	opts.DeviceCount = *deviceCount
 	opts.UserCount = *userCount
 	opts.DevicesPerUser = *devicesPerUser
 	opts.VMCount = *vmCount
+	opts.LoadGeneratorDevicesPerVM = *loadGeneratorDevicesPerVM
 }
 
 func applyRuntimeConditionFlags(opts *PlanOptions, runnerNofile *int, sessionModel *string, readModel *string) {
@@ -894,10 +896,13 @@ func shardConnectedDevices(stageConnected int, totalDevices int, assignment VMAs
 		}
 	}
 	if deviceCount <= 0 {
-		deviceCount = ceilDiv(totalDevices, DefaultVMCount)
+		deviceCount = DefaultDevicesPerVM
 	}
 	if totalDevices <= 0 {
 		totalDevices = DefaultDeviceCount
+	}
+	if deviceCount > totalDevices {
+		deviceCount = totalDevices
 	}
 	target := stageConnected * deviceCount / totalDevices
 	if target <= 0 && stageConnected > 0 {
@@ -1420,7 +1425,7 @@ func parseProvisionVMFlags(name string, args []string, stderr io.Writer) (PlanOp
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
-	deviceCount, userCount, devicesPerUser, vmCount := addSizingFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM := addSizingFlags(fs)
 	functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance := addGateThresholdFlags(fs)
 	runID := fs.String("run-id", "", "run id for VM tags")
 	outDir := fs.String("out-dir", "", "artifact output directory")
@@ -1438,7 +1443,7 @@ func parseProvisionVMFlags(name string, args []string, stderr io.Writer) (PlanOp
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
-	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
 	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
 	return opts, provisionVMFlagValues{
 		runID:             *runID,
@@ -1462,7 +1467,7 @@ func parseDestroyVMFlags(name string, args []string, stderr io.Writer) (PlanOpti
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
-	deviceCount, userCount, devicesPerUser, vmCount := addSizingFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM := addSizingFlags(fs)
 	functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance := addGateThresholdFlags(fs)
 	runID := fs.String("run-id", "", "run id for VM tags")
 	live := fs.Bool("live", false, "destroy Linode VMs")
@@ -1476,7 +1481,7 @@ func parseDestroyVMFlags(name string, args []string, stderr io.Writer) (PlanOpti
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
-	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
 	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
 	return opts, destroyVMFlagValues{
 		runID:          *runID,
@@ -1496,7 +1501,7 @@ func parseListVMFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
-	deviceCount, userCount, devicesPerUser, vmCount := addSizingFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM := addSizingFlags(fs)
 	functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance := addGateThresholdFlags(fs)
 	runID := fs.String("run-id", "", "run id for VM tags")
 	live := fs.Bool("live", false, "query Linode VMs")
@@ -1508,7 +1513,7 @@ func parseListVMFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
-	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
 	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
 	return opts, listVMFlagValues{
 		runID:          *runID,
@@ -1526,7 +1531,7 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
-	deviceCount, userCount, devicesPerUser, vmCount := addSizingFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM := addSizingFlags(fs)
 	runnerNofile, sessionModel, readModel := addRuntimeConditionFlags(fs)
 	functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance := addGateThresholdFlags(fs)
 	runID := fs.String("run-id", "", "run id for artifact correlation")
@@ -1560,7 +1565,7 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
-	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
 	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel)
 	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
 	return opts, workflowFlagValues{
@@ -1598,7 +1603,7 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
-	deviceCount, userCount, devicesPerUser, vmCount := addSizingFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM := addSizingFlags(fs)
 	functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance := addGateThresholdFlags(fs)
 	runID := fs.String("run-id", "", "run id for artifact correlation")
 	outDir := fs.String("out-dir", "", "artifact output directory")
@@ -1621,7 +1626,7 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
-	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
 	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
 	return opts, shardRunFlagValues{
 		runID:                *runID,
@@ -1828,8 +1833,7 @@ func collectCentralLoggerEvidence(envRoot string, runID string) (EvidenceSource,
 		return EvidenceSource{Available: false, Optional: true, Detail: "central logger evidence skipped by HOME100K_SKIP_CENTRAL_LOGGER"}, "central_logger evidence probe skipped by HOME100K_SKIP_CENTRAL_LOGGER"
 	}
 	values := centralLoggerEnvValues(envRoot)
-	endpoint := strings.TrimRight(strings.TrimSpace(firstNonEmpty(values["CLOUD_LOGGER_ENDPOINT"], os.Getenv("CLOUD_LOGGER_ENDPOINT"))), "/")
-	token := strings.TrimSpace(firstNonEmpty(values["CLOUD_LOGGER_INGEST_TOKEN"], os.Getenv("CLOUD_LOGGER_INGEST_TOKEN")))
+	endpoint, token := centralLoggerEndpointAndToken(values)
 	if endpoint == "" || token == "" {
 		return EvidenceSource{Available: false, Optional: true, Detail: "central logger endpoint or token missing"}, "central_logger evidence probe skipped: endpoint/token missing"
 	}
@@ -1883,12 +1887,33 @@ func centralLoggerEnvValues(envRoot string) map[string]string {
 			break
 		}
 	}
+	stackValues := parseEnvFile(filepath.Join(envRoot, "env", "stack.env"))
+	if values["CLOUD_LOGGER_DOMAIN"] == "" {
+		values["CLOUD_LOGGER_DOMAIN"] = stackValues["CLOUD_LOGGER_DOMAIN"]
+	}
+	if values["CLOUD_LOGGER_ENDPOINT"] == "" && values["CLOUD_LOGGER_DOMAIN"] != "" {
+		values["CLOUD_LOGGER_ENDPOINT"] = "https://" + values["CLOUD_LOGGER_DOMAIN"]
+	}
 	if !explicitOverride {
 		if token := readTrimmedFile(filepath.Join(envRoot, "state", "secrets", "cloud-logger-ingest-token")); token != "" {
 			values["CLOUD_LOGGER_INGEST_TOKEN"] = token
 		}
 	}
 	return values
+}
+
+func centralLoggerEndpointAndToken(values map[string]string) (string, string) {
+	endpoint := strings.TrimRight(strings.TrimSpace(firstNonEmpty(
+		os.Getenv("HOME100K_CLOUD_LOGGER_ENDPOINT"),
+		os.Getenv("CLOUD_LOGGER_ENDPOINT"),
+		values["CLOUD_LOGGER_ENDPOINT"],
+	)), "/")
+	token := strings.TrimSpace(firstNonEmpty(
+		os.Getenv("HOME100K_CLOUD_LOGGER_INGEST_TOKEN"),
+		os.Getenv("CLOUD_LOGGER_INGEST_TOKEN"),
+		values["CLOUD_LOGGER_INGEST_TOKEN"],
+	))
+	return endpoint, token
 }
 
 func readTrimmedFile(path string) string {
@@ -1936,19 +1961,10 @@ func queryCentralLoggerCount(endpoint string, token string, key string, value st
 		return 0, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	client := http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return 0, fmt.Errorf("logger query status=%d", resp.StatusCode)
-	}
 	var decoded struct {
 		Events []json.RawMessage `json:"events"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+	if err := doCentralLoggerJSON(req, 10*time.Second, &decoded); err != nil {
 		return 0, err
 	}
 	return len(decoded.Events), nil
@@ -1968,8 +1984,7 @@ func collectCentralLoggerRuntimeLogEvidence(envRoot string, runID string, window
 		return EvidenceSource{}, EvidenceSource{}, "central_logger runtime evidence probe skipped by HOME100K_SKIP_CENTRAL_LOGGER"
 	}
 	values := centralLoggerEnvValues(envRoot)
-	endpoint := strings.TrimRight(strings.TrimSpace(firstNonEmpty(values["CLOUD_LOGGER_ENDPOINT"], os.Getenv("CLOUD_LOGGER_ENDPOINT"))), "/")
-	token := strings.TrimSpace(firstNonEmpty(values["CLOUD_LOGGER_INGEST_TOKEN"], os.Getenv("CLOUD_LOGGER_INGEST_TOKEN")))
+	endpoint, token := centralLoggerEndpointAndToken(values)
 	if endpoint == "" || token == "" {
 		return EvidenceSource{}, EvidenceSource{}, ""
 	}
@@ -2054,22 +2069,49 @@ func queryCentralLoggerRuntimeEvents(endpoint string, token string, since time.T
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	client := http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("logger runtime query status=%d", resp.StatusCode)
-	}
 	var decoded struct {
 		Events []centralLoggerRuntimeEvent `json:"events"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+	if err := doCentralLoggerJSON(req, 15*time.Second, &decoded); err != nil {
 		return nil, err
 	}
 	return decoded.Events, nil
+}
+
+func doCentralLoggerJSON(req *http.Request, timeout time.Duration, out any) error {
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		clone := req.Clone(req.Context())
+		client := http.Client{
+			Timeout: timeout,
+			Transport: &http.Transport{
+				DisableKeepAlives: true,
+				ForceAttemptHTTP2: false,
+			},
+		}
+		resp, err := client.Do(clone)
+		if err != nil {
+			lastErr = err
+		} else {
+			body, readErr := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+				return fmt.Errorf("logger query status=%d", resp.StatusCode)
+			}
+			if readErr != nil {
+				lastErr = readErr
+			} else if err := json.Unmarshal(body, out); err != nil {
+				lastErr = err
+			} else {
+				return nil
+			}
+		}
+		time.Sleep(time.Duration(attempt+1) * 250 * time.Millisecond)
+	}
+	return lastErr
 }
 
 func dedupeCentralLoggerRuntimeEvents(events []centralLoggerRuntimeEvent) []centralLoggerRuntimeEvent {
@@ -2731,13 +2773,13 @@ func serverEvidenceProbes(envRoot string, runID string, logsSinceArg string) []s
 		videoCloudAPIRequestTokenCounterProbe(runID, logsSinceArg),
 		videoCloudAPIMetricsProbe(runID),
 		kubectlLogsProbe("video_cloud_api", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=video-cloud-api", logsSinceArg, "Video Cloud API logs captured for run_id "+runID),
-			postgresCounterProbe("postgres", runID, shadowStoreCounterSQL(runID), "PostgreSQL device shadow convergence counters parsed for run_id "+runID),
-			kubectlLogsProbe("postgres", "video-cloud-staging-platform", "app.kubernetes.io/name=postgresql", logsSinceArg, "PostgreSQL logs captured"),
-			redisInfoProbe(runID),
-			kubectlLogsProbe("redis_valkey", "video-cloud-staging-platform", "app.kubernetes.io/name=redis", logsSinceArg, "Redis/Valkey logs captured when enabled"),
-			kubectlLogsProbe("ingress_nginx", "video-cloud-staging-ingress", "app.kubernetes.io/name=ingress-nginx", logsSinceArg, "Ingress/nginx logs captured for run_id "+runID),
-		}
+		postgresCounterProbe("postgres", runID, shadowStoreCounterSQL(runID), "PostgreSQL device shadow convergence counters parsed for run_id "+runID),
+		kubectlLogsProbe("postgres", "video-cloud-staging-platform", "app.kubernetes.io/name=postgresql", logsSinceArg, "PostgreSQL logs captured"),
+		redisInfoProbe(runID),
+		kubectlLogsProbe("redis_valkey", "video-cloud-staging-platform", "app.kubernetes.io/name=redis", logsSinceArg, "Redis/Valkey logs captured when enabled"),
+		kubectlLogsProbe("ingress_nginx", "video-cloud-staging-ingress", "app.kubernetes.io/name=ingress-nginx", logsSinceArg, "Ingress/nginx logs captured for run_id "+runID),
 	}
+}
 
 func postgresCounterProbe(source string, runID string, sql string, detail string) serverEvidenceProbe {
 	script := fmt.Sprintf(

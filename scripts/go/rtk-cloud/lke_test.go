@@ -31,7 +31,7 @@ func TestRunProvisionLKEApplyUsesKubectl(t *testing.T) {
 	}
 
 	log := readTestFile(t, logPath)
-	if count := strings.Count(log, "ARGS apply -f -"); count != len(lkeNamespaces(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}))+1 {
+	if count := strings.Count(log, "apply -f -"); count != len(lkeNamespaces(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}))+1 {
 		t.Fatalf("unexpected kubectl apply count in log:\n%s", log)
 	}
 	if !strings.Contains(log, "kind: Namespace") || !strings.Contains(log, "kind: ConfigMap") {
@@ -49,8 +49,8 @@ func TestRunProvisionLKEApplyInstallsMetricsServer(t *testing.T) {
 
 	log := readTestFile(t, logPath)
 	for _, want := range []string{
-		"ARGS apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.8.1/components.yaml",
-		"ARGS -n kube-system rollout status deployment/metrics-server --timeout 5m",
+		"apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.8.1/components.yaml",
+		"rollout status deployment/metrics-server --timeout 5m",
 	} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("expected metrics-server install to include %q, got:\n%s", want, log)
@@ -78,7 +78,7 @@ func TestRunProvisionLKEApplyFetchesKubeconfigWhenNoContext(t *testing.T) {
 		t.Fatalf("expected kubeconfig fetch, got:\n%s", curlCalls)
 	}
 	kubectlCalls := readTestFile(t, kubectlLog)
-	if !strings.Contains(kubectlCalls, "ARGS --kubeconfig "+filepath.Join(envRoot, "state", "lke-kubeconfig.yaml")+" apply -f -") {
+	if !strings.Contains(kubectlCalls, "ARGS --kubeconfig "+filepath.Join(envRoot, "state", "lke-kubeconfig.yaml")) || !strings.Contains(kubectlCalls, "apply -f -") {
 		t.Fatalf("expected kubectl to use env-root kubeconfig, got:\n%s", kubectlCalls)
 	}
 	kubeconfigInfo, err := os.Stat(filepath.Join(envRoot, "state", "lke-kubeconfig.yaml"))
@@ -133,7 +133,8 @@ func TestRunProvisionLKEApplyDiscoversClusterByLabel(t *testing.T) {
 	if !strings.Contains(state, "LKE_CLUSTER_ID=67890") || !strings.Contains(state, "LKE_CLUSTER_LABEL=video-cloud-staging-lke") {
 		t.Fatalf("expected discovered cluster state, got:\n%s", state)
 	}
-	if !strings.Contains(readTestFile(t, kubectlLog), "ARGS --kubeconfig "+filepath.Join(envRoot, "state", "lke-kubeconfig.yaml")+" apply -f -") {
+	kubectlCalls := readTestFile(t, kubectlLog)
+	if !strings.Contains(kubectlCalls, "ARGS --kubeconfig "+filepath.Join(envRoot, "state", "lke-kubeconfig.yaml")) || !strings.Contains(kubectlCalls, "apply -f -") {
 		t.Fatalf("expected kubectl to use fetched kubeconfig")
 	}
 }
@@ -152,7 +153,7 @@ func TestRunProvisionLKEApplyCreatesClusterWhenMissing(t *testing.T) {
 	fakeKubectlWithoutCurrentContext(t)
 	t.Setenv("LINODE_TOKEN", "test-token")
 	t.Setenv("LKE_NODE_TYPE", "g6-standard-2")
-	t.Setenv("LKE_NODE_COUNT", "3")
+	t.Setenv("LKE_NODE_COUNT", "4")
 
 	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--apply"}); err != nil {
 		t.Fatal(err)
@@ -172,6 +173,51 @@ func TestRunProvisionLKEApplyCreatesClusterWhenMissing(t *testing.T) {
 	state := readTestFile(t, filepath.Join(envRoot, "state", "lke.env"))
 	if !strings.Contains(state, "LKE_CLUSTER_ID=24680") || !strings.Contains(state, "LKE_CLUSTER_VERSION=1.33") {
 		t.Fatalf("expected created cluster state, got:\n%s", state)
+	}
+}
+
+func TestRunProvisionLKEApplyRecoversStaleClusterState(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	writeTestFile(t, filepath.Join(envRoot, "state", "lke.env"), "LKE_CLUSTER_ID=12345\nLKE_CLUSTER_LABEL=video-cloud-staging-lke\n")
+	writeTestFile(t, filepath.Join(envRoot, "state", "lke-kubeconfig.yaml"), "stale kubeconfig\n")
+	encodedKubeconfig := base64.StdEncoding.EncodeToString([]byte("apiVersion: v1\nclusters: []\n"))
+	curlLog := fakeLinodeCurl(t, map[string]string{
+		"/lke/clusters/12345/pools":        "__ERROR_404__",
+		"/lke/clusters?page_size=500":      `{"data":[]}`,
+		"/lke/versions":                    `{"data":[{"id":"1.33"}]}`,
+		"/lke/clusters":                    `{"id":24680,"label":"video-cloud-staging-lke","region":"us-sea","k8s_version":"1.33"}`,
+		"/lke/clusters/24680/kubeconfig":   `{"kubeconfig":"` + encodedKubeconfig + `"}`,
+		"/lke/clusters/24680/pools":        `{"data":[{"id":907616,"type":"g6-standard-2","count":3}]}`,
+		"/lke/clusters/24680/pools/907616": `{"id":907616,"type":"g6-standard-2","count":4}`,
+	})
+	fakeKubectl(t)
+	t.Setenv("LINODE_TOKEN", "test-token")
+	t.Setenv("LKE_NODE_TYPE", "g6-standard-2")
+	t.Setenv("LKE_NODE_COUNT", "4")
+
+	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--apply"}); err != nil {
+		t.Fatal(err)
+	}
+
+	curlCalls := readTestFile(t, curlLog)
+	for _, want := range []string{
+		"GET /lke/clusters/12345/pools",
+		"GET /lke/clusters?page_size=500",
+		"POST /lke/clusters",
+		"GET /lke/clusters/24680/kubeconfig",
+		"GET /lke/clusters/24680/pools",
+	} {
+		if !strings.Contains(curlCalls, want) {
+			t.Fatalf("expected %q in curl log, got:\n%s", want, curlCalls)
+		}
+	}
+	state := readTestFile(t, filepath.Join(envRoot, "state", "lke.env"))
+	if !strings.Contains(state, "LKE_CLUSTER_ID=24680") || !strings.Contains(state, "LKE_CLUSTER_VERSION=1.33") {
+		t.Fatalf("expected stale cluster state to be refreshed, got:\n%s", state)
+	}
+	kubeconfig := readTestFile(t, filepath.Join(envRoot, "state", "lke-kubeconfig.yaml"))
+	if strings.Contains(kubeconfig, "stale kubeconfig") {
+		t.Fatalf("expected stale kubeconfig to be overwritten, got:\n%s", kubeconfig)
 	}
 }
 
@@ -817,6 +863,134 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 	}
 }
 
+func TestRunProvisionLKEIngressHelmTimesOut(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	if err := os.MkdirAll(filepath.Join(workspace, "repos", "rtk_video_cloud", "tools", "godaddy-dns"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeKubectl(t)
+	helm := filepath.Join(t.TempDir(), "helm")
+	if err := os.WriteFile(helm, []byte("#!/usr/bin/env bash\nsleep 3\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_HELM", helm)
+	t.Setenv("LKE_INGRESS_HELM_TIMEOUT", "1s")
+
+	err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--dns"})
+	if err == nil || !strings.Contains(err.Error(), "helm command timed out after 1s") {
+		t.Fatalf("expected ingress helm timeout error, got %v", err)
+	}
+}
+
+func TestLKECreateEdgeHAProxyVMClassifiesActiveServicesLimit(t *testing.T) {
+	sshKey := filepath.Join(t.TempDir(), "id_ed25519_rtkcloud")
+	writeTestFile(t, sshKey+".pub", "ssh-ed25519 AAAATEST edge@test\n")
+	fakeLinodeCurl(t, map[string]string{
+		"/linode/instances": "__ERROR_400_ACCOUNT_LIMIT__",
+	})
+
+	_, err := lkeCreateEdgeHAProxyVM("test-token", map[string]string{
+		"CLOUD_STACK_NAME": "video-cloud-staging",
+		"CLOUD_REGION":     "us-sea",
+	}, provisionOptions{sshKey: sshKey})
+	if err == nil || !strings.Contains(err.Error(), "Linode active services limit reached") {
+		t.Fatalf("expected active services limit classification, got %v", err)
+	}
+}
+
+func TestRunProvisionLKEDNSIncludesCloudLoggerWhenServiceExists(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	if err := os.MkdirAll(filepath.Join(workspace, "repos", "rtk_video_cloud", "tools", "godaddy-dns"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	kubectlLog := fakeKubectl(t)
+	goLog := fakeGoForDNS(t)
+	fakeHelm(t)
+	fakeCertbot(t)
+	fakeDig(t, "198.51.100.10")
+	t.Setenv("FAKE_CLOUD_LOGGER_SERVICE", "1")
+	t.Setenv("LKE_EDGE_HAPROXY_PUBLIC_IP", "198.51.100.10")
+	t.Setenv("LKE_EDGE_HAPROXY_PRIVATE_IP", "10.2.1.5")
+	t.Setenv("GODADDY_KEY", "test-key")
+	t.Setenv("GODADDY_SECRET", "test-secret")
+	t.Setenv("GODADDY_ENV", "prod")
+
+	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--dns"}); err != nil {
+		t.Fatal(err)
+	}
+
+	kubectlCalls := readTestFile(t, kubectlLog)
+	for _, want := range []string{
+		"kind: Service\nmetadata:\n  name: public-cloud-logger-logger",
+		"externalName: cloud-logger.video-cloud-staging-logger.svc.cluster.local",
+		"host: logger.video-cloud-staging.realtekconnect.com",
+		"namespace: video-cloud-staging-logger",
+		"port: 18090",
+	} {
+		if !strings.Contains(kubectlCalls, want) {
+			t.Fatalf("expected %q in kubectl calls, got:\n%s", want, kubectlCalls)
+		}
+	}
+	goCalls := readTestFile(t, goLog)
+	if !strings.Contains(goCalls, "--name logger.video-cloud-staging --data 198.51.100.10 --ttl 600") {
+		t.Fatalf("expected logger DNS upsert, got:\n%s", goCalls)
+	}
+}
+
+func TestRunProvisionLKEPublicHTTPSRestoresCachedCertificateBeforeACME(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	if err := os.MkdirAll(filepath.Join(workspace, "repos", "rtk_video_cloud", "tools", "godaddy-dns"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	kubectlLog := fakeKubectl(t)
+	fakeHelm(t)
+	failingCertbot := filepath.Join(t.TempDir(), "certbot")
+	if err := os.WriteFile(failingCertbot, []byte("#!/usr/bin/env bash\nprintf 'certbot must not run\\n' >&2\nexit 42\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_CERTBOT", failingCertbot)
+	fakeDNSCommandsWithGoDelay(t, "198.51.100.10", "0")
+	fakeDig(t, "198.51.100.10")
+	t.Setenv("LKE_EDGE_HAPROXY_PUBLIC_IP", "198.51.100.10")
+	t.Setenv("LKE_EDGE_HAPROXY_PRIVATE_IP", "10.2.1.5")
+	t.Setenv("GODADDY_KEY", "test-key")
+	t.Setenv("GODADDY_SECRET", "test-secret")
+	t.Setenv("GODADDY_ENV", "prod")
+
+	loadedEnv, err := envroot.Load(envRoot, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := loadedEnv.Values
+	hosts := lkePublicHTTPSHosts(lkePublicHTTPSRoutes(env))
+	caCert, caKey, _, _, err := newLKECertificateAuthority("test-public-cache-ca")
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM, keyPEM, err := newLKESignedCertificate(caCert, caKey, hosts[0], hosts, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lkeWritePublicHTTPSCertificateCache(provisionPaths{EnvRoot: envRoot}, env, hosts, certPEM, keyPEM); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok, err := lkeLoadPublicHTTPSCertificateCache(provisionPaths{EnvRoot: envRoot}, env, hosts); err != nil || !ok {
+		t.Fatalf("expected public HTTPS cache to cover test hosts: ok=%v err=%v hosts=%v", ok, err, hosts)
+	}
+
+	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--dns"}); err != nil {
+		t.Fatal(err)
+	}
+
+	kubectlCalls := readTestFile(t, kubectlLog)
+	if !strings.Contains(kubectlCalls, "kind: Secret\nmetadata:\n  name: video-cloud-staging-public-tls\n  namespace: video-cloud-staging-ingress") {
+		t.Fatalf("expected cached TLS secret to be applied, got:\n%s", kubectlCalls)
+	}
+	if !strings.Contains(kubectlCalls, base64.StdEncoding.EncodeToString([]byte(certPEM))) {
+		t.Fatalf("expected applied TLS secret to use cached certificate, got:\n%s", kubectlCalls)
+	}
+}
+
 func TestRunProvisionLKEPublicHTTPSStartsDNSUpsertsBeforeWaiting(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	if err := os.MkdirAll(filepath.Join(workspace, "repos", "rtk_video_cloud", "tools", "godaddy-dns"), 0o755); err != nil {
@@ -1074,6 +1248,9 @@ func TestCertbotDNSHooksUseBoundedNetworkCalls(t *testing.T) {
 	for _, want := range []string{
 		"curl --connect-timeout 10 --max-time 30 -fsS -X PUT",
 		"dig +time=5 +tries=1 +short TXT",
+		"RTK_CLOUD_CERTBOT_DNS_STATE",
+		"RTK_CLOUD_CERTBOT_DNS_EXPECTED",
+		`if [ "$current_count" -lt "$expected" ]; then`,
 	} {
 		if !strings.Contains(auth, want) {
 			t.Fatalf("expected auth hook to contain %q, got:\n%s", want, auth)
@@ -1083,6 +1260,95 @@ func TestCertbotDNSHooksUseBoundedNetworkCalls(t *testing.T) {
 	cleanup := certbotDNSCleanupHookScript()
 	if !strings.Contains(cleanup, "curl --connect-timeout 10 --max-time 30 -fsS -X DELETE") {
 		t.Fatalf("expected cleanup hook to use bounded curl, got:\n%s", cleanup)
+	}
+}
+
+func TestCertbotDNSHooksAreBashSyntaxValid(t *testing.T) {
+	for name, script := range map[string]string{
+		"auth":    certbotDNSAuthHookScript(),
+		"cleanup": certbotDNSCleanupHookScript(),
+	} {
+		path := filepath.Join(t.TempDir(), name+".sh")
+		if err := os.WriteFile(path, []byte(lkeCertbotHookScript(script)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command("bash", "-n", path).CombinedOutput(); err != nil {
+			t.Fatalf("%s hook bash -n failed: %v\n%s", name, err, out)
+		}
+	}
+}
+
+func TestCertbotDNSAuthHookBatchesPropagationWait(t *testing.T) {
+	tmp := t.TempDir()
+	envPath := filepath.Join(tmp, "godaddy-dns.env")
+	if err := os.WriteFile(envPath, []byte(`GODADDY_KEY='key'
+GODADDY_SECRET='secret'
+GODADDY_ENV='prod'
+CLOUD_DNS_ROOT_DOMAIN='realtekconnect.com'
+GODADDY_DNS_TTL='600'
+GODADDY_DNS_WAIT_SECONDS='5'
+GODADDY_DNS_PROPAGATION_SECONDS='1'
+GODADDY_DNS_RESOLVERS='8.8.8.8'
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hookPath := filepath.Join(tmp, "dns-auth.sh")
+	if err := os.WriteFile(hookPath, []byte(lkeCertbotHookScript(certbotDNSAuthHookScript())), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	binDir := filepath.Join(tmp, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	curlLog := filepath.Join(tmp, "curl.log")
+	fakeCurl := `#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FAKE_CURL_LOG"
+`
+	if err := os.WriteFile(filepath.Join(binDir, "curl"), []byte(fakeCurl), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fakeDig := `#!/usr/bin/env bash
+while IFS= read -r value_file; do
+  cat "$value_file"
+  printf '\n'
+done < <(find "$RTK_CLOUD_CERTBOT_DNS_STATE/records" -type f | sort)
+`
+	if err := os.WriteFile(filepath.Join(binDir, "dig"), []byte(fakeDig), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	baseEnv := append(os.Environ(),
+		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"RTK_CLOUD_CERTBOT_DNS_ENV="+envPath,
+		"RTK_CLOUD_CERTBOT_DNS_STATE="+filepath.Join(tmp, "state"),
+		"RTK_CLOUD_CERTBOT_DNS_EXPECTED=2",
+		"FAKE_CURL_LOG="+curlLog,
+	)
+	first := exec.Command(hookPath)
+	first.Env = append(baseEnv,
+		"CERTBOT_DOMAIN=account-manager.video-cloud-staging.realtekconnect.com",
+		"CERTBOT_VALIDATION=validation-one",
+	)
+	if out, err := first.CombinedOutput(); err != nil {
+		t.Fatalf("first auth hook failed: %v\n%s", err, out)
+	}
+	second := exec.Command(hookPath)
+	second.Env = append(baseEnv,
+		"CERTBOT_DOMAIN=logger.video-cloud-staging.realtekconnect.com",
+		"CERTBOT_VALIDATION=validation-two",
+	)
+	if out, err := second.CombinedOutput(); err != nil {
+		t.Fatalf("second auth hook failed: %v\n%s", err, out)
+	}
+	log := readTestFile(t, curlLog)
+	for _, want := range []string{
+		"/records/TXT/_acme-challenge.account-manager.video-cloud-staging",
+		"/records/TXT/_acme-challenge.logger.video-cloud-staging",
+		`validation-one`,
+		`validation-two`,
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("expected %q in fake curl log, got:\n%s", want, log)
+		}
 	}
 }
 
@@ -1351,6 +1617,21 @@ func TestLKEWaitForPostgresPVCUsesBoundGate(t *testing.T) {
 	}
 }
 
+func TestLKEApplyPostgresStatefulSetReplacesStaleRevisionPod(t *testing.T) {
+	logPath := fakeKubectl(t)
+	t.Setenv("FAKE_POSTGRES_STATEFULSET_REVISIONS", "postgresql-old postgresql-new")
+
+	if err := lkeApplyPostgresStatefulSet(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}); err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, logPath)
+	want := "ARGS -n video-cloud-staging-platform delete pod/postgresql-0 --ignore-not-found=true"
+	if !strings.Contains(log, want) {
+		t.Fatalf("expected %q in kubectl calls, got:\n%s", want, log)
+	}
+}
+
 func TestLKEPostgresStatefulSetUsesPostgresImageOverride(t *testing.T) {
 	t.Setenv("LKE_POSTGRES_IMAGE", "registry.example.test/rtk/lke/postgresql:ci-1234")
 
@@ -1612,6 +1893,49 @@ func TestLKEMQTTResourcesCanBeOverridden(t *testing.T) {
 	} {
 		if !strings.Contains(manifest, want) {
 			t.Fatalf("expected %q in mqtt manifest, got:\n%s", want, manifest)
+		}
+	}
+}
+
+func TestLKEDeploymentResourcesCanBeOverriddenFromEnvRoot(t *testing.T) {
+	env := map[string]string{
+		"CLOUD_STACK_NAME":                         "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN":                       "video-cloud-staging.realtekconnect.com",
+		"LKE_VIDEO_CLOUD_API_REQUEST_CPU":          "250m",
+		"LKE_VIDEO_CLOUD_API_REQUEST_MEMORY":       "384Mi",
+		"LKE_VIDEO_CLOUD_API_LIMIT_MEMORY":         "1Gi",
+		"LKE_ACCOUNT_MANAGER_REQUEST_CPU":          "150m",
+		"LKE_ACCOUNT_MANAGER_REQUEST_MEMORY":       "192Mi",
+		"LKE_ACCOUNT_MANAGER_LIMIT_MEMORY":         "768Mi",
+		"LKE_VIDEO_CLOUD_LOGINGESTER_REQUEST_CPU":  "200m",
+		"LKE_VIDEO_CLOUD_LOGINGESTER_LIMIT_MEMORY": "768Mi",
+	}
+
+	api := lkeDeploymentManifest(env, lkeWorkload{
+		Key:       "video-cloud",
+		Name:      "video-cloud-api",
+		Namespace: lkeNamespaceName(env, "video-cloud"),
+		Image:     "video-cloud:test",
+		Port:      8080,
+		Host:      "video-cloud-staging.realtekconnect.com",
+	}, nil)
+	for _, want := range []string{`cpu: "250m"`, `memory: "384Mi"`, `memory: "1Gi"`} {
+		if !strings.Contains(api, want) {
+			t.Fatalf("expected %q in video-cloud-api manifest, got:\n%s", want, api)
+		}
+	}
+
+	account := lkeDeploymentManifest(env, lkeWorkload{
+		Key:       "account-manager",
+		Name:      "account-manager",
+		Namespace: lkeNamespaceName(env, "account-manager"),
+		Image:     "account-manager:test",
+		Port:      8080,
+		Host:      "account-manager.video-cloud-staging.realtekconnect.com",
+	}, nil)
+	for _, want := range []string{`cpu: "150m"`, `memory: "192Mi"`, `memory: "768Mi"`} {
+		if !strings.Contains(account, want) {
+			t.Fatalf("expected %q in account-manager manifest, got:\n%s", want, account)
 		}
 	}
 }
@@ -2384,6 +2708,8 @@ CLOUD_STACK_NAME=video-cloud-staging
 
 func TestRunMQTTTestPassesLoadModelToChildScript(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
+	fakeKubectl(t)
+	t.Setenv("RTK_CLOUD_LKE_PORT_FORWARD_WAIT", "0s")
 	childLog := filepath.Join(t.TempDir(), "child.log")
 	childScript := filepath.Join(t.TempDir(), "cloud-mqtt-test")
 	writeTestFile(t, childScript, `#!/usr/bin/env bash
@@ -2417,6 +2743,8 @@ printf '\n' >> "`+childLog+`"
 
 func TestRunMQTTTestPassesTargetWindowSustainedFlagsToChildScript(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
+	fakeKubectl(t)
+	t.Setenv("RTK_CLOUD_LKE_PORT_FORWARD_WAIT", "0s")
 	childLog := filepath.Join(t.TempDir(), "child.log")
 	childScript := filepath.Join(t.TempDir(), "cloud-mqtt-test")
 	writeTestFile(t, childScript, `#!/usr/bin/env bash
@@ -2464,10 +2792,15 @@ printf '\n' >> "`+childLog+`"
 			t.Fatalf("child args missing %q:\n%s", want, got)
 		}
 	}
+	if strings.Contains(got, "--stage-ramp-seconds") {
+		t.Fatalf("child args still include retired stage ramp flag:\n%s", got)
+	}
 }
 
 func TestRunMQTTTestOmitsEmptyStageUsageWindowsForTargetRuns(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
+	fakeKubectl(t)
+	t.Setenv("RTK_CLOUD_LKE_PORT_FORWARD_WAIT", "0s")
 	childLog := filepath.Join(t.TempDir(), "child.log")
 	childScript := filepath.Join(t.TempDir(), "cloud-mqtt-test")
 	writeTestFile(t, childScript, `#!/usr/bin/env bash
@@ -3009,6 +3342,7 @@ func makeLKETestEnv(t *testing.T) (string, string) {
 	t.Cleanup(func() {
 		_ = os.Unsetenv("RTK_CLOUD_LKE_KUBECONFIG")
 	})
+	t.Setenv("HOME", t.TempDir())
 	t.Setenv("LKE_EDGE_HAPROXY_PUBLIC_IP", "198.51.100.10")
 	t.Setenv("LKE_EDGE_HAPROXY_PRIVATE_IP", "10.2.1.5")
 	fakeHelm(t)
@@ -3069,10 +3403,27 @@ func fakeKubectl(t *testing.T) string {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "kubectl.log")
 	kubectl := filepath.Join(dir, "kubectl")
+	t.Setenv("RTK_CLOUD_KUBE_API_READY_POLL", "1ms")
+	t.Setenv("RTK_CLOUD_KUBE_API_READY_STABLE_CHECKS", "1")
 	script := `#!/usr/bin/env bash
 set -euo pipefail
+args=()
+for arg in "$@"; do
+  if [[ "$arg" != --request-timeout=* ]]; then
+    args+=("$arg")
+  fi
+done
+set -- "${args[@]}"
 if [[ "${1:-}" == "config" && "${2:-}" == "current-context" ]]; then
   printf 'test-context\n'
+  exit 0
+fi
+if [[ "$*" == *"get --raw=/readyz"* ]]; then
+  printf 'ok\n'
+  exit 0
+fi
+if [[ "$*" == *"get nodes -o name"* ]]; then
+  printf 'node/lke-test-1\n'
   exit 0
 fi
 if [[ "$*" == *"exec openbao-0 -- env "* && "$*" == *" bao status -format=json"* ]]; then
@@ -3096,6 +3447,10 @@ if [[ "$*" == *"get pod/openbao-0 -o jsonpath={.status.phase}"* ]]; then
 fi
 if [[ "$*" == *"get service ingress-nginx-controller -o jsonpath={.status.loadBalancer.ingress[0].ip}"* ]]; then
   printf '203.0.113.42'
+  exit 0
+fi
+if [[ "$*" == *"get statefulset/postgresql -o jsonpath={.status.currentRevision} {.status.updateRevision}"* && -n "${FAKE_POSTGRES_STATEFULSET_REVISIONS:-}" ]]; then
+  printf '%s' "$FAKE_POSTGRES_STATEFULSET_REVISIONS"
   exit 0
 fi
 if [[ "$*" == *"get service cloud-logger -o name"* && "${FAKE_CLOUD_LOGGER_SERVICE:-}" == "1" ]]; then
@@ -3170,7 +3525,7 @@ fi
     printf ' %s' "$arg"
   done
   printf '\n'
-  if [[ "${1:-}" == "apply" ]]; then
+  if [[ "$*" == *"apply -f"* ]]; then
     cat
     printf '\n---\n'
   fi
@@ -3188,10 +3543,27 @@ func fakeKubectlWithoutCurrentContext(t *testing.T) string {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "kubectl.log")
 	kubectl := filepath.Join(dir, "kubectl")
+	t.Setenv("RTK_CLOUD_KUBE_API_READY_POLL", "1ms")
+	t.Setenv("RTK_CLOUD_KUBE_API_READY_STABLE_CHECKS", "1")
 	script := `#!/usr/bin/env bash
 set -euo pipefail
+args=()
+for arg in "$@"; do
+  if [[ "$arg" != --request-timeout=* ]]; then
+    args+=("$arg")
+  fi
+done
+set -- "${args[@]}"
 if [[ "${1:-}" == "config" && "${2:-}" == "current-context" ]]; then
   exit 1
+fi
+if [[ "$*" == *"get --raw=/readyz"* ]]; then
+  printf 'ok\n'
+  exit 0
+fi
+if [[ "$*" == *"get nodes -o name"* ]]; then
+  printf 'node/lke-test-1\n'
+  exit 0
 fi
 if [[ "$*" == *"exec openbao-0 -- env "* && "$*" == *" bao status -format=json"* ]]; then
   printf '{"initialized":false,"sealed":true}\n'
@@ -3292,6 +3664,13 @@ func fakeKubectlForK8SE2EPortForwards(t *testing.T) string {
 	secretData := `"ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL":"YWRtaW5AZXhhbXBsZS50ZXN0","ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD":"cGFzc3dvcmQxMjM=","ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN":"dGVzdC10b2tlbg==","VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN":"dGVzdC10b2tlbg==","VIDEO_CLOUD_LOGGER_TOKEN":"dGVzdC1sb2dnZXItdG9rZW4=","FACTORY_ENROLL_AUTH_KEY":"dGVzdC1mYWN0b3J5LWtleQ=="`
 	script := `#!/usr/bin/env bash
 set -euo pipefail
+args=()
+for arg in "$@"; do
+  if [[ "$arg" != --request-timeout=* ]]; then
+    args+=("$arg")
+  fi
+done
+set -- "${args[@]}"
 {
   printf 'ARGS'
   for arg in "$@"; do
@@ -3643,6 +4022,23 @@ printf '%s %s\n' "$method" "$path" >> "` + logPath + `"
 case "$path" in
 `
 	for path, body := range responses {
+		if body == "__ERROR_404__" {
+			script += path + `)
+    printf 'curl: (22) The requested URL returned error: 404\n' >&2
+    exit 22
+  ;;
+`
+			continue
+		}
+		if body == "__ERROR_400_ACCOUNT_LIMIT__" {
+			script += path + `)
+    printf '{"errors": [{"reason": "You'\''ve reached a limit for the number of active services on your account. Please contact Support to request an increase and provide the total number of services you may need."}]}'
+    printf 'curl: (22) The requested URL returned error: 400\n' >&2
+    exit 22
+  ;;
+`
+			continue
+		}
 		script += path + `)
   cat <<'JSON'
 ` + body + `

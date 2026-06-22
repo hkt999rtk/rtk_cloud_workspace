@@ -66,6 +66,16 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 			},
 		},
 		{
+			Name:  "capacity-check",
+			Phase: "runtime",
+			Enabled: func(ctx provisionContext) bool {
+				return provider.Name() == "lke" && (ctx.Opts.mode.preflight || ctx.Opts.mode.apply || ctx.Opts.mode.deploy || ctx.Opts.mode.e2e)
+			},
+			Run: func(ctx provisionContext) error {
+				return lkeCheckCapacity(ctx.Env, ctx.Opts)
+			},
+		},
+		{
 			Name:  "ensure-kube-access",
 			Phase: "provider",
 			Enabled: func(ctx provisionContext) bool {
@@ -91,6 +101,16 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 			},
 		},
 		{
+			Name:  "wait-kube-api-ready",
+			Phase: "provider",
+			Enabled: func(ctx provisionContext) bool {
+				return ctx.Opts.mode.apply || ctx.Opts.mode.dns || ctx.Opts.mode.deploy || ctx.Opts.mode.e2e
+			},
+			Run: func(ctx provisionContext) error {
+				return waitForKubernetesAPIReady()
+			},
+		},
+		{
 			Name:    "apply-base",
 			Phase:   "runtime",
 			Enabled: func(ctx provisionContext) bool { return ctx.Opts.mode.apply },
@@ -105,26 +125,19 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 			},
 		},
 		{
+			Name:    "deploy-workloads",
+			Phase:   "runtime",
+			Enabled: func(ctx provisionContext) bool { return ctx.Opts.mode.deploy },
+			Run: func(ctx provisionContext) error {
+				return lkeDeployWorkloads(ctx.Paths, ctx.Env, ctx.Opts)
+			},
+		},
+		{
 			Name:    "public-https",
 			Phase:   "runtime",
 			Enabled: func(ctx provisionContext) bool { return ctx.Opts.mode.dns },
 			Run: func(ctx provisionContext) error {
 				return lkeApplyPublicHTTPS(ctx.Paths, ctx.Env, ctx.Opts)
-			},
-		},
-		{
-			Name:    "deploy-workloads",
-			Phase:   "runtime",
-			Enabled: func(ctx provisionContext) bool { return ctx.Opts.mode.deploy },
-			Run: func(ctx provisionContext) error {
-				if err := lkeDeployWorkloads(ctx.Paths, ctx.Env, ctx.Opts); err != nil {
-					return err
-				}
-				if ctx.Opts.mode.dns {
-					_, err := lkeEnsureExternalHAProxyEdge(ctx.Paths, ctx.Env, ctx.Opts)
-					return err
-				}
-				return nil
 			},
 		},
 		{
@@ -162,6 +175,6 @@ func printKubernetesProvisionPlan(provider cloudProvider, ctx provisionContext) 
 		fmt.Fprintf(os.Stdout, "- %s (%s)\n", step.Name, step.Phase)
 	}
 	if provider.Name() == "lke" {
-		lkePlan(ctx.Env)
+		lkePlan(ctx.Env, ctx.Opts)
 	}
 }

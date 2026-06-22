@@ -29,8 +29,8 @@ func certbotDNS01Env(stackEnv, operatorEnv map[string]string) (certbotDNS01EnvVa
 		Env:                firstNonEmpty(operatorEnv["GODADDY_ENV"], os.Getenv("GODADDY_ENV"), "prod"),
 		RootDomain:         firstNonEmpty(stackEnv["CLOUD_DNS_ROOT_DOMAIN"], operatorEnv["CLOUD_DNS_ROOT_DOMAIN"], os.Getenv("CLOUD_DNS_ROOT_DOMAIN")),
 		TTL:                firstNonEmpty(operatorEnv["GODADDY_DNS_TTL"], operatorEnv["GODADDY_RECORD_TTL"], os.Getenv("GODADDY_DNS_TTL"), os.Getenv("GODADDY_RECORD_TTL"), "600"),
-		WaitSeconds:        firstNonEmpty(operatorEnv["GODADDY_DNS_WAIT_SECONDS"], os.Getenv("GODADDY_DNS_WAIT_SECONDS"), "300"),
-		PropagationSeconds: firstNonEmpty(operatorEnv["GODADDY_DNS_PROPAGATION_SECONDS"], os.Getenv("GODADDY_DNS_PROPAGATION_SECONDS"), "60"),
+		WaitSeconds:        firstNonEmpty(operatorEnv["GODADDY_DNS_WAIT_SECONDS"], os.Getenv("GODADDY_DNS_WAIT_SECONDS"), "900"),
+		PropagationSeconds: firstNonEmpty(operatorEnv["GODADDY_DNS_PROPAGATION_SECONDS"], os.Getenv("GODADDY_DNS_PROPAGATION_SECONDS"), "200"),
 		Resolvers:          firstNonEmpty(operatorEnv["GODADDY_DNS_RESOLVERS"], os.Getenv("GODADDY_DNS_RESOLVERS"), "8.8.8.8 1.1.1.1 9.9.9.9"),
 	}
 	var missing []string
@@ -74,7 +74,20 @@ api_root="https://api.godaddy.com"
 if [ "${GODADDY_ENV:-prod}" != "prod" ]; then
   api_root="https://api.ote-godaddy.com"
 fi
-payload="$(CERTBOT_VALIDATION="$CERTBOT_VALIDATION" GODADDY_DNS_TTL="$ttl" python3 - <<'PY'
+state_dir="${RTK_CLOUD_CERTBOT_DNS_STATE:-${TMPDIR:-/tmp}/rtk-cloud-certbot-dns-state}"
+expected="${RTK_CLOUD_CERTBOT_DNS_EXPECTED:-1}"
+mkdir -p "$state_dir/records"
+CERTBOT_RECORD="$record" CERTBOT_VALIDATION="$CERTBOT_VALIDATION" CERTBOT_STATE_DIR="$state_dir" python3 - <<'PY'
+import hashlib, os, pathlib, urllib.parse
+state = pathlib.Path(os.environ["CERTBOT_STATE_DIR"])
+record = os.environ["CERTBOT_RECORD"]
+validation = os.environ["CERTBOT_VALIDATION"]
+record_dir = state / "records" / urllib.parse.quote(record, safe="")
+record_dir.mkdir(parents=True, exist_ok=True)
+(record_dir / hashlib.sha256(validation.encode()).hexdigest()).write_text(validation)
+PY
+current_count="$(find "$state_dir/records" -type f | wc -l | tr -d '[:space:]')"
+payload="$(CERTBOT_RECORD="$record" CERTBOT_VALIDATION="$CERTBOT_VALIDATION" GODADDY_DNS_TTL="$ttl" python3 - <<'PY'
 import json, os
 print(json.dumps([{"data": os.environ["CERTBOT_VALIDATION"], "ttl": int(os.environ["GODADDY_DNS_TTL"])}]))
 PY
@@ -83,25 +96,68 @@ curl --connect-timeout 10 --max-time 30 -fsS -X PUT "$api_root/v1/domains/$zone/
   -H "Authorization: sso-key $GODADDY_KEY:$GODADDY_SECRET" \
   -H "Content-Type: application/json" \
   --data "$payload" >/dev/null
-fqdn="$record.$zone"
+if [ "$current_count" -lt "$expected" ]; then
+  exit 0
+fi
+batch_file="$state_dir/batch-records.tsv"
+CERTBOT_STATE_DIR="$state_dir" GODADDY_DNS_TTL="$ttl" python3 - <<'PY' > "$batch_file"
+import json, os, pathlib, urllib.parse
+state = pathlib.Path(os.environ["CERTBOT_STATE_DIR"]) / "records"
+ttl = int(os.environ["GODADDY_DNS_TTL"])
+for record_dir in sorted(p for p in state.iterdir() if p.is_dir()):
+    record = urllib.parse.unquote(record_dir.name)
+    values = []
+    for value_file in sorted(p for p in record_dir.iterdir() if p.is_file()):
+        value = value_file.read_text().strip()
+        if value and value not in values:
+            values.append(value)
+    if values:
+        print(record + "\t" + json.dumps([{"data": value, "ttl": ttl} for value in values]))
+PY
+while IFS=$'\t' read -r batch_record batch_payload; do
+  curl --connect-timeout 10 --max-time 30 -fsS -X PUT "$api_root/v1/domains/$zone/records/TXT/$batch_record" \
+    -H "Authorization: sso-key $GODADDY_KEY:$GODADDY_SECRET" \
+    -H "Content-Type: application/json" \
+    --data "$batch_payload" >/dev/null
+done < "$batch_file"
 deadline=$((SECONDS + ${GODADDY_DNS_WAIT_SECONDS:-300}))
 resolvers="${GODADDY_DNS_RESOLVERS:-8.8.8.8 1.1.1.1 9.9.9.9}"
-propagation_seconds="${GODADDY_DNS_PROPAGATION_SECONDS:-60}"
+propagation_seconds="${GODADDY_DNS_PROPAGATION_SECONDS:-200}"
+# GoDaddy TXT TTL is normally 600s. Probe every propagation_seconds instead of
+# sleeping a full TTL unconditionally; once every configured resolver sees every
+# TXT validation value, ACME validation can proceed.
 while [ "$SECONDS" -lt "$deadline" ]; do
   found=1
-  for resolver in $resolvers; do
-    if ! dig +time=5 +tries=1 +short TXT "$fqdn" "@$resolver" | tr -d '"' | grep -Fx -- "$CERTBOT_VALIDATION" >/dev/null; then
-      found=0
+  wait_file="$state_dir/wait-records.tsv"
+  CERTBOT_STATE_DIR="$state_dir" python3 - <<'PY' > "$wait_file"
+import os, pathlib, urllib.parse
+state = pathlib.Path(os.environ["CERTBOT_STATE_DIR"]) / "records"
+for record_dir in sorted(p for p in state.iterdir() if p.is_dir()):
+    record = urllib.parse.unquote(record_dir.name)
+    for value_file in sorted(p for p in record_dir.iterdir() if p.is_file()):
+        value = value_file.read_text().strip()
+        if value:
+            print(record + "\t" + value)
+PY
+  while IFS=$'\t' read -r wait_record wait_value; do
+    fqdn="$wait_record.$zone"
+    for resolver in $resolvers; do
+      if ! dig +time=5 +tries=1 +short TXT "$fqdn" "@$resolver" | tr -d '"' | grep -Fx -- "$wait_value" >/dev/null; then
+        found=0
+        break
+      fi
+    done
+    if [ "$found" = "0" ]; then
       break
     fi
-  done
+  done < "$wait_file"
   if [ "$found" = "1" ]; then
     sleep "$propagation_seconds"
     exit 0
   fi
   sleep 10
 done
-echo "DNS TXT validation did not propagate for $fqdn" >&2
+echo "DNS TXT validation did not propagate for all requested public HTTPS hosts" >&2
 exit 1`
 }
 

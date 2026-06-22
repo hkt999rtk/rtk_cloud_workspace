@@ -279,8 +279,10 @@ type appBootstrapAttempt struct {
 }
 
 type appBootstrapMaterial struct {
-	Status      appBootstrapStatus
-	Certificate tls.Certificate
+	Status          appBootstrapStatus
+	Certificate     tls.Certificate
+	TokensByEmail   map[string]tokenBundle
+	ManagersByEmail map[string]*accountLoginTokenManager
 }
 
 type mqttActorProbe struct {
@@ -683,7 +685,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	appBootstrap := appBootstrapStatus{Status: "BLOCKED", Reason: "no selected assignment"}
 	appMaterial := appBootstrapMaterial{Status: appBootstrap}
 	if len(selectedAssignments) > 0 {
-		appMaterial = prepareAppCertificateBootstrapForAssignments(endpoints["account_manager_base_url"].(string), endpoints["video_cloud_token_base_url"].(string), users.TenantSlug, usersByEmail, selectedAssignments, 10)
+		appMaterial = prepareAppCertificateBootstrapForAssignments(endpoints["account_manager_base_url"].(string), endpoints["video_cloud_token_base_url"].(string), users.TenantSlug, usersByEmail, selectedAssignments, 0)
 		appBootstrap = appMaterial.Status
 		if appBootstrap.Status == "FAIL" {
 			base["status"] = "FAIL"
@@ -731,9 +733,9 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 			if stages, err := parseSustainedStages(opts); err != nil {
 				sustained = sustainedLoadResult{Status: "FAIL", Notes: []string{err.Error()}}
 			} else if len(stages) > 0 {
-				sustained, staged = runStagedSustainedHome100KLoad(selectedAssignments, certRecords, brandname, opts.RunID, endpoints["video_cloud_token_base_url"].(string), mqttTargets, appMaterial.Certificate, seed, opts, stages)
+				sustained, staged = runStagedSustainedHome100KLoad(selectedAssignments, certRecords, brandname, opts.RunID, endpoints["video_cloud_token_base_url"].(string), mqttTargets, appMaterial.ManagersByEmail, seed, opts, stages)
 			} else {
-				sustained = runSustainedHome100KLoad(selectedAssignments, certRecords, brandname, opts.RunID, endpoints["video_cloud_token_base_url"].(string), mqttTargets, appMaterial.Certificate, duration, seed, opts)
+				sustained = runSustainedHome100KLoad(selectedAssignments, certRecords, brandname, opts.RunID, endpoints["video_cloud_token_base_url"].(string), mqttTargets, appMaterial.ManagersByEmail, duration, seed, opts)
 			}
 			attachAppBootstrapTotals(&sustained.Totals, appBootstrap)
 			for _, item := range selectedAssignments {
@@ -755,7 +757,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 				base["stage_results"] = sustainedStageResultsJSON(staged, appBootstrap)
 			}
 		} else {
-			outcomes := runSelectedDeviceProbes(selectedAssignments, certRecords, brandname, opts.RunID, endpoints["video_cloud_token_base_url"].(string), mqttHost, mqttPort, appMaterial.Certificate, opts.Concurrency)
+			outcomes := runSelectedDeviceProbes(selectedAssignments, certRecords, brandname, opts.RunID, endpoints["video_cloud_token_base_url"].(string), mqttHost, mqttPort, appMaterial.TokensByEmail, opts.Concurrency)
 			for _, item := range selectedAssignments {
 				row := capCounts[item.DeviceType]
 				row["devices"]++
@@ -818,10 +820,10 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 		"probe_result":              mqttProbeResult,
 		"probe_model":               resultModel,
 		"client_identities_checked": len(certRecords),
-		"client_identity_mode":      "app_token_and_device_token",
+		"client_identity_mode":      "account_login_token_and_device_token",
 		"telemetry_receiver":        "app_observer",
 		"command_receiver":          "device_client",
-		"auth_flow":                 "device/app certificate mTLS request_token -> MQTT token credential",
+		"auth_flow":                 "app Account Manager login/refresh token; device mTLS request_token for MQTT",
 	}
 	if len(resultNotes) > 0 {
 		result["notes"] = resultNotes
@@ -839,7 +841,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	return writeOutputs(outDir, result)
 }
 
-func runDeviceActorSeparatedEnvelope(record certRecord, brandname, runID, apiBaseURL, host string, port int, appCert tls.Certificate) deviceResult {
+func runDeviceActorSeparatedEnvelope(record certRecord, brandname, runID, apiBaseURL, host string, port int, appAccessToken string) deviceResult {
 	cert, err := loadLeafFirstX509KeyPairForRecord(record)
 	if err != nil {
 		return failedActorResult(record.DeviceID, record.DeviceType, redactedError(err))
@@ -848,12 +850,8 @@ func runDeviceActorSeparatedEnvelope(record certRecord, brandname, runID, apiBas
 	if err != nil {
 		return failedActorResult(record.DeviceID, record.DeviceType, redactedError(err))
 	}
-	appToken, err := requestAppToken(apiBaseURL, appCert, record.DeviceID)
-	if err != nil {
-		return failedActorResult(record.DeviceID, record.DeviceType, redactedError(err))
-	}
-	if strings.TrimSpace(appToken.AccessToken) == "" {
-		return failedActorResult(record.DeviceID, record.DeviceType, "app request_token response missing access_token")
+	if strings.TrimSpace(appAccessToken) == "" {
+		return failedActorResult(record.DeviceID, record.DeviceType, "account login response missing access_token")
 	}
 	result := runActorSeparatedProbe(mqttActorProbe{
 		DeviceID:    record.DeviceID,
@@ -861,7 +859,7 @@ func runDeviceActorSeparatedEnvelope(record certRecord, brandname, runID, apiBas
 		Brandname:   brandname,
 		RunID:       runID,
 		DeviceToken: deviceToken,
-		AppToken:    appToken.AccessToken,
+		AppToken:    appAccessToken,
 		Dial: func() (io.ReadWriteCloser, error) {
 			return tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", net.JoinHostPort(host, strconv.Itoa(port)), &tls.Config{InsecureSkipVerify: true})
 		},
@@ -869,7 +867,7 @@ func runDeviceActorSeparatedEnvelope(record certRecord, brandname, runID, apiBas
 		Now:     time.Now,
 	})
 	prefix := []traceStep{
-		{Step: 1, Timestamp: nowISO(), Phase: "app_token", Actor: "app_actor", Action: "request_token", Status: "PASS", Detail: "scope=app"},
+		{Step: 1, Timestamp: nowISO(), Phase: "app_login", Actor: "app_actor", Action: "account_manager_login", Status: "PASS"},
 		{Step: 2, Timestamp: nowISO(), Phase: "device_token", Actor: "device_client", Action: "request_token", Status: "PASS", Detail: "scope=device"},
 	}
 	result.TraceChain = renumberTrace(append(prefix, result.TraceChain...))
@@ -898,6 +896,7 @@ type sustainedDeviceSession struct {
 	MQTTTarget      mqttEndpointTarget
 	Reader          *sustainedDeviceReader
 	AppTokenManager *tokenManager
+	AppLoginManager *accountLoginTokenManager
 }
 
 type sustainedMQTTPublish struct {
@@ -1252,7 +1251,7 @@ func parseCSVInts(raw string) ([]int, error) {
 	return out, nil
 }
 
-func runSustainedHome100KLoad(assignments []assignment, certs []certRecord, brandname, runID, apiBaseURL string, mqttTargets []mqttEndpointTarget, appCert tls.Certificate, durationSeconds int, seed int, opts loadOptions) sustainedLoadResult {
+func runSustainedHome100KLoad(assignments []assignment, certs []certRecord, brandname, runID, apiBaseURL string, mqttTargets []mqttEndpointTarget, appManagersByEmail map[string]*accountLoginTokenManager, durationSeconds int, seed int, opts loadOptions) sustainedLoadResult {
 	result := sustainedLoadResult{Status: "PASS"}
 	window := time.Duration(durationSeconds) * time.Second
 	if window <= 0 {
@@ -1276,7 +1275,7 @@ func runSustainedHome100KLoad(assignments []assignment, certs []certRecord, bran
 		rampWindow = connectDeadline.Sub(start)
 	}
 	sessions := connectSustainedDevicesPacedUntil(assignments, certByID, brandname, runID, apiBaseURL, mqttTargets, opts.Concurrency, connectDeadline, rampWindow, &result.Totals)
-	attachAppTokenManagers(sessions, apiBaseURL, appCert)
+	attachAppLoginManagers(sessions, appManagersByEmail)
 	defer closeSustainedSessions(sessions)
 	if len(sessions) == 0 {
 		result.Status = "FAIL"
@@ -1316,7 +1315,7 @@ func runSustainedHome100KLoad(assignments []assignment, certs []certRecord, bran
 				continue
 			}
 			result.CommandsAttempted++
-			if runSustainedShadowCommandWithContext(session, brandname, runID, apiBaseURL, appCert, &result.Totals, sustainedCommandContext{
+			if runSustainedShadowCommandWithContext(session, brandname, runID, apiBaseURL, &result.Totals, sustainedCommandContext{
 				EventIndex:  event.Index,
 				SessionSlot: sessionSlot,
 				Deadline:    deadline,
@@ -1335,7 +1334,7 @@ func runSustainedHome100KLoad(assignments []assignment, certs []certRecord, bran
 	return result
 }
 
-func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord, brandname, runID, apiBaseURL string, mqttTargets []mqttEndpointTarget, appCert tls.Certificate, seed int, opts loadOptions, stages []sustainedStage) (sustainedLoadResult, []sustainedStageResult) {
+func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord, brandname, runID, apiBaseURL string, mqttTargets []mqttEndpointTarget, appManagersByEmail map[string]*accountLoginTokenManager, seed int, opts loadOptions, stages []sustainedStage) (sustainedLoadResult, []sustainedStageResult) {
 	overall := sustainedLoadResult{Status: "PASS"}
 	certByID := map[string]certRecord{}
 	for _, cert := range certs {
@@ -1389,7 +1388,7 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 			stageResult.Diagnostics.ConnectWindowSeconds = connectDeadline.Sub(connectStarted).Seconds()
 			stageResult.Diagnostics.NewAssignments = len(newAssignments)
 			newSessions := connectSustainedDevicesPacedUntil(newAssignments, certByID, brandname, runID, apiBaseURL, mqttTargets, opts.Concurrency, connectDeadline, rampWindow, &stageResult.Totals)
-			attachAppTokenManagers(newSessions, apiBaseURL, appCert)
+			attachAppLoginManagers(newSessions, appManagersByEmail)
 			stageResult.Diagnostics.ConnectFinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
 			stageResult.Diagnostics.ConnectAttempts = stageResult.Totals.ConnectAttempts - before.ConnectAttempts
 			stageResult.Diagnostics.ConnectSuccesses = stageResult.Totals.ConnectSuccesses - before.ConnectSuccesses
@@ -1511,7 +1510,7 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 					sessionLocks[sessionSlot].Lock()
 					defer sessionLocks[sessionSlot].Unlock()
 					var commandTotals mqttIOTotals
-					err := runSustainedShadowCommandWithContext(session, brandname, runID, apiBaseURL, appCert, &commandTotals, sustainedCommandContext{
+					err := runSustainedShadowCommandWithContext(session, brandname, runID, apiBaseURL, &commandTotals, sustainedCommandContext{
 						Stage:       stage.Name,
 						EventIndex:  event.Index,
 						SessionSlot: sessionSlot,
@@ -1658,9 +1657,9 @@ func connectSustainedDevices(assignments []assignment, certByID map[string]certR
 	return connectSustainedDevicesUntil(assignments, certByID, brandname, runID, apiBaseURL, mqttTargets, concurrency, time.Time{}, totals)
 }
 
-func attachAppTokenManagers(sessions []sustainedDeviceSession, apiBaseURL string, appCert tls.Certificate) {
+func attachAppLoginManagers(sessions []sustainedDeviceSession, managersByEmail map[string]*accountLoginTokenManager) {
 	for idx := range sessions {
-		sessions[idx].AppTokenManager = newAppTokenManager(apiBaseURL, appCert, sessions[idx].Record.DeviceID)
+		sessions[idx].AppLoginManager = managersByEmail[sessions[idx].Assignment.AssignedEmail]
 	}
 }
 
@@ -2101,15 +2100,15 @@ func publishSustainedTelemetry(session sustainedDeviceSession, brandname string,
 	return bytesSent, nil
 }
 
-func runSustainedShadowCommand(session sustainedDeviceSession, brandname, runID, apiBaseURL string, appCert tls.Certificate, totals *mqttIOTotals) error {
-	return runSustainedShadowCommandUntil(session, brandname, runID, apiBaseURL, appCert, time.Time{}, totals)
+func runSustainedShadowCommand(session sustainedDeviceSession, brandname, runID, apiBaseURL string, totals *mqttIOTotals) error {
+	return runSustainedShadowCommandUntil(session, brandname, runID, apiBaseURL, time.Time{}, totals)
 }
 
-func runSustainedShadowCommandUntil(session sustainedDeviceSession, brandname, runID, apiBaseURL string, appCert tls.Certificate, deadline time.Time, totals *mqttIOTotals) error {
-	return runSustainedShadowCommandWithContext(session, brandname, runID, apiBaseURL, appCert, totals, sustainedCommandContext{Deadline: deadline})
+func runSustainedShadowCommandUntil(session sustainedDeviceSession, brandname, runID, apiBaseURL string, deadline time.Time, totals *mqttIOTotals) error {
+	return runSustainedShadowCommandWithContext(session, brandname, runID, apiBaseURL, totals, sustainedCommandContext{Deadline: deadline})
 }
 
-func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandname, runID, apiBaseURL string, appCert tls.Certificate, totals *mqttIOTotals, ctx sustainedCommandContext) error {
+func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandname, runID, apiBaseURL string, totals *mqttIOTotals, ctx sustainedCommandContext) error {
 	deadline := ctx.Deadline
 	commandTimeout := ctx.Timeout
 	if commandTimeout <= 0 {
@@ -2120,23 +2119,23 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		recordCommandFailure(totals, reason, err, session, ctx)
 		return err
 	}
-	tokenTimeout, err := timeoutUntilDeadline(deadline, commandTimeout, "app_token")
+	appLoginManager := session.AppLoginManager
+	if appLoginManager == nil {
+		totals.AppLoginFailures++
+		totals.HTTPFailures++
+		return fail("app_login", "app_login_token_missing", errors.New("account login token manager missing"))
+	}
+	tokenTimeout, err := timeoutUntilDeadline(deadline, commandTimeout, "app_login")
 	if err != nil {
 		totals.HTTPFailures++
-		return fail("app_token", "app_token_request_failed", err)
+		return fail("app_login", "app_login_token_unavailable", err)
 	}
-	totals.AppTokenAttempts++
-	appTokenManager := session.AppTokenManager
-	if appTokenManager == nil {
-		appTokenManager = newAppTokenManager(apiBaseURL, appCert, session.Record.DeviceID)
-	}
-	appToken, err := appTokenManager.Token(tokenTimeout)
+	appToken, err := appLoginManager.Token(tokenTimeout)
 	if err != nil {
-		totals.AppTokenFailures++
+		totals.AppLoginFailures++
 		totals.HTTPFailures++
-		return fail("app_token", "app_token_request_failed", err)
+		return fail("app_login", "app_login_token_unavailable", err)
 	}
-	totals.AppTokenSuccesses++
 	target := session.MQTTTarget
 	if target.Host == "" || target.Port <= 0 {
 		return fail("app_mqtt_target", "app_mqtt_connect_failed", errors.New("missing MQTT target for sustained app command"))
@@ -2550,7 +2549,7 @@ func shardAssignments(items []assignment, shardIndex, shardCount int) []assignme
 	return out
 }
 
-func runSelectedDeviceProbes(assignments []assignment, certs []certRecord, brandname, runID, apiBaseURL, host string, port int, appCert tls.Certificate, concurrency int) map[string]deviceResult {
+func runSelectedDeviceProbes(assignments []assignment, certs []certRecord, brandname, runID, apiBaseURL, host string, port int, appTokensByEmail map[string]tokenBundle, concurrency int) map[string]deviceResult {
 	if concurrency <= 0 {
 		concurrency = 25
 	}
@@ -2569,7 +2568,7 @@ func runSelectedDeviceProbes(assignments []assignment, certs []certRecord, brand
 		go func() {
 			defer wg.Done()
 			for item := range jobs {
-				results <- runDeviceActorSeparatedEnvelope(item.Cert, brandname, runID, apiBaseURL, host, port, appCert)
+				results <- runDeviceActorSeparatedEnvelope(item.Cert, brandname, runID, apiBaseURL, host, port, appTokensByEmail[item.Assignment.AssignedEmail].AccessToken)
 			}
 		}()
 	}
@@ -3631,6 +3630,77 @@ type tokenManager struct {
 	bundle tokenBundle
 }
 
+type accountLoginTokenManager struct {
+	accountBaseURL string
+	tenantSlug     string
+	user           userCredential
+	now            func() time.Time
+	timeout        time.Duration
+
+	mu     sync.Mutex
+	bundle tokenBundle
+}
+
+func newAccountLoginTokenManager(accountBaseURL, tenantSlug string, user userCredential, bundle tokenBundle) *accountLoginTokenManager {
+	return &accountLoginTokenManager{
+		accountBaseURL: accountBaseURL,
+		tenantSlug:     tenantSlug,
+		user:           user,
+		now:            time.Now,
+		timeout:        10 * time.Second,
+		bundle:         bundle,
+	}
+}
+
+func (m *accountLoginTokenManager) Token(timeout time.Duration) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.now == nil {
+		m.now = time.Now
+	}
+	if timeout <= 0 {
+		timeout = m.timeout
+	}
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	now := m.now()
+	if strings.TrimSpace(m.bundle.AccessToken) == "" {
+		return m.login(timeout)
+	}
+	if !accessTokenExpired(m.bundle.AccessToken, now) {
+		return m.bundle.AccessToken, nil
+	}
+	if strings.TrimSpace(m.bundle.RefreshToken) != "" {
+		if token, err := m.refresh(timeout); err == nil {
+			return token, nil
+		}
+	}
+	return m.login(timeout)
+}
+
+func (m *accountLoginTokenManager) login(timeout time.Duration) (string, error) {
+	login, err := accountLoginAppCertificateWithTimeout(m.accountBaseURL, m.tenantSlug, m.user, "", timeout)
+	if err != nil {
+		return "", err
+	}
+	bundle := login.tokenBundle()
+	if strings.TrimSpace(bundle.AccessToken) == "" {
+		return "", errors.New("account login response missing access_token")
+	}
+	m.bundle = bundle
+	return bundle.AccessToken, nil
+}
+
+func (m *accountLoginTokenManager) refresh(timeout time.Duration) (string, error) {
+	bundle, err := accountRefreshTokenBundleWithTimeout(m.accountBaseURL, m.tenantSlug, m.bundle.RefreshToken, timeout)
+	if err != nil {
+		return "", err
+	}
+	m.bundle = bundle
+	return bundle.AccessToken, nil
+}
+
 func newDeviceTokenManager(apiBaseURL string, cert tls.Certificate, deviceID string) *tokenManager {
 	return &tokenManager{apiBaseURL: apiBaseURL, cert: cert, deviceID: deviceID, scope: "device", service: "mqtt", now: time.Now, timeout: 10 * time.Second}
 }
@@ -3873,6 +3943,9 @@ func prepareAppCertificateBootstrapForAssignments(accountBaseURL, videoBaseURL, 
 	}
 	attempts := make([]appBootstrapAttempt, 0, len(candidates))
 	var last appBootstrapMaterial
+	var firstPass appBootstrapMaterial
+	tokensByEmail := map[string]tokenBundle{}
+	managersByEmail := map[string]*accountLoginTokenManager{}
 	for _, candidate := range candidates {
 		user, ok := usersByEmail[candidate.AssignedEmail]
 		if !ok {
@@ -3893,10 +3966,22 @@ func prepareAppCertificateBootstrapForAssignments(accountBaseURL, videoBaseURL, 
 			Reason:    material.Status.Reason,
 		})
 		if material.Status.Status == "PASS" {
-			return material
+			if firstPass.Status.Status == "" {
+				firstPass = material
+			}
+			if bundle, ok := material.TokensByEmail[user.Email]; ok {
+				tokensByEmail[user.Email] = bundle
+				managersByEmail[user.Email] = newAccountLoginTokenManager(accountBaseURL, tenantSlug, user, bundle)
+			}
 		}
 		attempts = material.Status.Attempts
 		last = material
+	}
+	if len(tokensByEmail) > 0 {
+		firstPass.TokensByEmail = tokensByEmail
+		firstPass.ManagersByEmail = managersByEmail
+		firstPass.Status.Attempts = attempts
+		return firstPass
 	}
 	if last.Status.Status == "" {
 		return appBootstrapMaterial{Status: appBootstrapStatus{Status: "BLOCKED", Reason: "no valid app bootstrap candidates", Attempts: attempts}}
@@ -3907,19 +3992,16 @@ func prepareAppCertificateBootstrapForAssignments(accountBaseURL, videoBaseURL, 
 }
 
 func appBootstrapCandidates(assignments []assignment, maxCandidates int) []assignment {
-	if maxCandidates <= 0 {
-		maxCandidates = 1
-	}
 	candidates := make([]assignment, 0, maxCandidates)
 	seen := map[string]bool{}
 	for _, item := range assignments {
-		key := item.AssignedEmail + "\x00" + item.DeviceID
+		key := item.AssignedEmail
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
 		candidates = append(candidates, item)
-		if len(candidates) >= maxCandidates {
+		if maxCandidates > 0 && len(candidates) >= maxCandidates {
 			break
 		}
 	}
@@ -3927,6 +4009,7 @@ func appBootstrapCandidates(assignments []assignment, maxCandidates int) []assig
 }
 
 func prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL, tenantSlug string, user userCredential, deviceID string) appBootstrapMaterial {
+	_ = videoBaseURL
 	status := appBootstrapStatus{Status: "FAIL", UserEmail: user.Email, DeviceID: deviceID}
 	material := appBootstrapMaterial{Status: status}
 	if strings.TrimSpace(tenantSlug) == "" {
@@ -3954,16 +4037,14 @@ func prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL, tenantSlug str
 	}
 	status.CertificateStatus = first.AppCertificate.Status
 	login := first
-	var keyPEM []byte
 	switch first.AppCertificate.Status {
 	case "csr_required":
-		csrPEM, generatedKeyPEM, err := generateAppCSR("app-user:" + first.User.ID)
+		csrPEM, _, err := generateAppCSR("app-user:" + first.User.ID)
 		if err != nil {
 			status.Reason = redactedError(err)
 			material.Status = status
 			return material
 		}
-		keyPEM = generatedKeyPEM
 		login, err = accountLoginAppCertificate(accountBaseURL, tenantSlug, user, csrPEM)
 		if err != nil {
 			status.Reason = redactedError(err)
@@ -3971,59 +4052,20 @@ func prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL, tenantSlug str
 			return material
 		}
 		status.CertificateStatus = login.AppCertificate.Status
-	case "issued":
-		if !hasLocalAppCredentials(user.AppCredentials) {
-			status.Status = "BLOCKED"
-			status.Reason = "users artifact lacks local app credentials for issued app certificate"
-			material.Status = status
-			return material
-		}
-		keyPEM = []byte(strings.TrimSpace(user.AppCredentials.PrivateKeyPEM))
 	}
 	status.Subject = login.AppCertificate.Subject
 	status.FingerprintSHA256 = login.AppCertificate.FingerprintSHA256
-	if len(keyPEM) == 0 {
-		status.Status = "BLOCKED"
-		status.Reason = "existing app certificate returned but simulation has no matching private key"
-		material.Status = status
-		return material
-	}
-	certPEMText, certSource := firstCertificatePEM(
-		"artifact_cert", user.AppCertificate.CertificatePEM,
-		"artifact_chain", user.AppCertificate.CertificateChainPEM,
-		"login_cert", login.AppCertificate.CertificatePEM,
-		"login_chain", login.AppCertificate.CertificateChainPEM,
-	)
-	status.CertificateSource = certSource
-	if certPEMText == "" {
-		status.Reason = "app certificate material missing valid PEM"
-		material.Status = status
-		return material
-	}
-	certPEM := []byte(certPEMText)
-	appCert, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		status.Reason = redactedError(err)
-		material.Status = status
-		return material
-	}
-	token, err := requestAppToken(videoBaseURL, appCert, deviceID)
-	if err != nil {
-		status.Reason = redactedError(err)
-		material.Status = status
-		return material
-	}
-	if strings.TrimSpace(token.AccessToken) == "" {
-		status.Reason = "app request_token response missing access_token"
+	if strings.TrimSpace(login.Tokens.AccessToken) == "" {
+		status.Reason = "account login response missing access_token"
 		material.Status = status
 		return material
 	}
 	status.Status = "PASS"
 	status.Reason = ""
-	status.TokenScope = token.Scope
-	status.AccessToken = token.AccessToken
+	status.TokenScope = "account_manager_login"
+	status.AccessToken = login.Tokens.AccessToken
 	material.Status = status
-	material.Certificate = appCert
+	material.TokensByEmail = map[string]tokenBundle{user.Email: login.tokenBundle()}
 	return material
 }
 
@@ -4039,6 +4081,10 @@ type accountLoginAppResponse struct {
 	User struct {
 		ID string `json:"id"`
 	} `json:"user"`
+	Tokens struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+	} `json:"tokens"`
 	AppCertificate struct {
 		Status              string `json:"status"`
 		Subject             string `json:"subject"`
@@ -4048,10 +4094,25 @@ type accountLoginAppResponse struct {
 	} `json:"app_certificate"`
 }
 
+func (r accountLoginAppResponse) tokenBundle() tokenBundle {
+	return tokenBundle{
+		AccessToken:  strings.TrimSpace(r.Tokens.AccessToken),
+		RefreshToken: strings.TrimSpace(r.Tokens.RefreshToken),
+		issuedAt:     time.Now(),
+	}
+}
+
 func accountLoginAppCertificate(baseURL, tenantSlug string, user userCredential, csrPEM string) (accountLoginAppResponse, error) {
+	return accountLoginAppCertificateWithTimeout(baseURL, tenantSlug, user, csrPEM, 10*time.Second)
+}
+
+func accountLoginAppCertificateWithTimeout(baseURL, tenantSlug string, user userCredential, csrPEM string, timeout time.Duration) (accountLoginAppResponse, error) {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" || strings.Contains(baseURL, "unknown") {
 		return accountLoginAppResponse{}, errors.New("missing account manager base URL")
+	}
+	if timeout <= 0 {
+		return accountLoginAppResponse{}, errors.New("account login timeout exhausted before request")
 	}
 	tenantSlug = strings.TrimSpace(tenantSlug)
 	if tenantSlug == "" {
@@ -4070,7 +4131,7 @@ func accountLoginAppCertificate(baseURL, tenantSlug string, user userCredential,
 		return accountLoginAppResponse{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	client := http.Client{Timeout: 10 * time.Second}
+	client := http.Client{Timeout: timeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return accountLoginAppResponse{}, err
@@ -4088,6 +4149,55 @@ func accountLoginAppCertificate(baseURL, tenantSlug string, user userCredential,
 		return accountLoginAppResponse{}, err
 	}
 	return out, nil
+}
+
+func accountRefreshTokenBundleWithTimeout(baseURL, tenantSlug, refreshToken string, timeout time.Duration) (tokenBundle, error) {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" || strings.Contains(baseURL, "unknown") {
+		return tokenBundle{}, errors.New("missing account manager base URL for token refresh")
+	}
+	if timeout <= 0 {
+		return tokenBundle{}, errors.New("account refresh timeout exhausted before request")
+	}
+	tenantSlug = strings.TrimSpace(tenantSlug)
+	if tenantSlug == "" {
+		return tokenBundle{}, errors.New("missing tenant_slug")
+	}
+	refreshToken = strings.TrimSpace(refreshToken)
+	if refreshToken == "" {
+		return tokenBundle{}, errors.New("missing refresh_token")
+	}
+	raw, err := json.Marshal(map[string]string{"refresh_token": refreshToken})
+	if err != nil {
+		return tokenBundle{}, err
+	}
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/v1/brand-clouds/"+url.PathEscape(tenantSlug)+"/auth/refresh", bytes.NewReader(raw))
+	if err != nil {
+		return tokenBundle{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := http.Client{Timeout: timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return tokenBundle{}, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return tokenBundle{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return tokenBundle{}, fmt.Errorf("account refresh status=%d", resp.StatusCode)
+	}
+	var out accountLoginAppResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		return tokenBundle{}, err
+	}
+	bundle := out.tokenBundle()
+	if strings.TrimSpace(bundle.AccessToken) == "" {
+		return tokenBundle{}, errors.New("account refresh response missing access_token")
+	}
+	return bundle, nil
 }
 
 func generateAppCSR(subject string) (string, []byte, error) {

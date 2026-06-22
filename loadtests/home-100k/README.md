@@ -80,16 +80,16 @@ Default baseline:
 | --- | --- |
 | Devices | 100,000 |
 | Users | 5,000 |
-| Devices per user | 10 |
+| Devices per user | 20 |
 | Server target | Current staging/LKE env-root |
 | Load-generator runtime | Ephemeral Linode VMs |
 | First baseline region model | Single Linode region |
-| Device-generator density | Up to 20,000 devices per VM |
-| Load-generator VM count | 5 execution-shard VMs labeled `lg01`..`lg05` by default |
-| Per-VM device task | 20,000 devices |
-| Per-VM user task | 1,000 users |
-| Total load-generator VM count | 5 for the default 100K-device/5K-user mixed baseline |
-| Ramp-up time | Configured by `HOME100K_RAMP_UP_TIME` |
+| Device-generator density | Configured by `HOME100K_LOAD_GENERATOR_DEVICES_PER_VM`; default 20,000 devices per VM |
+| Load-generator VM count | Automatically planned as `ceil(HOME100K_DEVICES / HOME100K_LOAD_GENERATOR_DEVICES_PER_VM)` unless `HOME100K_VM_COUNT` overrides it |
+| Per-VM device task | Up to `HOME100K_LOAD_GENERATOR_DEVICES_PER_VM` devices |
+| Per-VM user task | Derived from the assigned device shard and `HOME100K_DEVICES_PER_USER` |
+| Total load-generator VM count | 5 for the default 100K-device/5K-user mixed baseline; smaller targets such as 9K or 1K plan 1 VM by default |
+| Ramp-up time | Configured by `HOME100K_STAGE_WARM_UP` |
 | Target connects | Configured by `HOME100K_DEVICES` |
 
 The test should use deterministic sharding. A run ramps directly to the target
@@ -328,6 +328,11 @@ Required behavior:
 - `plan` prints VM count, role layout, shard ranges, ramp-up time, target
   connects, scenario
   mix, expected artifacts, server evidence queries, and cleanup plan.
+  By default the VM count is calculated as
+  `ceil(HOME100K_DEVICES / HOME100K_LOAD_GENERATOR_DEVICES_PER_VM)`.
+  `HOME100K_VM_COUNT`/`--vm-count` is an explicit override for operator-driven
+  sharding experiments, but the planner rejects an override that exceeds the
+  configured per-VM generator capacity.
 - `provision-vms` creates or reuses Linode VMs in the selected region. It is a
   dry-run by default; live provisioning requires `--live --confirm-live` and a
   Linode token from `--linode-token` or `LINODE_TOKEN`.
@@ -472,6 +477,8 @@ The script keeps non-secret defaults in one place:
 | `HOME100K_DEVICES` | `9000` from the default description file |
 | `HOME100K_USERS` | unset; planner derives `ceil(devices / devices-per-user)` |
 | `HOME100K_DEVICES_PER_USER` | `20` from the default description file |
+| `HOME100K_LOAD_GENERATOR_DEVICES_PER_VM` | `20000`; per-VM generator capacity used by the sizing formula |
+| `HOME100K_VM_COUNT` | unset; planner derives `ceil(HOME100K_DEVICES / HOME100K_LOAD_GENERATOR_DEVICES_PER_VM)`, so the default 9K profile uses 1 VM and the 100K baseline uses 5 VMs |
 | `HOME100K_RUNNER_NOFILE_LIMIT` | `1048576`; remote runner daemon file-descriptor limit for MQTT sockets |
 | `HOME100K_MQTT_CONCURRENCY` | `1000`; per-VM-shard live MQTT connect worker concurrency |
 | `HOME100K_COMMAND_CONCURRENCY` | `100`; per-VM-shard live shadow command concurrency |
@@ -558,10 +565,11 @@ Two load-generator runtime constraints are real capacity-test requirements, not
 implementation preferences:
 
 - File descriptor headroom: every live MQTT TCP/TLS connection consumes at
-  least one file descriptor on the load generator. A 9K-device / 5-VM debug
-  profile only needs thousands of FDs per VM, but a 100K-device profile can
-  require tens of thousands per VM once device sessions, app MQTT sessions,
-  logs, files, DNS, and SSH sockets are included. The default
+  least one file descriptor on the load generator. Small profiles such as 9K
+  devices normally fit in one VM under the 20K-per-VM planner rule, while a
+  100K-device profile plans five mixed VMs and can require tens of thousands
+  of FDs per VM once device sessions, app MQTT sessions, logs, files, DNS, and
+  SSH sockets are included. The default
   `HOME100K_RUNNER_NOFILE_LIMIT=1048576` is a `2^20` high-water limit used to
   keep the generator OS ceiling out of the server-capacity result. It does not
   create 1,048,576 connections; actual connection count is still controlled by
@@ -740,8 +748,11 @@ query API is used when `services/cloud-logger/logger.env` is available in the
 selected env-root.
 For LKE environments where the logger config is intentionally stored elsewhere,
 set `HOME100K_CLOUD_LOGGER_ENV` to the logger env file path or export
-`CLOUD_LOGGER_ENDPOINT` and `CLOUD_LOGGER_INGEST_TOKEN` before evidence
-collection; do not put logger tokens directly in the description file.
+`HOME100K_CLOUD_LOGGER_ENDPOINT` and
+`HOME100K_CLOUD_LOGGER_INGEST_TOKEN` before evidence collection. The endpoint
+can be a `kubectl port-forward` URL such as `http://127.0.0.1:18090` when the
+public logger ingress is not the desired evidence path; do not put logger
+tokens directly in the description file.
 It writes `server-evidence.json` when `--out-dir` is set. Partial probe failure is preserved as
 `complete=false`, so the final report cannot become a false `PASS`.
 `aggregate` reads `--out-dir/shards/*/results.json` plus

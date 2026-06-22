@@ -1306,8 +1306,8 @@ func missingClientCounterReasons(device DeviceMQTTTotals, app AppUserTotals) []s
 	if device.ReceivedMessages == 0 {
 		reasons = append(reasons, "client device MQTT received messages are zero; shadow delta path did not run")
 	}
-	if app.TokenAttempts == 0 {
-		reasons = append(reasons, "client app token attempts are zero")
+	if app.LoginAttempts == 0 && app.TokenAttempts == 0 {
+		reasons = append(reasons, "client app login/token attempts are zero")
 	}
 	if app.DesiredWrites == 0 {
 		reasons = append(reasons, "client app desired writes are zero; shadow desired path did not run")
