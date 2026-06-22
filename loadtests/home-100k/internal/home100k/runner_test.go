@@ -846,6 +846,46 @@ func TestCorrelateServerEvidenceAllowsSmallEMQXCounterDeltaAt10KScale(t *testing
 	}
 }
 
+func TestCorrelateServerEvidenceAcceptsAppLoginWithoutRequestToken(t *testing.T) {
+	device := DeviceMQTTTotals{
+		ConnectAttempts:   1000,
+		ConnectSuccess:    1000,
+		Subscribes:        1000,
+		Publishes:         740,
+		ReceivedMessages:  50,
+		DeltaReceived:     50,
+		ReportedPublishes: 50,
+	}
+	app := AppUserTotals{
+		LoginAttempts:      1,
+		LoginSuccess:       1,
+		MQTTConnackSuccess: 50,
+		DesiredWrites:      50,
+		ReceivedAcks:       50,
+	}
+	evidence := ServerEvidence{
+		Complete: true,
+		Sources: map[string]EvidenceSource{
+			"emqx": {Available: true, Counters: map[string]int64{
+				"emqx.broker.identity":       1,
+				"emqx.metric.client.connack": 1053,
+			}},
+			"iot_device_shadow": {Available: true, Counters: map[string]int64{
+				"app_user.desired_writes":        50,
+				"device_mqtt.delta_received":     50,
+				"device_mqtt.reported_publishes": 50,
+				"app_user.received_acks":         50,
+			}},
+		},
+	}
+
+	correlation := correlateServerEvidence(evidence, device, app)
+
+	if correlation.Status != "pass" {
+		t.Fatalf("status = %s, want pass; checks=%#v reasons=%#v", correlation.Status, correlation.Checks, correlation.Reasons)
+	}
+}
+
 func TestCorrelateServerEvidenceRejectsLargeEMQXCounterDelta(t *testing.T) {
 	device := DeviceMQTTTotals{
 		ConnectAttempts:   10000,

@@ -7,17 +7,17 @@
 ## Cloud Environment Root
 
 Environment root 採 `cloud_env/<env>/<provider>` 形式。staging scripts
-預設使用本機、git ignored 的 `cloud_env/staging/linode` 作為實際 Linode
-environment root。操作時可用 `--env-root cloud_env/staging` 指定 staging
-environment directory；script 會依 `CLOUD_PROVIDER`、`RTK_CLOUD_STAGING_PROVIDER`
-或 provider stack file 自動解析到 `cloud_env/staging/linode` 或
-`cloud_env/staging/lke`。這個目錄集中保存 operator env、topology、service
-env、state、keys/certificates、device fixtures、artifacts 與 backups。
+預設使用本機、git ignored 的 `cloud_env/staging/lke` 作為 active environment
+root。操作時可用 `--env-root cloud_env/staging` 指定 staging environment
+directory；script 會依 `CLOUD_PROVIDER`、`RTK_CLOUD_STAGING_PROVIDER` 或
+provider stack file 自動解析到 `cloud_env/staging/lke` 或其他 Kubernetes
+provider 子目錄。這個目錄集中保存 stack metadata、service env、state、
+device fixtures、artifacts 與 backups。
 
-目前 workspace provision routing 分成 cloud provider adapter 與 runtime
-兩層。`CLOUD_PROVIDER=linode` 保留 legacy VM runtime，仍 dispatch 到 Video
-Cloud、Account Manager、Cloud Admin、Cloud Logger 的 VM scripts。
-`CLOUD_PROVIDER=lke` 走 Kubernetes runtime，provider adapter 只負責 Linode
+目前 workspace deployment routing 分成 cloud provider adapter 與 Kubernetes
+runtime 兩層。`CLOUD_PROVIDER=linode` 代表已退役的 VM runtime，active
+deployment 會直接 fail fast；`CLOUD_PROVIDER=lke` 走 Kubernetes runtime，
+provider adapter 只負責 Linode
 LKE cluster discovery/create/kubeconfig；RTK workloads、Namespace、Secret、
 Deployment、Service、Ingress、NetworkPolicy、rollout 與 E2E orchestration
 由共用 Kubernetes runtime 處理。若沒有 `KUBECONFIG` / current context，LKE
@@ -31,9 +31,9 @@ namespace/apply/delete/rollout path。`deploy` 需要 container image；
 `LKE_CLOUD_LOGGER_IMAGE`。
 Service images 由各 service repo 的 release workflow 發布到 GHCR；
 workspace 只解析 pinned submodule commit、驗證對應 image 是否存在，並輸出
-後續 deploy/e2e 需要的 `LKE_*_IMAGE` mapping。GCP/Azure/AWS 的 Kubernetes
-service provider id 分別預留為 `gke`、`aks`、`eks`；目前只有 fail-fast
-adapter，會在任何 kubectl、cloud API、SSH、DNS 或 state mutation 前停止。
+後續 deploy/e2e 需要的 `LKE_*_IMAGE` mapping。Generic Kubernetes、
+GCP/Azure/AWS 的 provider id 分別預留為 `k8s`、`gke`、`aks`、`eks`；目前只有
+fail-fast adapter，會在任何 cloud API、DNS 或 state mutation 前停止。
 現階段唯一應被 live 驗證的 Kubernetes provider 仍是 `lke`。
 
 Kubernetes runtime manifest 的新增規則：非 secret YAML 優先放在
@@ -74,7 +74,10 @@ Platform View 分頁透過 same-origin iframe 觀看 Grafana，Cloud Admin BFF �
 
 可用 `--env-root PATH` 指向另一份 environment directory。舊的 `--secrets-root PATH` 仍保留為相容 alias，但新的操作與文件都應使用 `--env-root`。
 
-`cloud-*` 是目前正式入口。舊的 `staging-*` / `staging_*` 相容 wrapper 已移除；automation 與文件都應使用 `cloud-*` 名稱。
+K8s staging operator 入口是 `scripts/run-staging-e2e.sh`、
+`scripts/setup-staging-e2e-data.sh` 與 `./stg.sh`。舊 VM runtime shortcut 與
+service-owned VM runtime path 不再是 active deployment 入口；歷史參考只看
+`docs/linode-staging-deployment-snapshot.md`。
 
 目錄配置請見 `docs/cloud-env-layout.zh-TW.md`。
 
@@ -224,7 +227,7 @@ go run ./scripts/go/rtk-cloud -- generate-load-devices \
 # 指定輸出目錄；若目錄已存在，用 --force 重建
 go run ./scripts/go/rtk-cloud -- generate-load-devices \
   --env-root cloud_env/staging \
-  --out-dir cloud_env/staging/linode/devices/manual \
+  --out-dir cloud_env/staging/lke/devices/manual \
   --force
 
 # 只做離線 key/cert 材料產生，不呼叫 server；測試 script 本身時使用
@@ -238,8 +241,8 @@ go run ./scripts/go/rtk-cloud -- generate-load-devices \
 - `--count N`：產生 device 數量，預設 `100`。
 - `--mix SPEC`：類型權重，例如 `camera=40,light=25,air_conditioner=20,smart_meter=15`。
 - `--prefix PREFIX`：device id prefix，預設 `load-device`，輸出如 `load-device-0001`。
-- `--env-root PATH`：指定 environment directory；必填。可傳 `cloud_env/staging`，script 會自動使用其下的 `linode/`。
-- `--out-dir PATH`：輸出目錄，預設 `cloud_env/staging/linode/devices/test_device`。
+- `--env-root PATH`：指定 environment directory；必填。可傳 `cloud_env/staging`，script 會自動使用其下的 Kubernetes provider 子目錄，預設 `lke/`。
+- `--out-dir PATH`：輸出目錄，預設 `cloud_env/staging/lke/devices/test_device`。
 - `--factory-url URL` / `FACTORY_ENROLL_URL`：覆寫 factory enrollment API base URL；預設從 env-root 的 `FACTORY_ENROLL_URL` 讀取，沒有時用 `VIDEO_CLOUD_DOMAIN` 推導 `https://<domain>`。
 - `--factory-auth-key KEY` / `FACTORY_ENROLL_AUTH_KEY`：覆寫 factory enrollment HMAC key；預設從 env-root 的 video-cloud service env 讀取。
 - `--factory-id`、`--line-id`、`--station-id`、`--fixture-id`、`--operator-id`、`--batch-id`：送到 factory enroll request 的量產欄位。
@@ -281,13 +284,13 @@ ORDER BY device_type, service_options;
 
 預期結果是 `factory_device_entitlements=100`、`cert_issue_requests=100`、全部 `entitlement_state=active`、全部 cert 欄位非空、缺號為 `0`；預設配比應為 camera `40` 台帶 `["mqtt", "video_storage", "video_streaming"]`，light `25`、air_conditioner `20`、smart_meter `15` 台各帶 `["mqtt"]`。
 
-輸出的 private key 與 `--generate-only` 的 CA key 預設位於 git ignored 的 `cloud_env/staging/linode/devices/test_device`，不可 commit，也不可用在 production 或 customer environment。若要重建既有輸出，使用 `--force`。
+輸出的 private key 與 `--generate-only` 的 CA key 預設位於 git ignored 的 `cloud_env/staging/lke/devices/test_device`，不可 commit，也不可用在 production 或 customer environment。若要重建既有輸出，使用 `--force`。
 
 ### `go run ./scripts/go/rtk-cloud -- unprovision-devices`
 
 依照前一次 `go run ./scripts/go/rtk-cloud -- bind-devices` 產生的 redacted bind artifact，呼叫 Account Manager user-facing unprovision API，釋放 device 的 user/org binding，讓正常 device 回到可轉售或重新 onboarding 的狀態。這個 script 只走 Account Manager API，不 SSH 到遠端主機、不接觸 raw Claim Token、不撤銷 factory certificate，也不操作 Video Cloud denylist。
 
-預設會讀取最新的 `cloud_env/staging/linode/artifacts/device-bind/<brand>-device-bind-*.json`，並使用 artifact 內記錄的 `inputs.users_file` 登入原 assigned user 呼叫：
+預設會讀取最新的 `<env-root>/artifacts/device-bind/<brand>-device-bind-*.json`，並使用 artifact 內記錄的 `inputs.users_file` 登入原 assigned user 呼叫：
 
 ```sh
 go run ./scripts/go/rtk-cloud -- unprovision-devices \
@@ -308,7 +311,7 @@ go run ./scripts/go/rtk-cloud -- unprovision-devices \
 
 ### `go run ./scripts/go/rtk-cloud -- migrate-env`
 
-舊 VM staging env 匯入工具已退役。staging runtime 已改為 K8s-only，不再從 submodule VM deploy 目錄匯入 state/env。請使用 `sync-env` 維護 K8s/domain metadata，並讓 E2E 透過 K8s service query/port-forward 取得 runtime endpoint。
+舊 VM staging env 匯入工具已退役。staging runtime 已改為 K8s-only，不再從 retired submodule runtime 目錄匯入 state/env。請使用 `sync-env` 維護 K8s/domain metadata，並讓 E2E 透過 K8s service query/port-forward 取得 runtime endpoint。
 
 用法：
 
@@ -319,18 +322,19 @@ go run ./scripts/go/rtk-cloud -- migrate-env --env-root cloud_env/staging
 
 常用選項：
 
-- `--env-root PATH`：指定 environment directory；必填。可傳 `cloud_env/staging`，script 會依 provider 自動使用其下的 `linode/` 或 `lke/`。
+- `--env-root PATH`：指定 environment directory；必填。可傳 `cloud_env/staging`，script 會依 provider 自動使用其下的 Kubernetes provider 子目錄，預設 `lke/`。
 - `--force`：保留為相容 flag，但命令一律回報 retired。
 
 ### `go run ./scripts/go/rtk-cloud -- sync-env`
 
-依照 `cloud_env/<env>/linode/env/stack.env` 內的 root metadata 產生所有命名欄位。`CLOUD_ENV_NAME` 是唯一 stack slug/root；stack name、domain、topology label、Linode VM/firewall label、VPC/subnet label，以及 Account Manager、Cloud Admin、Cloud Logger service env 的 domain/label 都由它推演，不要手動分別修改。
+依照 `cloud_env/<env>/<provider>/env/stack.env` 內的 root metadata 產生
+Kubernetes stack/domain metadata。`CLOUD_ENV_NAME` 是唯一 stack slug/root；
+stack name、domain、K8s namespace/label metadata，以及存在的 service env
+內相關 URL 都由它推演，不要手動分別修改。
 
-目前 `sync-env` 仍是 Linode naming helper：產出的 `*_LINODE_*` 欄位是 VM
-provider metadata，不是 LKE 或未來 AWS/GCP/Azure 的跨 provider 欄位。LKE
-env root 可以使用相同 root inputs 讓 runtime CLI 推導 domain/stack name，但
-production Kubernetes manifests、Helm charts、CI/CD pipeline 仍受
-`docs/lke-migration-inventory.md` 的 gate 管制。
+`sync-env --check` 對 LKE/Kubernetes provider 不要求 legacy VM
+`topology/video-cloud-staging.yaml`。`CLOUD_PROVIDER=linode` 僅保留為 retired
+VM metadata 清理/檢查相容路徑，不是 active deployment provider。
 
 Root inputs 固定為：
 
@@ -339,7 +343,8 @@ Root inputs 固定為：
 - `CLOUD_REGION`
 - `CLOUD_DNS_ROOT_DOMAIN`
 
-以 `CLOUD_ENV_NAME=stg` 為例，generated naming 會包含 `video-cloud-stg-edge`、`rtk-account-manager-stg`、`rtk-cloud-admin-stg`、`rtk-cloud-logger-stg`。
+以 `CLOUD_ENV_NAME=stg` 為例，generated naming 會包含
+`CLOUD_STACK_NAME=video-cloud-stg` 與各 public/internal service domain。
 
 用法：
 
@@ -348,13 +353,16 @@ go run ./scripts/go/rtk-cloud -- sync-env --env-root cloud_env/staging
 go run ./scripts/go/rtk-cloud -- sync-env --env-root cloud_env/staging --check
 ```
 
-`--check` 不改檔，只檢查 `stack.env` generated block、topology YAML、service env 是否已和 root metadata 同步。staging runtime 已改為 K8s-only；若不同步請先執行 `sync-env --env-root ...`。
+`--check` 不改檔，只檢查 `stack.env` generated block 與存在的 service env
+是否已和 root metadata 同步。staging runtime 是 K8s-only；若不同步請先執行
+`sync-env --env-root ...`。
 
 ### `go run ./scripts/go/rtk-cloud -- provision-k8s`
 
-Linode staging runtime 只支援 K8s。`provision-k8s` 不建立 VM，也不部署 VM binary；它會取得 LKE kubeconfig、確認 staging namespaces 存在，並等待 deployment/statefulset rollout ready。
+Staging runtime 只支援 K8s。`provision-k8s` 不建立 VM，也不部署 VM binary；它會取得 kubeconfig、確認 staging namespaces 存在，並等待 deployment/statefulset rollout ready。
 
-Provider-aware `provision`/`deploy` command 仍保留給 legacy VM 與 LKE image/runtime tooling；完整 staging E2E 目前走 `provision-k8s`，不走 VM deploy hooks。
+Provider-aware `provision`/`deploy` command 只 dispatch 到 Kubernetes provider。
+`CLOUD_PROVIDER=linode` 會回報 retired VM runtime，不會呼叫 VM runtime hooks。
 
 LKE `provision --apply` 預設會安裝 Kubernetes metrics-server 到 `kube-system`，版本由 `LKE_METRICS_SERVER_VERSION` 控制，預設 `v0.8.1`。metrics-server 提供 `metrics.k8s.io`，讓 `kubectl top nodes` / `kubectl top pods` 與 Kubernetes HPA resource metrics 可用；它不取代 Prometheus 的長期觀測、dashboard 或 alert 用途。
 
@@ -409,7 +417,7 @@ go run ./scripts/go/rtk-cloud -- provision-k8s \
 常用選項：
 
 - `--workspace PATH`：指定 workspace 根目錄。
-- `--env-root PATH`：指定 environment directory；必填。可傳 `cloud_env/staging`，script 會自動使用其下的 `linode/`。
+- `--env-root PATH`：指定 environment directory；必填。可傳 `cloud_env/staging`，script 會自動使用其下的 Kubernetes provider 子目錄，預設 `lke/`。
 - `--confirm STACK`：必須符合 `CLOUD_STACK_NAME`，避免操作錯誤 stack。
 - `--timeout DURATION`：K8s rollout 等待時間，預設 5 分鐘；也可用 `CLOUD_STAGING_E2E_K8S_ROLLOUT_TIMEOUT` 設定。
 
@@ -507,6 +515,22 @@ scripts/destroy-linode-staging-resources.sh --env-root cloud_env/staging/lke --y
 Object Storage buckets 會列出但預設略過。若確定 matched buckets 已清空且也要刪除，
 才加 `--include-object-storage`；Linode API 會拒絕刪除非空 bucket。
 
+Linode CSI 可能留下 Kubernetes `Retain` policy 造成的 unattached `pvc-*`
+Block Storage volumes。這些 volume 也會列在 dry-run 裡，但預設一律 SKIP。
+若要刪除，必須先從 dry-run 輸出複製精確的 Linode volume id，再同時傳
+`--include-orphan-volumes` 與 `--orphan-volume-ids`。不要只靠 `pvc-*`
+名稱批次刪除，避免誤刪其他環境或其他 cluster 的 Retained PVC。
+
+```sh
+scripts/destroy-linode-staging-resources.sh --env-root cloud_env/staging/lke
+scripts/destroy-linode-staging-resources.sh \
+  --env-root cloud_env/staging/lke \
+  --yes \
+  --confirm-text "destroy video-cloud-staging" \
+  --include-orphan-volumes \
+  --orphan-volume-ids 16311688,16303493
+```
+
 ### Staging K8s lifecycle phases
 
 正式 staging runtime 已拆成三個可獨立執行的 K8s lifecycle phase。Shell
@@ -549,21 +573,23 @@ scripts/run-staging-e2e.sh --plan
 scripts/run-staging-e2e.sh --confirm video-cloud-staging
 ```
 
-LKE staging capacity baseline 預設建立 `4` 台 node，保留
-`account-manager` replicas 為 `1`，`video-cloud-api` 預設為 `3` pods，
-MQTT 預設為 `3` pod EMQX StatefulSet cluster，分散到不同 node 以支援
-HAProxy MQTTS backend round-robin。PostgreSQL 預設 request/limit 提高為
-`1 CPU`、`2Gi` request memory、`4Gi` limit memory；`video-cloud-api`
-預設為 `500m` CPU request、`512Mi` memory request、`1Gi` memory limit。
-容量測試或 production-like smoke 可用
-`LKE_MQTT_REPLICAS`、`LKE_ACCOUNT_MANAGER_REPLICAS`、
-`LKE_VIDEO_CLOUD_REPLICAS`、`LKE_NODE_COUNT` 調整；常用資源
-override 包含 `LKE_POSTGRES_REQUEST_CPU`、`LKE_POSTGRES_REQUEST_MEMORY`、
-`LKE_POSTGRES_LIMIT_MEMORY`、`LKE_VIDEO_CLOUD_API_REQUEST_CPU`、
-`LKE_VIDEO_CLOUD_API_REQUEST_MEMORY`、`LKE_VIDEO_CLOUD_API_LIMIT_MEMORY`、
-`LKE_MQTT_REQUEST_CPU`、`LKE_MQTT_REQUEST_MEMORY`、
-`LKE_MQTT_LIMIT_MEMORY`、`LKE_INGRESS_REPLICAS` 與
-`LKE_INGRESS_REQUEST_CPU`。
+LKE staging capacity 以 `cloud_env/staging/lke/env/stack.env` 為 source of
+truth。`rtk-cloud provision --plan` 會先印出 capacity plan；
+`--preflight`、`--apply`、`--deploy` 會在 mutation 前檢查：
+`required_mqtt_replicas = ceil(LKE_TARGET_CONNECTS / LKE_MQTT_CONNECTIONS_PER_POD)`，
+`usable_node_capacity = node_allocatable - per_node_system_reserved`，
+`required_nodes = max(cpu nodes, memory nodes, required_mqtt_replicas)`。
+目前 1K validation profile 在 `stack.env` 明確設定
+`LKE_TARGET_CONNECTS=1000`、`LKE_MQTT_CONNECTIONS_PER_POD=20000`、
+`LKE_MQTT_REPLICAS=2`、`LKE_NODE_COUNT=2`。100K 或更高目標應調整
+`LKE_TARGET_CONNECTS`、`LKE_MQTT_REPLICAS=auto` 或明確 replicas、
+`LKE_NODE_COUNT=auto` 或明確 node count，再用 plan/preflight review。
+常用資源 override 包含 `LKE_POSTGRES_REQUEST_CPU`、
+`LKE_POSTGRES_REQUEST_MEMORY`、`LKE_POSTGRES_LIMIT_MEMORY`、
+`LKE_VIDEO_CLOUD_API_REQUEST_CPU`、`LKE_VIDEO_CLOUD_API_REQUEST_MEMORY`、
+`LKE_VIDEO_CLOUD_API_LIMIT_MEMORY`、`LKE_MQTT_REQUEST_CPU`、
+`LKE_MQTT_REQUEST_MEMORY`、`LKE_MQTT_LIMIT_MEMORY`、
+`LKE_INGRESS_REPLICAS` 與 `LKE_INGRESS_REQUEST_CPU`。
 
 `run-staging-e2e.sh --confirm` 預設會先 reset K8s runtime resources，因此也
 預設重建 users/devices/bind artifacts，不重用舊本機 artifact；這可避免
@@ -625,7 +651,7 @@ scripts/setup-staging-e2e-data.sh \
   --brandname RTK \
   --user-count 10 \
   --device-count 100 \
-  --out-dir cloud_env/staging/linode/artifacts/staging-e2e/manual-data-setup
+  --out-dir cloud_env/staging/lke/artifacts/staging-e2e/manual-data-setup
 ```
 
 也可以用 staging shortcut：
@@ -638,13 +664,13 @@ scripts/setup-staging-e2e-data.sh \
 
 - `--plan`：只列出 data setup 會執行的步驟。
 - `--workspace PATH`：指定 workspace root；預設目前 checkout。
-- `--env-root PATH`：指定 environment directory；預設 `cloud_env/staging`，會依 provider 自動 resolve 到 `cloud_env/staging/linode` 或 `cloud_env/staging/lke`。
+- `--env-root PATH`：指定 environment directory；預設 `cloud_env/staging`，會依 provider 自動 resolve 到 Kubernetes provider 子目錄，預設 `cloud_env/staging/lke`。
 - `--brandname NAME`：brand cloud 名稱；預設 `RTK`。
 - `--user-count N` / `--device-count N`：建立 user/device 數量。
 - `--device-mix MIX` / `--device-prefix PREFIX`：轉傳給 `generate-load-devices`。
 - `--out-dir PATH`：輸出 `summary.json`、`logs/*.log` 與 `bind-validation/` 的位置；未指定時使用 `<env-root>/artifacts/staging-e2e-data/<timestamp>/`。
 
-輸出 `summary.json` 會包含 `users_file`、`device_bind_file`、`bind_validation_dir`，以及 create brand、create users、create devices、bind devices、validate bind 每段的 status、exit code、duration seconds 和 log path。這個腳本支援 `CLOUD_PROVIDER=linode` 與 `CLOUD_PROVIDER=lke`；其他 provider 會在任何 mutation 前 fail fast。
+輸出 `summary.json` 會包含 `users_file`、`device_bind_file`、`bind_validation_dir`，以及 create brand、create users、create devices、bind devices、validate bind 每段的 status、exit code、duration seconds 和 log path。這個腳本只支援 Kubernetes provider；`CLOUD_PROVIDER=linode` 會在任何 mutation 前 fail fast。
 
 ### Home loading test
 
@@ -665,12 +691,12 @@ Home loading test 的詳細操作步驟。
 
 ### K8s runtime 設定與 log level
 
-staging runtime 已改為 K8s-only，不再提供舊的 VM deploy shortcut。application service log level 應透過 K8s manifest/secret/config 管理，再用 `provision-k8s` 檢查 rollout readiness。
+staging runtime 已改為 K8s-only，不再提供舊的 VM runtime shortcut。application service log level 應透過 K8s manifest/secret/config 管理，再用 `provision-k8s` 檢查 rollout readiness。
 
 Staging 的平台管理頁登入帳密和 Account Manager automation token 帳密不同：
 
-- Cloud Admin `/login?next=/admin` 使用 `cloud_env/staging/linode/services/cloud-admin/admin-staging.env` 內的 `ADMIN_BOOTSTRAP_EMAIL` / `ADMIN_BOOTSTRAP_PASSWORD`。
-- `./stg.sh token` 和 e2e brand/user/bind automation 使用 `cloud_env/staging/linode/services/account-manager/account-manager-platform-admin.env` 內的 Account Manager bootstrap platform-admin 帳密。
+- Cloud Admin `/login?next=/admin` 使用 Account Manager platform-admin flow，不再使用 legacy Cloud Admin bootstrap credential。
+- `./stg.sh token` 和 e2e brand/user/bind automation 使用 `cloud_env/staging/lke/services/account-manager/account-manager-platform-admin.env` 內的 Account Manager bootstrap platform-admin 帳密。
 
 不要用 Account Manager bootstrap 帳號登入 Cloud Admin `/admin` UI。詳細邊界見 `docs/account-manager-admin-boundary.md#staging-login-credential-boundary`。
 
@@ -708,10 +734,10 @@ go run ./scripts/go/rtk-cloud -- check-certificates --env-root cloud_env/staging
 
 常用選項：
 
-- `--env-root PATH`：指定 environment directory；必填，避免檢查錯誤環境。可傳 `cloud_env/staging`，script 會自動使用其下的 `linode/`。
+- `--env-root PATH`：指定 environment directory；必填，避免檢查錯誤環境。可傳 `cloud_env/staging`，script 會自動使用其下的 Kubernetes provider 子目錄，預設 `lke/`。
 - `--dns-root-domain NAME`：root DNS domain，預設 `realtekconnect.com`。
 - `--min-valid-days N`：要求 certificate 至少還要有效幾天，預設 `7`。
-- `--skip-live`：只檢查 `cloud_env/staging/linode/certificates` 內的 cache。
+- `--skip-live`：只檢查 env-root 內的 certificate cache。
 - `--skip-cache`：只檢查 live HTTPS endpoint。
 - `--json`：輸出完整 JSON 結果。
 
@@ -730,7 +756,7 @@ go run ./scripts/go/rtk-cloud -- create-brandname-cloud --env-root cloud_env/sta
 常用選項：
 
 - `--workspace PATH`：指定 workspace 根目錄。
-- `--env-root PATH`：指定 environment directory；必填，避免建立到錯誤環境。可傳 `cloud_env/staging`，script 會自動使用其下的 `linode/`。
+- `--env-root PATH`：指定 environment directory；必填，避免建立到錯誤環境。可傳 `cloud_env/staging`，script 會自動使用其下的 Kubernetes provider 子目錄，預設 `lke/`。
 - `--skip-bootstrap`：不要更新/restart 遠端 Account Manager bootstrap admin env。
 
 腳本的進度訊息會寫到 stderr，最後 JSON 結果會寫到 stdout，方便其他工具解析。
@@ -800,7 +826,7 @@ go run ./scripts/go/rtk-cloud -- bind-devices \
   --brandname RTK
 
 go run ./scripts/go/rtk-cloud -- validate-device-bind \
-  --bind-artifact cloud_env/staging/linode/artifacts/device-bind/rtk-device-bind-<timestamp>.json
+  --bind-artifact cloud_env/staging/lke/artifacts/device-bind/rtk-device-bind-<timestamp>.json
 ```
 
 流程：
@@ -842,7 +868,7 @@ go run ./scripts/go/rtk-cloud -- validate-device-bind \
 
 ```sh
 go run ./scripts/go/rtk-cloud -- validate-device-bind \
-  --bind-artifact cloud_env/staging/linode/artifacts/device-bind/rtk-device-bind-<timestamp>.json \
+  --bind-artifact cloud_env/staging/lke/artifacts/device-bind/rtk-device-bind-<timestamp>.json \
   --expected-count 100 \
   --expected-devices-per-user 10
 ```

@@ -8,22 +8,23 @@ import (
 )
 
 const (
-	DefaultDeviceCount      = 100000
-	DefaultUserCount        = 5000
-	DefaultDevicesPerUser   = 20
-	DefaultVMCount          = 5
-	DefaultDevicesPerVM     = DefaultDeviceCount / DefaultVMCount
-	DefaultUserShards       = DefaultVMCount
-	DefaultServerTarget     = "staging/lke"
-	DefaultLoadGeneratorRun = "ephemeral-linode-vm"
-	DefaultRunnerNofile     = 1048576
-	DefaultDeviceSession    = "lifetime-subscription"
-	DefaultRunnerReadModel  = "go-netpoll-bounded-reader-goroutine"
-	DefaultStageWarmUp      = "30s"
-	DefaultStageSteady      = "90s"
-	DefaultStageCoolDown    = "30s"
-	DefaultScenarioProfile  = "home-diverse-v1"
-	DefaultVMLabelPrefix    = "lg"
+	DefaultDeviceCount               = 100000
+	DefaultUserCount                 = 5000
+	DefaultDevicesPerUser            = 20
+	DefaultLoadGeneratorDevicesPerVM = 20000
+	DefaultDevicesPerVM              = DefaultLoadGeneratorDevicesPerVM
+	DefaultVMCount                   = 5
+	DefaultUserShards                = DefaultVMCount
+	DefaultServerTarget              = "staging/lke"
+	DefaultLoadGeneratorRun          = "ephemeral-linode-vm"
+	DefaultRunnerNofile              = 1048576
+	DefaultDeviceSession             = "lifetime-subscription"
+	DefaultRunnerReadModel           = "go-netpoll-bounded-reader-goroutine"
+	DefaultStageWarmUp               = "30s"
+	DefaultStageSteady               = "90s"
+	DefaultStageCoolDown             = "30s"
+	DefaultScenarioProfile           = "home-diverse-v1"
+	DefaultVMLabelPrefix             = "lg"
 
 	DefaultFunctionalSuccessThresholdPercent    = 99.5
 	DefaultClientTargetCompletenessPercent      = 100.0
@@ -40,6 +41,7 @@ type PlanOptions struct {
 	UserCount                            int     `json:"user_count,omitempty"`
 	DevicesPerUser                       int     `json:"devices_per_user,omitempty"`
 	VMCount                              int     `json:"vm_count,omitempty"`
+	LoadGeneratorDevicesPerVM            int     `json:"load_generator_devices_per_vm,omitempty"`
 	StageWarmUp                          string  `json:"stage_warm_up"`
 	StageSteady                          string  `json:"stage_steady"`
 	StageCoolDown                        string  `json:"stage_cool_down"`
@@ -89,6 +91,8 @@ type TestConditions struct {
 	LoadGeneratorRuntime                 string  `json:"load_generator_runtime"`
 	FirstBaselineRegion                  string  `json:"first_baseline_region_model"`
 	DeviceGeneratorLimit                 int     `json:"device_generator_density"`
+	LoadGeneratorDevicesPerVM            int     `json:"load_generator_devices_per_vm"`
+	LoadGeneratorSizingFormula           string  `json:"load_generator_sizing_formula"`
 	VMCount                              int     `json:"vm_count"`
 	RunnerNofileLimit                    int     `json:"runner_nofile_limit"`
 	DeviceSessionModel                   string  `json:"device_session_model"`
@@ -203,12 +207,25 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	if devicesPerUser <= 0 {
 		return Plan{}, fmt.Errorf("devices per user must be positive, got %d", devicesPerUser)
 	}
+	devicesPerVM := opts.LoadGeneratorDevicesPerVM
+	if devicesPerVM <= 0 {
+		devicesPerVM = DefaultDevicesPerVM
+	}
+	if devicesPerVM <= 0 {
+		return Plan{}, fmt.Errorf("load-generator devices per VM must be positive, got %d", devicesPerVM)
+	}
 	vmCount := opts.VMCount
 	if vmCount <= 0 {
-		vmCount = DefaultVMCount
+		vmCount = ceilDiv(devices, devicesPerVM)
+		if vmCount <= 0 {
+			vmCount = 1
+		}
 	}
 	if vmCount <= 0 {
 		return Plan{}, fmt.Errorf("VM count must be positive, got %d", vmCount)
+	}
+	if perVM := ceilDiv(devices, vmCount); perVM > devicesPerVM {
+		return Plan{}, fmt.Errorf("target devices %d with VM count %d needs %d devices per VM, above configured load-generator capacity %d; increase VM count or --load-generator-devices-per-vm", devices, vmCount, perVM, devicesPerVM)
 	}
 	runnerNofile := opts.RunnerNofile
 	if runnerNofile <= 0 {
@@ -235,8 +252,7 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 		return Plan{}, err
 	}
 
-	usageWindows := homeDiverseUsageWindows()
-	stages := stagePlan(devices, opts.StageWarmUp, opts.StageSteady, opts.StageCoolDown, usageWindows)
+	stages := stagePlan(devices, opts.StageWarmUp, opts.StageSteady, opts.StageCoolDown)
 	plan := Plan{
 		Conditions: TestConditions{
 			EnvRoot:                              opts.EnvRoot,
@@ -249,6 +265,8 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 			LoadGeneratorRuntime:                 DefaultLoadGeneratorRun,
 			FirstBaselineRegion:                  "single-region",
 			DeviceGeneratorLimit:                 ceilDiv(devices, vmCount),
+			LoadGeneratorDevicesPerVM:            devicesPerVM,
+			LoadGeneratorSizingFormula:           "vm_count = ceil(devices / load_generator_devices_per_vm)",
 			VMCount:                              vmCount,
 			RunnerNofileLimit:                    runnerNofile,
 			DeviceSessionModel:                   sessionModel,
@@ -260,15 +278,14 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 			AggregateCorrelationTolerancePercent: thresholds.AggregateCorrelationTolerancePercent,
 			AggregateCorrelationMinTolerance:     thresholds.AggregateCorrelationMinTolerance,
 		},
-		ScenarioProfile:   scenarioProfile,
-		DeviceMix:         proportionalMix(devices, homeDiverseDeviceMixBuckets()),
-		DeviceProfiles:    homeDiverseDeviceProfiles(),
-		UserProfiles:      homeDiverseUserProfiles(),
-		StageUsageWindows: usageWindows,
-		PresenceMix:       proportionalMix(devices, []ratioBucket{{Name: "online_steady", Weight: 85}, {Name: "offline_desired_queue", Weight: 10}, {Name: "flapping_reconnect", Weight: 5}}),
-		Target:            targetWindowFromStages(stages),
-		Stages:            stages,
-		Workflow:          []string{"plan", "provision-vms", "sync", "run-stages", "collect", "collect-server-evidence", "aggregate", "destroy-vms"},
+		ScenarioProfile: scenarioProfile,
+		DeviceMix:       proportionalMix(devices, homeDiverseDeviceMixBuckets()),
+		DeviceProfiles:  homeDiverseDeviceProfiles(),
+		UserProfiles:    homeDiverseUserProfiles(),
+		PresenceMix:     proportionalMix(devices, []ratioBucket{{Name: "online_steady", Weight: 85}, {Name: "offline_desired_queue", Weight: 10}, {Name: "flapping_reconnect", Weight: 5}}),
+		Target:          targetWindowFromStages(stages),
+		Stages:          stages,
+		Workflow:        []string{"plan", "provision-vms", "sync", "run-stages", "collect", "collect-server-evidence", "aggregate", "destroy-vms"},
 		Artifacts: Artifacts{
 			RunPlan:         "loadtests/home-100k/plans/<run_id>/plan.json",
 			ShardResults:    "loadtests/home-100k/reports/<run_id>/shards/",
@@ -386,10 +403,6 @@ func homeDiverseUserProfiles() map[string]UserProfile {
 	}
 }
 
-func homeDiverseUsageWindows() []string {
-	return []string{"morning", "away", "return_home", "evening_peak"}
-}
-
 func defaultDuration(value string, fallback string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -437,32 +450,14 @@ func proportionalMix(total int, buckets []ratioBucket) map[string]int {
 	return out
 }
 
-func stagePlan(devices int, warmUp string, steady string, coolDown string, usageWindows []string) []Stage {
-	percentages := []int{25, 50, 75, 100}
-	out := make([]Stage, 0, len(percentages))
-	for idx, pct := range percentages {
-		connected := devices * pct / 100
-		if connected <= 0 && devices > 0 {
-			connected = 1
-		}
-		name := fmt.Sprintf("%dpct", pct)
-		if devices == DefaultDeviceCount {
-			name = fmt.Sprintf("%dk", connected/1000)
-		}
-		usageWindow := ""
-		if idx < len(usageWindows) {
-			usageWindow = usageWindows[idx]
-		}
-		out = append(out, Stage{
-			Name:             name,
-			ConnectedDevices: connected,
-			WarmUp:           warmUp,
-			SteadyState:      steady,
-			CoolDown:         coolDown,
-			UsageWindow:      usageWindow,
-		})
-	}
-	return out
+func stagePlan(devices int, warmUp string, steady string, coolDown string) []Stage {
+	return []Stage{{
+		Name:             "target",
+		ConnectedDevices: devices,
+		WarmUp:           warmUp,
+		SteadyState:      steady,
+		CoolDown:         coolDown,
+	}}
 }
 
 func targetWindowFromStages(stages []Stage) TargetWindow {

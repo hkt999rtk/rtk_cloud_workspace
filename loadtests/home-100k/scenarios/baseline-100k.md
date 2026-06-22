@@ -9,8 +9,9 @@ This scenario is the default first baseline for `home-100k`.
 - Region model: single region.
 - Devices: 100,000.
 - Users: 5,000.
-- Devices per user: 10.
-- Load-generator VMs: 5 total `mixed` VMs.
+- Devices per user: 20.
+- Load-generator VMs: automatically planned from the target at one `mixed` VM
+  per 20,000 devices. The 100K baseline therefore uses 5 total `mixed` VMs.
 - Each `mixed` VM owns one `device-mqtt` task shard with 20,000 devices and
   one `user-app` task shard with 1,000 users.
 - Target window: ramp directly to 100,000 connected devices.

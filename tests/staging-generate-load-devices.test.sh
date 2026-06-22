@@ -80,7 +80,7 @@ FACTORY_ENV_ROOT="$TMP/factory_env"
 mkdir -p "$FACTORY_ENV_ROOT/env" "$FACTORY_ENV_ROOT/services/video-cloud"
 {
 	printf 'CLOUD_ENV_NAME=test\n'
-	printf 'CLOUD_PROVIDER=linode\n'
+	printf 'CLOUD_PROVIDER=lke\n'
 	printf 'CLOUD_REGION=us-sea\n'
 	printf 'CLOUD_DNS_ROOT_DOMAIN=example.test\n'
 	printf 'CLOUD_STACK_NAME=video-cloud-test\n'

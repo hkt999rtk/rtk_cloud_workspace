@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -357,7 +358,7 @@ func lkePreflight(paths provisionPaths, env map[string]string) error {
 	return nil
 }
 
-func lkePlan(env map[string]string) {
+func lkePlan(env map[string]string, opts provisionOptions) {
 	fmt.Fprintln(os.Stdout, "LKE target:")
 	fmt.Fprintf(os.Stdout, "- stack: %s\n", env["CLOUD_STACK_NAME"])
 	fmt.Fprintf(os.Stdout, "- region: %s\n", env["CLOUD_REGION"])
@@ -378,6 +379,7 @@ func lkePlan(env map[string]string) {
 		}
 		fmt.Fprintf(os.Stdout, "  - %s: %s\n", workload.EnvKey, status)
 	}
+	lkePrintCapacityPlan(env, opts)
 }
 
 func lkeApplyBase(env map[string]string) error {
@@ -466,16 +468,31 @@ func lkeApplyPublicHTTPS(paths provisionPaths, env map[string]string, opts provi
 		return err
 	}
 	hosts := lkePublicHTTPSHosts(routes)
-	hasTLS, err := lkeExistingPublicHTTPSTLSSecretCoversHosts(env, hosts)
+	certPEM, keyPEM, hasTLS, err := lkeExistingPublicHTTPSTLSSecretMaterialCoversHosts(env, hosts)
 	if err != nil {
 		return err
 	}
 	if hasTLS {
 		fmt.Fprintf(os.Stderr, "[lke-provision] reusing existing public TLS secret %s/%s\n", lkeIngressNamespace(env), lkePublicHTTPSTLSSecretName(env))
+		if err := lkeWritePublicHTTPSCertificateCache(paths, env, hosts, certPEM, keyPEM); err != nil {
+			return err
+		}
 	} else {
-		certPEM, keyPEM, err := lkeIssuePublicHTTPSCertificate(env, opts, hosts)
+		cachedCertPEM, cachedKeyPEM, ok, err := lkeLoadPublicHTTPSCertificateCache(paths, env, hosts)
 		if err != nil {
 			return err
+		}
+		if ok {
+			fmt.Fprintf(os.Stderr, "[lke-provision] restoring cached public TLS certificate %s\n", lkePublicHTTPSCertificateCacheDir(paths, env))
+			certPEM, keyPEM = cachedCertPEM, cachedKeyPEM
+		} else {
+			certPEM, keyPEM, err = lkeIssuePublicHTTPSCertificate(env, opts, hosts)
+			if err != nil {
+				return err
+			}
+			if err := lkeWritePublicHTTPSCertificateCache(paths, env, hosts, certPEM, keyPEM); err != nil {
+				return err
+			}
 		}
 		if err := kubectlApply(lkePublicHTTPSTLSSecretManifest(env, certPEM, keyPEM)); err != nil {
 			return err
@@ -594,7 +611,8 @@ func lkeInstallIngressNginx(env map[string]string) error {
 		"--set", "controller.resources.limits.memory=" + firstNonEmpty(os.Getenv("LKE_INGRESS_LIMIT_MEMORY"), env["LKE_INGRESS_LIMIT_MEMORY"], "1Gi"),
 		"--set-json", `controller.topologySpreadConstraints=[{"maxSkew":1,"topologyKey":"kubernetes.io/hostname","whenUnsatisfiable":"ScheduleAnyway","labelSelector":{"matchLabels":{"app.kubernetes.io/name":"ingress-nginx","app.kubernetes.io/component":"controller"}}}]`,
 	}
-	if err := runHelm(args...); err != nil {
+	timeout := envDurationDefault("LKE_INGRESS_HELM_TIMEOUT", 5*time.Minute)
+	if err := runHelmWithTimeout(timeout, args...); err != nil {
 		return err
 	}
 	return runKubectl("-n", ns, "rollout", "status", "deployment/ingress-nginx-controller", "--timeout", firstNonEmpty(os.Getenv("LKE_INGRESS_ROLLOUT_TIMEOUT"), "5m"))
@@ -610,9 +628,17 @@ func lkeIngressReplicas(env map[string]string) string {
 }
 
 func lkePublicHTTPSRoutes(env map[string]string) []lkePublicHTTPSRoute {
+	routes := lkePublicHTTPSBaseRoutes(env)
+	if logger := lkeCloudLoggerRoute(env); logger.Host != "" {
+		routes = append(routes, logger)
+	}
+	return routes
+}
+
+func lkePublicHTTPSBaseRoutes(env map[string]string) []lkePublicHTTPSRoute {
 	videoNS := lkeNamespaceName(env, "video-cloud")
 	videoDomain := env["VIDEO_CLOUD_DOMAIN"]
-	routes := []lkePublicHTTPSRoute{
+	return []lkePublicHTTPSRoute{
 		{Host: videoDomain, Namespace: videoNS, Service: "video-cloud-api", ServicePort: 80, TargetPort: envIntDefault("LKE_VIDEO_CLOUD_PORT", 8080)},
 		{Host: firstNonEmpty(os.Getenv("LKE_DEVICE_DOMAIN"), env["VIDEO_CLOUD_DEVICE_DOMAIN"], "device."+videoDomain), Namespace: videoNS, Service: "video-cloud-api", ServicePort: 80, TargetPort: envIntDefault("LKE_VIDEO_CLOUD_PORT", 8080)},
 		{Host: env["VIDEO_CLOUD_CERTISSUER_DOMAIN"], Namespace: videoNS, Service: "certissuer", ServicePort: 9443, TargetPort: 9443, Protocol: "HTTPS"},
@@ -620,10 +646,6 @@ func lkePublicHTTPSRoutes(env map[string]string) []lkePublicHTTPSRoute {
 		{Host: env["CLOUD_ADMIN_DOMAIN"], Namespace: lkeNamespaceName(env, "admin"), Service: "cloud-admin", ServicePort: 80, TargetPort: envIntDefault("LKE_CLOUD_ADMIN_PORT", 8080)},
 		{Host: firstNonEmpty(os.Getenv("LKE_FRONTEND_DOMAIN"), env["FRONTEND_DOMAIN"], "frontend."+videoDomain), Namespace: lkeNamespaceName(env, "frontend"), Service: "frontend", ServicePort: 80, TargetPort: envIntDefault("LKE_FRONTEND_PORT", 8080)},
 	}
-	if logger := lkeCloudLoggerRoute(env); logger.Host != "" {
-		routes = append(routes, logger)
-	}
-	return routes
 }
 
 func lkeCloudLoggerRoute(env map[string]string) lkePublicHTTPSRoute {
@@ -633,7 +655,7 @@ func lkeCloudLoggerRoute(env map[string]string) lkePublicHTTPSRoute {
 	}
 	namespace := lkeNamespaceName(env, "logger")
 	service := firstNonEmpty(os.Getenv("LKE_CLOUD_LOGGER_SERVICE"), "cloud-logger")
-	out, err := exec.Command(lkeKubectl(), lkeKubectlArgs("-n", namespace, "get", "service", service, "-o", "name")...).CombinedOutput()
+	out, err := kubectlCombinedOutput(nil, "-n", namespace, "get", "service", service, "-o", "name")
 	if err != nil || strings.TrimSpace(string(out)) == "" {
 		return lkePublicHTTPSRoute{}
 	}
@@ -746,7 +768,11 @@ func lkeIssuePublicHTTPSCertificate(env map[string]string, opts provisionOptions
 		args = append(args, "-d", host)
 	}
 	cmd := exec.Command(certbot, args...)
-	cmd.Env = append(os.Environ(), "RTK_CLOUD_CERTBOT_DNS_ENV="+dnsEnvPath)
+	cmd.Env = append(os.Environ(),
+		"RTK_CLOUD_CERTBOT_DNS_ENV="+dnsEnvPath,
+		"RTK_CLOUD_CERTBOT_DNS_STATE="+filepath.Join(workDir, "dns-state"),
+		"RTK_CLOUD_CERTBOT_DNS_EXPECTED="+strconv.Itoa(len(hosts)),
+	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -768,19 +794,41 @@ func lkeIssuePublicHTTPSCertificate(env map[string]string, opts provisionOptions
 }
 
 func lkeExistingPublicHTTPSTLSSecretCoversHosts(env map[string]string, hosts []string) (bool, error) {
-	out, err := exec.Command(lkeKubectl(), lkeKubectlArgs("-n", lkeIngressNamespace(env), "get", "secret", lkePublicHTTPSTLSSecretName(env), "-o", "jsonpath={.data.tls\\.crt}")...).CombinedOutput()
+	_, _, ok, err := lkeExistingPublicHTTPSTLSSecretMaterialCoversHosts(env, hosts)
+	return ok, err
+}
+
+func lkeExistingPublicHTTPSTLSSecretMaterialCoversHosts(env map[string]string, hosts []string) (string, string, bool, error) {
+	certOut, err := kubectlCombinedOutput(nil, "-n", lkeIngressNamespace(env), "get", "secret", lkePublicHTTPSTLSSecretName(env), "-o", "jsonpath={.data.tls\\.crt}")
 	if err != nil {
-		return false, nil
+		return "", "", false, nil
 	}
-	encoded := strings.TrimSpace(string(out))
-	if encoded == "" {
-		return false, nil
-	}
-	certPEM, err := base64.StdEncoding.DecodeString(encoded)
+	keyOut, err := kubectlCombinedOutput(nil, "-n", lkeIngressNamespace(env), "get", "secret", lkePublicHTTPSTLSSecretName(env), "-o", "jsonpath={.data.tls\\.key}")
 	if err != nil {
-		return false, fmt.Errorf("decode existing public TLS secret certificate: %w", err)
+		return "", "", false, nil
 	}
-	return lkeCertificateCoversHosts(certPEM, hosts, time.Now().Add(30*24*time.Hour))
+	certEncoded := strings.TrimSpace(string(certOut))
+	keyEncoded := strings.TrimSpace(string(keyOut))
+	if certEncoded == "" || keyEncoded == "" {
+		return "", "", false, nil
+	}
+	certPEM, err := base64.StdEncoding.DecodeString(certEncoded)
+	if err != nil {
+		return "", "", false, fmt.Errorf("decode existing public TLS secret certificate: %w", err)
+	}
+	keyPEM, err := base64.StdEncoding.DecodeString(keyEncoded)
+	if err != nil {
+		return "", "", false, fmt.Errorf("decode existing public TLS secret key: %w", err)
+	}
+	ok, err := lkeCertificateCoversHosts(certPEM, hosts, lkePublicHTTPSMinValidUntil())
+	if err != nil || !ok {
+		return "", "", ok, err
+	}
+	return string(certPEM), string(keyPEM), true, nil
+}
+
+func lkePublicHTTPSMinValidUntil() time.Time {
+	return time.Now().Add(time.Duration(envIntDefault("LKE_PUBLIC_HTTPS_MIN_VALID_DAYS", 30)) * 24 * time.Hour)
 }
 
 func lkeCertificateCoversHosts(certPEM []byte, hosts []string, minValidUntil time.Time) (bool, error) {
@@ -804,6 +852,95 @@ func lkeCertificateCoversHosts(certPEM []byte, hosts []string, minValidUntil tim
 		}
 	}
 	return true, nil
+}
+
+type lkePublicHTTPSCertificateCacheMetadata struct {
+	SecretName    string   `json:"secret_name"`
+	Namespace     string   `json:"namespace"`
+	Hosts         []string `json:"hosts"`
+	NotBefore     string   `json:"not_before,omitempty"`
+	NotAfter      string   `json:"not_after,omitempty"`
+	CachedAt      string   `json:"cached_at"`
+	MinValidDays  int      `json:"min_valid_days"`
+	Certificate   string   `json:"certificate"`
+	PrivateKey    string   `json:"private_key"`
+	CacheContract string   `json:"cache_contract"`
+}
+
+func lkePublicHTTPSCertificateCacheDir(paths provisionPaths, env map[string]string) string {
+	return filepath.Join(paths.EnvRoot, "state", "public-https", lkePublicHTTPSTLSSecretName(env))
+}
+
+func lkeLoadPublicHTTPSCertificateCache(paths provisionPaths, env map[string]string, hosts []string) (string, string, bool, error) {
+	cacheDir := lkePublicHTTPSCertificateCacheDir(paths, env)
+	certPEM, err := os.ReadFile(filepath.Join(cacheDir, "fullchain.pem"))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, err
+	}
+	keyPEM, err := os.ReadFile(filepath.Join(cacheDir, "privkey.pem"))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, err
+	}
+	if len(bytes.TrimSpace(certPEM)) == 0 || len(bytes.TrimSpace(keyPEM)) == 0 {
+		return "", "", false, nil
+	}
+	ok, err := lkeCertificateCoversHosts(certPEM, hosts, lkePublicHTTPSMinValidUntil())
+	if err != nil || !ok {
+		return "", "", ok, err
+	}
+	return string(certPEM), string(keyPEM), true, nil
+}
+
+func lkeWritePublicHTTPSCertificateCache(paths provisionPaths, env map[string]string, hosts []string, certPEM, keyPEM string) error {
+	if len(bytes.TrimSpace([]byte(certPEM))) == 0 || len(bytes.TrimSpace([]byte(keyPEM))) == 0 {
+		return errors.New("public HTTPS certificate cache requires non-empty certificate and key")
+	}
+	cacheDir := lkePublicHTTPSCertificateCacheDir(paths, env)
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "fullchain.pem"), []byte(certPEM), 0o600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "privkey.pem"), []byte(keyPEM), 0o600); err != nil {
+		return err
+	}
+	meta := lkePublicHTTPSCertificateCacheMetadata{
+		SecretName:    lkePublicHTTPSTLSSecretName(env),
+		Namespace:     lkeIngressNamespace(env),
+		Hosts:         append([]string(nil), hosts...),
+		CachedAt:      time.Now().UTC().Format(time.RFC3339),
+		MinValidDays:  envIntDefault("LKE_PUBLIC_HTTPS_MIN_VALID_DAYS", 30),
+		Certificate:   "fullchain.pem",
+		PrivateKey:    "privkey.pem",
+		CacheContract: "reuse this certificate until it no longer covers all public HTTPS hosts or is within min_valid_days of expiration",
+	}
+	if cert, err := parseFirstCertificatePEM([]byte(certPEM)); err == nil && cert != nil {
+		meta.NotBefore = cert.NotBefore.UTC().Format(time.RFC3339)
+		meta.NotAfter = cert.NotAfter.UTC().Format(time.RFC3339)
+	}
+	raw, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "metadata.json"), append(raw, '\n'), 0o600); err != nil {
+		return err
+	}
+	return nil
+}
+
+func parseFirstCertificatePEM(certPEM []byte) (*x509.Certificate, error) {
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return nil, nil
+	}
+	return x509.ParseCertificate(block.Bytes)
 }
 
 func renderCertbotDNS01EnvFile(values certbotDNS01EnvValues) string {
@@ -867,7 +1004,7 @@ stringData:
 }
 
 func lkeCopyExistingDeviceMTLSAppCASecret(env map[string]string) error {
-	out, err := exec.Command(lkeKubectl(), lkeKubectlArgs("-n", lkeNamespaceName(env, "video-cloud"), "get", "secret", "certissuer-runtime", "-o", "json")...).CombinedOutput()
+	out, err := kubectlCombinedOutput(nil, "-n", lkeNamespaceName(env, "video-cloud"), "get", "secret", "certissuer-runtime", "-o", "json")
 	if err != nil || strings.TrimSpace(string(out)) == "" {
 		return nil
 	}
@@ -1438,7 +1575,7 @@ func lkeWaitForIngressExternalIP(env map[string]string) (string, error) {
 	deadline := time.Now().Add(timeout)
 	var last string
 	for {
-		out, err := exec.Command(lkeKubectl(), lkeKubectlArgs("-n", ns, "get", "service", "ingress-nginx-controller", "-o", "jsonpath={.status.loadBalancer.ingress[0].ip}")...).CombinedOutput()
+		out, err := kubectlCombinedOutput(nil, "-n", ns, "get", "service", "ingress-nginx-controller", "-o", "jsonpath={.status.loadBalancer.ingress[0].ip}")
 		last = strings.TrimSpace(string(out))
 		if err == nil && net.ParseIP(last) != nil {
 			return last, nil
@@ -1707,13 +1844,13 @@ func runRemoveAllLKE(envRoot string, env map[string]string, confirmed bool) erro
 		var answer string
 		_, _ = fmt.Fscan(os.Stdin, &answer)
 		if answer != "yes" {
-			fmt.Fprintln(os.Stderr, "[cloud-remove-all-vm] cancelled")
+			fmt.Fprintln(os.Stderr, "[cloud-remove-k8s] cancelled")
 			return nil
 		}
 	}
 	if err := ensureLKEKubeAccess(provisionPaths{EnvRoot: envRoot}, env, false); err != nil {
 		if errors.Is(err, errLKEMissingCluster) {
-			fmt.Fprintf(os.Stderr, "[cloud-remove-all-vm] no LKE cluster found for stack %s\n", stack)
+			fmt.Fprintf(os.Stderr, "[cloud-remove-k8s] no LKE cluster found for stack %s\n", stack)
 			return nil
 		}
 		return err
@@ -1725,10 +1862,10 @@ func runRemoveAllLKE(envRoot string, env map[string]string, confirmed bool) erro
 	if err := runKubectl(args...); err != nil {
 		return err
 	}
-	if err := backupAndRemoveState(envRoot); err != nil {
+	if err := backupAndRemoveLKEState(envRoot); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "[cloud-remove-all-vm] LKE namespace delete requests submitted for stack %s\n", stack)
+	fmt.Fprintf(os.Stderr, "[cloud-remove-k8s] LKE namespace delete requests submitted for stack %s\n", stack)
 	return nil
 }
 
@@ -1779,6 +1916,7 @@ func lkeNamespaces(env map[string]string) []lkeNamespace {
 		{Key: "observability", Name: firstNonEmpty(os.Getenv("LKE_NAMESPACE_OBSERVABILITY"), stack+"-observability")},
 		{Key: "secrets", Name: firstNonEmpty(os.Getenv("LKE_NAMESPACE_SECRETS"), stack+"-secrets")},
 		{Key: "logger", Name: firstNonEmpty(os.Getenv("LKE_NAMESPACE_CLOUD_LOGGER"), stack+"-logger")},
+		{Key: "ingress", Name: lkeIngressNamespace(env)},
 	}
 	return values
 }
@@ -2375,14 +2513,34 @@ func lkePostgresPlacementManifest(env map[string]string) string {
 func lkeApplyPostgresStatefulSet(env map[string]string) error {
 	manifest := lkePostgresStatefulSetManifest(env)
 	err := kubectlApply(manifest)
-	if err == nil || !strings.Contains(manifest, "volumeClaimTemplates:") || !isStatefulSetImmutableUpdateError(err) {
+	if err == nil {
+		return lkeReplaceStalePostgresPod(env)
+	}
+	if !strings.Contains(manifest, "volumeClaimTemplates:") || !isStatefulSetImmutableUpdateError(err) {
 		return err
 	}
 	namespace := lkeNamespaceName(env, "platform")
 	if deleteErr := runKubectl("-n", namespace, "delete", "statefulset/postgresql", "--cascade=orphan", "--ignore-not-found=true"); deleteErr != nil {
 		return deleteErr
 	}
-	return kubectlApply(manifest)
+	if err := kubectlApply(manifest); err != nil {
+		return err
+	}
+	return lkeReplaceStalePostgresPod(env)
+}
+
+func lkeReplaceStalePostgresPod(env map[string]string) error {
+	namespace := lkeNamespaceName(env, "platform")
+	out, err := kubectlCombinedOutput(nil, "-n", namespace, "get", "statefulset/postgresql", "-o", "jsonpath={.status.currentRevision} {.status.updateRevision}")
+	if err != nil {
+		return err
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) < 2 || fields[0] == "" || fields[1] == "" || fields[0] == fields[1] {
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "[lke] replacing stale postgresql-0 pod revision %s -> %s\n", fields[0], fields[1])
+	return runKubectl("-n", namespace, "delete", "pod/postgresql-0", "--ignore-not-found=true")
 }
 
 func isStatefulSetImmutableUpdateError(err error) bool {
@@ -2998,8 +3156,7 @@ func lkeEnsureOpenBao(paths provisionPaths, env map[string]string, tls lkeOpenBa
 
 func lkeOpenBaoTLSSecretUnchanged(env map[string]string, tls lkeOpenBaoTLSMaterial) bool {
 	namespace := lkeNamespaceName(env, "secrets")
-	cmd := exec.Command(lkeKubectl(), lkeKubectlArgs("-n", namespace, "get", "secret", "openbao-tls", "-o", "json")...)
-	out, err := cmd.Output()
+	out, err := kubectlCombinedOutput(nil, "-n", namespace, "get", "secret", "openbao-tls", "-o", "json")
 	if err != nil {
 		return false
 	}
@@ -3032,8 +3189,7 @@ func lkeRestartOpenBaoPod(env map[string]string) error {
 	var lastOut []byte
 	var lastErr error
 	for time.Now().Before(deadline) {
-		cmd := exec.Command(lkeKubectl(), lkeKubectlArgs("-n", namespace, "get", "pod/openbao-0", "-o", "jsonpath={.status.phase}")...)
-		lastOut, lastErr = cmd.CombinedOutput()
+		lastOut, lastErr = kubectlCombinedOutput(nil, "-n", namespace, "get", "pod/openbao-0", "-o", "jsonpath={.status.phase}")
 		if lastErr == nil && strings.TrimSpace(string(lastOut)) == "Running" {
 			fmt.Fprintln(os.Stdout, "pod/openbao-0 condition met")
 			return nil
@@ -3194,8 +3350,7 @@ func lkeBootstrapOpenBao(paths provisionPaths, env map[string]string) (lkeOpenBa
 func lkeOpenBaoStatusValue(env map[string]string) (lkeOpenBaoStatus, error) {
 	namespace := lkeNamespaceName(env, "secrets")
 	argv := []string{"-n", namespace, "exec", "openbao-0", "--", "env", "BAO_ADDR=" + lkeOpenBaoAddr(env), "BAO_CACERT=/openbao/tls/ca.crt", "bao", "status", "-format=json"}
-	cmd := exec.Command(lkeKubectl(), lkeKubectlArgs(argv...)...)
-	out, statusErr := cmd.CombinedOutput()
+	out, statusErr := kubectlCombinedOutput(nil, argv...)
 	var status lkeOpenBaoStatus
 	statusJSON := extractJSONObject(string(out))
 	if err := json.Unmarshal([]byte(statusJSON), &status); err != nil {
@@ -3331,8 +3486,7 @@ func openBaoExecOutput(env map[string]string, args ...string) (string, error) {
 	namespace := lkeNamespaceName(env, "secrets")
 	argv := []string{"-n", namespace, "exec", "openbao-0", "--", "env", "BAO_ADDR=" + lkeOpenBaoAddr(env), "BAO_CACERT=/openbao/tls/ca.crt", "bao"}
 	argv = append(argv, args...)
-	cmd := exec.Command(lkeKubectl(), lkeKubectlArgs(argv...)...)
-	out, err := cmd.CombinedOutput()
+	out, err := kubectlCombinedOutput(nil, argv...)
 	if err != nil {
 		return "", fmt.Errorf("kubectl exec openbao %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
@@ -3342,9 +3496,7 @@ func openBaoExecOutput(env map[string]string, args ...string) (string, error) {
 func openBaoSensitiveScript(env map[string]string, secret, script string) (string, error) {
 	namespace := lkeNamespaceName(env, "secrets")
 	prologue := fmt.Sprintf("set -euo pipefail\nOPENBAO_SECRET_INPUT=%s\nexport BAO_ADDR=%s\nexport BAO_CACERT=/openbao/tls/ca.crt\n", shellSingleQuote(secret), strconv.Quote(lkeOpenBaoAddr(env)))
-	cmd := exec.Command(lkeKubectl(), lkeKubectlArgs("-n", namespace, "exec", "-i", "openbao-0", "--", "sh", "-s")...)
-	cmd.Stdin = strings.NewReader(prologue + script + "\n")
-	out, err := cmd.CombinedOutput()
+	out, err := kubectlCombinedOutput(strings.NewReader(prologue+script+"\n"), "-n", namespace, "exec", "-i", "openbao-0", "--", "sh", "-s")
 	if err != nil {
 		return "", fmt.Errorf("kubectl exec openbao bootstrap failed: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -3391,6 +3543,22 @@ func runHelm(args ...string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func runHelmWithTimeout(timeout time.Duration, args ...string) error {
+	if timeout <= 0 {
+		return runHelm(args...)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, lkeHelm(), lkeHelmArgs(args...)...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	err := cmd.Run()
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("helm command timed out after %s: %s", timeout, strings.Join(args, " "))
+	}
+	return err
 }
 
 func runHelmQuiet(args ...string) error {
@@ -3640,16 +3808,44 @@ spec:
         - name: mqtt-runtime
           secret:
             secretName: mqtt-runtime
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeMQTTReplicas(env), env["CLOUD_STACK_NAME"], placement, firstNonEmpty(os.Getenv("LKE_MQTT_IMAGE"), "emqx/emqx:5.8.7"), lkeNamespaceName(env, "video-cloud"), lkeEMQXNodeCookie(env), lkeEMQXStaticSeeds(env), lkeEMQXListenerAcceptors(env), lkeEMQXListenerBacklog(env), lkeEMQXListenerAcceptors(env), lkeEMQXListenerBacklog(env), firstNonEmpty(os.Getenv("LKE_EMQX_FORCE_SHUTDOWN_MAX_MAILBOX_SIZE"), env["LKE_EMQX_FORCE_SHUTDOWN_MAX_MAILBOX_SIZE"], "131072"), firstNonEmpty(os.Getenv("LKE_EMQX_FORCE_SHUTDOWN_MAX_HEAP_SIZE"), env["LKE_EMQX_FORCE_SHUTDOWN_MAX_HEAP_SIZE"], "512MB"), lkeContainerResourcesManifest("mqtt"))
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeMQTTReplicas(env), env["CLOUD_STACK_NAME"], placement, firstNonEmpty(os.Getenv("LKE_MQTT_IMAGE"), "emqx/emqx:5.8.7"), lkeNamespaceName(env, "video-cloud"), lkeEMQXNodeCookie(env), lkeEMQXStaticSeeds(env), lkeEMQXListenerAcceptors(env), lkeEMQXListenerBacklog(env), lkeEMQXListenerAcceptors(env), lkeEMQXListenerBacklog(env), firstNonEmpty(os.Getenv("LKE_EMQX_FORCE_SHUTDOWN_MAX_MAILBOX_SIZE"), env["LKE_EMQX_FORCE_SHUTDOWN_MAX_MAILBOX_SIZE"], "131072"), firstNonEmpty(os.Getenv("LKE_EMQX_FORCE_SHUTDOWN_MAX_HEAP_SIZE"), env["LKE_EMQX_FORCE_SHUTDOWN_MAX_HEAP_SIZE"], "512MB"), lkeContainerResourcesManifest(env, "mqtt"))
 }
 
 func lkeMQTTReplicas(env map[string]string) int {
 	raw := strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_MQTT_REPLICAS"), env["LKE_MQTT_REPLICAS"], "4"))
+	if strings.EqualFold(raw, "auto") {
+		target := lkeTargetConnects(env)
+		if target <= 0 {
+			return 1
+		}
+		return maxInt(1, ceilDiv(target, lkeMQTTConnectionsPerPod(env)))
+	}
 	replicas, err := strconv.Atoi(raw)
 	if err != nil || replicas < 1 {
 		return 4
 	}
 	return replicas
+}
+
+func lkeTargetConnects(env map[string]string) int {
+	raw := strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_TARGET_CONNECTS"), env["LKE_TARGET_CONNECTS"], os.Getenv("HOME100K_DEVICES"), env["HOME100K_DEVICES"]))
+	if raw == "" {
+		return 0
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 0 {
+		return 0
+	}
+	return value
+}
+
+func lkeMQTTConnectionsPerPod(env map[string]string) int {
+	raw := strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_MQTT_CONNECTIONS_PER_POD"), env["LKE_MQTT_CONNECTIONS_PER_POD"], "20000"))
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return 20000
+	}
+	return value
 }
 
 func lkeEMQXNodeCookie(env map[string]string) string {
@@ -3751,8 +3947,7 @@ func lkeEnsureEMQXCluster(env map[string]string) error {
 
 func lkeMQTTPods(env map[string]string) ([]lkeMQTTPod, error) {
 	namespace := lkeNamespaceName(env, "video-cloud")
-	args := lkeKubectlArgs("-n", namespace, "get", "pods", "-l", "app.kubernetes.io/name=mqtt", "-o", "json")
-	out, err := exec.Command(lkeKubectl(), args...).CombinedOutput()
+	out, err := kubectlCombinedOutput(nil, "-n", namespace, "get", "pods", "-l", "app.kubernetes.io/name=mqtt", "-o", "json")
 	if err != nil {
 		return nil, fmt.Errorf("list MQTT pods: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -4065,7 +4260,7 @@ spec:
               value: %q
             - name: RTK_CLOUD_LOGGER_LOKI_URL
               value: %q
-%s`, lkeNamespaceName(env, "logger"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeImagePullSecretName(env), lkeCloudLoggerImage(env), firstNonEmpty(os.Getenv("RTK_CLOUD_LOGGER_STORE"), env["RTK_CLOUD_LOGGER_STORE"], "memory"), firstNonEmpty(os.Getenv("RTK_CLOUD_LOGGER_LOKI_URL"), env["RTK_CLOUD_LOGGER_LOKI_URL"]), lkeContainerResourcesManifest("cloud-logger"))
+%s`, lkeNamespaceName(env, "logger"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeImagePullSecretName(env), lkeCloudLoggerImage(env), firstNonEmpty(os.Getenv("RTK_CLOUD_LOGGER_STORE"), env["RTK_CLOUD_LOGGER_STORE"], "memory"), firstNonEmpty(os.Getenv("RTK_CLOUD_LOGGER_LOKI_URL"), env["RTK_CLOUD_LOGGER_LOKI_URL"]), lkeContainerResourcesManifest(env, "cloud-logger"))
 }
 
 func lkeCloudLoggerServiceManifest(env map[string]string) string {
@@ -4332,7 +4527,7 @@ spec:
       volumes:
         - name: logger-spool
           emptyDir: {}
-`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeDeploymentImagePullSecretsManifest(env), lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(service.Name), ports, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(service))
+`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeDeploymentImagePullSecretsManifest(env), lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(env, service.Name), ports, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(service))
 }
 
 func lkeVideoCloudAuxiliaryMQTTCleanSession(service lkeVideoCloudAuxiliaryService) string {
@@ -5517,7 +5712,7 @@ spec:
               value: %q
             - name: SERVICE_PUBLIC_HOST
               value: %q
-%s%s%s%s`, workload.Name, workload.Namespace, workload.Name, env["CLOUD_STACK_NAME"], replicas, strategy, workload.Name, templateAnnotations, workload.Name, env["CLOUD_STACK_NAME"], imagePullSecrets, topologySpread, workload.Image, lkeContainerResourcesManifest(workload.Name), workload.Port, env["CLOUD_STACK_NAME"], workload.Host, extraEnv, envFrom, volumeMounts, volumes)
+%s%s%s%s`, workload.Name, workload.Namespace, workload.Name, env["CLOUD_STACK_NAME"], replicas, strategy, workload.Name, templateAnnotations, workload.Name, env["CLOUD_STACK_NAME"], imagePullSecrets, topologySpread, workload.Image, lkeContainerResourcesManifest(env, workload.Name), workload.Port, env["CLOUD_STACK_NAME"], workload.Host, extraEnv, envFrom, volumeMounts, volumes)
 }
 
 func lkeDeploymentImagePullSecretsManifest(env map[string]string) string {
@@ -5564,13 +5759,28 @@ func lkeTopologySpreadManifest(name string) string {
 	}
 }
 
-func lkeContainerResourcesManifest(name string) string {
-	type resources struct {
-		requestCPU    string
-		requestMemory string
-		limitMemory   string
+func lkeContainerResourcesManifest(env map[string]string, name string) string {
+	profile, ok := lkeContainerResourceProfile(env, name)
+	if !ok {
+		return ""
 	}
-	profiles := map[string]resources{
+	return fmt.Sprintf(`          resources:
+            requests:
+              cpu: %q
+              memory: %q
+            limits:
+              memory: %q
+`, profile.requestCPU, profile.requestMemory, profile.limitMemory)
+}
+
+type lkeResourceProfile struct {
+	requestCPU    string
+	requestMemory string
+	limitMemory   string
+}
+
+func lkeContainerResourceProfile(env map[string]string, name string) (lkeResourceProfile, bool) {
+	profiles := map[string]lkeResourceProfile{
 		"account-manager":         {requestCPU: "250m", requestMemory: "256Mi", limitMemory: "1Gi"},
 		"cloud-logger":            {requestCPU: "100m", requestMemory: "128Mi", limitMemory: "512Mi"},
 		"mqtt":                    {requestCPU: "250m", requestMemory: "512Mi", limitMemory: "1536Mi"},
@@ -5580,19 +5790,13 @@ func lkeContainerResourcesManifest(name string) string {
 	}
 	profile, ok := profiles[name]
 	if !ok {
-		return ""
+		return lkeResourceProfile{}, false
 	}
 	envPrefix := "LKE_" + strings.ToUpper(strings.NewReplacer("-", "_").Replace(name)) + "_"
-	profile.requestCPU = firstNonEmpty(os.Getenv(envPrefix+"REQUEST_CPU"), profile.requestCPU)
-	profile.requestMemory = firstNonEmpty(os.Getenv(envPrefix+"REQUEST_MEMORY"), profile.requestMemory)
-	profile.limitMemory = firstNonEmpty(os.Getenv(envPrefix+"LIMIT_MEMORY"), profile.limitMemory)
-	return fmt.Sprintf(`          resources:
-            requests:
-              cpu: %q
-              memory: %q
-            limits:
-              memory: %q
-`, profile.requestCPU, profile.requestMemory, profile.limitMemory)
+	profile.requestCPU = firstNonEmpty(os.Getenv(envPrefix+"REQUEST_CPU"), env[envPrefix+"REQUEST_CPU"], profile.requestCPU)
+	profile.requestMemory = firstNonEmpty(os.Getenv(envPrefix+"REQUEST_MEMORY"), env[envPrefix+"REQUEST_MEMORY"], profile.requestMemory)
+	profile.limitMemory = firstNonEmpty(os.Getenv(envPrefix+"LIMIT_MEMORY"), env[envPrefix+"LIMIT_MEMORY"], profile.limitMemory)
+	return profile, true
 }
 
 func lkeVideoCloudAPIDBMaxOpenConns(env map[string]string) string {
@@ -5674,22 +5878,24 @@ spec:
 }
 
 func ensureLKEKubeAccess(paths provisionPaths, env map[string]string, allowCreate bool) error {
-	out, err := exec.Command(lkeKubectl(), "config", "current-context").CombinedOutput()
-	context := strings.TrimSpace(string(out))
-	if err == nil && context != "" {
-		fmt.Fprintf(os.Stderr, "[lke] kubectl context: %s\n", context)
-		return nil
-	}
 	if kubeconfig := firstNonEmpty(os.Getenv("RTK_CLOUD_LKE_KUBECONFIG"), os.Getenv("LKE_KUBECONFIG")); kubeconfig != "" {
 		if _, statErr := os.Stat(kubeconfig); statErr != nil {
 			return statErr
 		}
 		_ = os.Setenv("RTK_CLOUD_LKE_KUBECONFIG", kubeconfig)
+		fmt.Fprintf(os.Stderr, "[lke] kubeconfig: %s\n", kubeconfig)
 		return nil
 	}
 	stateKubeconfig := filepath.Join(paths.EnvRoot, "state", "lke-kubeconfig.yaml")
 	if _, statErr := os.Stat(stateKubeconfig); statErr == nil {
 		_ = os.Setenv("RTK_CLOUD_LKE_KUBECONFIG", stateKubeconfig)
+		fmt.Fprintf(os.Stderr, "[lke] kubeconfig: %s\n", stateKubeconfig)
+		return nil
+	}
+	out, err := exec.Command(lkeKubectl(), "config", "current-context").CombinedOutput()
+	context := strings.TrimSpace(string(out))
+	if err == nil && context != "" {
+		fmt.Fprintf(os.Stderr, "[lke] kubectl context: %s\n", context)
 		return nil
 	}
 	clusterID := lkeClusterID(paths, env)
@@ -5712,7 +5918,22 @@ func ensureLKEKubeAccess(paths provisionPaths, env map[string]string, allowCreat
 	}
 	kubeconfig, err := fetchLKEKubeconfig(token, clusterID)
 	if err != nil {
-		return err
+		if !isLinodeNotFoundError(err) {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "[lke] cluster %s is missing; rediscovering LKE cluster\n", clusterID)
+		discovered, discoverErr := discoverLKECluster(token, paths, env, allowCreate)
+		if discoverErr != nil {
+			return discoverErr
+		}
+		clusterID = strconv.Itoa(discovered.ID)
+		if err := writeLKEState(paths, discovered); err != nil {
+			return err
+		}
+		kubeconfig, err = fetchLKEKubeconfig(token, clusterID)
+		if err != nil {
+			return err
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(stateKubeconfig), 0o755); err != nil {
 		return err
@@ -5847,7 +6068,19 @@ func ensureLKENodePool(paths provisionPaths, env map[string]string) error {
 	desiredType := firstNonEmpty(os.Getenv("LKE_NODE_TYPE"), env["LKE_NODE_TYPE"], "g6-standard-2")
 	pools, err := listLKENodePools(token, clusterID)
 	if err != nil {
-		return err
+		if !isLinodeNotFoundError(err) {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "[lke] cluster %s is missing; refreshing LKE state\n", clusterID)
+		cluster, recoverErr := recoverStaleLKECluster(token, paths, env)
+		if recoverErr != nil {
+			return recoverErr
+		}
+		clusterID = strconv.Itoa(cluster.ID)
+		pools, err = listLKENodePools(token, clusterID)
+		if err != nil {
+			return err
+		}
 	}
 	if len(pools) == 0 {
 		return fmt.Errorf("LKE cluster %s has no node pools", clusterID)
@@ -5888,8 +6121,43 @@ func listLKENodePools(token string, clusterID string) ([]lkeNodePool, error) {
 	return listed.Data, nil
 }
 
+func recoverStaleLKECluster(token string, paths provisionPaths, env map[string]string) (lkeCluster, error) {
+	cluster, err := discoverLKECluster(token, paths, env, true)
+	if err != nil {
+		return lkeCluster{}, err
+	}
+	if err := writeLKEState(paths, cluster); err != nil {
+		return lkeCluster{}, err
+	}
+	kubeconfig, err := fetchLKEKubeconfig(token, strconv.Itoa(cluster.ID))
+	if err != nil {
+		return lkeCluster{}, err
+	}
+	stateKubeconfig := filepath.Join(paths.EnvRoot, "state", "lke-kubeconfig.yaml")
+	if err := os.MkdirAll(filepath.Dir(stateKubeconfig), 0o755); err != nil {
+		return lkeCluster{}, err
+	}
+	if err := os.WriteFile(stateKubeconfig, kubeconfig, 0o600); err != nil {
+		return lkeCluster{}, err
+	}
+	_ = os.Setenv("RTK_CLOUD_LKE_KUBECONFIG", stateKubeconfig)
+	fmt.Fprintf(os.Stderr, "[lke] wrote kubeconfig: %s\n", stateKubeconfig)
+	return cluster, nil
+}
+
 func lkeNodeCount(env map[string]string) (int, error) {
-	nodeCount, err := strconv.Atoi(firstNonEmpty(os.Getenv("LKE_NODE_COUNT"), env["LKE_NODE_COUNT"], "5"))
+	raw := strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_NODE_COUNT"), env["LKE_NODE_COUNT"], "5"))
+	if strings.EqualFold(raw, "auto") {
+		nodeCount, err := lkeRecommendedNodeCount(env)
+		if err != nil {
+			return 0, err
+		}
+		if nodeCount <= 0 {
+			return 0, errors.New("LKE_NODE_COUNT auto produced no nodes")
+		}
+		return nodeCount, nil
+	}
+	nodeCount, err := strconv.Atoi(raw)
 	if err != nil || nodeCount <= 0 {
 		return 0, errors.New("LKE_NODE_COUNT must be a positive integer")
 	}
@@ -5972,8 +6240,12 @@ func isTransientLKEKubeconfigError(err error) bool {
 	return strings.Contains(message, "503") || strings.Contains(message, "not yet available")
 }
 
+func isLinodeNotFoundError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "returned error: 404")
+}
+
 func linodeRequestRaw(token, method, path, data string) ([]byte, error) {
-	args := []string{"-fsS", "-X", method, "https://api.linode.com/v4" + path, "-H", "Authorization: Bearer " + token, "-H", "Content-Type: application/json"}
+	args := []string{"--fail-with-body", "-sS", "-X", method, "https://api.linode.com/v4" + path, "-H", "Authorization: Bearer " + token, "-H", "Content-Type: application/json"}
 	if data != "" {
 		args = append(args, "-d", data)
 	}
@@ -5983,8 +6255,15 @@ func linodeRequestRaw(token, method, path, data string) ([]byte, error) {
 	out, err := cmd.Output()
 	if err != nil {
 		errText := strings.TrimSpace(stderr.String())
+		bodyText := strings.TrimSpace(string(out))
 		if errText != "" {
+			if bodyText != "" {
+				return nil, fmt.Errorf("Linode API %s %s failed: %w: %s: %s", method, path, err, errText, bodyText)
+			}
 			return nil, fmt.Errorf("Linode API %s %s failed: %w: %s", method, path, err, errText)
+		}
+		if bodyText != "" {
+			return nil, fmt.Errorf("Linode API %s %s failed: %w: %s", method, path, err, bodyText)
 		}
 		return nil, fmt.Errorf("Linode API %s %s failed: %w", method, path, err)
 	}

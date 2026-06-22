@@ -33,6 +33,11 @@ func TestDestroyLinodeStagingResourcesDryRunListsMatchesWithoutDeleting(t *testi
 			{"label":"video-cloud-staging-artifacts","region":"us-sea"},
 			{"label":"release-artifacts","region":"us-sea"}
 		]}`,
+		"/volumes?page_size=500": `{"data":[
+			{"id":501,"label":"pvc-orphan","region":"us-sea","status":"active","linode_id":null},
+			{"id":502,"label":"pvc-attached","region":"us-sea","status":"active","linode_id":201},
+			{"id":503,"label":"manual-volume","region":"us-sea","status":"active","linode_id":null}
+		]}`,
 	})
 	t.Setenv("LINODE_TOKEN", "test-token")
 
@@ -56,6 +61,8 @@ func TestDestroyLinodeStagingResourcesDryRunListsMatchesWithoutDeleting(t *testi
 		"video-cloud-staging-vpc",
 		"Object Storage buckets",
 		"video-cloud-staging-artifacts",
+		"Unattached pvc-* Block Storage volumes",
+		"pvc-orphan",
 		"dry-run only",
 		"destroy video-cloud-staging",
 	} {
@@ -70,12 +77,15 @@ func TestDestroyLinodeStagingResourcesDryRunListsMatchesWithoutDeleting(t *testi
 
 func TestDestroyLinodeStagingResourcesConfirmedDeletesMatchedResources(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
+	writeTestFile(t, filepath.Join(envRoot, "state", "lke.env"), "LKE_CLUSTER_ID=101\n")
+	writeTestFile(t, filepath.Join(envRoot, "state", "lke-kubeconfig.yaml"), "apiVersion: v1\n")
 	curlLog := fakeLinodeCurl(t, map[string]string{
 		"/lke/clusters?page_size=500":           `{"data":[{"id":101,"label":"video-cloud-staging-lke","region":"us-sea"}]}`,
 		"/linode/instances?page_size=500":       `{"data":[{"id":201,"label":"video-cloud-staging-edge","region":"us-sea","status":"running","ipv4":["192.0.2.10"],"tags":["video-cloud-staging"]}]}`,
 		"/networking/firewalls?page_size=500":   `{"data":[{"id":301,"label":"video-cloud-staging-edge"}]}`,
 		"/vpcs?page_size=500":                   `{"data":[{"id":401,"label":"video-cloud-staging-vpc","region":"us-sea"}]}`,
 		"/object-storage/buckets?page_size=500": `{"data":[{"label":"video-cloud-staging-artifacts","region":"us-sea"}]}`,
+		"/volumes?page_size=500":                `{"data":[{"id":501,"label":"pvc-orphan","region":"us-sea","status":"active","linode_id":null}]}`,
 		"/lke/clusters/101":                     `{}`,
 		"/linode/instances/201":                 `{}`,
 		"/networking/firewalls/301":             `{}`,
@@ -108,6 +118,22 @@ func TestDestroyLinodeStagingResourcesConfirmedDeletesMatchedResources(t *testin
 	if strings.Contains(log, "DELETE /object-storage/buckets") {
 		t.Fatalf("object storage buckets must not be deleted without --include-object-storage, got:\n%s", log)
 	}
+	if strings.Contains(log, "DELETE /volumes") {
+		t.Fatalf("orphan volumes must not be deleted without --include-orphan-volumes, got:\n%s", log)
+	}
+	if _, err := os.Stat(filepath.Join(envRoot, "state", "lke.env")); !os.IsNotExist(err) {
+		t.Fatalf("expected local LKE state to be removed, stat err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(envRoot, "state", "lke-kubeconfig.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("expected local LKE kubeconfig to be removed, stat err=%v", err)
+	}
+	backups, err := filepath.Glob(filepath.Join(envRoot, "backups", "destroy-lke-*", "state", "lke.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 1 {
+		t.Fatalf("expected one local LKE state backup, got %v", backups)
+	}
 }
 
 func TestDestroyLinodeStagingResourcesIncludesObjectStorageOnlyWhenRequested(t *testing.T) {
@@ -118,6 +144,7 @@ func TestDestroyLinodeStagingResourcesIncludesObjectStorageOnlyWhenRequested(t *
 		"/networking/firewalls?page_size=500":                          `{"data":[]}`,
 		"/vpcs?page_size=500":                                          `{"data":[]}`,
 		"/object-storage/buckets?page_size=500":                        `{"data":[{"label":"video-cloud-staging-artifacts","region":"us-sea"}]}`,
+		"/volumes?page_size=500":                                       `{"data":[]}`,
 		"/object-storage/buckets/us-sea/video-cloud-staging-artifacts": `{}`,
 	})
 	t.Setenv("LINODE_TOKEN", "test-token")
@@ -140,6 +167,73 @@ func TestDestroyLinodeStagingResourcesIncludesObjectStorageOnlyWhenRequested(t *
 	}
 }
 
+func TestDestroyLinodeStagingResourcesIncludesOrphanVolumesOnlyWhenRequested(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	curlLog := fakeLinodeCurl(t, map[string]string{
+		"/lke/clusters?page_size=500":           `{"data":[]}`,
+		"/linode/instances?page_size=500":       `{"data":[]}`,
+		"/networking/firewalls?page_size=500":   `{"data":[]}`,
+		"/vpcs?page_size=500":                   `{"data":[]}`,
+		"/object-storage/buckets?page_size=500": `{"data":[]}`,
+		"/volumes?page_size=500": `{"data":[
+			{"id":501,"label":"pvc-orphan","region":"us-sea","status":"active","linode_id":null},
+			{"id":502,"label":"pvc-attached","region":"us-sea","status":"active","linode_id":201},
+			{"id":503,"label":"manual-volume","region":"us-sea","status":"active","linode_id":null}
+		]}`,
+		"/volumes/501": `{}`,
+	})
+	t.Setenv("LINODE_TOKEN", "test-token")
+
+	err := run([]string{
+		"destroy-linode-staging-resources",
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--yes",
+		"--confirm-text", "destroy video-cloud-staging",
+		"--include-orphan-volumes",
+		"--orphan-volume-ids", "501",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, curlLog)
+	if !strings.Contains(log, "DELETE /volumes/501") {
+		t.Fatalf("expected orphan volume delete, got:\n%s", log)
+	}
+	if strings.Contains(log, "DELETE /volumes/502") || strings.Contains(log, "DELETE /volumes/503") {
+		t.Fatalf("must not delete attached or non-pvc volumes, got:\n%s", log)
+	}
+}
+
+func TestDestroyLinodeStagingResourcesRequiresExactOrphanVolumeIDs(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	curlLog := fakeLinodeCurl(t, map[string]string{
+		"/lke/clusters?page_size=500":           `{"data":[]}`,
+		"/linode/instances?page_size=500":       `{"data":[]}`,
+		"/networking/firewalls?page_size=500":   `{"data":[]}`,
+		"/vpcs?page_size=500":                   `{"data":[]}`,
+		"/object-storage/buckets?page_size=500": `{"data":[]}`,
+		"/volumes?page_size=500":                `{"data":[{"id":501,"label":"pvc-orphan","region":"us-sea","status":"active","linode_id":null}]}`,
+	})
+	t.Setenv("LINODE_TOKEN", "test-token")
+
+	err := run([]string{
+		"destroy-linode-staging-resources",
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--yes",
+		"--confirm-text", "destroy video-cloud-staging",
+		"--include-orphan-volumes",
+	})
+	if err == nil || !strings.Contains(err.Error(), "--include-orphan-volumes requires --orphan-volume-ids") {
+		t.Fatalf("expected exact id requirement, got %v", err)
+	}
+	if strings.Contains(readTestFile(t, curlLog), "DELETE /volumes") {
+		t.Fatalf("must not delete orphan volumes without exact ids, got:\n%s", readTestFile(t, curlLog))
+	}
+}
+
 func TestDestroyLinodeStagingResourcesRejectsWrongConfirmation(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	_ = fakeLinodeCurl(t, map[string]string{
@@ -148,6 +242,7 @@ func TestDestroyLinodeStagingResourcesRejectsWrongConfirmation(t *testing.T) {
 		"/networking/firewalls?page_size=500":   `{"data":[]}`,
 		"/vpcs?page_size=500":                   `{"data":[]}`,
 		"/object-storage/buckets?page_size=500": `{"data":[]}`,
+		"/volumes?page_size=500":                `{"data":[]}`,
 	})
 	t.Setenv("LINODE_TOKEN", "test-token")
 

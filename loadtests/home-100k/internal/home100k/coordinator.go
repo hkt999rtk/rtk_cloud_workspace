@@ -84,7 +84,7 @@ func parseRunnerDaemonFlags(name string, args []string, stderr io.Writer) (PlanO
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
-	deviceCount, userCount, devicesPerUser, vmCount := addSizingFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM := addSizingFlags(fs)
 	runID := fs.String("run-id", "", "run id for artifact correlation")
 	outDir := fs.String("out-dir", "", "artifact output directory")
 	role := fs.String("role", "", "shard role")
@@ -106,7 +106,7 @@ func parseRunnerDaemonFlags(name string, args []string, stderr io.Writer) (PlanO
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
-	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
 	return opts, runnerDaemonFlagValues{
 		shardRunFlagValues: shardRunFlagValues{
 			runID:                *runID,

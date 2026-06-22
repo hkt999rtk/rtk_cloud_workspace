@@ -6,7 +6,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
-ENV_ROOT="$WORKSPACE/cloud_env/staging/linode"
+ENV_ROOT="$WORKSPACE/cloud_env/staging/lke"
 mkdir -p \
 	"$ENV_ROOT/certificates/video-cloud-staging.example.com" \
 	"$ENV_ROOT/certificates/account-manager.video-cloud-staging.example.com" \

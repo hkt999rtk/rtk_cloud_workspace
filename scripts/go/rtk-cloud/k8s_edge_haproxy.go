@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -224,7 +223,7 @@ func lkeKubernetesNodeInternalIPs() ([]string, error) {
 }
 
 func lkeKubernetesNodeInternalIPsByName() ([]lkeKubernetesNodeInternalIP, error) {
-	out, err := exec.Command(lkeKubectl(), lkeKubectlArgs("get", "nodes", "-o", "json")...).CombinedOutput()
+	out, err := kubectlCombinedOutput(nil, "get", "nodes", "-o", "json")
 	if err != nil {
 		return nil, fmt.Errorf("get LKE nodes for HAProxy upstreams: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -493,6 +492,9 @@ func lkeCreateEdgeHAProxyVM(token string, env map[string]string, opts provisionO
 	}
 	out, err := linodeRequestRaw(token, "POST", "/linode/instances", string(payload))
 	if err != nil {
+		if isLinodeActiveServicesLimitError(err) {
+			return lkeEdgeHAProxyVM{}, fmt.Errorf("Linode active services limit reached while creating HAProxy edge VM %q; delete unused Linode services or request a quota increase before rerunning staging provision: %w", lkeEdgeHAProxyLabel(env), err)
+		}
 		return lkeEdgeHAProxyVM{}, err
 	}
 	var created linodeInstance
@@ -503,6 +505,10 @@ func lkeCreateEdgeHAProxyVM(token string, env map[string]string, opts provisionO
 		return lkeEdgeHAProxyVM{}, errors.New("HAProxy edge VM create response did not include id")
 	}
 	return lkeEdgeVMFromLinode(created), nil
+}
+
+func isLinodeActiveServicesLimitError(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "limit for the number of active services")
 }
 
 func lkeWaitForEdgeHAProxyVM(token string, id int) (lkeEdgeHAProxyVM, error) {

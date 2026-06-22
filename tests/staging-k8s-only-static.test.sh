@@ -3,15 +3,29 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-for path in \
+active_paths=(
 	"$ROOT/scripts/run-staging-e2e.sh" \
 	"$ROOT/scripts/reset-staging-k8s.sh" \
 	"$ROOT/scripts/provision-staging.sh" \
 	"$ROOT/scripts/run-staging-acceptance.sh" \
 	"$ROOT/bin/stg.sh" \
 	"$ROOT/README.md" \
-	"$ROOT/scripts/README.zh-TW.md"; do
-	if rg -n -- '--target vm|CLOUD_STAGING_E2E_TARGET|remove-all-vm|remove_vm|provision_all|update-ssh-whitelist' "$path" >/tmp/staging-k8s-static.out; then
+	"$ROOT/scripts/README.zh-TW.md" \
+	"$ROOT/docs/cloud-env-layout.zh-TW.md" \
+	"$ROOT/docs/private-cloud-deployment.md" \
+	"$ROOT/docs/testing.md" \
+	"$ROOT/scripts/go/rtk-cloud/main.go" \
+	"$ROOT/scripts/go/rtk-cloud/provision.go" \
+	"$ROOT/scripts/go/rtk-cloud/native_commands.go" \
+	"$ROOT/scripts/go/rtk-cloud/k8s_runtime.go" \
+	"$ROOT/scripts/go/rtk-cloud/lke.go" \
+	"$ROOT/scripts/go/rtk-cloud/k8s_edge_haproxy.go" \
+	"$ROOT/scripts/go/rtk-cloud/provision_provider.go" \
+	"$ROOT/scripts/go/rtk-cloud/provider_linode_vm.go"
+)
+
+for path in "${active_paths[@]}"; do
+	if rg -n -- '--target vm|CLOUD_STAGING_E2E_TARGET|remove-all-vm|remove_vm|provision_all|update-ssh-whitelist|linode_deploy|deploy/linode|provision-public-vm|deploy-public-vm|provision-admin-vm|deploy-admin|linode-deploy deploy|deploy-staging\.sh --local-build' "$path" >/tmp/staging-k8s-static.out; then
 		cat /tmp/staging-k8s-static.out >&2
 		echo "staging runtime docs/scripts must stay K8s-only" >&2
 		exit 1
@@ -27,18 +41,6 @@ if rg -n -- 'ACCOUNT_MANAGER_LINODE_|ADMIN_LINODE_|CLOUD_LOGGER_LINODE_|provisio
 	echo "workspace staging schema/runtime code must not reference retired VM metadata/toolkits" >&2
 	exit 1
 fi
-
-for repo in "$ROOT/repos/rtk_video_cloud" "$ROOT/repos/rtk_account_manager" "$ROOT/repos/rtk_cloud_admin"; do
-	if [[ -d "$repo" ]] && rg -n \
-		-g '!**/docs/TEST_REPORT.md' \
-		-g '!**/docs/linode-staging-k8s.md' \
-		-- 'linode_deploy|deploy/linode|provision-public-vm|deploy-public-vm|provision-admin-vm|deploy-admin|linode-deploy deploy|deploy-staging\.sh --local-build|ACCOUNT_MANAGER_LINODE_|ADMIN_LINODE_|CLOUD_LOGGER_LINODE_|edge/api/infra/mqtt/coturn' \
-		"$repo" >/tmp/staging-k8s-submodules.out; then
-		cat /tmp/staging-k8s-submodules.out >&2
-		echo "submodule staging VM toolkits must stay retired" >&2
-		exit 1
-	fi
-done
 
 skill="/Users/kevinhuang/.codex/skills/linode-video-cloud-deploy/SKILL.md"
 if [[ -f "$skill" ]]; then

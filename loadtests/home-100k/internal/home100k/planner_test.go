@@ -1,6 +1,9 @@
 package home100k
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestDefaultPlanResolves100KHomeBaseline(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
@@ -116,14 +119,8 @@ func TestDefaultPlanIncludesDiverseDeviceAndUserProfiles(t *testing.T) {
 			t.Fatalf("missing user profile %s in %#v", name, plan.UserProfiles)
 		}
 	}
-	wantWindows := []string{"morning", "away", "return_home", "evening_peak"}
-	if len(plan.StageUsageWindows) != len(wantWindows) {
-		t.Fatalf("usage windows = %#v, want %#v", plan.StageUsageWindows, wantWindows)
-	}
-	for idx, want := range wantWindows {
-		if plan.StageUsageWindows[idx] != want || plan.Stages[idx].UsageWindow != want {
-			t.Fatalf("stage window %d = plan %q stage %q, want %q", idx, plan.StageUsageWindows[idx], plan.Stages[idx].UsageWindow, want)
-		}
+	if len(plan.StageUsageWindows) != 0 {
+		t.Fatalf("usage windows = %#v, want none for single target window", plan.StageUsageWindows)
 	}
 	if plan.DeviceProfiles["camera_status"].TrafficProfile != "event_burst" {
 		t.Fatalf("camera_status traffic profile = %#v", plan.DeviceProfiles["camera_status"])
@@ -182,17 +179,17 @@ func TestDefaultPlanCreatesDeterministicShardsAndStages(t *testing.T) {
 		}
 	}
 
-	wantStages := []int{25000, 50000, 75000, 100000}
-	if len(plan.Stages) != len(wantStages) {
-		t.Fatalf("stages = %d, want %d", len(plan.Stages), len(wantStages))
+	if len(plan.Stages) != 1 {
+		t.Fatalf("stages = %d, want 1 target window", len(plan.Stages))
 	}
-	for idx, want := range wantStages {
-		if plan.Stages[idx].ConnectedDevices != want {
-			t.Fatalf("stage %d devices = %d, want %d", idx, plan.Stages[idx].ConnectedDevices, want)
-		}
-		if plan.Stages[idx].WarmUp != "30s" || plan.Stages[idx].SteadyState != "90s" || plan.Stages[idx].CoolDown != "30s" {
-			t.Fatalf("stage %d durations = warm-up %s steady %s cool-down %s, want 30s/90s/30s", idx, plan.Stages[idx].WarmUp, plan.Stages[idx].SteadyState, plan.Stages[idx].CoolDown)
-		}
+	if plan.Stages[0].Name != "target" {
+		t.Fatalf("stage name = %q, want target", plan.Stages[0].Name)
+	}
+	if plan.Stages[0].ConnectedDevices != 100000 {
+		t.Fatalf("stage devices = %d, want 100000", plan.Stages[0].ConnectedDevices)
+	}
+	if plan.Stages[0].WarmUp != "30s" || plan.Stages[0].SteadyState != "90s" || plan.Stages[0].CoolDown != "30s" {
+		t.Fatalf("stage durations = warm-up %s steady %s cool-down %s, want 30s/90s/30s", plan.Stages[0].WarmUp, plan.Stages[0].SteadyState, plan.Stages[0].CoolDown)
 	}
 }
 
@@ -239,8 +236,8 @@ func TestPlanDefaultLoadWindowIsTenMinutes(t *testing.T) {
 		totalSeconds += seconds
 	}
 
-	if totalSeconds != 600 {
-		t.Fatalf("default load window = %d seconds from stages %v, want 600 seconds", totalSeconds, stageSeconds)
+	if totalSeconds != 150 {
+		t.Fatalf("default load window = %d seconds from stages %v, want 150 seconds", totalSeconds, stageSeconds)
 	}
 	for idx, seconds := range stageSeconds {
 		if seconds != 150 {
@@ -266,6 +263,15 @@ func TestPlanUsesConfiguredDeviceCount(t *testing.T) {
 	if plan.Conditions.Users != 450 {
 		t.Fatalf("users = %d, want 450", plan.Conditions.Users)
 	}
+	if plan.Conditions.VMCount != 1 {
+		t.Fatalf("VM count = %d, want 1 from ceil(9000/20000)", plan.Conditions.VMCount)
+	}
+	if plan.Conditions.LoadGeneratorDevicesPerVM != 20000 {
+		t.Fatalf("load-generator devices per VM = %d, want 20000", plan.Conditions.LoadGeneratorDevicesPerVM)
+	}
+	if plan.Conditions.LoadGeneratorSizingFormula != "vm_count = ceil(devices / load_generator_devices_per_vm)" {
+		t.Fatalf("sizing formula = %q", plan.Conditions.LoadGeneratorSizingFormula)
+	}
 	if got := plan.DeviceMix["light"]; got != 1620 {
 		t.Fatalf("light count = %d, want 1620", got)
 	}
@@ -289,35 +295,65 @@ func TestPlanUsesConfiguredDeviceCount(t *testing.T) {
 	}
 
 	deviceShards := plan.ShardsByRole("device-mqtt")
-	if len(deviceShards) != 5 {
-		t.Fatalf("device shards = %d, want 5", len(deviceShards))
+	if len(deviceShards) != 1 {
+		t.Fatalf("device shards = %d, want 1", len(deviceShards))
 	}
-	for idx, shard := range deviceShards {
-		if shard.Start != idx*1800 || shard.End != (idx+1)*1800 || shard.Count != 1800 {
-			t.Fatalf("device shard %d = [%d,%d) count=%d, want [%d,%d) count=1800", idx, shard.Start, shard.End, shard.Count, idx*1800, (idx+1)*1800)
-		}
+	if shard := deviceShards[0]; shard.Start != 0 || shard.End != 9000 || shard.Count != 9000 {
+		t.Fatalf("device shard = [%d,%d) count=%d, want [0,9000) count=9000", shard.Start, shard.End, shard.Count)
 	}
 	userShards := plan.ShardsByRole("user-app")
-	if userShards[0].Start != 0 || userShards[0].End != 90 || userShards[4].Start != 360 || userShards[4].End != 450 {
+	if len(userShards) != 1 || userShards[0].Start != 0 || userShards[0].End != 450 || userShards[0].Count != 450 {
 		t.Fatalf("unexpected user shards: %#v", userShards)
 	}
 
-	wantStages := []struct {
-		name    string
-		devices int
-	}{
-		{"25pct", 2250},
-		{"50pct", 4500},
-		{"75pct", 6750},
-		{"100pct", 9000},
+	if len(plan.Stages) != 1 {
+		t.Fatalf("stages = %d, want 1 target window", len(plan.Stages))
 	}
-	if len(plan.Stages) != len(wantStages) {
-		t.Fatalf("stages = %d, want %d", len(plan.Stages), len(wantStages))
+	if plan.Stages[0].Name != "target" || plan.Stages[0].ConnectedDevices != 9000 {
+		t.Fatalf("stage = %s/%d, want target/9000", plan.Stages[0].Name, plan.Stages[0].ConnectedDevices)
 	}
-	for idx, want := range wantStages {
-		if plan.Stages[idx].Name != want.name || plan.Stages[idx].ConnectedDevices != want.devices {
-			t.Fatalf("stage %d = %s/%d, want %s/%d", idx, plan.Stages[idx].Name, plan.Stages[idx].ConnectedDevices, want.name, want.devices)
-		}
+}
+
+func TestPlanHonorsExplicitVMCountWithinGeneratorCapacity(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:     "cloud_env/staging/lke",
+		Brandname:   "RTK",
+		Region:      "us-sea",
+		DeviceCount: 9000,
+		VMCount:     2,
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+
+	if plan.Conditions.VMCount != 2 {
+		t.Fatalf("VM count = %d, want explicit 2", plan.Conditions.VMCount)
+	}
+	deviceShards := plan.ShardsByRole("device-mqtt")
+	if len(deviceShards) != 2 {
+		t.Fatalf("device shards = %d, want 2", len(deviceShards))
+	}
+	if deviceShards[0].Start != 0 || deviceShards[0].End != 4500 || deviceShards[0].Count != 4500 {
+		t.Fatalf("first device shard = %#v, want [0,4500)", deviceShards[0])
+	}
+	if deviceShards[1].Start != 4500 || deviceShards[1].End != 9000 || deviceShards[1].Count != 4500 {
+		t.Fatalf("second device shard = %#v, want [4500,9000)", deviceShards[1])
+	}
+}
+
+func TestPlanRejectsExplicitVMCountBelowGeneratorCapacity(t *testing.T) {
+	_, err := NewPlan(PlanOptions{
+		EnvRoot:     "cloud_env/staging/lke",
+		Brandname:   "RTK",
+		Region:      "us-sea",
+		DeviceCount: 100000,
+		VMCount:     2,
+	})
+	if err == nil {
+		t.Fatal("expected capacity error")
+	}
+	if got := err.Error(); !strings.Contains(got, "above configured load-generator capacity 20000") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

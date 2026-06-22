@@ -49,7 +49,7 @@ func Resolve(workspace, envRoot string) (string, error) {
 		return "", fmt.Errorf("workspace is required")
 	}
 	if envRoot == "" {
-		envRoot = filepath.Join(workspace, "cloud_env", "staging", "linode")
+		envRoot = filepath.Join(workspace, "cloud_env", "staging", "lke")
 	}
 	abs, err := filepath.Abs(envRoot)
 	if err != nil {
@@ -58,16 +58,13 @@ func Resolve(workspace, envRoot string) (string, error) {
 	if filepath.Base(abs) == "staging" {
 		return filepath.Join(abs, stagingProviderForRoot(abs)), nil
 	}
-	if isDir(filepath.Join(abs, "linode")) && !isDir(filepath.Join(abs, "services")) && !isDir(filepath.Join(abs, "env")) && !isDir(filepath.Join(abs, "topology")) {
-		return filepath.Join(abs, "linode"), nil
-	}
 	return abs, nil
 }
 
 func stagingProviderForRoot(stagingRoot string) string {
 	provider := firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), os.Getenv("RTK_CLOUD_STAGING_PROVIDER"))
 	if provider == "" {
-		for _, candidate := range []string{"lke", "linode"} {
+		for _, candidate := range []string{"lke", "k8s", "gke", "eks", "aks"} {
 			if value := FileVar(filepath.Join(stagingRoot, candidate, "env", "stack.env"), "CLOUD_PROVIDER"); value == candidate {
 				provider = candidate
 				break
@@ -75,7 +72,7 @@ func stagingProviderForRoot(stagingRoot string) string {
 		}
 	}
 	if provider == "" {
-		provider = "linode"
+		provider = "lke"
 	}
 	return provider
 }
@@ -111,7 +108,7 @@ func Load(root, dnsOverride string) (Environment, error) {
 		values["CLOUD_ENV_NAME"] = nameFromRoot(root)
 	}
 	if values["CLOUD_PROVIDER"] == "" {
-		values["CLOUD_PROVIDER"] = "linode"
+		values["CLOUD_PROVIDER"] = "lke"
 	}
 	derived := Derive(values)
 	for _, key := range generatedKeys {
@@ -145,7 +142,7 @@ func Load(root, dnsOverride string) (Environment, error) {
 
 func supportedCloudProvider(provider string) bool {
 	switch provider {
-	case "linode", "lke", "gke", "aks", "eks":
+	case "linode", "lke", "k8s", "gke", "aks", "eks":
 		return true
 	default:
 		return false
@@ -183,14 +180,35 @@ func Validate(root string, env Environment) error {
 		label    string
 		expected string
 		actual   string
+	}{}
+	if env.Values["CLOUD_PROVIDER"] == "linode" {
+		checks = append(checks,
+			struct {
+				label    string
+				expected string
+				actual   string
+			}{"topology stack", env.Values["CLOUD_STACK_NAME"], YAMLTopValue(paths.VideoConfig, "stack")},
+			struct {
+				label    string
+				expected string
+				actual   string
+			}{"topology region", env.Values["CLOUD_REGION"], YAMLTopValue(paths.VideoConfig, "region")},
+			struct {
+				label    string
+				expected string
+				actual   string
+			}{"video certissuer domain", env.Values["VIDEO_CLOUD_CERTISSUER_DOMAIN"], YAMLPathValue(paths.VideoConfig, "deploy.certissuer_domain")},
+		)
+	}
+	checks = append(checks, []struct {
+		label    string
+		expected string
+		actual   string
 	}{
-		{"topology stack", env.Values["CLOUD_STACK_NAME"], YAMLTopValue(paths.VideoConfig, "stack")},
-		{"topology region", env.Values["CLOUD_REGION"], YAMLTopValue(paths.VideoConfig, "region")},
-		{"video certissuer domain", env.Values["VIDEO_CLOUD_CERTISSUER_DOMAIN"], YAMLPathValue(paths.VideoConfig, "deploy.certissuer_domain")},
 		{"Account Manager domain", env.Values["ACCOUNT_MANAGER_DOMAIN"], FileVar(paths.AccountManagerEnv, "ACCOUNT_MANAGER_DOMAIN")},
 		{"Cloud Admin domain", env.Values["CLOUD_ADMIN_DOMAIN"], FileVar(paths.AdminEnv, "CLOUD_ADMIN_DOMAIN")},
 		{"Cloud Logger domain", env.Values["CLOUD_LOGGER_DOMAIN"], FileVar(paths.CloudLoggerEnv, "CLOUD_LOGGER_DOMAIN")},
-	}
+	}...)
 	for _, check := range checks {
 		if check.actual != "" && check.expected != check.actual {
 			return fmt.Errorf("%s mismatch: expected %s, got %s", check.label, check.expected, check.actual)

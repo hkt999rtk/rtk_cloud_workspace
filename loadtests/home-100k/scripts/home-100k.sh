@@ -76,6 +76,7 @@ device_count="${HOME100K_DEVICES:-}"
 user_count="${HOME100K_USERS:-}"
 devices_per_user="${HOME100K_DEVICES_PER_USER:-}"
 vm_count="${HOME100K_VM_COUNT:-}"
+load_generator_devices_per_vm="${HOME100K_LOAD_GENERATOR_DEVICES_PER_VM:-20000}"
 runner_mode="${HOME100K_RUNNER_MODE:-live}"
 runner_nofile_limit="${HOME100K_RUNNER_NOFILE_LIMIT:-1048576}"
 mqtt_concurrency="${HOME100K_MQTT_CONCURRENCY:-1000}"
@@ -168,7 +169,8 @@ Defaults can be overridden with:
   HOME100K_DEVICES configured in the description file; current default description uses 9000
   HOME100K_USERS optional; when omitted, the planner derives users from devices/devices-per-user
   HOME100K_DEVICES_PER_USER configured in the description file; current default description uses 20
-  HOME100K_VM_COUNT optional; default planner value is 5 mixed generator VMs
+  HOME100K_LOAD_GENERATOR_DEVICES_PER_VM default: 20000; per-VM generator capacity used for automatic VM sizing
+  HOME100K_VM_COUNT optional; default planner value is ceil(HOME100K_DEVICES / HOME100K_LOAD_GENERATOR_DEVICES_PER_VM) mixed generator VMs
   HOME100K_RUNNER_MODE default: live; use sample only for local developer smoke tests
   HOME100K_RUNNER_NOFILE_LIMIT default: 1048576; remote daemon nofile limit for MQTT sockets
   HOME100K_MQTT_CONCURRENCY default: 1000 per VM shard; live MQTT connect worker concurrency
@@ -191,6 +193,9 @@ Defaults can be overridden with:
   HOME100K_TOKEN_ONLY_BASE_URL optional base URL for token-only; defaults to token/public Video Cloud URL
   HOME100K_TOKEN_ONLY_PROFILE optional comma-separated concurrency stages, e.g. 1000,5000,10000
   HOME100K_TOKEN_SEED_REDIS_ADDR Redis/Valkey address for seed-token-projections
+  HOME100K_CLOUD_LOGGER_ENV optional cloud-logger env file for server evidence
+  HOME100K_CLOUD_LOGGER_ENDPOINT optional explicit logger /v1/logs endpoint; useful with kubectl port-forward
+  HOME100K_CLOUD_LOGGER_INGEST_TOKEN optional explicit logger query token; prefer env/root secret when available
   HOME100K_VIDEO_CLOUD_BASE_URL legacy alias for HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL
   HOME100K_ACCOUNT_MANAGER_BASE_URL optional Account Manager base URL for remote generators
   HOME100K_NODE_RESOURCE_STATUS default: 1
@@ -365,12 +370,17 @@ node_resource_status() {
 
 k8s_kubeconfig() {
   local candidate
+  local env_root_kubeconfig
+  case "$env_root" in
+    /*) env_root_kubeconfig="$env_root/state/lke-kubeconfig.yaml" ;;
+    *) env_root_kubeconfig="$repo_root/$env_root/state/lke-kubeconfig.yaml" ;;
+  esac
   for candidate in \
     "${HOME100K_KUBECONFIG:-}" \
     "${RTK_CLOUD_LKE_KUBECONFIG:-}" \
     "${LKE_KUBECONFIG:-}" \
     "${CLOUD_STAGING_K8S_KUBECONFIG:-}" \
-    "$repo_root/$env_root/state/lke-kubeconfig.yaml"; do
+    "$env_root_kubeconfig"; do
     if [[ -n "$candidate" && -f "$candidate" ]]; then
       printf '%s\n' "$candidate"
       return 0
@@ -572,7 +582,7 @@ k8s_runtime_health_status() {
 }
 
 workflow_status() {
-  local now elapsed phase vm_count shard_count report_status evidence_status
+  local now elapsed phase vm_count shard_count report_status evidence_status expected_vm_count
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   elapsed="$(($(date +%s) - workflow_start_epoch))s"
   phase="starting"
@@ -610,9 +620,14 @@ PY
       evidence_status="incomplete"
     fi
   fi
+  expected_vm_count="${HOME100K_VM_COUNT:-}"
+  if [[ -z "$expected_vm_count" && "${device_count:-}" =~ ^[0-9]+$ && "$device_count" -gt 0 ]]; then
+    expected_vm_count="$(( (device_count + load_generator_devices_per_vm - 1) / load_generator_devices_per_vm ))"
+  fi
+  expected_vm_count="${expected_vm_count:-5}"
   {
     printf '[home-100k status] time=%s elapsed=%s run_id=%s phase=%s\n' "$now" "$elapsed" "$run_id" "$phase"
-    printf '[home-100k status] out_dir=%s vms=%s/5 shard_results=%s server_evidence=%s report_status=%s target_connects=%s target_users=%s devices_per_user=%s ramp_up_time=%s command_concurrency=%s shadow_command_timeout=%s\n' "$out_dir" "$vm_count" "$shard_count" "$evidence_status" "$report_status" "${device_count:-planner-default}" "${user_count:-derived}" "${devices_per_user:-planner-default}" "$target_ramp_up_time" "$command_concurrency" "$shadow_command_timeout"
+    printf '[home-100k status] out_dir=%s vms=%s/%s shard_results=%s server_evidence=%s report_status=%s target_connects=%s target_users=%s devices_per_user=%s ramp_up_time=%s command_concurrency=%s shadow_command_timeout=%s\n' "$out_dir" "$vm_count" "$expected_vm_count" "$shard_count" "$evidence_status" "$report_status" "${device_count:-planner-default}" "${user_count:-derived}" "${devices_per_user:-planner-default}" "$stage_warm_up" "$command_concurrency" "$shadow_command_timeout"
   } >&2
   ensure_resource_logs
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$now" "$run_id" "$elapsed" "$phase" "$vm_count" "$shard_count" "$evidence_status" "$report_status" >> "$workflow_status_log"
@@ -744,6 +759,7 @@ fi
 if [[ -n "$vm_count" ]]; then
   base_args+=("--vm-count" "$vm_count")
 fi
+base_args+=("--load-generator-devices-per-vm" "$load_generator_devices_per_vm")
 plan_condition_args=(
   "${base_args[@]}"
   "--runner-nofile-limit" "$runner_nofile_limit"

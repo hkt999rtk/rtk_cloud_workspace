@@ -15,7 +15,8 @@ func TestProvisionProviderRuntimeSelection(t *testing.T) {
 		runtime  provisionRuntime
 	}{
 		{name: "lke uses kubernetes runtime", provider: "lke", runtime: provisionRuntimeKubernetes},
-		{name: "linode keeps legacy vm runtime", provider: "linode", runtime: provisionRuntimeVM},
+		{name: "linode is retired before VM runtime dispatch", provider: "linode", runtime: provisionRuntimeKubernetes},
+		{name: "k8s reserves kubernetes runtime", provider: "k8s", runtime: provisionRuntimeKubernetes},
 		{name: "gke reserves kubernetes runtime", provider: "gke", runtime: provisionRuntimeKubernetes},
 		{name: "aks reserves kubernetes runtime", provider: "aks", runtime: provisionRuntimeKubernetes},
 		{name: "eks reserves kubernetes runtime", provider: "eks", runtime: provisionRuntimeKubernetes},
@@ -34,8 +35,22 @@ func TestProvisionProviderRuntimeSelection(t *testing.T) {
 	}
 }
 
+func TestLinodeProviderRetiresVMRuntime(t *testing.T) {
+	provider, err := newCloudProvider("linode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = provider.RunProvision(provisionContext{})
+	if !errors.Is(err, errVMRuntimeRetired) {
+		t.Fatalf("RunProvision error got %v want errVMRuntimeRetired", err)
+	}
+	if !strings.Contains(err.Error(), "retired VM runtime") && !strings.Contains(err.Error(), "VM runtime") {
+		t.Fatalf("retired error should mention VM runtime, got %v", err)
+	}
+}
+
 func TestFutureKubernetesProvidersFailFastBeforeMutation(t *testing.T) {
-	for _, name := range []string{"gke", "aks", "eks"} {
+	for _, name := range []string{"k8s", "gke", "aks", "eks"} {
 		t.Run(name, func(t *testing.T) {
 			provider, err := newCloudProvider(name)
 			if err != nil {
@@ -83,11 +98,13 @@ func TestKubernetesProvisionStepsExposeProviderNeutralOrder(t *testing.T) {
 	want := []string{
 		"preflight",
 		"plan",
+		"capacity-check",
 		"ensure-kube-access",
 		"ensure-lke-node-pool",
+		"wait-kube-api-ready",
 		"apply-base",
-		"public-https",
 		"deploy-workloads",
+		"public-https",
 		"write-artifacts",
 		"e2e",
 	}
@@ -99,6 +116,8 @@ func TestKubernetesProvisionStepsExposeProviderNeutralOrder(t *testing.T) {
 func TestLKEImagePullSecretApplyDoesNotLogRawToken(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LINODE_TOKEN", "")
 	t.Setenv("GHCR_PULL_USERNAME", "deploy-bot")
 	t.Setenv("GHCR_PULL_TOKEN", "raw-secret-token")
 

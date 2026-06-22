@@ -214,7 +214,6 @@ func runMQTTTest(args []string) error {
 	stageNames := fs.String("stage-names", "", "comma-separated staged sustained load stage names")
 	stageConnectedDevices := fs.String("stage-connected-devices", "", "comma-separated staged sustained per-shard connected device targets")
 	stageDurationsSeconds := fs.String("stage-durations-seconds", "", "comma-separated staged sustained stage durations in seconds")
-	stageRampSeconds := fs.String("stage-ramp-seconds", "", "comma-separated staged sustained connect ramp durations in seconds")
 	stageMinCommands := fs.String("stage-min-commands", "", "comma-separated staged sustained minimum command events")
 	deviceTrafficProfile := fs.String("device-traffic-profile", "", "device traffic profile passed through to cloud-mqtt-test")
 	stageUsageWindows := fs.String("stage-usage-windows", "", "comma-separated staged sustained usage windows")
@@ -315,7 +314,6 @@ func runMQTTTest(args []string) error {
 		"--stage-names", *stageNames,
 		"--stage-connected-devices", *stageConnectedDevices,
 		"--stage-durations-seconds", *stageDurationsSeconds,
-		"--stage-ramp-seconds", *stageRampSeconds,
 		"--stage-min-commands", *stageMinCommands,
 		"--device-traffic-profile", *deviceTrafficProfile,
 		"--concurrency", strconv.Itoa(*concurrency),
@@ -496,7 +494,7 @@ func syncEnvRoot(root string, check bool) (bool, error) {
 		raw["CLOUD_ENV_NAME"] = filepath.Base(filepath.Dir(root))
 	}
 	if raw["CLOUD_PROVIDER"] == "" {
-		raw["CLOUD_PROVIDER"] = "linode"
+		raw["CLOUD_PROVIDER"] = "lke"
 	}
 	if raw["CLOUD_REGION"] == "" {
 		raw["CLOUD_REGION"] = "us-sea"
@@ -511,28 +509,35 @@ func syncEnvRoot(root string, check bool) (bool, error) {
 	} else if c {
 		changed = true
 	}
-	topology := firstExistingPath(filepath.Join(root, "topology", "video-cloud.yaml"), filepath.Join(root, "topology", "video-cloud-staging.yaml"))
-	if c, err := syncTopology(topology, raw, derived, check); err != nil {
-		return changed, err
-	} else if c {
-		changed = true
+	if raw["CLOUD_PROVIDER"] == "linode" {
+		topology := firstExistingPath(filepath.Join(root, "topology", "video-cloud.yaml"), filepath.Join(root, "topology", "video-cloud-staging.yaml"))
+		if c, err := syncTopology(topology, raw, derived, check); err != nil {
+			return changed, err
+		} else if c {
+			changed = true
+		}
 	}
 	envUpdates := []struct {
-		path string
-		keys map[string]string
+		path   string
+		keys   map[string]string
+		create bool
 	}{
-		{firstExistingPath(filepath.Join(root, "services", "video-cloud", "video-cloud.env"), filepath.Join(root, "services", "video-cloud", "video-cloud-staging.env")), map[string]string{}},
-		{firstExistingPath(filepath.Join(root, "services", "account-manager", "account-manager.env"), filepath.Join(root, "services", "account-manager", "account-manager-public-staging.env")), map[string]string{
+		{path: firstExistingPath(filepath.Join(root, "services", "video-cloud", "video-cloud.env"), filepath.Join(root, "services", "video-cloud", "video-cloud-staging.env")), keys: map[string]string{}},
+		{path: firstExistingPath(filepath.Join(root, "services", "account-manager", "account-manager.env"), filepath.Join(root, "services", "account-manager", "account-manager-public-staging.env")), keys: map[string]string{
 			"ACCOUNT_MANAGER_DOMAIN": derived["ACCOUNT_MANAGER_DOMAIN"],
 		}},
-		{firstExistingPath(filepath.Join(root, "services", "cloud-admin", "admin.env"), filepath.Join(root, "services", "cloud-admin", "admin-staging.env")), map[string]string{
+		{path: firstExistingPath(filepath.Join(root, "services", "cloud-admin", "admin.env"), filepath.Join(root, "services", "cloud-admin", "admin-staging.env")), keys: map[string]string{
 			"CLOUD_ADMIN_DOMAIN": derived["CLOUD_ADMIN_DOMAIN"],
 		}},
-		{filepath.Join(root, "services", "cloud-logger", "logger.env"), map[string]string{
-			"CLOUD_LOGGER_DOMAIN": derived["CLOUD_LOGGER_DOMAIN"],
+		{path: filepath.Join(root, "services", "cloud-logger", "logger.env"), create: raw["CLOUD_PROVIDER"] == "lke", keys: map[string]string{
+			"CLOUD_LOGGER_DOMAIN":   derived["CLOUD_LOGGER_DOMAIN"],
+			"CLOUD_LOGGER_ENDPOINT": "https://" + derived["CLOUD_LOGGER_DOMAIN"],
 		}},
 	}
 	for _, item := range envUpdates {
+		if _, statErr := os.Stat(item.path); os.IsNotExist(statErr) && !item.create {
+			continue
+		}
 		c, err := syncEnvFile(item.path, item.keys, raw, derived, check)
 		if err != nil {
 			return changed, err
@@ -613,6 +618,9 @@ func syncEnvFile(path string, updates map[string]string, raw, derived map[string
 	values, err := readEnvFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return false, err
+	}
+	if values == nil {
+		values = map[string]string{}
 	}
 	for key, value := range values {
 		if isRetiredStagingRuntimeEnvKey(key) {
@@ -920,8 +928,8 @@ func runSecretsCheck(args []string) error {
 		".secrets",
 		".secrets.backup",
 		".secrets/staging/linode/admin/env/admin.env",
-		"cloud_env/staging/linode/env/operator.env",
-		"cloud_env/staging/linode/keys/root-ca.key.pem",
+		"cloud_env/staging/lke/state/lke-kubeconfig.yaml",
+		"cloud_env/staging/lke/services/account-manager/account-manager-platform-admin.env",
 	} {
 		if err := exec.Command("git", "-C", workspace, "check-ignore", "-q", path).Run(); err == nil {
 			check.pass(path + " is ignored")
@@ -2006,11 +2014,11 @@ func printE2EDataSetupPlan(workspace, envRoot, brandname string, userCount, devi
 	fmt.Fprintf(os.Stdout, "device_concurrency: %d\n", deviceConcurrency)
 	fmt.Fprintf(os.Stdout, "bind_concurrency: %d\n", bindConcurrency)
 	fmt.Fprintln(os.Stdout, "steps:")
-	fmt.Fprintf(os.Stdout, "  - create brand cloud with %s\n", scripts["create-brand"])
-	fmt.Fprintf(os.Stdout, "  - create users with %s\n", scripts["create-users"])
-	fmt.Fprintf(os.Stdout, "  - generate/factory-enroll devices with %s\n", scripts["generate-devices"])
-	fmt.Fprintf(os.Stdout, "  - bind/provision devices with %s\n", scripts["bind-devices"])
-	fmt.Fprintf(os.Stdout, "  - validate bind artifact with %s\n", scripts["validate-bind"])
+	fmt.Fprintf(os.Stdout, "  - create brand cloud with %s\n", displayCommand(scripts["create-brand"]))
+	fmt.Fprintf(os.Stdout, "  - create users with %s\n", displayCommand(scripts["create-users"]))
+	fmt.Fprintf(os.Stdout, "  - generate/factory-enroll devices with %s\n", displayCommand(scripts["generate-devices"]))
+	fmt.Fprintf(os.Stdout, "  - bind/provision devices with %s\n", displayCommand(scripts["bind-devices"]))
+	fmt.Fprintf(os.Stdout, "  - validate bind artifact with %s\n", displayCommand(scripts["validate-bind"]))
 }
 
 func e2eStepOrder() []string {
@@ -2234,13 +2242,11 @@ func runRemoveK8s(args []string) error {
 	fs.SetOutput(os.Stderr)
 	workspaceFlag := fs.String("workspace", "", "workspace")
 	envRootFlag := fs.String("env-root", "", "environment root")
+	plan := fs.Bool("plan", false, "print cleanup plan without deleting resources")
 	yes := fs.Bool("yes", false, "confirm")
 	purgeStorage := fs.Bool("purge-storage", false, "delete staging PVC/PV storage before removing namespaces")
 	if err := fs.Parse(args); err != nil {
 		return err
-	}
-	if !*yes {
-		return errors.New("--yes is required")
 	}
 	workspace := *workspaceFlag
 	var err error
@@ -2255,13 +2261,45 @@ func runRemoveK8s(args []string) error {
 		return err
 	}
 	stack := firstNonEmpty(envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_STACK_NAME"), "video-cloud-staging")
-	if os.Getenv("CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET") != "1" {
+	destructive := os.Getenv("CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET") == "1"
+	if *plan {
+		mode := "non-destructive reset no-op"
+		if destructive {
+			mode = "destructive namespace cleanup"
+		}
+		fmt.Fprintf(os.Stdout, "cloud-remove-k8s plan\n")
+		fmt.Fprintf(os.Stdout, "workspace: %s\n", workspace)
+		fmt.Fprintf(os.Stdout, "env_root: %s\n", envRoot)
+		fmt.Fprintf(os.Stdout, "stack: %s\n", stack)
+		fmt.Fprintf(os.Stdout, "mode: %s\n", mode)
+		fmt.Fprintf(os.Stdout, "purge_storage: %t\n", *purgeStorage)
+		fmt.Fprintf(os.Stdout, "namespaces:\n")
+		for _, ns := range k8sStagingNamespaces(stack) {
+			if *purgeStorage && destructive {
+				fmt.Fprintf(os.Stdout, "  - delete PVCs then namespace %s\n", ns)
+				continue
+			}
+			if destructive {
+				fmt.Fprintf(os.Stdout, "  - reset namespace resources in %s\n", ns)
+			} else {
+				fmt.Fprintf(os.Stdout, "  - would skip %s unless CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET=1\n", ns)
+			}
+		}
+		return nil
+	}
+	if !*yes {
+		return errors.New("--yes is required")
+	}
+	if !destructive {
 		fmt.Fprintf(os.Stderr, "[cloud-remove-k8s] non-destructive reset for %s; set CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET=1 to delete namespaces\n", stack)
 		return nil
 	}
 	kubeconfig, err := ensureK8SKubeconfig(workspace, envRoot, stack)
 	if err != nil {
 		return err
+	}
+	if err := cachePublicHTTPSSecretBeforeK8SRemoval(envRoot, kubeconfig); err != nil {
+		fmt.Fprintf(os.Stderr, "[cloud-remove-k8s] warning: public TLS certificate cache skipped: %v\n", err)
 	}
 	for _, ns := range k8sStagingNamespaces(stack) {
 		if *purgeStorage {
@@ -2277,6 +2315,40 @@ func runRemoveK8s(args []string) error {
 			return err
 		}
 	}
+	return nil
+}
+
+func cachePublicHTTPSSecretBeforeK8SRemoval(envRoot, kubeconfig string) error {
+	loaded, err := envroot.Load(envRoot, "")
+	if err != nil {
+		return err
+	}
+	env := loaded.Values
+	if firstNonEmpty(env["CLOUD_PROVIDER"], "lke") != "lke" {
+		return nil
+	}
+	if strings.TrimSpace(kubeconfig) != "" {
+		old := os.Getenv("RTK_CLOUD_LKE_KUBECONFIG")
+		if err := os.Setenv("RTK_CLOUD_LKE_KUBECONFIG", kubeconfig); err != nil {
+			return err
+		}
+		defer func() {
+			if old == "" {
+				_ = os.Unsetenv("RTK_CLOUD_LKE_KUBECONFIG")
+			} else {
+				_ = os.Setenv("RTK_CLOUD_LKE_KUBECONFIG", old)
+			}
+		}()
+	}
+	hosts := lkePublicHTTPSHosts(lkePublicHTTPSBaseRoutes(env))
+	certPEM, keyPEM, ok, err := lkeExistingPublicHTTPSTLSSecretMaterialCoversHosts(env, hosts)
+	if err != nil || !ok {
+		return err
+	}
+	if err := lkeWritePublicHTTPSCertificateCache(provisionPaths{EnvRoot: envRoot}, env, hosts, certPEM, keyPEM); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "[cloud-remove-k8s] cached public TLS certificate: %s\n", lkePublicHTTPSCertificateCacheDir(provisionPaths{EnvRoot: envRoot}, env))
 	return nil
 }
 
@@ -2355,6 +2427,9 @@ func k8sStagingNamespaces(stack string) []string {
 		stack + "-frontend",
 		stack + "-observability",
 		stack + "-video-cloud",
+		stack + "-ingress",
+		stack + "-secrets",
+		stack + "-logger",
 	}
 }
 
@@ -2728,7 +2803,7 @@ func resolveStagingRuntimeContext(workspaceFlag, stackFileFlag, envRootFlag stri
 		case envFileValue(filepath.Join(workspace, "cloud_env", "staging", "lke", "env", "stack.env"), "CLOUD_PROVIDER") == "lke":
 			stackFile = filepath.Join(workspace, "cloud_env", "staging", "lke", "env", "stack.env")
 		default:
-			stackFile = filepath.Join(workspace, "cloud_env", "staging", "linode", "env", "stack.env")
+			stackFile = filepath.Join(workspace, "cloud_env", "staging", "lke", "env", "stack.env")
 		}
 	}
 	if !filepath.IsAbs(stackFile) {
@@ -2738,9 +2813,12 @@ func resolveStagingRuntimeContext(workspaceFlag, stackFileFlag, envRootFlag stri
 	if provider == "" {
 		provider = envFileValue(ctx.stackFile, "CLOUD_PROVIDER")
 	}
-	provider = firstNonEmpty(provider, "linode")
-	if provider != "linode" && provider != "lke" {
-		return ctx, fmt.Errorf("unsupported CLOUD_PROVIDER=%s; staging E2E currently supports linode or lke", provider)
+	provider = firstNonEmpty(provider, "lke")
+	if provider == "linode" {
+		return ctx, fmt.Errorf("%w: CLOUD_PROVIDER=linode used the retired VM runtime; use CLOUD_PROVIDER=lke or another Kubernetes provider", errVMRuntimeRetired)
+	}
+	if !isKubernetesProviderName(provider) {
+		return ctx, fmt.Errorf("unsupported CLOUD_PROVIDER=%s; staging E2E currently supports Kubernetes providers only", provider)
 	}
 	ctx.provider = provider
 	if err := os.Setenv("CLOUD_PROVIDER", provider); err != nil {
@@ -2885,7 +2963,11 @@ func runStagingProvision(args []string) error {
 		if ctx.provider == "lke" {
 			missing := missingLKEImageEnvKeys()
 			if len(missing) > 0 {
-				fmt.Fprintf(os.Stdout, "image_resolve: automatic (%s)\n", strings.Join(missing, ","))
+				if env, source := existingLKEImageEnv(ctx.envRoot); lkeImageEnvHasKeys(env, missing) {
+					fmt.Fprintf(os.Stdout, "image_resolve: existing artifact (%s)\n", source)
+				} else {
+					fmt.Fprintf(os.Stdout, "image_resolve: automatic (%s)\n", strings.Join(missing, ","))
+				}
 			} else {
 				fmt.Fprintln(os.Stdout, "image_resolve: skipped (all LKE image env vars provided)")
 			}
@@ -3028,6 +3110,13 @@ func runStagingE2ETest(args []string) error {
 		stackName = "video-cloud-staging"
 	}
 	provider := firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), os.Getenv("RTK_CLOUD_STAGING_PROVIDER"), envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER"))
+	provider = firstNonEmpty(provider, "lke")
+	if provider == "linode" {
+		return fmt.Errorf("%w: CLOUD_PROVIDER=linode used the retired VM runtime; use CLOUD_PROVIDER=lke or another Kubernetes provider", errVMRuntimeRetired)
+	}
+	if !isKubernetesProviderName(provider) {
+		return fmt.Errorf("unsupported CLOUD_PROVIDER=%s; staging E2E currently supports Kubernetes providers only", provider)
+	}
 	lkeRemoveScript := os.Getenv("CLOUD_STAGING_E2E_REMOVE_SCRIPT")
 	lkeProvisionScript := os.Getenv("CLOUD_STAGING_E2E_PROVISION_SCRIPT")
 	useLKEProvision := provider == "lke" && os.Getenv("CLOUD_STAGING_E2E_PROVISION_K8S_SCRIPT") == "" && lkeProvisionScript == ""
@@ -3234,7 +3323,11 @@ func runStagingE2E(args []string) error {
 		if ctx.provider == "lke" {
 			missing := missingLKEImageEnvKeys()
 			if len(missing) > 0 {
-				fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] plan: LKE image resolve will run before provision because these env vars are missing: %s\n", strings.Join(missing, ","))
+				if env, source := existingLKEImageEnv(ctx.envRoot); lkeImageEnvHasKeys(env, missing) {
+					fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] plan: LKE image env will be loaded from %s\n", source)
+				} else {
+					fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] plan: LKE image resolve will run before provision because these env vars are missing: %s\n", strings.Join(missing, ","))
+				}
 			}
 		}
 		return runStagingE2ETest(stagingE2ETestArgs(stagingE2EArgs{
@@ -3363,6 +3456,15 @@ func resolveLKEImagesIfNeeded(workspace, envRoot string) error {
 	if len(missing) == 0 {
 		return nil
 	}
+	if env, source := existingLKEImageEnv(envRoot); lkeImageEnvHasKeys(env, missing) {
+		for _, key := range missing {
+			if err := os.Setenv(key, env[key]); err != nil {
+				return err
+			}
+		}
+		fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] use: lke_image_env source=%s keys=%s\n", source, strings.Join(missing, ","))
+		return nil
+	}
 	ts := time.Now().UTC().Format("20060102T150405Z")
 	imageDir := filepath.Join(envRoot, "artifacts", "lke-images", ts)
 	latestDir := filepath.Join(envRoot, "artifacts", "lke-images")
@@ -3400,6 +3502,31 @@ func resolveLKEImagesIfNeeded(workspace, envRoot string) error {
 	}
 	fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] pass: lke_resolve_images env=%s\n", envFile)
 	return nil
+}
+
+func existingLKEImageEnv(envRoot string) (map[string]string, string) {
+	latestDir := filepath.Join(envRoot, "artifacts", "lke-images")
+	manifestFile := filepath.Join(latestDir, "lke-image-manifest.json")
+	if env, err := readLKEImageManifestEnv(manifestFile); err == nil {
+		return env, manifestFile
+	}
+	envFile := filepath.Join(latestDir, "lke-image-env.sh")
+	if env, err := readEnvFile(envFile); err == nil {
+		return env, envFile
+	}
+	return nil, ""
+}
+
+func lkeImageEnvHasKeys(env map[string]string, keys []string) bool {
+	if len(env) == 0 {
+		return false
+	}
+	for _, key := range keys {
+		if strings.TrimSpace(env[key]) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func readLKEImageManifestEnv(path string) (map[string]string, error) {
@@ -8215,7 +8342,21 @@ func resolveEnvRoot(workspace, envRoot string) (string, error) {
 	}
 	envRoot = filepath.Clean(envRoot)
 	if filepath.Base(envRoot) == "staging" {
-		return filepath.Join(envRoot, "linode"), nil
+		lkeRoot := filepath.Join(envRoot, "lke")
+		if _, err := os.Stat(lkeRoot); err == nil {
+			return lkeRoot, nil
+		}
+		if _, err := os.Stat(filepath.Join(envRoot, "linode")); err == nil {
+			return filepath.Join(envRoot, "linode"), nil
+		}
+		return lkeRoot, nil
+	}
+	if info, err := os.Stat(filepath.Join(envRoot, "lke")); err == nil && info.IsDir() {
+		if _, servicesErr := os.Stat(filepath.Join(envRoot, "services")); os.IsNotExist(servicesErr) {
+			if _, envErr := os.Stat(filepath.Join(envRoot, "env")); os.IsNotExist(envErr) {
+				return filepath.Join(envRoot, "lke"), nil
+			}
+		}
 	}
 	if info, err := os.Stat(filepath.Join(envRoot, "linode")); err == nil && info.IsDir() {
 		if _, servicesErr := os.Stat(filepath.Join(envRoot, "services")); os.IsNotExist(servicesErr) {

@@ -11,7 +11,8 @@ Last reviewed: 2026-05-01.
 This document turns the Realtek Connect+ private-cloud positioning into a
 concrete deployment bill of materials and operations runbook. It is a
 workspace-level coordination document. It does not replace service-owned deploy
-specifications, systemd units, environment examples, or release procedures.
+specifications, Kubernetes manifests, environment examples, or release
+procedures.
 
 Use this document to scope a private-cloud evaluation or production-like
 customer deployment before opening service-specific work.
@@ -28,12 +29,11 @@ customer deployment before opening service-specific work.
 | Cross-service broker packaging | `docs/cross-service-broker-packaging.md` | Records that shared broker packaging is retired for the current runtime. |
 | Video cloud runtime deploy | `repos/rtk_video_cloud/docs/automation.md` | Release, deploy, staging evidence, and runner model. |
 | Video cloud release bundle | `repos/rtk_video_cloud/docs/release.md` | Release artifact contents and intended handoff shape. |
-| Video cloud host setup | `repos/rtk_video_cloud/docs/deployment-instance-setup.md` | Linux host bootstrap, PostgreSQL, systemd, EMQX, runner setup. |
 | Video cloud promotion/rollback | `repos/rtk_video_cloud/docs/deployment-promotion-rollback.md` | Staging, PM sign-off, production deploy, rollback. |
 | Video cloud observability | `repos/rtk_video_cloud/docs/observability-baseline.md` | Metrics, logs, EMQX, dead-letter, and evidence signals. |
 | Cross-service service logging | `docs/service-logging-architecture.md` | Central logger, journald forwarder, correlation, retention, and provisioning dependency plan. |
 | Video cloud config | `repos/rtk_video_cloud/docs/config-map.md` | Runtime env map including Postgres, blob, MQTT, TURN, and certissuer settings. |
-| Video cloud deploy assets | `repos/rtk_video_cloud/deploy/README.md` | Systemd units, EMQX compose, verifier, evidence collector. |
+| Legacy Linux/systemd deployment reference | `docs/linode-staging-deployment-snapshot.md` | Historical migration reference only; not an active operator entry point. |
 | Account manager behavior | `repos/rtk_account_manager/docs/SPEC.md` | Account, org, auth, registry, fleet, and provisioning scope. |
 | Frontend deployment | `repos/rtk_cloud_frontend/README.md` | Container packaging, SQLite persistence, reverse-proxy TLS assumption. |
 | Frontend product copy | `repos/rtk_cloud_frontend/docs/SPEC.md` | Private cloud website wording and availability boundaries. |
@@ -71,7 +71,11 @@ as the active staging or production path.
 
 ## Deployment Profiles
 
-### Single-Node Evaluation Profile
+### Retired Single-Node Evaluation Reference
+
+This profile is retained only as historical migration context for older
+Linux/systemd packaging. It is not an active workspace deployment model; new
+staging and private-cloud work should target Kubernetes provider env-roots.
 
 Use this profile for demos, engineering evaluation, and internal customer
 workshops. It optimizes for fast bring-up over high availability.
@@ -170,15 +174,9 @@ notes only for historical migration context, emergency recovery comparison, and
 understanding old service-owned runbooks. New staging work must use the LKE/K8s
 runtime.
 
-Legacy VM reference shape:
-
-| Layer | Legacy VM reference |
-| --- | --- |
-| Video Cloud | Five Linode roles: `edge`, `api`, `infra`, `mqtt`, `coturn`; see `repos/rtk_video_cloud/linode_deploy/docs/ARCHITECTURE.md`. |
-| Account Manager | Dedicated public VM with nginx TLS and local PostgreSQL; see `repos/rtk_account_manager/linode_deploy/docs/RUNBOOK.md`. |
-| Cloud Admin | Dedicated public+VPC VM with nginx TLS and SQLite persistence; see `repos/rtk_cloud_admin/docs/private-cloud-deployment.md`. |
-| Logging | Loki-backed backend and VM journald forwarders; see `docs/service-logging-architecture.md`. |
-| Secrets | Operator-local `.secrets/` and protected GitHub Environment secrets; see `docs/deployment-secrets-governance.md`. |
+Legacy VM reference shape is captured only in
+`docs/linode-staging-deployment-snapshot.md`. Do not use service-owned VM
+runbooks or deployment scripts as active operator entry points.
 
 ## Deployment Orchestration Order
 
@@ -402,17 +400,17 @@ contract is documented in `docs/product-level-evidence.md`. Account manager, adm
 and frontend still own their service-local smoke/evidence commands; the
 workspace wrapper records them as `SKIP` until configured or implemented.
 
-The current staging path is split into explicit K8s lifecycle wrappers:
-`scripts/reset-staging-k8s.sh`, `scripts/provision-staging.sh`, and
-`scripts/run-staging-acceptance.sh`. Use `scripts/run-staging-e2e.sh` when a
-single full reset + provision + acceptance run is desired. Provisioning is split
-into provider adapter plus runtime: `linode` keeps the legacy VM runtime, while
-`lke` uses the shared Kubernetes runtime with Linode LKE cluster/kubeconfig
-handling. GKE, AKS, and EKS provider ids are reserved only as fail-fast
-interfaces until their adapters are implemented and reviewed. When image env
-vars are not provided, the Go wrapper resolves the pinned submodule commits to
-private GHCR image tags and verifies those images before provisioning. Explicit
-`LKE_*_IMAGE` env vars are operator overrides, not the normal path.
+The current staging path is K8s-only. Use `scripts/run-staging-e2e.sh` when a
+single full reset + provision + acceptance run is desired, and
+`scripts/setup-staging-e2e-data.sh` when only brand/users/devices/bind artifacts
+need to be rebuilt. Provisioning is split into provider adapter plus shared
+Kubernetes runtime: `lke` handles Linode LKE cluster/kubeconfig discovery and
+creation; `k8s`, `gke`, `aks`, and `eks` are reserved fail-fast interfaces until
+their adapters are implemented and reviewed. `CLOUD_PROVIDER=linode` is retired
+and must not call VM/systemd deploy hooks. When image env vars are not provided,
+the Go wrapper resolves the pinned submodule commits to private GHCR image tags
+and verifies those images before provisioning. Explicit `LKE_*_IMAGE` env vars
+are operator overrides, not the normal path.
 `reset-staging-k8s` preserves PV/PVC/provider storage by default; use
 `--purge-storage` only for an intentional data-layer wipe. The default full
 E2E run still clears Kubernetes runtime resources and rebuilds pods before
