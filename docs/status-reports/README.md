@@ -77,7 +77,7 @@ changes it:
   release-gate definition, portal web, technical/security design,
   deployment/operation/evidence, and review gate.
 - Schedule context: project start is 2026-05-01; the early-August milestone is
-  the 50,000-device IoT loading test plus 5,000-video-camera loading test.
+  the 100,000-device IoT loading test plus 5,000-video-camera loading test.
   August alpha includes SDK/internal developer use, September beta includes SDK
   and pilot customer feedback, then the public path follows after gate evidence.
 - Scaling context: scaling architecture is designed in, but autoscaling/dynamic
@@ -126,7 +126,7 @@ management reports:
 ## Schedule Policy
 
 Every report must show the schedule path from project start on 2026-05-01 to
-the 2026-08-01 target of passing the 50,000-device IoT loading test plus
+the 2026-08-01 target of passing the 100,000-device IoT loading test plus
 5,000-video-camera loading test. The schedule section must state the current
 position, weekly gate, next gate, risk, and `on track` / `at risk` / `blocked`
 judgment based on evidence.
@@ -134,7 +134,7 @@ judgment based on evidence.
 If the report also covers IoT Video / WebRTC / video storage, include a
 separate video schedule lane for the 5,000-camera path: June foundation, July
 profile/rehearsal, and 2026-08-01 pass evidence. Keep video control/media
-evidence separate from the 50,000-device IoT telemetry/loading-test evidence.
+evidence separate from the 100,000-device IoT telemetry/loading-test evidence.
 
 The current architecture may be described as scaling-ready when evidence
 supports scale-out boundaries, service separation, multi-host readiness, and

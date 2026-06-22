@@ -182,8 +182,16 @@ function addStatusDot(slide, status, x, y) {
 }
 
 function addArrow(slide, x1, y1, x2, y2, color = C.sky) {
-  addShape(slide, { x: Math.min(x1, x2), y: y1 - 2, w: Math.abs(x2 - x1), h: 4, fill: color, line: "none" });
-  addShape(slide, { x: x2 - 8, y: y2 - 7, w: 14, h: 14, fill: color, line: color, geometry: "triangle" });
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const horizontal = Math.abs(dx) >= Math.abs(dy);
+  if (horizontal) {
+    addShape(slide, { x: Math.min(x1, x2), y: y1 - 2, w: Math.max(4, Math.abs(dx)), h: 4, fill: color, line: "none" });
+  } else {
+    addShape(slide, { x: x1 - 2, y: Math.min(y1, y2), w: 4, h: Math.max(4, Math.abs(dy)), fill: color, line: "none" });
+  }
+  const glyph = horizontal ? (dx >= 0 ? "▶" : "◀") : (dy >= 0 ? "▼" : "▲");
+  addText(slide, glyph, { x: x2 - 10, y: y2 - 13, w: 20, h: 24 }, { size: 14, color, bold: true, align: "center", face: FONT_EN });
 }
 
 async function slide01(p, payload) {
@@ -193,8 +201,7 @@ async function slide01(p, payload) {
   addText(slide, "Realtek Video / IoT Cloud\n狀態報告", { x: 72, y: 165, w: 620, h: 120 }, { size: 38, color: C.navy, bold: true });
   addText(slide, "AmebaPRO 推廣、Cloud 建置、Loading Test 與商業 KPI 對齊", { x: 76, y: 295, w: 680, h: 34 }, { size: 18, color: C.muted });
   addShape(slide, { x: 74, y: 366, w: 800, h: 120, fill: "#FFF6D8CC", line: "#E3C25A" });
-  addText(slide, "核心管理訊息", { x: 96, y: 382, w: 180, h: 24 }, { size: 14, color: C.navy, bold: true });
-  addText(slide, payload.coreMessage, { x: 96, y: 414, w: 750, h: 60 }, { size: 15, color: C.black });
+  addText(slide, payload.coreMessage, { x: 96, y: 392, w: 750, h: 70 }, { size: 15, color: C.black });
   addText(slide, `日期：${payload.reportDate}｜Snapshot：${payload.snapshotTimeUtc}｜內部狀態審閱`, { x: 76, y: 636, w: 850, h: 26 }, { size: 12, color: C.muted, face: FONT_EN });
   return slide;
 }
@@ -208,7 +215,7 @@ async function slideMajorTopics(p, payload) {
     ["2", "Schedule and release path", "5/1 到 8/1 loading test，再到 Alpha, Beta, Public；每個 gate 要看什麼，現在卡在哪裡。"],
     ["3", "Portal Web and sales loop", "Portal Web 用來看客戶在找什麼，內容要補什麼，demo / PoC lead 有沒有真的進來。"],
     ["4", "Technical and security design", "WebRTC/video storage, MQTT/shadow, PKI, STRIDE, threat model，說清楚設計與目前缺口。"],
-    ["5", "Deployment, cost, and support", "Linode runtime, initial cost, payment ownership, operation backup, alpha/beta 支援與 ongoing coverage。"],
+    ["5", "Deployment, cost, and support", "K8s runtime, initial cost, payment ownership, operation backup, alpha/beta 支援與 ongoing coverage。"],
   ];
   topics.forEach((t, i) => {
     const x = 110;
@@ -230,7 +237,7 @@ async function slideOperationalTransition(p, payload) {
   addText(slide, "Topic 2", { x: 88, y: 215, w: 300, h: 34 }, { size: 24, color: C.teal, bold: true, face: FONT_EN });
   addText(slide, "Operational Cloud 目前進度與 8 月路徑", { x: 88, y: 270, w: 830, h: 58 }, { size: 36, color: C.navy, bold: true });
   addText(slide, "接下來先看目前狀態、schedule path、loading-test readiness、video gate 與 staging-to-production 架構差距。", { x: 92, y: 365, w: 850, h: 62 }, { size: 18, color: C.black });
-  addText(slide, "重點：Aug.1 先完成 50,000 devices + 5,000 video cameras loading test，接著用一個月 alpha 和一個月 beta 把 SDK、pilot customer 與 public path 接起來。", { x: 92, y: 485, w: 900, h: 58 }, { size: 17, color: C.navy, bold: true, fill: "#FFF6D8CC" });
+  addText(slide, "重點：Aug.1 先完成 100,000 devices + 5,000 video cameras loading test，接著用一個月 alpha 和一個月 beta 把 SDK、pilot customer 與 public path 接起來。", { x: 92, y: 485, w: 900, h: 58 }, { size: 17, color: C.navy, bold: true, fill: "#FFF6D8CC" });
   return slide;
 }
 
@@ -243,7 +250,7 @@ async function slide02(p, payload) {
   addText(slide, "Schedule Snapshot", { x: 895, y: 194, w: 280, h: 24 }, { size: 17, color: C.navy, bold: true, face: FONT_EN });
   const items = [
     ["目前位置", payload.scheduleSnapshot.current_position],
-    ["本週目標", "Load-test preparation"],
+    ["本週目標", payload.scheduleSnapshot.current_week || payload.scheduleSnapshot.weekly_goal || "Load-test preparation"],
     ["下個 gate", payload.scheduleSnapshot.next_gate],
     ["判定", payload.scheduleSnapshot.judgement],
   ];
@@ -260,7 +267,7 @@ async function slide03(p, payload) {
   await addHeader(slide, payload, "Cloud 是 module product path", "EXECUTIVE SUMMARY");
   const claims = [
     ["Why", "Cloud 補齊 module + SDK + app + onboarding + OTA + video + admin 的完整產品路徑。"],
-    ["Now", "Linode staging、Admin mockups、SDK sample flow、Connect+ architecture 已能支撐端到端展示。"],
+    ["Now", "K8s staging、Admin mockups、SDK sample flow、Connect+ architecture 已能支撐端到端展示。"],
     ["Next", "把 demo flow 連到 loading-test evidence，建立 customer PoC 與 commercial KPI 信心。"],
     ["Risk", "Release version、backup/restore、load-test fleet/data、production-like sign-off 仍需補齊。"],
   ];
@@ -353,7 +360,7 @@ async function slide04(p, payload) {
       addText(slide, "目前位置", { x: x - 38, y: 438, w: 92, h: 22 }, { size: 12, color: C.amber, bold: true, align: "center" });
     }
   });
-  addText(slide, "Aug.1 gate: 50,000 IoT devices + 5,000 video cameras loading test; next: Aug alpha with SDK, Sep beta with SDK + pilot customer, then public.", { x: 90, y: 565, w: 1040, h: 42 }, { size: 16, color: C.navy, bold: true, align: "center", fill: C.pale });
+  addText(slide, "Aug.1 gate: 100,000 IoT devices + 5,000 video cameras loading test; next: Aug alpha with SDK, Sep beta with SDK + pilot customer, then public.", { x: 90, y: 565, w: 1040, h: 42 }, { size: 16, color: C.navy, bold: true, align: "center", fill: C.pale });
   return slide;
 }
 
@@ -382,9 +389,9 @@ async function slideReleaseGateDefinition(p, payload) {
 async function slide05(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
-  await addHeader(slide, payload, "Loading Test Readiness", "AUG.1: 50,000 DEVICES + 5,000 VIDEO CAMERAS");
+  await addHeader(slide, payload, "Loading Test Readiness", "AUG.1: 100,000 DEVICES + 5,000 VIDEO CAMERAS");
   addTable(slide, ["Area", "Status", "Needed before Aug.1", "Owner / dependency", "Risk"], payload.loadReadiness, { x: 62, y: 170, w: 1150, h: 390 }, [1.3, 0.9, 2.9, 1.6, 1], { rowH: 58, fontSize: 11 });
-  addText(slide, "Aug.1 loading test 要同時看 IoT device scale 與 video camera path: success rate, p95/p99 latency, error taxonomy, resource use, TURN/storage behavior, recovery.", { x: 90, y: 600, w: 1080, h: 40 }, { size: 15, color: C.navy, bold: true, align: "center", fill: C.paleTeal });
+  addText(slide, "Current status: MQTT 100K device loading test has passed on K8s cloud. Video path is still pending: 5,000-camera profile, WebRTC/TURN/storage metrics, and recovery behavior still need validation.", { x: 90, y: 600, w: 1080, h: 40 }, { size: 14.2, color: C.navy, bold: true, align: "center", fill: C.paleTeal });
   return slide;
 }
 
@@ -403,7 +410,7 @@ async function slide06(p, payload) {
     addText(slide, m.label, { x: x - 80, y: 242, w: 180, h: 26 }, { size: 15, color: C.navy, bold: true, align: "center" });
     addText(slide, m.note, { x: x - 80, y: 405, w: 180, h: 42 }, { size: 12, color: C.black, align: "center" });
   });
-  addText(slide, "Video camera loading test 要和 50,000 IoT device gate 同一天收斂: 5,000 cameras 需要 WebRTC setup, TURN behavior, storage path, stream health, metrics 一起看。", { x: 120, y: 555, w: 1000, h: 48 }, { size: 17, color: C.navy, bold: true, align: "center", fill: C.pale });
+  addText(slide, "Video camera loading test 要和 100,000 IoT device gate 同一天收斂: 5,000 cameras 需要 WebRTC setup, TURN behavior, storage path, stream health, metrics 一起看。", { x: 120, y: 555, w: 1000, h: 48 }, { size: 17, color: C.navy, bold: true, align: "center", fill: C.pale });
   return slide;
 }
 
@@ -456,7 +463,7 @@ async function slide08(p, payload) {
   await addBackground(slide, payload);
   await addHeader(slide, payload, "Current vs Target Architecture", "STAGING TO PRODUCTION");
   addTable(slide, ["Current staging", "Production Target"], [
-    ["Linode public HTTPS staging for demo and evidence", "Production deployment with monitored runtime, runbook, and release/version control"],
+    ["K8s public HTTPS staging for demo and evidence", "Production deployment with monitored runtime, runbook, and release/version control"],
     ["Account/Admin/Video source boundaries documented", "Source-of-truth boundaries operated with production ownership and incident response"],
     ["Scaling facility is designed in: service separation, broker/database/storage boundaries, and multi-host direction", "Auto scaling is deployed only in production after load-test evidence defines triggers and scaling units"],
     ["Health endpoints and UI/material evidence exist", "p95/p99, success rate, error taxonomy, recovery behavior, and capacity evidence drive production scaling policy"],
@@ -744,7 +751,7 @@ async function slideEvidenceTransition(p, payload) {
   await addImage(slide, payload.masterAssets.logo, { x: 72, y: 58, w: 205, h: 42 }, "contain");
   addText(slide, "Topic 5", { x: 88, y: 215, w: 300, h: 34 }, { size: 24, color: C.teal, bold: true, face: FONT_EN });
   addText(slide, "Deployment、操作流程與 Evidence", { x: 88, y: 270, w: 820, h: 58 }, { size: 36, color: C.navy, bold: true });
-  addText(slide, "最後把前面的設計落到目前 Linode staging runtime、health/config boundary、Admin 操作畫面與 SDK sample flow。", { x: 92, y: 365, w: 875, h: 62 }, { size: 18, color: C.black });
+  addText(slide, "最後把前面的設計落到目前 K8s staging runtime、Admin 操作畫面與 SDK sample flow。", { x: 92, y: 365, w: 875, h: 62 }, { size: 18, color: C.black });
   addText(slide, "重點：截圖與 health check 是狀態證據；正式 production readiness 仍需要 release、backup/restore、load-test 與 security sign-off。", { x: 92, y: 485, w: 860, h: 58 }, { size: 18, color: C.navy, bold: true, fill: "#FFF6D8CC" });
   return slide;
 }
@@ -752,22 +759,81 @@ async function slideEvidenceTransition(p, payload) {
 async function slide14(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
-  await addHeader(slide, payload, "Linode Staging Runtime Shape", "DEPLOYMENT TOPOLOGY");
-  await addImage(slide, payload.figures.linode, { x: 58, y: 160, w: 690, h: 420 }, "contain");
-  addTable(slide, ["Component", "Runtime shape"], [
-    ["Video Cloud", "edge nginx TLS gateway, Video Cloud API/runtime"],
-    ["Account Manager", "dedicated public VM, nginx, app, local PostgreSQL"],
-    ["Admin", "dedicated public VM, nginx, Docker, local SQLite cache"],
-    ["Frontend", "marketing/docs/lead-generation portal"],
-    ["EMQX/MQTT", "self-hosted broker/service-layer operation"],
-  ], { x: 770, y: 178, w: 430, h: 300 }, [1.1, 2.2], { rowH: 51, fontSize: 11 });
+  await addHeader(slide, payload, "K8s Staging Runtime Shape", "DEPLOYMENT TOPOLOGY");
+
+  const box = (text, x, y, w, h, fill = C.white, line = C.line, opts = {}) => {
+    addShape(slide, { x, y, w, h, fill, line });
+    addText(slide, text, { x: x + 8, y: y + 7, w: w - 16, h: h - 12 }, {
+      size: opts.size || 10.5,
+      color: opts.color || C.navy,
+      bold: opts.bold ?? true,
+      align: opts.align || "center",
+      face: opts.face || FONT_EN,
+    });
+  };
+  const label = (text, x, y, w, color = C.navy) => {
+    addText(slide, text, { x, y, w, h: 18 }, { size: 9, color, bold: true, align: "center", face: FONT_EN });
+  };
+  const hLine = (x1, y, x2, color = C.sky) => {
+    addShape(slide, { x: x1, y: y - 2, w: x2 - x1, h: 4, fill: color, line: "none" });
+    addText(slide, "▶", { x: x2 - 10, y: y - 13, w: 20, h: 24 }, { size: 14, color, bold: true, align: "center", face: FONT_EN });
+  };
+  const vLine = (x, y1, y2, color = C.line) => {
+    addShape(slide, { x: x - 2, y: y1, w: 4, h: y2 - y1, fill: color, line: "none" });
+  };
+
+  addText(slide, "Current staging runs as K8s-only runtime. A thin HAProxy edge forwards public HTTPS and MQTTS to K8s NodePorts; cluster services communicate by Kubernetes service DNS.", { x: 72, y: 150, w: 1136, h: 30 }, { size: 12.5, color: C.navy, bold: true, align: "center", fill: C.pale });
+
+  addShape(slide, { x: 56, y: 212, w: 210, h: 305, fill: C.paleBlue, line: C.line });
+  label("Public entry", 78, 228, 166);
+  box("External clients\nWeb / API / Devices", 86, 278, 150, 62, C.white, C.line, { size: 10 });
+  box("Public DNS\n*.video-cloud-staging\n.realtekconnect.com", 86, 382, 150, 72, C.white, C.line, { size: 9 });
+  vLine(161, 340, 382, C.sky);
+
+  addShape(slide, { x: 302, y: 212, w: 210, h: 305, fill: C.paleTeal, line: C.line });
+  label("Thin public edge", 324, 228, 166);
+  box("HAProxy Edge\nTCP forwarding only\n:443 HTTPS | :8883 MQTTS", 335, 330, 144, 84, C.white, C.line, { size: 9.5 });
+
+  addShape(slide, { x: 548, y: 212, w: 210, h: 305, fill: C.paleAmber, line: "#E3C25A" });
+  label("K8s entry points", 570, 228, 166);
+  box("NGINX Ingress\nNodePort 30443", 582, 292, 142, 60, C.white, C.line, { size: 9.5 });
+  box("MQTT NodePort\n31883", 582, 402, 142, 54, C.white, C.line, { size: 9.5 });
+
+  addShape(slide, { x: 792, y: 212, w: 432, h: 374, fill: C.white, line: C.blue });
+  addText(slide, "K8s Cluster: video-cloud-staging | us-sea | 2 nodes", { x: 812, y: 228, w: 392, h: 20 }, { size: 11.5, color: C.navy, bold: true, align: "center", face: FONT_EN });
+
+  addShape(slide, { x: 822, y: 270, w: 370, h: 78, fill: C.paleBlue, line: C.line });
+  addText(slide, "Public application routes", { x: 842, y: 280, w: 330, h: 16 }, { size: 9, color: C.muted, bold: true, align: "center", face: FONT_EN });
+  addText(slide, "Frontend | Cloud Admin | Account Manager | Video Cloud API | Cloud Logger", { x: 844, y: 312, w: 326, h: 20 }, { size: 10, color: C.navy, bold: true, align: "center", face: FONT_EN });
+
+  addShape(slide, { x: 822, y: 380, w: 370, h: 78, fill: C.paleAmber, line: "#E3C25A" });
+  addText(slide, "Video Cloud runtime", { x: 842, y: 390, w: 330, h: 16 }, { size: 9, color: C.muted, bold: true, align: "center", face: FONT_EN });
+  addText(slide, "MQTT StatefulSet | Factory Enroll | Cert Issuer | Coturn", { x: 844, y: 422, w: 326, h: 20 }, { size: 10, color: C.navy, bold: true, align: "center", face: FONT_EN });
+
+  addShape(slide, { x: 822, y: 490, w: 175, h: 60, fill: C.paleTeal, line: C.line });
+  addText(slide, "Platform services", { x: 838, y: 500, w: 143, h: 16 }, { size: 9, color: C.muted, bold: true, align: "center", face: FONT_EN });
+  addText(slide, "PostgreSQL | Redis", { x: 838, y: 526, w: 143, h: 16 }, { size: 10, color: C.navy, bold: true, align: "center", face: FONT_EN });
+
+  addShape(slide, { x: 1018, y: 490, w: 174, h: 60, fill: C.pale, line: C.line });
+  addText(slide, "Support services", { x: 1034, y: 500, w: 142, h: 16 }, { size: 9, color: C.muted, bold: true, align: "center", face: FONT_EN });
+  addText(slide, "OpenBao | Grafana | Prometheus", { x: 1034, y: 526, w: 142, h: 16 }, { size: 9.3, color: C.navy, bold: true, align: "center", face: FONT_EN });
+
+  hLine(236, 418, 335);
+  hLine(479, 372, 582);
+  hLine(479, 430, 582);
+  hLine(724, 322, 822);
+  hLine(724, 430, 822);
+
+  addText(slide, "Main HTTPS path: HAProxy -> NGINX ingress -> public application routes", { x: 84, y: 555, w: 510, h: 22 }, { size: 10, color: C.navy, bold: true, align: "center", fill: C.paleBlue, face: FONT_EN });
+  addText(slide, "Main MQTTS path: HAProxy -> MQTT NodePort -> MQTT StatefulSet", { x: 650, y: 555, w: 500, h: 22 }, { size: 10, color: C.navy, bold: true, align: "center", fill: C.paleTeal, face: FONT_EN });
+  addText(slide, "Source: cloud_env/staging/lke/env/stack.env, state/video-cloud-staging.state.json, edge-haproxy/upstreams.json. Secrets and kubeconfig contents are redacted.", { x: 74, y: 630, w: 1130, h: 22 }, { size: 9.5, color: C.muted, align: "center", face: FONT_EN });
   return slide;
 }
 
 async function slideCostView(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
-  await addHeader(slide, payload, "Initial Operation Cost View", "LINODE BASELINE / AWS COMMERCIAL-SCALE ESTIMATE");
+  await addHeader(slide, payload, "Initial Operation Cost View", "K8S BASELINE / AWS COMMERCIAL-SCALE ESTIMATE");
   const billing = payload.linodeBilling || {};
   const aws = payload.awsCostEstimate || {};
   const scenarios = aws.scenarios || {};
@@ -775,10 +841,10 @@ async function slideCostView(p, payload) {
   const perUnit = aws.perUnit || {};
   const moneyText = (value) => (value && value !== "n/a" ? `${value}/month` : "n/a");
 
-  addText(slide, "AWS cost discussion should focus on two decisions: whether to pay for CloudHSM key custody, and whether to use the robust redundant design. These are estimates, not AWS actual bills.", { x: 85, y: 154, w: 1110, h: 42 }, { size: 15, color: C.navy, bold: true, align: "center", fill: C.pale });
+  addText(slide, "AWS cost discussion now uses an AWS-native managed-service profile for 100,000 devices: Lambda/API, IoT Core, IoT Device Management, CloudWatch, RDS, and Managed Prometheus. These are estimates, not AWS actual bills.", { x: 85, y: 154, w: 1110, h: 42 }, { size: 14.2, color: C.navy, bold: true, align: "center", fill: C.pale });
 
   addShape(slide, { x: 70, y: 220, w: 360, h: 182, fill: C.white, line: C.line });
-  addText(slide, "Linode staging baseline", { x: 94, y: 238, w: 300, h: 28 }, { size: 18, color: C.navy, bold: true, face: FONT_EN });
+  addText(slide, "K8S Staging Baseline", { x: 94, y: 238, w: 300, h: 28 }, { size: 18, color: C.navy, bold: true, face: FONT_EN });
   addShape(slide, { x: 98, y: 284, w: 180, h: 66, fill: C.paleAmber, line: C.line });
   addText(slide, "Current run-rate", { x: 104, y: 292, w: 168, h: 15 }, { size: 9, color: C.muted, bold: true, align: "center", face: FONT_EN });
   addText(slide, billing.estimatedMonthlyRunRate || "n/a", { x: 104, y: 313, w: 168, h: 26 }, { size: 19, color: C.navy, bold: true, align: "center", face: FONT_EN });
@@ -820,7 +886,7 @@ async function slideCostView(p, payload) {
   addText(slide, "Robust is not a blanket 2x; it adds redundancy to HSM, RDS, cache, NAT, and selected workers.", { x: 682, y: 575, w: 465, h: 18 }, { size: 10, color: C.navy, bold: true, align: "center", fill: C.paleBlue });
 
   addShape(slide, { x: 70, y: 618, w: 495, h: 48, fill: C.white, line: C.line });
-  addText(slide, "Top drivers: AWS IoT Core, CloudHSM, ECS Fargate, RDS PostgreSQL, NAT Gateway.", { x: 92, y: 628, w: 450, h: 16 }, { size: 9.5, color: C.black, face: FONT_EN });
+  addText(slide, "Top drivers: CloudHSM, AWS IoT Core, IoT Device Management, RDS, ECS/Lambda runtime.", { x: 92, y: 628, w: 450, h: 16 }, { size: 9.1, color: C.black, face: FONT_EN });
   addText(slide, `Source: docs/cost/aws-pricing-sources.md, collected ${aws.collected || "n/a"}`, { x: 92, y: 646, w: 450, h: 14 }, { size: 8.5, color: C.muted, face: FONT_EN });
 
   addShape(slide, { x: 585, y: 618, w: 595, h: 48, fill: C.white, line: C.line });
@@ -838,13 +904,13 @@ async function slideCostView(p, payload) {
 async function slideLinodeScaleEstimate(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
-  await addHeader(slide, payload, "Linode 100k Device Cost View", "SELF-MANAGED CLUSTER ESTIMATE");
+  await addHeader(slide, payload, "K8S 100K Device Cost View", "SELF-MANAGED CLUSTER ESTIMATE");
   const estimate = payload.linodeScaleEstimate || {};
   const scenarios = estimate.scenarios || {};
   const perUnit = estimate.perUnit || {};
   const config = estimate.configuration || [];
 
-  addText(slide, "This is a planning profile for 10,000 users and 100,000 usually-online MQTT devices on Linode/Akamai Cloud. It is not the current Linode bill and still needs load-test evidence before sizing is final.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.5, color: C.navy, bold: true, align: "center", fill: C.pale });
+  addText(slide, "This is a self-managed K8s reference profile for 10,000 users and 100,000 usually-online MQTT devices. MQTT 100K has passed; video/WebRTC/TURN media remains excluded and still needs separate sizing.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.1, color: C.navy, bold: true, align: "center", fill: C.pale });
 
   const summary = [
     ["Sizing", "10,000 users / 100,000 devices"],
@@ -866,7 +932,7 @@ async function slideLinodeScaleEstimate(p, payload) {
     row.monthlySubtotal,
     row.rationale,
   ]);
-  addText(slide, "100k Linode configuration", { x: 58, y: 310, w: 720, h: 22 }, { size: 15, color: C.navy, bold: true, face: FONT_EN });
+  addText(slide, "100K self-managed K8s configuration", { x: 58, y: 310, w: 720, h: 22 }, { size: 15, color: C.navy, bold: true, face: FONT_EN });
   addTable(slide, ["Role", "Count", "Plan", "USD / mo", "Why needed"], configRows, { x: 50, y: 342, w: 780, h: 260 }, [1.35, 0.42, 1.25, 0.55, 2.65], { rowH: 24, headerH: 24, fontSize: 6.9 });
 
   addShape(slide, { x: 860, y: 320, w: 360, h: 118, fill: C.paleTeal, line: C.line });
@@ -875,11 +941,11 @@ async function slideLinodeScaleEstimate(p, payload) {
 
   addShape(slide, { x: 860, y: 466, w: 360, h: 118, fill: C.paleAmber, line: "#E3C25A" });
   addText(slide, "Interpretation", { x: 884, y: 486, w: 312, h: 20 }, { size: 16, color: C.navy, bold: true, align: "center", face: FONT_EN });
-  addText(slide, "This Linode profile is cheaper than managed AWS only if Realtek owns broker/database/cache operations, backup/restore, failover, patching, and capacity tuning.", { x: 890, y: 518, w: 300, h: 42 }, { size: 10.2, color: C.black, align: "center" });
+  addText(slide, "This K8s profile is cheaper than managed AWS only if Realtek owns broker/database/cache operations, backup/restore, failover, patching, and capacity tuning.", { x: 890, y: 518, w: 300, h: 42 }, { size: 10.2, color: C.black, align: "center" });
 
   addShape(slide, { x: 70, y: 620, w: 1130, h: 44, fill: C.white, line: C.line });
-  addText(slide, "Caveats: no AWS IoT Core/Cognito/CloudHSM equivalents; camera/WebRTC/TURN media excluded; not load-tested; optional Managed Service adds 1,500 USD/month for 15 compute instances.", { x: 92, y: 630, w: 1090, h: 16 }, { size: 9.3, color: C.black, bold: true, align: "center", face: FONT_EN });
-  addText(slide, `Source: ${estimate.source || "docs/cost/linode-100k-estimate.md"}, collected ${estimate.collected || "n/a"}`, { x: 92, y: 650, w: 1090, h: 12 }, { size: 7.5, color: C.muted, align: "center", face: FONT_EN });
+  addText(slide, "Caveats: no AWS IoT Core/Cognito/CloudHSM equivalents; camera/WebRTC/TURN media excluded; MQTT 100K passed, video not yet; optional Managed Service adds 1,500 USD/month for 15 compute instances.", { x: 92, y: 630, w: 1090, h: 16 }, { size: 8.8, color: C.black, bold: true, align: "center", face: FONT_EN });
+  addText(slide, `Source: self-managed K8s 100K reference estimate, collected ${estimate.collected || "n/a"}`, { x: 92, y: 650, w: 1090, h: 12 }, { size: 7.5, color: C.muted, align: "center", face: FONT_EN });
   return slide;
 }
 
@@ -939,7 +1005,7 @@ async function slideAwsCostCalculationBase(p, payload) {
   const details = aws.calculationDetails || {};
   const findLine = (name) => (details.baseLineItems || []).find((row) => row.area === name) || {};
 
-  addText(slide, "This page shows how the base monthly AWS estimate is built from service quantities and unit prices. CloudWatch logger and Cognito user-pool cost are included here, but camera/WebRTC/TURN relay remains excluded.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.5, color: C.navy, bold: true, align: "center", fill: C.pale });
+  addText(slide, "This page shows how the base monthly AWS estimate is built from service quantities and unit prices. It now includes Lambda/API, IoT Device Management, CloudWatch, RDS, and Managed Prometheus; camera/WebRTC/TURN relay remains excluded.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 13.8, color: C.navy, bold: true, align: "center", fill: C.pale });
 
   const assumptions = [
     ["Region", aws.region || "ap-southeast-1"],
@@ -955,10 +1021,13 @@ async function slideAwsCostCalculationBase(p, payload) {
   });
 
   const baseRows = [
+    ["Lambda app APIs/workers", findLine("AWS Lambda application APIs/workers").monthlyEstimate || "106.00", "30M account/device/admin/API invocations at 1 GB and 200 ms average duration."],
     ["ECS Fargate app services", findLine("ECS Fargate application services").monthlyEstimate || "539.79", "vCPU-hours * 0.05056 + GB-hours * 0.00553; includes account, video, admin, bridges, workers."],
     ["Amazon Cognito User Pools", findLine("Amazon Cognito User Pools").monthlyEstimate || "0.00", "10,000 direct/social MAUs: max(0, 10,000 - 10,000) * 0.015."],
-    ["RDS PostgreSQL", findLine("RDS PostgreSQL").monthlyEstimate || "493.19", "One shared db.t4g.large: 730 DB-hours * 0.203 + 2,500 GB storage * 0.138."],
+    ["RDS PostgreSQL", findLine("RDS PostgreSQL").monthlyEstimate || "557.02", "Single-AZ db.r7g.xlarge: 730 DB-hours * 0.574 + 1,000 GB storage * 0.138."],
     ["AWS IoT Core", findLine("AWS IoT Core").monthlyEstimate || "1,649.52", "100,000 connected devices: connection minutes + MQTT messages + shadow ops."],
+    ["IoT Device Management", findLine("AWS IoT Device Management").monthlyEstimate || "1,135.00", "100k managed devices plus fleet-index updates; jobs/secure tunneling remain usage adders."],
+    ["Managed Prometheus", findLine("Amazon Managed Service for Prometheus").monthlyEstimate || "69.80", "432M samples/month plus one collector and light dashboard/query usage."],
     ["NAT Gateway", findLine("NAT Gateway").monthlyEstimate || "161.07", "730 gateway-hours * 0.059 + 2,000 GB processed * 0.059."],
     ["ElastiCache / Valkey", findLine("ElastiCache for Valkey").monthlyEstimate || "28.03", "One cache.t4g.small node * 730 hours * 0.0384."],
     ["Application Load Balancer", findLine("Application Load Balancer").monthlyEstimate || "24.24", "One ALB-hour line plus one LCU-hour assumption."],
@@ -966,9 +1035,9 @@ async function slideAwsCostCalculationBase(p, payload) {
     ["Secrets Manager", findLine("Secrets Manager").monthlyEstimate || "20.50", "50 secrets * 0.40 + 100,000 API calls * 0.000005."],
     ["S3 storage / PUT", findLine("S3 storage and PUT requests").monthlyEstimate || "67.80", "100k-device firmware, backup, release artifact storage; camera snapshots excluded."],
     ["KMS", findLine("KMS").monthlyEstimate || "8.00", "5 customer-managed keys * 1.00 + 1,000,000 requests * 0.000003."],
-    ["Base subtotal", findLine("Base subtotal before HSM/Private CA").monthlyEstimate || "3,088.89", "Sum of base services; excludes CloudHSM, ACM Private CA, support plan, tax, discounts."],
+    ["Base subtotal", findLine("Base subtotal before HSM/Private CA").monthlyEstimate || "4,463.52", "Sum of base services; excludes CloudHSM, ACM Private CA, support plan, tax, discounts."],
   ];
-  addTable(slide, ["Base service item", "USD / month", "Calculation / assumption"], baseRows, { x: 58, y: 285, w: 720, h: 308 }, [1.45, 0.75, 3.15], { rowH: 21, headerH: 23, fontSize: 7.1 });
+  addTable(slide, ["Base service item", "USD / month", "Calculation / assumption"], baseRows, { x: 50, y: 285, w: 745, h: 310 }, [1.42, 0.7, 3.15], { rowH: 18, headerH: 23, fontSize: 6.2 });
 
   const frontendRows = (details.frontendCalculation || []).slice(0, 5).map((row) => [
     row.item.replace("CloudFront ", "CF "),
@@ -987,7 +1056,7 @@ async function slideAwsCostCalculationBase(p, payload) {
   addTable(slide, ["Item", "Formula", "USD"], iotRows, { x: 810, y: 477, w: 390, h: 118 }, [1.2, 2.2, 0.55], { rowH: 18, headerH: 20, fontSize: 6.6 });
 
   addShape(slide, { x: 70, y: 620, w: 1130, h: 44, fill: C.paleAmber, line: "#E3C25A" });
-  addText(slide, `CloudWatch logger included: ${details.cloudWatchFormula || "66.0 GB/month log ingestion plus 30-day retention = 48.18 USD/month."}`, { x: 90, y: 631, w: 1090, h: 18 }, { size: 9.8, color: C.navy, bold: true, align: "center", face: FONT_EN });
+  addText(slide, `CloudWatch logger included: ${details.cloudWatchFormula || "66.0 GB/month log ingestion plus 30-day retention = 48.18 USD/month."} Managed Prometheus is separate metrics cost.`, { x: 90, y: 631, w: 1090, h: 18 }, { size: 8.7, color: C.navy, bold: true, align: "center", face: FONT_EN });
   addText(slide, `Source: docs/cost/aws-pricing-sources.md, collected ${aws.collected || "n/a"}`, { x: 90, y: 650, w: 1090, h: 12 }, { size: 7.5, color: C.muted, align: "center", face: FONT_EN });
   return slide;
 }
@@ -999,7 +1068,7 @@ async function slideAwsCostFormulaBreakdown(p, payload) {
   const aws = payload.awsCostEstimate || {};
   const details = aws.calculationDetails || {};
 
-  addText(slide, "This page expands each major estimate into quantity * public unit price. Example: RDS PostgreSQL is DB instance hours plus storage GB-month; Cognito is billable above the 10,000 MAU free tier.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.5, color: C.navy, bold: true, align: "center", fill: C.pale });
+  addText(slide, "This page expands each major estimate into quantity * public unit price. AI-assisted operations are listed as an operations assumption, not an AWS infrastructure charge.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.5, color: C.navy, bold: true, align: "center", fill: C.pale });
 
   const formulaRows = (details.formulaBreakdown || []).map((row) => [
     row.item,
@@ -1008,16 +1077,16 @@ async function slideAwsCostFormulaBreakdown(p, payload) {
     row.formula,
     row.estimate,
   ]);
-  addTable(slide, ["Item", "Quantity", "Public unit price", "Formula", "USD / month"], formulaRows, { x: 42, y: 220, w: 1195, h: 365 }, [1.25, 1.45, 1.55, 2.15, 0.75], { rowH: 23, headerH: 25, fontSize: 6.4 });
+  addTable(slide, ["Item", "Quantity", "Public unit price", "Formula", "USD / month"], formulaRows, { x: 42, y: 220, w: 1195, h: 365 }, [1.25, 1.45, 1.55, 2.15, 0.75], { rowH: 20, headerH: 24, fontSize: 5.8 });
 
   addShape(slide, { x: 66, y: 604, w: 540, h: 58, fill: C.paleAmber, line: "#E3C25A" });
   addText(slide, "RDS example", { x: 86, y: 613, w: 150, h: 16 }, { size: 12, color: C.navy, bold: true, face: FONT_EN });
-  addText(slide, "730 DB-hours * 0.203 USD/hour = 148.19; 2,500 GB-month * 0.138 USD/GB-month = 345.00; total = 493.19 USD/month.", { x: 86, y: 636, w: 500, h: 18 }, { size: 8.8, color: C.black, face: FONT_EN });
+  addText(slide, "730 DB-hours * 0.574 USD/hour = 419.02; 1,000 GB-month * 0.138 USD/GB-month = 138.00; total = 557.02 USD/month.", { x: 86, y: 636, w: 500, h: 18 }, { size: 8.8, color: C.black, face: FONT_EN });
 
   addShape(slide, { x: 650, y: 604, w: 560, h: 58, fill: C.paleBlue, line: C.line });
-  addText(slide, "Cognito sensitivity", { x: 670, y: 613, w: 210, h: 16 }, { size: 12, color: C.navy, bold: true, face: FONT_EN });
-  addText(slide, "Default Essentials formula: max(0, MAUs - 10,000) * 0.015 USD/MAU.", { x: 670, y: 634, w: 520, h: 11 }, { size: 8.7, color: C.black, face: FONT_EN });
-  addText(slide, "Examples: 10,000 MAUs = 0.00; 25,000 MAUs = 225.00; 100,000 MAUs = 1,350.00. Plus 25,000 MAUs = 500.00.", { x: 670, y: 648, w: 520, h: 11 }, { size: 8.2, color: C.black, face: FONT_EN });
+  addText(slide, "AI-assisted operations", { x: 670, y: 613, w: 240, h: 16 }, { size: 12, color: C.navy, bold: true, face: FONT_EN });
+  addText(slide, "AI helps runbook execution, log triage, incident summaries, and status-report drafting.", { x: 670, y: 634, w: 520, h: 11 }, { size: 8.7, color: C.black, face: FONT_EN });
+  addText(slide, "Tracked as 0.00 AWS infrastructure here; add Bedrock or external AI seat/token cost separately if selected.", { x: 670, y: 648, w: 520, h: 11 }, { size: 8.2, color: C.black, face: FONT_EN });
   return slide;
 }
 
@@ -1065,15 +1134,6 @@ async function slideAwsCostCalculationScenarios(p, payload) {
   addTable(slide, ["Scenario", "Per user", "Per device"], unitRows, { x: 760, y: 484, w: 450, h: 112 }, [1.45, 1.25, 1.25], { rowH: 20, headerH: 22, fontSize: 6.7 });
   addShape(slide, { x: 760, y: 615, w: 450, h: 48, fill: C.paleTeal, line: C.line });
   addText(slide, "Weighted allocation view: split the same monthly pool 10% to user-driven account/app/admin costs and 90% to device-driven MQTT, shadow, logs, firmware, certificate, storage, and device API workload.", { x: 780, y: 624, w: 410, h: 28 }, { size: 8.8, color: C.navy, bold: true, align: "center" });
-  return slide;
-}
-
-async function slide15(p, payload) {
-  const slide = p.slides.add();
-  await addBackground(slide, payload);
-  await addHeader(slide, payload, "Linode Health & Configuration Boundary", "SAFE EVIDENCE");
-  addTable(slide, ["Component", "Check", "Result", "Observed"], payload.linodeHealth.map((r) => [r.component, r.check, r.result, r.observed]), { x: 50, y: 170, w: 1180, h: 300 }, [1.4, 0.8, 0.7, 3.4], { rowH: 56, fontSize: 10 });
-  addText(slide, "Allowed: domains, non-secret env key names, runtime placement, persistence category, reverse proxy/TLS boundary. Forbidden: DSN, tokens, private keys, bearer tokens, raw customer data.", { x: 90, y: 565, w: 1100, h: 45 }, { size: 14, color: C.navy, bold: true, align: "center", fill: C.pale });
   return slide;
 }
 
@@ -1206,7 +1266,7 @@ async function slide21(p, payload) {
 const SLIDES = [
   slide01, slideMajorTopics, slide07, slideWhyCloud, slideCustomerUseCaseFit, slide03, slideCloudTypes, slideOperationalTransition, slide02, slide04, slideReleaseGateDefinition, slide05, slide06, slide08,
   slidePortalTransition, slidePortalIntro, slide09, slideTechnicalTransition, slide10, slide11, slideStrideOverview, slide12, slideHsmSignerDesign, slide13,
-  slideEvidenceTransition, slide14, slideCostView, slideLinodeScaleEstimate, slideAwsUnitCost, slideAwsCostCalculationBase, slideAwsCostFormulaBreakdown, slideAwsCostCalculationScenarios, slide15, slide16, slide17, slide18, slide19, slidePostAlphaCoverage, slide20, slide21,
+  slideEvidenceTransition, slide14, slideCostView, slideLinodeScaleEstimate, slideAwsUnitCost, slideAwsCostCalculationBase, slideAwsCostFormulaBreakdown, slideAwsCostCalculationScenarios, slide16, slide17, slide18, slide19, slidePostAlphaCoverage, slide20, slide21,
 ];
 
 async function makeContactSheet(previewPaths, outputPath) {

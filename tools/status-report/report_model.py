@@ -34,10 +34,10 @@ CORE_MESSAGE = (
     "同時具備安全管理的網路架構，讓模組銷售能從硬體規格延伸成完整解決方案。"
 )
 CURRENT_STATUS_SUMMARY = [
-    ["Deployment", "Linode staging 已可作為 demo / 驗證環境使用，並以 public HTTPS health check 作為狀態證據。", "仍需補齊 release version、backup/restore 與 production-like sign-off。"],
-    ["Product / demo evidence", "Admin、SDK sample flow、Connect+ architecture 素材已可支撐端到端展示。", "下一步要把 demo flow 連到 loading test 與 customer PoC 指標。"],
+    ["Deployment", "初步已在 K8s 架設的雲環境完成 100K device loading test pass，K8s runtime 已可作為目前驗證基準。", "下一步補齊 test report package、release version、backup/restore 與 production-like sign-off。"],
+    ["Product / demo evidence", "Admin、SDK sample flow、Connect+ architecture 素材已可支撐端到端展示，且已接上 100K device loading-test evidence。", "下一步把 100K evidence 轉成 customer PoC 指標與對外 demo story。"],
     ["Operations readiness", "Account Manager、Video Cloud、Admin 分工已清楚，service health 可被報告化。", "正式商用後的 SLA、support owner、incident response 與持續維運人力仍需確認。"],
-    ["Next milestone", "2026-08-01 要完成 50,000 IoT devices + 5,000 video cameras loading test。", "8 月進 alpha test（含 SDK），9 月進 beta test（含 SDK 與 pilot customer），再進 public。"],
+    ["Next milestone", "100K IoT device loading test 已 pass；下一個重點是 5,000 video cameras profile 與 Alpha readiness。", "8 月進 alpha test（含 SDK），9 月進 beta test（含 SDK 與 pilot customer），再進 public。"],
 ]
 
 CUSTOMER_USE_CASE_FIT = [
@@ -48,7 +48,7 @@ CUSTOMER_USE_CASE_FIT = [
 ]
 
 RELEASE_GATE_DEFINITIONS = [
-    ["Aug.1 loading-test pass", "50,000 IoT devices + 5,000 video cameras", "Success rate、p95/p99、error taxonomy、resource use、recovery behavior、report package。"],
+    ["Aug.1 loading-test pass", "100,000 IoT devices + 5,000 video cameras", "Success rate、p95/p99、error taxonomy、resource use、recovery behavior、report package。"],
     ["Alpha test", "SDK + internal developer real use", "4-6 internal testers；至少 3-4 位 developer/firmware/app testers 實際跑 onboarding、SDK sample、debug/report。"],
     ["Beta test", "SDK + pilot customer", "1-2 pilot customers 或 partner use cases；確認 PoC feedback、support flow、deployment/cost assumptions。"],
     ["Public path", "operation, account, support, security baseline", "公司/核准第三方帳務、backup operator、release version、backup/restore、security review gate。"],
@@ -381,7 +381,7 @@ def collect_linode_scale_estimate() -> dict[str, object]:
         return {
             "status": "unavailable",
             "source": str(LINODE_100K_ESTIMATE_PATH.relative_to(ROOT)),
-            "summary": "Linode 100k planning estimate source not found.",
+        "summary": "Self-managed K8s 100k planning estimate source not found.",
         }
 
     text = LINODE_100K_ESTIMATE_PATH.read_text(encoding="utf-8")
@@ -395,8 +395,10 @@ def collect_linode_scale_estimate() -> dict[str, object]:
 
     scenarios = {row[0]: row[2] for row in scenario_rows if len(row) >= 3}
     per_unit = {row[0]: row for row in per_unit_rows if len(row) >= 4}
-    default_scenario = "Linode 100k self-managed cluster"
-    managed_scenario = "Linode 100k with optional Managed Service"
+    default_scenario = "K8s 100K self-managed cluster"
+    managed_scenario = "K8s 100K with optional Managed Service"
+    legacy_default_scenario = "Linode 100k self-managed cluster"
+    legacy_managed_scenario = "Linode 100k with optional Managed Service"
 
     return {
         "status": "available",
@@ -404,11 +406,11 @@ def collect_linode_scale_estimate() -> dict[str, object]:
         "region": metadata.get("region", "us-sea"),
         "currency": metadata.get("currency", "USD"),
         "collected": metadata.get("collected", "n/a"),
-        "summary": "Linode/Akamai Cloud 100k-device self-managed cluster planning estimate; not current bill and not load-tested.",
+        "summary": "Self-managed K8s 100k-device reference estimate; MQTT 100K has passed, video/WebRTC/TURN media remains excluded.",
         "sizing": metadata.get("sizing", "10,000 users / 100,000 devices"),
         "scenarios": {
-            "selfManaged": scenarios.get(default_scenario, "n/a"),
-            "withManagedService": scenarios.get(managed_scenario, "n/a"),
+            "selfManaged": scenarios.get(default_scenario) or scenarios.get(legacy_default_scenario, "n/a"),
+            "withManagedService": scenarios.get(managed_scenario) or scenarios.get(legacy_managed_scenario, "n/a"),
         },
         "configuration": [
             {
@@ -423,18 +425,18 @@ def collect_linode_scale_estimate() -> dict[str, object]:
             if len(row) >= 6
         ],
         "perUnit": {
-            "selfManagedPerUser": per_unit.get(default_scenario, ["", "n/a", "n/a", "n/a"])[1],
-            "selfManagedPerDevice": per_unit.get(default_scenario, ["", "n/a", "n/a", "n/a"])[2],
-            "selfManagedUserWithTenDevices": per_unit.get(default_scenario, ["", "n/a", "n/a", "n/a"])[3],
-            "selfManagedUserWithFourDevices": per_unit.get(default_scenario, ["", "n/a", "n/a", "n/a"])[3],
-            "managedServicePerUser": per_unit.get(managed_scenario, ["", "n/a", "n/a", "n/a"])[1],
-            "managedServicePerDevice": per_unit.get(managed_scenario, ["", "n/a", "n/a", "n/a"])[2],
-            "managedServiceUserWithTenDevices": per_unit.get(managed_scenario, ["", "n/a", "n/a", "n/a"])[3],
-            "managedServiceUserWithFourDevices": per_unit.get(managed_scenario, ["", "n/a", "n/a", "n/a"])[3],
+            "selfManagedPerUser": (per_unit.get(default_scenario) or per_unit.get(legacy_default_scenario, ["", "n/a", "n/a", "n/a"]))[1],
+            "selfManagedPerDevice": (per_unit.get(default_scenario) or per_unit.get(legacy_default_scenario, ["", "n/a", "n/a", "n/a"]))[2],
+            "selfManagedUserWithTenDevices": (per_unit.get(default_scenario) or per_unit.get(legacy_default_scenario, ["", "n/a", "n/a", "n/a"]))[3],
+            "selfManagedUserWithFourDevices": (per_unit.get(default_scenario) or per_unit.get(legacy_default_scenario, ["", "n/a", "n/a", "n/a"]))[3],
+            "managedServicePerUser": (per_unit.get(managed_scenario) or per_unit.get(legacy_managed_scenario, ["", "n/a", "n/a", "n/a"]))[1],
+            "managedServicePerDevice": (per_unit.get(managed_scenario) or per_unit.get(legacy_managed_scenario, ["", "n/a", "n/a", "n/a"]))[2],
+            "managedServiceUserWithTenDevices": (per_unit.get(managed_scenario) or per_unit.get(legacy_managed_scenario, ["", "n/a", "n/a", "n/a"]))[3],
+            "managedServiceUserWithFourDevices": (per_unit.get(managed_scenario) or per_unit.get(legacy_managed_scenario, ["", "n/a", "n/a", "n/a"]))[3],
         },
         "caveats": [
-            "Not load-tested yet; right-size after 10k/50k/100k MQTT evidence.",
-            "Self-managed Linode is not service-equivalent to AWS IoT Core, Cognito, CloudHSM, RDS, or ElastiCache.",
+            "MQTT 100K has passed; use the packaged run evidence to right-size API, broker, database, and observability nodes.",
+            "Self-managed K8s is not service-equivalent to AWS IoT Core, Cognito, CloudHSM, RDS, or ElastiCache.",
             "Excludes camera/WebRTC/TURN media traffic, tax, DNS/email, external monitoring, and support beyond optional Managed Service.",
         ],
     }
@@ -611,6 +613,7 @@ def collect_aws_cost_estimate() -> dict[str, object]:
     ]
     line_item_names = {
         "ECS Fargate application services",
+        "AWS Lambda application APIs/workers",
         "Public frontend CloudFront CDN",
         "Public frontend Lambda",
         "Public frontend S3 static origin",
@@ -619,6 +622,8 @@ def collect_aws_cost_estimate() -> dict[str, object]:
         "ElastiCache for Valkey",
         "S3 storage and PUT requests",
         "AWS IoT Core",
+        "AWS IoT Device Management",
+        "Amazon Managed Service for Prometheus",
         "Application Load Balancer",
         "NAT Gateway",
         "CloudWatch Logs",
@@ -681,12 +686,19 @@ def collect_aws_cost_estimate() -> dict[str, object]:
         ],
         "scenarioEquations": [
             {"scenario": "Base services only", "formula": "sum base service line items, excluding CloudHSM and Private CA", "estimate": base_without_hsm},
-            {"scenario": "Default + 1 CloudHSM", "formula": f"{base_without_hsm} + 1,357.80 CloudHSM", "estimate": default_with_hsm},
+            {"scenario": "Default + 1 CloudHSM", "formula": f"{base_without_hsm} + 2,336.00 CloudHSM", "estimate": default_with_hsm},
             {"scenario": "Robust, no CloudHSM", "formula": f"{base_without_hsm} + {diff_usd_amount(robust_without_hsm, base_without_hsm)} robust infra delta", "estimate": robust_without_hsm},
-            {"scenario": "Robust + 2 CloudHSMs", "formula": f"{robust_without_hsm} + 2 * 1,357.80 CloudHSM", "estimate": robust_with_hsm},
+            {"scenario": "Robust + 2 CloudHSMs", "formula": f"{robust_without_hsm} + 2 * 2,336.00 CloudHSM", "estimate": robust_with_hsm},
         ],
         "cloudWatchFormula": "30.0 GB service logs + 36.0 GB device runtime logs = 66.0 GB/month; 66.0 * 0.70 ingestion + 66.0 * 0.03 retention = 48.18 USD/month.",
         "formulaBreakdown": [
+            {
+                "item": "AWS Lambda application APIs/workers",
+                "quantity": "30.0M requests + 6.0M GB-sec",
+                "unitPrice": "0.20/M requests; 0.0000166667/GB-sec",
+                "formula": "30.0M * 0.20/M + 30.0M * 1 GB * 0.2s * 0.0000166667",
+                "estimate": "106.00",
+            },
             {
                 "item": "ECS Fargate application services",
                 "quantity": "8,760 vCPU-hr + 17,520 GB-hr",
@@ -695,11 +707,18 @@ def collect_aws_cost_estimate() -> dict[str, object]:
                 "estimate": "539.79",
             },
             {
+                "item": "AI-assisted operations",
+                "quantity": "Runbook + log triage + status report support",
+                "unitPrice": "Not AWS infra; tool/seat/token TBD",
+                "formula": "AI assists ops workflow; no AWS recurring infra line",
+                "estimate": "0.00 AWS infra",
+            },
+            {
                 "item": "RDS PostgreSQL",
-                "quantity": "730 DB-hr + 2,500 GB-month",
-                "unitPrice": "0.203/DB-hr; 0.138/GB-month",
-                "formula": "730 * 0.203 + 2,500 * 0.138 = 148.19 + 345.00",
-                "estimate": "493.19",
+                "quantity": "730 DB-hr + 1,000 GB-month",
+                "unitPrice": "0.574/DB-hr; 0.138/GB-month",
+                "formula": "730 * 0.574 + 1,000 * 0.138 = 419.02 + 138.00",
+                "estimate": "557.02",
             },
             {
                 "item": "AWS IoT Core",
@@ -707,6 +726,20 @@ def collect_aws_cost_estimate() -> dict[str, object]:
                 "unitPrice": "0.096/M conn-min; 1.20/M msg; 1.50/M shadow op",
                 "formula": "414.72 connection + 1,126.80 messages + 108.00 shadow ops",
                 "estimate": "1,649.52",
+            },
+            {
+                "item": "AWS IoT Device Management",
+                "quantity": "100k devices + 60.0M index updates",
+                "unitPrice": "0.01/device-month; 2.25/M index updates",
+                "formula": "100,000 * 0.01 + 60.0M * 2.25/M",
+                "estimate": "1,135.00",
+            },
+            {
+                "item": "Amazon Managed Service for Prometheus",
+                "quantity": "432.0M samples + collector + query/storage",
+                "unitPrice": "0.90/10M ingest; 0.04/collector-hr; 0.03/10M collected",
+                "formula": "38.88 ingest + 30.50 collector + 0.42 query/storage",
+                "estimate": "69.80",
             },
             {
                 "item": "NAT Gateway",
@@ -774,9 +807,9 @@ def collect_aws_cost_estimate() -> dict[str, object]:
             {
                 "item": "CloudHSM add-on",
                 "quantity": "730 HSM-hr per HSM",
-                "unitPrice": "1.86/HSM-hr",
-                "formula": "1 HSM: 730 * 1.86; robust: 2 * 1,357.80",
-                "estimate": "1,357.80 per HSM",
+                "unitPrice": "3.20/HSM-hr",
+                "formula": "1 HSM: 730 * 3.20; robust: 2 * 2,336.00",
+                "estimate": "2,336.00 per HSM",
             },
         ],
     }
@@ -1011,7 +1044,7 @@ def fig_load_targets() -> Path:
         draw.text((70, 45), "8 月 Loading Test 目標", font=font(46, True), fill=rgb("17324D"))
         rounded_box(draw, (140, 190, 810, 635), "DDF7F3", "0F766E", 36, 5)
         rounded_box(draw, (990, 190, 1660, 635), "FFF2CC", "F59E0B", 36, 5)
-        centered_multiline(draw, (160, 225, 790, 370), "IoT\n50,000 台", font(58, True), "17324D")
+        centered_multiline(draw, (160, 225, 790, 370), "IoT\n100,000 台", font(58, True), "17324D")
         centered_multiline(draw, (1010, 225, 1640, 370), "IoT Video\n5,000 台", font(58, True), "17324D")
         centered_multiline(draw, (190, 405, 760, 590), "大量連線、telemetry、state update、API latency", font(30, True), "233241")
         centered_multiline(draw, (1040, 405, 1610, 590), "video control plane、WebRTC setup、TURN readiness", font(30, True), "233241")
@@ -1040,20 +1073,21 @@ PPTX_LAYOUT_DIR = OUT_DIR / "pptx-layout"
 PPTX_WORK_DIR = OUT_DIR / "pptx-work"
 
 SCHEDULE_SNAPSHOT = {
-    "current_position": "Load-test preparation",
-    "weekly_goal": "Close runner/profile, metrics, thresholds, fleet prerequisites, video profile, and operator runbook.",
-    "next_gate": "June validation before July scale rehearsal",
-    "risk": "At risk if load-test profile and evidence packaging are not closed before June validation.",
-    "judgement": "at risk",
+    "current_position": "K8s cloud 100K device loading test pass",
+    "current_week": "100K device loading-test evidence package",
+    "weekly_goal": "Package the 100K device loading-test result, bottleneck notes, metrics thresholds, and follow-up actions.",
+    "next_gate": "5,000 video camera profile and Alpha readiness",
+    "risk": "Follow-up items are report packaging, video profile, support owner, and production-like sign-off.",
+    "judgement": "pass",
 }
 
 SCHEDULE_MILESTONES = [
     {"period": "May 1-10", "label": "Kickoff", "status": "done", "note": "scope / source-of-truth / target"},
-    {"period": "May 11-24", "label": "Foundation", "status": "done", "note": "Linode staging + integration"},
-    {"period": "May 25-Jun 7", "label": "Load prep", "status": "current", "note": "runner / metrics / runbook"},
-    {"period": "Jun 8-30", "label": "Validation", "status": "next", "note": "small-to-medium + bottlenecks"},
-    {"period": "Jul 1-31", "label": "Scale rehearsal", "status": "planned", "note": "50k IoT / 5k video dry run"},
-    {"period": "Aug 1", "label": "Load test pass", "status": "target", "note": "50k devices + 5k cameras"},
+    {"period": "May 11-24", "label": "Foundation", "status": "done", "note": "K8s staging + integration"},
+    {"period": "May 25-Jun 7", "label": "Load prep", "status": "done", "note": "runner / metrics / runbook"},
+    {"period": "Jun 8-30", "label": "Validation", "status": "current", "note": "small-to-medium + bottlenecks"},
+    {"period": "Jul 1-31", "label": "Scale rehearsal", "status": "planned", "note": "100k IoT / 5k video dry run"},
+    {"period": "Aug 1", "label": "Load test pass", "status": "target", "note": "100k devices + 5k cameras"},
     {"period": "Aug", "label": "Alpha test", "status": "planned", "note": "SDK included"},
     {"period": "Sep", "label": "Beta test", "status": "planned", "note": "SDK + pilot customer"},
     {"period": "After beta", "label": "Public", "status": "planned", "note": "public release path"},
@@ -1063,16 +1097,16 @@ VIDEO_MILESTONES = [
     {"period": "Jun", "label": "Foundation", "status": "current", "note": "WebRTC / media / storage path"},
     {"period": "Jul 1-15", "label": "Video profile", "status": "next", "note": "camera mix / viewer behavior"},
     {"period": "Jul 16-31", "label": "5k rehearsal", "status": "planned", "note": "TURN / storage / metrics"},
-    {"period": "Aug 1", "label": "5,000 cameras pass", "status": "target", "note": "same gate as 50k IoT"},
+    {"period": "Aug 1", "label": "5,000 cameras pass", "status": "target", "note": "same gate as 100k IoT"},
 ]
 
 LOAD_READINESS = [
-    ["Runner / profile", "partial", "safe staging profile, concurrency ladder, run metadata", "load-test owner", "at risk"],
-    ["Fleet / video profile", "not verified", "50k device fleet, 5k camera profile, credentials, test-data hygiene", "fleet owner", "at risk"],
-    ["Metrics / thresholds", "partial", "success rate, p95/p99, error taxonomy, WebRTC/TURN/storage metrics", "metrics owner", "flat"],
-    ["Infra / multi-host", "partial", "multi-host execution, aggregation, resource dashboard", "DevOps/SRE", "flat"],
-    ["Broker / DB / video path", "not verified", "broker, DB, TURN, video storage bottleneck visibility and recovery behavior", "service owners", "at risk"],
-    ["Report evidence", "partial", "JSON/Markdown/PPT evidence packaging", "report owner", "down"],
+    ["MQTT 100K load test", "pass", "100K device MQTT loading test passed on K8s cloud; preserve runner profile, run metadata, success rate, p95/p99, and resource evidence", "load-test owner", "down"],
+    ["Fleet / video profile", "not verified", "5k camera profile, viewer behavior, credentials, test-data hygiene, and video fleet prerequisites still need validation", "fleet owner", "at risk"],
+    ["Metrics / thresholds", "partial", "MQTT 100K thresholds have evidence; WebRTC/TURN/storage metrics still need pass/fail thresholds", "metrics owner", "flat"],
+    ["Infra / multi-host", "pass", "K8s cloud and multi-host MQTT execution passed 100K device load; keep resource dashboard and aggregation evidence", "DevOps/SRE", "down"],
+    ["Broker / DB / video path", "partial", "MQTT broker path passed 100K; DB, TURN, video storage bottleneck visibility and recovery behavior still need video validation", "service owners", "at risk"],
+    ["Report evidence", "partial", "Package 100K MQTT JSON/Markdown/PPT evidence; keep video evidence as pending section", "report owner", "flat"],
 ]
 
 DECISIONS = [
@@ -1099,7 +1133,7 @@ POST_ALPHA_COVERAGE = [
 ]
 
 RISKS = [
-    ["50,000-device / 5,000-camera fleet readiness", "not verified", "Define fleet prerequisite, video profile, and credential handling", "fleet owner", "flat"],
+    ["100,000-device / 5,000-camera fleet readiness", "not verified", "Define fleet prerequisite, video profile, and credential handling", "fleet owner", "flat"],
     ["Broker/database bottleneck unknown", "evidence-needed", "Run staged load ladder and collect resource metrics", "service owners", "new"],
     ["AppVersion=debug in staging", "open", "Use release version for externally reviewed staging", "release owner", "flat"],
     ["Backup/restore evidence incomplete", "open", "Collect product-level evidence bundle", "DevOps/SRE", "flat"],
@@ -1115,7 +1149,7 @@ EVIDENCE_INDEX = [
 DECK_REQUIRED_TOPICS = [
     "Schedule", "Release Gate", "Loading Test", "Cloud Relationship", "Customer Fit",
     "Portal Marketing", "WebRTC/storage", "MQTT/shadow", "PKI", "HSM signer",
-    "Threat Model", "Linode", "Operation Screenshots", "Evidence Appendix",
+    "Threat Model", "K8s", "Operation Screenshots", "Evidence Appendix",
 ]
 
 
