@@ -1289,7 +1289,8 @@ async function slideGcpCostView(p, payload) {
     note: "Use this only as a partial managed-service comparison. GCP needs self-hosted EMQX plus custom device registry/jobs/shadow, or a third-party quote.",
   }, 675, 218, 555, C.paleTeal);
 
-  addText(slide, "Pricing sources: GKE pricing, Cloud Billing Catalog / Pricing API, Cloud SQL, Cloud Run, Pub/Sub, Cloud Logging, Managed Service for Prometheus, Memorystore, Cloud Storage. Excludes tax, committed-use discounts, support plan, marketplace/private offers, and video/WebRTC/TURN.", { x: 80, y: 640, w: 1120, h: 20 }, { size: 7.6, color: C.muted, align: "center", face: FONT_EN });
+  addText(slide, "Sources: https://cloud.google.com/kubernetes-engine/pricing | https://docs.cloud.google.com/billing/docs/reference/rest/v1/services.skus/list | https://cloud.google.com/sql/pricing | https://cloud.google.com/run/pricing | https://cloud.google.com/products/observability/pricing", { x: 80, y: 632, w: 1120, h: 10 }, { size: 5.4, color: C.muted, align: "center", face: FONT_EN });
+  addText(slide, "Also used: https://cloud.google.com/pubsub/pricing | https://cloud.google.com/memorystore/pricing | https://cloud.google.com/storage/pricing. Excludes tax, committed-use discounts, support, marketplace/private offers, and video/WebRTC/TURN.", { x: 80, y: 646, w: 1120, h: 10 }, { size: 5.4, color: C.muted, align: "center", face: FONT_EN });
   return slide;
 }
 
@@ -1334,7 +1335,8 @@ async function slideAzureCostView(p, payload) {
     note: "IoT Hub can replace part of MQTT/device ingestion. Device Update, DPS volume, commands, jobs, and certificate provisioning are not fully priced here.",
   }, 675, 218, 555, C.paleTeal);
 
-  addText(slide, "Pricing sources: AKS pricing, Azure Retail Prices API, Azure IoT Hub pricing, Azure Database for PostgreSQL Flexible Server, Azure Monitor, Azure Cache for Redis, Azure Functions, Container Apps, ACR, Blob Storage. Excludes tax, reservations/savings plans, support, marketplace/private offers, and video/WebRTC/TURN.", { x: 80, y: 640, w: 1120, h: 20 }, { size: 7.6, color: C.muted, align: "center", face: FONT_EN });
+  addText(slide, "Sources: https://azure.microsoft.com/pricing/details/kubernetes-service/ | https://learn.microsoft.com/rest/api/cost-management/retail-prices/azure-retail-prices | https://learn.microsoft.com/azure/iot-hub/iot-hub-devguide-pricing", { x: 80, y: 632, w: 1120, h: 10 }, { size: 5.4, color: C.muted, align: "center", face: FONT_EN });
+  addText(slide, "Also used: https://azure.microsoft.com/pricing/details/postgresql/flexible-server/ | https://azure.microsoft.com/pricing/details/monitor/ | https://azure.microsoft.com/pricing/details/cache/ | https://azure.microsoft.com/pricing/details/container-apps/ | https://azure.microsoft.com/pricing/details/storage/blobs/", { x: 80, y: 646, w: 1120, h: 10 }, { size: 5.4, color: C.muted, align: "center", face: FONT_EN });
   return slide;
 }
 
