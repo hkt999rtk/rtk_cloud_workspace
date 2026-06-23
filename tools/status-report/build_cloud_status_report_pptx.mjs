@@ -150,6 +150,15 @@ function addPill(slide, text, x, y, w, color = C.blue) {
   addText(slide, text, { x: x + 6, y: y + 3, w: w - 12, h: 20 }, { size: 11, color, bold: true, align: "center" });
 }
 
+function addAwsTopFiveCostDrivers(slide, frame) {
+  addText(
+    slide,
+    "Top 5 cost drivers: CloudHSM 2,336.00 | AWS IoT Core 1,649.52 | IoT Device Management 1,135.00 | Business Support+ 621.96 | RDS PostgreSQL 557.02",
+    frame,
+    { size: 9.2, color: "#B00020", bold: true, align: "center", face: FONT_EN },
+  );
+}
+
 function addTable(slide, headers, rows, frame, widths, options = {}) {
   const rowH = options.rowH || 34;
   const headerH = options.headerH || 34;
@@ -1026,6 +1035,7 @@ async function slideAwsCostCalculationBase(p, payload) {
     addText(slide, item[0], { x: x + 8, y: 217, w: 234, h: 14 }, { size: 8.5, color: C.muted, bold: true, align: "center", face: FONT_EN });
     addText(slide, item[1], { x: x + 8, y: 238, w: 234, h: 16 }, { size: 12, color: C.navy, bold: true, align: "center", face: FONT_EN });
   });
+  addAwsTopFiveCostDrivers(slide, { x: 76, y: 264, w: 1128, h: 16 });
 
   const baseRows = [
     ["Lambda app APIs/workers", findLine("AWS Lambda application APIs/workers").monthlyEstimate || "106.00", "30M account/device/admin/API invocations at 1 GB and 200 ms average duration."],
@@ -1077,6 +1087,7 @@ async function slideAwsCostFormulaBreakdown(p, payload) {
   const details = aws.calculationDetails || {};
 
   addText(slide, "This page expands each major estimate into quantity * public unit price. AI-assisted operations are listed as an operations assumption, not an AWS infrastructure charge.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.5, color: C.navy, bold: true, align: "center", fill: C.pale });
+  addAwsTopFiveCostDrivers(slide, { x: 76, y: 196, w: 1128, h: 16 });
 
   const formulaRows = (details.formulaBreakdown || []).map((row) => [
     row.item,
@@ -1106,6 +1117,7 @@ async function slideAwsCostCalculationScenarios(p, payload) {
   const details = aws.calculationDetails || {};
 
   addText(slide, "This page explains how the scenario totals are derived from the base subtotal: CloudHSM is a security custody add-on, robust design adds only duplicated infrastructure, and unit cost divides one shared monthly pool.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.5, color: C.navy, bold: true, align: "center", fill: C.pale });
+  addAwsTopFiveCostDrivers(slide, { x: 76, y: 196, w: 1128, h: 16 });
 
   const scenarioRows = (details.scenarioEquations || []).map((row) => [
     row.scenario,
