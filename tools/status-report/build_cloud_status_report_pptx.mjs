@@ -1230,6 +1230,114 @@ async function slideAwsCostSourceUrls(p, payload) {
   return slide;
 }
 
+function addProviderCostMode(slide, mode, x, y, w, accentFill) {
+  addShape(slide, { x, y, w, h: 404, fill: C.white, line: C.line });
+  addShape(slide, { x: x + 14, y: y + 14, w: w - 28, h: 58, fill: accentFill, line: C.line });
+  addText(slide, mode.title, { x: x + 28, y: y + 23, w: w - 56, h: 18 }, { size: 14, color: C.navy, bold: true, align: "center", face: FONT_EN });
+  addText(slide, mode.total, { x: x + 28, y: y + 47, w: w - 56, h: 18 }, { size: 15, color: mode.highlight ? "#B00020" : C.navy, bold: true, align: "center", face: FONT_EN });
+  addText(slide, mode.unit, { x: x + 28, y: y + 66, w: w - 56, h: 10 }, { size: 7.4, color: C.muted, bold: true, align: "center", face: FONT_EN });
+
+  addTable(slide, ["Cost item", "Monthly", "Basis"], mode.rows, { x: x + 14, y: y + 92, w: w - 28, h: 236 }, [1.25, 0.68, 2.35], {
+    rowH: 22,
+    headerH: 22,
+    fontSize: 6.35,
+    cellStyle: (_cell, col, row) => col === 1 && mode.topItems.some((name) => row[0].includes(name)) ? TOP_COST_CELL_STYLE : {},
+  });
+
+  addShape(slide, { x: x + 14, y: y + 344, w: w - 28, h: 44, fill: C.paleAmber, line: "#E3C25A" });
+  addText(slide, mode.note, { x: x + 28, y: y + 354, w: w - 56, h: 22 }, { size: 7.7, color: C.black, bold: true, align: "center" });
+}
+
+async function slideGcpCostView(p, payload) {
+  const slide = p.slides.add();
+  await addBackground(slide, payload);
+  await addHeader(slide, payload, "GCP 100K Device Cost View", "K8S RUNTIME / CLOUD SERVICES");
+
+  addText(slide, "First-pass GCP planning view using the same 5,000-user / 100,000-device profile. GKE Standard is node-based; GCP has no active Cloud IoT Core equivalent, so MQTT remains self-hosted or requires a third-party quote.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 13.4, color: C.navy, bold: true, align: "center", fill: C.pale });
+
+  addProviderCostMode(slide, {
+    title: "Self-operated GKE Standard",
+    total: "Approx. 2,550 USD/month",
+    unit: "14 worker nodes + GKE cluster fee; about 0.03 USD/device-month",
+    highlight: false,
+    topItems: ["Worker nodes", "PostgreSQL", "Network"],
+    rows: [
+      ["GKE cluster fee", "73", "0.10 USD/cluster-hour * 730 hours."],
+      ["Worker nodes", "1,885", "System, API, EMQX, PostgreSQL, observability, Redis/NATS pools."],
+      ["Persistent Disk", "150", "1,500 GB database + Loki/Prometheus/broker/cache PVC allowance."],
+      ["Cloud Load Balancing", "90", "HTTPS ingress plus MQTT TCP/TLS ingress allowance."],
+      ["Cloud NAT / network", "240", "Private subnet outbound, inter-service transfer, and edge allowance."],
+      ["Artifact Registry / Cloud Storage", "110", "Container images, DB backup, Loki/archive, firmware, release artifacts."],
+    ],
+    note: "This is the closest match to the AWS K8S runtime slide: EMQX, PostgreSQL, Loki, Grafana, Prometheus, Redis, and NATS remain self-operated on GKE nodes.",
+  }, 50, 218, 555, C.paleBlue);
+
+  addProviderCostMode(slide, {
+    title: "GCP cloud services alternative",
+    total: "Approx. 2,900-3,800 USD/month + MQTT gap",
+    unit: "Managed DB/logging/metrics/API where available; MQTT/device management not service-equivalent",
+    highlight: true,
+    topItems: ["Cloud SQL", "EMQX", "Cloud Run"],
+    rows: [
+      ["Cloud Run / API Gateway", "300-450", "Account/device/admin APIs and light workers after handler refactor."],
+      ["Cloud SQL PostgreSQL", "700-950", "Managed PostgreSQL, 1,000 GB storage, backup retention; HA not included."],
+      ["EMQX on GKE/Compute", "650-900", "GCP IoT Core retired; managed MQTT/device registry needs third-party quote."],
+      ["Cloud Logging", "20-80", "66 GB/month log ingestion after free/project allowance; tune by log routing."],
+      ["Managed Prometheus", "26-80", "432M samples/month plus query/storage sensitivity."],
+      ["Memorystore / Pub/Sub / Storage", "300-520", "Redis-compatible cache, event bus, object backup, CDN/storage allowance."],
+    ],
+    note: "Use this only as a managed-service comparison. GCP does not directly replace AWS IoT Core + IoT Device Management in one native service.",
+  }, 675, 218, 555, C.paleTeal);
+
+  addText(slide, "Pricing sources: GKE pricing, Cloud Billing Catalog / Pricing API, Cloud SQL, Cloud Run, Pub/Sub, Cloud Logging, Managed Service for Prometheus, Memorystore, Cloud Storage. Excludes tax, committed-use discounts, support plan, marketplace/private offers, and video/WebRTC/TURN.", { x: 80, y: 640, w: 1120, h: 20 }, { size: 7.6, color: C.muted, align: "center", face: FONT_EN });
+  return slide;
+}
+
+async function slideAzureCostView(p, payload) {
+  const slide = p.slides.add();
+  await addBackground(slide, payload);
+  await addHeader(slide, payload, "Azure 100K Device Cost View", "K8S RUNTIME / CLOUD SERVICES");
+
+  addText(slide, "First-pass Azure planning view using the same 5,000-user / 100,000-device profile. AKS runtime cost is driven by VM node pools and supporting resources; Azure IoT Hub is the managed MQTT/device-ingestion comparison path.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 13.4, color: C.navy, bold: true, align: "center", fill: C.pale });
+
+  addProviderCostMode(slide, {
+    title: "Self-operated AKS",
+    total: "Approx. 2,950 USD/month",
+    unit: "14 worker nodes + AKS Standard control-plane SLA; about 0.03 USD/device-month",
+    highlight: false,
+    topItems: ["Worker nodes", "PostgreSQL", "Network"],
+    rows: [
+      ["AKS Standard tier", "73", "Planning allowance for SLA-backed cluster management."],
+      ["Worker nodes", "2,240", "System, API, EMQX, PostgreSQL, observability, Redis/NATS node pools."],
+      ["Managed Disks", "150", "1,500 GB PostgreSQL + Loki/Prometheus/broker/cache PVC allowance."],
+      ["Load Balancer / App Gateway", "120", "HTTPS ingress plus MQTT TCP/TLS ingress allowance."],
+      ["NAT / bandwidth / network", "260", "Private outbound, inter-service transfer, and edge allowance."],
+      ["ACR / Blob backup", "110", "Container registry, DB backup, Loki/archive, firmware, release artifacts."],
+    ],
+    note: "This is the Azure equivalent of the AWS K8S runtime slide: EMQX, PostgreSQL, Loki, Grafana, Prometheus, Redis, and NATS remain self-operated on AKS nodes.",
+  }, 50, 218, 555, C.paleBlue);
+
+  addProviderCostMode(slide, {
+    title: "Azure cloud services alternative",
+    total: "Approx. 3,300-4,300 USD/month",
+    unit: "IoT Hub + managed PostgreSQL/logging/metrics/API; about 0.03-0.04 USD/device-month",
+    highlight: true,
+    topItems: ["IoT Hub", "PostgreSQL", "Monitor"],
+    rows: [
+      ["Azure IoT Hub", "1,500-2,500", "100K usually-online devices; 4 KB message chunks; S2/S3 units to size."],
+      ["Container Apps / Functions", "300-500", "Account/device/admin APIs and light workers after handler refactor."],
+      ["Azure PostgreSQL Flexible", "650-950", "Managed PostgreSQL, 1,000 GB storage, backup retention; HA not included."],
+      ["Azure Monitor / Prometheus", "180-350", "Logs ingestion plus managed Prometheus sample/query sensitivity."],
+      ["Azure Cache / Service Bus", "120-260", "Redis-compatible cache plus event bus/DLQ comparison."],
+      ["Storage / ACR / networking", "300-450", "Blob backup, registry, CDN/storage, load balancer, NAT/bandwidth allowance."],
+    ],
+    note: "IoT Hub can replace part of MQTT/device ingestion, but topic model, device twin, commands, jobs, and certificate provisioning must be validated before treating it as equivalent.",
+  }, 675, 218, 555, C.paleTeal);
+
+  addText(slide, "Pricing sources: AKS pricing, Azure Retail Prices API, Azure IoT Hub pricing, Azure Database for PostgreSQL Flexible Server, Azure Monitor, Azure Cache for Redis, Azure Functions, Container Apps, ACR, Blob Storage. Excludes tax, reservations/savings plans, support, marketplace/private offers, and video/WebRTC/TURN.", { x: 80, y: 640, w: 1120, h: 20 }, { size: 7.6, color: C.muted, align: "center", face: FONT_EN });
+  return slide;
+}
+
 async function slide16(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
@@ -1358,7 +1466,7 @@ async function slide21(p, payload) {
 const SLIDES = [
   slide01, slideMajorTopics, slide07, slideWhyCloud, slideCustomerUseCaseFit, slide03, slideCloudTypes, slideOperationalTransition, slide02, slide04, slideReleaseGateDefinition, slide05, slide06, slide08,
   slidePortalTransition, slidePortalIntro, slide09, slideTechnicalTransition, slide10, slide11, slideStrideOverview, slide12, slideHsmSignerDesign, slide13,
-  slideEvidenceTransition, slide14, slideCostView, slideLinodeScaleEstimate, slideAwsUnitCost, slideAwsCostCalculationBase, slideAwsCostFormulaBreakdown, slideAwsCostCalculationScenarios, slideAwsCostSourceUrls, slide16, slide17, slide18, slide19, slidePostAlphaCoverage, slide20, slide21,
+  slideEvidenceTransition, slide14, slideCostView, slideLinodeScaleEstimate, slideAwsUnitCost, slideAwsCostCalculationBase, slideAwsCostFormulaBreakdown, slideAwsCostCalculationScenarios, slideAwsCostSourceUrls, slideGcpCostView, slideAzureCostView, slide16, slide17, slide18, slide19, slidePostAlphaCoverage, slide20, slide21,
 ];
 
 async function makeContactSheet(previewPaths, outputPath) {
