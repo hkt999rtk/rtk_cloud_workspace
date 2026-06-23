@@ -28,10 +28,9 @@ PORTAL_WEB_SCREENSHOT = FIG_DIR / "portal-webtest-home-hero.png"
 PORTAL_WEB_FALLBACK_IMAGE = ROOT / "repos/rtk_cloud_frontend/static/assets/connectplus-hero-corporate-v2.jpg"
 REPORT_LANGUAGE = "繁體中文"
 CORE_MESSAGE = (
-    "這個 Cloud 的存在目的，是輔助各單位以 Bottom-up Business 方式推動 AmebaPRO / IoT module "
-    "銷售：讓使用者、開發者與客戶 PoC 團隊可以直接使用雲端 onboarding、SDK/App、OTA、Video、"
-    "MQTT 與管理工具，縮短從硬體模組評估到解決方案導入的距離。它要提供的是方便導入、可展示、可驗證，"
-    "同時具備安全管理的網路架構，讓模組銷售能從硬體規格延伸成完整解決方案。"
+    "本文件整理 Realtek Video / IoT Control Cloud 目前進度，包含 K8S 部署現況、100K device loading test "
+    "結果、Portal Web 與 demo readiness、AWS/K8S 成本估算、主要風險，以及 Alpha/Beta 前需要決策或"
+    "補強的事項。"
 )
 CURRENT_STATUS_SUMMARY = [
     ["Deployment", "初步已在 K8s 架設的雲環境完成 100K device loading test pass，K8s runtime 已可作為目前驗證基準。", "下一步補齊 test report package、release version、backup/restore 與 production-like sign-off。"],

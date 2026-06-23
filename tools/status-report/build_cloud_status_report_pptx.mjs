@@ -215,7 +215,7 @@ async function slide01(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload, "cover");
   await addImage(slide, payload.masterAssets.logo, { x: 72, y: 60, w: 220, h: 45 }, "contain");
-  addText(slide, "Realtek Video / IoT Cloud\n狀態報告", { x: 72, y: 165, w: 620, h: 120 }, { size: 38, color: C.navy, bold: true });
+  addText(slide, "Realtek Video / IoT Control Cloud", { x: 72, y: 165, w: 780, h: 62 }, { size: 38, color: C.navy, bold: true });
   addText(slide, "AmebaPRO 推廣、Cloud 建置、Loading Test 與商業 KPI 對齊", { x: 76, y: 295, w: 680, h: 34 }, { size: 18, color: C.muted });
   addShape(slide, { x: 74, y: 366, w: 800, h: 120, fill: "#FFF6D8CC", line: "#E3C25A" });
   addText(slide, payload.coreMessage, { x: 96, y: 392, w: 750, h: 70 }, { size: 15, color: C.black });
