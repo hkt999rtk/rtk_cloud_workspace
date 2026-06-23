@@ -216,6 +216,47 @@ function addArrow(slide, x1, y1, x2, y2, color = C.sky) {
   addText(slide, glyph, { x: x2 - 10, y: y2 - 13, w: 20, h: 24 }, { size: 14, color, bold: true, align: "center", face: FONT_EN });
 }
 
+function addFlowBox(slide, title, body, frame, fill = C.paleBlue, options = {}) {
+  addShape(slide, { ...frame, fill, line: options.line || C.line });
+  addText(slide, title, { x: frame.x + 10, y: frame.y + 10, w: frame.w - 20, h: 18 }, {
+    size: options.titleSize || 12,
+    color: options.titleColor || C.navy,
+    bold: true,
+    align: "center",
+    face: FONT_EN,
+  });
+  addText(slide, body, { x: frame.x + 12, y: frame.y + 35, w: frame.w - 24, h: frame.h - 42 }, {
+    size: options.bodySize || 8.4,
+    color: options.bodyColor || C.black,
+    align: "center",
+    face: FONT_EN,
+  });
+}
+
+function addAwsFlowSlide(slide, { intro, steps, sideTitle, sideItems, footer }) {
+  addText(slide, intro, { x: 82, y: 152, w: 1120, h: 38 }, { size: 13.5, color: C.navy, bold: true, align: "center", fill: C.pale });
+  const startX = 70;
+  const gap = 28;
+  const stepW = 150;
+  const y = 235;
+  steps.forEach((step, i) => {
+    const x = startX + i * (stepW + gap);
+    addFlowBox(slide, step.title, step.body, { x, y, w: stepW, h: 118 }, step.fill || (i % 2 ? C.paleTeal : C.paleBlue), { bodySize: step.bodySize || 8.1 });
+    if (i < steps.length - 1) addArrow(slide, x + stepW + 4, y + 59, x + stepW + gap - 6, y + 59, C.sky);
+  });
+
+  addShape(slide, { x: 90, y: 392, w: 1095, h: 1, fill: C.line, line: "none" });
+  addText(slide, sideTitle, { x: 90, y: 418, w: 520, h: 22 }, { size: 16, color: C.navy, bold: true, face: FONT_EN });
+  sideItems.forEach((item, i) => {
+    const x = 90 + (i % 2) * 555;
+    const yy = 462 + Math.floor(i / 2) * 72;
+    addShape(slide, { x, y: yy, w: 510, h: 52, fill: i % 2 ? C.paleBlue : C.paleTeal, line: C.line });
+    addText(slide, item[0], { x: x + 18, y: yy + 9, w: 165, h: 18 }, { size: 11.5, color: C.navy, bold: true, face: FONT_EN });
+    addText(slide, item[1], { x: x + 190, y: yy + 8, w: 290, h: 30 }, { size: 9.2, color: C.black, face: FONT_EN });
+  });
+  addText(slide, footer, { x: 100, y: 640, w: 1080, h: 18 }, { size: 9, color: C.navy, bold: true, align: "center", fill: C.paleAmber, face: FONT_EN });
+}
+
 async function slide01(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload, "cover");
@@ -921,6 +962,84 @@ async function slideCostView(p, payload) {
   return slide;
 }
 
+async function slideAwsUserLoginFlow(p, payload) {
+  const slide = p.slides.add();
+  await addBackground(slide, payload);
+  await addHeader(slide, payload, "AWS User Login Data Flow", "MANAGED-SERVICE REQUEST PATH");
+  addAwsFlowSlide(slide, {
+    intro: "This view explains how a Portal/Admin/App user login would move through the AWS-native cost model. Cognito owns user authentication; application services still own tenant, role, audit, and product records.",
+    steps: [
+      ["User app / browser", "Portal, Admin, or mobile app starts sign-in and receives token/session state.", C.paleBlue],
+      ["CloudFront / ALB", "TLS entry point, routing, WAF option, access logs, and static asset delivery.", C.paleTeal],
+      ["Amazon Cognito", "Hosted login or SDK auth; validates password/social/OIDC flow and issues JWT.", C.paleAmber],
+      ["Lambda / API service", "Validates token claims, maps user to tenant/RBAC, and runs app-specific login logic.", C.paleBlue],
+      ["Amazon RDS", "Stores user profile, org membership, device ownership, audit, and application metadata.", C.paleTeal],
+      ["Response", "JWT/session plus application profile returns to client; downstream APIs use the same auth context.", C.paleBlue],
+    ].map(([title, body, fill]) => ({ title, body, fill })),
+    sideTitle: "Side effects and cost-bearing services",
+    sideItems: [
+      ["CloudWatch Logs", "ALB/API/Lambda/application logs, login errors, audit traces, and security-event evidence."],
+      ["Secrets / KMS", "App client secrets, DB credentials, token-signing material, and encrypted configuration."],
+      ["Managed Prometheus", "Login/API latency, error rate, request volume, and service health metrics."],
+      ["RDS backup", "User and tenant state remains recoverable through snapshots/backups and retention policy."],
+    ],
+    footer: "Cost implication: user login touches Cognito, API runtime, RDS, logging, metrics, and secrets; it is the main user-driven portion of the 5% user allocation.",
+  });
+  return slide;
+}
+
+async function slideAwsDeviceLoginFlow(p, payload) {
+  const slide = p.slides.add();
+  await addBackground(slide, payload);
+  await addHeader(slide, payload, "AWS Device Login / Activation Flow", "DEVICE IDENTITY AND REGISTRY PATH");
+  addAwsFlowSlide(slide, {
+    intro: "Device login means activation, certificate/device identity validation, and binding the device to its tenant. In the AWS-native cost model, registry and policy checks sit beside the existing product database.",
+    steps: [
+      ["Device SDK", "Factory credential, claim token, or mTLS certificate starts activation/login.", C.paleBlue],
+      ["ALB / API edge", "TLS ingress for activation API, device API, and provisioning callback path.", C.paleTeal],
+      ["Lambda / Video API", "Validates activation request, checks ownership intent, and creates runtime session facts.", C.paleBlue],
+      ["IoT Core registry", "Registers or validates device identity, policy, certificate status, and MQTT permission model.", C.paleAmber],
+      ["CloudHSM / KMS", "Protects CA/signing or token material used by certissuer and device credential lifecycle.", C.paleTeal],
+      ["Amazon RDS", "Authoritative account/device registry, activation status, audit trail, and lifecycle records.", C.paleBlue],
+    ].map(([title, body, fill]) => ({ title, body, fill })),
+    sideTitle: "Operational records created during device login",
+    sideItems: [
+      ["CloudWatch Logs", "Activation attempts, certificate failures, policy rejects, and API errors."],
+      ["IoT Device Mgmt", "Fleet indexing, search, jobs/commands, and managed device metadata if adopted."],
+      ["S3 / backup", "Certificate artifacts, release manifests, firmware metadata, and backup exports where needed."],
+      ["Prometheus / alarms", "Activation success rate, reject taxonomy, latency, and retry pressure."],
+    ],
+    footer: "Cost implication: device login is primarily device-driven; it affects IoT registry/policy, API runtime, RDS writes, logs, metrics, and protected key material.",
+  });
+  return slide;
+}
+
+async function slideAwsMqttFlow(p, payload) {
+  const slide = p.slides.add();
+  await addBackground(slide, payload);
+  await addHeader(slide, payload, "AWS MQTT Runtime Data Flow", "DEVICE MESSAGING / SHADOW / OBSERVABILITY");
+  addAwsFlowSlide(slide, {
+    intro: "This page maps the 100K-device MQTT runtime to the AWS-native managed-service profile used for costing. It is a comparison path; current K8S staging uses self-hosted EMQX.",
+    steps: [
+      ["Device fleet", "100K devices maintain MQTT sessions and publish command/status/log/shadow messages.", C.paleBlue],
+      ["AWS IoT Core", "Managed MQTT broker, TLS identity, topic policy, connection minutes, and message metering.", C.paleAmber],
+      ["IoT Rules / Shadow", "Routes selected topics to Lambda/SQS/S3/RDS paths; shadow state can use IoT Shadow or RTK shadow service.", C.paleTeal],
+      ["Lambda / workers", "Transforms events, runs command handlers, emits lifecycle events, and updates product state.", C.paleBlue],
+      ["RDS / S3", "Persistent shadow snapshots, device metadata, firmware/media pointers, and archive objects.", C.paleTeal],
+      ["CloudWatch", "MQTT/API logs, metrics, alarms, and failure taxonomy for loading-test evidence.", C.paleBlue],
+    ].map(([title, body, fill]) => ({ title, body, fill })),
+    sideTitle: "Runtime branches to size in the estimate",
+    sideItems: [
+      ["MQTT metering", "Connection minutes, message count, payload size, retained/shadow operations, and rules actions."],
+      ["Device shadow", "Desired/reported state updates, conflict handling, cache/write-through behavior, and retention."],
+      ["Logs / telemetry", "Runtime/debug logs, service logs, metrics samples, dashboard queries, and alarm volume."],
+      ["Back-pressure path", "SQS/EventBridge/NATS-equivalent decisions for retries, ordering, DLQ, and worker fan-out."],
+    ],
+    footer: "Cost implication: MQTT is the largest device-driven path; it is why the unit allocation now treats 95% of shared cost as device-driven.",
+  });
+  return slide;
+}
+
 async function slideLinodeScaleEstimate(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
@@ -1479,7 +1598,7 @@ async function slide21(p, payload) {
 const SLIDES = [
   slide01, slideMajorTopics, slide07, slideWhyCloud, slideCustomerUseCaseFit, slide03, slideCloudTypes, slideOperationalTransition, slide02, slide04, slideReleaseGateDefinition, slide05, slide06, slide08,
   slidePortalTransition, slidePortalIntro, slide09, slideTechnicalTransition, slide10, slide11, slideStrideOverview, slide12, slideHsmSignerDesign, slide13,
-  slideEvidenceTransition, slide14, slideCostView, slideLinodeScaleEstimate, slideAwsUnitCost, slideAwsCostCalculationBase, slideAwsCostFormulaBreakdown, slideAwsCostCalculationScenarios, slideAwsCostSourceUrls, slideGcpCostView, slideAzureCostView, slide16, slide17, slide18, slide19, slidePostAlphaCoverage, slide20, slide21,
+  slideEvidenceTransition, slide14, slideCostView, slideAwsUserLoginFlow, slideAwsDeviceLoginFlow, slideAwsMqttFlow, slideLinodeScaleEstimate, slideAwsUnitCost, slideAwsCostCalculationBase, slideAwsCostFormulaBreakdown, slideAwsCostCalculationScenarios, slideAwsCostSourceUrls, slideGcpCostView, slideAzureCostView, slide16, slide17, slide18, slide19, slidePostAlphaCoverage, slide20, slide21,
 ];
 
 async function makeContactSheet(previewPaths, outputPath) {
