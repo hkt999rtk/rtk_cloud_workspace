@@ -927,11 +927,11 @@ async function slideLinodeScaleEstimate(p, payload) {
   const perUnit = estimate.perUnit || {};
   const config = estimate.configuration || [];
 
-  addText(slide, "AWS infrastructure estimate for self-operated K8s: EMQX, PostgreSQL, Loki, Grafana, and Prometheus run as self-hosted pods. MQTT 100K has passed; video/WebRTC/TURN remains excluded.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.1, color: C.navy, bold: true, align: "center", fill: C.pale });
+  addText(slide, "AWS K8s billing is node-based in this EC2 worker profile: pods show workload placement, while cost comes from EKS control plane, EC2 worker nodes, EBS, LB, NAT/VPC, ECR, and S3.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.1, color: C.navy, bold: true, align: "center", fill: C.pale });
 
   const summary = [
     ["Sizing", "5,000 users / 100,000 devices"],
-    ["Runtime model", "Self-operated AWS K8S"],
+    ["Worker nodes", "14 EC2 nodes + EKS control plane"],
     ["Monthly infra estimate", scenarios.selfManaged || "2,733.00 USD"],
     ["Default unit view", perUnit.selfManagedUserWithTwentyDevices || perUnit.selfManagedUserWithTenDevices || perUnit.selfManagedUserWithFourDevices || "0.55 USD/month"],
   ];
@@ -958,7 +958,7 @@ async function slideLinodeScaleEstimate(p, payload) {
 
   addShape(slide, { x: 860, y: 466, w: 360, h: 118, fill: C.paleAmber, line: "#E3C25A" });
   addText(slide, "Interpretation", { x: 884, y: 486, w: 312, h: 20 }, { size: 16, color: C.navy, bold: true, align: "center", face: FONT_EN });
-  addText(slide, "This is not an AWS managed-service profile. Cost moves into EC2 workers, EBS/PVC, load balancers, NAT/VPC endpoints, ECR, S3 backup, and Realtek operations.", { x: 890, y: 515, w: 300, h: 48 }, { size: 9.7, color: C.black, align: "center" });
+  addText(slide, "EMQX, PostgreSQL, Loki, Grafana, Prometheus, Redis/Valkey, and NATS run as pods, but AWS charges this profile by the underlying nodes and infrastructure.", { x: 890, y: 515, w: 300, h: 48 }, { size: 9.7, color: C.black, align: "center" });
 
   addShape(slide, { x: 70, y: 620, w: 1130, h: 44, fill: C.white, line: C.line });
   addText(slide, "Caveats: AWS IoT Core, RDS, CloudWatch Logs, Managed Prometheus, Lambda primary runtime, ElastiCache, SQS, CloudHSM, external managed operations, and video/WebRTC/TURN are excluded.", { x: 92, y: 630, w: 1090, h: 16 }, { size: 8.5, color: C.black, bold: true, align: "center", face: FONT_EN });

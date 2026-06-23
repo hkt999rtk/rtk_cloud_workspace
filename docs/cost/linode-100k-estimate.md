@@ -7,7 +7,10 @@ Collected: 2026-06-23T00:00:00Z
 Sizing: 5,000 users, 20 devices per user, 100,000 registered devices, 100,000 usually-online MQTT devices
 
 This is an AWS infrastructure estimate for a self-operated K8s deployment.
-Deployment and operation are handled by Realtek. MQTT runs on self-hosted EMQX
+Deployment and operation are handled by Realtek. AWS billing is modeled from
+the EKS control plane, EC2 worker nodes, EBS, load balancers, NAT/VPC endpoints,
+ECR, and S3. Pods describe workload placement on those nodes; pods are not the
+billing unit in this EC2 worker-node profile. MQTT runs on self-hosted EMQX
 pods, PostgreSQL runs as self-managed PostgreSQL pods, and observability runs on
 self-hosted Loki, Grafana, and Prometheus pods. MQTT 100K has passed on the K8s
 cloud; video/WebRTC/TURN media remains excluded and still needs separate sizing.
@@ -48,6 +51,10 @@ ElastiCache, SQS, external managed operations, and camera/WebRTC/TURN media.
 | Scenario | Calculation | Monthly estimate |
 | --- | --- | ---: |
 | K8s 100K self-managed cluster | 73.00 + 170.00 + 510.00 + 450.00 + 480.00 + 340.00 + 170.00 + 120.00 + 70.00 + 350.00 | 2,733.00 USD |
+
+Node count: one EKS control plane plus 14 EC2 worker nodes. Worker-node subtotal
+is 2,120.00 USD/month before EBS, ingress, NAT/VPC endpoint, ECR, S3, and
+backup allowances.
 
 ## Per-Unit View
 

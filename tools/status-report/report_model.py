@@ -408,7 +408,7 @@ def collect_linode_scale_estimate() -> dict[str, object]:
         "region": metadata.get("region", "us-sea"),
         "currency": metadata.get("currency", "USD"),
         "collected": metadata.get("collected", "n/a"),
-        "summary": "AWS self-operated K8s 100k-device reference estimate; EMQX, PostgreSQL, Loki, Grafana, and Prometheus are self-hosted pods.",
+        "summary": "AWS self-operated K8s 100k-device reference estimate; billing is modeled from EKS control plane, EC2 worker nodes, EBS, load balancers, NAT/VPC endpoints, ECR, and S3.",
         "sizing": metadata.get("sizing", "5,000 users / 100,000 devices"),
         "scenarios": {
             "selfManaged": scenarios.get(default_scenario) or scenarios.get(legacy_default_scenario, "n/a"),
