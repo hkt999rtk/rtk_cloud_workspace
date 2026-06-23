@@ -1231,6 +1231,7 @@ async function slideAwsCostSourceUrls(p, payload) {
 }
 
 function addProviderCostMode(slide, mode, x, y, w, accentFill) {
+  const rowH = mode.rows.length > 6 ? 19 : 22;
   addShape(slide, { x, y, w, h: 404, fill: C.white, line: C.line });
   addShape(slide, { x: x + 14, y: y + 14, w: w - 28, h: 58, fill: accentFill, line: C.line });
   addText(slide, mode.title, { x: x + 28, y: y + 23, w: w - 56, h: 18 }, { size: 14, color: C.navy, bold: true, align: "center", face: FONT_EN });
@@ -1238,9 +1239,9 @@ function addProviderCostMode(slide, mode, x, y, w, accentFill) {
   addText(slide, mode.unit, { x: x + 28, y: y + 66, w: w - 56, h: 10 }, { size: 7.4, color: C.muted, bold: true, align: "center", face: FONT_EN });
 
   addTable(slide, ["Cost item", "Monthly", "Basis"], mode.rows, { x: x + 14, y: y + 92, w: w - 28, h: 236 }, [1.25, 0.68, 2.35], {
-    rowH: 22,
+    rowH,
     headerH: 22,
-    fontSize: 6.35,
+    fontSize: mode.rows.length > 6 ? 5.75 : 6.35,
     cellStyle: (_cell, col, row) => col === 1 && mode.topItems.some((name) => row[0].includes(name)) ? TOP_COST_CELL_STYLE : {},
   });
 
@@ -1273,20 +1274,21 @@ async function slideGcpCostView(p, payload) {
   }, 50, 218, 555, C.paleBlue);
 
   addProviderCostMode(slide, {
-    title: "GCP cloud services alternative",
-    total: "Approx. 2,200-3,100 USD/month + device mgmt gap",
-    unit: "Managed DB/logging/metrics/API where available; MQTT/device management not native-equivalent",
+    title: "GCP services + self-hosted gaps",
+    total: "Approx. 3,200-4,300 USD/month",
+    unit: "Managed DB/logging/metrics/API plus self-hosted MQTT/device-management gaps",
     highlight: true,
     topItems: ["Cloud SQL", "EMQX", "Cloud Run"],
     rows: [
-      ["Cloud Run / API Gateway", "300-450", "Account/device/admin APIs and light workers after handler refactor."],
+      ["Cloud Run / API Gateway", "300-450", "Account/admin APIs and light workers after handler refactor."],
       ["Cloud SQL PostgreSQL", "700-950", "Managed PostgreSQL, 1,000 GB storage, backup retention; HA not included."],
-      ["EMQX on GKE/Compute", "750-1,000", "GCP IoT Core retired; managed MQTT/device registry needs third-party quote."],
+      ["EMQX on GKE/Compute", "750-1,000", "GCP IoT Core retired; MQTT broker remains self-hosted."],
+      ["Device mgmt pods", "550-750", "Custom registry, jobs, shadow, command adapter, and certificate workflow."],
       ["Cloud Logging", "8-40", "66 GB/month log ingestion; first 50 GiB/project/month free in public pricing."],
       ["Managed Prometheus", "65-120", "432M samples/month plus query/storage sensitivity."],
       ["Memorystore / Pub/Sub / Storage", "300-520", "Redis-compatible cache, event bus, object backup, CDN/storage allowance."],
     ],
-    note: "Use this only as a partial managed-service comparison. GCP needs self-hosted EMQX plus custom device registry/jobs/shadow, or a third-party quote.",
+    note: "Fair comparison adds the services GCP does not replace natively: EMQX plus device registry/jobs/shadow/cert workflow remain self-hosted or quote-based.",
   }, 675, 218, 555, C.paleTeal);
 
   addText(slide, "Sources: https://cloud.google.com/kubernetes-engine/pricing | https://docs.cloud.google.com/billing/docs/reference/rest/v1/services.skus/list | https://cloud.google.com/sql/pricing | https://cloud.google.com/run/pricing | https://cloud.google.com/products/observability/pricing", { x: 80, y: 632, w: 1120, h: 10 }, { size: 5.4, color: C.muted, align: "center", face: FONT_EN });
@@ -1320,7 +1322,7 @@ async function slideAzureCostView(p, payload) {
 
   addProviderCostMode(slide, {
     title: "Azure cloud services alternative",
-    total: "Approx. 3,400-4,600 USD/month",
+    total: "Approx. 3,800-5,100 USD/month",
     unit: "IoT Hub + managed PostgreSQL/logging/metrics/API; about 0.03-0.04 USD/device-month",
     highlight: true,
     topItems: ["IoT Hub", "PostgreSQL", "Monitor"],
@@ -1329,10 +1331,11 @@ async function slideAzureCostView(p, payload) {
       ["Container Apps / Functions", "300-500", "Account/device/admin APIs and light workers after handler refactor."],
       ["Azure PostgreSQL Flexible", "700-1,000", "Managed PostgreSQL, 1,000 GB storage, backup retention; HA not included."],
       ["Azure Monitor / Prometheus", "200-380", "Logs ingestion plus managed Prometheus sample/query sensitivity."],
+      ["Device mgmt adapters", "350-500", "DPS, jobs/commands adapter, cert workflow, custom shadow semantics not fully native."],
       ["Azure Cache / Service Bus", "120-260", "Redis-compatible cache plus event bus/DLQ comparison."],
       ["Storage / ACR / networking", "300-450", "Blob backup, registry, CDN/storage, load balancer, NAT/bandwidth allowance."],
     ],
-    note: "IoT Hub can replace part of MQTT/device ingestion. Device Update, DPS volume, commands, jobs, and certificate provisioning are not fully priced here.",
+    note: "Fair comparison adds adapters around IoT Hub for provisioning, command/jobs flow, cert lifecycle, and any custom shadow semantics not covered natively.",
   }, 675, 218, 555, C.paleTeal);
 
   addText(slide, "Sources: https://azure.microsoft.com/pricing/details/kubernetes-service/ | https://learn.microsoft.com/rest/api/cost-management/retail-prices/azure-retail-prices | https://learn.microsoft.com/azure/iot-hub/iot-hub-devguide-pricing", { x: 80, y: 632, w: 1120, h: 10 }, { size: 5.4, color: C.muted, align: "center", face: FONT_EN });
