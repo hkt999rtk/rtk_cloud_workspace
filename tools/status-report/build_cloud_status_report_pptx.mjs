@@ -1028,6 +1028,7 @@ async function slideAwsCostCalculationBase(p, payload) {
     ["AWS IoT Core", findLine("AWS IoT Core").monthlyEstimate || "1,649.52", "100,000 connected devices: connection minutes + MQTT messages + shadow ops."],
     ["IoT Device Management", findLine("AWS IoT Device Management").monthlyEstimate || "1,135.00", "100k managed devices plus fleet-index updates; jobs/secure tunneling remain usage adders."],
     ["Managed Prometheus", findLine("Amazon Managed Service for Prometheus").monthlyEstimate || "69.80", "432M samples/month plus one collector and light dashboard/query usage."],
+    ["AWS ops/edge adders", findLine("AWS operational/edge adders").monthlyEstimate || "111.14", "API Gateway, Route 53, CloudWatch metrics/alarms, Managed Grafana, and ECR storage."],
     ["NAT Gateway", findLine("NAT Gateway").monthlyEstimate || "161.07", "730 gateway-hours * 0.059 + 2,000 GB processed * 0.059."],
     ["ElastiCache / Valkey", findLine("ElastiCache for Valkey").monthlyEstimate || "28.03", "One cache.t4g.small node * 730 hours * 0.0384."],
     ["Application Load Balancer", findLine("Application Load Balancer").monthlyEstimate || "24.24", "One ALB-hour line plus one LCU-hour assumption."],
@@ -1035,9 +1036,9 @@ async function slideAwsCostCalculationBase(p, payload) {
     ["Secrets Manager", findLine("Secrets Manager").monthlyEstimate || "20.50", "50 secrets * 0.40 + 100,000 API calls * 0.000005."],
     ["S3 storage / PUT", findLine("S3 storage and PUT requests").monthlyEstimate || "67.80", "100k-device firmware, backup, release artifact storage; camera snapshots excluded."],
     ["KMS", findLine("KMS").monthlyEstimate || "8.00", "5 customer-managed keys * 1.00 + 1,000,000 requests * 0.000003."],
-    ["Base subtotal", findLine("Base subtotal before HSM/Private CA").monthlyEstimate || "4,463.52", "Sum of base services; excludes CloudHSM, ACM Private CA, support plan, tax, discounts."],
+    ["Base subtotal", findLine("Base subtotal before HSM/Private CA").monthlyEstimate || "4,574.66", "Sum of base services; excludes CloudHSM, ACM Private CA, support plan, tax, discounts."],
   ];
-  addTable(slide, ["Base service item", "USD / month", "Calculation / assumption"], baseRows, { x: 50, y: 285, w: 745, h: 310 }, [1.42, 0.7, 3.15], { rowH: 18, headerH: 23, fontSize: 6.2 });
+  addTable(slide, ["Base service item", "USD / month", "Calculation / assumption"], baseRows, { x: 50, y: 285, w: 745, h: 310 }, [1.42, 0.7, 3.15], { rowH: 17, headerH: 23, fontSize: 5.9 });
 
   const frontendRows = (details.frontendCalculation || []).slice(0, 5).map((row) => [
     row.item.replace("CloudFront ", "CF "),
@@ -1056,7 +1057,7 @@ async function slideAwsCostCalculationBase(p, payload) {
   addTable(slide, ["Item", "Formula", "USD"], iotRows, { x: 810, y: 477, w: 390, h: 118 }, [1.2, 2.2, 0.55], { rowH: 18, headerH: 20, fontSize: 6.6 });
 
   addShape(slide, { x: 70, y: 620, w: 1130, h: 44, fill: C.paleAmber, line: "#E3C25A" });
-  addText(slide, `CloudWatch logger included: ${details.cloudWatchFormula || "66.0 GB/month log ingestion plus 30-day retention = 48.18 USD/month."} Managed Prometheus is separate metrics cost.`, { x: 90, y: 631, w: 1090, h: 18 }, { size: 8.7, color: C.navy, bold: true, align: "center", face: FONT_EN });
+  addText(slide, `CloudWatch logger included: ${details.cloudWatchFormula || "66.0 GB/month log ingestion plus 30-day retention = 48.18 USD/month."} Prometheus plus ops/edge adders are separate costs.`, { x: 90, y: 631, w: 1090, h: 18 }, { size: 8.7, color: C.navy, bold: true, align: "center", face: FONT_EN });
   addText(slide, `Source: docs/cost/aws-pricing-sources.md, collected ${aws.collected || "n/a"}`, { x: 90, y: 650, w: 1090, h: 12 }, { size: 7.5, color: C.muted, align: "center", face: FONT_EN });
   return slide;
 }

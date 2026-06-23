@@ -3,7 +3,7 @@
 Status: Supporting note
 Region: `ap-southeast-1` (Asia Pacific, Singapore)
 Currency: USD
-Collected: 2026-06-22T15:33:00Z
+Collected: 2026-06-23T09:20:00Z
 Sizing input: [aws-cost-estimate-worksheet.csv](aws-cost-estimate-worksheet.csv)
 Service mapping: [aws-service-mapping.md](aws-service-mapping.md)
 
@@ -36,6 +36,10 @@ Prices were collected from the AWS Bulk Price List API regional CSV files for
 | AWSELB | <https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSELB/current/ap-southeast-1/index.csv> | 2026-06-19T02:47:06Z |
 | AmazonCloudWatch | <https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonCloudWatch/current/ap-southeast-1/index.csv> | 2026-06-22T03:16:07Z |
 | AmazonVPC | <https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonVPC/current/ap-southeast-1/index.csv> | 2026-06-04T17:34:26Z |
+| AmazonApiGateway | <https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonApiGateway/current/ap-southeast-1/index.csv> | checked 2026-06-23 |
+| AmazonRoute53 | <https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRoute53/current/index.csv> | checked 2026-06-23 |
+| AmazonGrafana | <https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonGrafana/current/ap-southeast-1/index.csv> | checked 2026-06-23 |
+| AmazonECR | <https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonECR/current/ap-southeast-1/index.csv> | checked 2026-06-23 |
 
 Support, identity, and professional-services references were checked against
 public AWS pages:
@@ -52,6 +56,11 @@ public AWS pages:
 | AWS IoT Device Management pricing | <https://aws.amazon.com/iot-device-management/pricing/> | Add fleet-management cost for 100,000 devices: managed integration subscription plus fleet indexing; jobs and secure tunneling remain usage adders. Checked on 2026-06-22. |
 | Amazon Managed Service for Prometheus pricing | <https://aws.amazon.com/prometheus/pricing/> | Add Prometheus-compatible metrics cost based on samples ingested, collector hours/samples, storage, and query samples. Checked on 2026-06-22. |
 | AWS Lambda pricing | <https://aws.amazon.com/lambda/pricing/> | Cross-check request and GB-second rates for AWS-native application API/workers. Checked on 2026-06-22. |
+| Amazon API Gateway pricing | <https://aws.amazon.com/api-gateway/pricing/> | Add HTTP API request cost for Lambda/API-style account/device/admin APIs. Checked on 2026-06-23. |
+| Amazon Route 53 pricing | <https://aws.amazon.com/route53/pricing/> | Add hosted zone and DNS query cost for public service domains. Checked on 2026-06-23. |
+| Amazon CloudWatch pricing | <https://aws.amazon.com/cloudwatch/pricing/> | Add CloudWatch metrics/alarms cost separate from CloudWatch Logs. Checked on 2026-06-23. |
+| Amazon Managed Grafana pricing | <https://aws.amazon.com/grafana/pricing/> | Add five operator/editor users as a managed dashboard assumption. Checked on 2026-06-23. |
+| Amazon ECR pricing | <https://aws.amazon.com/ecr/pricing/> | Add small image storage allowance if production images move from GHCR to ECR. Checked on 2026-06-23. |
 
 ## Selected Unit Prices
 
@@ -65,6 +74,7 @@ public AWS pages:
 | Frontend dynamic compute | AWS Lambda x86 duration tier 1, Singapore | 0.0000166667 USD per GB-second |
 | Application API requests | AWS Lambda requests | 0.20 USD per 1,000,000 requests |
 | Application API compute | AWS Lambda duration | 0.0000166667 USD per GB-second |
+| Application API front door | API Gateway HTTP API | 1.00 USD per 1,000,000 requests for first 300M requests/month |
 | TURN host assumption | EC2 `t4g.small` Linux on demand | 0.0212 USD per instance-hour |
 | Database compute | RDS PostgreSQL `db.r7g.xlarge`, Single-AZ | 0.574 USD per DB-hour |
 | Database compute robust | RDS PostgreSQL `db.r7g.xlarge`, Multi-AZ | 1.148 USD per DB-hour |
@@ -88,11 +98,16 @@ public AWS pages:
 | Federated user sensitivity | Amazon Cognito SAML/OIDC federation | 50 MAUs free tier per month; 0.015 USD per MAU above free tier |
 | Load balancer | Application Load Balancer | 0.0252 USD per ALB-hour |
 | Load balancer capacity | Application Load Balancer LCU | 0.008 USD per LCU-hour |
+| DNS hosted zone | Route 53 public hosted zone | 0.50 USD per hosted zone-month |
+| DNS queries | Route 53 standard queries | 0.40 USD per million queries |
 | NAT | NAT Gateway | 0.059 USD per gateway-hour |
 | NAT data processing | NAT Gateway data processed | 0.059 USD per GB |
 | Logs | CloudWatch custom log ingestion, Standard | 0.70 USD per GB ingested |
 | Logs retention | CloudWatch log storage | 0.03 USD per GB-month |
 | Metrics | CloudWatch custom metric, first 10k | 0.30 USD per metric-month |
+| Alarms | CloudWatch standard alarm | 0.10 USD per alarm-month |
+| Managed dashboard | Amazon Managed Grafana editor/admin user | 9.00 USD per active user-month |
+| Container registry | Amazon ECR private repository storage | 0.10 USD per GB-month |
 | Secrets | Secrets Manager secret | 0.40 USD per secret-month |
 | Secrets API | Secrets Manager API requests | 0.000005 USD per request |
 | Key management | KMS customer managed key version | 1.00 USD per key-month |
@@ -118,10 +133,10 @@ use the first 9% tier.
 
 | Scenario basis | Gross monthly AWS charges | Business Support+ calculation | Monthly support estimate |
 | --- | ---: | --- | ---: |
-| Base services only, excluding CloudHSM | 4,463.52 | max(29, 4,463.52 * 9%) | 401.72 |
-| Default estimate with one CloudHSM | 6,799.52 | max(29, 6,799.52 * 9%) | 611.96 |
-| Robust redundant design, excluding CloudHSM | 5,271.57 | max(29, 5,271.57 * 9%) | 474.44 |
-| Robust redundant design with two CloudHSMs | 9,943.57 | max(29, 9,943.57 * 9%) | 894.92 |
+| Base services only, excluding CloudHSM | 4,574.66 | max(29, 4,574.66 * 9%) | 411.72 |
+| Default estimate with one CloudHSM | 6,910.66 | max(29, 6,910.66 * 9%) | 621.96 |
+| Robust redundant design, excluding CloudHSM | 5,382.71 | max(29, 5,382.71 * 9%) | 484.44 |
+| Robust redundant design with two CloudHSMs | 10,054.71 | 10,000.00 * 9% + 54.71 * 7% | 903.83 |
 
 Enterprise Support remains an optional sensitivity case. Its 5,000 USD/month
 minimum is larger than the current pilot infrastructure estimates, so it should
@@ -174,13 +189,14 @@ measured device telemetry to reduce this assumption later.
 | Amazon Managed Service for Prometheus | 69.80 | 432.0M samples/month plus one collector, light query load, and small storage allowance. |
 | Application Load Balancer | 24.24 | One ALB and one LCU assumption. |
 | NAT Gateway | 161.07 | One gateway plus 2,000 GB data processed. |
+| AWS operational/edge adders | 111.14 | API Gateway, Route 53, CloudWatch metrics/alarms, Amazon Managed Grafana, and ECR image storage added after staging-to-AWS service cross-check. |
 | EC2 TURN assumption | 0.00 | Camera/WebRTC profile excluded from first estimate. |
 | CloudWatch Logs | 48.18 | 66.0 GB/month ingestion plus 30-day retention: 30.0 GB service logs plus 36.0 GB device runtime logs. |
 | Secrets Manager | 20.50 | 50 secrets plus 100,000 API calls. |
 | KMS | 8.00 | Five customer managed keys plus 1,000,000 requests. |
-| Base subtotal before HSM/Private CA | 4,463.52 | Application, larger Single-AZ RDS, cache, storage, MQTT, device management, managed metrics, logging, Cognito, basic network, frontend hosting, and key API surface; camera/WebRTC excluded. |
+| Base subtotal before HSM/Private CA | 4,574.66 | Application, larger Single-AZ RDS, cache, storage, MQTT, device management, managed metrics, API edge, DNS, logging, Cognito, frontend hosting, and key API surface; camera/WebRTC excluded. |
 | CloudHSM | 2,336.00 | One HSM running 730 hours/month at 3.20 USD/HSM-hour; no HSM redundancy assumed for early stage. |
-| AWS Business Support+ | 611.96 | Default support-plan adder for the one-CloudHSM scenario, calculated as 9% of 6,799.52 USD gross monthly AWS charges. |
+| AWS Business Support+ | 621.96 | Default support-plan adder for the one-CloudHSM scenario, calculated as 9% of 6,910.66 USD gross monthly AWS charges. |
 | ACM Private CA | 0.00 | Excluded from default estimate because certificates are signed by CloudHSM-backed certissuer. |
 
 Frontend calculation:
@@ -213,6 +229,16 @@ AWS-native application and fleet-management calculation:
 | IoT Device Management subscription | 100,000 direct-connected managed devices * 0.01 USD/device-month | 1,000.00 |
 | IoT Device Management fleet indexing | 100,000 devices * 300 monthly updates * 2 KB-metered updates * 2.25 USD / 1M updates | 135.00 |
 
+AWS operational/edge adders calculation:
+
+| Item | Calculation | Monthly estimate |
+| --- | --- | ---: |
+| API Gateway HTTP API requests | 30.24M Lambda/API-style requests * 1.00 USD / 1M requests | 30.24 |
+| Route 53 hosted zone and queries | 1 hosted zone * 0.50 USD + 1.0M standard queries * 0.40 USD / 1M | 0.90 |
+| CloudWatch custom metrics and alarms | 100 custom metrics * 0.30 USD + 30 standard alarms * 0.10 USD | 33.00 |
+| Amazon Managed Grafana users | 5 active editor/admin users * 9.00 USD/user-month | 45.00 |
+| Amazon ECR image storage | 20 GB private image storage * 0.10 USD/GB-month | 2.00 |
+
 Managed Prometheus calculation:
 
 | Item | Calculation | Monthly estimate |
@@ -224,14 +250,14 @@ Managed Prometheus calculation:
 
 | Scenario | Estimated monthly cost |
 | --- | ---: |
-| Base services only, excluding CloudHSM | 4,463.52 USD |
-| Base services plus Business Support+ | 4,865.24 USD |
-| Default estimate with one CloudHSM and self-managed certissuer | 6,799.52 USD |
-| Default estimate with one CloudHSM plus Business Support+ | 7,411.48 USD |
-| Robust redundant design, excluding CloudHSM | 5,271.57 USD |
-| Robust redundant design excluding CloudHSM plus Business Support+ | 5,746.01 USD |
-| Robust redundant design with two CloudHSMs | 9,943.57 USD |
-| Robust redundant design with two CloudHSMs plus Business Support+ | 10,838.49 USD |
+| Base services only, excluding CloudHSM | 4,574.66 USD |
+| Base services plus Business Support+ | 4,986.38 USD |
+| Default estimate with one CloudHSM and self-managed certissuer | 6,910.66 USD |
+| Default estimate with one CloudHSM plus Business Support+ | 7,532.62 USD |
+| Robust redundant design, excluding CloudHSM | 5,382.71 USD |
+| Robust redundant design excluding CloudHSM plus Business Support+ | 5,867.15 USD |
+| Robust redundant design with two CloudHSMs | 10,054.71 USD |
+| Robust redundant design with two CloudHSMs plus Business Support+ | 10,958.54 USD |
 
 Per-unit calculation:
 
@@ -240,16 +266,16 @@ monthly cost pool. Do not add them together.
 
 | Scenario | Calculation | Estimate |
 | --- | --- | ---: |
-| Base services per user | 4,463.52 USD / 10,000 users | 0.45 USD/user-month |
-| Base services per device | 4,463.52 USD / 100,000 devices | 0.04 USD/device-month |
-| Default with CloudHSM per user | 6,799.52 USD / 10,000 users | 0.68 USD/user-month |
-| Default with CloudHSM per device | 6,799.52 USD / 100,000 devices | 0.07 USD/device-month |
-| Default with CloudHSM and Business Support+ per user | 7,411.48 USD / 10,000 users | 0.74 USD/user-month |
-| Default with CloudHSM and Business Support+ per device | 7,411.48 USD / 100,000 devices | 0.07 USD/device-month |
-| Robust with CloudHSM per user | 9,943.57 USD / 10,000 users | 0.99 USD/user-month |
-| Robust with CloudHSM per device | 9,943.57 USD / 100,000 devices | 0.10 USD/device-month |
-| Robust with CloudHSM and Business Support+ per user | 10,838.49 USD / 10,000 users | 1.08 USD/user-month |
-| Robust with CloudHSM and Business Support+ per device | 10,838.49 USD / 100,000 devices | 0.11 USD/device-month |
+| Base services per user | 4,574.66 USD / 10,000 users | 0.46 USD/user-month |
+| Base services per device | 4,574.66 USD / 100,000 devices | 0.05 USD/device-month |
+| Default with CloudHSM per user | 6,910.66 USD / 10,000 users | 0.69 USD/user-month |
+| Default with CloudHSM per device | 6,910.66 USD / 100,000 devices | 0.07 USD/device-month |
+| Default with CloudHSM and Business Support+ per user | 7,532.62 USD / 10,000 users | 0.75 USD/user-month |
+| Default with CloudHSM and Business Support+ per device | 7,532.62 USD / 100,000 devices | 0.08 USD/device-month |
+| Robust with CloudHSM per user | 10,054.71 USD / 10,000 users | 1.01 USD/user-month |
+| Robust with CloudHSM per device | 10,054.71 USD / 100,000 devices | 0.10 USD/device-month |
+| Robust with CloudHSM and Business Support+ per user | 10,958.54 USD / 10,000 users | 1.10 USD/user-month |
+| Robust with CloudHSM and Business Support+ per device | 10,958.54 USD / 100,000 devices | 0.11 USD/device-month |
 
 Weighted allocation model:
 
@@ -266,11 +292,11 @@ API traffic. A 10% user pool is kept for account/app/admin/audit/session costs.
 
 | Scenario | User pool | Device pool | Per user | Per device | Effective 1 user + 10 devices |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Base services only, excluding CloudHSM | 446.35 | 4,017.17 | 0.04 USD/user-month | 0.04 USD/device-month | 0.45 USD/month |
-| Default estimate with one CloudHSM | 679.95 | 6,119.57 | 0.07 USD/user-month | 0.06 USD/device-month | 0.68 USD/month |
-| Default estimate with one CloudHSM plus Business Support+ | 741.15 | 6,670.33 | 0.07 USD/user-month | 0.07 USD/device-month | 0.74 USD/month |
-| Robust redundant design with two CloudHSMs | 994.36 | 8,949.21 | 0.10 USD/user-month | 0.09 USD/device-month | 0.99 USD/month |
-| Robust redundant design with two CloudHSMs plus Business Support+ | 1,083.85 | 9,754.64 | 0.11 USD/user-month | 0.10 USD/device-month | 1.08 USD/month |
+| Base services only, excluding CloudHSM | 457.47 | 4,117.19 | 0.05 USD/user-month | 0.04 USD/device-month | 0.46 USD/month |
+| Default estimate with one CloudHSM | 691.07 | 6,219.59 | 0.07 USD/user-month | 0.06 USD/device-month | 0.69 USD/month |
+| Default estimate with one CloudHSM plus Business Support+ | 753.26 | 6,779.36 | 0.08 USD/user-month | 0.07 USD/device-month | 0.75 USD/month |
+| Robust redundant design with two CloudHSMs | 1,005.47 | 9,049.24 | 0.10 USD/user-month | 0.09 USD/device-month | 1.01 USD/month |
+| Robust redundant design with two CloudHSMs plus Business Support+ | 1,095.85 | 9,862.69 | 0.11 USD/user-month | 0.10 USD/device-month | 1.10 USD/month |
 
 Cognito sensitivity:
 
@@ -297,6 +323,7 @@ Robust-profile changes:
 | NAT Gateway | 1 gateway plus 200 GB processed | 2 gateways plus 200 GB processed; gateway-hours double, data processing does not |
 | Video workers | 1 task per worker service | 2 tasks per worker service |
 | Certissuer/factory enrollment | 1 task | 2 tasks |
+| Operational/edge adders | API Gateway, Route 53, CloudWatch metrics/alarms, Managed Grafana, ECR image storage | Same usage as baseline |
 | Camera/WebRTC | Excluded | Excluded |
 | ACM Private CA | Excluded | Excluded |
 
@@ -312,10 +339,11 @@ Robust cost delta:
 | RDS PostgreSQL | 557.02 | 1,114.04 | 557.02 |
 | ElastiCache for Valkey | 28.03 | 56.06 | 28.03 |
 | NAT Gateway | 161.07 | 204.14 | 43.07 |
+| AWS operational/edge adders | 111.14 | 111.14 | 0.00 |
 | CloudHSM | 2,336.00 | 4,672.00 | 2,336.00 |
-| AWS Business Support+ | 611.96 | 894.92 | 282.96 |
+| AWS Business Support+ | 621.96 | 903.83 | 281.87 |
 | Other baseline items | 3,177.61 | 3,177.61 | 0.00 |
-| Total with CloudHSM and Business Support+ | 7,411.48 | 10,838.49 | 3,427.01 |
+| Total with CloudHSM and Business Support+ | 7,532.62 | 10,958.54 | 3,425.92 |
 
 Robust cost behavior:
 
@@ -324,7 +352,7 @@ Robust cost behavior:
 | Doubled | CloudHSM, RDS estimate, ElastiCache | These are single-instance or stateful components where the robust profile adds a second node/standby. |
 | Partially increased | NAT Gateway, ECS Fargate backend services | NAT gateway-hours double but data processing stays the same; only selected worker/certissuer tasks are duplicated. |
 | Increased by percentage of gross AWS charges | AWS Business Support+ | Support is calculated from monthly AWS charges, so robust infrastructure increases the support-plan adder. |
-| Unchanged | AWS IoT Core, AWS IoT Device Management, Managed Prometheus, CloudWatch Logs, ALB, frontend CDN/Lambda/S3, Cognito, Secrets Manager, KMS, S3 storage | Product traffic, log volume, user count, request volume, and metrics volume are unchanged between baseline and robust profiles. |
+| Unchanged | AWS IoT Core, AWS IoT Device Management, Managed Prometheus, CloudWatch Logs, AWS operational/edge adders, ALB, frontend CDN/Lambda/S3, Cognito, Secrets Manager, KMS, S3 storage | Product traffic, log volume, user count, request volume, DNS/API request volume, and metrics volume are unchanged between baseline and robust profiles. |
 
 Top 10 monthly cost items:
 
@@ -333,13 +361,13 @@ Top 10 monthly cost items:
 | 1 | CloudHSM, 1 HSM | 2,336.00 |
 | 2 | AWS IoT Core MQTT plus Shadow | 1,649.52 |
 | 3 | AWS IoT Device Management | 1,135.00 |
-| 4 | AWS Business Support+ | 611.96 |
+| 4 | AWS Business Support+ | 621.96 |
 | 5 | RDS PostgreSQL, Single-AZ `db.r7g.xlarge` plus storage | 557.02 |
 | 6 | ECS Fargate backend services | 539.79 |
 | 7 | NAT Gateway | 161.07 |
-| 8 | AWS Lambda application APIs/workers | 106.00 |
-| 9 | Amazon Managed Service for Prometheus | 69.80 |
-| 10 | S3 storage and PUT requests | 67.80 |
+| 8 | AWS operational/edge adders | 111.14 |
+| 9 | AWS Lambda application APIs/workers | 106.00 |
+| 10 | Amazon Managed Service for Prometheus | 69.80 |
 
 Robust top 10 monthly cost items:
 
@@ -349,12 +377,12 @@ Robust top 10 monthly cost items:
 | 2 | AWS IoT Core MQTT plus Shadow | 1,649.52 |
 | 3 | AWS IoT Device Management | 1,135.00 |
 | 4 | RDS PostgreSQL, Multi-AZ `db.r7g.xlarge` plus storage | 1,114.04 |
-| 5 | AWS Business Support+ | 894.92 |
+| 5 | AWS Business Support+ | 903.83 |
 | 6 | ECS Fargate backend services | 719.72 |
 | 7 | NAT Gateway, 2 gateways | 204.14 |
-| 8 | AWS Lambda application APIs/workers | 106.00 |
-| 9 | Amazon Managed Service for Prometheus | 69.80 |
-| 10 | S3 storage and PUT requests | 67.80 |
+| 8 | AWS operational/edge adders | 111.14 |
+| 9 | AWS Lambda application APIs/workers | 106.00 |
+| 10 | Amazon Managed Service for Prometheus | 69.80 |
 
 ## Service Set
 
@@ -378,14 +406,14 @@ Robust top 10 monthly cost items:
 
 ## Cost Drivers
 
-CloudHSM dominates the default estimate. The base application and data plane is
-roughly 1.1k USD/month under the pilot assumptions, while one CloudHSM adds
-2,336.00 USD/month. Adding a second CloudHSM later would add another
-2,336.00 USD/month at the current collected unit price.
+CloudHSM remains the largest single security add-on. The base AWS service pool
+is 4,574.66 USD/month under the pilot assumptions, and one CloudHSM adds
+2,336.00 USD/month. Adding a second CloudHSM later would add another 2,336.00
+USD/month at the current collected unit price.
 
 AWS Business Support+ becomes a material recurring adder once it is included.
-For the current one-CloudHSM default estimate, it adds 611.96 USD/month. For the
-robust two-CloudHSM estimate, it adds 894.92 USD/month. Enterprise Support is a
+For the current one-CloudHSM default estimate, it adds 621.96 USD/month. For the
+robust two-CloudHSM estimate, it adds 903.83 USD/month. Enterprise Support is a
 separate budget decision because its 5,000 USD/month minimum exceeds the current
 pilot infrastructure total.
 
@@ -401,10 +429,9 @@ These items should be refined before using the estimate as a budget:
 
 | Gap | Why it matters |
 | --- | --- |
-| Internet data transfer out | Firmware downloads, video relay, and admin/API responses may add material egress cost. |
+| Internet data transfer out | Firmware downloads, video relay, and admin/API responses may add material egress cost beyond CloudFront and API request fees. |
 | TURN relay volume | Coturn compute is cheap; relay bandwidth is the real driver. |
 | AWS IoT Rules/Lambda/Timestream actions | The estimate prices MQTT/Shadow only, not downstream rule actions. |
-| Amazon Managed Grafana | Managed Prometheus is now priced, but Grafana users and dashboard costs still need a final operations decision. |
 | RDS Multi-AZ, replicas, Aurora, or split DB instances | Pilot estimate uses one shared Single-AZ RDS server; production HA or isolation will cost more. |
 | VPC endpoints | Can reduce NAT traffic but add hourly and data-processing charges. |
 | WAF/Shield | Not included in the first-pass security perimeter cost. |

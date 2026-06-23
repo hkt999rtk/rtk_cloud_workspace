@@ -626,6 +626,7 @@ def collect_aws_cost_estimate() -> dict[str, object]:
         "Amazon Managed Service for Prometheus",
         "Application Load Balancer",
         "NAT Gateway",
+        "AWS operational/edge adders",
         "CloudWatch Logs",
         "Secrets Manager",
         "KMS",
@@ -740,6 +741,13 @@ def collect_aws_cost_estimate() -> dict[str, object]:
                 "unitPrice": "0.90/10M ingest; 0.04/collector-hr; 0.03/10M collected",
                 "formula": "38.88 ingest + 30.50 collector + 0.42 query/storage",
                 "estimate": "69.80",
+            },
+            {
+                "item": "AWS operational/edge adders",
+                "quantity": "30.24M API calls + DNS + metrics/alarms + 5 Grafana users + 20 GB ECR",
+                "unitPrice": "API GW 1.00/M; R53 0.50/zone + 0.40/M; Grafana 9/user",
+                "formula": "30.24 API GW + 0.90 DNS + 33.00 CloudWatch + 45.00 Grafana + 2.00 ECR",
+                "estimate": "111.14",
             },
             {
                 "item": "NAT Gateway",

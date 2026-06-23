@@ -10,7 +10,7 @@ can be reviewed as one package.
 | Document | Classification | Purpose |
 | --- | --- | --- |
 | [aws-service-mapping.md](aws-service-mapping.md) | Supporting note | Maps current RTK Cloud private-cloud components to AWS service candidates and cost drivers. |
-| [aws-cost-estimate-worksheet.csv](aws-cost-estimate-worksheet.csv) | Supporting artifact | Quantity-first worksheet for the 10k-device `ap-southeast-1` commercial pilot and robust profile. |
+| [aws-cost-estimate-worksheet.csv](aws-cost-estimate-worksheet.csv) | Supporting artifact | Quantity-first worksheet for the 100,000-device `ap-southeast-1` commercial pilot and robust profile. |
 | [aws-pricing-sources.md](aws-pricing-sources.md) | Supporting note | Public AWS pricing snapshot, support-plan references, rough monthly estimate, and scenario totals. |
 | [linode-100k-estimate.md](linode-100k-estimate.md) | Supporting note | Linode/Akamai Cloud self-managed cluster estimate for 10,000 users and 100,000 usually-online MQTT devices. |
 
