@@ -338,7 +338,7 @@ async function slideCustomerUseCaseFit(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
   await addHeader(slide, payload, "Customer / Use Case Fit", "WHO THIS CLOUD HELPS");
-  addText(slide, "這頁用來讓主管先判斷：哪些客戶會需要這個 cloud，以及它如何回到 module selling、PoC 和 design-in。", { x: 82, y: 154, w: 1120, h: 40 }, { size: 16, color: C.navy, bold: true, align: "center", fill: C.pale });
+  addText(slide, "本頁說明目標客戶與使用情境，並釐清 cloud capability 如何支援 module selling、customer PoC 與 design-in 評估。", { x: 82, y: 154, w: 1120, h: 40 }, { size: 16, color: C.navy, bold: true, align: "center", fill: C.pale });
 
   const rows = payload.customerUseCaseFit || [];
   rows.forEach((row, i) => {
@@ -354,7 +354,7 @@ async function slideCustomerUseCaseFit(p, payload) {
   });
 
   addShape(slide, { x: 180, y: 575, w: 920, h: 48, fill: C.paleAmber, line: "#E3C25A" });
-  addText(slide, "判斷重點：報告要指出 target customer、使用情境、需要提供的內容，最後連回 IoT module selling / PoC / design-in。", { x: 205, y: 589, w: 870, h: 22 }, { size: 14, color: C.navy, bold: true, align: "center" });
+  addText(slide, "評估重點：確認 target customer、使用情境與交付內容，並連結到 IoT module selling / PoC / design-in 成果。", { x: 205, y: 589, w: 870, h: 22 }, { size: 14, color: C.navy, bold: true, align: "center" });
   return slide;
 }
 
