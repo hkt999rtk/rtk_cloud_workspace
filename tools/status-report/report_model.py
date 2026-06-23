@@ -408,7 +408,7 @@ def collect_linode_scale_estimate() -> dict[str, object]:
         "region": metadata.get("region", "us-sea"),
         "currency": metadata.get("currency", "USD"),
         "collected": metadata.get("collected", "n/a"),
-        "summary": "Self-managed K8s 100k-device reference estimate; MQTT 100K has passed, video/WebRTC/TURN media remains excluded.",
+        "summary": "AWS self-operated K8s 100k-device reference estimate; EMQX, PostgreSQL, Loki, Grafana, and Prometheus are self-hosted pods.",
         "sizing": metadata.get("sizing", "5,000 users / 100,000 devices"),
         "scenarios": {
             "selfManaged": scenarios.get(default_scenario) or scenarios.get(legacy_default_scenario, "n/a"),
@@ -440,8 +440,8 @@ def collect_linode_scale_estimate() -> dict[str, object]:
         },
         "caveats": [
             "MQTT 100K has passed; use the packaged run evidence to right-size API, broker, database, and observability nodes.",
-            "Self-managed K8s is not service-equivalent to AWS IoT Core, Cognito, CloudHSM, RDS, or ElastiCache.",
-            "Excludes camera/WebRTC/TURN media traffic, tax, DNS/email, external monitoring, and support beyond optional Managed Service.",
+            "This K8s runtime view excludes AWS IoT Core, RDS PostgreSQL, CloudWatch Logs, Amazon Managed Service for Prometheus, Lambda as primary runtime, ElastiCache, SQS, CloudHSM, and external managed operations.",
+            "Excludes camera/WebRTC/TURN media traffic, tax, DNS/email, external monitoring vendors, and object-media retention.",
         ],
     }
 

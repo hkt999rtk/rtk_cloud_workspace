@@ -921,19 +921,19 @@ async function slideCostView(p, payload) {
 async function slideLinodeScaleEstimate(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
-  await addHeader(slide, payload, "K8S 100K Device Cost View", "SELF-MANAGED CLUSTER ESTIMATE");
+  await addHeader(slide, payload, "AWS K8S Runtime Cost View", "SELF-OPERATED CLUSTER ESTIMATE");
   const estimate = payload.linodeScaleEstimate || {};
   const scenarios = estimate.scenarios || {};
   const perUnit = estimate.perUnit || {};
   const config = estimate.configuration || [];
 
-  addText(slide, "This is a self-managed K8s reference profile for 5,000 users and 100,000 usually-online MQTT devices. MQTT 100K has passed; video/WebRTC/TURN media remains excluded and still needs separate sizing.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.1, color: C.navy, bold: true, align: "center", fill: C.pale });
+  addText(slide, "AWS infrastructure estimate for self-operated K8s: EMQX, PostgreSQL, Loki, Grafana, and Prometheus run as self-hosted pods. MQTT 100K has passed; video/WebRTC/TURN remains excluded.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.1, color: C.navy, bold: true, align: "center", fill: C.pale });
 
   const summary = [
     ["Sizing", "5,000 users / 100,000 devices"],
-    ["Self-managed cluster", scenarios.selfManaged || "4,720.00 USD"],
-    ["With Managed Service", scenarios.withManagedService || "6,220.00 USD"],
-    ["Default unit view", perUnit.selfManagedUserWithTenDevices || perUnit.selfManagedUserWithFourDevices || "0.47 USD/month"],
+    ["Runtime model", "Self-operated AWS K8S"],
+    ["Monthly infra estimate", scenarios.selfManaged || "2,733.00 USD"],
+    ["Default unit view", perUnit.selfManagedUserWithTwentyDevices || perUnit.selfManagedUserWithTenDevices || perUnit.selfManagedUserWithFourDevices || "0.55 USD/month"],
   ];
   summary.forEach((item, i) => {
     const x = 70 + i * 292;
@@ -949,8 +949,8 @@ async function slideLinodeScaleEstimate(p, payload) {
     row.monthlySubtotal,
     row.rationale,
   ]);
-  addText(slide, "100K self-managed K8s configuration", { x: 58, y: 310, w: 720, h: 22 }, { size: 15, color: C.navy, bold: true, face: FONT_EN });
-  addTable(slide, ["Role", "Count", "Plan", "USD / mo", "Why needed"], configRows, { x: 50, y: 342, w: 780, h: 260 }, [1.35, 0.42, 1.25, 0.55, 2.65], { rowH: 24, headerH: 24, fontSize: 6.9 });
+  addText(slide, "100K self-operated AWS K8s configuration", { x: 58, y: 310, w: 720, h: 22 }, { size: 15, color: C.navy, bold: true, face: FONT_EN });
+  addTable(slide, ["Role", "Count", "Plan", "USD / mo", "Why needed"], configRows, { x: 50, y: 342, w: 780, h: 260 }, [1.35, 0.55, 1.2, 0.55, 2.57], { rowH: 22, headerH: 24, fontSize: 6.35 });
 
   addShape(slide, { x: 860, y: 320, w: 360, h: 118, fill: C.paleTeal, line: C.line });
   addText(slide, "Per-unit view", { x: 884, y: 340, w: 312, h: 20 }, { size: 16, color: C.navy, bold: true, align: "center", face: FONT_EN });
@@ -958,11 +958,11 @@ async function slideLinodeScaleEstimate(p, payload) {
 
   addShape(slide, { x: 860, y: 466, w: 360, h: 118, fill: C.paleAmber, line: "#E3C25A" });
   addText(slide, "Interpretation", { x: 884, y: 486, w: 312, h: 20 }, { size: 16, color: C.navy, bold: true, align: "center", face: FONT_EN });
-  addText(slide, "This K8s profile is cheaper than managed AWS only if Realtek owns broker/database/cache operations, backup/restore, failover, patching, and capacity tuning.", { x: 890, y: 518, w: 300, h: 42 }, { size: 10.2, color: C.black, align: "center" });
+  addText(slide, "This is not an AWS managed-service profile. Cost moves into EC2 workers, EBS/PVC, load balancers, NAT/VPC endpoints, ECR, S3 backup, and Realtek operations.", { x: 890, y: 515, w: 300, h: 48 }, { size: 9.7, color: C.black, align: "center" });
 
   addShape(slide, { x: 70, y: 620, w: 1130, h: 44, fill: C.white, line: C.line });
-  addText(slide, "Caveats: no AWS IoT Core/Cognito/CloudHSM equivalents; camera/WebRTC/TURN media excluded; MQTT 100K passed, video not yet; optional Managed Service adds 1,500 USD/month for 15 compute instances.", { x: 92, y: 630, w: 1090, h: 16 }, { size: 8.8, color: C.black, bold: true, align: "center", face: FONT_EN });
-  addText(slide, `Source: self-managed K8s 100K reference estimate, collected ${estimate.collected || "n/a"}`, { x: 92, y: 650, w: 1090, h: 12 }, { size: 7.5, color: C.muted, align: "center", face: FONT_EN });
+  addText(slide, "Caveats: AWS IoT Core, RDS, CloudWatch Logs, Managed Prometheus, Lambda primary runtime, ElastiCache, SQS, CloudHSM, external managed operations, and video/WebRTC/TURN are excluded.", { x: 92, y: 630, w: 1090, h: 16 }, { size: 8.5, color: C.black, bold: true, align: "center", face: FONT_EN });
+  addText(slide, `Source: AWS self-operated K8s 100K reference estimate, collected ${estimate.collected || "n/a"}`, { x: 92, y: 650, w: 1090, h: 12 }, { size: 7.5, color: C.muted, align: "center", face: FONT_EN });
   return slide;
 }
 
