@@ -226,7 +226,7 @@ async function slide01(p, payload) {
 async function slideMajorTopics(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
-  await addHeader(slide, payload, "本次報告要先建立共同上下文", "MAJOR TOPICS");
+  await addHeader(slide, payload, "本次簡報聚焦五個決策面向", "MAJOR TOPICS");
   const topics = [
     ["1", "Why this cloud exists", "先說 Realtek platform cloud, brand cloud, device / user 的關係，以及它怎麼支援 module selling。"],
     ["2", "Schedule and release path", "5/1 到 8/1 loading test，再到 Alpha, Beta, Public；每個 gate 要看什麼，現在卡在哪裡。"],
@@ -243,7 +243,7 @@ async function slideMajorTopics(p, payload) {
     addText(slide, t[1], { x: x + 76, y: y + 10, w: 320, h: 22 }, { size: 15, color: C.navy, bold: true, face: FONT_EN });
     addText(slide, t[2], { x: x + 410, y: y + 9, w: 620, h: 36 }, { size: 12, color: C.black });
   });
-  addText(slide, "順序會先建立 business / cloud 結構，再看時程，接著看 portal 和技術安全，最後收斂到成本, 帳號歸屬與人力支援。", { x: 150, y: 610, w: 980, h: 34 }, { size: 15, color: C.navy, bold: true, align: "center", fill: C.paleAmber });
+  addText(slide, "簡報順序：先確認 business / cloud 架構，再檢視時程、Portal、技術安全，最後收斂到成本、帳號歸屬與人力支援。", { x: 150, y: 610, w: 980, h: 34 }, { size: 15, color: C.navy, bold: true, align: "center", fill: C.paleAmber });
   return slide;
 }
 
