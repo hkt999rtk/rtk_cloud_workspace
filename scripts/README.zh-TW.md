@@ -253,11 +253,8 @@ K8s staging 的 factory enrollment 設定由 K8s runtime secret/config 提供。
 
 重要輸出：
 
-- `summary.json`：本次產生的數量、配比與主要路徑。
-- `manifests/devices.json`：完整 device inventory。
-- `manifests/devices.csv`：簡表。
-- `manifests/device_ids.txt`：load test 可用的 device id 清單。
-- `manifests/factory-enroll-results.jsonl`：逐台 enroll 狀態；失敗時用這個檔案對照 log。
+- `<env-root>/artifacts/test-data/<brand>-test-data.sqlite`：users/devices/device credentials/bindings 的 active source of truth，檔案權限固定 `0600`。
+- `summary.json`：本次產生的數量、配比與主要路徑；這是 run evidence，不是 test-data source。
 - `loadtest.env`：可 `source` 的 load test 參數，不包含 bearer token。
 
 正常 factory enroll 成功後，cloud database 預期可在 `video_cloud.factory_device_entitlements` 找到每台 device 的 `device_id`、`factory_id`、`serial_number`、`certificate_serial`、`certificate_sha256`、`csr_sha256`、`entitlement_state`、`metadata`，以及 storage 欄位 `allowed_services`（內容為 canonical `service_options`），並在 `video_cloud.cert_issue_requests` 找到每次簽發 request 的 `request_status=succeeded`、`signed_serial`、`cert_sha256` 與憑證 PEM。`video_cloud.devices` 通常要等後續 activation/claim/runtime inventory 流程才會出現；不要用它判斷 factory enrollment 是否成功。
@@ -284,13 +281,13 @@ ORDER BY device_type, service_options;
 
 預期結果是 `factory_device_entitlements=100`、`cert_issue_requests=100`、全部 `entitlement_state=active`、全部 cert 欄位非空、缺號為 `0`；預設配比應為 camera `40` 台帶 `["mqtt", "video_storage", "video_streaming"]`，light `25`、air_conditioner `20`、smart_meter `15` 台各帶 `["mqtt"]`。
 
-輸出的 private key 與 `--generate-only` 的 CA key 預設位於 git ignored 的 `cloud_env/staging/lke/devices/test_device`，不可 commit，也不可用在 production 或 customer environment。若要重建既有輸出，使用 `--force`。
+device private key、certificate、bundle PEM 會寫入 SQLite test-data DB；`--generate-only` 的 CA key 仍位於 git ignored 的 `cloud_env/staging/lke/devices/test_device`，不可 commit，也不可用在 production 或 customer environment。若要重建既有輸出，使用 `--force`。
 
 ### `go run ./scripts/go/rtk-cloud -- unprovision-devices`
 
-依照前一次 `go run ./scripts/go/rtk-cloud -- bind-devices` 產生的 redacted bind artifact，呼叫 Account Manager user-facing unprovision API，釋放 device 的 user/org binding，讓正常 device 回到可轉售或重新 onboarding 的狀態。這個 script 只走 Account Manager API，不 SSH 到遠端主機、不接觸 raw Claim Token、不撤銷 factory certificate，也不操作 Video Cloud denylist。
+依照 SQLite test-data DB 內的 bindings，呼叫 Account Manager user-facing unprovision API，釋放 device 的 user/org binding，讓正常 device 回到可轉售或重新 onboarding 的狀態。這個 script 只走 Account Manager API，不 SSH 到遠端主機、不接觸 raw Claim Token、不撤銷 factory certificate，也不操作 Video Cloud denylist。
 
-預設會讀取最新的 `<env-root>/artifacts/device-bind/<brand>-device-bind-*.json`，並使用 artifact 內記錄的 `inputs.users_file` 登入原 assigned user 呼叫：
+預設會讀取 `<env-root>/artifacts/test-data/<brand>-test-data.sqlite`，並使用 DB 內的 assigned user password/token 呼叫：
 
 ```sh
 go run ./scripts/go/rtk-cloud -- unprovision-devices \
@@ -300,7 +297,7 @@ go run ./scripts/go/rtk-cloud -- unprovision-devices \
 
 常用選項：
 
-- `--bind-artifact FILE`：指定要解除綁定的 device bind artifact。
+- `--bind-artifact FILE`：legacy 相容入口；active flow 使用 SQLite test-data DB。
 - `--count N`：只處理 artifact 前 N 台 device。
 - `--dry-run`：只輸出將呼叫的 account device 清單，不登入、不呼叫 API、不寫 artifact。
 
@@ -591,9 +588,44 @@ truth。`rtk-cloud provision --plan` 會先印出 capacity plan；
 `LKE_MQTT_REQUEST_MEMORY`、`LKE_MQTT_LIMIT_MEMORY`、
 `LKE_INGRESS_REPLICAS` 與 `LKE_INGRESS_REQUEST_CPU`。
 
+容量係數必須來自可 review 的實驗紀錄，不直接把 `20000` 當作永久真值。
+要產生一筆完整紀錄，使用：
+
+```sh
+scripts/run-lke-capacity-experiment.sh \
+  --target-devices 10000 \
+  --mqtt-pods 1 \
+  --node-count 2 \
+  --node-type g6-standard-2 \
+  --mqtt-request-memory 2Gi \
+  --mqtt-limit-memory 4Gi \
+  --live \
+  --confirm video-cloud-staging
+```
+
+這個 wrapper 只串接既有 cleanup、provision、data setup 與 home-100k scripts；
+每次 run 會把 request、applied stack config、load-test report，以及
+`capacity-run-summary.json` 寫到 `<env-root>/artifacts/capacity-experiments/<run-id>/`。
+若實驗調整 MQTT pod 資源，請用 wrapper 參數記錄
+`--mqtt-request-cpu`、`--mqtt-request-memory`、`--mqtt-limit-memory` 與
+`--emqx-force-shutdown-max-heap-size`；不要只手動改 cluster，否則下一輪
+review 看不到實驗條件。
+若失敗點在 runtime evidence/log correlation，cloud-logger sizing 也要由
+wrapper 記錄：`--cloud-logger-request-memory`、`--cloud-logger-limit-memory`。
+request 也會記錄 `live_runner_timeout_grace`；大型 live shard 需要額外時間
+完成 MQTT disconnect、cleanup 與 `results.json` 寫檔，不能只用 stage duration
+加固定短 buffer。
+wrapper 也會記錄 user/device/bind concurrency；目前 device enrollment 預設先用
+`16`，避免 local factory-enroll port-forward 在 64-way concurrency 下出現
+client-side header timeout。capacity wrapper 也會預設設定並記錄
+`factory_enroll_ports=18443,18444,18445,18446`，讓 data setup 透過多個
+factory-enroll port-forward endpoint 分散 device enrollment；這只是避免本機
+port-forward 成為 setup 瓶頸，不可拿來當 MQTT pod 或 LKE node 容量係數。
+容量公式、100K 初始預測與二分實驗策略見 `docs/lke-capacity-sizing.md`。
+
 `run-staging-e2e.sh --confirm` 預設會先 reset K8s runtime resources，因此也
-預設重建 users/devices/bind artifacts，不重用舊本機 artifact；這可避免
-fresh deployment 搭配舊 bind artifact 造成 validation 失敗。只有在明確加
+預設重建 users/devices/bind SQLite test data，不重用舊本機資料；這可避免
+fresh deployment 搭配舊 bindings 造成 validation 失敗。只有在明確加
 `--skip-remove` 或手動傳 `--resume` 時才會重用既有 artifact。
 
 目前 live staging 驗證使用預設 acceptance 規模：`10` 個 users、`100` 個
@@ -644,7 +676,7 @@ go run ./scripts/go/rtk-cloud -- staging-e2e-test \
 
 ### `scripts/setup-staging-e2e-data.sh`
 
-獨立的 staging E2E data setup 腳本，只建立/更新 E2E 測試資料，不 remove provider resources、不 provision servers、不跑 live MQTT。完整 `scripts/run-staging-e2e.sh` 會透過 `rtk-cloud staging-e2e-test` 呼叫這個腳本；operator 也可以單獨跑它來重建 brand/users/devices/bind artifact。
+獨立的 staging E2E data setup 腳本，只建立/更新 E2E 測試資料，不 remove provider resources、不 provision servers、不跑 live MQTT。完整 `scripts/run-staging-e2e.sh` 會透過 `rtk-cloud staging-e2e-test` 呼叫這個腳本；operator 也可以單獨跑它來重建 brand/users/devices/bind SQLite test data。
 
 ```sh
 scripts/setup-staging-e2e-data.sh \
@@ -670,7 +702,7 @@ scripts/setup-staging-e2e-data.sh \
 - `--device-mix MIX` / `--device-prefix PREFIX`：轉傳給 `generate-load-devices`。
 - `--out-dir PATH`：輸出 `summary.json`、`logs/*.log` 與 `bind-validation/` 的位置；未指定時使用 `<env-root>/artifacts/staging-e2e-data/<timestamp>/`。
 
-輸出 `summary.json` 會包含 `users_file`、`device_bind_file`、`bind_validation_dir`，以及 create brand、create users、create devices、bind devices、validate bind 每段的 status、exit code、duration seconds 和 log path。這個腳本只支援 Kubernetes provider；`CLOUD_PROVIDER=linode` 會在任何 mutation 前 fail fast。
+輸出 `summary.json` 會包含 `test_data_db`、`bind_validation_dir`，以及 create brand、create users、create devices、bind devices、validate bind 每段的 status、exit code、duration seconds 和 log path。這個腳本只支援 Kubernetes provider；`CLOUD_PROVIDER=linode` 會在任何 mutation 前 fail fast。
 
 ### Home loading test
 
@@ -687,7 +719,7 @@ loadtests/home-100k/docs/
 `loadtests/home-100k/` 為準。請不要在 `scripts/README.zh-TW.md` 內新增
 Home loading test 的詳細操作步驟。
 
-可用 `./stg.sh video RTK` 執行 staging WebRTC RTP relay smoke。這個測試只選最新 bind artifact 內具備 `video_streaming` service option 的 camera device，使用 device certificate mTLS 換 device token，使用 users artifact 內 app private key + app certificate mTLS 換 device-bound app token，然後重用 `e2e_test/video_cloud/load` runner。PASS 代表 device websocket owner online、viewer 建立 WebRTC session、server 回 SDP offer 與 ICE servers、device 送 SDP answer、ICE connected/completed、device 以 2s 1080p `testsrc2` Annex-B H.264 fixture loop 10 次送出 20s H.264 RTP，payload validation 看到 SPS/PPS/IDR/non-IDR NAL types，且 session close 成功。這不是 legacy raw RTP relay 測試；PASS 來源是 WebRTC signaling + H.264 RTP payload evidence。輸出在 `<env-root>/artifacts/video-relay-test/<timestamp>/results.json` 與 `TEST_REPORT.md`，console/report 會 redacted bearer token、TURN credential、private key、CSR 與 certificate PEM。
+可用 `./stg.sh video RTK` 執行 staging WebRTC RTP relay smoke。這個測試只選 SQLite test-data DB 內具備 `video_streaming` service option 的 camera device，使用 device certificate mTLS 換 device token，使用 DB 內 app private key + app certificate mTLS 換 device-bound app token，然後重用 `e2e_test/video_cloud/load` runner。PASS 代表 device websocket owner online、viewer 建立 WebRTC session、server 回 SDP offer 與 ICE servers、device 送 SDP answer、ICE connected/completed、device 以 2s 1080p `testsrc2` Annex-B H.264 fixture loop 10 次送出 20s H.264 RTP，payload validation 看到 SPS/PPS/IDR/non-IDR NAL types，且 session close 成功。這不是 legacy raw RTP relay 測試；PASS 來源是 WebRTC signaling + H.264 RTP payload evidence。輸出在 `<env-root>/artifacts/video-relay-test/<timestamp>/results.json` 與 `TEST_REPORT.md`，console/report 會 redacted bearer token、TURN credential、private key、CSR 與 certificate PEM。
 
 ### K8s runtime 設定與 log level
 
@@ -805,10 +837,10 @@ go run ./scripts/go/rtk-cloud -- create-users --env-root cloud_env/staging --bra
 - `--brandname NAME`：指定既有 brand cloud 名稱或 `metadata.brandname`。
 - `--count N`：建立帳號數量，預設 `10`；email 會使用 `<brand>+001@users.local` 這種序號格式。
 - `--role ROLE`：`owner`、`admin` 或 `member`，預設 `member`。
-- `--rotate-password`：既有 user 也更新初始密碼；預設遇到既有 user 會失敗，避免產生不會生效的新 credentials artifact。若只是要重用既有帳號，請使用前一次成功產生的 users artifact。
+- `--rotate-password`：既有 user 也更新初始密碼；預設遇到既有 user 會失敗，避免產生不會生效的新 credentials。若只是要重用既有帳號，請使用 SQLite test-data DB 內已保存的資料。
 - `--dry-run`：只列出將建立的 email，不呼叫建立 user API，也不寫 credentials。
 
-腳本的進度訊息會寫到 stderr，stdout 只輸出 summary JSON，不包含密碼、private key、CSR 或 certificate PEM。初始密碼與 app-local bootstrap material 只寫入 `cloud_env/.../artifacts/users/<brand>-users-<timestamp>.json`，檔案權限為 `0600`。建立或重設密碼後，腳本會依文件模擬第一次 app login：先登入 Account Manager；若回傳 `app_certificate.status=csr_required`，就在本機產生 app private key 與 subject `app-user:<user_id>` 的 CSR，以 `app_csr_pem` 再登入一次，讓 Account Manager 透過 certissuer 簽發 app certificate 並寫入 database。artifact 會記錄每個 user 的密碼、app private key、CSR、certificate/chain、fingerprint、serial、issuer request id 與有效期，供後續 production-like app mTLS/token bootstrap 測試使用。如果 API 回報 user 已存在且未指定 `--rotate-password`，腳本會停止，不會寫新的 credentials artifact。若 user 已有有效 app certificate，腳本會從同 brand 既有 users artifact 重用本機 app key/CSR；找不到既有 key 時會停止，避免產生缺少 mTLS private key 的最新 artifact。
+腳本的進度訊息會寫到 stderr，stdout 只輸出 summary JSON，不包含密碼、private key、CSR 或 certificate PEM。初始密碼與 app-local bootstrap material 會寫入 `<env-root>/artifacts/test-data/<brand>-test-data.sqlite`，檔案權限為 `0600`。建立或重設密碼後，腳本會依文件模擬第一次 app login：先登入 Account Manager；若回傳 `app_certificate.status=csr_required`，就在本機產生 app private key 與 subject `app-user:<user_id>` 的 CSR，以 `app_csr_pem` 再登入一次，讓 Account Manager 透過 certissuer 簽發 app certificate 並寫入 database。SQLite DB 會記錄每個 user 的密碼、app private key、CSR、certificate/chain、fingerprint、serial、issuer request id 與有效期，供後續 production-like app mTLS/token bootstrap 測試使用。如果 API 回報 user 已存在且未指定 `--rotate-password`，腳本會停止，不會寫新的 credentials。若 user 已有有效 app certificate，腳本會從同 brand SQLite test-data DB 或 legacy import 後的資料重用本機 app key/CSR；找不到既有 key 時會停止，避免產生缺少 mTLS private key 的最新資料。
 
 ### `go run ./scripts/go/rtk-cloud -- bind-devices`
 
@@ -826,7 +858,8 @@ go run ./scripts/go/rtk-cloud -- bind-devices \
   --brandname RTK
 
 go run ./scripts/go/rtk-cloud -- validate-device-bind \
-  --bind-artifact cloud_env/staging/lke/artifacts/device-bind/rtk-device-bind-<timestamp>.json
+  --env-root cloud_env/staging \
+  --brandname RTK
 ```
 
 流程：
@@ -843,32 +876,32 @@ go run ./scripts/go/rtk-cloud -- validate-device-bind \
 輸出與 secret handling：
 
 - stdout 只輸出 summary JSON，不包含密碼、bearer token、raw Claim Token、private key path。
-- 完整 redacted artifact 寫到 `cloud_env/.../artifacts/device-bind/<brand>-device-bind-<timestamp>.json`，檔案權限為 `0600`。
-- artifact 只包含 assigned email、device id/type、`service_options`、claim id、account device id、operation id 與 status。
+- bindings 與 provisioning state 寫到 `<env-root>/artifacts/test-data/<brand>-test-data.sqlite`，檔案權限為 `0600`。
+- DB 內包含 assigned email、device id/type、`service_options`、account device id、operation id 與 status。
 - raw Claim Token、user password、bearer token 只存在 process 暫存檔，腳本結束會移除。
-- 未指定 `--users-file` 時，命令會使用 `rtk-cloud create-users` 寫出的最新 `cloud_env/.../artifacts/users/<brand>-users-*.json`。
-- 未指定 `--devices-dir` 時，命令會使用 `rtk-cloud generate-load-devices` 的預設輸出 `cloud_env/.../devices/test_device`。
-- 未指定 `--count` 時，腳本會綁定 `manifests/devices.json` 內全部 devices。
+- 未指定 `--users-file` / `--devices-dir` 時，命令會使用 SQLite test-data DB 內的 users/devices。
+- 未指定 `--count` 時，腳本會綁定 DB 內全部 devices。
 
 常用選項：
 
 - `--env-root PATH`：指定 environment directory；必填。
 - `--brandname NAME`：指定既有 brand cloud。
-- `--users-file FILE`：指定 `rtk-cloud create-users` 產生的 credentials artifact；未指定時使用同 brand 最新 artifact。
-- `--devices-dir DIR`：指定 `rtk-cloud generate-load-devices` 產生的 device output directory；未指定時使用 `<env-root>/devices/test_device`。
-- `--count N`：只綁定前 N 台 device；未指定時綁定 manifest 內全部 devices。
-- `--dry-run`：只輸出 assignment plan，不呼叫 Account Manager API，也不寫 artifact。
+- `--users-file FILE`：legacy 相容入口；active flow 使用 SQLite test-data DB。
+- `--devices-dir DIR`：legacy 相容入口；active flow 使用 SQLite test-data DB。
+- `--count N`：只綁定前 N 台 device；未指定時綁定 DB 內全部 devices。
+- `--dry-run`：只輸出 assignment plan，不呼叫 Account Manager API，也不寫 bindings。
 - `--skip-bootstrap`：不要更新/restart 遠端 Account Manager bootstrap admin env。
 
 ### `go run ./scripts/go/rtk-cloud -- validate-device-bind`
 
-驗證 `rtk-cloud bind-devices` 產生的 redacted artifact，作為 100 devices onboarding staging smoke 的 API-level 結果檢查。這個 profile 不要求 live video streaming 成功；它確認每筆 API claim/bind/provision 結果都有 account device id、provision operation id，且 `service_options` 符合 ACL 預期。
+驗證 SQLite test-data DB 內 `rtk-cloud bind-devices` 寫入的 bindings/provisioning state，作為 100 devices onboarding staging smoke 的 API-level 結果檢查。這個 profile 不要求 live video streaming 成功；它確認每筆 API claim/bind/provision 結果都有 account device id、provision operation id，且 `service_options` 符合 ACL 預期。
 
 用法：
 
 ```sh
 go run ./scripts/go/rtk-cloud -- validate-device-bind \
-  --bind-artifact cloud_env/staging/lke/artifacts/device-bind/rtk-device-bind-<timestamp>.json \
+  --env-root cloud_env/staging \
+  --brandname RTK \
   --expected-count 100 \
   --expected-devices-per-user 10
 ```

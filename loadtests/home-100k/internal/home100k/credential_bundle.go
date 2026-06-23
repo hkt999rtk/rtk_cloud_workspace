@@ -35,6 +35,14 @@ type shardCredentialBundleManifest struct {
 	BindArtifact   string `json:"bind_artifact,omitempty"`
 }
 
+func homeTestDataDBPath(envRoot, brandname string) string {
+	brandLower := strings.ToLower(strings.TrimSpace(brandname))
+	if brandLower == "" {
+		brandLower = "rtk"
+	}
+	return filepath.Join(envRoot, "artifacts", "test-data", brandLower+"-test-data.sqlite")
+}
+
 func writeShardCredentialBundle(outDir string, envRoot string, plan Plan, assignment VMAssignment) (shardCredentialBundle, error) {
 	if strings.TrimSpace(assignment.Label) == "" {
 		return shardCredentialBundle{}, fmt.Errorf("assignment label is required")
@@ -71,11 +79,7 @@ func writeShardCredentialBundle(outDir string, envRoot string, plan Plan, assign
 	if err != nil {
 		return shardCredentialBundle{}, err
 	}
-	if err := insertBundleDevices(db, envRoot, deviceRows); err != nil {
-		return shardCredentialBundle{}, err
-	}
-	userArtifact, bindArtifact, err := insertBundleArtifacts(db, envRoot, strings.ToLower(plan.Conditions.Brandname))
-	if err != nil {
+	if err := insertBundleDevices(db, envRoot, plan.Conditions.Brandname, deviceRows); err != nil {
 		return shardCredentialBundle{}, err
 	}
 	if err := db.Close(); err != nil {
@@ -94,8 +98,6 @@ func writeShardCredentialBundle(outDir string, envRoot string, plan Plan, assign
 		SQLiteGzipPath: filepath.Base(compressedPath),
 		SHA256:         sum,
 		DeviceCount:    len(deviceRows),
-		UserArtifact:   filepath.Base(userArtifact),
-		BindArtifact:   filepath.Base(bindArtifact),
 	}
 	if err := writeJSONFile(manifestPath, manifest); err != nil {
 		return shardCredentialBundle{}, err
@@ -106,8 +108,6 @@ func writeShardCredentialBundle(outDir string, envRoot string, plan Plan, assign
 		ManifestPath:   manifestPath,
 		SHA256:         sum,
 		DeviceCount:    len(deviceRows),
-		UserArtifact:   userArtifact,
-		BindArtifact:   bindArtifact,
 	}, nil
 }
 
@@ -145,26 +145,72 @@ func insertBundleMetadata(db *sql.DB, key string, value string) error {
 }
 
 func loadShardDeviceRowsForBundle(envRoot string, plan Plan, assignment VMAssignment) ([]deviceManifestRow, error) {
-	if rows, err := loadShardDeviceRowsFromArtifacts(envRoot, plan, assignment); err == nil && len(rows) > 0 {
+	if rows, err := loadShardDeviceRowsFromTestData(envRoot, plan, assignment); err == nil && len(rows) > 0 {
 		return rows, nil
 	}
-	deviceRows, err := loadDeviceManifestRows(envRoot)
+	return nil, fmt.Errorf("missing SQLite test-data rows for %s", plan.Conditions.Brandname)
+}
+
+func loadShardDeviceRowsFromTestData(envRoot string, plan Plan, assignment VMAssignment) ([]deviceManifestRow, error) {
+	db, err := sql.Open("sqlite", homeTestDataDBPath(envRoot, plan.Conditions.Brandname))
 	if err != nil {
 		return nil, err
 	}
-	out := []deviceManifestRow{}
-	for _, shard := range assignment.TaskShards {
-		if shard.Role != "device-mqtt" {
+	defer db.Close()
+	rows, err := db.Query(`select assigned_email, device_id, device_type, service_options_json from device_bindings where brandname = ? order by assignment_index, device_id`, plan.Conditions.Brandname)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	selectedByUser := map[string][]shardBindAssignment{}
+	for rows.Next() {
+		var item shardBindAssignment
+		var serviceOptionsJSON string
+		if err := rows.Scan(&item.AssignedEmail, &item.DeviceID, &item.DeviceType, &serviceOptionsJSON); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(serviceOptionsJSON), &item.ServiceOptions)
+		if !homeDeviceType(item.DeviceType) || !stringSliceContains(item.ServiceOptions, "mqtt") {
 			continue
 		}
-		for idx := shard.Start; idx < shard.End && idx < len(deviceRows); idx++ {
-			out = append(out, deviceRows[idx])
+		selectedByUser[item.AssignedEmail] = append(selectedByUser[item.AssignedEmail], item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	selectedUsers := sortedMapKeys(selectedByUser)
+	selected := []shardBindAssignment{}
+	for _, email := range selectedUsers {
+		selected = append(selected, selectedByUser[email]...)
+	}
+	shardCount := len(plan.ShardsByRole("device-mqtt"))
+	if shardCount <= 0 {
+		shardCount = 1
+	}
+	shardIndex := assignment.Index
+	out := []deviceManifestRow{}
+	maxConnected := maxAssignmentConnectedDevices(assignment)
+	for idx, item := range selected {
+		if idx%shardCount != shardIndex {
+			continue
 		}
+		out = append(out, deviceManifestRow{DeviceID: item.DeviceID, DeviceType: item.DeviceType})
+		if maxConnected > 0 && len(out) >= maxConnected {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no selected devices for shard %d/%d", shardIndex, shardCount)
 	}
 	return out, nil
 }
 
-func insertBundleDevices(db *sql.DB, envRoot string, rows []deviceManifestRow) error {
+func insertBundleDevices(db *sql.DB, envRoot string, brandname string, rows []deviceManifestRow) error {
+	source, err := sql.Open("sqlite", homeTestDataDBPath(envRoot, brandname))
+	if err != nil {
+		return err
+	}
+	defer source.Close()
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -176,55 +222,26 @@ func insertBundleDevices(db *sql.DB, envRoot string, rows []deviceManifestRow) e
 	}
 	defer stmt.Close()
 	for _, row := range rows {
-		deviceDir := filepath.Join(envRoot, "devices", "test_device", "devices", row.DeviceType, row.DeviceID)
-		bundlePath := filepath.Join(envRoot, "devices", "test_device", "bundles", row.DeviceType, row.DeviceID+".pem")
+		var certPEM, keyPEM, chainPEM, bundlePEM, metadataJSON, requestJSON, responseJSON string
+		if err := source.QueryRow(`select cert_pem, key_pem, chain_pem, bundle_pem, metadata_json, factory_enroll_request_json, factory_enroll_response_redacted_json from device_credentials where brandname = ? and device_id = ?`, brandname, row.DeviceID).Scan(&certPEM, &keyPEM, &chainPEM, &bundlePEM, &metadataJSON, &requestJSON, &responseJSON); err != nil {
+			return err
+		}
 		if _, err := stmt.Exec(
 			row.DeviceID,
 			row.DeviceType,
-			readOptionalText(filepath.Join(deviceDir, "device.cert.pem")),
-			readOptionalText(filepath.Join(deviceDir, "device.key.pem")),
-			readOptionalText(filepath.Join(deviceDir, "device.chain.pem")),
-			readOptionalText(bundlePath),
-			readOptionalText(filepath.Join(deviceDir, "metadata.json")),
-			readOptionalText(filepath.Join(deviceDir, "factory-enroll-request.json")),
-			readOptionalText(filepath.Join(deviceDir, "factory-enroll-response.redacted.json")),
+			certPEM,
+			keyPEM,
+			chainPEM,
+			bundlePEM,
+			metadataJSON,
+			requestJSON,
+			responseJSON,
 		); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
 	}
 	return tx.Commit()
-}
-
-func insertBundleArtifacts(db *sql.DB, envRoot string, brandLower string) (string, string, error) {
-	if strings.TrimSpace(brandLower) == "" {
-		brandLower = "rtk"
-	}
-	usersPath := latestFile(filepath.Join(envRoot, "artifacts", "users", brandLower+"-users-*.json"))
-	bindPath := latestHomeBindArtifact(filepath.Join(envRoot, "artifacts", "device-bind", brandLower+"-device-bind-*.json"), brandLower)
-	if usersPath == "" || bindPath == "" {
-		return "", "", fmt.Errorf("missing users or device-bind artifact")
-	}
-	for _, item := range []struct {
-		name string
-		kind string
-		path string
-	}{
-		{name: filepath.Base(usersPath), kind: "users", path: usersPath},
-		{name: filepath.Base(bindPath), kind: "device_bind", path: bindPath},
-	} {
-		body, err := os.ReadFile(item.path)
-		if err != nil {
-			return "", "", err
-		}
-		if !json.Valid(body) {
-			return "", "", fmt.Errorf("artifact is not valid JSON: %s", item.path)
-		}
-		if _, err := db.Exec(`insert into artifacts(name, kind, body_json) values(?, ?, ?)`, item.name, item.kind, string(body)); err != nil {
-			return "", "", err
-		}
-	}
-	return usersPath, bindPath, nil
 }
 
 func readOptionalText(path string) string {

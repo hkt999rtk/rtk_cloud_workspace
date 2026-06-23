@@ -22,24 +22,29 @@ jq -e '.allocated.camera == 2' "$OUT/summary.json" >/dev/null
 jq -e '.allocated.light == 2' "$OUT/summary.json" >/dev/null
 jq -e '.allocated.air_conditioner == 2' "$OUT/summary.json" >/dev/null
 jq -e '.allocated.smart_meter == 1' "$OUT/summary.json" >/dev/null
-jq -e 'length == 7' "$OUT/manifests/devices.json" >/dev/null
-jq -e '.[0].service_options == ["mqtt","video_streaming","video_storage"]' "$OUT/manifests/devices.json" >/dev/null
-jq -e '.[2].service_options == ["mqtt"]' "$OUT/manifests/devices.json" >/dev/null
+INSPECT="$TMP/inspect.json"
+"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- test-data inspect \
+	--env-root "$TMP/cloud_env/staging" \
+	--brandname RTK >"$INSPECT"
+jq -e '.schema == "rtk-cloud-workspace-test-data/v1" and .devices == 7' "$INSPECT" >/dev/null
 
 test -f "$OUT/ca/sim-device-ca.cert.pem"
-test -f "$OUT/devices/camera/test-load-0001/device.key.pem"
-test -f "$OUT/devices/camera/test-load-0001/device.cert.pem"
-test -f "$OUT/devices/camera/test-load-0001/device.chain.pem"
-test -f "$OUT/devices/light/test-load-0003/metadata.json"
-test -f "$OUT/devices/air_conditioner/test-load-0005/metadata.json"
-test -f "$OUT/devices/smart_meter/test-load-0007/metadata.json"
 grep -F 'VIDEO_CLOUD_LOAD_DEVICE_IDS' "$OUT/loadtest.env" >/dev/null
 grep -F 'test-load-0001,test-load-0002,test-load-0003,test-load-0004,test-load-0005,test-load-0006,test-load-0007' "$OUT/loadtest.env" >/dev/null
-grep -F 'device_id,device_type,mqtt_capability,service_options,model,certificate_path,key_path,bundle_path' "$OUT/manifests/devices.csv" >/dev/null
-test -f "$OUT/manifests/factory-enroll-results.jsonl"
+for legacy in \
+	"$OUT/manifests/devices.json" \
+	"$OUT/manifests/devices.csv" \
+	"$OUT/manifests/factory-enroll-results.jsonl" \
+	"$OUT/devices/camera/test-load-0001/device.key.pem" \
+	"$OUT/devices/camera/test-load-0001/device.cert.pem" \
+	"$OUT/devices/light/test-load-0003/metadata.json"
+do
+	if [[ -e "$legacy" ]]; then
+		printf 'legacy test-data file should be cleaned: %s\n' "$legacy" >&2
+		exit 1
+	fi
+done
 grep -F 'device generation progress: done=7/7 generated=7 failed=0' /tmp/staging-generate-load-devices.err >/dev/null
-
-openssl x509 -in "$OUT/devices/camera/test-load-0001/device.cert.pem" -noout -subject | grep -F 'test-load-0001' >/dev/null
 
 if "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- generate-load-devices --out-dir "$TMP/missing-env-root" >/tmp/missing-env-root.out 2>/tmp/missing-env-root.err; then
 	printf 'expected missing --env-root to fail\n' >&2
@@ -115,8 +120,20 @@ jq -s -e '
   any($ok[]; .devid == "factory-load-0001" and .service_options == ["mqtt","video_streaming","video_storage"]) and
   any($ok[]; .devid == "factory-load-0002" and .service_options == ["mqtt"])
 ' "$FACTORY_LOG" >/dev/null
-jq -s -e 'length == 2 and all(.status == "ok")' "$FACTORY_OUT/manifests/factory-enroll-results.jsonl" >/dev/null
 jq -e '.enrollment.mode == "factory_enroll" and .enrollment.succeeded == 2 and .enrollment.failed == 0' "$FACTORY_OUT/summary.json" >/dev/null
-jq -e 'length == 2 and .[0].certificate_profile == "factory-enrolled-device-mtls-client"' "$FACTORY_OUT/manifests/devices.json" >/dev/null
-test -f "$FACTORY_OUT/devices/camera/factory-load-0001/factory-enroll-response.redacted.json"
-openssl x509 -in "$FACTORY_OUT/devices/camera/factory-load-0001/device.cert.pem" -noout -subject >/dev/null
+FACTORY_INSPECT="$TMP/factory-inspect.json"
+"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- test-data inspect \
+	--env-root "$FACTORY_ENV_ROOT" \
+	--brandname RTK >"$FACTORY_INSPECT"
+jq -e '.schema == "rtk-cloud-workspace-test-data/v1" and .devices == 2' "$FACTORY_INSPECT" >/dev/null
+for legacy in \
+	"$FACTORY_OUT/manifests/factory-enroll-results.jsonl" \
+	"$FACTORY_OUT/manifests/devices.json" \
+	"$FACTORY_OUT/devices/camera/factory-load-0001/factory-enroll-response.redacted.json" \
+	"$FACTORY_OUT/devices/camera/factory-load-0001/device.cert.pem"
+do
+	if [[ -e "$legacy" ]]; then
+		printf 'legacy test-data file should be cleaned: %s\n' "$legacy" >&2
+		exit 1
+	fi
+done

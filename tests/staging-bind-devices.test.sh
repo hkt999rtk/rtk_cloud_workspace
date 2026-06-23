@@ -3,7 +3,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+SERVER_PID=""
+trap 'if [[ -n "${SERVER_PID:-}" ]]; then kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true; fi; rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
 ENV_ROOT="$WORKSPACE/cloud_env/staging/lke"
@@ -52,6 +53,11 @@ jq -n '[
 	{device_id: "load-device-0004", device_type: "smart_meter", display_name: "Smart Meter 001", service_options: ["mqtt"]}
 ]' > "$DEVICES_DIR/manifests/devices.json"
 
+"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- test-data import-legacy \
+	--env-root "$ENV_ROOT" \
+	--brandname RTK \
+	--latest-only >/dev/null
+
 cat > "$FAKE_BIN/ssh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -93,50 +99,61 @@ case "$url" in
 	printf '{"brand_clouds":[{"id":"org-rtk","name":"RTK","tenant_slug":"rtk","organization_kind":"brand_cloud","metadata":{"brandname":"RTK"}}]}' >"$out"
 	status=200
 	;;
-*/v1/admin/device-claim-tokens)
-	device_id="$(jq -r '.video_cloud_devid' "$payload")"
-	if [[ "${FAKE_ALREADY_CLAIMED:-0}" == "1" ]]; then
-		printf '{"error":"already_claimed","message":"device already claimed"}' >"$out"
-		status=409
-	else
-		cp "$payload" "$FAKE_CURL_LOG/claim-$device_id.json"
-		printf '{"id":"claim-%s","claim_token":"raw-token-%s","category":"%s","video_cloud_devid":"%s"}' \
-			"$device_id" "$device_id" "$(jq -r '.category' "$payload")" "$device_id" >"$out"
-		status=201
-	fi
-	;;
-*/v1/orgs/org-rtk/devices/claim/resolve)
-	token="$(jq -r '.claim_token' "$payload")"
-	device_id="${token#raw-token-}"
-	user_tag="001"
-	if [[ "$token" == *"0003" || "$token" == *"0004" ]]; then
-		user_tag="002"
-	fi
-	cp "$payload" "$FAKE_CURL_LOG/resolve-$device_id.json"
-	jq -n \
-		--arg claim_id "claim-$device_id" \
-		--arg account_device_id "account-device-$device_id" \
-		--arg device_id "$device_id" \
-		--arg user_tag "$user_tag" \
-		--arg activity_id "bulk-bind-$device_id" \
-		--arg clip_public_key "bulk-bind-test-public-key" \
-		'{
-			claim_id: $claim_id,
-			device: {id: $account_device_id, video_cloud_devid: $device_id},
-			provision_input: {
-				video_cloud_devid: $device_id,
-				activity_id: $activity_id,
-				clip_public_key: $clip_public_key,
-				service_options: (if ($device_id == "load-device-0001" or $device_id == "load-device-0003") then ["mqtt", "video_streaming", "video_storage"] else ["mqtt"] end)
-			},
-			_user_tag: $user_tag
-	}' >"$out"
-	status=200
-	;;
-*/v1/orgs/org-rtk/devices\?limit=200\&offset=0)
-	printf '{"devices":[],"pagination":{"total":0}}' >"$out"
-	status=200
-	;;
+	*/v1/admin/brand-clouds/org-rtk/device-bind-jobs)
+		cp "$payload" "$FAKE_CURL_LOG/bulk-bind.json"
+		if [[ "${FAKE_BULK_BIND_FAIL:-0}" == "1" ]]; then
+			jq -n --arg device_id "$(jq -r '.items[0].video_cloud_devid' "$payload")" '{
+				job: {status: "completed", requested: 1, created: 0, existing: 0, failed: 1},
+				results: [{
+					video_cloud_devid: $device_id,
+					status: "failed",
+					account_device_id: "",
+					error: {code: "injected_failure", message: "forced bulk bind failure"}
+				}]
+			}' >"$out"
+		else
+			jq '
+				{
+					job: {
+						status: "completed",
+						requested: (.items | length),
+						created: (.items | length),
+						existing: 0,
+						failed: 0
+					},
+					results: [.items[] | {
+						video_cloud_devid,
+						status: "created",
+						account_device_id: ("account-device-" + .video_cloud_devid),
+						device: {
+							id: ("account-device-" + .video_cloud_devid),
+							organization_id: "org-rtk",
+							name: .device_name,
+							category,
+							metadata: {
+								video_cloud_devid,
+								video_cloud_activity_id: .activity_id,
+								video_cloud_clip_public_key: .clip_public_key,
+								service_options: .service_options
+							}
+						},
+						provision_input: {
+							video_cloud_devid,
+							activity_id,
+							clip_public_key,
+							service_options
+						},
+						error: null
+					}]
+				}
+			' "$payload" >"$out"
+		fi
+		status=200
+		;;
+	*/v1/orgs/org-rtk/devices\?*)
+		printf 'bind-devices must not pre-scan /devices: %s\n' "$url" >&2
+		exit 1
+		;;
 */v1/orgs/org-rtk/devices/*/provision)
 	account_device_id="$(basename "$(dirname "$url")")"
 	cp "$payload" "$FAKE_CURL_LOG/provision-$account_device_id.json"
@@ -154,6 +171,122 @@ if [[ -n "$write_code" ]]; then
 fi
 SH
 chmod +x "$FAKE_BIN/curl"
+
+cat > "$TMP/fake_account_manager.py" <<'PY'
+import base64
+import json
+import os
+import sys
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
+
+log_dir = sys.argv[1]
+
+def token(ttl):
+    header = base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode()).rstrip(b"=").decode()
+    payload = base64.urlsafe_b64encode(json.dumps({"exp": int(time.time()) + ttl}).encode()).rstrip(b"=").decode()
+    return f"{header}.{payload}."
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        return
+
+    def send_json(self, status, body):
+        data = json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def read_json(self):
+        length = int(self.headers.get("content-length", "0"))
+        if length == 0:
+            return {}
+        return json.loads(self.rfile.read(length))
+
+    def do_GET(self):
+        path = urlparse(self.path).path
+        query = urlparse(self.path).query
+        if path == "/v1/admin/brand-clouds" and query == "limit=200":
+            self.send_json(200, {"brand_clouds": [{"id": "org-rtk", "name": "RTK", "tenant_slug": "rtk", "organization_kind": "brand_cloud", "metadata": {"brandname": "RTK"}}]})
+            return
+        if path == "/v1/orgs/org-rtk/devices" and "limit=" in query:
+            self.send_json(500, {"error": "bind-devices must not pre-scan /devices"})
+            return
+        self.send_json(404, {"error": f"unexpected GET {self.path}"})
+
+    def do_POST(self):
+        path = urlparse(self.path).path
+        payload = self.read_json()
+        if path == "/v1/auth/login" or (path.startswith("/v1/brand-clouds/") and path.endswith("/auth/login")):
+            self.send_json(200, {"tokens": {"access_token": token(3600), "refresh_token": token(86400)}})
+            return
+        if path == "/v1/admin/brand-clouds/org-rtk/device-bind-jobs":
+            with open(os.path.join(log_dir, "bulk-bind.json"), "w") as f:
+                json.dump(payload, f)
+            if os.path.exists(os.path.join(log_dir, "fail-bulk")):
+                device_id = payload["items"][0]["video_cloud_devid"]
+                self.send_json(200, {
+                    "job": {"status": "completed", "requested": 1, "created": 0, "existing": 0, "failed": 1},
+                    "results": [{"video_cloud_devid": device_id, "status": "failed", "account_device_id": "", "error": {"code": "injected_failure", "message": "forced bulk bind failure"}}],
+                })
+                return
+            results = []
+            for item in payload["items"]:
+                device_id = item["video_cloud_devid"]
+                results.append({
+                    "video_cloud_devid": device_id,
+                    "status": "created",
+                    "account_device_id": "account-device-" + device_id,
+                    "device": {
+                        "id": "account-device-" + device_id,
+                        "organization_id": "org-rtk",
+                        "name": item["device_name"],
+                        "category": item["category"],
+                        "metadata": {
+                            "video_cloud_devid": device_id,
+                            "video_cloud_activity_id": item["activity_id"],
+                            "video_cloud_clip_public_key": item["clip_public_key"],
+                            "service_options": item["service_options"],
+                        },
+                    },
+                    "provision_input": {
+                        "video_cloud_devid": device_id,
+                        "activity_id": item["activity_id"],
+                        "clip_public_key": item["clip_public_key"],
+                        "service_options": item["service_options"],
+                    },
+                    "error": None,
+                })
+            self.send_json(200, {"job": {"status": "completed", "requested": len(results), "created": len(results), "existing": 0, "failed": 0}, "results": results})
+            return
+        if path.startswith("/v1/orgs/org-rtk/devices/") and path.endswith("/provision"):
+            account_device_id = path.split("/")[-2]
+            with open(os.path.join(log_dir, f"provision-{account_device_id}.json"), "w") as f:
+                json.dump(payload, f)
+            self.send_json(202, {"operation": {"id": payload["operation_id"], "status": "requested"}, "status": "requested"})
+            return
+        self.send_json(404, {"error": f"unexpected POST {self.path}"})
+
+server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+print(server.server_port, flush=True)
+server.serve_forever()
+PY
+
+python3 -u "$TMP/fake_account_manager.py" "$CURL_LOG" >"$TMP/fake-account-manager.port" 2>"$TMP/fake-account-manager.log" &
+SERVER_PID="$!"
+for _ in {1..50}; do
+	if [[ -s "$TMP/fake-account-manager.port" ]]; then
+		break
+	fi
+	sleep 0.1
+done
+ACCOUNT_MANAGER_BASE_URL="http://127.0.0.1:$(cat "$TMP/fake-account-manager.port")"
+export ACCOUNT_MANAGER_BASE_URL
+export ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL=root@example.com
+export ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD=correct-horse-battery-staple
 
 if PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- bind-devices \
 	--workspace "$WORKSPACE" \
@@ -192,7 +325,7 @@ PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "/usr/local/go/bin/go" run "$RO
 	--brandname RTK \
 	--dry-run >"$DEFAULT_DRY_RUN"
 jq -e '.action == "dry_run" and .brandname == "RTK" and .count == 4' "$DEFAULT_DRY_RUN" >/dev/null
-jq -e --arg users "$USERS_FILE" --arg devices "$DEVICES_DIR" '.users_file == $users and .devices_dir == $devices' "$DEFAULT_DRY_RUN" >/dev/null
+jq -e --arg devices "$DEVICES_DIR" '.users_file == "" and .devices_dir == $devices' "$DEFAULT_DRY_RUN" >/dev/null
 jq -e '.assignments | length == 4' "$DEFAULT_DRY_RUN" >/dev/null
 
 MANY_USERS="$ENV_ROOT/artifacts/users/rtk-users-100-test.json"
@@ -265,26 +398,28 @@ if grep -Ei 'password|bearer|raw-token|private|device.key' "$OUT" >/dev/null; th
 	echo "stdout must not include secrets" >&2
 	exit 1
 fi
-jq -e '.action == "bound" and .brandname == "RTK" and .count == 4 and .created_claims == 4 and .resolved_claims == 4 and .provision_started == 4' "$OUT" >/dev/null
-ARTIFACT="$(jq -r '.artifact_file' "$OUT")"
-test -f "$ARTIFACT"
-if grep -Ei 'password|bearer|raw-token|device.key' "$ARTIFACT" >/dev/null; then
-	echo "artifact must be redacted" >&2
+jq -e '.action == "bound" and .brandname == "RTK" and .count == 4 and .created_devices == 4 and .provision_started == 4 and .already_bound == 0' "$OUT" >/dev/null
+TEST_DATA_DB="$(jq -r '.test_data_db' "$OUT")"
+test -f "$TEST_DATA_DB"
+INSPECT="$TMP/test-data-inspect.json"
+"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- test-data inspect \
+	--env-root "$ENV_ROOT" \
+	--brandname RTK >"$INSPECT"
+jq -e '.schema == "rtk-cloud-workspace-test-data/v1" and .users == 2 and .devices == 4 and .bindings == 4' "$INSPECT" >/dev/null
+if find "$ENV_ROOT/artifacts/device-bind" -name 'rtk-device-bind-*.json' -type f 2>/dev/null | grep -q .; then
+	echo "bind-devices must not create legacy device-bind JSON artifacts" >&2
 	exit 1
 fi
-jq -e '.schema == "rtk-cloud-workspace.bulk-device-bind/v1" and (.assignments | length == 4)' "$ARTIFACT" >/dev/null
-jq -e '.assignments[0] | .assigned_email == "rtk+001@users.local" and .device_id == "load-device-0001" and .claim_id == "claim-load-device-0001" and .account_device_id == "account-device-load-device-0001" and .operation_id != "" and .status == "provision_requested"' "$ARTIFACT" >/dev/null
-jq -e '.assignments[1].service_options == ["mqtt"]' "$ARTIFACT" >/dev/null
-jq -e '.category == "ip_camera" and .service_options == ["mqtt", "video_streaming", "video_storage"]' "$CURL_LOG/claim-load-device-0001.json" >/dev/null
-jq -e '.category == "mqtt_device" and .service_options == ["mqtt"]' "$CURL_LOG/claim-load-device-0002.json" >/dev/null
+jq -e '.items[0] | .category == "ip_camera" and .service_options == ["mqtt", "video_streaming", "video_storage"]' "$CURL_LOG/bulk-bind.json" >/dev/null
+jq -e '.items[1] | .category == "mqtt_device" and .service_options == ["mqtt"]' "$CURL_LOG/bulk-bind.json" >/dev/null
 jq -e '.service_options == ["mqtt"] and .video_cloud_devid == "load-device-0002"' "$CURL_LOG/provision-account-device-load-device-0002.json" >/dev/null
 grep -F 'binding device 1/4: device=load-device-0001 user=rtk+001@users.local services=mqtt,video_streaming,video_storage' "$TMP/bind.err" >/dev/null
-grep -F 'creating claim token: device=load-device-0001' "$TMP/bind.err" >/dev/null
-grep -F 'resolving claim: device=load-device-0001 user=rtk+001@users.local' "$TMP/bind.err" >/dev/null
+grep -F 'bulk bind chunk summary: chunk=1 requested=4 created=4 existing=0 failed=0' "$TMP/bind.err" >/dev/null
 grep -F 'starting provision: device=load-device-0001 account_device=account-device-load-device-0001' "$TMP/bind.err" >/dev/null
-grep -F 'bind progress: done=4/4 created_claims=4 resolved_claims=4 provision_started=4 skipped=0' "$TMP/bind.err" >/dev/null
+grep -F 'bind progress: done=4/4 bulk_created=4 provision_started=4 skipped=0' "$TMP/bind.err" >/dev/null
 
-if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_ALREADY_CLAIMED=1 "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- bind-devices \
+touch "$CURL_LOG/fail-bulk"
+if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- bind-devices \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--brandname RTK \
@@ -296,4 +431,4 @@ if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_ALREADY_CLAIMED=1 "/usr
 	echo "expected already-claimed device to fail" >&2
 	exit 1
 fi
-grep -F 'claim token create failed' "$TMP/already.err" >/dev/null
+grep -F 'admin bulk bind failed' "$TMP/already.err" >/dev/null

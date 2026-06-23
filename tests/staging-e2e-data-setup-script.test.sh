@@ -75,12 +75,12 @@ actual="$(cut -f1 "$COMMAND_LOG")"
 }
 grep -F $'create-users\t' "$COMMAND_LOG" | grep -F -- "--env-root $WORKSPACE/cloud_env/staging/lke" | grep -F -- '--count 2' | grep -F -- '--rotate-password' | grep -F -- '--concurrency 64' >/dev/null
 grep -F $'generate-devices\t' "$COMMAND_LOG" | grep -F -- "--env-root $WORKSPACE/cloud_env/staging/lke" | grep -F -- '--count 4' | grep -F -- '--mix camera=2,light=2' | grep -F -- '--prefix load-device' | grep -F -- '--force' | grep -F -- '--concurrency 64' >/dev/null
-grep -F $'bind-devices\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/lke"$' --brandname RTK --users-file '"$ENV_ROOT/artifacts/users/rtk-users-test.json"$' --devices-dir '"$ENV_ROOT/devices/test_device"$' --count 4 --concurrency 64' "$COMMAND_LOG" >/dev/null
+grep -F $'bind-devices\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/lke"$' --brandname RTK --count 4 --concurrency 64' "$COMMAND_LOG" >/dev/null
 
 SUMMARY="$(jq -r '.summary_file' "$TMP/run.out")"
 test "$SUMMARY" = "$OUT_DIR/summary.json"
 test -f "$SUMMARY"
-jq -e '.overall == "pass" and .users_file != "" and .device_bind_file != "" and (.steps | length == 5)' "$SUMMARY" >/dev/null
+jq -e '.overall == "pass" and .test_data_db != "" and (.steps | length == 5)' "$SUMMARY" >/dev/null
 grep -E '\[cloud-staging-e2e\] start: create_brand log=.*/logs/create_brand.log' "$TMP/run.err" >/dev/null
 if grep -F '[cloud-staging-e2e] progress:' "$TMP/run.err" >/dev/null; then
 	echo "quiet data setup should not print progress lines" >&2
@@ -88,6 +88,7 @@ if grep -F '[cloud-staging-e2e] progress:' "$TMP/run.err" >/dev/null; then
 fi
 
 : > "$COMMAND_LOG"
+rm -f "$ENV_ROOT/artifacts/users"/rtk-users-*.json "$ENV_ROOT/artifacts/device-bind"/rtk-device-bind-*.json
 cat > "$ENV_ROOT/artifacts/users/rtk-users-complete.json" <<'EOF_USERS'
 {"brandname":"RTK","users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}
 EOF_USERS
@@ -109,6 +110,10 @@ cat > "$bind_artifact" <<'EOF_BIND'
 ]}
 EOF_BIND
 done
+"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- test-data import-legacy \
+	--env-root "$ENV_ROOT" \
+	--brandname RTK \
+	--latest-only >/dev/null
 CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT="$TMP/create-brand.sh" \
 CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT="$TMP/create-users.sh" \
 CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT="$TMP/generate-devices.sh" \
@@ -129,7 +134,7 @@ actual="$(cut -f1 "$COMMAND_LOG")"
 	printf 'default data setup should reuse complete artifacts; command order:\n%s\n' "$actual" >&2
 	exit 1
 }
-grep -F 'skip: create_users reason="--resume users artifact count=2"' "$TMP/resume-default.err" >/dev/null
+grep -F 'skip: create_users reason="--resume SQLite users count=2"' "$TMP/resume-default.err" >/dev/null
 grep -F 'skip: create_devices reason="--resume' "$TMP/resume-default.err" >/dev/null
 
 : > "$COMMAND_LOG"
@@ -156,6 +161,10 @@ actual="$(cut -f1 "$COMMAND_LOG")"
 }
 
 : > "$COMMAND_LOG"
+rm -f "$ENV_ROOT/artifacts/users"/rtk-users-*.json "$ENV_ROOT/artifacts/device-bind"/rtk-device-bind-*.json
+cat > "$ENV_ROOT/artifacts/users/rtk-users-complete.json" <<'EOF_USERS'
+{"brandname":"RTK","users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}
+EOF_USERS
 cat > "$ENV_ROOT/devices/test_device/manifests/devices.json" <<'EOF_DEVICES'
 [
   {"device_id":"load-device-0001","device_type":"camera","service_options":["mqtt","video_streaming","video_storage"],"certificate_path":"devices/camera/load-device-0001/device.cert.pem","certificate_chain_path":"devices/camera/load-device-0001/device.chain.pem","key_path":"devices/camera/load-device-0001/device.key.pem"},
@@ -185,6 +194,10 @@ cat > "$bind_artifact" <<'EOF_BIND'
 ]}
 EOF_BIND
 done
+"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- test-data import-legacy \
+	--env-root "$ENV_ROOT" \
+	--brandname RTK \
+	--latest-only >/dev/null
 cat > "$TMP/validate-bind-repair.sh" <<SH
 #!/usr/bin/env bash
 set -euo pipefail

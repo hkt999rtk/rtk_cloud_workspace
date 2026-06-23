@@ -35,7 +35,7 @@ environment layout:
 
 - `cloud_env_init` resolves `cloud_env/staging` to the provider-specific root.
 - `cloud_env_test_devices_dir` locates the generated load-test device fixture.
-- `cloud_env_artifacts_dir` locates users and device-bind artifacts.
+- `cloud_env_artifacts_dir` locates the SQLite test-data store and run evidence.
 - `cloud_env_account_manager_env` and `cloud_env_account_manager_state` locate
   Account Manager endpoint and runtime state.
 - `cloud_env_video_env` and `cloud_env_video_state` locate Video Cloud and MQTT
@@ -45,14 +45,8 @@ environment layout:
 
 Required inputs:
 
-- `<env-root>/devices/test_device/manifests/devices.json`
-- `<env-root>/devices/test_device/manifests/device_ids.txt`
 - `<env-root>/devices/test_device/loadtest.env`
-- `<env-root>/devices/test_device/devices/<type>/<device_id>/device.cert.pem`
-- `<env-root>/devices/test_device/devices/<type>/<device_id>/device.key.pem`
-- `<env-root>/devices/test_device/devices/<type>/<device_id>/device.chain.pem`
-- latest `<env-root>/artifacts/users/<brand>-users-*.json`
-- latest `<env-root>/artifacts/device-bind/<brand>-device-bind-*.json`
+- `<env-root>/artifacts/test-data/<brand>-test-data.sqlite`
 
 If required inputs are missing, unreadable, or inconsistent, the wrapper should
 write a redacted `BLOCKED` report. It must not fall back to synthetic users,
@@ -155,7 +149,8 @@ Create implementation issues in this order:
 
 1. [`[LoadTest] Add env-root discovery for home MQTT simulation`](https://github.com/hkt999rtk/rtk_cloud_workspace/issues/60)
    - Add the wrapper entry point and preflight discovery.
-   - Resolve users, bind artifact, devices, service endpoints, and mTLS files
+   - Resolve users, bindings, devices, service endpoints, and mTLS material
+     from the SQLite test-data store
      from `--env-root`.
    - Produce `BLOCKED` artifacts for missing prerequisites.
 
@@ -165,12 +160,12 @@ Create implementation issues in this order:
    - Keep credentials out of reports and logs.
 
 3. [`[LoadTest] Add home daily-use APP actor through Cloud API`](https://github.com/hkt999rtk/rtk_cloud_workspace/issues/62)
-   - Login users from the users artifact.
+   - Login users from the SQLite test-data store.
    - Model first-login app key generation, CSR submission, app certificate
      pinning, and app token issuance.
    - Exchange the pinned app certificate for a Video Cloud `app` token before
      app-side commands or subscriptions.
-   - Use the bind artifact to restrict each APP actor to authorized devices.
+   - Use SQLite bindings to restrict each APP actor to authorized devices.
    - Send device commands through Cloud API, not direct device credentials.
 
 4. [`[LoadTest] Add stateful light, air-conditioner, and smart-meter models`](https://github.com/hkt999rtk/rtk_cloud_workspace/issues/63)
@@ -191,8 +186,8 @@ Preflight validation:
 - Env-root resolves correctly.
 - Device manifest and `loadtest.env` exist.
 - All selected device cert/key/chain files exist and are readable.
-- Latest users artifact exists and has mode `0600`.
-- Latest bind artifact exists and passes `go run ./scripts/go/rtk-cloud -- validate-device-bind`.
+- SQLite test-data DB exists, has mode `0600`, and passes
+  `go run ./scripts/go/rtk-cloud -- validate-device-bind`.
 
 Smoke profile:
 
@@ -203,7 +198,7 @@ Smoke profile:
 
 Real-case profile:
 
-- All users and MQTT-only devices from the latest bind artifact.
+- All users and MQTT-only devices from the SQLite test-data DB.
 - 10-30 minute duration.
 - Default command mix: `read=50,light=25,air_conditioner=15,smart_meter=10`.
 

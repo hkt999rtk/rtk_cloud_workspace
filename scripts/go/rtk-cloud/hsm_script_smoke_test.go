@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestCreateUsersUsesAccountManagerBaseURLOverrideAndWritesArtifact(t *testing.T) {
+func TestCreateUsersUsesAccountManagerBaseURLOverrideAndWritesSQLite(t *testing.T) {
 	root := t.TempDir()
 	workspace := t.TempDir()
 	envRoot := filepath.Join(root, "env")
@@ -101,13 +101,21 @@ func TestCreateUsersUsesAccountManagerBaseURLOverrideAndWritesArtifact(t *testin
 	if !sawLogin || !sawBrandCloudList || !sawCreateUser || !sawCSRBootstrap {
 		t.Fatalf("expected full create user flow, login=%v list=%v create=%v csr=%v", sawLogin, sawBrandCloudList, sawCreateUser, sawCSRBootstrap)
 	}
-	matches, err := filepath.Glob(filepath.Join(envRoot, "artifacts", "users", "rtk-users-*.json"))
-	if err != nil || len(matches) != 1 {
-		t.Fatalf("expected one users artifact, matches=%v err=%v", matches, err)
+	store, err := openTestDataStore(envRoot, "RTK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	users, err := store.UserBodies("RTK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(users) != 1 || stringValue(users[0]["email"]) != "rtk+001@users.local" {
+		t.Fatalf("expected one SQLite user row, got=%+v", users)
 	}
 }
 
-func TestGenerateLoadDevicesGenerateOnlyWritesArtifacts(t *testing.T) {
+func TestGenerateLoadDevicesGenerateOnlyWritesSQLite(t *testing.T) {
 	root := t.TempDir()
 	workspace := t.TempDir()
 	outDir := filepath.Join(root, "devices")
@@ -126,13 +134,31 @@ func TestGenerateLoadDevicesGenerateOnlyWritesArtifacts(t *testing.T) {
 
 	for _, rel := range []string{
 		"summary.json",
+	} {
+		if _, err := os.Stat(filepath.Join(outDir, rel)); err != nil {
+			t.Fatalf("expected generated artifact %s: %v", rel, err)
+		}
+	}
+	for _, rel := range []string{
 		"manifests/devices.json",
 		"manifests/devices.csv",
 		"devices/camera/hsm-script-0001/device.cert.pem",
 		"devices/light/hsm-script-0002/device.cert.pem",
 	} {
-		if _, err := os.Stat(filepath.Join(outDir, rel)); err != nil {
-			t.Fatalf("expected generated artifact %s: %v", rel, err)
+		if _, err := os.Stat(filepath.Join(outDir, rel)); !os.IsNotExist(err) {
+			t.Fatalf("legacy test-data artifact %s should be cleaned after SQLite import, stat err=%v", rel, err)
 		}
+	}
+	store, err := openTestDataStore(root, "RTK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	coverage, err := store.Coverage("RTK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if coverage.Devices != 2 {
+		t.Fatalf("SQLite devices=%d, want 2", coverage.Devices)
 	}
 }

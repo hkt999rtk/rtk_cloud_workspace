@@ -106,18 +106,22 @@ app certificate bootstrap, video-side lifecycle, or mTLS prerequisites as
 
 Bulk device onboarding validation uses the workspace script sequence documented
 in `scripts/README.zh-TW.md`: create users, generate/factory-enroll devices,
-bind/provision devices, then validate the bind artifact. The validation profile
-lives under `e2e_test/provisioning/bulk_bind_validation/` and is invoked via:
+bind/provision devices, then validate the SQLite test-data DB. The validation
+profile lives under `e2e_test/provisioning/bulk_bind_validation/` and is invoked
+via:
 
 ```sh
 go run ./scripts/go/rtk-cloud -- validate-device-bind \
-  --bind-artifact cloud_env/staging/lke/artifacts/device-bind/rtk-device-bind-<timestamp>.json
+  --env-root cloud_env/staging/lke \
+  --brandname RTK
 ```
 
 This profile verifies API-level onboarding results without requiring live video
 streaming success: all expected devices have account device ids and provision
 operation ids, every user has the expected number of devices, and mqtt-only
-devices do not carry video service options.
+devices do not carry video service options. The source of truth is
+`<env-root>/artifacts/test-data/<brand>-test-data.sqlite`; validation JSON/MD
+outputs remain run evidence under the selected output directory.
 
 Admin BFF live checks are currently implemented in `rtk_cloud_admin`, but the
 workspace index for that product-facing flow lives at `e2e_test/admin_bff/`.

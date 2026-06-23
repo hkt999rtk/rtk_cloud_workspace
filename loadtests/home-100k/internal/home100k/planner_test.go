@@ -341,6 +341,47 @@ func TestPlanHonorsExplicitVMCountWithinGeneratorCapacity(t *testing.T) {
 	}
 }
 
+func TestPlanUsesConfiguredLoadGeneratorDevicesPerVM(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:                   "cloud_env/staging/lke",
+		Brandname:                 "RTK",
+		Region:                    "us-sea",
+		DeviceCount:               100000,
+		LoadGeneratorDevicesPerVM: 16667,
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+
+	if plan.Conditions.VMCount != 6 {
+		t.Fatalf("VM count = %d, want ceil(100000/16667)=6", plan.Conditions.VMCount)
+	}
+	if plan.Conditions.LoadGeneratorDevicesPerVM != 16667 {
+		t.Fatalf("load-generator devices per VM = %d, want 16667", plan.Conditions.LoadGeneratorDevicesPerVM)
+	}
+	if len(plan.Assignments) != 6 {
+		t.Fatalf("assignments = %d, want 6", len(plan.Assignments))
+	}
+	last := plan.Assignments[5]
+	if last.Role != "mixed" || last.Index != 5 || last.Label != "lg06" {
+		t.Fatalf("last assignment = %#v, want mixed index=5 label=lg06", last)
+	}
+	deviceShards := plan.ShardsByRole("device-mqtt")
+	if len(deviceShards) != 6 {
+		t.Fatalf("device shards = %d, want 6", len(deviceShards))
+	}
+	if shard := deviceShards[5]; shard.Start != 83334 || shard.End != 100000 || shard.Count != 16666 {
+		t.Fatalf("last device shard = %#v, want [83334,100000) count=16666", shard)
+	}
+	userShards := plan.ShardsByRole("user-app")
+	if len(userShards) != 6 {
+		t.Fatalf("user shards = %d, want 6", len(userShards))
+	}
+	if shard := userShards[5]; shard.Start != 4167 || shard.End != 5000 || shard.Count != 833 {
+		t.Fatalf("last user shard = %#v, want [4167,5000) count=833", shard)
+	}
+}
+
 func TestPlanRejectsExplicitVMCountBelowGeneratorCapacity(t *testing.T) {
 	_, err := NewPlan(PlanOptions{
 		EnvRoot:     "cloud_env/staging/lke",
