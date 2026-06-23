@@ -1185,6 +1185,53 @@ async function slideAwsCostCalculationScenarios(p, payload) {
   return slide;
 }
 
+async function slideAwsCostSourceUrls(p, payload) {
+  const slide = p.slides.add();
+  await addBackground(slide, payload);
+  await addHeader(slide, payload, "AWS Cost Source URLs", "PRICING REFERENCES USED FOR COST ESTIMATE");
+
+  addText(slide, "Official AWS pricing pages and Bulk Price List regional CSVs used to cross-check the 100K-device AWS estimate. Treat these as public pricing references, not a committed quote.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.2, color: C.navy, bold: true, align: "center", fill: C.pale });
+
+  const sourceRows = [
+    ["AWS Bulk Price List API", "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/index.json", "Regional CSV source for EC2, RDS, S3, IoT, CloudWatch, ELB, VPC, ECR, Lambda, and other unit prices."],
+    ["Amazon EC2", "https://aws.amazon.com/ec2/pricing/on-demand/", "Worker node and residual VM runtime reference."],
+    ["Amazon EKS", "https://aws.amazon.com/eks/pricing/", "K8s control-plane and EKS runtime pricing reference."],
+    ["Amazon EBS", "https://aws.amazon.com/ebs/pricing/", "Persistent volume / database PVC storage reference."],
+    ["Elastic Load Balancing", "https://aws.amazon.com/elasticloadbalancing/pricing/", "ALB/NLB ingress and capacity-unit assumptions."],
+    ["Amazon VPC", "https://aws.amazon.com/vpc/pricing/", "NAT Gateway, data processing, and VPC endpoint allowance."],
+    ["Amazon ECR", "https://aws.amazon.com/ecr/pricing/", "Container image storage allowance."],
+    ["Amazon S3", "https://aws.amazon.com/s3/pricing/", "Firmware, release artifact, backup, and non-camera object storage."],
+    ["AWS Lambda", "https://aws.amazon.com/lambda/pricing/", "AWS-native API/worker request and GB-second sensitivity."],
+    ["Amazon API Gateway", "https://aws.amazon.com/api-gateway/pricing/", "HTTP API front-door request pricing."],
+    ["Amazon RDS", "https://aws.amazon.com/rds/postgresql/pricing/", "Managed PostgreSQL alternative and robust-profile comparison."],
+    ["AWS IoT Core", "https://aws.amazon.com/iot-core/pricing/", "Managed MQTT, messaging, shadow, rules, and connection comparison."],
+    ["AWS IoT Device Mgmt", "https://aws.amazon.com/iot-device-management/pricing/", "100K-device fleet indexing and managed integration cost."],
+    ["Amazon CloudWatch", "https://aws.amazon.com/cloudwatch/pricing/", "Logs, metrics, alarms, and managed logging comparison."],
+    ["Amazon Managed Prometheus", "https://aws.amazon.com/prometheus/pricing/", "Managed metrics ingestion, collector, storage, and query pricing."],
+    ["AWS Support", "https://aws.amazon.com/premiumsupport/pricing/", "Business Support+ and Enterprise Support adders."],
+  ];
+
+  addText(slide, "Source", { x: 62, y: 220, w: 210, h: 18 }, { size: 10, color: C.navy, bold: true, face: FONT_EN });
+  addText(slide, "URL / estimate usage", { x: 284, y: 220, w: 330, h: 18 }, { size: 10, color: C.navy, bold: true, face: FONT_EN });
+  addText(slide, "Source", { x: 666, y: 220, w: 210, h: 18 }, { size: 10, color: C.navy, bold: true, face: FONT_EN });
+  addText(slide, "URL / estimate usage", { x: 888, y: 220, w: 330, h: 18 }, { size: 10, color: C.navy, bold: true, face: FONT_EN });
+
+  sourceRows.forEach((row, i) => {
+    const col = i < 8 ? 0 : 1;
+    const localIndex = i % 8;
+    const x = col === 0 ? 50 : 654;
+    const y = 246 + localIndex * 47;
+    addShape(slide, { x, y, w: 570, h: 40, fill: localIndex % 2 ? C.white : C.pale, line: C.line });
+    addText(slide, row[0], { x: x + 10, y: y + 7, w: 198, h: 14 }, { size: 7.8, color: C.navy, bold: true, face: FONT_EN });
+    addText(slide, row[1], { x: x + 220, y: y + 5, w: 332, h: 11 }, { size: 5.8, color: C.blue, face: FONT_EN });
+    addText(slide, row[2], { x: x + 220, y: y + 19, w: 332, h: 14 }, { size: 6.3, color: C.black });
+  });
+
+  addShape(slide, { x: 70, y: 635, w: 1130, h: 30, fill: C.paleAmber, line: "#E3C25A" });
+  addText(slide, "Tracked source file: docs/cost/aws-pricing-sources.md. Prices exclude tax, enterprise discounts, Savings Plans, Reserved Instances, Marketplace private offers, and future measured workload tuning.", { x: 92, y: 643, w: 1090, h: 12 }, { size: 8.4, color: C.navy, bold: true, align: "center", face: FONT_EN });
+  return slide;
+}
+
 async function slide16(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
@@ -1314,7 +1361,7 @@ async function slide21(p, payload) {
 const SLIDES = [
   slide01, slideMajorTopics, slide07, slideWhyCloud, slideCustomerUseCaseFit, slide03, slideCloudTypes, slideOperationalTransition, slide02, slide04, slideReleaseGateDefinition, slide05, slide06, slide08,
   slidePortalTransition, slidePortalIntro, slide09, slideTechnicalTransition, slide10, slide11, slideStrideOverview, slide12, slideHsmSignerDesign, slide13,
-  slideEvidenceTransition, slide14, slideCostView, slideLinodeScaleEstimate, slideAwsUnitCost, slideAwsCostCalculationBase, slideAwsCostFormulaBreakdown, slideAwsCostCalculationScenarios, slide16, slide17, slide18, slide19, slidePostAlphaCoverage, slide20, slide21,
+  slideEvidenceTransition, slide14, slideCostView, slideLinodeScaleEstimate, slideAwsUnitCost, slideAwsCostCalculationBase, slideAwsCostFormulaBreakdown, slideAwsCostCalculationScenarios, slideAwsCostSourceUrls, slide16, slide17, slide18, slide19, slidePostAlphaCoverage, slide20, slide21,
 ];
 
 async function makeContactSheet(previewPaths, outputPath) {
