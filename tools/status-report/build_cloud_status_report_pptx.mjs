@@ -126,6 +126,11 @@ function addText(slide, text, frame, style = {}) {
   return shape;
 }
 
+function deviceUnitCostOnly(value, fallback = "0.03 USD/device-month") {
+  const match = String(value || "").match(/(\d+(?:\.\d+)?\s+USD\/device-month)/g);
+  return match?.at(-1) || fallback;
+}
+
 async function addImage(slide, imagePath, frame, fit = "contain") {
   const blob = await fs.readFile(imagePath);
   const image = slide.images.add({
@@ -923,6 +928,7 @@ async function slideLinodeScaleEstimate(p, payload) {
   const estimate = payload.linodeScaleEstimate || {};
   const scenarios = estimate.scenarios || {};
   const perUnit = estimate.perUnit || {};
+  const selfManagedPerDevice = deviceUnitCostOnly(perUnit.selfManagedPerDevice);
   const config = estimate.configuration || [];
 
   addText(slide, "AWS K8s billing is node-based in this EC2 worker profile: pods show workload placement, while cost comes from EKS control plane, EC2 worker nodes, EBS, LB, NAT/VPC, ECR, and S3.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.1, color: C.navy, bold: true, align: "center", fill: C.pale });
@@ -931,7 +937,7 @@ async function slideLinodeScaleEstimate(p, payload) {
     ["Sizing", "5,000 users / 100,000 devices"],
     ["Worker nodes", "14 EC2 nodes + EKS control plane"],
     ["Monthly infra estimate", scenarios.selfManaged || "2,733.00 USD"],
-    ["Default unit view", perUnit.selfManagedUserWithTwentyDevices || perUnit.selfManagedUserWithTenDevices || perUnit.selfManagedUserWithFourDevices || "0.55 USD/month"],
+    ["Cost / device", selfManagedPerDevice],
   ];
   summary.forEach((item, i) => {
     const x = 70 + i * 292;
@@ -950,9 +956,11 @@ async function slideLinodeScaleEstimate(p, payload) {
   addText(slide, "100K self-operated AWS K8s configuration", { x: 58, y: 310, w: 720, h: 22 }, { size: 15, color: C.navy, bold: true, face: FONT_EN });
   addTable(slide, ["Role", "Count", "Plan", "USD / mo", "Why needed"], configRows, { x: 50, y: 342, w: 780, h: 260 }, [1.35, 0.55, 1.2, 0.55, 2.57], { rowH: 22, headerH: 24, fontSize: 6.35 });
 
-  addShape(slide, { x: 860, y: 320, w: 360, h: 118, fill: C.paleTeal, line: C.line });
-  addText(slide, "Per-unit view", { x: 884, y: 340, w: 312, h: 20 }, { size: 16, color: C.navy, bold: true, align: "center", face: FONT_EN });
-  addText(slide, `${perUnit.selfManagedPerUser || "0.86 USD/user-month"}\n${perUnit.selfManagedPerDevice || "0.04 USD/device-month"}\n${perUnit.selfManagedUserWithTwentyDevices || perUnit.selfManagedUserWithTenDevices || perUnit.selfManagedUserWithFourDevices || "0.86 USD/month"} for 1 user + 20 devices`, { x: 892, y: 370, w: 296, h: 48 }, { size: 12, color: C.black, bold: true, align: "center", face: FONT_EN });
+  addShape(slide, { x: 860, y: 320, w: 360, h: 118, fill: "#FFF1F1", line: C.red });
+  addText(slide, "K8S cost / device", { x: 884, y: 338, w: 312, h: 16 }, { size: 12.5, color: C.red, bold: true, align: "center", face: FONT_EN });
+  addText(slide, selfManagedPerDevice, { x: 884, y: 362, w: 312, h: 34 }, { size: 24, color: "#B00020", bold: true, align: "center", face: FONT_EN });
+  addText(slide, `${scenarios.selfManaged || "2,733.00 USD"} / 100,000 devices`, { x: 892, y: 404, w: 296, h: 12 }, { size: 8.4, color: C.red, bold: true, align: "center", face: FONT_EN });
+  addText(slide, `${perUnit.selfManagedPerUser || "0.55 USD/user-month"}; ${perUnit.selfManagedUserWithTwentyDevices || "0.55 USD/month"} for 1 user + 20 devices`, { x: 892, y: 421, w: 296, h: 10 }, { size: 7.2, color: C.black, bold: true, align: "center", face: FONT_EN });
 
   addShape(slide, { x: 860, y: 466, w: 360, h: 118, fill: C.paleAmber, line: "#E3C25A" });
   addText(slide, "Interpretation", { x: 884, y: 486, w: 312, h: 20 }, { size: 16, color: C.navy, bold: true, align: "center", face: FONT_EN });
