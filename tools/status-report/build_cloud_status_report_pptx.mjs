@@ -1352,8 +1352,7 @@ async function slide21(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload, "cover");
   await addImage(slide, payload.masterAssets.logo, { x: 456, y: 130, w: 360, h: 74 }, "contain");
-  addText(slide, "Review Gate", { x: 390, y: 270, w: 500, h: 54 }, { size: 40, color: C.navy, bold: true, align: "center", face: FONT_EN });
-  addText(slide, "Schedule 清楚｜重要數字用 chart｜不放 secrets｜不過度宣稱 production-ready｜Evidence 可追溯", { x: 180, y: 350, w: 920, h: 42 }, { size: 18, color: C.black, bold: true, align: "center" });
+  addText(slide, "THANK YOU", { x: 260, y: 295, w: 760, h: 64 }, { size: 52, color: C.navy, bold: true, align: "center", face: FONT_EN });
   addText(slide, "www.realtek.com", { x: 500, y: 610, w: 280, h: 26 }, { size: 16, color: C.blue, bold: true, align: "center", face: FONT_EN });
   return slide;
 }
