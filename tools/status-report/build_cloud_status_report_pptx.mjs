@@ -986,7 +986,7 @@ async function slideAwsUnitCost(p, payload) {
     ["End users", basis.endUsers || "5,000"],
     ["Registered devices", basis.registeredDevices || "100,000"],
     ["Devices / user", basis.devicesPerUser || "20"],
-    ["Allocation", `${basis.weightedUserPool || "10%"} user / ${basis.weightedDevicePool || "90%"} device`],
+    ["Allocation", `${basis.weightedUserPool || "5%"} user / ${basis.weightedDevicePool || "95%"} device`],
   ];
   basisItems.forEach((item, i) => {
     const x = 82 + i * 300;
@@ -1018,7 +1018,7 @@ async function slideAwsUnitCost(p, payload) {
     row.perDeviceMonth,
     row.effectiveUserWithTwentyDevices || row.effectiveUserWithTenDevices || row.effectiveUserWithFourDevices,
   ]);
-  addText(slide, "Weighted unit cost: 10% user pool / 90% device pool", { x: 70, y: 542, w: 650, h: 22 }, { size: 15, color: C.navy, bold: true, face: FONT_EN });
+  addText(slide, "Weighted unit cost: 5% user pool / 95% device pool", { x: 70, y: 542, w: 650, h: 22 }, { size: 15, color: C.navy, bold: true, face: FONT_EN });
   addTable(slide, ["Scenario", "Per user / month", "Per device / month", "1 user + 20 devices"], weightedRows, { x: 70, y: 574, w: 700, h: 92 }, [1.7, 1.0, 1.0, 1.0], { rowH: 20, headerH: 22, fontSize: 7.3 });
 
   addShape(slide, { x: 810, y: 544, w: 380, h: 112, fill: C.paleTeal, line: C.line });
@@ -1187,7 +1187,7 @@ async function slideAwsCostCalculationScenarios(p, payload) {
   addShape(slide, { x: 760, y: 606, w: 450, h: 28, fill: "#FFF1F1", line: C.red });
   addText(slide, `100K devices: ${defaultDeviceCost}`, { x: 780, y: 614, w: 410, h: 11 }, { size: 10.5, color: "#B00020", bold: true, align: "center", face: FONT_EN });
   addShape(slide, { x: 760, y: 641, w: 450, h: 30, fill: C.paleTeal, line: C.line });
-  addText(slide, "Weighted allocation view: 10% user-driven account/app/admin costs; 90% device-driven MQTT, shadow, logs, firmware, certificate, storage, and device API workload.", { x: 780, y: 648, w: 410, h: 15 }, { size: 7.4, color: C.navy, bold: true, align: "center" });
+  addText(slide, "Weighted allocation view: 5% user-driven account/app/admin costs; 95% device-driven MQTT, shadow, logs, firmware, certificate, storage, and device API workload.", { x: 780, y: 648, w: 410, h: 15 }, { size: 7.4, color: C.navy, bold: true, align: "center" });
   return slide;
 }
 

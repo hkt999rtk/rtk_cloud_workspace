@@ -282,21 +282,21 @@ Weighted allocation model:
 Default allocation uses a device-dominant split because most RTK Cloud cost
 drivers scale with device fleet size: MQTT connection minutes, messages, shadow
 operations, device logs, firmware delivery, storage, certificates, and device
-API traffic. A 10% user pool is kept for account/app/admin/audit/session costs.
+API traffic. A 5% user pool is kept for account/app/admin/audit/session costs.
 
 | Allocation item | Weight | Rationale |
 | --- | ---: | --- |
-| User pool | 10% | Account, auth/session, app/API, admin, audit, reporting, and user-driven support surfaces. |
-| Device pool | 90% | MQTT, shadow, telemetry/logs, certificates, firmware, storage, and device API workload. |
-| Device-heavy sensitivity case | 5% user / 95% device | Use only when modeling a fleet-first deployment with minimal user/app activity. |
+| User pool | 5% | Account, auth/session, app/API, admin, audit, reporting, and user-driven support surfaces. |
+| Device pool | 95% | MQTT, shadow, telemetry/logs, certificates, firmware, storage, and device API workload. |
+| Less device-heavy reference case | 10% user / 90% device | Use only when modeling heavier user/app/admin activity. |
 
 | Scenario | User pool | Device pool | Per user | Per device | Effective 1 user + 20 devices |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Base services only, excluding CloudHSM | 457.47 | 4,117.19 | 0.09 USD/user-month | 0.04 USD/device-month | 0.91 USD/month |
-| Default estimate with one CloudHSM | 691.07 | 6,219.59 | 0.14 USD/user-month | 0.06 USD/device-month | 1.38 USD/month |
-| Default estimate with one CloudHSM plus Business Support+ | 753.26 | 6,779.36 | 0.15 USD/user-month | 0.07 USD/device-month | 1.51 USD/month |
-| Robust redundant design with two CloudHSMs | 1,005.47 | 9,049.24 | 0.20 USD/user-month | 0.09 USD/device-month | 2.01 USD/month |
-| Robust redundant design with two CloudHSMs plus Business Support+ | 1,095.85 | 9,862.69 | 0.22 USD/user-month | 0.10 USD/device-month | 2.19 USD/month |
+| Base services only, excluding CloudHSM | 228.73 | 4,345.93 | 0.05 USD/user-month | 0.04 USD/device-month | 0.91 USD/month |
+| Default estimate with one CloudHSM | 345.53 | 6,565.13 | 0.07 USD/user-month | 0.07 USD/device-month | 1.38 USD/month |
+| Default estimate with one CloudHSM plus Business Support+ | 376.63 | 7,155.99 | 0.08 USD/user-month | 0.07 USD/device-month | 1.51 USD/month |
+| Robust redundant design with two CloudHSMs | 502.74 | 9,551.97 | 0.10 USD/user-month | 0.10 USD/device-month | 2.01 USD/month |
+| Robust redundant design with two CloudHSMs plus Business Support+ | 547.93 | 10,410.61 | 0.11 USD/user-month | 0.10 USD/device-month | 2.19 USD/month |
 
 Cognito sensitivity:
 
