@@ -226,7 +226,7 @@ async function slide01(p, payload) {
 async function slideMajorTopics(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
-  await addHeader(slide, payload, "本次簡報聚焦五個決策面向", "MAJOR TOPICS");
+  await addHeader(slide, payload, "五個面向", "MAJOR TOPICS");
   const topics = [
     ["1", "Why this cloud exists", "先說 Realtek platform cloud, brand cloud, device / user 的關係，以及它怎麼支援 module selling。"],
     ["2", "Schedule and release path", "5/1 到 8/1 loading test，再到 Alpha, Beta, Public；每個 gate 要看什麼，現在卡在哪裡。"],
