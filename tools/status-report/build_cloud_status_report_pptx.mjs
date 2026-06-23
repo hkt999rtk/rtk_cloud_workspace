@@ -37,6 +37,16 @@ const C = {
   red: "#C2410C",
 };
 
+const AWS_TOP_COST_ITEMS = [
+  "CloudHSM",
+  "AWS IoT Core",
+  "IoT Device Management",
+  "Business Support",
+  "RDS",
+  "RDS PostgreSQL",
+];
+const TOP_COST_CELL_STYLE = { color: "#B00020", bold: true };
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: ROOT,
@@ -150,15 +160,6 @@ function addPill(slide, text, x, y, w, color = C.blue) {
   addText(slide, text, { x: x + 6, y: y + 3, w: w - 12, h: 20 }, { size: 11, color, bold: true, align: "center" });
 }
 
-function addAwsTopFiveCostDrivers(slide, frame) {
-  addText(
-    slide,
-    "Top 5 cost drivers: CloudHSM 2,336.00 | AWS IoT Core 1,649.52 | IoT Device Management 1,135.00 | Business Support+ 621.96 | RDS PostgreSQL 557.02",
-    frame,
-    { size: 9.2, color: "#B00020", bold: true, align: "center", face: FONT_EN },
-  );
-}
-
 function addTable(slide, headers, rows, frame, widths, options = {}) {
   const rowH = options.rowH || 34;
   const headerH = options.headerH || 34;
@@ -178,7 +179,14 @@ function addTable(slide, headers, rows, frame, widths, options = {}) {
     row.forEach((cell, i) => {
       const w = (widths[i] / totalW) * frame.w;
       addShape(slide, { x, y, w, h: rowH, fill: r % 2 ? C.white : C.pale, line: C.line });
-      addText(slide, String(cell), { x: x + 5, y: y + 5, w: w - 10, h: rowH - 8 }, { size: fontSize, color: i === 0 ? C.navy : C.black, bold: i === 0, align: i === 0 ? "center" : "left" });
+      const cellStyle = options.cellStyle?.(cell, i, row, r) || {};
+      addText(slide, String(cell), { x: x + 5, y: y + 5, w: w - 10, h: rowH - 8 }, {
+        size: fontSize,
+        color: i === 0 ? C.navy : C.black,
+        bold: i === 0,
+        align: i === 0 ? "center" : "left",
+        ...cellStyle,
+      });
       x += w;
     });
     y += rowH;
@@ -1035,7 +1043,6 @@ async function slideAwsCostCalculationBase(p, payload) {
     addText(slide, item[0], { x: x + 8, y: 217, w: 234, h: 14 }, { size: 8.5, color: C.muted, bold: true, align: "center", face: FONT_EN });
     addText(slide, item[1], { x: x + 8, y: 238, w: 234, h: 16 }, { size: 12, color: C.navy, bold: true, align: "center", face: FONT_EN });
   });
-  addAwsTopFiveCostDrivers(slide, { x: 76, y: 264, w: 1128, h: 16 });
 
   const baseRows = [
     ["Lambda app APIs/workers", findLine("AWS Lambda application APIs/workers").monthlyEstimate || "106.00", "30M account/device/admin/API invocations at 1 GB and 200 ms average duration."],
@@ -1055,7 +1062,12 @@ async function slideAwsCostCalculationBase(p, payload) {
     ["KMS", findLine("KMS").monthlyEstimate || "8.00", "5 customer-managed keys * 1.00 + 1,000,000 requests * 0.000003."],
     ["Base subtotal", findLine("Base subtotal before HSM/Private CA").monthlyEstimate || "4,574.66", "Sum of base services; excludes CloudHSM, ACM Private CA, support plan, tax, discounts."],
   ];
-  addTable(slide, ["Base service item", "USD / month", "Calculation / assumption"], baseRows, { x: 50, y: 285, w: 745, h: 310 }, [1.42, 0.7, 3.15], { rowH: 17, headerH: 23, fontSize: 5.9 });
+  addTable(slide, ["Base service item", "USD / month", "Calculation / assumption"], baseRows, { x: 50, y: 285, w: 745, h: 310 }, [1.42, 0.7, 3.15], {
+    rowH: 17,
+    headerH: 23,
+    fontSize: 5.9,
+    cellStyle: (_cell, col, row) => col === 1 && AWS_TOP_COST_ITEMS.some((name) => row[0].includes(name)) ? TOP_COST_CELL_STYLE : {},
+  });
 
   const frontendRows = (details.frontendCalculation || []).slice(0, 5).map((row) => [
     row.item.replace("CloudFront ", "CF "),
@@ -1087,7 +1099,6 @@ async function slideAwsCostFormulaBreakdown(p, payload) {
   const details = aws.calculationDetails || {};
 
   addText(slide, "This page expands each major estimate into quantity * public unit price. AI-assisted operations are listed as an operations assumption, not an AWS infrastructure charge.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.5, color: C.navy, bold: true, align: "center", fill: C.pale });
-  addAwsTopFiveCostDrivers(slide, { x: 76, y: 196, w: 1128, h: 16 });
 
   const formulaRows = (details.formulaBreakdown || []).map((row) => [
     row.item,
@@ -1096,7 +1107,12 @@ async function slideAwsCostFormulaBreakdown(p, payload) {
     row.formula,
     row.estimate,
   ]);
-  addTable(slide, ["Item", "Quantity", "Public unit price", "Formula", "USD / month"], formulaRows, { x: 42, y: 220, w: 1195, h: 365 }, [1.25, 1.45, 1.55, 2.15, 0.75], { rowH: 20, headerH: 24, fontSize: 5.8 });
+  addTable(slide, ["Item", "Quantity", "Public unit price", "Formula", "USD / month"], formulaRows, { x: 42, y: 220, w: 1195, h: 365 }, [1.25, 1.45, 1.55, 2.15, 0.75], {
+    rowH: 20,
+    headerH: 24,
+    fontSize: 5.8,
+    cellStyle: (_cell, col, row) => col === 4 && AWS_TOP_COST_ITEMS.some((name) => row[0].includes(name)) ? TOP_COST_CELL_STYLE : {},
+  });
 
   addShape(slide, { x: 66, y: 604, w: 540, h: 58, fill: C.paleAmber, line: "#E3C25A" });
   addText(slide, "RDS example", { x: 86, y: 613, w: 150, h: 16 }, { size: 12, color: C.navy, bold: true, face: FONT_EN });
@@ -1117,7 +1133,6 @@ async function slideAwsCostCalculationScenarios(p, payload) {
   const details = aws.calculationDetails || {};
 
   addText(slide, "This page explains how the scenario totals are derived from the base subtotal: CloudHSM is a security custody add-on, robust design adds only duplicated infrastructure, and unit cost divides one shared monthly pool.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.5, color: C.navy, bold: true, align: "center", fill: C.pale });
-  addAwsTopFiveCostDrivers(slide, { x: 76, y: 196, w: 1128, h: 16 });
 
   const scenarioRows = (details.scenarioEquations || []).map((row) => [
     row.scenario,
@@ -1134,7 +1149,12 @@ async function slideAwsCostCalculationScenarios(p, payload) {
     row.delta,
   ]);
   addText(slide, "Robust delta is selective, not a blanket 2x", { x: 760, y: 218, w: 440, h: 20 }, { size: 14, color: C.navy, bold: true, face: FONT_EN });
-  addTable(slide, ["Area", "Base", "Robust", "Delta"], robustRows.slice(0, 7), { x: 760, y: 248, w: 450, h: 178 }, [1.35, 0.7, 0.7, 0.7], { rowH: 20, headerH: 22, fontSize: 6.9 });
+  addTable(slide, ["Area", "Base", "Robust", "Delta"], robustRows.slice(0, 7), { x: 760, y: 248, w: 450, h: 178 }, [1.35, 0.7, 0.7, 0.7], {
+    rowH: 20,
+    headerH: 22,
+    fontSize: 6.9,
+    cellStyle: (_cell, col, row) => col > 0 && AWS_TOP_COST_ITEMS.some((name) => row[0].includes(name)) ? TOP_COST_CELL_STYLE : {},
+  });
 
   const supportRows = (details.supportCalculation || []).filter((row) => row.scenario.includes("Default estimate") || row.scenario.includes("Robust redundant design with two CloudHSMs")).map((row) => [
     row.scenario.replace("Default estimate with one CloudHSM", "Default + 1 HSM").replace("Robust redundant design with two CloudHSMs", "Robust + 2 HSMs"),
@@ -1142,7 +1162,12 @@ async function slideAwsCostCalculationScenarios(p, payload) {
     row.monthlySupportEstimate,
   ]);
   addText(slide, "Support plan is optional in this deck view", { x: 58, y: 414, w: 620, h: 20 }, { size: 14, color: C.navy, bold: true, face: FONT_EN });
-  addTable(slide, ["Scenario", "Business Support+ formula", "Support USD"], supportRows, { x: 58, y: 444, w: 670, h: 70 }, [1.45, 2.45, 0.75], { rowH: 22, headerH: 22, fontSize: 7.0 });
+  addTable(slide, ["Scenario", "Business Support+ formula", "Support USD"], supportRows, { x: 58, y: 444, w: 670, h: 70 }, [1.45, 2.45, 0.75], {
+    rowH: 22,
+    headerH: 22,
+    fontSize: 7.0,
+    cellStyle: (_cell, col) => col === 2 ? TOP_COST_CELL_STYLE : {},
+  });
   addText(slide, "Main status slide excludes support, tax, discounts, Savings Plans, Reserved Instances, Marketplace, and camera/WebRTC/TURN. Support can be added as a separate adder when budget owner requests AWS support coverage.", { x: 82, y: 527, w: 620, h: 42 }, { size: 9.5, color: C.black, align: "center", fill: C.paleBlue });
 
   const unitRows = (aws.unitCosts?.rawDivision || []).map((row) => [
