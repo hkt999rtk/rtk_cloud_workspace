@@ -972,6 +972,13 @@ async function slideAwsUnitCost(p, payload) {
     addText(slide, item[1], { x: x + 8, y: 248, w: 229, h: 22 }, { size: i === 3 ? 13 : 16, color: C.navy, bold: true, align: "center", face: FONT_EN });
   });
 
+  const defaultDeviceCost = aws.perUnit?.defaultWithCloudHsmSupportPerDevice || "0.08 USD/device-month";
+  const defaultDeviceCostNoSupport = aws.perUnit?.defaultWithCloudHsmPerDevice || "0.07 USD/device-month";
+  addShape(slide, { x: 150, y: 294, w: 980, h: 62, fill: "#FFF1F1", line: C.red });
+  addText(slide, "100K devices AWS cost allocation", { x: 170, y: 301, w: 940, h: 15 }, { size: 10.5, color: C.red, bold: true, align: "center", face: FONT_EN });
+  addText(slide, `${defaultDeviceCost}  (Default + 1 CloudHSM + Business Support+)`, { x: 170, y: 319, w: 940, h: 24 }, { size: 20, color: "#B00020", bold: true, align: "center", face: FONT_EN });
+  addText(slide, `Reference without support: ${defaultDeviceCostNoSupport}`, { x: 170, y: 342, w: 940, h: 10 }, { size: 7.8, color: C.red, bold: true, align: "center", face: FONT_EN });
+
   const rawRows = (unitCosts.rawDivision || []).map((row) => [
     row.scenario,
     row.monthlyTotal,
@@ -979,8 +986,8 @@ async function slideAwsUnitCost(p, payload) {
     row.perDeviceMonth,
     row.notes,
   ]);
-  addText(slide, "Raw unit cost: total monthly AWS estimate divided by fleet size", { x: 70, y: 315, w: 1120, h: 22 }, { size: 16, color: C.navy, bold: true, face: FONT_EN });
-  addTable(slide, ["Scenario", "Monthly total", "Per user / month", "Per device / month", "Notes"], rawRows, { x: 70, y: 350, w: 1140, h: 150 }, [1.45, 0.85, 0.95, 0.95, 1.45], { rowH: 26, headerH: 26, fontSize: 8.5 });
+  addText(slide, "Raw unit cost: total monthly AWS estimate divided by fleet size", { x: 70, y: 372, w: 1120, h: 22 }, { size: 15, color: C.navy, bold: true, face: FONT_EN });
+  addTable(slide, ["Scenario", "Monthly total", "Per user / month", "Per device / month", "Notes"], rawRows, { x: 70, y: 402, w: 1140, h: 120 }, [1.45, 0.85, 0.95, 0.95, 1.45], { rowH: 21, headerH: 23, fontSize: 7.4 });
 
   const weightedRows = (unitCosts.weightedAllocation || []).map((row) => [
     row.scenario.replace("Default estimate with one CloudHSM", "Default + 1 CloudHSM").replace("Robust redundant design with two CloudHSMs", "Robust + 2 CloudHSMs").replace("Base services only, excluding CloudHSM", "Base services only"),
@@ -988,12 +995,12 @@ async function slideAwsUnitCost(p, payload) {
     row.perDeviceMonth,
     row.effectiveUserWithTenDevices || row.effectiveUserWithFourDevices,
   ]);
-  addText(slide, "Weighted unit cost: 10% user pool / 90% device pool", { x: 70, y: 530, w: 650, h: 22 }, { size: 16, color: C.navy, bold: true, face: FONT_EN });
-  addTable(slide, ["Scenario", "Per user / month", "Per device / month", "1 user + 10 devices"], weightedRows, { x: 70, y: 565, w: 700, h: 104 }, [1.7, 1.0, 1.0, 1.0], { rowH: 24, headerH: 24, fontSize: 8.2 });
+  addText(slide, "Weighted unit cost: 10% user pool / 90% device pool", { x: 70, y: 542, w: 650, h: 22 }, { size: 15, color: C.navy, bold: true, face: FONT_EN });
+  addTable(slide, ["Scenario", "Per user / month", "Per device / month", "1 user + 10 devices"], weightedRows, { x: 70, y: 574, w: 700, h: 92 }, [1.7, 1.0, 1.0, 1.0], { rowH: 20, headerH: 22, fontSize: 7.3 });
 
-  addShape(slide, { x: 810, y: 536, w: 380, h: 118, fill: C.paleTeal, line: C.line });
-  addText(slide, "How to present it", { x: 832, y: 555, w: 336, h: 24 }, { size: 17, color: C.navy, bold: true, align: "center", face: FONT_EN });
-  addText(slide, "For budget approval, use the monthly total. For customer / business-model discussion, use the weighted device-heavy unit view. Do not add per-user and per-device raw rows together.", { x: 832, y: 590, w: 336, h: 46 }, { size: 10.5, color: C.black, align: "center" });
+  addShape(slide, { x: 810, y: 544, w: 380, h: 112, fill: C.paleTeal, line: C.line });
+  addText(slide, "How to present it", { x: 832, y: 562, w: 336, h: 20 }, { size: 15, color: C.navy, bold: true, align: "center", face: FONT_EN });
+  addText(slide, "For budget approval, use the red raw division number. For business-model discussion, use the weighted device-heavy unit view. Do not add per-user and per-device raw rows together.", { x: 832, y: 591, w: 336, h: 44 }, { size: 9.6, color: C.black, align: "center" });
   return slide;
 }
 
@@ -1133,8 +1140,11 @@ async function slideAwsCostCalculationScenarios(p, payload) {
   ]);
   addText(slide, "Unit cost formulas", { x: 760, y: 454, w: 420, h: 20 }, { size: 14, color: C.navy, bold: true, face: FONT_EN });
   addTable(slide, ["Scenario", "Per user", "Per device"], unitRows, { x: 760, y: 484, w: 450, h: 112 }, [1.45, 1.25, 1.25], { rowH: 20, headerH: 22, fontSize: 6.7 });
-  addShape(slide, { x: 760, y: 615, w: 450, h: 48, fill: C.paleTeal, line: C.line });
-  addText(slide, "Weighted allocation view: split the same monthly pool 10% to user-driven account/app/admin costs and 90% to device-driven MQTT, shadow, logs, firmware, certificate, storage, and device API workload.", { x: 780, y: 624, w: 410, h: 28 }, { size: 8.8, color: C.navy, bold: true, align: "center" });
+  const defaultDeviceCost = aws.perUnit?.defaultWithCloudHsmSupportPerDevice || "0.08 USD/device-month";
+  addShape(slide, { x: 760, y: 606, w: 450, h: 28, fill: "#FFF1F1", line: C.red });
+  addText(slide, `100K devices: ${defaultDeviceCost}`, { x: 780, y: 614, w: 410, h: 11 }, { size: 10.5, color: "#B00020", bold: true, align: "center", face: FONT_EN });
+  addShape(slide, { x: 760, y: 641, w: 450, h: 30, fill: C.paleTeal, line: C.line });
+  addText(slide, "Weighted allocation view: 10% user-driven account/app/admin costs; 90% device-driven MQTT, shadow, logs, firmware, certificate, storage, and device API workload.", { x: 780, y: 648, w: 410, h: 15 }, { size: 7.4, color: C.navy, bold: true, align: "center" });
   return slide;
 }
 

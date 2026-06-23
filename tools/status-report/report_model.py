@@ -866,8 +866,10 @@ def collect_aws_cost_estimate() -> dict[str, object]:
         "perUnit": {
             "defaultWithCloudHsmPerUser": per_unit.get("Default with CloudHSM per user", "n/a"),
             "defaultWithCloudHsmPerDevice": per_unit.get("Default with CloudHSM per device", "n/a"),
+            "defaultWithCloudHsmSupportPerDevice": per_unit.get("Default with CloudHSM and Business Support+ per device", "n/a"),
             "robustWithCloudHsmPerUser": per_unit.get("Robust with CloudHSM per user", "n/a"),
             "robustWithCloudHsmPerDevice": per_unit.get("Robust with CloudHSM per device", "n/a"),
+            "robustWithCloudHsmSupportPerDevice": per_unit.get("Robust with CloudHSM and Business Support+ per device", "n/a"),
         },
         "unitCosts": {
             "basis": {
