@@ -494,10 +494,8 @@ async function slidePortalTransition(p, payload) {
   await addBackground(slide, payload, "cover");
   await addImage(slide, payload.masterAssets.logo, { x: 72, y: 58, w: 205, h: 42 }, "contain");
   addText(slide, "Topic 3", { x: 88, y: 190, w: 300, h: 34 }, { size: 24, color: C.teal, bold: true, face: FONT_EN });
-  addText(slide, "接下來切換到另一種 Cloud", { x: 86, y: 245, w: 720, h: 46 }, { size: 34, color: C.navy, bold: true });
-  addText(slide, "Portal Web / Digital Marketing", { x: 88, y: 315, w: 720, h: 52 }, { size: 38, color: C.blue, bold: true, face: FONT_EN });
-  addText(slide, "接下來看 public website、documentation/manual portal、SEO/content、CTA/lead capture 與 sales follow-up 這一組市場入口。", { x: 92, y: 395, w: 840, h: 78 }, { size: 18, color: C.black });
-  addText(slide, "目的：把前面 operational cloud 的產品能力，轉成外部可理解、可搜尋、可聯絡、可追蹤的銷售輔助流程。", { x: 92, y: 485, w: 860, h: 48 }, { size: 18, color: C.navy, bold: true, fill: "#FFF6D8CC" });
+  addText(slide, "Portal Web / Digital Marketing", { x: 88, y: 260, w: 720, h: 52 }, { size: 38, color: C.blue, bold: true, face: FONT_EN });
+  addText(slide, "public website、documentation/manual portal、SEO/content、CTA/lead capture 與 sales follow-up 這一組市場入口。", { x: 92, y: 350, w: 840, h: 78 }, { size: 18, color: C.black });
   return slide;
 }
 
