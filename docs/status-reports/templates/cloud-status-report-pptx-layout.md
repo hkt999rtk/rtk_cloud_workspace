@@ -96,7 +96,7 @@ appendix source index unless the report owner explicitly changes the framework.
 | 25 | Transition：Deployment、操作流程與 Evidence | Topic break before K8s runtime, operation screenshots, and SDK flow. |
 | 26 | K8s Staging Runtime Shape | Runtime topology plus component responsibility table. |
 | 27 | Initial Operation Cost View | Current K8S monthly run-rate estimate plus AWS commercial-scale difference view from `docs/cost`, focused on CloudHSM on/off and Robust Design on/off. |
-| 28 | K8S 100k Device Cost View | Self-managed K8S cluster estimate for 10,000 users and 100,000 usually-online MQTT devices, including per-unit cost and caveats. |
+| 28 | K8S 100k Device Cost View | Self-managed K8S cluster estimate for 5,000 users and 100,000 usually-online MQTT devices, including per-unit cost and caveats. |
 | 29 | AWS Unit Cost Per Month | Raw monthly total divided by users/devices plus weighted 10% user / 90% device unit-cost view. |
 | 30 | AWS Cost Calculation Detail 1/3 | Base-service line-item math from `docs/cost`: ECS, Cognito, RDS, IoT Core, NAT, CloudWatch Logs, Secrets, S3, KMS, and subtotal. |
 | 31 | AWS Cost Calculation Detail 2/3 | Explicit quantity * unit-price formulas for major items, e.g. RDS DB-hours plus storage GB-month and Cognito MAU free-tier calculation. |

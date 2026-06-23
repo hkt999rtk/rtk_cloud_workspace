@@ -152,12 +152,12 @@ recurring infrastructure baseline.
 ## Rough Estimate
 
 The calculation below uses the commercial-scale worksheet assumptions requested
-for 10,000 users and 100,000 registered devices:
+for 5,000 users and 100,000 registered devices:
 
 | Assumption | Value |
 | --- | --- |
-| End users | 10,000 |
-| Devices per user | 10 |
+| End users | 5,000 |
+| Devices per user | 20 |
 | Registered devices | 100,000 |
 | Average connected MQTT devices | 100,000 |
 | Camera-capable devices | 0 in first estimate; camera/WebRTC profile excluded |
@@ -180,7 +180,7 @@ measured device telemetry to reduce this assumption later.
 | Public frontend CloudFront CDN | 48.29 | 400 GB CloudFront egress plus 240,000 HTTPS requests/month. |
 | Public frontend Lambda | 0.25 | 240,000 requests/month at 256 MB and 200 ms average duration. |
 | Public frontend S3 static origin | 0.03 | 1 GB static asset storage and small deployment PUT allowance. |
-| Amazon Cognito User Pools | 0.00 | 10,000 MAUs with 10,000 free MAUs: 0 billable MAUs * 0.015 USD/MAU; SMS, SES, M2M token requests, and SAML/OIDC federation are not included. |
+| Amazon Cognito User Pools | 0.00 | 5,000 MAUs with 10,000 free MAUs: 0 billable MAUs * 0.015 USD/MAU; SMS, SES, M2M token requests, and SAML/OIDC federation are not included. |
 | RDS PostgreSQL | 557.02 | One shared Single-AZ `db.r7g.xlarge` DB server plus 1,000 GB account/device metadata storage; logs go to CloudWatch. Video/WebRTC/TURN media is excluded. |
 | ElastiCache for Valkey | 28.03 | One non-redundant `cache.t4g.small` node for the original Redis-compatible cache. |
 | S3 storage and PUT requests | 67.80 | Firmware binaries, backups, CI/release artifacts, and non-camera object storage scaled to the 100,000-device commercial case; camera snapshots excluded. |
@@ -266,15 +266,15 @@ monthly cost pool. Do not add them together.
 
 | Scenario | Calculation | Estimate |
 | --- | --- | ---: |
-| Base services per user | 4,574.66 USD / 10,000 users | 0.46 USD/user-month |
+| Base services per user | 4,574.66 USD / 5,000 users | 0.91 USD/user-month |
 | Base services per device | 4,574.66 USD / 100,000 devices | 0.05 USD/device-month |
-| Default with CloudHSM per user | 6,910.66 USD / 10,000 users | 0.69 USD/user-month |
+| Default with CloudHSM per user | 6,910.66 USD / 5,000 users | 1.38 USD/user-month |
 | Default with CloudHSM per device | 6,910.66 USD / 100,000 devices | 0.07 USD/device-month |
-| Default with CloudHSM and Business Support+ per user | 7,532.62 USD / 10,000 users | 0.75 USD/user-month |
+| Default with CloudHSM and Business Support+ per user | 7,532.62 USD / 5,000 users | 1.51 USD/user-month |
 | Default with CloudHSM and Business Support+ per device | 7,532.62 USD / 100,000 devices | 0.08 USD/device-month |
-| Robust with CloudHSM per user | 10,054.71 USD / 10,000 users | 1.01 USD/user-month |
+| Robust with CloudHSM per user | 10,054.71 USD / 5,000 users | 2.01 USD/user-month |
 | Robust with CloudHSM per device | 10,054.71 USD / 100,000 devices | 0.10 USD/device-month |
-| Robust with CloudHSM and Business Support+ per user | 10,958.54 USD / 10,000 users | 1.10 USD/user-month |
+| Robust with CloudHSM and Business Support+ per user | 10,958.54 USD / 5,000 users | 2.19 USD/user-month |
 | Robust with CloudHSM and Business Support+ per device | 10,958.54 USD / 100,000 devices | 0.11 USD/device-month |
 
 Weighted allocation model:
@@ -290,13 +290,13 @@ API traffic. A 10% user pool is kept for account/app/admin/audit/session costs.
 | Device pool | 90% | MQTT, shadow, telemetry/logs, certificates, firmware, storage, and device API workload. |
 | Device-heavy sensitivity case | 5% user / 95% device | Use only when modeling a fleet-first deployment with minimal user/app activity. |
 
-| Scenario | User pool | Device pool | Per user | Per device | Effective 1 user + 10 devices |
+| Scenario | User pool | Device pool | Per user | Per device | Effective 1 user + 20 devices |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Base services only, excluding CloudHSM | 457.47 | 4,117.19 | 0.05 USD/user-month | 0.04 USD/device-month | 0.46 USD/month |
-| Default estimate with one CloudHSM | 691.07 | 6,219.59 | 0.07 USD/user-month | 0.06 USD/device-month | 0.69 USD/month |
-| Default estimate with one CloudHSM plus Business Support+ | 753.26 | 6,779.36 | 0.08 USD/user-month | 0.07 USD/device-month | 0.75 USD/month |
-| Robust redundant design with two CloudHSMs | 1,005.47 | 9,049.24 | 0.10 USD/user-month | 0.09 USD/device-month | 1.01 USD/month |
-| Robust redundant design with two CloudHSMs plus Business Support+ | 1,095.85 | 9,862.69 | 0.11 USD/user-month | 0.10 USD/device-month | 1.10 USD/month |
+| Base services only, excluding CloudHSM | 457.47 | 4,117.19 | 0.09 USD/user-month | 0.04 USD/device-month | 0.91 USD/month |
+| Default estimate with one CloudHSM | 691.07 | 6,219.59 | 0.14 USD/user-month | 0.06 USD/device-month | 1.38 USD/month |
+| Default estimate with one CloudHSM plus Business Support+ | 753.26 | 6,779.36 | 0.15 USD/user-month | 0.07 USD/device-month | 1.51 USD/month |
+| Robust redundant design with two CloudHSMs | 1,005.47 | 9,049.24 | 0.20 USD/user-month | 0.09 USD/device-month | 2.01 USD/month |
+| Robust redundant design with two CloudHSMs plus Business Support+ | 1,095.85 | 9,862.69 | 0.22 USD/user-month | 0.10 USD/device-month | 2.19 USD/month |
 
 Cognito sensitivity:
 

@@ -389,7 +389,9 @@ def collect_linode_scale_estimate() -> dict[str, object]:
     metadata = parse_markdown_metadata(text)
     config_rows = table_by_header(tables, ["Role", "Count", "Plan", "Monthly unit", "Monthly subtotal", "Rationale"])
     scenario_rows = table_by_header(tables, ["Scenario", "Calculation", "Monthly estimate"])
-    per_unit_rows = table_by_header(tables, ["Scenario", "Per user", "Per device", "1 user + 10 devices"])
+    per_unit_rows = table_by_header(tables, ["Scenario", "Per user", "Per device", "1 user + 20 devices"])
+    if not per_unit_rows:
+        per_unit_rows = table_by_header(tables, ["Scenario", "Per user", "Per device", "1 user + 10 devices"])
     if not per_unit_rows:
         per_unit_rows = table_by_header(tables, ["Scenario", "Per user", "Per device", "1 user + 4 devices"])
 
@@ -407,7 +409,7 @@ def collect_linode_scale_estimate() -> dict[str, object]:
         "currency": metadata.get("currency", "USD"),
         "collected": metadata.get("collected", "n/a"),
         "summary": "Self-managed K8s 100k-device reference estimate; MQTT 100K has passed, video/WebRTC/TURN media remains excluded.",
-        "sizing": metadata.get("sizing", "10,000 users / 100,000 devices"),
+        "sizing": metadata.get("sizing", "5,000 users / 100,000 devices"),
         "scenarios": {
             "selfManaged": scenarios.get(default_scenario) or scenarios.get(legacy_default_scenario, "n/a"),
             "withManagedService": scenarios.get(managed_scenario) or scenarios.get(legacy_managed_scenario, "n/a"),
@@ -427,10 +429,12 @@ def collect_linode_scale_estimate() -> dict[str, object]:
         "perUnit": {
             "selfManagedPerUser": (per_unit.get(default_scenario) or per_unit.get(legacy_default_scenario, ["", "n/a", "n/a", "n/a"]))[1],
             "selfManagedPerDevice": (per_unit.get(default_scenario) or per_unit.get(legacy_default_scenario, ["", "n/a", "n/a", "n/a"]))[2],
+            "selfManagedUserWithTwentyDevices": (per_unit.get(default_scenario) or per_unit.get(legacy_default_scenario, ["", "n/a", "n/a", "n/a"]))[3],
             "selfManagedUserWithTenDevices": (per_unit.get(default_scenario) or per_unit.get(legacy_default_scenario, ["", "n/a", "n/a", "n/a"]))[3],
             "selfManagedUserWithFourDevices": (per_unit.get(default_scenario) or per_unit.get(legacy_default_scenario, ["", "n/a", "n/a", "n/a"]))[3],
             "managedServicePerUser": (per_unit.get(managed_scenario) or per_unit.get(legacy_managed_scenario, ["", "n/a", "n/a", "n/a"]))[1],
             "managedServicePerDevice": (per_unit.get(managed_scenario) or per_unit.get(legacy_managed_scenario, ["", "n/a", "n/a", "n/a"]))[2],
+            "managedServiceUserWithTwentyDevices": (per_unit.get(managed_scenario) or per_unit.get(legacy_managed_scenario, ["", "n/a", "n/a", "n/a"]))[3],
             "managedServiceUserWithTenDevices": (per_unit.get(managed_scenario) or per_unit.get(legacy_managed_scenario, ["", "n/a", "n/a", "n/a"]))[3],
             "managedServiceUserWithFourDevices": (per_unit.get(managed_scenario) or per_unit.get(legacy_managed_scenario, ["", "n/a", "n/a", "n/a"]))[3],
         },
@@ -530,7 +534,9 @@ def collect_aws_cost_estimate() -> dict[str, object]:
     metadata = parse_markdown_metadata(text)
     scenario_rows = table_by_header(tables, ["Scenario", "Estimated monthly cost"])
     per_unit_rows = table_by_header(tables, ["Scenario", "Calculation", "Estimate"])
-    weighted_unit_rows = table_by_header(tables, ["Scenario", "User pool", "Device pool", "Per user", "Per device", "Effective 1 user + 10 devices"])
+    weighted_unit_rows = table_by_header(tables, ["Scenario", "User pool", "Device pool", "Per user", "Per device", "Effective 1 user + 20 devices"])
+    if not weighted_unit_rows:
+        weighted_unit_rows = table_by_header(tables, ["Scenario", "User pool", "Device pool", "Per user", "Per device", "Effective 1 user + 10 devices"])
     if not weighted_unit_rows:
         weighted_unit_rows = table_by_header(tables, ["Scenario", "User pool", "Device pool", "Per user", "Per device", "Effective 1 user + 4 devices"])
     top_driver_rows = table_by_header(tables, ["Rank", "Cost item", "Monthly estimate"])
@@ -560,7 +566,7 @@ def collect_aws_cost_estimate() -> dict[str, object]:
     robust_without_hsm = scenarios.get("Robust redundant design, excluding CloudHSM", "n/a")
     robust_with_hsm = scenarios.get("Robust redundant design with two CloudHSMs", "n/a")
     weighted_units = {row[0]: row for row in weighted_unit_rows if len(row) >= 6}
-    end_user_count = 10000
+    end_user_count = 5000
     registered_device_count = 100000
 
     raw_unit_costs = [
@@ -601,6 +607,7 @@ def collect_aws_cost_estimate() -> dict[str, object]:
             "devicePool": row[2],
             "perUserMonth": row[3],
             "perDeviceMonth": row[4],
+            "effectiveUserWithTwentyDevices": row[5],
             "effectiveUserWithTenDevices": row[5],
             "effectiveUserWithFourDevices": row[5],
         }
@@ -793,9 +800,9 @@ def collect_aws_cost_estimate() -> dict[str, object]:
             },
             {
                 "item": "Amazon Cognito User Pools",
-                "quantity": "10,000 direct/social MAUs",
+                "quantity": "5,000 direct/social MAUs",
                 "unitPrice": "10,000 MAUs free; 0.015/MAU above free tier",
-                "formula": "max(0, 10,000 - 10,000) * 0.015",
+                "formula": "max(0, 5,000 - 10,000) * 0.015",
                 "estimate": "0.00",
             },
             {
@@ -873,9 +880,9 @@ def collect_aws_cost_estimate() -> dict[str, object]:
         },
         "unitCosts": {
             "basis": {
-                "endUsers": "10,000",
+                "endUsers": "5,000",
                 "registeredDevices": "100,000",
-                "devicesPerUser": "10",
+                "devicesPerUser": "20",
                 "weightedUserPool": "10%",
                 "weightedDevicePool": "90%",
             },

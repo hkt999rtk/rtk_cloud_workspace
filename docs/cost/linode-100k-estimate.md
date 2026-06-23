@@ -4,7 +4,7 @@ Status: Planning estimate
 Region: `us-sea`
 Currency: USD
 Collected: 2026-06-12T06:45:00Z
-Sizing: 10,000 users, 10 devices per user, 100,000 registered devices, 100,000 usually-online MQTT devices
+Sizing: 5,000 users, 20 devices per user, 100,000 registered devices, 100,000 usually-online MQTT devices
 
 This is a self-managed K8s reference profile for extending the current staging
 deployment shape to a 100,000-device commercial case. MQTT 100K has passed on
@@ -50,10 +50,10 @@ load-balancer, support, and network-transfer prices.
 
 ## Per-Unit View
 
-| Scenario | Per user | Per device | 1 user + 10 devices |
+| Scenario | Per user | Per device | 1 user + 20 devices |
 | --- | ---: | ---: | ---: |
-| K8s 100K self-managed cluster | 4,300.00 USD / 10,000 = 0.43 USD/user-month | 4,300.00 USD / 100,000 = 0.04 USD/device-month | 0.43 USD/month |
-| K8s 100K with optional Managed Service | 5,800.00 USD / 10,000 = 0.58 USD/user-month | 5,800.00 USD / 100,000 = 0.06 USD/device-month | 0.58 USD/month |
+| K8s 100K self-managed cluster | 4,300.00 USD / 5,000 = 0.86 USD/user-month | 4,300.00 USD / 100,000 = 0.04 USD/device-month | 0.86 USD/month |
+| K8s 100K with optional Managed Service | 5,800.00 USD / 5,000 = 1.16 USD/user-month | 5,800.00 USD / 100,000 = 0.06 USD/device-month | 1.16 USD/month |
 
 ## Caveats
 
