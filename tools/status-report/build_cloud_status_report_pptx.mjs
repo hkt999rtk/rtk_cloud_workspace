@@ -1274,19 +1274,19 @@ async function slideGcpCostView(p, payload) {
 
   addProviderCostMode(slide, {
     title: "GCP cloud services alternative",
-    total: "Approx. 2,900-3,800 USD/month + MQTT gap",
-    unit: "Managed DB/logging/metrics/API where available; MQTT/device management not service-equivalent",
+    total: "Approx. 2,200-3,100 USD/month + device mgmt gap",
+    unit: "Managed DB/logging/metrics/API where available; MQTT/device management not native-equivalent",
     highlight: true,
     topItems: ["Cloud SQL", "EMQX", "Cloud Run"],
     rows: [
       ["Cloud Run / API Gateway", "300-450", "Account/device/admin APIs and light workers after handler refactor."],
       ["Cloud SQL PostgreSQL", "700-950", "Managed PostgreSQL, 1,000 GB storage, backup retention; HA not included."],
-      ["EMQX on GKE/Compute", "650-900", "GCP IoT Core retired; managed MQTT/device registry needs third-party quote."],
-      ["Cloud Logging", "20-80", "66 GB/month log ingestion after free/project allowance; tune by log routing."],
-      ["Managed Prometheus", "26-80", "432M samples/month plus query/storage sensitivity."],
+      ["EMQX on GKE/Compute", "750-1,000", "GCP IoT Core retired; managed MQTT/device registry needs third-party quote."],
+      ["Cloud Logging", "8-40", "66 GB/month log ingestion; first 50 GiB/project/month free in public pricing."],
+      ["Managed Prometheus", "65-120", "432M samples/month plus query/storage sensitivity."],
       ["Memorystore / Pub/Sub / Storage", "300-520", "Redis-compatible cache, event bus, object backup, CDN/storage allowance."],
     ],
-    note: "Use this only as a managed-service comparison. GCP does not directly replace AWS IoT Core + IoT Device Management in one native service.",
+    note: "Use this only as a partial managed-service comparison. GCP needs self-hosted EMQX plus custom device registry/jobs/shadow, or a third-party quote.",
   }, 675, 218, 555, C.paleTeal);
 
   addText(slide, "Pricing sources: GKE pricing, Cloud Billing Catalog / Pricing API, Cloud SQL, Cloud Run, Pub/Sub, Cloud Logging, Managed Service for Prometheus, Memorystore, Cloud Storage. Excludes tax, committed-use discounts, support plan, marketplace/private offers, and video/WebRTC/TURN.", { x: 80, y: 640, w: 1120, h: 20 }, { size: 7.6, color: C.muted, align: "center", face: FONT_EN });
@@ -1302,13 +1302,13 @@ async function slideAzureCostView(p, payload) {
 
   addProviderCostMode(slide, {
     title: "Self-operated AKS",
-    total: "Approx. 2,950 USD/month",
+    total: "Approx. 3,100 USD/month",
     unit: "14 worker nodes + AKS Standard control-plane SLA; about 0.03 USD/device-month",
     highlight: false,
     topItems: ["Worker nodes", "PostgreSQL", "Network"],
     rows: [
       ["AKS Standard tier", "73", "Planning allowance for SLA-backed cluster management."],
-      ["Worker nodes", "2,240", "System, API, EMQX, PostgreSQL, observability, Redis/NATS node pools."],
+      ["Worker nodes", "2,397", "System, API, EMQX, PostgreSQL, observability, Redis/NATS node pools."],
       ["Managed Disks", "150", "1,500 GB PostgreSQL + Loki/Prometheus/broker/cache PVC allowance."],
       ["Load Balancer / App Gateway", "120", "HTTPS ingress plus MQTT TCP/TLS ingress allowance."],
       ["NAT / bandwidth / network", "260", "Private outbound, inter-service transfer, and edge allowance."],
@@ -1319,19 +1319,19 @@ async function slideAzureCostView(p, payload) {
 
   addProviderCostMode(slide, {
     title: "Azure cloud services alternative",
-    total: "Approx. 3,300-4,300 USD/month",
+    total: "Approx. 3,400-4,600 USD/month",
     unit: "IoT Hub + managed PostgreSQL/logging/metrics/API; about 0.03-0.04 USD/device-month",
     highlight: true,
     topItems: ["IoT Hub", "PostgreSQL", "Monitor"],
     rows: [
       ["Azure IoT Hub", "1,500-2,500", "100K usually-online devices; 4 KB message chunks; S2/S3 units to size."],
       ["Container Apps / Functions", "300-500", "Account/device/admin APIs and light workers after handler refactor."],
-      ["Azure PostgreSQL Flexible", "650-950", "Managed PostgreSQL, 1,000 GB storage, backup retention; HA not included."],
-      ["Azure Monitor / Prometheus", "180-350", "Logs ingestion plus managed Prometheus sample/query sensitivity."],
+      ["Azure PostgreSQL Flexible", "700-1,000", "Managed PostgreSQL, 1,000 GB storage, backup retention; HA not included."],
+      ["Azure Monitor / Prometheus", "200-380", "Logs ingestion plus managed Prometheus sample/query sensitivity."],
       ["Azure Cache / Service Bus", "120-260", "Redis-compatible cache plus event bus/DLQ comparison."],
       ["Storage / ACR / networking", "300-450", "Blob backup, registry, CDN/storage, load balancer, NAT/bandwidth allowance."],
     ],
-    note: "IoT Hub can replace part of MQTT/device ingestion, but topic model, device twin, commands, jobs, and certificate provisioning must be validated before treating it as equivalent.",
+    note: "IoT Hub can replace part of MQTT/device ingestion. Device Update, DPS volume, commands, jobs, and certificate provisioning are not fully priced here.",
   }, 675, 218, 555, C.paleTeal);
 
   addText(slide, "Pricing sources: AKS pricing, Azure Retail Prices API, Azure IoT Hub pricing, Azure Database for PostgreSQL Flexible Server, Azure Monitor, Azure Cache for Redis, Azure Functions, Container Apps, ACR, Blob Storage. Excludes tax, reservations/savings plans, support, marketplace/private offers, and video/WebRTC/TURN.", { x: 80, y: 640, w: 1120, h: 20 }, { size: 7.6, color: C.muted, align: "center", face: FONT_EN });
