@@ -58,6 +58,7 @@ var commands = map[string]commandSpec{
 	"list-brandname-clouds":            {run: runListBrandnameClouds},
 	"logs-check":                       {run: runLogsCheck},
 	"lke-build-images":                 {run: runLKEBuildImages},
+	"lke-capacity-run-summary":         {run: runLKECapacityRunSummary},
 	"lke-resolve-images":               {run: runLKEResolveImages},
 	"migrate-env":                      {run: runMigrateEnv},
 	"mqtt-loadtest":                    {run: runMQTTLoadTest},
@@ -3482,6 +3483,9 @@ func resolveLKEImagesIfNeeded(workspace, envRoot string) error {
 		return nil
 	}
 	if env, source := existingLKEImageEnv(envRoot); lkeImageEnvHasKeys(env, missing) {
+		if err := validateExistingLKEImageEnvAgainstStack(envRoot, env, source, missing); err != nil {
+			return err
+		}
 		for _, key := range missing {
 			if err := os.Setenv(key, env[key]); err != nil {
 				return err
@@ -3540,6 +3544,22 @@ func existingLKEImageEnv(envRoot string) (map[string]string, string) {
 		return env, envFile
 	}
 	return nil, ""
+}
+
+func validateExistingLKEImageEnvAgainstStack(envRoot string, imageEnv map[string]string, source string, keys []string) error {
+	stackEnv, err := readEnvFile(filepath.Join(envRoot, "env", "stack.env"))
+	if err != nil {
+		return nil
+	}
+	for _, key := range keys {
+		stackValue := strings.TrimSpace(stackEnv[key])
+		imageValue := strings.TrimSpace(imageEnv[key])
+		if stackValue == "" || imageValue == "" || stackValue == imageValue {
+			continue
+		}
+		return fmt.Errorf("LKE image artifact mismatch for %s: env/stack.env=%q but %s=%q; refresh artifacts/lke-images/lke-image-manifest.json or remove the stale artifact before provisioning", key, stackValue, source, imageValue)
+	}
+	return nil
 }
 
 func lkeImageEnvHasKeys(env map[string]string, keys []string) bool {
