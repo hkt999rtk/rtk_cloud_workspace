@@ -59,6 +59,7 @@ type userArtifact struct {
 type userCredential struct {
 	Email          string                `json:"email"`
 	Password       string                `json:"password"`
+	Tokens         tokenBundle           `json:"tokens"`
 	AppCredentials appCertificateKeys    `json:"app_credentials"`
 	AppCertificate appCertificateSummary `json:"app_certificate"`
 }
@@ -2464,7 +2465,9 @@ func loadHome100KCredentialBundle(envRoot string) (*home100KCredentialBundle, er
 func loadHome100KBundleUsers(db *sql.DB, bundle *home100KCredentialBundle) error {
 	brandname := firstNonEmpty(home100KBundleMetadata(db, "brandname"), "RTK")
 	bundle.Users.Brandname = brandname
-	rows, err := db.Query(`select email, password, app_credentials_json, app_certificate_json, body_json from users order by email`)
+	bundle.Users.BrandCloudID = home100KBundleMetadata(db, "brand_cloud_id")
+	bundle.Users.TenantSlug = home100KBundleMetadata(db, "tenant_slug")
+	rows, err := db.Query(`select email, password, tokens_json, app_credentials_json, app_certificate_json, body_json from users order by email`)
 	if err != nil {
 		if strings.Contains(err.Error(), "no such table") {
 			return nil
@@ -2473,8 +2476,8 @@ func loadHome100KBundleUsers(db *sql.DB, bundle *home100KCredentialBundle) error
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var email, password, appCredentialsJSON, appCertificateJSON, bodyJSON string
-		if err := rows.Scan(&email, &password, &appCredentialsJSON, &appCertificateJSON, &bodyJSON); err != nil {
+		var email, password, tokensJSON, appCredentialsJSON, appCertificateJSON, bodyJSON string
+		if err := rows.Scan(&email, &password, &tokensJSON, &appCredentialsJSON, &appCertificateJSON, &bodyJSON); err != nil {
 			return err
 		}
 		user := userCredential{Email: email, Password: password}
@@ -2487,6 +2490,9 @@ func loadHome100KBundleUsers(db *sql.DB, bundle *home100KCredentialBundle) error
 		if strings.TrimSpace(user.Password) == "" {
 			user.Password = password
 		}
+		if strings.TrimSpace(tokensJSON) != "" {
+			_ = json.Unmarshal([]byte(tokensJSON), &user.Tokens)
+		}
 		_ = json.Unmarshal([]byte(appCredentialsJSON), &user.AppCredentials)
 		_ = json.Unmarshal([]byte(appCertificateJSON), &user.AppCertificate)
 		bundle.Users.Users = append(bundle.Users.Users, user)
@@ -2497,6 +2503,8 @@ func loadHome100KBundleUsers(db *sql.DB, bundle *home100KCredentialBundle) error
 func loadHome100KBundleBindings(db *sql.DB, bundle *home100KCredentialBundle) error {
 	brandname := firstNonEmpty(home100KBundleMetadata(db, "brandname"), "RTK")
 	bundle.Bind.Brandname = brandname
+	bundle.Bind.BrandCloudID = home100KBundleMetadata(db, "brand_cloud_id")
+	bundle.Bind.TenantSlug = home100KBundleMetadata(db, "tenant_slug")
 	rows, err := db.Query(`select assigned_email, device_id, device_type, service_options_json, body_json from device_bindings order by assignment_index, device_id`)
 	if err != nil {
 		if strings.Contains(err.Error(), "no such table") {
@@ -4054,6 +4062,26 @@ func prepareAppCertificateBootstrapForAssignments(accountBaseURL, videoBaseURL, 
 				Status:    "BLOCKED",
 				Reason:    "selected assignment user missing from users artifact",
 			})
+			continue
+		}
+		if strings.TrimSpace(user.Tokens.AccessToken) != "" || strings.TrimSpace(user.Tokens.RefreshToken) != "" {
+			bundle := user.Tokens
+			tokensByEmail[user.Email] = bundle
+			managersByEmail[user.Email] = newAccountLoginTokenManager(accountBaseURL, tenantSlug, user, bundle)
+			attempts = append(attempts, appBootstrapAttempt{
+				UserEmail: user.Email,
+				DeviceID:  candidate.DeviceID,
+				Status:    "PASS",
+				Reason:    "cached account login token",
+			})
+			if firstPass.Status.Status == "" {
+				firstPass = appBootstrapMaterial{Status: appBootstrapStatus{
+					Status:     "PASS",
+					UserEmail:  user.Email,
+					DeviceID:   candidate.DeviceID,
+					TokenScope: "account_manager_login",
+				}}
+			}
 			continue
 		}
 		material := prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL, tenantSlug, user, candidate.DeviceID)

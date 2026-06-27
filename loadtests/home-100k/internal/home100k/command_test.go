@@ -65,9 +65,9 @@ func writeHomeSQLiteTestData(t *testing.T, envRoot string, users []string, assig
 	defer db.Close()
 	stmts := []string{
 		`create table metadata (key text primary key, value text not null)`,
-		`create table users (brandname text not null, email text not null, password text, tokens_json text, app_credentials_json text, app_certificate_json text, body_json text not null, primary key (brandname, email))`,
+		`create table users (brandname text not null, email text not null, brand_cloud_id text, tenant_slug text, password text, tokens_json text, app_credentials_json text, app_certificate_json text, body_json text not null, primary key (brandname, email))`,
 		`create table device_credentials (brandname text not null, device_id text not null, cert_pem text, key_pem text, chain_pem text, bundle_pem text, metadata_json text, factory_enroll_request_json text, factory_enroll_response_redacted_json text, primary key (brandname, device_id))`,
-		`create table device_bindings (brandname text not null, device_id text not null, assignment_index integer not null, assigned_email text not null, device_type text not null, service_options_json text not null, primary key (brandname, device_id))`,
+		`create table device_bindings (brandname text not null, device_id text not null, brand_cloud_id text, tenant_slug text, assignment_index integer not null, assigned_email text not null, device_type text not null, service_options_json text not null, primary key (brandname, device_id))`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
@@ -81,7 +81,7 @@ func writeHomeSQLiteTestData(t *testing.T, envRoot string, users []string, assig
 	if err != nil {
 		t.Fatal(err)
 	}
-	userStmt, err := tx.Prepare(`insert into users(brandname, email, password, tokens_json, app_credentials_json, app_certificate_json, body_json) values('RTK', ?, 'pw', '{}', '{}', '{}', ?)`)
+	userStmt, err := tx.Prepare(`insert into users(brandname, email, brand_cloud_id, tenant_slug, password, tokens_json, app_credentials_json, app_certificate_json, body_json) values('RTK', ?, 'brand-cloud-1', 'tenant-1', 'pw', '{"access_token":"cached-access","refresh_token":"cached-refresh"}', '{}', '{}', ?)`)
 	if err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
@@ -93,7 +93,7 @@ func writeHomeSQLiteTestData(t *testing.T, envRoot string, users []string, assig
 			t.Fatal(err)
 		}
 	}
-	bindStmt, err := tx.Prepare(`insert into device_bindings(brandname, device_id, assignment_index, assigned_email, device_type, service_options_json) values('RTK', ?, ?, ?, ?, ?)`)
+	bindStmt, err := tx.Prepare(`insert into device_bindings(brandname, device_id, brand_cloud_id, tenant_slug, assignment_index, assigned_email, device_type, service_options_json) values('RTK', ?, 'brand-cloud-1', 'tenant-1', ?, ?, ?, ?)`)
 	if err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
@@ -192,6 +192,36 @@ func readTarGzNames(t *testing.T, path string) map[string]bool {
 
 func assertCredentialBundleCounts(t *testing.T, path string, want map[string]int) {
 	t.Helper()
+	db := openCredentialBundleForTest(t, path)
+	defer db.Close()
+	for table, expected := range want {
+		var got int
+		if err := db.QueryRow("select count(*) from " + table).Scan(&got); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if got != expected {
+			t.Fatalf("count %s = %d, want %d", table, got, expected)
+		}
+	}
+}
+
+func assertCredentialBundleMetadata(t *testing.T, path string, want map[string]string) {
+	t.Helper()
+	db := openCredentialBundleForTest(t, path)
+	defer db.Close()
+	for key, expected := range want {
+		var got string
+		if err := db.QueryRow(`select value from metadata where key = ?`, key).Scan(&got); err != nil {
+			t.Fatalf("metadata %s: %v", key, err)
+		}
+		if got != expected {
+			t.Fatalf("metadata %s = %q, want %q", key, got, expected)
+		}
+	}
+}
+
+func openCredentialBundleForTest(t *testing.T, path string) *sql.DB {
+	t.Helper()
 	file, err := os.Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -218,16 +248,7 @@ func assertCredentialBundleCounts(t *testing.T, path string, want map[string]int
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	for table, expected := range want {
-		var got int
-		if err := db.QueryRow("select count(*) from " + table).Scan(&got); err != nil {
-			t.Fatalf("count %s: %v", table, err)
-		}
-		if got != expected {
-			t.Fatalf("count %s = %d, want %d", table, got, expected)
-		}
-	}
+	return db
 }
 
 func stubCommandOutputRunner(t *testing.T, fn func(name string, args ...string) (string, error)) {
@@ -986,6 +1007,10 @@ func TestExecuteSyncLiveHonorsExplicitVMCountOverride(t *testing.T) {
 		"devices":         4500,
 		"users":           450,
 		"device_bindings": 4500,
+	})
+	assertCredentialBundleMetadata(t, filepath.Join(outDir, "credential-bundles", "lg01.sqlite.gz"), map[string]string{
+		"brand_cloud_id": "brand-cloud-1",
+		"tenant_slug":    "tenant-1",
 	})
 	commonArchive := filepath.Join(outDir, "artifact-store", "common", "env-common.tar.gz")
 	if _, err := os.Stat(commonArchive); err != nil {
@@ -2023,6 +2048,30 @@ ssl:default ssl_closed 14482
 	}
 	if counters["emqx.ssl_default.shutdown_ssl_closed"] != 14482 {
 		t.Fatalf("ssl shutdown counter = %d, want 14482", counters["emqx.ssl_default.shutdown_ssl_closed"])
+	}
+}
+
+func TestProbeResultKeepsParseableEvidenceAfterNonZeroExit(t *testing.T) {
+	probe := serverEvidenceProbe{
+		source: "emqx_listener_stats",
+		detail: "listener stats captured",
+	}
+	out := `tcp:default acceptors 128
+ssl:default current_conn 12500
+emqx.pod_mqtt_0.ssl_default.current_conn 12500
+`
+	source, note := evidenceSourceFromProbeResult(probe, "run-fixed", out, errors.New("exit status 1"))
+	if !source.Available {
+		t.Fatalf("source should stay available when counters are parseable: %+v", source)
+	}
+	if source.Counters["emqx.broker.identity"] != 1 {
+		t.Fatalf("missing broker identity counter: %#v", source.Counters)
+	}
+	if source.Counters["emqx.ssl_default.current_conn"] != 12500 {
+		t.Fatalf("ssl current_conn = %d, want 12500", source.Counters["emqx.ssl_default.current_conn"])
+	}
+	if note == "" || !strings.Contains(note, "evidence probe failed") {
+		t.Fatalf("note = %q, want warning note", note)
 	}
 }
 

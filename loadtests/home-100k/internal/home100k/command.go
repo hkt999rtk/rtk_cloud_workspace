@@ -1810,15 +1810,11 @@ func collectLiveServerEvidence(envRoot string, runID string, outDir string) Serv
 			timeout = defaultServerEvidenceProbeTimeout
 		}
 		out, err := commandOutputRunnerWithTimeout(timeout, probe.command, probe.args...)
-		if err != nil {
-			detail := strings.TrimSpace(err.Error() + " " + redactEvidenceOutput(out))
-			sources[probe.source] = mergeEvidenceSource(sources[probe.source], EvidenceSource{Available: false, Detail: detail})
-			notes = append(notes, fmt.Sprintf("%s evidence probe failed: %s", probe.source, err.Error()))
-			continue
+		source, note := evidenceSourceFromProbeResult(probe, runID, out, err)
+		sources[probe.source] = mergeEvidenceSource(sources[probe.source], source)
+		if note != "" {
+			notes = append(notes, note)
 		}
-		counters := parseEvidenceCounters(probe.source, runID, out)
-		samples := parseEvidenceSamples(probe.source, out)
-		sources[probe.source] = mergeEvidenceSource(sources[probe.source], EvidenceSource{Available: true, Detail: probe.detail, Counters: counters, Samples: samples})
 	}
 	shadowSource, streamSource, runtimeNote := collectCentralLoggerRuntimeLogEvidence(envRoot, runID, windowStart)
 	if shadowSource.Available {
@@ -1847,6 +1843,21 @@ func collectLiveServerEvidence(envRoot string, runID string, outDir string) Serv
 	applyServerEvidenceBaselineDeltas(&evidence, runID, outDir, &notes)
 	evidence.Notes = notes
 	return evidence
+}
+
+func evidenceSourceFromProbeResult(probe serverEvidenceProbe, runID string, out string, err error) (EvidenceSource, string) {
+	counters := parseEvidenceCounters(probe.source, runID, out)
+	samples := parseEvidenceSamples(probe.source, out)
+	if err == nil {
+		return EvidenceSource{Available: true, Detail: probe.detail, Counters: counters, Samples: samples}, ""
+	}
+	note := fmt.Sprintf("%s evidence probe failed: %s", probe.source, err.Error())
+	if len(counters) > 0 || len(samples) > 0 {
+		detail := strings.TrimSpace(probe.detail + "; probe exited non-zero after producing parseable evidence: " + err.Error())
+		return EvidenceSource{Available: true, Detail: detail, Counters: counters, Samples: samples}, note
+	}
+	detail := strings.TrimSpace(err.Error() + " " + redactEvidenceOutput(out))
+	return EvidenceSource{Available: false, Detail: detail}, note
 }
 
 func normalizeEvidenceSourceCatalogMetadata(sources map[string]EvidenceSource) {
@@ -2900,7 +2911,11 @@ pods="$(kubectl -n video-cloud-staging-video-cloud get pods --selector app.kuber
 test -n "$pods"
 for pod in $pods; do
   safe_pod="$(printf '%s' "$pod" | tr -c 'A-Za-z0-9_' '_')"
-  kubectl -n video-cloud-staging-video-cloud exec "$pod" -- emqx ctl listeners | awk -v pod="$safe_pod" '
+  listener_out="$(kubectl -n video-cloud-staging-video-cloud exec "$pod" -- emqx ctl listeners 2>&1 || true)"
+  if [ -z "$listener_out" ]; then
+    continue
+  fi
+  printf '%s\n' "$listener_out" | awk -v pod="$safe_pod" '
     /^[a-z]+:default/ {listener=$1}
     /^[[:space:]]+(acceptors|current_conn|max_conns)[[:space:]]*:/ {
       key=$1; value=$3; safe_listener=listener; gsub(":", "_", safe_listener)

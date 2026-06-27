@@ -159,7 +159,7 @@ func initCredentialBundleSchema(db *sql.DB) error {
 }
 
 func insertBundleMetadata(db *sql.DB, key string, value string) error {
-	_, err := db.Exec(`insert into metadata(key, value) values(?, ?)`, key, value)
+	_, err := db.Exec(`insert into metadata(key, value) values(?, ?) on conflict(key) do update set value = excluded.value`, key, value)
 	return err
 }
 
@@ -275,6 +275,18 @@ func insertBundleUsersAndBindings(db *sql.DB, envRoot string, brandname string, 
 		return err
 	}
 	defer source.Close()
+	if brandCloudID, tenantSlug := shardBundleTenantMetadata(source, brandname); brandCloudID != "" || tenantSlug != "" {
+		if brandCloudID != "" {
+			if err := insertBundleMetadata(db, "brand_cloud_id", brandCloudID); err != nil {
+				return err
+			}
+		}
+		if tenantSlug != "" {
+			if err := insertBundleMetadata(db, "tenant_slug", tenantSlug); err != nil {
+				return err
+			}
+		}
+	}
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -314,6 +326,16 @@ func insertBundleUsersAndBindings(db *sql.DB, envRoot string, brandname string, 
 		}
 	}
 	return tx.Commit()
+}
+
+func shardBundleTenantMetadata(db *sql.DB, brandname string) (string, string) {
+	var brandCloudID, tenantSlug string
+	err := db.QueryRow(`select coalesce(brand_cloud_id, ''), coalesce(tenant_slug, '') from device_bindings where brandname = ? and (coalesce(brand_cloud_id, '') != '' or coalesce(tenant_slug, '') != '') order by assignment_index, device_id limit 1`, brandname).Scan(&brandCloudID, &tenantSlug)
+	if err == nil && (brandCloudID != "" || tenantSlug != "") {
+		return brandCloudID, tenantSlug
+	}
+	_ = db.QueryRow(`select coalesce(brand_cloud_id, ''), coalesce(tenant_slug, '') from users where brandname = ? and (coalesce(brand_cloud_id, '') != '' or coalesce(tenant_slug, '') != '') order by email limit 1`, brandname).Scan(&brandCloudID, &tenantSlug)
+	return brandCloudID, tenantSlug
 }
 
 func bundleJSONText(value any) string {
