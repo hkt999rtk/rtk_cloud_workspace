@@ -3175,15 +3175,19 @@ func writeEnvRsyncFilter(path string, envRoot string, assignment VMAssignment) e
 }
 
 type deviceManifestRow struct {
-	DeviceID   string
-	DeviceType string
+	AssignmentIndex int
+	AssignedEmail   string
+	DeviceID        string
+	DeviceType      string
+	ServiceOptions  []string
 }
 
 type shardBindAssignment struct {
-	AssignedEmail  string   `json:"assigned_email"`
-	DeviceID       string   `json:"device_id"`
-	DeviceType     string   `json:"device_type"`
-	ServiceOptions []string `json:"service_options"`
+	AssignmentIndex int      `json:"assignment_index"`
+	AssignedEmail   string   `json:"assigned_email"`
+	DeviceID        string   `json:"device_id"`
+	DeviceType      string   `json:"device_type"`
+	ServiceOptions  []string `json:"service_options"`
 }
 
 func writeEnvArchive(path string, plan Plan, assignment VMAssignment) error {

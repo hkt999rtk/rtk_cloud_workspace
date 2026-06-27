@@ -1783,11 +1783,29 @@ func TestLoadHome100KCredentialBundleReadsGzippedSQLiteDevices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.Exec(`create table metadata(key text primary key, value text not null)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`insert into metadata(key, value) values('brandname', 'RTK')`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(`create table devices(device_id text primary key, device_type text not null, cert_pem text, key_pem text, chain_pem text, bundle_pem text, metadata_json text, factory_enroll_request_json text, factory_enroll_response_redacted_json text)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`create table users(email text primary key, password text, tokens_json text, app_credentials_json text, app_certificate_json text, body_json text not null)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`create table device_bindings(device_id text primary key, assignment_index integer not null, assigned_email text not null, device_type text not null, service_options_json text not null, body_json text not null)`); err != nil {
 		t.Fatal(err)
 	}
 	certPEM, keyPEM, chainPEM := testAppMaterial(t, "device-1")
 	if _, err := db.Exec(`insert into devices(device_id, device_type, cert_pem, key_pem, chain_pem) values(?, ?, ?, ?, ?)`, "device-1", "light", certPEM, keyPEM, chainPEM); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`insert into users(email, password, app_credentials_json, app_certificate_json, body_json) values(?, ?, '{}', '{}', ?)`, "user-1@example.test", "pw", `{"email":"user-1@example.test","password":"pw"}`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`insert into device_bindings(device_id, assignment_index, assigned_email, device_type, service_options_json, body_json) values(?, 0, ?, ?, ?, ?)`, "device-1", "user-1@example.test", "light", `["mqtt"]`, `{"assigned_email":"user-1@example.test","device_id":"device-1","device_type":"light","service_options":["mqtt"]}`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -1805,6 +1823,15 @@ func TestLoadHome100KCredentialBundleReadsGzippedSQLiteDevices(t *testing.T) {
 	}
 	if device.CertPEM != certPEM || device.KeyPEM != keyPEM || device.ChainPEM != chainPEM {
 		t.Fatalf("bundle device PEM mismatch: %#v", device)
+	}
+	if !bundle.HasShardTestData() {
+		t.Fatalf("bundle should contain shard-scoped users and bindings: %#v", bundle)
+	}
+	if len(bundle.Users.Users) != 1 || bundle.Users.Users[0].Email != "user-1@example.test" {
+		t.Fatalf("bundle users = %#v", bundle.Users.Users)
+	}
+	if len(bundle.Bind.Assignments) != 1 || bundle.Bind.Assignments[0].DeviceID != "device-1" {
+		t.Fatalf("bundle bindings = %#v", bundle.Bind.Assignments)
 	}
 }
 

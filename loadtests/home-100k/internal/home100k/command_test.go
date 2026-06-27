@@ -65,7 +65,7 @@ func writeHomeSQLiteTestData(t *testing.T, envRoot string, users []string, assig
 	defer db.Close()
 	stmts := []string{
 		`create table metadata (key text primary key, value text not null)`,
-		`create table users (brandname text not null, email text not null, primary key (brandname, email))`,
+		`create table users (brandname text not null, email text not null, password text, tokens_json text, app_credentials_json text, app_certificate_json text, body_json text not null, primary key (brandname, email))`,
 		`create table device_credentials (brandname text not null, device_id text not null, cert_pem text, key_pem text, chain_pem text, bundle_pem text, metadata_json text, factory_enroll_request_json text, factory_enroll_response_redacted_json text, primary key (brandname, device_id))`,
 		`create table device_bindings (brandname text not null, device_id text not null, assignment_index integer not null, assigned_email text not null, device_type text not null, service_options_json text not null, primary key (brandname, device_id))`,
 	}
@@ -81,14 +81,14 @@ func writeHomeSQLiteTestData(t *testing.T, envRoot string, users []string, assig
 	if err != nil {
 		t.Fatal(err)
 	}
-	userStmt, err := tx.Prepare(`insert into users(brandname, email) values('RTK', ?)`)
+	userStmt, err := tx.Prepare(`insert into users(brandname, email, password, tokens_json, app_credentials_json, app_certificate_json, body_json) values('RTK', ?, 'pw', '{}', '{}', '{}', ?)`)
 	if err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
 	}
 	defer userStmt.Close()
 	for _, email := range users {
-		if _, err := userStmt.Exec(email); err != nil {
+		if _, err := userStmt.Exec(email, mustJSONText(t, map[string]any{"email": email, "password": "pw"})); err != nil {
 			_ = tx.Rollback()
 			t.Fatal(err)
 		}
@@ -187,6 +187,46 @@ func readTarGzNames(t *testing.T, path string) map[string]bool {
 			t.Fatal(err)
 		}
 		names[header.Name] = true
+	}
+}
+
+func assertCredentialBundleCounts(t *testing.T, path string, want map[string]int) {
+	t.Helper()
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	gz, err := gzip.NewReader(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gz.Close()
+	tmp := filepath.Join(t.TempDir(), "bundle.sqlite")
+	out, err := os.Create(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(out, gz); err != nil {
+		_ = out.Close()
+		t.Fatal(err)
+	}
+	if err := out.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for table, expected := range want {
+		var got int
+		if err := db.QueryRow("select count(*) from " + table).Scan(&got); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if got != expected {
+			t.Fatalf("count %s = %d, want %d", table, got, expected)
+		}
 	}
 }
 
@@ -942,6 +982,11 @@ func TestExecuteSyncLiveHonorsExplicitVMCountOverride(t *testing.T) {
 			t.Fatalf("shard env archive missing %q", want)
 		}
 	}
+	assertCredentialBundleCounts(t, filepath.Join(outDir, "credential-bundles", "lg01.sqlite.gz"), map[string]int{
+		"devices":         4500,
+		"users":           450,
+		"device_bindings": 4500,
+	})
 	commonArchive := filepath.Join(outDir, "artifact-store", "common", "env-common.tar.gz")
 	if _, err := os.Stat(commonArchive); err != nil {
 		t.Fatalf("missing common env archive: %v", err)

@@ -109,8 +109,12 @@ type certRecord struct {
 }
 
 type home100KCredentialBundle struct {
-	Devices map[string]home100KCredentialDevice
-	Source  string
+	Devices     map[string]home100KCredentialDevice
+	Users       userArtifact
+	Bind        bindArtifact
+	Manifest    []manifestRecord
+	ShardScoped bool
+	Source      string
 }
 
 type home100KCredentialDevice struct {
@@ -120,6 +124,10 @@ type home100KCredentialDevice struct {
 	KeyPEM     string
 	ChainPEM   string
 	BundlePEM  string
+}
+
+func (b *home100KCredentialBundle) HasShardTestData() bool {
+	return b != nil && b.ShardScoped && len(b.Users.Users) > 0 && len(b.Bind.Assignments) > 0
 }
 
 type deviceResult struct {
@@ -463,6 +471,11 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	videoState := videoStatePath(envRoot, stackEnv)
 
 	blockers := []string{}
+	credentialBundle, err := loadHome100KCredentialBundle(envRoot)
+	if err != nil {
+		blockers = append(blockers, "invalid home-100k credential bundle: "+redactedError(err))
+	}
+	bundleShardData := credentialBundle.HasShardTestData()
 	required := map[string]string{
 		"stack_env":       stackEnv,
 		"account_manager": accountEnv,
@@ -473,6 +486,9 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 		"loadtest_env":    filepath.Join(testDevicesDir, "loadtest.env"),
 	}
 	for name, path := range required {
+		if bundleShardData && (name == "device_manifest" || name == "device_ids") {
+			continue
+		}
 		if !readable(path) {
 			blockers = append(blockers, fmt.Sprintf("missing %s: %s", name, path))
 		}
@@ -480,10 +496,10 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 
 	usersPath := latest(filepath.Join(artifactsDir, "users", brandLower+"-users-*.json"))
 	bindPath := latestHomeMQTTBindArtifact(filepath.Join(artifactsDir, "device-bind", brandLower+"-device-bind-*.json"), brandLower)
-	if usersPath == "" {
+	if usersPath == "" && !bundleShardData {
 		blockers = append(blockers, fmt.Sprintf("missing latest users artifact for brand %s", brandname))
 	}
-	if bindPath == "" {
+	if bindPath == "" && !bundleShardData {
 		blockers = append(blockers, fmt.Sprintf("missing latest device-bind artifact for brand %s", brandname))
 	}
 	if usersPath != "" {
@@ -528,7 +544,9 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	endpoints["mqtt_targets"] = mqttTargets
 
 	users := userArtifact{}
-	if usersPath != "" {
+	if bundleShardData {
+		users = credentialBundle.Users
+	} else if usersPath != "" {
 		if err := readJSON(usersPath, &users); err != nil {
 			blockers = append(blockers, "invalid users artifact: "+redactedError(err))
 		} else if strings.ToLower(users.Brandname) != brandLower {
@@ -536,7 +554,9 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 		}
 	}
 	bind := bindArtifact{}
-	if bindPath != "" {
+	if bundleShardData {
+		bind = credentialBundle.Bind
+	} else if bindPath != "" {
 		if err := readJSON(bindPath, &bind); err != nil {
 			blockers = append(blockers, "invalid device-bind artifact: "+redactedError(err))
 		} else if strings.ToLower(bind.Brandname) != brandLower {
@@ -547,7 +567,9 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 		users.TenantSlug = strings.TrimSpace(bind.TenantSlug)
 	}
 	manifest := []manifestRecord{}
-	if readable(required["device_manifest"]) {
+	if bundleShardData {
+		manifest = credentialBundle.Manifest
+	} else if readable(required["device_manifest"]) {
 		if err := readJSON(required["device_manifest"], &manifest); err != nil {
 			blockers = append(blockers, "invalid device manifest: "+redactedError(err))
 		}
@@ -598,16 +620,14 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 		selectedAssignments = append(selectedAssignments, selectedByUser[email]...)
 	}
 	totalEligibleAssignments := len(selectedAssignments)
-	selectedAssignments = shardAssignments(selectedAssignments, opts.ShardIndex, opts.ShardCount)
+	if !bundleShardData {
+		selectedAssignments = shardAssignments(selectedAssignments, opts.ShardIndex, opts.ShardCount)
+	}
 	if opts.MaxConnectedDevicesPerShard > 0 && len(selectedAssignments) > opts.MaxConnectedDevicesPerShard {
 		selectedAssignments = selectedAssignments[:opts.MaxConnectedDevicesPerShard]
 	}
 	if len(selectedAssignments) == 0 && totalEligibleAssignments > 0 {
 		blockers = append(blockers, fmt.Sprintf("shard %d/%d has no selected MQTT devices", opts.ShardIndex, opts.ShardCount))
-	}
-	credentialBundle, err := loadHome100KCredentialBundle(envRoot)
-	if err != nil {
-		blockers = append(blockers, "invalid home-100k credential bundle: "+redactedError(err))
 	}
 	certRecords := []certRecord{}
 	for _, item := range selectedAssignments {
@@ -2423,12 +2443,89 @@ func loadHome100KCredentialBundle(envRoot string) (*home100KCredentialBundle, er
 		device.BundlePEM = bundlePEM.String
 		if strings.TrimSpace(device.DeviceID) != "" {
 			bundle.Devices[device.DeviceID] = device
+			bundle.Manifest = append(bundle.Manifest, manifestRecord{DeviceID: device.DeviceID, DeviceType: device.DeviceType})
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	if err := loadHome100KBundleUsers(db, bundle); err != nil {
+		return nil, err
+	}
+	if err := loadHome100KBundleBindings(db, bundle); err != nil {
+		return nil, err
+	}
+	bundle.ShardScoped = len(bundle.Users.Users) > 0 && len(bundle.Bind.Assignments) > 0
 	return bundle, nil
+}
+
+func loadHome100KBundleUsers(db *sql.DB, bundle *home100KCredentialBundle) error {
+	brandname := firstNonEmpty(home100KBundleMetadata(db, "brandname"), "RTK")
+	bundle.Users.Brandname = brandname
+	rows, err := db.Query(`select email, password, app_credentials_json, app_certificate_json, body_json from users order by email`)
+	if err != nil {
+		if strings.Contains(err.Error(), "no such table") {
+			return nil
+		}
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var email, password, appCredentialsJSON, appCertificateJSON, bodyJSON string
+		if err := rows.Scan(&email, &password, &appCredentialsJSON, &appCertificateJSON, &bodyJSON); err != nil {
+			return err
+		}
+		user := userCredential{Email: email, Password: password}
+		if strings.TrimSpace(bodyJSON) != "" {
+			_ = json.Unmarshal([]byte(bodyJSON), &user)
+		}
+		if strings.TrimSpace(user.Email) == "" {
+			user.Email = email
+		}
+		if strings.TrimSpace(user.Password) == "" {
+			user.Password = password
+		}
+		_ = json.Unmarshal([]byte(appCredentialsJSON), &user.AppCredentials)
+		_ = json.Unmarshal([]byte(appCertificateJSON), &user.AppCertificate)
+		bundle.Users.Users = append(bundle.Users.Users, user)
+	}
+	return rows.Err()
+}
+
+func loadHome100KBundleBindings(db *sql.DB, bundle *home100KCredentialBundle) error {
+	brandname := firstNonEmpty(home100KBundleMetadata(db, "brandname"), "RTK")
+	bundle.Bind.Brandname = brandname
+	rows, err := db.Query(`select assigned_email, device_id, device_type, service_options_json, body_json from device_bindings order by assignment_index, device_id`)
+	if err != nil {
+		if strings.Contains(err.Error(), "no such table") {
+			return nil
+		}
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item assignment
+		var serviceOptionsJSON, bodyJSON string
+		if err := rows.Scan(&item.AssignedEmail, &item.DeviceID, &item.DeviceType, &serviceOptionsJSON, &bodyJSON); err != nil {
+			return err
+		}
+		if strings.TrimSpace(bodyJSON) != "" {
+			_ = json.Unmarshal([]byte(bodyJSON), &item)
+		}
+		if len(item.ServiceOptions) == 0 {
+			_ = json.Unmarshal([]byte(serviceOptionsJSON), &item.ServiceOptions)
+		}
+		bundle.Bind.Assignments = append(bundle.Bind.Assignments, item)
+	}
+	return rows.Err()
+}
+
+func home100KBundleMetadata(db *sql.DB, key string) string {
+	var value string
+	if err := db.QueryRow(`select value from metadata where key = ?`, key).Scan(&value); err != nil {
+		return ""
+	}
+	return value
 }
 
 func gunzipToTempFile(path string) (string, func(), error) {

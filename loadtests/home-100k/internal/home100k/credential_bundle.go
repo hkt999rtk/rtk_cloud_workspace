@@ -82,6 +82,9 @@ func writeShardCredentialBundle(outDir string, envRoot string, plan Plan, assign
 	if err := insertBundleDevices(db, envRoot, plan.Conditions.Brandname, deviceRows); err != nil {
 		return shardCredentialBundle{}, err
 	}
+	if err := insertBundleUsersAndBindings(db, envRoot, plan.Conditions.Brandname, deviceRows); err != nil {
+		return shardCredentialBundle{}, err
+	}
 	if err := db.Close(); err != nil {
 		return shardCredentialBundle{}, err
 	}
@@ -125,6 +128,22 @@ func initCredentialBundleSchema(db *sql.DB) error {
 			factory_enroll_request_json text,
 			factory_enroll_response_redacted_json text
 		)`,
+		`create table users (
+			email text primary key,
+			password text,
+			tokens_json text,
+			app_credentials_json text,
+			app_certificate_json text,
+			body_json text not null
+		)`,
+		`create table device_bindings (
+			device_id text primary key,
+			assignment_index integer not null,
+			assigned_email text not null,
+			device_type text not null,
+			service_options_json text not null,
+			body_json text not null
+		)`,
 		`create table artifacts (
 			name text primary key,
 			kind text not null,
@@ -157,7 +176,7 @@ func loadShardDeviceRowsFromTestData(envRoot string, plan Plan, assignment VMAss
 		return nil, err
 	}
 	defer db.Close()
-	rows, err := db.Query(`select assigned_email, device_id, device_type, service_options_json from device_bindings where brandname = ? order by assignment_index, device_id`, plan.Conditions.Brandname)
+	rows, err := db.Query(`select assignment_index, assigned_email, device_id, device_type, service_options_json from device_bindings where brandname = ? order by assignment_index, device_id`, plan.Conditions.Brandname)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +185,7 @@ func loadShardDeviceRowsFromTestData(envRoot string, plan Plan, assignment VMAss
 	for rows.Next() {
 		var item shardBindAssignment
 		var serviceOptionsJSON string
-		if err := rows.Scan(&item.AssignedEmail, &item.DeviceID, &item.DeviceType, &serviceOptionsJSON); err != nil {
+		if err := rows.Scan(&item.AssignmentIndex, &item.AssignedEmail, &item.DeviceID, &item.DeviceType, &serviceOptionsJSON); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(serviceOptionsJSON), &item.ServiceOptions)
@@ -194,7 +213,13 @@ func loadShardDeviceRowsFromTestData(envRoot string, plan Plan, assignment VMAss
 		if idx%shardCount != shardIndex {
 			continue
 		}
-		out = append(out, deviceManifestRow{DeviceID: item.DeviceID, DeviceType: item.DeviceType})
+		out = append(out, deviceManifestRow{
+			AssignmentIndex: item.AssignmentIndex,
+			AssignedEmail:   item.AssignedEmail,
+			DeviceID:        item.DeviceID,
+			DeviceType:      item.DeviceType,
+			ServiceOptions:  item.ServiceOptions,
+		})
 		if maxConnected > 0 && len(out) >= maxConnected {
 			break
 		}
@@ -242,6 +267,61 @@ func insertBundleDevices(db *sql.DB, envRoot string, brandname string, rows []de
 		}
 	}
 	return tx.Commit()
+}
+
+func insertBundleUsersAndBindings(db *sql.DB, envRoot string, brandname string, rows []deviceManifestRow) error {
+	source, err := sql.Open("sqlite", homeTestDataDBPath(envRoot, brandname))
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	userStmt, err := tx.Prepare(`insert into users(email, password, tokens_json, app_credentials_json, app_certificate_json, body_json) values(?, ?, ?, ?, ?, ?) on conflict(email) do nothing`)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	defer userStmt.Close()
+	bindStmt, err := tx.Prepare(`insert into device_bindings(device_id, assignment_index, assigned_email, device_type, service_options_json, body_json) values(?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	defer bindStmt.Close()
+	for _, row := range rows {
+		var password, tokensJSON, appCredentialsJSON, appCertificateJSON, userBodyJSON string
+		if err := source.QueryRow(`select coalesce(password, ''), coalesce(tokens_json, '{}'), coalesce(app_credentials_json, '{}'), coalesce(app_certificate_json, '{}'), body_json from users where brandname = ? and email = ?`, brandname, row.AssignedEmail).Scan(&password, &tokensJSON, &appCredentialsJSON, &appCertificateJSON, &userBodyJSON); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if _, err := userStmt.Exec(row.AssignedEmail, password, tokensJSON, appCredentialsJSON, appCertificateJSON, userBodyJSON); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		bindBody := map[string]any{
+			"assignment_index": row.AssignmentIndex,
+			"assigned_email":   row.AssignedEmail,
+			"device_id":        row.DeviceID,
+			"device_type":      row.DeviceType,
+			"service_options":  row.ServiceOptions,
+		}
+		if _, err := bindStmt.Exec(row.DeviceID, row.AssignmentIndex, row.AssignedEmail, row.DeviceType, bundleJSONText(row.ServiceOptions), bundleJSONText(bindBody)); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func bundleJSONText(value any) string {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return "{}"
+	}
+	return string(raw)
 }
 
 func readOptionalText(path string) string {
