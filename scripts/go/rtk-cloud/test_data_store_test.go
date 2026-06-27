@@ -105,6 +105,76 @@ func TestTestDataStoreWritesUsersDevicesAndBindings(t *testing.T) {
 	}
 }
 
+func TestTestDataStoreUpsertsBindingCheckpoint(t *testing.T) {
+	envRoot := t.TempDir()
+	store, err := openTestDataStore(envRoot, "RTK")
+	if err != nil {
+		t.Fatalf("openTestDataStore() error = %v", err)
+	}
+	defer store.Close()
+
+	devices := []generatedDevice{{
+		DeviceID:       "load-device-0001",
+		DeviceType:     "light",
+		DisplayName:    "Light 1",
+		ServiceOptions: []string{"mqtt"},
+	}}
+	if err := store.ReplaceDevices("RTK", "run-1", devices, nil); err != nil {
+		t.Fatalf("ReplaceDevices() error = %v", err)
+	}
+
+	first := bindAssignment{
+		AssignmentIndex: 0,
+		AssignedEmail:   "rtk+001@users.local",
+		DeviceID:        "load-device-0001",
+		DeviceType:      "light",
+		Category:        "mqtt_device",
+		ServiceOptions:  []string{"mqtt"},
+		AccountDeviceID: "account-device-1",
+		OperationID:     "op-1",
+		Status:          "provision_requested",
+	}
+	if err := store.UpsertBinding("RTK", "org-rtk", "rtk", "run-1", first); err != nil {
+		t.Fatalf("UpsertBinding(first) error = %v", err)
+	}
+	updated := first
+	updated.OperationID = "op-2"
+	updated.Status = "provisioned"
+	if err := store.UpsertBinding("RTK", "org-rtk", "rtk", "run-2", updated); err != nil {
+		t.Fatalf("UpsertBinding(updated) error = %v", err)
+	}
+
+	assignments, err := store.ReadBindAssignments("RTK")
+	if err != nil {
+		t.Fatalf("ReadBindAssignments() error = %v", err)
+	}
+	if len(assignments) != 1 {
+		t.Fatalf("assignments count = %d, want 1", len(assignments))
+	}
+	if assignments[0].OperationID != "op-2" || assignments[0].Status != "provisioned" {
+		t.Fatalf("assignment not updated: %+v", assignments[0])
+	}
+	matches, err := store.BindingsMatchDevices("RTK")
+	if err != nil {
+		t.Fatalf("BindingsMatchDevices() error = %v", err)
+	}
+	if !matches {
+		t.Fatal("binding should match current device set")
+	}
+	stale := updated
+	stale.DeviceID = "old-device-0001"
+	if err := store.UpsertBinding("RTK", "org-rtk", "rtk", "run-2", stale); err != nil {
+		t.Fatalf("UpsertBinding(stale) error = %v", err)
+	}
+	matches, err = store.BindingsMatchDevices("RTK")
+	if err != nil {
+		t.Fatalf("BindingsMatchDevices(stale) error = %v", err)
+	}
+	if matches {
+		t.Fatal("stale binding must not match current device set")
+	}
+}
+
 func TestImportLegacyLatestAndCleanupPlan(t *testing.T) {
 	envRoot := t.TempDir()
 	usersDir := filepath.Join(envRoot, "artifacts", "users")

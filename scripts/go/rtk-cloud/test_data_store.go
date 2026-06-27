@@ -436,6 +436,44 @@ func (s *testDataStore) ReplaceBindings(brandname, brandCloudID, tenantSlug, run
 	return tx.Commit()
 }
 
+func (s *testDataStore) UpsertBinding(brandname, brandCloudID, tenantSlug, runID string, assignment bindAssignment) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := tx.Exec(`insert into device_bindings(brandname, device_id, run_id, brand_cloud_id, tenant_slug, assignment_index, assigned_email, device_type, category, service_options_json, account_device_id, operation_id, status, body_json, updated_at)
+values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+on conflict(brandname, device_id) do update set
+	run_id = excluded.run_id,
+	brand_cloud_id = excluded.brand_cloud_id,
+	tenant_slug = excluded.tenant_slug,
+	assignment_index = excluded.assignment_index,
+	assigned_email = excluded.assigned_email,
+	device_type = excluded.device_type,
+	category = excluded.category,
+	service_options_json = excluded.service_options_json,
+	account_device_id = excluded.account_device_id,
+	operation_id = excluded.operation_id,
+	status = excluded.status,
+	body_json = excluded.body_json,
+	updated_at = excluded.updated_at`, brandname, assignment.DeviceID, runID, brandCloudID, tenantSlug, assignment.AssignmentIndex, assignment.AssignedEmail, assignment.DeviceType, assignment.Category, mustMarshalJSONString(assignment.ServiceOptions), assignment.AccountDeviceID, assignment.OperationID, assignment.Status, mustMarshalJSONString(assignment), now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`insert into device_provisioning(brandname, device_id, account_device_id, operation_id, status, detail_json, updated_at)
+values(?, ?, ?, ?, ?, ?, ?)
+on conflict(brandname, device_id) do update set
+	account_device_id = excluded.account_device_id,
+	operation_id = excluded.operation_id,
+	status = excluded.status,
+	detail_json = excluded.detail_json,
+	updated_at = excluded.updated_at`, brandname, assignment.DeviceID, assignment.AccountDeviceID, assignment.OperationID, assignment.Status, mustMarshalJSONString(assignment), now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *testDataStore) ReadBindAssignments(brandname string) ([]bindAssignment, error) {
 	rows, err := s.DB.Query(`select assignment_index, assigned_email, device_id, device_type, category, service_options_json, account_device_id, operation_id, status from device_bindings where brandname = ? order by assignment_index, device_id`, brandname)
 	if err != nil {
@@ -453,6 +491,24 @@ func (s *testDataStore) ReadBindAssignments(brandname string) ([]bindAssignment,
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+func (s *testDataStore) BindingsMatchDevices(brandname string) (bool, error) {
+	var missing int
+	if err := s.DB.QueryRow(`select count(*)
+from devices d
+left join device_bindings b on b.brandname = d.brandname and b.device_id = d.device_id
+where d.brandname = ? and b.device_id is null`, brandname).Scan(&missing); err != nil {
+		return false, err
+	}
+	var stale int
+	if err := s.DB.QueryRow(`select count(*)
+from device_bindings b
+left join devices d on d.brandname = b.brandname and d.device_id = b.device_id
+where b.brandname = ? and d.device_id is null`, brandname).Scan(&stale); err != nil {
+		return false, err
+	}
+	return missing == 0 && stale == 0, nil
 }
 
 func (s *testDataStore) ReadBindArtifact(brandname string) (bindArtifact, error) {
@@ -619,7 +675,16 @@ func testDataDeviceMatchesSetup(envRoot, brandname string, expectedCount int, ex
 
 func testDataBindMatchesSetup(envRoot, brandname string, expectedUsers, expectedDevices int, expectedMix string) bool {
 	coverage := testDataCoverageFor(envRoot, brandname)
-	return coverage.Users == expectedUsers && coverage.BoundUsers == expectedUsers && coverage.Bindings == expectedDevices && testDataDeviceMatchesSetup(envRoot, brandname, expectedDevices, expectedMix)
+	if coverage.Users != expectedUsers || coverage.BoundUsers != expectedUsers || coverage.Bindings != expectedDevices || !testDataDeviceMatchesSetup(envRoot, brandname, expectedDevices, expectedMix) {
+		return false
+	}
+	store, err := openTestDataStore(envRoot, brandname)
+	if err != nil {
+		return false
+	}
+	defer store.Close()
+	matches, err := store.BindingsMatchDevices(brandname)
+	return err == nil && matches
 }
 
 func importLegacyTestData(envRoot, brandname string, latestOnly bool) (legacyImportSummary, error) {

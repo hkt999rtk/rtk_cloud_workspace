@@ -7362,12 +7362,23 @@ func runBindDevices(args []string) error {
 		userSessions[result.email] = &brandCloudUserSession{Email: result.email, Password: result.password, Session: session}
 	}
 	runID := time.Now().UTC().Format("20060102T150405Z")
+	store, err := openTestDataStore(envRoot, *brandname)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
 	var sessionMu sync.Mutex
 	var logMu sync.Mutex
+	var checkpointMu sync.Mutex
 	safeLog := func(format string, args ...any) {
 		logMu.Lock()
 		defer logMu.Unlock()
 		logBind(format, args...)
+	}
+	checkpointBinding := func(assignment bindAssignment) error {
+		checkpointMu.Lock()
+		defer checkpointMu.Unlock()
+		return store.UpsertBinding(*brandname, brandCloudID, tenantSlug, runID, assignment)
 	}
 	bulkResults := map[string]accountBulkBindDeviceResult{}
 	if len(assignments) > 0 {
@@ -7465,12 +7476,18 @@ func runBindDevices(args []string) error {
 				if err != nil {
 					return bindAssignment{}, err
 				}
+				if err := checkpointBinding(rebound); err != nil {
+					return bindAssignment{}, err
+				}
 				progress(0, 1, 1)
 				return rebound, nil
 			}
 			assignment.Status = "already_bound"
 			repaired, provisioned, err := repairExistingBoundDeviceProvisioning(ctx, tenantSlug, brandCloudID, assignment, existingDevice, runID, provisionBridge, userSession, safeLog)
 			if err != nil {
+				return bindAssignment{}, err
+			}
+			if err := checkpointBinding(repaired); err != nil {
 				return bindAssignment{}, err
 			}
 			if provisioned {
@@ -7484,17 +7501,15 @@ func runBindDevices(args []string) error {
 		if err != nil {
 			return bindAssignment{}, err
 		}
+		if err := checkpointBinding(assignment); err != nil {
+			return bindAssignment{}, err
+		}
 		progress(0, 1, 1)
 		return assignment, nil
 	})
 	if err != nil {
 		return err
 	}
-	store, err := openTestDataStore(envRoot, *brandname)
-	if err != nil {
-		return err
-	}
-	defer store.Close()
 	if err := store.ReplaceBindings(*brandname, brandCloudID, tenantSlug, runID, results); err != nil {
 		return err
 	}
