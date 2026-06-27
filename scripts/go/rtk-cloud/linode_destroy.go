@@ -45,6 +45,7 @@ func runDestroyLinodeStagingResources(args []string) error {
 	includeObjectStorage := fs.Bool("include-object-storage", false, "delete matched Object Storage buckets too; buckets must already be empty")
 	includeOrphanVolumes := fs.Bool("include-orphan-volumes", false, "delete unattached orphan pvc-* Block Storage volumes listed by --orphan-volume-ids")
 	orphanVolumeIDs := fs.String("orphan-volume-ids", "", "comma-separated Linode volume IDs allowed for orphan pvc-* deletion")
+	onlyOrphanVolumes := fs.Bool("only-orphan-volumes", false, "skip staging runtime resources and delete only exact unattached pvc-* volumes allowed by --orphan-volume-ids")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -79,7 +80,7 @@ func runDestroyLinodeStagingResources(args []string) error {
 	if err != nil {
 		return err
 	}
-	printLinodeDestroyPlan(os.Stdout, plan, *includeObjectStorage, *includeOrphanVolumes, orphanVolumeIDSet)
+	printLinodeDestroyPlan(os.Stdout, plan, *includeObjectStorage, *includeOrphanVolumes, orphanVolumeIDSet, *onlyOrphanVolumes)
 	if !*yes {
 		fmt.Fprintf(os.Stdout, "dry-run only; pass --yes --confirm-text %q to delete the listed non-skipped resources\n", plan.ConfirmText)
 		return nil
@@ -92,7 +93,7 @@ func runDestroyLinodeStagingResources(args []string) error {
 	if *confirmText != plan.ConfirmText {
 		return fmt.Errorf("confirmation text must be %q", plan.ConfirmText)
 	}
-	return executeLinodeDestroyPlan(token, envRoot, plan, *includeObjectStorage, *includeOrphanVolumes, orphanVolumeIDSet)
+	return executeLinodeDestroyPlan(token, envRoot, plan, *includeObjectStorage, *includeOrphanVolumes, orphanVolumeIDSet, *onlyOrphanVolumes)
 }
 
 func buildLinodeDestroyPlan(token string, env map[string]string, stack, loadTestPrefix string) (linodeDestroyPlan, error) {
@@ -351,14 +352,17 @@ func parseDestroyIDSet(raw string) (map[string]bool, error) {
 	return out, nil
 }
 
-func printLinodeDestroyPlan(w *os.File, plan linodeDestroyPlan, includeObjectStorage bool, includeOrphanVolumes bool, orphanVolumeIDs map[string]bool) {
+func printLinodeDestroyPlan(w *os.File, plan linodeDestroyPlan, includeObjectStorage bool, includeOrphanVolumes bool, orphanVolumeIDs map[string]bool, onlyOrphanVolumes bool) {
 	fmt.Fprintf(w, "Linode destructive cleanup plan for stack %q\n", plan.Stack)
-	printDestroyGroup(w, "LKE clusters", plan.LKEClusters, false)
-	printDestroyGroup(w, "Linode instances", plan.Instances, false)
-	printDestroyGroup(w, "Firewalls", plan.Firewalls, false)
-	printDestroyGroup(w, "VPCs", plan.VPCs, false)
-	printDestroyGroup(w, "Object Storage buckets", plan.ObjectBuckets, !includeObjectStorage)
+	printDestroyGroup(w, "LKE clusters", plan.LKEClusters, onlyOrphanVolumes)
+	printDestroyGroup(w, "Linode instances", plan.Instances, onlyOrphanVolumes)
+	printDestroyGroup(w, "Firewalls", plan.Firewalls, onlyOrphanVolumes)
+	printDestroyGroup(w, "VPCs", plan.VPCs, onlyOrphanVolumes)
+	printDestroyGroup(w, "Object Storage buckets", plan.ObjectBuckets, onlyOrphanVolumes || !includeObjectStorage)
 	printDestroyVolumeGroup(w, "Unattached pvc-* Block Storage volumes", plan.OrphanVolumes, includeOrphanVolumes, orphanVolumeIDs)
+	if onlyOrphanVolumes {
+		fmt.Fprintln(w, "Only orphan volume mode is enabled; staging runtime resources are listed but skipped.")
+	}
 	if len(plan.ObjectBuckets) > 0 && !includeObjectStorage {
 		fmt.Fprintln(w, "Object Storage buckets are listed only; pass --include-object-storage to delete matched empty buckets.")
 	}
@@ -413,25 +417,27 @@ func printDestroyVolumeGroup(w *os.File, title string, resources []linodeDestroy
 	}
 }
 
-func executeLinodeDestroyPlan(token, envRoot string, plan linodeDestroyPlan, includeObjectStorage bool, includeOrphanVolumes bool, orphanVolumeIDs map[string]bool) error {
-	for _, group := range [][]linodeDestroyResource{
-		plan.LKEClusters,
-		plan.Instances,
-		plan.Firewalls,
-		plan.VPCs,
-	} {
-		for _, item := range group {
-			if item.Path == "" {
-				continue
-			}
-			fmt.Fprintf(os.Stdout, "deleting %s (%s)\n", item.Label, item.Path)
-			if _, err := linodeRequestRaw(token, "DELETE", item.Path, ""); err != nil {
-				return err
+func executeLinodeDestroyPlan(token, envRoot string, plan linodeDestroyPlan, includeObjectStorage bool, includeOrphanVolumes bool, orphanVolumeIDs map[string]bool, onlyOrphanVolumes bool) error {
+	if !onlyOrphanVolumes {
+		for _, group := range [][]linodeDestroyResource{
+			plan.LKEClusters,
+			plan.Instances,
+			plan.Firewalls,
+			plan.VPCs,
+		} {
+			for _, item := range group {
+				if item.Path == "" {
+					continue
+				}
+				fmt.Fprintf(os.Stdout, "deleting %s (%s)\n", item.Label, item.Path)
+				if _, err := linodeRequestRaw(token, "DELETE", item.Path, ""); err != nil {
+					return err
+				}
 			}
 		}
-	}
-	if err := removeDestroyedLKEState(envRoot); err != nil {
-		return err
+		if err := removeDestroyedLKEState(envRoot); err != nil {
+			return err
+		}
 	}
 	if includeObjectStorage {
 		for _, item := range plan.ObjectBuckets {
