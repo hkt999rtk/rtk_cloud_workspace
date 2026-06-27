@@ -597,17 +597,19 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	if len(selectedByUser) == 0 {
 		blockers = append(blockers, "no bound home MQTT devices for users in latest artifacts")
 	}
-	for _, kind := range []string{"light", "air_conditioner", "smart_meter"} {
-		found := false
-		for _, rows := range selectedByUser {
-			for _, row := range rows {
-				if row.DeviceType == kind {
-					found = true
+	if !bundleShardData {
+		for _, kind := range []string{"light", "air_conditioner", "smart_meter"} {
+			found := false
+			for _, rows := range selectedByUser {
+				for _, row := range rows {
+					if row.DeviceType == kind {
+						found = true
+					}
 				}
 			}
-		}
-		if !found {
-			blockers = append(blockers, "missing bound "+kind+" device in latest device-bind artifact")
+			if !found {
+				blockers = append(blockers, "missing bound "+kind+" device in latest device-bind artifact")
+			}
 		}
 	}
 
