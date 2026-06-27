@@ -258,6 +258,102 @@ func TestValidateDeviceBindWaitsForProvisionedState(t *testing.T) {
 	}
 }
 
+func TestValidateDeviceBindWaitsForProvisionedStateFromSQLiteUsers(t *testing.T) {
+	root := t.TempDir()
+	envRoot := filepath.Join(root, "env")
+	if err := os.MkdirAll(filepath.Join(envRoot, "services", "account-manager"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store, err := openTestDataStore(envRoot, "RTK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReplaceUsers("RTK", "brand-1", "rtk-test", "member", []map[string]any{
+		{"email": "rtk+001@users.local", "password": "pass"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReplaceBindings("RTK", "brand-1", "rtk-test", "run-1", []bindAssignment{{
+		AssignmentIndex: 0,
+		AssignedEmail:   "rtk+001@users.local",
+		DeviceID:        "load-device-0001",
+		DeviceType:      "light",
+		Category:        "mqtt_device",
+		ServiceOptions:  []string{"mqtt"},
+		AccountDeviceID: "account-device-1",
+		OperationID:     "operation-1",
+		Status:          "provision_requested",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	outDir := filepath.Join(root, "out")
+
+	loginSeen := false
+	provisioningSeen := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/brand-clouds/rtk-test/auth/login":
+			loginSeen = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": "user-token", "refresh_token": "refresh-token"}})
+		case "/v1/orgs/brand-1/devices/account-device-1/provisioning":
+			provisioningSeen = true
+			if r.Header.Get("authorization") != "Bearer user-token" {
+				t.Fatalf("authorization header = %q", r.Header.Get("authorization"))
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operation": map[string]string{"status": "succeeded"},
+				"readiness": map[string]any{
+					"state":         "transport_pending",
+					"product_state": "activated",
+					"sources": map[string]any{
+						"provisioning_operation_status": "succeeded",
+						"video_cloud_activation_status": "activated",
+					},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	if err := os.WriteFile(filepath.Join(envRoot, "services", "account-manager", "account-manager.env"), []byte("ACCOUNT_MANAGER_BASE_URL="+server.URL+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err = runValidateDeviceBind([]string{
+		"--workspace", root,
+		"--env-root", envRoot,
+		"--brandname", "RTK",
+		"--out-dir", outDir,
+		"--expected-count", "1",
+		"--expected-devices-per-user", "1",
+		"--wait-provisioned-timeout", "1s",
+		"--wait-provisioned-poll", "1ms",
+	})
+	if err != nil {
+		t.Fatalf("runValidateDeviceBind() error = %v", err)
+	}
+	if !loginSeen || !provisioningSeen {
+		t.Fatalf("loginSeen=%v provisioningSeen=%v", loginSeen, provisioningSeen)
+	}
+	var result struct {
+		Provisioning bindProvisionWaitResult `json:"provisioning"`
+	}
+	body, err := os.ReadFile(filepath.Join(outDir, "bulk-device-bind-validation-results.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Provisioning.Ready != 1 || result.Provisioning.Pending != 0 || len(result.Provisioning.Failures) != 0 {
+		t.Fatalf("unexpected provisioning result: %+v", result.Provisioning)
+	}
+}
+
 func TestValidateDeviceBindRetriesProvisioningTransportErrors(t *testing.T) {
 	root := t.TempDir()
 	envRoot := filepath.Join(root, "env")

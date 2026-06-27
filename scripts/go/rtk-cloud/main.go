@@ -6744,12 +6744,9 @@ func waitBindProvisioned(workspaceFlag, envRootFlag string, artifact bindArtifac
 			return bindProvisionWaitResult{}, errors.New("bind artifact missing tenant_slug and brand cloud lookup did not return tenant_slug")
 		}
 	}
-	if artifact.Inputs.UsersFile == "" {
-		return bindProvisionWaitResult{}, errors.New("bind artifact missing inputs.users_file; cannot poll brand-cloud provisioning state")
-	}
-	users, err := readUsersFile(artifact.Inputs.UsersFile)
+	users, updateUsers, err := bindProvisionUsers(workspaceFlag, envRootFlag, artifact)
 	if err != nil {
-		return bindProvisionWaitResult{}, fmt.Errorf("read bind users file: %w", err)
+		return bindProvisionWaitResult{}, err
 	}
 	userSessions := map[string]*brandCloudUserSession{}
 	selected := []bindAssignment{}
@@ -6772,7 +6769,7 @@ func waitBindProvisioned(workspaceFlag, envRootFlag string, artifact bindArtifac
 		return bindProvisionWaitResult{}, err
 	}
 	defer func() {
-		_, _ = updateUsersArtifactTokens(artifact.Inputs.UsersFile, userSessions)
+		_ = updateUsers(userSessions)
 	}()
 	result := bindProvisionWaitResult{Checked: len(selected), LastStates: map[string]bindProvisioningStateSnapshot{}}
 	started := time.Now()
@@ -6877,6 +6874,40 @@ func waitBindProvisioned(workspaceFlag, envRootFlag string, artifact bindArtifac
 		}
 		time.Sleep(poll)
 	}
+}
+
+func bindProvisionUsers(workspaceFlag, envRootFlag string, artifact bindArtifact) (map[string]userCredential, func(map[string]*brandCloudUserSession) error, error) {
+	if artifact.Inputs.UsersFile != "" {
+		users, err := readUsersFile(artifact.Inputs.UsersFile)
+		if err != nil {
+			return nil, nil, fmt.Errorf("read bind users file: %w", err)
+		}
+		return users, func(sessions map[string]*brandCloudUserSession) error {
+			_, err := updateUsersArtifactTokens(artifact.Inputs.UsersFile, sessions)
+			return err
+		}, nil
+	}
+	brandname := strings.TrimSpace(artifact.Brandname)
+	if brandname == "" {
+		return nil, nil, errors.New("bind artifact missing brandname; cannot read SQLite test-data users")
+	}
+	envRoot, err := resolveEnvRootFromCommandFlags(workspaceFlag, envRootFlag)
+	if err != nil {
+		return nil, nil, fmt.Errorf("bind artifact missing inputs.users_file; SQLite fallback requires --env-root: %w", err)
+	}
+	users, _, err := readUsersListFromTestData(envRoot, brandname)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read SQLite test-data users: %w", err)
+	}
+	return users, func(sessions map[string]*brandCloudUserSession) error {
+		store, err := openTestDataStore(envRoot, brandname)
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		_, err = store.UpdateUserTokens(brandname, sessions)
+		return err
+	}, nil
 }
 
 func categorizeBindValidationFailure(failure string) string {
