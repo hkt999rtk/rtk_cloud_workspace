@@ -186,6 +186,44 @@ function addArrow(slide, x1, y1, x2, y2, color = C.sky) {
   addShape(slide, { x: x2 - 8, y: y2 - 7, w: 14, h: 14, fill: color, line: color, geometry: "triangle" });
 }
 
+function addMetricBar(slide, label, value, frame, color, maxValue = 100) {
+  addText(slide, label, { x: frame.x, y: frame.y, w: frame.labelW || 120, h: 22 }, { size: 10.5, color: C.navy, bold: true, face: FONT_EN });
+  addShape(slide, { x: frame.x + (frame.labelW || 120), y: frame.y + 5, w: frame.w, h: 12, fill: C.pale, line: C.line });
+  const filled = Math.max(0, Math.min(frame.w, (Number(value || 0) / maxValue) * frame.w));
+  addShape(slide, { x: frame.x + (frame.labelW || 120), y: frame.y + 5, w: filled, h: 12, fill: color, line: "none" });
+  addText(slide, `${Number(value || 0).toFixed(1)}%`, { x: frame.x + (frame.labelW || 120) + frame.w + 8, y: frame.y, w: 62, h: 22 }, { size: 10, color: C.black, face: FONT_EN });
+}
+
+function addHistoryBars(slide, title, history, frame) {
+  addText(slide, title, { x: frame.x, y: frame.y, w: frame.w, h: 20 }, { size: 12.5, color: C.navy, bold: true, face: FONT_EN, align: "center" });
+  const plotY = frame.y + 34;
+  const plotH = frame.h - 58;
+  const plotW = frame.w - 58;
+  addShape(slide, { x: frame.x + 28, y: plotY, w: plotW, h: plotH, fill: C.white, line: C.line });
+  addText(slide, "100%", { x: frame.x, y: plotY - 2, w: 34, h: 14 }, { size: 7.5, color: C.gray, face: FONT_EN, align: "right" });
+  addText(slide, "0", { x: frame.x, y: plotY + plotH - 10, w: 34, h: 14 }, { size: 7.5, color: C.gray, face: FONT_EN, align: "right" });
+  const points = Array.isArray(history) ? history : [];
+  const usable = points.length ? points : [{ cpuMax: 0, memMax: 0 }];
+  const gap = 2;
+  const pairW = Math.max(5, Math.floor((plotW - 12) / usable.length) - gap);
+  usable.forEach((p, i) => {
+    const x = frame.x + 34 + i * (pairW + gap);
+    const cpuH = Math.max(1, (Number(p.cpuMax || 0) / 100) * plotH);
+    const memH = Math.max(1, (Number(p.memMax || 0) / 100) * plotH);
+    const half = Math.max(2, Math.floor(pairW / 2));
+    addShape(slide, { x, y: plotY + plotH - cpuH, w: half, h: cpuH, fill: C.sky, line: "none" });
+    addShape(slide, { x: x + half, y: plotY + plotH - memH, w: half, h: memH, fill: C.amber, line: "none" });
+  });
+  addShape(slide, { x: frame.x + frame.w - 128, y: frame.y + frame.h - 16, w: 10, h: 10, fill: C.sky, line: "none" });
+  addText(slide, "CPU max", { x: frame.x + frame.w - 114, y: frame.y + frame.h - 20, w: 54, h: 14 }, { size: 7.5, color: C.muted, face: FONT_EN });
+  addShape(slide, { x: frame.x + frame.w - 58, y: frame.y + frame.h - 16, w: 10, h: 10, fill: C.amber, line: "none" });
+  addText(slide, "Mem max", { x: frame.x + frame.w - 44, y: frame.y + frame.h - 20, w: 54, h: 14 }, { size: 7.5, color: C.muted, face: FONT_EN });
+}
+
+function runByLabel(payload, shortLabel) {
+  return (payload.loadTestCapacity?.runs || []).find((r) => r.shortLabel === shortLabel) || {};
+}
+
 async function slide01(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload, "cover");
@@ -261,7 +299,7 @@ async function slide03(p, payload) {
   const claims = [
     ["Why", "Cloud 補齊 module + SDK + app + onboarding + OTA + video + admin 的完整產品路徑。"],
     ["Now", "Linode staging、Admin mockups、SDK sample flow、Connect+ architecture 已能支撐端到端展示。"],
-    ["Next", "把 demo flow 連到 loading-test evidence，建立 customer PoC 與 commercial KPI 信心。"],
+    ["Next", "把 100K loading-test evidence 連到 customer PoC 與 commercial KPI，並補 video camera gate。"],
     ["Risk", "Release version、backup/restore、load-test fleet/data、production-like sign-off 仍需補齊。"],
   ];
   claims.forEach((c, i) => {
@@ -382,9 +420,95 @@ async function slideReleaseGateDefinition(p, payload) {
 async function slide05(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
-  await addHeader(slide, payload, "Loading Test Readiness", "AUG.1: 50,000 DEVICES + 5,000 VIDEO CAMERAS");
+  await addHeader(slide, payload, "Loading Test Readiness", "IOT 100K VALIDATED / VIDEO GATE PENDING");
   addTable(slide, ["Area", "Status", "Needed before Aug.1", "Owner / dependency", "Risk"], payload.loadReadiness, { x: 62, y: 170, w: 1150, h: 390 }, [1.3, 0.9, 2.9, 1.6, 1], { rowH: 58, fontSize: 11 });
-  addText(slide, "Aug.1 loading test 要同時看 IoT device scale 與 video camera path: success rate, p95/p99 latency, error taxonomy, resource use, TURN/storage behavior, recovery.", { x: 90, y: 600, w: 1080, h: 40 }, { size: 15, color: C.navy, bold: true, align: "center", fill: C.paleTeal });
+  addText(slide, "IoT 100K 已用 8/8、7/7、6/6 三輪完成容量驗證；下一個 gap 是 5,000 video cameras 的 WebRTC / TURN / storage / bandwidth evidence。", { x: 90, y: 600, w: 1080, h: 40 }, { size: 15, color: C.navy, bold: true, align: "center", fill: C.paleTeal });
+  return slide;
+}
+
+async function slideLoadTestCapacityResult(p, payload) {
+  const slide = p.slides.add();
+  await addBackground(slide, payload);
+  await addHeader(slide, payload, "100K Loading Test Result", "CAPACITY VALIDATION");
+  const cap = payload.loadTestCapacity || {};
+  const recommended = cap.recommended || {};
+  addText(slide, cap.summary || "100K capacity evidence unavailable.", { x: 82, y: 152, w: 1118, h: 42 }, { size: 14.5, color: C.navy, bold: true, align: "center", fill: C.pale });
+  addTable(
+    slide,
+    ["Config", "Result", "MQTT connect", "APP ACK", "CPU p95/max", "Mem p95/max", "Decision"],
+    cap.tableRows || [],
+    { x: 54, y: 224, w: 1170, h: 150 },
+    [0.7, 0.85, 1.35, 1.05, 1.05, 1.05, 1.55],
+    { rowH: 30, headerH: 30, fontSize: 8.4 },
+  );
+  const cards = [
+    ["Recommended", recommended.shortLabel || "7/7", "7 nodes + 7 MQTT pods keeps capacity while preserving more memory headroom than 6/6."],
+    ["Functional gate", "PASS", "COMPLETE / SUCCESS, 100% connect target, 5,000 desired writes and 5,000 ACKs."],
+    ["Correlation gate", "PASS", "Server counters and runtime log streams match the client-side command evidence."],
+  ];
+  cards.forEach((card, i) => {
+    const x = 78 + i * 386;
+    addShape(slide, { x, y: 420, w: 335, h: 120, fill: i === 0 ? C.paleAmber : C.paleBlue, line: C.line });
+    addText(slide, card[0], { x: x + 18, y: 442, w: 130, h: 20 }, { size: 12, color: C.muted, bold: true, face: FONT_EN });
+    addText(slide, card[1], { x: x + 18, y: 472, w: 115, h: 34 }, { size: 24, color: i === 0 ? C.amber : C.green, bold: true, face: FONT_EN });
+    addText(slide, card[2], { x: x + 145, y: 452, w: 168, h: 66 }, { size: 9.5, color: C.black });
+  });
+  addText(slide, "Management readout: 6/6 can pass once, but 7/7 is the safer baseline because capacity decisions must include resource headroom, not only functional success.", { x: 120, y: 602, w: 1040, h: 36 }, { size: 14, color: C.navy, bold: true, align: "center", fill: C.paleTeal });
+  return slide;
+}
+
+async function slideLoadTestResourceCharts(p, payload) {
+  const slide = p.slides.add();
+  await addBackground(slide, payload);
+  await addHeader(slide, payload, "Resource Utilization History", "CPU / MEMORY / BANDWIDTH");
+  const r7 = runByLabel(payload, "7/7");
+  const r6 = runByLabel(payload, "6/6");
+  addHistoryBars(slide, "7/7 baseline: node max CPU and memory over test window", r7.k8s?.history || [], { x: 62, y: 168, w: 545, h: 190 });
+  addHistoryBars(slide, "6/6 lower bound: node max CPU and memory over test window", r6.k8s?.history || [], { x: 675, y: 168, w: 545, h: 190 });
+
+  const runs = payload.loadTestCapacity?.runs || [];
+  addText(slide, "Peak resource comparison by config", { x: 74, y: 395, w: 430, h: 24 }, { size: 15, color: C.navy, bold: true, face: FONT_EN });
+  runs.forEach((r, i) => {
+    const y = 430 + i * 48;
+    const summary = r.k8s?.summary || {};
+    addMetricBar(slide, `${r.shortLabel} CPU p95`, Number(summary.cpuP95Max || 0), { x: 80, y, w: 250, labelW: 95 }, C.sky);
+    addMetricBar(slide, `${r.shortLabel} Mem p95`, Number(summary.memP95Max || 0), { x: 485, y, w: 250, labelW: 95 }, C.amber);
+  });
+
+  addShape(slide, { x: 890, y: 402, w: 300, h: 158, fill: C.pale, line: C.line });
+  addText(slide, "Bandwidth evidence", { x: 918, y: 420, w: 245, h: 24 }, { size: 16, color: C.navy, bold: true, face: FONT_EN, align: "center" });
+  const bwRows = runs.map((r) => [r.shortLabel, `${Number(r.avgPayloadMbps || 0).toFixed(3)} Mbps`, `${Math.round((r.appPayloadBytes || 0) / 1024 / 1024)} MiB`]);
+  addTable(slide, ["Run", "Avg payload", "Bytes"], bwRows, { x: 910, y: 462, w: 260, h: 74 }, [0.65, 1.1, 0.85], { rowH: 18, headerH: 20, fontSize: 6.9 });
+  addText(slide, "Current report captures application payload throughput. NIC/link utilization should be added as the next evidence metric for video-camera and TURN tests.", { x: 135, y: 610, w: 1010, h: 34 }, { size: 13.2, color: C.navy, bold: true, align: "center", fill: C.paleAmber });
+  return slide;
+}
+
+async function slideLoadTestDecisionBasis(p, payload) {
+  const slide = p.slides.add();
+  await addBackground(slide, payload);
+  await addHeader(slide, payload, "Capacity Decision Basis", "WHY 7/7 IS THE BASELINE");
+  const cap = payload.loadTestCapacity || {};
+  const coeff = cap.capacityCoefficients || {};
+  addText(slide, "Capacity conclusion is model-first but evidence-backed: the formula chooses pods, nodes, and generator VMs, then live runs validate both functional gates and resource headroom.", { x: 84, y: 152, w: 1110, h: 42 }, { size: 14.5, color: C.navy, bold: true, align: "center", fill: C.pale });
+  addTable(slide, ["Formula / coefficient", "Value used in report"], [
+    ["users", "ceil(devices / 20 devices per user)"],
+    ["load_generator_vms", "ceil(devices / 20,000 devices per VM) = 5 for 100K"],
+    ["recommended safe devices / MQTT pod", `${Number(coeff.recommendedDevicesPerMqttPod || 0).toLocaleString()} from 7/7 baseline`],
+    ["recommended safe devices / node", `${Number(coeff.recommendedDevicesPerNode || 0).toLocaleString()} from 7/7 baseline`],
+    ["observed lower-bound pass", `6/6 observed ${Number(coeff.observedMaxDevicesPerMqttPod || 0).toLocaleString()} devices per MQTT pod, but memory p95/max was high`],
+  ], { x: 58, y: 225, w: 610, h: 235 }, [1.65, 2.65], { rowH: 40, headerH: 28, fontSize: 10 });
+
+  addTable(slide, ["Decision check", "Pass/fail basis"], (cap.decisionBasis || []).map((x) => {
+    const parts = String(x).split(": ");
+    return [parts[0], parts.slice(1).join(": ") || x];
+  }), { x: 710, y: 225, w: 500, h: 205 }, [1.05, 2.2], { rowH: 38, headerH: 28, fontSize: 9.2 });
+
+  addShape(slide, { x: 95, y: 520, w: 500, h: 75, fill: C.paleTeal, line: C.line });
+  addText(slide, "Recommendation", { x: 125, y: 535, w: 160, h: 24 }, { size: 17, color: C.navy, bold: true, face: FONT_EN });
+  addText(slide, "Use 7 nodes / 7 MQTT pods for the 100K IoT baseline. Treat 6/6 as a lower-bound experiment, not production sizing.", { x: 300, y: 532, w: 260, h: 44 }, { size: 11, color: C.black, bold: true });
+  addShape(slide, { x: 685, y: 520, w: 500, h: 75, fill: C.paleAmber, line: "#E3C25A" });
+  addText(slide, "Next evidence", { x: 715, y: 535, w: 150, h: 24 }, { size: 17, color: C.navy, bold: true, face: FONT_EN });
+  addText(slide, "Add NIC bandwidth sampling and run the 5,000 video-camera path with WebRTC/TURN/storage metrics.", { x: 880, y: 532, w: 260, h: 44 }, { size: 11, color: C.black, bold: true });
   return slide;
 }
 
@@ -1204,7 +1328,7 @@ async function slide21(p, payload) {
 }
 
 const SLIDES = [
-  slide01, slideMajorTopics, slide07, slideWhyCloud, slideCustomerUseCaseFit, slide03, slideCloudTypes, slideOperationalTransition, slide02, slide04, slideReleaseGateDefinition, slide05, slide06, slide08,
+  slide01, slideMajorTopics, slide07, slideWhyCloud, slideCustomerUseCaseFit, slide03, slideCloudTypes, slideOperationalTransition, slide02, slide04, slideReleaseGateDefinition, slide05, slideLoadTestCapacityResult, slideLoadTestResourceCharts, slideLoadTestDecisionBasis, slide06, slide08,
   slidePortalTransition, slidePortalIntro, slide09, slideTechnicalTransition, slide10, slide11, slideStrideOverview, slide12, slideHsmSignerDesign, slide13,
   slideEvidenceTransition, slide14, slideCostView, slideLinodeScaleEstimate, slideAwsUnitCost, slideAwsCostCalculationBase, slideAwsCostFormulaBreakdown, slideAwsCostCalculationScenarios, slide15, slide16, slide17, slide18, slide19, slidePostAlphaCoverage, slide20, slide21,
 ];

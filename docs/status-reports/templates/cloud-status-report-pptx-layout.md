@@ -80,35 +80,38 @@ appendix source index unless the report owner explicitly changes the framework.
 | 9 | 目前狀態總結 | Status summary table plus schedule snapshot. |
 | 10 | Schedule Path：May 1 到 Public | Timeline / milestone lane with `目前位置`, Aug.1 loading pass, August alpha, September beta, and public path. |
 | 11 | Release Gate Definition | Visual gate definition for Aug.1 loading pass, alpha, beta, and public path. |
-| 12 | Loading Test Readiness | Aug.1 50,000-device + 5,000-video-camera readiness matrix. |
-| 13 | Video Schedule Lane | 5,000 video-camera loading-test path to Aug.1. |
-| 14 | Current vs Target Architecture | Current staging vs Production Target, with scaling facility designed in staging and auto scaling reserved for production deployment. |
-| 15 | Transition：Portal Web / Digital Marketing | Chapter title page explaining the switch from operational cloud to marketing/portal cloud. |
-| 16 | Portal Web：市場入口與開發者導流 | Live `webtest.mgmeet.io` screenshot plus why-we-need-it and feature summary. |
-| 17 | Portal Web / Digital Marketing | Observation -> content decision -> sales action -> result/learning loop, with explicit linkage back to IoT module selling. |
-| 18 | Transition：Operational Cloud 技術設計與安全管理 | Topic break before runtime capability, PKI/security, and threat-model evidence. |
-| 19 | WebRTC / Video Storage | WebRTC signaling flow plus video-storage readiness matrix. |
-| 20 | MQTT / Device Shadow | MQTT transport vs IoT shadow state-management table. |
-| 21 | STRIDE：Security implementation 的檢查語言 | Hub-and-spoke STRIDE graphic mapping six threat categories to cloud implementation controls. |
-| 22 | Security / PKI Management | Device trust-chain and security-management matrix. |
-| 23 | HSM / PKCS#11 Signer Design | Key-custody boundary for certissuer and token signing; service gets signing capability, not raw private key material. |
-| 24 | Threat Model / Cyber Security Review | STRIDE risk matrix and next review focus. |
-| 25 | Transition：Deployment、操作流程與 Evidence | Topic break before Linode runtime, health/config boundary, operation screenshots, and SDK flow. |
-| 26 | Linode Staging Runtime Shape | Runtime topology plus component responsibility table. |
-| 27 | Initial Operation Cost View | Current Linode monthly run-rate estimate plus AWS commercial-scale difference view from `docs/cost`, focused on CloudHSM on/off and Robust Design on/off. |
-| 28 | Linode 100k Device Cost View | Self-managed Linode/Akamai cluster estimate for 10,000 users and 100,000 usually-online MQTT devices, including per-unit cost and caveats. |
-| 29 | AWS Unit Cost Per Month | Raw monthly total divided by users/devices plus weighted 10% user / 90% device unit-cost view. |
-| 30 | AWS Cost Calculation Detail 1/3 | Base-service line-item math from `docs/cost`: ECS, Cognito, RDS, IoT Core, NAT, CloudWatch Logs, Secrets, S3, KMS, and subtotal. |
-| 31 | AWS Cost Calculation Detail 2/3 | Explicit quantity * unit-price formulas for major items, e.g. RDS DB-hours plus storage GB-month and Cognito MAU free-tier calculation. |
-| 32 | AWS Cost Calculation Detail 3/3 | Scenario equations, CloudHSM/robust deltas, optional support-plan calculation, and per-user/per-device formulas. |
-| 33 | Linode Health & Configuration Boundary | Live health table and safe configuration boundary. |
-| 34 | Operation Flow Overview | Demo journey flow. |
-| 35 | Admin Operation Screenshots | 2x2 Admin screenshot grid. |
-| 36 | SDK / Sample App Flow | Sample app flow screenshot plus evidence-purpose table. |
-| 37 | Decision / Support Needed | Alpha-readiness support board: account/payment ownership, official Android/iOS market publishing accounts, operation backup, alpha internal testers, beta pilot customer, and milestone impact. |
-| 38 | Ongoing Operation / Development Coverage | Ongoing baseline estimate separate from temporary alpha/beta testers: backend/service owner, DevOps/SRE, SDK support, QA/load test, security review, and FAE/pilot support. |
-| 39 | Appendix：素材與來源索引 | Dense material/source/status table. |
-| 40 | Thank You / Review Gate | Master-style closing slide and checklist summary. |
+| 12 | Loading Test Readiness | IoT 100K validated / video gate pending readiness matrix. |
+| 13 | 100K Loading Test Result | 8/8, 7/7, and 6/6 result table with connect, ACK, CPU, memory, and baseline recommendation. |
+| 14 | Resource Utilization History | CPU max and memory max history charts, p95 comparison bars, and current payload-throughput bandwidth evidence. |
+| 15 | Capacity Decision Basis | Sizing formulas, pass/fail criteria, 7/7 baseline rationale, and next evidence gap for NIC/video bandwidth. |
+| 16 | Video Schedule Lane | 5,000 video-camera loading-test path to Aug.1. |
+| 17 | Current vs Target Architecture | Current staging vs Production Target, with scaling facility designed in staging and auto scaling reserved for production deployment. |
+| 18 | Transition：Portal Web / Digital Marketing | Chapter title page explaining the switch from operational cloud to marketing/portal cloud. |
+| 19 | Portal Web：市場入口與開發者導流 | Live `webtest.mgmeet.io` screenshot plus why-we-need-it and feature summary. |
+| 20 | Portal Web / Digital Marketing | Observation -> content decision -> sales action -> result/learning loop, with explicit linkage back to IoT module selling. |
+| 21 | Transition：Operational Cloud 技術設計與安全管理 | Topic break before runtime capability, PKI/security, and threat-model evidence. |
+| 22 | WebRTC / Video Storage | WebRTC signaling flow plus video-storage readiness matrix. |
+| 23 | MQTT / Device Shadow | MQTT transport vs IoT shadow state-management table. |
+| 24 | STRIDE：Security implementation 的檢查語言 | Hub-and-spoke STRIDE graphic mapping six threat categories to cloud implementation controls. |
+| 25 | Security / PKI Management | Device trust-chain and security-management matrix. |
+| 26 | HSM / PKCS#11 Signer Design | Key-custody boundary for certissuer and token signing; service gets signing capability, not raw private key material. |
+| 27 | Threat Model / Cyber Security Review | STRIDE risk matrix and next review focus. |
+| 28 | Transition：Deployment、操作流程與 Evidence | Topic break before Linode runtime, health/config boundary, operation screenshots, and SDK flow. |
+| 29 | Linode Staging Runtime Shape | Runtime topology plus component responsibility table. |
+| 30 | Initial Operation Cost View | Current Linode monthly run-rate estimate plus AWS commercial-scale difference view from `docs/cost`, focused on CloudHSM on/off and Robust Design on/off. |
+| 31 | Linode 100k Device Cost View | Self-managed Linode/Akamai cluster estimate for 10,000 users and 100,000 usually-online MQTT devices, including per-unit cost and caveats. |
+| 32 | AWS Unit Cost Per Month | Raw monthly total divided by users/devices plus weighted 10% user / 90% device unit-cost view. |
+| 33 | AWS Cost Calculation Detail 1/3 | Base-service line-item math from `docs/cost`: ECS, Cognito, RDS, IoT Core, NAT, CloudWatch Logs, Secrets, S3, KMS, and subtotal. |
+| 34 | AWS Cost Calculation Detail 2/3 | Explicit quantity * unit-price formulas for major items, e.g. RDS DB-hours plus storage GB-month and Cognito MAU free-tier calculation. |
+| 35 | AWS Cost Calculation Detail 3/3 | Scenario equations, CloudHSM/robust deltas, optional support-plan calculation, and per-user/per-device formulas. |
+| 36 | Linode Health & Configuration Boundary | Live health table and safe configuration boundary. |
+| 37 | Operation Flow Overview | Demo journey flow. |
+| 38 | Admin Operation Screenshots | 2x2 Admin screenshot grid. |
+| 39 | SDK / Sample App Flow | Sample app flow screenshot plus evidence-purpose table. |
+| 40 | Decision / Support Needed | Alpha-readiness support board: account/payment ownership, official Android/iOS market publishing accounts, operation backup, alpha internal testers, beta pilot customer, and milestone impact. |
+| 41 | Ongoing Operation / Development Coverage | Ongoing baseline estimate separate from temporary alpha/beta testers: backend/service owner, DevOps/SRE, SDK support, QA/load test, security review, and FAE/pilot support. |
+| 42 | Appendix：素材與來源索引 | Dense material/source/status table. |
+| 43 | Thank You / Review Gate | Master-style closing slide and checklist summary. |
 
 ## Layout Rules
 
