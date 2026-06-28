@@ -2923,24 +2923,97 @@ func TestRunStagingE2EDataSetupForLKEStartsPortForwards(t *testing.T) {
 	}
 }
 
+func TestRunStagingE2EDataSetupForLKESupportsMultipleFactoryPortForwards(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	kubectlLog := fakeKubectlForK8SE2EPortForwards(t)
+	commandLog := filepath.Join(t.TempDir(), "commands.log")
+	writeTestFile(t, filepath.Join(envRoot, "state", "lke-kubeconfig.yaml"), "apiVersion: v1\n")
+	factoryPort1 := freeTCPPort(t)
+	factoryPort2 := freeTCPPort(t)
+	t.Setenv("CLOUD_PROVIDER", "lke")
+	t.Setenv("CLOUD_STAGING_E2E_ACCOUNT_MANAGER_PORT", freeTCPPort(t))
+	t.Setenv("CLOUD_STAGING_E2E_VIDEO_CLOUD_PORT", freeTCPPort(t))
+	t.Setenv("CLOUD_STAGING_E2E_FACTORY_ENROLL_PORTS", factoryPort1+","+factoryPort2)
+	t.Setenv("CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-brand", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-users", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "generate-devices", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "bind-devices", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT", fakeE2EDataCommand(t, commandLog, "validate-bind", envRoot))
+
+	if err := runStagingE2EDataSetup([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--brandname", "RTK",
+		"--user-count", "2",
+		"--device-count", "4",
+		"--out-dir", filepath.Join(t.TempDir(), "out"),
+		"--quiet",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	kubectlCalls := readTestFile(t, kubectlLog)
+	if got := strings.Count(kubectlCalls, "PF_START svc/factoryenroll"); got != 2 {
+		t.Fatalf("expected two factoryenroll port-forwards, got %d:\n%s", got, kubectlCalls)
+	}
+	expectedURL := "generate-devices FACTORY_ENROLL_URL=http://127.0.0.1:" + factoryPort1 + ",http://127.0.0.1:" + factoryPort2
+	commands := readTestFile(t, commandLog)
+	if !strings.Contains(commands, expectedURL) {
+		t.Fatalf("expected generate-devices to receive multiple FACTORY_ENROLL_URL endpoints %q, got:\n%s", expectedURL, commands)
+	}
+}
+
+func seedStagingE2ETestData(t *testing.T, envRoot string, emails []string, assignments []bindAssignment) {
+	t.Helper()
+	store, err := openTestDataStore(envRoot, "RTK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	users := make([]map[string]any, 0, len(emails))
+	for _, email := range emails {
+		users = append(users, map[string]any{"email": email, "password": "password"})
+	}
+	if err := store.ReplaceUsers("RTK", "brand-1", "rtk", "member", users); err != nil {
+		t.Fatal(err)
+	}
+	devices := make([]generatedDevice, 0, len(assignments))
+	credentials := map[string]testDataDeviceCredential{}
+	for _, assignment := range assignments {
+		deviceType := assignment.DeviceType
+		category := "mqtt_device"
+		if contains(assignment.ServiceOptions, "video_streaming") || contains(assignment.ServiceOptions, "video_storage") {
+			category = "ip_camera"
+		}
+		devices = append(devices, generatedDevice{
+			DeviceID:       assignment.DeviceID,
+			DeviceType:     deviceType,
+			DisplayName:    assignment.DeviceID,
+			MQTTCapability: "shadow",
+			ServiceOptions: assignment.ServiceOptions,
+			Model:          "test-model",
+		})
+		credentials[assignment.DeviceID] = testDataDeviceCredential{DeviceID: assignment.DeviceID, MetadataJSON: mustMarshalJSONString(map[string]any{"device_id": assignment.DeviceID, "device_type": deviceType, "category": category})}
+	}
+	if err := store.ReplaceDevices("RTK", "test-run", devices, credentials); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReplaceBindings("RTK", "brand-1", "rtk", "test-run", assignments); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRunStagingE2EDataSetupDefaultsToResumeCompleteArtifacts(t *testing.T) {
 	t.Setenv("CLOUD_STAGING_E2E_K8S_PORT_FORWARD", "0")
 	workspace := t.TempDir()
 	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")
 	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\n")
-	writeTestFile(t, filepath.Join(envRoot, "artifacts", "users", "rtk-users-complete.json"), `{"brandname":"RTK","users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}`)
-	writeTestFile(t, filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.json"), `[
-{"device_id":"load-device-0001","device_type":"camera"},
-{"device_id":"load-device-0002","device_type":"camera"},
-{"device_id":"load-device-0003","device_type":"light"},
-{"device_id":"load-device-0004","device_type":"air_conditioner"}
-]`)
-	writeTestFile(t, filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-complete.json"), `{"brandname":"RTK","assignments":[
-{"assigned_email":"rtk+001@users.local","device_id":"load-device-0001","device_type":"camera","service_options":["mqtt","video_streaming","video_storage"]},
-{"assigned_email":"rtk+002@users.local","device_id":"load-device-0002","device_type":"camera","service_options":["mqtt","video_streaming","video_storage"]},
-{"assigned_email":"rtk+001@users.local","device_id":"load-device-0003","device_type":"light","service_options":["mqtt"]},
-{"assigned_email":"rtk+002@users.local","device_id":"load-device-0004","device_type":"air_conditioner","service_options":["mqtt"]}
-]}`)
+	seedStagingE2ETestData(t, envRoot, []string{"rtk+001@users.local", "rtk+002@users.local"}, []bindAssignment{
+		{AssignmentIndex: 0, AssignedEmail: "rtk+001@users.local", DeviceID: "load-device-0001", DeviceType: "camera", ServiceOptions: []string{"mqtt", "video_streaming", "video_storage"}},
+		{AssignmentIndex: 1, AssignedEmail: "rtk+002@users.local", DeviceID: "load-device-0002", DeviceType: "camera", ServiceOptions: []string{"mqtt", "video_streaming", "video_storage"}},
+		{AssignmentIndex: 2, AssignedEmail: "rtk+001@users.local", DeviceID: "load-device-0003", DeviceType: "light", ServiceOptions: []string{"mqtt"}},
+		{AssignmentIndex: 3, AssignedEmail: "rtk+002@users.local", DeviceID: "load-device-0004", DeviceType: "air_conditioner", ServiceOptions: []string{"mqtt"}},
+	})
 	commandLog := filepath.Join(t.TempDir(), "commands.log")
 	t.Setenv("CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-brand", envRoot))
 	t.Setenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-users", envRoot))
@@ -2978,19 +3051,12 @@ func TestRunStagingE2EDataSetupNoResumeDisablesLocalUserReuse(t *testing.T) {
 	workspace := t.TempDir()
 	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")
 	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\n")
-	writeTestFile(t, filepath.Join(envRoot, "artifacts", "users", "rtk-users-complete.json"), `{"brandname":"RTK","users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}`)
-	writeTestFile(t, filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.json"), `[
-{"device_id":"load-device-0001","device_type":"camera"},
-{"device_id":"load-device-0002","device_type":"camera"},
-{"device_id":"load-device-0003","device_type":"light"},
-{"device_id":"load-device-0004","device_type":"air_conditioner"}
-]`)
-	writeTestFile(t, filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-complete.json"), `{"brandname":"RTK","assignments":[
-{"assigned_email":"rtk+001@users.local","device_id":"load-device-0001","device_type":"camera","service_options":["mqtt","video_streaming","video_storage"]},
-{"assigned_email":"rtk+002@users.local","device_id":"load-device-0002","device_type":"camera","service_options":["mqtt","video_streaming","video_storage"]},
-{"assigned_email":"rtk+001@users.local","device_id":"load-device-0003","device_type":"light","service_options":["mqtt"]},
-{"assigned_email":"rtk+002@users.local","device_id":"load-device-0004","device_type":"air_conditioner","service_options":["mqtt"]}
-]}`)
+	seedStagingE2ETestData(t, envRoot, []string{"rtk+001@users.local", "rtk+002@users.local"}, []bindAssignment{
+		{AssignmentIndex: 0, AssignedEmail: "rtk+001@users.local", DeviceID: "load-device-0001", DeviceType: "camera", ServiceOptions: []string{"mqtt", "video_streaming", "video_storage"}},
+		{AssignmentIndex: 1, AssignedEmail: "rtk+002@users.local", DeviceID: "load-device-0002", DeviceType: "camera", ServiceOptions: []string{"mqtt", "video_streaming", "video_storage"}},
+		{AssignmentIndex: 2, AssignedEmail: "rtk+001@users.local", DeviceID: "load-device-0003", DeviceType: "light", ServiceOptions: []string{"mqtt"}},
+		{AssignmentIndex: 3, AssignedEmail: "rtk+002@users.local", DeviceID: "load-device-0004", DeviceType: "air_conditioner", ServiceOptions: []string{"mqtt"}},
+	})
 	commandLog := filepath.Join(t.TempDir(), "commands.log")
 	t.Setenv("FACTORY_ENROLL_URL", "http://127.0.0.1:1")
 	t.Setenv("FACTORY_ENROLL_AUTH_KEY", "test-key")
@@ -3024,19 +3090,12 @@ func TestRunStagingE2EDataSetupDoesNotResumeDeviceManifestWithWrongMix(t *testin
 	workspace := t.TempDir()
 	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")
 	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\n")
-	writeTestFile(t, filepath.Join(envRoot, "artifacts", "users", "rtk-users-complete.json"), `{"brandname":"RTK","users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}`)
-	writeTestFile(t, filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.json"), `[
-{"device_id":"load-device-0001","device_type":"camera"},
-{"device_id":"load-device-0002","device_type":"camera"},
-{"device_id":"load-device-0003","device_type":"light"},
-{"device_id":"load-device-0004","device_type":"smart_meter"}
-]`)
-	writeTestFile(t, filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-complete.json"), `{"brandname":"RTK","assignments":[
-{"assigned_email":"rtk+001@users.local","device_id":"load-device-0001","device_type":"camera","service_options":["mqtt"]},
-{"assigned_email":"rtk+002@users.local","device_id":"load-device-0002","device_type":"camera","service_options":["mqtt"]},
-{"assigned_email":"rtk+001@users.local","device_id":"load-device-0003","device_type":"light","service_options":["mqtt"]},
-{"assigned_email":"rtk+002@users.local","device_id":"load-device-0004","device_type":"smart_meter","service_options":["mqtt"]}
-]}`)
+	seedStagingE2ETestData(t, envRoot, []string{"rtk+001@users.local", "rtk+002@users.local"}, []bindAssignment{
+		{AssignmentIndex: 0, AssignedEmail: "rtk+001@users.local", DeviceID: "load-device-0001", DeviceType: "camera", ServiceOptions: []string{"mqtt"}},
+		{AssignmentIndex: 1, AssignedEmail: "rtk+002@users.local", DeviceID: "load-device-0002", DeviceType: "camera", ServiceOptions: []string{"mqtt"}},
+		{AssignmentIndex: 2, AssignedEmail: "rtk+001@users.local", DeviceID: "load-device-0003", DeviceType: "light", ServiceOptions: []string{"mqtt"}},
+		{AssignmentIndex: 3, AssignedEmail: "rtk+002@users.local", DeviceID: "load-device-0004", DeviceType: "smart_meter", ServiceOptions: []string{"mqtt"}},
+	})
 	commandLog := filepath.Join(t.TempDir(), "commands.log")
 	t.Setenv("FACTORY_ENROLL_URL", "http://127.0.0.1:1")
 	t.Setenv("FACTORY_ENROLL_AUTH_KEY", "test-key")
@@ -3072,19 +3131,12 @@ func TestRunStagingE2EDataSetupDoesNotResumeBindArtifactWithWrongUsers(t *testin
 	workspace := t.TempDir()
 	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")
 	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\n")
-	writeTestFile(t, filepath.Join(envRoot, "artifacts", "users", "rtk-users-complete.json"), `{"brandname":"RTK","users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}`)
-	writeTestFile(t, filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.json"), `[
-{"device_id":"load-device-0001","device_type":"light"},
-{"device_id":"load-device-0002","device_type":"light"},
-{"device_id":"load-device-0003","device_type":"smart_meter"},
-{"device_id":"load-device-0004","device_type":"smart_meter"}
-]`)
-	writeTestFile(t, filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-complete.json"), `{"brandname":"RTK","assignments":[
-{"assigned_email":"rtk+001@users.local","device_id":"load-device-0001","device_type":"light","service_options":["mqtt"]},
-{"assigned_email":"rtk+001@users.local","device_id":"load-device-0002","device_type":"light","service_options":["mqtt"]},
-{"assigned_email":"rtk+001@users.local","device_id":"load-device-0003","device_type":"smart_meter","service_options":["mqtt"]},
-{"assigned_email":"rtk+001@users.local","device_id":"load-device-0004","device_type":"smart_meter","service_options":["mqtt"]}
-]}`)
+	seedStagingE2ETestData(t, envRoot, []string{"rtk+001@users.local", "rtk+002@users.local"}, []bindAssignment{
+		{AssignmentIndex: 0, AssignedEmail: "rtk+001@users.local", DeviceID: "load-device-0001", DeviceType: "light", ServiceOptions: []string{"mqtt"}},
+		{AssignmentIndex: 1, AssignedEmail: "rtk+001@users.local", DeviceID: "load-device-0002", DeviceType: "light", ServiceOptions: []string{"mqtt"}},
+		{AssignmentIndex: 2, AssignedEmail: "rtk+001@users.local", DeviceID: "load-device-0003", DeviceType: "smart_meter", ServiceOptions: []string{"mqtt"}},
+		{AssignmentIndex: 3, AssignedEmail: "rtk+001@users.local", DeviceID: "load-device-0004", DeviceType: "smart_meter", ServiceOptions: []string{"mqtt"}},
+	})
 	commandLog := filepath.Join(t.TempDir(), "commands.log")
 	t.Setenv("CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-brand", envRoot))
 	t.Setenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-users", envRoot))
@@ -3151,7 +3203,14 @@ func TestBindArtifactDoesNotResumeAllAlreadyBoundWithoutProvisionEvidence(t *tes
 	dir := t.TempDir()
 	usersPath := filepath.Join(dir, "users.json")
 	bindPath := filepath.Join(dir, "bind.json")
+	devicesDir := filepath.Join(dir, "devices")
 	writeTestFile(t, usersPath, `{"users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}`)
+	writeTestFile(t, filepath.Join(devicesDir, "manifests", "devices.json"), `[
+{"device_id":"load-device-0001","device_type":"light"},
+{"device_id":"load-device-0002","device_type":"light"},
+{"device_id":"load-device-0003","device_type":"smart_meter"},
+{"device_id":"load-device-0004","device_type":"smart_meter"}
+]`)
 	writeTestFile(t, bindPath, `{"assignments":[
 {"assigned_email":"rtk+001@users.local","device_id":"load-device-0001","device_type":"light","service_options":["mqtt"],"status":"already_bound"},
 {"assigned_email":"rtk+002@users.local","device_id":"load-device-0002","device_type":"light","service_options":["mqtt"],"status":"already_bound"},
@@ -3159,8 +3218,32 @@ func TestBindArtifactDoesNotResumeAllAlreadyBoundWithoutProvisionEvidence(t *tes
 {"assigned_email":"rtk+002@users.local","device_id":"load-device-0004","device_type":"smart_meter","service_options":["mqtt"],"status":"already_bound"}
 ]}`)
 
-	if bindArtifactMatchesSetup(bindPath, usersPath, 2, 4, "light=2,smart_meter=2") {
+	if bindArtifactMatchesSetup(bindPath, usersPath, devicesDir, 2, 4, "light=2,smart_meter=2") {
 		t.Fatal("all already_bound artifact without operation evidence must not be resumed")
+	}
+}
+
+func TestBindArtifactDoesNotResumeWhenDeviceIDsDoNotMatchManifest(t *testing.T) {
+	dir := t.TempDir()
+	usersPath := filepath.Join(dir, "users.json")
+	bindPath := filepath.Join(dir, "bind.json")
+	devicesDir := filepath.Join(dir, "devices")
+	writeTestFile(t, usersPath, `{"users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}`)
+	writeTestFile(t, filepath.Join(devicesDir, "manifests", "devices.json"), `[
+{"device_id":"new-run-device-0001","device_type":"light"},
+{"device_id":"new-run-device-0002","device_type":"light"},
+{"device_id":"new-run-device-0003","device_type":"smart_meter"},
+{"device_id":"new-run-device-0004","device_type":"smart_meter"}
+]`)
+	writeTestFile(t, bindPath, `{"assignments":[
+{"assigned_email":"rtk+001@users.local","device_id":"old-run-device-0001","device_type":"light","service_options":["mqtt"],"status":"provisioned","operation_id":"op-1"},
+{"assigned_email":"rtk+002@users.local","device_id":"old-run-device-0002","device_type":"light","service_options":["mqtt"],"status":"provisioned","operation_id":"op-2"},
+{"assigned_email":"rtk+001@users.local","device_id":"old-run-device-0003","device_type":"smart_meter","service_options":["mqtt"],"status":"provisioned","operation_id":"op-3"},
+{"assigned_email":"rtk+002@users.local","device_id":"old-run-device-0004","device_type":"smart_meter","service_options":["mqtt"],"status":"provisioned","operation_id":"op-4"}
+]}`)
+
+	if bindArtifactMatchesSetup(bindPath, usersPath, devicesDir, 2, 4, "light=2,smart_meter=2") {
+		t.Fatal("bind artifact with old device IDs must not be resumed for the current manifest")
 	}
 }
 

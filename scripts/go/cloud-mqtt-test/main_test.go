@@ -584,6 +584,43 @@ func TestPrepareAppCertificateBootstrapForAssignmentsUsesAccountLoginToken(t *te
 	}
 }
 
+func TestPrepareAppCertificateBootstrapForAssignmentsUsesCachedAccountToken(t *testing.T) {
+	loginCalls := 0
+	account := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		loginCalls++
+		http.Error(w, "unexpected login", http.StatusInternalServerError)
+	}))
+	defer account.Close()
+
+	user := userCredential{
+		Email:    "rtk+001@users.local",
+		Password: "secret",
+		Tokens: tokenBundle{
+			AccessToken:  "cached-access",
+			RefreshToken: "cached-refresh",
+		},
+	}
+	material := prepareAppCertificateBootstrapForAssignments(account.URL, "https://video.example.invalid", "rtk-1234", map[string]userCredential{
+		user.Email: user,
+	}, []assignment{
+		{AssignedEmail: user.Email, DeviceID: "device-1"},
+		{AssignedEmail: user.Email, DeviceID: "device-2"},
+	}, 10)
+
+	if material.Status.Status != "PASS" || material.Status.DeviceID != "device-1" {
+		t.Fatalf("status = %#v, want PASS from cached token", material.Status)
+	}
+	if loginCalls != 0 {
+		t.Fatalf("loginCalls = %d, want cached token path to avoid login", loginCalls)
+	}
+	if got := material.TokensByEmail[user.Email].RefreshToken; got != "cached-refresh" {
+		t.Fatalf("refresh token = %q, want cached-refresh", got)
+	}
+	if material.ManagersByEmail[user.Email] == nil {
+		t.Fatal("manager missing for cached token user")
+	}
+}
+
 func TestGenerateAppCSRUsesEd25519(t *testing.T) {
 	csrPEM, keyPEM, err := generateAppCSR("app-user:user-1")
 	if err != nil {
@@ -1783,11 +1820,29 @@ func TestLoadHome100KCredentialBundleReadsGzippedSQLiteDevices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.Exec(`create table metadata(key text primary key, value text not null)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`insert into metadata(key, value) values('brandname', 'RTK'), ('brand_cloud_id', 'brand-cloud-1'), ('tenant_slug', 'tenant-1')`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(`create table devices(device_id text primary key, device_type text not null, cert_pem text, key_pem text, chain_pem text, bundle_pem text, metadata_json text, factory_enroll_request_json text, factory_enroll_response_redacted_json text)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`create table users(email text primary key, password text, tokens_json text, app_credentials_json text, app_certificate_json text, body_json text not null)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`create table device_bindings(device_id text primary key, assignment_index integer not null, assigned_email text not null, device_type text not null, service_options_json text not null, body_json text not null)`); err != nil {
 		t.Fatal(err)
 	}
 	certPEM, keyPEM, chainPEM := testAppMaterial(t, "device-1")
 	if _, err := db.Exec(`insert into devices(device_id, device_type, cert_pem, key_pem, chain_pem) values(?, ?, ?, ?, ?)`, "device-1", "light", certPEM, keyPEM, chainPEM); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`insert into users(email, password, tokens_json, app_credentials_json, app_certificate_json, body_json) values(?, ?, ?, '{}', '{}', ?)`, "user-1@example.test", "pw", `{"access_token":"cached-access","refresh_token":"cached-refresh"}`, `{"email":"user-1@example.test","password":"pw"}`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`insert into device_bindings(device_id, assignment_index, assigned_email, device_type, service_options_json, body_json) values(?, 0, ?, ?, ?, ?)`, "device-1", "user-1@example.test", "light", `["mqtt"]`, `{"assigned_email":"user-1@example.test","device_id":"device-1","device_type":"light","service_options":["mqtt"]}`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -1805,6 +1860,21 @@ func TestLoadHome100KCredentialBundleReadsGzippedSQLiteDevices(t *testing.T) {
 	}
 	if device.CertPEM != certPEM || device.KeyPEM != keyPEM || device.ChainPEM != chainPEM {
 		t.Fatalf("bundle device PEM mismatch: %#v", device)
+	}
+	if !bundle.HasShardTestData() {
+		t.Fatalf("bundle should contain shard-scoped users and bindings: %#v", bundle)
+	}
+	if len(bundle.Users.Users) != 1 || bundle.Users.Users[0].Email != "user-1@example.test" {
+		t.Fatalf("bundle users = %#v", bundle.Users.Users)
+	}
+	if bundle.Users.TenantSlug != "tenant-1" || bundle.Bind.TenantSlug != "tenant-1" {
+		t.Fatalf("bundle tenant metadata users=%q bind=%q, want tenant-1", bundle.Users.TenantSlug, bundle.Bind.TenantSlug)
+	}
+	if got := bundle.Users.Users[0].Tokens.RefreshToken; got != "cached-refresh" {
+		t.Fatalf("bundle user refresh token = %q, want cached-refresh", got)
+	}
+	if len(bundle.Bind.Assignments) != 1 || bundle.Bind.Assignments[0].DeviceID != "device-1" {
+		t.Fatalf("bundle bindings = %#v", bundle.Bind.Assignments)
 	}
 }
 

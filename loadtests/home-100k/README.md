@@ -405,8 +405,8 @@ execute every device/user range.
 Per-device PEM fan-out is not used for Home 100K sync. Before Ansible runs,
 `sync --live` creates one SQLite database per VM shard, compresses it as
 `<vm-label>.sqlite.gz`, and writes a sha256 manifest next to it. The database
-contains only the devices assigned to that VM plus the users/device-bind
-artifacts needed by that shard. It is extracted on the VM under
+contains only the users, devices, credentials, and bindings assigned to that VM
+from the staging test-data SQLite store. It is extracted on the VM under
 `<remote-env-root>/loadtests/home-100k/credentials/`.
 
 The runner reads device certificate/key/chain material directly from SQLite and
@@ -417,10 +417,8 @@ keeps each VM sync to a small number of files, avoids tens of thousands of
 inodes per shard, and lets future orchestra/coordinator reuse skip uploads when
 the bundle sha256 has not changed.
 
-Users and device-bind source artifacts are selected by the timestamp embedded in
-their filenames, for example `20260615T094325Z`, not by filesystem mtime. This
-keeps local bundle generation and remote runner behavior identical after tar or
-rsync normalizes mtimes.
+The source of truth is `<env-root>/artifacts/test-data/<brand>-test-data.sqlite`;
+shard manifests carry only shard metadata and do not duplicate credentials.
 
 ## Public CLI Shape
 
@@ -483,6 +481,7 @@ The script keeps non-secret defaults in one place:
 | `HOME100K_MQTT_CONCURRENCY` | `1000`; per-VM-shard live MQTT connect worker concurrency |
 | `HOME100K_COMMAND_CONCURRENCY` | `100`; per-VM-shard live shadow command concurrency |
 | `HOME100K_SHADOW_COMMAND_TIMEOUT` | `30s`; per-phase shadow command wait timeout |
+| `HOME100K_LIVE_RUNNER_TIMEOUT_GRACE` | unset; live shard command timeout defaults to `stage duration + max(10m, stage duration / 4)` |
 | `HOME100K_FUNCTIONAL_SUCCESS_THRESHOLD_PERCENT` | `99.5`; MQTT connect, app ACK, delta, and convergence success threshold |
 | `HOME100K_CLIENT_TARGET_COMPLETENESS_PERCENT` | `100`; active target devices/subscriptions and desired-write attempts must reach the planned target |
 | `HOME100K_EXACT_EVENT_CORRELATION_PERCENT` | `100`; command stream/sequence evidence correlation threshold |
@@ -535,6 +534,16 @@ and 100% stages before provisioning, sync, collection, and evidence overhead.
 Short debug runs can lower these values with explicit shell environment
 overrides or a custom `HOME100K_DESCRIPTION_FILE`; explicit shell environment
 variables take precedence over the description file.
+
+For large live runs, the runner allows extra time after the planned stage
+duration for MQTT disconnect, cleanup, and `results.json` writes. The default
+grace is `max(10m, duration / 4)`. Capacity experiment wrappers may set
+`HOME100K_LIVE_RUNNER_TIMEOUT_GRACE` explicitly so that the grace value is
+recorded in the experiment request artifact.
+
+Capacity experiments also record user/device/bind setup concurrency. Keep these
+values with the run record because data setup failures are not MQTT or node
+capacity evidence.
 
 Runner mode also belongs in the non-secret description file. The default is
 `HOME100K_RUNNER_MODE=live`. In live mode, each shard invokes the copied
@@ -604,25 +613,20 @@ shadow command wait phase. These do not change target connects or ramp-up time.
 
 ### LKE Capacity Placement
 
-The shadow load path is PostgreSQL-heavy. For 100K runs, keep PostgreSQL on a
-dedicated higher-capacity node pool and keep MQTT/API/worker pods on separate
-general nodes. Do not horizontally scale `mqtt` or `video-cloud-api` until the
-broker/client-id and shared-subscription semantics are explicitly changed; the
-safe default is one replica for each. `account-manager` is stateless for this
-test path and can run multiple replicas.
+LKE pod and node counts are experiment-derived capacity controls, not fixed
+defaults. The current model starts from
+`required_mqtt_pods = ceil(devices / measured_safe_devices_per_mqtt_pod)` and
+`required_nodes = max(cpu_nodes, memory_nodes, required_mqtt_pods, spread_min)`.
+The seed value is 20,000 devices per MQTT pod, but it must be replaced by the
+lowest successful coefficient from recorded capacity experiments.
 
-For the current staging/LKE tuning, the live cluster uses:
-
-- one `g6-standard-6` node pool for PostgreSQL
-- eight `g6-standard-4` general nodes for API, MQTT, workers, ingress, and
-  account-manager
-- `account-manager` scaled to 3 replicas with topology spread
-- resource requests on PostgreSQL, API, MQTT, logingester, mqttusage, and
-  account-manager so the scheduler has enough information to distribute pods
-
-When re-applying LKE manifests for this capacity profile, set
-`LKE_POSTGRES_NODE_POOL_ID=<postgres-pool-id>` so PostgreSQL keeps its
-nodeSelector/toleration placement.
+For 100K planning, start with 5 load-generator VMs, 5 MQTT pods, and at least
+5 general LKE nodes, then let `rtk-cloud provision --plan` raise the node count
+if CPU requests, memory requests, or placement spread require more. If
+PostgreSQL p95 CPU, memory, or I/O becomes the bottleneck, move it to a
+dedicated larger node pool and record that placement in the experiment
+artifacts. The source of truth for formulas and reviewable capacity records is
+`docs/lke-capacity-sizing.md`.
 
 The Go CLI remains the implementation entrypoint underneath the script:
 

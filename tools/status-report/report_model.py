@@ -4,6 +4,7 @@ import json
 import math
 import os
 import re
+import csv
 from datetime import date, datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -23,6 +24,33 @@ AWS_PRICING_SOURCES_PATH = COST_DIR / "aws-pricing-sources.md"
 AWS_COST_WORKSHEET_PATH = COST_DIR / "aws-cost-estimate-worksheet.csv"
 AWS_SERVICE_MAPPING_PATH = COST_DIR / "aws-service-mapping.md"
 LINODE_100K_ESTIMATE_PATH = COST_DIR / "linode-100k-estimate.md"
+LOADTEST_REPORTS_DIR = ROOT / "loadtests" / "home-100k" / "reports"
+LOADTEST_RUN_SPECS = [
+    {
+        "label": "8 nodes / 8 MQTT pods",
+        "shortLabel": "8/8",
+        "runId": "lt100k-n8p8-mysql7-20260627T0906Z",
+        "nodeCount": 8,
+        "mqttPods": 8,
+        "recommendation": "PASS reference",
+    },
+    {
+        "label": "7 nodes / 7 MQTT pods",
+        "shortLabel": "7/7",
+        "runId": "lt100k-n7p7-mysql1-20260627T105239Z",
+        "nodeCount": 7,
+        "mqttPods": 7,
+        "recommendation": "recommended baseline",
+    },
+    {
+        "label": "6 nodes / 6 MQTT pods",
+        "shortLabel": "6/6",
+        "runId": "lt100k-n6p6-mysql1-20260627T151040Z",
+        "nodeCount": 6,
+        "mqttPods": 6,
+        "recommendation": "lower-bound pass; memory risk",
+    },
+]
 PORTAL_WEB_URL = "https://webtest.mgmeet.io"
 PORTAL_WEB_SCREENSHOT = FIG_DIR / "portal-webtest-home-hero.png"
 PORTAL_WEB_FALLBACK_IMAGE = ROOT / "repos/rtk_cloud_frontend/static/assets/connectplus-hero-corporate-v2.jpg"
@@ -33,10 +61,10 @@ CORE_MESSAGE = (
     "補強的事項。"
 )
 CURRENT_STATUS_SUMMARY = [
-    ["Deployment", "初步已在 K8s 架設的雲環境完成 100K device loading test pass，K8s runtime 已可作為目前驗證基準。", "下一步補齊 test report package、release version、backup/restore 與 production-like sign-off。"],
-    ["Product / demo evidence", "Admin、SDK sample flow、Connect+ architecture 素材已可支撐端到端展示，且已接上 100K device loading-test evidence。", "下一步把 100K evidence 轉成 customer PoC 指標與對外 demo story。"],
-    ["Operations readiness", "Account Manager、Video Cloud、Admin 分工已清楚，service health 可被報告化。", "正式商用後的 SLA、support owner、incident response 與持續維運人力仍需確認。"],
-    ["Next milestone", "100K IoT device loading test 已 pass；下一個重點是 5,000 video cameras profile 與 Alpha readiness。", "8 月進 alpha test（含 SDK），9 月進 beta test（含 SDK 與 pilot customer），再進 public。"],
+    ["Deployment", "Linode LKE staging 已完成 100K IoT device capacity validation，並恢復到 7 nodes / 7 MQTT pods baseline。", "仍需補齊 release version、backup/restore 與 production-like sign-off。"],
+    ["Product / demo evidence", "Admin、SDK sample flow、Connect+ architecture 素材已可支撐端到端展示。", "下一步要把 100K loading-test evidence 連到 customer PoC 指標，並補 video camera capacity gate。"],
+    ["Operations readiness", "Account Manager、Video Cloud、Admin 分工已清楚，service health 與 loading-test evidence 可被報告化。", "正式商用後的 SLA、support owner、incident response 與持續維運人力仍需確認。"],
+    ["Next milestone", "IoT 100K capacity 已完成；2026-08-01 gate 應聚焦 5,000 video cameras 與 production-readiness evidence。", "8 月進 alpha test（含 SDK），9 月進 beta test（含 SDK 與 pilot customer），再進 public。"],
 ]
 
 CUSTOMER_USE_CASE_FIT = [
@@ -47,7 +75,7 @@ CUSTOMER_USE_CASE_FIT = [
 ]
 
 RELEASE_GATE_DEFINITIONS = [
-    ["Aug.1 loading-test pass", "100,000 IoT devices + 5,000 video cameras", "Success rate、p95/p99、error taxonomy、resource use、recovery behavior、report package。"],
+    ["Aug.1 loading-test pass", "IoT 100K validated; 5,000 video cameras pending", "Success rate、p95/p99、error taxonomy、resource use、recovery behavior、report package。"],
     ["Alpha test", "SDK + internal developer real use", "4-6 internal testers；至少 3-4 位 developer/firmware/app testers 實際跑 onboarding、SDK sample、debug/report。"],
     ["Beta test", "SDK + pilot customer", "1-2 pilot customers 或 partner use cases；確認 PoC feedback、support flow、deployment/cost assumptions。"],
     ["Public path", "operation, account, support, security baseline", "公司/核准第三方帳務、backup operator、release version、backup/restore、security review gate。"],
@@ -372,6 +400,232 @@ def collect_linode_billing() -> dict[str, object]:
         "estimateBasis": estimate_basis,
         "lastInvoice": money(invoice.get("total")) if invoice else "n/a",
         "lastInvoiceDate": invoice.get("date", "n/a") if invoice else "n/a",
+    }
+
+
+def percentile(values: list[float], pct: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    idx = math.ceil((pct / 100.0) * len(ordered)) - 1
+    return ordered[max(0, min(idx, len(ordered) - 1))]
+
+
+def read_tsv(path: Path) -> list[dict[str, str]]:
+    if not path.exists():
+        return []
+    with path.open("r", encoding="utf-8", newline="") as fh:
+        return list(csv.DictReader(fh, delimiter="\t"))
+
+
+def parse_float(value: object) -> float:
+    if value is None:
+        return 0.0
+    text = str(value).strip().replace("%", "")
+    if not text:
+        return 0.0
+    try:
+        return float(text)
+    except ValueError:
+        return 0.0
+
+
+def parse_time(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def compact_series(points: list[dict[str, object]], max_points: int = 18) -> list[dict[str, object]]:
+    if len(points) <= max_points:
+        return points
+    step = (len(points) - 1) / (max_points - 1)
+    compacted = []
+    used = set()
+    for i in range(max_points):
+        idx = round(i * step)
+        if idx not in used:
+            compacted.append(points[idx])
+            used.add(idx)
+    return compacted
+
+
+def summarize_resource_tsv(path: Path, name_field: str, cpu_field: str = "cpu_pct", mem_field: str = "mem_pct") -> dict[str, object]:
+    rows = [row for row in read_tsv(path) if row.get("status") == "ok" or row.get("cpu_pct")]
+    by_name: dict[str, dict[str, list[float]]] = {}
+    by_time: dict[str, dict[str, list[float]]] = {}
+    for row in rows:
+        name = row.get(name_field, "unknown")
+        cpu = parse_float(row.get(cpu_field))
+        mem = parse_float(row.get(mem_field))
+        if cpu <= 0 and mem <= 0:
+            continue
+        by_name.setdefault(name, {"cpu": [], "mem": []})
+        by_name[name]["cpu"].append(cpu)
+        by_name[name]["mem"].append(mem)
+        ts = row.get("time", "")
+        by_time.setdefault(ts, {"cpu": [], "mem": []})
+        by_time[ts]["cpu"].append(cpu)
+        by_time[ts]["mem"].append(mem)
+
+    per_node = {
+        name: {
+            "cpuP95": round(percentile(values["cpu"], 95), 1),
+            "cpuMax": round(max(values["cpu"]) if values["cpu"] else 0.0, 1),
+            "memP95": round(percentile(values["mem"], 95), 1),
+            "memMax": round(max(values["mem"]) if values["mem"] else 0.0, 1),
+            "samples": len(values["cpu"]),
+        }
+        for name, values in by_name.items()
+    }
+    history = []
+    for ts in sorted(by_time.keys()):
+        values = by_time[ts]
+        if not values["cpu"] and not values["mem"]:
+            continue
+        history.append(
+            {
+                "time": ts,
+                "cpuMax": round(max(values["cpu"]) if values["cpu"] else 0.0, 1),
+                "cpuAvg": round(sum(values["cpu"]) / len(values["cpu"]) if values["cpu"] else 0.0, 1),
+                "memMax": round(max(values["mem"]) if values["mem"] else 0.0, 1),
+                "memAvg": round(sum(values["mem"]) / len(values["mem"]) if values["mem"] else 0.0, 1),
+            }
+        )
+    return {
+        "perNode": per_node,
+        "summary": {
+            "cpuP95Max": round(max((node["cpuP95"] for node in per_node.values()), default=0.0), 1),
+            "cpuMax": round(max((node["cpuMax"] for node in per_node.values()), default=0.0), 1),
+            "memP95Max": round(max((node["memP95"] for node in per_node.values()), default=0.0), 1),
+            "memMax": round(max((node["memMax"] for node in per_node.values()), default=0.0), 1),
+            "nodeCount": len(per_node),
+        },
+        "history": compact_series(history),
+    }
+
+
+def stage_duration_seconds(results: dict[str, object]) -> float:
+    coord = results.get("start_coordination", {})
+    if not isinstance(coord, dict):
+        return 0.0
+    starts = []
+    ends = []
+    for vm in coord.get("vms", []) or []:
+        if not isinstance(vm, dict):
+            continue
+        start = parse_time(str(vm.get("stage_started_at", "")))
+        end = parse_time(str(vm.get("stage_completed_at", "")))
+        if start:
+            starts.append(start)
+        if end:
+            ends.append(end)
+    if starts and ends:
+        return max(1.0, (max(ends) - min(starts)).total_seconds())
+    stages = (results.get("plan", {}) or {}).get("stages", []) if isinstance(results.get("plan"), dict) else []
+    if stages:
+        return 32 * 60
+    return 0.0
+
+
+def loadtest_run_summary(spec: dict[str, object]) -> dict[str, object]:
+    run_id = str(spec["runId"])
+    run_dir = LOADTEST_REPORTS_DIR / run_id
+    results_path = run_dir / "results.json"
+    if not results_path.exists():
+        return {**spec, "status": "missing", "result": "missing", "runDir": str(run_dir)}
+
+    results = json.loads(results_path.read_text(encoding="utf-8"))
+    device = results.get("device_mqtt_totals", {}) or {}
+    app = results.get("app_user_totals", {}) or {}
+    server_corr = (results.get("server_correlation", {}) or {}).get("status", "n/a")
+    runtime_corr = (results.get("runtime_log_correlation", {}) or {}).get("status", "n/a")
+    k8s = summarize_resource_tsv(run_dir / "resource-samples" / "k8s-nodes.tsv", "name")
+    load_vms = summarize_resource_tsv(run_dir / "resource-samples" / "load-vms.tsv", "label")
+
+    duration = stage_duration_seconds(results)
+    total_bytes = int(device.get("bytes_sent", 0) or 0) + int(device.get("bytes_received", 0) or 0) + int(app.get("bytes_sent", 0) or 0) + int(app.get("bytes_received", 0) or 0)
+    avg_mbps = (total_bytes * 8 / duration / 1_000_000) if duration > 0 else 0.0
+    devices = int((results.get("plan", {}) or {}).get("conditions", {}).get("devices", 0) or device.get("connect_attempts", 0) or 0)
+    users = int((results.get("plan", {}) or {}).get("conditions", {}).get("users", 0) or 0)
+    target = (results.get("plan", {}) or {}).get("target", {}) if isinstance(results.get("plan"), dict) else {}
+
+    return {
+        **spec,
+        "runDir": str(run_dir),
+        "reportFile": str(run_dir / "TEST_REPORT.md"),
+        "status": results.get("status", "n/a"),
+        "result": results.get("result", "n/a"),
+        "devices": devices,
+        "users": users,
+        "targetConnects": target.get("target_connects", devices),
+        "rampUpTime": target.get("ramp_up_time", "10m"),
+        "connectSuccess": int(device.get("connect_success", 0) or 0),
+        "connectAttempts": int(device.get("connect_attempts", 0) or 0),
+        "connectFail": int(device.get("connect_fail", 0) or 0),
+        "appDesiredWrites": int(app.get("desired_writes", 0) or 0),
+        "appAcks": int(app.get("received_acks", 0) or 0),
+        "serverCorrelation": server_corr,
+        "runtimeLogCorrelation": runtime_corr,
+        "loadGeneratorSaturated": bool((results.get("load_generator_health", {}) or {}).get("saturated", False)),
+        "durationSeconds": round(duration),
+        "appPayloadBytes": total_bytes,
+        "avgPayloadMbps": round(avg_mbps, 3),
+        "k8s": k8s,
+        "loadGenerators": load_vms,
+    }
+
+
+def collect_loadtest_capacity() -> dict[str, object]:
+    runs = [loadtest_run_summary(spec) for spec in LOADTEST_RUN_SPECS]
+    successful = [r for r in runs if r.get("status") == "COMPLETE" and r.get("result") == "SUCCESS"]
+    recommended = next((r for r in runs if r.get("shortLabel") == "7/7"), successful[-1] if successful else None)
+    lower_bound = next((r for r in runs if r.get("shortLabel") == "6/6"), None)
+    max_devices_per_pod = max((r.get("devices", 0) / max(1, int(r.get("mqttPods", 1))) for r in successful), default=0)
+    max_devices_per_node = max((r.get("devices", 0) / max(1, int(r.get("nodeCount", 1))) for r in successful), default=0)
+    rows = []
+    for r in runs:
+        k8s = r.get("k8s", {}).get("summary", {}) if isinstance(r.get("k8s"), dict) else {}
+        rows.append(
+            [
+                r.get("shortLabel", ""),
+                r.get("result", "n/a"),
+                f"{r.get('connectSuccess', 0):,}/{r.get('connectAttempts', 0):,}",
+                f"{r.get('appAcks', 0):,}/{r.get('appDesiredWrites', 0):,}",
+                f"{k8s.get('cpuP95Max', 0)}% / {k8s.get('cpuMax', 0)}%",
+                f"{k8s.get('memP95Max', 0)}% / {k8s.get('memMax', 0)}%",
+                str(r.get("recommendation", "")),
+            ]
+        )
+    return {
+        "status": "available" if successful else "missing",
+        "summary": "100K IoT device-shadow load test validates current LKE capacity model; 7/7 is the recommended baseline, while 6/6 is a lower-bound pass with high memory pressure.",
+        "runs": runs,
+        "tableRows": rows,
+        "recommended": recommended,
+        "lowerBound": lower_bound,
+        "formulas": [
+            "users = ceil(devices / devices_per_user)",
+            "load_generator_vms = ceil(devices / 20,000)",
+            "mqtt_pods >= ceil(devices / measured_safe_devices_per_mqtt_pod)",
+            "required_nodes = max(cpu_nodes, memory_nodes, mqtt_pods, spread_min)",
+        ],
+        "decisionBasis": [
+            "Functional gate: COMPLETE / SUCCESS plus 100% client target completeness.",
+            "Correlation gate: server counters and runtime log streams must pass exact event correlation.",
+            "Resource gate: recommendation favors memory headroom, not just functional pass.",
+            "Network note: current report captures app payload throughput; NIC bandwidth utilization should be added as next evidence.",
+        ],
+        "capacityCoefficients": {
+            "validatedDevicesPerGeneratorVm": 20000,
+            "observedMaxDevicesPerMqttPod": round(max_devices_per_pod, 1),
+            "observedMaxDevicesPerNode": round(max_devices_per_node, 1),
+            "recommendedDevicesPerMqttPod": 14285.7,
+            "recommendedDevicesPerNode": 14285.7,
+        },
     }
 
 
@@ -1089,12 +1343,12 @@ PPTX_LAYOUT_DIR = OUT_DIR / "pptx-layout"
 PPTX_WORK_DIR = OUT_DIR / "pptx-work"
 
 SCHEDULE_SNAPSHOT = {
-    "current_position": "K8s cloud 100K device loading test pass",
-    "current_week": "100K device loading-test evidence package",
-    "weekly_goal": "Package the 100K device loading-test result, bottleneck notes, metrics thresholds, and follow-up actions.",
-    "next_gate": "5,000 video camera profile and Alpha readiness",
-    "risk": "Follow-up items are report packaging, video profile, support owner, and production-like sign-off.",
-    "judgement": "pass",
+    "current_position": "100K IoT capacity validated",
+    "current_week": "100K evidence sizing guidance",
+    "weekly_goal": "Convert 100K evidence into sizing guidance and close the remaining video-camera capacity gate.",
+    "next_gate": "5,000 video camera validation before alpha",
+    "risk": "At risk if video/WebRTC/TURN/storage evidence and production-readiness ownership are not closed before alpha.",
+    "judgement": "partial pass",
 }
 
 SCHEDULE_MILESTONES = [
@@ -1117,12 +1371,12 @@ VIDEO_MILESTONES = [
 ]
 
 LOAD_READINESS = [
-    ["MQTT 100K load test", "pass", "100K device MQTT loading test passed on K8s cloud; preserve runner profile, run metadata, success rate, p95/p99, and resource evidence", "load-test owner", "down"],
-    ["Fleet / video profile", "not verified", "5k camera profile, viewer behavior, credentials, test-data hygiene, and video fleet prerequisites still need validation", "fleet owner", "at risk"],
-    ["Metrics / thresholds", "partial", "MQTT 100K thresholds have evidence; WebRTC/TURN/storage metrics still need pass/fail thresholds", "metrics owner", "flat"],
-    ["Infra / multi-host", "pass", "K8s cloud and multi-host MQTT execution passed 100K device load; keep resource dashboard and aggregation evidence", "DevOps/SRE", "down"],
-    ["Broker / DB / video path", "partial", "MQTT broker path passed 100K; DB, TURN, video storage bottleneck visibility and recovery behavior still need video validation", "service owners", "at risk"],
-    ["Report evidence", "partial", "Package 100K MQTT JSON/Markdown/PPT evidence; keep video evidence as pending section", "report owner", "flat"],
+    ["Runner / profile", "validated", "100K IoT, 5 generator VMs, 10m ramp-up + 20m steady + evidence package", "load-test owner", "down"],
+    ["Fleet / test data", "validated", "SQLite test-data DB, 5K users, 100K devices, bind/provision validation", "fleet owner", "down"],
+    ["Metrics / thresholds", "validated", "COMPLETE/SUCCESS, 100% target completeness, server/runtime correlation", "metrics owner", "down"],
+    ["Infra / multi-host", "validated", "multi-VM dispatch, shard collection, K8s and VM resource samples", "DevOps/SRE", "down"],
+    ["Capacity baseline", "partial", "7/7 recommended; 6/6 passed but memory p95/max too high for baseline", "service owners", "flat"],
+    ["Video camera path", "not verified", "5K cameras need WebRTC/TURN/storage bandwidth and stream-health evidence", "video owners", "at risk"],
 ]
 
 DECISIONS = [
@@ -1149,8 +1403,8 @@ POST_ALPHA_COVERAGE = [
 ]
 
 RISKS = [
-    ["100,000-device / 5,000-camera fleet readiness", "not verified", "Define fleet prerequisite, video profile, and credential handling", "fleet owner", "flat"],
-    ["Broker/database bottleneck unknown", "evidence-needed", "Run staged load ladder and collect resource metrics", "service owners", "new"],
+    ["5,000-camera fleet readiness", "not verified", "Define WebRTC/TURN/storage/video profile and bandwidth evidence", "video owner", "flat"],
+    ["6/6 memory headroom", "mitigation-needed", "Use 7/7 baseline unless repeated 6/6 runs prove stable memory headroom", "service owners", "new"],
     ["AppVersion=debug in staging", "open", "Use release version for externally reviewed staging", "release owner", "flat"],
     ["Backup/restore evidence incomplete", "open", "Collect product-level evidence bundle", "DevOps/SRE", "flat"],
 ]
@@ -1159,13 +1413,14 @@ EVIDENCE_INDEX = [
     ["Live endpoint evidence", "materials.md live health checks", "PASS/FAIL/BLOCKED", "runtime availability only"],
     ["Design evidence", "Admin webui design, client mockups, frontend assets", "available", "operation and product visuals"],
     ["Threat model", "cyber_security/analysis/stride-matrix.md", "drafted", "security review progress"],
-    ["Load-test report", ".artifacts/status-reports/YYYY-MM-DD/", "not verified", "pending scale runs"],
+    ["Load-test report", "loadtests/home-100k/reports/lt100k-n7p7-mysql1-20260627T105239Z", "SUCCESS", "recommended 100K baseline"],
+    ["Load-test lower-bound report", "loadtests/home-100k/reports/lt100k-n6p6-mysql1-20260627T151040Z", "SUCCESS with memory risk", "capacity lower-bound evidence"],
 ]
 
 DECK_REQUIRED_TOPICS = [
     "Schedule", "Release Gate", "Loading Test", "Cloud Relationship", "Customer Fit",
     "Portal Marketing", "WebRTC/storage", "MQTT/shadow", "PKI", "HSM signer",
-    "Threat Model", "K8s", "Operation Screenshots", "Evidence Appendix",
+    "Threat Model", "Linode", "Cloud Cost", "Capacity Evidence", "CPU/Memory/Bandwidth", "Operation Screenshots", "Evidence Appendix",
 ]
 
 
@@ -1181,6 +1436,7 @@ def build_report_payload() -> dict[str, object]:
     billing = collect_linode_billing()
     linode_scale = collect_linode_scale_estimate()
     aws_cost = collect_aws_cost_estimate()
+    loadtest_capacity = collect_loadtest_capacity()
     return {
         "root": str(ROOT),
         "reportDate": REPORT_DATE,
@@ -1201,6 +1457,7 @@ def build_report_payload() -> dict[str, object]:
         "scheduleMilestones": SCHEDULE_MILESTONES,
         "videoMilestones": VIDEO_MILESTONES,
         "loadReadiness": LOAD_READINESS,
+        "loadTestCapacity": loadtest_capacity,
         "decisions": DECISIONS,
         "alphaSupport": ALPHA_SUPPORT,
         "postAlphaCoverage": POST_ALPHA_COVERAGE,

@@ -106,6 +106,7 @@
           --devices "{{ device_count }}" \
           --users "{{ user_count }}" \
           --devices-per-user "{{ devices_per_user }}" \
+          --load-generator-devices-per-vm "{{ load_generator_devices_per_vm }}" \
           --run-id "{{ run_id }}" \
           --role "{{ role }}" \
           --shard-index "{{ shard_index | string }}" \
@@ -120,6 +121,7 @@
           --mqtt-concurrency "{{ mqtt_concurrency | default(1000) }}" \
           --command-concurrency "{{ command_concurrency | default(100) }}" \
           --shadow-command-timeout "{{ shadow_command_timeout | default('30s') }}" \
+          --live-runner-timeout-grace "{{ live_runner_timeout_grace | default('') }}" \
           --listen ":18080" \
           > "{{ remote_out_dir }}/runner-daemon.log" 2>&1 &
         echo "$!" > "{{ remote_out_dir }}/runner-daemon.pid"
@@ -127,15 +129,30 @@
         executable: /bin/bash
 
     - name: Wait until runner daemon enters READY_WAIT
-      ansible.builtin.uri:
-        url: "http://127.0.0.1:18080/ready"
-        method: GET
-        return_content: true
-        status_code: 200
+      ansible.builtin.shell: |
+        set -euo pipefail
+        body="$(curl -fsS http://127.0.0.1:18080/ready || true)"
+        printf '%s' "$body" > "{{ remote_out_dir }}/runner-ready-response.json"
+        python3 - "$body" <<'PY'
+        import json
+        import sys
+
+        body = sys.argv[1]
+        try:
+            payload = json.loads(body)
+        except Exception:
+            sys.exit(1)
+        if payload.get("status") != "READY_WAIT":
+            sys.exit(1)
+        print(json.dumps(payload, sort_keys=True))
+        PY
+      args:
+        executable: /bin/bash
       register: runner_ready
+      changed_when: false
       retries: 60
       delay: 1
-      until: (runner_ready.content | from_json).status == "READY_WAIT"
+      until: runner_ready.rc == 0
 
     - name: Write runner daemon command log
       ansible.builtin.copy:

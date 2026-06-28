@@ -35,6 +35,14 @@ type shardCredentialBundleManifest struct {
 	BindArtifact   string `json:"bind_artifact,omitempty"`
 }
 
+func homeTestDataDBPath(envRoot, brandname string) string {
+	brandLower := strings.ToLower(strings.TrimSpace(brandname))
+	if brandLower == "" {
+		brandLower = "rtk"
+	}
+	return filepath.Join(envRoot, "artifacts", "test-data", brandLower+"-test-data.sqlite")
+}
+
 func writeShardCredentialBundle(outDir string, envRoot string, plan Plan, assignment VMAssignment) (shardCredentialBundle, error) {
 	if strings.TrimSpace(assignment.Label) == "" {
 		return shardCredentialBundle{}, fmt.Errorf("assignment label is required")
@@ -71,11 +79,10 @@ func writeShardCredentialBundle(outDir string, envRoot string, plan Plan, assign
 	if err != nil {
 		return shardCredentialBundle{}, err
 	}
-	if err := insertBundleDevices(db, envRoot, deviceRows); err != nil {
+	if err := insertBundleDevices(db, envRoot, plan.Conditions.Brandname, deviceRows); err != nil {
 		return shardCredentialBundle{}, err
 	}
-	userArtifact, bindArtifact, err := insertBundleArtifacts(db, envRoot, strings.ToLower(plan.Conditions.Brandname))
-	if err != nil {
+	if err := insertBundleUsersAndBindings(db, envRoot, plan.Conditions.Brandname, deviceRows); err != nil {
 		return shardCredentialBundle{}, err
 	}
 	if err := db.Close(); err != nil {
@@ -94,8 +101,6 @@ func writeShardCredentialBundle(outDir string, envRoot string, plan Plan, assign
 		SQLiteGzipPath: filepath.Base(compressedPath),
 		SHA256:         sum,
 		DeviceCount:    len(deviceRows),
-		UserArtifact:   filepath.Base(userArtifact),
-		BindArtifact:   filepath.Base(bindArtifact),
 	}
 	if err := writeJSONFile(manifestPath, manifest); err != nil {
 		return shardCredentialBundle{}, err
@@ -106,8 +111,6 @@ func writeShardCredentialBundle(outDir string, envRoot string, plan Plan, assign
 		ManifestPath:   manifestPath,
 		SHA256:         sum,
 		DeviceCount:    len(deviceRows),
-		UserArtifact:   userArtifact,
-		BindArtifact:   bindArtifact,
 	}, nil
 }
 
@@ -125,6 +128,22 @@ func initCredentialBundleSchema(db *sql.DB) error {
 			factory_enroll_request_json text,
 			factory_enroll_response_redacted_json text
 		)`,
+		`create table users (
+			email text primary key,
+			password text,
+			tokens_json text,
+			app_credentials_json text,
+			app_certificate_json text,
+			body_json text not null
+		)`,
+		`create table device_bindings (
+			device_id text primary key,
+			assignment_index integer not null,
+			assigned_email text not null,
+			device_type text not null,
+			service_options_json text not null,
+			body_json text not null
+		)`,
 		`create table artifacts (
 			name text primary key,
 			kind text not null,
@@ -140,31 +159,83 @@ func initCredentialBundleSchema(db *sql.DB) error {
 }
 
 func insertBundleMetadata(db *sql.DB, key string, value string) error {
-	_, err := db.Exec(`insert into metadata(key, value) values(?, ?)`, key, value)
+	_, err := db.Exec(`insert into metadata(key, value) values(?, ?) on conflict(key) do update set value = excluded.value`, key, value)
 	return err
 }
 
 func loadShardDeviceRowsForBundle(envRoot string, plan Plan, assignment VMAssignment) ([]deviceManifestRow, error) {
-	if rows, err := loadShardDeviceRowsFromArtifacts(envRoot, plan, assignment); err == nil && len(rows) > 0 {
+	if rows, err := loadShardDeviceRowsFromTestData(envRoot, plan, assignment); err == nil && len(rows) > 0 {
 		return rows, nil
 	}
-	deviceRows, err := loadDeviceManifestRows(envRoot)
+	return nil, fmt.Errorf("missing SQLite test-data rows for %s", plan.Conditions.Brandname)
+}
+
+func loadShardDeviceRowsFromTestData(envRoot string, plan Plan, assignment VMAssignment) ([]deviceManifestRow, error) {
+	db, err := sql.Open("sqlite", homeTestDataDBPath(envRoot, plan.Conditions.Brandname))
 	if err != nil {
 		return nil, err
 	}
-	out := []deviceManifestRow{}
-	for _, shard := range assignment.TaskShards {
-		if shard.Role != "device-mqtt" {
+	defer db.Close()
+	rows, err := db.Query(`select assignment_index, assigned_email, device_id, device_type, service_options_json from device_bindings where brandname = ? order by assignment_index, device_id`, plan.Conditions.Brandname)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	selectedByUser := map[string][]shardBindAssignment{}
+	for rows.Next() {
+		var item shardBindAssignment
+		var serviceOptionsJSON string
+		if err := rows.Scan(&item.AssignmentIndex, &item.AssignedEmail, &item.DeviceID, &item.DeviceType, &serviceOptionsJSON); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(serviceOptionsJSON), &item.ServiceOptions)
+		if !homeDeviceType(item.DeviceType) || !stringSliceContains(item.ServiceOptions, "mqtt") {
 			continue
 		}
-		for idx := shard.Start; idx < shard.End && idx < len(deviceRows); idx++ {
-			out = append(out, deviceRows[idx])
+		selectedByUser[item.AssignedEmail] = append(selectedByUser[item.AssignedEmail], item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	selectedUsers := sortedMapKeys(selectedByUser)
+	selected := []shardBindAssignment{}
+	for _, email := range selectedUsers {
+		selected = append(selected, selectedByUser[email]...)
+	}
+	shardCount := len(plan.ShardsByRole("device-mqtt"))
+	if shardCount <= 0 {
+		shardCount = 1
+	}
+	shardIndex := assignment.Index
+	out := []deviceManifestRow{}
+	maxConnected := maxAssignmentConnectedDevices(assignment)
+	for idx, item := range selected {
+		if idx%shardCount != shardIndex {
+			continue
 		}
+		out = append(out, deviceManifestRow{
+			AssignmentIndex: item.AssignmentIndex,
+			AssignedEmail:   item.AssignedEmail,
+			DeviceID:        item.DeviceID,
+			DeviceType:      item.DeviceType,
+			ServiceOptions:  item.ServiceOptions,
+		})
+		if maxConnected > 0 && len(out) >= maxConnected {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no selected devices for shard %d/%d", shardIndex, shardCount)
 	}
 	return out, nil
 }
 
-func insertBundleDevices(db *sql.DB, envRoot string, rows []deviceManifestRow) error {
+func insertBundleDevices(db *sql.DB, envRoot string, brandname string, rows []deviceManifestRow) error {
+	source, err := sql.Open("sqlite", homeTestDataDBPath(envRoot, brandname))
+	if err != nil {
+		return err
+	}
+	defer source.Close()
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -176,18 +247,20 @@ func insertBundleDevices(db *sql.DB, envRoot string, rows []deviceManifestRow) e
 	}
 	defer stmt.Close()
 	for _, row := range rows {
-		deviceDir := filepath.Join(envRoot, "devices", "test_device", "devices", row.DeviceType, row.DeviceID)
-		bundlePath := filepath.Join(envRoot, "devices", "test_device", "bundles", row.DeviceType, row.DeviceID+".pem")
+		var certPEM, keyPEM, chainPEM, bundlePEM, metadataJSON, requestJSON, responseJSON string
+		if err := source.QueryRow(`select cert_pem, key_pem, chain_pem, bundle_pem, metadata_json, factory_enroll_request_json, factory_enroll_response_redacted_json from device_credentials where brandname = ? and device_id = ?`, brandname, row.DeviceID).Scan(&certPEM, &keyPEM, &chainPEM, &bundlePEM, &metadataJSON, &requestJSON, &responseJSON); err != nil {
+			return err
+		}
 		if _, err := stmt.Exec(
 			row.DeviceID,
 			row.DeviceType,
-			readOptionalText(filepath.Join(deviceDir, "device.cert.pem")),
-			readOptionalText(filepath.Join(deviceDir, "device.key.pem")),
-			readOptionalText(filepath.Join(deviceDir, "device.chain.pem")),
-			readOptionalText(bundlePath),
-			readOptionalText(filepath.Join(deviceDir, "metadata.json")),
-			readOptionalText(filepath.Join(deviceDir, "factory-enroll-request.json")),
-			readOptionalText(filepath.Join(deviceDir, "factory-enroll-response.redacted.json")),
+			certPEM,
+			keyPEM,
+			chainPEM,
+			bundlePEM,
+			metadataJSON,
+			requestJSON,
+			responseJSON,
 		); err != nil {
 			_ = tx.Rollback()
 			return err
@@ -196,35 +269,81 @@ func insertBundleDevices(db *sql.DB, envRoot string, rows []deviceManifestRow) e
 	return tx.Commit()
 }
 
-func insertBundleArtifacts(db *sql.DB, envRoot string, brandLower string) (string, string, error) {
-	if strings.TrimSpace(brandLower) == "" {
-		brandLower = "rtk"
+func insertBundleUsersAndBindings(db *sql.DB, envRoot string, brandname string, rows []deviceManifestRow) error {
+	source, err := sql.Open("sqlite", homeTestDataDBPath(envRoot, brandname))
+	if err != nil {
+		return err
 	}
-	usersPath := latestFile(filepath.Join(envRoot, "artifacts", "users", brandLower+"-users-*.json"))
-	bindPath := latestHomeBindArtifact(filepath.Join(envRoot, "artifacts", "device-bind", brandLower+"-device-bind-*.json"), brandLower)
-	if usersPath == "" || bindPath == "" {
-		return "", "", fmt.Errorf("missing users or device-bind artifact")
-	}
-	for _, item := range []struct {
-		name string
-		kind string
-		path string
-	}{
-		{name: filepath.Base(usersPath), kind: "users", path: usersPath},
-		{name: filepath.Base(bindPath), kind: "device_bind", path: bindPath},
-	} {
-		body, err := os.ReadFile(item.path)
-		if err != nil {
-			return "", "", err
+	defer source.Close()
+	if brandCloudID, tenantSlug := shardBundleTenantMetadata(source, brandname); brandCloudID != "" || tenantSlug != "" {
+		if brandCloudID != "" {
+			if err := insertBundleMetadata(db, "brand_cloud_id", brandCloudID); err != nil {
+				return err
+			}
 		}
-		if !json.Valid(body) {
-			return "", "", fmt.Errorf("artifact is not valid JSON: %s", item.path)
-		}
-		if _, err := db.Exec(`insert into artifacts(name, kind, body_json) values(?, ?, ?)`, item.name, item.kind, string(body)); err != nil {
-			return "", "", err
+		if tenantSlug != "" {
+			if err := insertBundleMetadata(db, "tenant_slug", tenantSlug); err != nil {
+				return err
+			}
 		}
 	}
-	return usersPath, bindPath, nil
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	userStmt, err := tx.Prepare(`insert into users(email, password, tokens_json, app_credentials_json, app_certificate_json, body_json) values(?, ?, ?, ?, ?, ?) on conflict(email) do nothing`)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	defer userStmt.Close()
+	bindStmt, err := tx.Prepare(`insert into device_bindings(device_id, assignment_index, assigned_email, device_type, service_options_json, body_json) values(?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	defer bindStmt.Close()
+	for _, row := range rows {
+		var password, tokensJSON, appCredentialsJSON, appCertificateJSON, userBodyJSON string
+		if err := source.QueryRow(`select coalesce(password, ''), coalesce(tokens_json, '{}'), coalesce(app_credentials_json, '{}'), coalesce(app_certificate_json, '{}'), body_json from users where brandname = ? and email = ?`, brandname, row.AssignedEmail).Scan(&password, &tokensJSON, &appCredentialsJSON, &appCertificateJSON, &userBodyJSON); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if _, err := userStmt.Exec(row.AssignedEmail, password, tokensJSON, appCredentialsJSON, appCertificateJSON, userBodyJSON); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		bindBody := map[string]any{
+			"assignment_index": row.AssignmentIndex,
+			"assigned_email":   row.AssignedEmail,
+			"device_id":        row.DeviceID,
+			"device_type":      row.DeviceType,
+			"service_options":  row.ServiceOptions,
+		}
+		if _, err := bindStmt.Exec(row.DeviceID, row.AssignmentIndex, row.AssignedEmail, row.DeviceType, bundleJSONText(row.ServiceOptions), bundleJSONText(bindBody)); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func shardBundleTenantMetadata(db *sql.DB, brandname string) (string, string) {
+	var brandCloudID, tenantSlug string
+	err := db.QueryRow(`select coalesce(brand_cloud_id, ''), coalesce(tenant_slug, '') from device_bindings where brandname = ? and (coalesce(brand_cloud_id, '') != '' or coalesce(tenant_slug, '') != '') order by assignment_index, device_id limit 1`, brandname).Scan(&brandCloudID, &tenantSlug)
+	if err == nil && (brandCloudID != "" || tenantSlug != "") {
+		return brandCloudID, tenantSlug
+	}
+	_ = db.QueryRow(`select coalesce(brand_cloud_id, ''), coalesce(tenant_slug, '') from users where brandname = ? and (coalesce(brand_cloud_id, '') != '' or coalesce(tenant_slug, '') != '') order by email limit 1`, brandname).Scan(&brandCloudID, &tenantSlug)
+	return brandCloudID, tenantSlug
+}
+
+func bundleJSONText(value any) string {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return "{}"
+	}
+	return string(raw)
 }
 
 func readOptionalText(path string) string {

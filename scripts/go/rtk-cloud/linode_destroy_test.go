@@ -206,6 +206,63 @@ func TestDestroyLinodeStagingResourcesIncludesOrphanVolumesOnlyWhenRequested(t *
 	}
 }
 
+func TestDestroyLinodeStagingResourcesOnlyOrphanVolumesSkipsRuntimeResources(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	writeTestFile(t, filepath.Join(envRoot, "state", "lke.env"), "LKE_CLUSTER_ID=101\n")
+	writeTestFile(t, filepath.Join(envRoot, "state", "lke-kubeconfig.yaml"), "apiVersion: v1\n")
+	curlLog := fakeLinodeCurl(t, map[string]string{
+		"/lke/clusters?page_size=500":           `{"data":[{"id":101,"label":"video-cloud-staging-lke","region":"us-sea"}]}`,
+		"/linode/instances?page_size=500":       `{"data":[{"id":201,"label":"video-cloud-staging-edge","region":"us-sea","status":"running","tags":["video-cloud-staging"]}]}`,
+		"/networking/firewalls?page_size=500":   `{"data":[{"id":301,"label":"video-cloud-staging-edge"}]}`,
+		"/vpcs?page_size=500":                   `{"data":[{"id":401,"label":"video-cloud-staging-vpc","region":"us-sea"}]}`,
+		"/object-storage/buckets?page_size=500": `{"data":[{"label":"video-cloud-staging-artifacts","region":"us-sea"}]}`,
+		"/volumes?page_size=500":                `{"data":[{"id":501,"label":"pvc-orphan","region":"us-sea","status":"active","linode_id":null}]}`,
+		"/volumes/501":                          `{}`,
+	})
+	t.Setenv("LINODE_TOKEN", "test-token")
+
+	var err error
+	out := captureStdoutForDestroyTest(t, func() {
+		err = run([]string{
+			"destroy-linode-staging-resources",
+			"--workspace", workspace,
+			"--env-root", envRoot,
+			"--yes",
+			"--confirm-text", "destroy video-cloud-staging",
+			"--only-orphan-volumes",
+			"--include-orphan-volumes",
+			"--orphan-volume-ids", "501",
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Only orphan volume mode is enabled") {
+		t.Fatalf("expected only-orphan mode warning, got:\n%s", out)
+	}
+	log := readTestFile(t, curlLog)
+	for _, forbidden := range []string{
+		"DELETE /lke/clusters/101",
+		"DELETE /linode/instances/201",
+		"DELETE /networking/firewalls/301",
+		"DELETE /vpcs/401",
+		"DELETE /object-storage/buckets/us-sea/video-cloud-staging-artifacts",
+	} {
+		if strings.Contains(log, forbidden) {
+			t.Fatalf("only-orphan mode must not delete runtime resource %q, got:\n%s", forbidden, log)
+		}
+	}
+	if !strings.Contains(log, "DELETE /volumes/501") {
+		t.Fatalf("expected orphan volume delete, got:\n%s", log)
+	}
+	if _, err := os.Stat(filepath.Join(envRoot, "state", "lke.env")); err != nil {
+		t.Fatalf("only-orphan mode must keep local LKE state, stat err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(envRoot, "state", "lke-kubeconfig.yaml")); err != nil {
+		t.Fatalf("only-orphan mode must keep local LKE kubeconfig, stat err=%v", err)
+	}
+}
+
 func TestDestroyLinodeStagingResourcesRequiresExactOrphanVolumeIDs(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	curlLog := fakeLinodeCurl(t, map[string]string{

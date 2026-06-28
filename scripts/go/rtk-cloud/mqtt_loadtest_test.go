@@ -72,8 +72,8 @@ func TestMQTTLoadPreparePlanUsesBaselineDefaults(t *testing.T) {
 		"device_mix: light=18,switch=7,smart_plug=12,air_conditioner=10,environment_sensor=12,security_sensor=10,smart_meter=8,camera_status=7,door_lock=4,appliance=7,gateway=5",
 		"go run ./scripts/go/rtk-cloud -- create-users",
 		"go run ./scripts/go/rtk-cloud -- generate-load-devices",
-		"bind-devices uses latest rtk-users-*.json",
-		"validate-device-bind uses latest rtk-device-bind-*.json",
+		"test data DB:",
+		"bind-devices and validate-device-bind read SQLite test data for brand rtk",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("prepare plan missing %q:\n%s", want, output)
