@@ -14,7 +14,7 @@ literal product, repo, API, endpoint, command, and status-label names in English
 - 核心管理訊息必須固定出現在第一頁，且要在摘要正文之前。
 - 核心管理訊息之後必須放「目前狀態總結」。
 - 目前狀態總結格式：三欄表格 `面向` / `目前狀態` / `下一步或風險`，三到五列，每格一句話，至少涵蓋 deployment、product/demo evidence、operations/readiness、下一個 milestone 或 resource gap。
-- 一列 schedule snapshot，標示目前在 May 1 到 early-August 50,000-device loading test 目標路徑上的位置。
+- 一列 schedule snapshot，標示目前在 May 1 到 early-August 100,000-device loading test 目標路徑上的位置。
 - 一張 product-to-KPI 視覺圖。
 
 ## 第一部分：摘要
@@ -39,7 +39,7 @@ literal product, repo, API, endpoint, command, and status-label names in English
 - 目前位置：依報告日期與實際 evidence 更新，不可只用樂觀日期推進。
 - Timeline / Gantt / milestone-lane chart：標示 May 1 到 early-August target，並清楚標出 `目前位置`；schedule 不要只用純數字表格呈現。
 - Milestone detail table：只作為輔助明細，內容包含 May kickoff、May foundation、late-May/early-June load-test preparation、June small/medium validation、late-June multi-host/capacity、100K IoT validation、video-camera validation、early-Aug final pass。
-- Video schedule lane：June video readiness foundation、July video profile / 5,000-camera rehearsal、2026-08-01 與 50,000 IoT devices 同一個 gate 驗證 5,000 video cameras。
+- Video schedule lane：June video readiness foundation、July video profile / 5,000-camera rehearsal、2026-08-01 與 100,000 IoT devices 同一個 gate 驗證 5,000 video cameras。
 - Release gate definition：Aug.1 loading-test pass、Alpha、Beta、Public path 各自要有通過條件、evidence、未通過時的狀態標示。
 - 本週 gate：本週必須完成或驗證的可量測項目。
 - 下個 gate：下一個可驗證 milestone。

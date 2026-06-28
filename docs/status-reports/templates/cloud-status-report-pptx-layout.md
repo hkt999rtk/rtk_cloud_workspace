@@ -96,22 +96,27 @@ appendix source index unless the report owner explicitly changes the framework.
 | 25 | Security / PKI Management | Device trust-chain and security-management matrix. |
 | 26 | HSM / PKCS#11 Signer Design | Key-custody boundary for certissuer and token signing; service gets signing capability, not raw private key material. |
 | 27 | Threat Model / Cyber Security Review | STRIDE risk matrix and next review focus. |
-| 28 | Transition：Deployment、操作流程與 Evidence | Topic break before Linode runtime, health/config boundary, operation screenshots, and SDK flow. |
+| 28 | Transition：Deployment、操作流程與 Evidence | Topic break before Linode/LKE runtime, cost comparison, operation screenshots, and SDK flow. |
 | 29 | Linode Staging Runtime Shape | Runtime topology plus component responsibility table. |
 | 30 | Initial Operation Cost View | Current Linode monthly run-rate estimate plus AWS commercial-scale difference view from `docs/cost`, focused on CloudHSM on/off and Robust Design on/off. |
-| 31 | Linode 100k Device Cost View | Self-managed Linode/Akamai cluster estimate for 10,000 users and 100,000 usually-online MQTT devices, including per-unit cost and caveats. |
-| 32 | AWS Unit Cost Per Month | Raw monthly total divided by users/devices plus weighted 10% user / 90% device unit-cost view. |
-| 33 | AWS Cost Calculation Detail 1/3 | Base-service line-item math from `docs/cost`: ECS, Cognito, RDS, IoT Core, NAT, CloudWatch Logs, Secrets, S3, KMS, and subtotal. |
-| 34 | AWS Cost Calculation Detail 2/3 | Explicit quantity * unit-price formulas for major items, e.g. RDS DB-hours plus storage GB-month and Cognito MAU free-tier calculation. |
-| 35 | AWS Cost Calculation Detail 3/3 | Scenario equations, CloudHSM/robust deltas, optional support-plan calculation, and per-user/per-device formulas. |
-| 36 | Linode Health & Configuration Boundary | Live health table and safe configuration boundary. |
-| 37 | Operation Flow Overview | Demo journey flow. |
-| 38 | Admin Operation Screenshots | 2x2 Admin screenshot grid. |
-| 39 | SDK / Sample App Flow | Sample app flow screenshot plus evidence-purpose table. |
-| 40 | Decision / Support Needed | Alpha-readiness support board: account/payment ownership, official Android/iOS market publishing accounts, operation backup, alpha internal testers, beta pilot customer, and milestone impact. |
-| 41 | Ongoing Operation / Development Coverage | Ongoing baseline estimate separate from temporary alpha/beta testers: backend/service owner, DevOps/SRE, SDK support, QA/load test, security review, and FAE/pilot support. |
-| 42 | Appendix：素材與來源索引 | Dense material/source/status table. |
-| 43 | Thank You / Review Gate | Master-style closing slide and checklist summary. |
+| 31 | AWS User Login / Auth Flow | Cognito, API Gateway, service auth, and app token path. |
+| 32 | AWS Device Login / Provisioning Flow | Device provisioning, IoT policy/cert, and bootstrap handoff path. |
+| 33 | AWS MQTT / Shadow Data Flow | IoT Core topics, rules, persistence, and observability path. |
+| 34 | Linode 100k Device Cost View | Self-managed Linode/Akamai cluster estimate for 10,000 users and 100,000 usually-online MQTT devices, including per-unit cost and caveats. |
+| 35 | AWS Unit Cost Per Month | Raw monthly total divided by users/devices plus weighted 10% user / 90% device unit-cost view. |
+| 36 | AWS Cost Calculation Detail 1/3 | Base-service line-item math from `docs/cost`: ECS, Cognito, RDS, IoT Core, NAT, CloudWatch Logs, Secrets, S3, KMS, and subtotal. |
+| 37 | AWS Cost Calculation Detail 2/3 | Explicit quantity * unit-price formulas for major items, e.g. RDS DB-hours plus storage GB-month and Cognito MAU free-tier calculation. |
+| 38 | AWS Cost Calculation Detail 3/3 | Scenario equations, CloudHSM/robust deltas, optional support-plan calculation, and per-user/per-device formulas. |
+| 39 | AWS Pricing Source URLs | Source URL index for the AWS cost assumptions. |
+| 40 | GCP Cost View | GCP comparison with managed-service gaps and self-hosted substitutions. |
+| 41 | Azure Cost View | Azure comparison with managed-service gaps and self-hosted substitutions. |
+| 42 | Operation Flow Overview | Demo journey flow. |
+| 43 | Admin Operation Screenshots | 2x2 Admin screenshot grid. |
+| 44 | SDK / Sample App Flow | Sample app flow screenshot plus evidence-purpose table. |
+| 45 | Decision / Support Needed | Alpha-readiness support board: account/payment ownership, official Android/iOS market publishing accounts, operation backup, alpha internal testers, beta pilot customer, and milestone impact. |
+| 46 | Ongoing Operation / Development Coverage | Ongoing baseline estimate separate from temporary alpha/beta testers: backend/service owner, DevOps/SRE, SDK support, QA/load test, security review, and FAE/pilot support. |
+| 47 | Appendix：素材與來源索引 | Dense material/source/status table. |
+| 48 | Thank You / Review Gate | Master-style closing slide and checklist summary. |
 
 ## Layout Rules
 
@@ -145,7 +150,7 @@ appendix source index unless the report owner explicitly changes the framework.
 - Treat endpoint health as status evidence only, not production or security
   sign-off.
 - Keep operation-cost discussion to one or two lightweight slides unless requested:
-  current Linode staging monthly run-rate estimate, AWS pilot estimate from
+  current K8S staging monthly run-rate estimate, AWS pilot estimate from
   `docs/cost/aws-pricing-sources.md`, clear CloudHSM and Robust Design cost
   differences, per-user/per-device unit cost per month, post-loading-test
   estimate timing, and caveats that AWS numbers are a planning snapshot rather

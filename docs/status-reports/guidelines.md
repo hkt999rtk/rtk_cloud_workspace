@@ -16,7 +16,7 @@ Owner: `rtk_cloud_workspace`.
 | --- | --- |
 | 為什麼做這個 cloud？ | 它如何支援 AmebaPRO / IoT module、SDK/app、生態系、customer PoC、design-in 與商業 KPI。 |
 | 現在有什麼能展示？ | UI、SDK/sample app、API、deployment、health check、design asset、load-test evidence。 |
-| 時程走到哪裡？ | 從 2026-05-01 到 early-August 50,000-device loading test 的目前位置、下一個 gate、風險判定。 |
+| 時程走到哪裡？ | 從 2026-05-01 到 early-August 100,000-device loading test 的目前位置、下一個 gate、風險判定。 |
 | 哪些能力已驗證？ | 用 `PASS`、`FAIL`、`SKIP`、`BLOCKED`、`not verified` 標明，不用模糊描述。 |
 | 主要對象是誰？ | Module buyer、solution developer、brand/ODM customer、video IoT customer 等，每一類要連到 cloud proof 與 module selling path。 |
 | 每個 release gate 怎麼判定？ | Aug.1 loading test、Alpha、Beta、Public 的通過條件、需要 evidence、以及未過時的標示方式。 |
@@ -40,7 +40,7 @@ Owner: `rtk_cloud_workspace`.
 | --- | --- | --- |
 | Cover / 核心管理訊息 | 第一頁讓管理層知道本週重點。 | 本週一句核心訊息、目前狀態總結、schedule snapshot、product-to-KPI visual。 |
 | Part 1：主管摘要 | 五分鐘內看懂全局。 | 為什麼做、target customer / use case fit、目前完成什麼、下一步、風險、需要什麼決策。 |
-| Part 2：Schedule / Loading Test 路徑 | 說明從 May 1 到 early August 的進度。 | 目前位置、本週 gate、下個 gate、50,000-device IoT target、5,000-video-camera target、release gate definition、風險判定。 |
+| Part 2：Schedule / Loading Test 路徑 | 說明從 May 1 到 early August 的進度。 | 目前位置、本週 gate、下個 gate、100,000-device IoT target、5,000-video-camera target、release gate definition、風險判定。 |
 | Part 3：Cloud / Product / KPI Detail | 把工程能力翻譯成產品與商業價值。 | Cloud relationship、customer/use-case fit、KPI、architecture、portal marketing、MQTT/shadow、WebRTC/storage、Security/PKI、threat model。 |
 | Part 4：操作畫面與使用流程 | 讓非工程讀者看懂使用情境。 | Admin overview、device drawer、OTA、stream health、SDK/sample flow、demo journey。 |
 | Part 5：Linode Staging Deployment & Configuration | 說明目前 staging 部署與限制。 | Endpoint、runtime shape、safe config、health check、production-ready gap。 |
@@ -159,14 +159,14 @@ Generated output 留在 `.artifacts/`，不要 commit。可 commit 的是：
 | 必填內容 | `目前位置`、`本週目標`、`下個 gate`、`風險`、`判定`。 |
 | 建議視覺 | Timeline、Gantt-style chart、milestone lane、progress bar。 |
 | 資料來源 | Load-test plan、runner output、deployment status、metrics threshold、weekly evidence。 |
-| 避免事項 | 不要只用純表格；不要因為日期未到就宣稱 on track；不要把 IoT 50,000 target 和 Video 5,000 target 混在一起。 |
+| 避免事項 | 不要只用純表格；不要因為日期未到就宣稱 on track；不要把 IoT 100,000 target 和 Video 5,000 target 混在一起。 |
 
 Schedule constants：
 
 | 項目 | 固定值 |
 | --- | --- |
 | Project start | 2026-05-01 |
-| IoT target | Early August 2026 pass 50,000-device loading test |
+| IoT target | Early August 2026 pass 100,000-device loading test |
 | Video target | 2026-08-01 pass 5,000-video-camera loading test |
 | Post-load-test release path | August alpha test, September beta test, then public path |
 | Dynamic scaling | August release 不實作；loading test 後依 evidence 決定 |
@@ -175,14 +175,14 @@ Baseline milestone path：
 
 | 時段 | Milestone | Evidence |
 | --- | --- | --- |
-| 2026-05-01 to 2026-05-10 | Project kickoff and scope lock | Cloud purpose、source-of-truth boundaries、deployment target、50,000-device target。 |
+| 2026-05-01 to 2026-05-10 | Project kickoff and scope lock | Cloud purpose、source-of-truth boundaries、deployment target、100,000-device target。 |
 | 2026-05-11 to 2026-05-24 | Foundation buildout | Linode staging、Account Manager / Video Cloud / Admin integration、SDK/sample、OTA/telemetry、status-report framework。 |
 | 2026-05-25 to 2026-06-07 | Load-test preparation | Runner boundary、safe staging profile、fleet assumptions、metrics、thresholds、operator runbook。 |
 | 2026-06-08 to 2026-06-21 | Small-to-medium validation | 100 / 1,000 / 5,000-device runs，並分類 API、broker、DB、resource、credential、test-data failure。 |
 | 2026-06-22 to 2026-07-05 | Multi-host and capacity expansion | Multi-instance / multi-host、aggregation、resource dashboard、bottleneck fixes。 |
 | 2026-07-06 to 2026-07-19 | 10,000 to 30,000-device rehearsal | p95/p99 latency、success rate、broker/database capacity、recovery behavior、operator response。 |
-| 2026-07-20 to 2026-07-31 | 50,000-device dry run and hardening | Near-final dry run、soak test、rollback/retry plan、monitoring、report packaging。 |
-| 2026-08-01 | 50,000-device + 5,000-video-camera loading-test pass | Final run passes agreed thresholds and produces management-ready evidence。 |
+| 2026-07-20 to 2026-07-31 | 100,000-device dry run and hardening | Near-final dry run、soak test、rollback/retry plan、monitoring、report packaging。 |
+| 2026-08-01 | 100,000-device + 5,000-video-camera loading-test pass | Final run passes agreed thresholds and produces management-ready evidence。 |
 | August 2026 | Alpha test | SDK included；internal developers use onboarding、sample app、debug/report flow。 |
 | September 2026 | Beta test | SDK + pilot customer；collect customer feedback and support evidence。 |
 | After beta | Public path | Operation, account, support, security baseline ready。 |
@@ -195,7 +195,7 @@ Video lane：
 | 2026-06-01 to 2026-06-21 | Video readiness foundation | WebRTC signaling、owner transport、TURN/ICE、stream health、snapshot/media upload/download evidence。 |
 | 2026-06-22 to 2026-07-12 | Video small-scale validation | Representative app/device signaling、media upload、download auth、stream-health pass。 |
 | 2026-07-13 to 2026-07-31 | 5,000-camera rehearsal | Fleet、media profile、TURN/coturn capacity、metrics、storage/retention、runbook。 |
-| 2026-08-01 | 5,000-camera loading-test pass | Validate WebRTC/video-storage readiness at the same gate as 50,000 IoT devices。 |
+| 2026-08-01 | 5,000-camera loading-test pass | Validate WebRTC/video-storage readiness at the same gate as 100,000 IoT devices。 |
 | After loading-test pass | Alpha / beta release support | Use evidence to size operation cost, production scaling, and customer pilot boundary。 |
 
 Current-position rule：
@@ -208,7 +208,7 @@ Release gate definition：
 
 | Gate | Scope | Evidence to pass |
 | --- | --- | --- |
-| Aug.1 loading-test pass | 50,000 IoT devices + 5,000 video cameras | Success rate、p95/p99、error taxonomy、resource use、recovery behavior、report package。 |
+| Aug.1 loading-test pass | 100,000 IoT devices + 5,000 video cameras | Success rate、p95/p99、error taxonomy、resource use、recovery behavior、report package。 |
 | Alpha test | SDK + internal developer real use | 4-6 internal testers；至少 3-4 位 developer/firmware/app testers 實際跑 onboarding、SDK sample、debug/report。 |
 | Beta test | SDK + pilot customer | 1-2 pilot customers 或 partner use cases；確認 PoC feedback、support flow、deployment/cost assumptions。 |
 | Public path | Operation, account, support, security baseline | 公司/核准第三方帳務、backup operator、release version、backup/restore、security review gate。 |
@@ -389,7 +389,7 @@ Top risk themes 至少檢查：
 
 | 項目 | 指引 |
 | --- | --- |
-| 目的 | 對 early-August 50,000-device target 做可驗證 readiness tracking。 |
+| 目的 | 對 early-August 100,000-device target 做可驗證 readiness tracking。 |
 | 必填內容 | Runner/profile、fleet/data、metrics/thresholds、infra/multi-host、broker/database/storage visibility、report evidence。 |
 | 建議視覺 | Readiness matrix、progress bar、risk burn-down、scale target chart。 |
 | 資料來源 | Load-test runner output、JSON/Markdown reports、metrics dashboard、deployment evidence。 |
@@ -397,7 +397,7 @@ Top risk themes 至少檢查：
 
 Matrix columns：
 
-| Area | Current status | Needed before 50k | Owner / dependency | Risk |
+| Area | Current status | Needed before 100k | Owner / dependency | Risk |
 | --- | --- | --- | --- | --- |
 
 ### 4.12 Part 4：操作畫面與使用流程
@@ -540,11 +540,11 @@ If a status cannot be verified from a safe source, write `BLOCKED` or
 
 - 第一頁有核心管理訊息、目前狀態總結、schedule snapshot。
 - 摘要可在五分鐘內看懂。
-- Schedule path 顯示 2026-05-01 到 2026-08-01 50,000-device + 5,000-video-camera target，並標出 `目前位置`。
+- Schedule path 顯示 2026-05-01 到 2026-08-01 100,000-device + 5,000-video-camera target，並標出 `目前位置`。
 - Video schedule lane 有把 WebRTC/video-storage evidence 和 IoT telemetry/loading-test evidence 分開。
 - Release gate definition 有列 Aug.1、Alpha、Beta、Public 的通過條件。
 - 重要數字優先用 chart / timeline / progress visual。
-- Loading Test Readiness Matrix 有列出 50,000-device target 前的 gates。
+- Loading Test Readiness Matrix 有列出 100,000-device target 前的 gates。
 - Cloud relationship 清楚：Realtek Platform Root、Brand Cloud、brand users、end users、devices。
 - Admin Console 沒有被描述成 Account Manager 或 Video Cloud 的 source of truth。
 - Portal web / digital marketing 有 SEO、content、behavior analytics、lead conversion、sales improvement。

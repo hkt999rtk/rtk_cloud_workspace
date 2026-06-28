@@ -272,7 +272,7 @@ def build_doc() -> None:
     add_callout(
         doc,
         "一頁結論",
-        "這個 Cloud 的目的不是單純展示技術，而是補齊 AmebaPRO 與 IoT module 推廣所需的完整解決方案：module、SDK、App、Cloud onboarding、Video、OTA、Admin 管理與可量測的 Loading Test。8 月的 50,000 IoT / 5,000 IoT Video loading test，應被視為技術驗證與商業信心指標。",
+        "這個 Cloud 的目的不是單純展示技術，而是補齊 AmebaPRO 與 IoT module 推廣所需的完整解決方案：module、SDK、App、Cloud onboarding、Video、OTA、Admin 管理與可量測的 Loading Test。8 月的 100,000 IoT / 5,000 IoT Video loading test，應被視為技術驗證與商業信心指標。",
         "DDF7F3",
     )
 
@@ -304,7 +304,7 @@ def build_doc() -> None:
     add_figure(doc, figures["load_targets"], "圖 3：8 月 Loading Test 目標")
     add_paragraph(
         doc,
-        "IoT 50,000 與 IoT Video 5,000 不只是技術壓測數字，也是在對內確認資源投入、對外建立客戶信心。測試結果應轉化為可溝通的成功率、延遲、錯誤分類與容量邊界。",
+        "IoT 100,000 與 IoT Video 5,000 不只是技術壓測數字，也是在對內確認資源投入、對外建立客戶信心。測試結果應轉化為可溝通的成功率、延遲、錯誤分類與容量邊界。",
     )
     add_heading(doc, "3.1 Release Gate Definition", 3)
     add_key_value_table(
@@ -482,7 +482,7 @@ def build_doc() -> None:
         doc,
         ["測試類型", "目標規模", "核心量測"],
         [
-            ["IoT Loading Test", "50,000 devices", "大量連線、telemetry、state update、API latency、error rate"],
+            ["IoT Loading Test", "100,000 devices", "大量連線、telemetry、state update、API latency、error rate"],
             ["IoT Video Loading Test", "5,000 video devices", "video control plane、WebRTC setup、TURN readiness、viewer setup latency"],
         ],
         [4.5, 3.5, 7.6],

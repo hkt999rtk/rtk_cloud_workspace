@@ -1,21 +1,21 @@
 [submodule "repos/rtk_cloud_client"]
 	path = repos/rtk_cloud_client
-	url = git@github.com-work:hkt999rtk/rtk_cloud_client.git
+	url = git@github-work.com:hkt999rtk/rtk_cloud_client.git
 [submodule "repos/rtk_video_cloud"]
 	path = repos/rtk_video_cloud
-	url = git@github.com-work:hkt999rtk/rtk_video_cloud.git
+	url = git@github-work.com:hkt999rtk/rtk_video_cloud.git
 [submodule "repos/rtk_cloud_contracts_doc"]
 	path = repos/rtk_cloud_contracts_doc
-	url = git@github.com-work:hkt999rtk/rtk_cloud_contracts_doc.git
+	url = git@github-work.com:hkt999rtk/rtk_cloud_contracts_doc.git
 [submodule "repos/rtk_account_manager"]
 	path = repos/rtk_account_manager
-	url = git@github.com-work:hkt999rtk/rtk_account_manager.git
+	url = git@github-work.com:hkt999rtk/rtk_account_manager.git
 [submodule "repos/rtk_cloud_frontend"]
 	path = repos/rtk_cloud_frontend
-	url = git@github.com-work:hkt999rtk/rtk_cloud_frontend.git
+	url = git@github-work.com:hkt999rtk/rtk_cloud_frontend.git
 [submodule "repos/rtk_cloud_admin"]
 	path = repos/rtk_cloud_admin
-	url = git@github.com-work:hkt999rtk/rtk_cloud_admin.git
+	url = git@github-work.com:hkt999rtk/rtk_cloud_admin.git
 [submodule "repos/rtk_cloud_logger"]
 	path = repos/rtk_cloud_logger
-	url = git@github.com-work:hkt999rtk/rtk_cloud_logger.git
+	url = git@github-work.com:hkt999rtk/rtk_cloud_logger.git

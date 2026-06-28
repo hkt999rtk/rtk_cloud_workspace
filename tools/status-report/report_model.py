@@ -56,10 +56,9 @@ PORTAL_WEB_SCREENSHOT = FIG_DIR / "portal-webtest-home-hero.png"
 PORTAL_WEB_FALLBACK_IMAGE = ROOT / "repos/rtk_cloud_frontend/static/assets/connectplus-hero-corporate-v2.jpg"
 REPORT_LANGUAGE = "繁體中文"
 CORE_MESSAGE = (
-    "這個 Cloud 的存在目的，是輔助各單位以 Bottom-up Business 方式推動 AmebaPRO / IoT module "
-    "銷售：讓使用者、開發者與客戶 PoC 團隊可以直接使用雲端 onboarding、SDK/App、OTA、Video、"
-    "MQTT 與管理工具，縮短從硬體模組評估到解決方案導入的距離。它要提供的是方便導入、可展示、可驗證，"
-    "同時具備安全管理的網路架構，讓模組銷售能從硬體規格延伸成完整解決方案。"
+    "本文件整理 Realtek Video / IoT Control Cloud 目前進度，包含 K8S 部署現況、100K device loading test "
+    "結果、Portal Web 與 demo readiness、AWS/K8S 成本估算、主要風險，以及 Alpha/Beta 前需要決策或"
+    "補強的事項。"
 )
 CURRENT_STATUS_SUMMARY = [
     ["Deployment", "Linode LKE staging 已完成 100K IoT device capacity validation，並恢復到 7 nodes / 7 MQTT pods baseline。", "仍需補齊 release version、backup/restore 與 production-like sign-off。"],
@@ -635,7 +634,7 @@ def collect_linode_scale_estimate() -> dict[str, object]:
         return {
             "status": "unavailable",
             "source": str(LINODE_100K_ESTIMATE_PATH.relative_to(ROOT)),
-            "summary": "Linode 100k planning estimate source not found.",
+        "summary": "Self-managed K8s 100k planning estimate source not found.",
         }
 
     text = LINODE_100K_ESTIMATE_PATH.read_text(encoding="utf-8")
@@ -643,14 +642,18 @@ def collect_linode_scale_estimate() -> dict[str, object]:
     metadata = parse_markdown_metadata(text)
     config_rows = table_by_header(tables, ["Role", "Count", "Plan", "Monthly unit", "Monthly subtotal", "Rationale"])
     scenario_rows = table_by_header(tables, ["Scenario", "Calculation", "Monthly estimate"])
-    per_unit_rows = table_by_header(tables, ["Scenario", "Per user", "Per device", "1 user + 10 devices"])
+    per_unit_rows = table_by_header(tables, ["Scenario", "Per user", "Per device", "1 user + 20 devices"])
+    if not per_unit_rows:
+        per_unit_rows = table_by_header(tables, ["Scenario", "Per user", "Per device", "1 user + 10 devices"])
     if not per_unit_rows:
         per_unit_rows = table_by_header(tables, ["Scenario", "Per user", "Per device", "1 user + 4 devices"])
 
     scenarios = {row[0]: row[2] for row in scenario_rows if len(row) >= 3}
     per_unit = {row[0]: row for row in per_unit_rows if len(row) >= 4}
-    default_scenario = "Linode 100k self-managed cluster"
-    managed_scenario = "Linode 100k with optional Managed Service"
+    default_scenario = "K8s 100K self-managed cluster"
+    managed_scenario = "K8s 100K with optional Managed Service"
+    legacy_default_scenario = "Linode 100k self-managed cluster"
+    legacy_managed_scenario = "Linode 100k with optional Managed Service"
 
     return {
         "status": "available",
@@ -658,11 +661,11 @@ def collect_linode_scale_estimate() -> dict[str, object]:
         "region": metadata.get("region", "us-sea"),
         "currency": metadata.get("currency", "USD"),
         "collected": metadata.get("collected", "n/a"),
-        "summary": "Linode/Akamai Cloud 100k-device self-managed cluster planning estimate; not current bill and not load-tested.",
-        "sizing": metadata.get("sizing", "10,000 users / 100,000 devices"),
+        "summary": "AWS self-operated K8s 100k-device reference estimate; billing is modeled from EKS control plane, EC2 worker nodes, EBS, load balancers, NAT/VPC endpoints, ECR, and S3.",
+        "sizing": metadata.get("sizing", "5,000 users / 100,000 devices"),
         "scenarios": {
-            "selfManaged": scenarios.get(default_scenario, "n/a"),
-            "withManagedService": scenarios.get(managed_scenario, "n/a"),
+            "selfManaged": scenarios.get(default_scenario) or scenarios.get(legacy_default_scenario, "n/a"),
+            "withManagedService": scenarios.get(managed_scenario) or scenarios.get(legacy_managed_scenario, "n/a"),
         },
         "configuration": [
             {
@@ -677,19 +680,21 @@ def collect_linode_scale_estimate() -> dict[str, object]:
             if len(row) >= 6
         ],
         "perUnit": {
-            "selfManagedPerUser": per_unit.get(default_scenario, ["", "n/a", "n/a", "n/a"])[1],
-            "selfManagedPerDevice": per_unit.get(default_scenario, ["", "n/a", "n/a", "n/a"])[2],
-            "selfManagedUserWithTenDevices": per_unit.get(default_scenario, ["", "n/a", "n/a", "n/a"])[3],
-            "selfManagedUserWithFourDevices": per_unit.get(default_scenario, ["", "n/a", "n/a", "n/a"])[3],
-            "managedServicePerUser": per_unit.get(managed_scenario, ["", "n/a", "n/a", "n/a"])[1],
-            "managedServicePerDevice": per_unit.get(managed_scenario, ["", "n/a", "n/a", "n/a"])[2],
-            "managedServiceUserWithTenDevices": per_unit.get(managed_scenario, ["", "n/a", "n/a", "n/a"])[3],
-            "managedServiceUserWithFourDevices": per_unit.get(managed_scenario, ["", "n/a", "n/a", "n/a"])[3],
+            "selfManagedPerUser": (per_unit.get(default_scenario) or per_unit.get(legacy_default_scenario, ["", "n/a", "n/a", "n/a"]))[1],
+            "selfManagedPerDevice": (per_unit.get(default_scenario) or per_unit.get(legacy_default_scenario, ["", "n/a", "n/a", "n/a"]))[2],
+            "selfManagedUserWithTwentyDevices": (per_unit.get(default_scenario) or per_unit.get(legacy_default_scenario, ["", "n/a", "n/a", "n/a"]))[3],
+            "selfManagedUserWithTenDevices": (per_unit.get(default_scenario) or per_unit.get(legacy_default_scenario, ["", "n/a", "n/a", "n/a"]))[3],
+            "selfManagedUserWithFourDevices": (per_unit.get(default_scenario) or per_unit.get(legacy_default_scenario, ["", "n/a", "n/a", "n/a"]))[3],
+            "managedServicePerUser": (per_unit.get(managed_scenario) or per_unit.get(legacy_managed_scenario, ["", "n/a", "n/a", "n/a"]))[1],
+            "managedServicePerDevice": (per_unit.get(managed_scenario) or per_unit.get(legacy_managed_scenario, ["", "n/a", "n/a", "n/a"]))[2],
+            "managedServiceUserWithTwentyDevices": (per_unit.get(managed_scenario) or per_unit.get(legacy_managed_scenario, ["", "n/a", "n/a", "n/a"]))[3],
+            "managedServiceUserWithTenDevices": (per_unit.get(managed_scenario) or per_unit.get(legacy_managed_scenario, ["", "n/a", "n/a", "n/a"]))[3],
+            "managedServiceUserWithFourDevices": (per_unit.get(managed_scenario) or per_unit.get(legacy_managed_scenario, ["", "n/a", "n/a", "n/a"]))[3],
         },
         "caveats": [
-            "Not load-tested yet; right-size after 10k/50k/100k MQTT evidence.",
-            "Self-managed Linode is not service-equivalent to AWS IoT Core, Cognito, CloudHSM, RDS, or ElastiCache.",
-            "Excludes camera/WebRTC/TURN media traffic, tax, DNS/email, external monitoring, and support beyond optional Managed Service.",
+            "MQTT 100K has passed; use the packaged run evidence to right-size API, broker, database, and observability nodes.",
+            "This K8s runtime view excludes AWS IoT Core, RDS PostgreSQL, CloudWatch Logs, Amazon Managed Service for Prometheus, Lambda as primary runtime, ElastiCache, SQS, CloudHSM, and external managed operations.",
+            "Excludes camera/WebRTC/TURN media traffic, tax, DNS/email, external monitoring vendors, and object-media retention.",
         ],
     }
 
@@ -782,7 +787,9 @@ def collect_aws_cost_estimate() -> dict[str, object]:
     metadata = parse_markdown_metadata(text)
     scenario_rows = table_by_header(tables, ["Scenario", "Estimated monthly cost"])
     per_unit_rows = table_by_header(tables, ["Scenario", "Calculation", "Estimate"])
-    weighted_unit_rows = table_by_header(tables, ["Scenario", "User pool", "Device pool", "Per user", "Per device", "Effective 1 user + 10 devices"])
+    weighted_unit_rows = table_by_header(tables, ["Scenario", "User pool", "Device pool", "Per user", "Per device", "Effective 1 user + 20 devices"])
+    if not weighted_unit_rows:
+        weighted_unit_rows = table_by_header(tables, ["Scenario", "User pool", "Device pool", "Per user", "Per device", "Effective 1 user + 10 devices"])
     if not weighted_unit_rows:
         weighted_unit_rows = table_by_header(tables, ["Scenario", "User pool", "Device pool", "Per user", "Per device", "Effective 1 user + 4 devices"])
     top_driver_rows = table_by_header(tables, ["Rank", "Cost item", "Monthly estimate"])
@@ -812,7 +819,7 @@ def collect_aws_cost_estimate() -> dict[str, object]:
     robust_without_hsm = scenarios.get("Robust redundant design, excluding CloudHSM", "n/a")
     robust_with_hsm = scenarios.get("Robust redundant design with two CloudHSMs", "n/a")
     weighted_units = {row[0]: row for row in weighted_unit_rows if len(row) >= 6}
-    end_user_count = 10000
+    end_user_count = 5000
     registered_device_count = 100000
 
     raw_unit_costs = [
@@ -853,6 +860,7 @@ def collect_aws_cost_estimate() -> dict[str, object]:
             "devicePool": row[2],
             "perUserMonth": row[3],
             "perDeviceMonth": row[4],
+            "effectiveUserWithTwentyDevices": row[5],
             "effectiveUserWithTenDevices": row[5],
             "effectiveUserWithFourDevices": row[5],
         }
@@ -865,6 +873,7 @@ def collect_aws_cost_estimate() -> dict[str, object]:
     ]
     line_item_names = {
         "ECS Fargate application services",
+        "AWS Lambda application APIs/workers",
         "Public frontend CloudFront CDN",
         "Public frontend Lambda",
         "Public frontend S3 static origin",
@@ -873,8 +882,11 @@ def collect_aws_cost_estimate() -> dict[str, object]:
         "ElastiCache for Valkey",
         "S3 storage and PUT requests",
         "AWS IoT Core",
+        "AWS IoT Device Management",
+        "Amazon Managed Service for Prometheus",
         "Application Load Balancer",
         "NAT Gateway",
+        "AWS operational/edge adders",
         "CloudWatch Logs",
         "Secrets Manager",
         "KMS",
@@ -935,12 +947,19 @@ def collect_aws_cost_estimate() -> dict[str, object]:
         ],
         "scenarioEquations": [
             {"scenario": "Base services only", "formula": "sum base service line items, excluding CloudHSM and Private CA", "estimate": base_without_hsm},
-            {"scenario": "Default + 1 CloudHSM", "formula": f"{base_without_hsm} + 1,357.80 CloudHSM", "estimate": default_with_hsm},
+            {"scenario": "Default + 1 CloudHSM", "formula": f"{base_without_hsm} + 2,336.00 CloudHSM", "estimate": default_with_hsm},
             {"scenario": "Robust, no CloudHSM", "formula": f"{base_without_hsm} + {diff_usd_amount(robust_without_hsm, base_without_hsm)} robust infra delta", "estimate": robust_without_hsm},
-            {"scenario": "Robust + 2 CloudHSMs", "formula": f"{robust_without_hsm} + 2 * 1,357.80 CloudHSM", "estimate": robust_with_hsm},
+            {"scenario": "Robust + 2 CloudHSMs", "formula": f"{robust_without_hsm} + 2 * 2,336.00 CloudHSM", "estimate": robust_with_hsm},
         ],
         "cloudWatchFormula": "30.0 GB service logs + 36.0 GB device runtime logs = 66.0 GB/month; 66.0 * 0.70 ingestion + 66.0 * 0.03 retention = 48.18 USD/month.",
         "formulaBreakdown": [
+            {
+                "item": "AWS Lambda application APIs/workers",
+                "quantity": "30.0M requests + 6.0M GB-sec",
+                "unitPrice": "0.20/M requests; 0.0000166667/GB-sec",
+                "formula": "30.0M * 0.20/M + 30.0M * 1 GB * 0.2s * 0.0000166667",
+                "estimate": "106.00",
+            },
             {
                 "item": "ECS Fargate application services",
                 "quantity": "8,760 vCPU-hr + 17,520 GB-hr",
@@ -949,11 +968,18 @@ def collect_aws_cost_estimate() -> dict[str, object]:
                 "estimate": "539.79",
             },
             {
+                "item": "AI-assisted operations",
+                "quantity": "Runbook + log triage + status report support",
+                "unitPrice": "Not AWS infra; tool/seat/token TBD",
+                "formula": "AI assists ops workflow; no AWS recurring infra line",
+                "estimate": "0.00 AWS infra",
+            },
+            {
                 "item": "RDS PostgreSQL",
-                "quantity": "730 DB-hr + 2,500 GB-month",
-                "unitPrice": "0.203/DB-hr; 0.138/GB-month",
-                "formula": "730 * 0.203 + 2,500 * 0.138 = 148.19 + 345.00",
-                "estimate": "493.19",
+                "quantity": "730 DB-hr + 1,000 GB-month",
+                "unitPrice": "0.574/DB-hr; 0.138/GB-month",
+                "formula": "730 * 0.574 + 1,000 * 0.138 = 419.02 + 138.00",
+                "estimate": "557.02",
             },
             {
                 "item": "AWS IoT Core",
@@ -961,6 +987,27 @@ def collect_aws_cost_estimate() -> dict[str, object]:
                 "unitPrice": "0.096/M conn-min; 1.20/M msg; 1.50/M shadow op",
                 "formula": "414.72 connection + 1,126.80 messages + 108.00 shadow ops",
                 "estimate": "1,649.52",
+            },
+            {
+                "item": "AWS IoT Device Management",
+                "quantity": "100k devices + 60.0M index updates",
+                "unitPrice": "0.01/device-month; 2.25/M index updates",
+                "formula": "100,000 * 0.01 + 60.0M * 2.25/M",
+                "estimate": "1,135.00",
+            },
+            {
+                "item": "Amazon Managed Service for Prometheus",
+                "quantity": "432.0M samples + collector + query/storage",
+                "unitPrice": "0.90/10M ingest; 0.04/collector-hr; 0.03/10M collected",
+                "formula": "38.88 ingest + 30.50 collector + 0.42 query/storage",
+                "estimate": "69.80",
+            },
+            {
+                "item": "AWS operational/edge adders",
+                "quantity": "30.24M API calls + DNS + metrics/alarms + 5 Grafana users + 20 GB ECR",
+                "unitPrice": "API GW 1.00/M; R53 0.50/zone + 0.40/M; Grafana 9/user",
+                "formula": "30.24 API GW + 0.90 DNS + 33.00 CloudWatch + 45.00 Grafana + 2.00 ECR",
+                "estimate": "111.14",
             },
             {
                 "item": "NAT Gateway",
@@ -1006,9 +1053,9 @@ def collect_aws_cost_estimate() -> dict[str, object]:
             },
             {
                 "item": "Amazon Cognito User Pools",
-                "quantity": "10,000 direct/social MAUs",
+                "quantity": "5,000 direct/social MAUs",
                 "unitPrice": "10,000 MAUs free; 0.015/MAU above free tier",
-                "formula": "max(0, 10,000 - 10,000) * 0.015",
+                "formula": "max(0, 5,000 - 10,000) * 0.015",
                 "estimate": "0.00",
             },
             {
@@ -1028,9 +1075,9 @@ def collect_aws_cost_estimate() -> dict[str, object]:
             {
                 "item": "CloudHSM add-on",
                 "quantity": "730 HSM-hr per HSM",
-                "unitPrice": "1.86/HSM-hr",
-                "formula": "1 HSM: 730 * 1.86; robust: 2 * 1,357.80",
-                "estimate": "1,357.80 per HSM",
+                "unitPrice": "3.20/HSM-hr",
+                "formula": "1 HSM: 730 * 3.20; robust: 2 * 2,336.00",
+                "estimate": "2,336.00 per HSM",
             },
         ],
     }
@@ -1079,16 +1126,18 @@ def collect_aws_cost_estimate() -> dict[str, object]:
         "perUnit": {
             "defaultWithCloudHsmPerUser": per_unit.get("Default with CloudHSM per user", "n/a"),
             "defaultWithCloudHsmPerDevice": per_unit.get("Default with CloudHSM per device", "n/a"),
+            "defaultWithCloudHsmSupportPerDevice": per_unit.get("Default with CloudHSM and Business Support+ per device", "n/a"),
             "robustWithCloudHsmPerUser": per_unit.get("Robust with CloudHSM per user", "n/a"),
             "robustWithCloudHsmPerDevice": per_unit.get("Robust with CloudHSM per device", "n/a"),
+            "robustWithCloudHsmSupportPerDevice": per_unit.get("Robust with CloudHSM and Business Support+ per device", "n/a"),
         },
         "unitCosts": {
             "basis": {
-                "endUsers": "10,000",
+                "endUsers": "5,000",
                 "registeredDevices": "100,000",
-                "devicesPerUser": "10",
-                "weightedUserPool": "10%",
-                "weightedDevicePool": "90%",
+                "devicesPerUser": "20",
+                "weightedUserPool": "5%",
+                "weightedDevicePool": "95%",
             },
             "rawDivision": raw_unit_costs,
             "weightedAllocation": weighted_unit_costs,
@@ -1265,7 +1314,7 @@ def fig_load_targets() -> Path:
         draw.text((70, 45), "8 月 Loading Test 目標", font=font(46, True), fill=rgb("17324D"))
         rounded_box(draw, (140, 190, 810, 635), "DDF7F3", "0F766E", 36, 5)
         rounded_box(draw, (990, 190, 1660, 635), "FFF2CC", "F59E0B", 36, 5)
-        centered_multiline(draw, (160, 225, 790, 370), "IoT\n50,000 台", font(58, True), "17324D")
+        centered_multiline(draw, (160, 225, 790, 370), "IoT\n100,000 台", font(58, True), "17324D")
         centered_multiline(draw, (1010, 225, 1640, 370), "IoT Video\n5,000 台", font(58, True), "17324D")
         centered_multiline(draw, (190, 405, 760, 590), "大量連線、telemetry、state update、API latency", font(30, True), "233241")
         centered_multiline(draw, (1040, 405, 1610, 590), "video control plane、WebRTC setup、TURN readiness", font(30, True), "233241")
@@ -1295,6 +1344,7 @@ PPTX_WORK_DIR = OUT_DIR / "pptx-work"
 
 SCHEDULE_SNAPSHOT = {
     "current_position": "100K IoT capacity validated",
+    "current_week": "100K evidence sizing guidance",
     "weekly_goal": "Convert 100K evidence into sizing guidance and close the remaining video-camera capacity gate.",
     "next_gate": "5,000 video camera validation before alpha",
     "risk": "At risk if video/WebRTC/TURN/storage evidence and production-readiness ownership are not closed before alpha.",
@@ -1303,11 +1353,11 @@ SCHEDULE_SNAPSHOT = {
 
 SCHEDULE_MILESTONES = [
     {"period": "May 1-10", "label": "Kickoff", "status": "done", "note": "scope / source-of-truth / target"},
-    {"period": "May 11-24", "label": "Foundation", "status": "done", "note": "Linode staging + integration"},
-    {"period": "May 25-Jun 7", "label": "Load prep", "status": "current", "note": "runner / metrics / runbook"},
-    {"period": "Jun 8-30", "label": "Validation", "status": "next", "note": "small-to-medium + bottlenecks"},
-    {"period": "Jul 1-31", "label": "Scale rehearsal", "status": "planned", "note": "50k IoT / 5k video dry run"},
-    {"period": "Aug 1", "label": "Load test pass", "status": "target", "note": "50k devices + 5k cameras"},
+    {"period": "May 11-24", "label": "Foundation", "status": "done", "note": "K8s staging + integration"},
+    {"period": "May 25-Jun 7", "label": "Load prep", "status": "done", "note": "runner / metrics / runbook"},
+    {"period": "Jun 8-30", "label": "Validation", "status": "current", "note": "small-to-medium + bottlenecks"},
+    {"period": "Jul 1-31", "label": "Scale rehearsal", "status": "planned", "note": "100k IoT / 5k video dry run"},
+    {"period": "Aug 1", "label": "Load test pass", "status": "target", "note": "100k devices + 5k cameras"},
     {"period": "Aug", "label": "Alpha test", "status": "planned", "note": "SDK included"},
     {"period": "Sep", "label": "Beta test", "status": "planned", "note": "SDK + pilot customer"},
     {"period": "After beta", "label": "Public", "status": "planned", "note": "public release path"},
@@ -1317,7 +1367,7 @@ VIDEO_MILESTONES = [
     {"period": "Jun", "label": "Foundation", "status": "current", "note": "WebRTC / media / storage path"},
     {"period": "Jul 1-15", "label": "Video profile", "status": "next", "note": "camera mix / viewer behavior"},
     {"period": "Jul 16-31", "label": "5k rehearsal", "status": "planned", "note": "TURN / storage / metrics"},
-    {"period": "Aug 1", "label": "5,000 cameras pass", "status": "target", "note": "same gate as 50k IoT"},
+    {"period": "Aug 1", "label": "5,000 cameras pass", "status": "target", "note": "same gate as 100k IoT"},
 ]
 
 LOAD_READINESS = [
@@ -1370,7 +1420,7 @@ EVIDENCE_INDEX = [
 DECK_REQUIRED_TOPICS = [
     "Schedule", "Release Gate", "Loading Test", "Cloud Relationship", "Customer Fit",
     "Portal Marketing", "WebRTC/storage", "MQTT/shadow", "PKI", "HSM signer",
-    "Threat Model", "Linode", "Capacity Evidence", "CPU/Memory/Bandwidth", "Operation Screenshots", "Evidence Appendix",
+    "Threat Model", "Linode", "Cloud Cost", "Capacity Evidence", "CPU/Memory/Bandwidth", "Operation Screenshots", "Evidence Appendix",
 ]
 
 
