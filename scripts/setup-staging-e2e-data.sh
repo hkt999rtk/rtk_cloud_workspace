@@ -18,8 +18,6 @@ OUT_DIR=""
 QUIET=0
 RESUME=1
 FROM_STEP=""
-USERS_FILE=""
-BIND_ARTIFACT=""
 
 env_file_value() {
 	local file="$1"
@@ -52,11 +50,9 @@ Options:
   --bind-concurrency N            Concurrent device binding workers. Default: 64.
   --out-dir PATH                  Output directory for logs and summary.
   --quiet                         Suppress periodic progress lines.
-  --resume                        Reuse matching completed artifacts. Default.
-  --no-resume                     Recreate users/devices/bind artifacts even when local artifacts are complete.
+  --resume                        Reuse matching completed SQLite test data. Default.
+  --no-resume                     Recreate users/devices/bind data even when SQLite test data is complete.
   --from-step STEP                Start from create_brand, create_users, create_devices, bind_devices, or validate_bind.
-  --users-file PATH               Existing users artifact for bind/validate resume.
-  --bind-artifact PATH            Existing bind artifact for validate resume.
   -h, --help                      Show this help.
 USAGE
 }
@@ -175,22 +171,6 @@ while [[ $# -gt 0 ]]; do
 			fi
 			shift 2
 			;;
-		--users-file)
-			USERS_FILE="${2:-}"
-			if [[ -z "$USERS_FILE" ]]; then
-				printf 'error: --users-file requires a value\n' >&2
-				exit 2
-			fi
-			shift 2
-			;;
-		--bind-artifact)
-			BIND_ARTIFACT="${2:-}"
-			if [[ -z "$BIND_ARTIFACT" ]]; then
-				printf 'error: --bind-artifact requires a value\n' >&2
-				exit 2
-			fi
-			shift 2
-			;;
 		-h|--help)
 			usage
 			exit 0
@@ -262,11 +242,4 @@ fi
 if [[ -n "$FROM_STEP" ]]; then
 	run_args+=(--from-step "$FROM_STEP")
 fi
-if [[ -n "$USERS_FILE" ]]; then
-	run_args+=(--users-file "$USERS_FILE")
-fi
-if [[ -n "$BIND_ARTIFACT" ]]; then
-	run_args+=(--bind-artifact "$BIND_ARTIFACT")
-fi
-
 (cd "$ROOT" && "$GO_CMD" run ./scripts/go/rtk-cloud -- "${run_args[@]}")

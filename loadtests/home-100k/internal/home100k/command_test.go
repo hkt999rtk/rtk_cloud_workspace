@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,25 +25,13 @@ func writeTinyEnvRoot(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	files := map[string]string{
-		"env/stack.env":                                                             "STACK=test\n",
-		"state/lke.env":                                                             "LKE_CLUSTER_ID=123\n",
-		"state/lke-kubeconfig.yaml":                                                 "apiVersion: v1\nkind: Config\n",
-		"state/video-cloud-staging.state.json":                                      `{"mqtt":{"host":"mqtt.example.invalid","tls_port":8883}}`,
-		"services/video-cloud.env":                                                  "VIDEO_CLOUD_BASE_URL=http://example.invalid\n",
-		"devices/test_device/loadtest.env":                                          "LOADTEST=1\n",
-		"devices/test_device/summary.json":                                          `{"count":2}`,
-		"devices/test_device/manifests/devices.csv":                                 "device_id,device_type\n",
-		"devices/test_device/manifests/device_ids.txt":                              "load-device-0001\nload-device-0002\n",
-		"devices/test_device/devices/light/load-device-0001/device.cert.pem":        "cert\n",
-		"devices/test_device/devices/light/load-device-0001/device.key.pem":         "key\n",
-		"devices/test_device/devices/light/load-device-0001/device.chain.pem":       "chain\n",
-		"devices/test_device/bundles/light/load-device-0001.pem":                    "bundle\n",
-		"devices/test_device/devices/smart_meter/load-device-0002/device.cert.pem":  "cert\n",
-		"devices/test_device/devices/smart_meter/load-device-0002/device.key.pem":   "key\n",
-		"devices/test_device/devices/smart_meter/load-device-0002/device.chain.pem": "chain\n",
-		"devices/test_device/bundles/smart_meter/load-device-0002.pem":              "bundle\n",
-		"artifacts/users/rtk-users-test.json":                                       `{"users":[]}`,
-		"artifacts/device-bind/rtk-device-bind-test.json":                           `{"assignments":[]}`,
+		"env/stack.env":                        "STACK=test\n",
+		"state/lke.env":                        "LKE_CLUSTER_ID=123\n",
+		"state/lke-kubeconfig.yaml":            "apiVersion: v1\nkind: Config\n",
+		"state/video-cloud-staging.state.json": `{"mqtt":{"host":"mqtt.example.invalid","tls_port":8883}}`,
+		"services/video-cloud.env":             "VIDEO_CLOUD_BASE_URL=http://example.invalid\n",
+		"devices/test_device/loadtest.env":     "LOADTEST=1\n",
+		"devices/test_device/summary.json":     `{"count":2}`,
 	}
 	for rel, body := range files {
 		path := filepath.Join(root, rel)
@@ -53,24 +42,105 @@ func writeTinyEnvRoot(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	devicesJSON := []map[string]any{
-		{"device_id": "load-device-0001", "device_type": "light"},
-		{"device_id": "load-device-0002", "device_type": "smart_meter"},
-	}
-	if err := writeJSONFile(filepath.Join(root, "devices/test_device/manifests/devices.json"), devicesJSON); err != nil {
+	writeHomeSQLiteTestData(t, root, []string{"user-00@example.test", "user-01@example.test"}, []map[string]any{
+		{"assignment_index": 0, "assigned_email": "user-00@example.test", "device_id": "load-device-0001", "device_type": "light", "service_options": []string{"mqtt"}},
+		{"assignment_index": 1, "assigned_email": "user-01@example.test", "device_id": "load-device-0002", "device_type": "smart_meter", "service_options": []string{"mqtt"}},
+	})
+	return root
+}
+
+func writeHomeSQLiteTestData(t *testing.T, envRoot string, users []string, assignments []map[string]any) {
+	t.Helper()
+	dbPath := homeTestDataDBPath(envRoot, "RTK")
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	return root
+	if err := os.Remove(dbPath); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	stmts := []string{
+		`create table metadata (key text primary key, value text not null)`,
+		`create table users (brandname text not null, email text not null, brand_cloud_id text, tenant_slug text, password text, tokens_json text, app_credentials_json text, app_certificate_json text, body_json text not null, primary key (brandname, email))`,
+		`create table device_credentials (brandname text not null, device_id text not null, cert_pem text, key_pem text, chain_pem text, bundle_pem text, metadata_json text, factory_enroll_request_json text, factory_enroll_response_redacted_json text, primary key (brandname, device_id))`,
+		`create table device_bindings (brandname text not null, device_id text not null, brand_cloud_id text, tenant_slug text, assignment_index integer not null, assigned_email text not null, device_type text not null, service_options_json text not null, primary key (brandname, device_id))`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`insert into metadata(key, value) values('schema_version', 'rtk-cloud-workspace-test-data/v1')`); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	userStmt, err := tx.Prepare(`insert into users(brandname, email, brand_cloud_id, tenant_slug, password, tokens_json, app_credentials_json, app_certificate_json, body_json) values('RTK', ?, 'brand-cloud-1', 'tenant-1', 'pw', '{"access_token":"cached-access","refresh_token":"cached-refresh"}', '{}', '{}', ?)`)
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	defer userStmt.Close()
+	for _, email := range users {
+		if _, err := userStmt.Exec(email, mustJSONText(t, map[string]any{"email": email, "password": "pw"})); err != nil {
+			_ = tx.Rollback()
+			t.Fatal(err)
+		}
+	}
+	bindStmt, err := tx.Prepare(`insert into device_bindings(brandname, device_id, brand_cloud_id, tenant_slug, assignment_index, assigned_email, device_type, service_options_json) values('RTK', ?, 'brand-cloud-1', 'tenant-1', ?, ?, ?, ?)`)
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	defer bindStmt.Close()
+	credentialStmt, err := tx.Prepare(`insert into device_credentials(brandname, device_id, cert_pem, key_pem, chain_pem, bundle_pem, metadata_json, factory_enroll_request_json, factory_enroll_response_redacted_json) values('RTK', ?, 'cert', 'key', 'chain', 'bundle', ?, '', '')`)
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	defer credentialStmt.Close()
+	for idx, item := range assignments {
+		deviceID := item["device_id"].(string)
+		deviceType := item["device_type"].(string)
+		serviceOptions := item["service_options"].([]string)
+		assignmentIndex, _ := item["assignment_index"].(int)
+		if assignmentIndex == 0 && idx > 0 {
+			assignmentIndex = idx
+		}
+		if _, err := bindStmt.Exec(deviceID, assignmentIndex, item["assigned_email"].(string), deviceType, mustJSONText(t, serviceOptions)); err != nil {
+			_ = tx.Rollback()
+			t.Fatal(err)
+		}
+		if _, err := credentialStmt.Exec(deviceID, mustJSONText(t, map[string]any{"device_id": deviceID, "device_type": deviceType})); err != nil {
+			_ = tx.Rollback()
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mustJSONText(t *testing.T, v any) string {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
 }
 
 func writeHome100KCoverageArtifacts(t *testing.T, envRoot string) {
 	t.Helper()
-	users := make([]map[string]any, 0, DefaultUserCount)
+	users := make([]string, 0, DefaultUserCount)
 	for idx := 0; idx < DefaultUserCount; idx++ {
-		users = append(users, map[string]any{"email": fmt.Sprintf("user-%04d@example.test", idx)})
-	}
-	if err := writeJSONFile(filepath.Join(envRoot, "artifacts", "users", "rtk-users-20260616T000000Z.json"), map[string]any{"brandname": "RTK", "users": users}); err != nil {
-		t.Fatal(err)
+		users = append(users, fmt.Sprintf("user-%04d@example.test", idx))
 	}
 	mix := proportionalMix(DefaultDeviceCount, homeDiverseDeviceMixBuckets())
 	deviceTypes := make([]string, 0, len(mix))
@@ -83,16 +153,15 @@ func writeHome100KCoverageArtifacts(t *testing.T, envRoot string) {
 		for idx := 0; idx < mix[deviceType]; idx++ {
 			deviceIndex := len(assignments)
 			assignments = append(assignments, map[string]any{
-				"assigned_email":  fmt.Sprintf("user-%04d@example.test", deviceIndex%DefaultUserCount),
-				"device_id":       fmt.Sprintf("load-device-%06d", deviceIndex),
-				"device_type":     deviceType,
-				"service_options": []string{"mqtt"},
+				"assigned_email":   fmt.Sprintf("user-%04d@example.test", deviceIndex%DefaultUserCount),
+				"assignment_index": deviceIndex,
+				"device_id":        fmt.Sprintf("load-device-%06d", deviceIndex),
+				"device_type":      deviceType,
+				"service_options":  []string{"mqtt"},
 			})
 		}
 	}
-	if err := writeJSONFile(filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-20260616T000000Z.json"), map[string]any{"brandname": "rtk", "assignments": assignments}); err != nil {
-		t.Fatal(err)
-	}
+	writeHomeSQLiteTestData(t, envRoot, users, assignments)
 }
 
 func readTarGzNames(t *testing.T, path string) map[string]bool {
@@ -119,6 +188,67 @@ func readTarGzNames(t *testing.T, path string) map[string]bool {
 		}
 		names[header.Name] = true
 	}
+}
+
+func assertCredentialBundleCounts(t *testing.T, path string, want map[string]int) {
+	t.Helper()
+	db := openCredentialBundleForTest(t, path)
+	defer db.Close()
+	for table, expected := range want {
+		var got int
+		if err := db.QueryRow("select count(*) from " + table).Scan(&got); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if got != expected {
+			t.Fatalf("count %s = %d, want %d", table, got, expected)
+		}
+	}
+}
+
+func assertCredentialBundleMetadata(t *testing.T, path string, want map[string]string) {
+	t.Helper()
+	db := openCredentialBundleForTest(t, path)
+	defer db.Close()
+	for key, expected := range want {
+		var got string
+		if err := db.QueryRow(`select value from metadata where key = ?`, key).Scan(&got); err != nil {
+			t.Fatalf("metadata %s: %v", key, err)
+		}
+		if got != expected {
+			t.Fatalf("metadata %s = %q, want %q", key, got, expected)
+		}
+	}
+}
+
+func openCredentialBundleForTest(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	gz, err := gzip.NewReader(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gz.Close()
+	tmp := filepath.Join(t.TempDir(), "bundle.sqlite")
+	out, err := os.Create(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(out, gz); err != nil {
+		_ = out.Close()
+		t.Fatal(err)
+	}
+	if err := out.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db
 }
 
 func stubCommandOutputRunner(t *testing.T, fn func(name string, args ...string) (string, error)) {
@@ -732,6 +862,7 @@ func TestExecuteSyncLiveHonorsExplicitVMCountOverride(t *testing.T) {
 		"--region", "us-sea",
 		"--devices", "9000",
 		"--vm-count", "2",
+		"--load-generator-devices-per-vm", "4500",
 		"--run-id", "run-cli",
 		"--out-dir", outDir,
 		"--live",
@@ -826,6 +957,9 @@ func TestExecuteSyncLiveHonorsExplicitVMCountOverride(t *testing.T) {
 	if extraVars["devices_per_user"] != float64(20) {
 		t.Fatalf("extra vars devices_per_user = %#v, want 20", extraVars["devices_per_user"])
 	}
+	if extraVars["load_generator_devices_per_vm"] != float64(4500) {
+		t.Fatalf("extra vars load_generator_devices_per_vm = %#v, want 4500", extraVars["load_generator_devices_per_vm"])
+	}
 	if extraVars["runner_nofile_limit"] != float64(1048576) {
 		t.Fatalf("extra vars runner_nofile_limit = %#v, want 1048576", extraVars["runner_nofile_limit"])
 	}
@@ -869,14 +1003,28 @@ func TestExecuteSyncLiveHonorsExplicitVMCountOverride(t *testing.T) {
 			t.Fatalf("shard env archive missing %q", want)
 		}
 	}
+	assertCredentialBundleCounts(t, filepath.Join(outDir, "credential-bundles", "lg01.sqlite.gz"), map[string]int{
+		"devices":         4500,
+		"users":           450,
+		"device_bindings": 4500,
+	})
+	assertCredentialBundleMetadata(t, filepath.Join(outDir, "credential-bundles", "lg01.sqlite.gz"), map[string]string{
+		"brand_cloud_id": "brand-cloud-1",
+		"tenant_slug":    "tenant-1",
+	})
 	commonArchive := filepath.Join(outDir, "artifact-store", "common", "env-common.tar.gz")
 	if _, err := os.Stat(commonArchive); err != nil {
 		t.Fatalf("missing common env archive: %v", err)
 	}
 	commonNames := readTarGzNames(t, commonArchive)
-	for _, want := range []string{"env/stack.env", "state/lke.env", "state/lke-kubeconfig.yaml", "state/video-cloud-staging.state.json", "services/video-cloud.env", "devices/test_device/manifests/devices.json", "artifacts/users/rtk-users-20260616T000000Z.json", "artifacts/device-bind/rtk-device-bind-20260616T000000Z.json"} {
+	for _, want := range []string{"env/stack.env", "state/lke.env", "state/lke-kubeconfig.yaml", "state/video-cloud-staging.state.json", "services/video-cloud.env", "devices/test_device/loadtest.env", "devices/test_device/summary.json"} {
 		if !commonNames[want] {
 			t.Fatalf("common env archive missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"devices/test_device/manifests/devices.json", "artifacts/users/rtk-users-20260616T000000Z.json", "artifacts/device-bind/rtk-device-bind-20260616T000000Z.json"} {
+		if commonNames[forbidden] {
+			t.Fatalf("common env archive included legacy test-data artifact %q", forbidden)
 		}
 	}
 	forbiddenPrefixes := []string{
@@ -918,20 +1066,9 @@ func TestExecuteSyncLiveHonorsExplicitVMCountOverride(t *testing.T) {
 	}
 }
 
-func TestWriteEnvRsyncFilterFallsBackToDevicesJSONWhenCSVHasOnlyHeader(t *testing.T) {
+func TestWriteEnvRsyncFilterExcludesExpandedDeviceCredentials(t *testing.T) {
 	envRoot := t.TempDir()
-	manifestDir := filepath.Join(envRoot, "devices", "test_device", "manifests")
-	if err := os.MkdirAll(manifestDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(manifestDir, "devices.csv"), []byte("device_id,device_type\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	devicesJSON := []map[string]any{
-		{"device_id": "load-device-0001", "device_type": "light"},
-		{"device_id": "load-device-0002", "device_type": "smart_meter"},
-	}
-	if err := writeJSONFile(filepath.Join(manifestDir, "devices.json"), devicesJSON); err != nil {
+	if err := os.MkdirAll(filepath.Join(envRoot, "devices", "test_device", "manifests"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	out := filepath.Join(t.TempDir(), "filter")
@@ -955,13 +1092,24 @@ func TestWriteEnvRsyncFilterFallsBackToDevicesJSONWhenCSVHasOnlyHeader(t *testin
 	}
 	filter := string(raw)
 	for _, want := range []string{
-		"+ /devices/test_device/devices/light/load-device-0001/***",
-		"+ /devices/test_device/bundles/light/load-device-0001.pem",
-		"+ /devices/test_device/devices/smart_meter/load-device-0002/***",
-		"+ /devices/test_device/bundles/smart_meter/load-device-0002.pem",
+		"+ /env/***",
+		"+ /services/***",
+		"+ /devices/test_device/loadtest.env",
+		"+ /devices/test_device/summary.json",
 	} {
 		if !strings.Contains(filter, want) {
 			t.Fatalf("filter missing %q:\n%s", want, filter)
+		}
+	}
+	for _, forbidden := range []string{
+		"/devices/test_device/manifests/",
+		"/devices/test_device/devices/",
+		"/devices/test_device/bundles/",
+		"/artifacts/users/",
+		"/artifacts/device-bind/",
+	} {
+		if strings.Contains(filter, forbidden) {
+			t.Fatalf("filter included legacy test-data path %q:\n%s", forbidden, filter)
 		}
 	}
 }
@@ -1075,39 +1223,13 @@ func TestAnsibleSyncRetriesTransientFanoutRsyncFailures(t *testing.T) {
 
 func TestEnvArchiveUsesBoundDeviceShardSelection(t *testing.T) {
 	envRoot := writeTinyEnvRoot(t)
-	users := map[string]any{"users": []map[string]any{
-		{"email": "user-00@example.test"},
-		{"email": "user-01@example.test"},
-		{"email": "user-02@example.test"},
-	}}
-	if err := writeJSONFile(filepath.Join(envRoot, "artifacts", "users", "rtk-users-20260615.json"), users); err != nil {
-		t.Fatal(err)
-	}
-	bind := map[string]any{
-		"brandname": "rtk",
-		"assignments": []map[string]any{
+	writeHomeSQLiteTestData(t, envRoot,
+		[]string{"user-00@example.test", "user-01@example.test", "user-02@example.test"},
+		[]map[string]any{
 			{"assigned_email": "user-00@example.test", "device_id": "load-device-0001", "device_type": "light", "service_options": []string{"mqtt"}},
 			{"assigned_email": "user-01@example.test", "device_id": "load-device-0002", "device_type": "smart_meter", "service_options": []string{"mqtt"}},
 			{"assigned_email": "user-02@example.test", "device_id": "load-device-0003", "device_type": "air_conditioner", "service_options": []string{"mqtt"}},
-		},
-	}
-	if err := writeJSONFile(filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-20260615.json"), bind); err != nil {
-		t.Fatal(err)
-	}
-	for _, rel := range []string{
-		"devices/test_device/devices/air_conditioner/load-device-0003/device.cert.pem",
-		"devices/test_device/devices/air_conditioner/load-device-0003/device.key.pem",
-		"devices/test_device/devices/air_conditioner/load-device-0003/device.chain.pem",
-		"devices/test_device/bundles/air_conditioner/load-device-0003.pem",
-	} {
-		path := filepath.Join(envRoot, rel)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte("pem\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
+		})
 	plan, err := NewPlan(PlanOptions{EnvRoot: envRoot, Brandname: "RTK", Region: "us-sea"})
 	if err != nil {
 		t.Fatal(err)
@@ -1135,23 +1257,12 @@ func TestEnvArchiveUsesBoundDeviceShardSelection(t *testing.T) {
 
 func TestValidatePlanDataCoverageRejectsInsufficientUsersAndBoundDevices(t *testing.T) {
 	envRoot := writeTinyEnvRoot(t)
-	users := map[string]any{"users": []map[string]any{
-		{"email": "user-00@example.test"},
-		{"email": "user-01@example.test"},
-	}}
-	if err := writeJSONFile(filepath.Join(envRoot, "artifacts", "users", "rtk-users-20260615.json"), users); err != nil {
-		t.Fatal(err)
-	}
-	bind := map[string]any{
-		"brandname": "rtk",
-		"assignments": []map[string]any{
+	writeHomeSQLiteTestData(t, envRoot,
+		[]string{"user-00@example.test", "user-01@example.test"},
+		[]map[string]any{
 			{"assigned_email": "user-00@example.test", "device_id": "load-device-0001", "device_type": "light", "service_options": []string{"mqtt"}},
 			{"assigned_email": "user-01@example.test", "device_id": "load-device-0002", "device_type": "smart_meter", "service_options": []string{"mqtt"}},
-		},
-	}
-	if err := writeJSONFile(filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-20260615.json"), bind); err != nil {
-		t.Fatal(err)
-	}
+		})
 	plan, err := NewPlan(PlanOptions{EnvRoot: envRoot, Brandname: "RTK", Region: "us-sea"})
 	if err != nil {
 		t.Fatal(err)
@@ -1177,23 +1288,12 @@ func TestValidatePlanDataCoverageRejectsInsufficientUsersAndBoundDevices(t *test
 
 func TestValidatePlanDataCoverageAcceptsMatchingUsersAndBoundDevices(t *testing.T) {
 	envRoot := writeTinyEnvRoot(t)
-	users := map[string]any{"users": []map[string]any{
-		{"email": "user-00@example.test"},
-		{"email": "user-01@example.test"},
-	}}
-	if err := writeJSONFile(filepath.Join(envRoot, "artifacts", "users", "rtk-users-20260615.json"), users); err != nil {
-		t.Fatal(err)
-	}
-	bind := map[string]any{
-		"brandname": "rtk",
-		"assignments": []map[string]any{
+	writeHomeSQLiteTestData(t, envRoot,
+		[]string{"user-00@example.test", "user-01@example.test"},
+		[]map[string]any{
 			{"assigned_email": "user-00@example.test", "device_id": "load-device-0001", "device_type": "light", "service_options": []string{"mqtt"}},
 			{"assigned_email": "user-01@example.test", "device_id": "load-device-0002", "device_type": "smart_meter", "service_options": []string{"mqtt"}},
-		},
-	}
-	if err := writeJSONFile(filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-20260615.json"), bind); err != nil {
-		t.Fatal(err)
-	}
+		})
 	plan, err := NewPlan(PlanOptions{EnvRoot: envRoot, Brandname: "RTK", Region: "us-sea"})
 	if err != nil {
 		t.Fatal(err)
@@ -1207,7 +1307,7 @@ func TestValidatePlanDataCoverageAcceptsMatchingUsersAndBoundDevices(t *testing.
 	}
 }
 
-func TestEnvArchiveOnlyIncludesLatestUsersAndDeviceBindArtifacts(t *testing.T) {
+func TestEnvArchiveExcludesLegacyUsersAndDeviceBindArtifacts(t *testing.T) {
 	envRoot := writeTinyEnvRoot(t)
 	oldUsers := filepath.Join(envRoot, "artifacts", "users", "rtk-users-20260614T010000Z.json")
 	newUsers := filepath.Join(envRoot, "artifacts", "users", "rtk-users-20260615T010000Z.json")
@@ -1254,108 +1354,23 @@ func TestEnvArchiveOnlyIncludesLatestUsersAndDeviceBindArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	names := readTarGzNames(t, archivePath)
-	for _, want := range []string{
-		"artifacts/users/rtk-users-20260615T010000Z.json",
-		"artifacts/device-bind/rtk-device-bind-20260615T010000Z.json",
-	} {
-		if !names[want] {
-			t.Fatalf("archive missing latest artifact %q", want)
-		}
-	}
 	for _, forbidden := range []string{
 		"artifacts/users/rtk-users-20260614T010000Z.json",
+		"artifacts/users/rtk-users-20260615T010000Z.json",
 		"artifacts/device-bind/rtk-device-bind-20260614T010000Z.json",
+		"artifacts/device-bind/rtk-device-bind-20260615T010000Z.json",
 	} {
 		if names[forbidden] {
-			t.Fatalf("archive included stale artifact %q", forbidden)
+			t.Fatalf("archive included legacy test-data artifact %q", forbidden)
 		}
-	}
-}
-
-func TestEnvArchiveSelectsArtifactsByFilenameTimestampNotMTime(t *testing.T) {
-	envRoot := writeTinyEnvRoot(t)
-	oldUsers := map[string]any{"users": []map[string]any{
-		{"email": "old-user@example.test"},
-	}}
-	newUsers := map[string]any{"users": []map[string]any{
-		{"email": "new-user@example.test"},
-	}}
-	oldUsersPath := filepath.Join(envRoot, "artifacts", "users", "rtk-users-20260615T010000Z.json")
-	newUsersPath := filepath.Join(envRoot, "artifacts", "users", "rtk-users-20260615T020000Z.json")
-	if err := writeJSONFile(oldUsersPath, oldUsers); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeJSONFile(newUsersPath, newUsers); err != nil {
-		t.Fatal(err)
-	}
-	oldBind := map[string]any{
-		"brandname": "rtk",
-		"assignments": []map[string]any{
-			{"assigned_email": "old-user@example.test", "device_id": "load-device-0001", "device_type": "light", "service_options": []string{"mqtt"}},
-			{"assigned_email": "old-user@example.test", "device_id": "load-device-0002", "device_type": "air_conditioner", "service_options": []string{"mqtt"}},
-			{"assigned_email": "old-user@example.test", "device_id": "load-device-0003", "device_type": "smart_meter", "service_options": []string{"mqtt"}},
-		},
-	}
-	newBind := map[string]any{
-		"brandname": "rtk",
-		"assignments": []map[string]any{
-			{"assigned_email": "new-user@example.test", "device_id": "load-device-9001", "device_type": "light", "service_options": []string{"mqtt"}},
-			{"assigned_email": "new-user@example.test", "device_id": "load-device-9002", "device_type": "air_conditioner", "service_options": []string{"mqtt"}},
-			{"assigned_email": "new-user@example.test", "device_id": "load-device-9003", "device_type": "smart_meter", "service_options": []string{"mqtt"}},
-		},
-	}
-	oldBindPath := filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-20260615T010000Z.json")
-	newBindPath := filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-20260615T020000Z.json")
-	if err := writeJSONFile(oldBindPath, oldBind); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeJSONFile(newBindPath, newBind); err != nil {
-		t.Fatal(err)
-	}
-	newTime := time.Now().Add(-time.Hour)
-	oldTime := time.Now()
-	for _, path := range []string{newUsersPath, newBindPath} {
-		if err := os.Chtimes(path, newTime, newTime); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, path := range []string{oldUsersPath, oldBindPath} {
-		if err := os.Chtimes(path, oldTime, oldTime); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	rows, err := loadShardDeviceRowsFromArtifacts(envRoot, Plan{Conditions: TestConditions{Brandname: "RTK"}}, VMAssignment{
-		Index:      0,
-		TaskShards: []Shard{{Role: "device-mqtt", Count: 3}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := []string{}
-	for _, row := range rows {
-		got = append(got, row.DeviceID)
-	}
-	want := []string{"load-device-9001", "load-device-9002", "load-device-9003"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("selected devices = %v, want %v", got, want)
 	}
 }
 
 func TestEnvArchiveIsDeterministicForUnchangedShardInputs(t *testing.T) {
 	envRoot := writeTinyEnvRoot(t)
-	users := map[string]any{"users": []map[string]any{
-		{"email": "user-00@example.test"},
-	}}
-	bind := map[string]any{"assignments": []map[string]any{
-		{"device_id": "load-device-0001", "device_type": "light", "assigned_email": "user-00@example.test", "service_options": []string{"mqtt"}},
-	}}
-	if err := writeJSONFile(filepath.Join(envRoot, "artifacts", "users", "rtk-users-20260615.json"), users); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeJSONFile(filepath.Join(envRoot, "artifacts", "device-bind", "rtk-device-bind-20260615.json"), bind); err != nil {
-		t.Fatal(err)
-	}
+	writeHomeSQLiteTestData(t, envRoot,
+		[]string{"user-00@example.test"},
+		[]map[string]any{{"device_id": "load-device-0001", "device_type": "light", "assigned_email": "user-00@example.test", "service_options": []string{"mqtt"}}})
 	plan, err := NewPlan(PlanOptions{EnvRoot: envRoot, Brandname: "RTK", Region: "us-sea"})
 	if err != nil {
 		t.Fatal(err)
@@ -1702,6 +1717,36 @@ func shellQuoteForTest(path string) string {
 	return "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
 }
 
+func TestLiveRunnerCommandTimeoutUsesScaleAwareGrace(t *testing.T) {
+	timeout, err := liveRunnerCommandTimeout(3, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if timeout != 10*time.Minute+3*time.Second {
+		t.Fatalf("timeout = %s, want 10m3s", timeout)
+	}
+
+	timeout, err = liveRunnerCommandTimeout(3600, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if timeout != 75*time.Minute {
+		t.Fatalf("timeout = %s, want 75m", timeout)
+	}
+
+	timeout, err = liveRunnerCommandTimeout(60, "2m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if timeout != 3*time.Minute {
+		t.Fatalf("timeout = %s, want 3m", timeout)
+	}
+
+	if _, err := liveRunnerCommandTimeout(60, "bad"); err == nil {
+		t.Fatalf("expected invalid timeout grace to fail")
+	}
+}
+
 func TestAnsibleStartRunnerUsesPrebuiltCloudMQTTTestAndDaemonWait(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "ansible", "start-runner.yml"))
 	if err != nil {
@@ -1722,10 +1767,12 @@ func TestAnsibleStartRunnerUsesPrebuiltCloudMQTTTestAndDaemonWait(t *testing.T) 
 		`--devices "{{ device_count }}"`,
 		`--users "{{ user_count }}"`,
 		`--devices-per-user "{{ devices_per_user }}"`,
+		`--load-generator-devices-per-vm "{{ load_generator_devices_per_vm }}"`,
 		`--vm-label-prefix "{{ vm_label_prefix | default('lg') }}"`,
 		`--mqtt-concurrency "{{ mqtt_concurrency | default(1000) }}"`,
 		`runner_nofile_limit="{{ runner_nofile_limit | default(1048576) }}"`,
 		`ulimit -n "$runner_nofile_limit"`,
+		"runner-ready-response.json",
 		"READY_WAIT",
 	} {
 		if !strings.Contains(body, want) {
@@ -2001,6 +2048,30 @@ ssl:default ssl_closed 14482
 	}
 	if counters["emqx.ssl_default.shutdown_ssl_closed"] != 14482 {
 		t.Fatalf("ssl shutdown counter = %d, want 14482", counters["emqx.ssl_default.shutdown_ssl_closed"])
+	}
+}
+
+func TestProbeResultKeepsParseableEvidenceAfterNonZeroExit(t *testing.T) {
+	probe := serverEvidenceProbe{
+		source: "emqx_listener_stats",
+		detail: "listener stats captured",
+	}
+	out := `tcp:default acceptors 128
+ssl:default current_conn 12500
+emqx.pod_mqtt_0.ssl_default.current_conn 12500
+`
+	source, note := evidenceSourceFromProbeResult(probe, "run-fixed", out, errors.New("exit status 1"))
+	if !source.Available {
+		t.Fatalf("source should stay available when counters are parseable: %+v", source)
+	}
+	if source.Counters["emqx.broker.identity"] != 1 {
+		t.Fatalf("missing broker identity counter: %#v", source.Counters)
+	}
+	if source.Counters["emqx.ssl_default.current_conn"] != 12500 {
+		t.Fatalf("ssl current_conn = %d, want 12500", source.Counters["emqx.ssl_default.current_conn"])
+	}
+	if note == "" || !strings.Contains(note, "evidence probe failed") {
+		t.Fatalf("note = %q, want warning note", note)
 	}
 }
 
@@ -2295,7 +2366,9 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 		}
 		return nil
 	}
-	commandRunnerWithTimeout = func(_ time.Duration, name string, args ...string) error {
+	var capturedTimeout time.Duration
+	commandRunnerWithTimeout = func(timeout time.Duration, name string, args ...string) error {
+		capturedTimeout = timeout
 		return commandRunner(name, args...)
 	}
 	defer func() {
@@ -2351,6 +2424,9 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 	}
 	if strings.Contains(joined, "--stage-usage-windows") {
 		t.Fatalf("live shard command still passes usage windows:\n%s", joined)
+	}
+	if capturedTimeout != 10*time.Minute+3*time.Second {
+		t.Fatalf("live shard timeout = %s, want 10m3s", capturedTimeout)
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "results.json")); err != nil {
 		t.Fatalf("missing converted shard results: %v", err)

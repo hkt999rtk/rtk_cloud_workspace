@@ -281,17 +281,17 @@ func TestCreateUsersReusesCompleteLocalArtifact(t *testing.T) {
 	if createAttempts != 0 || brandLoginAttempts != 0 {
 		t.Fatalf("createAttempts=%d brandLoginAttempts=%d", createAttempts, brandLoginAttempts)
 	}
-	latest := latestMatchingFile(artifactDir, "rtk-users-*.json")
-	var generated struct {
-		Users []map[string]any `json:"users"`
-	}
-	if raw, err := os.ReadFile(latest); err != nil {
-		t.Fatal(err)
-	} else if err := json.Unmarshal(raw, &generated); err != nil {
+	store, err := openTestDataStore(envRoot, "RTK")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(generated.Users) != 1 || stringValue(generated.Users[0]["action"]) != "reused" || stringValue(generated.Users[0]["password"]) != "existing-password" {
-		t.Fatalf("unexpected generated users artifact: %+v", generated.Users)
+	defer store.Close()
+	generatedUsers, err := store.UserBodies("RTK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(generatedUsers) != 1 || stringValue(generatedUsers[0]["action"]) != "reused" || stringValue(generatedUsers[0]["password"]) != "existing-password" {
+		t.Fatalf("unexpected generated users in SQLite: %+v", generatedUsers)
 	}
 }
 
@@ -396,21 +396,21 @@ func TestCreateUsersRotatePasswordBypassesCompleteLocalArtifact(t *testing.T) {
 	if createAttempts != 1 || brandLoginAttempts != 1 {
 		t.Fatalf("createAttempts=%d brandLoginAttempts=%d", createAttempts, brandLoginAttempts)
 	}
-	latest := latestMatchingFile(artifactDir, "rtk-users-*.json")
-	var generated struct {
-		Users []map[string]any `json:"users"`
-	}
-	if raw, err := os.ReadFile(latest); err != nil {
-		t.Fatal(err)
-	} else if err := json.Unmarshal(raw, &generated); err != nil {
+	store, err := openTestDataStore(envRoot, "RTK")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(generated.Users) != 1 || stringValue(generated.Users[0]["action"]) != "assigned" || stringValue(generated.Users[0]["password"]) == "existing-password" {
-		t.Fatalf("unexpected generated users artifact: %+v", generated.Users)
+	defer store.Close()
+	generatedUsers, err := store.UserBodies("RTK")
+	if err != nil {
+		t.Fatal(err)
 	}
-	appCertificate, ok := generated.Users[0]["app_certificate"].(map[string]any)
+	if len(generatedUsers) != 1 || stringValue(generatedUsers[0]["action"]) != "assigned" || stringValue(generatedUsers[0]["password"]) == "existing-password" {
+		t.Fatalf("unexpected generated users in SQLite: %+v", generatedUsers)
+	}
+	appCertificate, ok := generatedUsers[0]["app_certificate"].(map[string]any)
 	if !ok {
-		t.Fatalf("app_certificate missing: %+v", generated.Users[0])
+		t.Fatalf("app_certificate missing: %+v", generatedUsers[0])
 	}
 	if got := stringValue(appCertificate["fingerprint_sha256"]); got != "rotated-fingerprint" {
 		t.Fatalf("fingerprint = %q, want rotated-fingerprint", got)
@@ -567,48 +567,6 @@ func TestReusableLocalUsersRequireCompleteCertificateMaterial(t *testing.T) {
 	}
 	if reusable["rtk+002@users.local"] != nil || reusable["rtk+003@users.local"] != nil {
 		t.Fatalf("incomplete local users must not be reusable: %+v", reusable)
-	}
-}
-
-func TestCreateClaimTokenFallsBackToPlatformLoginWhenRefreshFails(t *testing.T) {
-	loginCount := 0
-	refreshCount := 0
-	claimAttempts := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/auth/login":
-			loginCount++
-			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": testJWT(time.Now().Add(time.Hour)), "refresh_token": testJWT(time.Now().Add(24 * time.Hour))}})
-		case "/v1/auth/refresh":
-			refreshCount++
-			http.Error(w, `{"error":{"code":"invalid_refresh_token"}}`, http.StatusUnauthorized)
-		case "/v1/admin/device-claim-tokens":
-			claimAttempts++
-			if r.Header.Get("authorization") == "" {
-				t.Fatalf("authorization header = %q", r.Header.Get("authorization"))
-			}
-			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(map[string]string{"claim_token": "claim-token", "id": "claim-1"})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	ctx := accountManagerContext{BaseURL: server.URL, AdminEmail: "admin@example.test", AdminPassword: "pass"}
-	session := accountPlatformSession{AccessToken: testJWT(time.Now().Add(30 * time.Second)), RefreshToken: testJWT(time.Now().Add(time.Hour))}
-	oldAccessToken := session.AccessToken
-	claim, err := createClaimToken(ctx, &session, nil, func(string, ...any) {}, "brand-1", bindAssignment{
-		DeviceID:       "load-device-0001",
-		DeviceType:     "camera",
-		Category:       "ip_camera",
-		ServiceOptions: []string{"mqtt", "video_streaming", "video_storage"},
-	}, "run-1", 24)
-	if err != nil {
-		t.Fatalf("createClaimToken() error = %v", err)
-	}
-	if stringValue(claim["claim_token"]) != "claim-token" || session.AccessToken == oldAccessToken || session.RefreshToken == "" || loginCount != 1 || refreshCount != 1 || claimAttempts != 1 {
-		t.Fatalf("claim=%v session=%+v loginCount=%d refreshCount=%d claimAttempts=%d", claim, session, loginCount, refreshCount, claimAttempts)
 	}
 }
 

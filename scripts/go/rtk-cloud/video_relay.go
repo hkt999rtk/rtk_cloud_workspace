@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/tls"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -67,6 +68,9 @@ type videoRelaySelectedDevice struct {
 	CertPath       string
 	KeyPath        string
 	ChainPath      string
+	CertPEM        string
+	KeyPEM         string
+	ChainPEM       string
 	User           videoRelayUser
 }
 
@@ -233,36 +237,12 @@ func executeVideoRelayTest(workspace, envRoot, brandname, outDir, profile, webrt
 		Artifacts:   map[string]string{},
 		TraceDetail: traceDetail,
 	}
-	brandSlug := strings.ToLower(strings.TrimSpace(brandname))
-	usersPath := latestMatchingFile(filepath.Join(envRoot, "artifacts", "users"), brandSlug+"-users-*.json")
-	bindPath := latestMatchingFile(filepath.Join(envRoot, "artifacts", "device-bind"), brandSlug+"-device-bind-*.json")
-	if usersPath == "" || bindPath == "" {
-		return writeVideoRelayBlocked(outDir, result, "missing latest users or device-bind artifact")
-	}
-	result.Artifacts["users_artifact"] = usersPath
-	result.Artifacts["device_bind_artifact"] = bindPath
-
-	usersArtifact, err := readVideoRelayUsersArtifact(usersPath)
+	testDataDB := testDataDBPath(envRoot, brandname)
+	result.Artifacts["test_data_db"] = testDataDB
+	selected, blockers, err := selectVideoRelayDevicesFromTestData(envRoot, brandname, maxDevices)
 	if err != nil {
-		return writeVideoRelayBlocked(outDir, result, "invalid users artifact: "+sanitizeVideoRelayText(err.Error()))
+		return writeVideoRelayBlocked(outDir, result, "invalid SQLite test data: "+sanitizeVideoRelayText(err.Error()))
 	}
-	bind, err := readVideoRelayBindArtifact(bindPath)
-	if err != nil {
-		return writeVideoRelayBlocked(outDir, result, "invalid device-bind artifact: "+sanitizeVideoRelayText(err.Error()))
-	}
-	devicesDir := bind.Inputs.DevicesDir
-	if devicesDir == "" {
-		devicesDir = filepath.Join(envRoot, "devices", "test_device")
-	}
-	manifest, err := readVideoRelayManifest(filepath.Join(devicesDir, "manifests", "devices.json"))
-	if err != nil {
-		return writeVideoRelayBlocked(outDir, result, "invalid device manifest: "+sanitizeVideoRelayText(err.Error()))
-	}
-	usersByEmail := map[string]videoRelayUser{}
-	for _, user := range usersArtifact.Users {
-		usersByEmail[strings.ToLower(strings.TrimSpace(user.Email))] = user
-	}
-	selected, blockers := selectVideoRelayDevices(bind, usersByEmail, manifest, maxDevices)
 	if len(blockers) > 0 {
 		return writeVideoRelayBlocked(outDir, result, strings.Join(blockers, "; "))
 	}
@@ -273,7 +253,7 @@ func executeVideoRelayTest(workspace, envRoot, brandname, outDir, profile, webrt
 	deviceTokens := map[string]string{}
 	appTokens := map[string]string{}
 	for _, device := range selected {
-		cert, err := loadRelayDeviceCertificate(devicesDir, device)
+		cert, err := loadRelayDeviceCertificate("", device)
 		if err != nil {
 			return writeVideoRelayBlocked(outDir, result, fmt.Sprintf("device %s certificate material missing: %s", device.DeviceID, sanitizeVideoRelayText(err.Error())))
 		}
@@ -375,6 +355,63 @@ func executeVideoRelayTest(workspace, envRoot, brandname, outDir, profile, webrt
 		result.Overall = "fail"
 	}
 	return writeVideoRelayFinal(outDir, result)
+}
+
+func selectVideoRelayDevicesFromTestData(envRoot, brandname string, maxDevices int) ([]videoRelaySelectedDevice, []string, error) {
+	store, err := openTestDataStore(envRoot, brandname)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer store.Close()
+	userBodies, err := store.UserBodies(brandname)
+	if err != nil {
+		return nil, nil, err
+	}
+	users := map[string]videoRelayUser{}
+	for _, body := range userBodies {
+		raw, _ := json.Marshal(body)
+		var user videoRelayUser
+		if err := json.Unmarshal(raw, &user); err != nil {
+			return nil, nil, err
+		}
+		users[strings.ToLower(strings.TrimSpace(user.Email))] = user
+	}
+	assignments, err := store.ReadBindAssignments(brandname)
+	if err != nil {
+		return nil, nil, err
+	}
+	selected := []videoRelaySelectedDevice{}
+	blockers := []string{}
+	for _, assignment := range assignments {
+		if assignment.DeviceType != "camera" || !contains(assignment.ServiceOptions, "video_streaming") {
+			continue
+		}
+		email := strings.ToLower(strings.TrimSpace(assignment.AssignedEmail))
+		user, ok := users[email]
+		if !ok || !videoRelayHasLocalAppCredentials(user) {
+			blockers = append(blockers, "SQLite test data lacks matching local app credentials for "+assignment.AssignedEmail)
+			continue
+		}
+		var certPEM, keyPEM, chainPEM string
+		if err := store.DB.QueryRow(`select coalesce(cert_pem, ''), coalesce(key_pem, ''), coalesce(chain_pem, '') from device_credentials where brandname = ? and device_id = ?`, brandname, assignment.DeviceID).Scan(&certPEM, &keyPEM, &chainPEM); err != nil {
+			if err == sql.ErrNoRows {
+				blockers = append(blockers, "device "+assignment.DeviceID+" missing credential row in SQLite test data")
+				continue
+			}
+			return nil, nil, err
+		}
+		selected = append(selected, videoRelaySelectedDevice{
+			DeviceID: assignment.DeviceID, DeviceType: assignment.DeviceType, AssignedEmail: assignment.AssignedEmail,
+			ServiceOptions: assignment.ServiceOptions, CertPEM: certPEM, KeyPEM: keyPEM, ChainPEM: chainPEM, User: user,
+		})
+		if maxDevices > 0 && len(selected) >= maxDevices {
+			break
+		}
+	}
+	if len(selected) == 0 && len(blockers) == 0 {
+		blockers = append(blockers, "no bound camera devices with video_streaming service option")
+	}
+	return selected, blockers, nil
 }
 
 func readVideoRelayUsersArtifact(path string) (videoRelayUsersArtifact, error) {
@@ -1125,6 +1162,9 @@ func sanitizeVideoRelayText(text string) string {
 }
 
 func loadRelayDeviceCertificate(devicesDir string, device videoRelaySelectedDevice) (tls.Certificate, error) {
+	if strings.TrimSpace(device.KeyPEM) != "" && strings.TrimSpace(firstNonEmpty(device.ChainPEM, device.CertPEM)) != "" {
+		return tls.X509KeyPair([]byte(firstNonEmpty(device.ChainPEM, device.CertPEM)), []byte(device.KeyPEM))
+	}
 	certPath := filepath.Join(devicesDir, firstNonEmpty(device.ChainPath, device.CertPath))
 	keyPath := filepath.Join(devicesDir, device.KeyPath)
 	if filepath.IsAbs(firstNonEmpty(device.ChainPath, device.CertPath)) {

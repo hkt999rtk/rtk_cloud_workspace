@@ -5,7 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
-	"encoding/csv"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -369,26 +369,29 @@ type workflowFlagValues struct {
 	mqttConcurrency          int
 	commandConcurrency       int
 	shadowCommandTimeout     string
+	liveRunnerTimeoutGrace   string
 }
 
 type shardRunFlagValues struct {
-	runID                string
-	outDir               string
-	role                 string
-	shardIndex           int
-	shardManifest        string
-	honorStageDurations  bool
-	runnerMode           string
-	rtkCloudBinary       string
-	workspace            string
-	mqttConcurrency      int
-	commandConcurrency   int
-	shadowCommandTimeout string
+	runID                  string
+	outDir                 string
+	role                   string
+	shardIndex             int
+	shardManifest          string
+	honorStageDurations    bool
+	runnerMode             string
+	rtkCloudBinary         string
+	workspace              string
+	mqttConcurrency        int
+	commandConcurrency     int
+	shadowCommandTimeout   string
+	liveRunnerTimeoutGrace string
 }
 
 const DefaultLiveMQTTConcurrency = 1000
 const DefaultLiveCommandConcurrency = 100
 const DefaultShadowCommandTimeout = "30s"
+const DefaultLiveRunnerTimeoutGrace = "10m"
 
 func executeProvisionVMs(args []string, stdout io.Writer, stderr io.Writer) int {
 	opts, values, err := parseProvisionVMFlags("home-100k provision-vms", args, stderr)
@@ -758,7 +761,11 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 	if strings.TrimSpace(values.workspace) != "" {
 		args = append([]string{args[0], "--workspace", values.workspace}, args[1:]...)
 	}
-	runErr := commandRunnerWithTimeout(time.Duration(totalDuration)*time.Second+90*time.Second, rtkCloud, args...)
+	runTimeout, err := liveRunnerCommandTimeout(totalDuration, values.liveRunnerTimeoutGrace)
+	if err != nil {
+		return err
+	}
+	runErr := commandRunnerWithTimeout(runTimeout, rtkCloud, args...)
 	stageResults, err := loadLiveMQTTShardResults(filepath.Join(stageOut, "results.json"), plan.Stages, stageTargets)
 	if err != nil && len(stageResults) == 0 {
 		stageResults = fallbackFailedLiveStageResults(plan.Stages, stageTargets, liveShardErrorText(runErr, err))
@@ -814,6 +821,32 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		return fmt.Errorf("live target mqtt-test failed: %w", runErr)
 	}
 	return nil
+}
+
+func liveRunnerCommandTimeout(totalDurationSeconds int, graceRaw string) (time.Duration, error) {
+	if totalDurationSeconds < 0 {
+		return 0, fmt.Errorf("total duration must be non-negative")
+	}
+	base := time.Duration(totalDurationSeconds) * time.Second
+	grace := base / 4
+	minGrace, err := time.ParseDuration(DefaultLiveRunnerTimeoutGrace)
+	if err != nil {
+		return 0, err
+	}
+	if grace < minGrace {
+		grace = minGrace
+	}
+	if raw := strings.TrimSpace(graceRaw); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil {
+			return 0, fmt.Errorf("invalid live runner timeout grace %q: %w", raw, err)
+		}
+		if parsed < 0 {
+			return 0, fmt.Errorf("live runner timeout grace must be non-negative")
+		}
+		grace = parsed
+	}
+	return base + grace, nil
 }
 
 func fallbackFailedLiveStageResults(stages []Stage, stageTargets []string, detail string) []StageResult {
@@ -1549,6 +1582,7 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	mqttConcurrency := fs.Int("mqtt-concurrency", DefaultLiveMQTTConcurrency, "per-shard MQTT connect worker concurrency for live runner")
 	commandConcurrency := fs.Int("command-concurrency", DefaultLiveCommandConcurrency, "per-shard sustained shadow command concurrency for live runner")
 	shadowCommandTimeout := fs.String("shadow-command-timeout", DefaultShadowCommandTimeout, "per-phase sustained shadow command timeout")
+	liveRunnerTimeoutGrace := fs.String("live-runner-timeout-grace", "", "extra timeout after the configured live MQTT duration before killing the shard runner")
 	mqttAddr := fs.String("mqtt-addr", "", "public MQTT host:port for remote load-generator VMs")
 	videoCloudBaseURL := fs.String("video-cloud-base-url", "", "legacy alias for --video-cloud-public-base-url")
 	videoCloudPublicURL := fs.String("video-cloud-public-base-url", "", "Video Cloud public API base URL for remote load-generator VMs")
@@ -1592,6 +1626,7 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 		mqttConcurrency:          *mqttConcurrency,
 		commandConcurrency:       *commandConcurrency,
 		shadowCommandTimeout:     strings.TrimSpace(*shadowCommandTimeout),
+		liveRunnerTimeoutGrace:   strings.TrimSpace(*liveRunnerTimeoutGrace),
 	}, nil
 }
 
@@ -1617,6 +1652,7 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	mqttConcurrency := fs.Int("mqtt-concurrency", DefaultLiveMQTTConcurrency, "per-shard MQTT connect worker concurrency for live runner")
 	commandConcurrency := fs.Int("command-concurrency", DefaultLiveCommandConcurrency, "per-shard sustained shadow command concurrency for live runner")
 	shadowCommandTimeout := fs.String("shadow-command-timeout", DefaultShadowCommandTimeout, "per-phase sustained shadow command timeout")
+	liveRunnerTimeoutGrace := fs.String("live-runner-timeout-grace", "", "extra timeout after the configured live MQTT duration before killing the shard runner")
 	if err := fs.Parse(args); err != nil {
 		return PlanOptions{}, shardRunFlagValues{}, err
 	}
@@ -1629,18 +1665,19 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
 	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
 	return opts, shardRunFlagValues{
-		runID:                *runID,
-		outDir:               *outDir,
-		role:                 *role,
-		shardIndex:           *shardIndex,
-		shardManifest:        *shardManifest,
-		honorStageDurations:  *honorStageDurations,
-		runnerMode:           *runnerMode,
-		rtkCloudBinary:       *rtkCloudBinary,
-		workspace:            *workspace,
-		mqttConcurrency:      *mqttConcurrency,
-		commandConcurrency:   *commandConcurrency,
-		shadowCommandTimeout: strings.TrimSpace(*shadowCommandTimeout),
+		runID:                  *runID,
+		outDir:                 *outDir,
+		role:                   *role,
+		shardIndex:             *shardIndex,
+		shardManifest:          *shardManifest,
+		honorStageDurations:    *honorStageDurations,
+		runnerMode:             *runnerMode,
+		rtkCloudBinary:         *rtkCloudBinary,
+		workspace:              *workspace,
+		mqttConcurrency:        *mqttConcurrency,
+		commandConcurrency:     *commandConcurrency,
+		shadowCommandTimeout:   strings.TrimSpace(*shadowCommandTimeout),
+		liveRunnerTimeoutGrace: strings.TrimSpace(*liveRunnerTimeoutGrace),
 	}, nil
 }
 
@@ -1773,15 +1810,11 @@ func collectLiveServerEvidence(envRoot string, runID string, outDir string) Serv
 			timeout = defaultServerEvidenceProbeTimeout
 		}
 		out, err := commandOutputRunnerWithTimeout(timeout, probe.command, probe.args...)
-		if err != nil {
-			detail := strings.TrimSpace(err.Error() + " " + redactEvidenceOutput(out))
-			sources[probe.source] = mergeEvidenceSource(sources[probe.source], EvidenceSource{Available: false, Detail: detail})
-			notes = append(notes, fmt.Sprintf("%s evidence probe failed: %s", probe.source, err.Error()))
-			continue
+		source, note := evidenceSourceFromProbeResult(probe, runID, out, err)
+		sources[probe.source] = mergeEvidenceSource(sources[probe.source], source)
+		if note != "" {
+			notes = append(notes, note)
 		}
-		counters := parseEvidenceCounters(probe.source, runID, out)
-		samples := parseEvidenceSamples(probe.source, out)
-		sources[probe.source] = mergeEvidenceSource(sources[probe.source], EvidenceSource{Available: true, Detail: probe.detail, Counters: counters, Samples: samples})
 	}
 	shadowSource, streamSource, runtimeNote := collectCentralLoggerRuntimeLogEvidence(envRoot, runID, windowStart)
 	if shadowSource.Available {
@@ -1810,6 +1843,21 @@ func collectLiveServerEvidence(envRoot string, runID string, outDir string) Serv
 	applyServerEvidenceBaselineDeltas(&evidence, runID, outDir, &notes)
 	evidence.Notes = notes
 	return evidence
+}
+
+func evidenceSourceFromProbeResult(probe serverEvidenceProbe, runID string, out string, err error) (EvidenceSource, string) {
+	counters := parseEvidenceCounters(probe.source, runID, out)
+	samples := parseEvidenceSamples(probe.source, out)
+	if err == nil {
+		return EvidenceSource{Available: true, Detail: probe.detail, Counters: counters, Samples: samples}, ""
+	}
+	note := fmt.Sprintf("%s evidence probe failed: %s", probe.source, err.Error())
+	if len(counters) > 0 || len(samples) > 0 {
+		detail := strings.TrimSpace(probe.detail + "; probe exited non-zero after producing parseable evidence: " + err.Error())
+		return EvidenceSource{Available: true, Detail: detail, Counters: counters, Samples: samples}, note
+	}
+	detail := strings.TrimSpace(err.Error() + " " + redactEvidenceOutput(out))
+	return EvidenceSource{Available: false, Detail: detail}, note
 }
 
 func normalizeEvidenceSourceCatalogMetadata(sources map[string]EvidenceSource) {
@@ -2863,7 +2911,11 @@ pods="$(kubectl -n video-cloud-staging-video-cloud get pods --selector app.kuber
 test -n "$pods"
 for pod in $pods; do
   safe_pod="$(printf '%s' "$pod" | tr -c 'A-Za-z0-9_' '_')"
-  kubectl -n video-cloud-staging-video-cloud exec "$pod" -- emqx ctl listeners | awk -v pod="$safe_pod" '
+  listener_out="$(kubectl -n video-cloud-staging-video-cloud exec "$pod" -- emqx ctl listeners 2>&1 || true)"
+  if [ -z "$listener_out" ]; then
+    continue
+  fi
+  printf '%s\n' "$listener_out" | awk -v pod="$safe_pod" '
     /^[a-z]+:default/ {listener=$1}
     /^[[:space:]]+(acceptors|current_conn|max_conns)[[:space:]]*:/ {
       key=$1; value=$3; safe_listener=listener; gsub(":", "_", safe_listener)
@@ -3070,11 +3122,6 @@ func envRootRsyncFilters() []string {
 		"--include", "/devices/test_device/",
 		"--include", "/devices/test_device/loadtest.env",
 		"--include", "/devices/test_device/summary.json",
-		"--include", "/artifacts/",
-		"--include", "/artifacts/users/",
-		"--include", "/artifacts/users/*.json",
-		"--include", "/artifacts/device-bind/",
-		"--include", "/artifacts/device-bind/*.json",
 		"--exclude", "*",
 	}
 }
@@ -3134,37 +3181,6 @@ func writeEnvRsyncFilter(path string, envRoot string, assignment VMAssignment) e
 		"+ /devices/test_device/",
 		"+ /devices/test_device/loadtest.env",
 		"+ /devices/test_device/summary.json",
-		"+ /devices/test_device/manifests/",
-		"+ /devices/test_device/manifests/devices.csv",
-		"+ /devices/test_device/manifests/devices.json",
-		"+ /devices/test_device/manifests/device_ids.txt",
-		"+ /devices/test_device/devices/",
-		"+ /devices/test_device/bundles/",
-		"+ /artifacts/",
-		"+ /artifacts/users/",
-		"+ /artifacts/users/*.json",
-		"+ /artifacts/device-bind/",
-		"+ /artifacts/device-bind/*.json",
-	}
-	deviceRows, err := readDeviceManifestRows(filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.csv"))
-	if err == nil && len(deviceRows) == 0 {
-		deviceRows, err = readDeviceManifestRowsFromJSON(filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.json"))
-	}
-	if err == nil {
-		for _, shard := range assignment.TaskShards {
-			if shard.Role != "device-mqtt" {
-				continue
-			}
-			for idx := shard.Start; idx < shard.End && idx < len(deviceRows); idx++ {
-				row := deviceRows[idx]
-				lines = append(lines,
-					"+ /devices/test_device/devices/"+row.DeviceType+"/",
-					"+ /devices/test_device/devices/"+row.DeviceType+"/"+row.DeviceID+"/***",
-					"+ /devices/test_device/bundles/"+row.DeviceType+"/",
-					"+ /devices/test_device/bundles/"+row.DeviceType+"/"+row.DeviceID+".pem",
-				)
-			}
-		}
 	}
 	lines = append(lines, "- *")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -3174,106 +3190,19 @@ func writeEnvRsyncFilter(path string, envRoot string, assignment VMAssignment) e
 }
 
 type deviceManifestRow struct {
-	DeviceID   string
-	DeviceType string
-}
-
-type shardUserArtifact struct {
-	Users []struct {
-		Email string `json:"email"`
-	} `json:"users"`
-}
-
-type shardBindArtifact struct {
-	Brandname   string                `json:"brandname"`
-	Assignments []shardBindAssignment `json:"assignments"`
+	AssignmentIndex int
+	AssignedEmail   string
+	DeviceID        string
+	DeviceType      string
+	ServiceOptions  []string
 }
 
 type shardBindAssignment struct {
-	AssignedEmail  string   `json:"assigned_email"`
-	DeviceID       string   `json:"device_id"`
-	DeviceType     string   `json:"device_type"`
-	ServiceOptions []string `json:"service_options"`
-}
-
-func readDeviceManifestRows(path string) ([]deviceManifestRow, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	reader := csv.NewReader(file)
-	reader.FieldsPerRecord = -1
-	rows, err := reader.ReadAll()
-	if err != nil {
-		return nil, err
-	}
-	if len(rows) == 0 {
-		return nil, fmt.Errorf("empty devices manifest: %s", path)
-	}
-	header := map[string]int{}
-	for idx, name := range rows[0] {
-		header[strings.TrimSpace(name)] = idx
-	}
-	idIdx, ok := header["device_id"]
-	if !ok {
-		return nil, fmt.Errorf("devices manifest missing device_id")
-	}
-	typeIdx, ok := header["device_type"]
-	if !ok {
-		return nil, fmt.Errorf("devices manifest missing device_type")
-	}
-	out := make([]deviceManifestRow, 0, len(rows)-1)
-	for _, row := range rows[1:] {
-		if idIdx >= len(row) || typeIdx >= len(row) {
-			continue
-		}
-		deviceID := strings.TrimSpace(row[idIdx])
-		deviceType := strings.TrimSpace(row[typeIdx])
-		if deviceID == "" || deviceType == "" {
-			continue
-		}
-		out = append(out, deviceManifestRow{DeviceID: deviceID, DeviceType: deviceType})
-	}
-	return out, nil
-}
-
-func readDeviceManifestRowsFromJSON(path string) ([]deviceManifestRow, error) {
-	var rows []struct {
-		DeviceID   string `json:"device_id"`
-		DeviceType string `json:"device_type"`
-	}
-	if err := readJSON(path, &rows); err != nil {
-		return nil, err
-	}
-	out := make([]deviceManifestRow, 0, len(rows))
-	for _, row := range rows {
-		deviceID := strings.TrimSpace(row.DeviceID)
-		deviceType := strings.TrimSpace(row.DeviceType)
-		if deviceID == "" || deviceType == "" {
-			continue
-		}
-		out = append(out, deviceManifestRow{DeviceID: deviceID, DeviceType: deviceType})
-	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("devices JSON manifest has no usable rows: %s", path)
-	}
-	return out, nil
-}
-
-func loadDeviceManifestRows(envRoot string) ([]deviceManifestRow, error) {
-	rows, err := readDeviceManifestRows(filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.csv"))
-	if err == nil && len(rows) > 0 {
-		return rows, nil
-	}
-	jsonRows, jsonErr := readDeviceManifestRowsFromJSON(filepath.Join(envRoot, "devices", "test_device", "manifests", "devices.json"))
-	if jsonErr == nil {
-		return jsonRows, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return nil, jsonErr
+	AssignmentIndex int      `json:"assignment_index"`
+	AssignedEmail   string   `json:"assigned_email"`
+	DeviceID        string   `json:"device_id"`
+	DeviceType      string   `json:"device_type"`
+	ServiceOptions  []string `json:"service_options"`
 }
 
 func writeEnvArchive(path string, plan Plan, assignment VMAssignment) error {
@@ -3307,17 +3236,11 @@ func writeCommonEnvArchive(path string, plan Plan) error {
 		"services",
 		"devices/test_device/loadtest.env",
 		"devices/test_device/summary.json",
-		"devices/test_device/manifests/devices.csv",
-		"devices/test_device/manifests/devices.json",
-		"devices/test_device/manifests/device_ids.txt",
 	}
 	if stackState := stackStateRelPath(envRoot); stackState != "" {
 		relPaths = append(relPaths, stackState)
 	}
 	extraFiles := []archiveExtraFile{}
-	for _, artifact := range latestHome100KArtifactFiles(envRoot, plan.Conditions.Brandname) {
-		extraFiles = append(extraFiles, archiveExtraFile{Path: artifact.Path, Name: artifact.Name})
-	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -3327,27 +3250,6 @@ func writeCommonEnvArchive(path string, plan Plan) error {
 		return err
 	}
 	return os.Rename(tmpPath, path)
-}
-
-func latestHome100KArtifactFiles(envRoot string, brandname string) []archiveExtraFile {
-	brandLower := strings.ToLower(strings.TrimSpace(brandname))
-	if brandLower == "" {
-		brandLower = "rtk"
-	}
-	candidates := []archiveExtraFile{}
-	if usersPath := latestFile(filepath.Join(envRoot, "artifacts", "users", brandLower+"-users-*.json")); usersPath != "" {
-		candidates = append(candidates, archiveExtraFile{
-			Path: usersPath,
-			Name: filepath.ToSlash(filepath.Join("artifacts", "users", filepath.Base(usersPath))),
-		})
-	}
-	if bindPath := latestHomeBindArtifact(filepath.Join(envRoot, "artifacts", "device-bind", brandLower+"-device-bind-*.json"), brandLower); bindPath != "" {
-		candidates = append(candidates, archiveExtraFile{
-			Path: bindPath,
-			Name: filepath.ToSlash(filepath.Join("artifacts", "device-bind", filepath.Base(bindPath))),
-		})
-	}
-	return candidates
 }
 
 type planDataCoverage struct {
@@ -3388,47 +3290,44 @@ func validatePlanDataCoverage(envRoot string, plan Plan) error {
 }
 
 func inspectPlanDataCoverage(envRoot string, plan Plan) (planDataCoverage, error) {
-	brandLower := strings.ToLower(strings.TrimSpace(plan.Conditions.Brandname))
-	if brandLower == "" {
-		brandLower = "rtk"
+	dbPath := homeTestDataDBPath(envRoot, plan.Conditions.Brandname)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return planDataCoverage{}, err
 	}
-	usersPath := latestFile(filepath.Join(envRoot, "artifacts", "users", brandLower+"-users-*.json"))
-	bindPath := latestHomeBindArtifact(filepath.Join(envRoot, "artifacts", "device-bind", brandLower+"-device-bind-*.json"), brandLower)
-	if usersPath == "" || bindPath == "" {
-		return planDataCoverage{}, fmt.Errorf("home-100k data preflight failed: missing users or device-bind artifact (users=%s device_bind=%s)", usersPath, bindPath)
-	}
-	users := shardUserArtifact{}
-	if err := readJSON(usersPath, &users); err != nil {
-		return planDataCoverage{}, fmt.Errorf("read users artifact: %w", err)
-	}
-	bind := shardBindArtifact{}
-	if err := readJSON(bindPath, &bind); err != nil {
-		return planDataCoverage{}, fmt.Errorf("read device-bind artifact: %w", err)
-	}
-	userEmails := map[string]bool{}
-	for _, user := range users.Users {
-		email := strings.TrimSpace(user.Email)
-		if email != "" {
-			userEmails[email] = true
-		}
-	}
+	defer db.Close()
 	coverage := planDataCoverage{
-		UsersPath:      usersPath,
-		DeviceBindPath: bindPath,
-		UsersAvailable: len(userEmails),
+		UsersPath:      dbPath,
+		DeviceBindPath: dbPath,
 		DeviceMix:      map[string]int{},
 	}
+	if err := db.QueryRow(`select count(*) from users where brandname = ?`, plan.Conditions.Brandname).Scan(&coverage.UsersAvailable); err != nil {
+		return planDataCoverage{}, fmt.Errorf("read SQLite users coverage: %w", err)
+	}
 	eligibleUsers := map[string]bool{}
-	for _, item := range bind.Assignments {
-		email := strings.TrimSpace(item.AssignedEmail)
-		if !homeDeviceType(item.DeviceType) || !stringSliceContains(item.ServiceOptions, "mqtt") || !userEmails[email] {
+	rows, err := db.Query(`select b.assigned_email, b.device_type, b.service_options_json from device_bindings b join users u on u.brandname = b.brandname and u.email = b.assigned_email where b.brandname = ? order by b.assignment_index, b.device_id`, plan.Conditions.Brandname)
+	if err != nil {
+		return planDataCoverage{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var email, deviceType, serviceOptionsJSON string
+		if err := rows.Scan(&email, &deviceType, &serviceOptionsJSON); err != nil {
+			return planDataCoverage{}, err
+		}
+		serviceOptions := []string{}
+		_ = json.Unmarshal([]byte(serviceOptionsJSON), &serviceOptions)
+		if !homeDeviceType(deviceType) || !stringSliceContains(serviceOptions, "mqtt") {
 			continue
 		}
 		coverage.DevicesAvailable++
-		coverage.DeviceMix[item.DeviceType]++
+		coverage.DeviceMix[deviceType]++
 		if email != "" {
 			eligibleUsers[email] = true
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return planDataCoverage{}, err
 	}
 	coverage.EligibleUsers = len(eligibleUsers)
 	return coverage, nil
@@ -3444,13 +3343,6 @@ func writePreflightFailure(outDir string, err error) {
 	})
 }
 
-func deviceCredentialRelPaths(row deviceManifestRow) []string {
-	return []string{
-		filepath.Join("devices", "test_device", "devices", row.DeviceType, row.DeviceID),
-		filepath.Join("devices", "test_device", "bundles", row.DeviceType, row.DeviceID+".pem"),
-	}
-}
-
 func stackStateRelPath(envRoot string) string {
 	values := parseEnvFile(filepath.Join(envRoot, "env", "stack.env"))
 	stack := strings.TrimSpace(values["CLOUD_STACK_NAME"])
@@ -3464,74 +3356,6 @@ func stackStateRelPath(envRoot string) string {
 	return ""
 }
 
-func loadShardDeviceRowsFromArtifacts(envRoot string, plan Plan, assignment VMAssignment) ([]deviceManifestRow, error) {
-	deviceShardCount := 0
-	for _, shard := range assignment.TaskShards {
-		if shard.Role == "device-mqtt" {
-			deviceShardCount++
-		}
-	}
-	if deviceShardCount == 0 {
-		return nil, fmt.Errorf("assignment has no device shard")
-	}
-	brandLower := strings.ToLower(strings.TrimSpace(plan.Conditions.Brandname))
-	if brandLower == "" {
-		brandLower = "rtk"
-	}
-	usersPath := latestFile(filepath.Join(envRoot, "artifacts", "users", brandLower+"-users-*.json"))
-	bindPath := latestHomeBindArtifact(filepath.Join(envRoot, "artifacts", "device-bind", brandLower+"-device-bind-*.json"), brandLower)
-	if usersPath == "" || bindPath == "" {
-		return nil, fmt.Errorf("missing users or device-bind artifact")
-	}
-	users := shardUserArtifact{}
-	if err := readJSON(usersPath, &users); err != nil {
-		return nil, err
-	}
-	bind := shardBindArtifact{}
-	if err := readJSON(bindPath, &bind); err != nil {
-		return nil, err
-	}
-	userEmails := map[string]bool{}
-	for _, user := range users.Users {
-		email := strings.TrimSpace(user.Email)
-		if email != "" {
-			userEmails[email] = true
-		}
-	}
-	selectedByUser := map[string][]shardBindAssignment{}
-	for _, item := range bind.Assignments {
-		if !homeDeviceType(item.DeviceType) || !stringSliceContains(item.ServiceOptions, "mqtt") || !userEmails[item.AssignedEmail] {
-			continue
-		}
-		selectedByUser[item.AssignedEmail] = append(selectedByUser[item.AssignedEmail], item)
-	}
-	selectedUsers := sortedMapKeys(selectedByUser)
-	selected := []shardBindAssignment{}
-	for _, email := range selectedUsers {
-		selected = append(selected, selectedByUser[email]...)
-	}
-	shardCount := len(plan.ShardsByRole("device-mqtt"))
-	if shardCount <= 0 {
-		shardCount = 1
-	}
-	shardIndex := assignment.Index
-	rows := []deviceManifestRow{}
-	maxConnected := maxAssignmentConnectedDevices(assignment)
-	for idx, item := range selected {
-		if idx%shardCount != shardIndex {
-			continue
-		}
-		rows = append(rows, deviceManifestRow{DeviceID: item.DeviceID, DeviceType: item.DeviceType})
-		if maxConnected > 0 && len(rows) >= maxConnected {
-			break
-		}
-	}
-	if len(rows) == 0 {
-		return nil, fmt.Errorf("no selected devices for shard %d/%d", shardIndex, shardCount)
-	}
-	return rows, nil
-}
-
 func maxAssignmentConnectedDevices(assignment VMAssignment) int {
 	maxConnected := 0
 	for _, shard := range assignment.TaskShards {
@@ -3543,97 +3367,6 @@ func maxAssignmentConnectedDevices(assignment VMAssignment) int {
 		}
 	}
 	return maxConnected
-}
-
-func latestFile(pattern string) string {
-	matches, _ := filepath.Glob(pattern)
-	sortArtifactPathsNewestFirst(matches)
-	if len(matches) == 0 {
-		return ""
-	}
-	return matches[0]
-}
-
-func latestHomeBindArtifact(pattern string, brandLower string) string {
-	matches, _ := filepath.Glob(pattern)
-	sortArtifactPathsNewestFirst(matches)
-	for _, path := range matches {
-		bind := shardBindArtifact{}
-		if err := readJSON(path, &bind); err != nil {
-			continue
-		}
-		if strings.ToLower(bind.Brandname) != brandLower {
-			continue
-		}
-		found := map[string]bool{}
-		for _, item := range bind.Assignments {
-			if homeDeviceType(item.DeviceType) && stringSliceContains(item.ServiceOptions, "mqtt") {
-				found[item.DeviceType] = true
-			}
-		}
-		if containsAllHomeDeviceTypes(found) {
-			return path
-		}
-	}
-	if len(matches) == 0 {
-		return ""
-	}
-	return matches[0]
-}
-
-func containsAllHomeDeviceTypes(found map[string]bool) bool {
-	for _, typ := range []string{"light", "switch", "smart_plug", "air_conditioner", "environment_sensor", "security_sensor", "smart_meter", "camera_status", "door_lock", "appliance", "gateway"} {
-		if !found[typ] {
-			return false
-		}
-	}
-	return true
-}
-
-func sortArtifactPathsNewestFirst(paths []string) {
-	sort.Slice(paths, func(i, j int) bool {
-		ti := artifactFilenameTimestamp(paths[i])
-		tj := artifactFilenameTimestamp(paths[j])
-		if ti != "" || tj != "" {
-			if ti != tj {
-				return ti > tj
-			}
-			return filepath.Base(paths[i]) > filepath.Base(paths[j])
-		}
-		ai, _ := os.Stat(paths[i])
-		aj, _ := os.Stat(paths[j])
-		if ai == nil || aj == nil {
-			return paths[i] < paths[j]
-		}
-		if !ai.ModTime().Equal(aj.ModTime()) {
-			return ai.ModTime().After(aj.ModTime())
-		}
-		return filepath.Base(paths[i]) > filepath.Base(paths[j])
-	})
-}
-
-func artifactFilenameTimestamp(path string) string {
-	base := filepath.Base(path)
-	for i := 0; i+16 <= len(base); i++ {
-		candidate := base[i : i+16]
-		if candidate[8] != 'T' || candidate[15] != 'Z' {
-			continue
-		}
-		ok := true
-		for idx, ch := range candidate {
-			if idx == 8 || idx == 15 {
-				continue
-			}
-			if ch < '0' || ch > '9' {
-				ok = false
-				break
-			}
-		}
-		if ok {
-			return candidate
-		}
-	}
-	return ""
 }
 
 func homeDeviceType(value string) bool {
@@ -3953,38 +3686,40 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 		stageCoolDown = plan.Stages[0].CoolDown
 	}
 	extraVars := map[string]any{
-		"run_id":                      normalizedRunID(values.runID),
-		"local_out_dir":               localOutDir,
-		"local_runner":                localRunner,
-		"local_rtk_cloud":             localRTKCloud,
-		"local_cloud_mqtt_test":       localCloudMQTTTest,
-		"local_artifact_store":        localArtifactStore,
-		"fanout_private_key":          fanoutPrivateKey,
-		"fanout_public_key":           fanoutPublicKey,
-		"local_env_root":              strings.TrimRight(localEnvRoot, "/"),
-		"remote_workspace":            strings.TrimRight(values.remoteWorkspace, "/"),
-		"remote_env_root":             strings.TrimRight(values.remoteEnvRoot, "/"),
-		"remote_out_root":             strings.TrimRight(firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k"), "/"),
-		"brandname":                   plan.Conditions.Brandname,
-		"region":                      plan.Conditions.Region,
-		"vm_label_prefix":             plan.Conditions.VMLabelPrefix,
-		"device_count":                plan.Conditions.Devices,
-		"user_count":                  plan.Conditions.Users,
-		"devices_per_user":            plan.Conditions.DevicesPerUser,
-		"target_ramp_up_time":         stageWarmUp,
-		"measurement_window":          stageSteady,
-		"post_run_collection":         stageCoolDown,
-		"runner_mode":                 firstNonEmpty(values.runnerMode, "sample"),
-		"runner_nofile_limit":         values.runnerNofileLimit,
-		"mqtt_concurrency":            values.mqttConcurrency,
-		"command_concurrency":         liveCommandConcurrency(plan.Conditions.DeviceGeneratorLimit, values.commandConcurrency),
-		"shadow_command_timeout":      firstNonEmpty(values.shadowCommandTimeout, DefaultShadowCommandTimeout),
-		"mqtt_addr":                   strings.TrimSpace(values.mqttAddr),
-		"video_cloud_public_url":      strings.TrimSpace(firstNonEmpty(values.videoCloudPublicURL, values.videoCloudBaseURL)),
-		"video_cloud_token_url":       strings.TrimSpace(values.videoCloudTokenURL),
-		"account_manager_url":         strings.TrimSpace(values.accountManagerURL),
-		"generator_hosts_override_ip": strings.TrimSpace(values.generatorHostsOverrideIP),
-		"credential_bundle_format":    firstNonEmpty(values.credentialBundleFormat, "sqlite-gzip"),
+		"run_id":                        normalizedRunID(values.runID),
+		"local_out_dir":                 localOutDir,
+		"local_runner":                  localRunner,
+		"local_rtk_cloud":               localRTKCloud,
+		"local_cloud_mqtt_test":         localCloudMQTTTest,
+		"local_artifact_store":          localArtifactStore,
+		"fanout_private_key":            fanoutPrivateKey,
+		"fanout_public_key":             fanoutPublicKey,
+		"local_env_root":                strings.TrimRight(localEnvRoot, "/"),
+		"remote_workspace":              strings.TrimRight(values.remoteWorkspace, "/"),
+		"remote_env_root":               strings.TrimRight(values.remoteEnvRoot, "/"),
+		"remote_out_root":               strings.TrimRight(firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k"), "/"),
+		"brandname":                     plan.Conditions.Brandname,
+		"region":                        plan.Conditions.Region,
+		"vm_label_prefix":               plan.Conditions.VMLabelPrefix,
+		"device_count":                  plan.Conditions.Devices,
+		"user_count":                    plan.Conditions.Users,
+		"devices_per_user":              plan.Conditions.DevicesPerUser,
+		"load_generator_devices_per_vm": plan.Conditions.LoadGeneratorDevicesPerVM,
+		"target_ramp_up_time":           stageWarmUp,
+		"measurement_window":            stageSteady,
+		"post_run_collection":           stageCoolDown,
+		"runner_mode":                   firstNonEmpty(values.runnerMode, "sample"),
+		"runner_nofile_limit":           values.runnerNofileLimit,
+		"mqtt_concurrency":              values.mqttConcurrency,
+		"command_concurrency":           liveCommandConcurrency(plan.Conditions.DeviceGeneratorLimit, values.commandConcurrency),
+		"shadow_command_timeout":        firstNonEmpty(values.shadowCommandTimeout, DefaultShadowCommandTimeout),
+		"live_runner_timeout_grace":     firstNonEmpty(values.liveRunnerTimeoutGrace, ""),
+		"mqtt_addr":                     strings.TrimSpace(values.mqttAddr),
+		"video_cloud_public_url":        strings.TrimSpace(firstNonEmpty(values.videoCloudPublicURL, values.videoCloudBaseURL)),
+		"video_cloud_token_url":         strings.TrimSpace(values.videoCloudTokenURL),
+		"account_manager_url":           strings.TrimSpace(values.accountManagerURL),
+		"generator_hosts_override_ip":   strings.TrimSpace(values.generatorHostsOverrideIP),
+		"credential_bundle_format":      firstNonEmpty(values.credentialBundleFormat, "sqlite-gzip"),
 	}
 	return writeJSONFile(filepath.Join(ansibleDir, "extra-vars.json"), extraVars)
 }

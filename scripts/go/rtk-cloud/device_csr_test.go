@@ -86,6 +86,23 @@ func TestFactoryEnrollDeviceUsesDistinctP256FallbackRequestID(t *testing.T) {
 	}
 }
 
+func TestFactoryEnrollURLForDeviceDistributesAcrossURLs(t *testing.T) {
+	raw := " http://127.0.0.1:18443/ ,http://127.0.0.1:18444,http://127.0.0.1:18445/ "
+	want := map[int]string{
+		0: "http://127.0.0.1:18443",
+		1: "http://127.0.0.1:18443",
+		2: "http://127.0.0.1:18444",
+		3: "http://127.0.0.1:18445",
+		4: "http://127.0.0.1:18443",
+		5: "http://127.0.0.1:18444",
+	}
+	for index, expected := range want {
+		if got := factoryEnrollURLForDevice(raw, index); got != expected {
+			t.Fatalf("factoryEnrollURLForDevice(index=%d) = %q, want %q", index, got, expected)
+		}
+	}
+}
+
 func TestWriteLoadDeviceReusesCompleteLocalFactoryArtifact(t *testing.T) {
 	outDir := t.TempDir()
 	_, caCert, err := writeGeneratedCA(filepath.Join(t.TempDir(), "ca"), 1)
@@ -194,11 +211,19 @@ func TestGenerateLoadDevicesForceReusesCompleteLocalFactoryArtifact(t *testing.T
 	if requests != 1 {
 		t.Fatalf("factory enroll requests = %d, want 1", requests)
 	}
-	results, err := os.ReadFile(filepath.Join(outDir, "manifests", "factory-enroll-results.jsonl"))
+	store, err := openTestDataStore(envRoot, "RTK")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(results), `"status":"reused"`) {
-		t.Fatalf("second run should record reused result, got:\n%s", results)
+	defer store.Close()
+	cred, err := store.ReadDeviceCredential("RTK", "load-device-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(cred.CertPEM) == "" || strings.TrimSpace(cred.KeyPEM) == "" {
+		t.Fatalf("SQLite credential missing cert/key after reuse: %+v", cred)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "manifests", "factory-enroll-results.jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("legacy factory enroll result should be cleaned after SQLite import, stat err=%v", err)
 	}
 }

@@ -86,10 +86,9 @@ func runMQTTLoadTestPrepare(args []string) error {
 		*outDir = filepath.Join(envRoot, "artifacts", "mqtt-loadtest-prepare", time.Now().UTC().Format("20060102T150405Z"))
 	}
 	slug := brandSlug(*brandname)
-	devicesDir := filepath.Join(envRoot, "devices", "test_device")
 	commands := [][]string{
 		commandWithArgs(selfCommandPath("create-users"), "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--count", strconv.Itoa(*userCount)),
-		commandWithArgs(selfCommandPath("generate-load-devices"), "--workspace", workspace, "--env-root", envRoot, "--count", strconv.Itoa(*deviceCount), "--mix", *deviceMix, "--prefix", *devicePrefix, "--force"),
+		commandWithArgs(selfCommandPath("generate-load-devices"), "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--count", strconv.Itoa(*deviceCount), "--mix", *deviceMix, "--prefix", *devicePrefix, "--force"),
 	}
 	if !*runMode {
 		fmt.Fprintln(os.Stdout, "mqtt-loadtest prepare plan")
@@ -101,12 +100,12 @@ func runMQTTLoadTestPrepare(args []string) error {
 		fmt.Fprintf(os.Stdout, "device_mix: %s\n", *deviceMix)
 		for _, argv := range [][]string{
 			planSelfCommand("create-users", "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--count", strconv.Itoa(*userCount)),
-			planSelfCommand("generate-load-devices", "--workspace", workspace, "--env-root", envRoot, "--count", strconv.Itoa(*deviceCount), "--mix", *deviceMix, "--prefix", *devicePrefix, "--force"),
+			planSelfCommand("generate-load-devices", "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--count", strconv.Itoa(*deviceCount), "--mix", *deviceMix, "--prefix", *devicePrefix, "--force"),
 		} {
 			fmt.Fprintf(os.Stdout, "  - %s\n", shellQuoteArgs(argv))
 		}
-		fmt.Fprintf(os.Stdout, "  - bind-devices uses latest %s-users-*.json after create-users\n", slug)
-		fmt.Fprintf(os.Stdout, "  - validate-device-bind uses latest %s-device-bind-*.json after bind-devices\n", slug)
+		fmt.Fprintf(os.Stdout, "  - test data DB: %s\n", testDataDBPath(envRoot, *brandname))
+		fmt.Fprintf(os.Stdout, "  - bind-devices and validate-device-bind read SQLite test data for brand %s\n", slug)
 		return nil
 	}
 	if err := os.MkdirAll(*outDir, 0o755); err != nil {
@@ -126,38 +125,29 @@ func runMQTTLoadTestPrepare(args []string) error {
 			return err
 		}
 	}
-	usersFile := latestMatchingFile(filepath.Join(envRoot, "artifacts", "users"), slug+"-users-*.json")
-	if usersFile == "" {
-		return fmt.Errorf("no users artifact found for brand slug %s", slug)
-	}
-	bindArgs := commandWithArgs(selfCommandPath("bind-devices"), "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--users-file", usersFile, "--devices-dir", devicesDir, "--count", strconv.Itoa(*deviceCount))
+	bindArgs := commandWithArgs(selfCommandPath("bind-devices"), "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--count", strconv.Itoa(*deviceCount))
 	step, err := runE2EStep("bind_devices", filepath.Join(*outDir, "bind_devices.log"), bindArgs...)
 	steps = append(steps, step)
 	if err != nil {
 		return err
 	}
-	bindFile := latestMatchingFile(filepath.Join(envRoot, "artifacts", "device-bind"), slug+"-device-bind-*.json")
-	if bindFile == "" {
-		return fmt.Errorf("no device-bind artifact found for brand slug %s", slug)
-	}
 	expectedPerUser := (*deviceCount + *userCount - 1) / *userCount
-	validateArgs := commandWithArgs(selfCommandPath("validate-device-bind"), "--workspace", workspace, "--env-root", envRoot, "--bind-artifact", bindFile, "--out-dir", filepath.Join(*outDir, "bind-validation"), "--expected-count", strconv.Itoa(*deviceCount), "--expected-devices-per-user", strconv.Itoa(expectedPerUser), "--wait-provisioned-timeout", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_PROVISION_TIMEOUT"), "10m"), "--wait-provisioned-poll", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_PROVISION_POLL"), "10s"))
+	validateArgs := commandWithArgs(selfCommandPath("validate-device-bind"), "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--out-dir", filepath.Join(*outDir, "bind-validation"), "--expected-count", strconv.Itoa(*deviceCount), "--expected-devices-per-user", strconv.Itoa(expectedPerUser), "--wait-provisioned-timeout", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_PROVISION_TIMEOUT"), "10m"), "--wait-provisioned-poll", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_PROVISION_POLL"), "10s"))
 	step, err = runE2EStep("validate_bind", filepath.Join(*outDir, "validate_bind.log"), validateArgs...)
 	steps = append(steps, step)
 	if err != nil {
 		return err
 	}
 	summary := map[string]any{
-		"overall":          "pass",
-		"generated_at":     time.Now().UTC().Format(time.RFC3339),
-		"env_root":         envRoot,
-		"brandname":        *brandname,
-		"user_count":       *userCount,
-		"device_count":     *deviceCount,
-		"device_mix":       *deviceMix,
-		"users_file":       usersFile,
-		"device_bind_file": bindFile,
-		"steps":            steps,
+		"overall":      "pass",
+		"generated_at": time.Now().UTC().Format(time.RFC3339),
+		"env_root":     envRoot,
+		"brandname":    *brandname,
+		"user_count":   *userCount,
+		"device_count": *deviceCount,
+		"device_mix":   *deviceMix,
+		"test_data_db": testDataDBPath(envRoot, *brandname),
+		"steps":        steps,
 	}
 	summaryFile := filepath.Join(*outDir, "summary.json")
 	if err := writeJSON(summaryFile, summary); err != nil {

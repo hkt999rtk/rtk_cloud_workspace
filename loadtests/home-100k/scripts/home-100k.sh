@@ -82,6 +82,7 @@ runner_nofile_limit="${HOME100K_RUNNER_NOFILE_LIMIT:-1048576}"
 mqtt_concurrency="${HOME100K_MQTT_CONCURRENCY:-1000}"
 command_concurrency="${HOME100K_COMMAND_CONCURRENCY:-100}"
 shadow_command_timeout="${HOME100K_SHADOW_COMMAND_TIMEOUT:-30s}"
+live_runner_timeout_grace="${HOME100K_LIVE_RUNNER_TIMEOUT_GRACE:-}"
 device_session_model="${HOME100K_DEVICE_SESSION_MODEL:-lifetime-subscription}"
 runner_read_model="${HOME100K_RUNNER_READ_MODEL:-go-netpoll-bounded-reader-goroutine}"
 functional_success_threshold_percent="${HOME100K_FUNCTIONAL_SUCCESS_THRESHOLD_PERCENT:-99.5}"
@@ -176,6 +177,7 @@ Defaults can be overridden with:
   HOME100K_MQTT_CONCURRENCY default: 1000 per VM shard; live MQTT connect worker concurrency
   HOME100K_COMMAND_CONCURRENCY default: 100 per VM shard; live shadow command concurrency
   HOME100K_SHADOW_COMMAND_TIMEOUT default: 30s; per-phase shadow command wait timeout
+  HOME100K_LIVE_RUNNER_TIMEOUT_GRACE optional; defaults to max(10m, live duration / 4) before killing a shard runner
   HOME100K_DEVICE_SESSION_MODEL default: lifetime-subscription; device MQTT subscriptions stay open for device lifetime
   HOME100K_RUNNER_READ_MODEL default: go-netpoll-bounded-reader-goroutine; sustained async MQTT reads
   HOME100K_FUNCTIONAL_SUCCESS_THRESHOLD_PERCENT default: 99.5
@@ -775,6 +777,7 @@ workflow_args+=("--runner-nofile-limit" "$runner_nofile_limit")
 workflow_args+=("--mqtt-concurrency" "$mqtt_concurrency")
 workflow_args+=("--command-concurrency" "$command_concurrency")
 workflow_args+=("--shadow-command-timeout" "$shadow_command_timeout")
+workflow_args+=("--live-runner-timeout-grace" "$live_runner_timeout_grace")
 workflow_args+=("--device-session-model" "$device_session_model")
 workflow_args+=("--runner-read-model" "$runner_read_model")
 if [[ -n "$mqtt_addr" ]]; then

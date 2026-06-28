@@ -167,6 +167,31 @@ func TestResolveLKEImagesUsesExistingEnvRootManifest(t *testing.T) {
 	}
 }
 
+func TestResolveLKEImagesRejectsStaleManifestWhenStackPinsImage(t *testing.T) {
+	_, envRoot := makeStagingResetTestEnv(t)
+	clearLKEImageEnvForTest(t)
+	appendTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "LKE_ACCOUNT_MANAGER_IMAGE=registry.example.test/rtk/account-manager:new\n")
+	manifest := filepath.Join(envRoot, "artifacts", "lke-images", "lke-image-manifest.json")
+	writeTestFile(t, manifest, `{
+  "env": {
+    "LKE_POSTGRES_IMAGE": "postgres:16-alpine",
+    "LKE_VIDEO_CLOUD_IMAGE": "registry.example.test/rtk/video-cloud:manifest",
+    "LKE_ACCOUNT_MANAGER_IMAGE": "registry.example.test/rtk/account-manager:old",
+    "LKE_CLOUD_ADMIN_IMAGE": "registry.example.test/rtk/cloud-admin:manifest",
+    "LKE_FRONTEND_IMAGE": "registry.example.test/rtk/frontend:manifest",
+    "LKE_CLOUD_LOGGER_IMAGE": "registry.example.test/rtk/cloud-logger:manifest"
+  }
+}`)
+
+	err := resolveLKEImagesIfNeeded(t.TempDir(), envRoot)
+	if err == nil {
+		t.Fatal("expected stale manifest mismatch error")
+	}
+	if !strings.Contains(err.Error(), "LKE image artifact mismatch for LKE_ACCOUNT_MANAGER_IMAGE") || !strings.Contains(err.Error(), manifest) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestRunStagingProvisionPlanReportsExistingLKEImageArtifact(t *testing.T) {
 	workspace, envRoot := makeStagingResetTestEnv(t)
 	clearLKEImageEnvForTest(t)
@@ -338,4 +363,16 @@ printf 'mqtt-log-verify ARGS=%s\n' "$*" >> "` + logPath + `"
 		t.Fatal(err)
 	}
 	return path
+}
+
+func appendTestFile(t *testing.T, path string, body string) {
+	t.Helper()
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if _, err := file.WriteString(body); err != nil {
+		t.Fatal(err)
+	}
 }

@@ -34,17 +34,19 @@ literal product, repo, API, endpoint, command, and status-label names in English
 ## 第二部分：時程與 Loading Test 路徑
 
 - Project start：2026-05-01。
-- Target：2026-08-01 pass 50,000 IoT devices + 5,000 video cameras loading test。
+- Target：IoT 100K device-shadow capacity 已完成驗證；2026-08-01 仍需完成 5,000 video cameras loading test 與 production-readiness evidence。
 - Dynamic scaling：目前架構可說明已 design-in scaling-ready boundaries / scale-out direction，但 August release 不實作 dynamic scaling；八月前報告只描述 architecture direction、capacity evidence、multi-host readiness、bottleneck visibility 和 runbook，不可宣稱 autoscaling / elastic scaling implemented。
 - 目前位置：依報告日期與實際 evidence 更新，不可只用樂觀日期推進。
 - Timeline / Gantt / milestone-lane chart：標示 May 1 到 early-August target，並清楚標出 `目前位置`；schedule 不要只用純數字表格呈現。
-- Milestone detail table：只作為輔助明細，內容包含 May kickoff、May foundation、late-May/early-June load-test preparation、June small/medium validation、late-June multi-host/capacity、July 10k/30k rehearsal、late-July 50k dry run、early-Aug final pass。
+- Milestone detail table：只作為輔助明細，內容包含 May kickoff、May foundation、late-May/early-June load-test preparation、June small/medium validation、late-June multi-host/capacity、100K IoT validation、video-camera validation、early-Aug final pass。
 - Video schedule lane：June video readiness foundation、July video profile / 5,000-camera rehearsal、2026-08-01 與 50,000 IoT devices 同一個 gate 驗證 5,000 video cameras。
 - Release gate definition：Aug.1 loading-test pass、Alpha、Beta、Public path 各自要有通過條件、evidence、未通過時的狀態標示。
 - 本週 gate：本週必須完成或驗證的可量測項目。
 - 下個 gate：下一個可驗證 milestone。
 - Schedule risk：用 `on track` / `at risk` / `blocked`，並說明原因。
-- Loading Test Readiness Matrix：test runner/profile、test fleet/data、metrics/thresholds、infra/multi-host、broker/database/storage、report evidence。
+- Loading Test Readiness Matrix：test runner/profile、test fleet/data、metrics/thresholds、infra/multi-host、capacity baseline、video-camera path。
+- Loading Test Capacity Evidence：用 8/8、7/7、6/6 100K runs 呈現 COMPLETE/SUCCESS、MQTT connect、APP ACK、server/runtime correlation、CPU p95/max、memory p95/max、payload throughput，以及 7/7 recommended baseline / 6/6 lower-bound memory risk。
+- Resource charts：CPU utilization、Memory utilization 要有歷史或趨勢圖；bandwidth 目前只能呈現 application payload throughput，若沒有 NIC/link utilization sample，必須明確標成 next evidence gap。
 
 ## 第三部分：Cloud / Product / KPI 細節
 
@@ -132,7 +134,7 @@ Forbidden configuration detail:
 - 摘要可在五分鐘內看懂。
 - Schedule path 和目前位置清楚。
 - 重要數字優先用 chart / timeline / progress visual 呈現，純表格只作為 evidence 或明細。
-- Loading Test Readiness Matrix 有列出 50,000-device target 前的 gates。
+- Loading Test Readiness Matrix 有列出已完成的 100K IoT capacity gates、建議 baseline，以及 5,000 video-camera target 前的 gates。
 - 細節符合目前 repo 與 deployment 狀態。
 - 技術工作有連到 AmebaPRO / module commercial KPI。
 - WebRTC live video 與 video storage/media 沒有混在一起；signaling、TURN/ICE、owner transport、stream-health、snapshot/media upload、download auth、retention/backup evidence 各自清楚。
