@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	_ "modernc.org/sqlite"
@@ -74,15 +75,20 @@ func writeShardCredentialBundle(outDir string, envRoot string, plan Plan, assign
 	if err := insertBundleMetadata(db, "brandname", plan.Conditions.Brandname); err != nil {
 		return shardCredentialBundle{}, err
 	}
+	if len(plan.BrandDistribution) > 0 {
+		if err := insertBundleMetadata(db, "brand_distribution", bundleJSONText(plan.BrandDistribution)); err != nil {
+			return shardCredentialBundle{}, err
+		}
+	}
 
 	deviceRows, err := loadShardDeviceRowsForBundle(envRoot, plan, assignment)
 	if err != nil {
 		return shardCredentialBundle{}, err
 	}
-	if err := insertBundleDevices(db, envRoot, plan.Conditions.Brandname, deviceRows); err != nil {
+	if err := insertBundleDevices(db, envRoot, deviceRows); err != nil {
 		return shardCredentialBundle{}, err
 	}
-	if err := insertBundleUsersAndBindings(db, envRoot, plan.Conditions.Brandname, deviceRows); err != nil {
+	if err := insertBundleUsersAndBindings(db, envRoot, deviceRows); err != nil {
 		return shardCredentialBundle{}, err
 	}
 	if err := db.Close(); err != nil {
@@ -118,7 +124,8 @@ func initCredentialBundleSchema(db *sql.DB) error {
 	stmts := []string{
 		`create table metadata (key text primary key, value text not null)`,
 		`create table devices (
-			device_id text primary key,
+			brandname text not null default '',
+			device_id text not null,
 			device_type text not null,
 			cert_pem text,
 			key_pem text,
@@ -126,23 +133,32 @@ func initCredentialBundleSchema(db *sql.DB) error {
 			bundle_pem text,
 			metadata_json text,
 			factory_enroll_request_json text,
-			factory_enroll_response_redacted_json text
+			factory_enroll_response_redacted_json text,
+			primary key (brandname, device_id)
 		)`,
 		`create table users (
-			email text primary key,
+			brandname text not null default '',
+			brand_cloud_id text,
+			tenant_slug text,
+			email text not null,
 			password text,
 			tokens_json text,
 			app_credentials_json text,
 			app_certificate_json text,
-			body_json text not null
+			body_json text not null,
+			primary key (brandname, email)
 		)`,
 		`create table device_bindings (
-			device_id text primary key,
+			brandname text not null default '',
+			brand_cloud_id text,
+			tenant_slug text,
+			device_id text not null,
 			assignment_index integer not null,
 			assigned_email text not null,
 			device_type text not null,
 			service_options_json text not null,
-			body_json text not null
+			body_json text not null,
+			primary key (brandname, device_id)
 		)`,
 		`create table artifacts (
 			name text primary key,
@@ -171,37 +187,27 @@ func loadShardDeviceRowsForBundle(envRoot string, plan Plan, assignment VMAssign
 }
 
 func loadShardDeviceRowsFromTestData(envRoot string, plan Plan, assignment VMAssignment) ([]deviceManifestRow, error) {
-	db, err := sql.Open("sqlite", homeTestDataDBPath(envRoot, plan.Conditions.Brandname))
-	if err != nil {
-		return nil, err
+	brands := plan.BrandDistribution
+	if len(brands) == 0 {
+		brands = []BrandDistributionEntry{{Brandname: plan.Conditions.Brandname}}
 	}
-	defer db.Close()
-	rows, err := db.Query(`select assignment_index, assigned_email, device_id, device_type, service_options_json from device_bindings where brandname = ? order by assignment_index, device_id`, plan.Conditions.Brandname)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	selectedByUser := map[string][]shardBindAssignment{}
-	for rows.Next() {
-		var item shardBindAssignment
-		var serviceOptionsJSON string
-		if err := rows.Scan(&item.AssignmentIndex, &item.AssignedEmail, &item.DeviceID, &item.DeviceType, &serviceOptionsJSON); err != nil {
+	selected := []shardBindAssignment{}
+	for _, brand := range brands {
+		rows, err := loadEligibleBrandRows(envRoot, brand.Brandname)
+		if err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal([]byte(serviceOptionsJSON), &item.ServiceOptions)
-		if !homeDeviceType(item.DeviceType) || !stringSliceContains(item.ServiceOptions, "mqtt") {
-			continue
+		selected = append(selected, rows...)
+	}
+	sort.SliceStable(selected, func(i, j int) bool {
+		if selected[i].Brandname != selected[j].Brandname {
+			return selected[i].Brandname < selected[j].Brandname
 		}
-		selectedByUser[item.AssignedEmail] = append(selectedByUser[item.AssignedEmail], item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	selectedUsers := sortedMapKeys(selectedByUser)
-	selected := []shardBindAssignment{}
-	for _, email := range selectedUsers {
-		selected = append(selected, selectedByUser[email]...)
-	}
+		if selected[i].AssignedEmail != selected[j].AssignedEmail {
+			return selected[i].AssignedEmail < selected[j].AssignedEmail
+		}
+		return selected[i].DeviceID < selected[j].DeviceID
+	})
 	shardCount := len(plan.ShardsByRole("device-mqtt"))
 	if shardCount <= 0 {
 		shardCount = 1
@@ -214,6 +220,9 @@ func loadShardDeviceRowsFromTestData(envRoot string, plan Plan, assignment VMAss
 			continue
 		}
 		out = append(out, deviceManifestRow{
+			Brandname:       item.Brandname,
+			BrandCloudID:    item.BrandCloudID,
+			TenantSlug:      item.TenantSlug,
 			AssignmentIndex: item.AssignmentIndex,
 			AssignedEmail:   item.AssignedEmail,
 			DeviceID:        item.DeviceID,
@@ -230,28 +239,67 @@ func loadShardDeviceRowsFromTestData(envRoot string, plan Plan, assignment VMAss
 	return out, nil
 }
 
-func insertBundleDevices(db *sql.DB, envRoot string, brandname string, rows []deviceManifestRow) error {
-	source, err := sql.Open("sqlite", homeTestDataDBPath(envRoot, brandname))
+func loadEligibleBrandRows(envRoot string, brandname string) ([]shardBindAssignment, error) {
+	db, err := sql.Open("sqlite", homeTestDataDBPath(envRoot, brandname))
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer source.Close()
+	defer db.Close()
+	rows, err := db.Query(`select brandname, coalesce(brand_cloud_id, ''), coalesce(tenant_slug, ''), assignment_index, assigned_email, device_id, device_type, service_options_json from device_bindings where brandname = ? order by assignment_index, device_id`, brandname)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	selectedByUser := map[string][]shardBindAssignment{}
+	for rows.Next() {
+		var item shardBindAssignment
+		var serviceOptionsJSON string
+		if err := rows.Scan(&item.Brandname, &item.BrandCloudID, &item.TenantSlug, &item.AssignmentIndex, &item.AssignedEmail, &item.DeviceID, &item.DeviceType, &serviceOptionsJSON); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(serviceOptionsJSON), &item.ServiceOptions)
+		if !homeDeviceType(item.DeviceType) || !stringSliceContains(item.ServiceOptions, "mqtt") {
+			continue
+		}
+		selectedByUser[item.AssignedEmail] = append(selectedByUser[item.AssignedEmail], item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	selectedUsers := sortedMapKeys(selectedByUser)
+	selected := []shardBindAssignment{}
+	for _, email := range selectedUsers {
+		selected = append(selected, selectedByUser[email]...)
+	}
+	return selected, nil
+}
+
+func insertBundleDevices(db *sql.DB, envRoot string, rows []deviceManifestRow) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
-	stmt, err := tx.Prepare(`insert into devices(device_id, device_type, cert_pem, key_pem, chain_pem, bundle_pem, metadata_json, factory_enroll_request_json, factory_enroll_response_redacted_json) values(?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	stmt, err := tx.Prepare(`insert into devices(brandname, device_id, device_type, cert_pem, key_pem, chain_pem, bundle_pem, metadata_json, factory_enroll_request_json, factory_enroll_response_redacted_json) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		_ = tx.Rollback()
 		return err
 	}
 	defer stmt.Close()
+	sources := map[string]*sql.DB{}
+	defer closeBundleSources(sources)
 	for _, row := range rows {
+		source, err := bundleSourceForBrand(sources, envRoot, row.Brandname)
+		if err != nil {
+			_ = tx.Rollback()
+			return err
+		}
 		var certPEM, keyPEM, chainPEM, bundlePEM, metadataJSON, requestJSON, responseJSON string
-		if err := source.QueryRow(`select cert_pem, key_pem, chain_pem, bundle_pem, metadata_json, factory_enroll_request_json, factory_enroll_response_redacted_json from device_credentials where brandname = ? and device_id = ?`, brandname, row.DeviceID).Scan(&certPEM, &keyPEM, &chainPEM, &bundlePEM, &metadataJSON, &requestJSON, &responseJSON); err != nil {
+		if err := source.QueryRow(`select cert_pem, key_pem, chain_pem, bundle_pem, metadata_json, factory_enroll_request_json, factory_enroll_response_redacted_json from device_credentials where brandname = ? and device_id = ?`, row.Brandname, row.DeviceID).Scan(&certPEM, &keyPEM, &chainPEM, &bundlePEM, &metadataJSON, &requestJSON, &responseJSON); err != nil {
+			_ = tx.Rollback()
 			return err
 		}
 		if _, err := stmt.Exec(
+			row.Brandname,
 			row.DeviceID,
 			row.DeviceType,
 			certPEM,
@@ -269,13 +317,8 @@ func insertBundleDevices(db *sql.DB, envRoot string, brandname string, rows []de
 	return tx.Commit()
 }
 
-func insertBundleUsersAndBindings(db *sql.DB, envRoot string, brandname string, rows []deviceManifestRow) error {
-	source, err := sql.Open("sqlite", homeTestDataDBPath(envRoot, brandname))
-	if err != nil {
-		return err
-	}
-	defer source.Close()
-	if brandCloudID, tenantSlug := shardBundleTenantMetadata(source, brandname); brandCloudID != "" || tenantSlug != "" {
+func insertBundleUsersAndBindings(db *sql.DB, envRoot string, rows []deviceManifestRow) error {
+	if brandCloudID, tenantSlug := firstShardTenantMetadata(rows); brandCloudID != "" || tenantSlug != "" {
 		if brandCloudID != "" {
 			if err := insertBundleMetadata(db, "brand_cloud_id", brandCloudID); err != nil {
 				return err
@@ -291,41 +334,78 @@ func insertBundleUsersAndBindings(db *sql.DB, envRoot string, brandname string, 
 	if err != nil {
 		return err
 	}
-	userStmt, err := tx.Prepare(`insert into users(email, password, tokens_json, app_credentials_json, app_certificate_json, body_json) values(?, ?, ?, ?, ?, ?) on conflict(email) do nothing`)
+	userStmt, err := tx.Prepare(`insert into users(brandname, brand_cloud_id, tenant_slug, email, password, tokens_json, app_credentials_json, app_certificate_json, body_json) values(?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict(brandname, email) do nothing`)
 	if err != nil {
 		_ = tx.Rollback()
 		return err
 	}
 	defer userStmt.Close()
-	bindStmt, err := tx.Prepare(`insert into device_bindings(device_id, assignment_index, assigned_email, device_type, service_options_json, body_json) values(?, ?, ?, ?, ?, ?)`)
+	bindStmt, err := tx.Prepare(`insert into device_bindings(brandname, brand_cloud_id, tenant_slug, device_id, assignment_index, assigned_email, device_type, service_options_json, body_json) values(?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		_ = tx.Rollback()
 		return err
 	}
 	defer bindStmt.Close()
+	sources := map[string]*sql.DB{}
+	defer closeBundleSources(sources)
 	for _, row := range rows {
-		var password, tokensJSON, appCredentialsJSON, appCertificateJSON, userBodyJSON string
-		if err := source.QueryRow(`select coalesce(password, ''), coalesce(tokens_json, '{}'), coalesce(app_credentials_json, '{}'), coalesce(app_certificate_json, '{}'), body_json from users where brandname = ? and email = ?`, brandname, row.AssignedEmail).Scan(&password, &tokensJSON, &appCredentialsJSON, &appCertificateJSON, &userBodyJSON); err != nil {
+		source, err := bundleSourceForBrand(sources, envRoot, row.Brandname)
+		if err != nil {
 			_ = tx.Rollback()
 			return err
 		}
-		if _, err := userStmt.Exec(row.AssignedEmail, password, tokensJSON, appCredentialsJSON, appCertificateJSON, userBodyJSON); err != nil {
+		var password, tokensJSON, appCredentialsJSON, appCertificateJSON, userBodyJSON string
+		if err := source.QueryRow(`select coalesce(password, ''), coalesce(tokens_json, '{}'), coalesce(app_credentials_json, '{}'), coalesce(app_certificate_json, '{}'), body_json from users where brandname = ? and email = ?`, row.Brandname, row.AssignedEmail).Scan(&password, &tokensJSON, &appCredentialsJSON, &appCertificateJSON, &userBodyJSON); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if _, err := userStmt.Exec(row.Brandname, row.BrandCloudID, row.TenantSlug, row.AssignedEmail, password, tokensJSON, appCredentialsJSON, appCertificateJSON, userBodyJSON); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
 		bindBody := map[string]any{
+			"brandname":        row.Brandname,
+			"brand_cloud_id":   row.BrandCloudID,
+			"tenant_slug":      row.TenantSlug,
 			"assignment_index": row.AssignmentIndex,
 			"assigned_email":   row.AssignedEmail,
 			"device_id":        row.DeviceID,
 			"device_type":      row.DeviceType,
 			"service_options":  row.ServiceOptions,
 		}
-		if _, err := bindStmt.Exec(row.DeviceID, row.AssignmentIndex, row.AssignedEmail, row.DeviceType, bundleJSONText(row.ServiceOptions), bundleJSONText(bindBody)); err != nil {
+		if _, err := bindStmt.Exec(row.Brandname, row.BrandCloudID, row.TenantSlug, row.DeviceID, row.AssignmentIndex, row.AssignedEmail, row.DeviceType, bundleJSONText(row.ServiceOptions), bundleJSONText(bindBody)); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
 	}
 	return tx.Commit()
+}
+
+func bundleSourceForBrand(sources map[string]*sql.DB, envRoot string, brandname string) (*sql.DB, error) {
+	if db := sources[brandname]; db != nil {
+		return db, nil
+	}
+	db, err := sql.Open("sqlite", homeTestDataDBPath(envRoot, brandname))
+	if err != nil {
+		return nil, err
+	}
+	sources[brandname] = db
+	return db, nil
+}
+
+func closeBundleSources(sources map[string]*sql.DB) {
+	for _, db := range sources {
+		_ = db.Close()
+	}
+}
+
+func firstShardTenantMetadata(rows []deviceManifestRow) (string, string) {
+	for _, row := range rows {
+		if row.BrandCloudID != "" || row.TenantSlug != "" {
+			return row.BrandCloudID, row.TenantSlug
+		}
+	}
+	return "", ""
 }
 
 func shardBundleTenantMetadata(db *sql.DB, brandname string) (string, string) {

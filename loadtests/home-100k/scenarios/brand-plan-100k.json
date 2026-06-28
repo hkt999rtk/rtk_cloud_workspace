@@ -1,0 +1,51 @@
+{
+  "total_devices": 100000,
+  "devices_per_user": 20,
+  "brands": [
+    {
+      "brandname": "RTK-PRIMARY",
+      "devices": 60000,
+      "normal_users": 3000,
+      "developer_users": {
+        "owner": 1,
+        "admin": 1
+      }
+    },
+    {
+      "brandname": "RTK-MID-1",
+      "devices": 15000,
+      "normal_users": 750,
+      "developer_users": {
+        "owner": 1,
+        "admin": 1
+      }
+    },
+    {
+      "brandname": "RTK-MID-2",
+      "devices": 15000,
+      "normal_users": 750,
+      "developer_users": {
+        "owner": 1,
+        "admin": 1
+      }
+    },
+    {
+      "brandname": "RTK-SMALL-1",
+      "devices": 5000,
+      "normal_users": 250,
+      "developer_users": {
+        "owner": 1,
+        "admin": 1
+      }
+    },
+    {
+      "brandname": "RTK-SMALL-2",
+      "devices": 5000,
+      "normal_users": 250,
+      "developer_users": {
+        "owner": 1,
+        "admin": 1
+      }
+    }
+  ]
+}

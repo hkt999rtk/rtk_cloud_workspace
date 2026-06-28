@@ -376,6 +376,13 @@ PASS used the same 5 labels with 10K devices and 500 app users per VM.
 VM labels identify execution shards only; brand/cloud distribution remains in
 the plan and inventory metadata.
 
+The 100K multi-brand baseline uses
+`loadtests/home-100k/scenarios/brand-plan-100k.json` as the data distribution
+source of truth: 5 brand clouds, 5,000 normal member users, 10 developer
+users, and 100,000 devices. Developer users are created and validated as
+`owner`/`admin` setup data only; runtime MQTT/app-command traffic is generated
+by member users.
+
 | VM label | Device range | User range |
 | --- | ---: | ---: |
 | `lg01` | `0..19999` | `0..999` |
@@ -417,8 +424,13 @@ keeps each VM sync to a small number of files, avoids tens of thousands of
 inodes per shard, and lets future orchestra/coordinator reuse skip uploads when
 the bundle sha256 has not changed.
 
-The source of truth is `<env-root>/artifacts/test-data/<brand>-test-data.sqlite`;
-shard manifests carry only shard metadata and do not duplicate credentials.
+The source of truth is `<env-root>/artifacts/test-data/<brand>-test-data.sqlite`.
+For multi-brand runs, each source brand still owns its own SQLite DB, while the
+per-VM shard bundle may contain rows from multiple brands. Bundle rows include
+`brandname`, `brand_cloud_id`, and `tenant_slug`, so the runner can use the
+correct tenant for app login/token refresh and the correct brand in MQTT
+payloads. Shard manifests carry only shard metadata and do not duplicate
+credentials.
 
 ## Public CLI Shape
 
@@ -461,6 +473,7 @@ The script keeps non-secret defaults in one place:
 | `HOME100K_SECRET_ENV_FILE` | `~/.env`, only `LINODE_TOKEN` is read |
 | `HOME100K_ENV_ROOT` | `cloud_env/staging/lke` |
 | `HOME100K_BRANDNAME` | `RTK` |
+| `HOME100K_BRAND_PLAN` | unset; use `loadtests/home-100k/scenarios/brand-plan-100k.json` for the 100K multi-brand 7/7 baseline |
 | `HOME100K_REGION` | `us-sea` |
 | `HOME100K_RUN_ID` | Current UTC timestamp |
 | `HOME100K_OUT_DIR` | `loadtests/home-100k/reports/<run-id>` |

@@ -57,6 +57,9 @@ type userArtifact struct {
 }
 
 type userCredential struct {
+	Brandname      string                `json:"brandname,omitempty"`
+	BrandCloudID   string                `json:"brand_cloud_id,omitempty"`
+	TenantSlug     string                `json:"tenant_slug,omitempty"`
 	Email          string                `json:"email"`
 	Password       string                `json:"password"`
 	Tokens         tokenBundle           `json:"tokens"`
@@ -84,6 +87,9 @@ type bindArtifact struct {
 }
 
 type assignment struct {
+	Brandname      string   `json:"brandname,omitempty"`
+	BrandCloudID   string   `json:"brand_cloud_id,omitempty"`
+	TenantSlug     string   `json:"tenant_slug,omitempty"`
 	AssignedEmail  string   `json:"assigned_email"`
 	DeviceID       string   `json:"device_id"`
 	DeviceType     string   `json:"device_type"`
@@ -99,6 +105,7 @@ type manifestRecord struct {
 }
 
 type certRecord struct {
+	Brandname  string `json:"brandname,omitempty"`
 	DeviceID   string `json:"device_id"`
 	DeviceType string `json:"device_type"`
 	CertPath   string `json:"cert_path"`
@@ -119,6 +126,7 @@ type home100KCredentialBundle struct {
 }
 
 type home100KCredentialDevice struct {
+	Brandname  string
 	DeviceID   string
 	DeviceType string
 	CertPEM    string
@@ -580,8 +588,9 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	usersByEmail := map[string]userCredential{}
 	for _, u := range users.Users {
 		if u.Email != "" {
-			userEmails[u.Email] = true
-			usersByEmail[u.Email] = u
+			key := brandEmailKey(firstNonEmpty(u.Brandname, users.Brandname, brandname), u.Email)
+			userEmails[key] = true
+			usersByEmail[key] = u
 		}
 	}
 	manifestByID := map[string]manifestRecord{}
@@ -590,10 +599,19 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	}
 	selectedByUser := map[string][]assignment{}
 	for _, item := range bind.Assignments {
-		if !homeTypes[item.DeviceType] || !contains(item.ServiceOptions, "mqtt") || !userEmails[item.AssignedEmail] {
+		if strings.TrimSpace(item.Brandname) == "" {
+			item.Brandname = firstNonEmpty(bind.Brandname, brandname)
+		}
+		if strings.TrimSpace(item.BrandCloudID) == "" {
+			item.BrandCloudID = bind.BrandCloudID
+		}
+		if strings.TrimSpace(item.TenantSlug) == "" {
+			item.TenantSlug = firstNonEmpty(bind.TenantSlug, users.TenantSlug)
+		}
+		if !homeTypes[item.DeviceType] || !contains(item.ServiceOptions, "mqtt") || !userEmails[brandEmailKey(item.Brandname, item.AssignedEmail)] {
 			continue
 		}
-		selectedByUser[item.AssignedEmail] = append(selectedByUser[item.AssignedEmail], item)
+		selectedByUser[brandEmailKey(item.Brandname, item.AssignedEmail)] = append(selectedByUser[brandEmailKey(item.Brandname, item.AssignedEmail)], item)
 	}
 	if len(selectedByUser) == 0 {
 		blockers = append(blockers, "no bound home MQTT devices for users in latest artifacts")
@@ -634,14 +652,22 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	}
 	certRecords := []certRecord{}
 	for _, item := range selectedAssignments {
-		record, ok := manifestByID[item.DeviceID]
+		record, ok := manifestByID[brandDeviceKey(item.Brandname, item.DeviceID)]
+		if !ok {
+			record, ok = manifestByID[item.DeviceID]
+		}
 		if !ok {
 			blockers = append(blockers, fmt.Sprintf("device %s missing from manifest", item.DeviceID))
 			continue
 		}
 		if credentialBundle != nil {
-			if bundled, ok := credentialBundle.Devices[item.DeviceID]; ok {
+			bundled, ok := credentialBundle.Devices[brandDeviceKey(item.Brandname, item.DeviceID)]
+			if !ok {
+				bundled, ok = credentialBundle.Devices[item.DeviceID]
+			}
+			if ok {
 				certRecords = append(certRecords, certRecord{
+					Brandname:  firstNonEmpty(bundled.Brandname, item.Brandname, brandname),
 					DeviceID:   item.DeviceID,
 					DeviceType: item.DeviceType,
 					CertPEM:    bundled.CertPEM,
@@ -664,7 +690,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 				blockers = append(blockers, fmt.Sprintf("device %s missing %s file", item.DeviceID, label))
 			}
 		}
-		certRecords = append(certRecords, certRecord{DeviceID: item.DeviceID, DeviceType: item.DeviceType, CertPath: paths["cert"], KeyPath: paths["key"], ChainPath: paths["chain"]})
+		certRecords = append(certRecords, certRecord{Brandname: item.Brandname, DeviceID: item.DeviceID, DeviceType: item.DeviceType, CertPath: paths["cert"], KeyPath: paths["key"], ChainPath: paths["chain"]})
 	}
 
 	base := map[string]any{
@@ -1284,6 +1310,7 @@ func runSustainedHome100KLoad(assignments []assignment, certs []certRecord, bran
 	}
 	certByID := map[string]certRecord{}
 	for _, cert := range certs {
+		certByID[brandDeviceKey(cert.Brandname, cert.DeviceID)] = cert
 		certByID[cert.DeviceID] = cert
 	}
 	start := time.Now()
@@ -1328,7 +1355,8 @@ func runSustainedHome100KLoad(assignments []assignment, certs []certRecord, bran
 		session := sessions[sessionSlot]
 		switch event.Kind {
 		case "telemetry":
-			if _, err := publishSustainedTelemetry(session, brandname, runID, &result.Totals); err != nil {
+			sessionBrand := firstNonEmpty(session.Assignment.Brandname, session.Record.Brandname, brandname)
+			if _, err := publishSustainedTelemetry(session, sessionBrand, runID, &result.Totals); err != nil {
 				result.Status = "FAIL"
 			}
 		case "command":
@@ -1338,7 +1366,8 @@ func runSustainedHome100KLoad(assignments []assignment, certs []certRecord, bran
 				continue
 			}
 			result.CommandsAttempted++
-			if runSustainedShadowCommandWithContext(session, brandname, runID, apiBaseURL, &result.Totals, sustainedCommandContext{
+			sessionBrand := firstNonEmpty(session.Assignment.Brandname, session.Record.Brandname, brandname)
+			if runSustainedShadowCommandWithContext(session, sessionBrand, runID, apiBaseURL, &result.Totals, sustainedCommandContext{
 				EventIndex:  event.Index,
 				SessionSlot: sessionSlot,
 				Deadline:    deadline,
@@ -1361,6 +1390,7 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 	overall := sustainedLoadResult{Status: "PASS"}
 	certByID := map[string]certRecord{}
 	for _, cert := range certs {
+		certByID[brandDeviceKey(cert.Brandname, cert.DeviceID)] = cert
 		certByID[cert.DeviceID] = cert
 	}
 	sessions := []sustainedDeviceSession{}
@@ -1507,7 +1537,8 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 			switch event.Kind {
 			case "telemetry", "event":
 				var eventTotals mqttIOTotals
-				bytesSent, err := publishSustainedTelemetry(session, brandname, runID, &eventTotals)
+				sessionBrand := firstNonEmpty(session.Assignment.Brandname, session.Record.Brandname, brandname)
+				bytesSent, err := publishSustainedTelemetry(session, sessionBrand, runID, &eventTotals)
 				eventMu.Lock()
 				mergeTotals(eventTotals)
 				if err != nil {
@@ -1533,7 +1564,8 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 					sessionLocks[sessionSlot].Lock()
 					defer sessionLocks[sessionSlot].Unlock()
 					var commandTotals mqttIOTotals
-					err := runSustainedShadowCommandWithContext(session, brandname, runID, apiBaseURL, &commandTotals, sustainedCommandContext{
+					sessionBrand := firstNonEmpty(session.Assignment.Brandname, session.Record.Brandname, brandname)
+					err := runSustainedShadowCommandWithContext(session, sessionBrand, runID, apiBaseURL, &commandTotals, sustainedCommandContext{
 						Stage:       stage.Name,
 						EventIndex:  event.Index,
 						SessionSlot: sessionSlot,
@@ -1682,7 +1714,11 @@ func connectSustainedDevices(assignments []assignment, certByID map[string]certR
 
 func attachAppLoginManagers(sessions []sustainedDeviceSession, managersByEmail map[string]*accountLoginTokenManager) {
 	for idx := range sessions {
-		sessions[idx].AppLoginManager = managersByEmail[sessions[idx].Assignment.AssignedEmail]
+		key := brandEmailKey(sessions[idx].Assignment.Brandname, sessions[idx].Assignment.AssignedEmail)
+		sessions[idx].AppLoginManager = managersByEmail[key]
+		if sessions[idx].AppLoginManager == nil {
+			sessions[idx].AppLoginManager = managersByEmail[sessions[idx].Assignment.AssignedEmail]
+		}
 	}
 }
 
@@ -1711,7 +1747,10 @@ func connectSustainedDevicesPacedUntil(assignments []assignment, certByID map[st
 				if deadlineReached(deadline) {
 					return
 				}
-				record := certByID[item.Assignment.DeviceID]
+				record := certByID[brandDeviceKey(item.Assignment.Brandname, item.Assignment.DeviceID)]
+				if strings.TrimSpace(record.DeviceID) == "" {
+					record = certByID[item.Assignment.DeviceID]
+				}
 				mu.Lock()
 				totals.ConnectAttempts++
 				mu.Unlock()
@@ -1721,7 +1760,7 @@ func connectSustainedDevicesPacedUntil(assignments []assignment, certByID map[st
 					mu.Unlock()
 				}
 				target := mqttTargets[item.Index%len(mqttTargets)]
-				conn, err := connectSustainedDevice(record, brandname, runID, apiBaseURL, target, recordPhase)
+				conn, err := connectSustainedDevice(record, firstNonEmpty(item.Assignment.Brandname, record.Brandname, brandname), runID, apiBaseURL, target, recordPhase)
 				if err != nil {
 					mu.Lock()
 					totals.ConnectFailures++
@@ -2428,7 +2467,12 @@ func loadHome100KCredentialBundle(envRoot string) (*home100KCredentialBundle, er
 		return nil, err
 	}
 	defer db.Close()
-	rows, err := db.Query(`select device_id, device_type, cert_pem, key_pem, chain_pem, bundle_pem from devices`)
+	hasDeviceBrand := sqliteColumnExists(db, "devices", "brandname")
+	deviceQuery := `select device_id, device_type, cert_pem, key_pem, chain_pem, bundle_pem from devices`
+	if hasDeviceBrand {
+		deviceQuery = `select brandname, device_id, device_type, cert_pem, key_pem, chain_pem, bundle_pem from devices`
+	}
+	rows, err := db.Query(deviceQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -2437,14 +2481,22 @@ func loadHome100KCredentialBundle(envRoot string) (*home100KCredentialBundle, er
 	for rows.Next() {
 		var device home100KCredentialDevice
 		var certPEM, keyPEM, chainPEM, bundlePEM sql.NullString
-		if err := rows.Scan(&device.DeviceID, &device.DeviceType, &certPEM, &keyPEM, &chainPEM, &bundlePEM); err != nil {
-			return nil, err
+		if hasDeviceBrand {
+			if err := rows.Scan(&device.Brandname, &device.DeviceID, &device.DeviceType, &certPEM, &keyPEM, &chainPEM, &bundlePEM); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := rows.Scan(&device.DeviceID, &device.DeviceType, &certPEM, &keyPEM, &chainPEM, &bundlePEM); err != nil {
+				return nil, err
+			}
+			device.Brandname = firstNonEmpty(home100KBundleMetadata(db, "brandname"), "RTK")
 		}
 		device.CertPEM = certPEM.String
 		device.KeyPEM = keyPEM.String
 		device.ChainPEM = chainPEM.String
 		device.BundlePEM = bundlePEM.String
 		if strings.TrimSpace(device.DeviceID) != "" {
+			bundle.Devices[brandDeviceKey(device.Brandname, device.DeviceID)] = device
 			bundle.Devices[device.DeviceID] = device
 			bundle.Manifest = append(bundle.Manifest, manifestRecord{DeviceID: device.DeviceID, DeviceType: device.DeviceType})
 		}
@@ -2467,7 +2519,12 @@ func loadHome100KBundleUsers(db *sql.DB, bundle *home100KCredentialBundle) error
 	bundle.Users.Brandname = brandname
 	bundle.Users.BrandCloudID = home100KBundleMetadata(db, "brand_cloud_id")
 	bundle.Users.TenantSlug = home100KBundleMetadata(db, "tenant_slug")
-	rows, err := db.Query(`select email, password, tokens_json, app_credentials_json, app_certificate_json, body_json from users order by email`)
+	hasBrand := sqliteColumnExists(db, "users", "brandname")
+	query := `select email, password, tokens_json, app_credentials_json, app_certificate_json, body_json from users order by email`
+	if hasBrand {
+		query = `select brandname, coalesce(brand_cloud_id, ''), coalesce(tenant_slug, ''), email, password, tokens_json, app_credentials_json, app_certificate_json, body_json from users order by brandname, email`
+	}
+	rows, err := db.Query(query)
 	if err != nil {
 		if strings.Contains(err.Error(), "no such table") {
 			return nil
@@ -2477,10 +2534,19 @@ func loadHome100KBundleUsers(db *sql.DB, bundle *home100KCredentialBundle) error
 	defer rows.Close()
 	for rows.Next() {
 		var email, password, tokensJSON, appCredentialsJSON, appCertificateJSON, bodyJSON string
-		if err := rows.Scan(&email, &password, &tokensJSON, &appCredentialsJSON, &appCertificateJSON, &bodyJSON); err != nil {
-			return err
+		rowBrand := brandname
+		rowBrandCloudID := bundle.Users.BrandCloudID
+		rowTenantSlug := bundle.Users.TenantSlug
+		if hasBrand {
+			if err := rows.Scan(&rowBrand, &rowBrandCloudID, &rowTenantSlug, &email, &password, &tokensJSON, &appCredentialsJSON, &appCertificateJSON, &bodyJSON); err != nil {
+				return err
+			}
+		} else {
+			if err := rows.Scan(&email, &password, &tokensJSON, &appCredentialsJSON, &appCertificateJSON, &bodyJSON); err != nil {
+				return err
+			}
 		}
-		user := userCredential{Email: email, Password: password}
+		user := userCredential{Brandname: rowBrand, BrandCloudID: rowBrandCloudID, TenantSlug: rowTenantSlug, Email: email, Password: password}
 		if strings.TrimSpace(bodyJSON) != "" {
 			_ = json.Unmarshal([]byte(bodyJSON), &user)
 		}
@@ -2505,7 +2571,12 @@ func loadHome100KBundleBindings(db *sql.DB, bundle *home100KCredentialBundle) er
 	bundle.Bind.Brandname = brandname
 	bundle.Bind.BrandCloudID = home100KBundleMetadata(db, "brand_cloud_id")
 	bundle.Bind.TenantSlug = home100KBundleMetadata(db, "tenant_slug")
-	rows, err := db.Query(`select assigned_email, device_id, device_type, service_options_json, body_json from device_bindings order by assignment_index, device_id`)
+	hasBrand := sqliteColumnExists(db, "device_bindings", "brandname")
+	query := `select assigned_email, device_id, device_type, service_options_json, body_json from device_bindings order by assignment_index, device_id`
+	if hasBrand {
+		query = `select brandname, coalesce(brand_cloud_id, ''), coalesce(tenant_slug, ''), assigned_email, device_id, device_type, service_options_json, body_json from device_bindings order by brandname, assignment_index, device_id`
+	}
+	rows, err := db.Query(query)
 	if err != nil {
 		if strings.Contains(err.Error(), "no such table") {
 			return nil
@@ -2516,8 +2587,17 @@ func loadHome100KBundleBindings(db *sql.DB, bundle *home100KCredentialBundle) er
 	for rows.Next() {
 		var item assignment
 		var serviceOptionsJSON, bodyJSON string
-		if err := rows.Scan(&item.AssignedEmail, &item.DeviceID, &item.DeviceType, &serviceOptionsJSON, &bodyJSON); err != nil {
-			return err
+		if hasBrand {
+			if err := rows.Scan(&item.Brandname, &item.BrandCloudID, &item.TenantSlug, &item.AssignedEmail, &item.DeviceID, &item.DeviceType, &serviceOptionsJSON, &bodyJSON); err != nil {
+				return err
+			}
+		} else {
+			if err := rows.Scan(&item.AssignedEmail, &item.DeviceID, &item.DeviceType, &serviceOptionsJSON, &bodyJSON); err != nil {
+				return err
+			}
+			item.Brandname = brandname
+			item.BrandCloudID = bundle.Bind.BrandCloudID
+			item.TenantSlug = bundle.Bind.TenantSlug
 		}
 		if strings.TrimSpace(bodyJSON) != "" {
 			_ = json.Unmarshal([]byte(bodyJSON), &item)
@@ -2525,9 +2605,40 @@ func loadHome100KBundleBindings(db *sql.DB, bundle *home100KCredentialBundle) er
 		if len(item.ServiceOptions) == 0 {
 			_ = json.Unmarshal([]byte(serviceOptionsJSON), &item.ServiceOptions)
 		}
+		if strings.TrimSpace(item.Brandname) == "" {
+			item.Brandname = brandname
+		}
+		if strings.TrimSpace(item.BrandCloudID) == "" {
+			item.BrandCloudID = bundle.Bind.BrandCloudID
+		}
+		if strings.TrimSpace(item.TenantSlug) == "" {
+			item.TenantSlug = bundle.Bind.TenantSlug
+		}
 		bundle.Bind.Assignments = append(bundle.Bind.Assignments, item)
 	}
 	return rows.Err()
+}
+
+func sqliteColumnExists(db *sql.DB, table string, column string) bool {
+	rows, err := db.Query(`pragma table_info(` + table + `)`)
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull int
+		var dflt any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			return false
+		}
+		if name == column {
+			return true
+		}
+	}
+	return false
 }
 
 func home100KBundleMetadata(db *sql.DB, key string) string {
@@ -2675,12 +2786,17 @@ func runSelectedDeviceProbes(assignments []assignment, certs []certRecord, brand
 		go func() {
 			defer wg.Done()
 			for item := range jobs {
-				results <- runDeviceActorSeparatedEnvelope(item.Cert, brandname, runID, apiBaseURL, host, port, appTokensByEmail[item.Assignment.AssignedEmail].AccessToken)
+				itemBrand := firstNonEmpty(item.Assignment.Brandname, item.Cert.Brandname, brandname)
+				token := appTokensByEmail[brandEmailKey(itemBrand, item.Assignment.AssignedEmail)]
+				if strings.TrimSpace(token.AccessToken) == "" {
+					token = appTokensByEmail[item.Assignment.AssignedEmail]
+				}
+				results <- runDeviceActorSeparatedEnvelope(item.Cert, itemBrand, runID, apiBaseURL, host, port, token.AccessToken)
 			}
 		}()
 	}
 	for _, item := range assignments {
-		jobs <- job{Assignment: item, Cert: findCert(certs, item.DeviceID)}
+		jobs <- job{Assignment: item, Cert: findCert(certs, item.Brandname, item.DeviceID)}
 	}
 	close(jobs)
 	wg.Wait()
@@ -4054,7 +4170,11 @@ func prepareAppCertificateBootstrapForAssignments(accountBaseURL, videoBaseURL, 
 	tokensByEmail := map[string]tokenBundle{}
 	managersByEmail := map[string]*accountLoginTokenManager{}
 	for _, candidate := range candidates {
-		user, ok := usersByEmail[candidate.AssignedEmail]
+		candidateBrand := firstNonEmpty(candidate.Brandname, "")
+		user, ok := usersByEmail[brandEmailKey(candidateBrand, candidate.AssignedEmail)]
+		if !ok {
+			user, ok = usersByEmail[candidate.AssignedEmail]
+		}
 		if !ok {
 			attempts = append(attempts, appBootstrapAttempt{
 				UserEmail: candidate.AssignedEmail,
@@ -4064,10 +4184,14 @@ func prepareAppCertificateBootstrapForAssignments(accountBaseURL, videoBaseURL, 
 			})
 			continue
 		}
+		candidateTenantSlug := firstNonEmpty(candidate.TenantSlug, user.TenantSlug, tenantSlug)
+		candidateBrand = firstNonEmpty(candidateBrand, user.Brandname)
 		if strings.TrimSpace(user.Tokens.AccessToken) != "" || strings.TrimSpace(user.Tokens.RefreshToken) != "" {
 			bundle := user.Tokens
+			tokensByEmail[brandEmailKey(candidateBrand, user.Email)] = bundle
 			tokensByEmail[user.Email] = bundle
-			managersByEmail[user.Email] = newAccountLoginTokenManager(accountBaseURL, tenantSlug, user, bundle)
+			managersByEmail[brandEmailKey(candidateBrand, user.Email)] = newAccountLoginTokenManager(accountBaseURL, candidateTenantSlug, user, bundle)
+			managersByEmail[user.Email] = managersByEmail[brandEmailKey(candidateBrand, user.Email)]
 			attempts = append(attempts, appBootstrapAttempt{
 				UserEmail: user.Email,
 				DeviceID:  candidate.DeviceID,
@@ -4084,7 +4208,7 @@ func prepareAppCertificateBootstrapForAssignments(accountBaseURL, videoBaseURL, 
 			}
 			continue
 		}
-		material := prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL, tenantSlug, user, candidate.DeviceID)
+		material := prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL, candidateTenantSlug, user, candidate.DeviceID)
 		material.Status.Attempts = append([]appBootstrapAttempt{}, attempts...)
 		material.Status.Attempts = append(material.Status.Attempts, appBootstrapAttempt{
 			UserEmail: user.Email,
@@ -4097,8 +4221,10 @@ func prepareAppCertificateBootstrapForAssignments(accountBaseURL, videoBaseURL, 
 				firstPass = material
 			}
 			if bundle, ok := material.TokensByEmail[user.Email]; ok {
+				tokensByEmail[brandEmailKey(candidateBrand, user.Email)] = bundle
 				tokensByEmail[user.Email] = bundle
-				managersByEmail[user.Email] = newAccountLoginTokenManager(accountBaseURL, tenantSlug, user, bundle)
+				managersByEmail[brandEmailKey(candidateBrand, user.Email)] = newAccountLoginTokenManager(accountBaseURL, candidateTenantSlug, user, bundle)
+				managersByEmail[user.Email] = managersByEmail[brandEmailKey(candidateBrand, user.Email)]
 			}
 		}
 		attempts = material.Status.Attempts
@@ -4122,7 +4248,7 @@ func appBootstrapCandidates(assignments []assignment, maxCandidates int) []assig
 	candidates := make([]assignment, 0, maxCandidates)
 	seen := map[string]bool{}
 	for _, item := range assignments {
-		key := item.AssignedEmail
+		key := brandEmailKey(item.Brandname, item.AssignedEmail)
 		if seen[key] {
 			continue
 		}
@@ -4133,6 +4259,14 @@ func appBootstrapCandidates(assignments []assignment, maxCandidates int) []assig
 		}
 	}
 	return candidates
+}
+
+func brandEmailKey(brandname string, email string) string {
+	return strings.ToLower(strings.TrimSpace(brandname)) + "\x00" + strings.ToLower(strings.TrimSpace(email))
+}
+
+func brandDeviceKey(brandname string, deviceID string) string {
+	return strings.ToLower(strings.TrimSpace(brandname)) + "\x00" + strings.TrimSpace(deviceID)
 }
 
 func prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL, tenantSlug string, user userCredential, deviceID string) appBootstrapMaterial {
@@ -5468,13 +5602,18 @@ func mtlsSummaries(records []certRecord) []map[string]any {
 	return out
 }
 
-func findCert(records []certRecord, deviceID string) certRecord {
+func findCert(records []certRecord, brandname string, deviceID string) certRecord {
+	for _, record := range records {
+		if record.DeviceID == deviceID && strings.EqualFold(strings.TrimSpace(record.Brandname), strings.TrimSpace(brandname)) {
+			return record
+		}
+	}
 	for _, record := range records {
 		if record.DeviceID == deviceID {
 			return record
 		}
 	}
-	return certRecord{DeviceID: deviceID}
+	return certRecord{Brandname: brandname, DeviceID: deviceID}
 }
 
 func percentile(values []float64, pct float64) float64 {

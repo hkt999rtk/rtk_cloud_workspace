@@ -36,6 +36,7 @@ const (
 type PlanOptions struct {
 	EnvRoot                              string  `json:"env_root"`
 	Brandname                            string  `json:"brandname"`
+	BrandPlanFile                        string  `json:"brand_plan_file,omitempty"`
 	Region                               string  `json:"region"`
 	DeviceCount                          int     `json:"device_count,omitempty"`
 	UserCount                            int     `json:"user_count,omitempty"`
@@ -59,6 +60,7 @@ type PlanOptions struct {
 
 type Plan struct {
 	Conditions        TestConditions           `json:"conditions"`
+	BrandDistribution []BrandDistributionEntry `json:"brand_distribution,omitempty"`
 	ScenarioProfile   string                   `json:"scenario_profile"`
 	DeviceMix         map[string]int           `json:"device_mix"`
 	DeviceProfiles    map[string]DeviceProfile `json:"device_profiles"`
@@ -83,9 +85,11 @@ type TargetWindow struct {
 type TestConditions struct {
 	EnvRoot                              string  `json:"env_root"`
 	Brandname                            string  `json:"brandname"`
+	BrandPlanFile                        string  `json:"brand_plan_file,omitempty"`
 	Region                               string  `json:"region"`
 	Devices                              int     `json:"devices"`
 	Users                                int     `json:"users"`
+	DeveloperUsers                       int     `json:"developer_users,omitempty"`
 	DevicesPerUser                       int     `json:"devices_per_user"`
 	ServerTarget                         string  `json:"server_target"`
 	LoadGeneratorRuntime                 string  `json:"load_generator_runtime"`
@@ -173,6 +177,18 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	if opts.Region == "" {
 		return Plan{}, errors.New("--region is required")
 	}
+	brandPlanFile := strings.TrimSpace(opts.BrandPlanFile)
+	brandPlan := BrandPlan{}
+	if brandPlanFile != "" {
+		var err error
+		brandPlan, err = loadBrandPlan(brandPlanFile)
+		if err != nil {
+			return Plan{}, err
+		}
+		opts.DeviceCount = brandPlan.TotalDevices
+		opts.DevicesPerUser = brandPlan.DevicesPerUser
+		opts.UserCount = brandPlan.NormalUsers()
+	}
 	if err := validateDuration("stage warm-up", opts.StageWarmUp); err != nil {
 		return Plan{}, err
 	}
@@ -257,9 +273,11 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 		Conditions: TestConditions{
 			EnvRoot:                              opts.EnvRoot,
 			Brandname:                            opts.Brandname,
+			BrandPlanFile:                        brandPlanFile,
 			Region:                               opts.Region,
 			Devices:                              devices,
 			Users:                                users,
+			DeveloperUsers:                       brandPlan.DeveloperUsers(),
 			DevicesPerUser:                       devicesPerUser,
 			ServerTarget:                         DefaultServerTarget,
 			LoadGeneratorRuntime:                 DefaultLoadGeneratorRun,
@@ -278,14 +296,15 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 			AggregateCorrelationTolerancePercent: thresholds.AggregateCorrelationTolerancePercent,
 			AggregateCorrelationMinTolerance:     thresholds.AggregateCorrelationMinTolerance,
 		},
-		ScenarioProfile: scenarioProfile,
-		DeviceMix:       proportionalMix(devices, homeDiverseDeviceMixBuckets()),
-		DeviceProfiles:  homeDiverseDeviceProfiles(),
-		UserProfiles:    homeDiverseUserProfiles(),
-		PresenceMix:     proportionalMix(devices, []ratioBucket{{Name: "online_steady", Weight: 85}, {Name: "offline_desired_queue", Weight: 10}, {Name: "flapping_reconnect", Weight: 5}}),
-		Target:          targetWindowFromStages(stages),
-		Stages:          stages,
-		Workflow:        []string{"plan", "provision-vms", "sync", "run-stages", "collect", "collect-server-evidence", "aggregate", "destroy-vms"},
+		BrandDistribution: brandPlan.Distribution(),
+		ScenarioProfile:   scenarioProfile,
+		DeviceMix:         proportionalMix(devices, homeDiverseDeviceMixBuckets()),
+		DeviceProfiles:    homeDiverseDeviceProfiles(),
+		UserProfiles:      homeDiverseUserProfiles(),
+		PresenceMix:       proportionalMix(devices, []ratioBucket{{Name: "online_steady", Weight: 85}, {Name: "offline_desired_queue", Weight: 10}, {Name: "flapping_reconnect", Weight: 5}}),
+		Target:            targetWindowFromStages(stages),
+		Stages:            stages,
+		Workflow:          []string{"plan", "provision-vms", "sync", "run-stages", "collect", "collect-server-evidence", "aggregate", "destroy-vms"},
 		Artifacts: Artifacts{
 			RunPlan:         "loadtests/home-100k/plans/<run_id>/plan.json",
 			ShardResults:    "loadtests/home-100k/reports/<run_id>/shards/",
