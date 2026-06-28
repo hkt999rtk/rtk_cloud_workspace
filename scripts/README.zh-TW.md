@@ -624,9 +624,9 @@ port-forward 成為 setup 瓶頸，不可拿來當 MQTT pod 或 LKE node 容量�
 容量公式、100K 初始預測與二分實驗策略見 `docs/lke-capacity-sizing.md`。
 
 100K 7/7 loading baseline 的 test data distribution 由
-`loadtests/home-100k/scenarios/brand-plan-100k.json` 定義：5 個 brand
+`loadtests/home-100k/scenarios/brand-plan-100k.json` 定義：10 個 brand
 clouds、5,000 個 normal member users、10 個 developer users（每個 brand
-1 owner + 1 admin）、100,000 devices。developer users 只做 setup/validation，
+cloud 1 個 owner）、100,000 devices。developer users 只做 setup/validation，
 不參與 runtime MQTT/app command traffic。loader VM 數量仍由
 `ceil(devices / HOME100K_LOAD_GENERATOR_DEVICES_PER_VM)` 計算；100K / 20,000
 devices per VM 會得到 5 台，不在 script 或文件寫死。

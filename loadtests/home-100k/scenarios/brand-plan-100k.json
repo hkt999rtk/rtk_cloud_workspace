@@ -3,48 +3,83 @@
   "devices_per_user": 20,
   "brands": [
     {
-      "brandname": "RTK-PRIMARY",
-      "devices": 60000,
-      "normal_users": 3000,
+      "brandname": "RTK-BRAND-01",
+      "devices": 10000,
+      "normal_users": 500,
       "developer_users": {
-        "owner": 1,
-        "admin": 1
+        "owner": 1
       }
     },
     {
-      "brandname": "RTK-MID-1",
-      "devices": 15000,
-      "normal_users": 750,
+      "brandname": "RTK-BRAND-02",
+      "devices": 10000,
+      "normal_users": 500,
       "developer_users": {
-        "owner": 1,
-        "admin": 1
+        "owner": 1
       }
     },
     {
-      "brandname": "RTK-MID-2",
-      "devices": 15000,
-      "normal_users": 750,
+      "brandname": "RTK-BRAND-03",
+      "devices": 10000,
+      "normal_users": 500,
       "developer_users": {
-        "owner": 1,
-        "admin": 1
+        "owner": 1
       }
     },
     {
-      "brandname": "RTK-SMALL-1",
-      "devices": 5000,
-      "normal_users": 250,
+      "brandname": "RTK-BRAND-04",
+      "devices": 10000,
+      "normal_users": 500,
       "developer_users": {
-        "owner": 1,
-        "admin": 1
+        "owner": 1
       }
     },
     {
-      "brandname": "RTK-SMALL-2",
-      "devices": 5000,
-      "normal_users": 250,
+      "brandname": "RTK-BRAND-05",
+      "devices": 10000,
+      "normal_users": 500,
       "developer_users": {
-        "owner": 1,
-        "admin": 1
+        "owner": 1
+      }
+    },
+    {
+      "brandname": "RTK-BRAND-06",
+      "devices": 10000,
+      "normal_users": 500,
+      "developer_users": {
+        "owner": 1
+      }
+    },
+    {
+      "brandname": "RTK-BRAND-07",
+      "devices": 10000,
+      "normal_users": 500,
+      "developer_users": {
+        "owner": 1
+      }
+    },
+    {
+      "brandname": "RTK-BRAND-08",
+      "devices": 10000,
+      "normal_users": 500,
+      "developer_users": {
+        "owner": 1
+      }
+    },
+    {
+      "brandname": "RTK-BRAND-09",
+      "devices": 10000,
+      "normal_users": 500,
+      "developer_users": {
+        "owner": 1
+      }
+    },
+    {
+      "brandname": "RTK-BRAND-10",
+      "devices": 10000,
+      "normal_users": 500,
+      "developer_users": {
+        "owner": 1
       }
     }
   ]
