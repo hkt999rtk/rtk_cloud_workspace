@@ -1761,6 +1761,141 @@ type e2eDataSetupSummary struct {
 	Steps             []e2eStep `json:"steps"`
 }
 
+type stagingE2EMultiBrandConfig struct {
+	Workspace         string
+	EnvRoot           string
+	BrandPlanFile     string
+	DeviceMix         string
+	DevicePrefix      string
+	UserConcurrency   int
+	DeviceConcurrency int
+	BindConcurrency   int
+	OutDir            string
+	Quiet             bool
+	Resume            bool
+	NoResume          bool
+	FromStep          string
+	PlanMode          bool
+	Scripts           map[string]string
+}
+
+func runStagingE2EMultiBrandDataSetup(cfg stagingE2EMultiBrandConfig) error {
+	plan, err := loadLoadTestBrandPlan(cfg.BrandPlanFile)
+	if err != nil {
+		return err
+	}
+	if cfg.PlanMode {
+		fmt.Fprintf(os.Stdout, "multi_brand_plan: %s\n", cfg.BrandPlanFile)
+		fmt.Fprintf(os.Stdout, "total_devices: %d\nnormal_users: %d\ndeveloper_users: %d\ndevices_per_user: %d\n", plan.TotalDevices, plan.normalUserCount(), plan.developerUserCount(), plan.DevicesPerUser)
+		for _, brand := range plan.Brands {
+			deviceMix := cfg.DeviceMix
+			if len(brand.DeviceMix) > 0 {
+				deviceMix = deviceMixString(brand.DeviceMix)
+			}
+			fmt.Fprintf(os.Stdout, "- brandname: %s normal_users=%d devices=%d owner=%d admin=%d device_mix=%s\n", brand.Brandname, brand.NormalUsers, brand.Devices, brand.DeveloperUsers["owner"], brand.DeveloperUsers["admin"], deviceMix)
+		}
+		return nil
+	}
+	if cfg.NoResume {
+		cfg.Resume = false
+	}
+	if cfg.OutDir == "" {
+		cfg.OutDir = filepath.Join(cfg.EnvRoot, "artifacts", "staging-e2e-data", time.Now().UTC().Format("20060102T150405Z"))
+	}
+	logsDir := filepath.Join(cfg.OutDir, "logs")
+	if err := os.MkdirAll(logsDir, 0o755); err != nil {
+		return err
+	}
+	steps := []e2eStep{}
+	runStep := func(name string, argv ...string) error {
+		step, err := runE2EStepWithOptions(name, filepath.Join(logsDir, name+".log"), e2eStepOptions{Quiet: cfg.Quiet}, argv...)
+		steps = append(steps, step)
+		return err
+	}
+	for _, brand := range plan.Brands {
+		brandSlug := brandSlug(brand.Brandname)
+		if err := runStep(brandSlug+"_create_brand", commandWithArgs(cfg.Scripts["create-brand"], "--workspace", cfg.Workspace, "--env-root", cfg.EnvRoot, "--brandname", brand.Brandname)...); err != nil {
+			return err
+		}
+		for _, role := range []string{"owner", "admin"} {
+			count := brand.DeveloperUsers[role]
+			if count <= 0 {
+				continue
+			}
+			args := []string{"--workspace", cfg.Workspace, "--env-root", cfg.EnvRoot, "--brandname", brand.Brandname, "--count", strconv.Itoa(count), "--role", role, "--rotate-password", "--concurrency", strconv.Itoa(cfg.UserConcurrency)}
+			if cfg.NoResume {
+				args = append(args, "--no-reuse-local-users")
+			}
+			if err := runStep(brandSlug+"_create_"+role+"_users", commandWithArgs(cfg.Scripts["create-users"], args...)...); err != nil {
+				return err
+			}
+		}
+		deviceMix := cfg.DeviceMix
+		if len(brand.DeviceMix) > 0 {
+			deviceMix = deviceMixString(brand.DeviceMix)
+		}
+		args := []string{"--workspace", cfg.Workspace, "--env-root", cfg.EnvRoot, "--brandname", brand.Brandname, "--user-count", strconv.Itoa(brand.NormalUsers), "--device-count", strconv.Itoa(brand.Devices), "--device-mix", deviceMix, "--device-prefix", cfg.DevicePrefix + "-" + brandSlug, "--user-concurrency", strconv.Itoa(cfg.UserConcurrency), "--device-concurrency", strconv.Itoa(cfg.DeviceConcurrency), "--bind-concurrency", strconv.Itoa(cfg.BindConcurrency)}
+		if cfg.Resume {
+			args = append(args, "--resume")
+		} else {
+			args = append(args, "--no-resume")
+		}
+		if cfg.FromStep != "" {
+			args = append(args, "--from-step", cfg.FromStep)
+		}
+		args = append(args, "--out-dir", filepath.Join(cfg.OutDir, brandSlug))
+		if cfg.Quiet {
+			args = append(args, "--quiet")
+		}
+		if err := runStep(brandSlug+"_member_devices_bind_validate", commandWithArgs(selfCommandPath("staging-e2e-data-setup"), args...)...); err != nil {
+			return err
+		}
+	}
+	overall := "pass"
+	for _, step := range steps {
+		if step.Status != "PASS" && step.Status != "SKIP" && step.Status != "RETRY" {
+			overall = "fail"
+		}
+	}
+	summaryFile := filepath.Join(cfg.OutDir, "summary.json")
+	summary := map[string]any{
+		"overall":          overall,
+		"generated_at":     time.Now().UTC().Format(time.RFC3339),
+		"env_root":         cfg.EnvRoot,
+		"brand_plan_file":  cfg.BrandPlanFile,
+		"brand_count":      len(plan.Brands),
+		"normal_users":     plan.normalUserCount(),
+		"developer_users":  plan.developerUserCount(),
+		"devices":          plan.TotalDevices,
+		"devices_per_user": plan.DevicesPerUser,
+		"summary_file":     summaryFile,
+		"steps":            steps,
+	}
+	if err := writeJSON(summaryFile, summary); err != nil {
+		return err
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(summary); err != nil {
+		return err
+	}
+	if overall != "pass" {
+		return exitCode(1)
+	}
+	return nil
+}
+
+func deviceMixString(mix map[string]int) string {
+	keys := make([]string, 0, len(mix))
+	for key := range mix {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", key, mix[key]))
+	}
+	return strings.Join(parts, ",")
+}
+
 func runStagingE2EDataSetup(args []string) error {
 	fs := flag.NewFlagSet("staging-e2e-data-setup", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -1768,6 +1903,7 @@ func runStagingE2EDataSetup(args []string) error {
 	envRootFlag := fs.String("env-root", "", "environment root")
 	planMode := fs.Bool("plan", false, "plan")
 	brandname := fs.String("brandname", "RTK", "brand name")
+	brandPlanFile := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
 	userCount := fs.Int("user-count", 10, "user count")
 	deviceCount := fs.Int("device-count", 100, "device count")
 	deviceMix := fs.String("device-mix", "camera=40,light=25,air_conditioner=20,smart_meter=15", "device mix")
@@ -1821,6 +1957,25 @@ func runStagingE2EDataSetup(args []string) error {
 		"generate-devices": firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT"), selfCommandPath("generate-load-devices")),
 		"bind-devices":     firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT"), selfCommandPath("bind-devices")),
 		"validate-bind":    firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT"), selfCommandPath("validate-device-bind")),
+	}
+	if strings.TrimSpace(*brandPlanFile) != "" {
+		return runStagingE2EMultiBrandDataSetup(stagingE2EMultiBrandConfig{
+			Workspace:         workspace,
+			EnvRoot:           envRoot,
+			BrandPlanFile:     *brandPlanFile,
+			DeviceMix:         *deviceMix,
+			DevicePrefix:      *devicePrefix,
+			UserConcurrency:   *userConcurrency,
+			DeviceConcurrency: *deviceConcurrency,
+			BindConcurrency:   *bindConcurrency,
+			OutDir:            *outDir,
+			Quiet:             *quiet,
+			Resume:            *resume,
+			NoResume:          *noResume,
+			FromStep:          *fromStep,
+			PlanMode:          *planMode,
+			Scripts:           scripts,
+		})
 	}
 	if *planMode {
 		printE2EDataSetupPlan(workspace, envRoot, *brandname, *userCount, *deviceCount, *deviceMix, *userConcurrency, *deviceConcurrency, *bindConcurrency, scripts)
@@ -5062,8 +5217,12 @@ func plannedUsers(brandname, slug, role string, count int) []map[string]any {
 	users := make([]map[string]any, 0, count)
 	for i := 1; i <= count; i++ {
 		suffix := fmt.Sprintf("%03d", i)
+		email := fmt.Sprintf("%s+%s@users.local", slug, suffix)
+		if role != "member" {
+			email = fmt.Sprintf("%s+%s-%s@users.local", slug, role, suffix)
+		}
 		users = append(users, map[string]any{
-			"email":        fmt.Sprintf("%s+%s@users.local", slug, suffix),
+			"email":        email,
 			"display_name": fmt.Sprintf("%s User %s", brandname, suffix),
 			"role":         role,
 		})

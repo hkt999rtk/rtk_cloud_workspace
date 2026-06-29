@@ -58,6 +58,7 @@ load_linode_token_from_env_file
 
 env_root="${HOME100K_ENV_ROOT:-cloud_env/staging/lke}"
 brandname="${HOME100K_BRANDNAME:-RTK}"
+brand_plan="${HOME100K_BRAND_PLAN:-}"
 region="${HOME100K_REGION:-us-sea}"
 vm_label_prefix="${HOME100K_VM_LABEL_PREFIX:-lg}"
 run_id="${HOME100K_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
@@ -152,6 +153,7 @@ Defaults can be overridden with:
   HOME100K_SECRET_ENV_FILE  default: ~/.env; only LINODE_TOKEN is read
   HOME100K_ENV_ROOT       default: cloud_env/staging/lke
   HOME100K_BRANDNAME      default: RTK
+  HOME100K_BRAND_PLAN     optional multi-brand load-test plan JSON
   HOME100K_REGION         default: us-sea
   HOME100K_VM_LABEL_PREFIX default: lg; load-generator VM labels are <prefix>01..<prefix>NN
   HOME100K_RUN_ID         default: current UTC timestamp
@@ -749,6 +751,9 @@ base_args=(
   "--aggregate-correlation-tolerance-percent" "$aggregate_correlation_tolerance_percent"
   "--aggregate-correlation-min-tolerance" "$aggregate_correlation_min_tolerance"
 )
+if [[ -n "$brand_plan" ]]; then
+  base_args+=("--brand-plan" "$brand_plan")
+fi
 if [[ -n "$device_count" ]]; then
   base_args+=("--devices" "$device_count")
 fi

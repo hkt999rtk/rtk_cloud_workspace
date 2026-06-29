@@ -1,0 +1,86 @@
+{
+  "total_devices": 100000,
+  "devices_per_user": 20,
+  "brands": [
+    {
+      "brandname": "RTK-BRAND-01",
+      "devices": 10000,
+      "normal_users": 500,
+      "developer_users": {
+        "owner": 1
+      }
+    },
+    {
+      "brandname": "RTK-BRAND-02",
+      "devices": 10000,
+      "normal_users": 500,
+      "developer_users": {
+        "owner": 1
+      }
+    },
+    {
+      "brandname": "RTK-BRAND-03",
+      "devices": 10000,
+      "normal_users": 500,
+      "developer_users": {
+        "owner": 1
+      }
+    },
+    {
+      "brandname": "RTK-BRAND-04",
+      "devices": 10000,
+      "normal_users": 500,
+      "developer_users": {
+        "owner": 1
+      }
+    },
+    {
+      "brandname": "RTK-BRAND-05",
+      "devices": 10000,
+      "normal_users": 500,
+      "developer_users": {
+        "owner": 1
+      }
+    },
+    {
+      "brandname": "RTK-BRAND-06",
+      "devices": 10000,
+      "normal_users": 500,
+      "developer_users": {
+        "owner": 1
+      }
+    },
+    {
+      "brandname": "RTK-BRAND-07",
+      "devices": 10000,
+      "normal_users": 500,
+      "developer_users": {
+        "owner": 1
+      }
+    },
+    {
+      "brandname": "RTK-BRAND-08",
+      "devices": 10000,
+      "normal_users": 500,
+      "developer_users": {
+        "owner": 1
+      }
+    },
+    {
+      "brandname": "RTK-BRAND-09",
+      "devices": 10000,
+      "normal_users": 500,
+      "developer_users": {
+        "owner": 1
+      }
+    },
+    {
+      "brandname": "RTK-BRAND-10",
+      "devices": 10000,
+      "normal_users": 500,
+      "developer_users": {
+        "owner": 1
+      }
+    }
+  ]
+}

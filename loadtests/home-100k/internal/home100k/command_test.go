@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -51,7 +52,12 @@ func writeTinyEnvRoot(t *testing.T) string {
 
 func writeHomeSQLiteTestData(t *testing.T, envRoot string, users []string, assignments []map[string]any) {
 	t.Helper()
-	dbPath := homeTestDataDBPath(envRoot, "RTK")
+	writeHomeSQLiteTestDataForBrand(t, envRoot, "RTK", "brand-cloud-1", "tenant-1", users, assignments)
+}
+
+func writeHomeSQLiteTestDataForBrand(t *testing.T, envRoot string, brandname string, brandCloudID string, tenantSlug string, users []string, assignments []map[string]any) {
+	t.Helper()
+	dbPath := homeTestDataDBPath(envRoot, brandname)
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -81,25 +87,25 @@ func writeHomeSQLiteTestData(t *testing.T, envRoot string, users []string, assig
 	if err != nil {
 		t.Fatal(err)
 	}
-	userStmt, err := tx.Prepare(`insert into users(brandname, email, brand_cloud_id, tenant_slug, password, tokens_json, app_credentials_json, app_certificate_json, body_json) values('RTK', ?, 'brand-cloud-1', 'tenant-1', 'pw', '{"access_token":"cached-access","refresh_token":"cached-refresh"}', '{}', '{}', ?)`)
+	userStmt, err := tx.Prepare(`insert into users(brandname, email, brand_cloud_id, tenant_slug, password, tokens_json, app_credentials_json, app_certificate_json, body_json) values(?, ?, ?, ?, 'pw', '{"access_token":"cached-access","refresh_token":"cached-refresh"}', '{}', '{}', ?)`)
 	if err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
 	}
 	defer userStmt.Close()
 	for _, email := range users {
-		if _, err := userStmt.Exec(email, mustJSONText(t, map[string]any{"email": email, "password": "pw"})); err != nil {
+		if _, err := userStmt.Exec(brandname, email, brandCloudID, tenantSlug, mustJSONText(t, map[string]any{"email": email, "password": "pw"})); err != nil {
 			_ = tx.Rollback()
 			t.Fatal(err)
 		}
 	}
-	bindStmt, err := tx.Prepare(`insert into device_bindings(brandname, device_id, brand_cloud_id, tenant_slug, assignment_index, assigned_email, device_type, service_options_json) values('RTK', ?, 'brand-cloud-1', 'tenant-1', ?, ?, ?, ?)`)
+	bindStmt, err := tx.Prepare(`insert into device_bindings(brandname, device_id, brand_cloud_id, tenant_slug, assignment_index, assigned_email, device_type, service_options_json) values(?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
 	}
 	defer bindStmt.Close()
-	credentialStmt, err := tx.Prepare(`insert into device_credentials(brandname, device_id, cert_pem, key_pem, chain_pem, bundle_pem, metadata_json, factory_enroll_request_json, factory_enroll_response_redacted_json) values('RTK', ?, 'cert', 'key', 'chain', 'bundle', ?, '', '')`)
+	credentialStmt, err := tx.Prepare(`insert into device_credentials(brandname, device_id, cert_pem, key_pem, chain_pem, bundle_pem, metadata_json, factory_enroll_request_json, factory_enroll_response_redacted_json) values(?, ?, 'cert', 'key', 'chain', 'bundle', ?, '', '')`)
 	if err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
@@ -113,11 +119,11 @@ func writeHomeSQLiteTestData(t *testing.T, envRoot string, users []string, assig
 		if assignmentIndex == 0 && idx > 0 {
 			assignmentIndex = idx
 		}
-		if _, err := bindStmt.Exec(deviceID, assignmentIndex, item["assigned_email"].(string), deviceType, mustJSONText(t, serviceOptions)); err != nil {
+		if _, err := bindStmt.Exec(brandname, deviceID, brandCloudID, tenantSlug, assignmentIndex, item["assigned_email"].(string), deviceType, mustJSONText(t, serviceOptions)); err != nil {
 			_ = tx.Rollback()
 			t.Fatal(err)
 		}
-		if _, err := credentialStmt.Exec(deviceID, mustJSONText(t, map[string]any{"device_id": deviceID, "device_type": deviceType})); err != nil {
+		if _, err := credentialStmt.Exec(brandname, deviceID, mustJSONText(t, map[string]any{"device_id": deviceID, "device_type": deviceType})); err != nil {
 			_ = tx.Rollback()
 			t.Fatal(err)
 		}
@@ -220,6 +226,32 @@ func assertCredentialBundleMetadata(t *testing.T, path string, want map[string]s
 	}
 }
 
+func assertCredentialBundleBrandCounts(t *testing.T, path string, want map[string]int) {
+	t.Helper()
+	db := openCredentialBundleForTest(t, path)
+	defer db.Close()
+	rows, err := db.Query(`select brandname, count(*) from device_bindings group by brandname`)
+	if err != nil {
+		t.Fatalf("brand counts: %v", err)
+	}
+	defer rows.Close()
+	got := map[string]int{}
+	for rows.Next() {
+		var brand string
+		var count int
+		if err := rows.Scan(&brand, &count); err != nil {
+			t.Fatal(err)
+		}
+		got[brand] = count
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("bundle brand counts = %#v, want %#v", got, want)
+	}
+}
+
 func openCredentialBundleForTest(t *testing.T, path string) *sql.DB {
 	t.Helper()
 	file, err := os.Open(path)
@@ -307,6 +339,58 @@ func TestExecutePlanPrintsDeterministicRunPlan(t *testing.T) {
 	if !ok || len(stages) != 1 {
 		t.Fatalf("unexpected stages payload: %#v", decoded["stages"])
 	}
+}
+
+func TestBrandPlanDistributesMultiBrandShardBundles(t *testing.T) {
+	envRoot := writeTinyEnvRoot(t)
+	writeHomeSQLiteTestDataForBrand(t, envRoot, "RTK-PRIMARY", "brand-primary", "tenant-primary", []string{"primary+001@users.local", "primary+002@users.local"}, []map[string]any{
+		{"assignment_index": 0, "assigned_email": "primary+001@users.local", "device_id": "primary-device-0001", "device_type": "light", "service_options": []string{"mqtt"}},
+		{"assignment_index": 1, "assigned_email": "primary+002@users.local", "device_id": "primary-device-0002", "device_type": "smart_meter", "service_options": []string{"mqtt"}},
+	})
+	writeHomeSQLiteTestDataForBrand(t, envRoot, "RTK-SMALL-1", "brand-small", "tenant-small", []string{"small+001@users.local"}, []map[string]any{
+		{"assignment_index": 0, "assigned_email": "small+001@users.local", "device_id": "small-device-0001", "device_type": "light", "service_options": []string{"mqtt"}},
+	})
+	planFile := filepath.Join(envRoot, "env", "loadtest-brand-plan.json")
+	if err := os.WriteFile(planFile, []byte(`{
+		"total_devices": 3,
+		"devices_per_user": 1,
+		"brands": [
+			{"brandname":"RTK-PRIMARY","devices":2,"normal_users":2,"developer_users":{"owner":1,"admin":1}},
+			{"brandname":"RTK-SMALL-1","devices":1,"normal_users":1,"developer_users":{"owner":1,"admin":1}}
+		]
+	}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:                   envRoot,
+		Brandname:                 "RTK",
+		BrandPlanFile:             planFile,
+		Region:                    "us-sea",
+		LoadGeneratorDevicesPerVM: 3,
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+	if plan.Conditions.Devices != 3 || plan.Conditions.Users != 3 || plan.Conditions.DeveloperUsers != 4 {
+		t.Fatalf("plan counts devices=%d users=%d developers=%d", plan.Conditions.Devices, plan.Conditions.Users, plan.Conditions.DeveloperUsers)
+	}
+	if len(plan.BrandDistribution) != 2 {
+		t.Fatalf("brand distribution = %#v", plan.BrandDistribution)
+	}
+
+	bundle, err := writeShardCredentialBundle(filepath.Join(envRoot, "out"), envRoot, plan, plan.Assignments[0])
+	if err != nil {
+		t.Fatalf("writeShardCredentialBundle() error = %v", err)
+	}
+	assertCredentialBundleCounts(t, bundle.CompressedPath, map[string]int{
+		"devices":         3,
+		"users":           3,
+		"device_bindings": 3,
+	})
+	assertCredentialBundleBrandCounts(t, bundle.CompressedPath, map[string]int{
+		"RTK-PRIMARY": 2,
+		"RTK-SMALL-1": 1,
+	})
 }
 
 func TestExecutePlanAcceptsConfiguredStageDurations(t *testing.T) {

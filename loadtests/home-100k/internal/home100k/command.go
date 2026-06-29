@@ -180,6 +180,7 @@ func parseCommonFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	fs.SetOutput(stderr)
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
+	brandPlan := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
@@ -191,9 +192,10 @@ func parseCommonFlags(name string, args []string, stderr io.Writer) (PlanOptions
 		return PlanOptions{}, false, err
 	}
 	opts := PlanOptions{
-		EnvRoot:   *envRoot,
-		Brandname: *brandname,
-		Region:    *region,
+		EnvRoot:       *envRoot,
+		Brandname:     *brandname,
+		BrandPlanFile: *brandPlan,
+		Region:        *region,
 	}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
@@ -218,6 +220,7 @@ func parseRunFlags(name string, args []string, stderr io.Writer) (PlanOptions, b
 	fs.SetOutput(stderr)
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
+	brandPlan := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
@@ -232,9 +235,10 @@ func parseRunFlags(name string, args []string, stderr io.Writer) (PlanOptions, b
 		return PlanOptions{}, false, runFlagValues{}, err
 	}
 	opts := PlanOptions{
-		EnvRoot:   *envRoot,
-		Brandname: *brandname,
-		Region:    *region,
+		EnvRoot:       *envRoot,
+		Brandname:     *brandname,
+		BrandPlanFile: *brandPlan,
+		Region:        *region,
 	}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
@@ -1455,6 +1459,7 @@ func parseProvisionVMFlags(name string, args []string, stderr io.Writer) (PlanOp
 	fs.SetOutput(stderr)
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
+	brandPlan := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
@@ -1473,7 +1478,7 @@ func parseProvisionVMFlags(name string, args []string, stderr io.Writer) (PlanOp
 	if err := fs.Parse(args); err != nil {
 		return PlanOptions{}, provisionVMFlagValues{}, err
 	}
-	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
+	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, BrandPlanFile: *brandPlan, Region: *region}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
@@ -1497,6 +1502,7 @@ func parseDestroyVMFlags(name string, args []string, stderr io.Writer) (PlanOpti
 	fs.SetOutput(stderr)
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
+	brandPlan := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
@@ -1511,7 +1517,7 @@ func parseDestroyVMFlags(name string, args []string, stderr io.Writer) (PlanOpti
 	if err := fs.Parse(args); err != nil {
 		return PlanOptions{}, destroyVMFlagValues{}, err
 	}
-	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
+	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, BrandPlanFile: *brandPlan, Region: *region}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
@@ -1531,6 +1537,7 @@ func parseListVMFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	fs.SetOutput(stderr)
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
+	brandPlan := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
@@ -1543,7 +1550,7 @@ func parseListVMFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	if err := fs.Parse(args); err != nil {
 		return PlanOptions{}, listVMFlagValues{}, err
 	}
-	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
+	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, BrandPlanFile: *brandPlan, Region: *region}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
@@ -1561,6 +1568,7 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	fs.SetOutput(stderr)
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
+	brandPlan := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
@@ -1596,7 +1604,7 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	if strings.TrimSpace(*credentialBundleFormat) != "sqlite-gzip" {
 		return PlanOptions{}, workflowFlagValues{}, fmt.Errorf("unsupported --credential-bundle-format %q; only sqlite-gzip is supported", *credentialBundleFormat)
 	}
-	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
+	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, BrandPlanFile: *brandPlan, Region: *region}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
@@ -1635,6 +1643,7 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	fs.SetOutput(stderr)
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
+	brandPlan := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
@@ -1659,7 +1668,7 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	if strings.TrimSpace(*role) == "" {
 		return PlanOptions{}, shardRunFlagValues{}, fmt.Errorf("--role is required")
 	}
-	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
+	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, BrandPlanFile: *brandPlan, Region: *region}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
@@ -3190,6 +3199,9 @@ func writeEnvRsyncFilter(path string, envRoot string, assignment VMAssignment) e
 }
 
 type deviceManifestRow struct {
+	Brandname       string
+	BrandCloudID    string
+	TenantSlug      string
 	AssignmentIndex int
 	AssignedEmail   string
 	DeviceID        string
@@ -3198,6 +3210,9 @@ type deviceManifestRow struct {
 }
 
 type shardBindAssignment struct {
+	Brandname       string   `json:"brandname,omitempty"`
+	BrandCloudID    string   `json:"brand_cloud_id,omitempty"`
+	TenantSlug      string   `json:"tenant_slug,omitempty"`
 	AssignmentIndex int      `json:"assignment_index"`
 	AssignedEmail   string   `json:"assigned_email"`
 	DeviceID        string   `json:"device_id"`
@@ -3290,44 +3305,68 @@ func validatePlanDataCoverage(envRoot string, plan Plan) error {
 }
 
 func inspectPlanDataCoverage(envRoot string, plan Plan) (planDataCoverage, error) {
-	dbPath := homeTestDataDBPath(envRoot, plan.Conditions.Brandname)
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		return planDataCoverage{}, err
+	brands := plan.BrandDistribution
+	if len(brands) == 0 {
+		brands = []BrandDistributionEntry{{Brandname: plan.Conditions.Brandname}}
 	}
-	defer db.Close()
 	coverage := planDataCoverage{
-		UsersPath:      dbPath,
-		DeviceBindPath: dbPath,
+		UsersPath:      "multi-brand sqlite",
+		DeviceBindPath: "multi-brand sqlite",
 		DeviceMix:      map[string]int{},
 	}
-	if err := db.QueryRow(`select count(*) from users where brandname = ?`, plan.Conditions.Brandname).Scan(&coverage.UsersAvailable); err != nil {
-		return planDataCoverage{}, fmt.Errorf("read SQLite users coverage: %w", err)
-	}
 	eligibleUsers := map[string]bool{}
-	rows, err := db.Query(`select b.assigned_email, b.device_type, b.service_options_json from device_bindings b join users u on u.brandname = b.brandname and u.email = b.assigned_email where b.brandname = ? order by b.assignment_index, b.device_id`, plan.Conditions.Brandname)
-	if err != nil {
-		return planDataCoverage{}, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var email, deviceType, serviceOptionsJSON string
-		if err := rows.Scan(&email, &deviceType, &serviceOptionsJSON); err != nil {
+	for _, brand := range brands {
+		dbPath := homeTestDataDBPath(envRoot, brand.Brandname)
+		db, err := sql.Open("sqlite", dbPath)
+		if err != nil {
 			return planDataCoverage{}, err
 		}
-		serviceOptions := []string{}
-		_ = json.Unmarshal([]byte(serviceOptionsJSON), &serviceOptions)
-		if !homeDeviceType(deviceType) || !stringSliceContains(serviceOptions, "mqtt") {
-			continue
+		if len(brands) == 1 {
+			coverage.UsersPath = dbPath
+			coverage.DeviceBindPath = dbPath
 		}
-		coverage.DevicesAvailable++
-		coverage.DeviceMix[deviceType]++
-		if email != "" {
-			eligibleUsers[email] = true
+		var users int
+		userCountQuery := `select count(*) from users where brandname = ?`
+		bindingQuery := `select b.brandname, b.assigned_email, b.device_type, b.service_options_json from device_bindings b join users u on u.brandname = b.brandname and u.email = b.assigned_email where b.brandname = ? order by b.assignment_index, b.device_id`
+		if homeSQLiteColumnExists(db, "users", "role") {
+			userCountQuery = `select count(*) from users where brandname = ? and (role = 'member' or coalesce(role, '') = '')`
+			bindingQuery = `select b.brandname, b.assigned_email, b.device_type, b.service_options_json from device_bindings b join users u on u.brandname = b.brandname and u.email = b.assigned_email where b.brandname = ? and (u.role = 'member' or coalesce(u.role, '') = '') order by b.assignment_index, b.device_id`
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return planDataCoverage{}, err
+		if err := db.QueryRow(userCountQuery, brand.Brandname).Scan(&users); err != nil {
+			_ = db.Close()
+			return planDataCoverage{}, fmt.Errorf("read SQLite users coverage: %w", err)
+		}
+		coverage.UsersAvailable += users
+		rows, err := db.Query(bindingQuery, brand.Brandname)
+		if err != nil {
+			_ = db.Close()
+			return planDataCoverage{}, err
+		}
+		for rows.Next() {
+			var rowBrand, email, deviceType, serviceOptionsJSON string
+			if err := rows.Scan(&rowBrand, &email, &deviceType, &serviceOptionsJSON); err != nil {
+				_ = rows.Close()
+				_ = db.Close()
+				return planDataCoverage{}, err
+			}
+			serviceOptions := []string{}
+			_ = json.Unmarshal([]byte(serviceOptionsJSON), &serviceOptions)
+			if !homeDeviceType(deviceType) || !stringSliceContains(serviceOptions, "mqtt") {
+				continue
+			}
+			coverage.DevicesAvailable++
+			coverage.DeviceMix[deviceType]++
+			if email != "" {
+				eligibleUsers[rowBrand+"\x00"+email] = true
+			}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			_ = db.Close()
+			return planDataCoverage{}, err
+		}
+		_ = rows.Close()
+		_ = db.Close()
 	}
 	coverage.EligibleUsers = len(eligibleUsers)
 	return coverage, nil
@@ -3354,6 +3393,28 @@ func stackStateRelPath(envRoot string) string {
 		return rel
 	}
 	return ""
+}
+
+func homeSQLiteColumnExists(db *sql.DB, table string, column string) bool {
+	rows, err := db.Query(`pragma table_info(` + table + `)`)
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull int
+		var dflt any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			return false
+		}
+		if name == column {
+			return true
+		}
+	}
+	return false
 }
 
 func maxAssignmentConnectedDevices(assignment VMAssignment) int {

@@ -623,6 +623,14 @@ factory-enroll port-forward endpoint 分散 device enrollment；這只是避免�
 port-forward 成為 setup 瓶頸，不可拿來當 MQTT pod 或 LKE node 容量係數。
 容量公式、100K 初始預測與二分實驗策略見 `docs/lke-capacity-sizing.md`。
 
+100K 7/7 loading baseline 的 test data distribution 由
+`loadtests/home-100k/scenarios/brand-plan-100k.json` 定義：10 個 brand
+clouds、5,000 個 normal member users、10 個 developer users（每個 brand
+cloud 1 個 owner）、100,000 devices。developer users 只做 setup/validation，
+不參與 runtime MQTT/app command traffic。loader VM 數量仍由
+`ceil(devices / HOME100K_LOAD_GENERATOR_DEVICES_PER_VM)` 計算；100K / 20,000
+devices per VM 會得到 5 台，不在 script 或文件寫死。
+
 `run-staging-e2e.sh --confirm` 預設會先 reset K8s runtime resources，因此也
 預設重建 users/devices/bind SQLite test data，不重用舊本機資料；這可避免
 fresh deployment 搭配舊 bindings 造成 validation 失敗。只有在明確加
@@ -684,6 +692,11 @@ scripts/setup-staging-e2e-data.sh \
   --user-count 10 \
   --device-count 100 \
   --out-dir cloud_env/staging/lke/artifacts/staging-e2e/manual-data-setup
+
+scripts/setup-staging-e2e-data.sh \
+  --env-root cloud_env/staging/lke \
+  --brand-plan loadtests/home-100k/scenarios/brand-plan-100k.json \
+  --plan
 ```
 
 也可以用 staging shortcut：
@@ -698,6 +711,7 @@ scripts/setup-staging-e2e-data.sh \
 - `--workspace PATH`：指定 workspace root；預設目前 checkout。
 - `--env-root PATH`：指定 environment directory；預設 `cloud_env/staging`，會依 provider 自動 resolve 到 Kubernetes provider 子目錄，預設 `cloud_env/staging/lke`。
 - `--brandname NAME`：brand cloud 名稱；預設 `RTK`。
+- `--brand-plan FILE`：multi-brand data setup plan；指定後會依 plan 建立每個 brand cloud、owner/admin developer users、member users、devices、bindings 與 validation。
 - `--user-count N` / `--device-count N`：建立 user/device 數量。
 - `--device-mix MIX` / `--device-prefix PREFIX`：轉傳給 `generate-load-devices`。
 - `--out-dir PATH`：輸出 `summary.json`、`logs/*.log` 與 `bind-validation/` 的位置；未指定時使用 `<env-root>/artifacts/staging-e2e-data/<timestamp>/`。

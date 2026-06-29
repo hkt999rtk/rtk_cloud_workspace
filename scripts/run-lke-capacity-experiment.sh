@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_ROOT="$ROOT/cloud_env/staging/lke"
 BRANDNAME="RTK"
+BRAND_PLAN=""
 TARGET_DEVICES=""
 DEVICES_PER_USER="20"
 MQTT_PODS=""
@@ -48,6 +49,7 @@ capacity-run-summary.json.
 Defaults:
   --env-root cloud_env/staging/lke
   --brandname RTK
+  --brand-plan FILE
   --devices-per-user 20
   --load-generator-devices-per-vm 20000
   --mqtt-connections-per-pod 20000
@@ -242,6 +244,9 @@ run_data_setup() {
 			--bind-concurrency "$BIND_CONCURRENCY"
 			"$resume_flag"
 		)
+		if [[ -n "$BRAND_PLAN" ]]; then
+			setup_args+=(--brand-plan "$BRAND_PLAN")
+		fi
 		if [[ "${#from_step_args[@]}" -gt 0 ]]; then
 			setup_args+=("${from_step_args[@]}")
 		fi
@@ -290,6 +295,7 @@ while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--env-root) ENV_ROOT="$2"; shift 2 ;;
 		--brandname) BRANDNAME="$2"; shift 2 ;;
+		--brand-plan) BRAND_PLAN="$2"; shift 2 ;;
 		--target-devices) TARGET_DEVICES="$2"; shift 2 ;;
 		--devices-per-user) DEVICES_PER_USER="$2"; shift 2 ;;
 		--mqtt-pods) MQTT_PODS="$2"; shift 2 ;;
@@ -393,6 +399,7 @@ cat > "$CAPACITY_DIR/request.json" <<EOF
   "run_id": "$RUN_ID",
   "env_root": "$ENV_ROOT",
   "brandname": "$BRANDNAME",
+  "brand_plan_file": "$BRAND_PLAN",
   "target_devices": $TARGET_DEVICES,
   "users": $USERS,
   "devices_per_user": $DEVICES_PER_USER,
@@ -483,21 +490,27 @@ CURRENT_PHASE="data-setup"
 if [[ "$LIVE" -eq 1 ]]; then
 	run_data_setup
 else
+	data_setup_plan_args=(
+		--env-root "$ENV_ROOT"
+		--brandname "$BRANDNAME"
+		--user-count "$USERS"
+		--device-count "$TARGET_DEVICES"
+		--device-mix "$DEVICE_MIX"
+		--device-prefix "$RUN_ID-device"
+		--user-concurrency "$USER_CONCURRENCY"
+		--device-concurrency "$DEVICE_CONCURRENCY"
+		--bind-concurrency "$BIND_CONCURRENCY"
+		--no-resume
+		--out-dir "$DATA_DIR"
+	)
+	if [[ -n "$BRAND_PLAN" ]]; then
+		data_setup_plan_args+=(--brand-plan "$BRAND_PLAN")
+	fi
 	run_or_print env \
 		CLOUD_STAGING_E2E_FACTORY_ENROLL_PORTS="$FACTORY_ENROLL_PORTS" \
 		CLOUD_STAGING_E2E_BIND_PROVISION_TIMEOUT="$BIND_PROVISION_TIMEOUT" \
 		"$ROOT/scripts/setup-staging-e2e-data.sh" \
-		--env-root "$ENV_ROOT" \
-		--brandname "$BRANDNAME" \
-		--user-count "$USERS" \
-		--device-count "$TARGET_DEVICES" \
-		--device-mix "$DEVICE_MIX" \
-		--device-prefix "$RUN_ID-device" \
-		--user-concurrency "$USER_CONCURRENCY" \
-		--device-concurrency "$DEVICE_CONCURRENCY" \
-		--bind-concurrency "$BIND_CONCURRENCY" \
-		--no-resume \
-		--out-dir "$DATA_DIR"
+		"${data_setup_plan_args[@]}"
 fi
 
 CURRENT_PHASE="workflow-live"
@@ -506,6 +519,7 @@ CURRENT_PHASE="workflow-live"
 	set +e
 	run_or_print_logged "$RUN_LOG_DIR/workflow-live.log" env \
 		HOME100K_ENV_ROOT="$ENV_ROOT" \
+		HOME100K_BRAND_PLAN="$BRAND_PLAN" \
 		HOME100K_DEVICES="$TARGET_DEVICES" \
 		HOME100K_DEVICES_PER_USER="$DEVICES_PER_USER" \
 		HOME100K_LOAD_GENERATOR_DEVICES_PER_VM="$LOAD_GENERATOR_DEVICES_PER_VM" \

@@ -52,6 +52,51 @@ func TestReportRendersRequiredScenariosAndIncompleteEvidence(t *testing.T) {
 	}
 }
 
+func TestReportRendersMultiBrandConditions(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:   "cloud_env/staging/lke",
+		Brandname: "RTK",
+		Region:    "us-sea",
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+	plan.Conditions.BrandPlanFile = "loadtests/home-100k/scenarios/brand-plan-100k.json"
+	plan.Conditions.DeveloperUsers = 2
+	plan.BrandDistribution = []BrandDistributionEntry{{
+		Brandname:      "RTK-BRAND-01",
+		Devices:        10000,
+		NormalUsers:    500,
+		DeveloperUsers: map[string]int{"owner": 1},
+	}, {
+		Brandname:      "RTK-BRAND-02",
+		Devices:        10000,
+		NormalUsers:    500,
+		DeveloperUsers: map[string]int{"owner": 1},
+	}}
+	report := RenderReport(ReportInput{
+		Plan:                 plan,
+		RunID:                "multi-brand-report",
+		ShadowEvidenceFound:  true,
+		ServerEvidenceFound:  true,
+		LoadGeneratorHealthy: true,
+	})
+
+	for _, want := range []string{
+		"Brand plan: `loadtests/home-100k/scenarios/brand-plan-100k.json`",
+		"Brand clouds: 2",
+		"Developer users: 2",
+		"| RTK-BRAND-01 | 10000 | 500 | owner=1 |",
+	} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("report missing %q:\n%s", want, report)
+		}
+	}
+	if strings.Contains(report, "- Brand: `RTK`") {
+		t.Fatalf("multi-brand report still rendered single-brand condition:\n%s", report)
+	}
+}
+
 func TestReportMarksMissingPerTypeEvidenceAsCompleteFailure(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
 		EnvRoot:   "cloud_env/staging/lke",

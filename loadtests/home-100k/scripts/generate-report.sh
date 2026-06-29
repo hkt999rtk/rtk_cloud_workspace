@@ -203,10 +203,31 @@ def status_summary():
     return lines_or_dash(lines)
 
 def test_conditions():
-    conditions = ((result.get("plan") or {}).get("conditions") or {})
+    plan = result.get("plan") or {}
+    conditions = (plan.get("conditions") or {})
+    brand_distribution = plan.get("brand_distribution") or []
     lines = [
         f"- Env root: `{md(conditions.get('env_root', '-'))}`",
-        f"- Brand: `{md(conditions.get('brandname', '-'))}`",
+    ]
+    if brand_distribution:
+        lines.extend([
+            f"- Brand plan: `{md(conditions.get('brand_plan_file', '-'))}`",
+            f"- Brand clouds: {len(brand_distribution)}",
+            f"- Normal users: {num(conditions.get('users'), 0)}",
+            f"- Developer users: {num(conditions.get('developer_users'), 0)}",
+            "",
+            "| Brand cloud | Devices | Normal users | Developer users |",
+            "| --- | ---: | ---: | --- |",
+        ])
+        for brand in brand_distribution:
+            lines.append(
+                f"| {md(brand.get('brandname', '-'))} | {num(brand.get('devices'), 0)} | "
+                f"{num(brand.get('normal_users'), 0)} | {md(format_developer_users(brand.get('developer_users') or {}))} |"
+            )
+        lines.append("")
+    else:
+        lines.append(f"- Brand: `{md(conditions.get('brandname', '-'))}`")
+    lines.extend([
         f"- Region: `{md(conditions.get('region', '-'))}`",
         f"- Devices: {num(conditions.get('devices'), 0)}",
         f"- Users: {num(conditions.get('users'), 0)}",
@@ -215,8 +236,16 @@ def test_conditions():
         f"- Device session model: `{md(conditions.get('device_session_model', '-'))}`",
         f"- Runner read model: `{md(conditions.get('runner_read_model', '-'))}`",
         "- Runner read requirement: sustained MQTT reads through Go netpoll-backed connections and bounded per-device reader goroutines; command-time one-shot reads are not valid for capacity conclusions.",
-    ]
+    ])
     return "\n".join(lines)
+
+def format_developer_users(developer_users):
+    parts = []
+    for role in sorted(developer_users.keys()):
+        count = num(developer_users.get(role), 0)
+        if count > 0:
+            parts.append(f"{role}={count}")
+    return ", ".join(parts) if parts else "-"
 
 def gate_standards():
     conditions = ((result.get("plan") or {}).get("conditions") or {})

@@ -6,6 +6,7 @@ GO_CMD="${RTK_CLOUD_GO:-go}"
 WORKSPACE="$ROOT"
 ENV_ROOT="${RTK_CLOUD_STAGING_ENV_ROOT:-$ROOT/cloud_env/staging}"
 BRANDNAME="RTK"
+BRAND_PLAN=""
 USER_COUNT="10"
 DEVICE_COUNT="100"
 DEVICE_MIX="camera=40,light=25,air_conditioner=20,smart_meter=15"
@@ -41,6 +42,7 @@ Options:
   --workspace PATH                Workspace root. Default: current checkout.
   --env-root PATH                 Cloud env root. Default: cloud_env/staging.
   --brandname NAME                Brand cloud name. Default: RTK.
+  --brand-plan FILE               Multi-brand load-test plan JSON.
   --user-count N                  Users to create. Default: 10.
   --device-count N                Devices to create and bind. Default: 100.
   --device-mix MIX                Device mix for generate-load-devices.
@@ -83,6 +85,14 @@ while [[ $# -gt 0 ]]; do
 			BRANDNAME="${2:-}"
 			if [[ -z "$BRANDNAME" ]]; then
 				printf 'error: --brandname requires a value\n' >&2
+				exit 2
+			fi
+			shift 2
+			;;
+		--brand-plan)
+			BRAND_PLAN="${2:-}"
+			if [[ -z "$BRAND_PLAN" ]]; then
+				printf 'error: --brand-plan requires a value\n' >&2
 				exit 2
 			fi
 			shift 2
@@ -225,6 +235,9 @@ run_args=(
 	--device-concurrency "$DEVICE_CONCURRENCY"
 	--bind-concurrency "$BIND_CONCURRENCY"
 )
+if [[ -n "$BRAND_PLAN" ]]; then
+	run_args+=(--brand-plan "$BRAND_PLAN")
+fi
 if [[ "$PLAN" -eq 1 ]]; then
 	run_args+=(--plan)
 fi
