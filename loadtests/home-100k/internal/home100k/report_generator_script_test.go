@@ -24,6 +24,19 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 	if err != nil {
 		t.Fatalf("NewPlan() error = %v", err)
 	}
+	plan.Conditions.BrandPlanFile = "loadtests/home-100k/scenarios/brand-plan-100k.json"
+	plan.Conditions.DeveloperUsers = 2
+	plan.BrandDistribution = []BrandDistributionEntry{{
+		Brandname:      "RTK-BRAND-01",
+		Devices:        25000,
+		NormalUsers:    1250,
+		DeveloperUsers: map[string]int{"owner": 1},
+	}, {
+		Brandname:      "RTK-BRAND-02",
+		Devices:        25000,
+		NormalUsers:    1250,
+		DeveloperUsers: map[string]int{"owner": 1},
+	}}
 	result := RunResult{
 		RunID:  "script-report-test",
 		Status: "INCOMPLETE",
@@ -207,6 +220,8 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 		"- sample window: 2026-06-15T00:00:00Z -> 2026-06-15T00:00:30Z\n\n| Node | Samples | CPU p95 |",
 		"lke-node-a",
 		"Mem max",
+		"Brand clouds: 2",
+		"| RTK-BRAND-01 | 25000 | 1250 | owner=1 |",
 		"## Load Generator Start Coordination",
 		"- max start skew ms: 12\n\n| VM | IP | Status | Ready at |",
 		"## Report Source Artifacts",

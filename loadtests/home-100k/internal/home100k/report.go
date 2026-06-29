@@ -58,7 +58,7 @@ func RenderReport(input ReportInput) string {
 
 	fmt.Fprintln(&b, "## Test Conditions")
 	fmt.Fprintf(&b, "- Env root: `%s`\n", input.Plan.Conditions.EnvRoot)
-	fmt.Fprintf(&b, "- Brand: `%s`\n", input.Plan.Conditions.Brandname)
+	renderReportBrandConditions(&b, input.Plan)
 	fmt.Fprintf(&b, "- Region: `%s`\n", input.Plan.Conditions.Region)
 	fmt.Fprintf(&b, "- Devices: %d\n", input.Plan.Conditions.Devices)
 	fmt.Fprintf(&b, "- Users: %d\n", input.Plan.Conditions.Users)
@@ -438,6 +438,45 @@ func RenderReport(input ReportInput) string {
 		fmt.Fprintln(&b)
 	}
 	return b.String()
+}
+
+func renderReportBrandConditions(b *strings.Builder, plan Plan) {
+	if len(plan.BrandDistribution) == 0 {
+		fmt.Fprintf(b, "- Brand: `%s`\n", plan.Conditions.Brandname)
+		return
+	}
+	fmt.Fprintf(b, "- Brand plan: `%s`\n", plan.Conditions.BrandPlanFile)
+	fmt.Fprintf(b, "- Brand clouds: %d\n", len(plan.BrandDistribution))
+	fmt.Fprintf(b, "- Normal users: %d\n", plan.Conditions.Users)
+	fmt.Fprintf(b, "- Developer users: %d\n", plan.Conditions.DeveloperUsers)
+	fmt.Fprintln(b)
+	fmt.Fprintln(b, "| Brand cloud | Devices | Normal users | Developer users |")
+	fmt.Fprintln(b, "| --- | ---: | ---: | --- |")
+	for _, brand := range plan.BrandDistribution {
+		fmt.Fprintf(b, "| %s | %d | %d | %s |\n", brand.Brandname, brand.Devices, brand.NormalUsers, formatDeveloperUserRoles(brand.DeveloperUsers))
+	}
+	fmt.Fprintln(b)
+}
+
+func formatDeveloperUserRoles(roles map[string]int) string {
+	if len(roles) == 0 {
+		return "-"
+	}
+	keys := make([]string, 0, len(roles))
+	for role, count := range roles {
+		if count > 0 {
+			keys = append(keys, role)
+		}
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, role := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", role, roles[role]))
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, ", ")
 }
 
 type serverEvidenceCounterRow struct {
