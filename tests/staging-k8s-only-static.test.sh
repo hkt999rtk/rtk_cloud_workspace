@@ -20,6 +20,7 @@ active_paths=(
 	"$ROOT/scripts/go/rtk-cloud/k8s_runtime.go" \
 	"$ROOT/scripts/go/rtk-cloud/lke.go" \
 	"$ROOT/scripts/go/rtk-cloud/k8s_edge_haproxy.go" \
+	"$ROOT/scripts/go/rtk-cloud/k8s_coturn_vm.go" \
 	"$ROOT/scripts/go/rtk-cloud/provision_provider.go" \
 	"$ROOT/scripts/go/rtk-cloud/provider_linode_vm.go"
 )
@@ -27,7 +28,7 @@ active_paths=(
 for path in "${active_paths[@]}"; do
 	if rg -n -- '--target vm|CLOUD_STAGING_E2E_TARGET|remove-all-vm|remove_vm|provision_all|update-ssh-whitelist|linode_deploy|deploy/linode|provision-public-vm|deploy-public-vm|provision-admin-vm|deploy-admin|linode-deploy deploy|deploy-staging\.sh --local-build' "$path" >/tmp/staging-k8s-static.out; then
 		cat /tmp/staging-k8s-static.out >&2
-		echo "staging runtime docs/scripts must stay K8s-only" >&2
+		echo "staging runtime docs/scripts must stay K8s-only except explicit public edge and TURN data-plane VM helpers" >&2
 		exit 1
 	fi
 done

@@ -18,6 +18,7 @@ func TestDestroyLinodeStagingResourcesDryRunListsMatchesWithoutDeleting(t *testi
 		]}`,
 		"/linode/instances?page_size=500": `{"data":[
 			{"id":201,"label":"video-cloud-staging-edge","region":"us-sea","status":"running","ipv4":["192.0.2.10"],"tags":["video-cloud-staging"]},
+			{"id":203,"label":"video-cloud-staging-turn01","region":"us-sea","status":"running","ipv4":["192.0.2.20"],"tags":["rtk-cloud","video-cloud-staging","coturn-vm"]},
 			{"id":202,"label":"home-100k-lg-1","region":"us-sea","status":"running","ipv4":["192.0.2.11"],"tags":["home-100k"]},
 			{"id":999,"label":"ci-runner-1","region":"us-sea","status":"running","ipv4":["192.0.2.99"],"tags":["ci-runners"]}
 		]}`,
@@ -54,6 +55,7 @@ func TestDestroyLinodeStagingResourcesDryRunListsMatchesWithoutDeleting(t *testi
 		"video-cloud-staging-lke",
 		"Linode instances",
 		"video-cloud-staging-edge",
+		"video-cloud-staging-turn01",
 		"home-100k-lg-1",
 		"Firewalls",
 		"video-cloud-staging-edge",
@@ -81,13 +83,14 @@ func TestDestroyLinodeStagingResourcesConfirmedDeletesMatchedResources(t *testin
 	writeTestFile(t, filepath.Join(envRoot, "state", "lke-kubeconfig.yaml"), "apiVersion: v1\n")
 	curlLog := fakeLinodeCurl(t, map[string]string{
 		"/lke/clusters?page_size=500":           `{"data":[{"id":101,"label":"video-cloud-staging-lke","region":"us-sea"}]}`,
-		"/linode/instances?page_size=500":       `{"data":[{"id":201,"label":"video-cloud-staging-edge","region":"us-sea","status":"running","ipv4":["192.0.2.10"],"tags":["video-cloud-staging"]}]}`,
+		"/linode/instances?page_size=500":       `{"data":[{"id":201,"label":"video-cloud-staging-edge","region":"us-sea","status":"running","ipv4":["192.0.2.10"],"tags":["video-cloud-staging"]},{"id":203,"label":"video-cloud-staging-turn01","region":"us-sea","status":"running","ipv4":["192.0.2.20"],"tags":["rtk-cloud","video-cloud-staging","coturn-vm"]}]}`,
 		"/networking/firewalls?page_size=500":   `{"data":[{"id":301,"label":"video-cloud-staging-edge"}]}`,
 		"/vpcs?page_size=500":                   `{"data":[{"id":401,"label":"video-cloud-staging-vpc","region":"us-sea"}]}`,
 		"/object-storage/buckets?page_size=500": `{"data":[{"label":"video-cloud-staging-artifacts","region":"us-sea"}]}`,
 		"/volumes?page_size=500":                `{"data":[{"id":501,"label":"pvc-orphan","region":"us-sea","status":"active","linode_id":null}]}`,
 		"/lke/clusters/101":                     `{}`,
 		"/linode/instances/201":                 `{}`,
+		"/linode/instances/203":                 `{}`,
 		"/networking/firewalls/301":             `{}`,
 		"/vpcs/401":                             `{}`,
 	})
@@ -108,6 +111,7 @@ func TestDestroyLinodeStagingResourcesConfirmedDeletesMatchedResources(t *testin
 	for _, want := range []string{
 		"DELETE /lke/clusters/101",
 		"DELETE /linode/instances/201",
+		"DELETE /linode/instances/203",
 		"DELETE /networking/firewalls/301",
 		"DELETE /vpcs/401",
 	} {

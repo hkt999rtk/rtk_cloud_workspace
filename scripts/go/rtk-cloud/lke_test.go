@@ -277,6 +277,29 @@ func TestRunProvisionLKEPlanWithoutStackUsesProviderEnv(t *testing.T) {
 	}
 }
 
+func TestRunProvisionLKEPlanShowsCoturnVMIdentity(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+
+	out := captureStdout(t, func() {
+		if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--plan"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	for _, want := range []string{
+		"public TURN: external coturn VM data-plane exception, not HAProxy-backed",
+		"coturn_vm: name=turn01 label=video-cloud-staging-turn01",
+		"type=g6-nanode-1",
+		"image=linode/ubuntu24.04",
+		"domain=turn.video-cloud-staging.realtekconnect.com",
+		"relay_udp=49152-49200",
+		"turn_registry: domain=turnregistry.video-cloud-staging.realtekconnect.com registrar_node_id=turn01",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %q in provision plan, got:\n%s", want, out)
+		}
+	}
+}
+
 func TestRunProvisionLKEDeployRequiresImages(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 
@@ -696,6 +719,7 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 	t.Setenv("LKE_PUBLIC_HTTPS_ACME_SERVER", "https://acme-staging-v02.api.letsencrypt.org/directory")
 	t.Setenv("LKE_EDGE_HAPROXY_PUBLIC_IP", "198.51.100.10")
 	t.Setenv("LKE_EDGE_HAPROXY_PRIVATE_IP", "10.2.1.5")
+	t.Setenv("LKE_COTURN_VM_PUBLIC_IP", "198.51.100.20")
 	t.Setenv("GODADDY_KEY", "test-key")
 	t.Setenv("GODADDY_SECRET", "test-secret")
 	t.Setenv("GODADDY_ENV", "prod")
@@ -734,6 +758,8 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"externalName: video-cloud-api.video-cloud-staging-video-cloud.svc.cluster.local",
 		"kind: Service\nmetadata:\n  name: public-certissuer-video-cloud",
 		"externalName: certissuer.video-cloud-staging-video-cloud.svc.cluster.local",
+		"kind: Service\nmetadata:\n  name: public-video-cloud-turnregistry-video-cloud",
+		"externalName: video-cloud-turnregistry.video-cloud-staging-video-cloud.svc.cluster.local",
 		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-public",
 		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-device-mtls",
 		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-certissuer",
@@ -747,11 +773,13 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"host: video-cloud-staging.realtekconnect.com",
 		"host: device.video-cloud-staging.realtekconnect.com",
 		"host: certissuer.video-cloud-staging.realtekconnect.com",
+		"host: turnregistry.video-cloud-staging.realtekconnect.com",
 		"host: account-manager.video-cloud-staging.realtekconnect.com",
 		"host: admin.video-cloud-staging.realtekconnect.com",
 		"host: frontend.video-cloud-staging.realtekconnect.com",
 		"name: public-video-cloud-api-video-cloud\n                port:\n                  number: 80",
 		"name: public-certissuer-video-cloud\n                port:\n                  number: 9443",
+		"name: public-video-cloud-turnregistry-video-cloud\n                port:\n                  number: 18190",
 		"name: public-account-manager-account-manager\n                port:\n                  number: 80",
 		"name: public-cloud-admin-admin\n                port:\n                  number: 80",
 		"name: public-frontend-frontend\n                port:\n                  number: 80",
@@ -802,9 +830,11 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"--name video-cloud-staging --data 198.51.100.10 --ttl 600",
 		"--name device.video-cloud-staging --data 198.51.100.10 --ttl 600",
 		"--name certissuer.video-cloud-staging --data 198.51.100.10 --ttl 600",
+		"--name turnregistry.video-cloud-staging --data 198.51.100.10 --ttl 600",
 		"--name account-manager.video-cloud-staging --data 198.51.100.10 --ttl 600",
 		"--name admin.video-cloud-staging --data 198.51.100.10 --ttl 600",
 		"--name frontend.video-cloud-staging --data 198.51.100.10 --ttl 600",
+		"--name turn.video-cloud-staging --data 198.51.100.20 --ttl 600",
 	} {
 		if !strings.Contains(goCalls, want) {
 			t.Fatalf("expected %q in GoDaddy calls, got:\n%s", want, goCalls)
@@ -821,6 +851,12 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 	}
 	if !strings.Contains(readTestFile(t, digLog), "video-cloud-staging.realtekconnect.com") {
 		t.Fatalf("expected DNS convergence checks, got:\n%s", readTestFile(t, digLog))
+	}
+	if !strings.Contains(readTestFile(t, digLog), "turn.video-cloud-staging.realtekconnect.com") {
+		t.Fatalf("expected TURN DNS convergence checks, got:\n%s", readTestFile(t, digLog))
+	}
+	if !strings.Contains(readTestFile(t, digLog), "turnregistry.video-cloud-staging.realtekconnect.com") {
+		t.Fatalf("expected TURN registry DNS convergence checks, got:\n%s", readTestFile(t, digLog))
 	}
 	edgeDir := filepath.Join(envRoot, "artifacts", "edge-haproxy")
 	for _, name := range []string{"edge-vms.json", "upstreams.json", "haproxy.cfg", "install.sh", "validation.json"} {
@@ -860,6 +896,79 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 	}
 	if strings.Contains(cfg, "mqtt-node-3 10.2.1.11:31883") {
 		t.Fatalf("MQTT HAProxy backend must only include nodes with MQTT pods, got:\n%s", cfg)
+	}
+
+	coturnDir := filepath.Join(envRoot, "artifacts", "coturn-vm")
+	for _, name := range []string{"coturn-vm.json", "turnserver.conf.redacted", "install.sh", "validation.json"} {
+		if _, err := os.Stat(filepath.Join(coturnDir, name)); err != nil {
+			t.Fatalf("expected coturn VM artifact %s: %v", name, err)
+		}
+	}
+	coturnVM := readTestFile(t, filepath.Join(coturnDir, "coturn-vm.json"))
+	for _, want := range []string{
+		`"public_ip": "198.51.100.20"`,
+		`"domain": "turn.video-cloud-staging.realtekconnect.com"`,
+		`"name": "turn01"`,
+		`"role": "coturn-vm"`,
+	} {
+		if !strings.Contains(coturnVM, want) {
+			t.Fatalf("expected %q in coturn-vm.json, got:\n%s", want, coturnVM)
+		}
+	}
+	redactedConf := readTestFile(t, filepath.Join(coturnDir, "turnserver.conf.redacted"))
+	for _, want := range []string{"use-auth-secret", "static-auth-secret=<redacted>", "realm=video_cloud", "min-port=49152", "max-port=49200"} {
+		if !strings.Contains(redactedConf, want) {
+			t.Fatalf("expected %q in redacted coturn config, got:\n%s", want, redactedConf)
+		}
+	}
+	installScript := readTestFile(t, filepath.Join(coturnDir, "install.sh"))
+	for _, want := range []string{
+		"install -m 0755 /tmp/video-cloud-turnregistrar /opt/video_cloud/bin/turnregistrar",
+		"VIDEO_CLOUD_TURN_REGISTRY_ADDR=%s",
+		"https://turnregistry.video-cloud-staging.realtekconnect.com",
+		"VIDEO_CLOUD_TURN_NODE_ID=%s",
+		"turn01",
+		"VIDEO_CLOUD_TURN_NODE_PUBLIC_HOST=%s",
+		"turn.video-cloud-staging.realtekconnect.com",
+		"VIDEO_CLOUD_TURN_NODE_UDP_PORT=3478",
+		"VIDEO_CLOUD_TURN_NODE_TCP_PORT=3478",
+		"video-cloud-turnregistrar.service",
+		"turn registry register succeeded",
+	} {
+		if !strings.Contains(installScript, want) {
+			t.Fatalf("expected %q in coturn install script, got:\n%s", want, installScript)
+		}
+	}
+	for _, forbidden := range []string{"test-seed-turn-registry-node-auth", "test-seed-turn-shared", "COTURN_HEAD"} {
+		if strings.Contains(installScript, forbidden) {
+			t.Fatalf("coturn install script must not contain %q, got:\n%s", forbidden, installScript)
+		}
+	}
+}
+
+func TestLKECoturnVMNamingUsesTurnNNWithinStackLabel(t *testing.T) {
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+	if got := lkeCoturnVMName(env); got != "turn01" {
+		t.Fatalf("default coturn VM name = %q, want turn01", got)
+	}
+	if got := lkeCoturnVMLabel(env); got != "video-cloud-staging-turn01" {
+		t.Fatalf("default coturn VM label = %q, want video-cloud-staging-turn01", got)
+	}
+
+	env["LKE_COTURN_VM_INDEX"] = "2"
+	if got := lkeCoturnVMName(env); got != "turn02" {
+		t.Fatalf("indexed coturn VM name = %q, want turn02", got)
+	}
+	if got := lkeCoturnVMLabel(env); got != "video-cloud-staging-turn02" {
+		t.Fatalf("indexed coturn VM label = %q, want video-cloud-staging-turn02", got)
+	}
+
+	env["LKE_COTURN_VM_NAME"] = "custom-turn"
+	if got := lkeCoturnVMName(env); got != "custom-turn" {
+		t.Fatalf("explicit coturn VM name = %q, want custom-turn", got)
+	}
+	if got := lkeCoturnVMLabel(env); got != "video-cloud-staging-custom-turn" {
+		t.Fatalf("explicit coturn VM label = %q, want video-cloud-staging-custom-turn", got)
 	}
 }
 
@@ -911,6 +1020,7 @@ func TestRunProvisionLKEDNSIncludesCloudLoggerWhenServiceExists(t *testing.T) {
 	t.Setenv("FAKE_CLOUD_LOGGER_SERVICE", "1")
 	t.Setenv("LKE_EDGE_HAPROXY_PUBLIC_IP", "198.51.100.10")
 	t.Setenv("LKE_EDGE_HAPROXY_PRIVATE_IP", "10.2.1.5")
+	t.Setenv("LKE_COTURN_VM_PUBLIC_IP", "198.51.100.20")
 	t.Setenv("GODADDY_KEY", "test-key")
 	t.Setenv("GODADDY_SECRET", "test-secret")
 	t.Setenv("GODADDY_ENV", "prod")
@@ -949,10 +1059,11 @@ func TestRunProvisionLKEPublicHTTPSRestoresCachedCertificateBeforeACME(t *testin
 		t.Fatal(err)
 	}
 	t.Setenv("RTK_CLOUD_CERTBOT", failingCertbot)
-	fakeDNSCommandsWithGoDelay(t, "198.51.100.10", "0")
+	fakeDNSCommandsWithGoDelay(t, "198.51.100.10", "0", "198.51.100.20")
 	fakeDig(t, "198.51.100.10")
 	t.Setenv("LKE_EDGE_HAPROXY_PUBLIC_IP", "198.51.100.10")
 	t.Setenv("LKE_EDGE_HAPROXY_PRIVATE_IP", "10.2.1.5")
+	t.Setenv("LKE_COTURN_VM_PUBLIC_IP", "198.51.100.20")
 	t.Setenv("GODADDY_KEY", "test-key")
 	t.Setenv("GODADDY_SECRET", "test-secret")
 	t.Setenv("GODADDY_ENV", "prod")
@@ -998,10 +1109,11 @@ func TestRunProvisionLKEPublicHTTPSStartsDNSUpsertsBeforeWaiting(t *testing.T) {
 	}
 	fakeKubectl(t)
 	fakeHelm(t)
-	eventLog := fakeDNSCommandsWithGoDelay(t, "198.51.100.10", "0.2")
+	eventLog := fakeDNSCommandsWithGoDelay(t, "198.51.100.10", "0.2", "198.51.100.20")
 	fakeCertbot(t)
 	t.Setenv("LKE_PUBLIC_HTTPS_ISSUE_EMAIL", "ops@example.test")
 	t.Setenv("LKE_PUBLIC_HTTPS_ACME_SERVER", "https://acme-staging-v02.api.letsencrypt.org/directory")
+	t.Setenv("LKE_COTURN_VM_PUBLIC_IP", "198.51.100.20")
 	t.Setenv("GODADDY_KEY", "test-key")
 	t.Setenv("GODADDY_SECRET", "test-secret")
 	t.Setenv("GODADDY_ENV", "prod")
@@ -1020,6 +1132,7 @@ func TestRunProvisionLKEPublicHTTPSStartsDNSUpsertsBeforeWaiting(t *testing.T) {
 		"--name video-cloud-staging",
 		"--name device.video-cloud-staging",
 		"--name certissuer.video-cloud-staging",
+		"--name turnregistry.video-cloud-staging",
 		"--name account-manager.video-cloud-staging",
 		"--name admin.video-cloud-staging",
 		"--name frontend.video-cloud-staging",
@@ -2187,7 +2300,7 @@ func TestLKEPrometheusConfigHonorsSelectedWorkloads(t *testing.T) {
 	}
 }
 
-func TestRunProvisionLKEDeployAppliesCoturnRuntime(t *testing.T) {
+func TestRunProvisionLKEDeployUsesExternalCoturnVMConfig(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
@@ -2203,32 +2316,37 @@ func TestRunProvisionLKEDeployAppliesCoturnRuntime(t *testing.T) {
 
 	log := readTestFile(t, logPath)
 	for _, want := range []string{
-		"kind: Secret\nmetadata:\n  name: coturn-runtime",
-		"VIDEO_CLOUD_TURN_SHARED_SECRET: \"test-seed-turn-shared\"",
-		"kind: ConfigMap\nmetadata:\n  name: coturn-config",
-		"use-auth-secret",
-		"static-auth-secret=$(VIDEO_CLOUD_TURN_SHARED_SECRET)",
-		"realm=video_cloud",
-		"kind: Deployment\nmetadata:\n  name: coturn",
-		"image: coturn/coturn:",
-		"initContainers:",
-		"command: [\"/usr/bin/turnserver\", \"-c\", \"/tmp/coturn/turnserver.conf\"]",
-		"containerPort: 3478\n              protocol: UDP",
-		"kind: Service\nmetadata:\n  name: coturn",
-		"type: ClusterIP",
-		"port: 3478\n      targetPort: 3478\n      protocol: UDP",
-		"ARGS -n video-cloud-staging-video-cloud rollout status deployment/coturn",
+		"ARGS -n video-cloud-staging-video-cloud delete deployment/coturn --ignore-not-found=true",
+		"ARGS -n video-cloud-staging-video-cloud delete service/coturn --ignore-not-found=true",
+		"ARGS -n video-cloud-staging-video-cloud delete configmap/coturn-config --ignore-not-found=true",
+		"ARGS -n video-cloud-staging-video-cloud delete secret/coturn-runtime --ignore-not-found=true",
+		"name: VIDEO_CLOUD_WEBRTC_STUN_URLS\n              value: \"stun:turn.video-cloud-staging.realtekconnect.com:3478\"",
+		"name: VIDEO_CLOUD_WEBRTC_TURN_URLS\n              value: \"turn:turn.video-cloud-staging.realtekconnect.com:3478?transport=udp,turn:turn.video-cloud-staging.realtekconnect.com:3478?transport=tcp\"",
+		"name: VIDEO_CLOUD_TURN_REALM\n              value: \"video_cloud\"",
+		"name: VIDEO_CLOUD_TURN_SHARED_SECRET\n              valueFrom:\n                secretKeyRef:\n                  name: video-cloud-runtime\n                  key: VIDEO_CLOUD_TURN_SHARED_SECRET",
+		"name: VIDEO_CLOUD_TURN_CREDENTIAL_TTL\n              value: \"10m\"",
 	} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("expected %q in kubectl manifests, got:\n%s", want, log)
+		}
+	}
+	for _, forbidden := range []string{
+		"kind: Deployment\nmetadata:\n  name: coturn",
+		"kind: Service\nmetadata:\n  name: coturn",
+		"kind: ConfigMap\nmetadata:\n  name: coturn-config",
+		"kind: Secret\nmetadata:\n  name: coturn-runtime",
+		"rollout status deployment/coturn",
+	} {
+		if strings.Contains(log, forbidden) {
+			t.Fatalf("did not expect K8s coturn runtime %q, got:\n%s", forbidden, log)
 		}
 	}
 
 	state := readTestFile(t, filepath.Join(envRoot, "state", "video-cloud.state.json"))
 	for _, want := range []string{
 		`"coturn"`,
-		`"private_ip": "coturn.video-cloud-staging-video-cloud.svc.cluster.local"`,
-		`"role": "deployment/coturn"`,
+		`"public_host": "turn.video-cloud-staging.realtekconnect.com"`,
+		`"role": "coturn-vm"`,
 	} {
 		if !strings.Contains(state, want) {
 			t.Fatalf("expected %q in video state, got:\n%s", want, state)
@@ -3934,7 +4052,7 @@ printf '%s\n' "$line" >> "` + logPath + `"
 	return logPath
 }
 
-func fakeDNSCommandsWithGoDelay(t *testing.T, ip, delay string) string {
+func fakeDNSCommandsWithGoDelay(t *testing.T, ip, delay string, turnIP ...string) string {
 	t.Helper()
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "dns-events.log")
@@ -3951,6 +4069,10 @@ sleep "` + delay + `"
 	if err := os.WriteFile(goPath, []byte(goScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	turnRecordIP := ""
+	if len(turnIP) > 0 {
+		turnRecordIP = turnIP[0]
+	}
 	digPath := filepath.Join(dir, "dig")
 	digScript := `#!/usr/bin/env bash
 set -euo pipefail
@@ -3961,6 +4083,10 @@ done
 printf '%s\n' "$line" >> "` + logPath + `"
 if [[ "$*" == *" NS "* || "${1:-}" == "NS" ]]; then
   printf 'ns23.domaincontrol.com.\n'
+  exit 0
+fi
+if [[ -n "` + turnRecordIP + `" && "$*" == *"turn.video-cloud-staging.realtekconnect.com"* ]]; then
+  printf '` + turnRecordIP + `\n'
   exit 0
 fi
 printf '` + ip + `\n'
@@ -4065,6 +4191,10 @@ set -euo pipefail
 } >> "` + logPath + `"
 if [[ "$*" == *" NS "* || "${1:-}" == "NS" ]]; then
   printf 'ns23.domaincontrol.com.\n'
+  exit 0
+fi
+if [[ "$*" == *"turn.video-cloud-staging.realtekconnect.com"* ]]; then
+  printf '198.51.100.20\n'
   exit 0
 fi
 printf '` + ip + `\n'

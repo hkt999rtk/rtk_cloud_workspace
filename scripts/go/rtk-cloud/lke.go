@@ -369,7 +369,17 @@ func lkePlan(env map[string]string, opts provisionOptions) {
 	fmt.Fprintln(os.Stdout, "- public edge: external HAProxy VM :443/:8883 -> LKE node private IP NodePorts")
 	fmt.Fprintln(os.Stdout, "- public HTTP :80 is not exposed; TLS issuance uses GoDaddy DNS-01")
 	fmt.Fprintln(os.Stdout, "- public MQTT: HAProxy TCP passthrough :8883 -> EMQX/MQTT NodePort")
-	fmt.Fprintln(os.Stdout, "- public TURN remains out of scope for HAProxy edge v1")
+	fmt.Fprintln(os.Stdout, "- public TURN: external coturn VM data-plane exception, not HAProxy-backed")
+	fmt.Fprintf(os.Stdout, "  - coturn_vm: name=%s label=%s type=%s image=%s domain=%s ports=3478/udp,3478/tcp relay_udp=%s-%s\n",
+		lkeCoturnVMName(env),
+		lkeCoturnVMLabel(env),
+		firstNonEmpty(os.Getenv("LKE_COTURN_VM_TYPE"), env["LKE_COTURN_VM_TYPE"], "g6-nanode-1"),
+		firstNonEmpty(os.Getenv("LKE_COTURN_VM_IMAGE"), env["LKE_COTURN_VM_IMAGE"], "linode/ubuntu24.04"),
+		lkeCoturnDomain(env),
+		firstNonEmpty(os.Getenv("LKE_COTURN_MIN_PORT"), env["LKE_COTURN_MIN_PORT"], "49152"),
+		firstNonEmpty(os.Getenv("LKE_COTURN_MAX_PORT"), env["LKE_COTURN_MAX_PORT"], "49200"),
+	)
+	fmt.Fprintf(os.Stdout, "  - turn_registry: domain=%s registrar_node_id=%s\n", lkeTurnRegistryPublicDomain(env), lkeCoturnVMName(env))
 	fmt.Fprintln(os.Stdout, "- secrets: OpenBao standalone/AppRole for staging PKI; certissuer delegates device/app signing to OpenBao and Kubernetes Secrets do not carry CA private keys")
 	fmt.Fprintln(os.Stdout, "- deploy images:")
 	for _, workload := range lkeWorkloads(env) {
@@ -523,7 +533,14 @@ func lkeApplyPublicHTTPS(paths provisionPaths, env map[string]string, opts provi
 	if err != nil {
 		return err
 	}
-	return lkeSyncPublicHTTPSDNS(paths, env, opts, hosts, edge.PublicIP)
+	if err := lkeSyncPublicHTTPSDNS(paths, env, opts, hosts, edge.PublicIP); err != nil {
+		return err
+	}
+	coturn, err := lkeEnsureExternalCoturnVM(paths, env, opts)
+	if err != nil {
+		return err
+	}
+	return lkeSyncCoturnDNS(paths, env, opts, coturn)
 }
 
 func lkeSyncPublicHTTPSDNS(paths provisionPaths, env map[string]string, opts provisionOptions, hosts []string, ip string) error {
@@ -642,6 +659,7 @@ func lkePublicHTTPSBaseRoutes(env map[string]string) []lkePublicHTTPSRoute {
 		{Host: videoDomain, Namespace: videoNS, Service: "video-cloud-api", ServicePort: 80, TargetPort: envIntDefault("LKE_VIDEO_CLOUD_PORT", 8080)},
 		{Host: firstNonEmpty(os.Getenv("LKE_DEVICE_DOMAIN"), env["VIDEO_CLOUD_DEVICE_DOMAIN"], "device."+videoDomain), Namespace: videoNS, Service: "video-cloud-api", ServicePort: 80, TargetPort: envIntDefault("LKE_VIDEO_CLOUD_PORT", 8080)},
 		{Host: env["VIDEO_CLOUD_CERTISSUER_DOMAIN"], Namespace: videoNS, Service: "certissuer", ServicePort: 9443, TargetPort: 9443, Protocol: "HTTPS"},
+		{Host: lkeTurnRegistryPublicDomain(env), Namespace: videoNS, Service: "video-cloud-turnregistry", ServicePort: 18190, TargetPort: 18190},
 		{Host: env["ACCOUNT_MANAGER_DOMAIN"], Namespace: lkeNamespaceName(env, "account-manager"), Service: "account-manager", ServicePort: 80, TargetPort: envIntDefault("LKE_ACCOUNT_MANAGER_PORT", 8080)},
 		{Host: env["CLOUD_ADMIN_DOMAIN"], Namespace: lkeNamespaceName(env, "admin"), Service: "cloud-admin", ServicePort: 80, TargetPort: envIntDefault("LKE_CLOUD_ADMIN_PORT", 8080)},
 		{Host: firstNonEmpty(os.Getenv("LKE_FRONTEND_DOMAIN"), env["FRONTEND_DOMAIN"], "frontend."+videoDomain), Namespace: lkeNamespaceName(env, "frontend"), Service: "frontend", ServicePort: 80, TargetPort: envIntDefault("LKE_FRONTEND_PORT", 8080)},
@@ -2068,7 +2086,7 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 		if err := lkeEnsureEMQXCluster(env); err != nil {
 			return err
 		}
-		if err := lkeApplyCoturnRuntime(env); err != nil {
+		if err := lkeRemoveK8sCoturnRuntime(env); err != nil {
 			return err
 		}
 		if err := lkeApplyVideoCloudAuxiliaryServices(env, opts); err != nil {
@@ -2142,20 +2160,19 @@ func lkeApplyCloudLogger(env map[string]string, opts provisionOptions) error {
 	return runKubectl("-n", lkeNamespaceName(env, "logger"), "rollout", "status", "deployment/cloud-logger", "--timeout", firstNonEmpty(os.Getenv("LKE_CLOUD_LOGGER_ROLLOUT_TIMEOUT"), "3m"))
 }
 
-func lkeApplyCoturnRuntime(env map[string]string) error {
-	if err := kubectlApply(lkeCoturnRuntimeSecretManifest(env)); err != nil {
-		return err
+func lkeRemoveK8sCoturnRuntime(env map[string]string) error {
+	namespace := lkeNamespaceName(env, "video-cloud")
+	for _, resource := range []string{
+		"deployment/coturn",
+		"service/coturn",
+		"configmap/coturn-config",
+		"secret/coturn-runtime",
+	} {
+		if err := runKubectl("-n", namespace, "delete", resource, "--ignore-not-found=true"); err != nil {
+			return err
+		}
 	}
-	if err := kubectlApply(lkeCoturnConfigManifest(env)); err != nil {
-		return err
-	}
-	if err := kubectlApply(lkeCoturnDeploymentManifest(env)); err != nil {
-		return err
-	}
-	if err := kubectlApply(lkeCoturnServiceManifest(env)); err != nil {
-		return err
-	}
-	return runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/coturn", "--timeout", firstNonEmpty(os.Getenv("LKE_COTURN_ROLLOUT_TIMEOUT"), "5m"))
+	return nil
 }
 
 func lkeApplyVideoCloudAuxiliaryServices(env map[string]string, opts provisionOptions) error {
@@ -2328,8 +2345,8 @@ func lkeCompatibilityVideoState(env map[string]string) map[string]any {
 				"role":       "statefulset/mqtt",
 			},
 			"coturn": map[string]any{
-				"private_ip": serviceHost("coturn", videoNS),
-				"role":       "deployment/coturn",
+				"public_host": lkeCoturnDomain(env),
+				"role":        "coturn-vm",
 			},
 			"account-manager": map[string]any{
 				"private_ip": serviceHost("account-manager", accountNS),
@@ -3675,7 +3692,8 @@ stringData:
   POSTGRES_PASSWORD: %q
   VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN: %q
   VIDEO_CLOUD_LOGGER_TOKEN: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeInternalAuthToken(), lkeRuntimeSecretValue("cloud-logger-ingest-token"))
+  VIDEO_CLOUD_TURN_SHARED_SECRET: %q
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeInternalAuthToken(), lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("turn-shared"))
 }
 
 func lkeMQTTRuntimeSecretManifest(env map[string]string, material lkeMQTTMaterial) string {
@@ -4283,149 +4301,6 @@ spec:
       port: 80
       targetPort: 18090
 `, lkeNamespaceName(env, "logger"), env["CLOUD_STACK_NAME"])
-}
-
-func lkeCoturnRuntimeSecretManifest(env map[string]string) string {
-	return fmt.Sprintf(`apiVersion: v1
-kind: Secret
-metadata:
-  name: coturn-runtime
-  namespace: %s
-  labels:
-    app.kubernetes.io/name: coturn
-    app.kubernetes.io/part-of: rtk-cloud
-    rtk.realtek.com/provider: lke
-    rtk.realtek.com/stack: %s
-type: Opaque
-stringData:
-  VIDEO_CLOUD_TURN_SHARED_SECRET: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("turn-shared"))
-}
-
-func lkeCoturnConfigManifest(env map[string]string) string {
-	return fmt.Sprintf(`apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: coturn-config
-  namespace: %s
-  labels:
-    app.kubernetes.io/name: coturn
-    app.kubernetes.io/part-of: rtk-cloud
-    rtk.realtek.com/provider: lke
-    rtk.realtek.com/stack: %s
-data:
-  turnserver.conf: |
-    use-auth-secret
-    static-auth-secret=$(VIDEO_CLOUD_TURN_SHARED_SECRET)
-    realm=%s
-    listening-port=3478
-    fingerprint
-    min-port=%s
-    max-port=%s
-    no-loopback-peers
-    no-multicast-peers
-    log-file=stdout
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_COTURN_REALM"), "video_cloud"), firstNonEmpty(os.Getenv("LKE_COTURN_MIN_PORT"), "49152"), firstNonEmpty(os.Getenv("LKE_COTURN_MAX_PORT"), "49200"))
-}
-
-func lkeCoturnDeploymentManifest(env map[string]string) string {
-	return fmt.Sprintf(`apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: coturn
-  namespace: %s
-  labels:
-    app.kubernetes.io/name: coturn
-    app.kubernetes.io/part-of: rtk-cloud
-    rtk.realtek.com/provider: lke
-    rtk.realtek.com/stack: %s
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: coturn
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: coturn
-        app.kubernetes.io/part-of: rtk-cloud
-        rtk.realtek.com/provider: lke
-        rtk.realtek.com/stack: %s
-    spec:
-      initContainers:
-        - name: render-config
-          image: busybox:1.36
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              printf '%%s\n' \
-                use-auth-secret \
-                "static-auth-secret=${VIDEO_CLOUD_TURN_SHARED_SECRET}" \
-                realm=%s \
-                listening-port=3478 \
-                fingerprint \
-                min-port=%s \
-                max-port=%s \
-                no-loopback-peers \
-                no-multicast-peers \
-                log-file=stdout \
-                > /tmp/coturn/turnserver.conf
-          env:
-            - name: VIDEO_CLOUD_TURN_SHARED_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: coturn-runtime
-                  key: VIDEO_CLOUD_TURN_SHARED_SECRET
-          volumeMounts:
-            - name: coturn-runtime-config
-              mountPath: /tmp/coturn
-      containers:
-        - name: coturn
-          image: %s
-          imagePullPolicy: IfNotPresent
-          command: ["/usr/bin/turnserver", "-c", "/tmp/coturn/turnserver.conf"]
-          ports:
-            - name: turn-udp
-              containerPort: 3478
-              protocol: UDP
-            - name: turn-tcp
-              containerPort: 3478
-              protocol: TCP
-          volumeMounts:
-            - name: coturn-runtime-config
-              mountPath: /tmp/coturn
-              readOnly: true
-      volumes:
-        - name: coturn-runtime-config
-          emptyDir: {}
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_COTURN_REALM"), "video_cloud"), firstNonEmpty(os.Getenv("LKE_COTURN_MIN_PORT"), "49152"), firstNonEmpty(os.Getenv("LKE_COTURN_MAX_PORT"), "49200"), firstNonEmpty(os.Getenv("LKE_COTURN_IMAGE"), "coturn/coturn:4.6.2"))
-}
-
-func lkeCoturnServiceManifest(env map[string]string) string {
-	return fmt.Sprintf(`apiVersion: v1
-kind: Service
-metadata:
-  name: coturn
-  namespace: %s
-  labels:
-    app.kubernetes.io/name: coturn
-    app.kubernetes.io/part-of: rtk-cloud
-    rtk.realtek.com/provider: lke
-    rtk.realtek.com/stack: %s
-spec:
-  type: %s
-  selector:
-    app.kubernetes.io/name: coturn
-  ports:
-    - name: turn-udp
-      port: 3478
-      targetPort: 3478
-      protocol: UDP
-    - name: turn-tcp
-      port: 3478
-      targetPort: 3478
-      protocol: TCP
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_COTURN_SERVICE_TYPE"), "ClusterIP"))
 }
 
 func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lkeVideoCloudAuxiliaryService) string {
@@ -5627,6 +5502,19 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
               value: %q
             - name: VIDEO_CLOUD_SHADOW_CACHE_RECOVERY_INTERVAL
               value: %q
+            - name: VIDEO_CLOUD_WEBRTC_STUN_URLS
+              value: %q
+            - name: VIDEO_CLOUD_WEBRTC_TURN_URLS
+              value: %q
+            - name: VIDEO_CLOUD_TURN_REALM
+              value: %q
+            - name: VIDEO_CLOUD_TURN_SHARED_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-runtime
+                  key: VIDEO_CLOUD_TURN_SHARED_SECRET
+            - name: VIDEO_CLOUD_TURN_CREDENTIAL_TTL
+              value: %q
 `,
 			lkeNamespaceName(env, "platform"),
 			lkeVideoCloudAPIDBMaxOpenConns(env),
@@ -5653,6 +5541,10 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 			lkeVideoCloudShadowCacheFlushBatchSize(env),
 			lkeVideoCloudShadowCacheBufferMaxDocs(env),
 			lkeVideoCloudShadowCacheRecoveryInterval(env),
+			lkeCoturnSTUNURLs(env),
+			lkeCoturnTURNURLs(env),
+			lkeCoturnRealm(env),
+			lkeCoturnCredentialTTL(env),
 		)
 		volumeMounts = `          volumeMounts:
             - name: logger-spool

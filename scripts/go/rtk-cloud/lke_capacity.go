@@ -42,6 +42,7 @@ type lkeProviderServicePlan struct {
 	NodeServices     int
 	PostgresVolumes  int
 	EdgeVMs          int
+	CoturnVMs        int
 	RequiredServices int
 	Limit            int
 }
@@ -68,7 +69,7 @@ func lkePrintCapacityPlan(env map[string]string, opts provisionOptions) {
 		if plan.ProviderServices.Limit > 0 {
 			limit = strconv.Itoa(plan.ProviderServices.Limit)
 		}
-		fmt.Fprintf(os.Stdout, "  - provider_active_services: required=%d limit=%s nodes=%d postgres_volumes=%d edge_vms=%d\n", plan.ProviderServices.RequiredServices, limit, plan.ProviderServices.NodeServices, plan.ProviderServices.PostgresVolumes, plan.ProviderServices.EdgeVMs)
+		fmt.Fprintf(os.Stdout, "  - provider_active_services: required=%d limit=%s nodes=%d postgres_volumes=%d edge_vms=%d coturn_vms=%d\n", plan.ProviderServices.RequiredServices, limit, plan.ProviderServices.NodeServices, plan.ProviderServices.PostgresVolumes, plan.ProviderServices.EdgeVMs, plan.ProviderServices.CoturnVMs)
 	}
 }
 
@@ -85,7 +86,7 @@ func lkeCheckCapacity(env map[string]string, opts provisionOptions) error {
 			return fmt.Errorf("LKE capacity check failed: target_connects=%d requires at least %d MQTT replicas, current capacity=%d; set LKE_MQTT_REPLICAS=auto or increase LKE_MQTT_REPLICAS", plan.TargetConnects, plan.RequiredMQTTPods, plan.MQTTCapacity)
 		}
 		if plan.ProviderServices.Limit > 0 && plan.ProviderServices.RequiredServices > plan.ProviderServices.Limit {
-			return fmt.Errorf("LKE provider capacity check failed: required active services=%d exceeds LKE_LINODE_ACTIVE_SERVICE_LIMIT=%d (nodes=%d postgres_volumes=%d edge_vms=%d); reduce LKE_NODE_COUNT, use LKE_POSTGRES_STORAGE_MODE=emptydir for ephemeral validation, reduce LKE_EDGE_HAPROXY_COUNT, or request a Linode quota increase", plan.ProviderServices.RequiredServices, plan.ProviderServices.Limit, plan.ProviderServices.NodeServices, plan.ProviderServices.PostgresVolumes, plan.ProviderServices.EdgeVMs)
+			return fmt.Errorf("LKE provider capacity check failed: required active services=%d exceeds LKE_LINODE_ACTIVE_SERVICE_LIMIT=%d (nodes=%d postgres_volumes=%d edge_vms=%d coturn_vms=%d); reduce LKE_NODE_COUNT, use LKE_POSTGRES_STORAGE_MODE=emptydir for ephemeral validation, reduce LKE_EDGE_HAPROXY_COUNT, reduce LKE_COTURN_VM_COUNT, or request a Linode quota increase", plan.ProviderServices.RequiredServices, plan.ProviderServices.Limit, plan.ProviderServices.NodeServices, plan.ProviderServices.PostgresVolumes, plan.ProviderServices.EdgeVMs, plan.ProviderServices.CoturnVMs)
 		}
 		fmt.Fprintf(os.Stderr, "[lke] capacity ok: node_count=%d required=%d workload_cpu=%dm workload_memory=%dMi\n", plan.NodeCount, plan.RequiredNodes, plan.WorkloadCPU, plan.WorkloadMemMi)
 		return nil
@@ -185,12 +186,14 @@ func lkeProviderServices(env map[string]string, nodeCount int) lkeProviderServic
 	if edgeVMs < 0 {
 		edgeVMs = 0
 	}
+	coturnVMs := lkeCoturnVMCount(env)
 	limit := envIntFrom(env, "LKE_LINODE_ACTIVE_SERVICE_LIMIT", 0)
-	required := nodeCount + postgresVolumes + edgeVMs
+	required := nodeCount + postgresVolumes + edgeVMs + coturnVMs
 	return lkeProviderServicePlan{
 		NodeServices:     nodeCount,
 		PostgresVolumes:  postgresVolumes,
 		EdgeVMs:          edgeVMs,
+		CoturnVMs:        coturnVMs,
 		RequiredServices: required,
 		Limit:            limit,
 	}

@@ -356,7 +356,11 @@ go run ./scripts/go/rtk-cloud -- sync-env --env-root cloud_env/staging --check
 
 ### `go run ./scripts/go/rtk-cloud -- provision-k8s`
 
-Staging runtime 只支援 K8s。`provision-k8s` 不建立 VM，也不部署 VM binary；它會取得 kubeconfig、確認 staging namespaces 存在，並等待 deployment/statefulset rollout ready。
+Staging runtime 只支援 K8s。`provision-k8s` 不建立 retired VM runtime，也不部署
+service-owned VM binary；它會取得 kubeconfig、確認 staging namespaces 存在，
+並等待 deployment/statefulset rollout ready。唯一例外是 TURN data-plane：
+coturn 由 workspace LKE flow 管理一台獨立最小 Linode VM，避免把 UDP/TCP
+relay traffic 放進 Kubernetes Service/Ingress。
 
 Provider-aware `provision`/`deploy` command 只 dispatch 到 Kubernetes provider。
 `CLOUD_PROVIDER=linode` 會回報 retired VM runtime，不會呼叫 VM runtime hooks。
@@ -431,13 +435,23 @@ NodeBalancer。`--dns` / `staging-provision` 都走同一條 HAProxy edge 路徑
    - `video-cloud-staging.realtekconnect.com` -> `video-cloud-api`
    - `device.video-cloud-staging.realtekconnect.com` -> `video-cloud-api`
    - `certissuer.video-cloud-staging.realtekconnect.com` -> `certissuer`
+   - `turnregistry.video-cloud-staging.realtekconnect.com` -> `video-cloud-turnregistry`
    - `account-manager.video-cloud-staging.realtekconnect.com` -> `account-manager`
    - `admin.video-cloud-staging.realtekconnect.com` -> `cloud-admin`
    - `frontend.video-cloud-staging.realtekconnect.com` -> `frontend`
 6. provision 或更新 host-installed HAProxy edge VM；HAProxy 用 TCP mode 與 `balance roundrobin` 將 public `443/TCP` forward 到 ingress-nginx NodePort，將 `8883/TCP` round-robin forward 到三台 LKE node 的 EMQX/MQTT NodePort。
-7. GoDaddy A records 指向 HAProxy edge VM public IP，不等待 NodeBalancer IP。
-8. MQTT public exposure 使用 `NodePort`，不是 `LoadBalancer`；目前 MQTTS NodePort 預設為 `31883`，`mqtt` 預設是 3 pod EMQX StatefulSet cluster，使用 stable `mqtt-0..2` pod DNS 與 required pod anti-affinity 分散到三台 node。
-9. 套用 default-deny ingress NetworkPolicy 與必要 allow rules。
+7. GoDaddy A records 指向 HAProxy edge VM public IP，包含
+   `turnregistry.<VIDEO_CLOUD_DOMAIN>`；coturn VM registrar 會透過這個
+   signed control-plane endpoint 註冊與 heartbeat。
+8. provision 或更新 host-installed coturn VM。預設短名 `turn01`、Linode label
+   `<stack>-turn01`，type `g6-nanode-1`，Ubuntu 24.04，host package +
+   systemd，不跑 Docker。VM 同時安裝 `video-cloud-turnregistrar.service`，
+   讓 K8s 內的 `video-cloud-turnregistry` 知道此 TURN node 的 public host、
+   ports、region 與 heartbeat 狀態。
+9. `turn.<VIDEO_CLOUD_DOMAIN>`
+   或 `LKE_COTURN_DOMAIN` 指向 coturn VM public IP；不等待 NodeBalancer IP。
+10. MQTT public exposure 使用 `NodePort`，不是 `LoadBalancer`；目前 MQTTS NodePort 預設為 `31883`，`mqtt` 預設是 3 pod EMQX StatefulSet cluster，使用 stable `mqtt-0..2` pod DNS 與 required pod anti-affinity 分散到三台 node。
+11. 套用 default-deny ingress NetworkPolicy 與必要 allow rules。
 
 必要輸入：
 
@@ -447,6 +461,14 @@ NodeBalancer。`--dns` / `staging-provision` 都走同一條 HAProxy edge 路徑
 - `helm` 與 `kubectl` 可操作目標 LKE cluster。
 - `LKE_PUBLIC_EDGE_MODE=external-haproxy`，這是唯一支援的 public edge mode。
 - HAProxy edge VM operator inputs，包含 VM label/region/type、SSH key，以及 `LKE_EDGE_HAPROXY_MAXCONN`。`maxconn` 預設從 `200000` 開始，loading test 時再依 memory/FD/CPU 使用量調整。
+- coturn VM operator inputs：`LKE_COTURN_VM_NAME` 預設 `turn01`，
+  `LKE_COTURN_VM_LABEL` 預設 `<stack>-turn01`，`LKE_COTURN_VM_TYPE`
+  預設 `g6-nanode-1`，`LKE_COTURN_DOMAIN` 預設
+  `turn.<VIDEO_CLOUD_DOMAIN>`，`LKE_COTURN_MIN_PORT` / `LKE_COTURN_MAX_PORT`
+  預設 `49152` / `49200`。目前 `LKE_COTURN_VM_COUNT` 固定為 `1`；
+  `LKE_TURN_REGISTRY_PUBLIC_DOMAIN` 預設
+  `turnregistry.<VIDEO_CLOUD_DOMAIN>`。未來多節點命名保留 `turn02`、
+  `turn03` 這類短名。
 
 常用驗證：
 
@@ -455,6 +477,7 @@ kubectl -n video-cloud-staging-ingress get svc ingress-nginx-controller
 kubectl -n video-cloud-staging-video-cloud get svc mqtt-public
 kubectl get ingress -A
 dig +short A video-cloud-staging.realtekconnect.com @ns23.domaincontrol.com
+dig +short A turnregistry.video-cloud-staging.realtekconnect.com @ns23.domaincontrol.com
 nc -vz video-cloud-staging.realtekconnect.com 443
 nc -vz video-cloud-staging.realtekconnect.com 8883
 curl -fsS https://video-cloud-staging.realtekconnect.com/healthz
@@ -467,9 +490,9 @@ TCP passthrough；TLS/mTLS/SNI/HTTP routing 留在 K8s 內的 ingress-nginx /
 EMQX / service pod。詳細 design contract 見
 `docs/lke-external-haproxy-edge.md`。
 
-TURN、Postgres、OpenBao、Prometheus 不會因 `--dns` 對外公開。MQTT
-v1 只公開 MQTTS `8883/TCP`，經 HAProxy TCP passthrough 到 EMQX/MQTT
-NodePort；TURN 仍需要另行設計 TCP/UDP exposure。
+Postgres、OpenBao、Prometheus 不會因 `--dns` 對外公開。MQTT v1 只公開
+MQTTS `8883/TCP`，經 HAProxy TCP passthrough 到 EMQX/MQTT NodePort；TURN
+由獨立 coturn VM 對外提供 `3478/UDP`、`3478/TCP` 與 relay UDP range。
 Grafana 也不會因 `--dns` 對外公開；Platform 管理員從 Cloud Admin iframe
 入口使用，operator debug 可用：
 
