@@ -61,6 +61,7 @@ func TestSampleHomeCommandsUseDeviceSpecificActions(t *testing.T) {
 		{"light", "set_power", map[string]any{"power": true}},
 		{"air_conditioner", "set_hvac", map[string]any{"mode": "cool", "target_temperature_c": float64(24), "fan": "auto"}},
 		{"smart_meter", "read_meter", map[string]any{"reading": "instantaneous"}},
+		{"camera", "set_camera_status", map[string]any{"privacy_mode": false, "motion_detection": true}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.capability, func(t *testing.T) {
@@ -108,6 +109,7 @@ func TestSampleHomeCommandResultsReflectDeviceSpecificState(t *testing.T) {
 		{"light", map[string]any{"power": true}},
 		{"air_conditioner", map[string]any{"mode": "cool", "target_temperature_c": float64(24), "fan": "auto"}},
 		{"smart_meter", map[string]any{"reading": "instantaneous", "telemetry_report_requested": true}},
+		{"camera", map[string]any{"privacy_mode": false, "motion_detection": true, "online": true}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.capability, func(t *testing.T) {

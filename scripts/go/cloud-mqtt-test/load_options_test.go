@@ -107,7 +107,7 @@ func TestUserCommandScheduleCoversShortHome100KStageUsers(t *testing.T) {
 
 func TestHomeDiverseEventsDependOnDeviceTypeAndUsageWindow(t *testing.T) {
 	sessions := []sustainedDeviceSession{}
-	for idx, typ := range []string{"light", "light", "light", "light", "environment_sensor", "environment_sensor", "security_sensor", "camera_status"} {
+	for idx, typ := range []string{"light", "light", "light", "light", "environment_sensor", "environment_sensor", "security_sensor", "camera", "camera_status"} {
 		sessions = append(sessions, sustainedDeviceSession{Record: certRecord{DeviceID: fmt.Sprintf("device-%02d", idx), DeviceType: typ}})
 	}
 	opts := loadOptions{
@@ -135,8 +135,20 @@ func TestHomeDiverseEventsDependOnDeviceTypeAndUsageWindow(t *testing.T) {
 	if telemetryByType["environment_sensor"] == 0 {
 		t.Fatalf("environment sensors should still report telemetry/events: commands=%#v telemetry=%#v events=%#v", commandsByType, telemetryByType, events)
 	}
-	if telemetryByType["security_sensor"] == 0 && telemetryByType["camera_status"] == 0 {
+	if telemetryByType["security_sensor"] == 0 && telemetryByType["camera"] == 0 && telemetryByType["camera_status"] == 0 {
 		t.Fatalf("security/camera status devices should produce event-style reports: telemetry=%#v events=%#v", telemetryByType, events)
+	}
+}
+
+func TestCameraDevicesAreHomeMQTTEligible(t *testing.T) {
+	if !homeTypes["camera"] {
+		t.Fatal("video-capable camera devices must remain eligible for the home MQTT/shadow pilot")
+	}
+	if homeDiverseTrafficProfile("camera") != "event_burst" {
+		t.Fatalf("camera traffic profile = %q, want event_burst", homeDiverseTrafficProfile("camera"))
+	}
+	if commandActionForCapability("camera") != "set_camera_status" {
+		t.Fatalf("camera command action = %q, want set_camera_status", commandActionForCapability("camera"))
 	}
 }
 

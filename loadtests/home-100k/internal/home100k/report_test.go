@@ -206,6 +206,293 @@ func TestReportMarksFunctionalThresholdFailure(t *testing.T) {
 	}
 }
 
+func TestVideo1KProfilePlansVideoPilotDefaults(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:         "cloud_env/staging/lke",
+		Brandname:       "RTK",
+		Region:          "us-sea",
+		ScenarioProfile: "video-1k-v1",
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+
+	if plan.Conditions.Devices != 1000 {
+		t.Fatalf("video-1k-v1 devices = %d, want 1000", plan.Conditions.Devices)
+	}
+	if plan.Conditions.Users != 50 {
+		t.Fatalf("video-1k-v1 users = %d, want 50", plan.Conditions.Users)
+	}
+	if plan.VideoProfile.Name != "video-1k-v1" {
+		t.Fatalf("video profile name = %q", plan.VideoProfile.Name)
+	}
+	if plan.VideoProfile.VideoDevices != 100 || plan.VideoProfile.VideoViewers != 100 {
+		t.Fatalf("video profile devices/viewers = %d/%d, want 100/100", plan.VideoProfile.VideoDevices, plan.VideoProfile.VideoViewers)
+	}
+	if plan.VideoProfile.WebRTCMediaSet != "h264" {
+		t.Fatalf("webrtc media set = %q, want h264", plan.VideoProfile.WebRTCMediaSet)
+	}
+	if len(plan.Stages) != 1 || plan.Stages[0].Name != "target" || plan.Target.TargetConnects != 1000 {
+		t.Fatalf("video-1k-v1 should keep one target ramp stage: %+v target=%+v", plan.Stages, plan.Target)
+	}
+	if !containsString(plan.Workflow, "run-video-loadtest") {
+		t.Fatalf("workflow missing video runner step: %+v", plan.Workflow)
+	}
+}
+
+func TestReportMarksMissingVideoEvidenceIncomplete(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:         "cloud_env/staging/lke",
+		Brandname:       "RTK",
+		Region:          "us-sea",
+		ScenarioProfile: "video-1k-v1",
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+	report := RenderReport(ReportInput{
+		Plan:                 plan,
+		RunID:                "video-missing-evidence",
+		ServerEvidenceFound:  true,
+		LoadGeneratorHealthy: true,
+		ServerEvidence:       ServerEvidence{Complete: true, Sources: requiredEvidenceSources(true)},
+		ServerCorrelation:    ServerCorrelation{Status: "pass"},
+		StageResults: []StageResult{{
+			Name:             "target",
+			ConnectedDevices: 1000,
+			DeviceMQTTTotals: DeviceMQTTTotals{
+				ConnectSuccess:      1000,
+				Subscribes:          1000,
+				ActiveConnections:   1000,
+				ActiveSubscriptions: 1000,
+				Publishes:           1000,
+				ReceivedMessages:    1000,
+				DeltaReceived:       1000,
+				ReportedPublishes:   1000,
+			},
+			AppUserTotals: AppUserTotals{
+				DesiredWrites: 50,
+				ReceivedAcks:  50,
+			},
+			MQTTConnectSuccessRatePercent:  100,
+			DesiredReportedConvergenceRate: 100,
+			OfflineDesiredConvergenceRate:  100,
+			DeltaClearSuccessRatePercent:   100,
+			DeviceTypeTotals:               completeDeviceTypeEvidence(plan),
+		}},
+	})
+
+	for _, want := range []string{
+		"Status: INCOMPLETE",
+		"Result: INCOMPLETE",
+		"Missing WebRTC create/setup/close evidence",
+		"## Video Load Profile",
+		"Video profile: `video-1k-v1`",
+	} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("report missing %q:\n%s", want, report)
+		}
+	}
+}
+
+func TestReportRendersVideoAndTURNEvidence(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:         "cloud_env/staging/lke",
+		Brandname:       "RTK",
+		Region:          "us-sea",
+		ScenarioProfile: "video-1k-v1",
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+	report := RenderReport(ReportInput{
+		Plan:                 plan,
+		RunID:                "video-success",
+		ServerEvidenceFound:  true,
+		LoadGeneratorHealthy: true,
+		ServerEvidence: ServerEvidence{Complete: true, Sources: map[string]EvidenceSource{
+			"emqx":            {Available: true},
+			"video_cloud_api": {Available: true},
+			"postgres":        {Available: true},
+			"redis_valkey":    {Available: true},
+			"ingress_nginx":   {Available: true},
+			"host_pod_resources": {
+				Available: true,
+			},
+			"turn_registry": {
+				Available: true,
+				Counters: map[string]int64{
+					"active_nodes": 2,
+				},
+			},
+			"coturn": {
+				Available: true,
+				Counters: map[string]int64{
+					"active_sessions": 100,
+					"allocations":     100,
+				},
+			},
+		}},
+		ServerCorrelation: ServerCorrelation{Status: "pass"},
+		VideoEvidence: VideoEvidence{
+			Complete: true,
+			WebRTC: WebRTCTotals{
+				CreateAttempts:     100,
+				CreateSuccess:      100,
+				SetupAttempts:      100,
+				SetupSuccess:       100,
+				CloseAttempts:      100,
+				CloseSuccess:       100,
+				SuccessRatePercent: 100,
+				SetupP95MS:         250,
+				SetupP99MS:         310,
+				ICEServerCount:     2,
+			},
+			WebRTCMedia: WebRTCMediaTotals{
+				Enabled:             true,
+				Attempts:            100,
+				Successes:           100,
+				ICEConnectedP95MS:   120,
+				TimeToFirstRTPP95MS: 180,
+				PacketsReceived:     3000,
+				BytesReceived:       1500000,
+				H264PacketsReceived: 3000,
+				H264BytesReceived:   1500000,
+			},
+			TURN: TURNEvidence{
+				RegistryAvailable: true,
+				ActiveNodes:       2,
+				CoturnAvailable:   true,
+				Allocations:       100,
+				ActiveSessions:    100,
+			},
+		},
+		StageResults: []StageResult{{
+			Name:             "target",
+			ConnectedDevices: 1000,
+			DeviceMQTTTotals: DeviceMQTTTotals{
+				ConnectSuccess:      1000,
+				Subscribes:          1000,
+				ActiveConnections:   1000,
+				ActiveSubscriptions: 1000,
+				Publishes:           1000,
+				ReceivedMessages:    1000,
+				DeltaReceived:       1000,
+				ReportedPublishes:   1000,
+			},
+			AppUserTotals: AppUserTotals{
+				DesiredWrites: 50,
+				ReceivedAcks:  50,
+			},
+			MQTTConnectSuccessRatePercent:  100,
+			DesiredReportedConvergenceRate: 100,
+			OfflineDesiredConvergenceRate:  100,
+			DeltaClearSuccessRatePercent:   100,
+			DeviceTypeTotals:               completeDeviceTypeEvidence(plan),
+		}},
+	})
+
+	for _, want := range []string{
+		"Status: COMPLETE",
+		"Result: SUCCESS",
+		"## WebRTC Totals",
+		"| create | 100 | 100 | 100.00% |",
+		"Setup p95: 250 ms",
+		"## WebRTC Media Totals",
+		"First RTP p95: 180 ms",
+		"H.264 packets received: 3000",
+		"## TURN Evidence",
+		"active nodes: 2",
+		"allocations: 100",
+	} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("report missing %q:\n%s", want, report)
+		}
+	}
+}
+
+func TestVideoEvidenceUsesServerTURNEvidenceWhenRunnerOmitsTURN(t *testing.T) {
+	raw := []byte(`{
+		"webrtc": {
+			"success_rate": 1,
+			"setup_latency_p95_ms": 250,
+			"setup_latency_p99_ms": 310,
+			"ice_server_count": 2,
+			"create": {"operations": 100, "successes": 100},
+			"setup": {"operations": 100, "successes": 100},
+			"close": {"operations": 100, "successes": 100}
+		},
+		"webrtc_media": {
+			"attempts": 100,
+			"successes": 100,
+			"ice_connected_p95_ms": 120,
+			"time_to_first_rtp_p95_ms": 180,
+			"packets_received": 3000,
+			"bytes_received": 1500000
+		}
+	}`)
+	video, err := videoEvidenceFromLoadtestJSON(raw)
+	if err != nil {
+		t.Fatalf("videoEvidenceFromLoadtestJSON() error = %v", err)
+	}
+	video = videoEvidenceWithServerEvidence(video, ServerEvidence{Sources: map[string]EvidenceSource{
+		"turn_registry": {
+			Available: true,
+			Counters:  map[string]int64{"turn_registry.active_nodes": 2},
+		},
+		"coturn": {
+			Available: true,
+			Counters: map[string]int64{
+				"coturn.allocations":     100,
+				"coturn.active_sessions": 100,
+			},
+		},
+	}})
+
+	if !video.Complete {
+		t.Fatalf("video evidence should be complete after server TURN merge: %+v", video)
+	}
+	if !video.TURN.RegistryAvailable || !video.TURN.CoturnAvailable || video.TURN.ActiveNodes != 2 {
+		t.Fatalf("turn evidence not merged: %+v", video.TURN)
+	}
+}
+
+func TestVideoEvidenceDerivesSetupFromMediaWhenRunnerOmitsSetupTotals(t *testing.T) {
+	raw := []byte(`{
+		"webrtc": {
+			"success_rate": 0,
+			"create": {"operations": 100, "successes": 100},
+			"setup": {"operations": 0, "successes": 0},
+			"close": {"operations": 100, "successes": 100}
+		},
+		"webrtc_media": {
+			"attempts": 100,
+			"successes": 100,
+			"ice_connected_p95_ms": 27101,
+			"time_to_first_rtp_p95_ms": 27101,
+			"packets_received": 973000,
+			"bytes_received": 209620000
+		}
+	}`)
+	video, err := videoEvidenceFromLoadtestJSON(raw)
+	if err != nil {
+		t.Fatalf("videoEvidenceFromLoadtestJSON() error = %v", err)
+	}
+	if video.WebRTC.SetupAttempts != 100 || video.WebRTC.SetupSuccess != 100 {
+		t.Fatalf("setup totals = %+v, want media-derived 100/100", video.WebRTC)
+	}
+	if video.WebRTC.SuccessRatePercent != 100 {
+		t.Fatalf("success rate = %.2f, want 100", video.WebRTC.SuccessRatePercent)
+	}
+	video = videoEvidenceWithServerEvidence(video, ServerEvidence{Sources: map[string]EvidenceSource{
+		"turn_registry": {Available: true, Counters: map[string]int64{"turn_registry.active_nodes": 1}},
+		"coturn":        {Available: true},
+	}})
+	if !video.Complete {
+		t.Fatalf("video evidence should be complete after media setup derivation and TURN merge: %+v", video)
+	}
+}
+
 func TestReportRedactsSecretsAndMarksLoadGeneratorSaturation(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
 		EnvRoot:   "cloud_env/staging/lke",
@@ -499,4 +786,24 @@ func TestReportRendersCompleteFailWhenSuccessRateBelowThreshold(t *testing.T) {
 			t.Fatalf("report missing %q:\n%s", want, report)
 		}
 	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func completeDeviceTypeEvidence(plan Plan) map[string]DeviceTypeTotals {
+	out := map[string]DeviceTypeTotals{}
+	for name, count := range plan.DeviceMix {
+		if count <= 0 {
+			continue
+		}
+		out[name] = DeviceTypeTotals{TelemetryPublishes: 1}
+	}
+	return out
 }

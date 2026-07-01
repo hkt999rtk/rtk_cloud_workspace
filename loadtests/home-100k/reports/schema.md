@@ -14,6 +14,8 @@ carry the same sections.
 - `target`
 - `device_mqtt_totals`
 - `app_user_totals`
+- `video_profile` when the selected scenario enables video
+- `video_evidence` when the selected scenario enables video
 - `shadow_metrics`
 - `server_evidence`
 - `server_correlation`
@@ -79,9 +81,17 @@ The public `home-100k.sh` workflow also persists:
 - `workflow-status.log`
 - `resource-samples/load-vms.tsv`
 - `resource-samples/k8s-nodes.tsv`
+- `video/load-results.json` when `HOME100K_SCENARIO_PROFILE=video-1k-v1`
+  enables the video runner
 
 The report generator must summarize load-generator VM and per-Kubernetes-node
 resource usage from those files.
+
+For the `video-1k-v1` profile, `aggregate` reads
+`<out-dir>/video/load-results.json` from
+`e2e_test/video_cloud/load/scripts/run_video_loadtest.sh` and folds it into
+`video_evidence`. This reuses the workspace-owned video runner instead of
+adding WebRTC media logic to the home MQTT/shadow runner.
 
 Live reports must also render the generator runtime limits used for the run:
 
@@ -158,6 +168,48 @@ Each target-window result must include:
 - `received_acks`
 - `bytes_sent`
 - `bytes_received`
+
+## Required Video Evidence For `video-1k-v1`
+
+The `video-1k-v1` plan must include:
+
+- `video_profile.name`: `video-1k-v1`
+- `video_profile.video_devices`: default `100`
+- `video_profile.video_viewers`: default `100`
+- `video_profile.webrtc_media_set`: default `h264`
+
+The aggregated report must include `video_evidence`:
+
+- `webrtc_totals.create_attempts`
+- `webrtc_totals.create_success`
+- `webrtc_totals.setup_attempts`
+- `webrtc_totals.setup_success`
+- `webrtc_totals.close_attempts`
+- `webrtc_totals.close_success`
+- `webrtc_totals.success_rate_percent`
+- `webrtc_totals.setup_p95_ms`
+- `webrtc_totals.setup_p99_ms`
+- `webrtc_totals.ice_server_count`
+- `webrtc_totals.open_sessions`
+- `webrtc_media_totals.enabled`
+- `webrtc_media_totals.ice_connected_p95_ms`
+- `webrtc_media_totals.time_to_first_rtp_p95_ms`
+- `webrtc_media_totals.packets_received`
+- `webrtc_media_totals.bytes_received`
+- `webrtc_media_totals.h264_packets_received` when `h264` or `av` media runs
+- `webrtc_media_totals.opus_packets_received` when `av` media runs
+- `turn_evidence.registry_available`
+- `turn_evidence.active_nodes`
+- `turn_evidence.coturn_available`
+- `turn_evidence.allocations` when available
+- `turn_evidence.active_sessions` when available
+
+Missing WebRTC create/setup/close evidence sets `status=INCOMPLETE`. A
+completed signaling run below the configured functional threshold sets
+`result=FAIL`. When WebRTC media is enabled, missing ICE-connected or
+first-RTP evidence sets `result=FAIL`. Missing external TURN/coturn evidence
+sets `status=INCOMPLETE`; a signaling-only pass must not be reported as media
+capacity success.
 
 ## Required Client Target Coverage
 

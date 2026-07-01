@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -217,6 +218,95 @@ func runVideoRelayTest(args []string) error {
 		return exitErr
 	}
 	return exitCode(1)
+}
+
+func runVideoLoadtestTokens(args []string) error {
+	fs := flag.NewFlagSet("video-loadtest-tokens", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	envRootFlag := fs.String("env-root", "", "environment root")
+	brandname := fs.String("brandname", "RTK", "brand name")
+	maxDevices := fs.Int("max-devices", 100, "maximum selected video devices")
+	expirySeconds := fs.Int("expiry-seconds", 1800, "request_token expiry seconds")
+	outEnv := fs.String("out-env", "", "output shell env file")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *envRootFlag == "" {
+		return errors.New("--env-root is required")
+	}
+	if *outEnv == "" {
+		return errors.New("--out-env is required")
+	}
+	workspace, err := workspaceRoot()
+	if err != nil {
+		return err
+	}
+	envRoot, err := resolveEnvRoot(workspace, *envRootFlag)
+	if err != nil {
+		return err
+	}
+	selected, blockers, err := selectVideoRelayDevicesFromTestData(envRoot, *brandname, *maxDevices)
+	if err != nil {
+		return err
+	}
+	if len(blockers) > 0 {
+		return errors.New(strings.Join(blockers, "; "))
+	}
+	if len(selected) == 0 {
+		return errors.New("no selected video devices")
+	}
+	stackEnv := videoRelayEnvValues(filepath.Join(envRoot, "env", "stack.env"))
+	apiURL := "https://" + firstNonEmpty(stackEnv["VIDEO_CLOUD_DOMAIN"], "video-cloud-staging.realtekconnect.com")
+	mtlsURL := videoCloudMTLSBaseURLForRelay(envRoot, stackEnv, apiURL)
+	deviceTokens := map[string]string{}
+	appTokens := map[string]string{}
+	deviceIDs := make([]string, 0, len(selected))
+	for _, device := range selected {
+		cert, err := loadRelayDeviceCertificate("", device)
+		if err != nil {
+			return fmt.Errorf("device %s certificate material missing: %w", device.DeviceID, err)
+		}
+		deviceResp, err := requestVideoRelayToken(mtlsURL, cert, map[string]any{"scope": "device", "expiry": *expirySeconds})
+		if err != nil {
+			return fmt.Errorf("device %s request_token failed: %w", device.DeviceID, err)
+		}
+		appCert, err := loadRelayAppCertificate(device.User)
+		if err != nil {
+			return fmt.Errorf("user %s app certificate material missing: %w", device.AssignedEmail, err)
+		}
+		appToken, err := requestVideoRelayToken(mtlsURL, appCert, map[string]any{"scope": "app", "devid": device.DeviceID, "expiry": *expirySeconds})
+		if err != nil {
+			return fmt.Errorf("device %s app request_token failed: %w", device.DeviceID, err)
+		}
+		deviceIDs = append(deviceIDs, device.DeviceID)
+		deviceTokens[device.DeviceID] = deviceResp.AccessToken
+		appTokens[device.DeviceID] = appToken.AccessToken
+	}
+	deviceTokenJSON, _ := json.Marshal(deviceTokens)
+	appTokenJSON, _ := json.Marshal(appTokens)
+	tokenDir := filepath.Dir(*outEnv)
+	deviceTokenPath := filepath.Join(tokenDir, "device-token-map.json")
+	appTokenPath := filepath.Join(tokenDir, "app-token-map.json")
+	if err := os.MkdirAll(tokenDir, 0o700); err != nil {
+		return err
+	}
+	if err := os.WriteFile(deviceTokenPath, deviceTokenJSON, 0o600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(appTokenPath, appTokenJSON, 0o600); err != nil {
+		return err
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "export VIDEO_CLOUD_LOAD_DEVICE_IDS='%s'\n", shellQuote(strings.Join(deviceIDs, ",")))
+	fmt.Fprintf(&b, "export VIDEO_CLOUD_LOAD_VIRTUAL_DEVICES='%d'\n", len(deviceIDs))
+	fmt.Fprintf(&b, "export VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE='%s'\n", shellQuote(deviceTokenPath))
+	fmt.Fprintf(&b, "export VIDEO_CLOUD_LOAD_APP_TOKEN_MAP_FILE='%s'\n", shellQuote(appTokenPath))
+	fmt.Fprintf(&b, "export VIDEO_CLOUD_LOAD_ACCOUNT_TOKEN='%s'\n", shellQuote(appTokens[deviceIDs[0]]))
+	if err := os.WriteFile(*outEnv, []byte(b.String()), 0o600); err != nil {
+		return err
+	}
+	fmt.Printf("video loadtest token env: %s devices=%d\n", *outEnv, len(deviceIDs))
+	return nil
 }
 
 func executeVideoRelayTest(workspace, envRoot, brandname, outDir, profile, webrtcRelayRole string, durationSeconds, maxDevices int, traceDetail string) (videoRelayResult, error) {
@@ -912,6 +1002,27 @@ func evaluateVideoRelayCoturnEvidence(envRoot, outDir string, startedAt time.Tim
 	if !required {
 		return videoRelayCoturnStatus{Status: "not_required", Required: false, Detail: "WebRTC path did not require TURN relay evidence"}, nil
 	}
+	artifact := filepath.Join(envRoot, "artifacts", "coturn-vm", "coturn-vm.json")
+	if raw, err := os.ReadFile(artifact); err == nil {
+		var parsed map[string]any
+		_ = json.Unmarshal(raw, &parsed)
+		domain := stringValue(parsed["domain"])
+		if domain == "" {
+			if nested, ok := parsed["coturn_vm"].(map[string]any); ok {
+				domain = stringValue(nested["domain"])
+			}
+		}
+		if domain != "" {
+			conn, err := net.DialTimeout("tcp", net.JoinHostPort(domain, "3478"), 5*time.Second)
+			if err == nil {
+				_ = conn.Close()
+				return videoRelayCoturnStatus{Status: "PASS", Required: true, Detail: "coturn VM public TCP 3478 reachable: " + domain}, []videoRelayCoturnEvent{{
+					Kind:     "public_tcp_available",
+					Evidence: "coturn public TCP 3478 reachable",
+				}}
+			}
+		}
+	}
 	return videoRelayCoturnStatus{Status: "retired", Required: true, Detail: "VM coturn journal evidence is retired for K8s staging; use K8s observability or persisted runtime logs"}, nil
 }
 
@@ -1162,8 +1273,10 @@ func sanitizeVideoRelayText(text string) string {
 }
 
 func loadRelayDeviceCertificate(devicesDir string, device videoRelaySelectedDevice) (tls.Certificate, error) {
-	if strings.TrimSpace(device.KeyPEM) != "" && strings.TrimSpace(firstNonEmpty(device.ChainPEM, device.CertPEM)) != "" {
-		return tls.X509KeyPair([]byte(firstNonEmpty(device.ChainPEM, device.CertPEM)), []byte(device.KeyPEM))
+	certPEM := normalizeVideoRelayPEM(firstNonEmpty(device.ChainPEM, device.CertPEM))
+	keyPEM := normalizeVideoRelayPEM(device.KeyPEM)
+	if strings.TrimSpace(keyPEM) != "" && strings.TrimSpace(certPEM) != "" {
+		return tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
 	}
 	certPath := filepath.Join(devicesDir, firstNonEmpty(device.ChainPath, device.CertPath))
 	keyPath := filepath.Join(devicesDir, device.KeyPath)
@@ -1177,11 +1290,18 @@ func loadRelayDeviceCertificate(devicesDir string, device videoRelaySelectedDevi
 }
 
 func loadRelayAppCertificate(user videoRelayUser) (tls.Certificate, error) {
-	certPEM := firstNonEmpty(user.AppCertificate.CertificateChainPEM, user.AppCertificate.CertificatePEM)
-	if strings.TrimSpace(certPEM) == "" || strings.TrimSpace(user.AppCredentials.PrivateKeyPEM) == "" {
+	certPEM := normalizeVideoRelayPEM(firstNonEmpty(user.AppCertificate.CertificateChainPEM, user.AppCertificate.CertificatePEM))
+	keyPEM := normalizeVideoRelayPEM(user.AppCredentials.PrivateKeyPEM)
+	if strings.TrimSpace(certPEM) == "" || strings.TrimSpace(keyPEM) == "" {
 		return tls.Certificate{}, errors.New("missing app certificate or key")
 	}
-	return tls.X509KeyPair([]byte(certPEM), []byte(user.AppCredentials.PrivateKeyPEM))
+	return tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+}
+
+func normalizeVideoRelayPEM(value string) string {
+	value = strings.ReplaceAll(value, "-----END CERTIFICATE----------BEGIN CERTIFICATE-----", "-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----")
+	value = strings.ReplaceAll(value, "-----END PRIVATE KEY----------BEGIN PRIVATE KEY-----", "-----END PRIVATE KEY-----\n-----BEGIN PRIVATE KEY-----")
+	return value
 }
 
 type videoRelayTokenResponse struct {

@@ -258,3 +258,91 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 		t.Fatalf("generated report still contains template marker:\n%s", report)
 	}
 }
+
+func TestGenerateReportScriptRendersVideoEvidence(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	script := filepath.Clean(filepath.Join(wd, "..", "..", "scripts", "generate-report.sh"))
+	outDir := t.TempDir()
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:         "cloud_env/staging/lke",
+		Brandname:       "RTK",
+		Region:          "us-sea",
+		ScenarioProfile: "video-1k-v1",
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+	result := RunResult{
+		RunID:  "script-video-report-test",
+		Status: "COMPLETE",
+		Result: "SUCCESS",
+		Plan:   plan,
+		VideoEvidence: VideoEvidence{
+			Complete: true,
+			WebRTC: WebRTCTotals{
+				CreateAttempts:     100,
+				CreateSuccess:      100,
+				SetupAttempts:      100,
+				SetupSuccess:       100,
+				CloseAttempts:      100,
+				CloseSuccess:       100,
+				SuccessRatePercent: 100,
+				SetupP95MS:         27101,
+				SetupP99MS:         27101,
+			},
+			WebRTCMedia: WebRTCMediaTotals{
+				Enabled:             true,
+				Attempts:            100,
+				Successes:           100,
+				ICEConnectedP95MS:   27101,
+				TimeToFirstRTPP95MS: 27101,
+				PacketsReceived:     973000,
+				BytesReceived:       209620000,
+				H264PacketsReceived: 941974,
+				H264BytesReceived:   206973463,
+			},
+			TURN: TURNEvidence{
+				RegistryAvailable: true,
+				ActiveNodes:       1,
+				CoturnAvailable:   true,
+			},
+		},
+	}
+	raw, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		t.Fatalf("MarshalIndent() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(outDir, "results.json"), raw, 0o644); err != nil {
+		t.Fatalf("WriteFile(results.json) error = %v", err)
+	}
+
+	cmd := exec.Command("bash", script, "--out-dir", outDir)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generate-report.sh error = %v output=%s", err, string(output))
+	}
+	reportRaw, err := os.ReadFile(filepath.Join(outDir, "TEST_REPORT.md"))
+	if err != nil {
+		t.Fatalf("ReadFile(TEST_REPORT.md) error = %v", err)
+	}
+	report := string(reportRaw)
+	for _, want := range []string{
+		"## Video Load Profile",
+		"Video profile: `video-1k-v1`",
+		"## WebRTC Totals",
+		"| setup | 100 | 100 | 100.00% |",
+		"## WebRTC Media Totals",
+		"First RTP p95: 27101 ms",
+		"H.264 packets received: 941974",
+		"## TURN Evidence",
+		"registry available: true",
+		"coturn available: true",
+	} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("generated report missing %q:\n%s", want, report)
+		}
+	}
+}

@@ -29,9 +29,13 @@ negative_set="${VIDEO_CLOUD_LOAD_NEGATIVE_SET:-off}"
 negative_malformed_path="${VIDEO_CLOUD_LOAD_NEGATIVE_MALFORMED_PATH:-}"
 negative_timeout_path="${VIDEO_CLOUD_LOAD_NEGATIVE_TIMEOUT_PATH:-}"
 duration="${VIDEO_CLOUD_LOAD_DURATION:-30s}"
+http_timeout="${VIDEO_CLOUD_LOAD_HTTP_TIMEOUT:-10s}"
 virtual_devices="${VIDEO_CLOUD_LOAD_VIRTUAL_DEVICES:-1}"
 virtual_viewers="${VIDEO_CLOUD_LOAD_VIRTUAL_VIEWERS:-1}"
 iterations="${VIDEO_CLOUD_LOAD_ITERATIONS:-1}"
+app_concurrency="${VIDEO_CLOUD_LOAD_APP_CONCURRENCY:-0}"
+device_concurrency="${VIDEO_CLOUD_LOAD_DEVICE_CONCURRENCY:-0}"
+viewer_concurrency="${VIDEO_CLOUD_LOAD_VIEWER_CONCURRENCY:-0}"
 app_rate="${VIDEO_CLOUD_LOAD_APP_RATE:-0}"
 device_rate="${VIDEO_CLOUD_LOAD_DEVICE_RATE:-0}"
 viewer_rate="${VIDEO_CLOUD_LOAD_VIEWER_RATE:-0}"
@@ -44,7 +48,10 @@ admin_token="${VIDEO_CLOUD_LOAD_ADMIN_TOKEN:-}"
 device_token="${VIDEO_CLOUD_LOAD_DEVICE_TOKEN:-}"
 device_tokens="${VIDEO_CLOUD_LOAD_DEVICE_TOKENS:-}"
 app_tokens="${VIDEO_CLOUD_LOAD_APP_TOKENS:-}"
+device_token_map_file="${VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE:-}"
+app_token_map_file="${VIDEO_CLOUD_LOAD_APP_TOKEN_MAP_FILE:-}"
 refresh_token="${VIDEO_CLOUD_LOAD_REFRESH_TOKEN:-}"
+device_ids="${VIDEO_CLOUD_LOAD_DEVICE_IDS:-}"
 
 cat >"${artifact_dir}/metadata.json" <<EOF
 {
@@ -89,6 +96,15 @@ fi
 if [ -n "${app_tokens}" ]; then
   extra_args+=(--app-token-map-json "${app_tokens}")
 fi
+if [ -n "${device_token_map_file}" ]; then
+  extra_args+=(--device-token-map-file "${device_token_map_file}")
+fi
+if [ -n "${app_token_map_file}" ]; then
+  extra_args+=(--app-token-map-file "${app_token_map_file}")
+fi
+if [ -n "${device_ids}" ]; then
+  extra_args+=(--device-ids "${device_ids}")
+fi
 if [ -n "${refresh_token}" ]; then
   extra_args+=(--refresh-token "${refresh_token}")
 fi
@@ -98,7 +114,7 @@ fi
 
 (
   cd "${e2e_root}"
-  go run ./video_cloud/load/cmd/rtk-video-loadtest run \
+  GOWORK=off go run ./video_cloud/load/cmd/rtk-video-loadtest run \
     --profile "${profile}" \
     --actors "${actors}" \
     --app-route-set "${app_route_set}" \
@@ -125,9 +141,13 @@ fi
     --client-commit "${client_commit}" \
     --server-commit "${server_commit}" \
     --duration "${duration}" \
+    --http-timeout "${http_timeout}" \
     --virtual-devices "${virtual_devices}" \
     --virtual-viewers "${virtual_viewers}" \
     --iterations "${iterations}" \
+    --app-concurrency "${app_concurrency}" \
+    --device-concurrency "${device_concurrency}" \
+    --viewer-concurrency "${viewer_concurrency}" \
     --app-rate "${app_rate}" \
     --device-rate "${device_rate}" \
     --viewer-rate "${viewer_rate}" \

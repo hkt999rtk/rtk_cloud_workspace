@@ -44,6 +44,41 @@ online, offline, and reconnect load.
 These can become later profiles after the first single-region baseline is
 credible.
 
+## Video-Enabled 1K Pilot Profile
+
+`video-1k-v1` is the first video-enabled pilot profile. It keeps the existing
+home MQTT/shadow runner as the primary 1K device load and reuses the workspace
+video runner for WebRTC and RTP media evidence.
+
+Default pilot shape:
+
+| Condition | Value |
+| --- | ---: |
+| Home devices | 1,000 |
+| Derived app users | 50 |
+| Video-capable camera devices | 100 |
+| WebRTC viewers | 100 |
+| WebRTC media set | `h264` |
+
+Run it through the wrapper by selecting the scenario description:
+
+```sh
+HOME100K_DESCRIPTION_FILE=loadtests/home-100k/scenarios/video-1k.description.env \
+HOME100K_RUN_ID=video1k-$(date -u +%Y%m%dT%H%M%SZ) \
+./loadtests/home-100k/scripts/home-100k.sh workflow-live
+```
+
+The wrapper writes video runner artifacts to
+`loadtests/home-100k/reports/<run_id>/video/`. `aggregate` reads the existing
+`e2e_test/video_cloud/load` JSON output and folds WebRTC lifecycle, media, and
+TURN evidence into `TEST_REPORT.md`.
+
+For `video-1k-v1`, missing WebRTC create/setup/close evidence makes the report
+`INCOMPLETE`. A signaling success rate below the functional threshold is a
+`FAIL`. If H.264 media is enabled, missing ICE-connected or first-RTP evidence
+is also a `FAIL`. Missing external TURN/coturn evidence is `INCOMPLETE`, so a
+signaling-only pass is never reported as media-capacity success.
+
 ## Directory Ownership
 
 All new code and materials for this test suite should live under this

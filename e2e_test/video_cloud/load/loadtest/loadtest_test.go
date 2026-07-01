@@ -2318,6 +2318,25 @@ func TestAVReceiverCompareFailsWithoutAudioPayloadStats(t *testing.T) {
 	}
 }
 
+func TestH264ReceiverCompareAcceptsCompleteNALTypesWhenHashDiffers(t *testing.T) {
+	videoPlan, err := buildH264MediaPlan(200 * time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeOp := Operation{
+		Success: true,
+		Evidence: fmt.Sprintf(`{"status":"ok","media":{"packets_received":%d,"bytes_received":%d,"h264_packets":%d,"h264_sha256":"different","h264_bytes":%d,"nal_types":["idr","non-idr","pps","sps"]}}`,
+			len(videoPlan.Packets), videoPlan.Evidence.Bytes, len(videoPlan.Packets), videoPlan.Evidence.Bytes),
+	}
+	op := h264ReceiverCompareOperation("load-device-0", "viewer-0", 10, videoPlan.Evidence, closeOp)
+	if !op.Success {
+		t.Fatalf("receive op = %#v, want success with complete H.264 RTP evidence", op)
+	}
+	if !strings.Contains(op.Evidence, "receiver_bitstream_match=false") {
+		t.Fatalf("receive evidence should retain hash mismatch detail: %s", op.Evidence)
+	}
+}
+
 func TestWebRTCMediaDrainDelayAllowsInFlightRelayPackets(t *testing.T) {
 	if got := webRTCMediaDrainDelay(20 * time.Second); got != 5*time.Second {
 		t.Fatalf("20s media drain delay = %s, want 5s", got)
