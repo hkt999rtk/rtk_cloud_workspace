@@ -38,12 +38,16 @@ const C = {
 };
 
 const AWS_TOP_COST_ITEMS = [
-  "CloudHSM",
   "AWS IoT Core",
+  "Basic Ingest",
   "IoT Device Management",
   "Business Support",
   "RDS",
   "RDS PostgreSQL",
+  "Operational DB",
+  "ACM Private CA",
+  "hybrid CA",
+  "ECS Fargate",
 ];
 const TOP_COST_CELL_STYLE = { color: "#B00020", bold: true };
 
@@ -592,9 +596,12 @@ async function slide06(p, payload) {
   payload.videoMilestones.forEach((m, i) => {
     const x = startX + i * 300;
     addStatusDot(slide, m.status, x, y - 8);
-    addShape(slide, { x: x - 95, y: 205, w: 210, h: 95, fill: i === 0 ? C.paleAmber : C.paleBlue, line: C.line });
+    addShape(slide, { x: x - 95, y: 205, w: 210, h: 95, fill: m.status === "current" ? C.paleAmber : C.paleBlue, line: m.status === "current" ? C.amber : C.line });
     addText(slide, m.period, { x: x - 80, y: 218, w: 180, h: 18 }, { size: 10, color: C.muted, face: FONT_EN, align: "center" });
-    addText(slide, m.label, { x: x - 80, y: 242, w: 180, h: 26 }, { size: 15, color: C.navy, bold: true, align: "center" });
+    addText(slide, m.label, { x: x - 80, y: 242, w: 180, h: 26 }, { size: 15, color: m.status === "current" ? C.amber : C.navy, bold: true, align: "center" });
+    if (m.status === "current") {
+      addText(slide, "目前位置", { x: x - 80, y: 272, w: 180, h: 16 }, { size: 10, color: C.amber, bold: true, align: "center" });
+    }
     addText(slide, m.note, { x: x - 80, y: 405, w: 180, h: 42 }, { size: 12, color: C.black, align: "center" });
   });
   addText(slide, "Video camera loading test 要和 100,000 IoT device gate 同一天收斂: 5,000 cameras 需要 WebRTC setup, TURN behavior, storage path, stream health, metrics 一起看。", { x: 120, y: 555, w: 1000, h: 48 }, { size: 17, color: C.navy, bold: true, align: "center", fill: C.pale });
@@ -1018,15 +1025,16 @@ async function slide14(p, payload) {
 async function slideCostView(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
-  await addHeader(slide, payload, "Initial Operation Cost View", "K8S BASELINE / AWS COMMERCIAL-SCALE ESTIMATE");
+  await addHeader(slide, payload, "Initial Operation Cost View", "K8S BASELINE / AWS REVIEW-ADJUSTED ESTIMATE");
   const billing = payload.linodeBilling || {};
   const aws = payload.awsCostEstimate || {};
+  const adjusted = aws.adjusted || {};
   const scenarios = aws.scenarios || {};
-  const comparisons = aws.comparisons || {};
-  const perUnit = aws.perUnit || {};
+  const adjustedScenarios = adjusted.scenarios || {};
+  const adjustedPerUnit = adjusted.perUnit || {};
   const moneyText = (value) => (value && value !== "n/a" ? `${value}/month` : "n/a");
 
-  addText(slide, "AWS cost discussion now uses an AWS-native managed-service profile for 100,000 devices: Lambda/API, IoT Core, IoT Device Management, CloudWatch, RDS, and Managed Prometheus. These are estimates, not AWS actual bills.", { x: 85, y: 154, w: 1110, h: 42 }, { size: 14.2, color: C.navy, bold: true, align: "center", fill: C.pale });
+  addText(slide, "AWS review-adjusted model keeps source pricing unchanged, then applies architecture corrections: no always-on CloudHSM, no Managed Integrations, Basic Ingest for telemetry, and operational DB instead of telemetry-in-RDS.", { x: 85, y: 154, w: 1110, h: 42 }, { size: 13.8, color: C.navy, bold: true, align: "center", fill: C.pale });
 
   addShape(slide, { x: 70, y: 220, w: 360, h: 182, fill: C.white, line: C.line });
   addText(slide, "K8S Staging Baseline", { x: 94, y: 238, w: 300, h: 28 }, { size: 18, color: C.navy, bold: true, face: FONT_EN });
@@ -1037,12 +1045,12 @@ async function slideCostView(p, payload) {
   addText(slide, "Baseline only; AWS is separate planning estimate.", { x: 98, y: 366, w: 295, h: 18 }, { size: 10, color: C.navy, bold: true, align: "center", fill: C.paleBlue });
 
   addShape(slide, { x: 450, y: 220, w: 730, h: 182, fill: C.white, line: C.line });
-  addText(slide, `AWS scenario totals (${aws.region || "ap-southeast-1"}, ${aws.currency || "USD"})`, { x: 474, y: 238, w: 680, h: 28 }, { size: 18, color: C.navy, bold: true, face: FONT_EN });
+  addText(slide, `AWS revised estimate (${aws.region || "ap-southeast-1"}, ${aws.currency || "USD"})`, { x: 474, y: 238, w: 680, h: 28 }, { size: 18, color: C.navy, bold: true, face: FONT_EN });
   const totals = [
-    ["Base\n(no HSM, no robust)", moneyText(scenarios.baseWithoutCloudHsm), C.paleBlue],
-    ["+ CloudHSM\n(default)", moneyText(scenarios.defaultWithOneCloudHsm), C.paleAmber],
-    ["Robust\n(no HSM)", moneyText(scenarios.robustWithoutCloudHsm), C.paleTeal],
-    ["Robust\n+ 2 HSMs", moneyText(scenarios.robustWithTwoCloudHsms), C.paleAmber],
+    ["Original base\n(source snapshot)", moneyText(scenarios.baseWithoutCloudHsm), C.paleBlue],
+    ["Revised infra\n(no CA/support)", moneyText(adjustedScenarios.infraBase), C.paleTeal],
+    ["Default + CA\n(no support)", moneyText(adjustedScenarios.defaultWithCa), C.paleAmber],
+    ["Budget headline\nCA + Support+", moneyText(adjustedScenarios.budgetHeadline), "#FFF1F1"],
   ];
   totals.forEach((m, i) => {
     const x = 475 + i * 172;
@@ -1050,34 +1058,46 @@ async function slideCostView(p, payload) {
     addText(slide, m[0], { x: x + 5, y: 292, w: 144, h: 28 }, { size: 9, color: C.muted, bold: true, align: "center", face: FONT_EN });
     addText(slide, m[1], { x: x + 5, y: 326, w: 144, h: 22 }, { size: 13, color: C.navy, bold: true, align: "center", face: FONT_EN });
   });
-  addText(slide, `Default unit view: ${perUnit.defaultWithCloudHsmPerUser || "n/a"} / ${perUnit.defaultWithCloudHsmPerDevice || "n/a"}`, { x: 500, y: 370, w: 640, h: 18 }, { size: 11, color: C.navy, bold: true, align: "center", face: FONT_EN, fill: C.pale });
+  addText(slide, `Budget unit view: ${adjustedPerUnit.budgetPerUser || "n/a"} / ${adjustedPerUnit.budgetPerDevice || "n/a"} (includes Business Support+)`, { x: 500, y: 370, w: 640, h: 18 }, { size: 11, color: "#B00020", bold: true, align: "center", face: FONT_EN, fill: "#FFF1F1" });
 
   addShape(slide, { x: 70, y: 430, w: 565, h: 172, fill: C.white, line: C.line });
-  addText(slide, "Decision 1: CloudHSM on / off", { x: 94, y: 448, w: 520, h: 22 }, { size: 16, color: C.navy, bold: true, face: FONT_EN });
-  const cloudHsmRows = [
-    ["Default profile", comparisons.cloudHsmDefault?.without, comparisons.cloudHsmDefault?.with, `+${comparisons.cloudHsmDefault?.delta || "n/a"}`],
-    ["Robust profile", comparisons.cloudHsmRobust?.without, comparisons.cloudHsmRobust?.with, `+${comparisons.cloudHsmRobust?.delta || "n/a"}`],
-  ];
-  addTable(slide, ["Profile", "w/o CloudHSM", "w/ CloudHSM", "Difference"], cloudHsmRows, { x: 95, y: 485, w: 510, h: 78 }, [1.2, 1.2, 1.2, 1.1], { rowH: 28, headerH: 24, fontSize: 8.5 });
-  addText(slide, "CloudHSM is the largest security-cost decision; robust design uses two HSMs.", { x: 102, y: 575, w: 500, h: 18 }, { size: 10, color: C.navy, bold: true, align: "center", fill: C.paleAmber });
+  addText(slide, "AWS review adjustments adopted", { x: 94, y: 448, w: 520, h: 22 }, { size: 16, color: C.navy, bold: true, face: FONT_EN });
+  const adjustmentRows = (adjusted.adjustments || []).slice(0, 5).map((row) => [
+    row.item.replace("AWS ", "").replace(" / CA signing", ""),
+    row.original,
+    row.revised,
+    row.delta,
+  ]);
+  addTable(slide, ["Item", "Original", "Revised", "Delta"], adjustmentRows, { x: 95, y: 482, w: 510, h: 104 }, [1.55, 0.8, 0.8, 0.8], {
+    rowH: 16,
+    headerH: 20,
+    fontSize: 6.2,
+    cellStyle: (_cell, col) => col >= 2 ? TOP_COST_CELL_STYLE : {},
+  });
+  addText(slide, "Source pricing snapshot is preserved; these are derived AWS-review corrections.", { x: 102, y: 592, w: 500, h: 13 }, { size: 8.4, color: C.navy, bold: true, align: "center", fill: C.paleAmber });
 
   addShape(slide, { x: 655, y: 430, w: 525, h: 172, fill: C.white, line: C.line });
-  addText(slide, "Decision 2: Robust Design on / off", { x: 679, y: 448, w: 480, h: 22 }, { size: 16, color: C.navy, bold: true, face: FONT_EN });
-  const robustRows = [
-    ["No CloudHSM", comparisons.robustWithoutCloudHsm?.without, comparisons.robustWithoutCloudHsm?.with, `+${comparisons.robustWithoutCloudHsm?.delta || "n/a"}`],
-    ["With CloudHSM", comparisons.robustWithCloudHsm?.without, comparisons.robustWithCloudHsm?.with, `+${comparisons.robustWithCloudHsm?.delta || "n/a"}`],
-  ];
-  addTable(slide, ["Security mode", "w/o Robust", "w/ Robust", "Difference"], robustRows, { x: 680, y: 485, w: 470, h: 78 }, [1.1, 1.15, 1.15, 1.05], { rowH: 28, headerH: 24, fontSize: 8.5 });
-  addText(slide, "Robust is not a blanket 2x; it adds redundancy to HSM, RDS, cache, NAT, and selected workers.", { x: 682, y: 575, w: 465, h: 18 }, { size: 10, color: C.navy, bold: true, align: "center", fill: C.paleBlue });
+  addText(slide, "Revised scenario equations", { x: 679, y: 448, w: 480, h: 22 }, { size: 16, color: C.navy, bold: true, face: FONT_EN });
+  const scenarioRows = (adjusted.calculationDetails?.scenarioEquations || []).slice(0, 4).map((row) => [
+    row.scenario,
+    row.estimate,
+  ]);
+  addTable(slide, ["Scenario", "USD / month"], scenarioRows, { x: 680, y: 482, w: 470, h: 104 }, [1.7, 0.95], {
+    rowH: 16,
+    headerH: 20,
+    fontSize: 6.6,
+    cellStyle: (_cell, col, row) => col === 1 && row[0].includes("Budget") ? TOP_COST_CELL_STYLE : {},
+  });
+  addText(slide, "Basic Ingest assumes telemetry topics do not require app-side MQTT subscription.", { x: 682, y: 592, w: 465, h: 13 }, { size: 8.4, color: C.navy, bold: true, align: "center", fill: C.paleBlue });
 
   addShape(slide, { x: 70, y: 618, w: 495, h: 48, fill: C.white, line: C.line });
-  addText(slide, "Top drivers: CloudHSM, AWS IoT Core, IoT Device Management, RDS, ECS/Lambda runtime.", { x: 92, y: 628, w: 450, h: 16 }, { size: 9.1, color: C.black, face: FONT_EN });
-  addText(slide, `Source: docs/cost/aws-pricing-sources.md, collected ${aws.collected || "n/a"}`, { x: 92, y: 646, w: 450, h: 14 }, { size: 8.5, color: C.muted, face: FONT_EN });
+  addText(slide, "Top revised drivers: IoT Core, ECS/Fargate, ACM PCA, operational DB/S3 telemetry path, Support+.", { x: 92, y: 628, w: 450, h: 16 }, { size: 8.8, color: C.black, face: FONT_EN });
+  addText(slide, "Sources: aws-pricing-sources.md + aws-review-adjustments.md + AWS review PDF", { x: 92, y: 646, w: 450, h: 14 }, { size: 8.2, color: C.muted, face: FONT_EN });
 
   addShape(slide, { x: 585, y: 618, w: 595, h: 48, fill: C.white, line: C.line });
   const caveats = [
-    "Estimate excludes tax, support plan, discounts, Savings Plans, Reserved Instances, Marketplace charges, and camera/WebRTC/TURN relay.",
-    "Actual AWS bill is not queried; refresh after loading-test evidence.",
+    "Budget headline includes Business Support+; excludes tax, discounts, Savings Plans, Reserved Instances, Marketplace, and video/WebRTC/TURN.",
+    "Actual AWS bill is not queried; revise again after AWS workload measurements and telemetry retention/query decisions.",
   ];
   caveats.forEach((c, i) => {
     addStatusDot(slide, "partial", 600, 628 + i * 18);
@@ -1117,23 +1137,23 @@ async function slideAwsDeviceLoginFlow(p, payload) {
   await addBackground(slide, payload);
   await addHeader(slide, payload, "AWS Device Login / Activation Flow", "DEVICE IDENTITY AND REGISTRY PATH");
   addAwsFlowSlide(slide, {
-    intro: "Device login means activation, certificate/device identity validation, and binding the device to its tenant. In the AWS-native cost model, registry and policy checks sit beside the existing product database.",
+    intro: "Device login means activation, certificate/device identity validation, and binding the device to its tenant. CA signing is an issuance path; runtime validation is not a CloudHSM call.",
     steps: [
       ["Device SDK", "Factory credential, claim token, or mTLS certificate starts activation/login.", C.paleBlue],
       ["ALB / API edge", "TLS ingress for activation API, device API, and provisioning callback path.", C.paleTeal],
       ["Lambda / Video API", "Validates activation request, checks ownership intent, and creates runtime session facts.", C.paleBlue],
       ["IoT Core registry", "Registers or validates device identity, policy, certificate status, and MQTT permission model.", C.paleAmber],
-      ["CloudHSM / KMS", "Protects CA/signing or token material used by certissuer and device credential lifecycle.", C.paleTeal],
-      ["Amazon RDS", "Authoritative account/device registry, activation status, audit trail, and lifecycle records.", C.paleBlue],
+      ["ACM PCA / KMS", "Issues device certificates; optional offline CloudHSM Root CA is only for CA ceremony.", C.paleTeal],
+      ["RDS / Aurora", "Authoritative account/device registry, activation status, audit trail, and lifecycle records.", C.paleBlue],
     ].map(([title, body, fill]) => ({ title, body, fill })),
     sideTitle: "Operational records created during device login",
     sideItems: [
       ["CloudWatch Logs", "Activation attempts, certificate failures, policy rejects, and API errors."],
       ["IoT Device Mgmt", "Fleet indexing, search, jobs/commands, and managed device metadata if adopted."],
-      ["S3 / backup", "Certificate artifacts, release manifests, firmware metadata, and backup exports where needed."],
+      ["S3 / backup", "Certificate artifacts, release manifests, firmware metadata, and selected offline exports."],
       ["Prometheus / alarms", "Activation success rate, reject taxonomy, latency, and retry pressure."],
     ],
-    footer: "Cost implication: device login is primarily device-driven; it affects IoT registry/policy, API runtime, RDS writes, logs, metrics, and protected key material.",
+    footer: "Cost implication: default CA signing uses ACM PCA / hybrid offline Root CA, not always-on CloudHSM runtime.",
   });
   return slide;
 }
@@ -1143,23 +1163,23 @@ async function slideAwsMqttFlow(p, payload) {
   await addBackground(slide, payload);
   await addHeader(slide, payload, "AWS MQTT Runtime Data Flow", "DEVICE MESSAGING / SHADOW / OBSERVABILITY");
   addAwsFlowSlide(slide, {
-    intro: "This page maps the 100K-device MQTT runtime to the AWS-native managed-service profile used for costing. It is a comparison path; current K8S staging uses self-hosted EMQX.",
+    intro: "This page maps the 100K-device MQTT runtime to the AWS-review-adjusted model. High-volume telemetry is not modeled as per-message Lambda or primary RDS writes.",
     steps: [
       ["Device fleet", "100K devices maintain MQTT sessions and publish command/status/log/shadow messages.", C.paleBlue],
-      ["AWS IoT Core", "Managed MQTT broker, TLS identity, topic policy, connection minutes, and message metering.", C.paleAmber],
-      ["IoT Rules / Shadow", "Routes selected topics to Lambda/SQS/S3/RDS paths; shadow state can use IoT Shadow or RTK shadow service.", C.paleTeal],
-      ["Lambda / workers", "Transforms events, runs command handlers, emits lifecycle events, and updates product state.", C.paleBlue],
-      ["RDS / S3", "Persistent shadow snapshots, device metadata, firmware/media pointers, and archive objects.", C.paleTeal],
-      ["CloudWatch", "MQTT/API logs, metrics, alarms, and failure taxonomy for loading-test evidence.", C.paleBlue],
+      ["IoT Core Basic Ingest", "Managed TLS identity and MQTT path; telemetry topics bypass broker fan-out where eligible.", C.paleAmber],
+      ["Rules / Queue", "Routes selected topics to SQS/EventBridge or workers; shadow remains separate from raw telemetry.", C.paleTeal],
+      ["Workers / APIs", "Handle control-plane and lower-frequency semantic events; not every telemetry message.", C.paleBlue],
+      ["CloudWatch / S3", "Semantic logs, runtime logs, telemetry archives, and Athena-style offline analytics.", C.paleTeal],
+      ["RDS / Aurora", "Operational metadata, registry, lifecycle, and selected offline sync only.", C.paleBlue],
     ].map(([title, body, fill]) => ({ title, body, fill })),
     sideTitle: "Runtime branches to size in the estimate",
     sideItems: [
-      ["MQTT metering", "Connection minutes, message count, payload size, retained/shadow operations, and rules actions."],
+      ["MQTT metering", "Connection minutes, Basic Ingest eligibility, payload size, shadow operations, and rules actions."],
       ["Device shadow", "Desired/reported state updates, conflict handling, cache/write-through behavior, and retention."],
-      ["Logs / telemetry", "Runtime/debug logs, service logs, metrics samples, dashboard queries, and alarm volume."],
+      ["Logs / telemetry", "CloudWatch Logs or S3/Athena-style storage; K8S equivalent is Loki."],
       ["Back-pressure path", "SQS/EventBridge/NATS-equivalent decisions for retries, ordering, DLQ, and worker fan-out."],
     ],
-    footer: "Cost implication: MQTT is the largest device-driven path; it is why the unit allocation now treats 95% of shared cost as device-driven.",
+    footer: "Cost implication: MQTT remains the largest device-driven path, but telemetry should not be costed as Lambda-per-message or RDS-per-message.",
   });
   return slide;
 }
@@ -1220,10 +1240,11 @@ async function slideAwsUnitCost(p, payload) {
   await addBackground(slide, payload);
   await addHeader(slide, payload, "AWS Unit Cost Per Month", "PER USER / PER DEVICE VIEW");
   const aws = payload.awsCostEstimate || {};
-  const unitCosts = aws.unitCosts || {};
+  const adjusted = aws.adjusted || {};
+  const unitCosts = adjusted.unitCosts || aws.unitCosts || {};
   const basis = unitCosts.basis || {};
 
-  addText(slide, "This page converts the AWS monthly estimate into unit economics. Use raw division for budget sizing; use weighted allocation when explaining the device-heavy business model.", { x: 85, y: 154, w: 1110, h: 42 }, { size: 15, color: C.navy, bold: true, align: "center", fill: C.pale });
+  addText(slide, "This page converts the AWS-review-adjusted monthly estimate into unit economics. The headline includes ACM PCA / hybrid CA and Business Support+; raw and weighted rows split the same monthly cost pool.", { x: 85, y: 154, w: 1110, h: 42 }, { size: 14.2, color: C.navy, bold: true, align: "center", fill: C.pale });
 
   const basisItems = [
     ["End users", basis.endUsers || "5,000"],
@@ -1238,12 +1259,13 @@ async function slideAwsUnitCost(p, payload) {
     addText(slide, item[1], { x: x + 8, y: 248, w: 229, h: 22 }, { size: i === 3 ? 13 : 16, color: C.navy, bold: true, align: "center", face: FONT_EN });
   });
 
-  const defaultDeviceCost = aws.perUnit?.defaultWithCloudHsmSupportPerDevice || "0.08 USD/device-month";
-  const defaultDeviceCostNoSupport = aws.perUnit?.defaultWithCloudHsmPerDevice || "0.07 USD/device-month";
+  const defaultDeviceCost = adjusted.perUnit?.budgetPerDevice || "0.034 USD/device-month";
+  const defaultDeviceCostNoSupport = adjusted.perUnit?.infraPerDevice || "0.027 USD/device-month";
+  const budgetTotal = adjusted.scenarios?.budgetHeadline || "3,388.94 USD";
   addShape(slide, { x: 150, y: 294, w: 980, h: 62, fill: "#FFF1F1", line: C.red });
-  addText(slide, "100K devices AWS cost allocation", { x: 170, y: 301, w: 940, h: 15 }, { size: 10.5, color: C.red, bold: true, align: "center", face: FONT_EN });
-  addText(slide, `${defaultDeviceCost}  (Default + 1 CloudHSM + Business Support+)`, { x: 170, y: 319, w: 940, h: 24 }, { size: 20, color: "#B00020", bold: true, align: "center", face: FONT_EN });
-  addText(slide, `Reference without support: ${defaultDeviceCostNoSupport}`, { x: 170, y: 342, w: 940, h: 10 }, { size: 7.8, color: C.red, bold: true, align: "center", face: FONT_EN });
+  addText(slide, "100K devices AWS review-adjusted cost allocation", { x: 170, y: 301, w: 940, h: 15 }, { size: 10.5, color: C.red, bold: true, align: "center", face: FONT_EN });
+  addText(slide, `${defaultDeviceCost}  (${budgetTotal} / 100,000 devices)`, { x: 170, y: 319, w: 940, h: 24 }, { size: 20, color: "#B00020", bold: true, align: "center", face: FONT_EN });
+  addText(slide, `Infra-only reference: ${defaultDeviceCostNoSupport}; headline includes ACM PCA / hybrid CA + Business Support+`, { x: 170, y: 342, w: 940, h: 10 }, { size: 7.8, color: C.red, bold: true, align: "center", face: FONT_EN });
 
   const rawRows = (unitCosts.rawDivision || []).map((row) => [
     row.scenario,
@@ -1256,7 +1278,7 @@ async function slideAwsUnitCost(p, payload) {
   addTable(slide, ["Scenario", "Monthly total", "Per user / month", "Per device / month", "Notes"], rawRows, { x: 70, y: 402, w: 1140, h: 120 }, [1.45, 0.85, 0.95, 0.95, 1.45], { rowH: 21, headerH: 23, fontSize: 7.4 });
 
   const weightedRows = (unitCosts.weightedAllocation || []).map((row) => [
-    row.scenario.replace("Default estimate with one CloudHSM", "Default + 1 CloudHSM").replace("Robust redundant design with two CloudHSMs", "Robust + 2 CloudHSMs").replace("Base services only, excluding CloudHSM", "Base services only"),
+    row.scenario,
     row.perUserMonth,
     row.perDeviceMonth,
     row.effectiveUserWithTwentyDevices || row.effectiveUserWithTenDevices || row.effectiveUserWithFourDevices,
@@ -1273,12 +1295,12 @@ async function slideAwsUnitCost(p, payload) {
 async function slideAwsCostCalculationBase(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
-  await addHeader(slide, payload, "AWS Cost Calculation Detail 1/3", "BASE SERVICE LINE ITEMS");
+  await addHeader(slide, payload, "AWS Cost Calculation Detail 1/3", "REVIEW-ADJUSTED SERVICE LINE ITEMS");
   const aws = payload.awsCostEstimate || {};
-  const details = aws.calculationDetails || {};
-  const findLine = (name) => (details.baseLineItems || []).find((row) => row.area === name) || {};
+  const adjusted = aws.adjusted || {};
+  const details = adjusted.calculationDetails || {};
 
-  addText(slide, "This page shows how the base monthly AWS estimate is built from service quantities and unit prices. It now includes Lambda/API, IoT Device Management, CloudWatch, RDS, and Managed Prometheus; camera/WebRTC/TURN relay remains excluded.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 13.8, color: C.navy, bold: true, align: "center", fill: C.pale });
+  addText(slide, "This page shows the derived AWS review-adjusted estimate. Original pricing remains in aws-pricing-sources.md; this view applies architecture corrections from the AWS review and Realtek feedback.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 13.5, color: C.navy, bold: true, align: "center", fill: C.pale });
 
   const assumptions = [
     ["Region", aws.region || "ap-southeast-1"],
@@ -1293,50 +1315,93 @@ async function slideAwsCostCalculationBase(p, payload) {
     addText(slide, item[1], { x: x + 8, y: 238, w: 234, h: 16 }, { size: 12, color: C.navy, bold: true, align: "center", face: FONT_EN });
   });
 
-  const baseRows = [
-    ["Lambda app APIs/workers", findLine("AWS Lambda application APIs/workers").monthlyEstimate || "106.00", "30M account/device/admin/API invocations at 1 GB and 200 ms average duration."],
-    ["ECS Fargate app services", findLine("ECS Fargate application services").monthlyEstimate || "539.79", "vCPU-hours * 0.05056 + GB-hours * 0.00553; includes account, video, admin, bridges, workers."],
-    ["Amazon Cognito User Pools", findLine("Amazon Cognito User Pools").monthlyEstimate || "0.00", "5,000 direct/social MAUs: max(0, 5,000 - 10,000) * 0.015."],
-    ["RDS PostgreSQL", findLine("RDS PostgreSQL").monthlyEstimate || "557.02", "Single-AZ db.r7g.xlarge: 730 DB-hours * 0.574 + 1,000 GB storage * 0.138."],
-    ["AWS IoT Core", findLine("AWS IoT Core").monthlyEstimate || "1,649.52", "100,000 connected devices: connection minutes + MQTT messages + shadow ops."],
-    ["IoT Device Management", findLine("AWS IoT Device Management").monthlyEstimate || "1,135.00", "100k managed devices plus fleet-index updates; jobs/secure tunneling remain usage adders."],
-    ["Managed Prometheus", findLine("Amazon Managed Service for Prometheus").monthlyEstimate || "69.80", "432M samples/month plus one collector and light dashboard/query usage."],
-    ["AWS ops/edge adders", findLine("AWS operational/edge adders").monthlyEstimate || "111.14", "API Gateway, Route 53, CloudWatch metrics/alarms, Managed Grafana, and ECR storage."],
-    ["NAT Gateway", findLine("NAT Gateway").monthlyEstimate || "161.07", "730 gateway-hours * 0.059 + 2,000 GB processed * 0.059."],
-    ["ElastiCache / Valkey", findLine("ElastiCache for Valkey").monthlyEstimate || "28.03", "One cache.t4g.small node * 730 hours * 0.0384."],
-    ["Application Load Balancer", findLine("Application Load Balancer").monthlyEstimate || "24.24", "One ALB-hour line plus one LCU-hour assumption."],
-    ["CloudWatch Logs", findLine("CloudWatch Logs").monthlyEstimate || "48.18", "66.0 GB log ingestion * 0.70 + 66.0 GB-month retention * 0.03."],
-    ["Secrets Manager", findLine("Secrets Manager").monthlyEstimate || "20.50", "50 secrets * 0.40 + 100,000 API calls * 0.000005."],
-    ["S3 storage / PUT", findLine("S3 storage and PUT requests").monthlyEstimate || "67.80", "100k-device firmware, backup, release artifact storage; camera snapshots excluded."],
-    ["KMS", findLine("KMS").monthlyEstimate || "8.00", "5 customer-managed keys * 1.00 + 1,000,000 requests * 0.000003."],
-    ["Base subtotal", findLine("Base subtotal before HSM/Private CA").monthlyEstimate || "4,574.66", "Sum of base services; excludes CloudHSM, ACM Private CA, support plan, tax, discounts."],
-  ];
-  addTable(slide, ["Base service item", "USD / month", "Calculation / assumption"], baseRows, { x: 50, y: 285, w: 745, h: 310 }, [1.42, 0.7, 3.15], {
-    rowH: 17,
+  const baseRows = (details.baseLineItems || []).slice(0, 9).map((row) => [
+    row.area,
+    row.monthlyEstimate,
+    row.notes,
+  ]);
+  addTable(slide, ["Revised service item", "USD / month", "Calculation / assumption"], baseRows, { x: 50, y: 285, w: 745, h: 310 }, [1.42, 0.7, 3.15], {
+    rowH: 27,
     headerH: 23,
-    fontSize: 5.9,
+    fontSize: 6.25,
     cellStyle: (_cell, col, row) => col === 1 && AWS_TOP_COST_ITEMS.some((name) => row[0].includes(name)) ? TOP_COST_CELL_STYLE : {},
   });
 
-  const frontendRows = (details.frontendCalculation || []).slice(0, 5).map((row) => [
-    row.item.replace("CloudFront ", "CF "),
-    row.calculation.replace(" USD", "").replace("requests * ", "req * "),
-    row.monthlyEstimate,
+  const adjustmentRows = (adjusted.adjustments || []).map((row) => [
+    row.item.replace("AWS ", ""),
+    row.original,
+    row.revised,
+    row.delta,
   ]);
-  addText(slide, "Frontend detail", { x: 810, y: 285, w: 360, h: 20 }, { size: 13, color: C.navy, bold: true, face: FONT_EN });
-  addTable(slide, ["Item", "Formula", "USD"], frontendRows, { x: 810, y: 312, w: 390, h: 118 }, [1.2, 2.2, 0.55], { rowH: 18, headerH: 20, fontSize: 6.6 });
+  addText(slide, "Adjustment summary", { x: 810, y: 285, w: 360, h: 20 }, { size: 13, color: C.navy, bold: true, face: FONT_EN });
+  addTable(slide, ["Item", "Original", "Revised", "Delta"], adjustmentRows, { x: 810, y: 312, w: 390, h: 156 }, [1.45, 0.7, 0.7, 0.7], {
+    rowH: 22,
+    headerH: 22,
+    fontSize: 6.2,
+    cellStyle: (_cell, col) => col >= 2 ? TOP_COST_CELL_STYLE : {},
+  });
 
-  const iotRows = (details.iotCalculation || []).slice(0, 5).map((row) => [
-    row.item.replace("Telemetry/status", "Telemetry").replace("Downlink command", "Downlink"),
-    row.calculation.replace("100,000 devices * ", "100k * ").replace(" USD", ""),
+  const driverRows = (adjusted.topDrivers || []).map((row) => [
+    row.rank,
+    row.item,
     row.monthlyEstimate,
   ]);
-  addText(slide, "AWS IoT Core detail", { x: 810, y: 450, w: 360, h: 20 }, { size: 13, color: C.navy, bold: true, face: FONT_EN });
-  addTable(slide, ["Item", "Formula", "USD"], iotRows, { x: 810, y: 477, w: 390, h: 118 }, [1.2, 2.2, 0.55], { rowH: 18, headerH: 20, fontSize: 6.6 });
+  addText(slide, "Top revised cost drivers", { x: 810, y: 490, w: 360, h: 20 }, { size: 13, color: C.navy, bold: true, face: FONT_EN });
+  addTable(slide, ["#", "Item", "USD"], driverRows, { x: 810, y: 517, w: 390, h: 95 }, [0.25, 1.7, 0.65], {
+    rowH: 15,
+    headerH: 18,
+    fontSize: 5.9,
+    cellStyle: (_cell, col) => col === 2 ? TOP_COST_CELL_STYLE : {},
+  });
 
   addShape(slide, { x: 70, y: 620, w: 1130, h: 44, fill: C.paleAmber, line: "#E3C25A" });
-  addText(slide, `CloudWatch logger included: ${details.cloudWatchFormula || "66.0 GB/month log ingestion plus 30-day retention = 48.18 USD/month."} Prometheus plus ops/edge adders are separate costs.`, { x: 90, y: 631, w: 1090, h: 18 }, { size: 8.7, color: C.navy, bold: true, align: "center", face: FONT_EN });
-  addText(slide, `Source: docs/cost/aws-pricing-sources.md, collected ${aws.collected || "n/a"}`, { x: 90, y: 650, w: 1090, h: 12 }, { size: 7.5, color: C.muted, align: "center", face: FONT_EN });
+  addText(slide, details.cloudWatchFormula || "Telemetry is not modeled as primary RDS ingestion or per-message Lambda.", { x: 90, y: 631, w: 1090, h: 18 }, { size: 8.7, color: C.navy, bold: true, align: "center", face: FONT_EN });
+  addText(slide, `Source: ${adjusted.source || "docs/cost/aws-review-adjustments.md"}; original pricing snapshot collected ${aws.collected || "n/a"}`, { x: 90, y: 650, w: 1090, h: 12 }, { size: 7.5, color: C.muted, align: "center", face: FONT_EN });
+  return slide;
+}
+
+async function slideAwsEstimateReviewNotes(p, payload) {
+  const slide = p.slides.add();
+  await addBackground(slide, payload);
+  await addHeader(slide, payload, "AWS Estimate Review Notes", "ENGINEERING ASSESSMENT");
+  const aws = payload.awsCostEstimate || {};
+  const adjusted = aws.adjusted || {};
+
+  addText(slide, "Engineering view: the AWS proposal is reasonable as a review-adjusted planning model, but it is not yet a formal quote or production budget. The remaining risk is concentrated in workload-shape assumptions, not in arithmetic.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 13.8, color: C.navy, bold: true, align: "center", fill: C.pale });
+
+  const acceptedRows = [
+    ["CA / HSM", "Reasonable", "CloudHSM is not on the runtime validation path. ACM PCA / hybrid offline Root CA is a better default for device certificate issuance."],
+    ["Telemetry path", "Reasonable", "Telemetry should not be modeled as primary RDS ingestion or per-message Lambda. Queue + CloudWatch/S3-style storage matches the revised architecture."],
+    ["Device management", "Reasonable", "Removing Managed Integrations and keeping Fleet Indexing matches the expected device-management scope."],
+    ["Lambda", "Reasonable", "30M API/control-plane invocations is acceptable as a planning line; it should not scale with every MQTT telemetry message."],
+  ];
+  addText(slide, "Accepted corrections", { x: 74, y: 224, w: 520, h: 22 }, { size: 16, color: C.navy, bold: true, face: FONT_EN });
+  addTable(slide, ["Area", "Judgement", "Reason"], acceptedRows, { x: 64, y: 255, w: 555, h: 220 }, [0.9, 0.85, 2.7], {
+    rowH: 43,
+    headerH: 24,
+    fontSize: 7.6,
+    cellStyle: (_cell, col) => col === 1 ? { color: C.green, bold: true } : {},
+  });
+
+  const riskRows = [
+    ["IoT Core Basic Ingest", "High", "924 USD depends on telemetry topics not requiring app-side MQTT subscription, retained messages, or broker fan-out."],
+    ["Logs / telemetry retention", "Medium", "CloudWatch Logs at 48.18 USD may be low if semantic/runtime logs are retained longer, queried often, or used for telemetry-like volume."],
+    ["Operational DB + S3 path", "Medium", "384 USD remains a placeholder until RDS/Aurora size, S3/Athena retention, and selected offline sync requirements are measured."],
+    ["ECS Fargate sizing", "Medium", "539.79 USD is reasonable for planning, but replicas, HA, CPU/memory headroom, and always-on workers still need workload validation."],
+  ];
+  addText(slide, "Assumptions to verify before budget sign-off", { x: 680, y: 224, w: 500, h: 22 }, { size: 16, color: C.navy, bold: true, face: FONT_EN });
+  addTable(slide, ["Assumption", "Risk", "What to confirm"], riskRows, { x: 660, y: 255, w: 555, h: 220 }, [1.2, 0.55, 2.6], {
+    rowH: 43,
+    headerH: 24,
+    fontSize: 7.35,
+    cellStyle: (_cell, col, row) => col === 1 ? { color: row[1] === "High" ? C.red : C.amber, bold: true } : {},
+  });
+
+  addShape(slide, { x: 105, y: 520, w: 1070, h: 56, fill: "#FFF1F1", line: C.red });
+  addText(slide, `Current planning headline remains ${adjusted.scenarios?.budgetHeadline || "3,388.94 USD"} / month, or ${adjusted.perUnit?.budgetPerDevice || "0.034 USD/device-month"} for 100,000 devices.`, { x: 130, y: 535, w: 1020, h: 20 }, { size: 15, color: "#B00020", bold: true, align: "center", face: FONT_EN });
+  addText(slide, "Use this number for planning discussion only; confirm Basic Ingest eligibility, log retention/query behavior, DB/offline sync scope, and Fargate replica sizing before treating it as a budget baseline.", { x: 130, y: 557, w: 1020, h: 12 }, { size: 8.6, color: C.red, bold: true, align: "center", face: FONT_EN });
+
+  addText(slide, "Source basis: docs/cost/aws-review-adjustments.md plus AWS review PDF; original public pricing snapshot remains docs/cost/aws-pricing-sources.md.", { x: 120, y: 642, w: 1040, h: 14 }, { size: 8.5, color: C.muted, align: "center", face: FONT_EN });
   return slide;
 }
 
@@ -1345,9 +1410,10 @@ async function slideAwsCostFormulaBreakdown(p, payload) {
   await addBackground(slide, payload);
   await addHeader(slide, payload, "AWS Cost Calculation Detail 2/3", "UNIT PRICE FORMULA BREAKDOWN");
   const aws = payload.awsCostEstimate || {};
-  const details = aws.calculationDetails || {};
+  const adjusted = aws.adjusted || {};
+  const details = adjusted.calculationDetails || {};
 
-  addText(slide, "This page expands each major estimate into quantity * public unit price. AI-assisted operations are listed as an operations assumption, not an AWS infrastructure charge.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.5, color: C.navy, bold: true, align: "center", fill: C.pale });
+  addText(slide, "This page expands the AWS-review-adjusted estimate. Source unit prices remain in the pricing snapshot; adjustments are applied in the derived review model.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.5, color: C.navy, bold: true, align: "center", fill: C.pale });
 
   const formulaRows = (details.formulaBreakdown || []).map((row) => [
     row.item,
@@ -1364,13 +1430,13 @@ async function slideAwsCostFormulaBreakdown(p, payload) {
   });
 
   addShape(slide, { x: 66, y: 604, w: 540, h: 58, fill: C.paleAmber, line: "#E3C25A" });
-  addText(slide, "RDS example", { x: 86, y: 613, w: 150, h: 16 }, { size: 12, color: C.navy, bold: true, face: FONT_EN });
-  addText(slide, "730 DB-hours * 0.574 USD/hour = 419.02; 1,000 GB-month * 0.138 USD/GB-month = 138.00; total = 557.02 USD/month.", { x: 86, y: 636, w: 500, h: 18 }, { size: 8.8, color: C.black, face: FONT_EN });
+  addText(slide, "Telemetry and RDS correction", { x: 86, y: 613, w: 230, h: 16 }, { size: 12, color: C.navy, bold: true, face: FONT_EN });
+  addText(slide, "Telemetry is not modeled as all-in RDS writes. The revised model uses an operational DB plus CloudWatch/S3-style telemetry storage placeholder.", { x: 86, y: 636, w: 500, h: 18 }, { size: 8.6, color: C.black, face: FONT_EN });
 
   addShape(slide, { x: 650, y: 604, w: 560, h: 58, fill: C.paleBlue, line: C.line });
   addText(slide, "AI-assisted operations", { x: 670, y: 613, w: 240, h: 16 }, { size: 12, color: C.navy, bold: true, face: FONT_EN });
-  addText(slide, "AI helps runbook execution, log triage, incident summaries, and status-report drafting.", { x: 670, y: 634, w: 520, h: 11 }, { size: 8.7, color: C.black, face: FONT_EN });
-  addText(slide, "Tracked as 0.00 AWS infrastructure here; add Bedrock or external AI seat/token cost separately if selected.", { x: 670, y: 648, w: 520, h: 11 }, { size: 8.2, color: C.black, face: FONT_EN });
+  addText(slide, "Lambda is still an API/control-plane planning line. It is not multiplied by every MQTT telemetry message.", { x: 670, y: 634, w: 520, h: 11 }, { size: 8.7, color: C.black, face: FONT_EN });
+  addText(slide, "High-volume telemetry goes through Basic Ingest / Rules / queue / CloudWatch or S3-style storage.", { x: 670, y: 648, w: 520, h: 11 }, { size: 8.2, color: C.black, face: FONT_EN });
   return slide;
 }
 
@@ -1379,54 +1445,53 @@ async function slideAwsCostCalculationScenarios(p, payload) {
   await addBackground(slide, payload);
   await addHeader(slide, payload, "AWS Cost Calculation Detail 3/3", "SCENARIOS / ROBUST / UNIT COST");
   const aws = payload.awsCostEstimate || {};
-  const details = aws.calculationDetails || {};
+  const adjusted = aws.adjusted || {};
+  const details = adjusted.calculationDetails || {};
 
-  addText(slide, "This page explains how the scenario totals are derived from the base subtotal: CloudHSM is a security custody add-on, robust design adds only duplicated infrastructure, and unit cost divides one shared monthly pool.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.5, color: C.navy, bold: true, align: "center", fill: C.pale });
+  addText(slide, "This page explains how the revised scenario totals are derived: original source estimate is adjusted by AWS review findings, CA signing uses ACM PCA / hybrid CA, and the budget headline includes Business Support+.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.0, color: C.navy, bold: true, align: "center", fill: C.pale });
 
   const scenarioRows = (details.scenarioEquations || []).map((row) => [
     row.scenario,
     row.formula,
     row.estimate,
   ]);
-  addText(slide, "Scenario equations", { x: 64, y: 218, w: 550, h: 20 }, { size: 14, color: C.navy, bold: true, face: FONT_EN });
+  addText(slide, "Revised scenario equations", { x: 64, y: 218, w: 550, h: 20 }, { size: 14, color: C.navy, bold: true, face: FONT_EN });
   addTable(slide, ["Scenario", "Formula", "USD / month"], scenarioRows, { x: 58, y: 248, w: 670, h: 130 }, [1.4, 2.55, 0.85], { rowH: 22, headerH: 24, fontSize: 7.2 });
 
-  const robustRows = (details.robustDelta || []).filter((row) => !row.area.includes("Business Support")).map((row) => [
-    row.area.replace("ECS Fargate backend services", "ECS Fargate").replace("ElastiCache for Valkey", "Valkey").replace("RDS PostgreSQL", "RDS"),
-    row.baseline,
-    row.robust,
-    row.delta,
+  const driverRows = (adjusted.topDrivers || []).map((row) => [
+    row.rank,
+    row.item,
+    row.monthlyEstimate,
   ]);
-  addText(slide, "Robust delta is selective, not a blanket 2x", { x: 760, y: 218, w: 440, h: 20 }, { size: 14, color: C.navy, bold: true, face: FONT_EN });
-  addTable(slide, ["Area", "Base", "Robust", "Delta"], robustRows.slice(0, 7), { x: 760, y: 248, w: 450, h: 178 }, [1.35, 0.7, 0.7, 0.7], {
-    rowH: 20,
+  addText(slide, "Top revised drivers", { x: 760, y: 218, w: 440, h: 20 }, { size: 14, color: C.navy, bold: true, face: FONT_EN });
+  addTable(slide, ["#", "Item", "USD / month"], driverRows, { x: 760, y: 248, w: 450, h: 122 }, [0.25, 1.65, 0.75], {
+    rowH: 18,
     headerH: 22,
     fontSize: 6.9,
-    cellStyle: (_cell, col, row) => col > 0 && AWS_TOP_COST_ITEMS.some((name) => row[0].includes(name)) ? TOP_COST_CELL_STYLE : {},
+    cellStyle: (_cell, col) => col === 2 ? TOP_COST_CELL_STYLE : {},
   });
 
-  const supportRows = (details.supportCalculation || []).filter((row) => row.scenario.includes("Default estimate") || row.scenario.includes("Robust redundant design with two CloudHSMs")).map((row) => [
-    row.scenario.replace("Default estimate with one CloudHSM", "Default + 1 HSM").replace("Robust redundant design with two CloudHSMs", "Robust + 2 HSMs"),
-    row.calculation.replace("max", "max").replace(" USD/month", ""),
-    row.monthlySupportEstimate,
-  ]);
-  addText(slide, "Support plan is optional in this deck view", { x: 58, y: 414, w: 620, h: 20 }, { size: 14, color: C.navy, bold: true, face: FONT_EN });
-  addTable(slide, ["Scenario", "Business Support+ formula", "Support USD"], supportRows, { x: 58, y: 444, w: 670, h: 70 }, [1.45, 2.45, 0.75], {
+  const supportRows = [
+    ["Default + CA", adjusted.scenarios?.defaultWithCa || "3,109.12 USD", "9%", adjusted.scenarios?.businessSupportPlus || "279.82 USD"],
+    ["Robust + CA", adjusted.scenarios?.robustWithCa || "3,917.17 USD", "9%", adjusted.scenarios?.robustBusinessSupportPlus || "352.55 USD"],
+  ];
+  addText(slide, "Business Support+ included in headline", { x: 58, y: 414, w: 620, h: 20 }, { size: 14, color: C.navy, bold: true, face: FONT_EN });
+  addTable(slide, ["Scenario", "Gross charges", "Rate", "Support USD"], supportRows, { x: 58, y: 444, w: 670, h: 70 }, [1.25, 1.05, 0.45, 0.8], {
     rowH: 22,
     headerH: 22,
     fontSize: 7.0,
-    cellStyle: (_cell, col) => col === 2 ? TOP_COST_CELL_STYLE : {},
+    cellStyle: (_cell, col) => col === 3 ? TOP_COST_CELL_STYLE : {},
   });
-  addText(slide, "Main status slide excludes support, tax, discounts, Savings Plans, Reserved Instances, Marketplace, and camera/WebRTC/TURN. Support can be added as a separate adder when budget owner requests AWS support coverage.", { x: 82, y: 527, w: 620, h: 42 }, { size: 9.5, color: C.black, align: "center", fill: C.paleBlue });
+  addText(slide, "Budget headline includes Business Support+. It still excludes tax, discounts, Savings Plans, Reserved Instances, Marketplace, and camera/WebRTC/TURN.", { x: 82, y: 527, w: 620, h: 42 }, { size: 9.5, color: C.black, align: "center", fill: C.paleBlue });
 
-  const unitRows = (aws.unitCosts?.rawDivision || []).map((row) => [
+  const unitRows = (adjusted.unitCosts?.rawDivision || []).map((row) => [
     row.scenario,
     `${row.monthlyTotal} / 5,000 = ${row.perUserMonth}`,
     `${row.monthlyTotal} / 100,000 = ${row.perDeviceMonth}`,
   ]);
   addText(slide, "Unit cost formulas", { x: 760, y: 454, w: 420, h: 20 }, { size: 14, color: C.navy, bold: true, face: FONT_EN });
   addTable(slide, ["Scenario", "Per user", "Per device"], unitRows, { x: 760, y: 484, w: 450, h: 112 }, [1.45, 1.25, 1.25], { rowH: 20, headerH: 22, fontSize: 6.7 });
-  const defaultDeviceCost = aws.perUnit?.defaultWithCloudHsmSupportPerDevice || "0.08 USD/device-month";
+  const defaultDeviceCost = adjusted.perUnit?.budgetPerDevice || "0.034 USD/device-month";
   addShape(slide, { x: 760, y: 606, w: 450, h: 28, fill: "#FFF1F1", line: C.red });
   addText(slide, `100K devices: ${defaultDeviceCost}`, { x: 780, y: 614, w: 410, h: 11 }, { size: 10.5, color: "#B00020", bold: true, align: "center", face: FONT_EN });
   addShape(slide, { x: 760, y: 641, w: 450, h: 30, fill: C.paleTeal, line: C.line });
@@ -1439,7 +1504,7 @@ async function slideAwsCostSourceUrls(p, payload) {
   await addBackground(slide, payload);
   await addHeader(slide, payload, "AWS Cost Source URLs", "PRICING REFERENCES USED FOR COST ESTIMATE");
 
-  addText(slide, "Official AWS pricing pages and Bulk Price List regional CSVs used to cross-check the 100K-device AWS estimate. Treat these as public pricing references, not a committed quote.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 14.2, color: C.navy, bold: true, align: "center", fill: C.pale });
+  addText(slide, "Official AWS pricing pages and Bulk Price List regional CSVs remain the source pricing snapshot. The adjusted estimate also uses the internal AWS review PDF as architecture feedback, not as a public price source.", { x: 82, y: 152, w: 1120, h: 42 }, { size: 13.8, color: C.navy, bold: true, align: "center", fill: C.pale });
 
   const sourceRows = [
     ["AWS Bulk Price List API", "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/index.json", "Regional CSV source for EC2, RDS, S3, IoT, CloudWatch, ELB, VPC, ECR, Lambda, and other unit prices."],
@@ -1454,7 +1519,7 @@ async function slideAwsCostSourceUrls(p, payload) {
     ["Amazon API Gateway", "https://aws.amazon.com/api-gateway/pricing/", "HTTP API front-door request pricing."],
     ["Amazon RDS", "https://aws.amazon.com/rds/postgresql/pricing/", "Managed PostgreSQL alternative and robust-profile comparison."],
     ["AWS IoT Core", "https://aws.amazon.com/iot-core/pricing/", "Managed MQTT, messaging, shadow, rules, and connection comparison."],
-    ["AWS IoT Device Mgmt", "https://aws.amazon.com/iot-device-management/pricing/", "100K-device fleet indexing and managed integration cost."],
+    ["AWS IoT Device Mgmt", "https://aws.amazon.com/iot-device-management/pricing/", "Fleet Indexing reference; Managed Integrations removed from revised model."],
     ["Amazon CloudWatch", "https://aws.amazon.com/cloudwatch/pricing/", "Logs, metrics, alarms, and managed logging comparison."],
     ["Amazon Managed Prometheus", "https://aws.amazon.com/prometheus/pricing/", "Managed metrics ingestion, collector, storage, and query pricing."],
     ["AWS Support", "https://aws.amazon.com/premiumsupport/pricing/", "Business Support+ and Enterprise Support adders."],
@@ -1477,7 +1542,7 @@ async function slideAwsCostSourceUrls(p, payload) {
   });
 
   addShape(slide, { x: 70, y: 635, w: 1130, h: 30, fill: C.paleAmber, line: "#E3C25A" });
-  addText(slide, "Tracked source file: docs/cost/aws-pricing-sources.md. Prices exclude tax, enterprise discounts, Savings Plans, Reserved Instances, Marketplace private offers, and future measured workload tuning.", { x: 92, y: 643, w: 1090, h: 12 }, { size: 8.4, color: C.navy, bold: true, align: "center", face: FONT_EN });
+  addText(slide, "Tracked source files: docs/cost/aws-pricing-sources.md, docs/cost/aws-review-adjustments.md, and aws_report/Realtek_IoT_Cost_Review_Reply_v1.10 - 20260630.pdf.", { x: 92, y: 643, w: 1090, h: 12 }, { size: 8.4, color: C.navy, bold: true, align: "center", face: FONT_EN });
   return slide;
 }
 
@@ -1722,7 +1787,7 @@ async function slide21(p, payload) {
 const SLIDES = [
   slide01, slideMajorTopics, slide07, slideWhyCloud, slideCustomerUseCaseFit, slide03, slideCloudTypes, slideOperationalTransition, slide02, slide04, slideReleaseGateDefinition, slide05, slideLoadTestCapacityResult, slideLoadTestResourceCharts, slideLoadTestDecisionBasis, slide06, slide08,
   slidePortalTransition, slidePortalIntro, slide09, slideTechnicalTransition, slide10, slide11, slideStrideOverview, slide12, slideHsmSignerDesign, slide13,
-  slideEvidenceTransition, slide14, slideCostView, slideAwsUserLoginFlow, slideAwsDeviceLoginFlow, slideAwsMqttFlow, slideLinodeScaleEstimate, slideAwsUnitCost, slideAwsCostCalculationBase, slideAwsCostFormulaBreakdown, slideAwsCostCalculationScenarios, slideAwsCostSourceUrls, slideGcpCostView, slideAzureCostView, slide16, slide17, slide18, slide19, slidePostAlphaCoverage, slide20, slide21,
+  slideEvidenceTransition, slide14, slideCostView, slideAwsUserLoginFlow, slideAwsDeviceLoginFlow, slideAwsMqttFlow, slideLinodeScaleEstimate, slideAwsUnitCost, slideAwsCostCalculationBase, slideAwsEstimateReviewNotes, slideAwsCostFormulaBreakdown, slideAwsCostCalculationScenarios, slideAwsCostSourceUrls, slideGcpCostView, slideAzureCostView, slide16, slide17, slide18, slide19, slidePostAlphaCoverage, slide20, slide21,
 ];
 
 async function makeContactSheet(previewPaths, outputPath) {
