@@ -21,6 +21,7 @@ FIG_DIR = OUT_DIR / "figures"
 DOCX_PATH = OUT_DIR / "realtek_video_iot_cloud_status_report.docx"
 COST_DIR = ROOT / "docs" / "cost"
 AWS_PRICING_SOURCES_PATH = COST_DIR / "aws-pricing-sources.md"
+AWS_REVIEW_ADJUSTMENTS_PATH = COST_DIR / "aws-review-adjustments.md"
 AWS_COST_WORKSHEET_PATH = COST_DIR / "aws-cost-estimate-worksheet.csv"
 AWS_SERVICE_MAPPING_PATH = COST_DIR / "aws-service-mapping.md"
 LINODE_100K_ESTIMATE_PATH = COST_DIR / "linode-100k-estimate.md"
@@ -762,6 +763,170 @@ def divide_usd_amount(value: str, denominator: float, suffix: str) -> str:
     return f"{amount / denominator:,.2f} USD/{suffix}"
 
 
+def format_precise_device_cost(value: str, denominator: float) -> str:
+    amount = parse_usd_amount(value)
+    if amount is None or denominator <= 0:
+        return "n/a"
+    return f"{amount / denominator:.3f} USD/device-month"
+
+
+def build_aws_review_adjusted_estimate(base_without_hsm: str, robust_without_hsm: str) -> dict[str, object]:
+    original_base = parse_usd_amount(base_without_hsm) or 4574.66
+    original_robust = parse_usd_amount(robust_without_hsm) or 5382.71
+    iot_core_original = 1649.52
+    iot_core_revised = 924.00
+    device_mgmt_original = 1135.00
+    device_mgmt_revised = 135.00
+    rds_original = 557.02
+    operational_db_revised = 384.00
+    ca_signing = 433.00
+    support_rate = 0.09
+    end_user_count = 5000
+    registered_device_count = 100000
+    adjustment_delta = (iot_core_revised - iot_core_original) + (device_mgmt_revised - device_mgmt_original) + (operational_db_revised - rds_original)
+    infra_base = original_base + adjustment_delta
+    default_with_ca = infra_base + ca_signing
+    support = default_with_ca * support_rate
+    budget_total = default_with_ca + support
+    robust_infra = original_robust + adjustment_delta
+    robust_with_ca = robust_infra + ca_signing
+    robust_support = robust_with_ca * support_rate
+    robust_budget = robust_with_ca + robust_support
+    fmt = format_usd_amount
+
+    raw_unit_costs = [
+        {
+            "scenario": "Revised infra base",
+            "monthlyTotal": fmt(infra_base),
+            "perUserMonth": divide_usd_amount(fmt(infra_base), end_user_count, "user-month"),
+            "perDeviceMonth": format_precise_device_cost(fmt(infra_base), registered_device_count),
+            "notes": "No CA/signing add-on or support plan",
+        },
+        {
+            "scenario": "Default + ACM PCA / hybrid CA",
+            "monthlyTotal": fmt(default_with_ca),
+            "perUserMonth": divide_usd_amount(fmt(default_with_ca), end_user_count, "user-month"),
+            "perDeviceMonth": format_precise_device_cost(fmt(default_with_ca), registered_device_count),
+            "notes": "Default certificate issuance profile",
+        },
+        {
+            "scenario": "Default + CA + Support+",
+            "monthlyTotal": fmt(budget_total),
+            "perUserMonth": divide_usd_amount(fmt(budget_total), end_user_count, "user-month"),
+            "perDeviceMonth": format_precise_device_cost(fmt(budget_total), registered_device_count),
+            "notes": "Budget headline with Business Support+",
+        },
+        {
+            "scenario": "Robust + CA + Support+",
+            "monthlyTotal": fmt(robust_budget),
+            "perUserMonth": divide_usd_amount(fmt(robust_budget), end_user_count, "user-month"),
+            "perDeviceMonth": format_precise_device_cost(fmt(robust_budget), registered_device_count),
+            "notes": "Selected robust infrastructure adders",
+        },
+    ]
+
+    weighted_unit_costs = []
+    for scenario in raw_unit_costs:
+        total = parse_usd_amount(scenario["monthlyTotal"]) or 0.0
+        user_pool = total * 0.05
+        device_pool = total * 0.95
+        per_user = user_pool / end_user_count
+        per_device = device_pool / registered_device_count
+        weighted_unit_costs.append({
+            "scenario": scenario["scenario"],
+            "userPool": f"{user_pool:,.2f}",
+            "devicePool": f"{device_pool:,.2f}",
+            "perUserMonth": f"{per_user:.2f} USD/user-month",
+            "perDeviceMonth": f"{per_device:.3f} USD/device-month",
+            "effectiveUserWithTwentyDevices": f"{per_user + per_device * 20:.2f} USD/month",
+            "effectiveUserWithTenDevices": f"{per_user + per_device * 10:.2f} USD/month",
+            "effectiveUserWithFourDevices": f"{per_user + per_device * 4:.2f} USD/month",
+        })
+
+    line_items = [
+        {"area": "AWS IoT Core with Basic Ingest", "monthlyEstimate": fmt(iot_core_revised), "notes": "Connection minutes, Device Shadow, IoT Rules, and Basic Ingest optimization for telemetry topics."},
+        {"area": "ECS Fargate application services", "monthlyEstimate": "539.79", "notes": "Long-running services and workers that are not refactored to Lambda."},
+        {"area": "ACM Private CA / hybrid CA", "monthlyEstimate": fmt(ca_signing), "notes": "ACM PCA plus amortized 100K certificate issuance; optional offline CloudHSM Root CA has negligible steady-state runtime."},
+        {"area": "Operational DB plus telemetry storage", "monthlyEstimate": fmt(operational_db_revised), "notes": "Operational metadata DB plus S3/Firehose-style telemetry storage placeholder; telemetry is not primary RDS ingestion."},
+        {"area": "AWS Business Support+", "monthlyEstimate": fmt(support), "notes": "9% support-plan adder for the revised default with CA scenario."},
+        {"area": "AWS IoT Device Management Fleet Indexing", "monthlyEstimate": fmt(device_mgmt_revised), "notes": "Fleet Indexing only; Managed Integrations removed as not applicable."},
+        {"area": "AWS Lambda application APIs/workers", "monthlyEstimate": "106.00", "notes": "30M API/control-plane invocations; not per-message MQTT telemetry."},
+        {"area": "Amazon Managed Service for Prometheus", "monthlyEstimate": "69.80", "notes": "Managed metrics ingestion, collector, storage, and query allowance."},
+        {"area": "CloudWatch Logs", "monthlyEstimate": "48.18", "notes": "Semantic/runtime logs equivalent to the AWS-managed path for the K8S Loki use case."},
+    ]
+
+    return {
+        "status": "available",
+        "source": str(AWS_REVIEW_ADJUSTMENTS_PATH),
+        "reviewPdf": str(ROOT / "aws_report/Realtek_IoT_Cost_Review_Reply_v1.10 - 20260630.pdf"),
+        "scenarios": {
+            "infraBase": fmt(infra_base),
+            "defaultWithCa": fmt(default_with_ca),
+            "businessSupportPlus": fmt(support),
+            "budgetHeadline": fmt(budget_total),
+            "robustInfra": fmt(robust_infra),
+            "robustWithCa": fmt(robust_with_ca),
+            "robustBusinessSupportPlus": fmt(robust_support),
+            "robustBudget": fmt(robust_budget),
+        },
+        "perUnit": {
+            "budgetPerDevice": format_precise_device_cost(fmt(budget_total), registered_device_count),
+            "budgetPerUser": divide_usd_amount(fmt(budget_total), end_user_count, "user-month"),
+            "infraPerDevice": format_precise_device_cost(fmt(infra_base), registered_device_count),
+            "infraPerUser": divide_usd_amount(fmt(infra_base), end_user_count, "user-month"),
+        },
+        "unitCosts": {
+            "basis": {
+                "endUsers": "5,000",
+                "registeredDevices": "100,000",
+                "devicesPerUser": "20",
+                "weightedUserPool": "5%",
+                "weightedDevicePool": "95%",
+            },
+            "rawDivision": raw_unit_costs,
+            "weightedAllocation": weighted_unit_costs,
+        },
+        "adjustments": [
+            {"item": "CloudHSM / CA signing", "original": "2,336.00", "revised": fmt(ca_signing), "delta": "-1,903.00", "notes": "Replace always-on CloudHSM with ACM PCA / hybrid offline Root CA option."},
+            {"item": "AWS IoT Core", "original": fmt(iot_core_original), "revised": fmt(iot_core_revised), "delta": "-725.52", "notes": "Use Basic Ingest default and include Rules Engine effect."},
+            {"item": "AWS IoT Device Management", "original": fmt(device_mgmt_original), "revised": fmt(device_mgmt_revised), "delta": "-1,000.00", "notes": "Remove Managed Integrations; keep Fleet Indexing."},
+            {"item": "RDS / telemetry storage", "original": fmt(rds_original), "revised": fmt(operational_db_revised), "delta": "-173.02", "notes": "Move telemetry/logs out of primary RDS path."},
+            {"item": "ECS Fargate + Lambda", "original": "645.79", "revised": "645.79", "delta": "0.00", "notes": "Keep API/control-plane workload unchanged pending split confirmation."},
+        ],
+        "topDrivers": [
+            {"rank": "1", "item": "AWS IoT Core with Basic Ingest", "monthlyEstimate": fmt(iot_core_revised)},
+            {"rank": "2", "item": "ECS Fargate application services", "monthlyEstimate": "539.79"},
+            {"rank": "3", "item": "ACM Private CA / hybrid CA", "monthlyEstimate": fmt(ca_signing)},
+            {"rank": "4", "item": "Operational DB plus telemetry storage", "monthlyEstimate": fmt(operational_db_revised)},
+            {"rank": "5", "item": "AWS Business Support+", "monthlyEstimate": fmt(support)},
+        ],
+        "calculationDetails": {
+            "baseLineItems": line_items,
+            "scenarioEquations": [
+                {"scenario": "Revised infra base", "formula": f"{base_without_hsm} - 725.52 IoT Core - 1,000.00 Device Mgmt - 173.02 DB/telemetry", "estimate": fmt(infra_base)},
+                {"scenario": "Default + CA", "formula": f"{fmt(infra_base)} + {fmt(ca_signing)} ACM PCA / hybrid CA", "estimate": fmt(default_with_ca)},
+                {"scenario": "Budget headline", "formula": f"{fmt(default_with_ca)} + 9% Business Support+ ({fmt(support)})", "estimate": fmt(budget_total)},
+                {"scenario": "Robust budget", "formula": f"{fmt(robust_infra)} + {fmt(ca_signing)} CA + {fmt(robust_support)} support", "estimate": fmt(robust_budget)},
+            ],
+            "formulaBreakdown": [
+                {"item": "AWS IoT Core with Basic Ingest", "quantity": "100K connected devices + Rules/Shadow", "unitPrice": "AWS review adjusted", "formula": "1,649.52 original - 725.52 Basic Ingest net saving", "estimate": fmt(iot_core_revised)},
+                {"item": "AWS IoT Device Management", "quantity": "60.0M index updates", "unitPrice": "2.25/M index updates", "formula": "Managed Integrations removed; Fleet Indexing remains", "estimate": fmt(device_mgmt_revised)},
+                {"item": "Operational DB plus telemetry storage", "quantity": "Operational metadata + S3/Firehose telemetry path", "unitPrice": "AWS review placeholder", "formula": "384.00 revised vs 557.02 all-in RDS assumption", "estimate": fmt(operational_db_revised)},
+                {"item": "ACM Private CA / hybrid CA", "quantity": "1 CA + amortized 100K cert issuance", "unitPrice": "400 CA-month + cert amortization", "formula": "400.00 + 33.00 amortized cert issuance", "estimate": fmt(ca_signing)},
+                {"item": "AWS Lambda application APIs/workers", "quantity": "30.0M API/control-plane requests", "unitPrice": "0.20/M requests; duration rates", "formula": "Not invoked per MQTT telemetry message", "estimate": "106.00"},
+                {"item": "AWS Business Support+", "quantity": "Default + CA gross monthly charges", "unitPrice": "9% under 10k", "formula": f"{fmt(default_with_ca)} * 9%", "estimate": fmt(support)},
+            ],
+            "cloudWatchFormula": "K8S Loki-style semantic/runtime logs map to CloudWatch Logs or S3/Athena; telemetry is not modeled as primary RDS ingestion or per-message Lambda.",
+        },
+        "caveats": [
+            "Basic Ingest assumes telemetry topics do not require app-side MQTT subscription or retained-message broker semantics.",
+            "ACM PCA / hybrid CA is the default CA signing profile; always-on CloudHSM is not a default runtime cost.",
+            "Telemetry/log analytics storage is a planning placeholder pending retention and query requirements.",
+            "Camera/WebRTC/TURN remains excluded.",
+        ],
+    }
+
+
 def collect_aws_cost_estimate() -> dict[str, object]:
     pricing_path = AWS_PRICING_SOURCES_PATH
     if not pricing_path.exists():
@@ -1081,6 +1246,7 @@ def collect_aws_cost_estimate() -> dict[str, object]:
             },
         ],
     }
+    adjusted_estimate = build_aws_review_adjusted_estimate(base_without_hsm, robust_without_hsm)
 
     return {
         "status": "available",
@@ -1144,6 +1310,7 @@ def collect_aws_cost_estimate() -> dict[str, object]:
         },
         "calculationDetails": calculation_details,
         "topDrivers": top_drivers,
+        "adjusted": adjusted_estimate,
         "caveats": [
             "Planning snapshot only; not a committed AWS quote.",
             "Infrastructure totals shown on the status slide exclude tax, support plans, enterprise discounts, Savings Plans, Reserved Instances, and AWS Marketplace charges.",
@@ -1355,8 +1522,8 @@ SCHEDULE_MILESTONES = [
     {"period": "May 1-10", "label": "Kickoff", "status": "done", "note": "scope / source-of-truth / target"},
     {"period": "May 11-24", "label": "Foundation", "status": "done", "note": "K8s staging + integration"},
     {"period": "May 25-Jun 7", "label": "Load prep", "status": "done", "note": "runner / metrics / runbook"},
-    {"period": "Jun 8-30", "label": "Validation", "status": "current", "note": "small-to-medium + bottlenecks"},
-    {"period": "Jul 1-31", "label": "Scale rehearsal", "status": "planned", "note": "100k IoT / 5k video dry run"},
+    {"period": "Jun 8-30", "label": "Validation", "status": "done", "note": "MQTT 100K pass"},
+    {"period": "Jul 1-31", "label": "Scale rehearsal", "status": "current", "note": "video 5K profile / rehearsal"},
     {"period": "Aug 1", "label": "Load test pass", "status": "target", "note": "100k devices + 5k cameras"},
     {"period": "Aug", "label": "Alpha test", "status": "planned", "note": "SDK included"},
     {"period": "Sep", "label": "Beta test", "status": "planned", "note": "SDK + pilot customer"},
@@ -1364,8 +1531,8 @@ SCHEDULE_MILESTONES = [
 ]
 
 VIDEO_MILESTONES = [
-    {"period": "Jun", "label": "Foundation", "status": "current", "note": "WebRTC / media / storage path"},
-    {"period": "Jul 1-15", "label": "Video profile", "status": "next", "note": "camera mix / viewer behavior"},
+    {"period": "Jun", "label": "Foundation", "status": "done", "note": "WebRTC / media / storage path"},
+    {"period": "Jul 1-15", "label": "Video profile", "status": "current", "note": "camera mix / viewer behavior"},
     {"period": "Jul 16-31", "label": "5k rehearsal", "status": "planned", "note": "TURN / storage / metrics"},
     {"period": "Aug 1", "label": "5,000 cameras pass", "status": "target", "note": "same gate as 100k IoT"},
 ]

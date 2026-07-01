@@ -58,9 +58,9 @@ codebase.
 | Account manager workers | Outbox/inbox, lifecycle publication/consumption, cleanup jobs. | ECS Fargate service or scheduled ECS tasks. | EC2/systemd workers, Lambda consumers if broker is changed to SQS/EventBridge. | Always-on worker count, message throughput, retry/dead-letter volume, schedule frequency. |
 | Video cloud API (`rtk_video_cloud cmd/api`) | Device/app HTTP API, auth, activation, WebRTC signaling, firmware/media routes, MQTT adapter wiring. | ECS on Fargate or EC2 Auto Scaling behind ALB/NLB depending on long-lived connection needs. | EKS, EC2/systemd release bundle. Lambda is not a good first-cost default for websocket/MQTT-adjacent and long-lived runtime behavior. | Device count, connected sessions, HTTP/WebSocket request rate, vCPU/memory, egress, ALB/NLB, autoscaling headroom. |
 | Video cloud workers (`cleaner`, `statistics`, `metricsexporter`, `logingester`, `turnregistry`, `crossservice`, `certissuer`) | Background cleanup, metrics, runtime log ingestion to central logger, TURN registry, cross-service gateway, certificate issuance. | ECS Fargate services for always-on workers; scheduled ECS tasks for batch cleanup. | EC2/systemd, EKS jobs/deployments, Lambda for narrow scheduled cleanup only after proving runtime fit. | Worker count, schedule frequency, MQTT/log volume, logger ingest volume, DB writes for metadata/billing, metrics scrape frequency, certificate issuance rate. |
-| PostgreSQL for account manager and video cloud | Persistent account, registry, runtime metadata, firmware, telemetry, outbox/inbox, shadow snapshots, and billing ledgers. Raw runtime/debug logs are not stored in PostgreSQL. | Amazon RDS for PostgreSQL, separate databases or instances by environment and isolation requirement. | Aurora PostgreSQL for higher availability/read scaling; self-managed PostgreSQL on EC2 for lowest managed-service spend but higher ops burden. | Instance class, Multi-AZ, storage GB, IOPS, backup retention, read replicas, connection count, data transfer. |
+| PostgreSQL for account manager and video cloud | Persistent account, registry, runtime metadata, firmware metadata, lifecycle records, selected offline sync, outbox/inbox, shadow snapshots, and billing ledgers. Raw telemetry/runtime logs are not primary PostgreSQL ingestion. | Amazon RDS or Aurora PostgreSQL for operational metadata only. | Self-managed PostgreSQL on EC2/EKS for lowest managed-service spend but higher ops burden. | Instance class, storage GB, IOPS, backup retention, read/write rate, offline sync volume, connection count. |
 | Object/blob storage | Clips, snapshots, firmware binaries, backups, release artifacts. | Amazon S3 with lifecycle policies. | S3 Intelligent-Tiering, Glacier classes for archive, EFS only for filesystem semantics. | Stored GB by object type, PUT/GET/list requests, lifecycle transitions, retrievals, cross-region replication, egress. |
-| EMQX MQTT broker | Device transport when MQTT is enabled; MQTT shadows/logs/snapshots/control. | AWS IoT Core for a managed MQTT/device messaging cost scenario, if topic/auth/shadow behavior is adapted and validated. | Self-managed EMQX on ECS/EC2/EKS, or AWS Marketplace EMQX, when protocol compatibility and current ACL behavior matter. | Connected devices, message count, payload size, rules/actions, retained/shadow traffic, TLS auth model, broker node count. |
+| EMQX MQTT broker | Device transport when MQTT is enabled; MQTT shadows/logs/snapshots/control. | AWS IoT Core with Basic Ingest for telemetry topics that do not require app-side MQTT subscription; IoT Rules route selected events to queues, CloudWatch Logs, S3/Athena, or workers. | Self-managed EMQX on ECS/EC2/EKS, or AWS Marketplace EMQX, when protocol compatibility and current ACL behavior matter. | Connected devices, Basic Ingest eligibility, message count, payload size, rules/actions, retained/shadow traffic, TLS auth model, broker node count. |
 | Device shadow hot-state cache | Planned Redis-compatible/Valkey hot path for shadow desired/reported state with Postgres flush. | Amazon ElastiCache for Redis/Valkey. | MemoryDB for Redis if durable Redis-compatible semantics are required; self-managed Redis/Valkey on EC2. | Node class/count, memory used, write rate, replication/Multi-AZ, data transfer, backup retention. |
 | Cross-service broker | Account-to-video lifecycle commands and video-to-account events. Current default is NATS JetStream or equivalent. | Amazon SQS plus DLQs for a conservative cost model if ordering/partitioning semantics are redesigned around queues. | Amazon MSK, Amazon MQ, EventBridge, or self-managed NATS JetStream on ECS/EC2/EKS. | Messages/month, payload size, consumers, retention, ordering/partitioning need, DLQ volume, broker node count. |
 | Reverse proxy / TLS / routing | Public and internal HTTP routing, TLS termination, access logs, request size/security headers. | Application Load Balancer with ACM certificates and Route 53 DNS. | Network Load Balancer for TURN or TCP-heavy surfaces; CloudFront for public website/static caching; API Gateway only after route model review. | ALB/NLB hours, LCUs, TLS cert count, request rate, bandwidth, hosted zones, DNS queries. |
@@ -68,7 +68,7 @@ codebase.
 | Metrics and alerting | Prometheus-compatible metrics, service health, dashboard queries, readiness evidence. | Amazon Managed Service for Prometheus plus Amazon Managed Grafana and CloudWatch alarms. | Self-managed Prometheus/Grafana on ECS/EC2; CloudWatch custom metrics for smaller deployments. | Samples/sec, metric cardinality, retention, dashboard users, alert evaluations, custom metric count. |
 | Central logger (`rtk_cloud_logger`) | Queryable service logs and device runtime/debug logs from the log ingester. | CloudWatch Logs for first AWS cost model. | OpenSearch Service for richer query/search; self-managed Loki on ECS/EC2 if keeping current logger shape. | Log GB ingested/day, retention, query volume, indexes, dashboard users, export/archive to S3. |
 | Secrets | DSNs, auth secrets, MQTT credentials, webhook secrets, deploy keys, private keys. | AWS Secrets Manager. | SSM Parameter Store for lower-cost non-rotating parameters; AWS KMS for envelope encryption. | Number of secrets, API calls/month, rotation Lambda usage, KMS requests. |
-| Key and certificate management | Token signing, device/app CA, certissuer, factory enrollment mTLS, service certificates, public TLS, and revocation evidence. Current local/CI PKCS#11 validation uses SoftHSM2, not OpenHSM. | AWS CloudHSM plus CloudHSM-backed `certissuer`, AWS KMS, ACM for public TLS, and Secrets Manager. | AWS Private CA only for an AWS-managed CA profile; KMS-only protection only where the signing model allows it. | HSM hours, certificates issued, KMS requests, service cert count, CRL/OCSP/revocation artifact storage. |
+| Key and certificate management | Token signing, device/app CA, certissuer, factory enrollment mTLS, service certificates, public TLS, and revocation evidence. Current local/CI PKCS#11 validation uses SoftHSM2, not OpenHSM. | ACM Private CA or hybrid offline CloudHSM Root CA plus ACM Private CA for device certificate issuance; AWS KMS, ACM public certs, and Secrets Manager for supporting material. | Always-on CloudHSM only when dedicated HSM/PKCS#11 key ceremony is explicitly required. | CA count, certificates issued, KMS requests, optional HSM ceremony hours, service cert count, CRL/OCSP/revocation artifact storage. |
 | Backups | DB dumps, object backups, env/secrets escrow metadata, release manifests. | RDS automated backups/snapshots plus S3 backup bucket. | AWS Backup for centralized backup plans. | Backup storage GB-month, snapshot frequency, retention, cross-region copy, restore testing. |
 | CI/CD runners and artifacts | Build, test, deploy artifacts and release packages. | GitHub Actions plus S3 artifact bucket and IAM/OIDC. | AWS CodeBuild/CodePipeline if moving CI/CD into AWS. | Build minutes, artifact storage, cache size, transfer, runner concurrency. |
 | AWS support and consulting | Technical support cases, launch planning, migration assistance, and scoped consulting. | AWS Business Support+ for production support-plan cost; AWS Marketplace Professional Services for quote-based consulting. | Enterprise Support, Unified Operations, AWS Countdown Premium, AWS partner private offers. | Gross AWS monthly charges, support tier, account count, project/month consulting scope, launch-event support needs. |
@@ -106,13 +106,14 @@ Likely AWS line items:
 
 - ECS Fargate/App Runner for HTTP services where long-lived connection behavior
   is acceptable.
-- AWS IoT Core for MQTT/device messaging only after validating topic namespaces,
-  ACLs, retained/shadow behavior, and device credential provisioning.
+- AWS IoT Core for MQTT/device messaging after validating topic namespaces,
+  ACLs, retained/shadow behavior, device credential provisioning, and Basic
+  Ingest eligibility for high-volume telemetry topics.
 - SQS/EventBridge for cross-service lifecycle events only after confirming
   ordering, redelivery, dead-letter, idempotency, and stream naming contracts.
 - ElastiCache/Valkey for planned shadow hot-state cache.
-- CloudWatch Logs, Managed Prometheus, Managed Grafana, Secrets Manager, RDS, and
-  S3.
+- CloudWatch Logs, S3/Athena-style telemetry storage, Managed Prometheus,
+  Managed Grafana, Secrets Manager, RDS/Aurora for operational metadata, and S3.
 
 Use this profile for a managed-service cost comparison. Do not treat it as a
 drop-in migration plan.
@@ -261,9 +262,10 @@ AWS costing choices:
 
 - ECS/Fargate or EC2 for API and workers, depending on long-lived connection and
   network behavior.
-- RDS PostgreSQL for primary runtime state and billing ledgers. Runtime/debug
-  logs go through the central logger path; use CloudWatch Logs/OpenSearch or
-  the chosen logger backend for high-volume retention and query.
+- RDS/Aurora for operational metadata, registry/lifecycle, billing ledgers, and
+  selected offline sync. High-volume telemetry/runtime logs go through
+  CloudWatch Logs and/or S3/Athena-style storage, matching the K8S Loki pattern
+  rather than primary database ingestion.
 - S3 for clips, snapshots, and firmware objects.
 - EC2/ECS-on-EC2 for coturn/TURN due to public UDP/TCP relay behavior.
 - AWS IoT Core is a candidate for MQTT costing, but self-managed EMQX may be
@@ -358,10 +360,12 @@ Current shape:
 
 AWS costing choices:
 
-- Price AWS CloudHSM for HSM/HMS-backed signing and CA key protection when the
-  deployment requires non-exportable signing keys or PKCS#11 behavior.
-- Default estimate excludes AWS Private CA because `certissuer` signs through
-  CloudHSM. Price AWS Private CA only as a separate AWS-managed CA profile.
+- Price ACM Private CA or hybrid offline CloudHSM Root CA plus ACM Private CA
+  as the default AWS-managed certificate issuance profile. Runtime certificate
+  validation is not a CloudHSM call.
+- Price always-on AWS CloudHSM only when the deployment explicitly requires a
+  dedicated HSM instance, PKCS#11 key ceremony, or a regulatory mandate that ACM
+  Private CA/KMS cannot satisfy.
 - Price ACM for public TLS certificates and AWS KMS for envelope encryption of
   secrets, logs, backups, and object-storage keys.
 - Price Secrets Manager for HSM PIN references, HMAC/shared keys, DSNs, webhook
