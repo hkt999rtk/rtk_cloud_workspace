@@ -84,6 +84,7 @@ var commands = map[string]commandSpec{
 	"test-matrix":                      {run: runTestMatrix},
 	"unprovision-devices":              {run: runUnprovisionDevices},
 	"validate-device-bind":             {run: runValidateDeviceBind},
+	"video-loadtest-tokens":            {run: runVideoLoadtestTokens},
 	"video-relay-test":                 {run: runVideoRelayTest},
 }
 

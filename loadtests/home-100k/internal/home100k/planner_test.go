@@ -95,6 +95,29 @@ func TestDefaultPlanResolves100KHomeBaseline(t *testing.T) {
 	}
 }
 
+func TestVideo1KPlanUsesVideoPilotDeviceMix(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:         "cloud_env/staging/lke",
+		Brandname:       "RTK",
+		Region:          "us-sea",
+		ScenarioProfile: Video1KScenarioProfile,
+		DeviceCount:     1000,
+		DevicesPerUser:  20,
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+	if plan.DeviceMix["camera"] != 100 || plan.DeviceMix["light"] != 300 || plan.DeviceMix["air_conditioner"] != 300 || plan.DeviceMix["smart_meter"] != 300 {
+		t.Fatalf("video device mix = %#v, want camera=100 light=300 air_conditioner=300 smart_meter=300", plan.DeviceMix)
+	}
+	if _, ok := plan.DeviceMix["gateway"]; ok {
+		t.Fatalf("video device mix should not include home-diverse gateway: %#v", plan.DeviceMix)
+	}
+	if plan.DeviceProfiles["camera"].PayloadClass != "camera_status" {
+		t.Fatalf("camera profile = %#v, want camera_status payload class", plan.DeviceProfiles["camera"])
+	}
+}
+
 func TestDefaultPlanIncludesDiverseDeviceAndUserProfiles(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
 		EnvRoot:     "cloud_env/staging/lke",

@@ -17,6 +17,7 @@ type ReportInput struct {
 	ServerEvidence        ServerEvidence
 	ServerCorrelation     ServerCorrelation
 	RuntimeLogCorrelation RuntimeLogCorrelation
+	VideoEvidence         VideoEvidence
 	StartCoordination     StartCoordination
 	SyncTelemetry         SyncTelemetry
 	Notes                 []string
@@ -26,7 +27,7 @@ func RenderReport(input ReportInput) string {
 	evidence := input.ServerEvidence
 	evidence.Complete = input.ServerEvidenceFound
 	health := LoadGeneratorHealth{Saturated: !input.LoadGeneratorHealthy}
-	outcome := evaluateRunOutcome(input.Plan, evidence, input.StageResults, health, input.ServerCorrelation, input.RuntimeLogCorrelation)
+	outcome := evaluateRunOutcome(input.Plan, evidence, input.StageResults, health, input.ServerCorrelation, input.RuntimeLogCorrelation, input.VideoEvidence)
 	reasons := outcome.Reasons
 
 	var b strings.Builder
@@ -82,6 +83,54 @@ func RenderReport(input ReportInput) string {
 	fmt.Fprintln(&b, "- The current runner records synthetic actor sample counters; these totals are not proof that 100,000 real MQTT devices or 5,000 real app users exchanged traffic.")
 	fmt.Fprintln(&b, "- A capacity `PASS` requires functional success gates and exact event correlation to meet the configured thresholds; aggregate counter correlation inside tolerance is a sanity check, and small mismatches are warnings.")
 	fmt.Fprintln(&b)
+
+	if input.Plan.VideoEnabled() {
+		fmt.Fprintln(&b, "## Video Load Profile")
+		fmt.Fprintf(&b, "- Video profile: `%s`\n", input.Plan.VideoProfile.Name)
+		fmt.Fprintf(&b, "- Video devices: %d\n", input.Plan.VideoProfile.VideoDevices)
+		fmt.Fprintf(&b, "- Video viewers: %d\n", input.Plan.VideoProfile.VideoViewers)
+		fmt.Fprintf(&b, "- WebRTC media set: `%s`\n", input.Plan.VideoProfile.WebRTCMediaSet)
+		fmt.Fprintf(&b, "- Device actor: `%s`\n", input.Plan.VideoProfile.DeviceActorRole)
+		fmt.Fprintf(&b, "- App actor: `%s`\n", input.Plan.VideoProfile.AppActorRole)
+		fmt.Fprintf(&b, "- Viewer actor: `%s`\n", input.Plan.VideoProfile.ViewerActorRole)
+		fmt.Fprintln(&b)
+
+		fmt.Fprintln(&b, "## WebRTC Totals")
+		fmt.Fprintln(&b, "| Phase | Attempts | Success | Success rate |")
+		fmt.Fprintln(&b, "| --- | ---: | ---: | ---: |")
+		renderWebRTCPhase(&b, "create", input.VideoEvidence.WebRTC.CreateAttempts, input.VideoEvidence.WebRTC.CreateSuccess)
+		renderWebRTCPhase(&b, "setup", input.VideoEvidence.WebRTC.SetupAttempts, input.VideoEvidence.WebRTC.SetupSuccess)
+		renderWebRTCPhase(&b, "close", input.VideoEvidence.WebRTC.CloseAttempts, input.VideoEvidence.WebRTC.CloseSuccess)
+		fmt.Fprintf(&b, "- Setup p95: %d ms\n", input.VideoEvidence.WebRTC.SetupP95MS)
+		fmt.Fprintf(&b, "- Setup p99: %d ms\n", input.VideoEvidence.WebRTC.SetupP99MS)
+		fmt.Fprintf(&b, "- ICE server count: %d\n", input.VideoEvidence.WebRTC.ICEServerCount)
+		fmt.Fprintf(&b, "- Open sessions: %d\n", input.VideoEvidence.WebRTC.OpenSessions)
+		fmt.Fprintln(&b)
+
+		if input.VideoEvidence.WebRTCMedia.Enabled || input.VideoEvidence.WebRTCMedia.Attempts > 0 {
+			fmt.Fprintln(&b, "## WebRTC Media Totals")
+			fmt.Fprintf(&b, "- Attempts: %d\n", input.VideoEvidence.WebRTCMedia.Attempts)
+			fmt.Fprintf(&b, "- Successes: %d\n", input.VideoEvidence.WebRTCMedia.Successes)
+			fmt.Fprintf(&b, "- Failures: %d\n", input.VideoEvidence.WebRTCMedia.Failures)
+			fmt.Fprintf(&b, "- ICE connected p95: %d ms\n", input.VideoEvidence.WebRTCMedia.ICEConnectedP95MS)
+			fmt.Fprintf(&b, "- First RTP p95: %d ms\n", input.VideoEvidence.WebRTCMedia.TimeToFirstRTPP95MS)
+			fmt.Fprintf(&b, "- RTP packets received: %d\n", input.VideoEvidence.WebRTCMedia.PacketsReceived)
+			fmt.Fprintf(&b, "- RTP bytes received: %d\n", input.VideoEvidence.WebRTCMedia.BytesReceived)
+			fmt.Fprintf(&b, "- H.264 packets received: %d\n", input.VideoEvidence.WebRTCMedia.H264PacketsReceived)
+			fmt.Fprintf(&b, "- H.264 bytes received: %d\n", input.VideoEvidence.WebRTCMedia.H264BytesReceived)
+			fmt.Fprintf(&b, "- Opus packets received: %d\n", input.VideoEvidence.WebRTCMedia.OpusPacketsReceived)
+			fmt.Fprintf(&b, "- Opus bytes received: %d\n", input.VideoEvidence.WebRTCMedia.OpusBytesReceived)
+			fmt.Fprintln(&b)
+		}
+
+		fmt.Fprintln(&b, "## TURN Evidence")
+		fmt.Fprintf(&b, "- registry available: %t\n", input.VideoEvidence.TURN.RegistryAvailable)
+		fmt.Fprintf(&b, "- active nodes: %d\n", input.VideoEvidence.TURN.ActiveNodes)
+		fmt.Fprintf(&b, "- coturn available: %t\n", input.VideoEvidence.TURN.CoturnAvailable)
+		fmt.Fprintf(&b, "- allocations: %d\n", input.VideoEvidence.TURN.Allocations)
+		fmt.Fprintf(&b, "- active sessions: %d\n", input.VideoEvidence.TURN.ActiveSessions)
+		fmt.Fprintln(&b)
+	}
 
 	fmt.Fprintln(&b, "## Scenario Mix")
 	fmt.Fprintf(&b, "- Scenario profile: `%s`\n", firstNonEmpty(input.Plan.ScenarioProfile, DefaultScenarioProfile))
@@ -438,6 +487,10 @@ func RenderReport(input ReportInput) string {
 		fmt.Fprintln(&b)
 	}
 	return b.String()
+}
+
+func renderWebRTCPhase(b *strings.Builder, label string, attempts int64, successes int64) {
+	fmt.Fprintf(b, "| %s | %d | %d | %.2f%% |\n", label, attempts, successes, percentInt64(successes, attempts))
 }
 
 func renderReportBrandConditions(b *strings.Builder, plan Plan) {

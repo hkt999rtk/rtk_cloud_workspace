@@ -31,6 +31,7 @@ type RunResult struct {
 	ServerEvidence        ServerEvidence        `json:"server_evidence"`
 	ServerCorrelation     ServerCorrelation     `json:"server_correlation"`
 	RuntimeLogCorrelation RuntimeLogCorrelation `json:"runtime_log_correlation,omitempty"`
+	VideoEvidence         VideoEvidence         `json:"video_evidence,omitempty"`
 	StartCoordination     StartCoordination     `json:"start_coordination"`
 	SyncTelemetry         SyncTelemetry         `json:"sync_telemetry"`
 	LoadGeneratorHealth   LoadGeneratorHealth   `json:"load_generator_health"`
@@ -83,6 +84,51 @@ type StageResult struct {
 	UserActionTotals               map[string]int64            `json:"user_action_totals,omitempty"`
 	UsageWindowTotals              map[string]int64            `json:"usage_window_totals,omitempty"`
 	StageDiagnostics               []map[string]any            `json:"stage_diagnostics,omitempty"`
+}
+
+type VideoEvidence struct {
+	Complete    bool              `json:"complete"`
+	WebRTC      WebRTCTotals      `json:"webrtc_totals"`
+	WebRTCMedia WebRTCMediaTotals `json:"webrtc_media_totals,omitempty"`
+	TURN        TURNEvidence      `json:"turn_evidence,omitempty"`
+	Notes       []string          `json:"notes,omitempty"`
+}
+
+type WebRTCTotals struct {
+	CreateAttempts     int64   `json:"create_attempts"`
+	CreateSuccess      int64   `json:"create_success"`
+	SetupAttempts      int64   `json:"setup_attempts"`
+	SetupSuccess       int64   `json:"setup_success"`
+	CloseAttempts      int64   `json:"close_attempts"`
+	CloseSuccess       int64   `json:"close_success"`
+	SuccessRatePercent float64 `json:"success_rate_percent"`
+	SetupP95MS         int64   `json:"setup_p95_ms"`
+	SetupP99MS         int64   `json:"setup_p99_ms"`
+	ICEServerCount     int     `json:"ice_server_count"`
+	OpenSessions       int     `json:"open_sessions"`
+}
+
+type WebRTCMediaTotals struct {
+	Enabled             bool  `json:"enabled,omitempty"`
+	Attempts            int64 `json:"attempts,omitempty"`
+	Successes           int64 `json:"successes,omitempty"`
+	Failures            int64 `json:"failures,omitempty"`
+	ICEConnectedP95MS   int64 `json:"ice_connected_p95_ms,omitempty"`
+	TimeToFirstRTPP95MS int64 `json:"time_to_first_rtp_p95_ms,omitempty"`
+	PacketsReceived     int64 `json:"packets_received,omitempty"`
+	BytesReceived       int64 `json:"bytes_received,omitempty"`
+	H264PacketsReceived int64 `json:"h264_packets_received,omitempty"`
+	H264BytesReceived   int64 `json:"h264_bytes_received,omitempty"`
+	OpusPacketsReceived int64 `json:"opus_packets_received,omitempty"`
+	OpusBytesReceived   int64 `json:"opus_bytes_received,omitempty"`
+}
+
+type TURNEvidence struct {
+	RegistryAvailable bool  `json:"registry_available"`
+	ActiveNodes       int64 `json:"active_nodes,omitempty"`
+	CoturnAvailable   bool  `json:"coturn_available"`
+	Allocations       int64 `json:"allocations,omitempty"`
+	ActiveSessions    int64 `json:"active_sessions,omitempty"`
 }
 
 type DeviceTypeTotals struct {
@@ -321,7 +367,8 @@ func Run(opts RunOptions) (RunResult, error) {
 	thresholds := gateThresholdsFromConditions(plan.Conditions)
 	correlation := correlateServerEvidenceWithThresholds(evidence, deviceTotals, appTotals, thresholds)
 	runtimeLogCorrelation := correlateRuntimeLogsWithThresholds(evidence, stageResults, thresholds)
-	outcome := evaluateRunOutcome(plan, evidence, stageResults, LoadGeneratorHealth{}, correlation, runtimeLogCorrelation)
+	videoEvidence := videoEvidenceWithServerEvidence(loadVideoEvidence(filepath.Join(outDir, "video")), evidence)
+	outcome := evaluateRunOutcome(plan, evidence, stageResults, LoadGeneratorHealth{}, correlation, runtimeLogCorrelation, videoEvidence)
 
 	result := RunResult{
 		RunID:                 runID,
@@ -334,6 +381,7 @@ func Run(opts RunOptions) (RunResult, error) {
 		ServerEvidence:        evidence,
 		ServerCorrelation:     correlation,
 		RuntimeLogCorrelation: runtimeLogCorrelation,
+		VideoEvidence:         videoEvidence,
 		LoadGeneratorHealth:   LoadGeneratorHealth{},
 		PlanFile:              filepath.Join(outDir, "plan.json"),
 		ResultsFile:           filepath.Join(outDir, "results.json"),
@@ -359,6 +407,7 @@ func Run(opts RunOptions) (RunResult, error) {
 		ServerEvidence:        evidence,
 		ServerCorrelation:     correlation,
 		RuntimeLogCorrelation: runtimeLogCorrelation,
+		VideoEvidence:         videoEvidence,
 		SyncTelemetry:         SyncTelemetry{},
 	})
 	if err := os.WriteFile(result.ReportFile, []byte(report), 0o644); err != nil {
@@ -405,7 +454,8 @@ func AggregateCollectedRun(opts AggregateOptions) (RunResult, error) {
 	thresholds := gateThresholdsFromConditions(plan.Conditions)
 	correlation := correlateServerEvidenceWithThresholds(evidence, deviceTotals, appTotals, thresholds)
 	runtimeLogCorrelation := correlateRuntimeLogsWithThresholds(evidence, stages, thresholds)
-	outcome := evaluateRunOutcome(plan, evidence, stages, loadHealth, correlation, runtimeLogCorrelation)
+	videoEvidence := videoEvidenceWithServerEvidence(loadVideoEvidence(filepath.Join(outDir, "video")), evidence)
+	outcome := evaluateRunOutcome(plan, evidence, stages, loadHealth, correlation, runtimeLogCorrelation, videoEvidence)
 	result := RunResult{
 		RunID:                 runID,
 		Status:                outcome.Status,
@@ -417,6 +467,7 @@ func AggregateCollectedRun(opts AggregateOptions) (RunResult, error) {
 		ServerEvidence:        evidence,
 		ServerCorrelation:     correlation,
 		RuntimeLogCorrelation: runtimeLogCorrelation,
+		VideoEvidence:         videoEvidence,
 		StartCoordination:     startCoordination,
 		SyncTelemetry:         syncTelemetry,
 		LoadGeneratorHealth:   loadHealth,
@@ -446,6 +497,7 @@ func AggregateCollectedRun(opts AggregateOptions) (RunResult, error) {
 		ServerEvidence:        evidence,
 		ServerCorrelation:     correlation,
 		RuntimeLogCorrelation: runtimeLogCorrelation,
+		VideoEvidence:         videoEvidence,
 		StartCoordination:     startCoordination,
 		SyncTelemetry:         syncTelemetry,
 		Notes:                 loadHealth.Reasons,
@@ -496,6 +548,159 @@ func loadStartCoordination(path string) StartCoordination {
 		_ = json.Unmarshal(raw, &coordination)
 	}
 	return coordination
+}
+
+func loadVideoEvidence(dir string) VideoEvidence {
+	for _, name := range []string{"results.json", "load-results.json", "loadtest-results.json"} {
+		path := filepath.Join(dir, name)
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		evidence, err := videoEvidenceFromLoadtestJSON(raw)
+		if err != nil {
+			return VideoEvidence{Notes: []string{fmt.Sprintf("video evidence decode failed: %s", err)}}
+		}
+		return evidence
+	}
+	return VideoEvidence{}
+}
+
+func videoEvidenceFromLoadtestJSON(raw []byte) (VideoEvidence, error) {
+	var payload struct {
+		WebRTC struct {
+			Attempts          int64   `json:"attempts"`
+			Successes         int64   `json:"successes"`
+			Failures          int64   `json:"failures"`
+			SuccessRate       float64 `json:"success_rate"`
+			SetupLatencyP95MS int64   `json:"setup_latency_p95_ms"`
+			SetupLatencyP99MS int64   `json:"setup_latency_p99_ms"`
+			ICEServerCount    int     `json:"ice_server_count"`
+			OpenSessions      int     `json:"open_sessions"`
+			Create            struct {
+				Operations int64 `json:"operations"`
+				Successes  int64 `json:"successes"`
+			} `json:"create"`
+			Setup struct {
+				Operations int64 `json:"operations"`
+				Successes  int64 `json:"successes"`
+			} `json:"setup"`
+			Close struct {
+				Operations int64 `json:"operations"`
+				Successes  int64 `json:"successes"`
+			} `json:"close"`
+		} `json:"webrtc"`
+		WebRTCMedia struct {
+			Attempts            int64 `json:"attempts"`
+			Successes           int64 `json:"successes"`
+			Failures            int64 `json:"failures"`
+			PacketsReceived     int64 `json:"packets_received"`
+			BytesReceived       int64 `json:"bytes_received"`
+			H264PacketsReceived int64 `json:"h264_packets_received"`
+			H264BytesReceived   int64 `json:"h264_bytes_received"`
+			OpusPacketsReceived int64 `json:"opus_packets_received"`
+			OpusBytesReceived   int64 `json:"opus_bytes_received"`
+			TimeToFirstRTPP95MS int64 `json:"time_to_first_rtp_p95_ms"`
+			ICEConnectedP95MS   int64 `json:"ice_connected_p95_ms"`
+		} `json:"webrtc_media"`
+		TURN struct {
+			RegistryAvailable bool  `json:"registry_available"`
+			ActiveNodes       int64 `json:"active_nodes"`
+			CoturnAvailable   bool  `json:"coturn_available"`
+			Allocations       int64 `json:"allocations"`
+			ActiveSessions    int64 `json:"active_sessions"`
+		} `json:"turn_evidence"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return VideoEvidence{}, err
+	}
+	evidence := VideoEvidence{
+		WebRTC: WebRTCTotals{
+			CreateAttempts:     payload.WebRTC.Create.Operations,
+			CreateSuccess:      payload.WebRTC.Create.Successes,
+			SetupAttempts:      nonZeroInt64(payload.WebRTC.Setup.Operations, payload.WebRTC.Attempts),
+			SetupSuccess:       nonZeroInt64(payload.WebRTC.Setup.Successes, payload.WebRTC.Successes),
+			CloseAttempts:      payload.WebRTC.Close.Operations,
+			CloseSuccess:       payload.WebRTC.Close.Successes,
+			SuccessRatePercent: payload.WebRTC.SuccessRate * 100,
+			SetupP95MS:         payload.WebRTC.SetupLatencyP95MS,
+			SetupP99MS:         payload.WebRTC.SetupLatencyP99MS,
+			ICEServerCount:     payload.WebRTC.ICEServerCount,
+			OpenSessions:       payload.WebRTC.OpenSessions,
+		},
+		WebRTCMedia: WebRTCMediaTotals{
+			Enabled:             payload.WebRTCMedia.Attempts > 0,
+			Attempts:            payload.WebRTCMedia.Attempts,
+			Successes:           payload.WebRTCMedia.Successes,
+			Failures:            payload.WebRTCMedia.Failures,
+			ICEConnectedP95MS:   payload.WebRTCMedia.ICEConnectedP95MS,
+			TimeToFirstRTPP95MS: payload.WebRTCMedia.TimeToFirstRTPP95MS,
+			PacketsReceived:     payload.WebRTCMedia.PacketsReceived,
+			BytesReceived:       payload.WebRTCMedia.BytesReceived,
+			H264PacketsReceived: payload.WebRTCMedia.H264PacketsReceived,
+			H264BytesReceived:   payload.WebRTCMedia.H264BytesReceived,
+			OpusPacketsReceived: payload.WebRTCMedia.OpusPacketsReceived,
+			OpusBytesReceived:   payload.WebRTCMedia.OpusBytesReceived,
+		},
+		TURN: TURNEvidence{
+			RegistryAvailable: payload.TURN.RegistryAvailable,
+			ActiveNodes:       payload.TURN.ActiveNodes,
+			CoturnAvailable:   payload.TURN.CoturnAvailable,
+			Allocations:       payload.TURN.Allocations,
+			ActiveSessions:    payload.TURN.ActiveSessions,
+		},
+	}
+	if evidence.WebRTCMedia.Enabled && evidence.WebRTC.SetupAttempts == 0 && evidence.WebRTCMedia.Attempts > 0 {
+		evidence.WebRTC.SetupAttempts = evidence.WebRTCMedia.Attempts
+		evidence.WebRTC.SetupSuccess = evidence.WebRTCMedia.Successes
+		evidence.WebRTC.SetupP95MS = evidence.WebRTCMedia.ICEConnectedP95MS
+		evidence.WebRTC.SetupP99MS = evidence.WebRTCMedia.ICEConnectedP95MS
+	}
+	if evidence.WebRTC.SuccessRatePercent == 0 {
+		attempts := evidence.WebRTC.CreateAttempts + evidence.WebRTC.SetupAttempts + evidence.WebRTC.CloseAttempts
+		successes := evidence.WebRTC.CreateSuccess + evidence.WebRTC.SetupSuccess + evidence.WebRTC.CloseSuccess
+		if attempts > 0 {
+			evidence.WebRTC.SuccessRatePercent = float64(successes) * 100 / float64(attempts)
+		}
+	}
+	evidence.Complete = evidence.WebRTC.CreateAttempts > 0 &&
+		evidence.WebRTC.SetupAttempts > 0 &&
+		evidence.WebRTC.CloseAttempts > 0 &&
+		evidence.TURN.RegistryAvailable &&
+		evidence.TURN.CoturnAvailable &&
+		evidence.TURN.ActiveNodes > 0
+	return evidence, nil
+}
+
+func videoEvidenceWithServerEvidence(video VideoEvidence, evidence ServerEvidence) VideoEvidence {
+	if source, ok := evidence.Sources["turn_registry"]; ok {
+		video.TURN.RegistryAvailable = video.TURN.RegistryAvailable || source.Available
+		if value := source.Counters["turn_registry.active_nodes"]; value > video.TURN.ActiveNodes {
+			video.TURN.ActiveNodes = value
+		}
+		if value := source.Counters["turn_registry.ready_pods"]; value > video.TURN.ActiveNodes {
+			video.TURN.ActiveNodes = value
+		}
+	}
+	if source, ok := evidence.Sources["coturn"]; ok {
+		video.TURN.CoturnAvailable = video.TURN.CoturnAvailable || source.Available
+		if value := source.Counters["coturn.allocations"]; value > video.TURN.Allocations {
+			video.TURN.Allocations = value
+		}
+		if value := source.Counters["coturn.active_sessions"]; value > video.TURN.ActiveSessions {
+			video.TURN.ActiveSessions = value
+		}
+		if value := source.Counters["coturn.ready_pods"]; value > video.TURN.ActiveNodes {
+			video.TURN.ActiveNodes = value
+		}
+	}
+	video.Complete = video.WebRTC.CreateAttempts > 0 &&
+		video.WebRTC.SetupAttempts > 0 &&
+		video.WebRTC.CloseAttempts > 0 &&
+		video.TURN.RegistryAvailable &&
+		video.TURN.CoturnAvailable &&
+		video.TURN.ActiveNodes > 0
+	return video
 }
 
 func loadCollectedShardResults(shardsDir string, stages []Stage) (collectedShardResults, error) {
@@ -855,6 +1060,8 @@ func optionalEvidenceSources(available bool) map[string]EvidenceSource {
 	return map[string]EvidenceSource{
 		"central_logger": {Available: available, Optional: true},
 		"edge_haproxy":   {Available: available, Optional: true},
+		"turn_registry":  {Available: available, Optional: true},
+		"coturn":         {Available: available, Optional: true},
 	}
 }
 
@@ -935,11 +1142,15 @@ func runStatusWithCorrelation(plan Plan, evidence ServerEvidence, stages []Stage
 
 const runSuccessRateThresholdPercent = 99.5
 
-func evaluateRunOutcome(plan Plan, evidence ServerEvidence, stages []StageResult, health LoadGeneratorHealth, correlation ServerCorrelation, runtimeLogCorrelation RuntimeLogCorrelation) RunOutcome {
+func evaluateRunOutcome(plan Plan, evidence ServerEvidence, stages []StageResult, health LoadGeneratorHealth, correlation ServerCorrelation, runtimeLogCorrelation RuntimeLogCorrelation, videoEvidenceValues ...VideoEvidence) RunOutcome {
 	outcome := RunOutcome{Status: "COMPLETE", Result: "SUCCESS"}
 	reasons := []string{}
 	incomplete := false
 	fail := false
+	videoEvidence := VideoEvidence{}
+	if len(videoEvidenceValues) > 0 {
+		videoEvidence = videoEvidenceValues[0]
+	}
 
 	if !evidence.Complete {
 		incomplete = true
@@ -949,6 +1160,14 @@ func evaluateRunOutcome(plan Plan, evidence ServerEvidence, stages []StageResult
 		incomplete = true
 		reasons = append(reasons, "Missing IoT Device Shadow evidence")
 	}
+	videoIncomplete, videoFailReasons := videoGateFailures(plan, videoEvidence)
+	if videoIncomplete {
+		incomplete = true
+	}
+	if !videoIncomplete && len(videoFailReasons) > 0 {
+		fail = true
+	}
+	reasons = append(reasons, videoFailReasons...)
 	if health.Saturated {
 		incomplete = true
 		reasons = append(reasons, "Load-generator saturation invalidated server-capacity conclusion")
@@ -1023,6 +1242,44 @@ func evaluateRunOutcome(plan Plan, evidence ServerEvidence, stages []StageResult
 	}
 	outcome.Reasons = reasons
 	return outcome
+}
+
+func videoGateFailures(plan Plan, evidence VideoEvidence) (bool, []string) {
+	if !plan.VideoEnabled() {
+		return false, nil
+	}
+	reasons := []string{}
+	incomplete := false
+	if !evidence.Complete {
+		incomplete = true
+		reasons = append(reasons, "Missing WebRTC create/setup/close evidence")
+	}
+	if evidence.WebRTC.CreateAttempts == 0 || evidence.WebRTC.SetupAttempts == 0 || evidence.WebRTC.CloseAttempts == 0 {
+		incomplete = true
+		if len(reasons) == 0 {
+			reasons = append(reasons, "Missing WebRTC create/setup/close evidence")
+		}
+	}
+	if !evidence.TURN.RegistryAvailable || !evidence.TURN.CoturnAvailable || evidence.TURN.ActiveNodes == 0 {
+		incomplete = true
+		reasons = append(reasons, "Missing external TURN/coturn evidence")
+	}
+	if incomplete {
+		return true, reasons
+	}
+	threshold := DefaultFunctionalSuccessThresholdPercent
+	if plan.Conditions.FunctionalSuccessThresholdPercent > 0 {
+		threshold = plan.Conditions.FunctionalSuccessThresholdPercent
+	}
+	if evidence.WebRTC.SuccessRatePercent < threshold {
+		reasons = append(reasons, fmt.Sprintf("WebRTC signaling success rate %.2f%% below %.2f%% threshold", evidence.WebRTC.SuccessRatePercent, threshold))
+	}
+	if strings.TrimSpace(plan.VideoProfile.WebRTCMediaSet) != "" && plan.VideoProfile.WebRTCMediaSet != "off" {
+		if evidence.WebRTCMedia.Attempts == 0 || evidence.WebRTCMedia.Successes == 0 || evidence.WebRTCMedia.ICEConnectedP95MS == 0 || evidence.WebRTCMedia.TimeToFirstRTPP95MS == 0 {
+			reasons = append(reasons, "WebRTC media evidence missing ICE connected or first RTP")
+		}
+	}
+	return false, reasons
 }
 
 func successRateFailureReasons(conditions TestConditions, stages []StageResult, threshold float64) []string {

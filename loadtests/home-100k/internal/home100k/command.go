@@ -181,6 +181,7 @@ func parseCommonFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
 	brandPlan := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
+	scenarioProfile := fs.String("scenario-profile", "", "scenario profile, for example video-1k-v1")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
@@ -192,10 +193,11 @@ func parseCommonFlags(name string, args []string, stderr io.Writer) (PlanOptions
 		return PlanOptions{}, false, err
 	}
 	opts := PlanOptions{
-		EnvRoot:       *envRoot,
-		Brandname:     *brandname,
-		BrandPlanFile: *brandPlan,
-		Region:        *region,
+		EnvRoot:         *envRoot,
+		Brandname:       *brandname,
+		BrandPlanFile:   *brandPlan,
+		ScenarioProfile: *scenarioProfile,
+		Region:          *region,
 	}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
@@ -221,6 +223,7 @@ func parseRunFlags(name string, args []string, stderr io.Writer) (PlanOptions, b
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
 	brandPlan := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
+	scenarioProfile := fs.String("scenario-profile", "", "scenario profile, for example video-1k-v1")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
@@ -235,10 +238,11 @@ func parseRunFlags(name string, args []string, stderr io.Writer) (PlanOptions, b
 		return PlanOptions{}, false, runFlagValues{}, err
 	}
 	opts := PlanOptions{
-		EnvRoot:       *envRoot,
-		Brandname:     *brandname,
-		BrandPlanFile: *brandPlan,
-		Region:        *region,
+		EnvRoot:         *envRoot,
+		Brandname:       *brandname,
+		BrandPlanFile:   *brandPlan,
+		ScenarioProfile: *scenarioProfile,
+		Region:          *region,
 	}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
@@ -1460,6 +1464,7 @@ func parseProvisionVMFlags(name string, args []string, stderr io.Writer) (PlanOp
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
 	brandPlan := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
+	scenarioProfile := fs.String("scenario-profile", "", "scenario profile, for example video-1k-v1")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
@@ -1478,7 +1483,7 @@ func parseProvisionVMFlags(name string, args []string, stderr io.Writer) (PlanOp
 	if err := fs.Parse(args); err != nil {
 		return PlanOptions{}, provisionVMFlagValues{}, err
 	}
-	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, BrandPlanFile: *brandPlan, Region: *region}
+	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, BrandPlanFile: *brandPlan, ScenarioProfile: *scenarioProfile, Region: *region}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
@@ -1503,6 +1508,7 @@ func parseDestroyVMFlags(name string, args []string, stderr io.Writer) (PlanOpti
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
 	brandPlan := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
+	scenarioProfile := fs.String("scenario-profile", "", "scenario profile, for example video-1k-v1")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
@@ -1517,7 +1523,7 @@ func parseDestroyVMFlags(name string, args []string, stderr io.Writer) (PlanOpti
 	if err := fs.Parse(args); err != nil {
 		return PlanOptions{}, destroyVMFlagValues{}, err
 	}
-	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, BrandPlanFile: *brandPlan, Region: *region}
+	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, BrandPlanFile: *brandPlan, ScenarioProfile: *scenarioProfile, Region: *region}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
@@ -1538,6 +1544,7 @@ func parseListVMFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
 	brandPlan := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
+	scenarioProfile := fs.String("scenario-profile", "", "scenario profile, for example video-1k-v1")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
@@ -1550,7 +1557,7 @@ func parseListVMFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	if err := fs.Parse(args); err != nil {
 		return PlanOptions{}, listVMFlagValues{}, err
 	}
-	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, BrandPlanFile: *brandPlan, Region: *region}
+	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, BrandPlanFile: *brandPlan, ScenarioProfile: *scenarioProfile, Region: *region}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
@@ -1569,6 +1576,7 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
 	brandPlan := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
+	scenarioProfile := fs.String("scenario-profile", "", "scenario profile, for example video-1k-v1")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
@@ -1604,7 +1612,7 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	if strings.TrimSpace(*credentialBundleFormat) != "sqlite-gzip" {
 		return PlanOptions{}, workflowFlagValues{}, fmt.Errorf("unsupported --credential-bundle-format %q; only sqlite-gzip is supported", *credentialBundleFormat)
 	}
-	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, BrandPlanFile: *brandPlan, Region: *region}
+	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, BrandPlanFile: *brandPlan, ScenarioProfile: *scenarioProfile, Region: *region}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
@@ -1644,6 +1652,7 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
 	brandPlan := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
+	scenarioProfile := fs.String("scenario-profile", "", "scenario profile, for example video-1k-v1")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
@@ -1668,7 +1677,7 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	if strings.TrimSpace(*role) == "" {
 		return PlanOptions{}, shardRunFlagValues{}, fmt.Errorf("--role is required")
 	}
-	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, BrandPlanFile: *brandPlan, Region: *region}
+	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, BrandPlanFile: *brandPlan, ScenarioProfile: *scenarioProfile, Region: *region}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
@@ -2830,11 +2839,87 @@ func serverEvidenceProbes(envRoot string, runID string, logsSinceArg string) []s
 		videoCloudAPIRequestTokenCounterProbe(runID, logsSinceArg),
 		videoCloudAPIMetricsProbe(runID),
 		kubectlLogsProbe("video_cloud_api", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=video-cloud-api", logsSinceArg, "Video Cloud API logs captured for run_id "+runID),
+		turnRegistryProbe(runID),
+		coturnProbe(envRoot, runID),
 		postgresCounterProbe("postgres", runID, shadowStoreCounterSQL(runID), "PostgreSQL device shadow convergence counters parsed for run_id "+runID),
 		kubectlLogsProbe("postgres", "video-cloud-staging-platform", "app.kubernetes.io/name=postgresql", logsSinceArg, "PostgreSQL logs captured"),
 		redisInfoProbe(runID),
 		kubectlLogsProbe("redis_valkey", "video-cloud-staging-platform", "app.kubernetes.io/name=redis", logsSinceArg, "Redis/Valkey logs captured when enabled"),
 		kubectlLogsProbe("ingress_nginx", "video-cloud-staging-ingress", "app.kubernetes.io/name=ingress-nginx", logsSinceArg, "Ingress/nginx logs captured for run_id "+runID),
+	}
+}
+
+func turnRegistryProbe(runID string) serverEvidenceProbe {
+	script := `set -euo pipefail
+ns=video-cloud-staging-video-cloud
+selectors='app.kubernetes.io/name=turnregistry app.kubernetes.io/name=turn-registry app.kubernetes.io/name=video-cloud-turnregistry app=turnregistry app=video-cloud-turnregistry'
+pods=''
+for selector in $selectors; do
+  pods="$(printf '%s\n%s\n' "$pods" "$(kubectl -n "$ns" get pods --selector "$selector" -o name 2>/dev/null || true)")"
+done
+pods="$(printf '%s\n%s\n' "$pods" "$(kubectl -n "$ns" get pods -o name 2>/dev/null | grep -Ei 'turn.*registry|turnregistry' || true)" | sed '/^$/d' | sort -u)"
+services="$(kubectl -n "$ns" get svc -o name 2>/dev/null | grep -Ei 'turn.*registry|turnregistry' || true)"
+endpoints="$(kubectl -n "$ns" get endpoints -o name 2>/dev/null | grep -Ei 'turn.*registry|turnregistry' || true)"
+ready=0
+for pod in $pods; do
+  if [ "$(kubectl -n "$ns" get "$pod" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)" = "True" ]; then
+    ready=$((ready + 1))
+  fi
+done
+service_count="$(printf '%s\n' "$services" | sed '/^$/d' | wc -l | tr -d ' ')"
+endpoint_count="$(printf '%s\n' "$endpoints" | sed '/^$/d' | wc -l | tr -d ' ')"
+active="$ready"
+if [ "$active" -eq 0 ] && [ "$endpoint_count" -gt 0 ]; then
+  active="$endpoint_count"
+fi
+echo "turn_registry.ready_pods $ready"
+echo "turn_registry.services $service_count"
+echo "turn_registry.endpoints $endpoint_count"
+echo "turn_registry.active_nodes $active"
+test "$active" -gt 0`
+	return serverEvidenceProbe{
+		source:  "turn_registry",
+		command: "bash",
+		args:    []string{"-lc", script},
+		detail:  "TURN registry readiness and active node evidence captured for run_id " + runID,
+	}
+}
+
+func coturnProbe(envRoot string, runID string) serverEvidenceProbe {
+	artifact := filepath.Join(envRoot, "artifacts", "coturn-vm", "coturn-vm.json")
+	script := fmt.Sprintf(`set -euo pipefail
+ns=video-cloud-staging-video-cloud
+selectors='app.kubernetes.io/name=coturn app.kubernetes.io/name=turn app=coturn app=turn'
+pods=''
+for selector in $selectors; do
+  pods="$(printf '%%s\n%%s\n' "$pods" "$(kubectl -n "$ns" get pods --selector "$selector" -o name 2>/dev/null || true)")"
+done
+pods="$(printf '%%s\n%%s\n' "$pods" "$(kubectl -n "$ns" get pods -o name 2>/dev/null | grep -Ei '(^pod/)?coturn|(^pod/)?turn-' || true)" | sed '/^$/d' | sort -u)"
+services="$(kubectl -n "$ns" get svc -o name 2>/dev/null | grep -Ei 'coturn|turn-' || true)"
+ready=0
+for pod in $pods; do
+  if [ "$(kubectl -n "$ns" get "$pod" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)" = "True" ]; then
+    ready=$((ready + 1))
+  fi
+done
+service_count="$(printf '%%s\n' "$services" | sed '/^$/d' | wc -l | tr -d ' ')"
+domain=''
+if [ -f %s ]; then
+  domain="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print((data.get("domain") or data.get("coturn_vm", {}).get("domain") or "").strip())' %s 2>/dev/null || true)"
+fi
+public_tcp=0
+if [ -n "$domain" ] && nc -vz -w 5 "$domain" 3478 >/dev/null 2>&1; then
+  public_tcp=1
+fi
+echo "coturn.ready_pods $ready"
+echo "coturn.services $service_count"
+echo "coturn.public_tcp_available $public_tcp"
+test "$ready" -gt 0 || test "$public_tcp" -gt 0`, shellQuote(artifact), shellQuote(artifact))
+	return serverEvidenceProbe{
+		source:  "coturn",
+		command: "bash",
+		args:    []string{"-lc", script},
+		detail:  "coturn readiness evidence captured for run_id " + runID,
 	}
 }
 
@@ -3432,7 +3517,7 @@ func maxAssignmentConnectedDevices(assignment VMAssignment) int {
 
 func homeDeviceType(value string) bool {
 	switch value {
-	case "light", "switch", "smart_plug", "air_conditioner", "environment_sensor", "security_sensor", "smart_meter", "camera_status", "door_lock", "appliance", "gateway":
+	case "light", "switch", "smart_plug", "air_conditioner", "environment_sensor", "security_sensor", "smart_meter", "camera_status", "camera", "door_lock", "appliance", "gateway":
 		return true
 	default:
 		return false

@@ -43,6 +43,7 @@ var homeTypes = map[string]bool{
 	"environment_sensor": true,
 	"security_sensor":    true,
 	"smart_meter":        true,
+	"camera":             true,
 	"camera_status":      true,
 	"door_lock":          true,
 	"appliance":          true,
@@ -840,7 +841,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 		ioTotals = aggregateMQTTIOTotals(perDevice, appBootstrap, totalCommands, totalPassed)
 	}
 	capMetrics := []map[string]any{}
-	for _, kind := range []string{"light", "air_conditioner", "smart_meter"} {
+	for _, kind := range []string{"light", "air_conditioner", "smart_meter", "camera"} {
 		row := capCounts[kind]
 		pct := 0.0
 		if row["commands"] > 0 {
@@ -1975,7 +1976,7 @@ func homeDiverseTrafficProfile(deviceType string) string {
 		return "hvac_slow_converge"
 	case "environment_sensor", "smart_meter":
 		return "periodic_reported"
-	case "security_sensor", "camera_status":
+	case "security_sensor", "camera", "camera_status":
 		return "event_burst"
 	case "door_lock":
 		return "strict_access"
@@ -4609,7 +4610,7 @@ func commandActionForCapability(capability string) string {
 		return "read_security"
 	case "smart_meter", "meter":
 		return "read_meter"
-	case "camera_status":
+	case "camera", "camera_status":
 		return "set_camera_status"
 	case "door_lock":
 		return "set_lock"
@@ -4638,7 +4639,7 @@ func desiredStateForCapability(capability string) map[string]any {
 		return map[string]any{"armed": true}
 	case "smart_meter", "meter":
 		return map[string]any{"reading": "instantaneous"}
-	case "camera_status":
+	case "camera", "camera_status":
 		return map[string]any{"privacy_mode": false, "motion_detection": true}
 	case "door_lock":
 		return map[string]any{"locked": true}
@@ -4659,7 +4660,7 @@ func reportedStateForCapability(capability string) map[string]any {
 		return map[string]any{"armed": true, "motion": false, "open": false}
 	case "smart_meter", "meter":
 		return map[string]any{"reading": "instantaneous", "telemetry_report_requested": true}
-	case "camera_status":
+	case "camera", "camera_status":
 		return map[string]any{"privacy_mode": false, "motion_detection": true, "online": true}
 	case "door_lock":
 		return map[string]any{"locked": true, "battery_percent": 86}

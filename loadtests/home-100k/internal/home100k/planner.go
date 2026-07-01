@@ -24,6 +24,10 @@ const (
 	DefaultStageSteady               = "90s"
 	DefaultStageCoolDown             = "30s"
 	DefaultScenarioProfile           = "home-diverse-v1"
+	Video1KScenarioProfile           = "video-1k-v1"
+	DefaultVideo1KDevices            = 1000
+	DefaultVideo1KViewers            = 100
+	DefaultVideo1KMediaSet           = "h264"
 	DefaultVMLabelPrefix             = "lg"
 
 	DefaultFunctionalSuccessThresholdPercent    = 99.5
@@ -62,6 +66,7 @@ type Plan struct {
 	Conditions        TestConditions           `json:"conditions"`
 	BrandDistribution []BrandDistributionEntry `json:"brand_distribution,omitempty"`
 	ScenarioProfile   string                   `json:"scenario_profile"`
+	VideoProfile      VideoProfile             `json:"video_profile,omitempty"`
 	DeviceMix         map[string]int           `json:"device_mix"`
 	DeviceProfiles    map[string]DeviceProfile `json:"device_profiles"`
 	UserProfiles      map[string]UserProfile   `json:"user_profiles"`
@@ -75,6 +80,22 @@ type Plan struct {
 	Workflow          []string                 `json:"workflow"`
 	Artifacts         Artifacts                `json:"artifacts"`
 	CleanupPlan       []string                 `json:"cleanup_plan"`
+}
+
+type VideoProfile struct {
+	Name            string `json:"name,omitempty"`
+	VideoDevices    int    `json:"video_devices,omitempty"`
+	VideoViewers    int    `json:"video_viewers,omitempty"`
+	WebRTCMediaSet  string `json:"webrtc_media_set,omitempty"`
+	SignalingLayer  string `json:"signaling_layer,omitempty"`
+	MediaLayer      string `json:"media_layer,omitempty"`
+	DeviceActorRole string `json:"device_actor_role,omitempty"`
+	AppActorRole    string `json:"app_actor_role,omitempty"`
+	ViewerActorRole string `json:"viewer_actor_role,omitempty"`
+}
+
+func (p Plan) VideoEnabled() bool {
+	return strings.TrimSpace(p.VideoProfile.Name) != ""
 }
 
 type TargetWindow struct {
@@ -198,6 +219,14 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	if err := validateDuration("stage cool-down", opts.StageCoolDown); err != nil {
 		return Plan{}, err
 	}
+	scenarioProfile := strings.TrimSpace(opts.ScenarioProfile)
+	if scenarioProfile == "" {
+		scenarioProfile = DefaultScenarioProfile
+	}
+	videoProfile := videoProfileForScenario(scenarioProfile)
+	if videoProfile.Name == Video1KScenarioProfile && opts.DeviceCount <= 0 && brandPlanFile == "" {
+		opts.DeviceCount = DefaultVideo1KDevices
+	}
 	devices := opts.DeviceCount
 	if devices <= 0 {
 		devices = DefaultDeviceCount
@@ -255,9 +284,9 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	if readModel == "" {
 		readModel = DefaultRunnerReadModel
 	}
-	scenarioProfile := strings.TrimSpace(opts.ScenarioProfile)
-	if scenarioProfile == "" {
-		scenarioProfile = DefaultScenarioProfile
+	if videoProfile.Name == Video1KScenarioProfile {
+		videoProfile.VideoDevices = minInt(videoProfile.VideoDevices, devices)
+		videoProfile.VideoViewers = minInt(videoProfile.VideoViewers, videoProfile.VideoDevices)
 	}
 	vmLabelPrefix := strings.TrimSpace(opts.VMLabelPrefix)
 	if vmLabelPrefix == "" {
@@ -298,13 +327,14 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 		},
 		BrandDistribution: brandPlan.Distribution(),
 		ScenarioProfile:   scenarioProfile,
-		DeviceMix:         proportionalMix(devices, homeDiverseDeviceMixBuckets()),
-		DeviceProfiles:    homeDiverseDeviceProfiles(),
+		VideoProfile:      videoProfile,
+		DeviceMix:         deviceMixForScenario(scenarioProfile, devices),
+		DeviceProfiles:    deviceProfilesForScenario(scenarioProfile),
 		UserProfiles:      homeDiverseUserProfiles(),
 		PresenceMix:       proportionalMix(devices, []ratioBucket{{Name: "online_steady", Weight: 85}, {Name: "offline_desired_queue", Weight: 10}, {Name: "flapping_reconnect", Weight: 5}}),
 		Target:            targetWindowFromStages(stages),
 		Stages:            stages,
-		Workflow:          []string{"plan", "provision-vms", "sync", "run-stages", "collect", "collect-server-evidence", "aggregate", "destroy-vms"},
+		Workflow:          workflowSteps(videoProfile),
 		Artifacts: Artifacts{
 			RunPlan:         "loadtests/home-100k/plans/<run_id>/plan.json",
 			ShardResults:    "loadtests/home-100k/reports/<run_id>/shards/",
@@ -323,6 +353,52 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	plan.Assignments = mixedAssignments(opts.Region, plan.Shards, vmCount, vmLabelPrefix)
 	plan.Lifecycle = BuildLifecycleActions(plan, "<run_id>")
 	return plan, nil
+}
+
+func videoProfileForScenario(scenario string) VideoProfile {
+	if strings.TrimSpace(scenario) != Video1KScenarioProfile {
+		return VideoProfile{}
+	}
+	return VideoProfile{
+		Name:            Video1KScenarioProfile,
+		VideoDevices:    DefaultVideo1KViewers,
+		VideoViewers:    DefaultVideo1KViewers,
+		WebRTCMediaSet:  DefaultVideo1KMediaSet,
+		SignalingLayer:  "webrtc-signaling",
+		MediaLayer:      "webrtc-media",
+		DeviceActorRole: "device",
+		AppActorRole:    "app",
+		ViewerActorRole: "viewer",
+	}
+}
+
+func deviceMixForScenario(scenario string, devices int) map[string]int {
+	if strings.TrimSpace(scenario) == Video1KScenarioProfile {
+		return proportionalMix(devices, []ratioBucket{
+			{Name: "camera", Weight: 10},
+			{Name: "light", Weight: 30},
+			{Name: "air_conditioner", Weight: 30},
+			{Name: "smart_meter", Weight: 30},
+		})
+	}
+	return proportionalMix(devices, homeDiverseDeviceMixBuckets())
+}
+
+func deviceProfilesForScenario(scenario string) map[string]DeviceProfile {
+	profiles := homeDiverseDeviceProfiles()
+	if strings.TrimSpace(scenario) == Video1KScenarioProfile {
+		profiles["camera"] = DeviceProfile{RatioWeight: 10, TrafficProfile: "event_burst", PayloadClass: "camera_status"}
+	}
+	return profiles
+}
+
+func workflowSteps(video VideoProfile) []string {
+	steps := []string{"plan", "provision-vms", "sync", "run-stages", "collect"}
+	if strings.TrimSpace(video.Name) != "" {
+		steps = append(steps, "run-video-loadtest", "collect-video-evidence")
+	}
+	steps = append(steps, "collect-server-evidence", "aggregate", "destroy-vms")
+	return steps
 }
 
 func normalizeGateThresholds(opts PlanOptions) (GateThresholds, error) {

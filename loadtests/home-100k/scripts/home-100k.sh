@@ -59,6 +59,7 @@ load_linode_token_from_env_file
 env_root="${HOME100K_ENV_ROOT:-cloud_env/staging/lke}"
 brandname="${HOME100K_BRANDNAME:-RTK}"
 brand_plan="${HOME100K_BRAND_PLAN:-}"
+scenario_profile="${HOME100K_SCENARIO_PROFILE:-}"
 region="${HOME100K_REGION:-us-sea}"
 vm_label_prefix="${HOME100K_VM_LABEL_PREFIX:-lg}"
 run_id="${HOME100K_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
@@ -99,6 +100,14 @@ video_cloud_public_url="${HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL:-${HOME100K_VIDEO
 video_cloud_token_url="${HOME100K_VIDEO_CLOUD_TOKEN_BASE_URL:-}"
 account_manager_base_url="${HOME100K_ACCOUNT_MANAGER_BASE_URL:-}"
 generator_hosts_override_ip="${HOME100K_GENERATOR_HOSTS_OVERRIDE_IP:-}"
+video_loadtest="${HOME100K_VIDEO_LOADTEST:-auto}"
+video_loadtest_script="${HOME100K_VIDEO_LOADTEST_SCRIPT:-$repo_root/e2e_test/video_cloud/load/scripts/run_video_loadtest.sh}"
+video_loadtest_artifact_dir="${HOME100K_VIDEO_LOADTEST_ARTIFACT_DIR:-$repo_root/$out_dir/video}"
+video_loadtest_viewers="${HOME100K_VIDEO_LOADTEST_VIEWERS:-100}"
+video_loadtest_devices="${HOME100K_VIDEO_LOADTEST_DEVICES:-100}"
+video_loadtest_concurrency="${HOME100K_VIDEO_LOADTEST_CONCURRENCY:-10}"
+video_loadtest_media_set="${HOME100K_VIDEO_LOADTEST_WEBRTC_MEDIA_SET:-h264}"
+video_loadtest_duration="${HOME100K_VIDEO_LOADTEST_DURATION:-30s}"
 token_only_base_url="${HOME100K_TOKEN_ONLY_BASE_URL:-${video_cloud_token_url:-${video_cloud_public_url:-}}}"
 token_only_requests="${HOME100K_TOKEN_ONLY_REQUESTS:-1000}"
 token_only_concurrency="${HOME100K_TOKEN_ONLY_CONCURRENCY:-100}"
@@ -138,6 +147,7 @@ Commands:
   sync                    Review or live-sync runner/env-root to VMs.
   run-stages              Review or live-dispatch shard runners for the target window.
   collect                 Review or live-collect shard artifacts.
+  run-video-loadtest      Run the workspace video load runner into <out-dir>/video.
   collect-server-evidence Review or live-collect server evidence.
   aggregate               Aggregate collected shards and server evidence.
   generate-report         Generate TEST_REPORT.md from collected artifacts and template.
@@ -154,6 +164,7 @@ Defaults can be overridden with:
   HOME100K_ENV_ROOT       default: cloud_env/staging/lke
   HOME100K_BRANDNAME      default: RTK
   HOME100K_BRAND_PLAN     optional multi-brand load-test plan JSON
+  HOME100K_SCENARIO_PROFILE optional scenario profile, e.g. video-1k-v1
   HOME100K_REGION         default: us-sea
   HOME100K_VM_LABEL_PREFIX default: lg; load-generator VM labels are <prefix>01..<prefix>NN
   HOME100K_RUN_ID         default: current UTC timestamp
@@ -193,6 +204,10 @@ Defaults can be overridden with:
   HOME100K_MQTT_PUBLIC_LB_COUNT limits auto-public-mqtt endpoint count; current 9K profile uses 1
   HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL optional public Video Cloud API base URL for remote generators
   HOME100K_VIDEO_CLOUD_TOKEN_BASE_URL optional mTLS/device Video Cloud token bootstrap base URL
+  HOME100K_VIDEO_LOADTEST auto/off/on; auto runs for HOME100K_SCENARIO_PROFILE=video-1k-v1
+  HOME100K_VIDEO_LOADTEST_VIEWERS default: 100
+  HOME100K_VIDEO_LOADTEST_CONCURRENCY default: 10
+  HOME100K_VIDEO_LOADTEST_WEBRTC_MEDIA_SET default: h264
   HOME100K_GENERATOR_HOSTS_OVERRIDE_IP optional /etc/hosts IPv4 override for staging HTTPS hostnames on generators
   HOME100K_TOKEN_ONLY_BASE_URL optional base URL for token-only; defaults to token/public Video Cloud URL
   HOME100K_TOKEN_ONLY_PROFILE optional comma-separated concurrency stages, e.g. 1000,5000,10000
@@ -658,6 +673,65 @@ current_report_result() {
   printf '%s\n' "${result:-not-written}"
 }
 
+video_loadtest_enabled() {
+  case "$video_loadtest" in
+    1|true|on|yes)
+      return 0
+      ;;
+    0|false|off|no)
+      return 1
+      ;;
+    auto|"")
+      [[ "$scenario_profile" == "video-1k-v1" ]]
+      ;;
+    *)
+      echo "invalid HOME100K_VIDEO_LOADTEST: $video_loadtest" >&2
+      return 2
+      ;;
+  esac
+}
+
+run_video_loadtest_step() {
+  if ! video_loadtest_enabled; then
+    return 0
+  fi
+  if [[ ! -x "$video_loadtest_script" ]]; then
+    echo "video loadtest script not executable: $video_loadtest_script" >&2
+    return 1
+  fi
+  mkdir -p "$video_loadtest_artifact_dir"
+  set_phase "run-video-loadtest"
+  local token_env="$video_loadtest_artifact_dir/token-env.sh"
+  if [[ -z "${VIDEO_CLOUD_LOAD_DEVICE_IDS:-}" ]] || \
+     [[ -z "${VIDEO_CLOUD_LOAD_DEVICE_TOKENS:-}" && -z "${VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE:-}" ]] || \
+     [[ -z "${VIDEO_CLOUD_LOAD_APP_TOKENS:-}" && -z "${VIDEO_CLOUD_LOAD_APP_TOKEN_MAP_FILE:-}" ]]; then
+    (cd "$repo_root/scripts/go/rtk-cloud" && GOWORK=off go run . video-loadtest-tokens \
+      --env-root "$repo_root/$env_root" \
+      --brandname "$brandname" \
+      --max-devices "$video_loadtest_devices" \
+      --out-env "$token_env")
+    # shellcheck disable=SC1090
+    source "$token_env"
+  fi
+  VIDEO_CLOUD_LOAD_RUN_ID="${VIDEO_CLOUD_LOAD_RUN_ID:-$run_id}" \
+  VIDEO_CLOUD_LOAD_ARTIFACT_DIR="$video_loadtest_artifact_dir" \
+  VIDEO_CLOUD_LOAD_PROFILE="${VIDEO_CLOUD_LOAD_PROFILE:-safe-staging}" \
+  VIDEO_CLOUD_LOAD_ACTORS="${VIDEO_CLOUD_LOAD_ACTORS:-device,viewer}" \
+  VIDEO_CLOUD_LOAD_APP_ROUTE_SET="${VIDEO_CLOUD_LOAD_APP_ROUTE_SET:-smoke}" \
+  VIDEO_CLOUD_LOAD_DEVICE_ROUTE_SET="${VIDEO_CLOUD_LOAD_DEVICE_ROUTE_SET:-off}" \
+  VIDEO_CLOUD_LOAD_DEVICE_TRANSPORT_SET="${VIDEO_CLOUD_LOAD_DEVICE_TRANSPORT_SET:-smoke}" \
+  VIDEO_CLOUD_LOAD_VIEWER_ROUTE_SET="${VIDEO_CLOUD_LOAD_VIEWER_ROUTE_SET:-smoke}" \
+  VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_SET="${VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_SET:-$video_loadtest_media_set}" \
+  VIDEO_CLOUD_LOAD_DURATION="${VIDEO_CLOUD_LOAD_DURATION:-$video_loadtest_duration}" \
+  VIDEO_CLOUD_LOAD_HTTP_TIMEOUT="${VIDEO_CLOUD_LOAD_HTTP_TIMEOUT:-60s}" \
+  VIDEO_CLOUD_LOAD_VIRTUAL_DEVICES="${VIDEO_CLOUD_LOAD_VIRTUAL_DEVICES:-$video_loadtest_devices}" \
+  VIDEO_CLOUD_LOAD_VIRTUAL_VIEWERS="${VIDEO_CLOUD_LOAD_VIRTUAL_VIEWERS:-$video_loadtest_viewers}" \
+  VIDEO_CLOUD_LOAD_DEVICE_CONCURRENCY="${VIDEO_CLOUD_LOAD_DEVICE_CONCURRENCY:-$video_loadtest_concurrency}" \
+  VIDEO_CLOUD_LOAD_VIEWER_CONCURRENCY="${VIDEO_CLOUD_LOAD_VIEWER_CONCURRENCY:-$video_loadtest_concurrency}" \
+  VIDEO_CLOUD_LOAD_API_URL="${VIDEO_CLOUD_LOAD_API_URL:-$video_cloud_public_url}" \
+  "$video_loadtest_script"
+}
+
 start_status_monitor() {
   workflow_start_epoch="$(date +%s)"
   set_phase "starting"
@@ -754,6 +828,9 @@ base_args=(
 if [[ -n "$brand_plan" ]]; then
   base_args+=("--brand-plan" "$brand_plan")
 fi
+if [[ -n "$scenario_profile" ]]; then
+  base_args+=("--scenario-profile" "$scenario_profile")
+fi
 if [[ -n "$device_count" ]]; then
   base_args+=("--devices" "$device_count")
 fi
@@ -849,6 +926,9 @@ case "$command" in
     mkdir -p "$local_out_dir"
     run_home100k collect "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --vm-state-file "$local_vm_state_file" "$@"
     ;;
+  run-video-loadtest)
+    run_video_loadtest_step "$@"
+    ;;
   collect-server-evidence)
     mkdir -p "$local_out_dir"
     export_kubeconfig_if_available
@@ -917,6 +997,7 @@ case "$command" in
     workflow_status
     set_phase "collect"
     run_home100k collect "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --vm-state-file "$local_vm_state_file" --live --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
+    run_video_loadtest_step || workflow_rc=$?
     workflow_status
     set_phase "collect-server-evidence"
     export_kubeconfig_if_available
@@ -985,6 +1066,7 @@ case "$command" in
     workflow_status
     set_phase "collect"
     run_home100k collect "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --vm-state-file "$local_vm_state_file" --live --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
+    run_video_loadtest_step || workflow_rc=$?
     workflow_status
     set_phase "collect-server-evidence"
     export_kubeconfig_if_available

@@ -239,6 +239,71 @@ def test_conditions():
     ])
     return "\n".join(lines)
 
+def video_load_profile():
+    plan = result.get("plan") or {}
+    profile = plan.get("video_profile") or {}
+    evidence = result.get("video_evidence") or {}
+    if not profile.get("name") and not evidence:
+        return ""
+    webrtc = evidence.get("webrtc_totals") or {}
+    media = evidence.get("webrtc_media_totals") or {}
+    turn = evidence.get("turn_evidence") or {}
+
+    def phase_row(name, attempts, successes):
+        attempts = int(num(attempts, 0))
+        successes = int(num(successes, 0))
+        rate = 0.0 if attempts <= 0 else (successes * 100.0 / attempts)
+        return f"| {md(name)} | {attempts} | {successes} | {rate:.2f}% |"
+
+    lines = [
+        "## Video Load Profile",
+        f"- Video profile: `{md(profile.get('name', '-'))}`",
+        f"- Video devices: {num(profile.get('video_devices'), 0)}",
+        f"- Video viewers: {num(profile.get('video_viewers'), 0)}",
+        f"- WebRTC media set: `{md(profile.get('webrtc_media_set', '-'))}`",
+        f"- Device actor: `{md(profile.get('device_actor_role', '-'))}`",
+        f"- App actor: `{md(profile.get('app_actor_role', '-'))}`",
+        f"- Viewer actor: `{md(profile.get('viewer_actor_role', '-'))}`",
+        f"- Evidence complete: {str(bool(evidence.get('complete'))).lower()}",
+        "",
+        "## WebRTC Totals",
+        "| Phase | Attempts | Success | Success rate |",
+        "| --- | ---: | ---: | ---: |",
+        phase_row("create", webrtc.get("create_attempts"), webrtc.get("create_success")),
+        phase_row("setup", webrtc.get("setup_attempts"), webrtc.get("setup_success")),
+        phase_row("close", webrtc.get("close_attempts"), webrtc.get("close_success")),
+        f"- Setup p95: {num(webrtc.get('setup_p95_ms'), 0)} ms",
+        f"- Setup p99: {num(webrtc.get('setup_p99_ms'), 0)} ms",
+        f"- ICE server count: {num(webrtc.get('ice_server_count'), 0)}",
+        f"- Open sessions: {num(webrtc.get('open_sessions'), 0)}",
+    ]
+    if media.get("enabled") or num(media.get("attempts"), 0) > 0:
+        lines.extend([
+            "",
+            "## WebRTC Media Totals",
+            f"- Attempts: {num(media.get('attempts'), 0)}",
+            f"- Successes: {num(media.get('successes'), 0)}",
+            f"- Failures: {num(media.get('failures'), 0)}",
+            f"- ICE connected p95: {num(media.get('ice_connected_p95_ms'), 0)} ms",
+            f"- First RTP p95: {num(media.get('time_to_first_rtp_p95_ms'), 0)} ms",
+            f"- RTP packets received: {num(media.get('packets_received'), 0)}",
+            f"- RTP bytes received: {num(media.get('bytes_received'), 0)}",
+            f"- H.264 packets received: {num(media.get('h264_packets_received'), 0)}",
+            f"- H.264 bytes received: {num(media.get('h264_bytes_received'), 0)}",
+            f"- Opus packets received: {num(media.get('opus_packets_received'), 0)}",
+            f"- Opus bytes received: {num(media.get('opus_bytes_received'), 0)}",
+        ])
+    lines.extend([
+        "",
+        "## TURN Evidence",
+        f"- registry available: {str(bool(turn.get('registry_available'))).lower()}",
+        f"- active nodes: {num(turn.get('active_nodes'), 0)}",
+        f"- coturn available: {str(bool(turn.get('coturn_available'))).lower()}",
+        f"- allocations: {num(turn.get('allocations'), 0)}",
+        f"- active sessions: {num(turn.get('active_sessions'), 0)}",
+    ])
+    return "\n".join(lines)
+
 def format_developer_users(developer_users):
     parts = []
     for role in sorted(developer_users.keys()):
@@ -1078,6 +1143,7 @@ replacements = {
     "STATUS_SUMMARY": status_summary(),
     "TEST_CONDITIONS": test_conditions(),
     "GATE_STANDARDS": gate_standards(),
+    "VIDEO_LOAD_PROFILE": video_load_profile(),
     "SCENARIO_MIX": scenario_mix(),
     "DEVICE_TRAFFIC_PROFILES": device_traffic_profiles(),
     "USER_SCENARIO_PROFILES": user_scenario_profiles(),

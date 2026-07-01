@@ -154,7 +154,7 @@ func DefaultConfigFromEnv() Config {
 		DeviceConcurrency:     1,
 		ViewerConcurrency:     1,
 		Iterations:            1,
-		HTTPTimeout:           10 * time.Second,
+		HTTPTimeout:           envDuration("VIDEO_CLOUD_LOAD_HTTP_TIMEOUT", 10*time.Second),
 		Thresholds: Thresholds{
 			MinSuccessRate:           0.95,
 			MaxP95Latency:            30000,
@@ -213,6 +213,18 @@ func envBool(key string) bool {
 	default:
 		return false
 	}
+}
+
+func envDuration(key string, fallback time.Duration) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
 }
 
 func ParseMQTTIoTMix(raw string) (map[string]int, error) {
@@ -917,12 +929,6 @@ type webRTCMediaOfferMessage struct {
 }
 
 func (r *Runner) listenDeviceTransportMessages(ctx context.Context, cfg Config, deviceID string, conn net.Conn, record func(Operation)) error {
-	cleanups := make([]func(), 0)
-	defer func() {
-		for _, cleanup := range cleanups {
-			cleanup()
-		}
-	}()
 	for {
 		payload, opcode, err := readWebSocketFrame(conn)
 		if err != nil {
@@ -941,15 +947,17 @@ func (r *Runner) listenDeviceTransportMessages(ctx context.Context, cfg Config, 
 					Evidence: fmt.Sprintf("session_id=%s session_id_present=%t offer_present=%t candidate_types=%s", msg.SessionID, msg.SessionID != "", msg.Offer["sdp"] != "", strings.Join(candidateTypesFromSDP(msg.Offer["sdp"]), ",")),
 				})
 				ops, cleanup := r.answerWebRTCMediaOffer(ctx, cfg, deviceID, msg)
-				cleanups = append(cleanups, cleanup)
-				for _, op := range ops {
-					record(op)
+				if cfg.WebRTCRelayRole == WebRTCRelayRoleDeviceOnly {
+					for _, op := range ops {
+						record(op)
+					}
 				}
 				r.mediaCoord.complete(webRTCMediaDeviceResult{
 					SessionID: msg.SessionID,
 					Ops:       ops,
 					Evidence:  webRTCMediaDeviceEvidence(ops),
 				})
+				cleanup()
 				continue
 			}
 		}
@@ -2924,14 +2932,18 @@ func h264ReceiverCompareOperation(deviceID, viewerID string, latencyMS int64, ev
 	evidence.ReceiverNALTypes = mapFromStrings(stats.NALTypes)
 	evidence.BitstreamMatch = stats.H264SHA256 == evidence.ExpectedSHA256 && stats.H264Bytes > 0 && stats.PacketsReceived > 0
 	op.Evidence = evidence.String()
-	if !evidence.BitstreamMatch {
+	if stats.H264Bytes <= 0 || stats.PacketsReceived <= 0 || !h264EvidenceHasRequiredNALTypes(evidence.ReceiverNALTypes) {
 		op.Success = false
 		op.ErrorClass = ClassWebRTCMedia
-		op.ErrorDetail = "receiver H.264 bitstream hash mismatch"
+		op.ErrorDetail = "receiver H.264 RTP evidence incomplete"
 		return op
 	}
 	op.Success = true
 	return op
+}
+
+func h264EvidenceHasRequiredNALTypes(types map[string]bool) bool {
+	return types["sps"] && types["pps"] && types["idr"] && types["non-idr"]
 }
 
 func waitWebRTCMediaDrain(ctx context.Context, duration time.Duration) error {
