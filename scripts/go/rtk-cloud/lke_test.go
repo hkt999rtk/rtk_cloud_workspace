@@ -2325,6 +2325,7 @@ func TestRunProvisionLKEDeployUsesExternalCoturnVMConfig(t *testing.T) {
 		"name: VIDEO_CLOUD_TURN_REALM\n              value: \"video_cloud\"",
 		"name: VIDEO_CLOUD_TURN_SHARED_SECRET\n              valueFrom:\n                secretKeyRef:\n                  name: video-cloud-runtime\n                  key: VIDEO_CLOUD_TURN_SHARED_SECRET",
 		"name: VIDEO_CLOUD_TURN_CREDENTIAL_TTL\n              value: \"10m\"",
+		"name: VIDEO_CLOUD_WEBRTC_ICE_POLICY\n              value: \"relay\"",
 	} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("expected %q in kubectl manifests, got:\n%s", want, log)

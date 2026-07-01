@@ -84,6 +84,9 @@ func TestVideoRelayBuildsRunnerArgsWithoutLeakingTokens(t *testing.T) {
 	if !strings.Contains(joined, "--webrtc-relay-role") || !strings.Contains(joined, "both") {
 		t.Fatalf("runner args missing default WebRTC relay role: %v", args)
 	}
+	if !strings.Contains(joined, "--webrtc-ice-policy") || !strings.Contains(joined, "relay") {
+		t.Fatalf("runner args missing default relay-only ICE policy: %v", args)
+	}
 	if !strings.Contains(joined, "--duration") || !strings.Contains(joined, "5s") {
 		t.Fatalf("runner args should use short smoke scheduling duration so tokens do not expire before later devices: %v", args)
 	}

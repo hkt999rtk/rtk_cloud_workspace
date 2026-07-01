@@ -29,25 +29,28 @@ type WebRTCValidation struct {
 }
 
 type PionOfferSession struct {
-	peer  *webrtc.PeerConnection
-	offer webrtc.SessionDescription
+	peer      *webrtc.PeerConnection
+	offer     webrtc.SessionDescription
+	icePolicy webrtc.ICETransportPolicy
 }
 
 type WebRTCMediaStats struct {
-	ICEConnectedLatencyMS int64
-	TimeToFirstRTPMS      int64
-	PacketsReceived       int
-	BytesReceived         int
-	ReceiveDurationMS     int64
-	H264SHA256            string
-	H264Bytes             int
-	H264Packets           int
-	NALTypes              []string
-	Packetizations        []string
-	OpusSHA256            string
-	OpusBytes             int
-	OpusPackets           int
-	OpusFrames            int
+	ICEConnectedLatencyMS       int64
+	TimeToFirstRTPMS            int64
+	PacketsReceived             int
+	BytesReceived               int
+	ReceiveDurationMS           int64
+	SelectedLocalCandidateType  string
+	SelectedRemoteCandidateType string
+	H264SHA256                  string
+	H264Bytes                   int
+	H264Packets                 int
+	NALTypes                    []string
+	Packetizations              []string
+	OpusSHA256                  string
+	OpusBytes                   int
+	OpusPackets                 int
+	OpusFrames                  int
 }
 
 type H264RTPPlan struct {
@@ -60,22 +63,24 @@ type H264RTPPlan struct {
 }
 
 type H264RTPEvidence struct {
-	Packets          int
-	Bytes            int
-	DurationMS       int64
-	Loops            int
-	Frames           int
-	NALTypes         map[string]bool
-	Packetizations   map[string]bool
-	ReceiveMS        int64
-	TimeToFirstMS    int64
-	ICEMS            int64
-	ExpectedSHA256   string
-	ReceiverSHA256   string
-	ReceiverPackets  int
-	ReceiverBytes    int
-	ReceiverNALTypes map[string]bool
-	BitstreamMatch   bool
+	Packets                     int
+	Bytes                       int
+	DurationMS                  int64
+	Loops                       int
+	Frames                      int
+	NALTypes                    map[string]bool
+	Packetizations              map[string]bool
+	ReceiveMS                   int64
+	TimeToFirstMS               int64
+	ICEMS                       int64
+	SelectedLocalCandidateType  string
+	SelectedRemoteCandidateType string
+	ExpectedSHA256              string
+	ReceiverSHA256              string
+	ReceiverPackets             int
+	ReceiverBytes               int
+	ReceiverNALTypes            map[string]bool
+	BitstreamMatch              bool
 }
 
 type OpusRTPPlan struct {
@@ -89,22 +94,24 @@ type OpusRTPPlan struct {
 }
 
 type OpusRTPEvidence struct {
-	Packets         int
-	Bytes           int
-	DurationMS      int64
-	Loops           int
-	Frames          int
-	SampleRate      int
-	Channels        int
-	ReceiveMS       int64
-	TimeToFirstMS   int64
-	ICEMS           int64
-	ExpectedSHA256  string
-	ReceiverSHA256  string
-	ReceiverPackets int
-	ReceiverBytes   int
-	ReceiverFrames  int
-	PayloadMatch    bool
+	Packets                     int
+	Bytes                       int
+	DurationMS                  int64
+	Loops                       int
+	Frames                      int
+	SampleRate                  int
+	Channels                    int
+	ReceiveMS                   int64
+	TimeToFirstMS               int64
+	ICEMS                       int64
+	SelectedLocalCandidateType  string
+	SelectedRemoteCandidateType string
+	ExpectedSHA256              string
+	ReceiverSHA256              string
+	ReceiverPackets             int
+	ReceiverBytes               int
+	ReceiverFrames              int
+	PayloadMatch                bool
 }
 
 type AVRTPEvidence struct {
@@ -115,6 +122,7 @@ type AVRTPEvidence struct {
 type PionMediaOfferSession struct {
 	peer           *webrtc.PeerConnection
 	offer          webrtc.SessionDescription
+	icePolicy      webrtc.ICETransportPolicy
 	started        time.Time
 	iceConnected   chan struct{}
 	firstRTP       chan struct{}
@@ -138,13 +146,19 @@ type PionMediaAnswerSession struct {
 	audioTrack   *webrtc.TrackLocalStaticRTP
 	codecMime    string
 	answer       webrtc.SessionDescription
+	icePolicy    webrtc.ICETransportPolicy
 	iceConnected chan struct{}
 	closeOnce    sync.Once
 	iceOnce      sync.Once
 }
 
 func NewPionOfferSession() (*PionOfferSession, error) {
-	peer, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	return NewPionOfferSessionWithICEPolicy(WebRTCICEPolicyAll)
+}
+
+func NewPionOfferSessionWithICEPolicy(policy string) (*PionOfferSession, error) {
+	icePolicy := pionICETransportPolicy(policy)
+	peer, err := webrtc.NewPeerConnection(webrtc.Configuration{ICETransportPolicy: icePolicy})
 	if err != nil {
 		return nil, fmt.Errorf("pion peer connection: %w", err)
 	}
@@ -161,7 +175,7 @@ func NewPionOfferSession() (*PionOfferSession, error) {
 		_ = peer.Close()
 		return nil, fmt.Errorf("pion set local description: %w", err)
 	}
-	return &PionOfferSession{peer: peer, offer: offer}, nil
+	return &PionOfferSession{peer: peer, offer: offer, icePolicy: icePolicy}, nil
 }
 
 func NewPionMediaOfferSession(ctx context.Context, gatherTimeout time.Duration) (*PionMediaOfferSession, error) {
@@ -169,12 +183,18 @@ func NewPionMediaOfferSession(ctx context.Context, gatherTimeout time.Duration) 
 }
 
 func NewPionMediaOfferSessionForSet(ctx context.Context, mediaSet string, gatherTimeout time.Duration) (*PionMediaOfferSession, error) {
-	peer, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	return NewPionMediaOfferSessionForSetWithICEPolicy(ctx, mediaSet, WebRTCICEPolicyAll, gatherTimeout)
+}
+
+func NewPionMediaOfferSessionForSetWithICEPolicy(ctx context.Context, mediaSet, policy string, gatherTimeout time.Duration) (*PionMediaOfferSession, error) {
+	icePolicy := pionICETransportPolicy(policy)
+	peer, err := webrtc.NewPeerConnection(webrtc.Configuration{ICETransportPolicy: icePolicy})
 	if err != nil {
 		return nil, fmt.Errorf("pion media offer peer connection: %w", err)
 	}
 	session := &PionMediaOfferSession{
 		peer:           peer,
+		icePolicy:      icePolicy,
 		started:        time.Now(),
 		iceConnected:   make(chan struct{}),
 		firstRTP:       make(chan struct{}),
@@ -187,6 +207,9 @@ func NewPionMediaOfferSessionForSet(ctx context.Context, mediaSet string, gather
 			session.iceOnce.Do(func() {
 				session.mu.Lock()
 				session.stats.ICEConnectedLatencyMS = time.Since(session.started).Milliseconds()
+				localType, remoteType := selectedCandidatePairTypes(peer)
+				session.stats.SelectedLocalCandidateType = candidateTypeEvidence(localType, session.icePolicy)
+				session.stats.SelectedRemoteCandidateType = candidateTypeEvidence(remoteType, session.icePolicy)
 				session.mu.Unlock()
 				close(session.iceConnected)
 			})
@@ -330,6 +353,11 @@ func (s *PionMediaOfferSession) WaitForMedia(ctx context.Context, minPackets int
 func (s *PionMediaOfferSession) Snapshot() WebRTCMediaStats {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.stats.SelectedLocalCandidateType == "" || s.stats.SelectedRemoteCandidateType == "" {
+		localType, remoteType := selectedCandidatePairTypes(s.peer)
+		s.stats.SelectedLocalCandidateType = candidateTypeEvidence(localType, s.icePolicy)
+		s.stats.SelectedRemoteCandidateType = candidateTypeEvidence(remoteType, s.icePolicy)
+	}
 	return s.stats
 }
 
@@ -352,15 +380,21 @@ func NewPionMediaAnswerSessionForSet(ctx context.Context, offer map[string]strin
 }
 
 func NewPionMediaAnswerSessionWithICEServersForSet(ctx context.Context, offer map[string]string, iceServers []webrtc.ICEServer, mediaSet string, gatherTimeout time.Duration) (*PionMediaAnswerSession, error) {
+	return NewPionMediaAnswerSessionWithICEServersForSetAndPolicy(ctx, offer, iceServers, mediaSet, WebRTCICEPolicyAll, gatherTimeout)
+}
+
+func NewPionMediaAnswerSessionWithICEServersForSetAndPolicy(ctx context.Context, offer map[string]string, iceServers []webrtc.ICEServer, mediaSet, policy string, gatherTimeout time.Duration) (*PionMediaAnswerSession, error) {
 	if offer["type"] != "offer" || offer["sdp"] == "" {
 		return nil, errors.New("invalid media offer")
 	}
-	peer, err := webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: iceServers})
+	icePolicy := pionICETransportPolicy(policy)
+	peer, err := webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: iceServers, ICETransportPolicy: icePolicy})
 	if err != nil {
 		return nil, fmt.Errorf("pion media answer peer connection: %w", err)
 	}
 	session := &PionMediaAnswerSession{
 		peer:         peer,
+		icePolicy:    icePolicy,
 		iceConnected: make(chan struct{}),
 	}
 	peer.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
@@ -486,6 +520,9 @@ func (s *PionMediaAnswerSession) SendH264RTP(ctx context.Context, duration time.
 	if err != nil {
 		return H264RTPPlan{}, err
 	}
+	localType, remoteType := s.SelectedCandidatePairTypes()
+	plan.Evidence.SelectedLocalCandidateType = candidateTypeEvidence(localType, s.icePolicy)
+	plan.Evidence.SelectedRemoteCandidateType = candidateTypeEvidence(remoteType, s.icePolicy)
 	return s.sendH264Plan(ctx, plan)
 }
 
@@ -504,6 +541,11 @@ func (s *PionMediaAnswerSession) SendAVRTP(ctx context.Context, duration time.Du
 	if err != nil {
 		return AVRTPEvidence{}, err
 	}
+	localType, remoteType := s.SelectedCandidatePairTypes()
+	videoPlan.Evidence.SelectedLocalCandidateType = candidateTypeEvidence(localType, s.icePolicy)
+	videoPlan.Evidence.SelectedRemoteCandidateType = candidateTypeEvidence(remoteType, s.icePolicy)
+	audioPlan.Evidence.SelectedLocalCandidateType = candidateTypeEvidence(localType, s.icePolicy)
+	audioPlan.Evidence.SelectedRemoteCandidateType = candidateTypeEvidence(remoteType, s.icePolicy)
 	errCh := make(chan error, 2)
 	go func() {
 		_, err := s.sendH264Plan(ctx, videoPlan)
@@ -941,8 +983,8 @@ func (e H264RTPEvidence) WithTimings(receiveMS, timeToFirstMS, iceMS int64) H264
 }
 
 func (e H264RTPEvidence) String() string {
-	base := fmt.Sprintf("codec=h264 packets=%d bytes=%d duration_ms=%d loops=%d frames=%d nal_types=%s packetization=%s receive_ms=%d ttfb_ms=%d ice_ms=%d",
-		e.Packets, e.Bytes, e.DurationMS, e.Loops, e.Frames, joinEvidenceKeys(e.NALTypes), joinEvidenceKeys(e.Packetizations), e.ReceiveMS, e.TimeToFirstMS, e.ICEMS)
+	base := fmt.Sprintf("codec=h264 packets=%d bytes=%d duration_ms=%d loops=%d frames=%d nal_types=%s packetization=%s receive_ms=%d ttfb_ms=%d ice_ms=%d selected_local_candidate_type=%s selected_remote_candidate_type=%s",
+		e.Packets, e.Bytes, e.DurationMS, e.Loops, e.Frames, joinEvidenceKeys(e.NALTypes), joinEvidenceKeys(e.Packetizations), e.ReceiveMS, e.TimeToFirstMS, e.ICEMS, evidenceOrDefault(e.SelectedLocalCandidateType, "unknown"), evidenceOrDefault(e.SelectedRemoteCandidateType, "unknown"))
 	if e.ExpectedSHA256 != "" {
 		base += fmt.Sprintf(" expected_sha256=%s", e.ExpectedSHA256)
 	}
@@ -961,8 +1003,8 @@ func (e OpusRTPEvidence) WithTimings(receiveMS, timeToFirstMS, iceMS int64) Opus
 }
 
 func (e OpusRTPEvidence) String() string {
-	base := fmt.Sprintf("codec=opus packets=%d bytes=%d duration_ms=%d loops=%d frames=%d sample_rate=%d channels=%d receive_ms=%d ttfb_ms=%d ice_ms=%d",
-		e.Packets, e.Bytes, e.DurationMS, e.Loops, e.Frames, e.SampleRate, e.Channels, e.ReceiveMS, e.TimeToFirstMS, e.ICEMS)
+	base := fmt.Sprintf("codec=opus packets=%d bytes=%d duration_ms=%d loops=%d frames=%d sample_rate=%d channels=%d receive_ms=%d ttfb_ms=%d ice_ms=%d selected_local_candidate_type=%s selected_remote_candidate_type=%s",
+		e.Packets, e.Bytes, e.DurationMS, e.Loops, e.Frames, e.SampleRate, e.Channels, e.ReceiveMS, e.TimeToFirstMS, e.ICEMS, evidenceOrDefault(e.SelectedLocalCandidateType, "unknown"), evidenceOrDefault(e.SelectedRemoteCandidateType, "unknown"))
 	if e.ExpectedSHA256 != "" {
 		base += fmt.Sprintf(" expected_sha256=%s", e.ExpectedSHA256)
 	}
@@ -979,6 +1021,14 @@ func (e AVRTPEvidence) WithTimings(receiveMS, timeToFirstMS, iceMS int64) AVRTPE
 
 func (e AVRTPEvidence) String() string {
 	return "media_model=h264_opus_av " + prefixEvidenceKeys(e.Video.String(), "video_") + " " + prefixEvidenceKeys(e.Audio.String(), "audio_")
+}
+
+func evidenceOrDefault(value, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func prefixEvidenceKeys(evidence, prefix string) string {
@@ -1037,6 +1087,10 @@ func (s *PionOfferSession) OfferPayload() map[string]string {
 }
 
 func (s *PionOfferSession) ValidateAnswer(response map[string]any) (WebRTCValidation, error) {
+	return s.ValidateAnswerWithICEPolicy(response, WebRTCICEPolicyAll)
+}
+
+func (s *PionOfferSession) ValidateAnswerWithICEPolicy(response map[string]any, policy string) (WebRTCValidation, error) {
 	iceServers, err := extractICEServers(response)
 	if err != nil {
 		return WebRTCValidation{}, err
@@ -1072,11 +1126,15 @@ func NewPionOffer() (map[string]string, func(), error) {
 }
 
 func ValidateWebRTCSetup(response map[string]any) (WebRTCValidation, error) {
+	return ValidateWebRTCSetupWithICEPolicy(response, WebRTCICEPolicyAll)
+}
+
+func ValidateWebRTCSetupWithICEPolicy(response map[string]any, policy string) (WebRTCValidation, error) {
 	iceServers, err := extractICEServers(response)
 	if err != nil {
 		return WebRTCValidation{}, err
 	}
-	peer, err := webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: iceServers})
+	peer, err := webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: iceServers, ICETransportPolicy: pionICETransportPolicy(policy)})
 	if err != nil {
 		return WebRTCValidation{}, fmt.Errorf("pion peer connection: %w", err)
 	}
@@ -1098,6 +1156,99 @@ func ValidateWebRTCSetup(response map[string]any) (WebRTCValidation, error) {
 		return WebRTCValidation{}, fmt.Errorf("pion peer close: %w", err)
 	}
 	return WebRTCValidation{ICEServerCount: len(iceServers)}, nil
+}
+
+func (s *PionOfferSession) ICETransportPolicy() webrtc.ICETransportPolicy {
+	if s == nil {
+		return webrtc.ICETransportPolicyAll
+	}
+	return s.icePolicy
+}
+
+func (s *PionMediaOfferSession) ICETransportPolicy() webrtc.ICETransportPolicy {
+	if s == nil {
+		return webrtc.ICETransportPolicyAll
+	}
+	return s.icePolicy
+}
+
+func (s *PionMediaAnswerSession) ICETransportPolicy() webrtc.ICETransportPolicy {
+	if s == nil {
+		return webrtc.ICETransportPolicyAll
+	}
+	return s.icePolicy
+}
+
+func (s *PionMediaAnswerSession) SelectedCandidatePairTypes() (string, string) {
+	if s == nil {
+		return "", ""
+	}
+	return selectedCandidatePairTypes(s.peer)
+}
+
+func selectedCandidatePairTypes(peer *webrtc.PeerConnection) (string, string) {
+	if peer == nil {
+		return "", ""
+	}
+	for _, transceiver := range peer.GetTransceivers() {
+		if transceiver == nil {
+			continue
+		}
+		if receiver := transceiver.Receiver(); receiver != nil {
+			if localType, remoteType := selectedCandidatePairTypesFromDTLS(receiver.Transport()); localType != "" || remoteType != "" {
+				return localType, remoteType
+			}
+		}
+		if sender := transceiver.Sender(); sender != nil {
+			if localType, remoteType := selectedCandidatePairTypesFromDTLS(sender.Transport()); localType != "" || remoteType != "" {
+				return localType, remoteType
+			}
+		}
+	}
+	return "", ""
+}
+
+func selectedCandidatePairTypesFromDTLS(dtls *webrtc.DTLSTransport) (string, string) {
+	if dtls == nil || dtls.ICETransport() == nil {
+		return "", ""
+	}
+	pair, err := dtls.ICETransport().GetSelectedCandidatePair()
+	if err != nil || pair == nil {
+		return "", ""
+	}
+	localType, remoteType := "", ""
+	if pair.Local != nil {
+		localType = pair.Local.Typ.String()
+	}
+	if pair.Remote != nil {
+		remoteType = pair.Remote.Typ.String()
+	}
+	return localType, remoteType
+}
+
+func candidateTypeEvidence(candidateType string, policy webrtc.ICETransportPolicy) string {
+	candidateType = strings.TrimSpace(candidateType)
+	if candidateType != "" {
+		return candidateType
+	}
+	if policy == webrtc.ICETransportPolicyRelay {
+		return "relay_inferred"
+	}
+	return ""
+}
+
+func pionICETransportPolicy(policy string) webrtc.ICETransportPolicy {
+	if strings.EqualFold(strings.TrimSpace(policy), WebRTCICEPolicyRelay) {
+		return webrtc.ICETransportPolicyRelay
+	}
+	return webrtc.ICETransportPolicyAll
+}
+
+func normalizedWebRTCICEPolicy(policy string) string {
+	if strings.EqualFold(strings.TrimSpace(policy), WebRTCICEPolicyRelay) {
+		return WebRTCICEPolicyRelay
+	}
+	return WebRTCICEPolicyAll
 }
 
 func extractAnswer(response map[string]any) (webrtc.SessionDescription, bool, error) {

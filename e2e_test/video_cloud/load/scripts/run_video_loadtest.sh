@@ -16,6 +16,7 @@ device_transport_set="${VIDEO_CLOUD_LOAD_DEVICE_TRANSPORT_SET:-smoke}"
 viewer_route_set="${VIDEO_CLOUD_LOAD_VIEWER_ROUTE_SET:-smoke}"
 webrtc_media_set="${VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_SET:-off}"
 webrtc_relay_role="${VIDEO_CLOUD_LOAD_WEBRTC_RELAY_ROLE:-both}"
+webrtc_ice_policy="${VIDEO_CLOUD_LOAD_WEBRTC_ICE_POLICY:-all}"
 clip_set="${VIDEO_CLOUD_LOAD_CLIP_SET:-off}"
 mqtt_set="${VIDEO_CLOUD_LOAD_MQTT_SET:-off}"
 mqtt_addr="${VIDEO_CLOUD_MQTT_ADDR:-}"
@@ -123,6 +124,7 @@ fi
     --viewer-route-set "${viewer_route_set}" \
     --webrtc-media-set "${webrtc_media_set}" \
     --webrtc-relay-role "${webrtc_relay_role}" \
+    --webrtc-ice-policy "${webrtc_ice_policy}" \
     --clip-set "${clip_set}" \
     --mqtt-set "${mqtt_set}" \
     --mqtt-addr "${mqtt_addr}" \

@@ -81,6 +81,7 @@ type videoRelayRunnerConfig struct {
 	OutDir             string
 	Profile            string
 	WebRTCRelayRole    string
+	WebRTCICEPolicy    string
 	DurationSeconds    int
 	DeviceIDs          []string
 	DeviceTokenMapFile string
@@ -178,6 +179,7 @@ func runVideoRelayTest(args []string) error {
 	maxDevices := fs.Int("max-devices", 3, "maximum selected video devices")
 	traceDetail := fs.String("trace-detail", "summary", "console trace detail: none, summary, or verbose")
 	webrtcRelayRole := fs.String("webrtc-relay-role", "both", "WebRTC relay role: both, app-only, or device-only")
+	webrtcICEPolicy := fs.String("webrtc-ice-policy", "relay", "WebRTC ICE transport policy: all or relay")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -199,6 +201,9 @@ func runVideoRelayTest(args []string) error {
 	if *webrtcRelayRole != "both" && *webrtcRelayRole != "app-only" && *webrtcRelayRole != "device-only" {
 		return errors.New("--webrtc-relay-role must be both, app-only, or device-only")
 	}
+	if *webrtcICEPolicy != "all" && *webrtcICEPolicy != "relay" {
+		return errors.New("--webrtc-ice-policy must be all or relay")
+	}
 	workspace, err := workspaceRoot()
 	if err != nil {
 		return err
@@ -210,7 +215,7 @@ func runVideoRelayTest(args []string) error {
 	if *outDir == "" {
 		*outDir = filepath.Join(envRoot, "artifacts", "video-relay-test", time.Now().UTC().Format("20060102T150405Z"))
 	}
-	result, exitErr := executeVideoRelayTest(workspace, envRoot, *brandname, *outDir, *profile, *webrtcRelayRole, *duration, *maxDevices, *traceDetail)
+	result, exitErr := executeVideoRelayTest(workspace, envRoot, *brandname, *outDir, *profile, *webrtcRelayRole, *webrtcICEPolicy, *duration, *maxDevices, *traceDetail)
 	if result.Status == "PASS" {
 		return nil
 	}
@@ -309,7 +314,7 @@ func runVideoLoadtestTokens(args []string) error {
 	return nil
 }
 
-func executeVideoRelayTest(workspace, envRoot, brandname, outDir, profile, webrtcRelayRole string, durationSeconds, maxDevices int, traceDetail string) (videoRelayResult, error) {
+func executeVideoRelayTest(workspace, envRoot, brandname, outDir, profile, webrtcRelayRole, webrtcICEPolicy string, durationSeconds, maxDevices int, traceDetail string) (videoRelayResult, error) {
 	_ = os.MkdirAll(outDir, 0o755)
 	result := videoRelayResult{
 		Schema:          "rtk-cloud-workspace.video-relay-test/v1",
@@ -378,6 +383,7 @@ func executeVideoRelayTest(workspace, envRoot, brandname, outDir, profile, webrt
 		OutDir:             outDir,
 		Profile:            profile,
 		WebRTCRelayRole:    webrtcRelayRole,
+		WebRTCICEPolicy:    webrtcICEPolicy,
 		DurationSeconds:    durationSeconds,
 		DeviceIDs:          deviceIDs,
 		DeviceTokenMapFile: tokenFiles.Device,
@@ -588,6 +594,7 @@ func buildVideoRelayRunnerArgs(cfg videoRelayRunnerConfig) ([]string, string, er
 		return nil, "", errors.New("device and app token map files are required")
 	}
 	role := firstNonEmpty(cfg.WebRTCRelayRole, "both")
+	icePolicy := firstNonEmpty(cfg.WebRTCICEPolicy, "relay")
 	actors := "device,viewer"
 	virtualViewers := len(cfg.DeviceIDs)
 	runnerDuration := "5s"
@@ -615,6 +622,7 @@ func buildVideoRelayRunnerArgs(cfg videoRelayRunnerConfig) ([]string, string, er
 		"--device-route-set", "off",
 		"--webrtc-media-set", "av",
 		"--webrtc-relay-role", role,
+		"--webrtc-ice-policy", icePolicy,
 		"--webrtc-media-duration", "20s",
 		"--device-ids", strings.Join(cfg.DeviceIDs, ","),
 		"--virtual-devices", strconv.Itoa(len(cfg.DeviceIDs)),

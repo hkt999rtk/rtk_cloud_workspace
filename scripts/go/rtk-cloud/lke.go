@@ -5515,6 +5515,8 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
                   key: VIDEO_CLOUD_TURN_SHARED_SECRET
             - name: VIDEO_CLOUD_TURN_CREDENTIAL_TTL
               value: %q
+            - name: VIDEO_CLOUD_WEBRTC_ICE_POLICY
+              value: %q
 `,
 			lkeNamespaceName(env, "platform"),
 			lkeVideoCloudAPIDBMaxOpenConns(env),
@@ -5545,6 +5547,7 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 			lkeCoturnTURNURLs(env),
 			lkeCoturnRealm(env),
 			lkeCoturnCredentialTTL(env),
+			lkeWebRTCICEPolicy(env),
 		)
 		volumeMounts = `          volumeMounts:
             - name: logger-spool
@@ -5733,6 +5736,10 @@ func lkeVideoCloudWorkerDBMaxIdleConns(env map[string]string) string {
 
 func lkeVideoCloudDBConnMaxLifetime(env map[string]string) string {
 	return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_DB_CONN_MAX_LIFETIME"), env["LKE_VIDEO_CLOUD_DB_CONN_MAX_LIFETIME"], "5m")
+}
+
+func lkeWebRTCICEPolicy(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_WEBRTC_ICE_POLICY"), os.Getenv("VIDEO_CLOUD_WEBRTC_ICE_POLICY"), env["LKE_WEBRTC_ICE_POLICY"], env["VIDEO_CLOUD_WEBRTC_ICE_POLICY"], "relay")
 }
 
 func lkeAccountManagerInternalURL(env map[string]string) string {

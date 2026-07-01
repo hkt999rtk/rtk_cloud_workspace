@@ -107,6 +107,7 @@ video_loadtest_viewers="${HOME100K_VIDEO_LOADTEST_VIEWERS:-100}"
 video_loadtest_devices="${HOME100K_VIDEO_LOADTEST_DEVICES:-100}"
 video_loadtest_concurrency="${HOME100K_VIDEO_LOADTEST_CONCURRENCY:-10}"
 video_loadtest_media_set="${HOME100K_VIDEO_LOADTEST_WEBRTC_MEDIA_SET:-h264}"
+video_loadtest_ice_policy="${HOME100K_VIDEO_LOADTEST_WEBRTC_ICE_POLICY:-relay}"
 video_loadtest_duration="${HOME100K_VIDEO_LOADTEST_DURATION:-30s}"
 token_only_base_url="${HOME100K_TOKEN_ONLY_BASE_URL:-${video_cloud_token_url:-${video_cloud_public_url:-}}}"
 token_only_requests="${HOME100K_TOKEN_ONLY_REQUESTS:-1000}"
@@ -208,6 +209,7 @@ Defaults can be overridden with:
   HOME100K_VIDEO_LOADTEST_VIEWERS default: 100
   HOME100K_VIDEO_LOADTEST_CONCURRENCY default: 10
   HOME100K_VIDEO_LOADTEST_WEBRTC_MEDIA_SET default: h264
+  HOME100K_VIDEO_LOADTEST_WEBRTC_ICE_POLICY default: relay
   HOME100K_GENERATOR_HOSTS_OVERRIDE_IP optional /etc/hosts IPv4 override for staging HTTPS hostnames on generators
   HOME100K_TOKEN_ONLY_BASE_URL optional base URL for token-only; defaults to token/public Video Cloud URL
   HOME100K_TOKEN_ONLY_PROFILE optional comma-separated concurrency stages, e.g. 1000,5000,10000
@@ -406,6 +408,13 @@ k8s_kubeconfig() {
     fi
   done
   return 1
+}
+
+local_env_root_path() {
+  case "$env_root" in
+    /*) printf '%s\n' "$env_root" ;;
+    *) printf '%s/%s\n' "$repo_root" "$env_root" ;;
+  esac
 }
 
 export_kubeconfig_if_available() {
@@ -706,7 +715,7 @@ run_video_loadtest_step() {
      [[ -z "${VIDEO_CLOUD_LOAD_DEVICE_TOKENS:-}" && -z "${VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE:-}" ]] || \
      [[ -z "${VIDEO_CLOUD_LOAD_APP_TOKENS:-}" && -z "${VIDEO_CLOUD_LOAD_APP_TOKEN_MAP_FILE:-}" ]]; then
     (cd "$repo_root/scripts/go/rtk-cloud" && GOWORK=off go run . video-loadtest-tokens \
-      --env-root "$repo_root/$env_root" \
+      --env-root "$(local_env_root_path)" \
       --brandname "$brandname" \
       --max-devices "$video_loadtest_devices" \
       --out-env "$token_env")
@@ -722,6 +731,7 @@ run_video_loadtest_step() {
   VIDEO_CLOUD_LOAD_DEVICE_TRANSPORT_SET="${VIDEO_CLOUD_LOAD_DEVICE_TRANSPORT_SET:-smoke}" \
   VIDEO_CLOUD_LOAD_VIEWER_ROUTE_SET="${VIDEO_CLOUD_LOAD_VIEWER_ROUTE_SET:-smoke}" \
   VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_SET="${VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_SET:-$video_loadtest_media_set}" \
+  VIDEO_CLOUD_LOAD_WEBRTC_ICE_POLICY="${VIDEO_CLOUD_LOAD_WEBRTC_ICE_POLICY:-$video_loadtest_ice_policy}" \
   VIDEO_CLOUD_LOAD_DURATION="${VIDEO_CLOUD_LOAD_DURATION:-$video_loadtest_duration}" \
   VIDEO_CLOUD_LOAD_HTTP_TIMEOUT="${VIDEO_CLOUD_LOAD_HTTP_TIMEOUT:-60s}" \
   VIDEO_CLOUD_LOAD_VIRTUAL_DEVICES="${VIDEO_CLOUD_LOAD_VIRTUAL_DEVICES:-$video_loadtest_devices}" \

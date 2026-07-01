@@ -1477,6 +1477,66 @@ func TestPionWebRTCMediaLoopbackReceivesSyntheticRTP(t *testing.T) {
 	if stats.PacketsReceived < 3 || stats.BytesReceived == 0 {
 		t.Fatalf("media stats = %#v, want RTP packets and bytes", stats)
 	}
+	if stats.SelectedLocalCandidateType == "" || stats.SelectedRemoteCandidateType == "" {
+		t.Fatalf("media stats missing selected candidate pair: %#v", stats)
+	}
+}
+
+func TestPionWebRTCMediaSessionsCanForceRelayICEPolicy(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	viewer, err := NewPionMediaOfferSessionForSetWithICEPolicy(ctx, WebRTCMediaSetH264, WebRTCICEPolicyRelay, 2*time.Second)
+	if err != nil {
+		t.Fatalf("NewPionMediaOfferSessionForSetWithICEPolicy: %v", err)
+	}
+	defer viewer.Close()
+	if got := viewer.ICETransportPolicy(); got != webrtc.ICETransportPolicyRelay {
+		t.Fatalf("viewer ICE policy = %s, want relay", got)
+	}
+
+	answerer, err := NewPionMediaAnswerSessionWithICEServersForSetAndPolicy(ctx, viewer.OfferPayload(), nil, WebRTCMediaSetH264, WebRTCICEPolicyRelay, 2*time.Second)
+	if err != nil {
+		t.Fatalf("NewPionMediaAnswerSessionWithICEServersForSetAndPolicy: %v", err)
+	}
+	defer answerer.Close()
+	if got := answerer.ICETransportPolicy(); got != webrtc.ICETransportPolicyRelay {
+		t.Fatalf("answerer ICE policy = %s, want relay", got)
+	}
+}
+
+func TestRelayCandidateTypeEvidenceFallsBackToInference(t *testing.T) {
+	if got := candidateTypeEvidence("", webrtc.ICETransportPolicyRelay); got != "relay_inferred" {
+		t.Fatalf("relay policy candidate evidence = %q, want relay_inferred", got)
+	}
+	if got := candidateTypeEvidence("relay", webrtc.ICETransportPolicyRelay); got != "relay" {
+		t.Fatalf("explicit relay candidate evidence = %q, want relay", got)
+	}
+	if got := candidateTypeEvidence("", webrtc.ICETransportPolicyAll); got != "" {
+		t.Fatalf("all policy candidate evidence = %q, want empty", got)
+	}
+}
+
+func TestParseH264SenderEvidencePreservesCandidateTypes(t *testing.T) {
+	evidence := H264RTPEvidence{
+		Packets:                     10,
+		Bytes:                       20,
+		DurationMS:                  30,
+		Loops:                       1,
+		Frames:                      2,
+		NALTypes:                    map[string]bool{"idr": true},
+		Packetizations:              map[string]bool{"single-nal": true},
+		ReceiveMS:                   40,
+		TimeToFirstMS:               5,
+		ICEMS:                       6,
+		SelectedLocalCandidateType:  "relay_inferred",
+		SelectedRemoteCandidateType: "relay_inferred",
+		ExpectedSHA256:              "abc123",
+	}
+	parsed := parseH264SenderEvidence(h264SenderEvidence(evidence))
+	if parsed.SelectedLocalCandidateType != "relay_inferred" || parsed.SelectedRemoteCandidateType != "relay_inferred" {
+		t.Fatalf("parsed candidate types = %q/%q, want relay_inferred/relay_inferred", parsed.SelectedLocalCandidateType, parsed.SelectedRemoteCandidateType)
+	}
 }
 
 func TestH264AnnexBSamplePacketizesIntoValidRTPPayloads(t *testing.T) {
@@ -2115,6 +2175,20 @@ func TestWebRTCRelayRoleDefaultsAndValidation(t *testing.T) {
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "unsupported webrtc relay role") {
 		t.Fatalf("Validate error = %v, want unsupported webrtc relay role", err)
+	}
+}
+
+func TestWebRTCICEPolicyEnvAndValidation(t *testing.T) {
+	t.Setenv("VIDEO_CLOUD_LOAD_WEBRTC_ICE_POLICY", WebRTCICEPolicyRelay)
+	cfg := DefaultConfigFromEnv()
+	if cfg.WebRTCICEPolicy != WebRTCICEPolicyRelay {
+		t.Fatalf("WebRTCICEPolicy = %q, want %q", cfg.WebRTCICEPolicy, WebRTCICEPolicyRelay)
+	}
+
+	cfg = Config{Profile: ProfileSmoke, APIURL: "https://example.test", Actors: ActorAll, WebRTCMediaSet: WebRTCMediaSetH264, WebRTCICEPolicy: "direct"}
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "unsupported webrtc ICE policy") {
+		t.Fatalf("Validate error = %v, want unsupported webrtc ICE policy", err)
 	}
 }
 

@@ -105,6 +105,7 @@ device_transport_set="${VIDEO_CLOUD_LOAD_DEVICE_TRANSPORT_SET:-smoke}"
 viewer_route_set="${VIDEO_CLOUD_LOAD_VIEWER_ROUTE_SET:-smoke}"
 webrtc_media_set="${VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_SET:-off}"
 webrtc_relay_role="${VIDEO_CLOUD_LOAD_WEBRTC_RELAY_ROLE:-}"
+webrtc_ice_policy="${VIDEO_CLOUD_LOAD_WEBRTC_ICE_POLICY:-all}"
 clip_set="${VIDEO_CLOUD_LOAD_CLIP_SET:-off}"
 mqtt_set="${VIDEO_CLOUD_LOAD_MQTT_SET:-off}"
 mqtt_addr="${VIDEO_CLOUD_MQTT_ADDR:-}"
@@ -509,6 +510,7 @@ remote_run_command() {
   cmd+=("VIDEO_CLOUD_LOAD_VIEWER_ROUTE_SET=$(quote "$viewer_route_set")")
   cmd+=("VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_SET=$(quote "$webrtc_media_set")")
   cmd+=("VIDEO_CLOUD_LOAD_WEBRTC_RELAY_ROLE=$(quote "$relay_role")")
+  cmd+=("VIDEO_CLOUD_LOAD_WEBRTC_ICE_POLICY=$(quote "$webrtc_ice_policy")")
   cmd+=("VIDEO_CLOUD_LOAD_CLIP_SET=$(quote "$clip_set")")
   cmd+=("VIDEO_CLOUD_LOAD_MQTT_SET=$(quote "$mqtt_set")")
   cmd+=("VIDEO_CLOUD_LOAD_MQTT_DEVICE_PROFILE=$(quote "$mqtt_device_profile")")
@@ -535,6 +537,7 @@ remote_run_command() {
   cmd+=(--viewer-route-set "$(quote "$viewer_route_set")")
   cmd+=(--webrtc-media-set "$(quote "$webrtc_media_set")")
   cmd+=(--webrtc-relay-role "$(quote "$relay_role")")
+  cmd+=(--webrtc-ice-policy "$(quote "$webrtc_ice_policy")")
   cmd+=(--clip-set "$(quote "$clip_set")")
   cmd+=(--mqtt-set "$(quote "$mqtt_set")")
   cmd+=(--mqtt-addr "$(quote "$mqtt_addr")")

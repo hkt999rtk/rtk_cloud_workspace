@@ -62,6 +62,11 @@ const (
 )
 
 const (
+	WebRTCICEPolicyAll   = "all"
+	WebRTCICEPolicyRelay = "relay"
+)
+
+const (
 	ClipSetOff                 = "off"
 	ClipSetRecordingFunctional = "recording-functional"
 )
@@ -101,6 +106,7 @@ type Config struct {
 	ViewerRouteSet        string            `json:"viewer_route_set"`
 	WebRTCMediaSet        string            `json:"webrtc_media_set"`
 	WebRTCRelayRole       string            `json:"webrtc_relay_role"`
+	WebRTCICEPolicy       string            `json:"webrtc_ice_policy"`
 	WebRTCMediaDuration   time.Duration     `json:"webrtc_media_duration"`
 	ClipSet               string            `json:"clip_set"`
 	MQTTSet               string            `json:"mqtt_set"`
@@ -180,6 +186,7 @@ type RedactedConfig struct {
 	ViewerRouteSet     string   `json:"viewer_route_set"`
 	WebRTCMediaSet     string   `json:"webrtc_media_set"`
 	WebRTCRelayRole    string   `json:"webrtc_relay_role"`
+	WebRTCICEPolicy    string   `json:"webrtc_ice_policy"`
 	ClipSet            string   `json:"clip_set"`
 	MQTTSet            string   `json:"mqtt_set"`
 	MQTTAddr           string   `json:"mqtt_addr,omitempty"`
