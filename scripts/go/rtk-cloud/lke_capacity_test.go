@@ -148,6 +148,37 @@ func TestLKECapacityCheckFailsWhenTargetConnectsExceedFixedMQTTCapacity(t *testi
 	}
 }
 
+func TestLKEProviderServicesCountsCoturnVM(t *testing.T) {
+	env := map[string]string{
+		"CLOUD_STACK_NAME":                "video-cloud-staging",
+		"LKE_EDGE_HAPROXY_COUNT":          "1",
+		"LKE_COTURN_VM_COUNT":             "1",
+		"LKE_POSTGRES_STORAGE_MODE":       "emptydir",
+		"LKE_LINODE_ACTIVE_SERVICE_LIMIT": "6",
+	}
+
+	services := lkeProviderServices(env, 5)
+	if services.EdgeVMs != 1 {
+		t.Fatalf("edge VMs = %d, want 1", services.EdgeVMs)
+	}
+	if services.CoturnVMs != 1 {
+		t.Fatalf("coturn VMs = %d, want 1", services.CoturnVMs)
+	}
+	if services.RequiredServices != 7 {
+		t.Fatalf("required services = %d, want 7", services.RequiredServices)
+	}
+
+	err := lkeCheckCapacity(env, provisionOptions{})
+	if err == nil {
+		t.Fatal("expected provider capacity check to include coturn VM and fail")
+	}
+	for _, want := range []string{"required active services=7", "coturn_vms=1", "reduce LKE_COTURN_VM_COUNT"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected %q in provider capacity error:\n%s", want, err.Error())
+		}
+	}
+}
+
 func TestLKECapacityParsesQuantities(t *testing.T) {
 	cpu, err := parseCPUQuantity("0.25")
 	if err != nil || cpu != 250 {
