@@ -109,6 +109,9 @@ func runLoad(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	applyRunLoadDefaults(&cfg, runLoadFlagState{
+		deviceRouteSet: flagWasSet(fs, "device-route-set"),
+	})
 	if tokens, err := loadTokenMapFlag("device-token-map", deviceTokenMapJSON, deviceTokenMapFile); err != nil {
 		return err
 	} else if tokens != nil {
@@ -142,6 +145,39 @@ func runLoad(args []string) error {
 		return fmt.Errorf("threshold gate failed: %v", result.Thresholds.Failures)
 	}
 	return nil
+}
+
+type runLoadFlagState struct {
+	deviceRouteSet bool
+}
+
+func applyRunLoadDefaults(cfg *loadtest.Config, flags runLoadFlagState) {
+	if cfg == nil || flags.deviceRouteSet || os.Getenv("VIDEO_CLOUD_LOAD_DEVICE_ROUTE_SET") != "" {
+		return
+	}
+	if cfg.Profile != loadtest.ProfileSmoke || cfg.WebRTCMediaSet == "" || cfg.WebRTCMediaSet == loadtest.WebRTCMediaSetOff {
+		return
+	}
+	if cfg.DeviceRouteSet != loadtest.DeviceRouteSetSmoke {
+		return
+	}
+	_, enabled, err := loadtest.NormalizeActors(cfg.Actors)
+	if err != nil {
+		return
+	}
+	if enabled[loadtest.ActorDevice] && enabled[loadtest.ActorViewer] && !enabled[loadtest.ActorApp] {
+		cfg.DeviceRouteSet = loadtest.DeviceRouteSetOff
+	}
+}
+
+func flagWasSet(fs *flag.FlagSet, name string) bool {
+	seen := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			seen = true
+		}
+	})
+	return seen
 }
 
 func loadTokenMapFlag(name, jsonValue, filePath string) (map[string]string, error) {
