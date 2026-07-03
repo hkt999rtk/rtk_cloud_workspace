@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"mime/multipart"
 	"net"
@@ -916,15 +917,32 @@ func (h *webSocketOwnerHandle) writeFrame(opcode byte, payload []byte) error {
 }
 
 func (r *Runner) maintainWebSocketOwner(ctx context.Context, cfg Config, deviceID, token string, handle *webSocketOwnerHandle, record func(Operation)) {
-	ticker := time.NewTicker(webSocketOwnerKeepaliveInterval)
-	defer ticker.Stop()
+	var ticker *time.Ticker
+	var initialKeepalive *time.Timer
+	defer func() {
+		if initialKeepalive != nil {
+			initialKeepalive.Stop()
+		}
+		if ticker != nil {
+			ticker.Stop()
+		}
+	}()
+	var keepaliveC <-chan time.Time
+	if webSocketOwnerKeepaliveInterval > 0 {
+		initialKeepalive = time.NewTimer(webSocketOwnerKeepaliveInitialDelay(deviceID))
+		keepaliveC = initialKeepalive.C
+	}
 
 	listenerDone := r.startDeviceTransportListener(ctx, cfg, deviceID, handle, record)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-keepaliveC:
+			if ticker == nil {
+				ticker = time.NewTicker(webSocketOwnerKeepaliveInterval)
+				keepaliveC = ticker.C
+			}
 			start := time.Now()
 			op := Operation{Actor: ActorDevice, Name: "device_websocket_keepalive", DeviceID: deviceID}
 			if err := handle.writeFrame(1, deviceWebSocketKeepalivePayload(cfg, deviceID)); err != nil {
@@ -965,6 +983,19 @@ func (r *Runner) maintainWebSocketOwner(ctx context.Context, cfg Config, deviceI
 			}
 		}
 	}
+}
+
+func webSocketOwnerKeepaliveInitialDelay(deviceID string) time.Duration {
+	if webSocketOwnerKeepaliveInterval <= 0 {
+		return 0
+	}
+	span := uint64(webSocketOwnerKeepaliveInterval.Nanoseconds())
+	if span == 0 {
+		return 0
+	}
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(deviceID))
+	return time.Duration(h.Sum64() % span)
 }
 
 func deviceWebSocketKeepalivePayload(cfg Config, deviceID string) []byte {

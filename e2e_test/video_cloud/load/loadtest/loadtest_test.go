@@ -854,6 +854,25 @@ func TestRunnerWebSocketOwnerSendsKeepaliveAndRecordsLifecycle(t *testing.T) {
 	}
 }
 
+func TestWebSocketOwnerKeepaliveInitialDelayIsDeterministicJitter(t *testing.T) {
+	oldInterval := webSocketOwnerKeepaliveInterval
+	webSocketOwnerKeepaliveInterval = time.Second
+	defer func() { webSocketOwnerKeepaliveInterval = oldInterval }()
+
+	first := webSocketOwnerKeepaliveInitialDelay("device-1")
+	second := webSocketOwnerKeepaliveInitialDelay("device-1")
+	other := webSocketOwnerKeepaliveInitialDelay("device-2")
+	if first != second {
+		t.Fatalf("jitter is not deterministic: %s != %s", first, second)
+	}
+	if first < 0 || first >= webSocketOwnerKeepaliveInterval {
+		t.Fatalf("jitter %s outside interval %s", first, webSocketOwnerKeepaliveInterval)
+	}
+	if first == other {
+		t.Fatalf("expected different devices to spread keepalive phase, both got %s", first)
+	}
+}
+
 func TestRunnerWebSocketOwnerReconnectsAfterKeepaliveFailure(t *testing.T) {
 	oldInterval := webSocketOwnerKeepaliveInterval
 	webSocketOwnerKeepaliveInterval = 5 * time.Millisecond
