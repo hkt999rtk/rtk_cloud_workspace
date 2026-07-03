@@ -38,7 +38,7 @@ func usage() error {
 
 func runLoad(args []string) error {
 	cfg := loadtest.DefaultConfigFromEnv()
-	var output, reportOutput, deviceTokenMapJSON, appTokenMapJSON, deviceTokenMapFile, appTokenMapFile, deviceIDsCSV string
+	var output, reportOutput, deviceTokenMapJSON, appTokenMapJSON, deviceTokenMapFile, appTokenMapFile, deviceIDsCSV, deviceIDsFile string
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.StringVar(&cfg.Profile, "profile", cfg.Profile, "load profile: smoke, functional, safe-staging, stress, soak")
 	fs.StringVar(&cfg.APIURL, "api-url", cfg.APIURL, "rtk_video_cloud API base URL")
@@ -79,6 +79,7 @@ func runLoad(args []string) error {
 	fs.IntVar(&cfg.DeviceOwnerRetries, "device-owner-connect-retries", cfg.DeviceOwnerRetries, "retry count for initial device WebSocket owner connection")
 	fs.StringVar(&cfg.DevicePrefix, "device-prefix", cfg.DevicePrefix, "pre-provisioned device id prefix")
 	fs.StringVar(&deviceIDsCSV, "device-ids", "", "comma-separated explicit device ids for focused repro; overrides generated device-prefix indexes")
+	fs.StringVar(&deviceIDsFile, "device-ids-file", os.Getenv("VIDEO_CLOUD_LOAD_DEVICE_IDS_FILE"), "file containing comma- or newline-separated explicit device ids")
 	fs.StringVar(&cfg.ContractsCommit, "contracts-commit", cfg.ContractsCommit, "contracts docs commit for report evidence")
 	fs.StringVar(&cfg.ServerCommit, "server-commit", cfg.ServerCommit, "deployed server commit for report evidence")
 	fs.StringVar(&cfg.ClientCommit, "client-commit", cfg.ClientCommit, "client repo commit for report evidence")
@@ -124,6 +125,13 @@ func runLoad(args []string) error {
 	}
 	if deviceIDsCSV != "" {
 		cfg.DeviceIDs = loadtest.ParseDeviceIDs(deviceIDsCSV)
+	}
+	if deviceIDsFile != "" {
+		raw, err := os.ReadFile(deviceIDsFile)
+		if err != nil {
+			return fmt.Errorf("read device ids file: %w", err)
+		}
+		cfg.DeviceIDs = loadtest.ParseDeviceIDs(string(raw))
 	}
 	if cfg.ContractsCommit == "" {
 		cfg.ContractsCommit = loadtest.ResolveContractsCommit("")

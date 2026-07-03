@@ -352,6 +352,12 @@ class VideoLoadTestTwoHostTests(unittest.TestCase):
             binary = Path(tmp) / "rtk-video-loadtest-linux-amd64"
             binary.write_text("#!/bin/sh\n", encoding="utf-8")
             env = os.environ.copy()
+            device_map = Path(tmp) / "device-token-map.json"
+            app_map = Path(tmp) / "app-token-map.json"
+            device_ids_file = Path(tmp) / "device-ids.txt"
+            device_map.write_text('{"load-device-4":"device-file-secret"}\n', encoding="utf-8")
+            app_map.write_text('{"load-device-4":"app-file-secret"}\n', encoding="utf-8")
+            device_ids_file.write_text("load-device-4\n", encoding="utf-8")
             env.update(
                 {
                     "VIDEO_CLOUD_LOAD_API_URL": "https://video-cloud-cd.local:8443",
@@ -360,6 +366,9 @@ class VideoLoadTestTwoHostTests(unittest.TestCase):
                     "VIDEO_CLOUD_LOAD_DEVICE_TOKEN": "device-secret",
                     "VIDEO_CLOUD_LOAD_DEVICE_TOKENS": '{"load-device-0":"device-map-secret-0","load-device-1":"device-map-secret-1"}',
                     "VIDEO_CLOUD_LOAD_APP_TOKENS": '{"load-device-0":"app-map-secret-0","load-device-1":"app-map-secret-1"}',
+                    "VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE": str(device_map),
+                    "VIDEO_CLOUD_LOAD_APP_TOKEN_MAP_FILE": str(app_map),
+                    "VIDEO_CLOUD_LOAD_DEVICE_IDS_FILE": str(device_ids_file),
                     "VIDEO_CLOUD_LOAD_REFRESH_TOKEN": "refresh-secret",
                     "VIDEO_CLOUD_LOAD_ALLOW_STRESS": "1",
                     "VIDEO_CLOUD_LOAD_ALLOW_SOAK": "1",
@@ -381,6 +390,13 @@ class VideoLoadTestTwoHostTests(unittest.TestCase):
                     "VIDEO_CLOUD_LOAD_NEGATIVE_TIMEOUT_PATH": "/__loadtest/timeout",
                     "VIDEO_CLOUD_LOAD_DEVICE_IDS": "load-device-4",
                     "VIDEO_CLOUD_LOAD_RUN_ID": "run-1",
+                    "VIDEO_CLOUD_LOAD_HTTP_TIMEOUT": "45s",
+                    "VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_DURATION": "5s",
+                    "VIDEO_CLOUD_LOAD_APP_CONCURRENCY": "11",
+                    "VIDEO_CLOUD_LOAD_DEVICE_CONCURRENCY": "22",
+                    "VIDEO_CLOUD_LOAD_VIEWER_CONCURRENCY": "33",
+                    "VIDEO_CLOUD_LOAD_DEVICE_ONLINE_SETTLE": "4s",
+                    "VIDEO_CLOUD_LOAD_DEVICE_OWNER_CONNECT_RETRIES": "5",
                 }
             )
             proc = subprocess.run(
@@ -424,9 +440,26 @@ class VideoLoadTestTwoHostTests(unittest.TestCase):
             self.assertIn("VIDEO_CLOUD_LOAD_NEGATIVE_MALFORMED_PATH=/__loadtest/malformed_json", output)
             self.assertIn("VIDEO_CLOUD_LOAD_NEGATIVE_TIMEOUT_PATH=/__loadtest/timeout", output)
             self.assertIn("VIDEO_CLOUD_LOAD_DEVICE_IDS=load-device-4", output)
+            self.assertIn("--http-timeout 45s", output)
+            self.assertIn("--webrtc-media-duration 5s", output)
+            self.assertIn("--app-concurrency 11", output)
+            self.assertIn("--device-concurrency 22", output)
+            self.assertIn("--viewer-concurrency 33", output)
+            self.assertIn("--device-online-settle 4s", output)
+            self.assertIn("--device-owner-connect-retries 5", output)
+            self.assertIn("device-token-map.json", output)
+            self.assertIn("app-token-map.json", output)
+            self.assertIn("--device-token-map-file", output)
+            self.assertIn("--app-token-map-file", output)
+            self.assertIn("device-ids.txt", output)
+            self.assertIn("--device-ids-file", output)
             self.assertIn("stdout.log", output)
             self.assertIn("stderr.log", output)
+            self.assertIn("testsrc2_1080p_2s.h264", output)
+            self.assertIn("testtone_48k_mono_2s.opusframes", output)
+            self.assertIn("cd /opt/rtk-cloud-loadtest", output)
             self.assertIn("VIDEO_CLOUD_LOAD_DEVICE_ONLINE_MODE=websocket", output)
+            self.assertIn("VIDEO_CLOUD_LOAD_DEVICE_ONLINE_MODE=none", output)
             self.assertIn("background device role", output)
             self.assertIn("wait for device role", output)
             self.assertIn("<redacted>", output)
@@ -437,6 +470,8 @@ class VideoLoadTestTwoHostTests(unittest.TestCase):
             self.assertNotIn("device-map-secret-1", output)
             self.assertNotIn("app-map-secret-0", output)
             self.assertNotIn("app-map-secret-1", output)
+            self.assertNotIn("device-file-secret", output)
+            self.assertNotIn("app-file-secret", output)
             self.assertNotIn("refresh-secret", output)
             self.assertNotIn("mqtt-user", output)
             self.assertNotIn("mqtt-pass", output)

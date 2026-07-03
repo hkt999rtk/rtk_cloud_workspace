@@ -55,6 +55,7 @@ device_token_map_file="${VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE:-}"
 app_token_map_file="${VIDEO_CLOUD_LOAD_APP_TOKEN_MAP_FILE:-}"
 refresh_token="${VIDEO_CLOUD_LOAD_REFRESH_TOKEN:-}"
 device_ids="${VIDEO_CLOUD_LOAD_DEVICE_IDS:-}"
+device_ids_file="${VIDEO_CLOUD_LOAD_DEVICE_IDS_FILE:-}"
 
 cat >"${artifact_dir}/metadata.json" <<EOF
 {
@@ -109,6 +110,9 @@ if [ -n "${app_token_map_file}" ]; then
 fi
 if [ -n "${device_ids}" ]; then
   extra_args+=(--device-ids "${device_ids}")
+fi
+if [ -n "${device_ids_file}" ]; then
+  extra_args+=(--device-ids-file "${device_ids_file}")
 fi
 if [ -n "${refresh_token}" ]; then
   extra_args+=(--refresh-token "${refresh_token}")

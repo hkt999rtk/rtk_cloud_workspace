@@ -1,15 +1,17 @@
 # 100K Home IoT Device Shadow Load Test
 
-Status: implemented review-time runner and live VM lifecycle scaffold
+Status: implemented live Home MQTT/shadow runner with optional WebRTC/TURN
+video profiles
 Owner: rtk_cloud_workspace
-Last updated: 2026-06-15
+Last updated: 2026-07-04
 
 ## Summary
 
-This proposal defines a 100K home load-test suite for RTK cloud staging. The
-test validates 100,000 simulated home devices, 5,000 simulated app users, and
+This package defines the Home IoT load-test suite for RTK cloud staging. The
+default home profile validates simulated home devices, simulated app users, and
 the IoT Device Shadow behavior that connects user intent to device-reported
-state.
+state. Video-enabled profiles add a WebRTC/TURN relay-only viewer ladder on top
+of the same MQTT/shadow background load.
 
 The load generators run on ephemeral Linode VMs, not inside the server
 Kubernetes cluster. The server target for the first baseline is the current
@@ -19,7 +21,9 @@ variance.
 
 The test must prove more than MQTT connectivity. It must prove that IoT Device
 Shadow desired, reported, delta, and version semantics still converge under
-online, offline, and reconnect load.
+online, offline, and reconnect load. When a video profile is selected, the
+report must also prove WebRTC create/setup/close, relay-only ICE candidates,
+first RTP, first H.264 access-unit evidence, and external TURN/coturn evidence.
 
 ## Goals
 
@@ -38,7 +42,8 @@ online, offline, and reconnect load.
 - Multi-region load generation.
 - Legacy Linode VM server-runtime comparison.
 - Named IoT Device Shadows.
-- WebRTC, video relay, clip upload, snapshot upload, or media quality testing.
+- WebRTC, video relay, clip upload, snapshot upload, or media quality testing
+  in the first MQTT-only baseline profile.
 - Long-lived load-generator VM pools.
 
 These can become later profiles after the first single-region baseline is
@@ -78,6 +83,65 @@ For `video-1k-v1`, missing WebRTC create/setup/close evidence makes the report
 `FAIL`. If H.264 media is enabled, missing ICE-connected or first-RTP evidence
 is also a `FAIL`. Missing external TURN/coturn evidence is `INCOMPLETE`, so a
 signaling-only pass is never reported as media-capacity success.
+
+## WebRTC/TURN Sizing Profiles
+
+`video-50k-turn-v1` and `video-100k-turn-v1` keep the Home MQTT/shadow run as
+background load and add a relay-only WebRTC viewer ladder for coturn sizing.
+The video runner is still `e2e_test/video_cloud/load`; the home runner owns
+orchestration, evidence collection, and the final `TEST_REPORT.md`.
+
+Default TURN sizing shape:
+
+| Profile | Home devices | Derived app users | Video devices | Viewer ladder | Media |
+| --- | ---: | ---: | ---: | --- | --- |
+| `video-50k-turn-v1` | 50,000 | 2,500 | 5,000 | `100,500,1000,2000,5000` | `h264` |
+| `video-100k-turn-v1` | 100,000 | 5,000 | 5,000 | `100,500,1000,2000,5000` | `h264` |
+
+Run a full scripted 50K profile with:
+
+```sh
+HOME100K_DESCRIPTION_FILE=loadtests/home-100k/scenarios/video-50k-turn.description.env \
+HOME100K_RUN_ID=lt50k-video-turn-$(date -u +%Y%m%dT%H%M%SZ) \
+./loadtests/home-100k/scripts/home-100k.sh workflow-live
+```
+
+Run the 100K TURN sizing profile by switching the description file:
+
+```sh
+HOME100K_DESCRIPTION_FILE=loadtests/home-100k/scenarios/video-100k-turn.description.env \
+HOME100K_RUN_ID=lt100k-video-turn-$(date -u +%Y%m%dT%H%M%SZ) \
+./loadtests/home-100k/scripts/home-100k.sh workflow-live
+```
+
+The workflow can use a two-host video runner layout for larger viewer steps:
+
+```text
+video/step-<viewers>/device/load-results.json
+video/step-<viewers>/app-viewer/load-results.json
+video/step-<viewers>/turn-active-samples.tsv
+```
+
+The device host keeps device websocket owners online. The app/viewer host
+creates WebRTC sessions, receives RTP media, records first RTP and first H.264
+access-unit latency, and closes sessions. Token maps and device ID files are
+uploaded as files rather than expanded into long SSH command lines.
+
+The final report gates are intentionally strict:
+
+- missing 50K/100K MQTT/shadow evidence: `INCOMPLETE`
+- missing WebRTC create/setup/close evidence: `INCOMPLETE`
+- relay-only run with selected non-relay candidates: `FAIL`
+- missing external TURN/coturn active-window evidence: `INCOMPLETE`
+- missing first RTP or first H.264 access-unit evidence with H.264 media:
+  `FAIL`
+- missing multi-pod WebRTC signaling-store evidence for TURN sizing profiles:
+  `INCOMPLETE`
+
+Server-side shadow correlation is sourced from the Loki-backed central logger
+`device_runtime_log` events. EMQX connection correlation prefers run-scoped
+counters; when a stale baseline delta undercounts a live run, the report may use
+the active `emqx.metric.client.connected` gauge as warning-level evidence.
 
 ## Directory Ownership
 

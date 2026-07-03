@@ -219,7 +219,9 @@ func ParseDeviceIDs(raw string) []string {
 	if raw == "" {
 		return nil
 	}
-	parts := strings.Split(raw, ",")
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\r' || r == '\t' || r == ' '
+	})
 	ids := make([]string, 0, len(parts))
 	for _, part := range parts {
 		id := strings.TrimSpace(part)
@@ -4045,11 +4047,12 @@ func (r *Runner) postRaw(ctx context.Context, cfg Config, actor, name, deviceID,
 }
 
 func (r *Runner) get(ctx context.Context, cfg Config, actor, name, deviceID, viewerID, path string, bearer string) Operation {
-	return r.requestJSON(ctx, cfg, http.MethodGet, actor, name, deviceID, viewerID, path, nil, bearer)
+	op, _ := r.requestJSONRawWithRetry(ctx, cfg, http.MethodGet, actor, name, deviceID, viewerID, path, nil, bearer, 1)
+	return op
 }
 
 func (r *Runner) getRaw(ctx context.Context, cfg Config, actor, name, deviceID, viewerID, path string, bearer string) (Operation, []byte) {
-	return r.requestJSONRaw(ctx, cfg, http.MethodGet, actor, name, deviceID, viewerID, path, nil, bearer)
+	return r.requestJSONRawWithRetry(ctx, cfg, http.MethodGet, actor, name, deviceID, viewerID, path, nil, bearer, 1)
 }
 
 func (r *Runner) optionalLegacyPost(ctx context.Context, cfg Config, actor, name, deviceID, viewerID, path string, body any, bearer string) Operation {
@@ -4088,10 +4091,31 @@ func (r *Runner) requestJSON(ctx context.Context, cfg Config, method, actor, nam
 }
 
 func (r *Runner) requestJSONRaw(ctx context.Context, cfg Config, method, actor, name, deviceID, viewerID, path string, body any, bearer string) (Operation, []byte) {
+	return r.requestJSONRawWithRetry(ctx, cfg, method, actor, name, deviceID, viewerID, path, body, bearer, 0)
+}
+
+func (r *Runner) requestJSONRawWithRetry(ctx context.Context, cfg Config, method, actor, name, deviceID, viewerID, path string, body any, bearer string, retries int) (Operation, []byte) {
 	start := time.Now()
-	opCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.HTTPTimeout)
-	defer cancel()
-	raw, status, err := r.doJSON(opCtx, method, cfg.APIURL+path, body, bearer)
+	var raw []byte
+	var status int
+	var err error
+	attempts := retries + 1
+	usedAttempts := 0
+	for attempt := 1; attempt <= attempts; attempt++ {
+		usedAttempts = attempt
+		opCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.HTTPTimeout)
+		raw, status, err = r.doJSON(opCtx, method, cfg.APIURL+path, body, bearer)
+		cancel()
+		if err == nil || attempt == attempts || !isRetryableHTTPClientError(err) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+			attempt = attempts
+		case <-time.After(time.Duration(attempt) * 100 * time.Millisecond):
+		}
+	}
 	latency := time.Since(start).Milliseconds()
 	op := Operation{
 		Actor:      actor,
@@ -4105,11 +4129,28 @@ func (r *Runner) requestJSONRaw(ctx context.Context, cfg Config, method, actor, 
 		op.Success = false
 		op.ErrorClass = ClassifyError(status, raw, err)
 		op.ErrorDetail = redactDetail(err.Error())
+		if usedAttempts > 1 {
+			op.Evidence = fmt.Sprintf("http_attempts=%d", usedAttempts)
+		}
 		return op, raw
 	}
 	op.Success = true
 	op.Evidence = sanitizeEvidence(raw)
+	if usedAttempts > 1 {
+		op.Evidence = appendEvidence(op.Evidence, fmt.Sprintf("http_attempts=%d", usedAttempts))
+	}
 	return op, raw
+}
+
+func isRetryableHTTPClientError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := err.Error()
+	return strings.Contains(text, "server sent GOAWAY") ||
+		strings.Contains(text, "connection reset by peer") ||
+		strings.Contains(text, "use of closed network connection") ||
+		strings.Contains(text, "EOF")
 }
 
 func (r *Runner) doJSON(ctx context.Context, method, url string, body any, bearer string) ([]byte, int, error) {

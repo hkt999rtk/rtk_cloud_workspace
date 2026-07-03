@@ -1036,6 +1036,45 @@ func TestCorrelateServerEvidenceWarnsOnSharedEMQXConnectOverage(t *testing.T) {
 	}
 }
 
+func TestCorrelateServerEvidenceUsesActiveEMQXConnectedGaugeWhenBaselineDeltaIsStale(t *testing.T) {
+	device := DeviceMQTTTotals{
+		ConnectAttempts:   50000,
+		ConnectSuccess:    50000,
+		Subscribes:        50000,
+		Publishes:         2502,
+		ReceivedMessages:  2502,
+		DeltaReceived:     2502,
+		ReportedPublishes: 2502,
+	}
+	app := AppUserTotals{TokenAttempts: 2502, TokenSuccess: 2502, MQTTConnackSuccess: 2502, DesiredWrites: 2502, ReceivedAcks: 2502}
+	evidence := ServerEvidence{
+		Complete: true,
+		Sources: map[string]EvidenceSource{
+			"emqx": {Available: true, Counters: map[string]int64{
+				"emqx.broker.identity":             1,
+				"mqtt.total_connect_success":       17749,
+				"emqx.metric.client.connected":     53662,
+				"emqx.metric.packets.connack.sent": 53662,
+			}},
+			"iot_device_shadow": {Available: true, Counters: map[string]int64{
+				"app_user.desired_writes":        2502,
+				"device_mqtt.delta_received":     2502,
+				"device_mqtt.reported_publishes": 2502,
+				"app_user.received_acks":         2502,
+			}},
+		},
+	}
+
+	correlation := correlateServerEvidence(evidence, device, app)
+
+	if correlation.Status != "pass" {
+		t.Fatalf("status = %s, want pass with active EMQX connected gauge; checks=%#v", correlation.Status, correlation.Checks)
+	}
+	if check := correlation.Checks[0]; check.Counter != "emqx.metric.client.connected" || check.ServerTotal != 53662 || check.Status != "warning" {
+		t.Fatalf("emqx check = %#v, want active connected gauge warning", check)
+	}
+}
+
 func TestCorrelateServerEvidenceFailsOnMissingEMQXConnects(t *testing.T) {
 	device := DeviceMQTTTotals{
 		ConnectAttempts:   50000,

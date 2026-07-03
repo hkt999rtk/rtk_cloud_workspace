@@ -645,6 +645,84 @@ func TestVideoLadderEvidenceRendersPerStepReport(t *testing.T) {
 	}
 }
 
+func TestVideoLadderEvidenceLoadsTwoHostStepLayout(t *testing.T) {
+	tmp := t.TempDir()
+	stepDir := tmp + "/video/step-5000"
+	if err := os.MkdirAll(stepDir+"/app-viewer", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(stepDir+"/device", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	appViewer := []byte(`{
+		"config": {"webrtc_ice_policy": "relay", "virtual_viewers": 5000, "duration_ms": 1000000},
+		"webrtc": {
+			"success_rate": 1,
+			"setup_latency_p95_ms": 0,
+			"setup_latency_p99_ms": 0,
+			"ice_server_count": 2,
+			"create": {"operations": 5000, "successes": 5000},
+			"setup": {"operations": 0, "successes": 0},
+			"close": {"operations": 5000, "successes": 5000}
+		},
+		"webrtc_media": {
+			"attempts": 5000,
+			"successes": 5000,
+			"ice_connected_p95_ms": 2158,
+			"time_to_first_rtp_p95_ms": 3173,
+			"packets_received": 10046,
+			"bytes_received": 5090911,
+			"h264_packets_received": 10046,
+			"video_startup_latency": {
+				"samples": 5000,
+				"h264_access_unit_samples": 5000,
+				"app_request_to_first_rtp_p95_ms": 3173,
+				"app_request_to_first_h264_access_unit_p95_ms": 3176
+			}
+		},
+		"video_startup_latency": [
+			{"ice_policy":"relay","selected_local_candidate_type":"relay","selected_remote_candidate_type":"relay"}
+		]
+	}`)
+	device := []byte(`{
+		"config": {"webrtc_ice_policy": "relay", "virtual_viewers": 5000, "duration_ms": 1000000},
+		"webrtc": {"success_rate": 0},
+		"webrtc_media": {"ice_connected_p95_ms": 2121, "time_to_first_rtp_p95_ms": 3133}
+	}`)
+	if err := os.WriteFile(stepDir+"/app-viewer/load-results.json", appViewer, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stepDir+"/device/load-results.json", device, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stepDir+"/turn-active-samples.tsv", []byte("time\tnode\thost\tudp_sockets\tjournal_events\n2026-07-03T22:28:00Z\tturn01\t198.51.100.20\t164\t0\n2026-07-03T22:28:00Z\tturn02\t198.51.100.21\t162\t0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	video := videoEvidenceWithServerEvidence(loadVideoEvidence(tmp+"/video"), ServerEvidence{Sources: map[string]EvidenceSource{
+		"turn_registry": {Available: true, Counters: map[string]int64{"turn_registry.active_nodes": 2}},
+		"coturn":        {Available: true, Counters: map[string]int64{"coturn.configured_nodes": 2}},
+	}})
+	if len(video.Steps) != 1 {
+		t.Fatalf("steps = %d, want 1: %+v", len(video.Steps), video)
+	}
+	if !video.Complete || !video.Steps[0].Complete {
+		t.Fatalf("two-host video evidence incomplete: %+v", video)
+	}
+	if video.WebRTC.CreateAttempts != 5000 || video.WebRTC.SetupAttempts != 5000 || video.WebRTC.CloseAttempts != 5000 {
+		t.Fatalf("webrtc attempts = create %d setup %d close %d, want 5000 each", video.WebRTC.CreateAttempts, video.WebRTC.SetupAttempts, video.WebRTC.CloseAttempts)
+	}
+	if video.WebRTCMedia.Successes != 5000 || video.WebRTCMedia.Startup.H264AccessUnitSamples != 5000 {
+		t.Fatalf("media successes/startup samples = %d/%d, want 5000/5000", video.WebRTCMedia.Successes, video.WebRTCMedia.Startup.H264AccessUnitSamples)
+	}
+	if video.RelayCandidateSamples != 1 || video.NonRelayCandidateSamples != 0 {
+		t.Fatalf("relay/non-relay samples = %d/%d, want 1/0", video.RelayCandidateSamples, video.NonRelayCandidateSamples)
+	}
+	if video.TURN.ActiveSessions != 164 || video.TURN.ActiveNodes != 2 {
+		t.Fatalf("TURN active sessions/nodes = %d/%d, want 164/2", video.TURN.ActiveSessions, video.TURN.ActiveNodes)
+	}
+}
+
 func TestVideoStepThresholdFailureMakesMergedReportFail(t *testing.T) {
 	tmp := t.TempDir()
 	stepDir := tmp + "/video/step-100"
@@ -750,6 +828,24 @@ func TestVideoEvidenceUsesActiveTURNSampleSidecar(t *testing.T) {
 				t.Fatalf("video gate incomplete=%t reasons=%v video=%+v", incomplete, reasons, video)
 			}
 		})
+	}
+}
+
+func TestTURNEvidenceFromActiveSamplesSupportsTwoHostSamplerHeader(t *testing.T) {
+	tmp := t.TempDir()
+	path := tmp + "/turn-active-samples.tsv"
+	raw := "ts\tnode\tudp_sockets\ttcp_estab\tcpu_mem\n" +
+		"2026-07-03T22:27:41Z\tturn01\t18\t2\t\n" +
+		"2026-07-03T22:30:00Z\tturn01\t164\t70\t\n" +
+		"2026-07-03T22:30:00Z\tturn02\t162\t71\t\n"
+	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	turn := turnEvidenceFromActiveSamples(path)
+
+	if !turn.CoturnAvailable || turn.ActiveNodes != 2 || turn.ActiveSessions != 164 || turn.Allocations != 164 {
+		t.Fatalf("turn evidence = %+v, want nodes=2 sessions=164", turn)
 	}
 }
 

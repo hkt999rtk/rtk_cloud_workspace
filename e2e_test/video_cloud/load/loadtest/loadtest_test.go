@@ -126,6 +126,52 @@ func TestRunnerSimulatesActorsAndClosesWebRTCSessions(t *testing.T) {
 	}
 }
 
+func TestRunnerRetriesRetryableGETTransportError(t *testing.T) {
+	var attempts int
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		attempts++
+		if attempts == 1 {
+			return nil, fmt.Errorf("http2: server sent GOAWAY and closed the connection")
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Request:    req,
+		}, nil
+	})}
+
+	runner := NewRunner(client)
+	op := runner.get(context.Background(), Config{
+		APIURL:      "https://video-cloud.example",
+		HTTPTimeout: time.Second,
+	}, ActorViewer, "webrtc_media_answer", "device-1", "viewer-1", "/api/request_webrtc", "token")
+
+	if !op.Success {
+		t.Fatalf("GET operation failed after retry: %#v", op)
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", attempts)
+	}
+	if !strings.Contains(op.Evidence, "http_attempts=2") {
+		t.Fatalf("evidence = %q, want retry attempt count", op.Evidence)
+	}
+}
+
+func TestParseDeviceIDsAcceptsCSVAndNewlines(t *testing.T) {
+	got := ParseDeviceIDs("device-a, device-b\ndevice-c\r\n\tdevice-d")
+	want := []string{"device-a", "device-b", "device-c", "device-d"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("ParseDeviceIDs() = %#v, want %#v", got, want)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
 func TestSummarizeUnhandledWebSocketTextFrameRedactsBody(t *testing.T) {
 	body := []byte(`{"event":"webrtc_offer","data":{"session_id":"s1","offer":{"type":"offer","sdp":"SECRET-SDP"},"ice_servers":[{"username":"turn-user","credential":"turn-pass"}]}}`)
 

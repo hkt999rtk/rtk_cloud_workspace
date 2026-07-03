@@ -21,8 +21,12 @@ usage() {
 Usage: e2e_test/video_cloud/load/scripts/deploy_video_loadtest_two_host.sh [options]
 
 Deploy the same rtk-video-loadtest Linux binary to two Linux hosts:
-  - device host: VIDEO_CLOUD_LOAD_ACTORS=device
-  - app host:    VIDEO_CLOUD_LOAD_ACTORS=app,viewer
+  - device host:     VIDEO_CLOUD_LOAD_ACTORS=device
+  - app/viewer host: VIDEO_CLOUD_LOAD_ACTORS=app,viewer
+
+The script uploads the binary, token map files, optional device ID file, and
+media fixtures, runs each role from the remote workspace root, collects
+per-role load-results.json files, and writes two-host-load-report.md.
 
 Options:
   --binary PATH         Linux amd64 rtk-video-loadtest binary
@@ -41,8 +45,27 @@ Optional environment:
 Required environment for live run:
   VIDEO_CLOUD_LOAD_API_URL
   VIDEO_CLOUD_LOAD_ACCOUNT_TOKEN
-  VIDEO_CLOUD_LOAD_ADMIN_TOKEN
-  VIDEO_CLOUD_LOAD_DEVICE_TOKEN or VIDEO_CLOUD_LOAD_DEVICE_TOKENS
+  VIDEO_CLOUD_LOAD_DEVICE_TOKEN, VIDEO_CLOUD_LOAD_DEVICE_TOKENS, or VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE
+
+Optional environment:
+  VIDEO_CLOUD_LOAD_APP_TOKEN_MAP_FILE
+      Per-device app token map file. Preferred for large Home/WebRTC runs.
+  VIDEO_CLOUD_LOAD_DEVICE_IDS_FILE
+      Newline, comma, or whitespace separated device IDs. Preferred over
+      expanding thousands of IDs in the SSH command environment.
+  VIDEO_CLOUD_LOAD_DEVICE_ACTORS
+      Actor set for the device host. Default: device.
+  VIDEO_CLOUD_LOAD_APP_VIEWER_ACTORS
+      Actor set for the app/viewer host. Default: app,viewer.
+  VIDEO_CLOUD_LOAD_DEVICE_ONLINE_MODE
+      Device role online mode. Default: websocket.
+  VIDEO_CLOUD_LOAD_APP_VIEWER_DEVICE_ONLINE_MODE
+      App/viewer role online mode. Default: none.
+  VIDEO_CLOUD_LOAD_WEBRTC_ICE_POLICY
+      Use relay for TURN sizing runs.
+
+VIDEO_CLOUD_LOAD_ADMIN_TOKEN is required only when the selected actor set
+includes the admin-only app routes.
 EOF
 }
 
@@ -95,6 +118,8 @@ admin_token="${VIDEO_CLOUD_LOAD_ADMIN_TOKEN:-}"
 device_token="${VIDEO_CLOUD_LOAD_DEVICE_TOKEN:-}"
 device_tokens="${VIDEO_CLOUD_LOAD_DEVICE_TOKENS:-}"
 app_tokens="${VIDEO_CLOUD_LOAD_APP_TOKENS:-}"
+device_token_map_file="${VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE:-}"
+app_token_map_file="${VIDEO_CLOUD_LOAD_APP_TOKEN_MAP_FILE:-}"
 refresh_token="${VIDEO_CLOUD_LOAD_REFRESH_TOKEN:-}"
 allow_stress="${VIDEO_CLOUD_LOAD_ALLOW_STRESS:-0}"
 allow_soak="${VIDEO_CLOUD_LOAD_ALLOW_SOAK:-0}"
@@ -119,17 +144,28 @@ negative_set="${VIDEO_CLOUD_LOAD_NEGATIVE_SET:-off}"
 negative_malformed_path="${VIDEO_CLOUD_LOAD_NEGATIVE_MALFORMED_PATH:-}"
 negative_timeout_path="${VIDEO_CLOUD_LOAD_NEGATIVE_TIMEOUT_PATH:-}"
 duration="${VIDEO_CLOUD_LOAD_DURATION:-30s}"
+http_timeout="${VIDEO_CLOUD_LOAD_HTTP_TIMEOUT:-10s}"
+webrtc_media_duration="${VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_DURATION:-20s}"
 virtual_devices="${VIDEO_CLOUD_LOAD_VIRTUAL_DEVICES:-1}"
 virtual_viewers="${VIDEO_CLOUD_LOAD_VIRTUAL_VIEWERS:-1}"
 iterations="${VIDEO_CLOUD_LOAD_ITERATIONS:-1}"
+app_concurrency="${VIDEO_CLOUD_LOAD_APP_CONCURRENCY:-0}"
+device_concurrency="${VIDEO_CLOUD_LOAD_DEVICE_CONCURRENCY:-0}"
+viewer_concurrency="${VIDEO_CLOUD_LOAD_VIEWER_CONCURRENCY:-0}"
 app_rate="${VIDEO_CLOUD_LOAD_APP_RATE:-0}"
 device_rate="${VIDEO_CLOUD_LOAD_DEVICE_RATE:-0}"
 viewer_rate="${VIDEO_CLOUD_LOAD_VIEWER_RATE:-0}"
+device_actors="${VIDEO_CLOUD_LOAD_DEVICE_ACTORS:-device}"
+app_viewer_actors="${VIDEO_CLOUD_LOAD_APP_VIEWER_ACTORS:-app,viewer}"
 device_prefix="${VIDEO_CLOUD_LOAD_DEVICE_PREFIX:-load-device}"
 device_online_mode="${VIDEO_CLOUD_LOAD_DEVICE_ONLINE_MODE:-websocket}"
+device_online_mode_app_viewer="${VIDEO_CLOUD_LOAD_APP_VIEWER_DEVICE_ONLINE_MODE:-none}"
+device_online_settle="${VIDEO_CLOUD_LOAD_DEVICE_ONLINE_SETTLE:-2s}"
+device_owner_retries="${VIDEO_CLOUD_LOAD_DEVICE_OWNER_CONNECT_RETRIES:-3}"
 device_warmup_seconds="${VIDEO_CLOUD_LOAD_DEVICE_WARMUP_SECONDS:-3}"
 device_tail_seconds="${VIDEO_CLOUD_LOAD_DEVICE_TAIL_SECONDS:-15}"
 device_ids="${VIDEO_CLOUD_LOAD_DEVICE_IDS:-}"
+device_ids_file="${VIDEO_CLOUD_LOAD_DEVICE_IDS_FILE:-}"
 contracts_commit="${VIDEO_CLOUD_LOAD_CONTRACTS_COMMIT:-$(git -C "${workspace_root}/repos/rtk_cloud_contracts_doc" rev-parse HEAD 2>/dev/null || true)}"
 server_commit="${VIDEO_CLOUD_LOAD_SERVER_COMMIT:-unknown}"
 client_commit="${VIDEO_CLOUD_LOAD_CLIENT_COMMIT:-$(git -C "${workspace_root}" rev-parse HEAD 2>/dev/null || true)}"
@@ -226,7 +262,7 @@ sha256_file() {
   fi
 }
 
-duration_plus_seconds() {
+device_role_duration() {
   python3 - "$1" "$2" "$3" <<'PY'
 import re
 import sys
@@ -250,8 +286,10 @@ for match in re.finditer(r"([0-9]+(?:\.[0-9]+)?)(ns|us|µs|ms|s|m|h)", raw):
     pos = match.end()
 if pos != len(raw) or seconds <= 0:
     raise SystemExit(f"unsupported duration: {raw}")
-total = int(seconds + warmup + tail + 0.999)
-print(f"{total}s")
+# Device-only runs keep owners alive during runGroup scheduling and then again
+# in the device-only hold path. Pass half the required wall-clock hold time.
+total = int(((seconds + warmup + tail) / 2.0) + 0.999)
+print(f"{max(total, 1)}s")
 PY
 }
 
@@ -272,6 +310,15 @@ if isinstance(values, dict):
         if isinstance(value, str) and value:
             print(value)
 PY
+}
+
+actor_set_contains() {
+  local actors_csv="$1"
+  local actor="$2"
+  case ",${actors_csv}," in
+    *",${actor},"*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 redact() {
@@ -342,9 +389,20 @@ if [ "$dry_run" -eq 0 ]; then
   missing=()
   [ -n "$api_url" ] || missing+=("VIDEO_CLOUD_LOAD_API_URL")
   [ -n "$account_token" ] || missing+=("VIDEO_CLOUD_LOAD_ACCOUNT_TOKEN")
-  [ -n "$admin_token" ] || missing+=("VIDEO_CLOUD_LOAD_ADMIN_TOKEN")
-  if [ -z "$device_token" ] && [ -z "$device_tokens" ]; then
-    missing+=("VIDEO_CLOUD_LOAD_DEVICE_TOKEN or VIDEO_CLOUD_LOAD_DEVICE_TOKENS")
+  if actor_set_contains "$app_viewer_actors" "app"; then
+    [ -n "$admin_token" ] || missing+=("VIDEO_CLOUD_LOAD_ADMIN_TOKEN")
+  fi
+  if [ -z "$device_token" ] && [ -z "$device_tokens" ] && [ -z "$device_token_map_file" ]; then
+    missing+=("VIDEO_CLOUD_LOAD_DEVICE_TOKEN, VIDEO_CLOUD_LOAD_DEVICE_TOKENS, or VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE")
+  fi
+  if [ -n "$device_token_map_file" ] && [ ! -f "$device_token_map_file" ]; then
+    fail_with_report "preflight" "missing device token map file" "$device_token_map_file"
+  fi
+  if [ -n "$app_token_map_file" ] && [ ! -f "$app_token_map_file" ]; then
+    fail_with_report "preflight" "missing app token map file" "$app_token_map_file"
+  fi
+  if [ -n "$device_ids_file" ] && [ ! -f "$device_ids_file" ]; then
+    fail_with_report "preflight" "missing device ids file" "$device_ids_file"
   fi
   if [ "${#missing[@]}" -gt 0 ]; then
     fail_with_report "preflight" "missing required env: ${missing[*]}"
@@ -352,7 +410,7 @@ if [ "$dry_run" -eq 0 ]; then
 fi
 
 binary_sha256="$(sha256_file "$binary")"
-device_duration="${VIDEO_CLOUD_LOAD_DEVICE_HOLD_DURATION:-$(duration_plus_seconds "$duration" "$device_warmup_seconds" "$device_tail_seconds")}"
+device_duration="${VIDEO_CLOUD_LOAD_DEVICE_HOLD_DURATION:-$(device_role_duration "$duration" "$device_warmup_seconds" "$device_tail_seconds")}"
 
 verify_binary_checksum() {
   local checksum_file="${VIDEO_CLOUD_LOAD_BINARY_SHA256SUMS:-$(dirname "$binary")/SHA256SUMS}"
@@ -424,6 +482,40 @@ install_binary() {
   run_ssh "$remote" "chmod 755 $(quote "$remote_dir")/rtk-video-loadtest && printf '%s  rtk-video-loadtest\n' $(quote "$binary_sha256") > $(quote "$remote_dir")/SHA256SUMS"
 }
 
+install_media_fixtures() {
+  local host="$1"
+  local remote="${remote_user}@${host}"
+  local local_testdata="${load_root}/testdata"
+  local remote_testdata="${remote_dir}/e2e_test/video_cloud/load/testdata"
+  [ -d "$local_testdata" ] || fail_with_report "preflight" "missing load-test media fixtures" "$local_testdata"
+  run_ssh "$remote" "mkdir -p $(quote "$remote_testdata")"
+  run_scp "$local_testdata/testsrc2_1080p_2s.h264" "${remote}:$(quote "$remote_testdata")/testsrc2_1080p_2s.h264"
+  run_scp "$local_testdata/testtone_48k_mono_2s.opusframes" "${remote}:$(quote "$remote_testdata")/testtone_48k_mono_2s.opusframes"
+}
+
+remote_token_map_path() {
+  local role="$1"
+  local name="$2"
+  printf '%s/runs/%s/%s/%s' "$remote_dir" "$run_id" "$role" "$name"
+}
+
+install_token_maps() {
+  local host="$1"
+  local role="$2"
+  local remote="${remote_user}@${host}"
+  local remote_artifact_dir="${remote_dir}/runs/${run_id}/${role}"
+  run_ssh "$remote" "mkdir -p $(quote "$remote_artifact_dir")"
+  if [ -n "$device_token_map_file" ]; then
+    run_scp "$device_token_map_file" "${remote}:$(quote "$(remote_token_map_path "$role" "device-token-map.json")")"
+  fi
+  if [ -n "$app_token_map_file" ]; then
+    run_scp "$app_token_map_file" "${remote}:$(quote "$(remote_token_map_path "$role" "app-token-map.json")")"
+  fi
+  if [ -n "$device_ids_file" ]; then
+    run_scp "$device_ids_file" "${remote}:$(quote "$(remote_token_map_path "$role" "device-ids.txt")")"
+  fi
+}
+
 relay_role_for_host_role() {
   local role="$1"
   if [ -n "$webrtc_relay_role" ]; then
@@ -437,6 +529,19 @@ relay_role_for_host_role() {
   esac
 }
 
+device_online_mode_for_host_role() {
+  local role="$1"
+  local actors="$2"
+  if actor_set_contains "$actors" "device"; then
+    printf '%s' "$device_online_mode"
+    return
+  fi
+  case "$role" in
+    app-viewer) printf '%s' "$device_online_mode_app_viewer" ;;
+    *) printf '%s' "$device_online_mode" ;;
+  esac
+}
+
 write_remote_metadata() {
   local host="$1"
   local role="$2"
@@ -446,6 +551,8 @@ write_remote_metadata() {
   local remote_artifact_dir="${remote_dir}/runs/${run_id}/${role}"
   local relay_role
   relay_role="$(relay_role_for_host_role "$role")"
+  local role_device_online_mode
+  role_device_online_mode="$(device_online_mode_for_host_role "$role" "$actors")"
   local metadata
   metadata="$(cat <<EOF
 {
@@ -462,11 +569,13 @@ write_remote_metadata() {
   "webrtc_relay_role": "${relay_role}",
   "clip_set": "${clip_set}",
   "device_ids": "${device_ids}",
+  "device_ids_file": "$([ -n "${device_ids_file}" ] && printf 'device-ids.txt' || true)",
   "mqtt_set": "${mqtt_set}",
   "mqtt_addr": "${mqtt_addr}",
   "mqtt_device_profile": "${mqtt_device_profile}",
   "mqtt_iot_mix": "${mqtt_iot_mix}",
   "mqtt_required": "${mqtt_required}",
+  "device_online_mode": "${role_device_online_mode}",
   "negative_set": "${negative_set}",
   "api_url": "${api_url}",
   "server_commit": "${server_commit}",
@@ -492,6 +601,8 @@ remote_run_command() {
   local remote_artifact_dir="${remote_dir}/runs/${run_id}/${role}"
   local relay_role
   relay_role="$(relay_role_for_host_role "$role")"
+  local role_device_online_mode
+  role_device_online_mode="$(device_online_mode_for_host_role "$role" "$actors")"
   local cmd=()
   cmd+=("VIDEO_CLOUD_LOAD_API_URL=$(quote "$api_url")")
   cmd+=("VIDEO_CLOUD_LOAD_WS_URL=$(quote "$ws_url")")
@@ -500,6 +611,12 @@ remote_run_command() {
   cmd+=("VIDEO_CLOUD_LOAD_DEVICE_TOKEN=$(quote "$device_token")")
   cmd+=("VIDEO_CLOUD_LOAD_DEVICE_TOKENS=$(quote "$device_tokens")")
   cmd+=("VIDEO_CLOUD_LOAD_APP_TOKENS=$(quote "$app_tokens")")
+  if [ -n "$device_token_map_file" ]; then
+    cmd+=("VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE=$(quote "$(remote_token_map_path "$role" "device-token-map.json")")")
+  fi
+  if [ -n "$app_token_map_file" ]; then
+    cmd+=("VIDEO_CLOUD_LOAD_APP_TOKEN_MAP_FILE=$(quote "$(remote_token_map_path "$role" "app-token-map.json")")")
+  fi
   cmd+=("VIDEO_CLOUD_LOAD_REFRESH_TOKEN=$(quote "$refresh_token")")
   cmd+=("VIDEO_CLOUD_LOAD_ALLOW_STRESS=$(quote "$allow_stress")")
   cmd+=("VIDEO_CLOUD_LOAD_ALLOW_SOAK=$(quote "$allow_soak")")
@@ -526,8 +643,13 @@ remote_run_command() {
   cmd+=("VIDEO_CLOUD_LOAD_CLIENT_COMMIT=$(quote "$client_commit")")
   cmd+=("VIDEO_CLOUD_LOAD_SERVER_COMMIT=$(quote "$server_commit")")
   cmd+=("VIDEO_CLOUD_LOAD_BINARY_SHA256=$(quote "$binary_sha256")")
-  cmd+=("VIDEO_CLOUD_LOAD_DEVICE_ONLINE_MODE=$(quote "$device_online_mode")")
+  cmd+=("VIDEO_CLOUD_LOAD_DEVICE_ONLINE_MODE=$(quote "$role_device_online_mode")")
+  cmd+=("VIDEO_CLOUD_LOAD_DEVICE_ONLINE_SETTLE=$(quote "$device_online_settle")")
+  cmd+=("VIDEO_CLOUD_LOAD_DEVICE_OWNER_CONNECT_RETRIES=$(quote "$device_owner_retries")")
   cmd+=("VIDEO_CLOUD_LOAD_DEVICE_IDS=$(quote "$device_ids")")
+  if [ -n "$device_ids_file" ]; then
+    cmd+=("VIDEO_CLOUD_LOAD_DEVICE_IDS_FILE=$(quote "$(remote_token_map_path "$role" "device-ids.txt")")")
+  fi
   cmd+=("$(quote "$remote_dir")/rtk-video-loadtest" run)
   cmd+=(--profile "$(quote "$profile")")
   cmd+=(--actors "$(quote "$actors")")
@@ -560,9 +682,14 @@ remote_run_command() {
   cmd+=(--server-commit "$(quote "$server_commit")")
   cmd+=(--binary-sha256 "$(quote "$binary_sha256")")
   cmd+=(--duration "$(quote "$role_duration")")
+  cmd+=(--http-timeout "$(quote "$http_timeout")")
+  cmd+=(--webrtc-media-duration "$(quote "$webrtc_media_duration")")
   cmd+=(--virtual-devices "$(quote "$virtual_devices")")
   cmd+=(--virtual-viewers "$(quote "$virtual_viewers")")
   cmd+=(--iterations "$(quote "$iterations")")
+  cmd+=(--app-concurrency "$(quote "$app_concurrency")")
+  cmd+=(--device-concurrency "$(quote "$device_concurrency")")
+  cmd+=(--viewer-concurrency "$(quote "$viewer_concurrency")")
   cmd+=(--app-rate "$(quote "$app_rate")")
   cmd+=(--device-rate "$(quote "$device_rate")")
   cmd+=(--viewer-rate "$(quote "$viewer_rate")")
@@ -570,10 +697,21 @@ remote_run_command() {
   if [ -n "$device_ids" ]; then
     cmd+=(--device-ids "$(quote "$device_ids")")
   fi
+  if [ -n "$device_ids_file" ]; then
+    cmd+=(--device-ids-file "$(quote "$(remote_token_map_path "$role" "device-ids.txt")")")
+  fi
   cmd+=(--ws-url "$(quote "$ws_url")")
-  cmd+=(--device-online-mode "$(quote "$device_online_mode")")
+  cmd+=(--device-online-mode "$(quote "$role_device_online_mode")")
+  cmd+=(--device-online-settle "$(quote "$device_online_settle")")
+  cmd+=(--device-owner-connect-retries "$(quote "$device_owner_retries")")
   if [ -n "$app_tokens" ]; then
     cmd+=(--app-token-map-json "$(quote "$app_tokens")")
+  fi
+  if [ -n "$device_token_map_file" ]; then
+    cmd+=(--device-token-map-file "$(quote "$(remote_token_map_path "$role" "device-token-map.json")")")
+  fi
+  if [ -n "$app_token_map_file" ]; then
+    cmd+=(--app-token-map-file "$(quote "$(remote_token_map_path "$role" "app-token-map.json")")")
   fi
   cmd+=(--output "$(quote "$remote_artifact_dir")/load-results.json")
   cmd+=(--report-output "$(quote "$remote_artifact_dir")/load-report.md")
@@ -614,10 +752,10 @@ run_remote_role() {
   write_remote_metadata "$host" "$role" "$actors" "$instance_id"
   local status=0
   if [ "$dry_run" -eq 1 ]; then
-    run_ssh "$remote" "mkdir -p $(quote "$remote_artifact_dir") && { ${cmd}; } >$(quote "$stdout_log") 2>$(quote "$stderr_log")"
+    run_ssh "$remote" "mkdir -p $(quote "$remote_artifact_dir") && cd $(quote "$remote_dir") && { ${cmd}; } >$(quote "$stdout_log") 2>$(quote "$stderr_log")"
   else
     set +e
-    ssh_cmd "$remote" "mkdir -p $(quote "$remote_artifact_dir") && { ${cmd}; } >$(quote "$stdout_log") 2>$(quote "$stderr_log")"
+    ssh_cmd "$remote" "mkdir -p $(quote "$remote_artifact_dir") && cd $(quote "$remote_dir") && { ${cmd}; } >$(quote "$stdout_log") 2>$(quote "$stderr_log")"
     status=$?
     set -e
   fi
@@ -634,23 +772,27 @@ preflight_remote_host "$app_host" "app-viewer"
 
 install_binary "$device_host"
 install_binary "$app_host"
+install_media_fixtures "$device_host"
+install_media_fixtures "$app_host"
+install_token_maps "$device_host" "device"
+install_token_maps "$app_host" "app-viewer"
 
 run_two_host_roles() {
   if [ "$dry_run" -eq 1 ]; then
     redact "+ background device role on ${device_host}"
-    run_remote_role "$device_host" "device" "device" "${VIDEO_CLOUD_LOAD_DEVICE_INSTANCE_ID:-${run_id}-device}" "$device_duration"
+    run_remote_role "$device_host" "device" "$device_actors" "${VIDEO_CLOUD_LOAD_DEVICE_INSTANCE_ID:-${run_id}-device}" "$device_duration"
     redact "+ wait ${device_warmup_seconds}s for device owner transport"
-    run_remote_role "$app_host" "app-viewer" "app,viewer" "${VIDEO_CLOUD_LOAD_APP_INSTANCE_ID:-${run_id}-app-viewer}" "$duration"
+    run_remote_role "$app_host" "app-viewer" "$app_viewer_actors" "${VIDEO_CLOUD_LOAD_APP_INSTANCE_ID:-${run_id}-app-viewer}" "$duration"
     redact "+ wait for device role"
     return 0
   fi
 
   local device_status=0
   local app_status=0
-  run_remote_role "$device_host" "device" "device" "${VIDEO_CLOUD_LOAD_DEVICE_INSTANCE_ID:-${run_id}-device}" "$device_duration" &
+  run_remote_role "$device_host" "device" "$device_actors" "${VIDEO_CLOUD_LOAD_DEVICE_INSTANCE_ID:-${run_id}-device}" "$device_duration" &
   local device_pid=$!
   sleep "$device_warmup_seconds"
-  run_remote_role "$app_host" "app-viewer" "app,viewer" "${VIDEO_CLOUD_LOAD_APP_INSTANCE_ID:-${run_id}-app-viewer}" "$duration" || app_status=$?
+  run_remote_role "$app_host" "app-viewer" "$app_viewer_actors" "${VIDEO_CLOUD_LOAD_APP_INSTANCE_ID:-${run_id}-app-viewer}" "$duration" || app_status=$?
   wait "$device_pid" || device_status=$?
   if [ "$app_status" -ne 0 ]; then
     return "$app_status"

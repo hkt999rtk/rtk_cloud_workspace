@@ -11,6 +11,12 @@ READMEs.
   100K Home IoT Device Shadow workflow.
 - `home-mqtt-loadtest-simulation.md`: lower-level home MQTT simulation
   reference used as background for the formal Home 100K runner.
+- `../scenarios/video-1k.description.env`: non-secret 1K Home + WebRTC pilot
+  profile.
+- `../scenarios/video-50k-turn.description.env`: non-secret 50K Home +
+  relay-only WebRTC/TURN sizing profile.
+- `../scenarios/video-100k-turn.description.env`: non-secret 100K Home +
+  relay-only WebRTC/TURN sizing profile.
 
 ## Related Package Files
 
@@ -20,4 +26,5 @@ READMEs.
 - `../scripts/home-100k.sh`: public workflow script.
 - `../scripts/generate-report.sh`: fixed-format report generator.
 - `../reports/templates/TEST_REPORT.md.tmpl`: Markdown report template.
-- `../reports/schema.md`: report and artifact schema.
+- `../reports/schema.md`: report and artifact schema, including two-host
+  WebRTC ladder artifacts and TURN evidence gates.

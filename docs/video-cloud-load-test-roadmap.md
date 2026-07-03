@@ -1,8 +1,8 @@
 # Video Cloud API-Level E2E Load Test Roadmap
 
-Status: implemented owner migration; home MQTT simulation planned
+Status: implemented video runner and Home MQTT/WebRTC orchestration
 Owner: rtk_cloud_workspace
-Last updated: 2026-05-31
+Last updated: 2026-07-04
 
 ## Summary
 
@@ -11,17 +11,20 @@ simulation, not as a server-only benchmark. The v1 runner is owned by `rtk_cloud
 It uses a pre-provisioned and activated fleet; provisioning, claim/bind, and
 account readiness onboarding are prerequisites, not part of the v1 load loop.
 
-The v1 implementation is a Go CLI named `rtk-video-loadtest` under `e2e_test/video_cloud/load/`. It should
-simulate many virtual actors from one process, support multiple load instances
-through shared run metadata, validate WebRTC setup with Pion, and emit JSON plus
-Markdown reports that can be used as manual, lab, or release evidence.
+The v1 implementation is a Go CLI named `rtk-video-loadtest` under
+`e2e_test/video_cloud/load/`. It simulates many virtual actors from one process,
+supports multi-host load instances through shared run metadata, validates
+WebRTC signaling and media with Pion, and emits JSON plus Markdown reports that
+can be used as manual, lab, or release evidence.
 
-The next planned expansion is an env-root driven home MQTT simulation profile.
-It starts from the same local environment directory used by
-`go run ./scripts/go/rtk-cloud -- provision-k8s`, loads existing users, device fixtures, bind
-artifacts, and device mTLS material for token bootstrap, then models a real home
-user operating lights, air conditioners, and smart meters through Cloud APIs. See
+The env-root driven home MQTT simulation profile is implemented under
+`loadtests/home-100k`. It starts from the same local environment directory used
+by staging provisioning, loads existing users, device fixtures, bind artifacts,
+and device mTLS material for token bootstrap, then models a real home user
+operating lights, air conditioners, and smart meters through Cloud APIs. See
 [`loadtests/home-100k/docs/home-mqtt-loadtest-simulation.md`](../loadtests/home-100k/docs/home-mqtt-loadtest-simulation.md).
+Video-enabled Home profiles reuse `rtk-video-loadtest` for relay-only WebRTC
+viewer ladders while `home-100k` owns orchestration and the final report.
 
 ## Source-of-Truth Boundaries
 
@@ -43,26 +46,32 @@ In scope:
   maintain online/session behavior where the existing APIs support it, and
   produce deterministic identifiers for multi-instance runs.
 - Viewer actor behavior: use Go and Pion WebRTC to validate signaling, ICE/TURN
-  configuration, setup success/failure, and setup latency.
+  configuration, setup success/failure, setup latency, first RTP, and first
+  H.264 access-unit evidence.
 - Load profiles: `safe-staging`, `stress`, and `soak`.
 - Artifacts: `load-results.json`, `load-report.md`, run metadata, threshold
   result, and error classification.
-- Planned home MQTT profile: APP/user actors use Account Manager login,
+- Home MQTT profile: APP/user actors use Account Manager login,
   first-login app key generation, CSR submission, certificate pinning,
   mTLS app-token bootstrap, and
   Cloud APIs; device actors use mTLS credentials from env-root only to
   bootstrap MQTT device tokens; the workload models stateful light,
   air-conditioner, and smart-meter behavior.
+- Home WebRTC/TURN profiles: `video-1k-v1`, `video-50k-turn-v1`, and
+  `video-100k-turn-v1` run the home MQTT/shadow background load and then attach
+  relay-only H.264 WebRTC viewer steps. The TURN sizing ladder is
+  `100,500,1000,2000,5000` viewers by default.
 
 Out of scope for v1:
 
 - Claim token resolve, bind, product provisioning, and readiness onboarding.
 - Android/iOS UI automation.
 - Browser-based viewer automation.
-- Full media quality or bitrate validation beyond WebRTC setup and control-plane
-  behavior unless the implementing repo adds it explicitly as a later profile.
-- For the home MQTT profile: WebRTC relay, video streaming, storage, clips, and
-  snapshots remain disabled or reported as `NOT_RUN`.
+- Full media quality, bitrate, or decoder QoE validation beyond first RTP and
+  first H.264 access-unit evidence.
+- Storage, clips, and snapshots for the home MQTT/WebRTC profiles remain
+  disabled or reported as `NOT_RUN` unless a later profile explicitly enables
+  them.
 
 ## Public Interface Target
 
@@ -99,13 +108,17 @@ Environment variables:
 - `VIDEO_CLOUD_LOAD_RUN_ID`
 - `VIDEO_CLOUD_LOAD_INSTANCE_ID`
 - `VIDEO_CLOUD_LOAD_DEVICE_PREFIX`
+- `VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE`
+- `VIDEO_CLOUD_LOAD_APP_TOKEN_MAP_FILE`
+- `VIDEO_CLOUD_LOAD_DEVICE_IDS_FILE`
+- `VIDEO_CLOUD_LOAD_WEBRTC_ICE_POLICY=relay` for TURN sizing runs
 
-Planned home MQTT wrapper:
+Home MQTT/WebRTC wrapper:
 
 ```sh
-go run ./scripts/go/rtk-cloud -- mqtt-test \
-  --env-root cloud_env/staging \
-  --brandname RTK
+HOME100K_DESCRIPTION_FILE=loadtests/home-100k/scenarios/video-50k-turn.description.env \
+HOME100K_RUN_ID=lt50k-video-turn-$(date -u +%Y%m%dT%H%M%SZ) \
+./loadtests/home-100k/scripts/home-100k.sh workflow-live
 ```
 
 The wrapper must resolve the environment root with `scripts/go/rtk-cloud/internal/envroot`
@@ -115,8 +128,10 @@ publish/subscribe uses that token credential. Missing prerequisites should
 produce a redacted `BLOCKED` report instead of falling back to fake data.
 
 The runner must exit non-zero when configured thresholds fail. Thresholds should
-cover at least success rate and p95/p99 latency; WebRTC setup metrics should be
-reported separately from generic HTTP/API metrics.
+cover at least success rate and p95/p99 latency; WebRTC setup and startup
+metrics must be reported separately from generic HTTP/API metrics. Home reports
+must distinguish signaling success from media success and must not report TURN
+capacity success without relay candidate and external TURN/coturn evidence.
 
 ## Execution Policy
 
@@ -126,6 +141,18 @@ two-host deployment script, aggregation helper, and report candidate helper.
 Operators can run these manually from a local, lab, or cloud host. If automated
 CI/CD execution is needed later, add it as a separate workspace decision instead
 of reintroducing cross-cloud load workflows in `rtk_cloud_client`.
+
+For larger viewer steps, operators should use the two-host runner shape:
+
+```text
+device host:     VIDEO_CLOUD_LOAD_ACTORS=device
+app/viewer host: VIDEO_CLOUD_LOAD_ACTORS=app,viewer
+```
+
+The device host keeps device websocket owners online. The app/viewer host
+creates sessions, receives media, records startup latency, and closes sessions.
+Token maps and device IDs should be passed as files, not expanded into SSH
+environment variables.
 
 ## Historical Issue Order
 
@@ -155,10 +182,13 @@ V1 is complete when:
 - One process can simulate many API-level app/device/viewer actors.
 - Multiple instances can share a `VIDEO_CLOUD_LOAD_RUN_ID` with unique
   `VIDEO_CLOUD_LOAD_INSTANCE_ID` values.
-- WebRTC setup success/failure and latency are visible in the report.
+- WebRTC setup success/failure, first RTP, first H.264 access-unit latency, and
+  relay candidate evidence are visible in the report.
 - Threshold failures produce a non-zero exit code suitable for automation gating.
 - `rtk_video_cloud` documents the server prerequisites required to run the test
   without guessing.
+- `loadtests/home-100k` can merge home MQTT/shadow evidence and two-host WebRTC
+  ladder artifacts into one `TEST_REPORT.md`.
 
 ## Future Profile
 
@@ -167,7 +197,8 @@ claim/bind, cloud provisioning, readiness polling, video activation, and
 transport-online verification. That profile should be planned separately because
 it is a cross-service onboarding load test, not the v1 video cloud load loop.
 
-The home MQTT simulation profile is a separate runtime profile, not a
-provisioning profile. It assumes users and devices already exist under the
-environment root and validates realistic APP-to-device traffic for MQTT-only
-home devices before returning to WebRTC relay or storage load coverage.
+The home MQTT simulation profile is a runtime profile, not a provisioning
+profile. It assumes users and devices already exist under the environment root
+and validates realistic APP-to-device traffic. Video-enabled Home profiles add
+WebRTC relay and media-path evidence, but storage, clips, snapshots, and true
+decoder QoE remain separate future profiles.
