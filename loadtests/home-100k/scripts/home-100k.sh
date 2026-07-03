@@ -941,7 +941,7 @@ run_video_loadtest_step() {
   set_phase "run-video-loadtest"
   local max_devices
   max_devices="$(max_video_token_devices)"
-  ensure_video_loadtest_tokens "$max_devices"
+  ensure_video_loadtest_tokens "$max_devices" || return $?
   if [[ -z "$video_loadtest_ladder" ]]; then
     run_video_loadtest_once "$video_loadtest_artifact_dir" "$video_loadtest_viewers" "$video_loadtest_devices" "$run_id"
     return $?

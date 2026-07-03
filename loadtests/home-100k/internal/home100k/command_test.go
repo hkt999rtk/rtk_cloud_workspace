@@ -1928,6 +1928,63 @@ printf '%s,%s\n' "$VIDEO_CLOUD_LOAD_VIRTUAL_VIEWERS" "$VIDEO_CLOUD_LOAD_VIRTUAL_
 	}
 }
 
+func TestHome100KScriptVideoLoadtestStopsWhenTokenGenerationFails(t *testing.T) {
+	outDir := t.TempDir()
+	binDir := filepath.Join(outDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	goLog := filepath.Join(outDir, "go.log")
+	goStub := filepath.Join(binDir, "go")
+	goStubBody := `#!/usr/bin/env bash
+printf '%s\n' "$*" >> ` + shellQuoteForTest(goLog) + `
+exit 1
+`
+	if err := os.WriteFile(goStub, []byte(goStubBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	videoLog := filepath.Join(outDir, "video.log")
+	videoStub := filepath.Join(outDir, "video-stub.sh")
+	videoStubBody := `#!/usr/bin/env bash
+printf 'unexpected video runner call\n' >> ` + shellQuoteForTest(videoLog) + `
+`
+	if err := os.WriteFile(videoStub, []byte(videoStubBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	script := filepath.Join("..", "..", "scripts", "home-100k.sh")
+	cmd := exec.Command("bash", script, "run-video-loadtest")
+	cmd.Env = home100KTestEnv(
+		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"HOME100K_ENV_ROOT="+writeTinyEnvRoot(t),
+		"HOME100K_RUN_ID=test-video-token-fail",
+		"HOME100K_OUT_DIR="+filepath.Join(outDir, "report"),
+		"HOME100K_SCENARIO_PROFILE=video-50k-turn-v1",
+		"HOME100K_VIDEO_LOADTEST=on",
+		"HOME100K_VIDEO_LOADTEST_SCRIPT="+videoStub,
+		"HOME100K_VIDEO_LOADTEST_ARTIFACT_DIR="+filepath.Join(outDir, "video"),
+		"HOME100K_VIDEO_LOADTEST_LADDER=100,500",
+		"HOME100K_VIDEO_LOADTEST_STEP_COOLDOWN=0s",
+	)
+	raw, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("run-video-loadtest unexpectedly passed\n%s", raw)
+	}
+	if !strings.Contains(string(raw), "video loadtest token generation failed") {
+		t.Fatalf("output missing token generation failure:\n%s", raw)
+	}
+	if _, err := os.Stat(videoLog); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("video runner should not be called after token failure, stat err=%v", err)
+	}
+	goRaw, err := os.ReadFile(goLog)
+	if err != nil {
+		t.Fatalf("read go log: %v", err)
+	}
+	if !strings.Contains(string(goRaw), "video-loadtest-tokens") {
+		t.Fatalf("token generator was not invoked:\n%s", goRaw)
+	}
+}
+
 func TestHome100KScriptUsesAbsoluteEnvRootKubeconfigForServerEvidence(t *testing.T) {
 	outDir := t.TempDir()
 	envRoot := filepath.Join(outDir, "env-root")
