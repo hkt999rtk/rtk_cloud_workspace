@@ -38,6 +38,8 @@ Canonical contract source: `repos/rtk_cloud_contracts_doc/WEBRTC_ONLY_STREAMING_
 ## Kept Interfaces
 
 - `POST /api/request_webrtc`
+- `GET /api/request_webrtc/ice`
+- `GET /api/request_webrtc`
 - `POST /api/request_webrtc/answer`
 - `POST /api/request_webrtc/close`
 - device-transport `webrtc_offer`

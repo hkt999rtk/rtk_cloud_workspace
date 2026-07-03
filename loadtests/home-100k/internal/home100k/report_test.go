@@ -1,6 +1,7 @@
 package home100k
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -113,7 +114,7 @@ func TestReportMarksMissingPerTypeEvidenceAsCompleteFailure(t *testing.T) {
 		ShadowEvidenceFound:  true,
 		ServerEvidenceFound:  true,
 		LoadGeneratorHealthy: true,
-		ServerEvidence:       ServerEvidence{Complete: true, Sources: requiredEvidenceSources(true)},
+		ServerEvidence:       completeServerEvidenceWithWebRTCSignalingStore(),
 		ServerCorrelation:    ServerCorrelation{Status: "pass"},
 		StageResults: []StageResult{{
 			Name:             "1",
@@ -255,7 +256,7 @@ func TestReportMarksMissingVideoEvidenceIncomplete(t *testing.T) {
 		RunID:                "video-missing-evidence",
 		ServerEvidenceFound:  true,
 		LoadGeneratorHealthy: true,
-		ServerEvidence:       ServerEvidence{Complete: true, Sources: requiredEvidenceSources(true)},
+		ServerEvidence:       completeServerEvidenceWithWebRTCSignalingStore(),
 		ServerCorrelation:    ServerCorrelation{Status: "pass"},
 		StageResults: []StageResult{{
 			Name:             "target",
@@ -354,6 +355,24 @@ func TestReportRendersVideoAndTURNEvidence(t *testing.T) {
 				Successes:           100,
 				ICEConnectedP95MS:   120,
 				TimeToFirstRTPP95MS: 180,
+				Startup: VideoStartupTotals{
+					Samples:                              100,
+					H264AccessUnitSamples:                100,
+					AppRequestToFirstRTPP50MS:            160,
+					AppRequestToFirstRTPP95MS:            180,
+					AppRequestToFirstRTPP99MS:            190,
+					AppRequestToFirstH264AccessUnitP50MS: 165,
+					AppRequestToFirstH264AccessUnitP95MS: 185,
+					AppRequestToFirstH264AccessUnitP99MS: 195,
+					BreakdownP95: VideoStartupBreakdown{
+						APICreateMS:                   40,
+						OfferDeliveryMS:               20,
+						DeviceAnswerMS:                30,
+						ICEConnectMS:                  80,
+						FirstRTPAfterICEMS:            10,
+						FirstH264AccessUnitAfterRTPMS: 5,
+					},
+				},
 				PacketsReceived:     3000,
 				BytesReceived:       1500000,
 				H264PacketsReceived: 3000,
@@ -401,6 +420,10 @@ func TestReportRendersVideoAndTURNEvidence(t *testing.T) {
 		"## WebRTC Media Totals",
 		"First RTP p95: 180 ms",
 		"H.264 packets received: 3000",
+		"## Video Startup Latency",
+		"H.264 access unit samples: 100",
+		"App request -> first H.264 access unit p95: 185 ms",
+		"Device answer p95: 30 ms",
 		"## TURN Evidence",
 		"active nodes: 2",
 		"allocations: 100",
@@ -490,6 +513,496 @@ func TestVideoEvidenceDerivesSetupFromMediaWhenRunnerOmitsSetupTotals(t *testing
 	}})
 	if !video.Complete {
 		t.Fatalf("video evidence should be complete after media setup derivation and TURN merge: %+v", video)
+	}
+}
+
+func TestVideoEvidenceParsesStartupLatencySummary(t *testing.T) {
+	raw := []byte(`{
+		"webrtc": {
+			"success_rate": 1,
+			"create": {"operations": 2, "successes": 2},
+			"setup": {"operations": 2, "successes": 2},
+			"close": {"operations": 2, "successes": 2}
+		},
+		"webrtc_media": {
+			"attempts": 2,
+			"successes": 2,
+			"time_to_first_rtp_p95_ms": 210,
+			"video_startup_latency": {
+				"samples": 2,
+				"h264_access_unit_samples": 2,
+				"app_request_to_first_rtp_p50_ms": 180,
+				"app_request_to_first_rtp_p95_ms": 210,
+				"app_request_to_first_rtp_p99_ms": 210,
+				"app_request_to_first_h264_access_unit_p50_ms": 185,
+				"app_request_to_first_h264_access_unit_p95_ms": 217,
+				"app_request_to_first_h264_access_unit_p99_ms": 217,
+				"breakdown_p95": {
+					"api_create_ms": 50,
+					"offer_delivery_ms": 25,
+					"device_answer_ms": 35,
+					"ice_connect_ms": 90,
+					"first_rtp_after_ice_ms": 12,
+					"first_h264_access_unit_after_rtp_ms": 7
+				}
+			}
+		},
+		"turn_evidence": {"registry_available": true, "active_nodes": 1, "coturn_available": true}
+	}`)
+	video, err := videoEvidenceFromLoadtestJSON(raw)
+	if err != nil {
+		t.Fatalf("videoEvidenceFromLoadtestJSON() error = %v", err)
+	}
+	if video.WebRTCMedia.Startup.AppRequestToFirstH264AccessUnitP95MS != 217 {
+		t.Fatalf("h264 AU startup p95 = %d, want 217", video.WebRTCMedia.Startup.AppRequestToFirstH264AccessUnitP95MS)
+	}
+	if video.WebRTCMedia.Startup.Samples != 2 || video.WebRTCMedia.Startup.H264AccessUnitSamples != 2 {
+		t.Fatalf("startup sample counts = %d/%d, want 2/2", video.WebRTCMedia.Startup.Samples, video.WebRTCMedia.Startup.H264AccessUnitSamples)
+	}
+	if video.WebRTCMedia.Startup.BreakdownP95.DeviceAnswerMS != 35 {
+		t.Fatalf("device answer p95 = %d, want 35", video.WebRTCMedia.Startup.BreakdownP95.DeviceAnswerMS)
+	}
+}
+
+func TestVideoLadderEvidenceRendersPerStepReport(t *testing.T) {
+	tmp := t.TempDir()
+	videoDir := tmp + "/video"
+	mustWriteVideoStep := func(name, candidates string) {
+		t.Helper()
+		dir := videoDir + "/" + name
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		raw := strings.ReplaceAll(`{
+			"config": {"webrtc_ice_policy": "relay", "virtual_viewers": 100, "duration_ms": 300000},
+			"webrtc": {
+				"success_rate": 1,
+				"setup_latency_p95_ms": 250,
+				"setup_latency_p99_ms": 310,
+				"ice_server_count": 2,
+				"create": {"operations": 100, "successes": 100},
+				"setup": {"operations": 100, "successes": 100},
+				"close": {"operations": 100, "successes": 100}
+			},
+			"webrtc_media": {
+				"attempts": 100,
+				"successes": 100,
+				"ice_connected_p95_ms": 120,
+				"time_to_first_rtp_p95_ms": 180,
+				"packets_received": 3000,
+				"bytes_received": 1500000,
+				"h264_packets_received": 3000,
+				"video_startup_latency": {
+					"samples": 100,
+					"h264_access_unit_samples": 100,
+					"app_request_to_first_rtp_p95_ms": 180,
+					"app_request_to_first_h264_access_unit_p95_ms": 220
+				}
+			},
+			"turn_evidence": {
+				"registry_available": true,
+				"active_nodes": 1,
+				"coturn_available": true,
+				"allocations": 100,
+				"active_sessions": 100
+			},
+			"video_startup_latency": [`+candidates+`]
+		}`, "\t", "")
+		if err := os.WriteFile(dir+"/load-results.json", []byte(raw), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustWriteVideoStep("step-100", `{"ice_policy":"relay","selected_local_candidate_type":"relay","selected_remote_candidate_type":"relay"}`)
+	mustWriteVideoStep("step-500", `{"ice_policy":"relay","selected_local_candidate_type":"relay","selected_remote_candidate_type":"relay"}`)
+	video := loadVideoEvidence(videoDir)
+	if len(video.Steps) != 2 {
+		t.Fatalf("steps = %d, want 2: %+v", len(video.Steps), video)
+	}
+	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea", ScenarioProfile: Video100KTurnScenarioProfile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := RenderReport(ReportInput{
+		Plan:                 plan,
+		RunID:                "video-ladder",
+		ServerEvidenceFound:  true,
+		LoadGeneratorHealthy: true,
+		ServerEvidence:       completeServerEvidenceWithWebRTCSignalingStore(),
+		ServerCorrelation:    ServerCorrelation{Status: "pass"},
+		StageResults:         completeStageResultsForPlan(plan),
+		VideoEvidence:        video,
+	})
+	for _, want := range []string{
+		"Status: COMPLETE",
+		"Result: SUCCESS",
+		"## Video Ladder",
+		"| step-100 | 100 | relay | 100.00% | 100.00% | 180 ms | 220 ms | 1 | 0 | 100 | 100 |",
+		"TURN/UDP relays encrypted DTLS-SRTP packets",
+	} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("report missing %q:\n%s", want, report)
+		}
+	}
+}
+
+func TestVideoLadderEvidenceLoadsTwoHostStepLayout(t *testing.T) {
+	tmp := t.TempDir()
+	stepDir := tmp + "/video/step-5000"
+	if err := os.MkdirAll(stepDir+"/app-viewer", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(stepDir+"/device", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	appViewer := []byte(`{
+		"config": {"webrtc_ice_policy": "relay", "virtual_viewers": 5000, "duration_ms": 1000000},
+		"webrtc": {
+			"success_rate": 1,
+			"setup_latency_p95_ms": 0,
+			"setup_latency_p99_ms": 0,
+			"ice_server_count": 2,
+			"create": {"operations": 5000, "successes": 5000},
+			"setup": {"operations": 0, "successes": 0},
+			"close": {"operations": 5000, "successes": 5000}
+		},
+		"webrtc_media": {
+			"attempts": 5000,
+			"successes": 5000,
+			"ice_connected_p95_ms": 2158,
+			"time_to_first_rtp_p95_ms": 3173,
+			"packets_received": 10046,
+			"bytes_received": 5090911,
+			"h264_packets_received": 10046,
+			"video_startup_latency": {
+				"samples": 5000,
+				"h264_access_unit_samples": 5000,
+				"app_request_to_first_rtp_p95_ms": 3173,
+				"app_request_to_first_h264_access_unit_p95_ms": 3176
+			}
+		},
+		"video_startup_latency": [
+			{"ice_policy":"relay","selected_local_candidate_type":"relay","selected_remote_candidate_type":"relay"}
+		]
+	}`)
+	device := []byte(`{
+		"config": {"webrtc_ice_policy": "relay", "virtual_viewers": 5000, "duration_ms": 1000000},
+		"webrtc": {"success_rate": 0},
+		"webrtc_media": {"ice_connected_p95_ms": 2121, "time_to_first_rtp_p95_ms": 3133}
+	}`)
+	if err := os.WriteFile(stepDir+"/app-viewer/load-results.json", appViewer, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stepDir+"/device/load-results.json", device, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stepDir+"/turn-active-samples.tsv", []byte("time\tnode\thost\tudp_sockets\tjournal_events\n2026-07-03T22:28:00Z\tturn01\t198.51.100.20\t164\t0\n2026-07-03T22:28:00Z\tturn02\t198.51.100.21\t162\t0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	video := videoEvidenceWithServerEvidence(loadVideoEvidence(tmp+"/video"), ServerEvidence{Sources: map[string]EvidenceSource{
+		"turn_registry": {Available: true, Counters: map[string]int64{"turn_registry.active_nodes": 2}},
+		"coturn":        {Available: true, Counters: map[string]int64{"coturn.configured_nodes": 2}},
+	}})
+	if len(video.Steps) != 1 {
+		t.Fatalf("steps = %d, want 1: %+v", len(video.Steps), video)
+	}
+	if !video.Complete || !video.Steps[0].Complete {
+		t.Fatalf("two-host video evidence incomplete: %+v", video)
+	}
+	if video.WebRTC.CreateAttempts != 5000 || video.WebRTC.SetupAttempts != 5000 || video.WebRTC.CloseAttempts != 5000 {
+		t.Fatalf("webrtc attempts = create %d setup %d close %d, want 5000 each", video.WebRTC.CreateAttempts, video.WebRTC.SetupAttempts, video.WebRTC.CloseAttempts)
+	}
+	if video.WebRTCMedia.Successes != 5000 || video.WebRTCMedia.Startup.H264AccessUnitSamples != 5000 {
+		t.Fatalf("media successes/startup samples = %d/%d, want 5000/5000", video.WebRTCMedia.Successes, video.WebRTCMedia.Startup.H264AccessUnitSamples)
+	}
+	if video.RelayCandidateSamples != 1 || video.NonRelayCandidateSamples != 0 {
+		t.Fatalf("relay/non-relay samples = %d/%d, want 1/0", video.RelayCandidateSamples, video.NonRelayCandidateSamples)
+	}
+	if video.TURN.ActiveSessions != 164 || video.TURN.ActiveNodes != 2 {
+		t.Fatalf("TURN active sessions/nodes = %d/%d, want 164/2", video.TURN.ActiveSessions, video.TURN.ActiveNodes)
+	}
+}
+
+func TestVideoStepThresholdFailureMakesMergedReportFail(t *testing.T) {
+	tmp := t.TempDir()
+	stepDir := tmp + "/video/step-100"
+	if err := os.MkdirAll(stepDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte(`{
+		"config": {"webrtc_ice_policy": "relay", "virtual_viewers": 100, "duration_ms": 300000},
+		"thresholds": {"passed": false, "failures": ["p99 latency 156721 ms exceeds threshold 60000 ms"]},
+		"webrtc": {
+			"success_rate": 1,
+			"setup_latency_p95_ms": 27832,
+			"setup_latency_p99_ms": 27832,
+			"create": {"operations": 100, "successes": 100},
+			"setup": {"operations": 100, "successes": 100},
+			"close": {"operations": 100, "successes": 100}
+		},
+		"webrtc_media": {
+			"attempts": 100,
+			"successes": 100,
+			"ice_connected_p95_ms": 27832,
+			"time_to_first_rtp_p95_ms": 27832,
+			"video_startup_latency": {
+				"samples": 100,
+				"h264_access_unit_samples": 100,
+				"app_request_to_first_h264_access_unit_p95_ms": 27833
+			}
+		},
+		"turn_evidence": {"registry_available": true, "active_nodes": 2, "coturn_available": true, "allocations": 46, "active_sessions": 46},
+		"video_startup_latency": [
+			{"ice_policy":"relay","selected_local_candidate_type":"relay","selected_remote_candidate_type":"relay"}
+		]
+	}`)
+	if err := os.WriteFile(stepDir+"/load-results.json", raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	video := loadVideoEvidence(tmp + "/video")
+	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea", ScenarioProfile: Video50KTurnScenarioProfile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := RenderReport(ReportInput{
+		Plan:                 plan,
+		RunID:                "video-threshold-fail",
+		ServerEvidenceFound:  true,
+		LoadGeneratorHealthy: true,
+		ServerEvidence:       completeServerEvidenceWithWebRTCSignalingStore(),
+		ServerCorrelation:    ServerCorrelation{Status: "pass"},
+		StageResults:         completeStageResultsForPlan(plan),
+		VideoEvidence:        video,
+	})
+	for _, want := range []string{
+		"Status: COMPLETE",
+		"Result: FAIL",
+		"video step step-100 threshold failed: p99 latency 156721 ms exceeds threshold 60000 ms",
+	} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("report missing %q:\n%s", want, report)
+		}
+	}
+}
+
+func TestVideoEvidenceUsesActiveTURNSampleSidecar(t *testing.T) {
+	tmp := t.TempDir()
+	raw := []byte(`{
+		"config": {"webrtc_ice_policy": "relay", "virtual_viewers": 100, "duration_ms": 300000},
+		"webrtc": {
+			"success_rate": 1,
+			"create": {"operations": 100, "successes": 100},
+			"setup": {"operations": 100, "successes": 100},
+			"close": {"operations": 100, "successes": 100}
+		},
+		"webrtc_media": {
+			"attempts": 100,
+			"successes": 100,
+			"ice_connected_p95_ms": 120,
+			"time_to_first_rtp_p95_ms": 180,
+			"video_startup_latency": {
+				"samples": 100,
+				"h264_access_unit_samples": 100,
+				"app_request_to_first_h264_access_unit_p95_ms": 220
+			}
+		},
+		"turn_evidence": {"registry_available": true, "active_nodes": 1, "coturn_available": true},
+		"video_startup_latency": [
+			{"ice_policy":"relay","selected_local_candidate_type":"relay","selected_remote_candidate_type":"relay"}
+		]
+	}`)
+	if err := os.WriteFile(tmp+"/load-results.json", raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tmp+"/turn-active-samples.tsv", []byte("time\tnode\thost\tudp_sockets\tjournal_events\n2026-07-01T00:00:00Z\tturn01\t198.51.100.20\t7\t2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	video := loadVideoEvidence(tmp)
+	if video.TURN.Allocations != 7 || video.TURN.ActiveSessions != 7 {
+		t.Fatalf("TURN active evidence = %+v, want allocations/sessions from sidecar", video.TURN)
+	}
+	for _, profile := range []string{Video50KTurnScenarioProfile, Video100KTurnScenarioProfile} {
+		t.Run(profile, func(t *testing.T) {
+			incomplete, reasons := videoGateFailures(Plan{ScenarioProfile: profile, VideoProfile: videoProfileForScenario(profile)}, video)
+			if incomplete || len(reasons) != 0 {
+				t.Fatalf("video gate incomplete=%t reasons=%v video=%+v", incomplete, reasons, video)
+			}
+		})
+	}
+}
+
+func TestTURNEvidenceFromActiveSamplesSupportsTwoHostSamplerHeader(t *testing.T) {
+	tmp := t.TempDir()
+	path := tmp + "/turn-active-samples.tsv"
+	raw := "ts\tnode\tudp_sockets\ttcp_estab\tcpu_mem\n" +
+		"2026-07-03T22:27:41Z\tturn01\t18\t2\t\n" +
+		"2026-07-03T22:30:00Z\tturn01\t164\t70\t\n" +
+		"2026-07-03T22:30:00Z\tturn02\t162\t71\t\n"
+	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	turn := turnEvidenceFromActiveSamples(path)
+
+	if !turn.CoturnAvailable || turn.ActiveNodes != 2 || turn.ActiveSessions != 164 || turn.Allocations != 164 {
+		t.Fatalf("turn evidence = %+v, want nodes=2 sessions=164", turn)
+	}
+}
+
+func TestVideoTurnOutcomeRequiresWebRTCSignalingStoreEvidence(t *testing.T) {
+	for _, profile := range []string{Video50KTurnScenarioProfile, Video100KTurnScenarioProfile} {
+		t.Run(profile, func(t *testing.T) {
+			plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea", ScenarioProfile: profile})
+			if err != nil {
+				t.Fatal(err)
+			}
+			video := completeVideo100KTurnEvidence()
+			outcome := evaluateRunOutcome(
+				plan,
+				ServerEvidence{Complete: true, Sources: requiredEvidenceSources(true)},
+				completeStageResultsForPlan(plan),
+				LoadGeneratorHealth{},
+				ServerCorrelation{Status: "pass"},
+				RuntimeLogCorrelation{Status: "pass"},
+				video,
+			)
+			if outcome.Status != "INCOMPLETE" || outcome.Result != "INCOMPLETE" {
+				t.Fatalf("outcome = %+v, want INCOMPLETE", outcome)
+			}
+			if !containsString(outcome.Reasons, "Missing multi-pod WebRTC signaling store evidence") {
+				t.Fatalf("reasons = %v, want missing signaling store evidence", outcome.Reasons)
+			}
+		})
+	}
+}
+
+func TestRelayOnlyVideoGateFailsOnNonRelayCandidate(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea", ScenarioProfile: Video100KTurnScenarioProfile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	video := VideoEvidence{
+		Complete: true,
+		WebRTC: WebRTCTotals{
+			CreateAttempts: 100, CreateSuccess: 100,
+			SetupAttempts: 100, SetupSuccess: 100,
+			CloseAttempts: 100, CloseSuccess: 100,
+			SuccessRatePercent: 100,
+		},
+		WebRTCMedia: WebRTCMediaTotals{
+			Enabled: true, Attempts: 100, Successes: 100,
+			ICEConnectedP95MS: 100, TimeToFirstRTPP95MS: 120,
+			Startup: VideoStartupTotals{H264AccessUnitSamples: 100},
+		},
+		TURN: TURNEvidence{RegistryAvailable: true, ActiveNodes: 1, CoturnAvailable: true, Allocations: 100, ActiveSessions: 100},
+		Steps: []VideoStepEvidence{{
+			Name: "step-100", Viewers: 100, ICEPolicy: "relay",
+			WebRTC: WebRTCTotals{
+				CreateAttempts: 100, CreateSuccess: 100,
+				SetupAttempts: 100, SetupSuccess: 100,
+				CloseAttempts: 100, CloseSuccess: 100,
+				SuccessRatePercent: 100,
+			},
+			WebRTCMedia:              WebRTCMediaTotals{Enabled: true, Attempts: 100, Successes: 100},
+			TURN:                     TURNEvidence{RegistryAvailable: true, ActiveNodes: 1, CoturnAvailable: true, Allocations: 100, ActiveSessions: 100},
+			NonRelayCandidateSamples: 1,
+			Complete:                 true,
+		}},
+		NonRelayCandidateSamples: 1,
+	}
+	report := RenderReport(ReportInput{
+		Plan:                 plan,
+		RunID:                "video-direct-candidate",
+		ServerEvidenceFound:  true,
+		LoadGeneratorHealthy: true,
+		ServerEvidence:       completeServerEvidenceWithWebRTCSignalingStore(),
+		ServerCorrelation:    ServerCorrelation{Status: "pass"},
+		StageResults:         completeStageResultsForPlan(plan),
+		VideoEvidence:        video,
+	})
+	for _, want := range []string{
+		"Status: COMPLETE",
+		"Result: FAIL",
+		"relay-only WebRTC selected non-relay candidates in 1 samples",
+		"video step step-100 selected non-relay candidates in 1 samples",
+	} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("report missing %q:\n%s", want, report)
+		}
+	}
+}
+
+func TestVideoGateFailsWhenMediaSuccessRateBelowThreshold(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea", ScenarioProfile: Video50KTurnScenarioProfile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	video := completeVideo100KTurnEvidence()
+	video.WebRTCMedia.Attempts = 2000
+	video.WebRTCMedia.Successes = 1859
+	video.WebRTCMedia.Failures = 141
+	video.Steps = []VideoStepEvidence{{
+		Name:    "step-2000",
+		Viewers: 2000,
+		WebRTC: WebRTCTotals{
+			CreateAttempts: 2000, CreateSuccess: 2000,
+			SetupAttempts: 2000, SetupSuccess: 1859,
+			CloseAttempts: 2000, CloseSuccess: 2000,
+			SuccessRatePercent: 100,
+		},
+		WebRTCMedia: WebRTCMediaTotals{
+			Enabled: true, Attempts: 2000, Successes: 1859, Failures: 141,
+			ICEConnectedP95MS: 100, TimeToFirstRTPP95MS: 120,
+			Startup: VideoStartupTotals{H264AccessUnitSamples: 1859},
+		},
+		TURN:                  TURNEvidence{RegistryAvailable: true, ActiveNodes: 2, CoturnAvailable: true, Allocations: 779, ActiveSessions: 779},
+		ICEPolicy:             "relay",
+		RelayCandidateSamples: 1859,
+		Complete:              true,
+	}}
+	incomplete, reasons := videoGateFailures(plan, video)
+	if incomplete {
+		t.Fatalf("video gate incomplete=true reasons=%v", reasons)
+	}
+	if !containsString(reasons, "WebRTC media success rate 92.95% below 99.50% threshold (1859/2000)") {
+		t.Fatalf("reasons = %v, want total media success rate failure", reasons)
+	}
+	if !containsString(reasons, "video step step-2000 WebRTC media success rate 92.95% below 99.50% threshold (1859/2000)") {
+		t.Fatalf("reasons = %v, want step media success rate failure", reasons)
+	}
+}
+
+func completeServerEvidenceWithWebRTCSignalingStore() ServerEvidence {
+	sources := requiredEvidenceSources(true)
+	sources["video_cloud_api"] = EvidenceSource{
+		Available: true,
+		Counters: map[string]int64{
+			"video_cloud_api.k8s.desired_replicas":                3,
+			"video_cloud_api.k8s.running_pods":                    3,
+			"video_cloud_api.webrtc_signaling_store.enabled_pods": 3,
+			"video_cloud_api.webrtc_signaling_store.addr_pods":    3,
+			"video_cloud_api.webrtc_signaling_store.prefix_pods":  3,
+		},
+	}
+	return ServerEvidence{Complete: true, Sources: sources}
+}
+
+func completeVideo100KTurnEvidence() VideoEvidence {
+	return VideoEvidence{
+		Complete: true,
+		WebRTC: WebRTCTotals{
+			CreateAttempts: 100, CreateSuccess: 100,
+			SetupAttempts: 100, SetupSuccess: 100,
+			CloseAttempts: 100, CloseSuccess: 100,
+			SuccessRatePercent: 100,
+		},
+		WebRTCMedia: WebRTCMediaTotals{
+			Enabled: true, Attempts: 100, Successes: 100,
+			ICEConnectedP95MS: 100, TimeToFirstRTPP95MS: 120,
+			Startup: VideoStartupTotals{H264AccessUnitSamples: 100},
+		},
+		TURN:                  TURNEvidence{RegistryAvailable: true, ActiveNodes: 1, CoturnAvailable: true, Allocations: 100, ActiveSessions: 100},
+		RelayCandidateSamples: 100,
 	}
 }
 
@@ -806,4 +1319,30 @@ func completeDeviceTypeEvidence(plan Plan) map[string]DeviceTypeTotals {
 		out[name] = DeviceTypeTotals{TelemetryPublishes: 1}
 	}
 	return out
+}
+
+func completeStageResultsForPlan(plan Plan) []StageResult {
+	return []StageResult{{
+		Name:             "target",
+		ConnectedDevices: plan.Conditions.Devices,
+		DeviceMQTTTotals: DeviceMQTTTotals{
+			ConnectSuccess:      int64(plan.Conditions.Devices),
+			Subscribes:          int64(plan.Conditions.Devices),
+			ActiveConnections:   int64(plan.Conditions.Devices),
+			ActiveSubscriptions: int64(plan.Conditions.Devices),
+			Publishes:           int64(plan.Conditions.Devices),
+			ReceivedMessages:    int64(plan.Conditions.Devices),
+			DeltaReceived:       int64(plan.Conditions.Devices),
+			ReportedPublishes:   int64(plan.Conditions.Devices),
+		},
+		AppUserTotals: AppUserTotals{
+			DesiredWrites: int64(plan.Conditions.Users),
+			ReceivedAcks:  int64(plan.Conditions.Users),
+		},
+		MQTTConnectSuccessRatePercent:  100,
+		DesiredReportedConvergenceRate: 100,
+		OfflineDesiredConvergenceRate:  100,
+		DeltaClearSuccessRatePercent:   100,
+		DeviceTypeTotals:               completeDeviceTypeEvidence(plan),
+	}}
 }

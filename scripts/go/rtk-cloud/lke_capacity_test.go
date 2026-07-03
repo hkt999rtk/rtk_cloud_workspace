@@ -19,6 +19,7 @@ func TestLKECapacityPlanAcceptsExplicitOneKValidationProfile(t *testing.T) {
 		"LKE_INGRESS_REQUEST_CPU":                 "100m",
 		"LKE_ACCOUNT_MANAGER_REQUEST_CPU":         "150m",
 		"LKE_CLOUD_LOGGER_REQUEST_CPU":            "50m",
+		"LKE_CLOUD_LOGGER_REQUEST_MEMORY":         "512Mi",
 		"LKE_POSTGRES_REQUEST_CPU":                "250m",
 		"LKE_POSTGRES_REQUEST_MEMORY":             "512Mi",
 		"LKE_POSTGRES_LIMIT_MEMORY":               "2Gi",

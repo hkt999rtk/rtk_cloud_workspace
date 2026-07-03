@@ -1132,6 +1132,62 @@ func TestSustainedShadowCommandPublishesRuntimeLogsForServerCorrelation(t *testi
 	}
 }
 
+func TestSustainedShadowCommandCanDisableRuntimeLogs(t *testing.T) {
+	broker := newFakeTLSMQTTBroker(t)
+	defer broker.Close()
+	deviceConn, err := connectMQTTActor(mqttActorProbe{
+		DeviceID:    "rtk-0041",
+		DeviceType:  "light",
+		Brandname:   "RTK",
+		RunID:       "run-no-runtime-logs",
+		DeviceToken: "device-token",
+		Dial:        broker.TLSDial,
+		Timeout:     time.Second,
+		Now:         fixedProbeTime,
+	}, "device", "rtk-0041", "device-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer deviceConn.Close()
+	if err := mqttSubscribe(deviceConn, 1, "$vc/devices/rtk-0041/shadow/update/delta"); err != nil {
+		t.Fatal(err)
+	}
+	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(rawPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var totals mqttIOTotals
+	reader := startSustainedDeviceReader(deviceConn)
+	defer reader.Close()
+	err = runSustainedShadowCommandWithContext(sustainedDeviceSession{
+		Record:          certRecord{DeviceID: "rtk-0041", DeviceType: "light"},
+		Conn:            deviceConn,
+		Reader:          reader,
+		MQTTTarget:      mqttEndpointTarget{Host: host, Port: port},
+		AppLoginManager: newAccountLoginTokenManager("", "", userCredential{}, tokenBundle{AccessToken: "app-token"}),
+	}, "RTK", "run-no-runtime-logs", "", &totals, sustainedCommandContext{DisableRuntimeLogs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if totals.AppDesiredWrites != 1 || totals.DeltaReceived != 1 || totals.ReportedEvents != 1 || totals.AppReceivedAcks != 1 {
+		t.Fatalf("totals = %+v, want desired/delta/reported/ack", totals)
+	}
+	if len(totals.CommandEvents) != 1 {
+		t.Fatalf("command events = %#v, want one event", totals.CommandEvents)
+	}
+	if totals.CommandEvents[0].RuntimeLogStreamID != "" || len(totals.CommandEvents[0].ExpectedLogs) != 0 {
+		t.Fatalf("runtime log metadata should be empty when disabled: %#v", totals.CommandEvents[0])
+	}
+	if got := broker.PublishCount("app-controller", "devices/rtk-0041/logs") + broker.PublishCount("device", "devices/rtk-0041/logs"); got != 0 {
+		t.Fatalf("runtime log publishes = %d, want 0", got)
+	}
+}
+
 func TestSustainedShadowCommandFailsBeforeDeltaWhenAcceptedIsMissing(t *testing.T) {
 	broker := newFakeTLSMQTTBroker(t)
 	broker.SuppressShadowAccepted = true

@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -59,6 +60,94 @@ func TestVideoRelaySelectionBlocksWithoutVideoDevices(t *testing.T) {
 	}
 }
 
+func TestVideoLoadtestTokenSelectionAggregatesBrandPlanDevices(t *testing.T) {
+	envRoot := t.TempDir()
+	writeVideoRelaySelectionTestData(t, envRoot, "RTK-BRAND-01", "brand01", 2)
+	writeVideoRelaySelectionTestData(t, envRoot, "RTK-BRAND-02", "brand02", 2)
+	planPath := filepath.Join(envRoot, "brand-plan.json")
+	if err := os.WriteFile(planPath, []byte(`{
+		"total_devices": 4,
+		"devices_per_user": 1,
+		"brands": [
+			{"brandname": "RTK-BRAND-01", "devices": 2, "normal_users": 2, "developer_users": {"owner": 1}},
+			{"brandname": "RTK-BRAND-02", "devices": 2, "normal_users": 2, "developer_users": {"owner": 1}}
+		]
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	selected, blockers, err := selectVideoLoadtestTokenDevices(envRoot, "RTK", planPath, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blockers) != 0 {
+		t.Fatalf("blockers = %v, want none", blockers)
+	}
+	if got := strings.Join(deviceIDs(selected), ","); got != "brand01-cam-001,brand01-cam-002,brand02-cam-001" {
+		t.Fatalf("selected devices = %s", got)
+	}
+}
+
+func writeVideoRelaySelectionTestData(t *testing.T, envRoot, brandname, prefix string, count int) {
+	t.Helper()
+	store, err := openTestDataStore(envRoot, brandname)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	users := make([]map[string]any, 0, count)
+	devices := make([]generatedDevice, 0, count)
+	credentials := map[string]testDataDeviceCredential{}
+	assignments := make([]bindAssignment, 0, count)
+	for i := 1; i <= count; i++ {
+		email := fmt.Sprintf("%s-user-%03d@example.test", prefix, i)
+		deviceID := fmt.Sprintf("%s-cam-%03d", prefix, i)
+		users = append(users, map[string]any{
+			"email": email,
+			"app_credentials": map[string]any{
+				"private_key_pem": "-----BEGIN EC PRIVATE KEY-----\nkey\n-----END EC PRIVATE KEY-----",
+				"csr_pem":         "-----BEGIN CERTIFICATE REQUEST-----\ncsr\n-----END CERTIFICATE REQUEST-----",
+			},
+			"app_certificate": map[string]any{
+				"certificate_chain_pem": "-----BEGIN CERTIFICATE-----\ncert\n-----END CERTIFICATE-----",
+			},
+		})
+		device := generatedDevice{
+			DeviceID:       deviceID,
+			DeviceType:     "camera",
+			ServiceOptions: []string{"mqtt", "video_streaming"},
+			DisplayName:    deviceID,
+		}
+		devices = append(devices, device)
+		credentials[deviceID] = testDataDeviceCredential{
+			DeviceID: deviceID,
+			CertPEM:  "CERT",
+			KeyPEM:   "KEY",
+			ChainPEM: "CHAIN",
+		}
+		assignments = append(assignments, bindAssignment{
+			AssignmentIndex: i - 1,
+			AssignedEmail:   email,
+			DeviceID:        deviceID,
+			DeviceType:      "camera",
+			Category:        "ip_camera",
+			ServiceOptions:  []string{"mqtt", "video_streaming"},
+			AccountDeviceID: fmt.Sprintf("%s-account-%03d", prefix, i),
+			OperationID:     fmt.Sprintf("%s-op-%03d", prefix, i),
+			Status:          "provision_requested",
+		})
+	}
+	if err := store.ReplaceUsers(brandname, "org-"+prefix, prefix, "member", users); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReplaceDevices(brandname, "run-1", devices, credentials); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReplaceBindings(brandname, "org-"+prefix, prefix, "run-1", assignments); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestVideoRelayBuildsRunnerArgsWithoutLeakingTokens(t *testing.T) {
 	cfg := videoRelayRunnerConfig{
 		Workspace:          "/workspace",
@@ -83,6 +172,9 @@ func TestVideoRelayBuildsRunnerArgsWithoutLeakingTokens(t *testing.T) {
 	}
 	if !strings.Contains(joined, "--webrtc-relay-role") || !strings.Contains(joined, "both") {
 		t.Fatalf("runner args missing default WebRTC relay role: %v", args)
+	}
+	if !strings.Contains(joined, "--webrtc-ice-policy") || !strings.Contains(joined, "relay") {
+		t.Fatalf("runner args missing default relay-only ICE policy: %v", args)
 	}
 	if !strings.Contains(joined, "--duration") || !strings.Contains(joined, "5s") {
 		t.Fatalf("runner args should use short smoke scheduling duration so tokens do not expire before later devices: %v", args)
@@ -365,6 +457,104 @@ func TestVideoRelayTokenRequestsUseExpectedScopes(t *testing.T) {
 	}
 }
 
+func TestVideoRelayTokenRequestRetriesTransientFailures(t *testing.T) {
+	attempts := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			http.Error(w, "temporary", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`{"scope":"device","access_token":"token-device"}`))
+	}))
+	defer server.Close()
+
+	originalSleep := videoRelayTokenRetrySleep
+	videoRelayTokenRetrySleep = func(time.Duration) {}
+	defer func() { videoRelayTokenRetrySleep = originalSleep }()
+
+	resp, err := requestVideoRelayToken(server.URL, testTLSCertificate(t), map[string]any{"scope": "device"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.AccessToken != "token-device" {
+		t.Fatalf("access token = %q", resp.AccessToken)
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", attempts)
+	}
+}
+
+func TestVideoRelayTokenRequestDoesNotRetryAuthFailures(t *testing.T) {
+	attempts := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	_, err := requestVideoRelayToken(server.URL, testTLSCertificate(t), map[string]any{"scope": "device"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", attempts)
+	}
+}
+
+func TestVideoLoadtestTokenMintWaitsForBatchBeforeReportingFailures(t *testing.T) {
+	certPEM, keyPEM := testTLSCertificatePEM(t)
+	user := videoRelayUser{
+		Email: "u1@example.test",
+		AppCredentials: videoRelayAppCredentials{
+			PrivateKeyPEM: keyPEM,
+		},
+		AppCertificate: videoRelayAppCertificate{
+			CertificateChainPEM: certPEM,
+		},
+	}
+	selected := []videoRelaySelectedDevice{
+		{DeviceID: "cam-ok", AssignedEmail: user.Email, CertPEM: certPEM, KeyPEM: keyPEM, User: user},
+		{DeviceID: "cam-fail", AssignedEmail: user.Email, CertPEM: certPEM, KeyPEM: keyPEM, User: user},
+	}
+	requests := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["scope"] == "app" && body["devid"] == "cam-fail" {
+			http.Error(w, "temporary", http.StatusServiceUnavailable)
+			return
+		}
+		scope, _ := body["scope"].(string)
+		_, _ = w.Write([]byte(`{"scope":"` + scope + `","access_token":"token-` + scope + `"}`))
+	}))
+	defer server.Close()
+
+	originalSleep := videoRelayTokenRetrySleep
+	videoRelayTokenRetrySleep = func(time.Duration) {}
+	defer func() { videoRelayTokenRetrySleep = originalSleep }()
+
+	deviceTokens, appTokens, err := mintVideoLoadtestTokens(server.URL, selected, 300, 2, time.Second)
+	if err == nil {
+		t.Fatal("expected batch failure")
+	}
+	if deviceTokens != nil || appTokens != nil {
+		t.Fatalf("tokens = %#v/%#v, want nil on batch failure", deviceTokens, appTokens)
+	}
+	text := err.Error()
+	for _, want := range []string{"success=1", "failed=1", "total=2", "cam-fail"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("error %q missing %q", text, want)
+		}
+	}
+	if requests != 7 {
+		t.Fatalf("requests = %d, want 7: ok device+app, failing device+4 app retries", requests)
+	}
+}
+
 func TestVideoRelayDeviceCertificatePrefersChainPEM(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "leaf.pem"), []byte("bad cert"), 0o600); err != nil {
@@ -441,6 +631,16 @@ func deviceIDs(devices []videoRelaySelectedDevice) []string {
 
 func testTLSCertificate(t *testing.T) tls.Certificate {
 	t.Helper()
+	certPEM, keyPEM := testTLSCertificatePEM(t)
+	cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cert
+}
+
+func testTLSCertificatePEM(t *testing.T) (string, string) {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -468,11 +668,7 @@ func testTLSCertificate(t *testing.T) tls.Certificate {
 	}
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-	cert, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return cert
+	return string(certPEM), string(keyPEM)
 }
 
 func containsString(items []string, want string) bool {

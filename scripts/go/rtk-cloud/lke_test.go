@@ -63,11 +63,11 @@ func TestRunProvisionLKEApplyFetchesKubeconfigWhenNoContext(t *testing.T) {
 	writeTestFile(t, filepath.Join(envRoot, "state", "lke.env"), "LKE_CLUSTER_ID=12345\n")
 	curlLog := fakeLinodeCurl(t, map[string]string{
 		"/lke/clusters/12345/kubeconfig": `{"kubeconfig":"` + base64.StdEncoding.EncodeToString([]byte("apiVersion: v1\nclusters: []\n")) + `"}`,
-		"/lke/clusters/12345/pools":      `{"data":[{"id":907616,"type":"g6-standard-2","count":4}]}`,
+		"/lke/clusters/12345/pools":      `{"data":[{"id":907616,"type":"g6-standard-2","count":5}]}`,
 	})
 	kubectlLog := fakeKubectlWithoutCurrentContext(t)
 	t.Setenv("LINODE_TOKEN", "test-token")
-	t.Setenv("LKE_NODE_COUNT", "4")
+	t.Setenv("LKE_NODE_COUNT", "5")
 
 	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--apply"}); err != nil {
 		t.Fatal(err)
@@ -115,11 +115,11 @@ func TestRunProvisionLKEApplyDiscoversClusterByLabel(t *testing.T) {
 	curlLog := fakeLinodeCurl(t, map[string]string{
 		"/lke/clusters?page_size=500":    `{"data":[{"id":67890,"label":"video-cloud-staging-lke","region":"us-sea"}]}`,
 		"/lke/clusters/67890/kubeconfig": `{"kubeconfig":"` + encodedKubeconfig + `"}`,
-		"/lke/clusters/67890/pools":      `{"data":[{"id":907616,"type":"g6-standard-2","count":4}]}`,
+		"/lke/clusters/67890/pools":      `{"data":[{"id":907616,"type":"g6-standard-2","count":5}]}`,
 	})
 	kubectlLog := fakeKubectlWithoutCurrentContext(t)
 	t.Setenv("LINODE_TOKEN", "test-token")
-	t.Setenv("LKE_NODE_COUNT", "4")
+	t.Setenv("LKE_NODE_COUNT", "5")
 
 	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--apply"}); err != nil {
 		t.Fatal(err)
@@ -148,12 +148,12 @@ func TestRunProvisionLKEApplyCreatesClusterWhenMissing(t *testing.T) {
 		"/lke/clusters":                    `{"id":24680,"label":"video-cloud-staging-lke","region":"us-sea","k8s_version":"1.33"}`,
 		"/lke/clusters/24680/kubeconfig":   `{"kubeconfig":"` + encodedKubeconfig + `"}`,
 		"/lke/clusters/24680/pools":        `{"data":[{"id":907616,"type":"g6-standard-2","count":3}]}`,
-		"/lke/clusters/24680/pools/907616": `{"id":907616,"type":"g6-standard-2","count":4}`,
+		"/lke/clusters/24680/pools/907616": `{"id":907616,"type":"g6-standard-2","count":5}`,
 	})
 	fakeKubectlWithoutCurrentContext(t)
 	t.Setenv("LINODE_TOKEN", "test-token")
 	t.Setenv("LKE_NODE_TYPE", "g6-standard-2")
-	t.Setenv("LKE_NODE_COUNT", "4")
+	t.Setenv("LKE_NODE_COUNT", "5")
 
 	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--apply"}); err != nil {
 		t.Fatal(err)
@@ -188,12 +188,12 @@ func TestRunProvisionLKEApplyRecoversStaleClusterState(t *testing.T) {
 		"/lke/clusters":                    `{"id":24680,"label":"video-cloud-staging-lke","region":"us-sea","k8s_version":"1.33"}`,
 		"/lke/clusters/24680/kubeconfig":   `{"kubeconfig":"` + encodedKubeconfig + `"}`,
 		"/lke/clusters/24680/pools":        `{"data":[{"id":907616,"type":"g6-standard-2","count":3}]}`,
-		"/lke/clusters/24680/pools/907616": `{"id":907616,"type":"g6-standard-2","count":4}`,
+		"/lke/clusters/24680/pools/907616": `{"id":907616,"type":"g6-standard-2","count":5}`,
 	})
 	fakeKubectl(t)
 	t.Setenv("LINODE_TOKEN", "test-token")
 	t.Setenv("LKE_NODE_TYPE", "g6-standard-2")
-	t.Setenv("LKE_NODE_COUNT", "4")
+	t.Setenv("LKE_NODE_COUNT", "5")
 
 	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--apply"}); err != nil {
 		t.Fatal(err)
@@ -287,11 +287,11 @@ func TestRunProvisionLKEPlanShowsCoturnVMIdentity(t *testing.T) {
 	})
 	for _, want := range []string{
 		"public TURN: external coturn VM data-plane exception, not HAProxy-backed",
-		"coturn_vm: name=turn01 label=video-cloud-staging-turn01",
+		"coturn_vms: count=1 type=g6-nanode-1 image=linode/ubuntu24.04 ports=3478/udp,3478/tcp relay_udp=49152-65535",
+		"coturn_vm: name=turn01 label=video-cloud-staging-turn01 domain=turn.video-cloud-staging.realtekconnect.com",
 		"type=g6-nanode-1",
 		"image=linode/ubuntu24.04",
-		"domain=turn.video-cloud-staging.realtekconnect.com",
-		"relay_udp=49152-49200",
+		"relay_udp=49152-65535",
 		"turn_registry: domain=turnregistry.video-cloud-staging.realtekconnect.com registrar_node_id=turn01",
 	} {
 		if !strings.Contains(out, want) {
@@ -560,6 +560,8 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"VIDEO_CLOUD_MQTT_ADDR\n              value: \"mqtt.video-cloud-staging-video-cloud.svc.cluster.local:1883\"",
 		"POD_NAME\n              valueFrom:",
 		"fieldPath: metadata.name",
+		"POD_IP\n              valueFrom:",
+		"fieldPath: status.podIP",
 		"VIDEO_CLOUD_MQTT_CLIENT_ID\n              value: \"video-cloud-api-$(POD_NAME)\"",
 		"VIDEO_CLOUD_MQTT_TOPIC_ROOT\n              value: \"devices\"",
 		"VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY\n              value: \"64\"",
@@ -579,6 +581,8 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"VIDEO_CLOUD_SHADOW_CACHE_FLUSH_BATCH_SIZE\n              value: \"500\"",
 		"VIDEO_CLOUD_SHADOW_CACHE_BUFFER_MAX_DOCS\n              value: \"10000\"",
 		"VIDEO_CLOUD_SHADOW_CACHE_RECOVERY_INTERVAL\n              value: \"5s\"",
+		"VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_ENABLED\n              value: \"true\"",
+		"VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_ADDR\n              value: \"redis.video-cloud-staging-platform.svc.cluster.local:6379\"",
 		"kind: Secret\nmetadata:\n  name: mqtt-runtime",
 		"cert.pem:",
 		"key.pem:",
@@ -763,6 +767,9 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-public",
 		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-device-mtls",
 		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-certissuer",
+		"nginx.ingress.kubernetes.io/proxy-connect-timeout: \"60\"",
+		"nginx.ingress.kubernetes.io/proxy-read-timeout: \"3600\"",
+		"nginx.ingress.kubernetes.io/proxy-send-timeout: \"3600\"",
 		"nginx.ingress.kubernetes.io/auth-tls-secret: \"video-cloud-staging-ingress/video-cloud-staging-app-client-ca\"",
 		"nginx.ingress.kubernetes.io/auth-tls-verify-client: \"on\"",
 		"proxy_set_header X-Client-Verify $ssl_client_verify;",
@@ -795,6 +802,8 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"app.kubernetes.io/name: account-manager",
 		"kubernetes.io/metadata.name: video-cloud-staging-video-cloud",
 		"port: 8080",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-video-cloud-api-internal",
+		"app.kubernetes.io/name: video-cloud-api",
 		"kind: NetworkPolicy\nmetadata:\n  name: allow-video-cloud-mqtt-clients",
 		"app.kubernetes.io/name: mqtt",
 		"app.kubernetes.io/name: video-cloud-api",
@@ -916,7 +925,7 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		}
 	}
 	redactedConf := readTestFile(t, filepath.Join(coturnDir, "turnserver.conf.redacted"))
-	for _, want := range []string{"use-auth-secret", "static-auth-secret=<redacted>", "realm=video_cloud", "min-port=49152", "max-port=49200"} {
+	for _, want := range []string{"use-auth-secret", "static-auth-secret=<redacted>", "realm=video_cloud", "min-port=49152", "max-port=65535"} {
 		if !strings.Contains(redactedConf, want) {
 			t.Fatalf("expected %q in redacted coturn config, got:\n%s", want, redactedConf)
 		}
@@ -969,6 +978,76 @@ func TestLKECoturnVMNamingUsesTurnNNWithinStackLabel(t *testing.T) {
 	}
 	if got := lkeCoturnVMLabel(env); got != "video-cloud-staging-custom-turn" {
 		t.Fatalf("explicit coturn VM label = %q, want video-cloud-staging-custom-turn", got)
+	}
+}
+
+func TestLKECoturnMultiVMUsesPerNodeDomainsAndURLs(t *testing.T) {
+	env := map[string]string{
+		"CLOUD_STACK_NAME":      "video-cloud-staging",
+		"CLOUD_DNS_ROOT_DOMAIN": "realtekconnect.com",
+		"LKE_COTURN_VM_COUNT":   "2",
+	}
+	first := lkeCoturnVMEnvForIndex(env, 1)
+	second := lkeCoturnVMEnvForIndex(env, 2)
+	if got := lkeCoturnVMName(first); got != "turn01" {
+		t.Fatalf("first name = %q, want turn01", got)
+	}
+	if got := lkeCoturnVMName(second); got != "turn02" {
+		t.Fatalf("second name = %q, want turn02", got)
+	}
+	if got := lkeCoturnDomain(first); got != "turn01.video-cloud-staging.realtekconnect.com" {
+		t.Fatalf("first domain = %q", got)
+	}
+	if got := lkeCoturnDomain(second); got != "turn02.video-cloud-staging.realtekconnect.com" {
+		t.Fatalf("second domain = %q", got)
+	}
+	if got := lkeCoturnSTUNURLs(env); got != "stun:turn01.video-cloud-staging.realtekconnect.com:3478,stun:turn02.video-cloud-staging.realtekconnect.com:3478" {
+		t.Fatalf("STUN URLs = %q", got)
+	}
+	if got := lkeCoturnTURNURLs(env); got != "turn:turn01.video-cloud-staging.realtekconnect.com:3478?transport=udp,turn:turn01.video-cloud-staging.realtekconnect.com:3478?transport=tcp,turn:turn02.video-cloud-staging.realtekconnect.com:3478?transport=udp,turn:turn02.video-cloud-staging.realtekconnect.com:3478?transport=tcp" {
+		t.Fatalf("TURN URLs = %q", got)
+	}
+}
+
+func TestLKECoturnMultiVMProvidedIPsWritesArtifacts(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	env := map[string]string{
+		"CLOUD_STACK_NAME":           "video-cloud-staging",
+		"CLOUD_DNS_ROOT_DOMAIN":      "realtekconnect.com",
+		"CLOUD_REGION":               "us-sea",
+		"LKE_COTURN_VM_COUNT":        "2",
+		"LKE_COTURN_VM_PUBLIC_IPS":   "198.51.100.20,198.51.100.21",
+		"LKE_COTURN_VM_TYPE":         "g6-standard-2",
+		"LKE_COTURN_MAX_SESSIONS":    "10000",
+		"LKE_COTURN_MIN_PORT":        "49152",
+		"LKE_COTURN_MAX_PORT":        "65535",
+		"LKE_COTURN_VM_BOOT_TIMEOUT": "1s",
+	}
+	vms, err := lkeEnsureExternalCoturnVMs(provisionPaths{Workspace: workspace, EnvRoot: envRoot}, env, provisionOptions{})
+	if err != nil {
+		t.Fatalf("lkeEnsureExternalCoturnVMs() error = %v", err)
+	}
+	if len(vms) != 2 {
+		t.Fatalf("vms = %d, want 2", len(vms))
+	}
+	if vms[0].Domain != "turn01.video-cloud-staging.realtekconnect.com" || vms[1].Domain != "turn02.video-cloud-staging.realtekconnect.com" {
+		t.Fatalf("domains = %+v", vms)
+	}
+	for _, name := range []string{
+		"coturn-vm/turn01/coturn-vm.json",
+		"coturn-vm/turn02/coturn-vm.json",
+		"coturn-vm/coturn-vms.json",
+		"coturn-vm/coturn-vm.json",
+	} {
+		if _, err := os.Stat(filepath.Join(envRoot, "artifacts", name)); err != nil {
+			t.Fatalf("missing artifact %s: %v", name, err)
+		}
+	}
+	summary := readTestFile(t, filepath.Join(envRoot, "artifacts", "coturn-vm", "coturn-vms.json"))
+	for _, want := range []string{`"count": 2`, `"name": "turn01"`, `"name": "turn02"`, `"public_ip": "198.51.100.21"`} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("expected %q in coturn-vms summary:\n%s", want, summary)
+		}
 	}
 }
 
@@ -1277,6 +1356,23 @@ func TestLKENetworkPoliciesAllowRedisAndPrometheusScrapes(t *testing.T) {
 	} {
 		if !strings.Contains(scrapePolicy, want) {
 			t.Fatalf("expected %q in Prometheus scrape NetworkPolicy, got:\n%s", want, scrapePolicy)
+		}
+	}
+}
+
+func TestLKENetworkPoliciesAllowVideoCloudAPIInternalRouting(t *testing.T) {
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+
+	policy := lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env)
+	for _, want := range []string{
+		"name: allow-video-cloud-api-internal",
+		"namespace: video-cloud-staging-video-cloud",
+		"podSelector:\n    matchLabels:\n      app.kubernetes.io/name: video-cloud-api",
+		"from:\n        - podSelector:\n            matchLabels:\n              app.kubernetes.io/name: video-cloud-api",
+		"port: 8080",
+	} {
+		if !strings.Contains(policy, want) {
+			t.Fatalf("expected %q in video-cloud API internal NetworkPolicy, got:\n%s", want, policy)
 		}
 	}
 }
@@ -1787,7 +1883,7 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 
 	postgres := lkePostgresStatefulSetManifest(env)
 	for _, want := range []string{
-		`lke.linode.com/pool-id: "906225"`,
+		`rtk.realtek.com/workload: "postgres"`,
 		`value: "postgres"`,
 		`cpu: "1"`,
 		`memory: "2Gi"`,
@@ -1839,6 +1935,9 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 		"name: VIDEO_CLOUD_DB_MAX_OPEN_CONNS\n              value: \"40\"",
 		"name: VIDEO_CLOUD_DB_MAX_IDLE_CONNS\n              value: \"20\"",
 		"name: VIDEO_CLOUD_DB_CONN_MAX_LIFETIME\n              value: \"5m\"",
+		"name: VIDEO_CLOUD_DB_ENSURE_SCHEMA\n              value: \"false\"",
+		"readinessProbe:\n            httpGet:\n              path: /healthz\n              port: http",
+		"livenessProbe:\n            httpGet:\n              path: /healthz\n              port: http",
 		"name: VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY\n              value: \"64\"",
 		"name: VIDEO_CLOUD_MQTT_SHADOW_HANDLER_CONCURRENCY\n              value: \"64\"",
 		"name: VIDEO_CLOUD_MQTT_SHADOW_QUEUE_SIZE\n              value: \"8192\"",
@@ -1856,6 +1955,10 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 		"name: VIDEO_CLOUD_SHADOW_CACHE_FLUSH_BATCH_SIZE\n              value: \"500\"",
 		"name: VIDEO_CLOUD_SHADOW_CACHE_BUFFER_MAX_DOCS\n              value: \"10000\"",
 		"name: VIDEO_CLOUD_SHADOW_CACHE_RECOVERY_INTERVAL\n              value: \"5s\"",
+		"name: VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_ENABLED\n              value: \"true\"",
+		"name: VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_ADDR\n              value: \"redis.video-cloud-staging-platform.svc.cluster.local:6379\"",
+		"name: VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_PREFIX\n              value: \"video_cloud:webrtc\"",
+		"name: VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_TTL_GRACE\n              value: \"30s\"",
 	} {
 		if !strings.Contains(video, want) {
 			t.Fatalf("expected %q in video-cloud-api manifest, got:\n%s", want, video)
@@ -1918,6 +2021,61 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 	}
 	if strings.Contains(mqtt, "kind: Deployment") {
 		t.Fatalf("MQTT must be a StatefulSet, got Deployment:\n%s", mqtt)
+	}
+}
+
+func TestLKEPostgresDedicatedNodePoolDefaultsFor100K(t *testing.T) {
+	env := map[string]string{
+		"LKE_TARGET_CONNECTS": "100000",
+		"LKE_NODE_TYPE":       "g6-standard-4",
+	}
+	if !lkePostgresDedicatedNodePoolEnabled(env) {
+		t.Fatal("expected 100K target to enable dedicated postgres node pool")
+	}
+	payload := lkePostgresNodePoolPayload(env)
+	if got := payload["type"]; got != "g6-standard-8" {
+		t.Fatalf("postgres node pool type = %v, want g6-standard-8", got)
+	}
+	if got := payload["count"]; got != 1 {
+		t.Fatalf("postgres node pool count = %v, want 1", got)
+	}
+	if got := payload["label"]; got != "postgres" {
+		t.Fatalf("postgres node pool label = %v, want postgres", got)
+	}
+	labels, ok := payload["labels"].(map[string]string)
+	if !ok || labels["rtk.realtek.com/workload"] != "postgres" {
+		t.Fatalf("postgres node pool labels = %#v", payload["labels"])
+	}
+	taints, ok := payload["taints"].([]map[string]string)
+	if !ok || len(taints) != 1 {
+		t.Fatalf("postgres node pool taints = %#v", payload["taints"])
+	}
+	if taints[0]["key"] != "rtk.realtek.com/workload" || taints[0]["value"] != "postgres" || taints[0]["effect"] != "NoSchedule" {
+		t.Fatalf("postgres node pool taint = %#v", taints[0])
+	}
+}
+
+func TestLKENodePoolHasPostgresPlacement(t *testing.T) {
+	pool := lkeNodePool{
+		ID:    906225,
+		Type:  "g6-standard-4",
+		Count: 1,
+		Label: "postgres",
+		Labels: map[string]string{
+			"rtk.realtek.com/workload": "postgres",
+		},
+		Taints: []lkeNodePoolTaint{{
+			Key:    "rtk.realtek.com/workload",
+			Value:  "postgres",
+			Effect: "NoSchedule",
+		}},
+	}
+	if !lkeNodePoolHasPostgresPlacement(pool) {
+		t.Fatalf("expected postgres placement match")
+	}
+	pool.Taints = nil
+	if lkeNodePoolHasPostgresPlacement(pool) {
+		t.Fatalf("expected missing taint to fail postgres placement match")
 	}
 }
 
@@ -2006,6 +2164,134 @@ func TestLKEMQTTResourcesCanBeOverridden(t *testing.T) {
 	} {
 		if !strings.Contains(manifest, want) {
 			t.Fatalf("expected %q in mqtt manifest, got:\n%s", want, manifest)
+		}
+	}
+}
+
+func TestLKECloudLoggerResourceDefaultsCoverLoadTestEvidence(t *testing.T) {
+	env := map[string]string{
+		"CLOUD_STACK_NAME": "video-cloud-staging",
+	}
+
+	manifest := lkeCloudLoggerDeploymentManifest(env)
+
+	for _, want := range []string{
+		`cpu: "100m"`,
+		`memory: "4Gi"`,
+		`memory: "8Gi"`,
+		`name: RTK_CLOUD_LOGGER_LOKI_URL`,
+		`value: "http://video-cloud-loki.video-cloud-staging-observability.svc.cluster.local:3100"`,
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("expected %q in cloud-logger manifest, got:\n%s", want, manifest)
+		}
+	}
+	if strings.Contains(manifest, "_STORE") || strings.Contains(manifest, "store:") {
+		t.Fatalf("cloud-logger manifest must not expose a store selector:\n%s", manifest)
+	}
+}
+
+func TestLKELokiManifestSupportsCloudLoggerPersistence(t *testing.T) {
+	env := map[string]string{
+		"CLOUD_STACK_NAME": "video-cloud-staging",
+	}
+
+	config := lkeLokiConfigManifest(env)
+	deployment := lkeLokiDeploymentManifest(env)
+	service := lkeLokiServiceManifest(env)
+	policy := lkeAllowCloudLoggerLokiNetworkPolicyManifest(env)
+	collectorConfig := lkeLogCollectorConfigManifest(env)
+	collector := lkeLogCollectorDaemonSetManifest(env)
+	collectorPolicy := lkeAllowLogCollectorLokiNetworkPolicyManifest(env)
+
+	for _, tc := range []struct {
+		name     string
+		manifest string
+		want     []string
+	}{
+		{
+			name:     "config",
+			manifest: config,
+			want: []string{
+				"kind: ConfigMap",
+				"name: video-cloud-loki-config",
+				"auth_enabled: false",
+				"schema: v13",
+				"retention_period: 24h",
+			},
+		},
+		{
+			name:     "deployment",
+			manifest: deployment,
+			want: []string{
+				"kind: Deployment",
+				"name: video-cloud-loki",
+				"image: grafana/loki:3.5.1",
+				"- -config.file=/etc/loki/config.yaml",
+				`cpu: "250m"`,
+				`memory: "512Mi"`,
+				`memory: "2Gi"`,
+			},
+		},
+		{
+			name:     "service",
+			manifest: service,
+			want: []string{
+				"kind: Service",
+				"name: video-cloud-loki",
+				"port: 3100",
+			},
+		},
+		{
+			name:     "policy",
+			manifest: policy,
+			want: []string{
+				"kind: NetworkPolicy",
+				"name: allow-cloud-logger-loki",
+				"kubernetes.io/metadata.name: video-cloud-staging-logger",
+				"app.kubernetes.io/name: cloud-logger",
+				"port: 3100",
+			},
+		},
+		{
+			name:     "collector config",
+			manifest: collectorConfig,
+			want: []string{
+				"kind: ConfigMap",
+				"name: video-cloud-log-collector-config",
+				"pipeline_stages:",
+				"- cri: {}",
+				"url: http://video-cloud-loki.video-cloud-staging-observability.svc.cluster.local:3100/loki/api/v1/push",
+				"job_name: kubernetes-pod-files",
+				"__path__: /var/log/pods/**/*.log",
+			},
+		},
+		{
+			name:     "collector daemonset",
+			manifest: collector,
+			want: []string{
+				"kind: DaemonSet",
+				"name: video-cloud-log-collector",
+				"image: grafana/promtail:3.5.1",
+				"mountPath: /var/log/pods",
+				"path: /var/log/pods",
+			},
+		},
+		{
+			name:     "collector policy",
+			manifest: collectorPolicy,
+			want: []string{
+				"kind: NetworkPolicy",
+				"name: allow-log-collector-loki",
+				"app.kubernetes.io/name: video-cloud-log-collector",
+				"port: 3100",
+			},
+		},
+	} {
+		for _, want := range tc.want {
+			if !strings.Contains(tc.manifest, want) {
+				t.Fatalf("%s manifest missing %q:\n%s", tc.name, want, tc.manifest)
+			}
 		}
 	}
 }
@@ -2178,6 +2464,15 @@ func TestRunProvisionLKEDeployAppliesPrivateGrafana(t *testing.T) {
 
 	log := readTestFile(t, logPath)
 	for _, want := range []string{
+		"kind: ConfigMap\nmetadata:\n  name: video-cloud-loki-config",
+		"kind: Deployment\nmetadata:\n  name: video-cloud-loki",
+		"image: grafana/loki:3.5.1",
+		"kind: Service\nmetadata:\n  name: video-cloud-loki",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-cloud-logger-loki",
+		"kind: DaemonSet\nmetadata:\n  name: video-cloud-log-collector",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-log-collector-loki",
+		"ARGS -n video-cloud-staging-observability rollout status deployment/video-cloud-loki",
+		"ARGS -n video-cloud-staging-observability rollout status daemonset/video-cloud-log-collector",
 		"kind: Secret\nmetadata:\n  name: video-cloud-grafana-admin",
 		"GF_SECURITY_ALLOW_EMBEDDING\n              value: \"true\"",
 		"GF_AUTH_ANONYMOUS_ENABLED\n              value: \"false\"",
@@ -2325,6 +2620,7 @@ func TestRunProvisionLKEDeployUsesExternalCoturnVMConfig(t *testing.T) {
 		"name: VIDEO_CLOUD_TURN_REALM\n              value: \"video_cloud\"",
 		"name: VIDEO_CLOUD_TURN_SHARED_SECRET\n              valueFrom:\n                secretKeyRef:\n                  name: video-cloud-runtime\n                  key: VIDEO_CLOUD_TURN_SHARED_SECRET",
 		"name: VIDEO_CLOUD_TURN_CREDENTIAL_TTL\n              value: \"10m\"",
+		"name: VIDEO_CLOUD_WEBRTC_ICE_POLICY\n              value: \"relay\"",
 	} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("expected %q in kubectl manifests, got:\n%s", want, log)
@@ -2824,6 +3120,23 @@ CLOUD_STACK_NAME=video-cloud-staging
 	}
 }
 
+func TestRunMQTTTestForLKERefusesPortForwardWhenDisabled(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	fakeKubectl(t)
+	t.Setenv("CLOUD_STAGING_E2E_K8S_PORT_FORWARD", "0")
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), `CLOUD_ENV_NAME=staging
+CLOUD_PROVIDER=lke
+CLOUD_REGION=us-sea
+CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+CLOUD_STACK_NAME=video-cloud-staging
+`)
+
+	err := runMQTTTest([]string{"--workspace", workspace, "--env-root", envRoot, "--brandname", "RTK", "--duration-seconds", "1"})
+	if err == nil || !strings.Contains(err.Error(), "external endpoints are required when CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0") {
+		t.Fatalf("runMQTTTest error = %v, want disabled port-forward endpoint error", err)
+	}
+}
+
 func TestRunMQTTTestPassesLoadModelToChildScript(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	fakeKubectl(t)
@@ -2848,12 +3161,16 @@ printf '\n' >> "`+childLog+`"
 		"--env-root", envRoot,
 		"--brandname", "RTK",
 		"--duration-seconds", "1",
+		"--mqtt-probe",
 		"--load-model", "home-100k-sustained",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	got := readTestFile(t, childLog)
+	if !strings.Contains(got, "--mqtt-probe true") {
+		t.Fatalf("child args missing mqtt probe bool:\n%s", got)
+	}
 	if !strings.Contains(got, "--load-model home-100k-sustained") {
 		t.Fatalf("child args missing load model:\n%s", got)
 	}
@@ -2891,6 +3208,7 @@ printf '\n' >> "`+childLog+`"
 		"--device-traffic-profile", "home-diverse-v1",
 		"--command-concurrency", "100",
 		"--shadow-command-timeout", "30s",
+		"--runtime-logs=false",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2905,6 +3223,8 @@ printf '\n' >> "`+childLog+`"
 		"--device-traffic-profile home-diverse-v1",
 		"--command-concurrency 100",
 		"--shadow-command-timeout 30s",
+		"--runtime-logs=false",
+		"--load-model home-100k-sustained",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("child args missing %q:\n%s", want, got)

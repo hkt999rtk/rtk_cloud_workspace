@@ -121,6 +121,27 @@ func RenderMarkdown(result *Result) string {
 	fmt.Fprintf(&b, "| Time to first RTP p95 | %d ms |\n", result.WebRTCMedia.TimeToFirstRTPP95MS)
 	fmt.Fprintf(&b, "| ICE connected p95 | %d ms |\n", result.WebRTCMedia.ICEConnectedP95MS)
 	fmt.Fprintf(&b, "| Receive duration | %d ms |\n", result.WebRTCMedia.ReceiveDurationMS)
+	if result.WebRTCMedia.VideoStartupLatency.AppRequestToFirstRTPP95MS > 0 || result.WebRTCMedia.VideoStartupLatency.AppRequestToFirstH264AccessUnitP95MS > 0 {
+		startup := result.WebRTCMedia.VideoStartupLatency
+		fmt.Fprintf(&b, "\n## Video Startup Latency\n\n")
+		fmt.Fprintf(&b, "- Samples: %d\n", startup.Samples)
+		fmt.Fprintf(&b, "- H.264 access unit samples: %d\n\n", startup.H264AccessUnitSamples)
+		fmt.Fprintf(&b, "| Metric | p50 | p95 | p99 |\n")
+		fmt.Fprintf(&b, "| --- | ---: | ---: | ---: |\n")
+		fmt.Fprintf(&b, "| App request -> first RTP | %d ms | %d ms | %d ms |\n", startup.AppRequestToFirstRTPP50MS, startup.AppRequestToFirstRTPP95MS, startup.AppRequestToFirstRTPP99MS)
+		fmt.Fprintf(&b, "| App request -> first H.264 access unit | %d ms | %d ms | %d ms |\n", startup.AppRequestToFirstH264AccessUnitP50MS, startup.AppRequestToFirstH264AccessUnitP95MS, startup.AppRequestToFirstH264AccessUnitP99MS)
+		fmt.Fprintf(&b, "\n### Video Startup Breakdown\n\n")
+		fmt.Fprintf(&b, "| Layer | p95 |\n")
+		fmt.Fprintf(&b, "| --- | ---: |\n")
+		fmt.Fprintf(&b, "| API create | %d ms |\n", startup.BreakdownP95.APICreateMS)
+		fmt.Fprintf(&b, "| Offer delivery | %d ms |\n", startup.BreakdownP95.OfferDeliveryMS)
+		fmt.Fprintf(&b, "| Device answer | %d ms |\n", startup.BreakdownP95.DeviceAnswerMS)
+		fmt.Fprintf(&b, "| Remote answer set | %d ms |\n", startup.BreakdownP95.RemoteAnswerSetMS)
+		fmt.Fprintf(&b, "| ICE check | %d ms |\n", startup.BreakdownP95.ICECheckMS)
+		fmt.Fprintf(&b, "| ICE connected since session start | %d ms |\n", startup.BreakdownP95.ICEConnectedSinceSessionStartMS)
+		fmt.Fprintf(&b, "| First RTP after ICE | %d ms |\n", startup.BreakdownP95.FirstRTPAfterICEMS)
+		fmt.Fprintf(&b, "| First H.264 access unit after RTP | %d ms |\n", startup.BreakdownP95.FirstH264AccessUnitAfterRTPMS)
+	}
 	if len(result.MQTTIoT) > 0 {
 		fmt.Fprintf(&b, "\n## MQTT IoT Metrics\n\n")
 		fmt.Fprintf(&b, "| Capability | Ops | Success | Fail | Skip | Success rate | p95 | p99 | Throughput |\n")
@@ -222,4 +243,22 @@ func EvaluateResultThresholds(summary Summary, webrtc WebRTCMetrics, coverage ma
 		}
 	}
 	return evaluation
+}
+
+func ApplyWebRTCMediaThreshold(evaluation *ThresholdEvaluation, media WebRTCMediaMetrics, thresholds Thresholds) {
+	applyWebRTCMediaThreshold(evaluation, media, thresholds)
+}
+
+func applyWebRTCMediaThreshold(evaluation *ThresholdEvaluation, media WebRTCMediaMetrics, thresholds Thresholds) {
+	if evaluation == nil || thresholds.MinWebRTCMediaSuccessRate <= 0 || media.Attempts == 0 {
+		return
+	}
+	rate := float64(media.Successes) / float64(media.Attempts)
+	if rate >= thresholds.MinWebRTCMediaSuccessRate {
+		return
+	}
+	evaluation.Passed = false
+	evaluation.Failures = append(evaluation.Failures,
+		fmt.Sprintf("WebRTC media success rate %.2f%% is below threshold %.2f%% (%d/%d)",
+			rate*100, thresholds.MinWebRTCMediaSuccessRate*100, media.Successes, media.Attempts))
 }

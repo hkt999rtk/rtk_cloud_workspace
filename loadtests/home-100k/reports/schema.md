@@ -81,8 +81,14 @@ The public `home-100k.sh` workflow also persists:
 - `workflow-status.log`
 - `resource-samples/load-vms.tsv`
 - `resource-samples/k8s-nodes.tsv`
-- `video/load-results.json` when `HOME100K_SCENARIO_PROFILE=video-1k-v1`
-  enables the video runner
+- `video/load-results.json` when a single-step video profile enables the video
+  runner
+- `video/step-<viewers>/load-results.json` when a single-host video ladder
+  profile enables multiple WebRTC viewer steps
+- `video/step-<viewers>/device/load-results.json` and
+  `video/step-<viewers>/app-viewer/load-results.json` when the two-host video
+  runner splits long-lived device websocket owners from app/viewer WebRTC
+  sessions
 
 The report generator must summarize load-generator VM and per-Kubernetes-node
 resource usage from those files.
@@ -92,6 +98,15 @@ For the `video-1k-v1` profile, `aggregate` reads
 `e2e_test/video_cloud/load/scripts/run_video_loadtest.sh` and folds it into
 `video_evidence`. This reuses the workspace-owned video runner instead of
 adding WebRTC media logic to the home MQTT/shadow runner.
+
+For the `video-50k-turn-v1` and `video-100k-turn-v1` profiles, `aggregate`
+reads every `<out-dir>/video/step-*` directory, preserves a
+`video_evidence.steps` entry per viewer step, and also emits aggregate
+WebRTC/TURN/media totals. Each step may be either a single `load-results.json`
+or a two-host layout with `device/` and `app-viewer/` subdirectories. The
+default ladder is `100,500,1000,2000,5000` viewers with relay-only H.264 media.
+TURN is a UDP relay for encrypted DTLS-SRTP packets; coturn does not terminate
+DTLS or inspect RTP/H.264 payloads.
 
 Live reports must also render the generator runtime limits used for the run:
 
@@ -169,14 +184,20 @@ Each target-window result must include:
 - `bytes_sent`
 - `bytes_received`
 
-## Required Video Evidence For `video-1k-v1`
+## Required Video Evidence For Video Profiles
 
-The `video-1k-v1` plan must include:
+The `video-1k-v1`, `video-50k-turn-v1`, and `video-100k-turn-v1` plans must
+include:
 
-- `video_profile.name`: `video-1k-v1`
-- `video_profile.video_devices`: default `100`
-- `video_profile.video_viewers`: default `100`
+- `video_profile.name`
+- `video_profile.video_devices`
+- `video_profile.video_viewers`
 - `video_profile.webrtc_media_set`: default `h264`
+- `video_profile.webrtc_ice_policy`: `relay` for TURN sizing profiles
+- `video_profile.turn_transport`: `udp`
+- `video_profile.media_security`: `dtls-srtp`
+- `video_profile.viewer_ladder` for `video-50k-turn-v1` and
+  `video-100k-turn-v1`
 
 The aggregated report must include `video_evidence`:
 
@@ -203,13 +224,32 @@ The aggregated report must include `video_evidence`:
 - `turn_evidence.coturn_available`
 - `turn_evidence.allocations` when available
 - `turn_evidence.active_sessions` when available
+- `relay_candidate_samples`
+- `non_relay_candidate_samples`
+- `steps[]` for ladder profiles, with the same WebRTC/media/TURN fields per
+  step
 
 Missing WebRTC create/setup/close evidence sets `status=INCOMPLETE`. A
 completed signaling run below the configured functional threshold sets
 `result=FAIL`. When WebRTC media is enabled, missing ICE-connected or
-first-RTP evidence sets `result=FAIL`. Missing external TURN/coturn evidence
-sets `status=INCOMPLETE`; a signaling-only pass must not be reported as media
-capacity success.
+first-RTP evidence sets `result=FAIL`. H.264 and AV media also require first
+H.264 access-unit evidence. Relay-only media requires relay candidate evidence;
+non-relay selected candidates set `result=FAIL`. Missing external TURN/coturn
+evidence sets `status=INCOMPLETE`; a signaling-only pass must not be reported
+as media capacity success. For `video-50k-turn-v1` and `video-100k-turn-v1`,
+missing active-window allocations/sessions sets `status=INCOMPLETE`.
+Active-window TURN evidence may come from coturn/registry server evidence or
+from a `turn-active-samples.tsv` sidecar. The sidecar parser accepts both the
+legacy `time,node,host,udp_sockets,journal_events` TSV shape and the two-host
+sampler `ts,node,udp_sockets,tcp_estab,cpu_mem` shape. Per-step TURN
+allocations/sessions are rendered when a step has its own sidecar; the run-level
+gate requires external TURN evidence for the profile, not a hand-authored
+summary. `video-50k-turn-v1` and `video-100k-turn-v1` media runs also require
+multi-pod WebRTC signaling-store evidence from `video_cloud_api`: running API
+pods must be at least two, and Redis-compatible signaling store
+enabled/address/prefix counters must cover every running API pod. Missing or
+single-replica signaling-store evidence sets `status=INCOMPLETE` because the run
+cannot be used as coturn capacity evidence.
 
 ## Required Client Target Coverage
 
@@ -352,6 +392,13 @@ must not require that legacy table.
 `CLOUD_LOGGER_ENDPOINT` and `CLOUD_LOGGER_INGEST_TOKEN` are exported. The query
 must not expose the logger token in shell arguments or reports; reports show
 only availability, details, and parsed counters.
+
+EMQX connection correlation should prefer run-scoped counters when they are
+available and credible. If a stale baseline delta undercounts a live run,
+`emqx.metric.client.connected` can be used as active connection evidence. A
+positive overage from shared-cluster activity is reported as a warning, while a
+negative undercount remains a failed correlation unless another credible EMQX
+counter covers the client total.
 
 `host_pod_resources` includes Kubernetes pod placement/readiness and pod CPU and
 memory samples. The report renders Postgres pod CPU/memory p95 from these

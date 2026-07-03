@@ -89,11 +89,46 @@ func RenderReport(input ReportInput) string {
 		fmt.Fprintf(&b, "- Video profile: `%s`\n", input.Plan.VideoProfile.Name)
 		fmt.Fprintf(&b, "- Video devices: %d\n", input.Plan.VideoProfile.VideoDevices)
 		fmt.Fprintf(&b, "- Video viewers: %d\n", input.Plan.VideoProfile.VideoViewers)
+		if len(input.Plan.VideoProfile.ViewerLadder) > 0 {
+			fmt.Fprintf(&b, "- Viewer ladder: `%s`\n", joinInts(input.Plan.VideoProfile.ViewerLadder, ","))
+		}
 		fmt.Fprintf(&b, "- WebRTC media set: `%s`\n", input.Plan.VideoProfile.WebRTCMediaSet)
+		fmt.Fprintf(&b, "- WebRTC ICE policy: `%s`\n", input.Plan.VideoProfile.WebRTCICEPolicy)
+		if input.Plan.VideoProfile.StepDuration != "" {
+			fmt.Fprintf(&b, "- Video step duration: `%s`\n", input.Plan.VideoProfile.StepDuration)
+		}
+		if input.Plan.VideoProfile.StepCooldown != "" {
+			fmt.Fprintf(&b, "- Video step cooldown: `%s`\n", input.Plan.VideoProfile.StepCooldown)
+		}
+		fmt.Fprintf(&b, "- TURN transport: `%s`\n", firstNonEmpty(input.Plan.VideoProfile.TURNTransport, "udp"))
+		fmt.Fprintf(&b, "- Media security: `%s`\n", firstNonEmpty(input.Plan.VideoProfile.MediaSecurity, "dtls-srtp"))
+		fmt.Fprintln(&b, "- TURN/UDP relays encrypted DTLS-SRTP packets; coturn does not terminate DTLS or inspect RTP/H.264 payloads.")
 		fmt.Fprintf(&b, "- Device actor: `%s`\n", input.Plan.VideoProfile.DeviceActorRole)
 		fmt.Fprintf(&b, "- App actor: `%s`\n", input.Plan.VideoProfile.AppActorRole)
 		fmt.Fprintf(&b, "- Viewer actor: `%s`\n", input.Plan.VideoProfile.ViewerActorRole)
 		fmt.Fprintln(&b)
+		if len(input.VideoEvidence.Steps) > 1 {
+			fmt.Fprintln(&b, "## Video Ladder")
+			fmt.Fprintln(&b, "| Step | Viewers | ICE policy | WebRTC success | Media success | first RTP p95 | first H.264 AU p95 | Relay samples | Non-relay samples | TURN allocations | TURN sessions |")
+			fmt.Fprintln(&b, "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+			for _, step := range input.VideoEvidence.Steps {
+				mediaRate := percentInt64(step.WebRTCMedia.Successes, step.WebRTCMedia.Attempts)
+				fmt.Fprintf(&b, "| %s | %d | %s | %.2f%% | %.2f%% | %d ms | %d ms | %d | %d | %d | %d |\n",
+					firstNonEmpty(step.Name, fmt.Sprintf("%d-viewers", step.Viewers)),
+					step.Viewers,
+					firstNonEmpty(step.ICEPolicy, "-"),
+					step.WebRTC.SuccessRatePercent,
+					mediaRate,
+					step.WebRTCMedia.TimeToFirstRTPP95MS,
+					step.WebRTCMedia.Startup.AppRequestToFirstH264AccessUnitP95MS,
+					step.RelayCandidateSamples,
+					step.NonRelayCandidateSamples,
+					step.TURN.Allocations,
+					step.TURN.ActiveSessions,
+				)
+			}
+			fmt.Fprintln(&b)
+		}
 
 		fmt.Fprintln(&b, "## WebRTC Totals")
 		fmt.Fprintln(&b, "| Phase | Attempts | Success | Success rate |")
@@ -121,6 +156,25 @@ func RenderReport(input ReportInput) string {
 			fmt.Fprintf(&b, "- Opus packets received: %d\n", input.VideoEvidence.WebRTCMedia.OpusPacketsReceived)
 			fmt.Fprintf(&b, "- Opus bytes received: %d\n", input.VideoEvidence.WebRTCMedia.OpusBytesReceived)
 			fmt.Fprintln(&b)
+			if input.VideoEvidence.WebRTCMedia.Startup.AppRequestToFirstRTPP95MS > 0 || input.VideoEvidence.WebRTCMedia.Startup.AppRequestToFirstH264AccessUnitP95MS > 0 {
+				startup := input.VideoEvidence.WebRTCMedia.Startup
+				fmt.Fprintln(&b, "## Video Startup Latency")
+				fmt.Fprintf(&b, "- Samples: %d\n", startup.Samples)
+				fmt.Fprintf(&b, "- H.264 access unit samples: %d\n", startup.H264AccessUnitSamples)
+				fmt.Fprintf(&b, "- App request -> first RTP p50: %d ms\n", startup.AppRequestToFirstRTPP50MS)
+				fmt.Fprintf(&b, "- App request -> first RTP p95: %d ms\n", startup.AppRequestToFirstRTPP95MS)
+				fmt.Fprintf(&b, "- App request -> first RTP p99: %d ms\n", startup.AppRequestToFirstRTPP99MS)
+				fmt.Fprintf(&b, "- App request -> first H.264 access unit p50: %d ms\n", startup.AppRequestToFirstH264AccessUnitP50MS)
+				fmt.Fprintf(&b, "- App request -> first H.264 access unit p95: %d ms\n", startup.AppRequestToFirstH264AccessUnitP95MS)
+				fmt.Fprintf(&b, "- App request -> first H.264 access unit p99: %d ms\n", startup.AppRequestToFirstH264AccessUnitP99MS)
+				fmt.Fprintf(&b, "- API create p95: %d ms\n", startup.BreakdownP95.APICreateMS)
+				fmt.Fprintf(&b, "- Offer delivery p95: %d ms\n", startup.BreakdownP95.OfferDeliveryMS)
+				fmt.Fprintf(&b, "- Device answer p95: %d ms\n", startup.BreakdownP95.DeviceAnswerMS)
+				fmt.Fprintf(&b, "- ICE connect p95: %d ms\n", startup.BreakdownP95.ICEConnectMS)
+				fmt.Fprintf(&b, "- First RTP after ICE p95: %d ms\n", startup.BreakdownP95.FirstRTPAfterICEMS)
+				fmt.Fprintf(&b, "- First H.264 access unit after RTP p95: %d ms\n", startup.BreakdownP95.FirstH264AccessUnitAfterRTPMS)
+				fmt.Fprintln(&b)
+			}
 		}
 
 		fmt.Fprintln(&b, "## TURN Evidence")
@@ -129,6 +183,8 @@ func RenderReport(input ReportInput) string {
 		fmt.Fprintf(&b, "- coturn available: %t\n", input.VideoEvidence.TURN.CoturnAvailable)
 		fmt.Fprintf(&b, "- allocations: %d\n", input.VideoEvidence.TURN.Allocations)
 		fmt.Fprintf(&b, "- active sessions: %d\n", input.VideoEvidence.TURN.ActiveSessions)
+		fmt.Fprintf(&b, "- relay candidate samples: %d\n", input.VideoEvidence.RelayCandidateSamples)
+		fmt.Fprintf(&b, "- non-relay candidate samples: %d\n", input.VideoEvidence.NonRelayCandidateSamples)
 		fmt.Fprintln(&b)
 	}
 
@@ -873,6 +929,17 @@ func sortedKeys(values map[string]int64) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func joinInts(values []int, sep string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		parts = append(parts, fmt.Sprintf("%d", value))
+	}
+	return strings.Join(parts, sep)
 }
 
 func sortedNestedKeys(values map[string]map[string]int64) []string {

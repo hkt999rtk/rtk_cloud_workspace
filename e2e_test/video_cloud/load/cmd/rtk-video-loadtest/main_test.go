@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/hkt999rtk/rtk_cloud_workspace/e2e_test/video_cloud/load/loadtest"
 )
 
 func TestLoadTokenMapFromFile(t *testing.T) {
@@ -29,5 +31,35 @@ func TestLoadTokenMapRejectsJSONAndFileTogether(t *testing.T) {
 
 	if _, err := loadTokenMapFlag("device-token-map", `{"cam-1":"token-from-json"}`, path); err == nil {
 		t.Fatal("expected ambiguity error")
+	}
+}
+
+func TestRunLoadDefaultsWebRTCMediaOnlySmokeToDeviceRouteSetOff(t *testing.T) {
+	cfg := loadtest.Config{
+		Profile:        loadtest.ProfileSmoke,
+		Actors:         loadtest.ActorDevice + "," + loadtest.ActorViewer,
+		DeviceRouteSet: loadtest.DeviceRouteSetSmoke,
+		WebRTCMediaSet: loadtest.WebRTCMediaSetH264,
+	}
+
+	applyRunLoadDefaults(&cfg, runLoadFlagState{})
+
+	if cfg.DeviceRouteSet != loadtest.DeviceRouteSetOff {
+		t.Fatalf("DeviceRouteSet = %q, want %q", cfg.DeviceRouteSet, loadtest.DeviceRouteSetOff)
+	}
+}
+
+func TestRunLoadPreservesExplicitDeviceRouteSetForWebRTCMediaOnlySmoke(t *testing.T) {
+	cfg := loadtest.Config{
+		Profile:        loadtest.ProfileSmoke,
+		Actors:         loadtest.ActorDevice + "," + loadtest.ActorViewer,
+		DeviceRouteSet: loadtest.DeviceRouteSetSmoke,
+		WebRTCMediaSet: loadtest.WebRTCMediaSetH264,
+	}
+
+	applyRunLoadDefaults(&cfg, runLoadFlagState{deviceRouteSet: true})
+
+	if cfg.DeviceRouteSet != loadtest.DeviceRouteSetSmoke {
+		t.Fatalf("DeviceRouteSet = %q, want explicit %q", cfg.DeviceRouteSet, loadtest.DeviceRouteSetSmoke)
 	}
 }

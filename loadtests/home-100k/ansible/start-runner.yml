@@ -6,6 +6,10 @@
   vars:
     remote_home_100k_dir: "{{ remote_workspace }}/loadtests/home-100k"
   tasks:
+    - name: Wait for SSH before starting runner
+      ansible.builtin.wait_for_connection:
+        timeout: "{{ ssh_ready_timeout | default(300) }}"
+
     - name: Ensure shard output directory exists
       ansible.builtin.file:
         path: "{{ remote_out_dir }}"
@@ -76,7 +80,10 @@
         export KUBECONFIG="{{ remote_env_root }}/state/lke-kubeconfig.yaml"
         export RTK_CLOUD_LKE_KUBECONFIG="{{ remote_env_root }}/state/lke-kubeconfig.yaml"
         export CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT="{{ remote_home_100k_dir }}/bin/cloud-mqtt-test"
-        account_domain="$(awk -F= '/^ACCOUNT_MANAGER_DOMAIN=/ {print $2}' "{{ remote_env_root }}/env/stack.env" | tail -n 1)"
+        account_domain=""
+        if [ -f "{{ remote_env_root }}/env/stack.env" ]; then
+          account_domain="$(awk -F= '/^ACCOUNT_MANAGER_DOMAIN=/ {print $2}' "{{ remote_env_root }}/env/stack.env" | tail -n 1)"
+        fi
         if [ -n "$account_domain" ]; then
           export ACCOUNT_MANAGER_BASE_URL="https://${account_domain}"
         fi
@@ -121,6 +128,7 @@
           --mqtt-concurrency "{{ mqtt_concurrency | default(1000) }}" \
           --command-concurrency "{{ command_concurrency | default(100) }}" \
           --shadow-command-timeout "{{ shadow_command_timeout | default('30s') }}" \
+          --runtime-logs="{{ runtime_logs | default(true) | string | lower }}" \
           --live-runner-timeout-grace "{{ live_runner_timeout_grace | default('') }}" \
           --listen ":18080" \
           > "{{ remote_out_dir }}/runner-daemon.log" 2>&1 &

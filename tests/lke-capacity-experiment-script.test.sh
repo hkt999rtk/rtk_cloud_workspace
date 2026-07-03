@@ -43,8 +43,8 @@ jq -e '
   .mqtt_request_memory == "" and
   .mqtt_limit_memory == "" and
   .emqx_force_shutdown_max_heap_size == "" and
-  .cloud_logger_request_memory == "" and
-  .cloud_logger_limit_memory == "" and
+  .cloud_logger_request_memory == "4Gi" and
+  .cloud_logger_limit_memory == "8Gi" and
   .load_generator_vms == 1 and
   .live_runner_timeout_grace == "15m" and
   .user_concurrency == 16 and

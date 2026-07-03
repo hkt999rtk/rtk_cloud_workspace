@@ -84,6 +84,15 @@ runner_nofile_limit="${HOME100K_RUNNER_NOFILE_LIMIT:-1048576}"
 mqtt_concurrency="${HOME100K_MQTT_CONCURRENCY:-1000}"
 command_concurrency="${HOME100K_COMMAND_CONCURRENCY:-100}"
 shadow_command_timeout="${HOME100K_SHADOW_COMMAND_TIMEOUT:-30s}"
+runtime_logs="${HOME100K_RUNTIME_LOGS:-true}"
+if [[ "$runtime_logs" != "true" && "$runtime_logs" != "TRUE" && "$runtime_logs" != "1" ]]; then
+  case "$scenario_profile" in
+    video-50k-turn-v1|video-100k-turn-v1)
+      echo "HOME100K_RUNTIME_LOGS must be true for $scenario_profile; TURN sizing reports require run-scoped shadow runtime evidence." >&2
+      exit 2
+      ;;
+  esac
+fi
 live_runner_timeout_grace="${HOME100K_LIVE_RUNNER_TIMEOUT_GRACE:-}"
 device_session_model="${HOME100K_DEVICE_SESSION_MODEL:-lifetime-subscription}"
 runner_read_model="${HOME100K_RUNNER_READ_MODEL:-go-netpoll-bounded-reader-goroutine}"
@@ -103,11 +112,20 @@ generator_hosts_override_ip="${HOME100K_GENERATOR_HOSTS_OVERRIDE_IP:-}"
 video_loadtest="${HOME100K_VIDEO_LOADTEST:-auto}"
 video_loadtest_script="${HOME100K_VIDEO_LOADTEST_SCRIPT:-$repo_root/e2e_test/video_cloud/load/scripts/run_video_loadtest.sh}"
 video_loadtest_artifact_dir="${HOME100K_VIDEO_LOADTEST_ARTIFACT_DIR:-$repo_root/$out_dir/video}"
+video_loadtest_brandname="${HOME100K_VIDEO_LOADTEST_BRANDNAME:-$brandname}"
 video_loadtest_viewers="${HOME100K_VIDEO_LOADTEST_VIEWERS:-100}"
 video_loadtest_devices="${HOME100K_VIDEO_LOADTEST_DEVICES:-100}"
-video_loadtest_concurrency="${HOME100K_VIDEO_LOADTEST_CONCURRENCY:-10}"
+video_loadtest_concurrency="${HOME100K_VIDEO_LOADTEST_CONCURRENCY:-}"
+video_loadtest_ladder="${HOME100K_VIDEO_LOADTEST_LADDER:-}"
+video_loadtest_step_cooldown="${HOME100K_VIDEO_LOADTEST_STEP_COOLDOWN:-0s}"
+video_loadtest_turn_sample_interval="${HOME100K_VIDEO_LOADTEST_TURN_SAMPLE_INTERVAL_SECONDS:-5}"
+video_loadtest_token_concurrency="${HOME100K_VIDEO_LOADTEST_TOKEN_CONCURRENCY:-32}"
+video_loadtest_token_expiry_seconds="${HOME100K_VIDEO_LOADTEST_TOKEN_EXPIRY_SECONDS:-1800}"
+video_loadtest_token_request_timeout="${HOME100K_VIDEO_LOADTEST_TOKEN_REQUEST_TIMEOUT:-30s}"
 video_loadtest_media_set="${HOME100K_VIDEO_LOADTEST_WEBRTC_MEDIA_SET:-h264}"
+video_loadtest_ice_policy="${HOME100K_VIDEO_LOADTEST_WEBRTC_ICE_POLICY:-relay}"
 video_loadtest_duration="${HOME100K_VIDEO_LOADTEST_DURATION:-30s}"
+video_loadtest_device_online_settle="${HOME100K_VIDEO_LOADTEST_DEVICE_ONLINE_SETTLE:-}"
 token_only_base_url="${HOME100K_TOKEN_ONLY_BASE_URL:-${video_cloud_token_url:-${video_cloud_public_url:-}}}"
 token_only_requests="${HOME100K_TOKEN_ONLY_REQUESTS:-1000}"
 token_only_concurrency="${HOME100K_TOKEN_ONLY_CONCURRENCY:-100}"
@@ -164,7 +182,7 @@ Defaults can be overridden with:
   HOME100K_ENV_ROOT       default: cloud_env/staging/lke
   HOME100K_BRANDNAME      default: RTK
   HOME100K_BRAND_PLAN     optional multi-brand load-test plan JSON
-  HOME100K_SCENARIO_PROFILE optional scenario profile, e.g. video-1k-v1
+  HOME100K_SCENARIO_PROFILE optional scenario profile, e.g. video-1k-v1, video-50k-turn-v1, video-100k-turn-v1
   HOME100K_REGION         default: us-sea
   HOME100K_VM_LABEL_PREFIX default: lg; load-generator VM labels are <prefix>01..<prefix>NN
   HOME100K_RUN_ID         default: current UTC timestamp
@@ -190,6 +208,7 @@ Defaults can be overridden with:
   HOME100K_MQTT_CONCURRENCY default: 1000 per VM shard; live MQTT connect worker concurrency
   HOME100K_COMMAND_CONCURRENCY default: 100 per VM shard; live shadow command concurrency
   HOME100K_SHADOW_COMMAND_TIMEOUT default: 30s; per-phase shadow command wait timeout
+  HOME100K_RUNTIME_LOGS default: true; set false for large sustained loads to avoid MQTT /logs ingestion pressure
   HOME100K_LIVE_RUNNER_TIMEOUT_GRACE optional; defaults to max(10m, live duration / 4) before killing a shard runner
   HOME100K_DEVICE_SESSION_MODEL default: lifetime-subscription; device MQTT subscriptions stay open for device lifetime
   HOME100K_RUNNER_READ_MODEL default: go-netpoll-bounded-reader-goroutine; sustained async MQTT reads
@@ -204,10 +223,18 @@ Defaults can be overridden with:
   HOME100K_MQTT_PUBLIC_LB_COUNT limits auto-public-mqtt endpoint count; current 9K profile uses 1
   HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL optional public Video Cloud API base URL for remote generators
   HOME100K_VIDEO_CLOUD_TOKEN_BASE_URL optional mTLS/device Video Cloud token bootstrap base URL
-  HOME100K_VIDEO_LOADTEST auto/off/on; auto runs for HOME100K_SCENARIO_PROFILE=video-1k-v1
+  HOME100K_VIDEO_LOADTEST auto/off/on; auto runs for HOME100K_SCENARIO_PROFILE=video-1k-v1, video-50k-turn-v1, or video-100k-turn-v1
+  HOME100K_VIDEO_LOADTEST_BRANDNAME optional brand used to mint video load-test tokens
   HOME100K_VIDEO_LOADTEST_VIEWERS default: 100
-  HOME100K_VIDEO_LOADTEST_CONCURRENCY default: 10
+  HOME100K_VIDEO_LOADTEST_LADDER optional comma-separated viewer steps, e.g. 100,500,1000,2000,5000
+  HOME100K_VIDEO_LOADTEST_STEP_COOLDOWN default: 0s
+  HOME100K_VIDEO_LOADTEST_TURN_SAMPLE_INTERVAL_SECONDS default: 5
+  HOME100K_VIDEO_LOADTEST_TOKEN_CONCURRENCY default: 32
+  HOME100K_VIDEO_LOADTEST_TOKEN_EXPIRY_SECONDS default: 1800
+  HOME100K_VIDEO_LOADTEST_CONCURRENCY optional override; default: each ladder step uses its viewer/device count for concurrency
   HOME100K_VIDEO_LOADTEST_WEBRTC_MEDIA_SET default: h264
+  HOME100K_VIDEO_LOADTEST_WEBRTC_ICE_POLICY default: relay
+  HOME100K_VIDEO_LOADTEST_DEVICE_ONLINE_SETTLE optional delay after WebSocket device owners connect before viewer requests
   HOME100K_GENERATOR_HOSTS_OVERRIDE_IP optional /etc/hosts IPv4 override for staging HTTPS hostnames on generators
   HOME100K_TOKEN_ONLY_BASE_URL optional base URL for token-only; defaults to token/public Video Cloud URL
   HOME100K_TOKEN_ONLY_PROFILE optional comma-separated concurrency stages, e.g. 1000,5000,10000
@@ -353,19 +380,24 @@ node_resource_status() {
   if [[ "${HOME100K_NODE_RESOURCE_STATUS:-1}" == "0" || ! -f "$nodes_file" ]]; then
     return
   fi
-  ensure_resource_logs
   local now phase
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   phase="starting"
   if [[ -f "$status_file" ]]; then
     phase="$(cat "$status_file")"
   fi
+  case "$phase" in
+    starting|provision-vms|sync)
+      return
+      ;;
+  esac
+  ensure_resource_logs
   while IFS=$'\t' read -r label ip role id; do
     if [[ "$label" == "label" || -z "$ip" ]]; then
       continue
     fi
     local sample
-    sample="$(ssh -n -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$ssh_known_hosts_file" -i "$ssh_key" "${ssh_user}@${ip}" \
+    sample="$(ssh -n -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=1 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$ssh_known_hosts_file" -i "$ssh_key" "${ssh_user}@${ip}" \
       'read _ u n s i w irq sirq steal guest guestn < /proc/stat; total1=$((u+n+s+i+w+irq+sirq+steal)); idle1=$((i+w)); sleep 1; read _ u n s i w irq sirq steal guest guestn < /proc/stat; total2=$((u+n+s+i+w+irq+sirq+steal)); idle2=$((i+w)); awk -v t1=$total1 -v t2=$total2 -v i1=$idle1 -v i2=$idle2 "BEGIN {dt=t2-t1; di=i2-i1; if (dt>0) printf \"cpu_pct=%.1f \", 100*(dt-di)/dt; else printf \"cpu_pct=unknown \"}"; awk "{printf \"load1=%s \", \$1}" /proc/loadavg; free -m | awk "/^Mem:/ {printf \"mem_used_mb=%s mem_total_mb=%s \", \$3, \$2}"; df -h / | awk "NR==2 {printf \"disk_used=%s disk_total=%s disk_pct=%s\", \$3, \$2, \$5}"' 2>/dev/null || true)"
     if [[ -z "$sample" ]]; then
       sample="unreachable"
@@ -406,6 +438,13 @@ k8s_kubeconfig() {
     fi
   done
   return 1
+}
+
+local_env_root_path() {
+  case "$env_root" in
+    /*) printf '%s\n' "$env_root" ;;
+    *) printf '%s/%s\n' "$repo_root" "$env_root" ;;
+  esac
 }
 
 export_kubeconfig_if_available() {
@@ -682,13 +721,215 @@ video_loadtest_enabled() {
       return 1
       ;;
     auto|"")
-      [[ "$scenario_profile" == "video-1k-v1" ]]
+      [[ "$scenario_profile" == "video-1k-v1" || "$scenario_profile" == "video-50k-turn-v1" || "$scenario_profile" == "video-100k-turn-v1" ]]
       ;;
     *)
       echo "invalid HOME100K_VIDEO_LOADTEST: $video_loadtest" >&2
       return 2
       ;;
   esac
+}
+
+max_video_token_devices() {
+  local max="$video_loadtest_devices"
+  local item
+  if [[ -n "$video_loadtest_ladder" ]]; then
+    IFS=',' read -ra ladder_items <<<"$video_loadtest_ladder"
+    for item in "${ladder_items[@]}"; do
+      item="${item//[[:space:]]/}"
+      if [[ ! "$item" =~ ^[0-9]+$ || "$item" -le 0 ]]; then
+        echo "invalid HOME100K_VIDEO_LOADTEST_LADDER item: $item" >&2
+        return 2
+      fi
+      if (( item > max )); then
+        max="$item"
+      fi
+    done
+  fi
+  printf '%s\n' "$max"
+}
+
+ensure_video_loadtest_tokens() {
+  local max_devices="$1"
+  local token_env="$video_loadtest_artifact_dir/token-env.sh"
+  if [[ -z "${VIDEO_CLOUD_LOAD_DEVICE_IDS:-}" ]] || \
+     [[ -z "${VIDEO_CLOUD_LOAD_DEVICE_TOKENS:-}" && -z "${VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE:-}" ]] || \
+     [[ -z "${VIDEO_CLOUD_LOAD_APP_TOKENS:-}" && -z "${VIDEO_CLOUD_LOAD_APP_TOKEN_MAP_FILE:-}" ]]; then
+    mkdir -p "$video_loadtest_artifact_dir"
+    local token_args=(
+      video-loadtest-tokens
+      --env-root "$(local_env_root_path)" \
+      --brandname "$video_loadtest_brandname" \
+      --max-devices "$max_devices" \
+      --require-devices "$max_devices" \
+      --expiry-seconds "$video_loadtest_token_expiry_seconds" \
+      --concurrency "$video_loadtest_token_concurrency" \
+      --request-timeout "$video_loadtest_token_request_timeout" \
+      --out-env "$token_env"
+    )
+    if [[ -n "$brand_plan" ]]; then
+      token_args+=(--brand-plan "$brand_plan")
+    fi
+    if ! (cd "$repo_root/scripts/go/rtk-cloud" && GOWORK=off go run . "${token_args[@]}"); then
+      echo "video loadtest token generation failed" >&2
+      return 1
+    fi
+    if [[ ! -s "$token_env" ]]; then
+      echo "video loadtest token env was not written: $token_env" >&2
+      return 1
+    fi
+    # shellcheck disable=SC1090
+    source "$token_env"
+  fi
+}
+
+coturn_vm_rows() {
+  local env_root_json
+  env_root_json="$(local_env_root_path)"
+  python3 - "$env_root_json" <<'PY'
+import json, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+summary = root / "artifacts" / "coturn-vm" / "coturn-vms.json"
+single = root / "artifacts" / "coturn-vm" / "coturn-vm.json"
+items = []
+if summary.exists():
+    data = json.load(summary.open())
+    items = data.get("coturn_vms") or []
+elif single.exists():
+    data = json.load(single.open())
+    items = [data.get("coturn_vm") or data]
+for item in items:
+    name = (item.get("name") or item.get("label") or "coturn").strip()
+    ip = (item.get("public_ip") or "").strip()
+    domain = (item.get("domain") or "").strip()
+    if ip or domain:
+        print("\t".join([name, ip, domain]))
+PY
+}
+
+start_coturn_active_sampler() {
+  local artifact_dir="$1"
+  local sample_file="$artifact_dir/turn-active-samples.tsv"
+  local rows_file="$artifact_dir/coturn-vms.tsv"
+  mkdir -p "$artifact_dir"
+  coturn_vm_rows >"$rows_file" || true
+  if [[ ! -s "$rows_file" ]]; then
+    return 0
+  fi
+  {
+    printf 'time\tnode\thost\tudp_sockets\tjournal_events\n'
+  } >"$sample_file"
+  (
+    while true; do
+      local now
+      now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      while IFS=$'\t' read -r node ip domain; do
+        [[ -n "${node:-}" ]] || continue
+        local host="${ip:-$domain}"
+        [[ -n "$host" ]] || continue
+        local sample
+        sample="$(ssh -n -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=1 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$ssh_known_hosts_file" -i "$ssh_key" "${ssh_user}@${host}" \
+          'udp=$(ss -Huanp 2>/dev/null | awk "/turnserver/ {c++} END {print c+0}"); events=$(journalctl -u coturn --since "1 minutes ago" --no-pager 2>/dev/null | grep -Eci "session|allocation|peer|relay" || true); printf "%s\t%s" "$udp" "$events"' 2>/dev/null || true)"
+        if [[ -z "$sample" ]]; then
+          sample="0"$'\t'"0"
+        fi
+        printf '%s\t%s\t%s\t%s\n' "$now" "$node" "$host" "$sample" >>"$sample_file"
+      done <"$rows_file"
+      sleep "$video_loadtest_turn_sample_interval"
+    done
+  ) >/dev/null 2>&1 &
+  printf '%s\n' "$!"
+}
+
+video_loadtest_first_device_ids() {
+  local limit="$1"
+  local raw="${VIDEO_CLOUD_LOAD_DEVICE_IDS:-}"
+  if [[ -z "$raw" ]]; then
+    return 0
+  fi
+  awk -v limit="$limit" '
+    BEGIN { RS = ","; ORS = "" }
+    NR <= limit {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+      if ($0 == "") {
+        next
+      }
+      if (count > 0) {
+        printf ","
+      }
+      printf "%s", $0
+      count++
+    }
+  ' <<<"$raw"
+}
+
+video_loadtest_device_id_count() {
+  local raw="$1"
+  if [[ -z "$raw" ]]; then
+    printf '0\n'
+    return 0
+  fi
+  awk '
+    BEGIN { RS = "," }
+    {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+      if ($0 != "") {
+        count++
+      }
+    }
+    END { print count + 0 }
+  ' <<<"$raw"
+}
+
+run_video_loadtest_once() {
+  local artifact_dir="$1"
+  local viewers="$2"
+  local devices="$3"
+  local step_run_id="$4"
+  mkdir -p "$artifact_dir"
+  local sampler_pid=""
+  sampler_pid="$(start_coturn_active_sampler "$artifact_dir" || true)"
+  local step_device_ids=""
+  step_device_ids="$(video_loadtest_first_device_ids "$devices")"
+  local step_device_count
+  step_device_count="$(video_loadtest_device_id_count "$step_device_ids")"
+  if (( step_device_count < devices )); then
+    echo "video loadtest device inventory insufficient for step: requested_devices=$devices available_devices=$step_device_count; check HOME100K_BRAND_PLAN/HOME100K_VIDEO_LOADTEST_BRANDNAME token inventory" >&2
+    if [[ -n "$sampler_pid" ]]; then
+      kill "$sampler_pid" >/dev/null 2>&1 || true
+      wait "$sampler_pid" >/dev/null 2>&1 || true
+    fi
+    return 1
+  fi
+  local device_concurrency="${VIDEO_CLOUD_LOAD_DEVICE_CONCURRENCY:-${video_loadtest_concurrency:-$devices}}"
+  local viewer_concurrency="${VIDEO_CLOUD_LOAD_VIEWER_CONCURRENCY:-${video_loadtest_concurrency:-$viewers}}"
+  local rc=0
+  VIDEO_CLOUD_LOAD_RUN_ID="${VIDEO_CLOUD_LOAD_RUN_ID:-$step_run_id}" \
+  VIDEO_CLOUD_LOAD_ARTIFACT_DIR="$artifact_dir" \
+  VIDEO_CLOUD_LOAD_PROFILE="${VIDEO_CLOUD_LOAD_PROFILE:-safe-staging}" \
+  VIDEO_CLOUD_LOAD_ACTORS="${VIDEO_CLOUD_LOAD_ACTORS:-device,viewer}" \
+  VIDEO_CLOUD_LOAD_APP_ROUTE_SET="${VIDEO_CLOUD_LOAD_APP_ROUTE_SET:-smoke}" \
+  VIDEO_CLOUD_LOAD_DEVICE_ROUTE_SET="${VIDEO_CLOUD_LOAD_DEVICE_ROUTE_SET:-off}" \
+  VIDEO_CLOUD_LOAD_DEVICE_TRANSPORT_SET="${VIDEO_CLOUD_LOAD_DEVICE_TRANSPORT_SET:-smoke}" \
+  VIDEO_CLOUD_LOAD_VIEWER_ROUTE_SET="${VIDEO_CLOUD_LOAD_VIEWER_ROUTE_SET:-smoke}" \
+  VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_SET="${VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_SET:-$video_loadtest_media_set}" \
+  VIDEO_CLOUD_LOAD_WEBRTC_ICE_POLICY="${VIDEO_CLOUD_LOAD_WEBRTC_ICE_POLICY:-$video_loadtest_ice_policy}" \
+  VIDEO_CLOUD_LOAD_DURATION="${VIDEO_CLOUD_LOAD_DURATION:-$video_loadtest_duration}" \
+  VIDEO_CLOUD_LOAD_DEVICE_ONLINE_SETTLE="${VIDEO_CLOUD_LOAD_DEVICE_ONLINE_SETTLE:-$video_loadtest_device_online_settle}" \
+  VIDEO_CLOUD_LOAD_HTTP_TIMEOUT="${VIDEO_CLOUD_LOAD_HTTP_TIMEOUT:-60s}" \
+  VIDEO_CLOUD_LOAD_VIRTUAL_DEVICES="$devices" \
+  VIDEO_CLOUD_LOAD_VIRTUAL_VIEWERS="$viewers" \
+  VIDEO_CLOUD_LOAD_DEVICE_IDS="$step_device_ids" \
+  VIDEO_CLOUD_LOAD_DEVICE_CONCURRENCY="$device_concurrency" \
+  VIDEO_CLOUD_LOAD_VIEWER_CONCURRENCY="$viewer_concurrency" \
+  VIDEO_CLOUD_LOAD_API_URL="${VIDEO_CLOUD_LOAD_API_URL:-$video_cloud_public_url}" \
+  "$video_loadtest_script" || rc=$?
+  if [[ -n "$sampler_pid" ]]; then
+    kill "$sampler_pid" >/dev/null 2>&1 || true
+    wait "$sampler_pid" >/dev/null 2>&1 || true
+  fi
+  return "$rc"
 }
 
 run_video_loadtest_step() {
@@ -699,37 +940,28 @@ run_video_loadtest_step() {
     echo "video loadtest script not executable: $video_loadtest_script" >&2
     return 1
   fi
-  mkdir -p "$video_loadtest_artifact_dir"
   set_phase "run-video-loadtest"
-  local token_env="$video_loadtest_artifact_dir/token-env.sh"
-  if [[ -z "${VIDEO_CLOUD_LOAD_DEVICE_IDS:-}" ]] || \
-     [[ -z "${VIDEO_CLOUD_LOAD_DEVICE_TOKENS:-}" && -z "${VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE:-}" ]] || \
-     [[ -z "${VIDEO_CLOUD_LOAD_APP_TOKENS:-}" && -z "${VIDEO_CLOUD_LOAD_APP_TOKEN_MAP_FILE:-}" ]]; then
-    (cd "$repo_root/scripts/go/rtk-cloud" && GOWORK=off go run . video-loadtest-tokens \
-      --env-root "$repo_root/$env_root" \
-      --brandname "$brandname" \
-      --max-devices "$video_loadtest_devices" \
-      --out-env "$token_env")
-    # shellcheck disable=SC1090
-    source "$token_env"
+  local max_devices
+  max_devices="$(max_video_token_devices)"
+  ensure_video_loadtest_tokens "$max_devices" || return $?
+  if [[ -z "$video_loadtest_ladder" ]]; then
+    run_video_loadtest_once "$video_loadtest_artifact_dir" "$video_loadtest_viewers" "$video_loadtest_devices" "$run_id"
+    return $?
   fi
-  VIDEO_CLOUD_LOAD_RUN_ID="${VIDEO_CLOUD_LOAD_RUN_ID:-$run_id}" \
-  VIDEO_CLOUD_LOAD_ARTIFACT_DIR="$video_loadtest_artifact_dir" \
-  VIDEO_CLOUD_LOAD_PROFILE="${VIDEO_CLOUD_LOAD_PROFILE:-safe-staging}" \
-  VIDEO_CLOUD_LOAD_ACTORS="${VIDEO_CLOUD_LOAD_ACTORS:-device,viewer}" \
-  VIDEO_CLOUD_LOAD_APP_ROUTE_SET="${VIDEO_CLOUD_LOAD_APP_ROUTE_SET:-smoke}" \
-  VIDEO_CLOUD_LOAD_DEVICE_ROUTE_SET="${VIDEO_CLOUD_LOAD_DEVICE_ROUTE_SET:-off}" \
-  VIDEO_CLOUD_LOAD_DEVICE_TRANSPORT_SET="${VIDEO_CLOUD_LOAD_DEVICE_TRANSPORT_SET:-smoke}" \
-  VIDEO_CLOUD_LOAD_VIEWER_ROUTE_SET="${VIDEO_CLOUD_LOAD_VIEWER_ROUTE_SET:-smoke}" \
-  VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_SET="${VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_SET:-$video_loadtest_media_set}" \
-  VIDEO_CLOUD_LOAD_DURATION="${VIDEO_CLOUD_LOAD_DURATION:-$video_loadtest_duration}" \
-  VIDEO_CLOUD_LOAD_HTTP_TIMEOUT="${VIDEO_CLOUD_LOAD_HTTP_TIMEOUT:-60s}" \
-  VIDEO_CLOUD_LOAD_VIRTUAL_DEVICES="${VIDEO_CLOUD_LOAD_VIRTUAL_DEVICES:-$video_loadtest_devices}" \
-  VIDEO_CLOUD_LOAD_VIRTUAL_VIEWERS="${VIDEO_CLOUD_LOAD_VIRTUAL_VIEWERS:-$video_loadtest_viewers}" \
-  VIDEO_CLOUD_LOAD_DEVICE_CONCURRENCY="${VIDEO_CLOUD_LOAD_DEVICE_CONCURRENCY:-$video_loadtest_concurrency}" \
-  VIDEO_CLOUD_LOAD_VIEWER_CONCURRENCY="${VIDEO_CLOUD_LOAD_VIEWER_CONCURRENCY:-$video_loadtest_concurrency}" \
-  VIDEO_CLOUD_LOAD_API_URL="${VIDEO_CLOUD_LOAD_API_URL:-$video_cloud_public_url}" \
-  "$video_loadtest_script"
+  local item step_dir rc=0
+  IFS=',' read -ra ladder_items <<<"$video_loadtest_ladder"
+  for item in "${ladder_items[@]}"; do
+    item="${item//[[:space:]]/}"
+    step_dir="$video_loadtest_artifact_dir/step-${item}"
+    echo "running video loadtest ladder step viewers=$item artifact_dir=$step_dir" >&2
+    run_video_loadtest_once "$step_dir" "$item" "$item" "$run_id-video-${item}" || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+      return "$rc"
+    fi
+    if [[ "$video_loadtest_step_cooldown" != "0" && "$video_loadtest_step_cooldown" != "0s" ]]; then
+      sleep "$video_loadtest_step_cooldown"
+    fi
+  done
 }
 
 start_status_monitor() {
@@ -800,6 +1032,24 @@ on_script_exit() {
   exit "$rc"
 }
 
+run_live_sync_with_retries() {
+  local max_attempts="${HOME100K_SYNC_RETRIES:-3}"
+  local retry_delay="${HOME100K_SYNC_RETRY_DELAY_SECONDS:-20}"
+  local attempt rc
+  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    if run_home100k sync "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --vm-state-file "$local_vm_state_file" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"; then
+      return 0
+    else
+      rc=$?
+    fi
+    if (( attempt >= max_attempts )); then
+      return "$rc"
+    fi
+    echo "sync attempt $attempt/$max_attempts failed with rc=$rc; retrying in ${retry_delay}s" >&2
+    sleep "$retry_delay"
+  done
+}
+
 command="${1:-workflow-live}"
 if [[ "$command" == "-h" || "$command" == "--help" ]]; then
   usage
@@ -859,6 +1109,7 @@ workflow_args+=("--runner-nofile-limit" "$runner_nofile_limit")
 workflow_args+=("--mqtt-concurrency" "$mqtt_concurrency")
 workflow_args+=("--command-concurrency" "$command_concurrency")
 workflow_args+=("--shadow-command-timeout" "$shadow_command_timeout")
+workflow_args+=("--runtime-logs=$runtime_logs")
 workflow_args+=("--live-runner-timeout-grace" "$live_runner_timeout_grace")
 workflow_args+=("--device-session-model" "$device_session_model")
 workflow_args+=("--runner-read-model" "$runner_read_model")
@@ -924,7 +1175,7 @@ case "$command" in
     ;;
   collect)
     mkdir -p "$local_out_dir"
-    run_home100k collect "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --vm-state-file "$local_vm_state_file" "$@"
+    run_home100k collect "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --vm-state-file "$local_vm_state_file" --ssh-key "$ssh_key" "$@"
     ;;
   run-video-loadtest)
     run_video_loadtest_step "$@"
@@ -981,7 +1232,7 @@ case "$command" in
     run_home100k provision-vms "${base_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --live --confirm-live --authorized-key-file "$authorized_key_file" "$@"
     workflow_status
     set_phase "sync"
-    run_home100k sync "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --vm-state-file "$local_vm_state_file" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
+    run_live_sync_with_retries
     workflow_status
     set_phase "collect-server-baseline"
     export_kubeconfig_if_available
@@ -997,7 +1248,11 @@ case "$command" in
     workflow_status
     set_phase "collect"
     run_home100k collect "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --vm-state-file "$local_vm_state_file" --live --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
-    run_video_loadtest_step || workflow_rc=$?
+    if [[ "$workflow_rc" -eq 0 ]]; then
+      run_video_loadtest_step || workflow_rc=$?
+    else
+      echo "skipping video loadtest because run-stages returned rc=$workflow_rc" >&2
+    fi
     workflow_status
     set_phase "collect-server-evidence"
     export_kubeconfig_if_available
@@ -1050,7 +1305,7 @@ case "$command" in
     shutdown_live_vms_on_exit=1
     start_status_monitor
     set_phase "sync"
-    run_home100k sync "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --vm-state-file "$local_vm_state_file" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
+    run_live_sync_with_retries
     workflow_status
     set_phase "collect-server-baseline"
     export_kubeconfig_if_available
@@ -1066,7 +1321,11 @@ case "$command" in
     workflow_status
     set_phase "collect"
     run_home100k collect "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --vm-state-file "$local_vm_state_file" --live --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"
-    run_video_loadtest_step || workflow_rc=$?
+    if [[ "$workflow_rc" -eq 0 ]]; then
+      run_video_loadtest_step || workflow_rc=$?
+    else
+      echo "skipping video loadtest because run-stages returned rc=$workflow_rc" >&2
+    fi
     workflow_status
     set_phase "collect-server-evidence"
     export_kubeconfig_if_available

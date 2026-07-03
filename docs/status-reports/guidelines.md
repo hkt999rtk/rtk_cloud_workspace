@@ -282,17 +282,20 @@ Positioning：
 
 WebRTC wording：
 
-- `WebRTC signaling readiness`：只有 offer / answer / close route、auth、owner transport evidence。
+- `WebRTC signaling readiness`：只有 ICE preflight / offer create / answer wait / device answer / close route、auth、signaling transport evidence。
 - `live-video readiness`：signaling、device owner transport、representative media path / stream-health evidence 都存在。
 - `video storage/media readiness`：upload、metadata、download authorization、storage/retention evidence 都存在。
 
 Required WebRTC flow：
 
 ```text
-app offer -> POST /api/request_webrtc
-  -> owner transport webrtc_offer
+GET /api/request_webrtc/ice
+  -> app offer
+  -> POST /api/request_webrtc
+  -> signaling transport webrtc_offer
   -> device answer
   -> POST /api/request_webrtc/answer
+  -> GET /api/request_webrtc
   -> app media negotiation
   -> POST /api/request_webrtc/close
 ```

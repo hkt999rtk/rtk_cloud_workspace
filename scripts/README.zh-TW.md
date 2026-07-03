@@ -396,6 +396,10 @@ platform users，或刪除 brand-cloud/end-user 相關 Redis key 讓下一次 qu
   staging acceptance 不消耗 Linode block volume quota。
 - `LKE_GRAFANA_STORAGE`：啟用 persistence 時的 Grafana PVC 大小，預設 `5Gi`。
 - `CLOUD_ADMIN_GRAFANA_BASE_URL`：Cloud Admin 連到 Grafana 的 cluster-internal base URL，例如 `http://video-cloud-grafana.video-cloud-staging-observability.svc.cluster.local:3000`。
+- `LKE_LOKI_IMAGE`：Loki image，預設 `grafana/loki:3.5.1`。
+- `RTK_CLOUD_LOGGER_LOKI_URL`：cloud-logger 寫入的 Loki base URL；未設定時由
+  LKE 指到 private `video-cloud-loki` service。cloud-logger 一律使用 Loki，
+  不支援 in-process store fallback。
 
 Grafana 第一版 dashboard 會優先呈現平台管理者關心的穩定度與流量：
 targets down/up、每個 `brand_cloud_id` 的 MQTT publish/delivery rate 與
@@ -622,6 +626,8 @@ scripts/run-lke-capacity-experiment.sh \
   --node-type g6-standard-2 \
   --mqtt-request-memory 2Gi \
   --mqtt-limit-memory 4Gi \
+  --cloud-logger-request-memory 4Gi \
+  --cloud-logger-limit-memory 8Gi \
   --live \
   --confirm video-cloud-staging
 ```

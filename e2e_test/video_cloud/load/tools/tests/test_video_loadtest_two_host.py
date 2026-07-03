@@ -236,11 +236,128 @@ class VideoLoadTestTwoHostTests(unittest.TestCase):
             self.assertIn("mqtt_light_device_ready_receive", report)
             self.assertNotIn("must-not-leak", report)
 
+    def test_aggregate_webrtc_media_coverage_allows_threshold_tolerated_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result_path = root / "app-viewer-results.json"
+            output = root / "two-host-load-report.md"
+            operations = []
+            successes = 0
+            failures = 0
+            for i in range(10):
+                device_id = f"load-device-{i}"
+                viewer_id = f"viewer-{i}"
+                operations.append(
+                    {
+                        "actor": "viewer",
+                        "name": "webrtc_media_offer",
+                        "device_id": device_id,
+                        "viewer_id": viewer_id,
+                        "success": True,
+                    }
+                )
+                operations.append(
+                    {
+                        "actor": "viewer",
+                        "name": "webrtc_media_answer",
+                        "device_id": device_id,
+                        "viewer_id": viewer_id,
+                        "success": i < 9,
+                        "error_detail": "http 400: device not online",
+                    }
+                )
+                if i < 9:
+                    operations.extend(
+                        [
+                            {
+                                "actor": "viewer",
+                                "name": "webrtc_media_ice_connected",
+                                "device_id": device_id,
+                                "viewer_id": viewer_id,
+                                "success": True,
+                            },
+                            {
+                                "actor": "viewer",
+                                "name": "webrtc_media_first_rtp",
+                                "device_id": device_id,
+                                "viewer_id": viewer_id,
+                                "success": True,
+                            },
+                            {
+                                "actor": "viewer",
+                                "name": "webrtc_media_receive",
+                                "device_id": device_id,
+                                "viewer_id": viewer_id,
+                                "success": True,
+                                "evidence": "packets=8 bytes=40",
+                            },
+                            {
+                                "actor": "viewer",
+                                "name": "webrtc_media_close",
+                                "device_id": device_id,
+                                "viewer_id": viewer_id,
+                                "success": True,
+                            },
+                        ]
+                    )
+            successes = sum(1 for op in operations if op["success"])
+            failures = len(operations) - successes
+            result_path.write_text(
+                json.dumps(
+                    {
+                        "run_id": "run-media",
+                        "instance_id": "run-media-app-viewer",
+                        "profile": "smoke",
+                        "config": {"api_url": "https://video-cloud-cd.local:8443", "actors": "app,viewer"},
+                        "summary": {
+                            "total_operations": len(operations),
+                            "successes": successes,
+                            "failures": failures,
+                            "skips": 0,
+                            "success_rate": successes / len(operations),
+                        },
+                        "actors": {
+                            "viewer": {
+                                "operations": len(operations),
+                                "successes": successes,
+                                "failures": failures,
+                                "skips": 0,
+                            }
+                        },
+                        "operations": operations,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            subprocess.run(
+                [
+                    "python3",
+                    str(AGGREGATE_TOOL),
+                    "--input",
+                    f"app-viewer={result_path}",
+                    "--output",
+                    str(output),
+                ],
+                cwd=REPO_ROOT,
+                check=True,
+            )
+
+            report = output.read_text(encoding="utf-8")
+            self.assertIn("| webrtc_media | PASS |", report)
+            self.assertIn("RTP media received for 9/10 attempted devices", report)
+
     def test_two_host_deploy_dry_run_redacts_tokens_and_assigns_actor_roles(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             binary = Path(tmp) / "rtk-video-loadtest-linux-amd64"
             binary.write_text("#!/bin/sh\n", encoding="utf-8")
             env = os.environ.copy()
+            device_map = Path(tmp) / "device-token-map.json"
+            app_map = Path(tmp) / "app-token-map.json"
+            device_ids_file = Path(tmp) / "device-ids.txt"
+            device_map.write_text('{"load-device-4":"device-file-secret"}\n', encoding="utf-8")
+            app_map.write_text('{"load-device-4":"app-file-secret"}\n', encoding="utf-8")
+            device_ids_file.write_text("load-device-4\n", encoding="utf-8")
             env.update(
                 {
                     "VIDEO_CLOUD_LOAD_API_URL": "https://video-cloud-cd.local:8443",
@@ -249,6 +366,9 @@ class VideoLoadTestTwoHostTests(unittest.TestCase):
                     "VIDEO_CLOUD_LOAD_DEVICE_TOKEN": "device-secret",
                     "VIDEO_CLOUD_LOAD_DEVICE_TOKENS": '{"load-device-0":"device-map-secret-0","load-device-1":"device-map-secret-1"}',
                     "VIDEO_CLOUD_LOAD_APP_TOKENS": '{"load-device-0":"app-map-secret-0","load-device-1":"app-map-secret-1"}',
+                    "VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE": str(device_map),
+                    "VIDEO_CLOUD_LOAD_APP_TOKEN_MAP_FILE": str(app_map),
+                    "VIDEO_CLOUD_LOAD_DEVICE_IDS_FILE": str(device_ids_file),
                     "VIDEO_CLOUD_LOAD_REFRESH_TOKEN": "refresh-secret",
                     "VIDEO_CLOUD_LOAD_ALLOW_STRESS": "1",
                     "VIDEO_CLOUD_LOAD_ALLOW_SOAK": "1",
@@ -270,6 +390,13 @@ class VideoLoadTestTwoHostTests(unittest.TestCase):
                     "VIDEO_CLOUD_LOAD_NEGATIVE_TIMEOUT_PATH": "/__loadtest/timeout",
                     "VIDEO_CLOUD_LOAD_DEVICE_IDS": "load-device-4",
                     "VIDEO_CLOUD_LOAD_RUN_ID": "run-1",
+                    "VIDEO_CLOUD_LOAD_HTTP_TIMEOUT": "45s",
+                    "VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_DURATION": "5s",
+                    "VIDEO_CLOUD_LOAD_APP_CONCURRENCY": "11",
+                    "VIDEO_CLOUD_LOAD_DEVICE_CONCURRENCY": "22",
+                    "VIDEO_CLOUD_LOAD_VIEWER_CONCURRENCY": "33",
+                    "VIDEO_CLOUD_LOAD_DEVICE_ONLINE_SETTLE": "4s",
+                    "VIDEO_CLOUD_LOAD_DEVICE_OWNER_CONNECT_RETRIES": "5",
                 }
             )
             proc = subprocess.run(
@@ -313,9 +440,26 @@ class VideoLoadTestTwoHostTests(unittest.TestCase):
             self.assertIn("VIDEO_CLOUD_LOAD_NEGATIVE_MALFORMED_PATH=/__loadtest/malformed_json", output)
             self.assertIn("VIDEO_CLOUD_LOAD_NEGATIVE_TIMEOUT_PATH=/__loadtest/timeout", output)
             self.assertIn("VIDEO_CLOUD_LOAD_DEVICE_IDS=load-device-4", output)
+            self.assertIn("--http-timeout 45s", output)
+            self.assertIn("--webrtc-media-duration 5s", output)
+            self.assertIn("--app-concurrency 11", output)
+            self.assertIn("--device-concurrency 22", output)
+            self.assertIn("--viewer-concurrency 33", output)
+            self.assertIn("--device-online-settle 4s", output)
+            self.assertIn("--device-owner-connect-retries 5", output)
+            self.assertIn("device-token-map.json", output)
+            self.assertIn("app-token-map.json", output)
+            self.assertIn("--device-token-map-file", output)
+            self.assertIn("--app-token-map-file", output)
+            self.assertIn("device-ids.txt", output)
+            self.assertIn("--device-ids-file", output)
             self.assertIn("stdout.log", output)
             self.assertIn("stderr.log", output)
+            self.assertIn("testsrc2_1080p_2s.h264", output)
+            self.assertIn("testtone_48k_mono_2s.opusframes", output)
+            self.assertIn("cd /opt/rtk-cloud-loadtest", output)
             self.assertIn("VIDEO_CLOUD_LOAD_DEVICE_ONLINE_MODE=websocket", output)
+            self.assertIn("VIDEO_CLOUD_LOAD_DEVICE_ONLINE_MODE=none", output)
             self.assertIn("background device role", output)
             self.assertIn("wait for device role", output)
             self.assertIn("<redacted>", output)
@@ -326,6 +470,8 @@ class VideoLoadTestTwoHostTests(unittest.TestCase):
             self.assertNotIn("device-map-secret-1", output)
             self.assertNotIn("app-map-secret-0", output)
             self.assertNotIn("app-map-secret-1", output)
+            self.assertNotIn("device-file-secret", output)
+            self.assertNotIn("app-file-secret", output)
             self.assertNotIn("refresh-secret", output)
             self.assertNotIn("mqtt-user", output)
             self.assertNotIn("mqtt-pass", output)
