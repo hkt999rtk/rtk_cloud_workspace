@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -56,6 +57,94 @@ func TestVideoRelaySelectionBlocksWithoutVideoDevices(t *testing.T) {
 	}
 	if !containsString(blockers, "no bound camera devices with video_streaming service option") {
 		t.Fatalf("blockers = %v, want no video devices blocker", blockers)
+	}
+}
+
+func TestVideoLoadtestTokenSelectionAggregatesBrandPlanDevices(t *testing.T) {
+	envRoot := t.TempDir()
+	writeVideoRelaySelectionTestData(t, envRoot, "RTK-BRAND-01", "brand01", 2)
+	writeVideoRelaySelectionTestData(t, envRoot, "RTK-BRAND-02", "brand02", 2)
+	planPath := filepath.Join(envRoot, "brand-plan.json")
+	if err := os.WriteFile(planPath, []byte(`{
+		"total_devices": 4,
+		"devices_per_user": 1,
+		"brands": [
+			{"brandname": "RTK-BRAND-01", "devices": 2, "normal_users": 2, "developer_users": {"owner": 1}},
+			{"brandname": "RTK-BRAND-02", "devices": 2, "normal_users": 2, "developer_users": {"owner": 1}}
+		]
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	selected, blockers, err := selectVideoLoadtestTokenDevices(envRoot, "RTK", planPath, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blockers) != 0 {
+		t.Fatalf("blockers = %v, want none", blockers)
+	}
+	if got := strings.Join(deviceIDs(selected), ","); got != "brand01-cam-001,brand01-cam-002,brand02-cam-001" {
+		t.Fatalf("selected devices = %s", got)
+	}
+}
+
+func writeVideoRelaySelectionTestData(t *testing.T, envRoot, brandname, prefix string, count int) {
+	t.Helper()
+	store, err := openTestDataStore(envRoot, brandname)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	users := make([]map[string]any, 0, count)
+	devices := make([]generatedDevice, 0, count)
+	credentials := map[string]testDataDeviceCredential{}
+	assignments := make([]bindAssignment, 0, count)
+	for i := 1; i <= count; i++ {
+		email := fmt.Sprintf("%s-user-%03d@example.test", prefix, i)
+		deviceID := fmt.Sprintf("%s-cam-%03d", prefix, i)
+		users = append(users, map[string]any{
+			"email": email,
+			"app_credentials": map[string]any{
+				"private_key_pem": "-----BEGIN EC PRIVATE KEY-----\nkey\n-----END EC PRIVATE KEY-----",
+				"csr_pem":         "-----BEGIN CERTIFICATE REQUEST-----\ncsr\n-----END CERTIFICATE REQUEST-----",
+			},
+			"app_certificate": map[string]any{
+				"certificate_chain_pem": "-----BEGIN CERTIFICATE-----\ncert\n-----END CERTIFICATE-----",
+			},
+		})
+		device := generatedDevice{
+			DeviceID:       deviceID,
+			DeviceType:     "camera",
+			ServiceOptions: []string{"mqtt", "video_streaming"},
+			DisplayName:    deviceID,
+		}
+		devices = append(devices, device)
+		credentials[deviceID] = testDataDeviceCredential{
+			DeviceID: deviceID,
+			CertPEM:  "CERT",
+			KeyPEM:   "KEY",
+			ChainPEM: "CHAIN",
+		}
+		assignments = append(assignments, bindAssignment{
+			AssignmentIndex: i - 1,
+			AssignedEmail:   email,
+			DeviceID:        deviceID,
+			DeviceType:      "camera",
+			Category:        "ip_camera",
+			ServiceOptions:  []string{"mqtt", "video_streaming"},
+			AccountDeviceID: fmt.Sprintf("%s-account-%03d", prefix, i),
+			OperationID:     fmt.Sprintf("%s-op-%03d", prefix, i),
+			Status:          "provision_requested",
+		})
+	}
+	if err := store.ReplaceUsers(brandname, "org-"+prefix, prefix, "member", users); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReplaceDevices(brandname, "run-1", devices, credentials); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReplaceBindings(brandname, "org-"+prefix, prefix, "run-1", assignments); err != nil {
+		t.Fatal(err)
 	}
 }
 

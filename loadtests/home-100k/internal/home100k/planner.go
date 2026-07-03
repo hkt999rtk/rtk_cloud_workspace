@@ -452,12 +452,15 @@ func deviceMixForScenario(scenario string, devices int) map[string]int {
 			{Name: "smart_meter", Weight: 30},
 		})
 	}
+	if isVideoTurnSizingProfile(scenario) {
+		return proportionalMix(devices, videoTurnSizingDeviceMixBuckets())
+	}
 	return proportionalMix(devices, homeDiverseDeviceMixBuckets())
 }
 
 func deviceProfilesForScenario(scenario string) map[string]DeviceProfile {
 	profiles := homeDiverseDeviceProfiles()
-	if strings.TrimSpace(scenario) == Video1KScenarioProfile {
+	if strings.TrimSpace(scenario) == Video1KScenarioProfile || isVideoTurnSizingProfile(scenario) {
 		profiles["camera"] = DeviceProfile{RatioWeight: 10, TrafficProfile: "event_burst", PayloadClass: "camera_status"}
 	}
 	return profiles
@@ -538,6 +541,22 @@ func homeDiverseDeviceMixBuckets() []ratioBucket {
 		{Name: "security_sensor", Weight: 10},
 		{Name: "smart_meter", Weight: 8},
 		{Name: "camera_status", Weight: 7},
+		{Name: "door_lock", Weight: 4},
+		{Name: "appliance", Weight: 7},
+		{Name: "gateway", Weight: 5},
+	}
+}
+
+func videoTurnSizingDeviceMixBuckets() []ratioBucket {
+	return []ratioBucket{
+		{Name: "light", Weight: 15},
+		{Name: "switch", Weight: 7},
+		{Name: "smart_plug", Weight: 12},
+		{Name: "air_conditioner", Weight: 10},
+		{Name: "environment_sensor", Weight: 12},
+		{Name: "security_sensor", Weight: 10},
+		{Name: "smart_meter", Weight: 8},
+		{Name: "camera", Weight: 10},
 		{Name: "door_lock", Weight: 4},
 		{Name: "appliance", Weight: 7},
 		{Name: "gateway", Weight: 5},

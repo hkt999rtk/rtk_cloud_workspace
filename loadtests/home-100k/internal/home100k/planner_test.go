@@ -143,11 +143,11 @@ func TestVideo100KTurnPlanUsesSingleRampAndViewerLadder(t *testing.T) {
 	if plan.VideoProfile.WebRTCICEPolicy != "relay" || plan.VideoProfile.TURNTransport != "udp" || plan.VideoProfile.MediaSecurity != "dtls-srtp" {
 		t.Fatalf("video turn profile = %+v, want relay UDP DTLS-SRTP", plan.VideoProfile)
 	}
-	if _, ok := plan.DeviceMix["camera"]; ok {
-		t.Fatalf("100K TURN sizing background mix should stay home-diverse MQTT-only, got camera in %#v", plan.DeviceMix)
+	if got := plan.DeviceMix["camera"]; got != 10000 {
+		t.Fatalf("camera devices = %d, want 10000 for TURN video ladder", got)
 	}
-	if got := plan.DeviceMix["camera_status"]; got != 7000 {
-		t.Fatalf("camera_status devices = %d, want 7000 in home-diverse background mix", got)
+	if _, ok := plan.DeviceMix["camera_status"]; ok {
+		t.Fatalf("100K TURN sizing mix should use video-capable camera devices, got camera_status in %#v", plan.DeviceMix)
 	}
 	if plan.VideoProfile.VideoDevices != 5000 || plan.VideoProfile.VideoViewers != 5000 {
 		t.Fatalf("video profile sizing = devices=%d viewers=%d, want 5000/5000", plan.VideoProfile.VideoDevices, plan.VideoProfile.VideoViewers)
@@ -179,11 +179,11 @@ func TestVideo50KTurnPlanUsesSingleRampAndViewerLadder(t *testing.T) {
 	if plan.VideoProfile.WebRTCICEPolicy != "relay" || plan.VideoProfile.TURNTransport != "udp" || plan.VideoProfile.MediaSecurity != "dtls-srtp" {
 		t.Fatalf("video turn profile = %+v, want relay UDP DTLS-SRTP", plan.VideoProfile)
 	}
-	if _, ok := plan.DeviceMix["camera"]; ok {
-		t.Fatalf("50K TURN sizing background mix should stay home-diverse MQTT-only, got camera in %#v", plan.DeviceMix)
+	if got := plan.DeviceMix["camera"]; got != 5000 {
+		t.Fatalf("camera devices = %d, want 5000 for TURN video ladder", got)
 	}
-	if got := plan.DeviceMix["camera_status"]; got != 3500 {
-		t.Fatalf("camera_status devices = %d, want 3500 in home-diverse background mix", got)
+	if _, ok := plan.DeviceMix["camera_status"]; ok {
+		t.Fatalf("50K TURN sizing mix should use video-capable camera devices, got camera_status in %#v", plan.DeviceMix)
 	}
 	if plan.VideoProfile.VideoDevices != 5000 || plan.VideoProfile.VideoViewers != 5000 {
 		t.Fatalf("video profile sizing = devices=%d viewers=%d, want 5000/5000", plan.VideoProfile.VideoDevices, plan.VideoProfile.VideoViewers)

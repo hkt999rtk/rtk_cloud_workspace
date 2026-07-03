@@ -1878,6 +1878,56 @@ printf '%s,%s,%s,%s\n' "$VIDEO_CLOUD_LOAD_VIRTUAL_VIEWERS" "$VIDEO_CLOUD_LOAD_VI
 	}
 }
 
+func TestHome100KScriptVideoLadderFailsWhenDeviceInventoryTooSmall(t *testing.T) {
+	outDir := t.TempDir()
+	videoLog := filepath.Join(outDir, "video.log")
+	videoStub := filepath.Join(outDir, "video-stub.sh")
+	videoStubBody := `#!/usr/bin/env bash
+printf '%s,%s\n' "$VIDEO_CLOUD_LOAD_VIRTUAL_VIEWERS" "$VIDEO_CLOUD_LOAD_VIRTUAL_DEVICES" >> ` + shellQuoteForTest(videoLog) + `
+`
+	if err := os.WriteFile(videoStub, []byte(videoStubBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tokenMap := filepath.Join(outDir, "tokens.json")
+	if err := os.WriteFile(tokenMap, []byte(`{"device-001":"token"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deviceIDs := make([]string, 0, 100)
+	for i := 1; i <= 100; i++ {
+		deviceIDs = append(deviceIDs, fmt.Sprintf("device-%03d", i))
+	}
+
+	script := filepath.Join("..", "..", "scripts", "home-100k.sh")
+	cmd := exec.Command("bash", script, "run-video-loadtest")
+	cmd.Env = home100KTestEnv(
+		"HOME100K_RUN_ID=test-video-ladder-inventory",
+		"HOME100K_OUT_DIR="+filepath.Join(outDir, "report"),
+		"HOME100K_SCENARIO_PROFILE=video-50k-turn-v1",
+		"HOME100K_VIDEO_LOADTEST=on",
+		"HOME100K_VIDEO_LOADTEST_SCRIPT="+videoStub,
+		"HOME100K_VIDEO_LOADTEST_ARTIFACT_DIR="+filepath.Join(outDir, "video"),
+		"HOME100K_VIDEO_LOADTEST_LADDER=100,500",
+		"HOME100K_VIDEO_LOADTEST_STEP_COOLDOWN=0s",
+		"VIDEO_CLOUD_LOAD_DEVICE_IDS="+strings.Join(deviceIDs, ","),
+		"VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE="+tokenMap,
+		"VIDEO_CLOUD_LOAD_APP_TOKEN_MAP_FILE="+tokenMap,
+	)
+	raw, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("run-video-loadtest unexpectedly passed\n%s", raw)
+	}
+	if !strings.Contains(string(raw), "video loadtest device inventory insufficient for step: requested_devices=500 available_devices=100") {
+		t.Fatalf("output missing inventory failure:\n%s", raw)
+	}
+	logRaw, err := os.ReadFile(videoLog)
+	if err != nil {
+		t.Fatalf("read video log: %v", err)
+	}
+	if got := strings.TrimSpace(string(logRaw)); got != "100,100" {
+		t.Fatalf("video stub log = %q, want only step-100 before inventory failure", got)
+	}
+}
+
 func TestHome100KScriptUsesAbsoluteEnvRootKubeconfigForServerEvidence(t *testing.T) {
 	outDir := t.TempDir()
 	envRoot := filepath.Join(outDir, "env-root")

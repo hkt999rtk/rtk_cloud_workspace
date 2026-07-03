@@ -755,13 +755,20 @@ ensure_video_loadtest_tokens() {
      [[ -z "${VIDEO_CLOUD_LOAD_DEVICE_TOKENS:-}" && -z "${VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE:-}" ]] || \
      [[ -z "${VIDEO_CLOUD_LOAD_APP_TOKENS:-}" && -z "${VIDEO_CLOUD_LOAD_APP_TOKEN_MAP_FILE:-}" ]]; then
     mkdir -p "$video_loadtest_artifact_dir"
-    if ! (cd "$repo_root/scripts/go/rtk-cloud" && GOWORK=off go run . video-loadtest-tokens \
+    local token_args=(
+      video-loadtest-tokens
       --env-root "$(local_env_root_path)" \
       --brandname "$video_loadtest_brandname" \
       --max-devices "$max_devices" \
+      --require-devices "$max_devices" \
       --expiry-seconds "$video_loadtest_token_expiry_seconds" \
       --concurrency "$video_loadtest_token_concurrency" \
-      --out-env "$token_env"); then
+      --out-env "$token_env"
+    )
+    if [[ -n "$brand_plan" ]]; then
+      token_args+=(--brand-plan "$brand_plan")
+    fi
+    if ! (cd "$repo_root/scripts/go/rtk-cloud" && GOWORK=off go run . "${token_args[@]}"); then
       echo "video loadtest token generation failed" >&2
       return 1
     fi
@@ -855,6 +862,24 @@ video_loadtest_first_device_ids() {
   ' <<<"$raw"
 }
 
+video_loadtest_device_id_count() {
+  local raw="$1"
+  if [[ -z "$raw" ]]; then
+    printf '0\n'
+    return 0
+  fi
+  awk '
+    BEGIN { RS = "," }
+    {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+      if ($0 != "") {
+        count++
+      }
+    }
+    END { print count + 0 }
+  ' <<<"$raw"
+}
+
 run_video_loadtest_once() {
   local artifact_dir="$1"
   local viewers="$2"
@@ -865,6 +890,16 @@ run_video_loadtest_once() {
   sampler_pid="$(start_coturn_active_sampler "$artifact_dir" || true)"
   local step_device_ids=""
   step_device_ids="$(video_loadtest_first_device_ids "$devices")"
+  local step_device_count
+  step_device_count="$(video_loadtest_device_id_count "$step_device_ids")"
+  if (( step_device_count < devices )); then
+    echo "video loadtest device inventory insufficient for step: requested_devices=$devices available_devices=$step_device_count; check HOME100K_BRAND_PLAN/HOME100K_VIDEO_LOADTEST_BRANDNAME token inventory" >&2
+    if [[ -n "$sampler_pid" ]]; then
+      kill "$sampler_pid" >/dev/null 2>&1 || true
+      wait "$sampler_pid" >/dev/null 2>&1 || true
+    fi
+    return 1
+  fi
   local device_concurrency="${VIDEO_CLOUD_LOAD_DEVICE_CONCURRENCY:-${video_loadtest_concurrency:-$devices}}"
   local viewer_concurrency="${VIDEO_CLOUD_LOAD_VIEWER_CONCURRENCY:-${video_loadtest_concurrency:-$viewers}}"
   local rc=0

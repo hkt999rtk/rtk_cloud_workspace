@@ -233,7 +233,9 @@ func runVideoLoadtestTokens(args []string) error {
 	fs.SetOutput(os.Stderr)
 	envRootFlag := fs.String("env-root", "", "environment root")
 	brandname := fs.String("brandname", "RTK", "brand name")
+	brandPlan := fs.String("brand-plan", "", "optional multi-brand load-test plan JSON")
 	maxDevices := fs.Int("max-devices", 100, "maximum selected video devices")
+	requireDevices := fs.Int("require-devices", 0, "minimum selected video devices required")
 	expirySeconds := fs.Int("expiry-seconds", 1800, "request_token expiry seconds")
 	concurrency := fs.Int("concurrency", envInt("VIDEO_LOADTEST_TOKEN_CONCURRENCY", 32), "request_token mint concurrency")
 	outEnv := fs.String("out-env", "", "output shell env file")
@@ -254,7 +256,7 @@ func runVideoLoadtestTokens(args []string) error {
 	if err != nil {
 		return err
 	}
-	selected, blockers, err := selectVideoRelayDevicesFromTestData(envRoot, *brandname, *maxDevices)
+	selected, blockers, err := selectVideoLoadtestTokenDevices(envRoot, *brandname, *brandPlan, *maxDevices)
 	if err != nil {
 		return err
 	}
@@ -263,6 +265,9 @@ func runVideoLoadtestTokens(args []string) error {
 	}
 	if len(selected) == 0 {
 		return errors.New("no selected video devices")
+	}
+	if *requireDevices > 0 && len(selected) < *requireDevices {
+		return fmt.Errorf("selected video devices=%d, require %d; check HOME100K_BRAND_PLAN/HOME100K_VIDEO_LOADTEST_BRANDNAME inventory", len(selected), *requireDevices)
 	}
 	if *concurrency <= 0 {
 		return fmt.Errorf("--concurrency must be positive")
@@ -303,6 +308,42 @@ func runVideoLoadtestTokens(args []string) error {
 	}
 	fmt.Printf("video loadtest token env: %s devices=%d concurrency=%d\n", *outEnv, len(deviceIDs), *concurrency)
 	return nil
+}
+
+func selectVideoLoadtestTokenDevices(envRoot, brandname, brandPlanPath string, maxDevices int) ([]videoRelaySelectedDevice, []string, error) {
+	if strings.TrimSpace(brandPlanPath) == "" {
+		return selectVideoRelayDevicesFromTestData(envRoot, brandname, maxDevices)
+	}
+	plan, err := loadLoadTestBrandPlan(brandPlanPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	selected := []videoRelaySelectedDevice{}
+	blockers := []string{}
+	for _, brand := range plan.Brands {
+		remaining := maxDevices
+		if remaining > 0 {
+			remaining -= len(selected)
+			if remaining <= 0 {
+				break
+			}
+		}
+		devices, brandBlockers, err := selectVideoRelayDevicesFromTestData(envRoot, brand.Brandname, remaining)
+		if err != nil {
+			return nil, nil, err
+		}
+		selected = append(selected, devices...)
+		for _, blocker := range brandBlockers {
+			blockers = append(blockers, brand.Brandname+": "+blocker)
+		}
+		if maxDevices > 0 && len(selected) >= maxDevices {
+			break
+		}
+	}
+	if len(selected) == 0 && len(blockers) == 0 {
+		blockers = append(blockers, "brand plan has no bound camera devices with video_streaming service option")
+	}
+	return selected, blockers, nil
 }
 
 func mintVideoLoadtestTokens(mtlsURL string, selected []videoRelaySelectedDevice, expirySeconds, concurrency int) (map[string]string, map[string]string, error) {
