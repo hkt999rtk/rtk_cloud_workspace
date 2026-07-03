@@ -115,7 +115,7 @@ video_loadtest_artifact_dir="${HOME100K_VIDEO_LOADTEST_ARTIFACT_DIR:-$repo_root/
 video_loadtest_brandname="${HOME100K_VIDEO_LOADTEST_BRANDNAME:-$brandname}"
 video_loadtest_viewers="${HOME100K_VIDEO_LOADTEST_VIEWERS:-100}"
 video_loadtest_devices="${HOME100K_VIDEO_LOADTEST_DEVICES:-100}"
-video_loadtest_concurrency="${HOME100K_VIDEO_LOADTEST_CONCURRENCY:-10}"
+video_loadtest_concurrency="${HOME100K_VIDEO_LOADTEST_CONCURRENCY:-}"
 video_loadtest_ladder="${HOME100K_VIDEO_LOADTEST_LADDER:-}"
 video_loadtest_step_cooldown="${HOME100K_VIDEO_LOADTEST_STEP_COOLDOWN:-0s}"
 video_loadtest_turn_sample_interval="${HOME100K_VIDEO_LOADTEST_TURN_SAMPLE_INTERVAL_SECONDS:-5}"
@@ -230,7 +230,7 @@ Defaults can be overridden with:
   HOME100K_VIDEO_LOADTEST_TURN_SAMPLE_INTERVAL_SECONDS default: 5
   HOME100K_VIDEO_LOADTEST_TOKEN_CONCURRENCY default: 32
   HOME100K_VIDEO_LOADTEST_TOKEN_EXPIRY_SECONDS default: 1800
-  HOME100K_VIDEO_LOADTEST_CONCURRENCY default: 10
+  HOME100K_VIDEO_LOADTEST_CONCURRENCY optional override; default: each ladder step uses its viewer/device count for concurrency
   HOME100K_VIDEO_LOADTEST_WEBRTC_MEDIA_SET default: h264
   HOME100K_VIDEO_LOADTEST_WEBRTC_ICE_POLICY default: relay
   HOME100K_VIDEO_LOADTEST_DEVICE_ONLINE_SETTLE optional delay after WebSocket device owners connect before viewer requests
@@ -865,6 +865,8 @@ run_video_loadtest_once() {
   sampler_pid="$(start_coturn_active_sampler "$artifact_dir" || true)"
   local step_device_ids=""
   step_device_ids="$(video_loadtest_first_device_ids "$devices")"
+  local device_concurrency="${VIDEO_CLOUD_LOAD_DEVICE_CONCURRENCY:-${video_loadtest_concurrency:-$devices}}"
+  local viewer_concurrency="${VIDEO_CLOUD_LOAD_VIEWER_CONCURRENCY:-${video_loadtest_concurrency:-$viewers}}"
   local rc=0
   VIDEO_CLOUD_LOAD_RUN_ID="${VIDEO_CLOUD_LOAD_RUN_ID:-$step_run_id}" \
   VIDEO_CLOUD_LOAD_ARTIFACT_DIR="$artifact_dir" \
@@ -882,8 +884,8 @@ run_video_loadtest_once() {
   VIDEO_CLOUD_LOAD_VIRTUAL_DEVICES="$devices" \
   VIDEO_CLOUD_LOAD_VIRTUAL_VIEWERS="$viewers" \
   VIDEO_CLOUD_LOAD_DEVICE_IDS="$step_device_ids" \
-  VIDEO_CLOUD_LOAD_DEVICE_CONCURRENCY="${VIDEO_CLOUD_LOAD_DEVICE_CONCURRENCY:-$video_loadtest_concurrency}" \
-  VIDEO_CLOUD_LOAD_VIEWER_CONCURRENCY="${VIDEO_CLOUD_LOAD_VIEWER_CONCURRENCY:-$video_loadtest_concurrency}" \
+  VIDEO_CLOUD_LOAD_DEVICE_CONCURRENCY="$device_concurrency" \
+  VIDEO_CLOUD_LOAD_VIEWER_CONCURRENCY="$viewer_concurrency" \
   VIDEO_CLOUD_LOAD_API_URL="${VIDEO_CLOUD_LOAD_API_URL:-$video_cloud_public_url}" \
   "$video_loadtest_script" || rc=$?
   if [[ -n "$sampler_pid" ]]; then
