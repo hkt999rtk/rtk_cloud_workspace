@@ -1114,6 +1114,7 @@ func (r *Runner) listenDeviceTransportMessages(ctx context.Context, cfg Config, 
 	defer stopOfferQueue()
 	recordingQueue, stopRecordingQueue := startDeviceTransportEventQueue(ctx, 1, deviceTransportQueueDepth(1))
 	defer stopRecordingQueue()
+	handledWebRTCSessions := map[string]bool{}
 	for {
 		payload, opcode, err := readWebSocketFrame(conn)
 		if err != nil {
@@ -1125,6 +1126,19 @@ func (r *Runner) listenDeviceTransportMessages(ctx context.Context, cfg Config, 
 		if cfg.WebRTCMediaSet == WebRTCMediaSetRTP || cfg.WebRTCMediaSet == WebRTCMediaSetH264 || cfg.WebRTCMediaSet == WebRTCMediaSetAV {
 			if msg, ok := parseWebRTCMediaOfferMessage(payload); ok {
 				offerReceivedAt := time.Now()
+				if msg.SessionID != "" && handledWebRTCSessions[msg.SessionID] {
+					record(Operation{
+						Actor:    ActorDevice,
+						Name:     "webrtc_media_offer_duplicate",
+						DeviceID: deviceID,
+						Success:  true,
+						Evidence: fmt.Sprintf("run_id=%s session_id=%s device_id=%s", cfg.RunID, msg.SessionID, deviceID),
+					})
+					continue
+				}
+				if msg.SessionID != "" {
+					handledWebRTCSessions[msg.SessionID] = true
+				}
 				record(Operation{
 					Actor:    ActorDevice,
 					Name:     "webrtc_media_offer_receive",

@@ -2005,6 +2005,87 @@ func TestDeviceWebSocketListenerHandlesNextFrameWhileWebRTCAnswerRuns(t *testing
 	}
 }
 
+func TestDeviceWebSocketListenerIgnoresDuplicateWebRTCOffers(t *testing.T) {
+	viewer, err := NewPionMediaOfferSession(context.Background(), 2*time.Second)
+	if err != nil {
+		t.Fatalf("NewPionMediaOfferSession: %v", err)
+	}
+	defer viewer.Close()
+
+	reader, writer := net.Pipe()
+	defer reader.Close()
+	defer writer.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner := NewRunner(nil)
+	runner.mediaCoord = newWebRTCMediaCoordinator()
+	answerCalls := 0
+	answerDone := make(chan struct{}, 1)
+	runner.webRTCMediaOfferHandler = func(context.Context, Config, string, webRTCMediaOfferMessage) ([]Operation, time.Time, func()) {
+		answerCalls++
+		answerDone <- struct{}{}
+		return []Operation{{Actor: ActorDevice, Name: "webrtc_media_answer", DeviceID: "load-device-0", Success: true}}, time.Now(), func() {}
+	}
+	records := make(chan Operation, 8)
+	done := make(chan error, 1)
+	go func() {
+		done <- runner.listenDeviceTransportMessages(ctx, Config{
+			APIURL:              "https://example.test",
+			DeviceToken:         "device-token",
+			HTTPTimeout:         5 * time.Second,
+			WebRTCMediaSet:      WebRTCMediaSetH264,
+			WebRTCMediaDuration: 10 * time.Millisecond,
+			RunID:               "run-duplicate-offer",
+		}, "load-device-0", reader, func(op Operation) {
+			records <- op
+		})
+	}()
+
+	offerPayload, err := json.Marshal(map[string]any{
+		"event": "webrtc_offer",
+		"data": map[string]any{
+			"session_id": "session-duplicate",
+			"offer":      viewer.OfferPayload(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal offer: %v", err)
+	}
+	if err := writeWebSocketFrame(writer, 1, offerPayload); err != nil {
+		t.Fatalf("write first offer frame: %v", err)
+	}
+	select {
+	case <-answerDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("answer handler did not run for first offer")
+	}
+	if err := writeWebSocketFrame(writer, 1, offerPayload); err != nil {
+		t.Fatalf("write duplicate offer frame: %v", err)
+	}
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case op := <-records:
+			if op.Name == "webrtc_media_offer_duplicate" {
+				if !op.Success || !strings.Contains(op.Evidence, "session_id=session-duplicate") {
+					t.Fatalf("duplicate op = %#v", op)
+				}
+				if answerCalls != 1 {
+					t.Fatalf("answer calls = %d, want 1", answerCalls)
+				}
+				cancel()
+				return
+			}
+		case <-deadline:
+			t.Fatal("listener did not record duplicate WebRTC offer")
+		case err := <-done:
+			t.Fatalf("listener exited before duplicate evidence: %v", err)
+		}
+	}
+}
+
 func TestDeviceWebSocketListenerHandlesNextFrameWhileRecordingUploadRuns(t *testing.T) {
 	uploadStarted := make(chan struct{})
 	releaseUpload := make(chan struct{})
