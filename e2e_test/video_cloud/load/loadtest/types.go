@@ -279,12 +279,14 @@ type WebRTCMediaMetrics struct {
 }
 
 type VideoStartupBreakdown struct {
-	APICreateMS                   int64 `json:"api_create_ms,omitempty"`
-	OfferDeliveryMS               int64 `json:"offer_delivery_ms,omitempty"`
-	DeviceAnswerMS                int64 `json:"device_answer_ms,omitempty"`
-	ICEConnectMS                  int64 `json:"ice_connect_ms,omitempty"`
-	FirstRTPAfterICEMS            int64 `json:"first_rtp_after_ice_ms,omitempty"`
-	FirstH264AccessUnitAfterRTPMS int64 `json:"first_h264_access_unit_after_rtp_ms,omitempty"`
+	APICreateMS                     int64 `json:"api_create_ms,omitempty"`
+	OfferDeliveryMS                 int64 `json:"offer_delivery_ms,omitempty"`
+	DeviceAnswerMS                  int64 `json:"device_answer_ms,omitempty"`
+	RemoteAnswerSetMS               int64 `json:"remote_answer_set_ms,omitempty"`
+	ICECheckMS                      int64 `json:"ice_check_ms,omitempty"`
+	ICEConnectedSinceSessionStartMS int64 `json:"ice_connected_since_session_start_ms,omitempty"`
+	FirstRTPAfterICEMS              int64 `json:"first_rtp_after_ice_ms,omitempty"`
+	FirstH264AccessUnitAfterRTPMS   int64 `json:"first_h264_access_unit_after_rtp_ms,omitempty"`
 }
 
 type VideoStartupSummary struct {
@@ -310,7 +312,9 @@ type VideoStartupLatencySample struct {
 	APICreateMS                       int64  `json:"api_create_ms"`
 	OfferDeliveryMS                   int64  `json:"offer_delivery_ms"`
 	DeviceAnswerMS                    int64  `json:"device_answer_ms"`
-	ICEConnectMS                      int64  `json:"ice_connect_ms"`
+	RemoteAnswerSetMS                 int64  `json:"remote_answer_set_ms,omitempty"`
+	ICECheckMS                        int64  `json:"ice_check_ms,omitempty"`
+	ICEConnectedSinceSessionStartMS   int64  `json:"ice_connected_since_session_start_ms,omitempty"`
 	FirstRTPAfterICEMS                int64  `json:"first_rtp_after_ice_ms"`
 	FirstH264AccessUnitAfterRTPMS     int64  `json:"first_h264_access_unit_after_rtp_ms"`
 	AppRequestToFirstRTPMS            int64  `json:"app_request_to_first_rtp_ms"`

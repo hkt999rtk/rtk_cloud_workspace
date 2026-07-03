@@ -62,7 +62,9 @@ type videoStartupClock struct {
 	APICreateMS                       int64
 	OfferDeliveryMS                   int64
 	DeviceAnswerMS                    int64
-	ICEConnectMS                      int64
+	RemoteAnswerSetMS                 int64
+	ICECheckMS                        int64
+	ICEConnectedSinceSessionStartMS   int64
 	FirstRTPAfterICEMS                int64
 	FirstH264AccessUnitAfterRTPMS     int64
 	AppRequestToFirstRTPMS            int64
@@ -3803,7 +3805,11 @@ func (s videoStartupClock) withDeviceTimings(offerReceivedAt, answerDoneAt time.
 }
 
 func (s videoStartupClock) withReceiverStats(stats WebRTCMediaStats) videoStartupClock {
-	s.ICEConnectMS = stats.ICEConnectedLatencyMS
+	s.RemoteAnswerSetMS = stats.RemoteDescriptionSetMS
+	s.ICEConnectedSinceSessionStartMS = stats.ICEConnectedLatencyMS
+	if stats.ICEConnectedLatencyMS > 0 && stats.RemoteDescriptionSetMS > 0 {
+		s.ICECheckMS = nonNegativeMS(stats.ICEConnectedLatencyMS - stats.RemoteDescriptionSetMS)
+	}
 	firstRTP := s.AppRequestOffsetMS + stats.TimeToFirstRTPMS
 	s.AppRequestToFirstRTPMS = nonNegativeMS(firstRTP)
 	if stats.ICEConnectedLatencyMS > 0 && stats.TimeToFirstRTPMS > 0 {
@@ -3823,7 +3829,8 @@ func (s videoStartupClock) withReceiverStats(stats WebRTCMediaStats) videoStartu
 }
 
 func (s videoStartupClock) EvidenceForSyntheticSend(base string, elapsed int64) string {
-	s.ICEConnectMS = elapsed
+	s.ICEConnectedSinceSessionStartMS = elapsed
+	s.ICECheckMS = elapsed
 	s.AppRequestToFirstRTPMS = nonNegativeMS(s.AppRequestOffsetMS + elapsed)
 	s.AppRequestToFirstH264AccessUnitMS = s.AppRequestToFirstRTPMS
 	return s.Evidence(base)
@@ -3838,7 +3845,14 @@ func (s videoStartupClock) EvidenceForDeviceOwner(base, closeEvidence string) st
 		if senderStartOffsetMS == 0 {
 			senderStartOffsetMS = s.AppRequestOffsetMS
 		}
-		s.ICEConnectMS = iceMS
+		s.ICEConnectedSinceSessionStartMS = iceMS
+		remoteAnswerSetMS := firstNonZeroInt64(int64(evidenceInt(base, "remote_description_set_ms")), int64(evidenceInt(base, "video_remote_description_set_ms")))
+		if remoteAnswerSetMS > 0 {
+			s.RemoteAnswerSetMS = remoteAnswerSetMS
+			s.ICECheckMS = nonNegativeMS(iceMS - remoteAnswerSetMS)
+		} else {
+			s.ICECheckMS = iceMS
+		}
 		s.AppRequestToFirstRTPMS = nonNegativeMS(senderStartOffsetMS + firstRTP)
 		s.FirstRTPAfterICEMS = nonNegativeMS(firstRTPAfterICE)
 		firstAU := stats.FirstH264AccessUnitMS
@@ -3866,8 +3880,14 @@ func (s videoStartupClock) Evidence(base string) string {
 	if s.DeviceAnswerMS > 0 {
 		extra = append(extra, fmt.Sprintf("startup_device_answer_ms=%d", s.DeviceAnswerMS))
 	}
-	if s.ICEConnectMS > 0 {
-		extra = append(extra, fmt.Sprintf("startup_ice_connect_ms=%d", s.ICEConnectMS))
+	if s.RemoteAnswerSetMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_remote_answer_set_ms=%d", s.RemoteAnswerSetMS))
+	}
+	if s.ICECheckMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_ice_check_ms=%d", s.ICECheckMS))
+	}
+	if s.ICEConnectedSinceSessionStartMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_ice_connected_since_session_start_ms=%d", s.ICEConnectedSinceSessionStartMS))
 	}
 	if s.AppRequestToFirstRTPMS > 0 {
 		extra = append(extra, fmt.Sprintf("startup_first_rtp_after_ice_ms=%d", s.FirstRTPAfterICEMS))
@@ -4609,7 +4629,9 @@ func videoStartupLatencySamples(runID string, operations []Operation) []VideoSta
 			APICreateMS:                       evidenceInt64(op.Evidence, "startup_api_create_ms"),
 			OfferDeliveryMS:                   evidenceInt64(op.Evidence, "startup_offer_delivery_ms"),
 			DeviceAnswerMS:                    evidenceInt64(op.Evidence, "startup_device_answer_ms"),
-			ICEConnectMS:                      evidenceInt64(op.Evidence, "startup_ice_connect_ms"),
+			RemoteAnswerSetMS:                 evidenceInt64(op.Evidence, "startup_remote_answer_set_ms"),
+			ICECheckMS:                        evidenceInt64(op.Evidence, "startup_ice_check_ms"),
+			ICEConnectedSinceSessionStartMS:   evidenceInt64(op.Evidence, "startup_ice_connected_since_session_start_ms"),
 			FirstRTPAfterICEMS:                evidenceInt64(op.Evidence, "startup_first_rtp_after_ice_ms"),
 			FirstH264AccessUnitAfterRTPMS:     evidenceInt64(op.Evidence, "startup_first_h264_access_unit_after_rtp_ms"),
 			AppRequestToFirstRTPMS:            appToFirstRTP,
@@ -4629,7 +4651,9 @@ func applyVideoStartupSummary(metrics *WebRTCMediaMetrics, samples []VideoStartu
 	apiCreate := make([]int64, 0, len(samples))
 	offerDelivery := make([]int64, 0, len(samples))
 	deviceAnswer := make([]int64, 0, len(samples))
-	iceConnect := make([]int64, 0, len(samples))
+	remoteAnswerSet := make([]int64, 0, len(samples))
+	iceCheck := make([]int64, 0, len(samples))
+	iceConnectedSinceSessionStart := make([]int64, 0, len(samples))
 	firstRTPAfterICE := make([]int64, 0, len(samples))
 	firstAUAfterRTP := make([]int64, 0, len(samples))
 	for _, sample := range samples {
@@ -4638,7 +4662,9 @@ func applyVideoStartupSummary(metrics *WebRTCMediaMetrics, samples []VideoStartu
 		apiCreate = appendPositiveInt64(apiCreate, sample.APICreateMS)
 		offerDelivery = appendPositiveOrZeroInt64(offerDelivery, sample.OfferDeliveryMS)
 		deviceAnswer = appendPositiveOrZeroInt64(deviceAnswer, sample.DeviceAnswerMS)
-		iceConnect = appendPositiveInt64(iceConnect, sample.ICEConnectMS)
+		remoteAnswerSet = appendPositiveInt64(remoteAnswerSet, sample.RemoteAnswerSetMS)
+		iceCheck = appendPositiveInt64(iceCheck, sample.ICECheckMS)
+		iceConnectedSinceSessionStart = appendPositiveInt64(iceConnectedSinceSessionStart, sample.ICEConnectedSinceSessionStartMS)
 		firstRTPAfterICE = appendPositiveOrZeroInt64(firstRTPAfterICE, sample.FirstRTPAfterICEMS)
 		firstAUAfterRTP = appendPositiveOrZeroInt64(firstAUAfterRTP, sample.FirstH264AccessUnitAfterRTPMS)
 	}
@@ -4652,12 +4678,14 @@ func applyVideoStartupSummary(metrics *WebRTCMediaMetrics, samples []VideoStartu
 		AppRequestToFirstH264AccessUnitP95MS: percentile(firstH264AU, 95),
 		AppRequestToFirstH264AccessUnitP99MS: percentile(firstH264AU, 99),
 		BreakdownP95: VideoStartupBreakdown{
-			APICreateMS:                   percentile(apiCreate, 95),
-			OfferDeliveryMS:               percentile(offerDelivery, 95),
-			DeviceAnswerMS:                percentile(deviceAnswer, 95),
-			ICEConnectMS:                  percentile(iceConnect, 95),
-			FirstRTPAfterICEMS:            percentile(firstRTPAfterICE, 95),
-			FirstH264AccessUnitAfterRTPMS: percentile(firstAUAfterRTP, 95),
+			APICreateMS:                     percentile(apiCreate, 95),
+			OfferDeliveryMS:                 percentile(offerDelivery, 95),
+			DeviceAnswerMS:                  percentile(deviceAnswer, 95),
+			RemoteAnswerSetMS:               percentile(remoteAnswerSet, 95),
+			ICECheckMS:                      percentile(iceCheck, 95),
+			ICEConnectedSinceSessionStartMS: percentile(iceConnectedSinceSessionStart, 95),
+			FirstRTPAfterICEMS:              percentile(firstRTPAfterICE, 95),
+			FirstH264AccessUnitAfterRTPMS:   percentile(firstAUAfterRTP, 95),
 		},
 	}
 	metrics.VideoStartupLatency = summary

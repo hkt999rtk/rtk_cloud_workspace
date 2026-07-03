@@ -3346,7 +3346,7 @@ func TestBuildResultSummarizesVideoStartupLatency(t *testing.T) {
 			DeviceID: "dev-1",
 			ViewerID: "viewer-1",
 			Success:  true,
-			Evidence: "session_id=sess-1 ice_policy=relay selected_local_candidate_type=relay selected_remote_candidate_type=relay packets=30 bytes=3000 receiver_packets=30 receiver_bytes=3000 receive_ms=240 startup_api_create_ms=40 startup_offer_delivery_ms=20 startup_device_answer_ms=30 startup_ice_connect_ms=80 startup_first_rtp_after_ice_ms=10 startup_first_h264_access_unit_after_rtp_ms=5 startup_app_request_to_first_rtp_ms=180 startup_app_request_to_first_h264_access_unit_ms=185",
+			Evidence: "session_id=sess-1 ice_policy=relay selected_local_candidate_type=relay selected_remote_candidate_type=relay packets=30 bytes=3000 receiver_packets=30 receiver_bytes=3000 receive_ms=240 startup_api_create_ms=40 startup_offer_delivery_ms=20 startup_device_answer_ms=30 startup_remote_answer_set_ms=120 startup_ice_connected_since_session_start_ms=150 startup_ice_check_ms=30 startup_first_rtp_after_ice_ms=10 startup_first_h264_access_unit_after_rtp_ms=5 startup_app_request_to_first_rtp_ms=180 startup_app_request_to_first_h264_access_unit_ms=185",
 		},
 		{
 			Actor:    ActorViewer,
@@ -3354,7 +3354,7 @@ func TestBuildResultSummarizesVideoStartupLatency(t *testing.T) {
 			DeviceID: "dev-2",
 			ViewerID: "viewer-2",
 			Success:  true,
-			Evidence: "session_id=sess-2 ice_policy=relay selected_local_candidate_type=relay selected_remote_candidate_type=relay packets=40 bytes=4000 receiver_packets=40 receiver_bytes=4000 receive_ms=260 startup_api_create_ms=50 startup_offer_delivery_ms=25 startup_device_answer_ms=35 startup_ice_connect_ms=90 startup_first_rtp_after_ice_ms=12 startup_first_h264_access_unit_after_rtp_ms=7 startup_app_request_to_first_rtp_ms=210 startup_app_request_to_first_h264_access_unit_ms=217",
+			Evidence: "session_id=sess-2 ice_policy=relay selected_local_candidate_type=relay selected_remote_candidate_type=relay packets=40 bytes=4000 receiver_packets=40 receiver_bytes=4000 receive_ms=260 startup_api_create_ms=50 startup_offer_delivery_ms=25 startup_device_answer_ms=35 startup_remote_answer_set_ms=140 startup_ice_connected_since_session_start_ms=175 startup_ice_check_ms=35 startup_first_rtp_after_ice_ms=12 startup_first_h264_access_unit_after_rtp_ms=7 startup_app_request_to_first_rtp_ms=210 startup_app_request_to_first_h264_access_unit_ms=217",
 		},
 	}
 
@@ -3381,6 +3381,15 @@ func TestBuildResultSummarizesVideoStartupLatency(t *testing.T) {
 	if result.WebRTCMedia.BreakdownP95.DeviceAnswerMS != 35 {
 		t.Fatalf("device answer p95 = %d, want 35", result.WebRTCMedia.BreakdownP95.DeviceAnswerMS)
 	}
+	if result.WebRTCMedia.BreakdownP95.RemoteAnswerSetMS != 140 {
+		t.Fatalf("remote answer set p95 = %d, want 140", result.WebRTCMedia.BreakdownP95.RemoteAnswerSetMS)
+	}
+	if result.WebRTCMedia.BreakdownP95.ICECheckMS != 35 {
+		t.Fatalf("ICE check p95 = %d, want 35", result.WebRTCMedia.BreakdownP95.ICECheckMS)
+	}
+	if result.WebRTCMedia.BreakdownP95.ICEConnectedSinceSessionStartMS != 175 {
+		t.Fatalf("ICE connected since session start p95 = %d, want 175", result.WebRTCMedia.BreakdownP95.ICEConnectedSinceSessionStartMS)
+	}
 
 	md := RenderMarkdown(result)
 	for _, want := range []string{
@@ -3389,6 +3398,9 @@ func TestBuildResultSummarizesVideoStartupLatency(t *testing.T) {
 		"| App request -> first RTP | 180 ms | 210 ms | 210 ms |",
 		"| App request -> first H.264 access unit | 185 ms | 217 ms | 217 ms |",
 		"| Device answer | 35 ms |",
+		"| Remote answer set | 140 ms |",
+		"| ICE check | 35 ms |",
+		"| ICE connected since session start | 175 ms |",
 	} {
 		if !strings.Contains(md, want) {
 			t.Fatalf("markdown missing %q:\n%s", want, md)
@@ -3405,7 +3417,7 @@ func TestBuildResultIgnoresMissingH264StartupEvidence(t *testing.T) {
 			DeviceID: "dev-1",
 			ViewerID: "viewer-1",
 			Success:  true,
-			Evidence: "session_id=sess-missing ice_policy=relay selected_local_candidate_type=relay selected_remote_candidate_type=relay packets=30 bytes=3000 receiver_packets=30 receiver_bytes=3000 receive_ms=240 startup_api_create_ms=40 startup_device_answer_ms=30 startup_ice_connect_ms=80",
+			Evidence: "session_id=sess-missing ice_policy=relay selected_local_candidate_type=relay selected_remote_candidate_type=relay packets=30 bytes=3000 receiver_packets=30 receiver_bytes=3000 receive_ms=240 startup_api_create_ms=40 startup_device_answer_ms=30 startup_ice_connected_since_session_start_ms=80",
 		},
 	}
 
@@ -3432,7 +3444,7 @@ func TestVideoStartupDeviceOwnerAddsRTPAfterICEToICEConnect(t *testing.T) {
 		AppRequestOffsetMS:  100,
 	}
 	closeEvidence := `{"media":{"packets_received":10,"bytes_received":1000,"h264_packets":10,"h264_bytes":1000,"h264_sha256":"abc","nal_types":["sps","pps","idr","non-idr"]}}`
-	evidence := startup.EvidenceForDeviceOwner("packets=10 bytes=1000 ice_ms=1200 ttfb_ms=35 selected_local_candidate_type=relay selected_remote_candidate_type=relay", closeEvidence)
+	evidence := startup.EvidenceForDeviceOwner("packets=10 bytes=1000 ice_ms=1200 remote_description_set_ms=900 ttfb_ms=35 selected_local_candidate_type=relay selected_remote_candidate_type=relay", closeEvidence)
 
 	if got := evidenceInt64(evidence, "startup_app_request_to_first_rtp_ms"); got != 1335 {
 		t.Fatalf("app request -> first RTP = %d, want 1335", got)
@@ -3443,8 +3455,14 @@ func TestVideoStartupDeviceOwnerAddsRTPAfterICEToICEConnect(t *testing.T) {
 	if got := evidenceInt64(evidence, "startup_first_rtp_after_ice_ms"); got != 35 {
 		t.Fatalf("first RTP after ICE = %d, want 35", got)
 	}
-	if got := evidenceInt64(evidence, "startup_ice_connect_ms"); got != 1200 {
-		t.Fatalf("ICE connect = %d, want 1200", got)
+	if got := evidenceInt64(evidence, "startup_ice_connected_since_session_start_ms"); got != 1200 {
+		t.Fatalf("ICE connected since session start = %d, want 1200", got)
+	}
+	if got := evidenceInt64(evidence, "startup_remote_answer_set_ms"); got != 900 {
+		t.Fatalf("remote answer set = %d, want 900", got)
+	}
+	if got := evidenceInt64(evidence, "startup_ice_check_ms"); got != 300 {
+		t.Fatalf("ICE check = %d, want 300", got)
 	}
 }
 

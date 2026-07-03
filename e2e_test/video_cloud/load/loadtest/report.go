@@ -136,7 +136,9 @@ func RenderMarkdown(result *Result) string {
 		fmt.Fprintf(&b, "| API create | %d ms |\n", startup.BreakdownP95.APICreateMS)
 		fmt.Fprintf(&b, "| Offer delivery | %d ms |\n", startup.BreakdownP95.OfferDeliveryMS)
 		fmt.Fprintf(&b, "| Device answer | %d ms |\n", startup.BreakdownP95.DeviceAnswerMS)
-		fmt.Fprintf(&b, "| ICE connect | %d ms |\n", startup.BreakdownP95.ICEConnectMS)
+		fmt.Fprintf(&b, "| Remote answer set | %d ms |\n", startup.BreakdownP95.RemoteAnswerSetMS)
+		fmt.Fprintf(&b, "| ICE check | %d ms |\n", startup.BreakdownP95.ICECheckMS)
+		fmt.Fprintf(&b, "| ICE connected since session start | %d ms |\n", startup.BreakdownP95.ICEConnectedSinceSessionStartMS)
 		fmt.Fprintf(&b, "| First RTP after ICE | %d ms |\n", startup.BreakdownP95.FirstRTPAfterICEMS)
 		fmt.Fprintf(&b, "| First H.264 access unit after RTP | %d ms |\n", startup.BreakdownP95.FirstH264AccessUnitAfterRTPMS)
 	}
