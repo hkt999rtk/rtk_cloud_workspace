@@ -502,6 +502,59 @@ func TestVideoRelayTokenRequestDoesNotRetryAuthFailures(t *testing.T) {
 	}
 }
 
+func TestVideoLoadtestTokenMintWaitsForBatchBeforeReportingFailures(t *testing.T) {
+	certPEM, keyPEM := testTLSCertificatePEM(t)
+	user := videoRelayUser{
+		Email: "u1@example.test",
+		AppCredentials: videoRelayAppCredentials{
+			PrivateKeyPEM: keyPEM,
+		},
+		AppCertificate: videoRelayAppCertificate{
+			CertificateChainPEM: certPEM,
+		},
+	}
+	selected := []videoRelaySelectedDevice{
+		{DeviceID: "cam-ok", AssignedEmail: user.Email, CertPEM: certPEM, KeyPEM: keyPEM, User: user},
+		{DeviceID: "cam-fail", AssignedEmail: user.Email, CertPEM: certPEM, KeyPEM: keyPEM, User: user},
+	}
+	requests := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["scope"] == "app" && body["devid"] == "cam-fail" {
+			http.Error(w, "temporary", http.StatusServiceUnavailable)
+			return
+		}
+		scope, _ := body["scope"].(string)
+		_, _ = w.Write([]byte(`{"scope":"` + scope + `","access_token":"token-` + scope + `"}`))
+	}))
+	defer server.Close()
+
+	originalSleep := videoRelayTokenRetrySleep
+	videoRelayTokenRetrySleep = func(time.Duration) {}
+	defer func() { videoRelayTokenRetrySleep = originalSleep }()
+
+	deviceTokens, appTokens, err := mintVideoLoadtestTokens(server.URL, selected, 300, 2, time.Second)
+	if err == nil {
+		t.Fatal("expected batch failure")
+	}
+	if deviceTokens != nil || appTokens != nil {
+		t.Fatalf("tokens = %#v/%#v, want nil on batch failure", deviceTokens, appTokens)
+	}
+	text := err.Error()
+	for _, want := range []string{"success=1", "failed=1", "total=2", "cam-fail"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("error %q missing %q", text, want)
+		}
+	}
+	if requests != 7 {
+		t.Fatalf("requests = %d, want 7: ok device+app, failing device+4 app retries", requests)
+	}
+}
+
 func TestVideoRelayDeviceCertificatePrefersChainPEM(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "leaf.pem"), []byte("bad cert"), 0o600); err != nil {
@@ -578,6 +631,16 @@ func deviceIDs(devices []videoRelaySelectedDevice) []string {
 
 func testTLSCertificate(t *testing.T) tls.Certificate {
 	t.Helper()
+	certPEM, keyPEM := testTLSCertificatePEM(t)
+	cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cert
+}
+
+func testTLSCertificatePEM(t *testing.T) (string, string) {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -605,11 +668,7 @@ func testTLSCertificate(t *testing.T) tls.Certificate {
 	}
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-	cert, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return cert
+	return string(certPEM), string(keyPEM)
 }
 
 func containsString(items []string, want string) bool {

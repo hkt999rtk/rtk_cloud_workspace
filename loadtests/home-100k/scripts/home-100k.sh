@@ -121,6 +121,7 @@ video_loadtest_step_cooldown="${HOME100K_VIDEO_LOADTEST_STEP_COOLDOWN:-0s}"
 video_loadtest_turn_sample_interval="${HOME100K_VIDEO_LOADTEST_TURN_SAMPLE_INTERVAL_SECONDS:-5}"
 video_loadtest_token_concurrency="${HOME100K_VIDEO_LOADTEST_TOKEN_CONCURRENCY:-32}"
 video_loadtest_token_expiry_seconds="${HOME100K_VIDEO_LOADTEST_TOKEN_EXPIRY_SECONDS:-1800}"
+video_loadtest_token_request_timeout="${HOME100K_VIDEO_LOADTEST_TOKEN_REQUEST_TIMEOUT:-30s}"
 video_loadtest_media_set="${HOME100K_VIDEO_LOADTEST_WEBRTC_MEDIA_SET:-h264}"
 video_loadtest_ice_policy="${HOME100K_VIDEO_LOADTEST_WEBRTC_ICE_POLICY:-relay}"
 video_loadtest_duration="${HOME100K_VIDEO_LOADTEST_DURATION:-30s}"
@@ -763,6 +764,7 @@ ensure_video_loadtest_tokens() {
       --require-devices "$max_devices" \
       --expiry-seconds "$video_loadtest_token_expiry_seconds" \
       --concurrency "$video_loadtest_token_concurrency" \
+      --request-timeout "$video_loadtest_token_request_timeout" \
       --out-env "$token_env"
     )
     if [[ -n "$brand_plan" ]]; then

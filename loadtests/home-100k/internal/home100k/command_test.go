@@ -1965,6 +1965,7 @@ printf 'unexpected video runner call\n' >> ` + shellQuoteForTest(videoLog) + `
 		"HOME100K_VIDEO_LOADTEST_ARTIFACT_DIR="+filepath.Join(outDir, "video"),
 		"HOME100K_VIDEO_LOADTEST_LADDER=100,500",
 		"HOME100K_VIDEO_LOADTEST_STEP_COOLDOWN=0s",
+		"HOME100K_VIDEO_LOADTEST_TOKEN_REQUEST_TIMEOUT=45s",
 	)
 	raw, err := cmd.CombinedOutput()
 	if err == nil {
@@ -1982,6 +1983,9 @@ printf 'unexpected video runner call\n' >> ` + shellQuoteForTest(videoLog) + `
 	}
 	if !strings.Contains(string(goRaw), "video-loadtest-tokens") {
 		t.Fatalf("token generator was not invoked:\n%s", goRaw)
+	}
+	if !strings.Contains(string(goRaw), "--request-timeout 45s") {
+		t.Fatalf("token generator did not receive request timeout:\n%s", goRaw)
 	}
 }
 
