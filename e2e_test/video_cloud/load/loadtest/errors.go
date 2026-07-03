@@ -18,6 +18,7 @@ const (
 	ClassWebRTCSetup = "webrtc_setup"
 	ClassWebRTCMedia = "webrtc_media"
 	ClassNetwork     = "network"
+	ClassLoad        = "load"
 	ClassConfig      = "config"
 	ClassCancelled   = "cancelled"
 	ClassUnknown     = "unknown"

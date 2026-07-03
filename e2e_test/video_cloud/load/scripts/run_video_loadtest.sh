@@ -31,6 +31,8 @@ negative_malformed_path="${VIDEO_CLOUD_LOAD_NEGATIVE_MALFORMED_PATH:-}"
 negative_timeout_path="${VIDEO_CLOUD_LOAD_NEGATIVE_TIMEOUT_PATH:-}"
 duration="${VIDEO_CLOUD_LOAD_DURATION:-30s}"
 http_timeout="${VIDEO_CLOUD_LOAD_HTTP_TIMEOUT:-10s}"
+device_online_settle="${VIDEO_CLOUD_LOAD_DEVICE_ONLINE_SETTLE:-2s}"
+device_owner_retries="${VIDEO_CLOUD_LOAD_DEVICE_OWNER_CONNECT_RETRIES:-3}"
 virtual_devices="${VIDEO_CLOUD_LOAD_VIRTUAL_DEVICES:-1}"
 virtual_viewers="${VIDEO_CLOUD_LOAD_VIRTUAL_VIEWERS:-1}"
 iterations="${VIDEO_CLOUD_LOAD_ITERATIONS:-1}"
@@ -73,6 +75,8 @@ cat >"${artifact_dir}/metadata.json" <<EOF
   "mqtt_iot_mix": "${mqtt_iot_mix}",
   "mqtt_required": "${mqtt_required}",
   "negative_set": "${negative_set}",
+  "device_online_settle": "${device_online_settle}",
+  "device_owner_retries": "${device_owner_retries}",
   "api_url": "${api_url}",
   "client_commit": "${client_commit}",
   "server_commit": "${server_commit}",
@@ -144,6 +148,8 @@ fi
     --server-commit "${server_commit}" \
     --duration "${duration}" \
     --http-timeout "${http_timeout}" \
+    --device-online-settle "${device_online_settle}" \
+    --device-owner-connect-retries "${device_owner_retries}" \
     --virtual-devices "${virtual_devices}" \
     --virtual-viewers "${virtual_viewers}" \
     --iterations "${iterations}" \

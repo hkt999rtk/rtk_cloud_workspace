@@ -18,10 +18,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 const videoRelayProbeModel = "webrtc_rtp_relay"
+
+var videoRelayTokenRetrySleep = time.Sleep
 
 type videoRelayUsersArtifact struct {
 	Brandname string           `json:"brandname"`
@@ -232,6 +235,7 @@ func runVideoLoadtestTokens(args []string) error {
 	brandname := fs.String("brandname", "RTK", "brand name")
 	maxDevices := fs.Int("max-devices", 100, "maximum selected video devices")
 	expirySeconds := fs.Int("expiry-seconds", 1800, "request_token expiry seconds")
+	concurrency := fs.Int("concurrency", envInt("VIDEO_LOADTEST_TOKEN_CONCURRENCY", 32), "request_token mint concurrency")
 	outEnv := fs.String("out-env", "", "output shell env file")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -260,32 +264,19 @@ func runVideoLoadtestTokens(args []string) error {
 	if len(selected) == 0 {
 		return errors.New("no selected video devices")
 	}
+	if *concurrency <= 0 {
+		return fmt.Errorf("--concurrency must be positive")
+	}
 	stackEnv := videoRelayEnvValues(filepath.Join(envRoot, "env", "stack.env"))
 	apiURL := "https://" + firstNonEmpty(stackEnv["VIDEO_CLOUD_DOMAIN"], "video-cloud-staging.realtekconnect.com")
 	mtlsURL := videoCloudMTLSBaseURLForRelay(envRoot, stackEnv, apiURL)
-	deviceTokens := map[string]string{}
-	appTokens := map[string]string{}
+	deviceTokens, appTokens, err := mintVideoLoadtestTokens(mtlsURL, selected, *expirySeconds, *concurrency)
+	if err != nil {
+		return err
+	}
 	deviceIDs := make([]string, 0, len(selected))
 	for _, device := range selected {
-		cert, err := loadRelayDeviceCertificate("", device)
-		if err != nil {
-			return fmt.Errorf("device %s certificate material missing: %w", device.DeviceID, err)
-		}
-		deviceResp, err := requestVideoRelayToken(mtlsURL, cert, map[string]any{"scope": "device", "expiry": *expirySeconds})
-		if err != nil {
-			return fmt.Errorf("device %s request_token failed: %w", device.DeviceID, err)
-		}
-		appCert, err := loadRelayAppCertificate(device.User)
-		if err != nil {
-			return fmt.Errorf("user %s app certificate material missing: %w", device.AssignedEmail, err)
-		}
-		appToken, err := requestVideoRelayToken(mtlsURL, appCert, map[string]any{"scope": "app", "devid": device.DeviceID, "expiry": *expirySeconds})
-		if err != nil {
-			return fmt.Errorf("device %s app request_token failed: %w", device.DeviceID, err)
-		}
 		deviceIDs = append(deviceIDs, device.DeviceID)
-		deviceTokens[device.DeviceID] = deviceResp.AccessToken
-		appTokens[device.DeviceID] = appToken.AccessToken
 	}
 	deviceTokenJSON, _ := json.Marshal(deviceTokens)
 	appTokenJSON, _ := json.Marshal(appTokens)
@@ -310,8 +301,87 @@ func runVideoLoadtestTokens(args []string) error {
 	if err := os.WriteFile(*outEnv, []byte(b.String()), 0o600); err != nil {
 		return err
 	}
-	fmt.Printf("video loadtest token env: %s devices=%d\n", *outEnv, len(deviceIDs))
+	fmt.Printf("video loadtest token env: %s devices=%d concurrency=%d\n", *outEnv, len(deviceIDs), *concurrency)
 	return nil
+}
+
+func mintVideoLoadtestTokens(mtlsURL string, selected []videoRelaySelectedDevice, expirySeconds, concurrency int) (map[string]string, map[string]string, error) {
+	if concurrency <= 0 {
+		return nil, nil, fmt.Errorf("token concurrency must be positive")
+	}
+	jobs := make(chan videoRelaySelectedDevice)
+	results := make(chan videoLoadtestTokenResult, len(selected))
+	workers := concurrency
+	if workers > len(selected) {
+		workers = len(selected)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for device := range jobs {
+				results <- mintVideoLoadtestTokenPair(mtlsURL, device, expirySeconds)
+			}
+		}()
+	}
+	go func() {
+		for _, device := range selected {
+			jobs <- device
+		}
+		close(jobs)
+		wg.Wait()
+		close(results)
+	}()
+	deviceTokens := map[string]string{}
+	appTokens := map[string]string{}
+	completed := 0
+	for result := range results {
+		if result.err != nil {
+			return nil, nil, fmt.Errorf("token mint failed after %d/%d devices: %w", completed, len(selected), result.err)
+		}
+		completed++
+		deviceTokens[result.deviceID] = result.deviceToken
+		appTokens[result.deviceID] = result.appToken
+		if completed%100 == 0 || completed == len(selected) {
+			fmt.Fprintf(os.Stderr, "video loadtest token mint progress: completed=%d total=%d\n", completed, len(selected))
+		}
+	}
+	return deviceTokens, appTokens, nil
+}
+
+type videoLoadtestTokenResult struct {
+	deviceID    string
+	deviceToken string
+	appToken    string
+	err         error
+}
+
+func mintVideoLoadtestTokenPair(mtlsURL string, device videoRelaySelectedDevice, expirySeconds int) (out videoLoadtestTokenResult) {
+	out.deviceID = device.DeviceID
+	cert, err := loadRelayDeviceCertificate("", device)
+	if err != nil {
+		out.err = fmt.Errorf("device %s certificate material missing: %w", device.DeviceID, err)
+		return out
+	}
+	deviceResp, err := requestVideoRelayToken(mtlsURL, cert, map[string]any{"scope": "device", "expiry": expirySeconds})
+	if err != nil {
+		out.err = fmt.Errorf("device %s request_token failed: %w", device.DeviceID, err)
+		return out
+	}
+	appCert, err := loadRelayAppCertificate(device.User)
+	if err != nil {
+		out.err = fmt.Errorf("user %s app certificate material missing: %w", device.AssignedEmail, err)
+		return out
+	}
+	appToken, err := requestVideoRelayToken(mtlsURL, appCert, map[string]any{"scope": "app", "devid": device.DeviceID, "expiry": expirySeconds})
+	if err != nil {
+		out.err = fmt.Errorf("device %s app request_token failed: %w", device.DeviceID, err)
+		return out
+	}
+	out.deviceToken = deviceResp.AccessToken
+	out.appToken = appToken.AccessToken
+	return out
 }
 
 func executeVideoRelayTest(workspace, envRoot, brandname, outDir, profile, webrtcRelayRole, webrtcICEPolicy string, durationSeconds, maxDevices int, traceDetail string) (videoRelayResult, error) {
@@ -1327,6 +1397,22 @@ func requestVideoRelayAppToken(apiBaseURL string, cert tls.Certificate, deviceID
 }
 
 func requestVideoRelayToken(apiBaseURL string, cert tls.Certificate, payload map[string]any) (videoRelayTokenResponse, error) {
+	var lastErr error
+	for attempt := 1; attempt <= 4; attempt++ {
+		resp, err := requestVideoRelayTokenOnce(apiBaseURL, cert, payload)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if attempt == 4 || !isRetryableVideoRelayTokenError(err) {
+			break
+		}
+		videoRelayTokenRetrySleep(time.Duration(attempt*250) * time.Millisecond)
+	}
+	return videoRelayTokenResponse{}, lastErr
+}
+
+func requestVideoRelayTokenOnce(apiBaseURL string, cert tls.Certificate, payload map[string]any) (videoRelayTokenResponse, error) {
 	apiBaseURL = strings.TrimRight(strings.TrimSpace(apiBaseURL), "/")
 	if apiBaseURL == "" {
 		return videoRelayTokenResponse{}, errors.New("missing video cloud API URL")
@@ -1355,6 +1441,35 @@ func requestVideoRelayToken(apiBaseURL string, cert tls.Certificate, payload map
 		return out, errors.New("request_token response missing access_token")
 	}
 	return out, nil
+}
+
+func isRetryableVideoRelayTokenError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	text := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"context deadline exceeded",
+		"client.timeout",
+		"i/o timeout",
+		"eof",
+		"connection reset",
+		"broken pipe",
+		"request_token status=429",
+		"request_token status=500",
+		"request_token status=502",
+		"request_token status=503",
+		"request_token status=504",
+	} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func videoCloudMTLSBaseURLForRelay(envRoot string, stackValues map[string]string, fallback string) string {

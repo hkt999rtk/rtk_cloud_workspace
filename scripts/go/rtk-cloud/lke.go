@@ -370,15 +370,20 @@ func lkePlan(env map[string]string, opts provisionOptions) {
 	fmt.Fprintln(os.Stdout, "- public HTTP :80 is not exposed; TLS issuance uses GoDaddy DNS-01")
 	fmt.Fprintln(os.Stdout, "- public MQTT: HAProxy TCP passthrough :8883 -> EMQX/MQTT NodePort")
 	fmt.Fprintln(os.Stdout, "- public TURN: external coturn VM data-plane exception, not HAProxy-backed")
-	fmt.Fprintf(os.Stdout, "  - coturn_vm: name=%s label=%s type=%s image=%s domain=%s ports=3478/udp,3478/tcp relay_udp=%s-%s\n",
-		lkeCoturnVMName(env),
-		lkeCoturnVMLabel(env),
+	fmt.Fprintf(os.Stdout, "  - coturn_vms: count=%d type=%s image=%s ports=3478/udp,3478/tcp relay_udp=%s-%s\n",
+		lkeCoturnVMCount(env),
 		firstNonEmpty(os.Getenv("LKE_COTURN_VM_TYPE"), env["LKE_COTURN_VM_TYPE"], "g6-nanode-1"),
 		firstNonEmpty(os.Getenv("LKE_COTURN_VM_IMAGE"), env["LKE_COTURN_VM_IMAGE"], "linode/ubuntu24.04"),
-		lkeCoturnDomain(env),
 		firstNonEmpty(os.Getenv("LKE_COTURN_MIN_PORT"), env["LKE_COTURN_MIN_PORT"], "49152"),
-		firstNonEmpty(os.Getenv("LKE_COTURN_MAX_PORT"), env["LKE_COTURN_MAX_PORT"], "49200"),
+		firstNonEmpty(os.Getenv("LKE_COTURN_MAX_PORT"), env["LKE_COTURN_MAX_PORT"], "65535"),
 	)
+	for index := 1; index <= lkeCoturnVMCount(env); index++ {
+		nodeEnv := lkeCoturnVMEnvForIndex(env, index)
+		fmt.Fprintf(os.Stdout, "    - coturn_vm: name=%s label=%s domain=%s\n",
+			lkeCoturnVMName(nodeEnv),
+			lkeCoturnVMLabel(nodeEnv),
+			lkeCoturnDomain(nodeEnv))
+	}
 	fmt.Fprintf(os.Stdout, "  - turn_registry: domain=%s registrar_node_id=%s\n", lkeTurnRegistryPublicDomain(env), lkeCoturnVMName(env))
 	fmt.Fprintln(os.Stdout, "- secrets: OpenBao standalone/AppRole for staging PKI; certissuer delegates device/app signing to OpenBao and Kubernetes Secrets do not carry CA private keys")
 	fmt.Fprintln(os.Stdout, "- deploy images:")
@@ -536,11 +541,11 @@ func lkeApplyPublicHTTPS(paths provisionPaths, env map[string]string, opts provi
 	if err := lkeSyncPublicHTTPSDNS(paths, env, opts, hosts, edge.PublicIP); err != nil {
 		return err
 	}
-	coturn, err := lkeEnsureExternalCoturnVM(paths, env, opts)
+	coturnVMs, err := lkeEnsureExternalCoturnVMs(paths, env, opts)
 	if err != nil {
 		return err
 	}
-	return lkeSyncCoturnDNS(paths, env, opts, coturn)
+	return lkeSyncCoturnVMsDNS(paths, env, opts, coturnVMs)
 }
 
 func lkeSyncPublicHTTPSDNS(paths provisionPaths, env map[string]string, opts provisionOptions, hosts []string, ip string) error {
@@ -1153,6 +1158,9 @@ metadata:
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "false"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
 %s
 spec:
   ingressClassName: nginx
@@ -1198,6 +1206,7 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 	manifests = append(manifests, lkeAllowOpenBaoClientsNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowAccountManagerCertIssuerNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudAccountManagerNetworkPolicyManifest(env))
+	manifests = append(manifests, lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudMQTTClientsNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowEMQXClusterNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudLoggerNetworkPolicyManifest(env))
@@ -1395,6 +1404,34 @@ spec:
 `, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "video-cloud"))
 }
 
+func lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-video-cloud-api-internal
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-api
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: video-cloud-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: video-cloud-api
+      ports:
+        - protocol: TCP
+          port: 8080
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
+}
+
 func lkeAllowVideoCloudMQTTClientsNetworkPolicyManifest(env map[string]string) string {
 	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -1487,6 +1524,65 @@ spec:
         - protocol: TCP
           port: 18090
 `, lkeNamespaceName(env, "logger"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "video-cloud"))
+}
+
+func lkeAllowCloudLoggerLokiNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cloud-logger-loki
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-loki
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: video-cloud-loki
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloud-logger
+      ports:
+        - protocol: TCP
+          port: 3100
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "logger"))
+}
+
+func lkeAllowLogCollectorLokiNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-log-collector-loki
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-loki
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: video-cloud-loki
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: video-cloud-log-collector
+      ports:
+        - protocol: TCP
+          port: 3100
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"])
 }
 
 func lkeAllowRedisClientsNetworkPolicyManifest(env map[string]string) string {
@@ -2145,6 +2241,28 @@ func lkeApplyCloudLogger(env map[string]string, opts provisionOptions) error {
 	if !lkeWorkloadSelected(env, opts, "cloud-logger") {
 		return nil
 	}
+	for _, manifest := range []string{
+		lkeLokiConfigManifest(env),
+		lkeLokiDeploymentManifest(env),
+		lkeLokiServiceManifest(env),
+		lkeAllowCloudLoggerLokiNetworkPolicyManifest(env),
+		lkeLogCollectorServiceAccountManifest(env),
+		lkeLogCollectorClusterRoleManifest(env),
+		lkeLogCollectorClusterRoleBindingManifest(env),
+		lkeLogCollectorConfigManifest(env),
+		lkeLogCollectorDaemonSetManifest(env),
+		lkeAllowLogCollectorLokiNetworkPolicyManifest(env),
+	} {
+		if err := kubectlApply(manifest); err != nil {
+			return err
+		}
+	}
+	if err := runKubectl("-n", lkeNamespaceName(env, "observability"), "rollout", "status", "deployment/video-cloud-loki", "--timeout", firstNonEmpty(os.Getenv("LKE_LOKI_ROLLOUT_TIMEOUT"), "5m")); err != nil {
+		return err
+	}
+	if err := runKubectl("-n", lkeNamespaceName(env, "observability"), "rollout", "status", "daemonset/video-cloud-log-collector", "--timeout", firstNonEmpty(os.Getenv("LKE_LOG_COLLECTOR_ROLLOUT_TIMEOUT"), "5m")); err != nil {
+		return err
+	}
 	if err := kubectlApply(lkeCloudLoggerRuntimeSecretManifest(env)); err != nil {
 		return err
 	}
@@ -2517,14 +2635,14 @@ func lkePostgresPlacementManifest(env map[string]string) string {
 	if poolID == "" {
 		return ""
 	}
-	return fmt.Sprintf(`      nodeSelector:
-        lke.linode.com/pool-id: %q
+	return `      nodeSelector:
+        rtk.realtek.com/workload: "postgres"
       tolerations:
         - key: "rtk.realtek.com/workload"
           operator: "Equal"
           value: "postgres"
           effect: "NoSchedule"
-`, poolID)
+`
 }
 
 func lkeApplyPostgresStatefulSet(env map[string]string) error {
@@ -4274,11 +4392,9 @@ spec:
                 secretKeyRef:
                   name: cloud-logger-runtime
                   key: RTK_CLOUD_LOGGER_TOKEN
-            - name: RTK_CLOUD_LOGGER_STORE
-              value: %q
             - name: RTK_CLOUD_LOGGER_LOKI_URL
               value: %q
-%s`, lkeNamespaceName(env, "logger"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeImagePullSecretName(env), lkeCloudLoggerImage(env), firstNonEmpty(os.Getenv("RTK_CLOUD_LOGGER_STORE"), env["RTK_CLOUD_LOGGER_STORE"], "memory"), firstNonEmpty(os.Getenv("RTK_CLOUD_LOGGER_LOKI_URL"), env["RTK_CLOUD_LOGGER_LOKI_URL"]), lkeContainerResourcesManifest(env, "cloud-logger"))
+%s`, lkeNamespaceName(env, "logger"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeImagePullSecretName(env), lkeCloudLoggerImage(env), lkeCloudLoggerLokiURL(env), lkeContainerResourcesManifest(env, "cloud-logger"))
 }
 
 func lkeCloudLoggerServiceManifest(env map[string]string) string {
@@ -4541,6 +4657,262 @@ spec:
       port: 9090
       targetPort: 9090
 `, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"])
+}
+
+func lkeLokiConfigManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: video-cloud-loki-config
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-loki
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+data:
+  config.yaml: |
+    auth_enabled: false
+    server:
+      http_listen_port: 3100
+    common:
+      path_prefix: /loki
+      storage:
+        filesystem:
+          chunks_directory: /loki/chunks
+          rules_directory: /loki/rules
+      replication_factor: 1
+      ring:
+        kvstore:
+          store: inmemory
+    schema_config:
+      configs:
+        - from: 2024-01-01
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+    limits_config:
+      allow_structured_metadata: false
+      retention_period: 24h
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"])
+}
+
+func lkeLokiDeploymentManifest(env map[string]string) string {
+	checksum := lkeConfigChecksum(lkeLokiConfigManifest(env))
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: video-cloud-loki
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-loki
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: video-cloud-loki
+  template:
+    metadata:
+      annotations:
+        rtk.realtek.com/config-checksum: %q
+      labels:
+        app.kubernetes.io/name: video-cloud-loki
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+    spec:
+      containers:
+        - name: loki
+          image: %s
+          imagePullPolicy: IfNotPresent
+          args:
+            - -config.file=/etc/loki/config.yaml
+          ports:
+            - name: http
+              containerPort: 3100
+          volumeMounts:
+            - name: config
+              mountPath: /etc/loki
+            - name: data
+              mountPath: /loki
+%s      volumes:
+        - name: config
+          configMap:
+            name: video-cloud-loki-config
+        - name: data
+          emptyDir: {}
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_LOKI_IMAGE"), env["LKE_LOKI_IMAGE"], "grafana/loki:3.5.1"), lkeContainerResourcesManifest(env, "loki"))
+}
+
+func lkeLokiServiceManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Service
+metadata:
+  name: video-cloud-loki
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-loki
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: video-cloud-loki
+  ports:
+    - name: http
+      port: 3100
+      targetPort: 3100
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"])
+}
+
+func lkeLogCollectorServiceAccountManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: video-cloud-log-collector
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-log-collector
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"])
+}
+
+func lkeLogCollectorClusterRoleManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: %s-video-cloud-log-collector
+  labels:
+    app.kubernetes.io/name: video-cloud-log-collector
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "nodes/proxy", "services", "endpoints", "pods"]
+    verbs: ["get", "list", "watch"]
+`, env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"])
+}
+
+func lkeLogCollectorClusterRoleBindingManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: %s-video-cloud-log-collector
+  labels:
+    app.kubernetes.io/name: video-cloud-log-collector
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: %s-video-cloud-log-collector
+subjects:
+  - kind: ServiceAccount
+    name: video-cloud-log-collector
+    namespace: %s
+`, env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "observability"))
+}
+
+func lkeLogCollectorConfigManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: video-cloud-log-collector-config
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-log-collector
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+data:
+  config.yaml: |
+    server:
+      http_listen_port: 3101
+      grpc_listen_port: 0
+    positions:
+      filename: /run/promtail/positions.yaml
+    clients:
+      - url: http://video-cloud-loki.%s.svc.cluster.local:3100/loki/api/v1/push
+    scrape_configs:
+      - job_name: kubernetes-pod-files
+        pipeline_stages:
+          - cri: {}
+        static_configs:
+          - targets:
+              - localhost
+            labels:
+              job: kubernetes-pod-files
+              __path__: /var/log/pods/**/*.log
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "observability"))
+}
+
+func lkeLogCollectorDaemonSetManifest(env map[string]string) string {
+	checksum := lkeConfigChecksum(lkeLogCollectorConfigManifest(env))
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: video-cloud-log-collector
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-log-collector
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: video-cloud-log-collector
+  template:
+    metadata:
+      annotations:
+        rtk.realtek.com/config-checksum: %q
+      labels:
+        app.kubernetes.io/name: video-cloud-log-collector
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+    spec:
+      serviceAccountName: video-cloud-log-collector
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: promtail
+          image: %s
+          imagePullPolicy: IfNotPresent
+          args:
+            - -config.file=/etc/promtail/config.yaml
+          ports:
+            - name: http
+              containerPort: 3101
+          volumeMounts:
+            - name: config
+              mountPath: /etc/promtail
+            - name: run
+              mountPath: /run/promtail
+            - name: pod-logs
+              mountPath: /var/log/pods
+              readOnly: true
+%s      volumes:
+        - name: config
+          configMap:
+            name: video-cloud-log-collector-config
+        - name: run
+          emptyDir: {}
+        - name: pod-logs
+          hostPath:
+            path: /var/log/pods
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_LOG_COLLECTOR_IMAGE"), env["LKE_LOG_COLLECTOR_IMAGE"], "grafana/promtail:3.5.1"), lkeContainerResourcesManifest(env, "log-collector"))
 }
 
 func lkeGrafanaAdminSecretManifest(env map[string]string) string {
@@ -5193,6 +5565,14 @@ func lkeCloudLoggerEndpoint(env map[string]string) string {
 	)
 }
 
+func lkeCloudLoggerLokiURL(env map[string]string) string {
+	return strings.TrimRight(firstNonEmpty(
+		os.Getenv("RTK_CLOUD_LOGGER_LOKI_URL"),
+		env["RTK_CLOUD_LOGGER_LOKI_URL"],
+		"http://video-cloud-loki."+lkeNamespaceName(env, "observability")+".svc.cluster.local:3100",
+	), "/")
+}
+
 func lkeImagePullSecretName(env map[string]string) string {
 	return firstNonEmpty(os.Getenv("LKE_IMAGE_PULL_SECRET_NAME"), env["LKE_IMAGE_PULL_SECRET_NAME"], "ghcr-pull")
 }
@@ -5371,6 +5751,7 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 	extraEnv := ""
 	templateAnnotations := ""
 	topologySpread := lkeTopologySpreadManifest(workload.Name)
+	probes := lkeDeploymentProbeManifest(workload.Name)
 	imagePullSecrets := lkeDeploymentImagePullSecretsManifest(env)
 	replicas := lkeWorkloadReplicas(env, workload)
 	strategy := lkeDeploymentStrategyManifest(workload)
@@ -5419,6 +5800,7 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 		mqttOutboundQueueSize := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_OUTBOUND_QUEUE_SIZE"), env["LKE_VIDEO_CLOUD_MQTT_OUTBOUND_QUEUE_SIZE"], "8192")
 		mqttOutboundWriteTimeout := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_OUTBOUND_WRITE_TIMEOUT"), env["LKE_VIDEO_CLOUD_MQTT_OUTBOUND_WRITE_TIMEOUT"], "10s")
 		shadowCacheTTL := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_SHADOW_CACHE_TTL"), env["LKE_VIDEO_CLOUD_SHADOW_CACHE_TTL"], "24h")
+		webrtcSignalingStoreTTLGrace := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_TTL_GRACE"), env["LKE_VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_TTL_GRACE"], "30s")
 		extraEnv = fmt.Sprintf(`            - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -5433,6 +5815,8 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
             - name: VIDEO_CLOUD_DB_MAX_IDLE_CONNS
               value: %q
             - name: VIDEO_CLOUD_DB_CONN_MAX_LIFETIME
+              value: %q
+            - name: VIDEO_CLOUD_DB_ENSURE_SCHEMA
               value: %q
             - name: VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN
               valueFrom:
@@ -5462,6 +5846,10 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
             - name: VIDEO_CLOUD_MQTT_CLIENT_ID
               value: "video-cloud-api-$(POD_NAME)"
             - name: VIDEO_CLOUD_MQTT_TOPIC_ROOT
@@ -5517,11 +5905,20 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
               value: %q
             - name: VIDEO_CLOUD_WEBRTC_ICE_POLICY
               value: %q
+            - name: VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_ENABLED
+              value: "true"
+            - name: VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_ADDR
+              value: "redis.%s.svc.cluster.local:6379"
+            - name: VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_PREFIX
+              value: "video_cloud:webrtc"
+            - name: VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_TTL_GRACE
+              value: %q
 `,
 			lkeNamespaceName(env, "platform"),
 			lkeVideoCloudAPIDBMaxOpenConns(env),
 			lkeVideoCloudAPIDBMaxIdleConns(env),
 			lkeVideoCloudDBConnMaxLifetime(env),
+			lkeVideoCloudDBEnsureSchema(env),
 			lkeAccountManagerInternalURL(env),
 			lkeCloudLoggerEndpoint(env),
 			firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"),
@@ -5548,6 +5945,8 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 			lkeCoturnRealm(env),
 			lkeCoturnCredentialTTL(env),
 			lkeWebRTCICEPolicy(env),
+			lkeNamespaceName(env, "platform"),
+			webrtcSignalingStoreTTLGrace,
 		)
 		volumeMounts = `          volumeMounts:
             - name: logger-spool
@@ -5600,6 +5999,7 @@ spec:
           ports:
             - name: http
               containerPort: %d
+%s
           env:
             - name: CLOUD_PROVIDER
               value: "lke"
@@ -5607,7 +6007,7 @@ spec:
               value: %q
             - name: SERVICE_PUBLIC_HOST
               value: %q
-%s%s%s%s`, workload.Name, workload.Namespace, workload.Name, env["CLOUD_STACK_NAME"], replicas, strategy, workload.Name, templateAnnotations, workload.Name, env["CLOUD_STACK_NAME"], imagePullSecrets, topologySpread, workload.Image, lkeContainerResourcesManifest(env, workload.Name), workload.Port, env["CLOUD_STACK_NAME"], workload.Host, extraEnv, envFrom, volumeMounts, volumes)
+%s%s%s%s`, workload.Name, workload.Namespace, workload.Name, env["CLOUD_STACK_NAME"], replicas, strategy, workload.Name, templateAnnotations, workload.Name, env["CLOUD_STACK_NAME"], imagePullSecrets, topologySpread, workload.Image, lkeContainerResourcesManifest(env, workload.Name), workload.Port, probes, env["CLOUD_STACK_NAME"], workload.Host, extraEnv, envFrom, volumeMounts, volumes)
 }
 
 func lkeDeploymentImagePullSecretsManifest(env map[string]string) string {
@@ -5635,6 +6035,29 @@ func lkeDeploymentStrategyManifest(workload lkeWorkload) string {
     rollingUpdate:
       maxSurge: 0
       maxUnavailable: 1
+`
+}
+
+func lkeDeploymentProbeManifest(name string) string {
+	if name != "video-cloud-api" {
+		return ""
+	}
+	return `          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
 `
 }
 
@@ -5677,7 +6100,9 @@ type lkeResourceProfile struct {
 func lkeContainerResourceProfile(env map[string]string, name string) (lkeResourceProfile, bool) {
 	profiles := map[string]lkeResourceProfile{
 		"account-manager":         {requestCPU: "250m", requestMemory: "256Mi", limitMemory: "1Gi"},
-		"cloud-logger":            {requestCPU: "100m", requestMemory: "128Mi", limitMemory: "512Mi"},
+		"cloud-logger":            {requestCPU: "100m", requestMemory: "4Gi", limitMemory: "8Gi"},
+		"log-collector":           {requestCPU: "50m", requestMemory: "128Mi", limitMemory: "512Mi"},
+		"loki":                    {requestCPU: "250m", requestMemory: "512Mi", limitMemory: "2Gi"},
 		"mqtt":                    {requestCPU: "250m", requestMemory: "512Mi", limitMemory: "1536Mi"},
 		"video-cloud-api":         {requestCPU: "500m", requestMemory: "512Mi", limitMemory: "1536Mi"},
 		"video-cloud-logingester": {requestCPU: "500m", requestMemory: "512Mi", limitMemory: "1Gi"},
@@ -5736,6 +6161,10 @@ func lkeVideoCloudWorkerDBMaxIdleConns(env map[string]string) string {
 
 func lkeVideoCloudDBConnMaxLifetime(env map[string]string) string {
 	return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_DB_CONN_MAX_LIFETIME"), env["LKE_VIDEO_CLOUD_DB_CONN_MAX_LIFETIME"], "5m")
+}
+
+func lkeVideoCloudDBEnsureSchema(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_DB_ENSURE_SCHEMA"), env["LKE_VIDEO_CLOUD_DB_ENSURE_SCHEMA"], "false")
 }
 
 func lkeWebRTCICEPolicy(env map[string]string) string {
@@ -5862,9 +6291,18 @@ type lkeCluster struct {
 }
 
 type lkeNodePool struct {
-	ID    int    `json:"id"`
-	Type  string `json:"type"`
-	Count int    `json:"count"`
+	ID     int                `json:"id"`
+	Type   string             `json:"type"`
+	Count  int                `json:"count"`
+	Label  string             `json:"label"`
+	Labels map[string]string  `json:"labels"`
+	Taints []lkeNodePoolTaint `json:"taints"`
+}
+
+type lkeNodePoolTaint struct {
+	Key    string `json:"key"`
+	Value  string `json:"value"`
+	Effect string `json:"effect"`
 }
 
 func lkeClusterLabel(env map[string]string) string {
@@ -5911,14 +6349,18 @@ func createLKECluster(token string, env map[string]string) (lkeCluster, error) {
 	if err != nil {
 		return lkeCluster{}, err
 	}
+	nodePools := []map[string]any{
+		{"type": nodeType, "count": nodeCount},
+	}
+	if lkePostgresDedicatedNodePoolEnabled(env) {
+		nodePools = append(nodePools, lkePostgresNodePoolPayload(env))
+	}
 	payload, err := json.Marshal(map[string]any{
 		"label":       lkeClusterLabel(env),
 		"region":      firstNonEmpty(env["CLOUD_REGION"], "us-sea"),
 		"k8s_version": version,
 		"tags":        []string{"rtk-cloud", env["CLOUD_STACK_NAME"], "staging"},
-		"node_pools": []map[string]any{
-			{"type": nodeType, "count": nodeCount},
-		},
+		"node_pools":  nodePools,
 	})
 	if err != nil {
 		return lkeCluster{}, err
@@ -5993,7 +6435,7 @@ func ensureLKENodePool(paths provisionPaths, env map[string]string) error {
 	}
 	if pool.Count == desiredCount {
 		fmt.Fprintf(os.Stderr, "[lke] node pool %d already at count=%d\n", pool.ID, desiredCount)
-		return nil
+		return ensureLKEPostgresNodePool(paths, env, token, clusterID, pools)
 	}
 	payload, err := json.Marshal(map[string]any{"count": desiredCount})
 	if err != nil {
@@ -6003,7 +6445,149 @@ func ensureLKENodePool(paths provisionPaths, env map[string]string) error {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "[lke] resized node pool %d from count=%d to count=%d\n", pool.ID, pool.Count, desiredCount)
-	return nil
+	pools, err = listLKENodePools(token, clusterID)
+	if err != nil {
+		return err
+	}
+	return ensureLKEPostgresNodePool(paths, env, token, clusterID, pools)
+}
+
+func ensureLKEPostgresNodePool(paths provisionPaths, env map[string]string, token, clusterID string, pools []lkeNodePool) error {
+	if !lkePostgresDedicatedNodePoolEnabled(env) {
+		return nil
+	}
+	desiredCount := lkePostgresNodePoolCount(env)
+	desiredType := lkePostgresNodePoolType(env)
+	desiredIDRaw := firstNonEmpty(os.Getenv("LKE_POSTGRES_NODE_POOL_ID"), env["LKE_POSTGRES_NODE_POOL_ID"])
+	var pool *lkeNodePool
+	for i := range pools {
+		if desiredIDRaw != "" && strconv.Itoa(pools[i].ID) == desiredIDRaw {
+			pool = &pools[i]
+			break
+		}
+		if desiredIDRaw == "" && pools[i].Label == "postgres" {
+			pool = &pools[i]
+		}
+	}
+	payloadMap := lkePostgresNodePoolPayload(env)
+	if pool == nil {
+		payload, err := json.Marshal(payloadMap)
+		if err != nil {
+			return err
+		}
+		out, err := linodeRequestRaw(token, "POST", fmt.Sprintf("/lke/clusters/%s/pools", clusterID), string(payload))
+		if err != nil {
+			return err
+		}
+		var created lkeNodePool
+		if err := json.Unmarshal(out, &created); err != nil {
+			return err
+		}
+		if created.ID == 0 {
+			return errors.New("LKE postgres node pool create response did not include pool id")
+		}
+		fmt.Fprintf(os.Stderr, "[lke] created postgres node pool %d type=%s count=%d\n", created.ID, desiredType, desiredCount)
+		lkeSetPostgresNodePoolEnv(env, created.ID, desiredType, desiredCount)
+		return lkePersistStackEnvValues(paths.EnvRoot, map[string]string{
+			"LKE_POSTGRES_NODE_POOL_ID": strconv.Itoa(created.ID),
+			"LKE_POSTGRES_NODE_TYPE":    desiredType,
+			"LKE_POSTGRES_NODE_COUNT":   strconv.Itoa(desiredCount),
+		})
+	}
+	if pool.Type != desiredType || pool.Count != desiredCount || !lkeNodePoolHasPostgresPlacement(*pool) {
+		payload, err := json.Marshal(payloadMap)
+		if err != nil {
+			return err
+		}
+		if _, err := linodeRequestRaw(token, "PUT", fmt.Sprintf("/lke/clusters/%s/pools/%d", clusterID, pool.ID), string(payload)); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "[lke] updated postgres node pool %d type=%s count=%d\n", pool.ID, desiredType, desiredCount)
+	}
+	lkeSetPostgresNodePoolEnv(env, pool.ID, desiredType, desiredCount)
+	return lkePersistStackEnvValues(paths.EnvRoot, map[string]string{
+		"LKE_POSTGRES_NODE_POOL_ID": strconv.Itoa(pool.ID),
+		"LKE_POSTGRES_NODE_TYPE":    desiredType,
+		"LKE_POSTGRES_NODE_COUNT":   strconv.Itoa(desiredCount),
+	})
+}
+
+func lkeSetPostgresNodePoolEnv(env map[string]string, poolID int, nodeType string, count int) {
+	env["LKE_POSTGRES_NODE_POOL_ID"] = strconv.Itoa(poolID)
+	env["LKE_POSTGRES_NODE_TYPE"] = nodeType
+	env["LKE_POSTGRES_NODE_COUNT"] = strconv.Itoa(count)
+}
+
+func lkePostgresDedicatedNodePoolEnabled(env map[string]string) bool {
+	if firstNonEmpty(os.Getenv("LKE_POSTGRES_NODE_POOL_ID"), env["LKE_POSTGRES_NODE_POOL_ID"]) != "" {
+		return true
+	}
+	raw := strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_POSTGRES_DEDICATED_NODE_POOL"), env["LKE_POSTGRES_DEDICATED_NODE_POOL"]))
+	if raw != "" {
+		return strings.EqualFold(raw, "true") || raw == "1" || strings.EqualFold(raw, "yes")
+	}
+	target, err := strconv.Atoi(firstNonEmpty(os.Getenv("LKE_TARGET_CONNECTS"), env["LKE_TARGET_CONNECTS"], "0"))
+	return err == nil && target >= 100000
+}
+
+func lkePostgresNodePoolType(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_POSTGRES_NODE_TYPE"), env["LKE_POSTGRES_NODE_TYPE"], "g6-standard-8")
+}
+
+func lkePostgresNodePoolCount(env map[string]string) int {
+	raw := strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_POSTGRES_NODE_COUNT"), env["LKE_POSTGRES_NODE_COUNT"], "1"))
+	count, err := strconv.Atoi(raw)
+	if err != nil || count <= 0 {
+		return 1
+	}
+	return count
+}
+
+func lkePostgresNodePoolPayload(env map[string]string) map[string]any {
+	return map[string]any{
+		"type":  lkePostgresNodePoolType(env),
+		"count": lkePostgresNodePoolCount(env),
+		"label": "postgres",
+		"labels": map[string]string{
+			"rtk.realtek.com/workload": "postgres",
+		},
+		"taints": []map[string]string{
+			{
+				"key":    "rtk.realtek.com/workload",
+				"value":  "postgres",
+				"effect": "NoSchedule",
+			},
+		},
+	}
+}
+
+func lkeNodePoolHasPostgresPlacement(pool lkeNodePool) bool {
+	if pool.Label != "postgres" {
+		return false
+	}
+	if pool.Labels["rtk.realtek.com/workload"] != "postgres" {
+		return false
+	}
+	for _, taint := range pool.Taints {
+		if taint.Key == "rtk.realtek.com/workload" && taint.Value == "postgres" && taint.Effect == "NoSchedule" {
+			return true
+		}
+	}
+	return false
+}
+
+func lkePersistStackEnvValues(envRoot string, updates map[string]string) error {
+	stackPath := filepath.Join(envRoot, "env", "stack.env")
+	raw, err := readEnvFile(stackPath)
+	if err != nil {
+		return err
+	}
+	for key, value := range updates {
+		raw[key] = value
+	}
+	derived := envroot.Derive(raw)
+	_, err = syncTextFile(stackPath, renderStackEnv(raw, derived), false)
+	return err
 }
 
 func listLKENodePools(token string, clusterID string) ([]lkeNodePool, error) {

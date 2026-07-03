@@ -16,8 +16,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -224,6 +226,31 @@ func assertCredentialBundleMetadata(t *testing.T, path string, want map[string]s
 			t.Fatalf("metadata %s = %q, want %q", key, got, expected)
 		}
 	}
+}
+
+func TestCommandRunnerWithTimeoutKillsChildProcessGroup(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	err := commandRunnerWithTimeout(100*time.Millisecond, "sh", "-c", "sleep 30 & echo $! > "+pidFile+"; wait")
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("commandRunnerWithTimeout error = %v, want timeout", err)
+	}
+	raw, readErr := os.ReadFile(pidFile)
+	if readErr != nil {
+		t.Fatalf("read child pid: %v", readErr)
+	}
+	pid, parseErr := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if parseErr != nil {
+		t.Fatalf("parse child pid: %v", parseErr)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(pid, 0); err != nil {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	_ = syscall.Kill(pid, syscall.SIGKILL)
+	t.Fatalf("child process %d survived parent timeout", pid)
 }
 
 func assertCredentialBundleBrandCounts(t *testing.T, path string, want map[string]int) {
@@ -976,7 +1003,15 @@ func TestExecuteSyncLiveHonorsExplicitVMCountOverride(t *testing.T) {
 		t.Fatalf("missing generated ansible inventory: %v", err)
 	}
 	inventory := string(inventoryRaw)
-	for _, want := range []string{`"ansible_host": "203.0.113.101"`, `"shard_index": 0`, `"run_id": "run-cli"`, `"role": "mixed"`} {
+	for _, want := range []string{
+		`"ansible_host": "203.0.113.101"`,
+		`"shard_index": 0`,
+		`"run_id": "run-cli"`,
+		`"role": "mixed"`,
+		`ServerAliveInterval=5`,
+		`ServerAliveCountMax=1`,
+		`ConnectTimeout=10`,
+	} {
 		if !strings.Contains(inventory, want) {
 			t.Fatalf("inventory missing %q:\n%s", want, inventory)
 		}
@@ -1022,6 +1057,9 @@ func TestExecuteSyncLiveHonorsExplicitVMCountOverride(t *testing.T) {
 	}
 	if extraVars["shadow_command_timeout"] != DefaultShadowCommandTimeout {
 		t.Fatalf("extra vars shadow_command_timeout = %q, want %s", extraVars["shadow_command_timeout"], DefaultShadowCommandTimeout)
+	}
+	if extraVars["rsync_timeout"] != "90" {
+		t.Fatalf("extra vars rsync_timeout = %q, want 90", extraVars["rsync_timeout"])
 	}
 	if extraVars["generator_hosts_override_ip"] != "172.232.190.230" {
 		t.Fatalf("extra vars generator_hosts_override_ip = %q, want 172.232.190.230", extraVars["generator_hosts_override_ip"])
@@ -1237,8 +1275,12 @@ func TestAnsibleSyncSkipsUnchangedArtifactsByChecksum(t *testing.T) {
 	for _, want := range []string{
 		"remote_runner_stat",
 		"remote_env_archive_stat",
+		"remote_common_env_stack_stat",
+		"remote_common_env_kubeconfig_stat",
+		"remote_shard_credentials_stat",
 		"runner_needs_upload",
 		"env_archive_needs_upload",
+		"remote_extracted",
 		"Extract env-root shard archive when changed",
 		"files_skipped",
 		"bytes_skipped",
@@ -1502,10 +1544,13 @@ func TestAnsibleConfigDisablesSSHCompressionForPreCompressedArtifacts(t *testing
 		t.Fatal(err)
 	}
 	body := string(raw)
-	for _, want := range []string{`ssh_args`, `Compression=no`} {
+	for _, want := range []string{`ssh_args`, `Compression=no`, `ControlMaster=no`, `ServerAliveInterval=5`, `ServerAliveCountMax=1`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("ansible.cfg missing %q:\n%s", want, body)
 		}
+	}
+	if strings.Contains(body, `ControlMaster=auto`) {
+		t.Fatalf("ansible.cfg should not use SSH multiplexing for flaky load-generator VMs:\n%s", body)
 	}
 	if strings.Contains(body, ` -C`) {
 		t.Fatalf("ansible.cfg should not enable SSH compression for gzip artifacts:\n%s", body)
@@ -1570,10 +1615,69 @@ func TestHome100KResumeLiveSkipsProvisionWhenVMStateExists(t *testing.T) {
 	if strings.Contains(resume, "run_home100k provision-vms") {
 		t.Fatalf("workflow-resume-live must reuse existing vms.json and skip provision-vms:\n%s", resume)
 	}
-	for _, want := range []string{`requires existing VM state`, `set_phase "sync"`, `run_home100k sync`} {
+	for _, want := range []string{`requires existing VM state`, `set_phase "sync"`, `run_live_sync_with_retries`} {
 		if !strings.Contains(resume, want) {
 			t.Fatalf("workflow-resume-live missing %q:\n%s", want, resume)
 		}
+	}
+}
+
+func TestHome100KScriptSyncRetrySurvivesSetE(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "home-100k.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	_, retryFunc, ok := strings.Cut(body, "\nrun_live_sync_with_retries()")
+	if !ok {
+		t.Fatal("home-100k.sh missing run_live_sync_with_retries")
+	}
+	retryFunc, _, ok = strings.Cut(retryFunc, "\ncommand=")
+	if !ok {
+		t.Fatal("home-100k.sh retry function is not terminated before command dispatch")
+	}
+	if !strings.Contains(retryFunc, "if run_home100k sync ") || !strings.Contains(retryFunc, "else") || !strings.Contains(retryFunc, "rc=$?") {
+		t.Fatalf("sync retry must wrap run_home100k in if/else so set -e does not abort before retry:\n%s", retryFunc)
+	}
+}
+
+func TestHome100KScriptSkipsVMResourceSSHDuringBootstrap(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "home-100k.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	_, nodeStatus, ok := strings.Cut(body, "\nnode_resource_status()")
+	if !ok {
+		t.Fatal("home-100k.sh missing node_resource_status")
+	}
+	nodeStatus, _, ok = strings.Cut(nodeStatus, "\n}\n\nk8s_kubeconfig")
+	if !ok {
+		t.Fatal("home-100k.sh node_resource_status is not terminated before k8s_kubeconfig")
+	}
+	for _, want := range []string{"starting|provision-vms|sync)", "return"} {
+		if !strings.Contains(nodeStatus, want) {
+			t.Fatalf("node_resource_status must skip SSH polling during bootstrap phase, missing %q:\n%s", want, nodeStatus)
+		}
+	}
+}
+
+func TestHome100KScriptSingleCollectPassesSSHKey(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "home-100k.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	_, collectCase, ok := strings.Cut(body, "\n  collect)")
+	if !ok {
+		t.Fatal("home-100k.sh missing collect case")
+	}
+	collectCase, _, ok = strings.Cut(collectCase, "\n    ;;")
+	if !ok {
+		t.Fatal("home-100k.sh collect case is not terminated")
+	}
+	if !strings.Contains(collectCase, `--ssh-key "$ssh_key"`) {
+		t.Fatalf("single-step collect must pass configured ssh key:\n%s", collectCase)
 	}
 }
 
@@ -1844,6 +1948,7 @@ func TestAnsibleStartRunnerUsesPrebuiltCloudMQTTTestAndDaemonWait(t *testing.T) 
 		"runner daemon listen port :18080 is still in use after cleanup",
 		"CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT",
 		"{{ remote_home_100k_dir }}/bin/cloud-mqtt-test",
+		`if [ -f "{{ remote_env_root }}/env/stack.env" ]; then`,
 		"generator_hosts_override_ip | default('')",
 		"video-cloud-staging.realtekconnect.com",
 		"device.video-cloud-staging.realtekconnect.com",
@@ -1854,6 +1959,7 @@ func TestAnsibleStartRunnerUsesPrebuiltCloudMQTTTestAndDaemonWait(t *testing.T) 
 		`--load-generator-devices-per-vm "{{ load_generator_devices_per_vm }}"`,
 		`--vm-label-prefix "{{ vm_label_prefix | default('lg') }}"`,
 		`--mqtt-concurrency "{{ mqtt_concurrency | default(1000) }}"`,
+		`--runtime-logs="{{ runtime_logs | default(true) | string | lower }}"`,
 		`runner_nofile_limit="{{ runner_nofile_limit | default(1048576) }}"`,
 		`ulimit -n "$runner_nofile_limit"`,
 		"runner-ready-response.json",
@@ -1862,6 +1968,25 @@ func TestAnsibleStartRunnerUsesPrebuiltCloudMQTTTestAndDaemonWait(t *testing.T) 
 		if !strings.Contains(body, want) {
 			t.Fatalf("start-runner.yml missing %q:\n%s", want, body)
 		}
+	}
+}
+
+func TestRunnerDaemonAcceptsRuntimeLogsFlag(t *testing.T) {
+	var stderr bytes.Buffer
+	_, values, err := parseRunnerDaemonFlags("home-100k runner-daemon", []string{
+		"--env-root", "cloud_env/staging/lke",
+		"--brandname", "RTK",
+		"--region", "us-sea",
+		"--run-id", "run-cli",
+		"--role", "mixed",
+		"--shard-index", "0",
+		"--runtime-logs=false",
+	}, &stderr)
+	if err != nil {
+		t.Fatalf("parseRunnerDaemonFlags error: %v stderr=%s", err, stderr.String())
+	}
+	if values.runtimeLogs {
+		t.Fatalf("runtimeLogs = true, want false")
 	}
 }
 
@@ -2200,6 +2325,13 @@ func TestApplySourceCounterBaselineDelta(t *testing.T) {
 		"postgres": {Available: true, Counters: map[string]int64{
 			"postgres.too_many_clients": 34,
 		}},
+		"video_cloud_api": {Available: true, Counters: map[string]int64{
+			"video_cloud_api.k8s.running_pods":                    7,
+			"video_cloud_api.k8s.desired_replicas":                7,
+			"video_cloud_api.request_token.status_200":            9723,
+			"video_cloud_api.metrics.request_token_count":         140,
+			"video_cloud_api.webrtc_signaling_store.enabled_pods": 7,
+		}},
 	}}
 	baseline := ServerEvidence{Sources: map[string]EvidenceSource{
 		"ingress_nginx": {Available: true, Counters: map[string]int64{
@@ -2210,10 +2342,18 @@ func TestApplySourceCounterBaselineDelta(t *testing.T) {
 		"postgres": {Available: true, Counters: map[string]int64{
 			"postgres.too_many_clients": 34,
 		}},
+		"video_cloud_api": {Available: true, Counters: map[string]int64{
+			"video_cloud_api.k8s.running_pods":                    7,
+			"video_cloud_api.k8s.desired_replicas":                7,
+			"video_cloud_api.request_token.status_200":            1200,
+			"video_cloud_api.metrics.request_token_count":         100,
+			"video_cloud_api.webrtc_signaling_store.enabled_pods": 7,
+		}},
 	}}
 
 	applySourceCounterBaselineDelta(&evidence, baseline, "ingress_nginx")
 	applySourceCounterBaselineDelta(&evidence, baseline, "postgres")
+	applySourceCounterBaselineDelta(&evidence, baseline, "video_cloud_api")
 
 	ingress := evidence.Sources["ingress_nginx"].Counters
 	if ingress["ingress_nginx.request_token.status_200"] != 20 {
@@ -2227,6 +2367,22 @@ func TestApplySourceCounterBaselineDelta(t *testing.T) {
 	}
 	if got := evidence.Sources["postgres"].Counters["postgres.too_many_clients"]; got != 0 {
 		t.Fatalf("postgres too_many_clients delta = %d, want 0", got)
+	}
+	videoAPI := evidence.Sources["video_cloud_api"].Counters
+	if got := videoAPI["video_cloud_api.k8s.running_pods"]; got != 7 {
+		t.Fatalf("video api running pods = %d, want raw gauge 7", got)
+	}
+	if got := videoAPI["video_cloud_api.k8s.desired_replicas"]; got != 7 {
+		t.Fatalf("video api desired replicas = %d, want raw gauge 7", got)
+	}
+	if got := videoAPI["video_cloud_api.webrtc_signaling_store.enabled_pods"]; got != 7 {
+		t.Fatalf("signaling store pods = %d, want raw gauge 7", got)
+	}
+	if got := videoAPI["video_cloud_api.request_token.status_200"]; got != 8523 {
+		t.Fatalf("video api request token delta = %d, want 8523", got)
+	}
+	if got := videoAPI["video_cloud_api.metrics.request_token_count"]; got != 40 {
+		t.Fatalf("video api metrics delta = %d, want 40", got)
 	}
 }
 
@@ -2488,6 +2644,7 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 		"--env-root cloud_env/staging/lke",
 		"--brandname RTK",
 		"--duration-seconds 3",
+		"--mqtt-probe --run-id run-cli",
 		"--telemetry-interval off",
 		"--command-rate-per-device-per-day 1800.00",
 		"--stage-names target",
@@ -2498,6 +2655,7 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 		"--concurrency 1000",
 		"--command-concurrency 100",
 		"--shadow-command-timeout 30s",
+		"--runtime-logs=true",
 		"--max-connected-devices 20000",
 		"--shard-index 0",
 		"--shard-count 5",
@@ -2616,6 +2774,25 @@ func TestExecuteShardRunLiveWritesShardResultsWhenMQTTTestFails(t *testing.T) {
 	}
 	if result.StageResults[0].DeviceMQTTTotals.ConnectAttempts != 2500 || result.StageResults[0].AppUserTotals.DesiredWrites != 5000 {
 		t.Fatalf("failed shard counters not preserved: %#v", result.StageResults[0])
+	}
+}
+
+func TestLoadLiveMQTTShardResultsRejectsActorProbeFallback(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "results.json")
+	if err := writeJSONFile(path, map[string]any{
+		"overall": "pass",
+		"load": map[string]any{
+			"load_model": "actor-separated-probe",
+		},
+		"connect_attempts":   1000,
+		"connect_successes":  1000,
+		"active_connections": 1000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := loadLiveMQTTShardResults(path, []Stage{{Name: "target"}}, []string{"1000"})
+	if err == nil || !strings.Contains(err.Error(), `load_model = "actor-separated-probe"`) {
+		t.Fatalf("loadLiveMQTTShardResults error = %v, want actor probe rejection", err)
 	}
 }
 
@@ -2990,6 +3167,63 @@ func TestExecuteCollectLiveCopiesShardArtifacts(t *testing.T) {
 	}
 }
 
+func TestExecuteCollectLiveRetriesCollectPlaybook(t *testing.T) {
+	outDir := t.TempDir()
+	envRoot := writeTinyEnvRoot(t)
+	writeHome100KCoverageArtifacts(t, envRoot)
+	stateFile := filepath.Join(outDir, "vms.json")
+	body, err := json.Marshal(map[string]any{
+		"created": []LinodeVM{{ID: 101, Label: "lg01", PublicIPv4: "203.0.113.101"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stateFile, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	oldRunner := commandRunner
+	oldDelay := ansibleRetryDelay
+	defer func() {
+		commandRunner = oldRunner
+		ansibleRetryDelay = oldDelay
+	}()
+	ansibleRetryDelay = 0
+
+	collectAttempts := 0
+	commandRunner = func(name string, args ...string) error {
+		joined := name + " " + strings.Join(args, " ")
+		if strings.Contains(joined, "ansible/collect.yml") {
+			collectAttempts++
+			if collectAttempts == 1 {
+				return errors.New("transient ssh close")
+			}
+		}
+		return nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Execute([]string{
+		"collect",
+		"--env-root", envRoot,
+		"--brandname", "RTK",
+		"--region", "us-sea",
+		"--run-id", "run-cli",
+		"--out-dir", outDir,
+		"--live",
+		"--vm-state-file", stateFile,
+		"--remote-out-root", "/var/lib/home-100k",
+		"--ssh-user", "root",
+		"--ssh-key", "/tmp/test-key",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Execute(collect live) code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if collectAttempts != 2 {
+		t.Fatalf("collect playbook attempts = %d, want 2", collectAttempts)
+	}
+}
+
 func TestExecuteCollectServerEvidenceDefaultsToIncompleteSourcePlan(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
@@ -3228,6 +3462,32 @@ func TestCollectLiveServerEvidenceFallsBackToCentralLoggerRuntimeLogs(t *testing
 		if !strings.Contains(joined, want) {
 			t.Fatalf("central logger runtime query missing %q in:\n%s", want, joined)
 		}
+	}
+}
+
+func TestCentralLoggerRuntimeQueryStopsAtWindowBudget(t *testing.T) {
+	t.Setenv("HOME100K_CENTRAL_LOGGER_RUNTIME_QUERY_MAX_WINDOWS", "3")
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.Error(w, "too wide", http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	envRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(envRoot, "services", "cloud-logger"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envRoot, "services", "cloud-logger", "logger.env"), []byte("CLOUD_LOGGER_ENDPOINT="+server.URL+"\nCLOUD_LOGGER_INGEST_TOKEN=logger-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, note := collectCentralLoggerRuntimeLogEvidence(envRoot, "run-budget", time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano))
+	if !strings.Contains(note, "central_logger runtime evidence probe failed") {
+		t.Fatalf("note = %q, want runtime evidence failure", note)
+	}
+	if requests > 3 {
+		t.Fatalf("runtime logger requests = %d, want <= 3", requests)
 	}
 }
 

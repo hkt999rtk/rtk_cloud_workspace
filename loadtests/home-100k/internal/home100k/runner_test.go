@@ -999,6 +999,80 @@ func TestCorrelateServerEvidenceAllowsSmallEMQXConnectMetricDrift(t *testing.T) 
 	}
 }
 
+func TestCorrelateServerEvidenceWarnsOnSharedEMQXConnectOverage(t *testing.T) {
+	device := DeviceMQTTTotals{
+		ConnectAttempts:   50000,
+		ConnectSuccess:    50000,
+		Subscribes:        50000,
+		Publishes:         2502,
+		ReceivedMessages:  2502,
+		DeltaReceived:     2502,
+		ReportedPublishes: 2502,
+	}
+	app := AppUserTotals{TokenAttempts: 2502, TokenSuccess: 2502, MQTTConnackSuccess: 2502, DesiredWrites: 2502, ReceivedAcks: 2502}
+	evidence := ServerEvidence{
+		Complete: true,
+		Sources: map[string]EvidenceSource{
+			"emqx": {Available: true, Counters: map[string]int64{
+				"emqx.broker.identity":       1,
+				"mqtt.total_connect_success": 52826,
+			}},
+			"iot_device_shadow": {Available: true, Counters: map[string]int64{
+				"app_user.desired_writes":        2502,
+				"device_mqtt.delta_received":     2502,
+				"device_mqtt.reported_publishes": 2502,
+				"app_user.received_acks":         2502,
+			}},
+		},
+	}
+
+	correlation := correlateServerEvidence(evidence, device, app)
+
+	if correlation.Status != "pass" {
+		t.Fatalf("status = %s, want pass with EMQX shared-cluster overage warning; checks=%#v", correlation.Status, correlation.Checks)
+	}
+	if check := correlation.Checks[0]; check.Counter != "mqtt.total_connect_success" || check.Delta != 324 || check.Tolerance != 53 || check.Status != "warning" {
+		t.Fatalf("emqx check = %#v, want overage warning", check)
+	}
+}
+
+func TestCorrelateServerEvidenceFailsOnMissingEMQXConnects(t *testing.T) {
+	device := DeviceMQTTTotals{
+		ConnectAttempts:   50000,
+		ConnectSuccess:    50000,
+		Subscribes:        50000,
+		Publishes:         2502,
+		ReceivedMessages:  2502,
+		DeltaReceived:     2502,
+		ReportedPublishes: 2502,
+	}
+	app := AppUserTotals{TokenAttempts: 2502, TokenSuccess: 2502, MQTTConnackSuccess: 2502, DesiredWrites: 2502, ReceivedAcks: 2502}
+	evidence := ServerEvidence{
+		Complete: true,
+		Sources: map[string]EvidenceSource{
+			"emqx": {Available: true, Counters: map[string]int64{
+				"emqx.broker.identity":       1,
+				"mqtt.total_connect_success": 52000,
+			}},
+			"iot_device_shadow": {Available: true, Counters: map[string]int64{
+				"app_user.desired_writes":        2502,
+				"device_mqtt.delta_received":     2502,
+				"device_mqtt.reported_publishes": 2502,
+				"app_user.received_acks":         2502,
+			}},
+		},
+	}
+
+	correlation := correlateServerEvidence(evidence, device, app)
+
+	if correlation.Status != "fail" {
+		t.Fatalf("status = %s, want fail for missing EMQX connects; checks=%#v", correlation.Status, correlation.Checks)
+	}
+	if check := correlation.Checks[0]; check.Delta >= 0 || check.Status != "fail" {
+		t.Fatalf("emqx check = %#v, want negative delta fail", check)
+	}
+}
+
 func TestCorrelateServerEvidenceDoesNotTolerateShadowCounterDrift(t *testing.T) {
 	device := DeviceMQTTTotals{
 		ConnectAttempts:   10,
@@ -1124,5 +1198,31 @@ func TestCorrelateRuntimeLogsFindsMissingStreamsAndSequences(t *testing.T) {
 	}
 	if correlation.MissingSequenceCount != 1 || correlation.MissingSequenceSamples[0].Seq != 2 {
 		t.Fatalf("missing sequences = %+v", correlation)
+	}
+}
+
+func TestCorrelateRuntimeLogsSkipsEventsWithoutRuntimeExpectations(t *testing.T) {
+	stages := []StageResult{{
+		Name: "target",
+		CommandEvents: []CommandEvent{{
+			Stage:     "target",
+			DeviceID:  "rtk-0041",
+			CommandID: "cmd-1",
+		}},
+	}}
+	evidence := ServerEvidence{Sources: map[string]EvidenceSource{
+		"iot_device_shadow_streams": {
+			Available: true,
+			Counters:  map[string]int64{},
+		},
+	}}
+
+	correlation := correlateRuntimeLogs(evidence, stages)
+
+	if correlation.Status != "skipped" {
+		t.Fatalf("status = %s, want skipped", correlation.Status)
+	}
+	if correlation.ClientCommandEvents != 1 || correlation.MissingStreamCount != 0 || correlation.MissingSequenceCount != 0 {
+		t.Fatalf("unexpected correlation: %+v", correlation)
 	}
 }

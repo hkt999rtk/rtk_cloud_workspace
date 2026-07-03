@@ -35,7 +35,16 @@ the input and rerun; do not hard-code a one-off VM count into the runbook.
 Logger memory is also part of capacity evidence. Runtime-log correlation is a
 hard gate, so `LKE_CLOUD_LOGGER_REQUEST_MEMORY` and
 `LKE_CLOUD_LOGGER_LIMIT_MEMORY` must be recorded when cloud-logger sizing is
-changed.
+changed. For 50K and larger runs, the current evidence-profile default is
+`LKE_CLOUD_LOGGER_REQUEST_MEMORY=4Gi` and
+`LKE_CLOUD_LOGGER_LIMIT_MEMORY=8Gi`. A smaller logger limit can make a
+server-capacity run unusable even when MQTT, API, and WebRTC client paths mostly
+work, because the report cannot prove runtime shadow evidence after the logger
+OOMs.
+Cloud Logger must use Loki-backed storage in staging. Store selection is not a
+sizing knob and must not be reintroduced as an in-process fallback; use
+`RTK_CLOUD_LOGGER_LOKI_URL` only to point at the private or external Loki base
+URL.
 
 The initial seed values are:
 
@@ -299,8 +308,8 @@ reports are useful for failure taxonomy only.
 - Interpretation: the MQTT memory fix moved the bottleneck away from broker
   OOM. This still cannot be used as a safe 50K coefficient because the evidence
   gate failed. The next retry should keep 50K, 5 MQTT pods, and 5 nodes fixed,
-  then raise cloud-logger memory, for example
-  `--cloud-logger-request-memory 1Gi --cloud-logger-limit-memory 2Gi`.
+  then raise cloud-logger memory. The current recommended floor is
+  `--cloud-logger-request-memory 4Gi --cloud-logger-limit-memory 8Gi`.
 - Cleanup confirmation: the wrapper destroyed the three `home-100k`
   load-generator VMs; a follow-up Linode query returned no matching `home-100k`
   instances. The final cleanup plan listed three new unattached PVC volumes
@@ -351,6 +360,46 @@ reports are useful for failure taxonomy only.
   `home-100k` instances. The post-run cleanup plan listed new unattached PVC
   volumes `16393032`, `16393033`, and `16393017`; delete them by exact ID before
   the next fresh run if the run will destroy and recreate the LKE stack.
+
+### `lt50k-video-turn-20260702T124500Z` Logger Evidence Notes
+
+- Report:
+  `loadtests/home-100k/reports/lt50k-video-turn-20260702T124500Z/TEST_REPORT.md`
+- Result: `INCOMPLETE`. This run must not be used as a 50K-with-WebRTC capacity
+  coefficient.
+- MQTT/shadow client signal: 50000 device attempts produced 49996 MQTT connect
+  successes and 4 token failures. APP desired writes reached 2502, but only
+  2320 ACKs were observed; 182 APP waits timed out.
+- WebRTC signal: the first relay-only video step reached 77/100 media sessions.
+  The remaining 23 failed at `webrtc_media_answer` with HTTP 400
+  `device not online`. The failing devices still had active websocket owner
+  evidence, so this was a Video Cloud API online-projection/signaling ownership
+  bug, not coturn pressure.
+- TURN signal: turnregistry reported one active coturn node, coturn active
+  allocations/sessions were around 46 during the active window, all selected
+  candidates were relay, and no non-relay candidate was reported. This is not
+  enough pressure to justify adding coturn nodes.
+- Logger root cause evidence: the server evidence probe reported
+  `central logger query failed: logger query status=502`, and
+  `runtime_log_streams=0`. The previous `cloud-logger` pod had
+  `Last State: Terminated`, `Reason: OOMKilled`, `Exit Code: 137`, restart count
+  3, and a 4Gi memory limit. Because runtime shadow evidence was missing, the
+  report correctly stayed `INCOMPLETE`.
+- Fix after the run: `cloud_env/staging/lke/env/stack.env` now sets
+  `LKE_CLOUD_LOGGER_REQUEST_MEMORY=4Gi` and
+  `LKE_CLOUD_LOGGER_LIMIT_MEMORY=8Gi`; the LKE manifest fallback and
+  `scripts/run-lke-capacity-experiment.sh` defaults use the same 4Gi/8Gi
+  capacity floor. After redeploy, the new `cloud-logger` pod had restart count
+  0 and the 8Gi limit applied. A later live check found an old pod had been
+  evicted under node memory pressure while using about 4.37Gi with only a 1Gi
+  request, so the request floor must stay near the observed active-window
+  footprint rather than only raising the memory limit.
+- Required next-run checks: record `cloud-logger` restart count before and
+  after the 50K-with-WebRTC run, capture memory p95/max during the active
+  window, and verify `/v1/logs` can return run-scoped runtime events before
+  accepting MQTT/shadow evidence. If logger query fails, classify the run as
+  `evidence_logging` or `cloud_logger_oom`; do not attribute it to coturn,
+  MQTT, or API capacity without separate evidence.
 
 ### `cap100k-anchor-20260622T231201Z` Notes
 
@@ -525,7 +574,10 @@ Failure classification controls the next action:
 - `evidence_logging`: fix logger/server evidence before treating the run as a
   capacity datapoint.
 - `cloud_logger_oom`: increase cloud-logger memory or move to a durable logger
-  backend, then rerun the same target before changing MQTT/node sizing.
+  backend, then rerun the same target before changing MQTT/node sizing. For
+  50K+ staging evidence runs, do not go below the current 4Gi request / 8Gi
+  limit floor, and verify logger restart count plus memory p95/max in the next
+  report.
 
 ## 100K Initial Prediction
 

@@ -96,6 +96,7 @@ func parseRunnerDaemonFlags(name string, args []string, stderr io.Writer) (PlanO
 	mqttConcurrency := fs.Int("mqtt-concurrency", DefaultLiveMQTTConcurrency, "per-shard MQTT connect worker concurrency for live runner")
 	commandConcurrency := fs.Int("command-concurrency", DefaultLiveCommandConcurrency, "per-shard sustained shadow command concurrency for live runner")
 	shadowCommandTimeout := fs.String("shadow-command-timeout", DefaultShadowCommandTimeout, "per-phase sustained shadow command timeout")
+	runtimeLogs := fs.Bool("runtime-logs", true, "publish MQTT runtime logs during sustained shadow commands")
 	liveRunnerTimeoutGrace := fs.String("live-runner-timeout-grace", "", "extra timeout after the configured live MQTT duration before killing the shard runner")
 	listen := fs.String("listen", defaultRunnerDaemonListen, "runner daemon listen address")
 	if err := fs.Parse(args); err != nil {
@@ -122,6 +123,7 @@ func parseRunnerDaemonFlags(name string, args []string, stderr io.Writer) (PlanO
 			mqttConcurrency:        *mqttConcurrency,
 			commandConcurrency:     *commandConcurrency,
 			shadowCommandTimeout:   strings.TrimSpace(*shadowCommandTimeout),
+			runtimeLogs:            *runtimeLogs,
 			liveRunnerTimeoutGrace: strings.TrimSpace(*liveRunnerTimeoutGrace),
 		},
 		listen: *listen,

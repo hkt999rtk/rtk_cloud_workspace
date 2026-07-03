@@ -59,6 +59,10 @@
   vars:
     remote_artifact_store: "{{ remote_out_root }}/{{ run_id }}/orchestra/artifact-store"
   tasks:
+    - name: Wait for SSH
+      ansible.builtin.wait_for_connection:
+        timeout: "{{ ssh_ready_timeout | default(300) }}"
+
     - name: Create orchestra artifact store
       ansible.builtin.file:
         path: "{{ remote_artifact_store }}"
@@ -114,6 +118,9 @@
           - "--progress"
       when: orchestra_artifact_store_needs_upload
       register: orchestra_artifact_copy
+      retries: "{{ rsync_retries | default(3) }}"
+      delay: "{{ rsync_retry_delay | default(10) }}"
+      until: orchestra_artifact_copy is succeeded
 
     - name: Write orchestra artifact cache telemetry
       ansible.builtin.copy:
@@ -139,6 +146,10 @@
     remote_artifact_store: "{{ remote_out_root }}/{{ run_id }}/orchestra/artifact-store"
     fanout_ssh: "ssh -i /root/.ssh/home100k_fanout_{{ run_id }} -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/root/.ssh/home100k_fanout_known_hosts -o ConnectTimeout=10"
   tasks:
+    - name: Wait for SSH
+      ansible.builtin.wait_for_connection:
+        timeout: "{{ ssh_ready_timeout | default(300) }}"
+
     - name: Inspect artifact runner binary on orchestra
       ansible.builtin.stat:
         path: "{{ remote_artifact_store }}/bin/home-100k"
@@ -221,14 +232,29 @@
         checksum_algorithm: sha256
       register: remote_common_env_archive_stat
 
+    - name: Inspect remote extracted common env stack file
+      ansible.builtin.stat:
+        path: "{{ remote_env_root }}/env/stack.env"
+      register: remote_common_env_stack_stat
+
+    - name: Inspect remote extracted common env kubeconfig
+      ansible.builtin.stat:
+        path: "{{ remote_env_root }}/state/lke-kubeconfig.yaml"
+      register: remote_common_env_kubeconfig_stat
+
+    - name: Inspect remote extracted shard credential bundle
+      ansible.builtin.stat:
+        path: "{{ remote_env_root }}/loadtests/home-100k/credentials/{{ vm_label }}.sqlite.gz"
+      register: remote_shard_credentials_stat
+
     - name: Decide fanout cache state
       ansible.builtin.set_fact:
         runner_needs_upload: "{{ (not remote_runner_stat.stat.exists) or ((remote_runner_stat.stat.checksum | default('')) != (artifact_runner_stat.stat.checksum | default(''))) }}"
         rtk_cloud_needs_upload: "{{ (not remote_rtk_cloud_stat.stat.exists) or ((remote_rtk_cloud_stat.stat.checksum | default('')) != (artifact_rtk_cloud_stat.stat.checksum | default(''))) }}"
         cloud_mqtt_test_needs_upload: "{{ (not remote_cloud_mqtt_test_stat.stat.exists) or ((remote_cloud_mqtt_test_stat.stat.checksum | default('')) != (artifact_cloud_mqtt_test_stat.stat.checksum | default(''))) }}"
-        common_env_archive_needs_upload: "{{ (not remote_common_env_archive_stat.stat.exists) or ((remote_common_env_archive_stat.stat.checksum | default('')) != (artifact_common_env_archive_stat.stat.checksum | default(''))) }}"
+        common_env_archive_needs_upload: "{{ (not remote_common_env_archive_stat.stat.exists) or ((remote_common_env_archive_stat.stat.checksum | default('')) != (artifact_common_env_archive_stat.stat.checksum | default(''))) or (not remote_common_env_stack_stat.stat.exists) or (not remote_common_env_kubeconfig_stat.stat.exists) }}"
         manifest_needs_upload: "{{ (not remote_manifest_stat.stat.exists) or ((remote_manifest_stat.stat.checksum | default('')) != (artifact_manifest_stat.stat.checksum | default(''))) }}"
-        env_archive_needs_upload: "{{ (not remote_env_archive_stat.stat.exists) or ((remote_env_archive_stat.stat.checksum | default('')) != (artifact_env_archive_stat.stat.checksum | default(''))) }}"
+        env_archive_needs_upload: "{{ (not remote_env_archive_stat.stat.exists) or ((remote_env_archive_stat.stat.checksum | default('')) != (artifact_env_archive_stat.stat.checksum | default(''))) or (not remote_shard_credentials_stat.stat.exists) }}"
 
     - name: Fan out runner binary from orchestra
       ansible.builtin.shell: >
@@ -407,6 +433,11 @@
             },
             "common_env_archive_extracted": {{ common_env_extract.changed | default(false) | to_json }},
             "env_archive_extracted": {{ env_extract.changed | default(false) | to_json }},
+            "remote_extracted": {
+              "stack_env": {{ remote_common_env_stack_stat.stat.exists | default(false) | to_json }},
+              "kubeconfig": {{ remote_common_env_kubeconfig_stat.stat.exists | default(false) | to_json }},
+              "shard_credentials": {{ remote_shard_credentials_stat.stat.exists | default(false) | to_json }}
+            },
             "remote_disk_before": {{ disk_before.stdout | to_json }},
             "remote_disk_after": {{ disk_after.stdout | to_json }}
           }

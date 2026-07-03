@@ -43,10 +43,14 @@ var commandRunnerWithTimeout = func(timeout time.Duration, name string, args ...
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
+			if cmd.Process != nil {
+				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			}
 			return fmt.Errorf("%s timed out after %s", name, timeout)
 		}
 		return err
@@ -377,6 +381,7 @@ type workflowFlagValues struct {
 	mqttConcurrency          int
 	commandConcurrency       int
 	shadowCommandTimeout     string
+	runtimeLogs              bool
 	liveRunnerTimeoutGrace   string
 }
 
@@ -393,6 +398,7 @@ type shardRunFlagValues struct {
 	mqttConcurrency        int
 	commandConcurrency     int
 	shadowCommandTimeout   string
+	runtimeLogs            bool
 	liveRunnerTimeoutGrace string
 }
 
@@ -764,6 +770,7 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		"--concurrency", strconv.Itoa(liveMQTTConcurrency(maxTarget, values.mqttConcurrency)),
 		"--command-concurrency", strconv.Itoa(liveCommandConcurrency(maxTarget, values.commandConcurrency)),
 		"--shadow-command-timeout", firstNonEmpty(values.shadowCommandTimeout, DefaultShadowCommandTimeout),
+		"--runtime-logs=" + strconv.FormatBool(values.runtimeLogs),
 		"--max-connected-devices", strconv.Itoa(maxTarget),
 	}
 	if strings.TrimSpace(values.workspace) != "" {
@@ -1067,11 +1074,17 @@ type rawLiveMQTTResult struct {
 func loadLiveMQTTShardResults(path string, stages []Stage, stageTargets []string) ([]StageResult, error) {
 	var root struct {
 		StageResults []rawLiveMQTTResult `json:"stage_results"`
+		Load         struct {
+			LoadModel string `json:"load_model"`
+		} `json:"load"`
 	}
 	if err := readJSON(path, &root); err != nil {
 		return nil, err
 	}
 	if len(root.StageResults) == 0 {
+		if strings.TrimSpace(root.Load.LoadModel) != "" && strings.TrimSpace(root.Load.LoadModel) != "home-100k-sustained" {
+			return nil, fmt.Errorf("live MQTT result load_model = %q, want home-100k-sustained", root.Load.LoadModel)
+		}
 		if len(stages) == 0 {
 			return nil, fmt.Errorf("no stages configured")
 		}
@@ -1598,6 +1611,7 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	mqttConcurrency := fs.Int("mqtt-concurrency", DefaultLiveMQTTConcurrency, "per-shard MQTT connect worker concurrency for live runner")
 	commandConcurrency := fs.Int("command-concurrency", DefaultLiveCommandConcurrency, "per-shard sustained shadow command concurrency for live runner")
 	shadowCommandTimeout := fs.String("shadow-command-timeout", DefaultShadowCommandTimeout, "per-phase sustained shadow command timeout")
+	runtimeLogs := fs.Bool("runtime-logs", true, "publish MQTT runtime logs during sustained shadow commands")
 	liveRunnerTimeoutGrace := fs.String("live-runner-timeout-grace", "", "extra timeout after the configured live MQTT duration before killing the shard runner")
 	mqttAddr := fs.String("mqtt-addr", "", "public MQTT host:port for remote load-generator VMs")
 	videoCloudBaseURL := fs.String("video-cloud-base-url", "", "legacy alias for --video-cloud-public-base-url")
@@ -1642,6 +1656,7 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 		mqttConcurrency:          *mqttConcurrency,
 		commandConcurrency:       *commandConcurrency,
 		shadowCommandTimeout:     strings.TrimSpace(*shadowCommandTimeout),
+		runtimeLogs:              *runtimeLogs,
 		liveRunnerTimeoutGrace:   strings.TrimSpace(*liveRunnerTimeoutGrace),
 	}, nil
 }
@@ -1670,6 +1685,7 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	mqttConcurrency := fs.Int("mqtt-concurrency", DefaultLiveMQTTConcurrency, "per-shard MQTT connect worker concurrency for live runner")
 	commandConcurrency := fs.Int("command-concurrency", DefaultLiveCommandConcurrency, "per-shard sustained shadow command concurrency for live runner")
 	shadowCommandTimeout := fs.String("shadow-command-timeout", DefaultShadowCommandTimeout, "per-phase sustained shadow command timeout")
+	runtimeLogs := fs.Bool("runtime-logs", true, "publish MQTT runtime logs during sustained shadow commands")
 	liveRunnerTimeoutGrace := fs.String("live-runner-timeout-grace", "", "extra timeout after the configured live MQTT duration before killing the shard runner")
 	if err := fs.Parse(args); err != nil {
 		return PlanOptions{}, shardRunFlagValues{}, err
@@ -1695,6 +1711,7 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 		mqttConcurrency:        *mqttConcurrency,
 		commandConcurrency:     *commandConcurrency,
 		shadowCommandTimeout:   strings.TrimSpace(*shadowCommandTimeout),
+		runtimeLogs:            *runtimeLogs,
 		liveRunnerTimeoutGrace: strings.TrimSpace(*liveRunnerTimeoutGrace),
 	}, nil
 }
@@ -2066,7 +2083,8 @@ func collectCentralLoggerRuntimeLogEvidence(envRoot string, runID string, window
 	if until.Before(since) {
 		until = since.Add(30 * time.Minute)
 	}
-	events, err := queryCentralLoggerRuntimeEventsWindowed(endpoint, token, since, until, 0)
+	budget := &centralLoggerRuntimeQueryBudget{remaining: centralLoggerRuntimeQueryMaxWindows()}
+	events, err := queryCentralLoggerRuntimeEventsWindowed(endpoint, token, since, until, budget, 0)
 	if err != nil {
 		return EvidenceSource{}, EvidenceSource{}, "central_logger runtime evidence probe failed: " + err.Error()
 	}
@@ -2085,32 +2103,49 @@ func skipCentralLoggerEvidence() bool {
 	return raw == "1" || raw == "true" || raw == "yes"
 }
 
-func queryCentralLoggerRuntimeEventsWindowed(endpoint string, token string, since time.Time, until time.Time, depth int) ([]centralLoggerRuntimeEvent, error) {
+type centralLoggerRuntimeQueryBudget struct {
+	remaining int
+}
+
+func centralLoggerRuntimeQueryMaxWindows() int {
+	if raw := strings.TrimSpace(os.Getenv("HOME100K_CENTRAL_LOGGER_RUNTIME_QUERY_MAX_WINDOWS")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return 32
+}
+
+func queryCentralLoggerRuntimeEventsWindowed(endpoint string, token string, since time.Time, until time.Time, budget *centralLoggerRuntimeQueryBudget, depth int) ([]centralLoggerRuntimeEvent, error) {
+	if budget == nil || budget.remaining <= 0 {
+		return nil, errors.New("central logger runtime query window budget exhausted")
+	}
+	budget.remaining--
 	events, err := queryCentralLoggerRuntimeEvents(endpoint, token, since, until)
 	if err != nil {
-		if depth >= 20 || until.Sub(since) <= time.Second {
+		if depth >= 8 || until.Sub(since) <= time.Second {
 			return nil, err
 		}
 		mid := since.Add(until.Sub(since) / 2)
-		left, leftErr := queryCentralLoggerRuntimeEventsWindowed(endpoint, token, since, mid, depth+1)
+		left, leftErr := queryCentralLoggerRuntimeEventsWindowed(endpoint, token, since, mid, budget, depth+1)
 		if leftErr != nil {
 			return nil, leftErr
 		}
-		right, rightErr := queryCentralLoggerRuntimeEventsWindowed(endpoint, token, mid, until, depth+1)
+		right, rightErr := queryCentralLoggerRuntimeEventsWindowed(endpoint, token, mid, until, budget, depth+1)
 		if rightErr != nil {
 			return nil, rightErr
 		}
 		return dedupeCentralLoggerRuntimeEvents(append(left, right...)), nil
 	}
-	if len(events) < 1000 || depth >= 20 || until.Sub(since) <= time.Second {
+	if len(events) < 1000 || depth >= 8 || until.Sub(since) <= time.Second || budget.remaining <= 0 {
 		return dedupeCentralLoggerRuntimeEvents(events), nil
 	}
 	mid := since.Add(until.Sub(since) / 2)
-	left, err := queryCentralLoggerRuntimeEventsWindowed(endpoint, token, since, mid, depth+1)
+	left, err := queryCentralLoggerRuntimeEventsWindowed(endpoint, token, since, mid, budget, depth+1)
 	if err != nil {
 		return nil, err
 	}
-	right, err := queryCentralLoggerRuntimeEventsWindowed(endpoint, token, mid, until, depth+1)
+	right, err := queryCentralLoggerRuntimeEventsWindowed(endpoint, token, mid, until, budget, depth+1)
 	if err != nil {
 		return nil, err
 	}
@@ -2434,6 +2469,9 @@ func applySourceCounterBaselineDelta(evidence *ServerEvidence, baseline ServerEv
 		return
 	}
 	for counter, value := range source.Counters {
+		if !baselineDeltaCounter(sourceName, counter) {
+			continue
+		}
 		base, ok := baselineSource.Counters[counter]
 		if !ok {
 			continue
@@ -2445,6 +2483,23 @@ func applySourceCounterBaselineDelta(evidence *ServerEvidence, baseline ServerEv
 		source.Counters[counter] = delta
 	}
 	evidence.Sources[sourceName] = source
+}
+
+func baselineDeltaCounter(sourceName string, counter string) bool {
+	switch sourceName {
+	case "video_cloud_api":
+		return strings.HasPrefix(counter, "video_cloud_api.request_token.") ||
+			strings.HasPrefix(counter, "video_cloud_api.metrics.")
+	case "redis_valkey":
+		return counter == "redis_valkey.total_commands_processed" ||
+			counter == "redis_valkey.keyspace_hits" ||
+			counter == "redis_valkey.keyspace_misses" ||
+			counter == "redis_valkey.expired_keys" ||
+			counter == "redis_valkey.evicted_keys" ||
+			strings.HasPrefix(counter, "redis_valkey.command.")
+	default:
+		return true
+	}
 }
 
 func recomputeVideoCloudAPITopLevelCounters(evidence *ServerEvidence) {
@@ -2887,6 +2942,7 @@ test "$active" -gt 0`
 
 func coturnProbe(envRoot string, runID string) serverEvidenceProbe {
 	artifact := filepath.Join(envRoot, "artifacts", "coturn-vm", "coturn-vm.json")
+	summaryArtifact := filepath.Join(envRoot, "artifacts", "coturn-vm", "coturn-vms.json")
 	script := fmt.Sprintf(`set -euo pipefail
 ns=video-cloud-staging-video-cloud
 selectors='app.kubernetes.io/name=coturn app.kubernetes.io/name=turn app=coturn app=turn'
@@ -2903,18 +2959,28 @@ for pod in $pods; do
   fi
 done
 service_count="$(printf '%%s\n' "$services" | sed '/^$/d' | wc -l | tr -d ' ')"
-domain=''
+domains=''
+configured_nodes=0
 if [ -f %s ]; then
-  domain="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print((data.get("domain") or data.get("coturn_vm", {}).get("domain") or "").strip())' %s 2>/dev/null || true)"
+  domains="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print("\n".join([(item.get("domain") or "").strip() for item in data.get("coturn_vms", []) if (item.get("domain") or "").strip()]))' %s 2>/dev/null || true)"
+  configured_nodes="$(printf '%%s\n' "$domains" | sed '/^$/d' | wc -l | tr -d ' ')"
+fi
+if [ -z "$domains" ] && [ -f %s ]; then
+  domains="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print((data.get("domain") or data.get("coturn_vm", {}).get("domain") or "").strip())' %s 2>/dev/null || true)"
+  configured_nodes="$(printf '%%s\n' "$domains" | sed '/^$/d' | wc -l | tr -d ' ')"
 fi
 public_tcp=0
-if [ -n "$domain" ] && nc -vz -w 5 "$domain" 3478 >/dev/null 2>&1; then
-  public_tcp=1
-fi
+for domain in $domains; do
+  if nc -vz -w 5 "$domain" 3478 >/dev/null 2>&1; then
+    public_tcp=$((public_tcp + 1))
+  fi
+done
 echo "coturn.ready_pods $ready"
 echo "coturn.services $service_count"
 echo "coturn.public_tcp_available $public_tcp"
-test "$ready" -gt 0 || test "$public_tcp" -gt 0`, shellQuote(artifact), shellQuote(artifact))
+echo "coturn.configured_nodes $configured_nodes"
+echo "coturn.active_nodes $public_tcp"
+test "$ready" -gt 0 || test "$public_tcp" -gt 0`, shellQuote(summaryArtifact), shellQuote(summaryArtifact), shellQuote(artifact), shellQuote(artifact))
 	return serverEvidenceProbe{
 		source:  "coturn",
 		command: "bash",
@@ -3160,27 +3226,50 @@ func videoCloudAPIMetricsProbe(runID string) serverEvidenceProbe {
 	script := `set -euo pipefail
 pods="$(kubectl -n video-cloud-staging-video-cloud get pods --selector app.kubernetes.io/name=video-cloud-api -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}')"
 test -n "$pods"
+running_pods="$(printf '%s\n' "$pods" | awk 'NF {count++} END {print count+0}')"
+desired_replicas="$(kubectl -n video-cloud-staging-video-cloud get deploy video-cloud-api -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
+if [[ "$desired_replicas" =~ ^[0-9]+$ ]]; then
+  printf 'video_cloud_api.k8s.desired_replicas %s\n' "$desired_replicas"
+fi
+printf 'video_cloud_api.k8s.running_pods %s\n' "$running_pods"
+signaling_store_enabled_pods=0
+signaling_store_addr_pods=0
+signaling_store_prefix_pods=0
 for pod in $pods; do
   safe_pod="$(printf '%s' "$pod" | tr -c 'A-Za-z0-9_' '_')"
+  pod_env="$(kubectl -n video-cloud-staging-video-cloud exec "$pod" -- sh -c 'env' 2>/dev/null || true)"
+  if printf '%s\n' "$pod_env" | grep -q '^VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_ENABLED=true$'; then
+    signaling_store_enabled_pods=$((signaling_store_enabled_pods + 1))
+  fi
+  if printf '%s\n' "$pod_env" | grep -q '^VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_ADDR=.\+'; then
+    signaling_store_addr_pods=$((signaling_store_addr_pods + 1))
+  fi
+  if printf '%s\n' "$pod_env" | grep -q '^VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_PREFIX=.\+'; then
+    signaling_store_prefix_pods=$((signaling_store_prefix_pods + 1))
+  fi
   metrics="$(kubectl -n video-cloud-staging-video-cloud exec "$pod" -- sh -c 'wget -qO- http://127.0.0.1:8080/metrics/prometheus 2>/dev/null || curl -fsS http://127.0.0.1:8080/metrics/prometheus' 2>/dev/null || true)"
-  test -n "$metrics"
-  printf '%s\n' "$metrics" | awk -v pod="$safe_pod" '
-    /^request_token_step_duration_seconds_/ || /^pkcs11_sign_(wait|duration)_seconds_/ {
-      name=$1; value=$2
-      gsub(/\{.*\}/, "", name)
-      gsub(/[^A-Za-z0-9_]/, "_", name)
-      if (value ~ /^[0-9.]+$/) {
-        if (name ~ /_count$/) {
-          printf "video_cloud_api.metrics.%s %.0f\n", name, value
-          printf "video_cloud_api.metrics.pod_%s.%s %.0f\n", pod, name, value
-        } else if (name ~ /_max$/) {
-          printf "video_cloud_api.metrics.%s_ms %.0f\n", name, value * 1000
-          printf "video_cloud_api.metrics.pod_%s.%s_ms %.0f\n", pod, name, value * 1000
+  if test -n "$metrics"; then
+    printf '%s\n' "$metrics" | awk -v pod="$safe_pod" '
+      /^request_token_step_duration_seconds_/ || /^pkcs11_sign_(wait|duration)_seconds_/ {
+        name=$1; value=$2
+        gsub(/\{.*\}/, "", name)
+        gsub(/[^A-Za-z0-9_]/, "_", name)
+        if (value ~ /^[0-9.]+$/) {
+          if (name ~ /_count$/) {
+            printf "video_cloud_api.metrics.%s %.0f\n", name, value
+            printf "video_cloud_api.metrics.pod_%s.%s %.0f\n", pod, name, value
+          } else if (name ~ /_max$/) {
+            printf "video_cloud_api.metrics.%s_ms %.0f\n", name, value * 1000
+            printf "video_cloud_api.metrics.pod_%s.%s_ms %.0f\n", pod, name, value * 1000
+          }
         }
       }
-    }
-  '
+    '
+  fi
 done
+printf 'video_cloud_api.webrtc_signaling_store.enabled_pods %s\n' "$signaling_store_enabled_pods"
+printf 'video_cloud_api.webrtc_signaling_store.addr_pods %s\n' "$signaling_store_addr_pods"
+printf 'video_cloud_api.webrtc_signaling_store.prefix_pods %s\n' "$signaling_store_prefix_pods"
 `
 	return serverEvidenceProbe{
 		source:  "video_cloud_api",
@@ -3790,18 +3879,19 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 			"ansible_host":                 vm.PublicIPv4,
 			"ansible_user":                 values.sshUser,
 			"ansible_ssh_private_key_file": values.sshKey,
-			"ansible_ssh_common_args":      "-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=" + workflowKnownHostsFile(values),
-			"run_id":                       normalizedRunID(values.runID),
-			"role":                         assignment.Role,
-			"shard_index":                  assignment.Index,
-			"vm_label":                     vm.Label,
-			"local_shard_manifest":         localShardManifest,
-			"local_env_rsync_filter":       localEnvRsyncFilter,
-			"local_env_archive":            localEnvArchive,
-			"artifact_env_archive":         filepath.Base(localEnvArchive),
-			"artifact_shard_manifest":      filepath.Base(localShardManifest),
-			"remote_shard_manifest":        strings.TrimRight(values.remoteWorkspace, "/") + "/loadtests/home-100k/shard-manifests/current.json",
-			"remote_out_dir":               strings.TrimRight(firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k"), "/") + "/" + normalizedRunID(values.runID) + "/" + vm.Label,
+			"ansible_ssh_common_args": "-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=" + workflowKnownHostsFile(values) +
+				" -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=1",
+			"run_id":                  normalizedRunID(values.runID),
+			"role":                    assignment.Role,
+			"shard_index":             assignment.Index,
+			"vm_label":                vm.Label,
+			"local_shard_manifest":    localShardManifest,
+			"local_env_rsync_filter":  localEnvRsyncFilter,
+			"local_env_archive":       localEnvArchive,
+			"artifact_env_archive":    filepath.Base(localEnvArchive),
+			"artifact_shard_manifest": filepath.Base(localShardManifest),
+			"remote_shard_manifest":   strings.TrimRight(values.remoteWorkspace, "/") + "/loadtests/home-100k/shard-manifests/current.json",
+			"remote_out_dir":          strings.TrimRight(firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k"), "/") + "/" + normalizedRunID(values.runID) + "/" + vm.Label,
 		}
 	}
 	if len(vms) == 0 {
@@ -3859,6 +3949,7 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 		"mqtt_concurrency":              values.mqttConcurrency,
 		"command_concurrency":           liveCommandConcurrency(plan.Conditions.DeviceGeneratorLimit, values.commandConcurrency),
 		"shadow_command_timeout":        firstNonEmpty(values.shadowCommandTimeout, DefaultShadowCommandTimeout),
+		"runtime_logs":                  values.runtimeLogs,
 		"live_runner_timeout_grace":     firstNonEmpty(values.liveRunnerTimeoutGrace, ""),
 		"mqtt_addr":                     strings.TrimSpace(values.mqttAddr),
 		"video_cloud_public_url":        strings.TrimSpace(firstNonEmpty(values.videoCloudPublicURL, values.videoCloudBaseURL)),
@@ -3866,6 +3957,7 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 		"account_manager_url":           strings.TrimSpace(values.accountManagerURL),
 		"generator_hosts_override_ip":   strings.TrimSpace(values.generatorHostsOverrideIP),
 		"credential_bundle_format":      firstNonEmpty(values.credentialBundleFormat, "sqlite-gzip"),
+		"rsync_timeout":                 firstNonEmpty(os.Getenv("HOME100K_RSYNC_TIMEOUT_SECONDS"), "90"),
 	}
 	return writeJSONFile(filepath.Join(ansibleDir, "extra-vars.json"), extraVars)
 }
@@ -4212,7 +4304,7 @@ func collectRemoteVMs(vms []LinodeVM, plan Plan, runID string, remoteOutRoot str
 			return err
 		}
 	}
-	return runAnsiblePlaybook(values, "collect.yml")
+	return runAnsiblePlaybookWithRetry(values, "collect.yml", 3)
 }
 
 func dispatchRemoteShards(vms []LinodeVM, plan Plan, runID string, remoteOutRoot string, values workflowFlagValues) error {

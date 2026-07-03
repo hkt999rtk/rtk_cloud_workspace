@@ -75,6 +75,8 @@ func runLoad(args []string) error {
 	fs.StringVar(&cfg.NegativeMalformedPath, "negative-malformed-path", cfg.NegativeMalformedPath, "optional endpoint path that returns malformed JSON for negative coverage")
 	fs.StringVar(&cfg.NegativeTimeoutPath, "negative-timeout-path", cfg.NegativeTimeoutPath, "optional endpoint path that should exceed http-timeout for negative coverage")
 	fs.StringVar(&cfg.DeviceOnlineMode, "device-online-mode", cfg.DeviceOnlineMode, "device online owner mode: none or websocket")
+	fs.DurationVar(&cfg.DeviceOnlineSettle, "device-online-settle", cfg.DeviceOnlineSettle, "settle time after WebSocket owners connect before app/viewer actors start")
+	fs.IntVar(&cfg.DeviceOwnerRetries, "device-owner-connect-retries", cfg.DeviceOwnerRetries, "retry count for initial device WebSocket owner connection")
 	fs.StringVar(&cfg.DevicePrefix, "device-prefix", cfg.DevicePrefix, "pre-provisioned device id prefix")
 	fs.StringVar(&deviceIDsCSV, "device-ids", "", "comma-separated explicit device ids for focused repro; overrides generated device-prefix indexes")
 	fs.StringVar(&cfg.ContractsCommit, "contracts-commit", cfg.ContractsCommit, "contracts docs commit for report evidence")
@@ -96,6 +98,7 @@ func runLoad(args []string) error {
 	fs.BoolVar(&cfg.AllowStress, "allow-stress", envBool("VIDEO_CLOUD_LOAD_ALLOW_STRESS"), "permit stress profile")
 	fs.BoolVar(&cfg.AllowSoak, "allow-soak", envBool("VIDEO_CLOUD_LOAD_ALLOW_SOAK"), "permit soak profile")
 	fs.Float64Var(&cfg.Thresholds.MinSuccessRate, "min-success-rate", cfg.Thresholds.MinSuccessRate, "minimum success rate, 0 disables")
+	fs.Float64Var(&cfg.Thresholds.MinWebRTCMediaSuccessRate, "min-webrtc-media-success-rate", cfg.Thresholds.MinWebRTCMediaSuccessRate, "minimum WebRTC media success rate, 0 disables")
 	fs.Int64Var(&cfg.Thresholds.MaxP95Latency, "max-p95-ms", cfg.Thresholds.MaxP95Latency, "max p95 latency in ms, 0 disables")
 	fs.Int64Var(&cfg.Thresholds.MaxP99Latency, "max-p99-ms", cfg.Thresholds.MaxP99Latency, "max p99 latency in ms, 0 disables")
 	fs.Int64Var(&cfg.Thresholds.MaxWebRTCSetupP95Latency, "max-webrtc-setup-p95-ms", cfg.Thresholds.MaxWebRTCSetupP95Latency, "max WebRTC setup p95 latency in ms, 0 disables")
@@ -169,6 +172,7 @@ func runReport(args []string) error {
 	fs.StringVar(&input, "input", "load-results.json", "JSON input path")
 	fs.StringVar(&output, "output", "load-report.md", "Markdown output path")
 	fs.Float64Var(&thresholds.MinSuccessRate, "min-success-rate", 0, "minimum success rate, 0 keeps input gate")
+	fs.Float64Var(&thresholds.MinWebRTCMediaSuccessRate, "min-webrtc-media-success-rate", 0, "minimum WebRTC media success rate, 0 keeps input gate")
 	fs.Int64Var(&thresholds.MaxP95Latency, "max-p95-ms", 0, "max p95 latency in ms")
 	fs.Int64Var(&thresholds.MaxP99Latency, "max-p99-ms", 0, "max p99 latency in ms")
 	fs.Int64Var(&thresholds.MaxWebRTCSetupP95Latency, "max-webrtc-setup-p95-ms", 0, "max WebRTC setup p95 latency in ms")
@@ -181,8 +185,9 @@ func runReport(args []string) error {
 	if err != nil {
 		return err
 	}
-	if thresholds.MinSuccessRate > 0 || thresholds.MaxP95Latency > 0 || thresholds.MaxP99Latency > 0 || thresholds.MaxWebRTCSetupP95Latency > 0 || thresholds.MaxOpenWebRTCSessions >= 0 || thresholds.RequireCoverageMatrix {
+	if thresholds.MinSuccessRate > 0 || thresholds.MinWebRTCMediaSuccessRate > 0 || thresholds.MaxP95Latency > 0 || thresholds.MaxP99Latency > 0 || thresholds.MaxWebRTCSetupP95Latency > 0 || thresholds.MaxOpenWebRTCSessions >= 0 || thresholds.RequireCoverageMatrix {
 		result.Thresholds = loadtest.EvaluateResultThresholds(result.Summary, result.WebRTC, result.CoverageMatrix, thresholds)
+		loadtest.ApplyWebRTCMediaThreshold(&result.Thresholds, result.WebRTCMedia, thresholds)
 	}
 	if err := loadtest.WriteMarkdown(output, result); err != nil {
 		return err

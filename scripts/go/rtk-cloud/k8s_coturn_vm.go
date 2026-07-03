@@ -29,6 +29,9 @@ func lkeEnsureExternalCoturnVM(paths provisionPaths, env map[string]string, opts
 	if err := lkeValidateCoturnVMConfig(env); err != nil {
 		return lkeCoturnVM{}, err
 	}
+	if strings.TrimSpace(env["LKE_COTURN_VM_INDEX"]) == "" {
+		env = lkeCoturnVMEnvForIndex(env, 1)
+	}
 	vm, installMode, err := lkeResolveCoturnVM(paths, env, opts)
 	if err != nil {
 		return lkeCoturnVM{}, err
@@ -47,7 +50,7 @@ func lkeEnsureExternalCoturnVM(paths provisionPaths, env map[string]string, opts
 			"turn_tcp": 3478,
 			"relay_udp_range": fmt.Sprintf("%s-%s",
 				firstNonEmpty(os.Getenv("LKE_COTURN_MIN_PORT"), env["LKE_COTURN_MIN_PORT"], "49152"),
-				firstNonEmpty(os.Getenv("LKE_COTURN_MAX_PORT"), env["LKE_COTURN_MAX_PORT"], "49200")),
+				firstNonEmpty(os.Getenv("LKE_COTURN_MAX_PORT"), env["LKE_COTURN_MAX_PORT"], "65535")),
 		},
 	}
 	if err := writeLKECoturnVMArtifacts(paths, vm, config, install, validation); err != nil {
@@ -60,6 +63,25 @@ func lkeEnsureExternalCoturnVM(paths provisionPaths, env map[string]string, opts
 		return lkeCoturnVM{}, err
 	}
 	return vm, nil
+}
+
+func lkeEnsureExternalCoturnVMs(paths provisionPaths, env map[string]string, opts provisionOptions) ([]lkeCoturnVM, error) {
+	if err := lkeValidateCoturnVMConfig(env); err != nil {
+		return nil, err
+	}
+	count := lkeCoturnVMCount(env)
+	vms := make([]lkeCoturnVM, 0, count)
+	for index := 1; index <= count; index++ {
+		vm, err := lkeEnsureExternalCoturnVM(paths, lkeCoturnVMEnvForIndex(env, index), opts)
+		if err != nil {
+			return nil, err
+		}
+		vms = append(vms, vm)
+	}
+	if err := writeLKECoturnVMsSummary(paths, vms); err != nil {
+		return nil, err
+	}
+	return vms, nil
 }
 
 func lkeResolveCoturnVM(paths provisionPaths, env map[string]string, opts provisionOptions) (lkeCoturnVM, string, error) {
@@ -118,14 +140,31 @@ func lkeCoturnVMName(env map[string]string) string {
 	return fmt.Sprintf("%s%02d", prefix, index)
 }
 
+func lkeCoturnVideoDomain(env map[string]string) string {
+	return firstNonEmpty(env["VIDEO_CLOUD_DOMAIN"], firstNonEmpty(env["CLOUD_STACK_NAME"], "video-cloud-staging")+"."+firstNonEmpty(env["CLOUD_DNS_ROOT_DOMAIN"], "realtekconnect.com"))
+}
+
 func lkeCoturnDomain(env map[string]string) string {
-	videoDomain := firstNonEmpty(env["VIDEO_CLOUD_DOMAIN"], firstNonEmpty(env["CLOUD_STACK_NAME"], "video-cloud-staging")+"."+firstNonEmpty(env["CLOUD_DNS_ROOT_DOMAIN"], "realtekconnect.com"))
-	return firstNonEmpty(os.Getenv("LKE_COTURN_DOMAIN"), env["LKE_COTURN_DOMAIN"], "turn."+videoDomain)
+	if lkeCoturnVMCount(env) > 1 {
+		index := envIntFrom(env, "LKE_COTURN_VM_INDEX", 1)
+		if index < 1 {
+			index = 1
+		}
+		return lkeCoturnDomainForIndex(env, index)
+	}
+	return firstNonEmpty(os.Getenv("LKE_COTURN_DOMAIN"), env["LKE_COTURN_DOMAIN"], "turn."+lkeCoturnVideoDomain(env))
+}
+
+func lkeCoturnDomainForIndex(env map[string]string, index int) string {
+	if index <= 1 && lkeCoturnVMCount(env) <= 1 {
+		return lkeCoturnDomain(env)
+	}
+	prefix := firstNonEmpty(os.Getenv("LKE_COTURN_DOMAIN_PREFIX"), env["LKE_COTURN_DOMAIN_PREFIX"], "turn")
+	return fmt.Sprintf("%s%02d.%s", prefix, index, lkeCoturnVideoDomain(env))
 }
 
 func lkeTurnRegistryPublicDomain(env map[string]string) string {
-	videoDomain := firstNonEmpty(env["VIDEO_CLOUD_DOMAIN"], firstNonEmpty(env["CLOUD_STACK_NAME"], "video-cloud-staging")+"."+firstNonEmpty(env["CLOUD_DNS_ROOT_DOMAIN"], "realtekconnect.com"))
-	return firstNonEmpty(os.Getenv("LKE_TURN_REGISTRY_PUBLIC_DOMAIN"), env["LKE_TURN_REGISTRY_PUBLIC_DOMAIN"], "turnregistry."+videoDomain)
+	return firstNonEmpty(os.Getenv("LKE_TURN_REGISTRY_PUBLIC_DOMAIN"), env["LKE_TURN_REGISTRY_PUBLIC_DOMAIN"], "turnregistry."+lkeCoturnVideoDomain(env))
 }
 
 func lkeTurnRegistryPublicURL(env map[string]string) string {
@@ -140,13 +179,49 @@ func lkeCoturnVMCount(env map[string]string) int {
 	return count
 }
 
+func lkeCoturnVMEnvForIndex(env map[string]string, index int) map[string]string {
+	out := map[string]string{}
+	for key, value := range env {
+		out[key] = value
+	}
+	out["LKE_COTURN_VM_INDEX"] = strconv.Itoa(index)
+	if lkeCoturnVMCount(env) > 1 {
+		out["LKE_COTURN_DOMAIN"] = lkeCoturnDomainForIndex(env, index)
+		if ips := parseCSV(firstNonEmpty(env["LKE_COTURN_VM_PUBLIC_IPS"], os.Getenv("LKE_COTURN_VM_PUBLIC_IPS"))); len(ips) >= index {
+			out["LKE_COTURN_VM_PUBLIC_IP"] = ips[index-1]
+		} else {
+			delete(out, "LKE_COTURN_VM_PUBLIC_IP")
+		}
+	}
+	return out
+}
+
 func lkeCoturnSTUNURLs(env map[string]string) string {
-	return "stun:" + lkeCoturnDomain(env) + ":3478"
+	urls := make([]string, 0, lkeCoturnVMCount(env))
+	for _, domain := range lkeCoturnDomains(env) {
+		urls = append(urls, "stun:"+domain+":3478")
+	}
+	return strings.Join(urls, ",")
 }
 
 func lkeCoturnTURNURLs(env map[string]string) string {
-	host := lkeCoturnDomain(env)
-	return "turn:" + host + ":3478?transport=udp,turn:" + host + ":3478?transport=tcp"
+	urls := []string{}
+	for _, host := range lkeCoturnDomains(env) {
+		urls = append(urls, "turn:"+host+":3478?transport=udp", "turn:"+host+":3478?transport=tcp")
+	}
+	return strings.Join(urls, ",")
+}
+
+func lkeCoturnDomains(env map[string]string) []string {
+	count := lkeCoturnVMCount(env)
+	if count <= 1 {
+		return []string{lkeCoturnDomain(env)}
+	}
+	domains := make([]string, 0, count)
+	for index := 1; index <= count; index++ {
+		domains = append(domains, lkeCoturnDomainForIndex(env, index))
+	}
+	return domains
 }
 
 func lkeCoturnRealm(env map[string]string) string {
@@ -165,14 +240,13 @@ listening-port=3478
 fingerprint
 min-port=%s
 max-port=%s
-no-loopback-peers
 no-multicast-peers
 log-file=stdout
 `,
 		secret,
 		lkeCoturnRealm(env),
 		firstNonEmpty(os.Getenv("LKE_COTURN_MIN_PORT"), env["LKE_COTURN_MIN_PORT"], "49152"),
-		firstNonEmpty(os.Getenv("LKE_COTURN_MAX_PORT"), env["LKE_COTURN_MAX_PORT"], "49200"),
+		firstNonEmpty(os.Getenv("LKE_COTURN_MAX_PORT"), env["LKE_COTURN_MAX_PORT"], "65535"),
 	)
 }
 
@@ -190,10 +264,10 @@ func renderLKECoturnInstallScript(env map[string]string) string {
 	fmt.Fprintf(&b, "  printf '%%s\\n' 'use-auth-secret'\n")
 	fmt.Fprintf(&b, "  printf 'static-auth-secret=%%s\\n' \"$VIDEO_CLOUD_COTURN_SHARED_SECRET\"\n")
 	fmt.Fprintf(&b, "  cat <<'COTURN_TAIL'\n")
-	fmt.Fprintf(&b, "realm=%s\nlistening-port=3478\nfingerprint\nmin-port=%s\nmax-port=%s\nno-loopback-peers\nno-multicast-peers\nlog-file=stdout\nCOTURN_TAIL\n",
+	fmt.Fprintf(&b, "realm=%s\nlistening-port=3478\nfingerprint\nmin-port=%s\nmax-port=%s\nno-multicast-peers\nlog-file=stdout\nCOTURN_TAIL\n",
 		lkeCoturnRealm(env),
 		firstNonEmpty(os.Getenv("LKE_COTURN_MIN_PORT"), env["LKE_COTURN_MIN_PORT"], "49152"),
-		firstNonEmpty(os.Getenv("LKE_COTURN_MAX_PORT"), env["LKE_COTURN_MAX_PORT"], "49200"))
+		firstNonEmpty(os.Getenv("LKE_COTURN_MAX_PORT"), env["LKE_COTURN_MAX_PORT"], "65535"))
 	fmt.Fprintf(&b, "} >/etc/turnserver.conf\n")
 	fmt.Fprintf(&b, "chmod 0640 /etc/turnserver.conf\n")
 	fmt.Fprintf(&b, "{\n")
@@ -235,7 +309,7 @@ func renderLKECoturnInstallScript(env map[string]string) string {
 }
 
 func writeLKECoturnVMArtifacts(paths provisionPaths, vm lkeCoturnVM, config, install string, validation map[string]any) error {
-	dir := filepath.Join(paths.EnvRoot, "artifacts", "coturn-vm")
+	dir := filepath.Join(paths.EnvRoot, "artifacts", "coturn-vm", vm.Name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -256,7 +330,46 @@ func writeLKECoturnVMArtifacts(paths provisionPaths, vm lkeCoturnVM, config, ins
 	if err := os.WriteFile(filepath.Join(dir, "install.sh"), []byte(install), 0o700); err != nil {
 		return err
 	}
-	return writeJSON(filepath.Join(dir, "validation.json"), validation)
+	if err := writeJSON(filepath.Join(dir, "validation.json"), validation); err != nil {
+		return err
+	}
+	if vm.Name == "turn01" {
+		legacyDir := filepath.Join(paths.EnvRoot, "artifacts", "coturn-vm")
+		if err := writeJSON(filepath.Join(legacyDir, "coturn-vm.json"), map[string]any{
+			"schema":    "rtk-cloud-workspace.coturn-vm/v1",
+			"generated": time.Now().UTC().Format(time.RFC3339),
+			"coturn_vm": vm,
+			"name":      vm.Name,
+			"public_ip": vm.PublicIP,
+			"domain":    vm.Domain,
+			"role":      vm.Role,
+		}); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(legacyDir, "turnserver.conf.redacted"), []byte(config), 0o644); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(legacyDir, "install.sh"), []byte(install), 0o700); err != nil {
+			return err
+		}
+		if err := writeJSON(filepath.Join(legacyDir, "validation.json"), validation); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeLKECoturnVMsSummary(paths provisionPaths, vms []lkeCoturnVM) error {
+	dir := filepath.Join(paths.EnvRoot, "artifacts", "coturn-vm")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return writeJSON(filepath.Join(dir, "coturn-vms.json"), map[string]any{
+		"schema":     "rtk-cloud-workspace.coturn-vms/v1",
+		"generated":  time.Now().UTC().Format(time.RFC3339),
+		"coturn_vms": vms,
+		"count":      len(vms),
+	})
 }
 
 func lkeInstallExternalCoturnVM(paths provisionPaths, opts provisionOptions, vm lkeCoturnVM, install string) error {
@@ -445,14 +558,49 @@ func lkeSyncCoturnDNS(paths provisionPaths, env map[string]string, opts provisio
 	return waitDNS(vm.Domain, vm.PublicIP, env["CLOUD_DNS_ROOT_DOMAIN"], opts)
 }
 
-func lkeValidateCoturnVMConfig(env map[string]string) error {
-	if lkeCoturnVMCount(env) != 1 {
-		return errors.New("LKE_COTURN_VM_COUNT must be 1 for coturn VM staging v1")
-	}
-	minPort, minErr := strconv.Atoi(firstNonEmpty(os.Getenv("LKE_COTURN_MIN_PORT"), env["LKE_COTURN_MIN_PORT"], "49152"))
-	maxPort, maxErr := strconv.Atoi(firstNonEmpty(os.Getenv("LKE_COTURN_MAX_PORT"), env["LKE_COTURN_MAX_PORT"], "49200"))
-	if minErr != nil || maxErr != nil || minPort < 1 || maxPort < minPort || maxPort > 65535 {
-		return fmt.Errorf("invalid coturn relay port range: LKE_COTURN_MIN_PORT=%q LKE_COTURN_MAX_PORT=%q", firstNonEmpty(os.Getenv("LKE_COTURN_MIN_PORT"), env["LKE_COTURN_MIN_PORT"], "49152"), firstNonEmpty(os.Getenv("LKE_COTURN_MAX_PORT"), env["LKE_COTURN_MAX_PORT"], "49200"))
+func lkeSyncCoturnVMsDNS(paths provisionPaths, env map[string]string, opts provisionOptions, vms []lkeCoturnVM) error {
+	for _, vm := range vms {
+		if err := lkeSyncCoturnDNS(paths, env, opts, vm); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func lkeValidateCoturnVMConfig(env map[string]string) error {
+	count := lkeCoturnVMCount(env)
+	if count < 1 || count > 5 {
+		return fmt.Errorf("LKE_COTURN_VM_COUNT must be between 1 and 5 for coturn VM staging, got %d", count)
+	}
+	if count > 1 && firstNonEmpty(os.Getenv("LKE_COTURN_VM_NAME"), env["LKE_COTURN_VM_NAME"], os.Getenv("LKE_COTURN_VM_LABEL"), env["LKE_COTURN_VM_LABEL"]) != "" {
+		return errors.New("LKE_COTURN_VM_NAME and LKE_COTURN_VM_LABEL are only supported when LKE_COTURN_VM_COUNT=1")
+	}
+	if count > 1 && firstNonEmpty(os.Getenv("LKE_COTURN_VM_PUBLIC_IP"), env["LKE_COTURN_VM_PUBLIC_IP"]) != "" && firstNonEmpty(os.Getenv("LKE_COTURN_VM_PUBLIC_IPS"), env["LKE_COTURN_VM_PUBLIC_IPS"]) == "" {
+		return errors.New("LKE_COTURN_VM_PUBLIC_IPS is required for multi-coturn provided-IP mode; omit LKE_COTURN_VM_PUBLIC_IP to let Linode provisioning create VMs")
+	}
+	if count > 1 {
+		for _, ip := range parseCSV(firstNonEmpty(os.Getenv("LKE_COTURN_VM_PUBLIC_IPS"), env["LKE_COTURN_VM_PUBLIC_IPS"])) {
+			if net.ParseIP(ip) == nil {
+				return fmt.Errorf("LKE_COTURN_VM_PUBLIC_IPS contains invalid IP: %s", ip)
+			}
+		}
+	}
+	minPort, minErr := strconv.Atoi(firstNonEmpty(os.Getenv("LKE_COTURN_MIN_PORT"), env["LKE_COTURN_MIN_PORT"], "49152"))
+	maxPort, maxErr := strconv.Atoi(firstNonEmpty(os.Getenv("LKE_COTURN_MAX_PORT"), env["LKE_COTURN_MAX_PORT"], "65535"))
+	if minErr != nil || maxErr != nil || minPort < 1 || maxPort < minPort || maxPort > 65535 {
+		return fmt.Errorf("invalid coturn relay port range: LKE_COTURN_MIN_PORT=%q LKE_COTURN_MAX_PORT=%q", firstNonEmpty(os.Getenv("LKE_COTURN_MIN_PORT"), env["LKE_COTURN_MIN_PORT"], "49152"), firstNonEmpty(os.Getenv("LKE_COTURN_MAX_PORT"), env["LKE_COTURN_MAX_PORT"], "65535"))
+	}
+	return nil
+}
+
+func parseCSV(value string) []string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }

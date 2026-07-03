@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -87,11 +88,36 @@ type StageResult struct {
 }
 
 type VideoEvidence struct {
-	Complete    bool              `json:"complete"`
-	WebRTC      WebRTCTotals      `json:"webrtc_totals"`
-	WebRTCMedia WebRTCMediaTotals `json:"webrtc_media_totals,omitempty"`
-	TURN        TURNEvidence      `json:"turn_evidence,omitempty"`
-	Notes       []string          `json:"notes,omitempty"`
+	Complete                 bool                `json:"complete"`
+	WebRTC                   WebRTCTotals        `json:"webrtc_totals"`
+	WebRTCMedia              WebRTCMediaTotals   `json:"webrtc_media_totals,omitempty"`
+	TURN                     TURNEvidence        `json:"turn_evidence,omitempty"`
+	Thresholds               VideoThresholds     `json:"thresholds,omitempty"`
+	Steps                    []VideoStepEvidence `json:"steps,omitempty"`
+	RelayCandidateSamples    int64               `json:"relay_candidate_samples,omitempty"`
+	NonRelayCandidateSamples int64               `json:"non_relay_candidate_samples,omitempty"`
+	Notes                    []string            `json:"notes,omitempty"`
+}
+
+type VideoStepEvidence struct {
+	Name                     string            `json:"name,omitempty"`
+	ArtifactDir              string            `json:"artifact_dir,omitempty"`
+	Viewers                  int               `json:"viewers,omitempty"`
+	DurationMS               int64             `json:"duration_ms,omitempty"`
+	ICEPolicy                string            `json:"ice_policy,omitempty"`
+	WebRTC                   WebRTCTotals      `json:"webrtc_totals"`
+	WebRTCMedia              WebRTCMediaTotals `json:"webrtc_media_totals,omitempty"`
+	TURN                     TURNEvidence      `json:"turn_evidence,omitempty"`
+	Thresholds               VideoThresholds   `json:"thresholds,omitempty"`
+	Complete                 bool              `json:"complete"`
+	RelayCandidateSamples    int64             `json:"relay_candidate_samples,omitempty"`
+	NonRelayCandidateSamples int64             `json:"non_relay_candidate_samples,omitempty"`
+	Notes                    []string          `json:"notes,omitempty"`
+}
+
+type VideoThresholds struct {
+	Passed   bool     `json:"passed"`
+	Failures []string `json:"failures,omitempty"`
 }
 
 type WebRTCTotals struct {
@@ -109,18 +135,40 @@ type WebRTCTotals struct {
 }
 
 type WebRTCMediaTotals struct {
-	Enabled             bool  `json:"enabled,omitempty"`
-	Attempts            int64 `json:"attempts,omitempty"`
-	Successes           int64 `json:"successes,omitempty"`
-	Failures            int64 `json:"failures,omitempty"`
-	ICEConnectedP95MS   int64 `json:"ice_connected_p95_ms,omitempty"`
-	TimeToFirstRTPP95MS int64 `json:"time_to_first_rtp_p95_ms,omitempty"`
-	PacketsReceived     int64 `json:"packets_received,omitempty"`
-	BytesReceived       int64 `json:"bytes_received,omitempty"`
-	H264PacketsReceived int64 `json:"h264_packets_received,omitempty"`
-	H264BytesReceived   int64 `json:"h264_bytes_received,omitempty"`
-	OpusPacketsReceived int64 `json:"opus_packets_received,omitempty"`
-	OpusBytesReceived   int64 `json:"opus_bytes_received,omitempty"`
+	Enabled             bool               `json:"enabled,omitempty"`
+	Attempts            int64              `json:"attempts,omitempty"`
+	Successes           int64              `json:"successes,omitempty"`
+	Failures            int64              `json:"failures,omitempty"`
+	ICEConnectedP95MS   int64              `json:"ice_connected_p95_ms,omitempty"`
+	TimeToFirstRTPP95MS int64              `json:"time_to_first_rtp_p95_ms,omitempty"`
+	PacketsReceived     int64              `json:"packets_received,omitempty"`
+	BytesReceived       int64              `json:"bytes_received,omitempty"`
+	H264PacketsReceived int64              `json:"h264_packets_received,omitempty"`
+	H264BytesReceived   int64              `json:"h264_bytes_received,omitempty"`
+	OpusPacketsReceived int64              `json:"opus_packets_received,omitempty"`
+	OpusBytesReceived   int64              `json:"opus_bytes_received,omitempty"`
+	Startup             VideoStartupTotals `json:"video_startup_latency,omitempty"`
+}
+
+type VideoStartupTotals struct {
+	Samples                              int                   `json:"samples,omitempty"`
+	H264AccessUnitSamples                int                   `json:"h264_access_unit_samples,omitempty"`
+	AppRequestToFirstRTPP50MS            int64                 `json:"app_request_to_first_rtp_p50_ms,omitempty"`
+	AppRequestToFirstRTPP95MS            int64                 `json:"app_request_to_first_rtp_p95_ms,omitempty"`
+	AppRequestToFirstRTPP99MS            int64                 `json:"app_request_to_first_rtp_p99_ms,omitempty"`
+	AppRequestToFirstH264AccessUnitP50MS int64                 `json:"app_request_to_first_h264_access_unit_p50_ms,omitempty"`
+	AppRequestToFirstH264AccessUnitP95MS int64                 `json:"app_request_to_first_h264_access_unit_p95_ms,omitempty"`
+	AppRequestToFirstH264AccessUnitP99MS int64                 `json:"app_request_to_first_h264_access_unit_p99_ms,omitempty"`
+	BreakdownP95                         VideoStartupBreakdown `json:"breakdown_p95,omitempty"`
+}
+
+type VideoStartupBreakdown struct {
+	APICreateMS                   int64 `json:"api_create_ms,omitempty"`
+	OfferDeliveryMS               int64 `json:"offer_delivery_ms,omitempty"`
+	DeviceAnswerMS                int64 `json:"device_answer_ms,omitempty"`
+	ICEConnectMS                  int64 `json:"ice_connect_ms,omitempty"`
+	FirstRTPAfterICEMS            int64 `json:"first_rtp_after_ice_ms,omitempty"`
+	FirstH264AccessUnitAfterRTPMS int64 `json:"first_h264_access_unit_after_rtp_ms,omitempty"`
 }
 
 type TURNEvidence struct {
@@ -551,6 +599,30 @@ func loadStartCoordination(path string) StartCoordination {
 }
 
 func loadVideoEvidence(dir string) VideoEvidence {
+	stepMatches, err := filepath.Glob(filepath.Join(dir, "step-*", "load-results.json"))
+	if err == nil && len(stepMatches) > 0 {
+		sort.Strings(stepMatches)
+		steps := make([]VideoStepEvidence, 0, len(stepMatches))
+		notes := []string{}
+		for _, path := range stepMatches {
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				notes = append(notes, fmt.Sprintf("%s read failed: %s", filepath.Base(filepath.Dir(path)), err))
+				continue
+			}
+			evidence, err := videoEvidenceFromLoadtestJSON(raw)
+			if err != nil {
+				notes = append(notes, fmt.Sprintf("%s decode failed: %s", filepath.Base(filepath.Dir(path)), err))
+				continue
+			}
+			evidence = videoEvidenceWithActiveTURNSamples(evidence, filepath.Dir(path))
+			step := videoStepEvidenceFromEvidence(filepath.Base(filepath.Dir(path)), filepath.Dir(path), evidence)
+			steps = append(steps, step)
+		}
+		merged := mergeVideoStepEvidence(steps)
+		merged.Notes = append(merged.Notes, notes...)
+		return merged
+	}
 	for _, name := range []string{"results.json", "load-results.json", "loadtest-results.json"} {
 		path := filepath.Join(dir, name)
 		raw, err := os.ReadFile(path)
@@ -561,6 +633,7 @@ func loadVideoEvidence(dir string) VideoEvidence {
 		if err != nil {
 			return VideoEvidence{Notes: []string{fmt.Sprintf("video evidence decode failed: %s", err)}}
 		}
+		evidence = videoEvidenceWithActiveTURNSamples(evidence, dir)
 		return evidence
 	}
 	return VideoEvidence{}
@@ -568,6 +641,11 @@ func loadVideoEvidence(dir string) VideoEvidence {
 
 func videoEvidenceFromLoadtestJSON(raw []byte) (VideoEvidence, error) {
 	var payload struct {
+		Config struct {
+			WebRTCICEPolicy string `json:"webrtc_ice_policy"`
+			VirtualViewers  int    `json:"virtual_viewers"`
+			DurationMS      int64  `json:"duration_ms"`
+		} `json:"config"`
 		WebRTC struct {
 			Attempts          int64   `json:"attempts"`
 			Successes         int64   `json:"successes"`
@@ -591,17 +669,18 @@ func videoEvidenceFromLoadtestJSON(raw []byte) (VideoEvidence, error) {
 			} `json:"close"`
 		} `json:"webrtc"`
 		WebRTCMedia struct {
-			Attempts            int64 `json:"attempts"`
-			Successes           int64 `json:"successes"`
-			Failures            int64 `json:"failures"`
-			PacketsReceived     int64 `json:"packets_received"`
-			BytesReceived       int64 `json:"bytes_received"`
-			H264PacketsReceived int64 `json:"h264_packets_received"`
-			H264BytesReceived   int64 `json:"h264_bytes_received"`
-			OpusPacketsReceived int64 `json:"opus_packets_received"`
-			OpusBytesReceived   int64 `json:"opus_bytes_received"`
-			TimeToFirstRTPP95MS int64 `json:"time_to_first_rtp_p95_ms"`
-			ICEConnectedP95MS   int64 `json:"ice_connected_p95_ms"`
+			Attempts            int64              `json:"attempts"`
+			Successes           int64              `json:"successes"`
+			Failures            int64              `json:"failures"`
+			PacketsReceived     int64              `json:"packets_received"`
+			BytesReceived       int64              `json:"bytes_received"`
+			H264PacketsReceived int64              `json:"h264_packets_received"`
+			H264BytesReceived   int64              `json:"h264_bytes_received"`
+			OpusPacketsReceived int64              `json:"opus_packets_received"`
+			OpusBytesReceived   int64              `json:"opus_bytes_received"`
+			TimeToFirstRTPP95MS int64              `json:"time_to_first_rtp_p95_ms"`
+			ICEConnectedP95MS   int64              `json:"ice_connected_p95_ms"`
+			Startup             VideoStartupTotals `json:"video_startup_latency"`
 		} `json:"webrtc_media"`
 		TURN struct {
 			RegistryAvailable bool  `json:"registry_available"`
@@ -610,6 +689,12 @@ func videoEvidenceFromLoadtestJSON(raw []byte) (VideoEvidence, error) {
 			Allocations       int64 `json:"allocations"`
 			ActiveSessions    int64 `json:"active_sessions"`
 		} `json:"turn_evidence"`
+		Thresholds          VideoThresholds `json:"thresholds"`
+		VideoStartupLatency []struct {
+			ICEPolicy                   string `json:"ice_policy"`
+			SelectedLocalCandidateType  string `json:"selected_local_candidate_type"`
+			SelectedRemoteCandidateType string `json:"selected_remote_candidate_type"`
+		} `json:"video_startup_latency"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return VideoEvidence{}, err
@@ -641,6 +726,7 @@ func videoEvidenceFromLoadtestJSON(raw []byte) (VideoEvidence, error) {
 			H264BytesReceived:   payload.WebRTCMedia.H264BytesReceived,
 			OpusPacketsReceived: payload.WebRTCMedia.OpusPacketsReceived,
 			OpusBytesReceived:   payload.WebRTCMedia.OpusBytesReceived,
+			Startup:             payload.WebRTCMedia.Startup,
 		},
 		TURN: TURNEvidence{
 			RegistryAvailable: payload.TURN.RegistryAvailable,
@@ -649,7 +735,22 @@ func videoEvidenceFromLoadtestJSON(raw []byte) (VideoEvidence, error) {
 			Allocations:       payload.TURN.Allocations,
 			ActiveSessions:    payload.TURN.ActiveSessions,
 		},
+		Thresholds: payload.Thresholds,
 	}
+	relaySamples, nonRelaySamples := relayCandidateSampleCounts(payload.Config.WebRTCICEPolicy, payload.VideoStartupLatency)
+	evidence.RelayCandidateSamples = relaySamples
+	evidence.NonRelayCandidateSamples = nonRelaySamples
+	evidence.Steps = []VideoStepEvidence{{
+		Viewers:                  payload.Config.VirtualViewers,
+		DurationMS:               payload.Config.DurationMS,
+		ICEPolicy:                payload.Config.WebRTCICEPolicy,
+		WebRTC:                   evidence.WebRTC,
+		WebRTCMedia:              evidence.WebRTCMedia,
+		TURN:                     evidence.TURN,
+		Thresholds:               evidence.Thresholds,
+		RelayCandidateSamples:    relaySamples,
+		NonRelayCandidateSamples: nonRelaySamples,
+	}}
 	if evidence.WebRTCMedia.Enabled && evidence.WebRTC.SetupAttempts == 0 && evidence.WebRTCMedia.Attempts > 0 {
 		evidence.WebRTC.SetupAttempts = evidence.WebRTCMedia.Attempts
 		evidence.WebRTC.SetupSuccess = evidence.WebRTCMedia.Successes
@@ -669,30 +770,153 @@ func videoEvidenceFromLoadtestJSON(raw []byte) (VideoEvidence, error) {
 		evidence.TURN.RegistryAvailable &&
 		evidence.TURN.CoturnAvailable &&
 		evidence.TURN.ActiveNodes > 0
+	evidence.Steps[0].Complete = evidence.Complete
 	return evidence, nil
 }
 
-func videoEvidenceWithServerEvidence(video VideoEvidence, evidence ServerEvidence) VideoEvidence {
-	if source, ok := evidence.Sources["turn_registry"]; ok {
-		video.TURN.RegistryAvailable = video.TURN.RegistryAvailable || source.Available
-		if value := source.Counters["turn_registry.active_nodes"]; value > video.TURN.ActiveNodes {
-			video.TURN.ActiveNodes = value
+func relayCandidateSampleCounts(icePolicy string, samples []struct {
+	ICEPolicy                   string `json:"ice_policy"`
+	SelectedLocalCandidateType  string `json:"selected_local_candidate_type"`
+	SelectedRemoteCandidateType string `json:"selected_remote_candidate_type"`
+}) (int64, int64) {
+	var relaySamples int64
+	var nonRelaySamples int64
+	for _, sample := range samples {
+		policy := firstNonEmpty(strings.TrimSpace(sample.ICEPolicy), strings.TrimSpace(icePolicy))
+		if policy != "relay" {
+			continue
 		}
-		if value := source.Counters["turn_registry.ready_pods"]; value > video.TURN.ActiveNodes {
-			video.TURN.ActiveNodes = value
+		local := strings.TrimSpace(sample.SelectedLocalCandidateType)
+		remote := strings.TrimSpace(sample.SelectedRemoteCandidateType)
+		if local == "" && remote == "" {
+			continue
+		}
+		if isRelayCandidateType(local) && isRelayCandidateType(remote) {
+			relaySamples++
+		} else {
+			nonRelaySamples++
 		}
 	}
-	if source, ok := evidence.Sources["coturn"]; ok {
-		video.TURN.CoturnAvailable = video.TURN.CoturnAvailable || source.Available
-		if value := source.Counters["coturn.allocations"]; value > video.TURN.Allocations {
-			video.TURN.Allocations = value
+	return relaySamples, nonRelaySamples
+}
+
+func isRelayCandidateType(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "relay", "relay_inferred":
+		return true
+	default:
+		return false
+	}
+}
+
+func videoStepEvidenceFromEvidence(name, artifactDir string, evidence VideoEvidence) VideoStepEvidence {
+	step := VideoStepEvidence{
+		Name:                     name,
+		ArtifactDir:              artifactDir,
+		WebRTC:                   evidence.WebRTC,
+		WebRTCMedia:              evidence.WebRTCMedia,
+		TURN:                     evidence.TURN,
+		Thresholds:               evidence.Thresholds,
+		Complete:                 evidence.Complete,
+		RelayCandidateSamples:    evidence.RelayCandidateSamples,
+		NonRelayCandidateSamples: evidence.NonRelayCandidateSamples,
+		Notes:                    evidence.Notes,
+	}
+	if len(evidence.Steps) > 0 {
+		step.Viewers = evidence.Steps[0].Viewers
+		step.DurationMS = evidence.Steps[0].DurationMS
+		step.ICEPolicy = evidence.Steps[0].ICEPolicy
+	}
+	if step.Viewers == 0 {
+		step.Viewers = int(evidence.WebRTCMedia.Attempts)
+	}
+	return step
+}
+
+func mergeVideoStepEvidence(steps []VideoStepEvidence) VideoEvidence {
+	if len(steps) == 0 {
+		return VideoEvidence{}
+	}
+	merged := VideoEvidence{Complete: true, Steps: steps}
+	for _, step := range steps {
+		if !step.Complete {
+			merged.Complete = false
 		}
-		if value := source.Counters["coturn.active_sessions"]; value > video.TURN.ActiveSessions {
-			video.TURN.ActiveSessions = value
+		merged.WebRTC.CreateAttempts += step.WebRTC.CreateAttempts
+		merged.WebRTC.CreateSuccess += step.WebRTC.CreateSuccess
+		merged.WebRTC.SetupAttempts += step.WebRTC.SetupAttempts
+		merged.WebRTC.SetupSuccess += step.WebRTC.SetupSuccess
+		merged.WebRTC.CloseAttempts += step.WebRTC.CloseAttempts
+		merged.WebRTC.CloseSuccess += step.WebRTC.CloseSuccess
+		merged.WebRTC.SetupP95MS = maxInt64(merged.WebRTC.SetupP95MS, step.WebRTC.SetupP95MS)
+		merged.WebRTC.SetupP99MS = maxInt64(merged.WebRTC.SetupP99MS, step.WebRTC.SetupP99MS)
+		merged.WebRTC.ICEServerCount = maxInt(merged.WebRTC.ICEServerCount, step.WebRTC.ICEServerCount)
+		merged.WebRTC.OpenSessions = maxInt(merged.WebRTC.OpenSessions, step.WebRTC.OpenSessions)
+		merged.WebRTCMedia.Enabled = merged.WebRTCMedia.Enabled || step.WebRTCMedia.Enabled
+		merged.WebRTCMedia.Attempts += step.WebRTCMedia.Attempts
+		merged.WebRTCMedia.Successes += step.WebRTCMedia.Successes
+		merged.WebRTCMedia.Failures += step.WebRTCMedia.Failures
+		merged.WebRTCMedia.ICEConnectedP95MS = maxInt64(merged.WebRTCMedia.ICEConnectedP95MS, step.WebRTCMedia.ICEConnectedP95MS)
+		merged.WebRTCMedia.TimeToFirstRTPP95MS = maxInt64(merged.WebRTCMedia.TimeToFirstRTPP95MS, step.WebRTCMedia.TimeToFirstRTPP95MS)
+		merged.WebRTCMedia.PacketsReceived += step.WebRTCMedia.PacketsReceived
+		merged.WebRTCMedia.BytesReceived += step.WebRTCMedia.BytesReceived
+		merged.WebRTCMedia.H264PacketsReceived += step.WebRTCMedia.H264PacketsReceived
+		merged.WebRTCMedia.H264BytesReceived += step.WebRTCMedia.H264BytesReceived
+		merged.WebRTCMedia.OpusPacketsReceived += step.WebRTCMedia.OpusPacketsReceived
+		merged.WebRTCMedia.OpusBytesReceived += step.WebRTCMedia.OpusBytesReceived
+		merged.WebRTCMedia.Startup = mergeVideoStartupTotals(merged.WebRTCMedia.Startup, step.WebRTCMedia.Startup)
+		merged.TURN.RegistryAvailable = merged.TURN.RegistryAvailable || step.TURN.RegistryAvailable
+		merged.TURN.CoturnAvailable = merged.TURN.CoturnAvailable || step.TURN.CoturnAvailable
+		merged.TURN.ActiveNodes = maxInt64(merged.TURN.ActiveNodes, step.TURN.ActiveNodes)
+		merged.TURN.Allocations = maxInt64(merged.TURN.Allocations, step.TURN.Allocations)
+		merged.TURN.ActiveSessions = maxInt64(merged.TURN.ActiveSessions, step.TURN.ActiveSessions)
+		if !step.Thresholds.Passed || len(step.Thresholds.Failures) > 0 {
+			merged.Thresholds.Passed = false
+			merged.Thresholds.Failures = append(merged.Thresholds.Failures, step.Thresholds.Failures...)
 		}
-		if value := source.Counters["coturn.ready_pods"]; value > video.TURN.ActiveNodes {
-			video.TURN.ActiveNodes = value
-		}
+		merged.RelayCandidateSamples += step.RelayCandidateSamples
+		merged.NonRelayCandidateSamples += step.NonRelayCandidateSamples
+		merged.Notes = append(merged.Notes, step.Notes...)
+	}
+	attempts := merged.WebRTC.CreateAttempts + merged.WebRTC.SetupAttempts + merged.WebRTC.CloseAttempts
+	successes := merged.WebRTC.CreateSuccess + merged.WebRTC.SetupSuccess + merged.WebRTC.CloseSuccess
+	if attempts > 0 {
+		merged.WebRTC.SuccessRatePercent = float64(successes) * 100 / float64(attempts)
+	}
+	if len(merged.Thresholds.Failures) == 0 {
+		merged.Thresholds.Passed = true
+	}
+	return merged
+}
+
+func mergeVideoStartupTotals(a, b VideoStartupTotals) VideoStartupTotals {
+	a.Samples += b.Samples
+	a.H264AccessUnitSamples += b.H264AccessUnitSamples
+	a.AppRequestToFirstRTPP50MS = maxInt64(a.AppRequestToFirstRTPP50MS, b.AppRequestToFirstRTPP50MS)
+	a.AppRequestToFirstRTPP95MS = maxInt64(a.AppRequestToFirstRTPP95MS, b.AppRequestToFirstRTPP95MS)
+	a.AppRequestToFirstRTPP99MS = maxInt64(a.AppRequestToFirstRTPP99MS, b.AppRequestToFirstRTPP99MS)
+	a.AppRequestToFirstH264AccessUnitP50MS = maxInt64(a.AppRequestToFirstH264AccessUnitP50MS, b.AppRequestToFirstH264AccessUnitP50MS)
+	a.AppRequestToFirstH264AccessUnitP95MS = maxInt64(a.AppRequestToFirstH264AccessUnitP95MS, b.AppRequestToFirstH264AccessUnitP95MS)
+	a.AppRequestToFirstH264AccessUnitP99MS = maxInt64(a.AppRequestToFirstH264AccessUnitP99MS, b.AppRequestToFirstH264AccessUnitP99MS)
+	a.BreakdownP95.APICreateMS = maxInt64(a.BreakdownP95.APICreateMS, b.BreakdownP95.APICreateMS)
+	a.BreakdownP95.OfferDeliveryMS = maxInt64(a.BreakdownP95.OfferDeliveryMS, b.BreakdownP95.OfferDeliveryMS)
+	a.BreakdownP95.DeviceAnswerMS = maxInt64(a.BreakdownP95.DeviceAnswerMS, b.BreakdownP95.DeviceAnswerMS)
+	a.BreakdownP95.ICEConnectMS = maxInt64(a.BreakdownP95.ICEConnectMS, b.BreakdownP95.ICEConnectMS)
+	a.BreakdownP95.FirstRTPAfterICEMS = maxInt64(a.BreakdownP95.FirstRTPAfterICEMS, b.BreakdownP95.FirstRTPAfterICEMS)
+	a.BreakdownP95.FirstH264AccessUnitAfterRTPMS = maxInt64(a.BreakdownP95.FirstH264AccessUnitAfterRTPMS, b.BreakdownP95.FirstH264AccessUnitAfterRTPMS)
+	return a
+}
+
+func videoEvidenceWithServerEvidence(video VideoEvidence, evidence ServerEvidence) VideoEvidence {
+	video.TURN = turnEvidenceWithServerEvidence(video.TURN, evidence)
+	for i := range video.Steps {
+		video.Steps[i].TURN = turnEvidenceWithServerEvidence(video.Steps[i].TURN, evidence)
+		video.Steps[i].Complete = video.Steps[i].WebRTC.CreateAttempts > 0 &&
+			video.Steps[i].WebRTC.SetupAttempts > 0 &&
+			video.Steps[i].WebRTC.CloseAttempts > 0 &&
+			video.Steps[i].TURN.RegistryAvailable &&
+			video.Steps[i].TURN.CoturnAvailable &&
+			video.Steps[i].TURN.ActiveNodes > 0
 	}
 	video.Complete = video.WebRTC.CreateAttempts > 0 &&
 		video.WebRTC.SetupAttempts > 0 &&
@@ -701,6 +925,96 @@ func videoEvidenceWithServerEvidence(video VideoEvidence, evidence ServerEvidenc
 		video.TURN.CoturnAvailable &&
 		video.TURN.ActiveNodes > 0
 	return video
+}
+
+func turnEvidenceWithServerEvidence(turn TURNEvidence, evidence ServerEvidence) TURNEvidence {
+	if source, ok := evidence.Sources["turn_registry"]; ok {
+		turn.RegistryAvailable = turn.RegistryAvailable || source.Available
+		if value := source.Counters["turn_registry.active_nodes"]; value > turn.ActiveNodes {
+			turn.ActiveNodes = value
+		}
+		if value := source.Counters["turn_registry.ready_pods"]; value > turn.ActiveNodes {
+			turn.ActiveNodes = value
+		}
+	}
+	if source, ok := evidence.Sources["coturn"]; ok {
+		turn.CoturnAvailable = turn.CoturnAvailable || source.Available
+		if value := source.Counters["coturn.allocations"]; value > turn.Allocations {
+			turn.Allocations = value
+		}
+		if value := source.Counters["coturn.active_sessions"]; value > turn.ActiveSessions {
+			turn.ActiveSessions = value
+		}
+		if value := source.Counters["coturn.ready_pods"]; value > turn.ActiveNodes {
+			turn.ActiveNodes = value
+		}
+		if value := source.Counters["coturn.active_nodes"]; value > turn.ActiveNodes {
+			turn.ActiveNodes = value
+		}
+		if value := source.Counters["coturn.configured_nodes"]; value > turn.ActiveNodes {
+			turn.ActiveNodes = value
+		}
+	}
+	return turn
+}
+
+func videoEvidenceWithActiveTURNSamples(evidence VideoEvidence, dir string) VideoEvidence {
+	turn := turnEvidenceFromActiveSamples(filepath.Join(dir, "turn-active-samples.tsv"))
+	if turn.ActiveSessions == 0 && turn.Allocations == 0 {
+		return evidence
+	}
+	evidence.TURN.CoturnAvailable = true
+	evidence.TURN.Allocations = maxInt64(evidence.TURN.Allocations, turn.Allocations)
+	evidence.TURN.ActiveSessions = maxInt64(evidence.TURN.ActiveSessions, turn.ActiveSessions)
+	evidence.TURN.ActiveNodes = maxInt64(evidence.TURN.ActiveNodes, turn.ActiveNodes)
+	evidence.Complete = evidence.WebRTC.CreateAttempts > 0 &&
+		evidence.WebRTC.SetupAttempts > 0 &&
+		evidence.WebRTC.CloseAttempts > 0 &&
+		evidence.TURN.RegistryAvailable &&
+		evidence.TURN.CoturnAvailable &&
+		evidence.TURN.ActiveNodes > 0
+	if len(evidence.Steps) > 0 {
+		evidence.Steps[0].TURN = evidence.TURN
+		evidence.Steps[0].Complete = evidence.Complete
+	}
+	return evidence
+}
+
+func turnEvidenceFromActiveSamples(path string) TURNEvidence {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return TURNEvidence{}
+	}
+	lines := strings.Split(string(raw), "\n")
+	var maxSockets int64
+	var maxEvents int64
+	nodes := map[string]bool{}
+	for i, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || (i == 0 && strings.HasPrefix(line, "time\t")) {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) < 5 {
+			continue
+		}
+		node := strings.TrimSpace(fields[1])
+		if node != "" {
+			nodes[node] = true
+		}
+		maxSockets = maxInt64(maxSockets, parseInt64Default(fields[3], 0))
+		maxEvents = maxInt64(maxEvents, parseInt64Default(fields[4], 0))
+	}
+	active := maxInt64(maxSockets, maxEvents)
+	if active == 0 {
+		return TURNEvidence{}
+	}
+	return TURNEvidence{
+		CoturnAvailable: true,
+		ActiveNodes:     int64(len(nodes)),
+		Allocations:     active,
+		ActiveSessions:  active,
+	}
 }
 
 func loadCollectedShardResults(shardsDir string, stages []Stage) (collectedShardResults, error) {
@@ -1006,6 +1320,21 @@ func maxInt64(a, b int64) int64 {
 	return a
 }
 
+func parseInt64Default(value string, fallback int64) int64 {
+	parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func maxInt(a, b int) int {
+	if b > a {
+		return b
+	}
+	return a
+}
+
 func loadSyncTelemetry(path string) SyncTelemetry {
 	var telemetry SyncTelemetry
 	if raw, err := os.ReadFile(path); err == nil {
@@ -1161,6 +1490,13 @@ func evaluateRunOutcome(plan Plan, evidence ServerEvidence, stages []StageResult
 		reasons = append(reasons, "Missing IoT Device Shadow evidence")
 	}
 	videoIncomplete, videoFailReasons := videoGateFailures(plan, videoEvidence)
+	if isVideoTurnSizingProfile(plan.VideoProfile.Name) && videoEvidence.WebRTCMedia.Attempts > 0 {
+		signalingStoreReasons := webrtcSignalingStoreEvidenceFailures(evidence)
+		if len(signalingStoreReasons) > 0 {
+			videoIncomplete = true
+			videoFailReasons = append(videoFailReasons, signalingStoreReasons...)
+		}
+	}
 	if videoIncomplete {
 		incomplete = true
 	}
@@ -1264,6 +1600,14 @@ func videoGateFailures(plan Plan, evidence VideoEvidence) (bool, []string) {
 		incomplete = true
 		reasons = append(reasons, "Missing external TURN/coturn evidence")
 	}
+	if isVideoTurnSizingProfile(plan.VideoProfile.Name) && strings.TrimSpace(plan.VideoProfile.WebRTCICEPolicy) == "relay" && evidence.WebRTCMedia.Attempts > 0 && evidence.RelayCandidateSamples == 0 && evidence.NonRelayCandidateSamples == 0 {
+		incomplete = true
+		reasons = append(reasons, "Missing relay candidate evidence for relay-only WebRTC media")
+	}
+	if isVideoTurnSizingProfile(plan.VideoProfile.Name) && evidence.WebRTCMedia.Attempts > 0 && evidence.TURN.Allocations == 0 && evidence.TURN.ActiveSessions == 0 {
+		incomplete = true
+		reasons = append(reasons, "Missing active-window TURN allocations/sessions evidence")
+	}
 	if incomplete {
 		return true, reasons
 	}
@@ -1274,12 +1618,76 @@ func videoGateFailures(plan Plan, evidence VideoEvidence) (bool, []string) {
 	if evidence.WebRTC.SuccessRatePercent < threshold {
 		reasons = append(reasons, fmt.Sprintf("WebRTC signaling success rate %.2f%% below %.2f%% threshold", evidence.WebRTC.SuccessRatePercent, threshold))
 	}
+	if evidence.NonRelayCandidateSamples > 0 {
+		reasons = append(reasons, fmt.Sprintf("relay-only WebRTC selected non-relay candidates in %d samples", evidence.NonRelayCandidateSamples))
+	}
 	if strings.TrimSpace(plan.VideoProfile.WebRTCMediaSet) != "" && plan.VideoProfile.WebRTCMediaSet != "off" {
 		if evidence.WebRTCMedia.Attempts == 0 || evidence.WebRTCMedia.Successes == 0 || evidence.WebRTCMedia.ICEConnectedP95MS == 0 || evidence.WebRTCMedia.TimeToFirstRTPP95MS == 0 {
 			reasons = append(reasons, "WebRTC media evidence missing ICE connected or first RTP")
 		}
+		if evidence.WebRTCMedia.Attempts > 0 {
+			mediaSuccessRate := float64(evidence.WebRTCMedia.Successes) * 100 / float64(evidence.WebRTCMedia.Attempts)
+			if mediaSuccessRate < threshold {
+				reasons = append(reasons, fmt.Sprintf("WebRTC media success rate %.2f%% below %.2f%% threshold (%d/%d)", mediaSuccessRate, threshold, evidence.WebRTCMedia.Successes, evidence.WebRTCMedia.Attempts))
+			}
+		}
+		if strings.Contains(strings.TrimSpace(plan.VideoProfile.WebRTCMediaSet), "h264") || strings.TrimSpace(plan.VideoProfile.WebRTCMediaSet) == "av" {
+			if evidence.WebRTCMedia.Startup.H264AccessUnitSamples == 0 {
+				reasons = append(reasons, "WebRTC media evidence missing first H.264 access unit")
+			}
+		}
+	}
+	for _, step := range evidence.Steps {
+		stepName := firstNonEmpty(step.Name, fmt.Sprintf("%d-viewers", step.Viewers))
+		if step.WebRTC.CreateAttempts == 0 || step.WebRTC.SetupAttempts == 0 || step.WebRTC.CloseAttempts == 0 {
+			reasons = append(reasons, fmt.Sprintf("video step %s missing WebRTC create/setup/close evidence", stepName))
+			continue
+		}
+		if step.WebRTC.SuccessRatePercent < threshold {
+			reasons = append(reasons, fmt.Sprintf("video step %s WebRTC signaling success rate %.2f%% below %.2f%% threshold", stepName, step.WebRTC.SuccessRatePercent, threshold))
+		}
+		if step.WebRTCMedia.Attempts > 0 {
+			mediaSuccessRate := float64(step.WebRTCMedia.Successes) * 100 / float64(step.WebRTCMedia.Attempts)
+			if mediaSuccessRate < threshold {
+				reasons = append(reasons, fmt.Sprintf("video step %s WebRTC media success rate %.2f%% below %.2f%% threshold (%d/%d)", stepName, mediaSuccessRate, threshold, step.WebRTCMedia.Successes, step.WebRTCMedia.Attempts))
+			}
+		}
+		if strings.TrimSpace(step.ICEPolicy) == "relay" && step.NonRelayCandidateSamples > 0 {
+			reasons = append(reasons, fmt.Sprintf("video step %s selected non-relay candidates in %d samples", stepName, step.NonRelayCandidateSamples))
+		}
+		for _, failure := range step.Thresholds.Failures {
+			reasons = append(reasons, fmt.Sprintf("video step %s threshold failed: %s", stepName, failure))
+		}
 	}
 	return false, reasons
+}
+
+func webrtcSignalingStoreEvidenceFailures(evidence ServerEvidence) []string {
+	runningPods := evidenceCounter(evidence, "video_cloud_api", "video_cloud_api.k8s.running_pods")
+	desiredReplicas := evidenceCounter(evidence, "video_cloud_api", "video_cloud_api.k8s.desired_replicas")
+	enabledPods := evidenceCounter(evidence, "video_cloud_api", "video_cloud_api.webrtc_signaling_store.enabled_pods")
+	addrPods := evidenceCounter(evidence, "video_cloud_api", "video_cloud_api.webrtc_signaling_store.addr_pods")
+	prefixPods := evidenceCounter(evidence, "video_cloud_api", "video_cloud_api.webrtc_signaling_store.prefix_pods")
+	if runningPods == 0 && desiredReplicas == 0 && enabledPods == 0 && addrPods == 0 && prefixPods == 0 {
+		return []string{"Missing multi-pod WebRTC signaling store evidence"}
+	}
+	reasons := []string{}
+	if runningPods < 2 {
+		reasons = append(reasons, fmt.Sprintf("WebRTC TURN sizing requires multi-pod API evidence: running API pods %d < 2", runningPods))
+	}
+	if desiredReplicas > 0 && desiredReplicas < 2 {
+		reasons = append(reasons, fmt.Sprintf("WebRTC TURN sizing requires API desired replicas >= 2, got %d", desiredReplicas))
+	}
+	if enabledPods < runningPods {
+		reasons = append(reasons, fmt.Sprintf("WebRTC signaling store enabled on %d/%d API pods", enabledPods, runningPods))
+	}
+	if addrPods < runningPods {
+		reasons = append(reasons, fmt.Sprintf("WebRTC signaling store address configured on %d/%d API pods", addrPods, runningPods))
+	}
+	if prefixPods < runningPods {
+		reasons = append(reasons, fmt.Sprintf("WebRTC signaling store prefix configured on %d/%d API pods", prefixPods, runningPods))
+	}
+	return reasons
 }
 
 func successRateFailureReasons(conditions TestConditions, stages []StageResult, threshold float64) []string {
@@ -1366,7 +1774,7 @@ func correlateServerEvidenceWithThresholds(evidence ServerEvidence, device Devic
 		counterName = "emqx.metric.client.connected"
 	}
 	checks := []CorrelationCheck{
-		newCorrelationCheck("emqx", counterName, totalMQTTConnectSuccess, serverTotalMQTTConnectSuccess, aggregateCorrelationTolerance(totalMQTTConnectSuccess, serverTotalMQTTConnectSuccess, thresholds)),
+		newEMQXConnectCorrelationCheck(counterName, totalMQTTConnectSuccess, serverTotalMQTTConnectSuccess, aggregateCorrelationTolerance(totalMQTTConnectSuccess, serverTotalMQTTConnectSuccess, thresholds)),
 		newCorrelationCheck("iot_device_shadow", "app_user.desired_writes", app.DesiredWrites, evidenceCounter(evidence, "iot_device_shadow", "app_user.desired_writes"), aggregateCorrelationTolerance(app.DesiredWrites, evidenceCounter(evidence, "iot_device_shadow", "app_user.desired_writes"), thresholds)),
 		newCorrelationCheck("iot_device_shadow", "device_mqtt.delta_received", device.DeltaReceived, evidenceCounter(evidence, "iot_device_shadow", "device_mqtt.delta_received"), aggregateCorrelationTolerance(device.DeltaReceived, evidenceCounter(evidence, "iot_device_shadow", "device_mqtt.delta_received"), thresholds)),
 		newCorrelationCheck("iot_device_shadow", "device_mqtt.reported_publishes", device.ReportedPublishes, evidenceCounter(evidence, "iot_device_shadow", "device_mqtt.reported_publishes"), aggregateCorrelationTolerance(device.ReportedPublishes, evidenceCounter(evidence, "iot_device_shadow", "device_mqtt.reported_publishes"), thresholds)),
@@ -1405,6 +1813,12 @@ func correlateRuntimeLogsWithThresholds(evidence ServerEvidence, stages []StageR
 	for _, stage := range stages {
 		events = append(events, stage.CommandEvents...)
 	}
+	runtimeEvents := []CommandEvent{}
+	for _, event := range events {
+		if strings.TrimSpace(event.RuntimeLogStreamID) != "" && len(event.ExpectedLogs) > 0 {
+			runtimeEvents = append(runtimeEvents, event)
+		}
+	}
 	source := evidence.Sources["iot_device_shadow_streams"]
 	result := RuntimeLogCorrelation{
 		Status:               "pass",
@@ -1415,11 +1829,15 @@ func correlateRuntimeLogsWithThresholds(evidence ServerEvidence, stages []StageR
 		result.Status = "incomplete"
 		return result
 	}
+	if len(runtimeEvents) == 0 {
+		result.Status = "skipped"
+		return result
+	}
 	if !source.Available || len(source.Counters) == 0 {
 		result.Status = "skipped"
 		return result
 	}
-	for _, event := range events {
+	for _, event := range runtimeEvents {
 		streamKey := "runtime_log_stream." + event.RuntimeLogStreamID + ".entries"
 		if source.Counters[streamKey] == 0 {
 			result.MissingStreamCount++
@@ -1451,7 +1869,7 @@ func correlateRuntimeLogsWithThresholds(evidence ServerEvidence, stages []StageR
 			}
 		}
 	}
-	allowedMissing := allowedMissingExactEvents(len(events), thresholds)
+	allowedMissing := allowedMissingExactEvents(len(runtimeEvents), thresholds)
 	if result.MissingStreamCount+result.MissingSequenceCount > allowedMissing {
 		result.Status = "fail"
 	}
@@ -1473,6 +1891,14 @@ func newCorrelationCheck(source string, counter string, clientTotal int64, serve
 	} else if absInt64(check.Delta) > check.Tolerance {
 		check.Status = "fail"
 	} else if check.Delta != 0 {
+		check.Status = "warning"
+	}
+	return check
+}
+
+func newEMQXConnectCorrelationCheck(counter string, clientTotal int64, serverTotal int64, tolerance int64) CorrelationCheck {
+	check := newCorrelationCheck("emqx", counter, clientTotal, serverTotal, tolerance)
+	if check.Status == "fail" && check.Delta > 0 && counter == "mqtt.total_connect_success" {
 		check.Status = "warning"
 	}
 	return check

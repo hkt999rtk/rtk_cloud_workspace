@@ -243,6 +243,8 @@ def video_load_profile():
     plan = result.get("plan") or {}
     profile = plan.get("video_profile") or {}
     evidence = result.get("video_evidence") or {}
+    server = result.get("server_evidence") or {}
+    api_counters = ((server.get("sources") or {}).get("video_cloud_api") or {}).get("counters") or {}
     if not profile.get("name") and not evidence:
         return ""
     webrtc = evidence.get("webrtc_totals") or {}
@@ -260,12 +262,49 @@ def video_load_profile():
         f"- Video profile: `{md(profile.get('name', '-'))}`",
         f"- Video devices: {num(profile.get('video_devices'), 0)}",
         f"- Video viewers: {num(profile.get('video_viewers'), 0)}",
+        f"- Viewer ladder: `{md(','.join(str(x) for x in (profile.get('viewer_ladder') or [])) or '-')}`",
         f"- WebRTC media set: `{md(profile.get('webrtc_media_set', '-'))}`",
+        f"- WebRTC ICE policy: `{md(profile.get('webrtc_ice_policy', '-'))}`",
+        f"- Video step duration: `{md(profile.get('step_duration', '-'))}`",
+        f"- Video step cooldown: `{md(profile.get('step_cooldown', '-'))}`",
+        f"- TURN transport: `{md(profile.get('turn_transport') or 'udp')}`",
+        f"- Media security: `{md(profile.get('media_security') or 'dtls-srtp')}`",
+        "- TURN/UDP relays encrypted DTLS-SRTP packets; coturn does not terminate DTLS or inspect RTP/H.264 payloads.",
+        f"- API running pods: {num(api_counters.get('video_cloud_api.k8s.running_pods'), 0)}",
+        f"- WebRTC signaling store enabled pods: {num(api_counters.get('video_cloud_api.webrtc_signaling_store.enabled_pods'), 0)}",
+        f"- WebRTC signaling store address pods: {num(api_counters.get('video_cloud_api.webrtc_signaling_store.addr_pods'), 0)}",
+        f"- WebRTC signaling store prefix pods: {num(api_counters.get('video_cloud_api.webrtc_signaling_store.prefix_pods'), 0)}",
         f"- Device actor: `{md(profile.get('device_actor_role', '-'))}`",
         f"- App actor: `{md(profile.get('app_actor_role', '-'))}`",
         f"- Viewer actor: `{md(profile.get('viewer_actor_role', '-'))}`",
         f"- Evidence complete: {str(bool(evidence.get('complete'))).lower()}",
         "",
+    ]
+    steps = evidence.get("steps") or []
+    if len(steps) > 1:
+        lines.extend([
+            "## Video Ladder",
+            "| Step | Viewers | ICE policy | WebRTC success | Media success | first RTP p95 | first H.264 AU p95 | Relay samples | Non-relay samples | TURN allocations | TURN sessions |",
+            "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ])
+        for step in steps:
+            step_webrtc = step.get("webrtc_totals") or {}
+            step_media = step.get("webrtc_media_totals") or {}
+            step_startup = step_media.get("video_startup_latency") or {}
+            step_turn = step.get("turn_evidence") or {}
+            attempts = num(step_media.get("attempts"), 0)
+            successes = num(step_media.get("successes"), 0)
+            media_rate = 0 if attempts <= 0 else successes * 100.0 / attempts
+            lines.append(
+                f"| {md(step.get('name') or str(step.get('viewers') or '-'))} | {num(step.get('viewers'), 0)} | "
+                f"{md(step.get('ice_policy') or '-')} | {float_num(step_webrtc.get('success_rate_percent'), 0):.2f}% | "
+                f"{media_rate:.2f}% | {num(step_media.get('time_to_first_rtp_p95_ms'), 0)} ms | "
+                f"{num(step_startup.get('app_request_to_first_h264_access_unit_p95_ms'), 0)} ms | "
+                f"{num(step.get('relay_candidate_samples'), 0)} | {num(step.get('non_relay_candidate_samples'), 0)} | "
+                f"{num(step_turn.get('allocations'), 0)} | {num(step_turn.get('active_sessions'), 0)} |"
+            )
+        lines.append("")
+    lines.extend([
         "## WebRTC Totals",
         "| Phase | Attempts | Success | Success rate |",
         "| --- | ---: | ---: | ---: |",
@@ -276,8 +315,10 @@ def video_load_profile():
         f"- Setup p99: {num(webrtc.get('setup_p99_ms'), 0)} ms",
         f"- ICE server count: {num(webrtc.get('ice_server_count'), 0)}",
         f"- Open sessions: {num(webrtc.get('open_sessions'), 0)}",
-    ]
+    ])
     if media.get("enabled") or num(media.get("attempts"), 0) > 0:
+        startup = media.get("video_startup_latency") or {}
+        breakdown = startup.get("breakdown_p95") or {}
         lines.extend([
             "",
             "## WebRTC Media Totals",
@@ -293,6 +334,25 @@ def video_load_profile():
             f"- Opus packets received: {num(media.get('opus_packets_received'), 0)}",
             f"- Opus bytes received: {num(media.get('opus_bytes_received'), 0)}",
         ])
+        if num(startup.get("app_request_to_first_rtp_p95_ms"), 0) > 0 or num(startup.get("app_request_to_first_h264_access_unit_p95_ms"), 0) > 0:
+            lines.extend([
+                "",
+                "## Video Startup Latency",
+                f"- Samples: {num(startup.get('samples'), 0)}",
+                f"- H.264 access unit samples: {num(startup.get('h264_access_unit_samples'), 0)}",
+                f"- App request -> first RTP p50: {num(startup.get('app_request_to_first_rtp_p50_ms'), 0)} ms",
+                f"- App request -> first RTP p95: {num(startup.get('app_request_to_first_rtp_p95_ms'), 0)} ms",
+                f"- App request -> first RTP p99: {num(startup.get('app_request_to_first_rtp_p99_ms'), 0)} ms",
+                f"- App request -> first H.264 access unit p50: {num(startup.get('app_request_to_first_h264_access_unit_p50_ms'), 0)} ms",
+                f"- App request -> first H.264 access unit p95: {num(startup.get('app_request_to_first_h264_access_unit_p95_ms'), 0)} ms",
+                f"- App request -> first H.264 access unit p99: {num(startup.get('app_request_to_first_h264_access_unit_p99_ms'), 0)} ms",
+                f"- API create p95: {num(breakdown.get('api_create_ms'), 0)} ms",
+                f"- Offer delivery p95: {num(breakdown.get('offer_delivery_ms'), 0)} ms",
+                f"- Device answer p95: {num(breakdown.get('device_answer_ms'), 0)} ms",
+                f"- ICE connect p95: {num(breakdown.get('ice_connect_ms'), 0)} ms",
+                f"- First RTP after ICE p95: {num(breakdown.get('first_rtp_after_ice_ms'), 0)} ms",
+                f"- First H.264 access unit after RTP p95: {num(breakdown.get('first_h264_access_unit_after_rtp_ms'), 0)} ms",
+            ])
     lines.extend([
         "",
         "## TURN Evidence",
@@ -301,6 +361,8 @@ def video_load_profile():
         f"- coturn available: {str(bool(turn.get('coturn_available'))).lower()}",
         f"- allocations: {num(turn.get('allocations'), 0)}",
         f"- active sessions: {num(turn.get('active_sessions'), 0)}",
+        f"- relay candidate samples: {num(evidence.get('relay_candidate_samples'), 0)}",
+        f"- non-relay candidate samples: {num(evidence.get('non_relay_candidate_samples'), 0)}",
     ])
     return "\n".join(lines)
 

@@ -368,6 +368,51 @@ func TestVideoRelayTokenRequestsUseExpectedScopes(t *testing.T) {
 	}
 }
 
+func TestVideoRelayTokenRequestRetriesTransientFailures(t *testing.T) {
+	attempts := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			http.Error(w, "temporary", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`{"scope":"device","access_token":"token-device"}`))
+	}))
+	defer server.Close()
+
+	originalSleep := videoRelayTokenRetrySleep
+	videoRelayTokenRetrySleep = func(time.Duration) {}
+	defer func() { videoRelayTokenRetrySleep = originalSleep }()
+
+	resp, err := requestVideoRelayToken(server.URL, testTLSCertificate(t), map[string]any{"scope": "device"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.AccessToken != "token-device" {
+		t.Fatalf("access token = %q", resp.AccessToken)
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", attempts)
+	}
+}
+
+func TestVideoRelayTokenRequestDoesNotRetryAuthFailures(t *testing.T) {
+	attempts := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	_, err := requestVideoRelayToken(server.URL, testTLSCertificate(t), map[string]any{"scope": "device"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", attempts)
+	}
+}
+
 func TestVideoRelayDeviceCertificatePrefersChainPEM(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "leaf.pem"), []byte("bad cert"), 0o600); err != nil {

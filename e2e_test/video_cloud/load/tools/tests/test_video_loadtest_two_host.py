@@ -236,6 +236,117 @@ class VideoLoadTestTwoHostTests(unittest.TestCase):
             self.assertIn("mqtt_light_device_ready_receive", report)
             self.assertNotIn("must-not-leak", report)
 
+    def test_aggregate_webrtc_media_coverage_allows_threshold_tolerated_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result_path = root / "app-viewer-results.json"
+            output = root / "two-host-load-report.md"
+            operations = []
+            successes = 0
+            failures = 0
+            for i in range(10):
+                device_id = f"load-device-{i}"
+                viewer_id = f"viewer-{i}"
+                operations.append(
+                    {
+                        "actor": "viewer",
+                        "name": "webrtc_media_offer",
+                        "device_id": device_id,
+                        "viewer_id": viewer_id,
+                        "success": True,
+                    }
+                )
+                operations.append(
+                    {
+                        "actor": "viewer",
+                        "name": "webrtc_media_answer",
+                        "device_id": device_id,
+                        "viewer_id": viewer_id,
+                        "success": i < 9,
+                        "error_detail": "http 400: device not online",
+                    }
+                )
+                if i < 9:
+                    operations.extend(
+                        [
+                            {
+                                "actor": "viewer",
+                                "name": "webrtc_media_ice_connected",
+                                "device_id": device_id,
+                                "viewer_id": viewer_id,
+                                "success": True,
+                            },
+                            {
+                                "actor": "viewer",
+                                "name": "webrtc_media_first_rtp",
+                                "device_id": device_id,
+                                "viewer_id": viewer_id,
+                                "success": True,
+                            },
+                            {
+                                "actor": "viewer",
+                                "name": "webrtc_media_receive",
+                                "device_id": device_id,
+                                "viewer_id": viewer_id,
+                                "success": True,
+                                "evidence": "packets=8 bytes=40",
+                            },
+                            {
+                                "actor": "viewer",
+                                "name": "webrtc_media_close",
+                                "device_id": device_id,
+                                "viewer_id": viewer_id,
+                                "success": True,
+                            },
+                        ]
+                    )
+            successes = sum(1 for op in operations if op["success"])
+            failures = len(operations) - successes
+            result_path.write_text(
+                json.dumps(
+                    {
+                        "run_id": "run-media",
+                        "instance_id": "run-media-app-viewer",
+                        "profile": "smoke",
+                        "config": {"api_url": "https://video-cloud-cd.local:8443", "actors": "app,viewer"},
+                        "summary": {
+                            "total_operations": len(operations),
+                            "successes": successes,
+                            "failures": failures,
+                            "skips": 0,
+                            "success_rate": successes / len(operations),
+                        },
+                        "actors": {
+                            "viewer": {
+                                "operations": len(operations),
+                                "successes": successes,
+                                "failures": failures,
+                                "skips": 0,
+                            }
+                        },
+                        "operations": operations,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            subprocess.run(
+                [
+                    "python3",
+                    str(AGGREGATE_TOOL),
+                    "--input",
+                    f"app-viewer={result_path}",
+                    "--output",
+                    str(output),
+                ],
+                cwd=REPO_ROOT,
+                check=True,
+            )
+
+            report = output.read_text(encoding="utf-8")
+            self.assertIn("| webrtc_media | PASS |", report)
+            self.assertIn("RTP media received for 9/10 attempted devices", report)
+
     def test_two_host_deploy_dry_run_redacts_tokens_and_assigns_actor_roles(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             binary = Path(tmp) / "rtk-video-loadtest-linux-amd64"

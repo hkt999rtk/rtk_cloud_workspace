@@ -121,6 +121,8 @@ type Config struct {
 	NegativeMalformedPath string            `json:"negative_malformed_path,omitempty"`
 	NegativeTimeoutPath   string            `json:"negative_timeout_path,omitempty"`
 	DeviceOnlineMode      string            `json:"device_online_mode"`
+	DeviceOnlineSettle    time.Duration     `json:"device_online_settle"`
+	DeviceOwnerRetries    int               `json:"device_owner_retries"`
 	DevicePrefix          string            `json:"device_prefix"`
 	DeviceIDs             []string          `json:"device_ids,omitempty"`
 	ContractsCommit       string            `json:"contracts_commit,omitempty"`
@@ -145,69 +147,73 @@ type Config struct {
 }
 
 type Thresholds struct {
-	MinSuccessRate           float64 `json:"min_success_rate"`
-	MaxP95Latency            int64   `json:"max_p95_latency_ms"`
-	MaxP99Latency            int64   `json:"max_p99_latency_ms"`
-	MaxWebRTCSetupP95Latency int64   `json:"max_webrtc_setup_p95_latency_ms"`
-	MaxOpenWebRTCSessions    int     `json:"max_open_webrtc_sessions"`
-	RequireCoverageMatrix    bool    `json:"require_coverage_matrix"`
+	MinSuccessRate            float64 `json:"min_success_rate"`
+	MinWebRTCMediaSuccessRate float64 `json:"min_webrtc_media_success_rate"`
+	MaxP95Latency             int64   `json:"max_p95_latency_ms"`
+	MaxP99Latency             int64   `json:"max_p99_latency_ms"`
+	MaxWebRTCSetupP95Latency  int64   `json:"max_webrtc_setup_p95_latency_ms"`
+	MaxOpenWebRTCSessions     int     `json:"max_open_webrtc_sessions"`
+	RequireCoverageMatrix     bool    `json:"require_coverage_matrix"`
 }
 
 type Result struct {
-	Schema         string                  `json:"schema"`
-	RunID          string                  `json:"run_id"`
-	InstanceID     string                  `json:"instance_id"`
-	Profile        string                  `json:"profile"`
-	StartedAt      time.Time               `json:"started_at"`
-	EndedAt        time.Time               `json:"ended_at"`
-	DurationMS     int64                   `json:"duration_ms"`
-	Config         RedactedConfig          `json:"config"`
-	Summary        Summary                 `json:"summary"`
-	Actors         map[string]ActorMetrics `json:"actors"`
-	WebRTC         WebRTCMetrics           `json:"webrtc"`
-	WebRTCMedia    WebRTCMediaMetrics      `json:"webrtc_media"`
-	MQTTIoT        map[string]ActorMetrics `json:"mqtt_iot,omitempty"`
-	CoverageMatrix map[string]CoverageItem `json:"coverage_matrix"`
-	Errors         map[string]int          `json:"errors"`
-	Operations     []Operation             `json:"operations"`
-	Thresholds     ThresholdEvaluation     `json:"thresholds"`
-	Metadata       map[string]string       `json:"metadata,omitempty"`
+	Schema              string                      `json:"schema"`
+	RunID               string                      `json:"run_id"`
+	InstanceID          string                      `json:"instance_id"`
+	Profile             string                      `json:"profile"`
+	StartedAt           time.Time                   `json:"started_at"`
+	EndedAt             time.Time                   `json:"ended_at"`
+	DurationMS          int64                       `json:"duration_ms"`
+	Config              RedactedConfig              `json:"config"`
+	Summary             Summary                     `json:"summary"`
+	Actors              map[string]ActorMetrics     `json:"actors"`
+	WebRTC              WebRTCMetrics               `json:"webrtc"`
+	WebRTCMedia         WebRTCMediaMetrics          `json:"webrtc_media"`
+	MQTTIoT             map[string]ActorMetrics     `json:"mqtt_iot,omitempty"`
+	CoverageMatrix      map[string]CoverageItem     `json:"coverage_matrix"`
+	Errors              map[string]int              `json:"errors"`
+	Operations          []Operation                 `json:"operations"`
+	VideoStartupLatency []VideoStartupLatencySample `json:"video_startup_latency,omitempty"`
+	Thresholds          ThresholdEvaluation         `json:"thresholds"`
+	Metadata            map[string]string           `json:"metadata,omitempty"`
 }
 
 type RedactedConfig struct {
-	APIURL             string   `json:"api_url"`
-	WSURL              string   `json:"ws_url,omitempty"`
-	DevicePrefix       string   `json:"device_prefix"`
-	DeviceIDs          []string `json:"device_ids,omitempty"`
-	Actors             string   `json:"actors"`
-	AppRouteSet        string   `json:"app_route_set"`
-	DeviceRouteSet     string   `json:"device_route_set"`
-	DeviceTransportSet string   `json:"device_transport_set"`
-	ViewerRouteSet     string   `json:"viewer_route_set"`
-	WebRTCMediaSet     string   `json:"webrtc_media_set"`
-	WebRTCRelayRole    string   `json:"webrtc_relay_role"`
-	WebRTCICEPolicy    string   `json:"webrtc_ice_policy"`
-	ClipSet            string   `json:"clip_set"`
-	MQTTSet            string   `json:"mqtt_set"`
-	MQTTAddr           string   `json:"mqtt_addr,omitempty"`
-	MQTTUsername       string   `json:"mqtt_username,omitempty"`
-	MQTTDeviceProfile  string   `json:"mqtt_device_profile,omitempty"`
-	MQTTIoTMix         string   `json:"mqtt_iot_mix,omitempty"`
-	MQTTRequired       bool     `json:"mqtt_required,omitempty"`
-	NegativeSet        string   `json:"negative_set"`
-	DeviceOnlineMode   string   `json:"device_online_mode"`
-	VirtualDevices     int      `json:"virtual_devices"`
-	VirtualViewers     int      `json:"virtual_viewers"`
-	AppConcurrency     int      `json:"app_concurrency"`
-	DeviceConcurrency  int      `json:"device_concurrency"`
-	ViewerConcurrency  int      `json:"viewer_concurrency"`
-	Iterations         int      `json:"iterations"`
-	RampUpMS           int64    `json:"ramp_up_ms"`
-	DurationMS         int64    `json:"duration_ms"`
-	AccountToken       string   `json:"account_token"`
-	AdminToken         string   `json:"admin_token"`
-	DeviceToken        string   `json:"device_token,omitempty"`
-	RefreshToken       string   `json:"refresh_token,omitempty"`
+	APIURL               string   `json:"api_url"`
+	WSURL                string   `json:"ws_url,omitempty"`
+	DevicePrefix         string   `json:"device_prefix"`
+	DeviceIDs            []string `json:"device_ids,omitempty"`
+	Actors               string   `json:"actors"`
+	AppRouteSet          string   `json:"app_route_set"`
+	DeviceRouteSet       string   `json:"device_route_set"`
+	DeviceTransportSet   string   `json:"device_transport_set"`
+	ViewerRouteSet       string   `json:"viewer_route_set"`
+	WebRTCMediaSet       string   `json:"webrtc_media_set"`
+	WebRTCRelayRole      string   `json:"webrtc_relay_role"`
+	WebRTCICEPolicy      string   `json:"webrtc_ice_policy"`
+	ClipSet              string   `json:"clip_set"`
+	MQTTSet              string   `json:"mqtt_set"`
+	MQTTAddr             string   `json:"mqtt_addr,omitempty"`
+	MQTTUsername         string   `json:"mqtt_username,omitempty"`
+	MQTTDeviceProfile    string   `json:"mqtt_device_profile,omitempty"`
+	MQTTIoTMix           string   `json:"mqtt_iot_mix,omitempty"`
+	MQTTRequired         bool     `json:"mqtt_required,omitempty"`
+	NegativeSet          string   `json:"negative_set"`
+	DeviceOnlineMode     string   `json:"device_online_mode"`
+	DeviceOnlineSettleMS int64    `json:"device_online_settle_ms"`
+	DeviceOwnerRetries   int      `json:"device_owner_retries"`
+	VirtualDevices       int      `json:"virtual_devices"`
+	VirtualViewers       int      `json:"virtual_viewers"`
+	AppConcurrency       int      `json:"app_concurrency"`
+	DeviceConcurrency    int      `json:"device_concurrency"`
+	ViewerConcurrency    int      `json:"viewer_concurrency"`
+	Iterations           int      `json:"iterations"`
+	RampUpMS             int64    `json:"ramp_up_ms"`
+	DurationMS           int64    `json:"duration_ms"`
+	AccountToken         string   `json:"account_token"`
+	AdminToken           string   `json:"admin_token"`
+	DeviceToken          string   `json:"device_token,omitempty"`
+	RefreshToken         string   `json:"refresh_token,omitempty"`
 }
 
 type Summary struct {
@@ -248,20 +254,67 @@ type WebRTCMetrics struct {
 }
 
 type WebRTCMediaMetrics struct {
-	Attempts            int            `json:"attempts"`
-	Successes           int            `json:"successes"`
-	Failures            int            `json:"failures"`
-	PacketsReceived     int            `json:"packets_received"`
-	BytesReceived       int            `json:"bytes_received"`
-	H264PacketsReceived int            `json:"h264_packets_received,omitempty"`
-	H264BytesReceived   int            `json:"h264_bytes_received,omitempty"`
-	OpusPacketsReceived int            `json:"opus_packets_received,omitempty"`
-	OpusBytesReceived   int            `json:"opus_bytes_received,omitempty"`
-	OpusFramesReceived  int            `json:"opus_frames_received,omitempty"`
-	TimeToFirstRTPP95MS int64          `json:"time_to_first_rtp_p95_ms"`
-	ICEConnectedP95MS   int64          `json:"ice_connected_p95_ms"`
-	ReceiveDurationMS   int64          `json:"receive_duration_ms"`
-	FailuresByClass     map[string]int `json:"failures_by_class"`
+	Attempts                             int                   `json:"attempts"`
+	Successes                            int                   `json:"successes"`
+	Failures                             int                   `json:"failures"`
+	PacketsReceived                      int                   `json:"packets_received"`
+	BytesReceived                        int                   `json:"bytes_received"`
+	H264PacketsReceived                  int                   `json:"h264_packets_received,omitempty"`
+	H264BytesReceived                    int                   `json:"h264_bytes_received,omitempty"`
+	OpusPacketsReceived                  int                   `json:"opus_packets_received,omitempty"`
+	OpusBytesReceived                    int                   `json:"opus_bytes_received,omitempty"`
+	OpusFramesReceived                   int                   `json:"opus_frames_received,omitempty"`
+	TimeToFirstRTPP95MS                  int64                 `json:"time_to_first_rtp_p95_ms"`
+	AppRequestToFirstRTPP50MS            int64                 `json:"app_request_to_first_rtp_p50_ms,omitempty"`
+	AppRequestToFirstRTPP95MS            int64                 `json:"app_request_to_first_rtp_p95_ms,omitempty"`
+	AppRequestToFirstRTPP99MS            int64                 `json:"app_request_to_first_rtp_p99_ms,omitempty"`
+	AppRequestToFirstH264AccessUnitP50MS int64                 `json:"app_request_to_first_h264_access_unit_p50_ms,omitempty"`
+	AppRequestToFirstH264AccessUnitP95MS int64                 `json:"app_request_to_first_h264_access_unit_p95_ms,omitempty"`
+	AppRequestToFirstH264AccessUnitP99MS int64                 `json:"app_request_to_first_h264_access_unit_p99_ms,omitempty"`
+	BreakdownP95                         VideoStartupBreakdown `json:"breakdown_p95,omitempty"`
+	VideoStartupLatency                  VideoStartupSummary   `json:"video_startup_latency,omitempty"`
+	ICEConnectedP95MS                    int64                 `json:"ice_connected_p95_ms"`
+	ReceiveDurationMS                    int64                 `json:"receive_duration_ms"`
+	FailuresByClass                      map[string]int        `json:"failures_by_class"`
+}
+
+type VideoStartupBreakdown struct {
+	APICreateMS                   int64 `json:"api_create_ms,omitempty"`
+	OfferDeliveryMS               int64 `json:"offer_delivery_ms,omitempty"`
+	DeviceAnswerMS                int64 `json:"device_answer_ms,omitempty"`
+	ICEConnectMS                  int64 `json:"ice_connect_ms,omitempty"`
+	FirstRTPAfterICEMS            int64 `json:"first_rtp_after_ice_ms,omitempty"`
+	FirstH264AccessUnitAfterRTPMS int64 `json:"first_h264_access_unit_after_rtp_ms,omitempty"`
+}
+
+type VideoStartupSummary struct {
+	Samples                              int                   `json:"samples,omitempty"`
+	H264AccessUnitSamples                int                   `json:"h264_access_unit_samples,omitempty"`
+	AppRequestToFirstRTPP50MS            int64                 `json:"app_request_to_first_rtp_p50_ms,omitempty"`
+	AppRequestToFirstRTPP95MS            int64                 `json:"app_request_to_first_rtp_p95_ms,omitempty"`
+	AppRequestToFirstRTPP99MS            int64                 `json:"app_request_to_first_rtp_p99_ms,omitempty"`
+	AppRequestToFirstH264AccessUnitP50MS int64                 `json:"app_request_to_first_h264_access_unit_p50_ms,omitempty"`
+	AppRequestToFirstH264AccessUnitP95MS int64                 `json:"app_request_to_first_h264_access_unit_p95_ms,omitempty"`
+	AppRequestToFirstH264AccessUnitP99MS int64                 `json:"app_request_to_first_h264_access_unit_p99_ms,omitempty"`
+	BreakdownP95                         VideoStartupBreakdown `json:"breakdown_p95,omitempty"`
+}
+
+type VideoStartupLatencySample struct {
+	RunID                             string `json:"run_id,omitempty"`
+	SessionID                         string `json:"session_id,omitempty"`
+	DeviceID                          string `json:"device_id,omitempty"`
+	ViewerID                          string `json:"viewer_id,omitempty"`
+	ICEPolicy                         string `json:"ice_policy,omitempty"`
+	SelectedLocalCandidateType        string `json:"selected_local_candidate_type,omitempty"`
+	SelectedRemoteCandidateType       string `json:"selected_remote_candidate_type,omitempty"`
+	APICreateMS                       int64  `json:"api_create_ms"`
+	OfferDeliveryMS                   int64  `json:"offer_delivery_ms"`
+	DeviceAnswerMS                    int64  `json:"device_answer_ms"`
+	ICEConnectMS                      int64  `json:"ice_connect_ms"`
+	FirstRTPAfterICEMS                int64  `json:"first_rtp_after_ice_ms"`
+	FirstH264AccessUnitAfterRTPMS     int64  `json:"first_h264_access_unit_after_rtp_ms"`
+	AppRequestToFirstRTPMS            int64  `json:"app_request_to_first_rtp_ms"`
+	AppRequestToFirstH264AccessUnitMS int64  `json:"app_request_to_first_h264_access_unit_ms"`
 }
 
 type Operation struct {

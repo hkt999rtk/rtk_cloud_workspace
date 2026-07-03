@@ -118,6 +118,78 @@ func TestVideo1KPlanUsesVideoPilotDeviceMix(t *testing.T) {
 	}
 }
 
+func TestVideo100KTurnPlanUsesSingleRampAndViewerLadder(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:         "cloud_env/staging/lke",
+		Brandname:       "RTK",
+		Region:          "us-sea",
+		ScenarioProfile: Video100KTurnScenarioProfile,
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+	if plan.Conditions.Devices != 100000 {
+		t.Fatalf("devices = %d, want 100000", plan.Conditions.Devices)
+	}
+	if plan.Conditions.Users != 5000 {
+		t.Fatalf("users = %d, want 5000", plan.Conditions.Users)
+	}
+	if len(plan.Stages) != 1 || plan.Stages[0].Name != "target" || plan.Target.TargetConnects != 100000 {
+		t.Fatalf("video-100k-turn-v1 should keep one target ramp stage: %+v target=%+v", plan.Stages, plan.Target)
+	}
+	if got := joinInts(plan.VideoProfile.ViewerLadder, ","); got != "100,500,1000,2000,5000" {
+		t.Fatalf("viewer ladder = %q, want 100,500,1000,2000,5000", got)
+	}
+	if plan.VideoProfile.WebRTCICEPolicy != "relay" || plan.VideoProfile.TURNTransport != "udp" || plan.VideoProfile.MediaSecurity != "dtls-srtp" {
+		t.Fatalf("video turn profile = %+v, want relay UDP DTLS-SRTP", plan.VideoProfile)
+	}
+	if _, ok := plan.DeviceMix["camera"]; ok {
+		t.Fatalf("100K TURN sizing background mix should stay home-diverse MQTT-only, got camera in %#v", plan.DeviceMix)
+	}
+	if got := plan.DeviceMix["camera_status"]; got != 7000 {
+		t.Fatalf("camera_status devices = %d, want 7000 in home-diverse background mix", got)
+	}
+	if plan.VideoProfile.VideoDevices != 5000 || plan.VideoProfile.VideoViewers != 5000 {
+		t.Fatalf("video profile sizing = devices=%d viewers=%d, want 5000/5000", plan.VideoProfile.VideoDevices, plan.VideoProfile.VideoViewers)
+	}
+}
+
+func TestVideo50KTurnPlanUsesSingleRampAndViewerLadder(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:         "cloud_env/staging/lke",
+		Brandname:       "RTK",
+		Region:          "us-sea",
+		ScenarioProfile: Video50KTurnScenarioProfile,
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+	if plan.Conditions.Devices != 50000 {
+		t.Fatalf("devices = %d, want 50000", plan.Conditions.Devices)
+	}
+	if plan.Conditions.Users != 2500 {
+		t.Fatalf("users = %d, want 2500", plan.Conditions.Users)
+	}
+	if len(plan.Stages) != 1 || plan.Stages[0].Name != "target" || plan.Target.TargetConnects != 50000 {
+		t.Fatalf("video-50k-turn-v1 should keep one target ramp stage: %+v target=%+v", plan.Stages, plan.Target)
+	}
+	if got := joinInts(plan.VideoProfile.ViewerLadder, ","); got != "100,500,1000,2000,5000" {
+		t.Fatalf("viewer ladder = %q, want 100,500,1000,2000,5000", got)
+	}
+	if plan.VideoProfile.WebRTCICEPolicy != "relay" || plan.VideoProfile.TURNTransport != "udp" || plan.VideoProfile.MediaSecurity != "dtls-srtp" {
+		t.Fatalf("video turn profile = %+v, want relay UDP DTLS-SRTP", plan.VideoProfile)
+	}
+	if _, ok := plan.DeviceMix["camera"]; ok {
+		t.Fatalf("50K TURN sizing background mix should stay home-diverse MQTT-only, got camera in %#v", plan.DeviceMix)
+	}
+	if got := plan.DeviceMix["camera_status"]; got != 3500 {
+		t.Fatalf("camera_status devices = %d, want 3500 in home-diverse background mix", got)
+	}
+	if plan.VideoProfile.VideoDevices != 5000 || plan.VideoProfile.VideoViewers != 5000 {
+		t.Fatalf("video profile sizing = devices=%d viewers=%d, want 5000/5000", plan.VideoProfile.VideoDevices, plan.VideoProfile.VideoViewers)
+	}
+}
+
 func TestDefaultPlanIncludesDiverseDeviceAndUserProfiles(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
 		EnvRoot:     "cloud_env/staging/lke",

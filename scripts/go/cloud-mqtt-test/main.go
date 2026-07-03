@@ -266,13 +266,14 @@ type sustainedFailureEvent struct {
 }
 
 type sustainedCommandContext struct {
-	Stage       string
-	EventIndex  int
-	SessionSlot int
-	CommandID   string
-	Phase       string
-	Deadline    time.Time
-	Timeout     time.Duration
+	Stage              string
+	EventIndex         int
+	SessionSlot        int
+	CommandID          string
+	Phase              string
+	Deadline           time.Time
+	Timeout            time.Duration
+	DisableRuntimeLogs bool
 }
 
 type appBootstrapStatus struct {
@@ -329,6 +330,7 @@ func main() {
 	var stageNamesRaw, stageTargetsRaw, stageDurationsRaw, stageMinCommandsRaw string
 	var deviceTrafficProfile, stageUsageWindowsRaw string
 	var duration, seed, shardIndex, shardCount, concurrency, commandConcurrency, maxConnectedDevices int
+	var runtimeLogs bool
 	flag.StringVar(&root, "root", "", "workspace root")
 	flag.StringVar(&envRoot, "env-root", "", "environment root")
 	flag.StringVar(&brandname, "brandname", "", "brand name")
@@ -355,6 +357,7 @@ func main() {
 	flag.StringVar(&stageMinCommandsRaw, "stage-min-commands", "", "comma-separated staged sustained minimum command events")
 	flag.StringVar(&deviceTrafficProfile, "device-traffic-profile", "", "home MQTT device traffic profile")
 	flag.StringVar(&stageUsageWindowsRaw, "stage-usage-windows", "", "comma-separated usage window per sustained stage")
+	flag.BoolVar(&runtimeLogs, "runtime-logs", true, "publish MQTT runtime logs for exact event correlation")
 	flag.IntVar(&concurrency, "concurrency", 25, "load-test MQTT probe concurrency")
 	flag.IntVar(&maxConnectedDevices, "max-connected-devices", 0, "load-test max connected devices in this shard")
 	flag.Parse()
@@ -384,6 +387,7 @@ func main() {
 		StageMinCommands:            stageMinCommandsRaw,
 		DeviceTrafficProfile:        deviceTrafficProfile,
 		StageUsageWindows:           stageUsageWindowsRaw,
+		RuntimeLogs:                 runtimeLogs,
 		Concurrency:                 concurrency,
 		MaxConnectedDevicesPerShard: maxConnectedDevices,
 		RunID:                       runID,
@@ -416,6 +420,7 @@ type loadOptions struct {
 	DeviceTrafficProfile        string `json:"device_traffic_profile,omitempty"`
 	StageUsageWindows           string `json:"stage_usage_windows,omitempty"`
 	StageUsageWindow            string `json:"stage_usage_window,omitempty"`
+	RuntimeLogs                 bool   `json:"runtime_logs"`
 	Concurrency                 int    `json:"concurrency"`
 	MaxConnectedDevicesPerShard int    `json:"max_connected_devices_per_shard"`
 }
@@ -1369,10 +1374,11 @@ func runSustainedHome100KLoad(assignments []assignment, certs []certRecord, bran
 			result.CommandsAttempted++
 			sessionBrand := firstNonEmpty(session.Assignment.Brandname, session.Record.Brandname, brandname)
 			if runSustainedShadowCommandWithContext(session, sessionBrand, runID, apiBaseURL, &result.Totals, sustainedCommandContext{
-				EventIndex:  event.Index,
-				SessionSlot: sessionSlot,
-				Deadline:    deadline,
-				Timeout:     shadowCommandTimeout(opts),
+				EventIndex:         event.Index,
+				SessionSlot:        sessionSlot,
+				Deadline:           deadline,
+				Timeout:            shadowCommandTimeout(opts),
+				DisableRuntimeLogs: !opts.RuntimeLogs,
 			}) == nil {
 				result.CommandsPassed++
 			} else {
@@ -1567,11 +1573,12 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 					var commandTotals mqttIOTotals
 					sessionBrand := firstNonEmpty(session.Assignment.Brandname, session.Record.Brandname, brandname)
 					err := runSustainedShadowCommandWithContext(session, sessionBrand, runID, apiBaseURL, &commandTotals, sustainedCommandContext{
-						Stage:       stage.Name,
-						EventIndex:  event.Index,
-						SessionSlot: sessionSlot,
-						Deadline:    stageDeadline,
-						Timeout:     shadowCommandTimeout(opts),
+						Stage:              stage.Name,
+						EventIndex:         event.Index,
+						SessionSlot:        sessionSlot,
+						Deadline:           stageDeadline,
+						Timeout:            shadowCommandTimeout(opts),
+						DisableRuntimeLogs: !opts.RuntimeLogs,
 					})
 					eventMu.Lock()
 					defer eventMu.Unlock()
@@ -2266,23 +2273,26 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		totals.HTTPFailures++
 		return fail("app_desired_publish", "app_desired_publish_failed", err)
 	}
-	recorder := newRuntimeLogRecorderForCommand(session.Record.DeviceID, runID, commandID, time.Now)
 	commandEvent := sustainedCommandEvent{
-		Stage:              ctx.Stage,
-		DeviceID:           session.Record.DeviceID,
-		CommandID:          commandID,
-		RuntimeLogStreamID: recorder.streamID,
-		EventIndex:         ctx.EventIndex,
-		SessionSlot:        ctx.SessionSlot,
-		MQTTTarget:         mqttTargetString(session.MQTTTarget),
-		OccurredAt:         time.Now().UTC().Format(time.RFC3339Nano),
+		Stage:       ctx.Stage,
+		DeviceID:    session.Record.DeviceID,
+		CommandID:   commandID,
+		EventIndex:  ctx.EventIndex,
+		SessionSlot: ctx.SessionSlot,
+		MQTTTarget:  mqttTargetString(session.MQTTTarget),
+		OccurredAt:  time.Now().UTC().Format(time.RFC3339Nano),
 	}
-	expect, err := recorder.RecordWithExpectation(appConn, "shadow_desired", "app_controller", "publish", shadowUpdateTopic, map[string]any{"direction": "app_to_device", "command_id": commandID})
-	if err != nil {
-		totals.HTTPFailures++
-		return fail("app_desired_runtime_log", "app_desired_runtime_log_failed", err)
+	var recorder *runtimeLogRecorder
+	if !ctx.DisableRuntimeLogs {
+		recorder = newRuntimeLogRecorderForCommand(session.Record.DeviceID, runID, commandID, time.Now)
+		commandEvent.RuntimeLogStreamID = recorder.streamID
+		expect, err := recorder.RecordWithExpectation(appConn, "shadow_desired", "app_controller", "publish", shadowUpdateTopic, map[string]any{"direction": "app_to_device", "command_id": commandID})
+		if err != nil {
+			totals.HTTPFailures++
+			return fail("app_desired_runtime_log", "app_desired_runtime_log_failed", err)
+		}
+		commandEvent.ExpectedLogs = append(commandEvent.ExpectedLogs, expect)
 	}
-	commandEvent.ExpectedLogs = append(commandEvent.ExpectedLogs, expect)
 	totals.AppDesiredWrites++
 	totals.HTTPRequests++
 	totals.TotalHTTPBytesSent += int64(len(shadowUpdateTopic) + len(desiredPayload))
@@ -2310,12 +2320,14 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 	}
 	totals.MessagesReceived++
 	totals.DeltaReceived++
-	expect, err = recorder.RecordWithExpectation(session.Conn, "shadow_delta", "device_client", "receive", deltaTopic, map[string]any{"direction": "app_to_device", "command_id": commandID})
-	if err != nil {
-		totals.HTTPFailures++
-		return fail("device_delta_runtime_log", "device_delta_runtime_log_failed", err)
+	if recorder != nil {
+		expect, err := recorder.RecordWithExpectation(session.Conn, "shadow_delta", "device_client", "receive", deltaTopic, map[string]any{"direction": "app_to_device", "command_id": commandID})
+		if err != nil {
+			totals.HTTPFailures++
+			return fail("device_delta_runtime_log", "device_delta_runtime_log_failed", err)
+		}
+		commandEvent.ExpectedLogs = append(commandEvent.ExpectedLogs, expect)
 	}
-	commandEvent.ExpectedLogs = append(commandEvent.ExpectedLogs, expect)
 	reportedPayload, err := json.Marshal(map[string]any{
 		"state":       map[string]any{"reported": reportedState},
 		"clientToken": "reported-" + commandID,
@@ -2331,12 +2343,14 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 	totals.PublishSuccesses++
 	totals.ReportedEvents++
 	totals.TotalBytesSent += int64(len(shadowUpdateTopic) + len(reportedPayload))
-	expect, err = recorder.RecordWithExpectation(session.Conn, "shadow_reported", "device_client", "publish", shadowUpdateTopic, map[string]any{"direction": "device_to_app", "command_id": commandID})
-	if err != nil {
-		totals.PublishFailures++
-		return fail("device_reported_runtime_log", "device_reported_runtime_log_failed", err)
+	if recorder != nil {
+		expect, err := recorder.RecordWithExpectation(session.Conn, "shadow_reported", "device_client", "publish", shadowUpdateTopic, map[string]any{"direction": "device_to_app", "command_id": commandID})
+		if err != nil {
+			totals.PublishFailures++
+			return fail("device_reported_runtime_log", "device_reported_runtime_log_failed", err)
+		}
+		commandEvent.ExpectedLogs = append(commandEvent.ExpectedLogs, expect)
 	}
-	commandEvent.ExpectedLogs = append(commandEvent.ExpectedLogs, expect)
 	documentsTimeout, err := timeoutUntilDeadline(deadline, commandTimeout, "app_delta_clear_wait")
 	if err != nil {
 		totals.HTTPFailures++
@@ -2348,22 +2362,24 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		totals.HTTPFailures++
 		return fail("app_delta_clear_wait", "app_delta_clear_wait_failed", err)
 	}
-	runtimeLogTimeout, err := timeoutUntilDeadline(deadline, 3*time.Second, "app_reported_runtime_log")
-	if err != nil {
-		totals.HTTPFailures++
-		return fail("app_reported_runtime_log", "app_reported_runtime_log_failed", err)
+	if recorder != nil {
+		runtimeLogTimeout, err := timeoutUntilDeadline(deadline, 3*time.Second, "app_reported_runtime_log")
+		if err != nil {
+			totals.HTTPFailures++
+			return fail("app_reported_runtime_log", "app_reported_runtime_log_failed", err)
+		}
+		if setter, ok := appConn.(interface{ SetDeadline(time.Time) error }); ok {
+			_ = setter.SetDeadline(time.Now().Add(runtimeLogTimeout))
+			defer clearConnDeadline(appConn)
+		}
+		expect, err := recorder.RecordWithExpectationQoS1(appConn, "shadow_reported", "app_observer", "receive", documentsTopic, map[string]any{"direction": "device_to_app", "command_id": commandID})
+		if err != nil {
+			totals.HTTPFailures++
+			return fail("app_reported_runtime_log", "app_reported_runtime_log_failed", err)
+		}
+		clearConnDeadline(appConn)
+		commandEvent.ExpectedLogs = append(commandEvent.ExpectedLogs, expect)
 	}
-	if setter, ok := appConn.(interface{ SetDeadline(time.Time) error }); ok {
-		_ = setter.SetDeadline(time.Now().Add(runtimeLogTimeout))
-		defer clearConnDeadline(appConn)
-	}
-	expect, err = recorder.RecordWithExpectationQoS1(appConn, "shadow_reported", "app_observer", "receive", documentsTopic, map[string]any{"direction": "device_to_app", "command_id": commandID})
-	if err != nil {
-		totals.HTTPFailures++
-		return fail("app_reported_runtime_log", "app_reported_runtime_log_failed", err)
-	}
-	clearConnDeadline(appConn)
-	commandEvent.ExpectedLogs = append(commandEvent.ExpectedLogs, expect)
 	totals.AppReceivedAcks++
 	totals.HTTPSuccesses++
 	totals.CommandEvents = append(totals.CommandEvents, commandEvent)

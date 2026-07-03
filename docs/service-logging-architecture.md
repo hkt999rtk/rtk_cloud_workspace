@@ -235,8 +235,8 @@ Current status:
 | Area | Status | Notes |
 | --- | --- | --- |
 | Logger VM/firewall/env/state/DNS | Retired | Linode staging runtime is K8s-only; VM logger resources are no longer provisioned. |
-| Loki-backed store | Implemented in `rtk_cloud_logger` | `rtk-cloud-logger` supports `-store loki` / `RTK_CLOUD_LOGGER_STORE=loki`. |
-| Logger backend/Loki service install | K8s-owned | Manage logger backend through K8s manifests/runtime config. |
+| Loki-backed store | Required in `rtk_cloud_logger` | `rtk-cloud-logger` always uses Loki; deployments must not expose a store selector or in-process fallback. |
+| Logger backend/Loki service install | K8s-owned | LKE staging deploys a private `video-cloud-loki` service and points cloud-logger at it through `RTK_CLOUD_LOGGER_LOKI_URL`. |
 | Per-workload log forwarding | K8s-owned | Use K8s workload logging, sidecars/agents, or service-native log ingestion rather than per-host SSH install hooks. |
 | Verbose MQTT broker trace | K8s-owned | Enable through K8s runtime configuration and label events as `service=mqtt-broker`, `source=mqtt`, `component=mqtt-broker`, `operation_id=mqtt-broker-trace`; default remains off to avoid high-volume writes. |
 | Container/file-source forwarding | K8s-owned | Use source-specific K8s adapters before relying on central logger queries. |

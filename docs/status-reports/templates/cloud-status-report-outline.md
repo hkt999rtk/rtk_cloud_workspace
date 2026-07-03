@@ -58,8 +58,8 @@ literal product, repo, API, endpoint, command, and status-label names in English
 - Current-vs-target architecture：目前 staging/runtime/evidence/operations readiness 對照 early-August load-test-ready target。
 - Module-to-cloud-to-commercial KPI 路徑。
 - KPI framework：技術、產品、商業、維運。
-- WebRTC / Video Storage Management：分開說明 live WebRTC signaling readiness 和 stored-media/video-storage readiness；WebRTC 是 APP-offer/device-answer、TURN/ICE、owner transport、session lifecycle，video storage 是 snapshot/media upload、metadata、download auth、byte range、retention/backup。
-- WebRTC flow visual：app offer -> `/api/request_webrtc` -> owner transport `webrtc_offer` -> device answer -> `/answer` -> app media negotiation -> `/close`。
+- WebRTC / Video Storage Management：分開說明 live WebRTC signaling readiness 和 stored-media/video-storage readiness；WebRTC 是 ICE preflight、APP-offer/device-answer、TURN/ICE、device signaling transport、session lifecycle，video storage 是 snapshot/media upload、metadata、download auth、byte range、retention/backup。
+- WebRTC flow visual：`/api/request_webrtc/ice` -> app offer -> `POST /api/request_webrtc` -> signaling transport `webrtc_offer` -> device answer -> `POST /answer` -> `GET /api/request_webrtc` -> app media negotiation -> `POST /close`。
 - Media capability table：live stream、snapshot upload、clip/media upload、media listing、download、delete、retention、backup/restore 分開列 current status / evidence / gap / risk。
 - MQTT / Device Shadow Management：分開說明傳統 MQTT transport 和 IoT shadow state management；MQTT 是 broker/topic/owner transport，shadow 是 desired/reported/delta/version/lifecycle state governance。
 - MQTT/shadow topic-surface table：`devices/<device_id>/...` command/event/log topics 與 `$vc/devices/{devid}/shadow/...` get/update/delete/accepted/rejected/delta/documents topics 分開列。

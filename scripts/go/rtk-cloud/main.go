@@ -213,6 +213,7 @@ func runMQTTTest(args []string) error {
 	commandRate := fs.String("command-rate-per-device-per-day", "", "load-test command rate per device per day")
 	commandConcurrency := fs.Int("command-concurrency", 0, "load-test sustained shadow command concurrency")
 	shadowCommandTimeout := fs.String("shadow-command-timeout", "", "per-phase sustained shadow command timeout")
+	runtimeLogs := fs.Bool("runtime-logs", true, "publish MQTT runtime logs during sustained shadow commands")
 	loadModel := fs.String("load-model", "", "load model passed through to cloud-mqtt-test")
 	stageNames := fs.String("stage-names", "", "comma-separated staged sustained load stage names")
 	stageConnectedDevices := fs.String("stage-connected-devices", "", "comma-separated staged sustained per-shard connected device targets")
@@ -269,6 +270,9 @@ func runMQTTTest(args []string) error {
 			}
 		}
 		if os.Getenv("ACCOUNT_MANAGER_BASE_URL") == "" || videoBaseURL == "" || os.Getenv("VIDEO_CLOUD_MQTT_ADDR") == "" {
+			if strings.TrimSpace(os.Getenv("CLOUD_STAGING_E2E_K8S_PORT_FORWARD")) == "0" {
+				return errors.New("external endpoints are required when CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0: set ACCOUNT_MANAGER_BASE_URL, VIDEO_CLOUD_BASE_URL or VIDEO_CLOUD_PUBLIC_BASE_URL, and VIDEO_CLOUD_MQTT_ADDR")
+			}
 			stack := firstNonEmpty(stackEnv["CLOUD_STACK_NAME"], "video-cloud-staging")
 			env := map[string]string{"CLOUD_STACK_NAME": stack}
 			mqttPort, mqttCleanup, err := lkeTCPServicePortForward(resolvedEnv, env, "video-cloud", "mqtt", 8883, "mqtt")
@@ -313,6 +317,7 @@ func runMQTTTest(args []string) error {
 		"--command-rate-per-device-per-day", *commandRate,
 		"--command-concurrency", strconv.Itoa(*commandConcurrency),
 		"--shadow-command-timeout", *shadowCommandTimeout,
+		"--runtime-logs=" + strconv.FormatBool(*runtimeLogs),
 		"--load-model", *loadModel,
 		"--stage-names", *stageNames,
 		"--stage-connected-devices", *stageConnectedDevices,

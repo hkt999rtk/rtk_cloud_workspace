@@ -25,9 +25,18 @@ const (
 	DefaultStageCoolDown             = "30s"
 	DefaultScenarioProfile           = "home-diverse-v1"
 	Video1KScenarioProfile           = "video-1k-v1"
+	Video50KTurnScenarioProfile      = "video-50k-turn-v1"
+	Video100KTurnScenarioProfile     = "video-100k-turn-v1"
 	DefaultVideo1KDevices            = 1000
 	DefaultVideo1KViewers            = 100
 	DefaultVideo1KMediaSet           = "h264"
+	DefaultVideo50KDevices           = 50000
+	DefaultVideo50KViewers           = 5000
+	DefaultVideo100KDevices          = 100000
+	DefaultVideo100KViewers          = 5000
+	DefaultVideo100KLadder           = "100,500,1000,2000,5000"
+	DefaultVideo100KStepDuration     = "5m"
+	DefaultVideo100KStepCooldown     = "2m"
 	DefaultVMLabelPrefix             = "lg"
 
 	DefaultFunctionalSuccessThresholdPercent    = 99.5
@@ -86,7 +95,13 @@ type VideoProfile struct {
 	Name            string `json:"name,omitempty"`
 	VideoDevices    int    `json:"video_devices,omitempty"`
 	VideoViewers    int    `json:"video_viewers,omitempty"`
+	ViewerLadder    []int  `json:"viewer_ladder,omitempty"`
 	WebRTCMediaSet  string `json:"webrtc_media_set,omitempty"`
+	WebRTCICEPolicy string `json:"webrtc_ice_policy,omitempty"`
+	StepDuration    string `json:"step_duration,omitempty"`
+	StepCooldown    string `json:"step_cooldown,omitempty"`
+	TURNTransport   string `json:"turn_transport,omitempty"`
+	MediaSecurity   string `json:"media_security,omitempty"`
 	SignalingLayer  string `json:"signaling_layer,omitempty"`
 	MediaLayer      string `json:"media_layer,omitempty"`
 	DeviceActorRole string `json:"device_actor_role,omitempty"`
@@ -227,6 +242,12 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	if videoProfile.Name == Video1KScenarioProfile && opts.DeviceCount <= 0 && brandPlanFile == "" {
 		opts.DeviceCount = DefaultVideo1KDevices
 	}
+	if videoProfile.Name == Video50KTurnScenarioProfile && opts.DeviceCount <= 0 && brandPlanFile == "" {
+		opts.DeviceCount = DefaultVideo50KDevices
+	}
+	if videoProfile.Name == Video100KTurnScenarioProfile && opts.DeviceCount <= 0 && brandPlanFile == "" {
+		opts.DeviceCount = DefaultVideo100KDevices
+	}
 	devices := opts.DeviceCount
 	if devices <= 0 {
 		devices = DefaultDeviceCount
@@ -284,7 +305,7 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	if readModel == "" {
 		readModel = DefaultRunnerReadModel
 	}
-	if videoProfile.Name == Video1KScenarioProfile {
+	if videoProfile.Name == Video1KScenarioProfile || isVideoTurnSizingProfile(videoProfile.Name) {
 		videoProfile.VideoDevices = minInt(videoProfile.VideoDevices, devices)
 		videoProfile.VideoViewers = minInt(videoProfile.VideoViewers, videoProfile.VideoDevices)
 	}
@@ -356,19 +377,69 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 }
 
 func videoProfileForScenario(scenario string) VideoProfile {
-	if strings.TrimSpace(scenario) != Video1KScenarioProfile {
+	switch strings.TrimSpace(scenario) {
+	case Video1KScenarioProfile:
+		return VideoProfile{
+			Name:            Video1KScenarioProfile,
+			VideoDevices:    DefaultVideo1KViewers,
+			VideoViewers:    DefaultVideo1KViewers,
+			WebRTCMediaSet:  DefaultVideo1KMediaSet,
+			WebRTCICEPolicy: "relay",
+			TURNTransport:   "udp",
+			MediaSecurity:   "dtls-srtp",
+			SignalingLayer:  "webrtc-signaling",
+			MediaLayer:      "webrtc-media",
+			DeviceActorRole: "device",
+			AppActorRole:    "app",
+			ViewerActorRole: "viewer",
+		}
+	case Video100KTurnScenarioProfile:
+		return VideoProfile{
+			Name:            Video100KTurnScenarioProfile,
+			VideoDevices:    DefaultVideo100KViewers,
+			VideoViewers:    DefaultVideo100KViewers,
+			ViewerLadder:    []int{100, 500, 1000, 2000, 5000},
+			WebRTCMediaSet:  DefaultVideo1KMediaSet,
+			WebRTCICEPolicy: "relay",
+			StepDuration:    DefaultVideo100KStepDuration,
+			StepCooldown:    DefaultVideo100KStepCooldown,
+			TURNTransport:   "udp",
+			MediaSecurity:   "dtls-srtp",
+			SignalingLayer:  "webrtc-signaling",
+			MediaLayer:      "webrtc-media",
+			DeviceActorRole: "device",
+			AppActorRole:    "app",
+			ViewerActorRole: "viewer",
+		}
+	case Video50KTurnScenarioProfile:
+		return VideoProfile{
+			Name:            Video50KTurnScenarioProfile,
+			VideoDevices:    DefaultVideo50KViewers,
+			VideoViewers:    DefaultVideo50KViewers,
+			ViewerLadder:    []int{100, 500, 1000, 2000, 5000},
+			WebRTCMediaSet:  DefaultVideo1KMediaSet,
+			WebRTCICEPolicy: "relay",
+			StepDuration:    DefaultVideo100KStepDuration,
+			StepCooldown:    DefaultVideo100KStepCooldown,
+			TURNTransport:   "udp",
+			MediaSecurity:   "dtls-srtp",
+			SignalingLayer:  "webrtc-signaling",
+			MediaLayer:      "webrtc-media",
+			DeviceActorRole: "device",
+			AppActorRole:    "app",
+			ViewerActorRole: "viewer",
+		}
+	default:
 		return VideoProfile{}
 	}
-	return VideoProfile{
-		Name:            Video1KScenarioProfile,
-		VideoDevices:    DefaultVideo1KViewers,
-		VideoViewers:    DefaultVideo1KViewers,
-		WebRTCMediaSet:  DefaultVideo1KMediaSet,
-		SignalingLayer:  "webrtc-signaling",
-		MediaLayer:      "webrtc-media",
-		DeviceActorRole: "device",
-		AppActorRole:    "app",
-		ViewerActorRole: "viewer",
+}
+
+func isVideoTurnSizingProfile(name string) bool {
+	switch strings.TrimSpace(name) {
+	case Video50KTurnScenarioProfile, Video100KTurnScenarioProfile:
+		return true
+	default:
+		return false
 	}
 }
 
