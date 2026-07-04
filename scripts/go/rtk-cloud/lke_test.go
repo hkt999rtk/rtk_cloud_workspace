@@ -884,7 +884,7 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 	}
 	cfg := readTestFile(t, filepath.Join(edgeDir, "haproxy.cfg"))
 	for _, want := range []string{
-		"maxconn 200000",
+		"maxconn 400000",
 		"frontend public_https_443",
 		"bind *:443",
 		"backend k8s_ingress_https",

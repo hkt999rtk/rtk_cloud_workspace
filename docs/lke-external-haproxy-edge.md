@@ -59,7 +59,7 @@ Required host components:
 
 Default high-concurrency settings:
 
-- HAProxy `global maxconn 200000`, override with `LKE_EDGE_HAPROXY_MAXCONN`
+- HAProxy `global maxconn 400000`, override with `LKE_EDGE_HAPROXY_MAXCONN`
 - systemd `LimitNOFILE=1048576`
 - tune `net.core.somaxconn`
 - tune `net.core.netdev_max_backlog`
@@ -144,9 +144,12 @@ For the validated staging deployment, `haproxy -c` returned valid config,
 `systemctl is-active haproxy` returned `active`, systemd reported
 `LimitNOFILE=1048576`, and HAProxy listened on public `443` and `8883`.
 
-Load testing should start with `maxconn 200000` and measure memory, file
-descriptors, CPU, socket summary, and connection saturation before changing the
-default.
+Load testing should start with `maxconn 400000` for 100K MQTT plus API/WebRTC
+traffic and measure memory, file descriptors, CPU, socket summary, and
+connection saturation before changing the default. A 100K MQTTS run through TCP
+proxying can approach 200K HAProxy-side sockets before API `/request_token` and
+WebRTC signaling traffic are counted, so 200K is not enough headroom for the
+100K-with-video sizing profile.
 
 ## Rollback
 

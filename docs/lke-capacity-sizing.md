@@ -593,7 +593,7 @@ from `cap50k-logger4g-20260622T213248Z`, the initial 100K planning config is:
   node count must still be checked against CPU and memory requests
 - node type: start with `g6-standard-4` for general nodes unless quota or
   measured CPU/memory pressure requires a larger type
-- HAProxy edge: `1` VM with `LKE_EDGE_HAPROXY_MAXCONN >= 200000`
+- HAProxy edge: `1` VM with `LKE_EDGE_HAPROXY_MAXCONN >= 400000`
 - Postgres: use explicit CPU/memory requests and consider a dedicated larger
   node pool once Postgres p95 CPU, memory, or I/O pressure appears
 

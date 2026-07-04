@@ -464,7 +464,7 @@ NodeBalancer。`--dns` / `staging-provision` 都走同一條 HAProxy edge 路徑
 - `certbot` CLI，或用 `RTK_CLOUD_CERTBOT` 指到指定 binary。
 - `helm` 與 `kubectl` 可操作目標 LKE cluster。
 - `LKE_PUBLIC_EDGE_MODE=external-haproxy`，這是唯一支援的 public edge mode。
-- HAProxy edge VM operator inputs，包含 VM label/region/type、SSH key，以及 `LKE_EDGE_HAPROXY_MAXCONN`。`maxconn` 預設從 `200000` 開始，loading test 時再依 memory/FD/CPU 使用量調整。
+- HAProxy edge VM operator inputs，包含 VM label/region/type、SSH key，以及 `LKE_EDGE_HAPROXY_MAXCONN`。`maxconn` 預設從 `400000` 開始；100K MQTTS 經 TCP proxy 會接近 200K HAProxy-side sockets，還需要替 API `/request_token` 與 WebRTC signaling 保留 headroom，loading test 時再依 memory/FD/CPU 使用量調整。
 - coturn VM operator inputs：`LKE_COTURN_VM_NAME` 預設 `turn01`，
   `LKE_COTURN_VM_LABEL` 預設 `<stack>-turn01`，`LKE_COTURN_VM_TYPE`
   預設 `g6-nanode-1`，`LKE_COTURN_DOMAIN` 預設

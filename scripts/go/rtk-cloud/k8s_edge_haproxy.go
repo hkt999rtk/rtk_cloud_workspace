@@ -102,7 +102,7 @@ func lkeEnsureExternalHAProxyEdge(paths provisionPaths, env map[string]string, o
 		Upstreams:     upstreams,
 		HTTPSNodePort: lkeIngressHTTPSNodePort(env),
 		MQTTSNodePort: lkeMQTTPublicNodePort(env),
-		MaxConn:       envIntDefault("LKE_EDGE_HAPROXY_MAXCONN", 200000),
+		MaxConn:       envIntDefault("LKE_EDGE_HAPROXY_MAXCONN", 400000),
 		ProxyProtocol: lkeEnvBool("LKE_EDGE_HAPROXY_ENABLE_PROXY_PROTOCOL"),
 	}
 	cfg := renderLKEEdgeHAProxyConfig(plan)
