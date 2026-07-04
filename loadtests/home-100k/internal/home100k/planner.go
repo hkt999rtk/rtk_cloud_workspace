@@ -319,6 +319,11 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	}
 
 	stages := stagePlan(devices, opts.StageWarmUp, opts.StageSteady, opts.StageCoolDown)
+	deviceMix := deviceMixForScenario(scenarioProfile, devices)
+	if mix := brandPlan.AggregatedDeviceMix(); len(mix) > 0 {
+		deviceMix = mix
+	}
+
 	plan := Plan{
 		Conditions: TestConditions{
 			EnvRoot:                              opts.EnvRoot,
@@ -349,7 +354,7 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 		BrandDistribution: brandPlan.Distribution(),
 		ScenarioProfile:   scenarioProfile,
 		VideoProfile:      videoProfile,
-		DeviceMix:         deviceMixForScenario(scenarioProfile, devices),
+		DeviceMix:         deviceMix,
 		DeviceProfiles:    deviceProfilesForScenario(scenarioProfile),
 		UserProfiles:      homeDiverseUserProfiles(),
 		PresenceMix:       proportionalMix(devices, []ratioBucket{{Name: "online_steady", Weight: 85}, {Name: "offline_desired_queue", Weight: 10}, {Name: "flapping_reconnect", Weight: 5}}),

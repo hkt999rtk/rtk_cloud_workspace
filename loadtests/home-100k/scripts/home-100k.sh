@@ -59,6 +59,9 @@ load_linode_token_from_env_file
 env_root="${HOME100K_ENV_ROOT:-cloud_env/staging/lke}"
 brandname="${HOME100K_BRANDNAME:-RTK}"
 brand_plan="${HOME100K_BRAND_PLAN:-}"
+if [[ -n "$brand_plan" && "$brand_plan" != /* ]]; then
+  brand_plan="$repo_root/$brand_plan"
+fi
 scenario_profile="${HOME100K_SCENARIO_PROFILE:-}"
 region="${HOME100K_REGION:-us-sea}"
 vm_label_prefix="${HOME100K_VM_LABEL_PREFIX:-lg}"

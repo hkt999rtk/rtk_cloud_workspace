@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -118,6 +119,31 @@ func (p BrandPlan) Distribution() []BrandDistributionEntry {
 			NormalUsers:    brand.NormalUsers,
 			DeveloperUsers: developers,
 		})
+	}
+	return out
+}
+
+func (p BrandPlan) AggregatedDeviceMix() map[string]int {
+	out := map[string]int{}
+	for _, brand := range p.Brands {
+		if len(brand.DeviceMix) == 0 {
+			return nil
+		}
+		keys := make([]string, 0, len(brand.DeviceMix))
+		for name := range brand.DeviceMix {
+			keys = append(keys, name)
+		}
+		sort.Strings(keys)
+		buckets := make([]ratioBucket, 0, len(keys))
+		for _, name := range keys {
+			buckets = append(buckets, ratioBucket{Name: name, Weight: brand.DeviceMix[name]})
+		}
+		for name, count := range proportionalMix(brand.Devices, buckets) {
+			out[name] += count
+		}
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

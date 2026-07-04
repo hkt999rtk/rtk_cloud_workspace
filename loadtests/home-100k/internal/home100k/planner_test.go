@@ -154,6 +154,34 @@ func TestVideo100KTurnPlanUsesSingleRampAndViewerLadder(t *testing.T) {
 	}
 }
 
+func TestVideo100KTurnBrandPlanUsesPreparedInventoryMix(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:         "cloud_env/staging/lke",
+		Brandname:       "RTK",
+		BrandPlanFile:   "../../scenarios/brand-plan-100k.json",
+		Region:          "us-sea",
+		ScenarioProfile: Video100KTurnScenarioProfile,
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+	if got := plan.DeviceMix["camera"]; got != 5000 {
+		t.Fatalf("camera devices = %d, want 5000 from prepared video-capable home brands", got)
+	}
+	if got := plan.DeviceMix["camera_status"]; got != 3500 {
+		t.Fatalf("camera_status devices = %d, want 3500 from prepared diverse home brands", got)
+	}
+	if got := plan.DeviceMix["light"]; got != 16500 {
+		t.Fatalf("light devices = %d, want 16500 from mixed 100K brand plan", got)
+	}
+	if sumMap(plan.DeviceMix) != 100000 {
+		t.Fatalf("device mix sum = %d, want 100000: %#v", sumMap(plan.DeviceMix), plan.DeviceMix)
+	}
+	if plan.VideoProfile.VideoDevices != 5000 || plan.VideoProfile.VideoViewers != 5000 {
+		t.Fatalf("video profile sizing = devices=%d viewers=%d, want 5000/5000", plan.VideoProfile.VideoDevices, plan.VideoProfile.VideoViewers)
+	}
+}
+
 func TestVideo50KTurnPlanUsesSingleRampAndViewerLadder(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
 		EnvRoot:         "cloud_env/staging/lke",
