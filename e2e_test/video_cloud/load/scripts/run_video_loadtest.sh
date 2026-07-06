@@ -30,6 +30,7 @@ negative_set="${VIDEO_CLOUD_LOAD_NEGATIVE_SET:-off}"
 negative_malformed_path="${VIDEO_CLOUD_LOAD_NEGATIVE_MALFORMED_PATH:-}"
 negative_timeout_path="${VIDEO_CLOUD_LOAD_NEGATIVE_TIMEOUT_PATH:-}"
 duration="${VIDEO_CLOUD_LOAD_DURATION:-30s}"
+webrtc_media_duration="${VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_DURATION:-20s}"
 http_timeout="${VIDEO_CLOUD_LOAD_HTTP_TIMEOUT:-10s}"
 device_online_settle="${VIDEO_CLOUD_LOAD_DEVICE_ONLINE_SETTLE:-2s}"
 device_owner_retries="${VIDEO_CLOUD_LOAD_DEVICE_OWNER_CONNECT_RETRIES:-3}"
@@ -46,14 +47,8 @@ api_url="${VIDEO_CLOUD_LOAD_API_URL:-}"
 contracts_commit="${VIDEO_CLOUD_LOAD_CONTRACTS_COMMIT:-$(git -C "${workspace_root}/repos/rtk_cloud_contracts_doc" rev-parse HEAD 2>/dev/null || true)}"
 client_commit="${VIDEO_CLOUD_LOAD_CLIENT_COMMIT:-$(git -C "${workspace_root}" rev-parse HEAD 2>/dev/null || true)}"
 server_commit="${VIDEO_CLOUD_LOAD_SERVER_COMMIT:-unknown}"
-account_token="${VIDEO_CLOUD_LOAD_ACCOUNT_TOKEN:-}"
-admin_token="${VIDEO_CLOUD_LOAD_ADMIN_TOKEN:-}"
-device_token="${VIDEO_CLOUD_LOAD_DEVICE_TOKEN:-}"
-device_tokens="${VIDEO_CLOUD_LOAD_DEVICE_TOKENS:-}"
-app_tokens="${VIDEO_CLOUD_LOAD_APP_TOKENS:-}"
 device_token_map_file="${VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE:-}"
 app_token_map_file="${VIDEO_CLOUD_LOAD_APP_TOKEN_MAP_FILE:-}"
-refresh_token="${VIDEO_CLOUD_LOAD_REFRESH_TOKEN:-}"
 device_ids="${VIDEO_CLOUD_LOAD_DEVICE_IDS:-}"
 device_ids_file="${VIDEO_CLOUD_LOAD_DEVICE_IDS_FILE:-}"
 
@@ -68,6 +63,7 @@ cat >"${artifact_dir}/metadata.json" <<EOF
   "device_transport_set": "${device_transport_set}",
   "viewer_route_set": "${viewer_route_set}",
   "webrtc_media_set": "${webrtc_media_set}",
+  "webrtc_media_duration": "${webrtc_media_duration}",
   "webrtc_relay_role": "${webrtc_relay_role}",
   "clip_set": "${clip_set}",
   "mqtt_set": "${mqtt_set}",
@@ -87,21 +83,6 @@ cat >"${artifact_dir}/metadata.json" <<EOF
 EOF
 
 extra_args=()
-if [ -n "${account_token}" ]; then
-  extra_args+=(--account-token "${account_token}")
-fi
-if [ -n "${admin_token}" ]; then
-  extra_args+=(--admin-token "${admin_token}")
-fi
-if [ -n "${device_token}" ]; then
-  extra_args+=(--device-token "${device_token}")
-fi
-if [ -n "${device_tokens}" ]; then
-  extra_args+=(--device-token-map-json "${device_tokens}")
-fi
-if [ -n "${app_tokens}" ]; then
-  extra_args+=(--app-token-map-json "${app_tokens}")
-fi
 if [ -n "${device_token_map_file}" ]; then
   extra_args+=(--device-token-map-file "${device_token_map_file}")
 fi
@@ -113,9 +94,6 @@ if [ -n "${device_ids}" ]; then
 fi
 if [ -n "${device_ids_file}" ]; then
   extra_args+=(--device-ids-file "${device_ids_file}")
-fi
-if [ -n "${refresh_token}" ]; then
-  extra_args+=(--refresh-token "${refresh_token}")
 fi
 if [ "${mqtt_required}" = "1" ] || [ "${mqtt_required}" = "true" ]; then
   extra_args+=(--mqtt-required)
@@ -151,6 +129,7 @@ fi
     --client-commit "${client_commit}" \
     --server-commit "${server_commit}" \
     --duration "${duration}" \
+    --webrtc-media-duration "${webrtc_media_duration}" \
     --http-timeout "${http_timeout}" \
     --device-online-settle "${device_online_settle}" \
     --device-owner-connect-retries "${device_owner_retries}" \

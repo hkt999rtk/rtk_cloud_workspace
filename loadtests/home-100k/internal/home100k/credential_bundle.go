@@ -26,14 +26,15 @@ type shardCredentialBundle struct {
 }
 
 type shardCredentialBundleManifest struct {
-	Label          string `json:"label"`
-	RunID          string `json:"run_id,omitempty"`
-	Format         string `json:"format"`
-	SQLiteGzipPath string `json:"sqlite_gzip_path"`
-	SHA256         string `json:"sha256"`
-	DeviceCount    int    `json:"device_count"`
-	UserArtifact   string `json:"user_artifact,omitempty"`
-	BindArtifact   string `json:"bind_artifact,omitempty"`
+	Label          string   `json:"label"`
+	RunID          string   `json:"run_id,omitempty"`
+	Format         string   `json:"format"`
+	SQLiteGzipPath string   `json:"sqlite_gzip_path"`
+	SHA256         string   `json:"sha256"`
+	DeviceCount    int      `json:"device_count"`
+	DeviceIDs      []string `json:"device_ids,omitempty"`
+	UserArtifact   string   `json:"user_artifact,omitempty"`
+	BindArtifact   string   `json:"bind_artifact,omitempty"`
 }
 
 func homeTestDataDBPath(envRoot, brandname string) string {
@@ -107,6 +108,7 @@ func writeShardCredentialBundle(outDir string, envRoot string, plan Plan, assign
 		SQLiteGzipPath: filepath.Base(compressedPath),
 		SHA256:         sum,
 		DeviceCount:    len(deviceRows),
+		DeviceIDs:      deviceIDsFromManifestRows(deviceRows),
 	}
 	if err := writeJSONFile(manifestPath, manifest); err != nil {
 		return shardCredentialBundle{}, err
@@ -118,6 +120,16 @@ func writeShardCredentialBundle(outDir string, envRoot string, plan Plan, assign
 		SHA256:         sum,
 		DeviceCount:    len(deviceRows),
 	}, nil
+}
+
+func deviceIDsFromManifestRows(rows []deviceManifestRow) []string {
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if strings.TrimSpace(row.DeviceID) != "" {
+			ids = append(ids, row.DeviceID)
+		}
+	}
+	return ids
 }
 
 func initCredentialBundleSchema(db *sql.DB) error {

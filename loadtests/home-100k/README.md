@@ -3,7 +3,7 @@
 Status: implemented live Home MQTT/shadow runner with optional WebRTC/TURN
 video profiles
 Owner: rtk_cloud_workspace
-Last updated: 2026-07-04
+Last updated: 2026-07-05
 
 ## Summary
 
@@ -13,17 +13,19 @@ the IoT Device Shadow behavior that connects user intent to device-reported
 state. Video-enabled profiles add a WebRTC/TURN relay-only viewer ladder on top
 of the same MQTT/shadow background load.
 
-The load generators run on ephemeral Linode VMs, not inside the server
-Kubernetes cluster. The server target for the first baseline is the current
-staging/LKE environment. The first official baseline uses one Linode region so
-capacity and bottleneck analysis are not mixed with cross-region network
-variance.
+The load generators run outside the server Kubernetes cluster. The default
+runtime is ephemeral Linode VMs, but `workflow-live` can also consume
+operator-provided existing generator hosts through the same script when Linode
+active-service quota prevents creating new VMs. The server target for the first
+baseline is the current staging/LKE environment. The first official baseline
+uses one Linode region so capacity and bottleneck analysis are not mixed with
+cross-region network variance.
 
 The test must prove more than MQTT connectivity. It must prove that IoT Device
 Shadow desired, reported, delta, and version semantics still converge under
 online, offline, and reconnect load. When a video profile is selected, the
 report must also prove WebRTC create/setup/close, relay-only ICE candidates,
-first RTP, first H.264 access-unit evidence, and external TURN/coturn evidence.
+first RTP, H.264 RTP packet evidence, and external TURN/coturn evidence.
 
 ## Goals
 
@@ -98,6 +100,48 @@ Default TURN sizing shape:
 | `video-50k-turn-v1` | 50,000 | 2,500 | 5,000 | `100,500,1000,2000,5000` | `h264` |
 | `video-100k-turn-v1` | 100,000 | 5,000 | 5,000 | `100,500,1000,2000,5000` | `h264` |
 
+The TURN sizing profiles use `HOME100K_VIDEO_LOADTEST_MODE=remote-sharded` and
+`HOME100K_VIDEO_LOADTEST_SHARD_MODE=proportional`. Each ladder step is split
+across the same live MQTT load-generator shards (`lgNN`): if a step requests
+5,000 viewers in a 100,000-device run, each shard runs video for roughly 5% of
+its own MQTT device inventory. The video runner fetches its own remote-sharded
+artifacts under `video/step-<viewers>/`. The runner scheduling window is
+`HOME100K_VIDEO_LOADTEST_DURATION=0s`, so each planned shard starts as a
+concurrent batch after all remote hosts have been prepared. The per-session
+media/relay hold time is
+`HOME100K_VIDEO_LOADTEST_MEDIA_DURATION=10s`; this is the active TURN allocation
+sample window used for coturn sizing evidence.
+
+TURN sizing profiles allow both `turn:...?transport=udp` and
+`turn:...?transport=tcp` ICE server URLs. `relay` means WebRTC must use TURN
+relay candidates instead of direct host or srflx candidates; it does not mean
+UDP-only.
+
+The 100K TURN profile also sets
+`HOME100K_DEVICE_TOKEN_REQUEST_RETRIES=1` for device MQTT bootstrap. This retry
+is only for transient `POST /request_token` failures while ramping devices to the
+target; it does not relax the 100% client target completeness gate. A report
+with `device_token_attempts > connect_attempts` shows that retry was exercised,
+and any remaining device token timeout must be treated as an API/token-bootstrap
+capacity issue before interpreting coturn ladder results.
+
+TURN sizing is only valid when generator CPU and memory remain below
+saturation. The profile therefore sets
+`HOME100K_VIDEO_LOADTEST_MAX_VIEWERS_PER_HOST=1000` as an initial calibration
+guardrail for the 5-generator / 5K-viewer largest step; in proportional mode,
+any shard whose assigned video count exceeds that per-host limit fails before
+the step starts. This is not a protocol limit.
+The viewer path is intentionally protocol-only: it tracks first RTP, H.264/Opus
+RTP packet/byte counters, selected candidate type, and startup latency. It must
+not decode frames, parse every H.264 NAL, rebuild the full Annex-B bitstream for
+every packet, or hash the whole received audio/video stream in the 100K sizing
+path. Optional stricter media checks may be added for small calibration runs,
+but they are not the default coturn sizing gate.
+
+Do not add video-only generators for the default TURN sizing profile. Add them
+only after a proportional mixed-shard report proves the existing load generators
+saturated before coturn.
+
 Run a full scripted 50K profile with:
 
 ```sh
@@ -114,18 +158,51 @@ HOME100K_RUN_ID=lt100k-video-turn-$(date -u +%Y%m%dT%H%M%SZ) \
 ./loadtests/home-100k/scripts/home-100k.sh workflow-live
 ```
 
-The workflow can use a two-host video runner layout for larger viewer steps:
+If Linode active-service quota prevents creating new generator VMs, use the
+same workflow with explicitly provided generator hosts instead of hand-editing
+`vms.json`:
+
+```sh
+HOME100K_DESCRIPTION_FILE=loadtests/home-100k/scenarios/video-100k-turn.description.env \
+HOME100K_RUN_ID=lt100k-video-turn-$(date -u +%Y%m%dT%H%M%SZ) \
+HOME100K_EXISTING_GENERATOR_HOSTS='lg01=203.0.113.10,lg02=203.0.113.11,lg03=203.0.113.12,lg04=203.0.113.13,lg05=203.0.113.14' \
+./loadtests/home-100k/scripts/home-100k.sh workflow-live
+```
+
+The labels must match the generated mixed shard assignments (`lgNN`). The
+script writes `vms.json` with `source=existing-host`, syncs artifacts through
+the normal Ansible path, and skips automatic shutdown/delete for those hosts.
+Do not point this at Kubernetes server nodes or shared CI runners when the
+result is meant to size staging capacity; doing so contaminates server-side or
+CI capacity evidence. Only add separate `vgNN` video-only hosts for an explicit
+follow-up generator-capacity experiment after proportional mixed shards prove
+the generators are the bottleneck.
+
+The workflow writes a remote-sharded video runner layout for larger viewer
+steps:
 
 ```text
-video/step-<viewers>/device/load-results.json
-video/step-<viewers>/app-viewer/load-results.json
+video/step-<viewers>/shard-01/load-results.json
+video/step-<viewers>/shard-02/load-results.json
+...
 video/step-<viewers>/turn-active-samples.tsv
 ```
 
-The device host keeps device websocket owners online. The app/viewer host
-creates WebRTC sessions, receives RTP media, records first RTP and first H.264
-access-unit latency, and closes sessions. Token maps and device ID files are
-uploaded as files rather than expanded into long SSH command lines.
+Each shard process keeps device websocket owners online and runs the
+corresponding app/viewer WebRTC clients for its device slice. The viewer records
+first RTP latency and H.264 RTP packet evidence, keeps the session open for the
+configured media duration, then closes it. The current TURN sizing profiles use
+a 10-second media duration so generator CPU can be calibrated before longer
+sustained-stream windows are attempted. Token maps and device ID files are
+uploaded as files rather than expanded into long SSH command lines. Bearer
+tokens are passed through environment files or the process environment; the
+workflow must not place them in process argv.
+
+Startup latency breakdown distinguishes elapsed checkpoints from ICE work:
+`remote_answer_set` is the viewer-side SetRemoteDescription point, `ICE check`
+is the Pion ICE checking interval, and `ICE connected since session start` is
+the elapsed time from app request/session start to ICE connected. Reports must
+not collapse those fields into a single ambiguous `ICE connect` number.
 
 The final report gates are intentionally strict:
 
@@ -133,8 +210,7 @@ The final report gates are intentionally strict:
 - missing WebRTC create/setup/close evidence: `INCOMPLETE`
 - relay-only run with selected non-relay candidates: `FAIL`
 - missing external TURN/coturn active-window evidence: `INCOMPLETE`
-- missing first RTP or first H.264 access-unit evidence with H.264 media:
-  `FAIL`
+- missing first RTP or H.264 RTP packet evidence with H.264 media: `FAIL`
 - missing multi-pod WebRTC signaling-store evidence for TURN sizing profiles:
   `INCOMPLETE`
 
@@ -181,15 +257,38 @@ Default baseline:
 | Users | 5,000 |
 | Devices per user | 20 |
 | Server target | Current staging/LKE env-root |
-| Load-generator runtime | Ephemeral Linode VMs |
+| Load-generator runtime | Ephemeral Linode VMs by default; script-provided existing hosts when `HOME100K_EXISTING_GENERATOR_HOSTS` is set |
 | First baseline region model | Single Linode region |
-| Device-generator density | Configured by `HOME100K_LOAD_GENERATOR_DEVICES_PER_VM`; default 20,000 devices per VM |
+| Device-generator density | Configured by `HOME100K_LOAD_GENERATOR_DEVICES_PER_VM`; default 20,000 devices per VM for MQTT-only and the 100K TURN sizing profile |
 | Load-generator VM count | Automatically planned as `ceil(HOME100K_DEVICES / HOME100K_LOAD_GENERATOR_DEVICES_PER_VM)` unless `HOME100K_VM_COUNT` overrides it |
 | Per-VM device task | Up to `HOME100K_LOAD_GENERATOR_DEVICES_PER_VM` devices |
 | Per-VM user task | Derived from the assigned device shard and `HOME100K_DEVICES_PER_USER` |
-| Total load-generator VM count | 5 for the default 100K-device/5K-user mixed baseline; smaller targets such as 9K or 1K plan 1 VM by default |
+| Video shard model | `HOME100K_VIDEO_LOADTEST_SHARD_MODE=proportional`; video devices/viewers are selected from each VM's own MQTT shard inventory |
+| Video-only VM count | Optional exception via `HOME100K_VIDEO_GENERATOR_VM_COUNT`; not used by default TURN sizing profiles |
+| Total load-generator VM count | 5 mixed hosts for the default 100K-device/5K-user MQTT baseline; TURN sizing profiles fail fast if a proportional shard exceeds `HOME100K_VIDEO_LOADTEST_MAX_VIEWERS_PER_HOST` |
 | Ramp-up time | Configured by `HOME100K_STAGE_WARM_UP` |
 | Target connects | Configured by `HOME100K_DEVICES` |
+
+Before starting a live 100K TURN sizing run, the Linode active-service quota
+must cover the complete topology, not only the Kubernetes nodes:
+
+```text
+required_active_services =
+  LKE_NODE_COUNT
+  + LKE_POSTGRES_NODE_COUNT
+  + LKE_EDGE_HAPROXY_VM_COUNT
+  + LKE_COTURN_VM_COUNT
+  + HOME100K_VM_COUNT
+  + unrelated active Linodes that will remain running
+```
+
+For the default 100K profile this is `10 + 1 + 1 + 1 + 5 = 18` active
+services before counting unrelated Linodes such as shared CI runners. If the
+account limit is lower than that, the run is not validly runnable; do not reduce
+LKE or generator count just to fit quota and then call it a 100K result.
+The staging provision script also performs a live provider check when
+`LKE_LINODE_ACTIVE_SERVICE_LIMIT` is set: it counts current active Linodes and
+the missing edge/coturn VMs before attempting to create those VMs.
 
 The test should use deterministic sharding. A run ramps directly to the target
 connection count; there is no staged 25%/50%/75%/100% load model.
@@ -434,7 +533,9 @@ Required behavior:
   configured per-VM generator capacity.
 - `provision-vms` creates or reuses Linode VMs in the selected region. It is a
   dry-run by default; live provisioning requires `--live --confirm-live` and a
-  Linode token from `--linode-token` or `LINODE_TOKEN`.
+  Linode token from `--linode-token` or `LINODE_TOKEN`. When
+  `--existing-hosts` is provided, it writes the same `vms.json` state from
+  `label=ipv4` entries and skips Linode VM creation.
 - `sync` generates an Ansible inventory from `vms.json`, writes one shard
   manifest per VM, builds one compressed SQLite credential bundle per VM, and
   copies only the Linux runner binary, the VM's manifest, the compressed
@@ -454,14 +555,15 @@ Required behavior:
   template and collected artifacts.
 - `list-vms` lists leftover load-generator VMs by `home-100k`, `run_id`, and
   `load-generator` tags when cleanup needs review.
-- `shutdown-vms` powers off reusable load-generator VMs after collection. Use
-  the cleanup script only when the operator intentionally wants to delete the
-  VM pool.
+- `shutdown-vms` powers off reusable load-generator VMs after collection.
+  Existing-host entries are marked with `source=existing-host` and are skipped
+  by `shutdown-vms` and `destroy-vms`.
 - `workflow-live` and `workflow-resume-live` automatically shut down VMs only
   when the workflow return code is `0` and the rendered report status is
-  `PASS`. Failed, `FAIL`, or `INCOMPLETE` runs preserve VMs by default for
-  resume/debug. Set `HOME100K_SHUTDOWN_ON_ERROR=1` only when the operator wants
-  automatic shutdown even after a failed or incomplete run.
+  `SUCCESS`. Failed, `FAIL`, or `INCOMPLETE` runs preserve VMs by default for
+  resume/debug; existing-host entries are never powered off by this workflow.
+  Set `HOME100K_SHUTDOWN_ON_ERROR=1` only when the operator wants automatic
+  shutdown even after a failed or incomplete run.
 
 If a run fails before cleanup, the tooling must be able to list, shut down, or
 explicitly delete leftover load-generator VMs by tag/run id.
@@ -573,6 +675,8 @@ The script keeps non-secret defaults in one place:
 | `HOME100K_BRANDNAME` | `RTK` |
 | `HOME100K_BRAND_PLAN` | unset; use `loadtests/home-100k/scenarios/brand-plan-100k.json` for the 100K multi-brand 7/7 baseline |
 | `HOME100K_REGION` | `us-sea` |
+| `HOME100K_LINODE_TYPE` | unset; optional Linode VM type for load generators. TURN sizing profiles use `g6-standard-6` |
+| `HOME100K_EXISTING_GENERATOR_HOSTS` | unset; comma/space separated `label=ipv4` entries such as `lg01=203.0.113.10,lg02=203.0.113.11`. When set, `workflow-live` skips Linode VM creation and uses these hosts as the generated `vms.json` |
 | `HOME100K_RUN_ID` | Current UTC timestamp |
 | `HOME100K_OUT_DIR` | `loadtests/home-100k/reports/<run-id>` |
 | `HOME100K_SSH_KEY` | `~/.ssh/id_ed25519_rtkcloud` from the default description file |
@@ -592,6 +696,8 @@ The script keeps non-secret defaults in one place:
 | `HOME100K_MQTT_CONCURRENCY` | `1000`; per-VM-shard live MQTT connect worker concurrency |
 | `HOME100K_COMMAND_CONCURRENCY` | `100`; per-VM-shard live shadow command concurrency |
 | `HOME100K_SHADOW_COMMAND_TIMEOUT` | `30s`; per-phase shadow command wait timeout |
+| `HOME100K_DEVICE_TOKEN_REQUEST_TIMEOUT` | `10s`; per-attempt device `/request_token` timeout during MQTT bootstrap |
+| `HOME100K_DEVICE_TOKEN_REQUEST_RETRIES` | `0`; bounded retry count after the first device `/request_token` attempt. The 100K TURN profile overrides this to `1` |
 | `HOME100K_LIVE_RUNNER_TIMEOUT_GRACE` | unset; live shard command timeout defaults to `stage duration + max(10m, stage duration / 4)` |
 | `HOME100K_FUNCTIONAL_SUCCESS_THRESHOLD_PERCENT` | `99.5`; MQTT connect, app ACK, delta, and convergence success threshold |
 | `HOME100K_CLIENT_TARGET_COMPLETENESS_PERCENT` | `100`; active target devices/subscriptions and desired-write attempts must reach the planned target |
@@ -615,7 +721,7 @@ HOME100K_RUN_ID=20260615T100000Z \
 ```
 
 The default command is `workflow-live`. It runs the full paid/destructive VM
-lifecycle and powers off reusable VMs only after a successful `PASS` report.
+lifecycle and powers off reusable VMs only after a successful `SUCCESS` report.
 If the workflow fails, or the final report is `FAIL`/`INCOMPLETE`, VMs stay
 available for inspection and `workflow-resume-live`. Run `shutdown-vms` when
 debugging is finished, or `destroy-vms --live --confirm-live` only when the VM
@@ -627,6 +733,7 @@ inventory is written to `loadtests/home-100k/reports/<run-id>/nodes.tsv`. The
 same 30-second samples are persisted for report generation:
 
 - `workflow-status.log`
+- `linode-active-service-preflight.json`
 - `resource-samples/load-vms.tsv`
 - `resource-samples/k8s-nodes.tsv`
 
@@ -636,6 +743,18 @@ Kubernetes node resource samples use `kubectl top nodes --no-headers` and print
 `CLOUD_STAGING_K8S_KUBECONFIG`, then
 `<env-root>/state/lke-kubeconfig.yaml`. Set
 `HOME100K_K8S_NODE_RESOURCE_STATUS=0` to disable K8s node probing.
+
+Load-generator samples are collected through SSH from `/proc/stat`,
+`/sys/class/net`, `free`, and `df`; the report renders per-VM CPU, memory,
+disk, and RX/TX network utilization so generator saturation cannot be confused
+with server-side capacity.
+
+`workflow-live` writes `linode-active-service-preflight.json` before creating
+load-generator VMs. It records current active Linodes, missing edge/coturn VMs,
+planned load-generator VMs, and projected total active services. Set
+`HOME100K_LINODE_ACTIVE_SERVICE_LIMIT` or `LKE_LINODE_ACTIVE_SERVICE_LIMIT` to
+make this a hard fail-fast gate when the projected total exceeds the known
+account limit.
 
 Stage duration belongs in the non-secret description file, not in `~/.env`.
 The default profile uses `HOME100K_STAGE_WARM_UP=30s`,

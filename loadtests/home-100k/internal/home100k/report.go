@@ -67,6 +67,8 @@ func RenderReport(input ReportInput) string {
 	fmt.Fprintf(&b, "- Runner nofile limit: %d\n", input.Plan.Conditions.RunnerNofileLimit)
 	fmt.Fprintf(&b, "- Device session model: `%s`\n", firstNonEmpty(input.Plan.Conditions.DeviceSessionModel, DefaultDeviceSession))
 	fmt.Fprintf(&b, "- Runner read model: `%s`\n", firstNonEmpty(input.Plan.Conditions.RunnerReadModel, DefaultRunnerReadModel))
+	fmt.Fprintf(&b, "- Device token request timeout: `%s`\n", firstNonEmpty(input.Plan.Conditions.DeviceTokenRequestTimeout, DefaultDeviceTokenRequestTimeout))
+	fmt.Fprintf(&b, "- Device token request retries: %d\n", input.Plan.Conditions.DeviceTokenRequestRetries)
 	fmt.Fprintln(&b, "- Runner read requirement: sustained MQTT reads through Go netpoll-backed connections and bounded per-device reader goroutines; command-time one-shot reads are not valid for capacity conclusions.")
 	fmt.Fprintln(&b)
 
@@ -100,9 +102,9 @@ func RenderReport(input ReportInput) string {
 		if input.Plan.VideoProfile.StepCooldown != "" {
 			fmt.Fprintf(&b, "- Video step cooldown: `%s`\n", input.Plan.VideoProfile.StepCooldown)
 		}
-		fmt.Fprintf(&b, "- TURN transport: `%s`\n", firstNonEmpty(input.Plan.VideoProfile.TURNTransport, "udp"))
+		fmt.Fprintf(&b, "- TURN transport: `%s`\n", firstNonEmpty(input.Plan.VideoProfile.TURNTransport, "udp,tcp"))
 		fmt.Fprintf(&b, "- Media security: `%s`\n", firstNonEmpty(input.Plan.VideoProfile.MediaSecurity, "dtls-srtp"))
-		fmt.Fprintln(&b, "- TURN/UDP relays encrypted DTLS-SRTP packets; coturn does not terminate DTLS or inspect RTP/H.264 payloads.")
+		fmt.Fprintln(&b, "- TURN relays encrypted DTLS-SRTP packets over the configured UDP/TCP transports; coturn does not terminate DTLS or inspect RTP/H.264 payloads.")
 		fmt.Fprintf(&b, "- Device actor: `%s`\n", input.Plan.VideoProfile.DeviceActorRole)
 		fmt.Fprintf(&b, "- App actor: `%s`\n", input.Plan.VideoProfile.AppActorRole)
 		fmt.Fprintf(&b, "- Viewer actor: `%s`\n", input.Plan.VideoProfile.ViewerActorRole)
@@ -170,7 +172,14 @@ func RenderReport(input ReportInput) string {
 				fmt.Fprintf(&b, "- API create p95: %d ms\n", startup.BreakdownP95.APICreateMS)
 				fmt.Fprintf(&b, "- Offer delivery p95: %d ms\n", startup.BreakdownP95.OfferDeliveryMS)
 				fmt.Fprintf(&b, "- Device answer p95: %d ms\n", startup.BreakdownP95.DeviceAnswerMS)
-				fmt.Fprintf(&b, "- ICE connect p95: %d ms\n", startup.BreakdownP95.ICEConnectMS)
+				if startup.BreakdownP95.RemoteAnswerSetMS > 0 {
+					fmt.Fprintf(&b, "- Remote answer set p95: %d ms\n", startup.BreakdownP95.RemoteAnswerSetMS)
+				}
+				iceCheckMS := firstNonZeroInt64(startup.BreakdownP95.ICECheckMS, startup.BreakdownP95.ICEConnectMS)
+				fmt.Fprintf(&b, "- ICE check p95: %d ms\n", iceCheckMS)
+				if startup.BreakdownP95.ICEConnectedSinceSessionStartMS > 0 {
+					fmt.Fprintf(&b, "- ICE connected since session start p95: %d ms\n", startup.BreakdownP95.ICEConnectedSinceSessionStartMS)
+				}
 				fmt.Fprintf(&b, "- First RTP after ICE p95: %d ms\n", startup.BreakdownP95.FirstRTPAfterICEMS)
 				fmt.Fprintf(&b, "- First H.264 access unit after RTP p95: %d ms\n", startup.BreakdownP95.FirstH264AccessUnitAfterRTPMS)
 				fmt.Fprintln(&b)
@@ -987,4 +996,13 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstNonZeroInt64(values ...int64) int64 {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
 }

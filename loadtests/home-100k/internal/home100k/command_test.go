@@ -529,6 +529,34 @@ func TestExecuteProvisionVMsDefaultsToDryRun(t *testing.T) {
 	}
 }
 
+func TestExecuteProvisionVMsDryRunIncludesVideoOnlyGenerators(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Execute([]string{
+		"provision-vms",
+		"--env-root", "cloud_env/staging/lke",
+		"--brandname", "RTK",
+		"--region", "us-sea",
+		"--devices", "9000",
+		"--vm-count", "2",
+		"--video-generator-vm-count", "2",
+		"--video-generator-label-prefix", "vg",
+		"--run-id", "run-cli",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Execute(provision-vms dry-run) code = %d stderr=%s", code, stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		`"role": "video"`,
+		`"label": "vg01"`,
+		`"label": "vg02"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("dry-run output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestExecuteProvisionVMsRequiresConfirmForLive(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
@@ -596,6 +624,60 @@ func TestExecuteProvisionVMsLiveWritesVMStateFile(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), `"vm_state_file"`) {
 		t.Fatalf("stdout missing vm_state_file:\n%s", stdout.String())
+	}
+}
+
+func TestExecuteProvisionVMsLiveUsesExistingHostsWithoutLinodeAPI(t *testing.T) {
+	outDir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := Execute([]string{
+		"provision-vms",
+		"--env-root", "cloud_env/staging/lke",
+		"--brandname", "RTK",
+		"--region", "us-sea",
+		"--devices", "2000",
+		"--vm-count", "2",
+		"--run-id", "run-cli",
+		"--out-dir", outDir,
+		"--live",
+		"--existing-hosts", "lg01=203.0.113.101,lg02=203.0.113.102",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Execute(provision-vms live existing hosts) code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	raw, err := os.ReadFile(filepath.Join(outDir, "vms.json"))
+	if err != nil {
+		t.Fatalf("read vms.json: %v", err)
+	}
+	body := string(raw)
+	for _, want := range []string{`"label": "lg01"`, `"public_ipv4": "203.0.113.101"`, `"source": "existing-host"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("vms.json missing %q:\n%s", want, body)
+		}
+	}
+	if !strings.Contains(stdout.String(), `"source": "existing-host"`) {
+		t.Fatalf("stdout missing existing-host source:\n%s", stdout.String())
+	}
+}
+
+func TestExecuteProvisionVMsLiveExistingHostsRequireAllLoadAssignments(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Execute([]string{
+		"provision-vms",
+		"--env-root", "cloud_env/staging/lke",
+		"--brandname", "RTK",
+		"--region", "us-sea",
+		"--devices", "2000",
+		"--vm-count", "2",
+		"--run-id", "run-cli",
+		"--live",
+		"--existing-hosts", "lg01=203.0.113.101",
+	}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("Execute(provision-vms live missing existing host) code = 0 stdout=%s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "missing load-generator assignments: lg02") {
+		t.Fatalf("stderr missing assignment failure: %s", stderr.String())
 	}
 }
 
@@ -828,6 +910,54 @@ func TestExecuteDestroyVMsLiveReadsStateAndDeletesVMs(t *testing.T) {
 	}
 }
 
+func TestExecuteDestroyVMsLiveSkipsExistingHosts(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "vms.json")
+	state := map[string]any{
+		"created": []LinodeVM{
+			{ID: 101, Label: "lg01", PublicIPv4: "203.0.113.101"},
+			{Label: "lg02", PublicIPv4: "203.0.113.102", Source: "existing-host"},
+		},
+	}
+	body, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stateFile, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	deleted := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deleted = append(deleted, r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := Execute([]string{
+		"destroy-vms",
+		"--env-root", "cloud_env/staging/lke",
+		"--brandname", "RTK",
+		"--region", "us-sea",
+		"--run-id", "run-cli",
+		"--live",
+		"--confirm-live",
+		"--linode-token", "test-token",
+		"--linode-endpoint", server.URL + "/v4",
+		"--vm-state-file", stateFile,
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Execute(destroy-vms live skip existing) code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if len(deleted) != 1 || !strings.HasSuffix(deleted[0], "/linode/instances/101") {
+		t.Fatalf("deleted paths = %#v", deleted)
+	}
+	if !strings.Contains(stdout.String(), `"skipped"`) || !strings.Contains(stdout.String(), `"source": "existing-host"`) {
+		t.Fatalf("stdout missing skipped existing host:\n%s", stdout.String())
+	}
+}
+
 func TestExecuteListVMsDefaultsToDryRun(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
@@ -923,6 +1053,7 @@ func TestExecuteSyncLiveHonorsExplicitVMCountOverride(t *testing.T) {
 		"created": []LinodeVM{
 			{ID: 101, Label: "lg01", PublicIPv4: "203.0.113.101"},
 			{ID: 102, Label: "lg02", PublicIPv4: "203.0.113.102"},
+			{ID: 201, Label: "vg01", PublicIPv4: "203.0.113.201"},
 		},
 	}
 	body, err := json.Marshal(state)
@@ -973,6 +1104,7 @@ func TestExecuteSyncLiveHonorsExplicitVMCountOverride(t *testing.T) {
 		"--region", "us-sea",
 		"--devices", "9000",
 		"--vm-count", "2",
+		"--video-generator-vm-count", "1",
 		"--load-generator-devices-per-vm", "4500",
 		"--run-id", "run-cli",
 		"--out-dir", outDir,
@@ -1110,6 +1242,10 @@ func TestExecuteSyncLiveHonorsExplicitVMCountOverride(t *testing.T) {
 	if !filepath.IsAbs(lg02Manifest) {
 		t.Fatalf("inventory lg02 local_shard_manifest = %q, want absolute path", lg02Manifest)
 	}
+	vg01Archive, _ := inventoryDoc.All.Children["home_100k"].Hosts["vg01"]["local_env_archive"].(string)
+	if !filepath.IsAbs(vg01Archive) {
+		t.Fatalf("inventory vg01 local_env_archive = %q, want absolute path", vg01Archive)
+	}
 	assertShardManifestRange(t, localManifest, "device-mqtt", 0, 4500)
 	assertShardManifestRange(t, lg02Manifest, "device-mqtt", 4500, 9000)
 	localArchive, _ := inventoryDoc.All.Children["home_100k"].Hosts["lg01"]["local_env_archive"].(string)
@@ -1134,6 +1270,13 @@ func TestExecuteSyncLiveHonorsExplicitVMCountOverride(t *testing.T) {
 		"brand_cloud_id": "brand-cloud-1",
 		"tenant_slug":    "tenant-1",
 	})
+	vg01ArchiveNames := readTarGzNames(t, vg01Archive)
+	if !vg01ArchiveNames["loadtests/home-100k/credentials/vg01.no-shard.txt"] {
+		t.Fatalf("video-only env archive missing no-shard marker: %#v", vg01ArchiveNames)
+	}
+	if vg01ArchiveNames["loadtests/home-100k/credentials/vg01.sqlite.gz"] {
+		t.Fatalf("video-only env archive should not include shard credential bundle: %#v", vg01ArchiveNames)
+	}
 	commonArchive := filepath.Join(outDir, "artifact-store", "common", "env-common.tar.gz")
 	if _, err := os.Stat(commonArchive); err != nil {
 		t.Fatalf("missing common env archive: %v", err)
@@ -1641,6 +1784,20 @@ func TestHome100KScriptSyncRetrySurvivesSetE(t *testing.T) {
 	}
 }
 
+func TestSyncPlaybookSkipsShardCredentialRequirementForVideoOnlyVMs(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "ansible", "sync.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	if !strings.Contains(body, `when: role | default('mixed') == 'mixed'`) {
+		t.Fatalf("sync.yml must only stat shard credentials for mixed shard VMs")
+	}
+	if !strings.Contains(body, `(role | default('mixed') == 'mixed') and (not (remote_shard_credentials_stat.stat.exists | default(false)))`) {
+		t.Fatalf("sync.yml env_archive_needs_upload must not require shard credentials for video-only VMs")
+	}
+}
+
 func TestHome100KScriptSkipsVMResourceSSHDuringBootstrap(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "home-100k.sh"))
 	if err != nil {
@@ -1658,6 +1815,24 @@ func TestHome100KScriptSkipsVMResourceSSHDuringBootstrap(t *testing.T) {
 	for _, want := range []string{"starting|provision-vms|sync)", "return"} {
 		if !strings.Contains(nodeStatus, want) {
 			t.Fatalf("node_resource_status must skip SSH polling during bootstrap phase, missing %q:\n%s", want, nodeStatus)
+		}
+	}
+}
+
+func TestHome100KScriptNodeInventoryUsesVMRoleTags(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "home-100k.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, want := range []string{
+		`tags = set(str(tag) for tag in (vm.get("tags") or []))`,
+		`if "video" in tags:`,
+		`role = "video"`,
+		`elif "mixed" in tags:`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("home-100k.sh node inventory missing role/tag marker %q:\n%s", want, body)
 		}
 	}
 }
@@ -1747,6 +1922,72 @@ func TestHome100KScriptDefaultDescriptionPlansTenMinuteLoadWindow(t *testing.T) 
 		if !strings.Contains(body, want) {
 			t.Fatalf("plan missing default duration %q:\n%s", want, body)
 		}
+	}
+}
+
+func TestHome100KScriptPassesLinodeTypeToProvision(t *testing.T) {
+	outDir := t.TempDir()
+	binDir := filepath.Join(outDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	goLog := filepath.Join(outDir, "go.log")
+	goStub := filepath.Join(binDir, "go")
+	if err := os.WriteFile(goStub, []byte("#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> "+shellQuoteForTest(goLog)+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	script := filepath.Join("..", "..", "scripts", "home-100k.sh")
+	cmd := exec.Command("bash", script, "provision-vms")
+	cmd.Env = home100KTestEnv(
+		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"HOME100K_RUN_ID=test-linode-type",
+		"HOME100K_OUT_DIR="+filepath.Join(outDir, "report"),
+		"HOME100K_LINODE_TYPE=g6-standard-6",
+	)
+	if raw, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("home-100k.sh provision-vms failed: %v\n%s", err, raw)
+	}
+	raw, err := os.ReadFile(goLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	if !strings.Contains(body, "--linode-type g6-standard-6") {
+		t.Fatalf("provision-vms did not receive --linode-type:\n%s", body)
+	}
+}
+
+func TestHome100KScriptPassesExistingGeneratorHostsToProvision(t *testing.T) {
+	outDir := t.TempDir()
+	binDir := filepath.Join(outDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	goLog := filepath.Join(outDir, "go.log")
+	goStub := filepath.Join(binDir, "go")
+	if err := os.WriteFile(goStub, []byte("#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> "+shellQuoteForTest(goLog)+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	script := filepath.Join("..", "..", "scripts", "home-100k.sh")
+	cmd := exec.Command("bash", script, "provision-vms")
+	cmd.Env = home100KTestEnv(
+		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"HOME100K_RUN_ID=test-existing-hosts",
+		"HOME100K_OUT_DIR="+filepath.Join(outDir, "report"),
+		"HOME100K_EXISTING_GENERATOR_HOSTS=lg01=203.0.113.101,lg02=203.0.113.102",
+	)
+	if raw, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("home-100k.sh provision-vms failed: %v\n%s", err, raw)
+	}
+	raw, err := os.ReadFile(goLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	if !strings.Contains(body, "--existing-hosts lg01=203.0.113.101,lg02=203.0.113.102") {
+		t.Fatalf("provision-vms did not receive --existing-hosts:\n%s", body)
 	}
 }
 
@@ -1925,6 +2166,147 @@ printf '%s,%s\n' "$VIDEO_CLOUD_LOAD_VIRTUAL_VIEWERS" "$VIDEO_CLOUD_LOAD_VIRTUAL_
 	}
 	if got := strings.TrimSpace(string(logRaw)); got != "100,100" {
 		t.Fatalf("video stub log = %q, want only step-100 before inventory failure", got)
+	}
+}
+
+func TestHome100KScriptProportionalVideoShardsUseMQTTShardInventory(t *testing.T) {
+	outDir := t.TempDir()
+	binDir := filepath.Join(outDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sshLog := filepath.Join(outDir, "ssh.log")
+	sshStub := filepath.Join(binDir, "ssh")
+	sshStubBody := `#!/usr/bin/env bash
+printf 'SSH %s\n' "$*" >> ` + shellQuoteForTest(sshLog) + `
+cat >/dev/null || true
+`
+	if err := os.WriteFile(sshStub, []byte(sshStubBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	scpStub := filepath.Join(binDir, "scp")
+	if err := os.WriteFile(scpStub, []byte("#!/usr/bin/env bash\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	goStub := filepath.Join(binDir, "go")
+	goStubBody := `#!/usr/bin/env bash
+out_env=""
+ids_file=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --out-env) out_env="$2"; shift 2 ;;
+    --device-ids-file) ids_file="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$(dirname "$out_env")"
+python3 - "$ids_file" "$out_env" <<'PY'
+import json, pathlib, sys
+ids = [line.strip() for line in pathlib.Path(sys.argv[1]).read_text().splitlines() if line.strip()]
+out = pathlib.Path(sys.argv[2])
+device_map = out.with_name("device-token-map.json")
+app_map = out.with_name("app-token-map.json")
+device_map.write_text(json.dumps({device_id: "device-token" for device_id in ids}), encoding="utf-8")
+app_map.write_text(json.dumps({device_id: "app-token" for device_id in ids}), encoding="utf-8")
+out.write_text(
+    "export VIDEO_CLOUD_LOAD_DEVICE_IDS='" + ",".join(ids) + "'\n"
+    "export VIDEO_CLOUD_LOAD_VIRTUAL_DEVICES='" + str(len(ids)) + "'\n"
+    "export VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE='" + str(device_map) + "'\n"
+    "export VIDEO_CLOUD_LOAD_APP_TOKEN_MAP_FILE='" + str(app_map) + "'\n"
+    "export VIDEO_CLOUD_LOAD_ACCOUNT_TOKEN='account-token'\n",
+    encoding="utf-8",
+)
+PY
+`
+	if err := os.WriteFile(goStub, []byte(goStubBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	videoBinary := filepath.Join(outDir, "rtk-video-loadtest")
+	if err := os.WriteFile(videoBinary, []byte("#!/usr/bin/env bash\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	envRoot := filepath.Join(outDir, "env-root")
+	users := []string{"user@example.test"}
+	assignments := make([]map[string]any, 0, 100)
+	for i := 1; i <= 100; i++ {
+		assignments = append(assignments, map[string]any{
+			"assignment_index": i,
+			"assigned_email":   users[0],
+			"device_id":        fmt.Sprintf("device-%03d", i),
+			"device_type":      "camera",
+			"service_options":  []string{"mqtt", "video_streaming"},
+		})
+	}
+	writeHomeSQLiteTestData(t, envRoot, users, assignments)
+	reportDir := filepath.Join(outDir, "report")
+	manifestDir := filepath.Join(reportDir, "credential-bundles")
+	if err := os.MkdirAll(manifestDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeManifest := func(label string, start, count int) {
+		ids := make([]string, 0, count)
+		for i := start; i < start+count; i++ {
+			ids = append(ids, fmt.Sprintf("device-%03d", i))
+		}
+		raw, err := json.Marshal(map[string]any{
+			"label":        label,
+			"format":       "home-100k-credential-bundle/v1",
+			"device_count": count,
+			"device_ids":   ids,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(manifestDir, label+".manifest.json"), raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeManifest("lg01", 1, 60)
+	writeManifest("lg02", 61, 40)
+	script := filepath.Join("..", "..", "scripts", "home-100k.sh")
+	cmd := exec.Command("bash", script, "run-video-loadtest")
+	cmd.Env = home100KTestEnv(
+		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"HOME100K_ENV_ROOT="+envRoot,
+		"HOME100K_RUN_ID=test-video-proportional",
+		"HOME100K_OUT_DIR="+reportDir,
+		"HOME100K_SCENARIO_PROFILE=video-100k-turn-v1",
+		"HOME100K_VIDEO_LOADTEST=on",
+		"HOME100K_VIDEO_LOADTEST_MODE=remote-sharded",
+		"HOME100K_VIDEO_LOADTEST_SHARD_MODE=proportional",
+		"HOME100K_VIDEO_LOADTEST_REMOTE_HOSTS=lg01=192.0.2.1,lg02=192.0.2.2",
+		"HOME100K_VIDEO_LOADTEST_BINARY="+videoBinary,
+		"HOME100K_VIDEO_LOADTEST_ARTIFACT_DIR="+filepath.Join(outDir, "video"),
+		"HOME100K_VIDEO_LOADTEST_LADDER=100",
+		"HOME100K_VIDEO_LOADTEST_MAX_VIEWERS_PER_HOST=100",
+		"HOME100K_VIDEO_LOADTEST_STEP_COOLDOWN=0s",
+	)
+	if raw, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("run-video-loadtest failed: %v\n%s", err, raw)
+	}
+	planRaw, err := os.ReadFile(filepath.Join(outDir, "video", "step-100", "shards.tsv"))
+	if err != nil {
+		t.Fatalf("read proportional shard plan: %v", err)
+	}
+	plan := string(planRaw)
+	if !strings.Contains(plan, "lg01\t192.0.2.1\t60") || !strings.Contains(plan, "lg02\t192.0.2.2\t40") {
+		t.Fatalf("proportional shard plan did not split 60/40:\n%s", plan)
+	}
+	ids1, err := os.ReadFile(filepath.Join(outDir, "video", "step-100", "shard-01", "device-ids.txt"))
+	if err != nil {
+		t.Fatalf("read shard-01 IDs: %v", err)
+	}
+	if !strings.Contains(string(ids1), "device-001") || strings.Contains(string(ids1), "device-061") {
+		t.Fatalf("shard-01 IDs are not limited to lg01 inventory:\n%s", ids1)
+	}
+	sshRaw, err := os.ReadFile(sshLog)
+	if err != nil {
+		t.Fatalf("read ssh log: %v", err)
+	}
+	sshBody := string(sshRaw)
+	if !strings.Contains(sshBody, "--virtual-devices 60 --virtual-viewers 60") ||
+		!strings.Contains(sshBody, "--virtual-devices 40 --virtual-viewers 40") {
+		t.Fatalf("remote commands missing proportional virtual counts:\n%s", sshBody)
 	}
 }
 
@@ -2153,6 +2535,35 @@ func TestRunnerDaemonAcceptsRuntimeLogsFlag(t *testing.T) {
 	}
 }
 
+func TestRunnerDaemonAcceptsDeviceTokenRequestFlags(t *testing.T) {
+	var stderr bytes.Buffer
+	opts, values, err := parseRunnerDaemonFlags("home-100k runner-daemon", []string{
+		"--env-root", "cloud_env/staging/lke",
+		"--brandname", "RTK",
+		"--region", "us-sea",
+		"--run-id", "run-cli",
+		"--role", "mixed",
+		"--shard-index", "0",
+		"--device-token-request-timeout", "12s",
+		"--device-token-request-retries", "2",
+	}, &stderr)
+	if err != nil {
+		t.Fatalf("parseRunnerDaemonFlags error: %v stderr=%s", err, stderr.String())
+	}
+	if opts.DeviceTokenRequestTimeout != "12s" {
+		t.Fatalf("PlanOptions.DeviceTokenRequestTimeout = %q, want 12s", opts.DeviceTokenRequestTimeout)
+	}
+	if opts.DeviceTokenRequestRetries != 2 {
+		t.Fatalf("PlanOptions.DeviceTokenRequestRetries = %d, want 2", opts.DeviceTokenRequestRetries)
+	}
+	if values.deviceTokenRequestTimeout != "12s" {
+		t.Fatalf("values.deviceTokenRequestTimeout = %q, want 12s", values.deviceTokenRequestTimeout)
+	}
+	if values.deviceTokenRequestRetries != 2 {
+		t.Fatalf("values.deviceTokenRequestRetries = %d, want 2", values.deviceTokenRequestRetries)
+	}
+}
+
 func TestExecuteRunStagesProducesStageMetrics(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
@@ -2218,6 +2629,7 @@ func TestExecuteRunStagesLiveRequiresPublicMQTTEndpoint(t *testing.T) {
 		"--env-root", "cloud_env/staging/lke",
 		"--brandname", "RTK",
 		"--region", "us-sea",
+		"--video-generator-vm-count", "1",
 		"--run-id", "run-cli",
 		"--out-dir", outDir,
 		"--live",
@@ -2329,6 +2741,9 @@ func TestExecuteRunStagesLiveStartsRunnerDaemonsThenHostCoordinator(t *testing.T
 	}
 	if !strings.Contains(stdout.String(), `"dispatched"`) || !strings.Contains(stdout.String(), `"id": 101`) {
 		t.Fatalf("stdout missing dispatched VMs:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), `"id": 201`) {
+		t.Fatalf("stdout included video-only VM in home shard dispatch:\n%s", stdout.String())
 	}
 }
 
@@ -3038,8 +3453,15 @@ func TestExecuteShardRunLivePreservesPartialStagedResultsWhenMQTTTestFails(t *te
 					"http_requests":       250,
 					"http_successes":      240,
 					"failure_reasons":     map[string]any{"app_token_request_failed": 10},
-					"device_mqtt_totals":  map[string]any{"bytes_sent": 12345},
-					"app_user_totals":     map[string]any{"bytes_received": 67890},
+					"device_mqtt_totals": map[string]any{
+						"bytes_sent":                  12345,
+						"token_first_attempt_success": 2400,
+						"token_first_attempt_fail":    100,
+						"token_retry_attempts":        100,
+						"token_retry_success":         75,
+						"token_retry_exhausted":       25,
+					},
+					"app_user_totals": map[string]any{"bytes_received": 67890},
 				},
 			},
 		}
@@ -3090,7 +3512,13 @@ func TestExecuteShardRunLivePreservesPartialStagedResultsWhenMQTTTestFails(t *te
 	if len(result.StageResults) != 1 {
 		t.Fatalf("stage results len = %d, want 1", len(result.StageResults))
 	}
-	if result.StageResults[0].DeviceMQTTTotals.ConnectAttempts != 2500 || result.StageResults[0].DeviceMQTTTotals.BytesSent != 12345 {
+	if result.StageResults[0].DeviceMQTTTotals.ConnectAttempts != 2500 ||
+		result.StageResults[0].DeviceMQTTTotals.BytesSent != 12345 ||
+		result.StageResults[0].DeviceMQTTTotals.TokenFirstAttemptSuccess != 2400 ||
+		result.StageResults[0].DeviceMQTTTotals.TokenFirstAttemptFail != 100 ||
+		result.StageResults[0].DeviceMQTTTotals.TokenRetryAttempts != 100 ||
+		result.StageResults[0].DeviceMQTTTotals.TokenRetrySuccess != 75 ||
+		result.StageResults[0].DeviceMQTTTotals.TokenRetryExhausted != 25 {
 		t.Fatalf("partial device counters not preserved: %#v", result.StageResults[0].DeviceMQTTTotals)
 	}
 	if result.StageResults[0].AppUserTotals.DesiredWrites != 250 || result.StageResults[0].AppUserTotals.BytesReceived != 67890 {
@@ -3273,6 +3701,7 @@ func TestExecuteCollectLiveCopiesShardArtifacts(t *testing.T) {
 		"created": []LinodeVM{
 			{ID: 101, Label: "lg01", PublicIPv4: "203.0.113.101"},
 			{ID: 102, Label: "lg02", PublicIPv4: "203.0.113.102"},
+			{ID: 201, Label: "vg01", PublicIPv4: "203.0.113.201"},
 		},
 	}
 	body, err := json.Marshal(state)
@@ -3301,6 +3730,7 @@ func TestExecuteCollectLiveCopiesShardArtifacts(t *testing.T) {
 		"--env-root", "cloud_env/staging/lke",
 		"--brandname", "RTK",
 		"--region", "us-sea",
+		"--video-generator-vm-count", "1",
 		"--run-id", "run-cli",
 		"--out-dir", outDir,
 		"--live",
@@ -3327,6 +3757,9 @@ func TestExecuteCollectLiveCopiesShardArtifacts(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), `"collected"`) || !strings.Contains(stdout.String(), `"id": 101`) {
 		t.Fatalf("stdout missing collected VMs:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), `"id": 201`) {
+		t.Fatalf("stdout included video-only VM in home shard collect:\n%s", stdout.String())
 	}
 }
 
@@ -3593,7 +4026,7 @@ func TestCollectLiveServerEvidenceFallsBackToCentralLoggerRuntimeLogs(t *testing
 		case strings.Contains(joined, "device_runtime_logs"):
 			t.Fatalf("collectLiveServerEvidence queried legacy device_runtime_logs table: %s %s", name, joined)
 		case strings.Contains(joined, "device_shadows"):
-			return "device_shadow.rows_current_converged\t1\n", nil
+			t.Fatalf("collectLiveServerEvidence queried legacy device_shadows table: %s %s", name, joined)
 		default:
 			return "", nil
 		}
@@ -3801,7 +4234,7 @@ func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 		case strings.Contains(joined, "device_runtime_logs"):
 			t.Fatalf("collect-server-evidence queried legacy device_runtime_logs table: %s %s", name, joined)
 		case strings.Contains(joined, "device_shadows"):
-			return "device_shadow.reported_converged\t10\n", nil
+			t.Fatalf("collect-server-evidence queried legacy device_shadows table: %s %s", name, joined)
 		case strings.Contains(joined, "app.kubernetes.io/name=mqtt"):
 			return "client.connected rtk-e2e-run-cli-home-device-000001-device-1\n", nil
 		default:
@@ -3830,7 +4263,7 @@ func TestExecuteCollectServerEvidenceLiveWritesCompleteEvidence(t *testing.T) {
 	if !strings.Contains(out, `"evidence_window_mode": "run_scoped_since_time"`) || !strings.Contains(out, `"evidence_window_start": "2026-06-16T21:06:05Z"`) {
 		t.Fatalf("stdout missing run-scoped evidence window:\n%s", out)
 	}
-	if !strings.Contains(out, `"edge_haproxy.tcp.established_8883": 10000`) || !strings.Contains(out, `"device_shadow.reported_converged": 10`) {
+	if !strings.Contains(out, `"edge_haproxy.tcp.established_8883": 10000`) {
 		t.Fatalf("stdout missing parsed counters:\n%s", out)
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "server-evidence.json")); err != nil {
