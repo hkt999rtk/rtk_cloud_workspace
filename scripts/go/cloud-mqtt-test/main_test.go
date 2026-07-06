@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -389,6 +390,73 @@ func TestDeviceManagedTokenRenewsWithClientCertificateAtHalfLifetime(t *testing.
 	}
 	if requests != 2 {
 		t.Fatalf("request_token calls = %d, want 2", requests)
+	}
+}
+
+func TestDeviceRequestTokenRetryRecoversTransientTimeout(t *testing.T) {
+	certPEM, keyPEM, _ := testAppMaterial(t, "device-1")
+	cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requests int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/request_token" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if atomic.AddInt32(&requests, 1) == 1 {
+			time.Sleep(80 * time.Millisecond)
+			return
+		}
+		writeJSON(t, w, map[string]string{
+			"scope":        "device",
+			"access_token": testJWT(t, time.Now(), time.Now().Add(time.Minute)),
+		})
+	}))
+	defer server.Close()
+
+	var totals mqttIOTotals
+	token, err := requestDeviceTokenWithRetry(server.URL, cert, "device-1", time.Now().Add(time.Second), tokenRequestOptions{Timeout: 20 * time.Millisecond, Retries: 1}, func(update func(*mqttIOTotals)) {
+		update(&totals)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token == "" || requests != 2 {
+		t.Fatalf("token=%q requests=%d, want token and two attempts", token, requests)
+	}
+	if totals.DeviceTokenAttempts != 2 || totals.DeviceTokenSuccesses != 1 || totals.DeviceTokenFailures != 0 ||
+		totals.DeviceTokenFirstSuccess != 0 || totals.DeviceTokenFirstFailures != 1 ||
+		totals.DeviceTokenRetryAttempts != 1 || totals.DeviceTokenRetrySuccesses != 1 || totals.DeviceTokenRetryExhausted != 0 {
+		t.Fatalf("token totals = %#v, want retry success evidence", totals)
+	}
+}
+
+func TestDeviceRequestTokenRetryExhaustionRecordsEvidence(t *testing.T) {
+	certPEM, keyPEM, _ := testAppMaterial(t, "device-1")
+	cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/request_token" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		http.Error(w, "try later", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	var totals mqttIOTotals
+	_, err = requestDeviceTokenWithRetry(server.URL, cert, "device-1", time.Now().Add(time.Second), tokenRequestOptions{Timeout: 20 * time.Millisecond, Retries: 1}, func(update func(*mqttIOTotals)) {
+		update(&totals)
+	})
+	if err == nil {
+		t.Fatal("expected request_token failure")
+	}
+	if totals.DeviceTokenAttempts != 2 || totals.DeviceTokenSuccesses != 0 || totals.DeviceTokenFailures != 1 ||
+		totals.DeviceTokenFirstSuccess != 0 || totals.DeviceTokenFirstFailures != 1 ||
+		totals.DeviceTokenRetryAttempts != 1 || totals.DeviceTokenRetrySuccesses != 0 || totals.DeviceTokenRetryExhausted != 1 {
+		t.Fatalf("token totals = %#v, want retry exhaustion evidence", totals)
 	}
 }
 
@@ -1299,7 +1367,7 @@ func TestSustainedActorsUseLongMQTTKeepAlive(t *testing.T) {
 		DeviceType: "light",
 		CertPEM:    certPEM,
 		KeyPEM:     keyPEM,
-	}, "RTK", "run-sustained-keepalive", tokenServer.URL, mqttEndpointTarget{Host: host, Port: port}, func(update func(*mqttIOTotals)) {
+	}, "RTK", "run-sustained-keepalive", tokenServer.URL, mqttEndpointTarget{Host: host, Port: port}, time.Time{}, tokenRequestOptions{Timeout: time.Second}, func(update func(*mqttIOTotals)) {
 		update(&totals)
 	})
 	if err != nil {
@@ -1586,6 +1654,11 @@ func TestAttachMQTTIOTotalsIncludesConnectionPhaseCounters(t *testing.T) {
 		DeviceTokenAttempts:        3,
 		DeviceTokenSuccesses:       2,
 		DeviceTokenFailures:        1,
+		DeviceTokenFirstSuccess:    1,
+		DeviceTokenFirstFailures:   2,
+		DeviceTokenRetryAttempts:   2,
+		DeviceTokenRetrySuccesses:  1,
+		DeviceTokenRetryExhausted:  1,
 		DeviceMQTTDialAttempts:     2,
 		DeviceMQTTDialSuccesses:    2,
 		DeviceMQTTDialFailures:     0,
@@ -1612,7 +1685,14 @@ func TestAttachMQTTIOTotalsIncludesConnectionPhaseCounters(t *testing.T) {
 	if !ok {
 		t.Fatalf("app_user_totals missing: %#v", result)
 	}
-	if deviceTotals["token_attempts"] != int64(3) || deviceTotals["mqtt_connack_fail"] != int64(1) || deviceTotals["subscribe_attempts"] != int64(1) {
+	if deviceTotals["token_attempts"] != int64(3) ||
+		deviceTotals["token_first_attempt_success"] != int64(1) ||
+		deviceTotals["token_first_attempt_fail"] != int64(2) ||
+		deviceTotals["token_retry_attempts"] != int64(2) ||
+		deviceTotals["token_retry_success"] != int64(1) ||
+		deviceTotals["token_retry_exhausted"] != int64(1) ||
+		deviceTotals["mqtt_connack_fail"] != int64(1) ||
+		deviceTotals["subscribe_attempts"] != int64(1) {
 		t.Fatalf("device phase counters missing: %#v", deviceTotals)
 	}
 	if appTotals["token_attempts"] != int64(2) || appTotals["mqtt_dial_success"] != int64(1) || appTotals["mqtt_connack_success"] != int64(1) {
@@ -1689,10 +1769,20 @@ func TestSustainedDeviceReaderDispatchesMatchingDeltaAfterUnrelatedPublish(t *te
 	}
 }
 
-func TestConnectFailureReasonSeparatesWindowExpiry(t *testing.T) {
+func TestConnectFailureReasonPreservesRequestTokenPhaseAtWindowExpiry(t *testing.T) {
 	deadline := time.Now().Add(-time.Second)
 
 	reason := connectFailureReason(errors.New(`device request_token: Post "https://device.example/request_token": context deadline exceeded`), deadline)
+
+	if reason != "device_request_token_failed" {
+		t.Fatalf("reason = %q, want device_request_token_failed", reason)
+	}
+}
+
+func TestConnectFailureReasonStillReportsWindowExpiryForMQTTAtDeadline(t *testing.T) {
+	deadline := time.Now().Add(-time.Second)
+
+	reason := connectFailureReason(errors.New(`mqtt connect write: i/o timeout`), deadline)
 
 	if reason != "connect_window_expired" {
 		t.Fatalf("reason = %q, want connect_window_expired", reason)
@@ -2219,6 +2309,19 @@ func TestConnectDispatchDelaySpreadsAcrossRampWindow(t *testing.T) {
 	}
 	if got := connectDispatchDelay(19999, 20000, window); got <= 0 || got >= window {
 		t.Fatalf("last dispatch delay = %s, want positive delay before %s", got, window)
+	}
+}
+
+func TestConnectDispatchWindowReservesTokenRetryBudget(t *testing.T) {
+	window := 10 * time.Minute
+	got := connectDispatchWindow(window, tokenRequestOptions{Timeout: 15 * time.Second, Retries: 2})
+	want := window - 45*time.Second - 300*time.Millisecond
+	if got != want {
+		t.Fatalf("dispatch window = %s, want %s", got, want)
+	}
+
+	if got := connectDispatchWindow(10*time.Second, tokenRequestOptions{Timeout: 15 * time.Second, Retries: 2}); got != 5*time.Second {
+		t.Fatalf("short dispatch window = %s, want 5s", got)
 	}
 }
 

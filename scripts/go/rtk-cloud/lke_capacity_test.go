@@ -180,6 +180,109 @@ func TestLKEProviderServicesCountsCoturnVM(t *testing.T) {
 	}
 }
 
+func TestLKELiveProviderServicesCountsExistingActiveLinodes(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	fakeLinodeCurl(t, map[string]string{
+		"/linode/instances?page_size=500": `{"data":[
+			{"id":1,"label":"lke-node-01"},
+			{"id":2,"label":"lke-node-02"},
+			{"id":3,"label":"lke-node-03"},
+			{"id":4,"label":"lke-node-04"},
+			{"id":5,"label":"lke-node-05"},
+			{"id":6,"label":"lke-node-06"},
+			{"id":7,"label":"lke-node-07"},
+			{"id":8,"label":"lke-node-08"},
+			{"id":9,"label":"lke-node-09"},
+			{"id":10,"label":"lke-node-10"},
+			{"id":11,"label":"lke-postgres-01"},
+			{"id":12,"label":"shared-ci"}
+		]}`,
+		"/lke/clusters?page_size=500": `{"data":[{"id":12345,"label":"video-cloud-staging-lke","region":"us-sea","k8s_version":"1.36"}]}`,
+		"/lke/clusters/12345/pools":   `{"data":[{"id":111,"type":"g6-standard-6","count":10}]}`,
+	})
+	t.Setenv("LINODE_TOKEN", "test-token")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":                   "video-cloud-staging",
+		"CLOUD_REGION":                       "us-sea",
+		"LKE_NODE_TYPE":                      "g6-standard-6",
+		"LKE_NODE_COUNT":                     "10",
+		"LKE_MQTT_REPLICAS":                  "7",
+		"LKE_MQTT_CONNECTIONS_PER_POD":       "20000",
+		"LKE_TARGET_CONNECTS":                "100000",
+		"LKE_EDGE_HAPROXY_COUNT":             "1",
+		"LKE_COTURN_VM_COUNT":                "1",
+		"LKE_POSTGRES_STORAGE_MODE":          "emptydir",
+		"LKE_LINODE_ACTIVE_SERVICE_LIMIT":    "13",
+		"LKE_INGRESS_REQUEST_CPU":            "100m",
+		"LKE_ACCOUNT_MANAGER_REQUEST_CPU":    "150m",
+		"LKE_CLOUD_LOGGER_REQUEST_CPU":       "50m",
+		"LKE_MQTT_REQUEST_CPU":               "200m",
+		"LKE_VIDEO_CLOUD_REPLICAS":           "1",
+		"LKE_VIDEO_CLOUD_API_REQUEST_CPU":    "250m",
+		"LKE_VIDEO_CLOUD_API_REQUEST_MEMORY": "512Mi",
+	}
+
+	err := lkeCheckCapacityWithPaths(provisionPaths{Workspace: workspace, EnvRoot: envRoot}, env, provisionOptions{})
+	if err == nil {
+		t.Fatal("expected live provider active service failure")
+	}
+	for _, want := range []string{"projected active services=14", "current_active=12", "additional_required=2"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected %q in error:\n%s", want, err.Error())
+		}
+	}
+}
+
+func TestLKELiveProviderServicesAccountsForPlannedNodePoolShrink(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	fakeLinodeCurl(t, map[string]string{
+		"/linode/instances?page_size=500": `{"data":[
+			{"id":1,"label":"lke-node-01"},
+			{"id":2,"label":"lke-node-02"},
+			{"id":3,"label":"lke-node-03"},
+			{"id":4,"label":"lke-node-04"},
+			{"id":5,"label":"lke-node-05"},
+			{"id":6,"label":"lke-node-06"},
+			{"id":7,"label":"lke-node-07"},
+			{"id":8,"label":"lke-node-08"},
+			{"id":9,"label":"lke-node-09"},
+			{"id":10,"label":"lke-node-10"},
+			{"id":11,"label":"lke-postgres-01"},
+			{"id":12,"label":"shared-ci"}
+		]}`,
+		"/lke/clusters?page_size=500": `{"data":[{"id":12345,"label":"video-cloud-staging-lke","region":"us-sea","k8s_version":"1.36"}]}`,
+		"/lke/clusters/12345/pools": `{"data":[
+			{"id":111,"type":"g6-standard-6","count":10},
+			{"id":222,"type":"g6-standard-6","count":1,"labels":{"role":"postgres"},"taints":[{"key":"workload","value":"postgres","effect":"NoSchedule"}]}
+		]}`,
+	})
+	t.Setenv("LINODE_TOKEN", "test-token")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":                   "video-cloud-staging",
+		"CLOUD_REGION":                       "us-sea",
+		"LKE_NODE_TYPE":                      "g6-standard-6",
+		"LKE_NODE_COUNT":                     "5",
+		"LKE_MQTT_REPLICAS":                  "5",
+		"LKE_MQTT_CONNECTIONS_PER_POD":       "20000",
+		"LKE_TARGET_CONNECTS":                "50000",
+		"LKE_EDGE_HAPROXY_COUNT":             "1",
+		"LKE_COTURN_VM_COUNT":                "1",
+		"LKE_POSTGRES_NODE_COUNT":            "1",
+		"LKE_LINODE_ACTIVE_SERVICE_LIMIT":    "12",
+		"LKE_INGRESS_REQUEST_CPU":            "100m",
+		"LKE_ACCOUNT_MANAGER_REQUEST_CPU":    "150m",
+		"LKE_CLOUD_LOGGER_REQUEST_CPU":       "50m",
+		"LKE_MQTT_REQUEST_CPU":               "200m",
+		"LKE_VIDEO_CLOUD_REPLICAS":           "1",
+		"LKE_VIDEO_CLOUD_API_REQUEST_CPU":    "250m",
+		"LKE_VIDEO_CLOUD_API_REQUEST_MEMORY": "512Mi",
+	}
+
+	if err := lkeCheckCapacityWithPaths(provisionPaths{Workspace: workspace, EnvRoot: envRoot}, env, provisionOptions{}); err != nil {
+		t.Fatalf("capacity check should allow scripted shrink before adding edge/coturn: %v", err)
+	}
+}
+
 func TestLKECapacityParsesQuantities(t *testing.T) {
 	cpu, err := parseCPUQuantity("0.25")
 	if err != nil || cpu != 250 {

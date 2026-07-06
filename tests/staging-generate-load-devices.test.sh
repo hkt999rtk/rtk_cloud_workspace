@@ -46,6 +46,25 @@ do
 done
 grep -F 'device generation progress: done=7/7 generated=7 failed=0' /tmp/staging-generate-load-devices.err >/dev/null
 
+printf stale > "$OUT/stale-marker"
+"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- generate-load-devices \
+	--env-root "$TMP/cloud_env/staging" \
+	--out-dir "$OUT" \
+	--count 1 \
+	--mix camera=1 \
+	--prefix test-load \
+	--generate-only \
+	--force >/tmp/staging-generate-load-devices-force.out 2>/tmp/staging-generate-load-devices-force.err
+if [[ -e "$OUT/stale-marker" ]]; then
+	printf '--force should remove stale output before regenerating devices\n' >&2
+	exit 1
+fi
+jq -e '.count == 1 and .allocated.camera == 1' "$OUT/summary.json" >/dev/null
+"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- test-data inspect \
+	--env-root "$TMP/cloud_env/staging" \
+	--brandname RTK >"$INSPECT"
+jq -e '.schema == "rtk-cloud-workspace-test-data/v1" and .devices == 1' "$INSPECT" >/dev/null
+
 if "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- generate-load-devices --out-dir "$TMP/missing-env-root" >/tmp/missing-env-root.out 2>/tmp/missing-env-root.err; then
 	printf 'expected missing --env-root to fail\n' >&2
 	exit 1

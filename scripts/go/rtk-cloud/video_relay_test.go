@@ -88,6 +88,61 @@ func TestVideoLoadtestTokenSelectionAggregatesBrandPlanDevices(t *testing.T) {
 	}
 }
 
+func TestVideoLoadtestTokenSelectionUsesConcreteBrandOverBrandPlan(t *testing.T) {
+	envRoot := t.TempDir()
+	writeVideoRelaySelectionTestData(t, envRoot, "RTK-BRAND-01", "brand01", 2)
+	writeVideoRelaySelectionTestData(t, envRoot, "RTK-VIDEO-01", "video01", 3)
+	planPath := filepath.Join(envRoot, "brand-plan.json")
+	if err := os.WriteFile(planPath, []byte(`{
+		"total_devices": 2,
+		"devices_per_user": 1,
+		"brands": [
+			{"brandname": "RTK-BRAND-01", "devices": 2, "normal_users": 2, "developer_users": {"owner": 1}}
+		]
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	selected, blockers, err := selectVideoLoadtestTokenDevices(envRoot, "RTK-VIDEO-01", planPath, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blockers) != 0 {
+		t.Fatalf("blockers = %v, want none", blockers)
+	}
+	if got := strings.Join(deviceIDs(selected), ","); got != "video01-cam-001,video01-cam-002,video01-cam-003" {
+		t.Fatalf("selected devices = %s", got)
+	}
+}
+
+func TestVideoLoadtestTokenSelectionUsesExactDeviceIDs(t *testing.T) {
+	envRoot := t.TempDir()
+	writeVideoRelaySelectionTestData(t, envRoot, "RTK-BRAND-01", "brand01", 3)
+	writeVideoRelaySelectionTestData(t, envRoot, "RTK-BRAND-02", "brand02", 2)
+	planPath := filepath.Join(envRoot, "brand-plan.json")
+	if err := os.WriteFile(planPath, []byte(`{
+		"total_devices": 5,
+		"devices_per_user": 1,
+		"brands": [
+			{"brandname": "RTK-BRAND-01", "devices": 3, "normal_users": 3, "developer_users": {"owner": 1}},
+			{"brandname": "RTK-BRAND-02", "devices": 2, "normal_users": 2, "developer_users": {"owner": 1}}
+		]
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	selected, blockers, err := selectVideoLoadtestTokenDevicesByID(envRoot, "RTK", planPath, []string{"brand02-cam-002", "brand01-cam-003"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blockers) != 0 {
+		t.Fatalf("blockers = %v, want none", blockers)
+	}
+	if got := strings.Join(deviceIDs(selected), ","); got != "brand02-cam-002,brand01-cam-003" {
+		t.Fatalf("selected devices = %s", got)
+	}
+}
+
 func writeVideoRelaySelectionTestData(t *testing.T, envRoot, brandname, prefix string, count int) {
 	t.Helper()
 	store, err := openTestDataStore(envRoot, brandname)

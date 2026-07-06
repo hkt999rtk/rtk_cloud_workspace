@@ -16,14 +16,15 @@ import (
 )
 
 type linodeDestroyPlan struct {
-	Stack         string
-	ConfirmText   string
-	LKEClusters   []linodeDestroyResource
-	Instances     []linodeDestroyResource
-	Firewalls     []linodeDestroyResource
-	VPCs          []linodeDestroyResource
-	ObjectBuckets []linodeDestroyResource
-	OrphanVolumes []linodeDestroyResource
+	Stack               string
+	ConfirmText         string
+	LKEClusters         []linodeDestroyResource
+	Instances           []linodeDestroyResource
+	Firewalls           []linodeDestroyResource
+	VPCs                []linodeDestroyResource
+	ObjectBuckets       []linodeDestroyResource
+	OrphanVolumes       []linodeDestroyResource
+	OrphanNodeBalancers []linodeDestroyResource
 }
 
 type linodeDestroyResource struct {
@@ -46,8 +47,18 @@ func runDestroyLinodeStagingResources(args []string) error {
 	includeOrphanVolumes := fs.Bool("include-orphan-volumes", false, "delete unattached orphan pvc-* Block Storage volumes listed by --orphan-volume-ids")
 	orphanVolumeIDs := fs.String("orphan-volume-ids", "", "comma-separated Linode volume IDs allowed for orphan pvc-* deletion")
 	onlyOrphanVolumes := fs.Bool("only-orphan-volumes", false, "skip staging runtime resources and delete only exact unattached pvc-* volumes allowed by --orphan-volume-ids")
+	includeOrphanNodeBalancers := fs.Bool("include-orphan-nodebalancers", false, "delete orphan LKE NodeBalancers listed by --orphan-nodebalancer-ids")
+	orphanNodeBalancerIDs := fs.String("orphan-nodebalancer-ids", "", "comma-separated Linode NodeBalancer IDs allowed for orphan deletion")
+	onlyOrphanNodeBalancers := fs.Bool("only-orphan-nodebalancers", false, "skip staging runtime resources and delete only exact orphan LKE NodeBalancers allowed by --orphan-nodebalancer-ids")
+	onlyLKECluster := fs.Bool("only-lke-cluster", false, "skip non-LKE Linode resources and delete only matched LKE clusters plus local kubeconfig/LKE state")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *onlyLKECluster && (*onlyOrphanVolumes || *onlyOrphanNodeBalancers) {
+		return errors.New("--only-lke-cluster cannot be combined with orphan-only cleanup modes")
+	}
+	if *onlyOrphanVolumes && *onlyOrphanNodeBalancers {
+		return errors.New("--only-orphan-volumes cannot be combined with --only-orphan-nodebalancers")
 	}
 	workspace := *workspaceFlag
 	var err error
@@ -80,7 +91,11 @@ func runDestroyLinodeStagingResources(args []string) error {
 	if err != nil {
 		return err
 	}
-	printLinodeDestroyPlan(os.Stdout, plan, *includeObjectStorage, *includeOrphanVolumes, orphanVolumeIDSet, *onlyOrphanVolumes)
+	orphanNodeBalancerIDSet, err := parseDestroyIDSet(*orphanNodeBalancerIDs)
+	if err != nil {
+		return err
+	}
+	printLinodeDestroyPlan(os.Stdout, plan, *includeObjectStorage, *includeOrphanVolumes, orphanVolumeIDSet, *includeOrphanNodeBalancers, orphanNodeBalancerIDSet, *onlyOrphanVolumes, *onlyOrphanNodeBalancers, *onlyLKECluster)
 	if !*yes {
 		fmt.Fprintf(os.Stdout, "dry-run only; pass --yes --confirm-text %q to delete the listed non-skipped resources\n", plan.ConfirmText)
 		return nil
@@ -93,7 +108,7 @@ func runDestroyLinodeStagingResources(args []string) error {
 	if *confirmText != plan.ConfirmText {
 		return fmt.Errorf("confirmation text must be %q", plan.ConfirmText)
 	}
-	return executeLinodeDestroyPlan(token, envRoot, plan, *includeObjectStorage, *includeOrphanVolumes, orphanVolumeIDSet, *onlyOrphanVolumes)
+	return executeLinodeDestroyPlan(token, envRoot, plan, *includeObjectStorage, *includeOrphanVolumes, orphanVolumeIDSet, *includeOrphanNodeBalancers, orphanNodeBalancerIDSet, *onlyOrphanVolumes, *onlyOrphanNodeBalancers, *onlyLKECluster)
 }
 
 func buildLinodeDestroyPlan(token string, env map[string]string, stack, loadTestPrefix string) (linodeDestroyPlan, error) {
@@ -131,6 +146,11 @@ func buildLinodeDestroyPlan(token string, env map[string]string, stack, loadTest
 		return plan, err
 	} else {
 		plan.OrphanVolumes = volumes
+	}
+	if nodeBalancers, err := listDestroyOrphanNodeBalancers(token, env); err != nil {
+		return plan, err
+	} else {
+		plan.OrphanNodeBalancers = nodeBalancers
 	}
 	return plan, nil
 }
@@ -317,6 +337,38 @@ func listDestroyOrphanVolumes(token string) ([]linodeDestroyResource, error) {
 	return sortedDestroyResources(out), nil
 }
 
+func listDestroyOrphanNodeBalancers(token string, env map[string]string) ([]linodeDestroyResource, error) {
+	currentClusterID := strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_CLUSTER_ID"), env["LKE_CLUSTER_ID"]))
+	var listed struct {
+		Data []struct {
+			ID     int      `json:"id"`
+			Label  string   `json:"label"`
+			Region string   `json:"region"`
+			Tags   []string `json:"tags"`
+		} `json:"data"`
+	}
+	if err := linodeDestroyList(token, "/nodebalancers?page_size=500", &listed); err != nil {
+		return nil, err
+	}
+	out := []linodeDestroyResource{}
+	for _, item := range listed.Data {
+		if !strings.HasPrefix(item.Label, "lke") {
+			continue
+		}
+		if currentClusterID != "" && strings.HasPrefix(item.Label, "lke"+currentClusterID+"-") {
+			continue
+		}
+		out = append(out, linodeDestroyResource{
+			ID:     fmt.Sprint(item.ID),
+			Label:  item.Label,
+			Region: item.Region,
+			Status: "orphan-candidate",
+			Path:   fmt.Sprintf("/nodebalancers/%d", item.ID),
+		})
+	}
+	return sortedDestroyResources(out), nil
+}
+
 func linodeDestroyList(token, path string, target any) error {
 	out, err := linodeRequestRaw(token, "GET", path, "")
 	if err != nil {
@@ -352,22 +404,32 @@ func parseDestroyIDSet(raw string) (map[string]bool, error) {
 	return out, nil
 }
 
-func printLinodeDestroyPlan(w *os.File, plan linodeDestroyPlan, includeObjectStorage bool, includeOrphanVolumes bool, orphanVolumeIDs map[string]bool, onlyOrphanVolumes bool) {
+func printLinodeDestroyPlan(w *os.File, plan linodeDestroyPlan, includeObjectStorage bool, includeOrphanVolumes bool, orphanVolumeIDs map[string]bool, includeOrphanNodeBalancers bool, orphanNodeBalancerIDs map[string]bool, onlyOrphanVolumes bool, onlyOrphanNodeBalancers bool, onlyLKECluster bool) {
 	fmt.Fprintf(w, "Linode destructive cleanup plan for stack %q\n", plan.Stack)
-	printDestroyGroup(w, "LKE clusters", plan.LKEClusters, onlyOrphanVolumes)
-	printDestroyGroup(w, "Linode instances", plan.Instances, onlyOrphanVolumes)
-	printDestroyGroup(w, "Firewalls", plan.Firewalls, onlyOrphanVolumes)
-	printDestroyGroup(w, "VPCs", plan.VPCs, onlyOrphanVolumes)
-	printDestroyGroup(w, "Object Storage buckets", plan.ObjectBuckets, onlyOrphanVolumes || !includeObjectStorage)
-	printDestroyVolumeGroup(w, "Unattached pvc-* Block Storage volumes", plan.OrphanVolumes, includeOrphanVolumes, orphanVolumeIDs)
+	printDestroyGroup(w, "LKE clusters", plan.LKEClusters, onlyOrphanVolumes || onlyOrphanNodeBalancers)
+	printDestroyGroup(w, "Linode instances", plan.Instances, onlyOrphanVolumes || onlyOrphanNodeBalancers || onlyLKECluster)
+	printDestroyGroup(w, "Firewalls", plan.Firewalls, onlyOrphanVolumes || onlyOrphanNodeBalancers || onlyLKECluster)
+	printDestroyGroup(w, "VPCs", plan.VPCs, onlyOrphanVolumes || onlyOrphanNodeBalancers || onlyLKECluster)
+	printDestroyGroup(w, "Object Storage buckets", plan.ObjectBuckets, onlyOrphanVolumes || onlyOrphanNodeBalancers || onlyLKECluster || !includeObjectStorage)
+	printDestroyVolumeGroup(w, "Unattached pvc-* Block Storage volumes", plan.OrphanVolumes, includeOrphanVolumes && !onlyLKECluster, orphanVolumeIDs)
+	printDestroyExactIDGroup(w, "Orphan LKE NodeBalancers", plan.OrphanNodeBalancers, includeOrphanNodeBalancers && !onlyLKECluster, orphanNodeBalancerIDs)
 	if onlyOrphanVolumes {
 		fmt.Fprintln(w, "Only orphan volume mode is enabled; staging runtime resources are listed but skipped.")
+	}
+	if onlyOrphanNodeBalancers {
+		fmt.Fprintln(w, "Only orphan NodeBalancer mode is enabled; staging runtime resources are listed but skipped.")
+	}
+	if onlyLKECluster {
+		fmt.Fprintln(w, "Only LKE cluster mode is enabled; non-LKE Linode resources are listed but skipped.")
 	}
 	if len(plan.ObjectBuckets) > 0 && !includeObjectStorage {
 		fmt.Fprintln(w, "Object Storage buckets are listed only; pass --include-object-storage to delete matched empty buckets.")
 	}
 	if len(plan.OrphanVolumes) > 0 {
 		fmt.Fprintln(w, "Unattached pvc-* Block Storage volumes are listed only; pass --include-orphan-volumes with --orphan-volume-ids <id,id> to delete exact volume IDs.")
+	}
+	if len(plan.OrphanNodeBalancers) > 0 {
+		fmt.Fprintln(w, "Orphan LKE NodeBalancers are listed only; pass --include-orphan-nodebalancers with --orphan-nodebalancer-ids <id,id> to delete exact NodeBalancer IDs.")
 	}
 }
 
@@ -395,6 +457,10 @@ func printDestroyGroup(w *os.File, title string, resources []linodeDestroyResour
 }
 
 func printDestroyVolumeGroup(w *os.File, title string, resources []linodeDestroyResource, includeOrphanVolumes bool, orphanVolumeIDs map[string]bool) {
+	printDestroyExactIDGroup(w, title, resources, includeOrphanVolumes, orphanVolumeIDs)
+}
+
+func printDestroyExactIDGroup(w *os.File, title string, resources []linodeDestroyResource, include bool, allowedIDs map[string]bool) {
 	fmt.Fprintf(w, "\n%s (%d)\n", title, len(resources))
 	if len(resources) == 0 {
 		fmt.Fprintln(w, "- none")
@@ -409,7 +475,7 @@ func printDestroyVolumeGroup(w *os.File, title string, resources []linodeDestroy
 		if region == "" {
 			region = "-"
 		}
-		if includeOrphanVolumes && orphanVolumeIDs[item.ID] {
+		if include && allowedIDs[item.ID] {
 			fmt.Fprintf(w, "- DELETE id=%s label=%s region=%s status=%s\n", item.ID, item.Label, region, status)
 		} else {
 			fmt.Fprintf(w, "- SKIP id=%s label=%s region=%s status=%s\n", item.ID, item.Label, region, status)
@@ -417,14 +483,13 @@ func printDestroyVolumeGroup(w *os.File, title string, resources []linodeDestroy
 	}
 }
 
-func executeLinodeDestroyPlan(token, envRoot string, plan linodeDestroyPlan, includeObjectStorage bool, includeOrphanVolumes bool, orphanVolumeIDs map[string]bool, onlyOrphanVolumes bool) error {
-	if !onlyOrphanVolumes {
-		for _, group := range [][]linodeDestroyResource{
-			plan.LKEClusters,
-			plan.Instances,
-			plan.Firewalls,
-			plan.VPCs,
-		} {
+func executeLinodeDestroyPlan(token, envRoot string, plan linodeDestroyPlan, includeObjectStorage bool, includeOrphanVolumes bool, orphanVolumeIDs map[string]bool, includeOrphanNodeBalancers bool, orphanNodeBalancerIDs map[string]bool, onlyOrphanVolumes bool, onlyOrphanNodeBalancers bool, onlyLKECluster bool) error {
+	if !onlyOrphanVolumes && !onlyOrphanNodeBalancers {
+		groups := [][]linodeDestroyResource{plan.LKEClusters}
+		if !onlyLKECluster {
+			groups = append(groups, plan.Instances, plan.Firewalls, plan.VPCs)
+		}
+		for _, group := range groups {
 			for _, item := range group {
 				if item.Path == "" {
 					continue
@@ -439,7 +504,7 @@ func executeLinodeDestroyPlan(token, envRoot string, plan linodeDestroyPlan, inc
 			return err
 		}
 	}
-	if includeObjectStorage {
+	if includeObjectStorage && !onlyLKECluster {
 		for _, item := range plan.ObjectBuckets {
 			if item.Path == "" {
 				return fmt.Errorf("cannot delete Object Storage bucket %q without a region", item.Label)
@@ -450,7 +515,7 @@ func executeLinodeDestroyPlan(token, envRoot string, plan linodeDestroyPlan, inc
 			}
 		}
 	}
-	if includeOrphanVolumes {
+	if includeOrphanVolumes && !onlyLKECluster {
 		if len(orphanVolumeIDs) == 0 {
 			return errors.New("--include-orphan-volumes requires --orphan-volume-ids with exact Linode volume IDs")
 		}
@@ -460,6 +525,23 @@ func executeLinodeDestroyPlan(token, envRoot string, plan linodeDestroyPlan, inc
 			}
 			if item.Path == "" {
 				return fmt.Errorf("cannot delete orphan volume %q without an API path", item.Label)
+			}
+			fmt.Fprintf(os.Stdout, "deleting %s (%s)\n", item.Label, item.Path)
+			if _, err := linodeRequestRaw(token, "DELETE", item.Path, ""); err != nil {
+				return err
+			}
+		}
+	}
+	if includeOrphanNodeBalancers && !onlyLKECluster {
+		if len(orphanNodeBalancerIDs) == 0 {
+			return errors.New("--include-orphan-nodebalancers requires --orphan-nodebalancer-ids with exact Linode NodeBalancer IDs")
+		}
+		for _, item := range plan.OrphanNodeBalancers {
+			if !orphanNodeBalancerIDs[item.ID] {
+				continue
+			}
+			if item.Path == "" {
+				return fmt.Errorf("cannot delete orphan NodeBalancer %q without an API path", item.Label)
 			}
 			fmt.Fprintf(os.Stdout, "deleting %s (%s)\n", item.Label, item.Path)
 			if _, err := linodeRequestRaw(token, "DELETE", item.Path, ""); err != nil {

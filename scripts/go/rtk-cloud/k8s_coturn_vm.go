@@ -69,6 +69,9 @@ func lkeEnsureExternalCoturnVMs(paths provisionPaths, env map[string]string, opt
 	if err := lkeValidateCoturnVMConfig(env); err != nil {
 		return nil, err
 	}
+	if err := lkePruneExtraCoturnVMs(paths, env); err != nil {
+		return nil, err
+	}
 	count := lkeCoturnVMCount(env)
 	vms := make([]lkeCoturnVM, 0, count)
 	for index := 1; index <= count; index++ {
@@ -82,6 +85,47 @@ func lkeEnsureExternalCoturnVMs(paths provisionPaths, env map[string]string, opt
 		return nil, err
 	}
 	return vms, nil
+}
+
+func lkePruneExtraCoturnVMs(paths provisionPaths, env map[string]string) error {
+	if firstNonEmpty(os.Getenv("LKE_COTURN_VM_PUBLIC_IP"), env["LKE_COTURN_VM_PUBLIC_IP"], os.Getenv("LKE_COTURN_VM_PUBLIC_IPS"), env["LKE_COTURN_VM_PUBLIC_IPS"]) != "" {
+		return nil
+	}
+	token := resolveLinodeToken(paths.EnvRoot)
+	if token == "" {
+		return nil
+	}
+	out, err := linodeRequestRaw(token, "GET", "/linode/instances?page_size=500", "")
+	if err != nil {
+		return err
+	}
+	var listed struct {
+		Data []linodeInstance `json:"data"`
+	}
+	if err := json.Unmarshal(out, &listed); err != nil {
+		return err
+	}
+	stack := firstNonEmpty(env["CLOUD_STACK_NAME"], "video-cloud-staging")
+	prefix := stack + "-" + firstNonEmpty(os.Getenv("LKE_COTURN_VM_NAME_PREFIX"), env["LKE_COTURN_VM_NAME_PREFIX"], "turn")
+	desired := lkeCoturnVMCount(env)
+	for _, item := range listed.Data {
+		if !contains(item.Tags, stack) || !contains(item.Tags, "coturn-vm") {
+			continue
+		}
+		if !strings.HasPrefix(item.Label, prefix) {
+			continue
+		}
+		indexText := strings.TrimPrefix(item.Label, prefix)
+		index, err := strconv.Atoi(indexText)
+		if err != nil || index <= desired {
+			continue
+		}
+		fmt.Fprintf(os.Stdout, "[lke] deleting extra coturn VM outside desired count: label=%s id=%d desired_count=%d\n", item.Label, item.ID, desired)
+		if _, err := linodeRequestRaw(token, "DELETE", fmt.Sprintf("/linode/instances/%d", item.ID), ""); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func lkeResolveCoturnVM(paths provisionPaths, env map[string]string, opts provisionOptions) (lkeCoturnVM, string, error) {
