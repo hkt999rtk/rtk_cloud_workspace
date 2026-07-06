@@ -182,9 +182,9 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 		t.Fatalf("MkdirAll(resource-samples) error = %v", err)
 	}
 	loadRows := strings.Join([]string{
-		"time\trun_id\tphase\tlabel\tip\trole\tid\tstatus\tcpu_pct\tload1\tmem_used_mb\tmem_total_mb\tdisk_used\tdisk_total\tdisk_pct",
-		"2026-06-15T00:00:00Z\tscript-report-test\trun-stages\tlg01\t192.0.2.10\tmixed\t123\tok\t10.0\t0.50\t100\t1000\t2G\t25G\t8",
-		"2026-06-15T00:00:30Z\tscript-report-test\trun-stages\tlg01\t192.0.2.10\tmixed\t123\tok\t90.0\t1.50\t700\t1000\t3G\t25G\t12",
+		"time\trun_id\tphase\tlabel\tip\trole\tid\tstatus\tcpu_pct\tload1\tmem_used_mb\tmem_total_mb\tdisk_used\tdisk_total\tdisk_pct\trx_mbps\ttx_mbps",
+		"2026-06-15T00:00:00Z\tscript-report-test\trun-stages\tlg01\t192.0.2.10\tmixed\t123\tok\t10.0\t0.50\t100\t1000\t2G\t25G\t8\t12.5\t4.5",
+		"2026-06-15T00:00:30Z\tscript-report-test\trun-stages\tlg01\t192.0.2.10\tmixed\t123\tok\t90.0\t1.50\t700\t1000\t3G\t25G\t12\t98.0\t40.0",
 		"",
 	}, "\n")
 	if err := os.WriteFile(filepath.Join(resourceDir, "load-vms.tsv"), []byte(loadRows), 0o644); err != nil {
@@ -216,6 +216,8 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 		"- sample window: 2026-06-15T00:00:00Z -> 2026-06-15T00:00:30Z\n\n| VM | Role | IP | Samples |",
 		"lg01",
 		"CPU p95",
+		"RX p95 Mbps",
+		"TX p95 Mbps",
 		"## K8s Node Resource Usage During Test",
 		"- sample window: 2026-06-15T00:00:00Z -> 2026-06-15T00:00:30Z\n\n| Node | Samples | CPU p95 |",
 		"lke-node-a",
@@ -301,7 +303,7 @@ func TestGenerateReportScriptRendersVideoEvidence(t *testing.T) {
 				TimeToFirstRTPP95MS: 27101,
 				Startup: VideoStartupTotals{
 					Samples:                              100,
-					H264AccessUnitSamples:               100,
+					H264AccessUnitSamples:                100,
 					AppRequestToFirstRTPP50MS:            25000,
 					AppRequestToFirstRTPP95MS:            27101,
 					AppRequestToFirstRTPP99MS:            28000,
@@ -359,6 +361,7 @@ func TestGenerateReportScriptRendersVideoEvidence(t *testing.T) {
 		"H.264 access unit samples: 100",
 		"App request -> first H.264 access unit p95: 27109 ms",
 		"Device answer p95: 63 ms",
+		"ICE check p95: 27101 ms",
 		"## TURN Evidence",
 		"registry available: true",
 		"coturn available: true",

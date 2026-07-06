@@ -467,6 +467,7 @@ type linodeInstance struct {
 	Type   string   `json:"type"`
 	Status string   `json:"status"`
 	IPv4   []string `json:"ipv4"`
+	Tags   []string `json:"tags"`
 }
 
 func lkeCreateEdgeHAProxyVM(token string, env map[string]string, opts provisionOptions) (lkeEdgeHAProxyVM, error) {

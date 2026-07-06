@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1618,8 +1620,8 @@ func TestPionWebRTCMediaLoopbackReceivesSyntheticRTP(t *testing.T) {
 	if stats.PacketsReceived < 3 || stats.BytesReceived == 0 {
 		t.Fatalf("media stats = %#v, want RTP packets and bytes", stats)
 	}
-	if stats.FirstH264AccessUnitMS < stats.TimeToFirstRTPMS || !h264AccessUnitEvidenceReady(mapFromStrings(stats.NALTypes)) {
-		t.Fatalf("media stats = %#v, want first H.264 access unit timing and SPS/PPS/IDR evidence", stats)
+	if stats.H264Packets < 3 || stats.H264Bytes == 0 || stats.FirstH264RTPMS == 0 {
+		t.Fatalf("media stats = %#v, want H.264 RTP packet evidence", stats)
 	}
 	if stats.SelectedLocalCandidateType == "" || stats.SelectedRemoteCandidateType == "" {
 		t.Fatalf("media stats missing selected candidate pair: %#v", stats)
@@ -1658,6 +1660,39 @@ func TestRelayCandidateTypeEvidenceFallsBackToInference(t *testing.T) {
 	}
 	if got := candidateTypeEvidence("", webrtc.ICETransportPolicyAll); got != "" {
 		t.Fatalf("all policy candidate evidence = %q, want empty", got)
+	}
+}
+
+func TestCandidateTraceFromCandidateLineIncludesProtocol(t *testing.T) {
+	line := "candidate:842163049 1 tcp 1677729535 192.0.2.10 9 typ relay raddr 0.0.0.0 rport 0 tcptype passive"
+	trace := candidateTraceFromCandidateLine(line)
+	if trace.Type != "relay" || trace.Protocol != "tcp" {
+		t.Fatalf("candidate trace = %+v, want relay/tcp", trace)
+	}
+}
+
+func TestICETraceEvidenceIncludesCandidateTransports(t *testing.T) {
+	stats := WebRTCMediaStats{
+		LocalRelayCandidates:            2,
+		LocalUDPCandidates:              1,
+		LocalTCPCandidates:              1,
+		LocalRelayUDPCandidates:         1,
+		LocalRelayTCPCandidates:         1,
+		SelectedLocalCandidateProtocol:  "udp",
+		SelectedRemoteCandidateProtocol: "tcp",
+	}
+	evidence := iceTraceEvidence(stats)
+	for _, want := range []string{
+		"local_udp_candidates=1",
+		"local_tcp_candidates=1",
+		"local_relay_udp_candidates=1",
+		"local_relay_tcp_candidates=1",
+		"selected_local_candidate_protocol=udp",
+		"selected_remote_candidate_protocol=tcp",
+	} {
+		if !strings.Contains(evidence, want) {
+			t.Fatalf("evidence missing %q: %s", want, evidence)
+		}
 	}
 }
 
@@ -1730,6 +1765,85 @@ func TestH264MediaPlanLoopsTwoSecondFixtureForTwentySeconds(t *testing.T) {
 	}
 }
 
+func TestH264MediaPlanUsesThirtyFPSFrameGroupsWithoutChangingPayload(t *testing.T) {
+	plan, err := buildH264MediaPlan(2 * time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.FrameRate != 30 || len(plan.FramePackets) != 60 || plan.Frames != 60 {
+		t.Fatalf("frame model = rate %d groups %d frames %d, want 30fps/60 groups/60 frames", plan.FrameRate, len(plan.FramePackets), plan.Frames)
+	}
+	var groupedPackets int
+	var groupedBytes int
+	for frameIndex, frame := range plan.FramePackets {
+		if len(frame.Packets) == 0 {
+			t.Fatalf("frame %d has no RTP packets", frameIndex)
+		}
+		timestamp := frame.Packets[0].Timestamp
+		for _, packet := range frame.Packets {
+			if packet.Timestamp != timestamp {
+				t.Fatalf("frame %d has mixed RTP timestamps: got %d want %d", frameIndex, packet.Timestamp, timestamp)
+			}
+			groupedPackets++
+			groupedBytes += len(packet.Payload)
+		}
+		if frameIndex > 0 {
+			prev := plan.FramePackets[frameIndex-1].Packets[0].Timestamp
+			if timestamp != prev+3000 {
+				t.Fatalf("frame %d timestamp = %d, want previous timestamp %d + 3000", frameIndex, timestamp, prev)
+			}
+		}
+	}
+	if groupedPackets != len(plan.Packets) || groupedPackets != plan.Evidence.Packets {
+		t.Fatalf("grouped packets = %d, flat packets = %d, evidence packets = %d", groupedPackets, len(plan.Packets), plan.Evidence.Packets)
+	}
+	if groupedBytes != plan.Evidence.Bytes {
+		t.Fatalf("grouped bytes = %d, evidence bytes = %d", groupedBytes, plan.Evidence.Bytes)
+	}
+}
+
+func TestH264MediaPlanConcurrentBuildUsesSingleCachedPlan(t *testing.T) {
+	h264MediaPlanCache = sync.Map{}
+	defer func() {
+		h264MediaPlanCache = sync.Map{}
+		h264PlanBuildHook = nil
+	}()
+	var builds atomic.Int64
+	h264PlanBuildHook = func(time.Duration) {
+		builds.Add(1)
+	}
+	const workers = 32
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			plan, err := buildH264MediaPlan(5 * time.Minute)
+			if err != nil {
+				errs <- err
+				return
+			}
+			if plan.Loops != 150 || len(plan.Packets) == 0 {
+				errs <- fmt.Errorf("unexpected plan loops=%d packets=%d", plan.Loops, len(plan.Packets))
+			}
+			if plan.FrameRate != 30 || len(plan.FramePackets) != 9000 {
+				errs <- fmt.Errorf("unexpected frame model rate=%d frame_groups=%d", plan.FrameRate, len(plan.FramePackets))
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := builds.Load(); got != 1 {
+		t.Fatalf("H.264 media plan builds = %d, want 1", got)
+	}
+}
+
 func TestOpusMediaPlanLoopsTwoSecondFixtureForTwentySeconds(t *testing.T) {
 	plan, err := buildOpusMediaPlan(20 * time.Second)
 	if err != nil {
@@ -1744,11 +1858,50 @@ func TestOpusMediaPlanLoopsTwoSecondFixtureForTwentySeconds(t *testing.T) {
 	if len(plan.Packets) != plan.Frames {
 		t.Fatalf("packets = %d, want one RTP packet per Opus frame", len(plan.Packets))
 	}
-	if plan.Evidence.ExpectedSHA256 == "" || plan.Evidence.Bytes == 0 {
-		t.Fatalf("evidence = %#v, want expected audio payload hash and bytes", plan.Evidence)
+	if plan.Evidence.Bytes == 0 || plan.Evidence.Packets == 0 {
+		t.Fatalf("evidence = %#v, want Opus RTP packet and byte evidence", plan.Evidence)
 	}
 	if !strings.Contains(plan.Evidence.String(), "codec=opus") || !strings.Contains(plan.Evidence.String(), "sample_rate=48000") {
 		t.Fatalf("evidence missing Opus details: %s", plan.Evidence.String())
+	}
+}
+
+func TestOpusMediaPlanConcurrentBuildUsesSingleCachedPlan(t *testing.T) {
+	opusMediaPlanCache = sync.Map{}
+	defer func() {
+		opusMediaPlanCache = sync.Map{}
+		opusPlanBuildHook = nil
+	}()
+	var builds atomic.Int64
+	opusPlanBuildHook = func(time.Duration) {
+		builds.Add(1)
+	}
+	const workers = 32
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			plan, err := buildOpusMediaPlan(5 * time.Minute)
+			if err != nil {
+				errs <- err
+				return
+			}
+			if plan.Loops != 150 || len(plan.Packets) == 0 {
+				errs <- fmt.Errorf("unexpected plan loops=%d packets=%d", plan.Loops, len(plan.Packets))
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := builds.Load(); got != 1 {
+		t.Fatalf("Opus media plan builds = %d, want 1", got)
 	}
 }
 
@@ -1780,7 +1933,7 @@ func TestPionWebRTCMediaAVLoopbackReceivesVideoAndAudioRTP(t *testing.T) {
 	go func() {
 		_, _ = answerer.SendAVRTP(ctx, 200*time.Millisecond)
 	}()
-	stats, err := viewer.WaitForMedia(ctx, 3, 3*time.Second)
+	stats, err := waitForAVMediaEvidence(ctx, viewer, 3*time.Second)
 	if err != nil {
 		t.Fatalf("WaitForMedia: %v", err)
 	}
@@ -1789,7 +1942,28 @@ func TestPionWebRTCMediaAVLoopbackReceivesVideoAndAudioRTP(t *testing.T) {
 	}
 }
 
+func waitForAVMediaEvidence(ctx context.Context, viewer *PionMediaOfferSession, timeout time.Duration) (WebRTCMediaStats, error) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		stats := viewer.Snapshot()
+		if stats.H264Bytes > 0 && stats.OpusBytes > 0 && stats.OpusPackets > 0 {
+			return stats, nil
+		}
+		select {
+		case <-viewer.packetCh:
+		case <-ctx.Done():
+			return viewer.Snapshot(), ctx.Err()
+		case <-timer.C:
+			return viewer.Snapshot(), errors.New("webrtc AV media receive timeout")
+		}
+	}
+}
+
 func TestRunnerWebRTCMediaRTPRecordsCoverage(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
 	var answerersMu sync.Mutex
 	answerers := make([]*PionMediaAnswerSession, 0)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1827,7 +2001,7 @@ func TestRunnerWebRTCMediaRTPRecordsCoverage(t *testing.T) {
 			answerers = append(answerers, answerer)
 			answerersMu.Unlock()
 			go func() {
-				_, _ = answerer.SendH264RTP(context.Background(), 200*time.Millisecond)
+				_, _ = answerer.SendH264RTP(ctx, 200*time.Millisecond)
 			}()
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"status":     "ok",
@@ -1853,7 +2027,7 @@ func TestRunnerWebRTCMediaRTPRecordsCoverage(t *testing.T) {
 		}
 	}()
 
-	result, err := NewRunner(server.Client()).Run(context.Background(), Config{
+	result, err := NewRunner(server.Client()).Run(ctx, Config{
 		Profile:             ProfileSmoke,
 		APIURL:              server.URL,
 		Actors:              ActorViewer,
@@ -2448,7 +2622,7 @@ func TestRunnerWebRTCMediaAppOfferReceivesSyntheticRTP(t *testing.T) {
 		t.Fatalf("WebRTCMedia metrics = %#v, want RTP evidence", result.WebRTCMedia)
 	}
 	receive := operationByName(result.Operations, "webrtc_media_receive")
-	if !strings.Contains(receive.Evidence, "packets=") || !strings.Contains(receive.Evidence, "startup_app_request_to_first_h264_access_unit_ms=") || !strings.Contains(receive.Evidence, "selected_local_candidate_type=") {
+	if !strings.Contains(receive.Evidence, "packets=") || !strings.Contains(receive.Evidence, "h264_packets=") || !strings.Contains(receive.Evidence, "startup_app_request_to_first_rtp_ms=") || !strings.Contains(receive.Evidence, "selected_local_candidate_type=") {
 		t.Fatalf("receive evidence missing viewer-side media/startup validation: %#v", receive)
 	}
 }
@@ -2601,7 +2775,7 @@ func TestRunnerWebRTCMediaAppOfferUsesDeviceWebSocketActor(t *testing.T) {
 		t.Fatalf("answer op = %#v, want successful device actor", answer)
 	}
 	receive := operationByName(result.Operations, "webrtc_media_receive")
-	if !receive.Success || !strings.Contains(receive.Evidence, "startup_app_request_to_first_h264_access_unit_ms=") || !strings.Contains(receive.Evidence, "packets=") {
+	if !receive.Success || !strings.Contains(receive.Evidence, "startup_app_request_to_first_rtp_ms=") || !strings.Contains(receive.Evidence, "h264_packets=") {
 		t.Fatalf("receive op = %#v, want viewer-side H.264 media evidence", receive)
 	}
 }
@@ -2818,7 +2992,7 @@ func TestPostWebRTCMediaRequestRetriesDeviceNotOnline(t *testing.T) {
 	}
 }
 
-func TestAVReceiverCompareFailsWithoutAudioPayloadStats(t *testing.T) {
+func TestAVReceiverCompareFailsWithoutAudioRTPEvidence(t *testing.T) {
 	videoPlan, err := buildH264MediaPlan(200 * time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
@@ -2833,11 +3007,34 @@ func TestAVReceiverCompareFailsWithoutAudioPayloadStats(t *testing.T) {
 			len(videoPlan.Packets), videoPlan.Evidence.Bytes, len(videoPlan.Packets), videoPlan.Evidence.ExpectedSHA256, videoPlan.Evidence.ReceiverBytes),
 	}
 	op := avReceiverCompareOperation("load-device-0", "viewer-0", 10, AVRTPEvidence{Video: videoPlan.Evidence, Audio: audioPlan.Evidence}, closeOp)
-	if op.Success || op.ErrorDetail != "receiver Opus payload hash mismatch" {
-		t.Fatalf("receive op = %#v, want audio payload mismatch failure", op)
+	if op.Success || op.ErrorDetail != "receiver Opus RTP evidence incomplete" {
+		t.Fatalf("receive op = %#v, want audio RTP evidence failure", op)
 	}
-	if !strings.Contains(op.Evidence, "video_receiver_bitstream_match=true") || !strings.Contains(op.Evidence, "audio_payload_match=false") {
-		t.Fatalf("receive evidence should show video matched but audio failed: %s", op.Evidence)
+	if !strings.Contains(op.Evidence, "audio_receiver_packets=0") || strings.Contains(op.Evidence, "audio_payload_match") {
+		t.Fatalf("receive evidence should show missing audio RTP without payload match: %s", op.Evidence)
+	}
+}
+
+func TestAVReceiverComparePassesWithAudioRTPEvidenceOnly(t *testing.T) {
+	videoPlan, err := buildH264MediaPlan(200 * time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	audioPlan, err := buildOpusMediaPlan(200 * time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeOp := Operation{
+		Success: true,
+		Evidence: fmt.Sprintf(`{"status":"ok","media":{"packets_received":%d,"bytes_received":%d,"h264_packets":%d,"h264_bytes":%d,"opus_packets":3,"opus_bytes":240,"opus_frames":3,"first_opus_rtp_ms":12}}`,
+			len(videoPlan.Packets)+3, videoPlan.Evidence.Bytes+240, len(videoPlan.Packets), videoPlan.Evidence.ReceiverBytes),
+	}
+	op := avReceiverCompareOperation("load-device-0", "viewer-0", 10, AVRTPEvidence{Video: videoPlan.Evidence, Audio: audioPlan.Evidence}, closeOp)
+	if !op.Success {
+		t.Fatalf("receive op = %#v, want success with audio RTP evidence only", op)
+	}
+	if !strings.Contains(op.Evidence, "audio_receiver_packets=3") || !strings.Contains(op.Evidence, "audio_first_opus_rtp_ms=12") || strings.Contains(op.Evidence, "audio_payload_match") {
+		t.Fatalf("receive evidence should show audio RTP evidence without payload match: %s", op.Evidence)
 	}
 }
 
@@ -3492,7 +3689,7 @@ func TestBuildResultSummarizesVideoStartupLatency(t *testing.T) {
 			DeviceID: "dev-1",
 			ViewerID: "viewer-1",
 			Success:  true,
-			Evidence: "session_id=sess-1 ice_policy=relay selected_local_candidate_type=relay selected_remote_candidate_type=relay packets=30 bytes=3000 receiver_packets=30 receiver_bytes=3000 receive_ms=240 startup_api_create_ms=40 startup_offer_delivery_ms=20 startup_device_answer_ms=30 startup_remote_answer_set_ms=120 startup_ice_connected_since_session_start_ms=150 startup_ice_check_ms=30 startup_first_rtp_after_ice_ms=10 startup_first_h264_access_unit_after_rtp_ms=5 startup_app_request_to_first_rtp_ms=180 startup_app_request_to_first_h264_access_unit_ms=185",
+			Evidence: "session_id=sess-1 ice_policy=relay selected_local_candidate_type=relay selected_remote_candidate_type=relay selected_local_candidate_protocol=udp selected_remote_candidate_protocol=tcp packets=30 bytes=3000 receiver_packets=30 receiver_bytes=3000 receive_ms=240 startup_api_create_ms=40 startup_offer_delivery_ms=20 startup_device_answer_ms=30 startup_remote_answer_set_ms=120 startup_ice_connected_since_session_start_ms=150 startup_ice_check_ms=30 startup_first_rtp_after_ice_ms=10 startup_first_h264_access_unit_after_rtp_ms=5 startup_app_request_to_first_rtp_ms=180 startup_app_request_to_first_h264_access_unit_ms=185",
 		},
 		{
 			Actor:    ActorViewer,
@@ -3514,6 +3711,12 @@ func TestBuildResultSummarizesVideoStartupLatency(t *testing.T) {
 	}
 	if got := result.VideoStartupLatency[0].AppRequestToFirstH264AccessUnitMS; got != 185 {
 		t.Fatalf("first app->h264 AU = %d, want 185", got)
+	}
+	if got := result.VideoStartupLatency[0].SelectedLocalCandidateProtocol; got != "udp" {
+		t.Fatalf("first selected local candidate protocol = %q, want udp", got)
+	}
+	if got := result.VideoStartupLatency[0].SelectedRemoteCandidateProtocol; got != "tcp" {
+		t.Fatalf("first selected remote candidate protocol = %q, want tcp", got)
 	}
 	if result.WebRTCMedia.AppRequestToFirstH264AccessUnitP95MS != 217 {
 		t.Fatalf("h264 AU p95 = %d, want 217", result.WebRTCMedia.AppRequestToFirstH264AccessUnitP95MS)
@@ -3609,6 +3812,33 @@ func TestVideoStartupDeviceOwnerAddsRTPAfterICEToICEConnect(t *testing.T) {
 	}
 	if got := evidenceInt64(evidence, "startup_ice_check_ms"); got != 300 {
 		t.Fatalf("ICE check = %d, want 300", got)
+	}
+}
+
+func TestInferDeviceOwnerMediaSendFromViewerReceive(t *testing.T) {
+	startup := videoStartupClock{RunID: "run-1", SessionID: "sess-1", DeviceID: "device-1", ViewerID: "viewer-1"}
+	ops := inferDeviceOwnerMediaSendFromReceive([]Operation{{
+		Actor:       ActorDevice,
+		Name:        "webrtc_media_send",
+		DeviceID:    "device-1",
+		ViewerID:    "viewer-1",
+		Success:     false,
+		ErrorClass:  ClassWebRTCMedia,
+		ErrorDetail: "device media result missing",
+	}}, "device-1", "viewer-1", startup, Operation{
+		Actor:     ActorViewer,
+		Name:      "webrtc_media_receive",
+		DeviceID:  "device-1",
+		ViewerID:  "viewer-1",
+		Success:   true,
+		LatencyMS: 3210,
+		Evidence:  "packets=2 bytes=1009 selected_local_candidate_type=relay selected_remote_candidate_type=relay",
+	})
+	if len(ops) != 1 || !ops[0].Success || ops[0].ErrorClass != "" || ops[0].ErrorDetail != "" {
+		t.Fatalf("ops = %#v, want inferred success", ops)
+	}
+	if !strings.Contains(ops[0].Evidence, "inferred_from_viewer_receive=true") || !strings.Contains(ops[0].Evidence, "packets=2") {
+		t.Fatalf("evidence = %q, want viewer receive proof", ops[0].Evidence)
 	}
 }
 

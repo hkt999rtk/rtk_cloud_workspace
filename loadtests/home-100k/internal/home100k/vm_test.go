@@ -27,6 +27,34 @@ func TestBuildLifecycleActionsTagsEphemeralVMsByRunID(t *testing.T) {
 	}
 }
 
+func TestBuildLifecycleActionsIncludesVideoOnlyVMs(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:               "cloud_env/staging/lke",
+		Brandname:             "RTK",
+		Region:                "us-sea",
+		DeviceCount:           20000,
+		VMCount:               2,
+		VideoGeneratorVMCount: 2,
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+	actions := BuildLifecycleActions(plan, "run-video")
+
+	createVideo := filterActions(actions, "provision-vm", "video")
+	if len(createVideo) != 2 {
+		t.Fatalf("video provision actions = %d, want 2", len(createVideo))
+	}
+	for _, action := range createVideo {
+		if !contains(action.Tags, "video") || !contains(action.Tags, "run-video") {
+			t.Fatalf("video action tags = %#v, want video/run-id tags", action.Tags)
+		}
+	}
+	if destroyVideo := filterActions(actions, "destroy-vm", "video"); len(destroyVideo) != 2 {
+		t.Fatalf("video destroy actions = %d, want 2", len(destroyVideo))
+	}
+}
+
 func TestBuildLifecycleActionsContainsRequiredWorkflowOrder(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
 		EnvRoot:   "cloud_env/staging/lke",

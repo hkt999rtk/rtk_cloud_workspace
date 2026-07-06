@@ -22,7 +22,7 @@ import (
 	"github.com/pion/webrtc/v3/pkg/media/h264reader"
 )
 
-const defaultWebRTCMediaSettle = time.Second
+const defaultWebRTCMediaSettle = 0
 
 type WebRTCValidation struct {
 	ICEServerCount int
@@ -35,75 +35,102 @@ type PionOfferSession struct {
 }
 
 type WebRTCMediaStats struct {
-	ICEConnectedLatencyMS       int64
-	ICEGatheringCompleteMS      int64
-	RemoteDescriptionSetMS      int64
-	LocalDescriptionSetMS       int64
-	ICECheckingMS               int64
-	FirstLocalCandidateMS       int64
-	FirstLocalRelayCandidateMS  int64
-	LocalHostCandidates         int
-	LocalSrflxCandidates        int
-	LocalRelayCandidates        int
-	ICEConnectionStates         []string
-	ICEGatheringStates          []string
-	TimeToFirstRTPMS            int64
-	FirstH264AccessUnitMS       int64
-	PacketsReceived             int
-	BytesReceived               int
-	ReceiveDurationMS           int64
-	SelectedLocalCandidateType  string
-	SelectedRemoteCandidateType string
-	H264SHA256                  string
-	H264Bytes                   int
-	H264Packets                 int
-	NALTypes                    []string
-	Packetizations              []string
-	OpusSHA256                  string
-	OpusBytes                   int
-	OpusPackets                 int
-	OpusFrames                  int
+	ICEConnectedLatencyMS           int64
+	ICEGatheringCompleteMS          int64
+	RemoteDescriptionSetMS          int64
+	LocalDescriptionSetMS           int64
+	ICECheckingMS                   int64
+	FirstLocalCandidateMS           int64
+	FirstLocalRelayCandidateMS      int64
+	FirstLocalRelayUDPCandidateMS   int64
+	FirstLocalRelayTCPCandidateMS   int64
+	LocalHostCandidates             int
+	LocalSrflxCandidates            int
+	LocalRelayCandidates            int
+	LocalUDPCandidates              int
+	LocalTCPCandidates              int
+	LocalRelayUDPCandidates         int
+	LocalRelayTCPCandidates         int
+	ICEConnectionStates             []string
+	ICEGatheringStates              []string
+	TimeToFirstRTPMS                int64
+	FirstH264RTPMS                  int64
+	FirstH264AccessUnitMS           int64
+	PacketsReceived                 int
+	BytesReceived                   int
+	ReceiveDurationMS               int64
+	SelectedLocalCandidateType      string
+	SelectedRemoteCandidateType     string
+	SelectedLocalCandidateProtocol  string
+	SelectedRemoteCandidateProtocol string
+	H264SHA256                      string
+	H264Bytes                       int
+	H264Packets                     int
+	NALTypes                        []string
+	Packetizations                  []string
+	FirstOpusRTPMS                  int64
+	OpusBytes                       int
+	OpusPackets                     int
+	OpusFrames                      int
 }
 
 type H264RTPPlan struct {
-	Duration  time.Duration
-	Loops     int
-	FrameRate int
-	Frames    int
-	Packets   []*rtp.Packet
-	Evidence  H264RTPEvidence
+	Duration     time.Duration
+	Loops        int
+	FrameRate    int
+	Frames       int
+	FramePackets []H264RTPFrame
+	Packets      []*rtp.Packet
+	Evidence     H264RTPEvidence
+}
+
+type H264RTPFrame struct {
+	Packets []*rtp.Packet
 }
 
 type H264RTPEvidence struct {
-	Packets                     int
-	Bytes                       int
-	DurationMS                  int64
-	Loops                       int
-	Frames                      int
-	NALTypes                    map[string]bool
-	Packetizations              map[string]bool
-	ReceiveMS                   int64
-	TimeToFirstMS               int64
-	ICEMS                       int64
-	ICEGatheringCompleteMS      int64
-	RemoteDescriptionSetMS      int64
-	LocalDescriptionSetMS       int64
-	ICECheckingMS               int64
-	FirstLocalCandidateMS       int64
-	FirstLocalRelayCandidateMS  int64
-	LocalHostCandidates         int
-	LocalSrflxCandidates        int
-	LocalRelayCandidates        int
-	ICEConnectionStates         []string
-	ICEGatheringStates          []string
-	SelectedLocalCandidateType  string
-	SelectedRemoteCandidateType string
-	ExpectedSHA256              string
-	ReceiverSHA256              string
-	ReceiverPackets             int
-	ReceiverBytes               int
-	ReceiverNALTypes            map[string]bool
-	BitstreamMatch              bool
+	Packets                         int
+	Bytes                           int
+	DurationMS                      int64
+	Loops                           int
+	Frames                          int
+	NALTypes                        map[string]bool
+	Packetizations                  map[string]bool
+	ReceiveMS                       int64
+	TimeToFirstMS                   int64
+	ICEMS                           int64
+	ICEGatheringCompleteMS          int64
+	RemoteDescriptionSetMS          int64
+	LocalDescriptionSetMS           int64
+	ICECheckingMS                   int64
+	FirstLocalCandidateMS           int64
+	FirstLocalRelayCandidateMS      int64
+	FirstLocalRelayUDPCandidateMS   int64
+	FirstLocalRelayTCPCandidateMS   int64
+	LocalHostCandidates             int
+	LocalSrflxCandidates            int
+	LocalRelayCandidates            int
+	LocalUDPCandidates              int
+	LocalTCPCandidates              int
+	LocalRelayUDPCandidates         int
+	LocalRelayTCPCandidates         int
+	ICEConnectionStates             []string
+	ICEGatheringStates              []string
+	SelectedLocalCandidateType      string
+	SelectedRemoteCandidateType     string
+	SelectedLocalCandidateProtocol  string
+	SelectedRemoteCandidateProtocol string
+	ExpectedSHA256                  string
+	ReceiverSHA256                  string
+	ReceiverPackets                 int
+	ReceiverBytes                   int
+	ReceiverNALTypes                map[string]bool
+	BitstreamMatch                  bool
+	SchedulerDroppedJobs            int
+	SchedulerDroppedPackets         int
+	SchedulerQueueFullDrops         int
+	SchedulerPacketsSent            int
+	SchedulerBytesSent              int
 }
 
 type OpusRTPPlan struct {
@@ -117,35 +144,46 @@ type OpusRTPPlan struct {
 }
 
 type OpusRTPEvidence struct {
-	Packets                     int
-	Bytes                       int
-	DurationMS                  int64
-	Loops                       int
-	Frames                      int
-	SampleRate                  int
-	Channels                    int
-	ReceiveMS                   int64
-	TimeToFirstMS               int64
-	ICEMS                       int64
-	ICEGatheringCompleteMS      int64
-	RemoteDescriptionSetMS      int64
-	LocalDescriptionSetMS       int64
-	ICECheckingMS               int64
-	FirstLocalCandidateMS       int64
-	FirstLocalRelayCandidateMS  int64
-	LocalHostCandidates         int
-	LocalSrflxCandidates        int
-	LocalRelayCandidates        int
-	ICEConnectionStates         []string
-	ICEGatheringStates          []string
-	SelectedLocalCandidateType  string
-	SelectedRemoteCandidateType string
-	ExpectedSHA256              string
-	ReceiverSHA256              string
-	ReceiverPackets             int
-	ReceiverBytes               int
-	ReceiverFrames              int
-	PayloadMatch                bool
+	Packets                         int
+	Bytes                           int
+	DurationMS                      int64
+	Loops                           int
+	Frames                          int
+	SampleRate                      int
+	Channels                        int
+	ReceiveMS                       int64
+	TimeToFirstMS                   int64
+	ICEMS                           int64
+	ICEGatheringCompleteMS          int64
+	RemoteDescriptionSetMS          int64
+	LocalDescriptionSetMS           int64
+	ICECheckingMS                   int64
+	FirstLocalCandidateMS           int64
+	FirstLocalRelayCandidateMS      int64
+	FirstLocalRelayUDPCandidateMS   int64
+	FirstLocalRelayTCPCandidateMS   int64
+	LocalHostCandidates             int
+	LocalSrflxCandidates            int
+	LocalRelayCandidates            int
+	LocalUDPCandidates              int
+	LocalTCPCandidates              int
+	LocalRelayUDPCandidates         int
+	LocalRelayTCPCandidates         int
+	ICEConnectionStates             []string
+	ICEGatheringStates              []string
+	SelectedLocalCandidateType      string
+	SelectedRemoteCandidateType     string
+	SelectedLocalCandidateProtocol  string
+	SelectedRemoteCandidateProtocol string
+	ReceiverPackets                 int
+	ReceiverBytes                   int
+	ReceiverFrames                  int
+	FirstOpusRTPMS                  int64
+	SchedulerDroppedJobs            int
+	SchedulerDroppedPackets         int
+	SchedulerQueueFullDrops         int
+	SchedulerPacketsSent            int
+	SchedulerBytesSent              int
 }
 
 type AVRTPEvidence struct {
@@ -168,7 +206,6 @@ type PionMediaOfferSession struct {
 	stats          WebRTCMediaStats
 	h264           codecs.H264Packet
 	h264Bytes      bytes.Buffer
-	opusBytes      bytes.Buffer
 	nalTypes       map[string]bool
 	packetizations map[string]bool
 }
@@ -250,9 +287,11 @@ func NewPionMediaOfferSessionForSetWithICEServersAndPolicy(ctx context.Context, 
 			session.iceOnce.Do(func() {
 				session.mu.Lock()
 				session.stats.ICEConnectedLatencyMS = time.Since(session.started).Milliseconds()
-				localType, remoteType := selectedCandidatePairTypes(peer)
-				session.stats.SelectedLocalCandidateType = candidateTypeEvidence(localType, session.icePolicy)
-				session.stats.SelectedRemoteCandidateType = candidateTypeEvidence(remoteType, session.icePolicy)
+				pair := selectedCandidatePairTrace(peer)
+				session.stats.SelectedLocalCandidateType = candidateTypeEvidence(pair.LocalType, session.icePolicy)
+				session.stats.SelectedRemoteCandidateType = candidateTypeEvidence(pair.RemoteType, session.icePolicy)
+				session.stats.SelectedLocalCandidateProtocol = pair.LocalProtocol
+				session.stats.SelectedRemoteCandidateProtocol = pair.RemoteProtocol
 				session.mu.Unlock()
 				close(session.iceConnected)
 			})
@@ -304,29 +343,18 @@ func (s *PionMediaOfferSession) readRemoteRTP(track *webrtc.TrackRemote) {
 		s.stats.BytesReceived += len(packet.Payload)
 		if isH264 {
 			s.stats.H264Packets++
-			for _, packetization := range h264PayloadPacketizations(packet.Payload) {
-				s.packetizations[packetization] = true
-			}
-			if out, err := s.h264.Unmarshal(packet.Payload); err == nil && len(out) > 0 {
-				_, _ = s.h264Bytes.Write(out)
-				s.stats.H264Bytes = s.h264Bytes.Len()
-				s.stats.H264SHA256 = sha256Hex(s.h264Bytes.Bytes())
-				for _, name := range h264NALTypeNamesFromAnnexB(out) {
-					s.nalTypes[name] = true
-				}
-				s.stats.NALTypes = sortedEvidenceKeys(s.nalTypes)
-				s.stats.Packetizations = sortedEvidenceKeys(s.packetizations)
-				if s.stats.FirstH264AccessUnitMS == 0 && h264AccessUnitEvidenceReady(s.nalTypes) {
-					s.stats.FirstH264AccessUnitMS = time.Since(s.started).Milliseconds()
-				}
+			s.stats.H264Bytes += len(packet.Payload)
+			if s.stats.FirstH264RTPMS == 0 {
+				s.stats.FirstH264RTPMS = time.Since(s.started).Milliseconds()
 			}
 		}
 		if isOpus {
-			_, _ = s.opusBytes.Write(packet.Payload)
 			s.stats.OpusPackets++
 			s.stats.OpusFrames++
-			s.stats.OpusBytes = s.opusBytes.Len()
-			s.stats.OpusSHA256 = sha256Hex(s.opusBytes.Bytes())
+			s.stats.OpusBytes += len(packet.Payload)
+			if s.stats.FirstOpusRTPMS == 0 {
+				s.stats.FirstOpusRTPMS = time.Since(s.started).Milliseconds()
+			}
 		}
 		if s.stats.TimeToFirstRTPMS == 0 {
 			s.stats.TimeToFirstRTPMS = time.Since(s.started).Milliseconds()
@@ -347,7 +375,7 @@ func h264AccessUnitEvidenceReady(types map[string]bool) bool {
 
 type iceTraceStatsRecorder func(func(*WebRTCMediaStats))
 
-func installICETrace(peer *webrtc.PeerConnection, started time.Time, policy webrtc.ICETransportPolicy, recordGathering func(string), recordCandidate func(string), recordConnection func(string)) {
+func installICETrace(peer *webrtc.PeerConnection, started time.Time, policy webrtc.ICETransportPolicy, recordGathering func(string), recordCandidate func(candidateTrace), recordConnection func(string)) {
 	peer.OnICEGatheringStateChange(func(state webrtc.ICEGathererState) {
 		recordGathering(state.String())
 	})
@@ -356,7 +384,7 @@ func installICETrace(peer *webrtc.PeerConnection, started time.Time, policy webr
 			recordGathering("complete")
 			return
 		}
-		recordCandidate(candidateTypeFromCandidateLine(candidate.ToJSON().Candidate))
+		recordCandidate(candidateTraceFromCandidateLine(candidate.ToJSON().Candidate))
 	})
 	peer.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		recordConnection(state.String())
@@ -377,9 +405,9 @@ func (s *PionMediaOfferSession) recordICEGatheringComplete() {
 	})
 }
 
-func (s *PionMediaOfferSession) recordICECandidate(candidateType string) {
+func (s *PionMediaOfferSession) recordICECandidate(candidate candidateTrace) {
 	s.recordICETrace(func(stats *WebRTCMediaStats) {
-		recordICECandidate(stats, candidateType, s.started)
+		recordICECandidate(stats, candidate, s.started)
 	})
 }
 
@@ -423,9 +451,9 @@ func (s *PionMediaAnswerSession) recordICEGatheringComplete() {
 	})
 }
 
-func (s *PionMediaAnswerSession) recordICECandidate(candidateType string) {
+func (s *PionMediaAnswerSession) recordICECandidate(candidate candidateTrace) {
 	s.recordICETrace(func(stats *WebRTCMediaStats) {
-		recordICECandidate(stats, candidateType, s.started)
+		recordICECandidate(stats, candidate, s.started)
 	})
 }
 
@@ -474,12 +502,18 @@ func recordICEGatheringComplete(stats *WebRTCMediaStats, started time.Time) {
 	}
 }
 
-func recordICECandidate(stats *WebRTCMediaStats, candidateType string, started time.Time) {
+func recordICECandidate(stats *WebRTCMediaStats, candidate candidateTrace, started time.Time) {
 	nowMS := time.Since(started).Milliseconds()
 	if stats.FirstLocalCandidateMS == 0 {
 		stats.FirstLocalCandidateMS = nowMS
 	}
-	switch strings.ToLower(strings.TrimSpace(candidateType)) {
+	switch candidate.Protocol {
+	case "udp":
+		stats.LocalUDPCandidates++
+	case "tcp":
+		stats.LocalTCPCandidates++
+	}
+	switch candidate.Type {
 	case "host":
 		stats.LocalHostCandidates++
 	case "srflx":
@@ -488,6 +522,18 @@ func recordICECandidate(stats *WebRTCMediaStats, candidateType string, started t
 		stats.LocalRelayCandidates++
 		if stats.FirstLocalRelayCandidateMS == 0 {
 			stats.FirstLocalRelayCandidateMS = nowMS
+		}
+		switch candidate.Protocol {
+		case "udp":
+			stats.LocalRelayUDPCandidates++
+			if stats.FirstLocalRelayUDPCandidateMS == 0 {
+				stats.FirstLocalRelayUDPCandidateMS = nowMS
+			}
+		case "tcp":
+			stats.LocalRelayTCPCandidates++
+			if stats.FirstLocalRelayTCPCandidateMS == 0 {
+				stats.FirstLocalRelayTCPCandidateMS = nowMS
+			}
 		}
 	}
 }
@@ -504,14 +550,28 @@ func recordICEConnectionState(stats *WebRTCMediaStats, state string, started tim
 	}
 }
 
-func candidateTypeFromCandidateLine(candidate string) string {
+type candidateTrace struct {
+	Type     string
+	Protocol string
+}
+
+func candidateTraceFromCandidateLine(candidate string) candidateTrace {
 	fields := strings.Fields(candidate)
+	trace := candidateTrace{}
+	if len(fields) > 2 {
+		trace.Protocol = strings.ToLower(strings.TrimSpace(fields[2]))
+	}
 	for i, field := range fields {
 		if field == "typ" && i+1 < len(fields) {
-			return strings.TrimSpace(fields[i+1])
+			trace.Type = strings.ToLower(strings.TrimSpace(fields[i+1]))
+			break
 		}
 	}
-	return ""
+	return trace
+}
+
+func candidateTypeFromCandidateLine(candidate string) string {
+	return candidateTraceFromCandidateLine(candidate).Type
 }
 
 func (s *PionMediaOfferSession) OfferPayload() map[string]string {
@@ -604,10 +664,12 @@ func (s *PionMediaOfferSession) WaitForH264AccessUnit(ctx context.Context, timeo
 func (s *PionMediaOfferSession) Snapshot() WebRTCMediaStats {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.stats.SelectedLocalCandidateType == "" || s.stats.SelectedRemoteCandidateType == "" {
-		localType, remoteType := selectedCandidatePairTypes(s.peer)
-		s.stats.SelectedLocalCandidateType = candidateTypeEvidence(localType, s.icePolicy)
-		s.stats.SelectedRemoteCandidateType = candidateTypeEvidence(remoteType, s.icePolicy)
+	if s.stats.SelectedLocalCandidateType == "" || s.stats.SelectedRemoteCandidateType == "" || s.stats.SelectedLocalCandidateProtocol == "" || s.stats.SelectedRemoteCandidateProtocol == "" {
+		pair := selectedCandidatePairTrace(s.peer)
+		s.stats.SelectedLocalCandidateType = candidateTypeEvidence(pair.LocalType, s.icePolicy)
+		s.stats.SelectedRemoteCandidateType = candidateTypeEvidence(pair.RemoteType, s.icePolicy)
+		s.stats.SelectedLocalCandidateProtocol = pair.LocalProtocol
+		s.stats.SelectedRemoteCandidateProtocol = pair.RemoteProtocol
 	}
 	return s.stats
 }
@@ -656,9 +718,11 @@ func NewPionMediaAnswerSessionWithICEServersForSetAndPolicy(ctx context.Context,
 			session.iceOnce.Do(func() {
 				session.mu.Lock()
 				session.stats.ICEConnectedLatencyMS = time.Since(session.started).Milliseconds()
-				localType, remoteType := selectedCandidatePairTypes(peer)
-				session.stats.SelectedLocalCandidateType = candidateTypeEvidence(localType, session.icePolicy)
-				session.stats.SelectedRemoteCandidateType = candidateTypeEvidence(remoteType, session.icePolicy)
+				pair := selectedCandidatePairTrace(peer)
+				session.stats.SelectedLocalCandidateType = candidateTypeEvidence(pair.LocalType, session.icePolicy)
+				session.stats.SelectedRemoteCandidateType = candidateTypeEvidence(pair.RemoteType, session.icePolicy)
+				session.stats.SelectedLocalCandidateProtocol = pair.LocalProtocol
+				session.stats.SelectedRemoteCandidateProtocol = pair.RemoteProtocol
 				session.mu.Unlock()
 				close(session.iceConnected)
 			})
@@ -828,11 +892,13 @@ func (s *PionMediaAnswerSession) SendAVRTP(ctx context.Context, duration time.Du
 	audioPlan.Evidence.TimeToFirstMS = firstRTPAfterICE
 	errCh := make(chan error, 2)
 	go func() {
-		_, err := s.sendH264Plan(ctx, videoPlan)
+		sent, err := s.sendOpusPlan(ctx, audioPlan)
+		audioPlan = sent
 		errCh <- err
 	}()
 	go func() {
-		_, err := s.sendOpusPlan(ctx, audioPlan)
+		sent, err := s.sendH264Plan(ctx, videoPlan)
+		videoPlan = sent
 		errCh <- err
 	}()
 	for i := 0; i < 2; i++ {
@@ -846,7 +912,20 @@ func (s *PionMediaAnswerSession) SendAVRTP(ctx context.Context, duration time.Du
 	return AVRTPEvidence{Video: videoPlan.Evidence, Audio: audioPlan.Evidence}, nil
 }
 
+var (
+	h264MediaPlanCache sync.Map
+	h264MediaPlanMu    sync.Mutex
+	h264PlanBuildHook  func(time.Duration)
+
+	opusMediaPlanCache sync.Map
+	opusMediaPlanMu    sync.Mutex
+	opusPlanBuildHook  func(time.Duration)
+)
+
 func waitWebRTCMediaSettle(ctx context.Context) error {
+	if defaultWebRTCMediaSettle <= 0 {
+		return nil
+	}
 	timer := time.NewTimer(defaultWebRTCMediaSettle)
 	defer timer.Stop()
 	select {
@@ -871,33 +950,35 @@ func (s *PionMediaAnswerSession) waitICEConnected(ctx context.Context) error {
 func (s *PionMediaAnswerSession) Snapshot() WebRTCMediaStats {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.stats.SelectedLocalCandidateType == "" || s.stats.SelectedRemoteCandidateType == "" {
-		localType, remoteType := selectedCandidatePairTypes(s.peer)
-		s.stats.SelectedLocalCandidateType = candidateTypeEvidence(localType, s.icePolicy)
-		s.stats.SelectedRemoteCandidateType = candidateTypeEvidence(remoteType, s.icePolicy)
+	if s.stats.SelectedLocalCandidateType == "" || s.stats.SelectedRemoteCandidateType == "" || s.stats.SelectedLocalCandidateProtocol == "" || s.stats.SelectedRemoteCandidateProtocol == "" {
+		pair := selectedCandidatePairTrace(s.peer)
+		s.stats.SelectedLocalCandidateType = candidateTypeEvidence(pair.LocalType, s.icePolicy)
+		s.stats.SelectedRemoteCandidateType = candidateTypeEvidence(pair.RemoteType, s.icePolicy)
+		s.stats.SelectedLocalCandidateProtocol = pair.LocalProtocol
+		s.stats.SelectedRemoteCandidateProtocol = pair.RemoteProtocol
 	}
 	return s.stats
 }
 
 func (s *PionMediaAnswerSession) sendH264Plan(ctx context.Context, plan H264RTPPlan) (H264RTPPlan, error) {
-	interval := time.Duration(0)
-	if len(plan.Packets) > 0 && plan.Duration > 0 {
-		interval = plan.Duration / time.Duration(len(plan.Packets))
+	var frames [][]*rtp.Packet
+	if len(plan.FramePackets) > 0 {
+		frames = mediaFramesFromH264(plan.FramePackets)
+	} else {
+		frames = mediaFramesFromPackets(plan.Packets)
 	}
-	for i, packet := range plan.Packets {
-		if err := s.videoTrack.WriteRTP(packet); err != nil {
-			return H264RTPPlan{}, err
-		}
-		if interval <= 0 || i == len(plan.Packets)-1 {
-			continue
-		}
-		timer := time.NewTimer(interval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return H264RTPPlan{}, ctx.Err()
-		case <-timer.C:
-		}
+	stats, err := sharedMediaPacer.Send(ctx, mediaPacedSendRequest{
+		Label:    "h264",
+		Frames:   frames,
+		Duration: plan.Duration,
+		WriteRTP: s.videoTrack.WriteRTP,
+	})
+	plan.Evidence = plan.Evidence.WithSchedulerStats(stats)
+	if !stats.FirstWriteAt.IsZero() {
+		plan.Evidence.TimeToFirstMS = nonNegativeMS(stats.FirstWriteAt.Sub(s.started).Milliseconds() - plan.Evidence.ICEMS)
+	}
+	if err != nil {
+		return H264RTPPlan{}, err
 	}
 	return plan, nil
 }
@@ -906,24 +987,18 @@ func (s *PionMediaAnswerSession) sendOpusPlan(ctx context.Context, plan OpusRTPP
 	if s.audioTrack == nil {
 		return OpusRTPPlan{}, errors.New("webrtc media answerer missing Opus audio track")
 	}
-	interval := time.Duration(0)
-	if len(plan.Packets) > 0 && plan.Duration > 0 {
-		interval = plan.Duration / time.Duration(len(plan.Packets))
+	stats, err := sharedMediaPacer.Send(ctx, mediaPacedSendRequest{
+		Label:    "opus",
+		Frames:   mediaFramesFromPackets(plan.Packets),
+		Duration: plan.Duration,
+		WriteRTP: s.audioTrack.WriteRTP,
+	})
+	plan.Evidence = plan.Evidence.WithSchedulerStats(stats)
+	if !stats.FirstWriteAt.IsZero() {
+		plan.Evidence.TimeToFirstMS = nonNegativeMS(stats.FirstWriteAt.Sub(s.started).Milliseconds() - plan.Evidence.ICEMS)
 	}
-	for i, packet := range plan.Packets {
-		if err := s.audioTrack.WriteRTP(packet); err != nil {
-			return OpusRTPPlan{}, err
-		}
-		if interval <= 0 || i == len(plan.Packets)-1 {
-			continue
-		}
-		timer := time.NewTimer(interval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return OpusRTPPlan{}, ctx.Err()
-		case <-timer.C:
-		}
+	if err != nil {
+		return OpusRTPPlan{}, err
 	}
 	return plan, nil
 }
@@ -931,6 +1006,18 @@ func (s *PionMediaAnswerSession) sendOpusPlan(ctx context.Context, plan OpusRTPP
 func buildH264MediaPlan(duration time.Duration) (H264RTPPlan, error) {
 	if duration <= 0 {
 		duration = 20 * time.Second
+	}
+	cacheKey := duration.String()
+	if cached, ok := h264MediaPlanCache.Load(cacheKey); ok {
+		return cached.(H264RTPPlan), nil
+	}
+	h264MediaPlanMu.Lock()
+	defer h264MediaPlanMu.Unlock()
+	if cached, ok := h264MediaPlanCache.Load(cacheKey); ok {
+		return cached.(H264RTPPlan), nil
+	}
+	if h264PlanBuildHook != nil {
+		h264PlanBuildHook(duration)
 	}
 	sample, err := h264AnnexBSample(context.Background())
 	if err != nil {
@@ -946,6 +1033,7 @@ func buildH264MediaPlan(duration time.Duration) (H264RTPPlan, error) {
 	}
 	packetizer := rtp.NewPacketizer(1200, 96, 0x52544b43, &codecs.H264Payloader{}, rtp.NewFixedSequencer(1), 90000)
 	allPackets := make([]*rtp.Packet, 0)
+	allFrames := make([]H264RTPFrame, 0, loops*int(fixtureDuration.Seconds())*frameRate)
 	evidence := H264RTPEvidence{
 		DurationMS:     duration.Milliseconds(),
 		Loops:          loops,
@@ -954,11 +1042,14 @@ func buildH264MediaPlan(duration time.Duration) (H264RTPPlan, error) {
 		Packetizations: map[string]bool{},
 	}
 	for i := 0; i < loops; i++ {
-		packets, loopEvidence, err := packetizeH264AnnexBWithPacketizer(sample, packetizer, 3000)
+		frames, loopEvidence, err := packetizeH264AnnexBFramesWithPacketizer(sample, packetizer, frameRate, fixtureDuration)
 		if err != nil {
 			return H264RTPPlan{}, err
 		}
-		allPackets = append(allPackets, packets...)
+		for _, frame := range frames {
+			allPackets = append(allPackets, frame.Packets...)
+		}
+		allFrames = append(allFrames, frames...)
 		evidence.Packets += loopEvidence.Packets
 		evidence.Bytes += loopEvidence.Bytes
 		for name := range loopEvidence.NALTypes {
@@ -975,12 +1066,26 @@ func buildH264MediaPlan(duration time.Duration) (H264RTPPlan, error) {
 	evidence.ExpectedSHA256 = expectedSHA256
 	evidence.ReceiverSHA256 = ""
 	evidence.ReceiverBytes = h264Bytes
-	return H264RTPPlan{Duration: duration, Loops: loops, FrameRate: frameRate, Frames: evidence.Frames, Packets: allPackets, Evidence: evidence}, nil
+	plan := H264RTPPlan{Duration: duration, Loops: loops, FrameRate: frameRate, Frames: evidence.Frames, FramePackets: allFrames, Packets: allPackets, Evidence: evidence}
+	h264MediaPlanCache.Store(cacheKey, plan)
+	return plan, nil
 }
 
 func buildOpusMediaPlan(duration time.Duration) (OpusRTPPlan, error) {
 	if duration <= 0 {
 		duration = 20 * time.Second
+	}
+	cacheKey := duration.String()
+	if cached, ok := opusMediaPlanCache.Load(cacheKey); ok {
+		return cached.(OpusRTPPlan), nil
+	}
+	opusMediaPlanMu.Lock()
+	defer opusMediaPlanMu.Unlock()
+	if cached, ok := opusMediaPlanCache.Load(cacheKey); ok {
+		return cached.(OpusRTPPlan), nil
+	}
+	if opusPlanBuildHook != nil {
+		opusPlanBuildHook(duration)
 	}
 	const (
 		fixtureDuration = 2 * time.Second
@@ -1020,16 +1125,17 @@ func buildOpusMediaPlan(duration time.Duration) (OpusRTPPlan, error) {
 		}
 	}
 	evidence := OpusRTPEvidence{
-		Packets:        len(allPackets),
-		Bytes:          payloads.Len(),
-		DurationMS:     duration.Milliseconds(),
-		Loops:          loops,
-		Frames:         len(allPackets),
-		SampleRate:     sampleRate,
-		Channels:       channels,
-		ExpectedSHA256: sha256Hex(payloads.Bytes()),
+		Packets:    len(allPackets),
+		Bytes:      payloads.Len(),
+		DurationMS: duration.Milliseconds(),
+		Loops:      loops,
+		Frames:     len(allPackets),
+		SampleRate: sampleRate,
+		Channels:   channels,
 	}
-	return OpusRTPPlan{Duration: duration, Loops: loops, SampleRate: sampleRate, Channels: channels, Frames: len(allPackets), Packets: allPackets, Evidence: evidence}, nil
+	plan := OpusRTPPlan{Duration: duration, Loops: loops, SampleRate: sampleRate, Channels: channels, Frames: len(allPackets), Packets: allPackets, Evidence: evidence}
+	opusMediaPlanCache.Store(cacheKey, plan)
+	return plan, nil
 }
 
 func opusFrameFixture() ([][]byte, error) {
@@ -1103,7 +1209,15 @@ func h264AnnexBSample(_ context.Context) ([]byte, error) {
 
 func packetizeH264AnnexBForRTP(sample []byte, mtu uint16) ([]*rtp.Packet, H264RTPEvidence, error) {
 	packetizer := rtp.NewPacketizer(mtu, 96, 0x52544b43, &codecs.H264Payloader{}, rtp.NewFixedSequencer(1), 90000)
-	return packetizeH264AnnexBWithPacketizer(sample, packetizer, 3000)
+	frames, evidence, err := packetizeH264AnnexBFramesWithPacketizer(sample, packetizer, 30, 2*time.Second)
+	if err != nil {
+		return nil, H264RTPEvidence{}, err
+	}
+	packets := make([]*rtp.Packet, 0, evidence.Packets)
+	for _, frame := range frames {
+		packets = append(packets, frame.Packets...)
+	}
+	return packets, evidence, nil
 }
 
 func packetizeH264AnnexBWithPacketizer(sample []byte, packetizer rtp.Packetizer, samples uint32) ([]*rtp.Packet, H264RTPEvidence, error) {
@@ -1135,6 +1249,129 @@ func packetizeH264AnnexBWithPacketizer(sample []byte, packetizer rtp.Packetizer,
 		return nil, H264RTPEvidence{}, errors.New("H.264 fixture produced no RTP packets")
 	}
 	return packets, evidence, nil
+}
+
+func packetizeH264AnnexBFramesWithPacketizer(sample []byte, packetizer rtp.Packetizer, frameRate int, fixtureDuration time.Duration) ([]H264RTPFrame, H264RTPEvidence, error) {
+	nals, err := h264NALUnits(sample)
+	if err != nil {
+		return nil, H264RTPEvidence{}, err
+	}
+	nalFrames, err := h264AccessUnitNALGroups(nals, frameRate, fixtureDuration)
+	if err != nil {
+		return nil, H264RTPEvidence{}, err
+	}
+	evidence := H264RTPEvidence{NALTypes: map[string]bool{}, Packetizations: map[string]bool{}}
+	frames := make([]H264RTPFrame, 0, len(nalFrames))
+	for _, nalFrame := range nalFrames {
+		frame := H264RTPFrame{}
+		for i, nal := range nalFrame {
+			if len(nal) == 0 {
+				continue
+			}
+			nalType := h264NALTypeName(nal[0] & 0x1f)
+			if nalType != "" {
+				evidence.NALTypes[nalType] = true
+			}
+			samples := uint32(0)
+			if i == len(nalFrame)-1 {
+				samples = 3000
+			}
+			rtpPackets := packetizer.Packetize(nal, samples)
+			for _, packet := range rtpPackets {
+				packet.Marker = false
+				evidence.Packets++
+				evidence.Bytes += len(packet.Payload)
+				for _, packetization := range h264PayloadPacketizations(packet.Payload) {
+					evidence.Packetizations[packetization] = true
+				}
+				frame.Packets = append(frame.Packets, packet)
+			}
+		}
+		if len(frame.Packets) == 0 {
+			continue
+		}
+		frame.Packets[len(frame.Packets)-1].Marker = true
+		frames = append(frames, frame)
+	}
+	if evidence.Packets == 0 {
+		return nil, H264RTPEvidence{}, errors.New("H.264 fixture produced no RTP packets")
+	}
+	return frames, evidence, nil
+}
+
+func h264AccessUnitNALGroups(nals [][]byte, frameRate int, fixtureDuration time.Duration) ([][][]byte, error) {
+	if frameRate <= 0 || fixtureDuration <= 0 {
+		return nil, errors.New("invalid H.264 frame grouping parameters")
+	}
+	expectedFrames := int(fixtureDuration.Seconds() * float64(frameRate))
+	if expectedFrames <= 0 {
+		return nil, errors.New("invalid H.264 expected frame count")
+	}
+	vclCount := 0
+	for _, nal := range nals {
+		if len(nal) == 0 {
+			continue
+		}
+		switch nal[0] & 0x1f {
+		case 1, 5:
+			vclCount++
+		}
+	}
+	if vclCount == 0 {
+		return nil, errors.New("H.264 fixture has no VCL NAL units")
+	}
+	if vclCount%expectedFrames != 0 {
+		return nil, fmt.Errorf("H.264 VCL NAL count %d is not divisible by expected frames %d", vclCount, expectedFrames)
+	}
+	vclPerFrame := vclCount / expectedFrames
+	frames := make([][][]byte, 0, expectedFrames)
+	pending := make([][]byte, 0)
+	current := make([][]byte, 0, vclPerFrame+4)
+	currentVCL := 0
+	flush := func() {
+		if len(current) == 0 {
+			return
+		}
+		frames = append(frames, current)
+		current = nil
+		currentVCL = 0
+	}
+	for _, nal := range nals {
+		if len(nal) == 0 {
+			continue
+		}
+		switch nal[0] & 0x1f {
+		case 1, 5:
+			if len(current) == 0 && len(pending) > 0 {
+				current = append(current, pending...)
+				pending = nil
+			}
+			current = append(current, nal)
+			currentVCL++
+			if currentVCL == vclPerFrame {
+				flush()
+			}
+		default:
+			if len(current) == 0 {
+				pending = append(pending, nal)
+			} else {
+				current = append(current, nal)
+			}
+		}
+	}
+	if len(current) > 0 {
+		flush()
+	}
+	if len(pending) > 0 {
+		if len(frames) == 0 {
+			return nil, errors.New("H.264 fixture has non-VCL NAL units but no frames")
+		}
+		frames[len(frames)-1] = append(frames[len(frames)-1], pending...)
+	}
+	if len(frames) != expectedFrames {
+		return nil, fmt.Errorf("H.264 frame groups = %d, want %d", len(frames), expectedFrames)
+	}
+	return frames, nil
 }
 
 func h264NALUnits(sample []byte) ([][]byte, error) {
@@ -1283,18 +1520,37 @@ func (e H264RTPEvidence) WithICEStats(stats WebRTCMediaStats) H264RTPEvidence {
 	e.ICECheckingMS = stats.ICECheckingMS
 	e.FirstLocalCandidateMS = stats.FirstLocalCandidateMS
 	e.FirstLocalRelayCandidateMS = stats.FirstLocalRelayCandidateMS
+	e.FirstLocalRelayUDPCandidateMS = stats.FirstLocalRelayUDPCandidateMS
+	e.FirstLocalRelayTCPCandidateMS = stats.FirstLocalRelayTCPCandidateMS
 	e.LocalHostCandidates = stats.LocalHostCandidates
 	e.LocalSrflxCandidates = stats.LocalSrflxCandidates
 	e.LocalRelayCandidates = stats.LocalRelayCandidates
+	e.LocalUDPCandidates = stats.LocalUDPCandidates
+	e.LocalTCPCandidates = stats.LocalTCPCandidates
+	e.LocalRelayUDPCandidates = stats.LocalRelayUDPCandidates
+	e.LocalRelayTCPCandidates = stats.LocalRelayTCPCandidates
 	e.ICEConnectionStates = append([]string(nil), stats.ICEConnectionStates...)
 	e.ICEGatheringStates = append([]string(nil), stats.ICEGatheringStates...)
+	e.SelectedLocalCandidateProtocol = stats.SelectedLocalCandidateProtocol
+	e.SelectedRemoteCandidateProtocol = stats.SelectedRemoteCandidateProtocol
+	return e
+}
+
+func (e H264RTPEvidence) WithSchedulerStats(stats mediaPacedSendStats) H264RTPEvidence {
+	e.SchedulerDroppedJobs = stats.DroppedJobs
+	e.SchedulerDroppedPackets = stats.DroppedPackets
+	e.SchedulerQueueFullDrops = stats.QueueFullDrops
+	e.SchedulerPacketsSent = stats.PacketsSent
+	e.SchedulerBytesSent = stats.BytesSent
 	return e
 }
 
 func (e H264RTPEvidence) String() string {
-	base := fmt.Sprintf("codec=h264 packets=%d bytes=%d duration_ms=%d loops=%d frames=%d nal_types=%s packetization=%s receive_ms=%d ttfb_ms=%d ice_ms=%d selected_local_candidate_type=%s selected_remote_candidate_type=%s",
-		e.Packets, e.Bytes, e.DurationMS, e.Loops, e.Frames, joinEvidenceKeys(e.NALTypes), joinEvidenceKeys(e.Packetizations), e.ReceiveMS, e.TimeToFirstMS, e.ICEMS, evidenceOrDefault(e.SelectedLocalCandidateType, "unknown"), evidenceOrDefault(e.SelectedRemoteCandidateType, "unknown"))
-	base = appendICETraceEvidence(base, e.ICEGatheringCompleteMS, e.RemoteDescriptionSetMS, e.LocalDescriptionSetMS, e.ICECheckingMS, e.FirstLocalCandidateMS, e.FirstLocalRelayCandidateMS, e.LocalHostCandidates, e.LocalSrflxCandidates, e.LocalRelayCandidates, e.ICEConnectionStates, e.ICEGatheringStates)
+	base := fmt.Sprintf("codec=h264 packets=%d bytes=%d duration_ms=%d loops=%d frames=%d nal_types=%s packetization=%s receive_ms=%d ttfb_ms=%d ice_ms=%d selected_local_candidate_type=%s selected_remote_candidate_type=%s selected_local_candidate_protocol=%s selected_remote_candidate_protocol=%s",
+		e.Packets, e.Bytes, e.DurationMS, e.Loops, e.Frames, joinEvidenceKeys(e.NALTypes), joinEvidenceKeys(e.Packetizations), e.ReceiveMS, e.TimeToFirstMS, e.ICEMS, evidenceOrDefault(e.SelectedLocalCandidateType, "unknown"), evidenceOrDefault(e.SelectedRemoteCandidateType, "unknown"), evidenceOrDefault(e.SelectedLocalCandidateProtocol, "unknown"), evidenceOrDefault(e.SelectedRemoteCandidateProtocol, "unknown"))
+	base = appendICETraceEvidence(base, e.ICEGatheringCompleteMS, e.RemoteDescriptionSetMS, e.LocalDescriptionSetMS, e.ICECheckingMS, e.FirstLocalCandidateMS, e.FirstLocalRelayCandidateMS, e.FirstLocalRelayUDPCandidateMS, e.FirstLocalRelayTCPCandidateMS, e.LocalHostCandidates, e.LocalSrflxCandidates, e.LocalRelayCandidates, e.LocalUDPCandidates, e.LocalTCPCandidates, e.LocalRelayUDPCandidates, e.LocalRelayTCPCandidates, e.SelectedLocalCandidateProtocol, e.SelectedRemoteCandidateProtocol, e.ICEConnectionStates, e.ICEGatheringStates)
+	base += fmt.Sprintf(" scheduler_packets_sent=%d scheduler_bytes_sent=%d scheduler_dropped_jobs=%d scheduler_dropped_packets=%d scheduler_queue_full_drops=%d",
+		e.SchedulerPacketsSent, e.SchedulerBytesSent, e.SchedulerDroppedJobs, e.SchedulerDroppedPackets, e.SchedulerQueueFullDrops)
 	if e.ExpectedSHA256 != "" {
 		base += fmt.Sprintf(" expected_sha256=%s", e.ExpectedSHA256)
 	}
@@ -1319,23 +1575,39 @@ func (e OpusRTPEvidence) WithICEStats(stats WebRTCMediaStats) OpusRTPEvidence {
 	e.ICECheckingMS = stats.ICECheckingMS
 	e.FirstLocalCandidateMS = stats.FirstLocalCandidateMS
 	e.FirstLocalRelayCandidateMS = stats.FirstLocalRelayCandidateMS
+	e.FirstLocalRelayUDPCandidateMS = stats.FirstLocalRelayUDPCandidateMS
+	e.FirstLocalRelayTCPCandidateMS = stats.FirstLocalRelayTCPCandidateMS
 	e.LocalHostCandidates = stats.LocalHostCandidates
 	e.LocalSrflxCandidates = stats.LocalSrflxCandidates
 	e.LocalRelayCandidates = stats.LocalRelayCandidates
+	e.LocalUDPCandidates = stats.LocalUDPCandidates
+	e.LocalTCPCandidates = stats.LocalTCPCandidates
+	e.LocalRelayUDPCandidates = stats.LocalRelayUDPCandidates
+	e.LocalRelayTCPCandidates = stats.LocalRelayTCPCandidates
 	e.ICEConnectionStates = append([]string(nil), stats.ICEConnectionStates...)
 	e.ICEGatheringStates = append([]string(nil), stats.ICEGatheringStates...)
+	e.SelectedLocalCandidateProtocol = stats.SelectedLocalCandidateProtocol
+	e.SelectedRemoteCandidateProtocol = stats.SelectedRemoteCandidateProtocol
+	return e
+}
+
+func (e OpusRTPEvidence) WithSchedulerStats(stats mediaPacedSendStats) OpusRTPEvidence {
+	e.SchedulerDroppedJobs = stats.DroppedJobs
+	e.SchedulerDroppedPackets = stats.DroppedPackets
+	e.SchedulerQueueFullDrops = stats.QueueFullDrops
+	e.SchedulerPacketsSent = stats.PacketsSent
+	e.SchedulerBytesSent = stats.BytesSent
 	return e
 }
 
 func (e OpusRTPEvidence) String() string {
-	base := fmt.Sprintf("codec=opus packets=%d bytes=%d duration_ms=%d loops=%d frames=%d sample_rate=%d channels=%d receive_ms=%d ttfb_ms=%d ice_ms=%d selected_local_candidate_type=%s selected_remote_candidate_type=%s",
-		e.Packets, e.Bytes, e.DurationMS, e.Loops, e.Frames, e.SampleRate, e.Channels, e.ReceiveMS, e.TimeToFirstMS, e.ICEMS, evidenceOrDefault(e.SelectedLocalCandidateType, "unknown"), evidenceOrDefault(e.SelectedRemoteCandidateType, "unknown"))
-	base = appendICETraceEvidence(base, e.ICEGatheringCompleteMS, e.RemoteDescriptionSetMS, e.LocalDescriptionSetMS, e.ICECheckingMS, e.FirstLocalCandidateMS, e.FirstLocalRelayCandidateMS, e.LocalHostCandidates, e.LocalSrflxCandidates, e.LocalRelayCandidates, e.ICEConnectionStates, e.ICEGatheringStates)
-	if e.ExpectedSHA256 != "" {
-		base += fmt.Sprintf(" expected_sha256=%s", e.ExpectedSHA256)
-	}
-	base += fmt.Sprintf(" received_sha256=%s receiver_packets=%d receiver_bytes=%d receiver_frames=%d audio_payload_match=%t",
-		e.ReceiverSHA256, e.ReceiverPackets, e.ReceiverBytes, e.ReceiverFrames, e.PayloadMatch)
+	base := fmt.Sprintf("codec=opus packets=%d bytes=%d duration_ms=%d loops=%d frames=%d sample_rate=%d channels=%d receive_ms=%d ttfb_ms=%d ice_ms=%d selected_local_candidate_type=%s selected_remote_candidate_type=%s selected_local_candidate_protocol=%s selected_remote_candidate_protocol=%s",
+		e.Packets, e.Bytes, e.DurationMS, e.Loops, e.Frames, e.SampleRate, e.Channels, e.ReceiveMS, e.TimeToFirstMS, e.ICEMS, evidenceOrDefault(e.SelectedLocalCandidateType, "unknown"), evidenceOrDefault(e.SelectedRemoteCandidateType, "unknown"), evidenceOrDefault(e.SelectedLocalCandidateProtocol, "unknown"), evidenceOrDefault(e.SelectedRemoteCandidateProtocol, "unknown"))
+	base = appendICETraceEvidence(base, e.ICEGatheringCompleteMS, e.RemoteDescriptionSetMS, e.LocalDescriptionSetMS, e.ICECheckingMS, e.FirstLocalCandidateMS, e.FirstLocalRelayCandidateMS, e.FirstLocalRelayUDPCandidateMS, e.FirstLocalRelayTCPCandidateMS, e.LocalHostCandidates, e.LocalSrflxCandidates, e.LocalRelayCandidates, e.LocalUDPCandidates, e.LocalTCPCandidates, e.LocalRelayUDPCandidates, e.LocalRelayTCPCandidates, e.SelectedLocalCandidateProtocol, e.SelectedRemoteCandidateProtocol, e.ICEConnectionStates, e.ICEGatheringStates)
+	base += fmt.Sprintf(" scheduler_packets_sent=%d scheduler_bytes_sent=%d scheduler_dropped_jobs=%d scheduler_dropped_packets=%d scheduler_queue_full_drops=%d",
+		e.SchedulerPacketsSent, e.SchedulerBytesSent, e.SchedulerDroppedJobs, e.SchedulerDroppedPackets, e.SchedulerQueueFullDrops)
+	base += fmt.Sprintf(" receiver_packets=%d receiver_bytes=%d receiver_frames=%d first_opus_rtp_ms=%d",
+		e.ReceiverPackets, e.ReceiverBytes, e.ReceiverFrames, e.FirstOpusRTPMS)
 	return base
 }
 
@@ -1357,7 +1629,7 @@ func evidenceOrDefault(value, fallback string) string {
 	return value
 }
 
-func appendICETraceEvidence(base string, gatherCompleteMS, remoteDescriptionMS, localDescriptionMS, checkingMS, firstCandidateMS, firstRelayCandidateMS int64, hostCandidates, srflxCandidates, relayCandidates int, connectionStates, gatheringStates []string) string {
+func appendICETraceEvidence(base string, gatherCompleteMS, remoteDescriptionMS, localDescriptionMS, checkingMS, firstCandidateMS, firstRelayCandidateMS, firstRelayUDPCandidateMS, firstRelayTCPCandidateMS int64, hostCandidates, srflxCandidates, relayCandidates, udpCandidates, tcpCandidates, relayUDPCandidates, relayTCPCandidates int, selectedLocalProtocol, selectedRemoteProtocol string, connectionStates, gatheringStates []string) string {
 	parts := []string{}
 	if gatherCompleteMS > 0 {
 		parts = append(parts, fmt.Sprintf("ice_gather_complete_ms=%d", gatherCompleteMS))
@@ -1377,11 +1649,27 @@ func appendICETraceEvidence(base string, gatherCompleteMS, remoteDescriptionMS, 
 	if firstRelayCandidateMS > 0 {
 		parts = append(parts, fmt.Sprintf("first_local_relay_candidate_ms=%d", firstRelayCandidateMS))
 	}
+	if firstRelayUDPCandidateMS > 0 {
+		parts = append(parts, fmt.Sprintf("first_local_relay_udp_candidate_ms=%d", firstRelayUDPCandidateMS))
+	}
+	if firstRelayTCPCandidateMS > 0 {
+		parts = append(parts, fmt.Sprintf("first_local_relay_tcp_candidate_ms=%d", firstRelayTCPCandidateMS))
+	}
 	parts = append(parts,
 		fmt.Sprintf("local_host_candidates=%d", hostCandidates),
 		fmt.Sprintf("local_srflx_candidates=%d", srflxCandidates),
 		fmt.Sprintf("local_relay_candidates=%d", relayCandidates),
+		fmt.Sprintf("local_udp_candidates=%d", udpCandidates),
+		fmt.Sprintf("local_tcp_candidates=%d", tcpCandidates),
+		fmt.Sprintf("local_relay_udp_candidates=%d", relayUDPCandidates),
+		fmt.Sprintf("local_relay_tcp_candidates=%d", relayTCPCandidates),
 	)
+	if selectedLocalProtocol != "" {
+		parts = append(parts, "selected_local_candidate_protocol="+selectedLocalProtocol)
+	}
+	if selectedRemoteProtocol != "" {
+		parts = append(parts, "selected_remote_candidate_protocol="+selectedRemoteProtocol)
+	}
 	if len(connectionStates) > 0 {
 		parts = append(parts, "ice_connection_states="+strings.Join(connectionStates, ","))
 	}
@@ -1392,7 +1680,7 @@ func appendICETraceEvidence(base string, gatherCompleteMS, remoteDescriptionMS, 
 }
 
 func iceTraceEvidence(stats WebRTCMediaStats) string {
-	return appendICETraceEvidence("", stats.ICEGatheringCompleteMS, stats.RemoteDescriptionSetMS, stats.LocalDescriptionSetMS, stats.ICECheckingMS, stats.FirstLocalCandidateMS, stats.FirstLocalRelayCandidateMS, stats.LocalHostCandidates, stats.LocalSrflxCandidates, stats.LocalRelayCandidates, stats.ICEConnectionStates, stats.ICEGatheringStates)
+	return appendICETraceEvidence("", stats.ICEGatheringCompleteMS, stats.RemoteDescriptionSetMS, stats.LocalDescriptionSetMS, stats.ICECheckingMS, stats.FirstLocalCandidateMS, stats.FirstLocalRelayCandidateMS, stats.FirstLocalRelayUDPCandidateMS, stats.FirstLocalRelayTCPCandidateMS, stats.LocalHostCandidates, stats.LocalSrflxCandidates, stats.LocalRelayCandidates, stats.LocalUDPCandidates, stats.LocalTCPCandidates, stats.LocalRelayUDPCandidates, stats.LocalRelayTCPCandidates, stats.SelectedLocalCandidateProtocol, stats.SelectedRemoteCandidateProtocol, stats.ICEConnectionStates, stats.ICEGatheringStates)
 }
 
 func prefixEvidenceKeys(evidence, prefix string) string {
@@ -1550,43 +1838,62 @@ func (s *PionMediaAnswerSession) SelectedCandidatePairTypes() (string, string) {
 }
 
 func selectedCandidatePairTypes(peer *webrtc.PeerConnection) (string, string) {
+	trace := selectedCandidatePairTrace(peer)
+	return trace.LocalType, trace.RemoteType
+}
+
+type selectedCandidatePairEvidence struct {
+	LocalType      string
+	RemoteType     string
+	LocalProtocol  string
+	RemoteProtocol string
+}
+
+func selectedCandidatePairTrace(peer *webrtc.PeerConnection) selectedCandidatePairEvidence {
 	if peer == nil {
-		return "", ""
+		return selectedCandidatePairEvidence{}
 	}
 	for _, transceiver := range peer.GetTransceivers() {
 		if transceiver == nil {
 			continue
 		}
 		if receiver := transceiver.Receiver(); receiver != nil {
-			if localType, remoteType := selectedCandidatePairTypesFromDTLS(receiver.Transport()); localType != "" || remoteType != "" {
-				return localType, remoteType
+			if trace := selectedCandidatePairTraceFromDTLS(receiver.Transport()); trace.LocalType != "" || trace.RemoteType != "" || trace.LocalProtocol != "" || trace.RemoteProtocol != "" {
+				return trace
 			}
 		}
 		if sender := transceiver.Sender(); sender != nil {
-			if localType, remoteType := selectedCandidatePairTypesFromDTLS(sender.Transport()); localType != "" || remoteType != "" {
-				return localType, remoteType
+			if trace := selectedCandidatePairTraceFromDTLS(sender.Transport()); trace.LocalType != "" || trace.RemoteType != "" || trace.LocalProtocol != "" || trace.RemoteProtocol != "" {
+				return trace
 			}
 		}
 	}
-	return "", ""
+	return selectedCandidatePairEvidence{}
 }
 
 func selectedCandidatePairTypesFromDTLS(dtls *webrtc.DTLSTransport) (string, string) {
+	trace := selectedCandidatePairTraceFromDTLS(dtls)
+	return trace.LocalType, trace.RemoteType
+}
+
+func selectedCandidatePairTraceFromDTLS(dtls *webrtc.DTLSTransport) selectedCandidatePairEvidence {
 	if dtls == nil || dtls.ICETransport() == nil {
-		return "", ""
+		return selectedCandidatePairEvidence{}
 	}
 	pair, err := dtls.ICETransport().GetSelectedCandidatePair()
 	if err != nil || pair == nil {
-		return "", ""
+		return selectedCandidatePairEvidence{}
 	}
-	localType, remoteType := "", ""
+	trace := selectedCandidatePairEvidence{}
 	if pair.Local != nil {
-		localType = pair.Local.Typ.String()
+		trace.LocalType = pair.Local.Typ.String()
+		trace.LocalProtocol = pair.Local.Protocol.String()
 	}
 	if pair.Remote != nil {
-		remoteType = pair.Remote.Typ.String()
+		trace.RemoteType = pair.Remote.Typ.String()
+		trace.RemoteProtocol = pair.Remote.Protocol.String()
 	}
-	return localType, remoteType
+	return trace
 }
 
 func candidateTypeEvidence(candidateType string, policy webrtc.ICETransportPolicy) string {

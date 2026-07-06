@@ -78,11 +78,11 @@ func TestRunRemoveK8sPlanPrintsCleanupScopeWithoutConfirmation(t *testing.T) {
 		"cloud-remove-k8s plan",
 		"mode: destructive namespace cleanup",
 		"purge_storage: true",
-		"delete PVCs then namespace video-cloud-staging-platform",
-		"delete PVCs then namespace video-cloud-staging-video-cloud",
-		"delete PVCs then namespace video-cloud-staging-ingress",
-		"delete PVCs then namespace video-cloud-staging-secrets",
-		"delete PVCs then namespace video-cloud-staging-logger",
+		"delete workloads, PVCs, then namespace video-cloud-staging-platform",
+		"delete workloads, PVCs, then namespace video-cloud-staging-video-cloud",
+		"delete workloads, PVCs, then namespace video-cloud-staging-ingress",
+		"delete workloads, PVCs, then namespace video-cloud-staging-secrets",
+		"delete workloads, PVCs, then namespace video-cloud-staging-logger",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("plan missing %q:\n%s", want, stdout)
@@ -103,6 +103,11 @@ func TestRunRemoveK8sPurgeStorageDeletesPVCAndNamespaces(t *testing.T) {
 	log := readTestFile(t, kubectlLog)
 	if !strings.Contains(log, "delete pvc --all --ignore-not-found=true") {
 		t.Fatalf("purge reset should delete PVCs, got:\n%s", log)
+	}
+	workloadDelete := strings.Index(log, "delete deployment,statefulset,daemonset,job,cronjob --all --ignore-not-found=true")
+	pvcDelete := strings.Index(log, "delete pvc --all --ignore-not-found=true")
+	if workloadDelete < 0 || pvcDelete < 0 || workloadDelete > pvcDelete {
+		t.Fatalf("purge reset should delete workloads before PVCs, got:\n%s", log)
 	}
 	if !strings.Contains(log, "delete namespace video-cloud-staging-platform --ignore-not-found=true") {
 		t.Fatalf("purge reset should delete staging namespaces, got:\n%s", log)

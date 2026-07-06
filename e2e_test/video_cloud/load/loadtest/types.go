@@ -309,6 +309,8 @@ type VideoStartupLatencySample struct {
 	ICEPolicy                         string `json:"ice_policy,omitempty"`
 	SelectedLocalCandidateType        string `json:"selected_local_candidate_type,omitempty"`
 	SelectedRemoteCandidateType       string `json:"selected_remote_candidate_type,omitempty"`
+	SelectedLocalCandidateProtocol    string `json:"selected_local_candidate_protocol,omitempty"`
+	SelectedRemoteCandidateProtocol   string `json:"selected_remote_candidate_protocol,omitempty"`
 	APICreateMS                       int64  `json:"api_create_ms"`
 	OfferDeliveryMS                   int64  `json:"offer_delivery_ms"`
 	DeviceAnswerMS                    int64  `json:"device_answer_ms"`

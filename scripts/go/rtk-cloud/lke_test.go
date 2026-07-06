@@ -415,6 +415,87 @@ func TestRunLKEBuildImagesWritesManifest(t *testing.T) {
 	}
 }
 
+func TestRunLKEBuildImagesBuildsSelectedServiceImage(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	dockerLog := fakeDocker(t)
+	out := filepath.Join(t.TempDir(), "lke-images.json")
+
+	if err := runLKEBuildImages([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--workloads", "video-cloud",
+		"--image", "ttl.sh/rtk-video-cloud-local-test:24h",
+		"--out", out,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	dockerCalls := readTestFile(t, dockerLog)
+	if !strings.Contains(dockerCalls, " -t ttl.sh/rtk-video-cloud-local-test:24h ") {
+		t.Fatalf("expected docker build for exact video-cloud image, got:\n%s", dockerCalls)
+	}
+	if strings.Contains(dockerCalls, "postgresql") {
+		t.Fatalf("did not expect postgres build when selecting video-cloud only, got:\n%s", dockerCalls)
+	}
+	body := readTestFile(t, out)
+	for _, want := range []string{
+		`"key": "video-cloud"`,
+		`"LKE_VIDEO_CLOUD_IMAGE": "ttl.sh/rtk-video-cloud-local-test:24h"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("manifest missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "LKE_POSTGRES_IMAGE") {
+		t.Fatalf("selected service image manifest should not include postgres image:\n%s", body)
+	}
+}
+
+func TestRunLKEBuildImagesBuildsSelectedCloudLoggerImage(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	dockerLog := fakeDocker(t)
+	out := filepath.Join(t.TempDir(), "lke-images.json")
+
+	if err := runLKEBuildImages([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--workloads", "cloud-logger",
+		"--image", "ttl.sh/rtk-cloud-logger-local-test:24h",
+		"--out", out,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	dockerCalls := readTestFile(t, dockerLog)
+	if !strings.Contains(dockerCalls, " -t ttl.sh/rtk-cloud-logger-local-test:24h ") {
+		t.Fatalf("expected docker build for exact cloud-logger image, got:\n%s", dockerCalls)
+	}
+	body := readTestFile(t, out)
+	for _, want := range []string{
+		`"key": "cloud-logger"`,
+		`"LKE_CLOUD_LOGGER_IMAGE": "ttl.sh/rtk-cloud-logger-local-test:24h"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("manifest missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestRunLKEBuildImagesRejectsExactImageForMultipleWorkloads(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	fakeDocker(t)
+
+	err := runLKEBuildImages([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--workloads", "postgres,video-cloud",
+		"--image", "ttl.sh/rtk-video-cloud-local-test:24h",
+	})
+	if err == nil || !strings.Contains(err.Error(), "--image requires exactly one selected workload") {
+		t.Fatalf("expected exact image validation error, got %v", err)
+	}
+}
+
 func TestRunLKEResolveImagesWritesPinnedSubmoduleManifest(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	commits := makeLKEServiceRepos(t, workspace)
@@ -443,6 +524,35 @@ func TestRunLKEResolveImagesWritesPinnedSubmoduleManifest(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("manifest missing %q:\n%s", want, body)
 		}
+	}
+}
+
+func TestRunLKEResolveImagesUsesProvidedServiceImageWithoutInspect(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	makeLKEServiceRepos(t, workspace)
+	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "ttl.sh/rtk-cloud-logger-local-test:24h")
+	out := filepath.Join(t.TempDir(), "lke-images.json")
+	oldInspect := inspectLKEImage
+	inspectLKEImage = func(image string) error {
+		if strings.Contains(image, "rtk_cloud_logger") {
+			return errLKEImageNotFound
+		}
+		return nil
+	}
+	t.Cleanup(func() { inspectLKEImage = oldInspect })
+
+	if err := runLKEResolveImages([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--owner", "hkt999rtk",
+		"--out", out,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := readTestFile(t, out)
+	if !strings.Contains(body, `"LKE_CLOUD_LOGGER_IMAGE": "ttl.sh/rtk-cloud-logger-local-test:24h"`) {
+		t.Fatalf("manifest missing provided logger image:\n%s", body)
 	}
 }
 
@@ -1047,6 +1157,36 @@ func TestLKECoturnMultiVMProvidedIPsWritesArtifacts(t *testing.T) {
 	for _, want := range []string{`"count": 2`, `"name": "turn01"`, `"name": "turn02"`, `"public_ip": "198.51.100.21"`} {
 		if !strings.Contains(summary, want) {
 			t.Fatalf("expected %q in coturn-vms summary:\n%s", want, summary)
+		}
+	}
+}
+
+func TestLKEPruneExtraCoturnVMsDeletesOnlyNodesAboveDesiredCount(t *testing.T) {
+	_, envRoot := makeLKETestEnv(t)
+	curlLog := fakeLinodeCurl(t, map[string]string{
+		"/linode/instances?page_size=500": `{"data":[
+		  {"id":201,"label":"video-cloud-staging-edge-haproxy-01","region":"us-sea","status":"running","ipv4":["192.0.2.10"],"tags":["rtk-cloud","video-cloud-staging","edge-haproxy"]},
+		  {"id":301,"label":"video-cloud-staging-turn01","region":"us-sea","status":"running","ipv4":["192.0.2.20"],"tags":["rtk-cloud","video-cloud-staging","coturn-vm"]},
+		  {"id":302,"label":"video-cloud-staging-turn02","region":"us-sea","status":"running","ipv4":["192.0.2.21"],"tags":["rtk-cloud","video-cloud-staging","coturn-vm"]},
+		  {"id":303,"label":"other-stack-turn02","region":"us-sea","status":"running","ipv4":["192.0.2.22"],"tags":["rtk-cloud","other-stack","coturn-vm"]}
+		]}`,
+		"/linode/instances/302": `{}`,
+	})
+	t.Setenv("LINODE_TOKEN", "test-token")
+	err := lkePruneExtraCoturnVMs(provisionPaths{EnvRoot: envRoot}, map[string]string{
+		"CLOUD_STACK_NAME":    "video-cloud-staging",
+		"LKE_COTURN_VM_COUNT": "1",
+	})
+	if err != nil {
+		t.Fatalf("lkePruneExtraCoturnVMs() error = %v", err)
+	}
+	log := readTestFile(t, curlLog)
+	if !strings.Contains(log, "DELETE /linode/instances/302") {
+		t.Fatalf("expected turn02 delete, got:\n%s", log)
+	}
+	for _, forbidden := range []string{"DELETE /linode/instances/201", "DELETE /linode/instances/301", "DELETE /linode/instances/303"} {
+		if strings.Contains(log, forbidden) {
+			t.Fatalf("unexpected delete %q, got:\n%s", forbidden, log)
 		}
 	}
 }
@@ -2079,6 +2219,130 @@ func TestLKENodePoolHasPostgresPlacement(t *testing.T) {
 	}
 }
 
+func TestLKEPostgresPlacementUsesWorkloadSelector(t *testing.T) {
+	manifest := lkePostgresPlacementManifest(map[string]string{
+		"LKE_POSTGRES_NODE_POOL_ID": "918100",
+	})
+	for _, want := range []string{
+		`rtk.realtek.com/workload: "postgres"`,
+		`effect: "NoSchedule"`,
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("expected postgres placement to contain %q, got:\n%s", want, manifest)
+		}
+	}
+	if strings.Contains(manifest, "lke.linode.com/pool-id") {
+		t.Fatalf("postgres placement must not depend on Linode pool-id node labels, got:\n%s", manifest)
+	}
+}
+
+func TestEnsureLKEPostgresNodePoolCreatesReplacementForImmutableTypeChange(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	curlLog := fakeLinodeCurl(t, map[string]string{
+		"/lke/clusters/12345/pools": `{"id":918100,"type":"g6-standard-8","count":1,"label":"postgres","labels":{"rtk.realtek.com/workload":"postgres"},"taints":[{"key":"rtk.realtek.com/workload","value":"postgres","effect":"NoSchedule"}]}`,
+	})
+	t.Setenv("LINODE_TOKEN", "test-token")
+	env := map[string]string{
+		"LKE_POSTGRES_NODE_POOL_ID": "917710",
+		"LKE_POSTGRES_NODE_TYPE":    "g6-standard-8",
+		"LKE_POSTGRES_NODE_COUNT":   "1",
+	}
+	pools := []lkeNodePool{{
+		ID:    917710,
+		Type:  "g6-standard-4",
+		Count: 1,
+		Label: "postgres",
+		Labels: map[string]string{
+			"rtk.realtek.com/workload": "postgres",
+		},
+		Taints: []lkeNodePoolTaint{{
+			Key:    "rtk.realtek.com/workload",
+			Value:  "postgres",
+			Effect: "NoSchedule",
+		}},
+	}}
+
+	if err := ensureLKEPostgresNodePool(provisionPaths{Workspace: workspace, EnvRoot: envRoot}, env, "test-token", "12345", pools); err != nil {
+		t.Fatal(err)
+	}
+
+	curlCalls := readTestFile(t, curlLog)
+	if !strings.Contains(curlCalls, "POST /lke/clusters/12345/pools") {
+		t.Fatalf("expected replacement pool create, got:\n%s", curlCalls)
+	}
+	if strings.Contains(curlCalls, "PUT /lke/clusters/12345/pools/917710") {
+		t.Fatalf("postgres pool type is immutable; must not PUT old pool, got:\n%s", curlCalls)
+	}
+	if got := env["LKE_POSTGRES_NODE_POOL_ID"]; got != "918100" {
+		t.Fatalf("postgres pool id = %s, want replacement id 918100", got)
+	}
+	stackEnv := readTestFile(t, filepath.Join(envRoot, "env", "stack.env"))
+	if !strings.Contains(stackEnv, "LKE_POSTGRES_NODE_POOL_ID=918100") {
+		t.Fatalf("expected replacement pool id persisted, got:\n%s", stackEnv)
+	}
+}
+
+func TestEnsureLKEPostgresNodePoolFallsBackFromStaleIDAndPrunesDuplicates(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	curlLog := fakeLinodeCurl(t, map[string]string{
+		"/lke/clusters/12345/pools/918804": `{}`,
+	})
+	env := map[string]string{
+		"LKE_POSTGRES_NODE_POOL_ID": "999999",
+		"LKE_POSTGRES_NODE_TYPE":    "g6-standard-6",
+		"LKE_POSTGRES_NODE_COUNT":   "1",
+	}
+	pools := []lkeNodePool{
+		{
+			ID:    918802,
+			Type:  "g6-standard-6",
+			Count: 1,
+			Label: "postgres",
+			Labels: map[string]string{
+				"rtk.realtek.com/workload": "postgres",
+			},
+			Taints: []lkeNodePoolTaint{{
+				Key:    "rtk.realtek.com/workload",
+				Value:  "postgres",
+				Effect: "NoSchedule",
+			}},
+		},
+		{
+			ID:    918804,
+			Type:  "g6-standard-6",
+			Count: 1,
+			Label: "postgres",
+			Labels: map[string]string{
+				"rtk.realtek.com/workload": "postgres",
+			},
+			Taints: []lkeNodePoolTaint{{
+				Key:    "rtk.realtek.com/workload",
+				Value:  "postgres",
+				Effect: "NoSchedule",
+			}},
+		},
+	}
+
+	if err := ensureLKEPostgresNodePool(provisionPaths{Workspace: workspace, EnvRoot: envRoot}, env, "test-token", "12345", pools); err != nil {
+		t.Fatal(err)
+	}
+
+	curlCalls := readTestFile(t, curlLog)
+	if strings.Contains(curlCalls, "POST /lke/clusters/12345/pools") {
+		t.Fatalf("stale postgres pool id should fall back to existing postgres pool, got:\n%s", curlCalls)
+	}
+	if !strings.Contains(curlCalls, "DELETE /lke/clusters/12345/pools/918804") {
+		t.Fatalf("expected duplicate postgres pool prune, got:\n%s", curlCalls)
+	}
+	if got := env["LKE_POSTGRES_NODE_POOL_ID"]; got != "918802" {
+		t.Fatalf("postgres pool id = %s, want 918802", got)
+	}
+	stackEnv := readTestFile(t, filepath.Join(envRoot, "env", "stack.env"))
+	if !strings.Contains(stackEnv, "LKE_POSTGRES_NODE_POOL_ID=918802") {
+		t.Fatalf("expected fallback pool id persisted, got:\n%s", stackEnv)
+	}
+}
+
 func TestLKEMQTTReplicasCanBeOverridden(t *testing.T) {
 	t.Setenv("LKE_MQTT_REPLICAS", "5")
 	env := map[string]string{
@@ -2178,7 +2442,7 @@ func TestLKECloudLoggerResourceDefaultsCoverLoadTestEvidence(t *testing.T) {
 	for _, want := range []string{
 		`cpu: "100m"`,
 		`memory: "4Gi"`,
-		`memory: "8Gi"`,
+		`memory: "16Gi"`,
 		`name: RTK_CLOUD_LOGGER_LOKI_URL`,
 		`value: "http://video-cloud-loki.video-cloud-staging-observability.svc.cluster.local:3100"`,
 	} {
@@ -3208,6 +3472,8 @@ printf '\n' >> "`+childLog+`"
 		"--device-traffic-profile", "home-diverse-v1",
 		"--command-concurrency", "100",
 		"--shadow-command-timeout", "30s",
+		"--device-token-request-timeout", "10s",
+		"--device-token-request-retries", "1",
 		"--runtime-logs=false",
 	})
 	if err != nil {
@@ -3223,6 +3489,8 @@ printf '\n' >> "`+childLog+`"
 		"--device-traffic-profile home-diverse-v1",
 		"--command-concurrency 100",
 		"--shadow-command-timeout 30s",
+		"--device-token-request-timeout 10s",
+		"--device-token-request-retries 1",
 		"--runtime-logs=false",
 		"--load-model home-100k-sustained",
 	} {
@@ -4579,7 +4847,10 @@ JSON
   ;;
 `
 	}
-	script += `*)
+	script += `/nodebalancers?page_size=500)
+  printf '{"data":[]}'
+  ;;
+*)
   printf 'unexpected path: %s\n' "$path" >&2
   exit 22
   ;;

@@ -13,6 +13,25 @@
       ansible.builtin.wait_for_connection:
         timeout: 300
 
+    - name: Raise sshd preauth/session limits for load-test fanout
+      ansible.builtin.shell: |
+        set -eu
+        tmp="$(mktemp)"
+        cat > "$tmp" <<'EOF'
+          MaxStartups 100:30:200
+          MaxSessions 100
+          LoginGraceTime 20
+        EOF
+        install -m 0644 "$tmp" /etc/ssh/sshd_config.d/99-home100k-loadtest.conf
+        rm -f "$tmp"
+      args:
+        executable: /bin/bash
+
+    - name: Reload sshd after load-test fanout tuning
+      ansible.builtin.systemd:
+        name: ssh
+        state: reloaded
+
     - name: Install required sync/runtime packages
       ansible.builtin.apt:
         name:
@@ -246,6 +265,7 @@
       ansible.builtin.stat:
         path: "{{ remote_env_root }}/loadtests/home-100k/credentials/{{ vm_label }}.sqlite.gz"
       register: remote_shard_credentials_stat
+      when: role | default('mixed') == 'mixed'
 
     - name: Decide fanout cache state
       ansible.builtin.set_fact:
@@ -254,7 +274,7 @@
         cloud_mqtt_test_needs_upload: "{{ (not remote_cloud_mqtt_test_stat.stat.exists) or ((remote_cloud_mqtt_test_stat.stat.checksum | default('')) != (artifact_cloud_mqtt_test_stat.stat.checksum | default(''))) }}"
         common_env_archive_needs_upload: "{{ (not remote_common_env_archive_stat.stat.exists) or ((remote_common_env_archive_stat.stat.checksum | default('')) != (artifact_common_env_archive_stat.stat.checksum | default(''))) or (not remote_common_env_stack_stat.stat.exists) or (not remote_common_env_kubeconfig_stat.stat.exists) }}"
         manifest_needs_upload: "{{ (not remote_manifest_stat.stat.exists) or ((remote_manifest_stat.stat.checksum | default('')) != (artifact_manifest_stat.stat.checksum | default(''))) }}"
-        env_archive_needs_upload: "{{ (not remote_env_archive_stat.stat.exists) or ((remote_env_archive_stat.stat.checksum | default('')) != (artifact_env_archive_stat.stat.checksum | default(''))) or (not remote_shard_credentials_stat.stat.exists) }}"
+        env_archive_needs_upload: "{{ (not remote_env_archive_stat.stat.exists) or ((remote_env_archive_stat.stat.checksum | default('')) != (artifact_env_archive_stat.stat.checksum | default(''))) or ((role | default('mixed') == 'mixed') and (not (remote_shard_credentials_stat.stat.exists | default(false)))) }}"
 
     - name: Fan out runner binary from orchestra
       ansible.builtin.shell: >

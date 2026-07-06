@@ -60,7 +60,9 @@ In scope:
 - Home WebRTC/TURN profiles: `video-1k-v1`, `video-50k-turn-v1`, and
   `video-100k-turn-v1` run the home MQTT/shadow background load and then attach
   relay-only H.264 WebRTC viewer steps. The TURN sizing ladder is
-  `100,500,1000,2000,5000` viewers by default.
+  `100,500,1000,2000,5000` viewers by default. Relay-only sizing allows both
+  TURN/UDP and TURN/TCP ICE server URLs; the gate is selected relay candidates,
+  not UDP-only transport.
 
 Out of scope for v1:
 

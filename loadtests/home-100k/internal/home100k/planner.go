@@ -20,6 +20,7 @@ const (
 	DefaultRunnerNofile              = 1048576
 	DefaultDeviceSession             = "lifetime-subscription"
 	DefaultRunnerReadModel           = "go-netpoll-bounded-reader-goroutine"
+	DefaultDeviceTokenRequestTimeout = "10s"
 	DefaultStageWarmUp               = "30s"
 	DefaultStageSteady               = "90s"
 	DefaultStageCoolDown             = "30s"
@@ -35,7 +36,7 @@ const (
 	DefaultVideo100KDevices          = 100000
 	DefaultVideo100KViewers          = 5000
 	DefaultVideo100KLadder           = "100,500,1000,2000,5000"
-	DefaultVideo100KStepDuration     = "5m"
+	DefaultVideo100KStepDuration     = "10s"
 	DefaultVideo100KStepCooldown     = "2m"
 	DefaultVMLabelPrefix             = "lg"
 
@@ -55,6 +56,8 @@ type PlanOptions struct {
 	UserCount                            int     `json:"user_count,omitempty"`
 	DevicesPerUser                       int     `json:"devices_per_user,omitempty"`
 	VMCount                              int     `json:"vm_count,omitempty"`
+	VideoGeneratorVMCount                int     `json:"video_generator_vm_count,omitempty"`
+	VideoGeneratorLabelPrefix            string  `json:"video_generator_label_prefix,omitempty"`
 	LoadGeneratorDevicesPerVM            int     `json:"load_generator_devices_per_vm,omitempty"`
 	StageWarmUp                          string  `json:"stage_warm_up"`
 	StageSteady                          string  `json:"stage_steady"`
@@ -62,6 +65,8 @@ type PlanOptions struct {
 	RunnerNofile                         int     `json:"runner_nofile_limit,omitempty"`
 	SessionModel                         string  `json:"device_session_model,omitempty"`
 	RunnerReadModel                      string  `json:"runner_read_model,omitempty"`
+	DeviceTokenRequestTimeout            string  `json:"device_token_request_timeout,omitempty"`
+	DeviceTokenRequestRetries            int     `json:"device_token_request_retries,omitempty"`
 	ScenarioProfile                      string  `json:"scenario_profile,omitempty"`
 	VMLabelPrefix                        string  `json:"vm_label_prefix,omitempty"`
 	FunctionalSuccessThresholdPercent    float64 `json:"functional_success_threshold_percent,omitempty"`
@@ -134,9 +139,13 @@ type TestConditions struct {
 	LoadGeneratorDevicesPerVM            int     `json:"load_generator_devices_per_vm"`
 	LoadGeneratorSizingFormula           string  `json:"load_generator_sizing_formula"`
 	VMCount                              int     `json:"vm_count"`
+	VideoGeneratorVMCount                int     `json:"video_generator_vm_count,omitempty"`
+	VideoGeneratorLabelPrefix            string  `json:"video_generator_label_prefix,omitempty"`
 	RunnerNofileLimit                    int     `json:"runner_nofile_limit"`
 	DeviceSessionModel                   string  `json:"device_session_model"`
 	RunnerReadModel                      string  `json:"runner_read_model"`
+	DeviceTokenRequestTimeout            string  `json:"device_token_request_timeout"`
+	DeviceTokenRequestRetries            int     `json:"device_token_request_retries"`
 	VMLabelPrefix                        string  `json:"vm_label_prefix"`
 	FunctionalSuccessThresholdPercent    float64 `json:"functional_success_threshold_percent"`
 	ClientTargetCompletenessPercent      float64 `json:"client_target_completeness_percent"`
@@ -293,6 +302,14 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	if perVM := ceilDiv(devices, vmCount); perVM > devicesPerVM {
 		return Plan{}, fmt.Errorf("target devices %d with VM count %d needs %d devices per VM, above configured load-generator capacity %d; increase VM count or --load-generator-devices-per-vm", devices, vmCount, perVM, devicesPerVM)
 	}
+	videoGeneratorVMCount := opts.VideoGeneratorVMCount
+	if videoGeneratorVMCount < 0 {
+		return Plan{}, fmt.Errorf("video generator VM count must be non-negative, got %d", videoGeneratorVMCount)
+	}
+	videoGeneratorLabelPrefix := strings.TrimSpace(opts.VideoGeneratorLabelPrefix)
+	if videoGeneratorLabelPrefix == "" {
+		videoGeneratorLabelPrefix = "vg"
+	}
 	runnerNofile := opts.RunnerNofile
 	if runnerNofile <= 0 {
 		runnerNofile = DefaultRunnerNofile
@@ -304,6 +321,14 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	readModel := strings.TrimSpace(opts.RunnerReadModel)
 	if readModel == "" {
 		readModel = DefaultRunnerReadModel
+	}
+	deviceTokenRequestTimeout := strings.TrimSpace(opts.DeviceTokenRequestTimeout)
+	if deviceTokenRequestTimeout == "" {
+		deviceTokenRequestTimeout = DefaultDeviceTokenRequestTimeout
+	}
+	deviceTokenRequestRetries := opts.DeviceTokenRequestRetries
+	if deviceTokenRequestRetries < 0 {
+		return Plan{}, fmt.Errorf("device token request retries must be non-negative, got %d", deviceTokenRequestRetries)
 	}
 	if videoProfile.Name == Video1KScenarioProfile || isVideoTurnSizingProfile(videoProfile.Name) {
 		videoProfile.VideoDevices = minInt(videoProfile.VideoDevices, devices)
@@ -341,9 +366,13 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 			LoadGeneratorDevicesPerVM:            devicesPerVM,
 			LoadGeneratorSizingFormula:           "vm_count = ceil(devices / load_generator_devices_per_vm)",
 			VMCount:                              vmCount,
+			VideoGeneratorVMCount:                videoGeneratorVMCount,
+			VideoGeneratorLabelPrefix:            videoGeneratorLabelPrefix,
 			RunnerNofileLimit:                    runnerNofile,
 			DeviceSessionModel:                   sessionModel,
 			RunnerReadModel:                      readModel,
+			DeviceTokenRequestTimeout:            deviceTokenRequestTimeout,
+			DeviceTokenRequestRetries:            deviceTokenRequestRetries,
 			VMLabelPrefix:                        vmLabelPrefix,
 			FunctionalSuccessThresholdPercent:    thresholds.FunctionalSuccessThresholdPercent,
 			ClientTargetCompletenessPercent:      thresholds.ClientTargetCompletenessPercent,
@@ -377,6 +406,9 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	plan.Shards = append(plan.Shards, deviceShards(opts.Region, devices, vmCount)...)
 	plan.Shards = append(plan.Shards, userShards(opts.Region, users, vmCount)...)
 	plan.Assignments = mixedAssignments(opts.Region, plan.Shards, vmCount, vmLabelPrefix)
+	if videoGeneratorVMCount > 0 {
+		plan.Assignments = append(plan.Assignments, videoAssignments(opts.Region, videoGeneratorVMCount, videoGeneratorLabelPrefix)...)
+	}
 	plan.Lifecycle = BuildLifecycleActions(plan, "<run_id>")
 	return plan, nil
 }
@@ -390,7 +422,7 @@ func videoProfileForScenario(scenario string) VideoProfile {
 			VideoViewers:    DefaultVideo1KViewers,
 			WebRTCMediaSet:  DefaultVideo1KMediaSet,
 			WebRTCICEPolicy: "relay",
-			TURNTransport:   "udp",
+			TURNTransport:   "udp,tcp",
 			MediaSecurity:   "dtls-srtp",
 			SignalingLayer:  "webrtc-signaling",
 			MediaLayer:      "webrtc-media",
@@ -408,7 +440,7 @@ func videoProfileForScenario(scenario string) VideoProfile {
 			WebRTCICEPolicy: "relay",
 			StepDuration:    DefaultVideo100KStepDuration,
 			StepCooldown:    DefaultVideo100KStepCooldown,
-			TURNTransport:   "udp",
+			TURNTransport:   "udp,tcp",
 			MediaSecurity:   "dtls-srtp",
 			SignalingLayer:  "webrtc-signaling",
 			MediaLayer:      "webrtc-media",
@@ -426,7 +458,7 @@ func videoProfileForScenario(scenario string) VideoProfile {
 			WebRTCICEPolicy: "relay",
 			StepDuration:    DefaultVideo100KStepDuration,
 			StepCooldown:    DefaultVideo100KStepCooldown,
-			TURNTransport:   "udp",
+			TURNTransport:   "udp,tcp",
 			MediaSecurity:   "dtls-srtp",
 			SignalingLayer:  "webrtc-signaling",
 			MediaLayer:      "webrtc-media",
@@ -710,6 +742,24 @@ func mixedAssignments(region string, shards []Shard, vmCount int, labelPrefix st
 	return assignments
 }
 
+func videoAssignments(region string, vmCount int, labelPrefix string) []VMAssignment {
+	assignments := make([]VMAssignment, 0, vmCount)
+	labelPrefix = strings.TrimSpace(labelPrefix)
+	if labelPrefix == "" {
+		labelPrefix = "vg"
+	}
+	for idx := 0; idx < vmCount; idx++ {
+		assignments = append(assignments, VMAssignment{
+			Label:      fmt.Sprintf("%s%02d", labelPrefix, idx+1),
+			Index:      idx,
+			Role:       "video",
+			Region:     region,
+			TaskShards: nil,
+		})
+	}
+	return assignments
+}
+
 func findShardInList(shards []Shard, role string, index int) (Shard, bool) {
 	for _, shard := range shards {
 		if shard.Role == role && shard.Index == index {
@@ -753,6 +803,16 @@ func (p Plan) ShardsByRole(role string) []Shard {
 	return out
 }
 
+func (p Plan) AssignmentsByRole(role string) []VMAssignment {
+	out := []VMAssignment{}
+	for _, assignment := range p.Assignments {
+		if assignment.Role == role {
+			out = append(out, assignment)
+		}
+	}
+	return out
+}
+
 func (p Plan) Validate() error {
 	if p.Conditions.Devices != sumMap(p.DeviceMix) {
 		return fmt.Errorf("device mix sums to %d, want %d", sumMap(p.DeviceMix), p.Conditions.Devices)
@@ -766,8 +826,11 @@ func (p Plan) Validate() error {
 	if len(p.ShardsByRole("device-mqtt")) != p.Conditions.VMCount {
 		return fmt.Errorf("100K mixed baseline requires %d device-mqtt shards, got %d", p.Conditions.VMCount, len(p.ShardsByRole("device-mqtt")))
 	}
-	if len(p.Assignments) != p.Conditions.VMCount {
-		return fmt.Errorf("100K mixed baseline requires %d VM assignments, got %d", p.Conditions.VMCount, len(p.Assignments))
+	if got := len(p.AssignmentsByRole("mixed")); got != p.Conditions.VMCount {
+		return fmt.Errorf("100K mixed baseline requires %d mixed VM assignments, got %d", p.Conditions.VMCount, got)
+	}
+	if got := len(p.AssignmentsByRole("video")); got != p.Conditions.VideoGeneratorVMCount {
+		return fmt.Errorf("video generator assignments = %d, want %d", got, p.Conditions.VideoGeneratorVMCount)
 	}
 	return nil
 }

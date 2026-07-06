@@ -33,6 +33,12 @@ func TestDefaultPlanResolves100KHomeBaseline(t *testing.T) {
 	if plan.Conditions.RunnerReadModel != "go-netpoll-bounded-reader-goroutine" {
 		t.Fatalf("runner read model = %q, want go-netpoll-bounded-reader-goroutine", plan.Conditions.RunnerReadModel)
 	}
+	if plan.Conditions.DeviceTokenRequestTimeout != "10s" {
+		t.Fatalf("device token request timeout = %q, want 10s", plan.Conditions.DeviceTokenRequestTimeout)
+	}
+	if plan.Conditions.DeviceTokenRequestRetries != 0 {
+		t.Fatalf("device token request retries = %d, want 0", plan.Conditions.DeviceTokenRequestRetries)
+	}
 	if plan.Conditions.FunctionalSuccessThresholdPercent != 99.5 {
 		t.Fatalf("functional success threshold = %.2f, want 99.5", plan.Conditions.FunctionalSuccessThresholdPercent)
 	}
@@ -140,8 +146,8 @@ func TestVideo100KTurnPlanUsesSingleRampAndViewerLadder(t *testing.T) {
 	if got := joinInts(plan.VideoProfile.ViewerLadder, ","); got != "100,500,1000,2000,5000" {
 		t.Fatalf("viewer ladder = %q, want 100,500,1000,2000,5000", got)
 	}
-	if plan.VideoProfile.WebRTCICEPolicy != "relay" || plan.VideoProfile.TURNTransport != "udp" || plan.VideoProfile.MediaSecurity != "dtls-srtp" {
-		t.Fatalf("video turn profile = %+v, want relay UDP DTLS-SRTP", plan.VideoProfile)
+	if plan.VideoProfile.WebRTCICEPolicy != "relay" || plan.VideoProfile.TURNTransport != "udp,tcp" || plan.VideoProfile.MediaSecurity != "dtls-srtp" {
+		t.Fatalf("video turn profile = %+v, want relay UDP/TCP DTLS-SRTP", plan.VideoProfile)
 	}
 	if got := plan.DeviceMix["camera"]; got != 10000 {
 		t.Fatalf("camera devices = %d, want 10000 for TURN video ladder", got)
@@ -151,6 +157,40 @@ func TestVideo100KTurnPlanUsesSingleRampAndViewerLadder(t *testing.T) {
 	}
 	if plan.VideoProfile.VideoDevices != 5000 || plan.VideoProfile.VideoViewers != 5000 {
 		t.Fatalf("video profile sizing = devices=%d viewers=%d, want 5000/5000", plan.VideoProfile.VideoDevices, plan.VideoProfile.VideoViewers)
+	}
+}
+
+func TestPlanCanAddVideoOnlyGeneratorAssignments(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:                   "cloud_env/staging/lke",
+		Brandname:                 "RTK",
+		Region:                    "us-sea",
+		DeviceCount:               20000,
+		VMCount:                   2,
+		VideoGeneratorVMCount:     3,
+		VideoGeneratorLabelPrefix: "vid",
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+	if got := len(plan.AssignmentsByRole("mixed")); got != 2 {
+		t.Fatalf("mixed assignments = %d, want 2", got)
+	}
+	video := plan.AssignmentsByRole("video")
+	if got := len(video); got != 3 {
+		t.Fatalf("video assignments = %d, want 3", got)
+	}
+	for idx, assignment := range video {
+		wantLabel := []string{"vid01", "vid02", "vid03"}[idx]
+		if assignment.Label != wantLabel {
+			t.Fatalf("video assignment %d label = %q, want %q", idx, assignment.Label, wantLabel)
+		}
+		if len(assignment.TaskShards) != 0 {
+			t.Fatalf("video assignment %s should not own home task shards: %#v", assignment.Label, assignment.TaskShards)
+		}
+	}
+	if plan.Conditions.VideoGeneratorVMCount != 3 || plan.Conditions.VideoGeneratorLabelPrefix != "vid" {
+		t.Fatalf("video generator conditions = count %d prefix %q, want 3/vid", plan.Conditions.VideoGeneratorVMCount, plan.Conditions.VideoGeneratorLabelPrefix)
 	}
 }
 
@@ -204,8 +244,8 @@ func TestVideo50KTurnPlanUsesSingleRampAndViewerLadder(t *testing.T) {
 	if got := joinInts(plan.VideoProfile.ViewerLadder, ","); got != "100,500,1000,2000,5000" {
 		t.Fatalf("viewer ladder = %q, want 100,500,1000,2000,5000", got)
 	}
-	if plan.VideoProfile.WebRTCICEPolicy != "relay" || plan.VideoProfile.TURNTransport != "udp" || plan.VideoProfile.MediaSecurity != "dtls-srtp" {
-		t.Fatalf("video turn profile = %+v, want relay UDP DTLS-SRTP", plan.VideoProfile)
+	if plan.VideoProfile.WebRTCICEPolicy != "relay" || plan.VideoProfile.TURNTransport != "udp,tcp" || plan.VideoProfile.MediaSecurity != "dtls-srtp" {
+		t.Fatalf("video turn profile = %+v, want relay UDP/TCP DTLS-SRTP", plan.VideoProfile)
 	}
 	if got := plan.DeviceMix["camera"]; got != 5000 {
 		t.Fatalf("camera devices = %d, want 5000 for TURN video ladder", got)

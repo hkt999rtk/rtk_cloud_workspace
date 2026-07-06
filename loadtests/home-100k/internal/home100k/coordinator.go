@@ -84,7 +84,7 @@ func parseRunnerDaemonFlags(name string, args []string, stderr io.Writer) (PlanO
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
-	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM := addSizingFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix := addSizingFlags(fs)
 	runID := fs.String("run-id", "", "run id for artifact correlation")
 	outDir := fs.String("out-dir", "", "artifact output directory")
 	role := fs.String("role", "", "shard role")
@@ -96,6 +96,8 @@ func parseRunnerDaemonFlags(name string, args []string, stderr io.Writer) (PlanO
 	mqttConcurrency := fs.Int("mqtt-concurrency", DefaultLiveMQTTConcurrency, "per-shard MQTT connect worker concurrency for live runner")
 	commandConcurrency := fs.Int("command-concurrency", DefaultLiveCommandConcurrency, "per-shard sustained shadow command concurrency for live runner")
 	shadowCommandTimeout := fs.String("shadow-command-timeout", DefaultShadowCommandTimeout, "per-phase sustained shadow command timeout")
+	deviceTokenRequestTimeout := fs.String("device-token-request-timeout", DefaultDeviceTokenRequestTimeout, "per-attempt device /request_token timeout for live MQTT bootstrap")
+	deviceTokenRequestRetries := fs.Int("device-token-request-retries", 0, "bounded retry count after the first device /request_token attempt")
 	runtimeLogs := fs.Bool("runtime-logs", true, "publish MQTT runtime logs during sustained shadow commands")
 	liveRunnerTimeoutGrace := fs.String("live-runner-timeout-grace", "", "extra timeout after the configured live MQTT duration before killing the shard runner")
 	listen := fs.String("listen", defaultRunnerDaemonListen, "runner daemon listen address")
@@ -108,23 +110,27 @@ func parseRunnerDaemonFlags(name string, args []string, stderr io.Writer) (PlanO
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
-	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix)
+	opts.DeviceTokenRequestTimeout = strings.TrimSpace(*deviceTokenRequestTimeout)
+	opts.DeviceTokenRequestRetries = *deviceTokenRequestRetries
 	return opts, runnerDaemonFlagValues{
 		shardRunFlagValues: shardRunFlagValues{
-			runID:                  *runID,
-			outDir:                 *outDir,
-			role:                   *role,
-			shardIndex:             *shardIndex,
-			shardManifest:          *shardManifest,
-			honorStageDurations:    true,
-			runnerMode:             *runnerMode,
-			rtkCloudBinary:         *rtkCloudBinary,
-			workspace:              *workspace,
-			mqttConcurrency:        *mqttConcurrency,
-			commandConcurrency:     *commandConcurrency,
-			shadowCommandTimeout:   strings.TrimSpace(*shadowCommandTimeout),
-			runtimeLogs:            *runtimeLogs,
-			liveRunnerTimeoutGrace: strings.TrimSpace(*liveRunnerTimeoutGrace),
+			runID:                     *runID,
+			outDir:                    *outDir,
+			role:                      *role,
+			shardIndex:                *shardIndex,
+			shardManifest:             *shardManifest,
+			honorStageDurations:       true,
+			runnerMode:                *runnerMode,
+			rtkCloudBinary:            *rtkCloudBinary,
+			workspace:                 *workspace,
+			mqttConcurrency:           *mqttConcurrency,
+			commandConcurrency:        *commandConcurrency,
+			shadowCommandTimeout:      strings.TrimSpace(*shadowCommandTimeout),
+			deviceTokenRequestTimeout: strings.TrimSpace(*deviceTokenRequestTimeout),
+			deviceTokenRequestRetries: *deviceTokenRequestRetries,
+			runtimeLogs:               *runtimeLogs,
+			liveRunnerTimeoutGrace:    strings.TrimSpace(*liveRunnerTimeoutGrace),
 		},
 		listen: *listen,
 	}, nil

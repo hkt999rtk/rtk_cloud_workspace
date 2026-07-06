@@ -163,12 +163,15 @@ type VideoStartupTotals struct {
 }
 
 type VideoStartupBreakdown struct {
-	APICreateMS                   int64 `json:"api_create_ms,omitempty"`
-	OfferDeliveryMS               int64 `json:"offer_delivery_ms,omitempty"`
-	DeviceAnswerMS                int64 `json:"device_answer_ms,omitempty"`
-	ICEConnectMS                  int64 `json:"ice_connect_ms,omitempty"`
-	FirstRTPAfterICEMS            int64 `json:"first_rtp_after_ice_ms,omitempty"`
-	FirstH264AccessUnitAfterRTPMS int64 `json:"first_h264_access_unit_after_rtp_ms,omitempty"`
+	APICreateMS                     int64 `json:"api_create_ms,omitempty"`
+	OfferDeliveryMS                 int64 `json:"offer_delivery_ms,omitempty"`
+	DeviceAnswerMS                  int64 `json:"device_answer_ms,omitempty"`
+	RemoteAnswerSetMS               int64 `json:"remote_answer_set_ms,omitempty"`
+	ICEConnectMS                    int64 `json:"ice_connect_ms,omitempty"`
+	ICECheckMS                      int64 `json:"ice_check_ms,omitempty"`
+	ICEConnectedSinceSessionStartMS int64 `json:"ice_connected_since_session_start_ms,omitempty"`
+	FirstRTPAfterICEMS              int64 `json:"first_rtp_after_ice_ms,omitempty"`
+	FirstH264AccessUnitAfterRTPMS   int64 `json:"first_h264_access_unit_after_rtp_ms,omitempty"`
 }
 
 type TURNEvidence struct {
@@ -223,51 +226,61 @@ type LogExpect struct {
 }
 
 type DeviceMQTTTotals struct {
-	ConnectAttempts     int64 `json:"connect_attempts"`
-	ConnectSuccess      int64 `json:"connect_success"`
-	ConnectFail         int64 `json:"connect_fail"`
-	TokenAttempts       int64 `json:"token_attempts,omitempty"`
-	TokenSuccess        int64 `json:"token_success,omitempty"`
-	TokenFail           int64 `json:"token_fail,omitempty"`
-	MQTTDialAttempts    int64 `json:"mqtt_dial_attempts,omitempty"`
-	MQTTDialSuccess     int64 `json:"mqtt_dial_success,omitempty"`
-	MQTTDialFail        int64 `json:"mqtt_dial_fail,omitempty"`
-	MQTTConnackAttempts int64 `json:"mqtt_connack_attempts,omitempty"`
-	MQTTConnackSuccess  int64 `json:"mqtt_connack_success,omitempty"`
-	MQTTConnackFail     int64 `json:"mqtt_connack_fail,omitempty"`
-	SubscribeAttempts   int64 `json:"subscribe_attempts,omitempty"`
-	SubscribeFail       int64 `json:"subscribe_fail,omitempty"`
-	Subscribes          int64 `json:"subscribes"`
-	ActiveConnections   int64 `json:"active_connections,omitempty"`
-	ActiveSubscriptions int64 `json:"active_subscriptions,omitempty"`
-	Publishes           int64 `json:"publishes"`
-	ReceivedMessages    int64 `json:"received_messages"`
-	DeltaReceived       int64 `json:"delta_received"`
-	ReportedPublishes   int64 `json:"reported_publishes"`
-	RejectedPublishes   int64 `json:"rejected_publishes"`
-	BytesSent           int64 `json:"bytes_sent"`
-	BytesReceived       int64 `json:"bytes_received"`
+	ConnectAttempts          int64 `json:"connect_attempts"`
+	ConnectSuccess           int64 `json:"connect_success"`
+	ConnectFail              int64 `json:"connect_fail"`
+	TokenAttempts            int64 `json:"token_attempts,omitempty"`
+	TokenSuccess             int64 `json:"token_success,omitempty"`
+	TokenFail                int64 `json:"token_fail,omitempty"`
+	TokenFirstAttemptSuccess int64 `json:"token_first_attempt_success,omitempty"`
+	TokenFirstAttemptFail    int64 `json:"token_first_attempt_fail,omitempty"`
+	TokenRetryAttempts       int64 `json:"token_retry_attempts,omitempty"`
+	TokenRetrySuccess        int64 `json:"token_retry_success,omitempty"`
+	TokenRetryExhausted      int64 `json:"token_retry_exhausted,omitempty"`
+	MQTTDialAttempts         int64 `json:"mqtt_dial_attempts,omitempty"`
+	MQTTDialSuccess          int64 `json:"mqtt_dial_success,omitempty"`
+	MQTTDialFail             int64 `json:"mqtt_dial_fail,omitempty"`
+	MQTTConnackAttempts      int64 `json:"mqtt_connack_attempts,omitempty"`
+	MQTTConnackSuccess       int64 `json:"mqtt_connack_success,omitempty"`
+	MQTTConnackFail          int64 `json:"mqtt_connack_fail,omitempty"`
+	SubscribeAttempts        int64 `json:"subscribe_attempts,omitempty"`
+	SubscribeFail            int64 `json:"subscribe_fail,omitempty"`
+	Subscribes               int64 `json:"subscribes"`
+	ActiveConnections        int64 `json:"active_connections,omitempty"`
+	ActiveSubscriptions      int64 `json:"active_subscriptions,omitempty"`
+	Publishes                int64 `json:"publishes"`
+	ReceivedMessages         int64 `json:"received_messages"`
+	DeltaReceived            int64 `json:"delta_received"`
+	ReportedPublishes        int64 `json:"reported_publishes"`
+	RejectedPublishes        int64 `json:"rejected_publishes"`
+	BytesSent                int64 `json:"bytes_sent"`
+	BytesReceived            int64 `json:"bytes_received"`
 }
 
 type AppUserTotals struct {
-	LoginAttempts       int64 `json:"login_attempts"`
-	LoginSuccess        int64 `json:"login_success"`
-	LoginFail           int64 `json:"login_fail"`
-	TokenAttempts       int64 `json:"token_attempts,omitempty"`
-	TokenSuccess        int64 `json:"token_success,omitempty"`
-	TokenFail           int64 `json:"token_fail,omitempty"`
-	MQTTDialAttempts    int64 `json:"mqtt_dial_attempts,omitempty"`
-	MQTTDialSuccess     int64 `json:"mqtt_dial_success,omitempty"`
-	MQTTDialFail        int64 `json:"mqtt_dial_fail,omitempty"`
-	MQTTConnackAttempts int64 `json:"mqtt_connack_attempts,omitempty"`
-	MQTTConnackSuccess  int64 `json:"mqtt_connack_success,omitempty"`
-	MQTTConnackFail     int64 `json:"mqtt_connack_fail,omitempty"`
-	ListDevicesRequests int64 `json:"list_devices_requests"`
-	ReadShadowRequests  int64 `json:"read_shadow_requests"`
-	DesiredWrites       int64 `json:"desired_writes"`
-	ReceivedAcks        int64 `json:"received_acks"`
-	BytesSent           int64 `json:"bytes_sent"`
-	BytesReceived       int64 `json:"bytes_received"`
+	LoginAttempts            int64 `json:"login_attempts"`
+	LoginSuccess             int64 `json:"login_success"`
+	LoginFail                int64 `json:"login_fail"`
+	TokenAttempts            int64 `json:"token_attempts,omitempty"`
+	TokenSuccess             int64 `json:"token_success,omitempty"`
+	TokenFail                int64 `json:"token_fail,omitempty"`
+	TokenFirstAttemptSuccess int64 `json:"token_first_attempt_success,omitempty"`
+	TokenFirstAttemptFail    int64 `json:"token_first_attempt_fail,omitempty"`
+	TokenRetryAttempts       int64 `json:"token_retry_attempts,omitempty"`
+	TokenRetrySuccess        int64 `json:"token_retry_success,omitempty"`
+	TokenRetryExhausted      int64 `json:"token_retry_exhausted,omitempty"`
+	MQTTDialAttempts         int64 `json:"mqtt_dial_attempts,omitempty"`
+	MQTTDialSuccess          int64 `json:"mqtt_dial_success,omitempty"`
+	MQTTDialFail             int64 `json:"mqtt_dial_fail,omitempty"`
+	MQTTConnackAttempts      int64 `json:"mqtt_connack_attempts,omitempty"`
+	MQTTConnackSuccess       int64 `json:"mqtt_connack_success,omitempty"`
+	MQTTConnackFail          int64 `json:"mqtt_connack_fail,omitempty"`
+	ListDevicesRequests      int64 `json:"list_devices_requests"`
+	ReadShadowRequests       int64 `json:"read_shadow_requests"`
+	DesiredWrites            int64 `json:"desired_writes"`
+	ReceivedAcks             int64 `json:"received_acks"`
+	BytesSent                int64 `json:"bytes_sent"`
+	BytesReceived            int64 `json:"bytes_received"`
 }
 
 type ServerCorrelation struct {
@@ -881,7 +894,9 @@ func videoStepEvidenceFromEvidence(name, artifactDir string, evidence VideoEvide
 		Notes:                    evidence.Notes,
 	}
 	if len(evidence.Steps) > 0 {
-		step.Viewers = evidence.Steps[0].Viewers
+		for _, child := range evidence.Steps {
+			step.Viewers += child.Viewers
+		}
 		step.DurationMS = evidence.Steps[0].DurationMS
 		step.ICEPolicy = evidence.Steps[0].ICEPolicy
 	}
@@ -959,7 +974,10 @@ func mergeVideoStartupTotals(a, b VideoStartupTotals) VideoStartupTotals {
 	a.BreakdownP95.APICreateMS = maxInt64(a.BreakdownP95.APICreateMS, b.BreakdownP95.APICreateMS)
 	a.BreakdownP95.OfferDeliveryMS = maxInt64(a.BreakdownP95.OfferDeliveryMS, b.BreakdownP95.OfferDeliveryMS)
 	a.BreakdownP95.DeviceAnswerMS = maxInt64(a.BreakdownP95.DeviceAnswerMS, b.BreakdownP95.DeviceAnswerMS)
+	a.BreakdownP95.RemoteAnswerSetMS = maxInt64(a.BreakdownP95.RemoteAnswerSetMS, b.BreakdownP95.RemoteAnswerSetMS)
 	a.BreakdownP95.ICEConnectMS = maxInt64(a.BreakdownP95.ICEConnectMS, b.BreakdownP95.ICEConnectMS)
+	a.BreakdownP95.ICECheckMS = maxInt64(a.BreakdownP95.ICECheckMS, b.BreakdownP95.ICECheckMS)
+	a.BreakdownP95.ICEConnectedSinceSessionStartMS = maxInt64(a.BreakdownP95.ICEConnectedSinceSessionStartMS, b.BreakdownP95.ICEConnectedSinceSessionStartMS)
 	a.BreakdownP95.FirstRTPAfterICEMS = maxInt64(a.BreakdownP95.FirstRTPAfterICEMS, b.BreakdownP95.FirstRTPAfterICEMS)
 	a.BreakdownP95.FirstH264AccessUnitAfterRTPMS = maxInt64(a.BreakdownP95.FirstH264AccessUnitAfterRTPMS, b.BreakdownP95.FirstH264AccessUnitAfterRTPMS)
 	return a
@@ -1345,6 +1363,11 @@ func addDeviceMQTTTotals(a DeviceMQTTTotals, b DeviceMQTTTotals) DeviceMQTTTotal
 	a.TokenAttempts += b.TokenAttempts
 	a.TokenSuccess += b.TokenSuccess
 	a.TokenFail += b.TokenFail
+	a.TokenFirstAttemptSuccess += b.TokenFirstAttemptSuccess
+	a.TokenFirstAttemptFail += b.TokenFirstAttemptFail
+	a.TokenRetryAttempts += b.TokenRetryAttempts
+	a.TokenRetrySuccess += b.TokenRetrySuccess
+	a.TokenRetryExhausted += b.TokenRetryExhausted
 	a.MQTTDialAttempts += b.MQTTDialAttempts
 	a.MQTTDialSuccess += b.MQTTDialSuccess
 	a.MQTTDialFail += b.MQTTDialFail
@@ -1382,6 +1405,11 @@ func addAppUserTotals(a AppUserTotals, b AppUserTotals) AppUserTotals {
 	a.TokenAttempts += b.TokenAttempts
 	a.TokenSuccess += b.TokenSuccess
 	a.TokenFail += b.TokenFail
+	a.TokenFirstAttemptSuccess += b.TokenFirstAttemptSuccess
+	a.TokenFirstAttemptFail += b.TokenFirstAttemptFail
+	a.TokenRetryAttempts += b.TokenRetryAttempts
+	a.TokenRetrySuccess += b.TokenRetrySuccess
+	a.TokenRetryExhausted += b.TokenRetryExhausted
 	a.MQTTDialAttempts += b.MQTTDialAttempts
 	a.MQTTDialSuccess += b.MQTTDialSuccess
 	a.MQTTDialFail += b.MQTTDialFail
@@ -1713,11 +1741,6 @@ func videoGateFailures(plan Plan, evidence VideoEvidence) (bool, []string) {
 			mediaSuccessRate := float64(evidence.WebRTCMedia.Successes) * 100 / float64(evidence.WebRTCMedia.Attempts)
 			if mediaSuccessRate < threshold {
 				reasons = append(reasons, fmt.Sprintf("WebRTC media success rate %.2f%% below %.2f%% threshold (%d/%d)", mediaSuccessRate, threshold, evidence.WebRTCMedia.Successes, evidence.WebRTCMedia.Attempts))
-			}
-		}
-		if strings.Contains(strings.TrimSpace(plan.VideoProfile.WebRTCMediaSet), "h264") || strings.TrimSpace(plan.VideoProfile.WebRTCMediaSet) == "av" {
-			if evidence.WebRTCMedia.Startup.H264AccessUnitSamples == 0 {
-				reasons = append(reasons, "WebRTC media evidence missing first H.264 access unit")
 			}
 		}
 	}

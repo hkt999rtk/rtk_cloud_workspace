@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -74,6 +75,10 @@ func lkePrintCapacityPlan(env map[string]string, opts provisionOptions) {
 }
 
 func lkeCheckCapacity(env map[string]string, opts provisionOptions) error {
+	return lkeCheckCapacityWithPaths(provisionPaths{}, env, opts)
+}
+
+func lkeCheckCapacityWithPaths(paths provisionPaths, env map[string]string, opts provisionOptions) error {
 	if strings.TrimSpace(os.Getenv("LKE_CAPACITY_CHECK")) == "0" {
 		return nil
 	}
@@ -87,6 +92,9 @@ func lkeCheckCapacity(env map[string]string, opts provisionOptions) error {
 		}
 		if plan.ProviderServices.Limit > 0 && plan.ProviderServices.RequiredServices > plan.ProviderServices.Limit {
 			return fmt.Errorf("LKE provider capacity check failed: required active services=%d exceeds LKE_LINODE_ACTIVE_SERVICE_LIMIT=%d (nodes=%d postgres_volumes=%d edge_vms=%d coturn_vms=%d); reduce LKE_NODE_COUNT, use LKE_POSTGRES_STORAGE_MODE=emptydir for ephemeral validation, reduce LKE_EDGE_HAPROXY_COUNT, reduce LKE_COTURN_VM_COUNT, or request a Linode quota increase", plan.ProviderServices.RequiredServices, plan.ProviderServices.Limit, plan.ProviderServices.NodeServices, plan.ProviderServices.PostgresVolumes, plan.ProviderServices.EdgeVMs, plan.ProviderServices.CoturnVMs)
+		}
+		if err := lkeCheckLiveProviderActiveServices(paths, env, plan.ProviderServices); err != nil {
+			return err
 		}
 		fmt.Fprintf(os.Stderr, "[lke] capacity ok: node_count=%d required=%d workload_cpu=%dm workload_memory=%dMi\n", plan.NodeCount, plan.RequiredNodes, plan.WorkloadCPU, plan.WorkloadMemMi)
 		return nil
@@ -104,6 +112,72 @@ func lkeCheckCapacity(env map[string]string, opts provisionOptions) error {
 	}
 	lines = append(lines, "Increase LKE_NODE_COUNT/LKE_NODE_TYPE or lower explicit staging resource requests in env/stack.env before provisioning.")
 	return errors.New(strings.Join(lines, "\n"))
+}
+
+func lkeCheckLiveProviderActiveServices(paths provisionPaths, env map[string]string, plan lkeProviderServicePlan) error {
+	if plan.Limit <= 0 || strings.TrimSpace(paths.EnvRoot) == "" {
+		return nil
+	}
+	token := resolveLinodeToken(paths.EnvRoot)
+	if token == "" {
+		return nil
+	}
+	out, err := linodeRequestRaw(token, "GET", "/linode/instances?page_size=500", "")
+	if err != nil {
+		return err
+	}
+	var listed struct {
+		Data []linodeInstance `json:"data"`
+	}
+	if err := json.Unmarshal(out, &listed); err != nil {
+		return err
+	}
+	activeLabels := map[string]bool{}
+	for _, item := range listed.Data {
+		activeLabels[item.Label] = true
+	}
+	current := len(listed.Data)
+	additional := plan.RequiredServices
+	reducible := 0
+	if cluster, err := discoverLKECluster(token, paths, env, false); err == nil && cluster.ID > 0 {
+		additional = 0
+		if plan.EdgeVMs > 0 && !activeLabels[lkeEdgeHAProxyLabel(env)] {
+			additional++
+		}
+		for i := 1; i <= plan.CoturnVMs; i++ {
+			if !activeLabels[lkeCoturnVMLabel(lkeCoturnVMEnvForIndex(env, i))] {
+				additional++
+			}
+		}
+		reducible = lkeReducibleMainNodeServices(token, cluster, env, plan.NodeServices)
+	}
+	projected := current - reducible + additional
+	if projected > plan.Limit {
+		return fmt.Errorf("LKE live provider capacity check failed: projected active services=%d exceeds LKE_LINODE_ACTIVE_SERVICE_LIMIT=%d (current_active=%d reducible_lke_nodes=%d additional_required=%d edge_vms=%d coturn_vms=%d); delete unused Linode services or request a Linode quota increase before rerunning staging provision", projected, plan.Limit, current, reducible, additional, plan.EdgeVMs, plan.CoturnVMs)
+	}
+	fmt.Fprintf(os.Stderr, "[lke] provider active services ok: current=%d reducible_lke_nodes=%d additional_required=%d projected=%d limit=%d\n", current, reducible, additional, projected, plan.Limit)
+	return nil
+}
+
+func lkeReducibleMainNodeServices(token string, cluster lkeCluster, env map[string]string, desiredCount int) int {
+	if desiredCount <= 0 {
+		return 0
+	}
+	pools, err := listLKENodePools(token, strconv.Itoa(cluster.ID))
+	if err != nil {
+		return 0
+	}
+	desiredType := firstNonEmpty(os.Getenv("LKE_NODE_TYPE"), env["LKE_NODE_TYPE"], "g6-standard-2")
+	for _, pool := range pools {
+		if pool.Type != desiredType || lkeNodePoolHasPostgresPlacement(pool) {
+			continue
+		}
+		if pool.Count > desiredCount {
+			return pool.Count - desiredCount
+		}
+		return 0
+	}
+	return 0
 }
 
 func lkeCapacityPlan(env map[string]string, opts provisionOptions) (lkeCapacityPlanResult, error) {

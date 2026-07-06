@@ -29,6 +29,8 @@ func TestReportRendersRequiredScenariosAndIncompleteEvidence(t *testing.T) {
 		"Runner nofile limit: 1048576",
 		"Device session model: `lifetime-subscription`",
 		"Runner read model: `go-netpoll-bounded-reader-goroutine`",
+		"Device token request timeout: `10s`",
+		"Device token request retries: 0",
 		"sustained MQTT reads",
 		"## Gate Standards",
 		"Functional success threshold: 99.50%",
@@ -424,6 +426,7 @@ func TestReportRendersVideoAndTURNEvidence(t *testing.T) {
 		"H.264 access unit samples: 100",
 		"App request -> first H.264 access unit p95: 185 ms",
 		"Device answer p95: 30 ms",
+		"ICE check p95: 80 ms",
 		"## TURN Evidence",
 		"active nodes: 2",
 		"allocations: 100",
@@ -541,7 +544,9 @@ func TestVideoEvidenceParsesStartupLatencySummary(t *testing.T) {
 					"api_create_ms": 50,
 					"offer_delivery_ms": 25,
 					"device_answer_ms": 35,
-					"ice_connect_ms": 90,
+					"remote_answer_set_ms": 140,
+					"ice_check_ms": 90,
+					"ice_connected_since_session_start_ms": 230,
 					"first_rtp_after_ice_ms": 12,
 					"first_h264_access_unit_after_rtp_ms": 7
 				}
@@ -561,6 +566,9 @@ func TestVideoEvidenceParsesStartupLatencySummary(t *testing.T) {
 	}
 	if video.WebRTCMedia.Startup.BreakdownP95.DeviceAnswerMS != 35 {
 		t.Fatalf("device answer p95 = %d, want 35", video.WebRTCMedia.Startup.BreakdownP95.DeviceAnswerMS)
+	}
+	if video.WebRTCMedia.Startup.BreakdownP95.ICECheckMS != 90 || video.WebRTCMedia.Startup.BreakdownP95.ICEConnectedSinceSessionStartMS != 230 {
+		t.Fatalf("ice breakdown = %+v, want ice_check=90 and connected_since_session_start=230", video.WebRTCMedia.Startup.BreakdownP95)
 	}
 }
 
@@ -637,7 +645,7 @@ func TestVideoLadderEvidenceRendersPerStepReport(t *testing.T) {
 		"Result: SUCCESS",
 		"## Video Ladder",
 		"| step-100 | 100 | relay | 100.00% | 100.00% | 180 ms | 220 ms | 1 | 0 | 100 | 100 |",
-		"TURN/UDP relays encrypted DTLS-SRTP packets",
+		"TURN relays encrypted DTLS-SRTP packets over the configured UDP/TCP transports",
 	} {
 		if !strings.Contains(report, want) {
 			t.Fatalf("report missing %q:\n%s", want, report)
@@ -720,6 +728,57 @@ func TestVideoLadderEvidenceLoadsTwoHostStepLayout(t *testing.T) {
 	}
 	if video.TURN.ActiveSessions != 164 || video.TURN.ActiveNodes != 2 {
 		t.Fatalf("TURN active sessions/nodes = %d/%d, want 164/2", video.TURN.ActiveSessions, video.TURN.ActiveNodes)
+	}
+}
+
+func TestVideoLadderEvidenceSumsRemoteShardedViewers(t *testing.T) {
+	tmp := t.TempDir()
+	stepDir := tmp + "/video/step-20"
+	for _, shard := range []string{"shard-01", "shard-02"} {
+		if err := os.MkdirAll(stepDir+"/"+shard, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		raw := []byte(`{
+			"config": {"webrtc_ice_policy": "relay", "virtual_viewers": 10, "duration_ms": 30000},
+			"webrtc": {
+				"success_rate": 1,
+				"setup_latency_p95_ms": 200,
+				"setup_latency_p99_ms": 220,
+				"ice_server_count": 2,
+				"create": {"operations": 10, "successes": 10},
+				"setup": {"operations": 10, "successes": 10},
+				"close": {"operations": 10, "successes": 10}
+			},
+			"webrtc_media": {
+				"attempts": 10,
+				"successes": 10,
+				"ice_connected_p95_ms": 120,
+				"time_to_first_rtp_p95_ms": 180,
+				"video_startup_latency": {
+					"samples": 10,
+					"h264_access_unit_samples": 10,
+					"app_request_to_first_h264_access_unit_p95_ms": 220
+				}
+			},
+			"turn_evidence": {"registry_available": true, "active_nodes": 1, "coturn_available": true, "allocations": 10, "active_sessions": 10},
+			"video_startup_latency": [
+				{"ice_policy":"relay","selected_local_candidate_type":"relay","selected_remote_candidate_type":"relay"}
+			]
+		}`)
+		if err := os.WriteFile(stepDir+"/"+shard+"/load-results.json", raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	video := loadVideoEvidence(tmp + "/video")
+	if len(video.Steps) != 1 {
+		t.Fatalf("steps = %d, want 1: %+v", len(video.Steps), video)
+	}
+	if video.Steps[0].Viewers != 20 {
+		t.Fatalf("step viewers = %d, want sum of remote shards 20", video.Steps[0].Viewers)
+	}
+	if video.WebRTC.CreateAttempts != 20 || video.WebRTCMedia.Successes != 20 {
+		t.Fatalf("merged attempts/successes = %d/%d, want 20/20", video.WebRTC.CreateAttempts, video.WebRTCMedia.Successes)
 	}
 }
 
