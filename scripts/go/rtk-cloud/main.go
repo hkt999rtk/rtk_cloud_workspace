@@ -213,6 +213,8 @@ func runMQTTTest(args []string) error {
 	commandRate := fs.String("command-rate-per-device-per-day", "", "load-test command rate per device per day")
 	commandConcurrency := fs.Int("command-concurrency", 0, "load-test sustained shadow command concurrency")
 	shadowCommandTimeout := fs.String("shadow-command-timeout", "", "per-phase sustained shadow command timeout")
+	deviceTokenRequestTimeout := fs.String("device-token-request-timeout", "", "per-attempt device /request_token timeout")
+	deviceTokenRequestRetries := fs.Int("device-token-request-retries", 0, "device /request_token retries after the first attempt")
 	runtimeLogs := fs.Bool("runtime-logs", true, "publish MQTT runtime logs during sustained shadow commands")
 	loadModel := fs.String("load-model", "", "load model passed through to cloud-mqtt-test")
 	stageNames := fs.String("stage-names", "", "comma-separated staged sustained load stage names")
@@ -317,6 +319,8 @@ func runMQTTTest(args []string) error {
 		"--command-rate-per-device-per-day", *commandRate,
 		"--command-concurrency", strconv.Itoa(*commandConcurrency),
 		"--shadow-command-timeout", *shadowCommandTimeout,
+		"--device-token-request-timeout", *deviceTokenRequestTimeout,
+		"--device-token-request-retries", strconv.Itoa(*deviceTokenRequestRetries),
 		"--runtime-logs=" + strconv.FormatBool(*runtimeLogs),
 		"--load-model", *loadModel,
 		"--stage-names", *stageNames,
@@ -1153,6 +1157,9 @@ func runGenerateLoadDevices(args []string) error {
 	if exists(*outDir) {
 		if !*force {
 			return fmt.Errorf("%s already exists; use --force to replace it", *outDir)
+		}
+		if err := os.RemoveAll(*outDir); err != nil {
+			return fmt.Errorf("remove existing output directory for --force: %w", err)
 		}
 	}
 	if err := os.MkdirAll(*outDir, 0o755); err != nil {
@@ -2467,7 +2474,7 @@ func runRemoveK8s(args []string) error {
 		fmt.Fprintf(os.Stdout, "namespaces:\n")
 		for _, ns := range k8sStagingNamespaces(stack) {
 			if *purgeStorage && destructive {
-				fmt.Fprintf(os.Stdout, "  - delete PVCs then namespace %s\n", ns)
+				fmt.Fprintf(os.Stdout, "  - delete workloads, PVCs, then namespace %s\n", ns)
 				continue
 			}
 			if destructive {
@@ -2494,6 +2501,9 @@ func runRemoveK8s(args []string) error {
 	}
 	for _, ns := range k8sStagingNamespaces(stack) {
 		if *purgeStorage {
+			if err := resetK8SNamespaceResources(kubeconfig, ns); err != nil {
+				return err
+			}
 			if err := runK8SKubectl(kubeconfig, "-n", ns, "delete", "pvc", "--all", "--ignore-not-found=true"); err != nil {
 				return err
 			}
@@ -3151,7 +3161,9 @@ func runStagingProvision(args []string) error {
 		if ctx.provider == "lke" {
 			missing := missingLKEImageEnvKeys()
 			if len(missing) > 0 {
-				if env, source := existingLKEImageEnv(ctx.envRoot); lkeImageEnvHasKeys(env, missing) {
+				if env, source := stackLKEImageEnv(ctx.envRoot); lkeImageEnvHasKeys(env, missing) {
+					fmt.Fprintf(os.Stdout, "image_resolve: stack env (%s)\n", source)
+				} else if env, source := existingLKEImageEnv(ctx.envRoot); lkeImageEnvHasKeys(env, missing) {
 					fmt.Fprintf(os.Stdout, "image_resolve: existing artifact (%s)\n", source)
 				} else {
 					fmt.Fprintf(os.Stdout, "image_resolve: automatic (%s)\n", strings.Join(missing, ","))
@@ -3510,7 +3522,9 @@ func runStagingE2E(args []string) error {
 		if ctx.provider == "lke" {
 			missing := missingLKEImageEnvKeys()
 			if len(missing) > 0 {
-				if env, source := existingLKEImageEnv(ctx.envRoot); lkeImageEnvHasKeys(env, missing) {
+				if env, source := stackLKEImageEnv(ctx.envRoot); lkeImageEnvHasKeys(env, missing) {
+					fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] plan: LKE image env will be loaded from %s\n", source)
+				} else if env, source := existingLKEImageEnv(ctx.envRoot); lkeImageEnvHasKeys(env, missing) {
 					fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] plan: LKE image env will be loaded from %s\n", source)
 				} else {
 					fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] plan: LKE image resolve will run before provision because these env vars are missing: %s\n", strings.Join(missing, ","))
@@ -3643,6 +3657,15 @@ func resolveLKEImagesIfNeeded(workspace, envRoot string) error {
 	if len(missing) == 0 {
 		return nil
 	}
+	if stackEnv, source := stackLKEImageEnv(envRoot); lkeImageEnvHasKeys(stackEnv, missing) {
+		for _, key := range missing {
+			if err := os.Setenv(key, stackEnv[key]); err != nil {
+				return err
+			}
+		}
+		fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] use: lke_image_env source=%s keys=%s\n", source, strings.Join(missing, ","))
+		return nil
+	}
 	if env, source := existingLKEImageEnv(envRoot); lkeImageEnvHasKeys(env, missing) {
 		if err := validateExistingLKEImageEnvAgainstStack(envRoot, env, source, missing); err != nil {
 			return err
@@ -3692,6 +3715,15 @@ func resolveLKEImagesIfNeeded(workspace, envRoot string) error {
 	}
 	fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] pass: lke_resolve_images env=%s\n", envFile)
 	return nil
+}
+
+func stackLKEImageEnv(envRoot string) (map[string]string, string) {
+	source := filepath.Join(envRoot, "env", "stack.env")
+	env, err := readEnvFile(source)
+	if err != nil {
+		return nil, ""
+	}
+	return env, source
 }
 
 func existingLKEImageEnv(envRoot string) (map[string]string, string) {

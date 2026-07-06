@@ -464,7 +464,7 @@ NodeBalancer。`--dns` / `staging-provision` 都走同一條 HAProxy edge 路徑
 - `certbot` CLI，或用 `RTK_CLOUD_CERTBOT` 指到指定 binary。
 - `helm` 與 `kubectl` 可操作目標 LKE cluster。
 - `LKE_PUBLIC_EDGE_MODE=external-haproxy`，這是唯一支援的 public edge mode。
-- HAProxy edge VM operator inputs，包含 VM label/region/type、SSH key，以及 `LKE_EDGE_HAPROXY_MAXCONN`。`maxconn` 預設從 `200000` 開始，loading test 時再依 memory/FD/CPU 使用量調整。
+- HAProxy edge VM operator inputs，包含 VM label/region/type、SSH key，以及 `LKE_EDGE_HAPROXY_MAXCONN`。`maxconn` 預設從 `400000` 開始；100K MQTTS 經 TCP proxy 會接近 200K HAProxy-side sockets，還需要替 API `/request_token` 與 WebRTC signaling 保留 headroom，loading test 時再依 memory/FD/CPU 使用量調整。
 - coturn VM operator inputs：`LKE_COTURN_VM_NAME` 預設 `turn01`，
   `LKE_COTURN_VM_LABEL` 預設 `<stack>-turn01`，`LKE_COTURN_VM_TYPE`
   預設 `g6-nanode-1`，`LKE_COTURN_DOMAIN` 預設
@@ -614,6 +614,19 @@ truth。`rtk-cloud provision --plan` 會先印出 capacity plan；
 `LKE_VIDEO_CLOUD_API_LIMIT_MEMORY`、`LKE_MQTT_REQUEST_CPU`、
 `LKE_MQTT_REQUEST_MEMORY`、`LKE_MQTT_LIMIT_MEMORY`、
 `LKE_INGRESS_REPLICAS` 與 `LKE_INGRESS_REQUEST_CPU`。
+100K MQTT/shadow + WebRTC baseline 曾在 Postgres 專用
+`g6-standard-4` node 上觀察到 Postgres node CPU p95/max 約 `102%`，
+且 device token bootstrap 還有 `request_token context deadline exceeded`。
+100K baseline 因此建議使用 Postgres 專用 `g6-standard-8`、
+`LKE_POSTGRES_REQUEST_CPU=4`、`LKE_POSTGRES_REQUEST_MEMORY=4Gi`、
+`LKE_POSTGRES_LIMIT_MEMORY=8Gi`，除非新的 run report 證明較小配置已通過。
+若 Linode account type limit 暫時無法建立 `g6-standard-8`，可先用
+`g6-standard-6` 做受限 rerun，但報告必須保留這個 sizing constraint。
+`video-100k-turn-v1` 會設定 `HOME100K_DEVICE_TOKEN_REQUEST_RETRIES=1`，
+讓 device MQTT bootstrap 的 transient `/request_token` timeout 有一次 bounded
+retry。這只用來排除短暫 token/bootstrap 抖動，不放寬 100K client target
+completeness；若 retry 後仍有 device token timeout，應先歸因到
+API/token-bootstrap/Postgres path，而不是 coturn/TURN 容量。
 
 容量係數必須來自可 review 的實驗紀錄，不直接把 `20000` 當作永久真值。
 要產生一筆完整紀錄，使用：
@@ -627,7 +640,7 @@ scripts/run-lke-capacity-experiment.sh \
   --mqtt-request-memory 2Gi \
   --mqtt-limit-memory 4Gi \
   --cloud-logger-request-memory 4Gi \
-  --cloud-logger-limit-memory 8Gi \
+  --cloud-logger-limit-memory 16Gi \
   --live \
   --confirm video-cloud-staging
 ```
@@ -641,6 +654,13 @@ scripts/run-lke-capacity-experiment.sh \
 review 看不到實驗條件。
 若失敗點在 runtime evidence/log correlation，cloud-logger sizing 也要由
 wrapper 記錄：`--cloud-logger-request-memory`、`--cloud-logger-limit-memory`。
+100K evidence collection 曾在 8Gi limit 下觸發 cloud-logger OOMKilled，因此
+100K with WebRTC sizing baseline 不應低於 limit 16Gi；若 node sizing 允許，可再把
+request 提高到 8Gi，讓 scheduler 更保守地保留記憶體。
+若 runtime log correlation 顯示 `central logger runtime query window budget exhausted`，
+同一輪 100K rerun 應提高 `HOME100K_CENTRAL_LOGGER_RUNTIME_QUERY_MAX_WINDOWS`
+並保留報告中的 logger pod restart/resource evidence；不要把 skipped correlation
+當成完整 E2E trace。
 request 也會記錄 `live_runner_timeout_grace`；大型 live shard 需要額外時間
 完成 MQTT disconnect、cleanup 與 `results.json` 寫檔，不能只用 stage duration
 加固定短 buffer。

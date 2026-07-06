@@ -268,6 +268,49 @@ CLOUD_PROVIDER=lke "$ROOT/scripts/setup-staging-e2e-data.sh" --workspace "$WORKS
 grep -F 'cloud-staging-e2e-data-setup plan' "$TMP/lke-plan.out" >/dev/null
 grep -F 'env_root: '"$WORKSPACE/cloud_env/staging/lke" "$TMP/lke-plan.out" >/dev/null
 
+mkdir -p "$WORKSPACE/loadtests/home-100k/scenarios"
+cat > "$WORKSPACE/loadtests/home-100k/scenarios/test-brand-plan.json" <<'EOF_BRAND_PLAN'
+{
+  "total_devices": 4,
+  "devices_per_user": 2,
+  "brands": [
+    {
+      "brandname": "RTK-BRAND-01",
+      "devices": 4,
+      "normal_users": 2,
+      "developer_users": {"owner": 1, "admin": 0},
+      "device_mix": {"camera": 4}
+    }
+  ]
+}
+EOF_BRAND_PLAN
+cat > "$TMP/video-description.env" <<'EOF_DESCRIPTION'
+HOME100K_SCENARIO_PROFILE=video-100k-turn-v1
+HOME100K_BRAND_PLAN=loadtests/home-100k/scenarios/test-brand-plan.json
+HOME100K_DEVICES=4
+EOF_DESCRIPTION
+CLOUD_PROVIDER=lke "$ROOT/scripts/setup-staging-e2e-data.sh" \
+	--workspace "$WORKSPACE" \
+	--env-root "$WORKSPACE/cloud_env/staging" \
+	--description-file "$TMP/video-description.env" \
+	--plan >"$TMP/description-brand-plan.out"
+grep -F 'multi_brand_plan: '"$WORKSPACE/loadtests/home-100k/scenarios/test-brand-plan.json" "$TMP/description-brand-plan.out" >/dev/null
+grep -F -- '- brandname: RTK-BRAND-01 normal_users=2 devices=4 owner=1 admin=0 device_mix=camera=4' "$TMP/description-brand-plan.out" >/dev/null
+
+cat > "$TMP/video-description-missing-brand-plan.env" <<'EOF_DESCRIPTION'
+HOME100K_SCENARIO_PROFILE=video-100k-turn-v1
+HOME100K_DEVICES=100000
+EOF_DESCRIPTION
+if CLOUD_PROVIDER=lke "$ROOT/scripts/setup-staging-e2e-data.sh" \
+	--workspace "$WORKSPACE" \
+	--env-root "$WORKSPACE/cloud_env/staging" \
+	--description-file "$TMP/video-description-missing-brand-plan.env" \
+	--plan >"$TMP/description-missing-brand-plan.out" 2>"$TMP/description-missing-brand-plan.err"; then
+	echo "expected video-100k data setup without brand plan to fail" >&2
+	exit 1
+fi
+grep -F 'video-100k-turn-v1 requires HOME100K_BRAND_PLAN or --brand-plan for empty data setup' "$TMP/description-missing-brand-plan.err" >/dev/null
+
 RTK_CLOUD_STAGING_ENV_ROOT="$WORKSPACE/cloud_env/staging" "$ROOT/stg.sh" data --plan >"$TMP/stg-data-plan.out"
 grep -F 'cloud-staging-e2e-data-setup plan' "$TMP/stg-data-plan.out" >/dev/null
 

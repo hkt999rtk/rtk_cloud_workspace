@@ -72,7 +72,7 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 				return provider.Name() == "lke" && (ctx.Opts.mode.preflight || ctx.Opts.mode.apply || ctx.Opts.mode.deploy || ctx.Opts.mode.e2e)
 			},
 			Run: func(ctx provisionContext) error {
-				return lkeCheckCapacity(ctx.Env, ctx.Opts)
+				return lkeCheckCapacityWithPaths(ctx.Paths, ctx.Env, ctx.Opts)
 			},
 		},
 		{

@@ -7,6 +7,7 @@ WORKSPACE="$ROOT"
 ENV_ROOT="${RTK_CLOUD_STAGING_ENV_ROOT:-$ROOT/cloud_env/staging}"
 BRANDNAME="RTK"
 BRAND_PLAN=""
+SCENARIO_PROFILE=""
 USER_COUNT="10"
 DEVICE_COUNT="100"
 DEVICE_MIX="camera=40,light=25,air_conditioner=20,smart_meter=15"
@@ -19,6 +20,33 @@ OUT_DIR=""
 QUIET=0
 RESUME=1
 FROM_STEP=""
+DESCRIPTION_FILE="${HOME100K_DESCRIPTION_FILE:-}"
+
+capture_home100k_env_overrides() {
+	local name
+	env | while IFS='=' read -r name _; do
+		case "$name" in
+			HOME100K_*)
+				printf '%s=%q\n' "$name" "${!name-}"
+				;;
+		esac
+	done
+}
+
+description_file_from_args() {
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			--description-file)
+				printf '%s\n' "${2:-}"
+				return
+				;;
+			--)
+				return
+				;;
+		esac
+		shift
+	done
+}
 
 env_file_value() {
 	local file="$1"
@@ -43,6 +71,7 @@ Options:
   --env-root PATH                 Cloud env root. Default: cloud_env/staging.
   --brandname NAME                Brand cloud name. Default: RTK.
   --brand-plan FILE               Multi-brand load-test plan JSON.
+  --description-file FILE         HOME100K description env; HOME100K_* values become data setup defaults.
   --user-count N                  Users to create. Default: 10.
   --device-count N                Devices to create and bind. Default: 100.
   --device-mix MIX                Device mix for generate-load-devices.
@@ -58,6 +87,38 @@ Options:
   -h, --help                      Show this help.
 USAGE
 }
+
+description_from_args="$(description_file_from_args "$@")"
+if [[ -n "$description_from_args" ]]; then
+	DESCRIPTION_FILE="$description_from_args"
+fi
+explicit_home100k_env="$(capture_home100k_env_overrides)"
+if [[ -n "$DESCRIPTION_FILE" ]]; then
+	if [[ "$DESCRIPTION_FILE" != /* && ! -f "$DESCRIPTION_FILE" && -f "$ROOT/$DESCRIPTION_FILE" ]]; then
+		DESCRIPTION_FILE="$ROOT/$DESCRIPTION_FILE"
+	fi
+	if [[ ! -f "$DESCRIPTION_FILE" ]]; then
+		printf 'error: --description-file not found: %s\n' "$DESCRIPTION_FILE" >&2
+		exit 2
+	fi
+	set -a
+	# shellcheck source=/dev/null
+	source "$DESCRIPTION_FILE"
+	set +a
+fi
+if [[ -n "$explicit_home100k_env" ]]; then
+	eval "$explicit_home100k_env"
+fi
+
+BRANDNAME="${HOME100K_BRANDNAME:-$BRANDNAME}"
+BRAND_PLAN="${HOME100K_BRAND_PLAN:-$BRAND_PLAN}"
+SCENARIO_PROFILE="${HOME100K_SCENARIO_PROFILE:-$SCENARIO_PROFILE}"
+USER_COUNT="${HOME100K_USERS:-$USER_COUNT}"
+DEVICE_COUNT="${HOME100K_DEVICES:-$DEVICE_COUNT}"
+DEVICE_PREFIX="${HOME100K_DEVICE_PREFIX:-$DEVICE_PREFIX}"
+USER_CONCURRENCY="${HOME100K_USER_CONCURRENCY:-$USER_CONCURRENCY}"
+DEVICE_CONCURRENCY="${HOME100K_DEVICE_CONCURRENCY:-$DEVICE_CONCURRENCY}"
+BIND_CONCURRENCY="${HOME100K_BIND_CONCURRENCY:-$BIND_CONCURRENCY}"
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -93,6 +154,14 @@ while [[ $# -gt 0 ]]; do
 			BRAND_PLAN="${2:-}"
 			if [[ -z "$BRAND_PLAN" ]]; then
 				printf 'error: --brand-plan requires a value\n' >&2
+				exit 2
+			fi
+			shift 2
+			;;
+		--description-file)
+			DESCRIPTION_FILE="${2:-}"
+			if [[ -z "$DESCRIPTION_FILE" ]]; then
+				printf 'error: --description-file requires a value\n' >&2
 				exit 2
 			fi
 			shift 2
@@ -221,6 +290,18 @@ case "$PROVIDER" in
 		;;
 esac
 export CLOUD_PROVIDER="$PROVIDER"
+
+if [[ -n "$BRAND_PLAN" && "$BRAND_PLAN" != /* ]]; then
+	BRAND_PLAN="$WORKSPACE/$BRAND_PLAN"
+fi
+case "$SCENARIO_PROFILE" in
+	video-50k-turn-v1|video-100k-turn-v1)
+		if [[ -z "$BRAND_PLAN" ]]; then
+			printf 'error: %s requires HOME100K_BRAND_PLAN or --brand-plan for empty data setup\n' "$SCENARIO_PROFILE" >&2
+			exit 2
+		fi
+		;;
+esac
 
 run_args=(
 	staging-e2e-data-setup
