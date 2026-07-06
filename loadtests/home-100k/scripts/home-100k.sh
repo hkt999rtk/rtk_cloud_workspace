@@ -59,8 +59,12 @@ load_linode_token_from_env_file
 env_root="${HOME100K_ENV_ROOT:-cloud_env/staging/lke}"
 brandname="${HOME100K_BRANDNAME:-RTK}"
 brand_plan="${HOME100K_BRAND_PLAN:-}"
+if [[ -n "$brand_plan" && "$brand_plan" != /* ]]; then
+  brand_plan="$repo_root/$brand_plan"
+fi
 scenario_profile="${HOME100K_SCENARIO_PROFILE:-}"
 region="${HOME100K_REGION:-us-sea}"
+linode_type="${HOME100K_LINODE_TYPE:-}"
 vm_label_prefix="${HOME100K_VM_LABEL_PREFIX:-lg}"
 run_id="${HOME100K_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 out_dir="${HOME100K_OUT_DIR:-loadtests/home-100k/reports/${run_id}}"
@@ -80,10 +84,14 @@ devices_per_user="${HOME100K_DEVICES_PER_USER:-}"
 vm_count="${HOME100K_VM_COUNT:-}"
 load_generator_devices_per_vm="${HOME100K_LOAD_GENERATOR_DEVICES_PER_VM:-20000}"
 runner_mode="${HOME100K_RUNNER_MODE:-live}"
+video_generator_vm_count="${HOME100K_VIDEO_GENERATOR_VM_COUNT:-}"
+video_generator_label_prefix="${HOME100K_VIDEO_GENERATOR_LABEL_PREFIX:-vg}"
 runner_nofile_limit="${HOME100K_RUNNER_NOFILE_LIMIT:-1048576}"
 mqtt_concurrency="${HOME100K_MQTT_CONCURRENCY:-1000}"
 command_concurrency="${HOME100K_COMMAND_CONCURRENCY:-100}"
 shadow_command_timeout="${HOME100K_SHADOW_COMMAND_TIMEOUT:-30s}"
+device_token_request_timeout="${HOME100K_DEVICE_TOKEN_REQUEST_TIMEOUT:-10s}"
+device_token_request_retries="${HOME100K_DEVICE_TOKEN_REQUEST_RETRIES:-0}"
 runtime_logs="${HOME100K_RUNTIME_LOGS:-true}"
 if [[ "$runtime_logs" != "true" && "$runtime_logs" != "TRUE" && "$runtime_logs" != "1" ]]; then
   case "$scenario_profile" in
@@ -111,11 +119,17 @@ account_manager_base_url="${HOME100K_ACCOUNT_MANAGER_BASE_URL:-}"
 generator_hosts_override_ip="${HOME100K_GENERATOR_HOSTS_OVERRIDE_IP:-}"
 video_loadtest="${HOME100K_VIDEO_LOADTEST:-auto}"
 video_loadtest_script="${HOME100K_VIDEO_LOADTEST_SCRIPT:-$repo_root/e2e_test/video_cloud/load/scripts/run_video_loadtest.sh}"
+video_loadtest_mode="${HOME100K_VIDEO_LOADTEST_MODE:-local}"
+video_loadtest_shard_mode="${HOME100K_VIDEO_LOADTEST_SHARD_MODE:-}"
+video_loadtest_binary="${HOME100K_VIDEO_LOADTEST_BINARY:-$repo_root/.artifacts/e2e_test/video_cloud/load/cd/rtk-video-loadtest-linux-amd64}"
+video_loadtest_remote_dir="${HOME100K_VIDEO_LOADTEST_REMOTE_DIR:-/opt/rtk-video-loadtest}"
+video_loadtest_remote_hosts="${HOME100K_VIDEO_LOADTEST_REMOTE_HOSTS:-}"
 video_loadtest_artifact_dir="${HOME100K_VIDEO_LOADTEST_ARTIFACT_DIR:-$repo_root/$out_dir/video}"
 video_loadtest_brandname="${HOME100K_VIDEO_LOADTEST_BRANDNAME:-$brandname}"
 video_loadtest_viewers="${HOME100K_VIDEO_LOADTEST_VIEWERS:-100}"
 video_loadtest_devices="${HOME100K_VIDEO_LOADTEST_DEVICES:-100}"
 video_loadtest_concurrency="${HOME100K_VIDEO_LOADTEST_CONCURRENCY:-}"
+video_loadtest_max_viewers_per_host="${HOME100K_VIDEO_LOADTEST_MAX_VIEWERS_PER_HOST:-}"
 video_loadtest_ladder="${HOME100K_VIDEO_LOADTEST_LADDER:-}"
 video_loadtest_step_cooldown="${HOME100K_VIDEO_LOADTEST_STEP_COOLDOWN:-0s}"
 video_loadtest_turn_sample_interval="${HOME100K_VIDEO_LOADTEST_TURN_SAMPLE_INTERVAL_SECONDS:-5}"
@@ -125,7 +139,18 @@ video_loadtest_token_request_timeout="${HOME100K_VIDEO_LOADTEST_TOKEN_REQUEST_TI
 video_loadtest_media_set="${HOME100K_VIDEO_LOADTEST_WEBRTC_MEDIA_SET:-h264}"
 video_loadtest_ice_policy="${HOME100K_VIDEO_LOADTEST_WEBRTC_ICE_POLICY:-relay}"
 video_loadtest_duration="${HOME100K_VIDEO_LOADTEST_DURATION:-30s}"
+video_loadtest_media_duration="${HOME100K_VIDEO_LOADTEST_MEDIA_DURATION:-20s}"
 video_loadtest_device_online_settle="${HOME100K_VIDEO_LOADTEST_DEVICE_ONLINE_SETTLE:-}"
+if [[ -z "$video_loadtest_shard_mode" ]]; then
+  case "$scenario_profile:$video_loadtest_mode" in
+    video-50k-turn-v1:remote-sharded|video-100k-turn-v1:remote-sharded)
+      video_loadtest_shard_mode="proportional"
+      ;;
+    *)
+      video_loadtest_shard_mode="global"
+      ;;
+  esac
+fi
 token_only_base_url="${HOME100K_TOKEN_ONLY_BASE_URL:-${video_cloud_token_url:-${video_cloud_public_url:-}}}"
 token_only_requests="${HOME100K_TOKEN_ONLY_REQUESTS:-1000}"
 token_only_concurrency="${HOME100K_TOKEN_ONLY_CONCURRENCY:-100}"
@@ -136,7 +161,16 @@ token_only_key_file="${HOME100K_TOKEN_ONLY_KEY_FILE:-}"
 token_seed_redis_addr="${HOME100K_TOKEN_SEED_REDIS_ADDR:-}"
 token_seed_device_prefix="${HOME100K_TOKEN_SEED_DEVICE_PREFIX:-load-device-}"
 token_seed_ttl="${HOME100K_TOKEN_SEED_TTL:-24h}"
-local_out_dir="$repo_root/$out_dir"
+existing_generator_hosts="${HOME100K_EXISTING_GENERATOR_HOSTS:-}"
+linode_active_service_limit="${HOME100K_LINODE_ACTIVE_SERVICE_LIMIT:-${LKE_LINODE_ACTIVE_SERVICE_LIMIT:-}}"
+if [[ "$out_dir" == /* ]]; then
+  local_out_dir="$out_dir"
+else
+  local_out_dir="$repo_root/$out_dir"
+fi
+if [[ -z "${HOME100K_VIDEO_LOADTEST_ARTIFACT_DIR:-}" ]]; then
+  video_loadtest_artifact_dir="$local_out_dir/video"
+fi
 local_vm_state_file="$local_out_dir/vms.json"
 status_file="$local_out_dir/.workflow-status"
 nodes_file="$local_out_dir/nodes.tsv"
@@ -184,6 +218,7 @@ Defaults can be overridden with:
   HOME100K_BRAND_PLAN     optional multi-brand load-test plan JSON
   HOME100K_SCENARIO_PROFILE optional scenario profile, e.g. video-1k-v1, video-50k-turn-v1, video-100k-turn-v1
   HOME100K_REGION         default: us-sea
+  HOME100K_LINODE_TYPE    optional Linode VM type for load generators, passed to provision-vms
   HOME100K_VM_LABEL_PREFIX default: lg; load-generator VM labels are <prefix>01..<prefix>NN
   HOME100K_RUN_ID         default: current UTC timestamp
   HOME100K_OUT_DIR        default: loadtests/home-100k/reports/<run-id>
@@ -203,11 +238,16 @@ Defaults can be overridden with:
   HOME100K_DEVICES_PER_USER configured in the description file; current default description uses 20
   HOME100K_LOAD_GENERATOR_DEVICES_PER_VM default: 20000; per-VM generator capacity used for automatic VM sizing
   HOME100K_VM_COUNT optional; default planner value is ceil(HOME100K_DEVICES / HOME100K_LOAD_GENERATOR_DEVICES_PER_VM) mixed generator VMs
+  HOME100K_VIDEO_GENERATOR_VM_COUNT optional extra video-only VMs; not the default for proportional TURN sizing
+  HOME100K_VIDEO_GENERATOR_LABEL_PREFIX default: vg
+  HOME100K_VIDEO_LOADTEST_MAX_VIEWERS_PER_HOST optional safety gate; in proportional mode this is each MQTT shard's video viewer cap, not a fixed generator capability claim
   HOME100K_RUNNER_MODE default: live; use sample only for local developer smoke tests
   HOME100K_RUNNER_NOFILE_LIMIT default: 1048576; remote daemon nofile limit for MQTT sockets
   HOME100K_MQTT_CONCURRENCY default: 1000 per VM shard; live MQTT connect worker concurrency
   HOME100K_COMMAND_CONCURRENCY default: 100 per VM shard; live shadow command concurrency
   HOME100K_SHADOW_COMMAND_TIMEOUT default: 30s; per-phase shadow command wait timeout
+  HOME100K_DEVICE_TOKEN_REQUEST_TIMEOUT default: 10s; per-attempt device /request_token timeout during MQTT bootstrap
+  HOME100K_DEVICE_TOKEN_REQUEST_RETRIES default: 0; bounded retry count after the first device /request_token attempt
   HOME100K_RUNTIME_LOGS default: true; set false for large sustained loads to avoid MQTT /logs ingestion pressure
   HOME100K_LIVE_RUNNER_TIMEOUT_GRACE optional; defaults to max(10m, live duration / 4) before killing a shard runner
   HOME100K_DEVICE_SESSION_MODEL default: lifetime-subscription; device MQTT subscriptions stay open for device lifetime
@@ -224,9 +264,13 @@ Defaults can be overridden with:
   HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL optional public Video Cloud API base URL for remote generators
   HOME100K_VIDEO_CLOUD_TOKEN_BASE_URL optional mTLS/device Video Cloud token bootstrap base URL
   HOME100K_VIDEO_LOADTEST auto/off/on; auto runs for HOME100K_SCENARIO_PROFILE=video-1k-v1, video-50k-turn-v1, or video-100k-turn-v1
+  HOME100K_VIDEO_LOADTEST_MODE local/remote-sharded; remote-sharded splits each video step across live load-generator VMs
+  HOME100K_VIDEO_LOADTEST_SHARD_MODE global/proportional; video-50k/video-100k TURN profiles default to proportional
   HOME100K_VIDEO_LOADTEST_BRANDNAME optional brand used to mint video load-test tokens
   HOME100K_VIDEO_LOADTEST_VIEWERS default: 100
   HOME100K_VIDEO_LOADTEST_LADDER optional comma-separated viewer steps, e.g. 100,500,1000,2000,5000
+  HOME100K_VIDEO_LOADTEST_DURATION runner scheduling window; use 0s for concurrent viewer batches
+  HOME100K_VIDEO_LOADTEST_MEDIA_DURATION WebRTC media/session hold duration per viewer; default: 20s
   HOME100K_VIDEO_LOADTEST_STEP_COOLDOWN default: 0s
   HOME100K_VIDEO_LOADTEST_TURN_SAMPLE_INTERVAL_SECONDS default: 5
   HOME100K_VIDEO_LOADTEST_TOKEN_CONCURRENCY default: 32
@@ -327,7 +371,7 @@ set_phase() {
 ensure_resource_logs() {
   mkdir -p "$resource_samples_dir"
   if [[ ! -f "$load_vm_resource_file" ]]; then
-    printf 'time\trun_id\tphase\tlabel\tip\trole\tid\tstatus\tcpu_pct\tload1\tmem_used_mb\tmem_total_mb\tdisk_used\tdisk_total\tdisk_pct\n' > "$load_vm_resource_file"
+    printf 'time\trun_id\tphase\tlabel\tip\trole\tid\tstatus\tcpu_pct\tload1\tmem_used_mb\tmem_total_mb\tdisk_used\tdisk_total\tdisk_pct\trx_mbps\ttx_mbps\n' > "$load_vm_resource_file"
   fi
   if [[ ! -f "$k8s_node_resource_file" ]]; then
     printf 'time\trun_id\tphase\tname\tstatus\tcpu\tcpu_pct\tmem\tmem_pct\treason\n' > "$k8s_node_resource_file"
@@ -347,7 +391,7 @@ kv_field() {
 }
 
 generate_report_from_artifacts() {
-  "$repo_root/loadtests/home-100k/scripts/generate-report.sh" --out-dir "$repo_root/$out_dir"
+  "$repo_root/loadtests/home-100k/scripts/generate-report.sh" --out-dir "$local_out_dir"
 }
 
 write_nodes_file() {
@@ -368,9 +412,17 @@ with open(nodes_path, "w") as f:
     for vm in vms:
         label = vm.get("label", "")
         ip = vm.get("public_ipv4", "")
-        role = "mixed"
+        tags = set(str(tag) for tag in (vm.get("tags") or []))
+        role = str(vm.get("role") or "").strip()
+        if not role:
+            if "video" in tags:
+                role = "video"
+            elif "mixed" in tags:
+                role = "mixed"
+        if not role:
+            role = "mixed"
         parts = label.split("-")
-        if len(parts) >= 4 and parts[0] == "home" and parts[1] == "100k":
+        if role == "mixed" and len(parts) >= 4 and parts[0] == "home" and parts[1] == "100k":
             role = "-".join(parts[2:-1])
         f.write(f"{label}\t{ip}\t{role}\t{vm.get('id', '')}\n")
 PY
@@ -398,15 +450,15 @@ node_resource_status() {
     fi
     local sample
     sample="$(ssh -n -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=1 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$ssh_known_hosts_file" -i "$ssh_key" "${ssh_user}@${ip}" \
-      'read _ u n s i w irq sirq steal guest guestn < /proc/stat; total1=$((u+n+s+i+w+irq+sirq+steal)); idle1=$((i+w)); sleep 1; read _ u n s i w irq sirq steal guest guestn < /proc/stat; total2=$((u+n+s+i+w+irq+sirq+steal)); idle2=$((i+w)); awk -v t1=$total1 -v t2=$total2 -v i1=$idle1 -v i2=$idle2 "BEGIN {dt=t2-t1; di=i2-i1; if (dt>0) printf \"cpu_pct=%.1f \", 100*(dt-di)/dt; else printf \"cpu_pct=unknown \"}"; awk "{printf \"load1=%s \", \$1}" /proc/loadavg; free -m | awk "/^Mem:/ {printf \"mem_used_mb=%s mem_total_mb=%s \", \$3, \$2}"; df -h / | awk "NR==2 {printf \"disk_used=%s disk_total=%s disk_pct=%s\", \$3, \$2, \$5}"' 2>/dev/null || true)"
+      'read_net() { rx=0; tx=0; for dev in /sys/class/net/*; do name=${dev##*/}; [ "$name" = lo ] && continue; [ -r "$dev/statistics/rx_bytes" ] || continue; r=$(cat "$dev/statistics/rx_bytes"); t=$(cat "$dev/statistics/tx_bytes"); rx=$((rx+r)); tx=$((tx+t)); done; printf "%s %s" "$rx" "$tx"; }; read _ u n s i w irq sirq steal guest guestn < /proc/stat; total1=$((u+n+s+i+w+irq+sirq+steal)); idle1=$((i+w)); set -- $(read_net); rx1=$1; tx1=$2; sleep 1; read _ u n s i w irq sirq steal guest guestn < /proc/stat; total2=$((u+n+s+i+w+irq+sirq+steal)); idle2=$((i+w)); set -- $(read_net); rx2=$1; tx2=$2; awk -v t1=$total1 -v t2=$total2 -v i1=$idle1 -v i2=$idle2 "BEGIN {dt=t2-t1; di=i2-i1; if (dt>0) printf \"cpu_pct=%.1f \", 100*(dt-di)/dt; else printf \"cpu_pct=unknown \"}"; awk "{printf \"load1=%s \", \$1}" /proc/loadavg; free -m | awk "/^Mem:/ {printf \"mem_used_mb=%s mem_total_mb=%s \", \$3, \$2}"; df -h / | awk "NR==2 {printf \"disk_used=%s disk_total=%s disk_pct=%s \", \$3, \$2, \$5}"; awk -v rx1=$rx1 -v rx2=$rx2 -v tx1=$tx1 -v tx2=$tx2 "BEGIN {printf \"rx_mbps=%.3f tx_mbps=%.3f\", ((rx2-rx1)*8)/1000000, ((tx2-tx1)*8)/1000000}"' 2>/dev/null || true)"
     if [[ -z "$sample" ]]; then
       sample="unreachable"
     fi
     printf '[home-100k node] label=%s ip=%s role=%s id=%s %s\n' "$label" "$ip" "$role" "$id" "$sample" >&2
     if [[ "$sample" == "unreachable" ]]; then
-      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\tunreachable\t\t\t\t\t\t\t\n' "$now" "$run_id" "$phase" "$label" "$ip" "$role" "$id" >> "$load_vm_resource_file"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\tunreachable\t\t\t\t\t\t\t\t\t\n' "$now" "$run_id" "$phase" "$label" "$ip" "$role" "$id" >> "$load_vm_resource_file"
     else
-      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\tok\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\tok\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$now" "$run_id" "$phase" "$label" "$ip" "$role" "$id" \
         "$(kv_field "$sample" cpu_pct)" \
         "$(kv_field "$sample" load1)" \
@@ -414,7 +466,9 @@ node_resource_status() {
         "$(kv_field "$sample" mem_total_mb)" \
         "$(kv_field "$sample" disk_used)" \
         "$(kv_field "$sample" disk_total)" \
-        "$(kv_field "$sample" disk_pct | tr -d '%')" >> "$load_vm_resource_file"
+        "$(kv_field "$sample" disk_pct | tr -d '%')" \
+        "$(kv_field "$sample" rx_mbps)" \
+        "$(kv_field "$sample" tx_mbps)" >> "$load_vm_resource_file"
     fi
   done < "$nodes_file"
 }
@@ -445,6 +499,157 @@ local_env_root_path() {
     /*) printf '%s\n' "$env_root" ;;
     *) printf '%s/%s\n' "$repo_root" "$env_root" ;;
   esac
+}
+
+load_generator_vm_count_for_quota() {
+  if [[ -n "$existing_generator_hosts" ]]; then
+    printf '0\n'
+    return
+  fi
+  local mixed_count="${vm_count:-}"
+  if [[ -z "$mixed_count" && "${device_count:-}" =~ ^[0-9]+$ && "$device_count" -gt 0 ]]; then
+    mixed_count="$(( (device_count + load_generator_devices_per_vm - 1) / load_generator_devices_per_vm ))"
+  fi
+  mixed_count="${mixed_count:-5}"
+  local extra_video="${video_generator_vm_count:-0}"
+  if ! [[ "$extra_video" =~ ^[0-9]+$ ]]; then
+    extra_video=0
+  fi
+  printf '%s\n' "$((mixed_count + extra_video))"
+}
+
+linode_active_service_preflight() {
+  if [[ -n "$existing_generator_hosts" && -z "$linode_active_service_limit" ]]; then
+    return
+  fi
+  if [[ -z "${LINODE_TOKEN:-}" ]]; then
+    return
+  fi
+  mkdir -p "$local_out_dir"
+  local env_root_path artifact active_json rc
+  env_root_path="$(local_env_root_path)"
+  artifact="$local_out_dir/linode-active-service-preflight.json"
+  active_json="$(mktemp)"
+  rc=0
+  /usr/bin/curl -fsS -H "Authorization: Bearer $LINODE_TOKEN" 'https://api.linode.com/v4/linode/instances?page_size=500' > "$active_json" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    rm -f "$active_json"
+    echo "warning: unable to query Linode active services for quota preflight" >&2
+    return
+  fi
+  if ! python3 - "$active_json" "$env_root_path" "$artifact" "$(load_generator_vm_count_for_quota)" "$linode_active_service_limit" <<'PY'
+import json
+import os
+import sys
+
+active_path, env_root, artifact, load_generators_raw, limit_raw = sys.argv[1:]
+
+def env_file(path):
+    out = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                out[k.strip()] = v.strip().strip('"').strip("'")
+    except FileNotFoundError:
+        pass
+    return out
+
+def int_value(value, default=0):
+    try:
+        return int(str(value).strip())
+    except Exception:
+        return default
+
+def count_active_artifact_items(path, key, active_ids, active_labels):
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return 0
+    items = data.get(key)
+    if isinstance(items, list):
+        count = 0
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            item_id = item.get("id")
+            label = str(item.get("label") or "")
+            if item_id in active_ids or label in active_labels:
+                count += 1
+        return count
+    return 0
+
+with open(active_path, encoding="utf-8") as f:
+    active = json.load(f)
+active_items = active.get("data") or []
+current_active = len(active_items)
+active_ids = {item.get("id") for item in active_items}
+active_labels = {str(item.get("label") or "") for item in active_items}
+
+stack = env_file(os.path.join(env_root, "env", "stack.env"))
+desired_edge = int_value(stack.get("LKE_EDGE_HAPROXY_COUNT"), 1)
+desired_coturn = int_value(stack.get("LKE_COTURN_VM_COUNT"), 1)
+existing_edge = count_active_artifact_items(os.path.join(env_root, "artifacts", "edge-haproxy", "edge-vms.json"), "edge_vms", active_ids, active_labels)
+existing_coturn = count_active_artifact_items(os.path.join(env_root, "artifacts", "coturn-vm", "coturn-vms.json"), "coturn_vms", active_ids, active_labels)
+missing_edge = max(0, desired_edge - existing_edge)
+missing_coturn = max(0, desired_coturn - existing_coturn)
+load_generators = int_value(load_generators_raw, 0)
+projected_required = current_active + missing_edge + missing_coturn + load_generators
+limit = int_value(limit_raw, 0)
+ok = True
+reason = ""
+if limit > 0 and projected_required > limit:
+    ok = False
+    reason = (
+        f"projected active services {projected_required} exceeds configured limit {limit} "
+        f"(current={current_active}, missing_edge={missing_edge}, missing_coturn={missing_coturn}, "
+        f"load_generators={load_generators})"
+    )
+
+doc = {
+    "schema": "home-100k-linode-active-service-preflight/v1",
+    "current_active_services": current_active,
+    "missing_edge_vms": missing_edge,
+    "missing_coturn_vms": missing_coturn,
+    "planned_load_generator_vms": load_generators,
+    "projected_required_active_services": projected_required,
+    "configured_limit": limit if limit > 0 else None,
+    "ok": ok,
+    "reason": reason,
+    "active_instances": [
+        {
+            "id": item.get("id"),
+            "label": item.get("label"),
+            "status": item.get("status"),
+            "type": item.get("type"),
+            "region": item.get("region"),
+            "tags": item.get("tags") or [],
+        }
+        for item in active_items
+    ],
+}
+os.makedirs(os.path.dirname(artifact), exist_ok=True)
+with open(artifact, "w", encoding="utf-8") as f:
+    json.dump(doc, f, indent=2, sort_keys=True)
+    f.write("\n")
+print(
+    "current=%d missing_edge=%d missing_coturn=%d load_generators=%d projected=%d limit=%s ok=%s"
+    % (current_active, missing_edge, missing_coturn, load_generators, projected_required, limit if limit > 0 else "unset", str(ok).lower())
+)
+if not ok:
+    print(reason, file=sys.stderr)
+    sys.exit(3)
+PY
+  then
+    rm -f "$active_json"
+    echo "Linode active-service quota preflight failed; see $artifact" >&2
+    exit 2
+  fi
+  rm -f "$active_json"
 }
 
 export_kubeconfig_if_available() {
@@ -783,6 +988,40 @@ ensure_video_loadtest_tokens() {
   fi
 }
 
+ensure_video_loadtest_tokens_for_ids() {
+  local device_ids_file="$1"
+  local token_env="$2"
+  if [[ ! -s "$device_ids_file" ]]; then
+    echo "video loadtest exact token device IDs missing: $device_ids_file" >&2
+    return 1
+  fi
+  mkdir -p "$(dirname "$token_env")"
+  local token_args=(
+    video-loadtest-tokens
+    --env-root "$(local_env_root_path)"
+    --brandname "$video_loadtest_brandname"
+    --device-ids-file "$device_ids_file"
+    --require-devices "$(wc -l <"$device_ids_file" | tr -d '[:space:]')"
+    --expiry-seconds "$video_loadtest_token_expiry_seconds"
+    --concurrency "$video_loadtest_token_concurrency"
+    --request-timeout "$video_loadtest_token_request_timeout"
+    --out-env "$token_env"
+  )
+  if [[ -n "$brand_plan" ]]; then
+    token_args+=(--brand-plan "$brand_plan")
+  fi
+  if ! (cd "$repo_root/scripts/go/rtk-cloud" && GOWORK=off go run . "${token_args[@]}"); then
+    echo "video loadtest exact token generation failed" >&2
+    return 1
+  fi
+  if [[ ! -s "$token_env" ]]; then
+    echo "video loadtest exact token env was not written: $token_env" >&2
+    return 1
+  fi
+  # shellcheck disable=SC1090
+  source "$token_env"
+}
+
 coturn_vm_rows() {
   local env_root_json
   env_root_json="$(local_env_root_path)"
@@ -882,11 +1121,530 @@ video_loadtest_device_id_count() {
   ' <<<"$raw"
 }
 
+shell_quote() {
+  printf '%q' "$1"
+}
+
+video_loadtest_remote_host_rows() {
+  if [[ -n "$video_loadtest_remote_hosts" ]]; then
+    python3 - "$video_loadtest_remote_hosts" <<'PY'
+import sys
+
+raw = sys.argv[1]
+for index, item in enumerate(raw.replace("\n", ",").split(","), 1):
+    item = item.strip()
+    if not item:
+        continue
+    if "=" in item:
+        label, host = item.split("=", 1)
+    else:
+        label, host = f"video{index:02d}", item
+    label, host = label.strip(), host.strip()
+    if host:
+        print(f"{label}\t{host}")
+PY
+    return
+  fi
+  python3 - "$local_vm_state_file" "$local_out_dir" "$video_loadtest_shard_mode" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+out_dir = Path(sys.argv[2])
+shard_mode = sys.argv[3]
+if not path.exists():
+    raise SystemExit(0)
+data = json.load(path.open())
+vms = data.get("created") or data.get("vms") or []
+video_vms = []
+mixed_vms = []
+for index, vm in enumerate(vms, 1):
+    label = str(vm.get("label") or f"lg{index:02d}")
+    host = str(vm.get("public_ipv4") or vm.get("ip") or "")
+    tags = set(str(tag) for tag in (vm.get("tags") or []))
+    if host and "video" in tags:
+        video_vms.append((label, host))
+    manifest = out_dir / "credential-bundles" / f"{label}.manifest.json"
+    if host and manifest.exists():
+        mixed_vms.append((label, host))
+if shard_mode == "proportional":
+    selected = mixed_vms
+else:
+    selected = video_vms or [
+        (str(vm.get("label") or f"lg{index:02d}"), str(vm.get("public_ipv4") or vm.get("ip") or ""))
+        for index, vm in enumerate(vms, 1)
+    ]
+for label, host in selected:
+    if host:
+        print(f"{label}\t{host}")
+PY
+}
+
+ensure_video_loadtest_binary() {
+  if [[ -x "$video_loadtest_binary" ]]; then
+    return 0
+  fi
+  mkdir -p "$(dirname "$video_loadtest_binary")"
+  (cd "$repo_root/e2e_test" && GOWORK=off GOOS=linux GOARCH=amd64 go build -o "$video_loadtest_binary" ./video_cloud/load/cmd/rtk-video-loadtest)
+}
+
+check_video_loadtest_remote_capacity() {
+  if [[ "$video_loadtest_mode" != "remote-sharded" || -z "$video_loadtest_max_viewers_per_host" ]]; then
+    return 0
+  fi
+  local steps
+  if [[ -n "$video_loadtest_ladder" ]]; then
+    steps="$video_loadtest_ladder"
+  else
+    steps="$video_loadtest_viewers"
+  fi
+  local host_rows
+  host_rows="$(video_loadtest_remote_host_rows)"
+  python3 - "$steps" "$host_rows" "$video_loadtest_max_viewers_per_host" "$video_loadtest_shard_mode" "$local_out_dir" <<'PY'
+import json
+import math
+import sys
+from pathlib import Path
+
+steps_raw = sys.argv[1]
+hosts_raw = sys.argv[2]
+max_per_host_raw = sys.argv[3]
+shard_mode = sys.argv[4]
+out_dir = Path(sys.argv[5])
+try:
+    max_per_host = int(max_per_host_raw)
+except ValueError as exc:
+    raise SystemExit(f"invalid HOME100K_VIDEO_LOADTEST_MAX_VIEWERS_PER_HOST={max_per_host_raw!r}") from exc
+if max_per_host <= 0:
+    raise SystemExit("HOME100K_VIDEO_LOADTEST_MAX_VIEWERS_PER_HOST must be positive")
+steps = []
+for raw in steps_raw.split(","):
+    raw = raw.strip()
+    if not raw:
+        continue
+    try:
+        steps.append(int(raw))
+    except ValueError as exc:
+        raise SystemExit(f"invalid video viewer step={raw!r}") from exc
+hosts = []
+for line in hosts_raw.splitlines():
+    parts = line.split("\t")
+    if len(parts) >= 2 and parts[1].strip():
+        hosts.append((parts[0].strip(), parts[1].strip()))
+if not hosts:
+    raise SystemExit("remote-sharded video loadtest requires live VM hosts or HOME100K_VIDEO_LOADTEST_REMOTE_HOSTS")
+if shard_mode == "proportional":
+    counts = []
+    for label, _ in hosts:
+        manifest = out_dir / "credential-bundles" / f"{label}.manifest.json"
+        if not manifest.exists():
+            raise SystemExit(f"proportional video shard missing credential manifest for host label={label}: {manifest}")
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        ids = data.get("device_ids") or []
+        if not ids:
+            raise SystemExit(f"proportional video shard missing device_ids for host label={label}: {manifest}")
+        counts.append((label, len(ids)))
+    total = sum(count for _, count in counts)
+    if total <= 0:
+        raise SystemExit("proportional video shard has no MQTT device inventory")
+    for step in steps:
+        if step <= 0:
+            raise SystemExit(f"invalid video viewer step={step}; must be positive")
+        if step > total:
+            raise SystemExit(f"proportional video viewer step exceeds shard inventory: requested_viewers={step} available_devices={total}")
+        allocations = []
+        remaining = step
+        remainders = []
+        for label, count in counts:
+            exact = step * count / total
+            base = int(math.floor(exact))
+            allocations.append([label, base])
+            remaining -= base
+            remainders.append((exact - base, label))
+        allocation_by_label = {label: base for label, base in allocations}
+        for _, label in sorted(remainders, key=lambda item: (-item[0], item[1]))[:remaining]:
+            allocation_by_label[label] += 1
+        over = [(label, count) for label, count in allocation_by_label.items() if count > max_per_host]
+        if over:
+            detail = ", ".join(f"{label}={count}" for label, count in over)
+            raise SystemExit(
+                "proportional video loadtest generator capacity insufficient: "
+                f"requested_viewers={step} max_viewers_per_host={max_per_host} over_limit={detail}"
+            )
+    raise SystemExit(0)
+for step in steps:
+    if step <= 0:
+        raise SystemExit(f"invalid video viewer step={step}; must be positive")
+    required_hosts = math.ceil(step / max_per_host)
+    if len(hosts) < required_hosts:
+        raise SystemExit(
+            "remote-sharded video loadtest generator capacity insufficient: "
+            f"requested_viewers={step} max_viewers_per_host={max_per_host} "
+            f"required_hosts={required_hosts} available_hosts={len(hosts)}"
+        )
+PY
+}
+
+write_video_loadtest_shard_plan() {
+  local devices="$1"
+  local step_dir="$2"
+  local host_rows="$3"
+  local plan_file="$step_dir/shards.tsv"
+  local all_ids_file="$step_dir/device-ids.txt"
+  mkdir -p "$step_dir"
+  if [[ "$video_loadtest_shard_mode" == "proportional" ]]; then
+    python3 - "$devices" "$host_rows" "$plan_file" "$step_dir" "$video_loadtest_max_viewers_per_host" "$local_out_dir" "$(local_env_root_path)" "$all_ids_file" <<'PY'
+import json
+import math
+import sqlite3
+import sys
+from pathlib import Path
+
+requested = int(sys.argv[1])
+hosts_raw = sys.argv[2]
+plan_path = Path(sys.argv[3])
+step_dir = Path(sys.argv[4])
+max_per_host_raw = sys.argv[5].strip()
+out_dir = Path(sys.argv[6])
+env_root = Path(sys.argv[7])
+all_ids_path = Path(sys.argv[8])
+
+hosts = []
+for line in hosts_raw.splitlines():
+    parts = line.split("\t")
+    if len(parts) >= 2 and parts[0].strip() and parts[1].strip():
+        hosts.append((parts[0].strip(), parts[1].strip()))
+if not hosts:
+    raise SystemExit("proportional video loadtest requires live MQTT shard VMs")
+
+video_capable = set()
+for db_path in sorted((env_root / "artifacts" / "test-data").glob("*-test-data.sqlite")):
+    conn = sqlite3.connect(db_path)
+    try:
+        for device_id, device_type, service_options_json in conn.execute(
+            "select device_id, device_type, service_options_json from device_bindings"
+        ):
+            try:
+                options = json.loads(service_options_json or "[]")
+            except json.JSONDecodeError:
+                options = []
+            if device_type == "camera" and "video_streaming" in options:
+                video_capable.add(str(device_id))
+    finally:
+        conn.close()
+if not video_capable:
+    raise SystemExit("proportional video shard has no camera/video_streaming devices in test-data SQLite")
+
+max_per_host = None
+if max_per_host_raw:
+    try:
+        max_per_host = int(max_per_host_raw)
+    except ValueError as exc:
+        raise SystemExit(f"invalid HOME100K_VIDEO_LOADTEST_MAX_VIEWERS_PER_HOST={max_per_host_raw!r}") from exc
+    if max_per_host <= 0:
+        raise SystemExit("HOME100K_VIDEO_LOADTEST_MAX_VIEWERS_PER_HOST must be positive")
+
+shards = []
+for label, host in hosts:
+    manifest = out_dir / "credential-bundles" / f"{label}.manifest.json"
+    if not manifest.exists():
+        raise SystemExit(f"proportional video shard missing credential manifest for host label={label}: {manifest}")
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    mqtt_ids = [str(item).strip() for item in (data.get("device_ids") or []) if str(item).strip()]
+    if not mqtt_ids:
+        raise SystemExit(f"proportional video shard missing device_ids for host label={label}: {manifest}")
+    video_ids = [device_id for device_id in mqtt_ids if device_id in video_capable]
+    if not video_ids:
+        raise SystemExit(f"proportional video shard has no shard-local camera/video_streaming device IDs for host label={label}")
+    shards.append({"label": label, "host": host, "ids": video_ids, "mqtt_devices": len(mqtt_ids), "video_capable_devices": len(video_ids)})
+
+total_devices = sum(item["video_capable_devices"] for item in shards)
+if requested <= 0:
+    raise SystemExit(f"invalid video viewer step={requested}; must be positive")
+if requested > total_devices:
+    raise SystemExit(f"proportional video viewer step exceeds shard inventory: requested_viewers={requested} available_devices={total_devices}")
+
+remaining = requested
+remainders = []
+for item in shards:
+    exact = requested * item["video_capable_devices"] / total_devices
+    count = int(math.floor(exact))
+    item["video_count"] = count
+    remaining -= count
+    remainders.append((exact - count, item["label"]))
+by_label = {item["label"]: item for item in shards}
+for _, label in sorted(remainders, key=lambda pair: (-pair[0], pair[1]))[:remaining]:
+    by_label[label]["video_count"] += 1
+
+if max_per_host is not None:
+    over = [f"{item['label']}={item['video_count']}" for item in shards if item["video_count"] > max_per_host]
+    if over:
+        raise SystemExit(
+            "proportional video loadtest generator capacity insufficient: "
+            f"requested_viewers={requested} max_viewers_per_host={max_per_host} over_limit={','.join(over)}"
+        )
+
+with plan_path.open("w", encoding="utf-8") as out:
+    out.write("shard\tlabel\thost\tcount\tdevice_ids_file\tartifact_dir\tmqtt_devices\tvideo_viewers\tvideo_ratio\n")
+    all_step_ids = []
+    for index, item in enumerate(shards, 1):
+        count = item["video_count"]
+        if count <= 0:
+            continue
+        shard = f"shard-{index:02d}"
+        shard_dir = step_dir / shard
+        shard_dir.mkdir(parents=True, exist_ok=True)
+        shard_ids = item["ids"][:count]
+        all_step_ids.extend(shard_ids)
+        shard_ids_file = shard_dir / "device-ids.txt"
+        shard_ids_file.write_text("\n".join(shard_ids) + "\n", encoding="utf-8")
+        ratio = count / item["mqtt_devices"] if item["mqtt_devices"] else 0
+        out.write(
+            f"{shard}\t{item['label']}\t{item['host']}\t{count}\t{shard_ids_file}\t{shard_dir}\t"
+            f"{item['mqtt_devices']}\t{count}\t{ratio:.6f}\n"
+        )
+all_ids_path.write_text("\n".join(all_step_ids) + "\n", encoding="utf-8")
+PY
+    printf '%s\n' "$plan_file"
+    return
+  fi
+  video_loadtest_first_device_ids "$devices" | tr ',' '\n' | awk 'NF' >"$all_ids_file"
+  python3 - "$devices" "$host_rows" "$all_ids_file" "$plan_file" "$step_dir" "$video_loadtest_max_viewers_per_host" <<'PY'
+import math
+import sys
+from pathlib import Path
+
+requested = int(sys.argv[1])
+hosts_raw = sys.argv[2]
+ids_path = Path(sys.argv[3])
+plan_path = Path(sys.argv[4])
+step_dir = Path(sys.argv[5])
+max_per_host_raw = sys.argv[6].strip()
+
+hosts = []
+for line in hosts_raw.splitlines():
+    parts = line.split("\t")
+    if len(parts) >= 2 and parts[1].strip():
+        hosts.append((parts[0].strip() or f"video{len(hosts)+1:02d}", parts[1].strip()))
+ids = [line.strip() for line in ids_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+if len(ids) < requested:
+    raise SystemExit(f"video loadtest device inventory insufficient for remote shard: requested_devices={requested} available_devices={len(ids)}")
+if not hosts:
+    raise SystemExit("remote-sharded video loadtest requires live VM hosts or HOME100K_VIDEO_LOADTEST_REMOTE_HOSTS")
+if max_per_host_raw:
+    try:
+        max_per_host = int(max_per_host_raw)
+    except ValueError as exc:
+        raise SystemExit(f"invalid HOME100K_VIDEO_LOADTEST_MAX_VIEWERS_PER_HOST={max_per_host_raw!r}") from exc
+    if max_per_host <= 0:
+        raise SystemExit("HOME100K_VIDEO_LOADTEST_MAX_VIEWERS_PER_HOST must be positive")
+    required_hosts = math.ceil(requested / max_per_host)
+    if len(hosts) < required_hosts:
+        raise SystemExit(
+            "remote-sharded video loadtest generator capacity insufficient: "
+            f"requested_viewers={requested} max_viewers_per_host={max_per_host} "
+            f"required_hosts={required_hosts} available_hosts={len(hosts)}"
+        )
+    shard_count = min(len(hosts), requested, required_hosts)
+else:
+    shard_count = min(len(hosts), requested)
+base = requested // shard_count
+extra = requested % shard_count
+offset = 0
+with plan_path.open("w", encoding="utf-8") as out:
+    out.write("shard\tlabel\thost\tcount\tdevice_ids_file\tartifact_dir\tmqtt_devices\tvideo_viewers\tvideo_ratio\n")
+    for index in range(shard_count):
+        count = base + (1 if index < extra else 0)
+        shard_ids = ids[offset : offset + count]
+        offset += count
+        label, host = hosts[index]
+        shard = f"shard-{index+1:02d}"
+        shard_dir = step_dir / shard
+        shard_dir.mkdir(parents=True, exist_ok=True)
+        shard_ids_file = shard_dir / "device-ids.txt"
+        shard_ids_file.write_text("\n".join(shard_ids) + "\n", encoding="utf-8")
+        out.write(f"{shard}\t{label}\t{host}\t{count}\t{shard_ids_file}\t{shard_dir}\t0\t{count}\t0\n")
+PY
+  printf '%s\n' "$plan_file"
+}
+
+install_video_loadtest_remote_host() {
+  local host="$1"
+  local remote="${ssh_user}@${host}"
+  local remote_base="$video_loadtest_remote_dir/$run_id"
+  local remote_testdata="$remote_base/e2e_test/video_cloud/load/testdata"
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$ssh_known_hosts_file" -i "$ssh_key" "$remote" \
+    "mkdir -p $(shell_quote "$remote_base") $(shell_quote "$remote_testdata")"
+  scp_video_loadtest_file_if_changed "$remote" "$video_loadtest_binary" "$remote_base/rtk-video-loadtest"
+  scp_video_loadtest_file_if_changed "$remote" "$repo_root/e2e_test/video_cloud/load/testdata/testsrc2_1080p_2s.h264" "$remote_testdata/testsrc2_1080p_2s.h264"
+  scp_video_loadtest_file_if_changed "$remote" "$repo_root/e2e_test/video_cloud/load/testdata/testtone_48k_mono_2s.opusframes" "$remote_testdata/testtone_48k_mono_2s.opusframes"
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$ssh_known_hosts_file" -i "$ssh_key" "$remote" \
+    "chmod 755 $(shell_quote "$remote_base")/rtk-video-loadtest"
+}
+
+scp_video_loadtest_file_if_changed() {
+  local remote="$1"
+  local local_path="$2"
+  local remote_path="$3"
+  local local_sha
+  local_sha="$(shasum -a 256 "$local_path" | awk '{print $1}')"
+  if ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$ssh_known_hosts_file" -i "$ssh_key" "$remote" \
+    "test -f $(shell_quote "$remote_path") && command -v sha256sum >/dev/null 2>&1 && test \"\$(sha256sum $(shell_quote "$remote_path") | awk '{print \$1}')\" = $(shell_quote "$local_sha")"; then
+    return 0
+  fi
+  scp -q -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$ssh_known_hosts_file" -i "$ssh_key" \
+    "$local_path" "${remote}:$(shell_quote "$remote_path")"
+}
+
+run_video_loadtest_remote_shard() {
+  local shard="$1"
+  local host="$2"
+  local count="$3"
+  local device_ids_file="$4"
+  local artifact_dir="$5"
+  local step_run_id="$6"
+  local remote="${ssh_user}@${host}"
+  local remote_base="$video_loadtest_remote_dir/$run_id"
+  local remote_artifact_dir="$remote_base/runs/$step_run_id/$shard"
+  local remote_device_ids="$remote_artifact_dir/device-ids.txt"
+  local remote_device_tokens="$remote_artifact_dir/device-token-map.json"
+  local remote_app_tokens="$remote_artifact_dir/app-token-map.json"
+  local remote_secret_env="$remote_artifact_dir/secrets.env"
+  local concurrency="${video_loadtest_concurrency:-$count}"
+  if (( concurrency > count )); then
+    concurrency="$count"
+  fi
+  if [[ -z "${VIDEO_CLOUD_LOAD_ACCOUNT_TOKEN:-}" || -z "${VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE:-}" || -z "${VIDEO_CLOUD_LOAD_APP_TOKEN_MAP_FILE:-}" ]]; then
+    echo "remote-sharded video loadtest requires VIDEO_CLOUD_LOAD_ACCOUNT_TOKEN, VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE, and VIDEO_CLOUD_LOAD_APP_TOKEN_MAP_FILE from token generation" >&2
+    return 1
+  fi
+  mkdir -p "$artifact_dir"
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$ssh_known_hosts_file" -i "$ssh_key" "$remote" \
+    "mkdir -p $(shell_quote "$remote_artifact_dir")"
+  scp -q -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$ssh_known_hosts_file" -i "$ssh_key" \
+    "$device_ids_file" "${remote}:$(shell_quote "$remote_device_ids")"
+  scp -q -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$ssh_known_hosts_file" -i "$ssh_key" \
+    "${VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE}" "${remote}:$(shell_quote "$remote_device_tokens")"
+  scp -q -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$ssh_known_hosts_file" -i "$ssh_key" \
+    "${VIDEO_CLOUD_LOAD_APP_TOKEN_MAP_FILE}" "${remote}:$(shell_quote "$remote_app_tokens")"
+  printf 'VIDEO_CLOUD_LOAD_ACCOUNT_TOKEN=%q\n' "${VIDEO_CLOUD_LOAD_ACCOUNT_TOKEN:-}" | \
+    ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$ssh_known_hosts_file" -i "$ssh_key" "$remote" \
+      "umask 077 && cat > $(shell_quote "$remote_secret_env")"
+
+  local cmd_parts=()
+  cmd_parts+=("cd $(shell_quote "$remote_base") &&")
+  cmd_parts+=("set -a && . $(shell_quote "$remote_secret_env") && set +a &&")
+  cmd_parts+=("./rtk-video-loadtest run")
+  cmd_parts+=("--profile $(shell_quote "${VIDEO_CLOUD_LOAD_PROFILE:-safe-staging}")")
+  cmd_parts+=("--actors device,viewer")
+  cmd_parts+=("--app-route-set $(shell_quote "${VIDEO_CLOUD_LOAD_APP_ROUTE_SET:-smoke}")")
+  cmd_parts+=("--device-route-set $(shell_quote "${VIDEO_CLOUD_LOAD_DEVICE_ROUTE_SET:-off}")")
+  cmd_parts+=("--device-transport-set $(shell_quote "${VIDEO_CLOUD_LOAD_DEVICE_TRANSPORT_SET:-smoke}")")
+  cmd_parts+=("--viewer-route-set $(shell_quote "${VIDEO_CLOUD_LOAD_VIEWER_ROUTE_SET:-smoke}")")
+  cmd_parts+=("--webrtc-media-set $(shell_quote "${VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_SET:-$video_loadtest_media_set}")")
+  cmd_parts+=("--webrtc-relay-role both")
+  cmd_parts+=("--webrtc-ice-policy $(shell_quote "${VIDEO_CLOUD_LOAD_WEBRTC_ICE_POLICY:-$video_loadtest_ice_policy}")")
+  cmd_parts+=("--clip-set off --mqtt-set off")
+  cmd_parts+=("--api-url $(shell_quote "${VIDEO_CLOUD_LOAD_API_URL:-$video_cloud_public_url}")")
+  cmd_parts+=("--run-id $(shell_quote "$step_run_id-$shard")")
+  cmd_parts+=("--instance-id $(shell_quote "$shard")")
+  cmd_parts+=("--contracts-commit $(shell_quote "$(git -C "$repo_root/repos/rtk_cloud_contracts_doc" rev-parse HEAD 2>/dev/null || true)")")
+  cmd_parts+=("--client-commit $(shell_quote "$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || true)")")
+  cmd_parts+=("--server-commit unknown")
+  cmd_parts+=("--duration $(shell_quote "${VIDEO_CLOUD_LOAD_DURATION:-$video_loadtest_duration}")")
+  cmd_parts+=("--webrtc-media-duration $(shell_quote "${VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_DURATION:-$video_loadtest_media_duration}")")
+  cmd_parts+=("--http-timeout $(shell_quote "${VIDEO_CLOUD_LOAD_HTTP_TIMEOUT:-60s}")")
+  cmd_parts+=("--device-online-settle $(shell_quote "${VIDEO_CLOUD_LOAD_DEVICE_ONLINE_SETTLE:-${video_loadtest_device_online_settle:-2s}}")")
+  cmd_parts+=("--device-owner-connect-retries $(shell_quote "${VIDEO_CLOUD_LOAD_DEVICE_OWNER_CONNECT_RETRIES:-3}")")
+  cmd_parts+=("--virtual-devices $count --virtual-viewers $count --iterations 1")
+  cmd_parts+=("--app-concurrency 0 --device-concurrency $concurrency --viewer-concurrency $concurrency")
+  cmd_parts+=("--app-rate 0 --device-rate 0 --viewer-rate 0")
+  cmd_parts+=("--device-token-map-file $(shell_quote "$remote_device_tokens")")
+  cmd_parts+=("--app-token-map-file $(shell_quote "$remote_app_tokens")")
+  cmd_parts+=("--device-ids-file $(shell_quote "$remote_device_ids")")
+  cmd_parts+=("--output $(shell_quote "$remote_artifact_dir/load-results.json")")
+  cmd_parts+=("--report-output $(shell_quote "$remote_artifact_dir/load-report.md")")
+
+  local remote_cmd stdout_log stderr_log status=0
+  remote_cmd="${cmd_parts[*]}"
+  stdout_log="$remote_artifact_dir/stdout.log"
+  stderr_log="$remote_artifact_dir/stderr.log"
+  set +e
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$ssh_known_hosts_file" -i "$ssh_key" "$remote" \
+    "{ $remote_cmd; } >$(shell_quote "$stdout_log") 2>$(shell_quote "$stderr_log")"
+  status=$?
+  set -e
+  local file
+  for file in load-results.json load-report.md metadata.json stdout.log stderr.log; do
+    scp -q -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$ssh_known_hosts_file" -i "$ssh_key" \
+      "${remote}:$(shell_quote "$remote_artifact_dir")/$file" "$artifact_dir/$file" >/dev/null 2>&1 || true
+  done
+  return "$status"
+}
+
+run_video_loadtest_once_remote_sharded() {
+  local artifact_dir="$1"
+  local viewers="$2"
+  local devices="$3"
+  local step_run_id="$4"
+  mkdir -p "$artifact_dir"
+  ensure_video_loadtest_binary
+  local sampler_pid=""
+  sampler_pid="$(start_coturn_active_sampler "$artifact_dir" || true)"
+  local host_rows plan_file
+  host_rows="$(video_loadtest_remote_host_rows)"
+  plan_file="$(write_video_loadtest_shard_plan "$devices" "$artifact_dir" "$host_rows")"
+  ensure_video_loadtest_tokens_for_ids "$artifact_dir/device-ids.txt" "$artifact_dir/token-env.sh"
+  local installed_hosts_file="$artifact_dir/.installed-hosts"
+  : >"$installed_hosts_file"
+  local install_host
+  while IFS= read -r install_host; do
+    [[ -z "$install_host" ]] && continue
+    echo "installing remote video loadtest host=$install_host step=$(basename "$artifact_dir")" >&2
+    install_video_loadtest_remote_host "$install_host"
+    printf '%s\n' "$install_host" >>"$installed_hosts_file"
+  done < <(awk -F '\t' 'NR > 1 && $3 != "" && !seen[$3]++ { print $3 }' "$plan_file")
+  local shard label host count ids_file shard_dir mqtt_devices video_viewers video_ratio
+  local pids=()
+  local labels=()
+  local rc=0
+  while IFS=$'\t' read -r shard label host count ids_file shard_dir mqtt_devices video_viewers video_ratio; do
+    [[ "$shard" == "shard" ]] && continue
+    echo "running remote video shard step=$(basename "$artifact_dir") shard=$shard host=$host mqtt_devices=${mqtt_devices:-unknown} viewers=$count video_ratio=${video_ratio:-unknown} artifact_dir=$shard_dir" >&2
+    run_video_loadtest_remote_shard "$shard" "$host" "$count" "$ids_file" "$shard_dir" "$step_run_id" &
+    pids+=("$!")
+    labels+=("$shard@$host")
+  done <"$plan_file"
+  local idx status
+  for idx in "${!pids[@]}"; do
+    status=0
+    wait "${pids[$idx]}" || status=$?
+    if [[ "$status" -ne 0 ]]; then
+      echo "remote video shard failed: ${labels[$idx]} rc=$status" >&2
+      rc="$status"
+    fi
+  done
+  if [[ -n "$sampler_pid" ]]; then
+    kill "$sampler_pid" >/dev/null 2>&1 || true
+    wait "$sampler_pid" >/dev/null 2>&1 || true
+  fi
+  return "$rc"
+}
+
 run_video_loadtest_once() {
   local artifact_dir="$1"
   local viewers="$2"
   local devices="$3"
   local step_run_id="$4"
+  if [[ "$video_loadtest_mode" == "remote-sharded" ]]; then
+    run_video_loadtest_once_remote_sharded "$artifact_dir" "$viewers" "$devices" "$step_run_id"
+    return $?
+  fi
+  if [[ "$video_loadtest_mode" != "local" ]]; then
+    echo "invalid HOME100K_VIDEO_LOADTEST_MODE: $video_loadtest_mode" >&2
+    return 2
+  fi
   mkdir -p "$artifact_dir"
   local sampler_pid=""
   sampler_pid="$(start_coturn_active_sampler "$artifact_dir" || true)"
@@ -916,6 +1674,7 @@ run_video_loadtest_once() {
   VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_SET="${VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_SET:-$video_loadtest_media_set}" \
   VIDEO_CLOUD_LOAD_WEBRTC_ICE_POLICY="${VIDEO_CLOUD_LOAD_WEBRTC_ICE_POLICY:-$video_loadtest_ice_policy}" \
   VIDEO_CLOUD_LOAD_DURATION="${VIDEO_CLOUD_LOAD_DURATION:-$video_loadtest_duration}" \
+  VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_DURATION="${VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_DURATION:-$video_loadtest_media_duration}" \
   VIDEO_CLOUD_LOAD_DEVICE_ONLINE_SETTLE="${VIDEO_CLOUD_LOAD_DEVICE_ONLINE_SETTLE:-$video_loadtest_device_online_settle}" \
   VIDEO_CLOUD_LOAD_HTTP_TIMEOUT="${VIDEO_CLOUD_LOAD_HTTP_TIMEOUT:-60s}" \
   VIDEO_CLOUD_LOAD_VIRTUAL_DEVICES="$devices" \
@@ -941,9 +1700,12 @@ run_video_loadtest_step() {
     return 1
   fi
   set_phase "run-video-loadtest"
-  local max_devices
-  max_devices="$(max_video_token_devices)"
-  ensure_video_loadtest_tokens "$max_devices" || return $?
+  check_video_loadtest_remote_capacity || return $?
+  if [[ "$video_loadtest_mode" != "remote-sharded" ]]; then
+    local max_devices
+    max_devices="$(max_video_token_devices)"
+    ensure_video_loadtest_tokens "$max_devices" || return $?
+  fi
   if [[ -z "$video_loadtest_ladder" ]]; then
     run_video_loadtest_once "$video_loadtest_artifact_dir" "$video_loadtest_viewers" "$video_loadtest_devices" "$run_id"
     return $?
@@ -998,6 +1760,8 @@ import sys
 with open(sys.argv[1]) as f:
     data = json.load(f)
 for vm in data.get("created") or data.get("vms") or []:
+    if vm.get("source") == "existing-host":
+        continue
     if vm.get("id"):
         print(vm["id"])
 PY
@@ -1050,6 +1814,20 @@ run_live_sync_with_retries() {
   done
 }
 
+prepare_load_generator_hosts() {
+  local host_rows
+  host_rows="$(video_loadtest_remote_host_rows)"
+  [[ -n "$host_rows" ]] || return 0
+  local label host remote
+  while IFS=$'\t' read -r label host; do
+    [[ -n "$host" ]] || continue
+    remote="${ssh_user}@${host}"
+    echo "preparing load generator host label=$label host=$host" >&2
+    ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$ssh_known_hosts_file" -i "$ssh_key" "$remote" \
+      "systemctl stop unattended-upgrades apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service >/dev/null 2>&1 || true; systemctl mask unattended-upgrades apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service >/dev/null 2>&1 || true"
+  done <<<"$host_rows"
+}
+
 command="${1:-workflow-live}"
 if [[ "$command" == "-h" || "$command" == "--help" ]]; then
   usage
@@ -1093,12 +1871,27 @@ fi
 if [[ -n "$vm_count" ]]; then
   base_args+=("--vm-count" "$vm_count")
 fi
+if [[ -n "$video_generator_vm_count" ]]; then
+  base_args+=("--video-generator-vm-count" "$video_generator_vm_count")
+fi
+if [[ -n "$video_generator_label_prefix" ]]; then
+  base_args+=("--video-generator-label-prefix" "$video_generator_label_prefix")
+fi
 base_args+=("--load-generator-devices-per-vm" "$load_generator_devices_per_vm")
+provision_args=("${base_args[@]}")
+if [[ -n "$linode_type" ]]; then
+  provision_args+=("--linode-type" "$linode_type")
+fi
+if [[ -n "$existing_generator_hosts" ]]; then
+  provision_args+=("--existing-hosts" "$existing_generator_hosts")
+fi
 plan_condition_args=(
   "${base_args[@]}"
   "--runner-nofile-limit" "$runner_nofile_limit"
   "--device-session-model" "$device_session_model"
   "--runner-read-model" "$runner_read_model"
+  "--device-token-request-timeout" "$device_token_request_timeout"
+  "--device-token-request-retries" "$device_token_request_retries"
 )
 workflow_args=("${base_args[@]}")
 coordinator_args=(
@@ -1109,6 +1902,8 @@ workflow_args+=("--runner-nofile-limit" "$runner_nofile_limit")
 workflow_args+=("--mqtt-concurrency" "$mqtt_concurrency")
 workflow_args+=("--command-concurrency" "$command_concurrency")
 workflow_args+=("--shadow-command-timeout" "$shadow_command_timeout")
+workflow_args+=("--device-token-request-timeout" "$device_token_request_timeout")
+workflow_args+=("--device-token-request-retries" "$device_token_request_retries")
 workflow_args+=("--runtime-logs=$runtime_logs")
 workflow_args+=("--live-runner-timeout-grace" "$live_runner_timeout_grace")
 workflow_args+=("--device-session-model" "$device_session_model")
@@ -1139,7 +1934,7 @@ case "$command" in
     ;;
   provision-vms)
     mkdir -p "$local_out_dir"
-    run_home100k provision-vms "${base_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" "$@"
+    run_home100k provision-vms "${provision_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" "$@"
     ;;
   token-only)
     mkdir -p "$repo_root/$out_dir"
@@ -1205,14 +2000,14 @@ case "$command" in
     ;;
   workflow-dry-run)
     run_home100k plan "${plan_condition_args[@]}"
-    run_home100k provision-vms "${base_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir"
+    run_home100k provision-vms "${provision_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir"
     run_home100k sync "${workflow_args[@]}" --run-id "$run_id" --vm-state-file "$local_vm_state_file"
     run_home100k run-stages "${workflow_args[@]}" "${coordinator_args[@]}" --run-id "$run_id" --vm-state-file "$local_vm_state_file" --runner-mode sample
     run_home100k collect "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --vm-state-file "$local_vm_state_file"
     run_home100k collect-server-evidence "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir"
     ;;
   workflow-live)
-    if [[ -z "${LINODE_TOKEN:-}" ]]; then
+    if [[ -z "$existing_generator_hosts" && -z "${LINODE_TOKEN:-}" ]]; then
       echo "workflow-live requires LINODE_TOKEN" >&2
       exit 2
     fi
@@ -1220,19 +2015,21 @@ case "$command" in
       echo "workflow-live SSH key not found: $ssh_key" >&2
       exit 2
     fi
-    if [[ ! -f "$authorized_key_file" ]]; then
+    if [[ -z "$existing_generator_hosts" && ! -f "$authorized_key_file" ]]; then
       echo "workflow-live authorized public key not found: $authorized_key_file" >&2
       exit 2
     fi
     mkdir -p "$local_out_dir"
+    linode_active_service_preflight
     rm -f "$ssh_known_hosts_file"
     shutdown_live_vms_on_exit=1
     start_status_monitor
     set_phase "provision-vms"
-    run_home100k provision-vms "${base_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --live --confirm-live --authorized-key-file "$authorized_key_file" "$@"
+    run_home100k provision-vms "${provision_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --live --confirm-live --authorized-key-file "$authorized_key_file" "$@"
     workflow_status
     set_phase "sync"
     run_live_sync_with_retries
+    prepare_load_generator_hosts
     workflow_status
     set_phase "collect-server-baseline"
     export_kubeconfig_if_available
@@ -1285,10 +2082,6 @@ case "$command" in
     exit "$cleanup_rc"
     ;;
   workflow-resume-live)
-    if [[ -z "${LINODE_TOKEN:-}" ]]; then
-      echo "workflow-resume-live requires LINODE_TOKEN" >&2
-      exit 2
-    fi
     if [[ ! -f "$ssh_key" ]]; then
       echo "workflow-resume-live SSH key not found: $ssh_key" >&2
       exit 2
@@ -1306,6 +2099,7 @@ case "$command" in
     start_status_monitor
     set_phase "sync"
     run_live_sync_with_retries
+    prepare_load_generator_hosts
     workflow_status
     set_phase "collect-server-baseline"
     export_kubeconfig_if_available

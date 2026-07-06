@@ -128,6 +128,8 @@
           --mqtt-concurrency "{{ mqtt_concurrency | default(1000) }}" \
           --command-concurrency "{{ command_concurrency | default(100) }}" \
           --shadow-command-timeout "{{ shadow_command_timeout | default('30s') }}" \
+          --device-token-request-timeout "{{ device_token_request_timeout | default('10s') }}" \
+          --device-token-request-retries "{{ device_token_request_retries | default(0) }}" \
           --runtime-logs="{{ runtime_logs | default(true) | string | lower }}" \
           --live-runner-timeout-grace "{{ live_runner_timeout_grace | default('') }}" \
           --listen ":18080" \

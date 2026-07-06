@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -189,8 +190,8 @@ func parseCommonFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
-	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM := addSizingFlags(fs)
-	runnerNofile, sessionModel, readModel := addRuntimeConditionFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix := addSizingFlags(fs)
+	runnerNofile, sessionModel, readModel, deviceTokenRequestTimeout, deviceTokenRequestRetries := addRuntimeConditionFlags(fs)
 	functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance := addGateThresholdFlags(fs)
 	ephemeral := fs.Bool("ephemeral-vms", false, "require ephemeral VM lifecycle")
 	if err := fs.Parse(args); err != nil {
@@ -205,8 +206,8 @@ func parseCommonFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
-	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
-	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix)
+	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel, deviceTokenRequestTimeout, deviceTokenRequestRetries)
 	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
 	return opts, *ephemeral, nil
 }
@@ -231,8 +232,8 @@ func parseRunFlags(name string, args []string, stderr io.Writer) (PlanOptions, b
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
-	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM := addSizingFlags(fs)
-	runnerNofile, sessionModel, readModel := addRuntimeConditionFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix := addSizingFlags(fs)
+	runnerNofile, sessionModel, readModel, deviceTokenRequestTimeout, deviceTokenRequestRetries := addRuntimeConditionFlags(fs)
 	functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance := addGateThresholdFlags(fs)
 	ephemeral := fs.Bool("ephemeral-vms", false, "require ephemeral VM lifecycle")
 	runID := fs.String("run-id", "", "run id for artifact correlation")
@@ -250,8 +251,8 @@ func parseRunFlags(name string, args []string, stderr io.Writer) (PlanOptions, b
 	}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
-	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
-	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix)
+	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel, deviceTokenRequestTimeout, deviceTokenRequestRetries)
 	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
 	return opts, *ephemeral, runFlagValues{
 		runID:              *runID,
@@ -267,13 +268,15 @@ func addStageDurationFlags(fs *flag.FlagSet) (*string, *string, *string) {
 	return stageWarmUp, stageSteady, stageCoolDown
 }
 
-func addSizingFlags(fs *flag.FlagSet) (*int, *int, *int, *int, *int) {
+func addSizingFlags(fs *flag.FlagSet) (*int, *int, *int, *int, *int, *int, *string) {
 	deviceCount := fs.Int("devices", 0, "total simulated device count")
 	userCount := fs.Int("users", 0, "total simulated app user count")
 	devicesPerUser := fs.Int("devices-per-user", 0, "target devices per app user when --users is omitted")
 	vmCount := fs.Int("vm-count", 0, "number of mixed Linode generator VMs")
 	loadGeneratorDevicesPerVM := fs.Int("load-generator-devices-per-vm", 0, "maximum simulated devices per load-generator VM")
-	return deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM
+	videoGeneratorVMCount := fs.Int("video-generator-vm-count", 0, "additional video-only Linode generator VMs")
+	videoGeneratorLabelPrefix := fs.String("video-generator-label-prefix", "vg", "label prefix for video-only generator VMs")
+	return deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix
 }
 
 func addVMLabelPrefixFlag(fs *flag.FlagSet) *string {
@@ -284,11 +287,13 @@ func applyVMLabelPrefixFlag(opts *PlanOptions, vmLabelPrefix *string) {
 	opts.VMLabelPrefix = *vmLabelPrefix
 }
 
-func addRuntimeConditionFlags(fs *flag.FlagSet) (*int, *string, *string) {
+func addRuntimeConditionFlags(fs *flag.FlagSet) (*int, *string, *string, *string, *int) {
 	runnerNofile := fs.Int("runner-nofile-limit", DefaultRunnerNofile, "remote runner nofile limit for MQTT sockets")
 	sessionModel := fs.String("device-session-model", DefaultDeviceSession, "device MQTT session model")
 	readModel := fs.String("runner-read-model", DefaultRunnerReadModel, "runner MQTT read model")
-	return runnerNofile, sessionModel, readModel
+	deviceTokenRequestTimeout := fs.String("device-token-request-timeout", DefaultDeviceTokenRequestTimeout, "per-attempt device /request_token timeout for live MQTT bootstrap")
+	deviceTokenRequestRetries := fs.Int("device-token-request-retries", 0, "bounded retry count after the first device /request_token attempt")
+	return runnerNofile, sessionModel, readModel, deviceTokenRequestTimeout, deviceTokenRequestRetries
 }
 
 func addGateThresholdFlags(fs *flag.FlagSet) (*float64, *float64, *float64, *float64, *int64) {
@@ -306,18 +311,22 @@ func applyStageDurationFlags(opts *PlanOptions, stageWarmUp *string, stageSteady
 	opts.StageCoolDown = *stageCoolDown
 }
 
-func applySizingFlags(opts *PlanOptions, deviceCount *int, userCount *int, devicesPerUser *int, vmCount *int, loadGeneratorDevicesPerVM *int) {
+func applySizingFlags(opts *PlanOptions, deviceCount *int, userCount *int, devicesPerUser *int, vmCount *int, loadGeneratorDevicesPerVM *int, videoGeneratorVMCount *int, videoGeneratorLabelPrefix *string) {
 	opts.DeviceCount = *deviceCount
 	opts.UserCount = *userCount
 	opts.DevicesPerUser = *devicesPerUser
 	opts.VMCount = *vmCount
 	opts.LoadGeneratorDevicesPerVM = *loadGeneratorDevicesPerVM
+	opts.VideoGeneratorVMCount = *videoGeneratorVMCount
+	opts.VideoGeneratorLabelPrefix = *videoGeneratorLabelPrefix
 }
 
-func applyRuntimeConditionFlags(opts *PlanOptions, runnerNofile *int, sessionModel *string, readModel *string) {
+func applyRuntimeConditionFlags(opts *PlanOptions, runnerNofile *int, sessionModel *string, readModel *string, deviceTokenRequestTimeout *string, deviceTokenRequestRetries *int) {
 	opts.RunnerNofile = *runnerNofile
 	opts.SessionModel = *sessionModel
 	opts.RunnerReadModel = *readModel
+	opts.DeviceTokenRequestTimeout = strings.TrimSpace(*deviceTokenRequestTimeout)
+	opts.DeviceTokenRequestRetries = *deviceTokenRequestRetries
 }
 
 func applyGateThresholdFlags(opts *PlanOptions, functionalThreshold *float64, targetThreshold *float64, eventThreshold *float64, aggregateTolerancePercent *float64, aggregateMinTolerance *int64) {
@@ -339,6 +348,7 @@ type provisionVMFlagValues struct {
 	linodeImage       string
 	rootPass          string
 	authorizedKeyFile string
+	existingHosts     string
 }
 
 type destroyVMFlagValues struct {
@@ -358,48 +368,52 @@ type listVMFlagValues struct {
 }
 
 type workflowFlagValues struct {
-	runID                    string
-	outDir                   string
-	serverEvidenceFile       string
-	live                     bool
-	runnerMode               string
-	vmStateFile              string
-	remoteWorkspace          string
-	remoteEnvRoot            string
-	remoteOutRoot            string
-	sshUser                  string
-	sshKey                   string
-	coordinatorDelayMS       int
-	mqttAddr                 string
-	videoCloudBaseURL        string
-	videoCloudPublicURL      string
-	videoCloudTokenURL       string
-	accountManagerURL        string
-	generatorHostsOverrideIP string
-	credentialBundleFormat   string
-	runnerNofileLimit        int
-	mqttConcurrency          int
-	commandConcurrency       int
-	shadowCommandTimeout     string
-	runtimeLogs              bool
-	liveRunnerTimeoutGrace   string
+	runID                     string
+	outDir                    string
+	serverEvidenceFile        string
+	live                      bool
+	runnerMode                string
+	vmStateFile               string
+	remoteWorkspace           string
+	remoteEnvRoot             string
+	remoteOutRoot             string
+	sshUser                   string
+	sshKey                    string
+	coordinatorDelayMS        int
+	mqttAddr                  string
+	videoCloudBaseURL         string
+	videoCloudPublicURL       string
+	videoCloudTokenURL        string
+	accountManagerURL         string
+	generatorHostsOverrideIP  string
+	credentialBundleFormat    string
+	runnerNofileLimit         int
+	mqttConcurrency           int
+	commandConcurrency        int
+	shadowCommandTimeout      string
+	deviceTokenRequestTimeout string
+	deviceTokenRequestRetries int
+	runtimeLogs               bool
+	liveRunnerTimeoutGrace    string
 }
 
 type shardRunFlagValues struct {
-	runID                  string
-	outDir                 string
-	role                   string
-	shardIndex             int
-	shardManifest          string
-	honorStageDurations    bool
-	runnerMode             string
-	rtkCloudBinary         string
-	workspace              string
-	mqttConcurrency        int
-	commandConcurrency     int
-	shadowCommandTimeout   string
-	runtimeLogs            bool
-	liveRunnerTimeoutGrace string
+	runID                     string
+	outDir                    string
+	role                      string
+	shardIndex                int
+	shardManifest             string
+	honorStageDurations       bool
+	runnerMode                string
+	rtkCloudBinary            string
+	workspace                 string
+	mqttConcurrency           int
+	commandConcurrency        int
+	shadowCommandTimeout      string
+	deviceTokenRequestTimeout string
+	deviceTokenRequestRetries int
+	runtimeLogs               bool
+	liveRunnerTimeoutGrace    string
 }
 
 const DefaultLiveMQTTConcurrency = 1000
@@ -428,6 +442,9 @@ func executeProvisionVMs(args []string, stdout io.Writer, stderr io.Writer) int 
 			"run_id":  runID,
 			"actions": actions,
 		})
+	}
+	if strings.TrimSpace(values.existingHosts) != "" {
+		return executeExistingHostVMState(plan, runID, values, stdout, stderr)
 	}
 	if !values.confirmLive {
 		fmt.Fprintln(stderr, "--confirm-live is required with --live before creating Linode VMs")
@@ -498,6 +515,94 @@ func executeProvisionVMs(args []string, stdout io.Writer, stderr io.Writer) int 
 		"reused":        reused,
 		"vm_state_file": vmStateFile,
 	})
+}
+
+func executeExistingHostVMState(plan Plan, runID string, values provisionVMFlagValues, stdout io.Writer, stderr io.Writer) int {
+	hosts, err := parseExistingGeneratorHosts(values.existingHosts, plan, runID)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	vmStateFile := ""
+	if strings.TrimSpace(values.outDir) != "" {
+		vmStateFile = filepath.Join(values.outDir, "vms.json")
+		if err := writeJSONFile(vmStateFile, map[string]any{
+			"run_id":  runID,
+			"created": hosts,
+			"reused":  []LinodeVM{},
+		}); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
+	return writeJSONTo(stdout, stderr, map[string]any{
+		"dry_run":       false,
+		"run_id":        runID,
+		"created":       hosts,
+		"reused":        []LinodeVM{},
+		"vm_state_file": vmStateFile,
+		"source":        "existing-host",
+	})
+}
+
+func parseExistingGeneratorHosts(raw string, plan Plan, runID string) ([]LinodeVM, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, errors.New("--existing-hosts requires at least one label=ipv4 entry")
+	}
+	assignments := map[string]VMAssignment{}
+	for _, assignment := range plan.Assignments {
+		assignments[assignment.Label] = assignment
+	}
+	seen := map[string]bool{}
+	out := []LinodeVM{}
+	for _, entry := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == '\n' || r == '\t' || r == ' ' }) {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		label, ip, ok := strings.Cut(entry, "=")
+		if !ok {
+			return nil, fmt.Errorf("invalid --existing-hosts entry %q; expected label=ipv4", entry)
+		}
+		label = strings.TrimSpace(label)
+		ip = strings.TrimSpace(ip)
+		assignment, ok := assignments[label]
+		if !ok {
+			return nil, fmt.Errorf("existing host label %q does not match any plan VM assignment", label)
+		}
+		if seen[label] {
+			return nil, fmt.Errorf("duplicate existing host label %q", label)
+		}
+		parsedIP := net.ParseIP(ip)
+		if parsedIP == nil || parsedIP.To4() == nil {
+			return nil, fmt.Errorf("existing host %s has invalid IPv4 address %q", label, ip)
+		}
+		seen[label] = true
+		out = append(out, LinodeVM{
+			Label:      label,
+			PublicIPv4: ip,
+			Status:     "existing",
+			Tags:       []string{"home-100k", runID, "load-generator", assignment.Role},
+			Source:     "existing-host",
+		})
+	}
+	if len(out) == 0 {
+		return nil, errors.New("--existing-hosts requires at least one label=ipv4 entry")
+	}
+	missing := []string{}
+	for _, assignment := range plan.Assignments {
+		if len(assignment.TaskShards) == 0 {
+			continue
+		}
+		if !seen[assignment.Label] {
+			missing = append(missing, assignment.Label)
+		}
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("--existing-hosts missing load-generator assignments: %s", strings.Join(missing, ", "))
+	}
+	return out, nil
 }
 
 func vmReusableForRun(vm LinodeVM, runID string) bool {
@@ -584,15 +689,20 @@ func executeRunStages(args []string, stdout io.Writer, stderr io.Writer) int {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
+		homeVMs := homeShardVMs(vms, plan)
+		if len(homeVMs) == 0 {
+			fmt.Fprintln(stderr, "VM state contains no home shard VMs")
+			return 1
+		}
 		remoteOutRoot := firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k")
-		if err := dispatchRemoteShards(vms, plan, runID, remoteOutRoot, values); err != nil {
+		if err := dispatchRemoteShards(homeVMs, plan, runID, remoteOutRoot, values); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
 		return writeJSONTo(stdout, stderr, map[string]any{
 			"dry_run":    false,
 			"run_id":     runID,
-			"dispatched": vms,
+			"dispatched": homeVMs,
 		})
 	}
 	if usesFormalRunner(values.runnerMode) {
@@ -770,6 +880,8 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		"--concurrency", strconv.Itoa(liveMQTTConcurrency(maxTarget, values.mqttConcurrency)),
 		"--command-concurrency", strconv.Itoa(liveCommandConcurrency(maxTarget, values.commandConcurrency)),
 		"--shadow-command-timeout", firstNonEmpty(values.shadowCommandTimeout, DefaultShadowCommandTimeout),
+		"--device-token-request-timeout", firstNonEmpty(values.deviceTokenRequestTimeout, "10s"),
+		"--device-token-request-retries", strconv.Itoa(values.deviceTokenRequestRetries),
 		"--runtime-logs=" + strconv.FormatBool(values.runtimeLogs),
 		"--max-connected-devices", strconv.Itoa(maxTarget),
 	}
@@ -1027,6 +1139,11 @@ type rawLiveMQTTResult struct {
 	DeviceTokenAttempts        int64                       `json:"device_token_attempts"`
 	DeviceTokenSuccesses       int64                       `json:"device_token_successes"`
 	DeviceTokenFailures        int64                       `json:"device_token_failures"`
+	DeviceTokenFirstSuccess    int64                       `json:"device_token_first_attempt_success"`
+	DeviceTokenFirstFailures   int64                       `json:"device_token_first_attempt_failures"`
+	DeviceTokenRetryAttempts   int64                       `json:"device_token_retry_attempts"`
+	DeviceTokenRetrySuccesses  int64                       `json:"device_token_retry_successes"`
+	DeviceTokenRetryExhausted  int64                       `json:"device_token_retry_exhausted"`
 	DeviceMQTTDialAttempts     int64                       `json:"device_mqtt_dial_attempts"`
 	DeviceMQTTDialSuccesses    int64                       `json:"device_mqtt_dial_successes"`
 	DeviceMQTTDialFailures     int64                       `json:"device_mqtt_dial_failures"`
@@ -1162,30 +1279,35 @@ func convertLiveMQTTStageResult(raw rawLiveMQTTResult, stage Stage, maxConnected
 		ConnectedDevices:      stage.ConnectedDevices,
 		ShardConnectedDevices: maxConnected,
 		DeviceMQTTTotals: DeviceMQTTTotals{
-			ConnectAttempts:     connectAttempts,
-			ConnectSuccess:      connectSuccess,
-			ConnectFail:         connectFail,
-			TokenAttempts:       nonZeroInt64(raw.DeviceMQTTTotals.TokenAttempts, raw.DeviceTokenAttempts),
-			TokenSuccess:        nonZeroInt64(raw.DeviceMQTTTotals.TokenSuccess, raw.DeviceTokenSuccesses),
-			TokenFail:           nonZeroInt64(raw.DeviceMQTTTotals.TokenFail, raw.DeviceTokenFailures),
-			MQTTDialAttempts:    nonZeroInt64(raw.DeviceMQTTTotals.MQTTDialAttempts, raw.DeviceMQTTDialAttempts),
-			MQTTDialSuccess:     nonZeroInt64(raw.DeviceMQTTTotals.MQTTDialSuccess, raw.DeviceMQTTDialSuccesses),
-			MQTTDialFail:        nonZeroInt64(raw.DeviceMQTTTotals.MQTTDialFail, raw.DeviceMQTTDialFailures),
-			MQTTConnackAttempts: nonZeroInt64(raw.DeviceMQTTTotals.MQTTConnackAttempts, raw.DeviceMQTTConnackAttempts),
-			MQTTConnackSuccess:  nonZeroInt64(raw.DeviceMQTTTotals.MQTTConnackSuccess, raw.DeviceMQTTConnackSuccesses),
-			MQTTConnackFail:     nonZeroInt64(raw.DeviceMQTTTotals.MQTTConnackFail, raw.DeviceMQTTConnackFailures),
-			SubscribeAttempts:   nonZeroInt64(raw.DeviceMQTTTotals.SubscribeAttempts, raw.DeviceSubscribeAttempts),
-			SubscribeFail:       nonZeroInt64(raw.DeviceMQTTTotals.SubscribeFail, raw.DeviceSubscribeFailures),
-			Subscribes:          subscribes,
-			ActiveConnections:   activeConnections,
-			ActiveSubscriptions: activeSubscriptions,
-			Publishes:           publishes,
-			ReceivedMessages:    receivedMessages,
-			DeltaReceived:       deltaReceived,
-			ReportedPublishes:   reportedPublishes,
-			RejectedPublishes:   rejectedPublishes,
-			BytesSent:           nonZeroInt64(raw.DeviceMQTTTotals.BytesSent, raw.TotalBytesSent),
-			BytesReceived:       nonZeroInt64(raw.DeviceMQTTTotals.BytesReceived, raw.TotalBytesReceived),
+			ConnectAttempts:          connectAttempts,
+			ConnectSuccess:           connectSuccess,
+			ConnectFail:              connectFail,
+			TokenAttempts:            nonZeroInt64(raw.DeviceMQTTTotals.TokenAttempts, raw.DeviceTokenAttempts),
+			TokenSuccess:             nonZeroInt64(raw.DeviceMQTTTotals.TokenSuccess, raw.DeviceTokenSuccesses),
+			TokenFail:                nonZeroInt64(raw.DeviceMQTTTotals.TokenFail, raw.DeviceTokenFailures),
+			TokenFirstAttemptSuccess: nonZeroInt64(raw.DeviceMQTTTotals.TokenFirstAttemptSuccess, raw.DeviceTokenFirstSuccess),
+			TokenFirstAttemptFail:    nonZeroInt64(raw.DeviceMQTTTotals.TokenFirstAttemptFail, raw.DeviceTokenFirstFailures),
+			TokenRetryAttempts:       nonZeroInt64(raw.DeviceMQTTTotals.TokenRetryAttempts, raw.DeviceTokenRetryAttempts),
+			TokenRetrySuccess:        nonZeroInt64(raw.DeviceMQTTTotals.TokenRetrySuccess, raw.DeviceTokenRetrySuccesses),
+			TokenRetryExhausted:      nonZeroInt64(raw.DeviceMQTTTotals.TokenRetryExhausted, raw.DeviceTokenRetryExhausted),
+			MQTTDialAttempts:         nonZeroInt64(raw.DeviceMQTTTotals.MQTTDialAttempts, raw.DeviceMQTTDialAttempts),
+			MQTTDialSuccess:          nonZeroInt64(raw.DeviceMQTTTotals.MQTTDialSuccess, raw.DeviceMQTTDialSuccesses),
+			MQTTDialFail:             nonZeroInt64(raw.DeviceMQTTTotals.MQTTDialFail, raw.DeviceMQTTDialFailures),
+			MQTTConnackAttempts:      nonZeroInt64(raw.DeviceMQTTTotals.MQTTConnackAttempts, raw.DeviceMQTTConnackAttempts),
+			MQTTConnackSuccess:       nonZeroInt64(raw.DeviceMQTTTotals.MQTTConnackSuccess, raw.DeviceMQTTConnackSuccesses),
+			MQTTConnackFail:          nonZeroInt64(raw.DeviceMQTTTotals.MQTTConnackFail, raw.DeviceMQTTConnackFailures),
+			SubscribeAttempts:        nonZeroInt64(raw.DeviceMQTTTotals.SubscribeAttempts, raw.DeviceSubscribeAttempts),
+			SubscribeFail:            nonZeroInt64(raw.DeviceMQTTTotals.SubscribeFail, raw.DeviceSubscribeFailures),
+			Subscribes:               subscribes,
+			ActiveConnections:        activeConnections,
+			ActiveSubscriptions:      activeSubscriptions,
+			Publishes:                publishes,
+			ReceivedMessages:         receivedMessages,
+			DeltaReceived:            deltaReceived,
+			ReportedPublishes:        reportedPublishes,
+			RejectedPublishes:        rejectedPublishes,
+			BytesSent:                nonZeroInt64(raw.DeviceMQTTTotals.BytesSent, raw.TotalBytesSent),
+			BytesReceived:            nonZeroInt64(raw.DeviceMQTTTotals.BytesReceived, raw.TotalBytesReceived),
 		},
 		AppUserTotals: AppUserTotals{
 			LoginAttempts:       raw.AppUserTotals.LoginAttempts,
@@ -1271,15 +1393,20 @@ func executeCollect(args []string, stdout io.Writer, stderr io.Writer) int {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
+		homeVMs := homeShardVMs(vms, plan)
+		if len(homeVMs) == 0 {
+			fmt.Fprintln(stderr, "VM state contains no home shard VMs")
+			return 1
+		}
 		remoteOutRoot := firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k")
-		if err := collectRemoteVMs(vms, plan, runID, remoteOutRoot, outDir, values); err != nil {
+		if err := collectRemoteVMs(homeVMs, plan, runID, remoteOutRoot, outDir, values); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
 		return writeJSONTo(stdout, stderr, map[string]any{
 			"dry_run":   false,
 			"run_id":    runID,
-			"collected": vms,
+			"collected": homeVMs,
 			"out_dir":   outDir,
 		})
 	}
@@ -1439,7 +1566,12 @@ func executeDestroyVMs(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 	client := NewLinodeClient(firstNonEmpty(values.linodeEndpoint, "https://api.linode.com/v4"), values.linodeToken)
 	destroyed := []LinodeVM{}
+	skipped := []LinodeVM{}
 	for _, vm := range vms {
+		if strings.TrimSpace(vm.Source) == "existing-host" {
+			skipped = append(skipped, vm)
+			continue
+		}
 		if err := client.DestroyVM(context.Background(), vm.ID); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
@@ -1450,6 +1582,7 @@ func executeDestroyVMs(args []string, stdout io.Writer, stderr io.Writer) int {
 		"dry_run":   false,
 		"run_id":    runID,
 		"destroyed": destroyed,
+		"skipped":   skipped,
 	})
 }
 
@@ -1481,7 +1614,7 @@ func parseProvisionVMFlags(name string, args []string, stderr io.Writer) (PlanOp
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
-	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM := addSizingFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix := addSizingFlags(fs)
 	functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance := addGateThresholdFlags(fs)
 	runID := fs.String("run-id", "", "run id for VM tags")
 	outDir := fs.String("out-dir", "", "artifact output directory")
@@ -1493,13 +1626,14 @@ func parseProvisionVMFlags(name string, args []string, stderr io.Writer) (PlanOp
 	linodeImage := fs.String("linode-image", "", "Linode image")
 	rootPass := fs.String("root-pass", "", "Linode root password")
 	authorizedKeyFile := fs.String("authorized-key-file", "", "SSH public key file for Linode authorized_keys")
+	existingHosts := fs.String("existing-hosts", "", "comma/space separated existing load-generator hosts as label=ipv4 entries; skips Linode VM creation")
 	if err := fs.Parse(args); err != nil {
 		return PlanOptions{}, provisionVMFlagValues{}, err
 	}
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, BrandPlanFile: *brandPlan, ScenarioProfile: *scenarioProfile, Region: *region}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
-	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix)
 	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
 	return opts, provisionVMFlagValues{
 		runID:             *runID,
@@ -1512,6 +1646,7 @@ func parseProvisionVMFlags(name string, args []string, stderr io.Writer) (PlanOp
 		linodeImage:       *linodeImage,
 		rootPass:          *rootPass,
 		authorizedKeyFile: *authorizedKeyFile,
+		existingHosts:     *existingHosts,
 	}, nil
 }
 
@@ -1525,7 +1660,7 @@ func parseDestroyVMFlags(name string, args []string, stderr io.Writer) (PlanOpti
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
-	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM := addSizingFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix := addSizingFlags(fs)
 	functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance := addGateThresholdFlags(fs)
 	runID := fs.String("run-id", "", "run id for VM tags")
 	live := fs.Bool("live", false, "destroy Linode VMs")
@@ -1539,7 +1674,7 @@ func parseDestroyVMFlags(name string, args []string, stderr io.Writer) (PlanOpti
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, BrandPlanFile: *brandPlan, ScenarioProfile: *scenarioProfile, Region: *region}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
-	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix)
 	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
 	return opts, destroyVMFlagValues{
 		runID:          *runID,
@@ -1561,7 +1696,7 @@ func parseListVMFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
-	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM := addSizingFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix := addSizingFlags(fs)
 	functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance := addGateThresholdFlags(fs)
 	runID := fs.String("run-id", "", "run id for VM tags")
 	live := fs.Bool("live", false, "query Linode VMs")
@@ -1573,7 +1708,7 @@ func parseListVMFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, BrandPlanFile: *brandPlan, ScenarioProfile: *scenarioProfile, Region: *region}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
-	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix)
 	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
 	return opts, listVMFlagValues{
 		runID:          *runID,
@@ -1593,8 +1728,8 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
-	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM := addSizingFlags(fs)
-	runnerNofile, sessionModel, readModel := addRuntimeConditionFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix := addSizingFlags(fs)
+	runnerNofile, sessionModel, readModel, deviceTokenPlanTimeout, deviceTokenPlanRetries := addRuntimeConditionFlags(fs)
 	functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance := addGateThresholdFlags(fs)
 	runID := fs.String("run-id", "", "run id for artifact correlation")
 	outDir := fs.String("out-dir", "", "artifact output directory")
@@ -1629,35 +1764,37 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, BrandPlanFile: *brandPlan, ScenarioProfile: *scenarioProfile, Region: *region}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
-	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
-	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix)
+	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel, deviceTokenPlanTimeout, deviceTokenPlanRetries)
 	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
 	return opts, workflowFlagValues{
-		runID:                    *runID,
-		outDir:                   *outDir,
-		serverEvidenceFile:       *serverEvidenceFile,
-		live:                     *live,
-		runnerMode:               *runnerMode,
-		vmStateFile:              *vmStateFile,
-		remoteWorkspace:          *remoteWorkspace,
-		remoteEnvRoot:            *remoteEnvRoot,
-		remoteOutRoot:            *remoteOutRoot,
-		sshUser:                  *sshUser,
-		sshKey:                   *sshKey,
-		coordinatorDelayMS:       *coordinatorDelayMS,
-		mqttAddr:                 *mqttAddr,
-		videoCloudBaseURL:        *videoCloudBaseURL,
-		videoCloudPublicURL:      *videoCloudPublicURL,
-		videoCloudTokenURL:       *videoCloudTokenURL,
-		accountManagerURL:        *accountManagerURL,
-		generatorHostsOverrideIP: strings.TrimSpace(*generatorHostsOverrideIP),
-		credentialBundleFormat:   strings.TrimSpace(*credentialBundleFormat),
-		runnerNofileLimit:        *runnerNofile,
-		mqttConcurrency:          *mqttConcurrency,
-		commandConcurrency:       *commandConcurrency,
-		shadowCommandTimeout:     strings.TrimSpace(*shadowCommandTimeout),
-		runtimeLogs:              *runtimeLogs,
-		liveRunnerTimeoutGrace:   strings.TrimSpace(*liveRunnerTimeoutGrace),
+		runID:                     *runID,
+		outDir:                    *outDir,
+		serverEvidenceFile:        *serverEvidenceFile,
+		live:                      *live,
+		runnerMode:                *runnerMode,
+		vmStateFile:               *vmStateFile,
+		remoteWorkspace:           *remoteWorkspace,
+		remoteEnvRoot:             *remoteEnvRoot,
+		remoteOutRoot:             *remoteOutRoot,
+		sshUser:                   *sshUser,
+		sshKey:                    *sshKey,
+		coordinatorDelayMS:        *coordinatorDelayMS,
+		mqttAddr:                  *mqttAddr,
+		videoCloudBaseURL:         *videoCloudBaseURL,
+		videoCloudPublicURL:       *videoCloudPublicURL,
+		videoCloudTokenURL:        *videoCloudTokenURL,
+		accountManagerURL:         *accountManagerURL,
+		generatorHostsOverrideIP:  strings.TrimSpace(*generatorHostsOverrideIP),
+		credentialBundleFormat:    strings.TrimSpace(*credentialBundleFormat),
+		runnerNofileLimit:         *runnerNofile,
+		mqttConcurrency:           *mqttConcurrency,
+		commandConcurrency:        *commandConcurrency,
+		shadowCommandTimeout:      strings.TrimSpace(*shadowCommandTimeout),
+		deviceTokenRequestTimeout: strings.TrimSpace(*deviceTokenPlanTimeout),
+		deviceTokenRequestRetries: *deviceTokenPlanRetries,
+		runtimeLogs:               *runtimeLogs,
+		liveRunnerTimeoutGrace:    strings.TrimSpace(*liveRunnerTimeoutGrace),
 	}, nil
 }
 
@@ -1671,7 +1808,7 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
-	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM := addSizingFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix := addSizingFlags(fs)
 	functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance := addGateThresholdFlags(fs)
 	runID := fs.String("run-id", "", "run id for artifact correlation")
 	outDir := fs.String("out-dir", "", "artifact output directory")
@@ -1685,6 +1822,8 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	mqttConcurrency := fs.Int("mqtt-concurrency", DefaultLiveMQTTConcurrency, "per-shard MQTT connect worker concurrency for live runner")
 	commandConcurrency := fs.Int("command-concurrency", DefaultLiveCommandConcurrency, "per-shard sustained shadow command concurrency for live runner")
 	shadowCommandTimeout := fs.String("shadow-command-timeout", DefaultShadowCommandTimeout, "per-phase sustained shadow command timeout")
+	deviceTokenRequestTimeout := fs.String("device-token-request-timeout", "10s", "per-attempt device /request_token timeout for live MQTT bootstrap")
+	deviceTokenRequestRetries := fs.Int("device-token-request-retries", 0, "bounded retry count after the first device /request_token attempt")
 	runtimeLogs := fs.Bool("runtime-logs", true, "publish MQTT runtime logs during sustained shadow commands")
 	liveRunnerTimeoutGrace := fs.String("live-runner-timeout-grace", "", "extra timeout after the configured live MQTT duration before killing the shard runner")
 	if err := fs.Parse(args); err != nil {
@@ -1696,23 +1835,25 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, BrandPlanFile: *brandPlan, ScenarioProfile: *scenarioProfile, Region: *region}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
-	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix)
 	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
 	return opts, shardRunFlagValues{
-		runID:                  *runID,
-		outDir:                 *outDir,
-		role:                   *role,
-		shardIndex:             *shardIndex,
-		shardManifest:          *shardManifest,
-		honorStageDurations:    *honorStageDurations,
-		runnerMode:             *runnerMode,
-		rtkCloudBinary:         *rtkCloudBinary,
-		workspace:              *workspace,
-		mqttConcurrency:        *mqttConcurrency,
-		commandConcurrency:     *commandConcurrency,
-		shadowCommandTimeout:   strings.TrimSpace(*shadowCommandTimeout),
-		runtimeLogs:            *runtimeLogs,
-		liveRunnerTimeoutGrace: strings.TrimSpace(*liveRunnerTimeoutGrace),
+		runID:                     *runID,
+		outDir:                    *outDir,
+		role:                      *role,
+		shardIndex:                *shardIndex,
+		shardManifest:             *shardManifest,
+		honorStageDurations:       *honorStageDurations,
+		runnerMode:                *runnerMode,
+		rtkCloudBinary:            *rtkCloudBinary,
+		workspace:                 *workspace,
+		mqttConcurrency:           *mqttConcurrency,
+		commandConcurrency:        *commandConcurrency,
+		shadowCommandTimeout:      strings.TrimSpace(*shadowCommandTimeout),
+		deviceTokenRequestTimeout: strings.TrimSpace(*deviceTokenRequestTimeout),
+		deviceTokenRequestRetries: *deviceTokenRequestRetries,
+		runtimeLogs:               *runtimeLogs,
+		liveRunnerTimeoutGrace:    strings.TrimSpace(*liveRunnerTimeoutGrace),
 	}, nil
 }
 
@@ -1736,11 +1877,31 @@ func readVMStateFile(path string) ([]LinodeVM, error) {
 		return nil, fmt.Errorf("VM state file %s does not contain created VMs", path)
 	}
 	for _, vm := range vms {
+		if strings.TrimSpace(vm.Source) == "existing-host" {
+			if strings.TrimSpace(vm.PublicIPv4) == "" {
+				return nil, fmt.Errorf("VM state file %s contains existing host %s without public IPv4", path, vm.Label)
+			}
+			continue
+		}
 		if vm.ID <= 0 {
 			return nil, fmt.Errorf("VM state file %s contains VM without positive id", path)
 		}
 	}
 	return vms, nil
+}
+
+func homeShardVMs(vms []LinodeVM, plan Plan) []LinodeVM {
+	out := make([]LinodeVM, 0, len(vms))
+	for _, vm := range vms {
+		assignment, ok := findAssignmentByLabel(plan, vm.Label)
+		if !ok {
+			continue
+		}
+		if len(assignment.TaskShards) > 0 {
+			out = append(out, vm)
+		}
+	}
+	return out
 }
 
 func normalizedRunID(runID string) string {
@@ -2896,7 +3057,6 @@ func serverEvidenceProbes(envRoot string, runID string, logsSinceArg string) []s
 		kubectlLogsProbe("video_cloud_api", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=video-cloud-api", logsSinceArg, "Video Cloud API logs captured for run_id "+runID),
 		turnRegistryProbe(runID),
 		coturnProbe(envRoot, runID),
-		postgresCounterProbe("postgres", runID, shadowStoreCounterSQL(runID), "PostgreSQL device shadow convergence counters parsed for run_id "+runID),
 		kubectlLogsProbe("postgres", "video-cloud-staging-platform", "app.kubernetes.io/name=postgresql", logsSinceArg, "PostgreSQL logs captured"),
 		redisInfoProbe(runID),
 		kubectlLogsProbe("redis_valkey", "video-cloud-staging-platform", "app.kubernetes.io/name=redis", logsSinceArg, "Redis/Valkey logs captured when enabled"),
@@ -2987,24 +3147,6 @@ test "$ready" -gt 0 || test "$public_tcp" -gt 0`, shellQuote(summaryArtifact), s
 		args:    []string{"-lc", script},
 		detail:  "coturn readiness evidence captured for run_id " + runID,
 	}
-}
-
-func postgresCounterProbe(source string, runID string, sql string, detail string) serverEvidenceProbe {
-	script := fmt.Sprintf(
-		`set -euo pipefail; kubectl -n video-cloud-staging-platform exec postgresql-0 -- psql -U postgres -d video_cloud -At -F '	' -c %s`,
-		shellQuote(sql),
-	)
-	return serverEvidenceProbe{source: source, command: "bash", args: []string{"-lc", script}, detail: detail}
-}
-
-func shadowStoreCounterSQL(runID string) string {
-	return `
-SELECT 'device_shadow.rows_current_converged', COUNT(*)
-FROM device_shadows
-WHERE shadow_name = ''
-  AND desired = reported
-  AND deleted_at IS NULL
-`
 }
 
 func redisInfoProbe(runID string) serverEvidenceProbe {
@@ -3337,8 +3479,14 @@ func writeAnsibleInputs(vms []LinodeVM, plan Plan, values workflowFlagValues, bi
 			return fmt.Errorf("write env rsync filter for %s: %w", vm.Label, err)
 		}
 		archivePath := filepath.Join(base, "env-archives", vm.Label+".tar.gz")
-		if err := writeEnvArchive(archivePath, plan, assignment); err != nil {
-			return fmt.Errorf("write env archive for %s: %w", vm.Label, err)
+		if len(assignment.TaskShards) > 0 {
+			if err := writeEnvArchive(archivePath, plan, assignment); err != nil {
+				return fmt.Errorf("write env archive for %s: %w", vm.Label, err)
+			}
+		} else {
+			if err := writeNoShardEnvArchive(archivePath, assignment); err != nil {
+				return fmt.Errorf("write no-shard env archive for %s: %w", vm.Label, err)
+			}
 		}
 	}
 	return writeAnsibleInventoryAndVars(vms, plan, values, binaries, true)
@@ -3409,6 +3557,31 @@ func writeEnvArchive(path string, plan Plan, assignment VMAssignment) error {
 	}
 	tmpPath := path + ".tmp"
 	if err := createTarGzFromRelPaths(tmpPath, envRoot, nil, extraFiles); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+func writeNoShardEnvArchive(path string, assignment VMAssignment) error {
+	markerDir := filepath.Join(filepath.Dir(filepath.Dir(path)), "env-archive-markers")
+	if err := os.MkdirAll(markerDir, 0o755); err != nil {
+		return err
+	}
+	markerPath := filepath.Join(markerDir, assignment.Label+".txt")
+	marker := fmt.Sprintf("label=%s\nrole=%s\nno_home_task_shards=true\n", assignment.Label, assignment.Role)
+	if err := os.WriteFile(markerPath, []byte(marker), 0o644); err != nil {
+		return err
+	}
+	extraFiles := []archiveExtraFile{{
+		Path: markerPath,
+		Name: filepath.ToSlash(filepath.Join("loadtests", "home-100k", "credentials", assignment.Label+".no-shard.txt")),
+	}}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmpPath := path + ".tmp"
+	if err := createTarGzFromRelPaths(tmpPath, ".", nil, extraFiles); err != nil {
 		_ = os.Remove(tmpPath)
 		return err
 	}
@@ -3949,6 +4122,8 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 		"mqtt_concurrency":              values.mqttConcurrency,
 		"command_concurrency":           liveCommandConcurrency(plan.Conditions.DeviceGeneratorLimit, values.commandConcurrency),
 		"shadow_command_timeout":        firstNonEmpty(values.shadowCommandTimeout, DefaultShadowCommandTimeout),
+		"device_token_request_timeout":  firstNonEmpty(values.deviceTokenRequestTimeout, "10s"),
+		"device_token_request_retries":  values.deviceTokenRequestRetries,
 		"runtime_logs":                  values.runtimeLogs,
 		"live_runner_timeout_grace":     firstNonEmpty(values.liveRunnerTimeoutGrace, ""),
 		"mqtt_addr":                     strings.TrimSpace(values.mqttAddr),

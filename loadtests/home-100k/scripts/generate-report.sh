@@ -267,9 +267,9 @@ def video_load_profile():
         f"- WebRTC ICE policy: `{md(profile.get('webrtc_ice_policy', '-'))}`",
         f"- Video step duration: `{md(profile.get('step_duration', '-'))}`",
         f"- Video step cooldown: `{md(profile.get('step_cooldown', '-'))}`",
-        f"- TURN transport: `{md(profile.get('turn_transport') or 'udp')}`",
+        f"- TURN transport: `{md(profile.get('turn_transport') or 'udp,tcp')}`",
         f"- Media security: `{md(profile.get('media_security') or 'dtls-srtp')}`",
-        "- TURN/UDP relays encrypted DTLS-SRTP packets; coturn does not terminate DTLS or inspect RTP/H.264 payloads.",
+        "- TURN relays encrypted DTLS-SRTP packets over the configured UDP/TCP transports; coturn does not terminate DTLS or inspect RTP/H.264 payloads.",
         f"- API running pods: {num(api_counters.get('video_cloud_api.k8s.running_pods'), 0)}",
         f"- WebRTC signaling store enabled pods: {num(api_counters.get('video_cloud_api.webrtc_signaling_store.enabled_pods'), 0)}",
         f"- WebRTC signaling store address pods: {num(api_counters.get('video_cloud_api.webrtc_signaling_store.addr_pods'), 0)}",
@@ -349,7 +349,17 @@ def video_load_profile():
                 f"- API create p95: {num(breakdown.get('api_create_ms'), 0)} ms",
                 f"- Offer delivery p95: {num(breakdown.get('offer_delivery_ms'), 0)} ms",
                 f"- Device answer p95: {num(breakdown.get('device_answer_ms'), 0)} ms",
-                f"- ICE connect p95: {num(breakdown.get('ice_connect_ms'), 0)} ms",
+            ])
+            remote_answer_set_ms = num(breakdown.get("remote_answer_set_ms"), 0)
+            if remote_answer_set_ms > 0:
+                lines.append(f"- Remote answer set p95: {remote_answer_set_ms} ms")
+            lines.extend([
+                f"- ICE check p95: {num(breakdown.get('ice_check_ms') or breakdown.get('ice_connect_ms'), 0)} ms",
+            ])
+            ice_connected_since_session_start_ms = num(breakdown.get("ice_connected_since_session_start_ms"), 0)
+            if ice_connected_since_session_start_ms > 0:
+                lines.append(f"- ICE connected since session start p95: {ice_connected_since_session_start_ms} ms")
+            lines.extend([
                 f"- First RTP after ICE p95: {num(breakdown.get('first_rtp_after_ice_ms'), 0)} ms",
                 f"- First H.264 access unit after RTP p95: {num(breakdown.get('first_h264_access_unit_after_rtp_ms'), 0)} ms",
             ])
@@ -1072,8 +1082,8 @@ def load_machine_resource_usage():
     lines = [
         f"- sample window: {md(first)} -> {md(last)}",
         "",
-        "| VM | Role | IP | Samples | CPU p95 | CPU max | Load1 max | Mem max | Disk max | Unreachable |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| VM | Role | IP | Samples | CPU p95 | CPU max | Load1 max | Mem max | Disk max | RX p95 Mbps | RX max Mbps | TX p95 Mbps | TX max Mbps | Unreachable |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for label in sorted(groups):
         group = groups[label]
@@ -1086,12 +1096,16 @@ def load_machine_resource_usage():
             if used is not None and total:
                 mem_pcts.append(100.0 * used / total)
         disk_pcts = [pct_value(r.get("disk_pct")) for r in group]
+        rx_mbps = [pct_value(r.get("rx_mbps")) for r in group]
+        tx_mbps = [pct_value(r.get("tx_mbps")) for r in group]
         unreachable = sum(1 for r in group if (r.get("status") or "").lower() != "ok")
         lines.append(
             f"| {md(label)} | {md(group[-1].get('role'))} | {md(group[-1].get('ip'))} | {len(group)} | "
             f"{fmt_float(percentile(cpus, 95))}% | {fmt_float(max([v for v in cpus if v is not None], default=None))}% | "
             f"{fmt_float(max([v for v in load1 if v is not None], default=None))} | "
-            f"{fmt_float(max(mem_pcts, default=None))}% | {fmt_float(max([v for v in disk_pcts if v is not None], default=None))}% | {unreachable} |"
+            f"{fmt_float(max(mem_pcts, default=None))}% | {fmt_float(max([v for v in disk_pcts if v is not None], default=None))}% | "
+            f"{fmt_float(percentile(rx_mbps, 95))} | {fmt_float(max([v for v in rx_mbps if v is not None], default=None))} | "
+            f"{fmt_float(percentile(tx_mbps, 95))} | {fmt_float(max([v for v in tx_mbps if v is not None], default=None))} | {unreachable} |"
         )
     return "\n".join(lines)
 

@@ -30,6 +30,7 @@ type LinodeVM struct {
 	PublicIPv4 string   `json:"public_ipv4,omitempty"`
 	Status     string   `json:"status,omitempty"`
 	Tags       []string `json:"tags,omitempty"`
+	Source     string   `json:"source,omitempty"`
 }
 
 func NewLinodeClient(endpoint string, token string) *LinodeClient {

@@ -89,6 +89,10 @@ The public `home-100k.sh` workflow also persists:
   `video/step-<viewers>/app-viewer/load-results.json` when the two-host video
   runner splits long-lived device websocket owners from app/viewer WebRTC
   sessions
+- `video/step-<viewers>/shard-01/load-results.json`,
+  `video/step-<viewers>/shard-02/load-results.json`, ... when the remote
+  sharded video runner spreads app/viewer/device actors across video generator
+  hosts
 
 The report generator must summarize load-generator VM and per-Kubernetes-node
 resource usage from those files.
@@ -103,10 +107,35 @@ For the `video-50k-turn-v1` and `video-100k-turn-v1` profiles, `aggregate`
 reads every `<out-dir>/video/step-*` directory, preserves a
 `video_evidence.steps` entry per viewer step, and also emits aggregate
 WebRTC/TURN/media totals. Each step may be either a single `load-results.json`
-or a two-host layout with `device/` and `app-viewer/` subdirectories. The
-default ladder is `100,500,1000,2000,5000` viewers with relay-only H.264 media.
-TURN is a UDP relay for encrypted DTLS-SRTP packets; coturn does not terminate
+or a remote-sharded layout with `shard-01/`, `shard-02/`, ... subdirectories.
+The default ladder is `100,500,1000,2000,5000` viewers with relay-only H.264
+media. TURN sizing profiles start each step as a concurrent viewer batch and
+use the configured WebRTC media duration as the active TURN allocation sample
+window.
+TURN sizing profiles allow both UDP and TCP relay transports. The `relay` ICE
+policy requires selected candidates to be TURN relay candidates, but it does not
+imply UDP-only. coturn relays encrypted DTLS-SRTP packets and does not terminate
 DTLS or inspect RTP/H.264 payloads.
+
+Remote-sharded video steps may set
+`HOME100K_VIDEO_LOADTEST_MAX_VIEWERS_PER_HOST`. When this limit is configured,
+the planner must fail before launching a step if a proportional MQTT shard is
+assigned more viewers than the per-host limit. This is a generator-capacity
+guard, not a coturn gate. It prevents a saturated load generator from producing
+slow startup latency that could be misread as TURN relay capacity.
+
+For `video-50k-turn-v1` and `video-100k-turn-v1`, the default remote-sharded
+model is `proportional_mqtt_video_mix`: each `lgNN` MQTT shard selects video
+device IDs only from its own credential manifest, and each ladder step splits
+the global viewer count by that shard's MQTT device count. Additional
+video-only generator VMs are an explicit exception for later generator-capacity
+experiments, not the default TURN sizing model.
+
+If a video shard exits with `rc=137` or host evidence shows the Linux OOM killer
+terminated `rtk-video-loadtest`, the affected ladder step is generator-capacity
+limited. The report must not interpret that step as coturn/TURN capacity. The
+next run should increase `HOME100K_LINODE_TYPE`, increase `HOME100K_VM_COUNT`,
+or reduce per-step viewers until generator CPU/memory evidence is clean.
 
 Live reports must also render the generator runtime limits used for the run:
 
@@ -122,6 +151,13 @@ Live reports must also render the generator runtime limits used for the run:
 - `HOME100K_SHADOW_COMMAND_TIMEOUT` or the equivalent
   `shadow_command_timeout` workflow value. The report must describe this as a
   per-phase shadow command wait timeout.
+- `HOME100K_DEVICE_TOKEN_REQUEST_TIMEOUT` or the equivalent
+  `device_token_request_timeout` workflow value. The report must describe this
+  as the per-attempt device `/request_token` timeout during MQTT bootstrap.
+- `HOME100K_DEVICE_TOKEN_REQUEST_RETRIES` or the equivalent
+  `device_token_request_retries` workflow value. The report must describe this
+  as bounded retry count after the first device `/request_token` attempt; retries
+  do not relax the client target completeness gate.
 - `HOME100K_DEVICE_SESSION_MODEL`. The live-supported value is
   `lifetime-subscription`, where device MQTT delta subscriptions stay open for
   the whole device online lifetime.
@@ -194,7 +230,7 @@ include:
 - `video_profile.video_viewers`
 - `video_profile.webrtc_media_set`: default `h264`
 - `video_profile.webrtc_ice_policy`: `relay` for TURN sizing profiles
-- `video_profile.turn_transport`: `udp`
+- `video_profile.turn_transport`: default `udp,tcp`
 - `video_profile.media_security`: `dtls-srtp`
 - `video_profile.viewer_ladder` for `video-50k-turn-v1` and
   `video-100k-turn-v1`
@@ -219,6 +255,20 @@ The aggregated report must include `video_evidence`:
 - `webrtc_media_totals.bytes_received`
 - `webrtc_media_totals.h264_packets_received` when `h264` or `av` media runs
 - `webrtc_media_totals.opus_packets_received` when `av` media runs
+- `webrtc_media_totals.opus_bytes_received` when `av` media runs
+- `webrtc_media_totals.video_startup_latency.app_request_to_first_rtp_p95_ms`
+- `webrtc_media_totals.video_startup_latency.app_request_to_first_h264_access_unit_p95_ms`
+- `webrtc_media_totals.video_startup_latency.breakdown_p95.api_create_ms`
+- `webrtc_media_totals.video_startup_latency.breakdown_p95.offer_delivery_ms`
+- `webrtc_media_totals.video_startup_latency.breakdown_p95.device_answer_ms`
+- `webrtc_media_totals.video_startup_latency.breakdown_p95.remote_answer_set_ms`
+- `webrtc_media_totals.video_startup_latency.breakdown_p95.ice_check_ms`
+- `webrtc_media_totals.video_startup_latency.breakdown_p95.ice_connected_since_session_start_ms`
+- `webrtc_media_totals.video_startup_latency.breakdown_p95.first_rtp_after_ice_ms`
+- `webrtc_media_totals.video_startup_latency.breakdown_p95.first_h264_access_unit_after_rtp_ms`
+- per-session startup samples must include `selected_local_candidate_protocol`
+  and `selected_remote_candidate_protocol` when Pion exposes the selected ICE
+  pair. These fields identify whether the selected relay pair used UDP or TCP.
 - `turn_evidence.registry_available`
 - `turn_evidence.active_nodes`
 - `turn_evidence.coturn_available`
@@ -327,13 +377,28 @@ actual observed skew from runner telemetry.
 ## Required Resource Telemetry
 
 `resource-samples/load-vms.tsv` must include 30-second load-generator samples
-with VM label, IP, role, CPU percent, load average, memory usage, and disk
-usage. `resource-samples/k8s-nodes.tsv` must include 30-second Kubernetes node
+with VM label, IP, role, CPU percent, load average, memory usage, disk usage,
+and RX/TX network Mbps. `resource-samples/k8s-nodes.tsv` must include
+30-second Kubernetes node
 samples with node name, CPU, CPU percent, memory, memory percent, and
 unavailable reason when collection fails.
 
 Reports must include summary tables for both files. Missing resource timelines
 must be rendered explicitly as missing data.
+
+`linode-active-service-preflight.json` records the active-service quota model
+used before `workflow-live` creates load-generator VMs:
+
+- `current_active_services`
+- `missing_edge_vms`
+- `missing_coturn_vms`
+- `planned_load_generator_vms`
+- `projected_required_active_services`
+- `configured_limit`
+- `ok`
+
+When `configured_limit` is present and `ok=false`, the workflow must fail before
+creating load-generator VMs.
 
 `host_pod_resources` server evidence must preserve parsed `kubectl top pods -A`
 samples. Reports must include a Postgres pod resource table with namespace, pod,
