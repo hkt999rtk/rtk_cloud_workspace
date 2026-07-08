@@ -22,18 +22,26 @@ type mediaPacedSendRequest struct {
 	Frames           [][]*rtp.Packet
 	Duration         time.Duration
 	WriteRTP         func(*rtp.Packet) error
+	WriteRTPBytes    func(*rtp.Packet) (int, error)
 	MaxPacketsPerJob int
 }
 
 type mediaPacedSendStats struct {
-	PacketsSent    int
-	BytesSent      int
-	DroppedJobs    int
-	DroppedPackets int
-	QueueFullDrops int
-	StartedAt      time.Time
-	FirstWriteAt   time.Time
-	EndedAt        time.Time
+	PacketsSent        int
+	BytesSent          int
+	DroppedJobs        int
+	DroppedPackets     int
+	QueueFullDrops     int
+	ZeroByteWrites     int
+	WriteAttempts      int
+	WriteReturns       int
+	WriteErrors        int
+	StartedAt          time.Time
+	FirstWriteCallAt   time.Time
+	FirstWriteReturnAt time.Time
+	FirstWriteAt       time.Time
+	EndedAt            time.Time
+	MaxWriteLatency    time.Duration
 }
 
 type mediaPacerConfig struct {
@@ -66,15 +74,20 @@ type mediaPacedTask struct {
 }
 
 type mediaPacedWork struct {
-	task      *mediaPacedTask
-	packets   []*rtp.Packet
-	byteCount int
+	task       *mediaPacedTask
+	packets    []*rtp.Packet
+	byteCount  int
+	startIndex int
+	endIndex   int
 }
 
 type mediaPacedResult struct {
 	task       *mediaPacedTask
 	stats      mediaPacedSendStats
 	firstWrite time.Time
+	endIndex   int
+	nextIndex  int
+	retry      bool
 	err        error
 }
 
@@ -135,7 +148,7 @@ func (p *mediaPacer) Stop() {
 }
 
 func (p *mediaPacer) Send(ctx context.Context, req mediaPacedSendRequest) (mediaPacedSendStats, error) {
-	if req.WriteRTP == nil {
+	if req.WriteRTP == nil && req.WriteRTPBytes == nil {
 		return mediaPacedSendStats{}, fmt.Errorf("media scheduler missing RTP writer")
 	}
 	if len(req.Frames) == 0 {
@@ -207,6 +220,19 @@ func (p *mediaPacer) loop() {
 			task := result.task
 			task.stats.PacketsSent += result.stats.PacketsSent
 			task.stats.BytesSent += result.stats.BytesSent
+			task.stats.ZeroByteWrites += result.stats.ZeroByteWrites
+			task.stats.WriteAttempts += result.stats.WriteAttempts
+			task.stats.WriteReturns += result.stats.WriteReturns
+			task.stats.WriteErrors += result.stats.WriteErrors
+			if task.stats.FirstWriteCallAt.IsZero() && !result.stats.FirstWriteCallAt.IsZero() {
+				task.stats.FirstWriteCallAt = result.stats.FirstWriteCallAt
+			}
+			if task.stats.FirstWriteReturnAt.IsZero() && !result.stats.FirstWriteReturnAt.IsZero() {
+				task.stats.FirstWriteReturnAt = result.stats.FirstWriteReturnAt
+			}
+			if result.stats.MaxWriteLatency > task.stats.MaxWriteLatency {
+				task.stats.MaxWriteLatency = result.stats.MaxWriteLatency
+			}
 			if task.stats.FirstWriteAt.IsZero() && !result.firstWrite.IsZero() {
 				task.stats.FirstWriteAt = result.firstWrite
 			}
@@ -214,6 +240,17 @@ func (p *mediaPacer) loop() {
 				task.stats.EndedAt = time.Now()
 				task.done <- mediaPacedResult{task: task, stats: task.stats, err: result.err}
 				continue
+			}
+			if result.retry {
+				if result.nextIndex > task.packetIndex {
+					task.packetIndex = result.nextIndex
+				}
+				task.nextDue = time.Now().Add(p.cfg.Tick)
+				schedule(task, time.Now())
+				continue
+			}
+			if result.endIndex > task.packetIndex {
+				task.packetIndex = result.endIndex
 			}
 			if task.packetIndex >= len(task.req.Frames[task.frameIndex]) {
 				task.frameIndex++
@@ -272,10 +309,9 @@ func (p *mediaPacer) enqueueDueTask(task *mediaPacedTask, now time.Time, schedul
 	}
 	packets := frame[task.packetIndex:end]
 	byteCount := rtpPayloadBytes(packets)
-	work := mediaPacedWork{task: task, packets: packets, byteCount: byteCount}
+	work := mediaPacedWork{task: task, packets: packets, byteCount: byteCount, startIndex: task.packetIndex, endIndex: end}
 	select {
 	case p.workCh <- work:
-		task.packetIndex = end
 	default:
 		task.stats.DroppedJobs++
 		task.stats.DroppedPackets += len(packets)
@@ -293,18 +329,39 @@ func (p *mediaPacer) worker() {
 		case <-p.stopCh:
 			return
 		case work := <-p.workCh:
-			result := mediaPacedResult{task: work.task}
+			result := mediaPacedResult{task: work.task, endIndex: work.endIndex, nextIndex: work.startIndex}
 			for _, packet := range work.packets {
-				if err := work.task.req.WriteRTP(packet); err != nil {
+				callAt := time.Now()
+				if result.stats.FirstWriteCallAt.IsZero() {
+					result.stats.FirstWriteCallAt = callAt
+				}
+				result.stats.WriteAttempts++
+				n, err := work.task.writeRTP(packet)
+				returnAt := time.Now()
+				result.stats.WriteReturns++
+				if result.stats.FirstWriteReturnAt.IsZero() {
+					result.stats.FirstWriteReturnAt = returnAt
+				}
+				if latency := returnAt.Sub(callAt); latency > result.stats.MaxWriteLatency {
+					result.stats.MaxWriteLatency = latency
+				}
+				if err != nil {
+					result.stats.WriteErrors++
 					result.err = err
+					break
+				}
+				if n <= 0 {
+					result.retry = true
+					result.stats.ZeroByteWrites++
 					break
 				}
 				if result.firstWrite.IsZero() {
 					result.firstWrite = time.Now()
 				}
 				result.stats.PacketsSent++
+				result.stats.BytesSent += n
+				result.nextIndex++
 			}
-			result.stats.BytesSent = work.byteCount
 			select {
 			case p.resultCh <- result:
 			case <-p.stopCh:
@@ -312,6 +369,16 @@ func (p *mediaPacer) worker() {
 			}
 		}
 	}
+}
+
+func (t *mediaPacedTask) writeRTP(packet *rtp.Packet) (int, error) {
+	if t.req.WriteRTPBytes != nil {
+		return t.req.WriteRTPBytes(packet)
+	}
+	if err := t.req.WriteRTP(packet); err != nil {
+		return 0, err
+	}
+	return len(packet.Payload), nil
 }
 
 func mediaSchedulerLogLine(format string, args ...any) string {

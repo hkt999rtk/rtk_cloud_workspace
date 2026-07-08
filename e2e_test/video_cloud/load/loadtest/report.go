@@ -129,18 +129,123 @@ func RenderMarkdown(result *Result) string {
 		fmt.Fprintf(&b, "| Metric | p50 | p95 | p99 |\n")
 		fmt.Fprintf(&b, "| --- | ---: | ---: | ---: |\n")
 		fmt.Fprintf(&b, "| App request -> first RTP | %d ms | %d ms | %d ms |\n", startup.AppRequestToFirstRTPP50MS, startup.AppRequestToFirstRTPP95MS, startup.AppRequestToFirstRTPP99MS)
-		fmt.Fprintf(&b, "| App request -> first H.264 access unit | %d ms | %d ms | %d ms |\n", startup.AppRequestToFirstH264AccessUnitP50MS, startup.AppRequestToFirstH264AccessUnitP95MS, startup.AppRequestToFirstH264AccessUnitP99MS)
+		if startup.H264AccessUnitSamples > 0 {
+			fmt.Fprintf(&b, "| App request -> first H.264 access unit | %d ms | %d ms | %d ms |\n", startup.AppRequestToFirstH264AccessUnitP50MS, startup.AppRequestToFirstH264AccessUnitP95MS, startup.AppRequestToFirstH264AccessUnitP99MS)
+		}
 		fmt.Fprintf(&b, "\n### Video Startup Breakdown\n\n")
 		fmt.Fprintf(&b, "| Layer | p95 |\n")
 		fmt.Fprintf(&b, "| --- | ---: |\n")
 		fmt.Fprintf(&b, "| API create | %d ms |\n", startup.BreakdownP95.APICreateMS)
 		fmt.Fprintf(&b, "| Offer delivery | %d ms |\n", startup.BreakdownP95.OfferDeliveryMS)
+		fmt.Fprintf(&b, "| Answer queue wait | %d ms |\n", startup.BreakdownP95.AnswerQueueWaitMS)
+		fmt.Fprintf(&b, "| Answer prepare | %d ms |\n", startup.BreakdownP95.AnswerPrepareMS)
+		fmt.Fprintf(&b, "| Answer POST | %d ms |\n", startup.BreakdownP95.AnswerPostMS)
 		fmt.Fprintf(&b, "| Device answer | %d ms |\n", startup.BreakdownP95.DeviceAnswerMS)
+		fmt.Fprintf(&b, "| Pion create peer | %d ms |\n", startup.BreakdownP95.PionCreatePeerMS)
+		fmt.Fprintf(&b, "| Pion create offer | %d ms |\n", startup.BreakdownP95.PionCreateOfferMS)
+		if startup.BreakdownP95.PionCreateAnswerMS > 0 {
+			fmt.Fprintf(&b, "| Pion create answer | %d ms |\n", startup.BreakdownP95.PionCreateAnswerMS)
+		}
+		fmt.Fprintf(&b, "| Pion set local description | %d ms |\n", startup.BreakdownP95.PionSetLocalDescriptionMS)
+		fmt.Fprintf(&b, "| Pion ICE gathering wait | %d ms |\n", startup.BreakdownP95.PionICEGatheringWaitMS)
+		if startup.BreakdownP95.PionFirstLocalCandidateMS > 0 {
+			fmt.Fprintf(&b, "| Pion first local candidate | %d ms |\n", startup.BreakdownP95.PionFirstLocalCandidateMS)
+		}
+		if startup.BreakdownP95.PionFirstLocalRelayCandidateMS > 0 {
+			fmt.Fprintf(&b, "| Pion first local relay candidate | %d ms |\n", startup.BreakdownP95.PionFirstLocalRelayCandidateMS)
+		}
+		if startup.BreakdownP95.PionFirstLocalRelayUDPCandidateMS > 0 {
+			fmt.Fprintf(&b, "| Pion first local relay UDP candidate | %d ms |\n", startup.BreakdownP95.PionFirstLocalRelayUDPCandidateMS)
+		}
+		if startup.BreakdownP95.PionFirstLocalRelayTCPCandidateMS > 0 {
+			fmt.Fprintf(&b, "| Pion first local relay TCP candidate | %d ms |\n", startup.BreakdownP95.PionFirstLocalRelayTCPCandidateMS)
+		}
+		if startup.BreakdownP95.PionRelayCandidateToGatherCompleteMS > 0 {
+			fmt.Fprintf(&b, "| Pion relay candidate -> gather complete | %d ms |\n", startup.BreakdownP95.PionRelayCandidateToGatherCompleteMS)
+		}
+		fmt.Fprintf(&b, "| Pion set remote description | %d ms |\n", startup.BreakdownP95.PionSetRemoteDescriptionMS)
 		fmt.Fprintf(&b, "| Remote answer set | %d ms |\n", startup.BreakdownP95.RemoteAnswerSetMS)
+		if startup.BreakdownP95.ICESelectedPairChanges > 0 {
+			fmt.Fprintf(&b, "| ICE selected pair changes | %d |\n", startup.BreakdownP95.ICESelectedPairChanges)
+		}
+		if startup.BreakdownP95.ICESelectedPairFirstChangeMS > 0 {
+			fmt.Fprintf(&b, "| ICE selected pair first change | %d ms |\n", startup.BreakdownP95.ICESelectedPairFirstChangeMS)
+		}
+		if startup.BreakdownP95.ICESelectedPairLastChangeMS > 0 {
+			fmt.Fprintf(&b, "| ICE selected pair last change | %d ms |\n", startup.BreakdownP95.ICESelectedPairLastChangeMS)
+		}
+		if startup.BreakdownP95.ICERequestsSent > 0 {
+			fmt.Fprintf(&b, "| ICE requests sent | %d |\n", startup.BreakdownP95.ICERequestsSent)
+		}
+		if startup.BreakdownP95.ICERequestsReceived > 0 {
+			fmt.Fprintf(&b, "| ICE requests received | %d |\n", startup.BreakdownP95.ICERequestsReceived)
+		}
+		if startup.BreakdownP95.ICEResponsesSent > 0 {
+			fmt.Fprintf(&b, "| ICE responses sent | %d |\n", startup.BreakdownP95.ICEResponsesSent)
+		}
+		if startup.BreakdownP95.ICEResponsesReceived > 0 {
+			fmt.Fprintf(&b, "| ICE responses received | %d |\n", startup.BreakdownP95.ICEResponsesReceived)
+		}
+		if startup.BreakdownP95.ICERetransmissionsSent > 0 {
+			fmt.Fprintf(&b, "| ICE retransmissions sent | %d |\n", startup.BreakdownP95.ICERetransmissionsSent)
+		}
+		if startup.BreakdownP95.ICERetransmissionsReceived > 0 {
+			fmt.Fprintf(&b, "| ICE retransmissions received | %d |\n", startup.BreakdownP95.ICERetransmissionsReceived)
+		}
+		if startup.BreakdownP95.ICEConsentRequestsSent > 0 {
+			fmt.Fprintf(&b, "| ICE consent requests sent | %d |\n", startup.BreakdownP95.ICEConsentRequestsSent)
+		}
+		if startup.BreakdownP95.ICEWriteRTTMS > 0 {
+			fmt.Fprintf(&b, "| ICE RTT | %d ms |\n", startup.BreakdownP95.ICEWriteRTTMS)
+		}
 		fmt.Fprintf(&b, "| ICE check | %d ms |\n", startup.BreakdownP95.ICECheckMS)
 		fmt.Fprintf(&b, "| ICE connected since session start | %d ms |\n", startup.BreakdownP95.ICEConnectedSinceSessionStartMS)
+		fmt.Fprintf(&b, "| Device ICE wait | %d ms |\n", startup.BreakdownP95.DeviceICEWaitMS)
+		if startup.BreakdownP95.ViewerPeerConnectionConnectedMS > 0 {
+			fmt.Fprintf(&b, "| Viewer peer connection connected | %d ms |\n", startup.BreakdownP95.ViewerPeerConnectionConnectedMS)
+		}
+		if startup.BreakdownP95.ViewerPeerConnectedAfterICEMS > 0 {
+			fmt.Fprintf(&b, "| Viewer peer connected after ICE | %d ms |\n", startup.BreakdownP95.ViewerPeerConnectedAfterICEMS)
+		}
+		if startup.BreakdownP95.SenderPeerConnectionConnectedMS > 0 {
+			fmt.Fprintf(&b, "| Sender peer connection connected | %d ms |\n", startup.BreakdownP95.SenderPeerConnectionConnectedMS)
+		}
+		if startup.BreakdownP95.SenderPeerConnectedAfterICEMS > 0 {
+			fmt.Fprintf(&b, "| Sender peer connected after ICE | %d ms |\n", startup.BreakdownP95.SenderPeerConnectedAfterICEMS)
+		}
+		fmt.Fprintf(&b, "| Sender queue wait | %d ms |\n", startup.BreakdownP95.SenderQueueWaitMS)
+		if startup.BreakdownP95.SenderWriteAttempts > 0 {
+			fmt.Fprintf(&b, "| Sender WriteRTP attempts | %d |\n", startup.BreakdownP95.SenderWriteAttempts)
+		}
+		if startup.BreakdownP95.SenderWriteReturns > 0 {
+			fmt.Fprintf(&b, "| Sender WriteRTP returns | %d |\n", startup.BreakdownP95.SenderWriteReturns)
+		}
+		if startup.BreakdownP95.SenderWriteErrors > 0 {
+			fmt.Fprintf(&b, "| Sender WriteRTP errors | %d |\n", startup.BreakdownP95.SenderWriteErrors)
+		}
+		if startup.BreakdownP95.SenderFirstWriteCallMS > 0 {
+			fmt.Fprintf(&b, "| Sender first WriteRTP call | %d ms |\n", startup.BreakdownP95.SenderFirstWriteCallMS)
+		}
+		if startup.BreakdownP95.SenderFirstWriteReturnMS > 0 {
+			fmt.Fprintf(&b, "| Sender first WriteRTP return | %d ms |\n", startup.BreakdownP95.SenderFirstWriteReturnMS)
+		}
+		if startup.BreakdownP95.SenderWriteMaxMS > 0 {
+			fmt.Fprintf(&b, "| Sender max WriteRTP latency | %d ms |\n", startup.BreakdownP95.SenderWriteMaxMS)
+		}
+		fmt.Fprintf(&b, "| Sender first write after ICE | %d ms |\n", startup.BreakdownP95.SenderFirstWriteAfterICEMS)
+		if startup.BreakdownP95.SenderFirstWriteAfterPeerMS > 0 {
+			fmt.Fprintf(&b, "| Sender first write after peer connected | %d ms |\n", startup.BreakdownP95.SenderFirstWriteAfterPeerMS)
+		}
+		if startup.BreakdownP95.SenderFirstWriteSinceSessionMS > 0 {
+			fmt.Fprintf(&b, "| Sender first RTP write since session start | %d ms |\n", startup.BreakdownP95.SenderFirstWriteSinceSessionMS)
+		}
+		if startup.BreakdownP95.SenderQueueFullDrops > 0 {
+			fmt.Fprintf(&b, "| Sender queue full drops | %d |\n", startup.BreakdownP95.SenderQueueFullDrops)
+		}
 		fmt.Fprintf(&b, "| First RTP after ICE | %d ms |\n", startup.BreakdownP95.FirstRTPAfterICEMS)
-		fmt.Fprintf(&b, "| First H.264 access unit after RTP | %d ms |\n", startup.BreakdownP95.FirstH264AccessUnitAfterRTPMS)
+		if startup.H264AccessUnitSamples > 0 {
+			fmt.Fprintf(&b, "| First H.264 access unit after RTP | %d ms |\n", startup.BreakdownP95.FirstH264AccessUnitAfterRTPMS)
+		}
 	}
 	if len(result.MQTTIoT) > 0 {
 		fmt.Fprintf(&b, "\n## MQTT IoT Metrics\n\n")

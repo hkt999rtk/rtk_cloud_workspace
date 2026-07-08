@@ -1623,8 +1623,34 @@ func TestPionWebRTCMediaLoopbackReceivesSyntheticRTP(t *testing.T) {
 	if stats.H264Packets < 3 || stats.H264Bytes == 0 || stats.FirstH264RTPMS == 0 {
 		t.Fatalf("media stats = %#v, want H.264 RTP packet evidence", stats)
 	}
+	if stats.FirstH264AccessUnitMS == 0 || len(stats.NALTypes) == 0 || len(stats.Packetizations) == 0 {
+		t.Fatalf("media stats = %#v, want lightweight H.264 payload frame candidate evidence", stats)
+	}
 	if stats.SelectedLocalCandidateType == "" || stats.SelectedRemoteCandidateType == "" {
 		t.Fatalf("media stats missing selected candidate pair: %#v", stats)
+	}
+}
+
+func TestH264RTPPayloadFrameCandidateEvidenceUsesPayloadHeaderOnly(t *testing.T) {
+	for name, payload := range map[string][]byte{
+		"single_idr": {0x65, 0x88},
+		"fu_a_idr":   {0x7c, 0x85, 0x88},
+		"stap_a":     {0x78, 0x00, 0x02, 0x67, 0x42, 0x00, 0x02, 0x68, 0xce},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !h264RTPPayloadHasFrameCandidate(payload, false) {
+				t.Fatalf("payload %x should be H.264 frame candidate", payload)
+			}
+			if len(h264NALTypesFromRTPPayload(payload)) == 0 {
+				t.Fatalf("payload %x should expose NAL type evidence", payload)
+			}
+		})
+	}
+	if h264RTPPayloadHasFrameCandidate(nil, true) {
+		t.Fatal("empty payload must not be frame candidate")
+	}
+	if h264RTPPayloadHasFrameCandidate([]byte{0xff}, false) {
+		t.Fatal("unsupported payload must not be frame candidate without marker")
 	}
 }
 
@@ -1648,6 +1674,90 @@ func TestPionWebRTCMediaSessionsCanForceRelayICEPolicy(t *testing.T) {
 	defer answerer.Close()
 	if got := answerer.ICETransportPolicy(); got != webrtc.ICETransportPolicyRelay {
 		t.Fatalf("answerer ICE policy = %s, want relay", got)
+	}
+}
+
+func TestExtractICEServersForRelayPolicyKeepsOnlyTURNURLs(t *testing.T) {
+	response := map[string]any{
+		"ice_servers": []any{
+			map[string]any{"urls": "stun:stun.example.test:3478"},
+			map[string]any{
+				"urls":       []any{"turn:turn.example.test:3478?transport=udp", "turn:turn.example.test:3478?transport=tcp", "stuns:stun.example.test:5349"},
+				"username":   "user",
+				"credential": "pass",
+			},
+			map[string]any{"urls": "turns:turn.example.test:5349?transport=tcp"},
+		},
+	}
+
+	servers, err := extractICEServersForPolicy(response, WebRTCICEPolicyRelay)
+	if err != nil {
+		t.Fatalf("extractICEServersForPolicy relay: %v", err)
+	}
+	if len(servers) != 2 {
+		t.Fatalf("servers = %#v, want 2 TURN-only servers", servers)
+	}
+	if got := servers[0].URLs; len(got) != 2 || got[0] != "turn:turn.example.test:3478?transport=udp" || got[1] != "turn:turn.example.test:3478?transport=tcp" {
+		t.Fatalf("first relay urls = %#v", got)
+	}
+	if got := servers[1].URLs; len(got) != 1 || got[0] != "turns:turn.example.test:5349?transport=tcp" {
+		t.Fatalf("second relay urls = %#v", got)
+	}
+
+	allServers, err := extractICEServersForPolicy(response, WebRTCICEPolicyAll)
+	if err != nil {
+		t.Fatalf("extractICEServersForPolicy all: %v", err)
+	}
+	if len(allServers) != 3 {
+		t.Fatalf("all-policy servers = %#v, want original STUN and TURN servers", allServers)
+	}
+}
+
+func TestExtractICEServersForRelayPolicyRequiresTURN(t *testing.T) {
+	_, err := extractICEServersForPolicy(map[string]any{
+		"ice_servers": []any{map[string]any{"urls": "stun:stun.example.test:3478"}},
+	}, WebRTCICEPolicyRelay)
+	if err == nil || !strings.Contains(err.Error(), "missing TURN") {
+		t.Fatalf("extractICEServersForPolicy relay error = %v, want missing TURN", err)
+	}
+}
+
+func TestWaitICEGatheringReadyForRelayReturnsOnFirstRelayCandidate(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	gatherComplete := make(chan struct{})
+	localRelayCandidate := make(chan struct{})
+	close(localRelayCandidate)
+
+	started := time.Now()
+	if err := waitICEGatheringReady(ctx, gatherComplete, localRelayCandidate, webrtc.ICETransportPolicyRelay, time.Second); err != nil {
+		t.Fatalf("waitICEGatheringReady relay: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+		t.Fatalf("waitICEGatheringReady relay waited %s, want immediate relay-candidate return", elapsed)
+	}
+}
+
+func TestWaitICEGatheringReadyForAllWaitsForComplete(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	gatherComplete := make(chan struct{})
+	localRelayCandidate := make(chan struct{})
+	close(localRelayCandidate)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- waitICEGatheringReady(ctx, gatherComplete, localRelayCandidate, webrtc.ICETransportPolicyAll, time.Second)
+	}()
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("waitICEGatheringReady all returned before gather complete: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(gatherComplete)
+	if err := <-errCh; err != nil {
+		t.Fatalf("waitICEGatheringReady all after complete: %v", err)
 	}
 }
 
@@ -1678,6 +1788,8 @@ func TestICETraceEvidenceIncludesCandidateTransports(t *testing.T) {
 		LocalTCPCandidates:              1,
 		LocalRelayUDPCandidates:         1,
 		LocalRelayTCPCandidates:         1,
+		SelectedLocalCandidateType:      "relay",
+		SelectedRemoteCandidateType:     "relay",
 		SelectedLocalCandidateProtocol:  "udp",
 		SelectedRemoteCandidateProtocol: "tcp",
 	}
@@ -1687,11 +1799,56 @@ func TestICETraceEvidenceIncludesCandidateTransports(t *testing.T) {
 		"local_tcp_candidates=1",
 		"local_relay_udp_candidates=1",
 		"local_relay_tcp_candidates=1",
+		"selected_local_candidate_type=relay",
+		"selected_remote_candidate_type=relay",
 		"selected_local_candidate_protocol=udp",
 		"selected_remote_candidate_protocol=tcp",
 	} {
 		if !strings.Contains(evidence, want) {
 			t.Fatalf("evidence missing %q: %s", want, evidence)
+		}
+	}
+}
+
+func TestRTPEvidenceWithICEStatsKeepsSelectedCandidatePair(t *testing.T) {
+	stats := WebRTCMediaStats{
+		SelectedLocalCandidateType:      "relay",
+		SelectedRemoteCandidateType:     "relay",
+		SelectedLocalCandidateProtocol:  "udp",
+		SelectedRemoteCandidateProtocol: "tcp",
+		LocalRelayUDPCandidates:         1,
+		LocalRelayTCPCandidates:         1,
+	}
+
+	h264 := (H264RTPEvidence{
+		Packets:        1,
+		Bytes:          2,
+		NALTypes:       map[string]bool{"idr": true},
+		Packetizations: map[string]bool{"single-nal": true},
+	}).WithICEStats(stats).String()
+	for _, want := range []string{
+		"selected_local_candidate_type=relay",
+		"selected_remote_candidate_type=relay",
+		"selected_local_candidate_protocol=udp",
+		"selected_remote_candidate_protocol=tcp",
+	} {
+		if !strings.Contains(h264, want) {
+			t.Fatalf("H.264 evidence missing %q: %s", want, h264)
+		}
+	}
+
+	opus := (OpusRTPEvidence{
+		Packets: 1,
+		Bytes:   2,
+	}).WithICEStats(stats).String()
+	for _, want := range []string{
+		"selected_local_candidate_type=relay",
+		"selected_remote_candidate_type=relay",
+		"selected_local_candidate_protocol=udp",
+		"selected_remote_candidate_protocol=tcp",
+	} {
+		if !strings.Contains(opus, want) {
+			t.Fatalf("Opus evidence missing %q: %s", want, opus)
 		}
 	}
 }
@@ -2222,6 +2379,120 @@ func TestDeviceWebSocketListenerHandlesNextFrameWhileWebRTCAnswerRuns(t *testing
 		case err := <-done:
 			t.Fatalf("listener exited before processing next frame: %v", err)
 		}
+	}
+}
+
+func TestWebRTCMediaOfferAnswerWorkerDoesNotWaitForMediaSend(t *testing.T) {
+	answerStarted := make(chan struct{}, 1)
+	answerPosted := make(chan struct{}, 1)
+	mediaStarted := make(chan struct{}, 1)
+	releaseMedia := make(chan struct{})
+
+	runner := NewRunner(nil)
+	runner.mediaCoord = newWebRTCMediaCoordinator()
+	runner.webRTCMediaOfferHandler = func(context.Context, Config, string, webRTCMediaOfferMessage) ([]Operation, time.Time, func()) {
+		answerStarted <- struct{}{}
+		return []Operation{{
+			Actor:    ActorDevice,
+			Name:     "webrtc_media_answer",
+			DeviceID: "load-device-0",
+			Success:  true,
+			Evidence: "device_media_answer_submitted",
+		}}, time.Now(), func() {}
+	}
+	runner.webRTCMediaSendHandler = func(context.Context, Config, string, webRTCMediaOfferMessage, *PionMediaAnswerSession) []Operation {
+		answerPosted <- struct{}{}
+		mediaStarted <- struct{}{}
+		<-releaseMedia
+		return []Operation{{Actor: ActorDevice, Name: "webrtc_media_send", DeviceID: "load-device-0", Success: true}}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	recorded := make(chan Operation, 4)
+	mediaQueue, stopMediaQueue := startDeviceTransportEventQueue(ctx, 1, 1)
+	defer stopMediaQueue()
+	defer close(releaseMedia)
+	runner.handleQueuedWebRTCMediaOffer(ctx, Config{
+		RunID:               "run-async-state-machine",
+		WebRTCMediaSet:      WebRTCMediaSetH264,
+		WebRTCMediaDuration: 10 * time.Millisecond,
+	}, "load-device-0", webRTCMediaOfferMessage{SessionID: "session-1"}, time.Now(), mediaQueue, func(op Operation) {
+		recorded <- op
+	})
+
+	select {
+	case <-answerStarted:
+	case <-time.After(time.Second):
+		t.Fatal("answer worker did not run")
+	}
+	select {
+	case op := <-recorded:
+		if op.Name != "webrtc_media_answer" || !op.Success {
+			t.Fatalf("first recorded op = %#v, want successful answer before media completes", op)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("answer op was not recorded before media send completed")
+	}
+	select {
+	case <-answerPosted:
+	case <-time.After(time.Second):
+		t.Fatal("media sender was not enqueued after answer")
+	}
+	select {
+	case result := <-runner.mediaCoord.waiters["session-1"]:
+		t.Fatalf("mediaCoord completed before media send finished: %#v", result)
+	default:
+	}
+}
+
+func TestWebRTCMediaSenderQueueFullCompletesMediaCoordinator(t *testing.T) {
+	runner := NewRunner(nil)
+	runner.mediaCoord = newWebRTCMediaCoordinator()
+	runner.webRTCMediaOfferHandler = func(context.Context, Config, string, webRTCMediaOfferMessage) ([]Operation, time.Time, func()) {
+		return []Operation{{
+			Actor:    ActorDevice,
+			Name:     "webrtc_media_answer",
+			DeviceID: "load-device-0",
+			Success:  true,
+		}}, time.Now(), func() {}
+	}
+	records := make(chan Operation, 4)
+	mediaQueue := make(chan func(context.Context))
+
+	runner.handleQueuedWebRTCMediaOffer(context.Background(), Config{
+		RunID:               "run-media-queue-full",
+		WebRTCMediaSet:      WebRTCMediaSetH264,
+		WebRTCMediaDuration: 10 * time.Millisecond,
+	}, "load-device-0", webRTCMediaOfferMessage{SessionID: "session-full"}, time.Now(), mediaQueue, func(op Operation) {
+		records <- op
+	})
+
+	var sawQueueFull bool
+	for i := 0; i < 2; i++ {
+		select {
+		case op := <-records:
+			if op.Name == "webrtc_media_sender_queue_full" {
+				sawQueueFull = true
+				if op.Success || op.ErrorClass != ClassWebRTCMedia || !strings.Contains(op.Evidence, "queue_depth=0") {
+					t.Fatalf("queue full op = %#v, want media failure evidence", op)
+				}
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for queue full evidence")
+		}
+	}
+	if !sawQueueFull {
+		t.Fatal("missing webrtc_media_sender_queue_full operation")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	result, err := runner.mediaCoord.wait(ctx, "session-full")
+	if err != nil {
+		t.Fatalf("mediaCoord.wait: %v", err)
+	}
+	if len(result.Ops) == 0 || result.Ops[len(result.Ops)-1].Name != "webrtc_media_sender_queue_full" {
+		t.Fatalf("media result = %#v, want queue full completion", result)
 	}
 }
 
@@ -3689,7 +3960,7 @@ func TestBuildResultSummarizesVideoStartupLatency(t *testing.T) {
 			DeviceID: "dev-1",
 			ViewerID: "viewer-1",
 			Success:  true,
-			Evidence: "session_id=sess-1 ice_policy=relay selected_local_candidate_type=relay selected_remote_candidate_type=relay selected_local_candidate_protocol=udp selected_remote_candidate_protocol=tcp packets=30 bytes=3000 receiver_packets=30 receiver_bytes=3000 receive_ms=240 startup_api_create_ms=40 startup_offer_delivery_ms=20 startup_device_answer_ms=30 startup_remote_answer_set_ms=120 startup_ice_connected_since_session_start_ms=150 startup_ice_check_ms=30 startup_first_rtp_after_ice_ms=10 startup_first_h264_access_unit_after_rtp_ms=5 startup_app_request_to_first_rtp_ms=180 startup_app_request_to_first_h264_access_unit_ms=185",
+			Evidence: "session_id=sess-1 ice_policy=relay selected_local_candidate_type=relay selected_remote_candidate_type=relay selected_local_candidate_protocol=udp selected_remote_candidate_protocol=tcp packets=30 bytes=3000 receiver_packets=30 receiver_bytes=3000 receive_ms=240 startup_api_create_ms=40 startup_offer_delivery_ms=20 startup_answer_queue_wait_ms=2 startup_answer_prepare_ms=21 startup_answer_post_ms=4 startup_device_answer_ms=30 startup_pion_create_peer_ms=4 startup_pion_create_offer_ms=6 startup_pion_set_local_description_ms=8 startup_pion_ice_gathering_wait_ms=12 startup_pion_first_local_candidate_ms=2 startup_pion_first_local_relay_candidate_ms=3 startup_pion_first_local_relay_udp_candidate_ms=4 startup_pion_first_local_relay_tcp_candidate_ms=5 startup_pion_relay_candidate_to_gather_complete_ms=9 startup_pion_set_remote_description_ms=14 startup_remote_answer_set_ms=120 startup_ice_selected_pair_changes=1 startup_ice_selected_pair_first_change_ms=130 startup_ice_selected_pair_last_change_ms=132 startup_ice_requests_sent=4 startup_ice_responses_received=3 startup_ice_retransmissions_sent=1 startup_ice_rtt_ms=25 startup_ice_connected_since_session_start_ms=150 startup_ice_check_ms=30 startup_viewer_peer_connection_connected_ms=156 startup_viewer_peer_connected_after_ice_ms=6 startup_device_ice_wait_ms=90 startup_sender_peer_connection_connected_ms=162 startup_sender_peer_connected_after_ice_ms=12 startup_sender_queue_wait_ms=3 startup_sender_write_attempts=30 startup_sender_write_returns=30 startup_sender_write_errors=0 startup_sender_first_write_call_ms=168 startup_sender_first_write_return_ms=169 startup_sender_write_max_ms=4 startup_sender_first_write_after_ice_ms=6 startup_sender_first_write_after_peer_ms=0 startup_first_rtp_after_ice_ms=10 startup_first_h264_access_unit_after_rtp_ms=5 startup_app_request_to_first_rtp_ms=180 startup_app_request_to_first_h264_access_unit_ms=185",
 		},
 		{
 			Actor:    ActorViewer,
@@ -3697,7 +3968,7 @@ func TestBuildResultSummarizesVideoStartupLatency(t *testing.T) {
 			DeviceID: "dev-2",
 			ViewerID: "viewer-2",
 			Success:  true,
-			Evidence: "session_id=sess-2 ice_policy=relay selected_local_candidate_type=relay selected_remote_candidate_type=relay packets=40 bytes=4000 receiver_packets=40 receiver_bytes=4000 receive_ms=260 startup_api_create_ms=50 startup_offer_delivery_ms=25 startup_device_answer_ms=35 startup_remote_answer_set_ms=140 startup_ice_connected_since_session_start_ms=175 startup_ice_check_ms=35 startup_first_rtp_after_ice_ms=12 startup_first_h264_access_unit_after_rtp_ms=7 startup_app_request_to_first_rtp_ms=210 startup_app_request_to_first_h264_access_unit_ms=217",
+			Evidence: "session_id=sess-2 ice_policy=relay selected_local_candidate_type=relay selected_remote_candidate_type=relay packets=40 bytes=4000 receiver_packets=40 receiver_bytes=4000 receive_ms=260 startup_api_create_ms=50 startup_offer_delivery_ms=25 startup_answer_queue_wait_ms=3 startup_answer_prepare_ms=24 startup_answer_post_ms=5 startup_device_answer_ms=35 startup_pion_create_peer_ms=5 startup_pion_create_offer_ms=7 startup_pion_set_local_description_ms=9 startup_pion_ice_gathering_wait_ms=13 startup_pion_first_local_candidate_ms=3 startup_pion_first_local_relay_candidate_ms=4 startup_pion_first_local_relay_udp_candidate_ms=5 startup_pion_first_local_relay_tcp_candidate_ms=6 startup_pion_relay_candidate_to_gather_complete_ms=10 startup_pion_set_remote_description_ms=15 startup_remote_answer_set_ms=140 startup_ice_selected_pair_changes=2 startup_ice_selected_pair_first_change_ms=150 startup_ice_selected_pair_last_change_ms=160 startup_ice_requests_sent=5 startup_ice_responses_received=4 startup_ice_retransmissions_sent=2 startup_ice_rtt_ms=35 startup_ice_connected_since_session_start_ms=175 startup_ice_check_ms=35 startup_viewer_peer_connection_connected_ms=188 startup_viewer_peer_connected_after_ice_ms=13 startup_device_ice_wait_ms=100 startup_sender_peer_connection_connected_ms=190 startup_sender_peer_connected_after_ice_ms=15 startup_sender_queue_wait_ms=7 startup_sender_write_attempts=40 startup_sender_write_returns=39 startup_sender_write_errors=1 startup_sender_first_write_call_ms=198 startup_sender_first_write_return_ms=200 startup_sender_write_max_ms=9 startup_sender_first_write_after_ice_ms=9 startup_sender_first_write_after_peer_ms=0 startup_first_rtp_after_ice_ms=12 startup_first_h264_access_unit_after_rtp_ms=7 startup_app_request_to_first_rtp_ms=210 startup_app_request_to_first_h264_access_unit_ms=217",
 		},
 	}
 
@@ -3730,14 +4001,92 @@ func TestBuildResultSummarizesVideoStartupLatency(t *testing.T) {
 	if result.WebRTCMedia.BreakdownP95.DeviceAnswerMS != 35 {
 		t.Fatalf("device answer p95 = %d, want 35", result.WebRTCMedia.BreakdownP95.DeviceAnswerMS)
 	}
+	if result.WebRTCMedia.BreakdownP95.AnswerQueueWaitMS != 3 {
+		t.Fatalf("answer queue wait p95 = %d, want 3", result.WebRTCMedia.BreakdownP95.AnswerQueueWaitMS)
+	}
+	if result.WebRTCMedia.BreakdownP95.AnswerPrepareMS != 24 {
+		t.Fatalf("answer prepare p95 = %d, want 24", result.WebRTCMedia.BreakdownP95.AnswerPrepareMS)
+	}
+	if result.WebRTCMedia.BreakdownP95.AnswerPostMS != 5 {
+		t.Fatalf("answer post p95 = %d, want 5", result.WebRTCMedia.BreakdownP95.AnswerPostMS)
+	}
+	if result.WebRTCMedia.BreakdownP95.PionCreatePeerMS != 5 {
+		t.Fatalf("pion create peer p95 = %d, want 5", result.WebRTCMedia.BreakdownP95.PionCreatePeerMS)
+	}
+	if result.WebRTCMedia.BreakdownP95.PionCreateOfferMS != 7 {
+		t.Fatalf("pion create offer p95 = %d, want 7", result.WebRTCMedia.BreakdownP95.PionCreateOfferMS)
+	}
+	if result.WebRTCMedia.BreakdownP95.PionSetLocalDescriptionMS != 9 {
+		t.Fatalf("pion set local description p95 = %d, want 9", result.WebRTCMedia.BreakdownP95.PionSetLocalDescriptionMS)
+	}
+	if result.WebRTCMedia.BreakdownP95.PionICEGatheringWaitMS != 13 {
+		t.Fatalf("pion ICE gathering wait p95 = %d, want 13", result.WebRTCMedia.BreakdownP95.PionICEGatheringWaitMS)
+	}
+	if result.WebRTCMedia.BreakdownP95.PionFirstLocalRelayUDPCandidateMS != 5 {
+		t.Fatalf("pion first local relay UDP candidate p95 = %d, want 5", result.WebRTCMedia.BreakdownP95.PionFirstLocalRelayUDPCandidateMS)
+	}
+	if result.WebRTCMedia.BreakdownP95.PionRelayCandidateToGatherCompleteMS != 10 {
+		t.Fatalf("pion relay candidate -> gather complete p95 = %d, want 10", result.WebRTCMedia.BreakdownP95.PionRelayCandidateToGatherCompleteMS)
+	}
+	if result.WebRTCMedia.BreakdownP95.PionSetRemoteDescriptionMS != 15 {
+		t.Fatalf("pion set remote description p95 = %d, want 15", result.WebRTCMedia.BreakdownP95.PionSetRemoteDescriptionMS)
+	}
 	if result.WebRTCMedia.BreakdownP95.RemoteAnswerSetMS != 140 {
 		t.Fatalf("remote answer set p95 = %d, want 140", result.WebRTCMedia.BreakdownP95.RemoteAnswerSetMS)
+	}
+	if result.WebRTCMedia.BreakdownP95.ICESelectedPairChanges != 2 {
+		t.Fatalf("ICE selected pair changes p95 = %d, want 2", result.WebRTCMedia.BreakdownP95.ICESelectedPairChanges)
+	}
+	if result.WebRTCMedia.BreakdownP95.ICESelectedPairFirstChangeMS != 150 {
+		t.Fatalf("ICE selected pair first change p95 = %d, want 150", result.WebRTCMedia.BreakdownP95.ICESelectedPairFirstChangeMS)
+	}
+	if result.WebRTCMedia.BreakdownP95.ICERequestsSent != 5 {
+		t.Fatalf("ICE requests sent p95 = %d, want 5", result.WebRTCMedia.BreakdownP95.ICERequestsSent)
+	}
+	if result.WebRTCMedia.BreakdownP95.ICEResponsesReceived != 4 {
+		t.Fatalf("ICE responses received p95 = %d, want 4", result.WebRTCMedia.BreakdownP95.ICEResponsesReceived)
+	}
+	if result.WebRTCMedia.BreakdownP95.ICEWriteRTTMS != 35 {
+		t.Fatalf("ICE RTT p95 = %d, want 35", result.WebRTCMedia.BreakdownP95.ICEWriteRTTMS)
 	}
 	if result.WebRTCMedia.BreakdownP95.ICECheckMS != 35 {
 		t.Fatalf("ICE check p95 = %d, want 35", result.WebRTCMedia.BreakdownP95.ICECheckMS)
 	}
 	if result.WebRTCMedia.BreakdownP95.ICEConnectedSinceSessionStartMS != 175 {
 		t.Fatalf("ICE connected since session start p95 = %d, want 175", result.WebRTCMedia.BreakdownP95.ICEConnectedSinceSessionStartMS)
+	}
+	if result.WebRTCMedia.BreakdownP95.DeviceICEWaitMS != 100 {
+		t.Fatalf("device ICE wait p95 = %d, want 100", result.WebRTCMedia.BreakdownP95.DeviceICEWaitMS)
+	}
+	if result.WebRTCMedia.BreakdownP95.ViewerPeerConnectionConnectedMS != 188 {
+		t.Fatalf("viewer peer connection connected p95 = %d, want 188", result.WebRTCMedia.BreakdownP95.ViewerPeerConnectionConnectedMS)
+	}
+	if result.WebRTCMedia.BreakdownP95.SenderPeerConnectedAfterICEMS != 15 {
+		t.Fatalf("sender peer connected after ICE p95 = %d, want 15", result.WebRTCMedia.BreakdownP95.SenderPeerConnectedAfterICEMS)
+	}
+	if result.WebRTCMedia.BreakdownP95.SenderQueueWaitMS != 7 {
+		t.Fatalf("sender queue wait p95 = %d, want 7", result.WebRTCMedia.BreakdownP95.SenderQueueWaitMS)
+	}
+	if result.WebRTCMedia.BreakdownP95.SenderFirstWriteAfterICEMS != 9 {
+		t.Fatalf("sender first write after ICE p95 = %d, want 9", result.WebRTCMedia.BreakdownP95.SenderFirstWriteAfterICEMS)
+	}
+	if result.WebRTCMedia.BreakdownP95.SenderWriteAttempts != 40 {
+		t.Fatalf("sender write attempts p95 = %d, want 40", result.WebRTCMedia.BreakdownP95.SenderWriteAttempts)
+	}
+	if result.WebRTCMedia.BreakdownP95.SenderWriteReturns != 39 {
+		t.Fatalf("sender write returns p95 = %d, want 39", result.WebRTCMedia.BreakdownP95.SenderWriteReturns)
+	}
+	if result.WebRTCMedia.BreakdownP95.SenderWriteErrors != 1 {
+		t.Fatalf("sender write errors p95 = %d, want 1", result.WebRTCMedia.BreakdownP95.SenderWriteErrors)
+	}
+	if result.WebRTCMedia.BreakdownP95.SenderFirstWriteCallMS != 198 {
+		t.Fatalf("sender first write call p95 = %d, want 198", result.WebRTCMedia.BreakdownP95.SenderFirstWriteCallMS)
+	}
+	if result.WebRTCMedia.BreakdownP95.SenderFirstWriteReturnMS != 200 {
+		t.Fatalf("sender first write return p95 = %d, want 200", result.WebRTCMedia.BreakdownP95.SenderFirstWriteReturnMS)
+	}
+	if result.WebRTCMedia.BreakdownP95.SenderWriteMaxMS != 9 {
+		t.Fatalf("sender write max p95 = %d, want 9", result.WebRTCMedia.BreakdownP95.SenderWriteMaxMS)
 	}
 
 	md := RenderMarkdown(result)
@@ -3746,14 +4095,75 @@ func TestBuildResultSummarizesVideoStartupLatency(t *testing.T) {
 		"H.264 access unit samples: 2",
 		"| App request -> first RTP | 180 ms | 210 ms | 210 ms |",
 		"| App request -> first H.264 access unit | 185 ms | 217 ms | 217 ms |",
+		"| Answer queue wait | 3 ms |",
+		"| Answer prepare | 24 ms |",
+		"| Answer POST | 5 ms |",
 		"| Device answer | 35 ms |",
+		"| Pion create peer | 5 ms |",
+		"| Pion create offer | 7 ms |",
+		"| Pion set local description | 9 ms |",
+		"| Pion ICE gathering wait | 13 ms |",
+		"| Pion first local relay UDP candidate | 5 ms |",
+		"| Pion relay candidate -> gather complete | 10 ms |",
+		"| Pion set remote description | 15 ms |",
 		"| Remote answer set | 140 ms |",
+		"| ICE selected pair changes | 2 |",
+		"| ICE selected pair first change | 150 ms |",
+		"| ICE requests sent | 5 |",
+		"| ICE responses received | 4 |",
+		"| ICE RTT | 35 ms |",
 		"| ICE check | 35 ms |",
 		"| ICE connected since session start | 175 ms |",
+		"| Device ICE wait | 100 ms |",
+		"| Viewer peer connection connected | 188 ms |",
+		"| Sender peer connected after ICE | 15 ms |",
+		"| Sender queue wait | 7 ms |",
+		"| Sender WriteRTP attempts | 40 |",
+		"| Sender WriteRTP returns | 39 |",
+		"| Sender WriteRTP errors | 1 |",
+		"| Sender first WriteRTP call | 198 ms |",
+		"| Sender first WriteRTP return | 200 ms |",
+		"| Sender max WriteRTP latency | 9 ms |",
+		"| Sender first write after ICE | 9 ms |",
 	} {
 		if !strings.Contains(md, want) {
 			t.Fatalf("markdown missing %q:\n%s", want, md)
 		}
+	}
+}
+
+func TestBuildResultBackfillsStartupCandidateEvidenceFromSameSession(t *testing.T) {
+	started := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	ops := []Operation{
+		{
+			Actor:    ActorViewer,
+			Name:     "webrtc_media_ice_connected",
+			DeviceID: "dev-1",
+			ViewerID: "viewer-1",
+			Success:  true,
+			Evidence: "session_id=sess-1 ice_policy=relay selected_local_candidate_type=relay selected_remote_candidate_type=relay selected_local_candidate_protocol=udp selected_remote_candidate_protocol=tcp",
+		},
+		{
+			Actor:    ActorViewer,
+			Name:     "webrtc_media_receive",
+			DeviceID: "dev-1",
+			ViewerID: "viewer-1",
+			Success:  true,
+			Evidence: "session_id=sess-1 ice_policy=relay packets=30 bytes=3000 receiver_packets=30 receiver_bytes=3000 startup_app_request_to_first_rtp_ms=180 startup_app_request_to_first_h264_access_unit_ms=180",
+		},
+	}
+
+	result := BuildResult(Config{RunID: "run-startup", WebRTCMediaSet: WebRTCMediaSetH264, WebRTCICEPolicy: WebRTCICEPolicyRelay}, started, started.Add(time.Second), ops)
+
+	if len(result.VideoStartupLatency) != 1 {
+		t.Fatalf("startup samples = %d, want 1", len(result.VideoStartupLatency))
+	}
+	sample := result.VideoStartupLatency[0]
+	if sample.SelectedLocalCandidateType != "relay" || sample.SelectedRemoteCandidateType != "relay" {
+		t.Fatalf("candidate types = %q/%q, want relay/relay", sample.SelectedLocalCandidateType, sample.SelectedRemoteCandidateType)
+	}
+	if sample.SelectedLocalCandidateProtocol != "udp" || sample.SelectedRemoteCandidateProtocol != "tcp" {
+		t.Fatalf("candidate protocols = %q/%q, want udp/tcp", sample.SelectedLocalCandidateProtocol, sample.SelectedRemoteCandidateProtocol)
 	}
 }
 
@@ -3778,6 +4188,108 @@ func TestBuildResultIgnoresMissingH264StartupEvidence(t *testing.T) {
 	summary := result.WebRTCMedia.VideoStartupLatency
 	if summary.Samples != 0 || summary.H264AccessUnitSamples != 0 {
 		t.Fatalf("startup sample counts = %d/%d, want 0/0", summary.Samples, summary.H264AccessUnitSamples)
+	}
+}
+
+func TestBuildResultKeepsFirstRTPWithoutH264AccessUnitSample(t *testing.T) {
+	started := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	ops := []Operation{
+		{
+			Actor:    ActorViewer,
+			Name:     "webrtc_media_receive",
+			DeviceID: "dev-1",
+			ViewerID: "viewer-1",
+			Success:  true,
+			Evidence: "session_id=sess-rtp-only ice_policy=relay selected_local_candidate_type=relay selected_remote_candidate_type=relay packets=30 bytes=3000 receiver_packets=30 receiver_bytes=3000 startup_api_create_ms=40 startup_offer_delivery_ms=20 startup_device_answer_ms=30 startup_ice_connected_since_session_start_ms=2100 startup_ice_check_ms=2000 startup_first_rtp_after_ice_ms=25 startup_app_request_to_first_rtp_ms=2150",
+		},
+	}
+
+	result := BuildResult(Config{RunID: "run-startup-rtp-only", WebRTCMediaSet: WebRTCMediaSetH264, WebRTCICEPolicy: WebRTCICEPolicyRelay}, started, started.Add(time.Second), ops)
+
+	if len(result.VideoStartupLatency) != 1 {
+		t.Fatalf("startup samples = %d, want 1: %#v", len(result.VideoStartupLatency), result.VideoStartupLatency)
+	}
+	summary := result.WebRTCMedia.VideoStartupLatency
+	if summary.Samples != 1 {
+		t.Fatalf("startup samples = %d, want 1", summary.Samples)
+	}
+	if summary.H264AccessUnitSamples != 0 {
+		t.Fatalf("h264 AU samples = %d, want 0", summary.H264AccessUnitSamples)
+	}
+	if got := summary.AppRequestToFirstRTPP95MS; got != 2150 {
+		t.Fatalf("first RTP p95 = %d, want 2150", got)
+	}
+	if got := summary.AppRequestToFirstH264AccessUnitP95MS; got != 0 {
+		t.Fatalf("h264 AU p95 = %d, want 0", got)
+	}
+	if got := summary.BreakdownP95.FirstH264AccessUnitAfterRTPMS; got != 0 {
+		t.Fatalf("h264 AU after RTP p95 = %d, want 0", got)
+	}
+	md := RenderMarkdown(result)
+	if !strings.Contains(md, "H.264 access unit samples: 0") {
+		t.Fatalf("markdown missing zero AU sample count:\n%s", md)
+	}
+	if strings.Contains(md, "App request -> first H.264 access unit") {
+		t.Fatalf("markdown should not render H.264 AU latency without AU samples:\n%s", md)
+	}
+	if strings.Contains(md, "First H.264 access unit after RTP") {
+		t.Fatalf("markdown should not render H.264 AU breakdown without AU samples:\n%s", md)
+	}
+}
+
+func TestWebRTCMediaFailureEvidenceIncludesCorrelationAndICETrace(t *testing.T) {
+	startup := videoStartupClock{
+		RunID:     "run-1",
+		SessionID: "sess-1",
+		DeviceID:  "dev-1",
+		ViewerID:  "viewer-1",
+		ICEPolicy: WebRTCICEPolicyRelay,
+	}
+	stats := WebRTCMediaStats{
+		ICEConnectionStates:             []string{"checking@100", "connected@2300"},
+		SelectedLocalCandidateProtocol:  "udp",
+		SelectedRemoteCandidateProtocol: "udp",
+	}
+
+	evidence := webRTCMediaFailureEvidence(startup, stats, "no_rtp")
+
+	for _, want := range []string{
+		"run_id=run-1",
+		"session_id=sess-1",
+		"device_id=dev-1",
+		"viewer_id=viewer-1",
+		"ice_policy=relay",
+		"failure_reason=no_rtp",
+		"ice_connection_states=checking@100,connected@2300",
+		"selected_local_candidate_protocol=udp",
+		"selected_remote_candidate_protocol=udp",
+	} {
+		if !strings.Contains(evidence, want) {
+			t.Fatalf("failure evidence missing %q: %s", want, evidence)
+		}
+	}
+}
+
+func TestSetLoadTraceHeadersIncludesRunDeviceViewerOperationAndSession(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/request_webrtc/answer", nil)
+	body := map[string]any{"session_id": "sess-1"}
+
+	setLoadTraceHeaders(req, Config{RunID: "run-1"}, ActorViewer, "webrtc_media_answer", "dev-1", "viewer-1", "/api/request_webrtc/answer", body)
+
+	for name, want := range map[string]string{
+		"X-RTK-Run-ID":     "run-1",
+		"X-RTK-Device-ID":  "dev-1",
+		"X-RTK-Viewer-ID":  "viewer-1",
+		"X-RTK-Load-Actor": "viewer",
+		"X-RTK-Operation":  "webrtc_media_answer",
+		"X-RTK-Session-ID": "sess-1",
+	} {
+		if got := req.Header.Get(name); got != want {
+			t.Fatalf("%s = %q, want %q", name, got, want)
+		}
+	}
+	if got := req.Header.Get("X-Request-ID"); !strings.Contains(got, "run-1:webrtc_media_answer:dev-1:viewer-1") {
+		t.Fatalf("X-Request-ID = %q, want run/operation/device/viewer correlation", got)
 	}
 }
 

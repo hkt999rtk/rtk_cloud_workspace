@@ -22,7 +22,11 @@ import (
 	"github.com/pion/webrtc/v3/pkg/media/h264reader"
 )
 
-const defaultWebRTCMediaSettle = 0
+const (
+	defaultWebRTCMediaSettle      = 0
+	defaultWebRTCICERequiredWait  = 30 * time.Second
+	defaultWebRTCPeerRequiredWait = 30 * time.Second
+)
 
 type WebRTCValidation struct {
 	ICEServerCount int
@@ -39,6 +43,12 @@ type WebRTCMediaStats struct {
 	ICEGatheringCompleteMS          int64
 	RemoteDescriptionSetMS          int64
 	LocalDescriptionSetMS           int64
+	PionCreatePeerMS                int64
+	PionCreateOfferMS               int64
+	PionCreateAnswerMS              int64
+	PionSetLocalDescriptionMS       int64
+	PionSetRemoteDescriptionMS      int64
+	PionICEGatheringWaitMS          int64
 	ICECheckingMS                   int64
 	FirstLocalCandidateMS           int64
 	FirstLocalRelayCandidateMS      int64
@@ -53,6 +63,19 @@ type WebRTCMediaStats struct {
 	LocalRelayTCPCandidates         int
 	ICEConnectionStates             []string
 	ICEGatheringStates              []string
+	PeerConnectionStates            []string
+	PeerConnectionConnectedMS       int64
+	ICESelectedPairChanges          int
+	ICESelectedPairFirstChangeMS    int64
+	ICESelectedPairLastChangeMS     int64
+	ICERequestsSent                 uint64
+	ICERequestsReceived             uint64
+	ICEResponsesSent                uint64
+	ICEResponsesReceived            uint64
+	ICERetransmissionsSent          uint64
+	ICERetransmissionsReceived      uint64
+	ICEConsentRequestsSent          uint64
+	ICECurrentRoundTripTimeMS       int64
 	TimeToFirstRTPMS                int64
 	FirstH264RTPMS                  int64
 	FirstH264AccessUnitMS           int64
@@ -63,6 +86,12 @@ type WebRTCMediaStats struct {
 	SelectedRemoteCandidateType     string
 	SelectedLocalCandidateProtocol  string
 	SelectedRemoteCandidateProtocol string
+	SelectedLocalCandidateAddress   string
+	SelectedRemoteCandidateAddress  string
+	SelectedLocalCandidatePort      int
+	SelectedRemoteCandidatePort     int
+	SelectedLocalCandidateTCPType   string
+	SelectedRemoteCandidateTCPType  string
 	H264SHA256                      string
 	H264Bytes                       int
 	H264Packets                     int
@@ -89,48 +118,87 @@ type H264RTPFrame struct {
 }
 
 type H264RTPEvidence struct {
-	Packets                         int
-	Bytes                           int
-	DurationMS                      int64
-	Loops                           int
-	Frames                          int
-	NALTypes                        map[string]bool
-	Packetizations                  map[string]bool
-	ReceiveMS                       int64
-	TimeToFirstMS                   int64
-	ICEMS                           int64
-	ICEGatheringCompleteMS          int64
-	RemoteDescriptionSetMS          int64
-	LocalDescriptionSetMS           int64
-	ICECheckingMS                   int64
-	FirstLocalCandidateMS           int64
-	FirstLocalRelayCandidateMS      int64
-	FirstLocalRelayUDPCandidateMS   int64
-	FirstLocalRelayTCPCandidateMS   int64
-	LocalHostCandidates             int
-	LocalSrflxCandidates            int
-	LocalRelayCandidates            int
-	LocalUDPCandidates              int
-	LocalTCPCandidates              int
-	LocalRelayUDPCandidates         int
-	LocalRelayTCPCandidates         int
-	ICEConnectionStates             []string
-	ICEGatheringStates              []string
-	SelectedLocalCandidateType      string
-	SelectedRemoteCandidateType     string
-	SelectedLocalCandidateProtocol  string
-	SelectedRemoteCandidateProtocol string
-	ExpectedSHA256                  string
-	ReceiverSHA256                  string
-	ReceiverPackets                 int
-	ReceiverBytes                   int
-	ReceiverNALTypes                map[string]bool
-	BitstreamMatch                  bool
-	SchedulerDroppedJobs            int
-	SchedulerDroppedPackets         int
-	SchedulerQueueFullDrops         int
-	SchedulerPacketsSent            int
-	SchedulerBytesSent              int
+	Packets                               int
+	Bytes                                 int
+	DurationMS                            int64
+	Loops                                 int
+	Frames                                int
+	NALTypes                              map[string]bool
+	Packetizations                        map[string]bool
+	ReceiveMS                             int64
+	TimeToFirstMS                         int64
+	ICEMS                                 int64
+	ICEGatheringCompleteMS                int64
+	RemoteDescriptionSetMS                int64
+	LocalDescriptionSetMS                 int64
+	PionCreatePeerMS                      int64
+	PionCreateOfferMS                     int64
+	PionCreateAnswerMS                    int64
+	PionSetLocalDescriptionMS             int64
+	PionSetRemoteDescriptionMS            int64
+	PionICEGatheringWaitMS                int64
+	ICECheckingMS                         int64
+	FirstLocalCandidateMS                 int64
+	FirstLocalRelayCandidateMS            int64
+	FirstLocalRelayUDPCandidateMS         int64
+	FirstLocalRelayTCPCandidateMS         int64
+	LocalHostCandidates                   int
+	LocalSrflxCandidates                  int
+	LocalRelayCandidates                  int
+	LocalUDPCandidates                    int
+	LocalTCPCandidates                    int
+	LocalRelayUDPCandidates               int
+	LocalRelayTCPCandidates               int
+	ICEConnectionStates                   []string
+	ICEGatheringStates                    []string
+	PeerConnectionStates                  []string
+	PeerConnectionConnectedMS             int64
+	ICESelectedPairChanges                int
+	ICESelectedPairFirstChangeMS          int64
+	ICESelectedPairLastChangeMS           int64
+	ICERequestsSent                       uint64
+	ICERequestsReceived                   uint64
+	ICEResponsesSent                      uint64
+	ICEResponsesReceived                  uint64
+	ICERetransmissionsSent                uint64
+	ICERetransmissionsReceived            uint64
+	ICEConsentRequestsSent                uint64
+	ICECurrentRoundTripTimeMS             int64
+	SelectedLocalCandidateType            string
+	SelectedRemoteCandidateType           string
+	SelectedLocalCandidateProtocol        string
+	SelectedRemoteCandidateProtocol       string
+	SelectedLocalCandidateAddress         string
+	SelectedRemoteCandidateAddress        string
+	SelectedLocalCandidatePort            int
+	SelectedRemoteCandidatePort           int
+	SelectedLocalCandidateTCPType         string
+	SelectedRemoteCandidateTCPType        string
+	ExpectedSHA256                        string
+	ReceiverSHA256                        string
+	ReceiverPackets                       int
+	ReceiverBytes                         int
+	ReceiverNALTypes                      map[string]bool
+	BitstreamMatch                        bool
+	SchedulerDroppedJobs                  int
+	SchedulerDroppedPackets               int
+	SchedulerQueueFullDrops               int
+	SchedulerZeroByteWrites               int
+	SchedulerWriteAttempts                int
+	SchedulerWriteReturns                 int
+	SchedulerWriteErrors                  int
+	SchedulerFirstWriteCallMS             int64
+	SchedulerFirstWriteReturnMS           int64
+	SchedulerFirstWriteCallSinceStartMS   int64
+	SchedulerFirstWriteReturnSinceStartMS int64
+	SchedulerMaxWriteMS                   int64
+	SchedulerPacketsSent                  int
+	SchedulerBytesSent                    int
+	SchedulerStartedAtMS                  int64
+	SchedulerFirstWriteMS                 int64
+	SchedulerFirstWriteSinceStartMS       int64
+	SchedulerEndedAtMS                    int64
+	SchedulerSendDurationMS               int64
 }
 
 type OpusRTPPlan struct {
@@ -144,46 +212,85 @@ type OpusRTPPlan struct {
 }
 
 type OpusRTPEvidence struct {
-	Packets                         int
-	Bytes                           int
-	DurationMS                      int64
-	Loops                           int
-	Frames                          int
-	SampleRate                      int
-	Channels                        int
-	ReceiveMS                       int64
-	TimeToFirstMS                   int64
-	ICEMS                           int64
-	ICEGatheringCompleteMS          int64
-	RemoteDescriptionSetMS          int64
-	LocalDescriptionSetMS           int64
-	ICECheckingMS                   int64
-	FirstLocalCandidateMS           int64
-	FirstLocalRelayCandidateMS      int64
-	FirstLocalRelayUDPCandidateMS   int64
-	FirstLocalRelayTCPCandidateMS   int64
-	LocalHostCandidates             int
-	LocalSrflxCandidates            int
-	LocalRelayCandidates            int
-	LocalUDPCandidates              int
-	LocalTCPCandidates              int
-	LocalRelayUDPCandidates         int
-	LocalRelayTCPCandidates         int
-	ICEConnectionStates             []string
-	ICEGatheringStates              []string
-	SelectedLocalCandidateType      string
-	SelectedRemoteCandidateType     string
-	SelectedLocalCandidateProtocol  string
-	SelectedRemoteCandidateProtocol string
-	ReceiverPackets                 int
-	ReceiverBytes                   int
-	ReceiverFrames                  int
-	FirstOpusRTPMS                  int64
-	SchedulerDroppedJobs            int
-	SchedulerDroppedPackets         int
-	SchedulerQueueFullDrops         int
-	SchedulerPacketsSent            int
-	SchedulerBytesSent              int
+	Packets                               int
+	Bytes                                 int
+	DurationMS                            int64
+	Loops                                 int
+	Frames                                int
+	SampleRate                            int
+	Channels                              int
+	ReceiveMS                             int64
+	TimeToFirstMS                         int64
+	ICEMS                                 int64
+	ICEGatheringCompleteMS                int64
+	RemoteDescriptionSetMS                int64
+	LocalDescriptionSetMS                 int64
+	PionCreatePeerMS                      int64
+	PionCreateOfferMS                     int64
+	PionCreateAnswerMS                    int64
+	PionSetLocalDescriptionMS             int64
+	PionSetRemoteDescriptionMS            int64
+	PionICEGatheringWaitMS                int64
+	ICECheckingMS                         int64
+	FirstLocalCandidateMS                 int64
+	FirstLocalRelayCandidateMS            int64
+	FirstLocalRelayUDPCandidateMS         int64
+	FirstLocalRelayTCPCandidateMS         int64
+	LocalHostCandidates                   int
+	LocalSrflxCandidates                  int
+	LocalRelayCandidates                  int
+	LocalUDPCandidates                    int
+	LocalTCPCandidates                    int
+	LocalRelayUDPCandidates               int
+	LocalRelayTCPCandidates               int
+	ICEConnectionStates                   []string
+	ICEGatheringStates                    []string
+	PeerConnectionStates                  []string
+	PeerConnectionConnectedMS             int64
+	ICESelectedPairChanges                int
+	ICESelectedPairFirstChangeMS          int64
+	ICESelectedPairLastChangeMS           int64
+	ICERequestsSent                       uint64
+	ICERequestsReceived                   uint64
+	ICEResponsesSent                      uint64
+	ICEResponsesReceived                  uint64
+	ICERetransmissionsSent                uint64
+	ICERetransmissionsReceived            uint64
+	ICEConsentRequestsSent                uint64
+	ICECurrentRoundTripTimeMS             int64
+	SelectedLocalCandidateType            string
+	SelectedRemoteCandidateType           string
+	SelectedLocalCandidateProtocol        string
+	SelectedRemoteCandidateProtocol       string
+	SelectedLocalCandidateAddress         string
+	SelectedRemoteCandidateAddress        string
+	SelectedLocalCandidatePort            int
+	SelectedRemoteCandidatePort           int
+	SelectedLocalCandidateTCPType         string
+	SelectedRemoteCandidateTCPType        string
+	ReceiverPackets                       int
+	ReceiverBytes                         int
+	ReceiverFrames                        int
+	FirstOpusRTPMS                        int64
+	SchedulerDroppedJobs                  int
+	SchedulerDroppedPackets               int
+	SchedulerQueueFullDrops               int
+	SchedulerZeroByteWrites               int
+	SchedulerWriteAttempts                int
+	SchedulerWriteReturns                 int
+	SchedulerWriteErrors                  int
+	SchedulerFirstWriteCallMS             int64
+	SchedulerFirstWriteReturnMS           int64
+	SchedulerFirstWriteCallSinceStartMS   int64
+	SchedulerFirstWriteReturnSinceStartMS int64
+	SchedulerMaxWriteMS                   int64
+	SchedulerPacketsSent                  int
+	SchedulerBytesSent                    int
+	SchedulerStartedAtMS                  int64
+	SchedulerFirstWriteMS                 int64
+	SchedulerFirstWriteSinceStartMS       int64
+	SchedulerEndedAtMS                    int64
+	SchedulerSendDurationMS               int64
 }
 
 type AVRTPEvidence struct {
@@ -192,38 +299,46 @@ type AVRTPEvidence struct {
 }
 
 type PionMediaOfferSession struct {
-	peer           *webrtc.PeerConnection
-	offer          webrtc.SessionDescription
-	icePolicy      webrtc.ICETransportPolicy
-	started        time.Time
-	iceConnected   chan struct{}
-	firstRTP       chan struct{}
-	packetCh       chan struct{}
-	closeOnce      sync.Once
-	iceOnce        sync.Once
-	firstOnce      sync.Once
-	mu             sync.Mutex
-	stats          WebRTCMediaStats
-	h264           codecs.H264Packet
-	h264Bytes      bytes.Buffer
-	nalTypes       map[string]bool
-	packetizations map[string]bool
+	peer                *webrtc.PeerConnection
+	offer               webrtc.SessionDescription
+	icePolicy           webrtc.ICETransportPolicy
+	started             time.Time
+	iceConnected        chan struct{}
+	peerConnected       chan struct{}
+	localRelayCandidate chan struct{}
+	firstRTP            chan struct{}
+	packetCh            chan struct{}
+	closeOnce           sync.Once
+	iceOnce             sync.Once
+	peerOnce            sync.Once
+	relayOnce           sync.Once
+	firstOnce           sync.Once
+	mu                  sync.Mutex
+	stats               WebRTCMediaStats
+	h264                codecs.H264Packet
+	h264Bytes           bytes.Buffer
+	nalTypes            map[string]bool
+	packetizations      map[string]bool
 }
 
 type PionMediaAnswerSession struct {
-	peer         *webrtc.PeerConnection
-	track        *webrtc.TrackLocalStaticRTP
-	videoTrack   *webrtc.TrackLocalStaticRTP
-	audioTrack   *webrtc.TrackLocalStaticRTP
-	codecMime    string
-	answer       webrtc.SessionDescription
-	icePolicy    webrtc.ICETransportPolicy
-	started      time.Time
-	mu           sync.Mutex
-	stats        WebRTCMediaStats
-	iceConnected chan struct{}
-	closeOnce    sync.Once
-	iceOnce      sync.Once
+	peer                *webrtc.PeerConnection
+	track               *webrtc.TrackLocalStaticRTP
+	videoTrack          *webrtc.TrackLocalStaticRTP
+	audioTrack          *webrtc.TrackLocalStaticRTP
+	codecMime           string
+	answer              webrtc.SessionDescription
+	icePolicy           webrtc.ICETransportPolicy
+	started             time.Time
+	mu                  sync.Mutex
+	stats               WebRTCMediaStats
+	iceConnected        chan struct{}
+	peerConnected       chan struct{}
+	localRelayCandidate chan struct{}
+	closeOnce           sync.Once
+	iceOnce             sync.Once
+	peerOnce            sync.Once
+	relayOnce           sync.Once
 }
 
 func NewPionOfferSession() (*PionOfferSession, error) {
@@ -266,19 +381,25 @@ func NewPionMediaOfferSessionForSetWithICEPolicy(ctx context.Context, mediaSet, 
 
 func NewPionMediaOfferSessionForSetWithICEServersAndPolicy(ctx context.Context, mediaSet string, iceServers []webrtc.ICEServer, policy string, gatherTimeout time.Duration) (*PionMediaOfferSession, error) {
 	icePolicy := pionICETransportPolicy(policy)
+	sessionStarted := time.Now()
+	phaseStarted := time.Now()
 	peer, err := webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: iceServers, ICETransportPolicy: icePolicy})
 	if err != nil {
 		return nil, fmt.Errorf("pion media offer peer connection: %w", err)
 	}
+	createPeerMS := time.Since(phaseStarted).Milliseconds()
 	session := &PionMediaOfferSession{
-		peer:           peer,
-		icePolicy:      icePolicy,
-		started:        time.Now(),
-		iceConnected:   make(chan struct{}),
-		firstRTP:       make(chan struct{}),
-		packetCh:       make(chan struct{}, 32),
-		nalTypes:       map[string]bool{},
-		packetizations: map[string]bool{},
+		peer:                peer,
+		icePolicy:           icePolicy,
+		started:             sessionStarted,
+		iceConnected:        make(chan struct{}),
+		peerConnected:       make(chan struct{}),
+		localRelayCandidate: make(chan struct{}),
+		firstRTP:            make(chan struct{}),
+		packetCh:            make(chan struct{}, 32),
+		stats:               WebRTCMediaStats{PionCreatePeerMS: createPeerMS},
+		nalTypes:            map[string]bool{},
+		packetizations:      map[string]bool{},
 	}
 	installICETrace(peer, session.started, session.icePolicy, session.recordICEGatheringState, session.recordICECandidate, session.recordICEConnectionState)
 	peer.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
@@ -288,12 +409,20 @@ func NewPionMediaOfferSessionForSetWithICEServersAndPolicy(ctx context.Context, 
 				session.mu.Lock()
 				session.stats.ICEConnectedLatencyMS = time.Since(session.started).Milliseconds()
 				pair := selectedCandidatePairTrace(peer)
-				session.stats.SelectedLocalCandidateType = candidateTypeEvidence(pair.LocalType, session.icePolicy)
-				session.stats.SelectedRemoteCandidateType = candidateTypeEvidence(pair.RemoteType, session.icePolicy)
-				session.stats.SelectedLocalCandidateProtocol = pair.LocalProtocol
-				session.stats.SelectedRemoteCandidateProtocol = pair.RemoteProtocol
+				applySelectedCandidatePairTrace(&session.stats, pair, session.icePolicy)
 				session.mu.Unlock()
 				close(session.iceConnected)
+			})
+		}
+	})
+	peer.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+		session.recordPeerConnectionState(state.String())
+		if state == webrtc.PeerConnectionStateConnected {
+			session.peerOnce.Do(func() {
+				session.recordICETrace(func(stats *WebRTCMediaStats) {
+					stats.PeerConnectionConnectedMS = time.Since(session.started).Milliseconds()
+				})
+				close(session.peerConnected)
 			})
 		}
 	})
@@ -310,21 +439,34 @@ func NewPionMediaOfferSessionForSetWithICEServersAndPolicy(ctx context.Context, 
 			return nil, fmt.Errorf("pion media audio recvonly transceiver: %w", err)
 		}
 	}
+	installSelectedCandidatePairTrace(peer, session.recordSelectedCandidatePairChange)
+	phaseStarted = time.Now()
 	offer, err := peer.CreateOffer(nil)
 	if err != nil {
 		_ = peer.Close()
 		return nil, fmt.Errorf("pion media create offer: %w", err)
 	}
+	session.recordICETrace(func(stats *WebRTCMediaStats) {
+		stats.PionCreateOfferMS = time.Since(phaseStarted).Milliseconds()
+	})
 	gatherComplete := webrtc.GatheringCompletePromise(peer)
+	phaseStarted = time.Now()
 	if err := peer.SetLocalDescription(offer); err != nil {
 		_ = peer.Close()
 		return nil, fmt.Errorf("pion media set local offer: %w", err)
 	}
+	session.recordICETrace(func(stats *WebRTCMediaStats) {
+		stats.PionSetLocalDescriptionMS = time.Since(phaseStarted).Milliseconds()
+	})
 	session.recordLocalDescriptionSet()
-	if err := waitICEGatheringComplete(ctx, gatherComplete, gatherTimeout); err != nil {
+	phaseStarted = time.Now()
+	if err := waitICEGatheringReady(ctx, gatherComplete, session.localRelayCandidate, icePolicy, gatherTimeout); err != nil {
 		_ = peer.Close()
 		return nil, err
 	}
+	session.recordICETrace(func(stats *WebRTCMediaStats) {
+		stats.PionICEGatheringWaitMS = time.Since(phaseStarted).Milliseconds()
+	})
 	session.recordICEGatheringComplete()
 	session.offer = *peer.LocalDescription()
 	return session, nil
@@ -344,8 +486,18 @@ func (s *PionMediaOfferSession) readRemoteRTP(track *webrtc.TrackRemote) {
 		if isH264 {
 			s.stats.H264Packets++
 			s.stats.H264Bytes += len(packet.Payload)
+			nowMS := time.Since(s.started).Milliseconds()
 			if s.stats.FirstH264RTPMS == 0 {
-				s.stats.FirstH264RTPMS = time.Since(s.started).Milliseconds()
+				s.stats.FirstH264RTPMS = nowMS
+			}
+			for _, nalType := range h264NALTypesFromRTPPayload(packet.Payload) {
+				s.stats.NALTypes = appendUniqueString(s.stats.NALTypes, nalType)
+			}
+			for _, packetization := range h264PayloadPacketizations(packet.Payload) {
+				s.stats.Packetizations = appendUniqueString(s.stats.Packetizations, packetization)
+			}
+			if s.stats.FirstH264AccessUnitMS == 0 && h264RTPPayloadHasFrameCandidate(packet.Payload, packet.Marker) {
+				s.stats.FirstH264AccessUnitMS = nowMS
 			}
 		}
 		if isOpus {
@@ -370,7 +522,7 @@ func (s *PionMediaOfferSession) readRemoteRTP(track *webrtc.TrackRemote) {
 }
 
 func h264AccessUnitEvidenceReady(types map[string]bool) bool {
-	return types["sps"] && types["pps"] && types["idr"]
+	return len(types) > 0
 }
 
 type iceTraceStatsRecorder func(func(*WebRTCMediaStats))
@@ -393,6 +545,38 @@ func installICETrace(peer *webrtc.PeerConnection, started time.Time, policy webr
 	})
 }
 
+func installSelectedCandidatePairTrace(peer *webrtc.PeerConnection, recordPair func(selectedCandidatePairEvidence)) {
+	if peer == nil || recordPair == nil {
+		return
+	}
+	seen := map[*webrtc.ICETransport]bool{}
+	for _, transceiver := range peer.GetTransceivers() {
+		if transceiver == nil {
+			continue
+		}
+		if receiver := transceiver.Receiver(); receiver != nil {
+			installSelectedCandidatePairTraceFromDTLS(receiver.Transport(), seen, recordPair)
+		}
+		if sender := transceiver.Sender(); sender != nil {
+			installSelectedCandidatePairTraceFromDTLS(sender.Transport(), seen, recordPair)
+		}
+	}
+}
+
+func installSelectedCandidatePairTraceFromDTLS(dtls *webrtc.DTLSTransport, seen map[*webrtc.ICETransport]bool, recordPair func(selectedCandidatePairEvidence)) {
+	if dtls == nil || dtls.ICETransport() == nil {
+		return
+	}
+	iceTransport := dtls.ICETransport()
+	if seen[iceTransport] {
+		return
+	}
+	seen[iceTransport] = true
+	iceTransport.OnSelectedCandidatePairChange(func(pair *webrtc.ICECandidatePair) {
+		recordPair(selectedCandidatePairTraceFromPair(pair))
+	})
+}
+
 func (s *PionMediaOfferSession) recordICEGatheringState(state string) {
 	s.recordICETrace(func(stats *WebRTCMediaStats) {
 		recordICEGatheringState(stats, state, s.started)
@@ -409,11 +593,26 @@ func (s *PionMediaOfferSession) recordICECandidate(candidate candidateTrace) {
 	s.recordICETrace(func(stats *WebRTCMediaStats) {
 		recordICECandidate(stats, candidate, s.started)
 	})
+	if candidate.Type == "relay" {
+		s.relayOnce.Do(func() { close(s.localRelayCandidate) })
+	}
 }
 
 func (s *PionMediaOfferSession) recordICEConnectionState(state string) {
 	s.recordICETrace(func(stats *WebRTCMediaStats) {
 		recordICEConnectionState(stats, state, s.started)
+	})
+}
+
+func (s *PionMediaOfferSession) recordPeerConnectionState(state string) {
+	s.recordICETrace(func(stats *WebRTCMediaStats) {
+		recordPeerConnectionState(stats, state, s.started)
+	})
+}
+
+func (s *PionMediaOfferSession) recordSelectedCandidatePairChange(pair selectedCandidatePairEvidence) {
+	s.recordICETrace(func(stats *WebRTCMediaStats) {
+		recordSelectedCandidatePairChange(stats, pair, s.icePolicy, s.started)
 	})
 }
 
@@ -455,11 +654,26 @@ func (s *PionMediaAnswerSession) recordICECandidate(candidate candidateTrace) {
 	s.recordICETrace(func(stats *WebRTCMediaStats) {
 		recordICECandidate(stats, candidate, s.started)
 	})
+	if candidate.Type == "relay" {
+		s.relayOnce.Do(func() { close(s.localRelayCandidate) })
+	}
 }
 
 func (s *PionMediaAnswerSession) recordICEConnectionState(state string) {
 	s.recordICETrace(func(stats *WebRTCMediaStats) {
 		recordICEConnectionState(stats, state, s.started)
+	})
+}
+
+func (s *PionMediaAnswerSession) recordPeerConnectionState(state string) {
+	s.recordICETrace(func(stats *WebRTCMediaStats) {
+		recordPeerConnectionState(stats, state, s.started)
+	})
+}
+
+func (s *PionMediaAnswerSession) recordSelectedCandidatePairChange(pair selectedCandidatePairEvidence) {
+	s.recordICETrace(func(stats *WebRTCMediaStats) {
+		recordSelectedCandidatePairChange(stats, pair, s.icePolicy, s.started)
 	})
 }
 
@@ -550,6 +764,65 @@ func recordICEConnectionState(stats *WebRTCMediaStats, state string, started tim
 	}
 }
 
+func recordPeerConnectionState(stats *WebRTCMediaStats, state string, started time.Time) {
+	nowMS := time.Since(started).Milliseconds()
+	if len(stats.PeerConnectionStates) > 0 {
+		last := stats.PeerConnectionStates[len(stats.PeerConnectionStates)-1]
+		if strings.HasPrefix(last, state+"@") {
+			return
+		}
+	}
+	stats.PeerConnectionStates = append(stats.PeerConnectionStates, fmt.Sprintf("%s@%d", state, nowMS))
+	if state == webrtc.PeerConnectionStateConnected.String() && stats.PeerConnectionConnectedMS == 0 {
+		stats.PeerConnectionConnectedMS = nowMS
+	}
+}
+
+func recordSelectedCandidatePairChange(stats *WebRTCMediaStats, pair selectedCandidatePairEvidence, policy webrtc.ICETransportPolicy, started time.Time) {
+	nowMS := time.Since(started).Milliseconds()
+	stats.ICESelectedPairChanges++
+	if stats.ICESelectedPairFirstChangeMS == 0 {
+		stats.ICESelectedPairFirstChangeMS = nowMS
+	}
+	stats.ICESelectedPairLastChangeMS = nowMS
+	applySelectedCandidatePairTrace(stats, pair, policy)
+}
+
+func applySelectedCandidatePairTrace(stats *WebRTCMediaStats, pair selectedCandidatePairEvidence, policy webrtc.ICETransportPolicy) {
+	stats.SelectedLocalCandidateType = candidateTypeEvidence(pair.LocalType, policy)
+	stats.SelectedRemoteCandidateType = candidateTypeEvidence(pair.RemoteType, policy)
+	stats.SelectedLocalCandidateProtocol = pair.LocalProtocol
+	stats.SelectedRemoteCandidateProtocol = pair.RemoteProtocol
+	stats.SelectedLocalCandidateAddress = pair.LocalAddress
+	stats.SelectedRemoteCandidateAddress = pair.RemoteAddress
+	stats.SelectedLocalCandidatePort = pair.LocalPort
+	stats.SelectedRemoteCandidatePort = pair.RemotePort
+	stats.SelectedLocalCandidateTCPType = pair.LocalTCPType
+	stats.SelectedRemoteCandidateTCPType = pair.RemoteTCPType
+}
+
+type selectedCandidatePairStatsEvidence struct {
+	RequestsSent            uint64
+	RequestsReceived        uint64
+	ResponsesSent           uint64
+	ResponsesReceived       uint64
+	RetransmissionsSent     uint64
+	RetransmissionsReceived uint64
+	ConsentRequestsSent     uint64
+	CurrentRoundTripTimeMS  int64
+}
+
+func recordSelectedCandidatePairStats(stats *WebRTCMediaStats, pairStats selectedCandidatePairStatsEvidence) {
+	stats.ICERequestsSent = pairStats.RequestsSent
+	stats.ICERequestsReceived = pairStats.RequestsReceived
+	stats.ICEResponsesSent = pairStats.ResponsesSent
+	stats.ICEResponsesReceived = pairStats.ResponsesReceived
+	stats.ICERetransmissionsSent = pairStats.RetransmissionsSent
+	stats.ICERetransmissionsReceived = pairStats.RetransmissionsReceived
+	stats.ICEConsentRequestsSent = pairStats.ConsentRequestsSent
+	stats.ICECurrentRoundTripTimeMS = pairStats.CurrentRoundTripTimeMS
+}
+
 type candidateTrace struct {
 	Type     string
 	Protocol string
@@ -585,9 +858,13 @@ func (s *PionMediaOfferSession) SetRemoteAnswer(answer map[string]string) error 
 	if answer["type"] != "answer" || answer["sdp"] == "" {
 		return errors.New("invalid media answer")
 	}
+	phaseStarted := time.Now()
 	if err := s.peer.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: answer["sdp"]}); err != nil {
 		return err
 	}
+	s.recordICETrace(func(stats *WebRTCMediaStats) {
+		stats.PionSetRemoteDescriptionMS = time.Since(phaseStarted).Milliseconds()
+	})
 	s.recordRemoteDescriptionSet()
 	return nil
 }
@@ -666,10 +943,7 @@ func (s *PionMediaOfferSession) Snapshot() WebRTCMediaStats {
 	defer s.mu.Unlock()
 	if s.stats.SelectedLocalCandidateType == "" || s.stats.SelectedRemoteCandidateType == "" || s.stats.SelectedLocalCandidateProtocol == "" || s.stats.SelectedRemoteCandidateProtocol == "" {
 		pair := selectedCandidatePairTrace(s.peer)
-		s.stats.SelectedLocalCandidateType = candidateTypeEvidence(pair.LocalType, s.icePolicy)
-		s.stats.SelectedRemoteCandidateType = candidateTypeEvidence(pair.RemoteType, s.icePolicy)
-		s.stats.SelectedLocalCandidateProtocol = pair.LocalProtocol
-		s.stats.SelectedRemoteCandidateProtocol = pair.RemoteProtocol
+		applySelectedCandidatePairTrace(&s.stats, pair, s.icePolicy)
 	}
 	return s.stats
 }
@@ -701,15 +975,21 @@ func NewPionMediaAnswerSessionWithICEServersForSetAndPolicy(ctx context.Context,
 		return nil, errors.New("invalid media offer")
 	}
 	icePolicy := pionICETransportPolicy(policy)
+	sessionStarted := time.Now()
+	phaseStarted := time.Now()
 	peer, err := webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: iceServers, ICETransportPolicy: icePolicy})
 	if err != nil {
 		return nil, fmt.Errorf("pion media answer peer connection: %w", err)
 	}
+	createPeerMS := time.Since(phaseStarted).Milliseconds()
 	session := &PionMediaAnswerSession{
-		peer:         peer,
-		icePolicy:    icePolicy,
-		started:      time.Now(),
-		iceConnected: make(chan struct{}),
+		peer:                peer,
+		icePolicy:           icePolicy,
+		started:             sessionStarted,
+		stats:               WebRTCMediaStats{PionCreatePeerMS: createPeerMS},
+		iceConnected:        make(chan struct{}),
+		peerConnected:       make(chan struct{}),
+		localRelayCandidate: make(chan struct{}),
 	}
 	installICETrace(peer, session.started, session.icePolicy, session.recordICEGatheringState, session.recordICECandidate, session.recordICEConnectionState)
 	peer.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
@@ -719,12 +999,20 @@ func NewPionMediaAnswerSessionWithICEServersForSetAndPolicy(ctx context.Context,
 				session.mu.Lock()
 				session.stats.ICEConnectedLatencyMS = time.Since(session.started).Milliseconds()
 				pair := selectedCandidatePairTrace(peer)
-				session.stats.SelectedLocalCandidateType = candidateTypeEvidence(pair.LocalType, session.icePolicy)
-				session.stats.SelectedRemoteCandidateType = candidateTypeEvidence(pair.RemoteType, session.icePolicy)
-				session.stats.SelectedLocalCandidateProtocol = pair.LocalProtocol
-				session.stats.SelectedRemoteCandidateProtocol = pair.RemoteProtocol
+				applySelectedCandidatePairTrace(&session.stats, pair, session.icePolicy)
 				session.mu.Unlock()
 				close(session.iceConnected)
+			})
+		}
+	})
+	peer.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+		session.recordPeerConnectionState(state.String())
+		if state == webrtc.PeerConnectionStateConnected {
+			session.peerOnce.Do(func() {
+				session.recordICETrace(func(stats *WebRTCMediaStats) {
+					stats.PeerConnectionConnectedMS = time.Since(session.started).Milliseconds()
+				})
+				close(session.peerConnected)
 			})
 		}
 	})
@@ -759,27 +1047,44 @@ func NewPionMediaAnswerSessionWithICEServersForSetAndPolicy(ctx context.Context,
 		}
 		session.audioTrack = audioTrack
 	}
+	installSelectedCandidatePairTrace(peer, session.recordSelectedCandidatePairChange)
 	session.codecMime = webrtc.MimeTypeH264
+	phaseStarted = time.Now()
 	if err := peer.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: offer["sdp"]}); err != nil {
 		_ = peer.Close()
 		return nil, fmt.Errorf("pion media answer set remote offer: %w", err)
 	}
+	session.recordICETrace(func(stats *WebRTCMediaStats) {
+		stats.PionSetRemoteDescriptionMS = time.Since(phaseStarted).Milliseconds()
+	})
 	session.recordRemoteDescriptionSet()
+	phaseStarted = time.Now()
 	answer, err := peer.CreateAnswer(nil)
 	if err != nil {
 		_ = peer.Close()
 		return nil, fmt.Errorf("pion media create answer: %w", err)
 	}
+	session.recordICETrace(func(stats *WebRTCMediaStats) {
+		stats.PionCreateAnswerMS = time.Since(phaseStarted).Milliseconds()
+	})
 	gatherComplete := webrtc.GatheringCompletePromise(peer)
+	phaseStarted = time.Now()
 	if err := peer.SetLocalDescription(answer); err != nil {
 		_ = peer.Close()
 		return nil, fmt.Errorf("pion media set local answer: %w", err)
 	}
+	session.recordICETrace(func(stats *WebRTCMediaStats) {
+		stats.PionSetLocalDescriptionMS = time.Since(phaseStarted).Milliseconds()
+	})
 	session.recordLocalDescriptionSet()
-	if err := waitICEGatheringComplete(ctx, gatherComplete, gatherTimeout); err != nil {
+	phaseStarted = time.Now()
+	if err := waitICEGatheringReady(ctx, gatherComplete, session.localRelayCandidate, icePolicy, gatherTimeout); err != nil {
 		_ = peer.Close()
 		return nil, err
 	}
+	session.recordICETrace(func(stats *WebRTCMediaStats) {
+		stats.PionICEGatheringWaitMS = time.Since(phaseStarted).Milliseconds()
+	})
 	session.recordICEGatheringComplete()
 	session.answer = *peer.LocalDescription()
 	return session, nil
@@ -810,8 +1115,11 @@ func (s *PionMediaAnswerSession) SendSyntheticRTP(ctx context.Context, packets i
 	case <-s.iceConnected:
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-time.After(5 * time.Second):
+	case <-time.After(defaultWebRTCICERequiredWait):
 		return errors.New("webrtc media answerer ICE connection timeout")
+	}
+	if err := s.waitPeerConnected(ctx); err != nil {
+		return err
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -843,6 +1151,9 @@ func (s *PionMediaAnswerSession) SendH264RTP(ctx context.Context, duration time.
 	if err := s.waitICEConnected(ctx); err != nil {
 		return H264RTPPlan{}, err
 	}
+	if err := s.waitPeerConnected(ctx); err != nil {
+		return H264RTPPlan{}, err
+	}
 	stats := s.Snapshot()
 	if err := waitWebRTCMediaSettle(ctx); err != nil {
 		return H264RTPPlan{}, err
@@ -859,11 +1170,15 @@ func (s *PionMediaAnswerSession) SendH264RTP(ctx context.Context, duration time.
 	plan.Evidence.TimeToFirstMS = nonNegativeMS(time.Since(s.started).Milliseconds() - stats.ICEConnectedLatencyMS)
 	sent, err := s.sendH264Plan(ctx, plan)
 	sent.Evidence.ReceiveMS = time.Since(s.started).Milliseconds()
+	sent.Evidence = sent.Evidence.WithICEStats(s.Snapshot())
 	return sent, err
 }
 
 func (s *PionMediaAnswerSession) SendAVRTP(ctx context.Context, duration time.Duration) (AVRTPEvidence, error) {
 	if err := s.waitICEConnected(ctx); err != nil {
+		return AVRTPEvidence{}, err
+	}
+	if err := s.waitPeerConnected(ctx); err != nil {
 		return AVRTPEvidence{}, err
 	}
 	stats := s.Snapshot()
@@ -907,6 +1222,9 @@ func (s *PionMediaAnswerSession) SendAVRTP(ctx context.Context, duration time.Du
 		}
 	}
 	receiveMS := time.Since(s.started).Milliseconds()
+	finalStats := s.Snapshot()
+	videoPlan.Evidence = videoPlan.Evidence.WithICEStats(finalStats)
+	audioPlan.Evidence = audioPlan.Evidence.WithICEStats(finalStats)
 	videoPlan.Evidence.ReceiveMS = receiveMS
 	audioPlan.Evidence.ReceiveMS = receiveMS
 	return AVRTPEvidence{Video: videoPlan.Evidence, Audio: audioPlan.Evidence}, nil
@@ -942,8 +1260,38 @@ func (s *PionMediaAnswerSession) waitICEConnected(ctx context.Context) error {
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-time.After(5 * time.Second):
+	case <-time.After(defaultWebRTCICERequiredWait):
 		return errors.New("webrtc media answerer ICE connection timeout")
+	}
+}
+
+func (s *PionMediaAnswerSession) waitPeerConnected(ctx context.Context) error {
+	if s.peer.ConnectionState() == webrtc.PeerConnectionStateConnected {
+		return nil
+	}
+	select {
+	case <-s.peerConnected:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(defaultWebRTCPeerRequiredWait):
+		return errors.New("webrtc media answerer peer connection timeout")
+	}
+}
+
+func (s *PionMediaAnswerSession) waitPeerConnectedBestEffort(ctx context.Context, timeout time.Duration) error {
+	if timeout <= 0 || s.peer.ConnectionState() == webrtc.PeerConnectionStateConnected {
+		return nil
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-s.peerConnected:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 
@@ -952,10 +1300,7 @@ func (s *PionMediaAnswerSession) Snapshot() WebRTCMediaStats {
 	defer s.mu.Unlock()
 	if s.stats.SelectedLocalCandidateType == "" || s.stats.SelectedRemoteCandidateType == "" || s.stats.SelectedLocalCandidateProtocol == "" || s.stats.SelectedRemoteCandidateProtocol == "" {
 		pair := selectedCandidatePairTrace(s.peer)
-		s.stats.SelectedLocalCandidateType = candidateTypeEvidence(pair.LocalType, s.icePolicy)
-		s.stats.SelectedRemoteCandidateType = candidateTypeEvidence(pair.RemoteType, s.icePolicy)
-		s.stats.SelectedLocalCandidateProtocol = pair.LocalProtocol
-		s.stats.SelectedRemoteCandidateProtocol = pair.RemoteProtocol
+		applySelectedCandidatePairTrace(&s.stats, pair, s.icePolicy)
 	}
 	return s.stats
 }
@@ -974,11 +1319,19 @@ func (s *PionMediaAnswerSession) sendH264Plan(ctx context.Context, plan H264RTPP
 		WriteRTP: s.videoTrack.WriteRTP,
 	})
 	plan.Evidence = plan.Evidence.WithSchedulerStats(stats)
+	if !stats.FirstWriteCallAt.IsZero() {
+		plan.Evidence.SchedulerFirstWriteCallSinceStartMS = nonNegativeMS(stats.FirstWriteCallAt.Sub(s.started).Milliseconds())
+	}
+	if !stats.FirstWriteReturnAt.IsZero() {
+		plan.Evidence.SchedulerFirstWriteReturnSinceStartMS = nonNegativeMS(stats.FirstWriteReturnAt.Sub(s.started).Milliseconds())
+	}
 	if !stats.FirstWriteAt.IsZero() {
-		plan.Evidence.TimeToFirstMS = nonNegativeMS(stats.FirstWriteAt.Sub(s.started).Milliseconds() - plan.Evidence.ICEMS)
+		firstWriteSinceStart := nonNegativeMS(stats.FirstWriteAt.Sub(s.started).Milliseconds())
+		plan.Evidence.SchedulerFirstWriteSinceStartMS = firstWriteSinceStart
+		plan.Evidence.TimeToFirstMS = nonNegativeMS(firstWriteSinceStart - plan.Evidence.ICEMS)
 	}
 	if err != nil {
-		return H264RTPPlan{}, err
+		return plan, err
 	}
 	return plan, nil
 }
@@ -994,11 +1347,19 @@ func (s *PionMediaAnswerSession) sendOpusPlan(ctx context.Context, plan OpusRTPP
 		WriteRTP: s.audioTrack.WriteRTP,
 	})
 	plan.Evidence = plan.Evidence.WithSchedulerStats(stats)
+	if !stats.FirstWriteCallAt.IsZero() {
+		plan.Evidence.SchedulerFirstWriteCallSinceStartMS = nonNegativeMS(stats.FirstWriteCallAt.Sub(s.started).Milliseconds())
+	}
+	if !stats.FirstWriteReturnAt.IsZero() {
+		plan.Evidence.SchedulerFirstWriteReturnSinceStartMS = nonNegativeMS(stats.FirstWriteReturnAt.Sub(s.started).Milliseconds())
+	}
 	if !stats.FirstWriteAt.IsZero() {
-		plan.Evidence.TimeToFirstMS = nonNegativeMS(stats.FirstWriteAt.Sub(s.started).Milliseconds() - plan.Evidence.ICEMS)
+		firstWriteSinceStart := nonNegativeMS(stats.FirstWriteAt.Sub(s.started).Milliseconds())
+		plan.Evidence.SchedulerFirstWriteSinceStartMS = firstWriteSinceStart
+		plan.Evidence.TimeToFirstMS = nonNegativeMS(firstWriteSinceStart - plan.Evidence.ICEMS)
 	}
 	if err != nil {
-		return OpusRTPPlan{}, err
+		return plan, err
 	}
 	return plan, nil
 }
@@ -1483,6 +1844,54 @@ func h264PayloadPacketizations(payload []byte) []string {
 	}
 }
 
+func h264RTPPayloadHasFrameCandidate(payload []byte, marker bool) bool {
+	if len(payload) == 0 {
+		return false
+	}
+	if len(h264NALTypesFromRTPPayload(payload)) > 0 {
+		return true
+	}
+	return marker && len(h264PayloadPacketizations(payload)) > 0
+}
+
+func h264NALTypesFromRTPPayload(payload []byte) []string {
+	if len(payload) == 0 {
+		return nil
+	}
+	switch payload[0] & 0x1f {
+	case 1, 5, 6, 7, 8, 9:
+		if name := h264NALTypeName(payload[0] & 0x1f); name != "" {
+			return []string{name}
+		}
+	case 24:
+		return h264NALTypesFromSTAPA(payload[1:])
+	case 28:
+		if len(payload) < 2 {
+			return nil
+		}
+		if name := h264NALTypeName(payload[1] & 0x1f); name != "" {
+			return []string{name}
+		}
+	}
+	return nil
+}
+
+func h264NALTypesFromSTAPA(payload []byte) []string {
+	var out []string
+	for len(payload) >= 2 {
+		nalLen := int(payload[0])<<8 | int(payload[1])
+		payload = payload[2:]
+		if nalLen <= 0 || nalLen > len(payload) {
+			return out
+		}
+		if name := h264NALTypeName(payload[0] & 0x1f); name != "" {
+			out = appendUniqueString(out, name)
+		}
+		payload = payload[nalLen:]
+	}
+	return out
+}
+
 func h264NALTypeName(nalType byte) string {
 	switch nalType {
 	case 1:
@@ -1502,6 +1911,18 @@ func h264NALTypeName(nalType byte) string {
 	}
 }
 
+func appendUniqueString(values []string, value string) []string {
+	if value == "" {
+		return values
+	}
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
 func (e H264RTPEvidence) HasNALType(name string) bool {
 	return e.NALTypes[name]
 }
@@ -1517,6 +1938,12 @@ func (e H264RTPEvidence) WithICEStats(stats WebRTCMediaStats) H264RTPEvidence {
 	e.ICEGatheringCompleteMS = stats.ICEGatheringCompleteMS
 	e.RemoteDescriptionSetMS = stats.RemoteDescriptionSetMS
 	e.LocalDescriptionSetMS = stats.LocalDescriptionSetMS
+	e.PionCreatePeerMS = stats.PionCreatePeerMS
+	e.PionCreateOfferMS = stats.PionCreateOfferMS
+	e.PionCreateAnswerMS = stats.PionCreateAnswerMS
+	e.PionSetLocalDescriptionMS = stats.PionSetLocalDescriptionMS
+	e.PionSetRemoteDescriptionMS = stats.PionSetRemoteDescriptionMS
+	e.PionICEGatheringWaitMS = stats.PionICEGatheringWaitMS
 	e.ICECheckingMS = stats.ICECheckingMS
 	e.FirstLocalCandidateMS = stats.FirstLocalCandidateMS
 	e.FirstLocalRelayCandidateMS = stats.FirstLocalRelayCandidateMS
@@ -1531,8 +1958,29 @@ func (e H264RTPEvidence) WithICEStats(stats WebRTCMediaStats) H264RTPEvidence {
 	e.LocalRelayTCPCandidates = stats.LocalRelayTCPCandidates
 	e.ICEConnectionStates = append([]string(nil), stats.ICEConnectionStates...)
 	e.ICEGatheringStates = append([]string(nil), stats.ICEGatheringStates...)
+	e.PeerConnectionStates = append([]string(nil), stats.PeerConnectionStates...)
+	e.PeerConnectionConnectedMS = stats.PeerConnectionConnectedMS
+	e.ICESelectedPairChanges = stats.ICESelectedPairChanges
+	e.ICESelectedPairFirstChangeMS = stats.ICESelectedPairFirstChangeMS
+	e.ICESelectedPairLastChangeMS = stats.ICESelectedPairLastChangeMS
+	e.ICERequestsSent = stats.ICERequestsSent
+	e.ICERequestsReceived = stats.ICERequestsReceived
+	e.ICEResponsesSent = stats.ICEResponsesSent
+	e.ICEResponsesReceived = stats.ICEResponsesReceived
+	e.ICERetransmissionsSent = stats.ICERetransmissionsSent
+	e.ICERetransmissionsReceived = stats.ICERetransmissionsReceived
+	e.ICEConsentRequestsSent = stats.ICEConsentRequestsSent
+	e.ICECurrentRoundTripTimeMS = stats.ICECurrentRoundTripTimeMS
+	e.SelectedLocalCandidateType = stats.SelectedLocalCandidateType
+	e.SelectedRemoteCandidateType = stats.SelectedRemoteCandidateType
 	e.SelectedLocalCandidateProtocol = stats.SelectedLocalCandidateProtocol
 	e.SelectedRemoteCandidateProtocol = stats.SelectedRemoteCandidateProtocol
+	e.SelectedLocalCandidateAddress = stats.SelectedLocalCandidateAddress
+	e.SelectedRemoteCandidateAddress = stats.SelectedRemoteCandidateAddress
+	e.SelectedLocalCandidatePort = stats.SelectedLocalCandidatePort
+	e.SelectedRemoteCandidatePort = stats.SelectedRemoteCandidatePort
+	e.SelectedLocalCandidateTCPType = stats.SelectedLocalCandidateTCPType
+	e.SelectedRemoteCandidateTCPType = stats.SelectedRemoteCandidateTCPType
 	return e
 }
 
@@ -1540,17 +1988,33 @@ func (e H264RTPEvidence) WithSchedulerStats(stats mediaPacedSendStats) H264RTPEv
 	e.SchedulerDroppedJobs = stats.DroppedJobs
 	e.SchedulerDroppedPackets = stats.DroppedPackets
 	e.SchedulerQueueFullDrops = stats.QueueFullDrops
+	e.SchedulerZeroByteWrites = stats.ZeroByteWrites
+	e.SchedulerWriteAttempts = stats.WriteAttempts
+	e.SchedulerWriteReturns = stats.WriteReturns
+	e.SchedulerWriteErrors = stats.WriteErrors
 	e.SchedulerPacketsSent = stats.PacketsSent
 	e.SchedulerBytesSent = stats.BytesSent
+	e.SchedulerStartedAtMS = schedulerOffsetMS(stats.StartedAt, stats.StartedAt)
+	e.SchedulerFirstWriteCallMS = schedulerOffsetMS(stats.FirstWriteCallAt, stats.StartedAt)
+	e.SchedulerFirstWriteReturnMS = schedulerOffsetMS(stats.FirstWriteReturnAt, stats.StartedAt)
+	e.SchedulerFirstWriteMS = schedulerOffsetMS(stats.FirstWriteAt, stats.StartedAt)
+	e.SchedulerEndedAtMS = schedulerOffsetMS(stats.EndedAt, stats.StartedAt)
+	e.SchedulerMaxWriteMS = stats.MaxWriteLatency.Milliseconds()
+	if !stats.StartedAt.IsZero() && !stats.EndedAt.IsZero() {
+		e.SchedulerSendDurationMS = stats.EndedAt.Sub(stats.StartedAt).Milliseconds()
+	}
 	return e
 }
 
 func (e H264RTPEvidence) String() string {
-	base := fmt.Sprintf("codec=h264 packets=%d bytes=%d duration_ms=%d loops=%d frames=%d nal_types=%s packetization=%s receive_ms=%d ttfb_ms=%d ice_ms=%d selected_local_candidate_type=%s selected_remote_candidate_type=%s selected_local_candidate_protocol=%s selected_remote_candidate_protocol=%s",
-		e.Packets, e.Bytes, e.DurationMS, e.Loops, e.Frames, joinEvidenceKeys(e.NALTypes), joinEvidenceKeys(e.Packetizations), e.ReceiveMS, e.TimeToFirstMS, e.ICEMS, evidenceOrDefault(e.SelectedLocalCandidateType, "unknown"), evidenceOrDefault(e.SelectedRemoteCandidateType, "unknown"), evidenceOrDefault(e.SelectedLocalCandidateProtocol, "unknown"), evidenceOrDefault(e.SelectedRemoteCandidateProtocol, "unknown"))
-	base = appendICETraceEvidence(base, e.ICEGatheringCompleteMS, e.RemoteDescriptionSetMS, e.LocalDescriptionSetMS, e.ICECheckingMS, e.FirstLocalCandidateMS, e.FirstLocalRelayCandidateMS, e.FirstLocalRelayUDPCandidateMS, e.FirstLocalRelayTCPCandidateMS, e.LocalHostCandidates, e.LocalSrflxCandidates, e.LocalRelayCandidates, e.LocalUDPCandidates, e.LocalTCPCandidates, e.LocalRelayUDPCandidates, e.LocalRelayTCPCandidates, e.SelectedLocalCandidateProtocol, e.SelectedRemoteCandidateProtocol, e.ICEConnectionStates, e.ICEGatheringStates)
-	base += fmt.Sprintf(" scheduler_packets_sent=%d scheduler_bytes_sent=%d scheduler_dropped_jobs=%d scheduler_dropped_packets=%d scheduler_queue_full_drops=%d",
-		e.SchedulerPacketsSent, e.SchedulerBytesSent, e.SchedulerDroppedJobs, e.SchedulerDroppedPackets, e.SchedulerQueueFullDrops)
+	base := fmt.Sprintf("codec=h264 packets=%d bytes=%d duration_ms=%d loops=%d frames=%d nal_types=%s packetization=%s receive_ms=%d ttfb_ms=%d ice_ms=%d selected_local_candidate_type=%s selected_remote_candidate_type=%s selected_local_candidate_protocol=%s selected_remote_candidate_protocol=%s selected_local_candidate_address=%s selected_remote_candidate_address=%s selected_local_candidate_port=%d selected_remote_candidate_port=%d selected_local_candidate_tcp_type=%s selected_remote_candidate_tcp_type=%s",
+		e.Packets, e.Bytes, e.DurationMS, e.Loops, e.Frames, joinEvidenceKeys(e.NALTypes), joinEvidenceKeys(e.Packetizations), e.ReceiveMS, e.TimeToFirstMS, e.ICEMS, evidenceOrDefault(e.SelectedLocalCandidateType, "unknown"), evidenceOrDefault(e.SelectedRemoteCandidateType, "unknown"), evidenceOrDefault(e.SelectedLocalCandidateProtocol, "unknown"), evidenceOrDefault(e.SelectedRemoteCandidateProtocol, "unknown"), evidenceOrDefault(e.SelectedLocalCandidateAddress, "unknown"), evidenceOrDefault(e.SelectedRemoteCandidateAddress, "unknown"), e.SelectedLocalCandidatePort, e.SelectedRemoteCandidatePort, evidenceOrDefault(e.SelectedLocalCandidateTCPType, "unknown"), evidenceOrDefault(e.SelectedRemoteCandidateTCPType, "unknown"))
+	base = appendICETraceEvidence(base, e.ICEGatheringCompleteMS, e.RemoteDescriptionSetMS, e.LocalDescriptionSetMS, e.ICECheckingMS, e.FirstLocalCandidateMS, e.FirstLocalRelayCandidateMS, e.FirstLocalRelayUDPCandidateMS, e.FirstLocalRelayTCPCandidateMS, e.LocalHostCandidates, e.LocalSrflxCandidates, e.LocalRelayCandidates, e.LocalUDPCandidates, e.LocalTCPCandidates, e.LocalRelayUDPCandidates, e.LocalRelayTCPCandidates, e.SelectedLocalCandidateType, e.SelectedRemoteCandidateType, e.SelectedLocalCandidateProtocol, e.SelectedRemoteCandidateProtocol, e.ICEConnectionStates, e.ICEGatheringStates)
+	base = appendICEPairStatsEvidence(base, e.ICESelectedPairChanges, e.ICESelectedPairFirstChangeMS, e.ICESelectedPairLastChangeMS, e.ICERequestsSent, e.ICERequestsReceived, e.ICEResponsesSent, e.ICEResponsesReceived, e.ICERetransmissionsSent, e.ICERetransmissionsReceived, e.ICEConsentRequestsSent, e.ICECurrentRoundTripTimeMS)
+	base = appendPeerConnectionEvidence(base, e.PeerConnectionConnectedMS, e.PeerConnectionStates)
+	base = appendPionPhaseEvidence(base, e.PionCreatePeerMS, e.PionCreateOfferMS, e.PionCreateAnswerMS, e.PionSetLocalDescriptionMS, e.PionSetRemoteDescriptionMS, e.PionICEGatheringWaitMS)
+	base += fmt.Sprintf(" scheduler_packets_sent=%d scheduler_bytes_sent=%d scheduler_dropped_jobs=%d scheduler_dropped_packets=%d scheduler_queue_full_drops=%d scheduler_zero_byte_writes=%d scheduler_write_attempts=%d scheduler_write_returns=%d scheduler_write_errors=%d scheduler_first_write_call_ms=%d scheduler_first_write_return_ms=%d scheduler_first_write_call_since_session_start_ms=%d scheduler_first_write_return_since_session_start_ms=%d scheduler_write_max_ms=%d scheduler_started_ms=%d scheduler_first_write_ms=%d scheduler_first_write_since_session_start_ms=%d scheduler_ended_ms=%d scheduler_send_duration_ms=%d",
+		e.SchedulerPacketsSent, e.SchedulerBytesSent, e.SchedulerDroppedJobs, e.SchedulerDroppedPackets, e.SchedulerQueueFullDrops, e.SchedulerZeroByteWrites, e.SchedulerWriteAttempts, e.SchedulerWriteReturns, e.SchedulerWriteErrors, e.SchedulerFirstWriteCallMS, e.SchedulerFirstWriteReturnMS, e.SchedulerFirstWriteCallSinceStartMS, e.SchedulerFirstWriteReturnSinceStartMS, e.SchedulerMaxWriteMS, e.SchedulerStartedAtMS, e.SchedulerFirstWriteMS, e.SchedulerFirstWriteSinceStartMS, e.SchedulerEndedAtMS, e.SchedulerSendDurationMS)
 	if e.ExpectedSHA256 != "" {
 		base += fmt.Sprintf(" expected_sha256=%s", e.ExpectedSHA256)
 	}
@@ -1572,6 +2036,12 @@ func (e OpusRTPEvidence) WithICEStats(stats WebRTCMediaStats) OpusRTPEvidence {
 	e.ICEGatheringCompleteMS = stats.ICEGatheringCompleteMS
 	e.RemoteDescriptionSetMS = stats.RemoteDescriptionSetMS
 	e.LocalDescriptionSetMS = stats.LocalDescriptionSetMS
+	e.PionCreatePeerMS = stats.PionCreatePeerMS
+	e.PionCreateOfferMS = stats.PionCreateOfferMS
+	e.PionCreateAnswerMS = stats.PionCreateAnswerMS
+	e.PionSetLocalDescriptionMS = stats.PionSetLocalDescriptionMS
+	e.PionSetRemoteDescriptionMS = stats.PionSetRemoteDescriptionMS
+	e.PionICEGatheringWaitMS = stats.PionICEGatheringWaitMS
 	e.ICECheckingMS = stats.ICECheckingMS
 	e.FirstLocalCandidateMS = stats.FirstLocalCandidateMS
 	e.FirstLocalRelayCandidateMS = stats.FirstLocalRelayCandidateMS
@@ -1586,8 +2056,29 @@ func (e OpusRTPEvidence) WithICEStats(stats WebRTCMediaStats) OpusRTPEvidence {
 	e.LocalRelayTCPCandidates = stats.LocalRelayTCPCandidates
 	e.ICEConnectionStates = append([]string(nil), stats.ICEConnectionStates...)
 	e.ICEGatheringStates = append([]string(nil), stats.ICEGatheringStates...)
+	e.PeerConnectionStates = append([]string(nil), stats.PeerConnectionStates...)
+	e.PeerConnectionConnectedMS = stats.PeerConnectionConnectedMS
+	e.ICESelectedPairChanges = stats.ICESelectedPairChanges
+	e.ICESelectedPairFirstChangeMS = stats.ICESelectedPairFirstChangeMS
+	e.ICESelectedPairLastChangeMS = stats.ICESelectedPairLastChangeMS
+	e.ICERequestsSent = stats.ICERequestsSent
+	e.ICERequestsReceived = stats.ICERequestsReceived
+	e.ICEResponsesSent = stats.ICEResponsesSent
+	e.ICEResponsesReceived = stats.ICEResponsesReceived
+	e.ICERetransmissionsSent = stats.ICERetransmissionsSent
+	e.ICERetransmissionsReceived = stats.ICERetransmissionsReceived
+	e.ICEConsentRequestsSent = stats.ICEConsentRequestsSent
+	e.ICECurrentRoundTripTimeMS = stats.ICECurrentRoundTripTimeMS
+	e.SelectedLocalCandidateType = stats.SelectedLocalCandidateType
+	e.SelectedRemoteCandidateType = stats.SelectedRemoteCandidateType
 	e.SelectedLocalCandidateProtocol = stats.SelectedLocalCandidateProtocol
 	e.SelectedRemoteCandidateProtocol = stats.SelectedRemoteCandidateProtocol
+	e.SelectedLocalCandidateAddress = stats.SelectedLocalCandidateAddress
+	e.SelectedRemoteCandidateAddress = stats.SelectedRemoteCandidateAddress
+	e.SelectedLocalCandidatePort = stats.SelectedLocalCandidatePort
+	e.SelectedRemoteCandidatePort = stats.SelectedRemoteCandidatePort
+	e.SelectedLocalCandidateTCPType = stats.SelectedLocalCandidateTCPType
+	e.SelectedRemoteCandidateTCPType = stats.SelectedRemoteCandidateTCPType
 	return e
 }
 
@@ -1595,17 +2086,33 @@ func (e OpusRTPEvidence) WithSchedulerStats(stats mediaPacedSendStats) OpusRTPEv
 	e.SchedulerDroppedJobs = stats.DroppedJobs
 	e.SchedulerDroppedPackets = stats.DroppedPackets
 	e.SchedulerQueueFullDrops = stats.QueueFullDrops
+	e.SchedulerZeroByteWrites = stats.ZeroByteWrites
+	e.SchedulerWriteAttempts = stats.WriteAttempts
+	e.SchedulerWriteReturns = stats.WriteReturns
+	e.SchedulerWriteErrors = stats.WriteErrors
 	e.SchedulerPacketsSent = stats.PacketsSent
 	e.SchedulerBytesSent = stats.BytesSent
+	e.SchedulerStartedAtMS = schedulerOffsetMS(stats.StartedAt, stats.StartedAt)
+	e.SchedulerFirstWriteCallMS = schedulerOffsetMS(stats.FirstWriteCallAt, stats.StartedAt)
+	e.SchedulerFirstWriteReturnMS = schedulerOffsetMS(stats.FirstWriteReturnAt, stats.StartedAt)
+	e.SchedulerFirstWriteMS = schedulerOffsetMS(stats.FirstWriteAt, stats.StartedAt)
+	e.SchedulerEndedAtMS = schedulerOffsetMS(stats.EndedAt, stats.StartedAt)
+	e.SchedulerMaxWriteMS = stats.MaxWriteLatency.Milliseconds()
+	if !stats.StartedAt.IsZero() && !stats.EndedAt.IsZero() {
+		e.SchedulerSendDurationMS = stats.EndedAt.Sub(stats.StartedAt).Milliseconds()
+	}
 	return e
 }
 
 func (e OpusRTPEvidence) String() string {
-	base := fmt.Sprintf("codec=opus packets=%d bytes=%d duration_ms=%d loops=%d frames=%d sample_rate=%d channels=%d receive_ms=%d ttfb_ms=%d ice_ms=%d selected_local_candidate_type=%s selected_remote_candidate_type=%s selected_local_candidate_protocol=%s selected_remote_candidate_protocol=%s",
-		e.Packets, e.Bytes, e.DurationMS, e.Loops, e.Frames, e.SampleRate, e.Channels, e.ReceiveMS, e.TimeToFirstMS, e.ICEMS, evidenceOrDefault(e.SelectedLocalCandidateType, "unknown"), evidenceOrDefault(e.SelectedRemoteCandidateType, "unknown"), evidenceOrDefault(e.SelectedLocalCandidateProtocol, "unknown"), evidenceOrDefault(e.SelectedRemoteCandidateProtocol, "unknown"))
-	base = appendICETraceEvidence(base, e.ICEGatheringCompleteMS, e.RemoteDescriptionSetMS, e.LocalDescriptionSetMS, e.ICECheckingMS, e.FirstLocalCandidateMS, e.FirstLocalRelayCandidateMS, e.FirstLocalRelayUDPCandidateMS, e.FirstLocalRelayTCPCandidateMS, e.LocalHostCandidates, e.LocalSrflxCandidates, e.LocalRelayCandidates, e.LocalUDPCandidates, e.LocalTCPCandidates, e.LocalRelayUDPCandidates, e.LocalRelayTCPCandidates, e.SelectedLocalCandidateProtocol, e.SelectedRemoteCandidateProtocol, e.ICEConnectionStates, e.ICEGatheringStates)
-	base += fmt.Sprintf(" scheduler_packets_sent=%d scheduler_bytes_sent=%d scheduler_dropped_jobs=%d scheduler_dropped_packets=%d scheduler_queue_full_drops=%d",
-		e.SchedulerPacketsSent, e.SchedulerBytesSent, e.SchedulerDroppedJobs, e.SchedulerDroppedPackets, e.SchedulerQueueFullDrops)
+	base := fmt.Sprintf("codec=opus packets=%d bytes=%d duration_ms=%d loops=%d frames=%d sample_rate=%d channels=%d receive_ms=%d ttfb_ms=%d ice_ms=%d selected_local_candidate_type=%s selected_remote_candidate_type=%s selected_local_candidate_protocol=%s selected_remote_candidate_protocol=%s selected_local_candidate_address=%s selected_remote_candidate_address=%s selected_local_candidate_port=%d selected_remote_candidate_port=%d selected_local_candidate_tcp_type=%s selected_remote_candidate_tcp_type=%s",
+		e.Packets, e.Bytes, e.DurationMS, e.Loops, e.Frames, e.SampleRate, e.Channels, e.ReceiveMS, e.TimeToFirstMS, e.ICEMS, evidenceOrDefault(e.SelectedLocalCandidateType, "unknown"), evidenceOrDefault(e.SelectedRemoteCandidateType, "unknown"), evidenceOrDefault(e.SelectedLocalCandidateProtocol, "unknown"), evidenceOrDefault(e.SelectedRemoteCandidateProtocol, "unknown"), evidenceOrDefault(e.SelectedLocalCandidateAddress, "unknown"), evidenceOrDefault(e.SelectedRemoteCandidateAddress, "unknown"), e.SelectedLocalCandidatePort, e.SelectedRemoteCandidatePort, evidenceOrDefault(e.SelectedLocalCandidateTCPType, "unknown"), evidenceOrDefault(e.SelectedRemoteCandidateTCPType, "unknown"))
+	base = appendICETraceEvidence(base, e.ICEGatheringCompleteMS, e.RemoteDescriptionSetMS, e.LocalDescriptionSetMS, e.ICECheckingMS, e.FirstLocalCandidateMS, e.FirstLocalRelayCandidateMS, e.FirstLocalRelayUDPCandidateMS, e.FirstLocalRelayTCPCandidateMS, e.LocalHostCandidates, e.LocalSrflxCandidates, e.LocalRelayCandidates, e.LocalUDPCandidates, e.LocalTCPCandidates, e.LocalRelayUDPCandidates, e.LocalRelayTCPCandidates, e.SelectedLocalCandidateType, e.SelectedRemoteCandidateType, e.SelectedLocalCandidateProtocol, e.SelectedRemoteCandidateProtocol, e.ICEConnectionStates, e.ICEGatheringStates)
+	base = appendICEPairStatsEvidence(base, e.ICESelectedPairChanges, e.ICESelectedPairFirstChangeMS, e.ICESelectedPairLastChangeMS, e.ICERequestsSent, e.ICERequestsReceived, e.ICEResponsesSent, e.ICEResponsesReceived, e.ICERetransmissionsSent, e.ICERetransmissionsReceived, e.ICEConsentRequestsSent, e.ICECurrentRoundTripTimeMS)
+	base = appendPeerConnectionEvidence(base, e.PeerConnectionConnectedMS, e.PeerConnectionStates)
+	base = appendPionPhaseEvidence(base, e.PionCreatePeerMS, e.PionCreateOfferMS, e.PionCreateAnswerMS, e.PionSetLocalDescriptionMS, e.PionSetRemoteDescriptionMS, e.PionICEGatheringWaitMS)
+	base += fmt.Sprintf(" scheduler_packets_sent=%d scheduler_bytes_sent=%d scheduler_dropped_jobs=%d scheduler_dropped_packets=%d scheduler_queue_full_drops=%d scheduler_zero_byte_writes=%d scheduler_write_attempts=%d scheduler_write_returns=%d scheduler_write_errors=%d scheduler_first_write_call_ms=%d scheduler_first_write_return_ms=%d scheduler_first_write_call_since_session_start_ms=%d scheduler_first_write_return_since_session_start_ms=%d scheduler_write_max_ms=%d scheduler_started_ms=%d scheduler_first_write_ms=%d scheduler_first_write_since_session_start_ms=%d scheduler_ended_ms=%d scheduler_send_duration_ms=%d",
+		e.SchedulerPacketsSent, e.SchedulerBytesSent, e.SchedulerDroppedJobs, e.SchedulerDroppedPackets, e.SchedulerQueueFullDrops, e.SchedulerZeroByteWrites, e.SchedulerWriteAttempts, e.SchedulerWriteReturns, e.SchedulerWriteErrors, e.SchedulerFirstWriteCallMS, e.SchedulerFirstWriteReturnMS, e.SchedulerFirstWriteCallSinceStartMS, e.SchedulerFirstWriteReturnSinceStartMS, e.SchedulerMaxWriteMS, e.SchedulerStartedAtMS, e.SchedulerFirstWriteMS, e.SchedulerFirstWriteSinceStartMS, e.SchedulerEndedAtMS, e.SchedulerSendDurationMS)
 	base += fmt.Sprintf(" receiver_packets=%d receiver_bytes=%d receiver_frames=%d first_opus_rtp_ms=%d",
 		e.ReceiverPackets, e.ReceiverBytes, e.ReceiverFrames, e.FirstOpusRTPMS)
 	return base
@@ -1629,7 +2136,14 @@ func evidenceOrDefault(value, fallback string) string {
 	return value
 }
 
-func appendICETraceEvidence(base string, gatherCompleteMS, remoteDescriptionMS, localDescriptionMS, checkingMS, firstCandidateMS, firstRelayCandidateMS, firstRelayUDPCandidateMS, firstRelayTCPCandidateMS int64, hostCandidates, srflxCandidates, relayCandidates, udpCandidates, tcpCandidates, relayUDPCandidates, relayTCPCandidates int, selectedLocalProtocol, selectedRemoteProtocol string, connectionStates, gatheringStates []string) string {
+func schedulerOffsetMS(value time.Time, start time.Time) int64 {
+	if value.IsZero() || start.IsZero() {
+		return 0
+	}
+	return nonNegativeMS(value.Sub(start).Milliseconds())
+}
+
+func appendICETraceEvidence(base string, gatherCompleteMS, remoteDescriptionMS, localDescriptionMS, checkingMS, firstCandidateMS, firstRelayCandidateMS, firstRelayUDPCandidateMS, firstRelayTCPCandidateMS int64, hostCandidates, srflxCandidates, relayCandidates, udpCandidates, tcpCandidates, relayUDPCandidates, relayTCPCandidates int, selectedLocalType, selectedRemoteType, selectedLocalProtocol, selectedRemoteProtocol string, connectionStates, gatheringStates []string) string {
 	parts := []string{}
 	if gatherCompleteMS > 0 {
 		parts = append(parts, fmt.Sprintf("ice_gather_complete_ms=%d", gatherCompleteMS))
@@ -1664,6 +2178,12 @@ func appendICETraceEvidence(base string, gatherCompleteMS, remoteDescriptionMS, 
 		fmt.Sprintf("local_relay_udp_candidates=%d", relayUDPCandidates),
 		fmt.Sprintf("local_relay_tcp_candidates=%d", relayTCPCandidates),
 	)
+	if selectedLocalType != "" {
+		parts = append(parts, "selected_local_candidate_type="+selectedLocalType)
+	}
+	if selectedRemoteType != "" {
+		parts = append(parts, "selected_remote_candidate_type="+selectedRemoteType)
+	}
 	if selectedLocalProtocol != "" {
 		parts = append(parts, "selected_local_candidate_protocol="+selectedLocalProtocol)
 	}
@@ -1679,8 +2199,83 @@ func appendICETraceEvidence(base string, gatherCompleteMS, remoteDescriptionMS, 
 	return appendEvidence(base, strings.Join(parts, " "))
 }
 
+func appendICEPairStatsEvidence(base string, selectedPairChanges int, firstPairChangeMS, lastPairChangeMS int64, requestsSent, requestsReceived, responsesSent, responsesReceived, retransmissionsSent, retransmissionsReceived, consentRequestsSent uint64, currentRTTMS int64) string {
+	parts := []string{}
+	if selectedPairChanges > 0 {
+		parts = append(parts, fmt.Sprintf("ice_selected_pair_changes=%d", selectedPairChanges))
+	}
+	if firstPairChangeMS > 0 {
+		parts = append(parts, fmt.Sprintf("ice_selected_pair_first_change_ms=%d", firstPairChangeMS))
+	}
+	if lastPairChangeMS > 0 {
+		parts = append(parts, fmt.Sprintf("ice_selected_pair_last_change_ms=%d", lastPairChangeMS))
+	}
+	if requestsSent > 0 {
+		parts = append(parts, fmt.Sprintf("ice_requests_sent=%d", requestsSent))
+	}
+	if requestsReceived > 0 {
+		parts = append(parts, fmt.Sprintf("ice_requests_received=%d", requestsReceived))
+	}
+	if responsesSent > 0 {
+		parts = append(parts, fmt.Sprintf("ice_responses_sent=%d", responsesSent))
+	}
+	if responsesReceived > 0 {
+		parts = append(parts, fmt.Sprintf("ice_responses_received=%d", responsesReceived))
+	}
+	if retransmissionsSent > 0 {
+		parts = append(parts, fmt.Sprintf("ice_retransmissions_sent=%d", retransmissionsSent))
+	}
+	if retransmissionsReceived > 0 {
+		parts = append(parts, fmt.Sprintf("ice_retransmissions_received=%d", retransmissionsReceived))
+	}
+	if consentRequestsSent > 0 {
+		parts = append(parts, fmt.Sprintf("ice_consent_requests_sent=%d", consentRequestsSent))
+	}
+	if currentRTTMS > 0 {
+		parts = append(parts, fmt.Sprintf("ice_rtt_ms=%d", currentRTTMS))
+	}
+	return appendEvidence(base, strings.Join(parts, " "))
+}
+
 func iceTraceEvidence(stats WebRTCMediaStats) string {
-	return appendICETraceEvidence("", stats.ICEGatheringCompleteMS, stats.RemoteDescriptionSetMS, stats.LocalDescriptionSetMS, stats.ICECheckingMS, stats.FirstLocalCandidateMS, stats.FirstLocalRelayCandidateMS, stats.FirstLocalRelayUDPCandidateMS, stats.FirstLocalRelayTCPCandidateMS, stats.LocalHostCandidates, stats.LocalSrflxCandidates, stats.LocalRelayCandidates, stats.LocalUDPCandidates, stats.LocalTCPCandidates, stats.LocalRelayUDPCandidates, stats.LocalRelayTCPCandidates, stats.SelectedLocalCandidateProtocol, stats.SelectedRemoteCandidateProtocol, stats.ICEConnectionStates, stats.ICEGatheringStates)
+	base := appendICETraceEvidence("", stats.ICEGatheringCompleteMS, stats.RemoteDescriptionSetMS, stats.LocalDescriptionSetMS, stats.ICECheckingMS, stats.FirstLocalCandidateMS, stats.FirstLocalRelayCandidateMS, stats.FirstLocalRelayUDPCandidateMS, stats.FirstLocalRelayTCPCandidateMS, stats.LocalHostCandidates, stats.LocalSrflxCandidates, stats.LocalRelayCandidates, stats.LocalUDPCandidates, stats.LocalTCPCandidates, stats.LocalRelayUDPCandidates, stats.LocalRelayTCPCandidates, stats.SelectedLocalCandidateType, stats.SelectedRemoteCandidateType, stats.SelectedLocalCandidateProtocol, stats.SelectedRemoteCandidateProtocol, stats.ICEConnectionStates, stats.ICEGatheringStates)
+	base = appendICEPairStatsEvidence(base, stats.ICESelectedPairChanges, stats.ICESelectedPairFirstChangeMS, stats.ICESelectedPairLastChangeMS, stats.ICERequestsSent, stats.ICERequestsReceived, stats.ICEResponsesSent, stats.ICEResponsesReceived, stats.ICERetransmissionsSent, stats.ICERetransmissionsReceived, stats.ICEConsentRequestsSent, stats.ICECurrentRoundTripTimeMS)
+	base = appendPeerConnectionEvidence(base, stats.PeerConnectionConnectedMS, stats.PeerConnectionStates)
+	return appendPionPhaseEvidence(base, stats.PionCreatePeerMS, stats.PionCreateOfferMS, stats.PionCreateAnswerMS, stats.PionSetLocalDescriptionMS, stats.PionSetRemoteDescriptionMS, stats.PionICEGatheringWaitMS)
+}
+
+func appendPeerConnectionEvidence(base string, connectedMS int64, states []string) string {
+	parts := []string{}
+	if connectedMS > 0 {
+		parts = append(parts, fmt.Sprintf("peer_connection_connected_ms=%d", connectedMS))
+	}
+	if len(states) > 0 {
+		parts = append(parts, "peer_connection_states="+strings.Join(states, ","))
+	}
+	return appendEvidence(base, strings.Join(parts, " "))
+}
+
+func appendPionPhaseEvidence(base string, createPeerMS, createOfferMS, createAnswerMS, setLocalDescriptionMS, setRemoteDescriptionMS, iceGatheringWaitMS int64) string {
+	parts := []string{}
+	if createPeerMS > 0 {
+		parts = append(parts, fmt.Sprintf("pion_create_peer_ms=%d", createPeerMS))
+	}
+	if createOfferMS > 0 {
+		parts = append(parts, fmt.Sprintf("pion_create_offer_ms=%d", createOfferMS))
+	}
+	if createAnswerMS > 0 {
+		parts = append(parts, fmt.Sprintf("pion_create_answer_ms=%d", createAnswerMS))
+	}
+	if setLocalDescriptionMS > 0 {
+		parts = append(parts, fmt.Sprintf("pion_set_local_description_ms=%d", setLocalDescriptionMS))
+	}
+	if setRemoteDescriptionMS > 0 {
+		parts = append(parts, fmt.Sprintf("pion_set_remote_description_ms=%d", setRemoteDescriptionMS))
+	}
+	if iceGatheringWaitMS > 0 {
+		parts = append(parts, fmt.Sprintf("pion_ice_gathering_wait_ms=%d", iceGatheringWaitMS))
+	}
+	return appendEvidence(base, strings.Join(parts, " "))
 }
 
 func prefixEvidenceKeys(evidence, prefix string) string {
@@ -1715,11 +2310,27 @@ func (s *PionMediaAnswerSession) Close() {
 }
 
 func waitICEGatheringComplete(ctx context.Context, gatherComplete <-chan struct{}, timeout time.Duration) error {
+	return waitICEGatheringReady(ctx, gatherComplete, nil, webrtc.ICETransportPolicyAll, timeout)
+}
+
+func waitICEGatheringReady(ctx context.Context, gatherComplete <-chan struct{}, localRelayCandidate <-chan struct{}, policy webrtc.ICETransportPolicy, timeout time.Duration) error {
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
+	if policy == webrtc.ICETransportPolicyRelay && localRelayCandidate != nil {
+		select {
+		case <-localRelayCandidate:
+			return nil
+		case <-gatherComplete:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return errors.New("webrtc ICE relay candidate timeout")
+		}
+	}
 	select {
 	case <-gatherComplete:
 		return nil
@@ -1847,6 +2458,34 @@ type selectedCandidatePairEvidence struct {
 	RemoteType     string
 	LocalProtocol  string
 	RemoteProtocol string
+	LocalAddress   string
+	RemoteAddress  string
+	LocalPort      int
+	RemotePort     int
+	LocalTCPType   string
+	RemoteTCPType  string
+}
+
+func selectedCandidatePairTraceFromPair(pair *webrtc.ICECandidatePair) selectedCandidatePairEvidence {
+	if pair == nil {
+		return selectedCandidatePairEvidence{}
+	}
+	trace := selectedCandidatePairEvidence{}
+	if pair.Local != nil {
+		trace.LocalType = pair.Local.Typ.String()
+		trace.LocalProtocol = pair.Local.Protocol.String()
+		trace.LocalAddress = pair.Local.Address
+		trace.LocalPort = int(pair.Local.Port)
+		trace.LocalTCPType = pair.Local.TCPType
+	}
+	if pair.Remote != nil {
+		trace.RemoteType = pair.Remote.Typ.String()
+		trace.RemoteProtocol = pair.Remote.Protocol.String()
+		trace.RemoteAddress = pair.Remote.Address
+		trace.RemotePort = int(pair.Remote.Port)
+		trace.RemoteTCPType = pair.Remote.TCPType
+	}
+	return trace
 }
 
 func selectedCandidatePairTrace(peer *webrtc.PeerConnection) selectedCandidatePairEvidence {
@@ -1884,16 +2523,54 @@ func selectedCandidatePairTraceFromDTLS(dtls *webrtc.DTLSTransport) selectedCand
 	if err != nil || pair == nil {
 		return selectedCandidatePairEvidence{}
 	}
-	trace := selectedCandidatePairEvidence{}
-	if pair.Local != nil {
-		trace.LocalType = pair.Local.Typ.String()
-		trace.LocalProtocol = pair.Local.Protocol.String()
+	return selectedCandidatePairTraceFromPair(pair)
+}
+
+func selectedCandidatePairStatsTrace(peer *webrtc.PeerConnection) selectedCandidatePairStatsEvidence {
+	if peer == nil {
+		return selectedCandidatePairStatsEvidence{}
 	}
-	if pair.Remote != nil {
-		trace.RemoteType = pair.Remote.Typ.String()
-		trace.RemoteProtocol = pair.Remote.Protocol.String()
+	report := peer.GetStats()
+	for _, transceiver := range peer.GetTransceivers() {
+		if transceiver == nil {
+			continue
+		}
+		if receiver := transceiver.Receiver(); receiver != nil {
+			if stats, ok := selectedCandidatePairStatsTraceFromDTLS(report, receiver.Transport()); ok {
+				return stats
+			}
+		}
+		if sender := transceiver.Sender(); sender != nil {
+			if stats, ok := selectedCandidatePairStatsTraceFromDTLS(report, sender.Transport()); ok {
+				return stats
+			}
+		}
 	}
-	return trace
+	return selectedCandidatePairStatsEvidence{}
+}
+
+func selectedCandidatePairStatsTraceFromDTLS(report webrtc.StatsReport, dtls *webrtc.DTLSTransport) (selectedCandidatePairStatsEvidence, bool) {
+	if dtls == nil || dtls.ICETransport() == nil {
+		return selectedCandidatePairStatsEvidence{}, false
+	}
+	pair, err := dtls.ICETransport().GetSelectedCandidatePair()
+	if err != nil || pair == nil {
+		return selectedCandidatePairStatsEvidence{}, false
+	}
+	stats, ok := report.GetICECandidatePairStats(pair)
+	if !ok {
+		return selectedCandidatePairStatsEvidence{}, false
+	}
+	return selectedCandidatePairStatsEvidence{
+		RequestsSent:            stats.RequestsSent,
+		RequestsReceived:        stats.RequestsReceived,
+		ResponsesSent:           stats.ResponsesSent,
+		ResponsesReceived:       stats.ResponsesReceived,
+		RetransmissionsSent:     stats.RetransmissionsSent,
+		RetransmissionsReceived: stats.RetransmissionsReceived,
+		ConsentRequestsSent:     stats.ConsentRequestsSent,
+		CurrentRoundTripTimeMS:  int64(stats.CurrentRoundTripTime * 1000),
+	}, true
 }
 
 func candidateTypeEvidence(candidateType string, policy webrtc.ICETransportPolicy) string {
@@ -1972,6 +2649,10 @@ func validateServerOffer(response map[string]any) error {
 }
 
 func extractICEServers(response map[string]any) ([]webrtc.ICEServer, error) {
+	return extractICEServersForPolicy(response, WebRTCICEPolicyAll)
+}
+
+func extractICEServersForPolicy(response map[string]any, policy string) ([]webrtc.ICEServer, error) {
 	raw, ok := response["ice_servers"]
 	if !ok {
 		return nil, errors.New("missing ice_servers")
@@ -1994,13 +2675,33 @@ func extractICEServers(response map[string]any) ([]webrtc.ICEServer, error) {
 		if err != nil {
 			return nil, err
 		}
+		if strings.EqualFold(normalizedWebRTCICEPolicy(policy), WebRTCICEPolicyRelay) {
+			urls = relayICEURLs(urls)
+			if len(urls) == 0 {
+				continue
+			}
+		}
 		servers = append(servers, webrtc.ICEServer{
 			URLs:       urls,
 			Username:   server.Username,
 			Credential: server.Credential,
 		})
 	}
+	if strings.EqualFold(normalizedWebRTCICEPolicy(policy), WebRTCICEPolicyRelay) && len(servers) == 0 {
+		return nil, errors.New("missing TURN ice_servers for relay policy")
+	}
 	return servers, nil
+}
+
+func relayICEURLs(urls []string) []string {
+	relayURLs := make([]string, 0, len(urls))
+	for _, url := range urls {
+		scheme := strings.ToLower(strings.TrimSpace(url))
+		if strings.HasPrefix(scheme, "turn:") || strings.HasPrefix(scheme, "turns:") {
+			relayURLs = append(relayURLs, url)
+		}
+	}
+	return relayURLs
 }
 
 func normalizeURLs(raw any) ([]string, error) {
