@@ -285,6 +285,10 @@ fingerprint
 min-port=%s
 max-port=%s
 no-multicast-peers
+verbose
+cli-ip=127.0.0.1
+cli-port=5766
+cli-password=<redacted>
 log-file=stdout
 `,
 		secret,
@@ -300,18 +304,23 @@ func renderLKECoturnInstallScript(env map[string]string) string {
 	fmt.Fprintf(&b, ": \"${VIDEO_CLOUD_COTURN_SHARED_SECRET:?VIDEO_CLOUD_COTURN_SHARED_SECRET is required}\"\n")
 	fmt.Fprintf(&b, "export DEBIAN_FRONTEND=noninteractive\n")
 	fmt.Fprintf(&b, "apt-get update\n")
-	fmt.Fprintf(&b, "apt-get install -y coturn prometheus-node-exporter\n")
+	fmt.Fprintf(&b, "apt-get install -y coturn conntrack curl netcat-openbsd prometheus-node-exporter\n")
 	fmt.Fprintf(&b, "install -d -m 0755 /opt/video_cloud/bin\n")
 	fmt.Fprintf(&b, "install -m 0755 /tmp/video-cloud-turnregistrar /opt/video_cloud/bin/turnregistrar\n")
 	fmt.Fprintf(&b, "install -d -m 0755 /etc/systemd/system/coturn.service.d\n")
+	fmt.Fprintf(&b, "coturn_cli_password=$(openssl rand -hex 24)\n")
+	fmt.Fprintf(&b, "printf 'COTURN_CLI_PASSWORD=%%s\\n' \"$coturn_cli_password\" >/etc/video-cloud-coturn-cli.env\n")
+	fmt.Fprintf(&b, "chmod 0600 /etc/video-cloud-coturn-cli.env\n")
 	fmt.Fprintf(&b, "{\n")
 	fmt.Fprintf(&b, "  printf '%%s\\n' 'use-auth-secret'\n")
 	fmt.Fprintf(&b, "  printf 'static-auth-secret=%%s\\n' \"$VIDEO_CLOUD_COTURN_SHARED_SECRET\"\n")
 	fmt.Fprintf(&b, "  cat <<'COTURN_TAIL'\n")
-	fmt.Fprintf(&b, "realm=%s\nlistening-port=3478\nfingerprint\nmin-port=%s\nmax-port=%s\nno-multicast-peers\nlog-file=stdout\nCOTURN_TAIL\n",
+	fmt.Fprintf(&b, "realm=%s\nlistening-port=3478\nfingerprint\nmin-port=%s\nmax-port=%s\nno-multicast-peers\nverbose\ncli-ip=127.0.0.1\ncli-port=5766\nCOTURN_TAIL\n",
 		lkeCoturnRealm(env),
 		firstNonEmpty(os.Getenv("LKE_COTURN_MIN_PORT"), env["LKE_COTURN_MIN_PORT"], "49152"),
 		firstNonEmpty(os.Getenv("LKE_COTURN_MAX_PORT"), env["LKE_COTURN_MAX_PORT"], "65535"))
+	fmt.Fprintf(&b, "  printf 'cli-password=%%s\\n' \"$coturn_cli_password\"\n")
+	fmt.Fprintf(&b, "  printf '%%s\\n' 'log-file=stdout'\n")
 	fmt.Fprintf(&b, "} >/etc/turnserver.conf\n")
 	fmt.Fprintf(&b, "chmod 0640 /etc/turnserver.conf\n")
 	fmt.Fprintf(&b, "{\n")
@@ -340,6 +349,7 @@ func renderLKECoturnInstallScript(env map[string]string) string {
 	fmt.Fprintf(&b, "systemctl is-active coturn >/dev/null\n")
 	fmt.Fprintf(&b, "ss -lnup | grep -E '[:.]3478\\b' >/dev/null\n")
 	fmt.Fprintf(&b, "ss -lntp | grep -E '[:.]3478\\b' >/dev/null\n")
+	fmt.Fprintf(&b, "ss -lntp | grep -E '127\\.0\\.0\\.1:5766\\b' >/dev/null\n")
 	fmt.Fprintf(&b, "systemctl enable --now prometheus-node-exporter || true\n")
 	fmt.Fprintf(&b, "systemctl enable video-cloud-turnregistrar\n")
 	fmt.Fprintf(&b, "for attempt in $(seq 1 10); do\n")
