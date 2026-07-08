@@ -157,6 +157,12 @@ func RenderReport(input ReportInput) string {
 			fmt.Fprintf(&b, "- H.264 bytes received: %d\n", input.VideoEvidence.WebRTCMedia.H264BytesReceived)
 			fmt.Fprintf(&b, "- Opus packets received: %d\n", input.VideoEvidence.WebRTCMedia.OpusPacketsReceived)
 			fmt.Fprintf(&b, "- Opus bytes received: %d\n", input.VideoEvidence.WebRTCMedia.OpusBytesReceived)
+			if len(input.VideoEvidence.WebRTCMedia.FailureReasons) > 0 {
+				fmt.Fprintln(&b, "- Failure reasons:")
+				for _, reason := range sortedStringIntKeys(input.VideoEvidence.WebRTCMedia.FailureReasons) {
+					fmt.Fprintf(&b, "  - %s: %d\n", reason, input.VideoEvidence.WebRTCMedia.FailureReasons[reason])
+				}
+			}
 			if len(input.VideoEvidence.WebRTCMedia.SenderFailurePhases) > 0 {
 				fmt.Fprintln(&b, "- Sender failure phases:")
 				for _, phase := range sortedStringIntKeys(input.VideoEvidence.WebRTCMedia.SenderFailurePhases) {

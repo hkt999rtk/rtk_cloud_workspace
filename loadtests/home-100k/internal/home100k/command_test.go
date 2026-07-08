@@ -4021,8 +4021,8 @@ func TestCollectLokiWebRTCTraceEvidenceCountsLifecycleEvents(t *testing.T) {
 	if len(requests) != 1 {
 		t.Fatalf("Loki requests = %d, want 1", len(requests))
 	}
-	if got := requestLimit(t, requests[0]); got != "10000" {
-		t.Fatalf("Loki first query limit = %s, want 10000", got)
+	if got := requestLimit(t, requests[0]); got != "50000" {
+		t.Fatalf("Loki first query limit = %s, want 50000", got)
 	}
 }
 
@@ -4072,6 +4072,61 @@ func TestCollectLokiWebRTCTraceEvidenceRetriesWithSmallerLimit(t *testing.T) {
 	}
 	if len(requests) < 2 {
 		t.Fatalf("Loki requests = %d, want retry with smaller limit", len(requests))
+	}
+}
+
+func TestCollectLokiWebRTCTraceEvidenceBackfillsMissingLifecycleEvents(t *testing.T) {
+	requests := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.String())
+		query := r.URL.Query().Get("query")
+		values := make([][]string, 0, 1002)
+		switch {
+		case strings.Contains(query, "create_started"):
+			values = append(values, []string{"1780000000000000000", `{"run_id":"run-loki-backfill","event":"create_started","session_id":"s1","duration_ms":8}`})
+		case strings.Contains(query, "answer_succeeded"):
+			values = append(values, []string{"1780000001000000000", `{"run_id":"run-loki-backfill","event":"answer_succeeded","session_id":"s1","duration_ms":17}`})
+		case strings.Contains(query, "offer_delivered"):
+			values = append(values, []string{"1780000002000000000", `{"run_id":"run-loki-backfill","event":"offer_delivered","session_id":"s1","duration_ms":4}`})
+		case strings.Contains(query, "session_created"):
+			values = append(values, []string{"1780000003000000000", `{"run_id":"run-loki-backfill","event":"session_created","session_id":"s1","duration_ms":2}`})
+		default:
+			for i := 0; i < 1000; i++ {
+				values = append(values, []string{
+					fmt.Sprintf("%019d", 1780000010000000000+i),
+					fmt.Sprintf(`{"run_id":"run-loki-backfill","event":"close_succeeded","session_id":"s%d","duration_ms":1}`, i),
+				})
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "success",
+			"data": map[string]any{
+				"result": []map[string]any{{
+					"values": values,
+				}},
+			},
+		})
+	}))
+	defer server.Close()
+	t.Setenv("HOME100K_LOKI_URL", server.URL)
+
+	source, note := collectLokiWebRTCTraceEvidence(t.TempDir(), "run-loki-backfill", "2026-07-07T00:00:00Z")
+
+	if note != "" {
+		t.Fatalf("unexpected note: %s", note)
+	}
+	if !source.Available {
+		t.Fatalf("loki source = %+v, want available", source)
+	}
+	if source.Counters["loki_webrtc_trace.close_succeeded.events"] != 1000 ||
+		source.Counters["loki_webrtc_trace.create_started.events"] != 1 ||
+		source.Counters["loki_webrtc_trace.session_created.events"] != 1 ||
+		source.Counters["loki_webrtc_trace.offer_delivered.events"] != 1 ||
+		source.Counters["loki_webrtc_trace.answer_succeeded.events"] != 1 {
+		t.Fatalf("unexpected Loki counters after backfill: %+v", source.Counters)
+	}
+	if len(requests) <= 1 {
+		t.Fatalf("Loki requests = %d, want event backfill queries", len(requests))
 	}
 }
 

@@ -147,6 +147,7 @@ type WebRTCMediaTotals struct {
 	H264BytesReceived   int64              `json:"h264_bytes_received,omitempty"`
 	OpusPacketsReceived int64              `json:"opus_packets_received,omitempty"`
 	OpusBytesReceived   int64              `json:"opus_bytes_received,omitempty"`
+	FailureReasons      map[string]int     `json:"failure_reasons,omitempty"`
 	SenderFailurePhases map[string]int     `json:"sender_failure_phases,omitempty"`
 	Startup             VideoStartupTotals `json:"video_startup_latency,omitempty"`
 }
@@ -801,6 +802,7 @@ func videoEvidenceFromLoadtestJSON(raw []byte) (VideoEvidence, error) {
 			H264BytesReceived   int64              `json:"h264_bytes_received"`
 			OpusPacketsReceived int64              `json:"opus_packets_received"`
 			OpusBytesReceived   int64              `json:"opus_bytes_received"`
+			FailureReasons      map[string]int     `json:"failure_reasons"`
 			SenderFailurePhases map[string]int     `json:"sender_failure_phases"`
 			TimeToFirstRTPP95MS int64              `json:"time_to_first_rtp_p95_ms"`
 			ICEConnectedP95MS   int64              `json:"ice_connected_p95_ms"`
@@ -866,6 +868,7 @@ func videoEvidenceFromLoadtestJSON(raw []byte) (VideoEvidence, error) {
 			H264BytesReceived:   payload.WebRTCMedia.H264BytesReceived,
 			OpusPacketsReceived: payload.WebRTCMedia.OpusPacketsReceived,
 			OpusBytesReceived:   payload.WebRTCMedia.OpusBytesReceived,
+			FailureReasons:      cloneStringIntMap(payload.WebRTCMedia.FailureReasons),
 			SenderFailurePhases: cloneStringIntMap(payload.WebRTCMedia.SenderFailurePhases),
 			Startup:             payload.WebRTCMedia.Startup,
 		},
@@ -1023,6 +1026,7 @@ func mergeVideoStepEvidence(steps []VideoStepEvidence) VideoEvidence {
 		merged.WebRTCMedia.H264BytesReceived += step.WebRTCMedia.H264BytesReceived
 		merged.WebRTCMedia.OpusPacketsReceived += step.WebRTCMedia.OpusPacketsReceived
 		merged.WebRTCMedia.OpusBytesReceived += step.WebRTCMedia.OpusBytesReceived
+		mergeStringIntMapInto(&merged.WebRTCMedia.FailureReasons, step.WebRTCMedia.FailureReasons)
 		mergeStringIntMapInto(&merged.WebRTCMedia.SenderFailurePhases, step.WebRTCMedia.SenderFailurePhases)
 		merged.WebRTCMedia.Startup = mergeVideoStartupTotals(merged.WebRTCMedia.Startup, step.WebRTCMedia.Startup)
 		merged.TURN.RegistryAvailable = merged.TURN.RegistryAvailable || step.TURN.RegistryAvailable

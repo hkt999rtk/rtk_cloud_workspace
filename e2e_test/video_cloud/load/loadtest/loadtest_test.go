@@ -4353,6 +4353,59 @@ func TestWebRTCMediaFailureEvidenceIncludesCorrelationAndICETrace(t *testing.T) 
 	}
 }
 
+func TestBuildResultCorrelatesWebRTCMediaFailureSamples(t *testing.T) {
+	started := time.Date(2026, 7, 9, 0, 0, 0, 0, time.UTC)
+	result := BuildResult(Config{RunID: "run-fail", WebRTCMediaSet: WebRTCMediaSetH264, WebRTCICEPolicy: WebRTCICEPolicyRelay}, started, started.Add(time.Second), []Operation{
+		{
+			Actor:    ActorDevice,
+			Name:     "webrtc_media_answer",
+			DeviceID: "dev-1",
+			Success:  true,
+			Evidence: "run_id=run-fail session_id=sess-1 device_id=dev-1",
+		},
+		{
+			Actor:    ActorDevice,
+			Name:     "webrtc_media_send",
+			DeviceID: "dev-1",
+			Success:  true,
+			Evidence: "run_id=run-fail session_id=sess-1 device_id=dev-1 sender_controller_state=completed sender_selected_local_candidate_type=relay sender_selected_remote_candidate_type=relay sender_selected_local_candidate_protocol=udp sender_selected_remote_candidate_protocol=udp sender_ice_connection_states=checking@100,connected@1200 sender_peer_connection_states=connecting@1100 sender_ice_ms=1200 sender_scheduler_first_write_since_session_start_ms=1210 sender_scheduler_packets_sent=4865 sender_scheduler_bytes_sent=300000 scheduler_write_attempts=4865 scheduler_write_returns=4865",
+		},
+		{
+			Actor:       ActorViewer,
+			Name:        "webrtc_media_first_rtp",
+			DeviceID:    "dev-1",
+			ViewerID:    "viewer-1",
+			Success:     false,
+			ErrorClass:  ClassWebRTCMedia,
+			ErrorDetail: "no_rtp",
+			Evidence:    "run_id=run-fail session_id=sess-1 device_id=dev-1 viewer_id=viewer-1 ice_policy=relay failure_reason=no_rtp selected_local_candidate_type=relay selected_remote_candidate_type=prflx selected_local_candidate_protocol=udp selected_remote_candidate_protocol=udp ice_connection_states=checking@100,connected@2200,disconnected@5000 peer_connection_states=connecting@100,failed@30000 receiver_track_arrived_ms=2300 receiver_track_kind=video receiver_track_codec=video/H264",
+		},
+	})
+
+	if got := result.WebRTCMedia.FailureReasons["no_rtp"]; got != 1 {
+		t.Fatalf("failure reason no_rtp = %d, want 1: %#v", got, result.WebRTCMedia.FailureReasons)
+	}
+	if len(result.WebRTCMediaFailures) != 1 {
+		t.Fatalf("failure samples = %d, want 1: %#v", len(result.WebRTCMediaFailures), result.WebRTCMediaFailures)
+	}
+	sample := result.WebRTCMediaFailures[0]
+	if sample.SessionID != "sess-1" || sample.DeviceID != "dev-1" || sample.ViewerID != "viewer-1" {
+		t.Fatalf("failure sample ids = %#v", sample)
+	}
+	if !sample.DeviceAnswerSuccess || !sample.DeviceSendSuccess {
+		t.Fatalf("device success flags missing: %#v", sample)
+	}
+	if sample.DeviceSenderState != "completed" || sample.SenderPacketsSent != 4865 || sample.SenderWriteReturns != 4865 {
+		t.Fatalf("device sender evidence missing: %#v", sample)
+	}
+	if got := strings.Join(sample.ViewerFailureReasons, ","); got != "no_rtp" {
+		t.Fatalf("viewer failure reasons = %q, want no_rtp", got)
+	}
+	if sample.ViewerTrackArrivedMS != 2300 || sample.ViewerTrackCodec != "video/H264" {
+		t.Fatalf("viewer RTP trace missing: %#v", sample)
+	}
+}
+
 func TestSetLoadTraceHeadersIncludesRunDeviceViewerOperationAndSession(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/request_webrtc/answer", nil)
 	body := map[string]any{"session_id": "sess-1"}
