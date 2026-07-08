@@ -157,6 +157,12 @@ func RenderReport(input ReportInput) string {
 			fmt.Fprintf(&b, "- H.264 bytes received: %d\n", input.VideoEvidence.WebRTCMedia.H264BytesReceived)
 			fmt.Fprintf(&b, "- Opus packets received: %d\n", input.VideoEvidence.WebRTCMedia.OpusPacketsReceived)
 			fmt.Fprintf(&b, "- Opus bytes received: %d\n", input.VideoEvidence.WebRTCMedia.OpusBytesReceived)
+			if len(input.VideoEvidence.WebRTCMedia.SenderFailurePhases) > 0 {
+				fmt.Fprintln(&b, "- Sender failure phases:")
+				for _, phase := range sortedStringIntKeys(input.VideoEvidence.WebRTCMedia.SenderFailurePhases) {
+					fmt.Fprintf(&b, "  - %s: %d\n", phase, input.VideoEvidence.WebRTCMedia.SenderFailurePhases[phase])
+				}
+			}
 			fmt.Fprintln(&b)
 			if input.VideoEvidence.WebRTCMedia.Startup.AppRequestToFirstRTPP95MS > 0 || input.VideoEvidence.WebRTCMedia.Startup.AppRequestToFirstH264AccessUnitP95MS > 0 {
 				startup := input.VideoEvidence.WebRTCMedia.Startup
@@ -981,6 +987,15 @@ func failureEventRows(stages []StageResult) []FailureEvent {
 }
 
 func sortedKeys(values map[string]int64) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedStringIntKeys(values map[string]int) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
 		keys = append(keys, key)

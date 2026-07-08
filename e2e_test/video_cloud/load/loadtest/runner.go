@@ -5327,7 +5327,7 @@ func summarizeWebRTC(operations []Operation, duration time.Duration) WebRTCMetri
 }
 
 func summarizeWebRTCMedia(operations []Operation) WebRTCMediaMetrics {
-	metrics := WebRTCMediaMetrics{FailuresByClass: map[string]int{}}
+	metrics := WebRTCMediaMetrics{FailuresByClass: map[string]int{}, SenderFailurePhases: map[string]int{}}
 	firstRTPLatencies := make([]int64, 0)
 	iceLatencies := make([]int64, 0)
 	for _, op := range operations {
@@ -5372,7 +5372,13 @@ func summarizeWebRTCMedia(operations []Operation) WebRTCMediaMetrics {
 		if !op.Success && !op.Skipped {
 			metrics.Failures++
 			metrics.FailuresByClass[op.ErrorClass]++
+			if phase := evidenceValue(op.Evidence, "sender_failure_phase"); phase != "" {
+				metrics.SenderFailurePhases[phase]++
+			}
 		}
+	}
+	if len(metrics.SenderFailurePhases) == 0 {
+		metrics.SenderFailurePhases = nil
 	}
 	metrics.TimeToFirstRTPP95MS = percentile(firstRTPLatencies, 95)
 	metrics.ICEConnectedP95MS = percentile(iceLatencies, 95)

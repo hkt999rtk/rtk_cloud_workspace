@@ -379,6 +379,7 @@ func TestReportRendersVideoAndTURNEvidence(t *testing.T) {
 				BytesReceived:       1500000,
 				H264PacketsReceived: 3000,
 				H264BytesReceived:   1500000,
+				SenderFailurePhases: map[string]int{"wait_peer_connected": 2},
 			},
 			TURN: TURNEvidence{
 				RegistryAvailable: true,
@@ -422,6 +423,8 @@ func TestReportRendersVideoAndTURNEvidence(t *testing.T) {
 		"## WebRTC Media Totals",
 		"First RTP p95: 180 ms",
 		"H.264 packets received: 3000",
+		"Sender failure phases:",
+		"wait_peer_connected: 2",
 		"## Video Startup Latency",
 		"H.264 access unit samples: 100",
 		"App request -> first H.264 access unit p95: 185 ms",
@@ -556,6 +559,7 @@ func TestVideoEvidenceParsesStartupLatencySummary(t *testing.T) {
 			"attempts": 2,
 			"successes": 2,
 			"time_to_first_rtp_p95_ms": 210,
+			"sender_failure_phases": {"wait_peer_connected": 2},
 			"video_startup_latency": {
 				"samples": 2,
 				"h264_access_unit_samples": 2,
@@ -594,6 +598,9 @@ func TestVideoEvidenceParsesStartupLatencySummary(t *testing.T) {
 	}
 	if video.WebRTCMedia.Startup.BreakdownP95.ICECheckMS != 90 || video.WebRTCMedia.Startup.BreakdownP95.ICEConnectedSinceSessionStartMS != 230 {
 		t.Fatalf("ice breakdown = %+v, want ice_check=90 and connected_since_session_start=230", video.WebRTCMedia.Startup.BreakdownP95)
+	}
+	if got := video.WebRTCMedia.SenderFailurePhases["wait_peer_connected"]; got != 2 {
+		t.Fatalf("sender failure phases = %#v, want wait_peer_connected=2", video.WebRTCMedia.SenderFailurePhases)
 	}
 }
 

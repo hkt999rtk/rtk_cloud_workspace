@@ -1177,9 +1177,6 @@ func (s *PionMediaAnswerSession) SendH264RTP(ctx context.Context, duration time.
 	if err := s.waitICEConnected(ctx); err != nil {
 		return H264RTPPlan{}, err
 	}
-	if err := s.waitPeerConnected(ctx); err != nil {
-		return H264RTPPlan{}, err
-	}
 	stats := s.Snapshot()
 	if err := waitWebRTCMediaSettle(ctx); err != nil {
 		return H264RTPPlan{}, err
@@ -1202,9 +1199,6 @@ func (s *PionMediaAnswerSession) SendH264RTP(ctx context.Context, duration time.
 
 func (s *PionMediaAnswerSession) SendAVRTP(ctx context.Context, duration time.Duration) (AVRTPEvidence, error) {
 	if err := s.waitICEConnected(ctx); err != nil {
-		return AVRTPEvidence{}, err
-	}
-	if err := s.waitPeerConnected(ctx); err != nil {
 		return AVRTPEvidence{}, err
 	}
 	stats := s.Snapshot()

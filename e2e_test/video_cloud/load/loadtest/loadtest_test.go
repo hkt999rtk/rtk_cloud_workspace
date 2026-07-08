@@ -3916,6 +3916,46 @@ func TestBuildResultCountsWebRTCMediaCloseAsClosedSession(t *testing.T) {
 	}
 }
 
+func TestBuildResultSummarizesWebRTCMediaSenderFailurePhases(t *testing.T) {
+	started := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	result := BuildResult(Config{WebRTCMediaSet: WebRTCMediaSetH264}, started, started.Add(time.Second), []Operation{
+		{
+			Actor:       ActorDevice,
+			Name:        "webrtc_media_ice_connected",
+			DeviceID:    "dev-1",
+			Success:     false,
+			ErrorClass:  ClassWebRTCMedia,
+			ErrorDetail: "webrtc media answerer peer connection timeout",
+			Evidence:    "session_id=sess-1 sender_controller_state=failed sender_failure_phase=wait_peer_connected",
+		},
+		{
+			Actor:       ActorDevice,
+			Name:        "webrtc_media_ice_connected",
+			DeviceID:    "dev-2",
+			Success:     false,
+			ErrorClass:  ClassWebRTCMedia,
+			ErrorDetail: "webrtc media answerer ICE connection timeout",
+			Evidence:    "session_id=sess-2 sender_controller_state=failed sender_failure_phase=wait_ice_connected",
+		},
+		{
+			Actor:       ActorDevice,
+			Name:        "webrtc_media_send",
+			DeviceID:    "dev-3",
+			Success:     false,
+			ErrorClass:  ClassWebRTCMedia,
+			ErrorDetail: "webrtc media answerer peer connection timeout",
+			Evidence:    "session_id=sess-3 sender_controller_state=failed sender_failure_phase=wait_peer_connected",
+		},
+	})
+
+	if got := result.WebRTCMedia.SenderFailurePhases["wait_peer_connected"]; got != 2 {
+		t.Fatalf("wait_peer_connected count = %d, want 2: %#v", got, result.WebRTCMedia.SenderFailurePhases)
+	}
+	if got := result.WebRTCMedia.SenderFailurePhases["wait_ice_connected"]; got != 1 {
+		t.Fatalf("wait_ice_connected count = %d, want 1: %#v", got, result.WebRTCMedia.SenderFailurePhases)
+	}
+}
+
 func TestCompleteServerOfferWebRTCMediaClosesSessionOnSetupFailure(t *testing.T) {
 	closeCalled := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

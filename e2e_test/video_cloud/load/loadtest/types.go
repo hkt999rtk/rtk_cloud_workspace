@@ -276,6 +276,7 @@ type WebRTCMediaMetrics struct {
 	ICEConnectedP95MS                    int64                 `json:"ice_connected_p95_ms"`
 	ReceiveDurationMS                    int64                 `json:"receive_duration_ms"`
 	FailuresByClass                      map[string]int        `json:"failures_by_class"`
+	SenderFailurePhases                  map[string]int        `json:"sender_failure_phases,omitempty"`
 }
 
 type VideoStartupBreakdown struct {
