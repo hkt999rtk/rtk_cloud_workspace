@@ -282,6 +282,11 @@ func TestGenerateReportScriptRendersVideoEvidence(t *testing.T) {
 		Status: "COMPLETE",
 		Result: "SUCCESS",
 		Plan:   plan,
+		ServerCorrelation: ServerCorrelation{
+			Status:  "incomplete",
+			Reasons: []string{"client device MQTT connect attempts are zero"},
+		},
+		RuntimeLogCorrelation: RuntimeLogCorrelation{Status: "incomplete"},
 		VideoEvidence: VideoEvidence{
 			Complete: true,
 			WebRTC: WebRTCTotals{
@@ -365,9 +370,14 @@ func TestGenerateReportScriptRendersVideoEvidence(t *testing.T) {
 		"## TURN Evidence",
 		"registry available: true",
 		"coturn available: true",
+		"MQTT/shadow correlation: skipped for WebRTC-only workflow",
+		"skipped for WebRTC-only workflow; MQTT/shadow server/client counter correlation was not part of this run",
 	} {
 		if !strings.Contains(report, want) {
 			t.Fatalf("generated report missing %q:\n%s", want, report)
 		}
+	}
+	if strings.Contains(report, "incomplete reason: client device MQTT connect attempts are zero") {
+		t.Fatalf("video-only report summary should not render skipped MQTT/shadow incomplete reason:\n%s", report)
 	}
 }

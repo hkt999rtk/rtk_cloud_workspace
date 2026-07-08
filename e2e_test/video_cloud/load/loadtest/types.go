@@ -405,6 +405,13 @@ type VideoStartupLatencySample struct {
 	SenderFirstWriteAfterPeerMS          int64  `json:"sender_first_write_after_peer_ms,omitempty"`
 	FirstRTPAfterICEMS                   int64  `json:"first_rtp_after_ice_ms"`
 	FirstH264AccessUnitAfterRTPMS        int64  `json:"first_h264_access_unit_after_rtp_ms"`
+	ReceiverTrackArrivedMS               int64  `json:"receiver_track_arrived_ms,omitempty"`
+	ReceiverTrackKind                    string `json:"receiver_track_kind,omitempty"`
+	ReceiverTrackCodec                   string `json:"receiver_track_codec,omitempty"`
+	ReceiverFirstRTPPayloadType          int    `json:"receiver_first_rtp_payload_type,omitempty"`
+	ReceiverFirstRTPSequence             int    `json:"receiver_first_rtp_sequence,omitempty"`
+	ReceiverFirstRTPTimestamp            int    `json:"receiver_first_rtp_timestamp,omitempty"`
+	ReceiverFirstRTPSSRC                 int    `json:"receiver_first_rtp_ssrc,omitempty"`
 	SenderFirstWriteSinceSessionMS       int64  `json:"sender_first_write_since_session_ms,omitempty"`
 	SenderQueueFullDrops                 int    `json:"sender_queue_full_drops,omitempty"`
 	SenderSchedulerQueueFullDrops        int    `json:"sender_scheduler_queue_full_drops,omitempty"`

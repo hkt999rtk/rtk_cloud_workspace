@@ -65,6 +65,13 @@ type WebRTCMediaStats struct {
 	ICEGatheringStates              []string
 	PeerConnectionStates            []string
 	PeerConnectionConnectedMS       int64
+	TrackArrivedMS                  int64
+	TrackKind                       string
+	TrackCodec                      string
+	FirstRTPPayloadType             int
+	FirstRTPSequenceNumber          uint16
+	FirstRTPTimestamp               uint32
+	FirstRTPSSRC                    uint32
 	ICESelectedPairChanges          int
 	ICESelectedPairFirstChangeMS    int64
 	ICESelectedPairLastChangeMS     int64
@@ -427,6 +434,7 @@ func NewPionMediaOfferSessionForSetWithICEServersAndPolicy(ctx context.Context, 
 		}
 	})
 	peer.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+		session.recordTrackArrived(track)
 		go session.readRemoteRTP(track)
 	})
 	if _, err := peer.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
@@ -481,6 +489,13 @@ func (s *PionMediaOfferSession) readRemoteRTP(track *webrtc.TrackRemote) {
 			return
 		}
 		s.mu.Lock()
+		if s.stats.TimeToFirstRTPMS == 0 {
+			s.stats.TimeToFirstRTPMS = time.Since(s.started).Milliseconds()
+			s.stats.FirstRTPPayloadType = int(packet.PayloadType)
+			s.stats.FirstRTPSequenceNumber = packet.SequenceNumber
+			s.stats.FirstRTPTimestamp = packet.Timestamp
+			s.stats.FirstRTPSSRC = packet.SSRC
+		}
 		s.stats.PacketsReceived++
 		s.stats.BytesReceived += len(packet.Payload)
 		if isH264 {
@@ -507,9 +522,6 @@ func (s *PionMediaOfferSession) readRemoteRTP(track *webrtc.TrackRemote) {
 			if s.stats.FirstOpusRTPMS == 0 {
 				s.stats.FirstOpusRTPMS = time.Since(s.started).Milliseconds()
 			}
-		}
-		if s.stats.TimeToFirstRTPMS == 0 {
-			s.stats.TimeToFirstRTPMS = time.Since(s.started).Milliseconds()
 		}
 		s.stats.ReceiveDurationMS = time.Since(s.started).Milliseconds()
 		s.mu.Unlock()
@@ -613,6 +625,20 @@ func (s *PionMediaOfferSession) recordPeerConnectionState(state string) {
 func (s *PionMediaOfferSession) recordSelectedCandidatePairChange(pair selectedCandidatePairEvidence) {
 	s.recordICETrace(func(stats *WebRTCMediaStats) {
 		recordSelectedCandidatePairChange(stats, pair, s.icePolicy, s.started)
+	})
+}
+
+func (s *PionMediaOfferSession) recordTrackArrived(track *webrtc.TrackRemote) {
+	if track == nil {
+		return
+	}
+	codec := track.Codec()
+	s.recordICETrace(func(stats *WebRTCMediaStats) {
+		if stats.TrackArrivedMS == 0 {
+			stats.TrackArrivedMS = time.Since(s.started).Milliseconds()
+			stats.TrackKind = track.Kind().String()
+			stats.TrackCodec = codec.MimeType
+		}
 	})
 }
 
@@ -2241,7 +2267,37 @@ func iceTraceEvidence(stats WebRTCMediaStats) string {
 	base := appendICETraceEvidence("", stats.ICEGatheringCompleteMS, stats.RemoteDescriptionSetMS, stats.LocalDescriptionSetMS, stats.ICECheckingMS, stats.FirstLocalCandidateMS, stats.FirstLocalRelayCandidateMS, stats.FirstLocalRelayUDPCandidateMS, stats.FirstLocalRelayTCPCandidateMS, stats.LocalHostCandidates, stats.LocalSrflxCandidates, stats.LocalRelayCandidates, stats.LocalUDPCandidates, stats.LocalTCPCandidates, stats.LocalRelayUDPCandidates, stats.LocalRelayTCPCandidates, stats.SelectedLocalCandidateType, stats.SelectedRemoteCandidateType, stats.SelectedLocalCandidateProtocol, stats.SelectedRemoteCandidateProtocol, stats.ICEConnectionStates, stats.ICEGatheringStates)
 	base = appendICEPairStatsEvidence(base, stats.ICESelectedPairChanges, stats.ICESelectedPairFirstChangeMS, stats.ICESelectedPairLastChangeMS, stats.ICERequestsSent, stats.ICERequestsReceived, stats.ICEResponsesSent, stats.ICEResponsesReceived, stats.ICERetransmissionsSent, stats.ICERetransmissionsReceived, stats.ICEConsentRequestsSent, stats.ICECurrentRoundTripTimeMS)
 	base = appendPeerConnectionEvidence(base, stats.PeerConnectionConnectedMS, stats.PeerConnectionStates)
-	return appendPionPhaseEvidence(base, stats.PionCreatePeerMS, stats.PionCreateOfferMS, stats.PionCreateAnswerMS, stats.PionSetLocalDescriptionMS, stats.PionSetRemoteDescriptionMS, stats.PionICEGatheringWaitMS)
+	base = appendPionPhaseEvidence(base, stats.PionCreatePeerMS, stats.PionCreateOfferMS, stats.PionCreateAnswerMS, stats.PionSetLocalDescriptionMS, stats.PionSetRemoteDescriptionMS, stats.PionICEGatheringWaitMS)
+	return appendReceiverRTPTraceEvidence(base, stats)
+}
+
+func appendReceiverRTPTraceEvidence(base string, stats WebRTCMediaStats) string {
+	parts := []string{}
+	if stats.TrackArrivedMS > 0 {
+		parts = append(parts, fmt.Sprintf("receiver_track_arrived_ms=%d", stats.TrackArrivedMS))
+	}
+	if stats.TrackKind != "" {
+		parts = append(parts, "receiver_track_kind="+stats.TrackKind)
+	}
+	if stats.TrackCodec != "" {
+		parts = append(parts, "receiver_track_codec="+stats.TrackCodec)
+	}
+	if stats.TimeToFirstRTPMS > 0 {
+		parts = append(parts, fmt.Sprintf("receiver_first_rtp_ms=%d", stats.TimeToFirstRTPMS))
+	}
+	if stats.FirstRTPPayloadType > 0 {
+		parts = append(parts, fmt.Sprintf("receiver_first_rtp_payload_type=%d", stats.FirstRTPPayloadType))
+	}
+	if stats.FirstRTPSequenceNumber > 0 {
+		parts = append(parts, fmt.Sprintf("receiver_first_rtp_sequence=%d", stats.FirstRTPSequenceNumber))
+	}
+	if stats.FirstRTPTimestamp > 0 {
+		parts = append(parts, fmt.Sprintf("receiver_first_rtp_timestamp=%d", stats.FirstRTPTimestamp))
+	}
+	if stats.FirstRTPSSRC > 0 {
+		parts = append(parts, fmt.Sprintf("receiver_first_rtp_ssrc=%d", stats.FirstRTPSSRC))
+	}
+	return appendEvidence(base, strings.Join(parts, " "))
 }
 
 func appendPeerConnectionEvidence(base string, connectedMS int64, states []string) string {

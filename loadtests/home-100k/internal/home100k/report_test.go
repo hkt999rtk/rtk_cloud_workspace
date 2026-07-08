@@ -483,6 +483,31 @@ func TestVideoEvidenceUsesServerTURNEvidenceWhenRunnerOmitsTURN(t *testing.T) {
 	}
 }
 
+func TestRelayOnlyCandidateEvidenceAcceptsOneSidedRelayPair(t *testing.T) {
+	raw := []byte(`{
+		"config": {"webrtc_ice_policy": "relay", "virtual_viewers": 2, "duration_ms": 30000},
+		"webrtc": {
+			"success_rate": 1,
+			"create": {"operations": 2, "successes": 2},
+			"setup": {"operations": 2, "successes": 2},
+			"close": {"operations": 2, "successes": 2}
+		},
+		"webrtc_media": {"attempts": 2, "successes": 2, "ice_connected_p95_ms": 2100, "time_to_first_rtp_p95_ms": 2125},
+		"turn_evidence": {"registry_available": true, "active_nodes": 1, "coturn_available": true, "allocations": 2, "active_sessions": 2, "api_turn_registry_lookup_succeeded": 1, "api_dynamic_turn_count": 1, "api_turn_registry_node_count": 1},
+		"video_startup_latency": [
+			{"ice_policy":"relay","selected_local_candidate_type":"relay","selected_remote_candidate_type":"prflx"},
+			{"ice_policy":"relay","selected_local_candidate_type":"prflx","selected_remote_candidate_type":"relay"}
+		]
+	}`)
+	video, err := videoEvidenceFromLoadtestJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if video.RelayCandidateSamples != 2 || video.NonRelayCandidateSamples != 0 {
+		t.Fatalf("relay/non-relay samples = %d/%d, want 2/0", video.RelayCandidateSamples, video.NonRelayCandidateSamples)
+	}
+}
+
 func TestVideoEvidenceDerivesSetupFromMediaWhenRunnerOmitsSetupTotals(t *testing.T) {
 	raw := []byte(`{
 		"webrtc": {

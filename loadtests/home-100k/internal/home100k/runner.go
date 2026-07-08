@@ -945,7 +945,7 @@ func relayCandidateSampleCounts(icePolicy string, samples []struct {
 		if local == "" && remote == "" {
 			continue
 		}
-		if isRelayCandidateType(local) && isRelayCandidateType(remote) {
+		if isRelayCandidateType(local) || isRelayCandidateType(remote) {
 			relaySamples++
 		} else {
 			nonRelaySamples++
@@ -1885,12 +1885,13 @@ func evaluateRunOutcome(plan Plan, evidence ServerEvidence, stages []StageResult
 	if len(videoEvidenceValues) > 0 {
 		videoEvidence = videoEvidenceValues[0]
 	}
+	videoOnlyRun := plan.VideoEnabled() && hasVideoEvidence(videoEvidence) && len(stages) == 0
 
 	if !evidence.Complete {
 		incomplete = true
 		reasons = append(reasons, "Missing server evidence")
 	}
-	if !shadowEvidenceComplete(stages) {
+	if !videoOnlyRun && !shadowEvidenceComplete(stages) {
 		incomplete = true
 		reasons = append(reasons, "Missing IoT Device Shadow evidence")
 	}
@@ -1916,34 +1917,36 @@ func evaluateRunOutcome(plan Plan, evidence ServerEvidence, stages []StageResult
 			reasons = append(reasons, reason)
 		}
 	}
-	missingTypes := missingDeviceTypeEvidence(plan, stages)
-
-	switch strings.ToLower(strings.TrimSpace(correlation.Status)) {
-	case "pass":
-	case "fail":
-		fail = true
-		reasons = append(reasons, "Server/client counter correlation mismatch")
-	case "":
-		incomplete = true
-		reasons = append(reasons, "Server/client counter correlation is incomplete")
-	default:
-		incomplete = true
-		if len(correlation.Reasons) == 0 {
+	missingTypes := []string{}
+	if !videoOnlyRun {
+		missingTypes = missingDeviceTypeEvidence(plan, stages)
+		switch strings.ToLower(strings.TrimSpace(correlation.Status)) {
+		case "pass":
+		case "fail":
+			fail = true
+			reasons = append(reasons, "Server/client counter correlation mismatch")
+		case "":
 			reasons = append(reasons, "Server/client counter correlation is incomplete")
+			incomplete = true
+		default:
+			incomplete = true
+			if len(correlation.Reasons) == 0 {
+				reasons = append(reasons, "Server/client counter correlation is incomplete")
+			}
+			for _, reason := range correlation.Reasons {
+				reasons = append(reasons, "Server/client counter correlation incomplete: "+reason)
+			}
 		}
-		for _, reason := range correlation.Reasons {
-			reasons = append(reasons, "Server/client counter correlation incomplete: "+reason)
-		}
-	}
 
-	switch strings.ToLower(strings.TrimSpace(runtimeLogCorrelation.Status)) {
-	case "", "pass", "skipped":
-	case "fail":
-		fail = true
-		reasons = append(reasons, "Runtime log stream correlation mismatch")
-	default:
-		incomplete = true
-		reasons = append(reasons, "Runtime log stream correlation is incomplete")
+		switch strings.ToLower(strings.TrimSpace(runtimeLogCorrelation.Status)) {
+		case "", "pass", "skipped":
+		case "fail":
+			fail = true
+			reasons = append(reasons, "Runtime log stream correlation mismatch")
+		default:
+			incomplete = true
+			reasons = append(reasons, "Runtime log stream correlation is incomplete")
+		}
 	}
 
 	if !incomplete {

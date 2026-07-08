@@ -4167,6 +4167,33 @@ func TestBuildResultBackfillsStartupCandidateEvidenceFromSameSession(t *testing.
 	}
 }
 
+func TestBuildResultIncludesReceiverRTPTraceInStartupSample(t *testing.T) {
+	started := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	ops := []Operation{
+		{
+			Actor:    ActorViewer,
+			Name:     "webrtc_media_receive",
+			DeviceID: "dev-1",
+			ViewerID: "viewer-1",
+			Success:  true,
+			Evidence: "session_id=sess-1 ice_policy=relay packets=30 bytes=3000 receiver_packets=30 receiver_bytes=3000 receiver_track_arrived_ms=2200 receiver_track_kind=video receiver_track_codec=video/H264 receiver_first_rtp_ms=2210 receiver_first_rtp_payload_type=96 receiver_first_rtp_sequence=321 receiver_first_rtp_timestamp=654321 receiver_first_rtp_ssrc=1381251907 startup_app_request_to_first_rtp_ms=2210 startup_app_request_to_first_h264_access_unit_ms=2210",
+		},
+	}
+
+	result := BuildResult(Config{RunID: "run-startup", WebRTCMediaSet: WebRTCMediaSetH264, WebRTCICEPolicy: WebRTCICEPolicyRelay}, started, started.Add(time.Second), ops)
+
+	if len(result.VideoStartupLatency) != 1 {
+		t.Fatalf("startup samples = %d, want 1", len(result.VideoStartupLatency))
+	}
+	sample := result.VideoStartupLatency[0]
+	if sample.ReceiverTrackArrivedMS != 2200 || sample.ReceiverTrackKind != "video" || sample.ReceiverTrackCodec != "video/H264" {
+		t.Fatalf("receiver track sample = %#v, want track metadata", sample)
+	}
+	if sample.ReceiverFirstRTPPayloadType != 96 || sample.ReceiverFirstRTPSequence != 321 || sample.ReceiverFirstRTPTimestamp != 654321 || sample.ReceiverFirstRTPSSRC != 1381251907 {
+		t.Fatalf("receiver first RTP sample = %#v, want RTP metadata", sample)
+	}
+}
+
 func TestBuildResultIgnoresMissingH264StartupEvidence(t *testing.T) {
 	started := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	ops := []Operation{
@@ -4249,6 +4276,14 @@ func TestWebRTCMediaFailureEvidenceIncludesCorrelationAndICETrace(t *testing.T) 
 		ICEConnectionStates:             []string{"checking@100", "connected@2300"},
 		SelectedLocalCandidateProtocol:  "udp",
 		SelectedRemoteCandidateProtocol: "udp",
+		TrackArrivedMS:                  2400,
+		TrackKind:                       "video",
+		TrackCodec:                      "video/H264",
+		TimeToFirstRTPMS:                2412,
+		FirstRTPPayloadType:             96,
+		FirstRTPSequenceNumber:          1234,
+		FirstRTPTimestamp:               5678,
+		FirstRTPSSRC:                    0x52544b43,
 	}
 
 	evidence := webRTCMediaFailureEvidence(startup, stats, "no_rtp")
@@ -4263,6 +4298,14 @@ func TestWebRTCMediaFailureEvidenceIncludesCorrelationAndICETrace(t *testing.T) 
 		"ice_connection_states=checking@100,connected@2300",
 		"selected_local_candidate_protocol=udp",
 		"selected_remote_candidate_protocol=udp",
+		"receiver_track_arrived_ms=2400",
+		"receiver_track_kind=video",
+		"receiver_track_codec=video/H264",
+		"receiver_first_rtp_ms=2412",
+		"receiver_first_rtp_payload_type=96",
+		"receiver_first_rtp_sequence=1234",
+		"receiver_first_rtp_timestamp=5678",
+		"receiver_first_rtp_ssrc=1381256003",
 	} {
 		if !strings.Contains(evidence, want) {
 			t.Fatalf("failure evidence missing %q: %s", want, evidence)

@@ -92,6 +92,23 @@ def float_num(value, default=0.0):
     except (TypeError, ValueError):
         return default
 
+def has_video_evidence():
+    video = result.get("video_evidence") or {}
+    webrtc = video.get("webrtc_totals") or {}
+    media = video.get("webrtc_media_totals") or {}
+    turn = video.get("turn_evidence") or {}
+    return any([
+        num(webrtc.get("create_attempts"), 0),
+        num(webrtc.get("setup_attempts"), 0),
+        num(webrtc.get("close_attempts"), 0),
+        num(media.get("attempts"), 0),
+        bool(turn.get("coturn_available")),
+    ])
+
+def is_video_only_run():
+    plan = result.get("plan") or {}
+    return bool(plan.get("video_profile")) and has_video_evidence() and not (result.get("stage_results") or [])
+
 def pct_value(value):
     if value is None:
         return None
@@ -179,6 +196,13 @@ def status_summary():
         f"- status: {md(result.get('status', 'UNKNOWN'))}",
         f"- result: {md(result.get('result', 'UNKNOWN'))}",
     ]
+    if is_video_only_run():
+        lines.append("- MQTT/shadow correlation: skipped for WebRTC-only workflow")
+        lines.append("- runtime log stream correlation: skipped for WebRTC-only workflow")
+        evidence = result.get("server_evidence") or {}
+        if evidence:
+            lines.append(f"- server evidence complete: {str(bool(evidence.get('complete'))).lower()}")
+        return lines_or_dash(lines)
     correlation = result.get("server_correlation") or {}
     if correlation.get("status"):
         lines.append(f"- server correlation: {md(correlation.get('status'))}")
@@ -968,6 +992,8 @@ def failure_details():
     return "\n".join(lines)
 
 def server_correlation():
+    if is_video_only_run():
+        return "- skipped for WebRTC-only workflow; MQTT/shadow server/client counter correlation was not part of this run"
     correlation = result.get("server_correlation") or {}
     lines = [f"- status: {md(correlation.get('status', 'unknown'))}"]
     for reason in correlation.get("reasons") or []:
@@ -986,6 +1012,8 @@ def server_correlation():
     return "\n".join(lines)
 
 def runtime_log_correlation():
+    if is_video_only_run():
+        return "- skipped for WebRTC-only workflow; MQTT/shadow runtime stream correlation was not part of this run"
     correlation = result.get("runtime_log_correlation") or {}
     if not correlation:
         return "- no runtime log stream correlation"

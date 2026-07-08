@@ -2112,6 +2112,35 @@ func TestHome100KScriptDocumentsWebRTCOnlyWorkflow(t *testing.T) {
 	}
 }
 
+func TestHome100KScriptWebRTCOnlyWorkflowGeneratesRunLevelReport(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "home-100k.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	start := strings.Index(body, "\nrun_video_live_workflow() {")
+	if start < 0 {
+		t.Fatal("home-100k.sh missing run_video_live_workflow")
+	}
+	end := strings.Index(body[start:], "\ncommand=\"${1:-workflow-live}\"")
+	if end < 0 {
+		t.Fatal("home-100k.sh video workflow helper is not terminated before command dispatch")
+	}
+	helper := body[start : start+end]
+	for _, want := range []string{
+		`set_phase "aggregate"`,
+		`run_home100k aggregate`,
+		`generate_report_from_artifacts`,
+		`current_report_status`,
+		`current_report_result`,
+		`should_shutdown_after_workflow`,
+	} {
+		if !strings.Contains(helper, want) {
+			t.Fatalf("run_video_live_workflow missing %q:\n%s", want, helper)
+		}
+	}
+}
+
 func TestHome100KScriptVideoLadderDefaultsConcurrencyToStepViewers(t *testing.T) {
 	outDir := t.TempDir()
 	binDir := filepath.Join(outDir, "bin")
@@ -2393,6 +2422,7 @@ printf 'unexpected video runner call\n' >> ` + shellQuoteForTest(videoLog) + `
 		"HOME100K_VIDEO_LOADTEST_LADDER=100,500",
 		"HOME100K_VIDEO_LOADTEST_STEP_COOLDOWN=0s",
 		"HOME100K_VIDEO_LOADTEST_TOKEN_REQUEST_TIMEOUT=45s",
+		"HOME100K_VIDEO_CLOUD_TOKEN_BASE_URL=https://device.video.example.test",
 	)
 	raw, err := cmd.CombinedOutput()
 	if err == nil {
@@ -2413,6 +2443,9 @@ printf 'unexpected video runner call\n' >> ` + shellQuoteForTest(videoLog) + `
 	}
 	if !strings.Contains(string(goRaw), "--request-timeout 45s") {
 		t.Fatalf("token generator did not receive request timeout:\n%s", goRaw)
+	}
+	if !strings.Contains(string(goRaw), "--base-url https://device.video.example.test") {
+		t.Fatalf("token generator did not receive explicit token base URL:\n%s", goRaw)
 	}
 }
 
@@ -4700,10 +4733,10 @@ func TestExecuteAggregateWritesVideoOnlyRunLevelReport(t *testing.T) {
 			"setup": {"operations": 0, "successes": 0},
 			"close": {"operations": 5, "successes": 5}
 		},
-		"webrtc_media": {
-			"attempts": 5,
-			"successes": 5,
-			"ice_connected_p95_ms": 2148,
+			"webrtc_media": {
+				"attempts": 5,
+				"successes": 5,
+				"ice_connected_p95_ms": 2148,
 			"time_to_first_rtp_p95_ms": 2225,
 			"h264_packets_received": 29,
 			"h264_bytes_received": 17763,
@@ -4711,12 +4744,20 @@ func TestExecuteAggregateWritesVideoOnlyRunLevelReport(t *testing.T) {
 				"samples": 5,
 				"h264_access_unit_samples": 5,
 				"app_request_to_first_rtp_p95_ms": 2232,
-				"app_request_to_first_h264_access_unit_p95_ms": 2232
-			}
-		},
-		"video_startup_latency": [
-			{"ice_policy":"relay","selected_local_candidate_type":"relay","selected_remote_candidate_type":"relay","selected_local_candidate_protocol":"udp","selected_remote_candidate_protocol":"udp"}
-		]
+					"app_request_to_first_h264_access_unit_p95_ms": 2232
+				}
+			},
+			"turn_evidence": {
+				"registry_available": true,
+				"active_nodes": 1,
+				"coturn_available": true,
+				"api_turn_registry_lookup_succeeded": 1,
+				"api_dynamic_turn_count": 1,
+				"api_turn_registry_node_count": 1
+			},
+			"video_startup_latency": [
+				{"ice_policy":"relay","selected_local_candidate_type":"relay","selected_remote_candidate_type":"relay","selected_local_candidate_protocol":"udp","selected_remote_candidate_protocol":"udp"}
+			]
 	}`)
 	if err := os.WriteFile(filepath.Join(videoDir, "load-results.json"), raw, 0o644); err != nil {
 		t.Fatal(err)
@@ -4750,6 +4791,9 @@ func TestExecuteAggregateWritesVideoOnlyRunLevelReport(t *testing.T) {
 	if err := readJSON(filepath.Join(outDir, "results.json"), &result); err != nil {
 		t.Fatal(err)
 	}
+	if result.Status != "COMPLETE" || result.Result != "SUCCESS" {
+		t.Fatalf("video-only outcome = %s/%s, want COMPLETE/SUCCESS; reasons=%v", result.Status, result.Result, result.VideoEvidence.Thresholds.Failures)
+	}
 	if result.VideoEvidence.WebRTCMedia.Successes != 5 || result.VideoEvidence.TURN.ActiveSessions != 20 {
 		t.Fatalf("video-only aggregate evidence = media %d turn sessions %d, want 5/20", result.VideoEvidence.WebRTCMedia.Successes, result.VideoEvidence.TURN.ActiveSessions)
 	}
@@ -4759,6 +4803,8 @@ func TestExecuteAggregateWritesVideoOnlyRunLevelReport(t *testing.T) {
 	}
 	report := string(reportRaw)
 	for _, want := range []string{
+		"Status: COMPLETE",
+		"Result: SUCCESS",
 		"## WebRTC Totals",
 		"App request -> first H.264 access unit",
 		"active sessions: 20",

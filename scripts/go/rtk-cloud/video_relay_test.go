@@ -676,6 +676,15 @@ func TestVideoRelayMTLSBaseURLDefaultsToDeviceSubdomain(t *testing.T) {
 	}
 }
 
+func TestVideoRelayTokenBaseURLPrefersExplicitValue(t *testing.T) {
+	got := videoCloudTokenBaseURLForRelay(t.TempDir(), map[string]string{
+		"VIDEO_CLOUD_DOMAIN": "video.example.test",
+	}, "https://video.example.test", "https://device.override.example.test/")
+	if got != "https://device.override.example.test" {
+		t.Fatalf("token base URL = %q, want explicit device token URL", got)
+	}
+}
+
 func deviceIDs(devices []videoRelaySelectedDevice) []string {
 	out := make([]string, 0, len(devices))
 	for _, device := range devices {

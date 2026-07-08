@@ -234,6 +234,7 @@ func runVideoLoadtestTokens(args []string) error {
 	envRootFlag := fs.String("env-root", "", "environment root")
 	brandname := fs.String("brandname", "RTK", "brand name")
 	brandPlan := fs.String("brand-plan", "", "optional multi-brand load-test plan JSON")
+	baseURL := fs.String("base-url", "", "explicit mTLS/device Video Cloud token bootstrap base URL")
 	maxDevices := fs.Int("max-devices", 100, "maximum selected video devices")
 	requireDevices := fs.Int("require-devices", 0, "minimum selected video devices required")
 	deviceIDsFile := fs.String("device-ids-file", "", "optional newline-delimited exact device IDs to mint tokens for")
@@ -286,7 +287,7 @@ func runVideoLoadtestTokens(args []string) error {
 	}
 	stackEnv := videoRelayEnvValues(filepath.Join(envRoot, "env", "stack.env"))
 	apiURL := "https://" + firstNonEmpty(stackEnv["VIDEO_CLOUD_DOMAIN"], "video-cloud-staging.realtekconnect.com")
-	mtlsURL := videoCloudMTLSBaseURLForRelay(envRoot, stackEnv, apiURL)
+	mtlsURL := videoCloudTokenBaseURLForRelay(envRoot, stackEnv, apiURL, *baseURL)
 	deviceTokens, appTokens, err := mintVideoLoadtestTokens(mtlsURL, selected, *expirySeconds, *concurrency, *requestTimeout)
 	if err != nil {
 		return err
@@ -1655,6 +1656,13 @@ func videoCloudMTLSBaseURLForRelay(envRoot string, stackValues map[string]string
 		return "https://" + strings.TrimRight(strings.TrimSpace(host), "/")
 	}
 	return fallback
+}
+
+func videoCloudTokenBaseURLForRelay(envRoot string, stackValues map[string]string, fallback string, explicit string) string {
+	if explicit = strings.TrimRight(strings.TrimSpace(explicit), "/"); explicit != "" {
+		return explicit
+	}
+	return strings.TrimRight(strings.TrimSpace(videoCloudMTLSBaseURLForRelay(envRoot, stackValues, fallback)), "/")
 }
 
 func videoRelayTopologyDeployValue(path, key string) string {
