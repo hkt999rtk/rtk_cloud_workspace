@@ -2077,8 +2077,12 @@ func collectLokiWebRTCTraceEvidence(envRoot string, runID string, windowStart st
 	}
 	counters := lokiWebRTCTraceCounters(runID, lines)
 	if shouldBackfillLokiWebRTCTraceEvents(counters, len(lines)) {
-		backfilled := append([]string{}, lines...)
-		for _, event := range missingLokiWebRTCTraceEvents(counters) {
+		backfillEvents := lokiWebRTCTraceBackfillEvents(counters)
+		backfilled := []string{}
+		if len(backfillEvents) != len(lokiWebRTCTraceEventNames()) {
+			backfilled = append(backfilled, lines...)
+		}
+		for _, event := range backfillEvents {
 			eventQuery := baseQuery + ` |= "` + escapeLogQLLiteral(`"event":"`+event+`"`) + `"`
 			eventLines, err := queryLokiLinesWithLimitFallback(baseURL, eventQuery, since, until, 10000, 5000, 1000, 500, 250)
 			if err != nil {
@@ -2228,31 +2232,69 @@ func shouldBackfillLokiWebRTCTraceEvents(counters map[string]int64, matchedLines
 	if matchedLines < 900 {
 		return false
 	}
-	if counters["loki_webrtc_trace.close_succeeded.events"] == 0 &&
-		counters["loki_webrtc_trace.session_closed.events"] == 0 {
-		return false
-	}
+	maxCritical := int64(0)
+	minCritical := int64(-1)
 	for _, event := range []string{
 		"create_started",
 		"session_created",
 		"offer_delivered",
+		"answer_wait_store_completed",
 		"answer_succeeded",
+		"close_succeeded",
 	} {
-		if counters["loki_webrtc_trace."+event+".events"] == 0 {
+		value := counters["loki_webrtc_trace."+event+".events"]
+		if value == 0 {
 			return true
 		}
+		if value > maxCritical {
+			maxCritical = value
+		}
+		if minCritical < 0 || value < minCritical {
+			minCritical = value
+		}
+	}
+	if minCritical*2 < maxCritical {
+		return true
 	}
 	return false
 }
 
-func missingLokiWebRTCTraceEvents(counters map[string]int64) []string {
-	missing := []string{}
+func lokiWebRTCTraceBackfillEvents(counters map[string]int64) []string {
+	if hasImbalancedLokiWebRTCCriticalEvents(counters) {
+		return lokiWebRTCTraceEventNames()
+	}
+	events := []string{}
 	for _, event := range lokiWebRTCTraceEventNames() {
 		if counters["loki_webrtc_trace."+event+".events"] == 0 {
-			missing = append(missing, event)
+			events = append(events, event)
 		}
 	}
-	return missing
+	return events
+}
+
+func hasImbalancedLokiWebRTCCriticalEvents(counters map[string]int64) bool {
+	maxCritical := int64(0)
+	minCritical := int64(-1)
+	for _, event := range []string{
+		"create_started",
+		"session_created",
+		"offer_delivered",
+		"answer_wait_store_completed",
+		"answer_succeeded",
+		"close_succeeded",
+	} {
+		value := counters["loki_webrtc_trace."+event+".events"]
+		if value == 0 {
+			return false
+		}
+		if value > maxCritical {
+			maxCritical = value
+		}
+		if minCritical < 0 || value < minCritical {
+			minCritical = value
+		}
+	}
+	return minCritical*2 < maxCritical
 }
 
 func dedupeLokiLines(lines []string) []string {

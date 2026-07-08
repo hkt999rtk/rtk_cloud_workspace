@@ -4130,6 +4130,91 @@ func TestCollectLokiWebRTCTraceEvidenceBackfillsMissingLifecycleEvents(t *testin
 	}
 }
 
+func TestCollectLokiWebRTCTraceEvidenceBackfillsImbalancedLifecycleEvents(t *testing.T) {
+	requests := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.String())
+		query := r.URL.Query().Get("query")
+		values := make([][]string, 0, 1000)
+		eventCounts := map[string]int{
+			"create_started":                 500,
+			"session_created":                500,
+			"offer_delivered":                500,
+			"answer_wait_store_completed":    500,
+			"answer_succeeded":               500,
+			"close_succeeded":                500,
+			"turn_registry_lookup_succeeded": 500,
+		}
+		backfillEvent := ""
+		for event := range eventCounts {
+			if strings.Contains(query, event) {
+				backfillEvent = event
+				break
+			}
+		}
+		if backfillEvent != "" {
+			for event, count := range eventCounts {
+				if event != backfillEvent {
+					continue
+				}
+				for i := 0; i < count; i++ {
+					values = append(values, []string{
+						fmt.Sprintf("%019d", 1780000020000000000+i),
+						fmt.Sprintf(`{"run_id":"run-loki-imbalanced","event":"%s","session_id":"s%d","duration_ms":1}`, event, i),
+					})
+				}
+				break
+			}
+		} else if strings.Contains(query, "event") {
+			values = nil
+		} else {
+			// Simulate Loki returning only a tail slice: every critical event is
+			// present, but counts are obviously too imbalanced to be complete.
+			for i := 0; i < 700; i++ {
+				values = append(values, []string{
+					fmt.Sprintf("%019d", 1780000030000000000+i),
+					fmt.Sprintf(`{"run_id":"run-loki-imbalanced","event":"close_succeeded","session_id":"s%d","duration_ms":1}`, i),
+				})
+			}
+			for _, event := range []string{"create_started", "session_created", "offer_delivered", "answer_wait_store_completed", "answer_succeeded"} {
+				for i := 0; i < 60; i++ {
+					values = append(values, []string{
+						fmt.Sprintf("%019d", 1780000040000000000+i),
+						fmt.Sprintf(`{"run_id":"run-loki-imbalanced","event":"%s","session_id":"s%d","duration_ms":1}`, event, i),
+					})
+				}
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "success",
+			"data": map[string]any{
+				"result": []map[string]any{{
+					"values": values,
+				}},
+			},
+		})
+	}))
+	defer server.Close()
+	t.Setenv("HOME100K_LOKI_URL", server.URL)
+
+	source, note := collectLokiWebRTCTraceEvidence(t.TempDir(), "run-loki-imbalanced", "2026-07-07T00:00:00Z")
+
+	if note != "" {
+		t.Fatalf("unexpected note: %s", note)
+	}
+	if !source.Available {
+		t.Fatalf("loki source = %+v, want available", source)
+	}
+	for _, event := range []string{"create_started", "session_created", "offer_delivered", "answer_wait_store_completed", "answer_succeeded", "close_succeeded"} {
+		if got := source.Counters["loki_webrtc_trace."+event+".events"]; got != 500 {
+			t.Fatalf("%s events = %d, want 500; counters=%+v", event, got, source.Counters)
+		}
+	}
+	if len(requests) <= 1 {
+		t.Fatalf("Loki requests = %d, want event backfill queries", len(requests))
+	}
+}
+
 func TestCollectLiveServerEvidenceFallsBackToCentralLoggerRuntimeLogs(t *testing.T) {
 	outDir := t.TempDir()
 	if err := writeJSONFile(filepath.Join(outDir, "start-coordination.json"), StartCoordination{
