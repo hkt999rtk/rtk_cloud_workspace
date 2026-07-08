@@ -166,20 +166,43 @@ type VideoStartupBreakdown struct {
 	APICreateMS                     int64 `json:"api_create_ms,omitempty"`
 	OfferDeliveryMS                 int64 `json:"offer_delivery_ms,omitempty"`
 	DeviceAnswerMS                  int64 `json:"device_answer_ms,omitempty"`
+	PionCreatePeerMS                int64 `json:"pion_create_peer_ms,omitempty"`
+	PionCreateOfferMS               int64 `json:"pion_create_offer_ms,omitempty"`
+	PionCreateAnswerMS              int64 `json:"pion_create_answer_ms,omitempty"`
+	PionSetLocalDescriptionMS       int64 `json:"pion_set_local_description_ms,omitempty"`
+	PionICEGatheringWaitMS          int64 `json:"pion_ice_gathering_wait_ms,omitempty"`
+	PionSetRemoteDescriptionMS      int64 `json:"pion_set_remote_description_ms,omitempty"`
 	RemoteAnswerSetMS               int64 `json:"remote_answer_set_ms,omitempty"`
 	ICEConnectMS                    int64 `json:"ice_connect_ms,omitempty"`
 	ICECheckMS                      int64 `json:"ice_check_ms,omitempty"`
 	ICEConnectedSinceSessionStartMS int64 `json:"ice_connected_since_session_start_ms,omitempty"`
 	FirstRTPAfterICEMS              int64 `json:"first_rtp_after_ice_ms,omitempty"`
 	FirstH264AccessUnitAfterRTPMS   int64 `json:"first_h264_access_unit_after_rtp_ms,omitempty"`
+	SenderFirstWriteSinceSessionMS  int64 `json:"sender_first_write_since_session_ms,omitempty"`
 }
 
 type TURNEvidence struct {
-	RegistryAvailable bool  `json:"registry_available"`
-	ActiveNodes       int64 `json:"active_nodes,omitempty"`
-	CoturnAvailable   bool  `json:"coturn_available"`
-	Allocations       int64 `json:"allocations,omitempty"`
-	ActiveSessions    int64 `json:"active_sessions,omitempty"`
+	RegistryAvailable              bool   `json:"registry_available"`
+	ActiveNodes                    int64  `json:"active_nodes,omitempty"`
+	CoturnAvailable                bool   `json:"coturn_available"`
+	Allocations                    int64  `json:"allocations,omitempty"`
+	ActiveSessions                 int64  `json:"active_sessions,omitempty"`
+	UDPSockets                     int64  `json:"udp_sockets,omitempty"`
+	TCPEstablished                 int64  `json:"tcp_established,omitempty"`
+	RelayUDPFlows                  int64  `json:"relay_udp_flows,omitempty"`
+	RelayTCPFlows                  int64  `json:"relay_tcp_flows,omitempty"`
+	JournalEvents                  int64  `json:"journal_events,omitempty"`
+	CoturnCPUPercent               int64  `json:"coturn_cpu_pct,omitempty"`
+	CoturnRSSKB                    int64  `json:"coturn_rss_kb,omitempty"`
+	RXBytes                        int64  `json:"rx_bytes,omitempty"`
+	TXBytes                        int64  `json:"tx_bytes,omitempty"`
+	APITURNRegistryLookupSucceeded int64  `json:"api_turn_registry_lookup_succeeded,omitempty"`
+	APITURNRegistryLookupEmpty     int64  `json:"api_turn_registry_lookup_empty,omitempty"`
+	APITURNRegistryLookupFailed    int64  `json:"api_turn_registry_lookup_failed,omitempty"`
+	APIStaticTURNCount             int64  `json:"api_static_turn_count,omitempty"`
+	APIDynamicTURNCount            int64  `json:"api_dynamic_turn_count,omitempty"`
+	APITURNRegistryNodeCount       int64  `json:"api_turn_registry_node_count,omitempty"`
+	EvidenceStatus                 string `json:"evidence_status,omitempty"`
 }
 
 type DeviceTypeTotals struct {
@@ -494,9 +517,14 @@ func AggregateCollectedRun(opts AggregateOptions) (RunResult, error) {
 	if outDir == "" {
 		outDir = filepath.Join("loadtests", "home-100k", "reports", runID)
 	}
+	videoDir := filepath.Join(outDir, "video")
+	preloadedVideoEvidence := loadVideoEvidence(videoDir)
 	collected, err := loadCollectedShardResults(filepath.Join(outDir, "shards"), plan.Stages)
 	if err != nil {
-		return RunResult{}, err
+		if !isNoShardResultsError(err) || !hasVideoEvidence(preloadedVideoEvidence) {
+			return RunResult{}, err
+		}
+		collected = collectedShardResults{}
 	}
 	stages := collected.StageResults
 	loadHealth := collected.LoadGeneratorHealth
@@ -515,7 +543,7 @@ func AggregateCollectedRun(opts AggregateOptions) (RunResult, error) {
 	thresholds := gateThresholdsFromConditions(plan.Conditions)
 	correlation := correlateServerEvidenceWithThresholds(evidence, deviceTotals, appTotals, thresholds)
 	runtimeLogCorrelation := correlateRuntimeLogsWithThresholds(evidence, stages, thresholds)
-	videoEvidence := videoEvidenceWithServerEvidence(loadVideoEvidence(filepath.Join(outDir, "video")), evidence)
+	videoEvidence := videoEvidenceWithServerEvidence(preloadedVideoEvidence, evidence)
 	outcome := evaluateRunOutcome(plan, evidence, stages, loadHealth, correlation, runtimeLogCorrelation, videoEvidence)
 	result := RunResult{
 		RunID:                 runID,
@@ -670,6 +698,29 @@ func loadVideoEvidence(dir string) VideoEvidence {
 		evidence = videoEvidenceWithActiveTURNSamples(evidence, dir)
 		return evidence
 	}
+	shardMatches, err := filepath.Glob(filepath.Join(dir, "shard-*", "load-results.json"))
+	if err == nil && len(shardMatches) > 0 {
+		sort.Strings(shardMatches)
+		steps := make([]VideoStepEvidence, 0, len(shardMatches))
+		notes := []string{}
+		for _, path := range shardMatches {
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				notes = append(notes, fmt.Sprintf("%s read failed: %s", filepath.Base(filepath.Dir(path)), err))
+				continue
+			}
+			evidence, err := videoEvidenceFromLoadtestJSON(raw)
+			if err != nil {
+				notes = append(notes, fmt.Sprintf("%s decode failed: %s", filepath.Base(filepath.Dir(path)), err))
+				continue
+			}
+			steps = append(steps, videoStepEvidenceFromEvidence(filepath.Base(filepath.Dir(path)), filepath.Dir(path), evidence))
+		}
+		merged := mergeVideoStepEvidence(steps)
+		merged = videoEvidenceWithActiveTURNSamples(merged, dir)
+		merged.Notes = append(merged.Notes, notes...)
+		return merged
+	}
 	return VideoEvidence{}
 }
 
@@ -754,11 +805,27 @@ func videoEvidenceFromLoadtestJSON(raw []byte) (VideoEvidence, error) {
 			Startup             VideoStartupTotals `json:"video_startup_latency"`
 		} `json:"webrtc_media"`
 		TURN struct {
-			RegistryAvailable bool  `json:"registry_available"`
-			ActiveNodes       int64 `json:"active_nodes"`
-			CoturnAvailable   bool  `json:"coturn_available"`
-			Allocations       int64 `json:"allocations"`
-			ActiveSessions    int64 `json:"active_sessions"`
+			RegistryAvailable              bool   `json:"registry_available"`
+			ActiveNodes                    int64  `json:"active_nodes"`
+			CoturnAvailable                bool   `json:"coturn_available"`
+			Allocations                    int64  `json:"allocations"`
+			ActiveSessions                 int64  `json:"active_sessions"`
+			UDPSockets                     int64  `json:"udp_sockets"`
+			TCPEstablished                 int64  `json:"tcp_established"`
+			RelayUDPFlows                  int64  `json:"relay_udp_flows"`
+			RelayTCPFlows                  int64  `json:"relay_tcp_flows"`
+			JournalEvents                  int64  `json:"journal_events"`
+			CoturnCPUPercent               int64  `json:"coturn_cpu_pct"`
+			CoturnRSSKB                    int64  `json:"coturn_rss_kb"`
+			RXBytes                        int64  `json:"rx_bytes"`
+			TXBytes                        int64  `json:"tx_bytes"`
+			APITURNRegistryLookupSucceeded int64  `json:"api_turn_registry_lookup_succeeded"`
+			APITURNRegistryLookupEmpty     int64  `json:"api_turn_registry_lookup_empty"`
+			APITURNRegistryLookupFailed    int64  `json:"api_turn_registry_lookup_failed"`
+			APIStaticTURNCount             int64  `json:"api_static_turn_count"`
+			APIDynamicTURNCount            int64  `json:"api_dynamic_turn_count"`
+			APITURNRegistryNodeCount       int64  `json:"api_turn_registry_node_count"`
+			EvidenceStatus                 string `json:"evidence_status"`
 		} `json:"turn_evidence"`
 		Thresholds          VideoThresholds `json:"thresholds"`
 		VideoStartupLatency []struct {
@@ -800,11 +867,27 @@ func videoEvidenceFromLoadtestJSON(raw []byte) (VideoEvidence, error) {
 			Startup:             payload.WebRTCMedia.Startup,
 		},
 		TURN: TURNEvidence{
-			RegistryAvailable: payload.TURN.RegistryAvailable,
-			ActiveNodes:       payload.TURN.ActiveNodes,
-			CoturnAvailable:   payload.TURN.CoturnAvailable,
-			Allocations:       payload.TURN.Allocations,
-			ActiveSessions:    payload.TURN.ActiveSessions,
+			RegistryAvailable:              payload.TURN.RegistryAvailable,
+			ActiveNodes:                    payload.TURN.ActiveNodes,
+			CoturnAvailable:                payload.TURN.CoturnAvailable,
+			Allocations:                    payload.TURN.Allocations,
+			ActiveSessions:                 payload.TURN.ActiveSessions,
+			UDPSockets:                     payload.TURN.UDPSockets,
+			TCPEstablished:                 payload.TURN.TCPEstablished,
+			RelayUDPFlows:                  payload.TURN.RelayUDPFlows,
+			RelayTCPFlows:                  payload.TURN.RelayTCPFlows,
+			JournalEvents:                  payload.TURN.JournalEvents,
+			CoturnCPUPercent:               payload.TURN.CoturnCPUPercent,
+			CoturnRSSKB:                    payload.TURN.CoturnRSSKB,
+			RXBytes:                        payload.TURN.RXBytes,
+			TXBytes:                        payload.TURN.TXBytes,
+			APITURNRegistryLookupSucceeded: payload.TURN.APITURNRegistryLookupSucceeded,
+			APITURNRegistryLookupEmpty:     payload.TURN.APITURNRegistryLookupEmpty,
+			APITURNRegistryLookupFailed:    payload.TURN.APITURNRegistryLookupFailed,
+			APIStaticTURNCount:             payload.TURN.APIStaticTURNCount,
+			APIDynamicTURNCount:            payload.TURN.APIDynamicTURNCount,
+			APITURNRegistryNodeCount:       payload.TURN.APITURNRegistryNodeCount,
+			EvidenceStatus:                 payload.TURN.EvidenceStatus,
 		},
 		Thresholds: payload.Thresholds,
 	}
@@ -943,6 +1026,22 @@ func mergeVideoStepEvidence(steps []VideoStepEvidence) VideoEvidence {
 		merged.TURN.ActiveNodes = maxInt64(merged.TURN.ActiveNodes, step.TURN.ActiveNodes)
 		merged.TURN.Allocations = maxInt64(merged.TURN.Allocations, step.TURN.Allocations)
 		merged.TURN.ActiveSessions = maxInt64(merged.TURN.ActiveSessions, step.TURN.ActiveSessions)
+		merged.TURN.UDPSockets = maxInt64(merged.TURN.UDPSockets, step.TURN.UDPSockets)
+		merged.TURN.TCPEstablished = maxInt64(merged.TURN.TCPEstablished, step.TURN.TCPEstablished)
+		merged.TURN.RelayUDPFlows = maxInt64(merged.TURN.RelayUDPFlows, step.TURN.RelayUDPFlows)
+		merged.TURN.RelayTCPFlows = maxInt64(merged.TURN.RelayTCPFlows, step.TURN.RelayTCPFlows)
+		merged.TURN.JournalEvents = maxInt64(merged.TURN.JournalEvents, step.TURN.JournalEvents)
+		merged.TURN.CoturnCPUPercent = maxInt64(merged.TURN.CoturnCPUPercent, step.TURN.CoturnCPUPercent)
+		merged.TURN.CoturnRSSKB = maxInt64(merged.TURN.CoturnRSSKB, step.TURN.CoturnRSSKB)
+		merged.TURN.RXBytes = maxInt64(merged.TURN.RXBytes, step.TURN.RXBytes)
+		merged.TURN.TXBytes = maxInt64(merged.TURN.TXBytes, step.TURN.TXBytes)
+		merged.TURN.APITURNRegistryLookupSucceeded = maxInt64(merged.TURN.APITURNRegistryLookupSucceeded, step.TURN.APITURNRegistryLookupSucceeded)
+		merged.TURN.APITURNRegistryLookupEmpty = maxInt64(merged.TURN.APITURNRegistryLookupEmpty, step.TURN.APITURNRegistryLookupEmpty)
+		merged.TURN.APITURNRegistryLookupFailed = maxInt64(merged.TURN.APITURNRegistryLookupFailed, step.TURN.APITURNRegistryLookupFailed)
+		merged.TURN.APIStaticTURNCount = maxInt64(merged.TURN.APIStaticTURNCount, step.TURN.APIStaticTURNCount)
+		merged.TURN.APIDynamicTURNCount = maxInt64(merged.TURN.APIDynamicTURNCount, step.TURN.APIDynamicTURNCount)
+		merged.TURN.APITURNRegistryNodeCount = maxInt64(merged.TURN.APITURNRegistryNodeCount, step.TURN.APITURNRegistryNodeCount)
+		merged.TURN.EvidenceStatus = mergeTURNEvidenceStatus(merged.TURN.EvidenceStatus, step.TURN.EvidenceStatus)
 		if !step.Thresholds.Passed || len(step.Thresholds.Failures) > 0 {
 			merged.Thresholds.Passed = false
 			merged.Thresholds.Failures = append(merged.Thresholds.Failures, step.Thresholds.Failures...)
@@ -974,12 +1073,19 @@ func mergeVideoStartupTotals(a, b VideoStartupTotals) VideoStartupTotals {
 	a.BreakdownP95.APICreateMS = maxInt64(a.BreakdownP95.APICreateMS, b.BreakdownP95.APICreateMS)
 	a.BreakdownP95.OfferDeliveryMS = maxInt64(a.BreakdownP95.OfferDeliveryMS, b.BreakdownP95.OfferDeliveryMS)
 	a.BreakdownP95.DeviceAnswerMS = maxInt64(a.BreakdownP95.DeviceAnswerMS, b.BreakdownP95.DeviceAnswerMS)
+	a.BreakdownP95.PionCreatePeerMS = maxInt64(a.BreakdownP95.PionCreatePeerMS, b.BreakdownP95.PionCreatePeerMS)
+	a.BreakdownP95.PionCreateOfferMS = maxInt64(a.BreakdownP95.PionCreateOfferMS, b.BreakdownP95.PionCreateOfferMS)
+	a.BreakdownP95.PionCreateAnswerMS = maxInt64(a.BreakdownP95.PionCreateAnswerMS, b.BreakdownP95.PionCreateAnswerMS)
+	a.BreakdownP95.PionSetLocalDescriptionMS = maxInt64(a.BreakdownP95.PionSetLocalDescriptionMS, b.BreakdownP95.PionSetLocalDescriptionMS)
+	a.BreakdownP95.PionICEGatheringWaitMS = maxInt64(a.BreakdownP95.PionICEGatheringWaitMS, b.BreakdownP95.PionICEGatheringWaitMS)
+	a.BreakdownP95.PionSetRemoteDescriptionMS = maxInt64(a.BreakdownP95.PionSetRemoteDescriptionMS, b.BreakdownP95.PionSetRemoteDescriptionMS)
 	a.BreakdownP95.RemoteAnswerSetMS = maxInt64(a.BreakdownP95.RemoteAnswerSetMS, b.BreakdownP95.RemoteAnswerSetMS)
 	a.BreakdownP95.ICEConnectMS = maxInt64(a.BreakdownP95.ICEConnectMS, b.BreakdownP95.ICEConnectMS)
 	a.BreakdownP95.ICECheckMS = maxInt64(a.BreakdownP95.ICECheckMS, b.BreakdownP95.ICECheckMS)
 	a.BreakdownP95.ICEConnectedSinceSessionStartMS = maxInt64(a.BreakdownP95.ICEConnectedSinceSessionStartMS, b.BreakdownP95.ICEConnectedSinceSessionStartMS)
 	a.BreakdownP95.FirstRTPAfterICEMS = maxInt64(a.BreakdownP95.FirstRTPAfterICEMS, b.BreakdownP95.FirstRTPAfterICEMS)
 	a.BreakdownP95.FirstH264AccessUnitAfterRTPMS = maxInt64(a.BreakdownP95.FirstH264AccessUnitAfterRTPMS, b.BreakdownP95.FirstH264AccessUnitAfterRTPMS)
+	a.BreakdownP95.SenderFirstWriteSinceSessionMS = maxInt64(a.BreakdownP95.SenderFirstWriteSinceSessionMS, b.BreakdownP95.SenderFirstWriteSinceSessionMS)
 	return a
 }
 
@@ -1021,6 +1127,21 @@ func turnEvidenceWithServerEvidence(turn TURNEvidence, evidence ServerEvidence) 
 		if value := source.Counters["coturn.active_sessions"]; value > turn.ActiveSessions {
 			turn.ActiveSessions = value
 		}
+		if value := source.Counters["coturn.udp_sockets"]; value > turn.UDPSockets {
+			turn.UDPSockets = value
+		}
+		if value := source.Counters["coturn.tcp_established"]; value > turn.TCPEstablished {
+			turn.TCPEstablished = value
+		}
+		if value := source.Counters["coturn.relay_udp_flows"]; value > turn.RelayUDPFlows {
+			turn.RelayUDPFlows = value
+		}
+		if value := source.Counters["coturn.relay_tcp_flows"]; value > turn.RelayTCPFlows {
+			turn.RelayTCPFlows = value
+		}
+		if value := source.Counters["coturn.journal_events"]; value > turn.JournalEvents {
+			turn.JournalEvents = value
+		}
 		if value := source.Counters["coturn.ready_pods"]; value > turn.ActiveNodes {
 			turn.ActiveNodes = value
 		}
@@ -1031,18 +1152,40 @@ func turnEvidenceWithServerEvidence(turn TURNEvidence, evidence ServerEvidence) 
 			turn.ActiveNodes = value
 		}
 	}
+	if source, ok := evidence.Sources["loki_webrtc_trace"]; ok {
+		if source.Counters != nil {
+			turn.APITURNRegistryLookupSucceeded = maxInt64(turn.APITURNRegistryLookupSucceeded, source.Counters["loki_webrtc_trace.turn_registry_lookup_succeeded.events"])
+			turn.APITURNRegistryLookupEmpty = maxInt64(turn.APITURNRegistryLookupEmpty, source.Counters["loki_webrtc_trace.turn_registry_lookup_empty.events"])
+			turn.APITURNRegistryLookupFailed = maxInt64(turn.APITURNRegistryLookupFailed, source.Counters["loki_webrtc_trace.turn_registry_lookup_failed.events"])
+			turn.APIStaticTURNCount = maxInt64(turn.APIStaticTURNCount, source.Counters["loki_webrtc_trace.ice_servers_resolved.static_turn_count_max"])
+			turn.APIDynamicTURNCount = maxInt64(turn.APIDynamicTURNCount, source.Counters["loki_webrtc_trace.ice_servers_resolved.dynamic_turn_count_max"])
+			turn.APITURNRegistryNodeCount = maxInt64(turn.APITURNRegistryNodeCount, source.Counters["loki_webrtc_trace.ice_servers_resolved.turn_registry_node_count_max"])
+			turn.APITURNRegistryNodeCount = maxInt64(turn.APITURNRegistryNodeCount, source.Counters["loki_webrtc_trace.turn_registry_lookup_succeeded.turn_registry_node_count_max"])
+			turn.APITURNRegistryNodeCount = maxInt64(turn.APITURNRegistryNodeCount, source.Counters["loki_webrtc_trace.turn_registry_lookup_empty.turn_registry_node_count_max"])
+		}
+	}
 	return turn
 }
 
 func videoEvidenceWithActiveTURNSamples(evidence VideoEvidence, dir string) VideoEvidence {
 	turn := turnEvidenceFromActiveSamples(filepath.Join(dir, "turn-active-samples.tsv"))
-	if turn.ActiveSessions == 0 && turn.Allocations == 0 {
+	if turn.ActiveSessions == 0 && turn.Allocations == 0 && turn.RelayUDPFlows == 0 && turn.RelayTCPFlows == 0 && turn.UDPSockets == 0 && turn.TCPEstablished == 0 && turn.JournalEvents == 0 && turn.CoturnCPUPercent == 0 && turn.CoturnRSSKB == 0 && turn.RXBytes == 0 && turn.TXBytes == 0 {
 		return evidence
 	}
 	evidence.TURN.CoturnAvailable = true
 	evidence.TURN.Allocations = maxInt64(evidence.TURN.Allocations, turn.Allocations)
 	evidence.TURN.ActiveSessions = maxInt64(evidence.TURN.ActiveSessions, turn.ActiveSessions)
 	evidence.TURN.ActiveNodes = maxInt64(evidence.TURN.ActiveNodes, turn.ActiveNodes)
+	evidence.TURN.RelayUDPFlows = maxInt64(evidence.TURN.RelayUDPFlows, turn.RelayUDPFlows)
+	evidence.TURN.RelayTCPFlows = maxInt64(evidence.TURN.RelayTCPFlows, turn.RelayTCPFlows)
+	evidence.TURN.UDPSockets = maxInt64(evidence.TURN.UDPSockets, turn.UDPSockets)
+	evidence.TURN.TCPEstablished = maxInt64(evidence.TURN.TCPEstablished, turn.TCPEstablished)
+	evidence.TURN.JournalEvents = maxInt64(evidence.TURN.JournalEvents, turn.JournalEvents)
+	evidence.TURN.CoturnCPUPercent = maxInt64(evidence.TURN.CoturnCPUPercent, turn.CoturnCPUPercent)
+	evidence.TURN.CoturnRSSKB = maxInt64(evidence.TURN.CoturnRSSKB, turn.CoturnRSSKB)
+	evidence.TURN.RXBytes = maxInt64(evidence.TURN.RXBytes, turn.RXBytes)
+	evidence.TURN.TXBytes = maxInt64(evidence.TURN.TXBytes, turn.TXBytes)
+	evidence.TURN.EvidenceStatus = mergeTURNEvidenceStatus(evidence.TURN.EvidenceStatus, turn.EvidenceStatus)
 	evidence.Complete = evidence.WebRTC.CreateAttempts > 0 &&
 		evidence.WebRTC.SetupAttempts > 0 &&
 		evidence.WebRTC.CloseAttempts > 0 &&
@@ -1062,13 +1205,33 @@ func turnEvidenceFromActiveSamples(path string) TURNEvidence {
 		return TURNEvidence{}
 	}
 	lines := strings.Split(string(raw), "\n")
-	var maxSockets int64
+	var maxUDPSockets int64
+	var maxTCPEstablished int64
 	var maxEvents int64
+	var maxAllocations int64
+	var maxSessions int64
+	var maxRelayUDP int64
+	var maxRelayTCP int64
+	var maxCoturnCPU int64
+	var maxCoturnRSS int64
+	var maxRXBytes int64
+	var maxTXBytes int64
 	nodes := map[string]bool{}
 	nodeIndex := 1
 	udpIndex := 3
 	tcpIndex := -1
 	eventsIndex := 4
+	relayUDPIndex := -1
+	relayTCPIndex := -1
+	allocationsIndex := -1
+	sessionsIndex := -1
+	cpuIndex := -1
+	rssIndex := -1
+	rxIndex := -1
+	txIndex := -1
+	statusIndex := -1
+	status := ""
+	hasStrongEvidence := false
 	for i, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -1086,6 +1249,24 @@ func turnEvidenceFromActiveSamples(path string) TURNEvidence {
 					tcpIndex = idx
 				case "journal_events", "events":
 					eventsIndex = idx
+				case "relay_udp_flows":
+					relayUDPIndex = idx
+				case "relay_tcp_flows":
+					relayTCPIndex = idx
+				case "active_allocations", "allocations":
+					allocationsIndex = idx
+				case "active_sessions", "sessions":
+					sessionsIndex = idx
+				case "coturn_cpu_pct":
+					cpuIndex = idx
+				case "coturn_rss_kb":
+					rssIndex = idx
+				case "rx_bytes":
+					rxIndex = idx
+				case "tx_bytes":
+					txIndex = idx
+				case "evidence_status":
+					statusIndex = idx
 				}
 			}
 			continue
@@ -1098,25 +1279,124 @@ func turnEvidenceFromActiveSamples(path string) TURNEvidence {
 			nodes[node] = true
 		}
 		if udpIndex >= 0 && len(fields) > udpIndex {
-			maxSockets = maxInt64(maxSockets, parseInt64Default(fields[udpIndex], 0))
+			maxUDPSockets = maxInt64(maxUDPSockets, parseInt64Default(fields[udpIndex], 0))
 		}
 		if tcpIndex >= 0 && len(fields) > tcpIndex {
-			maxSockets = maxInt64(maxSockets, parseInt64Default(fields[tcpIndex], 0))
+			maxTCPEstablished = maxInt64(maxTCPEstablished, parseInt64Default(fields[tcpIndex], 0))
 		}
 		if eventsIndex >= 0 && len(fields) > eventsIndex {
 			maxEvents = maxInt64(maxEvents, parseInt64Default(fields[eventsIndex], 0))
 		}
+		if relayUDPIndex >= 0 && len(fields) > relayUDPIndex {
+			maxRelayUDP = maxInt64(maxRelayUDP, parseInt64Default(fields[relayUDPIndex], 0))
+		}
+		if relayTCPIndex >= 0 && len(fields) > relayTCPIndex {
+			maxRelayTCP = maxInt64(maxRelayTCP, parseInt64Default(fields[relayTCPIndex], 0))
+		}
+		if allocationsIndex >= 0 && len(fields) > allocationsIndex {
+			maxAllocations = maxInt64(maxAllocations, parseInt64Default(fields[allocationsIndex], 0))
+		}
+		if sessionsIndex >= 0 && len(fields) > sessionsIndex {
+			maxSessions = maxInt64(maxSessions, parseInt64Default(fields[sessionsIndex], 0))
+		}
+		if cpuIndex >= 0 && len(fields) > cpuIndex {
+			maxCoturnCPU = maxInt64(maxCoturnCPU, parseInt64Default(fields[cpuIndex], 0))
+		}
+		if rssIndex >= 0 && len(fields) > rssIndex {
+			maxCoturnRSS = maxInt64(maxCoturnRSS, parseInt64Default(fields[rssIndex], 0))
+		}
+		if rxIndex >= 0 && len(fields) > rxIndex {
+			maxRXBytes = maxInt64(maxRXBytes, parseInt64Default(fields[rxIndex], 0))
+		}
+		if txIndex >= 0 && len(fields) > txIndex {
+			maxTXBytes = maxInt64(maxTXBytes, parseInt64Default(fields[txIndex], 0))
+		}
+		if statusIndex >= 0 && len(fields) > statusIndex {
+			lineStatus := strings.TrimSpace(fields[statusIndex])
+			status = mergeTURNEvidenceStatus(status, lineStatus)
+			if lineStatus == "active" || lineStatus == "cli_active" || lineStatus == "prometheus_active" || lineStatus == "journal_active" || lineStatus == "conntrack_active" {
+				hasStrongEvidence = true
+			}
+		}
 	}
-	active := maxInt64(maxSockets, maxEvents)
-	if active == 0 {
+	if maxAllocations > 0 || maxSessions > 0 {
+		hasStrongEvidence = true
+	}
+	if hasStrongEvidence {
+		active := maxInt64(maxAllocations, maxSessions)
+		if active == 0 {
+			return TURNEvidence{}
+		}
+		return TURNEvidence{
+			CoturnAvailable:  true,
+			ActiveNodes:      int64(len(nodes)),
+			Allocations:      maxInt64(maxAllocations, active),
+			ActiveSessions:   maxInt64(maxSessions, active),
+			UDPSockets:       maxUDPSockets,
+			TCPEstablished:   maxTCPEstablished,
+			RelayUDPFlows:    maxRelayUDP,
+			RelayTCPFlows:    maxRelayTCP,
+			JournalEvents:    maxEvents,
+			CoturnCPUPercent: maxCoturnCPU,
+			CoturnRSSKB:      maxCoturnRSS,
+			RXBytes:          maxRXBytes,
+			TXBytes:          maxTXBytes,
+			EvidenceStatus:   firstNonEmpty(status, "active"),
+		}
+	}
+	if maxUDPSockets == 0 && maxTCPEstablished == 0 && maxEvents == 0 && maxRelayUDP == 0 && maxRelayTCP == 0 && maxCoturnCPU == 0 && maxCoturnRSS == 0 && maxRXBytes == 0 && maxTXBytes == 0 {
 		return TURNEvidence{}
 	}
-	return TURNEvidence{
-		CoturnAvailable: true,
-		ActiveNodes:     int64(len(nodes)),
-		Allocations:     active,
-		ActiveSessions:  active,
+	if status == "" || status == "unavailable" {
+		status = "socket_activity_observed"
 	}
+	return TURNEvidence{
+		CoturnAvailable:  true,
+		ActiveNodes:      int64(len(nodes)),
+		UDPSockets:       maxUDPSockets,
+		TCPEstablished:   maxTCPEstablished,
+		RelayUDPFlows:    maxRelayUDP,
+		RelayTCPFlows:    maxRelayTCP,
+		JournalEvents:    maxEvents,
+		CoturnCPUPercent: maxCoturnCPU,
+		CoturnRSSKB:      maxCoturnRSS,
+		RXBytes:          maxRXBytes,
+		TXBytes:          maxTXBytes,
+		EvidenceStatus:   status,
+	}
+}
+
+func mergeTURNEvidenceStatus(a, b string) string {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	rank := func(value string) int {
+		switch value {
+		case "active":
+			return 5
+		case "cli_active":
+			return 4
+		case "prometheus_active":
+			return 4
+		case "journal_active":
+			return 4
+		case "conntrack_active":
+			return 4
+		case "relay_flow_observed":
+			return 3
+		case "socket_activity_observed":
+			return 2
+		case "unavailable":
+			return 1
+		case "":
+			return 0
+		default:
+			return 1
+		}
+	}
+	if rank(b) > rank(a) {
+		return b
+	}
+	return a
 }
 
 func loadCollectedShardResults(shardsDir string, stages []Stage) (collectedShardResults, error) {
@@ -1168,6 +1448,18 @@ func loadCollectedShardResults(shardsDir string, stages []Stage) (collectedShard
 		return collectedShardResults{}, fmt.Errorf("collected shard results did not contain stage_results")
 	}
 	return collectedShardResults{StageResults: results, LoadGeneratorHealth: health}, nil
+}
+
+func isNoShardResultsError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no shard results found")
+}
+
+func hasVideoEvidence(evidence VideoEvidence) bool {
+	return evidence.WebRTC.CreateAttempts > 0 ||
+		evidence.WebRTC.SetupAttempts > 0 ||
+		evidence.WebRTC.CloseAttempts > 0 ||
+		evidence.WebRTCMedia.Attempts > 0 ||
+		evidence.TURN.CoturnAvailable
 }
 
 func aggregateStageResults(items []StageResult) StageResult {
@@ -1499,10 +1791,11 @@ func requiredEvidenceSources(available bool) map[string]EvidenceSource {
 
 func optionalEvidenceSources(available bool) map[string]EvidenceSource {
 	return map[string]EvidenceSource{
-		"central_logger": {Available: available, Optional: true},
-		"edge_haproxy":   {Available: available, Optional: true},
-		"turn_registry":  {Available: available, Optional: true},
-		"coturn":         {Available: available, Optional: true},
+		"central_logger":    {Available: available, Optional: true},
+		"loki_webrtc_trace": {Available: available, Optional: true},
+		"edge_haproxy":      {Available: available, Optional: true},
+		"turn_registry":     {Available: available, Optional: true},
+		"coturn":            {Available: available, Optional: true},
 	}
 }
 
@@ -1718,7 +2011,19 @@ func videoGateFailures(plan Plan, evidence VideoEvidence) (bool, []string) {
 	}
 	if isVideoTurnSizingProfile(plan.VideoProfile.Name) && evidence.WebRTCMedia.Attempts > 0 && evidence.TURN.Allocations == 0 && evidence.TURN.ActiveSessions == 0 {
 		incomplete = true
-		reasons = append(reasons, "Missing active-window TURN allocations/sessions evidence")
+		if evidence.TURN.UDPSockets > 0 || evidence.TURN.TCPEstablished > 0 || evidence.TURN.RelayUDPFlows > 0 || evidence.TURN.RelayTCPFlows > 0 || evidence.TURN.JournalEvents > 0 {
+			reasons = append(reasons, "Missing precise active-window TURN allocations/sessions evidence; coturn transport activity was observed")
+		} else {
+			reasons = append(reasons, "Missing active-window TURN allocations/sessions evidence")
+		}
+	}
+	if isVideoTurnSizingProfile(plan.VideoProfile.Name) && evidence.WebRTCMedia.Attempts > 0 && evidence.TURN.ActiveNodes > 0 && evidence.TURN.APIDynamicTURNCount == 0 {
+		incomplete = true
+		reasons = append(reasons, "API did not return dynamic TURN servers from active turnregistry nodes; static TURN URLs are not valid coturn sizing evidence")
+	}
+	if isVideoTurnSizingProfile(plan.VideoProfile.Name) && evidence.WebRTCMedia.Attempts > 0 && evidence.TURN.APITURNRegistryLookupEmpty > 0 && evidence.TURN.APITURNRegistryLookupSucceeded == 0 {
+		incomplete = true
+		reasons = append(reasons, "API turnregistry lookup returned empty during WebRTC ICE server resolution")
 	}
 	if incomplete {
 		return true, reasons

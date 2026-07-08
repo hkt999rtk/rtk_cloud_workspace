@@ -63,6 +63,11 @@ In scope:
   `100,500,1000,2000,5000` viewers by default. Relay-only sizing allows both
   TURN/UDP and TURN/TCP ICE server URLs; the gate is selected relay candidates,
   not UDP-only transport.
+- Device-side WebRTC load-runner behavior uses async bounded queues: websocket
+  read loops enqueue answer preparation, answer workers POST SDP answers and
+  release, and media workers separately wait for ICE and send RTP. Startup
+  reports include answer queue, answer prepare, answer POST, device ICE wait,
+  sender queue, and sender first-write-after-ICE breakdowns.
 
 Out of scope for v1:
 
@@ -122,6 +127,11 @@ HOME100K_DESCRIPTION_FILE=loadtests/home-100k/scenarios/video-50k-turn.descripti
 HOME100K_RUN_ID=lt50k-video-turn-$(date -u +%Y%m%dT%H%M%SZ) \
 ./loadtests/home-100k/scripts/home-100k.sh workflow-live
 ```
+
+For focused WebRTC/TURN debugging, `workflow-video-live` and
+`workflow-video-resume-live` use the same scripted VM, sync, token, server
+evidence, and remote-sharded video runner path, but skip the MQTT/shadow
+`run-stages` phase so Pion/ICE/TURN failures surface faster.
 
 The wrapper must resolve the environment root with `scripts/go/rtk-cloud/internal/envroot`
 and discover users, device inventory, bind artifacts, service endpoints, and

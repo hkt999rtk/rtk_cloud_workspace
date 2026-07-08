@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -2027,6 +2028,11 @@ func collectLiveServerEvidence(envRoot string, runID string, outDir string) Serv
 	if loggerNote != "" {
 		notes = append(notes, loggerNote)
 	}
+	lokiTraceSource, lokiTraceNote := collectLokiWebRTCTraceEvidence(envRoot, runID, windowStart)
+	sources["loki_webrtc_trace"] = lokiTraceSource
+	if lokiTraceNote != "" {
+		notes = append(notes, lokiTraceNote)
+	}
 	normalizeEvidenceSourceCatalogMetadata(sources)
 	evidence := ServerEvidence{
 		RunID:               runID,
@@ -2039,6 +2045,339 @@ func collectLiveServerEvidence(envRoot string, runID string, outDir string) Serv
 	applyServerEvidenceBaselineDeltas(&evidence, runID, outDir, &notes)
 	evidence.Notes = notes
 	return evidence
+}
+
+func collectLokiWebRTCTraceEvidence(envRoot string, runID string, windowStart string) (EvidenceSource, string) {
+	if strings.TrimSpace(runID) == "" {
+		return EvidenceSource{Available: false, Optional: true, Detail: "run_id missing"}, "loki_webrtc_trace evidence probe skipped: run_id missing"
+	}
+	baseURL, cleanup, err := lokiEvidenceBaseURL(envRoot)
+	if err != nil {
+		return EvidenceSource{Available: false, Optional: true, Detail: redact(err.Error())}, "loki_webrtc_trace evidence probe failed: " + err.Error()
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
+	since := time.Now().UTC().Add(-30 * time.Minute)
+	if strings.TrimSpace(windowStart) != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, windowStart)
+		if err != nil {
+			return EvidenceSource{Available: false, Optional: true, Detail: "invalid evidence window start: " + redact(err.Error())}, "loki_webrtc_trace evidence probe failed: invalid evidence window start"
+		}
+		since = parsed.UTC()
+	}
+	until := time.Now().UTC()
+	if until.Before(since) {
+		until = since.Add(30 * time.Minute)
+	}
+	lines, err := queryLokiLinesWithLimitFallback(baseURL, `{filename=~".*video-cloud-api.*"} |= "`+escapeLogQLLiteral(runID)+`"`, since, until, 10000, 5000, 1000, 500, 250)
+	if err != nil {
+		return EvidenceSource{Available: false, Optional: true, Detail: redact(err.Error())}, "loki_webrtc_trace evidence probe failed: " + err.Error()
+	}
+	counters := lokiWebRTCTraceCounters(runID, lines)
+	if len(lines) == 0 || totalCounterValues(counters) == 0 {
+		return EvidenceSource{
+			Available: false,
+			Optional:  true,
+			Detail:    fmt.Sprintf("Loki query returned %d video-cloud-api lines but no WebRTC lifecycle events for run_id %s", len(lines), runID),
+			Counters:  counters,
+		}, "loki_webrtc_trace evidence probe found no WebRTC lifecycle events for run_id " + runID
+	}
+	return EvidenceSource{
+		Available: true,
+		Optional:  true,
+		Detail:    fmt.Sprintf("Loki video-cloud-api logs queried by run_id; matched_lines=%d", len(lines)),
+		Counters:  counters,
+	}, ""
+}
+
+func lokiEvidenceBaseURL(envRoot string) (string, func(), error) {
+	if raw := strings.TrimRight(strings.TrimSpace(firstNonEmpty(
+		os.Getenv("HOME100K_LOKI_URL"),
+		os.Getenv("RTK_CLOUD_LOGGER_LOKI_URL"),
+	)), "/"); raw != "" {
+		return raw, nil, nil
+	}
+	port, err := reserveLocalPort()
+	if err != nil {
+		return "", nil, err
+	}
+	namespace := lokiNamespace(envRoot)
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(ctx, "kubectl", "-n", namespace, "port-forward", "svc/video-cloud-loki", fmt.Sprintf("%d:3100", port))
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if err := cmd.Start(); err != nil {
+		cancel()
+		return "", nil, err
+	}
+	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if lokiReady(baseURL) {
+			return baseURL, func() {
+				cancel()
+				_ = cmd.Wait()
+			}, nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	cancel()
+	_ = cmd.Wait()
+	return "", nil, fmt.Errorf("Loki port-forward to namespace %s did not become ready", namespace)
+}
+
+func reserveLocalPort() (int, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port, nil
+}
+
+func lokiNamespace(envRoot string) string {
+	stackValues := parseEnvFile(filepath.Join(envRoot, "env", "stack.env"))
+	stack := strings.TrimSpace(stackValues["CLOUD_STACK_NAME"])
+	if stack == "" {
+		stack = "video-cloud-staging"
+	}
+	return stack + "-observability"
+}
+
+func lokiReady(baseURL string) bool {
+	client := http.Client{Timeout: time.Second}
+	resp, err := client.Get(strings.TrimRight(baseURL, "/") + "/ready")
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode >= 200 && resp.StatusCode < 500
+}
+
+func queryLokiLinesWithLimitFallback(baseURL string, query string, since time.Time, until time.Time, limits ...int) ([]string, error) {
+	if len(limits) == 0 {
+		limits = []int{10000, 5000, 1000, 500, 250}
+	}
+	var lastErr error
+	for _, limit := range limits {
+		lines, err := queryLokiLines(baseURL, query, since, until, limit)
+		if err == nil {
+			return lines, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
+
+func queryLokiLines(baseURL string, query string, since time.Time, until time.Time, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = 5000
+	}
+	u, err := url.Parse(strings.TrimRight(baseURL, "/") + "/loki/api/v1/query_range")
+	if err != nil {
+		return nil, err
+	}
+	values := u.Query()
+	values.Set("query", query)
+	values.Set("start", strconv.FormatInt(since.UnixNano(), 10))
+	values.Set("end", strconv.FormatInt(until.UnixNano(), 10))
+	values.Set("limit", strconv.Itoa(limit))
+	u.RawQuery = values.Encode()
+	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	var decoded struct {
+		Status string `json:"status"`
+		Data   struct {
+			Result []struct {
+				Values [][]string `json:"values"`
+			} `json:"result"`
+		} `json:"data"`
+	}
+	if err := doCentralLoggerJSON(req, 20*time.Second, &decoded); err != nil {
+		return nil, err
+	}
+	lines := []string{}
+	for _, stream := range decoded.Data.Result {
+		for _, value := range stream.Values {
+			if len(value) >= 2 {
+				lines = append(lines, value[1])
+			}
+		}
+	}
+	return lines, nil
+}
+
+func lokiWebRTCTraceCounters(runID string, lines []string) map[string]int64 {
+	events := []string{
+		"ice_preflight_started",
+		"ice_servers_resolved",
+		"ice_servers_resolve_started",
+		"ice_servers_returned",
+		"turn_registry_lookup_started",
+		"turn_registry_lookup_succeeded",
+		"turn_registry_lookup_failed",
+		"turn_registry_lookup_empty",
+		"create_started",
+		"session_create_started",
+		"session_created",
+		"offer_delivery_started",
+		"offer_delivered",
+		"create_succeeded",
+		"answer_wait_store_started",
+		"answer_wait_store_completed",
+		"answer_apply_started",
+		"answer_applied",
+		"answer_succeeded",
+		"close_started",
+		"session_closed",
+		"close_succeeded",
+		"request_failed",
+	}
+	counters := map[string]int64{}
+	durations := map[string][]int64{}
+	sessions := map[string]map[string]bool{}
+	intFields := []string{
+		"ice_server_count",
+		"static_ice_server_count",
+		"static_stun_count",
+		"static_turn_count",
+		"dynamic_turn_count",
+		"turn_registry_node_count",
+		"turn_registry_query_limit",
+	}
+	for _, event := range events {
+		counters["loki_webrtc_trace."+event+".events"] = 0
+	}
+	for _, line := range lines {
+		if !strings.Contains(line, runID) {
+			continue
+		}
+		event, durationMS, sessionID, fields := lokiTraceEventFields(line)
+		if event == "" {
+			continue
+		}
+		if _, ok := counters["loki_webrtc_trace."+event+".events"]; ok {
+			counters["loki_webrtc_trace."+event+".events"]++
+			if durationMS >= 0 {
+				durations[event] = append(durations[event], durationMS)
+			}
+			if sessionID != "" {
+				if sessions[event] == nil {
+					sessions[event] = map[string]bool{}
+				}
+				sessions[event][sessionID] = true
+			}
+			for _, field := range intFields {
+				value := jsonInt64Field(fields, field, -1)
+				if value >= 0 {
+					key := "loki_webrtc_trace." + event + "." + field + "_max"
+					if value > counters[key] {
+						counters[key] = value
+					}
+				}
+			}
+		}
+	}
+	for event, values := range durations {
+		if len(values) == 0 {
+			continue
+		}
+		sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
+		counters["loki_webrtc_trace."+event+".duration_p95_ms"] = percentileInt64(values, 95)
+		counters["loki_webrtc_trace."+event+".duration_max_ms"] = values[len(values)-1]
+	}
+	for event, ids := range sessions {
+		counters["loki_webrtc_trace."+event+".unique_sessions"] = int64(len(ids))
+	}
+	return counters
+}
+
+func lokiTraceEventName(line string) string {
+	event, _, _, _ := lokiTraceEventFields(line)
+	return event
+}
+
+func lokiTraceEventFields(line string) (string, int64, string, map[string]any) {
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(line), &decoded); err != nil {
+		return "", -1, "", nil
+	}
+	durationMS := int64(-1)
+	sessionID := ""
+	if event, ok := decoded["event"].(string); ok {
+		durationMS = jsonInt64Field(decoded, "duration_ms", -1)
+		sessionID = strings.TrimSpace(jsonStringField(decoded, "session_id"))
+		return strings.TrimSpace(event), durationMS, sessionID, decoded
+	}
+	if fields, ok := decoded["fields"].(map[string]any); ok {
+		if event, ok := fields["event"].(string); ok {
+			durationMS = jsonInt64Field(fields, "duration_ms", -1)
+			sessionID = strings.TrimSpace(jsonStringField(fields, "session_id"))
+			return strings.TrimSpace(event), durationMS, sessionID, fields
+		}
+	}
+	return "", -1, "", nil
+}
+
+func jsonStringField(fields map[string]any, name string) string {
+	if value, ok := fields[name].(string); ok {
+		return value
+	}
+	return ""
+}
+
+func jsonInt64Field(fields map[string]any, name string, fallback int64) int64 {
+	value, ok := fields[name]
+	if !ok || value == nil {
+		return fallback
+	}
+	switch typed := value.(type) {
+	case float64:
+		return int64(typed)
+	case int64:
+		return typed
+	case int:
+		return int64(typed)
+	case json.Number:
+		if parsed, err := typed.Int64(); err == nil {
+			return parsed
+		}
+	case string:
+		if parsed, err := strconv.ParseInt(strings.TrimSpace(typed), 10, 64); err == nil {
+			return parsed
+		}
+	}
+	return fallback
+}
+
+func percentileInt64(values []int64, percentile int) int64 {
+	if len(values) == 0 {
+		return 0
+	}
+	index := int(math.Ceil(float64(percentile)/100.0*float64(len(values)))) - 1
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(values) {
+		index = len(values) - 1
+	}
+	return values[index]
+}
+
+func totalCounterValues(counters map[string]int64) int64 {
+	var total int64
+	for _, value := range counters {
+		total += value
+	}
+	return total
+}
+
+func escapeLogQLLiteral(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	return strings.ReplaceAll(value, `"`, `\"`)
 }
 
 func evidenceSourceFromProbeResult(probe serverEvidenceProbe, runID string, out string, err error) (EvidenceSource, string) {
@@ -4133,8 +4472,18 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 		"generator_hosts_override_ip":   strings.TrimSpace(values.generatorHostsOverrideIP),
 		"credential_bundle_format":      firstNonEmpty(values.credentialBundleFormat, "sqlite-gzip"),
 		"rsync_timeout":                 firstNonEmpty(os.Getenv("HOME100K_RSYNC_TIMEOUT_SECONDS"), "90"),
+		"skip_sshd_tuning":              truthyEnv("HOME100K_SKIP_SSHD_TUNING"),
 	}
 	return writeJSONFile(filepath.Join(ansibleDir, "extra-vars.json"), extraVars)
+}
+
+func truthyEnv(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func prepareLocalArtifactStore(base string, vms []LinodeVM, binaries remoteRunnerBinaries) (string, error) {
@@ -4302,10 +4651,14 @@ func runAnsiblePlaybook(values workflowFlagValues, playbook string) error {
 	}
 	ansibleDir := filepath.Join(workspace, "loadtests", "home-100k", "ansible")
 	ansibleConfig := filepath.Join(ansibleDir, "ansible.cfg")
+	forks := firstNonEmpty(strings.TrimSpace(os.Getenv("HOME100K_ANSIBLE_FORKS")), "20")
+	if parsed, err := strconv.Atoi(forks); err != nil || parsed < 1 {
+		return fmt.Errorf("HOME100K_ANSIBLE_FORKS must be a positive integer, got %q", forks)
+	}
 	args := []string{
 		"ANSIBLE_CONFIG=" + ansibleConfig,
 		"ansible-playbook",
-		"--forks", "20",
+		"--forks", forks,
 		"-i", filepath.Join(base, "ansible", "inventory.json"),
 		filepath.Join(ansibleDir, playbook),
 		"--extra-vars", "@" + filepath.Join(base, "ansible", "extra-vars.json"),

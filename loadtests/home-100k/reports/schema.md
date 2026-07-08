@@ -117,6 +117,21 @@ policy requires selected candidates to be TURN relay candidates, but it does not
 imply UDP-only. coturn relays encrypted DTLS-SRTP packets and does not terminate
 DTLS or inspect RTP/H.264 payloads.
 
+For `video-50k-turn-v1` and `video-100k-turn-v1`, successful coturn sizing also
+requires evidence that the API resolved TURN servers from the active
+turnregistry path. A run where coturn has active sessions but
+`loki_webrtc_trace.ice_servers_resolved.dynamic_turn_count_max` is `0` is
+`INCOMPLETE`, because that means the WebRTC sessions used static TURN URLs
+rather than the dynamic registry path being sized. The report must render the
+API TURN lookup counters:
+
+- `api_turn_registry_lookup_succeeded`
+- `api_turn_registry_lookup_empty`
+- `api_turn_registry_lookup_failed`
+- `api_dynamic_turn_count`
+- `api_static_turn_count`
+- `api_turn_registry_node_count`
+
 Remote-sharded video steps may set
 `HOME100K_VIDEO_LOADTEST_MAX_VIEWERS_PER_HOST`. When this limit is configured,
 the planner must fail before launching a step if a proportional MQTT shard is
@@ -260,20 +275,35 @@ The aggregated report must include `video_evidence`:
 - `webrtc_media_totals.video_startup_latency.app_request_to_first_h264_access_unit_p95_ms`
 - `webrtc_media_totals.video_startup_latency.breakdown_p95.api_create_ms`
 - `webrtc_media_totals.video_startup_latency.breakdown_p95.offer_delivery_ms`
+- `webrtc_media_totals.video_startup_latency.breakdown_p95.answer_queue_wait_ms`
+- `webrtc_media_totals.video_startup_latency.breakdown_p95.answer_prepare_ms`
+- `webrtc_media_totals.video_startup_latency.breakdown_p95.answer_post_ms`
 - `webrtc_media_totals.video_startup_latency.breakdown_p95.device_answer_ms`
 - `webrtc_media_totals.video_startup_latency.breakdown_p95.remote_answer_set_ms`
 - `webrtc_media_totals.video_startup_latency.breakdown_p95.ice_check_ms`
 - `webrtc_media_totals.video_startup_latency.breakdown_p95.ice_connected_since_session_start_ms`
+- `webrtc_media_totals.video_startup_latency.breakdown_p95.device_ice_wait_ms`
+- `webrtc_media_totals.video_startup_latency.breakdown_p95.sender_queue_wait_ms`
+- `webrtc_media_totals.video_startup_latency.breakdown_p95.sender_first_write_after_ice_ms`
 - `webrtc_media_totals.video_startup_latency.breakdown_p95.first_rtp_after_ice_ms`
 - `webrtc_media_totals.video_startup_latency.breakdown_p95.first_h264_access_unit_after_rtp_ms`
-- per-session startup samples must include `selected_local_candidate_protocol`
-  and `selected_remote_candidate_protocol` when Pion exposes the selected ICE
-  pair. These fields identify whether the selected relay pair used UDP or TCP.
+- `webrtc_media_totals.video_startup_latency.breakdown_p95.sender_queue_full_drops`
+- per-session startup samples must include `selected_local_candidate_type`,
+  `selected_remote_candidate_type`, `selected_local_candidate_protocol`, and
+  `selected_remote_candidate_protocol` when Pion exposes the selected ICE pair.
+  The type fields identify relay/host/srflx selection; the protocol fields
+  identify whether the selected relay pair used UDP or TCP.
 - `turn_evidence.registry_available`
 - `turn_evidence.active_nodes`
 - `turn_evidence.coturn_available`
 - `turn_evidence.allocations` when available
 - `turn_evidence.active_sessions` when available
+- `turn_evidence.udp_sockets`
+- `turn_evidence.tcp_established`
+- `turn_evidence.relay_udp_flows`
+- `turn_evidence.relay_tcp_flows`
+- `turn_evidence.journal_events`
+- `turn_evidence.evidence_status`
 - `relay_candidate_samples`
 - `non_relay_candidate_samples`
 - `steps[]` for ladder profiles, with the same WebRTC/media/TURN fields per
@@ -287,11 +317,24 @@ H.264 access-unit evidence. Relay-only media requires relay candidate evidence;
 non-relay selected candidates set `result=FAIL`. Missing external TURN/coturn
 evidence sets `status=INCOMPLETE`; a signaling-only pass must not be reported
 as media capacity success. For `video-50k-turn-v1` and `video-100k-turn-v1`,
-missing active-window allocations/sessions sets `status=INCOMPLETE`.
+missing active-window allocations/sessions sets `status=INCOMPLETE`. If coturn
+socket or journal activity is observed but precise allocations/sessions are not,
+the report must preserve that as transport evidence and explicitly call out the
+missing precise allocation/session evidence instead of reporting zero evidence.
 Active-window TURN evidence may come from coturn/registry server evidence or
-from a `turn-active-samples.tsv` sidecar. The sidecar parser accepts both the
-legacy `time,node,host,udp_sockets,journal_events` TSV shape and the two-host
-sampler `ts,node,udp_sockets,tcp_estab,cpu_mem` shape. Per-step TURN
+from a `turn-active-samples.tsv` sidecar. Current Linode coturn sidecars prefer
+coturn's local CLI on `127.0.0.1:5766` for active allocation/session evidence.
+If CLI evidence is unavailable, the sidecar falls back to coturn verbose journal
+allocation lifecycle evidence, then kernel conntrack evidence when available:
+control flows involving TURN port `3478` populate
+`active_allocations`/`active_sessions`, and flows involving the relay port range
+populate `relay_udp_flows`/`relay_tcp_flows`. The sidecar still falls back to
+coturn sockets and journal activity when precise active counters are unavailable.
+The parser accepts both the legacy `time,node,host,udp_sockets,journal_events`
+TSV shape and the two-host sampler `ts,node,udp_sockets,tcp_estab,cpu_mem`
+shape. Current Linode coturn sidecars also include coturn process
+`coturn_cpu_pct`, `coturn_rss_kb`, and VM `rx_bytes`/`tx_bytes` counters.
+Per-step TURN
 allocations/sessions are rendered when a step has its own sidecar; the run-level
 gate requires external TURN evidence for the profile, not a hand-authored
 summary. `video-50k-turn-v1` and `video-100k-turn-v1` media runs also require

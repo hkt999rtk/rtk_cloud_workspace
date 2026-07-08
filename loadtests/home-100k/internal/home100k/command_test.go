@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1331,6 +1332,30 @@ func TestExecuteSyncLiveHonorsExplicitVMCountOverride(t *testing.T) {
 	}
 }
 
+func TestRunAnsiblePlaybookUsesForksOverride(t *testing.T) {
+	tmp := t.TempDir()
+	outDir := filepath.Join(tmp, "out")
+	t.Setenv("HOME100K_ANSIBLE_FORKS", "1")
+	t.Setenv("HOME100K_OUT_DIR", outDir)
+	old := commandRunner
+	defer func() { commandRunner = old }()
+	var calls []string
+	commandRunner = func(name string, args ...string) error {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Join(outDir, "ansible"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := runAnsiblePlaybook(workflowFlagValues{outDir: outDir}, "sync.yml"); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(calls, "\n")
+	if !strings.Contains(joined, "ansible-playbook --forks 1 -i "+filepath.Join(outDir, "ansible", "inventory.json")) {
+		t.Fatalf("ansible forks override not used:\n%s", joined)
+	}
+}
+
 func TestWriteEnvRsyncFilterExcludesExpandedDeviceCredentials(t *testing.T) {
 	envRoot := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(envRoot, "devices", "test_device", "manifests"), 0o755); err != nil {
@@ -2064,6 +2089,26 @@ JSON
 	}
 	if strings.Contains(string(goRaw), "203.0.113.20:8883") {
 		t.Fatalf("sync should limit auto-discovered mqtt addr count to 1:\n%s", goRaw)
+	}
+}
+
+func TestHome100KScriptDocumentsWebRTCOnlyWorkflow(t *testing.T) {
+	script := filepath.Join("..", "..", "scripts", "home-100k.sh")
+	cmd := exec.Command("bash", script, "--help")
+	cmd.Env = home100KTestEnv()
+	raw, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("home-100k.sh --help failed: %v\n%s", err, raw)
+	}
+	body := string(raw)
+	for _, want := range []string{
+		"workflow-video-live",
+		"workflow-video-resume-live",
+		"Run only the live WebRTC video lifecycle",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("help missing %q:\n%s", want, body)
+		}
 	}
 }
 
@@ -3893,6 +3938,110 @@ func TestCollectCentralLoggerEvidenceQueriesRunIDIndexes(t *testing.T) {
 	}
 }
 
+func TestCollectLokiWebRTCTraceEvidenceCountsLifecycleEvents(t *testing.T) {
+	requests := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.String())
+		if r.URL.Path != "/loki/api/v1/query_range" {
+			t.Fatalf("unexpected Loki path: %s", r.URL.Path)
+		}
+		if !strings.Contains(r.URL.Query().Get("query"), "run-loki") {
+			t.Fatalf("Loki query missing run_id: %s", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "success",
+			"data": map[string]any{
+				"result": []map[string]any{{
+					"values": [][]string{
+						{"1780000000000000000", `{"run_id":"run-loki","event":"create_started","session_id":"s1","duration_ms":10}`},
+						{"1780000001000000000", `{"run_id":"run-loki","event":"answer_succeeded","session_id":"s1","duration_ms":25}`},
+						{"1780000001500000000", `{"run_id":"run-loki","event":"ice_servers_resolved","session_id":"s1","duration_ms":3,"ice_server_count":2,"static_stun_count":1,"static_turn_count":1,"dynamic_turn_count":0,"turn_registry_node_count":0}`},
+						{"1780000001600000000", `{"run_id":"run-loki","event":"turn_registry_lookup_empty","session_id":"s1","duration_ms":2,"turn_registry_node_count":0,"turn_registry_query_limit":0}`},
+						{"1780000002000000000", `{"run_id":"run-other","event":"create_started","session_id":"s2"}`},
+					},
+				}},
+			},
+		})
+	}))
+	defer server.Close()
+	t.Setenv("HOME100K_LOKI_URL", server.URL)
+
+	source, note := collectLokiWebRTCTraceEvidence(t.TempDir(), "run-loki", "2026-07-07T00:00:00Z")
+
+	if note != "" {
+		t.Fatalf("unexpected note: %s", note)
+	}
+	if !source.Available || !source.Optional {
+		t.Fatalf("loki source flags = %+v, want available optional", source)
+	}
+	if source.Counters["loki_webrtc_trace.create_started.events"] != 1 ||
+		source.Counters["loki_webrtc_trace.answer_succeeded.events"] != 1 ||
+		source.Counters["loki_webrtc_trace.request_failed.events"] != 0 ||
+		source.Counters["loki_webrtc_trace.create_started.duration_p95_ms"] != 10 ||
+		source.Counters["loki_webrtc_trace.answer_succeeded.duration_max_ms"] != 25 ||
+		source.Counters["loki_webrtc_trace.answer_succeeded.unique_sessions"] != 1 ||
+		source.Counters["loki_webrtc_trace.ice_servers_resolved.ice_server_count_max"] != 2 ||
+		source.Counters["loki_webrtc_trace.ice_servers_resolved.static_turn_count_max"] != 1 ||
+		source.Counters["loki_webrtc_trace.turn_registry_lookup_empty.turn_registry_node_count_max"] != 0 {
+		t.Fatalf("unexpected Loki counters: %+v", source.Counters)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("Loki requests = %d, want 1", len(requests))
+	}
+	if got := requestLimit(t, requests[0]); got != "10000" {
+		t.Fatalf("Loki first query limit = %s, want 10000", got)
+	}
+}
+
+func requestLimit(t *testing.T, raw string) string {
+	t.Helper()
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse request URL %q: %v", raw, err)
+	}
+	return parsed.Query().Get("limit")
+}
+
+func TestCollectLokiWebRTCTraceEvidenceRetriesWithSmallerLimit(t *testing.T) {
+	requests := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.String())
+		if r.URL.Query().Get("limit") != "250" {
+			http.Error(w, "query too large", http.StatusGatewayTimeout)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "success",
+			"data": map[string]any{
+				"result": []map[string]any{{
+					"values": [][]string{
+						{"1780000000000000000", `{"run_id":"run-loki-retry","event":"create_started","session_id":"s1"}`},
+						{"1780000001000000000", `{"run_id":"run-loki-retry","event":"offer_delivered","session_id":"s1"}`},
+					},
+				}},
+			},
+		})
+	}))
+	defer server.Close()
+	t.Setenv("HOME100K_LOKI_URL", server.URL)
+
+	source, note := collectLokiWebRTCTraceEvidence(t.TempDir(), "run-loki-retry", "2026-07-07T00:00:00Z")
+
+	if note != "" {
+		t.Fatalf("unexpected note: %s", note)
+	}
+	if !source.Available {
+		t.Fatalf("loki source = %+v, want available after smaller retry", source)
+	}
+	if source.Counters["loki_webrtc_trace.create_started.events"] != 1 ||
+		source.Counters["loki_webrtc_trace.offer_delivered.events"] != 1 {
+		t.Fatalf("unexpected Loki counters: %+v", source.Counters)
+	}
+	if len(requests) < 2 {
+		t.Fatalf("Loki requests = %d, want retry with smaller limit", len(requests))
+	}
+}
+
 func TestCollectLiveServerEvidenceFallsBackToCentralLoggerRuntimeLogs(t *testing.T) {
 	outDir := t.TempDir()
 	if err := writeJSONFile(filepath.Join(outDir, "start-coordination.json"), StartCoordination{
@@ -4534,6 +4683,90 @@ func TestExecuteAggregateWritesRunLevelReport(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "TEST_REPORT.md")); err != nil {
 		t.Fatalf("missing aggregate report: %v", err)
+	}
+}
+
+func TestExecuteAggregateWritesVideoOnlyRunLevelReport(t *testing.T) {
+	outDir := t.TempDir()
+	videoDir := filepath.Join(outDir, "video", "shard-01")
+	if err := os.MkdirAll(videoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte(`{
+		"config": {"webrtc_ice_policy": "relay", "virtual_viewers": 5, "duration_ms": 30000},
+		"webrtc": {
+			"success_rate": 1,
+			"create": {"operations": 5, "successes": 5},
+			"setup": {"operations": 0, "successes": 0},
+			"close": {"operations": 5, "successes": 5}
+		},
+		"webrtc_media": {
+			"attempts": 5,
+			"successes": 5,
+			"ice_connected_p95_ms": 2148,
+			"time_to_first_rtp_p95_ms": 2225,
+			"h264_packets_received": 29,
+			"h264_bytes_received": 17763,
+			"video_startup_latency": {
+				"samples": 5,
+				"h264_access_unit_samples": 5,
+				"app_request_to_first_rtp_p95_ms": 2232,
+				"app_request_to_first_h264_access_unit_p95_ms": 2232
+			}
+		},
+		"video_startup_latency": [
+			{"ice_policy":"relay","selected_local_candidate_type":"relay","selected_remote_candidate_type":"relay","selected_local_candidate_protocol":"udp","selected_remote_candidate_protocol":"udp"}
+		]
+	}`)
+	if err := os.WriteFile(filepath.Join(videoDir, "load-results.json"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	turnSamples := "time\tnode\thost\tudp_sockets\ttcp_estab\trelay_udp_flows\trelay_tcp_flows\tactive_allocations\tactive_sessions\tjournal_events\tcoturn_cpu_pct\tcoturn_rss_kb\trx_bytes\ttx_bytes\tevidence_status\n" +
+		"2026-07-07T11:06:07Z\tturn01\t198.51.100.20\t36\t10\t0\t0\t20\t20\t250\t0\t19384\t15591006125\t13681693458\tjournal_active\n"
+	if err := os.WriteFile(filepath.Join(outDir, "video", "turn-active-samples.tsv"), []byte(turnSamples), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	serverEvidence := completeServerEvidenceWithWebRTCSignalingStore()
+	serverEvidence.Sources["turn_registry"] = EvidenceSource{Available: true, Counters: map[string]int64{"turn_registry.active_nodes": 1}}
+	serverEvidence.Sources["coturn"] = EvidenceSource{Available: true, Counters: map[string]int64{"coturn.configured_nodes": 1}}
+	if err := writeJSONFile(filepath.Join(outDir, "server-evidence.json"), serverEvidence); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Execute([]string{
+		"aggregate",
+		"--env-root", "cloud_env/staging/lke",
+		"--brandname", "RTK",
+		"--region", "us-sea",
+		"--scenario-profile", Video50KTurnScenarioProfile,
+		"--run-id", "video-only",
+		"--out-dir", outDir,
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Execute(aggregate) code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	var result RunResult
+	if err := readJSON(filepath.Join(outDir, "results.json"), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.VideoEvidence.WebRTCMedia.Successes != 5 || result.VideoEvidence.TURN.ActiveSessions != 20 {
+		t.Fatalf("video-only aggregate evidence = media %d turn sessions %d, want 5/20", result.VideoEvidence.WebRTCMedia.Successes, result.VideoEvidence.TURN.ActiveSessions)
+	}
+	reportRaw, err := os.ReadFile(filepath.Join(outDir, "TEST_REPORT.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := string(reportRaw)
+	for _, want := range []string{
+		"## WebRTC Totals",
+		"App request -> first H.264 access unit",
+		"active sessions: 20",
+		"journal_active",
+	} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("video-only report missing %q:\n%s", want, report)
+		}
 	}
 }
 
