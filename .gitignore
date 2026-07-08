@@ -10,7 +10,21 @@ keys/
 .secrets/
 .secrets.backup
 .secrets.backup/
-cloud_env/
+cloud_env/*
+!cloud_env/staging/
+cloud_env/staging/*
+!cloud_env/staging/lke/
+cloud_env/staging/lke/*
+!cloud_env/staging/lke/env/
+!cloud_env/staging/lke/env/stack.env
+cloud_env/staging/lke/env/secrets.env
+!cloud_env/staging/lke/services/
+cloud_env/staging/lke/services/*
+!cloud_env/staging/lke/services/*/
+cloud_env/staging/lke/services/*/*
+!cloud_env/staging/lke/services/*/*.env
+scripts/cloud_env/
+scripts/go/rtk-cloud/cloud_env/
 
 # Local deploy/provision outputs.
 output/

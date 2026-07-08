@@ -14,7 +14,9 @@ func TestCreateUsersUsesAccountManagerBaseURLOverrideAndWritesSQLite(t *testing.
 	workspace := t.TempDir()
 	envRoot := filepath.Join(root, "env")
 	mkdirAll(t, filepath.Join(envRoot, "services", "account-manager"))
-	writeFile(t, filepath.Join(envRoot, "services", "account-manager", "account-manager-platform-admin.env"), "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL=admin@example.test\nACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD=password123\n")
+	mkdirAll(t, filepath.Join(envRoot, "env"))
+	writeFile(t, filepath.Join(envRoot, "services", "account-manager", "account-manager-platform-admin.env"), "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL=admin@example.test\n")
+	writeFile(t, filepath.Join(envRoot, "env", "secrets.env"), "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD=password123\n")
 
 	var sawLogin bool
 	var sawBrandCloudList bool

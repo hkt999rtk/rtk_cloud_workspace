@@ -692,6 +692,9 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"VIDEO_CLOUD_SHADOW_CACHE_BUFFER_MAX_DOCS\n              value: \"10000\"",
 		"VIDEO_CLOUD_SHADOW_CACHE_RECOVERY_INTERVAL\n              value: \"5s\"",
 		"VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_ENABLED\n              value: \"true\"",
+		"VIDEO_CLOUD_TURN_REGISTRY_ADDR\n              value: \"http://video-cloud-turnregistry.video-cloud-staging-video-cloud.svc.cluster.local:18190\"",
+		"VIDEO_CLOUD_TURN_REGISTRY_CLIENT_NODE_ID\n              value: \"video-cloud-api\"",
+		"VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY\n              valueFrom:",
 		"VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_ADDR\n              value: \"redis.video-cloud-staging-platform.svc.cluster.local:6379\"",
 		"kind: Secret\nmetadata:\n  name: mqtt-runtime",
 		"cert.pem:",
@@ -914,6 +917,9 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"port: 8080",
 		"kind: NetworkPolicy\nmetadata:\n  name: allow-video-cloud-api-internal",
 		"app.kubernetes.io/name: video-cloud-api",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-video-cloud-api-turnregistry",
+		"app.kubernetes.io/name: video-cloud-turnregistry",
+		"port: 18190",
 		"kind: NetworkPolicy\nmetadata:\n  name: allow-video-cloud-mqtt-clients",
 		"app.kubernetes.io/name: mqtt",
 		"app.kubernetes.io/name: video-cloud-api",
@@ -1035,7 +1041,7 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		}
 	}
 	redactedConf := readTestFile(t, filepath.Join(coturnDir, "turnserver.conf.redacted"))
-	for _, want := range []string{"use-auth-secret", "static-auth-secret=<redacted>", "realm=video_cloud", "min-port=49152", "max-port=65535"} {
+	for _, want := range []string{"use-auth-secret", "static-auth-secret=<redacted>", "realm=video_cloud", "min-port=49152", "max-port=65535", "verbose", "cli-ip=127.0.0.1", "cli-port=5766", "cli-password=<redacted>"} {
 		if !strings.Contains(redactedConf, want) {
 			t.Fatalf("expected %q in redacted coturn config, got:\n%s", want, redactedConf)
 		}
@@ -1051,6 +1057,7 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"turn.video-cloud-staging.realtekconnect.com",
 		"VIDEO_CLOUD_TURN_NODE_UDP_PORT=3478",
 		"VIDEO_CLOUD_TURN_NODE_TCP_PORT=3478",
+		"ss -lntp | grep -E '127\\.0\\.0\\.1:5766\\b'",
 		"video-cloud-turnregistrar.service",
 		"turn registry register succeeded",
 	} {
@@ -1513,6 +1520,23 @@ func TestLKENetworkPoliciesAllowVideoCloudAPIInternalRouting(t *testing.T) {
 	} {
 		if !strings.Contains(policy, want) {
 			t.Fatalf("expected %q in video-cloud API internal NetworkPolicy, got:\n%s", want, policy)
+		}
+	}
+}
+
+func TestLKENetworkPoliciesAllowVideoCloudAPITurnRegistryRouting(t *testing.T) {
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+
+	policy := lkeAllowVideoCloudAPITurnRegistryNetworkPolicyManifest(env)
+	for _, want := range []string{
+		"name: allow-video-cloud-api-turnregistry",
+		"namespace: video-cloud-staging-video-cloud",
+		"podSelector:\n    matchLabels:\n      app.kubernetes.io/name: video-cloud-turnregistry",
+		"from:\n        - podSelector:\n            matchLabels:\n              app.kubernetes.io/name: video-cloud-api",
+		"port: 18190",
+	} {
+		if !strings.Contains(policy, want) {
+			t.Fatalf("expected %q in video-cloud API turnregistry NetworkPolicy, got:\n%s", want, policy)
 		}
 	}
 }
@@ -2885,6 +2909,9 @@ func TestRunProvisionLKEDeployUsesExternalCoturnVMConfig(t *testing.T) {
 		"name: VIDEO_CLOUD_TURN_SHARED_SECRET\n              valueFrom:\n                secretKeyRef:\n                  name: video-cloud-runtime\n                  key: VIDEO_CLOUD_TURN_SHARED_SECRET",
 		"name: VIDEO_CLOUD_TURN_CREDENTIAL_TTL\n              value: \"10m\"",
 		"name: VIDEO_CLOUD_WEBRTC_ICE_POLICY\n              value: \"relay\"",
+		"name: VIDEO_CLOUD_TURN_REGISTRY_ADDR\n              value: \"http://video-cloud-turnregistry.video-cloud-staging-video-cloud.svc.cluster.local:18190\"",
+		"name: VIDEO_CLOUD_TURN_REGISTRY_CLIENT_NODE_ID\n              value: \"video-cloud-api\"",
+		"name: VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY\n              valueFrom:\n                secretKeyRef:\n                  name: video-cloud-workers-runtime\n                  key: VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY",
 	} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("expected %q in kubectl manifests, got:\n%s", want, log)
@@ -3042,16 +3069,30 @@ func TestRunProvisionLKEDeployWritesPlatformAdminEnv(t *testing.T) {
 	}
 
 	body := readTestFile(t, filepath.Join(envRoot, "services", "account-manager", "account-manager-platform-admin.env"))
-	if !strings.Contains(body, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL=platform-admin@video-cloud-staging.local") ||
-		!strings.Contains(body, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD=test-seed-platform-admin") {
+	if !strings.Contains(body, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL=platform-admin@video-cloud-staging.local") {
 		t.Fatalf("unexpected platform admin env:\n%s", body)
+	}
+	if strings.Contains(body, "PASSWORD") || strings.Contains(body, "test-seed-platform-admin") {
+		t.Fatalf("platform admin env must not contain secrets:\n%s", body)
 	}
 	info, err := os.Stat(filepath.Join(envRoot, "services", "account-manager", "account-manager-platform-admin.env"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	if info.Mode().Perm() != 0o644 {
+		t.Fatalf("platform admin env permissions got %o want 644", info.Mode().Perm())
+	}
+	secretPath := filepath.Join(envRoot, "env", "secrets.env")
+	secretBody := readTestFile(t, secretPath)
+	if !strings.Contains(secretBody, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD=test-seed-platform-admin") {
+		t.Fatalf("expected platform admin secret in centralized secret env:\n%s", secretBody)
+	}
+	info, err = os.Stat(secretPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("platform admin env permissions got %o want 600", info.Mode().Perm())
+		t.Fatalf("platform admin secret env permissions got %o want 600", info.Mode().Perm())
 	}
 }
 
@@ -3070,16 +3111,28 @@ func TestRunProvisionLKEDeployWritesVideoCloudRuntimeEnv(t *testing.T) {
 	}
 
 	body := readTestFile(t, filepath.Join(envRoot, "services", "video-cloud", "video-cloud.env"))
-	if !strings.Contains(body, "FACTORY_ENROLL_AUTH_KEY=test-seed-factory-enroll-auth") ||
-		!strings.Contains(body, "VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN=test-seed-internal-auth") {
-		t.Fatalf("unexpected video cloud runtime env:\n%s", body)
+	if strings.Contains(body, "AUTH_KEY") || strings.Contains(body, "TOKEN") || strings.Contains(body, "test-seed-") {
+		t.Fatalf("video cloud runtime env must not contain secrets:\n%s", body)
 	}
 	info, err := os.Stat(filepath.Join(envRoot, "services", "video-cloud", "video-cloud.env"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	if info.Mode().Perm() != 0o644 {
+		t.Fatalf("video cloud runtime env permissions got %o want 644", info.Mode().Perm())
+	}
+	secretPath := filepath.Join(envRoot, "env", "secrets.env")
+	secretBody := readTestFile(t, secretPath)
+	if !strings.Contains(secretBody, "FACTORY_ENROLL_AUTH_KEY=test-seed-factory-enroll-auth") ||
+		!strings.Contains(secretBody, "VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN=test-seed-internal-auth") {
+		t.Fatalf("expected video cloud secrets in centralized secret env:\n%s", secretBody)
+	}
+	info, err = os.Stat(secretPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("video cloud runtime env permissions got %o want 600", info.Mode().Perm())
+		t.Fatalf("video cloud secret env permissions got %o want 600", info.Mode().Perm())
 	}
 }
 
@@ -3098,15 +3151,27 @@ func TestRunProvisionLKEDeployWritesAccountManagerRuntimeEnv(t *testing.T) {
 	}
 
 	body := readTestFile(t, filepath.Join(envRoot, "services", "account-manager", "account-manager.env"))
-	if !strings.Contains(body, "ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN=test-seed-internal-auth") {
-		t.Fatalf("unexpected account-manager runtime env:\n%s", body)
+	if strings.Contains(body, "TOKEN") || strings.Contains(body, "test-seed-internal-auth") {
+		t.Fatalf("account-manager runtime env must not contain secrets:\n%s", body)
 	}
 	info, err := os.Stat(filepath.Join(envRoot, "services", "account-manager", "account-manager.env"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	if info.Mode().Perm() != 0o644 {
+		t.Fatalf("account-manager runtime env permissions got %o want 644", info.Mode().Perm())
+	}
+	secretPath := filepath.Join(envRoot, "env", "secrets.env")
+	secretBody := readTestFile(t, secretPath)
+	if !strings.Contains(secretBody, "ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN=test-seed-internal-auth") {
+		t.Fatalf("expected account-manager secret in centralized secret env:\n%s", secretBody)
+	}
+	info, err = os.Stat(secretPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("account-manager runtime env permissions got %o want 600", info.Mode().Perm())
+		t.Fatalf("account-manager secret env permissions got %o want 600", info.Mode().Perm())
 	}
 }
 
@@ -3273,7 +3338,8 @@ func TestAccountManagerContextForLKEUsesPortForward(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	kubectlLog := fakeKubectl(t)
 	t.Setenv("RTK_CLOUD_LKE_PORT_FORWARD_WAIT", "0s")
-	writeTestFile(t, filepath.Join(envRoot, "services", "account-manager", "account-manager-platform-admin.env"), "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL=admin@example.test\nACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD=password123\n")
+	writeTestFile(t, filepath.Join(envRoot, "services", "account-manager", "account-manager-platform-admin.env"), "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL=admin@example.test\n")
+	writeTestFile(t, filepath.Join(envRoot, "env", "secrets.env"), "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD=password123\n")
 
 	ctx, err := accountManagerContextFromFlags(workspace, envRoot)
 	if err != nil {
@@ -3321,8 +3387,7 @@ func TestStagingProvisionBridgeForLKEUsesVideoCloudPortForward(t *testing.T) {
 	_, envRoot := makeLKETestEnv(t)
 	kubectlLog := fakeKubectl(t)
 	t.Setenv("RTK_CLOUD_LKE_PORT_FORWARD_WAIT", "0s")
-	writeTestFile(t, filepath.Join(envRoot, "services", "account-manager", "account-manager.env"), "ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN=test-token\n")
-	writeTestFile(t, filepath.Join(envRoot, "services", "video-cloud", "video-cloud.env"), "VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN=test-token\n")
+	writeTestFile(t, filepath.Join(envRoot, "env", "secrets.env"), "ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN=test-token\nVIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN=test-token\n")
 
 	bridge, err := stagingProvisionBridgeFromEnvRoot(accountManagerContext{
 		EnvRoot: envRoot,

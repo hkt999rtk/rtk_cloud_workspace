@@ -350,9 +350,12 @@ go run ./scripts/go/rtk-cloud -- sync-env --env-root cloud_env/staging
 go run ./scripts/go/rtk-cloud -- sync-env --env-root cloud_env/staging --check
 ```
 
-`--check` 不改檔，只檢查 `stack.env` generated block 與存在的 service env
-是否已和 root metadata 同步。staging runtime 是 K8s-only；若不同步請先執行
-`sync-env --env-root ...`。
+`--check` 不改檔，只檢查 `stack.env` generated block、存在的 service env、
+`env/secrets.env.example` 與 tracked env secret boundary 是否同步。LKE tracked
+env 只能放 non-secret config；`TOKEN`、`PASSWORD`、`SECRET`、`AUTH_KEY` 等
+secret-like key 必須放在 git ignored 的 `env/secrets.env`、`state/secrets/*`、
+process env，或由 K8s Secret readback 取得。staging runtime 是 K8s-only；若不同步
+請先執行 `sync-env --env-root ...`。
 
 ### `go run ./scripts/go/rtk-cloud -- provision-k8s`
 
@@ -791,7 +794,11 @@ staging runtime 已改為 K8s-only，不再提供舊的 VM runtime shortcut。ap
 Staging 的平台管理頁登入帳密和 Account Manager automation token 帳密不同：
 
 - Cloud Admin `/login?next=/admin` 使用 Account Manager platform-admin flow，不再使用 legacy Cloud Admin bootstrap credential。
-- `./stg.sh token` 和 e2e brand/user/bind automation 使用 `cloud_env/staging/lke/services/account-manager/account-manager-platform-admin.env` 內的 Account Manager bootstrap platform-admin 帳密。
+- `./stg.sh token` 和 e2e brand/user/bind automation 使用
+  `cloud_env/staging/lke/services/account-manager/account-manager-platform-admin.env`
+  內的 Account Manager bootstrap platform-admin email，password 從
+  `cloud_env/staging/lke/env/secrets.env`、`state/secrets/*`、process env 或 K8s
+  Secret readback 取得。
 
 不要用 Account Manager bootstrap 帳號登入 Cloud Admin `/admin` UI。詳細邊界見 `docs/account-manager-admin-boundary.md#staging-login-credential-boundary`。
 

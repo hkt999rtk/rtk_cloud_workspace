@@ -137,6 +137,7 @@ ACCOUNT_MANAGER_DOMAIN=account-manager.video-cloud-staging.realtekconnect.com
 CLOUD_ADMIN_DOMAIN=admin.video-cloud-staging.realtekconnect.com
 CLOUD_LOGGER_DOMAIN=logger.video-cloud-staging.realtekconnect.com
 `)
+	writeFile(t, filepath.Join(envRoot, "env", "secrets.env.example"), renderLKESecretsEnvExample())
 	writeFile(t, filepath.Join(envRoot, "services", "account-manager", "account-manager.env"), `ACCOUNT_MANAGER_DOMAIN=account-manager.video-cloud-staging.realtekconnect.com
 `)
 	writeFile(t, filepath.Join(envRoot, "services", "video-cloud", "video-cloud.env"), "")
@@ -174,6 +175,56 @@ CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
 	}
 	if strings.Contains(logger, "CLOUD_LOGGER_INGEST_TOKEN") {
 		t.Fatalf("logger env must not contain secret token:\n%s", logger)
+	}
+}
+
+func TestSyncEnvCheckRejectsSecretKeysInTrackedLKEEnv(t *testing.T) {
+	workspace := t.TempDir()
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")
+	mkdirAll(t, filepath.Join(envRoot, "env"))
+	mkdirAll(t, filepath.Join(envRoot, "services", "video-cloud"))
+	writeFile(t, filepath.Join(envRoot, "env", "stack.env"), `CLOUD_ENV_NAME=staging
+CLOUD_PROVIDER=lke
+CLOUD_REGION=us-sea
+CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+`)
+	writeFile(t, filepath.Join(envRoot, "services", "video-cloud", "video-cloud.env"), "FACTORY_ENROLL_AUTH_KEY=must-not-be-tracked\n")
+
+	err := run([]string{"sync-env", "--workspace", workspace, "--env-root", envRoot, "--check"})
+	if err == nil || !strings.Contains(err.Error(), "tracked env contains secret-like key") {
+		t.Fatalf("expected tracked secret key error, got %v", err)
+	}
+}
+
+func TestSyncEnvWritesLKESecretExample(t *testing.T) {
+	workspace := t.TempDir()
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")
+	mkdirAll(t, filepath.Join(envRoot, "env"))
+	writeFile(t, filepath.Join(envRoot, "env", "stack.env"), `CLOUD_ENV_NAME=staging
+CLOUD_PROVIDER=lke
+CLOUD_REGION=us-sea
+CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+`)
+
+	if err := run([]string{"sync-env", "--workspace", workspace, "--env-root", envRoot}); err != nil {
+		t.Fatalf("sync-env returned error: %v", err)
+	}
+
+	example := readFile(t, filepath.Join(envRoot, "env", "secrets.env.example"))
+	for _, want := range []string{
+		"ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD=",
+		"ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN=",
+		"FACTORY_ENROLL_AUTH_KEY=",
+		"VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN=",
+		"VIDEO_CLOUD_LOGGER_TOKEN=",
+		"VIDEO_CLOUD_TURN_SHARED_SECRET=",
+	} {
+		if !strings.Contains(example, want) {
+			t.Fatalf("secrets.env.example missing %q:\n%s", want, example)
+		}
+	}
+	if strings.Contains(example, "test-seed") || strings.Contains(example, "must-not") {
+		t.Fatalf("secrets.env.example must not contain secret values:\n%s", example)
 	}
 }
 

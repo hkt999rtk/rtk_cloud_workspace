@@ -558,7 +558,81 @@ func syncEnvRoot(root string, check bool) (bool, error) {
 			changed = true
 		}
 	}
+	if raw["CLOUD_PROVIDER"] == "lke" {
+		if c, err := syncLKEEnvContract(root, check); err != nil {
+			return changed, err
+		} else if c {
+			changed = true
+		}
+	}
 	return changed, nil
+}
+
+func syncLKEEnvContract(root string, check bool) (bool, error) {
+	if err := rejectSecretKeysInTrackedEnv(root); err != nil {
+		return false, err
+	}
+	return syncTextFile(filepath.Join(root, "env", "secrets.env.example"), renderLKESecretsEnvExample(), check)
+}
+
+func rejectSecretKeysInTrackedEnv(root string) error {
+	paths := []string{filepath.Join(root, "env", "stack.env")}
+	serviceMatches, err := filepath.Glob(filepath.Join(root, "services", "*", "*.env"))
+	if err != nil {
+		return err
+	}
+	paths = append(paths, serviceMatches...)
+	for _, path := range paths {
+		if strings.HasSuffix(path, ".secret.env") {
+			continue
+		}
+		values, err := readEnvFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		for key := range values {
+			if isSecretLikeEnvKey(key) {
+				return fmt.Errorf("tracked env contains secret-like key %s in %s; move it to env/secrets.env", key, path)
+			}
+		}
+	}
+	return nil
+}
+
+func isSecretLikeEnvKey(key string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(key))
+	for _, marker := range []string{"TOKEN", "PASSWORD", "SECRET", "AUTH_KEY", "AUTH_TOKEN", "PRIVATE", "CREDENTIAL"} {
+		if strings.Contains(upper, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func renderLKESecretsEnvExample() string {
+	keys := []string{
+		"ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD",
+		"ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN",
+		"FACTORY_ENROLL_AUTH_KEY",
+		"JWT_ACCESS_SECRET",
+		"JWT_REFRESH_SECRET",
+		"POSTGRES_PASSWORD",
+		"RTK_CLOUD_LOGGER_TOKEN",
+		"VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN",
+		"VIDEO_CLOUD_LOGGER_TOKEN",
+		"VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY",
+		"VIDEO_CLOUD_TURN_SHARED_SECRET",
+	}
+	var b strings.Builder
+	b.WriteString("# Per-environment local secret values. Do not commit env/secrets.env.\n")
+	b.WriteString("# Copy this file to secrets.env only on the operator machine when explicit values are needed.\n")
+	for _, key := range keys {
+		fmt.Fprintf(&b, "%s=\n", key)
+	}
+	return b.String()
 }
 
 func renderStackEnv(raw, derived map[string]string) string {
@@ -1140,11 +1214,12 @@ func runGenerateLoadDevices(args []string) error {
 	}
 	if !*generateOnly {
 		videoEnv := firstExistingPath(filepath.Join(envRoot, "services", "video-cloud", "video-cloud.env"), filepath.Join(envRoot, "services", "video-cloud", "video-cloud-staging.env"))
+		secretEnv := filepath.Join(envRoot, "env", "secrets.env")
 		if *factoryURL == "" {
 			*factoryURL = envFileValue(videoEnv, "FACTORY_ENROLL_URL")
 		}
 		if *factoryAuthKey == "" {
-			*factoryAuthKey = envFileValue(videoEnv, "FACTORY_ENROLL_AUTH_KEY")
+			*factoryAuthKey = envFileValueFirst("FACTORY_ENROLL_AUTH_KEY", secretEnv, videoEnv)
 		}
 		if *factoryURL == "" {
 			return errors.New("factory enrollment URL missing; set FACTORY_ENROLL_URL in video-cloud env or pass --factory-url")
@@ -5315,6 +5390,7 @@ func accountManagerContextFromFlags(workspaceFlag, envRootFlag string) (accountM
 	}
 	accountEnv := firstExistingPath(filepath.Join(envRoot, "services", "account-manager", "account-manager.env"), filepath.Join(envRoot, "services", "account-manager", "account-manager-public-staging.env"))
 	platformEnv := filepath.Join(envRoot, "services", "account-manager", "account-manager-platform-admin.env")
+	secretEnv := filepath.Join(envRoot, "env", "secrets.env")
 	stackEnv, _ := readEnvFile(filepath.Join(envRoot, "env", "stack.env"))
 	domain := firstNonEmpty(envFileValue(accountEnv, "ACCOUNT_MANAGER_DOMAIN"), stackEnv["ACCOUNT_MANAGER_DOMAIN"], "account-manager.video-cloud-staging.realtekconnect.com")
 	baseURL := strings.TrimRight(firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_BASE_URL"), envFileValue(accountEnv, "ACCOUNT_MANAGER_BASE_URL")), "/")
@@ -5325,7 +5401,7 @@ func accountManagerContextFromFlags(workspaceFlag, envRootFlag string) (accountM
 		EnvRoot:          envRoot,
 		BaseURL:          baseURL,
 		AdminEmail:       firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL"), envFileValue(platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL")),
-		AdminPassword:    firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD"), envFileValue(platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD")),
+		AdminPassword:    firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD"), envFileValueFirst("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD", secretEnv, platformEnv)),
 		PlatformAdminEnv: platformEnv,
 	}
 	if firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), stackEnv["CLOUD_PROVIDER"]) == "lke" && os.Getenv("ACCOUNT_MANAGER_BASE_URL") == "" {
@@ -8260,12 +8336,13 @@ func stagingProvisionBridgeFromEnvRoot(ctx accountManagerContext, skip bool) (st
 		return stagingProvisionBridge{}, nil
 	}
 	accountEnv := firstExistingPath(filepath.Join(ctx.EnvRoot, "services", "account-manager", "account-manager.env"), filepath.Join(ctx.EnvRoot, "services", "account-manager", "account-manager-public-staging.env"))
-	videoEnv := filepath.Join(ctx.EnvRoot, "services", "video-cloud", "video-cloud-staging.env")
+	videoEnv := firstExistingPath(filepath.Join(ctx.EnvRoot, "services", "video-cloud", "video-cloud.env"), filepath.Join(ctx.EnvRoot, "services", "video-cloud", "video-cloud-staging.env"))
+	secretEnv := filepath.Join(ctx.EnvRoot, "env", "secrets.env")
 	adminEnv := filepath.Join(ctx.EnvRoot, "services", "cloud-admin", "admin-staging.env")
 	stackEnv := filepath.Join(ctx.EnvRoot, "env", "stack.env")
 
-	accountToken := firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN"), envFileValue(accountEnv, "ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN"))
-	videoToken := firstNonEmpty(os.Getenv("VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN"), envFileValue(videoEnv, "VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN"), accountToken)
+	accountToken := firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN"), envFileValueFirst("ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN", secretEnv, accountEnv))
+	videoToken := firstNonEmpty(os.Getenv("VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN"), envFileValueFirst("VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN", secretEnv, videoEnv), accountToken)
 	videoBaseURL := strings.TrimRight(firstNonEmpty(os.Getenv("VIDEO_CLOUD_BASE_URL"), envFileValue(adminEnv, "VIDEO_CLOUD_BASE_URL"), envFileValue(videoEnv, "VIDEO_CLOUD_PUBLIC_API_BASE_URL")), "/")
 	if videoBaseURL == "" {
 		if domain := envFileValue(stackEnv, "VIDEO_CLOUD_DOMAIN"); domain != "" {
@@ -8779,6 +8856,15 @@ func envFileValue(path, key string) string {
 		name, value, ok := strings.Cut(line, "=")
 		if ok && name == key {
 			return strings.Trim(strings.TrimSpace(value), `"'`)
+		}
+	}
+	return ""
+}
+
+func envFileValueFirst(key string, paths ...string) string {
+	for _, path := range paths {
+		if value := envFileValue(path, key); value != "" {
+			return value
 		}
 	}
 	return ""

@@ -1,8 +1,9 @@
 # cloud_env 目錄配置
 
-`cloud_env/` 是 workspace 的本機 cloud environment 目錄，整個目錄都被 git
-ignore。active deployment 只支援 Kubernetes runtime；Linode VM/systemd/SSH
-runtime deployment 已退役。
+`cloud_env/` 是 workspace 的 cloud environment 目錄。Git 只追蹤
+non-secret environment config；operator-local secret、state、artifacts、device
+credential 與 kubeconfig 都必須維持 git ignored。active deployment 只支援
+Kubernetes runtime；Linode VM/systemd/SSH runtime deployment 已退役。
 
 Environment root 採 `cloud_env/<env>/<provider>` 形式保存 provider-specific
 資料。staging 的 active LKE environment root 是：
@@ -24,13 +25,18 @@ discover/create kubeconfig 的 cloud API 流程；其他 Kubernetes provider 必
 
 ## LKE 必需檔案
 
-- `env/stack.env`：provider、stack、domain、region metadata。`CLOUD_PROVIDER`
-  必須是 `lke`；`CLOUD_STACK_NAME` 是 namespace、label、domain 的命名 root。
+- `env/stack.env`：可追蹤的 provider、stack、domain、region、image、replica
+  與 resource sizing metadata。`CLOUD_PROVIDER` 必須是 `lke`；
+  `CLOUD_STACK_NAME` 是 namespace、label、domain 的命名 root。
+- `env/secrets.env.example`：可追蹤的 per-environment secret key 範本，只列
+  key，不放值。
+- `env/secrets.env`：operator-local secret value 檔，集中存放 staging 的
+  token/password/key override，不可 commit，權限應維持 `0600`。
 - `state/lke.env`：LKE cluster id、label、region、version。這是
   operator-local runtime state，不可 commit。
 - `state/lke-kubeconfig.yaml`：LKE kubeconfig，權限應維持 `0600`。
-- `services/*/*.env`：service runtime/deploy env 與 bootstrap secret material。
-  常見檔案包含 `services/account-manager/account-manager.env`、
+- `services/*/*.env`：可追蹤的 service runtime/deploy non-secret env，不可放
+  token/password/key。常見檔案包含 `services/account-manager/account-manager.env`、
   `services/account-manager/account-manager-platform-admin.env`、以及
   `services/video-cloud/video-cloud.env`。
 - `artifacts/lke-images/lke-image-manifest.json` 和
@@ -40,9 +46,10 @@ discover/create kubeconfig 的 cloud API 流程；其他 Kubernetes provider 必
 
 ## 目錄用途
 
-- `env/`：環境 metadata。LKE operator credential 來源是 shell env 或 `~/.env`，
-  不是 env-root 內的 `operator.env`。
-- `services/`：各服務 runtime env 與 bootstrap secrets。
+- `env/`：環境 metadata 與集中 secret 範本。LKE operator credential 來源是
+  shell env 或 `~/.env`，不是 env-root 內的 `operator.env`。
+- `services/`：各服務 non-secret runtime env。Secret value 集中在
+  `env/secrets.env` 或由 `state/secrets/*` / K8s Secret readback 取得。
 - `state/`：Kubernetes/LKE runtime state、kubeconfig、OpenBao/certissuer
   local secret material。
 - `artifacts/`：image manifest、provision/e2e/load-test/report output。
@@ -58,9 +65,13 @@ discover/create kubeconfig 的 cloud API 流程；其他 Kubernetes provider 必
   使用 `lke`。
 - `CLOUD_PROVIDER=linode` 只代表已退役的 VM runtime，active deployment 不可使用。
 - `--secrets-root PATH` 只保留為舊參數 alias，新的文件與操作都使用 `--env-root`。
-- `sync-env --check` 對 LKE 只檢查 stack metadata 與存在的 service env，不要求
-  legacy VM `topology/video-cloud-staging.yaml`。
-- 不要 commit `cloud_env/` 裡的任何檔案。
+- `sync-env --check` 對 LKE 會檢查 stack metadata、存在的 service env、集中
+  secret 範本，以及 tracked env 不得含 secret-like key；不要求 legacy VM
+  `topology/video-cloud-staging.yaml`。
+- 可以 commit `env/stack.env`、`env/secrets.env.example` 與 non-secret
+  `services/*/*.env`。不要 commit `env/secrets.env`、`state/`、`artifacts/`、
+  `devices/`、private key、token、password、kubeconfig 或任何 generated
+  runtime output。
 
 ## 常用指令
 
