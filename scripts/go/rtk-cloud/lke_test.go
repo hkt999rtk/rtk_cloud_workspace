@@ -692,6 +692,9 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"VIDEO_CLOUD_SHADOW_CACHE_BUFFER_MAX_DOCS\n              value: \"10000\"",
 		"VIDEO_CLOUD_SHADOW_CACHE_RECOVERY_INTERVAL\n              value: \"5s\"",
 		"VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_ENABLED\n              value: \"true\"",
+		"VIDEO_CLOUD_TURN_REGISTRY_ADDR\n              value: \"http://video-cloud-turnregistry.video-cloud-staging-video-cloud.svc.cluster.local:18190\"",
+		"VIDEO_CLOUD_TURN_REGISTRY_CLIENT_NODE_ID\n              value: \"video-cloud-api\"",
+		"VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY\n              valueFrom:",
 		"VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_ADDR\n              value: \"redis.video-cloud-staging-platform.svc.cluster.local:6379\"",
 		"kind: Secret\nmetadata:\n  name: mqtt-runtime",
 		"cert.pem:",
@@ -914,6 +917,9 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"port: 8080",
 		"kind: NetworkPolicy\nmetadata:\n  name: allow-video-cloud-api-internal",
 		"app.kubernetes.io/name: video-cloud-api",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-video-cloud-api-turnregistry",
+		"app.kubernetes.io/name: video-cloud-turnregistry",
+		"port: 18190",
 		"kind: NetworkPolicy\nmetadata:\n  name: allow-video-cloud-mqtt-clients",
 		"app.kubernetes.io/name: mqtt",
 		"app.kubernetes.io/name: video-cloud-api",
@@ -1035,7 +1041,7 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		}
 	}
 	redactedConf := readTestFile(t, filepath.Join(coturnDir, "turnserver.conf.redacted"))
-	for _, want := range []string{"use-auth-secret", "static-auth-secret=<redacted>", "realm=video_cloud", "min-port=49152", "max-port=65535"} {
+	for _, want := range []string{"use-auth-secret", "static-auth-secret=<redacted>", "realm=video_cloud", "min-port=49152", "max-port=65535", "verbose", "cli-ip=127.0.0.1", "cli-port=5766", "cli-password=<redacted>"} {
 		if !strings.Contains(redactedConf, want) {
 			t.Fatalf("expected %q in redacted coturn config, got:\n%s", want, redactedConf)
 		}
@@ -1051,6 +1057,7 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"turn.video-cloud-staging.realtekconnect.com",
 		"VIDEO_CLOUD_TURN_NODE_UDP_PORT=3478",
 		"VIDEO_CLOUD_TURN_NODE_TCP_PORT=3478",
+		"ss -lntp | grep -E '127\\.0\\.0\\.1:5766\\b'",
 		"video-cloud-turnregistrar.service",
 		"turn registry register succeeded",
 	} {
@@ -1513,6 +1520,23 @@ func TestLKENetworkPoliciesAllowVideoCloudAPIInternalRouting(t *testing.T) {
 	} {
 		if !strings.Contains(policy, want) {
 			t.Fatalf("expected %q in video-cloud API internal NetworkPolicy, got:\n%s", want, policy)
+		}
+	}
+}
+
+func TestLKENetworkPoliciesAllowVideoCloudAPITurnRegistryRouting(t *testing.T) {
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+
+	policy := lkeAllowVideoCloudAPITurnRegistryNetworkPolicyManifest(env)
+	for _, want := range []string{
+		"name: allow-video-cloud-api-turnregistry",
+		"namespace: video-cloud-staging-video-cloud",
+		"podSelector:\n    matchLabels:\n      app.kubernetes.io/name: video-cloud-turnregistry",
+		"from:\n        - podSelector:\n            matchLabels:\n              app.kubernetes.io/name: video-cloud-api",
+		"port: 18190",
+	} {
+		if !strings.Contains(policy, want) {
+			t.Fatalf("expected %q in video-cloud API turnregistry NetworkPolicy, got:\n%s", want, policy)
 		}
 	}
 }
@@ -2885,6 +2909,9 @@ func TestRunProvisionLKEDeployUsesExternalCoturnVMConfig(t *testing.T) {
 		"name: VIDEO_CLOUD_TURN_SHARED_SECRET\n              valueFrom:\n                secretKeyRef:\n                  name: video-cloud-runtime\n                  key: VIDEO_CLOUD_TURN_SHARED_SECRET",
 		"name: VIDEO_CLOUD_TURN_CREDENTIAL_TTL\n              value: \"10m\"",
 		"name: VIDEO_CLOUD_WEBRTC_ICE_POLICY\n              value: \"relay\"",
+		"name: VIDEO_CLOUD_TURN_REGISTRY_ADDR\n              value: \"http://video-cloud-turnregistry.video-cloud-staging-video-cloud.svc.cluster.local:18190\"",
+		"name: VIDEO_CLOUD_TURN_REGISTRY_CLIENT_NODE_ID\n              value: \"video-cloud-api\"",
+		"name: VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY\n              valueFrom:\n                secretKeyRef:\n                  name: video-cloud-workers-runtime\n                  key: VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY",
 	} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("expected %q in kubectl manifests, got:\n%s", want, log)

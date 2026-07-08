@@ -1262,6 +1262,7 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 	manifests = append(manifests, lkeAllowAccountManagerCertIssuerNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudAccountManagerNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env))
+	manifests = append(manifests, lkeAllowVideoCloudAPITurnRegistryNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudMQTTClientsNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowEMQXClusterNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudLoggerNetworkPolicyManifest(env))
@@ -1484,6 +1485,33 @@ spec:
       ports:
         - protocol: TCP
           port: 8080
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
+}
+
+func lkeAllowVideoCloudAPITurnRegistryNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-video-cloud-api-turnregistry
+  namespace: %s
+  labels:
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: video-cloud-turnregistry
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: video-cloud-api
+      ports:
+        - protocol: TCP
+          port: 18190
 `, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
 }
 
@@ -5962,6 +5990,15 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
               value: %q
             - name: VIDEO_CLOUD_WEBRTC_ICE_POLICY
               value: %q
+            - name: VIDEO_CLOUD_TURN_REGISTRY_ADDR
+              value: "http://video-cloud-turnregistry.%s.svc.cluster.local:18190"
+            - name: VIDEO_CLOUD_TURN_REGISTRY_CLIENT_NODE_ID
+              value: "video-cloud-api"
+            - name: VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-workers-runtime
+                  key: VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY
             - name: VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_ENABLED
               value: "true"
             - name: VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_ADDR
@@ -6002,6 +6039,7 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 			lkeCoturnRealm(env),
 			lkeCoturnCredentialTTL(env),
 			lkeWebRTCICEPolicy(env),
+			lkeNamespaceName(env, "video-cloud"),
 			lkeNamespaceName(env, "platform"),
 			webrtcSignalingStoreTTLGrace,
 		)
