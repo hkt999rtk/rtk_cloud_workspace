@@ -139,3 +139,49 @@ func TestMediaSchedulerPacesFrames(t *testing.T) {
 		t.Fatalf("frame gap too small: %s", gap)
 	}
 }
+
+func TestMediaSchedulerDoesNotCountZeroByteWritesAsSent(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	pacer := newMediaPacer(mediaPacerConfig{
+		Tick:             time.Millisecond,
+		WheelSize:        64,
+		WorkerCount:      1,
+		QueueCapacity:    8,
+		MaxPacketsPerJob: 1,
+	})
+	defer pacer.Stop()
+
+	writes := 0
+	frames := [][]*rtp.Packet{
+		{{Header: rtp.Header{Version: 2}, Payload: []byte{1, 2, 3}}},
+	}
+	stats, err := pacer.Send(ctx, mediaPacedSendRequest{
+		Label:    "paced",
+		Frames:   frames,
+		Duration: 10 * time.Millisecond,
+		WriteRTPBytes: func(*rtp.Packet) (int, error) {
+			writes++
+			if writes < 3 {
+				return 0, nil
+			}
+			return len(frames[0][0].Payload), nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Send returned error: %v", err)
+	}
+	if writes != 3 {
+		t.Fatalf("writes = %d, want 3", writes)
+	}
+	if stats.PacketsSent != 1 {
+		t.Fatalf("PacketsSent = %d, want 1 confirmed packet", stats.PacketsSent)
+	}
+	if stats.BytesSent != len(frames[0][0].Payload) {
+		t.Fatalf("BytesSent = %d, want %d", stats.BytesSent, len(frames[0][0].Payload))
+	}
+	if stats.FirstWriteAt.IsZero() {
+		t.Fatalf("expected FirstWriteAt after confirmed byte write")
+	}
+}

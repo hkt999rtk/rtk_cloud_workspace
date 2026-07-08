@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,6 +35,7 @@ type Runner struct {
 	ownsClient                 bool
 	mediaCoord                 *webRTCMediaCoordinator
 	webRTCMediaOfferHandler    func(context.Context, Config, string, webRTCMediaOfferMessage) ([]Operation, time.Time, func())
+	webRTCMediaSendHandler     func(context.Context, Config, string, webRTCMediaOfferMessage, *PionMediaAnswerSession) []Operation
 	recordingClipUploadHandler func(context.Context, Config, string) Operation
 }
 
@@ -52,27 +54,78 @@ type webRTCMediaCoordinator struct {
 }
 
 type videoStartupClock struct {
-	RunID                             string
-	SessionID                         string
-	DeviceID                          string
-	ViewerID                          string
-	ICEPolicy                         string
-	SelectedLocalCandidateType        string
-	SelectedRemoteCandidateType       string
-	SelectedLocalCandidateProtocol    string
-	SelectedRemoteCandidateProtocol   string
-	AppRequestStartedAt               time.Time
-	APICreateMS                       int64
-	OfferDeliveryMS                   int64
-	DeviceAnswerMS                    int64
-	RemoteAnswerSetMS                 int64
-	ICECheckMS                        int64
-	ICEConnectedSinceSessionStartMS   int64
-	FirstRTPAfterICEMS                int64
-	FirstH264AccessUnitAfterRTPMS     int64
-	AppRequestToFirstRTPMS            int64
-	AppRequestToFirstH264AccessUnitMS int64
-	AppRequestOffsetMS                int64
+	RunID                                string
+	SessionID                            string
+	DeviceID                             string
+	ViewerID                             string
+	ICEPolicy                            string
+	SelectedLocalCandidateType           string
+	SelectedRemoteCandidateType          string
+	SelectedLocalCandidateProtocol       string
+	SelectedRemoteCandidateProtocol      string
+	SelectedLocalCandidateAddress        string
+	SelectedRemoteCandidateAddress       string
+	SelectedLocalCandidatePort           int
+	SelectedRemoteCandidatePort          int
+	SelectedLocalCandidateTCPType        string
+	SelectedRemoteCandidateTCPType       string
+	AppRequestStartedAt                  time.Time
+	APICreateMS                          int64
+	OfferDeliveryMS                      int64
+	DeviceAnswerMS                       int64
+	PionCreatePeerMS                     int64
+	PionCreateOfferMS                    int64
+	PionCreateAnswerMS                   int64
+	PionSetLocalDescriptionMS            int64
+	PionICEGatheringWaitMS               int64
+	PionFirstLocalCandidateMS            int64
+	PionFirstLocalRelayCandidateMS       int64
+	PionFirstLocalRelayUDPCandidateMS    int64
+	PionFirstLocalRelayTCPCandidateMS    int64
+	PionRelayCandidateToGatherCompleteMS int64
+	PionSetRemoteDescriptionMS           int64
+	RemoteAnswerSetMS                    int64
+	ICESelectedPairChanges               int64
+	ICESelectedPairFirstChangeMS         int64
+	ICESelectedPairLastChangeMS          int64
+	ICERequestsSent                      int64
+	ICERequestsReceived                  int64
+	ICEResponsesSent                     int64
+	ICEResponsesReceived                 int64
+	ICERetransmissionsSent               int64
+	ICERetransmissionsReceived           int64
+	ICEConsentRequestsSent               int64
+	ICEWriteRTTMS                        int64
+	ICECheckMS                           int64
+	ICEConnectedSinceSessionStartMS      int64
+	AnswerQueueWaitMS                    int64
+	AnswerPrepareMS                      int64
+	AnswerPostMS                         int64
+	DeviceICEWaitMS                      int64
+	ViewerPeerConnectionConnectedMS      int64
+	ViewerPeerConnectedAfterICEMS        int64
+	SenderPeerConnectionConnectedMS      int64
+	SenderPeerConnectedAfterICEMS        int64
+	SenderQueueWaitMS                    int64
+	SenderWriteAttempts                  int64
+	SenderWriteReturns                   int64
+	SenderWriteErrors                    int64
+	SenderFirstWriteCallMS               int64
+	SenderFirstWriteReturnMS             int64
+	SenderWriteMaxMS                     int64
+	SenderFirstWriteAfterICEMS           int64
+	SenderFirstWriteAfterPeerMS          int64
+	FirstRTPAfterICEMS                   int64
+	FirstH264AccessUnitAfterRTPMS        int64
+	SenderFirstWriteSinceSessionMS       int64
+	SenderQueueFullDrops                 int
+	SenderSchedulerQueueFullDrops        int
+	SenderSchedulerDroppedPackets        int
+	SenderSchedulerPacketsSent           int
+	SenderSchedulerBytesSent             int
+	AppRequestToFirstRTPMS               int64
+	AppRequestToFirstH264AccessUnitMS    int64
+	AppRequestOffsetMS                   int64
 }
 
 func newWebRTCMediaCoordinator() *webRTCMediaCoordinator {
@@ -1115,6 +1168,8 @@ type webRTCMediaOfferMessage struct {
 
 func (r *Runner) listenDeviceTransportMessages(ctx context.Context, cfg Config, deviceID string, conn net.Conn, record func(Operation)) error {
 	offerQueue, stopOfferQueue := startDeviceTransportEventQueue(ctx, webRTCMediaOfferWorkerCount(cfg), deviceTransportQueueDepth(webRTCMediaOfferWorkerCount(cfg)))
+	mediaQueue, stopMediaQueue := startDeviceTransportEventQueue(ctx, webRTCMediaSenderWorkerCount(cfg), webRTCMediaSenderQueueDepth(webRTCMediaSenderWorkerCount(cfg)))
+	defer stopMediaQueue()
 	defer stopOfferQueue()
 	recordingQueue, stopRecordingQueue := startDeviceTransportEventQueue(ctx, 1, deviceTransportQueueDepth(1))
 	defer stopRecordingQueue()
@@ -1151,7 +1206,7 @@ func (r *Runner) listenDeviceTransportMessages(ctx context.Context, cfg Config, 
 					Evidence: fmt.Sprintf("run_id=%s session_id=%s device_id=%s session_id_present=%t offer_present=%t candidate_types=%s", cfg.RunID, msg.SessionID, deviceID, msg.SessionID != "", msg.Offer["sdp"] != "", strings.Join(candidateTypesFromSDP(msg.Offer["sdp"]), ",")),
 				})
 				job := func(jobCtx context.Context) {
-					r.handleQueuedWebRTCMediaOffer(jobCtx, cfg, deviceID, msg, offerReceivedAt, record)
+					r.handleQueuedWebRTCMediaOffer(jobCtx, cfg, deviceID, msg, offerReceivedAt, mediaQueue, record)
 				}
 				select {
 				case offerQueue <- job:
@@ -1251,36 +1306,232 @@ func startDeviceTransportEventQueue(ctx context.Context, workerCount, depth int)
 	return queue, stop
 }
 
-func (r *Runner) handleQueuedWebRTCMediaOffer(ctx context.Context, cfg Config, deviceID string, msg webRTCMediaOfferMessage, offerReceivedAt time.Time, record func(Operation)) {
+func (r *Runner) handleQueuedWebRTCMediaOffer(ctx context.Context, cfg Config, deviceID string, msg webRTCMediaOfferMessage, offerReceivedAt time.Time, mediaQueue chan<- func(context.Context), record func(Operation)) {
+	answerStartedAt := time.Now()
+	answerQueueWaitMS := nonNegativeMS(answerStartedAt.Sub(offerReceivedAt).Milliseconds())
 	handler := r.answerWebRTCMediaOffer
 	var answerRecorded bool
+	var answerer *PionMediaAnswerSession
 	if r.webRTCMediaOfferHandler != nil {
 		handler = r.webRTCMediaOfferHandler
 	} else {
 		handler = func(ctx context.Context, cfg Config, deviceID string, msg webRTCMediaOfferMessage) ([]Operation, time.Time, func()) {
-			return r.answerWebRTCMediaOfferWithRecorder(ctx, cfg, deviceID, msg, func(op Operation) {
+			ops, answerDoneAt, cleanup, preparedAnswerer := r.prepareWebRTCMediaAnswerSessionWithRecorder(ctx, cfg, deviceID, msg, func(op Operation) {
 				answerRecorded = true
+				op.Evidence = appendEvidence(op.Evidence, fmt.Sprintf("startup_answer_queue_wait_ms=%d", answerQueueWaitMS))
 				record(op)
 			})
+			answerer = preparedAnswerer
+			return ops, answerDoneAt, cleanup
 		}
 	}
 	ops, answerDoneAt, cleanup := handler(ctx, cfg, deviceID, msg)
-	defer cleanup()
-	if cfg.WebRTCRelayRole == WebRTCRelayRoleDeviceOnly {
-		for _, op := range ops {
-			if answerRecorded && op.Actor == ActorDevice && op.Name == "webrtc_media_answer" {
-				continue
-			}
-			record(op)
+	annotateWebRTCMediaOpsEvidence(ops, fmt.Sprintf("startup_answer_queue_wait_ms=%d", answerQueueWaitMS))
+	for _, op := range ops {
+		if answerRecorded && op.Actor == ActorDevice && op.Name == "webrtc_media_answer" {
+			continue
+		}
+		record(op)
+	}
+	if !webRTCMediaAnswerSucceeded(ops) {
+		defer cleanup()
+		r.mediaCoord.complete(webRTCMediaDeviceResult{
+			SessionID:       msg.SessionID,
+			Ops:             ops,
+			Evidence:        webRTCMediaDeviceEvidence(ops),
+			OfferReceivedAt: offerReceivedAt,
+			AnswerDoneAt:    answerDoneAt,
+		})
+		return
+	}
+	mediaQueuedAt := time.Now()
+	mediaJob := func(jobCtx context.Context) {
+		defer cleanup()
+		senderQueueWaitMS := nonNegativeMS(time.Since(mediaQueuedAt).Milliseconds())
+		mediaOps := r.sendPreparedWebRTCMedia(jobCtx, cfg, deviceID, msg, answerer, senderQueueWaitMS)
+		allOps := append(append([]Operation{}, ops...), mediaOps...)
+		r.mediaCoord.complete(webRTCMediaDeviceResult{
+			SessionID:       msg.SessionID,
+			Ops:             allOps,
+			Evidence:        webRTCMediaDeviceEvidence(allOps),
+			OfferReceivedAt: offerReceivedAt,
+			AnswerDoneAt:    answerDoneAt,
+		})
+	}
+	select {
+	case mediaQueue <- mediaJob:
+	default:
+		defer cleanup()
+		op := Operation{
+			Actor:       ActorDevice,
+			Name:        "webrtc_media_sender_queue_full",
+			DeviceID:    deviceID,
+			Success:     false,
+			ErrorClass:  ClassWebRTCMedia,
+			ErrorDetail: "webrtc media sender queue full",
+			Evidence:    fmt.Sprintf("run_id=%s session_id=%s device_id=%s queue_depth=%d sender_queue_full_drops=1", cfg.RunID, msg.SessionID, deviceID, cap(mediaQueue)),
+		}
+		record(op)
+		allOps := append(append([]Operation{}, ops...), op)
+		r.mediaCoord.complete(webRTCMediaDeviceResult{
+			SessionID:       msg.SessionID,
+			Ops:             allOps,
+			Evidence:        webRTCMediaDeviceEvidence(allOps),
+			OfferReceivedAt: offerReceivedAt,
+			AnswerDoneAt:    answerDoneAt,
+		})
+	}
+}
+
+func annotateWebRTCMediaOpsEvidence(ops []Operation, evidence string) {
+	for i := range ops {
+		if ops[i].Actor != ActorDevice || !strings.HasPrefix(ops[i].Name, "webrtc_media_") {
+			continue
+		}
+		ops[i].Evidence = appendEvidence(ops[i].Evidence, evidence)
+	}
+}
+
+func webRTCMediaAnswerSucceeded(ops []Operation) bool {
+	for _, op := range ops {
+		if op.Actor == ActorDevice && op.Name == "webrtc_media_answer" {
+			return op.Success
 		}
 	}
-	r.mediaCoord.complete(webRTCMediaDeviceResult{
-		SessionID:       msg.SessionID,
-		Ops:             ops,
-		Evidence:        webRTCMediaDeviceEvidence(ops),
-		OfferReceivedAt: offerReceivedAt,
-		AnswerDoneAt:    answerDoneAt,
-	})
+	return false
+}
+
+func webRTCMediaSenderWorkerCount(cfg Config) int {
+	workers := cfg.ViewerConcurrency
+	if workers <= 0 {
+		workers = 1
+	}
+	maxWorkers := runtime.GOMAXPROCS(0) * 4
+	if maxWorkers < 1 {
+		maxWorkers = 1
+	}
+	if workers > maxWorkers {
+		return maxWorkers
+	}
+	return workers
+}
+
+func webRTCMediaSenderQueueDepth(workerCount int) int {
+	depth := workerCount * 8
+	if depth < 64 {
+		return 64
+	}
+	return depth
+}
+
+func (r *Runner) sendPreparedWebRTCMedia(ctx context.Context, cfg Config, deviceID string, msg webRTCMediaOfferMessage, answerer *PionMediaAnswerSession, senderQueueWaitMS int64) []Operation {
+	if r.webRTCMediaSendHandler != nil {
+		ops := r.webRTCMediaSendHandler(ctx, cfg, deviceID, msg, answerer)
+		annotateWebRTCMediaOpsEvidence(ops, fmt.Sprintf("startup_sender_queue_wait_ms=%d", senderQueueWaitMS))
+		return ops
+	}
+	if answerer == nil {
+		return []Operation{{
+			Actor:       ActorDevice,
+			Name:        "webrtc_media_send",
+			DeviceID:    deviceID,
+			Success:     false,
+			ErrorClass:  ClassWebRTCMedia,
+			ErrorDetail: "device media answerer missing",
+			Evidence:    fmt.Sprintf("run_id=%s session_id=%s device_id=%s", cfg.RunID, msg.SessionID, deviceID),
+		}}
+	}
+	start := time.Now()
+	if cfg.WebRTCMediaSet == WebRTCMediaSetAV {
+		evidence, err := answerer.SendAVRTP(ctx, cfg.WebRTCMediaDuration)
+		elapsed := time.Since(start).Milliseconds()
+		startupEvidence := senderStartupEvidence(senderQueueWaitMS, evidence.Video.ICEMS, evidence.Video.TimeToFirstMS)
+		if err != nil {
+			return []Operation{{Actor: ActorDevice, Name: "webrtc_media_ice_connected", DeviceID: deviceID, Success: false, ErrorClass: ClassWebRTCMedia, ErrorDetail: redactDetail(err.Error()), Evidence: appendEvidence(webRTCMediaDeviceFailureEvidence(cfg, msg.SessionID, deviceID, answerer.Snapshot(), avSenderEvidence(evidence)), startupEvidence)}}
+		}
+		iceMS := evidence.Video.ICEMS
+		firstRTPMS := iceMS + evidence.Video.TimeToFirstMS
+		return []Operation{
+			{Actor: ActorDevice, Name: "webrtc_media_ice_connected", DeviceID: deviceID, Success: true, LatencyMS: iceMS, Evidence: appendEvidence(appendEvidence(fmt.Sprintf("run_id=%s session_id=%s device_id=%s ice_connected_ms=%d ice_policy=%s", cfg.RunID, msg.SessionID, deviceID, iceMS, normalizedWebRTCICEPolicy(cfg.WebRTCICEPolicy)), avSenderEvidence(evidence)), startupEvidence)},
+			{Actor: ActorDevice, Name: "webrtc_media_first_rtp", DeviceID: deviceID, Success: true, LatencyMS: firstRTPMS, Evidence: appendEvidence(appendEvidence(fmt.Sprintf("run_id=%s session_id=%s device_id=%s time_to_first_rtp_ms=%d first_rtp_after_ice_ms=%d", cfg.RunID, msg.SessionID, deviceID, firstRTPMS, evidence.Video.TimeToFirstMS), avSenderEvidence(evidence)), startupEvidence)},
+			{Actor: ActorDevice, Name: "webrtc_media_send", DeviceID: deviceID, Success: true, LatencyMS: elapsed, Evidence: appendEvidence(fmt.Sprintf("run_id=%s session_id=%s device_id=%s %s", cfg.RunID, msg.SessionID, deviceID, avSenderEvidence(evidence)), startupEvidence)},
+		}
+	}
+	evidence, err := answerer.SendH264RTP(ctx, cfg.WebRTCMediaDuration)
+	elapsed := time.Since(start).Milliseconds()
+	startupEvidence := senderStartupEvidence(senderQueueWaitMS, evidence.Evidence.ICEMS, evidence.Evidence.TimeToFirstMS)
+	if err != nil {
+		return []Operation{{Actor: ActorDevice, Name: "webrtc_media_ice_connected", DeviceID: deviceID, Success: false, ErrorClass: ClassWebRTCMedia, ErrorDetail: redactDetail(err.Error()), Evidence: appendEvidence(webRTCMediaDeviceFailureEvidence(cfg, msg.SessionID, deviceID, answerer.Snapshot(), h264SenderEvidence(evidence.Evidence)), startupEvidence)}}
+	}
+	iceMS := evidence.Evidence.ICEMS
+	firstRTPMS := iceMS + evidence.Evidence.TimeToFirstMS
+	return []Operation{
+		{Actor: ActorDevice, Name: "webrtc_media_ice_connected", DeviceID: deviceID, Success: true, LatencyMS: iceMS, Evidence: appendEvidence(appendEvidence(fmt.Sprintf("run_id=%s session_id=%s device_id=%s ice_connected_ms=%d ice_policy=%s", cfg.RunID, msg.SessionID, deviceID, iceMS, normalizedWebRTCICEPolicy(cfg.WebRTCICEPolicy)), h264SenderEvidence(evidence.Evidence)), startupEvidence)},
+		{Actor: ActorDevice, Name: "webrtc_media_first_rtp", DeviceID: deviceID, Success: true, LatencyMS: firstRTPMS, Evidence: appendEvidence(appendEvidence(fmt.Sprintf("run_id=%s session_id=%s device_id=%s time_to_first_rtp_ms=%d first_rtp_after_ice_ms=%d", cfg.RunID, msg.SessionID, deviceID, firstRTPMS, evidence.Evidence.TimeToFirstMS), h264SenderEvidence(evidence.Evidence)), startupEvidence)},
+		{Actor: ActorDevice, Name: "webrtc_media_send", DeviceID: deviceID, Success: true, LatencyMS: elapsed, Evidence: appendEvidence(fmt.Sprintf("run_id=%s session_id=%s device_id=%s %s", cfg.RunID, msg.SessionID, deviceID, h264SenderEvidence(evidence.Evidence)), startupEvidence)},
+	}
+}
+
+func senderStartupEvidence(senderQueueWaitMS, iceMS, firstWriteAfterICEMS int64) string {
+	return fmt.Sprintf("startup_sender_queue_wait_ms=%d startup_device_ice_wait_ms=%d startup_sender_first_write_after_ice_ms=%d", nonNegativeMS(senderQueueWaitMS), nonNegativeMS(iceMS), nonNegativeMS(firstWriteAfterICEMS))
+}
+
+func (r *Runner) prepareWebRTCMediaAnswerWithRecorder(ctx context.Context, cfg Config, deviceID string, msg webRTCMediaOfferMessage, recordAnswer func(Operation)) ([]Operation, time.Time, func()) {
+	ops, answerDoneAt, cleanup, _ := r.prepareWebRTCMediaAnswerSessionWithRecorder(ctx, cfg, deviceID, msg, recordAnswer)
+	return ops, answerDoneAt, cleanup
+}
+
+func (r *Runner) prepareWebRTCMediaAnswerSessionWithRecorder(ctx context.Context, cfg Config, deviceID string, msg webRTCMediaOfferMessage, recordAnswer func(Operation)) ([]Operation, time.Time, func(), *PionMediaAnswerSession) {
+	prepareStartedAt := time.Now()
+	iceServers, err := extractICEServersForPolicy(map[string]any{"ice_servers": msg.ICEServers}, cfg.WebRTCICEPolicy)
+	if err != nil {
+		return []Operation{{
+			Actor:       ActorDevice,
+			Name:        "webrtc_media_answer",
+			DeviceID:    deviceID,
+			Success:     false,
+			ErrorClass:  ClassWebRTCSetup,
+			ErrorDetail: redactDetail(err.Error()),
+			Evidence:    fmt.Sprintf("run_id=%s session_id=%s device_id=%s startup_answer_prepare_ms=%d", cfg.RunID, msg.SessionID, deviceID, nonNegativeMS(time.Since(prepareStartedAt).Milliseconds())),
+		}}, time.Time{}, func() {}, nil
+	}
+	answerer, err := NewPionMediaAnswerSessionWithICEServersForSetAndPolicy(ctx, msg.Offer, iceServers, cfg.WebRTCMediaSet, cfg.WebRTCICEPolicy, cfg.HTTPTimeout)
+	if err != nil {
+		return []Operation{{
+			Actor:       ActorDevice,
+			Name:        "webrtc_media_answer",
+			DeviceID:    deviceID,
+			Success:     false,
+			ErrorClass:  ClassWebRTCSetup,
+			ErrorDetail: redactDetail(err.Error()),
+			Evidence:    fmt.Sprintf("run_id=%s session_id=%s device_id=%s startup_answer_prepare_ms=%d", cfg.RunID, msg.SessionID, deviceID, nonNegativeMS(time.Since(prepareStartedAt).Milliseconds())),
+		}}, time.Time{}, func() {}, nil
+	}
+	cleanup := answerer.Close
+	postStartedAt := time.Now()
+	op := r.post(ctx, cfg, ActorDevice, "webrtc_media_answer", deviceID, "", "/api/request_webrtc/answer", map[string]any{
+		"devid":      deviceID,
+		"session_id": msg.SessionID,
+		"answer":     answerer.AnswerPayload(),
+	}, cfg.DeviceBearerFor(deviceID))
+	answerDoneAt := time.Now()
+	answerPrepareMS := nonNegativeMS(postStartedAt.Sub(prepareStartedAt).Milliseconds())
+	answerPostMS := nonNegativeMS(answerDoneAt.Sub(postStartedAt).Milliseconds())
+	ops := []Operation{op}
+	if !op.Success {
+		op.Evidence = appendEvidence(op.Evidence, fmt.Sprintf("run_id=%s session_id=%s device_id=%s startup_answer_prepare_ms=%d startup_answer_post_ms=%d", cfg.RunID, msg.SessionID, deviceID, answerPrepareMS, answerPostMS))
+		ops[0] = op
+		if recordAnswer != nil {
+			recordAnswer(op)
+		}
+		return ops, answerDoneAt, cleanup, answerer
+	}
+	op.Evidence = fmt.Sprintf("run_id=%s session_id=%s device_id=%s device_media_answer_submitted ice_servers=%d ice_policy=%s startup_answer_prepare_ms=%d startup_answer_post_ms=%d", cfg.RunID, msg.SessionID, deviceID, len(iceServers), normalizedWebRTCICEPolicy(cfg.WebRTCICEPolicy), answerPrepareMS, answerPostMS)
+	ops[0] = op
+	if recordAnswer != nil {
+		recordAnswer(op)
+	}
+	return ops, answerDoneAt, cleanup, answerer
 }
 
 func (r *Runner) handleQueuedRecordingCommand(ctx context.Context, cfg Config, deviceID string, record func(Operation)) {
@@ -1412,77 +1663,12 @@ func (r *Runner) answerWebRTCMediaOffer(ctx context.Context, cfg Config, deviceI
 }
 
 func (r *Runner) answerWebRTCMediaOfferWithRecorder(ctx context.Context, cfg Config, deviceID string, msg webRTCMediaOfferMessage, recordAnswer func(Operation)) ([]Operation, time.Time, func()) {
-	iceServers, err := extractICEServers(map[string]any{"ice_servers": msg.ICEServers})
-	if err != nil {
-		return []Operation{{
-			Actor:       ActorDevice,
-			Name:        "webrtc_media_answer",
-			DeviceID:    deviceID,
-			Success:     false,
-			ErrorClass:  ClassWebRTCSetup,
-			ErrorDetail: redactDetail(err.Error()),
-		}}, time.Time{}, func() {}
-	}
-	answerer, err := NewPionMediaAnswerSessionWithICEServersForSetAndPolicy(ctx, msg.Offer, iceServers, cfg.WebRTCMediaSet, cfg.WebRTCICEPolicy, cfg.HTTPTimeout)
-	if err != nil {
-		return []Operation{{
-			Actor:       ActorDevice,
-			Name:        "webrtc_media_answer",
-			DeviceID:    deviceID,
-			Success:     false,
-			ErrorClass:  ClassWebRTCSetup,
-			ErrorDetail: redactDetail(err.Error()),
-		}}, time.Time{}, func() {}
-	}
-	cleanup := answerer.Close
-	op := r.post(ctx, cfg, ActorDevice, "webrtc_media_answer", deviceID, "", "/api/request_webrtc/answer", map[string]any{
-		"devid":      deviceID,
-		"session_id": msg.SessionID,
-		"answer":     answerer.AnswerPayload(),
-	}, cfg.DeviceBearerFor(deviceID))
-	answerDoneAt := time.Now()
-	ops := []Operation{op}
-	if !op.Success {
-		if recordAnswer != nil {
-			recordAnswer(op)
-		}
+	ops, answerDoneAt, cleanup, answerer := r.prepareWebRTCMediaAnswerSessionWithRecorder(ctx, cfg, deviceID, msg, recordAnswer)
+	if !webRTCMediaAnswerSucceeded(ops) {
 		return ops, answerDoneAt, cleanup
 	}
-	op.Evidence = fmt.Sprintf("run_id=%s session_id=%s device_id=%s device_media_answer_submitted ice_servers=%d ice_policy=%s", cfg.RunID, msg.SessionID, deviceID, len(iceServers), normalizedWebRTCICEPolicy(cfg.WebRTCICEPolicy))
-	ops[0] = op
-	if recordAnswer != nil {
-		recordAnswer(op)
-	}
-	start := time.Now()
-	if cfg.WebRTCMediaSet == WebRTCMediaSetAV {
-		evidence, err := answerer.SendAVRTP(ctx, cfg.WebRTCMediaDuration)
-		elapsed := time.Since(start).Milliseconds()
-		if err != nil {
-			ops = append(ops, Operation{Actor: ActorDevice, Name: "webrtc_media_ice_connected", DeviceID: deviceID, Success: false, ErrorClass: ClassWebRTCMedia, ErrorDetail: redactDetail(err.Error())})
-			return ops, answerDoneAt, cleanup
-		}
-		iceMS := evidence.Video.ICEMS
-		firstRTPMS := iceMS + evidence.Video.TimeToFirstMS
-		ops = append(ops,
-			Operation{Actor: ActorDevice, Name: "webrtc_media_ice_connected", DeviceID: deviceID, Success: true, LatencyMS: iceMS, Evidence: fmt.Sprintf("run_id=%s session_id=%s device_id=%s ice_connected_ms=%d ice_policy=%s", cfg.RunID, msg.SessionID, deviceID, iceMS, normalizedWebRTCICEPolicy(cfg.WebRTCICEPolicy))},
-			Operation{Actor: ActorDevice, Name: "webrtc_media_first_rtp", DeviceID: deviceID, Success: true, LatencyMS: firstRTPMS, Evidence: fmt.Sprintf("run_id=%s session_id=%s device_id=%s time_to_first_rtp_ms=%d first_rtp_after_ice_ms=%d", cfg.RunID, msg.SessionID, deviceID, firstRTPMS, evidence.Video.TimeToFirstMS)},
-			Operation{Actor: ActorDevice, Name: "webrtc_media_send", DeviceID: deviceID, Success: true, LatencyMS: elapsed, Evidence: fmt.Sprintf("run_id=%s session_id=%s device_id=%s %s", cfg.RunID, msg.SessionID, deviceID, avSenderEvidence(evidence))},
-		)
-		return ops, answerDoneAt, cleanup
-	}
-	evidence, err := answerer.SendH264RTP(ctx, cfg.WebRTCMediaDuration)
-	elapsed := time.Since(start).Milliseconds()
-	if err != nil {
-		ops = append(ops, Operation{Actor: ActorDevice, Name: "webrtc_media_ice_connected", DeviceID: deviceID, Success: false, ErrorClass: ClassWebRTCMedia, ErrorDetail: redactDetail(err.Error())})
-		return ops, answerDoneAt, cleanup
-	}
-	iceMS := evidence.Evidence.ICEMS
-	firstRTPMS := iceMS + evidence.Evidence.TimeToFirstMS
-	ops = append(ops,
-		Operation{Actor: ActorDevice, Name: "webrtc_media_ice_connected", DeviceID: deviceID, Success: true, LatencyMS: iceMS, Evidence: fmt.Sprintf("run_id=%s session_id=%s device_id=%s ice_connected_ms=%d ice_policy=%s", cfg.RunID, msg.SessionID, deviceID, iceMS, normalizedWebRTCICEPolicy(cfg.WebRTCICEPolicy))},
-		Operation{Actor: ActorDevice, Name: "webrtc_media_first_rtp", DeviceID: deviceID, Success: true, LatencyMS: firstRTPMS, Evidence: fmt.Sprintf("run_id=%s session_id=%s device_id=%s time_to_first_rtp_ms=%d first_rtp_after_ice_ms=%d", cfg.RunID, msg.SessionID, deviceID, firstRTPMS, evidence.Evidence.TimeToFirstMS)},
-		Operation{Actor: ActorDevice, Name: "webrtc_media_send", DeviceID: deviceID, Success: true, LatencyMS: elapsed, Evidence: fmt.Sprintf("run_id=%s session_id=%s device_id=%s %s", cfg.RunID, msg.SessionID, deviceID, h264SenderEvidence(evidence.Evidence))},
-	)
+	mediaOps := r.sendPreparedWebRTCMedia(ctx, cfg, deviceID, msg, answerer, 0)
+	ops = append(ops, mediaOps...)
 	return ops, answerDoneAt, cleanup
 }
 
@@ -2986,7 +3172,7 @@ func (r *Runner) runWebRTCMediaViewerActor(ctx context.Context, cfg Config, devi
 		ops[0] = preflight
 		return ops
 	}
-	iceServers, err := extractICEServers(preflightResponse)
+	iceServers, err := extractICEServersForPolicy(preflightResponse, cfg.WebRTCICEPolicy)
 	if err != nil {
 		preflight.Success = false
 		preflight.ErrorClass = ClassWebRTCSetup
@@ -3111,16 +3297,18 @@ func (r *Runner) runWebRTCMediaViewerActor(ctx context.Context, cfg Config, devi
 	receiveOp := Operation{Actor: ActorViewer, Name: "webrtc_media_receive", DeviceID: deviceID, ViewerID: viewerID, LatencyMS: stats.ReceiveDurationMS}
 	if stats.PacketsReceived > 0 {
 		firstOp.Success = true
-		firstOp.Evidence = appendEvidence(fmt.Sprintf("time_to_first_rtp_ms=%d", stats.TimeToFirstRTPMS), startup.correlationEvidence())
+		firstOp.Evidence = appendEvidence(fmt.Sprintf("time_to_first_rtp_ms=%d", stats.TimeToFirstRTPMS), appendEvidence(startup.correlationEvidence(), iceTraceEvidence(stats)))
 	} else {
 		firstOp.Success = false
 		firstOp.ErrorClass = ClassWebRTCMedia
 		firstOp.ErrorDetail = "no_rtp"
+		firstOp.Evidence = webRTCMediaFailureEvidence(startup, stats, "no_rtp")
 	}
 	if err != nil {
 		receiveOp.Success = false
 		receiveOp.ErrorClass = ClassWebRTCMedia
 		receiveOp.ErrorDetail = redactDetail(err.Error())
+		receiveOp.Evidence = webRTCMediaFailureEvidence(startup, stats, "wait_for_media_error")
 	} else {
 		receiveOp.Success = true
 		receiveOp.Evidence = appendEvidence(startup.withReceiverStats(stats).Evidence(receiverMediaEvidence(stats)), iceTraceEvidence(stats))
@@ -3136,6 +3324,7 @@ func (r *Runner) runWebRTCMediaViewerActor(ctx context.Context, cfg Config, devi
 				Success:     false,
 				ErrorClass:  ClassWebRTCMedia,
 				ErrorDetail: redactDetail(err.Error()),
+				Evidence:    webRTCMediaFailureEvidence(startup.withReceiverStats(stats), stats, "media_drain_error"),
 			})
 			return r.appendWebRTCMediaClose(ctx, cfg, ops, deviceID, viewerID, response)
 		}
@@ -3252,7 +3441,7 @@ func (r *Runner) completeServerOfferWebRTCMedia(ctx context.Context, cfg Config,
 	if cfg.DeviceOnlineMode == DeviceOnlineModeWebSocket {
 		return r.completeDeviceOwnerWebRTCMedia(ctx, cfg, deviceID, viewerID, response, startup)
 	}
-	iceServers, err := extractICEServers(response)
+	iceServers, err := extractICEServersForPolicy(response, cfg.WebRTCICEPolicy)
 	if err != nil {
 		ops := []Operation{{
 			Actor:       ActorViewer,
@@ -3484,6 +3673,15 @@ func receiverMediaEvidence(stats WebRTCMediaStats) string {
 	return fmt.Sprintf("packets=%d bytes=%d h264_packets=%d h264_bytes=%d receive_ms=%d ttfb_ms=%d ice_ms=%d", stats.PacketsReceived, stats.BytesReceived, stats.H264Packets, stats.H264Bytes, stats.ReceiveDurationMS, stats.TimeToFirstRTPMS, stats.ICEConnectedLatencyMS)
 }
 
+func webRTCMediaFailureEvidence(startup videoStartupClock, stats WebRTCMediaStats, reason string) string {
+	return appendEvidence(startup.correlationEvidence(), appendEvidence("failure_reason="+reason, iceTraceEvidence(stats)))
+}
+
+func webRTCMediaDeviceFailureEvidence(cfg Config, sessionID string, deviceID string, stats WebRTCMediaStats, senderEvidence string) string {
+	base := fmt.Sprintf("run_id=%s session_id=%s device_id=%s ice_policy=%s", cfg.RunID, sessionID, deviceID, normalizedWebRTCICEPolicy(cfg.WebRTCICEPolicy))
+	return appendEvidence(base, appendEvidence(iceTraceEvidence(stats), senderEvidence))
+}
+
 func webRTCMediaDrainDelay(duration time.Duration) time.Duration {
 	if duration <= 0 {
 		return 0
@@ -3564,100 +3762,151 @@ func webRTCMediaDeviceEvidence(ops []Operation) any {
 
 func parseH264SenderEvidence(evidence string) H264RTPEvidence {
 	return H264RTPEvidence{
-		Packets:                     evidenceInt(evidence, "sender_packets"),
-		Bytes:                       evidenceInt(evidence, "sender_bytes"),
-		DurationMS:                  int64(evidenceInt(evidence, "sender_duration_ms")),
-		Loops:                       evidenceInt(evidence, "sender_loops"),
-		Frames:                      evidenceInt(evidence, "sender_frames"),
-		ReceiveMS:                   int64(evidenceInt(evidence, "sender_receive_ms")),
-		TimeToFirstMS:               int64(evidenceInt(evidence, "sender_ttfb_ms")),
-		ICEMS:                       int64(evidenceInt(evidence, "sender_ice_ms")),
-		ICEGatheringCompleteMS:      int64(evidenceInt(evidence, "sender_ice_gather_complete_ms")),
-		RemoteDescriptionSetMS:      int64(evidenceInt(evidence, "sender_remote_description_set_ms")),
-		LocalDescriptionSetMS:       int64(evidenceInt(evidence, "sender_local_description_set_ms")),
-		ICECheckingMS:               int64(evidenceInt(evidence, "sender_ice_checking_ms")),
-		FirstLocalCandidateMS:       int64(evidenceInt(evidence, "sender_first_local_candidate_ms")),
-		FirstLocalRelayCandidateMS:  int64(evidenceInt(evidence, "sender_first_local_relay_candidate_ms")),
-		LocalHostCandidates:         evidenceInt(evidence, "sender_local_host_candidates"),
-		LocalSrflxCandidates:        evidenceInt(evidence, "sender_local_srflx_candidates"),
-		LocalRelayCandidates:        evidenceInt(evidence, "sender_local_relay_candidates"),
-		ICEConnectionStates:         evidenceCSV(evidenceValue(evidence, "sender_ice_connection_states")),
-		ICEGatheringStates:          evidenceCSV(evidenceValue(evidence, "sender_ice_gathering_states")),
-		ExpectedSHA256:              evidenceValue(evidence, "sender_expected_sha256"),
-		SelectedLocalCandidateType:  evidenceValue(evidence, "sender_selected_local_candidate_type"),
-		SelectedRemoteCandidateType: evidenceValue(evidence, "sender_selected_remote_candidate_type"),
-		NALTypes:                    evidenceSet(evidenceValue(evidence, "sender_nal_types")),
-		Packetizations:              evidenceSet(evidenceValue(evidence, "sender_packetization")),
-		SchedulerPacketsSent:        evidenceInt(evidence, "sender_scheduler_packets_sent"),
-		SchedulerBytesSent:          evidenceInt(evidence, "sender_scheduler_bytes_sent"),
-		SchedulerDroppedJobs:        evidenceInt(evidence, "sender_scheduler_dropped_jobs"),
-		SchedulerDroppedPackets:     evidenceInt(evidence, "sender_scheduler_dropped_packets"),
-		SchedulerQueueFullDrops:     evidenceInt(evidence, "sender_scheduler_queue_full_drops"),
+		Packets:                         evidenceInt(evidence, "sender_packets"),
+		Bytes:                           evidenceInt(evidence, "sender_bytes"),
+		DurationMS:                      int64(evidenceInt(evidence, "sender_duration_ms")),
+		Loops:                           evidenceInt(evidence, "sender_loops"),
+		Frames:                          evidenceInt(evidence, "sender_frames"),
+		ReceiveMS:                       int64(evidenceInt(evidence, "sender_receive_ms")),
+		TimeToFirstMS:                   int64(evidenceInt(evidence, "sender_ttfb_ms")),
+		ICEMS:                           int64(evidenceInt(evidence, "sender_ice_ms")),
+		ICEGatheringCompleteMS:          int64(evidenceInt(evidence, "sender_ice_gather_complete_ms")),
+		RemoteDescriptionSetMS:          int64(evidenceInt(evidence, "sender_remote_description_set_ms")),
+		LocalDescriptionSetMS:           int64(evidenceInt(evidence, "sender_local_description_set_ms")),
+		ICECheckingMS:                   int64(evidenceInt(evidence, "sender_ice_checking_ms")),
+		FirstLocalCandidateMS:           int64(evidenceInt(evidence, "sender_first_local_candidate_ms")),
+		FirstLocalRelayCandidateMS:      int64(evidenceInt(evidence, "sender_first_local_relay_candidate_ms")),
+		FirstLocalRelayUDPCandidateMS:   int64(evidenceInt(evidence, "sender_first_local_relay_udp_candidate_ms")),
+		FirstLocalRelayTCPCandidateMS:   int64(evidenceInt(evidence, "sender_first_local_relay_tcp_candidate_ms")),
+		LocalHostCandidates:             evidenceInt(evidence, "sender_local_host_candidates"),
+		LocalSrflxCandidates:            evidenceInt(evidence, "sender_local_srflx_candidates"),
+		LocalRelayCandidates:            evidenceInt(evidence, "sender_local_relay_candidates"),
+		LocalUDPCandidates:              evidenceInt(evidence, "sender_local_udp_candidates"),
+		LocalTCPCandidates:              evidenceInt(evidence, "sender_local_tcp_candidates"),
+		LocalRelayUDPCandidates:         evidenceInt(evidence, "sender_local_relay_udp_candidates"),
+		LocalRelayTCPCandidates:         evidenceInt(evidence, "sender_local_relay_tcp_candidates"),
+		ICEConnectionStates:             evidenceCSV(evidenceValue(evidence, "sender_ice_connection_states")),
+		ICEGatheringStates:              evidenceCSV(evidenceValue(evidence, "sender_ice_gathering_states")),
+		PeerConnectionStates:            evidenceCSV(evidenceValue(evidence, "sender_peer_connection_states")),
+		PeerConnectionConnectedMS:       int64(evidenceInt(evidence, "sender_peer_connection_connected_ms")),
+		ExpectedSHA256:                  evidenceValue(evidence, "sender_expected_sha256"),
+		SelectedLocalCandidateType:      evidenceValue(evidence, "sender_selected_local_candidate_type"),
+		SelectedRemoteCandidateType:     evidenceValue(evidence, "sender_selected_remote_candidate_type"),
+		SelectedLocalCandidateProtocol:  evidenceValue(evidence, "sender_selected_local_candidate_protocol"),
+		SelectedRemoteCandidateProtocol: evidenceValue(evidence, "sender_selected_remote_candidate_protocol"),
+		SelectedLocalCandidateAddress:   evidenceValue(evidence, "sender_selected_local_candidate_address"),
+		SelectedRemoteCandidateAddress:  evidenceValue(evidence, "sender_selected_remote_candidate_address"),
+		SelectedLocalCandidatePort:      evidenceInt(evidence, "sender_selected_local_candidate_port"),
+		SelectedRemoteCandidatePort:     evidenceInt(evidence, "sender_selected_remote_candidate_port"),
+		SelectedLocalCandidateTCPType:   evidenceValue(evidence, "sender_selected_local_candidate_tcp_type"),
+		SelectedRemoteCandidateTCPType:  evidenceValue(evidence, "sender_selected_remote_candidate_tcp_type"),
+		NALTypes:                        evidenceSet(evidenceValue(evidence, "sender_nal_types")),
+		Packetizations:                  evidenceSet(evidenceValue(evidence, "sender_packetization")),
+		SchedulerPacketsSent:            evidenceInt(evidence, "sender_scheduler_packets_sent"),
+		SchedulerBytesSent:              evidenceInt(evidence, "sender_scheduler_bytes_sent"),
+		SchedulerDroppedJobs:            evidenceInt(evidence, "sender_scheduler_dropped_jobs"),
+		SchedulerDroppedPackets:         evidenceInt(evidence, "sender_scheduler_dropped_packets"),
+		SchedulerQueueFullDrops:         evidenceInt(evidence, "sender_scheduler_queue_full_drops"),
+		SchedulerFirstWriteSinceStartMS: int64(evidenceInt(evidence, "sender_scheduler_first_write_since_session_start_ms")),
 	}
 }
 
 func parseAVSenderEvidence(evidence string) AVRTPEvidence {
 	return AVRTPEvidence{
 		Video: H264RTPEvidence{
-			Packets:                     evidenceInt(evidence, "sender_video_packets"),
-			Bytes:                       evidenceInt(evidence, "sender_video_bytes"),
-			DurationMS:                  int64(evidenceInt(evidence, "sender_video_duration_ms")),
-			Loops:                       evidenceInt(evidence, "sender_video_loops"),
-			Frames:                      evidenceInt(evidence, "sender_video_frames"),
-			ReceiveMS:                   int64(evidenceInt(evidence, "sender_video_receive_ms")),
-			TimeToFirstMS:               int64(evidenceInt(evidence, "sender_video_ttfb_ms")),
-			ICEMS:                       int64(evidenceInt(evidence, "sender_video_ice_ms")),
-			ICEGatheringCompleteMS:      int64(evidenceInt(evidence, "sender_video_ice_gather_complete_ms")),
-			RemoteDescriptionSetMS:      int64(evidenceInt(evidence, "sender_video_remote_description_set_ms")),
-			LocalDescriptionSetMS:       int64(evidenceInt(evidence, "sender_video_local_description_set_ms")),
-			ICECheckingMS:               int64(evidenceInt(evidence, "sender_video_ice_checking_ms")),
-			FirstLocalCandidateMS:       int64(evidenceInt(evidence, "sender_video_first_local_candidate_ms")),
-			FirstLocalRelayCandidateMS:  int64(evidenceInt(evidence, "sender_video_first_local_relay_candidate_ms")),
-			LocalHostCandidates:         evidenceInt(evidence, "sender_video_local_host_candidates"),
-			LocalSrflxCandidates:        evidenceInt(evidence, "sender_video_local_srflx_candidates"),
-			LocalRelayCandidates:        evidenceInt(evidence, "sender_video_local_relay_candidates"),
-			ICEConnectionStates:         evidenceCSV(evidenceValue(evidence, "sender_video_ice_connection_states")),
-			ICEGatheringStates:          evidenceCSV(evidenceValue(evidence, "sender_video_ice_gathering_states")),
-			ExpectedSHA256:              evidenceValue(evidence, "sender_video_expected_sha256"),
-			SelectedLocalCandidateType:  evidenceValue(evidence, "sender_video_selected_local_candidate_type"),
-			SelectedRemoteCandidateType: evidenceValue(evidence, "sender_video_selected_remote_candidate_type"),
-			NALTypes:                    evidenceSet(evidenceValue(evidence, "sender_video_nal_types")),
-			Packetizations:              evidenceSet(evidenceValue(evidence, "sender_video_packetization")),
-			SchedulerPacketsSent:        evidenceInt(evidence, "sender_video_scheduler_packets_sent"),
-			SchedulerBytesSent:          evidenceInt(evidence, "sender_video_scheduler_bytes_sent"),
-			SchedulerDroppedJobs:        evidenceInt(evidence, "sender_video_scheduler_dropped_jobs"),
-			SchedulerDroppedPackets:     evidenceInt(evidence, "sender_video_scheduler_dropped_packets"),
-			SchedulerQueueFullDrops:     evidenceInt(evidence, "sender_video_scheduler_queue_full_drops"),
+			Packets:                         evidenceInt(evidence, "sender_video_packets"),
+			Bytes:                           evidenceInt(evidence, "sender_video_bytes"),
+			DurationMS:                      int64(evidenceInt(evidence, "sender_video_duration_ms")),
+			Loops:                           evidenceInt(evidence, "sender_video_loops"),
+			Frames:                          evidenceInt(evidence, "sender_video_frames"),
+			ReceiveMS:                       int64(evidenceInt(evidence, "sender_video_receive_ms")),
+			TimeToFirstMS:                   int64(evidenceInt(evidence, "sender_video_ttfb_ms")),
+			ICEMS:                           int64(evidenceInt(evidence, "sender_video_ice_ms")),
+			ICEGatheringCompleteMS:          int64(evidenceInt(evidence, "sender_video_ice_gather_complete_ms")),
+			RemoteDescriptionSetMS:          int64(evidenceInt(evidence, "sender_video_remote_description_set_ms")),
+			LocalDescriptionSetMS:           int64(evidenceInt(evidence, "sender_video_local_description_set_ms")),
+			ICECheckingMS:                   int64(evidenceInt(evidence, "sender_video_ice_checking_ms")),
+			FirstLocalCandidateMS:           int64(evidenceInt(evidence, "sender_video_first_local_candidate_ms")),
+			FirstLocalRelayCandidateMS:      int64(evidenceInt(evidence, "sender_video_first_local_relay_candidate_ms")),
+			FirstLocalRelayUDPCandidateMS:   int64(evidenceInt(evidence, "sender_video_first_local_relay_udp_candidate_ms")),
+			FirstLocalRelayTCPCandidateMS:   int64(evidenceInt(evidence, "sender_video_first_local_relay_tcp_candidate_ms")),
+			LocalHostCandidates:             evidenceInt(evidence, "sender_video_local_host_candidates"),
+			LocalSrflxCandidates:            evidenceInt(evidence, "sender_video_local_srflx_candidates"),
+			LocalRelayCandidates:            evidenceInt(evidence, "sender_video_local_relay_candidates"),
+			LocalUDPCandidates:              evidenceInt(evidence, "sender_video_local_udp_candidates"),
+			LocalTCPCandidates:              evidenceInt(evidence, "sender_video_local_tcp_candidates"),
+			LocalRelayUDPCandidates:         evidenceInt(evidence, "sender_video_local_relay_udp_candidates"),
+			LocalRelayTCPCandidates:         evidenceInt(evidence, "sender_video_local_relay_tcp_candidates"),
+			ICEConnectionStates:             evidenceCSV(evidenceValue(evidence, "sender_video_ice_connection_states")),
+			ICEGatheringStates:              evidenceCSV(evidenceValue(evidence, "sender_video_ice_gathering_states")),
+			PeerConnectionStates:            evidenceCSV(evidenceValue(evidence, "sender_video_peer_connection_states")),
+			PeerConnectionConnectedMS:       int64(evidenceInt(evidence, "sender_video_peer_connection_connected_ms")),
+			ExpectedSHA256:                  evidenceValue(evidence, "sender_video_expected_sha256"),
+			SelectedLocalCandidateType:      evidenceValue(evidence, "sender_video_selected_local_candidate_type"),
+			SelectedRemoteCandidateType:     evidenceValue(evidence, "sender_video_selected_remote_candidate_type"),
+			SelectedLocalCandidateProtocol:  evidenceValue(evidence, "sender_video_selected_local_candidate_protocol"),
+			SelectedRemoteCandidateProtocol: evidenceValue(evidence, "sender_video_selected_remote_candidate_protocol"),
+			SelectedLocalCandidateAddress:   evidenceValue(evidence, "sender_video_selected_local_candidate_address"),
+			SelectedRemoteCandidateAddress:  evidenceValue(evidence, "sender_video_selected_remote_candidate_address"),
+			SelectedLocalCandidatePort:      evidenceInt(evidence, "sender_video_selected_local_candidate_port"),
+			SelectedRemoteCandidatePort:     evidenceInt(evidence, "sender_video_selected_remote_candidate_port"),
+			SelectedLocalCandidateTCPType:   evidenceValue(evidence, "sender_video_selected_local_candidate_tcp_type"),
+			SelectedRemoteCandidateTCPType:  evidenceValue(evidence, "sender_video_selected_remote_candidate_tcp_type"),
+			NALTypes:                        evidenceSet(evidenceValue(evidence, "sender_video_nal_types")),
+			Packetizations:                  evidenceSet(evidenceValue(evidence, "sender_video_packetization")),
+			SchedulerPacketsSent:            evidenceInt(evidence, "sender_video_scheduler_packets_sent"),
+			SchedulerBytesSent:              evidenceInt(evidence, "sender_video_scheduler_bytes_sent"),
+			SchedulerDroppedJobs:            evidenceInt(evidence, "sender_video_scheduler_dropped_jobs"),
+			SchedulerDroppedPackets:         evidenceInt(evidence, "sender_video_scheduler_dropped_packets"),
+			SchedulerQueueFullDrops:         evidenceInt(evidence, "sender_video_scheduler_queue_full_drops"),
+			SchedulerFirstWriteSinceStartMS: int64(evidenceInt(evidence, "sender_video_scheduler_first_write_since_session_start_ms")),
 		},
 		Audio: OpusRTPEvidence{
-			Packets:                     evidenceInt(evidence, "sender_audio_packets"),
-			Bytes:                       evidenceInt(evidence, "sender_audio_bytes"),
-			DurationMS:                  int64(evidenceInt(evidence, "sender_audio_duration_ms")),
-			Loops:                       evidenceInt(evidence, "sender_audio_loops"),
-			Frames:                      evidenceInt(evidence, "sender_audio_frames"),
-			SampleRate:                  evidenceInt(evidence, "sender_audio_sample_rate"),
-			Channels:                    evidenceInt(evidence, "sender_audio_channels"),
-			ReceiveMS:                   int64(evidenceInt(evidence, "sender_audio_receive_ms")),
-			TimeToFirstMS:               int64(evidenceInt(evidence, "sender_audio_ttfb_ms")),
-			ICEMS:                       int64(evidenceInt(evidence, "sender_audio_ice_ms")),
-			ICEGatheringCompleteMS:      int64(evidenceInt(evidence, "sender_audio_ice_gather_complete_ms")),
-			RemoteDescriptionSetMS:      int64(evidenceInt(evidence, "sender_audio_remote_description_set_ms")),
-			LocalDescriptionSetMS:       int64(evidenceInt(evidence, "sender_audio_local_description_set_ms")),
-			ICECheckingMS:               int64(evidenceInt(evidence, "sender_audio_ice_checking_ms")),
-			FirstLocalCandidateMS:       int64(evidenceInt(evidence, "sender_audio_first_local_candidate_ms")),
-			FirstLocalRelayCandidateMS:  int64(evidenceInt(evidence, "sender_audio_first_local_relay_candidate_ms")),
-			LocalHostCandidates:         evidenceInt(evidence, "sender_audio_local_host_candidates"),
-			LocalSrflxCandidates:        evidenceInt(evidence, "sender_audio_local_srflx_candidates"),
-			LocalRelayCandidates:        evidenceInt(evidence, "sender_audio_local_relay_candidates"),
-			ICEConnectionStates:         evidenceCSV(evidenceValue(evidence, "sender_audio_ice_connection_states")),
-			ICEGatheringStates:          evidenceCSV(evidenceValue(evidence, "sender_audio_ice_gathering_states")),
-			SelectedLocalCandidateType:  evidenceValue(evidence, "sender_audio_selected_local_candidate_type"),
-			SelectedRemoteCandidateType: evidenceValue(evidence, "sender_audio_selected_remote_candidate_type"),
-			SchedulerPacketsSent:        evidenceInt(evidence, "sender_audio_scheduler_packets_sent"),
-			SchedulerBytesSent:          evidenceInt(evidence, "sender_audio_scheduler_bytes_sent"),
-			SchedulerDroppedJobs:        evidenceInt(evidence, "sender_audio_scheduler_dropped_jobs"),
-			SchedulerDroppedPackets:     evidenceInt(evidence, "sender_audio_scheduler_dropped_packets"),
-			SchedulerQueueFullDrops:     evidenceInt(evidence, "sender_audio_scheduler_queue_full_drops"),
+			Packets:                         evidenceInt(evidence, "sender_audio_packets"),
+			Bytes:                           evidenceInt(evidence, "sender_audio_bytes"),
+			DurationMS:                      int64(evidenceInt(evidence, "sender_audio_duration_ms")),
+			Loops:                           evidenceInt(evidence, "sender_audio_loops"),
+			Frames:                          evidenceInt(evidence, "sender_audio_frames"),
+			SampleRate:                      evidenceInt(evidence, "sender_audio_sample_rate"),
+			Channels:                        evidenceInt(evidence, "sender_audio_channels"),
+			ReceiveMS:                       int64(evidenceInt(evidence, "sender_audio_receive_ms")),
+			TimeToFirstMS:                   int64(evidenceInt(evidence, "sender_audio_ttfb_ms")),
+			ICEMS:                           int64(evidenceInt(evidence, "sender_audio_ice_ms")),
+			ICEGatheringCompleteMS:          int64(evidenceInt(evidence, "sender_audio_ice_gather_complete_ms")),
+			RemoteDescriptionSetMS:          int64(evidenceInt(evidence, "sender_audio_remote_description_set_ms")),
+			LocalDescriptionSetMS:           int64(evidenceInt(evidence, "sender_audio_local_description_set_ms")),
+			ICECheckingMS:                   int64(evidenceInt(evidence, "sender_audio_ice_checking_ms")),
+			FirstLocalCandidateMS:           int64(evidenceInt(evidence, "sender_audio_first_local_candidate_ms")),
+			FirstLocalRelayCandidateMS:      int64(evidenceInt(evidence, "sender_audio_first_local_relay_candidate_ms")),
+			FirstLocalRelayUDPCandidateMS:   int64(evidenceInt(evidence, "sender_audio_first_local_relay_udp_candidate_ms")),
+			FirstLocalRelayTCPCandidateMS:   int64(evidenceInt(evidence, "sender_audio_first_local_relay_tcp_candidate_ms")),
+			LocalHostCandidates:             evidenceInt(evidence, "sender_audio_local_host_candidates"),
+			LocalSrflxCandidates:            evidenceInt(evidence, "sender_audio_local_srflx_candidates"),
+			LocalRelayCandidates:            evidenceInt(evidence, "sender_audio_local_relay_candidates"),
+			LocalUDPCandidates:              evidenceInt(evidence, "sender_audio_local_udp_candidates"),
+			LocalTCPCandidates:              evidenceInt(evidence, "sender_audio_local_tcp_candidates"),
+			LocalRelayUDPCandidates:         evidenceInt(evidence, "sender_audio_local_relay_udp_candidates"),
+			LocalRelayTCPCandidates:         evidenceInt(evidence, "sender_audio_local_relay_tcp_candidates"),
+			ICEConnectionStates:             evidenceCSV(evidenceValue(evidence, "sender_audio_ice_connection_states")),
+			ICEGatheringStates:              evidenceCSV(evidenceValue(evidence, "sender_audio_ice_gathering_states")),
+			PeerConnectionStates:            evidenceCSV(evidenceValue(evidence, "sender_audio_peer_connection_states")),
+			PeerConnectionConnectedMS:       int64(evidenceInt(evidence, "sender_audio_peer_connection_connected_ms")),
+			SelectedLocalCandidateType:      evidenceValue(evidence, "sender_audio_selected_local_candidate_type"),
+			SelectedRemoteCandidateType:     evidenceValue(evidence, "sender_audio_selected_remote_candidate_type"),
+			SelectedLocalCandidateProtocol:  evidenceValue(evidence, "sender_audio_selected_local_candidate_protocol"),
+			SelectedRemoteCandidateProtocol: evidenceValue(evidence, "sender_audio_selected_remote_candidate_protocol"),
+			SelectedLocalCandidateAddress:   evidenceValue(evidence, "sender_audio_selected_local_candidate_address"),
+			SelectedRemoteCandidateAddress:  evidenceValue(evidence, "sender_audio_selected_remote_candidate_address"),
+			SelectedLocalCandidatePort:      evidenceInt(evidence, "sender_audio_selected_local_candidate_port"),
+			SelectedRemoteCandidatePort:     evidenceInt(evidence, "sender_audio_selected_remote_candidate_port"),
+			SelectedLocalCandidateTCPType:   evidenceValue(evidence, "sender_audio_selected_local_candidate_tcp_type"),
+			SelectedRemoteCandidateTCPType:  evidenceValue(evidence, "sender_audio_selected_remote_candidate_tcp_type"),
+			SchedulerPacketsSent:            evidenceInt(evidence, "sender_audio_scheduler_packets_sent"),
+			SchedulerBytesSent:              evidenceInt(evidence, "sender_audio_scheduler_bytes_sent"),
+			SchedulerDroppedJobs:            evidenceInt(evidence, "sender_audio_scheduler_dropped_jobs"),
+			SchedulerDroppedPackets:         evidenceInt(evidence, "sender_audio_scheduler_dropped_packets"),
+			SchedulerQueueFullDrops:         evidenceInt(evidence, "sender_audio_scheduler_queue_full_drops"),
+			SchedulerFirstWriteSinceStartMS: int64(evidenceInt(evidence, "sender_audio_scheduler_first_write_since_session_start_ms")),
 		},
 	}
 }
@@ -3905,10 +4154,38 @@ func (s videoStartupClock) withDeviceTimings(offerReceivedAt, answerDoneAt time.
 }
 
 func (s videoStartupClock) withReceiverStats(stats WebRTCMediaStats) videoStartupClock {
+	s.PionCreatePeerMS = stats.PionCreatePeerMS
+	s.PionCreateOfferMS = stats.PionCreateOfferMS
+	s.PionCreateAnswerMS = stats.PionCreateAnswerMS
+	s.PionSetLocalDescriptionMS = stats.PionSetLocalDescriptionMS
+	s.PionICEGatheringWaitMS = stats.PionICEGatheringWaitMS
+	s.PionFirstLocalCandidateMS = stats.FirstLocalCandidateMS
+	s.PionFirstLocalRelayCandidateMS = stats.FirstLocalRelayCandidateMS
+	s.PionFirstLocalRelayUDPCandidateMS = stats.FirstLocalRelayUDPCandidateMS
+	s.PionFirstLocalRelayTCPCandidateMS = stats.FirstLocalRelayTCPCandidateMS
+	if stats.ICEGatheringCompleteMS > 0 && stats.FirstLocalRelayCandidateMS > 0 {
+		s.PionRelayCandidateToGatherCompleteMS = nonNegativeMS(stats.ICEGatheringCompleteMS - stats.FirstLocalRelayCandidateMS)
+	}
+	s.PionSetRemoteDescriptionMS = stats.PionSetRemoteDescriptionMS
 	s.RemoteAnswerSetMS = stats.RemoteDescriptionSetMS
+	s.ICESelectedPairChanges = int64(stats.ICESelectedPairChanges)
+	s.ICESelectedPairFirstChangeMS = stats.ICESelectedPairFirstChangeMS
+	s.ICESelectedPairLastChangeMS = stats.ICESelectedPairLastChangeMS
+	s.ICERequestsSent = int64(stats.ICERequestsSent)
+	s.ICERequestsReceived = int64(stats.ICERequestsReceived)
+	s.ICEResponsesSent = int64(stats.ICEResponsesSent)
+	s.ICEResponsesReceived = int64(stats.ICEResponsesReceived)
+	s.ICERetransmissionsSent = int64(stats.ICERetransmissionsSent)
+	s.ICERetransmissionsReceived = int64(stats.ICERetransmissionsReceived)
+	s.ICEConsentRequestsSent = int64(stats.ICEConsentRequestsSent)
+	s.ICEWriteRTTMS = stats.ICECurrentRoundTripTimeMS
 	s.ICEConnectedSinceSessionStartMS = stats.ICEConnectedLatencyMS
 	if stats.ICEConnectedLatencyMS > 0 && stats.RemoteDescriptionSetMS > 0 {
 		s.ICECheckMS = nonNegativeMS(stats.ICEConnectedLatencyMS - stats.RemoteDescriptionSetMS)
+	}
+	s.ViewerPeerConnectionConnectedMS = stats.PeerConnectionConnectedMS
+	if stats.PeerConnectionConnectedMS > 0 && stats.ICEConnectedLatencyMS > 0 {
+		s.ViewerPeerConnectedAfterICEMS = nonNegativeMS(stats.PeerConnectionConnectedMS - stats.ICEConnectedLatencyMS)
 	}
 	firstRTP := s.AppRequestOffsetMS + stats.TimeToFirstRTPMS
 	s.AppRequestToFirstRTPMS = nonNegativeMS(firstRTP)
@@ -3927,6 +4204,12 @@ func (s videoStartupClock) withReceiverStats(stats WebRTCMediaStats) videoStartu
 	s.SelectedRemoteCandidateType = stats.SelectedRemoteCandidateType
 	s.SelectedLocalCandidateProtocol = stats.SelectedLocalCandidateProtocol
 	s.SelectedRemoteCandidateProtocol = stats.SelectedRemoteCandidateProtocol
+	s.SelectedLocalCandidateAddress = stats.SelectedLocalCandidateAddress
+	s.SelectedRemoteCandidateAddress = stats.SelectedRemoteCandidateAddress
+	s.SelectedLocalCandidatePort = stats.SelectedLocalCandidatePort
+	s.SelectedRemoteCandidatePort = stats.SelectedRemoteCandidatePort
+	s.SelectedLocalCandidateTCPType = stats.SelectedLocalCandidateTCPType
+	s.SelectedRemoteCandidateTCPType = stats.SelectedRemoteCandidateTCPType
 	return s
 }
 
@@ -3970,6 +4253,110 @@ func (s videoStartupClock) EvidenceForDeviceOwner(base, closeEvidence string) st
 	s.SelectedRemoteCandidateType = firstNonEmptyString(evidenceValue(base, "selected_remote_candidate_type"), evidenceValue(base, "video_selected_remote_candidate_type"))
 	s.SelectedLocalCandidateProtocol = firstNonEmptyString(evidenceValue(base, "selected_local_candidate_protocol"), evidenceValue(base, "video_selected_local_candidate_protocol"))
 	s.SelectedRemoteCandidateProtocol = firstNonEmptyString(evidenceValue(base, "selected_remote_candidate_protocol"), evidenceValue(base, "video_selected_remote_candidate_protocol"))
+	s.SelectedLocalCandidateAddress = firstNonEmptyString(evidenceValue(base, "selected_local_candidate_address"), evidenceValue(base, "video_selected_local_candidate_address"))
+	s.SelectedRemoteCandidateAddress = firstNonEmptyString(evidenceValue(base, "selected_remote_candidate_address"), evidenceValue(base, "video_selected_remote_candidate_address"))
+	s.SelectedLocalCandidatePort = firstNonZero(evidenceInt(base, "selected_local_candidate_port"), evidenceInt(base, "video_selected_local_candidate_port"))
+	s.SelectedRemoteCandidatePort = firstNonZero(evidenceInt(base, "selected_remote_candidate_port"), evidenceInt(base, "video_selected_remote_candidate_port"))
+	s.SelectedLocalCandidateTCPType = firstNonEmptyString(evidenceValue(base, "selected_local_candidate_tcp_type"), evidenceValue(base, "video_selected_local_candidate_tcp_type"))
+	s.SelectedRemoteCandidateTCPType = firstNonEmptyString(evidenceValue(base, "selected_remote_candidate_tcp_type"), evidenceValue(base, "video_selected_remote_candidate_tcp_type"))
+	s.AnswerQueueWaitMS = evidenceInt64(base, "startup_answer_queue_wait_ms")
+	s.AnswerPrepareMS = evidenceInt64(base, "startup_answer_prepare_ms")
+	s.AnswerPostMS = evidenceInt64(base, "startup_answer_post_ms")
+	s.DeviceICEWaitMS = evidenceInt64(base, "startup_device_ice_wait_ms")
+	s.PionFirstLocalCandidateMS = firstNonZeroInt64(
+		int64(evidenceInt(base, "first_local_candidate_ms")),
+		int64(evidenceInt(base, "video_first_local_candidate_ms")),
+		int64(evidenceInt(base, "sender_first_local_candidate_ms")),
+		int64(evidenceInt(base, "sender_video_first_local_candidate_ms")),
+	)
+	s.PionFirstLocalRelayCandidateMS = firstNonZeroInt64(
+		int64(evidenceInt(base, "first_local_relay_candidate_ms")),
+		int64(evidenceInt(base, "video_first_local_relay_candidate_ms")),
+		int64(evidenceInt(base, "sender_first_local_relay_candidate_ms")),
+		int64(evidenceInt(base, "sender_video_first_local_relay_candidate_ms")),
+	)
+	s.PionFirstLocalRelayUDPCandidateMS = firstNonZeroInt64(
+		int64(evidenceInt(base, "first_local_relay_udp_candidate_ms")),
+		int64(evidenceInt(base, "video_first_local_relay_udp_candidate_ms")),
+		int64(evidenceInt(base, "sender_first_local_relay_udp_candidate_ms")),
+		int64(evidenceInt(base, "sender_video_first_local_relay_udp_candidate_ms")),
+	)
+	s.PionFirstLocalRelayTCPCandidateMS = firstNonZeroInt64(
+		int64(evidenceInt(base, "first_local_relay_tcp_candidate_ms")),
+		int64(evidenceInt(base, "video_first_local_relay_tcp_candidate_ms")),
+		int64(evidenceInt(base, "sender_first_local_relay_tcp_candidate_ms")),
+		int64(evidenceInt(base, "sender_video_first_local_relay_tcp_candidate_ms")),
+	)
+	gatherCompleteMS := firstNonZeroInt64(
+		int64(evidenceInt(base, "ice_gather_complete_ms")),
+		int64(evidenceInt(base, "video_ice_gather_complete_ms")),
+		int64(evidenceInt(base, "sender_ice_gather_complete_ms")),
+		int64(evidenceInt(base, "sender_video_ice_gather_complete_ms")),
+	)
+	if gatherCompleteMS > 0 && s.PionFirstLocalRelayCandidateMS > 0 {
+		s.PionRelayCandidateToGatherCompleteMS = nonNegativeMS(gatherCompleteMS - s.PionFirstLocalRelayCandidateMS)
+	}
+	s.ICESelectedPairChanges = firstNonZeroInt64(
+		evidenceInt64(base, "startup_ice_selected_pair_changes"),
+		int64(evidenceInt(base, "ice_selected_pair_changes")),
+		int64(evidenceInt(base, "video_ice_selected_pair_changes")),
+		int64(evidenceInt(base, "sender_ice_selected_pair_changes")),
+		int64(evidenceInt(base, "sender_video_ice_selected_pair_changes")),
+	)
+	s.ICESelectedPairFirstChangeMS = firstNonZeroInt64(
+		evidenceInt64(base, "startup_ice_selected_pair_first_change_ms"),
+		int64(evidenceInt(base, "ice_selected_pair_first_change_ms")),
+		int64(evidenceInt(base, "video_ice_selected_pair_first_change_ms")),
+		int64(evidenceInt(base, "sender_ice_selected_pair_first_change_ms")),
+		int64(evidenceInt(base, "sender_video_ice_selected_pair_first_change_ms")),
+	)
+	s.ICESelectedPairLastChangeMS = firstNonZeroInt64(
+		evidenceInt64(base, "startup_ice_selected_pair_last_change_ms"),
+		int64(evidenceInt(base, "ice_selected_pair_last_change_ms")),
+		int64(evidenceInt(base, "video_ice_selected_pair_last_change_ms")),
+		int64(evidenceInt(base, "sender_ice_selected_pair_last_change_ms")),
+		int64(evidenceInt(base, "sender_video_ice_selected_pair_last_change_ms")),
+	)
+	s.ICERequestsSent = prefixedEvidenceInt64(base, "ice_requests_sent")
+	s.ICERequestsReceived = prefixedEvidenceInt64(base, "ice_requests_received")
+	s.ICEResponsesSent = prefixedEvidenceInt64(base, "ice_responses_sent")
+	s.ICEResponsesReceived = prefixedEvidenceInt64(base, "ice_responses_received")
+	s.ICERetransmissionsSent = prefixedEvidenceInt64(base, "ice_retransmissions_sent")
+	s.ICERetransmissionsReceived = prefixedEvidenceInt64(base, "ice_retransmissions_received")
+	s.ICEConsentRequestsSent = prefixedEvidenceInt64(base, "ice_consent_requests_sent")
+	s.ICEWriteRTTMS = prefixedEvidenceInt64(base, "ice_rtt_ms")
+	s.ViewerPeerConnectionConnectedMS = firstNonZeroInt64(
+		evidenceInt64(base, "startup_viewer_peer_connection_connected_ms"),
+		int64(evidenceInt(base, "peer_connection_connected_ms")),
+		int64(evidenceInt(base, "video_peer_connection_connected_ms")),
+	)
+	if s.ViewerPeerConnectionConnectedMS > 0 && s.ICEConnectedSinceSessionStartMS > 0 {
+		s.ViewerPeerConnectedAfterICEMS = nonNegativeMS(s.ViewerPeerConnectionConnectedMS - s.ICEConnectedSinceSessionStartMS)
+	}
+	s.SenderPeerConnectionConnectedMS = firstNonZeroInt64(
+		int64(evidenceInt(base, "sender_peer_connection_connected_ms")),
+		int64(evidenceInt(base, "sender_video_peer_connection_connected_ms")),
+	)
+	if s.SenderPeerConnectionConnectedMS > 0 && s.ICEConnectedSinceSessionStartMS > 0 {
+		s.SenderPeerConnectedAfterICEMS = nonNegativeMS(s.SenderPeerConnectionConnectedMS - s.ICEConnectedSinceSessionStartMS)
+	}
+	s.SenderQueueWaitMS = evidenceInt64(base, "startup_sender_queue_wait_ms")
+	s.SenderFirstWriteAfterICEMS = evidenceInt64(base, "startup_sender_first_write_after_ice_ms")
+	s.SenderQueueFullDrops = evidenceInt(base, "sender_queue_full_drops")
+	s.SenderWriteAttempts = prefixedEvidenceInt64(base, "scheduler_write_attempts")
+	s.SenderWriteReturns = prefixedEvidenceInt64(base, "scheduler_write_returns")
+	s.SenderWriteErrors = prefixedEvidenceInt64(base, "scheduler_write_errors")
+	s.SenderFirstWriteCallMS = prefixedEvidenceInt64(base, "scheduler_first_write_call_since_session_start_ms")
+	s.SenderFirstWriteReturnMS = prefixedEvidenceInt64(base, "scheduler_first_write_return_since_session_start_ms")
+	s.SenderWriteMaxMS = prefixedEvidenceInt64(base, "scheduler_write_max_ms")
+	s.SenderFirstWriteSinceSessionMS = firstNonZeroInt64(int64(evidenceInt(base, "sender_scheduler_first_write_since_session_start_ms")), int64(evidenceInt(base, "sender_video_scheduler_first_write_since_session_start_ms")))
+	if s.SenderFirstWriteSinceSessionMS > 0 && s.SenderPeerConnectionConnectedMS > 0 {
+		s.SenderFirstWriteAfterPeerMS = nonNegativeMS(s.SenderFirstWriteSinceSessionMS - s.SenderPeerConnectionConnectedMS)
+	}
+	s.SenderSchedulerQueueFullDrops = firstNonZero(evidenceInt(base, "sender_scheduler_queue_full_drops"), evidenceInt(base, "sender_video_scheduler_queue_full_drops"))
+	s.SenderSchedulerDroppedPackets = firstNonZero(evidenceInt(base, "sender_scheduler_dropped_packets"), evidenceInt(base, "sender_video_scheduler_dropped_packets"))
+	s.SenderSchedulerPacketsSent = firstNonZero(evidenceInt(base, "sender_scheduler_packets_sent"), evidenceInt(base, "sender_video_scheduler_packets_sent"))
+	s.SenderSchedulerBytesSent = firstNonZero(evidenceInt(base, "sender_scheduler_bytes_sent"), evidenceInt(base, "sender_video_scheduler_bytes_sent"))
 	return s.Evidence(base)
 }
 
@@ -3981,17 +4368,134 @@ func (s videoStartupClock) Evidence(base string) string {
 	if s.OfferDeliveryMS > 0 {
 		extra = append(extra, fmt.Sprintf("startup_offer_delivery_ms=%d", s.OfferDeliveryMS))
 	}
+	if s.AnswerQueueWaitMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_answer_queue_wait_ms=%d", s.AnswerQueueWaitMS))
+	}
+	if s.AnswerPrepareMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_answer_prepare_ms=%d", s.AnswerPrepareMS))
+	}
+	if s.AnswerPostMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_answer_post_ms=%d", s.AnswerPostMS))
+	}
 	if s.DeviceAnswerMS > 0 {
 		extra = append(extra, fmt.Sprintf("startup_device_answer_ms=%d", s.DeviceAnswerMS))
 	}
+	if s.PionCreatePeerMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_pion_create_peer_ms=%d", s.PionCreatePeerMS))
+	}
+	if s.PionCreateOfferMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_pion_create_offer_ms=%d", s.PionCreateOfferMS))
+	}
+	if s.PionCreateAnswerMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_pion_create_answer_ms=%d", s.PionCreateAnswerMS))
+	}
+	if s.PionSetLocalDescriptionMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_pion_set_local_description_ms=%d", s.PionSetLocalDescriptionMS))
+	}
+	if s.PionICEGatheringWaitMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_pion_ice_gathering_wait_ms=%d", s.PionICEGatheringWaitMS))
+	}
+	if s.PionFirstLocalCandidateMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_pion_first_local_candidate_ms=%d", s.PionFirstLocalCandidateMS))
+	}
+	if s.PionFirstLocalRelayCandidateMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_pion_first_local_relay_candidate_ms=%d", s.PionFirstLocalRelayCandidateMS))
+	}
+	if s.PionFirstLocalRelayUDPCandidateMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_pion_first_local_relay_udp_candidate_ms=%d", s.PionFirstLocalRelayUDPCandidateMS))
+	}
+	if s.PionFirstLocalRelayTCPCandidateMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_pion_first_local_relay_tcp_candidate_ms=%d", s.PionFirstLocalRelayTCPCandidateMS))
+	}
+	if s.PionRelayCandidateToGatherCompleteMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_pion_relay_candidate_to_gather_complete_ms=%d", s.PionRelayCandidateToGatherCompleteMS))
+	}
+	if s.PionSetRemoteDescriptionMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_pion_set_remote_description_ms=%d", s.PionSetRemoteDescriptionMS))
+	}
 	if s.RemoteAnswerSetMS > 0 {
 		extra = append(extra, fmt.Sprintf("startup_remote_answer_set_ms=%d", s.RemoteAnswerSetMS))
+	}
+	if s.ICESelectedPairChanges > 0 {
+		extra = append(extra, fmt.Sprintf("startup_ice_selected_pair_changes=%d", s.ICESelectedPairChanges))
+	}
+	if s.ICESelectedPairFirstChangeMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_ice_selected_pair_first_change_ms=%d", s.ICESelectedPairFirstChangeMS))
+	}
+	if s.ICESelectedPairLastChangeMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_ice_selected_pair_last_change_ms=%d", s.ICESelectedPairLastChangeMS))
+	}
+	if s.ICERequestsSent > 0 {
+		extra = append(extra, fmt.Sprintf("startup_ice_requests_sent=%d", s.ICERequestsSent))
+	}
+	if s.ICERequestsReceived > 0 {
+		extra = append(extra, fmt.Sprintf("startup_ice_requests_received=%d", s.ICERequestsReceived))
+	}
+	if s.ICEResponsesSent > 0 {
+		extra = append(extra, fmt.Sprintf("startup_ice_responses_sent=%d", s.ICEResponsesSent))
+	}
+	if s.ICEResponsesReceived > 0 {
+		extra = append(extra, fmt.Sprintf("startup_ice_responses_received=%d", s.ICEResponsesReceived))
+	}
+	if s.ICERetransmissionsSent > 0 {
+		extra = append(extra, fmt.Sprintf("startup_ice_retransmissions_sent=%d", s.ICERetransmissionsSent))
+	}
+	if s.ICERetransmissionsReceived > 0 {
+		extra = append(extra, fmt.Sprintf("startup_ice_retransmissions_received=%d", s.ICERetransmissionsReceived))
+	}
+	if s.ICEConsentRequestsSent > 0 {
+		extra = append(extra, fmt.Sprintf("startup_ice_consent_requests_sent=%d", s.ICEConsentRequestsSent))
+	}
+	if s.ICEWriteRTTMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_ice_rtt_ms=%d", s.ICEWriteRTTMS))
 	}
 	if s.ICECheckMS > 0 {
 		extra = append(extra, fmt.Sprintf("startup_ice_check_ms=%d", s.ICECheckMS))
 	}
 	if s.ICEConnectedSinceSessionStartMS > 0 {
 		extra = append(extra, fmt.Sprintf("startup_ice_connected_since_session_start_ms=%d", s.ICEConnectedSinceSessionStartMS))
+	}
+	if s.DeviceICEWaitMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_device_ice_wait_ms=%d", s.DeviceICEWaitMS))
+	}
+	if s.ViewerPeerConnectionConnectedMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_viewer_peer_connection_connected_ms=%d", s.ViewerPeerConnectionConnectedMS))
+	}
+	if s.ViewerPeerConnectedAfterICEMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_viewer_peer_connected_after_ice_ms=%d", s.ViewerPeerConnectedAfterICEMS))
+	}
+	if s.SenderPeerConnectionConnectedMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_sender_peer_connection_connected_ms=%d", s.SenderPeerConnectionConnectedMS))
+	}
+	if s.SenderPeerConnectedAfterICEMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_sender_peer_connected_after_ice_ms=%d", s.SenderPeerConnectedAfterICEMS))
+	}
+	if s.SenderQueueWaitMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_sender_queue_wait_ms=%d", s.SenderQueueWaitMS))
+	}
+	if s.SenderWriteAttempts > 0 {
+		extra = append(extra, fmt.Sprintf("startup_sender_write_attempts=%d", s.SenderWriteAttempts))
+	}
+	if s.SenderWriteReturns > 0 {
+		extra = append(extra, fmt.Sprintf("startup_sender_write_returns=%d", s.SenderWriteReturns))
+	}
+	if s.SenderWriteErrors > 0 {
+		extra = append(extra, fmt.Sprintf("startup_sender_write_errors=%d", s.SenderWriteErrors))
+	}
+	if s.SenderFirstWriteCallMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_sender_first_write_call_ms=%d", s.SenderFirstWriteCallMS))
+	}
+	if s.SenderFirstWriteReturnMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_sender_first_write_return_ms=%d", s.SenderFirstWriteReturnMS))
+	}
+	if s.SenderWriteMaxMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_sender_write_max_ms=%d", s.SenderWriteMaxMS))
+	}
+	if s.SenderFirstWriteAfterICEMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_sender_first_write_after_ice_ms=%d", s.SenderFirstWriteAfterICEMS))
+	}
+	if s.SenderFirstWriteAfterPeerMS > 0 {
+		extra = append(extra, fmt.Sprintf("startup_sender_first_write_after_peer_ms=%d", s.SenderFirstWriteAfterPeerMS))
 	}
 	if s.AppRequestToFirstRTPMS > 0 {
 		extra = append(extra, fmt.Sprintf("startup_first_rtp_after_ice_ms=%d", s.FirstRTPAfterICEMS))
@@ -4013,6 +4517,42 @@ func (s videoStartupClock) Evidence(base string) string {
 	if s.SelectedRemoteCandidateProtocol != "" {
 		extra = append(extra, "selected_remote_candidate_protocol="+s.SelectedRemoteCandidateProtocol)
 	}
+	if s.SelectedLocalCandidateAddress != "" {
+		extra = append(extra, "selected_local_candidate_address="+s.SelectedLocalCandidateAddress)
+	}
+	if s.SelectedRemoteCandidateAddress != "" {
+		extra = append(extra, "selected_remote_candidate_address="+s.SelectedRemoteCandidateAddress)
+	}
+	if s.SelectedLocalCandidatePort > 0 {
+		extra = append(extra, fmt.Sprintf("selected_local_candidate_port=%d", s.SelectedLocalCandidatePort))
+	}
+	if s.SelectedRemoteCandidatePort > 0 {
+		extra = append(extra, fmt.Sprintf("selected_remote_candidate_port=%d", s.SelectedRemoteCandidatePort))
+	}
+	if s.SelectedLocalCandidateTCPType != "" {
+		extra = append(extra, "selected_local_candidate_tcp_type="+s.SelectedLocalCandidateTCPType)
+	}
+	if s.SelectedRemoteCandidateTCPType != "" {
+		extra = append(extra, "selected_remote_candidate_tcp_type="+s.SelectedRemoteCandidateTCPType)
+	}
+	if s.SenderFirstWriteSinceSessionMS > 0 {
+		extra = append(extra, fmt.Sprintf("sender_first_write_since_session_ms=%d", s.SenderFirstWriteSinceSessionMS))
+	}
+	if s.SenderQueueFullDrops > 0 {
+		extra = append(extra, fmt.Sprintf("sender_queue_full_drops=%d", s.SenderQueueFullDrops))
+	}
+	if s.SenderSchedulerPacketsSent > 0 {
+		extra = append(extra, fmt.Sprintf("sender_scheduler_packets_sent=%d", s.SenderSchedulerPacketsSent))
+	}
+	if s.SenderSchedulerBytesSent > 0 {
+		extra = append(extra, fmt.Sprintf("sender_scheduler_bytes_sent=%d", s.SenderSchedulerBytesSent))
+	}
+	if s.SenderSchedulerDroppedPackets > 0 {
+		extra = append(extra, fmt.Sprintf("sender_scheduler_dropped_packets=%d", s.SenderSchedulerDroppedPackets))
+	}
+	if s.SenderSchedulerQueueFullDrops > 0 {
+		extra = append(extra, fmt.Sprintf("sender_scheduler_queue_full_drops=%d", s.SenderSchedulerQueueFullDrops))
+	}
 	return appendEvidence(base, strings.Join(extra, " "))
 }
 
@@ -4030,6 +4570,16 @@ func firstNonZeroInt64(values ...int64) int64 {
 		}
 	}
 	return 0
+}
+
+func prefixedEvidenceInt64(evidence, key string) int64 {
+	return firstNonZeroInt64(
+		evidenceInt64(evidence, "startup_"+key),
+		int64(evidenceInt(evidence, key)),
+		int64(evidenceInt(evidence, "video_"+key)),
+		int64(evidenceInt(evidence, "sender_"+key)),
+		int64(evidenceInt(evidence, "sender_video_"+key)),
+	)
 }
 
 func firstNonEmptyString(values ...string) string {
@@ -4167,7 +4717,7 @@ func (r *Runner) requestJSONRawWithRetry(ctx context.Context, cfg Config, method
 	for attempt := 1; attempt <= attempts; attempt++ {
 		usedAttempts = attempt
 		opCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.HTTPTimeout)
-		raw, status, err = r.doJSON(opCtx, method, cfg.APIURL+path, body, bearer)
+		raw, status, err = r.doJSON(opCtx, method, cfg, actor, name, deviceID, viewerID, path, body, bearer)
 		cancel()
 		if err == nil || attempt == attempts || !isRetryableHTTPClientError(err) {
 			break
@@ -4216,7 +4766,7 @@ func isRetryableHTTPClientError(err error) bool {
 		strings.Contains(text, "EOF")
 }
 
-func (r *Runner) doJSON(ctx context.Context, method, url string, body any, bearer string) ([]byte, int, error) {
+func (r *Runner) doJSON(ctx context.Context, method string, cfg Config, actor, name, deviceID, viewerID, path string, body any, bearer string) ([]byte, int, error) {
 	var reader io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -4225,7 +4775,7 @@ func (r *Runner) doJSON(ctx context.Context, method, url string, body any, beare
 		}
 		reader = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, url, reader)
+	req, err := http.NewRequestWithContext(ctx, method, cfg.APIURL+path, reader)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -4235,6 +4785,7 @@ func (r *Runner) doJSON(ctx context.Context, method, url string, body any, beare
 	if bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
+	setLoadTraceHeaders(req, cfg, actor, name, deviceID, viewerID, path, body)
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return nil, 0, err
@@ -4248,6 +4799,54 @@ func (r *Runner) doJSON(ctx context.Context, method, url string, body any, beare
 		return raw, resp.StatusCode, fmt.Errorf("http %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	return raw, resp.StatusCode, nil
+}
+
+func setLoadTraceHeaders(req *http.Request, cfg Config, actor, operation, deviceID, viewerID, path string, body any) {
+	if req == nil {
+		return
+	}
+	if cfg.RunID != "" {
+		req.Header.Set("X-RTK-Run-ID", cfg.RunID)
+	}
+	if deviceID != "" {
+		req.Header.Set("X-RTK-Device-ID", deviceID)
+	}
+	if viewerID != "" {
+		req.Header.Set("X-RTK-Viewer-ID", viewerID)
+	}
+	if actor != "" {
+		req.Header.Set("X-RTK-Load-Actor", actor)
+	}
+	if operation != "" {
+		req.Header.Set("X-RTK-Operation", operation)
+	}
+	if sessionID := requestSessionID(path, body); sessionID != "" {
+		req.Header.Set("X-RTK-Session-ID", sessionID)
+	}
+	if cfg.RunID != "" && operation != "" {
+		requestID := cfg.RunID + ":" + operation
+		if deviceID != "" {
+			requestID += ":" + deviceID
+		}
+		if viewerID != "" {
+			requestID += ":" + viewerID
+		}
+		req.Header.Set("X-Request-ID", requestID)
+	}
+}
+
+func requestSessionID(path string, body any) string {
+	if parsed, err := url.Parse(path); err == nil {
+		if sessionID := strings.TrimSpace(parsed.Query().Get("session_id")); sessionID != "" {
+			return sessionID
+		}
+	}
+	if values, ok := body.(map[string]any); ok {
+		if sessionID, ok := values["session_id"].(string); ok {
+			return strings.TrimSpace(sessionID)
+		}
+	}
+	return ""
 }
 
 func BuildResult(cfg Config, started, ended time.Time, operations []Operation) *Result {
@@ -4758,6 +5357,7 @@ func summarizeWebRTCMedia(operations []Operation) WebRTCMediaMetrics {
 
 func videoStartupLatencySamples(runID string, operations []Operation) []VideoStartupLatencySample {
 	samples := make([]VideoStartupLatencySample, 0)
+	candidates := candidateEvidenceByStartupKey(operations)
 	for _, op := range operations {
 		if op.Name != "webrtc_media_receive" || !op.Success {
 			continue
@@ -4768,29 +5368,290 @@ func videoStartupLatencySamples(runID string, operations []Operation) []VideoSta
 			continue
 		}
 		sample := VideoStartupLatencySample{
-			RunID:                             firstNonEmptyString(evidenceValue(op.Evidence, "run_id"), runID),
-			SessionID:                         evidenceValue(op.Evidence, "session_id"),
-			DeviceID:                          firstNonEmptyString(evidenceValue(op.Evidence, "device_id"), op.DeviceID),
-			ViewerID:                          firstNonEmptyString(evidenceValue(op.Evidence, "viewer_id"), op.ViewerID),
-			ICEPolicy:                         evidenceValue(op.Evidence, "ice_policy"),
-			SelectedLocalCandidateType:        evidenceValue(op.Evidence, "selected_local_candidate_type"),
-			SelectedRemoteCandidateType:       evidenceValue(op.Evidence, "selected_remote_candidate_type"),
-			SelectedLocalCandidateProtocol:    evidenceValue(op.Evidence, "selected_local_candidate_protocol"),
-			SelectedRemoteCandidateProtocol:   evidenceValue(op.Evidence, "selected_remote_candidate_protocol"),
-			APICreateMS:                       evidenceInt64(op.Evidence, "startup_api_create_ms"),
-			OfferDeliveryMS:                   evidenceInt64(op.Evidence, "startup_offer_delivery_ms"),
-			DeviceAnswerMS:                    evidenceInt64(op.Evidence, "startup_device_answer_ms"),
-			RemoteAnswerSetMS:                 evidenceInt64(op.Evidence, "startup_remote_answer_set_ms"),
-			ICECheckMS:                        evidenceInt64(op.Evidence, "startup_ice_check_ms"),
-			ICEConnectedSinceSessionStartMS:   evidenceInt64(op.Evidence, "startup_ice_connected_since_session_start_ms"),
-			FirstRTPAfterICEMS:                evidenceInt64(op.Evidence, "startup_first_rtp_after_ice_ms"),
-			FirstH264AccessUnitAfterRTPMS:     evidenceInt64(op.Evidence, "startup_first_h264_access_unit_after_rtp_ms"),
-			AppRequestToFirstRTPMS:            appToFirstRTP,
-			AppRequestToFirstH264AccessUnitMS: appToFirstH264AU,
+			RunID:                                firstNonEmptyString(evidenceValue(op.Evidence, "run_id"), runID),
+			SessionID:                            evidenceValue(op.Evidence, "session_id"),
+			DeviceID:                             firstNonEmptyString(evidenceValue(op.Evidence, "device_id"), op.DeviceID),
+			ViewerID:                             firstNonEmptyString(evidenceValue(op.Evidence, "viewer_id"), op.ViewerID),
+			ICEPolicy:                            evidenceValue(op.Evidence, "ice_policy"),
+			SelectedLocalCandidateType:           evidenceValue(op.Evidence, "selected_local_candidate_type"),
+			SelectedRemoteCandidateType:          evidenceValue(op.Evidence, "selected_remote_candidate_type"),
+			SelectedLocalCandidateProtocol:       evidenceValue(op.Evidence, "selected_local_candidate_protocol"),
+			SelectedRemoteCandidateProtocol:      evidenceValue(op.Evidence, "selected_remote_candidate_protocol"),
+			SelectedLocalCandidateAddress:        evidenceValue(op.Evidence, "selected_local_candidate_address"),
+			SelectedRemoteCandidateAddress:       evidenceValue(op.Evidence, "selected_remote_candidate_address"),
+			SelectedLocalCandidatePort:           evidenceInt(op.Evidence, "selected_local_candidate_port"),
+			SelectedRemoteCandidatePort:          evidenceInt(op.Evidence, "selected_remote_candidate_port"),
+			SelectedLocalCandidateTCPType:        evidenceValue(op.Evidence, "selected_local_candidate_tcp_type"),
+			SelectedRemoteCandidateTCPType:       evidenceValue(op.Evidence, "selected_remote_candidate_tcp_type"),
+			APICreateMS:                          evidenceInt64(op.Evidence, "startup_api_create_ms"),
+			OfferDeliveryMS:                      evidenceInt64(op.Evidence, "startup_offer_delivery_ms"),
+			AnswerQueueWaitMS:                    evidenceInt64(op.Evidence, "startup_answer_queue_wait_ms"),
+			AnswerPrepareMS:                      evidenceInt64(op.Evidence, "startup_answer_prepare_ms"),
+			AnswerPostMS:                         evidenceInt64(op.Evidence, "startup_answer_post_ms"),
+			DeviceAnswerMS:                       evidenceInt64(op.Evidence, "startup_device_answer_ms"),
+			PionCreatePeerMS:                     evidenceInt64(op.Evidence, "startup_pion_create_peer_ms"),
+			PionCreateOfferMS:                    evidenceInt64(op.Evidence, "startup_pion_create_offer_ms"),
+			PionCreateAnswerMS:                   evidenceInt64(op.Evidence, "startup_pion_create_answer_ms"),
+			PionSetLocalDescriptionMS:            evidenceInt64(op.Evidence, "startup_pion_set_local_description_ms"),
+			PionICEGatheringWaitMS:               evidenceInt64(op.Evidence, "startup_pion_ice_gathering_wait_ms"),
+			PionFirstLocalCandidateMS:            evidenceInt64(op.Evidence, "startup_pion_first_local_candidate_ms"),
+			PionFirstLocalRelayCandidateMS:       evidenceInt64(op.Evidence, "startup_pion_first_local_relay_candidate_ms"),
+			PionFirstLocalRelayUDPCandidateMS:    evidenceInt64(op.Evidence, "startup_pion_first_local_relay_udp_candidate_ms"),
+			PionFirstLocalRelayTCPCandidateMS:    evidenceInt64(op.Evidence, "startup_pion_first_local_relay_tcp_candidate_ms"),
+			PionRelayCandidateToGatherCompleteMS: evidenceInt64(op.Evidence, "startup_pion_relay_candidate_to_gather_complete_ms"),
+			PionSetRemoteDescriptionMS:           evidenceInt64(op.Evidence, "startup_pion_set_remote_description_ms"),
+			RemoteAnswerSetMS:                    evidenceInt64(op.Evidence, "startup_remote_answer_set_ms"),
+			ICESelectedPairChanges:               evidenceInt64(op.Evidence, "startup_ice_selected_pair_changes"),
+			ICESelectedPairFirstChangeMS:         evidenceInt64(op.Evidence, "startup_ice_selected_pair_first_change_ms"),
+			ICESelectedPairLastChangeMS:          evidenceInt64(op.Evidence, "startup_ice_selected_pair_last_change_ms"),
+			ICERequestsSent:                      evidenceInt64(op.Evidence, "startup_ice_requests_sent"),
+			ICERequestsReceived:                  evidenceInt64(op.Evidence, "startup_ice_requests_received"),
+			ICEResponsesSent:                     evidenceInt64(op.Evidence, "startup_ice_responses_sent"),
+			ICEResponsesReceived:                 evidenceInt64(op.Evidence, "startup_ice_responses_received"),
+			ICERetransmissionsSent:               evidenceInt64(op.Evidence, "startup_ice_retransmissions_sent"),
+			ICERetransmissionsReceived:           evidenceInt64(op.Evidence, "startup_ice_retransmissions_received"),
+			ICEConsentRequestsSent:               evidenceInt64(op.Evidence, "startup_ice_consent_requests_sent"),
+			ICEWriteRTTMS:                        evidenceInt64(op.Evidence, "startup_ice_rtt_ms"),
+			ICECheckMS:                           evidenceInt64(op.Evidence, "startup_ice_check_ms"),
+			ICEConnectedSinceSessionStartMS:      evidenceInt64(op.Evidence, "startup_ice_connected_since_session_start_ms"),
+			DeviceICEWaitMS:                      evidenceInt64(op.Evidence, "startup_device_ice_wait_ms"),
+			ViewerPeerConnectionConnectedMS:      evidenceInt64(op.Evidence, "startup_viewer_peer_connection_connected_ms"),
+			ViewerPeerConnectedAfterICEMS:        evidenceInt64(op.Evidence, "startup_viewer_peer_connected_after_ice_ms"),
+			SenderPeerConnectionConnectedMS:      evidenceInt64(op.Evidence, "startup_sender_peer_connection_connected_ms"),
+			SenderPeerConnectedAfterICEMS:        evidenceInt64(op.Evidence, "startup_sender_peer_connected_after_ice_ms"),
+			SenderQueueWaitMS:                    evidenceInt64(op.Evidence, "startup_sender_queue_wait_ms"),
+			SenderWriteAttempts:                  evidenceInt64(op.Evidence, "startup_sender_write_attempts"),
+			SenderWriteReturns:                   evidenceInt64(op.Evidence, "startup_sender_write_returns"),
+			SenderWriteErrors:                    evidenceInt64(op.Evidence, "startup_sender_write_errors"),
+			SenderFirstWriteCallMS:               evidenceInt64(op.Evidence, "startup_sender_first_write_call_ms"),
+			SenderFirstWriteReturnMS:             evidenceInt64(op.Evidence, "startup_sender_first_write_return_ms"),
+			SenderWriteMaxMS:                     evidenceInt64(op.Evidence, "startup_sender_write_max_ms"),
+			SenderFirstWriteAfterICEMS:           evidenceInt64(op.Evidence, "startup_sender_first_write_after_ice_ms"),
+			SenderFirstWriteAfterPeerMS:          evidenceInt64(op.Evidence, "startup_sender_first_write_after_peer_ms"),
+			FirstRTPAfterICEMS:                   evidenceInt64(op.Evidence, "startup_first_rtp_after_ice_ms"),
+			FirstH264AccessUnitAfterRTPMS:        evidenceInt64(op.Evidence, "startup_first_h264_access_unit_after_rtp_ms"),
+			SenderFirstWriteSinceSessionMS:       evidenceInt64(op.Evidence, "sender_first_write_since_session_ms"),
+			SenderQueueFullDrops:                 evidenceInt(op.Evidence, "sender_queue_full_drops"),
+			SenderSchedulerQueueFullDrops:        evidenceInt(op.Evidence, "sender_scheduler_queue_full_drops"),
+			SenderSchedulerDroppedPackets:        evidenceInt(op.Evidence, "sender_scheduler_dropped_packets"),
+			SenderSchedulerPacketsSent:           evidenceInt(op.Evidence, "sender_scheduler_packets_sent"),
+			SenderSchedulerBytesSent:             evidenceInt(op.Evidence, "sender_scheduler_bytes_sent"),
+			AppRequestToFirstRTPMS:               appToFirstRTP,
+			AppRequestToFirstH264AccessUnitMS:    appToFirstH264AU,
+		}
+		if candidate, ok := candidates[startupEvidenceKey(sample.SessionID, sample.DeviceID, sample.ViewerID)]; ok {
+			sample.SelectedLocalCandidateType = firstNonEmptyString(sample.SelectedLocalCandidateType, candidate.SelectedLocalCandidateType)
+			sample.SelectedRemoteCandidateType = firstNonEmptyString(sample.SelectedRemoteCandidateType, candidate.SelectedRemoteCandidateType)
+			sample.SelectedLocalCandidateProtocol = firstNonEmptyString(sample.SelectedLocalCandidateProtocol, candidate.SelectedLocalCandidateProtocol)
+			sample.SelectedRemoteCandidateProtocol = firstNonEmptyString(sample.SelectedRemoteCandidateProtocol, candidate.SelectedRemoteCandidateProtocol)
+			sample.SelectedLocalCandidateAddress = firstNonEmptyString(sample.SelectedLocalCandidateAddress, candidate.SelectedLocalCandidateAddress)
+			sample.SelectedRemoteCandidateAddress = firstNonEmptyString(sample.SelectedRemoteCandidateAddress, candidate.SelectedRemoteCandidateAddress)
+			sample.SelectedLocalCandidatePort = firstNonZero(sample.SelectedLocalCandidatePort, candidate.SelectedLocalCandidatePort)
+			sample.SelectedRemoteCandidatePort = firstNonZero(sample.SelectedRemoteCandidatePort, candidate.SelectedRemoteCandidatePort)
+			sample.SelectedLocalCandidateTCPType = firstNonEmptyString(sample.SelectedLocalCandidateTCPType, candidate.SelectedLocalCandidateTCPType)
+			sample.SelectedRemoteCandidateTCPType = firstNonEmptyString(sample.SelectedRemoteCandidateTCPType, candidate.SelectedRemoteCandidateTCPType)
+			sample.AnswerQueueWaitMS = firstNonZeroInt64(sample.AnswerQueueWaitMS, candidate.AnswerQueueWaitMS)
+			sample.AnswerPrepareMS = firstNonZeroInt64(sample.AnswerPrepareMS, candidate.AnswerPrepareMS)
+			sample.AnswerPostMS = firstNonZeroInt64(sample.AnswerPostMS, candidate.AnswerPostMS)
+			sample.DeviceICEWaitMS = firstNonZeroInt64(sample.DeviceICEWaitMS, candidate.DeviceICEWaitMS)
+			sample.PionFirstLocalCandidateMS = firstNonZeroInt64(sample.PionFirstLocalCandidateMS, candidate.PionFirstLocalCandidateMS)
+			sample.PionFirstLocalRelayCandidateMS = firstNonZeroInt64(sample.PionFirstLocalRelayCandidateMS, candidate.PionFirstLocalRelayCandidateMS)
+			sample.PionFirstLocalRelayUDPCandidateMS = firstNonZeroInt64(sample.PionFirstLocalRelayUDPCandidateMS, candidate.PionFirstLocalRelayUDPCandidateMS)
+			sample.PionFirstLocalRelayTCPCandidateMS = firstNonZeroInt64(sample.PionFirstLocalRelayTCPCandidateMS, candidate.PionFirstLocalRelayTCPCandidateMS)
+			sample.PionRelayCandidateToGatherCompleteMS = firstNonZeroInt64(sample.PionRelayCandidateToGatherCompleteMS, candidate.PionRelayCandidateToGatherCompleteMS)
+			sample.ICESelectedPairChanges = firstNonZeroInt64(sample.ICESelectedPairChanges, candidate.ICESelectedPairChanges)
+			sample.ICESelectedPairFirstChangeMS = firstNonZeroInt64(sample.ICESelectedPairFirstChangeMS, candidate.ICESelectedPairFirstChangeMS)
+			sample.ICESelectedPairLastChangeMS = firstNonZeroInt64(sample.ICESelectedPairLastChangeMS, candidate.ICESelectedPairLastChangeMS)
+			sample.ICERequestsSent = firstNonZeroInt64(sample.ICERequestsSent, candidate.ICERequestsSent)
+			sample.ICERequestsReceived = firstNonZeroInt64(sample.ICERequestsReceived, candidate.ICERequestsReceived)
+			sample.ICEResponsesSent = firstNonZeroInt64(sample.ICEResponsesSent, candidate.ICEResponsesSent)
+			sample.ICEResponsesReceived = firstNonZeroInt64(sample.ICEResponsesReceived, candidate.ICEResponsesReceived)
+			sample.ICERetransmissionsSent = firstNonZeroInt64(sample.ICERetransmissionsSent, candidate.ICERetransmissionsSent)
+			sample.ICERetransmissionsReceived = firstNonZeroInt64(sample.ICERetransmissionsReceived, candidate.ICERetransmissionsReceived)
+			sample.ICEConsentRequestsSent = firstNonZeroInt64(sample.ICEConsentRequestsSent, candidate.ICEConsentRequestsSent)
+			sample.ICEWriteRTTMS = firstNonZeroInt64(sample.ICEWriteRTTMS, candidate.ICEWriteRTTMS)
+			sample.SenderPeerConnectionConnectedMS = firstNonZeroInt64(sample.SenderPeerConnectionConnectedMS, candidate.SenderPeerConnectionConnectedMS)
+			sample.SenderPeerConnectedAfterICEMS = firstNonZeroInt64(sample.SenderPeerConnectedAfterICEMS, candidate.SenderPeerConnectedAfterICEMS)
+			sample.SenderQueueWaitMS = firstNonZeroInt64(sample.SenderQueueWaitMS, candidate.SenderQueueWaitMS)
+			sample.SenderWriteAttempts = firstNonZeroInt64(sample.SenderWriteAttempts, candidate.SenderWriteAttempts)
+			sample.SenderWriteReturns = firstNonZeroInt64(sample.SenderWriteReturns, candidate.SenderWriteReturns)
+			sample.SenderWriteErrors = firstNonZeroInt64(sample.SenderWriteErrors, candidate.SenderWriteErrors)
+			sample.SenderFirstWriteCallMS = firstNonZeroInt64(sample.SenderFirstWriteCallMS, candidate.SenderFirstWriteCallMS)
+			sample.SenderFirstWriteReturnMS = firstNonZeroInt64(sample.SenderFirstWriteReturnMS, candidate.SenderFirstWriteReturnMS)
+			sample.SenderWriteMaxMS = firstNonZeroInt64(sample.SenderWriteMaxMS, candidate.SenderWriteMaxMS)
+			sample.SenderFirstWriteAfterICEMS = firstNonZeroInt64(sample.SenderFirstWriteAfterICEMS, candidate.SenderFirstWriteAfterICEMS)
+			sample.SenderFirstWriteAfterPeerMS = firstNonZeroInt64(sample.SenderFirstWriteAfterPeerMS, candidate.SenderFirstWriteAfterPeerMS)
+			sample.SenderQueueFullDrops = firstNonZero(sample.SenderQueueFullDrops, candidate.SenderQueueFullDrops)
+			sample.SenderFirstWriteSinceSessionMS = firstNonZeroInt64(sample.SenderFirstWriteSinceSessionMS, candidate.SenderFirstWriteSinceSessionMS)
+			sample.SenderSchedulerQueueFullDrops = firstNonZero(sample.SenderSchedulerQueueFullDrops, candidate.SenderSchedulerQueueFullDrops)
+			sample.SenderSchedulerDroppedPackets = firstNonZero(sample.SenderSchedulerDroppedPackets, candidate.SenderSchedulerDroppedPackets)
+			sample.SenderSchedulerPacketsSent = firstNonZero(sample.SenderSchedulerPacketsSent, candidate.SenderSchedulerPacketsSent)
+			sample.SenderSchedulerBytesSent = firstNonZero(sample.SenderSchedulerBytesSent, candidate.SenderSchedulerBytesSent)
 		}
 		samples = append(samples, sample)
 	}
 	return samples
+}
+
+func candidateEvidenceByStartupKey(operations []Operation) map[string]VideoStartupLatencySample {
+	out := map[string]VideoStartupLatencySample{}
+	for _, op := range operations {
+		localType := firstNonEmptyString(evidenceValue(op.Evidence, "selected_local_candidate_type"), evidenceValue(op.Evidence, "sender_selected_local_candidate_type"), evidenceValue(op.Evidence, "sender_video_selected_local_candidate_type"))
+		remoteType := firstNonEmptyString(evidenceValue(op.Evidence, "selected_remote_candidate_type"), evidenceValue(op.Evidence, "sender_selected_remote_candidate_type"), evidenceValue(op.Evidence, "sender_video_selected_remote_candidate_type"))
+		localProtocol := firstNonEmptyString(evidenceValue(op.Evidence, "selected_local_candidate_protocol"), evidenceValue(op.Evidence, "sender_selected_local_candidate_protocol"), evidenceValue(op.Evidence, "sender_video_selected_local_candidate_protocol"))
+		remoteProtocol := firstNonEmptyString(evidenceValue(op.Evidence, "selected_remote_candidate_protocol"), evidenceValue(op.Evidence, "sender_selected_remote_candidate_protocol"), evidenceValue(op.Evidence, "sender_video_selected_remote_candidate_protocol"))
+		localAddress := firstNonEmptyString(evidenceValue(op.Evidence, "selected_local_candidate_address"), evidenceValue(op.Evidence, "sender_selected_local_candidate_address"), evidenceValue(op.Evidence, "sender_video_selected_local_candidate_address"))
+		remoteAddress := firstNonEmptyString(evidenceValue(op.Evidence, "selected_remote_candidate_address"), evidenceValue(op.Evidence, "sender_selected_remote_candidate_address"), evidenceValue(op.Evidence, "sender_video_selected_remote_candidate_address"))
+		senderFirstWrite := evidenceInt64(op.Evidence, "sender_first_write_since_session_ms")
+		if senderFirstWrite == 0 {
+			senderFirstWrite = firstNonZeroInt64(int64(evidenceInt(op.Evidence, "sender_scheduler_first_write_since_session_start_ms")), int64(evidenceInt(op.Evidence, "sender_video_scheduler_first_write_since_session_start_ms")))
+		}
+		answerQueueWait := evidenceInt64(op.Evidence, "startup_answer_queue_wait_ms")
+		answerPrepare := evidenceInt64(op.Evidence, "startup_answer_prepare_ms")
+		answerPost := evidenceInt64(op.Evidence, "startup_answer_post_ms")
+		deviceICEWait := evidenceInt64(op.Evidence, "startup_device_ice_wait_ms")
+		pionFirstCandidate := firstNonZeroInt64(
+			evidenceInt64(op.Evidence, "startup_pion_first_local_candidate_ms"),
+			int64(evidenceInt(op.Evidence, "sender_first_local_candidate_ms")),
+			int64(evidenceInt(op.Evidence, "sender_video_first_local_candidate_ms")),
+		)
+		pionFirstRelayCandidate := firstNonZeroInt64(
+			evidenceInt64(op.Evidence, "startup_pion_first_local_relay_candidate_ms"),
+			int64(evidenceInt(op.Evidence, "sender_first_local_relay_candidate_ms")),
+			int64(evidenceInt(op.Evidence, "sender_video_first_local_relay_candidate_ms")),
+		)
+		pionFirstRelayUDPCandidate := firstNonZeroInt64(
+			evidenceInt64(op.Evidence, "startup_pion_first_local_relay_udp_candidate_ms"),
+			int64(evidenceInt(op.Evidence, "sender_first_local_relay_udp_candidate_ms")),
+			int64(evidenceInt(op.Evidence, "sender_video_first_local_relay_udp_candidate_ms")),
+		)
+		pionFirstRelayTCPCandidate := firstNonZeroInt64(
+			evidenceInt64(op.Evidence, "startup_pion_first_local_relay_tcp_candidate_ms"),
+			int64(evidenceInt(op.Evidence, "sender_first_local_relay_tcp_candidate_ms")),
+			int64(evidenceInt(op.Evidence, "sender_video_first_local_relay_tcp_candidate_ms")),
+		)
+		pionRelayToGatherComplete := evidenceInt64(op.Evidence, "startup_pion_relay_candidate_to_gather_complete_ms")
+		if pionRelayToGatherComplete == 0 {
+			gatherComplete := firstNonZeroInt64(
+				int64(evidenceInt(op.Evidence, "sender_ice_gather_complete_ms")),
+				int64(evidenceInt(op.Evidence, "sender_video_ice_gather_complete_ms")),
+			)
+			if gatherComplete > 0 && pionFirstRelayCandidate > 0 {
+				pionRelayToGatherComplete = nonNegativeMS(gatherComplete - pionFirstRelayCandidate)
+			}
+		}
+		iceSelectedPairChanges := prefixedEvidenceInt64(op.Evidence, "ice_selected_pair_changes")
+		iceSelectedPairFirstChange := prefixedEvidenceInt64(op.Evidence, "ice_selected_pair_first_change_ms")
+		iceSelectedPairLastChange := prefixedEvidenceInt64(op.Evidence, "ice_selected_pair_last_change_ms")
+		iceRequestsSent := prefixedEvidenceInt64(op.Evidence, "ice_requests_sent")
+		iceRequestsReceived := prefixedEvidenceInt64(op.Evidence, "ice_requests_received")
+		iceResponsesSent := prefixedEvidenceInt64(op.Evidence, "ice_responses_sent")
+		iceResponsesReceived := prefixedEvidenceInt64(op.Evidence, "ice_responses_received")
+		iceRetransmissionsSent := prefixedEvidenceInt64(op.Evidence, "ice_retransmissions_sent")
+		iceRetransmissionsReceived := prefixedEvidenceInt64(op.Evidence, "ice_retransmissions_received")
+		iceConsentRequestsSent := prefixedEvidenceInt64(op.Evidence, "ice_consent_requests_sent")
+		iceRTT := prefixedEvidenceInt64(op.Evidence, "ice_rtt_ms")
+		senderPeerConnected := firstNonZeroInt64(
+			evidenceInt64(op.Evidence, "startup_sender_peer_connection_connected_ms"),
+			int64(evidenceInt(op.Evidence, "sender_peer_connection_connected_ms")),
+			int64(evidenceInt(op.Evidence, "sender_video_peer_connection_connected_ms")),
+		)
+		iceConnected := firstNonZeroInt64(
+			evidenceInt64(op.Evidence, "startup_ice_connected_since_session_start_ms"),
+			int64(evidenceInt(op.Evidence, "sender_ice_ms")),
+			int64(evidenceInt(op.Evidence, "sender_video_ice_ms")),
+		)
+		senderPeerAfterICE := evidenceInt64(op.Evidence, "startup_sender_peer_connected_after_ice_ms")
+		if senderPeerAfterICE == 0 && senderPeerConnected > 0 && iceConnected > 0 {
+			senderPeerAfterICE = nonNegativeMS(senderPeerConnected - iceConnected)
+		}
+		senderQueueWait := evidenceInt64(op.Evidence, "startup_sender_queue_wait_ms")
+		senderFirstWriteAfterICE := evidenceInt64(op.Evidence, "startup_sender_first_write_after_ice_ms")
+		senderFirstWriteAfterPeer := evidenceInt64(op.Evidence, "startup_sender_first_write_after_peer_ms")
+		if senderFirstWriteAfterPeer == 0 && senderFirstWrite > 0 && senderPeerConnected > 0 {
+			senderFirstWriteAfterPeer = nonNegativeMS(senderFirstWrite - senderPeerConnected)
+		}
+		senderWriteAttempts := prefixedEvidenceInt64(op.Evidence, "scheduler_write_attempts")
+		senderWriteReturns := prefixedEvidenceInt64(op.Evidence, "scheduler_write_returns")
+		senderWriteErrors := prefixedEvidenceInt64(op.Evidence, "scheduler_write_errors")
+		senderFirstWriteCall := prefixedEvidenceInt64(op.Evidence, "scheduler_first_write_call_since_session_start_ms")
+		senderFirstWriteReturn := prefixedEvidenceInt64(op.Evidence, "scheduler_first_write_return_since_session_start_ms")
+		senderWriteMax := prefixedEvidenceInt64(op.Evidence, "scheduler_write_max_ms")
+		senderQueueFullDrops := evidenceInt(op.Evidence, "sender_queue_full_drops")
+		if localType == "" && remoteType == "" && localProtocol == "" && remoteProtocol == "" && localAddress == "" && remoteAddress == "" && senderFirstWrite == 0 && answerQueueWait == 0 && answerPrepare == 0 && answerPost == 0 && deviceICEWait == 0 && pionFirstCandidate == 0 && pionFirstRelayCandidate == 0 && pionFirstRelayUDPCandidate == 0 && pionFirstRelayTCPCandidate == 0 && pionRelayToGatherComplete == 0 && iceSelectedPairChanges == 0 && iceRequestsSent == 0 && iceResponsesReceived == 0 && iceRTT == 0 && senderPeerConnected == 0 && senderPeerAfterICE == 0 && senderQueueWait == 0 && senderFirstWriteAfterICE == 0 && senderFirstWriteAfterPeer == 0 && senderWriteAttempts == 0 && senderWriteReturns == 0 && senderWriteErrors == 0 && senderFirstWriteCall == 0 && senderFirstWriteReturn == 0 && senderWriteMax == 0 && senderQueueFullDrops == 0 {
+			continue
+		}
+		sessionID := evidenceValue(op.Evidence, "session_id")
+		deviceID := firstNonEmptyString(evidenceValue(op.Evidence, "device_id"), op.DeviceID)
+		viewerID := firstNonEmptyString(evidenceValue(op.Evidence, "viewer_id"), op.ViewerID)
+		key := startupEvidenceKey(sessionID, deviceID, viewerID)
+		if key == "" {
+			continue
+		}
+		current := out[key]
+		current.SelectedLocalCandidateType = firstNonEmptyString(current.SelectedLocalCandidateType, localType)
+		current.SelectedRemoteCandidateType = firstNonEmptyString(current.SelectedRemoteCandidateType, remoteType)
+		current.SelectedLocalCandidateProtocol = firstNonEmptyString(current.SelectedLocalCandidateProtocol, localProtocol)
+		current.SelectedRemoteCandidateProtocol = firstNonEmptyString(current.SelectedRemoteCandidateProtocol, remoteProtocol)
+		current.SelectedLocalCandidateAddress = firstNonEmptyString(current.SelectedLocalCandidateAddress, localAddress)
+		current.SelectedRemoteCandidateAddress = firstNonEmptyString(current.SelectedRemoteCandidateAddress, remoteAddress)
+		current.SelectedLocalCandidatePort = firstNonZero(current.SelectedLocalCandidatePort, firstNonZero(evidenceInt(op.Evidence, "selected_local_candidate_port"), evidenceInt(op.Evidence, "sender_selected_local_candidate_port"), evidenceInt(op.Evidence, "sender_video_selected_local_candidate_port")))
+		current.SelectedRemoteCandidatePort = firstNonZero(current.SelectedRemoteCandidatePort, firstNonZero(evidenceInt(op.Evidence, "selected_remote_candidate_port"), evidenceInt(op.Evidence, "sender_selected_remote_candidate_port"), evidenceInt(op.Evidence, "sender_video_selected_remote_candidate_port")))
+		current.SelectedLocalCandidateTCPType = firstNonEmptyString(current.SelectedLocalCandidateTCPType, evidenceValue(op.Evidence, "selected_local_candidate_tcp_type"), evidenceValue(op.Evidence, "sender_selected_local_candidate_tcp_type"), evidenceValue(op.Evidence, "sender_video_selected_local_candidate_tcp_type"))
+		current.SelectedRemoteCandidateTCPType = firstNonEmptyString(current.SelectedRemoteCandidateTCPType, evidenceValue(op.Evidence, "selected_remote_candidate_tcp_type"), evidenceValue(op.Evidence, "sender_selected_remote_candidate_tcp_type"), evidenceValue(op.Evidence, "sender_video_selected_remote_candidate_tcp_type"))
+		current.AnswerQueueWaitMS = firstNonZeroInt64(current.AnswerQueueWaitMS, answerQueueWait)
+		current.AnswerPrepareMS = firstNonZeroInt64(current.AnswerPrepareMS, answerPrepare)
+		current.AnswerPostMS = firstNonZeroInt64(current.AnswerPostMS, answerPost)
+		current.DeviceICEWaitMS = firstNonZeroInt64(current.DeviceICEWaitMS, deviceICEWait)
+		current.PionFirstLocalCandidateMS = firstNonZeroInt64(current.PionFirstLocalCandidateMS, pionFirstCandidate)
+		current.PionFirstLocalRelayCandidateMS = firstNonZeroInt64(current.PionFirstLocalRelayCandidateMS, pionFirstRelayCandidate)
+		current.PionFirstLocalRelayUDPCandidateMS = firstNonZeroInt64(current.PionFirstLocalRelayUDPCandidateMS, pionFirstRelayUDPCandidate)
+		current.PionFirstLocalRelayTCPCandidateMS = firstNonZeroInt64(current.PionFirstLocalRelayTCPCandidateMS, pionFirstRelayTCPCandidate)
+		current.PionRelayCandidateToGatherCompleteMS = firstNonZeroInt64(current.PionRelayCandidateToGatherCompleteMS, pionRelayToGatherComplete)
+		current.ICESelectedPairChanges = firstNonZeroInt64(current.ICESelectedPairChanges, iceSelectedPairChanges)
+		current.ICESelectedPairFirstChangeMS = firstNonZeroInt64(current.ICESelectedPairFirstChangeMS, iceSelectedPairFirstChange)
+		current.ICESelectedPairLastChangeMS = firstNonZeroInt64(current.ICESelectedPairLastChangeMS, iceSelectedPairLastChange)
+		current.ICERequestsSent = firstNonZeroInt64(current.ICERequestsSent, iceRequestsSent)
+		current.ICERequestsReceived = firstNonZeroInt64(current.ICERequestsReceived, iceRequestsReceived)
+		current.ICEResponsesSent = firstNonZeroInt64(current.ICEResponsesSent, iceResponsesSent)
+		current.ICEResponsesReceived = firstNonZeroInt64(current.ICEResponsesReceived, iceResponsesReceived)
+		current.ICERetransmissionsSent = firstNonZeroInt64(current.ICERetransmissionsSent, iceRetransmissionsSent)
+		current.ICERetransmissionsReceived = firstNonZeroInt64(current.ICERetransmissionsReceived, iceRetransmissionsReceived)
+		current.ICEConsentRequestsSent = firstNonZeroInt64(current.ICEConsentRequestsSent, iceConsentRequestsSent)
+		current.ICEWriteRTTMS = firstNonZeroInt64(current.ICEWriteRTTMS, iceRTT)
+		current.SenderPeerConnectionConnectedMS = firstNonZeroInt64(current.SenderPeerConnectionConnectedMS, senderPeerConnected)
+		current.SenderPeerConnectedAfterICEMS = firstNonZeroInt64(current.SenderPeerConnectedAfterICEMS, senderPeerAfterICE)
+		current.SenderQueueWaitMS = firstNonZeroInt64(current.SenderQueueWaitMS, senderQueueWait)
+		current.SenderWriteAttempts = firstNonZeroInt64(current.SenderWriteAttempts, senderWriteAttempts)
+		current.SenderWriteReturns = firstNonZeroInt64(current.SenderWriteReturns, senderWriteReturns)
+		current.SenderWriteErrors = firstNonZeroInt64(current.SenderWriteErrors, senderWriteErrors)
+		current.SenderFirstWriteCallMS = firstNonZeroInt64(current.SenderFirstWriteCallMS, senderFirstWriteCall)
+		current.SenderFirstWriteReturnMS = firstNonZeroInt64(current.SenderFirstWriteReturnMS, senderFirstWriteReturn)
+		current.SenderWriteMaxMS = firstNonZeroInt64(current.SenderWriteMaxMS, senderWriteMax)
+		current.SenderFirstWriteAfterICEMS = firstNonZeroInt64(current.SenderFirstWriteAfterICEMS, senderFirstWriteAfterICE)
+		current.SenderFirstWriteAfterPeerMS = firstNonZeroInt64(current.SenderFirstWriteAfterPeerMS, senderFirstWriteAfterPeer)
+		current.SenderQueueFullDrops = firstNonZero(current.SenderQueueFullDrops, senderQueueFullDrops)
+		current.SenderFirstWriteSinceSessionMS = firstNonZeroInt64(current.SenderFirstWriteSinceSessionMS, senderFirstWrite)
+		current.SenderSchedulerQueueFullDrops = firstNonZero(current.SenderSchedulerQueueFullDrops, firstNonZero(evidenceInt(op.Evidence, "sender_scheduler_queue_full_drops"), evidenceInt(op.Evidence, "sender_video_scheduler_queue_full_drops")))
+		current.SenderSchedulerDroppedPackets = firstNonZero(current.SenderSchedulerDroppedPackets, firstNonZero(evidenceInt(op.Evidence, "sender_scheduler_dropped_packets"), evidenceInt(op.Evidence, "sender_video_scheduler_dropped_packets")))
+		current.SenderSchedulerPacketsSent = firstNonZero(current.SenderSchedulerPacketsSent, firstNonZero(evidenceInt(op.Evidence, "sender_scheduler_packets_sent"), evidenceInt(op.Evidence, "sender_video_scheduler_packets_sent")))
+		current.SenderSchedulerBytesSent = firstNonZero(current.SenderSchedulerBytesSent, firstNonZero(evidenceInt(op.Evidence, "sender_scheduler_bytes_sent"), evidenceInt(op.Evidence, "sender_video_scheduler_bytes_sent")))
+		out[key] = current
+	}
+	return out
+}
+
+func startupEvidenceKey(sessionID, deviceID, viewerID string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID != "" {
+		return "session:" + sessionID
+	}
+	deviceID = strings.TrimSpace(deviceID)
+	viewerID = strings.TrimSpace(viewerID)
+	if deviceID == "" && viewerID == "" {
+		return ""
+	}
+	return "device-viewer:" + deviceID + ":" + viewerID
 }
 
 func applyVideoStartupSummary(metrics *WebRTCMediaMetrics, samples []VideoStartupLatencySample) {
@@ -4801,23 +5662,107 @@ func applyVideoStartupSummary(metrics *WebRTCMediaMetrics, samples []VideoStartu
 	firstH264AU := make([]int64, 0, len(samples))
 	apiCreate := make([]int64, 0, len(samples))
 	offerDelivery := make([]int64, 0, len(samples))
+	answerQueueWait := make([]int64, 0, len(samples))
+	answerPrepare := make([]int64, 0, len(samples))
+	answerPost := make([]int64, 0, len(samples))
 	deviceAnswer := make([]int64, 0, len(samples))
+	pionCreatePeer := make([]int64, 0, len(samples))
+	pionCreateOffer := make([]int64, 0, len(samples))
+	pionCreateAnswer := make([]int64, 0, len(samples))
+	pionSetLocalDescription := make([]int64, 0, len(samples))
+	pionICEGatheringWait := make([]int64, 0, len(samples))
+	pionFirstLocalCandidate := make([]int64, 0, len(samples))
+	pionFirstLocalRelayCandidate := make([]int64, 0, len(samples))
+	pionFirstLocalRelayUDPCandidate := make([]int64, 0, len(samples))
+	pionFirstLocalRelayTCPCandidate := make([]int64, 0, len(samples))
+	pionRelayCandidateToGatherComplete := make([]int64, 0, len(samples))
+	pionSetRemoteDescription := make([]int64, 0, len(samples))
 	remoteAnswerSet := make([]int64, 0, len(samples))
+	iceSelectedPairChanges := make([]int64, 0, len(samples))
+	iceSelectedPairFirstChange := make([]int64, 0, len(samples))
+	iceSelectedPairLastChange := make([]int64, 0, len(samples))
+	iceRequestsSent := make([]int64, 0, len(samples))
+	iceRequestsReceived := make([]int64, 0, len(samples))
+	iceResponsesSent := make([]int64, 0, len(samples))
+	iceResponsesReceived := make([]int64, 0, len(samples))
+	iceRetransmissionsSent := make([]int64, 0, len(samples))
+	iceRetransmissionsReceived := make([]int64, 0, len(samples))
+	iceConsentRequestsSent := make([]int64, 0, len(samples))
+	iceRTT := make([]int64, 0, len(samples))
 	iceCheck := make([]int64, 0, len(samples))
 	iceConnectedSinceSessionStart := make([]int64, 0, len(samples))
+	deviceICEWait := make([]int64, 0, len(samples))
+	viewerPeerConnected := make([]int64, 0, len(samples))
+	viewerPeerConnectedAfterICE := make([]int64, 0, len(samples))
+	senderPeerConnected := make([]int64, 0, len(samples))
+	senderPeerConnectedAfterICE := make([]int64, 0, len(samples))
+	senderQueueWait := make([]int64, 0, len(samples))
+	senderWriteAttempts := make([]int64, 0, len(samples))
+	senderWriteReturns := make([]int64, 0, len(samples))
+	senderWriteErrors := make([]int64, 0, len(samples))
+	senderFirstWriteCall := make([]int64, 0, len(samples))
+	senderFirstWriteReturn := make([]int64, 0, len(samples))
+	senderWriteMax := make([]int64, 0, len(samples))
+	senderFirstWriteAfterICE := make([]int64, 0, len(samples))
+	senderFirstWriteAfterPeer := make([]int64, 0, len(samples))
 	firstRTPAfterICE := make([]int64, 0, len(samples))
 	firstAUAfterRTP := make([]int64, 0, len(samples))
+	senderFirstWrite := make([]int64, 0, len(samples))
+	senderQueueFullDrops := 0
 	for _, sample := range samples {
 		firstRTP = appendPositiveOrZeroInt64(firstRTP, sample.AppRequestToFirstRTPMS)
-		firstH264AU = appendPositiveOrZeroInt64(firstH264AU, sample.AppRequestToFirstH264AccessUnitMS)
+		if sample.AppRequestToFirstH264AccessUnitMS > 0 {
+			firstH264AU = append(firstH264AU, sample.AppRequestToFirstH264AccessUnitMS)
+			firstAUAfterRTP = appendPositiveOrZeroInt64(firstAUAfterRTP, sample.FirstH264AccessUnitAfterRTPMS)
+		}
 		apiCreate = appendPositiveInt64(apiCreate, sample.APICreateMS)
 		offerDelivery = appendPositiveOrZeroInt64(offerDelivery, sample.OfferDeliveryMS)
+		answerQueueWait = appendPositiveOrZeroInt64(answerQueueWait, sample.AnswerQueueWaitMS)
+		answerPrepare = appendPositiveOrZeroInt64(answerPrepare, sample.AnswerPrepareMS)
+		answerPost = appendPositiveOrZeroInt64(answerPost, sample.AnswerPostMS)
 		deviceAnswer = appendPositiveOrZeroInt64(deviceAnswer, sample.DeviceAnswerMS)
+		pionCreatePeer = appendPositiveOrZeroInt64(pionCreatePeer, sample.PionCreatePeerMS)
+		pionCreateOffer = appendPositiveOrZeroInt64(pionCreateOffer, sample.PionCreateOfferMS)
+		pionCreateAnswer = appendPositiveOrZeroInt64(pionCreateAnswer, sample.PionCreateAnswerMS)
+		pionSetLocalDescription = appendPositiveOrZeroInt64(pionSetLocalDescription, sample.PionSetLocalDescriptionMS)
+		pionICEGatheringWait = appendPositiveOrZeroInt64(pionICEGatheringWait, sample.PionICEGatheringWaitMS)
+		pionFirstLocalCandidate = appendPositiveOrZeroInt64(pionFirstLocalCandidate, sample.PionFirstLocalCandidateMS)
+		pionFirstLocalRelayCandidate = appendPositiveOrZeroInt64(pionFirstLocalRelayCandidate, sample.PionFirstLocalRelayCandidateMS)
+		pionFirstLocalRelayUDPCandidate = appendPositiveOrZeroInt64(pionFirstLocalRelayUDPCandidate, sample.PionFirstLocalRelayUDPCandidateMS)
+		pionFirstLocalRelayTCPCandidate = appendPositiveOrZeroInt64(pionFirstLocalRelayTCPCandidate, sample.PionFirstLocalRelayTCPCandidateMS)
+		pionRelayCandidateToGatherComplete = appendPositiveOrZeroInt64(pionRelayCandidateToGatherComplete, sample.PionRelayCandidateToGatherCompleteMS)
+		pionSetRemoteDescription = appendPositiveOrZeroInt64(pionSetRemoteDescription, sample.PionSetRemoteDescriptionMS)
 		remoteAnswerSet = appendPositiveInt64(remoteAnswerSet, sample.RemoteAnswerSetMS)
+		iceSelectedPairChanges = appendPositiveOrZeroInt64(iceSelectedPairChanges, sample.ICESelectedPairChanges)
+		iceSelectedPairFirstChange = appendPositiveOrZeroInt64(iceSelectedPairFirstChange, sample.ICESelectedPairFirstChangeMS)
+		iceSelectedPairLastChange = appendPositiveOrZeroInt64(iceSelectedPairLastChange, sample.ICESelectedPairLastChangeMS)
+		iceRequestsSent = appendPositiveOrZeroInt64(iceRequestsSent, sample.ICERequestsSent)
+		iceRequestsReceived = appendPositiveOrZeroInt64(iceRequestsReceived, sample.ICERequestsReceived)
+		iceResponsesSent = appendPositiveOrZeroInt64(iceResponsesSent, sample.ICEResponsesSent)
+		iceResponsesReceived = appendPositiveOrZeroInt64(iceResponsesReceived, sample.ICEResponsesReceived)
+		iceRetransmissionsSent = appendPositiveOrZeroInt64(iceRetransmissionsSent, sample.ICERetransmissionsSent)
+		iceRetransmissionsReceived = appendPositiveOrZeroInt64(iceRetransmissionsReceived, sample.ICERetransmissionsReceived)
+		iceConsentRequestsSent = appendPositiveOrZeroInt64(iceConsentRequestsSent, sample.ICEConsentRequestsSent)
+		iceRTT = appendPositiveOrZeroInt64(iceRTT, sample.ICEWriteRTTMS)
 		iceCheck = appendPositiveInt64(iceCheck, sample.ICECheckMS)
 		iceConnectedSinceSessionStart = appendPositiveInt64(iceConnectedSinceSessionStart, sample.ICEConnectedSinceSessionStartMS)
+		deviceICEWait = appendPositiveOrZeroInt64(deviceICEWait, sample.DeviceICEWaitMS)
+		viewerPeerConnected = appendPositiveInt64(viewerPeerConnected, sample.ViewerPeerConnectionConnectedMS)
+		viewerPeerConnectedAfterICE = appendPositiveOrZeroInt64(viewerPeerConnectedAfterICE, sample.ViewerPeerConnectedAfterICEMS)
+		senderPeerConnected = appendPositiveInt64(senderPeerConnected, sample.SenderPeerConnectionConnectedMS)
+		senderPeerConnectedAfterICE = appendPositiveOrZeroInt64(senderPeerConnectedAfterICE, sample.SenderPeerConnectedAfterICEMS)
+		senderQueueWait = appendPositiveOrZeroInt64(senderQueueWait, sample.SenderQueueWaitMS)
+		senderWriteAttempts = appendPositiveOrZeroInt64(senderWriteAttempts, sample.SenderWriteAttempts)
+		senderWriteReturns = appendPositiveOrZeroInt64(senderWriteReturns, sample.SenderWriteReturns)
+		senderWriteErrors = appendPositiveOrZeroInt64(senderWriteErrors, sample.SenderWriteErrors)
+		senderFirstWriteCall = appendPositiveOrZeroInt64(senderFirstWriteCall, sample.SenderFirstWriteCallMS)
+		senderFirstWriteReturn = appendPositiveOrZeroInt64(senderFirstWriteReturn, sample.SenderFirstWriteReturnMS)
+		senderWriteMax = appendPositiveOrZeroInt64(senderWriteMax, sample.SenderWriteMaxMS)
+		senderFirstWriteAfterICE = appendPositiveOrZeroInt64(senderFirstWriteAfterICE, sample.SenderFirstWriteAfterICEMS)
+		senderFirstWriteAfterPeer = appendPositiveOrZeroInt64(senderFirstWriteAfterPeer, sample.SenderFirstWriteAfterPeerMS)
 		firstRTPAfterICE = appendPositiveOrZeroInt64(firstRTPAfterICE, sample.FirstRTPAfterICEMS)
-		firstAUAfterRTP = appendPositiveOrZeroInt64(firstAUAfterRTP, sample.FirstH264AccessUnitAfterRTPMS)
+		senderFirstWrite = appendPositiveInt64(senderFirstWrite, sample.SenderFirstWriteSinceSessionMS)
+		senderQueueFullDrops += sample.SenderQueueFullDrops
 	}
 	summary := VideoStartupSummary{
 		Samples:                              len(samples),
@@ -4829,14 +5774,55 @@ func applyVideoStartupSummary(metrics *WebRTCMediaMetrics, samples []VideoStartu
 		AppRequestToFirstH264AccessUnitP95MS: percentile(firstH264AU, 95),
 		AppRequestToFirstH264AccessUnitP99MS: percentile(firstH264AU, 99),
 		BreakdownP95: VideoStartupBreakdown{
-			APICreateMS:                     percentile(apiCreate, 95),
-			OfferDeliveryMS:                 percentile(offerDelivery, 95),
-			DeviceAnswerMS:                  percentile(deviceAnswer, 95),
-			RemoteAnswerSetMS:               percentile(remoteAnswerSet, 95),
-			ICECheckMS:                      percentile(iceCheck, 95),
-			ICEConnectedSinceSessionStartMS: percentile(iceConnectedSinceSessionStart, 95),
-			FirstRTPAfterICEMS:              percentile(firstRTPAfterICE, 95),
-			FirstH264AccessUnitAfterRTPMS:   percentile(firstAUAfterRTP, 95),
+			APICreateMS:                          percentile(apiCreate, 95),
+			OfferDeliveryMS:                      percentile(offerDelivery, 95),
+			AnswerQueueWaitMS:                    percentile(answerQueueWait, 95),
+			AnswerPrepareMS:                      percentile(answerPrepare, 95),
+			AnswerPostMS:                         percentile(answerPost, 95),
+			DeviceAnswerMS:                       percentile(deviceAnswer, 95),
+			PionCreatePeerMS:                     percentile(pionCreatePeer, 95),
+			PionCreateOfferMS:                    percentile(pionCreateOffer, 95),
+			PionCreateAnswerMS:                   percentile(pionCreateAnswer, 95),
+			PionSetLocalDescriptionMS:            percentile(pionSetLocalDescription, 95),
+			PionICEGatheringWaitMS:               percentile(pionICEGatheringWait, 95),
+			PionFirstLocalCandidateMS:            percentile(pionFirstLocalCandidate, 95),
+			PionFirstLocalRelayCandidateMS:       percentile(pionFirstLocalRelayCandidate, 95),
+			PionFirstLocalRelayUDPCandidateMS:    percentile(pionFirstLocalRelayUDPCandidate, 95),
+			PionFirstLocalRelayTCPCandidateMS:    percentile(pionFirstLocalRelayTCPCandidate, 95),
+			PionRelayCandidateToGatherCompleteMS: percentile(pionRelayCandidateToGatherComplete, 95),
+			PionSetRemoteDescriptionMS:           percentile(pionSetRemoteDescription, 95),
+			RemoteAnswerSetMS:                    percentile(remoteAnswerSet, 95),
+			ICESelectedPairChanges:               percentile(iceSelectedPairChanges, 95),
+			ICESelectedPairFirstChangeMS:         percentile(iceSelectedPairFirstChange, 95),
+			ICESelectedPairLastChangeMS:          percentile(iceSelectedPairLastChange, 95),
+			ICERequestsSent:                      percentile(iceRequestsSent, 95),
+			ICERequestsReceived:                  percentile(iceRequestsReceived, 95),
+			ICEResponsesSent:                     percentile(iceResponsesSent, 95),
+			ICEResponsesReceived:                 percentile(iceResponsesReceived, 95),
+			ICERetransmissionsSent:               percentile(iceRetransmissionsSent, 95),
+			ICERetransmissionsReceived:           percentile(iceRetransmissionsReceived, 95),
+			ICEConsentRequestsSent:               percentile(iceConsentRequestsSent, 95),
+			ICEWriteRTTMS:                        percentile(iceRTT, 95),
+			ICECheckMS:                           percentile(iceCheck, 95),
+			ICEConnectedSinceSessionStartMS:      percentile(iceConnectedSinceSessionStart, 95),
+			DeviceICEWaitMS:                      percentile(deviceICEWait, 95),
+			ViewerPeerConnectionConnectedMS:      percentile(viewerPeerConnected, 95),
+			ViewerPeerConnectedAfterICEMS:        percentile(viewerPeerConnectedAfterICE, 95),
+			SenderPeerConnectionConnectedMS:      percentile(senderPeerConnected, 95),
+			SenderPeerConnectedAfterICEMS:        percentile(senderPeerConnectedAfterICE, 95),
+			SenderQueueWaitMS:                    percentile(senderQueueWait, 95),
+			SenderWriteAttempts:                  percentile(senderWriteAttempts, 95),
+			SenderWriteReturns:                   percentile(senderWriteReturns, 95),
+			SenderWriteErrors:                    percentile(senderWriteErrors, 95),
+			SenderFirstWriteCallMS:               percentile(senderFirstWriteCall, 95),
+			SenderFirstWriteReturnMS:             percentile(senderFirstWriteReturn, 95),
+			SenderWriteMaxMS:                     percentile(senderWriteMax, 95),
+			SenderFirstWriteAfterICEMS:           percentile(senderFirstWriteAfterICE, 95),
+			SenderFirstWriteAfterPeerMS:          percentile(senderFirstWriteAfterPeer, 95),
+			FirstRTPAfterICEMS:                   percentile(firstRTPAfterICE, 95),
+			FirstH264AccessUnitAfterRTPMS:        percentile(firstAUAfterRTP, 95),
+			SenderFirstWriteSinceSessionMS:       percentile(senderFirstWrite, 95),
+			SenderQueueFullDrops:                 senderQueueFullDrops,
 		},
 	}
 	metrics.VideoStartupLatency = summary
