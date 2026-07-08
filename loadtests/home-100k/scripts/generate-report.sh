@@ -343,9 +343,14 @@ def video_load_profile():
                 f"- App request -> first RTP p50: {num(startup.get('app_request_to_first_rtp_p50_ms'), 0)} ms",
                 f"- App request -> first RTP p95: {num(startup.get('app_request_to_first_rtp_p95_ms'), 0)} ms",
                 f"- App request -> first RTP p99: {num(startup.get('app_request_to_first_rtp_p99_ms'), 0)} ms",
-                f"- App request -> first H.264 access unit p50: {num(startup.get('app_request_to_first_h264_access_unit_p50_ms'), 0)} ms",
-                f"- App request -> first H.264 access unit p95: {num(startup.get('app_request_to_first_h264_access_unit_p95_ms'), 0)} ms",
-                f"- App request -> first H.264 access unit p99: {num(startup.get('app_request_to_first_h264_access_unit_p99_ms'), 0)} ms",
+            ])
+            if num(startup.get("h264_access_unit_samples"), 0) > 0:
+                lines.extend([
+                    f"- App request -> first H.264 access unit p50: {num(startup.get('app_request_to_first_h264_access_unit_p50_ms'), 0)} ms",
+                    f"- App request -> first H.264 access unit p95: {num(startup.get('app_request_to_first_h264_access_unit_p95_ms'), 0)} ms",
+                    f"- App request -> first H.264 access unit p99: {num(startup.get('app_request_to_first_h264_access_unit_p99_ms'), 0)} ms",
+                ])
+            lines.extend([
                 f"- API create p95: {num(breakdown.get('api_create_ms'), 0)} ms",
                 f"- Offer delivery p95: {num(breakdown.get('offer_delivery_ms'), 0)} ms",
                 f"- Device answer p95: {num(breakdown.get('device_answer_ms'), 0)} ms",
@@ -361,8 +366,9 @@ def video_load_profile():
                 lines.append(f"- ICE connected since session start p95: {ice_connected_since_session_start_ms} ms")
             lines.extend([
                 f"- First RTP after ICE p95: {num(breakdown.get('first_rtp_after_ice_ms'), 0)} ms",
-                f"- First H.264 access unit after RTP p95: {num(breakdown.get('first_h264_access_unit_after_rtp_ms'), 0)} ms",
             ])
+            if num(startup.get("h264_access_unit_samples"), 0) > 0:
+                lines.append(f"- First H.264 access unit after RTP p95: {num(breakdown.get('first_h264_access_unit_after_rtp_ms'), 0)} ms")
     lines.extend([
         "",
         "## TURN Evidence",
@@ -371,6 +377,12 @@ def video_load_profile():
         f"- coturn available: {str(bool(turn.get('coturn_available'))).lower()}",
         f"- allocations: {num(turn.get('allocations'), 0)}",
         f"- active sessions: {num(turn.get('active_sessions'), 0)}",
+        f"- coturn UDP sockets: {num(turn.get('udp_sockets'), 0)}",
+        f"- coturn TCP established: {num(turn.get('tcp_established'), 0)}",
+        f"- relay UDP flows: {num(turn.get('relay_udp_flows'), 0)}",
+        f"- relay TCP flows: {num(turn.get('relay_tcp_flows'), 0)}",
+        f"- coturn journal events: {num(turn.get('journal_events'), 0)}",
+        f"- active evidence status: {md(str(turn.get('evidence_status') or '-'))}",
         f"- relay candidate samples: {num(evidence.get('relay_candidate_samples'), 0)}",
         f"- non-relay candidate samples: {num(evidence.get('non_relay_candidate_samples'), 0)}",
     ])

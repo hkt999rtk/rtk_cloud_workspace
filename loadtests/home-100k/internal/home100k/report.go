@@ -166,12 +166,32 @@ func RenderReport(input ReportInput) string {
 				fmt.Fprintf(&b, "- App request -> first RTP p50: %d ms\n", startup.AppRequestToFirstRTPP50MS)
 				fmt.Fprintf(&b, "- App request -> first RTP p95: %d ms\n", startup.AppRequestToFirstRTPP95MS)
 				fmt.Fprintf(&b, "- App request -> first RTP p99: %d ms\n", startup.AppRequestToFirstRTPP99MS)
-				fmt.Fprintf(&b, "- App request -> first H.264 access unit p50: %d ms\n", startup.AppRequestToFirstH264AccessUnitP50MS)
-				fmt.Fprintf(&b, "- App request -> first H.264 access unit p95: %d ms\n", startup.AppRequestToFirstH264AccessUnitP95MS)
-				fmt.Fprintf(&b, "- App request -> first H.264 access unit p99: %d ms\n", startup.AppRequestToFirstH264AccessUnitP99MS)
+				if startup.H264AccessUnitSamples > 0 {
+					fmt.Fprintf(&b, "- App request -> first H.264 access unit p50: %d ms\n", startup.AppRequestToFirstH264AccessUnitP50MS)
+					fmt.Fprintf(&b, "- App request -> first H.264 access unit p95: %d ms\n", startup.AppRequestToFirstH264AccessUnitP95MS)
+					fmt.Fprintf(&b, "- App request -> first H.264 access unit p99: %d ms\n", startup.AppRequestToFirstH264AccessUnitP99MS)
+				}
 				fmt.Fprintf(&b, "- API create p95: %d ms\n", startup.BreakdownP95.APICreateMS)
 				fmt.Fprintf(&b, "- Offer delivery p95: %d ms\n", startup.BreakdownP95.OfferDeliveryMS)
 				fmt.Fprintf(&b, "- Device answer p95: %d ms\n", startup.BreakdownP95.DeviceAnswerMS)
+				if startup.BreakdownP95.PionCreatePeerMS > 0 {
+					fmt.Fprintf(&b, "- Pion create peer p95: %d ms\n", startup.BreakdownP95.PionCreatePeerMS)
+				}
+				if startup.BreakdownP95.PionCreateOfferMS > 0 {
+					fmt.Fprintf(&b, "- Pion create offer p95: %d ms\n", startup.BreakdownP95.PionCreateOfferMS)
+				}
+				if startup.BreakdownP95.PionCreateAnswerMS > 0 {
+					fmt.Fprintf(&b, "- Pion create answer p95: %d ms\n", startup.BreakdownP95.PionCreateAnswerMS)
+				}
+				if startup.BreakdownP95.PionSetLocalDescriptionMS > 0 {
+					fmt.Fprintf(&b, "- Pion set local description p95: %d ms\n", startup.BreakdownP95.PionSetLocalDescriptionMS)
+				}
+				if startup.BreakdownP95.PionICEGatheringWaitMS > 0 {
+					fmt.Fprintf(&b, "- Pion ICE gathering wait p95: %d ms\n", startup.BreakdownP95.PionICEGatheringWaitMS)
+				}
+				if startup.BreakdownP95.PionSetRemoteDescriptionMS > 0 {
+					fmt.Fprintf(&b, "- Pion set remote description p95: %d ms\n", startup.BreakdownP95.PionSetRemoteDescriptionMS)
+				}
 				if startup.BreakdownP95.RemoteAnswerSetMS > 0 {
 					fmt.Fprintf(&b, "- Remote answer set p95: %d ms\n", startup.BreakdownP95.RemoteAnswerSetMS)
 				}
@@ -180,8 +200,13 @@ func RenderReport(input ReportInput) string {
 				if startup.BreakdownP95.ICEConnectedSinceSessionStartMS > 0 {
 					fmt.Fprintf(&b, "- ICE connected since session start p95: %d ms\n", startup.BreakdownP95.ICEConnectedSinceSessionStartMS)
 				}
+				if startup.BreakdownP95.SenderFirstWriteSinceSessionMS > 0 {
+					fmt.Fprintf(&b, "- Sender first RTP write since session start p95: %d ms\n", startup.BreakdownP95.SenderFirstWriteSinceSessionMS)
+				}
 				fmt.Fprintf(&b, "- First RTP after ICE p95: %d ms\n", startup.BreakdownP95.FirstRTPAfterICEMS)
-				fmt.Fprintf(&b, "- First H.264 access unit after RTP p95: %d ms\n", startup.BreakdownP95.FirstH264AccessUnitAfterRTPMS)
+				if startup.H264AccessUnitSamples > 0 {
+					fmt.Fprintf(&b, "- First H.264 access unit after RTP p95: %d ms\n", startup.BreakdownP95.FirstH264AccessUnitAfterRTPMS)
+				}
 				fmt.Fprintln(&b)
 			}
 		}
@@ -192,6 +217,30 @@ func RenderReport(input ReportInput) string {
 		fmt.Fprintf(&b, "- coturn available: %t\n", input.VideoEvidence.TURN.CoturnAvailable)
 		fmt.Fprintf(&b, "- allocations: %d\n", input.VideoEvidence.TURN.Allocations)
 		fmt.Fprintf(&b, "- active sessions: %d\n", input.VideoEvidence.TURN.ActiveSessions)
+		fmt.Fprintf(&b, "- coturn UDP sockets: %d\n", input.VideoEvidence.TURN.UDPSockets)
+		fmt.Fprintf(&b, "- coturn TCP established: %d\n", input.VideoEvidence.TURN.TCPEstablished)
+		fmt.Fprintf(&b, "- relay UDP flows: %d\n", input.VideoEvidence.TURN.RelayUDPFlows)
+		fmt.Fprintf(&b, "- relay TCP flows: %d\n", input.VideoEvidence.TURN.RelayTCPFlows)
+		fmt.Fprintf(&b, "- coturn journal events: %d\n", input.VideoEvidence.TURN.JournalEvents)
+		if input.VideoEvidence.TURN.APIStaticTURNCount > 0 || input.VideoEvidence.TURN.APIDynamicTURNCount > 0 || input.VideoEvidence.TURN.APITURNRegistryLookupSucceeded > 0 || input.VideoEvidence.TURN.APITURNRegistryLookupEmpty > 0 || input.VideoEvidence.TURN.APITURNRegistryLookupFailed > 0 {
+			fmt.Fprintf(&b, "- API TURN registry lookup succeeded events: %d\n", input.VideoEvidence.TURN.APITURNRegistryLookupSucceeded)
+			fmt.Fprintf(&b, "- API TURN registry lookup empty events: %d\n", input.VideoEvidence.TURN.APITURNRegistryLookupEmpty)
+			fmt.Fprintf(&b, "- API TURN registry lookup failed events: %d\n", input.VideoEvidence.TURN.APITURNRegistryLookupFailed)
+			fmt.Fprintf(&b, "- API dynamic TURN server count max: %d\n", input.VideoEvidence.TURN.APIDynamicTURNCount)
+			fmt.Fprintf(&b, "- API static TURN server count max: %d\n", input.VideoEvidence.TURN.APIStaticTURNCount)
+			fmt.Fprintf(&b, "- API turnregistry node count max: %d\n", input.VideoEvidence.TURN.APITURNRegistryNodeCount)
+		}
+		if input.VideoEvidence.TURN.CoturnCPUPercent > 0 || input.VideoEvidence.TURN.CoturnRSSKB > 0 {
+			fmt.Fprintf(&b, "- coturn process CPU peak: %d%%\n", input.VideoEvidence.TURN.CoturnCPUPercent)
+			fmt.Fprintf(&b, "- coturn process RSS peak: %d KB\n", input.VideoEvidence.TURN.CoturnRSSKB)
+		}
+		if input.VideoEvidence.TURN.RXBytes > 0 || input.VideoEvidence.TURN.TXBytes > 0 {
+			fmt.Fprintf(&b, "- coturn VM RX bytes peak: %d\n", input.VideoEvidence.TURN.RXBytes)
+			fmt.Fprintf(&b, "- coturn VM TX bytes peak: %d\n", input.VideoEvidence.TURN.TXBytes)
+		}
+		if input.VideoEvidence.TURN.EvidenceStatus != "" {
+			fmt.Fprintf(&b, "- active evidence status: %s\n", input.VideoEvidence.TURN.EvidenceStatus)
+		}
 		fmt.Fprintf(&b, "- relay candidate samples: %d\n", input.VideoEvidence.RelayCandidateSamples)
 		fmt.Fprintf(&b, "- non-relay candidate samples: %d\n", input.VideoEvidence.NonRelayCandidateSamples)
 		fmt.Fprintln(&b)

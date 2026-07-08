@@ -26,11 +26,13 @@
         rm -f "$tmp"
       args:
         executable: /bin/bash
+      when: not (skip_sshd_tuning | default(false) | bool)
 
     - name: Reload sshd after load-test fanout tuning
       ansible.builtin.systemd:
         name: ssh
         state: reloaded
+      when: not (skip_sshd_tuning | default(false) | bool)
 
     - name: Install required sync/runtime packages
       ansible.builtin.apt:

@@ -552,7 +552,7 @@ func TestVideoEvidenceParsesStartupLatencySummary(t *testing.T) {
 				}
 			}
 		},
-		"turn_evidence": {"registry_available": true, "active_nodes": 1, "coturn_available": true}
+		"turn_evidence": {"registry_available": true, "active_nodes": 1, "coturn_available": true, "api_turn_registry_lookup_succeeded": 1, "api_dynamic_turn_count": 1, "api_turn_registry_node_count": 1}
 	}`)
 	video, err := videoEvidenceFromLoadtestJSON(raw)
 	if err != nil {
@@ -612,7 +612,10 @@ func TestVideoLadderEvidenceRendersPerStepReport(t *testing.T) {
 				"active_nodes": 1,
 				"coturn_available": true,
 				"allocations": 100,
-				"active_sessions": 100
+				"active_sessions": 100,
+				"api_turn_registry_lookup_succeeded": 1,
+				"api_dynamic_turn_count": 1,
+				"api_turn_registry_node_count": 1
 			},
 			"video_startup_latency": [`+candidates+`]
 		}`, "\t", "")
@@ -703,7 +706,7 @@ func TestVideoLadderEvidenceLoadsTwoHostStepLayout(t *testing.T) {
 	if err := os.WriteFile(stepDir+"/device/load-results.json", device, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(stepDir+"/turn-active-samples.tsv", []byte("time\tnode\thost\tudp_sockets\tjournal_events\n2026-07-03T22:28:00Z\tturn01\t198.51.100.20\t164\t0\n2026-07-03T22:28:00Z\tturn02\t198.51.100.21\t162\t0\n"), 0o644); err != nil {
+	if err := os.WriteFile(stepDir+"/turn-active-samples.tsv", []byte("time\tnode\thost\tudp_sockets\ttcp_estab\trelay_udp_flows\trelay_tcp_flows\tactive_allocations\tactive_sessions\tjournal_events\tevidence_status\n2026-07-03T22:28:00Z\tturn01\t198.51.100.20\t164\t0\t164\t0\t164\t164\t0\tactive\n2026-07-03T22:28:00Z\tturn02\t198.51.100.21\t162\t0\t162\t0\t162\t162\t0\tactive\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -760,7 +763,7 @@ func TestVideoLadderEvidenceSumsRemoteShardedViewers(t *testing.T) {
 					"app_request_to_first_h264_access_unit_p95_ms": 220
 				}
 			},
-			"turn_evidence": {"registry_available": true, "active_nodes": 1, "coturn_available": true, "allocations": 10, "active_sessions": 10},
+			"turn_evidence": {"registry_available": true, "active_nodes": 1, "coturn_available": true, "allocations": 10, "active_sessions": 10, "api_turn_registry_lookup_succeeded": 1, "api_dynamic_turn_count": 1, "api_turn_registry_node_count": 1},
 			"video_startup_latency": [
 				{"ice_policy":"relay","selected_local_candidate_type":"relay","selected_remote_candidate_type":"relay"}
 			]
@@ -810,7 +813,7 @@ func TestVideoStepThresholdFailureMakesMergedReportFail(t *testing.T) {
 				"app_request_to_first_h264_access_unit_p95_ms": 27833
 			}
 		},
-		"turn_evidence": {"registry_available": true, "active_nodes": 2, "coturn_available": true, "allocations": 46, "active_sessions": 46},
+		"turn_evidence": {"registry_available": true, "active_nodes": 2, "coturn_available": true, "allocations": 46, "active_sessions": 46, "api_turn_registry_lookup_succeeded": 1, "api_dynamic_turn_count": 1, "api_turn_registry_node_count": 2},
 		"video_startup_latency": [
 			{"ice_policy":"relay","selected_local_candidate_type":"relay","selected_remote_candidate_type":"relay"}
 		]
@@ -865,7 +868,7 @@ func TestVideoEvidenceUsesActiveTURNSampleSidecar(t *testing.T) {
 				"app_request_to_first_h264_access_unit_p95_ms": 220
 			}
 		},
-		"turn_evidence": {"registry_available": true, "active_nodes": 1, "coturn_available": true},
+		"turn_evidence": {"registry_available": true, "active_nodes": 1, "coturn_available": true, "api_turn_registry_lookup_succeeded": 1, "api_dynamic_turn_count": 1, "api_turn_registry_node_count": 1},
 		"video_startup_latency": [
 			{"ice_policy":"relay","selected_local_candidate_type":"relay","selected_remote_candidate_type":"relay"}
 		]
@@ -873,7 +876,7 @@ func TestVideoEvidenceUsesActiveTURNSampleSidecar(t *testing.T) {
 	if err := os.WriteFile(tmp+"/load-results.json", raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(tmp+"/turn-active-samples.tsv", []byte("time\tnode\thost\tudp_sockets\tjournal_events\n2026-07-01T00:00:00Z\tturn01\t198.51.100.20\t7\t2\n"), 0o644); err != nil {
+	if err := os.WriteFile(tmp+"/turn-active-samples.tsv", []byte("time\tnode\thost\tudp_sockets\ttcp_estab\trelay_udp_flows\trelay_tcp_flows\tactive_allocations\tactive_sessions\tjournal_events\tevidence_status\n2026-07-01T00:00:00Z\tturn01\t198.51.100.20\t7\t0\t7\t0\t7\t7\t2\tactive\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	video := loadVideoEvidence(tmp)
@@ -893,10 +896,10 @@ func TestVideoEvidenceUsesActiveTURNSampleSidecar(t *testing.T) {
 func TestTURNEvidenceFromActiveSamplesSupportsTwoHostSamplerHeader(t *testing.T) {
 	tmp := t.TempDir()
 	path := tmp + "/turn-active-samples.tsv"
-	raw := "ts\tnode\tudp_sockets\ttcp_estab\tcpu_mem\n" +
-		"2026-07-03T22:27:41Z\tturn01\t18\t2\t\n" +
-		"2026-07-03T22:30:00Z\tturn01\t164\t70\t\n" +
-		"2026-07-03T22:30:00Z\tturn02\t162\t71\t\n"
+	raw := "ts\tnode\tudp_sockets\ttcp_estab\trelay_udp_flows\trelay_tcp_flows\tactive_allocations\tactive_sessions\tevidence_status\n" +
+		"2026-07-03T22:27:41Z\tturn01\t18\t2\t18\t2\t18\t18\tactive\n" +
+		"2026-07-03T22:30:00Z\tturn01\t164\t70\t164\t70\t164\t164\tactive\n" +
+		"2026-07-03T22:30:00Z\tturn02\t162\t71\t162\t71\t162\t162\tactive\n"
 	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -905,6 +908,167 @@ func TestTURNEvidenceFromActiveSamplesSupportsTwoHostSamplerHeader(t *testing.T)
 
 	if !turn.CoturnAvailable || turn.ActiveNodes != 2 || turn.ActiveSessions != 164 || turn.Allocations != 164 {
 		t.Fatalf("turn evidence = %+v, want nodes=2 sessions=164", turn)
+	}
+}
+
+func TestTURNEvidenceFromActiveSamplesDoesNotTreatSocketsAsSessions(t *testing.T) {
+	tmp := t.TempDir()
+	path := tmp + "/turn-active-samples.tsv"
+	raw := "time\tnode\thost\tudp_sockets\tjournal_events\n" +
+		"2026-07-01T00:00:00Z\tturn01\t198.51.100.20\t164\t2\n"
+	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	turn := turnEvidenceFromActiveSamples(path)
+
+	if !turn.CoturnAvailable || turn.ActiveNodes != 1 {
+		t.Fatalf("turn availability = %+v, want coturn node availability from weak sidecar", turn)
+	}
+	if turn.Allocations != 0 || turn.ActiveSessions != 0 {
+		t.Fatalf("turn sessions = %+v, weak socket-only sidecar must not become allocation/session evidence", turn)
+	}
+}
+
+func TestTURNEvidenceFromActiveSamplesKeepsRelayFlowAndJournalActiveEvidence(t *testing.T) {
+	tmp := t.TempDir()
+	path := tmp + "/turn-active-samples.tsv"
+	raw := "time\tnode\thost\tudp_sockets\ttcp_estab\trelay_udp_flows\trelay_tcp_flows\tactive_allocations\tactive_sessions\tjournal_events\tcoturn_cpu_pct\tcoturn_rss_kb\trx_bytes\ttx_bytes\tevidence_status\n" +
+		"2026-07-01T00:00:00Z\tturn01\t198.51.100.20\t40\t8\t31\t7\t0\t0\t12\t9\t65536\t1000\t2000\trelay_flow_observed\n" +
+		"2026-07-01T00:00:05Z\tturn01\t198.51.100.20\t60\t12\t45\t9\t33\t33\t18\t27\t131072\t3000\t5000\tjournal_active\n"
+	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	turn := turnEvidenceFromActiveSamples(path)
+
+	if !turn.CoturnAvailable || turn.ActiveNodes != 1 {
+		t.Fatalf("turn availability = %+v, want coturn active node", turn)
+	}
+	if turn.RelayUDPFlows != 45 || turn.RelayTCPFlows != 9 {
+		t.Fatalf("relay flows = %+v, want max udp/tcp relay flow evidence", turn)
+	}
+	if turn.Allocations != 33 || turn.ActiveSessions != 33 || turn.EvidenceStatus != "journal_active" {
+		t.Fatalf("active evidence = %+v, want journal-derived active sessions", turn)
+	}
+	if turn.CoturnCPUPercent != 27 || turn.CoturnRSSKB != 131072 || turn.RXBytes != 3000 || turn.TXBytes != 5000 {
+		t.Fatalf("coturn runtime evidence = %+v, want cpu/rss/rx/tx peak values", turn)
+	}
+}
+
+func TestTURNEvidenceFromActiveSamplesKeepsSocketActivityEvidence(t *testing.T) {
+	tmp := t.TempDir()
+	path := tmp + "/turn-active-samples.tsv"
+	raw := "time\tnode\thost\tudp_sockets\ttcp_estab\trelay_udp_flows\trelay_tcp_flows\tactive_allocations\tactive_sessions\tjournal_events\tevidence_status\n" +
+		"2026-07-01T00:00:00Z\tturn01\t198.51.100.20\t16\t0\t0\t0\t0\t0\t0\tunavailable\n" +
+		"2026-07-01T00:00:05Z\tturn01\t198.51.100.20\t678\t338\t0\t0\t0\t0\t6\tsocket_activity_observed\n"
+	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	turn := turnEvidenceFromActiveSamples(path)
+
+	if !turn.CoturnAvailable || turn.ActiveNodes != 1 {
+		t.Fatalf("turn availability = %+v, want coturn active node", turn)
+	}
+	if turn.UDPSockets != 678 || turn.TCPEstablished != 338 || turn.JournalEvents != 6 {
+		t.Fatalf("socket evidence = %+v, want udp/tcp/journal active-window values", turn)
+	}
+	if turn.Allocations != 0 || turn.ActiveSessions != 0 {
+		t.Fatalf("turn sessions = %+v, socket-only evidence must not become allocation/session count", turn)
+	}
+	if turn.EvidenceStatus != "socket_activity_observed" {
+		t.Fatalf("evidence status = %q, want socket_activity_observed", turn.EvidenceStatus)
+	}
+}
+
+func TestTURNEvidenceFromActiveSamplesAcceptsConntrackActiveEvidence(t *testing.T) {
+	tmp := t.TempDir()
+	path := tmp + "/turn-active-samples.tsv"
+	raw := "time\tnode\thost\tudp_sockets\ttcp_estab\trelay_udp_flows\trelay_tcp_flows\tactive_allocations\tactive_sessions\tjournal_events\tevidence_status\n" +
+		"2026-07-01T00:00:00Z\tturn01\t198.51.100.20\t40\t8\t24\t2\t60\t60\t0\tconntrack_active\n"
+	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	turn := turnEvidenceFromActiveSamples(path)
+
+	if !turn.CoturnAvailable || turn.ActiveNodes != 1 {
+		t.Fatalf("turn availability = %+v, want coturn active node", turn)
+	}
+	if turn.Allocations != 60 || turn.ActiveSessions != 60 {
+		t.Fatalf("turn active counts = %+v, want conntrack-derived counts", turn)
+	}
+	if turn.RelayUDPFlows != 24 || turn.RelayTCPFlows != 2 || turn.EvidenceStatus != "conntrack_active" {
+		t.Fatalf("turn conntrack evidence = %+v, want relay flow and conntrack status", turn)
+	}
+}
+
+func TestTURNEvidenceFromActiveSamplesAcceptsPrometheusActiveEvidence(t *testing.T) {
+	tmp := t.TempDir()
+	path := tmp + "/turn-active-samples.tsv"
+	raw := "time\tnode\thost\tudp_sockets\ttcp_estab\trelay_udp_flows\trelay_tcp_flows\tactive_allocations\tactive_sessions\tjournal_events\tevidence_status\n" +
+		"2026-07-01T00:00:00Z\tturn01\t198.51.100.20\t40\t8\t24\t2\t31\t31\t0\tprometheus_active\n"
+	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	turn := turnEvidenceFromActiveSamples(path)
+
+	if !turn.CoturnAvailable || turn.ActiveNodes != 1 {
+		t.Fatalf("turn availability = %+v, want coturn active node", turn)
+	}
+	if turn.Allocations != 31 || turn.ActiveSessions != 31 {
+		t.Fatalf("turn active counts = %+v, want prometheus-derived counts", turn)
+	}
+	if turn.EvidenceStatus != "prometheus_active" {
+		t.Fatalf("turn evidence status = %q, want prometheus_active", turn.EvidenceStatus)
+	}
+}
+
+func TestTURNEvidenceFromActiveSamplesAcceptsCLIActiveEvidence(t *testing.T) {
+	tmp := t.TempDir()
+	path := tmp + "/turn-active-samples.tsv"
+	raw := "time\tnode\thost\tudp_sockets\ttcp_estab\trelay_udp_flows\trelay_tcp_flows\tactive_allocations\tactive_sessions\tjournal_events\tevidence_status\n" +
+		"2026-07-01T00:00:00Z\tturn01\t198.51.100.20\t40\t8\t24\t2\t29\t29\t0\tcli_active\n"
+	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	turn := turnEvidenceFromActiveSamples(path)
+
+	if !turn.CoturnAvailable || turn.ActiveNodes != 1 {
+		t.Fatalf("turn availability = %+v, want coturn active node", turn)
+	}
+	if turn.Allocations != 29 || turn.ActiveSessions != 29 {
+		t.Fatalf("turn active counts = %+v, want CLI-derived counts", turn)
+	}
+	if turn.EvidenceStatus != "cli_active" {
+		t.Fatalf("turn evidence status = %q, want cli_active", turn.EvidenceStatus)
+	}
+}
+
+func TestVideoEvidenceWithActiveTURNSamplesKeepsSocketOnlyEvidence(t *testing.T) {
+	tmp := t.TempDir()
+	raw := "time\tnode\thost\tudp_sockets\ttcp_estab\trelay_udp_flows\trelay_tcp_flows\tactive_allocations\tactive_sessions\tjournal_events\tcoturn_cpu_pct\tcoturn_rss_kb\trx_bytes\ttx_bytes\tevidence_status\n" +
+		"2026-07-01T00:00:00Z\tturn01\t198.51.100.20\t678\t338\t0\t0\t0\t0\t6\t22\t131072\t3000\t5000\tsocket_activity_observed\n"
+	if err := os.WriteFile(tmp+"/turn-active-samples.tsv", []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	video := videoEvidenceWithActiveTURNSamples(VideoEvidence{
+		WebRTC: WebRTCTotals{CreateAttempts: 1, SetupAttempts: 1, CloseAttempts: 1},
+		TURN:   TURNEvidence{RegistryAvailable: true},
+	}, tmp)
+
+	if !video.TURN.CoturnAvailable || video.TURN.ActiveNodes != 1 {
+		t.Fatalf("turn availability = %+v, want socket-only sidecar retained", video.TURN)
+	}
+	if video.TURN.Allocations != 0 || video.TURN.ActiveSessions != 0 {
+		t.Fatalf("turn sessions = %+v, socket-only sidecar must not fabricate sessions", video.TURN)
+	}
+	if video.TURN.UDPSockets != 678 || video.TURN.TCPEstablished != 338 || video.TURN.CoturnCPUPercent != 22 || video.TURN.CoturnRSSKB != 131072 || video.TURN.RXBytes != 3000 || video.TURN.TXBytes != 5000 {
+		t.Fatalf("turn socket/resource evidence = %+v, want active-window values", video.TURN)
 	}
 }
 
@@ -935,6 +1099,38 @@ func TestVideoTurnOutcomeRequiresWebRTCSignalingStoreEvidence(t *testing.T) {
 	}
 }
 
+func TestVideoTurnOutcomeRequiresDynamicTURNRegistryPath(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea", ScenarioProfile: Video50KTurnScenarioProfile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	video := completeVideo100KTurnEvidence()
+	video.TURN.APIDynamicTURNCount = 0
+	video.TURN.APIStaticTURNCount = 2
+	video.TURN.APITURNRegistryLookupSucceeded = 0
+	video.TURN.APITURNRegistryLookupEmpty = 5
+
+	outcome := evaluateRunOutcome(
+		plan,
+		completeServerEvidenceWithWebRTCSignalingStore(),
+		completeStageResultsForPlan(plan),
+		LoadGeneratorHealth{},
+		ServerCorrelation{Status: "pass"},
+		RuntimeLogCorrelation{Status: "pass"},
+		video,
+	)
+
+	if outcome.Status != "INCOMPLETE" || outcome.Result != "INCOMPLETE" {
+		t.Fatalf("outcome = %+v, want INCOMPLETE", outcome)
+	}
+	if !containsString(outcome.Reasons, "API did not return dynamic TURN servers from active turnregistry nodes; static TURN URLs are not valid coturn sizing evidence") {
+		t.Fatalf("reasons = %v, want dynamic TURN path blocker", outcome.Reasons)
+	}
+	if !containsString(outcome.Reasons, "API turnregistry lookup returned empty during WebRTC ICE server resolution") {
+		t.Fatalf("reasons = %v, want turnregistry empty blocker", outcome.Reasons)
+	}
+}
+
 func TestRelayOnlyVideoGateFailsOnNonRelayCandidate(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea", ScenarioProfile: Video100KTurnScenarioProfile})
 	if err != nil {
@@ -953,7 +1149,10 @@ func TestRelayOnlyVideoGateFailsOnNonRelayCandidate(t *testing.T) {
 			ICEConnectedP95MS: 100, TimeToFirstRTPP95MS: 120,
 			Startup: VideoStartupTotals{H264AccessUnitSamples: 100},
 		},
-		TURN: TURNEvidence{RegistryAvailable: true, ActiveNodes: 1, CoturnAvailable: true, Allocations: 100, ActiveSessions: 100},
+		TURN: TURNEvidence{
+			RegistryAvailable: true, ActiveNodes: 1, CoturnAvailable: true, Allocations: 100, ActiveSessions: 100,
+			APITURNRegistryLookupSucceeded: 1, APIDynamicTURNCount: 1, APITURNRegistryNodeCount: 1,
+		},
 		Steps: []VideoStepEvidence{{
 			Name: "step-100", Viewers: 100, ICEPolicy: "relay",
 			WebRTC: WebRTCTotals{
@@ -962,8 +1161,11 @@ func TestRelayOnlyVideoGateFailsOnNonRelayCandidate(t *testing.T) {
 				CloseAttempts: 100, CloseSuccess: 100,
 				SuccessRatePercent: 100,
 			},
-			WebRTCMedia:              WebRTCMediaTotals{Enabled: true, Attempts: 100, Successes: 100},
-			TURN:                     TURNEvidence{RegistryAvailable: true, ActiveNodes: 1, CoturnAvailable: true, Allocations: 100, ActiveSessions: 100},
+			WebRTCMedia: WebRTCMediaTotals{Enabled: true, Attempts: 100, Successes: 100},
+			TURN: TURNEvidence{
+				RegistryAvailable: true, ActiveNodes: 1, CoturnAvailable: true, Allocations: 100, ActiveSessions: 100,
+				APITURNRegistryLookupSucceeded: 1, APIDynamicTURNCount: 1, APITURNRegistryNodeCount: 1,
+			},
 			NonRelayCandidateSamples: 1,
 			Complete:                 true,
 		}},
@@ -1014,7 +1216,10 @@ func TestVideoGateFailsWhenMediaSuccessRateBelowThreshold(t *testing.T) {
 			ICEConnectedP95MS: 100, TimeToFirstRTPP95MS: 120,
 			Startup: VideoStartupTotals{H264AccessUnitSamples: 1859},
 		},
-		TURN:                  TURNEvidence{RegistryAvailable: true, ActiveNodes: 2, CoturnAvailable: true, Allocations: 779, ActiveSessions: 779},
+		TURN: TURNEvidence{
+			RegistryAvailable: true, ActiveNodes: 2, CoturnAvailable: true, Allocations: 779, ActiveSessions: 779,
+			APITURNRegistryLookupSucceeded: 1, APIDynamicTURNCount: 1, APITURNRegistryNodeCount: 2,
+		},
 		ICEPolicy:             "relay",
 		RelayCandidateSamples: 1859,
 		Complete:              true,
@@ -1060,7 +1265,10 @@ func completeVideo100KTurnEvidence() VideoEvidence {
 			ICEConnectedP95MS: 100, TimeToFirstRTPP95MS: 120,
 			Startup: VideoStartupTotals{H264AccessUnitSamples: 100},
 		},
-		TURN:                  TURNEvidence{RegistryAvailable: true, ActiveNodes: 1, CoturnAvailable: true, Allocations: 100, ActiveSessions: 100},
+		TURN: TURNEvidence{
+			RegistryAvailable: true, ActiveNodes: 1, CoturnAvailable: true, Allocations: 100, ActiveSessions: 100,
+			APITURNRegistryLookupSucceeded: 1, APIDynamicTURNCount: 1, APITURNRegistryNodeCount: 1,
+		},
 		RelayCandidateSamples: 100,
 	}
 }

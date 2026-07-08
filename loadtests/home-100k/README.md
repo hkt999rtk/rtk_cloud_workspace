@@ -189,20 +189,33 @@ video/step-<viewers>/turn-active-samples.tsv
 ```
 
 Each shard process keeps device websocket owners online and runs the
-corresponding app/viewer WebRTC clients for its device slice. The viewer records
-first RTP latency and H.264 RTP packet evidence, keeps the session open for the
-configured media duration, then closes it. The current TURN sizing profiles use
-a 10-second media duration so generator CPU can be calibrated before longer
-sustained-stream windows are attempted. Token maps and device ID files are
-uploaded as files rather than expanded into long SSH command lines. Bearer
-tokens are passed through environment files or the process environment; the
-workflow must not place them in process argv.
+corresponding app/viewer WebRTC clients for its device slice. Device-side WebRTC
+handling is an async state machine: the websocket listener only records
+`webrtc_offer` receipt and enqueues answer preparation; bounded answer workers
+POST the SDP answer and then release; bounded media workers wait for ICE and send
+RTP for the configured media duration. The viewer records first RTP latency and
+H.264 RTP packet evidence, keeps the session open for the configured media
+duration, then closes it. The current TURN sizing profiles use a 10-second media
+duration so generator CPU can be calibrated before longer sustained-stream
+windows are attempted. Token maps and device ID files are uploaded as files
+rather than expanded into long SSH command lines. Bearer tokens are passed
+through environment files or the process environment; the workflow must not place
+them in process argv.
 
 Startup latency breakdown distinguishes elapsed checkpoints from ICE work:
 `remote_answer_set` is the viewer-side SetRemoteDescription point, `ICE check`
 is the Pion ICE checking interval, and `ICE connected since session start` is
-the elapsed time from app request/session start to ICE connected. Reports must
-not collapse those fields into a single ambiguous `ICE connect` number.
+the elapsed time from app request/session start to ICE connected. Pion phase
+fields (`pion_create_peer`, `pion_create_offer`, `pion_create_answer`,
+`pion_set_local_description`, `pion_ice_gathering_wait`, and
+`pion_set_remote_description`) are phase durations, not elapsed checkpoints,
+and are emitted in raw evidence plus the startup latency report. Device-side
+async queue fields (`answer_queue_wait`, `answer_prepare`, `answer_post`,
+`device_ice_wait`, `sender_queue_wait`, and `sender_first_write_after_ice`) are
+also reported so an operator can distinguish answer-worker backlog, Pion answer
+creation, HTTP answer POST latency, sender backlog, device-side ICE wait, and
+TURN/media path delay. Reports must not collapse those fields into a single
+ambiguous `ICE connect` number.
 
 The final report gates are intentionally strict:
 
@@ -736,6 +749,14 @@ same 30-second samples are persisted for report generation:
 - `linode-active-service-preflight.json`
 - `resource-samples/load-vms.tsv`
 - `resource-samples/k8s-nodes.tsv`
+
+For focused WebRTC/TURN investigation, use `workflow-video-live` or
+`workflow-video-resume-live`. These commands keep the same scripted VM
+provision, sync, host preparation, server evidence, token generation, and
+remote-sharded video runner path, but intentionally skip `run-stages` and do
+not run the MQTT/shadow lifecycle. They are intended for quickly reproducing
+Pion/ICE/TURN bottlenecks after device inventory and token prerequisites are
+available.
 
 Kubernetes node resource samples use `kubectl top nodes --no-headers` and print
 `[home-100k k8s-node]` lines. Kubeconfig resolution order is

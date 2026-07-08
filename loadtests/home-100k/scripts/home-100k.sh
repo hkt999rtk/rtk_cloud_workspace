@@ -121,7 +121,9 @@ video_loadtest="${HOME100K_VIDEO_LOADTEST:-auto}"
 video_loadtest_script="${HOME100K_VIDEO_LOADTEST_SCRIPT:-$repo_root/e2e_test/video_cloud/load/scripts/run_video_loadtest.sh}"
 video_loadtest_mode="${HOME100K_VIDEO_LOADTEST_MODE:-local}"
 video_loadtest_shard_mode="${HOME100K_VIDEO_LOADTEST_SHARD_MODE:-}"
-video_loadtest_binary="${HOME100K_VIDEO_LOADTEST_BINARY:-$repo_root/.artifacts/e2e_test/video_cloud/load/cd/rtk-video-loadtest-linux-amd64}"
+default_video_loadtest_binary="$repo_root/.artifacts/e2e_test/video_cloud/load/cd/rtk-video-loadtest-linux-amd64"
+video_loadtest_binary="${HOME100K_VIDEO_LOADTEST_BINARY:-$default_video_loadtest_binary}"
+video_loadtest_rebuild="${HOME100K_VIDEO_LOADTEST_REBUILD:-auto}"
 video_loadtest_remote_dir="${HOME100K_VIDEO_LOADTEST_REMOTE_DIR:-/opt/rtk-video-loadtest}"
 video_loadtest_remote_hosts="${HOME100K_VIDEO_LOADTEST_REMOTE_HOSTS:-}"
 video_loadtest_artifact_dir="${HOME100K_VIDEO_LOADTEST_ARTIFACT_DIR:-$repo_root/$out_dir/video}"
@@ -209,6 +211,9 @@ Commands:
   workflow-dry-run        Run plan plus dry-run lifecycle review commands.
   workflow-live           Create VMs and run the live lifecycle through aggregate.
   workflow-resume-live    Resume an existing live run from sync using <out-dir>/vms.json.
+  workflow-video-live     Run only the live WebRTC video lifecycle; skips MQTT/shadow.
+  workflow-video-resume-live
+                          Resume only the live WebRTC video lifecycle; skips MQTT/shadow.
 
 Defaults can be overridden with:
   HOME100K_DESCRIPTION_FILE default: loadtests/home-100k/scenarios/default.description.env
@@ -299,6 +304,7 @@ Examples:
   $(basename "$0")
   $(basename "$0") workflow-live
   HOME100K_RUN_ID=<run-id> $(basename "$0") workflow-resume-live
+  $(basename "$0") workflow-video-live
   $(basename "$0") plan
   $(basename "$0") dry-run
   HOME100K_REGION=us-southeast $(basename "$0") provision-vms --live --confirm-live
@@ -1057,7 +1063,7 @@ start_coturn_active_sampler() {
     return 0
   fi
   {
-    printf 'time\tnode\thost\tudp_sockets\tjournal_events\n'
+    printf 'time\tnode\thost\tudp_sockets\ttcp_estab\trelay_udp_flows\trelay_tcp_flows\tactive_allocations\tactive_sessions\tjournal_events\tcoturn_cpu_pct\tcoturn_rss_kb\trx_bytes\ttx_bytes\tevidence_status\n'
   } >"$sample_file"
   (
     while true; do
@@ -1069,9 +1075,62 @@ start_coturn_active_sampler() {
         [[ -n "$host" ]] || continue
         local sample
         sample="$(ssh -n -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=1 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$ssh_known_hosts_file" -i "$ssh_key" "${ssh_user}@${host}" \
-          'udp=$(ss -Huanp 2>/dev/null | awk "/turnserver/ {c++} END {print c+0}"); events=$(journalctl -u coturn --since "1 minutes ago" --no-pager 2>/dev/null | grep -Eci "session|allocation|peer|relay" || true); printf "%s\t%s" "$udp" "$events"' 2>/dev/null || true)"
+          'udp=$(ss -Huanp 2>/dev/null | awk "/turnserver/ {c++} END {print c+0}");
+           tcp=$(ss -Htanp 2>/dev/null | awk "/turnserver/ && /ESTAB/ {c++} END {print c+0}");
+           relay_udp=$(ss -Huanp 2>/dev/null | awk "/turnserver/ && ($0 ~ /:(49[1-9][0-9][0-9]|5[0-9][0-9][0-9][0-9]|6[0-4][0-9][0-9][0-9]|65[0-4][0-9][0-9]|655[0-2][0-9]|6553[0-5])/) {c++} END {print c+0}");
+           relay_tcp=$(ss -Htanp 2>/dev/null | awk "/turnserver/ && /ESTAB/ && ($0 ~ /:(49[1-9][0-9][0-9]|5[0-9][0-9][0-9][0-9]|6[0-4][0-9][0-9][0-9]|65[0-4][0-9][0-9]|655[0-2][0-9]|6553[0-5])/) {c++} END {print c+0}");
+           events=$(journalctl -u coturn --since "1 minutes ago" --no-pager 2>/dev/null | grep -Eci "session|allocation|peer|relay" || true);
+           cpu=$(ps -C turnserver -o %cpu= 2>/dev/null | awk "{s+=\$1} END {printf \"%.0f\", s+0}");
+           rss=$(ps -C turnserver -o rss= 2>/dev/null | awk "{s+=\$1} END {print s+0}");
+	           rx=$(awk "{s+=\$1} END {print s+0}" /sys/class/net/*/statistics/rx_bytes 2>/dev/null || echo 0);
+	           tx=$(awk "{s+=\$1} END {print s+0}" /sys/class/net/*/statistics/tx_bytes 2>/dev/null || echo 0);
+	           cli_password=$(awk -F= '"'"'$1=="COTURN_CLI_PASSWORD" {print $2; exit}'"'"' /etc/video-cloud-coturn-cli.env 2>/dev/null || true);
+	           cli_out="";
+	           if [ -n "$cli_password" ] && command -v nc >/dev/null 2>&1; then
+	             cli_out=$({ sleep 0.2; printf "%s\r\n" "$cli_password"; sleep 0.2; printf "sr video_cloud\r\n"; sleep 0.2; printf "ps\r\n"; sleep 0.2; printf "quit\r\n"; sleep 0.2; } | nc -w 3 127.0.0.1 5766 2>/dev/null || true);
+	           fi;
+	           cli_active=$(printf "%s\n" "$cli_out" | awk '"'"'
+	             BEGIN { IGNORECASE = 1 }
+	             /total[[:space:]]+sessions/ {
+	               for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+$/ && $i + 0 > max) max = $i + 0
+	             }
+	             END { print max + 0 }
+	           '"'"');
+	           ct_udp=$(if command -v conntrack >/dev/null 2>&1; then conntrack -L -p udp 2>/dev/null || true; fi);
+           ct_tcp=$(if command -v conntrack >/dev/null 2>&1; then conntrack -L -p tcp 2>/dev/null || true; fi);
+           ct_control_udp=$(printf "%s\n" "$ct_udp" | awk '"'"'{for(i=1;i<=NF;i++) if($i=="dport=3478" || $i=="sport=3478" || $i=="dport=3478," || $i=="sport=3478,") {c++; break}} END{print c+0}'"'"');
+           ct_control_tcp=$(printf "%s\n" "$ct_tcp" | awk '"'"'{for(i=1;i<=NF;i++) if($i=="dport=3478" || $i=="sport=3478" || $i=="dport=3478," || $i=="sport=3478,") {c++; break}} END{print c+0}'"'"');
+           ct_relay_udp=$(printf "%s\n" "$ct_udp" | awk '"'"'{hit=0; for(i=1;i<=NF;i++){split($i,a,"="); if((a[1]=="sport" || a[1]=="dport") && a[2]+0>=49152 && a[2]+0<=65535) hit=1} if(hit)c++} END{print c+0}'"'"');
+           ct_relay_tcp=$(printf "%s\n" "$ct_tcp" | awk '"'"'{hit=0; for(i=1;i<=NF;i++){split($i,a,"="); if((a[1]=="sport" || a[1]=="dport") && a[2]+0>=49152 && a[2]+0<=65535) hit=1} if(hit)c++} END{print c+0}'"'"');
+           ct_control=$(( ${ct_control_udp:-0} + ${ct_control_tcp:-0} ));
+           if [ "${ct_relay_udp:-0}" -gt "${relay_udp:-0}" ]; then relay_udp="$ct_relay_udp"; fi;
+           if [ "${ct_relay_tcp:-0}" -gt "${relay_tcp:-0}" ]; then relay_tcp="$ct_relay_tcp"; fi;
+	           journal_active=$(journalctl -u coturn --since "30 minutes ago" --no-pager 2>/dev/null | awk '"'"'
+             BEGIN { IGNORECASE = 1 }
+             /session/ && (/ALLOCATE processed, success/ || /new allocation/ || /: new/ || /New allocation/) {
+               for (i = 1; i < NF; i++) if ($i == "session") { id = $(i + 1); sub(/:.*/, "", id); if (id != "") open[id] = 1 }
+             }
+             /session/ && (/closed/ || /delete allocation/ || /allocation timeout/ || /delete session/ || /session closed/) {
+               for (i = 1; i < NF; i++) if ($i == "session") { id = $(i + 1); sub(/:.*/, "", id); if (id != "") delete open[id] }
+             }
+             END { for (id in open) c++; print c + 0 }
+	           '"'"' || true);
+	           active="${journal_active:-0}";
+	           if [ "${cli_active:-0}" -gt "$active" ]; then active="$cli_active"; fi;
+	           if [ "${ct_control:-0}" -gt "$active" ]; then active="$ct_control"; fi;
+	           status=unavailable;
+           if [ "${udp:-0}" -gt 16 ] || [ "${tcp:-0}" -gt 0 ] || [ "${events:-0}" -gt 0 ]; then status=socket_activity_observed; fi;
+	           if [ "${relay_udp:-0}" -gt 0 ] || [ "${relay_tcp:-0}" -gt 0 ]; then status=relay_flow_observed; fi;
+	           if [ "${journal_active:-0}" -gt 0 ]; then status=journal_active; fi;
+	           if [ "${ct_control:-0}" -gt 0 ]; then status=conntrack_active; fi;
+	           if [ "${cli_active:-0}" -gt 0 ]; then status=cli_active; fi;
+	           allocations="${cli_active:-0}";
+	           sessions="${cli_active:-0}";
+	           if [ "${active:-0}" -gt "$allocations" ]; then allocations="$active"; fi;
+	           if [ "${active:-0}" -gt "$sessions" ]; then sessions="$active"; fi;
+	           printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" "$udp" "$tcp" "$relay_udp" "$relay_tcp" "${allocations:-0}" "${sessions:-0}" "$events" "${cpu:-0}" "${rss:-0}" "${rx:-0}" "${tx:-0}" "$status"' 2>/dev/null || true)"
         if [[ -z "$sample" ]]; then
-          sample="0"$'\t'"0"
+          sample="0"$'\t'"0"$'\t'"0"$'\t'"0"$'\t'"0"$'\t'"0"$'\t'"0"$'\t'"0"$'\t'"0"$'\t'"0"$'\t'"0"$'\t'"unavailable"
         fi
         printf '%s\t%s\t%s\t%s\n' "$now" "$node" "$host" "$sample" >>"$sample_file"
       done <"$rows_file"
@@ -1183,9 +1242,28 @@ PY
 
 ensure_video_loadtest_binary() {
   if [[ -x "$video_loadtest_binary" ]]; then
-    return 0
+    case "$video_loadtest_rebuild" in
+      never)
+        return 0
+        ;;
+      always)
+        ;;
+      auto|"")
+        if [[ "$video_loadtest_binary" != "$default_video_loadtest_binary" ]]; then
+          return 0
+        fi
+        if ! find "$repo_root/e2e_test/video_cloud/load" -type f -name '*.go' -newer "$video_loadtest_binary" -print -quit | grep -q .; then
+          return 0
+        fi
+        ;;
+      *)
+        echo "invalid HOME100K_VIDEO_LOADTEST_REBUILD: $video_loadtest_rebuild" >&2
+        return 2
+        ;;
+    esac
   fi
   mkdir -p "$(dirname "$video_loadtest_binary")"
+  echo "building video loadtest binary: $video_loadtest_binary" >&2
   (cd "$repo_root/e2e_test" && GOWORK=off GOOS=linux GOARCH=amd64 go build -o "$video_loadtest_binary" ./video_cloud/load/cmd/rtk-video-loadtest)
 }
 
@@ -1828,6 +1906,81 @@ prepare_load_generator_hosts() {
   done <<<"$host_rows"
 }
 
+run_video_live_workflow() {
+  local resume_mode="${1:-0}"
+  shift || true
+  local command_name="workflow-video-live"
+  if [[ "$resume_mode" == "1" ]]; then
+    command_name="workflow-video-resume-live"
+  fi
+  if [[ "$resume_mode" == "0" && -z "$existing_generator_hosts" && -z "${LINODE_TOKEN:-}" ]]; then
+    echo "$command_name requires LINODE_TOKEN" >&2
+    exit 2
+  fi
+  if [[ ! -f "$ssh_key" ]]; then
+    echo "$command_name SSH key not found: $ssh_key" >&2
+    exit 2
+  fi
+  if [[ "$resume_mode" == "0" && -z "$existing_generator_hosts" && ! -f "$authorized_key_file" ]]; then
+    echo "$command_name authorized public key not found: $authorized_key_file" >&2
+    exit 2
+  fi
+  if [[ "$resume_mode" == "1" && ! -f "$local_vm_state_file" ]]; then
+    echo "$command_name requires existing VM state: $out_dir/vms.json" >&2
+    exit 2
+  fi
+  mkdir -p "$local_out_dir"
+  rm -f "$ssh_known_hosts_file"
+  shutdown_live_vms_on_exit=1
+  start_status_monitor
+  workflow_rc=0
+  if [[ "$resume_mode" == "0" ]]; then
+    linode_active_service_preflight
+    set_phase "provision-vms"
+    run_home100k provision-vms "${provision_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --live --confirm-live --authorized-key-file "$authorized_key_file" "$@" || workflow_rc=$?
+    workflow_status
+  fi
+  if [[ "$workflow_rc" -eq 0 ]]; then
+    set_phase "sync"
+    run_live_sync_with_retries || workflow_rc=$?
+  fi
+  if [[ "$workflow_rc" -eq 0 ]]; then
+    prepare_load_generator_hosts || workflow_rc=$?
+  fi
+  workflow_status
+  if [[ "$workflow_rc" -eq 0 ]]; then
+    set_phase "collect-server-baseline"
+    export_kubeconfig_if_available
+    rm -f "$local_out_dir/server-evidence-baseline.json"
+    run_home100k collect-server-evidence "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --server-evidence-file "$local_out_dir/server-evidence-baseline.json" --live || workflow_rc=$?
+  fi
+  workflow_status
+  if [[ "$workflow_rc" -eq 0 ]]; then
+    set_phase "run-video-loadtest"
+    run_video_loadtest_step || workflow_rc=$?
+  fi
+  workflow_status
+  set_phase "collect-server-evidence"
+  export_kubeconfig_if_available
+  run_home100k collect-server-evidence "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --live || true
+  cleanup_rc=0
+  if [[ "$shutdown_on_error" == "1" ]]; then
+    set_phase "shutdown-vms"
+    shutdown_live_vms || cleanup_rc=$?
+  else
+    set_phase "preserve-vms"
+    echo "preserving live VMs for resume/debug; run shutdown-vms when finished" >&2
+  fi
+  shutdown_live_vms_on_exit=0
+  set_phase "complete"
+  stop_status_monitor
+  echo "live WebRTC video workflow artifacts: $out_dir"
+  if [[ "$workflow_rc" -ne 0 ]]; then
+    exit "$workflow_rc"
+  fi
+  exit "$cleanup_rc"
+}
+
 command="${1:-workflow-live}"
 if [[ "$command" == "-h" || "$command" == "--help" ]]; then
   usage
@@ -2150,6 +2303,12 @@ case "$command" in
       exit "$workflow_rc"
     fi
     exit "$cleanup_rc"
+    ;;
+  workflow-video-live)
+    run_video_live_workflow 0 "$@"
+    ;;
+  workflow-video-resume-live)
+    run_video_live_workflow 1 "$@"
     ;;
   *)
     echo "unknown command: $command" >&2
