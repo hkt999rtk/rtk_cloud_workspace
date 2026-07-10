@@ -3103,6 +3103,30 @@ func TestParseEMQXBrokerMetricsCounters(t *testing.T) {
 	}
 }
 
+func TestCentralLoggerRuntimeCountersRequireStructuredRuntimeLogFields(t *testing.T) {
+	events := []centralLoggerRuntimeEvent{
+		{
+			EventID:   "valid",
+			Message:   "mqtt_e2e shadow_desired app_controller publish",
+			Source:    "device-runtime",
+			Component: "device_runtime_log",
+			Fields: map[string]any{
+				"devid": "device-1", "stream_id": "mqtt-e2e-run-device-1", "seq": float64(1), "source": "app_controller",
+			},
+		},
+		{
+			EventID: "legacy-text-only", Message: "mqtt_e2e shadow_desired app_controller publish", Source: "device-runtime", Component: "device_runtime_log",
+		},
+	}
+	_, streams := centralLoggerRuntimeCounters("run", events)
+	if streams["runtime_log_schema.valid"] != 1 || streams["runtime_log_schema.invalid"] != 1 {
+		t.Fatalf("schema counters = %#v", streams)
+	}
+	if streams["runtime_log_stream.mqtt-e2e-run-device-1.device.device-1.entries"] != 1 {
+		t.Fatalf("missing structured device evidence: %#v", streams)
+	}
+}
+
 func TestParseIngressRequestTokenAccessLogCounters(t *testing.T) {
 	out := strings.Join([]string{
 		`198.51.100.10 - - [16/Jun/2026:19:44:34 +0000] "POST /request_token HTTP/1.1" 200 517 "-" "Go-http-client/1.1" 255 0.186 [video-cloud-staging-video-cloud-video-cloud-api-8080] [] 10.128.218.139:80 517 0.186 200 abc`,

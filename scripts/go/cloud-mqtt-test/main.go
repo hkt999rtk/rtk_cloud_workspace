@@ -143,6 +143,8 @@ func (b *home100KCredentialBundle) HasShardTestData() bool {
 type deviceResult struct {
 	DeviceID                string      `json:"device_id"`
 	DeviceType              string      `json:"device_type"`
+	BrandCloudID            string      `json:"brand_cloud_id,omitempty"`
+	CorrelationID           string      `json:"correlation_id,omitempty"`
 	AssignedEmail           string      `json:"assigned_email"`
 	Commands                int         `json:"commands"`
 	SuccessPercent          float64     `json:"success_percent"`
@@ -919,13 +921,17 @@ func runDeviceActorSeparatedEnvelope(record certRecord, brandname, runID, apiBas
 	if strings.TrimSpace(appAccessToken) == "" {
 		return failedActorResult(record.DeviceID, record.DeviceType, "account login response missing access_token")
 	}
+	appMQTTToken, err := requestAppToken(apiBaseURL, cert, record.DeviceID)
+	if err != nil {
+		return failedActorResult(record.DeviceID, record.DeviceType, redactedError(err))
+	}
 	result := runActorSeparatedProbe(mqttActorProbe{
 		DeviceID:    record.DeviceID,
 		DeviceType:  record.DeviceType,
 		Brandname:   brandname,
 		RunID:       runID,
 		DeviceToken: deviceToken,
-		AppToken:    appAccessToken,
+		AppToken:    appMQTTToken.AccessToken,
 		Dial: func() (io.ReadWriteCloser, error) {
 			return tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", net.JoinHostPort(host, strconv.Itoa(port)), &tls.Config{InsecureSkipVerify: true})
 		},
@@ -1963,7 +1969,7 @@ func connectSustainedDevice(record certRecord, brandname, runID, apiBaseURL stri
 		OnConnackAttempt: func() { recordPhase(func(totals *mqttIOTotals) { totals.DeviceMQTTConnackAttempts++ }) },
 		OnConnackSuccess: func() { recordPhase(func(totals *mqttIOTotals) { totals.DeviceMQTTConnackSuccesses++ }) },
 		OnConnackFailure: func(error) { recordPhase(func(totals *mqttIOTotals) { totals.DeviceMQTTConnackFailures++ }) },
-	}, "device", record.DeviceID, deviceToken)
+	}, "device", deviceToken)
 }
 
 func sustainedEvents(sessions []sustainedDeviceSession, opts loadOptions, seed int, window time.Duration) []sustainedEvent {
@@ -2262,6 +2268,18 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		totals.HTTPFailures++
 		return fail("app_login", "app_login_token_unavailable", err)
 	}
+	appMQTTToken := appToken
+	if strings.TrimSpace(apiBaseURL) != "" {
+		cert, err := loadLeafFirstX509KeyPairForRecord(session.Record)
+		if err != nil {
+			return fail("app_mqtt_token", "app_mqtt_token_unavailable", err)
+		}
+		issued, err := requestAppToken(apiBaseURL, cert, session.Record.DeviceID)
+		if err != nil {
+			return fail("app_mqtt_token", "app_mqtt_token_unavailable", err)
+		}
+		appMQTTToken = issued.AccessToken
+	}
 	target := session.MQTTTarget
 	if target.Host == "" || target.Port <= 0 {
 		return fail("app_mqtt_target", "app_mqtt_connect_failed", errors.New("missing MQTT target for sustained app command"))
@@ -2276,7 +2294,7 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		DeviceType: session.Record.DeviceType,
 		Brandname:  brandname,
 		RunID:      runID,
-		AppToken:   appToken,
+		AppToken:   appMQTTToken,
 		Dial: func() (io.ReadWriteCloser, error) {
 			conn, err := tls.DialWithDialer(&net.Dialer{Timeout: appMQTTTimeout}, "tcp", net.JoinHostPort(target.Host, strconv.Itoa(target.Port)), &tls.Config{InsecureSkipVerify: true})
 			if err != nil {
@@ -2293,7 +2311,7 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		OnConnackAttempt: func() { totals.AppMQTTConnackAttempts++ },
 		OnConnackSuccess: func() { totals.AppMQTTConnackSuccesses++ },
 		OnConnackFailure: func(error) { totals.AppMQTTConnackFailures++ },
-	}, "app-controller", appMQTTUsername(session.Record.DeviceID), appToken)
+	}, "app-controller", appMQTTToken)
 	if err != nil {
 		totals.HTTPFailures++
 		return fail("app_mqtt_connect", "app_mqtt_connect_failed", err)
@@ -2901,9 +2919,12 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 	shadowDeltaTopic := shadowUpdateTopic + "/delta"
 	correlationID := probeCorrelationID(probe.RunID, probe.Now())
 	logStreamID := fmt.Sprintf("mqtt-e2e-%s-%s", correlationID, probe.DeviceID)
+	identity, _ := mqttIdentityFromAccessToken(probe.DeviceToken, "device")
 	result := deviceResult{
 		DeviceID:                probe.DeviceID,
 		DeviceType:              probe.DeviceType,
+		BrandCloudID:            identity.Username,
+		CorrelationID:           correlationID,
 		Commands:                2,
 		SuccessPercent:          0,
 		MQTTStatus:              "FAIL",
@@ -2932,7 +2953,7 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 		result.RuntimeLogExpectations = append(result.RuntimeLogExpectations, expect)
 		return nil
 	}
-	appObserver, err := connectMQTTActor(probe, "app-observer", appMQTTUsername(probe.DeviceID), probe.AppToken)
+	appObserver, err := connectMQTTActor(probe, "app-observer", probe.AppToken)
 	if err != nil {
 		result.Error = "app MQTT actor unauthorized or unavailable: " + redactedError(err)
 		result.TraceChain = appendTrace(result.TraceChain, "mqtt_connect", "app_observer", "mqtt_connect", "", "FAIL", "")
@@ -2940,7 +2961,7 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 	}
 	result.TraceChain = appendTrace(result.TraceChain, "mqtt_connect", "app_observer", "mqtt_connect", "", "PASS", "")
 	defer appObserver.Close()
-	device, err := connectMQTTActor(probe, "device", probe.DeviceID, probe.DeviceToken)
+	device, err := connectMQTTActor(probe, "device", probe.DeviceToken)
 	if err != nil {
 		result.Error = "device MQTT actor unauthorized or unavailable: " + redactedError(err)
 		result.TraceChain = appendTrace(result.TraceChain, "mqtt_connect", "device_client", "mqtt_connect", "", "FAIL", "")
@@ -2948,7 +2969,7 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 	}
 	result.TraceChain = appendTrace(result.TraceChain, "mqtt_connect", "device_client", "mqtt_connect", "", "PASS", "")
 	defer device.Close()
-	appController, err := connectMQTTActor(probe, "app-controller", appMQTTUsername(probe.DeviceID), probe.AppToken)
+	appController, err := connectMQTTActor(probe, "app-controller", probe.AppToken)
 	if err != nil {
 		result.Error = "app MQTT actor unauthorized or unavailable: " + redactedError(err)
 		result.TraceChain = appendTrace(result.TraceChain, "mqtt_connect", "app_controller", "mqtt_connect", "", "FAIL", "")
@@ -3115,7 +3136,7 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 
 const sustainedMQTTKeepAliveSeconds uint16 = 30
 
-func connectMQTTActor(probe mqttActorProbe, actor, username, password string) (io.ReadWriteCloser, error) {
+func connectMQTTActor(probe mqttActorProbe, actor, accessToken string) (io.ReadWriteCloser, error) {
 	if probe.Dial == nil {
 		return nil, errors.New("missing MQTT dialer")
 	}
@@ -3135,7 +3156,10 @@ func connectMQTTActor(probe mqttActorProbe, actor, username, password string) (i
 	if setter, ok := conn.(interface{ SetDeadline(time.Time) error }); ok {
 		_ = setter.SetDeadline(time.Now().Add(probe.Timeout))
 	}
-	clientID := fmt.Sprintf("rtk-e2e-%s-%s-%s-%d", probeCorrelationID(probe.RunID, probe.Now()), probe.DeviceID, actor, os.Getpid())
+	identity, err := mqttIdentityFromAccessToken(accessToken, actor)
+	if err != nil {
+		return nil, err
+	}
 	keepAliveSeconds := probe.KeepAliveSeconds
 	if keepAliveSeconds == 0 {
 		keepAliveSeconds = 30
@@ -3143,7 +3167,7 @@ func connectMQTTActor(probe mqttActorProbe, actor, username, password string) (i
 	if probe.OnConnackAttempt != nil {
 		probe.OnConnackAttempt()
 	}
-	if err := mqttConnect(conn, clientID, username, password, keepAliveSeconds); err != nil {
+	if err := mqttConnect(conn, identity.ClientID, identity.Username, accessToken, keepAliveSeconds); err != nil {
 		_ = conn.Close()
 		if probe.OnConnackFailure != nil {
 			probe.OnConnackFailure(err)
@@ -3154,6 +3178,32 @@ func connectMQTTActor(probe mqttActorProbe, actor, username, password string) (i
 		probe.OnConnackSuccess()
 	}
 	return conn, nil
+}
+
+func mqttIdentityFromAccessToken(accessToken, role string) (mqttConnection, error) {
+	parts := strings.Split(strings.TrimSpace(accessToken), ".")
+	if len(parts) != 3 {
+		return mqttConnection{}, errors.New("mqtt token is not a JWT")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return mqttConnection{}, errors.New("mqtt token has invalid JWT payload")
+	}
+	var claims struct {
+		BrandCloudID string `json:"brand_cloud_id"`
+		MQTTClientID string `json:"mqtt_client_id"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return mqttConnection{}, errors.New("mqtt token has invalid claims")
+	}
+	if strings.TrimSpace(claims.BrandCloudID) == "" || strings.TrimSpace(claims.MQTTClientID) == "" {
+		return mqttConnection{}, errors.New("mqtt token missing broker connection metadata")
+	}
+	role = strings.Trim(strings.TrimSpace(role), "-")
+	if role == "" {
+		return mqttConnection{Username: claims.BrandCloudID, ClientID: claims.MQTTClientID}, nil
+	}
+	return mqttConnection{Username: claims.BrandCloudID, ClientID: claims.MQTTClientID + "-" + role}, nil
 }
 
 func probeCorrelationID(runID string, now time.Time) string {
@@ -3211,10 +3261,6 @@ func waitForMQTTPublish(conn io.Reader, topic string, timeout time.Duration, mat
 		}
 	}
 	return nil, errors.New("timed out waiting for MQTT publish")
-}
-
-func appMQTTUsername(deviceID string) string {
-	return "app-user:" + deviceID
 }
 
 func appendTrace(chain []traceStep, phase, actor, action, topic, status, detail string) []traceStep {
@@ -3927,10 +3973,18 @@ func traceDetail(detail string) string {
 }
 
 type tokenBundle struct {
-	Scope        string    `json:"scope"`
-	AccessToken  string    `json:"access_token"`
-	RefreshToken string    `json:"refresh_token"`
-	issuedAt     time.Time `json:"-"`
+	Scope        string          `json:"scope"`
+	AccessToken  string          `json:"access_token"`
+	RefreshToken string          `json:"refresh_token"`
+	MQTT         *mqttConnection `json:"mqtt,omitempty"`
+	issuedAt     time.Time       `json:"-"`
+}
+
+// mqttConnection is returned by Video Cloud with a broker identity bound to
+// the access token. It is deliberately not written to load-test artifacts.
+type mqttConnection struct {
+	Username string `json:"username"`
+	ClientID string `json:"client_id"`
 }
 
 type tokenManager struct {
@@ -4671,7 +4725,7 @@ func requestAppToken(apiBaseURL string, cert tls.Certificate, deviceID string) (
 }
 
 func requestAppTokenWithTimeout(apiBaseURL string, cert tls.Certificate, deviceID string, timeout time.Duration) (appTokenResponse, error) {
-	token, err := requestTokenBundleWithTimeout(apiBaseURL, cert, deviceID, "app", "", timeout)
+	token, err := requestTokenBundleWithTimeout(apiBaseURL, cert, deviceID, "app", "mqtt", timeout)
 	if err != nil {
 		return appTokenResponse{}, err
 	}

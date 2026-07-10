@@ -191,31 +191,31 @@ func NewRunner(client *http.Client) *Runner {
 func DefaultConfigFromEnv() Config {
 	host, _ := os.Hostname()
 	cfg := Config{
-		Profile:               envDefault("VIDEO_CLOUD_LOAD_PROFILE", ProfileSafeStaging),
-		APIURL:                os.Getenv("VIDEO_CLOUD_LOAD_API_URL"),
-		WSURL:                 os.Getenv("VIDEO_CLOUD_LOAD_WS_URL"),
-		AccountToken:          os.Getenv("VIDEO_CLOUD_LOAD_ACCOUNT_TOKEN"),
-		AppTokens:             parseTokenMap(os.Getenv("VIDEO_CLOUD_LOAD_APP_TOKENS")),
-		AdminToken:            os.Getenv("VIDEO_CLOUD_LOAD_ADMIN_TOKEN"),
-		DeviceToken:           os.Getenv("VIDEO_CLOUD_LOAD_DEVICE_TOKEN"),
-		DeviceTokens:          parseTokenMap(os.Getenv("VIDEO_CLOUD_LOAD_DEVICE_TOKENS")),
-		RefreshToken:          os.Getenv("VIDEO_CLOUD_LOAD_REFRESH_TOKEN"),
-		RunID:                 os.Getenv("VIDEO_CLOUD_LOAD_RUN_ID"),
-		InstanceID:            os.Getenv("VIDEO_CLOUD_LOAD_INSTANCE_ID"),
-		Actors:                envDefault("VIDEO_CLOUD_LOAD_ACTORS", ActorAll),
-		AppRouteSet:           envDefault("VIDEO_CLOUD_LOAD_APP_ROUTE_SET", AppRouteSetSmoke),
-		DeviceRouteSet:        envDefault("VIDEO_CLOUD_LOAD_DEVICE_ROUTE_SET", DeviceRouteSetSmoke),
-		DeviceTransportSet:    envDefault("VIDEO_CLOUD_LOAD_DEVICE_TRANSPORT_SET", DeviceTransportSetSmoke),
-		ViewerRouteSet:        envDefault("VIDEO_CLOUD_LOAD_VIEWER_ROUTE_SET", ViewerRouteSetSmoke),
-		WebRTCMediaSet:        envDefault("VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_SET", WebRTCMediaSetOff),
-		WebRTCRelayRole:       envDefault("VIDEO_CLOUD_LOAD_WEBRTC_RELAY_ROLE", WebRTCRelayRoleBoth),
-		WebRTCICEPolicy:       envDefault("VIDEO_CLOUD_LOAD_WEBRTC_ICE_POLICY", WebRTCICEPolicyAll),
-		WebRTCMediaDuration:   20 * time.Second,
-		ClipSet:               envDefault("VIDEO_CLOUD_LOAD_CLIP_SET", ClipSetOff),
-		MQTTSet:               envDefault("VIDEO_CLOUD_LOAD_MQTT_SET", MQTTSetOff),
-		MQTTAddr:              os.Getenv("VIDEO_CLOUD_MQTT_ADDR"),
-		MQTTUsername:          os.Getenv("VIDEO_CLOUD_MQTT_USERNAME"),
-		MQTTPassword:          os.Getenv("VIDEO_CLOUD_MQTT_PASSWORD"),
+		Profile:             envDefault("VIDEO_CLOUD_LOAD_PROFILE", ProfileSafeStaging),
+		APIURL:              os.Getenv("VIDEO_CLOUD_LOAD_API_URL"),
+		WSURL:               os.Getenv("VIDEO_CLOUD_LOAD_WS_URL"),
+		AccountToken:        os.Getenv("VIDEO_CLOUD_LOAD_ACCOUNT_TOKEN"),
+		AppTokens:           parseTokenMap(os.Getenv("VIDEO_CLOUD_LOAD_APP_TOKENS")),
+		AdminToken:          os.Getenv("VIDEO_CLOUD_LOAD_ADMIN_TOKEN"),
+		DeviceToken:         os.Getenv("VIDEO_CLOUD_LOAD_DEVICE_TOKEN"),
+		DeviceTokens:        parseTokenMap(os.Getenv("VIDEO_CLOUD_LOAD_DEVICE_TOKENS")),
+		RefreshToken:        os.Getenv("VIDEO_CLOUD_LOAD_REFRESH_TOKEN"),
+		RunID:               os.Getenv("VIDEO_CLOUD_LOAD_RUN_ID"),
+		InstanceID:          os.Getenv("VIDEO_CLOUD_LOAD_INSTANCE_ID"),
+		Actors:              envDefault("VIDEO_CLOUD_LOAD_ACTORS", ActorAll),
+		AppRouteSet:         envDefault("VIDEO_CLOUD_LOAD_APP_ROUTE_SET", AppRouteSetSmoke),
+		DeviceRouteSet:      envDefault("VIDEO_CLOUD_LOAD_DEVICE_ROUTE_SET", DeviceRouteSetSmoke),
+		DeviceTransportSet:  envDefault("VIDEO_CLOUD_LOAD_DEVICE_TRANSPORT_SET", DeviceTransportSetSmoke),
+		ViewerRouteSet:      envDefault("VIDEO_CLOUD_LOAD_VIEWER_ROUTE_SET", ViewerRouteSetSmoke),
+		WebRTCMediaSet:      envDefault("VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_SET", WebRTCMediaSetOff),
+		WebRTCRelayRole:     envDefault("VIDEO_CLOUD_LOAD_WEBRTC_RELAY_ROLE", WebRTCRelayRoleBoth),
+		WebRTCICEPolicy:     envDefault("VIDEO_CLOUD_LOAD_WEBRTC_ICE_POLICY", WebRTCICEPolicyAll),
+		WebRTCMediaDuration: 20 * time.Second,
+		ClipSet:             envDefault("VIDEO_CLOUD_LOAD_CLIP_SET", ClipSetOff),
+		MQTTSet:             envDefault("VIDEO_CLOUD_LOAD_MQTT_SET", MQTTSetOff),
+		MQTTAddr:            os.Getenv("VIDEO_CLOUD_MQTT_ADDR"),
+		// Broker credentials are derived from the actor's Video Cloud JWT. Static
+		// VIDEO_CLOUD_MQTT_USERNAME/PASSWORD are intentionally not used here.
 		MQTTTopicRoot:         envDefault("VIDEO_CLOUD_MQTT_TOPIC_ROOT", "devices"),
 		MQTTDeviceProfile:     envDefault("VIDEO_CLOUD_LOAD_MQTT_DEVICE_PROFILE", MQTTDeviceProfileCamera),
 		MQTTIoTMix:            envDefault("VIDEO_CLOUD_LOAD_MQTT_IOT_MIX", "light=4,air_conditioner=3,smart_meter=3"),
@@ -2115,9 +2115,9 @@ func (r *Runner) runMQTTBrokerCoverage(ctx context.Context, cfg Config, deviceID
 		return []Operation{connectOp}
 	}
 	defer conn.Close()
-	if err := mqttConnect(conn, cfg, deviceID); err != nil {
+	if err := mqttConnect(conn, cfg, ActorDevice, deviceID); err != nil {
 		connectOp.Success = false
-		connectOp.ErrorClass = ClassNetwork
+		connectOp.ErrorClass = mqttConnectErrorClass(err)
 		connectOp.ErrorDetail = redactDetail(err.Error())
 		return []Operation{connectOp}
 	}
@@ -2727,10 +2727,10 @@ func mqttOpenConnection(ctx context.Context, cfg Config, actor, name, deviceID s
 		op.ErrorDetail = redactDetail(err.Error())
 		return nil, op
 	}
-	if err := mqttConnect(conn, cfg, deviceID); err != nil {
+	if err := mqttConnect(conn, cfg, actor, deviceID); err != nil {
 		_ = conn.Close()
 		op.Success = false
-		op.ErrorClass = ClassNetwork
+		op.ErrorClass = mqttConnectErrorClass(err)
 		op.ErrorDetail = redactDetail(err.Error())
 		return nil, op
 	}
@@ -2739,18 +2739,31 @@ func mqttOpenConnection(ctx context.Context, cfg Config, actor, name, deviceID s
 	return conn, op
 }
 
-func mqttConnect(conn net.Conn, cfg Config, deviceID string) error {
-	clientID := fmt.Sprintf("rtk-video-loadtest-%s-%d", deviceID, time.Now().UnixNano())
+func mqttConnectErrorClass(err error) string {
+	if err == nil {
+		return ""
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "metadata") || strings.Contains(strings.ToLower(err.Error()), "jwt") {
+		return ClassAuth
+	}
+	return ClassNetwork
+}
+
+func mqttConnect(conn net.Conn, cfg Config, actor, deviceID string) error {
+	token := cfg.DeviceBearerFor(deviceID)
+	if actor == ActorApp || actor == ActorViewer {
+		token = cfg.AccountBearerFor(deviceID)
+	}
+	identity, err := mqttIdentityFromJWT(token, strings.ToLower(actor))
+	if err != nil {
+		return err
+	}
 	flags := byte(0x02)
-	payload := mqttString(clientID)
-	if cfg.MQTTUsername != "" {
-		flags |= 0x80
-		payload = append(payload, mqttString(cfg.MQTTUsername)...)
-	}
-	if cfg.MQTTPassword != "" {
-		flags |= 0x40
-		payload = append(payload, mqttString(cfg.MQTTPassword)...)
-	}
+	payload := mqttString(identity.ClientID)
+	flags |= 0x80
+	payload = append(payload, mqttString(identity.Username)...)
+	flags |= 0x40
+	payload = append(payload, mqttString(token)...)
 	body := append(mqttString("MQTT"), 0x04, flags, 0x00, 0x1e)
 	body = append(body, payload...)
 	if _, err := conn.Write(mqttPacket(0x10, body)); err != nil {
@@ -2764,6 +2777,38 @@ func mqttConnect(conn net.Conn, cfg Config, deviceID string) error {
 		return fmt.Errorf("mqtt CONNACK failed: type=%#x payload=%x", packetType, payload)
 	}
 	return nil
+}
+
+type mqttJWTIdentity struct {
+	Username string
+	ClientID string
+}
+
+func mqttIdentityFromJWT(token, role string) (mqttJWTIdentity, error) {
+	parts := strings.Split(strings.TrimSpace(token), ".")
+	if len(parts) != 3 {
+		return mqttJWTIdentity{}, errors.New("mqtt token is not a JWT")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return mqttJWTIdentity{}, errors.New("mqtt token has invalid JWT payload")
+	}
+	var claims struct {
+		BrandCloudID string `json:"brand_cloud_id"`
+		MQTTClientID string `json:"mqtt_client_id"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return mqttJWTIdentity{}, errors.New("mqtt token has invalid claims")
+	}
+	if strings.TrimSpace(claims.BrandCloudID) == "" || strings.TrimSpace(claims.MQTTClientID) == "" {
+		return mqttJWTIdentity{}, errors.New("mqtt token missing broker connection metadata")
+	}
+	role = strings.Trim(role, "-")
+	clientID := claims.MQTTClientID
+	if role != "" {
+		clientID += "-" + role
+	}
+	return mqttJWTIdentity{Username: claims.BrandCloudID, ClientID: clientID}, nil
 }
 
 func mqttSubscribeOperation(conn net.Conn, deviceID, topic string) Operation {

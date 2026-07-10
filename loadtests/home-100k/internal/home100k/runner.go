@@ -332,6 +332,8 @@ type RuntimeLogCorrelation struct {
 	MissingSequenceCount   int                       `json:"missing_sequence_count"`
 	MissingStreamSamples   []RuntimeLogMissingStream `json:"missing_stream_samples,omitempty"`
 	MissingSequenceSamples []RuntimeLogMissingSeq    `json:"missing_sequence_samples,omitempty"`
+	SchemaInvalidCount     int64                     `json:"schema_invalid_count,omitempty"`
+	TenantMismatchCount    int                       `json:"tenant_mismatch_count,omitempty"`
 }
 
 type RuntimeLogMissingStream struct {
@@ -2329,6 +2331,11 @@ func correlateRuntimeLogsWithThresholds(evidence ServerEvidence, stages []StageR
 		result.Status = "skipped"
 		return result
 	}
+	result.SchemaInvalidCount = source.Counters["runtime_log_schema.invalid"]
+	if result.SchemaInvalidCount > 0 {
+		result.Status = "incomplete"
+		return result
+	}
 	for _, event := range runtimeEvents {
 		streamKey := "runtime_log_stream." + event.RuntimeLogStreamID + ".entries"
 		if source.Counters[streamKey] == 0 {
@@ -2341,6 +2348,11 @@ func correlateRuntimeLogsWithThresholds(evidence ServerEvidence, stages []StageR
 					RuntimeLogStreamID: event.RuntimeLogStreamID,
 				})
 			}
+			continue
+		}
+		deviceKey := "runtime_log_stream." + event.RuntimeLogStreamID + ".device." + sanitizeEvidenceCounterPart(event.DeviceID) + ".entries"
+		if source.Counters[deviceKey] == 0 {
+			result.TenantMismatchCount++
 			continue
 		}
 		for _, expected := range event.ExpectedLogs {
@@ -2362,7 +2374,7 @@ func correlateRuntimeLogsWithThresholds(evidence ServerEvidence, stages []StageR
 		}
 	}
 	allowedMissing := allowedMissingExactEvents(len(runtimeEvents), thresholds)
-	if result.MissingStreamCount+result.MissingSequenceCount > allowedMissing {
+	if result.MissingStreamCount+result.MissingSequenceCount > allowedMissing || result.TenantMismatchCount > 0 {
 		result.Status = "fail"
 	}
 	return result

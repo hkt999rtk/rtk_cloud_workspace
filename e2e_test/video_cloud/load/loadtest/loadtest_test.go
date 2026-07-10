@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -4898,5 +4899,26 @@ func TestRequestJSONRawKeepsSecretsOutOfEvidence(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "turn-user") || !strings.Contains(string(raw), "turn-secret") {
 		t.Fatalf("raw response did not preserve TURN credentials: %s", string(raw))
+	}
+}
+
+func TestMQTTIdentityFromJWTUsesSignedBrokerClaims(t *testing.T) {
+	payload, err := json.Marshal(map[string]string{
+		"brand_cloud_id": "brand-cloud-a",
+		"mqtt_client_id": "mqtt-device-issued",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := "eyJhbGciOiJFZERTQSJ9." + base64.RawURLEncoding.EncodeToString(payload) + ".signature"
+	identity, err := mqttIdentityFromJWT(token, "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.Username != "brand-cloud-a" || identity.ClientID != "mqtt-device-issued-app" {
+		t.Fatalf("identity = %#v", identity)
+	}
+	if _, err := mqttIdentityFromJWT("not-a-jwt", "device"); err == nil {
+		t.Fatal("expected missing JWT metadata to be rejected")
 	}
 }

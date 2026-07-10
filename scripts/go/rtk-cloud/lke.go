@@ -3976,7 +3976,10 @@ rewrite = [
 }
 
 func lkeMQTTTenantNamespaceEnabled(env map[string]string) bool {
-	return strings.EqualFold(strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_MQTT_TENANT_NAMESPACE_ENABLED"), env["LKE_MQTT_TENANT_NAMESPACE_ENABLED"], "false")), "true")
+	// Staging now validates every external MQTT connection through the tenant
+	// namespace path. An explicit false remains available only for local
+	// compatibility environments.
+	return strings.EqualFold(strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_MQTT_TENANT_NAMESPACE_ENABLED"), env["LKE_MQTT_TENANT_NAMESPACE_ENABLED"], "true")), "true")
 }
 
 func indentManifest(value string, spaces int) string {

@@ -29,6 +29,17 @@ import (
 	"time"
 )
 
+func testMQTTToken(scope string) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
+	payload, _ := json.Marshal(map[string]any{
+		"scope":          scope,
+		"brand_cloud_id": "test-brand-cloud",
+		"mqtt_client_id": "mqtt-" + scope + "-test",
+		"exp":            time.Now().Add(time.Hour).Unix(),
+	})
+	return header + "." + base64.RawURLEncoding.EncodeToString(payload) + ".test"
+}
+
 func TestVideoStatePathUsesConfiguredStackName(t *testing.T) {
 	root := t.TempDir()
 	mkdir(t, filepath.Join(root, "env"))
@@ -1020,8 +1031,8 @@ func TestActorSeparatedTelemetryRequiresAppObserverReceive(t *testing.T) {
 		DeviceID:    "rtk-0041",
 		DeviceType:  "light",
 		Brandname:   "RTK",
-		DeviceToken: "device-token",
-		AppToken:    "app-token",
+		DeviceToken: testMQTTToken("device"),
+		AppToken:    testMQTTToken("app"),
 		Dial:        broker.Dial,
 		Timeout:     time.Second,
 		Now:         fixedProbeTime,
@@ -1050,8 +1061,8 @@ func TestActorSeparatedCommandRequiresDeviceReceiveAndAppAck(t *testing.T) {
 		DeviceID:    "rtk-0041",
 		DeviceType:  "light",
 		Brandname:   "RTK",
-		DeviceToken: "device-token",
-		AppToken:    "app-token",
+		DeviceToken: testMQTTToken("device"),
+		AppToken:    testMQTTToken("app"),
 		Dial:        broker.Dial,
 		Timeout:     time.Second,
 		Now:         fixedProbeTime,
@@ -1093,8 +1104,8 @@ func TestActorSeparatedProbePublishesRuntimeLogsForDeviceAndAppActors(t *testing
 		DeviceID:    "rtk-0041",
 		DeviceType:  "light",
 		Brandname:   "RTK",
-		DeviceToken: "device-token",
-		AppToken:    "app-token",
+		DeviceToken: testMQTTToken("device"),
+		AppToken:    testMQTTToken("app"),
 		Dial:        broker.Dial,
 		Timeout:     time.Second,
 		Now:         fixedProbeTime,
@@ -1126,11 +1137,11 @@ func TestSustainedShadowCommandPublishesRuntimeLogsForServerCorrelation(t *testi
 		DeviceType:  "light",
 		Brandname:   "RTK",
 		RunID:       "run-sustained-logs",
-		DeviceToken: "device-token",
+		DeviceToken: testMQTTToken("device"),
 		Dial:        broker.TLSDial,
 		Timeout:     time.Second,
 		Now:         fixedProbeTime,
-	}, "device", "rtk-0041", "device-token")
+	}, "device", testMQTTToken("device"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1155,7 +1166,7 @@ func TestSustainedShadowCommandPublishesRuntimeLogsForServerCorrelation(t *testi
 		Conn:            deviceConn,
 		Reader:          reader,
 		MQTTTarget:      mqttEndpointTarget{Host: host, Port: port},
-		AppLoginManager: newAccountLoginTokenManager("", "", userCredential{}, tokenBundle{AccessToken: "app-token"}),
+		AppLoginManager: newAccountLoginTokenManager("", "", userCredential{}, tokenBundle{AccessToken: testMQTTToken("app")}),
 	}, "RTK", "run-sustained-logs", "", &totals)
 	if err != nil {
 		t.Fatal(err)
@@ -1208,11 +1219,11 @@ func TestSustainedShadowCommandCanDisableRuntimeLogs(t *testing.T) {
 		DeviceType:  "light",
 		Brandname:   "RTK",
 		RunID:       "run-no-runtime-logs",
-		DeviceToken: "device-token",
+		DeviceToken: testMQTTToken("device"),
 		Dial:        broker.TLSDial,
 		Timeout:     time.Second,
 		Now:         fixedProbeTime,
-	}, "device", "rtk-0041", "device-token")
+	}, "device", testMQTTToken("device"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1237,7 +1248,7 @@ func TestSustainedShadowCommandCanDisableRuntimeLogs(t *testing.T) {
 		Conn:            deviceConn,
 		Reader:          reader,
 		MQTTTarget:      mqttEndpointTarget{Host: host, Port: port},
-		AppLoginManager: newAccountLoginTokenManager("", "", userCredential{}, tokenBundle{AccessToken: "app-token"}),
+		AppLoginManager: newAccountLoginTokenManager("", "", userCredential{}, tokenBundle{AccessToken: testMQTTToken("app")}),
 	}, "RTK", "run-no-runtime-logs", "", &totals, sustainedCommandContext{DisableRuntimeLogs: true})
 	if err != nil {
 		t.Fatal(err)
@@ -1265,11 +1276,11 @@ func TestSustainedShadowCommandFailsBeforeDeltaWhenAcceptedIsMissing(t *testing.
 		DeviceType:  "light",
 		Brandname:   "RTK",
 		RunID:       "run-missing-accepted",
-		DeviceToken: "device-token",
+		DeviceToken: testMQTTToken("device"),
 		Dial:        broker.TLSDial,
 		Timeout:     time.Second,
 		Now:         fixedProbeTime,
-	}, "device", "rtk-0041", "device-token")
+	}, "device", testMQTTToken("device"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1294,7 +1305,7 @@ func TestSustainedShadowCommandFailsBeforeDeltaWhenAcceptedIsMissing(t *testing.
 		Conn:            deviceConn,
 		Reader:          reader,
 		MQTTTarget:      mqttEndpointTarget{Host: host, Port: port},
-		AppLoginManager: newAccountLoginTokenManager("", "", userCredential{}, tokenBundle{AccessToken: "app-token"}),
+		AppLoginManager: newAccountLoginTokenManager("", "", userCredential{}, tokenBundle{AccessToken: testMQTTToken("app")}),
 	}, "RTK", "run-missing-accepted", "", time.Now().Add(250*time.Millisecond), &totals)
 	if err == nil {
 		t.Fatal("runSustainedShadowCommandUntil succeeded without shadow accepted")
@@ -1350,7 +1361,7 @@ func TestSustainedActorsUseLongMQTTKeepAlive(t *testing.T) {
 	defer broker.Close()
 	certPEM, keyPEM, _ := testAppMaterial(t, "rtk-0041")
 	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, map[string]string{"access_token": "device-token"})
+		writeJSON(t, w, map[string]string{"access_token": testMQTTToken("device")})
 	}))
 	defer tokenServer.Close()
 	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
@@ -1380,7 +1391,7 @@ func TestSustainedActorsUseLongMQTTKeepAlive(t *testing.T) {
 		t.Fatalf("unexpected sustained device phase counters: %#v", totals)
 	}
 
-	clientID := fmt.Sprintf("rtk-e2e-run-sustained-keepalive-rtk-0041-device-%d", os.Getpid())
+	clientID := "mqtt-device-test-device"
 	if got := broker.KeepAlive(clientID); got != sustainedMQTTKeepAliveSeconds {
 		t.Fatalf("sustained device keepalive = %d, want %d", got, sustainedMQTTKeepAliveSeconds)
 	}
@@ -1445,14 +1456,14 @@ func TestRuntimeLogRecorderQoS1WaitsForPubAck(t *testing.T) {
 
 func TestActorSeparatedProbeFailsWhenAppMQTTAuthRejected(t *testing.T) {
 	broker := newFakeMQTTBroker(t)
-	broker.RejectUsername = "app-user:rtk-0041"
+	broker.RejectUsername = "test-brand-cloud"
 	defer broker.Close()
 	probe := mqttActorProbe{
 		DeviceID:    "rtk-0041",
 		DeviceType:  "light",
 		Brandname:   "RTK",
-		DeviceToken: "device-token",
-		AppToken:    "app-token",
+		DeviceToken: testMQTTToken("device"),
+		AppToken:    testMQTTToken("app"),
 		Dial:        broker.Dial,
 		Timeout:     time.Second,
 		Now:         fixedProbeTime,
@@ -1899,7 +1910,7 @@ func TestStagedSustainedLoadRunsPartialShadowActionWhenTargetMissed(t *testing.T
 	defer broker.Close()
 	deviceCertPEM, deviceKeyPEM, _ := testAppMaterial(t, "rtk-0041")
 	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, map[string]string{"access_token": "load-test-token"})
+		writeJSON(t, w, map[string]string{"access_token": testMQTTToken("device")})
 	}))
 	defer tokenServer.Close()
 	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
@@ -1918,7 +1929,7 @@ func TestStagedSustainedLoadRunsPartialShadowActionWhenTargetMissed(t *testing.T
 		"run-partial-shadow",
 		tokenServer.URL,
 		[]mqttEndpointTarget{{Host: host, Port: port}},
-		map[string]*accountLoginTokenManager{"user@example.test": newAccountLoginTokenManager("", "", userCredential{}, tokenBundle{AccessToken: "app-token"})},
+		map[string]*accountLoginTokenManager{"user@example.test": newAccountLoginTokenManager("", "", userCredential{}, tokenBundle{AccessToken: testMQTTToken("app")})},
 		20260616,
 		loadOptions{Concurrency: 1, CommandRatePerDevicePerDay: "86400000"},
 		[]sustainedStage{{Name: "partial", ConnectedTarget: 2, DurationSeconds: 1}},
@@ -2031,8 +2042,8 @@ func TestActorSeparatedProbeRecordsTraceChain(t *testing.T) {
 		DeviceID:    "rtk-0041",
 		DeviceType:  "light",
 		Brandname:   "RTK",
-		DeviceToken: "device-token",
-		AppToken:    "app-token",
+		DeviceToken: testMQTTToken("device"),
+		AppToken:    testMQTTToken("app"),
 		Dial:        broker.Dial,
 		Timeout:     time.Second,
 		Now:         fixedProbeTime,

@@ -448,6 +448,21 @@ baseline.
 All simulated devices use issued device tokens and MQTT. Device certificates
 from the env-root are used only for token bootstrap.
 
+### Tenant-aware MQTT and runtime-log evidence
+
+Load generators publish and subscribe only to logical topics such as
+`devices/{device_id}/...` and `$vc/devices/{device_id}/shadow/...`. They never
+put `_bc/{brand_cloud_id}` into a client topic: EMQX derives that physical
+namespace from the JWT-backed MQTT connection identity. The issued Video Cloud
+token supplies the MQTT username and client-id base; the token is never copied
+to reports or traces.
+
+`SUCCESS` also requires structured central-logger runtime-log evidence. Each
+runtime log must include device id, stream id, positive sequence, source, and
+message so the runner can correlate it with the shadow command. Missing or
+unparseable logger evidence is `INCOMPLETE`; a tenant/device mismatch is
+`FAIL`.
+
 ### Online Steady Devices
 
 - Connect to MQTT and remain online during the run window.
