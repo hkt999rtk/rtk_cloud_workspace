@@ -147,6 +147,8 @@ type WebRTCMediaTotals struct {
 	H264BytesReceived   int64              `json:"h264_bytes_received,omitempty"`
 	OpusPacketsReceived int64              `json:"opus_packets_received,omitempty"`
 	OpusBytesReceived   int64              `json:"opus_bytes_received,omitempty"`
+	FailureReasons      map[string]int     `json:"failure_reasons,omitempty"`
+	SenderFailurePhases map[string]int     `json:"sender_failure_phases,omitempty"`
 	Startup             VideoStartupTotals `json:"video_startup_latency,omitempty"`
 }
 
@@ -800,6 +802,8 @@ func videoEvidenceFromLoadtestJSON(raw []byte) (VideoEvidence, error) {
 			H264BytesReceived   int64              `json:"h264_bytes_received"`
 			OpusPacketsReceived int64              `json:"opus_packets_received"`
 			OpusBytesReceived   int64              `json:"opus_bytes_received"`
+			FailureReasons      map[string]int     `json:"failure_reasons"`
+			SenderFailurePhases map[string]int     `json:"sender_failure_phases"`
 			TimeToFirstRTPP95MS int64              `json:"time_to_first_rtp_p95_ms"`
 			ICEConnectedP95MS   int64              `json:"ice_connected_p95_ms"`
 			Startup             VideoStartupTotals `json:"video_startup_latency"`
@@ -864,6 +868,8 @@ func videoEvidenceFromLoadtestJSON(raw []byte) (VideoEvidence, error) {
 			H264BytesReceived:   payload.WebRTCMedia.H264BytesReceived,
 			OpusPacketsReceived: payload.WebRTCMedia.OpusPacketsReceived,
 			OpusBytesReceived:   payload.WebRTCMedia.OpusBytesReceived,
+			FailureReasons:      cloneStringIntMap(payload.WebRTCMedia.FailureReasons),
+			SenderFailurePhases: cloneStringIntMap(payload.WebRTCMedia.SenderFailurePhases),
 			Startup:             payload.WebRTCMedia.Startup,
 		},
 		TURN: TURNEvidence{
@@ -945,7 +951,7 @@ func relayCandidateSampleCounts(icePolicy string, samples []struct {
 		if local == "" && remote == "" {
 			continue
 		}
-		if isRelayCandidateType(local) && isRelayCandidateType(remote) {
+		if isRelayCandidateType(local) || isRelayCandidateType(remote) {
 			relaySamples++
 		} else {
 			nonRelaySamples++
@@ -1020,6 +1026,8 @@ func mergeVideoStepEvidence(steps []VideoStepEvidence) VideoEvidence {
 		merged.WebRTCMedia.H264BytesReceived += step.WebRTCMedia.H264BytesReceived
 		merged.WebRTCMedia.OpusPacketsReceived += step.WebRTCMedia.OpusPacketsReceived
 		merged.WebRTCMedia.OpusBytesReceived += step.WebRTCMedia.OpusBytesReceived
+		mergeStringIntMapInto(&merged.WebRTCMedia.FailureReasons, step.WebRTCMedia.FailureReasons)
+		mergeStringIntMapInto(&merged.WebRTCMedia.SenderFailurePhases, step.WebRTCMedia.SenderFailurePhases)
 		merged.WebRTCMedia.Startup = mergeVideoStartupTotals(merged.WebRTCMedia.Startup, step.WebRTCMedia.Startup)
 		merged.TURN.RegistryAvailable = merged.TURN.RegistryAvailable || step.TURN.RegistryAvailable
 		merged.TURN.CoturnAvailable = merged.TURN.CoturnAvailable || step.TURN.CoturnAvailable
@@ -1562,6 +1570,36 @@ func addInt64MapTotals(left, right map[string]int64) map[string]int64 {
 	return merged
 }
 
+func cloneStringIntMap(values map[string]int) map[string]int {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]int, len(values))
+	for key, value := range values {
+		if value != 0 {
+			out[key] = value
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func mergeStringIntMapInto(dst *map[string]int, src map[string]int) {
+	if len(src) == 0 {
+		return
+	}
+	if *dst == nil {
+		*dst = map[string]int{}
+	}
+	for key, value := range src {
+		if value != 0 {
+			(*dst)[key] += value
+		}
+	}
+}
+
 func connectSuccessPercent(totals DeviceMQTTTotals) float64 {
 	if totals.ConnectAttempts <= 0 {
 		return 0
@@ -1885,12 +1923,13 @@ func evaluateRunOutcome(plan Plan, evidence ServerEvidence, stages []StageResult
 	if len(videoEvidenceValues) > 0 {
 		videoEvidence = videoEvidenceValues[0]
 	}
+	videoOnlyRun := plan.VideoEnabled() && hasVideoEvidence(videoEvidence) && len(stages) == 0
 
 	if !evidence.Complete {
 		incomplete = true
 		reasons = append(reasons, "Missing server evidence")
 	}
-	if !shadowEvidenceComplete(stages) {
+	if !videoOnlyRun && !shadowEvidenceComplete(stages) {
 		incomplete = true
 		reasons = append(reasons, "Missing IoT Device Shadow evidence")
 	}
@@ -1916,34 +1955,36 @@ func evaluateRunOutcome(plan Plan, evidence ServerEvidence, stages []StageResult
 			reasons = append(reasons, reason)
 		}
 	}
-	missingTypes := missingDeviceTypeEvidence(plan, stages)
-
-	switch strings.ToLower(strings.TrimSpace(correlation.Status)) {
-	case "pass":
-	case "fail":
-		fail = true
-		reasons = append(reasons, "Server/client counter correlation mismatch")
-	case "":
-		incomplete = true
-		reasons = append(reasons, "Server/client counter correlation is incomplete")
-	default:
-		incomplete = true
-		if len(correlation.Reasons) == 0 {
+	missingTypes := []string{}
+	if !videoOnlyRun {
+		missingTypes = missingDeviceTypeEvidence(plan, stages)
+		switch strings.ToLower(strings.TrimSpace(correlation.Status)) {
+		case "pass":
+		case "fail":
+			fail = true
+			reasons = append(reasons, "Server/client counter correlation mismatch")
+		case "":
 			reasons = append(reasons, "Server/client counter correlation is incomplete")
+			incomplete = true
+		default:
+			incomplete = true
+			if len(correlation.Reasons) == 0 {
+				reasons = append(reasons, "Server/client counter correlation is incomplete")
+			}
+			for _, reason := range correlation.Reasons {
+				reasons = append(reasons, "Server/client counter correlation incomplete: "+reason)
+			}
 		}
-		for _, reason := range correlation.Reasons {
-			reasons = append(reasons, "Server/client counter correlation incomplete: "+reason)
-		}
-	}
 
-	switch strings.ToLower(strings.TrimSpace(runtimeLogCorrelation.Status)) {
-	case "", "pass", "skipped":
-	case "fail":
-		fail = true
-		reasons = append(reasons, "Runtime log stream correlation mismatch")
-	default:
-		incomplete = true
-		reasons = append(reasons, "Runtime log stream correlation is incomplete")
+		switch strings.ToLower(strings.TrimSpace(runtimeLogCorrelation.Status)) {
+		case "", "pass", "skipped":
+		case "fail":
+			fail = true
+			reasons = append(reasons, "Runtime log stream correlation mismatch")
+		default:
+			incomplete = true
+			reasons = append(reasons, "Runtime log stream correlation is incomplete")
+		}
 	}
 
 	if !incomplete {

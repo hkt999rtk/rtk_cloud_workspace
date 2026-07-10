@@ -2070,11 +2070,29 @@ func collectLokiWebRTCTraceEvidence(envRoot string, runID string, windowStart st
 	if until.Before(since) {
 		until = since.Add(30 * time.Minute)
 	}
-	lines, err := queryLokiLinesWithLimitFallback(baseURL, `{filename=~".*video-cloud-api.*"} |= "`+escapeLogQLLiteral(runID)+`"`, since, until, 10000, 5000, 1000, 500, 250)
+	baseQuery := `{filename=~".*video-cloud-api.*"} |= "` + escapeLogQLLiteral(runID) + `"`
+	lines, err := queryLokiLinesWithLimitFallback(baseURL, baseQuery, since, until, 50000, 25000, 10000, 5000, 1000, 500, 250)
 	if err != nil {
 		return EvidenceSource{Available: false, Optional: true, Detail: redact(err.Error())}, "loki_webrtc_trace evidence probe failed: " + err.Error()
 	}
 	counters := lokiWebRTCTraceCounters(runID, lines)
+	if shouldBackfillLokiWebRTCTraceEvents(counters, len(lines)) {
+		backfillEvents := lokiWebRTCTraceBackfillEvents(counters)
+		backfilled := []string{}
+		if len(backfillEvents) != len(lokiWebRTCTraceEventNames()) {
+			backfilled = append(backfilled, lines...)
+		}
+		for _, event := range backfillEvents {
+			eventQuery := baseQuery + ` |= "` + escapeLogQLLiteral(`"event":"`+event+`"`) + `"`
+			eventLines, err := queryLokiLinesWithLimitFallback(baseURL, eventQuery, since, until, 10000, 5000, 1000, 500, 250)
+			if err != nil {
+				continue
+			}
+			backfilled = append(backfilled, eventLines...)
+		}
+		lines = dedupeLokiLines(backfilled)
+		counters = lokiWebRTCTraceCounters(runID, lines)
+	}
 	if len(lines) == 0 || totalCounterValues(counters) == 0 {
 		return EvidenceSource{
 			Available: false,
@@ -2210,8 +2228,90 @@ func queryLokiLines(baseURL string, query string, since time.Time, until time.Ti
 	return lines, nil
 }
 
-func lokiWebRTCTraceCounters(runID string, lines []string) map[string]int64 {
-	events := []string{
+func shouldBackfillLokiWebRTCTraceEvents(counters map[string]int64, matchedLines int) bool {
+	if matchedLines < 900 {
+		return false
+	}
+	maxCritical := int64(0)
+	minCritical := int64(-1)
+	for _, event := range []string{
+		"create_started",
+		"session_created",
+		"offer_delivered",
+		"answer_wait_store_completed",
+		"answer_succeeded",
+		"close_succeeded",
+	} {
+		value := counters["loki_webrtc_trace."+event+".events"]
+		if value == 0 {
+			return true
+		}
+		if value > maxCritical {
+			maxCritical = value
+		}
+		if minCritical < 0 || value < minCritical {
+			minCritical = value
+		}
+	}
+	if minCritical*2 < maxCritical {
+		return true
+	}
+	return false
+}
+
+func lokiWebRTCTraceBackfillEvents(counters map[string]int64) []string {
+	if hasImbalancedLokiWebRTCCriticalEvents(counters) {
+		return lokiWebRTCTraceEventNames()
+	}
+	events := []string{}
+	for _, event := range lokiWebRTCTraceEventNames() {
+		if counters["loki_webrtc_trace."+event+".events"] == 0 {
+			events = append(events, event)
+		}
+	}
+	return events
+}
+
+func hasImbalancedLokiWebRTCCriticalEvents(counters map[string]int64) bool {
+	maxCritical := int64(0)
+	minCritical := int64(-1)
+	for _, event := range []string{
+		"create_started",
+		"session_created",
+		"offer_delivered",
+		"answer_wait_store_completed",
+		"answer_succeeded",
+		"close_succeeded",
+	} {
+		value := counters["loki_webrtc_trace."+event+".events"]
+		if value == 0 {
+			return false
+		}
+		if value > maxCritical {
+			maxCritical = value
+		}
+		if minCritical < 0 || value < minCritical {
+			minCritical = value
+		}
+	}
+	return minCritical*2 < maxCritical
+}
+
+func dedupeLokiLines(lines []string) []string {
+	seen := map[string]bool{}
+	deduped := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if seen[line] {
+			continue
+		}
+		seen[line] = true
+		deduped = append(deduped, line)
+	}
+	return deduped
+}
+
+func lokiWebRTCTraceEventNames() []string {
+	return []string{
 		"ice_preflight_started",
 		"ice_servers_resolved",
 		"ice_servers_resolve_started",
@@ -2236,6 +2336,10 @@ func lokiWebRTCTraceCounters(runID string, lines []string) map[string]int64 {
 		"close_succeeded",
 		"request_failed",
 	}
+}
+
+func lokiWebRTCTraceCounters(runID string, lines []string) map[string]int64 {
+	events := lokiWebRTCTraceEventNames()
 	counters := map[string]int64{}
 	durations := map[string][]int64{}
 	sessions := map[string]map[string]bool{}

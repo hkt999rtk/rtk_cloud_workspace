@@ -379,6 +379,8 @@ func TestReportRendersVideoAndTURNEvidence(t *testing.T) {
 				BytesReceived:       1500000,
 				H264PacketsReceived: 3000,
 				H264BytesReceived:   1500000,
+				FailureReasons:      map[string]int{"no_rtp": 3},
+				SenderFailurePhases: map[string]int{"wait_peer_connected": 2},
 			},
 			TURN: TURNEvidence{
 				RegistryAvailable: true,
@@ -422,6 +424,10 @@ func TestReportRendersVideoAndTURNEvidence(t *testing.T) {
 		"## WebRTC Media Totals",
 		"First RTP p95: 180 ms",
 		"H.264 packets received: 3000",
+		"Failure reasons:",
+		"no_rtp: 3",
+		"Sender failure phases:",
+		"wait_peer_connected: 2",
 		"## Video Startup Latency",
 		"H.264 access unit samples: 100",
 		"App request -> first H.264 access unit p95: 185 ms",
@@ -483,6 +489,31 @@ func TestVideoEvidenceUsesServerTURNEvidenceWhenRunnerOmitsTURN(t *testing.T) {
 	}
 }
 
+func TestRelayOnlyCandidateEvidenceAcceptsOneSidedRelayPair(t *testing.T) {
+	raw := []byte(`{
+		"config": {"webrtc_ice_policy": "relay", "virtual_viewers": 2, "duration_ms": 30000},
+		"webrtc": {
+			"success_rate": 1,
+			"create": {"operations": 2, "successes": 2},
+			"setup": {"operations": 2, "successes": 2},
+			"close": {"operations": 2, "successes": 2}
+		},
+		"webrtc_media": {"attempts": 2, "successes": 2, "ice_connected_p95_ms": 2100, "time_to_first_rtp_p95_ms": 2125},
+		"turn_evidence": {"registry_available": true, "active_nodes": 1, "coturn_available": true, "allocations": 2, "active_sessions": 2, "api_turn_registry_lookup_succeeded": 1, "api_dynamic_turn_count": 1, "api_turn_registry_node_count": 1},
+		"video_startup_latency": [
+			{"ice_policy":"relay","selected_local_candidate_type":"relay","selected_remote_candidate_type":"prflx"},
+			{"ice_policy":"relay","selected_local_candidate_type":"prflx","selected_remote_candidate_type":"relay"}
+		]
+	}`)
+	video, err := videoEvidenceFromLoadtestJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if video.RelayCandidateSamples != 2 || video.NonRelayCandidateSamples != 0 {
+		t.Fatalf("relay/non-relay samples = %d/%d, want 2/0", video.RelayCandidateSamples, video.NonRelayCandidateSamples)
+	}
+}
+
 func TestVideoEvidenceDerivesSetupFromMediaWhenRunnerOmitsSetupTotals(t *testing.T) {
 	raw := []byte(`{
 		"webrtc": {
@@ -531,6 +562,8 @@ func TestVideoEvidenceParsesStartupLatencySummary(t *testing.T) {
 			"attempts": 2,
 			"successes": 2,
 			"time_to_first_rtp_p95_ms": 210,
+			"failure_reasons": {"no_rtp": 2},
+			"sender_failure_phases": {"wait_peer_connected": 2},
 			"video_startup_latency": {
 				"samples": 2,
 				"h264_access_unit_samples": 2,
@@ -569,6 +602,12 @@ func TestVideoEvidenceParsesStartupLatencySummary(t *testing.T) {
 	}
 	if video.WebRTCMedia.Startup.BreakdownP95.ICECheckMS != 90 || video.WebRTCMedia.Startup.BreakdownP95.ICEConnectedSinceSessionStartMS != 230 {
 		t.Fatalf("ice breakdown = %+v, want ice_check=90 and connected_since_session_start=230", video.WebRTCMedia.Startup.BreakdownP95)
+	}
+	if got := video.WebRTCMedia.SenderFailurePhases["wait_peer_connected"]; got != 2 {
+		t.Fatalf("sender failure phases = %#v, want wait_peer_connected=2", video.WebRTCMedia.SenderFailurePhases)
+	}
+	if got := video.WebRTCMedia.FailureReasons["no_rtp"]; got != 2 {
+		t.Fatalf("failure reasons = %#v, want no_rtp=2", video.WebRTCMedia.FailureReasons)
 	}
 }
 

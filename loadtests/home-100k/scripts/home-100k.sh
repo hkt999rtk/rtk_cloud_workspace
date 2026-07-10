@@ -978,6 +978,9 @@ ensure_video_loadtest_tokens() {
       --request-timeout "$video_loadtest_token_request_timeout" \
       --out-env "$token_env"
     )
+    if [[ -n "$video_cloud_token_url" ]]; then
+      token_args+=(--base-url "$video_cloud_token_url")
+    fi
     if [[ -n "$brand_plan" ]]; then
       token_args+=(--brand-plan "$brand_plan")
     fi
@@ -1013,6 +1016,9 @@ ensure_video_loadtest_tokens_for_ids() {
     --request-timeout "$video_loadtest_token_request_timeout"
     --out-env "$token_env"
   )
+  if [[ -n "$video_cloud_token_url" ]]; then
+    token_args+=(--base-url "$video_cloud_token_url")
+  fi
   if [[ -n "$brand_plan" ]]; then
     token_args+=(--brand-plan "$brand_plan")
   fi
@@ -1963,8 +1969,17 @@ run_video_live_workflow() {
   set_phase "collect-server-evidence"
   export_kubeconfig_if_available
   run_home100k collect-server-evidence "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --live || true
+  set_phase "aggregate"
+  run_home100k aggregate "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" || workflow_rc=$?
+  generate_report_from_artifacts
+  report_status="$(current_report_status)"
+  report_result="$(current_report_result)"
+  if [[ "$workflow_rc" -eq 0 && ( "$report_status" != "COMPLETE" || "$report_result" != "SUCCESS" ) ]]; then
+    workflow_rc=1
+    echo "report status is $report_status result is $report_result; preserving VMs for investigation" >&2
+  fi
   cleanup_rc=0
-  if [[ "$shutdown_on_error" == "1" ]]; then
+  if should_shutdown_after_workflow; then
     set_phase "shutdown-vms"
     shutdown_live_vms || cleanup_rc=$?
   else

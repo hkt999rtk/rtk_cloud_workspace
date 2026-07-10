@@ -1447,33 +1447,56 @@ func (r *Runner) sendPreparedWebRTCMedia(ctx context.Context, cfg Config, device
 		elapsed := time.Since(start).Milliseconds()
 		startupEvidence := senderStartupEvidence(senderQueueWaitMS, evidence.Video.ICEMS, evidence.Video.TimeToFirstMS)
 		if err != nil {
-			return []Operation{{Actor: ActorDevice, Name: "webrtc_media_ice_connected", DeviceID: deviceID, Success: false, ErrorClass: ClassWebRTCMedia, ErrorDetail: redactDetail(err.Error()), Evidence: appendEvidence(webRTCMediaDeviceFailureEvidence(cfg, msg.SessionID, deviceID, answerer.Snapshot(), avSenderEvidence(evidence)), startupEvidence)}}
+			return []Operation{{Actor: ActorDevice, Name: "webrtc_media_ice_connected", DeviceID: deviceID, Success: false, ErrorClass: ClassWebRTCMedia, ErrorDetail: redactDetail(err.Error()), Evidence: appendEvidence(appendEvidence(webRTCMediaDeviceFailureEvidence(cfg, msg.SessionID, deviceID, answerer.Snapshot(), avSenderEvidence(evidence)), startupEvidence), senderFailurePhaseEvidence(err))}}
 		}
 		iceMS := evidence.Video.ICEMS
 		firstRTPMS := iceMS + evidence.Video.TimeToFirstMS
+		completedEvidence := appendEvidence(startupEvidence, "sender_controller_state=completed")
 		return []Operation{
-			{Actor: ActorDevice, Name: "webrtc_media_ice_connected", DeviceID: deviceID, Success: true, LatencyMS: iceMS, Evidence: appendEvidence(appendEvidence(fmt.Sprintf("run_id=%s session_id=%s device_id=%s ice_connected_ms=%d ice_policy=%s", cfg.RunID, msg.SessionID, deviceID, iceMS, normalizedWebRTCICEPolicy(cfg.WebRTCICEPolicy)), avSenderEvidence(evidence)), startupEvidence)},
-			{Actor: ActorDevice, Name: "webrtc_media_first_rtp", DeviceID: deviceID, Success: true, LatencyMS: firstRTPMS, Evidence: appendEvidence(appendEvidence(fmt.Sprintf("run_id=%s session_id=%s device_id=%s time_to_first_rtp_ms=%d first_rtp_after_ice_ms=%d", cfg.RunID, msg.SessionID, deviceID, firstRTPMS, evidence.Video.TimeToFirstMS), avSenderEvidence(evidence)), startupEvidence)},
-			{Actor: ActorDevice, Name: "webrtc_media_send", DeviceID: deviceID, Success: true, LatencyMS: elapsed, Evidence: appendEvidence(fmt.Sprintf("run_id=%s session_id=%s device_id=%s %s", cfg.RunID, msg.SessionID, deviceID, avSenderEvidence(evidence)), startupEvidence)},
+			{Actor: ActorDevice, Name: "webrtc_media_ice_connected", DeviceID: deviceID, Success: true, LatencyMS: iceMS, Evidence: appendEvidence(appendEvidence(fmt.Sprintf("run_id=%s session_id=%s device_id=%s ice_connected_ms=%d ice_policy=%s", cfg.RunID, msg.SessionID, deviceID, iceMS, normalizedWebRTCICEPolicy(cfg.WebRTCICEPolicy)), avSenderEvidence(evidence)), completedEvidence)},
+			{Actor: ActorDevice, Name: "webrtc_media_first_rtp", DeviceID: deviceID, Success: true, LatencyMS: firstRTPMS, Evidence: appendEvidence(appendEvidence(fmt.Sprintf("run_id=%s session_id=%s device_id=%s time_to_first_rtp_ms=%d first_rtp_after_ice_ms=%d", cfg.RunID, msg.SessionID, deviceID, firstRTPMS, evidence.Video.TimeToFirstMS), avSenderEvidence(evidence)), completedEvidence)},
+			{Actor: ActorDevice, Name: "webrtc_media_send", DeviceID: deviceID, Success: true, LatencyMS: elapsed, Evidence: appendEvidence(fmt.Sprintf("run_id=%s session_id=%s device_id=%s %s", cfg.RunID, msg.SessionID, deviceID, avSenderEvidence(evidence)), completedEvidence)},
 		}
 	}
 	evidence, err := answerer.SendH264RTP(ctx, cfg.WebRTCMediaDuration)
 	elapsed := time.Since(start).Milliseconds()
 	startupEvidence := senderStartupEvidence(senderQueueWaitMS, evidence.Evidence.ICEMS, evidence.Evidence.TimeToFirstMS)
 	if err != nil {
-		return []Operation{{Actor: ActorDevice, Name: "webrtc_media_ice_connected", DeviceID: deviceID, Success: false, ErrorClass: ClassWebRTCMedia, ErrorDetail: redactDetail(err.Error()), Evidence: appendEvidence(webRTCMediaDeviceFailureEvidence(cfg, msg.SessionID, deviceID, answerer.Snapshot(), h264SenderEvidence(evidence.Evidence)), startupEvidence)}}
+		return []Operation{{Actor: ActorDevice, Name: "webrtc_media_ice_connected", DeviceID: deviceID, Success: false, ErrorClass: ClassWebRTCMedia, ErrorDetail: redactDetail(err.Error()), Evidence: appendEvidence(appendEvidence(webRTCMediaDeviceFailureEvidence(cfg, msg.SessionID, deviceID, answerer.Snapshot(), h264SenderEvidence(evidence.Evidence)), startupEvidence), senderFailurePhaseEvidence(err))}}
 	}
 	iceMS := evidence.Evidence.ICEMS
 	firstRTPMS := iceMS + evidence.Evidence.TimeToFirstMS
+	completedEvidence := appendEvidence(startupEvidence, "sender_controller_state=completed")
 	return []Operation{
-		{Actor: ActorDevice, Name: "webrtc_media_ice_connected", DeviceID: deviceID, Success: true, LatencyMS: iceMS, Evidence: appendEvidence(appendEvidence(fmt.Sprintf("run_id=%s session_id=%s device_id=%s ice_connected_ms=%d ice_policy=%s", cfg.RunID, msg.SessionID, deviceID, iceMS, normalizedWebRTCICEPolicy(cfg.WebRTCICEPolicy)), h264SenderEvidence(evidence.Evidence)), startupEvidence)},
-		{Actor: ActorDevice, Name: "webrtc_media_first_rtp", DeviceID: deviceID, Success: true, LatencyMS: firstRTPMS, Evidence: appendEvidence(appendEvidence(fmt.Sprintf("run_id=%s session_id=%s device_id=%s time_to_first_rtp_ms=%d first_rtp_after_ice_ms=%d", cfg.RunID, msg.SessionID, deviceID, firstRTPMS, evidence.Evidence.TimeToFirstMS), h264SenderEvidence(evidence.Evidence)), startupEvidence)},
-		{Actor: ActorDevice, Name: "webrtc_media_send", DeviceID: deviceID, Success: true, LatencyMS: elapsed, Evidence: appendEvidence(fmt.Sprintf("run_id=%s session_id=%s device_id=%s %s", cfg.RunID, msg.SessionID, deviceID, h264SenderEvidence(evidence.Evidence)), startupEvidence)},
+		{Actor: ActorDevice, Name: "webrtc_media_ice_connected", DeviceID: deviceID, Success: true, LatencyMS: iceMS, Evidence: appendEvidence(appendEvidence(fmt.Sprintf("run_id=%s session_id=%s device_id=%s ice_connected_ms=%d ice_policy=%s", cfg.RunID, msg.SessionID, deviceID, iceMS, normalizedWebRTCICEPolicy(cfg.WebRTCICEPolicy)), h264SenderEvidence(evidence.Evidence)), completedEvidence)},
+		{Actor: ActorDevice, Name: "webrtc_media_first_rtp", DeviceID: deviceID, Success: true, LatencyMS: firstRTPMS, Evidence: appendEvidence(appendEvidence(fmt.Sprintf("run_id=%s session_id=%s device_id=%s time_to_first_rtp_ms=%d first_rtp_after_ice_ms=%d", cfg.RunID, msg.SessionID, deviceID, firstRTPMS, evidence.Evidence.TimeToFirstMS), h264SenderEvidence(evidence.Evidence)), completedEvidence)},
+		{Actor: ActorDevice, Name: "webrtc_media_send", DeviceID: deviceID, Success: true, LatencyMS: elapsed, Evidence: appendEvidence(fmt.Sprintf("run_id=%s session_id=%s device_id=%s %s", cfg.RunID, msg.SessionID, deviceID, h264SenderEvidence(evidence.Evidence)), completedEvidence)},
 	}
 }
 
 func senderStartupEvidence(senderQueueWaitMS, iceMS, firstWriteAfterICEMS int64) string {
 	return fmt.Sprintf("startup_sender_queue_wait_ms=%d startup_device_ice_wait_ms=%d startup_sender_first_write_after_ice_ms=%d", nonNegativeMS(senderQueueWaitMS), nonNegativeMS(iceMS), nonNegativeMS(firstWriteAfterICEMS))
+}
+
+func senderFailurePhaseEvidence(err error) string {
+	if err == nil {
+		return ""
+	}
+	detail := strings.ToLower(err.Error())
+	phase := "unknown"
+	switch {
+	case strings.Contains(detail, "ice connection timeout"):
+		phase = "wait_ice_connected"
+	case strings.Contains(detail, "peer connection timeout"):
+		phase = "wait_peer_connected"
+	case strings.Contains(detail, "media scheduler"):
+		phase = "scheduler"
+	case strings.Contains(detail, "writertp"), strings.Contains(detail, "write rtp"):
+		phase = "write_rtp"
+	case strings.Contains(detail, "context canceled"), strings.Contains(detail, "context deadline"):
+		phase = "context"
+	}
+	return "sender_controller_state=failed sender_failure_phase=" + phase
 }
 
 func (r *Runner) prepareWebRTCMediaAnswerWithRecorder(ctx context.Context, cfg Config, deviceID string, msg webRTCMediaOfferMessage, recordAnswer func(Operation)) ([]Operation, time.Time, func()) {
@@ -3375,6 +3398,7 @@ func (r *Runner) waitDeviceOwnerWebRTCMediaResultWithStartup(ctx context.Context
 			Success:     false,
 			ErrorClass:  ClassWebRTCMedia,
 			ErrorDetail: "device media result missing",
+			Evidence:    appendEvidence(startup.correlationEvidence(), fmt.Sprintf("device_media_result_missing=true wait_timeout_ms=%d", waitTimeout.Milliseconds())),
 		}}, startup
 	}
 	startup = startup.withDeviceTimings(result.OfferReceivedAt, result.AnswerDoneAt)
@@ -3400,7 +3424,7 @@ func inferDeviceOwnerMediaSendFromReceive(ops []Operation, deviceID, viewerID st
 	op.DeviceID = deviceID
 	op.ViewerID = viewerID
 	op.LatencyMS = receiveOp.LatencyMS
-	op.Evidence = appendEvidence(startup.correlationEvidence(), appendEvidence("inferred_from_viewer_receive=true", receiveOp.Evidence))
+	op.Evidence = appendEvidence(startup.correlationEvidence(), appendEvidence("inferred_from_viewer_receive=true device_media_result_missing=true", receiveOp.Evidence))
 	return []Operation{op}
 }
 
@@ -4928,6 +4952,7 @@ func BuildResult(cfg Config, started, ended time.Time, operations []Operation) *
 	result.WebRTC = summarizeWebRTC(operations, duration)
 	result.WebRTCMedia = summarizeWebRTCMedia(operations)
 	result.VideoStartupLatency = videoStartupLatencySamples(cfg.RunID, operations)
+	result.WebRTCMediaFailures = webRTCMediaFailureSamples(cfg.RunID, operations)
 	applyVideoStartupSummary(&result.WebRTCMedia, result.VideoStartupLatency)
 	result.MQTTIoT = summarizeMQTTIoT(operations, duration)
 	result.CoverageMatrix = BuildCoverageMatrix(cfg, operations)
@@ -5303,7 +5328,7 @@ func summarizeWebRTC(operations []Operation, duration time.Duration) WebRTCMetri
 }
 
 func summarizeWebRTCMedia(operations []Operation) WebRTCMediaMetrics {
-	metrics := WebRTCMediaMetrics{FailuresByClass: map[string]int{}}
+	metrics := WebRTCMediaMetrics{FailuresByClass: map[string]int{}, FailureReasons: map[string]int{}, SenderFailurePhases: map[string]int{}}
 	firstRTPLatencies := make([]int64, 0)
 	iceLatencies := make([]int64, 0)
 	for _, op := range operations {
@@ -5348,7 +5373,19 @@ func summarizeWebRTCMedia(operations []Operation) WebRTCMediaMetrics {
 		if !op.Success && !op.Skipped {
 			metrics.Failures++
 			metrics.FailuresByClass[op.ErrorClass]++
+			if reason := evidenceValue(op.Evidence, "failure_reason"); reason != "" {
+				metrics.FailureReasons[reason]++
+			}
+			if phase := evidenceValue(op.Evidence, "sender_failure_phase"); phase != "" {
+				metrics.SenderFailurePhases[phase]++
+			}
 		}
+	}
+	if len(metrics.FailureReasons) == 0 {
+		metrics.FailureReasons = nil
+	}
+	if len(metrics.SenderFailurePhases) == 0 {
+		metrics.SenderFailurePhases = nil
 	}
 	metrics.TimeToFirstRTPP95MS = percentile(firstRTPLatencies, 95)
 	metrics.ICEConnectedP95MS = percentile(iceLatencies, 95)
@@ -5430,6 +5467,13 @@ func videoStartupLatencySamples(runID string, operations []Operation) []VideoSta
 			SenderFirstWriteAfterPeerMS:          evidenceInt64(op.Evidence, "startup_sender_first_write_after_peer_ms"),
 			FirstRTPAfterICEMS:                   evidenceInt64(op.Evidence, "startup_first_rtp_after_ice_ms"),
 			FirstH264AccessUnitAfterRTPMS:        evidenceInt64(op.Evidence, "startup_first_h264_access_unit_after_rtp_ms"),
+			ReceiverTrackArrivedMS:               evidenceInt64(op.Evidence, "receiver_track_arrived_ms"),
+			ReceiverTrackKind:                    evidenceValue(op.Evidence, "receiver_track_kind"),
+			ReceiverTrackCodec:                   evidenceValue(op.Evidence, "receiver_track_codec"),
+			ReceiverFirstRTPPayloadType:          evidenceInt(op.Evidence, "receiver_first_rtp_payload_type"),
+			ReceiverFirstRTPSequence:             evidenceInt(op.Evidence, "receiver_first_rtp_sequence"),
+			ReceiverFirstRTPTimestamp:            evidenceInt(op.Evidence, "receiver_first_rtp_timestamp"),
+			ReceiverFirstRTPSSRC:                 evidenceInt(op.Evidence, "receiver_first_rtp_ssrc"),
 			SenderFirstWriteSinceSessionMS:       evidenceInt64(op.Evidence, "sender_first_write_since_session_ms"),
 			SenderQueueFullDrops:                 evidenceInt(op.Evidence, "sender_queue_full_drops"),
 			SenderSchedulerQueueFullDrops:        evidenceInt(op.Evidence, "sender_scheduler_queue_full_drops"),
@@ -5491,6 +5535,130 @@ func videoStartupLatencySamples(runID string, operations []Operation) []VideoSta
 		samples = append(samples, sample)
 	}
 	return samples
+}
+
+func webRTCMediaFailureSamples(runID string, operations []Operation) []WebRTCMediaFailureSample {
+	samples := map[string]WebRTCMediaFailureSample{}
+	order := make([]string, 0)
+	ensure := func(op Operation) (string, WebRTCMediaFailureSample, bool) {
+		sessionID := evidenceValue(op.Evidence, "session_id")
+		deviceID := firstNonEmptyString(evidenceValue(op.Evidence, "device_id"), op.DeviceID)
+		viewerID := firstNonEmptyString(evidenceValue(op.Evidence, "viewer_id"), op.ViewerID)
+		key := startupEvidenceKey(sessionID, deviceID, viewerID)
+		if key == "" {
+			return "", WebRTCMediaFailureSample{}, false
+		}
+		sample, ok := samples[key]
+		if !ok {
+			order = append(order, key)
+			sample = WebRTCMediaFailureSample{
+				RunID:     firstNonEmptyString(evidenceValue(op.Evidence, "run_id"), runID),
+				SessionID: sessionID,
+				DeviceID:  deviceID,
+				ViewerID:  viewerID,
+				ICEPolicy: evidenceValue(op.Evidence, "ice_policy"),
+			}
+		}
+		sample.RunID = firstNonEmptyString(sample.RunID, evidenceValue(op.Evidence, "run_id"), runID)
+		sample.SessionID = firstNonEmptyString(sample.SessionID, sessionID)
+		sample.DeviceID = firstNonEmptyString(sample.DeviceID, deviceID)
+		sample.ViewerID = firstNonEmptyString(sample.ViewerID, viewerID)
+		sample.ICEPolicy = firstNonEmptyString(sample.ICEPolicy, evidenceValue(op.Evidence, "ice_policy"))
+		return key, sample, true
+	}
+	for _, op := range operations {
+		if !strings.HasPrefix(op.Name, "webrtc_media_") {
+			continue
+		}
+		key, sample, ok := ensure(op)
+		if !ok {
+			continue
+		}
+		if op.Actor == ActorViewer {
+			mergeViewerMediaFailureEvidence(&sample, op)
+		}
+		if op.Actor == ActorDevice {
+			mergeDeviceMediaFailureEvidence(&sample, op)
+		}
+		samples[key] = sample
+	}
+	out := make([]WebRTCMediaFailureSample, 0)
+	for _, key := range order {
+		sample := samples[key]
+		if len(sample.ViewerFailureOperations) == 0 && len(sample.ViewerFailureReasons) == 0 && sample.DeviceSenderFailurePhase == "" {
+			continue
+		}
+		out = append(out, sample)
+	}
+	return out
+}
+
+func mergeViewerMediaFailureEvidence(sample *WebRTCMediaFailureSample, op Operation) {
+	if sample == nil {
+		return
+	}
+	if !op.Success && !op.Skipped {
+		sample.ViewerFailureOperations = appendUniqueString(sample.ViewerFailureOperations, op.Name)
+		if reason := evidenceValue(op.Evidence, "failure_reason"); reason != "" {
+			sample.ViewerFailureReasons = appendUniqueString(sample.ViewerFailureReasons, reason)
+		}
+		if op.ErrorDetail != "" {
+			sample.ViewerErrorDetails = appendUniqueString(sample.ViewerErrorDetails, op.ErrorDetail)
+		}
+	}
+	sample.ViewerSelectedLocalType = firstNonEmptyString(sample.ViewerSelectedLocalType, evidenceValue(op.Evidence, "selected_local_candidate_type"))
+	sample.ViewerSelectedRemoteType = firstNonEmptyString(sample.ViewerSelectedRemoteType, evidenceValue(op.Evidence, "selected_remote_candidate_type"))
+	sample.ViewerSelectedLocalProtocol = firstNonEmptyString(sample.ViewerSelectedLocalProtocol, evidenceValue(op.Evidence, "selected_local_candidate_protocol"))
+	sample.ViewerSelectedRemoteProtocol = firstNonEmptyString(sample.ViewerSelectedRemoteProtocol, evidenceValue(op.Evidence, "selected_remote_candidate_protocol"))
+	sample.ViewerICEConnectionStates = firstNonEmptyStringSlice(sample.ViewerICEConnectionStates, evidenceCSV(evidenceValue(op.Evidence, "ice_connection_states")))
+	sample.ViewerPeerConnectionStates = firstNonEmptyStringSlice(sample.ViewerPeerConnectionStates, evidenceCSV(evidenceValue(op.Evidence, "peer_connection_states")))
+	sample.ViewerTrackArrivedMS = firstNonZeroInt64(sample.ViewerTrackArrivedMS, evidenceInt64(op.Evidence, "receiver_track_arrived_ms"))
+	sample.ViewerTrackKind = firstNonEmptyString(sample.ViewerTrackKind, evidenceValue(op.Evidence, "receiver_track_kind"))
+	sample.ViewerTrackCodec = firstNonEmptyString(sample.ViewerTrackCodec, evidenceValue(op.Evidence, "receiver_track_codec"))
+	sample.ViewerFirstRTPMS = firstNonZeroInt64(sample.ViewerFirstRTPMS, evidenceInt64(op.Evidence, "receiver_first_rtp_ms"))
+	sample.ViewerFirstRTPPayloadType = firstNonZero(sample.ViewerFirstRTPPayloadType, evidenceInt(op.Evidence, "receiver_first_rtp_payload_type"))
+	sample.ViewerFirstRTPSequence = firstNonZero(sample.ViewerFirstRTPSequence, evidenceInt(op.Evidence, "receiver_first_rtp_sequence"))
+	sample.ViewerFirstRTPTimestamp = firstNonZero(sample.ViewerFirstRTPTimestamp, evidenceInt(op.Evidence, "receiver_first_rtp_timestamp"))
+	sample.ViewerFirstRTPSSRC = firstNonZero(sample.ViewerFirstRTPSSRC, evidenceInt(op.Evidence, "receiver_first_rtp_ssrc"))
+}
+
+func mergeDeviceMediaFailureEvidence(sample *WebRTCMediaFailureSample, op Operation) {
+	if sample == nil {
+		return
+	}
+	if op.Name == "webrtc_media_answer" && op.Success {
+		sample.DeviceAnswerSuccess = true
+	}
+	if op.Name == "webrtc_media_send" && op.Success {
+		sample.DeviceSendSuccess = true
+	}
+	sample.DeviceSenderState = firstNonEmptyString(sample.DeviceSenderState, evidenceValue(op.Evidence, "sender_controller_state"))
+	sample.DeviceSenderFailurePhase = firstNonEmptyString(sample.DeviceSenderFailurePhase, evidenceValue(op.Evidence, "sender_failure_phase"))
+	sample.DeviceSelectedLocalType = firstNonEmptyString(sample.DeviceSelectedLocalType, evidenceValue(op.Evidence, "sender_selected_local_candidate_type"), evidenceValue(op.Evidence, "sender_video_selected_local_candidate_type"), evidenceValue(op.Evidence, "selected_local_candidate_type"))
+	sample.DeviceSelectedRemoteType = firstNonEmptyString(sample.DeviceSelectedRemoteType, evidenceValue(op.Evidence, "sender_selected_remote_candidate_type"), evidenceValue(op.Evidence, "sender_video_selected_remote_candidate_type"), evidenceValue(op.Evidence, "selected_remote_candidate_type"))
+	sample.DeviceSelectedLocalProtocol = firstNonEmptyString(sample.DeviceSelectedLocalProtocol, evidenceValue(op.Evidence, "sender_selected_local_candidate_protocol"), evidenceValue(op.Evidence, "sender_video_selected_local_candidate_protocol"), evidenceValue(op.Evidence, "selected_local_candidate_protocol"))
+	sample.DeviceSelectedRemoteProtocol = firstNonEmptyString(sample.DeviceSelectedRemoteProtocol, evidenceValue(op.Evidence, "sender_selected_remote_candidate_protocol"), evidenceValue(op.Evidence, "sender_video_selected_remote_candidate_protocol"), evidenceValue(op.Evidence, "selected_remote_candidate_protocol"))
+	sample.DeviceICEConnectionStates = firstNonEmptyStringSlice(sample.DeviceICEConnectionStates, evidenceCSV(firstNonEmptyString(evidenceValue(op.Evidence, "sender_ice_connection_states"), evidenceValue(op.Evidence, "sender_video_ice_connection_states"), evidenceValue(op.Evidence, "ice_connection_states"))))
+	sample.DevicePeerConnectionStates = firstNonEmptyStringSlice(sample.DevicePeerConnectionStates, evidenceCSV(firstNonEmptyString(evidenceValue(op.Evidence, "sender_peer_connection_states"), evidenceValue(op.Evidence, "sender_video_peer_connection_states"), evidenceValue(op.Evidence, "peer_connection_states"))))
+	sample.DeviceICEConnectedMS = firstNonZeroInt64(sample.DeviceICEConnectedMS, evidenceInt64(op.Evidence, "startup_device_ice_wait_ms"), int64(evidenceInt(op.Evidence, "sender_ice_ms")), int64(evidenceInt(op.Evidence, "sender_video_ice_ms")))
+	sample.SenderFirstWriteSinceSessionMS = firstNonZeroInt64(sample.SenderFirstWriteSinceSessionMS, evidenceInt64(op.Evidence, "sender_first_write_since_session_ms"), int64(evidenceInt(op.Evidence, "sender_scheduler_first_write_since_session_start_ms")), int64(evidenceInt(op.Evidence, "sender_video_scheduler_first_write_since_session_start_ms")))
+	sample.SenderFirstWriteAfterICEMS = firstNonZeroInt64(sample.SenderFirstWriteAfterICEMS, evidenceInt64(op.Evidence, "startup_sender_first_write_after_ice_ms"))
+	sample.SenderWriteAttempts = firstNonZeroInt64(sample.SenderWriteAttempts, prefixedEvidenceInt64(op.Evidence, "scheduler_write_attempts"))
+	sample.SenderWriteReturns = firstNonZeroInt64(sample.SenderWriteReturns, prefixedEvidenceInt64(op.Evidence, "scheduler_write_returns"))
+	sample.SenderWriteErrors = firstNonZeroInt64(sample.SenderWriteErrors, prefixedEvidenceInt64(op.Evidence, "scheduler_write_errors"))
+	sample.SenderPacketsSent = firstNonZero(sample.SenderPacketsSent, evidenceInt(op.Evidence, "sender_scheduler_packets_sent"), evidenceInt(op.Evidence, "sender_video_scheduler_packets_sent"), evidenceInt(op.Evidence, "scheduler_packets_sent"))
+	sample.SenderBytesSent = firstNonZero(sample.SenderBytesSent, evidenceInt(op.Evidence, "sender_scheduler_bytes_sent"), evidenceInt(op.Evidence, "sender_video_scheduler_bytes_sent"), evidenceInt(op.Evidence, "scheduler_bytes_sent"))
+	sample.SenderSchedulerQueueFullDrops = firstNonZero(sample.SenderSchedulerQueueFullDrops, evidenceInt(op.Evidence, "sender_scheduler_queue_full_drops"), evidenceInt(op.Evidence, "sender_video_scheduler_queue_full_drops"), evidenceInt(op.Evidence, "scheduler_queue_full_drops"))
+	sample.SenderSchedulerDroppedPackets = firstNonZero(sample.SenderSchedulerDroppedPackets, evidenceInt(op.Evidence, "sender_scheduler_dropped_packets"), evidenceInt(op.Evidence, "sender_video_scheduler_dropped_packets"), evidenceInt(op.Evidence, "scheduler_dropped_packets"))
+}
+
+func firstNonEmptyStringSlice(values ...[]string) []string {
+	for _, value := range values {
+		if len(value) > 0 {
+			return value
+		}
+	}
+	return nil
 }
 
 func candidateEvidenceByStartupKey(operations []Operation) map[string]VideoStartupLatencySample {

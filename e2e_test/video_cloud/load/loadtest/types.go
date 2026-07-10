@@ -174,6 +174,7 @@ type Result struct {
 	Errors              map[string]int              `json:"errors"`
 	Operations          []Operation                 `json:"operations"`
 	VideoStartupLatency []VideoStartupLatencySample `json:"video_startup_latency,omitempty"`
+	WebRTCMediaFailures []WebRTCMediaFailureSample  `json:"webrtc_media_failures,omitempty"`
 	Thresholds          ThresholdEvaluation         `json:"thresholds"`
 	Metadata            map[string]string           `json:"metadata,omitempty"`
 }
@@ -276,6 +277,8 @@ type WebRTCMediaMetrics struct {
 	ICEConnectedP95MS                    int64                 `json:"ice_connected_p95_ms"`
 	ReceiveDurationMS                    int64                 `json:"receive_duration_ms"`
 	FailuresByClass                      map[string]int        `json:"failures_by_class"`
+	FailureReasons                       map[string]int        `json:"failure_reasons,omitempty"`
+	SenderFailurePhases                  map[string]int        `json:"sender_failure_phases,omitempty"`
 }
 
 type VideoStartupBreakdown struct {
@@ -405,6 +408,13 @@ type VideoStartupLatencySample struct {
 	SenderFirstWriteAfterPeerMS          int64  `json:"sender_first_write_after_peer_ms,omitempty"`
 	FirstRTPAfterICEMS                   int64  `json:"first_rtp_after_ice_ms"`
 	FirstH264AccessUnitAfterRTPMS        int64  `json:"first_h264_access_unit_after_rtp_ms"`
+	ReceiverTrackArrivedMS               int64  `json:"receiver_track_arrived_ms,omitempty"`
+	ReceiverTrackKind                    string `json:"receiver_track_kind,omitempty"`
+	ReceiverTrackCodec                   string `json:"receiver_track_codec,omitempty"`
+	ReceiverFirstRTPPayloadType          int    `json:"receiver_first_rtp_payload_type,omitempty"`
+	ReceiverFirstRTPSequence             int    `json:"receiver_first_rtp_sequence,omitempty"`
+	ReceiverFirstRTPTimestamp            int    `json:"receiver_first_rtp_timestamp,omitempty"`
+	ReceiverFirstRTPSSRC                 int    `json:"receiver_first_rtp_ssrc,omitempty"`
 	SenderFirstWriteSinceSessionMS       int64  `json:"sender_first_write_since_session_ms,omitempty"`
 	SenderQueueFullDrops                 int    `json:"sender_queue_full_drops,omitempty"`
 	SenderSchedulerQueueFullDrops        int    `json:"sender_scheduler_queue_full_drops,omitempty"`
@@ -413,6 +423,51 @@ type VideoStartupLatencySample struct {
 	SenderSchedulerBytesSent             int    `json:"sender_scheduler_bytes_sent,omitempty"`
 	AppRequestToFirstRTPMS               int64  `json:"app_request_to_first_rtp_ms"`
 	AppRequestToFirstH264AccessUnitMS    int64  `json:"app_request_to_first_h264_access_unit_ms"`
+}
+
+type WebRTCMediaFailureSample struct {
+	RunID                          string   `json:"run_id,omitempty"`
+	SessionID                      string   `json:"session_id,omitempty"`
+	DeviceID                       string   `json:"device_id,omitempty"`
+	ViewerID                       string   `json:"viewer_id,omitempty"`
+	ICEPolicy                      string   `json:"ice_policy,omitempty"`
+	ViewerFailureOperations        []string `json:"viewer_failure_operations,omitempty"`
+	ViewerFailureReasons           []string `json:"viewer_failure_reasons,omitempty"`
+	ViewerErrorDetails             []string `json:"viewer_error_details,omitempty"`
+	ViewerSelectedLocalType        string   `json:"viewer_selected_local_candidate_type,omitempty"`
+	ViewerSelectedRemoteType       string   `json:"viewer_selected_remote_candidate_type,omitempty"`
+	ViewerSelectedLocalProtocol    string   `json:"viewer_selected_local_candidate_protocol,omitempty"`
+	ViewerSelectedRemoteProtocol   string   `json:"viewer_selected_remote_candidate_protocol,omitempty"`
+	ViewerICEConnectionStates      []string `json:"viewer_ice_connection_states,omitempty"`
+	ViewerPeerConnectionStates     []string `json:"viewer_peer_connection_states,omitempty"`
+	ViewerTrackArrivedMS           int64    `json:"viewer_track_arrived_ms,omitempty"`
+	ViewerTrackKind                string   `json:"viewer_track_kind,omitempty"`
+	ViewerTrackCodec               string   `json:"viewer_track_codec,omitempty"`
+	ViewerFirstRTPMS               int64    `json:"viewer_first_rtp_ms,omitempty"`
+	ViewerFirstRTPPayloadType      int      `json:"viewer_first_rtp_payload_type,omitempty"`
+	ViewerFirstRTPSequence         int      `json:"viewer_first_rtp_sequence,omitempty"`
+	ViewerFirstRTPTimestamp        int      `json:"viewer_first_rtp_timestamp,omitempty"`
+	ViewerFirstRTPSSRC             int      `json:"viewer_first_rtp_ssrc,omitempty"`
+	DeviceAnswerSuccess            bool     `json:"device_answer_success,omitempty"`
+	DeviceSendSuccess              bool     `json:"device_send_success,omitempty"`
+	DeviceSenderState              string   `json:"device_sender_state,omitempty"`
+	DeviceSenderFailurePhase       string   `json:"device_sender_failure_phase,omitempty"`
+	DeviceSelectedLocalType        string   `json:"device_selected_local_candidate_type,omitempty"`
+	DeviceSelectedRemoteType       string   `json:"device_selected_remote_candidate_type,omitempty"`
+	DeviceSelectedLocalProtocol    string   `json:"device_selected_local_candidate_protocol,omitempty"`
+	DeviceSelectedRemoteProtocol   string   `json:"device_selected_remote_candidate_protocol,omitempty"`
+	DeviceICEConnectionStates      []string `json:"device_ice_connection_states,omitempty"`
+	DevicePeerConnectionStates     []string `json:"device_peer_connection_states,omitempty"`
+	DeviceICEConnectedMS           int64    `json:"device_ice_connected_ms,omitempty"`
+	SenderFirstWriteSinceSessionMS int64    `json:"sender_first_write_since_session_ms,omitempty"`
+	SenderFirstWriteAfterICEMS     int64    `json:"sender_first_write_after_ice_ms,omitempty"`
+	SenderWriteAttempts            int64    `json:"sender_write_attempts,omitempty"`
+	SenderWriteReturns             int64    `json:"sender_write_returns,omitempty"`
+	SenderWriteErrors              int64    `json:"sender_write_errors,omitempty"`
+	SenderPacketsSent              int      `json:"sender_packets_sent,omitempty"`
+	SenderBytesSent                int      `json:"sender_bytes_sent,omitempty"`
+	SenderSchedulerQueueFullDrops  int      `json:"sender_scheduler_queue_full_drops,omitempty"`
+	SenderSchedulerDroppedPackets  int      `json:"sender_scheduler_dropped_packets,omitempty"`
 }
 
 type Operation struct {
