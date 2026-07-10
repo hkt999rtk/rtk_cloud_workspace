@@ -1482,6 +1482,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: video-cloud-api
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mqtt
       ports:
         - protocol: TCP
           port: 8080
@@ -3896,7 +3899,9 @@ stringData:
   VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN: %q
   VIDEO_CLOUD_LOGGER_TOKEN: %q
   VIDEO_CLOUD_TURN_SHARED_SECRET: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeInternalAuthToken(), lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("turn-shared"))
+  VIDEO_CLOUD_MQTT_BROKER_AUTH_KEY: %q
+  VIDEO_CLOUD_MQTT_SERVER_PASSWORD: %q
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeInternalAuthToken(), lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("turn-shared"), lkeRuntimeSecretValue("mqtt-broker-auth"), lkeRuntimeSecretValue("mqtt-server-password"))
 }
 
 func lkeMQTTRuntimeSecretManifest(env map[string]string, material lkeMQTTMaterial) string {
@@ -3917,7 +3922,12 @@ stringData:
   cert.pem: %q
   key.pem: %q
   cacert.pem: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], material.ServerCert, material.ServerKey, material.ServerCert, material.ServerKey, material.ServerCert)
+  EMQX_HTTP_AUTHENTICATION: %q
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], material.ServerCert, material.ServerKey, material.ServerCert, material.ServerKey, material.ServerCert, lkeEMQXHTTPAuthentication(env))
+}
+
+func lkeEMQXHTTPAuthentication(env map[string]string) string {
+	return fmt.Sprintf(`[{mechanism=password_based,backend=http,enable=true,method=post,url="http://video-cloud-api.%s.svc.cluster.local/v1/internal/mqtt/authenticate",headers={"content-type"="application/json","authorization"="Bearer %s"},body={listener="${listener}",username="${username}",password="${password}",clientid="${clientid}"},connect_timeout="5s",request_timeout="5s",pool_size=32,pipelining=100}]`, lkeNamespaceName(env, "video-cloud"), lkeRuntimeSecretValue("mqtt-broker-auth"))
 }
 
 func lkeMQTTConfigManifest(env map[string]string) string {
@@ -3933,7 +3943,66 @@ metadata:
     rtk.realtek.com/stack: %s
 data:
   broker: emqx
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
+  base.hocon: |
+%s
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], indentManifest(lkeEMQXTenantBaseHOCON(env), 4))
+}
+
+func lkeEMQXTenantBaseHOCON(env map[string]string) string {
+	if !lkeMQTTTenantNamespaceEnabled(env) {
+		return "rewrite = []\n"
+	}
+	return `authorization {
+  no_match = deny
+  deny_action = ignore
+  cache.enable = false
+  sources = []
+}
+rewrite = [
+  {
+    action = "all"
+    source_topic = "#"
+    re = "^(?!_bc/)(.+)$"
+    dest_topic = "_bc/${username}/$1"
+  },
+  {
+    action = "all"
+    source_topic = "$vc/#"
+    re = "^(\\$vc/.*)$"
+    dest_topic = "_bc/${username}/$1"
+  }
+]
+`
+}
+
+func lkeMQTTTenantNamespaceEnabled(env map[string]string) bool {
+	return strings.EqualFold(strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_MQTT_TENANT_NAMESPACE_ENABLED"), env["LKE_MQTT_TENANT_NAMESPACE_ENABLED"], "false")), "true")
+}
+
+func indentManifest(value string, spaces int) string {
+	prefix := strings.Repeat(" ", spaces)
+	lines := strings.Split(strings.TrimSuffix(value, "\n"), "\n")
+	for idx := range lines {
+		lines[idx] = prefix + lines[idx]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func lkeEMQXListenerAuthEnvManifest(env map[string]string) string {
+	if !lkeMQTTTenantNamespaceEnabled(env) {
+		return ""
+	}
+	return `            - name: EMQX_LISTENERS__TCP__DEFAULT__AUTHENTICATION
+              valueFrom:
+                secretKeyRef:
+                  name: mqtt-runtime
+                  key: EMQX_HTTP_AUTHENTICATION
+            - name: EMQX_LISTENERS__SSL__DEFAULT__AUTHENTICATION
+              valueFrom:
+                secretKeyRef:
+                  name: mqtt-runtime
+                  key: EMQX_HTTP_AUTHENTICATION
+`
 }
 
 func lkeMQTTDeploymentManifest(env map[string]string) string {
@@ -3942,6 +4011,8 @@ func lkeMQTTDeploymentManifest(env map[string]string) string {
 
 func lkeMQTTStatefulSetManifest(env map[string]string) string {
 	placement := lkeMQTTPlacementManifest(env)
+	authEnabled := strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env))
+	authEnv := lkeEMQXListenerAuthEnvManifest(env)
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -3963,6 +4034,8 @@ spec:
       app.kubernetes.io/name: mqtt
   template:
     metadata:
+      annotations:
+        rtk.realtek.com/mqtt-config-checksum: %q
       labels:
         app.kubernetes.io/name: mqtt
         app.kubernetes.io/part-of: rtk-cloud
@@ -3994,7 +4067,7 @@ spec:
             - name: EMQX_LISTENERS__TCP__DEFAULT__BIND
               value: "0.0.0.0:1883"
             - name: EMQX_LISTENERS__TCP__DEFAULT__ENABLE_AUTHN
-              value: "false"
+              value: %q
             - name: EMQX_LISTENERS__TCP__DEFAULT__ACCEPTORS
               value: "%s"
             - name: EMQX_LISTENERS__TCP__DEFAULT__TCP_OPTIONS__BACKLOG
@@ -4002,7 +4075,7 @@ spec:
             - name: EMQX_LISTENERS__SSL__DEFAULT__BIND
               value: "0.0.0.0:8883"
             - name: EMQX_LISTENERS__SSL__DEFAULT__ENABLE_AUTHN
-              value: "false"
+              value: %q
             - name: EMQX_LISTENERS__SSL__DEFAULT__ACCEPTORS
               value: "%s"
             - name: EMQX_LISTENERS__SSL__DEFAULT__TCP_OPTIONS__BACKLOG
@@ -4016,6 +4089,7 @@ spec:
             - name: EMQX_FORCE_SHUTDOWN__MAX_HEAP_SIZE
               value: "%s"
 %s
+%s
           ports:
             - name: mqtt
               containerPort: 1883
@@ -4025,11 +4099,18 @@ spec:
             - name: mqtt-runtime
               mountPath: /opt/emqx/etc/certs
               readOnly: true
+            - name: mqtt-config
+              mountPath: /opt/emqx/etc/base.hocon
+              subPath: base.hocon
+              readOnly: true
       volumes:
         - name: mqtt-runtime
           secret:
             secretName: mqtt-runtime
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeMQTTReplicas(env), env["CLOUD_STACK_NAME"], placement, firstNonEmpty(os.Getenv("LKE_MQTT_IMAGE"), "emqx/emqx:5.8.7"), lkeNamespaceName(env, "video-cloud"), lkeEMQXNodeCookie(env), lkeEMQXStaticSeeds(env), lkeEMQXListenerAcceptors(env), lkeEMQXListenerBacklog(env), lkeEMQXListenerAcceptors(env), lkeEMQXListenerBacklog(env), firstNonEmpty(os.Getenv("LKE_EMQX_FORCE_SHUTDOWN_MAX_MAILBOX_SIZE"), env["LKE_EMQX_FORCE_SHUTDOWN_MAX_MAILBOX_SIZE"], "131072"), firstNonEmpty(os.Getenv("LKE_EMQX_FORCE_SHUTDOWN_MAX_HEAP_SIZE"), env["LKE_EMQX_FORCE_SHUTDOWN_MAX_HEAP_SIZE"], "512MB"), lkeContainerResourcesManifest(env, "mqtt"))
+        - name: mqtt-config
+          configMap:
+            name: mqtt-config
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeMQTTReplicas(env), env["CLOUD_STACK_NAME"], lkeConfigChecksum(lkeEMQXTenantBaseHOCON(env), lkeEMQXHTTPAuthentication(env)), placement, firstNonEmpty(os.Getenv("LKE_MQTT_IMAGE"), "emqx/emqx:5.8.7"), lkeNamespaceName(env, "video-cloud"), lkeEMQXNodeCookie(env), lkeEMQXStaticSeeds(env), authEnabled, lkeEMQXListenerAcceptors(env), lkeEMQXListenerBacklog(env), authEnabled, lkeEMQXListenerAcceptors(env), lkeEMQXListenerBacklog(env), firstNonEmpty(os.Getenv("LKE_EMQX_FORCE_SHUTDOWN_MAX_MAILBOX_SIZE"), env["LKE_EMQX_FORCE_SHUTDOWN_MAX_MAILBOX_SIZE"], "131072"), firstNonEmpty(os.Getenv("LKE_EMQX_FORCE_SHUTDOWN_MAX_HEAP_SIZE"), env["LKE_EMQX_FORCE_SHUTDOWN_MAX_HEAP_SIZE"], "512MB"), authEnv, lkeContainerResourcesManifest(env, "mqtt"))
 }
 
 func lkeMQTTReplicas(env map[string]string) int {
@@ -4576,6 +4657,29 @@ spec:
               value: %q
             - name: VIDEO_CLOUD_MQTT_ADDR
               value: %q
+            - name: VIDEO_CLOUD_MQTT_USERNAME
+              value: "video-cloud-server"
+            - name: VIDEO_CLOUD_MQTT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-runtime
+                  key: VIDEO_CLOUD_MQTT_SERVER_PASSWORD
+            - name: VIDEO_CLOUD_MQTT_SERVER_USERNAME
+              value: "video-cloud-server"
+            - name: VIDEO_CLOUD_MQTT_SERVER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-runtime
+                  key: VIDEO_CLOUD_MQTT_SERVER_PASSWORD
+            - name: VIDEO_CLOUD_MQTT_BROKER_AUTH_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-runtime
+                  key: VIDEO_CLOUD_MQTT_BROKER_AUTH_KEY
+            - name: VIDEO_CLOUD_MQTT_TENANT_NAMESPACE_ENABLED
+              value: %q
+            - name: VIDEO_CLOUD_MQTT_TENANT_PREFIX
+              value: "_bc"
             - name: VIDEO_CLOUD_MQTT_CLIENT_ID
               value: %q
             - name: VIDEO_CLOUD_MQTT_TOPIC_ROOT
@@ -4603,7 +4707,7 @@ spec:
       volumes:
         - name: logger-spool
           emptyDir: {}
-`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeDeploymentImagePullSecretsManifest(env), lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(env, service.Name), ports, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(service))
+`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeDeploymentImagePullSecretsManifest(env), lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(env, service.Name), ports, lkeVideoCloudImage(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(service))
 }
 
 func lkeVideoCloudAuxiliaryMQTTCleanSession(service lkeVideoCloudAuxiliaryService) string {
@@ -5874,6 +5978,9 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 `
 	}
 	if workload.Key == "video-cloud" {
+		templateAnnotations = fmt.Sprintf(`      annotations:
+        rtk.realtek.com/runtime-checksum: %q
+`, lkeConfigChecksum(lkeRuntimeSecretValue("mqtt-broker-auth"), lkeRuntimeSecretValue("mqtt-server-password"), strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env))))
 		mqttHandlerConcurrency := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY"), env["LKE_VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY"], "64")
 		mqttShadowHandlerConcurrency := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_SHADOW_HANDLER_CONCURRENCY"), env["LKE_VIDEO_CLOUD_MQTT_SHADOW_HANDLER_CONCURRENCY"], "64")
 		mqttShadowQueueSize := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_SHADOW_QUEUE_SIZE"), env["LKE_VIDEO_CLOUD_MQTT_SHADOW_QUEUE_SIZE"], "8192")
@@ -5927,6 +6034,29 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
               value: "true"
             - name: VIDEO_CLOUD_MQTT_ADDR
               value: %q
+            - name: VIDEO_CLOUD_MQTT_USERNAME
+              value: "video-cloud-server"
+            - name: VIDEO_CLOUD_MQTT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-runtime
+                  key: VIDEO_CLOUD_MQTT_SERVER_PASSWORD
+            - name: VIDEO_CLOUD_MQTT_SERVER_USERNAME
+              value: "video-cloud-server"
+            - name: VIDEO_CLOUD_MQTT_SERVER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-runtime
+                  key: VIDEO_CLOUD_MQTT_SERVER_PASSWORD
+            - name: VIDEO_CLOUD_MQTT_BROKER_AUTH_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-runtime
+                  key: VIDEO_CLOUD_MQTT_BROKER_AUTH_KEY
+            - name: VIDEO_CLOUD_MQTT_TENANT_NAMESPACE_ENABLED
+              value: %q
+            - name: VIDEO_CLOUD_MQTT_TENANT_PREFIX
+              value: "_bc"
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -6017,6 +6147,7 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 			lkeCloudLoggerEndpoint(env),
 			firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"),
 			lkeMQTTInternalAddr(env),
+			strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)),
 			mqttHandlerConcurrency,
 			mqttShadowHandlerConcurrency,
 			mqttShadowQueueSize,
