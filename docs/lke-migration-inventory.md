@@ -41,7 +41,7 @@ Reviewed workspace documents and configuration:
 | `repos/rtk_video_cloud/deploy/systemd/`, `deploy/docker-compose.*.yml`, `deploy/prometheus/` | Legacy config evidence | Historical systemd, EMQX/coturn/PostgreSQL/Prometheus packaging. |
 | `repos/rtk_account_manager/linode_deploy/docs/RUNBOOK.md` | Legacy source | Retired Account Manager public VM deployment, local PostgreSQL, nginx/TLS, backup. |
 | `repos/rtk_cloud_admin/docs/private-cloud-deployment.md` | Legacy source | Retired Cloud Admin VM deployment, upstream dependencies, SQLite persistence, backup. |
-| `scripts/run-staging-e2e.sh`, `stg.sh`, `tests/staging-*.test.sh` | Operational evidence | Current K8s/LKE staging orchestration, validation, and E2E acceptance paths. |
+| `scripts/run-staging-e2e.sh`, `rtk-cloud ... --environment staging`, `tests/staging-*.test.sh` | Operational evidence | Current K8s/LKE staging orchestration, validation, and E2E acceptance paths. |
 
 Legacy Linode VM model:
 

@@ -8,7 +8,6 @@ active_paths=(
 	"$ROOT/scripts/reset-staging-k8s.sh" \
 	"$ROOT/scripts/provision-staging.sh" \
 	"$ROOT/scripts/run-staging-acceptance.sh" \
-	"$ROOT/bin/stg.sh" \
 	"$ROOT/README.md" \
 	"$ROOT/scripts/README.zh-TW.md" \
 	"$ROOT/docs/cloud-env-layout.zh-TW.md" \

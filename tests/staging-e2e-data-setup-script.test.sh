@@ -310,15 +310,3 @@ if CLOUD_PROVIDER=lke "$ROOT/scripts/setup-staging-e2e-data.sh" \
 	exit 1
 fi
 grep -F 'video-100k-turn-v1 requires HOME100K_BRAND_PLAN or --brand-plan for empty data setup' "$TMP/description-missing-brand-plan.err" >/dev/null
-
-RTK_CLOUD_STAGING_ENV_ROOT="$ENV_ROOT" "$ROOT/stg.sh" data --plan >"$TMP/stg-data-plan.out"
-grep -F 'cloud-staging-e2e-data-setup plan' "$TMP/stg-data-plan.out" >/dev/null
-
-if CLOUD_PROVIDER=aws RTK_CLOUD_STAGING_ENV_ROOT="$ENV_ROOT" "$ROOT/stg.sh" data --plan >"$TMP/stg-data-provider.out" 2>"$TMP/stg-data-provider.err"; then
-	echo "expected stg.sh data unsupported provider to fail" >&2
-	exit 1
-fi
-grep -F 'unsupported CLOUD_PROVIDER=aws' "$TMP/stg-data-provider.err" >/dev/null
-
-CLOUD_PROVIDER=lke RTK_CLOUD_STAGING_ENV_ROOT="$ENV_ROOT" "$ROOT/stg.sh" data --plan >"$TMP/stg-data-lke-plan.out"
-grep -F 'env_root: '"$WORKSPACE/cloud_env/staging/runtime" "$TMP/stg-data-lke-plan.out" >/dev/null

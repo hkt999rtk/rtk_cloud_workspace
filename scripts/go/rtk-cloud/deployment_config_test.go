@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -89,6 +90,20 @@ func TestMaterializeDeploymentRuntimeSeparatesSharedAndAdapterConfig(t *testing.
 		if !strings.Contains(adapterConfig, want) {
 			t.Fatalf("adapter config missing %s", want)
 		}
+	}
+}
+
+func TestNormalizeEnvironmentArgs(t *testing.T) {
+	args, err := normalizeEnvironmentArgs([]string{"mqtt-test", "--workspace", "/tmp/ws", "--environment", "dev", "--brandname", "RTK"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"mqtt-test", "--workspace", "/tmp/ws", "--env-root", "/tmp/ws/cloud_env/dev/runtime", "--brandname", "RTK"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("normalizeEnvironmentArgs() = %#v, want %#v", args, want)
+	}
+	if _, err := normalizeEnvironmentArgs([]string{"mqtt-test", "--env-root", "/tmp/runtime", "--environment", "dev"}); err == nil {
+		t.Fatal("expected conflicting environment selectors to fail")
 	}
 }
 

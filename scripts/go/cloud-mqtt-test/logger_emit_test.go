@@ -41,7 +41,7 @@ func TestEmitCentralLoggerEventPostsMQTTSummaryWithoutLeakingToken(t *testing.T)
 		if event["service"] != "workspace-mqtt-test" {
 			t.Fatalf("unexpected service: %v", event["service"])
 		}
-		if event["unit"] != "stg.sh mqtt" {
+		if event["unit"] != "rtk-cloud mqtt-test" {
 			t.Fatalf("unexpected unit: %v", event["unit"])
 		}
 		if event["operation_id"] != "home-mqtt-loadtest" {

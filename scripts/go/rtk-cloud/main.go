@@ -124,6 +124,11 @@ func run(args []string) error {
 		return nil
 	}
 	args = normalizeLegacyPathArgs(args)
+	var err error
+	args, err = normalizeEnvironmentArgs(args)
+	if err != nil {
+		return err
+	}
 	cmdName := args[0]
 	if cmdName == "ci-runners" {
 		if len(args) < 2 || args[1] == "-h" || args[1] == "--help" {
@@ -147,6 +152,53 @@ func run(args []string) error {
 		return spec.run(args[1:])
 	}
 	return errors.New("internal error: command has no native implementation")
+}
+
+func normalizeEnvironmentArgs(args []string) ([]string, error) {
+	if len(args) == 0 || args[0] == "deployment" {
+		return args, nil
+	}
+	var environment, workspace string
+	hasEnvRoot := false
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--environment", "--workspace", "--env-root":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("%s requires a value", args[i])
+			}
+			if args[i] == "--environment" {
+				environment = args[i+1]
+			} else if args[i] == "--workspace" {
+				workspace = args[i+1]
+			} else {
+				hasEnvRoot = true
+			}
+			i++
+		}
+	}
+	if environment == "" {
+		return args, nil
+	}
+	if hasEnvRoot {
+		return nil, errors.New("--environment and --env-root cannot be used together")
+	}
+	if filepath.Base(environment) != environment || environment == "." || environment == ".." {
+		return nil, fmt.Errorf("invalid environment name %q", environment)
+	}
+	if workspace == "" {
+		workspace = "."
+	}
+	envRoot := filepath.Join(workspace, "cloud_env", environment, "runtime")
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--environment" {
+			out = append(out, "--env-root", envRoot)
+			i++
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return out, nil
 }
 
 func normalizeLegacyPathArgs(args []string) []string {
@@ -9004,6 +9056,7 @@ func printUsage() {
 	}
 	sort.Strings(names)
 	fmt.Fprintln(os.Stderr, "Usage: rtk-cloud <command> [args]")
+	fmt.Fprintln(os.Stderr, "Environment-aware commands accept --environment NAME; --env-root is reserved for tests and internal orchestration.")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Commands:")
 	for _, name := range names {

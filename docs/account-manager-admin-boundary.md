@@ -140,7 +140,7 @@ login and Account Manager API automation:
 
 | Context | Endpoint / UI | Credential source | Intended use |
 | --- | --- | --- | --- |
-| Account Manager platform admin | Cloud Admin `https://admin.video-cloud-staging.<root-domain>/login?next=/admin`, Cloud Admin `/api/auth/platform/login`, Account Manager `/v1/auth/login`, and `./stg.sh token` | `cloud_env/staging/runtime/services/account-manager/account-manager-platform-admin.env`, keys `ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL` and `ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD` | Browser login to Platform Dashboard plus backend/API automation for brand cloud, user, bind, and e2e setup |
+| Account Manager platform admin | Cloud Admin `https://admin.video-cloud-staging.<root-domain>/login?next=/admin`, Cloud Admin `/api/auth/platform/login`, Account Manager `/v1/auth/login`, and `rtk-cloud platform-admin-token --environment staging` | `cloud_env/staging/runtime/services/account-manager/account-manager-platform-admin.env`, keys `ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL` and `ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD` | Browser login to Platform Dashboard plus backend/API automation for brand cloud, user, bind, and e2e setup |
 
 Do not use legacy Cloud Admin `ADMIN_BOOTSTRAP_*` credentials for `/admin`.
 Those local break-glass credentials are not supported. In staging,

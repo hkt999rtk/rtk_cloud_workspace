@@ -5387,7 +5387,7 @@ func emitCentralLoggerEvent(envRoot string, result map[string]any) error {
 			"env":          envNameFromRoot(envRoot),
 			"version":      "workspace",
 			"host":         "operator",
-			"unit":         "stg.sh mqtt",
+			"unit":         "rtk-cloud mqtt-test",
 			"source":       "workspace",
 			"trace_id":     eventID,
 			"request_id":   eventID,
