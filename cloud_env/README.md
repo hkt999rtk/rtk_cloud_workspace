@@ -16,12 +16,14 @@ mkdir -p "cloud_env/$environment/overrides"
 ```env
 CLOUD_STACK_NAME=video-cloud-qa
 CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+DEPLOYMENT_LOCATION=us-west
 ```
 
 | Key | 必填 | 用途 |
 | --- | --- | --- |
 | `CLOUD_STACK_NAME` | 是 | Cluster、namespace、DNS 與 destructive confirmation 使用的唯一 stack 名稱。 |
 | `CLOUD_DNS_ROOT_DOMAIN` | 是 | Public service hostname 的根網域。 |
+| `DEPLOYMENT_LOCATION` | 是 | Provider-neutral logical location；adapter 會轉換成實際 provider region。 |
 
 建立 `cloud_env/qa/deployment.env`：
 
@@ -43,16 +45,17 @@ DEPLOYMENT_ADAPTER=lke
 CAPACITY_TARGET_CONNECTIONS=1000
 MQTT_REPLICAS=2
 NODE_CLASS_BROKER_MIN_COUNT=2
+NODE_CLASS_BROKER_MIN_VCPU=4
+NODE_CLASS_BROKER_MIN_MEMORY_GIB=8
 ```
 
-需要調整 LKE region、node type 或 quota 時，將 [`cloud_deploy/adapters/lke/defaults.env`](../cloud_deploy/adapters/lke/defaults.env) 已存在的 key 寫入 `overrides/adapter.env`：
+Environment 不指定 LKE region、Linode type 或 provider account quota。Adapter 根據 logical location 與 node-class resource minima 選擇 provider resources，實際結果只寫入 ignored runtime evidence。
+
+`overrides/adapter.env` 只保留給經審查的 provider escape hatch，不是建立 environment 的標準設定。一般 dev、staging、prod 應保持空白。Provider account limit 由 operator 放在 ignored runtime：
 
 ```env
-LKE_REGION=us-sea
-LKE_GENERAL_NODE_TYPE=g6-standard-4
-LKE_BROKER_NODE_TYPE=g6-standard-4
-LKE_DATABASE_NODE_TYPE=g6-standard-8
-LINODE_ACTIVE_SERVICE_LIMIT=20
+# cloud_env/qa/runtime/adapters/lke/account.env
+LKE_ACTIVE_SERVICE_LIMIT=20
 ```
 
 Architecture override 不得包含 provider key；adapter override 不得包含 workload、capacity 或 topology key。Unknown key、錯誤型別與跨層 key 會在 plan 階段失敗。
@@ -82,6 +85,7 @@ LKE mutation 需要 operator 提供 `LINODE_TOKEN`。Token、kubeconfig、certif
 - `CLOUD_STACK_NAME` 與 DNS 名稱不會碰撞其他 environment。
 - 只覆寫與此 environment 確實不同的值。
 - Architecture override 沒有 `LKE_*`、`EKS_*`、`GKE_*`。
-- Adapter override 的 key 已存在於所選 adapter defaults。
+- dev、staging、prod 的 adapter override 不包含正常 region、SKU 或 quota。
+- Provider account limit 只存在 ignored adapter runtime，不進版控。
 - `deployment plan` 成功且 resolved plan 不含 secret。
 - `runtime/` 保持 ignored，沒有從其他 environment 複製 state。

@@ -72,6 +72,12 @@ Conflicts and outdated areas:
 - Kubernetes auth for OpenBao, LKE storage choices, PostgreSQL HA, EMQX
   clustering, Redis persistence, and production HSM strategy are not confirmed.
 
+## Provider-neutral adapter migration
+
+Tracked environments no longer set `LKE_REGION`, `LKE_GENERAL_NODE_TYPE`, `LKE_BROKER_NODE_TYPE`, `LKE_DATABASE_NODE_TYPE`, or `LINODE_ACTIVE_SERVICE_LIMIT`. They set `DEPLOYMENT_LOCATION` and provider-neutral node-class vCPU/memory minima. LKE maps `us-west` to `us-sea` and selects the smallest matching Linode type using memory surplus, then vCPU surplus, then type name.
+
+Before the first mutation after this change, the operator must create `cloud_env/<environment>/runtime/adapters/lke/account.env` with `LKE_ACTIVE_SERVICE_LIMIT`. There is no automatic migration from tracked config. The adapter writes selected region and types to `resolved-resources.env`; provider IDs remain in the existing adapter-private state files.
+
 ## Kubernetes Runtime Target Summary
 
 The current validated staging target is Linode Kubernetes Engine (LKE). The
@@ -85,7 +91,7 @@ are implemented.
 
 | Area | Target direction |
 | --- | --- |
-| Cluster | Provider adapter supplies a Kubernetes cluster and kubeconfig. LKE is the only live adapter today and uses environment-specific node pools. TODO: confirm region, node types, autoscaling limits, and maintenance window for production. |
+| Cluster | Provider adapter supplies a Kubernetes cluster and kubeconfig. LKE maps logical location and node-class resource minima to LKE region and deterministic Linode types. Account quota is ignored runtime state, not tracked environment config. TODO: confirm autoscaling limits and maintenance window for production. |
 | Namespaces | `platform`, `video-cloud`, `account-manager`, `admin`, `frontend`, `observability`, and `secrets` unless a later platform standard chooses different names. |
 | Public HTTP(S) | External HAProxy edge VM in TCP mode forwards public `443/TCP` to ingress-nginx NodePort; staging default NodePort is `30443`; public `80/TCP` remains closed. |
 | Public MQTT | External HAProxy edge VM in TCP mode forwards public `8883/TCP` to EMQX/MQTT NodePort; staging default NodePort is `31883`, with a three-pod EMQX StatefulSet cluster spread one per node for HAProxy round-robin. |

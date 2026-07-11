@@ -32,7 +32,7 @@ cloud_env/<environment>/
     adapter.env
 ```
 
-`cloud_env/` 下的目錄名稱就是 environment identity；`environment.env` 只定義 stack 與 DNS root。`deployment.env` 只選擇 architecture 與 adapter。`overrides/architecture.env` 只可覆寫 provider-neutral keys；`overrides/adapter.env` 只可覆寫被選 adapter 的 keys。
+`cloud_env/` 下的目錄名稱就是 environment identity；`environment.env` 定義 stack、DNS root 與 logical deployment location。`deployment.env` 只選擇 architecture 與 adapter。`overrides/architecture.env` 只可覆寫 provider-neutral keys；`overrides/adapter.env` 只保留給明確的 provider escape hatch。
 
 ## 本機 runtime
 
@@ -51,6 +51,8 @@ runtime/
 ```
 
 Shared Kubernetes runtime 與 load test 只讀 normalized `runtime/state`、`runtime/services`、`runtime/devices` 與 `runtime/artifacts`。Cluster ID、node-pool ID、Linode resource ID 等 provider state 只能存在 `runtime/adapters/lke/`。
+
+LKE account limit 位於 ignored `runtime/adapters/lke/account.env`。Adapter resolution 寫入 `runtime/adapters/lke/resolved-resources.env`；shared runtime 與 load test 不得直接讀取這兩個 adapter-private 檔案。
 
 ## 設定解析順序
 
