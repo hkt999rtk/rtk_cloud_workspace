@@ -422,7 +422,12 @@ type lkeNodeType struct {
 }
 
 func lkeNodeTypeShape(nodeType string) (lkeNodeType, bool) {
-	shapes := map[string]lkeNodeType{
+	shape, ok := lkeNodeTypeCatalog()[nodeType]
+	return shape, ok
+}
+
+func lkeNodeTypeCatalog() map[string]lkeNodeType {
+	return map[string]lkeNodeType{
 		"g6-standard-1":  {cpu: 1, memoryGi: 2},
 		"g6-standard-2":  {cpu: 2, memoryGi: 4},
 		"g6-standard-4":  {cpu: 4, memoryGi: 8},
@@ -433,8 +438,6 @@ func lkeNodeTypeShape(nodeType string) (lkeNodeType, bool) {
 		"g6-standard-24": {cpu: 24, memoryGi: 128},
 		"g6-standard-32": {cpu: 32, memoryGi: 192},
 	}
-	shape, ok := shapes[nodeType]
-	return shape, ok
 }
 
 func parseCPUQuantity(raw string) (int, error) {

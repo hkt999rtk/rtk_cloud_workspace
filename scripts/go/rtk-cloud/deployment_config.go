@@ -21,17 +21,21 @@ type deploymentConfig struct {
 	Adapter         string
 	Values          map[string]string
 	AdapterValues   map[string]string
+	AdapterResolved map[string]string
 }
 
 var deploymentIntegerKeys = map[string]bool{
 	"CAPACITY_TARGET_CONNECTIONS": true, "CAPACITY_CONNECTIONS_PER_MQTT_POD": true,
 	"CAPACITY_SYSTEM_RESERVED_CPU_MILLI": true, "CAPACITY_SYSTEM_RESERVED_MEMORY_MIB": true,
 	"NODE_CLASS_GENERAL_MIN_COUNT": true, "NODE_CLASS_BROKER_MIN_COUNT": true,
-	"NODE_CLASS_DATABASE_MIN_COUNT": true, "MQTT_REPLICAS": true,
+	"NODE_CLASS_DATABASE_MIN_COUNT": true,
+	"NODE_CLASS_GENERAL_MIN_VCPU":   true, "NODE_CLASS_GENERAL_MIN_MEMORY_GIB": true,
+	"NODE_CLASS_BROKER_MIN_VCPU": true, "NODE_CLASS_BROKER_MIN_MEMORY_GIB": true,
+	"NODE_CLASS_DATABASE_MIN_VCPU": true, "NODE_CLASS_DATABASE_MIN_MEMORY_GIB": true,
+	"MQTT_REPLICAS":            true,
 	"VIDEO_CLOUD_API_REPLICAS": true, "EDGE_REPLICAS": true,
 	"EDGE_MAX_CONNECTIONS": true, "TURN_REPLICAS": true,
 	"TURN_MIN_PORT": true, "TURN_MAX_PORT": true,
-	"LINODE_ACTIVE_SERVICE_LIMIT": true,
 }
 
 var deploymentArchitectureKeys = keySet(
@@ -39,6 +43,9 @@ var deploymentArchitectureKeys = keySet(
 	"CAPACITY_TARGET_CONNECTIONS", "CAPACITY_CONNECTIONS_PER_MQTT_POD",
 	"CAPACITY_SYSTEM_RESERVED_CPU_MILLI", "CAPACITY_SYSTEM_RESERVED_MEMORY_MIB",
 	"NODE_CLASS_GENERAL_MIN_COUNT", "NODE_CLASS_BROKER_MIN_COUNT", "NODE_CLASS_DATABASE_MIN_COUNT",
+	"NODE_CLASS_GENERAL_MIN_VCPU", "NODE_CLASS_GENERAL_MIN_MEMORY_GIB",
+	"NODE_CLASS_BROKER_MIN_VCPU", "NODE_CLASS_BROKER_MIN_MEMORY_GIB",
+	"NODE_CLASS_DATABASE_MIN_VCPU", "NODE_CLASS_DATABASE_MIN_MEMORY_GIB",
 	"MQTT_REPLICAS", "MQTT_NODE_CLASS", "MQTT_HARD_ANTI_AFFINITY", "VIDEO_CLOUD_API_REPLICAS",
 	"POSTGRES_NODE_CLASS", "POSTGRES_REQUEST_CPU", "POSTGRES_REQUEST_MEMORY", "POSTGRES_LIMIT_MEMORY",
 	"CLOUD_LOGGER_REQUEST_CPU", "CLOUD_LOGGER_REQUEST_MEMORY", "CLOUD_LOGGER_LIMIT_MEMORY",
@@ -118,9 +125,18 @@ func runDeployment(args []string) error {
 }
 
 func validateLKEEnvironmentStateBeforeMutation(cfg deploymentConfig) error {
-	compat := appendMap(appendMap(cfg.Values, cfg.AdapterValues), deploymentLegacyLKEValues(appendMap(cfg.Values, cfg.AdapterValues), cfg.Environment))
+	account, err := readLKEAccountState(cfg.RuntimeRoot, true)
+	if err != nil {
+		return err
+	}
+	if _, err := positiveIntValue("LKE_ACTIVE_SERVICE_LIMIT", account["LKE_ACTIVE_SERVICE_LIMIT"]); err != nil {
+		return err
+	}
+	compatInput := appendMap(cfg.Values, cfg.AdapterResolved)
+	compat := appendMap(compatInput, deploymentLegacyLKEValues(compatInput, cfg.Environment))
+	compat["LKE_LINODE_ACTIVE_SERVICE_LIMIT"] = account["LKE_ACTIVE_SERVICE_LIMIT"]
 	for _, key := range []string{"LKE_REGION", "LKE_GENERAL_NODE_TYPE", "LKE_BROKER_NODE_TYPE", "LKE_DATABASE_NODE_TYPE"} {
-		if strings.TrimSpace(cfg.AdapterValues[key]) == "" {
+		if strings.TrimSpace(cfg.AdapterResolved[key]) == "" {
 			return fmt.Errorf("LKE adapter setting %s is required before mutation", key)
 		}
 	}
@@ -128,7 +144,7 @@ func validateLKEEnvironmentStateBeforeMutation(cfg deploymentConfig) error {
 	if token == "" {
 		return errors.New("LKE credentials reference is required before mutation: configure LINODE_TOKEN in the environment runtime secret")
 	}
-	_, err := discoverLKECluster(token, provisionPaths{EnvRoot: cfg.RuntimeRoot}, compat, false)
+	_, err = discoverLKECluster(token, provisionPaths{EnvRoot: cfg.RuntimeRoot}, compat, false)
 	if errors.Is(err, errLKEMissingCluster) {
 		return nil
 	}
@@ -190,11 +206,21 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 	if err != nil {
 		return deploymentConfig{}, err
 	}
+	for key := range envIdentity {
+		if !keySet("CLOUD_STACK_NAME", "CLOUD_DNS_ROOT_DOMAIN", "DEPLOYMENT_LOCATION")[key] {
+			return deploymentConfig{}, fmt.Errorf("unknown environment key %s", key)
+		}
+	}
 	selection, err := readStrictEnv(filepath.Join(environmentRoot, "deployment.env"))
 	if err != nil {
 		return deploymentConfig{}, err
 	}
-	for _, key := range []string{"CLOUD_STACK_NAME", "CLOUD_DNS_ROOT_DOMAIN"} {
+	for key := range selection {
+		if !keySet("DEPLOYMENT_ARCHITECTURE", "DEPLOYMENT_ADAPTER")[key] {
+			return deploymentConfig{}, fmt.Errorf("unknown deployment selection key %s", key)
+		}
+	}
+	for _, key := range []string{"CLOUD_STACK_NAME", "CLOUD_DNS_ROOT_DOMAIN", "DEPLOYMENT_LOCATION"} {
 		if strings.TrimSpace(envIdentity[key]) == "" {
 			return deploymentConfig{}, fmt.Errorf("%s is required in environment.env", key)
 		}
@@ -275,6 +301,17 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 			}
 		}
 	}
+	for _, key := range []string{
+		"NODE_CLASS_GENERAL_MIN_COUNT", "NODE_CLASS_BROKER_MIN_COUNT", "NODE_CLASS_DATABASE_MIN_COUNT",
+		"NODE_CLASS_GENERAL_MIN_VCPU", "NODE_CLASS_GENERAL_MIN_MEMORY_GIB",
+		"NODE_CLASS_BROKER_MIN_VCPU", "NODE_CLASS_BROKER_MIN_MEMORY_GIB",
+		"NODE_CLASS_DATABASE_MIN_VCPU", "NODE_CLASS_DATABASE_MIN_MEMORY_GIB",
+	} {
+		n, _ := strconv.Atoi(values[key])
+		if n <= 0 {
+			return deploymentConfig{}, fmt.Errorf("%s must be a positive integer", key)
+		}
+	}
 	if raw := values["MQTT_HARD_ANTI_AFFINITY"]; raw != "true" && raw != "false" {
 		return deploymentConfig{}, errors.New("MQTT_HARD_ANTI_AFFINITY must be true or false")
 	}
@@ -293,7 +330,14 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 			return deploymentConfig{}, fmt.Errorf("MQTT_REPLICAS=%d exceeds broker node capacity=%d", r, n)
 		}
 	}
-	return deploymentConfig{Workspace: workspace, Environment: environment, EnvironmentRoot: environmentRoot, RuntimeRoot: filepath.Join(environmentRoot, "runtime"), Architecture: architecture, Adapter: adapter, Values: values, AdapterValues: adapterValues}, nil
+	adapterResolved := map[string]string{}
+	if adapter == "lke" {
+		adapterResolved, err = resolveLKEAdapterResources(workspace, values, adapterValues)
+		if err != nil {
+			return deploymentConfig{}, err
+		}
+	}
+	return deploymentConfig{Workspace: workspace, Environment: environment, EnvironmentRoot: environmentRoot, RuntimeRoot: filepath.Join(environmentRoot, "runtime"), Architecture: architecture, Adapter: adapter, Values: values, AdapterValues: adapterValues, AdapterResolved: adapterResolved}, nil
 }
 
 func appendMap(a, b map[string]string) map[string]string {
@@ -347,25 +391,76 @@ func readOptionalStrictEnv(path string) (map[string]string, error) {
 	return out, err
 }
 
+func readLKEAccountState(runtimeRoot string, required bool) (map[string]string, error) {
+	path := filepath.Join(runtimeRoot, "adapters", "lke", "account.env")
+	account, err := readStrictEnv(path)
+	if os.IsNotExist(err) && !required {
+		return map[string]string{}, nil
+	}
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("LKE provider account state is required before mutation: create %s with LKE_ACTIVE_SERVICE_LIMIT", path)
+		}
+		return nil, err
+	}
+	for key := range account {
+		if key != "LKE_ACTIVE_SERVICE_LIMIT" {
+			return nil, fmt.Errorf("unknown LKE provider account key %s", key)
+		}
+	}
+	return account, nil
+}
+
+func positiveIntValue(key, raw string) (int, error) {
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", key)
+	}
+	return n, nil
+}
+
 func materializeDeploymentRuntime(cfg deploymentConfig) error {
 	for _, dir := range []string{"resolved", "env", "state", filepath.Join("adapters", cfg.Adapter), "services", "secrets", "devices", "artifacts", "backups"} {
 		if err := os.MkdirAll(filepath.Join(cfg.RuntimeRoot, dir), 0o700); err != nil {
 			return err
 		}
 	}
-	resolved := appendMap(cfg.Values, cfg.AdapterValues)
+	resolved := appendMap(cfg.Values, nil)
 	stack := appendMap(cfg.Values, deploymentRuntimeEndpoints(resolved))
 	stack["CLOUD_ENV_NAME"] = cfg.Environment
 	stack["CLOUD_PROVIDER"] = cfg.Adapter
-	stack["CLOUD_REGION"] = firstNonEmpty(cfg.AdapterValues["LKE_REGION"], cfg.AdapterValues["EKS_REGION"], cfg.AdapterValues["GKE_REGION"])
+	stack["CLOUD_REGION"] = cfg.AdapterResolved["LKE_REGION"]
 	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "resolved", "deployment.env"), resolved, 0o600); err != nil {
 		return err
 	}
 	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "env", "stack.env"), stack, 0o600); err != nil {
 		return err
 	}
-	adapterRuntime := appendMap(cfg.AdapterValues, deploymentLegacyLKEValues(resolved, cfg.Environment))
+	adapterRuntime := appendMap(cfg.AdapterValues, cfg.AdapterResolved)
+	compatInput := appendMap(resolved, cfg.AdapterResolved)
+	adapterRuntime = appendMap(adapterRuntime, deploymentLegacyLKEValues(compatInput, cfg.Environment))
+	account, err := readLKEAccountState(cfg.RuntimeRoot, false)
+	if err != nil {
+		return err
+	}
+	providerPreflight := map[string]string{}
+	if region := cfg.AdapterResolved["LKE_REGION"]; region != "" {
+		providerPreflight["PROVIDER_REGION"] = region
+	}
+	if limit := account["LKE_ACTIVE_SERVICE_LIMIT"]; limit != "" {
+		if _, err := positiveIntValue("LKE_ACTIVE_SERVICE_LIMIT", limit); err != nil {
+			return err
+		}
+		adapterRuntime["LKE_LINODE_ACTIVE_SERVICE_LIMIT"] = limit
+		providerPreflight["PROVIDER_ACTIVE_SERVICE_LIMIT"] = limit
+	}
 	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "adapters", cfg.Adapter, "config.env"), adapterRuntime, 0o600); err != nil {
+		return err
+	}
+	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "adapters", cfg.Adapter, "resolved-resources.env"), cfg.AdapterResolved, 0o600); err != nil {
+		return err
+	}
+	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "state", "provider-preflight.env"), providerPreflight, 0o600); err != nil {
 		return err
 	}
 	plan := map[string]any{"environment": cfg.Environment, "architecture": cfg.Architecture, "adapter": cfg.Adapter, "values": resolved}
@@ -407,7 +502,6 @@ func deploymentLegacyLKEValues(v map[string]string, environment string) map[stri
 		"LKE_CLOUD_LOGGER_REQUEST_CPU": v["CLOUD_LOGGER_REQUEST_CPU"], "LKE_CLOUD_LOGGER_REQUEST_MEMORY": v["CLOUD_LOGGER_REQUEST_MEMORY"], "LKE_CLOUD_LOGGER_LIMIT_MEMORY": v["CLOUD_LOGGER_LIMIT_MEMORY"],
 		"LKE_EDGE_HAPROXY_COUNT": v["EDGE_REPLICAS"], "LKE_EDGE_HAPROXY_MAXCONN": v["EDGE_MAX_CONNECTIONS"],
 		"LKE_COTURN_VM_COUNT": v["TURN_REPLICAS"], "LKE_COTURN_MIN_PORT": v["TURN_MIN_PORT"], "LKE_COTURN_MAX_PORT": v["TURN_MAX_PORT"],
-		"LKE_LINODE_ACTIVE_SERVICE_LIMIT": v["LINODE_ACTIVE_SERVICE_LIMIT"],
 	}
 }
 
