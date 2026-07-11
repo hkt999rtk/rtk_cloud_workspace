@@ -1549,12 +1549,12 @@ async function slideAwsCostSourceUrls(p, payload) {
 function addProviderCostMode(slide, mode, x, y, w, accentFill) {
   const rowH = mode.rows.length > 6 ? 19 : 22;
   addShape(slide, { x, y, w, h: 404, fill: C.white, line: C.line });
-  addShape(slide, { x: x + 14, y: y + 14, w: w - 28, h: 58, fill: accentFill, line: C.line });
-  addText(slide, mode.title, { x: x + 28, y: y + 23, w: w - 56, h: 18 }, { size: 14, color: C.navy, bold: true, align: "center", face: FONT_EN });
+  addShape(slide, { x: x + 14, y: y + 14, w: w - 28, h: 72, fill: accentFill, line: C.line });
+  addText(slide, mode.title, { x: x + 28, y: y + 22, w: w - 56, h: 18 }, { size: 14, color: C.navy, bold: true, align: "center", face: FONT_EN });
   addText(slide, mode.total, { x: x + 28, y: y + 47, w: w - 56, h: 18 }, { size: 15, color: mode.highlight ? "#B00020" : C.navy, bold: true, align: "center", face: FONT_EN });
-  addText(slide, mode.unit, { x: x + 28, y: y + 66, w: w - 56, h: 10 }, { size: 7.4, color: C.muted, bold: true, align: "center", face: FONT_EN });
+  addText(slide, mode.unit, { x: x + 28, y: y + 69, w: w - 56, h: 12 }, { size: 9.0, color: "#B00020", bold: true, align: "center", face: FONT_EN });
 
-  addTable(slide, ["Cost item", "Monthly", "Basis"], mode.rows, { x: x + 14, y: y + 92, w: w - 28, h: 236 }, [1.25, 0.68, 2.35], {
+  addTable(slide, ["Cost item", "Monthly", "Basis"], mode.rows, { x: x + 14, y: y + 104, w: w - 28, h: 224 }, [1.25, 0.68, 2.35], {
     rowH,
     headerH: 22,
     fontSize: mode.rows.length > 6 ? 5.75 : 6.35,
@@ -1575,7 +1575,7 @@ async function slideGcpCostView(p, payload) {
   addProviderCostMode(slide, {
     title: "Self-operated GKE Standard",
     total: "Approx. 2,550 USD/month",
-    unit: "14 worker nodes + GKE cluster fee; about 0.03 USD/device-month",
+    unit: "2,550 / 100,000 = 0.026 USD/device-month",
     highlight: false,
     topItems: ["Worker nodes", "PostgreSQL", "Network"],
     rows: [
@@ -1592,7 +1592,7 @@ async function slideGcpCostView(p, payload) {
   addProviderCostMode(slide, {
     title: "GCP services + self-hosted gaps",
     total: "Approx. 3,200-4,300 USD/month",
-    unit: "Managed DB/logging/metrics/API plus self-hosted MQTT/device-management gaps",
+    unit: "3,200-4,300 / 100,000 = 0.032-0.043 USD/device-month",
     highlight: true,
     topItems: ["Cloud SQL", "EMQX", "Cloud Run"],
     rows: [
@@ -1622,7 +1622,7 @@ async function slideAzureCostView(p, payload) {
   addProviderCostMode(slide, {
     title: "Self-operated AKS",
     total: "Approx. 3,100 USD/month",
-    unit: "14 worker nodes + AKS Standard control-plane SLA; about 0.03 USD/device-month",
+    unit: "3,100 / 100,000 = 0.031 USD/device-month",
     highlight: false,
     topItems: ["Worker nodes", "PostgreSQL", "Network"],
     rows: [
@@ -1639,7 +1639,7 @@ async function slideAzureCostView(p, payload) {
   addProviderCostMode(slide, {
     title: "Azure cloud services alternative",
     total: "Approx. 3,800-5,100 USD/month",
-    unit: "IoT Hub + managed PostgreSQL/logging/metrics/API; about 0.03-0.04 USD/device-month",
+    unit: "3,800-5,100 / 100,000 = 0.038-0.051 USD/device-month",
     highlight: true,
     topItems: ["IoT Hub", "PostgreSQL", "Monitor"],
     rows: [
@@ -1670,7 +1670,6 @@ async function slide16(p, payload) {
     addText(slide, s, { x: x + 8, y: 312, w: 129, h: 28 }, { size: 13, color: C.navy, bold: true, align: "center" });
     if (i < flow.length - 1) addArrow(slide, x + 150, 325, x + 180, 325, C.sky);
   });
-  addText(slide, "操作截圖需對應 demo、customer workflow readiness 或 evidence claim，讓畫面和管理結論連在一起。", { x: 150, y: 500, w: 980, h: 40 }, { size: 18, color: C.navy, bold: true, align: "center", fill: C.paleAmber });
   return slide;
 }
 
