@@ -1,0 +1,456 @@
+package main
+
+import (
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+)
+
+type deploymentConfig struct {
+	Workspace       string
+	Environment     string
+	EnvironmentRoot string
+	RuntimeRoot     string
+	Architecture    string
+	Adapter         string
+	Values          map[string]string
+	AdapterValues   map[string]string
+}
+
+var deploymentIntegerKeys = map[string]bool{
+	"CAPACITY_TARGET_CONNECTIONS": true, "CAPACITY_CONNECTIONS_PER_MQTT_POD": true,
+	"CAPACITY_SYSTEM_RESERVED_CPU_MILLI": true, "CAPACITY_SYSTEM_RESERVED_MEMORY_MIB": true,
+	"NODE_CLASS_GENERAL_MIN_COUNT": true, "NODE_CLASS_BROKER_MIN_COUNT": true,
+	"NODE_CLASS_DATABASE_MIN_COUNT": true, "MQTT_REPLICAS": true,
+	"VIDEO_CLOUD_API_REPLICAS": true, "EDGE_REPLICAS": true,
+	"EDGE_MAX_CONNECTIONS": true, "TURN_REPLICAS": true,
+	"TURN_MIN_PORT": true, "TURN_MAX_PORT": true,
+	"LINODE_ACTIVE_SERVICE_LIMIT": true,
+}
+
+var deploymentArchitectureKeys = keySet(
+	"DEPLOYMENT_RUNTIME", "NODE_CLASS_LABEL_KEY", "DEFAULT_WORKLOAD_NODE_CLASS", "POD_SPREAD_TOPOLOGY_KEY",
+	"CAPACITY_TARGET_CONNECTIONS", "CAPACITY_CONNECTIONS_PER_MQTT_POD",
+	"CAPACITY_SYSTEM_RESERVED_CPU_MILLI", "CAPACITY_SYSTEM_RESERVED_MEMORY_MIB",
+	"NODE_CLASS_GENERAL_MIN_COUNT", "NODE_CLASS_BROKER_MIN_COUNT", "NODE_CLASS_DATABASE_MIN_COUNT",
+	"MQTT_REPLICAS", "MQTT_NODE_CLASS", "MQTT_HARD_ANTI_AFFINITY", "VIDEO_CLOUD_API_REPLICAS",
+	"POSTGRES_NODE_CLASS", "POSTGRES_REQUEST_CPU", "POSTGRES_REQUEST_MEMORY", "POSTGRES_LIMIT_MEMORY",
+	"CLOUD_LOGGER_REQUEST_CPU", "CLOUD_LOGGER_REQUEST_MEMORY", "CLOUD_LOGGER_LIMIT_MEMORY",
+	"EDGE_REPLICAS", "EDGE_MAX_CONNECTIONS", "TURN_REPLICAS", "TURN_MIN_PORT", "TURN_MAX_PORT",
+)
+
+func keySet(keys ...string) map[string]bool {
+	out := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		out[key] = true
+	}
+	return out
+}
+
+func runDeployment(args []string) error {
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
+		printDeploymentUsage()
+		return nil
+	}
+	action := args[0]
+	fs := flag.NewFlagSet("deployment "+action, flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	environment := fs.String("environment", "", "environment name under cloud_env")
+	environmentRoot := fs.String("environment-root", "", "explicit environment root for tests/custom environments")
+	workspace := fs.String("workspace", "", "workspace root")
+	confirm := fs.String("confirm", "", "stack confirmation for mutation")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	if action != "plan" && action != "provision" && action != "acceptance" && action != "remove" {
+		return fmt.Errorf("unknown deployment action %q", action)
+	}
+	cfg, err := resolveDeploymentConfig(*workspace, *environment, *environmentRoot)
+	if err != nil {
+		return err
+	}
+	if err := materializeDeploymentRuntime(cfg); err != nil {
+		return err
+	}
+	stack := cfg.Values["CLOUD_STACK_NAME"]
+	if action != "plan" && action != "acceptance" && *confirm != stack {
+		return fmt.Errorf("--confirm %s is required", stack)
+	}
+	if cfg.Adapter != "lke" && action != "plan" {
+		return fmt.Errorf("deployment adapter %s is not implemented", cfg.Adapter)
+	}
+	switch action {
+	case "plan":
+		fmt.Printf("environment: %s\narchitecture: %s\nadapter: %s\nruntime_root: %s\n", cfg.Environment, cfg.Architecture, cfg.Adapter, cfg.RuntimeRoot)
+		if cfg.Adapter != "lke" {
+			fmt.Printf("infrastructure: adapter not implemented; mutation will fail fast\n")
+			return normalizeDeploymentRuntime(cfg)
+		}
+		if err := runProvision([]string{"--workspace", cfg.Workspace, "--env-root", cfg.RuntimeRoot, "--plan"}); err != nil {
+			return err
+		}
+		return normalizeDeploymentRuntime(cfg)
+	case "provision":
+		if cfg.Adapter == "lke" {
+			if err := validateLKEEnvironmentStateBeforeMutation(cfg); err != nil {
+				return err
+			}
+			if err := resolveLKEImagesIfNeeded(cfg.Workspace, cfg.RuntimeRoot); err != nil {
+				return err
+			}
+		}
+		err = runProvision([]string{"--workspace", cfg.Workspace, "--env-root", cfg.RuntimeRoot, "--preflight", "--plan", "--apply", "--deploy", "--dns", "--artifacts", "--confirm", stack})
+	case "acceptance":
+		err = runStagingAcceptance([]string{"--workspace", cfg.Workspace, "--env-root", cfg.RuntimeRoot, "--confirm", stack})
+	case "remove":
+		err = runRemoveK8s([]string{"--workspace", cfg.Workspace, "--env-root", cfg.RuntimeRoot, "--confirm", stack})
+	}
+	if err != nil {
+		return err
+	}
+	return normalizeDeploymentRuntime(cfg)
+}
+
+func validateLKEEnvironmentStateBeforeMutation(cfg deploymentConfig) error {
+	compat := appendMap(appendMap(cfg.Values, cfg.AdapterValues), deploymentLegacyLKEValues(appendMap(cfg.Values, cfg.AdapterValues), cfg.Environment))
+	for _, key := range []string{"LKE_REGION", "LKE_GENERAL_NODE_TYPE", "LKE_BROKER_NODE_TYPE", "LKE_DATABASE_NODE_TYPE"} {
+		if strings.TrimSpace(cfg.AdapterValues[key]) == "" {
+			return fmt.Errorf("LKE adapter setting %s is required before mutation", key)
+		}
+	}
+	token := resolveLinodeToken(cfg.RuntimeRoot)
+	if token == "" {
+		return errors.New("LKE credentials reference is required before mutation: configure LINODE_TOKEN in the environment runtime secret")
+	}
+	_, err := discoverLKECluster(token, provisionPaths{EnvRoot: cfg.RuntimeRoot}, compat, false)
+	if errors.Is(err, errLKEMissingCluster) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	required := []string{
+		filepath.Join(cfg.RuntimeRoot, "state", "openbao", "unseal-key"),
+		filepath.Join(cfg.RuntimeRoot, "state", "openbao", "root-token"),
+		filepath.Join(cfg.RuntimeRoot, "state", "secrets", "postgres"),
+	}
+	missing := make([]string, 0, len(required))
+	for _, path := range required {
+		if info, statErr := os.Stat(path); statErr != nil || info.Size() == 0 {
+			missing = append(missing, path)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("existing LKE cluster requires matching environment runtime state before mutation; missing %s; either restore the environment state or intentionally rebuild the cluster and persistent storage", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+func printDeploymentUsage() {
+	fmt.Fprint(os.Stdout, `Usage:
+  rtk-cloud deployment plan --environment NAME
+  rtk-cloud deployment provision --environment NAME --confirm STACK
+  rtk-cloud deployment acceptance --environment NAME
+  rtk-cloud deployment remove --environment NAME --confirm STACK
+`)
+}
+
+func resolveDeploymentConfig(workspace, environment, environmentRoot string) (deploymentConfig, error) {
+	var err error
+	if workspace == "" {
+		workspace, err = workspaceRoot()
+		if err != nil {
+			return deploymentConfig{}, err
+		}
+	}
+	if environmentRoot != "" {
+		if strings.HasSuffix(filepath.Clean(environmentRoot), filepath.Join("staging", "lke")) {
+			return deploymentConfig{}, errors.New("legacy provider env-root is not supported; use --environment staging")
+		}
+		environmentRoot, err = filepath.Abs(environmentRoot)
+		if err != nil {
+			return deploymentConfig{}, err
+		}
+		if environment == "" {
+			environment = filepath.Base(environmentRoot)
+		}
+	} else {
+		if environment == "" {
+			return deploymentConfig{}, errors.New("--environment is required")
+		}
+		environmentRoot = filepath.Join(workspace, "cloud_env", environment)
+	}
+	envIdentity, err := readStrictEnv(filepath.Join(environmentRoot, "environment.env"))
+	if err != nil {
+		return deploymentConfig{}, err
+	}
+	selection, err := readStrictEnv(filepath.Join(environmentRoot, "deployment.env"))
+	if err != nil {
+		return deploymentConfig{}, err
+	}
+	for _, key := range []string{"CLOUD_STACK_NAME", "CLOUD_DNS_ROOT_DOMAIN"} {
+		if strings.TrimSpace(envIdentity[key]) == "" {
+			return deploymentConfig{}, fmt.Errorf("%s is required in environment.env", key)
+		}
+	}
+	architecture := selection["DEPLOYMENT_ARCHITECTURE"]
+	adapter := selection["DEPLOYMENT_ADAPTER"]
+	if architecture == "" || adapter == "" {
+		return deploymentConfig{}, errors.New("DEPLOYMENT_ARCHITECTURE and DEPLOYMENT_ADAPTER are required")
+	}
+	values := map[string]string{}
+	for _, name := range []string{"architecture.env", "capacity.env", "topology.env", "workloads.env"} {
+		part, readErr := readStrictEnv(filepath.Join(workspace, "cloud_deploy", "architectures", architecture, name))
+		if readErr != nil {
+			return deploymentConfig{}, readErr
+		}
+		if err := mergeDeploymentLayer(values, part, "architecture"); err != nil {
+			return deploymentConfig{}, err
+		}
+	}
+	for k := range values {
+		if strings.HasPrefix(k, "LKE_") || strings.HasPrefix(k, "EKS_") || strings.HasPrefix(k, "GKE_") {
+			return deploymentConfig{}, fmt.Errorf("provider key %s is not allowed in architecture", k)
+		}
+		if !deploymentArchitectureKeys[k] {
+			return deploymentConfig{}, fmt.Errorf("unknown architecture key %s", k)
+		}
+	}
+	architectureOverride, err := readOptionalStrictEnv(filepath.Join(environmentRoot, "overrides", "architecture.env"))
+	if err != nil {
+		return deploymentConfig{}, err
+	}
+	for k := range architectureOverride {
+		if _, ok := values[k]; !ok {
+			return deploymentConfig{}, fmt.Errorf("unknown architecture override %s", k)
+		}
+		values[k] = architectureOverride[k]
+	}
+	for k, v := range envIdentity {
+		values[k] = v
+	}
+	for k, v := range selection {
+		values[k] = v
+	}
+	adapterValues, err := readStrictEnv(filepath.Join(workspace, "cloud_deploy", "adapters", adapter, "defaults.env"))
+	if err != nil && adapter == "lke" {
+		return deploymentConfig{}, err
+	}
+	if adapterValues == nil {
+		adapterValues = map[string]string{}
+	}
+	adapterSchema, err := readStrictEnv(filepath.Join(workspace, "cloud_deploy", "adapters", adapter, "schema.env"))
+	if err != nil {
+		return deploymentConfig{}, err
+	}
+	if adapterSchema["ADAPTER_NAME"] != adapter || adapterSchema["ADAPTER_RUNTIME"] != values["DEPLOYMENT_RUNTIME"] {
+		return deploymentConfig{}, fmt.Errorf("adapter %s schema is incompatible with runtime %s", adapter, values["DEPLOYMENT_RUNTIME"])
+	}
+	for key := range adapterValues {
+		if deploymentArchitectureKeys[key] {
+			return deploymentConfig{}, fmt.Errorf("adapter %s may not override architecture key %s", adapter, key)
+		}
+	}
+	adapterOverride, err := readOptionalStrictEnv(filepath.Join(environmentRoot, "overrides", "adapter.env"))
+	if err != nil {
+		return deploymentConfig{}, err
+	}
+	for k := range adapterOverride {
+		if _, ok := adapterValues[k]; !ok {
+			return deploymentConfig{}, fmt.Errorf("unknown %s adapter override %s", adapter, k)
+		}
+		adapterValues[k] = adapterOverride[k]
+	}
+	for k, v := range appendMap(values, adapterValues) {
+		if deploymentIntegerKeys[k] {
+			n, parseErr := strconv.Atoi(v)
+			if parseErr != nil || n < 0 {
+				return deploymentConfig{}, fmt.Errorf("%s must be a non-negative integer", k)
+			}
+		}
+	}
+	if raw := values["MQTT_HARD_ANTI_AFFINITY"]; raw != "true" && raw != "false" {
+		return deploymentConfig{}, errors.New("MQTT_HARD_ANTI_AFFINITY must be true or false")
+	}
+	turnMin, _ := strconv.Atoi(values["TURN_MIN_PORT"])
+	turnMax, _ := strconv.Atoi(values["TURN_MAX_PORT"])
+	if turnMin > turnMax {
+		return deploymentConfig{}, errors.New("TURN_MIN_PORT must not exceed TURN_MAX_PORT")
+	}
+	if values["DEPLOYMENT_RUNTIME"] != "kubernetes" {
+		return deploymentConfig{}, fmt.Errorf("unsupported deployment runtime %q", values["DEPLOYMENT_RUNTIME"])
+	}
+	if values["MQTT_NODE_CLASS"] == "broker" {
+		r, _ := strconv.Atoi(values["MQTT_REPLICAS"])
+		n, _ := strconv.Atoi(values["NODE_CLASS_BROKER_MIN_COUNT"])
+		if r > n {
+			return deploymentConfig{}, fmt.Errorf("MQTT_REPLICAS=%d exceeds broker node capacity=%d", r, n)
+		}
+	}
+	return deploymentConfig{Workspace: workspace, Environment: environment, EnvironmentRoot: environmentRoot, RuntimeRoot: filepath.Join(environmentRoot, "runtime"), Architecture: architecture, Adapter: adapter, Values: values, AdapterValues: adapterValues}, nil
+}
+
+func appendMap(a, b map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, v := range a {
+		out[k] = v
+	}
+	for k, v := range b {
+		out[k] = v
+	}
+	return out
+}
+func mergeDeploymentLayer(dst, src map[string]string, layer string) error {
+	for k, v := range src {
+		if _, ok := dst[k]; ok {
+			return fmt.Errorf("duplicate %s key %s", layer, k)
+		}
+		dst[k] = v
+	}
+	return nil
+}
+
+func readStrictEnv(path string) (map[string]string, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for n, raw := range strings.Split(string(body), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(key) == "" {
+			return nil, fmt.Errorf("%s:%d invalid env assignment", path, n+1)
+		}
+		key = strings.TrimSpace(key)
+		if _, exists := out[key]; exists {
+			return nil, fmt.Errorf("%s:%d duplicate key %s", path, n+1, key)
+		}
+		out[key] = strings.TrimSpace(value)
+	}
+	return out, nil
+}
+func readOptionalStrictEnv(path string) (map[string]string, error) {
+	out, err := readStrictEnv(path)
+	if os.IsNotExist(err) {
+		return map[string]string{}, nil
+	}
+	return out, err
+}
+
+func materializeDeploymentRuntime(cfg deploymentConfig) error {
+	for _, dir := range []string{"resolved", "env", "state", filepath.Join("adapters", cfg.Adapter), "services", "secrets", "devices", "artifacts", "backups"} {
+		if err := os.MkdirAll(filepath.Join(cfg.RuntimeRoot, dir), 0o700); err != nil {
+			return err
+		}
+	}
+	resolved := appendMap(cfg.Values, cfg.AdapterValues)
+	stack := appendMap(cfg.Values, deploymentRuntimeEndpoints(resolved))
+	stack["CLOUD_ENV_NAME"] = cfg.Environment
+	stack["CLOUD_PROVIDER"] = cfg.Adapter
+	stack["CLOUD_REGION"] = firstNonEmpty(cfg.AdapterValues["LKE_REGION"], cfg.AdapterValues["EKS_REGION"], cfg.AdapterValues["GKE_REGION"])
+	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "resolved", "deployment.env"), resolved, 0o600); err != nil {
+		return err
+	}
+	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "env", "stack.env"), stack, 0o600); err != nil {
+		return err
+	}
+	adapterRuntime := appendMap(cfg.AdapterValues, deploymentLegacyLKEValues(resolved, cfg.Environment))
+	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "adapters", cfg.Adapter, "config.env"), adapterRuntime, 0o600); err != nil {
+		return err
+	}
+	plan := map[string]any{"environment": cfg.Environment, "architecture": cfg.Architecture, "adapter": cfg.Adapter, "values": resolved}
+	body, _ := json.MarshalIndent(plan, "", "  ")
+	body = append(body, '\n')
+	return os.WriteFile(filepath.Join(cfg.RuntimeRoot, "resolved", "deployment-plan.json"), body, 0o600)
+}
+
+func deploymentRuntimeEndpoints(v map[string]string) map[string]string {
+	stack := strings.TrimSpace(v["CLOUD_STACK_NAME"])
+	rootDomain := strings.TrimSpace(v["CLOUD_DNS_ROOT_DOMAIN"])
+	if stack == "" || rootDomain == "" {
+		return map[string]string{}
+	}
+	publicHost := stack + "." + rootDomain
+	return map[string]string{
+		"ACCOUNT_MANAGER_BASE_URL":    "https://account-manager." + publicHost,
+		"VIDEO_CLOUD_BASE_URL":        "https://" + publicHost,
+		"VIDEO_CLOUD_PUBLIC_BASE_URL": "https://" + publicHost,
+		"VIDEO_CLOUD_MTLS_BASE_URL":   "https://device." + publicHost,
+		"VIDEO_CLOUD_TOKEN_BASE_URL":  "https://device." + publicHost,
+		"VIDEO_CLOUD_MQTT_ADDR":       publicHost + ":8883",
+	}
+}
+
+func deploymentLegacyLKEValues(v map[string]string, environment string) map[string]string {
+	if v["DEPLOYMENT_ADAPTER"] != "lke" {
+		return map[string]string{}
+	}
+	return map[string]string{
+		"CLOUD_ENV_NAME": environment, "CLOUD_PROVIDER": "lke", "CLOUD_REGION": v["LKE_REGION"],
+		"LKE_TARGET_CONNECTS": v["CAPACITY_TARGET_CONNECTIONS"], "LKE_MQTT_CONNECTIONS_PER_POD": v["CAPACITY_CONNECTIONS_PER_MQTT_POD"],
+		"LKE_SYSTEM_RESERVED_CPU_PER_NODE": v["CAPACITY_SYSTEM_RESERVED_CPU_MILLI"] + "m", "LKE_SYSTEM_RESERVED_MEMORY_PER_NODE": v["CAPACITY_SYSTEM_RESERVED_MEMORY_MIB"] + "Mi",
+		"LKE_NODE_COUNT": v["NODE_CLASS_BROKER_MIN_COUNT"], "LKE_NODE_TYPE": v["LKE_BROKER_NODE_TYPE"],
+		"LKE_GENERAL_NODE_COUNT": v["NODE_CLASS_GENERAL_MIN_COUNT"], "LKE_GENERAL_NODE_TYPE": v["LKE_GENERAL_NODE_TYPE"],
+		"LKE_POSTGRES_DEDICATED_NODE_POOL": "true", "LKE_POSTGRES_NODE_COUNT": v["NODE_CLASS_DATABASE_MIN_COUNT"], "LKE_POSTGRES_NODE_TYPE": v["LKE_DATABASE_NODE_TYPE"],
+		"LKE_MQTT_REPLICAS": v["MQTT_REPLICAS"], "LKE_VIDEO_CLOUD_REPLICAS": v["VIDEO_CLOUD_API_REPLICAS"],
+		"LKE_POSTGRES_REQUEST_CPU": v["POSTGRES_REQUEST_CPU"], "LKE_POSTGRES_REQUEST_MEMORY": v["POSTGRES_REQUEST_MEMORY"], "LKE_POSTGRES_LIMIT_MEMORY": v["POSTGRES_LIMIT_MEMORY"],
+		"LKE_CLOUD_LOGGER_REQUEST_CPU": v["CLOUD_LOGGER_REQUEST_CPU"], "LKE_CLOUD_LOGGER_REQUEST_MEMORY": v["CLOUD_LOGGER_REQUEST_MEMORY"], "LKE_CLOUD_LOGGER_LIMIT_MEMORY": v["CLOUD_LOGGER_LIMIT_MEMORY"],
+		"LKE_EDGE_HAPROXY_COUNT": v["EDGE_REPLICAS"], "LKE_EDGE_HAPROXY_MAXCONN": v["EDGE_MAX_CONNECTIONS"],
+		"LKE_COTURN_VM_COUNT": v["TURN_REPLICAS"], "LKE_COTURN_MIN_PORT": v["TURN_MIN_PORT"], "LKE_COTURN_MAX_PORT": v["TURN_MAX_PORT"],
+		"LKE_LINODE_ACTIVE_SERVICE_LIMIT": v["LINODE_ACTIVE_SERVICE_LIMIT"],
+	}
+}
+
+func writeSortedEnv(path string, values map[string]string, mode os.FileMode) error {
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		if values[k] != "" {
+			fmt.Fprintf(&b, "%s=%s\n", k, values[k])
+		}
+	}
+	return os.WriteFile(path, []byte(b.String()), mode)
+}
+
+func normalizeDeploymentRuntime(cfg deploymentConfig) error {
+	normalized := filepath.Join(cfg.RuntimeRoot, "state", "kubeconfig.yaml")
+	body, err := os.ReadFile(normalized)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if cfg.Adapter != "lke" {
+		return nil
+	}
+	adapterState, err := readOptionalStrictEnv(filepath.Join(cfg.RuntimeRoot, "adapters", "lke", "state.env"))
+	if err != nil {
+		return err
+	}
+	clusterID := strings.TrimSpace(adapterState["LKE_CLUSTER_ID"])
+	if clusterID == "" {
+		return nil
+	}
+	replacements := []string{
+		"lke" + clusterID + "-admin", "rtk-cloud-" + cfg.Environment + "-admin",
+		"lke" + clusterID + "-ctx", "rtk-cloud-" + cfg.Environment + "-context",
+		"lke" + clusterID, "rtk-cloud-" + cfg.Environment + "-cluster",
+	}
+	sanitized := strings.NewReplacer(replacements...).Replace(string(body))
+	return os.WriteFile(normalized, []byte(sanitized), 0o600)
+}

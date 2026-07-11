@@ -553,9 +553,9 @@ func executeLinodeDestroyPlan(token, envRoot string, plan linodeDestroyPlan, inc
 }
 
 func removeDestroyedLKEState(envRoot string) error {
-	stateDir := filepath.Join(envRoot, "state")
-	backupDir := filepath.Join(envRoot, "backups", "destroy-lke-"+time.Now().UTC().Format("20060102T150405Z"), "state")
-	files := []string{"lke.env", "lke-kubeconfig.yaml"}
+	stateDir := envRoot
+	backupDir := filepath.Join(envRoot, "backups", "destroy-lke-"+time.Now().UTC().Format("20060102T150405Z"))
+	files := []string{filepath.Join("adapters", "lke", "state.env"), filepath.Join("state", "kubeconfig.yaml")}
 	backedUp := false
 	for _, name := range files {
 		src := filepath.Join(stateDir, name)

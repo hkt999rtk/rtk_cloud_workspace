@@ -6,7 +6,7 @@ import (
 )
 
 func TestExecuteStagesUsesActorFlowsForShadowMetrics(t *testing.T) {
-	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea"})
+	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/runtime", Brandname: "RTK", Region: "us-sea"})
 	if err != nil {
 		t.Fatalf("NewPlan() error = %v", err)
 	}
@@ -174,7 +174,7 @@ func TestAggregateStageResultsSumsDeviceAndAppTotals(t *testing.T) {
 
 func TestExecuteStagesCanHonorConfiguredStageDurations(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:       "cloud_env/staging/lke",
+		EnvRoot:       "cloud_env/staging/runtime",
 		Brandname:     "RTK",
 		Region:        "us-sea",
 		StageWarmUp:   "1ms",

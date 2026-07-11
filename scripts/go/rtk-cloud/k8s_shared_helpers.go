@@ -347,9 +347,21 @@ func runCmdWithInput(dir, input, name string, args ...string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+		return fmt.Errorf("%s %s: %w", name, strings.Join(redactCommandArgs(args), " "), err)
 	}
 	return nil
+}
+
+func redactCommandArgs(args []string) []string {
+	redacted := append([]string(nil), args...)
+	for i, arg := range redacted {
+		key, _, found := strings.Cut(arg, "=")
+		upper := strings.ToUpper(key)
+		if found && (strings.Contains(upper, "SECRET") || strings.Contains(upper, "TOKEN") || strings.HasSuffix(upper, "_KEY") || strings.Contains(upper, "PASSWORD")) {
+			redacted[i] = key + "=<redacted>"
+		}
+	}
+	return redacted
 }
 
 func runCmdQuiet(name string, args ...string) error {

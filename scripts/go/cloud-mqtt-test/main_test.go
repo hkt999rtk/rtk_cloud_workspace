@@ -2506,11 +2506,17 @@ func TestParsePositiveDurationRejectsEmptyAndInvalidValues(t *testing.T) {
 }
 
 func TestDesiredWriteRemainingBudgetScalesForShortDebugStages(t *testing.T) {
-	if got := desiredWriteRemainingBudget(75 * time.Second); got != 15*time.Second {
+	if got := desiredWriteRemainingBudget(75*time.Second, 0); got != 15*time.Second {
 		t.Fatalf("75s stage budget = %s, want 15s", got)
 	}
-	if got := desiredWriteRemainingBudget(1 * time.Second); got != 250*time.Millisecond {
+	if got := desiredWriteRemainingBudget(1*time.Second, 0); got != 250*time.Millisecond {
 		t.Fatalf("1s stage budget = %s, want 250ms", got)
+	}
+	if got := desiredWriteRemainingBudget(150*time.Second, 30*time.Second); got != 30*time.Second {
+		t.Fatalf("150s stage budget = %s, want configured 30s command timeout", got)
+	}
+	if got := desiredWriteRemainingBudget(10*time.Second, 30*time.Second); got != 5*time.Second {
+		t.Fatalf("10s stage budget = %s, want half-stage cap 5s", got)
 	}
 }
 

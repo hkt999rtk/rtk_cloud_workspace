@@ -77,8 +77,7 @@
     - name: Start runner daemon in READY_WAIT
       ansible.builtin.shell: |
         set -euo pipefail
-        export KUBECONFIG="{{ remote_env_root }}/state/lke-kubeconfig.yaml"
-        export RTK_CLOUD_LKE_KUBECONFIG="{{ remote_env_root }}/state/lke-kubeconfig.yaml"
+        export KUBECONFIG="{{ remote_env_root }}/state/kubeconfig.yaml"
         export CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT="{{ remote_home_100k_dir }}/bin/cloud-mqtt-test"
         account_domain=""
         if [ -f "{{ remote_env_root }}/env/stack.env" ]; then

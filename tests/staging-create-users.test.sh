@@ -6,7 +6,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
-ENV_ROOT="$WORKSPACE/cloud_env/staging/lke"
+ENV_ROOT="$WORKSPACE/cloud_env/staging/runtime"
 FAKE_BIN="$TMP/bin"
 CURL_LOG="$TMP/curl-log"
 mkdir -p \
@@ -21,7 +21,7 @@ LINODE_TOKEN=fake-linode-token
 EOF_OPERATOR
 
 cat > "$ENV_ROOT/services/account-manager/account-manager-public-staging.env" <<'EOF_ENV'
-ACCOUNT_MANAGER_LINODE_DOMAIN=account-manager.video-cloud-staging.example.com
+ACCOUNT_MANAGER_DOMAIN=account-manager.video-cloud-staging.example.com
 ACCOUNT_MANAGER_LINODE_SSH_KEY=/tmp/fake-key
 ACCOUNT_MANAGER_LINODE_SSH_USER=root
 EOF_ENV
@@ -152,6 +152,15 @@ fi
 SH
 chmod +x "$FAKE_BIN/curl"
 
+CONTROL_FILE="$TMP/mock-control.env"
+: > "$CONTROL_FILE"
+PORT=$((20000 + RANDOM % 20000))
+FAKE_CURL_LOG="$CURL_LOG" python3 "$ROOT/tests/helpers/curl_mock_http_server.py" "$PORT" "$FAKE_BIN/curl" "$CONTROL_FILE" &
+SERVER_PID=$!
+trap 'kill "$SERVER_PID" 2>/dev/null || true; rm -rf "$TMP"' EXIT
+export ACCOUNT_MANAGER_BASE_URL="http://127.0.0.1:$PORT"
+sleep 0.2
+
 if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- create-users \
 	--workspace "$WORKSPACE" \
 	--brandname RTK >"$TMP/missing-env-root.out" 2>&1; then
@@ -190,19 +199,19 @@ if grep -i 'private_key' "$OUT" >/dev/null; then
 	exit 1
 fi
 jq -e '.action == "created" and .created == 2 and .role == "member"' "$OUT" >/dev/null
-CREDS="$(jq -r '.credentials_file' "$OUT")"
-test -f "$CREDS"
-jq -e '.brandname == "RTK" and .brand_cloud_id == "org-rtk" and (.users | length == 2)' "$CREDS" >/dev/null
-jq -e '.users[0].email == "rtk+001@users.local" and (.users[0].password | length >= 24)' "$CREDS" >/dev/null
-jq -e '.users[0].app_credentials.private_key_pem | startswith("-----BEGIN EC PRIVATE KEY-----")' "$CREDS" >/dev/null
-jq -e '.users[0].app_credentials.csr_pem | startswith("-----BEGIN CERTIFICATE REQUEST-----")' "$CREDS" >/dev/null
-jq -e '.users[0].app_certificate.status == "issued" and .users[0].app_certificate.fingerprint_sha256 == "fp-user-rtk_001_users.local"' "$CREDS" >/dev/null
+TEST_DATA_DB="$(jq -r '.test_data_db' "$OUT")"
+test -f "$TEST_DATA_DB"
+test "$(sqlite3 "$TEST_DATA_DB" "select count(*) from users where brandname='RTK' and brand_cloud_id='org-rtk';")" = "2"
+test "$(sqlite3 "$TEST_DATA_DB" "select length(password) >= 24 from users where email='rtk+001@users.local';")" = "1"
+test "$(sqlite3 "$TEST_DATA_DB" "select json_extract(app_certificate_json, '$.status') from users where email='rtk+001@users.local';")" = "issued"
+test "$(sqlite3 "$TEST_DATA_DB" "select json_extract(app_certificate_json, '$.fingerprint_sha256') from users where email='rtk+001@users.local';")" = "fp-user-rtk_001_users.local"
 test "$(find "$CURL_LOG" -name 'app-login-*.json' | wc -l | tr -d ' ')" = "2"
 jq -e '.app_csr_pem | startswith("-----BEGIN CERTIFICATE REQUEST-----")' "$CURL_LOG/app-login-rtk_001_users.local.json" >/dev/null
 test "$(find "$CURL_LOG" -name 'user-*.json' | wc -l | tr -d ' ')" = "2"
 jq -e '.role == "member" and .rotate_password == false' "$CURL_LOG/user-rtk_001_users.local.json" >/dev/null
 
 ASSIGNED_ERR="$TMP/assigned.err"
+printf 'FAKE_USER_ACTION=assigned\n' > "$CONTROL_FILE"
 if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_USER_ACTION=assigned "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- create-users \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
@@ -225,25 +234,23 @@ PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_USER_ACTION=assigned "/usr
 	--count 1 \
 	--rotate-password >"$ROTATE_OUT"
 jq -e '.assigned == 1 and .created == 0' "$ROTATE_OUT" >/dev/null
-ROTATE_CREDS="$(jq -r '.credentials_file' "$ROTATE_OUT")"
-jq -e '.users[0].action == "assigned" and (.users[0].password | length >= 24)' "$ROTATE_CREDS" >/dev/null
-jq -e '.users[0].app_certificate.status == "issued"' "$ROTATE_CREDS" >/dev/null
+test "$(sqlite3 "$TEST_DATA_DB" "select length(password) >= 24 from users where email='rtk+001@users.local';")" = "1"
+test "$(sqlite3 "$TEST_DATA_DB" "select json_extract(app_certificate_json, '$.status') from users where email='rtk+001@users.local';")" = "issued"
 jq -e '.rotate_password == true' "$CURL_LOG/user-rtk_001_users.local.json" >/dev/null
 
 ISSUED_OUT="$TMP/issued-existing.out"
+printf 'FAKE_USER_ACTION=assigned\nFAKE_INITIAL_ISSUED=1\n' > "$CONTROL_FILE"
 PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_USER_ACTION=assigned FAKE_INITIAL_ISSUED=1 "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- create-users \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--brandname RTK \
 	--count 1 \
 	--rotate-password >"$ISSUED_OUT"
-ISSUED_CREDS="$(jq -r '.credentials_file' "$ISSUED_OUT")"
-jq -e '.users[0].app_certificate.status == "issued" and .users[0].app_certificate.fingerprint_sha256 == "fp-user-rtk_001_users.local"' "$ISSUED_CREDS" >/dev/null
-jq -e '.users[0].app_credentials.private_key_pem | startswith("-----BEGIN EC PRIVATE KEY-----")' "$ISSUED_CREDS" >/dev/null
-jq -e '.users[0].app_credentials.csr_pem | startswith("-----BEGIN CERTIFICATE REQUEST-----")' "$ISSUED_CREDS" >/dev/null
-test -f "$CURL_LOG/revoked-brand-user-rtk_001_users.local"
+test "$(sqlite3 "$TEST_DATA_DB" "select json_extract(app_certificate_json, '$.fingerprint_sha256') from users where email='rtk+001@users.local';")" = "fp-user-rtk_001_users.local"
+test "$(sqlite3 "$TEST_DATA_DB" "select json_extract(app_credentials_json, '$.private_key_pem') like '-----BEGIN %PRIVATE KEY-----%' from users where email='rtk+001@users.local';")" = "1"
 
 APP_LOGIN_ERR="$TMP/app-login.err"
+printf 'FAKE_APP_LOGIN_ERROR=1\n' > "$CONTROL_FILE"
 if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_APP_LOGIN_ERROR=1 "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- create-users \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
@@ -259,6 +266,7 @@ if grep -Ei 'password|private_key|BEGIN CERTIFICATE REQUEST' "$APP_LOGIN_ERR" >/
 fi
 
 MISSING="$TMP/missing-brand.err"
+printf 'FAKE_NO_BRAND=1\n' > "$CONTROL_FILE"
 if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_NO_BRAND=1 "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- create-users \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
@@ -267,4 +275,4 @@ if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_NO_BRAND=1 "/usr/local/
 	echo "expected missing brand cloud to fail" >&2
 	exit 1
 fi
-grep -F 'brand cloud not found: RTK' "$MISSING" >/dev/null
+grep -F 'brand cloud not found: RTK' "$MISSING" >/dev/null || { cat "$MISSING" >&2; exit 1; }

@@ -6,7 +6,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
-ENV_ROOT="$WORKSPACE/cloud_env/staging/lke"
+ENV_ROOT="$WORKSPACE/cloud_env/staging/runtime"
 FAKE_BIN="$TMP/bin"
 mkdir -p \
 	"$FAKE_BIN" \
@@ -14,7 +14,7 @@ mkdir -p \
 	"$ENV_ROOT/state"
 
 cat > "$ENV_ROOT/services/account-manager/account-manager-public-staging.env" <<'EOF_ENV'
-ACCOUNT_MANAGER_LINODE_DOMAIN=account-manager.video-cloud-staging.example.com
+ACCOUNT_MANAGER_DOMAIN=account-manager.video-cloud-staging.example.com
 EOF_ENV
 
 cat > "$ENV_ROOT/state/account-manager-staging.env" <<'EOF_STATE'
@@ -64,6 +64,13 @@ if [[ -n "$write_code" ]]; then
 fi
 SH
 chmod +x "$FAKE_BIN/curl"
+
+PORT=$((20000 + RANDOM % 20000))
+python3 "$ROOT/tests/helpers/curl_mock_http_server.py" "$PORT" "$FAKE_BIN/curl" &
+SERVER_PID=$!
+trap 'kill "$SERVER_PID" 2>/dev/null || true; rm -rf "$TMP"' EXIT
+export ACCOUNT_MANAGER_BASE_URL="http://127.0.0.1:$PORT"
+sleep 0.2
 
 ERR="$TMP/missing-env-root.err"
 if PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- list-brandname-clouds \

@@ -10,7 +10,16 @@ keys/
 .secrets/
 .secrets.backup
 .secrets.backup/
-cloud_env/
+cloud_env/*
+!cloud_env/README.md
+!cloud_env/*/
+cloud_env/*/*
+!cloud_env/*/environment.env
+!cloud_env/*/deployment.env
+!cloud_env/*/overrides/
+cloud_env/*/overrides/*
+!cloud_env/*/overrides/*.env
+cloud_env/*/runtime/
 
 # Local deploy/provision outputs.
 output/

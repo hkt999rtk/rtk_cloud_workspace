@@ -8,7 +8,7 @@ import (
 
 func TestReportRendersRequiredScenariosAndIncompleteEvidence(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:   "cloud_env/staging/lke",
+		EnvRoot:   "cloud_env/staging/runtime",
 		Brandname: "RTK",
 		Region:    "us-sea",
 	})
@@ -57,7 +57,7 @@ func TestReportRendersRequiredScenariosAndIncompleteEvidence(t *testing.T) {
 
 func TestReportRendersMultiBrandConditions(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:   "cloud_env/staging/lke",
+		EnvRoot:   "cloud_env/staging/runtime",
 		Brandname: "RTK",
 		Region:    "us-sea",
 	})
@@ -102,7 +102,7 @@ func TestReportRendersMultiBrandConditions(t *testing.T) {
 
 func TestReportMarksMissingPerTypeEvidenceAsCompleteFailure(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:   "cloud_env/staging/lke",
+		EnvRoot:   "cloud_env/staging/runtime",
 		Brandname: "RTK",
 		Region:    "us-sea",
 	})
@@ -156,7 +156,7 @@ func TestReportMarksMissingPerTypeEvidenceAsCompleteFailure(t *testing.T) {
 
 func TestReportMarksFunctionalThresholdFailure(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:     "cloud_env/staging/lke",
+		EnvRoot:     "cloud_env/staging/runtime",
 		Brandname:   "RTK",
 		Region:      "us-sea",
 		DeviceCount: 20,
@@ -211,7 +211,7 @@ func TestReportMarksFunctionalThresholdFailure(t *testing.T) {
 
 func TestVideo1KProfilePlansVideoPilotDefaults(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:         "cloud_env/staging/lke",
+		EnvRoot:         "cloud_env/staging/runtime",
 		Brandname:       "RTK",
 		Region:          "us-sea",
 		ScenarioProfile: "video-1k-v1",
@@ -245,7 +245,7 @@ func TestVideo1KProfilePlansVideoPilotDefaults(t *testing.T) {
 
 func TestReportMarksMissingVideoEvidenceIncomplete(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:         "cloud_env/staging/lke",
+		EnvRoot:         "cloud_env/staging/runtime",
 		Brandname:       "RTK",
 		Region:          "us-sea",
 		ScenarioProfile: "video-1k-v1",
@@ -300,7 +300,7 @@ func TestReportMarksMissingVideoEvidenceIncomplete(t *testing.T) {
 
 func TestReportRendersVideoAndTURNEvidence(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:         "cloud_env/staging/lke",
+		EnvRoot:         "cloud_env/staging/runtime",
 		Brandname:       "RTK",
 		Region:          "us-sea",
 		ScenarioProfile: "video-1k-v1",
@@ -668,7 +668,7 @@ func TestVideoLadderEvidenceRendersPerStepReport(t *testing.T) {
 	if len(video.Steps) != 2 {
 		t.Fatalf("steps = %d, want 2: %+v", len(video.Steps), video)
 	}
-	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea", ScenarioProfile: Video100KTurnScenarioProfile})
+	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/runtime", Brandname: "RTK", Region: "us-sea", ScenarioProfile: Video100KTurnScenarioProfile})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -861,7 +861,7 @@ func TestVideoStepThresholdFailureMakesMergedReportFail(t *testing.T) {
 		t.Fatal(err)
 	}
 	video := loadVideoEvidence(tmp + "/video")
-	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea", ScenarioProfile: Video50KTurnScenarioProfile})
+	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/runtime", Brandname: "RTK", Region: "us-sea", ScenarioProfile: Video50KTurnScenarioProfile})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1114,7 +1114,7 @@ func TestVideoEvidenceWithActiveTURNSamplesKeepsSocketOnlyEvidence(t *testing.T)
 func TestVideoTurnOutcomeRequiresWebRTCSignalingStoreEvidence(t *testing.T) {
 	for _, profile := range []string{Video50KTurnScenarioProfile, Video100KTurnScenarioProfile} {
 		t.Run(profile, func(t *testing.T) {
-			plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea", ScenarioProfile: profile})
+			plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/runtime", Brandname: "RTK", Region: "us-sea", ScenarioProfile: profile})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1139,7 +1139,7 @@ func TestVideoTurnOutcomeRequiresWebRTCSignalingStoreEvidence(t *testing.T) {
 }
 
 func TestVideoTurnOutcomeRequiresDynamicTURNRegistryPath(t *testing.T) {
-	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea", ScenarioProfile: Video50KTurnScenarioProfile})
+	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/runtime", Brandname: "RTK", Region: "us-sea", ScenarioProfile: Video50KTurnScenarioProfile})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1171,7 +1171,7 @@ func TestVideoTurnOutcomeRequiresDynamicTURNRegistryPath(t *testing.T) {
 }
 
 func TestRelayOnlyVideoGateFailsOnNonRelayCandidate(t *testing.T) {
-	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea", ScenarioProfile: Video100KTurnScenarioProfile})
+	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/runtime", Brandname: "RTK", Region: "us-sea", ScenarioProfile: Video100KTurnScenarioProfile})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1233,7 +1233,7 @@ func TestRelayOnlyVideoGateFailsOnNonRelayCandidate(t *testing.T) {
 }
 
 func TestVideoGateFailsWhenMediaSuccessRateBelowThreshold(t *testing.T) {
-	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea", ScenarioProfile: Video50KTurnScenarioProfile})
+	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/runtime", Brandname: "RTK", Region: "us-sea", ScenarioProfile: Video50KTurnScenarioProfile})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1314,7 +1314,7 @@ func completeVideo100KTurnEvidence() VideoEvidence {
 
 func TestReportRedactsSecretsAndMarksLoadGeneratorSaturation(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:   "cloud_env/staging/lke",
+		EnvRoot:   "cloud_env/staging/runtime",
 		Brandname: "RTK",
 		Region:    "us-sea",
 	})
@@ -1349,7 +1349,7 @@ func TestReportRedactsSecretsAndMarksLoadGeneratorSaturation(t *testing.T) {
 
 func TestReportRendersFailureEventSamples(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:   "cloud_env/staging/lke",
+		EnvRoot:   "cloud_env/staging/runtime",
 		Brandname: "RTK",
 		Region:    "us-sea",
 	})
@@ -1396,7 +1396,7 @@ func TestReportRendersFailureEventSamples(t *testing.T) {
 
 func TestReportRendersRequiredStageMetrics(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:   "cloud_env/staging/lke",
+		EnvRoot:   "cloud_env/staging/runtime",
 		Brandname: "RTK",
 		Region:    "us-sea",
 	})

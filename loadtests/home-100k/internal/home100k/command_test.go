@@ -30,8 +30,8 @@ func writeTinyEnvRoot(t *testing.T) string {
 	root := t.TempDir()
 	files := map[string]string{
 		"env/stack.env":                        "STACK=test\n",
-		"state/lke.env":                        "LKE_CLUSTER_ID=123\n",
-		"state/lke-kubeconfig.yaml":            "apiVersion: v1\nkind: Config\n",
+		"adapters/lke/state.env":               "LKE_CLUSTER_ID=123\n",
+		"state/kubeconfig.yaml":                "apiVersion: v1\nkind: Config\n",
 		"state/video-cloud-staging.state.json": `{"mqtt":{"host":"mqtt.example.invalid","tls_port":8883}}`,
 		"services/video-cloud.env":             "VIDEO_CLOUD_BASE_URL=http://example.invalid\n",
 		"devices/test_device/loadtest.env":     "LOADTEST=1\n",
@@ -329,7 +329,7 @@ func TestExecutePlanPrintsDeterministicRunPlan(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"--", "plan",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 	}, &stdout, &stderr)
@@ -425,7 +425,7 @@ func TestExecutePlanAcceptsConfiguredStageDurations(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"--", "plan",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--stage-warm-up", "1m",
@@ -447,7 +447,7 @@ func TestExecutePlanRejectsLegacyStageProfileFlag(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"--", "plan",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--stage-profile", "staged",
@@ -465,7 +465,7 @@ func TestExecuteRunWithoutLiveProvisionerProducesIncompleteReport(t *testing.T) 
 	outDir := t.TempDir()
 	code := Execute([]string{
 		"run",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--ephemeral-vms",
@@ -499,7 +499,7 @@ func TestExecuteRunRequiresEphemeralVMs(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"run",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 	}, &stdout, &stderr)
@@ -515,7 +515,7 @@ func TestExecuteProvisionVMsDefaultsToDryRun(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"provision-vms",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--devices", "9000",
@@ -534,7 +534,7 @@ func TestExecuteProvisionVMsDryRunIncludesVideoOnlyGenerators(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"provision-vms",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--devices", "9000",
@@ -562,7 +562,7 @@ func TestExecuteProvisionVMsRequiresConfirmForLive(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"provision-vms",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--devices", "9000",
@@ -604,7 +604,7 @@ func TestExecuteProvisionVMsLiveWritesVMStateFile(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"provision-vms",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -633,7 +633,7 @@ func TestExecuteProvisionVMsLiveUsesExistingHostsWithoutLinodeAPI(t *testing.T) 
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"provision-vms",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--devices", "2000",
@@ -665,7 +665,7 @@ func TestExecuteProvisionVMsLiveExistingHostsRequireAllLoadAssignments(t *testin
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"provision-vms",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--devices", "2000",
@@ -716,7 +716,7 @@ func TestExecuteProvisionVMsLiveReusesExistingLabelPoolAndBootsPoweredOffVMs(t *
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"provision-vms",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -768,7 +768,7 @@ func TestExecuteProvisionVMsLiveRejectsStaleFixedLabel(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"provision-vms",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -810,7 +810,7 @@ func TestExecuteProvisionVMsLiveUsesVMConfigFlagsWithoutLeakingRootPass(t *testi
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"provision-vms",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -843,7 +843,7 @@ func TestExecuteDestroyVMsDefaultsToDryRun(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"destroy-vms",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -890,7 +890,7 @@ func TestExecuteDestroyVMsLiveReadsStateAndDeletesVMs(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"destroy-vms",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -938,7 +938,7 @@ func TestExecuteDestroyVMsLiveSkipsExistingHosts(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"destroy-vms",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -963,7 +963,7 @@ func TestExecuteListVMsDefaultsToDryRun(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"list-vms",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -993,7 +993,7 @@ func TestExecuteListVMsLiveReturnsTaggedVMs(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"list-vms",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -1013,7 +1013,7 @@ func TestExecuteSyncDefaultsToDryRun(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"sync",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -1031,7 +1031,7 @@ func TestExecuteSyncRejectsUnsupportedCredentialBundleFormat(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"sync",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -1112,7 +1112,7 @@ func TestExecuteSyncLiveHonorsExplicitVMCountOverride(t *testing.T) {
 		"--live",
 		"--vm-state-file", stateFile,
 		"--remote-workspace", "/root/rtk_cloud_workspace",
-		"--remote-env-root", "/root/rtk_cloud_workspace/cloud_env/staging/lke",
+		"--remote-env-root", "/root/rtk_cloud_workspace/cloud_env/staging/runtime",
 		"--ssh-user", "root",
 		"--ssh-key", "/tmp/test-key",
 		"--generator-hosts-override-ip", "172.232.190.230",
@@ -1283,10 +1283,13 @@ func TestExecuteSyncLiveHonorsExplicitVMCountOverride(t *testing.T) {
 		t.Fatalf("missing common env archive: %v", err)
 	}
 	commonNames := readTarGzNames(t, commonArchive)
-	for _, want := range []string{"env/stack.env", "state/lke.env", "state/lke-kubeconfig.yaml", "state/video-cloud-staging.state.json", "services/video-cloud.env", "devices/test_device/loadtest.env", "devices/test_device/summary.json"} {
+	for _, want := range []string{"env/stack.env", "state/kubeconfig.yaml", "state/video-cloud-staging.state.json", "services/video-cloud.env", "devices/test_device/loadtest.env", "devices/test_device/summary.json"} {
 		if !commonNames[want] {
 			t.Fatalf("common env archive missing %q", want)
 		}
+	}
+	if commonNames["adapters/lke/state.env"] {
+		t.Fatal("common env archive must not expose provider adapter state")
 	}
 	for _, forbidden := range []string{"devices/test_device/manifests/devices.json", "artifacts/users/rtk-users-20260616T000000Z.json", "artifacts/device-bind/rtk-device-bind-20260616T000000Z.json"} {
 		if commonNames[forbidden] {
@@ -2043,7 +2046,7 @@ func TestHome100KScriptAutoDiscoversPublicMQTTOnlyForLiveCommands(t *testing.T) 
 	outDir := t.TempDir()
 	descriptionFile := filepath.Join(outDir, "description.env")
 	if err := os.WriteFile(descriptionFile, []byte(strings.Join([]string{
-		"HOME100K_ENV_ROOT=cloud_env/staging/lke",
+		"HOME100K_ENV_ROOT=cloud_env/staging/runtime",
 		"HOME100K_BRANDNAME=RTK",
 		"HOME100K_REGION=us-sea",
 		"HOME100K_MQTT_ADDR=auto-public-mqtt",
@@ -2098,7 +2101,7 @@ JSON
 	if err := os.WriteFile(stateFile, []byte(`{"created":[{"id":101,"label":"lg01","ipv4":["203.0.113.101"]}]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	syncCmd := exec.Command("bash", script, "sync", "--live", "--remote-workspace", "/root/ws", "--remote-env-root", "/root/ws/cloud_env/staging/lke", "--ssh-key", "/tmp/key")
+	syncCmd := exec.Command("bash", script, "sync", "--live", "--remote-workspace", "/root/ws", "--remote-env-root", "/root/ws/cloud_env/staging/runtime", "--ssh-key", "/tmp/key")
 	syncCmd.Env = commonEnv
 	if raw, err := syncCmd.CombinedOutput(); err != nil {
 		t.Fatalf("sync failed: %v\n%s", err, raw)
@@ -2475,7 +2478,7 @@ printf 'unexpected video runner call\n' >> ` + shellQuoteForTest(videoLog) + `
 func TestHome100KScriptUsesAbsoluteEnvRootKubeconfigForServerEvidence(t *testing.T) {
 	outDir := t.TempDir()
 	envRoot := filepath.Join(outDir, "env-root")
-	kubeconfig := filepath.Join(envRoot, "state", "lke-kubeconfig.yaml")
+	kubeconfig := filepath.Join(envRoot, "state", "kubeconfig.yaml")
 	if err := os.MkdirAll(filepath.Dir(kubeconfig), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -2620,7 +2623,7 @@ func TestAnsibleStartRunnerUsesPrebuiltCloudMQTTTestAndDaemonWait(t *testing.T) 
 func TestRunnerDaemonAcceptsRuntimeLogsFlag(t *testing.T) {
 	var stderr bytes.Buffer
 	_, values, err := parseRunnerDaemonFlags("home-100k runner-daemon", []string{
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -2639,7 +2642,7 @@ func TestRunnerDaemonAcceptsRuntimeLogsFlag(t *testing.T) {
 func TestRunnerDaemonAcceptsDeviceTokenRequestFlags(t *testing.T) {
 	var stderr bytes.Buffer
 	opts, values, err := parseRunnerDaemonFlags("home-100k runner-daemon", []string{
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -2669,7 +2672,7 @@ func TestExecuteRunStagesProducesStageMetrics(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"run-stages",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -2694,7 +2697,7 @@ func TestExecuteRunStagesLiveRunnerModeRefusesSampleFallback(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"run-stages",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -2727,7 +2730,7 @@ func TestExecuteRunStagesLiveRequiresPublicMQTTEndpoint(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"run-stages",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--video-generator-vm-count", "1",
@@ -2737,7 +2740,7 @@ func TestExecuteRunStagesLiveRequiresPublicMQTTEndpoint(t *testing.T) {
 		"--runner-mode", "live",
 		"--vm-state-file", stateFile,
 		"--remote-workspace", "/root/rtk_cloud_workspace",
-		"--remote-env-root", "/root/rtk_cloud_workspace/cloud_env/staging/lke",
+		"--remote-env-root", "/root/rtk_cloud_workspace/cloud_env/staging/runtime",
 	}, &stdout, &stderr)
 	if code == 0 {
 		t.Fatalf("Execute(run-stages live without mqtt addr) code = 0 stdout=%s", stdout.String())
@@ -2815,7 +2818,7 @@ func TestExecuteRunStagesLiveStartsRunnerDaemonsThenHostCoordinator(t *testing.T
 		"--live",
 		"--vm-state-file", stateFile,
 		"--remote-workspace", "/root/rtk_cloud_workspace",
-		"--remote-env-root", "/root/rtk_cloud_workspace/cloud_env/staging/lke",
+		"--remote-env-root", "/root/rtk_cloud_workspace/cloud_env/staging/runtime",
 		"--remote-out-root", "/var/lib/home-100k",
 		"--ssh-user", "root",
 		"--ssh-key", "/tmp/test-key",
@@ -2901,7 +2904,7 @@ func TestExecuteRunStagesLiveRetriesStartRunnerPlaybook(t *testing.T) {
 		"--live",
 		"--vm-state-file", stateFile,
 		"--remote-workspace", "/root/rtk_cloud_workspace",
-		"--remote-env-root", "/root/rtk_cloud_workspace/cloud_env/staging/lke",
+		"--remote-env-root", "/root/rtk_cloud_workspace/cloud_env/staging/runtime",
 		"--remote-out-root", "/var/lib/home-100k",
 		"--ssh-user", "root",
 		"--ssh-key", "/tmp/test-key",
@@ -3126,6 +3129,23 @@ func TestParseEMQXBrokerMetricsCounters(t *testing.T) {
 	}
 }
 
+func TestKubernetesRuntimeLoggerEvidenceUsesNormalizedKubeconfig(t *testing.T) {
+	envRoot := t.TempDir()
+	stateDir := filepath.Join(envRoot, "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if usesKubernetesRuntimeLoggerEvidence(envRoot) {
+		t.Fatal("runtime logger evidence enabled without normalized kubeconfig")
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "kubeconfig.yaml"), []byte("apiVersion: v1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !usesKubernetesRuntimeLoggerEvidence(envRoot) {
+		t.Fatal("runtime logger evidence not enabled by normalized kubeconfig")
+	}
+}
+
 func TestCentralLoggerRuntimeCountersRequireStructuredRuntimeLogFields(t *testing.T) {
 	events := []centralLoggerRuntimeEvent{
 		{
@@ -3224,7 +3244,7 @@ func TestExecuteShardRunWritesShardArtifacts(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"shard-run",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -3322,7 +3342,7 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"shard-run",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -3344,7 +3364,7 @@ func TestExecuteShardRunLiveInvokesRTKCloudMQTTTest(t *testing.T) {
 		"rtk-cloud mqtt-test",
 		"--load-model home-100k-sustained",
 		"--workspace /root/rtk_cloud_workspace",
-		"--env-root cloud_env/staging/lke",
+		"--env-root cloud_env/staging/runtime",
 		"--brandname RTK",
 		"--duration-seconds 3",
 		"--mqtt-probe --run-id run-cli",
@@ -3450,7 +3470,7 @@ func TestExecuteShardRunLiveWritesShardResultsWhenMQTTTestFails(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"shard-run",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -3512,7 +3532,7 @@ func TestExecuteShardRunLiveWritesFallbackStageResultsWhenMQTTTestProducesNoResu
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"shard-run",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -3606,7 +3626,7 @@ func TestExecuteShardRunLivePreservesPartialStagedResultsWhenMQTTTestFails(t *te
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"shard-run",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -3785,7 +3805,7 @@ func TestExecuteShardRunRejectsUnknownShard(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"shard-run",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -3805,7 +3825,7 @@ func TestExecuteCollectDefaultsToDryRun(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"collect",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -3852,7 +3872,7 @@ func TestExecuteCollectLiveCopiesShardArtifacts(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"collect",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--video-generator-vm-count", "1",
@@ -3949,7 +3969,7 @@ func TestExecuteCollectServerEvidenceDefaultsToIncompleteSourcePlan(t *testing.T
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"collect-server-evidence",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -4671,7 +4691,7 @@ func TestLocalWorkflowArtifactPathResolvesRelativePathFromWorkspaceRoot(t *testi
 }
 
 func TestServerEvidenceProbesIncludeExternalHAProxyHealth(t *testing.T) {
-	probes := serverEvidenceProbes("cloud_env/staging/lke", "run-edge", "--since=1m")
+	probes := serverEvidenceProbes("cloud_env/staging/runtime", "run-edge", "--since=1m")
 	for _, probe := range probes {
 		if probe.source != "edge_haproxy" {
 			continue
@@ -4714,7 +4734,7 @@ func TestExecuteCollectServerEvidenceLiveWritesIncompleteEvidenceOnProbeFailure(
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"collect-server-evidence",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -4752,7 +4772,7 @@ func TestExecuteCollectServerEvidenceLivePreservesFailureForRepeatedSource(t *te
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"collect-server-evidence",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -4867,7 +4887,7 @@ cmdstat_set:calls=12,usec=24,usec_per_call=2.00
 
 func TestExecuteAggregateWritesRunLevelReport(t *testing.T) {
 	outDir := t.TempDir()
-	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea"})
+	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/runtime", Brandname: "RTK", Region: "us-sea"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4890,7 +4910,7 @@ func TestExecuteAggregateWritesRunLevelReport(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"aggregate",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--run-id", "run-cli",
@@ -4965,7 +4985,7 @@ func TestExecuteAggregateWritesVideoOnlyRunLevelReport(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Execute([]string{
 		"aggregate",
-		"--env-root", "cloud_env/staging/lke",
+		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
 		"--scenario-profile", Video50KTurnScenarioProfile,

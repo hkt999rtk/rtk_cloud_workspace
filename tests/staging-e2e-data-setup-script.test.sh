@@ -6,7 +6,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
-ENV_ROOT="$WORKSPACE/cloud_env/staging/lke"
+ENV_ROOT="$WORKSPACE/cloud_env/staging/runtime"
 mkdir -p "$WORKSPACE" "$ENV_ROOT/env" "$ENV_ROOT/artifacts/users" "$ENV_ROOT/artifacts/device-bind" "$ENV_ROOT/devices/test_device/manifests"
 
 cat > "$ENV_ROOT/env/stack.env" <<'EOF_ENV'
@@ -59,7 +59,7 @@ CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT="$TMP/bind-devices.sh" \
 CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT="$TMP/validate-bind.sh" \
 	"$ROOT/scripts/setup-staging-e2e-data.sh" \
 	--workspace "$WORKSPACE" \
-	--env-root "$WORKSPACE/cloud_env/staging" \
+	--env-root "$ENV_ROOT" \
 	--brandname RTK \
 	--user-count 2 \
 	--device-count 4 \
@@ -73,9 +73,9 @@ actual="$(cut -f1 "$COMMAND_LOG")"
 	printf 'unexpected command order:\n%s\n' "$actual" >&2
 	exit 1
 }
-grep -F $'create-users\t' "$COMMAND_LOG" | grep -F -- "--env-root $WORKSPACE/cloud_env/staging/lke" | grep -F -- '--count 2' | grep -F -- '--rotate-password' | grep -F -- '--concurrency 64' >/dev/null
-grep -F $'generate-devices\t' "$COMMAND_LOG" | grep -F -- "--env-root $WORKSPACE/cloud_env/staging/lke" | grep -F -- '--count 4' | grep -F -- '--mix camera=2,light=2' | grep -F -- '--prefix load-device' | grep -F -- '--force' | grep -F -- '--concurrency 64' >/dev/null
-grep -F $'bind-devices\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/lke"$' --brandname RTK --count 4 --concurrency 64' "$COMMAND_LOG" >/dev/null
+grep -F $'create-users\t' "$COMMAND_LOG" | grep -F -- "--env-root $WORKSPACE/cloud_env/staging/runtime" | grep -F -- '--count 2' | grep -F -- '--rotate-password' | grep -F -- '--concurrency 64' >/dev/null
+grep -F $'generate-devices\t' "$COMMAND_LOG" | grep -F -- "--env-root $WORKSPACE/cloud_env/staging/runtime" | grep -F -- '--count 4' | grep -F -- '--mix camera=2,light=2' | grep -F -- '--prefix load-device' | grep -F -- '--force' | grep -F -- '--concurrency 64' >/dev/null
+grep -F $'bind-devices\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/runtime"$' --brandname RTK --count 4 --concurrency 64' "$COMMAND_LOG" >/dev/null
 
 SUMMARY="$(jq -r '.summary_file' "$TMP/run.out")"
 test "$SUMMARY" = "$OUT_DIR/summary.json"
@@ -121,7 +121,7 @@ CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT="$TMP/bind-devices.sh" \
 CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT="$TMP/validate-bind.sh" \
 	"$ROOT/scripts/setup-staging-e2e-data.sh" \
 	--workspace "$WORKSPACE" \
-	--env-root "$WORKSPACE/cloud_env/staging" \
+	--env-root "$ENV_ROOT" \
 	--brandname RTK \
 	--user-count 2 \
 	--device-count 4 \
@@ -145,7 +145,7 @@ CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT="$TMP/bind-devices.sh" \
 CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT="$TMP/validate-bind.sh" \
 	"$ROOT/scripts/setup-staging-e2e-data.sh" \
 	--workspace "$WORKSPACE" \
-	--env-root "$WORKSPACE/cloud_env/staging" \
+	--env-root "$ENV_ROOT" \
 	--brandname RTK \
 	--user-count 2 \
 	--device-count 4 \
@@ -238,7 +238,7 @@ CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT="$TMP/bind-devices.sh" \
 CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT="$TMP/validate-bind-repair.sh" \
 	"$ROOT/scripts/setup-staging-e2e-data.sh" \
 	--workspace "$WORKSPACE" \
-	--env-root "$WORKSPACE/cloud_env/staging" \
+	--env-root "$ENV_ROOT" \
 	--brandname RTK \
 	--user-count 2 \
 	--device-count 4 \
@@ -253,20 +253,20 @@ actual="$(cut -f1 "$COMMAND_LOG")"
 }
 grep -F 'repair: validate_bind failure_category="already_bound_not_ready"; rerunning bind_devices' "$TMP/repair-bind.err" >/dev/null
 
-if CLOUD_PROVIDER=aws "$ROOT/scripts/setup-staging-e2e-data.sh" --workspace "$WORKSPACE" --env-root "$WORKSPACE/cloud_env/staging" --plan >"$TMP/provider.out" 2>"$TMP/provider.err"; then
+if CLOUD_PROVIDER=aws "$ROOT/scripts/setup-staging-e2e-data.sh" --workspace "$WORKSPACE" --env-root "$ENV_ROOT" --plan >"$TMP/provider.out" 2>"$TMP/provider.err"; then
 	echo "expected unsupported provider to fail" >&2
 	exit 1
 fi
 grep -F 'unsupported CLOUD_PROVIDER=aws' "$TMP/provider.err" >/dev/null
 
-mkdir -p "$WORKSPACE/cloud_env/staging/lke/env"
-cat > "$WORKSPACE/cloud_env/staging/lke/env/stack.env" <<'EOF_LKE_ENV'
+mkdir -p "$WORKSPACE/cloud_env/staging/runtime/env"
+cat > "$WORKSPACE/cloud_env/staging/runtime/env/stack.env" <<'EOF_LKE_ENV'
 CLOUD_PROVIDER=lke
 CLOUD_STACK_NAME=video-cloud-staging
 EOF_LKE_ENV
-CLOUD_PROVIDER=lke "$ROOT/scripts/setup-staging-e2e-data.sh" --workspace "$WORKSPACE" --env-root "$WORKSPACE/cloud_env/staging" --plan >"$TMP/lke-plan.out"
+CLOUD_PROVIDER=lke "$ROOT/scripts/setup-staging-e2e-data.sh" --workspace "$WORKSPACE" --env-root "$ENV_ROOT" --plan >"$TMP/lke-plan.out"
 grep -F 'cloud-staging-e2e-data-setup plan' "$TMP/lke-plan.out" >/dev/null
-grep -F 'env_root: '"$WORKSPACE/cloud_env/staging/lke" "$TMP/lke-plan.out" >/dev/null
+grep -F 'env_root: '"$WORKSPACE/cloud_env/staging/runtime" "$TMP/lke-plan.out" >/dev/null
 
 mkdir -p "$WORKSPACE/loadtests/home-100k/scenarios"
 cat > "$WORKSPACE/loadtests/home-100k/scenarios/test-brand-plan.json" <<'EOF_BRAND_PLAN'
@@ -291,7 +291,7 @@ HOME100K_DEVICES=4
 EOF_DESCRIPTION
 CLOUD_PROVIDER=lke "$ROOT/scripts/setup-staging-e2e-data.sh" \
 	--workspace "$WORKSPACE" \
-	--env-root "$WORKSPACE/cloud_env/staging" \
+	--env-root "$ENV_ROOT" \
 	--description-file "$TMP/video-description.env" \
 	--plan >"$TMP/description-brand-plan.out"
 grep -F 'multi_brand_plan: '"$WORKSPACE/loadtests/home-100k/scenarios/test-brand-plan.json" "$TMP/description-brand-plan.out" >/dev/null
@@ -303,22 +303,10 @@ HOME100K_DEVICES=100000
 EOF_DESCRIPTION
 if CLOUD_PROVIDER=lke "$ROOT/scripts/setup-staging-e2e-data.sh" \
 	--workspace "$WORKSPACE" \
-	--env-root "$WORKSPACE/cloud_env/staging" \
+	--env-root "$ENV_ROOT" \
 	--description-file "$TMP/video-description-missing-brand-plan.env" \
 	--plan >"$TMP/description-missing-brand-plan.out" 2>"$TMP/description-missing-brand-plan.err"; then
 	echo "expected video-100k data setup without brand plan to fail" >&2
 	exit 1
 fi
 grep -F 'video-100k-turn-v1 requires HOME100K_BRAND_PLAN or --brand-plan for empty data setup' "$TMP/description-missing-brand-plan.err" >/dev/null
-
-RTK_CLOUD_STAGING_ENV_ROOT="$WORKSPACE/cloud_env/staging" "$ROOT/stg.sh" data --plan >"$TMP/stg-data-plan.out"
-grep -F 'cloud-staging-e2e-data-setup plan' "$TMP/stg-data-plan.out" >/dev/null
-
-if CLOUD_PROVIDER=aws RTK_CLOUD_STAGING_ENV_ROOT="$WORKSPACE/cloud_env/staging" "$ROOT/stg.sh" data --plan >"$TMP/stg-data-provider.out" 2>"$TMP/stg-data-provider.err"; then
-	echo "expected stg.sh data unsupported provider to fail" >&2
-	exit 1
-fi
-grep -F 'unsupported CLOUD_PROVIDER=aws' "$TMP/stg-data-provider.err" >/dev/null
-
-CLOUD_PROVIDER=lke RTK_CLOUD_STAGING_ENV_ROOT="$WORKSPACE/cloud_env/staging" "$ROOT/stg.sh" data --plan >"$TMP/stg-data-lke-plan.out"
-grep -F 'env_root: '"$WORKSPACE/cloud_env/staging/lke" "$TMP/stg-data-lke-plan.out" >/dev/null

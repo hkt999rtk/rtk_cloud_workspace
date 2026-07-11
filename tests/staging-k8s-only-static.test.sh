@@ -8,7 +8,6 @@ active_paths=(
 	"$ROOT/scripts/reset-staging-k8s.sh" \
 	"$ROOT/scripts/provision-staging.sh" \
 	"$ROOT/scripts/run-staging-acceptance.sh" \
-	"$ROOT/bin/stg.sh" \
 	"$ROOT/README.md" \
 	"$ROOT/scripts/README.zh-TW.md" \
 	"$ROOT/docs/cloud-env-layout.zh-TW.md" \
@@ -32,6 +31,29 @@ for path in "${active_paths[@]}"; do
 		exit 1
 	fi
 done
+
+if rg -n -- 'LKE_|EKS_|GKE_|lke\.linode\.com/pool-id' "$ROOT/cloud_deploy/architectures" >/tmp/staging-k8s-static.out; then
+	cat /tmp/staging-k8s-static.out >&2
+	echo "provider-neutral architecture must not contain adapter keys or provider labels" >&2
+	exit 1
+fi
+
+if rg -n --glob '!**/*_test.go' -- 'LKE_|lke\.linode\.com/pool-id' \
+	"$ROOT/loadtests/home-100k/scripts/home-100k.sh" \
+	"$ROOT/loadtests/home-100k/internal/home100k" >/tmp/staging-k8s-static.out; then
+	cat /tmp/staging-k8s-static.out >&2
+	echo "load-test runtime must consume normalized environment state, not LKE internals" >&2
+	exit 1
+fi
+
+if git -C "$ROOT" check-ignore -q cloud_env/qa/environment.env; then
+	echo "arbitrary environment config must be trackable" >&2
+	exit 1
+fi
+if ! git -C "$ROOT" check-ignore -q cloud_env/qa/runtime/secrets/token.env; then
+	echo "arbitrary environment runtime and secrets must stay ignored" >&2
+	exit 1
+fi
 
 if rg -n -- 'ACCOUNT_MANAGER_LINODE_|ADMIN_LINODE_|CLOUD_LOGGER_LINODE_|provision-public-vm|deploy-public-vm|provision-admin-vm|deploy-admin|linode-deploy deploy|deploy-staging\.sh --local-build' \
 	"$ROOT/scripts/go/rtk-cloud/internal/envroot" \

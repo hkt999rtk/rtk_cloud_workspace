@@ -118,7 +118,7 @@ func TestBuildLKECapacityRunSummaryClassifiesMQTTPodOOM(t *testing.T) {
 	dir := t.TempDir()
 	envRoot := filepath.Join(dir, "envroot")
 	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_STACK_NAME=video-cloud-staging\nLKE_MQTT_REPLICAS=5\nLKE_NODE_COUNT=5\nLKE_NODE_TYPE=g6-standard-4\n")
-	writeTestFile(t, filepath.Join(envRoot, "state", "lke-kubeconfig.yaml"), "apiVersion: v1\n")
+	writeTestFile(t, filepath.Join(envRoot, "state", "kubeconfig.yaml"), "apiVersion: v1\n")
 	kubectl := filepath.Join(dir, "kubectl")
 	writeTestFile(t, kubectl, `#!/usr/bin/env bash
 cat <<'JSON'
@@ -184,7 +184,7 @@ func TestBuildLKECapacityRunSummaryClassifiesCloudLoggerOOM(t *testing.T) {
 	dir := t.TempDir()
 	envRoot := filepath.Join(dir, "envroot")
 	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_STACK_NAME=video-cloud-staging\n")
-	writeTestFile(t, filepath.Join(envRoot, "state", "lke-kubeconfig.yaml"), "apiVersion: v1\n")
+	writeTestFile(t, filepath.Join(envRoot, "state", "kubeconfig.yaml"), "apiVersion: v1\n")
 	kubectl := filepath.Join(dir, "kubectl")
 	writeTestFile(t, kubectl, `#!/usr/bin/env bash
 cat <<'JSON'

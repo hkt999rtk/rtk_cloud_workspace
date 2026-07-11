@@ -4,7 +4,7 @@ import "testing"
 
 func TestBuildLifecycleActionsTagsEphemeralVMsByRunID(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:   "cloud_env/staging/lke",
+		EnvRoot:   "cloud_env/staging/runtime",
 		Brandname: "RTK",
 		Region:    "us-sea",
 	})
@@ -29,7 +29,7 @@ func TestBuildLifecycleActionsTagsEphemeralVMsByRunID(t *testing.T) {
 
 func TestBuildLifecycleActionsIncludesVideoOnlyVMs(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:               "cloud_env/staging/lke",
+		EnvRoot:               "cloud_env/staging/runtime",
 		Brandname:             "RTK",
 		Region:                "us-sea",
 		DeviceCount:           20000,
@@ -57,7 +57,7 @@ func TestBuildLifecycleActionsIncludesVideoOnlyVMs(t *testing.T) {
 
 func TestBuildLifecycleActionsContainsRequiredWorkflowOrder(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:   "cloud_env/staging/lke",
+		EnvRoot:   "cloud_env/staging/runtime",
 		Brandname: "RTK",
 		Region:    "us-sea",
 	})

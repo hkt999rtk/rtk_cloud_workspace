@@ -1163,13 +1163,14 @@ def k8s_node_resource_usage():
         "| Node | Samples | CPU p95 | CPU max | Mem p95 | Mem max | Unavailable |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
+    node_aliases = {name: f"k8s-node-{idx:02d}" for idx, name in enumerate(sorted(groups), 1)}
     for name in sorted(groups):
         group = groups[name]
         cpus = [pct_value(r.get("cpu_pct")) for r in group]
         mems = [pct_value(r.get("mem_pct")) for r in group]
         unavailable = sum(1 for r in group if (r.get("status") or "").lower() != "ok")
         lines.append(
-            f"| {md(name)} | {len(group)} | {fmt_float(percentile(cpus, 95))}% | "
+            f"| {node_aliases[name]} | {len(group)} | {fmt_float(percentile(cpus, 95))}% | "
             f"{fmt_float(max([v for v in cpus if v is not None], default=None))}% | "
             f"{fmt_float(percentile(mems, 95))}% | {fmt_float(max([v for v in mems if v is not None], default=None))}% | {unavailable} |"
         )

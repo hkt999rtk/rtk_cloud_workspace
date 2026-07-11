@@ -1663,7 +1663,7 @@ func parseProvisionVMFlags(name string, args []string, stderr io.Writer) (PlanOp
 	outDir := fs.String("out-dir", "", "artifact output directory")
 	live := fs.Bool("live", false, "create Linode VMs")
 	confirmLive := fs.Bool("confirm-live", false, "confirm live Linode VM creation")
-	linodeToken := fs.String("linode-token", os.Getenv("LINODE_TOKEN"), "Linode API token")
+	linodeToken := fs.String("linode-token", "", "Linode API token (defaults to LINODE_TOKEN after parsing)")
 	linodeEndpoint := fs.String("linode-endpoint", "", "Linode API endpoint")
 	linodeType := fs.String("linode-type", "", "Linode instance type")
 	linodeImage := fs.String("linode-image", "", "Linode image")
@@ -1683,7 +1683,7 @@ func parseProvisionVMFlags(name string, args []string, stderr io.Writer) (PlanOp
 		outDir:            *outDir,
 		live:              *live,
 		confirmLive:       *confirmLive,
-		linodeToken:       *linodeToken,
+		linodeToken:       firstNonEmpty(*linodeToken, os.Getenv("LINODE_TOKEN")),
 		linodeEndpoint:    *linodeEndpoint,
 		linodeType:        *linodeType,
 		linodeImage:       *linodeImage,
@@ -1708,7 +1708,7 @@ func parseDestroyVMFlags(name string, args []string, stderr io.Writer) (PlanOpti
 	runID := fs.String("run-id", "", "run id for VM tags")
 	live := fs.Bool("live", false, "destroy Linode VMs")
 	confirmLive := fs.Bool("confirm-live", false, "confirm live Linode VM destruction")
-	linodeToken := fs.String("linode-token", os.Getenv("LINODE_TOKEN"), "Linode API token")
+	linodeToken := fs.String("linode-token", "", "Linode API token (defaults to LINODE_TOKEN after parsing)")
 	linodeEndpoint := fs.String("linode-endpoint", "", "Linode API endpoint")
 	vmStateFile := fs.String("vm-state-file", "", "VM state JSON from provision-vms")
 	if err := fs.Parse(args); err != nil {
@@ -1723,7 +1723,7 @@ func parseDestroyVMFlags(name string, args []string, stderr io.Writer) (PlanOpti
 		runID:          *runID,
 		live:           *live,
 		confirmLive:    *confirmLive,
-		linodeToken:    *linodeToken,
+		linodeToken:    firstNonEmpty(*linodeToken, os.Getenv("LINODE_TOKEN")),
 		linodeEndpoint: *linodeEndpoint,
 		vmStateFile:    *vmStateFile,
 	}, nil
@@ -1743,7 +1743,7 @@ func parseListVMFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance := addGateThresholdFlags(fs)
 	runID := fs.String("run-id", "", "run id for VM tags")
 	live := fs.Bool("live", false, "query Linode VMs")
-	linodeToken := fs.String("linode-token", os.Getenv("LINODE_TOKEN"), "Linode API token")
+	linodeToken := fs.String("linode-token", "", "Linode API token (defaults to LINODE_TOKEN after parsing)")
 	linodeEndpoint := fs.String("linode-endpoint", "", "Linode API endpoint")
 	if err := fs.Parse(args); err != nil {
 		return PlanOptions{}, listVMFlagValues{}, err
@@ -1756,7 +1756,7 @@ func parseListVMFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	return opts, listVMFlagValues{
 		runID:          *runID,
 		live:           *live,
-		linodeToken:    *linodeToken,
+		linodeToken:    firstNonEmpty(*linodeToken, os.Getenv("LINODE_TOKEN")),
 		linodeEndpoint: *linodeEndpoint,
 	}, nil
 }
@@ -2748,7 +2748,7 @@ func collectCentralLoggerRuntimeLogEvidence(envRoot string, runID string, window
 			return EvidenceSource{}, EvidenceSource{}, "central_logger runtime evidence probe failed: " + err.Error()
 		}
 		shadowCounters, streamCounters = centralLoggerRuntimeCounters(runID, events)
-		if !usesLKELoggerEvidence(envRoot) && shadowCounters["app_user.desired_writes"] == 0 && streamCounters["runtime_log_streams.total"] == 0 {
+		if !usesKubernetesRuntimeLoggerEvidence(envRoot) && shadowCounters["app_user.desired_writes"] == 0 && streamCounters["runtime_log_streams.total"] == 0 {
 			// Loki stores an ingestion timestamp which can be in a different clock
 			// domain from the load generator's event timestamp. A bounded window may
 			// therefore be empty even though the run-scoped stream is present.
@@ -2772,16 +2772,16 @@ func collectCentralLoggerRuntimeLogEvidence(envRoot string, runID string, window
 		"central_logger runtime evidence used for iot_device_shadow and iot_device_shadow_streams"
 }
 
-// The LKE log ingester writes to the in-cluster Cloud Logger/Loki service.
-// Its historical public logger DNS is a different store, so evidence must use
-// the same backend that accepted the runtime events.
-func usesLKELoggerEvidence(envRoot string) bool {
-	_, err := os.Stat(filepath.Join(envRoot, "state", "lke-kubeconfig.yaml"))
+// Kubernetes runtime logs are ingested by the in-cluster Cloud Logger/Loki
+// service. Query the normalized runtime selected by the environment instead of
+// inferring a provider from adapter-specific state paths.
+func usesKubernetesRuntimeLoggerEvidence(envRoot string) bool {
+	_, err := os.Stat(filepath.Join(envRoot, "state", "kubeconfig.yaml"))
 	return err == nil
 }
 
 func queryCentralLoggerRuntimeEvidenceEvents(envRoot, runID string, since, until time.Time) ([]centralLoggerRuntimeEvent, error) {
-	if usesLKELoggerEvidence(envRoot) {
+	if usesKubernetesRuntimeLoggerEvidence(envRoot) {
 		baseURL, cleanup, err := lokiEvidenceBaseURL(envRoot)
 		if err != nil {
 			return nil, err
@@ -4223,8 +4223,7 @@ func writeCommonEnvArchive(path string, plan Plan) error {
 	envRoot := plan.Conditions.EnvRoot
 	relPaths := []string{
 		"env",
-		"state/lke.env",
-		"state/lke-kubeconfig.yaml",
+		"state/kubeconfig.yaml",
 		"state/video-cloud-staging.state.json",
 		"services",
 		"devices/test_device/loadtest.env",

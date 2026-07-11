@@ -132,7 +132,7 @@ func TestMQTTLoadRunPlanUsesHostShards(t *testing.T) {
 			"--brandname", "RTK",
 			"--hosts-file", hostsFile,
 			"--remote-workspace", "/root/ws",
-			"--remote-env-root", "/root/ws/cloud_env/staging/lke",
+			"--remote-env-root", "/root/ws/cloud_env/staging/runtime",
 			"--plan",
 		}); err != nil {
 			t.Fatal(err)
@@ -155,7 +155,7 @@ func TestMQTTLoadRunPlanUsesHostShards(t *testing.T) {
 func TestBuildRemoteMQTTShardCommandRunsInsideScriptsGoModule(t *testing.T) {
 	command := buildRemoteMQTTShardCommand(remoteMQTTLoadInput{
 		Workspace:       "/root/ws",
-		EnvRoot:         "/root/ws/cloud_env/staging/lke",
+		EnvRoot:         "/root/ws/cloud_env/staging/runtime",
 		Brandname:       "RTK",
 		Profile:         "baseline-10k",
 		RampUp:          "10m",

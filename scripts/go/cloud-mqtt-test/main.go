@@ -827,7 +827,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 				base["stage_results"] = sustainedStageResultsJSON(staged, appBootstrap)
 			}
 		} else {
-			outcomes := runSelectedDeviceProbes(selectedAssignments, certRecords, brandname, opts.RunID, endpoints["video_cloud_token_base_url"].(string), mqttHost, mqttPort, appMaterial.TokensByEmail, opts.Concurrency)
+			outcomes := runSelectedDeviceProbes(selectedAssignments, certRecords, brandname, opts.RunID, endpoints["video_cloud_token_base_url"].(string), mqttHost, mqttPort, appMaterial.UsersByEmail, opts.Concurrency)
 			for _, item := range selectedAssignments {
 				row := capCounts[item.DeviceType]
 				row["devices"]++
@@ -923,17 +923,13 @@ func runDeviceActorSeparatedEnvelope(record certRecord, brandname, runID, apiBas
 	if strings.TrimSpace(appAccessToken) == "" {
 		return failedActorResult(record.DeviceID, record.DeviceType, "account login response missing access_token")
 	}
-	appMQTTToken, err := requestAppToken(apiBaseURL, cert, record.DeviceID)
-	if err != nil {
-		return failedActorResult(record.DeviceID, record.DeviceType, redactedError(err))
-	}
 	result := runActorSeparatedProbe(mqttActorProbe{
 		DeviceID:    record.DeviceID,
 		DeviceType:  record.DeviceType,
 		Brandname:   brandname,
 		RunID:       runID,
 		DeviceToken: deviceToken,
-		AppToken:    appMQTTToken.AccessToken,
+		AppToken:    appAccessToken,
 		Dial: func() (io.ReadWriteCloser, error) {
 			return tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", net.JoinHostPort(host, strconv.Itoa(port)), &tls.Config{InsecureSkipVerify: true})
 		},
@@ -1554,7 +1550,7 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 		stageOpts.MaxConnectedDevicesPerShard = stage.ConnectedTarget
 		stageOpts.StageMinCommands = strconv.Itoa(stage.MinCommands)
 		stageOpts.StageUsageWindow = stage.UsageWindow
-		commandBudget := desiredWriteRemainingBudget(stageWindow)
+		commandBudget := desiredWriteRemainingBudget(stageWindow, shadowCommandTimeout(opts))
 		commandWindow := actionWindow - commandBudget
 		if commandWindow < 0 {
 			commandWindow = 0
@@ -1733,9 +1729,9 @@ func recordStageUsageWindow(stage *sustainedStageResult, usageWindow string) {
 	stage.UsageWindowTotals[usageWindow]++
 }
 
-func desiredWriteRemainingBudget(stageWindow time.Duration) time.Duration {
+func desiredWriteRemainingBudget(stageWindow, commandTimeout time.Duration) time.Duration {
 	if stageWindow <= 0 {
-		return 15 * time.Second
+		return maxDuration(15*time.Second, commandTimeout)
 	}
 	budget := stageWindow / 4
 	if budget < 250*time.Millisecond {
@@ -1744,7 +1740,21 @@ func desiredWriteRemainingBudget(stageWindow time.Duration) time.Duration {
 	if budget > 15*time.Second {
 		budget = 15 * time.Second
 	}
+	if commandTimeout > budget {
+		budget = commandTimeout
+	}
+	maxBudget := stageWindow / 2
+	if budget > maxBudget {
+		budget = maxBudget
+	}
 	return budget
+}
+
+func maxDuration(left, right time.Duration) time.Duration {
+	if left > right {
+		return left
+	}
+	return right
 }
 
 func firstNonEmptyString(values ...string) string {
@@ -2567,14 +2577,26 @@ func loadHome100KCredentialBundle(envRoot string) (*home100KCredentialBundle, er
 	if err != nil {
 		return nil, err
 	}
-	if len(matches) == 0 {
-		return nil, nil
-	}
-	sort.Strings(matches)
-	source := matches[0]
-	sqlitePath, cleanup, err := gunzipToTempFile(source)
-	if err != nil {
-		return nil, err
+	var source, sqlitePath string
+	cleanup := func() {}
+	if len(matches) > 0 {
+		sort.Strings(matches)
+		source = matches[0]
+		sqlitePath, cleanup, err = gunzipToTempFile(source)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		matches, err = filepath.Glob(filepath.Join(envRoot, "artifacts", "test-data", "*-test-data.sqlite"))
+		if err != nil {
+			return nil, err
+		}
+		if len(matches) == 0 {
+			return nil, nil
+		}
+		sort.Strings(matches)
+		source = matches[0]
+		sqlitePath = source
 	}
 	defer cleanup()
 	db, err := sql.Open("sqlite", sqlitePath)
@@ -2583,8 +2605,13 @@ func loadHome100KCredentialBundle(envRoot string) (*home100KCredentialBundle, er
 	}
 	defer db.Close()
 	hasDeviceBrand := sqliteColumnExists(db, "devices", "brandname")
+	hasSeparateCredentials := sqliteColumnExists(db, "device_credentials", "cert_pem")
 	deviceQuery := `select device_id, device_type, cert_pem, key_pem, chain_pem, bundle_pem from devices`
-	if hasDeviceBrand {
+	if hasDeviceBrand && hasSeparateCredentials {
+		deviceQuery = `select d.brandname, d.device_id, d.device_type, c.cert_pem, c.key_pem, c.chain_pem, c.bundle_pem
+			from devices d left join device_credentials c on c.brandname = d.brandname and c.device_id = d.device_id
+			order by d.brandname, d.device_id`
+	} else if hasDeviceBrand {
 		deviceQuery = `select brandname, device_id, device_type, cert_pem, key_pem, chain_pem, bundle_pem from devices`
 	}
 	rows, err := db.Query(deviceQuery)
@@ -2882,7 +2909,7 @@ func shardAssignments(items []assignment, shardIndex, shardCount int) []assignme
 	return out
 }
 
-func runSelectedDeviceProbes(assignments []assignment, certs []certRecord, brandname, runID, apiBaseURL, host string, port int, appTokensByEmail map[string]tokenBundle, concurrency int) map[string]deviceResult {
+func runSelectedDeviceProbes(assignments []assignment, certs []certRecord, brandname, runID, apiBaseURL, host string, port int, appUsersByEmail map[string]userCredential, concurrency int) map[string]deviceResult {
 	if concurrency <= 0 {
 		concurrency = 25
 	}
@@ -2902,11 +2929,25 @@ func runSelectedDeviceProbes(assignments []assignment, certs []certRecord, brand
 			defer wg.Done()
 			for item := range jobs {
 				itemBrand := firstNonEmpty(item.Assignment.Brandname, item.Cert.Brandname, brandname)
-				token := appTokensByEmail[brandEmailKey(itemBrand, item.Assignment.AssignedEmail)]
-				if strings.TrimSpace(token.AccessToken) == "" {
-					token = appTokensByEmail[item.Assignment.AssignedEmail]
+				user, ok := appUsersByEmail[brandEmailKey(itemBrand, item.Assignment.AssignedEmail)]
+				if !ok {
+					user, ok = appUsersByEmail[item.Assignment.AssignedEmail]
 				}
-				results <- runDeviceActorSeparatedEnvelope(item.Cert, itemBrand, runID, apiBaseURL, host, port, token.AccessToken)
+				if !ok {
+					results <- failedActorResult(item.Assignment.DeviceID, item.Assignment.DeviceType, "app user certificate material unavailable")
+					continue
+				}
+				appCert, err := loadAppX509KeyPairForUser(user)
+				if err != nil {
+					results <- failedActorResult(item.Assignment.DeviceID, item.Assignment.DeviceType, redactedError(err))
+					continue
+				}
+				appToken, err := requestAppToken(apiBaseURL, appCert, item.Assignment.DeviceID)
+				if err != nil {
+					results <- failedActorResult(item.Assignment.DeviceID, item.Assignment.DeviceType, redactedError(err))
+					continue
+				}
+				results <- runDeviceActorSeparatedEnvelope(item.Cert, itemBrand, runID, apiBaseURL, host, port, appToken.AccessToken)
 			}
 		}()
 	}
@@ -5346,7 +5387,7 @@ func emitCentralLoggerEvent(envRoot string, result map[string]any) error {
 			"env":          envNameFromRoot(envRoot),
 			"version":      "workspace",
 			"host":         "operator",
-			"unit":         "stg.sh mqtt",
+			"unit":         "rtk-cloud mqtt-test",
 			"source":       "workspace",
 			"trace_id":     eventID,
 			"request_id":   eventID,
@@ -5905,6 +5946,11 @@ func redactedError(err error) string {
 
 func redactedErrorString(message string) string {
 	lower := strings.ToLower(message)
+	if strings.Contains(lower, "private key does not match public key") ||
+		strings.Contains(lower, "private key type does not match public key type") ||
+		strings.Contains(lower, "failed to find any pem data") {
+		return message
+	}
 	if strings.Contains(lower, "request_token") &&
 		(strings.Contains(lower, "http ") ||
 			strings.Contains(lower, "status=") ||

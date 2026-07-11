@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-ENV_ROOT="$TMP/cloud_env/staging/lke"
+ENV_ROOT="$TMP/cloud_env/staging/runtime"
 mkdir -p \
 	"$ENV_ROOT/env" \
 	"$ENV_ROOT/services/account-manager" \
@@ -25,6 +25,7 @@ CLOUD_REGION=us-sea
 CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
 CLOUD_STACK_NAME=video-cloud-staging
 VIDEO_CLOUD_DOMAIN=video-cloud-staging.realtekconnect.com
+VIDEO_CLOUD_MQTT_ADDR=127.0.0.1:8883
 VIDEO_CLOUD_CERTISSUER_DOMAIN=certissuer.video-cloud-staging.realtekconnect.com
 ACCOUNT_MANAGER_DOMAIN=account-manager.video-cloud-staging.realtekconnect.com
 CLOUD_ADMIN_DOMAIN=admin.video-cloud-staging.realtekconnect.com
@@ -52,6 +53,10 @@ EOF_STATE
 touch "$ENV_ROOT/state/account-manager-staging.env"
 touch "$ENV_ROOT/devices/test_device/loadtest.env"
 printf 'light-001\nac-001\nmeter-001\n' > "$ENV_ROOT/devices/test_device/manifests/device_ids.txt"
+export CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0
+export ACCOUNT_MANAGER_BASE_URL=http://127.0.0.1:18081
+export VIDEO_CLOUD_BASE_URL=http://127.0.0.1:18080
+export VIDEO_CLOUD_MQTT_ADDR=127.0.0.1:8883
 
 for path in \
 	"$ENV_ROOT/devices/test_device/devices/light/light-001" \
@@ -115,7 +120,7 @@ jq -n '{
 
 OUT="$TMP/out.json"
 if "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- mqtt-test \
-	--env-root "$TMP/cloud_env/staging" \
+	--env-root "$ENV_ROOT" \
 	--brandname RTK \
 	--out-dir "$TMP/report" \
 	--seed 7 \
@@ -124,9 +129,11 @@ if "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- mqtt-test \
 	exit 1
 fi
 
-jq -e '.overall == "blocked" and .status == "BLOCKED"' "$OUT" >/dev/null
+jq -e '.overall == "blocked" and .status == "BLOCKED"' "$OUT" >/dev/null || { cat "$OUT" "$TMP/report.stderr" >&2; exit 1; }
 RESULTS="$(jq -r '.results_file' "$OUT")"
 REPORT="$(jq -r '.report_file' "$OUT")"
+test -f "$RESULTS" || { cat "$OUT" >&2; exit 1; }
+test -f "$REPORT" || { cat "$OUT" >&2; exit 1; }
 jq -e '.overall == "blocked" and (.blockers | index("--no-mqtt-probe skips live MQTT E2E"))' "$RESULTS" >/dev/null
 jq -e '.mqtt.probe_result == "NOT_RUN" and (.out_of_scope | index("webrtc"))' "$RESULTS" >/dev/null
 grep -F 'Home MQTT Load-Test Report' "$TMP/report.stderr" >/dev/null
@@ -146,7 +153,7 @@ fi
 
 rm "$ENV_ROOT/devices/test_device/devices/light/light-001/device.key.pem"
 if "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- mqtt-test \
-	--env-root "$TMP/cloud_env/staging" \
+	--env-root "$ENV_ROOT" \
 	--brandname RTK \
 	--out-dir "$TMP/blocked" > "$TMP/blocked.out" 2>"$TMP/blocked.stderr"; then
 	echo "expected missing key to block" >&2

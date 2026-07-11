@@ -6,7 +6,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
-ENV_ROOT="$WORKSPACE/cloud_env/staging/lke"
+ENV_ROOT="$WORKSPACE/cloud_env/staging/runtime"
 mkdir -p "$WORKSPACE" "$ENV_ROOT/env" "$ENV_ROOT/artifacts/users" "$ENV_ROOT/artifacts/device-bind" "$ENV_ROOT/devices/test_device/manifests"
 
 cat > "$ENV_ROOT/env/stack.env" <<'EOF_ENV'
@@ -138,7 +138,7 @@ RESET_PLAN_OUT="$TMP/reset-plan.out"
 CLOUD_STAGING_E2E_REMOVE_K8S_SCRIPT="$TMP/remove-k8s.sh" \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-reset-k8s \
 	--workspace "$WORKSPACE" \
-	--env-root "$WORKSPACE/cloud_env/staging" \
+	--env-root "$ENV_ROOT" \
 	--plan > "$RESET_PLAN_OUT"
 grep -F 'cloud-staging-reset-k8s plan' "$RESET_PLAN_OUT" >/dev/null
 grep -F 'purge_storage: false' "$RESET_PLAN_OUT" >/dev/null
@@ -149,7 +149,7 @@ RESET_PURGE_PLAN_OUT="$TMP/reset-purge-plan.out"
 CLOUD_STAGING_E2E_REMOVE_K8S_SCRIPT="$TMP/remove-k8s.sh" \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-reset-k8s \
 	--workspace "$WORKSPACE" \
-	--env-root "$WORKSPACE/cloud_env/staging" \
+	--env-root "$ENV_ROOT" \
 	--purge-storage \
 	--plan > "$RESET_PURGE_PLAN_OUT"
 grep -F 'purge_storage: true' "$RESET_PURGE_PLAN_OUT" >/dev/null
@@ -160,9 +160,9 @@ RESET_RUN_OUT="$TMP/reset-run.out"
 CLOUD_STAGING_E2E_REMOVE_K8S_SCRIPT="$TMP/remove-k8s.sh" \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-reset-k8s \
 	--workspace "$WORKSPACE" \
-	--env-root "$WORKSPACE/cloud_env/staging" \
+	--env-root "$ENV_ROOT" \
 	--confirm video-cloud-staging > "$RESET_RUN_OUT"
-grep -F $'remove-k8s\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/lke"$' --yes' "$COMMAND_LOG" >/dev/null
+grep -F $'remove-k8s\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/runtime"$' --yes' "$COMMAND_LOG" >/dev/null
 grep -F '"overall":"pass"' "$RESET_RUN_OUT" >/dev/null
 
 : > "$COMMAND_LOG"
@@ -170,10 +170,10 @@ RESET_PURGE_RUN_OUT="$TMP/reset-purge-run.out"
 CLOUD_STAGING_E2E_REMOVE_K8S_SCRIPT="$TMP/remove-k8s.sh" \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-reset-k8s \
 	--workspace "$WORKSPACE" \
-	--env-root "$WORKSPACE/cloud_env/staging" \
+	--env-root "$ENV_ROOT" \
 	--confirm video-cloud-staging \
 	--purge-storage > "$RESET_PURGE_RUN_OUT"
-grep -F $'remove-k8s\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/lke"$' --yes --purge-storage' "$COMMAND_LOG" >/dev/null
+grep -F $'remove-k8s\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/runtime"$' --yes --purge-storage' "$COMMAND_LOG" >/dev/null
 grep -F '"purge_storage":true' "$RESET_PURGE_RUN_OUT" >/dev/null
 
 : > "$COMMAND_LOG"
@@ -181,7 +181,7 @@ PROVISION_PLAN_OUT="$TMP/provision-plan.out"
 CLOUD_STAGING_E2E_PROVISION_K8S_SCRIPT="$TMP/provision-k8s.sh" \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-provision \
 	--workspace "$WORKSPACE" \
-	--env-root "$WORKSPACE/cloud_env/staging" \
+	--env-root "$ENV_ROOT" \
 	--plan > "$PROVISION_PLAN_OUT"
 grep -F 'cloud-staging-provision plan' "$PROVISION_PLAN_OUT" >/dev/null
 grep -F 'phase: provision' "$PROVISION_PLAN_OUT" >/dev/null
@@ -192,9 +192,9 @@ PROVISION_RUN_OUT="$TMP/provision-run.out"
 CLOUD_STAGING_E2E_PROVISION_K8S_SCRIPT="$TMP/provision-k8s.sh" \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-provision \
 	--workspace "$WORKSPACE" \
-	--env-root "$WORKSPACE/cloud_env/staging" \
+	--env-root "$ENV_ROOT" \
 	--confirm video-cloud-staging > "$PROVISION_RUN_OUT"
-grep -F $'provision-k8s\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/lke"$' --confirm video-cloud-staging' "$COMMAND_LOG" >/dev/null
+grep -F $'provision-k8s\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/runtime"$' --confirm video-cloud-staging' "$COMMAND_LOG" >/dev/null
 grep -F '"overall":"pass"' "$PROVISION_RUN_OUT" >/dev/null
 
 : > "$COMMAND_LOG"
@@ -204,7 +204,7 @@ CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT="$TMP/mqtt-test.sh" \
 CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT="$TMP/mqtt-log-verify.sh" \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-acceptance \
 	--workspace "$WORKSPACE" \
-	--env-root "$WORKSPACE/cloud_env/staging" \
+	--env-root "$ENV_ROOT" \
 	--plan > "$ACCEPTANCE_PLAN_OUT"
 grep -F 'cloud-staging-e2e-test plan' "$ACCEPTANCE_PLAN_OUT" >/dev/null
 grep -F 'phase: acceptance' "$ACCEPTANCE_PLAN_OUT" >/dev/null
@@ -222,7 +222,7 @@ CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT="$TMP/mqtt-log-verify.sh" \
 CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0 \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-acceptance \
 	--workspace "$WORKSPACE" \
-	--env-root "$WORKSPACE/cloud_env/staging" \
+	--env-root "$ENV_ROOT" \
 	--confirm video-cloud-staging \
 	--brandname RTK \
 	--user-count 1 \
@@ -245,7 +245,7 @@ CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT="$TMP/mqtt-test.sh" \
 CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT="$TMP/mqtt-log-verify.sh" \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-e2e-test \
 	--workspace "$WORKSPACE" \
-	--env-root "$WORKSPACE/cloud_env/staging" \
+	--env-root "$ENV_ROOT" \
 	--plan > "$PLAN_OUT"
 
 grep -F 'cloud-staging-e2e-test plan' "$PLAN_OUT" >/dev/null
@@ -265,7 +265,7 @@ CLOUD_STAGING_E2E_PROGRESS_INTERVAL=100ms \
 CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0 \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-e2e-test \
 	--workspace "$WORKSPACE" \
-	--env-root "$WORKSPACE/cloud_env/staging" \
+	--env-root "$ENV_ROOT" \
 	--run \
 	--confirm video-cloud-staging \
 	--brandname RTK \
@@ -282,7 +282,7 @@ actual="$(cut -f1 "$COMMAND_LOG")"
 }
 grep -F $'remove-k8s\t' "$COMMAND_LOG" >/dev/null
 grep -F $'provision-k8s\t' "$COMMAND_LOG" >/dev/null
-grep -F $'setup-data\t' "$COMMAND_LOG" | grep -F -- "--env-root $WORKSPACE/cloud_env/staging/lke" | grep -F -- '--brandname RTK' | grep -F -- '--user-count 1' | grep -F -- '--device-count 3' | grep -F -- '--device-mix camera=1,light=1,smart_meter=1' | grep -F -- '--user-concurrency 64' | grep -F -- '--device-concurrency 64' | grep -F -- '--bind-concurrency 64' | grep -F -- '--out-dir ' >/dev/null
+grep -F $'setup-data\t' "$COMMAND_LOG" | grep -F -- "--env-root $WORKSPACE/cloud_env/staging/runtime" | grep -F -- '--brandname RTK' | grep -F -- '--user-count 1' | grep -F -- '--device-count 3' | grep -F -- '--device-mix camera=1,light=1,smart_meter=1' | grep -F -- '--user-concurrency 64' | grep -F -- '--device-concurrency 64' | grep -F -- '--bind-concurrency 64' | grep -F -- '--out-dir ' >/dev/null
 grep -F $'setup-data\t' "$COMMAND_LOG" | grep -F -- '--no-resume' >/dev/null
 if grep -E '(^|[[:space:]])(remove-all-vm|provision|deploy|remove_vm|provision_all)([[:space:]]|$)' "$COMMAND_LOG" >/dev/null; then
 	echo "staging-e2e-test should not invoke retired VM runtime commands" >&2
@@ -320,7 +320,7 @@ CLOUD_STAGING_E2E_PROGRESS_INTERVAL=100ms \
 CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0 \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-e2e-test \
 	--workspace "$WORKSPACE" \
-	--env-root "$WORKSPACE/cloud_env/staging" \
+	--env-root "$ENV_ROOT" \
 	--run \
 	--confirm video-cloud-staging \
 	--brandname RTK \
@@ -330,7 +330,7 @@ CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0 \
 	--skip-mqtt-probe \
 	--quiet > "$QUIET_OUT" 2> "$QUIET_ERR"
 
-grep -F $'setup-data\t' "$COMMAND_LOG" | grep -F -- "--env-root $WORKSPACE/cloud_env/staging/lke" | grep -F -- '--brandname RTK' | grep -F -- '--user-count 1' | grep -F -- '--device-count 3' | grep -F -- '--device-mix camera=1,light=1,smart_meter=1' | grep -F -- '--quiet' >/dev/null
+grep -F $'setup-data\t' "$COMMAND_LOG" | grep -F -- "--env-root $WORKSPACE/cloud_env/staging/runtime" | grep -F -- '--brandname RTK' | grep -F -- '--user-count 1' | grep -F -- '--device-count 3' | grep -F -- '--device-mix camera=1,light=1,smart_meter=1' | grep -F -- '--quiet' >/dev/null
 grep -F $'setup-data\t' "$COMMAND_LOG" | grep -F -- '--no-resume' >/dev/null
 grep -E "\\[cloud-staging-e2e\\] start: provision_k8s log=.*/logs/provision_k8s.log" "$QUIET_ERR" >/dev/null
 if grep -F '[cloud-staging-e2e] progress:' "$QUIET_ERR" >/dev/null; then
@@ -338,7 +338,7 @@ if grep -F '[cloud-staging-e2e] progress:' "$QUIET_ERR" >/dev/null; then
 	exit 1
 fi
 
-LKE_ENV_ROOT="$WORKSPACE/cloud_env/staging/lke"
+LKE_ENV_ROOT="$WORKSPACE/cloud_env/staging/runtime"
 mkdir -p "$LKE_ENV_ROOT/env"
 cat > "$LKE_ENV_ROOT/env/stack.env" <<'EOF_LKE_ENV'
 CLOUD_ENV_NAME=staging
@@ -358,7 +358,7 @@ CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT="$TMP/mqtt-log-verify.sh" \
 CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0 \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-e2e-test \
 	--workspace "$WORKSPACE" \
-	--env-root "$WORKSPACE/cloud_env/staging" \
+	--env-root "$ENV_ROOT" \
 	--run \
 	--confirm video-cloud-staging \
 	--brandname RTK \
@@ -376,7 +376,7 @@ fi
 
 if "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-e2e-test \
 	--workspace "$WORKSPACE" \
-	--env-root "$WORKSPACE/cloud_env/staging" \
+	--env-root "$ENV_ROOT" \
 	--run \
 	--confirm wrong-stack >/tmp/should-fail.out 2>/tmp/should-fail.err; then
 	echo "expected wrong confirm to fail" >&2

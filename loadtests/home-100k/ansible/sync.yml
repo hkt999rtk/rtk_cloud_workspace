@@ -260,7 +260,7 @@
 
     - name: Inspect remote extracted common env kubeconfig
       ansible.builtin.stat:
-        path: "{{ remote_env_root }}/state/lke-kubeconfig.yaml"
+        path: "{{ remote_env_root }}/state/kubeconfig.yaml"
       register: remote_common_env_kubeconfig_stat
 
     - name: Inspect remote extracted shard credential bundle

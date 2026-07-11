@@ -6,12 +6,12 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
-ENV_ROOT="$WORKSPACE/cloud_env/staging/lke"
+ENV_ROOT="$WORKSPACE/cloud_env/staging/runtime"
 FAKE_BIN="$TMP/bin"
 mkdir -p "$FAKE_BIN" "$ENV_ROOT/services/account-manager"
 
 cat > "$ENV_ROOT/services/account-manager/account-manager-public-staging.env" <<'EOF_ENV'
-ACCOUNT_MANAGER_LINODE_DOMAIN=account-manager.video-cloud-staging.example.com
+ACCOUNT_MANAGER_DOMAIN=127.0.0.1:1
 EOF_ENV
 
 cat > "$ENV_ROOT/services/account-manager/account-manager-platform-admin.env" <<'EOF_ADMIN'
@@ -77,4 +77,8 @@ if PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud
 	exit 1
 fi
 
-grep -F 'PostgreSQL fallback is retired for K8s staging' "$TMP/err" >/dev/null
+grep -F 'HTTP request failed for https://127.0.0.1:1/v1/auth/login' "$TMP/err" >/dev/null
+if grep -F 'unexpected ssh fallback' "$TMP/err" >/dev/null; then
+	echo "create-brandname-cloud must not use an SSH/VM fallback" >&2
+	exit 1
+fi

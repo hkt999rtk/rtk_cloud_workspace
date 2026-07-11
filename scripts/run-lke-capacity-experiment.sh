@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_ROOT="$ROOT/cloud_env/staging/lke"
+ENV_ROOT="$ROOT/cloud_env/staging/runtime"
 BRANDNAME="RTK"
 BRAND_PLAN=""
 TARGET_DEVICES=""
@@ -47,7 +47,7 @@ cleanup -> fresh provision -> staging data setup -> home-100k workflow-live ->
 capacity-run-summary.json.
 
 Defaults:
-  --env-root cloud_env/staging/lke
+  --env-root cloud_env/staging/runtime
   --brandname RTK
   --brand-plan FILE
   --devices-per-user 20
@@ -528,7 +528,7 @@ CURRENT_PHASE="workflow-live"
 		HOME100K_STAGE_COOL_DOWN="$STAGE_COOL_DOWN" \
 		HOME100K_LIVE_RUNNER_TIMEOUT_GRACE="$LIVE_RUNNER_TIMEOUT_GRACE" \
 		HOME100K_RUN_ID="$RUN_ID" \
-		HOME100K_KUBECONFIG="$ENV_ROOT/state/lke-kubeconfig.yaml" \
+		HOME100K_KUBECONFIG="$ENV_ROOT/state/kubeconfig.yaml" \
 		HOME100K_MQTT_ADDR="video-cloud-staging.realtekconnect.com:8883" \
 		HOME100K_SSH_KEY="$HOME/.ssh/id_ed25519_rtkcloud" \
 		HOME100K_AUTHORIZED_KEY_FILE="$HOME/.ssh/id_ed25519_rtkcloud.pub" \
