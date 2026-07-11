@@ -7612,11 +7612,17 @@ func runBindDevices(args []string) error {
 	if len(assignments) > 0 {
 		results, summary, err := accountBulkBindDevicesInChunks(ctx, &session, &sessionMu, safeLog, brandCloudID, assignments, bindDevicesBulkChunkSize())
 		if err != nil {
-			artifactDir := filepath.Join(envRoot, "artifacts", "device-bind")
-			_ = os.MkdirAll(artifactDir, 0o755)
-			failedPath := filepath.Join(artifactDir, fmt.Sprintf("%s-device-bind-failed-%s.json", slug, runID))
-			_ = writeJSON(failedPath, map[string]any{"schema": "rtk-cloud-workspace.bulk-device-bind-failed/v1", "brandname": *brandname, "brand_cloud_id": brandCloudID, "run_id": runID, "error": err.Error(), "results": results})
-			return fmt.Errorf("admin bulk bind failed: %w", err)
+			if strings.Contains(err.Error(), "HTTP 404") {
+				safeLog("bulk bind endpoint unavailable; falling back to claim-token resolve flow")
+				results, summary, err = accountBindDevicesViaClaimResolve(ctx, &session, &sessionMu, safeLog, brandCloudID, tenantSlug, assignments, userSessions, runID, *concurrency)
+			}
+			if err != nil {
+				artifactDir := filepath.Join(envRoot, "artifacts", "device-bind")
+				_ = os.MkdirAll(artifactDir, 0o755)
+				failedPath := filepath.Join(artifactDir, fmt.Sprintf("%s-device-bind-failed-%s.json", slug, runID))
+				_ = writeJSON(failedPath, map[string]any{"schema": "rtk-cloud-workspace.bulk-device-bind-failed/v1", "brandname": *brandname, "brand_cloud_id": brandCloudID, "run_id": runID, "error": err.Error(), "results": results})
+				return fmt.Errorf("admin bulk bind failed: %w", err)
+			}
 		}
 		bulkResults = results
 		safeLog("bulk bind complete: requested=%d created=%d existing=%d failed=%d chunks=%d", summary.Requested, summary.Created, summary.Existing, summary.Failed, summary.Chunks)
@@ -8035,6 +8041,194 @@ func accountBulkBindDevices(ctx accountManagerContext, token, brandCloudID strin
 		return nil, accountBulkBindSummary{}, fmt.Errorf("bulk device bind failed: HTTP %d%s", status, errorBodySuffix(body))
 	}
 	return parseAccountBulkBindResponse(body)
+}
+
+func accountBindDevicesViaClaimResolve(ctx accountManagerContext, session *accountPlatformSession, sessionMu *sync.Mutex, logf func(string, ...any), brandCloudID, tenantSlug string, assignments []bindAssignment, userSessions map[string]*brandCloudUserSession, runID string, concurrency int) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+	if concurrency > 16 {
+		concurrency = 16
+	}
+	results := map[string]accountBulkBindDeviceResult{}
+	var resultsMu sync.Mutex
+	var progressMu sync.Mutex
+	done := 0
+	failed := 0
+	expiresAt := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339Nano)
+	_, err := boundedParallelMap(len(assignments), concurrency, func(i int) (struct{}, error) {
+		assignment := assignments[i]
+		userSession := userSessions[assignment.AssignedEmail]
+		if userSession == nil {
+			return struct{}{}, fmt.Errorf("missing assigned user session: email=%s device=%s", assignment.AssignedEmail, assignment.DeviceID)
+		}
+		claimToken := fmt.Sprintf("loadtest-%s-%s", runID, assignment.DeviceID)
+		activityID := fmt.Sprintf("bulk-bind-%s-%s", runID, assignment.DeviceID)
+		createPayload, err := json.Marshal(map[string]any{
+			"claim_token":       claimToken,
+			"category":          assignment.Category,
+			"video_cloud_devid": assignment.DeviceID,
+			"activity_id":       activityID,
+			"clip_public_key":   "bulk-bind-placeholder-public-key",
+			"service_options":   assignment.ServiceOptions,
+			"expires_at":        expiresAt,
+			"metadata": map[string]any{
+				"source":      "rtk-cloud bind-devices claim fallback",
+				"run_id":      runID,
+				"device_type": assignment.DeviceType,
+			},
+		})
+		if err != nil {
+			return struct{}{}, err
+		}
+		body, status, err := curlJSONStatusWithPlatformRetryLocked(ctx, session, sessionMu, logf, "claim token create", func(platformToken string) ([]byte, int, error) {
+			return curlJSONStatus(ctx.BaseURL+"/v1/admin/device-claim-tokens", platformToken, createPayload)
+		})
+		if err != nil {
+			return struct{}{}, err
+		}
+		if status != http.StatusCreated {
+			return struct{}{}, fmt.Errorf("claim token create failed: device=%s HTTP %d%s", assignment.DeviceID, status, errorBodySuffix(body))
+		}
+		userToken, err := brandCloudUserAccessToken(ctx, tenantSlug, userSession, logf)
+		if err != nil {
+			return struct{}{}, err
+		}
+		resolvePayload, err := json.Marshal(map[string]any{
+			"claim_token": claimToken,
+			"device_name": assignment.DeviceID,
+		})
+		if err != nil {
+			return struct{}{}, err
+		}
+		body, status, err = curlJSONStatus(fmt.Sprintf("%s/v1/orgs/%s/devices/claim/resolve", ctx.BaseURL, url.PathEscape(brandCloudID)), userToken, resolvePayload)
+		if err != nil {
+			return struct{}{}, err
+		}
+		if status != http.StatusCreated {
+			if status == http.StatusConflict && accountClaimResolveAlreadyClaimed(body) {
+				result, lookupErr := accountFindExistingClaimedDevice(ctx, brandCloudID, userToken, assignment)
+				if lookupErr != nil {
+					return struct{}{}, fmt.Errorf("claim resolve already claimed but existing device lookup failed: device=%s: %w", assignment.DeviceID, lookupErr)
+				}
+				resultsMu.Lock()
+				results[assignment.DeviceID] = result
+				resultsMu.Unlock()
+				progressMu.Lock()
+				done++
+				if done%100 == 0 || done == len(assignments) {
+					logf("claim resolve fallback progress: done=%d/%d failed=%d", done, len(assignments), failed)
+				}
+				progressMu.Unlock()
+				return struct{}{}, nil
+			}
+			return struct{}{}, fmt.Errorf("claim resolve failed: device=%s HTTP %d%s", assignment.DeviceID, status, errorBodySuffix(body))
+		}
+		result, err := parseAccountClaimResolveBindResult(body, assignment)
+		if err != nil {
+			return struct{}{}, err
+		}
+		resultsMu.Lock()
+		results[assignment.DeviceID] = result
+		resultsMu.Unlock()
+		progressMu.Lock()
+		done++
+		if done%100 == 0 || done == len(assignments) {
+			logf("claim resolve fallback progress: done=%d/%d failed=%d", done, len(assignments), failed)
+		}
+		progressMu.Unlock()
+		return struct{}{}, nil
+	})
+	if err != nil {
+		progressMu.Lock()
+		failed++
+		progressMu.Unlock()
+		return results, accountBulkBindSummary{Requested: len(assignments), Created: len(results), Failed: len(assignments) - len(results), Chunks: 1}, err
+	}
+	return results, accountBulkBindSummary{Requested: len(assignments), Created: len(results), Failed: 0, Chunks: 1}, nil
+}
+
+func accountClaimResolveAlreadyClaimed(body []byte) bool {
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return false
+	}
+	if stringValue(parsed["code"]) == "already_claimed" {
+		return true
+	}
+	if errorObject, ok := parsed["error"].(map[string]any); ok {
+		return stringValue(errorObject["code"]) == "already_claimed"
+	}
+	return stringValue(parsed["error"]) == "already_claimed"
+}
+
+func accountFindExistingClaimedDevice(ctx accountManagerContext, brandCloudID, userToken string, assignment bindAssignment) (accountBulkBindDeviceResult, error) {
+	const limit = 200
+	for offset := 0; ; offset += limit {
+		endpoint := fmt.Sprintf("%s/v1/orgs/%s/devices?limit=%d&offset=%d", ctx.BaseURL, url.PathEscape(brandCloudID), limit, offset)
+		body, status, err := curlJSONStatus(endpoint, userToken, nil)
+		if err != nil {
+			return accountBulkBindDeviceResult{}, err
+		}
+		if status != http.StatusOK {
+			return accountBulkBindDeviceResult{}, fmt.Errorf("list devices failed: HTTP %d%s", status, errorBodySuffix(body))
+		}
+		var parsed struct {
+			Devices    []map[string]any `json:"devices"`
+			Pagination struct {
+				Total int `json:"total"`
+			} `json:"pagination"`
+		}
+		if err := json.Unmarshal(body, &parsed); err != nil {
+			return accountBulkBindDeviceResult{}, err
+		}
+		for _, device := range parsed.Devices {
+			metadata, _ := device["metadata"].(map[string]any)
+			if stringValue(metadata["video_cloud_devid"]) != assignment.DeviceID {
+				continue
+			}
+			accountDeviceID := stringValue(device["id"])
+			if accountDeviceID == "" {
+				return accountBulkBindDeviceResult{}, fmt.Errorf("existing device missing id: device=%s", assignment.DeviceID)
+			}
+			return accountBulkBindDeviceResult{
+				VideoCloudDevid: assignment.DeviceID,
+				Status:          "existing",
+				AccountDeviceID: accountDeviceID,
+				Device:          device,
+				ProvisionInput:  provisionInputForAssignment(assignment),
+			}, nil
+		}
+		if len(parsed.Devices) == 0 || offset+len(parsed.Devices) >= parsed.Pagination.Total {
+			break
+		}
+	}
+	return accountBulkBindDeviceResult{}, fmt.Errorf("existing claimed device not found by metadata.video_cloud_devid")
+}
+
+func parseAccountClaimResolveBindResult(body []byte, assignment bindAssignment) (accountBulkBindDeviceResult, error) {
+	var parsed struct {
+		ClaimID        string         `json:"claim_id"`
+		Device         map[string]any `json:"device"`
+		ProvisionInput map[string]any `json:"provision_input"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return accountBulkBindDeviceResult{}, err
+	}
+	accountDeviceID := stringValue(parsed.Device["id"])
+	if accountDeviceID == "" {
+		return accountBulkBindDeviceResult{}, fmt.Errorf("claim resolve response missing device.id: device=%s", assignment.DeviceID)
+	}
+	if parsed.ProvisionInput == nil {
+		parsed.ProvisionInput = provisionInputForAssignment(assignment)
+	}
+	return accountBulkBindDeviceResult{
+		VideoCloudDevid: assignment.DeviceID,
+		Status:          "created",
+		AccountDeviceID: accountDeviceID,
+		Device:          parsed.Device,
+		ProvisionInput:  parsed.ProvisionInput,
+	}, nil
 }
 
 func bulkBindRequestItems(assignments []bindAssignment) []map[string]any {

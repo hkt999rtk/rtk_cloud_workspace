@@ -3927,7 +3927,7 @@ stringData:
 }
 
 func lkeEMQXHTTPAuthentication(env map[string]string) string {
-	return fmt.Sprintf(`[{mechanism=password_based,backend=http,enable=true,method=post,url="http://video-cloud-api.%s.svc.cluster.local/v1/internal/mqtt/authenticate",headers={"content-type"="application/json","authorization"="Bearer %s"},body={listener="${listener}",username="${username}",password="${password}",clientid="${clientid}"},connect_timeout="5s",request_timeout="5s",pool_size=32,pipelining=100}]`, lkeNamespaceName(env, "video-cloud"), lkeRuntimeSecretValue("mqtt-broker-auth"))
+	return fmt.Sprintf(`[{mechanism=password_based,backend=http,enable=true,method=post,url="http://video-cloud-api.%s.svc.cluster.local/v1/internal/mqtt/authenticate",headers={"content-type"="application/json","authorization"="Bearer %s"},body={listener="${listener}",username="${username}",password="${password}",clientid="${clientid}"},connect_timeout="5s",request_timeout="5s",pool_size=32}]`, lkeNamespaceName(env, "video-cloud"), lkeRuntimeSecretValue("mqtt-broker-auth"))
 }
 
 func lkeMQTTConfigManifest(env map[string]string) string {
@@ -4113,7 +4113,7 @@ spec:
         - name: mqtt-config
           configMap:
             name: mqtt-config
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeMQTTReplicas(env), env["CLOUD_STACK_NAME"], lkeConfigChecksum(lkeEMQXTenantBaseHOCON(env), lkeEMQXHTTPAuthentication(env)), placement, firstNonEmpty(os.Getenv("LKE_MQTT_IMAGE"), "emqx/emqx:5.8.7"), lkeNamespaceName(env, "video-cloud"), lkeEMQXNodeCookie(env), lkeEMQXStaticSeeds(env), authEnabled, lkeEMQXListenerAcceptors(env), lkeEMQXListenerBacklog(env), authEnabled, lkeEMQXListenerAcceptors(env), lkeEMQXListenerBacklog(env), firstNonEmpty(os.Getenv("LKE_EMQX_FORCE_SHUTDOWN_MAX_MAILBOX_SIZE"), env["LKE_EMQX_FORCE_SHUTDOWN_MAX_MAILBOX_SIZE"], "131072"), firstNonEmpty(os.Getenv("LKE_EMQX_FORCE_SHUTDOWN_MAX_HEAP_SIZE"), env["LKE_EMQX_FORCE_SHUTDOWN_MAX_HEAP_SIZE"], "512MB"), authEnv, lkeContainerResourcesManifest(env, "mqtt"))
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeMQTTReplicas(env), lkeConfigChecksum(lkeEMQXTenantBaseHOCON(env), lkeEMQXHTTPAuthentication(env)), env["CLOUD_STACK_NAME"], placement, firstNonEmpty(os.Getenv("LKE_MQTT_IMAGE"), "emqx/emqx:5.8.7"), lkeNamespaceName(env, "video-cloud"), lkeEMQXNodeCookie(env), lkeEMQXStaticSeeds(env), authEnabled, lkeEMQXListenerAcceptors(env), lkeEMQXListenerBacklog(env), authEnabled, lkeEMQXListenerAcceptors(env), lkeEMQXListenerBacklog(env), firstNonEmpty(os.Getenv("LKE_EMQX_FORCE_SHUTDOWN_MAX_MAILBOX_SIZE"), env["LKE_EMQX_FORCE_SHUTDOWN_MAX_MAILBOX_SIZE"], "131072"), firstNonEmpty(os.Getenv("LKE_EMQX_FORCE_SHUTDOWN_MAX_HEAP_SIZE"), env["LKE_EMQX_FORCE_SHUTDOWN_MAX_HEAP_SIZE"], "512MB"), authEnv, lkeContainerResourcesManifest(env, "mqtt"))
 }
 
 func lkeMQTTReplicas(env map[string]string) int {
@@ -4710,7 +4710,7 @@ spec:
       volumes:
         - name: logger-spool
           emptyDir: {}
-	`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeDeploymentImagePullSecretsManifest(env), lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(env, service.Name), ports, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(service))
+`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeDeploymentImagePullSecretsManifest(env), lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(env, service.Name), ports, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(service))
 }
 
 func lkeVideoCloudAuxiliaryMQTTCleanSession(service lkeVideoCloudAuxiliaryService) string {

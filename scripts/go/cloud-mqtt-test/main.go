@@ -308,6 +308,7 @@ type appBootstrapMaterial struct {
 	Status          appBootstrapStatus
 	Certificate     tls.Certificate
 	TokensByEmail   map[string]tokenBundle
+	UsersByEmail    map[string]userCredential
 	ManagersByEmail map[string]*accountLoginTokenManager
 }
 
@@ -713,6 +714,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	}
 
 	base := map[string]any{
+		"run_id":           opts.RunID,
 		"generated_at":     nowISO(),
 		"status":           "PASS",
 		"overall":          "pass",
@@ -1099,7 +1101,7 @@ func (r *sustainedDeviceReader) WaitForPublish(topic string, timeout time.Durati
 					return nil, io.EOF
 				}
 			}
-			if publish.Topic != topic {
+			if !mqttTopicsEquivalent(publish.Topic, topic) {
 				continue
 			}
 			if match == nil || match(publish.Doc) {
@@ -2270,14 +2272,22 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 	}
 	appMQTTToken := appToken
 	if strings.TrimSpace(apiBaseURL) != "" {
-		cert, err := loadLeafFirstX509KeyPairForRecord(session.Record)
+		totals.AppTokenAttempts++
+		totals.HTTPRequests++
+		cert, err := appLoginManager.AppCertificate()
 		if err != nil {
+			totals.AppTokenFailures++
+			totals.HTTPFailures++
 			return fail("app_mqtt_token", "app_mqtt_token_unavailable", err)
 		}
 		issued, err := requestAppToken(apiBaseURL, cert, session.Record.DeviceID)
 		if err != nil {
+			totals.AppTokenFailures++
+			totals.HTTPFailures++
 			return fail("app_mqtt_token", "app_mqtt_token_unavailable", err)
 		}
+		totals.AppTokenSuccesses++
+		totals.HTTPSuccesses++
 		appMQTTToken = issued.AccessToken
 	}
 	target := session.MQTTTarget
@@ -2378,8 +2388,22 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 	if _, err := waitForMQTTPublishWithDeadline(appConn, acceptedTopic, acceptedTimeout, func(doc map[string]any) bool {
 		return doc["clientToken"] == commandID
 	}); err != nil {
-		totals.HTTPFailures++
-		return fail("app_shadow_accepted_wait", "app_shadow_accepted_wait_failed", err)
+		retryTimeout, retryErr := timeoutUntilDeadline(deadline, commandTimeout, "app_shadow_accepted_retry")
+		if retryErr != nil {
+			totals.HTTPFailures++
+			return fail("app_shadow_accepted_wait", "app_shadow_accepted_wait_failed", err)
+		}
+		if retryPublishErr := mqttPublish(appConn, shadowUpdateTopic, desiredPayload); retryPublishErr != nil {
+			totals.HTTPFailures++
+			return fail("app_desired_retry_publish", "app_desired_retry_publish_failed", retryPublishErr)
+		}
+		totals.TotalHTTPBytesSent += int64(len(shadowUpdateTopic) + len(desiredPayload))
+		if _, retryWaitErr := waitForMQTTPublishWithDeadline(appConn, acceptedTopic, retryTimeout, func(doc map[string]any) bool {
+			return doc["clientToken"] == commandID
+		}); retryWaitErr != nil {
+			totals.HTTPFailures++
+			return fail("app_shadow_accepted_wait", "app_shadow_accepted_wait_failed", err)
+		}
 	}
 	deltaTimeout, err := timeoutUntilDeadline(deadline, commandTimeout, "device_delta_wait")
 	if err != nil {
@@ -3249,7 +3273,7 @@ func waitForMQTTPublish(conn io.Reader, topic string, timeout time.Duration, mat
 			continue
 		}
 		gotTopic, message, err := mqttDecodePublish(packetType&0x0f, body)
-		if err != nil || gotTopic != topic {
+		if err != nil || !mqttTopicsEquivalent(gotTopic, topic) {
 			continue
 		}
 		doc := map[string]any{}
@@ -4022,6 +4046,13 @@ func newAccountLoginTokenManager(accountBaseURL, tenantSlug string, user userCre
 	}
 }
 
+func (m *accountLoginTokenManager) AppCertificate() (tls.Certificate, error) {
+	if m == nil {
+		return tls.Certificate{}, errors.New("account login token manager missing")
+	}
+	return loadAppX509KeyPairForUser(m.user)
+}
+
 func (m *accountLoginTokenManager) Token(timeout time.Duration) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -4403,6 +4434,7 @@ func prepareAppCertificateBootstrapForAssignments(accountBaseURL, videoBaseURL, 
 	var last appBootstrapMaterial
 	var firstPass appBootstrapMaterial
 	tokensByEmail := map[string]tokenBundle{}
+	materialUsersByEmail := map[string]userCredential{}
 	managersByEmail := map[string]*accountLoginTokenManager{}
 	for _, candidate := range candidates {
 		candidateBrand := firstNonEmpty(candidate.Brandname, "")
@@ -4425,6 +4457,8 @@ func prepareAppCertificateBootstrapForAssignments(accountBaseURL, videoBaseURL, 
 			bundle := user.Tokens
 			tokensByEmail[brandEmailKey(candidateBrand, user.Email)] = bundle
 			tokensByEmail[user.Email] = bundle
+			materialUsersByEmail[brandEmailKey(candidateBrand, user.Email)] = user
+			materialUsersByEmail[user.Email] = user
 			managersByEmail[brandEmailKey(candidateBrand, user.Email)] = newAccountLoginTokenManager(accountBaseURL, candidateTenantSlug, user, bundle)
 			managersByEmail[user.Email] = managersByEmail[brandEmailKey(candidateBrand, user.Email)]
 			attempts = append(attempts, appBootstrapAttempt{
@@ -4456,9 +4490,17 @@ func prepareAppCertificateBootstrapForAssignments(accountBaseURL, videoBaseURL, 
 				firstPass = material
 			}
 			if bundle, ok := material.TokensByEmail[user.Email]; ok {
+				managerUser := user
+				if material.UsersByEmail != nil {
+					if updated, ok := material.UsersByEmail[user.Email]; ok {
+						managerUser = updated
+					}
+				}
 				tokensByEmail[brandEmailKey(candidateBrand, user.Email)] = bundle
 				tokensByEmail[user.Email] = bundle
-				managersByEmail[brandEmailKey(candidateBrand, user.Email)] = newAccountLoginTokenManager(accountBaseURL, candidateTenantSlug, user, bundle)
+				materialUsersByEmail[brandEmailKey(candidateBrand, user.Email)] = managerUser
+				materialUsersByEmail[user.Email] = managerUser
+				managersByEmail[brandEmailKey(candidateBrand, user.Email)] = newAccountLoginTokenManager(accountBaseURL, candidateTenantSlug, managerUser, bundle)
 				managersByEmail[user.Email] = managersByEmail[brandEmailKey(candidateBrand, user.Email)]
 			}
 		}
@@ -4467,6 +4509,7 @@ func prepareAppCertificateBootstrapForAssignments(accountBaseURL, videoBaseURL, 
 	}
 	if len(tokensByEmail) > 0 {
 		firstPass.TokensByEmail = tokensByEmail
+		firstPass.UsersByEmail = materialUsersByEmail
 		firstPass.ManagersByEmail = managersByEmail
 		firstPass.Status.Attempts = attempts
 		return firstPass
@@ -4533,14 +4576,16 @@ func prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL, tenantSlug str
 	}
 	status.CertificateStatus = first.AppCertificate.Status
 	login := first
+	issuedUser := user
 	switch first.AppCertificate.Status {
 	case "csr_required":
-		csrPEM, _, err := generateAppCSR("app-user:" + first.User.ID)
+		csrPEM, keyPEM, err := generateAppCSR("app-user:" + first.User.ID)
 		if err != nil {
 			status.Reason = redactedError(err)
 			material.Status = status
 			return material
 		}
+		issuedUser.AppCredentials = appCertificateKeys{PrivateKeyPEM: string(keyPEM), CSRPem: csrPEM}
 		login, err = accountLoginAppCertificate(accountBaseURL, tenantSlug, user, csrPEM)
 		if err != nil {
 			status.Reason = redactedError(err)
@@ -4551,6 +4596,14 @@ func prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL, tenantSlug str
 	}
 	status.Subject = login.AppCertificate.Subject
 	status.FingerprintSHA256 = login.AppCertificate.FingerprintSHA256
+	if strings.TrimSpace(issuedUser.AppCertificate.CertificatePEM) == "" {
+		issuedUser.AppCertificate = appCertificateSummary{
+			Subject:             login.AppCertificate.Subject,
+			CertificatePEM:      login.AppCertificate.CertificatePEM,
+			CertificateChainPEM: login.AppCertificate.CertificateChainPEM,
+			FingerprintSHA256:   login.AppCertificate.FingerprintSHA256,
+		}
+	}
 	if strings.TrimSpace(login.Tokens.AccessToken) == "" {
 		status.Reason = "account login response missing access_token"
 		material.Status = status
@@ -4562,6 +4615,7 @@ func prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL, tenantSlug str
 	status.AccessToken = login.Tokens.AccessToken
 	material.Status = status
 	material.TokensByEmail = map[string]tokenBundle{user.Email: login.tokenBundle()}
+	material.UsersByEmail = map[string]userCredential{user.Email: issuedUser}
 	return material
 }
 
@@ -4571,6 +4625,40 @@ func hasLocalAppCredentials(credentials appCertificateKeys) bool {
 	return strings.HasPrefix(privateKey, "-----BEGIN ") &&
 		strings.Contains(privateKey, "PRIVATE KEY-----") &&
 		strings.HasPrefix(csr, "-----BEGIN CERTIFICATE REQUEST-----")
+}
+
+func loadAppX509KeyPairForUser(user userCredential) (tls.Certificate, error) {
+	keyPEM := strings.TrimSpace(user.AppCredentials.PrivateKeyPEM)
+	if keyPEM == "" {
+		return tls.Certificate{}, errors.New("app certificate material missing")
+	}
+	candidates := []struct {
+		label string
+		value string
+	}{
+		{label: "certificate_chain_pem", value: user.AppCertificate.CertificateChainPEM},
+		{label: "certificate_pem", value: user.AppCertificate.CertificatePEM},
+	}
+	var tried []string
+	for _, candidate := range candidates {
+		certPEM := normalizePEM(candidate.value)
+		if !strings.Contains(certPEM, "-----BEGIN CERTIFICATE-----") {
+			continue
+		}
+		if block, _ := pem.Decode([]byte(certPEM)); block == nil || block.Type != "CERTIFICATE" {
+			tried = append(tried, fmt.Sprintf("%s:no_certificate_block(len=%d)", candidate.label, len(certPEM)))
+			continue
+		}
+		cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+		if err == nil {
+			return cert, nil
+		}
+		tried = append(tried, fmt.Sprintf("%s:%v", candidate.label, err))
+	}
+	if len(tried) > 0 {
+		return tls.Certificate{}, fmt.Errorf("parse app certificate material: %s", strings.Join(tried, "; "))
+	}
+	return tls.Certificate{}, errors.New("app certificate material missing")
 }
 
 type accountLoginAppResponse struct {
@@ -4995,6 +5083,20 @@ func mqttPublishQoS1AndWaitPuback(w io.ReadWriter, packetID uint16, topic string
 	}
 }
 
+func mqttTopicsEquivalent(got, want string) bool {
+	want = strings.TrimSpace(want)
+	return strings.TrimSpace(got) == want || stripPhysicalTenantTopic(got) == want
+}
+
+func stripPhysicalTenantTopic(topic string) string {
+	trimmed := strings.Trim(strings.TrimSpace(topic), "/")
+	parts := strings.SplitN(trimmed, "/", 3)
+	if len(parts) == 3 && parts[0] == "_bc" && strings.TrimSpace(parts[1]) != "" {
+		return parts[2]
+	}
+	return trimmed
+}
+
 type runtimeLogRecorder struct {
 	deviceID string
 	streamID string
@@ -5199,7 +5301,10 @@ func writeOutputs(outDir string, result map[string]any) error {
 }
 
 func emitCentralLoggerEvent(envRoot string, result map[string]any) error {
-	loggerEnvPath := filepath.Join(envRoot, "services", "cloud-logger", "logger.env")
+	loggerEnvPath := firstExisting(
+		filepath.Join(envRoot, "services", "cloud-logger", "logger.env"),
+		filepath.Join(envRoot, "state", "cloud-logger.env"),
+	)
 	if !readable(loggerEnvPath) {
 		return nil
 	}
@@ -5220,6 +5325,7 @@ func emitCentralLoggerEvent(envRoot string, result map[string]any) error {
 	status := asString(result["status"])
 	eventID := mqttLoggerEventID(generatedAt, brandname, asString(result["results_file"]))
 	fields := map[string]any{
+		"run_id":           asString(result["run_id"]),
 		"brandname":        brandname,
 		"profile":          result["profile"],
 		"duration_seconds": result["duration_seconds"],
@@ -5740,13 +5846,20 @@ func firstNonEmpty(values ...string) string {
 func firstCertificatePEM(labelValuePairs ...string) (string, string) {
 	for i := 0; i+1 < len(labelValuePairs); i += 2 {
 		label := labelValuePairs[i]
-		value := labelValuePairs[i+1]
-		trimmed := strings.TrimSpace(value)
+		trimmed := normalizePEM(labelValuePairs[i+1])
 		if strings.Contains(trimmed, "-----BEGIN CERTIFICATE-----") {
 			return trimmed, label
 		}
 	}
 	return "", ""
+}
+
+func normalizePEM(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if strings.Contains(trimmed, `\n`) && !strings.Contains(trimmed, "\n") {
+		trimmed = strings.ReplaceAll(trimmed, `\n`, "\n")
+	}
+	return trimmed
 }
 
 func valueOr(value, fallback string) string {

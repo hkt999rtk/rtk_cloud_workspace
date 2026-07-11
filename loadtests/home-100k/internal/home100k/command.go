@@ -109,6 +109,8 @@ func Execute(args []string, stdout io.Writer, stderr io.Writer) int {
 		return executeProvisionVMs(args[1:], stdout, stderr)
 	case "sync":
 		return executeSync(args[1:], stdout, stderr)
+	case "write-credential-bundle":
+		return executeWriteCredentialBundle(args[1:], stdout, stderr)
 	case "run-stages":
 		return executeRunStages(args[1:], stdout, stderr)
 	case "collect":
@@ -126,6 +128,46 @@ func Execute(args []string, stdout io.Writer, stderr io.Writer) int {
 		printUsage(stderr)
 		return 2
 	}
+}
+
+// executeWriteCredentialBundle materializes the exact credential shard used by
+// a live runner. It is useful when an operator-managed generator is resumed
+// without the normal VM/Ansible sync workflow.
+func executeWriteCredentialBundle(args []string, stdout io.Writer, stderr io.Writer) int {
+	fs := flag.NewFlagSet("home-100k write-credential-bundle", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	envRoot := fs.String("env-root", "", "staging/LKE env-root")
+	brandname := fs.String("brandname", "", "brand name")
+	region := fs.String("region", "", "Linode region")
+	devices := fs.Int("devices", 0, "total devices")
+	users := fs.Int("users", 0, "total users")
+	devicesPerUser := fs.Int("devices-per-user", 0, "devices per user")
+	vmCount := fs.Int("vm-count", 1, "mixed VM count")
+	label := fs.String("label", "lg01", "assignment label")
+	outDir := fs.String("out-dir", "", "credential bundle output directory")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if strings.TrimSpace(*outDir) == "" {
+		fmt.Fprintln(stderr, "--out-dir is required")
+		return 2
+	}
+	plan, err := NewPlan(PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region, DeviceCount: *devices, UserCount: *users, DevicesPerUser: *devicesPerUser, VMCount: *vmCount})
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	assignment, ok := findAssignmentByLabel(plan, *label)
+	if !ok {
+		fmt.Fprintf(stderr, "assignment not found: %s\n", *label)
+		return 2
+	}
+	bundle, err := writeShardCredentialBundle(*outDir, *envRoot, plan, assignment)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	return writeJSONTo(stdout, stderr, bundle)
 }
 
 func executePlan(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -2524,29 +2566,15 @@ func collectCentralLoggerEvidence(envRoot string, runID string) (EvidenceSource,
 	if endpoint == "" || token == "" {
 		return EvidenceSource{Available: false, Optional: true, Detail: "central logger endpoint or token missing"}, "central_logger evidence probe skipped: endpoint/token missing"
 	}
-	counters := map[string]int64{}
-	queries := []struct {
-		label string
-		key   string
-		value string
-	}{
-		{label: "trace_id", key: "trace_id", value: runID},
-		{label: "request_id", key: "request_id", value: runID},
-		{label: "operation_id", key: "operation_id", value: runID},
-		{label: "home_mqtt_operation", key: "operation_id", value: "home-mqtt-loadtest"},
-	}
-	for _, query := range queries {
-		count, err := queryCentralLoggerCount(endpoint, token, query.key, query.value)
-		if err != nil {
-			return EvidenceSource{Available: false, Optional: true, Detail: "central logger query failed: " + redact(err.Error())}, "central_logger evidence probe failed: " + err.Error()
-		}
-		counters["central_logger."+query.label+".events"] = int64(count)
+	count, err := queryCentralLoggerRunSummaryCount(endpoint, token, runID)
+	if err != nil {
+		return EvidenceSource{Available: false, Optional: true, Detail: "central logger query failed: " + redact(err.Error())}, "central_logger evidence probe failed: " + err.Error()
 	}
 	return EvidenceSource{
 		Available: true,
 		Optional:  true,
-		Detail:    "central logger /v1/logs queried by run_id trace_id/request_id/operation_id and home-mqtt-loadtest operation_id",
-		Counters:  counters,
+		Detail:    "central logger /v1/logs queried by home-mqtt-loadtest operation and structured run_id field",
+		Counters:  map[string]int64{"central_logger.run_summary.events": int64(count)},
 	}, ""
 }
 
@@ -2657,23 +2685,49 @@ func queryCentralLoggerCount(endpoint string, token string, key string, value st
 	return len(decoded.Events), nil
 }
 
+func queryCentralLoggerRunSummaryCount(endpoint string, token string, runID string) (int, error) {
+	base, err := url.Parse(endpoint + "/v1/logs")
+	if err != nil {
+		return 0, err
+	}
+	values := base.Query()
+	values.Set("operation_id", "home-mqtt-loadtest")
+	values.Set("limit", "1000")
+	values.Set("order", "desc")
+	base.RawQuery = values.Encode()
+	req, err := http.NewRequest(http.MethodGet, base.String(), nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	var decoded struct {
+		Events []centralLoggerRuntimeEvent `json:"events"`
+	}
+	if err := doCentralLoggerJSON(req, 10*time.Second, &decoded); err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, event := range decoded.Events {
+		if centralLoggerEventFieldString(event, "run_id") == runID {
+			count++
+		}
+	}
+	return count, nil
+}
+
 type centralLoggerRuntimeEvent struct {
 	EventID   string         `json:"event_id"`
 	Time      time.Time      `json:"ts"`
 	Message   string         `json:"msg"`
 	Source    string         `json:"source"`
 	Component string         `json:"component"`
+	DeviceID  string         `json:"device_id"`
 	Fields    map[string]any `json:"fields"`
 }
 
 func collectCentralLoggerRuntimeLogEvidence(envRoot string, runID string, windowStart string) (EvidenceSource, EvidenceSource, string) {
 	if skipCentralLoggerEvidence() {
 		return EvidenceSource{}, EvidenceSource{}, "central_logger runtime evidence probe skipped by HOME100K_SKIP_CENTRAL_LOGGER"
-	}
-	values := centralLoggerEnvValues(envRoot)
-	endpoint, token := centralLoggerEndpointAndToken(values)
-	if endpoint == "" || token == "" {
-		return EvidenceSource{}, EvidenceSource{}, ""
 	}
 	since := time.Now().UTC().Add(-30 * time.Minute)
 	if strings.TrimSpace(windowStart) != "" {
@@ -2687,12 +2741,28 @@ func collectCentralLoggerRuntimeLogEvidence(envRoot string, runID string, window
 	if until.Before(since) {
 		until = since.Add(30 * time.Minute)
 	}
-	budget := &centralLoggerRuntimeQueryBudget{remaining: centralLoggerRuntimeQueryMaxWindows()}
-	events, err := queryCentralLoggerRuntimeEventsWindowed(endpoint, token, since, until, budget, 0)
-	if err != nil {
-		return EvidenceSource{}, EvidenceSource{}, "central_logger runtime evidence probe failed: " + err.Error()
+	var shadowCounters, streamCounters map[string]int64
+	for attempt := 0; attempt < centralLoggerRuntimeQueryRetries(); attempt++ {
+		events, err := queryCentralLoggerRuntimeEvidenceEvents(envRoot, runID, since, until)
+		if err != nil {
+			return EvidenceSource{}, EvidenceSource{}, "central_logger runtime evidence probe failed: " + err.Error()
+		}
+		shadowCounters, streamCounters = centralLoggerRuntimeCounters(runID, events)
+		if !usesLKELoggerEvidence(envRoot) && shadowCounters["app_user.desired_writes"] == 0 && streamCounters["runtime_log_streams.total"] == 0 {
+			// Loki stores an ingestion timestamp which can be in a different clock
+			// domain from the load generator's event timestamp. A bounded window may
+			// therefore be empty even though the run-scoped stream is present.
+			values := centralLoggerEnvValues(envRoot)
+			endpoint, token := centralLoggerEndpointAndToken(values)
+			if unbounded, queryErr := queryCentralLoggerRuntimeEvents(endpoint, token, time.Time{}, time.Time{}); queryErr == nil {
+				shadowCounters, streamCounters = centralLoggerRuntimeCounters(runID, unbounded)
+			}
+		}
+		if len(shadowCounters) > 0 || len(streamCounters) > 0 || attempt+1 == centralLoggerRuntimeQueryRetries() {
+			break
+		}
+		time.Sleep(time.Second)
 	}
-	shadowCounters, streamCounters := centralLoggerRuntimeCounters(runID, events)
 	if len(shadowCounters) == 0 && len(streamCounters) == 0 {
 		return EvidenceSource{}, EvidenceSource{}, "central_logger runtime evidence probe found no matching runtime log events for run_id " + runID
 	}
@@ -2700,6 +2770,66 @@ func collectCentralLoggerRuntimeLogEvidence(envRoot string, runID string, window
 	return EvidenceSource{Available: true, Detail: detail, Counters: shadowCounters},
 		EvidenceSource{Available: true, Detail: detail, Counters: streamCounters},
 		"central_logger runtime evidence used for iot_device_shadow and iot_device_shadow_streams"
+}
+
+// The LKE log ingester writes to the in-cluster Cloud Logger/Loki service.
+// Its historical public logger DNS is a different store, so evidence must use
+// the same backend that accepted the runtime events.
+func usesLKELoggerEvidence(envRoot string) bool {
+	_, err := os.Stat(filepath.Join(envRoot, "state", "lke-kubeconfig.yaml"))
+	return err == nil
+}
+
+func queryCentralLoggerRuntimeEvidenceEvents(envRoot, runID string, since, until time.Time) ([]centralLoggerRuntimeEvent, error) {
+	if usesLKELoggerEvidence(envRoot) {
+		baseURL, cleanup, err := lokiEvidenceBaseURL(envRoot)
+		if err != nil {
+			return nil, err
+		}
+		defer cleanup()
+		query := `{service=~".+"} |= "` + escapeLogQLLiteral("mqtt-e2e-"+runID+"-") + `"`
+		lines, err := queryLokiLinesWithLimitFallback(baseURL, query, since, until, 5000, 2000, 1000, 500)
+		if err != nil {
+			return nil, err
+		}
+		return parseCentralLoggerRuntimeLokiLines(lines), nil
+	}
+	values := centralLoggerEnvValues(envRoot)
+	endpoint, token := centralLoggerEndpointAndToken(values)
+	if endpoint == "" || token == "" {
+		return nil, nil
+	}
+	budget := &centralLoggerRuntimeQueryBudget{remaining: centralLoggerRuntimeQueryMaxWindows()}
+	return queryCentralLoggerRuntimeEventsWindowed(endpoint, token, since, until, budget, 0)
+}
+
+func parseCentralLoggerRuntimeLokiLines(lines []string) []centralLoggerRuntimeEvent {
+	events := make([]centralLoggerRuntimeEvent, 0, len(lines))
+	seen := map[string]struct{}{}
+	for _, line := range lines {
+		var event centralLoggerRuntimeEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil || event.EventID == "" {
+			continue
+		}
+		if event.Component != "device_runtime_log" || event.Source != "device-runtime" {
+			continue
+		}
+		if _, ok := seen[event.EventID]; ok {
+			continue
+		}
+		seen[event.EventID] = struct{}{}
+		events = append(events, event)
+	}
+	return events
+}
+
+func centralLoggerRuntimeQueryRetries() int {
+	if raw := strings.TrimSpace(os.Getenv("HOME100K_CENTRAL_LOGGER_RUNTIME_QUERY_RETRIES")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return 5
 }
 
 func skipCentralLoggerEvidence() bool {
@@ -2766,8 +2896,12 @@ func queryCentralLoggerRuntimeEvents(endpoint string, token string, since time.T
 	values.Set("source", "device-runtime")
 	values.Set("limit", "1000")
 	values.Set("order", "asc")
-	values.Set("since", since.UTC().Format(time.RFC3339Nano))
-	values.Set("until", until.UTC().Format(time.RFC3339Nano))
+	if !since.IsZero() {
+		values.Set("since", since.UTC().Format(time.RFC3339Nano))
+	}
+	if !until.IsZero() {
+		values.Set("until", until.UTC().Format(time.RFC3339Nano))
+	}
 	base.RawQuery = values.Encode()
 	req, err := http.NewRequest(http.MethodGet, base.String(), nil)
 	if err != nil {
@@ -2915,6 +3049,7 @@ type normalizedRuntimeLogEvent struct {
 // intentionally rejected so they cannot produce a false SUCCESS result.
 func normalizeCentralLoggerRuntimeEvent(event centralLoggerRuntimeEvent) (normalizedRuntimeLogEvent, bool) {
 	deviceID := firstNonEmpty(
+		strings.TrimSpace(event.DeviceID),
 		centralLoggerEventFieldString(event, "device_id"),
 		centralLoggerEventFieldString(event, "devid"),
 	)
@@ -4098,9 +4233,17 @@ func writeCommonEnvArchive(path string, plan Plan) error {
 	if stackState := stackStateRelPath(envRoot); stackState != "" {
 		relPaths = append(relPaths, stackState)
 	}
-	extraFiles := []archiveExtraFile{}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
+	}
+	extraFiles := []archiveExtraFile{}
+	loggerEnvPath, cleanupLoggerEnv, err := writeRemoteCloudLoggerEnv(filepath.Dir(path), envRoot)
+	if err != nil {
+		return err
+	}
+	defer cleanupLoggerEnv()
+	if loggerEnvPath != "" {
+		extraFiles = append(extraFiles, archiveExtraFile{Path: loggerEnvPath, Name: "state/cloud-logger.env"})
 	}
 	tmpPath := path + ".tmp"
 	if err := createTarGzFromRelPaths(tmpPath, envRoot, deduplicateLines(relPaths), extraFiles); err != nil {
@@ -4108,6 +4251,40 @@ func writeCommonEnvArchive(path string, plan Plan) error {
 		return err
 	}
 	return os.Rename(tmpPath, path)
+}
+
+// writeRemoteCloudLoggerEnv creates a narrowly scoped credential file for an
+// authorized load generator. The LKE env root deliberately keeps the current
+// token outside services/, while the runner needs it only to emit its own
+// redacted run-summary event.
+func writeRemoteCloudLoggerEnv(dir string, envRoot string) (string, func(), error) {
+	values := centralLoggerEnvValues(envRoot)
+	endpoint, token := centralLoggerEndpointAndToken(values)
+	if endpoint == "" || token == "" {
+		return "", func() {}, nil
+	}
+	file, err := os.CreateTemp(dir, "cloud-logger-remote-*.env")
+	if err != nil {
+		return "", nil, err
+	}
+	path := file.Name()
+	cleanup := func() { _ = os.Remove(path) }
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		cleanup()
+		return "", nil, err
+	}
+	_, err = fmt.Fprintf(file, "CLOUD_LOGGER_ENDPOINT=%s\nCLOUD_LOGGER_INGEST_TOKEN=%s\n", endpoint, token)
+	closeErr := file.Close()
+	if err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	if closeErr != nil {
+		cleanup()
+		return "", nil, closeErr
+	}
+	return path, cleanup, nil
 }
 
 type planDataCoverage struct {
