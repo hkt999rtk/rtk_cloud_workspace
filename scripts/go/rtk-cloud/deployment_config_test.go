@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -139,7 +140,7 @@ func TestMaterializeDeploymentRuntimeSeparatesSharedAndAdapterConfig(t *testing.
 		t.Fatalf("resolved generic config leaked compatibility keys:\n%s", resolved)
 	}
 	compat := readTestFile(t, filepath.Join(cfg.RuntimeRoot, "env", "stack.env"))
-	for _, want := range []string{"CLOUD_PROVIDER=lke", "CAPACITY_TARGET_CONNECTIONS=1000", "MQTT_REPLICAS=2"} {
+	for _, want := range []string{"CLOUD_PROVIDER=lke", "CAPACITY_TARGET_CONNECTIONS=1000", "MQTT_EFFECTIVE_REPLICAS=2"} {
 		if !strings.Contains(compat, want) {
 			t.Fatalf("missing %s", want)
 		}
@@ -178,8 +179,10 @@ func TestLKEAccountStateRequiredOnlyForMutation(t *testing.T) {
 		t.Fatal(err)
 	}
 	preflight := readTestFile(t, filepath.Join(cfg.RuntimeRoot, "state", "provider-preflight.env"))
-	if preflight != "PROVIDER_ACTIVE_SERVICE_LIMIT=20\n" {
-		t.Fatalf("provider preflight = %q", preflight)
+	for _, want := range []string{"PROVIDER_ACTIVE_SERVICE_LIMIT=20", "PROVIDER_REGION=us-sea"} {
+		if !strings.Contains(preflight, want+"\n") {
+			t.Fatalf("provider preflight missing %s: %q", want, preflight)
+		}
 	}
 	adapterConfig := readTestFile(t, filepath.Join(cfg.RuntimeRoot, "adapters", "lke", "config.env"))
 	if !strings.Contains(adapterConfig, "LKE_LINODE_ACTIVE_SERVICE_LIMIT=20") {
@@ -204,11 +207,24 @@ func TestNormalizeEnvironmentArgs(t *testing.T) {
 func writeDeploymentFixture(t *testing.T, environment, adapter string) string {
 	t.Helper()
 	root := t.TempDir()
+	var workloads strings.Builder
+	for _, spec := range capacityWorkloadRegistry {
+		replicas, nodeClass := 1, "general"
+		if spec.Name == "mqtt" {
+			replicas, nodeClass = 2, "broker"
+		} else if spec.Name == "video-cloud-api" {
+			replicas = 2
+		} else if spec.Name == "postgresql" {
+			nodeClass = "database"
+		}
+		fmt.Fprintf(&workloads, "%s_MIN_REPLICAS=%d\n%s_NODE_CLASS=%s\n%s_REQUEST_CPU=100m\n%s_REQUEST_MEMORY=128Mi\n", spec.Prefix, replicas, spec.Prefix, nodeClass, spec.Prefix, spec.Prefix)
+	}
+	workloads.WriteString("MQTT_HARD_ANTI_AFFINITY=true\nPOSTGRES_LIMIT_MEMORY=4Gi\nCLOUD_LOGGER_LIMIT_MEMORY=2Gi\nEDGE_REPLICAS=1\nEDGE_MAX_CONNECTIONS=400000\nTURN_REPLICAS=1\nTURN_MIN_PORT=49152\nTURN_MAX_PORT=49200\n")
 	files := map[string]string{
 		"cloud_deploy/architectures/kubernetes/architecture.env":   "DEPLOYMENT_RUNTIME=kubernetes\nNODE_CLASS_LABEL_KEY=rtk.io/node-class\nDEFAULT_WORKLOAD_NODE_CLASS=general\n",
-		"cloud_deploy/architectures/kubernetes/capacity.env":       "CAPACITY_TARGET_CONNECTIONS=1000\nCAPACITY_CONNECTIONS_PER_MQTT_POD=20000\n",
-		"cloud_deploy/architectures/kubernetes/topology.env":       "NODE_CLASS_GENERAL_MIN_COUNT=2\nNODE_CLASS_GENERAL_MIN_VCPU=4\nNODE_CLASS_GENERAL_MIN_MEMORY_GIB=8\nNODE_CLASS_BROKER_MIN_COUNT=2\nNODE_CLASS_BROKER_MIN_VCPU=4\nNODE_CLASS_BROKER_MIN_MEMORY_GIB=8\nNODE_CLASS_DATABASE_MIN_COUNT=1\nNODE_CLASS_DATABASE_MIN_VCPU=8\nNODE_CLASS_DATABASE_MIN_MEMORY_GIB=16\nMQTT_NODE_CLASS=broker\n",
-		"cloud_deploy/architectures/kubernetes/workloads.env":      "MQTT_REPLICAS=2\nMQTT_HARD_ANTI_AFFINITY=true\nVIDEO_CLOUD_API_REPLICAS=2\nPOSTGRES_REQUEST_CPU=1\nPOSTGRES_REQUEST_MEMORY=2Gi\nPOSTGRES_LIMIT_MEMORY=4Gi\nEDGE_REPLICAS=1\nEDGE_MAX_CONNECTIONS=400000\nTURN_REPLICAS=1\nTURN_MIN_PORT=49152\nTURN_MAX_PORT=49200\n",
+		"cloud_deploy/architectures/kubernetes/capacity.env":       "CAPACITY_TARGET_CONNECTIONS=1000\nCAPACITY_CONNECTIONS_PER_MQTT_POD=20000\nCAPACITY_ACTIVE_DEVICES=1000\nCAPACITY_ACTIVE_DEVICES_PER_API_POD=40000\nCAPACITY_SYSTEM_RESERVED_CPU_MILLI=1000\nCAPACITY_SYSTEM_RESERVED_MEMORY_MIB=1536\n",
+		"cloud_deploy/architectures/kubernetes/topology.env":       "NODE_CLASS_GENERAL_MIN_COUNT=2\nNODE_CLASS_GENERAL_MIN_VCPU=4\nNODE_CLASS_GENERAL_MIN_MEMORY_GIB=8\nNODE_CLASS_BROKER_MIN_COUNT=2\nNODE_CLASS_BROKER_MIN_VCPU=4\nNODE_CLASS_BROKER_MIN_MEMORY_GIB=8\nNODE_CLASS_DATABASE_MIN_COUNT=1\nNODE_CLASS_DATABASE_MIN_VCPU=8\nNODE_CLASS_DATABASE_MIN_MEMORY_GIB=16\n",
+		"cloud_deploy/architectures/kubernetes/workloads.env":      workloads.String(),
 		"cloud_deploy/adapters/lke/defaults.env":                   "LKE_REGION_PIN=\nLKE_GENERAL_NODE_TYPE_PIN=\nLKE_BROKER_NODE_TYPE_PIN=\nLKE_DATABASE_NODE_TYPE_PIN=\n",
 		"cloud_deploy/adapters/lke/locations.env":                  "LOCATION_US_WEST=us-sea\n",
 		"cloud_deploy/adapters/lke/schema.env":                     "ADAPTER_NAME=lke\nADAPTER_RUNTIME=kubernetes\nADAPTER_MUTATION_SUPPORTED=true\n",

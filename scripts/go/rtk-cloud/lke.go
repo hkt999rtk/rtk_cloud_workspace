@@ -696,7 +696,7 @@ func lkeInstallIngressNginx(env map[string]string) error {
 }
 
 func lkeIngressReplicas(env map[string]string) string {
-	raw := strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_INGRESS_REPLICAS"), env["LKE_INGRESS_REPLICAS"], "1"))
+	raw := strings.TrimSpace(firstNonEmpty(env["INGRESS_EFFECTIVE_REPLICAS"], os.Getenv("LKE_INGRESS_REPLICAS"), env["LKE_INGRESS_REPLICAS"], "1"))
 	replicas, err := strconv.Atoi(raw)
 	if err != nil || replicas < 1 {
 		return "1"
@@ -4119,14 +4119,7 @@ spec:
 }
 
 func lkeMQTTReplicas(env map[string]string) int {
-	raw := strings.TrimSpace(firstNonEmpty(os.Getenv("LKE_MQTT_REPLICAS"), env["LKE_MQTT_REPLICAS"], "4"))
-	if strings.EqualFold(raw, "auto") {
-		target := lkeTargetConnects(env)
-		if target <= 0 {
-			return 1
-		}
-		return maxInt(1, ceilDiv(target, lkeMQTTConnectionsPerPod(env)))
-	}
+	raw := strings.TrimSpace(firstNonEmpty(env["MQTT_EFFECTIVE_REPLICAS"], os.Getenv("LKE_MQTT_REPLICAS"), env["LKE_MQTT_REPLICAS"], "1"))
 	replicas, err := strconv.Atoi(raw)
 	if err != nil || replicas < 1 {
 		return 4
@@ -6245,6 +6238,11 @@ func lkeDeploymentImagePullSecretsManifest(env map[string]string) string {
 }
 
 func lkeWorkloadReplicas(env map[string]string, workload lkeWorkload) string {
+	if spec, ok := capacityWorkloadSpecForName(workload.Name); ok {
+		if effective := strings.TrimSpace(env[spec.Prefix+"_EFFECTIVE_REPLICAS"]); effective != "" {
+			return effective
+		}
+	}
 	switch workload.Key {
 	case "account-manager":
 		return firstNonEmpty(os.Getenv("LKE_ACCOUNT_MANAGER_REPLICAS"), env["LKE_ACCOUNT_MANAGER_REPLICAS"], "1")
@@ -6326,24 +6324,18 @@ type lkeResourceProfile struct {
 }
 
 func lkeContainerResourceProfile(env map[string]string, name string) (lkeResourceProfile, bool) {
-	profiles := map[string]lkeResourceProfile{
-		"account-manager":         {requestCPU: "250m", requestMemory: "256Mi", limitMemory: "1Gi"},
-		"cloud-logger":            {requestCPU: "100m", requestMemory: "4Gi", limitMemory: "16Gi"},
-		"log-collector":           {requestCPU: "50m", requestMemory: "128Mi", limitMemory: "512Mi"},
-		"loki":                    {requestCPU: "250m", requestMemory: "512Mi", limitMemory: "2Gi"},
-		"mqtt":                    {requestCPU: "250m", requestMemory: "512Mi", limitMemory: "1536Mi"},
-		"video-cloud-api":         {requestCPU: "500m", requestMemory: "512Mi", limitMemory: "1536Mi"},
-		"video-cloud-logingester": {requestCPU: "500m", requestMemory: "512Mi", limitMemory: "1Gi"},
-		"video-cloud-mqttusage":   {requestCPU: "250m", requestMemory: "256Mi", limitMemory: "1Gi"},
+	limits := map[string]string{
+		"account-manager": "1Gi", "cloud-admin": "512Mi", "cloud-logger": "2Gi", "frontend": "512Mi",
+		"mqtt": "1536Mi", "video-cloud-api": "1536Mi", "video-cloud-logingester": "1Gi", "video-cloud-mqttusage": "1Gi",
 	}
-	profile, ok := profiles[name]
+	spec, ok := capacityWorkloadSpecForName(name)
 	if !ok {
 		return lkeResourceProfile{}, false
 	}
-	envPrefix := "LKE_" + strings.ToUpper(strings.NewReplacer("-", "_").Replace(name)) + "_"
-	profile.requestCPU = firstNonEmpty(os.Getenv(envPrefix+"REQUEST_CPU"), env[envPrefix+"REQUEST_CPU"], profile.requestCPU)
-	profile.requestMemory = firstNonEmpty(os.Getenv(envPrefix+"REQUEST_MEMORY"), env[envPrefix+"REQUEST_MEMORY"], profile.requestMemory)
-	profile.limitMemory = firstNonEmpty(os.Getenv(envPrefix+"LIMIT_MEMORY"), env[envPrefix+"LIMIT_MEMORY"], profile.limitMemory)
+	profile := lkeResourceProfile{
+		requestCPU: env[spec.Prefix+"_REQUEST_CPU"], requestMemory: env[spec.Prefix+"_REQUEST_MEMORY"],
+		limitMemory: firstNonEmpty(env[spec.Prefix+"_LIMIT_MEMORY"], limits[name], env[spec.Prefix+"_REQUEST_MEMORY"]),
+	}
 	return profile, true
 }
 

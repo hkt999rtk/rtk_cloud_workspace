@@ -38,9 +38,30 @@ if rg -n -- 'LKE_|EKS_|GKE_|lke\.linode\.com/pool-id' "$ROOT/cloud_deploy/archit
 	exit 1
 fi
 
-if rg -n -- 'LKE_REGION|LKE_(GENERAL|BROKER|DATABASE)_NODE_TYPE|LINODE_ACTIVE_SERVICE_LIMIT' \
+if rg -n --glob '!**/runtime/**' -- '\b(MQTT_REPLICAS|VIDEO_CLOUD_API_REPLICAS)\b' \
+	"$ROOT/cloud_deploy" "$ROOT/cloud_env/dev" "$ROOT/cloud_env/staging" "$ROOT/cloud_env/prod" \
+	>/tmp/staging-k8s-static.out; then
+	cat /tmp/staging-k8s-static.out >&2
+	echo "tracked architecture must use minimum and generated effective replica keys" >&2
+	exit 1
+fi
+
+if rg -n -- 'LKE_|EKS_|GKE_|LINODE_' "$ROOT/scripts/go/rtk-cloud/deployment_capacity.go" >/tmp/staging-k8s-static.out; then
+	cat /tmp/staging-k8s-static.out >&2
+	echo "shared capacity planner must remain provider-neutral" >&2
+	exit 1
+fi
+
+if rg -n -- 'CAPACITY_TARGET_CONNECTIONS|CAPACITY_ACTIVE_DEVICES|lkeCapacityWorkloads|ceilDiv' \
+	"$ROOT/scripts/go/rtk-cloud/lke_capacity.go" >/tmp/staging-k8s-static.out; then
+	cat /tmp/staging-k8s-static.out >&2
+	echo "LKE capacity code must consume effective values instead of recalculating generic capacity" >&2
+	exit 1
+fi
+
+if rg -n --glob '!**/runtime/**' -- 'LKE_REGION|LKE_(GENERAL|BROKER|DATABASE)_NODE_TYPE|LINODE_ACTIVE_SERVICE_LIMIT' \
 	"$ROOT/cloud_env/dev" "$ROOT/cloud_env/staging" "$ROOT/cloud_env/prod" \
-	--glob '!**/runtime/**' >/tmp/staging-k8s-static.out; then
+	>/tmp/staging-k8s-static.out; then
 	cat /tmp/staging-k8s-static.out >&2
 	echo "tracked environments must describe provider-neutral location and node sizing" >&2
 	exit 1
