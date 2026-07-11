@@ -422,7 +422,7 @@ func lkePlan(env map[string]string, opts provisionOptions) {
 		fmt.Fprintf(os.Stdout, "  - %s=%s\n", ns.Key, ns.Name)
 	}
 	fmt.Fprintln(os.Stdout, "- public edge: external HAProxy VM :443/:8883 -> LKE node private IP NodePorts")
-	fmt.Fprintln(os.Stdout, "- public HTTP :80 is not exposed; TLS issuance uses GoDaddy DNS-01")
+	fmt.Fprintf(os.Stdout, "- public HTTP :80 is not exposed; TLS issuance uses %s DNS-01\n", env["DNS_ADAPTER"])
 	fmt.Fprintln(os.Stdout, "- public MQTT: HAProxy TCP passthrough :8883 -> EMQX/MQTT NodePort")
 	fmt.Fprintln(os.Stdout, "- public TURN: external coturn VM data-plane exception, not HAProxy-backed")
 	fmt.Fprintf(os.Stdout, "  - coturn_vms: count=%d type=%s image=%s ports=3478/udp,3478/tcp relay_udp=%s-%s\n",
@@ -556,7 +556,7 @@ func lkeApplyPublicHTTPS(paths provisionPaths, env map[string]string, opts provi
 			fmt.Fprintf(os.Stderr, "[lke-provision] restoring cached public TLS certificate %s\n", lkePublicHTTPSCertificateCacheDir(paths, env))
 			certPEM, keyPEM = cachedCertPEM, cachedKeyPEM
 		} else {
-			certPEM, keyPEM, err = lkeIssuePublicHTTPSCertificate(env, opts, hosts)
+			certPEM, keyPEM, err = lkeIssuePublicHTTPSCertificate(paths, env, opts, hosts)
 			if err != nil {
 				return err
 			}
@@ -607,21 +607,12 @@ func lkeSyncPublicHTTPSDNS(paths provisionPaths, env map[string]string, opts pro
 	if len(hosts) == 0 {
 		return nil
 	}
-	concurrency := envIntDefault("LKE_PUBLIC_HTTPS_DNS_CONCURRENCY", 4)
-	if concurrency < 1 {
-		concurrency = 1
+	ttl := envIntDefault("DNS_RECORD_TTL", 600)
+	records := make([]dnsRecordSet, 0, len(hosts))
+	for _, host := range hosts {
+		records = append(records, dnsRecordSet{Name: host, Type: "A", Values: []string{ip}, TTL: ttl, Purpose: "public-edge"})
 	}
-	if concurrency > len(hosts) {
-		concurrency = len(hosts)
-	}
-	if err := lkeRunHostTasks(hosts, concurrency, func(host string) error {
-		return godaddyUpsert(paths, env["CLOUD_DNS_ROOT_DOMAIN"], opts.godaddyEnv, opts.operatorEnv, host, ip, opts.dnsFinalTTL)
-	}); err != nil {
-		return err
-	}
-	return lkeRunHostTasks(hosts, concurrency, func(host string) error {
-		return waitDNS(host, ip, env["CLOUD_DNS_ROOT_DOMAIN"], opts)
-	})
+	return syncDNSRecords(paths, env, records)
 }
 
 func lkeRunHostTasks(hosts []string, concurrency int, task func(string) error) error {
@@ -794,30 +785,36 @@ func lkePublicHTTPSHosts(routes []lkePublicHTTPSRoute) []string {
 	return hosts
 }
 
-func lkeIssuePublicHTTPSCertificate(env map[string]string, opts provisionOptions, hosts []string) (string, string, error) {
+func lkeIssuePublicHTTPSCertificate(paths provisionPaths, env map[string]string, opts provisionOptions, hosts []string) (string, string, error) {
 	if len(hosts) == 0 {
 		return "", "", errors.New("public HTTPS certificate requires at least one hostname")
 	}
-	operatorEnv, _ := readEnvFile(opts.operatorEnv)
-	dnsEnv, err := certbotDNS01Env(env, operatorEnv)
-	if err != nil {
+	if _, _, _, err := selectedDNSAdapter(paths, env); err != nil {
 		return "", "", err
 	}
-	workDir, err := os.MkdirTemp("", "rtk-lke-public-https-*")
+	defer func() {
+		if err := cleanupRecordedDNSChallenges(paths, env); err != nil {
+			fmt.Fprintf(os.Stderr, "[dns] challenge cleanup warning: %v\n", err)
+		}
+	}()
+	workDir, err := os.MkdirTemp("", "rtk-public-https-*")
 	if err != nil {
 		return "", "", err
 	}
 	defer os.RemoveAll(workDir)
-	dnsEnvPath := filepath.Join(workDir, "godaddy-dns.env")
-	if err := os.WriteFile(dnsEnvPath, []byte(renderCertbotDNS01EnvFile(dnsEnv)), 0o600); err != nil {
-		return "", "", err
+	hookBinary := os.Getenv("RTK_CLOUD_DNS_HOOK_BINARY")
+	if hookBinary == "" {
+		hookBinary, err = os.Executable()
+		if err != nil {
+			return "", "", err
+		}
 	}
 	authHook := filepath.Join(workDir, "dns-auth.sh")
 	cleanupHook := filepath.Join(workDir, "dns-cleanup.sh")
-	if err := os.WriteFile(authHook, []byte(lkeCertbotHookScript(certbotDNSAuthHookScript())), 0o700); err != nil {
+	if err := os.WriteFile(authHook, []byte(certbotDNSHookScript(hookBinary, paths.EnvRoot, paths.OperatorEnv, "present")), 0o700); err != nil {
 		return "", "", err
 	}
-	if err := os.WriteFile(cleanupHook, []byte(lkeCertbotHookScript(certbotDNSCleanupHookScript())), 0o700); err != nil {
+	if err := os.WriteFile(cleanupHook, []byte(certbotDNSHookScript(hookBinary, paths.EnvRoot, paths.OperatorEnv, "cleanup")), 0o700); err != nil {
 		return "", "", err
 	}
 	configDir := filepath.Join(workDir, "config")
@@ -846,11 +843,7 @@ func lkeIssuePublicHTTPSCertificate(env map[string]string, opts provisionOptions
 		args = append(args, "-d", host)
 	}
 	cmd := exec.Command(certbot, args...)
-	cmd.Env = append(os.Environ(),
-		"RTK_CLOUD_CERTBOT_DNS_ENV="+dnsEnvPath,
-		"RTK_CLOUD_CERTBOT_DNS_STATE="+filepath.Join(workDir, "dns-state"),
-		"RTK_CLOUD_CERTBOT_DNS_EXPECTED="+strconv.Itoa(len(hosts)),
-	)
+	cmd.Env = os.Environ()
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -1019,23 +1012,6 @@ func parseFirstCertificatePEM(certPEM []byte) (*x509.Certificate, error) {
 		return nil, nil
 	}
 	return x509.ParseCertificate(block.Bytes)
-}
-
-func renderCertbotDNS01EnvFile(values certbotDNS01EnvValues) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "GODADDY_KEY=%s\n", shellSingleQuote(values.Key))
-	fmt.Fprintf(&b, "GODADDY_SECRET=%s\n", shellSingleQuote(values.Secret))
-	fmt.Fprintf(&b, "GODADDY_ENV=%s\n", shellSingleQuote(values.Env))
-	fmt.Fprintf(&b, "CLOUD_DNS_ROOT_DOMAIN=%s\n", shellSingleQuote(values.RootDomain))
-	fmt.Fprintf(&b, "GODADDY_DNS_TTL=%s\n", shellSingleQuote(values.TTL))
-	fmt.Fprintf(&b, "GODADDY_DNS_WAIT_SECONDS=%s\n", shellSingleQuote(values.WaitSeconds))
-	fmt.Fprintf(&b, "GODADDY_DNS_PROPAGATION_SECONDS=%s\n", shellSingleQuote(values.PropagationSeconds))
-	fmt.Fprintf(&b, "GODADDY_DNS_RESOLVERS=%s\n", shellSingleQuote(values.Resolvers))
-	return b.String()
-}
-
-func lkeCertbotHookScript(script string) string {
-	return strings.Replace(script, ". /etc/rtk-cloud/godaddy-dns.env", `. "${RTK_CLOUD_CERTBOT_DNS_ENV:?RTK_CLOUD_CERTBOT_DNS_ENV is required}"`, 1)
 }
 
 func lkePublicHTTPSTLSSecretName(env map[string]string) string {
@@ -6327,6 +6303,7 @@ func lkeContainerResourceProfile(env map[string]string, name string) (lkeResourc
 	limits := map[string]string{
 		"account-manager": "1Gi", "cloud-admin": "512Mi", "cloud-logger": "2Gi", "frontend": "512Mi",
 		"mqtt": "1536Mi", "video-cloud-api": "1536Mi", "video-cloud-logingester": "1Gi", "video-cloud-mqttusage": "1Gi",
+		"loki": "2Gi",
 	}
 	spec, ok := capacityWorkloadSpecForName(name)
 	if !ok {

@@ -66,6 +66,15 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 			},
 		},
 		{
+			Name:    "dns-adapter-preflight",
+			Phase:   "dns",
+			Enabled: func(ctx provisionContext) bool { return ctx.Opts.mode.dns },
+			Run: func(ctx provisionContext) error {
+				_, _, _, err := selectedDNSAdapter(ctx.Paths, ctx.Env)
+				return err
+			},
+		},
+		{
 			Name:  "capacity-check",
 			Phase: "runtime",
 			Enabled: func(ctx provisionContext) bool {

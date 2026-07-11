@@ -230,8 +230,10 @@ func writeDeploymentFixture(t *testing.T, environment, adapter string) string {
 		"cloud_deploy/adapters/lke/schema.env":                     "ADAPTER_NAME=lke\nADAPTER_RUNTIME=kubernetes\nADAPTER_MUTATION_SUPPORTED=true\n",
 		"cloud_deploy/adapters/eks/schema.env":                     "ADAPTER_NAME=eks\nADAPTER_RUNTIME=kubernetes\nADAPTER_MUTATION_SUPPORTED=false\n",
 		"cloud_deploy/adapters/gke/schema.env":                     "ADAPTER_NAME=gke\nADAPTER_RUNTIME=kubernetes\nADAPTER_MUTATION_SUPPORTED=false\n",
+		"cloud_deploy/dns_adapters/godaddy/defaults.env":           "DNS_RECORD_TTL=600\nDNS_PROPAGATION_TIMEOUT_SECONDS=900\nDNS_PROPAGATION_INTERVAL_SECONDS=10\nGODADDY_ENV=prod\n",
+		"cloud_deploy/dns_adapters/godaddy/schema.env":             "DNS_ADAPTER_NAME=godaddy\n",
 		filepath.Join("cloud_env", environment, "environment.env"): "CLOUD_STACK_NAME=video-cloud-" + environment + "\nCLOUD_DNS_ROOT_DOMAIN=example.test\nDEPLOYMENT_LOCATION=us-west\n",
-		filepath.Join("cloud_env", environment, "deployment.env"):  "DEPLOYMENT_ARCHITECTURE=kubernetes\nDEPLOYMENT_ADAPTER=" + adapter + "\n",
+		filepath.Join("cloud_env", environment, "deployment.env"):  "DEPLOYMENT_ARCHITECTURE=kubernetes\nDEPLOYMENT_ADAPTER=" + adapter + "\nDNS_ADAPTER=godaddy\n",
 	}
 	for path, body := range files {
 		writeTestFile(t, filepath.Join(root, path), body)

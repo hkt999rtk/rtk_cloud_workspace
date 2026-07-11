@@ -53,6 +53,7 @@ var commands = map[string]commandSpec{
 	"create-users":                     {run: runCreateUsers},
 	"deploy":                           {run: runDeploy},
 	"deployment":                       {run: runDeployment},
+	"dns-hook":                         {run: runDNSHook},
 	"destroy-linode-staging-resources": {run: runDestroyLinodeStagingResources},
 	"docs-check":                       {run: runDocsCheck},
 	"generate-load-devices":            {run: runGenerateLoadDevices},

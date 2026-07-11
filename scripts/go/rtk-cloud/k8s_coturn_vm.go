@@ -606,10 +606,7 @@ func lkeSyncCoturnDNS(paths provisionPaths, env map[string]string, opts provisio
 	if vm.PublicIP == "" || vm.Domain == "" {
 		return nil
 	}
-	if err := godaddyUpsert(paths, env["CLOUD_DNS_ROOT_DOMAIN"], opts.godaddyEnv, opts.operatorEnv, vm.Domain, vm.PublicIP, opts.dnsFinalTTL); err != nil {
-		return err
-	}
-	return waitDNS(vm.Domain, vm.PublicIP, env["CLOUD_DNS_ROOT_DOMAIN"], opts)
+	return syncDNSRecords(paths, env, []dnsRecordSet{{Name: vm.Domain, Type: "A", Values: []string{vm.PublicIP}, TTL: envIntDefault("DNS_RECORD_TTL", 600), Purpose: "turn"}})
 }
 
 func lkeSyncCoturnVMsDNS(paths provisionPaths, env map[string]string, opts provisionOptions, vms []lkeCoturnVM) error {

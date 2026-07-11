@@ -19,9 +19,11 @@ type deploymentConfig struct {
 	RuntimeRoot     string
 	Architecture    string
 	Adapter         string
+	DNSAdapter      string
 	Values          map[string]string
 	AdapterValues   map[string]string
 	AdapterResolved map[string]string
+	DNSValues       map[string]string
 	Capacity        sharedCapacityPlan
 }
 
@@ -101,7 +103,7 @@ func runDeployment(args []string) error {
 	}
 	switch action {
 	case "plan":
-		fmt.Printf("environment: %s\narchitecture: %s\nadapter: %s\nruntime_root: %s\n", cfg.Environment, cfg.Architecture, cfg.Adapter, cfg.RuntimeRoot)
+		fmt.Printf("environment: %s\narchitecture: %s\nadapter: %s\ndns_adapter: %s\nruntime_root: %s\n", cfg.Environment, cfg.Architecture, cfg.Adapter, cfg.DNSAdapter, cfg.RuntimeRoot)
 		if cfg.Adapter != "lke" {
 			fmt.Printf("infrastructure: adapter not implemented; mutation will fail fast\n")
 			return normalizeDeploymentRuntime(cfg)
@@ -111,6 +113,9 @@ func runDeployment(args []string) error {
 		}
 		return normalizeDeploymentRuntime(cfg)
 	case "provision":
+		if err := validateDNSBeforeMutation(cfg); err != nil {
+			return err
+		}
 		if cfg.Adapter == "lke" {
 			if err := validateLKEEnvironmentStateBeforeMutation(cfg); err != nil {
 				return err
@@ -123,12 +128,21 @@ func runDeployment(args []string) error {
 	case "acceptance":
 		err = runStagingAcceptance([]string{"--workspace", cfg.Workspace, "--env-root", cfg.RuntimeRoot, "--confirm", stack})
 	case "remove":
-		err = runRemoveK8s([]string{"--workspace", cfg.Workspace, "--env-root", cfg.RuntimeRoot, "--confirm", stack})
+		if err = removeOwnedDNSRecords(newProvisionPaths(cfg.Workspace, cfg.RuntimeRoot, provisionOptions{}), appendMap(cfg.Values, cfg.DNSValues)); err == nil {
+			err = runRemoveK8s([]string{"--workspace", cfg.Workspace, "--env-root", cfg.RuntimeRoot, "--confirm", stack})
+		}
 	}
 	if err != nil {
 		return err
 	}
 	return normalizeDeploymentRuntime(cfg)
+}
+
+func validateDNSBeforeMutation(cfg deploymentConfig) error {
+	env := appendMap(cfg.Values, cfg.DNSValues)
+	paths := newProvisionPaths(cfg.Workspace, cfg.RuntimeRoot, provisionOptions{})
+	_, _, _, err := selectedDNSAdapter(paths, env)
+	return err
 }
 
 func validateLKEEnvironmentStateBeforeMutation(cfg deploymentConfig) error {
@@ -223,7 +237,7 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		return deploymentConfig{}, err
 	}
 	for key := range selection {
-		if !keySet("DEPLOYMENT_ARCHITECTURE", "DEPLOYMENT_ADAPTER")[key] {
+		if !keySet("DEPLOYMENT_ARCHITECTURE", "DEPLOYMENT_ADAPTER", "DNS_ADAPTER")[key] {
 			return deploymentConfig{}, fmt.Errorf("unknown deployment selection key %s", key)
 		}
 	}
@@ -234,8 +248,9 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 	}
 	architecture := selection["DEPLOYMENT_ARCHITECTURE"]
 	adapter := selection["DEPLOYMENT_ADAPTER"]
-	if architecture == "" || adapter == "" {
-		return deploymentConfig{}, errors.New("DEPLOYMENT_ARCHITECTURE and DEPLOYMENT_ADAPTER are required")
+	dnsAdapter := selection["DNS_ADAPTER"]
+	if architecture == "" || adapter == "" || dnsAdapter == "" {
+		return deploymentConfig{}, errors.New("DEPLOYMENT_ARCHITECTURE, DEPLOYMENT_ADAPTER, and DNS_ADAPTER are required")
 	}
 	values := map[string]string{}
 	for _, name := range []string{"architecture.env", "capacity.env", "topology.env", "workloads.env"} {
@@ -300,6 +315,52 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		}
 		adapterValues[k] = adapterOverride[k]
 	}
+	dnsValues, err := readStrictEnv(filepath.Join(workspace, "cloud_deploy", "dns_adapters", dnsAdapter, "defaults.env"))
+	if err != nil {
+		return deploymentConfig{}, err
+	}
+	dnsSchema, err := readStrictEnv(filepath.Join(workspace, "cloud_deploy", "dns_adapters", dnsAdapter, "schema.env"))
+	if err != nil {
+		return deploymentConfig{}, err
+	}
+	if dnsSchema["DNS_ADAPTER_NAME"] != dnsAdapter {
+		return deploymentConfig{}, fmt.Errorf("DNS adapter %s schema is invalid", dnsAdapter)
+	}
+	dnsAllowed := keySet("DNS_RECORD_TTL", "DNS_PROPAGATION_TIMEOUT_SECONDS", "DNS_PROPAGATION_INTERVAL_SECONDS")
+	if dnsAdapter == "godaddy" {
+		dnsAllowed["GODADDY_ENV"] = true
+	}
+	if dnsAdapter == "route53" {
+		dnsAllowed["ROUTE53_CONTROL_PLANE_REGION"] = true
+	}
+	for key := range dnsValues {
+		if !dnsAllowed[key] {
+			return deploymentConfig{}, fmt.Errorf("unknown %s DNS adapter key %s", dnsAdapter, key)
+		}
+	}
+	dnsOverride, err := readOptionalStrictEnv(filepath.Join(environmentRoot, "overrides", "dns.env"))
+	if err != nil {
+		return deploymentConfig{}, err
+	}
+	for k := range dnsOverride {
+		if _, ok := dnsValues[k]; !ok {
+			return deploymentConfig{}, fmt.Errorf("unknown %s DNS adapter override %s", dnsAdapter, k)
+		}
+		dnsValues[k] = dnsOverride[k]
+	}
+	for _, key := range []string{"DNS_RECORD_TTL", "DNS_PROPAGATION_TIMEOUT_SECONDS", "DNS_PROPAGATION_INTERVAL_SECONDS"} {
+		if _, err := positiveIntValue(key, dnsValues[key]); err != nil {
+			return deploymentConfig{}, err
+		}
+	}
+	if dnsAdapter == "godaddy" {
+		if dnsValues["GODADDY_ENV"] != "prod" && dnsValues["GODADDY_ENV"] != "ote" {
+			return deploymentConfig{}, errors.New("GODADDY_ENV must be prod or ote")
+		}
+		if ttl, _ := strconv.Atoi(dnsValues["DNS_RECORD_TTL"]); ttl < 600 {
+			return deploymentConfig{}, errors.New("GoDaddy DNS_RECORD_TTL must be at least 600")
+		}
+	}
 	for k, v := range appendMap(values, adapterValues) {
 		if deploymentIntegerKeys[k] {
 			n, parseErr := strconv.Atoi(v)
@@ -344,7 +405,7 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 			return deploymentConfig{}, err
 		}
 	}
-	return deploymentConfig{Workspace: workspace, Environment: environment, EnvironmentRoot: environmentRoot, RuntimeRoot: filepath.Join(environmentRoot, "runtime"), Architecture: architecture, Adapter: adapter, Values: values, AdapterValues: adapterValues, AdapterResolved: adapterResolved, Capacity: capacity}, nil
+	return deploymentConfig{Workspace: workspace, Environment: environment, EnvironmentRoot: environmentRoot, RuntimeRoot: filepath.Join(environmentRoot, "runtime"), Architecture: architecture, Adapter: adapter, DNSAdapter: dnsAdapter, Values: values, AdapterValues: adapterValues, AdapterResolved: adapterResolved, DNSValues: dnsValues, Capacity: capacity}, nil
 }
 
 func appendMap(a, b map[string]string) map[string]string {
@@ -427,13 +488,14 @@ func positiveIntValue(key, raw string) (int, error) {
 }
 
 func materializeDeploymentRuntime(cfg deploymentConfig) error {
-	for _, dir := range []string{"resolved", "env", "state", filepath.Join("adapters", cfg.Adapter), "services", "secrets", "devices", "artifacts", "backups"} {
+	for _, dir := range []string{"resolved", "env", "state", filepath.Join("adapters", cfg.Adapter), filepath.Join("dns", cfg.DNSAdapter), "services", "secrets", "devices", "artifacts", "backups"} {
 		if err := os.MkdirAll(filepath.Join(cfg.RuntimeRoot, dir), 0o700); err != nil {
 			return err
 		}
 	}
 	resolved := appendMap(cfg.Values, nil)
 	stack := appendMap(cfg.Values, deploymentRuntimeEndpoints(resolved))
+	stack = appendMap(stack, cfg.DNSValues)
 	stack["CLOUD_ENV_NAME"] = cfg.Environment
 	stack["CLOUD_PROVIDER"] = cfg.Adapter
 	stack["CLOUD_REGION"] = cfg.AdapterResolved["LKE_REGION"]
@@ -470,7 +532,19 @@ func materializeDeploymentRuntime(cfg deploymentConfig) error {
 	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "state", "provider-preflight.env"), providerPreflight, 0o600); err != nil {
 		return err
 	}
-	plan := map[string]any{"environment": cfg.Environment, "architecture": cfg.Architecture, "adapter": cfg.Adapter, "values": resolved, "capacity": cfg.Capacity}
+	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "dns", cfg.DNSAdapter, "config.env"), cfg.DNSValues, 0o600); err != nil {
+		return err
+	}
+	dnsPlan := buildGenericDNSPlan(cfg)
+	if body, err := json.MarshalIndent(dnsPlan, "", "  "); err != nil {
+		return err
+	} else if err := os.WriteFile(filepath.Join(cfg.RuntimeRoot, "resolved", "dns-plan.json"), append(body, '\n'), 0o600); err != nil {
+		return err
+	}
+	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "state", "dns.env"), map[string]string{"DNS_ADAPTER": cfg.DNSAdapter, "DNS_ROOT_DOMAIN": cfg.Values["CLOUD_DNS_ROOT_DOMAIN"]}, 0o600); err != nil {
+		return err
+	}
+	plan := map[string]any{"environment": cfg.Environment, "architecture": cfg.Architecture, "adapter": cfg.Adapter, "dns_adapter": cfg.DNSAdapter, "values": resolved, "capacity": cfg.Capacity}
 	body, _ := json.MarshalIndent(plan, "", "  ")
 	body = append(body, '\n')
 	return os.WriteFile(filepath.Join(cfg.RuntimeRoot, "resolved", "deployment-plan.json"), body, 0o600)

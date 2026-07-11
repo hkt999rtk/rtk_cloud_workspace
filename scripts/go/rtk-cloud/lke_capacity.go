@@ -85,9 +85,6 @@ func lkeCheckCapacityWithPaths(paths provisionPaths, env map[string]string, opts
 		return err
 	}
 	if plan.NodeCount >= plan.RequiredNodes {
-		if plan.TargetConnects > 0 && plan.MQTTCapacity < plan.TargetConnects {
-			return fmt.Errorf("LKE capacity check failed: target_connects=%d requires at least %d MQTT replicas, current capacity=%d; set LKE_MQTT_REPLICAS=auto or increase LKE_MQTT_REPLICAS", plan.TargetConnects, plan.RequiredMQTTPods, plan.MQTTCapacity)
-		}
 		if plan.ProviderServices.Limit > 0 && plan.ProviderServices.RequiredServices > plan.ProviderServices.Limit {
 			return fmt.Errorf("LKE provider capacity check failed: required active services=%d exceeds LKE_LINODE_ACTIVE_SERVICE_LIMIT=%d (nodes=%d postgres_volumes=%d edge_vms=%d coturn_vms=%d); reduce LKE_NODE_COUNT, use LKE_POSTGRES_STORAGE_MODE=emptydir for ephemeral validation, reduce LKE_EDGE_HAPROXY_COUNT, reduce LKE_COTURN_VM_COUNT, or request a Linode quota increase", plan.ProviderServices.RequiredServices, plan.ProviderServices.Limit, plan.ProviderServices.NodeServices, plan.ProviderServices.PostgresVolumes, plan.ProviderServices.EdgeVMs, plan.ProviderServices.CoturnVMs)
 		}

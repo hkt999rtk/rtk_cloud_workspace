@@ -87,6 +87,10 @@ Route53 hosted-zone IDs and change IDs are provider-private runtime evidence.
 The adapter uses `ChangeResourceRecordSets` for UPSERT/DELETE and waits for the
 change plus shared public DNS convergence.
 
+CI uses a mocked Route53 client. An approved disposable public hosted zone can
+run the opt-in SDK smoke with
+`RTK_CLOUD_ROUTE53_LIVE_ROOT_DOMAIN=<zone> go test ./rtk-cloud -run TestRoute53LiveSmoke` from `scripts/go`; the test creates and removes only its `_rtk-dns-adapter-smoke` TXT record and must never target a production zone.
+
 ## Migration
 
 - Add `DNS_ADAPTER=godaddy` to existing environment `deployment.env` files.
