@@ -8,6 +8,8 @@ RTK Cloud deployment 分成三個互相獨立的層次：
 
 Architecture 不屬於 staging；LKE 也不是 staging 的子目錄。任一 environment 都可選擇任一與 architecture 相容的 adapter。
 
+新增 environment 的必填欄位、override 範例、secret 邊界與驗證步驟，以 [`cloud_env/README.md`](../cloud_env/README.md) 為唯一操作入口。本文件只定義目錄與責任邊界，避免操作流程在多份文件間漂移。
+
 ## 版控目錄
 
 ```text

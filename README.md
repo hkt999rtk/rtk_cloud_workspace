@@ -28,6 +28,8 @@ The workspace snapshot includes:
 | Artifact release governance | [`docs/artifact-release-governance.md`](docs/artifact-release-governance.md) | Linode Object Storage release artifact policy and adoption matrix. |
 | Cross-repo contracts | [`repos/rtk_cloud_contracts_doc/README.md`](repos/rtk_cloud_contracts_doc/README.md) | Normative wire, payload, and integration contracts. |
 | Cross-repo testing | [`docs/testing.md`](docs/testing.md) | Local validation commands for pinned snapshots. |
+| Create an environment | [`cloud_env/README.md`](cloud_env/README.md) | Required settings, overrides, secrets boundary, validation, and provision flow. |
+| Deployment defaults | [`cloud_deploy/README.md`](cloud_deploy/README.md) | Architecture and adapter key ownership. |
 
 ## Bootstrap
 

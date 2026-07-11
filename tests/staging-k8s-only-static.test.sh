@@ -46,6 +46,15 @@ if rg -n --glob '!**/*_test.go' -- 'LKE_|lke\.linode\.com/pool-id' \
 	exit 1
 fi
 
+if git -C "$ROOT" check-ignore -q cloud_env/qa/environment.env; then
+	echo "arbitrary environment config must be trackable" >&2
+	exit 1
+fi
+if ! git -C "$ROOT" check-ignore -q cloud_env/qa/runtime/secrets/token.env; then
+	echo "arbitrary environment runtime and secrets must stay ignored" >&2
+	exit 1
+fi
+
 if rg -n -- 'ACCOUNT_MANAGER_LINODE_|ADMIN_LINODE_|CLOUD_LOGGER_LINODE_|provision-public-vm|deploy-public-vm|provision-admin-vm|deploy-admin|linode-deploy deploy|deploy-staging\.sh --local-build' \
 	"$ROOT/scripts/go/rtk-cloud/internal/envroot" \
 	"$ROOT/scripts/go/rtk-cloud/logs_check.go" \

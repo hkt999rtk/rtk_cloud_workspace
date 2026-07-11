@@ -32,6 +32,15 @@ func TestResolveDeploymentConfigRejectsLegacyRoot(t *testing.T) {
 	}
 }
 
+func TestResolveDeploymentConfigRequiresEnvironmentIdentity(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "qa", "lke")
+	writeTestFile(t, filepath.Join(workspace, "cloud_env", "qa", "environment.env"), "CLOUD_ENVIRONMENT=qa\nCLOUD_STACK_NAME=video-cloud-qa\n")
+	_, err := resolveDeploymentConfig(workspace, "qa", "")
+	if err == nil || !strings.Contains(err.Error(), "CLOUD_DNS_ROOT_DOMAIN is required") {
+		t.Fatalf("got %v", err)
+	}
+}
+
 func TestResolveDeploymentConfigRejectsProviderKeyInArchitecture(t *testing.T) {
 	workspace := writeDeploymentFixture(t, "dev", "lke")
 	appendFile(t, filepath.Join(workspace, "cloud_deploy", "architectures", "kubernetes", "workloads.env"), "LKE_NODE_COUNT=2\n")

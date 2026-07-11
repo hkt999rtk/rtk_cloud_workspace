@@ -197,6 +197,11 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 	if got := envIdentity["CLOUD_ENVIRONMENT"]; got != environment {
 		return deploymentConfig{}, fmt.Errorf("environment directory %q does not match CLOUD_ENVIRONMENT=%q", environment, got)
 	}
+	for _, key := range []string{"CLOUD_STACK_NAME", "CLOUD_DNS_ROOT_DOMAIN"} {
+		if strings.TrimSpace(envIdentity[key]) == "" {
+			return deploymentConfig{}, fmt.Errorf("%s is required in environment.env", key)
+		}
+	}
 	architecture := selection["DEPLOYMENT_ARCHITECTURE"]
 	adapter := selection["DEPLOYMENT_ADAPTER"]
 	if architecture == "" || adapter == "" {
