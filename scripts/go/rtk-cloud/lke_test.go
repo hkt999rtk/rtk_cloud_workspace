@@ -2456,6 +2456,55 @@ func TestLKEMQTTResourcesCanBeOverridden(t *testing.T) {
 	}
 }
 
+func TestLKEMQTTStatefulSetKeepsChecksumOutOfLabels(t *testing.T) {
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+
+	manifest := lkeMQTTStatefulSetManifest(env)
+
+	if !strings.Contains(manifest, `rtk.realtek.com/mqtt-config-checksum: "`) {
+		t.Fatalf("expected MQTT config checksum annotation, got:\n%s", manifest)
+	}
+	if got := strings.Count(manifest, "rtk.realtek.com/stack: video-cloud-staging"); got != 2 {
+		t.Fatalf("expected stack label on StatefulSet and pod template, got %d:\n%s", got, manifest)
+	}
+	if strings.Contains(manifest, "rtk.realtek.com/stack: 12efc48f") {
+		t.Fatalf("MQTT checksum must not be rendered as a stack label:\n%s", manifest)
+	}
+}
+
+func TestLKEEMQXHTTPAuthenticationUsesSupportedFields(t *testing.T) {
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+
+	auth := lkeEMQXHTTPAuthentication(env)
+
+	for _, want := range []string{
+		"mechanism=password_based",
+		"backend=http",
+		"pool_size=32",
+		`body={listener="${listener}",username="${username}",password="${password}",clientid="${clientid}"}`,
+	} {
+		if !strings.Contains(auth, want) {
+			t.Fatalf("expected %q in EMQX HTTP auth config, got:\n%s", want, auth)
+		}
+	}
+	if strings.Contains(auth, "pipelining") {
+		t.Fatalf("EMQX 5.8 HTTP auth schema rejects pipelining, got:\n%s", auth)
+	}
+}
+
+func TestLKEVideoCloudAuxiliaryDeploymentManifestHasNoTabOnlyLine(t *testing.T) {
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+
+	manifest := lkeVideoCloudAuxiliaryDeploymentManifest(env, lkeVideoCloudAuxiliaryService{Name: "video-cloud-mqttusage", Binary: "mqttusage"})
+
+	if strings.Contains(manifest, "\n\t") {
+		t.Fatalf("auxiliary deployment manifest must not contain tab-indented YAML lines:\n%s", manifest)
+	}
+	if !strings.Contains(manifest, "emptyDir: {}\n") {
+		t.Fatalf("expected logger spool volume in auxiliary deployment manifest:\n%s", manifest)
+	}
+}
+
 func TestLKECloudLoggerResourceDefaultsCoverLoadTestEvidence(t *testing.T) {
 	env := map[string]string{
 		"CLOUD_STACK_NAME": "video-cloud-staging",

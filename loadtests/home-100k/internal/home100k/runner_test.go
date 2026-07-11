@@ -1217,9 +1217,10 @@ func TestCorrelateRuntimeLogsFindsMissingStreamsAndSequences(t *testing.T) {
 		"iot_device_shadow_streams": {
 			Available: true,
 			Counters: map[string]int64{
-				"runtime_log_streams.total":           1,
-				"runtime_log_stream.stream-1.entries": 1,
-				"runtime_log_stream.stream-1.seq.1":   1,
+				"runtime_log_streams.total":                           1,
+				"runtime_log_stream.stream-1.entries":                 1,
+				"runtime_log_stream.stream-1.device.rtk-0001.entries": 1,
+				"runtime_log_stream.stream-1.seq.1":                   1,
 			},
 		},
 	}}

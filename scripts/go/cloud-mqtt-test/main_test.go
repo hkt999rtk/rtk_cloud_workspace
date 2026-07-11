@@ -896,6 +896,69 @@ func TestRequestAppTokenParsesAccessToken(t *testing.T) {
 	}
 }
 
+func TestLoadAppX509KeyPairSkipsNonPEMCertificateStatus(t *testing.T) {
+	certPEM, keyPEM, csrPEM := testAppMaterial(t, "app-user:user-1")
+	cert, err := loadAppX509KeyPairForUser(userCredential{
+		AppCredentials: appCertificateKeys{PrivateKeyPEM: keyPEM, CSRPem: csrPEM},
+		AppCertificate: appCertificateSummary{
+			CertificateChainPEM: "issued",
+			CertificatePEM:      certPEM,
+		},
+	})
+	if err != nil {
+		t.Fatalf("loadAppX509KeyPairForUser() error = %v", err)
+	}
+	if len(cert.Certificate) == 0 {
+		t.Fatal("certificate chain is empty")
+	}
+}
+
+func TestLoadAppX509KeyPairNormalizesEscapedPEM(t *testing.T) {
+	certPEM, keyPEM, csrPEM := testAppMaterial(t, "app-user:user-1")
+	escapedCertPEM := strings.ReplaceAll(certPEM, "\n", `\n`)
+	cert, err := loadAppX509KeyPairForUser(userCredential{
+		AppCredentials: appCertificateKeys{PrivateKeyPEM: keyPEM, CSRPem: csrPEM},
+		AppCertificate: appCertificateSummary{
+			CertificatePEM: escapedCertPEM,
+		},
+	})
+	if err != nil {
+		t.Fatalf("loadAppX509KeyPairForUser() error = %v", err)
+	}
+	if len(cert.Certificate) == 0 {
+		t.Fatal("certificate chain is empty")
+	}
+}
+
+func TestLoadAppX509KeyPairFallsBackFromInvalidChainToLeaf(t *testing.T) {
+	certPEM, keyPEM, csrPEM := testAppMaterial(t, "app-user:user-1")
+	cert, err := loadAppX509KeyPairForUser(userCredential{
+		AppCredentials: appCertificateKeys{PrivateKeyPEM: keyPEM, CSRPem: csrPEM},
+		AppCertificate: appCertificateSummary{
+			CertificateChainPEM: "-----BEGIN CERTIFICATE-----\nnot-valid\n-----END CERTIFICATE-----",
+			CertificatePEM:      certPEM,
+		},
+	})
+	if err != nil {
+		t.Fatalf("loadAppX509KeyPairForUser() error = %v", err)
+	}
+	if len(cert.Certificate) == 0 {
+		t.Fatal("certificate chain is empty")
+	}
+}
+
+func TestMQTTTopicsEquivalentNormalizesPhysicalTenantPrefix(t *testing.T) {
+	if !mqttTopicsEquivalent("_bc/brand-cloud-1/$vc/devices/device-1/shadow/update/accepted", "$vc/devices/device-1/shadow/update/accepted") {
+		t.Fatal("physical tenant shadow topic did not match logical topic")
+	}
+	if !mqttTopicsEquivalent("_bc/brand-cloud-1/devices/device-1/logs", "devices/device-1/logs") {
+		t.Fatal("physical tenant transport topic did not match logical topic")
+	}
+	if mqttTopicsEquivalent("_bc/brand-cloud-2/$vc/devices/device-2/shadow/update/accepted", "$vc/devices/device-1/shadow/update/accepted") {
+		t.Fatal("different logical topic matched")
+	}
+}
+
 func TestAccountLoginTokenManagerKeepsValidAccessTokenPastHalfLife(t *testing.T) {
 	baseTime := time.Date(2026, 6, 22, 8, 0, 0, 0, time.UTC)
 	oldToken := testJWT(t, baseTime, baseTime.Add(2*time.Minute))
@@ -1264,6 +1327,83 @@ func TestSustainedShadowCommandCanDisableRuntimeLogs(t *testing.T) {
 	}
 	if got := broker.PublishCount("app-controller", "devices/rtk-0041/logs") + broker.PublishCount("device", "devices/rtk-0041/logs"); got != 0 {
 		t.Fatalf("runtime log publishes = %d, want 0", got)
+	}
+}
+
+func TestSustainedShadowCommandRequestsAppMQTTTokenWithAppCertificate(t *testing.T) {
+	broker := newFakeTLSMQTTBroker(t)
+	defer broker.Close()
+	deviceConn, err := connectMQTTActor(mqttActorProbe{
+		DeviceID:    "rtk-0041",
+		DeviceType:  "light",
+		Brandname:   "RTK",
+		RunID:       "run-app-cert-token",
+		DeviceToken: testMQTTToken("device"),
+		Dial:        broker.TLSDial,
+		Timeout:     time.Second,
+		Now:         fixedProbeTime,
+	}, "device", testMQTTToken("device"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer deviceConn.Close()
+	if err := mqttSubscribe(deviceConn, 1, "$vc/devices/rtk-0041/shadow/update/delta"); err != nil {
+		t.Fatal(err)
+	}
+	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(rawPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM, keyPEM, csrPEM := testAppMaterial(t, "app-user:user-1")
+	tokenRequests := 0
+	video := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tokenRequests++
+		if got := r.Header.Get("X-Client-S-DN"); got != "/CN=app-user:user-1/O=VideoCloud" {
+			t.Fatalf("X-Client-S-DN = %q, want app certificate subject", got)
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["scope"] != "app" || body["service"] != "mqtt" || body["devid"] != "rtk-0041" {
+			t.Fatalf("request_token body = %#v", body)
+		}
+		writeJSON(t, w, map[string]string{"scope": "app", "access_token": testMQTTToken("app")})
+	}))
+	defer video.Close()
+
+	var totals mqttIOTotals
+	reader := startSustainedDeviceReader(deviceConn)
+	defer reader.Close()
+	err = runSustainedShadowCommandWithContext(sustainedDeviceSession{
+		Record:     certRecord{DeviceID: "rtk-0041", DeviceType: "light"},
+		Conn:       deviceConn,
+		Reader:     reader,
+		MQTTTarget: mqttEndpointTarget{Host: host, Port: port},
+		AppLoginManager: newAccountLoginTokenManager("", "", userCredential{
+			Email: "rtk+001@users.local",
+			AppCredentials: appCertificateKeys{
+				PrivateKeyPEM: keyPEM,
+				CSRPem:        csrPEM,
+			},
+			AppCertificate: appCertificateSummary{
+				CertificatePEM:      certPEM,
+				CertificateChainPEM: certPEM,
+			},
+		}, tokenBundle{AccessToken: testMQTTToken("account")}),
+	}, "RTK", "run-app-cert-token", video.URL, &totals, sustainedCommandContext{DisableRuntimeLogs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tokenRequests != 1 {
+		t.Fatalf("tokenRequests = %d, want 1", tokenRequests)
+	}
+	if totals.AppTokenSuccesses != 1 || totals.AppDesiredWrites != 1 || totals.AppReceivedAcks != 1 {
+		t.Fatalf("totals = %+v, want app token and command success", totals)
 	}
 }
 
@@ -1909,7 +2049,19 @@ func TestStagedSustainedLoadRunsPartialShadowActionWhenTargetMissed(t *testing.T
 	broker := newFakeTLSMQTTBroker(t)
 	defer broker.Close()
 	deviceCertPEM, deviceKeyPEM, _ := testAppMaterial(t, "rtk-0041")
+	appCertPEM, appKeyPEM, appCSRPEM := testAppMaterial(t, "app-user:user-1")
 	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["scope"] == "app" {
+			if got := r.Header.Get("X-Client-S-DN"); got != "/CN=app-user:user-1/O=VideoCloud" {
+				t.Fatalf("X-Client-S-DN = %q, want app certificate subject", got)
+			}
+			writeJSON(t, w, map[string]string{"access_token": testMQTTToken("app")})
+			return
+		}
 		writeJSON(t, w, map[string]string{"access_token": testMQTTToken("device")})
 	}))
 	defer tokenServer.Close()
@@ -1929,7 +2081,13 @@ func TestStagedSustainedLoadRunsPartialShadowActionWhenTargetMissed(t *testing.T
 		"run-partial-shadow",
 		tokenServer.URL,
 		[]mqttEndpointTarget{{Host: host, Port: port}},
-		map[string]*accountLoginTokenManager{"user@example.test": newAccountLoginTokenManager("", "", userCredential{}, tokenBundle{AccessToken: testMQTTToken("app")})},
+		map[string]*accountLoginTokenManager{"user@example.test": newAccountLoginTokenManager("", "", userCredential{
+			AppCredentials: appCertificateKeys{PrivateKeyPEM: appKeyPEM, CSRPem: appCSRPEM},
+			AppCertificate: appCertificateSummary{
+				CertificatePEM:      appCertPEM,
+				CertificateChainPEM: appCertPEM,
+			},
+		}, tokenBundle{AccessToken: testMQTTToken("app")})},
 		20260616,
 		loadOptions{Concurrency: 1, CommandRatePerDevicePerDay: "86400000"},
 		[]sustainedStage{{Name: "partial", ConnectedTarget: 2, DurationSeconds: 1}},

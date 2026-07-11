@@ -1693,6 +1693,29 @@ func TestEnvArchiveIsDeterministicForUnchangedShardInputs(t *testing.T) {
 	}
 }
 
+func TestWriteCommonEnvArchiveAddsRemoteLoggerCredentials(t *testing.T) {
+	envRoot := writeTinyEnvRoot(t)
+	loggerDir := filepath.Join(envRoot, "services", "cloud-logger")
+	if err := os.MkdirAll(loggerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(loggerDir, "logger.env"), []byte("CLOUD_LOGGER_ENDPOINT=https://logger.example\nCLOUD_LOGGER_INGEST_TOKEN=test-ingest-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := NewPlan(PlanOptions{EnvRoot: envRoot, Brandname: "RTK", Region: "us-sea"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(t.TempDir(), "env-common.tar.gz")
+	if err := writeCommonEnvArchive(archivePath, plan); err != nil {
+		t.Fatal(err)
+	}
+	names := readTarGzNames(t, archivePath)
+	if !names["state/cloud-logger.env"] {
+		t.Fatalf("common archive missing remote logger credentials: %#v", names)
+	}
+}
+
 func TestAnsibleSyncInstallsKubectlForLiveRunner(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "ansible", "sync.yml"))
 	if err != nil {
@@ -3951,16 +3974,16 @@ func TestExecuteCollectServerEvidenceDefaultsToIncompleteSourcePlan(t *testing.T
 	}
 }
 
-func TestCollectCentralLoggerEvidenceQueriesRunIDIndexes(t *testing.T) {
+func TestCollectCentralLoggerEvidenceQueriesStructuredRunID(t *testing.T) {
 	seen := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer logger-token" {
 			t.Fatalf("Authorization = %q, want bearer token", got)
 		}
 		seen = append(seen, r.URL.RawQuery)
-		events := []map[string]string{{"event_id": "evt-1"}}
+		events := []map[string]any{{"event_id": "evt-1", "fields": map[string]any{"run_id": "other-run"}}}
 		if r.URL.Query().Get("operation_id") == "home-mqtt-loadtest" {
-			events = append(events, map[string]string{"event_id": "evt-2"})
+			events = append(events, map[string]any{"event_id": "evt-2", "fields": map[string]any{"run_id": "run-logger"}})
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"events": events})
 	}))
@@ -3981,14 +4004,11 @@ func TestCollectCentralLoggerEvidenceQueriesRunIDIndexes(t *testing.T) {
 	if !source.Available || !source.Optional {
 		t.Fatalf("central logger source flags = %+v, want available optional", source)
 	}
-	if source.Counters["central_logger.trace_id.events"] != 1 ||
-		source.Counters["central_logger.request_id.events"] != 1 ||
-		source.Counters["central_logger.operation_id.events"] != 1 ||
-		source.Counters["central_logger.home_mqtt_operation.events"] != 2 {
+	if source.Counters["central_logger.run_summary.events"] != 1 {
 		t.Fatalf("unexpected counters: %+v", source.Counters)
 	}
 	joined := strings.Join(seen, "\n")
-	for _, want := range []string{"trace_id=run-logger", "request_id=run-logger", "operation_id=run-logger", "operation_id=home-mqtt-loadtest"} {
+	for _, want := range []string{"operation_id=home-mqtt-loadtest", "limit=1000"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("central logger query missing %q in:\n%s", want, joined)
 		}
@@ -4263,6 +4283,7 @@ func TestCollectLiveServerEvidenceFallsBackToCentralLoggerRuntimeLogs(t *testing
 			events = []map[string]any{
 				{
 					"event_id":  "evt-1",
+					"device_id": "device-000001",
 					"ts":        "2026-06-16T21:06:20Z",
 					"level":     "info",
 					"msg":       "mqtt_e2e shadow_desired app_controller publish",
@@ -4281,6 +4302,7 @@ func TestCollectLiveServerEvidenceFallsBackToCentralLoggerRuntimeLogs(t *testing
 				},
 				{
 					"event_id":  "evt-2",
+					"device_id": "device-000001",
 					"ts":        "2026-06-16T21:06:21Z",
 					"level":     "info",
 					"msg":       "mqtt_e2e shadow_delta device_client receive",
@@ -4299,6 +4321,7 @@ func TestCollectLiveServerEvidenceFallsBackToCentralLoggerRuntimeLogs(t *testing
 				},
 				{
 					"event_id":  "evt-3",
+					"device_id": "device-000001",
 					"ts":        "2026-06-16T21:06:22Z",
 					"level":     "info",
 					"msg":       "mqtt_e2e shadow_reported device_client publish",
@@ -4317,6 +4340,7 @@ func TestCollectLiveServerEvidenceFallsBackToCentralLoggerRuntimeLogs(t *testing
 				},
 				{
 					"event_id":  "evt-4",
+					"device_id": "device-000001",
 					"ts":        "2026-06-16T21:06:23Z",
 					"level":     "info",
 					"msg":       "mqtt_e2e shadow_reported app_observer receive",

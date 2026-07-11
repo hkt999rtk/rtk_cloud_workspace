@@ -148,6 +148,72 @@ func TestAccountBulkBindDevicesUsesAdminEndpointAndDoesNotListDevices(t *testing
 	}
 }
 
+func TestAccountClaimResolveAlreadyClaimed(t *testing.T) {
+	if !accountClaimResolveAlreadyClaimed([]byte(`{"code":"already_claimed","message":"Claim token has already been claimed"}`)) {
+		t.Fatal("already_claimed response was not recognized")
+	}
+	if !accountClaimResolveAlreadyClaimed([]byte(`{"error":"already_claimed","message":"Claim token has already been claimed"}`)) {
+		t.Fatal("string error already_claimed response was not recognized")
+	}
+	if !accountClaimResolveAlreadyClaimed([]byte(`{"error":{"code":"already_claimed","message":"Claim token has already been claimed"}}`)) {
+		t.Fatal("nested already_claimed response was not recognized")
+	}
+	if accountClaimResolveAlreadyClaimed([]byte(`{"code":"invalid_claim_token"}`)) {
+		t.Fatal("non already_claimed response was recognized")
+	}
+	if accountClaimResolveAlreadyClaimed([]byte(`not-json`)) {
+		t.Fatal("invalid JSON was recognized")
+	}
+}
+
+func TestAccountFindExistingClaimedDeviceByVideoCloudDevid(t *testing.T) {
+	seenOffset := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/orgs/brand-1/devices" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("authorization") != "Bearer user-token" {
+			t.Fatalf("authorization = %q", r.Header.Get("authorization"))
+		}
+		seenOffset = append(seenOffset, r.URL.Query().Get("offset"))
+		switch r.URL.Query().Get("offset") {
+		case "0":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"devices": []map[string]any{
+					{"id": "account-device-other", "metadata": map[string]any{"video_cloud_devid": "load-device-other"}},
+				},
+				"pagination": map[string]any{"total": 201},
+			})
+		case "200":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"devices": []map[string]any{
+					{"id": "account-device-1", "metadata": map[string]any{"video_cloud_devid": "load-device-0001"}},
+				},
+				"pagination": map[string]any{"total": 201},
+			})
+		default:
+			t.Fatalf("unexpected offset %q", r.URL.Query().Get("offset"))
+		}
+	}))
+	defer server.Close()
+
+	result, err := accountFindExistingClaimedDevice(accountManagerContext{BaseURL: server.URL}, "brand-1", "user-token", bindAssignment{
+		DeviceID:       "load-device-0001",
+		Category:       "mqtt_device",
+		ServiceOptions: []string{"mqtt"},
+	})
+	if err != nil {
+		t.Fatalf("accountFindExistingClaimedDevice() error = %v", err)
+	}
+	if result.Status != "existing" || result.AccountDeviceID != "account-device-1" || result.ProvisionInput["video_cloud_devid"] != "load-device-0001" {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if len(seenOffset) != 2 || seenOffset[0] != "0" || seenOffset[1] != "200" {
+		t.Fatalf("unexpected offsets: %v", seenOffset)
+	}
+}
+
 func TestBindDeviceBulkChunkSizeIsClamped(t *testing.T) {
 	t.Setenv("CLOUD_BIND_DEVICES_BULK_CHUNK_SIZE", "9000")
 	if got := bindDevicesBulkChunkSize(); got != 5000 {
