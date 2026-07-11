@@ -123,10 +123,10 @@ Required infrastructure:
 - External HAProxy edge VM for public TCP passthrough to Kubernetes NodePorts.
   HAProxy is installed on the VM host with systemd, not Docker. TLS, mTLS, SNI,
   and HTTP routing remain inside Kubernetes.
-- DNS-01 TLS automation for public hostnames. The workspace-managed LKE staging
-  bridge uses GoDaddy DNS-01 plus certbot to create a Kubernetes TLS Secret;
-  cert-manager remains the production operator path when an approved DNS
-  provider integration exists.
+- DNS-01 TLS automation for public hostnames. Shared DNS orchestration uses the
+  environment-selected GoDaddy or Route53 adapter plus certbot to create a
+  Kubernetes TLS Secret; DNS is independent from the deployment adapter.
+  cert-manager remains a later production operator path.
 - PostgreSQL deployment choice documented before cutover: external/VM bridge,
   in-cluster operator, in-cluster StatefulSet, or managed/external service
 - Linode Object Storage or approved object storage for artifacts, media, and
@@ -426,14 +426,12 @@ The current validated staging acceptance profile is `10` users and `100`
 devices with mix `camera=40`, `light=25`, `air_conditioner=20`, and
 `smart_meter=15`. The HAProxy edge VM handles public `443/TCP` and `8883/TCP`
 and forwards to ingress-nginx NodePort `30443` and MQTT NodePort `31883`.
-MQTT defaults to three replicas with required pod anti-affinity, giving HAProxy
-one MQTTS NodePort backend on each staging node. Those pods form an EMQX
-StatefulSet cluster using stable `mqtt-0..2` pod DNS.
-For 10K staging load-test headroom, provision now defaults to four LKE nodes,
-three `video-cloud-api` pods, one `account-manager` pod, and increased
-PostgreSQL resource requests plus moderate API requests. Override with `LKE_NODE_COUNT`,
-`LKE_VIDEO_CLOUD_REPLICAS`, and the `LKE_*_REQUEST_*` resource environment
-variables when running a smaller smoke profile.
+MQTT uses required pod anti-affinity and forms an EMQX StatefulSet cluster with
+stable pod DNS. Shared capacity formulas derive MQTT/API effective replicas and
+logical node counts from environment targets, workload requests, planning
+shapes, system reserve, and spread floors. Provider adapters map that resolved
+plan to infrastructure; operators do not set LKE node counts or workload
+replicas directly.
 
 ## Support Boundaries
 

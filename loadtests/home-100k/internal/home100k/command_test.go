@@ -2368,6 +2368,7 @@ PY
 	cmd.Env = home100KTestEnv(
 		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"HOME100K_ENV_ROOT="+envRoot,
+		"HOME100K_REGION=us-sea",
 		"HOME100K_RUN_ID=test-video-proportional",
 		"HOME100K_OUT_DIR="+reportDir,
 		"HOME100K_SCENARIO_PROFILE=video-100k-turn-v1",
@@ -2439,6 +2440,7 @@ printf 'unexpected video runner call\n' >> ` + shellQuoteForTest(videoLog) + `
 	cmd.Env = home100KTestEnv(
 		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"HOME100K_ENV_ROOT="+writeTinyEnvRoot(t),
+		"HOME100K_REGION=us-sea",
 		"HOME100K_RUN_ID=test-video-token-fail",
 		"HOME100K_OUT_DIR="+filepath.Join(outDir, "report"),
 		"HOME100K_SCENARIO_PROFILE=video-50k-turn-v1",
@@ -2503,6 +2505,7 @@ printf 'KUBECONFIG=%s\nARGS=%s\n' "${KUBECONFIG:-}" "$*" >> ` + shellQuoteForTes
 	cmd.Env = home100KTestEnv(
 		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"HOME100K_ENV_ROOT="+envRoot,
+		"HOME100K_REGION=us-sea",
 		"HOME100K_RUN_ID=test-absolute-env-root",
 		"HOME100K_OUT_DIR="+filepath.Join(outDir, "report"),
 	)

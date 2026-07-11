@@ -32,15 +32,64 @@ for path in "${active_paths[@]}"; do
 	fi
 done
 
-if rg -n -- 'LKE_|EKS_|GKE_|lke\.linode\.com/pool-id' "$ROOT/cloud_deploy/architectures" >/tmp/staging-k8s-static.out; then
+if rg -n -- 'LKE_|EKS_|GKE_|GODADDY_|ROUTE53_|AWS_ACCESS_|lke\.linode\.com/pool-id' "$ROOT/cloud_deploy/architectures" >/tmp/staging-k8s-static.out; then
 	cat /tmp/staging-k8s-static.out >&2
 	echo "provider-neutral architecture must not contain adapter keys or provider labels" >&2
 	exit 1
 fi
 
-if rg -n -- 'LKE_REGION|LKE_(GENERAL|BROKER|DATABASE)_NODE_TYPE|LINODE_ACTIVE_SERVICE_LIMIT' \
+if rg -n --glob '!**/runtime/**' -- 'GODADDY_(KEY|SECRET)|AWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN)|ROUTE53_HOSTED_ZONE_ID' \
+	"$ROOT/cloud_env/dev" "$ROOT/cloud_env/staging" "$ROOT/cloud_env/prod" >/tmp/staging-k8s-static.out; then
+	cat /tmp/staging-k8s-static.out >&2
+	echo "tracked environments must not contain DNS credentials or provider zone IDs" >&2
+	exit 1
+fi
+
+if rg -n --glob '!**/runtime/**' -- '\b(MQTT_REPLICAS|VIDEO_CLOUD_API_REPLICAS)\b' \
+	"$ROOT/cloud_deploy" "$ROOT/cloud_env/dev" "$ROOT/cloud_env/staging" "$ROOT/cloud_env/prod" \
+	>/tmp/staging-k8s-static.out; then
+	cat /tmp/staging-k8s-static.out >&2
+	echo "tracked architecture must use minimum and generated effective replica keys" >&2
+	exit 1
+fi
+
+if rg -n -- 'LKE_|EKS_|GKE_|LINODE_' "$ROOT/scripts/go/rtk-cloud/deployment_capacity.go" >/tmp/staging-k8s-static.out; then
+	cat /tmp/staging-k8s-static.out >&2
+	echo "shared capacity planner must remain provider-neutral" >&2
+	exit 1
+fi
+
+if rg -n -i -- 'godaddy|route53|api\.godaddy|GODADDY_|hosted.zone' \
+	"$ROOT/scripts/go/rtk-cloud/lke.go" \
+	"$ROOT/scripts/go/rtk-cloud/k8s_coturn_vm.go" \
+	"$ROOT/scripts/go/rtk-cloud/k8s_shared_helpers.go" \
+	"$ROOT/scripts/go/rtk-cloud/k8s_runtime.go" >/tmp/staging-k8s-static.out; then
+	cat /tmp/staging-k8s-static.out >&2
+	echo "deployment adapter and shared Kubernetes runtime must not contain DNS vendor implementation" >&2
+	exit 1
+fi
+
+if rg -n --glob '!**/*_test.go' -- 'repos/rtk_video_cloud/tools/godaddy-dns|cmd/godaddy-dns' \
+	"$ROOT/scripts/go/rtk-cloud" >/tmp/staging-k8s-static.out; then
+	cat /tmp/staging-k8s-static.out >&2
+	echo "active DNS implementation must not invoke the service submodule GoDaddy tool" >&2
+	exit 1
+fi
+
+for environment in dev staging prod; do
+	grep -Eq '^DNS_ADAPTER=(godaddy|route53)$' "$ROOT/cloud_env/$environment/deployment.env"
+done
+
+if rg -n -- 'CAPACITY_TARGET_CONNECTIONS|CAPACITY_ACTIVE_DEVICES|lkeCapacityWorkloads|ceilDiv' \
+	"$ROOT/scripts/go/rtk-cloud/lke_capacity.go" >/tmp/staging-k8s-static.out; then
+	cat /tmp/staging-k8s-static.out >&2
+	echo "LKE capacity code must consume effective values instead of recalculating generic capacity" >&2
+	exit 1
+fi
+
+if rg -n --glob '!**/runtime/**' -- 'LKE_REGION|LKE_(GENERAL|BROKER|DATABASE)_NODE_TYPE|LINODE_ACTIVE_SERVICE_LIMIT' \
 	"$ROOT/cloud_env/dev" "$ROOT/cloud_env/staging" "$ROOT/cloud_env/prod" \
-	--glob '!**/runtime/**' >/tmp/staging-k8s-static.out; then
+	>/tmp/staging-k8s-static.out; then
 	cat /tmp/staging-k8s-static.out >&2
 	echo "tracked environments must describe provider-neutral location and node sizing" >&2
 	exit 1

@@ -46,15 +46,17 @@ func TestLKECapacityPlanAcceptsExplicitOneKValidationProfile(t *testing.T) {
 
 func TestLKECapacityCheckFailsBeforeSchedulingWhenRequestsExceedNodes(t *testing.T) {
 	env := map[string]string{
-		"CLOUD_STACK_NAME":       "video-cloud-staging",
-		"CLOUD_PROVIDER":         "lke",
-		"VIDEO_CLOUD_DOMAIN":     "video-cloud-staging.realtekconnect.com",
-		"ACCOUNT_MANAGER_DOMAIN": "account-manager.video-cloud-staging.realtekconnect.com",
-		"CLOUD_ADMIN_DOMAIN":     "admin.video-cloud-staging.realtekconnect.com",
-		"CLOUD_LOGGER_DOMAIN":    "logger.video-cloud-staging.realtekconnect.com",
-		"LKE_NODE_TYPE":          "g6-standard-2",
-		"LKE_NODE_COUNT":         "2",
-		"LKE_MQTT_REPLICAS":      "2",
+		"CLOUD_STACK_NAME":                          "video-cloud-staging",
+		"CLOUD_PROVIDER":                            "lke",
+		"VIDEO_CLOUD_DOMAIN":                        "video-cloud-staging.realtekconnect.com",
+		"ACCOUNT_MANAGER_DOMAIN":                    "account-manager.video-cloud-staging.realtekconnect.com",
+		"CLOUD_ADMIN_DOMAIN":                        "admin.video-cloud-staging.realtekconnect.com",
+		"CLOUD_LOGGER_DOMAIN":                       "logger.video-cloud-staging.realtekconnect.com",
+		"LKE_NODE_TYPE":                             "g6-standard-2",
+		"LKE_NODE_COUNT":                            "2",
+		"MQTT_EFFECTIVE_REPLICAS":                   "2",
+		"NODE_CLASS_BROKER_EFFECTIVE_COUNT":         "3",
+		"NODE_CLASS_BROKER_TOTAL_REQUEST_CPU_MILLI": "7000",
 	}
 
 	err := lkeCheckCapacity(env, provisionOptions{})
@@ -62,7 +64,7 @@ func TestLKECapacityCheckFailsBeforeSchedulingWhenRequestsExceedNodes(t *testing
 		t.Fatal("expected capacity check to fail")
 	}
 	msg := err.Error()
-	for _, want := range []string{"LKE capacity check failed", "required_nodes=", "postgresql", "video-cloud-api"} {
+	for _, want := range []string{"LKE capacity check failed", "required_nodes="} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("expected %q in error:\n%s", want, msg)
 		}
@@ -80,7 +82,8 @@ func TestLKECapacityDerivesMQTTAndNodeCountFromTargetConnects(t *testing.T) {
 		"LKE_NODE_TYPE":                           "g6-standard-2",
 		"LKE_NODE_COUNT":                          "auto",
 		"LKE_TARGET_CONNECTS":                     "100000",
-		"LKE_MQTT_REPLICAS":                       "auto",
+		"MQTT_EFFECTIVE_REPLICAS":                 "5",
+		"NODE_CLASS_BROKER_EFFECTIVE_COUNT":       "5",
 		"LKE_MQTT_CONNECTIONS_PER_POD":            "20000",
 		"LKE_INGRESS_REQUEST_CPU":                 "100m",
 		"LKE_ACCOUNT_MANAGER_REQUEST_CPU":         "150m",
@@ -114,7 +117,7 @@ func TestLKECapacityDerivesMQTTAndNodeCountFromTargetConnects(t *testing.T) {
 	}
 }
 
-func TestLKECapacityCheckFailsWhenTargetConnectsExceedFixedMQTTCapacity(t *testing.T) {
+func TestLKECapacityDoesNotRecalculateSharedMQTTIntent(t *testing.T) {
 	env := map[string]string{
 		"CLOUD_STACK_NAME":                        "video-cloud-staging",
 		"CLOUD_PROVIDER":                          "lke",
@@ -125,7 +128,8 @@ func TestLKECapacityCheckFailsWhenTargetConnectsExceedFixedMQTTCapacity(t *testi
 		"LKE_NODE_TYPE":                           "g6-standard-2",
 		"LKE_NODE_COUNT":                          "5",
 		"LKE_TARGET_CONNECTS":                     "100000",
-		"LKE_MQTT_REPLICAS":                       "4",
+		"MQTT_EFFECTIVE_REPLICAS":                 "4",
+		"NODE_CLASS_BROKER_EFFECTIVE_COUNT":       "5",
 		"LKE_MQTT_CONNECTIONS_PER_POD":            "20000",
 		"LKE_INGRESS_REQUEST_CPU":                 "100m",
 		"LKE_ACCOUNT_MANAGER_REQUEST_CPU":         "150m",
@@ -140,12 +144,8 @@ func TestLKECapacityCheckFailsWhenTargetConnectsExceedFixedMQTTCapacity(t *testi
 		"LKE_VIDEO_CLOUD_MQTTUSAGE_REQUEST_CPU":   "100m",
 	}
 
-	err := lkeCheckCapacity(env, provisionOptions{})
-	if err == nil {
-		t.Fatal("expected MQTT capacity failure")
-	}
-	if !strings.Contains(err.Error(), "requires at least 5 MQTT replicas") {
-		t.Fatalf("unexpected error: %v", err)
+	if err := lkeCheckCapacity(env, provisionOptions{}); err != nil {
+		t.Fatalf("LKE adapter must consume shared effective values without recalculating target capacity: %v", err)
 	}
 }
 

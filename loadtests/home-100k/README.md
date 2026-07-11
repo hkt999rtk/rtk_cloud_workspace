@@ -298,7 +298,7 @@ The selected Kubernetes environment must run MQTT on EMQX. Public MQTT load test
 use an EMQX node pool sized so each broker pod can land on a different
 Kubernetes node. For the 100K baseline this means:
 
-- `MQTT_REPLICAS=9` in the environment architecture override.
+- `MQTT_MIN_REPLICAS=9` in the environment architecture override when preserving the validated nine-broker floor.
 - A dedicated or otherwise uncongested node pool with at least 9 schedulable
   nodes labeled `rtk.io/node-class=broker`.
 - EMQX pod hard anti-affinity on `kubernetes.io/hostname`.

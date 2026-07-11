@@ -8,7 +8,7 @@ The Kubernetes architecture owns workloads, namespaces, logical node classes, re
 
 An environment declares a logical deployment location such as `us-west`. Each logical node class declares minimum vCPU and memory requirements. It never names a provider region or machine SKU. Persistent storage remains workload/storage intent and is not inferred from node sizing.
 
-An adapter maps that intent to a provider. The LKE adapter owns Linode regions and instance types, LKE clusters and pools, Block/Object Storage, external HAProxy and coturn VMs, DNS, quota, and kubeconfig acquisition. EKS and GKE are reserved contracts and fail before mutation until implemented.
+An adapter maps that intent to a provider. The LKE adapter owns Linode regions and instance types, LKE clusters and pools, Block/Object Storage, external HAProxy and coturn VMs, quota, and kubeconfig acquisition. EKS and GKE are reserved contracts and fail before mutation until implemented. DNS is a separate adapter family described in [`dns-adapter-architecture.md`](dns-adapter-architecture.md); it is not owned by LKE, EKS, or GKE.
 
 Adapter resolution is deterministic. LKE maps the logical location to an LKE region, filters its instance catalog by minimum vCPU and memory, then selects the candidate with the least memory surplus, least vCPU surplus, and finally lexicographically smallest type name. The generic plan contains only logical intent; provider region and SKU are adapter-private resolved evidence.
 
@@ -19,7 +19,8 @@ The directory name under `cloud_env/` is the environment identity. Configuration
 ```text
 resolve -> validate -> plan -> ensure adapter infrastructure
         -> normalize kube access -> deploy shared Kubernetes workloads
-        -> configure adapter edge/DNS -> acceptance -> evidence
+        -> configure adapter edge -> configure selected DNS adapter
+        -> acceptance -> evidence
 ```
 
 The normalized runtime contract is `cloud_env/<environment>/runtime`. Shared commands never inspect adapter-private state. A resolved plan is sanitized and contains no credentials, kubeconfig content, private keys, tokens, or generated service secrets.
@@ -32,6 +33,35 @@ The initial node classes are `general`, `broker`, and `database`. MQTT placement
 
 Edge and TURN are architecture intent (`EDGE_REPLICAS`, `EDGE_MAX_CONNECTIONS`, `TURN_REPLICAS`, and relay port bounds). LKE currently realizes them with Linode VMs; another adapter may use a different implementation without changing the environment or load-test contract.
 
+## Shared capacity formulas
+
+Capacity is resolved before adapter selection. MQTT and Video Cloud API effective replicas are:
+
+```text
+MQTT_EFFECTIVE_REPLICAS = max(MQTT_MIN_REPLICAS,
+  ceil(CAPACITY_TARGET_CONNECTIONS / CAPACITY_CONNECTIONS_PER_MQTT_POD))
+
+VIDEO_CLOUD_API_EFFECTIVE_REPLICAS = max(VIDEO_CLOUD_API_MIN_REPLICAS,
+  ceil(CAPACITY_ACTIVE_DEVICES / CAPACITY_ACTIVE_DEVICES_PER_API_POD))
+```
+
+The initial API density is 40,000 active devices per Pod. Other workloads use explicit minimum replicas until a measured unit-capacity contract exists.
+
+Each workload belongs to one logical node class and declares request CPU, request memory, and spread/anti-affinity floor. For each class:
+
+```text
+totalCPU = sum(requestCPU * effectiveReplicas)
+totalMemory = sum(requestMemory * effectiveReplicas)
+usableCPUPerNode = planningVCPU * 1000 - systemReservedCPU
+usableMemoryPerNode = planningMemoryGiB * 1024 - systemReservedMemory
+effectiveNodeCount = max(minCount,
+  ceil(totalCPU / usableCPUPerNode),
+  ceil(totalMemory / usableMemoryPerNode),
+  spreadFloor)
+```
+
+Every Pod must fit one planning node. Persistent volumes are storage intent and DaemonSet/node-agent overhead is part of system reserve. Edge and TURN resources are excluded from Kubernetes node packing. The generic planner owns all replicas and node counts; adapters only map logical location and planning shape to provider resources.
+
 ## Legacy mapping
 
 | Legacy input | New owner |
@@ -39,8 +69,8 @@ Edge and TURN are architecture intent (`EDGE_REPLICAS`, `EDGE_MAX_CONNECTIONS`, 
 | `cloud_env/staging/lke` | `cloud_env/staging/runtime` generated state |
 | `LKE_TARGET_CONNECTS` | `CAPACITY_TARGET_CONNECTIONS` |
 | `LKE_MQTT_CONNECTIONS_PER_POD` | `CAPACITY_CONNECTIONS_PER_MQTT_POD` |
-| `LKE_MQTT_REPLICAS` | `MQTT_REPLICAS` |
-| `LKE_VIDEO_CLOUD_REPLICAS` | `VIDEO_CLOUD_API_REPLICAS` |
+| `LKE_MQTT_REPLICAS` | generated `MQTT_EFFECTIVE_REPLICAS` from `MQTT_MIN_REPLICAS` |
+| `LKE_VIDEO_CLOUD_REPLICAS` | generated `VIDEO_CLOUD_API_EFFECTIVE_REPLICAS` from `VIDEO_CLOUD_API_MIN_REPLICAS` |
 | `LKE_*_REQUEST_CPU/MEMORY` | matching provider-neutral workload resource key |
 | `LKE_EDGE_HAPROXY_COUNT/MAXCONN` | `EDGE_REPLICAS` / `EDGE_MAX_CONNECTIONS` |
 | `LKE_COTURN_VM_COUNT` and relay ports | `TURN_REPLICAS` and `TURN_*_PORT` |

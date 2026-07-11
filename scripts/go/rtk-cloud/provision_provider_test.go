@@ -98,6 +98,7 @@ func TestKubernetesProvisionStepsExposeProviderNeutralOrder(t *testing.T) {
 	want := []string{
 		"preflight",
 		"plan",
+		"dns-adapter-preflight",
 		"capacity-check",
 		"ensure-kube-access",
 		"ensure-lke-node-pool",

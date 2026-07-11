@@ -30,12 +30,14 @@ DEPLOYMENT_LOCATION=us-west
 ```env
 DEPLOYMENT_ARCHITECTURE=kubernetes
 DEPLOYMENT_ADAPTER=lke
+DNS_ADAPTER=godaddy
 ```
 
 | Key | 必填 | 用途 |
 | --- | --- | --- |
 | `DEPLOYMENT_ARCHITECTURE` | 是 | 選擇共用 architecture；目前為 `kubernetes`。 |
 | `DEPLOYMENT_ADAPTER` | 是 | 選擇 provider adapter；目前只有 `lke` 支援 mutation，`eks`、`gke` 只會 validate 後 fail fast。 |
+| `DNS_ADAPTER` | 是 | 獨立選擇 DNS provider；`godaddy` 與 `route53` 都支援 mutation。 |
 
 ## 選填 overrides
 
@@ -43,7 +45,9 @@ DEPLOYMENT_ADAPTER=lke
 
 ```env
 CAPACITY_TARGET_CONNECTIONS=1000
-MQTT_REPLICAS=2
+CAPACITY_ACTIVE_DEVICES=1000
+MQTT_MIN_REPLICAS=2
+VIDEO_CLOUD_API_MIN_REPLICAS=2
 NODE_CLASS_BROKER_MIN_COUNT=2
 NODE_CLASS_BROKER_MIN_VCPU=4
 NODE_CLASS_BROKER_MIN_MEMORY_GIB=8
@@ -60,6 +64,8 @@ LKE_ACTIVE_SERVICE_LIMIT=20
 
 Architecture override 不得包含 provider key；adapter override 不得包含 workload、capacity 或 topology key。Unknown key、錯誤型別與跨層 key 會在 plan 階段失敗。
 
+DNS provider 的選填 escape hatch 使用 `overrides/dns.env`。一般 environment 不設定 hosted-zone ID、API endpoint、AWS access key 或 GoDaddy key。GoDaddy credentials 依序從 process environment、environment runtime operator file、`~/.env` 讀取；Route53 使用 AWS SDK default credential chain並依 `CLOUD_DNS_ROOT_DOMAIN` 自動尋找唯一 public hosted zone。詳細設定與切換流程見 [`docs/dns-adapter-architecture.md`](../docs/dns-adapter-architecture.md)。
+
 ## 驗證與 provision
 
 先確認 tracked config 不會被 Git ignore，再產生 sanitized plan：
@@ -69,7 +75,7 @@ git check-ignore "cloud_env/qa/environment.env" || true
 go run ./scripts/go/rtk-cloud -- deployment plan --environment qa
 ```
 
-檢查 generic plan 中的 environment、logical location、capacity、replicas 與 node classes，再檢查 adapter-private `runtime/adapters/lke/resolved-resources.env` 的實際 region/SKU。Load test 只使用 normalized `runtime/state/provider-preflight.env`，不讀 adapter-private state。確認無誤後才執行 mutation：
+檢查 generic plan 中的 environment、logical location、minimum/effective replicas、每類 node 的 aggregate requests 與 effective count，再檢查 adapter-private `runtime/adapters/lke/resolved-resources.env` 的實際 region/SKU。Load test 只使用 normalized `runtime/state/provider-preflight.env`，不讀 adapter-private state。確認無誤後才執行 mutation：
 
 ```sh
 go run ./scripts/go/rtk-cloud -- deployment provision \
@@ -87,5 +93,6 @@ LKE mutation 需要 operator 提供 `LINODE_TOKEN`。Token、kubeconfig、certif
 - Architecture override 沒有 `LKE_*`、`EKS_*`、`GKE_*`。
 - dev、staging、prod 的 adapter override 不包含正常 region、SKU 或 quota。
 - Provider account limit 只存在 ignored adapter runtime，不進版控。
+- DNS adapter 已選擇，且 environment 沒有 provider zone ID 或 DNS credentials。
 - `deployment plan` 成功且 resolved plan 不含 secret。
 - `runtime/` 保持 ignored，沒有從其他 environment 複製 state。

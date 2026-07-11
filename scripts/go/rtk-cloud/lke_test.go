@@ -11,6 +11,8 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -829,7 +831,7 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 	}
 	kubectlLog := fakeKubectl(t)
 	helmLog := fakeHelm(t)
-	goLog := fakeGoForDNS(t)
+	goLog := fakeGoDaddyAPI(t)
 	certbotLog := fakeCertbot(t)
 	digLog := fakeDig(t, "198.51.100.10")
 	t.Setenv("LKE_PUBLIC_HTTPS_ISSUE_EMAIL", "ops@example.test")
@@ -1204,6 +1206,8 @@ func TestRunProvisionLKEIngressHelmTimesOut(t *testing.T) {
 		t.Fatal(err)
 	}
 	fakeKubectl(t)
+	t.Setenv("GODADDY_KEY", "test-key")
+	t.Setenv("GODADDY_SECRET", "test-secret")
 	helm := filepath.Join(t.TempDir(), "helm")
 	if err := os.WriteFile(helm, []byte("#!/usr/bin/env bash\nsleep 3\n"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1239,7 +1243,7 @@ func TestRunProvisionLKEDNSIncludesCloudLoggerWhenServiceExists(t *testing.T) {
 		t.Fatal(err)
 	}
 	kubectlLog := fakeKubectl(t)
-	goLog := fakeGoForDNS(t)
+	goLog := fakeGoDaddyAPI(t)
 	fakeHelm(t)
 	fakeCertbot(t)
 	fakeDig(t, "198.51.100.10")
@@ -1363,7 +1367,7 @@ func TestRunProvisionLKEPublicHTTPSStartsDNSUpsertsBeforeWaiting(t *testing.T) {
 		"--name admin.video-cloud-staging",
 		"--name frontend.video-cloud-staging",
 	} {
-		idx := strings.Index(events, "GO ARGS run ./cmd/godaddy-dns")
+		idx := strings.Index(events, "GO ARGS records upsert")
 		if idx < 0 {
 			t.Fatalf("expected GoDaddy upsert, got:\n%s", events)
 		}
@@ -1593,138 +1597,6 @@ func TestLKEEnsureOpenBaoSkipsHelmRepoUpdateWhenTemplateWorks(t *testing.T) {
 	}
 }
 
-func TestRenderCertbotDNS01EnvFileQuotesShellValues(t *testing.T) {
-	body := renderCertbotDNS01EnvFile(certbotDNS01EnvValues{
-		Key:                "test key",
-		Secret:             "test'secret",
-		Env:                "prod",
-		RootDomain:         "realtekconnect.com",
-		TTL:                "600",
-		WaitSeconds:        "300",
-		PropagationSeconds: "60",
-		Resolvers:          "8.8.8.8 1.1.1.1 9.9.9.9",
-	})
-
-	for _, want := range []string{
-		"GODADDY_KEY='test key'",
-		"GODADDY_SECRET='test'\"'\"'secret'",
-		"GODADDY_DNS_RESOLVERS='8.8.8.8 1.1.1.1 9.9.9.9'",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("expected %q in certbot DNS env file, got:\n%s", want, body)
-		}
-	}
-}
-
-func TestCertbotDNSHooksUseBoundedNetworkCalls(t *testing.T) {
-	auth := certbotDNSAuthHookScript()
-	for _, want := range []string{
-		"curl --connect-timeout 10 --max-time 30 -fsS -X PUT",
-		"dig +time=5 +tries=1 +short TXT",
-		"RTK_CLOUD_CERTBOT_DNS_STATE",
-		"RTK_CLOUD_CERTBOT_DNS_EXPECTED",
-		`if [ "$current_count" -lt "$expected" ]; then`,
-	} {
-		if !strings.Contains(auth, want) {
-			t.Fatalf("expected auth hook to contain %q, got:\n%s", want, auth)
-		}
-	}
-
-	cleanup := certbotDNSCleanupHookScript()
-	if !strings.Contains(cleanup, "curl --connect-timeout 10 --max-time 30 -fsS -X DELETE") {
-		t.Fatalf("expected cleanup hook to use bounded curl, got:\n%s", cleanup)
-	}
-}
-
-func TestCertbotDNSHooksAreBashSyntaxValid(t *testing.T) {
-	for name, script := range map[string]string{
-		"auth":    certbotDNSAuthHookScript(),
-		"cleanup": certbotDNSCleanupHookScript(),
-	} {
-		path := filepath.Join(t.TempDir(), name+".sh")
-		if err := os.WriteFile(path, []byte(lkeCertbotHookScript(script)), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if out, err := exec.Command("bash", "-n", path).CombinedOutput(); err != nil {
-			t.Fatalf("%s hook bash -n failed: %v\n%s", name, err, out)
-		}
-	}
-}
-
-func TestCertbotDNSAuthHookBatchesPropagationWait(t *testing.T) {
-	tmp := t.TempDir()
-	envPath := filepath.Join(tmp, "godaddy-dns.env")
-	if err := os.WriteFile(envPath, []byte(`GODADDY_KEY='key'
-GODADDY_SECRET='secret'
-GODADDY_ENV='prod'
-CLOUD_DNS_ROOT_DOMAIN='realtekconnect.com'
-GODADDY_DNS_TTL='600'
-GODADDY_DNS_WAIT_SECONDS='5'
-GODADDY_DNS_PROPAGATION_SECONDS='1'
-GODADDY_DNS_RESOLVERS='8.8.8.8'
-`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	hookPath := filepath.Join(tmp, "dns-auth.sh")
-	if err := os.WriteFile(hookPath, []byte(lkeCertbotHookScript(certbotDNSAuthHookScript())), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	binDir := filepath.Join(tmp, "bin")
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	curlLog := filepath.Join(tmp, "curl.log")
-	fakeCurl := `#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$FAKE_CURL_LOG"
-`
-	if err := os.WriteFile(filepath.Join(binDir, "curl"), []byte(fakeCurl), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	fakeDig := `#!/usr/bin/env bash
-while IFS= read -r value_file; do
-  cat "$value_file"
-  printf '\n'
-done < <(find "$RTK_CLOUD_CERTBOT_DNS_STATE/records" -type f | sort)
-`
-	if err := os.WriteFile(filepath.Join(binDir, "dig"), []byte(fakeDig), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	baseEnv := append(os.Environ(),
-		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
-		"RTK_CLOUD_CERTBOT_DNS_ENV="+envPath,
-		"RTK_CLOUD_CERTBOT_DNS_STATE="+filepath.Join(tmp, "state"),
-		"RTK_CLOUD_CERTBOT_DNS_EXPECTED=2",
-		"FAKE_CURL_LOG="+curlLog,
-	)
-	first := exec.Command(hookPath)
-	first.Env = append(baseEnv,
-		"CERTBOT_DOMAIN=account-manager.video-cloud-staging.realtekconnect.com",
-		"CERTBOT_VALIDATION=validation-one",
-	)
-	if out, err := first.CombinedOutput(); err != nil {
-		t.Fatalf("first auth hook failed: %v\n%s", err, out)
-	}
-	second := exec.Command(hookPath)
-	second.Env = append(baseEnv,
-		"CERTBOT_DOMAIN=logger.video-cloud-staging.realtekconnect.com",
-		"CERTBOT_VALIDATION=validation-two",
-	)
-	if out, err := second.CombinedOutput(); err != nil {
-		t.Fatalf("second auth hook failed: %v\n%s", err, out)
-	}
-	log := readTestFile(t, curlLog)
-	for _, want := range []string{
-		"/records/TXT/_acme-challenge.account-manager.video-cloud-staging",
-		"/records/TXT/_acme-challenge.logger.video-cloud-staging",
-		`validation-one`,
-		`validation-two`,
-	} {
-		if !strings.Contains(log, want) {
-			t.Fatalf("expected %q in fake curl log, got:\n%s", want, log)
-		}
-	}
-}
-
 func TestRunProvisionLKEDNSRequiresGoDaddyCredentialsBeforeDNSMutation(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	if err := os.MkdirAll(filepath.Join(workspace, "repos", "rtk_video_cloud", "tools", "godaddy-dns"), 0o755); err != nil {
@@ -1732,11 +1604,11 @@ func TestRunProvisionLKEDNSRequiresGoDaddyCredentialsBeforeDNSMutation(t *testin
 	}
 	fakeKubectl(t)
 	fakeHelm(t)
-	goLog := fakeGoForDNS(t)
+	goLog := fakeGoDaddyAPI(t)
 	fakeCertbot(t)
 
 	err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--dns"})
-	if err == nil || !strings.Contains(err.Error(), "GoDaddy DNS-01 credentials missing") {
+	if err == nil || !strings.Contains(err.Error(), "GoDaddy DNS credentials missing") {
 		t.Fatalf("expected missing GoDaddy credentials error, got %v", err)
 	}
 	if _, statErr := os.Stat(goLog); !os.IsNotExist(statErr) {
@@ -1751,7 +1623,7 @@ func TestRunProvisionLKEDNSStopsBeforeDNSWhenCertificateIssuanceFails(t *testing
 	}
 	fakeKubectl(t)
 	fakeHelm(t)
-	goLog := fakeGoForDNS(t)
+	goLog := fakeGoDaddyAPI(t)
 	fakeFailingCertbot(t)
 	t.Setenv("GODADDY_KEY", "test-key")
 	t.Setenv("GODADDY_SECRET", "test-secret")
@@ -2041,9 +1913,11 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 	t.Setenv("LKE_POSTGRES_NODE_POOL_ID", "906225")
 	t.Setenv("LKE_MQTT_NODE_POOL_ID", "906225")
 	env := map[string]string{
-		"CLOUD_STACK_NAME":   "video-cloud-staging",
-		"VIDEO_CLOUD_DOMAIN": "video-cloud-staging.realtekconnect.com",
+		"CLOUD_STACK_NAME":        "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN":      "video-cloud-staging.realtekconnect.com",
+		"MQTT_EFFECTIVE_REPLICAS": "4",
 	}
+	env = withArchitectureWorkloadDefaults(t, env)
 
 	postgres := lkePostgresStatefulSetManifest(env)
 	for _, want := range []string{
@@ -2071,7 +1945,7 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 		"topologySpreadConstraints:",
 		"whenUnsatisfiable: DoNotSchedule",
 		`cpu: "250m"`,
-		`memory: "1Gi"`,
+		`memory: "256Mi"`,
 	} {
 		if !strings.Contains(account, want) {
 			t.Fatalf("expected %q in account-manager manifest, got:\n%s", want, account)
@@ -2438,10 +2312,7 @@ func TestLKEVideoCloudMQTTHandlerConcurrencyCanBeOverridden(t *testing.T) {
 }
 
 func TestLKEMQTTResourcesCanBeOverridden(t *testing.T) {
-	t.Setenv("LKE_MQTT_REQUEST_CPU", "3")
-	t.Setenv("LKE_MQTT_REQUEST_MEMORY", "4Gi")
-	t.Setenv("LKE_MQTT_LIMIT_MEMORY", "8Gi")
-	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "MQTT_REQUEST_CPU": "3", "MQTT_REQUEST_MEMORY": "4Gi", "MQTT_LIMIT_MEMORY": "8Gi"}
 
 	manifest := lkeMQTTDeploymentManifest(env)
 
@@ -2509,13 +2380,14 @@ func TestLKECloudLoggerResourceDefaultsCoverLoadTestEvidence(t *testing.T) {
 	env := map[string]string{
 		"CLOUD_STACK_NAME": "video-cloud-staging",
 	}
+	env = withArchitectureWorkloadDefaults(t, env)
 
 	manifest := lkeCloudLoggerDeploymentManifest(env)
 
 	for _, want := range []string{
 		`cpu: "100m"`,
-		`memory: "4Gi"`,
-		`memory: "16Gi"`,
+		`memory: "1Gi"`,
+		`memory: "2Gi"`,
 		`name: RTK_CLOUD_LOGGER_LOKI_URL`,
 		`value: "http://video-cloud-loki.video-cloud-staging-observability.svc.cluster.local:3100"`,
 	} {
@@ -2532,6 +2404,7 @@ func TestLKELokiManifestSupportsCloudLoggerPersistence(t *testing.T) {
 	env := map[string]string{
 		"CLOUD_STACK_NAME": "video-cloud-staging",
 	}
+	env = withArchitectureWorkloadDefaults(t, env)
 
 	config := lkeLokiConfigManifest(env)
 	deployment := lkeLokiDeploymentManifest(env)
@@ -2635,16 +2508,16 @@ func TestLKELokiManifestSupportsCloudLoggerPersistence(t *testing.T) {
 
 func TestLKEDeploymentResourcesCanBeOverriddenFromEnvRoot(t *testing.T) {
 	env := map[string]string{
-		"CLOUD_STACK_NAME":                         "video-cloud-staging",
-		"VIDEO_CLOUD_DOMAIN":                       "video-cloud-staging.realtekconnect.com",
-		"LKE_VIDEO_CLOUD_API_REQUEST_CPU":          "250m",
-		"LKE_VIDEO_CLOUD_API_REQUEST_MEMORY":       "384Mi",
-		"LKE_VIDEO_CLOUD_API_LIMIT_MEMORY":         "1Gi",
-		"LKE_ACCOUNT_MANAGER_REQUEST_CPU":          "150m",
-		"LKE_ACCOUNT_MANAGER_REQUEST_MEMORY":       "192Mi",
-		"LKE_ACCOUNT_MANAGER_LIMIT_MEMORY":         "768Mi",
-		"LKE_VIDEO_CLOUD_LOGINGESTER_REQUEST_CPU":  "200m",
-		"LKE_VIDEO_CLOUD_LOGINGESTER_LIMIT_MEMORY": "768Mi",
+		"CLOUD_STACK_NAME":                      "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN":                    "video-cloud-staging.realtekconnect.com",
+		"VIDEO_CLOUD_API_REQUEST_CPU":           "250m",
+		"VIDEO_CLOUD_API_REQUEST_MEMORY":        "384Mi",
+		"VIDEO_CLOUD_API_LIMIT_MEMORY":          "1Gi",
+		"ACCOUNT_MANAGER_REQUEST_CPU":           "150m",
+		"ACCOUNT_MANAGER_REQUEST_MEMORY":        "192Mi",
+		"ACCOUNT_MANAGER_LIMIT_MEMORY":          "768Mi",
+		"VIDEO_CLOUD_LOG_INGESTER_REQUEST_CPU":  "200m",
+		"VIDEO_CLOUD_LOG_INGESTER_LIMIT_MEMORY": "768Mi",
 	}
 
 	api := lkeDeploymentManifest(env, lkeWorkload{
@@ -4696,23 +4569,42 @@ set -euo pipefail
 	return logPath
 }
 
-func fakeGoForDNS(t *testing.T) string {
+func withArchitectureWorkloadDefaults(t *testing.T, env map[string]string) map[string]string {
+	t.Helper()
+	defaults, err := readStrictEnv(filepath.Join("..", "..", "..", "cloud_deploy", "architectures", "kubernetes", "workloads.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return appendMap(defaults, env)
+}
+
+func fakeGoDaddyAPI(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "go.log")
-	goPath := filepath.Join(dir, "go")
-	script := `#!/usr/bin/env bash
-set -euo pipefail
-line='ARGS'
-for arg in "$@"; do
-  line="$line $arg"
-done
-printf '%s\n' "$line" >> "` + logPath + `"
-`
-	if err := os.WriteFile(goPath, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("RTK_CLOUD_GO", goPath)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, "[]")
+			return
+		}
+		if r.Method == http.MethodPut && len(parts) >= 6 {
+			var payload []struct {
+				Data string `json:"data"`
+				TTL  int    `json:"ttl"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			for _, record := range payload {
+				f, _ := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+				fmt.Fprintf(f, "ARGS records upsert --name %s --data %s --ttl %d\n", parts[len(parts)-1], record.Data, record.TTL)
+				_ = f.Close()
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("RTK_CLOUD_GODADDY_API_ROOT", server.URL)
 	return logPath
 }
 
@@ -4720,6 +4612,24 @@ func fakeDNSCommandsWithGoDelay(t *testing.T, ip, delay string, turnIP ...string
 	t.Helper()
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "dns-events.log")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			fmt.Fprint(w, "[]")
+			return
+		}
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		if r.Method == http.MethodPut && len(parts) >= 6 {
+			f, _ := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+			fmt.Fprintf(f, "GO ARGS records upsert --name %s\n", parts[len(parts)-1])
+			_ = f.Close()
+			if wait, err := time.ParseDuration(delay + "s"); err == nil {
+				time.Sleep(wait)
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("RTK_CLOUD_GODADDY_API_ROOT", server.URL)
 	goPath := filepath.Join(dir, "go")
 	goScript := `#!/usr/bin/env bash
 set -euo pipefail

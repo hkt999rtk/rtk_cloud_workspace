@@ -19,38 +19,47 @@ type deploymentConfig struct {
 	RuntimeRoot     string
 	Architecture    string
 	Adapter         string
+	DNSAdapter      string
 	Values          map[string]string
 	AdapterValues   map[string]string
 	AdapterResolved map[string]string
+	DNSValues       map[string]string
+	Capacity        sharedCapacityPlan
 }
 
 var deploymentIntegerKeys = map[string]bool{
 	"CAPACITY_TARGET_CONNECTIONS": true, "CAPACITY_CONNECTIONS_PER_MQTT_POD": true,
+	"CAPACITY_ACTIVE_DEVICES": true, "CAPACITY_ACTIVE_DEVICES_PER_API_POD": true,
 	"CAPACITY_SYSTEM_RESERVED_CPU_MILLI": true, "CAPACITY_SYSTEM_RESERVED_MEMORY_MIB": true,
 	"NODE_CLASS_GENERAL_MIN_COUNT": true, "NODE_CLASS_BROKER_MIN_COUNT": true,
 	"NODE_CLASS_DATABASE_MIN_COUNT": true,
 	"NODE_CLASS_GENERAL_MIN_VCPU":   true, "NODE_CLASS_GENERAL_MIN_MEMORY_GIB": true,
 	"NODE_CLASS_BROKER_MIN_VCPU": true, "NODE_CLASS_BROKER_MIN_MEMORY_GIB": true,
 	"NODE_CLASS_DATABASE_MIN_VCPU": true, "NODE_CLASS_DATABASE_MIN_MEMORY_GIB": true,
-	"MQTT_REPLICAS":            true,
-	"VIDEO_CLOUD_API_REPLICAS": true, "EDGE_REPLICAS": true,
+	"EDGE_REPLICAS":        true,
 	"EDGE_MAX_CONNECTIONS": true, "TURN_REPLICAS": true,
 	"TURN_MIN_PORT": true, "TURN_MAX_PORT": true,
 }
 
-var deploymentArchitectureKeys = keySet(
-	"DEPLOYMENT_RUNTIME", "NODE_CLASS_LABEL_KEY", "DEFAULT_WORKLOAD_NODE_CLASS", "POD_SPREAD_TOPOLOGY_KEY",
-	"CAPACITY_TARGET_CONNECTIONS", "CAPACITY_CONNECTIONS_PER_MQTT_POD",
-	"CAPACITY_SYSTEM_RESERVED_CPU_MILLI", "CAPACITY_SYSTEM_RESERVED_MEMORY_MIB",
-	"NODE_CLASS_GENERAL_MIN_COUNT", "NODE_CLASS_BROKER_MIN_COUNT", "NODE_CLASS_DATABASE_MIN_COUNT",
-	"NODE_CLASS_GENERAL_MIN_VCPU", "NODE_CLASS_GENERAL_MIN_MEMORY_GIB",
-	"NODE_CLASS_BROKER_MIN_VCPU", "NODE_CLASS_BROKER_MIN_MEMORY_GIB",
-	"NODE_CLASS_DATABASE_MIN_VCPU", "NODE_CLASS_DATABASE_MIN_MEMORY_GIB",
-	"MQTT_REPLICAS", "MQTT_NODE_CLASS", "MQTT_HARD_ANTI_AFFINITY", "VIDEO_CLOUD_API_REPLICAS",
-	"POSTGRES_NODE_CLASS", "POSTGRES_REQUEST_CPU", "POSTGRES_REQUEST_MEMORY", "POSTGRES_LIMIT_MEMORY",
-	"CLOUD_LOGGER_REQUEST_CPU", "CLOUD_LOGGER_REQUEST_MEMORY", "CLOUD_LOGGER_LIMIT_MEMORY",
-	"EDGE_REPLICAS", "EDGE_MAX_CONNECTIONS", "TURN_REPLICAS", "TURN_MIN_PORT", "TURN_MAX_PORT",
-)
+var deploymentArchitectureKeys = architectureKeySet()
+
+func architectureKeySet() map[string]bool {
+	out := keySet(
+		"DEPLOYMENT_RUNTIME", "NODE_CLASS_LABEL_KEY", "DEFAULT_WORKLOAD_NODE_CLASS", "POD_SPREAD_TOPOLOGY_KEY",
+		"CAPACITY_TARGET_CONNECTIONS", "CAPACITY_CONNECTIONS_PER_MQTT_POD",
+		"CAPACITY_ACTIVE_DEVICES", "CAPACITY_ACTIVE_DEVICES_PER_API_POD", "CAPACITY_SYSTEM_RESERVED_CPU_MILLI", "CAPACITY_SYSTEM_RESERVED_MEMORY_MIB",
+		"NODE_CLASS_GENERAL_MIN_COUNT", "NODE_CLASS_BROKER_MIN_COUNT", "NODE_CLASS_DATABASE_MIN_COUNT",
+		"NODE_CLASS_GENERAL_MIN_VCPU", "NODE_CLASS_GENERAL_MIN_MEMORY_GIB",
+		"NODE_CLASS_BROKER_MIN_VCPU", "NODE_CLASS_BROKER_MIN_MEMORY_GIB",
+		"NODE_CLASS_DATABASE_MIN_VCPU", "NODE_CLASS_DATABASE_MIN_MEMORY_GIB",
+		"MQTT_HARD_ANTI_AFFINITY", "POSTGRES_LIMIT_MEMORY", "CLOUD_LOGGER_LIMIT_MEMORY",
+		"EDGE_REPLICAS", "EDGE_MAX_CONNECTIONS", "TURN_REPLICAS", "TURN_MIN_PORT", "TURN_MAX_PORT",
+	)
+	for _, key := range capacitySourceKeys() {
+		out[key] = true
+	}
+	return out
+}
 
 func keySet(keys ...string) map[string]bool {
 	out := make(map[string]bool, len(keys))
@@ -94,7 +103,7 @@ func runDeployment(args []string) error {
 	}
 	switch action {
 	case "plan":
-		fmt.Printf("environment: %s\narchitecture: %s\nadapter: %s\nruntime_root: %s\n", cfg.Environment, cfg.Architecture, cfg.Adapter, cfg.RuntimeRoot)
+		fmt.Printf("environment: %s\narchitecture: %s\nadapter: %s\ndns_adapter: %s\nruntime_root: %s\n", cfg.Environment, cfg.Architecture, cfg.Adapter, cfg.DNSAdapter, cfg.RuntimeRoot)
 		if cfg.Adapter != "lke" {
 			fmt.Printf("infrastructure: adapter not implemented; mutation will fail fast\n")
 			return normalizeDeploymentRuntime(cfg)
@@ -104,6 +113,9 @@ func runDeployment(args []string) error {
 		}
 		return normalizeDeploymentRuntime(cfg)
 	case "provision":
+		if err := validateDNSBeforeMutation(cfg); err != nil {
+			return err
+		}
 		if cfg.Adapter == "lke" {
 			if err := validateLKEEnvironmentStateBeforeMutation(cfg); err != nil {
 				return err
@@ -116,12 +128,21 @@ func runDeployment(args []string) error {
 	case "acceptance":
 		err = runStagingAcceptance([]string{"--workspace", cfg.Workspace, "--env-root", cfg.RuntimeRoot, "--confirm", stack})
 	case "remove":
-		err = runRemoveK8s([]string{"--workspace", cfg.Workspace, "--env-root", cfg.RuntimeRoot, "--confirm", stack})
+		if err = removeOwnedDNSRecords(newProvisionPaths(cfg.Workspace, cfg.RuntimeRoot, provisionOptions{}), appendMap(cfg.Values, cfg.DNSValues)); err == nil {
+			err = runRemoveK8s([]string{"--workspace", cfg.Workspace, "--env-root", cfg.RuntimeRoot, "--confirm", stack})
+		}
 	}
 	if err != nil {
 		return err
 	}
 	return normalizeDeploymentRuntime(cfg)
+}
+
+func validateDNSBeforeMutation(cfg deploymentConfig) error {
+	env := appendMap(cfg.Values, cfg.DNSValues)
+	paths := newProvisionPaths(cfg.Workspace, cfg.RuntimeRoot, provisionOptions{})
+	_, _, _, err := selectedDNSAdapter(paths, env)
+	return err
 }
 
 func validateLKEEnvironmentStateBeforeMutation(cfg deploymentConfig) error {
@@ -216,7 +237,7 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		return deploymentConfig{}, err
 	}
 	for key := range selection {
-		if !keySet("DEPLOYMENT_ARCHITECTURE", "DEPLOYMENT_ADAPTER")[key] {
+		if !keySet("DEPLOYMENT_ARCHITECTURE", "DEPLOYMENT_ADAPTER", "DNS_ADAPTER")[key] {
 			return deploymentConfig{}, fmt.Errorf("unknown deployment selection key %s", key)
 		}
 	}
@@ -227,8 +248,9 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 	}
 	architecture := selection["DEPLOYMENT_ARCHITECTURE"]
 	adapter := selection["DEPLOYMENT_ADAPTER"]
-	if architecture == "" || adapter == "" {
-		return deploymentConfig{}, errors.New("DEPLOYMENT_ARCHITECTURE and DEPLOYMENT_ADAPTER are required")
+	dnsAdapter := selection["DNS_ADAPTER"]
+	if architecture == "" || adapter == "" || dnsAdapter == "" {
+		return deploymentConfig{}, errors.New("DEPLOYMENT_ARCHITECTURE, DEPLOYMENT_ADAPTER, and DNS_ADAPTER are required")
 	}
 	values := map[string]string{}
 	for _, name := range []string{"architecture.env", "capacity.env", "topology.env", "workloads.env"} {
@@ -293,6 +315,52 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		}
 		adapterValues[k] = adapterOverride[k]
 	}
+	dnsValues, err := readStrictEnv(filepath.Join(workspace, "cloud_deploy", "dns_adapters", dnsAdapter, "defaults.env"))
+	if err != nil {
+		return deploymentConfig{}, err
+	}
+	dnsSchema, err := readStrictEnv(filepath.Join(workspace, "cloud_deploy", "dns_adapters", dnsAdapter, "schema.env"))
+	if err != nil {
+		return deploymentConfig{}, err
+	}
+	if dnsSchema["DNS_ADAPTER_NAME"] != dnsAdapter {
+		return deploymentConfig{}, fmt.Errorf("DNS adapter %s schema is invalid", dnsAdapter)
+	}
+	dnsAllowed := keySet("DNS_RECORD_TTL", "DNS_PROPAGATION_TIMEOUT_SECONDS", "DNS_PROPAGATION_INTERVAL_SECONDS")
+	if dnsAdapter == "godaddy" {
+		dnsAllowed["GODADDY_ENV"] = true
+	}
+	if dnsAdapter == "route53" {
+		dnsAllowed["ROUTE53_CONTROL_PLANE_REGION"] = true
+	}
+	for key := range dnsValues {
+		if !dnsAllowed[key] {
+			return deploymentConfig{}, fmt.Errorf("unknown %s DNS adapter key %s", dnsAdapter, key)
+		}
+	}
+	dnsOverride, err := readOptionalStrictEnv(filepath.Join(environmentRoot, "overrides", "dns.env"))
+	if err != nil {
+		return deploymentConfig{}, err
+	}
+	for k := range dnsOverride {
+		if _, ok := dnsValues[k]; !ok {
+			return deploymentConfig{}, fmt.Errorf("unknown %s DNS adapter override %s", dnsAdapter, k)
+		}
+		dnsValues[k] = dnsOverride[k]
+	}
+	for _, key := range []string{"DNS_RECORD_TTL", "DNS_PROPAGATION_TIMEOUT_SECONDS", "DNS_PROPAGATION_INTERVAL_SECONDS"} {
+		if _, err := positiveIntValue(key, dnsValues[key]); err != nil {
+			return deploymentConfig{}, err
+		}
+	}
+	if dnsAdapter == "godaddy" {
+		if dnsValues["GODADDY_ENV"] != "prod" && dnsValues["GODADDY_ENV"] != "ote" {
+			return deploymentConfig{}, errors.New("GODADDY_ENV must be prod or ote")
+		}
+		if ttl, _ := strconv.Atoi(dnsValues["DNS_RECORD_TTL"]); ttl < 600 {
+			return deploymentConfig{}, errors.New("GoDaddy DNS_RECORD_TTL must be at least 600")
+		}
+	}
 	for k, v := range appendMap(values, adapterValues) {
 		if deploymentIntegerKeys[k] {
 			n, parseErr := strconv.Atoi(v)
@@ -323,12 +391,12 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 	if values["DEPLOYMENT_RUNTIME"] != "kubernetes" {
 		return deploymentConfig{}, fmt.Errorf("unsupported deployment runtime %q", values["DEPLOYMENT_RUNTIME"])
 	}
-	if values["MQTT_NODE_CLASS"] == "broker" {
-		r, _ := strconv.Atoi(values["MQTT_REPLICAS"])
-		n, _ := strconv.Atoi(values["NODE_CLASS_BROKER_MIN_COUNT"])
-		if r > n {
-			return deploymentConfig{}, fmt.Errorf("MQTT_REPLICAS=%d exceeds broker node capacity=%d", r, n)
-		}
+	capacity, capacityValues, err := buildSharedCapacityPlan(values)
+	if err != nil {
+		return deploymentConfig{}, err
+	}
+	for key, value := range capacityValues {
+		values[key] = value
 	}
 	adapterResolved := map[string]string{}
 	if adapter == "lke" {
@@ -337,7 +405,7 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 			return deploymentConfig{}, err
 		}
 	}
-	return deploymentConfig{Workspace: workspace, Environment: environment, EnvironmentRoot: environmentRoot, RuntimeRoot: filepath.Join(environmentRoot, "runtime"), Architecture: architecture, Adapter: adapter, Values: values, AdapterValues: adapterValues, AdapterResolved: adapterResolved}, nil
+	return deploymentConfig{Workspace: workspace, Environment: environment, EnvironmentRoot: environmentRoot, RuntimeRoot: filepath.Join(environmentRoot, "runtime"), Architecture: architecture, Adapter: adapter, DNSAdapter: dnsAdapter, Values: values, AdapterValues: adapterValues, AdapterResolved: adapterResolved, DNSValues: dnsValues, Capacity: capacity}, nil
 }
 
 func appendMap(a, b map[string]string) map[string]string {
@@ -420,13 +488,14 @@ func positiveIntValue(key, raw string) (int, error) {
 }
 
 func materializeDeploymentRuntime(cfg deploymentConfig) error {
-	for _, dir := range []string{"resolved", "env", "state", filepath.Join("adapters", cfg.Adapter), "services", "secrets", "devices", "artifacts", "backups"} {
+	for _, dir := range []string{"resolved", "env", "state", filepath.Join("adapters", cfg.Adapter), filepath.Join("dns", cfg.DNSAdapter), "services", "secrets", "devices", "artifacts", "backups"} {
 		if err := os.MkdirAll(filepath.Join(cfg.RuntimeRoot, dir), 0o700); err != nil {
 			return err
 		}
 	}
 	resolved := appendMap(cfg.Values, nil)
 	stack := appendMap(cfg.Values, deploymentRuntimeEndpoints(resolved))
+	stack = appendMap(stack, cfg.DNSValues)
 	stack["CLOUD_ENV_NAME"] = cfg.Environment
 	stack["CLOUD_PROVIDER"] = cfg.Adapter
 	stack["CLOUD_REGION"] = cfg.AdapterResolved["LKE_REGION"]
@@ -463,7 +532,19 @@ func materializeDeploymentRuntime(cfg deploymentConfig) error {
 	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "state", "provider-preflight.env"), providerPreflight, 0o600); err != nil {
 		return err
 	}
-	plan := map[string]any{"environment": cfg.Environment, "architecture": cfg.Architecture, "adapter": cfg.Adapter, "values": resolved}
+	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "dns", cfg.DNSAdapter, "config.env"), cfg.DNSValues, 0o600); err != nil {
+		return err
+	}
+	dnsPlan := buildGenericDNSPlan(cfg)
+	if body, err := json.MarshalIndent(dnsPlan, "", "  "); err != nil {
+		return err
+	} else if err := os.WriteFile(filepath.Join(cfg.RuntimeRoot, "resolved", "dns-plan.json"), append(body, '\n'), 0o600); err != nil {
+		return err
+	}
+	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "state", "dns.env"), map[string]string{"DNS_ADAPTER": cfg.DNSAdapter, "DNS_ROOT_DOMAIN": cfg.Values["CLOUD_DNS_ROOT_DOMAIN"]}, 0o600); err != nil {
+		return err
+	}
+	plan := map[string]any{"environment": cfg.Environment, "architecture": cfg.Architecture, "adapter": cfg.Adapter, "dns_adapter": cfg.DNSAdapter, "values": resolved, "capacity": cfg.Capacity}
 	body, _ := json.MarshalIndent(plan, "", "  ")
 	body = append(body, '\n')
 	return os.WriteFile(filepath.Join(cfg.RuntimeRoot, "resolved", "deployment-plan.json"), body, 0o600)
@@ -490,19 +571,24 @@ func deploymentLegacyLKEValues(v map[string]string, environment string) map[stri
 	if v["DEPLOYMENT_ADAPTER"] != "lke" {
 		return map[string]string{}
 	}
-	return map[string]string{
+	out := map[string]string{
 		"CLOUD_ENV_NAME": environment, "CLOUD_PROVIDER": "lke", "CLOUD_REGION": v["LKE_REGION"],
 		"LKE_TARGET_CONNECTS": v["CAPACITY_TARGET_CONNECTIONS"], "LKE_MQTT_CONNECTIONS_PER_POD": v["CAPACITY_CONNECTIONS_PER_MQTT_POD"],
 		"LKE_SYSTEM_RESERVED_CPU_PER_NODE": v["CAPACITY_SYSTEM_RESERVED_CPU_MILLI"] + "m", "LKE_SYSTEM_RESERVED_MEMORY_PER_NODE": v["CAPACITY_SYSTEM_RESERVED_MEMORY_MIB"] + "Mi",
-		"LKE_NODE_COUNT": v["NODE_CLASS_BROKER_MIN_COUNT"], "LKE_NODE_TYPE": v["LKE_BROKER_NODE_TYPE"],
-		"LKE_GENERAL_NODE_COUNT": v["NODE_CLASS_GENERAL_MIN_COUNT"], "LKE_GENERAL_NODE_TYPE": v["LKE_GENERAL_NODE_TYPE"],
-		"LKE_POSTGRES_DEDICATED_NODE_POOL": "true", "LKE_POSTGRES_NODE_COUNT": v["NODE_CLASS_DATABASE_MIN_COUNT"], "LKE_POSTGRES_NODE_TYPE": v["LKE_DATABASE_NODE_TYPE"],
-		"LKE_MQTT_REPLICAS": v["MQTT_REPLICAS"], "LKE_VIDEO_CLOUD_REPLICAS": v["VIDEO_CLOUD_API_REPLICAS"],
+		"LKE_NODE_COUNT": v["NODE_CLASS_BROKER_EFFECTIVE_COUNT"], "LKE_NODE_TYPE": v["LKE_BROKER_NODE_TYPE"],
+		"LKE_GENERAL_NODE_COUNT": v["NODE_CLASS_GENERAL_EFFECTIVE_COUNT"], "LKE_GENERAL_NODE_TYPE": v["LKE_GENERAL_NODE_TYPE"],
+		"LKE_POSTGRES_DEDICATED_NODE_POOL": "true", "LKE_POSTGRES_NODE_COUNT": v["NODE_CLASS_DATABASE_EFFECTIVE_COUNT"], "LKE_POSTGRES_NODE_TYPE": v["LKE_DATABASE_NODE_TYPE"],
+		"LKE_MQTT_REPLICAS": v["MQTT_EFFECTIVE_REPLICAS"], "LKE_VIDEO_CLOUD_REPLICAS": v["VIDEO_CLOUD_API_EFFECTIVE_REPLICAS"],
 		"LKE_POSTGRES_REQUEST_CPU": v["POSTGRES_REQUEST_CPU"], "LKE_POSTGRES_REQUEST_MEMORY": v["POSTGRES_REQUEST_MEMORY"], "LKE_POSTGRES_LIMIT_MEMORY": v["POSTGRES_LIMIT_MEMORY"],
 		"LKE_CLOUD_LOGGER_REQUEST_CPU": v["CLOUD_LOGGER_REQUEST_CPU"], "LKE_CLOUD_LOGGER_REQUEST_MEMORY": v["CLOUD_LOGGER_REQUEST_MEMORY"], "LKE_CLOUD_LOGGER_LIMIT_MEMORY": v["CLOUD_LOGGER_LIMIT_MEMORY"],
 		"LKE_EDGE_HAPROXY_COUNT": v["EDGE_REPLICAS"], "LKE_EDGE_HAPROXY_MAXCONN": v["EDGE_MAX_CONNECTIONS"],
 		"LKE_COTURN_VM_COUNT": v["TURN_REPLICAS"], "LKE_COTURN_MIN_PORT": v["TURN_MIN_PORT"], "LKE_COTURN_MAX_PORT": v["TURN_MAX_PORT"],
 	}
+	for _, prefix := range []string{"INGRESS", "REDIS", "REDIS_EXPORTER"} {
+		out["LKE_"+prefix+"_REQUEST_CPU"] = v[prefix+"_REQUEST_CPU"]
+		out["LKE_"+prefix+"_REQUEST_MEMORY"] = v[prefix+"_REQUEST_MEMORY"]
+	}
+	return out
 }
 
 func writeSortedEnv(path string, values map[string]string, mode os.FileMode) error {

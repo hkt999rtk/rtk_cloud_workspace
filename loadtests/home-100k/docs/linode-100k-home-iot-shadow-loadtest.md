@@ -105,7 +105,7 @@ The server target is EMQX on LKE. Before a formal 100K run, verify that the
 staging server deployment has enough broker capacity and that broker pods are
 spread across nodes:
 
-- `MQTT_REPLICAS=9` in the selected environment's architecture override.
+- `MQTT_MIN_REPLICAS=9` in the selected environment's architecture override when preserving the validated nine-broker floor.
 - At least 9 schedulable nodes labeled `rtk.io/node-class=broker`.
 - The EMQX deployment uses hard pod anti-affinity by
   `kubernetes.io/hostname`.
