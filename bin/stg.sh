@@ -2,12 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_ROOT="${RTK_CLOUD_STAGING_ENV_ROOT:-$ROOT/cloud_env/staging}"
+ENV_ROOT="${RTK_CLOUD_STAGING_ENV_ROOT:-$ROOT/cloud_env/staging/runtime}"
 GO_CMD="${RTK_CLOUD_GO:-go}"
-STAGING_PROVIDER="${CLOUD_PROVIDER:-${RTK_CLOUD_STAGING_PROVIDER:-}}"
-if [[ -z "${RTK_CLOUD_STAGING_ENV_ROOT:-}" && -n "$STAGING_PROVIDER" ]]; then
-	ENV_ROOT="$ROOT/cloud_env/staging/$STAGING_PROVIDER"
-fi
 
 usage() {
 	cat <<'USAGE'
@@ -15,7 +11,7 @@ Usage:
   stg.sh <command> [args]
 
 Shortcuts:
-  provision [args]              -> provision-k8s
+  provision [args]              -> deployment provision --environment staging
   token [args]                  -> rtk-cloud platform-admin-token --env-root cloud_env/staging
   brand NAME [args]             -> create-brandname-cloud
   brands [args]                 -> list-brandname-clouds
@@ -70,7 +66,7 @@ shift
 
 case "$cmd" in
 	provision)
-		with_env provision-k8s "$@"
+		rtk deployment provision --environment staging "$@"
 		;;
 	deploy)
 		retired_vm_shortcut "$cmd"

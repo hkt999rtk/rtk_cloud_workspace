@@ -7,6 +7,8 @@ trap 'rm -rf "$TMP"' EXIT
 
 ARTIFACT="$TMP/bind-artifact.json"
 REPORT_DIR="$TMP/report"
+ENV_ROOT="$TMP/runtime"
+mkdir -p "$ENV_ROOT"
 
 jq -n '{
 	schema: "rtk-cloud-workspace.bulk-device-bind/v1",
@@ -42,14 +44,15 @@ jq -n '{
 	]
 }' > "$ARTIFACT"
 
-if "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- validate-device-bind --out-dir "$REPORT_DIR" >"$TMP/missing.out" 2>&1; then
-	echo "expected missing --bind-artifact to fail" >&2
+if "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- validate-device-bind --env-root "$ENV_ROOT" --out-dir "$REPORT_DIR" --expected-count 2 >"$TMP/missing.out" 2>/dev/null; then
+	echo "expected empty environment test data to fail count validation" >&2
 	exit 1
 fi
-grep -F -- '--bind-artifact is required' "$TMP/missing.out" >/dev/null
+jq -e '.overall == "fail" and .failure_categories.count_mismatch == 1' "$TMP/missing.out" >/dev/null
 
 OUT="$TMP/out.json"
 "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- validate-device-bind \
+	--env-root "$ENV_ROOT" \
 	--bind-artifact "$ARTIFACT" \
 	--out-dir "$REPORT_DIR" \
 	--expected-count 2 \
@@ -75,6 +78,7 @@ fi
 BAD="$TMP/bad-artifact.json"
 jq '.assignments[1].service_options = ["mqtt", "video_storage"]' "$ARTIFACT" > "$BAD"
 if "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- validate-device-bind \
+	--env-root "$ENV_ROOT" \
 	--bind-artifact "$BAD" \
 	--out-dir "$TMP/bad-report" \
 	--expected-count 2 \

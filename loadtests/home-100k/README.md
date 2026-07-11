@@ -282,40 +282,25 @@ Default baseline:
 | Ramp-up time | Configured by `HOME100K_STAGE_WARM_UP` |
 | Target connects | Configured by `HOME100K_DEVICES` |
 
-Before starting a live 100K TURN sizing run, the Linode active-service quota
-must cover the complete topology, not only the Kubernetes nodes:
-
-```text
-required_active_services =
-  LKE_NODE_COUNT
-  + LKE_POSTGRES_NODE_COUNT
-  + LKE_EDGE_HAPROXY_VM_COUNT
-  + LKE_COTURN_VM_COUNT
-  + HOME100K_VM_COUNT
-  + unrelated active Linodes that will remain running
-```
-
-For the default 100K profile this is `10 + 1 + 1 + 1 + 5 = 18` active
-services before counting unrelated Linodes such as shared CI runners. If the
-account limit is lower than that, the run is not validly runnable; do not reduce
-LKE or generator count just to fit quota and then call it a 100K result.
-The staging provision script also performs a live provider check when
-`LKE_LINODE_ACTIVE_SERVICE_LIMIT` is set: it counts current active Linodes and
-the missing edge/coturn VMs before attempting to create those VMs.
+Before starting a live 100K TURN sizing run, inspect the selected environment's
+resolved deployment plan and provider preflight. Its projected active services
+must cover all logical node classes, edge/TURN resources, load generators, and
+unrelated provider resources that remain active. Provider quota and instance
+types belong to the selected deployment adapter; the load test does not compute
+them from provider-specific environment variables.
 
 The test should use deterministic sharding. A run ramps directly to the target
 connection count; there is no staged 25%/50%/75%/100% load model.
 
 ## Server-Side Capacity Prerequisites
 
-The staging/LKE target must run MQTT on EMQX. Public MQTT load testing should
+The selected Kubernetes environment must run MQTT on EMQX. Public MQTT load testing should
 use an EMQX node pool sized so each broker pod can land on a different
 Kubernetes node. For the 100K baseline this means:
 
-- `LKE_MQTT_REPLICAS=9`.
+- `MQTT_REPLICAS=9` in the environment architecture override.
 - A dedicated or otherwise uncongested node pool with at least 9 schedulable
-  nodes.
-- `LKE_MQTT_NODE_POOL_ID=<pool-id>` when EMQX should be pinned to that pool.
+  nodes labeled `rtk.io/node-class=broker`.
 - EMQX pod hard anti-affinity on `kubernetes.io/hostname`.
 - `mqtt-public` service `externalTrafficPolicy: Local`, so the Linode
   NodeBalancer only sends MQTT traffic to nodes with a local EMQX endpoint.
@@ -676,7 +661,7 @@ Secrets and non-secret test descriptions are intentionally separate:
 
 - `~/.env` supplies only `LINODE_TOKEN`.
 - `loadtests/home-100k/scenarios/default.description.env` supplies the
-  non-secret test description: env-root, brand, region, remote paths, SSH key
+  non-secret test description: environment, brand, region, remote paths, SSH key
   path, status interval, ramp-up time, and target load size.
 
 The `home-100k` directory, command, VM label prefix, and remote path are package
@@ -686,11 +671,11 @@ configured by `HOME100K_DEVICES`, optional `HOME100K_USERS`, and
 debug profile uses `HOME100K_DEVICES=9000`; switching back to a 100K run should
 be a description-file change, not a filename or code change.
 
-The default description file points at the existing provision-server staging
-environment:
+The default description selects the staging environment. The runner resolves
+its normalized runtime without knowing which deployment adapter implements it:
 
 ```text
-cloud_env/staging/lke
+HOME100K_ENVIRONMENT=staging
 ```
 
 The script keeps non-secret defaults in one place:
@@ -699,7 +684,8 @@ The script keeps non-secret defaults in one place:
 | --- | --- |
 | `HOME100K_DESCRIPTION_FILE` | `loadtests/home-100k/scenarios/default.description.env` |
 | `HOME100K_SECRET_ENV_FILE` | `~/.env`, only `LINODE_TOKEN` is read |
-| `HOME100K_ENV_ROOT` | `cloud_env/staging/lke` |
+| `HOME100K_ENVIRONMENT` | `staging`; resolves `cloud_env/staging/runtime` |
+| `HOME100K_ENV_ROOT` | internal/custom runtime override only |
 | `HOME100K_BRANDNAME` | `RTK` |
 | `HOME100K_BRAND_PLAN` | unset; use `loadtests/home-100k/scenarios/brand-plan-100k.json` for the 100K multi-brand 7/7 baseline |
 | `HOME100K_REGION` | `us-sea` |
@@ -736,7 +722,7 @@ The script keeps non-secret defaults in one place:
 | `HOME100K_MQTT_PUBLIC_LB_COUNT` | `1`; limits auto-discovered MQTT LoadBalancers for the current 9K profile |
 | `HOME100K_NODE_RESOURCE_STATUS` | `1` |
 | `HOME100K_K8S_NODE_RESOURCE_STATUS` | `1` |
-| `HOME100K_KUBECONFIG` | unset; falls back to existing LKE kubeconfig env or `<env-root>/state/lke-kubeconfig.yaml` |
+| `HOME100K_KUBECONFIG` | unset; falls back to existing LKE kubeconfig env or `<env-root>/state/kubeconfig.yaml` |
 
 Live VM lifecycle commands are also routed through the same script:
 
@@ -775,9 +761,8 @@ available.
 
 Kubernetes node resource samples use `kubectl top nodes --no-headers` and print
 `[home-100k k8s-node]` lines. Kubeconfig resolution order is
-`HOME100K_KUBECONFIG`, `RTK_CLOUD_LKE_KUBECONFIG`, `LKE_KUBECONFIG`,
-`CLOUD_STAGING_K8S_KUBECONFIG`, then
-`<env-root>/state/lke-kubeconfig.yaml`. Set
+`HOME100K_KUBECONFIG`, then the selected environment's normalized
+`<runtime-root>/state/kubeconfig.yaml`. Set
 `HOME100K_K8S_NODE_RESOURCE_STATUS=0` to disable K8s node probing.
 
 Load-generator samples are collected through SSH from `/proc/stat`,
@@ -788,9 +773,8 @@ with server-side capacity.
 `workflow-live` writes `linode-active-service-preflight.json` before creating
 load-generator VMs. It records current active Linodes, missing edge/coturn VMs,
 planned load-generator VMs, and projected total active services. Set
-`HOME100K_LINODE_ACTIVE_SERVICE_LIMIT` or `LKE_LINODE_ACTIVE_SERVICE_LIMIT` to
-make this a hard fail-fast gate when the projected total exceeds the known
-account limit.
+The selected adapter's quota setting makes this a hard fail-fast gate when the
+projected total exceeds the known account limit.
 
 Stage duration belongs in the non-secret description file, not in `~/.env`.
 The default profile uses `HOME100K_STAGE_WARM_UP=30s`,
@@ -898,64 +882,64 @@ The Go CLI remains the implementation entrypoint underneath the script:
 
 ```sh
 go run ./loadtests/home-100k/cmd/home-100k -- plan \
-  --env-root cloud_env/staging/lke \
+  --env-root cloud_env/staging/runtime \
   --brandname RTK \
   --region <linode-region>
 
 go run ./loadtests/home-100k/cmd/home-100k -- provision-vms \
-  --env-root cloud_env/staging/lke \
+  --env-root cloud_env/staging/runtime \
   --brandname RTK \
   --region <linode-region> \
   --run-id <run-id> \
   --out-dir loadtests/home-100k/reports/<run-id>
 
 go run ./loadtests/home-100k/cmd/home-100k -- sync \
-  --env-root cloud_env/staging/lke \
+  --env-root cloud_env/staging/runtime \
   --brandname RTK \
   --region <linode-region> \
   --run-id <run-id>
 
 go run ./loadtests/home-100k/cmd/home-100k -- run-stages \
-  --env-root cloud_env/staging/lke \
+  --env-root cloud_env/staging/runtime \
   --brandname RTK \
   --region <linode-region> \
   --run-id <run-id>
 
 go run ./loadtests/home-100k/cmd/home-100k -- collect \
-  --env-root cloud_env/staging/lke \
+  --env-root cloud_env/staging/runtime \
   --brandname RTK \
   --region <linode-region> \
   --run-id <run-id> \
   --out-dir loadtests/home-100k/reports/<run-id>
 
 go run ./loadtests/home-100k/cmd/home-100k -- collect-server-evidence \
-  --env-root cloud_env/staging/lke \
+  --env-root cloud_env/staging/runtime \
   --brandname RTK \
   --region <linode-region> \
   --run-id <run-id>
 
 go run ./loadtests/home-100k/cmd/home-100k -- aggregate \
-  --env-root cloud_env/staging/lke \
+  --env-root cloud_env/staging/runtime \
   --brandname RTK \
   --region <linode-region> \
   --run-id <run-id> \
   --out-dir loadtests/home-100k/reports/<run-id>
 
 go run ./loadtests/home-100k/cmd/home-100k -- list-vms \
-  --env-root cloud_env/staging/lke \
+  --env-root cloud_env/staging/runtime \
   --brandname RTK \
   --region <linode-region> \
   --run-id <run-id>
 
 go run ./loadtests/home-100k/cmd/home-100k -- destroy-vms \
-  --env-root cloud_env/staging/lke \
+  --env-root cloud_env/staging/runtime \
   --brandname RTK \
   --region <linode-region> \
   --run-id <run-id> \
   --vm-state-file loadtests/home-100k/reports/<run-id>/vms.json
 
 go run ./loadtests/home-100k/cmd/home-100k -- run \
-  --env-root cloud_env/staging/lke \
+  --env-root cloud_env/staging/runtime \
   --brandname RTK \
   --region <linode-region> \
   --ephemeral-vms \

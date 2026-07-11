@@ -7,7 +7,7 @@ SERVER_PID=""
 trap 'if [[ -n "${SERVER_PID:-}" ]]; then kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true; fi; rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
-ENV_ROOT="$WORKSPACE/cloud_env/staging/lke"
+ENV_ROOT="$WORKSPACE/cloud_env/staging/runtime"
 DEVICES_DIR="$ENV_ROOT/devices/test_device"
 USERS_FILE="$ENV_ROOT/artifacts/users/rtk-users-test.json"
 FAKE_BIN="$TMP/bin"

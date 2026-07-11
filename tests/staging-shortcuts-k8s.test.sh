@@ -16,7 +16,7 @@ chmod +x "$GO_STUB"
 export STG_SHORTCUT_LOG="$LOG"
 
 RTK_CLOUD_GO="$GO_STUB" RTK_CLOUD_STAGING_ENV_ROOT="$TMP/env" "$ROOT/bin/stg.sh" provision --confirm video-cloud-staging
-grep -F 'run ./scripts/go/rtk-cloud -- provision-k8s --env-root '"$TMP/env"' --confirm video-cloud-staging' "$LOG" >/dev/null
+grep -F 'run ./scripts/go/rtk-cloud -- deployment provision --environment staging --confirm video-cloud-staging' "$LOG" >/dev/null
 
 for retired in deploy deploy-local ssh rm-vm; do
 	if RTK_CLOUD_GO="$GO_STUB" RTK_CLOUD_STAGING_ENV_ROOT="$TMP/env" "$ROOT/bin/stg.sh" "$retired" >/tmp/stg-shortcut.out 2>/tmp/stg-shortcut.err; then

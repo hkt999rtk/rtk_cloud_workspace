@@ -400,7 +400,7 @@ func collectLKECapacityPodStatuses(envRoot string) []lkeCapacityPodStatus {
 	if strings.TrimSpace(envRoot) == "" {
 		return nil
 	}
-	kubeconfig := filepath.Join(envRoot, "state", "lke-kubeconfig.yaml")
+	kubeconfig := filepath.Join(envRoot, "state", "kubeconfig.yaml")
 	if _, err := os.Stat(kubeconfig); err != nil {
 		return nil
 	}

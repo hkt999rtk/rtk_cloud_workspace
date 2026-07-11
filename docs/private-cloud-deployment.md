@@ -400,10 +400,12 @@ contract is documented in `docs/product-level-evidence.md`. Account manager, adm
 and frontend still own their service-local smoke/evidence commands; the
 workspace wrapper records them as `SKIP` until configured or implemented.
 
-The current staging path is K8s-only. Use `scripts/run-staging-e2e.sh` when a
+The current deployment architecture is K8s-only and is selected independently
+by each environment. LKE is the implemented deployment adapter; EKS and GKE
+remain fail-fast adapter contracts. Use `scripts/run-staging-e2e.sh` when a
 single full reset + provision + acceptance run is desired, and
 `scripts/setup-staging-e2e-data.sh` when only brand/users/devices/bind artifacts
-need to be rebuilt. Provisioning is split into provider adapter plus shared
+need to be rebuilt. Provisioning is split into deployment adapter plus shared
 Kubernetes runtime: `lke` handles Linode LKE cluster/kubeconfig discovery and
 creation; `k8s`, `gke`, `aks`, and `eks` are reserved fail-fast interfaces until
 their adapters are implemented and reviewed. `CLOUD_PROVIDER=linode` is retired

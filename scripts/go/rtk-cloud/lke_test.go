@@ -60,10 +60,10 @@ func TestRunProvisionLKEApplyInstallsMetricsServer(t *testing.T) {
 
 func TestRunProvisionLKEApplyFetchesKubeconfigWhenNoContext(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
-	writeTestFile(t, filepath.Join(envRoot, "state", "lke.env"), "LKE_CLUSTER_ID=12345\n")
+	writeTestFile(t, filepath.Join(envRoot, "adapters", "lke", "state.env"), "LKE_CLUSTER_ID=12345\n")
 	curlLog := fakeLinodeCurl(t, map[string]string{
 		"/lke/clusters/12345/kubeconfig": `{"kubeconfig":"` + base64.StdEncoding.EncodeToString([]byte("apiVersion: v1\nclusters: []\n")) + `"}`,
-		"/lke/clusters/12345/pools":      `{"data":[{"id":907616,"type":"g6-standard-2","count":5}]}`,
+		"/lke/clusters/12345/pools":      `{"data":[{"id":907616,"type":"g6-standard-2","count":5,"labels":{"rtk.io/node-class":"broker"}}]}`,
 	})
 	kubectlLog := fakeKubectlWithoutCurrentContext(t)
 	t.Setenv("LINODE_TOKEN", "test-token")
@@ -78,10 +78,10 @@ func TestRunProvisionLKEApplyFetchesKubeconfigWhenNoContext(t *testing.T) {
 		t.Fatalf("expected kubeconfig fetch, got:\n%s", curlCalls)
 	}
 	kubectlCalls := readTestFile(t, kubectlLog)
-	if !strings.Contains(kubectlCalls, "ARGS --kubeconfig "+filepath.Join(envRoot, "state", "lke-kubeconfig.yaml")) || !strings.Contains(kubectlCalls, "apply -f -") {
+	if !strings.Contains(kubectlCalls, "ARGS --kubeconfig "+filepath.Join(envRoot, "state", "kubeconfig.yaml")) || !strings.Contains(kubectlCalls, "apply -f -") {
 		t.Fatalf("expected kubectl to use env-root kubeconfig, got:\n%s", kubectlCalls)
 	}
-	kubeconfigInfo, err := os.Stat(filepath.Join(envRoot, "state", "lke-kubeconfig.yaml"))
+	kubeconfigInfo, err := os.Stat(filepath.Join(envRoot, "state", "kubeconfig.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestEnsureK8SKubeconfigPrefersEnvRootState(t *testing.T) {
 	t.Setenv("CLOUD_STAGING_K8S_KUBECONFIG", "")
 	t.Setenv("KUBECONFIG", "")
 	t.Setenv("LINODE_TOKEN", "")
-	envRootKubeconfig := filepath.Join(envRoot, "state", "lke-kubeconfig.yaml")
+	envRootKubeconfig := filepath.Join(envRoot, "state", "kubeconfig.yaml")
 	workspaceKubeconfig := filepath.Join(workspace, ".artifacts", "kube", "video-cloud-staging-lke.kubeconfig")
 	writeTestFile(t, envRootKubeconfig, "env-root kubeconfig\n")
 	writeTestFile(t, workspaceKubeconfig, "stale workspace kubeconfig\n")
@@ -115,7 +115,7 @@ func TestRunProvisionLKEApplyDiscoversClusterByLabel(t *testing.T) {
 	curlLog := fakeLinodeCurl(t, map[string]string{
 		"/lke/clusters?page_size=500":    `{"data":[{"id":67890,"label":"video-cloud-staging-lke","region":"us-sea"}]}`,
 		"/lke/clusters/67890/kubeconfig": `{"kubeconfig":"` + encodedKubeconfig + `"}`,
-		"/lke/clusters/67890/pools":      `{"data":[{"id":907616,"type":"g6-standard-2","count":5}]}`,
+		"/lke/clusters/67890/pools":      `{"data":[{"id":907616,"type":"g6-standard-2","count":5,"labels":{"rtk.io/node-class":"broker"}}]}`,
 	})
 	kubectlLog := fakeKubectlWithoutCurrentContext(t)
 	t.Setenv("LINODE_TOKEN", "test-token")
@@ -129,12 +129,12 @@ func TestRunProvisionLKEApplyDiscoversClusterByLabel(t *testing.T) {
 	if !strings.Contains(curlCalls, "GET /lke/clusters?page_size=500") || !strings.Contains(curlCalls, "GET /lke/clusters/67890/kubeconfig") {
 		t.Fatalf("expected cluster list and kubeconfig fetch, got:\n%s", curlCalls)
 	}
-	state := readTestFile(t, filepath.Join(envRoot, "state", "lke.env"))
+	state := readTestFile(t, filepath.Join(envRoot, "adapters", "lke", "state.env"))
 	if !strings.Contains(state, "LKE_CLUSTER_ID=67890") || !strings.Contains(state, "LKE_CLUSTER_LABEL=video-cloud-staging-lke") {
 		t.Fatalf("expected discovered cluster state, got:\n%s", state)
 	}
 	kubectlCalls := readTestFile(t, kubectlLog)
-	if !strings.Contains(kubectlCalls, "ARGS --kubeconfig "+filepath.Join(envRoot, "state", "lke-kubeconfig.yaml")) || !strings.Contains(kubectlCalls, "apply -f -") {
+	if !strings.Contains(kubectlCalls, "ARGS --kubeconfig "+filepath.Join(envRoot, "state", "kubeconfig.yaml")) || !strings.Contains(kubectlCalls, "apply -f -") {
 		t.Fatalf("expected kubectl to use fetched kubeconfig")
 	}
 }
@@ -170,7 +170,7 @@ func TestRunProvisionLKEApplyCreatesClusterWhenMissing(t *testing.T) {
 			t.Fatalf("expected %q in curl log, got:\n%s", want, curlCalls)
 		}
 	}
-	state := readTestFile(t, filepath.Join(envRoot, "state", "lke.env"))
+	state := readTestFile(t, filepath.Join(envRoot, "adapters", "lke", "state.env"))
 	if !strings.Contains(state, "LKE_CLUSTER_ID=24680") || !strings.Contains(state, "LKE_CLUSTER_VERSION=1.33") {
 		t.Fatalf("expected created cluster state, got:\n%s", state)
 	}
@@ -178,8 +178,8 @@ func TestRunProvisionLKEApplyCreatesClusterWhenMissing(t *testing.T) {
 
 func TestRunProvisionLKEApplyRecoversStaleClusterState(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
-	writeTestFile(t, filepath.Join(envRoot, "state", "lke.env"), "LKE_CLUSTER_ID=12345\nLKE_CLUSTER_LABEL=video-cloud-staging-lke\n")
-	writeTestFile(t, filepath.Join(envRoot, "state", "lke-kubeconfig.yaml"), "stale kubeconfig\n")
+	writeTestFile(t, filepath.Join(envRoot, "adapters", "lke", "state.env"), "LKE_CLUSTER_ID=12345\nLKE_CLUSTER_LABEL=video-cloud-staging-lke\n")
+	writeTestFile(t, filepath.Join(envRoot, "state", "kubeconfig.yaml"), "stale kubeconfig\n")
 	encodedKubeconfig := base64.StdEncoding.EncodeToString([]byte("apiVersion: v1\nclusters: []\n"))
 	curlLog := fakeLinodeCurl(t, map[string]string{
 		"/lke/clusters/12345/pools":        "__ERROR_404__",
@@ -211,11 +211,11 @@ func TestRunProvisionLKEApplyRecoversStaleClusterState(t *testing.T) {
 			t.Fatalf("expected %q in curl log, got:\n%s", want, curlCalls)
 		}
 	}
-	state := readTestFile(t, filepath.Join(envRoot, "state", "lke.env"))
+	state := readTestFile(t, filepath.Join(envRoot, "adapters", "lke", "state.env"))
 	if !strings.Contains(state, "LKE_CLUSTER_ID=24680") || !strings.Contains(state, "LKE_CLUSTER_VERSION=1.33") {
 		t.Fatalf("expected stale cluster state to be refreshed, got:\n%s", state)
 	}
-	kubeconfig := readTestFile(t, filepath.Join(envRoot, "state", "lke-kubeconfig.yaml"))
+	kubeconfig := readTestFile(t, filepath.Join(envRoot, "state", "kubeconfig.yaml"))
 	if strings.Contains(kubeconfig, "stale kubeconfig") {
 		t.Fatalf("expected stale kubeconfig to be overwritten, got:\n%s", kubeconfig)
 	}
@@ -246,7 +246,7 @@ func TestEnsureLKENodePoolResizesExistingPoolToDesiredCount(t *testing.T) {
 		"/lke/clusters/12345/pools":        `{"data":[{"id":907616,"type":"g6-standard-2","count":3}]}`,
 		"/lke/clusters/12345/pools/907616": `{"id":907616,"type":"g6-standard-2","count":4}`,
 	})
-	writeTestFile(t, filepath.Join(envRoot, "state", "lke.env"), "LKE_CLUSTER_ID=12345\n")
+	writeTestFile(t, filepath.Join(envRoot, "adapters", "lke", "state.env"), "LKE_CLUSTER_ID=12345\n")
 	t.Setenv("LINODE_TOKEN", "test-token")
 
 	err := ensureLKENodePool(provisionPaths{Workspace: workspace, EnvRoot: envRoot}, map[string]string{
@@ -2047,8 +2047,8 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 
 	postgres := lkePostgresStatefulSetManifest(env)
 	for _, want := range []string{
-		`rtk.realtek.com/workload: "postgres"`,
-		`value: "postgres"`,
+		`rtk.io/node-class: "database"`,
+		`value: "database"`,
 		`cpu: "1"`,
 		`memory: "2Gi"`,
 		`memory: "4Gi"`,
@@ -2152,7 +2152,7 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 		"replicas: 4",
 		"podManagementPolicy: Parallel",
 		"updateStrategy:",
-		`lke.linode.com/pool-id: "906225"`,
+		`rtk.io/node-class: "broker"`,
 		"fieldPath: metadata.name",
 		"EMQX_NODE__NAME",
 		`value: "emqx@$(POD_NAME).mqtt-headless.video-cloud-staging-video-cloud.svc.cluster.local"`,
@@ -2207,14 +2207,14 @@ func TestLKEPostgresDedicatedNodePoolDefaultsFor100K(t *testing.T) {
 		t.Fatalf("postgres node pool label = %v, want postgres", got)
 	}
 	labels, ok := payload["labels"].(map[string]string)
-	if !ok || labels["rtk.realtek.com/workload"] != "postgres" {
+	if !ok || labels["rtk.io/node-class"] != "database" {
 		t.Fatalf("postgres node pool labels = %#v", payload["labels"])
 	}
 	taints, ok := payload["taints"].([]map[string]string)
 	if !ok || len(taints) != 1 {
 		t.Fatalf("postgres node pool taints = %#v", payload["taints"])
 	}
-	if taints[0]["key"] != "rtk.realtek.com/workload" || taints[0]["value"] != "postgres" || taints[0]["effect"] != "NoSchedule" {
+	if taints[0]["key"] != "rtk.io/node-class" || taints[0]["value"] != "database" || taints[0]["effect"] != "NoSchedule" {
 		t.Fatalf("postgres node pool taint = %#v", taints[0])
 	}
 }
@@ -2226,11 +2226,11 @@ func TestLKENodePoolHasPostgresPlacement(t *testing.T) {
 		Count: 1,
 		Label: "postgres",
 		Labels: map[string]string{
-			"rtk.realtek.com/workload": "postgres",
+			"rtk.io/node-class": "database",
 		},
 		Taints: []lkeNodePoolTaint{{
-			Key:    "rtk.realtek.com/workload",
-			Value:  "postgres",
+			Key:    "rtk.io/node-class",
+			Value:  "database",
 			Effect: "NoSchedule",
 		}},
 	}
@@ -2248,7 +2248,7 @@ func TestLKEPostgresPlacementUsesWorkloadSelector(t *testing.T) {
 		"LKE_POSTGRES_NODE_POOL_ID": "918100",
 	})
 	for _, want := range []string{
-		`rtk.realtek.com/workload: "postgres"`,
+		`rtk.io/node-class: "database"`,
 		`effect: "NoSchedule"`,
 	} {
 		if !strings.Contains(manifest, want) {
@@ -2263,7 +2263,7 @@ func TestLKEPostgresPlacementUsesWorkloadSelector(t *testing.T) {
 func TestEnsureLKEPostgresNodePoolCreatesReplacementForImmutableTypeChange(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	curlLog := fakeLinodeCurl(t, map[string]string{
-		"/lke/clusters/12345/pools": `{"id":918100,"type":"g6-standard-8","count":1,"label":"postgres","labels":{"rtk.realtek.com/workload":"postgres"},"taints":[{"key":"rtk.realtek.com/workload","value":"postgres","effect":"NoSchedule"}]}`,
+		"/lke/clusters/12345/pools": `{"id":918100,"type":"g6-standard-8","count":1,"label":"postgres","labels":{"rtk.io/node-class":"database"},"taints":[{"key":"rtk.io/node-class","value":"database","effect":"NoSchedule"}]}`,
 	})
 	t.Setenv("LINODE_TOKEN", "test-token")
 	env := map[string]string{
@@ -2277,11 +2277,11 @@ func TestEnsureLKEPostgresNodePoolCreatesReplacementForImmutableTypeChange(t *te
 		Count: 1,
 		Label: "postgres",
 		Labels: map[string]string{
-			"rtk.realtek.com/workload": "postgres",
+			"rtk.io/node-class": "database",
 		},
 		Taints: []lkeNodePoolTaint{{
-			Key:    "rtk.realtek.com/workload",
-			Value:  "postgres",
+			Key:    "rtk.io/node-class",
+			Value:  "database",
 			Effect: "NoSchedule",
 		}},
 	}}
@@ -2300,9 +2300,9 @@ func TestEnsureLKEPostgresNodePoolCreatesReplacementForImmutableTypeChange(t *te
 	if got := env["LKE_POSTGRES_NODE_POOL_ID"]; got != "918100" {
 		t.Fatalf("postgres pool id = %s, want replacement id 918100", got)
 	}
-	stackEnv := readTestFile(t, filepath.Join(envRoot, "env", "stack.env"))
-	if !strings.Contains(stackEnv, "LKE_POSTGRES_NODE_POOL_ID=918100") {
-		t.Fatalf("expected replacement pool id persisted, got:\n%s", stackEnv)
+	adapterState := readTestFile(t, filepath.Join(envRoot, "adapters", "lke", "state.env"))
+	if !strings.Contains(adapterState, "LKE_POSTGRES_NODE_POOL_ID=918100") {
+		t.Fatalf("expected replacement pool id persisted in adapter state, got:\n%s", adapterState)
 	}
 }
 
@@ -2323,11 +2323,11 @@ func TestEnsureLKEPostgresNodePoolFallsBackFromStaleIDAndPrunesDuplicates(t *tes
 			Count: 1,
 			Label: "postgres",
 			Labels: map[string]string{
-				"rtk.realtek.com/workload": "postgres",
+				"rtk.io/node-class": "database",
 			},
 			Taints: []lkeNodePoolTaint{{
-				Key:    "rtk.realtek.com/workload",
-				Value:  "postgres",
+				Key:    "rtk.io/node-class",
+				Value:  "database",
 				Effect: "NoSchedule",
 			}},
 		},
@@ -2337,11 +2337,11 @@ func TestEnsureLKEPostgresNodePoolFallsBackFromStaleIDAndPrunesDuplicates(t *tes
 			Count: 1,
 			Label: "postgres",
 			Labels: map[string]string{
-				"rtk.realtek.com/workload": "postgres",
+				"rtk.io/node-class": "database",
 			},
 			Taints: []lkeNodePoolTaint{{
-				Key:    "rtk.realtek.com/workload",
-				Value:  "postgres",
+				Key:    "rtk.io/node-class",
+				Value:  "database",
 				Effect: "NoSchedule",
 			}},
 		},
@@ -2361,9 +2361,9 @@ func TestEnsureLKEPostgresNodePoolFallsBackFromStaleIDAndPrunesDuplicates(t *tes
 	if got := env["LKE_POSTGRES_NODE_POOL_ID"]; got != "918802" {
 		t.Fatalf("postgres pool id = %s, want 918802", got)
 	}
-	stackEnv := readTestFile(t, filepath.Join(envRoot, "env", "stack.env"))
-	if !strings.Contains(stackEnv, "LKE_POSTGRES_NODE_POOL_ID=918802") {
-		t.Fatalf("expected fallback pool id persisted, got:\n%s", stackEnv)
+	adapterState := readTestFile(t, filepath.Join(envRoot, "adapters", "lke", "state.env"))
+	if !strings.Contains(adapterState, "LKE_POSTGRES_NODE_POOL_ID=918802") {
+		t.Fatalf("expected fallback pool id persisted in adapter state, got:\n%s", adapterState)
 	}
 }
 
@@ -3328,7 +3328,7 @@ func TestRunRemoveAllLKEDoesNotCreateMissingCluster(t *testing.T) {
 	if strings.Contains(curlCalls, "POST /lke/clusters") {
 		t.Fatalf("remove should not create LKE clusters, got:\n%s", curlCalls)
 	}
-	if _, err := os.Stat(filepath.Join(envRoot, "state", "lke.env")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(envRoot, "adapters", "lke", "state.env")); !os.IsNotExist(err) {
 		t.Fatalf("remove should not create LKE state when cluster is missing, stat err=%v", err)
 	}
 }
@@ -3623,7 +3623,7 @@ printf '\n' >> "`+childLog+`"
 func TestStartK8SE2EPortForwardsStartsAllBeforeWaiting(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	kubectlLog := fakeKubectlForK8SE2EPortForwards(t)
-	writeTestFile(t, filepath.Join(envRoot, "state", "lke-kubeconfig.yaml"), "apiVersion: v1\n")
+	writeTestFile(t, filepath.Join(envRoot, "state", "kubeconfig.yaml"), "apiVersion: v1\n")
 	accountPort := freeTCPPort(t)
 	videoPort := freeTCPPort(t)
 	factoryPort := freeTCPPort(t)
@@ -3663,7 +3663,7 @@ func TestRunStagingE2EDataSetupForLKEStartsPortForwards(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	kubectlLog := fakeKubectlForK8SE2EPortForwards(t)
 	commandLog := filepath.Join(t.TempDir(), "commands.log")
-	writeTestFile(t, filepath.Join(envRoot, "state", "lke-kubeconfig.yaml"), "apiVersion: v1\n")
+	writeTestFile(t, filepath.Join(envRoot, "state", "kubeconfig.yaml"), "apiVersion: v1\n")
 	t.Setenv("CLOUD_PROVIDER", "lke")
 	t.Setenv("CLOUD_STAGING_E2E_ACCOUNT_MANAGER_PORT", freeTCPPort(t))
 	t.Setenv("CLOUD_STAGING_E2E_VIDEO_CLOUD_PORT", freeTCPPort(t))
@@ -3709,7 +3709,7 @@ func TestRunStagingE2EDataSetupForLKESupportsMultipleFactoryPortForwards(t *test
 	workspace, envRoot := makeLKETestEnv(t)
 	kubectlLog := fakeKubectlForK8SE2EPortForwards(t)
 	commandLog := filepath.Join(t.TempDir(), "commands.log")
-	writeTestFile(t, filepath.Join(envRoot, "state", "lke-kubeconfig.yaml"), "apiVersion: v1\n")
+	writeTestFile(t, filepath.Join(envRoot, "state", "kubeconfig.yaml"), "apiVersion: v1\n")
 	factoryPort1 := freeTCPPort(t)
 	factoryPort2 := freeTCPPort(t)
 	t.Setenv("CLOUD_PROVIDER", "lke")

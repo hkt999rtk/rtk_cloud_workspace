@@ -10,7 +10,26 @@ keys/
 .secrets/
 .secrets.backup
 .secrets.backup/
-cloud_env/
+cloud_env/*
+!cloud_env/dev/
+!cloud_env/staging/
+!cloud_env/prod/
+cloud_env/dev/*
+cloud_env/staging/*
+cloud_env/prod/*
+!cloud_env/dev/environment.env
+!cloud_env/dev/deployment.env
+!cloud_env/dev/overrides/
+!cloud_env/dev/overrides/*.env
+!cloud_env/staging/environment.env
+!cloud_env/staging/deployment.env
+!cloud_env/staging/overrides/
+!cloud_env/staging/overrides/*.env
+!cloud_env/prod/environment.env
+!cloud_env/prod/deployment.env
+!cloud_env/prod/overrides/
+!cloud_env/prod/overrides/*.env
+cloud_env/*/runtime/
 
 # Local deploy/provision outputs.
 output/

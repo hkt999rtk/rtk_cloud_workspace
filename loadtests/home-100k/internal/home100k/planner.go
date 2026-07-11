@@ -15,7 +15,7 @@ const (
 	DefaultDevicesPerVM              = DefaultLoadGeneratorDevicesPerVM
 	DefaultVMCount                   = 5
 	DefaultUserShards                = DefaultVMCount
-	DefaultServerTarget              = "staging/lke"
+	DefaultServerTarget              = "environment"
 	DefaultLoadGeneratorRun          = "ephemeral-linode-vm"
 	DefaultRunnerNofile              = 1048576
 	DefaultDeviceSession             = "lifetime-subscription"

@@ -13,7 +13,7 @@ func TestResolveAndPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectedDefault := filepath.Join(workspace, "cloud_env", "staging", "lke")
+	expectedDefault := filepath.Join(workspace, "cloud_env", "staging", "runtime")
 	if defaultRoot != expectedDefault {
 		t.Fatalf("default root got %s want %s", defaultRoot, expectedDefault)
 	}
@@ -29,16 +29,11 @@ func TestResolveAndPaths(t *testing.T) {
 		t.Fatalf("override got %s want %s", override, custom)
 	}
 	staging := filepath.Join(workspace, "cloud_env", "staging")
-	if err := os.MkdirAll(filepath.Join(staging, "lke", "services"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	mkdir(t, filepath.Join(staging, "lke", "env"))
-	write(t, filepath.Join(staging, "lke", "env", "stack.env"), "CLOUD_PROVIDER=lke\n")
 	stagingRoot, err := Resolve(workspace, staging)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stagingRoot != filepath.Join(staging, "lke") {
+	if stagingRoot != filepath.Join(staging, "runtime") {
 		t.Fatalf("staging root got %s", stagingRoot)
 	}
 	paths := NewPaths(defaultRoot)
@@ -56,28 +51,20 @@ func TestResolveAndPaths(t *testing.T) {
 	}
 }
 
-func TestResolveStagingRootUsesLKEProvider(t *testing.T) {
+func TestResolveStagingRootUsesNormalizedRuntime(t *testing.T) {
 	workspace := t.TempDir()
 	staging := filepath.Join(workspace, "cloud_env", "staging")
-	mkdir(t, filepath.Join(staging, "lke", "env"))
-	write(t, filepath.Join(staging, "lke", "env", "stack.env"), `CLOUD_PROVIDER=lke
-`)
-
 	root, err := Resolve(workspace, staging)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if root != filepath.Join(staging, "lke") {
+	if root != filepath.Join(staging, "runtime") {
 		t.Fatalf("staging root got %s", root)
 	}
 
-	t.Setenv("CLOUD_PROVIDER", "gke")
-	root, err = Resolve(workspace, staging)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if root != filepath.Join(staging, "gke") {
-		t.Fatalf("env override root got %s", root)
+	_, err = Resolve(workspace, filepath.Join(staging, "lke"))
+	if err == nil || !strings.Contains(err.Error(), "legacy provider env-root") {
+		t.Fatalf("expected legacy root error, got %v", err)
 	}
 }
 

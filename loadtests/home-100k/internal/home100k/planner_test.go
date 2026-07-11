@@ -7,7 +7,7 @@ import (
 
 func TestDefaultPlanResolves100KHomeBaseline(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:   "cloud_env/staging/lke",
+		EnvRoot:   "cloud_env/staging/runtime",
 		Brandname: "RTK",
 		Region:    "us-sea",
 	})
@@ -103,7 +103,7 @@ func TestDefaultPlanResolves100KHomeBaseline(t *testing.T) {
 
 func TestVideo1KPlanUsesVideoPilotDeviceMix(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:         "cloud_env/staging/lke",
+		EnvRoot:         "cloud_env/staging/runtime",
 		Brandname:       "RTK",
 		Region:          "us-sea",
 		ScenarioProfile: Video1KScenarioProfile,
@@ -126,7 +126,7 @@ func TestVideo1KPlanUsesVideoPilotDeviceMix(t *testing.T) {
 
 func TestVideo100KTurnPlanUsesSingleRampAndViewerLadder(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:         "cloud_env/staging/lke",
+		EnvRoot:         "cloud_env/staging/runtime",
 		Brandname:       "RTK",
 		Region:          "us-sea",
 		ScenarioProfile: Video100KTurnScenarioProfile,
@@ -162,7 +162,7 @@ func TestVideo100KTurnPlanUsesSingleRampAndViewerLadder(t *testing.T) {
 
 func TestPlanCanAddVideoOnlyGeneratorAssignments(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:                   "cloud_env/staging/lke",
+		EnvRoot:                   "cloud_env/staging/runtime",
 		Brandname:                 "RTK",
 		Region:                    "us-sea",
 		DeviceCount:               20000,
@@ -196,7 +196,7 @@ func TestPlanCanAddVideoOnlyGeneratorAssignments(t *testing.T) {
 
 func TestVideo100KTurnBrandPlanUsesPreparedInventoryMix(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:         "cloud_env/staging/lke",
+		EnvRoot:         "cloud_env/staging/runtime",
 		Brandname:       "RTK",
 		BrandPlanFile:   "../../scenarios/brand-plan-100k.json",
 		Region:          "us-sea",
@@ -224,7 +224,7 @@ func TestVideo100KTurnBrandPlanUsesPreparedInventoryMix(t *testing.T) {
 
 func TestVideo50KTurnPlanUsesSingleRampAndViewerLadder(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:         "cloud_env/staging/lke",
+		EnvRoot:         "cloud_env/staging/runtime",
 		Brandname:       "RTK",
 		Region:          "us-sea",
 		ScenarioProfile: Video50KTurnScenarioProfile,
@@ -260,7 +260,7 @@ func TestVideo50KTurnPlanUsesSingleRampAndViewerLadder(t *testing.T) {
 
 func TestDefaultPlanIncludesDiverseDeviceAndUserProfiles(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:     "cloud_env/staging/lke",
+		EnvRoot:     "cloud_env/staging/runtime",
 		Brandname:   "RTK",
 		Region:      "us-sea",
 		DeviceCount: 37,
@@ -295,7 +295,7 @@ func TestDefaultPlanIncludesDiverseDeviceAndUserProfiles(t *testing.T) {
 
 func TestDefaultPlanCreatesDeterministicShardsAndStages(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:   "cloud_env/staging/lke",
+		EnvRoot:   "cloud_env/staging/runtime",
 		Brandname: "RTK",
 		Region:    "us-sea",
 	})
@@ -358,7 +358,7 @@ func TestDefaultPlanCreatesDeterministicShardsAndStages(t *testing.T) {
 
 func TestPlanUsesConfiguredVMLabelPrefix(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:       "cloud_env/staging/lke",
+		EnvRoot:       "cloud_env/staging/runtime",
 		Brandname:     "RTK",
 		Region:        "us-sea",
 		VMLabelPrefix: "loadgen",
@@ -380,7 +380,7 @@ func TestPlanUsesConfiguredVMLabelPrefix(t *testing.T) {
 
 func TestPlanDefaultLoadWindowIsTenMinutes(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:   "cloud_env/staging/lke",
+		EnvRoot:   "cloud_env/staging/runtime",
 		Brandname: "RTK",
 		Region:    "us-sea",
 	})
@@ -411,7 +411,7 @@ func TestPlanDefaultLoadWindowIsTenMinutes(t *testing.T) {
 
 func TestPlanUsesConfiguredDeviceCount(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:     "cloud_env/staging/lke",
+		EnvRoot:     "cloud_env/staging/runtime",
 		Brandname:   "RTK",
 		Region:      "us-sea",
 		DeviceCount: 9000,
@@ -479,7 +479,7 @@ func TestPlanUsesConfiguredDeviceCount(t *testing.T) {
 
 func TestPlanHonorsExplicitVMCountWithinGeneratorCapacity(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:     "cloud_env/staging/lke",
+		EnvRoot:     "cloud_env/staging/runtime",
 		Brandname:   "RTK",
 		Region:      "us-sea",
 		DeviceCount: 9000,
@@ -506,7 +506,7 @@ func TestPlanHonorsExplicitVMCountWithinGeneratorCapacity(t *testing.T) {
 
 func TestPlanUsesConfiguredLoadGeneratorDevicesPerVM(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:                   "cloud_env/staging/lke",
+		EnvRoot:                   "cloud_env/staging/runtime",
 		Brandname:                 "RTK",
 		Region:                    "us-sea",
 		DeviceCount:               100000,
@@ -547,7 +547,7 @@ func TestPlanUsesConfiguredLoadGeneratorDevicesPerVM(t *testing.T) {
 
 func TestPlanRejectsExplicitVMCountBelowGeneratorCapacity(t *testing.T) {
 	_, err := NewPlan(PlanOptions{
-		EnvRoot:     "cloud_env/staging/lke",
+		EnvRoot:     "cloud_env/staging/runtime",
 		Brandname:   "RTK",
 		Region:      "us-sea",
 		DeviceCount: 100000,
@@ -563,7 +563,7 @@ func TestPlanRejectsExplicitVMCountBelowGeneratorCapacity(t *testing.T) {
 
 func TestPlanUsesConfiguredStageDurations(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:       "cloud_env/staging/lke",
+		EnvRoot:       "cloud_env/staging/runtime",
 		Brandname:     "RTK",
 		Region:        "us-sea",
 		StageWarmUp:   "1m",
@@ -583,7 +583,7 @@ func TestPlanUsesConfiguredStageDurations(t *testing.T) {
 
 func TestDefaultPlanWorkflowIncludesAggregationBeforeCleanup(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:   "cloud_env/staging/lke",
+		EnvRoot:   "cloud_env/staging/runtime",
 		Brandname: "RTK",
 		Region:    "us-sea",
 	})
@@ -604,7 +604,7 @@ func TestDefaultPlanWorkflowIncludesAggregationBeforeCleanup(t *testing.T) {
 
 func TestDefaultPlanArtifactsMatchCollectedRunLayout(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:   "cloud_env/staging/lke",
+		EnvRoot:   "cloud_env/staging/runtime",
 		Brandname: "RTK",
 		Region:    "us-sea",
 	})
@@ -627,10 +627,10 @@ func TestPlanRequiresReviewCriticalInputs(t *testing.T) {
 	if _, err := NewPlan(PlanOptions{Brandname: "RTK", Region: "us-sea"}); err == nil {
 		t.Fatal("NewPlan() without env root succeeded, want error")
 	}
-	if _, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Region: "us-sea"}); err == nil {
+	if _, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/runtime", Region: "us-sea"}); err == nil {
 		t.Fatal("NewPlan() without brandname succeeded, want error")
 	}
-	if _, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK"}); err == nil {
+	if _, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/runtime", Brandname: "RTK"}); err == nil {
 		t.Fatal("NewPlan() without region succeeded, want error")
 	}
 }

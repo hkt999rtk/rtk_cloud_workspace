@@ -1,6 +1,6 @@
 {
   "conditions": {
-    "env_root": "cloud_env/staging/lke",
+    "env_root": "cloud_env/staging/runtime",
     "brandname": "RTK",
     "region": "us-sea",
     "devices": 100000,

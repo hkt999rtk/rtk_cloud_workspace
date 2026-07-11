@@ -1,4 +1,4 @@
-# Linode Kubernetes Engine Runtime Inventory
+# LKE Deployment Adapter Inventory
 
 Status: current K8s/LKE staging runtime with production hardening gates.
 
@@ -9,8 +9,9 @@ Last reviewed: 2026-06-14.
 ## Purpose
 
 This document is the source-of-truth inventory and gate checklist for the
-current Linode Kubernetes Engine (LKE) staging runtime and the remaining
-production hardening work. The old Linode VM deployment model is retained only
+reusable Linode Kubernetes Engine (LKE) deployment adapter and the remaining
+production hardening work. Provider-neutral architecture and environment
+contracts live in `docs/cloud-deployment-architecture.md`. The old Linode VM deployment model is retained only
 as legacy migration context. This document does not define production
 Kubernetes manifests, Helm charts, Dockerfiles, or CI/CD deployment pipelines.
 Those implementation artifacts are blocked until the gates in this document are

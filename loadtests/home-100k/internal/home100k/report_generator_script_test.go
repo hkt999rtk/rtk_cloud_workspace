@@ -17,7 +17,7 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 	script := filepath.Clean(filepath.Join(wd, "..", "..", "scripts", "generate-report.sh"))
 	outDir := t.TempDir()
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:   "cloud_env/staging/lke",
+		EnvRoot:   "cloud_env/staging/runtime",
 		Brandname: "RTK",
 		Region:    "us-sea",
 	})
@@ -269,7 +269,7 @@ func TestGenerateReportScriptRendersVideoEvidence(t *testing.T) {
 	script := filepath.Clean(filepath.Join(wd, "..", "..", "scripts", "generate-report.sh"))
 	outDir := t.TempDir()
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:         "cloud_env/staging/lke",
+		EnvRoot:         "cloud_env/staging/runtime",
 		Brandname:       "RTK",
 		Region:          "us-sea",
 		ScenarioProfile: "video-1k-v1",

@@ -6,7 +6,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
-ENV_ROOT="$WORKSPACE/cloud_env/staging/lke"
+ENV_ROOT="$WORKSPACE/cloud_env/staging/runtime"
 USERS_FILE="$ENV_ROOT/artifacts/users/rtk-users-test.json"
 BIND_DIR="$ENV_ROOT/artifacts/device-bind"
 BIND_ARTIFACT="$BIND_DIR/rtk-device-bind-test.json"
@@ -21,7 +21,7 @@ mkdir -p \
 	"$BIND_DIR"
 
 cat > "$ENV_ROOT/services/account-manager/account-manager-public-staging.env" <<'EOF_ENV'
-ACCOUNT_MANAGER_LINODE_DOMAIN=account-manager.video-cloud-staging.example.com
+ACCOUNT_MANAGER_DOMAIN=account-manager.video-cloud-staging.example.com
 EOF_ENV
 
 cat > "$ENV_ROOT/state/account-manager-staging.env" <<'EOF_STATE'
@@ -125,6 +125,15 @@ fi
 SH
 chmod +x "$FAKE_BIN/curl"
 
+CONTROL_FILE="$TMP/mock-control.env"
+: > "$CONTROL_FILE"
+PORT=$((20000 + RANDOM % 20000))
+FAKE_CURL_LOG="$CURL_LOG" python3 "$ROOT/tests/helpers/curl_mock_http_server.py" "$PORT" "$FAKE_BIN/curl" "$CONTROL_FILE" &
+SERVER_PID=$!
+trap 'kill "$SERVER_PID" 2>/dev/null || true; rm -rf "$TMP"' EXIT
+export ACCOUNT_MANAGER_BASE_URL="http://127.0.0.1:$PORT"
+sleep 0.2
+
 if PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- unprovision-devices \
 	--workspace "$WORKSPACE" \
 	--brandname RTK \
@@ -155,6 +164,7 @@ PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" "/usr/local/go/bin/go" run "$RO
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--brandname RTK \
+	--bind-artifact "$BIND_ARTIFACT" \
 	--dry-run >"$DEFAULT_DRY_RUN"
 jq -e '.action == "dry_run" and .brandname == "RTK" and .count == 3' "$DEFAULT_DRY_RUN" >/dev/null
 jq -e --arg bind "$BIND_ARTIFACT" '.bind_artifact == $bind' "$DEFAULT_DRY_RUN" >/dev/null
@@ -184,6 +194,7 @@ jq -e '.assignments[1].service_options == ["mqtt"]' "$ARTIFACT" >/dev/null
 jq -e '.reason == "user_resale_factory_ready"' "$CURL_LOG/unprovision-account-device-load-device-0001.json" >/dev/null
 
 NESTED_OUT="$TMP/nested-out.json"
+printf 'FAKE_UNPROVISION_NESTED_NOT_FOUND=1\n' > "$CONTROL_FILE"
 PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_UNPROVISION_NESTED_NOT_FOUND=1 "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- unprovision-devices \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
@@ -192,6 +203,7 @@ PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_UNPROVISION_NESTED_NOT_FOU
 	--count 1 >"$NESTED_OUT"
 jq -e '.action == "unprovisioned" and .brandname == "RTK" and .count == 1 and .unprovisioned == 1' "$NESTED_OUT" >/dev/null
 
+printf 'FAKE_UNPROVISION_FAIL=1\n' > "$CONTROL_FILE"
 if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_UNPROVISION_FAIL=1 "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- unprovision-devices \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
@@ -203,6 +215,7 @@ if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_UNPROVISION_FAIL=1 "/us
 fi
 grep -F 'unprovision failed' "$TMP/fail.err" >/dev/null
 
+printf 'FAKE_UNPROVISION_ROUTE_MISSING=1\n' > "$CONTROL_FILE"
 if PATH="$FAKE_BIN:$PATH" FAKE_CURL_LOG="$CURL_LOG" FAKE_UNPROVISION_ROUTE_MISSING=1 "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- unprovision-devices \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \

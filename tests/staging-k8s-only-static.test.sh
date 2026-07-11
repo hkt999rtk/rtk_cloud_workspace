@@ -33,6 +33,20 @@ for path in "${active_paths[@]}"; do
 	fi
 done
 
+if rg -n -- 'LKE_|EKS_|GKE_|lke\.linode\.com/pool-id' "$ROOT/cloud_deploy/architectures" >/tmp/staging-k8s-static.out; then
+	cat /tmp/staging-k8s-static.out >&2
+	echo "provider-neutral architecture must not contain adapter keys or provider labels" >&2
+	exit 1
+fi
+
+if rg -n --glob '!**/*_test.go' -- 'LKE_|lke\.linode\.com/pool-id' \
+	"$ROOT/loadtests/home-100k/scripts/home-100k.sh" \
+	"$ROOT/loadtests/home-100k/internal/home100k" >/tmp/staging-k8s-static.out; then
+	cat /tmp/staging-k8s-static.out >&2
+	echo "load-test runtime must consume normalized environment state, not LKE internals" >&2
+	exit 1
+fi
+
 if rg -n -- 'ACCOUNT_MANAGER_LINODE_|ADMIN_LINODE_|CLOUD_LOGGER_LINODE_|provision-public-vm|deploy-public-vm|provision-admin-vm|deploy-admin|linode-deploy deploy|deploy-staging\.sh --local-build' \
 	"$ROOT/scripts/go/rtk-cloud/internal/envroot" \
 	"$ROOT/scripts/go/rtk-cloud/logs_check.go" \

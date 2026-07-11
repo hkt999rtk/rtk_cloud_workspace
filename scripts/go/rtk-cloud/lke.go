@@ -67,7 +67,7 @@ var inspectLKEImage = func(image string) error {
 func runLKEBuildImages(args []string) error {
 	fs := flag.NewFlagSet("lke-build-images", flag.ContinueOnError)
 	workspace := fs.String("workspace", ".", "workspace root")
-	envRoot := fs.String("env-root", "cloud_env/staging", "environment root; provider-aware roots may resolve to cloud_env/staging/lke")
+	envRoot := fs.String("env-root", "cloud_env/staging/runtime", "normalized environment runtime root")
 	registryFlag := fs.String("registry", "", "container image registry/repository prefix, for example ghcr.io/org/repo/lke")
 	tagFlag := fs.String("tag", "", "container image tag")
 	workloadsFlag := fs.String("workloads", "postgres", "comma-separated workload keys to build, or all")
@@ -217,7 +217,7 @@ func selectLKEBuildImageWorkloads(workloads []lkeWorkload, raw string) ([]lkeWor
 func runLKEResolveImages(args []string) error {
 	fs := flag.NewFlagSet("lke-resolve-images", flag.ContinueOnError)
 	workspace := fs.String("workspace", ".", "workspace root")
-	envRoot := fs.String("env-root", "cloud_env/staging", "environment root; provider-aware roots may resolve to cloud_env/staging/lke")
+	envRoot := fs.String("env-root", "cloud_env/staging/runtime", "normalized environment runtime root")
 	registryHost := fs.String("registry-host", "ghcr.io", "container registry host")
 	owner := fs.String("owner", "hkt999rtk", "container registry owner or organization")
 	out := fs.String("out", "", "write image manifest JSON to this path")
@@ -2468,6 +2468,9 @@ func lkeWaitForRollouts(targets []lkeRolloutTarget) error {
 }
 
 func writeLKECompatibilityArtifacts(paths provisionPaths, env map[string]string) error {
+	if env["DEPLOYMENT_ARCHITECTURE"] != "" {
+		return nil
+	}
 	if err := os.MkdirAll(filepath.Join(paths.EnvRoot, "env"), 0o755); err != nil {
 		return err
 	}
@@ -2719,16 +2722,15 @@ spec:
 }
 
 func lkePostgresPlacementManifest(env map[string]string) string {
-	poolID := firstNonEmpty(os.Getenv("LKE_POSTGRES_NODE_POOL_ID"), env["LKE_POSTGRES_NODE_POOL_ID"])
-	if poolID == "" {
+	if firstNonEmpty(os.Getenv("LKE_POSTGRES_NODE_POOL_ID"), env["LKE_POSTGRES_NODE_POOL_ID"]) == "" {
 		return ""
 	}
 	return `      nodeSelector:
-        rtk.realtek.com/workload: "postgres"
+        rtk.io/node-class: "database"
       tolerations:
-        - key: "rtk.realtek.com/workload"
+        - key: "rtk.io/node-class"
           operator: "Equal"
-          value: "postgres"
+          value: "database"
           effect: "NoSchedule"
 `
 }
@@ -3141,7 +3143,7 @@ func newLKEOpenBaoTLSMaterial(env map[string]string) (lkeOpenBaoTLSMaterial, err
 }
 
 func loadOrCreateLKEOpenBaoTLSMaterial(paths provisionPaths, env map[string]string) (lkeOpenBaoTLSMaterial, error) {
-	stateDir := filepath.Join(paths.EnvRoot, "state", "openbao")
+	stateDir := firstNonEmpty(os.Getenv("RTK_CLOUD_OPENBAO_STATE_DIR"), filepath.Join(paths.EnvRoot, "state", "openbao"))
 	caPath := filepath.Join(stateDir, "tls-ca.crt")
 	certPath := filepath.Join(stateDir, "tls.crt")
 	keyPath := filepath.Join(stateDir, "tls.key")
@@ -3515,7 +3517,7 @@ func lkeBootstrapOpenBao(paths provisionPaths, env map[string]string) (lkeOpenBa
 	if err != nil {
 		return lkeOpenBaoBootstrapResult{}, err
 	}
-	stateDir := filepath.Join(paths.EnvRoot, "state", "openbao")
+	stateDir := firstNonEmpty(os.Getenv("RTK_CLOUD_OPENBAO_STATE_DIR"), filepath.Join(paths.EnvRoot, "state", "openbao"))
 	if !status.Initialized {
 		if err := os.MkdirAll(stateDir, 0o700); err != nil {
 			return lkeOpenBaoBootstrapResult{}, err
@@ -4330,12 +4332,9 @@ func lkeMQTTPlacementManifest(env map[string]string) string {
                 matchLabels:
                   app.kubernetes.io/name: mqtt
 `)
-	poolID := firstNonEmpty(os.Getenv("LKE_MQTT_NODE_POOL_ID"), env["LKE_MQTT_NODE_POOL_ID"])
-	if poolID != "" {
-		fmt.Fprintf(&b, `      nodeSelector:
-        lke.linode.com/pool-id: %q
-`, poolID)
-	}
+	fmt.Fprint(&b, `      nodeSelector:
+        rtk.io/node-class: "broker"
+`)
 	return b.String()
 }
 
@@ -6443,7 +6442,7 @@ func ensureLKEKubeAccess(paths provisionPaths, env map[string]string, allowCreat
 		fmt.Fprintf(os.Stderr, "[lke] kubeconfig: %s\n", kubeconfig)
 		return nil
 	}
-	stateKubeconfig := filepath.Join(paths.EnvRoot, "state", "lke-kubeconfig.yaml")
+	stateKubeconfig := filepath.Join(paths.EnvRoot, "state", "kubeconfig.yaml")
 	if _, statErr := os.Stat(stateKubeconfig); statErr == nil {
 		_ = os.Setenv("RTK_CLOUD_LKE_KUBECONFIG", stateKubeconfig)
 		fmt.Fprintf(os.Stderr, "[lke] kubeconfig: %s\n", stateKubeconfig)
@@ -6507,7 +6506,7 @@ func lkeClusterID(paths provisionPaths, env map[string]string) string {
 	return firstNonEmpty(
 		os.Getenv("LKE_CLUSTER_ID"),
 		env["LKE_CLUSTER_ID"],
-		envFileValue(filepath.Join(paths.EnvRoot, "state", "lke.env"), "LKE_CLUSTER_ID"),
+		envFileValue(filepath.Join(paths.EnvRoot, "adapters", "lke", "state.env"), "LKE_CLUSTER_ID"),
 		envFileValue(filepath.Join(paths.EnvRoot, "env", "stack.env"), "LKE_CLUSTER_ID"),
 	)
 }
@@ -6586,7 +6585,7 @@ func createLKECluster(token string, env map[string]string) (lkeCluster, error) {
 		return lkeCluster{}, err
 	}
 	nodePools := []map[string]any{
-		{"type": nodeType, "count": nodeCount},
+		{"type": nodeType, "count": nodeCount, "labels": map[string]string{"rtk.io/node-class": "broker"}},
 	}
 	if lkePostgresDedicatedNodePoolEnabled(env) {
 		nodePools = append(nodePools, lkePostgresNodePoolPayload(env))
@@ -6662,18 +6661,25 @@ func ensureLKENodePool(paths provisionPaths, env map[string]string) error {
 	if len(pools) == 0 {
 		return fmt.Errorf("LKE cluster %s has no node pools", clusterID)
 	}
+	if err := ensureLKEGeneralNodePool(env, token, clusterID, pools); err != nil {
+		return err
+	}
+	pools, err = listLKENodePools(token, clusterID)
+	if err != nil {
+		return err
+	}
 	pool := pools[0]
 	for _, candidate := range pools {
-		if candidate.Type == desiredType {
+		if candidate.Type == desiredType && candidate.Labels["rtk.io/node-class"] != "general" && candidate.Labels["rtk.io/node-class"] != "database" {
 			pool = candidate
 			break
 		}
 	}
-	if pool.Count == desiredCount && !lkeNodePoolAutoscalerNeedsReconcile(pool, desiredCount) {
+	if pool.Count == desiredCount && !lkeNodePoolAutoscalerNeedsReconcile(pool, desiredCount) && pool.Labels["rtk.io/node-class"] == "broker" {
 		fmt.Fprintf(os.Stderr, "[lke] node pool %d already at count=%d\n", pool.ID, desiredCount)
 		return ensureLKEPostgresNodePool(paths, env, token, clusterID, pools)
 	}
-	payloadMap := map[string]any{"count": desiredCount}
+	payloadMap := map[string]any{"count": desiredCount, "labels": map[string]string{"rtk.io/node-class": "broker"}}
 	if lkeNodePoolAutoscalerNeedsReconcile(pool, desiredCount) {
 		payloadMap["autoscaler"] = map[string]any{
 			"enabled": false,
@@ -6698,6 +6704,58 @@ func ensureLKENodePool(paths provisionPaths, env map[string]string) error {
 		return err
 	}
 	return ensureLKEPostgresNodePool(paths, env, token, clusterID, pools)
+}
+
+func ensureLKEGeneralNodePool(env map[string]string, token, clusterID string, pools []lkeNodePool) error {
+	rawCount := firstNonEmpty(env["LKE_GENERAL_NODE_COUNT"], "0")
+	desiredCount, err := strconv.Atoi(rawCount)
+	if err != nil || desiredCount <= 0 {
+		return nil
+	}
+	desiredType := firstNonEmpty(env["LKE_GENERAL_NODE_TYPE"], env["LKE_NODE_TYPE"], "g6-standard-2")
+	var pool *lkeNodePool
+	for i := range pools {
+		if pools[i].Labels["rtk.io/node-class"] == "general" {
+			pool = &pools[i]
+			break
+		}
+	}
+	payloadMap := map[string]any{
+		"type": desiredType, "count": desiredCount, "label": "general",
+		"labels": map[string]string{"rtk.io/node-class": "general"},
+	}
+	if pool == nil || pool.Type != desiredType {
+		payload, marshalErr := json.Marshal(payloadMap)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		out, requestErr := linodeRequestRaw(token, "POST", fmt.Sprintf("/lke/clusters/%s/pools", clusterID), string(payload))
+		if requestErr != nil {
+			return requestErr
+		}
+		var created lkeNodePool
+		if err := json.Unmarshal(out, &created); err != nil {
+			return err
+		}
+		if created.ID == 0 {
+			return errors.New("LKE general node pool create response did not include pool id")
+		}
+		fmt.Fprintf(os.Stderr, "[lke] created general node pool %d type=%s count=%d\n", created.ID, desiredType, desiredCount)
+		return nil
+	}
+	if pool.Count == desiredCount && pool.Labels["rtk.io/node-class"] == "general" && !lkeNodePoolAutoscalerNeedsReconcile(*pool, desiredCount) {
+		return nil
+	}
+	update := map[string]any{"count": desiredCount, "labels": map[string]string{"rtk.io/node-class": "general"}}
+	if lkeNodePoolAutoscalerNeedsReconcile(*pool, desiredCount) {
+		update["autoscaler"] = map[string]any{"enabled": false, "min": desiredCount, "max": desiredCount}
+	}
+	payload, err := json.Marshal(update)
+	if err != nil {
+		return err
+	}
+	_, err = linodeRequestRaw(token, "PUT", fmt.Sprintf("/lke/clusters/%s/pools/%d", clusterID, pool.ID), string(payload))
+	return err
 }
 
 func lkeNodePoolAutoscalerNeedsReconcile(pool lkeNodePool, desiredCount int) bool {
@@ -6854,12 +6912,12 @@ func lkePostgresNodePoolPayload(env map[string]string) map[string]any {
 		"count": lkePostgresNodePoolCount(env),
 		"label": "postgres",
 		"labels": map[string]string{
-			"rtk.realtek.com/workload": "postgres",
+			"rtk.io/node-class": "database",
 		},
 		"taints": []map[string]string{
 			{
-				"key":    "rtk.realtek.com/workload",
-				"value":  "postgres",
+				"key":    "rtk.io/node-class",
+				"value":  "database",
 				"effect": "NoSchedule",
 			},
 		},
@@ -6870,11 +6928,11 @@ func lkeNodePoolHasPostgresPlacement(pool lkeNodePool) bool {
 	if pool.Label != "postgres" {
 		return false
 	}
-	if pool.Labels["rtk.realtek.com/workload"] != "postgres" {
+	if pool.Labels["rtk.io/node-class"] != "database" {
 		return false
 	}
 	for _, taint := range pool.Taints {
-		if taint.Key == "rtk.realtek.com/workload" && taint.Value == "postgres" && taint.Effect == "NoSchedule" {
+		if taint.Key == "rtk.io/node-class" && taint.Value == "database" && taint.Effect == "NoSchedule" {
 			return true
 		}
 	}
@@ -6882,17 +6940,21 @@ func lkeNodePoolHasPostgresPlacement(pool lkeNodePool) bool {
 }
 
 func lkePersistStackEnvValues(envRoot string, updates map[string]string) error {
-	stackPath := filepath.Join(envRoot, "env", "stack.env")
-	raw, err := readEnvFile(stackPath)
-	if err != nil {
+	statePath := filepath.Join(envRoot, "adapters", "lke", "state.env")
+	raw, err := readEnvFile(statePath)
+	if err != nil && !os.IsNotExist(err) {
 		return err
+	}
+	if raw == nil {
+		raw = map[string]string{}
 	}
 	for key, value := range updates {
 		raw[key] = value
 	}
-	derived := envroot.Derive(raw)
-	_, err = syncTextFile(stackPath, renderStackEnv(raw, derived), false)
-	return err
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
+		return err
+	}
+	return writeSortedEnv(statePath, raw, 0o600)
 }
 
 func listLKENodePools(token string, clusterID string) ([]lkeNodePool, error) {
@@ -6921,7 +6983,7 @@ func recoverStaleLKECluster(token string, paths provisionPaths, env map[string]s
 	if err != nil {
 		return lkeCluster{}, err
 	}
-	stateKubeconfig := filepath.Join(paths.EnvRoot, "state", "lke-kubeconfig.yaml")
+	stateKubeconfig := filepath.Join(paths.EnvRoot, "state", "kubeconfig.yaml")
 	if err := os.MkdirAll(filepath.Dir(stateKubeconfig), 0o755); err != nil {
 		return lkeCluster{}, err
 	}
@@ -6972,7 +7034,7 @@ func latestLKEVersion(token string) (string, error) {
 }
 
 func writeLKEState(paths provisionPaths, cluster lkeCluster) error {
-	statePath := filepath.Join(paths.EnvRoot, "state", "lke.env")
+	statePath := filepath.Join(paths.EnvRoot, "adapters", "lke", "state.env")
 	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
 		return err
 	}
