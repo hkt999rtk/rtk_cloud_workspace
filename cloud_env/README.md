@@ -64,7 +64,7 @@ LKE_ACTIVE_SERVICE_LIMIT=20
 
 Architecture override 不得包含 provider key；adapter override 不得包含 workload、capacity 或 topology key。Unknown key、錯誤型別與跨層 key 會在 plan 階段失敗。
 
-DNS provider 的選填 escape hatch 使用 `overrides/dns.env`。一般 environment 不設定 hosted-zone ID、API endpoint、AWS access key 或 GoDaddy key。GoDaddy credentials 由 operator secret source 提供；Route53 使用 AWS SDK default credential chain並依 `CLOUD_DNS_ROOT_DOMAIN` 自動尋找唯一 public hosted zone。詳細設定與切換流程見 [`docs/dns-adapter-architecture.md`](../docs/dns-adapter-architecture.md)。
+DNS provider 的選填 escape hatch 使用 `overrides/dns.env`。一般 environment 不設定 hosted-zone ID、API endpoint、AWS access key 或 GoDaddy key。GoDaddy credentials 依序從 process environment、environment runtime operator file、`~/.env` 讀取；Route53 使用 AWS SDK default credential chain並依 `CLOUD_DNS_ROOT_DOMAIN` 自動尋找唯一 public hosted zone。詳細設定與切換流程見 [`docs/dns-adapter-architecture.md`](../docs/dns-adapter-architecture.md)。
 
 ## 驗證與 provision
 

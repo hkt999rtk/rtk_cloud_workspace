@@ -464,7 +464,7 @@ NodeBalancer。`--dns` / `staging-provision` 都走同一條 HAProxy edge 路徑
 
 必要輸入：
 
-- `DNS_ADAPTER=godaddy` 時需要 operator secret source 的 `GODADDY_KEY` / `GODADDY_SECRET`；`DNS_ADAPTER=route53` 時使用 AWS SDK default credential chain。
+- `DNS_ADAPTER=godaddy` 時，`GODADDY_KEY` / `GODADDY_SECRET` 依序從 process environment、environment runtime 的 `env/operator.env`、`~/.env` 讀取；`DNS_ADAPTER=route53` 時使用 AWS SDK default credential chain。
 - `CLOUD_DNS_ROOT_DOMAIN`，staging 預設是 `realtekconnect.com`。
 - `certbot` CLI，或用 `RTK_CLOUD_CERTBOT` 指到指定 binary。
 - `helm` 與 `kubectl` 可操作目標 LKE cluster。

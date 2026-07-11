@@ -303,7 +303,12 @@ func (*goDaddyDNSAdapter) Name() string { return "godaddy" }
 
 func (a *goDaddyDNSAdapter) credentials(ctx dnsAdapterContext) (string, string) {
 	operator, _ := readEnvFile(ctx.OperatorEnv)
-	return firstNonEmpty(operator["GODADDY_KEY"], os.Getenv("GODADDY_KEY")), firstNonEmpty(operator["GODADDY_SECRET"], os.Getenv("GODADDY_SECRET"))
+	home := map[string]string{}
+	if homeDir, err := os.UserHomeDir(); err == nil && homeDir != "" {
+		home, _ = readEnvFile(filepath.Join(homeDir, ".env"))
+	}
+	return firstNonEmpty(os.Getenv("GODADDY_KEY"), operator["GODADDY_KEY"], home["GODADDY_KEY"]),
+		firstNonEmpty(os.Getenv("GODADDY_SECRET"), operator["GODADDY_SECRET"], home["GODADDY_SECRET"])
 }
 
 func (a *goDaddyDNSAdapter) Validate(_ context.Context, ctx dnsAdapterContext) error {

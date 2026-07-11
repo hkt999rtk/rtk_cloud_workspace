@@ -69,10 +69,12 @@ deleting operator-owned data.
 
 The workspace adapter directly implements GoDaddy record APIs; active
 deployment code does not call the service submodule's `godaddy-dns` tool.
-Credentials come from the operator/process secret source as `GODADDY_KEY` and
-`GODADDY_SECRET`. `GODADDY_ENV` selects production or OTE and remains
-adapter-private. GoDaddy's record TTL constraints are validated only by this
-adapter.
+Credentials are resolved as `GODADDY_KEY` and `GODADDY_SECRET` in this
+order: process environment, the environment runtime operator file, then
+`~/.env`. This matches the LKE operator-secret fallback without copying
+credentials into tracked environment config or resolved runtime evidence.
+`GODADDY_ENV` selects production or OTE and remains adapter-private.
+GoDaddy's record TTL constraints are validated only by this adapter.
 
 ## Route53 adapter
 

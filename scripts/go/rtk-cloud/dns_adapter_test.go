@@ -55,6 +55,43 @@ func TestGoDaddyDNSAdapterCleanupPreservesOtherTXTValues(t *testing.T) {
 	}
 }
 
+func TestGoDaddyDNSAdapterCredentialsFallBackToHomeEnv(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("GODADDY_KEY", "")
+	t.Setenv("GODADDY_SECRET", "")
+	writeTestFile(t, filepath.Join(home, ".env"), "GODADDY_KEY=home-key\nGODADDY_SECRET=home-secret\n")
+
+	adapter := &goDaddyDNSAdapter{}
+	ctx := dnsAdapterContext{
+		OperatorEnv: filepath.Join(t.TempDir(), "missing-operator.env"),
+		Values:      map[string]string{"DNS_RECORD_TTL": "600"},
+	}
+	key, secret := adapter.credentials(ctx)
+	if key != "home-key" || secret != "home-secret" {
+		t.Fatalf("credentials did not use ~/.env fallback")
+	}
+	if err := adapter.Validate(context.Background(), ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGoDaddyDNSAdapterCredentialPrecedence(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("GODADDY_KEY", "process-key")
+	t.Setenv("GODADDY_SECRET", "process-secret")
+	writeTestFile(t, filepath.Join(home, ".env"), "GODADDY_KEY=home-key\nGODADDY_SECRET=home-secret\n")
+	operatorEnv := filepath.Join(t.TempDir(), "operator.env")
+	writeTestFile(t, operatorEnv, "GODADDY_KEY=operator-key\nGODADDY_SECRET=operator-secret\n")
+
+	adapter := &goDaddyDNSAdapter{}
+	key, secret := adapter.credentials(dnsAdapterContext{OperatorEnv: operatorEnv})
+	if key != "process-key" || secret != "process-secret" {
+		t.Fatalf("process environment must take precedence over operator files")
+	}
+}
+
 type fakeRoute53API struct {
 	zones   []types.HostedZone
 	records []types.ResourceRecordSet
