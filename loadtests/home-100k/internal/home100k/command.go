@@ -2842,6 +2842,7 @@ func dedupeCentralLoggerRuntimeEvents(events []centralLoggerRuntimeEvent) []cent
 func centralLoggerRuntimeCounters(runID string, events []centralLoggerRuntimeEvent) (map[string]int64, map[string]int64) {
 	prefix := "mqtt-e2e-" + sanitizeEvidenceRunID(runID) + "-"
 	shadowCounters := map[string]int64{}
+	streamCounters := map[string]int64{}
 	streamEntries := map[string]int64{}
 	streamSeqEntries := map[string]map[string]int64{}
 	for _, event := range dedupeCentralLoggerRuntimeEvents(events) {
@@ -2851,23 +2852,30 @@ func centralLoggerRuntimeCounters(runID string, events []centralLoggerRuntimeEve
 		if event.Source != "" && event.Source != "device-runtime" {
 			continue
 		}
-		streamID := centralLoggerEventFieldString(event, "stream_id")
+		normalized, ok := normalizeCentralLoggerRuntimeEvent(event)
+		if !ok {
+			streamCounters["runtime_log_schema.invalid"]++
+			continue
+		}
+		streamCounters["runtime_log_schema.valid"]++
+		streamID := normalized.StreamID
 		if !strings.HasPrefix(streamID, prefix) {
 			continue
 		}
-		source := centralLoggerEventFieldString(event, "source")
+		source := normalized.Source
 		switch {
-		case source == "app_controller" && event.Message == "mqtt_e2e shadow_desired app_controller publish":
+		case source == "app_controller" && normalized.Message == "mqtt_e2e shadow_desired app_controller publish":
 			shadowCounters["app_user.desired_writes"]++
-		case source == "device_client" && event.Message == "mqtt_e2e shadow_delta device_client receive":
+		case source == "device_client" && normalized.Message == "mqtt_e2e shadow_delta device_client receive":
 			shadowCounters["device_mqtt.delta_received"]++
-		case source == "device_client" && event.Message == "mqtt_e2e shadow_reported device_client publish":
+		case source == "device_client" && normalized.Message == "mqtt_e2e shadow_reported device_client publish":
 			shadowCounters["device_mqtt.reported_publishes"]++
-		case source == "app_observer" && event.Message == "mqtt_e2e shadow_reported app_observer receive":
+		case source == "app_observer" && normalized.Message == "mqtt_e2e shadow_reported app_observer receive":
 			shadowCounters["app_user.received_acks"]++
 		}
 		streamEntries[streamID]++
-		seq := centralLoggerEventFieldString(event, "seq")
+		streamCounters["runtime_log_stream."+streamID+".device."+sanitizeEvidenceCounterPart(normalized.DeviceID)+".entries"]++
+		seq := normalized.Sequence
 		if seq == "" {
 			continue
 		}
@@ -2876,7 +2884,6 @@ func centralLoggerRuntimeCounters(runID string, events []centralLoggerRuntimeEve
 		}
 		streamSeqEntries[streamID][seq]++
 	}
-	streamCounters := map[string]int64{}
 	if len(streamEntries) > 0 {
 		streamCounters["runtime_log_streams.total"] = int64(len(streamEntries))
 	}
@@ -2893,6 +2900,52 @@ func centralLoggerRuntimeCounters(runID string, events []centralLoggerRuntimeEve
 		streamCounters = nil
 	}
 	return shadowCounters, streamCounters
+}
+
+type normalizedRuntimeLogEvent struct {
+	DeviceID string
+	StreamID string
+	Sequence string
+	Source   string
+	Message  string
+}
+
+// normalizeCentralLoggerRuntimeEvent accepts the structured runtime-log shape
+// emitted by the current logger pipeline. Text-only service-log fallbacks are
+// intentionally rejected so they cannot produce a false SUCCESS result.
+func normalizeCentralLoggerRuntimeEvent(event centralLoggerRuntimeEvent) (normalizedRuntimeLogEvent, bool) {
+	deviceID := firstNonEmpty(
+		centralLoggerEventFieldString(event, "device_id"),
+		centralLoggerEventFieldString(event, "devid"),
+	)
+	streamID := centralLoggerEventFieldString(event, "stream_id")
+	seq := centralLoggerEventFieldString(event, "seq")
+	source := centralLoggerEventFieldString(event, "source")
+	message := firstNonEmpty(centralLoggerEventFieldString(event, "message"), strings.TrimSpace(event.Message))
+	if deviceID == "" || streamID == "" || seq == "" || source == "" || message == "" {
+		return normalizedRuntimeLogEvent{}, false
+	}
+	if n, err := strconv.ParseInt(seq, 10, 64); err != nil || n <= 0 {
+		return normalizedRuntimeLogEvent{}, false
+	}
+	return normalizedRuntimeLogEvent{DeviceID: deviceID, StreamID: streamID, Sequence: seq, Source: source, Message: message}, true
+}
+
+func sanitizeEvidenceCounterPart(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "unknown"
+	}
+	var b strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }
 
 func centralLoggerEventFieldString(event centralLoggerRuntimeEvent, key string) string {

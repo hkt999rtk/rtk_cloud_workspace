@@ -33,10 +33,12 @@ type mqttTraceSummary struct {
 }
 
 type mqttTraceDevice struct {
-	DeviceID   string          `json:"device_id"`
-	DeviceType string          `json:"device_type"`
-	MQTTStatus string          `json:"mqtt_status"`
-	TraceChain []mqttTraceStep `json:"trace_chain"`
+	DeviceID      string          `json:"device_id"`
+	DeviceType    string          `json:"device_type"`
+	BrandCloudID  string          `json:"brand_cloud_id"`
+	CorrelationID string          `json:"correlation_id"`
+	MQTTStatus    string          `json:"mqtt_status"`
+	TraceChain    []mqttTraceStep `json:"trace_chain"`
 }
 
 type mqttTraceStep struct {
@@ -180,10 +182,10 @@ func renderMQTTTraceReport(results mqttTraceResults, source string) string {
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Summary")
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "| Device | Type | MQTT | Trace steps |")
-	fmt.Fprintln(&b, "| --- | --- | --- | ---: |")
+	fmt.Fprintln(&b, "| Device | Type | Brand cloud | Correlation | MQTT | Trace steps |")
+	fmt.Fprintln(&b, "| --- | --- | --- | --- | --- | ---: |")
 	for _, device := range results.Devices {
-		fmt.Fprintf(&b, "| `%s` | `%s` | `%s` | %d |\n", device.DeviceID, device.DeviceType, device.MQTTStatus, len(device.TraceChain))
+		fmt.Fprintf(&b, "| `%s` | `%s` | `%s` | `%s` | `%s` | %d |\n", device.DeviceID, device.DeviceType, device.BrandCloudID, device.CorrelationID, device.MQTTStatus, len(device.TraceChain))
 	}
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Trace Chain")
