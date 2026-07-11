@@ -438,7 +438,7 @@ NodeBalancer。`--dns` / `staging-provision` 都走同一條 HAProxy edge 路徑
 
 1. 用 Helm 安裝或更新 `ingress-nginx` 到 `<stack>-ingress` namespace。
 2. ingress-nginx controller service 使用 `NodePort`，不是 `LoadBalancer`；目前 HTTPS NodePort 預設為 `30443`。
-3. 透過 certbot manual DNS-01 hook 與 GoDaddy TXT record 簽一張 staging multi-SAN certificate，寫入 Kubernetes TLS secret `video-cloud-staging-public-tls`。
+3. 透過 shared certbot DNS-01 flow 與 environment 選擇的 GoDaddy/Route53 adapter 簽一張 staging multi-SAN certificate，寫入 Kubernetes TLS secret `video-cloud-staging-public-tls`。
 4. 建立 ingress namespace 內的 ExternalName bridge services，讓 Ingress 合法轉到各 namespace 的 internal `ClusterIP` services。
 5. 建立 HTTPS Ingress rules：
    - `video-cloud-staging.realtekconnect.com` -> `video-cloud-api`
@@ -449,7 +449,7 @@ NodeBalancer。`--dns` / `staging-provision` 都走同一條 HAProxy edge 路徑
    - `admin.video-cloud-staging.realtekconnect.com` -> `cloud-admin`
    - `frontend.video-cloud-staging.realtekconnect.com` -> `frontend`
 6. provision 或更新 host-installed HAProxy edge VM；HAProxy 用 TCP mode 與 `balance roundrobin` 將 public `443/TCP` forward 到 ingress-nginx NodePort，將 `8883/TCP` round-robin forward 到三台 LKE node 的 EMQX/MQTT NodePort。
-7. GoDaddy A records 指向 HAProxy edge VM public IP，包含
+7. DNS adapter A records 指向 HAProxy edge VM public IP，包含
    `turnregistry.<VIDEO_CLOUD_DOMAIN>`；coturn VM registrar 會透過這個
    signed control-plane endpoint 註冊與 heartbeat。
 8. provision 或更新 host-installed coturn VM。預設短名 `turn01`、Linode label
@@ -464,7 +464,7 @@ NodeBalancer。`--dns` / `staging-provision` 都走同一條 HAProxy edge 路徑
 
 必要輸入：
 
-- `GODADDY_KEY` / `GODADDY_SECRET` 或 operator env 內的等效 GoDaddy credentials。
+- `DNS_ADAPTER=godaddy` 時需要 operator secret source 的 `GODADDY_KEY` / `GODADDY_SECRET`；`DNS_ADAPTER=route53` 時使用 AWS SDK default credential chain。
 - `CLOUD_DNS_ROOT_DOMAIN`，staging 預設是 `realtekconnect.com`。
 - `certbot` CLI，或用 `RTK_CLOUD_CERTBOT` 指到指定 binary。
 - `helm` 與 `kubectl` 可操作目標 LKE cluster。

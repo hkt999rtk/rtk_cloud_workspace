@@ -80,6 +80,8 @@ Before the first mutation after this change, the operator must create `cloud_env
 
 The shared planner now owns workload replicas and logical node counts. `MQTT_REPLICAS` and `VIDEO_CLOUD_API_REPLICAS` are replaced once by `MQTT_MIN_REPLICAS` and `VIDEO_CLOUD_API_MIN_REPLICAS`; generated effective values feed the LKE compatibility renderer. LKE capacity code may check provider quota and current resources but must not recalculate generic workload or node capacity.
 
+DNS is no longer an LKE responsibility. LKE returns normalized public edge and TURN targets; the independently selected GoDaddy or Route53 DNS adapter owns zone discovery, record mutation and DNS-01 challenges. LKE code must not read DNS credentials, invoke vendor APIs, or store DNS provider IDs. See `docs/dns-adapter-architecture.md`.
+
 ## Kubernetes Runtime Target Summary
 
 The current validated staging target is Linode Kubernetes Engine (LKE). The
@@ -97,7 +99,7 @@ are implemented.
 | Namespaces | `platform`, `video-cloud`, `account-manager`, `admin`, `frontend`, `observability`, and `secrets` unless a later platform standard chooses different names. |
 | Public HTTP(S) | External HAProxy edge VM in TCP mode forwards public `443/TCP` to ingress-nginx NodePort; staging default NodePort is `30443`; public `80/TCP` remains closed. |
 | Public MQTT | External HAProxy edge VM in TCP mode forwards public `8883/TCP` to EMQX/MQTT NodePort; staging default NodePort is `31883`, with a three-pod EMQX StatefulSet cluster spread one per node for HAProxy round-robin. |
-| DNS | Workspace LKE `--dns` provisions GoDaddy A records to HAProxy edge VM public IPs and uses GoDaddy DNS-01 for ACME TLS issuance. |
+| DNS | Shared DNS orchestration publishes LKE edge/TURN targets through the environment-selected GoDaddy or Route53 adapter and uses the same adapter for ACME DNS-01. |
 | Internal traffic | Kubernetes Services and NetworkPolicy replace VM private IP allowlists. |
 | Stateful storage | Linode Block Storage-backed PVCs where in-cluster persistence is selected. |
 | Object storage | Linode Object Storage remains the preferred artifact/media/backup target where applicable. |

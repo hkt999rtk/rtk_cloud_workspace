@@ -4,7 +4,8 @@ RTK Cloud deployment 分成三個互相獨立的層次：
 
 1. `cloud_deploy/architectures/` 保存跨環境、跨 provider 的 workload 與 topology intent。
 2. `cloud_deploy/adapters/` 保存 LKE、EKS、GKE 等 deployment adapter contract。
-3. `cloud_env/<environment>/` 保存 dev、staging、prod 等環境 instance 與本機 runtime。
+3. `cloud_deploy/dns_adapters/` 保存 GoDaddy、Route53 等獨立 DNS adapter contract。
+4. `cloud_env/<environment>/` 保存 dev、staging、prod 等環境 instance 與本機 runtime。
 
 Architecture 不屬於 staging；LKE 也不是 staging 的子目錄。任一 environment 都可選擇任一與 architecture 相容的 adapter。
 
@@ -23,6 +24,9 @@ cloud_deploy/
     lke/{defaults.env,schema.env}
     eks/schema.env
     gke/schema.env
+  dns_adapters/
+    godaddy/{defaults.env,schema.env}
+    route53/{defaults.env,schema.env}
 
 cloud_env/<environment>/
   environment.env
@@ -30,9 +34,10 @@ cloud_env/<environment>/
   overrides/
     architecture.env
     adapter.env
+    dns.env
 ```
 
-`cloud_env/` 下的目錄名稱就是 environment identity；`environment.env` 定義 stack、DNS root 與 logical deployment location。`deployment.env` 只選擇 architecture 與 adapter。`overrides/architecture.env` 只可覆寫 provider-neutral keys；`overrides/adapter.env` 只保留給明確的 provider escape hatch。
+`cloud_env/` 下的目錄名稱就是 environment identity；`environment.env` 定義 stack、DNS root 與 logical deployment location。`deployment.env` 選擇 architecture、deployment adapter 與獨立 DNS adapter。`overrides/architecture.env` 只可覆寫 provider-neutral keys；`overrides/adapter.env` 與 `overrides/dns.env` 只保留給明確的 provider escape hatch。
 
 ## 本機 runtime
 
@@ -43,6 +48,7 @@ runtime/
   resolved/{deployment.env,deployment-plan.json}
   state/{kubeconfig.yaml,topology.json}
   adapters/<adapter>/{state.env,resources.json}
+  dns/<dns-adapter>/state.json
   services/
   secrets/
   devices/
@@ -51,6 +57,8 @@ runtime/
 ```
 
 Shared Kubernetes runtime 與 load test 只讀 normalized `runtime/state`、`runtime/services`、`runtime/devices` 與 `runtime/artifacts`。Cluster ID、node-pool ID、Linode resource ID 等 provider state 只能存在 `runtime/adapters/lke/`。
+
+Generic DNS plan 位於 `runtime/resolved/dns-plan.json`；normalized DNS state 位於 `runtime/state/dns.env`。Hosted-zone ID、change ID 等 DNS provider state 只能存在 `runtime/dns/<dns-adapter>/`。Shared runtime 與 load test 不得直接讀取 DNS provider-private state。
 
 LKE account limit 位於 ignored `runtime/adapters/lke/account.env`。Adapter resolution 寫入 `runtime/adapters/lke/resolved-resources.env`；normalized `runtime/state/provider-preflight.env` 只公開 load test 需要的 provider region 與 active-service limit。Shared runtime 與 load test 不得直接讀取 adapter-private 檔案。
 

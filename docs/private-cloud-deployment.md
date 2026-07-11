@@ -123,10 +123,10 @@ Required infrastructure:
 - External HAProxy edge VM for public TCP passthrough to Kubernetes NodePorts.
   HAProxy is installed on the VM host with systemd, not Docker. TLS, mTLS, SNI,
   and HTTP routing remain inside Kubernetes.
-- DNS-01 TLS automation for public hostnames. The workspace-managed LKE staging
-  bridge uses GoDaddy DNS-01 plus certbot to create a Kubernetes TLS Secret;
-  cert-manager remains the production operator path when an approved DNS
-  provider integration exists.
+- DNS-01 TLS automation for public hostnames. Shared DNS orchestration uses the
+  environment-selected GoDaddy or Route53 adapter plus certbot to create a
+  Kubernetes TLS Secret; DNS is independent from the deployment adapter.
+  cert-manager remains a later production operator path.
 - PostgreSQL deployment choice documented before cutover: external/VM bridge,
   in-cluster operator, in-cluster StatefulSet, or managed/external service
 - Linode Object Storage or approved object storage for artifacts, media, and
