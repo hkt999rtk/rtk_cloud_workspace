@@ -52,7 +52,7 @@ runtime/
 
 Shared Kubernetes runtime 與 load test 只讀 normalized `runtime/state`、`runtime/services`、`runtime/devices` 與 `runtime/artifacts`。Cluster ID、node-pool ID、Linode resource ID 等 provider state 只能存在 `runtime/adapters/lke/`。
 
-LKE account limit 位於 ignored `runtime/adapters/lke/account.env`。Adapter resolution 寫入 `runtime/adapters/lke/resolved-resources.env`；shared runtime 與 load test 不得直接讀取這兩個 adapter-private 檔案。
+LKE account limit 位於 ignored `runtime/adapters/lke/account.env`。Adapter resolution 寫入 `runtime/adapters/lke/resolved-resources.env`；normalized `runtime/state/provider-preflight.env` 只公開 load test 需要的 provider region 與 active-service limit。Shared runtime 與 load test 不得直接讀取 adapter-private 檔案。
 
 ## 設定解析順序
 

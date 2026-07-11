@@ -23,6 +23,11 @@ func TestResolveDeploymentConfigSupportsMultipleEnvironments(t *testing.T) {
 	if cfg.RuntimeRoot != filepath.Join(workspace, "cloud_env", "staging", "runtime") {
 		t.Fatalf("runtime = %s", cfg.RuntimeRoot)
 	}
+	for key, want := range map[string]string{"LKE_REGION": "us-sea", "LKE_GENERAL_NODE_TYPE": "g6-standard-4", "LKE_BROKER_NODE_TYPE": "g6-standard-4", "LKE_DATABASE_NODE_TYPE": "g6-standard-8"} {
+		if cfg.AdapterResolved[key] != want {
+			t.Fatalf("%s = %q, want %q", key, cfg.AdapterResolved[key], want)
+		}
+	}
 }
 
 func TestResolveDeploymentConfigRejectsLegacyRoot(t *testing.T) {
@@ -59,6 +64,54 @@ func TestResolveDeploymentConfigRejectsUnknownArchitectureKey(t *testing.T) {
 	}
 }
 
+func TestResolveDeploymentConfigRejectsProviderKeyInEnvironment(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "dev", "lke")
+	appendFile(t, filepath.Join(workspace, "cloud_env", "dev", "environment.env"), "LKE_REGION=us-sea\n")
+	if _, err := resolveDeploymentConfig(workspace, "dev", ""); err == nil || !strings.Contains(err.Error(), "unknown environment key LKE_REGION") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestResolveDeploymentConfigRejectsUnknownLocationAndUnsatisfiedShape(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "dev", "lke")
+	writeTestFile(t, filepath.Join(workspace, "cloud_env", "dev", "environment.env"), "CLOUD_STACK_NAME=video-cloud-dev\nCLOUD_DNS_ROOT_DOMAIN=example.test\nDEPLOYMENT_LOCATION=moon\n")
+	if _, err := resolveDeploymentConfig(workspace, "dev", ""); err == nil || !strings.Contains(err.Error(), "no region mapping") {
+		t.Fatalf("unknown location got %v", err)
+	}
+	writeTestFile(t, filepath.Join(workspace, "cloud_env", "dev", "environment.env"), "CLOUD_STACK_NAME=video-cloud-dev\nCLOUD_DNS_ROOT_DOMAIN=example.test\nDEPLOYMENT_LOCATION=us-west\n")
+	writeTestFile(t, filepath.Join(workspace, "cloud_env", "dev", "overrides", "architecture.env"), "NODE_CLASS_GENERAL_MIN_VCPU=100\n")
+	if _, err := resolveDeploymentConfig(workspace, "dev", ""); err == nil || !strings.Contains(err.Error(), "no Linode type satisfies") {
+		t.Fatalf("unsatisfied shape got %v", err)
+	}
+}
+
+func TestResolveDeploymentConfigRejectsNonPositiveNodeIntent(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "dev", "lke")
+	writeTestFile(t, filepath.Join(workspace, "cloud_env", "dev", "overrides", "architecture.env"), "NODE_CLASS_BROKER_MIN_VCPU=0\n")
+	if _, err := resolveDeploymentConfig(workspace, "dev", ""); err == nil || !strings.Contains(err.Error(), "must be a positive integer") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestSelectLKENodeTypeDeterministicAndValidatesPins(t *testing.T) {
+	for _, tc := range []struct {
+		cpu, memory int
+		want        string
+	}{
+		{cpu: 4, memory: 8, want: "g6-standard-4"},
+		{cpu: 4, memory: 16, want: "g6-standard-6"},
+		{cpu: 8, memory: 16, want: "g6-standard-8"},
+	} {
+		got, err := selectLKENodeType(tc.cpu, tc.memory, "")
+		if err != nil || got != tc.want {
+			t.Fatalf("select %d/%d = %q, %v; want %q", tc.cpu, tc.memory, got, err, tc.want)
+		}
+	}
+	if _, err := selectLKENodeType(8, 16, "g6-standard-4"); err == nil || !strings.Contains(err.Error(), "below required") {
+		t.Fatalf("undersized pin got %v", err)
+	}
+}
+
 func TestResolveDeploymentConfigRejectsUnimplementedMutation(t *testing.T) {
 	for _, adapter := range []string{"eks", "gke"} {
 		workspace := writeDeploymentFixture(t, "prod", adapter)
@@ -82,7 +135,7 @@ func TestMaterializeDeploymentRuntimeSeparatesSharedAndAdapterConfig(t *testing.
 		t.Fatal(err)
 	}
 	resolved := readTestFile(t, filepath.Join(cfg.RuntimeRoot, "resolved", "deployment.env"))
-	if strings.Contains(resolved, "LKE_NODE_COUNT") {
+	if strings.Contains(resolved, "LKE_") || strings.Contains(resolved, "LINODE_") {
 		t.Fatalf("resolved generic config leaked compatibility keys:\n%s", resolved)
 	}
 	compat := readTestFile(t, filepath.Join(cfg.RuntimeRoot, "env", "stack.env"))
@@ -94,11 +147,43 @@ func TestMaterializeDeploymentRuntimeSeparatesSharedAndAdapterConfig(t *testing.
 	if strings.Contains(compat, "LKE_") {
 		t.Fatalf("shared stack contains adapter compatibility keys:\n%s", compat)
 	}
+	resources := readTestFile(t, filepath.Join(cfg.RuntimeRoot, "adapters", "lke", "resolved-resources.env"))
+	for _, want := range []string{"LKE_REGION=us-sea", "LKE_GENERAL_NODE_TYPE=g6-standard-4", "LKE_BROKER_NODE_TYPE=g6-standard-4", "LKE_DATABASE_NODE_TYPE=g6-standard-8"} {
+		if !strings.Contains(resources, want) {
+			t.Fatalf("adapter resources missing %s:\n%s", want, resources)
+		}
+	}
 	adapterConfig := readTestFile(t, filepath.Join(cfg.RuntimeRoot, "adapters", "lke", "config.env"))
-	for _, want := range []string{"LKE_TARGET_CONNECTS=1000", "LKE_MQTT_REPLICAS=2"} {
+	for _, want := range []string{"LKE_TARGET_CONNECTS=1000", "LKE_MQTT_REPLICAS=2", "LKE_REGION=us-sea", "LKE_GENERAL_NODE_TYPE=g6-standard-4"} {
 		if !strings.Contains(adapterConfig, want) {
 			t.Fatalf("adapter config missing %s", want)
 		}
+	}
+}
+
+func TestLKEAccountStateRequiredOnlyForMutation(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "staging", "lke")
+	cfg, err := resolveDeploymentConfig(workspace, "staging", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := materializeDeploymentRuntime(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateLKEEnvironmentStateBeforeMutation(cfg); err == nil || !strings.Contains(err.Error(), "provider account state is required") {
+		t.Fatalf("missing account state got %v", err)
+	}
+	writeTestFile(t, filepath.Join(cfg.RuntimeRoot, "adapters", "lke", "account.env"), "LKE_ACTIVE_SERVICE_LIMIT=20\n")
+	if err := materializeDeploymentRuntime(cfg); err != nil {
+		t.Fatal(err)
+	}
+	preflight := readTestFile(t, filepath.Join(cfg.RuntimeRoot, "state", "provider-preflight.env"))
+	if preflight != "PROVIDER_ACTIVE_SERVICE_LIMIT=20\n" {
+		t.Fatalf("provider preflight = %q", preflight)
+	}
+	adapterConfig := readTestFile(t, filepath.Join(cfg.RuntimeRoot, "adapters", "lke", "config.env"))
+	if !strings.Contains(adapterConfig, "LKE_LINODE_ACTIVE_SERVICE_LIMIT=20") {
+		t.Fatalf("adapter config missing quota compatibility key:\n%s", adapterConfig)
 	}
 }
 
@@ -122,13 +207,14 @@ func writeDeploymentFixture(t *testing.T, environment, adapter string) string {
 	files := map[string]string{
 		"cloud_deploy/architectures/kubernetes/architecture.env":   "DEPLOYMENT_RUNTIME=kubernetes\nNODE_CLASS_LABEL_KEY=rtk.io/node-class\nDEFAULT_WORKLOAD_NODE_CLASS=general\n",
 		"cloud_deploy/architectures/kubernetes/capacity.env":       "CAPACITY_TARGET_CONNECTIONS=1000\nCAPACITY_CONNECTIONS_PER_MQTT_POD=20000\n",
-		"cloud_deploy/architectures/kubernetes/topology.env":       "NODE_CLASS_GENERAL_MIN_COUNT=2\nNODE_CLASS_BROKER_MIN_COUNT=2\nMQTT_NODE_CLASS=broker\n",
+		"cloud_deploy/architectures/kubernetes/topology.env":       "NODE_CLASS_GENERAL_MIN_COUNT=2\nNODE_CLASS_GENERAL_MIN_VCPU=4\nNODE_CLASS_GENERAL_MIN_MEMORY_GIB=8\nNODE_CLASS_BROKER_MIN_COUNT=2\nNODE_CLASS_BROKER_MIN_VCPU=4\nNODE_CLASS_BROKER_MIN_MEMORY_GIB=8\nNODE_CLASS_DATABASE_MIN_COUNT=1\nNODE_CLASS_DATABASE_MIN_VCPU=8\nNODE_CLASS_DATABASE_MIN_MEMORY_GIB=16\nMQTT_NODE_CLASS=broker\n",
 		"cloud_deploy/architectures/kubernetes/workloads.env":      "MQTT_REPLICAS=2\nMQTT_HARD_ANTI_AFFINITY=true\nVIDEO_CLOUD_API_REPLICAS=2\nPOSTGRES_REQUEST_CPU=1\nPOSTGRES_REQUEST_MEMORY=2Gi\nPOSTGRES_LIMIT_MEMORY=4Gi\nEDGE_REPLICAS=1\nEDGE_MAX_CONNECTIONS=400000\nTURN_REPLICAS=1\nTURN_MIN_PORT=49152\nTURN_MAX_PORT=49200\n",
-		"cloud_deploy/adapters/lke/defaults.env":                   "LKE_REGION=us-sea\nLKE_GENERAL_NODE_TYPE=g6-standard-4\nLINODE_ACTIVE_SERVICE_LIMIT=20\n",
+		"cloud_deploy/adapters/lke/defaults.env":                   "LKE_REGION_PIN=\nLKE_GENERAL_NODE_TYPE_PIN=\nLKE_BROKER_NODE_TYPE_PIN=\nLKE_DATABASE_NODE_TYPE_PIN=\n",
+		"cloud_deploy/adapters/lke/locations.env":                  "LOCATION_US_WEST=us-sea\n",
 		"cloud_deploy/adapters/lke/schema.env":                     "ADAPTER_NAME=lke\nADAPTER_RUNTIME=kubernetes\nADAPTER_MUTATION_SUPPORTED=true\n",
 		"cloud_deploy/adapters/eks/schema.env":                     "ADAPTER_NAME=eks\nADAPTER_RUNTIME=kubernetes\nADAPTER_MUTATION_SUPPORTED=false\n",
 		"cloud_deploy/adapters/gke/schema.env":                     "ADAPTER_NAME=gke\nADAPTER_RUNTIME=kubernetes\nADAPTER_MUTATION_SUPPORTED=false\n",
-		filepath.Join("cloud_env", environment, "environment.env"): "CLOUD_STACK_NAME=video-cloud-" + environment + "\nCLOUD_DNS_ROOT_DOMAIN=example.test\n",
+		filepath.Join("cloud_env", environment, "environment.env"): "CLOUD_STACK_NAME=video-cloud-" + environment + "\nCLOUD_DNS_ROOT_DOMAIN=example.test\nDEPLOYMENT_LOCATION=us-west\n",
 		filepath.Join("cloud_env", environment, "deployment.env"):  "DEPLOYMENT_ARCHITECTURE=kubernetes\nDEPLOYMENT_ADAPTER=" + adapter + "\n",
 	}
 	for path, body := range files {

@@ -688,7 +688,7 @@ The script keeps non-secret defaults in one place:
 | `HOME100K_ENV_ROOT` | internal/custom runtime override only |
 | `HOME100K_BRANDNAME` | `RTK` |
 | `HOME100K_BRAND_PLAN` | unset; use `loadtests/home-100k/scenarios/brand-plan-100k.json` for the 100K multi-brand 7/7 baseline |
-| `HOME100K_REGION` | `us-sea` |
+| `HOME100K_REGION` | Explicit test-only override; normally read from normalized environment provider preflight state. |
 | `HOME100K_LINODE_TYPE` | unset; optional Linode VM type for load generators. TURN sizing profiles use `g6-standard-6` |
 | `HOME100K_EXISTING_GENERATOR_HOSTS` | unset; comma/space separated `label=ipv4` entries such as `lg01=203.0.113.10,lg02=203.0.113.11`. When set, `workflow-live` skips Linode VM creation and uses these hosts as the generated `vms.json` |
 | `HOME100K_RUN_ID` | Current UTC timestamp |

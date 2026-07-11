@@ -69,7 +69,20 @@ if [[ -n "$brand_plan" && "$brand_plan" != /* ]]; then
   brand_plan="$repo_root/$brand_plan"
 fi
 scenario_profile="${HOME100K_SCENARIO_PROFILE:-}"
-region="${HOME100K_REGION:-us-sea}"
+region="${HOME100K_REGION:-}"
+if [[ -z "$region" ]]; then
+  case "$env_root" in
+    /*) provider_preflight_file="$env_root/state/provider-preflight.env" ;;
+    *) provider_preflight_file="$repo_root/$env_root/state/provider-preflight.env" ;;
+  esac
+  if [[ -f "$provider_preflight_file" ]]; then
+    region="$(awk -F= '$1 == "PROVIDER_REGION" {print $2; exit}' "$provider_preflight_file")"
+  fi
+fi
+if [[ -z "$region" ]]; then
+  echo "provider region is unresolved; run rtk-cloud deployment plan --environment $environment" >&2
+  exit 2
+fi
 linode_type="${HOME100K_LINODE_TYPE:-}"
 vm_label_prefix="${HOME100K_VM_LABEL_PREFIX:-lg}"
 run_id="${HOME100K_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
@@ -170,7 +183,7 @@ token_seed_redis_addr="${HOME100K_TOKEN_SEED_REDIS_ADDR:-}"
 token_seed_device_prefix="${HOME100K_TOKEN_SEED_DEVICE_PREFIX:-load-device-}"
 token_seed_ttl="${HOME100K_TOKEN_SEED_TTL:-24h}"
 existing_generator_hosts="${HOME100K_EXISTING_GENERATOR_HOSTS:-}"
-linode_active_service_limit="${HOME100K_LINODE_ACTIVE_SERVICE_LIMIT:-${LINODE_ACTIVE_SERVICE_LIMIT:-}}"
+provider_active_service_limit=""
 if [[ "$out_dir" == /* ]]; then
   local_out_dir="$out_dir"
 else
@@ -229,7 +242,7 @@ Defaults can be overridden with:
   HOME100K_BRANDNAME      default: RTK
   HOME100K_BRAND_PLAN     optional multi-brand load-test plan JSON
   HOME100K_SCENARIO_PROFILE optional scenario profile, e.g. video-1k-v1, video-50k-turn-v1, video-100k-turn-v1
-  HOME100K_REGION         default: us-sea
+  HOME100K_REGION         explicit test-only provider region override; normally resolved from environment
   HOME100K_LINODE_TYPE    optional Linode VM type for load generators, passed to provision-vms
   HOME100K_VM_LABEL_PREFIX default: lg; load-generator VM labels are <prefix>01..<prefix>NN
   HOME100K_RUN_ID         default: current UTC timestamp
@@ -530,16 +543,19 @@ load_generator_vm_count_for_quota() {
 }
 
 linode_active_service_preflight() {
-  if [[ -n "$existing_generator_hosts" && -z "$linode_active_service_limit" ]]; then
-    return
-  fi
-  if [[ -z "${LINODE_TOKEN:-}" ]]; then
-    return
-  fi
-  mkdir -p "$local_out_dir"
-  local env_root_path artifact active_json rc
-  env_root_path="$(local_env_root_path)"
-  artifact="$local_out_dir/linode-active-service-preflight.json"
+	local env_root_path artifact active_json rc
+	env_root_path="$(local_env_root_path)"
+	if [[ -f "$env_root_path/state/provider-preflight.env" ]]; then
+		provider_active_service_limit="$(awk -F= '$1 == "PROVIDER_ACTIVE_SERVICE_LIMIT" {print $2; exit}' "$env_root_path/state/provider-preflight.env")"
+	fi
+	if [[ -n "$existing_generator_hosts" && -z "$provider_active_service_limit" ]]; then
+		return
+	fi
+	if [[ -z "${LINODE_TOKEN:-}" ]]; then
+		return
+	fi
+	mkdir -p "$local_out_dir"
+	artifact="$local_out_dir/linode-active-service-preflight.json"
   active_json="$(mktemp)"
   rc=0
   /usr/bin/curl -fsS -H "Authorization: Bearer $LINODE_TOKEN" 'https://api.linode.com/v4/linode/instances?page_size=500' > "$active_json" || rc=$?
@@ -548,7 +564,7 @@ linode_active_service_preflight() {
     echo "warning: unable to query Linode active services for quota preflight" >&2
     return
   fi
-  if ! python3 - "$active_json" "$env_root_path" "$artifact" "$(load_generator_vm_count_for_quota)" "$linode_active_service_limit" <<'PY'
+	if ! python3 - "$active_json" "$env_root_path" "$artifact" "$(load_generator_vm_count_for_quota)" "$provider_active_service_limit" <<'PY'
 import json
 import os
 import sys

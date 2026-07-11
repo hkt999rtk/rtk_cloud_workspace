@@ -38,6 +38,27 @@ if rg -n -- 'LKE_|EKS_|GKE_|lke\.linode\.com/pool-id' "$ROOT/cloud_deploy/archit
 	exit 1
 fi
 
+if rg -n -- 'LKE_REGION|LKE_(GENERAL|BROKER|DATABASE)_NODE_TYPE|LINODE_ACTIVE_SERVICE_LIMIT' \
+	"$ROOT/cloud_env/dev" "$ROOT/cloud_env/staging" "$ROOT/cloud_env/prod" \
+	--glob '!**/runtime/**' >/tmp/staging-k8s-static.out; then
+	cat /tmp/staging-k8s-static.out >&2
+	echo "tracked environments must describe provider-neutral location and node sizing" >&2
+	exit 1
+fi
+
+if rg -n -- 'HOME100K_LINODE_ACTIVE_SERVICE_LIMIT|LINODE_ACTIVE_SERVICE_LIMIT' \
+	"$ROOT/loadtests/home-100k" >/tmp/staging-k8s-static.out; then
+	cat /tmp/staging-k8s-static.out >&2
+	echo "load test must consume normalized provider preflight state" >&2
+	exit 1
+fi
+
+if rg -n -- '^HOME100K_REGION=' "$ROOT/loadtests/home-100k/scenarios" >/tmp/staging-k8s-static.out; then
+	cat /tmp/staging-k8s-static.out >&2
+	echo "load-test scenarios must resolve provider region from the selected environment" >&2
+	exit 1
+fi
+
 if rg -n --glob '!**/*_test.go' -- 'LKE_|lke\.linode\.com/pool-id' \
 	"$ROOT/loadtests/home-100k/scripts/home-100k.sh" \
 	"$ROOT/loadtests/home-100k/internal/home100k" >/tmp/staging-k8s-static.out; then

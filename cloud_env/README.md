@@ -69,7 +69,7 @@ git check-ignore "cloud_env/qa/environment.env" || true
 go run ./scripts/go/rtk-cloud -- deployment plan --environment qa
 ```
 
-檢查 plan 中的 environment、stack、architecture、adapter、capacity、replicas 與 node classes。確認無誤後才執行 mutation：
+檢查 generic plan 中的 environment、logical location、capacity、replicas 與 node classes，再檢查 adapter-private `runtime/adapters/lke/resolved-resources.env` 的實際 region/SKU。Load test 只使用 normalized `runtime/state/provider-preflight.env`，不讀 adapter-private state。確認無誤後才執行 mutation：
 
 ```sh
 go run ./scripts/go/rtk-cloud -- deployment provision \
