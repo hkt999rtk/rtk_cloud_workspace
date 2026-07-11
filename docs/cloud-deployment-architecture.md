@@ -10,7 +10,7 @@ An adapter maps that intent to a provider. The LKE adapter owns Linode regions a
 
 ## Resolution and lifecycle
 
-Configuration is resolved in this order: architecture defaults, adapter defaults, environment identity/selection, environment architecture overrides, environment adapter overrides, and allow-listed explicit overrides. Cross-layer duplicate keys, unknown keys, invalid types, and provider keys in architecture config are errors.
+The directory name under `cloud_env/` is the environment identity. Configuration is resolved in this order: architecture defaults, adapter defaults, environment stack/selection, environment architecture overrides, environment adapter overrides, and allow-listed explicit overrides. Cross-layer duplicate keys, unknown keys, invalid types, and provider keys in architecture config are errors.
 
 ```text
 resolve -> validate -> plan -> ensure adapter infrastructure

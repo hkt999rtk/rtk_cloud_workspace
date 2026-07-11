@@ -34,7 +34,7 @@ func TestResolveDeploymentConfigRejectsLegacyRoot(t *testing.T) {
 
 func TestResolveDeploymentConfigRequiresEnvironmentIdentity(t *testing.T) {
 	workspace := writeDeploymentFixture(t, "qa", "lke")
-	writeTestFile(t, filepath.Join(workspace, "cloud_env", "qa", "environment.env"), "CLOUD_ENVIRONMENT=qa\nCLOUD_STACK_NAME=video-cloud-qa\n")
+	writeTestFile(t, filepath.Join(workspace, "cloud_env", "qa", "environment.env"), "CLOUD_STACK_NAME=video-cloud-qa\n")
 	_, err := resolveDeploymentConfig(workspace, "qa", "")
 	if err == nil || !strings.Contains(err.Error(), "CLOUD_DNS_ROOT_DOMAIN is required") {
 		t.Fatalf("got %v", err)
@@ -128,7 +128,7 @@ func writeDeploymentFixture(t *testing.T, environment, adapter string) string {
 		"cloud_deploy/adapters/lke/schema.env":                     "ADAPTER_NAME=lke\nADAPTER_RUNTIME=kubernetes\nADAPTER_MUTATION_SUPPORTED=true\n",
 		"cloud_deploy/adapters/eks/schema.env":                     "ADAPTER_NAME=eks\nADAPTER_RUNTIME=kubernetes\nADAPTER_MUTATION_SUPPORTED=false\n",
 		"cloud_deploy/adapters/gke/schema.env":                     "ADAPTER_NAME=gke\nADAPTER_RUNTIME=kubernetes\nADAPTER_MUTATION_SUPPORTED=false\n",
-		filepath.Join("cloud_env", environment, "environment.env"): "CLOUD_ENVIRONMENT=" + environment + "\nCLOUD_STACK_NAME=video-cloud-" + environment + "\nCLOUD_DNS_ROOT_DOMAIN=example.test\n",
+		filepath.Join("cloud_env", environment, "environment.env"): "CLOUD_STACK_NAME=video-cloud-" + environment + "\nCLOUD_DNS_ROOT_DOMAIN=example.test\n",
 		filepath.Join("cloud_env", environment, "deployment.env"):  "DEPLOYMENT_ARCHITECTURE=kubernetes\nDEPLOYMENT_ADAPTER=" + adapter + "\n",
 	}
 	for path, body := range files {

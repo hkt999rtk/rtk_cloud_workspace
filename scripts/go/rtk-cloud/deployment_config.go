@@ -118,7 +118,7 @@ func runDeployment(args []string) error {
 }
 
 func validateLKEEnvironmentStateBeforeMutation(cfg deploymentConfig) error {
-	compat := appendMap(appendMap(cfg.Values, cfg.AdapterValues), deploymentLegacyLKEValues(appendMap(cfg.Values, cfg.AdapterValues)))
+	compat := appendMap(appendMap(cfg.Values, cfg.AdapterValues), deploymentLegacyLKEValues(appendMap(cfg.Values, cfg.AdapterValues), cfg.Environment))
 	for _, key := range []string{"LKE_REGION", "LKE_GENERAL_NODE_TYPE", "LKE_BROKER_NODE_TYPE", "LKE_DATABASE_NODE_TYPE"} {
 		if strings.TrimSpace(cfg.AdapterValues[key]) == "" {
 			return fmt.Errorf("LKE adapter setting %s is required before mutation", key)
@@ -193,9 +193,6 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 	selection, err := readStrictEnv(filepath.Join(environmentRoot, "deployment.env"))
 	if err != nil {
 		return deploymentConfig{}, err
-	}
-	if got := envIdentity["CLOUD_ENVIRONMENT"]; got != environment {
-		return deploymentConfig{}, fmt.Errorf("environment directory %q does not match CLOUD_ENVIRONMENT=%q", environment, got)
 	}
 	for _, key := range []string{"CLOUD_STACK_NAME", "CLOUD_DNS_ROOT_DOMAIN"} {
 		if strings.TrimSpace(envIdentity[key]) == "" {
@@ -367,7 +364,7 @@ func materializeDeploymentRuntime(cfg deploymentConfig) error {
 	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "env", "stack.env"), stack, 0o600); err != nil {
 		return err
 	}
-	adapterRuntime := appendMap(cfg.AdapterValues, deploymentLegacyLKEValues(resolved))
+	adapterRuntime := appendMap(cfg.AdapterValues, deploymentLegacyLKEValues(resolved, cfg.Environment))
 	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "adapters", cfg.Adapter, "config.env"), adapterRuntime, 0o600); err != nil {
 		return err
 	}
@@ -394,12 +391,12 @@ func deploymentRuntimeEndpoints(v map[string]string) map[string]string {
 	}
 }
 
-func deploymentLegacyLKEValues(v map[string]string) map[string]string {
+func deploymentLegacyLKEValues(v map[string]string, environment string) map[string]string {
 	if v["DEPLOYMENT_ADAPTER"] != "lke" {
 		return map[string]string{}
 	}
 	return map[string]string{
-		"CLOUD_ENV_NAME": v["CLOUD_ENVIRONMENT"], "CLOUD_PROVIDER": "lke", "CLOUD_REGION": v["LKE_REGION"],
+		"CLOUD_ENV_NAME": environment, "CLOUD_PROVIDER": "lke", "CLOUD_REGION": v["LKE_REGION"],
 		"LKE_TARGET_CONNECTS": v["CAPACITY_TARGET_CONNECTIONS"], "LKE_MQTT_CONNECTIONS_PER_POD": v["CAPACITY_CONNECTIONS_PER_MQTT_POD"],
 		"LKE_SYSTEM_RESERVED_CPU_PER_NODE": v["CAPACITY_SYSTEM_RESERVED_CPU_MILLI"] + "m", "LKE_SYSTEM_RESERVED_MEMORY_PER_NODE": v["CAPACITY_SYSTEM_RESERVED_MEMORY_MIB"] + "Mi",
 		"LKE_NODE_COUNT": v["NODE_CLASS_BROKER_MIN_COUNT"], "LKE_NODE_TYPE": v["LKE_BROKER_NODE_TYPE"],

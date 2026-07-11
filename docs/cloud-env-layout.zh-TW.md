@@ -32,7 +32,7 @@ cloud_env/<environment>/
     adapter.env
 ```
 
-`environment.env` 定義 environment identity、stack 與 DNS root。`deployment.env` 只選擇 architecture 與 adapter。`overrides/architecture.env` 只可覆寫 provider-neutral keys；`overrides/adapter.env` 只可覆寫被選 adapter 的 keys。
+`cloud_env/` 下的目錄名稱就是 environment identity；`environment.env` 只定義 stack 與 DNS root。`deployment.env` 只選擇 architecture 與 adapter。`overrides/architecture.env` 只可覆寫 provider-neutral keys；`overrides/adapter.env` 只可覆寫被選 adapter 的 keys。
 
 ## 本機 runtime
 

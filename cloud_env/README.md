@@ -4,7 +4,7 @@
 
 ## 建立最小設定
 
-Environment 名稱使用小寫英數字與 `-`，目錄名稱必須與 `CLOUD_ENVIRONMENT` 完全一致。不要複製既有 environment 的 `runtime/`。
+Environment identity 直接取自 `cloud_env/` 下的目錄名稱；名稱使用小寫英數字與 `-`。不要複製既有 environment 的 `runtime/`。
 
 ```sh
 environment=qa
@@ -14,14 +14,12 @@ mkdir -p "cloud_env/$environment/overrides"
 建立 `cloud_env/qa/environment.env`：
 
 ```env
-CLOUD_ENVIRONMENT=qa
 CLOUD_STACK_NAME=video-cloud-qa
 CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
 ```
 
 | Key | 必填 | 用途 |
 | --- | --- | --- |
-| `CLOUD_ENVIRONMENT` | 是 | Environment identity；必須等於目錄名稱。 |
 | `CLOUD_STACK_NAME` | 是 | Cluster、namespace、DNS 與 destructive confirmation 使用的唯一 stack 名稱。 |
 | `CLOUD_DNS_ROOT_DOMAIN` | 是 | Public service hostname 的根網域。 |
 
@@ -80,7 +78,7 @@ LKE mutation 需要 operator 提供 `LINODE_TOKEN`。Token、kubeconfig、certif
 
 ## Review checklist
 
-- Environment 目錄與 `CLOUD_ENVIRONMENT` 相同。
+- Environment 目錄名稱清楚且使用小寫英數字與 `-`。
 - `CLOUD_STACK_NAME` 與 DNS 名稱不會碰撞其他 environment。
 - 只覆寫與此 environment 確實不同的值。
 - Architecture override 沒有 `LKE_*`、`EKS_*`、`GKE_*`。
