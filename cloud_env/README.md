@@ -43,7 +43,9 @@ DEPLOYMENT_ADAPTER=lke
 
 ```env
 CAPACITY_TARGET_CONNECTIONS=1000
-MQTT_REPLICAS=2
+CAPACITY_ACTIVE_DEVICES=1000
+MQTT_MIN_REPLICAS=2
+VIDEO_CLOUD_API_MIN_REPLICAS=2
 NODE_CLASS_BROKER_MIN_COUNT=2
 NODE_CLASS_BROKER_MIN_VCPU=4
 NODE_CLASS_BROKER_MIN_MEMORY_GIB=8
@@ -69,7 +71,7 @@ git check-ignore "cloud_env/qa/environment.env" || true
 go run ./scripts/go/rtk-cloud -- deployment plan --environment qa
 ```
 
-檢查 generic plan 中的 environment、logical location、capacity、replicas 與 node classes，再檢查 adapter-private `runtime/adapters/lke/resolved-resources.env` 的實際 region/SKU。Load test 只使用 normalized `runtime/state/provider-preflight.env`，不讀 adapter-private state。確認無誤後才執行 mutation：
+檢查 generic plan 中的 environment、logical location、minimum/effective replicas、每類 node 的 aggregate requests 與 effective count，再檢查 adapter-private `runtime/adapters/lke/resolved-resources.env` 的實際 region/SKU。Load test 只使用 normalized `runtime/state/provider-preflight.env`，不讀 adapter-private state。確認無誤後才執行 mutation：
 
 ```sh
 go run ./scripts/go/rtk-cloud -- deployment provision \

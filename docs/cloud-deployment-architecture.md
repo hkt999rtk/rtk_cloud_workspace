@@ -32,6 +32,35 @@ The initial node classes are `general`, `broker`, and `database`. MQTT placement
 
 Edge and TURN are architecture intent (`EDGE_REPLICAS`, `EDGE_MAX_CONNECTIONS`, `TURN_REPLICAS`, and relay port bounds). LKE currently realizes them with Linode VMs; another adapter may use a different implementation without changing the environment or load-test contract.
 
+## Shared capacity formulas
+
+Capacity is resolved before adapter selection. MQTT and Video Cloud API effective replicas are:
+
+```text
+MQTT_EFFECTIVE_REPLICAS = max(MQTT_MIN_REPLICAS,
+  ceil(CAPACITY_TARGET_CONNECTIONS / CAPACITY_CONNECTIONS_PER_MQTT_POD))
+
+VIDEO_CLOUD_API_EFFECTIVE_REPLICAS = max(VIDEO_CLOUD_API_MIN_REPLICAS,
+  ceil(CAPACITY_ACTIVE_DEVICES / CAPACITY_ACTIVE_DEVICES_PER_API_POD))
+```
+
+The initial API density is 40,000 active devices per Pod. Other workloads use explicit minimum replicas until a measured unit-capacity contract exists.
+
+Each workload belongs to one logical node class and declares request CPU, request memory, and spread/anti-affinity floor. For each class:
+
+```text
+totalCPU = sum(requestCPU * effectiveReplicas)
+totalMemory = sum(requestMemory * effectiveReplicas)
+usableCPUPerNode = planningVCPU * 1000 - systemReservedCPU
+usableMemoryPerNode = planningMemoryGiB * 1024 - systemReservedMemory
+effectiveNodeCount = max(minCount,
+  ceil(totalCPU / usableCPUPerNode),
+  ceil(totalMemory / usableMemoryPerNode),
+  spreadFloor)
+```
+
+Every Pod must fit one planning node. Persistent volumes are storage intent and DaemonSet/node-agent overhead is part of system reserve. Edge and TURN resources are excluded from Kubernetes node packing. The generic planner owns all replicas and node counts; adapters only map logical location and planning shape to provider resources.
+
 ## Legacy mapping
 
 | Legacy input | New owner |
@@ -39,8 +68,8 @@ Edge and TURN are architecture intent (`EDGE_REPLICAS`, `EDGE_MAX_CONNECTIONS`, 
 | `cloud_env/staging/lke` | `cloud_env/staging/runtime` generated state |
 | `LKE_TARGET_CONNECTS` | `CAPACITY_TARGET_CONNECTIONS` |
 | `LKE_MQTT_CONNECTIONS_PER_POD` | `CAPACITY_CONNECTIONS_PER_MQTT_POD` |
-| `LKE_MQTT_REPLICAS` | `MQTT_REPLICAS` |
-| `LKE_VIDEO_CLOUD_REPLICAS` | `VIDEO_CLOUD_API_REPLICAS` |
+| `LKE_MQTT_REPLICAS` | generated `MQTT_EFFECTIVE_REPLICAS` from `MQTT_MIN_REPLICAS` |
+| `LKE_VIDEO_CLOUD_REPLICAS` | generated `VIDEO_CLOUD_API_EFFECTIVE_REPLICAS` from `VIDEO_CLOUD_API_MIN_REPLICAS` |
 | `LKE_*_REQUEST_CPU/MEMORY` | matching provider-neutral workload resource key |
 | `LKE_EDGE_HAPROXY_COUNT/MAXCONN` | `EDGE_REPLICAS` / `EDGE_MAX_CONNECTIONS` |
 | `LKE_COTURN_VM_COUNT` and relay ports | `TURN_REPLICAS` and `TURN_*_PORT` |

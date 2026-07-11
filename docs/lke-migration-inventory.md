@@ -78,6 +78,8 @@ Tracked environments no longer set `LKE_REGION`, `LKE_GENERAL_NODE_TYPE`, `LKE_B
 
 Before the first mutation after this change, the operator must create `cloud_env/<environment>/runtime/adapters/lke/account.env` with `LKE_ACTIVE_SERVICE_LIMIT`. There is no automatic migration from tracked config. The adapter writes selected region and types to `resolved-resources.env`; provider IDs remain in the existing adapter-private state files.
 
+The shared planner now owns workload replicas and logical node counts. `MQTT_REPLICAS` and `VIDEO_CLOUD_API_REPLICAS` are replaced once by `MQTT_MIN_REPLICAS` and `VIDEO_CLOUD_API_MIN_REPLICAS`; generated effective values feed the LKE compatibility renderer. LKE capacity code may check provider quota and current resources but must not recalculate generic workload or node capacity.
+
 ## Kubernetes Runtime Target Summary
 
 The current validated staging target is Linode Kubernetes Engine (LKE). The

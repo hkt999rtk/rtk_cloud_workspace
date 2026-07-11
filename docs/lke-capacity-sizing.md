@@ -13,7 +13,8 @@ For each experiment:
 
 - `users = ceil(devices / devices_per_user)`
 - `load_generator_vms = ceil(devices / load_generator_devices_per_vm)`
-- `required_mqtt_pods = ceil(devices / measured_safe_devices_per_mqtt_pod)`
+- `required_mqtt_pods = max(mqtt_min_replicas, ceil(target_connections / measured_safe_connections_per_mqtt_pod))`
+- `required_api_pods = max(api_min_replicas, ceil(active_devices / active_devices_per_api_pod))`
 - `usable_node_cpu = node_allocatable_cpu - system_reserved_cpu`
 - `usable_node_mem = node_allocatable_mem - system_reserved_mem`
 - `cpu_nodes = ceil(sum(workload_cpu_requests * replicas) / usable_node_cpu)`
@@ -23,8 +24,8 @@ For each experiment:
 
 MQTT memory is now a first-class sizing input. A run that OOMKills MQTT pods is
 not a broker-capacity success even if most device connections were established.
-Record `LKE_MQTT_REQUEST_MEMORY`, `LKE_MQTT_LIMIT_MEMORY`, and, when changed,
-`LKE_EMQX_FORCE_SHUTDOWN_MAX_HEAP_SIZE` in the experiment request before using
+Record provider-neutral MQTT request/limit memory and, when changed, the
+adapter-specific EMQX heap limit in the experiment request before using
 that run as evidence.
 
 Load-generator VM count is formula-driven, not a fixed profile value. The
@@ -605,11 +606,12 @@ classification must say `load_generator` and the next run should reduce
 the same formula. A 100K PASS can raise confidence; only a follow-up
 reduction/binary-search run can justify reducing pod or node count.
 
-The final node count is not just `5`. It is the maximum of MQTT spread,
-workload CPU requests, workload memory requests, and any dedicated placement
-rules. Use `rtk-cloud provision --plan` after setting `LKE_TARGET_CONNECTS`,
-`LKE_MQTT_REPLICAS`, `LKE_NODE_COUNT`, and resource requests in
-`cloud_env/staging/lke/env/stack.env`.
+The final node count is not just `5`. The shared planner calculates each logical
+node class independently as the maximum of its configured floor, workload CPU,
+workload memory, and spread rules. Use
+`rtk-cloud deployment plan --environment staging` after setting generic capacity
+targets, minimum replicas, planning shapes, and workload requests in the
+environment architecture override.
 
 ## Review Checklist
 
