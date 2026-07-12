@@ -589,6 +589,32 @@ PVC/PV/provider volume 類資料層。`staging-provision`
 負責新安裝或停機升級：解析 image、套用 manifests、DNS/artifacts、rollout
 readiness。`staging-acceptance` 不 reset、不 deploy，只驗證已部署好的 stack。
 
+`staging-e2e-test` / `run-staging-e2e` 支援以 `--steps` 選擇要執行的階段，預設
+`all` 會從 reset、provision、data setup、MQTT 流量、runtime log 到 billing
+log/ledger 全部跑完。可單獨重跑某一段而沿用既有 load-test artifacts：
+
+```sh
+# 只重跑 billing logger 與 PostgreSQL ledger 驗證
+scripts/run-staging-e2e.sh --confirm video-cloud-staging \
+  --skip-remove --steps billing
+
+# 只驗證 billing log
+scripts/run-staging-e2e.sh --confirm video-cloud-staging \
+  --skip-remove --steps billing-log \
+  --out-dir cloud_env/staging/lke/artifacts/staging-e2e/<existing-run>
+
+# 只跑 MQTT 流量與 billing，不重建 users/devices
+scripts/run-staging-e2e.sh --confirm video-cloud-staging \
+  --skip-remove --steps mqtt,billing
+```
+
+可用 step 為 `reset`、`provision`、`data`、`mqtt`、`runtime-logs`、
+`billing-log`、`billing-db`；`billing` 等同於 `billing-log,billing-db`。
+`billing-log` 會使用專用 billing logger token 查詢 `billing_usage`，
+`billing-db` 會查詢同一個 Brand Cloud 的 `usage_facts`。因此 billing 驗證
+使用 load-test 已產生的 Brand Cloud/device credentials，不會另行建立一套
+不同的憑證流程。
+
 ### `go run ./scripts/go/rtk-cloud -- staging-e2e-test`
 
 Linode K8s staging E2E compatibility orchestrator。它仍可把 K8s reset、K8s rollout readiness、K8s service query/port-forward、staging E2E data setup、home MQTT simulation，以及 persisted MQTT runtime log verification 串成單一流程，最後輸出 sanitized `summary.json` 與 `TEST_REPORT.md`。建立 RTK brand cloud、建立測試 users、產生並 factory-enroll devices、device bind/provision、bulk bind validation 已拆到 `scripts/setup-staging-e2e-data.sh` / `rtk-cloud staging-e2e-data-setup`，完整 E2E 會呼叫這個獨立步驟。

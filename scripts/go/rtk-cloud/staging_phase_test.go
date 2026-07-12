@@ -19,6 +19,7 @@ func TestRunStagingE2EResetDeletesWorkloadsByDefault(t *testing.T) {
 	t.Setenv("CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT", fakeStagingPhaseDataSetupCommand(t, logPath))
 	t.Setenv("CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT", fakeStagingPhaseMQTTCommand(t, logPath))
 	t.Setenv("CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT", fakeStagingPhaseMQTTLogVerifyCommand(t, logPath))
+	t.Setenv("CLOUD_STAGING_E2E_BILLING_VERIFY_SCRIPT", fakeStagingPhaseBillingVerifyCommand(t, logPath))
 
 	if err := runStagingE2ETest([]string{
 		"--workspace", workspace,
@@ -26,6 +27,7 @@ func TestRunStagingE2EResetDeletesWorkloadsByDefault(t *testing.T) {
 		"--run",
 		"--confirm", "video-cloud-staging",
 		"--out-dir", outDir,
+		"--steps", "reset,provision,data,mqtt,runtime-logs",
 		"--quiet",
 	}); err != nil {
 		t.Fatal(err)
@@ -363,6 +365,33 @@ done
 mkdir -p "$out_dir"
 printf '{"overall":"pass"}\n' > "$out_dir/summary.json"
 printf 'mqtt-log-verify ARGS=%s\n' "$*" >> "` + logPath + `"
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func fakeStagingPhaseBillingVerifyCommand(t *testing.T, logPath string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "billing-verify")
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+out_dir=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --out-dir)
+      out_dir="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+mkdir -p "$out_dir"
+printf '{"overall":"pass"}\n' > "$out_dir/summary.json"
+printf 'billing-verify ARGS=%s\n' "$*" >> "` + logPath + `"
 `
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
