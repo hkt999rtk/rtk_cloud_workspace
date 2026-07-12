@@ -6325,8 +6325,9 @@ func lkeContainerResourceProfile(env map[string]string, name string) (lkeResourc
 		return lkeResourceProfile{}, false
 	}
 	profile := lkeResourceProfile{
-		requestCPU: env[spec.Prefix+"_REQUEST_CPU"], requestMemory: env[spec.Prefix+"_REQUEST_MEMORY"],
-		limitMemory: firstNonEmpty(env[spec.Prefix+"_LIMIT_MEMORY"], limits[name], env[spec.Prefix+"_REQUEST_MEMORY"]),
+		requestCPU:    firstNonEmpty(os.Getenv(spec.Prefix+"_REQUEST_CPU"), env[spec.Prefix+"_REQUEST_CPU"]),
+		requestMemory: firstNonEmpty(os.Getenv(spec.Prefix+"_REQUEST_MEMORY"), env[spec.Prefix+"_REQUEST_MEMORY"]),
+		limitMemory:   firstNonEmpty(env[spec.Prefix+"_LIMIT_MEMORY"], limits[name], env[spec.Prefix+"_REQUEST_MEMORY"]),
 	}
 	return profile, true
 }
