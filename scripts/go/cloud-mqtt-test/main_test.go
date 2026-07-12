@@ -2188,6 +2188,13 @@ func TestLoadHome100KCredentialBundleReadsGzippedSQLiteDevices(t *testing.T) {
 	if got := bundle.Users.Users[0].Tokens.RefreshToken; got != "cached-refresh" {
 		t.Fatalf("bundle user refresh token = %q, want cached-refresh", got)
 	}
+	explicit, err := loadHome100KCredentialBundleAt(envRoot, sqlitePath)
+	if err != nil {
+		t.Fatalf("load explicit SQLite credential bundle: %v", err)
+	}
+	if explicit.Source != sqlitePath || len(explicit.Bind.Assignments) != 1 || explicit.Bind.Assignments[0].DeviceID != "device-1" {
+		t.Fatalf("explicit bundle = %#v", explicit)
+	}
 	if len(bundle.Bind.Assignments) != 1 || bundle.Bind.Assignments[0].DeviceID != "device-1" {
 		t.Fatalf("bundle bindings = %#v", bundle.Bind.Assignments)
 	}

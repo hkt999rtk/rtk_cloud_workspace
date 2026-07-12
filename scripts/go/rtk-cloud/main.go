@@ -74,6 +74,7 @@ var commands = map[string]commandSpec{
 	"run-staging-e2e":                  {run: runStagingE2E},
 	"secrets-check":                    {run: runSecretsCheck},
 	"staging-acceptance":               {run: runStagingAcceptance},
+	"staging-e2e-billing-verify":       {run: runStagingE2EBillingVerify},
 	"staging-e2e-data-setup":           {run: runStagingE2EDataSetup},
 	"staging-e2e-mqtt-log-verify":      {run: runStagingE2EMQTTLogVerify},
 	"staging-e2e-test":                 {run: runStagingE2ETest},
@@ -253,6 +254,7 @@ func runMQTTTest(args []string) error {
 	workspaceFlag := fs.String("workspace", "", "workspace")
 	brandname := fs.String("brandname", "", "brand name")
 	outDir := fs.String("out-dir", "", "output directory")
+	testDataDB := fs.String("test-data-db", "", "explicit SQLite test-data database containing load-test credentials")
 	profile := fs.String("profile", "smoke", "profile")
 	runID := fs.String("run-id", os.Getenv("HOME100K_RUN_ID"), "run id for log correlation")
 	duration := fs.Int("duration-seconds", 120, "duration seconds")
@@ -368,6 +370,7 @@ func runMQTTTest(args []string) error {
 		"--env-root", resolvedEnv,
 		"--brandname", *brandname,
 		"--out-dir", *outDir,
+		"--test-data-db", *testDataDB,
 		"--profile", *profile,
 		"--run-id", *runID,
 		"--duration-seconds", strconv.Itoa(*duration),
@@ -3285,11 +3288,15 @@ func runStagingAcceptance(args []string) error {
 	quiet := fs.Bool("quiet", false, "suppress periodic progress lines")
 	resume := fs.Bool("resume", true, "reuse completed data setup artifacts")
 	noResume := fs.Bool("no-resume", false, "recreate users/devices/bind artifacts")
+	steps := fs.String("steps", "all", "comma-separated steps: reset,provision,data,mqtt,runtime-logs,billing-log,billing-db (or all)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *noResume {
 		*resume = false
+	}
+	if _, err := parseE2ESteps(*steps, true, true); err != nil {
+		return err
 	}
 	ctx, err := resolveStagingRuntimeContext(*workspaceFlag, *stackFileFlag, *envRootFlag)
 	if err != nil {
@@ -3307,6 +3314,7 @@ func runStagingAcceptance(args []string) error {
 		userConcurrency: *userConcurrency, deviceConcurrency: *deviceConcurrency, bindConcurrency: *bindConcurrency,
 		outDir: *outDir, skipMQTTProbe: *skipMQTTProbe, skipRemove: true, skipProvision: true, quiet: *quiet, resume: *resume,
 		confirmOverride: *confirm,
+		steps:           *steps,
 	}))
 }
 
@@ -3334,6 +3342,7 @@ func runStagingE2ETest(args []string) error {
 	resume := fs.Bool("resume", true, "reuse completed data setup artifacts")
 	noResume := fs.Bool("no-resume", false, "recreate data setup artifacts")
 	skipProvision := fs.Bool("skip-provision", false, "skip K8s provision and run only acceptance checks")
+	selectedStepsFlag := fs.String("steps", "all", "comma-separated steps: reset,provision,data,mqtt,runtime-logs,billing-log,billing-db (or all)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -3342,6 +3351,13 @@ func runStagingE2ETest(args []string) error {
 	}
 	if *noResume {
 		*resume = false
+	}
+	if _, err := parseE2ESteps(*selectedStepsFlag, *skipRemove, *skipProvision); err != nil {
+		return err
+	}
+	selection, selectionErr := parseE2ESteps(*selectedStepsFlag, *skipRemove, *skipProvision)
+	if selectionErr != nil {
+		return selectionErr
 	}
 	if !*skipRemove && !hasFlag(args, "--resume") {
 		*resume = false
@@ -3399,6 +3415,7 @@ func runStagingE2ETest(args []string) error {
 		"setup-data":      firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT"), filepath.Join(workspace, "scripts", "setup-staging-e2e-data.sh")),
 		"mqtt-test":       firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT"), selfCommandPath("mqtt-test")),
 		"mqtt-log-verify": firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT"), selfCommandPath("staging-e2e-mqtt-log-verify")),
+		"billing-verify":  firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BILLING_VERIFY_SCRIPT"), selfCommandPath("staging-e2e-billing-verify")),
 	}
 	if provider == "lke" {
 		if lkeRemoveScript != "" {
@@ -3416,7 +3433,7 @@ func runStagingE2ETest(args []string) error {
 		if *skipRemove && *skipProvision {
 			phase = "acceptance"
 		}
-		printE2EPlan(workspace, envRoot, stackName, phase, *brandname, *userCount, *deviceCount, *deviceMix, *userConcurrency, *deviceConcurrency, *bindConcurrency, *skipRemove, *skipProvision, scripts)
+		printE2EPlan(workspace, envRoot, stackName, phase, *brandname, *userCount, *deviceCount, *deviceMix, *userConcurrency, *deviceConcurrency, *bindConcurrency, *skipRemove, *skipProvision, *selectedStepsFlag, scripts)
 		return nil
 	}
 	if *confirm != stackName {
@@ -3436,7 +3453,7 @@ func runStagingE2ETest(args []string) error {
 		return err
 	}
 	childEnv := []string{}
-	if !*skipRemove {
+	if selection.Reset {
 		resetArgs := append(commandWithArgs(scripts["remove-k8s"], "--workspace", workspace, "--env-root", envRoot), "--yes")
 		if *purgeStorage {
 			resetArgs = append(resetArgs, "--purge-storage")
@@ -3453,69 +3470,85 @@ func runStagingE2ETest(args []string) error {
 	} else if useLegacyLKEProvision {
 		k8sProvisionArgs = []string{"--workspace", workspace, "--env-root", envRoot, "--all", "--confirm", stackName}
 	}
-	if !*skipProvision {
+	if selection.Provision {
 		if err := runStep("provision_k8s", commandWithArgs(scripts["provision-k8s"], k8sProvisionArgs...)...); err != nil {
 			return err
 		}
 	}
-	portForwardEnv, cleanup, err := startK8SE2EPortForwards(workspace, envRoot)
+	portForwardEnv, cleanup, err := startK8SE2EPortForwardsForServices(workspace, envRoot, selection.MQTT || selection.RuntimeLogs || selection.BillingLog)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 	childEnv = append(childEnv, portForwardEnv...)
 	dataSetupDir := filepath.Join(*outDir, "data-setup")
-	dataSetupArgs := []string{"--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--user-count", strconv.Itoa(*userCount), "--device-count", strconv.Itoa(*deviceCount), "--device-mix", *deviceMix, "--device-prefix", *devicePrefix, "--user-concurrency", strconv.Itoa(*userConcurrency), "--device-concurrency", strconv.Itoa(*deviceConcurrency), "--bind-concurrency", strconv.Itoa(*bindConcurrency), "--out-dir", dataSetupDir}
-	if *quiet {
-		dataSetupArgs = append(dataSetupArgs, "--quiet")
-	}
-	if !*resume {
-		dataSetupArgs = append(dataSetupArgs, "--no-resume")
-	}
-	dataSetupStep, err := runE2EStepWithOptions("setup_brand_devices", filepath.Join(logsDir, "setup_brand_devices.log"), e2eStepOptions{Quiet: *quiet, Env: childEnv}, commandWithArgs(scripts["setup-data"], dataSetupArgs...)...)
-	if err != nil {
+	testDataDB := testDataDBPath(envRoot, *brandname)
+	dataSetupSummaryFile := filepath.Join(dataSetupDir, "summary.json")
+	bindValidationDir := filepath.Join(dataSetupDir, "bind-validation")
+	if selection.Data {
+		dataSetupArgs := []string{"--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--user-count", strconv.Itoa(*userCount), "--device-count", strconv.Itoa(*deviceCount), "--device-mix", *deviceMix, "--device-prefix", *devicePrefix, "--user-concurrency", strconv.Itoa(*userConcurrency), "--device-concurrency", strconv.Itoa(*deviceConcurrency), "--bind-concurrency", strconv.Itoa(*bindConcurrency), "--out-dir", dataSetupDir}
+		if *quiet {
+			dataSetupArgs = append(dataSetupArgs, "--quiet")
+		}
+		if !*resume {
+			dataSetupArgs = append(dataSetupArgs, "--no-resume")
+		}
+		dataSetupStep, dataErr := runE2EStepWithOptions("setup_brand_devices", filepath.Join(logsDir, "setup_brand_devices.log"), e2eStepOptions{Quiet: *quiet, Env: childEnv}, commandWithArgs(scripts["setup-data"], dataSetupArgs...)...)
 		steps = append(steps, dataSetupStep)
-		return err
+		if dataErr != nil {
+			return dataErr
+		}
+		dataSummary, dataErr := readE2EDataSetupSummary(filepath.Join(dataSetupDir, "summary.json"))
+		if dataErr != nil {
+			return dataErr
+		}
+		testDataDB = firstNonEmpty(dataSummary.TestDataDB, testDataDB)
+		dataSetupSummaryFile = firstNonEmpty(dataSummary.SummaryFile, dataSetupSummaryFile)
+		bindValidationDir = firstNonEmpty(dataSummary.BindValidationDir, bindValidationDir)
 	}
-	dataSummary, err := readE2EDataSetupSummary(filepath.Join(dataSetupDir, "summary.json"))
-	if err != nil {
-		steps = append(steps, dataSetupStep)
-		return err
+	if selection.MQTT {
+		mqttArgs := []string{"--env-root", envRoot, "--brandname", *brandname, "--profile", "smoke", "--test-data-db", testDataDB, "--out-dir", filepath.Join(*outDir, "home-mqtt")}
+		if *skipMQTTProbe {
+			mqttArgs = append(mqttArgs, "--no-mqtt-probe")
+		} else {
+			mqttArgs = append(mqttArgs, "--mqtt-probe")
+		}
+		step, mqttErr := runE2EStepWithOptions("cloud_mqtt_test", filepath.Join(logsDir, "cloud_mqtt_test.log"), e2eStepOptions{Quiet: *quiet, Env: childEnv}, commandWithArgs(scripts["mqtt-test"], mqttArgs...)...)
+		steps = append(steps, step)
+		if mqttErr != nil {
+			return mqttErr
+		}
 	}
-	steps = append(steps, dataSetupStep)
-	testDataDB := dataSummary.TestDataDB
-	if testDataDB == "" {
-		testDataDB = testDataDBPath(envRoot, *brandname)
+	mqttResultsFile := filepath.Join(*outDir, "home-mqtt", "results.json")
+	mqttLogVerifySummaryFile := filepath.Join(*outDir, "mqtt-log-verify", "summary.json")
+	if selection.RuntimeLogs {
+		mqttLogVerifyArgs := []string{"--workspace", workspace, "--env-root", envRoot, "--mqtt-results", mqttResultsFile, "--out-dir", filepath.Dir(mqttLogVerifySummaryFile)}
+		step, logErr := runE2EStepWithOptions("verify_mqtt_logs", filepath.Join(logsDir, "verify_mqtt_logs.log"), e2eStepOptions{Quiet: *quiet, Env: childEnv}, commandWithArgs(scripts["mqtt-log-verify"], mqttLogVerifyArgs...)...)
+		steps = append(steps, step)
+		if logErr != nil {
+			return logErr
+		}
 	}
-	dataSetupSummaryFile := dataSummary.SummaryFile
-	bindValidationDir := dataSummary.BindValidationDir
-	if testDataDB == "" {
-		return errors.New("data setup summary did not include test_data_db")
-	}
-	if dataSetupSummaryFile == "" {
-		dataSetupSummaryFile = filepath.Join(dataSetupDir, "summary.json")
-	}
-	if bindValidationDir == "" {
-		return errors.New("data setup summary did not include bind_validation_dir")
-	}
-	mqttArgs := []string{"--env-root", envRoot, "--brandname", *brandname, "--profile", "smoke", "--out-dir", filepath.Join(*outDir, "home-mqtt")}
-	if *skipMQTTProbe {
-		mqttArgs = append(mqttArgs, "--no-mqtt-probe")
-	} else {
-		mqttArgs = append(mqttArgs, "--mqtt-probe")
-	}
-	step, err := runE2EStepWithOptions("cloud_mqtt_test", filepath.Join(logsDir, "cloud_mqtt_test.log"), e2eStepOptions{Quiet: *quiet, Env: childEnv}, commandWithArgs(scripts["mqtt-test"], mqttArgs...)...)
-	steps = append(steps, step)
-	if err != nil {
-		return err
-	}
-	mqttLogVerifyDir := filepath.Join(*outDir, "mqtt-log-verify")
-	mqttLogVerifySummaryFile := filepath.Join(mqttLogVerifyDir, "summary.json")
-	mqttLogVerifyArgs := []string{"--workspace", workspace, "--env-root", envRoot, "--mqtt-results", filepath.Join(*outDir, "home-mqtt", "results.json"), "--out-dir", mqttLogVerifyDir}
-	step, err = runE2EStepWithOptions("verify_mqtt_logs", filepath.Join(logsDir, "verify_mqtt_logs.log"), e2eStepOptions{Quiet: *quiet, Env: childEnv}, commandWithArgs(scripts["mqtt-log-verify"], mqttLogVerifyArgs...)...)
-	steps = append(steps, step)
-	if err != nil {
-		return err
+	if selection.BillingLog || selection.BillingDB {
+		if _, err := os.Stat(testDataDB); err != nil {
+			return fmt.Errorf("billing step requires test data database %s: %w", testDataDB, err)
+		}
+		billingChecks := []string{}
+		if selection.BillingLog {
+			billingChecks = append(billingChecks, "log")
+		}
+		if selection.BillingDB {
+			billingChecks = append(billingChecks, "db")
+		}
+		billingArgs := []string{"--workspace", workspace, "--env-root", envRoot, "--stack", stackName, "--test-data-db", testDataDB, "--out-dir", filepath.Join(*outDir, "billing-verify"), "--checks", strings.Join(billingChecks, ",")}
+		if _, err := os.Stat(mqttResultsFile); err == nil {
+			billingArgs = append(billingArgs, "--mqtt-results", mqttResultsFile)
+		}
+		step, billingErr := runE2EStepWithOptions("verify_billing", filepath.Join(logsDir, "verify_billing.log"), e2eStepOptions{Quiet: *quiet, Env: childEnv}, commandWithArgs(scripts["billing-verify"], billingArgs...)...)
+		steps = append(steps, step)
+		if billingErr != nil {
+			return billingErr
+		}
 	}
 	overall := "pass"
 	for _, step := range steps {
@@ -3532,7 +3565,7 @@ func runStagingE2ETest(args []string) error {
 		"stack":        stackName,
 		"target":       "k8s",
 		"brandname":    *brandname,
-		"artifacts":    map[string]any{"test_data_db": testDataDB, "bind_validation_dir": bindValidationDir, "data_setup_summary_file": dataSetupSummaryFile, "mqtt_log_verify_summary_file": mqttLogVerifySummaryFile, "report_file": reportFile},
+		"artifacts":    map[string]any{"test_data_db": testDataDB, "bind_validation_dir": bindValidationDir, "data_setup_summary_file": dataSetupSummaryFile, "mqtt_log_verify_summary_file": mqttLogVerifySummaryFile, "billing_verify_summary_file": filepath.Join(*outDir, "billing-verify", "summary.json"), "report_file": reportFile},
 		"steps":        steps,
 	}
 	if err := writeJSON(summaryFile, summary); err != nil {
@@ -3576,11 +3609,15 @@ func runStagingE2E(args []string) error {
 	quiet := fs.Bool("quiet", false, "suppress periodic progress lines")
 	resume := fs.Bool("resume", true, "reuse completed data setup artifacts")
 	noResume := fs.Bool("no-resume", false, "recreate users/devices/bind artifacts")
+	steps := fs.String("steps", "all", "comma-separated steps: reset,provision,data,mqtt,runtime-logs,billing-log,billing-db (or all)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *noResume {
 		*resume = false
+	}
+	if _, err := parseE2ESteps(*steps, *skipRemove, false); err != nil {
+		return err
 	}
 	if !*skipRemove && !hasFlag(args, "--resume") {
 		*resume = false
@@ -3608,6 +3645,7 @@ func runStagingE2E(args []string) error {
 			brandname: *brandname, userCount: *userCount, deviceCount: *deviceCount, deviceMix: *deviceMix, devicePrefix: *devicePrefix,
 			userConcurrency: *userConcurrency, deviceConcurrency: *deviceConcurrency, bindConcurrency: *bindConcurrency,
 			outDir: *outDir, skipMQTTProbe: *skipMQTTProbe, skipRemove: *skipRemove, purgeStorage: *purgeStorage, quiet: *quiet, resume: *resume,
+			steps: *steps,
 		}))
 	}
 	if *confirm != ctx.stackName {
@@ -3630,6 +3668,7 @@ func runStagingE2E(args []string) error {
 		brandname: *brandname, userCount: *userCount, deviceCount: *deviceCount, deviceMix: *deviceMix, devicePrefix: *devicePrefix,
 		userConcurrency: *userConcurrency, deviceConcurrency: *deviceConcurrency, bindConcurrency: *bindConcurrency,
 		outDir: runOutDir, skipMQTTProbe: *skipMQTTProbe, skipRemove: *skipRemove, purgeStorage: *purgeStorage, quiet: *quiet, resume: *resume,
+		steps: *steps,
 	}))
 	if reportErr := writeStagingInstallReport(ctx.provider, filepath.Join(runOutDir, "summary.json"), filepath.Join(runOutDir, "TEST_REPORT.md"), runOutDir); reportErr != nil && err == nil {
 		err = reportErr
@@ -3662,6 +3701,7 @@ type stagingE2EArgs struct {
 	quiet             bool
 	resume            bool
 	confirmOverride   string
+	steps             string
 }
 
 func stagingE2ETestArgs(cfg stagingE2EArgs) []string {
@@ -3685,6 +3725,9 @@ func stagingE2ETestArgs(cfg stagingE2EArgs) []string {
 	)
 	if cfg.outDir != "" {
 		out = append(out, "--out-dir", cfg.outDir)
+	}
+	if strings.TrimSpace(cfg.steps) != "" && strings.TrimSpace(cfg.steps) != "all" {
+		out = append(out, "--steps", cfg.steps)
 	}
 	if cfg.skipMQTTProbe {
 		out = append(out, "--skip-mqtt-probe")
@@ -4218,7 +4261,7 @@ func sqlLiteral(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
-func printE2EPlan(workspace, envRoot, stack, phase, brandname string, userCount, deviceCount int, deviceMix string, userConcurrency, deviceConcurrency, bindConcurrency int, skipRemove, skipProvision bool, scripts map[string]string) {
+func printE2EPlan(workspace, envRoot, stack, phase, brandname string, userCount, deviceCount int, deviceMix string, userConcurrency, deviceConcurrency, bindConcurrency int, skipRemove, skipProvision bool, selectedSteps string, scripts map[string]string) {
 	fmt.Fprintln(os.Stdout, "cloud-staging-e2e-test plan")
 	fmt.Fprintf(os.Stdout, "workspace: %s\n", workspace)
 	fmt.Fprintf(os.Stdout, "env_root: %s\n", envRoot)
@@ -4234,16 +4277,27 @@ func printE2EPlan(workspace, envRoot, stack, phase, brandname string, userCount,
 	fmt.Fprintf(os.Stdout, "bind_concurrency: %d\n", bindConcurrency)
 	fmt.Fprintf(os.Stdout, "skip_remove: %v\n", skipRemove)
 	fmt.Fprintf(os.Stdout, "skip_provision: %v\n", skipProvision)
+	fmt.Fprintf(os.Stdout, "steps: %s\n", selectedSteps)
 	fmt.Fprintln(os.Stdout, "steps:")
-	if !skipRemove {
+	selection, _ := parseE2ESteps(selectedSteps, skipRemove, skipProvision)
+	if selection.Reset {
 		fmt.Fprintf(os.Stdout, "  - reset K8s staging with %s\n", displayCommand(scripts["remove-k8s"]))
 	}
-	if !skipProvision {
+	if selection.Provision {
 		fmt.Fprintf(os.Stdout, "  - provision K8s staging with %s\n", displayCommand(scripts["provision-k8s"]))
 	}
-	fmt.Fprintf(os.Stdout, "  - setup brand/users/devices with %s\n", displayCommand(scripts["setup-data"]))
-	fmt.Fprintf(os.Stdout, "  - run live home MQTT E2E with %s\n", displayCommand(scripts["mqtt-test"]))
-	fmt.Fprintf(os.Stdout, "  - verify persisted MQTT runtime logs with %s\n", displayCommand(scripts["mqtt-log-verify"]))
+	if selection.Data {
+		fmt.Fprintf(os.Stdout, "  - setup brand/users/devices with %s\n", displayCommand(scripts["setup-data"]))
+	}
+	if selection.MQTT {
+		fmt.Fprintf(os.Stdout, "  - run live home MQTT E2E with %s\n", displayCommand(scripts["mqtt-test"]))
+	}
+	if selection.RuntimeLogs {
+		fmt.Fprintf(os.Stdout, "  - verify persisted MQTT runtime logs with %s\n", displayCommand(scripts["mqtt-log-verify"]))
+	}
+	if selection.BillingLog || selection.BillingDB {
+		fmt.Fprintf(os.Stdout, "  - verify billing usage log/ledger with %s\n", displayCommand(scripts["billing-verify"]))
+	}
 }
 
 type e2eStepOptions struct {

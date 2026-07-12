@@ -332,7 +332,7 @@ type mqttActorProbe struct {
 }
 
 func main() {
-	var root, envRoot, brandname, outDir, profile, maxUsersRaw, mqttProbeRaw, traceDetail, runID string
+	var root, envRoot, brandname, outDir, profile, maxUsersRaw, mqttProbeRaw, traceDetail, runID, testDataDB string
 	var rampUp, telemetryInterval, stateInterval, commandRate, loadModel string
 	var shadowCommandTimeout, deviceTokenRequestTimeout string
 	var stageNamesRaw, stageTargetsRaw, stageDurationsRaw, stageMinCommandsRaw string
@@ -343,6 +343,7 @@ func main() {
 	flag.StringVar(&envRoot, "env-root", "", "environment root")
 	flag.StringVar(&brandname, "brandname", "", "brand name")
 	flag.StringVar(&outDir, "out-dir", "", "output directory")
+	flag.StringVar(&testDataDB, "test-data-db", "", "explicit SQLite test-data database containing load-test credentials")
 	flag.StringVar(&profile, "profile", "smoke", "profile")
 	flag.StringVar(&runID, "run-id", os.Getenv("HOME100K_RUN_ID"), "run id for log correlation")
 	flag.IntVar(&duration, "duration-seconds", 120, "duration seconds")
@@ -404,7 +405,7 @@ func main() {
 		MaxConnectedDevicesPerShard: maxConnectedDevices,
 		RunID:                       runID,
 	}
-	if err := run(root, envRoot, brandname, outDir, profile, duration, maxUsers, seed, mqttProbe, traceDetail, opts); err != nil {
+	if err := run(root, envRoot, brandname, outDir, profile, duration, maxUsers, seed, mqttProbe, traceDetail, testDataDB, opts); err != nil {
 		fatal(err)
 	}
 }
@@ -458,7 +459,7 @@ func (opts loadOptions) validateLoadModel() error {
 	}
 }
 
-func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, seed int, mqttProbe bool, traceDetail string, opts loadOptions) error {
+func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, seed int, mqttProbe bool, traceDetail, testDataDB string, opts loadOptions) error {
 	opts.RunID = sanitizeCorrelationID(opts.RunID)
 	traceDetail = strings.ToLower(strings.TrimSpace(traceDetail))
 	if traceDetail == "" {
@@ -500,7 +501,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	videoState := videoStatePath(envRoot, stackEnv)
 
 	blockers := []string{}
-	credentialBundle, err := loadHome100KCredentialBundle(envRoot)
+	credentialBundle, err := loadHome100KCredentialBundleAt(envRoot, testDataDB)
 	if err != nil {
 		blockers = append(blockers, "invalid home-100k credential bundle: "+redactedError(err))
 	}
@@ -2573,6 +2574,13 @@ func loadLeafFirstX509KeyPairForRecord(record certRecord) (tls.Certificate, erro
 }
 
 func loadHome100KCredentialBundle(envRoot string) (*home100KCredentialBundle, error) {
+	return loadHome100KCredentialBundleAt(envRoot, "")
+}
+
+func loadHome100KCredentialBundleAt(envRoot, explicitPath string) (*home100KCredentialBundle, error) {
+	if strings.TrimSpace(explicitPath) != "" {
+		return loadHome100KCredentialBundleSQLite(explicitPath)
+	}
 	matches, err := filepath.Glob(filepath.Join(envRoot, "loadtests", "home-100k", "credentials", "*.sqlite.gz"))
 	if err != nil {
 		return nil, err
@@ -2599,6 +2607,10 @@ func loadHome100KCredentialBundle(envRoot string) (*home100KCredentialBundle, er
 		sqlitePath = source
 	}
 	defer cleanup()
+	return loadHome100KCredentialBundleSQLite(sqlitePath)
+}
+
+func loadHome100KCredentialBundleSQLite(sqlitePath string) (*home100KCredentialBundle, error) {
 	db, err := sql.Open("sqlite", sqlitePath)
 	if err != nil {
 		return nil, err
@@ -2619,7 +2631,7 @@ func loadHome100KCredentialBundle(envRoot string) (*home100KCredentialBundle, er
 		return nil, err
 	}
 	defer rows.Close()
-	bundle := &home100KCredentialBundle{Devices: map[string]home100KCredentialDevice{}, Source: source}
+	bundle := &home100KCredentialBundle{Devices: map[string]home100KCredentialDevice{}, Source: sqlitePath}
 	for rows.Next() {
 		var device home100KCredentialDevice
 		var certPEM, keyPEM, chainPEM, bundlePEM sql.NullString
