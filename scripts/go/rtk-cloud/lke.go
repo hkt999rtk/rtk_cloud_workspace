@@ -1240,6 +1240,7 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 	manifests = append(manifests, lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudAPITurnRegistryNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudMQTTClientsNetworkPolicyManifest(env))
+	manifests = append(manifests, lkeAllowEMQXMQTTUsageNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowEMQXClusterNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudLoggerNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowRedisClientsNetworkPolicyManifest(env))
@@ -1524,6 +1525,33 @@ spec:
       ports:
         - protocol: TCP
           port: 1883
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
+}
+
+func lkeAllowEMQXMQTTUsageNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-emqx-mqtt-usage
+  namespace: %s
+  labels:
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: video-cloud-mqttusage
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mqtt
+      ports:
+        - protocol: TCP
+          port: 19400
 `, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
 }
 
@@ -6327,7 +6355,7 @@ func lkeContainerResourceProfile(env map[string]string, name string) (lkeResourc
 	profile := lkeResourceProfile{
 		requestCPU:    firstNonEmpty(os.Getenv(spec.Prefix+"_REQUEST_CPU"), env[spec.Prefix+"_REQUEST_CPU"]),
 		requestMemory: firstNonEmpty(os.Getenv(spec.Prefix+"_REQUEST_MEMORY"), env[spec.Prefix+"_REQUEST_MEMORY"]),
-		limitMemory:   firstNonEmpty(env[spec.Prefix+"_LIMIT_MEMORY"], limits[name], env[spec.Prefix+"_REQUEST_MEMORY"]),
+		limitMemory:   firstNonEmpty(os.Getenv(spec.Prefix+"_LIMIT_MEMORY"), env[spec.Prefix+"_LIMIT_MEMORY"], limits[name], env[spec.Prefix+"_REQUEST_MEMORY"]),
 	}
 	return profile, true
 }
