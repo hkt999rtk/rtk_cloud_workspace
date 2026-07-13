@@ -119,6 +119,8 @@ func Execute(args []string, stdout io.Writer, stderr io.Writer) int {
 		return executeCollectServerEvidence(args[1:], stdout, stderr)
 	case "aggregate":
 		return executeAggregate(args[1:], stdout, stderr)
+	case "generate-e2e-fixture":
+		return executeGenerateE2EFixture(args[1:], stdout, stderr)
 	case "list-vms":
 		return executeListVMs(args[1:], stdout, stderr)
 	case "destroy-vms":
@@ -256,7 +258,24 @@ func parseCommonFlags(name string, args []string, stderr io.Writer) (PlanOptions
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, `usage: home-100k <plan|run|token-only|seed-token-projections|provision-vms|sync|run-stages|collect|collect-server-evidence|aggregate|list-vms|destroy-vms|runner-daemon> --env-root PATH --brandname NAME --region LINODE_REGION [--ephemeral-vms]`)
+	fmt.Fprintln(w, `usage: home-100k <plan|run|generate-e2e-fixture|token-only|seed-token-projections|provision-vms|sync|run-stages|collect|collect-server-evidence|aggregate|list-vms|destroy-vms|runner-daemon>`)
+}
+
+func executeGenerateE2EFixture(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("home-100k generate-e2e-fixture", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	scenario := fs.String("scenario", "", "validated brand plan JSON")
+	runID := fs.String("run-id", "", "fixture correlation run id")
+	outDir := fs.String("out", "", "fixture output directory")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	manifest, err := GenerateE2EFixture(*scenario, *runID, *outDir, time.Now())
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	return writeJSONTo(stdout, stderr, manifest)
 }
 
 type runFlagValues struct {

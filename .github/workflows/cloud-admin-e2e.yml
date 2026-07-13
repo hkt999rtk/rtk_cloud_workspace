@@ -1,0 +1,68 @@
+name: Cloud Admin E2E
+
+on:
+  pull_request:
+    paths:
+      - 'loadtests/home-100k/**'
+      - 'repos/rtk_cloud_admin/**'
+      - '.github/workflows/cloud-admin-e2e.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  playwright:
+    name: Playwright local E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out workspace
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      - name: Initialize Cloud Admin submodule
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "git@github-work.com:"
+          git submodule update --init --depth=1 repos/rtk_cloud_admin
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.3'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: repos/rtk_cloud_admin/web/package-lock.json
+
+      - name: Install and build Cloud Admin
+        working-directory: repos/rtk_cloud_admin/web
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npm run build
+
+      - name: Generate load-test-backed E2E fixture
+        working-directory: repos/rtk_cloud_admin/web
+        run: npm run e2e:generate-fixture
+
+      - name: Run Playwright smoke
+        working-directory: repos/rtk_cloud_admin/web
+        run: npm run e2e:smoke
+
+      - name: Upload E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloud-admin-playwright-e2e
+          path: |
+            repos/rtk_cloud_admin/.artifacts/playwright-report
+            repos/rtk_cloud_admin/.artifacts/playwright-results
+            repos/rtk_cloud_admin/.artifacts/e2e-fixtures
+          if-no-files-found: warn
