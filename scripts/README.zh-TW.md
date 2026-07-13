@@ -817,8 +817,9 @@ Staging 的平台管理頁登入帳密和 Account Manager automation token 帳�
 
 - Cloud Admin `/login?next=/admin` 使用 Account Manager platform-admin flow，不再使用 legacy Cloud Admin bootstrap credential。
 - `rtk-cloud platform-admin-token --environment staging` 和 e2e brand/user/bind automation 使用 `cloud_env/staging/runtime/services/account-manager/account-manager-platform-admin.env` 內的 Account Manager bootstrap platform-admin 帳密。
+- `ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL` 可由 deployment environment override；未指定時 LKE 預設為 `platform-admin@<stack-name>.local`。密碼由 deployment runtime secret 的 `LKE_PLATFORM_ADMIN` 提供，未指定時由 runtime secret state 產生／保存；不要把密碼寫入 tracked `.env` 或文件。
 
-不要用 Account Manager bootstrap 帳號登入 Cloud Admin `/admin` UI。詳細邊界見 `docs/account-manager-admin-boundary.md#staging-login-credential-boundary`。
+Cloud Admin `/admin` UI 應使用上述 Account Manager platform-admin 帳號登入；不要使用已淘汰的 legacy Cloud Admin `ADMIN_BOOTSTRAP_*` 帳密。詳細邊界見 `docs/account-manager-admin-boundary.md#staging-login-credential-boundary`。
 
 常用檢查：
 
