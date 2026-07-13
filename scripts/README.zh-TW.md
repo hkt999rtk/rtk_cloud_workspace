@@ -584,6 +584,15 @@ PVC/PV/provider volume 類資料層。`staging-provision`
 負責新安裝或停機升級：解析 image、套用 manifests、DNS/artifacts、rollout
 readiness。`staging-acceptance` 不 reset、不 deploy，只驗證已部署好的 stack。
 
+PostgreSQL capacity expansion 不屬於一般 `staging-provision` rollout。LKE
+persistent mode 使用 PostgreSQL StatefulSet 的 PVC；`LKE_POSTGRES_STORAGE`
+描述新建 manifest 的 claim size，不會自動改變已經 Bound 的
+`data-postgresql-0`。既有 PVC 的擴充、Linode CSI online expansion 前置條件、
+filesystem resize、backup、fallback 與驗證流程，請依
+[`docs/postgres-capacity-expansion-runbook.md`](../docs/postgres-capacity-expansion-runbook.md)
+執行。`LKE_POSTGRES_STORAGE_MODE=emptydir` 只適合明確的 ephemeral validation，
+不得用來承載需要保留的 PostgreSQL data。
+
 ### `go run ./scripts/go/rtk-cloud -- staging-e2e-test`
 
 Linode K8s staging E2E compatibility orchestrator。它仍可把 K8s reset、K8s rollout readiness、K8s service query/port-forward、staging E2E data setup、home MQTT simulation，以及 persisted MQTT runtime log verification 串成單一流程，最後輸出 sanitized `summary.json` 與 `TEST_REPORT.md`。建立 RTK brand cloud、建立測試 users、產生並 factory-enroll devices、device bind/provision、bulk bind validation 已拆到 `scripts/setup-staging-e2e-data.sh` / `rtk-cloud staging-e2e-data-setup`，完整 E2E 會呼叫這個獨立步驟。
