@@ -66,12 +66,12 @@ exit 2
 	}
 }
 
-func TestLKEKubectlArgsAddsKubeconfigAndRequestTimeout(t *testing.T) {
-	t.Setenv("RTK_CLOUD_LKE_KUBECONFIG", "/tmp/lke.yaml")
+func TestKubernetesKubectlArgsAddsKubeconfigAndRequestTimeout(t *testing.T) {
+	t.Setenv("RTK_CLOUD_KUBECONFIG", "/tmp/kubernetes.yaml")
 	t.Setenv("RTK_CLOUD_KUBECTL_REQUEST_TIMEOUT", "7s")
 
 	got := strings.Join(lkeKubectlArgs("get", "nodes"), " ")
-	want := "--kubeconfig /tmp/lke.yaml --request-timeout=7s get nodes"
+	want := "--kubeconfig /tmp/kubernetes.yaml --request-timeout=7s get nodes"
 	if got != want {
 		t.Fatalf("lkeKubectlArgs got %q want %q", got, want)
 	}

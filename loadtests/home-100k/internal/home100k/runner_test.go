@@ -31,7 +31,7 @@ func correlatedEvidenceForStages(runID string, stages []StageResult) ServerEvide
 func TestRunWritesPlanResultsEvidenceAndReportArtifacts(t *testing.T) {
 	outDir := t.TempDir()
 	evidenceFile := filepath.Join(outDir, "input-server-evidence.json")
-	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea"})
+	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/runtime", Brandname: "RTK", Region: "us-sea"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestRunWritesPlanResultsEvidenceAndReportArtifacts(t *testing.T) {
 
 	result, err := Run(RunOptions{
 		PlanOptions: PlanOptions{
-			EnvRoot:   "cloud_env/staging/lke",
+			EnvRoot:   "cloud_env/staging/runtime",
 			Brandname: "RTK",
 			Region:    "us-sea",
 		},
@@ -87,7 +87,7 @@ func TestRunWithoutServerEvidenceWritesIncompleteArtifacts(t *testing.T) {
 	outDir := t.TempDir()
 	result, err := Run(RunOptions{
 		PlanOptions: PlanOptions{
-			EnvRoot:   "cloud_env/staging/lke",
+			EnvRoot:   "cloud_env/staging/runtime",
 			Brandname: "RTK",
 			Region:    "us-sea",
 		},
@@ -116,7 +116,7 @@ func TestRunWithoutServerEvidenceWritesIncompleteArtifacts(t *testing.T) {
 
 func TestAggregateCollectedRunWritesRunLevelArtifacts(t *testing.T) {
 	outDir := t.TempDir()
-	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea"})
+	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/runtime", Brandname: "RTK", Region: "us-sea"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestAggregateCollectedRunWritesRunLevelArtifacts(t *testing.T) {
 	}
 
 	result, err := AggregateCollectedRun(AggregateOptions{
-		PlanOptions: PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea"},
+		PlanOptions: PlanOptions{EnvRoot: "cloud_env/staging/runtime", Brandname: "RTK", Region: "us-sea"},
 		RunID:       "run-agg",
 		OutDir:      outDir,
 	})
@@ -167,7 +167,7 @@ func TestAggregateCollectedRunWritesRunLevelArtifacts(t *testing.T) {
 func TestAggregateCollectedRunUsesConfiguredStageNames(t *testing.T) {
 	outDir := t.TempDir()
 	planOptions := PlanOptions{
-		EnvRoot:     "cloud_env/staging/lke",
+		EnvRoot:     "cloud_env/staging/runtime",
 		Brandname:   "RTK",
 		Region:      "us-sea",
 		DeviceCount: 9000,
@@ -236,7 +236,7 @@ func TestAggregateCollectedRunUsesConfiguredStageNames(t *testing.T) {
 
 func TestAggregateCollectedRunWithoutServerEvidenceIsIncomplete(t *testing.T) {
 	outDir := t.TempDir()
-	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea"})
+	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/runtime", Brandname: "RTK", Region: "us-sea"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +254,7 @@ func TestAggregateCollectedRunWithoutServerEvidenceIsIncomplete(t *testing.T) {
 	}
 
 	result, err := AggregateCollectedRun(AggregateOptions{
-		PlanOptions: PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea"},
+		PlanOptions: PlanOptions{EnvRoot: "cloud_env/staging/runtime", Brandname: "RTK", Region: "us-sea"},
 		RunID:       "run-agg-missing",
 		OutDir:      outDir,
 	})
@@ -268,7 +268,7 @@ func TestAggregateCollectedRunWithoutServerEvidenceIsIncomplete(t *testing.T) {
 
 func TestAggregateCollectedRunMarksLoadGeneratorSaturationIncomplete(t *testing.T) {
 	outDir := t.TempDir()
-	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea"})
+	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/runtime", Brandname: "RTK", Region: "us-sea"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +293,7 @@ func TestAggregateCollectedRunMarksLoadGeneratorSaturationIncomplete(t *testing.
 	}
 
 	result, err := AggregateCollectedRun(AggregateOptions{
-		PlanOptions: PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea"},
+		PlanOptions: PlanOptions{EnvRoot: "cloud_env/staging/runtime", Brandname: "RTK", Region: "us-sea"},
 		RunID:       "run-agg-saturated",
 		OutDir:      outDir,
 	})
@@ -314,7 +314,7 @@ func TestAggregateCollectedRunMarksLoadGeneratorSaturationIncomplete(t *testing.
 
 func TestAggregateCollectedRunMergesFetchedSyncTelemetry(t *testing.T) {
 	outDir := t.TempDir()
-	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea"})
+	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/runtime", Brandname: "RTK", Region: "us-sea"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +347,7 @@ func TestAggregateCollectedRunMergesFetchedSyncTelemetry(t *testing.T) {
 	}
 
 	result, err := AggregateCollectedRun(AggregateOptions{
-		PlanOptions: PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea"},
+		PlanOptions: PlanOptions{EnvRoot: "cloud_env/staging/runtime", Brandname: "RTK", Region: "us-sea"},
 		RunID:       "run-agg-sync",
 		OutDir:      outDir,
 	})
@@ -368,7 +368,7 @@ func TestAggregateCollectedRunMergesFetchedSyncTelemetry(t *testing.T) {
 
 func TestAggregateCollectedRunWithAvailableEvidenceButMissingCountersIsIncomplete(t *testing.T) {
 	outDir := t.TempDir()
-	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea"})
+	plan, err := NewPlan(PlanOptions{EnvRoot: "cloud_env/staging/runtime", Brandname: "RTK", Region: "us-sea"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,7 +393,7 @@ func TestAggregateCollectedRunWithAvailableEvidenceButMissingCountersIsIncomplet
 	}
 
 	result, err := AggregateCollectedRun(AggregateOptions{
-		PlanOptions: PlanOptions{EnvRoot: "cloud_env/staging/lke", Brandname: "RTK", Region: "us-sea"},
+		PlanOptions: PlanOptions{EnvRoot: "cloud_env/staging/runtime", Brandname: "RTK", Region: "us-sea"},
 		RunID:       "run-agg-no-counters",
 		OutDir:      outDir,
 	})
@@ -1217,9 +1217,10 @@ func TestCorrelateRuntimeLogsFindsMissingStreamsAndSequences(t *testing.T) {
 		"iot_device_shadow_streams": {
 			Available: true,
 			Counters: map[string]int64{
-				"runtime_log_streams.total":           1,
-				"runtime_log_stream.stream-1.entries": 1,
-				"runtime_log_stream.stream-1.seq.1":   1,
+				"runtime_log_streams.total":                           1,
+				"runtime_log_stream.stream-1.entries":                 1,
+				"runtime_log_stream.stream-1.device.rtk-0001.entries": 1,
+				"runtime_log_stream.stream-1.seq.1":                   1,
 			},
 		},
 	}}

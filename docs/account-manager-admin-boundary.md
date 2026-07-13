@@ -140,12 +140,18 @@ login and Account Manager API automation:
 
 | Context | Endpoint / UI | Credential source | Intended use |
 | --- | --- | --- | --- |
-| Account Manager platform admin | Cloud Admin `https://admin.video-cloud-staging.<root-domain>/login?next=/admin`, Cloud Admin `/api/auth/platform/login`, Account Manager `/v1/auth/login`, and `./stg.sh token` | `cloud_env/staging/lke/services/account-manager/account-manager-platform-admin.env`, keys `ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL` and `ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD` | Browser login to Platform Dashboard plus backend/API automation for brand cloud, user, bind, and e2e setup |
+| Account Manager platform admin | Cloud Admin `https://admin.video-cloud-staging.<root-domain>/login?next=/admin`, Cloud Admin `/api/auth/platform/login`, Account Manager `/v1/auth/login`, and `rtk-cloud platform-admin-token --environment staging` | `cloud_env/staging/runtime/services/account-manager/account-manager-platform-admin.env`, keys `ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL` and `ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD` | Browser login to Platform Dashboard plus backend/API automation for brand cloud, user, bind, and e2e setup |
 
 Do not use legacy Cloud Admin `ADMIN_BOOTSTRAP_*` credentials for `/admin`.
-Those local break-glass credentials are not supported. In staging,
-`root@realtekconnect.com` is the Account Manager platform-admin bootstrap
-account used for Cloud Admin Platform Dashboard login and API token minting.
+Those local break-glass credentials are not supported. The staging
+platform-admin identity is the value of
+`ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL` in
+`account-manager-platform-admin.env`; the current LKE default is
+`platform-admin@<stack-name>.local`, and deployments may override it. The
+matching password is the value of
+`ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD` in the same runtime
+secret/env file. These are the credentials used for Cloud Admin Platform
+Dashboard login and API token minting.
 
 When verifying the Admin Console login page, use the Account Manager platform
 admin account from `account-manager-platform-admin.env`. A successful platform

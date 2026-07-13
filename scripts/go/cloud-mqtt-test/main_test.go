@@ -29,6 +29,17 @@ import (
 	"time"
 )
 
+func testMQTTToken(scope string) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
+	payload, _ := json.Marshal(map[string]any{
+		"scope":          scope,
+		"brand_cloud_id": "test-brand-cloud",
+		"mqtt_client_id": "mqtt-" + scope + "-test",
+		"exp":            time.Now().Add(time.Hour).Unix(),
+	})
+	return header + "." + base64.RawURLEncoding.EncodeToString(payload) + ".test"
+}
+
 func TestVideoStatePathUsesConfiguredStackName(t *testing.T) {
 	root := t.TempDir()
 	mkdir(t, filepath.Join(root, "env"))
@@ -885,6 +896,69 @@ func TestRequestAppTokenParsesAccessToken(t *testing.T) {
 	}
 }
 
+func TestLoadAppX509KeyPairSkipsNonPEMCertificateStatus(t *testing.T) {
+	certPEM, keyPEM, csrPEM := testAppMaterial(t, "app-user:user-1")
+	cert, err := loadAppX509KeyPairForUser(userCredential{
+		AppCredentials: appCertificateKeys{PrivateKeyPEM: keyPEM, CSRPem: csrPEM},
+		AppCertificate: appCertificateSummary{
+			CertificateChainPEM: "issued",
+			CertificatePEM:      certPEM,
+		},
+	})
+	if err != nil {
+		t.Fatalf("loadAppX509KeyPairForUser() error = %v", err)
+	}
+	if len(cert.Certificate) == 0 {
+		t.Fatal("certificate chain is empty")
+	}
+}
+
+func TestLoadAppX509KeyPairNormalizesEscapedPEM(t *testing.T) {
+	certPEM, keyPEM, csrPEM := testAppMaterial(t, "app-user:user-1")
+	escapedCertPEM := strings.ReplaceAll(certPEM, "\n", `\n`)
+	cert, err := loadAppX509KeyPairForUser(userCredential{
+		AppCredentials: appCertificateKeys{PrivateKeyPEM: keyPEM, CSRPem: csrPEM},
+		AppCertificate: appCertificateSummary{
+			CertificatePEM: escapedCertPEM,
+		},
+	})
+	if err != nil {
+		t.Fatalf("loadAppX509KeyPairForUser() error = %v", err)
+	}
+	if len(cert.Certificate) == 0 {
+		t.Fatal("certificate chain is empty")
+	}
+}
+
+func TestLoadAppX509KeyPairFallsBackFromInvalidChainToLeaf(t *testing.T) {
+	certPEM, keyPEM, csrPEM := testAppMaterial(t, "app-user:user-1")
+	cert, err := loadAppX509KeyPairForUser(userCredential{
+		AppCredentials: appCertificateKeys{PrivateKeyPEM: keyPEM, CSRPem: csrPEM},
+		AppCertificate: appCertificateSummary{
+			CertificateChainPEM: "-----BEGIN CERTIFICATE-----\nnot-valid\n-----END CERTIFICATE-----",
+			CertificatePEM:      certPEM,
+		},
+	})
+	if err != nil {
+		t.Fatalf("loadAppX509KeyPairForUser() error = %v", err)
+	}
+	if len(cert.Certificate) == 0 {
+		t.Fatal("certificate chain is empty")
+	}
+}
+
+func TestMQTTTopicsEquivalentNormalizesPhysicalTenantPrefix(t *testing.T) {
+	if !mqttTopicsEquivalent("_bc/brand-cloud-1/$vc/devices/device-1/shadow/update/accepted", "$vc/devices/device-1/shadow/update/accepted") {
+		t.Fatal("physical tenant shadow topic did not match logical topic")
+	}
+	if !mqttTopicsEquivalent("_bc/brand-cloud-1/devices/device-1/logs", "devices/device-1/logs") {
+		t.Fatal("physical tenant transport topic did not match logical topic")
+	}
+	if mqttTopicsEquivalent("_bc/brand-cloud-2/$vc/devices/device-2/shadow/update/accepted", "$vc/devices/device-1/shadow/update/accepted") {
+		t.Fatal("different logical topic matched")
+	}
+}
+
 func TestAccountLoginTokenManagerKeepsValidAccessTokenPastHalfLife(t *testing.T) {
 	baseTime := time.Date(2026, 6, 22, 8, 0, 0, 0, time.UTC)
 	oldToken := testJWT(t, baseTime, baseTime.Add(2*time.Minute))
@@ -1020,8 +1094,8 @@ func TestActorSeparatedTelemetryRequiresAppObserverReceive(t *testing.T) {
 		DeviceID:    "rtk-0041",
 		DeviceType:  "light",
 		Brandname:   "RTK",
-		DeviceToken: "device-token",
-		AppToken:    "app-token",
+		DeviceToken: testMQTTToken("device"),
+		AppToken:    testMQTTToken("app"),
 		Dial:        broker.Dial,
 		Timeout:     time.Second,
 		Now:         fixedProbeTime,
@@ -1050,8 +1124,8 @@ func TestActorSeparatedCommandRequiresDeviceReceiveAndAppAck(t *testing.T) {
 		DeviceID:    "rtk-0041",
 		DeviceType:  "light",
 		Brandname:   "RTK",
-		DeviceToken: "device-token",
-		AppToken:    "app-token",
+		DeviceToken: testMQTTToken("device"),
+		AppToken:    testMQTTToken("app"),
 		Dial:        broker.Dial,
 		Timeout:     time.Second,
 		Now:         fixedProbeTime,
@@ -1093,8 +1167,8 @@ func TestActorSeparatedProbePublishesRuntimeLogsForDeviceAndAppActors(t *testing
 		DeviceID:    "rtk-0041",
 		DeviceType:  "light",
 		Brandname:   "RTK",
-		DeviceToken: "device-token",
-		AppToken:    "app-token",
+		DeviceToken: testMQTTToken("device"),
+		AppToken:    testMQTTToken("app"),
 		Dial:        broker.Dial,
 		Timeout:     time.Second,
 		Now:         fixedProbeTime,
@@ -1126,11 +1200,11 @@ func TestSustainedShadowCommandPublishesRuntimeLogsForServerCorrelation(t *testi
 		DeviceType:  "light",
 		Brandname:   "RTK",
 		RunID:       "run-sustained-logs",
-		DeviceToken: "device-token",
+		DeviceToken: testMQTTToken("device"),
 		Dial:        broker.TLSDial,
 		Timeout:     time.Second,
 		Now:         fixedProbeTime,
-	}, "device", "rtk-0041", "device-token")
+	}, "device", testMQTTToken("device"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1155,7 +1229,7 @@ func TestSustainedShadowCommandPublishesRuntimeLogsForServerCorrelation(t *testi
 		Conn:            deviceConn,
 		Reader:          reader,
 		MQTTTarget:      mqttEndpointTarget{Host: host, Port: port},
-		AppLoginManager: newAccountLoginTokenManager("", "", userCredential{}, tokenBundle{AccessToken: "app-token"}),
+		AppLoginManager: newAccountLoginTokenManager("", "", userCredential{}, tokenBundle{AccessToken: testMQTTToken("app")}),
 	}, "RTK", "run-sustained-logs", "", &totals)
 	if err != nil {
 		t.Fatal(err)
@@ -1208,11 +1282,11 @@ func TestSustainedShadowCommandCanDisableRuntimeLogs(t *testing.T) {
 		DeviceType:  "light",
 		Brandname:   "RTK",
 		RunID:       "run-no-runtime-logs",
-		DeviceToken: "device-token",
+		DeviceToken: testMQTTToken("device"),
 		Dial:        broker.TLSDial,
 		Timeout:     time.Second,
 		Now:         fixedProbeTime,
-	}, "device", "rtk-0041", "device-token")
+	}, "device", testMQTTToken("device"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1237,7 +1311,7 @@ func TestSustainedShadowCommandCanDisableRuntimeLogs(t *testing.T) {
 		Conn:            deviceConn,
 		Reader:          reader,
 		MQTTTarget:      mqttEndpointTarget{Host: host, Port: port},
-		AppLoginManager: newAccountLoginTokenManager("", "", userCredential{}, tokenBundle{AccessToken: "app-token"}),
+		AppLoginManager: newAccountLoginTokenManager("", "", userCredential{}, tokenBundle{AccessToken: testMQTTToken("app")}),
 	}, "RTK", "run-no-runtime-logs", "", &totals, sustainedCommandContext{DisableRuntimeLogs: true})
 	if err != nil {
 		t.Fatal(err)
@@ -1256,6 +1330,83 @@ func TestSustainedShadowCommandCanDisableRuntimeLogs(t *testing.T) {
 	}
 }
 
+func TestSustainedShadowCommandRequestsAppMQTTTokenWithAppCertificate(t *testing.T) {
+	broker := newFakeTLSMQTTBroker(t)
+	defer broker.Close()
+	deviceConn, err := connectMQTTActor(mqttActorProbe{
+		DeviceID:    "rtk-0041",
+		DeviceType:  "light",
+		Brandname:   "RTK",
+		RunID:       "run-app-cert-token",
+		DeviceToken: testMQTTToken("device"),
+		Dial:        broker.TLSDial,
+		Timeout:     time.Second,
+		Now:         fixedProbeTime,
+	}, "device", testMQTTToken("device"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer deviceConn.Close()
+	if err := mqttSubscribe(deviceConn, 1, "$vc/devices/rtk-0041/shadow/update/delta"); err != nil {
+		t.Fatal(err)
+	}
+	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(rawPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM, keyPEM, csrPEM := testAppMaterial(t, "app-user:user-1")
+	tokenRequests := 0
+	video := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tokenRequests++
+		if got := r.Header.Get("X-Client-S-DN"); got != "/CN=app-user:user-1/O=VideoCloud" {
+			t.Fatalf("X-Client-S-DN = %q, want app certificate subject", got)
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["scope"] != "app" || body["service"] != "mqtt" || body["devid"] != "rtk-0041" {
+			t.Fatalf("request_token body = %#v", body)
+		}
+		writeJSON(t, w, map[string]string{"scope": "app", "access_token": testMQTTToken("app")})
+	}))
+	defer video.Close()
+
+	var totals mqttIOTotals
+	reader := startSustainedDeviceReader(deviceConn)
+	defer reader.Close()
+	err = runSustainedShadowCommandWithContext(sustainedDeviceSession{
+		Record:     certRecord{DeviceID: "rtk-0041", DeviceType: "light"},
+		Conn:       deviceConn,
+		Reader:     reader,
+		MQTTTarget: mqttEndpointTarget{Host: host, Port: port},
+		AppLoginManager: newAccountLoginTokenManager("", "", userCredential{
+			Email: "rtk+001@users.local",
+			AppCredentials: appCertificateKeys{
+				PrivateKeyPEM: keyPEM,
+				CSRPem:        csrPEM,
+			},
+			AppCertificate: appCertificateSummary{
+				CertificatePEM:      certPEM,
+				CertificateChainPEM: certPEM,
+			},
+		}, tokenBundle{AccessToken: testMQTTToken("account")}),
+	}, "RTK", "run-app-cert-token", video.URL, &totals, sustainedCommandContext{DisableRuntimeLogs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tokenRequests != 1 {
+		t.Fatalf("tokenRequests = %d, want 1", tokenRequests)
+	}
+	if totals.AppTokenSuccesses != 1 || totals.AppDesiredWrites != 1 || totals.AppReceivedAcks != 1 {
+		t.Fatalf("totals = %+v, want app token and command success", totals)
+	}
+}
+
 func TestSustainedShadowCommandFailsBeforeDeltaWhenAcceptedIsMissing(t *testing.T) {
 	broker := newFakeTLSMQTTBroker(t)
 	broker.SuppressShadowAccepted = true
@@ -1265,11 +1416,11 @@ func TestSustainedShadowCommandFailsBeforeDeltaWhenAcceptedIsMissing(t *testing.
 		DeviceType:  "light",
 		Brandname:   "RTK",
 		RunID:       "run-missing-accepted",
-		DeviceToken: "device-token",
+		DeviceToken: testMQTTToken("device"),
 		Dial:        broker.TLSDial,
 		Timeout:     time.Second,
 		Now:         fixedProbeTime,
-	}, "device", "rtk-0041", "device-token")
+	}, "device", testMQTTToken("device"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1294,7 +1445,7 @@ func TestSustainedShadowCommandFailsBeforeDeltaWhenAcceptedIsMissing(t *testing.
 		Conn:            deviceConn,
 		Reader:          reader,
 		MQTTTarget:      mqttEndpointTarget{Host: host, Port: port},
-		AppLoginManager: newAccountLoginTokenManager("", "", userCredential{}, tokenBundle{AccessToken: "app-token"}),
+		AppLoginManager: newAccountLoginTokenManager("", "", userCredential{}, tokenBundle{AccessToken: testMQTTToken("app")}),
 	}, "RTK", "run-missing-accepted", "", time.Now().Add(250*time.Millisecond), &totals)
 	if err == nil {
 		t.Fatal("runSustainedShadowCommandUntil succeeded without shadow accepted")
@@ -1350,7 +1501,7 @@ func TestSustainedActorsUseLongMQTTKeepAlive(t *testing.T) {
 	defer broker.Close()
 	certPEM, keyPEM, _ := testAppMaterial(t, "rtk-0041")
 	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, map[string]string{"access_token": "device-token"})
+		writeJSON(t, w, map[string]string{"access_token": testMQTTToken("device")})
 	}))
 	defer tokenServer.Close()
 	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
@@ -1380,7 +1531,7 @@ func TestSustainedActorsUseLongMQTTKeepAlive(t *testing.T) {
 		t.Fatalf("unexpected sustained device phase counters: %#v", totals)
 	}
 
-	clientID := fmt.Sprintf("rtk-e2e-run-sustained-keepalive-rtk-0041-device-%d", os.Getpid())
+	clientID := "mqtt-device-test-device"
 	if got := broker.KeepAlive(clientID); got != sustainedMQTTKeepAliveSeconds {
 		t.Fatalf("sustained device keepalive = %d, want %d", got, sustainedMQTTKeepAliveSeconds)
 	}
@@ -1445,14 +1596,14 @@ func TestRuntimeLogRecorderQoS1WaitsForPubAck(t *testing.T) {
 
 func TestActorSeparatedProbeFailsWhenAppMQTTAuthRejected(t *testing.T) {
 	broker := newFakeMQTTBroker(t)
-	broker.RejectUsername = "app-user:rtk-0041"
+	broker.RejectUsername = "test-brand-cloud"
 	defer broker.Close()
 	probe := mqttActorProbe{
 		DeviceID:    "rtk-0041",
 		DeviceType:  "light",
 		Brandname:   "RTK",
-		DeviceToken: "device-token",
-		AppToken:    "app-token",
+		DeviceToken: testMQTTToken("device"),
+		AppToken:    testMQTTToken("app"),
 		Dial:        broker.Dial,
 		Timeout:     time.Second,
 		Now:         fixedProbeTime,
@@ -1898,8 +2049,20 @@ func TestStagedSustainedLoadRunsPartialShadowActionWhenTargetMissed(t *testing.T
 	broker := newFakeTLSMQTTBroker(t)
 	defer broker.Close()
 	deviceCertPEM, deviceKeyPEM, _ := testAppMaterial(t, "rtk-0041")
+	appCertPEM, appKeyPEM, appCSRPEM := testAppMaterial(t, "app-user:user-1")
 	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, map[string]string{"access_token": "load-test-token"})
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["scope"] == "app" {
+			if got := r.Header.Get("X-Client-S-DN"); got != "/CN=app-user:user-1/O=VideoCloud" {
+				t.Fatalf("X-Client-S-DN = %q, want app certificate subject", got)
+			}
+			writeJSON(t, w, map[string]string{"access_token": testMQTTToken("app")})
+			return
+		}
+		writeJSON(t, w, map[string]string{"access_token": testMQTTToken("device")})
 	}))
 	defer tokenServer.Close()
 	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
@@ -1918,7 +2081,13 @@ func TestStagedSustainedLoadRunsPartialShadowActionWhenTargetMissed(t *testing.T
 		"run-partial-shadow",
 		tokenServer.URL,
 		[]mqttEndpointTarget{{Host: host, Port: port}},
-		map[string]*accountLoginTokenManager{"user@example.test": newAccountLoginTokenManager("", "", userCredential{}, tokenBundle{AccessToken: "app-token"})},
+		map[string]*accountLoginTokenManager{"user@example.test": newAccountLoginTokenManager("", "", userCredential{
+			AppCredentials: appCertificateKeys{PrivateKeyPEM: appKeyPEM, CSRPem: appCSRPEM},
+			AppCertificate: appCertificateSummary{
+				CertificatePEM:      appCertPEM,
+				CertificateChainPEM: appCertPEM,
+			},
+		}, tokenBundle{AccessToken: testMQTTToken("app")})},
 		20260616,
 		loadOptions{Concurrency: 1, CommandRatePerDevicePerDay: "86400000"},
 		[]sustainedStage{{Name: "partial", ConnectedTarget: 2, DurationSeconds: 1}},
@@ -2019,6 +2188,13 @@ func TestLoadHome100KCredentialBundleReadsGzippedSQLiteDevices(t *testing.T) {
 	if got := bundle.Users.Users[0].Tokens.RefreshToken; got != "cached-refresh" {
 		t.Fatalf("bundle user refresh token = %q, want cached-refresh", got)
 	}
+	explicit, err := loadHome100KCredentialBundleAt(envRoot, sqlitePath)
+	if err != nil {
+		t.Fatalf("load explicit SQLite credential bundle: %v", err)
+	}
+	if explicit.Source != sqlitePath || len(explicit.Bind.Assignments) != 1 || explicit.Bind.Assignments[0].DeviceID != "device-1" {
+		t.Fatalf("explicit bundle = %#v", explicit)
+	}
 	if len(bundle.Bind.Assignments) != 1 || bundle.Bind.Assignments[0].DeviceID != "device-1" {
 		t.Fatalf("bundle bindings = %#v", bundle.Bind.Assignments)
 	}
@@ -2031,8 +2207,8 @@ func TestActorSeparatedProbeRecordsTraceChain(t *testing.T) {
 		DeviceID:    "rtk-0041",
 		DeviceType:  "light",
 		Brandname:   "RTK",
-		DeviceToken: "device-token",
-		AppToken:    "app-token",
+		DeviceToken: testMQTTToken("device"),
+		AppToken:    testMQTTToken("app"),
 		Dial:        broker.Dial,
 		Timeout:     time.Second,
 		Now:         fixedProbeTime,
@@ -2337,11 +2513,17 @@ func TestParsePositiveDurationRejectsEmptyAndInvalidValues(t *testing.T) {
 }
 
 func TestDesiredWriteRemainingBudgetScalesForShortDebugStages(t *testing.T) {
-	if got := desiredWriteRemainingBudget(75 * time.Second); got != 15*time.Second {
+	if got := desiredWriteRemainingBudget(75*time.Second, 0); got != 15*time.Second {
 		t.Fatalf("75s stage budget = %s, want 15s", got)
 	}
-	if got := desiredWriteRemainingBudget(1 * time.Second); got != 250*time.Millisecond {
+	if got := desiredWriteRemainingBudget(1*time.Second, 0); got != 250*time.Millisecond {
 		t.Fatalf("1s stage budget = %s, want 250ms", got)
+	}
+	if got := desiredWriteRemainingBudget(150*time.Second, 30*time.Second); got != 30*time.Second {
+		t.Fatalf("150s stage budget = %s, want configured 30s command timeout", got)
+	}
+	if got := desiredWriteRemainingBudget(10*time.Second, 30*time.Second); got != 5*time.Second {
+		t.Fatalf("10s stage budget = %s, want half-stage cap 5s", got)
 	}
 }
 

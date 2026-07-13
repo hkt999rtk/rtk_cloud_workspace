@@ -877,6 +877,79 @@ def usage_window_totals():
         lines.append(f"| {md(name)} | {totals[name]} |")
     return "\n".join(lines)
 
+def metered_traffic_report():
+    """Render generic service/metric totals and persist a machine-readable artifact."""
+    event_path = out_dir / "billing_usage_events.json"
+    rows = []
+    evidence = "client_counter"
+    if event_path.exists():
+        with event_path.open() as f:
+            payload = json.load(f)
+        events = payload.get("events", payload) if isinstance(payload, (dict, list)) else []
+        if isinstance(events, dict):
+            events = [events]
+        totals = defaultdict(lambda: {"quantity": 0, "events": 0})
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            service = str(event.get("service_code", "")).strip()
+            brand_cloud_id = str(event.get("brand_cloud_id", "")).strip()
+            for measurement in event.get("measurements") or []:
+                metric = str(measurement.get("metric_code", "")).strip()
+                unit = str(measurement.get("unit", "")).strip()
+                if not service or not metric or not unit or not brand_cloud_id:
+                    continue
+                key = (service, metric, unit, brand_cloud_id)
+                totals[key]["quantity"] += num(measurement.get("quantity"), 0)
+                totals[key]["events"] += 1
+        for (service, metric, unit, brand_cloud_id), total in sorted(totals.items()):
+            rows.append({
+                "service_code": service, "metric_code": metric, "unit": unit,
+                "quantity": total["quantity"], "event_count": total["events"],
+                "brand_cloud_id": brand_cloud_id, "evidence": "billing_usage_event",
+            })
+        evidence = "billing_usage_event" if rows else "client_counter"
+
+    if not rows:
+        stages = result.get("stage_results") or []
+        device = total_device_totals(stages)
+        app = total_app_totals(stages)
+        brand = ((result.get("plan") or {}).get("conditions") or {}).get("brandname", "")
+        rows = [
+            {"service_code": "mqtt", "metric_code": "publish_bytes", "unit": "bytes",
+             "quantity": device["bytes_sent"] + app["bytes_sent"], "event_count": 0,
+             "brand_cloud_id": "not-captured", "dimensions": {"brandname": brand},
+             "evidence": "client_counter"},
+            {"service_code": "mqtt", "metric_code": "delivery_bytes", "unit": "bytes",
+             "quantity": device["bytes_received"] + app["bytes_received"], "event_count": 0,
+             "brand_cloud_id": "not-captured", "dimensions": {"brandname": brand},
+             "evidence": "client_counter"},
+        ]
+
+    artifact = {
+        "run_id": result.get("run_id", ""),
+        "service_model": "generic_usage_event", "evidence": evidence,
+        "source": "billing_usage_events.json" if event_path.exists() and evidence == "billing_usage_event" else "results.json",
+        "rows": rows, "pricing_applied": False,
+    }
+    (out_dir / "billing-usage-report.json").write_text(json.dumps(artifact, indent=2, sort_keys=True) + "\n")
+    lines = [
+        f"- evidence: `{evidence}`",
+        "- pricing applied: `false` (usage facts only; no invoice calculation)",
+        "| Service | Metric | Unit | Quantity | Brand Cloud | Events |",
+        "| --- | --- | --- | ---: | --- | ---: |",
+    ]
+    for row in rows:
+        lines.append(
+            f"| {md(row.get('service_code'))} | {md(row.get('metric_code'))} | {md(row.get('unit'))} | "
+            f"{num(row.get('quantity'), 0)} | {md(row.get('brand_cloud_id'))} | {num(row.get('event_count'), 0)} |"
+        )
+    if evidence == "client_counter":
+        lines.append("- Client-derived rows are a traffic sanity report; they are not proof that the billing log/ledger received the same usage.")
+    else:
+        lines.append("- Rows were aggregated from the generic billing usage event envelope; pricing and invoicing remain separate.")
+    return "\n".join(lines)
+
 def failure_reasons():
     stages = result.get("stage_results") or []
     totals = defaultdict(int)
@@ -1163,13 +1236,14 @@ def k8s_node_resource_usage():
         "| Node | Samples | CPU p95 | CPU max | Mem p95 | Mem max | Unavailable |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
+    node_aliases = {name: f"k8s-node-{idx:02d}" for idx, name in enumerate(sorted(groups), 1)}
     for name in sorted(groups):
         group = groups[name]
         cpus = [pct_value(r.get("cpu_pct")) for r in group]
         mems = [pct_value(r.get("mem_pct")) for r in group]
         unavailable = sum(1 for r in group if (r.get("status") or "").lower() != "ok")
         lines.append(
-            f"| {md(name)} | {len(group)} | {fmt_float(percentile(cpus, 95))}% | "
+            f"| {node_aliases[name]} | {len(group)} | {fmt_float(percentile(cpus, 95))}% | "
             f"{fmt_float(max([v for v in cpus if v is not None], default=None))}% | "
             f"{fmt_float(percentile(mems, 95))}% | {fmt_float(max([v for v in mems if v is not None], default=None))}% | {unavailable} |"
         )
@@ -1241,6 +1315,8 @@ def report_source_artifacts():
         "server-evidence.json",
         "start-coordination.json",
         "sync-telemetry.json",
+        "billing_usage_events.json",
+        "billing-usage-report.json",
         "workflow-status.log",
         "resource-samples/load-vms.tsv",
         "resource-samples/k8s-nodes.tsv",
@@ -1277,6 +1353,7 @@ replacements = {
     "PER_TYPE_MQTT_TOTALS": per_type_mqtt_totals(),
     "USER_ACTION_TOTALS": user_action_totals(),
     "USAGE_WINDOW_TOTALS": usage_window_totals(),
+    "METERED_TRAFFIC_REPORT": metered_traffic_report(),
     "FAILURE_REASONS": failure_reasons(),
     "FAILURE_DETAILS": failure_details(),
     "SERVER_CORRELATION": server_correlation(),

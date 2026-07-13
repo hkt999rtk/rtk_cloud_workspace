@@ -28,6 +28,8 @@ The workspace snapshot includes:
 | Artifact release governance | [`docs/artifact-release-governance.md`](docs/artifact-release-governance.md) | Linode Object Storage release artifact policy and adoption matrix. |
 | Cross-repo contracts | [`repos/rtk_cloud_contracts_doc/README.md`](repos/rtk_cloud_contracts_doc/README.md) | Normative wire, payload, and integration contracts. |
 | Cross-repo testing | [`docs/testing.md`](docs/testing.md) | Local validation commands for pinned snapshots. |
+| Create an environment | [`cloud_env/README.md`](cloud_env/README.md) | Required settings, overrides, secrets boundary, validation, and provision flow. |
+| Deployment defaults | [`cloud_deploy/README.md`](cloud_deploy/README.md) | Architecture and adapter key ownership. |
 
 ## Bootstrap
 
@@ -57,7 +59,7 @@ remote but does not move pinned commits. To change the validated cross-repo
 snapshot, update the relevant submodule commit intentionally and commit the
 pointer change in this workspace repository.
 
-## Staging Shortcuts
+## Environment Operations
 
 Use the staging K8s lifecycle wrappers when you want explicit phase control.
 `reset` clears K8s resources, `provision` installs or updates workloads and
@@ -87,17 +89,15 @@ scripts/reset-staging-k8s.sh --confirm video-cloud-staging
 scripts/provision-staging.sh --confirm video-cloud-staging
 scripts/run-staging-acceptance.sh --confirm video-cloud-staging
 scripts/run-staging-e2e.sh --confirm video-cloud-staging
-./stg.sh e2e --plan
-./stg.sh provision --confirm video-cloud-staging
-./stg.sh brand RTK
-./stg.sh brands
-./stg.sh users RTK 10
-./stg.sh devices 100
-./stg.sh bind RTK 100
-./stg.sh mqtt RTK
+go run ./scripts/go/rtk-cloud -- deployment plan --environment staging
+go run ./scripts/go/rtk-cloud -- deployment provision --environment staging --confirm video-cloud-staging
+go run ./scripts/go/rtk-cloud -- create-brandname-cloud --environment staging --brandname RTK
+go run ./scripts/go/rtk-cloud -- list-brandname-clouds --environment staging
+go run ./scripts/go/rtk-cloud -- create-users --environment staging --brandname RTK --count 10
+go run ./scripts/go/rtk-cloud -- generate-load-devices --environment staging --count 100
+go run ./scripts/go/rtk-cloud -- bind-devices --environment staging --brandname RTK --count 100
+go run ./scripts/go/rtk-cloud -- mqtt-test --environment staging --brandname RTK
 ```
-
-From `scripts/`, use `../stg.sh ...`.
 
 ## Workspace Rules
 

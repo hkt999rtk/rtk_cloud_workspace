@@ -56,14 +56,33 @@ else
 fi
 load_linode_token_from_env_file
 
-env_root="${HOME100K_ENV_ROOT:-cloud_env/staging/lke}"
+environment="${HOME100K_ENVIRONMENT:-staging}"
+environment_root="${HOME100K_ENVIRONMENT_ROOT:-cloud_env/${environment}}"
+if [[ "$environment_root" == */staging/lke || "$environment_root" == cloud_env/staging/lke ]]; then
+  echo "legacy provider env-root is not supported; use HOME100K_ENVIRONMENT=staging" >&2
+  exit 2
+fi
+env_root="${HOME100K_ENV_ROOT:-${environment_root}/runtime}"
 brandname="${HOME100K_BRANDNAME:-RTK}"
 brand_plan="${HOME100K_BRAND_PLAN:-}"
 if [[ -n "$brand_plan" && "$brand_plan" != /* ]]; then
   brand_plan="$repo_root/$brand_plan"
 fi
 scenario_profile="${HOME100K_SCENARIO_PROFILE:-}"
-region="${HOME100K_REGION:-us-sea}"
+region="${HOME100K_REGION:-}"
+if [[ -z "$region" ]]; then
+  case "$env_root" in
+    /*) provider_preflight_file="$env_root/state/provider-preflight.env" ;;
+    *) provider_preflight_file="$repo_root/$env_root/state/provider-preflight.env" ;;
+  esac
+  if [[ -f "$provider_preflight_file" ]]; then
+    region="$(awk -F= '$1 == "PROVIDER_REGION" {print $2; exit}' "$provider_preflight_file")"
+  fi
+fi
+if [[ -z "$region" ]]; then
+  echo "provider region is unresolved; run rtk-cloud deployment plan --environment $environment" >&2
+  exit 2
+fi
 linode_type="${HOME100K_LINODE_TYPE:-}"
 vm_label_prefix="${HOME100K_VM_LABEL_PREFIX:-lg}"
 run_id="${HOME100K_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
@@ -164,7 +183,7 @@ token_seed_redis_addr="${HOME100K_TOKEN_SEED_REDIS_ADDR:-}"
 token_seed_device_prefix="${HOME100K_TOKEN_SEED_DEVICE_PREFIX:-load-device-}"
 token_seed_ttl="${HOME100K_TOKEN_SEED_TTL:-24h}"
 existing_generator_hosts="${HOME100K_EXISTING_GENERATOR_HOSTS:-}"
-linode_active_service_limit="${HOME100K_LINODE_ACTIVE_SERVICE_LIMIT:-${LKE_LINODE_ACTIVE_SERVICE_LIMIT:-}}"
+provider_active_service_limit=""
 if [[ "$out_dir" == /* ]]; then
   local_out_dir="$out_dir"
 else
@@ -218,11 +237,12 @@ Commands:
 Defaults can be overridden with:
   HOME100K_DESCRIPTION_FILE default: loadtests/home-100k/scenarios/default.description.env
   HOME100K_SECRET_ENV_FILE  default: ~/.env; only LINODE_TOKEN is read
-  HOME100K_ENV_ROOT       default: cloud_env/staging/lke
+  HOME100K_ENVIRONMENT    default: staging; selects cloud_env/<environment>
+  HOME100K_ENV_ROOT       internal runtime override; default: cloud_env/<environment>/runtime
   HOME100K_BRANDNAME      default: RTK
   HOME100K_BRAND_PLAN     optional multi-brand load-test plan JSON
   HOME100K_SCENARIO_PROFILE optional scenario profile, e.g. video-1k-v1, video-50k-turn-v1, video-100k-turn-v1
-  HOME100K_REGION         default: us-sea
+  HOME100K_REGION         explicit test-only provider region override; normally resolved from environment
   HOME100K_LINODE_TYPE    optional Linode VM type for load generators, passed to provision-vms
   HOME100K_VM_LABEL_PREFIX default: lg; load-generator VM labels are <prefix>01..<prefix>NN
   HOME100K_RUN_ID         default: current UTC timestamp
@@ -298,7 +318,7 @@ Defaults can be overridden with:
   HOME100K_K8S_RUNTIME_HEALTH_STATUS default: 1 during run-stages; set 0 to disable API/EMQX health snapshots
   HOME100K_K8S_RUNTIME_HEALTH_SINCE default: 2m; log lookback window for API/EMQX error snapshots
   HOME100K_SHUTDOWN_ON_ERROR default: 0; keep VMs running after failures for resume/debug
-  HOME100K_KUBECONFIG default: RTK_CLOUD_LKE_KUBECONFIG, LKE_KUBECONFIG, CLOUD_STAGING_K8S_KUBECONFIG, or <env-root>/state/lke-kubeconfig.yaml
+  HOME100K_KUBECONFIG default: CLOUD_STAGING_K8S_KUBECONFIG or <env-root>/state/kubeconfig.yaml
 
 Examples:
   $(basename "$0")
@@ -483,13 +503,11 @@ k8s_kubeconfig() {
   local candidate
   local env_root_kubeconfig
   case "$env_root" in
-    /*) env_root_kubeconfig="$env_root/state/lke-kubeconfig.yaml" ;;
-    *) env_root_kubeconfig="$repo_root/$env_root/state/lke-kubeconfig.yaml" ;;
+    /*) env_root_kubeconfig="$env_root/state/kubeconfig.yaml" ;;
+    *) env_root_kubeconfig="$repo_root/$env_root/state/kubeconfig.yaml" ;;
   esac
   for candidate in \
     "${HOME100K_KUBECONFIG:-}" \
-    "${RTK_CLOUD_LKE_KUBECONFIG:-}" \
-    "${LKE_KUBECONFIG:-}" \
     "${CLOUD_STAGING_K8S_KUBECONFIG:-}" \
     "$env_root_kubeconfig"; do
     if [[ -n "$candidate" && -f "$candidate" ]]; then
@@ -525,16 +543,19 @@ load_generator_vm_count_for_quota() {
 }
 
 linode_active_service_preflight() {
-  if [[ -n "$existing_generator_hosts" && -z "$linode_active_service_limit" ]]; then
-    return
-  fi
-  if [[ -z "${LINODE_TOKEN:-}" ]]; then
-    return
-  fi
-  mkdir -p "$local_out_dir"
-  local env_root_path artifact active_json rc
-  env_root_path="$(local_env_root_path)"
-  artifact="$local_out_dir/linode-active-service-preflight.json"
+	local env_root_path artifact active_json rc
+	env_root_path="$(local_env_root_path)"
+	if [[ -f "$env_root_path/state/provider-preflight.env" ]]; then
+		provider_active_service_limit="$(awk -F= '$1 == "PROVIDER_ACTIVE_SERVICE_LIMIT" {print $2; exit}' "$env_root_path/state/provider-preflight.env")"
+	fi
+	if [[ -n "$existing_generator_hosts" && -z "$provider_active_service_limit" ]]; then
+		return
+	fi
+	if [[ -z "${LINODE_TOKEN:-}" ]]; then
+		return
+	fi
+	mkdir -p "$local_out_dir"
+	artifact="$local_out_dir/linode-active-service-preflight.json"
   active_json="$(mktemp)"
   rc=0
   /usr/bin/curl -fsS -H "Authorization: Bearer $LINODE_TOKEN" 'https://api.linode.com/v4/linode/instances?page_size=500' > "$active_json" || rc=$?
@@ -543,7 +564,7 @@ linode_active_service_preflight() {
     echo "warning: unable to query Linode active services for quota preflight" >&2
     return
   fi
-  if ! python3 - "$active_json" "$env_root_path" "$artifact" "$(load_generator_vm_count_for_quota)" "$linode_active_service_limit" <<'PY'
+	if ! python3 - "$active_json" "$env_root_path" "$artifact" "$(load_generator_vm_count_for_quota)" "$provider_active_service_limit" <<'PY'
 import json
 import os
 import sys
@@ -597,8 +618,8 @@ active_ids = {item.get("id") for item in active_items}
 active_labels = {str(item.get("label") or "") for item in active_items}
 
 stack = env_file(os.path.join(env_root, "env", "stack.env"))
-desired_edge = int_value(stack.get("LKE_EDGE_HAPROXY_COUNT"), 1)
-desired_coturn = int_value(stack.get("LKE_COTURN_VM_COUNT"), 1)
+desired_edge = int_value(stack.get("EDGE_REPLICAS"), 1)
+desired_coturn = int_value(stack.get("TURN_REPLICAS"), 1)
 existing_edge = count_active_artifact_items(os.path.join(env_root, "artifacts", "edge-haproxy", "edge-vms.json"), "edge_vms", active_ids, active_labels)
 existing_coturn = count_active_artifact_items(os.path.join(env_root, "artifacts", "coturn-vm", "coturn-vms.json"), "coturn_vms", active_ids, active_labels)
 missing_edge = max(0, desired_edge - existing_edge)
@@ -678,21 +699,32 @@ command_needs_public_mqtt_addr() {
 }
 
 discover_public_mqtt_addr() {
-  local kubectl_bin="${HOME100K_KUBECTL:-${RTK_CLOUD_KUBECTL:-kubectl}}"
-  if ! command -v "$kubectl_bin" >/dev/null 2>&1; then
-    echo "HOME100K_MQTT_ADDR=auto-public-mqtt requires kubectl" >&2
-    return 1
-  fi
   if ! command -v jq >/dev/null 2>&1; then
     echo "HOME100K_MQTT_ADDR=auto-public-mqtt requires jq" >&2
     return 1
   fi
-  local kubeconfig output addrs
+  local state_file edge_host stack_name
+  for state_file in "$env_root"/state/*.state.json; do
+    [[ -f "$state_file" ]] || continue
+    edge_host="$(jq -r '.instances.edge.public_ipv4 // empty' "$state_file")"
+    if [[ -n "$edge_host" ]]; then
+      printf '%s:8883\n' "$edge_host"
+      return 0
+    fi
+  done
+  local kubectl_bin="${HOME100K_KUBECTL:-${RTK_CLOUD_KUBECTL:-kubectl}}"
+  if ! command -v "$kubectl_bin" >/dev/null 2>&1; then
+    echo "HOME100K_MQTT_ADDR=auto-public-mqtt found no normalized edge endpoint and requires kubectl for service discovery" >&2
+    return 1
+  fi
+  local kubeconfig output addrs namespace
   kubeconfig="$(k8s_kubeconfig || true)"
+  stack_name="$(jq -r '.stack // empty' "$env_root"/state/*.state.json 2>/dev/null | head -1)"
+  namespace="${stack_name:-video-cloud-staging}-video-cloud"
   if [[ -n "$kubeconfig" ]]; then
-    output="$(KUBECONFIG="$kubeconfig" "$kubectl_bin" -n video-cloud-staging-video-cloud get svc -l app.kubernetes.io/component=public-mqtt -o json)"
+    output="$(KUBECONFIG="$kubeconfig" "$kubectl_bin" -n "$namespace" get svc -l app.kubernetes.io/component=public-mqtt -o json)"
   else
-    output="$("$kubectl_bin" -n video-cloud-staging-video-cloud get svc -l app.kubernetes.io/component=public-mqtt -o json)"
+    output="$("$kubectl_bin" -n "$namespace" get svc -l app.kubernetes.io/component=public-mqtt -o json)"
   fi
   local lb_count="${mqtt_public_lb_count:-0}"
   if ! [[ "$lb_count" =~ ^[0-9]+$ ]]; then
@@ -706,7 +738,7 @@ discover_public_mqtt_addr() {
     | join(",")
   ')"
   if [[ -z "$addrs" ]]; then
-    echo "HOME100K_MQTT_ADDR=auto-public-mqtt found no public MQTT LoadBalancer IPs" >&2
+    echo "HOME100K_MQTT_ADDR=auto-public-mqtt found neither a normalized edge endpoint nor public MQTT LoadBalancer IPs" >&2
     return 1
   fi
   printf '%s\n' "$addrs"

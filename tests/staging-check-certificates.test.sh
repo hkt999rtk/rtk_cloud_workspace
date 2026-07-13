@@ -6,11 +6,12 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
-ENV_ROOT="$WORKSPACE/cloud_env/staging/lke"
+ENV_ROOT="$WORKSPACE/cloud_env/staging/runtime"
 mkdir -p \
 	"$ENV_ROOT/certificates/video-cloud-staging.example.com" \
 	"$ENV_ROOT/certificates/account-manager.video-cloud-staging.example.com" \
 	"$ENV_ROOT/certificates/admin.video-cloud-staging.example.com" \
+	"$ENV_ROOT/certificates/logger.video-cloud-staging.example.com" \
 	"$ENV_ROOT/services/account-manager" \
 	"$ENV_ROOT/services/cloud-admin"
 
@@ -39,24 +40,28 @@ make_cert \
 	admin.video-cloud-staging.example.com \
 	"$ENV_ROOT/certificates/admin.video-cloud-staging.example.com" \
 	30
+make_cert \
+	logger.video-cloud-staging.example.com \
+	"$ENV_ROOT/certificates/logger.video-cloud-staging.example.com" \
+	30
 
 cat > "$ENV_ROOT/services/account-manager/account-manager-public-staging.env" <<'EOF_AM'
-ACCOUNT_MANAGER_LINODE_DOMAIN=account-manager.video-cloud-staging.example.com
+ACCOUNT_MANAGER_DOMAIN=account-manager.video-cloud-staging.example.com
 EOF_AM
 cat > "$ENV_ROOT/services/cloud-admin/admin-staging.env" <<'EOF_ADMIN'
-ADMIN_LINODE_DOMAIN=admin.video-cloud-staging.example.com
+CLOUD_ADMIN_DOMAIN=admin.video-cloud-staging.example.com
 EOF_ADMIN
 
 JSON_OUT="$TMP/pass.json"
 "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- check-certificates \
 	--workspace "$WORKSPACE" \
-	--env-root "$WORKSPACE/cloud_env/staging" \
+	--env-root "$ENV_ROOT" \
 	--dns-root-domain example.com \
 	--skip-live \
-	--json > "$JSON_OUT"
+	--json > "$JSON_OUT" || { cat "$JSON_OUT" >&2; exit 1; }
 
 jq -e '.status == "pass"' "$JSON_OUT" >/dev/null
-jq -e '.results | length == 4' "$JSON_OUT" >/dev/null
+jq -e '.results | length == 5' "$JSON_OUT" >/dev/null
 jq -e '[.results[].status] | all(. == "pass")' "$JSON_OUT" >/dev/null
 
 make_cert \

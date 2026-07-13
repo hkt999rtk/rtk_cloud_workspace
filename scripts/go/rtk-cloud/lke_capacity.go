@@ -4,9 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -87,9 +85,6 @@ func lkeCheckCapacityWithPaths(paths provisionPaths, env map[string]string, opts
 		return err
 	}
 	if plan.NodeCount >= plan.RequiredNodes {
-		if plan.TargetConnects > 0 && plan.MQTTCapacity < plan.TargetConnects {
-			return fmt.Errorf("LKE capacity check failed: target_connects=%d requires at least %d MQTT replicas, current capacity=%d; set LKE_MQTT_REPLICAS=auto or increase LKE_MQTT_REPLICAS", plan.TargetConnects, plan.RequiredMQTTPods, plan.MQTTCapacity)
-		}
 		if plan.ProviderServices.Limit > 0 && plan.ProviderServices.RequiredServices > plan.ProviderServices.Limit {
 			return fmt.Errorf("LKE provider capacity check failed: required active services=%d exceeds LKE_LINODE_ACTIVE_SERVICE_LIMIT=%d (nodes=%d postgres_volumes=%d edge_vms=%d coturn_vms=%d); reduce LKE_NODE_COUNT, use LKE_POSTGRES_STORAGE_MODE=emptydir for ephemeral validation, reduce LKE_EDGE_HAPROXY_COUNT, reduce LKE_COTURN_VM_COUNT, or request a Linode quota increase", plan.ProviderServices.RequiredServices, plan.ProviderServices.Limit, plan.ProviderServices.NodeServices, plan.ProviderServices.PostgresVolumes, plan.ProviderServices.EdgeVMs, plan.ProviderServices.CoturnVMs)
 		}
@@ -181,73 +176,24 @@ func lkeReducibleMainNodeServices(token string, cluster lkeCluster, env map[stri
 }
 
 func lkeCapacityPlan(env map[string]string, opts provisionOptions) (lkeCapacityPlanResult, error) {
+	_ = opts
 	nodeCount, err := lkeNodeCount(env)
 	if err != nil {
 		return lkeCapacityPlanResult{}, err
 	}
 	nodeType := firstNonEmpty(os.Getenv("LKE_NODE_TYPE"), env["LKE_NODE_TYPE"], "g6-standard-2")
-	allocCPU, allocMem, err := lkeNodeAllocatable(nodeType, env)
-	if err != nil {
-		return lkeCapacityPlanResult{}, err
-	}
-	systemCPU, err := parseCPUQuantity(firstNonEmpty(os.Getenv("LKE_SYSTEM_RESERVED_CPU_PER_NODE"), env["LKE_SYSTEM_RESERVED_CPU_PER_NODE"], "500m"))
-	if err != nil {
-		return lkeCapacityPlanResult{}, fmt.Errorf("LKE_SYSTEM_RESERVED_CPU_PER_NODE: %w", err)
-	}
-	systemMem, err := parseMemoryMi(firstNonEmpty(os.Getenv("LKE_SYSTEM_RESERVED_MEMORY_PER_NODE"), env["LKE_SYSTEM_RESERVED_MEMORY_PER_NODE"], "384Mi"))
-	if err != nil {
-		return lkeCapacityPlanResult{}, fmt.Errorf("LKE_SYSTEM_RESERVED_MEMORY_PER_NODE: %w", err)
-	}
-	items, err := lkeCapacityWorkloads(env, opts)
-	if err != nil {
-		return lkeCapacityPlanResult{}, err
-	}
-	totalCPU := 0
-	totalMem := 0
-	spreadMin := 1
-	for _, item := range items {
-		totalCPU += item.CPUMilli * item.Replicas
-		totalMem += item.MemoryMi * item.Replicas
-		if item.SpreadMin > spreadMin {
-			spreadMin = item.SpreadMin
-		}
-	}
-	cpuPerNode := allocCPU - systemCPU
-	memPerNode := allocMem - systemMem
-	if cpuPerNode <= 0 {
-		return lkeCapacityPlanResult{}, fmt.Errorf("node type %s has no CPU headroom after system reserve", nodeType)
-	}
-	if memPerNode <= 0 {
-		return lkeCapacityPlanResult{}, fmt.Errorf("node type %s has no memory headroom after system reserve", nodeType)
-	}
-	requiredCPU := ceilDiv(totalCPU, cpuPerNode)
-	requiredMem := ceilDiv(totalMem, memPerNode)
-	required := maxInt(requiredCPU, requiredMem, spreadMin)
+	allocCPU := envIntFrom(env, "NODE_CLASS_BROKER_USABLE_CPU_MILLI", 0)
+	allocMem := envIntFrom(env, "NODE_CLASS_BROKER_USABLE_MEMORY_MIB", 0)
+	totalCPU := envIntFrom(env, "NODE_CLASS_BROKER_TOTAL_REQUEST_CPU_MILLI", 0)
+	totalMem := envIntFrom(env, "NODE_CLASS_BROKER_TOTAL_REQUEST_MEMORY_MIB", 0)
+	required := envIntFrom(env, "NODE_CLASS_BROKER_EFFECTIVE_COUNT", nodeCount)
 	targetConnects := lkeTargetConnects(env)
-	requiredMQTT := 0
-	mqttCapacity := 0
-	if targetConnects > 0 {
-		perPod := lkeMQTTConnectionsPerPod(env)
-		requiredMQTT = ceilDiv(targetConnects, perPod)
-		mqttCapacity = lkeMQTTReplicas(env) * perPod
-		if requiredMQTT > required {
-			required = requiredMQTT
-		}
-	}
-	sort.Slice(items, func(i, j int) bool {
-		left := items[i].CPUMilli*items[i].Replicas + items[i].MemoryMi*items[i].Replicas
-		right := items[j].CPUMilli*items[j].Replicas + items[j].MemoryMi*items[j].Replicas
-		if left == right {
-			return items[i].Name < items[j].Name
-		}
-		return left > right
-	})
+	requiredMQTT := lkeMQTTReplicas(env)
+	mqttCapacity := requiredMQTT * lkeMQTTConnectionsPerPod(env)
 	providerServices := lkeProviderServices(env, nodeCount)
 	return lkeCapacityPlanResult{
 		NodeType: nodeType, NodeCount: nodeCount, TargetConnects: targetConnects, MQTTCapacity: mqttCapacity, RequiredMQTTPods: requiredMQTT, AllocatableCPU: allocCPU, AllocatableMemMi: allocMem,
-		SystemCPUPerNode: systemCPU, SystemMemPerNode: systemMem, Workloads: items,
-		WorkloadCPU: totalCPU, WorkloadMemMi: totalMem, RequiredCPUNode: requiredCPU, RequiredMemNode: requiredMem,
-		RequiredSpread: spreadMin, RequiredNodes: required, ProviderServices: providerServices,
+		WorkloadCPU: totalCPU, WorkloadMemMi: totalMem, RequiredSpread: requiredMQTT, RequiredNodes: required, ProviderServices: providerServices,
 	}, nil
 }
 
@@ -286,103 +232,11 @@ func envIntFrom(env map[string]string, key string, fallback int) int {
 }
 
 func lkeRecommendedNodeCount(env map[string]string) (int, error) {
-	nodeType := firstNonEmpty(os.Getenv("LKE_NODE_TYPE"), env["LKE_NODE_TYPE"], "g6-standard-2")
-	allocCPU, allocMem, err := lkeNodeAllocatable(nodeType, env)
-	if err != nil {
-		return 0, err
+	count := envIntFrom(env, "NODE_CLASS_BROKER_EFFECTIVE_COUNT", 0)
+	if count <= 0 {
+		return 0, errors.New("shared capacity plan missing NODE_CLASS_BROKER_EFFECTIVE_COUNT")
 	}
-	systemCPU, err := parseCPUQuantity(firstNonEmpty(os.Getenv("LKE_SYSTEM_RESERVED_CPU_PER_NODE"), env["LKE_SYSTEM_RESERVED_CPU_PER_NODE"], "500m"))
-	if err != nil {
-		return 0, err
-	}
-	systemMem, err := parseMemoryMi(firstNonEmpty(os.Getenv("LKE_SYSTEM_RESERVED_MEMORY_PER_NODE"), env["LKE_SYSTEM_RESERVED_MEMORY_PER_NODE"], "384Mi"))
-	if err != nil {
-		return 0, err
-	}
-	items, err := lkeCapacityWorkloads(env, provisionOptions{})
-	if err != nil {
-		return 0, err
-	}
-	totalCPU := 0
-	totalMem := 0
-	spreadMin := 1
-	for _, item := range items {
-		totalCPU += item.CPUMilli * item.Replicas
-		totalMem += item.MemoryMi * item.Replicas
-		if item.SpreadMin > spreadMin {
-			spreadMin = item.SpreadMin
-		}
-	}
-	cpuNodes := ceilDiv(totalCPU, allocCPU-systemCPU)
-	memNodes := ceilDiv(totalMem, allocMem-systemMem)
-	return maxInt(cpuNodes, memNodes, spreadMin), nil
-}
-
-func lkeCapacityWorkloads(env map[string]string, opts provisionOptions) ([]lkeResourceRequest, error) {
-	items := []lkeResourceRequest{}
-	add := func(name string, replicas int, cpu, mem string, spread int) error {
-		if replicas <= 0 {
-			return nil
-		}
-		cpuMilli, err := parseCPUQuantity(cpu)
-		if err != nil {
-			return fmt.Errorf("%s cpu %q: %w", name, cpu, err)
-		}
-		memMi, err := parseMemoryMi(mem)
-		if err != nil {
-			return fmt.Errorf("%s memory %q: %w", name, mem, err)
-		}
-		items = append(items, lkeResourceRequest{Name: name, Replicas: replicas, CPUMilli: cpuMilli, MemoryMi: memMi, SpreadMin: spread})
-		return nil
-	}
-	ingressReplicas, _ := strconv.Atoi(lkeIngressReplicas(env))
-	if err := add("ingress-nginx-controller", ingressReplicas, firstNonEmpty(os.Getenv("LKE_INGRESS_REQUEST_CPU"), env["LKE_INGRESS_REQUEST_CPU"], "500m"), firstNonEmpty(os.Getenv("LKE_INGRESS_REQUEST_MEMORY"), env["LKE_INGRESS_REQUEST_MEMORY"], "512Mi"), 1); err != nil {
-		return nil, err
-	}
-	if err := add("postgresql", 1, firstNonEmpty(os.Getenv("LKE_POSTGRES_REQUEST_CPU"), env["LKE_POSTGRES_REQUEST_CPU"], "1"), firstNonEmpty(os.Getenv("LKE_POSTGRES_REQUEST_MEMORY"), env["LKE_POSTGRES_REQUEST_MEMORY"], "2Gi"), 1); err != nil {
-		return nil, err
-	}
-	if err := add("redis", 1, firstNonEmpty(os.Getenv("LKE_REDIS_REQUEST_CPU"), env["LKE_REDIS_REQUEST_CPU"], "100m"), firstNonEmpty(os.Getenv("LKE_REDIS_REQUEST_MEMORY"), env["LKE_REDIS_REQUEST_MEMORY"], "128Mi"), 1); err != nil {
-		return nil, err
-	}
-	if err := add("redis-exporter", 1, firstNonEmpty(os.Getenv("LKE_REDIS_EXPORTER_REQUEST_CPU"), env["LKE_REDIS_EXPORTER_REQUEST_CPU"], "50m"), firstNonEmpty(os.Getenv("LKE_REDIS_EXPORTER_REQUEST_MEMORY"), env["LKE_REDIS_EXPORTER_REQUEST_MEMORY"], "64Mi"), 1); err != nil {
-		return nil, err
-	}
-	mqttReplicas := lkeMQTTReplicas(env)
-	if profile, ok := lkeContainerResourceProfile(env, "mqtt"); ok {
-		if err := add("mqtt", mqttReplicas, profile.requestCPU, profile.requestMemory, mqttReplicas); err != nil {
-			return nil, err
-		}
-	}
-	for _, workload := range k8sSelectedWorkloads(env, opts) {
-		profile, ok := lkeContainerResourceProfile(env, workload.Name)
-		if !ok {
-			continue
-		}
-		replicas := 1
-		if raw, err := strconv.Atoi(lkeWorkloadReplicas(env, workload)); err == nil && raw > 0 {
-			replicas = raw
-		}
-		spread := 1
-		if workload.Name == "account-manager" || workload.Name == "video-cloud-api" {
-			spread = replicas
-		}
-		if err := add(workload.Name, replicas, profile.requestCPU, profile.requestMemory, spread); err != nil {
-			return nil, err
-		}
-	}
-	if k8sWorkloadSelected(env, opts, "video-cloud") {
-		for _, service := range k8sAuxiliaryWorkloads() {
-			profile, ok := lkeContainerResourceProfile(env, service.Name)
-			if !ok {
-				continue
-			}
-			if err := add(service.Name, 1, profile.requestCPU, profile.requestMemory, 1); err != nil {
-				return nil, err
-			}
-		}
-	}
-	return items, nil
+	return count, nil
 }
 
 func lkeNodeAllocatable(nodeType string, env map[string]string) (int, int, error) {
@@ -422,7 +276,12 @@ type lkeNodeType struct {
 }
 
 func lkeNodeTypeShape(nodeType string) (lkeNodeType, bool) {
-	shapes := map[string]lkeNodeType{
+	shape, ok := lkeNodeTypeCatalog()[nodeType]
+	return shape, ok
+}
+
+func lkeNodeTypeCatalog() map[string]lkeNodeType {
+	return map[string]lkeNodeType{
 		"g6-standard-1":  {cpu: 1, memoryGi: 2},
 		"g6-standard-2":  {cpu: 2, memoryGi: 4},
 		"g6-standard-4":  {cpu: 4, memoryGi: 8},
@@ -433,69 +292,4 @@ func lkeNodeTypeShape(nodeType string) (lkeNodeType, bool) {
 		"g6-standard-24": {cpu: 24, memoryGi: 128},
 		"g6-standard-32": {cpu: 32, memoryGi: 192},
 	}
-	shape, ok := shapes[nodeType]
-	return shape, ok
-}
-
-func parseCPUQuantity(raw string) (int, error) {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return 0, nil
-	}
-	if strings.HasSuffix(value, "m") {
-		n, err := strconv.Atoi(strings.TrimSuffix(value, "m"))
-		if err != nil || n < 0 {
-			return 0, fmt.Errorf("invalid CPU quantity %q", raw)
-		}
-		return n, nil
-	}
-	f, err := strconv.ParseFloat(value, 64)
-	if err != nil || f < 0 {
-		return 0, fmt.Errorf("invalid CPU quantity %q", raw)
-	}
-	return int(math.Ceil(f * 1000)), nil
-}
-
-func parseMemoryMi(raw string) (int, error) {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return 0, nil
-	}
-	units := []struct {
-		suffix string
-		mult   float64
-	}{
-		{"Gi", 1024}, {"G", 1000}, {"Mi", 1}, {"M", 1000.0 / 1024.0}, {"Ki", 1.0 / 1024.0}, {"K", 1000.0 / 1024.0 / 1024.0},
-	}
-	for _, unit := range units {
-		if strings.HasSuffix(value, unit.suffix) {
-			f, err := strconv.ParseFloat(strings.TrimSuffix(value, unit.suffix), 64)
-			if err != nil || f < 0 {
-				return 0, fmt.Errorf("invalid memory quantity %q", raw)
-			}
-			return int(math.Ceil(f * unit.mult)), nil
-		}
-	}
-	n, err := strconv.Atoi(value)
-	if err != nil || n < 0 {
-		return 0, fmt.Errorf("invalid memory quantity %q", raw)
-	}
-	return int(math.Ceil(float64(n) / 1024.0 / 1024.0)), nil
-}
-
-func ceilDiv(n, d int) int {
-	if n <= 0 {
-		return 0
-	}
-	return (n + d - 1) / d
-}
-
-func maxInt(values ...int) int {
-	max := 0
-	for _, value := range values {
-		if value > max {
-			max = value
-		}
-	}
-	return max
 }

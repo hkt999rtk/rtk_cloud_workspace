@@ -41,14 +41,14 @@ func TestEmitCentralLoggerEventPostsMQTTSummaryWithoutLeakingToken(t *testing.T)
 		if event["service"] != "workspace-mqtt-test" {
 			t.Fatalf("unexpected service: %v", event["service"])
 		}
-		if event["unit"] != "stg.sh mqtt" {
+		if event["unit"] != "rtk-cloud mqtt-test" {
 			t.Fatalf("unexpected unit: %v", event["unit"])
 		}
 		if event["operation_id"] != "home-mqtt-loadtest" {
 			t.Fatalf("unexpected operation_id: %v", event["operation_id"])
 		}
 		fields := event["fields"].(map[string]any)
-		if fields["brandname"] != "RTK" || fields["overall"] != "pass" {
+		if fields["run_id"] != "run-logger" || fields["brandname"] != "RTK" || fields["overall"] != "pass" {
 			t.Fatalf("unexpected fields: %#v", fields)
 		}
 		w.WriteHeader(http.StatusAccepted)
@@ -62,6 +62,7 @@ func TestEmitCentralLoggerEventPostsMQTTSummaryWithoutLeakingToken(t *testing.T)
 	}
 
 	err := emitCentralLoggerEvent(envRoot, map[string]any{
+		"run_id":             "run-logger",
 		"generated_at":       "2026-06-02T15:53:47Z",
 		"brandname":          "RTK",
 		"profile":            "smoke",

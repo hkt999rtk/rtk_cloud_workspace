@@ -96,7 +96,7 @@ The default description file points at the existing provision-server staging
 environment:
 
 ```text
-cloud_env/staging/lke
+cloud_env/staging/runtime
 ```
 
 ## EMQX Capacity And Placement
@@ -105,9 +105,8 @@ The server target is EMQX on LKE. Before a formal 100K run, verify that the
 staging server deployment has enough broker capacity and that broker pods are
 spread across nodes:
 
-- `LKE_MQTT_REPLICAS=9`.
-- `LKE_MQTT_NODE_POOL_ID=<pool-id>` points EMQX at a node pool with at least 9
-  schedulable nodes.
+- `MQTT_MIN_REPLICAS=9` in the selected environment's architecture override when preserving the validated nine-broker floor.
+- At least 9 schedulable nodes labeled `rtk.io/node-class=broker`.
 - The EMQX deployment uses hard pod anti-affinity by
   `kubernetes.io/hostname`.
 - `mqtt-public` uses `externalTrafficPolicy: Local`.
@@ -125,7 +124,7 @@ Defaults:
 | --- | --- |
 | `HOME100K_DESCRIPTION_FILE` | `loadtests/home-100k/scenarios/default.description.env` |
 | `HOME100K_SECRET_ENV_FILE` | `~/.env`, only `LINODE_TOKEN` is read |
-| `HOME100K_ENV_ROOT` | `cloud_env/staging/lke` |
+| `HOME100K_ENV_ROOT` | `cloud_env/staging/runtime` |
 | `HOME100K_BRANDNAME` | `RTK` |
 | `HOME100K_REGION` | `us-sea` |
 | `HOME100K_RUN_ID` | Current UTC timestamp |
@@ -157,7 +156,7 @@ Defaults:
 | `HOME100K_MQTT_PUBLIC_LB_COUNT` | `1`; limits auto-discovered MQTT LoadBalancers for the current 9K profile |
 | `HOME100K_NODE_RESOURCE_STATUS` | `1` |
 | `HOME100K_K8S_NODE_RESOURCE_STATUS` | `1` |
-| `HOME100K_KUBECONFIG` | unset; falls back to existing LKE kubeconfig env or `<env-root>/state/lke-kubeconfig.yaml` |
+| `HOME100K_KUBECONFIG` | unset; falls back to existing LKE kubeconfig env or `<env-root>/state/kubeconfig.yaml` |
 
 Generate a deterministic plan without creating Linode resources:
 
@@ -205,9 +204,8 @@ samples. Provisioned node inventory is written to
 
 Kubernetes node resource samples use `kubectl top nodes --no-headers` and print
 `[home-100k k8s-node]` lines. Kubeconfig resolution order is
-`HOME100K_KUBECONFIG`, `RTK_CLOUD_LKE_KUBECONFIG`, `LKE_KUBECONFIG`,
-`CLOUD_STAGING_K8S_KUBECONFIG`, then
-`<env-root>/state/lke-kubeconfig.yaml`. Set
+`HOME100K_KUBECONFIG`, then the selected environment's normalized
+`<runtime-root>/state/kubeconfig.yaml`. Set
 `HOME100K_K8S_NODE_RESOURCE_STATUS=0` to disable K8s node probing.
 
 Stage duration is part of the non-secret description file. The default profile

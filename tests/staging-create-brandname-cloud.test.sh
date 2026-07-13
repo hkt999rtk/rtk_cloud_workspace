@@ -6,7 +6,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
-ENV_ROOT="$WORKSPACE/cloud_env/staging/lke"
+ENV_ROOT="$WORKSPACE/cloud_env/staging/runtime"
 FAKE_BIN="$TMP/bin"
 mkdir -p \
 	"$FAKE_BIN" \
@@ -19,7 +19,7 @@ LINODE_TOKEN=fake-linode-token
 EOF_OPERATOR
 
 cat > "$ENV_ROOT/services/account-manager/account-manager-public-staging.env" <<'EOF_ENV'
-ACCOUNT_MANAGER_LINODE_DOMAIN=account-manager.video-cloud-staging.example.com
+ACCOUNT_MANAGER_DOMAIN=account-manager.video-cloud-staging.example.com
 ACCOUNT_MANAGER_LINODE_SSH_KEY=/tmp/fake-key
 ACCOUNT_MANAGER_LINODE_SSH_USER=root
 EOF_ENV
@@ -95,6 +95,28 @@ fi
 SH
 chmod +x "$FAKE_BIN/curl"
 
+PORT=$((20000 + RANDOM % 20000))
+python3 -c '
+import http.server, json, sys
+class Handler(http.server.BaseHTTPRequestHandler):
+    def respond(self, status, body):
+        raw = json.dumps(body).encode()
+        self.send_response(status); self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw))); self.end_headers(); self.wfile.write(raw)
+    def log_message(self, *_): pass
+    def do_POST(self):
+        if self.path == "/v1/auth/login": return self.respond(200, {"tokens":{"access_token":"test-token"}})
+        if self.path == "/v1/admin/brand-clouds": return self.respond(201, {"brand_cloud":{"id":"org-rtk","name":"RTK","organization_kind":"brand_cloud","status":"active","tier":"commercial","evaluation_device_quota":5,"metadata":{"brandname":"RTK"}}})
+        self.respond(404, {})
+    def do_GET(self):
+        if self.path == "/v1/admin/brand-clouds?limit=200": return self.respond(200, {"brand_clouds":[],"pagination":{"limit":200,"offset":0,"total":0}})
+        self.respond(404, {})
+http.server.ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
+' "$PORT" &
+SERVER_PID=$!
+trap 'kill "$SERVER_PID" 2>/dev/null || true; rm -rf "$TMP"' EXIT
+sleep 0.2
+
 OUT="$TMP/out.json"
 if PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- create-brandname-cloud \
 	--workspace "$WORKSPACE" \
@@ -104,7 +126,7 @@ if PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud
 fi
 grep -F -- '--env-root is required' "$TMP/missing-env-root.out" >/dev/null
 
-PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- create-brandname-cloud \
+ACCOUNT_MANAGER_BASE_URL="http://127.0.0.1:$PORT" PATH="$FAKE_BIN:$PATH" "/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- create-brandname-cloud \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--brandname RTK >"$OUT"

@@ -1,4 +1,4 @@
-# Linode Kubernetes Engine Runtime Inventory
+# LKE Deployment Adapter Inventory
 
 Status: current K8s/LKE staging runtime with production hardening gates.
 
@@ -9,8 +9,9 @@ Last reviewed: 2026-06-14.
 ## Purpose
 
 This document is the source-of-truth inventory and gate checklist for the
-current Linode Kubernetes Engine (LKE) staging runtime and the remaining
-production hardening work. The old Linode VM deployment model is retained only
+reusable Linode Kubernetes Engine (LKE) deployment adapter and the remaining
+production hardening work. Provider-neutral architecture and environment
+contracts live in `docs/cloud-deployment-architecture.md`. The old Linode VM deployment model is retained only
 as legacy migration context. This document does not define production
 Kubernetes manifests, Helm charts, Dockerfiles, or CI/CD deployment pipelines.
 Those implementation artifacts are blocked until the gates in this document are
@@ -40,7 +41,7 @@ Reviewed workspace documents and configuration:
 | `repos/rtk_video_cloud/deploy/systemd/`, `deploy/docker-compose.*.yml`, `deploy/prometheus/` | Legacy config evidence | Historical systemd, EMQX/coturn/PostgreSQL/Prometheus packaging. |
 | `repos/rtk_account_manager/linode_deploy/docs/RUNBOOK.md` | Legacy source | Retired Account Manager public VM deployment, local PostgreSQL, nginx/TLS, backup. |
 | `repos/rtk_cloud_admin/docs/private-cloud-deployment.md` | Legacy source | Retired Cloud Admin VM deployment, upstream dependencies, SQLite persistence, backup. |
-| `scripts/run-staging-e2e.sh`, `stg.sh`, `tests/staging-*.test.sh` | Operational evidence | Current K8s/LKE staging orchestration, validation, and E2E acceptance paths. |
+| `scripts/run-staging-e2e.sh`, `rtk-cloud ... --environment staging`, `tests/staging-*.test.sh` | Operational evidence | Current K8s/LKE staging orchestration, validation, and E2E acceptance paths. |
 
 Legacy Linode VM model:
 
@@ -71,6 +72,16 @@ Conflicts and outdated areas:
 - Kubernetes auth for OpenBao, LKE storage choices, PostgreSQL HA, EMQX
   clustering, Redis persistence, and production HSM strategy are not confirmed.
 
+## Provider-neutral adapter migration
+
+Tracked environments no longer set `LKE_REGION`, `LKE_GENERAL_NODE_TYPE`, `LKE_BROKER_NODE_TYPE`, `LKE_DATABASE_NODE_TYPE`, or `LINODE_ACTIVE_SERVICE_LIMIT`. They set `DEPLOYMENT_LOCATION` and provider-neutral node-class vCPU/memory minima. LKE maps `us-west` to `us-sea` and selects the smallest matching Linode type using memory surplus, then vCPU surplus, then type name.
+
+Before the first mutation after this change, the operator must create `cloud_env/<environment>/runtime/adapters/lke/account.env` with `LKE_ACTIVE_SERVICE_LIMIT`. There is no automatic migration from tracked config. The adapter writes selected region and types to `resolved-resources.env`; provider IDs remain in the existing adapter-private state files.
+
+The shared planner now owns workload replicas and logical node counts. `MQTT_REPLICAS` and `VIDEO_CLOUD_API_REPLICAS` are replaced once by `MQTT_MIN_REPLICAS` and `VIDEO_CLOUD_API_MIN_REPLICAS`; generated effective values feed the LKE compatibility renderer. LKE capacity code may check provider quota and current resources but must not recalculate generic workload or node capacity.
+
+DNS is no longer an LKE responsibility. LKE returns normalized public edge and TURN targets; the independently selected GoDaddy or Route53 DNS adapter owns zone discovery, record mutation and DNS-01 challenges. LKE code must not read DNS credentials, invoke vendor APIs, or store DNS provider IDs. See `docs/dns-adapter-architecture.md`.
+
 ## Kubernetes Runtime Target Summary
 
 The current validated staging target is Linode Kubernetes Engine (LKE). The
@@ -84,11 +95,11 @@ are implemented.
 
 | Area | Target direction |
 | --- | --- |
-| Cluster | Provider adapter supplies a Kubernetes cluster and kubeconfig. LKE is the only live adapter today and uses environment-specific node pools. TODO: confirm region, node types, autoscaling limits, and maintenance window for production. |
+| Cluster | Provider adapter supplies a Kubernetes cluster and kubeconfig. LKE maps logical location and node-class resource minima to LKE region and deterministic Linode types. Account quota is ignored runtime state, not tracked environment config. TODO: confirm autoscaling limits and maintenance window for production. |
 | Namespaces | `platform`, `video-cloud`, `account-manager`, `admin`, `frontend`, `observability`, and `secrets` unless a later platform standard chooses different names. |
 | Public HTTP(S) | External HAProxy edge VM in TCP mode forwards public `443/TCP` to ingress-nginx NodePort; staging default NodePort is `30443`; public `80/TCP` remains closed. |
 | Public MQTT | External HAProxy edge VM in TCP mode forwards public `8883/TCP` to EMQX/MQTT NodePort; staging default NodePort is `31883`, with a three-pod EMQX StatefulSet cluster spread one per node for HAProxy round-robin. |
-| DNS | Workspace LKE `--dns` provisions GoDaddy A records to HAProxy edge VM public IPs and uses GoDaddy DNS-01 for ACME TLS issuance. |
+| DNS | Shared DNS orchestration publishes LKE edge/TURN targets through the environment-selected GoDaddy or Route53 adapter and uses the same adapter for ACME DNS-01. |
 | Internal traffic | Kubernetes Services and NetworkPolicy replace VM private IP allowlists. |
 | Stateful storage | Linode Block Storage-backed PVCs where in-cluster persistence is selected. |
 | Object storage | Linode Object Storage remains the preferred artifact/media/backup target where applicable. |

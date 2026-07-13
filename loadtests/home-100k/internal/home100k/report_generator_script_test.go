@@ -17,7 +17,7 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 	script := filepath.Clean(filepath.Join(wd, "..", "..", "scripts", "generate-report.sh"))
 	outDir := t.TempDir()
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:   "cloud_env/staging/lke",
+		EnvRoot:   "cloud_env/staging/runtime",
 		Brandname: "RTK",
 		Region:    "us-sea",
 	})
@@ -220,7 +220,7 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 		"TX p95 Mbps",
 		"## K8s Node Resource Usage During Test",
 		"- sample window: 2026-06-15T00:00:00Z -> 2026-06-15T00:00:30Z\n\n| Node | Samples | CPU p95 |",
-		"lke-node-a",
+		"k8s-node-01",
 		"Mem max",
 		"Brand clouds: 2",
 		"| RTK-BRAND-01 | 25000 | 1250 | owner=1 |",
@@ -269,7 +269,7 @@ func TestGenerateReportScriptRendersVideoEvidence(t *testing.T) {
 	script := filepath.Clean(filepath.Join(wd, "..", "..", "scripts", "generate-report.sh"))
 	outDir := t.TempDir()
 	plan, err := NewPlan(PlanOptions{
-		EnvRoot:         "cloud_env/staging/lke",
+		EnvRoot:         "cloud_env/staging/runtime",
 		Brandname:       "RTK",
 		Region:          "us-sea",
 		ScenarioProfile: "video-1k-v1",

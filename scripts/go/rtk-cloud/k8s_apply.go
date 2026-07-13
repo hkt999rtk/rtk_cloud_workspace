@@ -159,7 +159,7 @@ func lkeKubectl() string {
 
 func lkeKubectlArgs(args ...string) []string {
 	prefix := []string{}
-	if kubeconfig := os.Getenv("RTK_CLOUD_LKE_KUBECONFIG"); kubeconfig != "" {
+	if kubeconfig := firstNonEmpty(os.Getenv("RTK_CLOUD_KUBECONFIG"), os.Getenv("KUBECONFIG"), os.Getenv("RTK_CLOUD_LKE_KUBECONFIG")); kubeconfig != "" {
 		prefix = append(prefix, "--kubeconfig", kubeconfig)
 	}
 	if !kubectlArgsHaveRequestTimeout(args) {

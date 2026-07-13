@@ -67,7 +67,7 @@ do not run application runtime services:
 
 ```sh
 go run ./loadtests/home-100k/cmd/home-100k -- plan \
-  --env-root cloud_env/staging/lke \
+  --env-root cloud_env/staging/runtime \
   --brandname RTK \
   --region us-sea
 ```
@@ -112,7 +112,7 @@ via:
 
 ```sh
 go run ./scripts/go/rtk-cloud -- validate-device-bind \
-  --env-root cloud_env/staging/lke \
+  --env-root cloud_env/staging/runtime \
   --brandname RTK
 ```
 

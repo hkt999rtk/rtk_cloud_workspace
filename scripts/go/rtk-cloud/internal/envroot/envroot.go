@@ -49,32 +49,19 @@ func Resolve(workspace, envRoot string) (string, error) {
 		return "", fmt.Errorf("workspace is required")
 	}
 	if envRoot == "" {
-		envRoot = filepath.Join(workspace, "cloud_env", "staging", "lke")
+		envRoot = filepath.Join(workspace, "cloud_env", "staging", "runtime")
 	}
 	abs, err := filepath.Abs(envRoot)
 	if err != nil {
 		return "", err
 	}
 	if filepath.Base(abs) == "staging" {
-		return filepath.Join(abs, stagingProviderForRoot(abs)), nil
+		return filepath.Join(abs, "runtime"), nil
+	}
+	if filepath.Base(abs) == "lke" && filepath.Base(filepath.Dir(abs)) == "staging" {
+		return "", fmt.Errorf("legacy provider env-root is not supported; use %s", filepath.Dir(abs))
 	}
 	return abs, nil
-}
-
-func stagingProviderForRoot(stagingRoot string) string {
-	provider := firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), os.Getenv("RTK_CLOUD_STAGING_PROVIDER"))
-	if provider == "" {
-		for _, candidate := range []string{"lke", "k8s", "gke", "eks", "aks"} {
-			if value := FileVar(filepath.Join(stagingRoot, candidate, "env", "stack.env"), "CLOUD_PROVIDER"); value == candidate {
-				provider = candidate
-				break
-			}
-		}
-	}
-	if provider == "" {
-		provider = "lke"
-	}
-	return provider
 }
 
 func NewPaths(root string) Paths {
@@ -103,6 +90,16 @@ func Load(root, dnsOverride string) (Environment, error) {
 	values, err := parseEnvFile(paths.StackEnv)
 	if err != nil {
 		return Environment{}, err
+	}
+	adapter := firstNonEmpty(values["DEPLOYMENT_ADAPTER"], values["CLOUD_PROVIDER"])
+	if adapter != "" {
+		adapterValues, adapterErr := parseOptionalEnvFile(filepath.Join(root, "adapters", adapter, "config.env"))
+		if adapterErr != nil {
+			return Environment{}, adapterErr
+		}
+		for key, value := range adapterValues {
+			values[key] = value
+		}
 	}
 	if values["CLOUD_ENV_NAME"] == "" {
 		values["CLOUD_ENV_NAME"] = nameFromRoot(root)
@@ -138,6 +135,14 @@ func Load(root, dnsOverride string) (Environment, error) {
 		return Environment{}, fmt.Errorf("unsupported CLOUD_PROVIDER=%s", values["CLOUD_PROVIDER"])
 	}
 	return Environment{Values: values}, nil
+}
+
+func parseOptionalEnvFile(path string) (map[string]string, error) {
+	values, err := parseEnvFile(path)
+	if os.IsNotExist(err) {
+		return map[string]string{}, nil
+	}
+	return values, err
 }
 
 func supportedCloudProvider(provider string) bool {

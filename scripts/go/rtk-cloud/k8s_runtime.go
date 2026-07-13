@@ -66,6 +66,15 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 			},
 		},
 		{
+			Name:    "dns-adapter-preflight",
+			Phase:   "dns",
+			Enabled: func(ctx provisionContext) bool { return ctx.Opts.mode.dns },
+			Run: func(ctx provisionContext) error {
+				_, _, _, err := selectedDNSAdapter(ctx.Paths, ctx.Env)
+				return err
+			},
+		},
+		{
 			Name:  "capacity-check",
 			Phase: "runtime",
 			Enabled: func(ctx provisionContext) bool {
@@ -129,7 +138,10 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 			Phase:   "runtime",
 			Enabled: func(ctx provisionContext) bool { return ctx.Opts.mode.deploy },
 			Run: func(ctx provisionContext) error {
-				return lkeDeployWorkloads(ctx.Paths, ctx.Env, ctx.Opts)
+				if err := lkeDeployWorkloads(ctx.Paths, ctx.Env, ctx.Opts); err != nil {
+					return err
+				}
+				return applySharedKubernetesNodeClassPlacement(ctx)
 			},
 		},
 		{
@@ -162,6 +174,33 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 			},
 		},
 	}
+}
+
+func applySharedKubernetesNodeClassPlacement(ctx provisionContext) error {
+	if ctx.Env["DEPLOYMENT_ARCHITECTURE"] == "" {
+		return nil
+	}
+	class := firstNonEmpty(ctx.Env["DEFAULT_WORKLOAD_NODE_CLASS"], "general")
+	labelKey := firstNonEmpty(ctx.Env["NODE_CLASS_LABEL_KEY"], "rtk.io/node-class")
+	patch := fmt.Sprintf(`{"spec":{"template":{"spec":{"nodeSelector":{%q:%q}}}}}`, labelKey, class)
+	targets := []struct{ namespace, deployment string }{
+		{lkeNamespaceName(ctx.Env, "video-cloud"), "video-cloud-api"},
+		{lkeNamespaceName(ctx.Env, "account-manager"), "account-manager"},
+		{lkeNamespaceName(ctx.Env, "admin"), "cloud-admin"},
+		{lkeNamespaceName(ctx.Env, "frontend"), "frontend"},
+		{lkeNamespaceName(ctx.Env, "logger"), "cloud-logger"},
+	}
+	for _, target := range targets {
+		if err := runKubectl("-n", target.namespace, "patch", "deployment", target.deployment, "--type=merge", "-p", patch); err != nil {
+			return err
+		}
+	}
+	for _, target := range targets {
+		if err := runKubectl("-n", target.namespace, "rollout", "status", "deployment/"+target.deployment, "--timeout", "5m"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func printKubernetesProvisionPlan(provider cloudProvider, ctx provisionContext) {

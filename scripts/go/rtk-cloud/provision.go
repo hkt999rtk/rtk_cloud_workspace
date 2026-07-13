@@ -48,10 +48,6 @@ type provisionOptions struct {
 	sshKey               string
 	dnsRoot              string
 	dnsRootExplicit      bool
-	godaddyEnv           string
-	dnsWaitTTL           string
-	dnsFinalTTL          string
-	dnsWaitMaxSeconds    string
 	artifactDir          string
 	videoRelease         string
 	accountRelease       string
@@ -120,11 +116,7 @@ func defaultProvisionEnvValues() map[string]string {
 
 func parseProvisionArgs(args []string) (provisionOptions, error) {
 	opts := provisionOptions{
-		dnsRoot:           "realtekconnect.com",
-		godaddyEnv:        "prod",
-		dnsWaitTTL:        firstNonEmpty(os.Getenv("GODADDY_WAIT_TTL"), os.Getenv("GODADDY_RECORD_WAIT_TTL"), "600"),
-		dnsFinalTTL:       firstNonEmpty(os.Getenv("GODADDY_RECORD_TTL"), "600"),
-		dnsWaitMaxSeconds: firstNonEmpty(os.Getenv("DNS_WAIT_MAX_SECONDS"), "700"),
+		dnsRoot: "realtekconnect.com",
 	}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -187,30 +179,6 @@ func parseProvisionArgs(args []string) (provisionOptions, error) {
 			}
 			opts.dnsRoot = v
 			opts.dnsRootExplicit = true
-		case "--godaddy-env":
-			v, err := next()
-			if err != nil {
-				return opts, err
-			}
-			opts.godaddyEnv = v
-		case "--dns-wait-ttl":
-			v, err := next()
-			if err != nil {
-				return opts, err
-			}
-			opts.dnsWaitTTL = v
-		case "--dns-final-ttl", "--dns-ttl":
-			v, err := next()
-			if err != nil {
-				return opts, err
-			}
-			opts.dnsFinalTTL = v
-		case "--dns-wait-max-seconds":
-			v, err := next()
-			if err != nil {
-				return opts, err
-			}
-			opts.dnsWaitMaxSeconds = v
 		case "--artifact-dir":
 			v, err := next()
 			if err != nil {
@@ -268,25 +236,7 @@ func parseProvisionArgs(args []string) (provisionOptions, error) {
 	if opts.envRoot == "" {
 		return opts, errors.New("--env-root is required")
 	}
-	return opts, validateProvisionNumericOptions(opts)
-}
-
-func validateProvisionNumericOptions(opts provisionOptions) error {
-	for name, value := range map[string]string{
-		"--dns-wait-ttl":            opts.dnsWaitTTL,
-		"--dns-final-ttl":           opts.dnsFinalTTL,
-		"--dns-wait-max-seconds":    opts.dnsWaitMaxSeconds,
-		"DNS_WAIT_INTERVAL_SECONDS": firstNonEmpty(os.Getenv("DNS_WAIT_INTERVAL_SECONDS"), "10"),
-	} {
-		n, err := strconv.Atoi(value)
-		if err != nil || n <= 0 {
-			return fmt.Errorf("%s must be a positive integer", name)
-		}
-		if (name == "--dns-wait-ttl" || name == "--dns-final-ttl") && n < 600 {
-			return fmt.Errorf("%s must be >= 600 for GoDaddy DNS records", name)
-		}
-	}
-	return nil
+	return opts, nil
 }
 
 func printProvisionUsage() {
