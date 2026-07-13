@@ -360,6 +360,20 @@ behavior for account manager and frontend before production commitments.
 
 ## Backup And Restore Boundary
 
+PostgreSQL capacity expansion follows the dedicated
+[`docs/postgres-capacity-expansion-runbook.md`](postgres-capacity-expansion-runbook.md).
+Production-like deployments must use a PVC or an external/managed database;
+`emptyDir` is reserved for explicitly ephemeral validation. LKE PVC expansion
+may be online only after the exact StorageClass, Linode CSI driver, and
+filesystem combination has passed the staging resize drill. A single
+PostgreSQL replica must not be described as an HA or zero-downtime guarantee.
+
+The API/store boundary and Redis-compatible cache reduce client coupling and
+read pressure, but they do not expand PostgreSQL storage. PostgreSQL remains
+authoritative for transactions, authorization, quota, lifecycle, and
+outbox/inbox state. A no-downtime fallback for resize or migration requires a
+tested standby/failover path or an equivalent managed PostgreSQL contract.
+
 Backups are mandatory for production-like profiles and optional but recommended
 for single-node evaluation.
 
