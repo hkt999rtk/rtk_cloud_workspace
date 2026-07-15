@@ -1,0 +1,20 @@
+{
+  "total_devices": 16,
+  "devices_per_user": 5,
+  "brands": [
+    {
+      "brandname": "E2E Alpha Cloud",
+      "devices": 8,
+      "normal_users": 2,
+      "developer_users": {"owner": 1},
+      "device_mix": {"camera": 6, "sensor": 2}
+    },
+    {
+      "brandname": "E2E Beta Cloud",
+      "devices": 8,
+      "normal_users": 2,
+      "developer_users": {"owner": 1},
+      "device_mix": {"camera": 4, "sensor": 4}
+    }
+  ]
+}
