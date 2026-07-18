@@ -66,6 +66,37 @@ SQLite test data 必須沿用原本 staging identity。不要在新 Mac 隨意�
 users/devices 或 rotate credentials，否則資料庫內的 credentials、device
 binding 與 staging server state 可能不一致。
 
+### LKE active-service limit
+
+LKE account limit 也不會隨 Git clone 取得。請在 deployment mutation 前建立：
+
+```text
+cloud_env/staging/runtime/adapters/lke/account.env
+```
+
+內容使用 Linode 已確認的 account limit，例如：
+
+```env
+LKE_ACTIVE_SERVICE_LIMIT=20
+```
+
+這是 safety number，不是另一個 secret。Linode API 目前不能透過
+`LINODE_TOKEN` 查詢 account limit；值不明時不要猜測，應先向 Linode/account
+owner 確認。Deployment 會在建立任何付費資源前，比較現有 active services
+加上 planned resources 與這個 limit。
+
+如果原本 workspace 已經完成 staging setup，可複製 operator state：
+
+```sh
+mkdir -p cloud_env/staging/runtime/adapters/lke
+cp /path/to/known-good-workspace/cloud_env/staging/runtime/adapters/lke/account.env \
+  cloud_env/staging/runtime/adapters/lke/account.env
+chmod 600 cloud_env/staging/runtime/adapters/lke/account.env
+```
+
+這個檔案位於被 Git 忽略的 runtime；不要 commit，也不要放進 tracked
+`cloud_env/staging/overrides/*.env`。
+
 ## 全新 staging：重新建立 runtime
 
 只有在要建立新的 staging environment、或原本 runtime 已不可恢復時，才走
@@ -73,8 +104,8 @@ binding 與 staging server state 可能不一致。
 
 ```sh
 go run ./scripts/go/rtk-cloud -- deployment plan --environment staging
-go run ./scripts/go/rtk-cloud -- deployment provision \\
-  --environment staging \\
+go run ./scripts/go/rtk-cloud -- deployment provision \
+  --environment staging \
   --confirm video-cloud-staging
 ```
 
@@ -82,11 +113,11 @@ go run ./scripts/go/rtk-cloud -- deployment provision \\
 environment metadata，並產生 load-test data：
 
 ```sh
-go run ./scripts/go/rtk-cloud -- sync-env \\
+go run ./scripts/go/rtk-cloud -- sync-env \
   --env-root cloud_env/staging
 
-go run ./scripts/go/rtk-cloud -- generate-load-devices \\
-  --env-root cloud_env/staging \\
+go run ./scripts/go/rtk-cloud -- generate-load-devices \
+  --env-root cloud_env/staging \
   --brandname RTK
 ```
 
@@ -112,6 +143,7 @@ cloud_env/staging/runtime
 | `env/stack.env` | sync/deployment flow | generated runtime |
 | `devices/test_device/loadtest.env` | load-device generation flow | generated test config |
 | `artifacts/test-data/<brand>-test-data.sqlite` | users/devices/bind flow | secret credentials |
+| `adapters/lke/account.env` | Linode account confirmation | operator safety state |
 
 目前 `main` 的 Home MQTT runner 使用 `devices/test_device/loadtest.env`；
 `generate-load-devices` 會將 `loadtest.env` 寫入 `--out-dir`，預設就是這個
