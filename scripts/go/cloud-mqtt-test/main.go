@@ -115,6 +115,7 @@ type certRecord struct {
 	CertPEM    string `json:"-"`
 	KeyPEM     string `json:"-"`
 	ChainPEM   string `json:"-"`
+	Source     string `json:"-"`
 }
 
 type home100KCredentialBundle struct {
@@ -332,13 +333,13 @@ type mqttActorProbe struct {
 }
 
 func main() {
-	var root, envRoot, brandname, outDir, profile, maxUsersRaw, mqttProbeRaw, traceDetail, runID, testDataDB string
+	var root, envRoot, brandname, outDir, profile, maxUsersRaw, mqttProbeRaw, traceDetail, runID, testDataDB, readyFile, sdkReconnectSignalFile string
 	var rampUp, telemetryInterval, stateInterval, commandRate, loadModel string
 	var shadowCommandTimeout, deviceTokenRequestTimeout string
 	var stageNamesRaw, stageTargetsRaw, stageDurationsRaw, stageMinCommandsRaw string
 	var deviceTrafficProfile, stageUsageWindowsRaw string
 	var duration, seed, shardIndex, shardCount, concurrency, commandConcurrency, maxConnectedDevices, deviceTokenRequestRetries int
-	var runtimeLogs bool
+	var runtimeLogs, sdkInvalidCredentialProbe bool
 	flag.StringVar(&root, "root", "", "workspace root")
 	flag.StringVar(&envRoot, "env-root", "", "environment root")
 	flag.StringVar(&brandname, "brandname", "", "brand name")
@@ -346,6 +347,9 @@ func main() {
 	flag.StringVar(&testDataDB, "test-data-db", "", "explicit SQLite test-data database containing load-test credentials")
 	flag.StringVar(&profile, "profile", "smoke", "profile")
 	flag.StringVar(&runID, "run-id", os.Getenv("HOME100K_RUN_ID"), "run id for log correlation")
+	flag.StringVar(&readyFile, "ready-file", "", "optional machine-readable ready artifact for sdk-device-simulator")
+	flag.StringVar(&sdkReconnectSignalFile, "sdk-reconnect-signal-file", "", "optional deterministic reconnect signal for sdk-device-simulator")
+	flag.BoolVar(&sdkInvalidCredentialProbe, "sdk-invalid-credential-probe", false, "require an invalid device/certificate binding to be rejected before sdk-device-simulator starts")
 	flag.IntVar(&duration, "duration-seconds", 120, "duration seconds")
 	flag.StringVar(&maxUsersRaw, "max-users", "", "max users")
 	flag.IntVar(&seed, "seed", 20260531, "seed")
@@ -404,6 +408,9 @@ func main() {
 		Concurrency:                 concurrency,
 		MaxConnectedDevicesPerShard: maxConnectedDevices,
 		RunID:                       runID,
+		ReadyFile:                   readyFile,
+		SDKReconnectSignalFile:      sdkReconnectSignalFile,
+		SDKInvalidCredentialProbe:   sdkInvalidCredentialProbe,
 	}
 	if err := run(root, envRoot, brandname, outDir, profile, duration, maxUsers, seed, mqttProbe, traceDetail, testDataDB, opts); err != nil {
 		fatal(err)
@@ -419,6 +426,9 @@ type loadOptions struct {
 	ShardIndex                  int    `json:"shard_index"`
 	ShardCount                  int    `json:"shard_count"`
 	RunID                       string `json:"run_id,omitempty"`
+	ReadyFile                   string `json:"ready_file,omitempty"`
+	SDKReconnectSignalFile      string `json:"sdk_reconnect_signal_file,omitempty"`
+	SDKInvalidCredentialProbe   bool   `json:"sdk_invalid_credential_probe,omitempty"`
 	RampUp                      string `json:"ramp_up"`
 	TelemetryInterval           string `json:"telemetry_interval"`
 	StateInterval               string `json:"state_interval"`
@@ -447,9 +457,9 @@ type mqttEndpointTarget struct {
 
 func (opts loadOptions) validateLoadModel() error {
 	switch strings.TrimSpace(opts.LoadModel) {
-	case "", "actor-separated-probe", "home-100k-sustained":
+	case "", "actor-separated-probe", "home-100k-sustained", "sdk-device-simulator":
 	default:
-		return errors.New("--load-model must be actor-separated-probe or home-100k-sustained")
+		return errors.New("--load-model must be actor-separated-probe, home-100k-sustained, or sdk-device-simulator")
 	}
 	switch strings.TrimSpace(opts.DeviceTrafficProfile) {
 	case "", "home-diverse-v1":
@@ -460,6 +470,12 @@ func (opts loadOptions) validateLoadModel() error {
 }
 
 func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, seed int, mqttProbe bool, traceDetail, testDataDB string, opts loadOptions) error {
+	if strings.TrimSpace(os.Getenv("HOME100K_DEVICE_CLIENT_CA_BUNDLE")) == "" {
+		candidate := filepath.Join(envRoot, "state", "secrets", "device-client-ca-bundle.pem")
+		if readable(candidate) {
+			_ = os.Setenv("HOME100K_DEVICE_CLIENT_CA_BUNDLE", candidate)
+		}
+	}
 	opts.RunID = sanitizeCorrelationID(opts.RunID)
 	traceDetail = strings.ToLower(strings.TrimSpace(traceDetail))
 	if traceDetail == "" {
@@ -694,6 +710,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 					CertPEM:    bundled.CertPEM,
 					KeyPEM:     bundled.KeyPEM,
 					ChainPEM:   bundled.ChainPEM,
+					Source:     "sqlite_bundle",
 				})
 				continue
 			}
@@ -711,7 +728,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 				blockers = append(blockers, fmt.Sprintf("device %s missing %s file", item.DeviceID, label))
 			}
 		}
-		certRecords = append(certRecords, certRecord{Brandname: item.Brandname, DeviceID: item.DeviceID, DeviceType: item.DeviceType, CertPath: paths["cert"], KeyPath: paths["key"], ChainPath: paths["chain"]})
+		certRecords = append(certRecords, certRecord{Brandname: item.Brandname, DeviceID: item.DeviceID, DeviceType: item.DeviceType, CertPath: paths["cert"], KeyPath: paths["key"], ChainPath: paths["chain"], Source: "manifest_files"})
 	}
 
 	base := map[string]any{
@@ -755,7 +772,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	}
 	appBootstrap := appBootstrapStatus{Status: "BLOCKED", Reason: "no selected assignment"}
 	appMaterial := appBootstrapMaterial{Status: appBootstrap}
-	if len(selectedAssignments) > 0 {
+	if len(selectedAssignments) > 0 && opts.LoadModel != "sdk-device-simulator" {
 		appMaterial = prepareAppCertificateBootstrapForAssignments(endpoints["account_manager_base_url"].(string), endpoints["video_cloud_token_base_url"].(string), users.TenantSlug, usersByEmail, selectedAssignments, 0)
 		appBootstrap = appMaterial.Status
 		if appBootstrap.Status == "FAIL" {
@@ -766,6 +783,9 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 			base["overall"] = "blocked"
 			base["blockers"] = append(blockers, "app certificate bootstrap: "+appBootstrap.Reason)
 		}
+	} else if opts.LoadModel == "sdk-device-simulator" {
+		appBootstrap = appBootstrapStatus{Status: "SKIP", Reason: "app actor is owned by the external SDK validation app"}
+		appMaterial.Status = appBootstrap
 	}
 
 	perDevice := []deviceResult{}
@@ -790,11 +810,31 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 		base["overall"] = "blocked"
 		base["blockers"] = []string{"missing MQTT endpoint"}
 		mqttProbeResult = "BLOCKED: missing MQTT endpoint"
-	} else if appMaterial.Status.Status != "PASS" && opts.LoadModel != "home-100k-sustained" {
+	} else if appMaterial.Status.Status != "PASS" && opts.LoadModel != "home-100k-sustained" && opts.LoadModel != "sdk-device-simulator" {
 		mqttProbeResult = appMaterial.Status.Status + ": app MQTT actor unavailable"
 	} else {
 		mqttProbeResult = "PASS"
-		if opts.LoadModel == "home-100k-sustained" {
+		if opts.LoadModel == "sdk-device-simulator" {
+			simulator := runSDKDeviceSimulator(selectedAssignments, certRecords, brandname, opts.RunID, endpoints["video_cloud_token_base_url"].(string), mqttTargets, duration, opts)
+			for _, item := range selectedAssignments {
+				capCounts[item.DeviceType]["devices"]++
+			}
+			totalCommands = simulator.CommandsAttempted
+			totalPassed = simulator.CommandsPassed
+			ioTotals = simulator.Totals
+			resultModel = "sdk_device_simulator"
+			resultNotes = append(resultNotes, simulator.Notes...)
+			if totalCommands == 0 && simulator.Status == "PASS" {
+				successRate = 100
+			} else {
+				successRate = simulator.SuccessRate()
+			}
+			if simulator.Status != "PASS" {
+				mqttProbeResult = "FAIL"
+				base["status"] = "FAIL"
+				base["overall"] = "fail"
+			}
+		} else if opts.LoadModel == "home-100k-sustained" {
 			if appMaterial.Status.Status != "PASS" {
 				mqttProbeResult = "FAIL: app MQTT actor unavailable; device sustained path still executed"
 				resultNotes = append(resultNotes, "app bootstrap unavailable; device sustained connect/subscribe/telemetry path still executed")
@@ -849,7 +889,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 		}
 	}
 
-	if opts.LoadModel != "home-100k-sustained" {
+	if opts.LoadModel != "home-100k-sustained" && opts.LoadModel != "sdk-device-simulator" {
 		for _, row := range perDevice {
 			totalCommands += row.Commands
 			if row.MQTTStatus == "PASS" {
@@ -919,7 +959,7 @@ func runDeviceActorSeparatedEnvelope(record certRecord, brandname, runID, apiBas
 	}
 	deviceToken, err := requestDeviceToken(apiBaseURL, cert, record.DeviceID)
 	if err != nil {
-		return failedActorResult(record.DeviceID, record.DeviceType, redactedError(err))
+		return failedActorResult(record.DeviceID, record.DeviceType, fmt.Sprintf("%s (client_chain_certificates=%d)", redactedError(err), len(cert.Certificate)))
 	}
 	if strings.TrimSpace(appAccessToken) == "" {
 		return failedActorResult(record.DeviceID, record.DeviceType, "account login response missing access_token")
@@ -1274,8 +1314,9 @@ func shadowCommandTimeout(opts loadOptions) time.Duration {
 }
 
 type tokenRequestOptions struct {
-	Timeout time.Duration
-	Retries int
+	Timeout            time.Duration
+	Retries            int
+	SubscribeShadowGet bool
 }
 
 func (opts loadOptions) deviceTokenOptions() tokenRequestOptions {
@@ -1446,6 +1487,274 @@ func runSustainedHome100KLoad(assignments []assignment, certs []certRecord, bran
 		result.Notes = append(result.Notes, "sustained user command schedule produced zero desired writes")
 	}
 	return result
+}
+
+func runSDKDeviceSimulator(assignments []assignment, certs []certRecord, brandname, runID, apiBaseURL string, mqttTargets []mqttEndpointTarget, durationSeconds int, opts loadOptions) sustainedLoadResult {
+	result := sustainedLoadResult{Status: "PASS"}
+	window := time.Duration(durationSeconds) * time.Second
+	if window <= 0 {
+		result.Status = "FAIL"
+		result.Notes = append(result.Notes, "sdk device simulator duration must be positive")
+		return result
+	}
+	certByID := map[string]certRecord{}
+	for _, cert := range certs {
+		certByID[brandDeviceKey(cert.Brandname, cert.DeviceID)] = cert
+		certByID[cert.DeviceID] = cert
+	}
+	if opts.SDKInvalidCredentialProbe {
+		if err := probeInvalidDeviceCredential(assignments, certByID, apiBaseURL, opts.deviceTokenOptions()); err != nil {
+			result.Status = "FAIL"
+			result.Notes = append(result.Notes, "sdk invalid credential probe: "+redactedError(err))
+			return result
+		}
+		result.Notes = append(result.Notes, "sdk invalid device/certificate binding rejected")
+	}
+	started := time.Now()
+	deadline := started.Add(window)
+	connectDeadline := started.Add(30 * time.Second)
+	if deadline.Before(connectDeadline) {
+		connectDeadline = deadline
+	}
+	sessions := connectSustainedDevicesPacedUntilWithOptions(assignments, certByID, brandname, runID, apiBaseURL, mqttTargets, opts.Concurrency, connectDeadline, 0, opts.deviceTokenOptions(), &result.Totals)
+	defer func() { closeSustainedSessions(sessions) }()
+	if len(sessions) != len(assignments) || len(sessions) == 0 {
+		result.Status = "FAIL"
+		result.Notes = append(result.Notes, fmt.Sprintf("sdk device simulator connected %d/%d devices", len(sessions), len(assignments)))
+		return result
+	}
+	result.Totals.ActiveConnections = int64(len(sessions))
+	result.Totals.ActiveSubscriptions = int64(len(sessions))
+	if err := writeSDKDeviceReadyFile(opts.ReadyFile, runID, sessions, result.Totals); err != nil {
+		result.Status = "FAIL"
+		result.Notes = append(result.Notes, "sdk device ready artifact: "+redactedError(err))
+		return result
+	}
+	if strings.TrimSpace(opts.SDKReconnectSignalFile) != "" {
+		closeSustainedSessions(sessions)
+		sessions = nil
+		result.Totals.ActiveConnections = 0
+		result.Totals.ActiveSubscriptions = 0
+		if err := waitForSDKReconnectSignal(opts.SDKReconnectSignalFile, deadline); err != nil {
+			result.Status = "FAIL"
+			result.Notes = append(result.Notes, "sdk device reconnect signal: "+redactedError(err))
+			return result
+		}
+		reconnectDeadline := time.Now().Add(30 * time.Second)
+		if deadline.Before(reconnectDeadline) {
+			reconnectDeadline = deadline
+		}
+		reconnectTokenOpts := opts.deviceTokenOptions()
+		reconnectTokenOpts.SubscribeShadowGet = true
+		sessions = connectSustainedDevicesPacedUntilWithOptions(assignments, certByID, brandname, runID, apiBaseURL, mqttTargets, opts.Concurrency, reconnectDeadline, 0, reconnectTokenOpts, &result.Totals)
+		if len(sessions) != len(assignments) || len(sessions) == 0 {
+			result.Status = "FAIL"
+			result.Notes = append(result.Notes, fmt.Sprintf("sdk device simulator reconnected %d/%d devices", len(sessions), len(assignments)))
+			return result
+		}
+		result.Totals.ActiveConnections = int64(len(sessions))
+		result.Totals.ActiveSubscriptions = int64(len(sessions))
+		if err := resyncSDKDeviceShadows(sessions, runID, &result); err != nil {
+			result.Status = "FAIL"
+			result.Notes = append(result.Notes, "sdk device reconnect shadow sync: "+redactedError(err))
+			return result
+		}
+		result.Notes = append(result.Notes, "sdk device deterministic offline/reconnect handshake completed")
+	}
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, session := range sessions {
+		session := session
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			topic := "$vc/devices/" + session.Record.DeviceID + "/shadow/update/delta"
+			updateTopic := "$vc/devices/" + session.Record.DeviceID + "/shadow/update"
+			for time.Now().Before(deadline) {
+				wait := time.Until(deadline)
+				if wait > time.Second {
+					wait = time.Second
+				}
+				doc, err := session.Reader.WaitForPublish(topic, wait, nil)
+				if err != nil {
+					if readerErr := session.Reader.LastError(); readerErr != nil {
+						mu.Lock()
+						result.Status = "FAIL"
+						recordFailure(&result.Totals, "sdk_device_reader_failed", readerErr)
+						mu.Unlock()
+						return
+					}
+					continue
+				}
+				delta := sdkSimulatorDelta(doc)
+				if len(delta) == 0 {
+					continue
+				}
+				clientToken, _ := doc["clientToken"].(string)
+				payload, err := json.Marshal(map[string]any{
+					"state":       map[string]any{"reported": delta},
+					"clientToken": "reported-" + clientToken,
+				})
+				mu.Lock()
+				result.CommandsAttempted++
+				result.Totals.MessagesReceived++
+				result.Totals.DeltaReceived++
+				mu.Unlock()
+				if err != nil || mqttPublish(session.Conn, updateTopic, payload) != nil {
+					mu.Lock()
+					result.Status = "FAIL"
+					result.Totals.PublishFailures++
+					mu.Unlock()
+					continue
+				}
+				mu.Lock()
+				result.CommandsPassed++
+				result.Totals.PublishSuccesses++
+				result.Totals.ReportedEvents++
+				result.Totals.TotalBytesSent += int64(len(updateTopic) + len(payload))
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	return result
+}
+
+func resyncSDKDeviceShadows(sessions []sustainedDeviceSession, runID string, result *sustainedLoadResult) error {
+	for idx, session := range sessions {
+		baseTopic := "$vc/devices/" + session.Record.DeviceID + "/shadow"
+		clientToken := fmt.Sprintf("%s-device-reconnect-%d", runID, idx+1)
+		request, err := json.Marshal(map[string]any{"clientToken": clientToken})
+		if err != nil {
+			return err
+		}
+		if err := mqttPublish(session.Conn, baseTopic+"/get", request); err != nil {
+			return fmt.Errorf("publish shadow get for %s: %w", session.Record.DeviceID, err)
+		}
+		document, err := session.Reader.WaitForPublish(baseTopic+"/get/accepted", 10*time.Second, func(doc map[string]any) bool {
+			got, _ := doc["clientToken"].(string)
+			return got == "" || got == clientToken
+		})
+		if err != nil {
+			return fmt.Errorf("wait shadow get for %s: %w", session.Record.DeviceID, err)
+		}
+		delta := sdkSimulatorDelta(document)
+		if len(delta) == 0 {
+			continue
+		}
+		payload, err := json.Marshal(map[string]any{
+			"state":       map[string]any{"reported": delta},
+			"clientToken": "reported-" + clientToken,
+		})
+		if err != nil {
+			return err
+		}
+		result.CommandsAttempted++
+		result.Totals.MessagesReceived++
+		result.Totals.DeltaReceived++
+		if err := mqttPublish(session.Conn, baseTopic+"/update", payload); err != nil {
+			result.Totals.PublishFailures++
+			return fmt.Errorf("publish reconnect reported state for %s: %w", session.Record.DeviceID, err)
+		}
+		result.CommandsPassed++
+		result.Totals.PublishSuccesses++
+		result.Totals.ReportedEvents++
+		result.Totals.TotalBytesSent += int64(len(baseTopic+"/update") + len(payload))
+	}
+	return nil
+}
+
+func probeInvalidDeviceCredential(assignments []assignment, certByID map[string]certRecord, apiBaseURL string, tokenOpts tokenRequestOptions) error {
+	if len(assignments) == 0 {
+		return errors.New("no device assignment available")
+	}
+	assignment := assignments[0]
+	record := certByID[brandDeviceKey(assignment.Brandname, assignment.DeviceID)]
+	if strings.TrimSpace(record.DeviceID) == "" {
+		record = certByID[assignment.DeviceID]
+	}
+	if strings.TrimSpace(record.DeviceID) == "" {
+		return errors.New("device certificate record missing")
+	}
+	cert, err := loadLeafFirstX509KeyPairForRecord(record)
+	if err != nil {
+		return fmt.Errorf("load device certificate: %w", err)
+	}
+	timeout := tokenOpts.Timeout
+	if timeout <= 0 || timeout > 10*time.Second {
+		timeout = 10 * time.Second
+	}
+	invalidDeviceID := record.DeviceID + "-invalid-binding"
+	_, err = requestDeviceTokenWithTimeout(apiBaseURL, cert, invalidDeviceID, timeout)
+	if err == nil {
+		return errors.New("cloud accepted a certificate for an unrelated device id")
+	}
+	detail := strings.ToLower(err.Error())
+	authorizationDenied := strings.Contains(detail, "http 401") || strings.Contains(detail, "http 403")
+	certificateIdentityRejected := strings.Contains(detail, "http 400") && strings.Contains(detail, "certificate device id mismatch")
+	if !authorizationDenied && !certificateIdentityRejected {
+		return fmt.Errorf("expected authorization or certificate-identity denial, got %w", err)
+	}
+	return nil
+}
+
+func waitForSDKReconnectSignal(path string, deadline time.Time) error {
+	for time.Now().Before(deadline) {
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return nil
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return errors.New("timed out waiting for reconnect signal")
+}
+
+func sdkSimulatorDelta(doc map[string]any) map[string]any {
+	if state, ok := doc["state"].(map[string]any); ok {
+		if delta, ok := state["delta"].(map[string]any); ok {
+			return delta
+		}
+		// The canonical MQTT shadow delta payload uses state itself as the
+		// delta object. Keep the nested form above for compatibility with
+		// older fixtures, but do not discard production payloads.
+		return state
+	}
+	if delta, ok := doc["delta"].(map[string]any); ok {
+		return delta
+	}
+	return nil
+}
+
+func writeSDKDeviceReadyFile(path, runID string, sessions []sustainedDeviceSession, totals mqttIOTotals) error {
+	if strings.TrimSpace(path) == "" {
+		return errors.New("--ready-file is required for sdk-device-simulator")
+	}
+	deviceIDs := make([]string, 0, len(sessions))
+	for _, session := range sessions {
+		deviceIDs = append(deviceIDs, session.Record.DeviceID)
+	}
+	sort.Strings(deviceIDs)
+	payload, err := json.MarshalIndent(map[string]any{
+		"schema_version": 1,
+		"run_id":         runID,
+		"status":         "READY",
+		"ready_at":       time.Now().UTC().Format(time.RFC3339Nano),
+		"device_ids":     deviceIDs,
+		"evidence": map[string]any{
+			"device_token_successes": totals.DeviceTokenSuccesses,
+			"mqtt_connack_successes": totals.DeviceMQTTConnackSuccesses,
+			"subscribe_successes":    totals.SubscribeSuccesses,
+		},
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(payload, '\n'), 0o600)
 }
 
 func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord, brandname, runID, apiBaseURL string, mqttTargets []mqttEndpointTarget, appManagersByEmail map[string]*accountLoginTokenManager, seed int, opts loadOptions, stages []sustainedStage) (sustainedLoadResult, []sustainedStageResult) {
@@ -1861,6 +2170,18 @@ func connectSustainedDevicesPacedUntilWithOptions(assignments []assignment, cert
 					recordFailure(totals, "device_delta_subscribe_failed", err)
 					mu.Unlock()
 					continue
+				}
+				if tokenOpts.SubscribeShadowGet {
+					getAcceptedTopic := "$vc/devices/" + record.DeviceID + "/shadow/get/accepted"
+					if err := mqttSubscribe(conn, uint16((item.Index%30000)+30001), getAcceptedTopic); err != nil {
+						_ = conn.Close()
+						mu.Lock()
+						totals.ConnectFailures++
+						totals.DeviceSubscribeFailures++
+						recordFailure(totals, "device_shadow_get_subscribe_failed", err)
+						mu.Unlock()
+						continue
+					}
 				}
 				clearConnDeadline(conn)
 				lockedConn := &lockedReadWriteCloser{ReadWriteCloser: conn}
@@ -2541,16 +2862,33 @@ func clearConnDeadline(conn io.ReadWriter) {
 }
 
 func loadLeafFirstX509KeyPair(certPath, chainPath, keyPath string) (tls.Certificate, error) {
-	if strings.TrimSpace(certPath) != "" {
-		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
-		if err == nil {
-			return cert, nil
+	certPEM, certErr := os.ReadFile(certPath)
+	if certErr == nil {
+		chainPEM := []byte(nil)
+		if strings.TrimSpace(chainPath) != "" && chainPath != certPath {
+			chainPEM, certErr = os.ReadFile(chainPath)
+			if certErr != nil {
+				return tls.Certificate{}, certErr
+			}
 		}
-		if strings.TrimSpace(chainPath) == "" || chainPath == certPath {
-			return tls.Certificate{}, err
+		keyPEM, keyErr := os.ReadFile(keyPath)
+		if keyErr != nil {
+			return tls.Certificate{}, keyErr
 		}
+		return x509KeyPairWithChain(certPEM, chainPEM, keyPEM)
 	}
-	return tls.LoadX509KeyPair(chainPath, keyPath)
+	if strings.TrimSpace(chainPath) == "" {
+		return tls.Certificate{}, certErr
+	}
+	chainPEM, err := os.ReadFile(chainPath)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	keyPEM, err := os.ReadFile(keyPath)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	return tls.X509KeyPair(chainPEM, keyPEM)
 }
 
 func loadLeafFirstX509KeyPairForRecord(record certRecord) (tls.Certificate, error) {
@@ -2559,18 +2897,40 @@ func loadLeafFirstX509KeyPairForRecord(record certRecord) (tls.Certificate, erro
 		if certPEM == "" {
 			certPEM = strings.TrimSpace(record.ChainPEM)
 		}
-		if certPEM != "" && strings.TrimSpace(record.KeyPEM) != "" {
-			cert, err := tls.X509KeyPair([]byte(certPEM), []byte(strings.TrimSpace(record.KeyPEM)))
-			if err == nil {
-				return cert, nil
-			}
-			if strings.TrimSpace(record.ChainPEM) == "" || strings.TrimSpace(record.ChainPEM) == certPEM {
-				return tls.Certificate{}, err
-			}
-		}
-		return tls.X509KeyPair([]byte(strings.TrimSpace(record.ChainPEM)), []byte(strings.TrimSpace(record.KeyPEM)))
+		chainPEM := strings.TrimSpace(record.ChainPEM)
+		chainPEM = appendCertificatePEM(chainPEM, readPEMFile(os.Getenv("HOME100K_DEVICE_CLIENT_CA_BUNDLE")))
+		return x509KeyPairWithChain([]byte(certPEM), []byte(chainPEM), []byte(strings.TrimSpace(record.KeyPEM)))
 	}
 	return loadLeafFirstX509KeyPair(record.CertPath, record.ChainPath, record.KeyPath)
+}
+
+// x509KeyPairWithChain keeps the leaf certificate first and appends the
+// issuer certificates from chainPEM. The staging device fixture stores the
+// leaf in both cert_pem and chain_pem; sending only cert_pem makes an mTLS
+// ingress that trusts the staging root reject the client before the request
+// reaches Video Cloud.
+func x509KeyPairWithChain(certPEM, chainPEM, keyPEM []byte) (tls.Certificate, error) {
+	certPEM = []byte(normalizeCertificatePEM(string(certPEM)))
+	chainPEM = []byte(normalizeCertificatePEM(string(chainPEM)))
+	keyPEM = []byte(normalizePEM(string(keyPEM)))
+	if len(certPEM) == 0 {
+		certPEM = chainPEM
+	}
+	if len(certPEM) == 0 || len(keyPEM) == 0 {
+		return tls.Certificate{}, errors.New("device certificate material is incomplete")
+	}
+	leaf, _ := pem.Decode(certPEM)
+	if leaf == nil || leaf.Type != "CERTIFICATE" {
+		return tls.Certificate{}, errors.New("device certificate PEM is invalid")
+	}
+	assembled := append([]byte{}, pem.EncodeToMemory(leaf)...)
+	for restBlock, tail := pem.Decode(chainPEM); restBlock != nil; restBlock, tail = pem.Decode(tail) {
+		if restBlock.Type != "CERTIFICATE" || bytes.Equal(restBlock.Bytes, leaf.Bytes) {
+			continue
+		}
+		assembled = append(assembled, pem.EncodeToMemory(restBlock)...)
+	}
+	return tls.X509KeyPair(assembled, keyPEM)
 }
 
 func loadHome100KCredentialBundle(envRoot string) (*home100KCredentialBundle, error) {
@@ -2657,6 +3017,12 @@ func loadHome100KCredentialBundleSQLite(sqlitePath string) (*home100KCredentialB
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	if trusted := readPEMFile(os.Getenv("HOME100K_DEVICE_CLIENT_CA_BUNDLE")); trusted != "" {
+		for key, device := range bundle.Devices {
+			device.ChainPEM = appendCertificatePEM(device.ChainPEM, trusted)
+			bundle.Devices[key] = device
+		}
 	}
 	if err := loadHome100KBundleUsers(db, bundle); err != nil {
 		return nil, err
@@ -4412,7 +4778,7 @@ func requestTokenBundleWithTimeout(apiBaseURL string, cert tls.Certificate, devi
 		return tokenBundle{}, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return tokenBundle{}, fmt.Errorf("request_token failed with HTTP %d", resp.StatusCode)
+		return tokenBundle{}, fmt.Errorf("request_token failed with HTTP %d: %s", resp.StatusCode, safeHTTPErrorDetail(payload))
 	}
 	var token tokenBundle
 	if err := json.Unmarshal(payload, &token); err != nil {
@@ -4423,6 +4789,17 @@ func requestTokenBundleWithTimeout(apiBaseURL string, cert tls.Certificate, devi
 	}
 	token.issuedAt = time.Now()
 	return token, nil
+}
+
+func safeHTTPErrorDetail(payload []byte) string {
+	value := strings.Join(strings.Fields(string(payload)), " ")
+	if len(value) > 256 {
+		value = value[:256]
+	}
+	if value == "" {
+		return "empty response body"
+	}
+	return value
 }
 
 func refreshTokenBundleWithTimeout(apiBaseURL string, cert tls.Certificate, deviceID, scope, refreshToken string, timeout time.Duration) (tokenBundle, error) {
@@ -4506,7 +4883,7 @@ func prepareAppCertificateBootstrapForAssignments(accountBaseURL, videoBaseURL, 
 		}
 		candidateTenantSlug := firstNonEmpty(candidate.TenantSlug, user.TenantSlug, tenantSlug)
 		candidateBrand = firstNonEmpty(candidateBrand, user.Brandname)
-		if strings.TrimSpace(user.Tokens.AccessToken) != "" || strings.TrimSpace(user.Tokens.RefreshToken) != "" {
+		if !refreshAppCertificateRequested() && (strings.TrimSpace(user.Tokens.AccessToken) != "" || strings.TrimSpace(user.Tokens.RefreshToken) != "") {
 			bundle := user.Tokens
 			tokensByEmail[brandEmailKey(candidateBrand, user.Email)] = bundle
 			tokensByEmail[user.Email] = bundle
@@ -4630,8 +5007,8 @@ func prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL, tenantSlug str
 	status.CertificateStatus = first.AppCertificate.Status
 	login := first
 	issuedUser := user
-	switch first.AppCertificate.Status {
-	case "csr_required":
+	requestCSR := first.AppCertificate.Status == "csr_required" || (first.AppCertificate.Status == "issued" && refreshAppCertificateRequested())
+	if requestCSR {
 		csrPEM, keyPEM, err := generateAppCSR("app-user:" + first.User.ID)
 		if err != nil {
 			status.Reason = redactedError(err)
@@ -4645,11 +5022,10 @@ func prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL, tenantSlug str
 			material.Status = status
 			return material
 		}
-		status.CertificateStatus = login.AppCertificate.Status
 	}
 	status.Subject = login.AppCertificate.Subject
 	status.FingerprintSHA256 = login.AppCertificate.FingerprintSHA256
-	if strings.TrimSpace(issuedUser.AppCertificate.CertificatePEM) == "" {
+	if strings.TrimSpace(login.AppCertificate.CertificatePEM) != "" {
 		issuedUser.AppCertificate = appCertificateSummary{
 			Subject:             login.AppCertificate.Subject,
 			CertificatePEM:      login.AppCertificate.CertificatePEM,
@@ -4670,6 +5046,11 @@ func prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL, tenantSlug str
 	material.TokensByEmail = map[string]tokenBundle{user.Email: login.tokenBundle()}
 	material.UsersByEmail = map[string]userCredential{user.Email: issuedUser}
 	return material
+}
+
+func refreshAppCertificateRequested() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("HOME100K_REFRESH_APP_CERT")))
+	return value == "1" || value == "true" || value == "yes" || value == "on"
 }
 
 func hasLocalAppCredentials(credentials appCertificateKeys) bool {
@@ -4694,15 +5075,17 @@ func loadAppX509KeyPairForUser(user userCredential) (tls.Certificate, error) {
 	}
 	var tried []string
 	for _, candidate := range candidates {
-		certPEM := normalizePEM(candidate.value)
+		certPEM := normalizeCertificatePEM(candidate.value)
 		if !strings.Contains(certPEM, "-----BEGIN CERTIFICATE-----") {
 			continue
 		}
-		if block, _ := pem.Decode([]byte(certPEM)); block == nil || block.Type != "CERTIFICATE" {
+		block, rest := pem.Decode([]byte(certPEM))
+		if block == nil || block.Type != "CERTIFICATE" {
 			tried = append(tried, fmt.Sprintf("%s:no_certificate_block(len=%d)", candidate.label, len(certPEM)))
 			continue
 		}
-		cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+		chainPEM := appendCertificatePEM(string(rest), readPEMFile(os.Getenv("HOME100K_DEVICE_CLIENT_CA_BUNDLE")))
+		cert, err := x509KeyPairWithChain(pem.EncodeToMemory(block), []byte(chainPEM), []byte(keyPEM))
 		if err == nil {
 			return cert, nil
 		}
@@ -5907,6 +6290,58 @@ func firstCertificatePEM(labelValuePairs ...string) (string, string) {
 	return "", ""
 }
 
+func normalizeCertificatePEM(value string) string {
+	value = normalizePEM(value)
+	return strings.ReplaceAll(value, "-----END CERTIFICATE----------BEGIN CERTIFICATE-----", "-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----")
+}
+
+func readPEMFile(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return normalizeCertificatePEM(string(data))
+}
+
+func appendCertificatePEM(existing, additional string) string {
+	existing = normalizeCertificatePEM(existing)
+	additional = normalizeCertificatePEM(additional)
+	if additional == "" {
+		return existing
+	}
+	seen := map[string]struct{}{}
+	for raw := []byte(existing); ; {
+		block, rest := pem.Decode(raw)
+		if block == nil {
+			break
+		}
+		if block.Type == "CERTIFICATE" {
+			seen[string(block.Bytes)] = struct{}{}
+		}
+		raw = rest
+	}
+	merged := []byte(existing)
+	for raw := []byte(additional); ; {
+		block, rest := pem.Decode(raw)
+		if block == nil {
+			break
+		}
+		if block.Type == "CERTIFICATE" {
+			if _, ok := seen[string(block.Bytes)]; ok {
+				raw = rest
+				continue
+			}
+			seen[string(block.Bytes)] = struct{}{}
+		}
+		merged = append(merged, pem.EncodeToMemory(block)...)
+		raw = rest
+	}
+	return string(merged)
+}
+
 func normalizePEM(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if strings.Contains(trimmed, `\n`) && !strings.Contains(trimmed, "\n") {
@@ -6003,9 +6438,37 @@ func userSummaries(users []string, selected map[string][]assignment) []map[strin
 func mtlsSummaries(records []certRecord) []map[string]any {
 	out := []map[string]any{}
 	for _, record := range records {
-		out = append(out, map[string]any{"device_id": record.DeviceID, "device_type": record.DeviceType, "cert": "present", "key": "present", "chain": "present"})
+		out = append(out, map[string]any{"device_id": record.DeviceID, "device_type": record.DeviceType, "source": record.Source, "cert": "present", "key": "present", "chain": "present", "chain_certificate_count": countCertificatePEM(record.CertPEM, record.ChainPEM)})
 	}
 	return out
+}
+
+func countCertificatePEM(certPEM, chainPEM string) int {
+	certPEM = normalizeCertificatePEM(certPEM)
+	chainPEM = normalizeCertificatePEM(chainPEM)
+	leaf, _ := pem.Decode([]byte(certPEM))
+	count := 0
+	if leaf != nil && leaf.Type == "CERTIFICATE" {
+		count = 1
+	}
+	seen := map[string]struct{}{}
+	if leaf != nil {
+		seen[string(leaf.Bytes)] = struct{}{}
+	}
+	for raw := []byte(chainPEM); ; {
+		block, rest := pem.Decode(raw)
+		if block == nil {
+			break
+		}
+		if block.Type == "CERTIFICATE" {
+			if _, ok := seen[string(block.Bytes)]; !ok {
+				seen[string(block.Bytes)] = struct{}{}
+				count++
+			}
+		}
+		raw = rest
+	}
+	return count
 }
 
 func findCert(records []certRecord, brandname string, deviceID string) certRecord {

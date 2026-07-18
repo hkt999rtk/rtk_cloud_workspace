@@ -1,0 +1,66 @@
+schema_version: 1
+scenarios:
+  - id: token_mtls_http
+    required_capabilities: [token, mtls, http]
+    device_profile: online
+    app_action: request_token_and_read_device
+    expected_sdk_result: success
+    expected_cloud_evidence: [token_issued, authorized_device_read, device_mtls_authenticated]
+    timeout: 30s
+    cleanup: run_owned_resources
+  - id: websocket_lifecycle
+    required_capabilities: [token, websocket]
+    device_profile: online
+    app_action: connect_send_disconnect
+    expected_sdk_result: success
+    expected_cloud_evidence: [transport_connected, transport_disconnected]
+    timeout: 45s
+    cleanup: close_sessions
+  - id: websocket_receive_roundtrip
+    required_capabilities: [token, websocket, cloud_command_trigger]
+    device_profile: online
+    app_action: receive_cloud_triggered_message
+    expected_sdk_result: success
+    expected_cloud_evidence: [command_dispatched]
+    timeout: 45s
+    cleanup: close_sessions
+  - id: cross_cloud_denied
+    required_capabilities: [token, http]
+    device_profile: cross_cloud
+    app_action: read_foreign_device
+    expected_sdk_result: forbidden
+    expected_cloud_evidence: [authorization_denied]
+    timeout: 20s
+    cleanup: run_owned_resources
+  - id: unavailable_normalized
+    required_capabilities: [http]
+    device_profile: none
+    app_action: connect_unavailable_endpoint
+    expected_sdk_result: transport_failure
+    expected_cloud_evidence: []
+    timeout: 10s
+    cleanup: local_only
+  - id: invalid_or_expired_token
+    required_capabilities: [http, normalized_errors]
+    device_profile: online
+    app_action: read_device_with_invalid_or_expired_token
+    expected_sdk_result: auth_failure
+    expected_cloud_evidence: [authorization_denied]
+    timeout: 20s
+    cleanup: local_only
+  - id: operation_controls
+    required_capabilities: [cancel, timeout]
+    device_profile: none
+    app_action: cancel_before_connect_and_timeout_unavailable
+    expected_sdk_result: cancelled_and_timeout
+    expected_cloud_evidence: []
+    timeout: 10s
+    cleanup: local_only
+  - id: destroy_callback_suppression
+    required_capabilities: [session_destroy]
+    device_profile: none
+    app_action: destroy_session_and_reject_late_callbacks
+    expected_sdk_result: destroyed_without_callback
+    expected_cloud_evidence: []
+    timeout: 10s
+    cleanup: local_only

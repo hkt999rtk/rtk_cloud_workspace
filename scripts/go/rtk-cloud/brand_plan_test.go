@@ -61,3 +61,10 @@ func TestPlannedUsersKeepsMemberEmailAndSeparatesDeveloperRoles(t *testing.T) {
 		t.Fatalf("role emails should be unique: member=%q owner=%q admin=%q", member, owner, admin)
 	}
 }
+
+func TestPlannedUsersWithPrefixUsesRunScopedAddress(t *testing.T) {
+	user := plannedUsersWithPrefix("SDK E2E iOS", "sdk-e2e-ios", "member", 1, "sdk-ios-run-123")[0]
+	if got, want := user["email"], "sdk-ios-run-123+001@users.local"; got != want {
+		t.Fatalf("email = %v, want %s", got, want)
+	}
+}

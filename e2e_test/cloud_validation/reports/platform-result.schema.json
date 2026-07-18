@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://realtekconnect.com/schemas/cloud-validation-platform-result-v1.json",
+  "type": "object",
+  "required": ["schema_version", "run_id", "platform", "sdk_commit", "server_version", "status", "results"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "platform": { "enum": ["ios", "android"] },
+    "sdk_commit": { "type": "string", "minLength": 1 },
+    "server_version": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["PASS", "FAIL", "SKIP", "BLOCKED"] },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["scenario_id", "status", "duration_ms", "correlation_id"],
+        "properties": {
+          "scenario_id": { "type": "string", "minLength": 1 },
+          "status": { "enum": ["PASS", "FAIL", "SKIP", "BLOCKED"] },
+          "reason_code": { "type": "string" },
+          "reason": { "type": "string" },
+          "duration_ms": { "type": "integer", "minimum": 0 },
+          "sdk_error_code": { "type": "string" },
+          "correlation_id": { "type": "string", "minLength": 1 },
+          "evidence": { "type": "array", "items": { "type": "string" } }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

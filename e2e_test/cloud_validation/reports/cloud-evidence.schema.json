@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://realtekconnect.com/schemas/cloud-validation-evidence-v1.json",
+  "type": "object",
+  "required": ["schema_version", "run_id", "platform", "events"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "platform": { "enum": ["ios", "android"] },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["scenario_id", "correlation_id", "type", "observed_at"],
+        "properties": {
+          "scenario_id": { "type": "string", "minLength": 1 },
+          "correlation_id": { "type": "string", "minLength": 1 },
+          "type": { "type": "string", "minLength": 1 },
+          "observed_at": { "type": "string", "format": "date-time" },
+          "evidence": { "type": "object" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

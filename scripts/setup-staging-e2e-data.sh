@@ -9,6 +9,7 @@ BRANDNAME="RTK"
 BRAND_PLAN=""
 SCENARIO_PROFILE=""
 USER_COUNT="10"
+USER_EMAIL_PREFIX=""
 DEVICE_COUNT="100"
 DEVICE_MIX="camera=40,light=25,air_conditioner=20,smart_meter=15"
 DEVICE_PREFIX="load-device"
@@ -73,6 +74,7 @@ Options:
   --brand-plan FILE               Multi-brand load-test plan JSON.
   --description-file FILE         HOME100K description env; HOME100K_* values become data setup defaults.
   --user-count N                  Users to create. Default: 10.
+  --user-email-prefix PREFIX      Optional run-scoped user email prefix.
   --device-count N                Devices to create and bind. Default: 100.
   --device-mix MIX                Device mix for generate-load-devices.
   --device-prefix PREFIX          Device prefix. Default: load-device.
@@ -170,6 +172,14 @@ while [[ $# -gt 0 ]]; do
 			USER_COUNT="${2:-}"
 			if [[ -z "$USER_COUNT" ]]; then
 				printf 'error: --user-count requires a value\n' >&2
+				exit 2
+			fi
+			shift 2
+			;;
+		--user-email-prefix)
+			USER_EMAIL_PREFIX="${2:-}"
+			if [[ -z "$USER_EMAIL_PREFIX" ]]; then
+				printf 'error: --user-email-prefix requires a value\n' >&2
 				exit 2
 			fi
 			shift 2
@@ -316,6 +326,9 @@ run_args=(
 	--device-concurrency "$DEVICE_CONCURRENCY"
 	--bind-concurrency "$BIND_CONCURRENCY"
 )
+if [[ -n "$USER_EMAIL_PREFIX" ]]; then
+	run_args+=(--user-email-prefix "$USER_EMAIL_PREFIX")
+fi
 if [[ -n "$BRAND_PLAN" ]]; then
 	run_args+=(--brand-plan "$BRAND_PLAN")
 fi

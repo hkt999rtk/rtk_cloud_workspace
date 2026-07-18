@@ -1,0 +1,10 @@
+schema_version: 1
+scenarios:
+  - id: shadow_online_roundtrip
+    required_capabilities: [app_shadow]
+    device_profile: online
+    app_action: write_desired_and_observe_documents
+    expected_sdk_result: delta_cleared
+    expected_cloud_evidence: [desired_written, delta_delivered, reported_written, delta_cleared]
+    timeout: 45s
+    cleanup: reset_shadow

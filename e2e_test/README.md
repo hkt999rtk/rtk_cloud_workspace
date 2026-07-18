@@ -14,6 +14,7 @@ scripts, and E2E fixture documentation should be indexed here.
 | `provisioning/account_video_smoke/` | Account Manager + Video Cloud provisioning smoke using test users and factory certsets. | Implemented; live staging prerequisites may report `BLOCKED`. |
 | `provisioning/bulk_bind_validation/` | Bulk bind/provision artifact validation for 100-device staging onboarding. | Implemented. |
 | `admin_bff/` | Admin dashboard live BFF E2E entry points and ownership notes. | Indexed; runner still lives in `rtk_cloud_admin` until migrated. |
+| `cloud_validation/` | Android/iOS sample app SDK validation against a deployed Cloud plus a real-certificate virtual device. | Implemented with built-in staging fixture/evidence/cleanup providers, Cloud WebSocket command trigger, and deploy/nightly/release profiles. |
 | `fixtures/` | Fixture layout and local secret/artifact conventions for E2E runs. | Documentation only; secrets stay untracked. |
 
 ## Artifact Layout

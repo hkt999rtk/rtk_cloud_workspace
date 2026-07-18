@@ -21,6 +21,14 @@ import (
 	"github.com/pion/webrtc/v3"
 )
 
+func mqttTestJWT(clientID string) string {
+	payload, _ := json.Marshal(map[string]string{
+		"brand_cloud_id": "test-brand-cloud",
+		"mqtt_client_id": clientID,
+	})
+	return "e30." + base64.RawURLEncoding.EncodeToString(payload) + ".test-signature"
+}
+
 func TestRunnerSimulatesActorsAndClosesWebRTCSessions(t *testing.T) {
 	var mu sync.Mutex
 	closedSessions := map[string]bool{}
@@ -1172,7 +1180,7 @@ func TestRunnerMQTTBrokerCoveragePublishesStateLogAndSnapshot(t *testing.T) {
 		APIURL:              server.URL,
 		Actors:              "device",
 		DeviceOnlineMode:    DeviceOnlineModeNone,
-		DeviceToken:         "device-token",
+		DeviceToken:         mqttTestJWT("mqtt-broker-device"),
 		MQTTSet:             MQTTSetBroker,
 		MQTTAddr:            listener.Addr().String(),
 		MQTTTopicRoot:       "devices",
@@ -1317,7 +1325,7 @@ func TestRunnerMQTTIoTCoverageCoordinatesCommandsAndTelemetry(t *testing.T) {
 		APIURL:              server.URL,
 		Actors:              "device",
 		DeviceOnlineMode:    DeviceOnlineModeNone,
-		DeviceToken:         "device-token",
+		DeviceToken:         mqttTestJWT("mqtt-iot-device"),
 		MQTTSet:             MQTTSetBroker,
 		MQTTAddr:            broker.Addr(),
 		MQTTTopicRoot:       "devices",
@@ -1348,7 +1356,8 @@ func TestRunnerMQTTIoTCoverageCoordinatesCommandsAndTelemetry(t *testing.T) {
 		Profile:           "safe-staging",
 		APIURL:            server.URL,
 		Actors:            "app",
-		AdminToken:        "admin-token",
+		AdminToken:        mqttTestJWT("mqtt-iot-app"),
+		AccountToken:      mqttTestJWT("mqtt-iot-app"),
 		MQTTSet:           MQTTSetBroker,
 		MQTTAddr:          broker.Addr(),
 		MQTTTopicRoot:     "devices",
@@ -1440,7 +1449,8 @@ func TestRunnerMQTTIoTCoverageCoordinatesWhenAppStartsBeforeDevice(t *testing.T)
 			Profile:           "safe-staging",
 			APIURL:            server.URL,
 			Actors:            "app",
-			AdminToken:        "admin-token",
+			AdminToken:        mqttTestJWT("mqtt-iot-app-first"),
+			AccountToken:      mqttTestJWT("mqtt-iot-app-first"),
 			MQTTSet:           MQTTSetBroker,
 			MQTTAddr:          broker.Addr(),
 			MQTTTopicRoot:     "devices",
@@ -1469,7 +1479,7 @@ func TestRunnerMQTTIoTCoverageCoordinatesWhenAppStartsBeforeDevice(t *testing.T)
 		APIURL:            server.URL,
 		Actors:            "device",
 		DeviceOnlineMode:  DeviceOnlineModeNone,
-		DeviceToken:       "device-token",
+		DeviceToken:       mqttTestJWT("mqtt-iot-device-after-app"),
 		MQTTSet:           MQTTSetBroker,
 		MQTTAddr:          broker.Addr(),
 		MQTTTopicRoot:     "devices",
