@@ -24,6 +24,32 @@ import (
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/envroot"
 )
 
+func TestLKEGHCRPullCredentialsFallsBackToHomeEnv(t *testing.T) {
+	home := t.TempDir()
+	writeTestFile(t, filepath.Join(home, ".env"), "GHCR_PULL_USERNAME=home-user\nGHCR_PULL_TOKEN=home-token\n")
+	t.Setenv("HOME", home)
+	t.Setenv("GHCR_PULL_USERNAME", "")
+	t.Setenv("GHCR_PULL_TOKEN", "")
+
+	username, token := lkeGHCRPullCredentials(nil)
+	if username != "home-user" || token != "home-token" {
+		t.Fatalf("lkeGHCRPullCredentials() = (%q, %q), want home .env values", username, token)
+	}
+}
+
+func TestLKEGHCRPullCredentialsPrefersProcessEnv(t *testing.T) {
+	home := t.TempDir()
+	writeTestFile(t, filepath.Join(home, ".env"), "GHCR_PULL_USERNAME=home-user\nGHCR_PULL_TOKEN=home-token\n")
+	t.Setenv("HOME", home)
+	t.Setenv("GHCR_PULL_USERNAME", "process-user")
+	t.Setenv("GHCR_PULL_TOKEN", "process-token")
+
+	username, token := lkeGHCRPullCredentials(nil)
+	if username != "process-user" || token != "process-token" {
+		t.Fatalf("lkeGHCRPullCredentials() = (%q, %q), want process env values", username, token)
+	}
+}
+
 func TestRunProvisionLKEApplyUsesKubectl(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)

@@ -502,8 +502,7 @@ func lkeInstallMetricsServer() error {
 }
 
 func lkeApplyImagePullSecret(env map[string]string, namespace string) error {
-	username := firstNonEmpty(os.Getenv("GHCR_PULL_USERNAME"), env["GHCR_PULL_USERNAME"])
-	token := firstNonEmpty(os.Getenv("GHCR_PULL_TOKEN"), env["GHCR_PULL_TOKEN"])
+	username, token := lkeGHCRPullCredentials(env)
 	if username == "" || token == "" {
 		return nil
 	}
@@ -512,6 +511,20 @@ func lkeApplyImagePullSecret(env map[string]string, namespace string) error {
 		return err
 	}
 	return applyKubernetesObjectJSON(secret)
+}
+
+func lkeGHCRPullCredentials(env map[string]string) (string, string) {
+	username := firstNonEmpty(os.Getenv("GHCR_PULL_USERNAME"), env["GHCR_PULL_USERNAME"])
+	token := firstNonEmpty(os.Getenv("GHCR_PULL_TOKEN"), env["GHCR_PULL_TOKEN"])
+	if username != "" && token != "" {
+		return username, token
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return username, token
+	}
+	return firstNonEmpty(username, envFileValue(filepath.Join(home, ".env"), "GHCR_PULL_USERNAME")),
+		firstNonEmpty(token, envFileValue(filepath.Join(home, ".env"), "GHCR_PULL_TOKEN"))
 }
 
 type lkePublicHTTPSRoute struct {
