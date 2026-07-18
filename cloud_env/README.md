@@ -79,13 +79,14 @@ cloud_env/staging/runtime/adapters/lke/account.env
 
 ```sh
 mkdir -p cloud_env/staging/runtime/adapters/lke
-
-cat > cloud_env/staging/runtime/adapters/lke/account.env <<'EOF'
-LKE_ACTIVE_SERVICE_LIMIT=20
-EOF
+cp cloud_env/staging/runtime/adapters/lke/account.env.example \
+  cloud_env/staging/runtime/adapters/lke/account.env
 
 chmod 600 cloud_env/staging/runtime/adapters/lke/account.env
 ```
+
+也可以直接編輯 `account.env`，將 example 裡的 `20` 換成 Linode 確認的實際
+上限。
 
 如果另一台已完成 staging setup 的 workspace 已有這個檔案，可以安全複製其
 operator state；不要把它 commit：

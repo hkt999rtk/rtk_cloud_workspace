@@ -74,6 +74,20 @@ LKE account limit 也不會隨 Git clone 取得。請在 deployment mutation 前
 cloud_env/staging/runtime/adapters/lke/account.env
 ```
 
+Repository 提供可追蹤的範例檔：
+
+```text
+cloud_env/staging/runtime/adapters/lke/account.env.example
+```
+
+執行者先複製它，再填入 Linode 已確認的實際上限：
+
+```sh
+cp cloud_env/staging/runtime/adapters/lke/account.env.example \
+  cloud_env/staging/runtime/adapters/lke/account.env
+chmod 600 cloud_env/staging/runtime/adapters/lke/account.env
+```
+
 內容使用 Linode 已確認的 account limit，例如：
 
 ```env
