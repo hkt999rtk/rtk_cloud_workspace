@@ -161,6 +161,49 @@ func TestWriteLoadDeviceReusesCompleteLocalFactoryArtifact(t *testing.T) {
 	}
 }
 
+func TestWriteLoadDeviceRetriesTransientFactoryFailure(t *testing.T) {
+	t.Setenv("CLOUD_LOAD_DEVICES_FACTORY_ENROLL_RETRIES", "3")
+	t.Setenv("CLOUD_LOAD_DEVICES_FACTORY_ENROLL_RETRY_DELAY", "0s")
+	outDir := t.TempDir()
+	_, caCert, err := writeGeneratedCA(filepath.Join(t.TempDir(), "ca"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests < 3 {
+			http.Error(w, "temporary issuer failure", http.StatusBadGateway)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"certificate_pem":       string(caCert),
+			"certificate_chain_pem": string(caCert),
+			"serial_number":         "retry-serial",
+		})
+	}))
+	defer server.Close()
+
+	in := loadDeviceInput{
+		Index: 1, Ordinal: 1, Type: loadDeviceTypes[0], Prefix: "retry-device", OutDir: outDir,
+		FactoryURL: server.URL, FactoryAuthKey: "test-key", FactoryID: "factory", LineID: "line",
+		StationID: "station", FixtureID: "fixture", OperatorID: "operator", BatchID: "batch",
+		SerialPrefix: "LOAD", RunID: "run-retry", Timeout: time.Second,
+		ResultsPath: filepath.Join(outDir, "factory-enroll-results.jsonl"),
+	}
+	device, ok, err := writeLoadDevice(in)
+	if err != nil || !ok {
+		t.Fatalf("writeLoadDevice() device=%+v ok=%v err=%v", device, ok, err)
+	}
+	if requests != 3 {
+		t.Fatalf("factory enroll requests = %d, want 3", requests)
+	}
+	if device.KeyAlgorithm != "ed25519" {
+		t.Fatalf("key algorithm = %q, want same-algorithm retry success", device.KeyAlgorithm)
+	}
+}
+
 func TestGenerateLoadDevicesForceReusesCompleteLocalFactoryArtifact(t *testing.T) {
 	envRoot := t.TempDir()
 	outDir := filepath.Join(t.TempDir(), "devices")

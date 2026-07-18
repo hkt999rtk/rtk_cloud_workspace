@@ -1,0 +1,397 @@
+name: SDK Deployed Cloud Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Deployed environment
+        type: string
+        default: staging
+      platform:
+        description: Mobile platform
+        type: choice
+        options: [all, ios, android]
+        default: all
+      mode:
+        description: SDK source or release package
+        type: choice
+        options: [source, package]
+        default: source
+      profile:
+        description: Validation tier
+        type: choice
+        options: [deploy, nightly, release]
+        default: deploy
+      artifact_path:
+        description: Runner-local AAR, Swift package zip, or XCFramework path for package mode
+        type: string
+        default: ""
+      artifact_sha256:
+        description: Required SHA-256 for package mode
+        type: string
+        default: ""
+      ios_artifact_path:
+        description: iOS Swift package archive or XCFramework path; required for package/all
+        type: string
+        default: ""
+      ios_artifact_sha256:
+        description: iOS artifact SHA-256
+        type: string
+        default: ""
+      android_artifact_path:
+        description: Android AAR path; required for package/all
+        type: string
+        default: ""
+      android_artifact_sha256:
+        description: Android artifact SHA-256
+        type: string
+        default: ""
+      run_live:
+        description: Run live Cloud mutations (otherwise validate harness and sample builds only)
+        type: boolean
+        default: false
+      run_1k_smoke:
+        description: Run an independent 1K capacity smoke after selected SDK jobs pass
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        default: staging
+      platform:
+        type: string
+        default: all
+      mode:
+        type: string
+        default: source
+      profile:
+        type: string
+        default: deploy
+      artifact_path:
+        type: string
+        default: ""
+      artifact_sha256:
+        type: string
+        default: ""
+      ios_artifact_path:
+        type: string
+        default: ""
+      ios_artifact_sha256:
+        type: string
+        default: ""
+      android_artifact_path:
+        type: string
+        default: ""
+      android_artifact_sha256:
+        type: string
+        default: ""
+      run_live:
+        type: boolean
+        default: true
+      run_1k_smoke:
+        type: boolean
+        default: false
+    secrets:
+      fixture_provider_command:
+        required: false
+      fixture_cleanup_command:
+        required: false
+      evidence_provider_command:
+        required: false
+      SDK_E2E_FIXTURE_PROVIDER_COMMAND:
+        required: false
+      SDK_E2E_FIXTURE_CLEANUP_COMMAND:
+        required: false
+      SDK_E2E_EVIDENCE_PROVIDER_COMMAND:
+        required: false
+      platform_admin_token:
+        required: false
+      video_cloud_admin_token:
+        required: false
+      cloud_logger_token:
+        required: false
+      linode_token:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  contract-and-source:
+    name: Contract, harness, and sample source validation
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.24.x"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+      - uses: android-actions/setup-android@v3
+      - name: Validate contracts and harness
+        run: |
+          set -euo pipefail
+          chmod +x e2e_test/cloud_validation/scripts/*.sh repos/rtk_cloud_client/tools/*.sh
+          bash -n e2e_test/cloud_validation/scripts/*.sh e2e_test/cloud_validation/providers/*.sh repos/rtk_cloud_client/tools/run_*cloud_validation.sh repos/rtk_cloud_client/tools/run_ios_sample_simulator.sh repos/rtk_cloud_client/tools/run_ios_sample_ui_tests.sh
+          (cd e2e_test && GOWORK=off go test ./cloud_validation/...)
+          (cd scripts/go/cloud-mqtt-test && GOWORK=off go test ./...)
+          e2e_test/cloud_validation/scripts/test-staging-providers.sh
+          e2e_test/cloud_validation/scripts/test-android-emulator-state.sh
+          ruby -e 'require "yaml"; ARGV.each { |path| YAML.safe_load(File.read(path), [], [], true); puts "parsed #{path}" }' \
+            repos/rtk_cloud_contracts_doc/openapi.yaml \
+            repos/rtk_cloud_client/docs/rtk_cloud_contracts_doc/openapi.yaml
+          git diff --check
+      - name: Build real SDK sample apps
+        run: |
+          set -euo pipefail
+          swift test --package-path repos/rtk_cloud_client/packages/ios
+          swift test --package-path repos/rtk_cloud_client/samples/ios
+          gradle -p repos/rtk_cloud_client/samples/android :rtk-cloud-client:testDebugUnitTest :app:testDebugUnitTest assembleDebug assembleDebugAndroidTest
+      - name: Validate release-package sample wiring
+        run: |
+          set -euo pipefail
+          gradle -p repos/rtk_cloud_client/packages/android :rtk-cloud-client:assembleRelease
+          android_aar="$PWD/repos/rtk_cloud_client/packages/android/rtk-cloud-client/build/outputs/aar/rtk-cloud-client-release.aar"
+          test -f "$android_aar"
+          gradle -p repos/rtk_cloud_client/samples/android :app:assembleDebug -PcloudValidationSdkAar="$android_aar"
+          package_tmp="$(mktemp -d -t sdk-ios-package)"
+          trap 'rm -rf "$package_tmp"' EXIT
+          tar -czf "$package_tmp/RTKCloudClient.tar.gz" -C repos/rtk_cloud_client/packages ios
+          CLOUD_VALIDATION_MODE=package \
+          CLOUD_VALIDATION_ARTIFACT="$package_tmp/RTKCloudClient.tar.gz" \
+          DERIVED_DATA="${RUNNER_TEMP}/ios-package-derived-data" \
+            repos/rtk_cloud_client/tools/run_ios_sample_simulator.sh build
+      - name: Validate both platform plans through the public entrypoint
+        run: |
+          set -euo pipefail
+          ca_file="$(mktemp -t sdk-cloud-validation-ca)"
+          trap 'rm -f "$ca_file"' EXIT
+          printf 'plan-only placeholder' > "$ca_file"
+          CLOUD_VALIDATION_ARTIFACT_ROOT="${RUNNER_TEMP}/sdk-cloud-validation-plan" \
+          CLOUD_VALIDATION_ACCOUNT_MANAGER_URL=https://account.example \
+          CLOUD_VALIDATION_VIDEO_CLOUD_URL=https://video.example \
+          CLOUD_VALIDATION_DEVICE_URL=https://device.example \
+          CLOUD_VALIDATION_MQTT_ADDR=mqtt.example:8883 \
+          CLOUD_VALIDATION_CA_BUNDLE="$ca_file" \
+          CLOUD_VALIDATION_IOS_CLOUD_SLUG=sdk-e2e-ios \
+          CLOUD_VALIDATION_ANDROID_CLOUD_SLUG=sdk-e2e-android \
+            e2e_test/cloud_validation/scripts/run-cloud-validation.sh \
+              --environment staging --platform all --run-id ci-plan --plan-only
+          set +e
+          CLOUD_VALIDATION_ARTIFACT_ROOT="${RUNNER_TEMP}/sdk-cloud-validation-blocked" \
+          CLOUD_VALIDATION_ACCOUNT_MANAGER_URL=https://account.example \
+          CLOUD_VALIDATION_VIDEO_CLOUD_URL=https://video.example \
+          CLOUD_VALIDATION_DEVICE_URL=https://device.example \
+          CLOUD_VALIDATION_MQTT_ADDR=mqtt.example:8883 \
+          CLOUD_VALIDATION_CA_BUNDLE="$ca_file" \
+          CLOUD_VALIDATION_IOS_CLOUD_SLUG=sdk-e2e-ios \
+          CLOUD_VALIDATION_ANDROID_CLOUD_SLUG=sdk-e2e-android \
+            env -u CLOUD_VALIDATION_FIXTURE_PROVIDER_COMMAND \
+                -u CLOUD_VALIDATION_EVIDENCE_PROVIDER_COMMAND \
+                -u CLOUD_VALIDATION_FIXTURE_CLEANUP_COMMAND \
+              e2e_test/cloud_validation/scripts/run-cloud-validation.sh \
+                --environment staging --platform all --run-id ci-blocked
+          blocked_rc=$?
+          set -e
+          test "$blocked_rc" -eq 2
+          for report in "${RUNNER_TEMP}/sdk-cloud-validation-blocked"/ci-blocked-*/results.json; do
+            jq -e '.status == "BLOCKED" and any(.steps[]; .reason_code == "not_configured")' "$report"
+          done
+          test "$(find "${RUNNER_TEMP}/sdk-cloud-validation-blocked" -name results.json | wc -l | tr -d ' ')" -eq 2
+
+  ios-live:
+    name: iOS Simulator deployed-cloud validation
+    needs: contract-and-source
+    if: ${{ inputs.run_live && (inputs.platform == 'all' || inputs.platform == 'ios') }}
+    runs-on: [self-hosted, macOS, ARM64, rtk_cloud_client, jarvis-macos]
+    timeout-minutes: 30
+    concurrency:
+      group: sdk-cloud-validation-mobile-host
+      cancel-in-progress: false
+    env:
+      CLOUD_VALIDATION_ACCOUNT_MANAGER_URL: ${{ vars.SDK_E2E_ACCOUNT_MANAGER_URL }}
+      CLOUD_VALIDATION_VIDEO_CLOUD_URL: ${{ vars.SDK_E2E_VIDEO_CLOUD_URL }}
+      CLOUD_VALIDATION_DEVICE_URL: ${{ vars.SDK_E2E_DEVICE_URL }}
+      CLOUD_VALIDATION_MQTT_ADDR: ${{ vars.SDK_E2E_MQTT_ADDR }}
+      CLOUD_VALIDATION_CA_BUNDLE: ${{ vars.SDK_E2E_CA_BUNDLE }}
+      CLOUD_VALIDATION_ENV_ROOT: ${{ vars.SDK_E2E_ENV_ROOT }}
+      CLOUD_VALIDATION_CLOUD_LOGGER_URL: ${{ vars.SDK_E2E_CLOUD_LOGGER_URL }}
+      CLOUD_VALIDATION_IOS_CLOUD_SLUG: sdk-e2e-ios
+      CLOUD_VALIDATION_ANDROID_CLOUD_SLUG: sdk-e2e-android
+      CLOUD_VALIDATION_PLATFORM_ADMIN_TOKEN: ${{ secrets.platform_admin_token }}
+      CLOUD_VALIDATION_VIDEO_CLOUD_ADMIN_TOKEN: ${{ secrets.video_cloud_admin_token }}
+      CLOUD_VALIDATION_CLOUD_LOGGER_TOKEN: ${{ secrets.cloud_logger_token }}
+      CLOUD_VALIDATION_FIXTURE_PROVIDER_COMMAND: ${{ secrets.fixture_provider_command || secrets.SDK_E2E_FIXTURE_PROVIDER_COMMAND }}
+      CLOUD_VALIDATION_FIXTURE_CLEANUP_COMMAND: ${{ secrets.fixture_cleanup_command || secrets.SDK_E2E_FIXTURE_CLEANUP_COMMAND }}
+      CLOUD_VALIDATION_EVIDENCE_PROVIDER_COMMAND: ${{ secrets.evidence_provider_command || secrets.SDK_E2E_EVIDENCE_PROVIDER_COMMAND }}
+      CLOUD_VALIDATION_ARTIFACT: ${{ inputs.ios_artifact_path || inputs.artifact_path }}
+      CLOUD_VALIDATION_ARTIFACT_SHA256: ${{ inputs.ios_artifact_sha256 || inputs.artifact_sha256 }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.24.x"
+      - name: Run iOS validation
+        run: |
+          chmod +x e2e_test/cloud_validation/scripts/*.sh e2e_test/cloud_validation/providers/*.sh repos/rtk_cloud_client/tools/*.sh
+          e2e_test/cloud_validation/scripts/run-cloud-validation.sh \
+            --environment "${{ inputs.environment }}" --platform ios --mode "${{ inputs.mode }}" \
+            --profile "${{ inputs.profile }}" \
+            --run-id "sdk-cloud-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-ios"
+      - name: Reject and remove secret-bearing iOS text artifacts
+        if: always()
+        run: e2e_test/cloud_validation/scripts/sanitize-upload-artifacts.sh .artifacts/e2e_test/cloud_validation
+      - name: Upload redacted iOS evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: sdk-cloud-validation-${{ github.run_id }}-${{ github.run_attempt }}-ios
+          path: |
+            .artifacts/e2e_test/cloud_validation/**/SUMMARY.md
+            .artifacts/e2e_test/cloud_validation/**/results.json
+            .artifacts/e2e_test/cloud_validation/**/junit.xml
+            .artifacts/e2e_test/cloud_validation/**/platform-result.json
+            .artifacts/e2e_test/cloud_validation/**/cloud-evidence.json
+            .artifacts/e2e_test/cloud_validation/**/resource-manifest.json
+            .artifacts/e2e_test/cloud_validation/**/ready.json
+            .artifacts/e2e_test/cloud_validation/**/CloudValidationUITests.xcresult/**
+            .artifacts/e2e_test/cloud_validation/**/CloudValidationUITests-summary.json
+            .artifacts/e2e_test/cloud_validation/**/ios-simulator-launch.log
+            .artifacts/e2e_test/cloud_validation/**/ios/*.log
+            .artifacts/e2e_test/cloud_validation/**/ios/*.crash
+            .artifacts/e2e_test/cloud_validation/**/ios/*.ips
+            .artifacts/e2e_test/cloud_validation/**/virtual-device.log
+            .artifacts/e2e_test/cloud_validation/**/virtual-device/results.json
+            .artifacts/e2e_test/cloud_validation/**/virtual-device/TEST_REPORT.md
+            .artifacts/e2e_test/cloud_validation/**/platform_test.log
+            .artifacts/e2e_test/cloud_validation/**/redaction-failures.txt
+          if-no-files-found: error
+          include-hidden-files: true
+
+  android-live:
+    name: Android Emulator deployed-cloud validation
+    needs: contract-and-source
+    if: ${{ inputs.run_live && (inputs.platform == 'all' || inputs.platform == 'android') }}
+    runs-on: [self-hosted, macOS, ARM64, rtk_cloud_client, jarvis-macos]
+    timeout-minutes: 35
+    concurrency:
+      group: sdk-cloud-validation-mobile-host
+      cancel-in-progress: false
+    env:
+      CLOUD_VALIDATION_ACCOUNT_MANAGER_URL: ${{ vars.SDK_E2E_ACCOUNT_MANAGER_URL }}
+      CLOUD_VALIDATION_VIDEO_CLOUD_URL: ${{ vars.SDK_E2E_VIDEO_CLOUD_URL }}
+      CLOUD_VALIDATION_DEVICE_URL: ${{ vars.SDK_E2E_DEVICE_URL }}
+      CLOUD_VALIDATION_MQTT_ADDR: ${{ vars.SDK_E2E_MQTT_ADDR }}
+      CLOUD_VALIDATION_CA_BUNDLE: ${{ vars.SDK_E2E_CA_BUNDLE }}
+      CLOUD_VALIDATION_ENV_ROOT: ${{ vars.SDK_E2E_ENV_ROOT }}
+      CLOUD_VALIDATION_CLOUD_LOGGER_URL: ${{ vars.SDK_E2E_CLOUD_LOGGER_URL }}
+      CLOUD_VALIDATION_ANDROID_CLOUD_SLUG: sdk-e2e-android
+      CLOUD_VALIDATION_IOS_CLOUD_SLUG: sdk-e2e-ios
+      CLOUD_VALIDATION_PLATFORM_ADMIN_TOKEN: ${{ secrets.platform_admin_token }}
+      CLOUD_VALIDATION_VIDEO_CLOUD_ADMIN_TOKEN: ${{ secrets.video_cloud_admin_token }}
+      CLOUD_VALIDATION_CLOUD_LOGGER_TOKEN: ${{ secrets.cloud_logger_token }}
+      CLOUD_VALIDATION_FIXTURE_PROVIDER_COMMAND: ${{ secrets.fixture_provider_command || secrets.SDK_E2E_FIXTURE_PROVIDER_COMMAND }}
+      CLOUD_VALIDATION_FIXTURE_CLEANUP_COMMAND: ${{ secrets.fixture_cleanup_command || secrets.SDK_E2E_FIXTURE_CLEANUP_COMMAND }}
+      CLOUD_VALIDATION_EVIDENCE_PROVIDER_COMMAND: ${{ secrets.evidence_provider_command || secrets.SDK_E2E_EVIDENCE_PROVIDER_COMMAND }}
+      CLOUD_VALIDATION_ANDROID_EMULATOR_STATE: ${{ runner.temp }}/sdk-cloud-validation-${{ github.run_id }}-${{ github.run_attempt }}-android-emulator.json
+      CLOUD_VALIDATION_INSTALL_ANDROID_SYSTEM_IMAGE: "1"
+      CLOUD_VALIDATION_ARTIFACT: ${{ inputs.android_artifact_path || inputs.artifact_path }}
+      CLOUD_VALIDATION_ARTIFACT_SHA256: ${{ inputs.android_artifact_sha256 || inputs.artifact_sha256 }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.24.x"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+      - uses: android-actions/setup-android@v3
+      - name: Run Android validation
+        run: |
+          chmod +x e2e_test/cloud_validation/scripts/*.sh e2e_test/cloud_validation/providers/*.sh repos/rtk_cloud_client/tools/*.sh
+          e2e_test/cloud_validation/scripts/run-cloud-validation.sh \
+            --environment "${{ inputs.environment }}" --platform android --mode "${{ inputs.mode }}" \
+            --profile "${{ inputs.profile }}" \
+            --run-id "sdk-cloud-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-android"
+      - name: Reject and remove secret-bearing Android artifacts
+        if: always()
+        run: e2e_test/cloud_validation/scripts/sanitize-upload-artifacts.sh .artifacts/e2e_test/cloud_validation
+      - name: Upload redacted Android evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: sdk-cloud-validation-${{ github.run_id }}-${{ github.run_attempt }}-android
+          path: |
+            .artifacts/e2e_test/cloud_validation/**/SUMMARY.md
+            .artifacts/e2e_test/cloud_validation/**/results.json
+            .artifacts/e2e_test/cloud_validation/**/junit.xml
+            .artifacts/e2e_test/cloud_validation/**/platform-result.json
+            .artifacts/e2e_test/cloud_validation/**/cloud-evidence.json
+            .artifacts/e2e_test/cloud_validation/**/resource-manifest.json
+            .artifacts/e2e_test/cloud_validation/**/ready.json
+            .artifacts/e2e_test/cloud_validation/**/android/*.log
+            .artifacts/e2e_test/cloud_validation/**/android/*.txt
+            .artifacts/e2e_test/cloud_validation/**/virtual-device.log
+            .artifacts/e2e_test/cloud_validation/**/virtual-device/results.json
+            .artifacts/e2e_test/cloud_validation/**/virtual-device/TEST_REPORT.md
+            .artifacts/e2e_test/cloud_validation/**/platform_test.log
+            .artifacts/e2e_test/cloud_validation/**/redaction-failures.txt
+          if-no-files-found: error
+          include-hidden-files: true
+
+  capacity-1k-follow-up:
+    name: Optional independent 1K load smoke
+    needs: [contract-and-source, ios-live, android-live]
+    if: >-
+      ${{ always() && inputs.run_live && inputs.run_1k_smoke &&
+          needs.contract-and-source.result == 'success' &&
+          (needs.ios-live.result == 'success' || needs.ios-live.result == 'skipped') &&
+          (needs.android-live.result == 'success' || needs.android-live.result == 'skipped') }}
+    runs-on: [self-hosted, macOS, ARM64, rtk_cloud_client, jarvis-macos]
+    timeout-minutes: 90
+    env:
+      LINODE_TOKEN: ${{ secrets.linode_token }}
+      HOME100K_RUN_ID: sdk-followup-${{ github.run_id }}-${{ github.run_attempt }}
+      HOME100K_DESCRIPTION_FILE: loadtests/home-100k/scenarios/default.description.env
+      HOME100K_DEVICES: "1000"
+      HOME100K_PRESERVE_VMS: "0"
+      HOME100K_AUTO_DESTROY_ON_EXIT: "1"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.24.x"
+      - name: Run separate 1K workflow-live smoke
+        run: loadtests/home-100k/scripts/home-100k.sh workflow-live
+      - name: Require complete successful 1K report
+        run: |
+          report="loadtests/home-100k/reports/${HOME100K_RUN_ID}/TEST_REPORT.md"
+          test -f "$report"
+          grep -Fq -- '- Status: COMPLETE' "$report"
+          grep -Fq -- '- Result: SUCCESS' "$report"
+      - name: Upload independent 1K report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: sdk-followup-1k-${{ github.run_id }}-${{ github.run_attempt }}
+          path: loadtests/home-100k/reports/${{ env.HOME100K_RUN_ID }}/**
+          if-no-files-found: error

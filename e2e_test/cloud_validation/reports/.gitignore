@@ -1,0 +1,4 @@
+*
+!.gitignore
+!platform-result.schema.json
+!cloud-evidence.schema.json

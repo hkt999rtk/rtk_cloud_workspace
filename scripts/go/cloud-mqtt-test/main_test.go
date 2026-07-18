@@ -1537,6 +1537,20 @@ func TestSustainedActorsUseLongMQTTKeepAlive(t *testing.T) {
 	}
 }
 
+func TestWaitForSDKReconnectSignal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "reconnect.signal")
+	go func() {
+		time.Sleep(25 * time.Millisecond)
+		_ = os.WriteFile(path, []byte("ready\n"), 0o600)
+	}()
+	if err := waitForSDKReconnectSignal(path, time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("waitForSDKReconnectSignal() error = %v", err)
+	}
+	if err := waitForSDKReconnectSignal(filepath.Join(t.TempDir(), "missing"), time.Now().Add(20*time.Millisecond)); err == nil {
+		t.Fatal("waitForSDKReconnectSignal() unexpectedly accepted a missing signal")
+	}
+}
+
 func TestSustainedDeviceReaderSendsMQTTKeepAlivePing(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()
@@ -2345,6 +2359,7 @@ type fakeMQTTBroker struct {
 	keepAlives             map[string]uint16
 	publishCounts          map[string]int
 	publishPayloads        map[string][][]byte
+	shadowStates           map[string]map[string]any
 	RejectUsername         string
 	SuppressShadowAccepted bool
 }
@@ -2382,6 +2397,7 @@ func newFakeMQTTBrokerWithListener(t *testing.T, ln net.Listener) *fakeMQTTBroke
 		keepAlives:      map[string]uint16{},
 		publishCounts:   map[string]int{},
 		publishPayloads: map[string][][]byte{},
+		shadowStates:    map[string]map[string]any{},
 	}
 	go broker.serve()
 	return broker
@@ -2649,7 +2665,27 @@ func mqttPublishPacketIDForTest(flags byte, body []byte) uint16 {
 }
 
 func (b *fakeMQTTBroker) publishShadowResponses(topic string, payload []byte) {
-	if !strings.HasPrefix(topic, "$vc/devices/") || !strings.HasSuffix(topic, "/shadow/update") {
+	if !strings.HasPrefix(topic, "$vc/devices/") {
+		return
+	}
+	if strings.HasSuffix(topic, "/shadow/get") {
+		var req struct {
+			Token string `json:"clientToken"`
+		}
+		if err := json.Unmarshal(payload, &req); err != nil {
+			return
+		}
+		deviceID := strings.TrimSuffix(strings.TrimPrefix(topic, "$vc/devices/"), "/shadow/get")
+		b.mu.Lock()
+		state := b.shadowStates[deviceID]
+		if state == nil {
+			state = map[string]any{"desired": map[string]any{}, "reported": map[string]any{}, "delta": map[string]any{}}
+		}
+		b.mu.Unlock()
+		b.publishToSubscribers(topic+"/accepted", map[string]any{"clientToken": req.Token, "version": 1, "state": state})
+		return
+	}
+	if !strings.HasSuffix(topic, "/shadow/update") {
 		return
 	}
 	var req struct {
@@ -2662,12 +2698,22 @@ func (b *fakeMQTTBroker) publishShadowResponses(topic string, payload []byte) {
 	acceptedTopic := topic + "/accepted"
 	documentsTopic := topic + "/documents"
 	deltaTopic := topic + "/delta"
+	deviceID := strings.TrimSuffix(strings.TrimPrefix(topic, "$vc/devices/"), "/shadow/update")
 	accepted := map[string]any{"clientToken": req.Token, "version": 1, "state": req.State}
 	if !b.SuppressShadowAccepted {
 		b.publishToSubscribers(acceptedTopic, accepted)
 	}
 	if desired := req.State["desired"]; len(desired) > 0 {
-		b.publishToSubscribers(deltaTopic, map[string]any{"clientToken": req.Token, "version": 1, "state": desired})
+		b.mu.Lock()
+		state := b.shadowStates[deviceID]
+		if state == nil {
+			state = map[string]any{"reported": map[string]any{}}
+			b.shadowStates[deviceID] = state
+		}
+		state["desired"] = desired
+		state["delta"] = desired
+		b.mu.Unlock()
+		b.publishToSubscribers(deltaTopic, map[string]any{"clientToken": req.Token, "version": 1, "state": map[string]any{"delta": desired}})
 		b.publishToSubscribers(documentsTopic, map[string]any{
 			"clientToken": req.Token,
 			"version":     1,
@@ -2680,6 +2726,16 @@ func (b *fakeMQTTBroker) publishShadowResponses(topic string, payload []byte) {
 		return
 	}
 	if reported := req.State["reported"]; len(reported) > 0 {
+		b.mu.Lock()
+		state := b.shadowStates[deviceID]
+		if state == nil {
+			state = map[string]any{}
+			b.shadowStates[deviceID] = state
+		}
+		state["reported"] = reported
+		state["desired"] = reported
+		state["delta"] = map[string]any{}
+		b.mu.Unlock()
 		b.publishToSubscribers(documentsTopic, map[string]any{
 			"clientToken": req.Token,
 			"version":     2,
@@ -2840,5 +2896,282 @@ func TestParseMQTTEndpointTargetsAcceptsCommaSeparatedLoadBalancers(t *testing.T
 	}
 	if targets[1] != (mqttEndpointTarget{Host: "mqtt-a.example.test", Port: 8883}) {
 		t.Fatalf("target[1] = %#v", targets[1])
+	}
+}
+
+func TestSDKSimulatorDeltaAcceptsCanonicalNestedAndLegacyShapes(t *testing.T) {
+	canonical := sdkSimulatorDelta(map[string]any{
+		"state": map[string]any{"enabled": true},
+	})
+	if canonical["enabled"] != true {
+		t.Fatalf("canonical delta = %#v", canonical)
+	}
+	nested := sdkSimulatorDelta(map[string]any{
+		"state": map[string]any{"delta": map[string]any{"power": true}},
+	})
+	if nested["power"] != true {
+		t.Fatalf("nested delta = %#v", nested)
+	}
+	legacy := sdkSimulatorDelta(map[string]any{
+		"delta": map[string]any{"temperature": float64(25)},
+	})
+	if legacy["temperature"] != float64(25) {
+		t.Fatalf("legacy delta = %#v", legacy)
+	}
+	if got := sdkSimulatorDelta(map[string]any{"state": "invalid"}); got != nil {
+		t.Fatalf("invalid delta = %#v, want nil", got)
+	}
+}
+
+func TestProbeInvalidDeviceCredentialRequiresAuthorizationDenial(t *testing.T) {
+	certPEM, keyPEM, _ := testAppMaterial(t, "device-1")
+	assertProbeRejected := func(t *testing.T, status int, response string) {
+		t.Helper()
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body["devid"] != "device-1-invalid-binding" {
+				t.Fatalf("devid = %#v", body["devid"])
+			}
+			http.Error(w, response, status)
+		}))
+		defer server.Close()
+		records := map[string]certRecord{
+			"device-1": {DeviceID: "device-1", CertPEM: certPEM, KeyPEM: keyPEM},
+		}
+		if err := probeInvalidDeviceCredential([]assignment{{DeviceID: "device-1"}}, records, server.URL, tokenRequestOptions{Timeout: time.Second}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Run("authorization denial", func(t *testing.T) {
+		assertProbeRejected(t, http.StatusForbidden, `{"code":"DEVICE_CERTIFICATE_BINDING_MISMATCH"}`)
+	})
+	t.Run("certificate identity denial", func(t *testing.T) {
+		assertProbeRejected(t, http.StatusBadRequest, `{"status":"fail","reason":"certificate device id mismatch"}`)
+	})
+
+	unavailable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer unavailable.Close()
+	records := map[string]certRecord{
+		"device-1": {DeviceID: "device-1", CertPEM: certPEM, KeyPEM: keyPEM},
+	}
+	if err := probeInvalidDeviceCredential([]assignment{{DeviceID: "device-1"}}, records, unavailable.URL, tokenRequestOptions{Timeout: time.Second}); err == nil || !strings.Contains(err.Error(), "expected authorization or certificate-identity denial") {
+		t.Fatalf("unavailable probe err = %v, want non-auth failure", err)
+	}
+}
+
+func TestSDKDeviceSimulatorMatchesHome100KShadowDeviceContract(t *testing.T) {
+	broker := newFakeTLSMQTTBroker(t)
+	defer broker.Close()
+	deviceCertPEM, deviceKeyPEM, _ := testAppMaterial(t, "device-parity")
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, map[string]string{"access_token": testMQTTToken("device")})
+	}))
+	defer tokenServer.Close()
+	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(rawPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	topic := "$vc/devices/device-parity/shadow/update"
+	readyFile := filepath.Join(t.TempDir(), "ready.json")
+	resultCh := make(chan sustainedLoadResult, 1)
+	go func() {
+		resultCh <- runSDKDeviceSimulator(
+			[]assignment{{DeviceID: "device-parity", DeviceType: "light"}},
+			[]certRecord{{DeviceID: "device-parity", DeviceType: "light", CertPEM: deviceCertPEM, KeyPEM: deviceKeyPEM}},
+			"RTK", "run-sdk-parity", tokenServer.URL,
+			[]mqttEndpointTarget{{Host: host, Port: port}}, 1,
+			loadOptions{Concurrency: 1, ReadyFile: readyFile},
+		)
+	}()
+	deadline := time.Now().Add(time.Second)
+	for {
+		if _, err := os.Stat(readyFile); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("sdk simulator did not become ready")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	appConn, err := connectMQTTActor(mqttActorProbe{
+		DeviceID: "device-parity", Brandname: "RTK", RunID: "run-sdk-parity",
+		AppToken: testMQTTToken("app"), Dial: broker.TLSDial, Timeout: time.Second, Now: fixedProbeTime,
+	}, "app-controller", testMQTTToken("app"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	desiredPayload, err := json.Marshal(map[string]any{
+		"state": map[string]any{"desired": map[string]any{"power": true}}, "clientToken": "sdk-parity",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mqttPublish(appConn, topic, desiredPayload); err != nil {
+		t.Fatal(err)
+	}
+	_ = appConn.Close()
+	sdkResult := <-resultCh
+	if sdkResult.Status != "PASS" || sdkResult.CommandsPassed != 1 || sdkResult.Totals.DeltaReceived != 1 || sdkResult.Totals.ReportedEvents != 1 {
+		t.Fatalf("sdk device result = %+v", sdkResult)
+	}
+
+	homeDeviceConn, err := connectMQTTActor(mqttActorProbe{
+		DeviceID: "device-parity", DeviceType: "light", Brandname: "RTK", RunID: "run-home-parity",
+		DeviceToken: testMQTTToken("device"), Dial: broker.TLSDial, Timeout: time.Second, Now: fixedProbeTime,
+	}, "device", testMQTTToken("device"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer homeDeviceConn.Close()
+	if err := mqttSubscribe(homeDeviceConn, 10, topic+"/delta"); err != nil {
+		t.Fatal(err)
+	}
+	reader := startSustainedDeviceReader(homeDeviceConn)
+	defer reader.Close()
+	var homeTotals mqttIOTotals
+	if err := runSustainedShadowCommandWithContext(sustainedDeviceSession{
+		Record: certRecord{DeviceID: "device-parity", DeviceType: "light"}, Conn: homeDeviceConn, Reader: reader,
+		MQTTTarget:      mqttEndpointTarget{Host: host, Port: port},
+		AppLoginManager: newAccountLoginTokenManager("", "", userCredential{}, tokenBundle{AccessToken: testMQTTToken("app")}),
+	}, "RTK", "run-home-parity", "", &homeTotals, sustainedCommandContext{DisableRuntimeLogs: true}); err != nil {
+		t.Fatal(err)
+	}
+	if homeTotals.DeltaReceived != 1 || homeTotals.ReportedEvents != 1 || homeTotals.AppReceivedAcks != 1 {
+		t.Fatalf("home-1k device totals = %+v", homeTotals)
+	}
+
+	reportedPayloads := broker.PublishPayloads("device", topic)
+	if len(reportedPayloads) < 2 {
+		t.Fatalf("reported payloads = %d, want SDK and home-1k payloads", len(reportedPayloads))
+	}
+	for idx, payload := range reportedPayloads[len(reportedPayloads)-2:] {
+		var doc struct {
+			State map[string]map[string]any `json:"state"`
+			Token string                    `json:"clientToken"`
+		}
+		if err := json.Unmarshal(payload, &doc); err != nil {
+			t.Fatal(err)
+		}
+		if len(doc.State["reported"]) == 0 || !strings.HasPrefix(doc.Token, "reported-") {
+			t.Fatalf("reported payload[%d] = %#v, want shared reported-state contract", idx, doc)
+		}
+	}
+}
+
+func TestSDKDeviceSimulatorResyncsShadowAfterOfflineReconnect(t *testing.T) {
+	broker := newFakeTLSMQTTBroker(t)
+	defer broker.Close()
+	deviceCertPEM, deviceKeyPEM, _ := testAppMaterial(t, "device-reconnect")
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, map[string]string{"access_token": testMQTTToken("device")})
+	}))
+	defer tokenServer.Close()
+	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(rawPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	readyFile := filepath.Join(tmp, "ready.json")
+	reconnectSignal := filepath.Join(tmp, "reconnect.signal")
+	resultCh := make(chan sustainedLoadResult, 1)
+	go func() {
+		resultCh <- runSDKDeviceSimulator(
+			[]assignment{{DeviceID: "device-reconnect", DeviceType: "light"}},
+			[]certRecord{{DeviceID: "device-reconnect", DeviceType: "light", CertPEM: deviceCertPEM, KeyPEM: deviceKeyPEM}},
+			"RTK", "run-sdk-reconnect", tokenServer.URL,
+			[]mqttEndpointTarget{{Host: host, Port: port}}, 3,
+			loadOptions{Concurrency: 1, ReadyFile: readyFile, SDKReconnectSignalFile: reconnectSignal},
+		)
+	}()
+	deadline := time.Now().Add(time.Second)
+	for {
+		if _, err := os.Stat(readyFile); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("sdk reconnect simulator did not become ready")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond)
+	appConn, err := connectMQTTActor(mqttActorProbe{
+		DeviceID: "device-reconnect", Brandname: "RTK", RunID: "run-sdk-reconnect",
+		AppToken: testMQTTToken("app"), Dial: broker.TLSDial, Timeout: time.Second, Now: fixedProbeTime,
+	}, "app-controller", testMQTTToken("app"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	desiredPayload, err := json.Marshal(map[string]any{
+		"state": map[string]any{"desired": map[string]any{"power": true}}, "clientToken": "offline-desired",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mqttPublish(appConn, "$vc/devices/device-reconnect/shadow/update", desiredPayload); err != nil {
+		t.Fatal(err)
+	}
+	_ = appConn.Close()
+	if err := os.WriteFile(reconnectSignal, []byte("reconnect\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case result := <-resultCh:
+		if result.Status != "PASS" || result.CommandsPassed != 1 || result.Totals.DeltaReceived != 1 || result.Totals.ReportedEvents != 1 {
+			t.Fatalf("sdk reconnect result = %+v", result)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("sdk reconnect simulator did not finish")
+	}
+}
+
+func TestWriteSDKDeviceReadyFileIsDeterministic(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "virtual-device", "ready.json")
+	sessions := []sustainedDeviceSession{
+		{Record: certRecord{DeviceID: "device-b"}},
+		{Record: certRecord{DeviceID: "device-a"}},
+	}
+	totals := mqttIOTotals{DeviceTokenSuccesses: 2, DeviceMQTTConnackSuccesses: 2, SubscribeSuccesses: 2}
+	if err := writeSDKDeviceReadyFile(path, "run-1", sessions, totals); err != nil {
+		t.Fatal(err)
+	}
+	var ready struct {
+		SchemaVersion int      `json:"schema_version"`
+		RunID         string   `json:"run_id"`
+		Status        string   `json:"status"`
+		DeviceIDs     []string `json:"device_ids"`
+		Evidence      struct {
+			DeviceTokenSuccesses int64 `json:"device_token_successes"`
+			MQTTConnackSuccesses int64 `json:"mqtt_connack_successes"`
+			SubscribeSuccesses   int64 `json:"subscribe_successes"`
+		} `json:"evidence"`
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &ready); err != nil {
+		t.Fatal(err)
+	}
+	if ready.SchemaVersion != 1 || ready.RunID != "run-1" || ready.Status != "READY" {
+		t.Fatalf("ready identity = %#v", ready)
+	}
+	if strings.Join(ready.DeviceIDs, ",") != "device-a,device-b" {
+		t.Fatalf("device ids = %#v", ready.DeviceIDs)
+	}
+	if ready.Evidence.DeviceTokenSuccesses != 2 || ready.Evidence.MQTTConnackSuccesses != 2 || ready.Evidence.SubscribeSuccesses != 2 {
+		t.Fatalf("ready evidence = %#v", ready.Evidence)
 	}
 }

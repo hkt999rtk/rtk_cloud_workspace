@@ -1,0 +1,10 @@
+schema_version: 1
+scenarios:
+  - id: shadow_offline_reconnect
+    required_capabilities: [app_shadow, device_reconnect_control]
+    device_profile: offline_reconnect
+    app_action: write_desired_and_wait_for_reconnect
+    expected_sdk_result: delta_cleared
+    expected_cloud_evidence: [desired_queued, device_reconnected, reported_written, delta_cleared]
+    timeout: 90s
+    cleanup: reset_shadow

@@ -1,0 +1,26 @@
+schema_version: 1
+scenarios:
+  - id: repeated_connect_disconnect
+    required_capabilities: [token, websocket]
+    device_profile: online
+    app_action: repeat_connect_disconnect
+    expected_sdk_result: success
+    expected_cloud_evidence: [transport_connected, transport_disconnected]
+    timeout: 60s
+    cleanup: close_sessions
+  - id: app_restart_recovery
+    required_capabilities: [app_restart]
+    device_profile: online
+    app_action: restart_and_restore_or_reauthenticate
+    expected_sdk_result: success
+    expected_cloud_evidence: []
+    timeout: 180s
+    cleanup: close_sessions
+  - id: app_certificate_rotation
+    required_capabilities: [app_mtls_certificate_rotation]
+    device_profile: online
+    app_action: reject_old_certificate_and_load_rotated_certificate
+    expected_sdk_result: capability_not_implemented
+    expected_cloud_evidence: []
+    timeout: 90s
+    cleanup: revoke_rotated_certificate

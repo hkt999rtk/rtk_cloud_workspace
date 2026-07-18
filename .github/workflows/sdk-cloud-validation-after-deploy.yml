@@ -1,0 +1,20 @@
+name: SDK Cloud Validation After Staging Deploy
+
+on:
+  repository_dispatch:
+    types: [staging-deploy-succeeded]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    uses: ./.github/workflows/sdk-cloud-validation.yml
+    with:
+      environment: staging
+      platform: all
+      mode: source
+      profile: deploy
+      run_live: true
+      run_1k_smoke: false
+    secrets: inherit

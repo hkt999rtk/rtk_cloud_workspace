@@ -1628,6 +1628,7 @@ func runCreateUsers(args []string) error {
 	workspaceFlag := fs.String("workspace", "", "workspace")
 	envRootFlag := fs.String("env-root", "", "environment root")
 	brandname := fs.String("brandname", "", "brand name")
+	userEmailPrefix := fs.String("user-email-prefix", "", "optional run-scoped email prefix")
 	count := fs.Int("count", 10, "count")
 	role := fs.String("role", "member", "role")
 	rotatePassword := fs.Bool("rotate-password", false, "rotate password")
@@ -1685,7 +1686,7 @@ func runCreateUsers(args []string) error {
 	}
 	logCreateUsers("brand cloud found: id=%s", brandCloudID)
 	slug := brandSlug(*brandname)
-	planned := plannedUsers(*brandname, slug, *role, *count)
+	planned := plannedUsersWithPrefix(*brandname, slug, *role, *count, *userEmailPrefix)
 	if *dryRun {
 		return json.NewEncoder(os.Stdout).Encode(map[string]any{"action": "dry_run", "brand_cloud": brandCloud, "role": *role, "users": planned})
 	}
@@ -1767,14 +1768,15 @@ func runCreateUsers(args []string) error {
 			return createUserResult{}, err
 		}
 		result.user = map[string]any{
-			"email":           email,
-			"display_name":    displayName,
-			"role":            *role,
-			"password":        password,
-			"action":          createResult.Action,
-			"app_credentials": appCredentials,
-			"app_certificate": appCertificate,
-			"tokens":          userSession,
+			"email":               email,
+			"display_name":        displayName,
+			"role":                *role,
+			"brand_cloud_user_id": createResult.BrandCloudUserID,
+			"password":            password,
+			"action":              createResult.Action,
+			"app_credentials":     appCredentials,
+			"app_certificate":     appCertificate,
+			"tokens":              userSession,
 		}
 		createdDelta := 0
 		if result.created {
@@ -1995,6 +1997,7 @@ func runStagingE2EDataSetup(args []string) error {
 	deviceCount := fs.Int("device-count", 100, "device count")
 	deviceMix := fs.String("device-mix", "camera=40,light=25,air_conditioner=20,smart_meter=15", "device mix")
 	devicePrefix := fs.String("device-prefix", "load-device", "device prefix")
+	userEmailPrefix := fs.String("user-email-prefix", "", "optional run-scoped user email prefix")
 	userConcurrency := fs.Int("user-concurrency", envInt("CLOUD_STAGING_E2E_USER_CONCURRENCY", 64), "user creation concurrency")
 	deviceConcurrency := fs.Int("device-concurrency", envInt("CLOUD_STAGING_E2E_DEVICE_CONCURRENCY", 64), "device generation concurrency")
 	bindConcurrency := fs.Int("bind-concurrency", envInt("CLOUD_STAGING_E2E_BIND_CONCURRENCY", 64), "device bind concurrency")
@@ -2114,6 +2117,9 @@ func runStagingE2EDataSetup(args []string) error {
 	coverage := testDataCoverageFor(envRoot, *brandname)
 	if shouldRunStep("create_users") && !(*resume && coverage.Users == *userCount) {
 		args := []string{"--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--count", strconv.Itoa(*userCount), "--rotate-password", "--concurrency", strconv.Itoa(*userConcurrency)}
+		if strings.TrimSpace(*userEmailPrefix) != "" {
+			args = append(args, "--user-email-prefix", *userEmailPrefix)
+		}
 		if !*resume {
 			args = append(args, "--no-reuse-local-users")
 		}
@@ -4982,7 +4988,10 @@ func accountEnsureUserAppCertificate(ctx accountManagerContext, tenantSlug, emai
 	if strings.TrimSpace(subject) == "" {
 		return nil, nil, accountPlatformSession{}, fmt.Errorf("app certificate subject is required for %s", email)
 	}
-	keyAlgorithm := "ed25519"
+	keyAlgorithm := strings.ToLower(strings.TrimSpace(os.Getenv("RTK_CLOUD_APP_CERT_KEY_ALGORITHM")))
+	if keyAlgorithm == "" {
+		keyAlgorithm = "ed25519"
+	}
 	if bootstrapWithCSR {
 		return accountIssueUserAppCertificate(ctx, tenantSlug, email, password, subject, "", keyAlgorithm)
 	}
@@ -5378,12 +5387,17 @@ func accountAppCertificateMap(cert accountAppCertificate) map[string]any {
 }
 
 func plannedUsers(brandname, slug, role string, count int) []map[string]any {
+	return plannedUsersWithPrefix(brandname, slug, role, count, "")
+}
+
+func plannedUsersWithPrefix(brandname, slug, role string, count int, emailPrefix string) []map[string]any {
+	emailPrefix = brandSlug(firstNonEmpty(strings.TrimSpace(emailPrefix), slug))
 	users := make([]map[string]any, 0, count)
 	for i := 1; i <= count; i++ {
 		suffix := fmt.Sprintf("%03d", i)
-		email := fmt.Sprintf("%s+%s@users.local", slug, suffix)
+		email := fmt.Sprintf("%s+%s@users.local", emailPrefix, suffix)
 		if role != "member" {
-			email = fmt.Sprintf("%s+%s-%s@users.local", slug, role, suffix)
+			email = fmt.Sprintf("%s+%s-%s@users.local", emailPrefix, role, suffix)
 		}
 		users = append(users, map[string]any{
 			"email":        email,
@@ -5963,6 +5977,12 @@ func writeLoadDevice(in loadDeviceInput) (generatedDevice, bool, error) {
 		warning = "Simulation-only generated credential. Do not use as a production or customer device identity."
 	} else {
 		var outcome factoryEnrollOutcome
+		enrollAttempts := envInt("CLOUD_LOAD_DEVICES_FACTORY_ENROLL_RETRIES", 1)
+		if enrollAttempts < 1 {
+			enrollAttempts = 1
+		}
+		retryDelay := envDurationDefault("CLOUD_LOAD_DEVICES_FACTORY_ENROLL_RETRY_DELAY", time.Second)
+	enrollAlgorithms:
 		for i, algorithm := range []string{"ed25519", "p256"} {
 			keyAlgorithm = algorithm
 			if i > 0 {
@@ -5971,14 +5991,25 @@ func writeLoadDevice(in loadDeviceInput) (generatedDevice, bool, error) {
 					return generatedDevice{}, false, err
 				}
 			}
-			outcome, err = factoryEnrollDevice(in, deviceID, display, csrPath, certPath, chainPath, keyAlgorithm)
-			if err != nil {
-				return generatedDevice{}, false, err
+			for attempt := 1; attempt <= enrollAttempts; attempt++ {
+				outcome, err = factoryEnrollDevice(in, deviceID, display, csrPath, certPath, chainPath, keyAlgorithm)
+				if err != nil {
+					return generatedDevice{}, false, err
+				}
+				if outcome.OK {
+					break enrollAlgorithms
+				}
+				if !outcome.Retryable {
+					break enrollAlgorithms
+				}
+				if attempt < enrollAttempts {
+					logLoad("retrying transient factory enrollment failure: index=%03d device=%s algorithm=%s attempt=%d/%d status=%s", in.Index, deviceID, keyAlgorithm, attempt+1, enrollAttempts, outcome.HTTPStatus)
+					if retryDelay > 0 {
+						time.Sleep(retryDelay)
+					}
+				}
 			}
-			if outcome.OK {
-				break
-			}
-			if !outcome.Retryable || i == 1 {
+			if i == 1 {
 				break
 			}
 		}

@@ -72,6 +72,7 @@ func TestAccountEnsureUserAppCertificateUsesExtendedTransientRetryBudget(t *test
 }
 
 func TestAccountEnsureUserAppCertificateBootstrapsWithCSRInFirstLogin(t *testing.T) {
+	t.Setenv("RTK_CLOUD_APP_CERT_KEY_ALGORITHM", "p256")
 	loginAttempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/brand-clouds/rtk-test/auth/login" {
@@ -105,7 +106,7 @@ func TestAccountEnsureUserAppCertificateBootstrapsWithCSRInFirstLogin(t *testing
 	if err != nil {
 		t.Fatalf("accountEnsureUserAppCertificate() error = %v", err)
 	}
-	if !hasLocalAppCredentials(credentials) || stringValue(certificate["fingerprint_sha256"]) != "new-fingerprint" || loginAttempts != 1 {
+	if !hasLocalAppCredentials(credentials) || stringValue(credentials["key_algorithm"]) != "p256" || !strings.Contains(stringValue(credentials["private_key_pem"]), "BEGIN EC PRIVATE KEY") || stringValue(certificate["fingerprint_sha256"]) != "new-fingerprint" || loginAttempts != 1 {
 		t.Fatalf("credentials=%v certificate=%v loginAttempts=%d", credentials, certificate, loginAttempts)
 	}
 }

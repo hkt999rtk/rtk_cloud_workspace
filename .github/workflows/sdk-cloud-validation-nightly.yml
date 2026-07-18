@@ -1,0 +1,21 @@
+name: SDK Cloud Validation Nightly
+
+on:
+  schedule:
+    - cron: "23 17 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  nightly:
+    uses: ./.github/workflows/sdk-cloud-validation.yml
+    with:
+      environment: staging
+      platform: all
+      mode: source
+      profile: nightly
+      run_live: true
+      run_1k_smoke: false
+    secrets: inherit
