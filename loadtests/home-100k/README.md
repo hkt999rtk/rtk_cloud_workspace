@@ -27,6 +27,10 @@ online, offline, and reconnect load. When a video profile is selected, the
 report must also prove WebRTC create/setup/close, relay-only ICE candidates,
 first RTP, H.264 RTP packet evidence, and external TURN/coturn evidence.
 
+Before running on a newly cloned workspace, prepare the staging runtime using
+[`docs/staging-runtime-bootstrap.zh-TW.md`](../../docs/staging-runtime-bootstrap.zh-TW.md).
+The runtime is intentionally not stored in Git.
+
 ## Goals
 
 - Validate a 100K-device and 5K-user home scenario against staging/LKE.
