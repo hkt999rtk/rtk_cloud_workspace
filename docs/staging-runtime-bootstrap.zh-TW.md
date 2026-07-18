@@ -46,6 +46,29 @@ chmod 600 \
 `rsync --delete` 的來源與目的地必須先確認；不要把 workspace root 或其他
 廣泛目錄當成目的地。
 
+遠端 deploy runner 可使用 workspace 提供的 restore/check 工具。先將
+known-good runtime 以受控方式放到遠端可讀取的位置，再在遠端 workspace 執行：
+
+```sh
+scripts/restore-staging-runtime.sh \
+  --source-runtime /secure/path/cloud_env/staging/runtime \
+  --target-runtime "$PWD/cloud_env/staging/runtime"
+```
+
+若 runtime 已由其他安全管道還原，只做檢查：
+
+```sh
+scripts/restore-staging-runtime.sh \
+  --check-only \
+  --target-runtime "$PWD/cloud_env/staging/runtime"
+```
+
+工具會檢查 existing-cluster safety state、kubeconfig、OpenBao state、service
+environment、device test data 與權限；它只做本機檔案同步與檢查，不會 destroy、
+rebuild、provision 或修改任何 cloud resource。GitHub Actions 或其他 CI runner
+必須先透過 encrypted artifact、OpenBao 或受控檔案傳輸取得 source runtime，不能
+靠 `git clone` 取得。
+
 還原後，從新 workspace 執行：
 
 ```sh
