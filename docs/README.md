@@ -28,6 +28,7 @@ repositories. Shared wire and payload contracts belong in
 | [private-cloud-deployment.md](private-cloud-deployment.md) | Supporting note | Private-cloud deployment bill of materials, deployment order, profiles, operations runbook, support boundary, and follow-up routing. |
 | [product-level-evidence.md](product-level-evidence.md) | Supporting note | Workspace evidence wrapper for private-cloud readiness sign-off and canonical report aggregation. |
 | [linode-staging-deployment-snapshot.md](linode-staging-deployment-snapshot.md) | Supporting note | Current Linode staging deployment snapshot, live endpoints, PR state, and remaining production-readiness work. |
+| [staging-from-scratch.md](staging-from-scratch.md) | Source | Fresh-clone LKE staging deployment, billing setup, acceptance, and canonical 1K MQTT/Device Shadow validation. |
 | [linode-ci-runners.md](linode-ci-runners.md) | Source | Linode self-hosted CI runner VM topology, lifecycle, artifact archive, and shutdown policy. |
 | [linode-100k-home-iot-shadow-loadtest.md](linode-100k-home-iot-shadow-loadtest.md) | Pointer | Moved pointer for the 100,000-device Home IoT Device Shadow load-test package under `loadtests/home-100k/`. |
 | [status-reports/README.md](status-reports/README.md) | Source | Reusable weekly status report framework, material index, and builder workflow. |

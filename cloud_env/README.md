@@ -2,6 +2,10 @@
 
 這是新增 `dev`、`staging`、`prod`、`qa` 或其他 deployment environment 的操作入口。架構責任與解析原理見 [`docs/cloud-deployment-architecture.md`](../docs/cloud-deployment-architecture.md)；共用 defaults 與 adapter keys 見 [`cloud_deploy/README.md`](../cloud_deploy/README.md)。
 
+要從全新 clone 建立 LKE staging、完成服務驗收並執行 1K MQTT/Device
+Shadow 測試，請依序執行 [`staging-from-scratch.md`](../docs/staging-from-scratch.md)。不要把該流程用於
+已存在的 cluster；既有環境應先安全還原其 ignored `runtime/`。
+
 ## 建立最小設定
 
 Environment identity 直接取自 `cloud_env/` 下的目錄名稱；名稱使用小寫英數字與 `-`。不要複製既有 environment 的 `runtime/`。

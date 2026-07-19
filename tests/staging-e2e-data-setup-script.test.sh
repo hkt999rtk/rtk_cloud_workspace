@@ -297,6 +297,18 @@ CLOUD_PROVIDER=lke "$ROOT/scripts/setup-staging-e2e-data.sh" \
 grep -F 'multi_brand_plan: '"$WORKSPACE/loadtests/home-100k/scenarios/test-brand-plan.json" "$TMP/description-brand-plan.out" >/dev/null
 grep -F -- '- brandname: RTK-BRAND-01 normal_users=2 devices=4 owner=1 admin=0 device_mix=camera=4' "$TMP/description-brand-plan.out" >/dev/null
 
+cat > "$TMP/mqtt-description.env" <<'EOF_DESCRIPTION'
+HOME100K_DEVICES=4
+HOME100K_DEVICE_MIX=light=3,switch=1
+EOF_DESCRIPTION
+CLOUD_PROVIDER=lke "$ROOT/scripts/setup-staging-e2e-data.sh" \
+	--workspace "$WORKSPACE" \
+	--env-root "$ENV_ROOT" \
+	--description-file "$TMP/mqtt-description.env" \
+	--plan >"$TMP/description-device-mix.out"
+grep -F 'device_count: 4' "$TMP/description-device-mix.out" >/dev/null
+grep -F 'device_mix: light=3,switch=1' "$TMP/description-device-mix.out" >/dev/null
+
 cat > "$TMP/video-description-missing-brand-plan.env" <<'EOF_DESCRIPTION'
 HOME100K_SCENARIO_PROFILE=video-100k-turn-v1
 HOME100K_DEVICES=100000
