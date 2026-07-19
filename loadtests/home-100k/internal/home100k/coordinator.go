@@ -263,7 +263,7 @@ func coordinateRemoteRunnerStart(vms []LinodeVM, plan Plan, runID string, values
 			if _, ok := ready[vm.Label]; ok {
 				continue
 			}
-			telemetry, err := getRunnerTelemetry(client, vm, "/ready")
+			telemetry, err := getRunnerTelemetryWithSSHFallback(client, vm, "/ready", values)
 			if err == nil && telemetry.Status == "READY_WAIT" && strings.TrimSpace(telemetry.RunID) == runID {
 				telemetry.IP = vm.PublicIPv4
 				ready[vm.Label] = telemetry
@@ -275,7 +275,7 @@ func coordinateRemoteRunnerStart(vms []LinodeVM, plan Plan, runID string, values
 		time.Sleep(2 * time.Second)
 	}
 	if len(ready) != len(vms) {
-		return StartCoordination{}, fmt.Errorf("runner ready barrier failed: %d/%d ready", len(ready), len(vms))
+		return StartCoordination{}, fmt.Errorf("RUNNER_READY_BARRIER_FAILED: runner ready barrier failed: %d/%d ready", len(ready), len(vms))
 	}
 
 	delayMS := values.coordinatorDelayMS
@@ -283,7 +283,7 @@ func coordinateRemoteRunnerStart(vms []LinodeVM, plan Plan, runID string, values
 		delayMS = defaultCoordinatorStartDelayMS
 	}
 	for idx, vm := range vms {
-		if err := postRunnerStart(client, vm, startCommand{RunID: runID, StageID: "all", Seq: idx + 1, DelayMS: delayMS}); err != nil {
+		if err := postRunnerStartWithSSHFallback(client, vm, startCommand{RunID: runID, StageID: "all", Seq: idx + 1, DelayMS: delayMS}, values); err != nil {
 			return StartCoordination{}, err
 		}
 	}
@@ -325,6 +325,45 @@ func coordinateRemoteRunnerStart(vms []LinodeVM, plan Plan, runID string, values
 		MaxSkewMS:    computeMaxStartSkewMS(items),
 		VMs:          items,
 	}, nil
+}
+
+func getRunnerTelemetryWithSSHFallback(client *http.Client, vm LinodeVM, path string, values workflowFlagValues) (VMStartTelemetry, error) {
+	telemetry, err := getRunnerTelemetry(client, vm, path)
+	if err == nil || strings.TrimSpace(values.sshKey) == "" {
+		return telemetry, err
+	}
+	out, sshErr := runnerSSHHTTP(values, vm, "GET", path, "")
+	if sshErr != nil {
+		return VMStartTelemetry{}, fmt.Errorf("%s public control request failed: %v; ssh fallback failed: %w", vm.Label, err, sshErr)
+	}
+	if decodeErr := json.Unmarshal([]byte(out), &telemetry); decodeErr != nil {
+		return VMStartTelemetry{}, decodeErr
+	}
+	return telemetry, nil
+}
+
+func postRunnerStartWithSSHFallback(client *http.Client, vm LinodeVM, cmd startCommand, values workflowFlagValues) error {
+	err := postRunnerStart(client, vm, cmd)
+	if err == nil || strings.TrimSpace(values.sshKey) == "" {
+		return err
+	}
+	body, marshalErr := json.Marshal(cmd)
+	if marshalErr != nil {
+		return marshalErr
+	}
+	if _, sshErr := runnerSSHHTTP(values, vm, "POST", "/start", string(body)); sshErr != nil {
+		return fmt.Errorf("%s public control request failed: %v; ssh fallback failed: %w", vm.Label, err, sshErr)
+	}
+	return nil
+}
+
+func runnerSSHHTTP(values workflowFlagValues, vm LinodeVM, method, path, body string) (string, error) {
+	user := firstNonEmpty(values.sshUser, "root")
+	args := []string{"-n", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new", "-i", values.sshKey, user + "@" + vm.PublicIPv4, "curl", "-fsS", "-X", method, "http://127.0.0.1:18080" + path}
+	if method == "POST" {
+		args = append(args, "-H", "Content-Type: application/json", "--data-raw", body)
+	}
+	return commandOutputRunnerWithTimeout(15*time.Second, "ssh", args...)
 }
 
 func getRunnerTelemetry(client *http.Client, vm LinodeVM, path string) (VMStartTelemetry, error) {

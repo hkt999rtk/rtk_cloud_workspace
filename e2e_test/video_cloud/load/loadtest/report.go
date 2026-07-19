@@ -64,6 +64,24 @@ func RenderMarkdown(result *Result) string {
 	fmt.Fprintf(&b, "| p95 latency | %d ms |\n", result.Summary.P95LatencyMS)
 	fmt.Fprintf(&b, "| p99 latency | %d ms |\n", result.Summary.P99LatencyMS)
 	fmt.Fprintf(&b, "| Throughput | %.2f ops/sec |\n", result.Summary.ThroughputPerSecond)
+	if result.ClipStorage.Enabled {
+		clip := result.ClipStorage
+		fmt.Fprintf(&b, "\n## Clip Storage Metrics\n\n")
+		fmt.Fprintf(&b, "| Metric | Value |\n| --- | ---: |\n")
+		fmt.Fprintf(&b, "| Camera devices | %d |\n", clip.CameraDevices)
+		fmt.Fprintf(&b, "| Expected clips | %d |\n", clip.ExpectedClips)
+		fmt.Fprintf(&b, "| Actual Poisson arrivals | %d |\n", clip.ActualArrivals)
+		fmt.Fprintf(&b, "| Upload attempts | %d |\n", clip.UploadAttempts)
+		fmt.Fprintf(&b, "| Upload successes | %d |\n", clip.UploadSuccesses)
+		fmt.Fprintf(&b, "| Upload failures | %d |\n", clip.UploadFailures)
+		fmt.Fprintf(&b, "| Upload success rate | %.2f%% |\n", clip.SuccessRate*100)
+		fmt.Fprintf(&b, "| Total clip bytes | %d |\n", clip.TotalBytes)
+		fmt.Fprintf(&b, "| Poisson seed | %d |\n", clip.PoissonSeed)
+		fmt.Fprintf(&b, "| Schedule window | %d ms |\n", clip.ScheduleWindowMS)
+		fmt.Fprintf(&b, "| Upload latency p50/p95/p99 | %d/%d/%d ms |\n", clip.P50LatencyMS, clip.P95LatencyMS, clip.P99LatencyMS)
+		fmt.Fprintf(&b, "| Cameras with successful clips | %d |\n", clip.CamerasWithClips)
+		fmt.Fprintf(&b, "| Per-camera clip distribution min/max | %d/%d |\n", clip.MinClipsPerCamera, clip.MaxClipsPerCamera)
+	}
 	fmt.Fprintf(&b, "\n## Threshold Gate\n\n")
 	status := "PASS"
 	if !result.Thresholds.Passed {

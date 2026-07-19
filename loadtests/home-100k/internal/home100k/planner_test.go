@@ -124,6 +124,30 @@ func TestVideo1KPlanUsesVideoPilotDeviceMix(t *testing.T) {
 	}
 }
 
+func TestClipStorage10KPlanPreservesMixedDeviceMix(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:         "cloud_env/staging/runtime",
+		Brandname:       "RTK",
+		Region:          "us-sea",
+		ScenarioProfile: ClipStorage10KScenarioProfile,
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+	if plan.Conditions.Devices != 10000 || plan.DeviceMix["camera"] != 1000 || plan.DeviceMix["light"] != 3000 || plan.DeviceMix["air_conditioner"] != 3000 || plan.DeviceMix["smart_meter"] != 3000 {
+		t.Fatalf("clip storage plan = devices=%d mix=%#v, want 10000 and 10/30/30/30", plan.Conditions.Devices, plan.DeviceMix)
+	}
+	if plan.VideoEnabled() {
+		t.Fatalf("clip storage scenario must not enable WebRTC video profile: %#v", plan.VideoProfile)
+	}
+	if plan.ClipStorageProfile.CameraDevices != 1000 || plan.ClipStorageProfile.ClipsPerCameraPerDay != 10 || plan.ClipStorageProfile.UploadConcurrency != 64 {
+		t.Fatalf("clip storage profile = %#v", plan.ClipStorageProfile)
+	}
+	if !containsString(plan.Workflow, "run-clip-storage-loadtest") || containsString(plan.Workflow, "run-video-loadtest") {
+		t.Fatalf("clip storage workflow = %#v", plan.Workflow)
+	}
+}
+
 func TestVideo100KTurnPlanUsesSingleRampAndViewerLadder(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
 		EnvRoot:         "cloud_env/staging/runtime",

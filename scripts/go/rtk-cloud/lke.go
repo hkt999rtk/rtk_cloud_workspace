@@ -1109,6 +1109,24 @@ func lkeClientCABundle(rootCA string, deviceCA string, appCA string) string {
 	return strings.Join(parts, "")
 }
 
+func writeLKEDeviceClientCABundle(paths provisionPaths, rootCA string, deviceCA string, appCA string) error {
+	if strings.TrimSpace(rootCA) == "" || strings.TrimSpace(deviceCA) == "" || strings.TrimSpace(appCA) == "" {
+		return errors.New("root, device, and app CA certificates are required for the device client CA bundle")
+	}
+	dir := filepath.Join(paths.EnvRoot, "state", "secrets")
+	path := filepath.Join(dir, "device-client-ca-bundle.pem")
+	if err := writeSensitiveFile(path, lkeClientCABundle(rootCA, deviceCA, appCA)); err != nil {
+		return fmt.Errorf("write device client CA bundle: %w", err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return fmt.Errorf("secure device client CA bundle directory: %w", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("secure device client CA bundle: %w", err)
+	}
+	return nil
+}
+
 func lkePublicHTTPSIngressManifests(env map[string]string, routes []lkePublicHTTPSRoute) []string {
 	httpRoutes := []lkePublicHTTPSRoute{}
 	deviceMTLSRoutes := []lkePublicHTTPSRoute{}
@@ -1192,6 +1210,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: "20m"
 %s
 spec:
   ingressClassName: nginx
@@ -2195,6 +2214,9 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 		material.RootCACert = openBao.RootCACert
 		material.DeviceCACert = openBao.DeviceCACert
 		material.AppCACert = openBao.AppCACert
+		if err := writeLKEDeviceClientCABundle(paths, material.RootCACert, material.DeviceCACert, material.AppCACert); err != nil {
+			return err
+		}
 		materialReady = true
 		if err := writeLKEVideoCloudRuntimeEnv(paths, env); err != nil {
 			return err
@@ -3902,13 +3924,16 @@ metadata:
 type: Opaque
 stringData:
   POSTGRES_PASSWORD: %q
+  VIDEO_CLOUD_AUTH_SECRET: %q
   VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN: %q
   VIDEO_CLOUD_LOGGER_TOKEN: %q
   VIDEO_CLOUD_BILLING_USAGE_LOGGER_TOKEN: %q
   VIDEO_CLOUD_TURN_SHARED_SECRET: %q
   VIDEO_CLOUD_MQTT_BROKER_AUTH_KEY: %q
   VIDEO_CLOUD_MQTT_SERVER_PASSWORD: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeInternalAuthToken(), lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"), lkeRuntimeSecretValue("turn-shared"), lkeRuntimeSecretValue("mqtt-broker-auth"), lkeRuntimeSecretValue("mqtt-server-password"))
+  AWS_ACCESS_KEY_ID: %q
+  AWS_SECRET_ACCESS_KEY: %q
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("video-auth"), lkeInternalAuthToken(), lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"), lkeRuntimeSecretValue("turn-shared"), lkeRuntimeSecretValue("mqtt-broker-auth"), lkeRuntimeSecretValue("mqtt-server-password"), lkeObjectStorageCredential("LINODE_OBJ_ACCESS_KEY_ID"), lkeObjectStorageCredential("LINODE_OBJ_SECRET_ACCESS_KEY"))
 }
 
 func lkeMQTTRuntimeSecretManifest(env map[string]string, material lkeMQTTMaterial) string {
@@ -4600,7 +4625,7 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
               containerPort: %d
 `, firstNonEmpty(service.PortName, "http"), service.Port)
 	}
-	return fmt.Sprintf(`apiVersion: apps/v1
+	body := fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: %s
@@ -4722,6 +4747,9 @@ spec:
         - name: logger-spool
           emptyDir: {}
 `, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeDeploymentImagePullSecretsManifest(env), lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(env, service.Name), ports, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(service), service.Name)
+	body = strings.Replace(body, "      volumes:\n", lkeBlobEnvironmentManifest(env, "video-cloud-runtime")+"      volumes:\n", 1)
+	body = strings.Replace(body, "    metadata:\n      labels:", fmt.Sprintf("    metadata:\n      annotations:\n        rtk.realtek.com/runtime-checksum: %q\n      labels:", lkeVideoCloudRuntimeChecksum(env)), 1)
+	return body
 }
 
 func lkeVideoCloudAuxiliaryMQTTCleanSession(service lkeVideoCloudAuxiliaryService) string {
@@ -5792,6 +5820,10 @@ func lkeInternalAuthToken() string {
 	return lkeRuntimeSecretValue("internal-auth")
 }
 
+func lkeObjectStorageCredential(name string) string {
+	return strings.TrimSpace(os.Getenv(name))
+}
+
 func lkeAccountManagerSecretManifest(env map[string]string) string {
 	return fmt.Sprintf(`apiVersion: v1
 kind: Secret
@@ -5892,7 +5924,7 @@ func writeLKEVideoCloudRuntimeEnv(paths provisionPaths, env map[string]string) e
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	body := fmt.Sprintf("FACTORY_ENROLL_AUTH_KEY=%s\nVIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN=%s\n", lkeFactoryEnrollAuthKey(env), lkeInternalAuthToken())
+	body := fmt.Sprintf("FACTORY_ENROLL_AUTH_KEY=%s\nVIDEO_CLOUD_AUTH_SECRET=%s\nVIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN=%s\n", lkeFactoryEnrollAuthKey(env), lkeRuntimeSecretValue("video-auth"), lkeInternalAuthToken())
 	return os.WriteFile(path, []byte(body), 0o600)
 }
 
@@ -5994,7 +6026,7 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 	if workload.Key == "video-cloud" {
 		templateAnnotations = fmt.Sprintf(`      annotations:
         rtk.realtek.com/runtime-checksum: %q
-`, lkeConfigChecksum(lkeRuntimeSecretValue("mqtt-broker-auth"), lkeRuntimeSecretValue("mqtt-server-password"), strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env))))
+`, lkeVideoCloudRuntimeChecksum(env))
 		mqttHandlerConcurrency := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY"), env["LKE_VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY"], "64")
 		mqttShadowHandlerConcurrency := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_SHADOW_HANDLER_CONCURRENCY"), env["LKE_VIDEO_CLOUD_MQTT_SHADOW_HANDLER_CONCURRENCY"], "64")
 		mqttShadowQueueSize := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_SHADOW_QUEUE_SIZE"), env["LKE_VIDEO_CLOUD_MQTT_SHADOW_QUEUE_SIZE"], "8192")
@@ -6012,6 +6044,11 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
                 secretKeyRef:
                   name: video-cloud-runtime
                   key: POSTGRES_PASSWORD
+            - name: VIDEO_CLOUD_AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-runtime
+                  key: VIDEO_CLOUD_AUTH_SECRET
             - name: VIDEO_CLOUD_API_ADDR
               value: ":8080"
             - name: VIDEO_CLOUD_DB_DSN
@@ -6188,6 +6225,7 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 			lkeNamespaceName(env, "platform"),
 			webrtcSignalingStoreTTLGrace,
 		)
+		extraEnv += lkeBlobEnvironmentManifest(env, "video-cloud-runtime")
 		volumeMounts = `          volumeMounts:
             - name: logger-spool
               mountPath: /var/lib/video_cloud/logger-spool
@@ -6248,6 +6286,42 @@ spec:
             - name: SERVICE_PUBLIC_HOST
               value: %q
 %s%s%s%s`, workload.Name, workload.Namespace, workload.Name, env["CLOUD_STACK_NAME"], replicas, strategy, workload.Name, templateAnnotations, workload.Name, env["CLOUD_STACK_NAME"], imagePullSecrets, topologySpread, workload.Image, lkeContainerResourcesManifest(env, workload.Name), workload.Port, probes, env["CLOUD_STACK_NAME"], workload.Host, extraEnv, envFrom, volumeMounts, volumes)
+}
+
+func lkeBlobEnvironmentManifest(env map[string]string, secretName string) string {
+	return fmt.Sprintf(`            - name: VIDEO_CLOUD_BLOB_ENDPOINT
+              value: %q
+            - name: VIDEO_CLOUD_BLOB_REGION
+              value: %q
+            - name: VIDEO_CLOUD_BLOB_BUCKET
+              value: %q
+            - name: VIDEO_CLOUD_BLOB_PREFIX
+              value: %q
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: %s
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: %s
+                  key: AWS_SECRET_ACCESS_KEY
+`, env["VIDEO_CLOUD_BLOB_ENDPOINT"], env["VIDEO_CLOUD_BLOB_REGION"], env["VIDEO_CLOUD_BLOB_BUCKET"], env["VIDEO_CLOUD_BLOB_PREFIX"], secretName, secretName)
+}
+
+func lkeVideoCloudRuntimeChecksum(env map[string]string) string {
+	return lkeConfigChecksum(
+		lkeRuntimeSecretValue("postgres"),
+		lkeRuntimeSecretValue("video-auth"),
+		lkeRuntimeSecretValue("mqtt-broker-auth"),
+		lkeRuntimeSecretValue("mqtt-server-password"),
+		env["VIDEO_CLOUD_BLOB_ENDPOINT"],
+		env["VIDEO_CLOUD_BLOB_REGION"],
+		env["VIDEO_CLOUD_BLOB_BUCKET"],
+		env["VIDEO_CLOUD_BLOB_PREFIX"],
+		strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)),
+	)
 }
 
 func lkeDeploymentImagePullSecretsManifest(env map[string]string) string {
@@ -6325,6 +6399,12 @@ func lkeTopologySpreadManifest(name string) string {
 func lkeContainerResourcesManifest(env map[string]string, name string) string {
 	profile, ok := lkeContainerResourceProfile(env, name)
 	if !ok {
+		return ""
+	}
+	// Empty request values are valid for an unset capacity profile, but an
+	// empty Kubernetes quantity is not. Omit the optional resources block until
+	// the operator supplies a complete request profile.
+	if strings.TrimSpace(profile.requestCPU) == "" || strings.TrimSpace(profile.requestMemory) == "" {
 		return ""
 	}
 	return fmt.Sprintf(`          resources:

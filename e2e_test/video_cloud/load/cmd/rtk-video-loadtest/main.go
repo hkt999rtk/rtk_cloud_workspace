@@ -38,7 +38,7 @@ func usage() error {
 
 func runLoad(args []string) error {
 	cfg := loadtest.DefaultConfigFromEnv()
-	var output, reportOutput, deviceTokenMapJSON, appTokenMapJSON, deviceTokenMapFile, appTokenMapFile, deviceIDsCSV, deviceIDsFile string
+	var output, reportOutput, deviceTokenMapJSON, appTokenMapJSON, deviceTokenMapFile, appTokenMapFile, deviceIDsCSV, deviceIDsFile, clipDeviceIDsFile string
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.StringVar(&cfg.Profile, "profile", cfg.Profile, "load profile: smoke, functional, safe-staging, stress, soak")
 	fs.StringVar(&cfg.APIURL, "api-url", cfg.APIURL, "rtk_video_cloud API base URL")
@@ -62,7 +62,14 @@ func runLoad(args []string) error {
 	fs.StringVar(&cfg.WebRTCRelayRole, "webrtc-relay-role", cfg.WebRTCRelayRole, "WebRTC relay role: both, app-only, or device-only")
 	fs.StringVar(&cfg.WebRTCICEPolicy, "webrtc-ice-policy", cfg.WebRTCICEPolicy, "WebRTC ICE transport policy: all or relay")
 	fs.DurationVar(&cfg.WebRTCMediaDuration, "webrtc-media-duration", cfg.WebRTCMediaDuration, "WebRTC media send duration")
-	fs.StringVar(&cfg.ClipSet, "clip-set", cfg.ClipSet, "camera recording clip coverage set: off or recording-functional")
+	fs.StringVar(&cfg.ClipSet, "clip-set", cfg.ClipSet, "camera recording clip coverage set: off, recording-functional, or storage-poisson")
+	fs.StringVar(&clipDeviceIDsFile, "clip-device-ids-file", os.Getenv("VIDEO_CLOUD_LOAD_CLIP_DEVICE_IDS_FILE"), "file containing camera ids used by the storage-poisson clip workload")
+	fs.IntVar(&cfg.ClipCountPerDevice, "clip-count-per-device", cfg.ClipCountPerDevice, "expected clips per camera in the compressed schedule window")
+	fs.DurationVar(&cfg.ClipScheduleWindow, "clip-schedule-window", cfg.ClipScheduleWindow, "compressed clip arrival window")
+	fs.StringVar(&cfg.ClipFixturePath, "clip-fixture", cfg.ClipFixturePath, "playable MP4 fixture for storage-poisson uploads")
+	fs.StringVar(&cfg.ClipThumbnailPath, "clip-thumbnail", cfg.ClipThumbnailPath, "thumbnail JPEG fixture for storage-poisson uploads")
+	fs.Int64Var(&cfg.ClipPoissonSeed, "clip-poisson-seed", cfg.ClipPoissonSeed, "deterministic Poisson seed")
+	fs.IntVar(&cfg.ClipUploadConcurrency, "clip-upload-concurrency", cfg.ClipUploadConcurrency, "maximum concurrent clip uploads")
 	fs.StringVar(&cfg.MQTTSet, "mqtt-set", cfg.MQTTSet, "MQTT coverage set: off or broker")
 	fs.StringVar(&cfg.MQTTAddr, "mqtt-addr", cfg.MQTTAddr, "MQTT broker host:port")
 	fs.StringVar(&cfg.MQTTUsername, "mqtt-username", cfg.MQTTUsername, "MQTT username")
@@ -132,6 +139,13 @@ func runLoad(args []string) error {
 			return fmt.Errorf("read device ids file: %w", err)
 		}
 		cfg.DeviceIDs = loadtest.ParseDeviceIDs(string(raw))
+	}
+	if clipDeviceIDsFile != "" {
+		raw, err := os.ReadFile(clipDeviceIDsFile)
+		if err != nil {
+			return fmt.Errorf("read clip device ids file: %w", err)
+		}
+		cfg.ClipDeviceIDs = loadtest.ParseDeviceIDs(string(raw))
 	}
 	if cfg.ContractsCommit == "" {
 		cfg.ContractsCommit = loadtest.ResolveContractsCommit("")

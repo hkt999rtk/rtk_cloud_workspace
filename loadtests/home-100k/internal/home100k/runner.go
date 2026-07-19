@@ -1415,7 +1415,7 @@ func loadCollectedShardResults(shardsDir string, stages []Stage) (collectedShard
 		return collectedShardResults{}, err
 	}
 	if len(matches) == 0 {
-		return collectedShardResults{}, fmt.Errorf("no shard results found under %s", shardsDir)
+		return collectedShardResults{}, fmt.Errorf("SHARD_RESULTS_MISSING: no shard results found under %s", shardsDir)
 	}
 	byStage := map[string][]StageResult{}
 	health := LoadGeneratorHealth{}

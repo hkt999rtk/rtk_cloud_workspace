@@ -27,6 +27,42 @@ online, offline, and reconnect load. When a video profile is selected, the
 report must also prove WebRTC create/setup/close, relay-only ICE candidates,
 first RTP, H.264 RTP packet evidence, and external TURN/coturn evidence.
 
+## Live workflow safety gates
+
+`workflow-live` performs two gates before creating a load-generator VM:
+
+1. `preflight` validates the selected fixture brand, device mix, user/device
+   counts, current device/app certificates, and certificate chain against the
+   current staging CA bundle.
+2. A one-device actor-separated smoke validates token bootstrap and MQTT
+   connectivity using the same fixture and CA bundle.
+
+The CA bundle is resolved from `HOME100K_DEVICE_CLIENT_CA_BUNDLE` or
+`<env-root>/state/secrets/device-client-ca-bundle.pem`. A failed gate stops the
+workflow with a stable classification such as `FIXTURE_MISMATCH`,
+`CERTIFICATE_CA_MISSING`, or `TOKEN_BOOTSTRAP_FAILED` and no load-generator VM
+is provisioned.
+
+Run the gate explicitly when diagnosing a fixture or certificate change:
+
+```sh
+HOME100K_BRANDNAME=RTK-LOAD1K-20260717-DIVERSE \
+./loadtests/home-100k/scripts/home-100k.sh preflight
+```
+
+Run-created VMs are destroyed automatically after collection and report
+generation. Set `HOME100K_PRESERVE_VMS=1` only for an intentional investigation
+or resume workflow. The default is safe cleanup. The host coordinator also
+falls back to the VM's SSH loopback when the public runner control port is not
+reachable; this avoids treating a public-port race as a load-test failure.
+
+Common failure classifications include:
+
+- `RUNNER_READY_BARRIER_FAILED`: one or more runners did not report the exact
+  run as ready before the start deadline.
+- `SHARD_RESULTS_MISSING`: the run did not produce a shard result to aggregate.
+- `CLEANUP_FAILED`: run-created VM deletion needs operator follow-up.
+
 ## Goals
 
 - Validate a 100K-device and 5K-user home scenario against staging/LKE.

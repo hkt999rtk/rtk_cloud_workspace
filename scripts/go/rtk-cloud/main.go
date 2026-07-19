@@ -8209,6 +8209,8 @@ func accountBindDevicesViaClaimResolve(ctx accountManagerContext, session *accou
 	}
 	results := map[string]accountBulkBindDeviceResult{}
 	var resultsMu sync.Mutex
+	var existingMu sync.Mutex
+	existingByOrg := map[string]map[string]accountBulkBindDeviceResult{}
 	var progressMu sync.Mutex
 	done := 0
 	failed := 0
@@ -8264,10 +8266,25 @@ func accountBindDevicesViaClaimResolve(ctx accountManagerContext, session *accou
 		}
 		if status != http.StatusCreated {
 			if status == http.StatusConflict && accountClaimResolveAlreadyClaimed(body) {
-				result, lookupErr := accountFindExistingClaimedDevice(ctx, brandCloudID, userToken, assignment)
+				existingMu.Lock()
+				byDevice, loaded := existingByOrg[brandCloudID]
+				if !loaded {
+					byDevice, err = accountListExistingClaimedDevices(ctx, brandCloudID, userToken, assignment)
+					if err == nil {
+						existingByOrg[brandCloudID] = byDevice
+					}
+				}
+				result, found := byDevice[assignment.DeviceID]
+				existingMu.Unlock()
+				var lookupErr error
+				if !found {
+					lookupErr = fmt.Errorf("existing claimed device not found by metadata.video_cloud_devid")
+				}
 				if lookupErr != nil {
 					return struct{}{}, fmt.Errorf("claim resolve already claimed but existing device lookup failed: device=%s: %w", assignment.DeviceID, lookupErr)
 				}
+				result.VideoCloudDevid = assignment.DeviceID
+				result.ProvisionInput = provisionInputForAssignment(assignment)
 				resultsMu.Lock()
 				results[assignment.DeviceID] = result
 				resultsMu.Unlock()
@@ -8308,7 +8325,7 @@ func accountBindDevicesViaClaimResolve(ctx accountManagerContext, session *accou
 func accountClaimResolveAlreadyClaimed(body []byte) bool {
 	var parsed map[string]any
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return false
+		return strings.Contains(strings.ToLower(string(body)), "already claimed")
 	}
 	if stringValue(parsed["code"]) == "already_claimed" {
 		return true
@@ -8316,19 +8333,34 @@ func accountClaimResolveAlreadyClaimed(body []byte) bool {
 	if errorObject, ok := parsed["error"].(map[string]any); ok {
 		return stringValue(errorObject["code"]) == "already_claimed"
 	}
-	return stringValue(parsed["error"]) == "already_claimed"
+	if stringValue(parsed["error"]) == "already_claimed" {
+		return true
+	}
+	return strings.Contains(strings.ToLower(string(body)), "already claimed")
 }
 
 func accountFindExistingClaimedDevice(ctx accountManagerContext, brandCloudID, userToken string, assignment bindAssignment) (accountBulkBindDeviceResult, error) {
+	devices, err := accountListExistingClaimedDevices(ctx, brandCloudID, userToken, assignment)
+	if err != nil {
+		return accountBulkBindDeviceResult{}, err
+	}
+	if result, ok := devices[assignment.DeviceID]; ok {
+		return result, nil
+	}
+	return accountBulkBindDeviceResult{}, fmt.Errorf("existing claimed device not found by metadata.video_cloud_devid")
+}
+
+func accountListExistingClaimedDevices(ctx accountManagerContext, brandCloudID, userToken string, assignment bindAssignment) (map[string]accountBulkBindDeviceResult, error) {
+	devices := map[string]accountBulkBindDeviceResult{}
 	const limit = 200
 	for offset := 0; ; offset += limit {
 		endpoint := fmt.Sprintf("%s/v1/orgs/%s/devices?limit=%d&offset=%d", ctx.BaseURL, url.PathEscape(brandCloudID), limit, offset)
 		body, status, err := curlJSONStatus(endpoint, userToken, nil)
 		if err != nil {
-			return accountBulkBindDeviceResult{}, err
+			return nil, err
 		}
 		if status != http.StatusOK {
-			return accountBulkBindDeviceResult{}, fmt.Errorf("list devices failed: HTTP %d%s", status, errorBodySuffix(body))
+			return nil, fmt.Errorf("list devices failed: HTTP %d%s", status, errorBodySuffix(body))
 		}
 		var parsed struct {
 			Devices    []map[string]any `json:"devices"`
@@ -8337,30 +8369,31 @@ func accountFindExistingClaimedDevice(ctx accountManagerContext, brandCloudID, u
 			} `json:"pagination"`
 		}
 		if err := json.Unmarshal(body, &parsed); err != nil {
-			return accountBulkBindDeviceResult{}, err
+			return nil, err
 		}
 		for _, device := range parsed.Devices {
 			metadata, _ := device["metadata"].(map[string]any)
-			if stringValue(metadata["video_cloud_devid"]) != assignment.DeviceID {
+			deviceID := stringValue(metadata["video_cloud_devid"])
+			if deviceID == "" {
 				continue
 			}
 			accountDeviceID := stringValue(device["id"])
 			if accountDeviceID == "" {
-				return accountBulkBindDeviceResult{}, fmt.Errorf("existing device missing id: device=%s", assignment.DeviceID)
+				return nil, fmt.Errorf("existing device missing id: device=%s", deviceID)
 			}
-			return accountBulkBindDeviceResult{
-				VideoCloudDevid: assignment.DeviceID,
+			devices[deviceID] = accountBulkBindDeviceResult{
+				VideoCloudDevid: deviceID,
 				Status:          "existing",
 				AccountDeviceID: accountDeviceID,
 				Device:          device,
 				ProvisionInput:  provisionInputForAssignment(assignment),
-			}, nil
+			}
 		}
 		if len(parsed.Devices) == 0 || offset+len(parsed.Devices) >= parsed.Pagination.Total {
 			break
 		}
 	}
-	return accountBulkBindDeviceResult{}, fmt.Errorf("existing claimed device not found by metadata.video_cloud_devid")
+	return devices, nil
 }
 
 func parseAccountClaimResolveBindResult(body []byte, assignment bindAssignment) (accountBulkBindDeviceResult, error) {

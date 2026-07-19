@@ -41,6 +41,56 @@ func TestRunProvisionLKEApplyUsesKubectl(t *testing.T) {
 	}
 }
 
+func TestWriteLKEDeviceClientCABundle(t *testing.T) {
+	envRoot := t.TempDir()
+	paths := provisionPaths{EnvRoot: envRoot}
+	dir := filepath.Join(envRoot, "state", "secrets")
+	path := filepath.Join(dir, "device-client-ca-bundle.pem")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("stale\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rootCA := "-----BEGIN CERTIFICATE-----\nroot\n-----END CERTIFICATE-----"
+	deviceCA := "-----BEGIN CERTIFICATE-----\ndevice\n-----END CERTIFICATE-----"
+	appCA := "-----BEGIN CERTIFICATE-----\napp\n-----END CERTIFICATE-----"
+
+	if err := writeLKEDeviceClientCABundle(paths, rootCA, deviceCA, appCA); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := lkeClientCABundle(rootCA, deviceCA, appCA)
+	if string(got) != want {
+		t.Fatalf("unexpected CA bundle:\n%s", got)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("CA bundle permissions = %o, want 600", got)
+	}
+	parentInfo, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parentInfo.Mode().Perm(); got != 0o700 {
+		t.Fatalf("CA bundle directory permissions = %o, want 700", got)
+	}
+}
+
+func TestWriteLKEDeviceClientCABundleRejectsIncompleteMaterial(t *testing.T) {
+	err := writeLKEDeviceClientCABundle(provisionPaths{EnvRoot: t.TempDir()}, "root", "", "app")
+	if err == nil || !strings.Contains(err.Error(), "root, device, and app CA certificates are required") {
+		t.Fatalf("expected incomplete CA material error, got %v", err)
+	}
+}
+
 func TestRunProvisionLKEApplyInstallsMetricsServer(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)
@@ -663,8 +713,10 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"FACTORY_ENROLL_CERT_ISSUER_URL\n              value: \"https://certissuer.video-cloud-staging-video-cloud.svc.cluster.local:9443\"",
 		"FACTORY_ENROLL_AUTH_KEY",
 		"kind: Secret\nmetadata:\n  name: video-cloud-runtime",
+		"VIDEO_CLOUD_AUTH_SECRET: \"test-seed-video-auth\"",
 		"VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN",
 		"VIDEO_CLOUD_DB_DSN",
+		"VIDEO_CLOUD_AUTH_SECRET\n              valueFrom:\n                secretKeyRef:\n                  name: video-cloud-runtime\n                  key: VIDEO_CLOUD_AUTH_SECRET",
 		"VIDEO_CLOUD_API_ADDR\n              value: \":8080\"",
 		"VIDEO_CLOUD_AUTH_TRUSTED_CLIENT_CERT_HEADERS\n              value: \"true\"",
 		"VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_URL\n              value: \"http://account-manager.video-cloud-staging-account-manager.svc.cluster.local:80\"",

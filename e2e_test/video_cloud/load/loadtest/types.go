@@ -69,6 +69,7 @@ const (
 const (
 	ClipSetOff                 = "off"
 	ClipSetRecordingFunctional = "recording-functional"
+	ClipSetStoragePoisson      = "storage-poisson"
 )
 
 const (
@@ -109,6 +110,13 @@ type Config struct {
 	WebRTCICEPolicy       string            `json:"webrtc_ice_policy"`
 	WebRTCMediaDuration   time.Duration     `json:"webrtc_media_duration"`
 	ClipSet               string            `json:"clip_set"`
+	ClipDeviceIDs         []string          `json:"clip_device_ids,omitempty"`
+	ClipCountPerDevice    int               `json:"clip_count_per_device,omitempty"`
+	ClipScheduleWindow    time.Duration     `json:"clip_schedule_window,omitempty"`
+	ClipFixturePath       string            `json:"-"`
+	ClipThumbnailPath     string            `json:"-"`
+	ClipPoissonSeed       int64             `json:"clip_poisson_seed,omitempty"`
+	ClipUploadConcurrency int               `json:"clip_upload_concurrency,omitempty"`
 	MQTTSet               string            `json:"mqtt_set"`
 	MQTTAddr              string            `json:"mqtt_addr,omitempty"`
 	MQTTUsername          string            `json:"-"`
@@ -169,6 +177,7 @@ type Result struct {
 	Actors              map[string]ActorMetrics     `json:"actors"`
 	WebRTC              WebRTCMetrics               `json:"webrtc"`
 	WebRTCMedia         WebRTCMediaMetrics          `json:"webrtc_media"`
+	ClipStorage         ClipStorageMetrics          `json:"clip_storage,omitempty"`
 	MQTTIoT             map[string]ActorMetrics     `json:"mqtt_iot,omitempty"`
 	CoverageMatrix      map[string]CoverageItem     `json:"coverage_matrix"`
 	Errors              map[string]int              `json:"errors"`
@@ -177,6 +186,26 @@ type Result struct {
 	WebRTCMediaFailures []WebRTCMediaFailureSample  `json:"webrtc_media_failures,omitempty"`
 	Thresholds          ThresholdEvaluation         `json:"thresholds"`
 	Metadata            map[string]string           `json:"metadata,omitempty"`
+}
+
+type ClipStorageMetrics struct {
+	Enabled           bool    `json:"enabled"`
+	CameraDevices     int     `json:"camera_devices"`
+	ExpectedClips     int     `json:"expected_clips"`
+	ActualArrivals    int     `json:"actual_arrivals"`
+	UploadAttempts    int     `json:"upload_attempts"`
+	UploadSuccesses   int     `json:"upload_successes"`
+	UploadFailures    int     `json:"upload_failures"`
+	SuccessRate       float64 `json:"success_rate"`
+	TotalBytes        int64   `json:"total_bytes"`
+	PoissonSeed       int64   `json:"poisson_seed"`
+	ScheduleWindowMS  int64   `json:"schedule_window_ms"`
+	P50LatencyMS      int64   `json:"p50_latency_ms"`
+	P95LatencyMS      int64   `json:"p95_latency_ms"`
+	P99LatencyMS      int64   `json:"p99_latency_ms"`
+	CamerasWithClips  int     `json:"cameras_with_clips"`
+	MinClipsPerCamera int     `json:"min_clips_per_camera"`
+	MaxClipsPerCamera int     `json:"max_clips_per_camera"`
 }
 
 type RedactedConfig struct {
@@ -193,6 +222,10 @@ type RedactedConfig struct {
 	WebRTCRelayRole      string   `json:"webrtc_relay_role"`
 	WebRTCICEPolicy      string   `json:"webrtc_ice_policy"`
 	ClipSet              string   `json:"clip_set"`
+	ClipDeviceCount      int      `json:"clip_device_count,omitempty"`
+	ClipCountPerDevice   int      `json:"clip_count_per_device,omitempty"`
+	ClipScheduleWindowMS int64    `json:"clip_schedule_window_ms,omitempty"`
+	ClipPoissonSeed      int64    `json:"clip_poisson_seed,omitempty"`
 	MQTTSet              string   `json:"mqtt_set"`
 	MQTTAddr             string   `json:"mqtt_addr,omitempty"`
 	MQTTUsername         string   `json:"mqtt_username,omitempty"`

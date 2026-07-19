@@ -262,6 +262,19 @@ func RenderReport(input ReportInput) string {
 	fmt.Fprintf(&b, "- Scenario profile: `%s`\n", firstNonEmpty(input.Plan.ScenarioProfile, DefaultScenarioProfile))
 	renderMap(&b, "Device mix", input.Plan.DeviceMix)
 	renderMap(&b, "Presence mix", input.Plan.PresenceMix)
+	if input.Plan.ClipStorageProfile.Name != "" {
+		clip := input.Plan.ClipStorageProfile
+		fmt.Fprintln(&b)
+		fmt.Fprintln(&b, "## Clip Storage Feature Test")
+		fmt.Fprintf(&b, "- Camera devices: %d\n", clip.CameraDevices)
+		fmt.Fprintf(&b, "- Expected clips per camera per day: %d\n", clip.ClipsPerCameraPerDay)
+		fmt.Fprintf(&b, "- Expected aggregate clips per day: %d\n", clip.CameraDevices*clip.ClipsPerCameraPerDay)
+		fmt.Fprintf(&b, "- Poisson schedule window: %s\n", clip.ScheduleWindow)
+		fmt.Fprintf(&b, "- Poisson seed: %d\n", clip.PoissonSeed)
+		fmt.Fprintf(&b, "- Upload concurrency: %d\n", clip.UploadConcurrency)
+		fmt.Fprintln(&b, "- Path: camera simulator -> POST /upload_clip -> Video Cloud -> Linode Object Storage")
+		fmt.Fprintln(&b, "- WebRTC is disabled for this scenario; the mixed device MQTT workload remains enabled.")
+	}
 	fmt.Fprintln(&b)
 
 	if len(input.Plan.DeviceProfiles) > 0 {
