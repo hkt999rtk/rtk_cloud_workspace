@@ -5,9 +5,12 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -95,6 +98,8 @@ func Execute(args []string, stdout io.Writer, stderr io.Writer) int {
 	switch args[0] {
 	case "plan":
 		return executePlan(args[1:], stdout, stderr)
+	case "preflight":
+		return executePreflight(args[1:], stdout, stderr)
 	case "run":
 		return executeRun(args[1:], stdout, stderr)
 	case "token-only":
@@ -193,6 +198,226 @@ func executePlan(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// executePreflight validates the local, secret-bearing fixture before a live
+// run provisions any VM. Keeping this check here makes the same plan/data
+// rules apply to sync and to the operator-facing workflow wrapper.
+func executePreflight(args []string, stdout io.Writer, stderr io.Writer) int {
+	fs := flag.NewFlagSet("home-100k preflight", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	envRoot := fs.String("env-root", "", "staging/LKE env-root")
+	brandname := fs.String("brandname", "", "brand name")
+	scenarioProfile := fs.String("scenario-profile", "", "scenario profile")
+	region := fs.String("region", "", "Linode region")
+	vmLabelPrefix := addVMLabelPrefixFlag(fs)
+	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
+	deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix := addSizingFlags(fs)
+	runnerNofile, sessionModel, readModel, deviceTokenRequestTimeout, deviceTokenRequestRetries := addRuntimeConditionFlags(fs)
+	functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance := addGateThresholdFlags(fs)
+	caBundle := fs.String("ca-bundle", "", "current staging device/app client CA bundle")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, ScenarioProfile: *scenarioProfile, Region: *region}
+	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
+	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
+	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix)
+	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel, deviceTokenRequestTimeout, deviceTokenRequestRetries)
+	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
+	plan, err := NewPlan(opts)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	if err := plan.Validate(); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	coverage, err := inspectPlanDataCoverage(*envRoot, plan)
+	if err != nil {
+		fmt.Fprintf(stderr, "FIXTURE_UNAVAILABLE: %v\n", err)
+		return 1
+	}
+	if err := validatePlanDataCoverage(*envRoot, plan); err != nil {
+		fmt.Fprintf(stderr, "FIXTURE_MISMATCH: %v\n", err)
+		return 1
+	}
+	if strings.TrimSpace(*caBundle) == "" {
+		fmt.Fprintln(stderr, "CERTIFICATE_CA_MISSING: --ca-bundle is required")
+		return 1
+	}
+	caPEM, err := os.ReadFile(*caBundle)
+	if err != nil {
+		fmt.Fprintf(stderr, "CERTIFICATE_CA_MISSING: %v\n", err)
+		return 1
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(caPEM) {
+		fmt.Fprintln(stderr, "CERTIFICATE_CA_INVALID: CA bundle contains no certificates")
+		return 1
+	}
+	if err := validateFixtureCertificates(*envRoot, plan, roots); err != nil {
+		fmt.Fprintf(stderr, "CERTIFICATE_INVALID: %v\n", err)
+		return 1
+	}
+	return writeJSONTo(stdout, stderr, map[string]any{
+		"status": "PASS", "brandname": plan.Conditions.Brandname,
+		"users": coverage.UsersAvailable, "eligible_users": coverage.EligibleUsers,
+		"devices": coverage.DevicesAvailable, "device_mix": coverage.DeviceMix,
+		"ca_bundle": *caBundle,
+	})
+}
+
+func validateFixtureCertificates(envRoot string, plan Plan, roots *x509.CertPool) error {
+	brands := plan.BrandDistribution
+	if len(brands) == 0 {
+		brands = []BrandDistributionEntry{{Brandname: plan.Conditions.Brandname}}
+	}
+	for _, brand := range brands {
+		db, err := sql.Open("sqlite", homeTestDataDBPath(envRoot, brand.Brandname))
+		if err != nil {
+			return err
+		}
+		rows, err := db.Query(`select device_id, cert_pem, key_pem, chain_pem from device_credentials where brandname = ?`, brand.Brandname)
+		if err != nil {
+			_ = db.Close()
+			return err
+		}
+		for rows.Next() {
+			var id, certPEM, keyPEM, chainPEM string
+			if err := rows.Scan(&id, &certPEM, &keyPEM, &chainPEM); err != nil {
+				_ = rows.Close()
+				_ = db.Close()
+				return err
+			}
+			if err := verifyFixtureCertificate(id, certPEM, keyPEM, chainPEM, roots); err != nil {
+				_ = rows.Close()
+				_ = db.Close()
+				return err
+			}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			_ = db.Close()
+			return err
+		}
+		_ = rows.Close()
+		userRows, err := db.Query(`select email, app_credentials_json, app_certificate_json from users where brandname = ? and (role = 'member' or coalesce(role, '') = '')`, brand.Brandname)
+		if err != nil {
+			_ = db.Close()
+			return err
+		}
+		for userRows.Next() {
+			var email, credentialsJSON, certificateJSON string
+			if err := userRows.Scan(&email, &credentialsJSON, &certificateJSON); err != nil {
+				_ = userRows.Close()
+				_ = db.Close()
+				return err
+			}
+			var credentials, certificate map[string]any
+			if err := json.Unmarshal([]byte(credentialsJSON), &credentials); err != nil {
+				_ = userRows.Close()
+				_ = db.Close()
+				return fmt.Errorf("app credentials %s: %w", email, err)
+			}
+			if err := json.Unmarshal([]byte(certificateJSON), &certificate); err != nil {
+				_ = userRows.Close()
+				_ = db.Close()
+				return fmt.Errorf("app certificate %s: %w", email, err)
+			}
+			key := firstStringMapValue(credentials, "private_key_pem", "key_pem")
+			certChain := firstStringMapValue(certificate, "certificate_chain_pem", "chain_pem")
+			certChain = string(normalizeFixturePEM(certChain))
+			cert := firstCertificateFromPEM(certChain)
+			if cert == nil || strings.TrimSpace(key) == "" {
+				_ = userRows.Close()
+				_ = db.Close()
+				return fmt.Errorf("app credentials incomplete for %s", email)
+			}
+			if _, err := tls.X509KeyPair([]byte(certChain), []byte(key)); err != nil {
+				_ = userRows.Close()
+				_ = db.Close()
+				return fmt.Errorf("app key pair %s: %w", email, err)
+			}
+			if err := verifyCertificateChain(cert, certChain, roots); err != nil {
+				_ = userRows.Close()
+				_ = db.Close()
+				return fmt.Errorf("app certificate %s: %w", email, err)
+			}
+		}
+		if err := userRows.Err(); err != nil {
+			_ = userRows.Close()
+			_ = db.Close()
+			return err
+		}
+		_ = userRows.Close()
+		_ = db.Close()
+	}
+	return nil
+}
+
+func verifyFixtureCertificate(id, certPEM, keyPEM, chainPEM string, roots *x509.CertPool) error {
+	certPEM = string(normalizeFixturePEM(certPEM))
+	chainPEM = string(normalizeFixturePEM(chainPEM))
+	cert := firstCertificateFromPEM(certPEM)
+	if cert == nil {
+		return fmt.Errorf("device %s leaf certificate is invalid", id)
+	}
+	if cert.NotAfter.Before(time.Now().Add(10 * time.Minute)) {
+		return fmt.Errorf("device %s certificate expires at %s", id, cert.NotAfter.UTC().Format(time.RFC3339))
+	}
+	if _, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM)); err != nil {
+		return fmt.Errorf("device %s key pair: %w", id, err)
+	}
+	return verifyCertificateChain(cert, chainPEM, roots)
+}
+
+func verifyCertificateChain(leaf *x509.Certificate, chainPEM string, roots *x509.CertPool) error {
+	intermediates := x509.NewCertPool()
+	for rest := normalizeFixturePEM(chainPEM); len(rest) > 0; {
+		block, next := pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		rest = next
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return err
+		}
+		if cert.Equal(leaf) {
+			continue
+		}
+		intermediates.AddCert(cert)
+	}
+	_, err := leaf.Verify(x509.VerifyOptions{Roots: roots, Intermediates: intermediates, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}})
+	return err
+}
+
+func firstCertificateFromPEM(value string) *x509.Certificate {
+	block, _ := pem.Decode(normalizeFixturePEM(value))
+	if block == nil || block.Type != "CERTIFICATE" {
+		return nil
+	}
+	cert, _ := x509.ParseCertificate(block.Bytes)
+	return cert
+}
+
+func firstStringMapValue(values map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := values[key].(string); ok && strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func normalizeFixturePEM(value string) []byte {
+	value = strings.ReplaceAll(value, "-----END CERTIFICATE----------BEGIN CERTIFICATE-----", "-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----")
+	return []byte(value)
 }
 
 func executeRun(args []string, stdout io.Writer, stderr io.Writer) int {

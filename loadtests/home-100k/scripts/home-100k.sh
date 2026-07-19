@@ -162,6 +162,17 @@ video_loadtest_ice_policy="${HOME100K_VIDEO_LOADTEST_WEBRTC_ICE_POLICY:-relay}"
 video_loadtest_duration="${HOME100K_VIDEO_LOADTEST_DURATION:-30s}"
 video_loadtest_media_duration="${HOME100K_VIDEO_LOADTEST_MEDIA_DURATION:-20s}"
 video_loadtest_device_online_settle="${HOME100K_VIDEO_LOADTEST_DEVICE_ONLINE_SETTLE:-}"
+clip_storage_loadtest="${HOME100K_CLIP_STORAGE_LOADTEST:-auto}"
+clip_storage_loadtest_script="${HOME100K_CLIP_STORAGE_LOADTEST_SCRIPT:-$repo_root/e2e_test/video_cloud/load/scripts/run_clip_storage_loadtest.sh}"
+clip_storage_loadtest_artifact_dir="${HOME100K_CLIP_STORAGE_LOADTEST_ARTIFACT_DIR:-$repo_root/$out_dir/clip-storage}"
+clip_storage_camera_ids_file="${HOME100K_CLIP_STORAGE_CAMERA_IDS_FILE:-}"
+clip_storage_token_map_file="${HOME100K_CLIP_STORAGE_TOKEN_MAP_FILE:-}"
+clip_storage_fixture="${HOME100K_CLIP_STORAGE_FIXTURE:-$repo_root/e2e_test/video_cloud/load/testdata/clip_1080p_h264_3mbps_15s.mp4}"
+clip_storage_thumbnail="${HOME100K_CLIP_STORAGE_THUMBNAIL:-$repo_root/e2e_test/video_cloud/load/testdata/thumbnail_1080p.jpg}"
+clip_storage_count_per_camera="${HOME100K_CLIP_STORAGE_CLIPS_PER_CAMERA:-10}"
+clip_storage_window="${HOME100K_CLIP_STORAGE_WINDOW:-30m}"
+clip_storage_seed="${HOME100K_CLIP_STORAGE_POISSON_SEED:-20260719}"
+clip_storage_concurrency="${HOME100K_CLIP_STORAGE_UPLOAD_CONCURRENCY:-64}"
 if [[ -z "$video_loadtest_shard_mode" ]]; then
   case "$scenario_profile:$video_loadtest_mode" in
     video-50k-turn-v1:remote-sharded|video-100k-turn-v1:remote-sharded)
@@ -192,6 +203,9 @@ fi
 if [[ -z "${HOME100K_VIDEO_LOADTEST_ARTIFACT_DIR:-}" ]]; then
   video_loadtest_artifact_dir="$local_out_dir/video"
 fi
+if [[ -z "${HOME100K_CLIP_STORAGE_LOADTEST_ARTIFACT_DIR:-}" ]]; then
+  clip_storage_loadtest_artifact_dir="$local_out_dir/clip-storage"
+fi
 local_vm_state_file="$local_out_dir/vms.json"
 status_file="$local_out_dir/.workflow-status"
 nodes_file="$local_out_dir/nodes.tsv"
@@ -203,6 +217,9 @@ workflow_status_log="$local_out_dir/workflow-status.log"
 k8s_runtime_health_file="$resource_samples_dir/k8s-runtime-health.log"
 shutdown_live_vms_on_exit=0
 shutdown_on_error="${HOME100K_SHUTDOWN_ON_ERROR:-0}"
+auto_destroy_on_exit="${HOME100K_AUTO_DESTROY_ON_EXIT:-1}"
+preserve_vms="${HOME100K_PRESERVE_VMS:-0}"
+single_device_smoke="${HOME100K_SINGLE_DEVICE_SMOKE:-1}"
 
 usage() {
   cat <<EOF
@@ -213,6 +230,7 @@ Default command:
 
 Commands:
   plan                    Print the deterministic configured-size mixed run plan.
+  preflight               Validate fixture inventory and current client CA before VM creation.
   dry-run                 Render local review artifacts; does not create VMs.
   provision-vms           Review or live-create Linode VMs.
   token-only              Run isolated /request_token load against an API base URL.
@@ -318,6 +336,9 @@ Defaults can be overridden with:
   HOME100K_K8S_RUNTIME_HEALTH_STATUS default: 1 during run-stages; set 0 to disable API/EMQX health snapshots
   HOME100K_K8S_RUNTIME_HEALTH_SINCE default: 2m; log lookback window for API/EMQX error snapshots
   HOME100K_SHUTDOWN_ON_ERROR default: 0; keep VMs running after failures for resume/debug
+  HOME100K_AUTO_DESTROY_ON_EXIT default: 1; destroy run-created VMs after workflow cleanup
+  HOME100K_PRESERVE_VMS default: 0; explicit opt-out for investigation/resume
+  HOME100K_SINGLE_DEVICE_SMOKE default: 1; run one actor-separated device/app smoke before provisioning
   HOME100K_KUBECONFIG default: CLOUD_STAGING_K8S_KUBECONFIG or <env-root>/state/kubeconfig.yaml
 
 Examples:
@@ -333,6 +354,59 @@ EOF
 
 run_home100k() {
   (cd "$repo_root" && GOWORK=auto go run ./loadtests/home-100k/cmd/home-100k -- "$@")
+}
+
+device_ca_bundle_path() {
+  local candidate
+  for candidate in \
+    "${HOME100K_DEVICE_CLIENT_CA_BUNDLE:-}" \
+    "$(local_env_root_path)/state/secrets/device-client-ca-bundle.pem"; do
+    if [[ -n "$candidate" && -f "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+run_fixture_preflight() {
+  local ca_bundle="$1"
+  local preflight_json="$local_out_dir/preflight.json"
+  local preflight_log="$local_out_dir/preflight.log"
+  mkdir -p "$local_out_dir"
+  if ! run_home100k preflight "${base_args[@]}" --ca-bundle "$ca_bundle" >"$preflight_json" 2>"$preflight_log"; then
+    echo "loadtest preflight failed; classification is in $preflight_log" >&2
+    return 1
+  fi
+  echo "loadtest fixture preflight passed: $preflight_json" >&2
+}
+
+run_single_device_smoke() {
+  [[ "$single_device_smoke" == "1" || "$single_device_smoke" == "true" || "$single_device_smoke" == "TRUE" ]] || return 0
+  [[ "$runner_mode" == "live" ]] || return 0
+  local ca_bundle db_path smoke_dir brand_file
+  ca_bundle="$(device_ca_bundle_path)" || { echo "CERTIFICATE_CA_MISSING: current device CA bundle not found" >&2; return 1; }
+  brand_file="$(printf '%s' "$brandname" | tr '[:upper:]' '[:lower:]')"
+  db_path="$(local_env_root_path)/artifacts/test-data/${brand_file}-test-data.sqlite"
+  [[ -f "$db_path" ]] || { echo "FIXTURE_UNAVAILABLE: test-data DB not found: $db_path" >&2; return 1; }
+  smoke_dir="$local_out_dir/single-device-smoke"
+  mkdir -p "$smoke_dir"
+  echo "running single-device actor smoke before VM provisioning" >&2
+  if ! (cd "$repo_root/scripts/go/cloud-mqtt-test" && \
+    HOME100K_DEVICE_CLIENT_CA_BUNDLE="$ca_bundle" \
+    ACCOUNT_MANAGER_BASE_URL="$account_manager_base_url" \
+    VIDEO_CLOUD_TOKEN_BASE_URL="$video_cloud_token_url" \
+    VIDEO_CLOUD_MQTT_ADDR="$mqtt_addr" \
+    VIDEO_CLOUD_PUBLIC_BASE_URL="$video_cloud_public_url" \
+    GOWORK=off go run . \
+      -root "$repo_root" -env-root "$(local_env_root_path)" -test-data-db "$db_path" \
+      -brandname "$brandname" -out-dir "$smoke_dir" -load-model actor-separated-probe \
+      -max-connected-devices 1 -max-users 1 -concurrency 1 -duration-seconds 5 -mqtt-probe true \
+      -run-id "$run_id-single-device-smoke" >"$smoke_dir/console.log" 2>&1); then
+    echo "TOKEN_BOOTSTRAP_FAILED or MQTT_SMOKE_FAILED: see $smoke_dir/console.log" >&2
+    return 1
+  fi
+  echo "single-device actor smoke passed: $smoke_dir/TEST_REPORT.md" >&2
 }
 
 duration_millis() {
@@ -1842,6 +1916,49 @@ run_video_loadtest_step() {
   done
 }
 
+clip_storage_loadtest_enabled() {
+  case "$clip_storage_loadtest" in
+    off|false|0) return 1 ;;
+    on|true|1) return 0 ;;
+    auto) [[ "$scenario_profile" == "clip-storage-10k-v1" ]] ;;
+    *) echo "invalid HOME100K_CLIP_STORAGE_LOADTEST: $clip_storage_loadtest" >&2; return 2 ;;
+  esac
+}
+
+run_clip_storage_loadtest_step() {
+  clip_storage_loadtest_enabled || return $?
+  if [[ ! -x "$clip_storage_loadtest_script" ]]; then
+    echo "clip storage loadtest script not executable: $clip_storage_loadtest_script" >&2
+    return 1
+  fi
+  if [[ -z "$clip_storage_camera_ids_file" || -z "$clip_storage_token_map_file" ]]; then
+    echo "clip storage loadtest requires HOME100K_CLIP_STORAGE_CAMERA_IDS_FILE and HOME100K_CLIP_STORAGE_TOKEN_MAP_FILE" >&2
+    return 1
+  fi
+  set_phase "run-clip-storage-loadtest"
+  VIDEO_CLOUD_LOAD_RUN_ID="${VIDEO_CLOUD_LOAD_RUN_ID:-$run_id-clip-storage}" \
+  VIDEO_CLOUD_LOAD_ARTIFACT_DIR="$clip_storage_loadtest_artifact_dir" \
+  VIDEO_CLOUD_LOAD_CLIP_DEVICE_IDS_FILE="$clip_storage_camera_ids_file" \
+  VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE="$clip_storage_token_map_file" \
+  VIDEO_CLOUD_LOAD_CLIP_FIXTURE="$clip_storage_fixture" \
+  VIDEO_CLOUD_LOAD_CLIP_THUMBNAIL="$clip_storage_thumbnail" \
+  VIDEO_CLOUD_LOAD_CLIP_COUNT_PER_DEVICE="$clip_storage_count_per_camera" \
+  VIDEO_CLOUD_LOAD_CLIP_SCHEDULE_WINDOW="$clip_storage_window" \
+  VIDEO_CLOUD_LOAD_CLIP_POISSON_SEED="$clip_storage_seed" \
+  VIDEO_CLOUD_LOAD_CLIP_UPLOAD_CONCURRENCY="$clip_storage_concurrency" \
+  VIDEO_CLOUD_LOAD_API_URL="${VIDEO_CLOUD_LOAD_API_URL:-$video_cloud_public_url}" \
+  "$clip_storage_loadtest_script"
+}
+
+collect_clip_storage_evidence() {
+  clip_storage_loadtest_enabled || return $?
+  if [[ ! -s "$clip_storage_loadtest_artifact_dir/load-results.json" || ! -s "$clip_storage_loadtest_artifact_dir/load-report.md" ]]; then
+    echo "clip storage evidence is incomplete: expected load-results.json and load-report.md under $clip_storage_loadtest_artifact_dir" >&2
+    return 1
+  fi
+  cp "$clip_storage_loadtest_artifact_dir/load-results.json" "$clip_storage_loadtest_artifact_dir/clip-storage-evidence.json"
+}
+
 start_status_monitor() {
   workflow_start_epoch="$(date +%s)"
   set_phase "starting"
@@ -1889,6 +2006,28 @@ PY
   done
 }
 
+destroy_live_vms() {
+  if [[ "$auto_destroy_on_exit" != "1" && "$auto_destroy_on_exit" != "true" && "$auto_destroy_on_exit" != "TRUE" ]]; then
+    return 0
+  fi
+  if [[ "$preserve_vms" == "1" || "$preserve_vms" == "true" || "$preserve_vms" == "TRUE" ]]; then
+    echo "preserving live VMs because HOME100K_PRESERVE_VMS is enabled" >&2
+    return 0
+  fi
+  if [[ ! -f "$local_vm_state_file" || -z "${LINODE_TOKEN:-}" ]]; then
+    return 0
+  fi
+  run_home100k destroy-vms "${base_args[@]}" --run-id "$run_id" --vm-state-file "$local_vm_state_file" --live --confirm-live >/dev/null
+}
+
+cleanup_live_vms() {
+  shutdown_live_vms || true
+  destroy_live_vms || {
+    echo "CLEANUP_FAILED: unable to destroy run-created VMs; state=$local_vm_state_file" >&2
+    return 1
+  }
+}
+
 should_shutdown_after_workflow() {
   if [[ "$shutdown_on_error" == "1" ]]; then
     return 0
@@ -1905,9 +2044,9 @@ on_script_exit() {
     kill "$status_monitor_pid" 2>/dev/null || true
     wait "$status_monitor_pid" 2>/dev/null || true
   fi
-  if [[ "$shutdown_live_vms_on_exit" == "1" && ( "$rc" == "0" || "$shutdown_on_error" == "1" ) ]]; then
+  if [[ "$shutdown_live_vms_on_exit" == "1" && ( "$rc" == "0" || "$shutdown_on_error" == "1" || "$auto_destroy_on_exit" == "1" || "$auto_destroy_on_exit" == "true" || "$auto_destroy_on_exit" == "TRUE" ) ]]; then
     set_phase "shutdown-vms"
-    shutdown_live_vms >/dev/null 2>&1 || true
+    cleanup_live_vms >/dev/null 2>&1 || true
   fi
   exit "$rc"
 }
@@ -1972,10 +2111,25 @@ run_video_live_workflow() {
   shutdown_live_vms_on_exit=1
   start_status_monitor
   workflow_rc=0
+  ca_bundle_path=""
+  if ca_bundle_path="$(device_ca_bundle_path)"; then
+    export HOME100K_DEVICE_CLIENT_CA_BUNDLE="$ca_bundle_path"
+  else
+    echo "CERTIFICATE_CA_MISSING: current device/app CA bundle is required for live workflow" >&2
+    workflow_rc=1
+  fi
+  if [[ "$workflow_rc" -eq 0 ]]; then
+    run_fixture_preflight "$ca_bundle_path" || workflow_rc=$?
+  fi
+  if [[ "$workflow_rc" -eq 0 ]]; then
+    run_single_device_smoke || workflow_rc=$?
+  fi
   if [[ "$resume_mode" == "0" ]]; then
-    linode_active_service_preflight
-    set_phase "provision-vms"
-    run_home100k provision-vms "${provision_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --live --confirm-live --authorized-key-file "$authorized_key_file" "$@" || workflow_rc=$?
+    if [[ "$workflow_rc" -eq 0 ]]; then
+      linode_active_service_preflight
+      set_phase "provision-vms"
+      run_home100k provision-vms "${provision_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --live --confirm-live --authorized-key-file "$authorized_key_file" "$@" || workflow_rc=$?
+    fi
     workflow_status
   fi
   if [[ "$workflow_rc" -eq 0 ]]; then
@@ -1997,6 +2151,12 @@ run_video_live_workflow() {
     set_phase "run-video-loadtest"
     run_video_loadtest_step || workflow_rc=$?
   fi
+  if [[ "$workflow_rc" -eq 0 ]]; then
+    run_clip_storage_loadtest_step || workflow_rc=$?
+  fi
+  if [[ "$workflow_rc" -eq 0 ]]; then
+    collect_clip_storage_evidence || workflow_rc=$?
+  fi
   workflow_status
   set_phase "collect-server-evidence"
   export_kubeconfig_if_available
@@ -2011,9 +2171,9 @@ run_video_live_workflow() {
     echo "report status is $report_status result is $report_result; preserving VMs for investigation" >&2
   fi
   cleanup_rc=0
-  if should_shutdown_after_workflow; then
+  if should_shutdown_after_workflow || [[ "$workflow_rc" -ne 0 ]]; then
     set_phase "shutdown-vms"
-    shutdown_live_vms || cleanup_rc=$?
+    cleanup_live_vms || cleanup_rc=$?
   else
     set_phase "preserve-vms"
     echo "preserving live VMs for resume/debug; run shutdown-vms when finished" >&2
@@ -2128,6 +2288,14 @@ case "$command" in
   plan)
     run_home100k plan "${plan_condition_args[@]}" "$@"
     ;;
+  preflight)
+    ca_bundle="$(device_ca_bundle_path || true)"
+    if [[ -z "$ca_bundle" ]]; then
+      echo "CERTIFICATE_CA_MISSING: current device/app CA bundle not found" >&2
+      exit 1
+    fi
+    run_home100k preflight "${base_args[@]}" --ca-bundle "$ca_bundle" "$@"
+    ;;
   dry-run)
     mkdir -p "$local_out_dir"
     run_home100k run "${plan_condition_args[@]}" --ephemeral-vms --run-id "$run_id" --out-dir "$local_out_dir" "$@"
@@ -2175,6 +2343,12 @@ case "$command" in
   run-video-loadtest)
     run_video_loadtest_step "$@"
     ;;
+  run-clip-storage-loadtest)
+    run_clip_storage_loadtest_step "$@"
+    ;;
+  collect-clip-storage-evidence)
+    collect_clip_storage_evidence "$@"
+    ;;
   collect-server-evidence)
     mkdir -p "$local_out_dir"
     export_kubeconfig_if_available
@@ -2220,10 +2394,31 @@ case "$command" in
       exit 2
     fi
     mkdir -p "$local_out_dir"
-    linode_active_service_preflight
     rm -f "$ssh_known_hosts_file"
     shutdown_live_vms_on_exit=1
     start_status_monitor
+    workflow_rc=0
+    ca_bundle_path=""
+    if ca_bundle_path="$(device_ca_bundle_path)"; then
+      export HOME100K_DEVICE_CLIENT_CA_BUNDLE="$ca_bundle_path"
+    else
+      echo "CERTIFICATE_CA_MISSING: current device/app CA bundle is required for live workflow" >&2
+      workflow_rc=1
+    fi
+    if [[ "$workflow_rc" -eq 0 ]]; then
+      run_fixture_preflight "$ca_bundle_path" || workflow_rc=$?
+    fi
+    if [[ "$workflow_rc" -eq 0 ]]; then
+      run_single_device_smoke || workflow_rc=$?
+    fi
+    if [[ "$workflow_rc" -ne 0 ]]; then
+      set_phase "preflight-failed"
+      workflow_status
+      shutdown_live_vms_on_exit=0
+      stop_status_monitor
+      exit "$workflow_rc"
+    fi
+    linode_active_service_preflight
     set_phase "provision-vms"
     run_home100k provision-vms "${provision_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --live --confirm-live --authorized-key-file "$authorized_key_file" "$@"
     workflow_status
@@ -2265,9 +2460,9 @@ case "$command" in
       echo "report status is $report_status result is $report_result; preserving VMs for investigation" >&2
     fi
     cleanup_rc=0
-    if should_shutdown_after_workflow; then
+    if should_shutdown_after_workflow || [[ "$workflow_rc" -ne 0 ]]; then
       set_phase "shutdown-vms"
-      shutdown_live_vms || cleanup_rc=$?
+      cleanup_live_vms || cleanup_rc=$?
     else
       set_phase "preserve-vms"
       echo "preserving live VMs for resume/debug; run shutdown-vms when finished" >&2

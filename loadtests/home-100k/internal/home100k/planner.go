@@ -26,6 +26,7 @@ const (
 	DefaultStageCoolDown             = "30s"
 	DefaultScenarioProfile           = "home-diverse-v1"
 	Video1KScenarioProfile           = "video-1k-v1"
+	ClipStorage10KScenarioProfile    = "clip-storage-10k-v1"
 	Video50KTurnScenarioProfile      = "video-50k-turn-v1"
 	Video100KTurnScenarioProfile     = "video-100k-turn-v1"
 	DefaultVideo1KDevices            = 1000
@@ -77,23 +78,24 @@ type PlanOptions struct {
 }
 
 type Plan struct {
-	Conditions        TestConditions           `json:"conditions"`
-	BrandDistribution []BrandDistributionEntry `json:"brand_distribution,omitempty"`
-	ScenarioProfile   string                   `json:"scenario_profile"`
-	VideoProfile      VideoProfile             `json:"video_profile,omitempty"`
-	DeviceMix         map[string]int           `json:"device_mix"`
-	DeviceProfiles    map[string]DeviceProfile `json:"device_profiles"`
-	UserProfiles      map[string]UserProfile   `json:"user_profiles"`
-	StageUsageWindows []string                 `json:"stage_usage_windows,omitempty"`
-	PresenceMix       map[string]int           `json:"presence_mix"`
-	Target            TargetWindow             `json:"target"`
-	Stages            []Stage                  `json:"stages"`
-	Shards            []Shard                  `json:"shards"`
-	Assignments       []VMAssignment           `json:"vm_assignments"`
-	Lifecycle         []LifecycleAction        `json:"lifecycle_actions"`
-	Workflow          []string                 `json:"workflow"`
-	Artifacts         Artifacts                `json:"artifacts"`
-	CleanupPlan       []string                 `json:"cleanup_plan"`
+	Conditions         TestConditions           `json:"conditions"`
+	BrandDistribution  []BrandDistributionEntry `json:"brand_distribution,omitempty"`
+	ScenarioProfile    string                   `json:"scenario_profile"`
+	VideoProfile       VideoProfile             `json:"video_profile,omitempty"`
+	ClipStorageProfile ClipStorageProfile       `json:"clip_storage_profile,omitempty"`
+	DeviceMix          map[string]int           `json:"device_mix"`
+	DeviceProfiles     map[string]DeviceProfile `json:"device_profiles"`
+	UserProfiles       map[string]UserProfile   `json:"user_profiles"`
+	StageUsageWindows  []string                 `json:"stage_usage_windows,omitempty"`
+	PresenceMix        map[string]int           `json:"presence_mix"`
+	Target             TargetWindow             `json:"target"`
+	Stages             []Stage                  `json:"stages"`
+	Shards             []Shard                  `json:"shards"`
+	Assignments        []VMAssignment           `json:"vm_assignments"`
+	Lifecycle          []LifecycleAction        `json:"lifecycle_actions"`
+	Workflow           []string                 `json:"workflow"`
+	Artifacts          Artifacts                `json:"artifacts"`
+	CleanupPlan        []string                 `json:"cleanup_plan"`
 }
 
 type VideoProfile struct {
@@ -112,6 +114,17 @@ type VideoProfile struct {
 	DeviceActorRole string `json:"device_actor_role,omitempty"`
 	AppActorRole    string `json:"app_actor_role,omitempty"`
 	ViewerActorRole string `json:"viewer_actor_role,omitempty"`
+}
+
+type ClipStorageProfile struct {
+	Name                 string `json:"name,omitempty"`
+	CameraDevices        int    `json:"camera_devices,omitempty"`
+	ClipsPerCameraPerDay int    `json:"clips_per_camera_per_day,omitempty"`
+	ScheduleWindow       string `json:"schedule_window,omitempty"`
+	PoissonSeed          int64  `json:"poisson_seed,omitempty"`
+	UploadConcurrency    int    `json:"upload_concurrency,omitempty"`
+	Fixture              string `json:"fixture,omitempty"`
+	Thumbnail            string `json:"thumbnail,omitempty"`
 }
 
 func (p Plan) VideoEnabled() bool {
@@ -257,6 +270,9 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	if videoProfile.Name == Video100KTurnScenarioProfile && opts.DeviceCount <= 0 && brandPlanFile == "" {
 		opts.DeviceCount = DefaultVideo100KDevices
 	}
+	if scenarioProfile == ClipStorage10KScenarioProfile && opts.DeviceCount <= 0 && brandPlanFile == "" {
+		opts.DeviceCount = 10000
+	}
 	devices := opts.DeviceCount
 	if devices <= 0 {
 		devices = DefaultDeviceCount
@@ -380,16 +396,17 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 			AggregateCorrelationTolerancePercent: thresholds.AggregateCorrelationTolerancePercent,
 			AggregateCorrelationMinTolerance:     thresholds.AggregateCorrelationMinTolerance,
 		},
-		BrandDistribution: brandPlan.Distribution(),
-		ScenarioProfile:   scenarioProfile,
-		VideoProfile:      videoProfile,
-		DeviceMix:         deviceMix,
-		DeviceProfiles:    deviceProfilesForScenario(scenarioProfile),
-		UserProfiles:      homeDiverseUserProfiles(),
-		PresenceMix:       proportionalMix(devices, []ratioBucket{{Name: "online_steady", Weight: 85}, {Name: "offline_desired_queue", Weight: 10}, {Name: "flapping_reconnect", Weight: 5}}),
-		Target:            targetWindowFromStages(stages),
-		Stages:            stages,
-		Workflow:          workflowSteps(videoProfile),
+		BrandDistribution:  brandPlan.Distribution(),
+		ScenarioProfile:    scenarioProfile,
+		VideoProfile:       videoProfile,
+		ClipStorageProfile: clipStorageProfileForScenario(scenarioProfile),
+		DeviceMix:          deviceMix,
+		DeviceProfiles:     deviceProfilesForScenario(scenarioProfile),
+		UserProfiles:       homeDiverseUserProfiles(),
+		PresenceMix:        proportionalMix(devices, []ratioBucket{{Name: "online_steady", Weight: 85}, {Name: "offline_desired_queue", Weight: 10}, {Name: "flapping_reconnect", Weight: 5}}),
+		Target:             targetWindowFromStages(stages),
+		Stages:             stages,
+		Workflow:           workflowSteps(scenarioProfile, videoProfile),
 		Artifacts: Artifacts{
 			RunPlan:         "loadtests/home-100k/plans/<run_id>/plan.json",
 			ShardResults:    "loadtests/home-100k/reports/<run_id>/shards/",
@@ -411,6 +428,22 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	}
 	plan.Lifecycle = BuildLifecycleActions(plan, "<run_id>")
 	return plan, nil
+}
+
+func clipStorageProfileForScenario(scenario string) ClipStorageProfile {
+	if strings.TrimSpace(scenario) != ClipStorage10KScenarioProfile {
+		return ClipStorageProfile{}
+	}
+	return ClipStorageProfile{
+		Name:                 ClipStorage10KScenarioProfile,
+		CameraDevices:        1000,
+		ClipsPerCameraPerDay: 10,
+		ScheduleWindow:       "30m",
+		PoissonSeed:          20260719,
+		UploadConcurrency:    64,
+		Fixture:              "e2e_test/video_cloud/load/testdata/clip_1080p_h264_3mbps_15s.mp4",
+		Thumbnail:            "e2e_test/video_cloud/load/testdata/thumbnail_1080p.jpg",
+	}
 }
 
 func videoProfileForScenario(scenario string) VideoProfile {
@@ -481,7 +514,7 @@ func isVideoTurnSizingProfile(name string) bool {
 }
 
 func deviceMixForScenario(scenario string, devices int) map[string]int {
-	if strings.TrimSpace(scenario) == Video1KScenarioProfile {
+	if strings.TrimSpace(scenario) == Video1KScenarioProfile || strings.TrimSpace(scenario) == ClipStorage10KScenarioProfile {
 		return proportionalMix(devices, []ratioBucket{
 			{Name: "camera", Weight: 10},
 			{Name: "light", Weight: 30},
@@ -497,16 +530,19 @@ func deviceMixForScenario(scenario string, devices int) map[string]int {
 
 func deviceProfilesForScenario(scenario string) map[string]DeviceProfile {
 	profiles := homeDiverseDeviceProfiles()
-	if strings.TrimSpace(scenario) == Video1KScenarioProfile || isVideoTurnSizingProfile(scenario) {
+	if strings.TrimSpace(scenario) == Video1KScenarioProfile || strings.TrimSpace(scenario) == ClipStorage10KScenarioProfile || isVideoTurnSizingProfile(scenario) {
 		profiles["camera"] = DeviceProfile{RatioWeight: 10, TrafficProfile: "event_burst", PayloadClass: "camera_status"}
 	}
 	return profiles
 }
 
-func workflowSteps(video VideoProfile) []string {
+func workflowSteps(scenario string, video VideoProfile) []string {
 	steps := []string{"plan", "provision-vms", "sync", "run-stages", "collect"}
 	if strings.TrimSpace(video.Name) != "" {
 		steps = append(steps, "run-video-loadtest", "collect-video-evidence")
+	}
+	if strings.TrimSpace(scenario) == ClipStorage10KScenarioProfile {
+		steps = append(steps, "run-clip-storage-loadtest", "collect-clip-storage-evidence")
 	}
 	steps = append(steps, "collect-server-evidence", "aggregate", "destroy-vms")
 	return steps
