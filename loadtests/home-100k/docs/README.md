@@ -7,10 +7,15 @@ READMEs.
 
 ## Documents
 
+- `prepare-another-machine.md`: operator onboarding for restoring or generating
+  the git-ignored runtime prerequisites on another controller, and for allowing
+  `workflow-live` to sync scoped inputs to load-generator VMs.
 - `linode-100k-home-iot-shadow-loadtest.md`: operator guide for the Linode VM
   100K Home IoT Device Shadow workflow.
 - `home-mqtt-loadtest-simulation.md`: lower-level home MQTT simulation
   reference used as background for the formal Home 100K runner.
+- `../scenarios/mqtt-1k.description.env`: non-secret 1K MQTT/Device Shadow
+  deployment-validation profile with the full `home-diverse-v1` device mix.
 - `../scenarios/video-1k.description.env`: non-secret 1K Home + WebRTC pilot
   profile.
 - `../scenarios/video-50k-turn.description.env`: non-secret 50K Home +

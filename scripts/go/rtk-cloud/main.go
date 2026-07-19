@@ -4188,9 +4188,17 @@ func queryMissingK8SMQTTRuntimeLogs(kubeconfig, stack string, expectations []mqt
 	token := firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_TOKEN"), os.Getenv("CLOUD_LOGGER_INGEST_TOKEN"))
 	client := &http.Client{Timeout: 10 * time.Second}
 	found := map[string]struct{}{}
+	expectedByDevice := map[string][]mqttLogExpectation{}
+	deviceIDs := []string{}
 	for _, expected := range expectations {
+		if _, ok := expectedByDevice[expected.DeviceID]; !ok {
+			deviceIDs = append(deviceIDs, expected.DeviceID)
+		}
+		expectedByDevice[expected.DeviceID] = append(expectedByDevice[expected.DeviceID], expected)
+	}
+	for _, deviceID := range deviceIDs {
 		values := url.Values{}
-		values.Set("device_id", expected.DeviceID)
+		values.Set("device_id", deviceID)
 		values.Set("component", "device_runtime_log")
 		values.Set("source", "device-runtime")
 		values.Set("limit", "1000")
@@ -4223,9 +4231,10 @@ func queryMissingK8SMQTTRuntimeLogs(kubeconfig, stack string, expectations []mqt
 			streamID, _ := event.Fields["stream_id"].(string)
 			source, _ := event.Fields["source"].(string)
 			seq := intFromJSONNumber(event.Fields["seq"])
-			if streamID == expected.StreamID && source == expected.Source && seq == expected.Seq && event.Message == expected.Message {
-				found[expected.key()] = struct{}{}
-				break
+			for _, expected := range expectedByDevice[deviceID] {
+				if streamID == expected.StreamID && source == expected.Source && seq == expected.Seq && event.Message == expected.Message {
+					found[expected.key()] = struct{}{}
+				}
 			}
 		}
 	}

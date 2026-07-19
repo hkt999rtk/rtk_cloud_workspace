@@ -2035,6 +2035,8 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 		"name: VIDEO_CLOUD_DB_MAX_IDLE_CONNS\n              value: \"2\"",
 		"name: VIDEO_CLOUD_DB_CONN_MAX_LIFETIME\n              value: \"5m\"",
 		"name: VIDEO_CLOUD_MQTT_CLEAN_SESSION\n              value: \"false\"",
+		"name: VIDEO_CLOUD_MQTT_LOG_HANDLER_CONCURRENCY\n              value: \"1\"",
+		"name: VIDEO_CLOUD_LOG_INGESTER_WORKER_COUNT\n              value: \"1\"",
 	} {
 		if !strings.Contains(worker, want) {
 			t.Fatalf("expected %q in video-cloud worker manifest, got:\n%s", want, worker)
@@ -2399,6 +2401,18 @@ func TestLKEVideoCloudAuxiliaryDeploymentManifestHasNoTabOnlyLine(t *testing.T) 
 	}
 	if !strings.Contains(manifest, "emptyDir: {}\n") {
 		t.Fatalf("expected logger spool volume in auxiliary deployment manifest:\n%s", manifest)
+	}
+	for _, want := range []string{
+		"name: VIDEO_CLOUD_MQTT_USAGE_LOG_INTERVAL\n              value: \"5s\"",
+		"name: VIDEO_CLOUD_MQTT_USAGE_PERSIST_INTERVAL\n              value: \"5s\"",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("expected %q in mqttusage deployment manifest:\n%s", want, manifest)
+		}
+	}
+	cleanerManifest := lkeVideoCloudAuxiliaryDeploymentManifest(env, lkeVideoCloudAuxiliaryService{Name: "video-cloud-cleaner", Binary: "cleaner"})
+	if strings.Contains(cleanerManifest, "VIDEO_CLOUD_MQTT_USAGE_LOG_INTERVAL") || strings.Contains(cleanerManifest, "VIDEO_CLOUD_MQTT_USAGE_PERSIST_INTERVAL") {
+		t.Fatalf("mqttusage intervals must not be rendered for unrelated workers:\n%s", cleanerManifest)
 	}
 }
 

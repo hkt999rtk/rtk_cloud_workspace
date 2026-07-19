@@ -4613,6 +4613,22 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
               containerPort: %d
 `, firstNonEmpty(service.PortName, "http"), service.Port)
 	}
+	logIngesterEnv := ""
+	if service.Name == "video-cloud-logingester" {
+		logIngesterEnv = fmt.Sprintf(`            - name: VIDEO_CLOUD_MQTT_LOG_HANDLER_CONCURRENCY
+              value: %q
+            - name: VIDEO_CLOUD_LOG_INGESTER_WORKER_COUNT
+              value: %q
+`, firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_LOG_INGESTER_MQTT_HANDLER_CONCURRENCY"), env["LKE_VIDEO_CLOUD_LOG_INGESTER_MQTT_HANDLER_CONCURRENCY"], "1"), firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_LOG_INGESTER_WORKER_COUNT"), env["LKE_VIDEO_CLOUD_LOG_INGESTER_WORKER_COUNT"], "1"))
+	}
+	mqttUsageEnv := ""
+	if service.Name == "video-cloud-mqttusage" {
+		mqttUsageEnv = `            - name: VIDEO_CLOUD_MQTT_USAGE_LOG_INTERVAL
+              value: "5s"
+            - name: VIDEO_CLOUD_MQTT_USAGE_PERSIST_INTERVAL
+              value: "5s"
+`
+	}
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -4711,7 +4727,7 @@ spec:
               value: "devices"
             - name: VIDEO_CLOUD_MQTT_CLEAN_SESSION
               value: %q
-            - name: VIDEO_CLOUD_METRICS_EXPORTER_ADDR
+%s            - name: VIDEO_CLOUD_METRICS_EXPORTER_ADDR
               value: "0.0.0.0:19200"
             - name: VIDEO_CLOUD_TURN_REGISTRY_ADDR
               value: "0.0.0.0:18190"
@@ -4721,7 +4737,7 @@ spec:
               value: "0.0.0.0:19400"
             - name: VIDEO_CLOUD_MQTT_BROKER_NODE
               value: %q
-            - name: VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY
+%s            - name: VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY
               valueFrom:
                 secretKeyRef:
                   name: video-cloud-workers-runtime
@@ -4734,7 +4750,7 @@ spec:
       volumes:
         - name: logger-spool
           emptyDir: {}
-`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeDeploymentImagePullSecretsManifest(env), lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(env, service.Name), ports, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(service), service.Name)
+`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeDeploymentImagePullSecretsManifest(env), lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(env, service.Name), ports, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(service), logIngesterEnv, service.Name, mqttUsageEnv)
 }
 
 func lkeVideoCloudAuxiliaryMQTTCleanSession(service lkeVideoCloudAuxiliaryService) string {

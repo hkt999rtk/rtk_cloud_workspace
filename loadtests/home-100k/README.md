@@ -21,6 +21,13 @@ baseline is the current staging/LKE environment. The first official baseline
 uses one Linode region so capacity and bottleneck analysis are not mixed with
 cross-region network variance.
 
+A fresh Git clone does not include the secret and stateful files under
+`cloud_env/<environment>/runtime/`. Before using another controller machine,
+follow [`docs/prepare-another-machine.md`](docs/prepare-another-machine.md) to
+restore or generate the prerequisites. Load-generator VMs receive a scoped
+runtime bundle from `workflow-live` and should not receive a manually copied
+operator runtime.
+
 The test must prove more than MQTT connectivity. It must prove that IoT Device
 Shadow desired, reported, delta, and version semantics still converge under
 online, offline, and reconnect load. When a video profile is selected, the
@@ -54,6 +61,24 @@ The runtime is intentionally not stored in Git.
 
 These can become later profiles after the first single-region baseline is
 credible.
+
+## MQTT 1K Validation Profile
+
+`mqtt-1k.description.env` is the lightweight MQTT/Device Shadow validation
+profile used after a new staging deployment. It defines 1,000 devices, 50
+users, the full eleven-type `home-diverse-v1` inventory, one ephemeral mixed
+load-generator VM, and a 150-second target stage.
+
+Prepare matching data before running it; a four-type smoke inventory is not
+compatible with this scenario. The complete new-environment sequence is in
+[`../../docs/staging-from-scratch.md`](../../docs/staging-from-scratch.md).
+
+```sh
+HOME100K_DESCRIPTION_FILE=loadtests/home-100k/scenarios/mqtt-1k.description.env \
+HOME100K_BRANDNAME=RTK1K \
+HOME100K_RUN_ID=mqtt1k-$(date -u +%Y%m%dT%H%M%SZ) \
+./loadtests/home-100k/scripts/home-100k.sh workflow-live
+```
 
 ## Video-Enabled 1K Pilot Profile
 
