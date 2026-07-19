@@ -2,6 +2,10 @@
 
 這是新增 `dev`、`staging`、`prod`、`qa` 或其他 deployment environment 的操作入口。架構責任與解析原理見 [`docs/cloud-deployment-architecture.md`](../docs/cloud-deployment-architecture.md)；共用 defaults 與 adapter keys 見 [`cloud_deploy/README.md`](../cloud_deploy/README.md)。
 
+要從全新 clone 建立 LKE staging、完成服務驗收並執行 1K MQTT/Device
+Shadow 測試，請依序執行 [`staging-from-scratch.md`](../docs/staging-from-scratch.md)。不要把該流程用於
+已存在的 cluster；既有環境應先安全還原其 ignored `runtime/`。
+
 ## 建立最小設定
 
 Environment identity 直接取自 `cloud_env/` 下的目錄名稱；名稱使用小寫英數字與 `-`。不要複製既有 environment 的 `runtime/`。
@@ -61,6 +65,45 @@ Environment 不指定 LKE region、Linode type 或 provider account quota。Adap
 # cloud_env/qa/runtime/adapters/lke/account.env
 LKE_ACTIVE_SERVICE_LIMIT=20
 ```
+
+Staging 的實際檔案位置是：
+
+```text
+cloud_env/staging/runtime/adapters/lke/account.env
+```
+
+`LKE_ACTIVE_SERVICE_LIMIT` 是 Linode account 允許的 active-service 上限，
+不是另一個 API secret，也不是 architecture/default config。Linode API
+目前不提供可由 `LINODE_TOKEN` 查詢這個上限的 endpoint，因此 operator 必須
+依 Linode account confirmation 手動設定。Deployment 會在任何付費資源建立前
+比較 `current active services + planned resources` 與這個上限；值不明時應
+停止，不要猜測。
+
+建立 staging account state：
+
+```sh
+mkdir -p cloud_env/staging/runtime/adapters/lke
+cp cloud_env/staging/runtime/adapters/lke/account.env.example \
+  cloud_env/staging/runtime/adapters/lke/account.env
+
+chmod 600 cloud_env/staging/runtime/adapters/lke/account.env
+```
+
+也可以直接編輯 `account.env`，將 example 裡的 `20` 換成 Linode 確認的實際
+上限。
+
+如果另一台已完成 staging setup 的 workspace 已有這個檔案，可以安全複製其
+operator state；不要把它 commit：
+
+```sh
+cp /path/to/known-good-workspace/cloud_env/staging/runtime/adapters/lke/account.env \
+  cloud_env/staging/runtime/adapters/lke/account.env
+chmod 600 cloud_env/staging/runtime/adapters/lke/account.env
+```
+
+`20` 只是已確認 account limit 的例子；執行者必須以自己 Linode account
+收到的實際上限替換。檔案位於被 Git 忽略的 `runtime/`，不會隨 `git clone`
+取得。
 
 Architecture override 不得包含 provider key；adapter override 不得包含 workload、capacity 或 topology key。Unknown key、錯誤型別與跨層 key 會在 plan 階段失敗。
 

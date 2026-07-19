@@ -38,6 +38,28 @@ GCP/Azure/AWS 的 provider id 分別預留為 `k8s`、`gke`、`aks`、`eks`；�
 fail-fast adapter，會在任何 cloud API、DNS 或 state mutation 前停止。
 現階段唯一應被 live 驗證的 Kubernetes provider 仍是 `lke`。
 
+Private GHCR image pull 使用 operator-local credentials。Local deployment
+會依序讀取 process environment、runtime env map，以及 `~/.env`：
+
+```env
+GHCR_PULL_USERNAME=你的 GitHub username
+GHCR_PULL_TOKEN=具備 read:packages 的 GitHub token
+```
+
+`GHCR_PULL_TOKEN` 不得寫入 tracked `env/stack.env`、Git、PR 或 log。部署前
+先確認 Docker registry login 成功：
+
+```sh
+printf '%s' "$GHCR_PULL_TOKEN" | \
+  docker login ghcr.io \
+    --username "$GHCR_PULL_USERNAME" \
+    --password-stdin
+```
+
+若只放在 `~/.env`，deployment command 會自動讀取；不需要每次手動
+`export`。GitHub Actions 則使用 repository secrets
+`GHCR_PULL_USERNAME` 與 `GHCR_PULL_TOKEN`。
+
 Kubernetes runtime manifest 的新增規則：非 secret YAML 優先放在
 `scripts/go/rtk-cloud/templates/k8s/*.yaml.tmpl`，透過 Go template renderer
 產生；共用 labels/selectors/namespace/imagePullSecret metadata 由 Go helper

@@ -24,6 +24,32 @@ import (
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/envroot"
 )
 
+func TestLKEGHCRPullCredentialsFallsBackToHomeEnv(t *testing.T) {
+	home := t.TempDir()
+	writeTestFile(t, filepath.Join(home, ".env"), "GHCR_PULL_USERNAME=home-user\nGHCR_PULL_TOKEN=home-token\n")
+	t.Setenv("HOME", home)
+	t.Setenv("GHCR_PULL_USERNAME", "")
+	t.Setenv("GHCR_PULL_TOKEN", "")
+
+	username, token := lkeGHCRPullCredentials(nil)
+	if username != "home-user" || token != "home-token" {
+		t.Fatalf("lkeGHCRPullCredentials() = (%q, %q), want home .env values", username, token)
+	}
+}
+
+func TestLKEGHCRPullCredentialsPrefersProcessEnv(t *testing.T) {
+	home := t.TempDir()
+	writeTestFile(t, filepath.Join(home, ".env"), "GHCR_PULL_USERNAME=home-user\nGHCR_PULL_TOKEN=home-token\n")
+	t.Setenv("HOME", home)
+	t.Setenv("GHCR_PULL_USERNAME", "process-user")
+	t.Setenv("GHCR_PULL_TOKEN", "process-token")
+
+	username, token := lkeGHCRPullCredentials(nil)
+	if username != "process-user" || token != "process-token" {
+		t.Fatalf("lkeGHCRPullCredentials() = (%q, %q), want process env values", username, token)
+	}
+}
+
 func TestRunProvisionLKEApplyUsesKubectl(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)
@@ -2061,6 +2087,8 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 		"name: VIDEO_CLOUD_DB_MAX_IDLE_CONNS\n              value: \"2\"",
 		"name: VIDEO_CLOUD_DB_CONN_MAX_LIFETIME\n              value: \"5m\"",
 		"name: VIDEO_CLOUD_MQTT_CLEAN_SESSION\n              value: \"false\"",
+		"name: VIDEO_CLOUD_MQTT_LOG_HANDLER_CONCURRENCY\n              value: \"1\"",
+		"name: VIDEO_CLOUD_LOG_INGESTER_WORKER_COUNT\n              value: \"1\"",
 	} {
 		if !strings.Contains(worker, want) {
 			t.Fatalf("expected %q in video-cloud worker manifest, got:\n%s", want, worker)
@@ -2425,6 +2453,18 @@ func TestLKEVideoCloudAuxiliaryDeploymentManifestHasNoTabOnlyLine(t *testing.T) 
 	}
 	if !strings.Contains(manifest, "emptyDir: {}\n") {
 		t.Fatalf("expected logger spool volume in auxiliary deployment manifest:\n%s", manifest)
+	}
+	for _, want := range []string{
+		"name: VIDEO_CLOUD_MQTT_USAGE_LOG_INTERVAL\n              value: \"5s\"",
+		"name: VIDEO_CLOUD_MQTT_USAGE_PERSIST_INTERVAL\n              value: \"5s\"",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("expected %q in mqttusage deployment manifest:\n%s", want, manifest)
+		}
+	}
+	cleanerManifest := lkeVideoCloudAuxiliaryDeploymentManifest(env, lkeVideoCloudAuxiliaryService{Name: "video-cloud-cleaner", Binary: "cleaner"})
+	if strings.Contains(cleanerManifest, "VIDEO_CLOUD_MQTT_USAGE_LOG_INTERVAL") || strings.Contains(cleanerManifest, "VIDEO_CLOUD_MQTT_USAGE_PERSIST_INTERVAL") {
+		t.Fatalf("mqttusage intervals must not be rendered for unrelated workers:\n%s", cleanerManifest)
 	}
 }
 

@@ -3389,7 +3389,7 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 	}
 	recorder := runtimeLogRecorder{deviceID: probe.DeviceID, streamID: logStreamID, now: probe.Now}
 	recordRuntimeLog := func(conn io.ReadWriter, phase, actor, action, topic string, attrs map[string]any) error {
-		expect, err := recorder.RecordWithExpectation(conn, phase, actor, action, topic, attrs)
+		expect, err := recorder.RecordWithExpectationQoS1(conn, phase, actor, action, topic, attrs)
 		if err != nil {
 			return err
 		}
