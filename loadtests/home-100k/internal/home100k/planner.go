@@ -26,7 +26,7 @@ const (
 	DefaultStageCoolDown             = "30s"
 	DefaultScenarioProfile           = "home-diverse-v1"
 	Video1KScenarioProfile           = "video-1k-v1"
-	ClipStorage10KScenarioProfile    = "clip-storage-10k-v1"
+	ClipStorage10KScenarioProfile    = "clip-storage-10k-v2"
 	Video50KTurnScenarioProfile      = "video-50k-turn-v1"
 	Video100KTurnScenarioProfile     = "video-100k-turn-v1"
 	DefaultVideo1KDevices            = 1000

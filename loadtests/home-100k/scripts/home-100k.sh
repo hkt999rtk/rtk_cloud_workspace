@@ -913,7 +913,7 @@ k8s_runtime_health_status() {
   fi
 
   local top_output api_errors emqx_errors listener_output mqtt_pods pod
-  top_output="$("${kubectl_prefix[@]}" top pods -A --containers --request-timeout=5s 2>&1 | grep -E 'mqtt|video-cloud-api|postgres|redis|ingress' || true)"
+  top_output="$("${kubectl_prefix[@]}" top pods -A --containers --request-timeout=5s 2>&1 | grep -E 'mqtt|video-cloud-(api|clipverifier)|postgres|redis|ingress' || true)"
   api_errors="$("${kubectl_prefix[@]}" -n "$ns" logs deploy/video-cloud-api --since="$since" --tail=300 2>&1 | grep -Ei 'broken pipe|connection reset|socket_error|congest|timeout' || true)"
   mqtt_pods="$("${kubectl_prefix[@]}" -n "$ns" get pods --selector app.kubernetes.io/name=mqtt -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)"
   listener_output=""
@@ -1920,7 +1920,7 @@ clip_storage_loadtest_enabled() {
   case "$clip_storage_loadtest" in
     off|false|0) return 1 ;;
     on|true|1) return 0 ;;
-    auto) [[ "$scenario_profile" == "clip-storage-10k-v1" ]] ;;
+    auto) [[ "$scenario_profile" == "clip-storage-10k-v2" ]] ;;
     *) echo "invalid HOME100K_CLIP_STORAGE_LOADTEST: $clip_storage_loadtest" >&2; return 2 ;;
   esac
 }
@@ -1947,13 +1947,15 @@ run_clip_storage_loadtest_step() {
   VIDEO_CLOUD_LOAD_CLIP_POISSON_SEED="$clip_storage_seed" \
   VIDEO_CLOUD_LOAD_CLIP_UPLOAD_CONCURRENCY="$clip_storage_concurrency" \
   VIDEO_CLOUD_LOAD_API_URL="${VIDEO_CLOUD_LOAD_API_URL:-$video_cloud_public_url}" \
+  VIDEO_CLOUD_LOAD_STORAGE_EXEC="${VIDEO_CLOUD_LOAD_STORAGE_EXEC:-kubernetes}" \
+  KUBECONFIG="${KUBECONFIG:-$(k8s_kubeconfig)}" \
   "$clip_storage_loadtest_script"
 }
 
 collect_clip_storage_evidence() {
   clip_storage_loadtest_enabled || return $?
-  if [[ ! -s "$clip_storage_loadtest_artifact_dir/load-results.json" || ! -s "$clip_storage_loadtest_artifact_dir/load-report.md" ]]; then
-    echo "clip storage evidence is incomplete: expected load-results.json and load-report.md under $clip_storage_loadtest_artifact_dir" >&2
+  if [[ ! -s "$clip_storage_loadtest_artifact_dir/load-results.json" || ! -s "$clip_storage_loadtest_artifact_dir/load-report.md" || ! -s "$clip_storage_loadtest_artifact_dir/reconciliation.json" || ! -s "$clip_storage_loadtest_artifact_dir/s3-checksum-preflight.log" ]]; then
+    echo "clip storage evidence is incomplete: expected results, report, reconciliation, and S3 preflight artifacts under $clip_storage_loadtest_artifact_dir" >&2
     return 1
   fi
   cp "$clip_storage_loadtest_artifact_dir/load-results.json" "$clip_storage_loadtest_artifact_dir/clip-storage-evidence.json"
@@ -2433,7 +2435,22 @@ case "$command" in
     workflow_status
     set_phase "run-stages"
     workflow_rc=0
+    clip_storage_pid=""
+    if clip_storage_loadtest_enabled; then
+      run_clip_storage_loadtest_step &
+      clip_storage_pid=$!
+    fi
     run_home100k run-stages "${workflow_args[@]}" "${coordinator_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --vm-state-file "$local_vm_state_file" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key" --runner-mode "$runner_mode" || workflow_rc=$?
+    if [[ -n "$clip_storage_pid" ]]; then
+      clip_storage_rc=0
+      wait "$clip_storage_pid" || clip_storage_rc=$?
+      if [[ "$clip_storage_rc" -ne 0 ]]; then
+        echo "clip storage loadtest returned rc=$clip_storage_rc" >&2
+        workflow_rc=$clip_storage_rc
+      else
+        collect_clip_storage_evidence || workflow_rc=$?
+      fi
+    fi
     if [[ "$workflow_rc" -ne 0 ]]; then
       echo "run-stages returned rc=$workflow_rc; continuing to collect artifacts and generate report" >&2
     fi
@@ -2503,7 +2520,22 @@ case "$command" in
     workflow_status
     set_phase "run-stages"
     workflow_rc=0
+    clip_storage_pid=""
+    if clip_storage_loadtest_enabled; then
+      run_clip_storage_loadtest_step &
+      clip_storage_pid=$!
+    fi
     run_home100k run-stages "${workflow_args[@]}" "${coordinator_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --vm-state-file "$local_vm_state_file" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key" --runner-mode "$runner_mode" || workflow_rc=$?
+    if [[ -n "$clip_storage_pid" ]]; then
+      clip_storage_rc=0
+      wait "$clip_storage_pid" || clip_storage_rc=$?
+      if [[ "$clip_storage_rc" -ne 0 ]]; then
+        echo "clip storage loadtest returned rc=$clip_storage_rc" >&2
+        workflow_rc=$clip_storage_rc
+      else
+        collect_clip_storage_evidence || workflow_rc=$?
+      fi
+    fi
     if [[ "$workflow_rc" -ne 0 ]]; then
       echo "run-stages returned rc=$workflow_rc; continuing to collect artifacts and generate report" >&2
     fi

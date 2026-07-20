@@ -83,6 +83,7 @@ func k8sWorkloads(env map[string]string) []k8sWorkload {
 func k8sAuxiliaryWorkloads() []k8sAuxiliaryWorkload {
 	return []k8sAuxiliaryWorkload{
 		{Name: "video-cloud-cleaner", Binary: "cleaner"},
+		{Name: "video-cloud-clipverifier", Binary: "clipverifier", Port: 19500, PortName: "http", MetricsPath: "/metrics/prometheus", MetricsJob: "video-cloud-clip-verifier"},
 		{Name: "video-cloud-statistics", Binary: "statistics"},
 		{Name: "video-cloud-metricsexporter", Binary: "metricsexporter", Port: 19200, PortName: "http", MetricsPath: "/metrics/prometheus", MetricsJob: "video-cloud-metrics-exporter"},
 		{Name: "video-cloud-turnregistry", Binary: "turnregistry", Port: 18190, PortName: "http", MetricsPath: "/metrics/prometheus"},

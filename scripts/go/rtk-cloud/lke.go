@@ -3946,7 +3946,23 @@ stringData:
   VIDEO_CLOUD_MQTT_SERVER_PASSWORD: %q
   AWS_ACCESS_KEY_ID: %q
   AWS_SECRET_ACCESS_KEY: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("video-auth"), lkeInternalAuthToken(), lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"), lkeRuntimeSecretValue("turn-shared"), lkeRuntimeSecretValue("mqtt-broker-auth"), lkeRuntimeSecretValue("mqtt-server-password"), lkeObjectStorageCredential("LINODE_OBJ_ACCESS_KEY_ID"), lkeObjectStorageCredential("LINODE_OBJ_SECRET_ACCESS_KEY"))
+  clip-private-key.pem: %q
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("video-auth"), lkeInternalAuthToken(), lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"), lkeRuntimeSecretValue("turn-shared"), lkeRuntimeSecretValue("mqtt-broker-auth"), lkeRuntimeSecretValue("mqtt-server-password"), lkeObjectStorageCredential("LINODE_OBJ_ACCESS_KEY_ID"), lkeObjectStorageCredential("LINODE_OBJ_SECRET_ACCESS_KEY"), lkeClipPrivateKeyPEM())
+}
+
+func lkeClipPrivateKeyPEM() string {
+	seed := sha256.Sum256([]byte(lkeRuntimeSecretValue("clip-private-key-seed")))
+	n := elliptic.P256().Params().N
+	d := new(big.Int).SetBytes(seed[:])
+	d.Mod(d, new(big.Int).Sub(n, big.NewInt(1)))
+	d.Add(d, big.NewInt(1))
+	key := &ecdsa.PrivateKey{PublicKey: ecdsa.PublicKey{Curve: elliptic.P256()}, D: d}
+	key.PublicKey.X, key.PublicKey.Y = key.PublicKey.Curve.ScalarBaseMult(d.Bytes())
+	encoded, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		panic("marshal clip private key: " + err.Error())
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: encoded}))
 }
 
 func lkeMQTTRuntimeSecretManifest(env map[string]string, material lkeMQTTMaterial) string {
@@ -4631,6 +4647,10 @@ spec:
 }
 
 func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lkeVideoCloudAuxiliaryService) string {
+	replicas := 1
+	if service.Name == "video-cloud-clipverifier" {
+		replicas = envIntDefault("LKE_VIDEO_CLOUD_CLIPVERIFIER_REPLICAS", 4)
+	}
 	ports := ""
 	if service.Port > 0 {
 		ports = fmt.Sprintf(`          ports:
@@ -4645,6 +4665,24 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
             - name: VIDEO_CLOUD_LOG_INGESTER_WORKER_COUNT
               value: %q
 `, firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_LOG_INGESTER_MQTT_HANDLER_CONCURRENCY"), env["LKE_VIDEO_CLOUD_LOG_INGESTER_MQTT_HANDLER_CONCURRENCY"], "1"), firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_LOG_INGESTER_WORKER_COUNT"), env["LKE_VIDEO_CLOUD_LOG_INGESTER_WORKER_COUNT"], "1"))
+	}
+	clipVerifierEnv := ""
+	if service.Name == "video-cloud-clipverifier" {
+		apiBaseURL := strings.TrimSpace(env["VIDEO_CLOUD_API_BASE_URL"])
+		if apiBaseURL == "" && strings.TrimSpace(env["VIDEO_CLOUD_DOMAIN"]) != "" {
+			apiBaseURL = "https://" + strings.TrimSpace(env["VIDEO_CLOUD_DOMAIN"])
+		}
+		if apiBaseURL == "" {
+			apiBaseURL = "http://video-cloud-api." + lkeNamespaceName(env, "video-cloud") + ".svc.cluster.local:8080"
+		}
+		clipVerifierEnv = fmt.Sprintf(`            - name: VIDEO_CLOUD_AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-runtime
+                  key: VIDEO_CLOUD_AUTH_SECRET
+            - name: VIDEO_CLOUD_API_BASE_URL
+              value: %q
+`, apiBaseURL)
 	}
 	mqttUsageEnv := ""
 	if service.Name == "video-cloud-mqttusage" {
@@ -4665,7 +4703,7 @@ metadata:
     rtk.realtek.com/provider: lke
     rtk.realtek.com/stack: %s
 spec:
-  replicas: 1
+  replicas: %d
   selector:
     matchLabels:
       app.kubernetes.io/name: %s
@@ -4775,7 +4813,7 @@ spec:
       volumes:
         - name: logger-spool
           emptyDir: {}
-`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeDeploymentImagePullSecretsManifest(env), lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(env, service.Name), ports, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(service), logIngesterEnv, service.Name, mqttUsageEnv)
+`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], replicas, service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeDeploymentImagePullSecretsManifest(env), lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(env, service.Name), ports, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(service), logIngesterEnv+clipVerifierEnv, service.Name, mqttUsageEnv)
 	body = strings.Replace(body, "      volumes:\n", lkeBlobEnvironmentManifest(env, "video-cloud-runtime")+"      volumes:\n", 1)
 	body = strings.Replace(body, "    metadata:\n      labels:", fmt.Sprintf("    metadata:\n      annotations:\n        rtk.realtek.com/runtime-checksum: %q\n      labels:", lkeVideoCloudRuntimeChecksum(env)), 1)
 	return body
@@ -6068,6 +6106,19 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 		mqttOutboundWriteTimeout := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_OUTBOUND_WRITE_TIMEOUT"), env["LKE_VIDEO_CLOUD_MQTT_OUTBOUND_WRITE_TIMEOUT"], "10s")
 		shadowCacheTTL := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_SHADOW_CACHE_TTL"), env["LKE_VIDEO_CLOUD_SHADOW_CACHE_TTL"], "24h")
 		webrtcSignalingStoreTTLGrace := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_TTL_GRACE"), env["LKE_VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_TTL_GRACE"], "30s")
+		volumeMounts = `          volumeMounts:
+            - name: clip-crypto
+              mountPath: /etc/video_cloud/clip-crypto
+              readOnly: true
+`
+		volumes = `      volumes:
+        - name: clip-crypto
+          secret:
+            secretName: video-cloud-runtime
+            items:
+              - key: clip-private-key.pem
+                path: clip-private-key.pem
+`
 		extraEnv = fmt.Sprintf(`            - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -6090,6 +6141,8 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
               value: %q
             - name: VIDEO_CLOUD_DB_ENSURE_SCHEMA
               value: %q
+            - name: VIDEO_CLOUD_CLIP_PRIVATE_KEY_PATH
+              value: "/etc/video_cloud/clip-crypto/clip-private-key.pem"
             - name: VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -6258,10 +6311,19 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 		volumeMounts = `          volumeMounts:
             - name: logger-spool
               mountPath: /var/lib/video_cloud/logger-spool
+            - name: clip-crypto
+              mountPath: /etc/video_cloud/clip-crypto
+              readOnly: true
 `
 		volumes = `      volumes:
         - name: logger-spool
           emptyDir: {}
+        - name: clip-crypto
+          secret:
+            secretName: video-cloud-runtime
+            items:
+              - key: clip-private-key.pem
+                path: clip-private-key.pem
 `
 	}
 	if workload.Key == "cloud-admin" {
@@ -6326,6 +6388,24 @@ func lkeBlobEnvironmentManifest(env map[string]string, secretName string) string
               value: %q
             - name: VIDEO_CLOUD_BLOB_PREFIX
               value: %q
+            - name: VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE
+              value: %q
+            - name: VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED
+              value: %q
+            - name: VIDEO_CLOUD_CLIP_VERIFIER_ADDR
+              value: %q
+            - name: VIDEO_CLOUD_CLIP_UPLOAD_URL_TTL
+              value: %q
+            - name: VIDEO_CLOUD_CLIP_UPLOAD_SESSION_TTL
+              value: %q
+            - name: VIDEO_CLOUD_CLIP_UPLOAD_MAX_BYTES
+              value: %q
+            - name: VIDEO_CLOUD_CLIP_THUMBNAIL_MAX_BYTES
+              value: %q
+            - name: VIDEO_CLOUD_CLIP_VERIFY_POLL_INTERVAL
+              value: %q
+            - name: VIDEO_CLOUD_CLIP_VERIFY_SWEEP_INTERVAL
+              value: %q
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
@@ -6336,7 +6416,7 @@ func lkeBlobEnvironmentManifest(env map[string]string, secretName string) string
                 secretKeyRef:
                   name: %s
                   key: AWS_SECRET_ACCESS_KEY
-`, env["VIDEO_CLOUD_BLOB_ENDPOINT"], env["VIDEO_CLOUD_BLOB_REGION"], env["VIDEO_CLOUD_BLOB_BUCKET"], env["VIDEO_CLOUD_BLOB_PREFIX"], secretName, secretName)
+`, env["VIDEO_CLOUD_BLOB_ENDPOINT"], env["VIDEO_CLOUD_BLOB_REGION"], env["VIDEO_CLOUD_BLOB_BUCKET"], env["VIDEO_CLOUD_BLOB_PREFIX"], firstNonEmpty(env["VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE"], "false"), firstNonEmpty(env["VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED"], "true"), firstNonEmpty(env["VIDEO_CLOUD_CLIP_VERIFIER_ADDR"], "0.0.0.0:19500"), firstNonEmpty(env["VIDEO_CLOUD_CLIP_UPLOAD_URL_TTL"], "10m"), firstNonEmpty(env["VIDEO_CLOUD_CLIP_UPLOAD_SESSION_TTL"], "30m"), firstNonEmpty(env["VIDEO_CLOUD_CLIP_UPLOAD_MAX_BYTES"], "268435456"), firstNonEmpty(env["VIDEO_CLOUD_CLIP_THUMBNAIL_MAX_BYTES"], "5242880"), firstNonEmpty(env["VIDEO_CLOUD_CLIP_VERIFY_POLL_INTERVAL"], "500ms"), firstNonEmpty(env["VIDEO_CLOUD_CLIP_VERIFY_SWEEP_INTERVAL"], "1m"), secretName, secretName)
 }
 
 func lkeVideoCloudRuntimeChecksum(env map[string]string) string {
@@ -6345,6 +6425,7 @@ func lkeVideoCloudRuntimeChecksum(env map[string]string) string {
 		lkeRuntimeSecretValue("video-auth"),
 		lkeRuntimeSecretValue("mqtt-broker-auth"),
 		lkeRuntimeSecretValue("mqtt-server-password"),
+		lkeClipPrivateKeyPEM(),
 		env["VIDEO_CLOUD_BLOB_ENDPOINT"],
 		env["VIDEO_CLOUD_BLOB_REGION"],
 		env["VIDEO_CLOUD_BLOB_BUCKET"],
@@ -6454,7 +6535,7 @@ type lkeResourceProfile struct {
 func lkeContainerResourceProfile(env map[string]string, name string) (lkeResourceProfile, bool) {
 	limits := map[string]string{
 		"account-manager": "1Gi", "cloud-admin": "512Mi", "cloud-logger": "2Gi", "frontend": "512Mi",
-		"mqtt": "1536Mi", "video-cloud-api": "1536Mi", "video-cloud-logingester": "1Gi", "video-cloud-mqttusage": "1Gi",
+		"mqtt": "1536Mi", "video-cloud-api": "1536Mi", "video-cloud-clipverifier": "1Gi", "video-cloud-logingester": "1Gi", "video-cloud-mqttusage": "1Gi",
 		"loki": "2Gi",
 	}
 	spec, ok := capacityWorkloadSpecForName(name)

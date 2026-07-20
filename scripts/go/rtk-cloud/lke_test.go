@@ -2678,6 +2678,10 @@ func TestRunProvisionLKEDeployAppliesVideoCloudAuxiliaryServices(t *testing.T) {
 		"VIDEO_CLOUD_MQTT_USAGE_INGEST_TOKEN: \"test-seed-mqtt-usage-ingest\"",
 		"kind: Deployment\nmetadata:\n  name: video-cloud-cleaner",
 		"command: [\"/app/cleaner\"]",
+		"kind: Deployment\nmetadata:\n  name: video-cloud-clipverifier",
+		"name: video-cloud-clipverifier\n  namespace: video-cloud-staging-video-cloud\n  labels:",
+		"command: [\"/app/clipverifier\"]",
+		"containerPort: 19500",
 		"kind: Deployment\nmetadata:\n  name: video-cloud-statistics",
 		"command: [\"/app/statistics\"]",
 		"kind: Deployment\nmetadata:\n  name: video-cloud-metricsexporter",
@@ -2703,6 +2707,7 @@ func TestRunProvisionLKEDeployAppliesVideoCloudAuxiliaryServices(t *testing.T) {
 		"targets: [\"account-manager.video-cloud-staging-account-manager.svc.cluster.local:80\"]",
 		"targets: [\"cloud-admin.video-cloud-staging-admin.svc.cluster.local:80\"]",
 		"targets: [\"frontend.video-cloud-staging-frontend.svc.cluster.local:80\"]",
+		"targets: [\"video-cloud-clipverifier.video-cloud-staging-video-cloud.svc.cluster.local:19500\"]",
 		"targets: [\"video-cloud-metricsexporter.video-cloud-staging-video-cloud.svc.cluster.local:19200\"]",
 		"targets: [\"factoryenroll.video-cloud-staging-video-cloud.svc.cluster.local:80\"]",
 	} {
@@ -2712,6 +2717,7 @@ func TestRunProvisionLKEDeployAppliesVideoCloudAuxiliaryServices(t *testing.T) {
 	}
 	for _, want := range []string{
 		"ARGS -n video-cloud-staging-video-cloud rollout status deployment/video-cloud-cleaner",
+		"ARGS -n video-cloud-staging-video-cloud rollout status deployment/video-cloud-clipverifier",
 		"ARGS -n video-cloud-staging-video-cloud rollout status deployment/video-cloud-statistics",
 		"ARGS -n video-cloud-staging-video-cloud rollout status deployment/video-cloud-metricsexporter",
 		"ARGS -n video-cloud-staging-video-cloud rollout status deployment/video-cloud-turnregistry",
@@ -2722,6 +2728,26 @@ func TestRunProvisionLKEDeployAppliesVideoCloudAuxiliaryServices(t *testing.T) {
 		if !strings.Contains(log, want) {
 			t.Fatalf("expected rollout check %q in kubectl calls, got:\n%s", want, log)
 		}
+	}
+}
+
+func TestLKEClipVerifierDefaultsToFourReplicas(t *testing.T) {
+	t.Setenv("LKE_VIDEO_CLOUD_CLIPVERIFIER_REPLICAS", "")
+	manifest := lkeVideoCloudAuxiliaryDeploymentManifest(map[string]string{
+		"CLOUD_STACK_NAME":      "video-cloud-staging",
+		"LKE_VIDEO_CLOUD_IMAGE": "registry.example.test/video-cloud:test",
+	}, lkeVideoCloudAuxiliaryService{Name: "video-cloud-clipverifier", Binary: "clipverifier", Port: 19500, PortName: "http"})
+	if !strings.Contains(manifest, "spec:\n  replicas: 4\n") {
+		t.Fatalf("expected four verifier replicas, got:\n%s", manifest)
+	}
+
+	t.Setenv("LKE_VIDEO_CLOUD_CLIPVERIFIER_REPLICAS", "6")
+	manifest = lkeVideoCloudAuxiliaryDeploymentManifest(map[string]string{
+		"CLOUD_STACK_NAME":      "video-cloud-staging",
+		"LKE_VIDEO_CLOUD_IMAGE": "registry.example.test/video-cloud:test",
+	}, lkeVideoCloudAuxiliaryService{Name: "video-cloud-clipverifier", Binary: "clipverifier", Port: 19500, PortName: "http"})
+	if !strings.Contains(manifest, "spec:\n  replicas: 6\n") {
+		t.Fatalf("expected configured verifier replicas, got:\n%s", manifest)
 	}
 }
 
@@ -2844,6 +2870,8 @@ func TestLKEPrometheusConfigIsGeneratedFromMetricsRegistry(t *testing.T) {
 		"targets: [\"cloud-admin.video-cloud-staging-admin.svc.cluster.local:80\"]",
 		"job_name: frontend",
 		"targets: [\"frontend.video-cloud-staging-frontend.svc.cluster.local:80\"]",
+		"job_name: video-cloud-clip-verifier",
+		"targets: [\"video-cloud-clipverifier.video-cloud-staging-video-cloud.svc.cluster.local:19500\"]",
 		"job_name: video-cloud-turnregistry",
 		"targets: [\"video-cloud-turnregistry.video-cloud-staging-video-cloud.svc.cluster.local:18190\"]",
 		"job_name: video-cloud-metrics-exporter",
@@ -2866,10 +2894,10 @@ func TestLKEPrometheusConfigIsGeneratedFromMetricsRegistry(t *testing.T) {
 			t.Fatalf("expected %q in Prometheus config manifest, got:\n%s", want, manifest)
 		}
 	}
-	if got, want := strings.Count(manifest, "metrics_path: /metrics/prometheus"), 9; got != want {
+	if got, want := strings.Count(manifest, "metrics_path: /metrics/prometheus"), 10; got != want {
 		t.Fatalf("metrics_path count = %d, want %d in manifest:\n%s", got, want, manifest)
 	}
-	if got, want := strings.Count(manifest, "metrics_path: /metrics"), 12; got != want {
+	if got, want := strings.Count(manifest, "metrics_path: /metrics"), 13; got != want {
 		t.Fatalf("all metrics_path count = %d, want %d in manifest:\n%s", got, want, manifest)
 	}
 }
@@ -2879,6 +2907,7 @@ func TestLKEPrometheusConfigHonorsSelectedWorkloads(t *testing.T) {
 
 	for _, want := range []string{
 		"targets: [\"video-cloud-api.video-cloud-staging-video-cloud.svc.cluster.local:80\"]",
+		"targets: [\"video-cloud-clipverifier.video-cloud-staging-video-cloud.svc.cluster.local:19500\"]",
 		"targets: [\"video-cloud-metricsexporter.video-cloud-staging-video-cloud.svc.cluster.local:19200\"]",
 		"targets: [\"factoryenroll.video-cloud-staging-video-cloud.svc.cluster.local:80\"]",
 	} {
