@@ -191,36 +191,39 @@ func NewRunner(client *http.Client) *Runner {
 func DefaultConfigFromEnv() Config {
 	host, _ := os.Hostname()
 	cfg := Config{
-		Profile:               envDefault("VIDEO_CLOUD_LOAD_PROFILE", ProfileSafeStaging),
-		APIURL:                os.Getenv("VIDEO_CLOUD_LOAD_API_URL"),
-		WSURL:                 os.Getenv("VIDEO_CLOUD_LOAD_WS_URL"),
-		AccountToken:          os.Getenv("VIDEO_CLOUD_LOAD_ACCOUNT_TOKEN"),
-		AppTokens:             parseTokenMap(os.Getenv("VIDEO_CLOUD_LOAD_APP_TOKENS")),
-		AdminToken:            os.Getenv("VIDEO_CLOUD_LOAD_ADMIN_TOKEN"),
-		DeviceToken:           os.Getenv("VIDEO_CLOUD_LOAD_DEVICE_TOKEN"),
-		DeviceTokens:          parseTokenMap(os.Getenv("VIDEO_CLOUD_LOAD_DEVICE_TOKENS")),
-		RefreshToken:          os.Getenv("VIDEO_CLOUD_LOAD_REFRESH_TOKEN"),
-		RunID:                 os.Getenv("VIDEO_CLOUD_LOAD_RUN_ID"),
-		InstanceID:            os.Getenv("VIDEO_CLOUD_LOAD_INSTANCE_ID"),
-		Actors:                envDefault("VIDEO_CLOUD_LOAD_ACTORS", ActorAll),
-		AppRouteSet:           envDefault("VIDEO_CLOUD_LOAD_APP_ROUTE_SET", AppRouteSetSmoke),
-		DeviceRouteSet:        envDefault("VIDEO_CLOUD_LOAD_DEVICE_ROUTE_SET", DeviceRouteSetSmoke),
-		DeviceTransportSet:    envDefault("VIDEO_CLOUD_LOAD_DEVICE_TRANSPORT_SET", DeviceTransportSetSmoke),
-		ViewerRouteSet:        envDefault("VIDEO_CLOUD_LOAD_VIEWER_ROUTE_SET", ViewerRouteSetSmoke),
-		WebRTCMediaSet:        envDefault("VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_SET", WebRTCMediaSetOff),
-		WebRTCRelayRole:       envDefault("VIDEO_CLOUD_LOAD_WEBRTC_RELAY_ROLE", WebRTCRelayRoleBoth),
-		WebRTCICEPolicy:       envDefault("VIDEO_CLOUD_LOAD_WEBRTC_ICE_POLICY", WebRTCICEPolicyAll),
-		WebRTCMediaDuration:   20 * time.Second,
-		ClipSet:               envDefault("VIDEO_CLOUD_LOAD_CLIP_SET", ClipSetOff),
-		ClipDeviceIDs:         ParseDeviceIDs(os.Getenv("VIDEO_CLOUD_LOAD_CLIP_DEVICE_IDS")),
-		ClipCountPerDevice:    envInt("VIDEO_CLOUD_LOAD_CLIP_COUNT_PER_DEVICE", 10),
-		ClipScheduleWindow:    envDuration("VIDEO_CLOUD_LOAD_CLIP_SCHEDULE_WINDOW", 30*time.Minute),
-		ClipFixturePath:       os.Getenv("VIDEO_CLOUD_LOAD_CLIP_FIXTURE"),
-		ClipThumbnailPath:     os.Getenv("VIDEO_CLOUD_LOAD_CLIP_THUMBNAIL"),
-		ClipPoissonSeed:       int64(envInt("VIDEO_CLOUD_LOAD_CLIP_POISSON_SEED", 20260719)),
-		ClipUploadConcurrency: envInt("VIDEO_CLOUD_LOAD_CLIP_UPLOAD_CONCURRENCY", 64),
-		MQTTSet:               envDefault("VIDEO_CLOUD_LOAD_MQTT_SET", MQTTSetOff),
-		MQTTAddr:              os.Getenv("VIDEO_CLOUD_MQTT_ADDR"),
+		Profile:                 envDefault("VIDEO_CLOUD_LOAD_PROFILE", ProfileSafeStaging),
+		APIURL:                  os.Getenv("VIDEO_CLOUD_LOAD_API_URL"),
+		WSURL:                   os.Getenv("VIDEO_CLOUD_LOAD_WS_URL"),
+		AccountToken:            os.Getenv("VIDEO_CLOUD_LOAD_ACCOUNT_TOKEN"),
+		AppTokens:               parseTokenMap(os.Getenv("VIDEO_CLOUD_LOAD_APP_TOKENS")),
+		AdminToken:              os.Getenv("VIDEO_CLOUD_LOAD_ADMIN_TOKEN"),
+		DeviceToken:             os.Getenv("VIDEO_CLOUD_LOAD_DEVICE_TOKEN"),
+		DeviceTokens:            parseTokenMap(os.Getenv("VIDEO_CLOUD_LOAD_DEVICE_TOKENS")),
+		RefreshToken:            os.Getenv("VIDEO_CLOUD_LOAD_REFRESH_TOKEN"),
+		RunID:                   os.Getenv("VIDEO_CLOUD_LOAD_RUN_ID"),
+		InstanceID:              os.Getenv("VIDEO_CLOUD_LOAD_INSTANCE_ID"),
+		Actors:                  envDefault("VIDEO_CLOUD_LOAD_ACTORS", ActorAll),
+		AppRouteSet:             envDefault("VIDEO_CLOUD_LOAD_APP_ROUTE_SET", AppRouteSetSmoke),
+		DeviceRouteSet:          envDefault("VIDEO_CLOUD_LOAD_DEVICE_ROUTE_SET", DeviceRouteSetSmoke),
+		DeviceTransportSet:      envDefault("VIDEO_CLOUD_LOAD_DEVICE_TRANSPORT_SET", DeviceTransportSetSmoke),
+		ViewerRouteSet:          envDefault("VIDEO_CLOUD_LOAD_VIEWER_ROUTE_SET", ViewerRouteSetSmoke),
+		WebRTCMediaSet:          envDefault("VIDEO_CLOUD_LOAD_WEBRTC_MEDIA_SET", WebRTCMediaSetOff),
+		WebRTCRelayRole:         envDefault("VIDEO_CLOUD_LOAD_WEBRTC_RELAY_ROLE", WebRTCRelayRoleBoth),
+		WebRTCICEPolicy:         envDefault("VIDEO_CLOUD_LOAD_WEBRTC_ICE_POLICY", WebRTCICEPolicyAll),
+		WebRTCMediaDuration:     20 * time.Second,
+		ClipSet:                 envDefault("VIDEO_CLOUD_LOAD_CLIP_SET", ClipSetOff),
+		ClipDeviceIDs:           ParseDeviceIDs(os.Getenv("VIDEO_CLOUD_LOAD_CLIP_DEVICE_IDS")),
+		ClipCountPerDevice:      envInt("VIDEO_CLOUD_LOAD_CLIP_COUNT_PER_DEVICE", 10),
+		ClipScheduleWindow:      envDuration("VIDEO_CLOUD_LOAD_CLIP_SCHEDULE_WINDOW", 30*time.Minute),
+		ClipFixturePath:         os.Getenv("VIDEO_CLOUD_LOAD_CLIP_FIXTURE"),
+		ClipThumbnailPath:       os.Getenv("VIDEO_CLOUD_LOAD_CLIP_THUMBNAIL"),
+		ClipUserPrivateKeyPath:  os.Getenv("VIDEO_CLOUD_LOAD_CLIP_USER_PRIVATE_KEY"),
+		ClipServerPublicKeyPath: os.Getenv("VIDEO_CLOUD_LOAD_CLIP_SERVER_PUBLIC_KEY"),
+		ClipPoissonSeed:         int64(envInt("VIDEO_CLOUD_LOAD_CLIP_POISSON_SEED", 20260719)),
+		ClipUploadConcurrency:   envInt("VIDEO_CLOUD_LOAD_CLIP_UPLOAD_CONCURRENCY", 64),
+		ClipMixedNonClip:        envBool("VIDEO_CLOUD_LOAD_CLIP_MIXED_NONCLIP"),
+		MQTTSet:                 envDefault("VIDEO_CLOUD_LOAD_MQTT_SET", MQTTSetOff),
+		MQTTAddr:                os.Getenv("VIDEO_CLOUD_MQTT_ADDR"),
 		// Broker credentials are derived from the actor's Video Cloud JWT. Static
 		// VIDEO_CLOUD_MQTT_USERNAME/PASSWORD are intentionally not used here.
 		MQTTTopicRoot:         envDefault("VIDEO_CLOUD_MQTT_TOPIC_ROOT", "devices"),
@@ -505,6 +508,9 @@ func (c *Config) Validate() error {
 		}
 		if strings.TrimSpace(c.ClipFixturePath) == "" || strings.TrimSpace(c.ClipThumbnailPath) == "" {
 			return errors.New("storage-poisson clip set requires clip fixture and thumbnail paths")
+		}
+		if (c.AdminToken != "" || len(c.AppTokens) != 0) && (strings.TrimSpace(c.ClipUserPrivateKeyPath) == "" || strings.TrimSpace(c.ClipServerPublicKeyPath) == "") {
+			return errors.New("storage-poisson clip verification requires clip user private and server public key paths")
 		}
 		if c.ClipUploadConcurrency <= 0 {
 			c.ClipUploadConcurrency = 64
@@ -1945,6 +1951,7 @@ func (r *Runner) runGroup(ctx context.Context, concurrency, actorCount, iteratio
 		}
 	}
 
+	scheduleStarted := time.Now()
 	scheduled := 0
 	for scheduled < totalTarget {
 		select {
@@ -1966,7 +1973,10 @@ func (r *Runner) runGroup(ctx context.Context, concurrency, actorCount, iteratio
 			}
 		}(scheduled)
 		scheduled++
-		waitUntil := time.Now().Add(interval)
+		// Anchor each launch to the original schedule. Using time.Now here makes
+		// per-iteration overhead accumulate and can extend a large run well past
+		// its configured window.
+		waitUntil := scheduleStarted.Add(time.Duration(scheduled) * interval)
 		if scheduled < totalTarget {
 			select {
 			case <-ctx.Done():
@@ -4986,6 +4996,7 @@ func BuildResult(cfg Config, started, ended time.Time, operations []Operation) *
 			ClipCountPerDevice:   cfg.ClipCountPerDevice,
 			ClipScheduleWindowMS: cfg.ClipScheduleWindow.Milliseconds(),
 			ClipPoissonSeed:      cfg.ClipPoissonSeed,
+			ClipMixedNonClip:     cfg.ClipMixedNonClip,
 			MQTTSet:              cfg.MQTTSet,
 			MQTTAddr:             cfg.MQTTAddr,
 			MQTTUsername:         redactToken(cfg.MQTTUsername),
@@ -5046,6 +5057,7 @@ func BuildResult(cfg Config, started, ended time.Time, operations []Operation) *
 	}
 	result.Thresholds = EvaluateResultThresholds(result.Summary, result.WebRTC, result.CoverageMatrix, cfg.Thresholds)
 	applyWebRTCMediaThreshold(&result.Thresholds, result.WebRTCMedia, cfg.Thresholds)
+	ApplyClipStorageThreshold(&result.Thresholds, result.ClipStorage)
 	return result
 }
 
@@ -5107,9 +5119,12 @@ func BuildCoverageMatrix(cfg Config, operations []Operation) map[string]Coverage
 }
 
 func coverageForClipStorage(operations []Operation) CoverageItem {
-	item := coverageForFamily([]string{"clip_upload"}, operations)
+	item := coverageForFamily([]string{
+		"clip_authorize", "clip_put", "thumbnail_put", "clip_complete", "clip_verify_ready", "clip_upload",
+		"clip_total", "clip_enum", "clip_info", "clip_download_range", "clip_download_decrypt", "clip_thumbnail_download", "clip_delete",
+	}, operations)
 	if item.Status == CoverageStatusPass {
-		item.Summary = "camera simulator multipart upload exercised through Video Cloud"
+		item.Summary = "direct upload, verified ready state, metadata, ciphertext range, plaintext decryption, thumbnail, and deletion samples passed"
 	}
 	return item
 }
@@ -6195,7 +6210,7 @@ func sanitizeEvidenceValue(value any) string {
 	case map[string]any:
 		for key, child := range v {
 			lower := strings.ToLower(key)
-			if lower == "credential" || lower == "username" || lower == "access_token" || lower == "refresh_token" || lower == "token" {
+			if sensitiveEvidenceKey(lower) {
 				v[key] = "<redacted>"
 				continue
 			}
@@ -6218,7 +6233,7 @@ func sanitizeEvidenceAny(value any) any {
 	case map[string]any:
 		for key, child := range v {
 			lower := strings.ToLower(key)
-			if lower == "credential" || lower == "username" || lower == "access_token" || lower == "refresh_token" || lower == "token" {
+			if sensitiveEvidenceKey(lower) {
 				v[key] = "<redacted>"
 				continue
 			}
@@ -6233,6 +6248,10 @@ func sanitizeEvidenceAny(value any) any {
 	default:
 		return value
 	}
+}
+
+func sensitiveEvidenceKey(lower string) bool {
+	return lower == "credential" || lower == "username" || lower == "access_token" || lower == "refresh_token" || lower == "token" || lower == "url" || strings.HasSuffix(lower, "_url")
 }
 
 func redactDetail(detail string) string {

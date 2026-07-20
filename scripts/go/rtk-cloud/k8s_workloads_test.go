@@ -85,6 +85,7 @@ func TestK8SPrometheusTargetsAreDerivedFromWorkloadRegistry(t *testing.T) {
 	}
 	checks := map[string]string{
 		"video-cloud-api":              "video-cloud-api",
+		"video-cloud-clip-verifier":    "video-cloud-clipverifier",
 		"video-cloud-metrics-exporter": "video-cloud-metricsexporter",
 		"video-cloud-logingester":      "video-cloud-logingester",
 		"video-cloud-mqttusage":        "video-cloud-mqttusage",

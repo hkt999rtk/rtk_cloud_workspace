@@ -75,12 +75,28 @@ func RenderMarkdown(result *Result) string {
 		fmt.Fprintf(&b, "| Upload successes | %d |\n", clip.UploadSuccesses)
 		fmt.Fprintf(&b, "| Upload failures | %d |\n", clip.UploadFailures)
 		fmt.Fprintf(&b, "| Upload success rate | %.2f%% |\n", clip.SuccessRate*100)
+		fmt.Fprintf(&b, "| Uploads reaching ready | %d |\n", clip.ReadyUploads)
+		fmt.Fprintf(&b, "| Correlated ready uploads | %d |\n", clip.CorrelatedReady)
+		fmt.Fprintf(&b, "| API control request-body bytes | %d |\n", clip.ControlPlaneBytes)
+		fmt.Fprintf(&b, "| Direct object PUT bytes | %d |\n", clip.DirectPutBytes)
+		fmt.Fprintf(&b, "| Verification latency p95/p99 | %d/%d ms |\n", clip.VerificationP95MS, clip.VerificationP99MS)
 		fmt.Fprintf(&b, "| Total clip bytes | %d |\n", clip.TotalBytes)
 		fmt.Fprintf(&b, "| Poisson seed | %d |\n", clip.PoissonSeed)
 		fmt.Fprintf(&b, "| Schedule window | %d ms |\n", clip.ScheduleWindowMS)
 		fmt.Fprintf(&b, "| Upload latency p50/p95/p99 | %d/%d/%d ms |\n", clip.P50LatencyMS, clip.P95LatencyMS, clip.P99LatencyMS)
 		fmt.Fprintf(&b, "| Cameras with successful clips | %d |\n", clip.CamerasWithClips)
 		fmt.Fprintf(&b, "| Per-camera clip distribution min/max | %d/%d |\n", clip.MinClipsPerCamera, clip.MaxClipsPerCamera)
+		if clip.MixedNonClipEnabled {
+			fmt.Fprintf(&b, "| Concurrent non-clip attempts | %d |\n", clip.NonClipAttempts)
+			fmt.Fprintf(&b, "| Concurrent non-clip successes | %d |\n", clip.NonClipSuccesses)
+			fmt.Fprintf(&b, "| Concurrent non-clip failures | %d |\n", clip.NonClipFailures)
+			fmt.Fprintf(&b, "| Concurrent non-clip success rate | %.2f%% |\n", clip.NonClipSuccessRate*100)
+		}
+		for _, stage := range []string{"clip_authorize", "clip_put", "thumbnail_put", "clip_complete", "clip_verify_ready", "clip_info", "clip_enum", "clip_download_range", "clip_thumbnail_download", "clip_delete"} {
+			if value, ok := clip.StageP95MS[stage]; ok {
+				fmt.Fprintf(&b, "| %s p95 | %d ms |\n", stage, value)
+			}
+		}
 	}
 	fmt.Fprintf(&b, "\n## Threshold Gate\n\n")
 	status := "PASS"
@@ -370,6 +386,49 @@ func EvaluateResultThresholds(summary Summary, webrtc WebRTCMetrics, coverage ma
 
 func ApplyWebRTCMediaThreshold(evaluation *ThresholdEvaluation, media WebRTCMediaMetrics, thresholds Thresholds) {
 	applyWebRTCMediaThreshold(evaluation, media, thresholds)
+}
+
+func ApplyClipStorageThreshold(evaluation *ThresholdEvaluation, clip ClipStorageMetrics) {
+	if evaluation == nil || !clip.Enabled {
+		return
+	}
+	if clip.SuccessRate < 0.995 {
+		evaluation.Passed = false
+		evaluation.Failures = append(evaluation.Failures, fmt.Sprintf("clip ready success rate %.4f is below 0.9950", clip.SuccessRate))
+	}
+	if clip.ReadyUploads != clip.UploadSuccesses {
+		evaluation.Passed = false
+		evaluation.Failures = append(evaluation.Failures, fmt.Sprintf("clip ready correlation %d does not match successful uploads %d", clip.ReadyUploads, clip.UploadSuccesses))
+	}
+	if clip.CorrelatedReady != clip.UploadSuccesses {
+		evaluation.Passed = false
+		evaluation.Failures = append(evaluation.Failures, fmt.Sprintf("clip correlation %d does not match successful uploads %d", clip.CorrelatedReady, clip.UploadSuccesses))
+	}
+	if clip.UploadSuccesses > 0 && clip.DirectPutBytes == 0 {
+		evaluation.Passed = false
+		evaluation.Failures = append(evaluation.Failures, "successful clip uploads have no direct object PUT byte evidence")
+	}
+	if clip.UploadSuccesses > 0 && clip.ControlPlaneBytes >= clip.DirectPutBytes {
+		evaluation.Passed = false
+		evaluation.Failures = append(evaluation.Failures, fmt.Sprintf("API control body volume %d is not smaller than direct object PUT volume %d", clip.ControlPlaneBytes, clip.DirectPutBytes))
+	}
+	if clip.VerificationP95MS > 30000 {
+		evaluation.Passed = false
+		evaluation.Failures = append(evaluation.Failures, fmt.Sprintf("clip verification p95 %dms exceeds 30000ms", clip.VerificationP95MS))
+	}
+	if clip.VerificationP99MS > 60000 {
+		evaluation.Passed = false
+		evaluation.Failures = append(evaluation.Failures, fmt.Sprintf("clip verification p99 %dms exceeds 60000ms", clip.VerificationP99MS))
+	}
+	if clip.MixedNonClipEnabled {
+		if clip.NonClipAttempts == 0 {
+			evaluation.Passed = false
+			evaluation.Failures = append(evaluation.Failures, "mixed clip run contains no non-clip attempts")
+		} else if clip.NonClipSuccessRate < 0.995 {
+			evaluation.Passed = false
+			evaluation.Failures = append(evaluation.Failures, fmt.Sprintf("concurrent non-clip success rate %.4f is below 0.9950", clip.NonClipSuccessRate))
+		}
+	}
 }
 
 func applyWebRTCMediaThreshold(evaluation *ThresholdEvaluation, media WebRTCMediaMetrics, thresholds Thresholds) {
