@@ -89,6 +89,36 @@ foreign_setup_out="$out_dir/fixture-setup-foreign"
 db="$isolated_env/artifacts/test-data/${cloud_slug}-test-data.sqlite"
 foreign_db="$isolated_env/artifacts/test-data/${foreign_cloud_slug}-test-data.sqlite"
 
+brand_slug() {
+  local value="$1"
+  value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+  value="$(printf '%s' "$value" | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')"
+  if [[ -z "$value" ]]; then
+    value="brand"
+  fi
+  printf '%s' "$value"
+}
+
+summary_test_data_db() {
+  local summary="$1" fallback="$2" candidate parent expected_parent
+  if [[ ! -f "$summary" ]]; then
+    printf '%s' "$fallback"
+    return
+  fi
+  candidate="$(jq -er '.test_data_db' "$summary")"
+  if [[ ! -f "$candidate" ]]; then
+    echo "fixture setup summary references a missing test-data DB" >&2
+    return 1
+  fi
+  parent="$(cd "$(dirname "$candidate")" && pwd -P)"
+  expected_parent="$(cd "$isolated_env/artifacts/test-data" && pwd -P)"
+  if [[ "$parent" != "$expected_parent" ]]; then
+    echo "fixture setup summary references a test-data DB outside the isolated run" >&2
+    return 1
+  fi
+  printf '%s/%s' "$parent" "$(basename "$candidate")"
+}
+
 sqlite_json_array() {
   local database="$1" query="$2" result
   result="$($sqlite -json "$database" "$query" 2>/dev/null || true)"
@@ -187,6 +217,12 @@ for required_slug in "$cloud_slug" "$foreign_cloud_slug"; do
 done
 cloud_name="$(jq -er --arg slug "$cloud_slug" 'first((.brand_clouds // .items // [])[] | select(.tenant_slug == $slug)) | .name' "$cloud_list")"
 foreign_cloud_name="$(jq -er --arg slug "$foreign_cloud_slug" 'first((.brand_clouds // .items // [])[] | select(.tenant_slug == $slug)) | .name' "$cloud_list")"
+# The shared data setup keys its SQLite filename from the Brand Cloud display
+# name, while rows inside the DB retain the tenant slug. These values can differ
+# because Account Manager adds a uniqueness suffix to tenant slugs.
+db="$isolated_env/artifacts/test-data/$(brand_slug "$cloud_name")-test-data.sqlite"
+foreign_db="$isolated_env/artifacts/test-data/$(brand_slug "$foreign_cloud_name")-test-data.sqlite"
+write_recovery_bundle "clouds_validated" 1
 
 run_setup() {
   local name="$1" role="$2" output="$3"
@@ -227,6 +263,9 @@ set +e
 run_setup "$cloud_name" primary "$setup_out"
 setup_rc=$?
 if (( setup_rc == 0 )); then
+  # Persist the primary resources before starting the foreign fixture. A
+  # failure in the second setup must not orphan the first user or device.
+  write_recovery_bundle "primary_fixture_created" 1
   run_setup "$foreign_cloud_name" foreign "$foreign_setup_out"
   setup_rc=$?
 fi
@@ -239,6 +278,9 @@ if (( setup_rc != 0 )); then
   write_recovery_bundle "staging_e2e_data" "$setup_rc"
   exit "$setup_rc"
 fi
+
+db="$(summary_test_data_db "$setup_out/summary.json" "$db")"
+foreign_db="$(summary_test_data_db "$foreign_setup_out/summary.json" "$foreign_db")"
 
 if [[ ! -f "$db" || ! -f "$foreign_db" ]]; then
   echo "fixture setup did not create both expected SQLite test-data DBs" >&2

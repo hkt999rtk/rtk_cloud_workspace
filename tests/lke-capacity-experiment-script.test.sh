@@ -141,6 +141,7 @@ EOF_SH
 chmod +x "$FAKE_ROOT/loadtests/home-100k/scripts/home-100k.sh"
 
 set +e
+LKE_VIDEO_CLOUD_IMAGE="registry.example.test/video-cloud:sha-current" \
 "$FAKE_ROOT/scripts/run-lke-capacity-experiment.sh" \
 	--env-root "$FAKE_ROOT/cloud_env/staging/lke" \
 	--target-devices 1000 \
@@ -161,6 +162,8 @@ if [[ -f "$FAKE_ROOT/loadtests/destroy-vms.called" ]]; then
 	echo "destroy-vms must not run after workflow-live failure" >&2
 	exit 1
 fi
+grep -F 'LKE_VIDEO_CLOUD_IMAGE=registry.example.test/video-cloud:sha-current' \
+	"$FAKE_ROOT/cloud_env/staging/lke/env/stack.env" >/dev/null
 
 CAP_DIR="$FAKE_ROOT/cloud_env/staging/lke/artifacts/capacity-experiments/cap-workflow-141"
 grep -F 'fake workflow-live before SIGPIPE' "$CAP_DIR/logs/workflow-live.log" >/dev/null

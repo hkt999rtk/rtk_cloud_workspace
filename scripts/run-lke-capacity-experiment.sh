@@ -443,6 +443,15 @@ printf '[capacity] request=%s\n' "$CAPACITY_DIR/request.json"
 
 if [[ "$LIVE" -eq 1 ]]; then
 	cp "$STACK_FILE" "$CAPACITY_DIR/stack.env.before"
+	# Persist explicit image overrides in the environment source of truth. Without
+	# this, a later provision --deploy can silently reload an older image manifest
+	# and roll the freshly validated stack backward.
+	for image_key in LKE_VIDEO_CLOUD_IMAGE LKE_ACCOUNT_MANAGER_IMAGE LKE_CLOUD_ADMIN_IMAGE LKE_FRONTEND_IMAGE LKE_CLOUD_LOGGER_IMAGE; do
+		image_value="${!image_key:-}"
+		if [[ -n "$image_value" ]]; then
+			set_stack_value "$image_key" "$image_value"
+		fi
+	done
 	set_stack_value LKE_TARGET_CONNECTS "$TARGET_DEVICES"
 	set_stack_value LKE_MQTT_REPLICAS "$MQTT_PODS"
 	set_stack_value LKE_NODE_COUNT "$NODE_COUNT"

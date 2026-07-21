@@ -163,6 +163,16 @@ they must never be committed. The harness writes a per-run credential bundle
 with mode `0600`, passes only its path through simulator/instrumentation runtime
 configuration, and removes it during cleanup.
 
+When `CLOUD_VALIDATION_ENV_ROOT` points at a local environment created by the
+workspace provisioner, the runner reads mode-`0600` operator state to obtain
+the Account Manager platform-admin token, a short-lived Video Cloud admin
+token, and the Cloud Logger query token. The provisioner persists
+`state/secrets/video-auth`; the API deployment consumes that same value as
+`VIDEO_CLOUD_AUTH_SECRET`. Set
+`CLOUD_VALIDATION_DISABLE_LOCAL_CREDENTIAL_DISCOVERY=1` when CI must require
+all three tokens from its secret store instead. Tokens remain in child-process
+environment only and are never copied to reports or command arguments.
+
 The built-in staging providers live under `providers/`. They create isolated
 run-scoped fixture data through the existing staging setup path, obtain the app
 token with mTLS, query Cloud Logger, and run independent customer-safe Cloud
