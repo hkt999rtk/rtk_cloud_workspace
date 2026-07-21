@@ -1,6 +1,7 @@
 package loadtest
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdsa"
@@ -8,13 +9,100 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestPlaybackSessionRangeUsesShortLivedURLWithoutBearer(t *testing.T) {
+	tmp := t.TempDir()
+	userPrivate, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	userDER, err := x509.MarshalECPrivateKey(userPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	userPrivatePath := filepath.Join(tmp, "user-private.pem")
+	if err := os.WriteFile(userPrivatePath, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: userDER}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	userPublicDER, err := x509.MarshalPKIXPublicKey(&userPrivate.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	userPublic := strings.ReplaceAll(string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: userPublicDER})), "\n", ",")
+	fixture := []byte("0123456789abcdef-valid-mp4-fixture")
+	_, storedClipKey, err := encryptLegacyClip(userPublic, fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixturePath := filepath.Join(tmp, "clip.mp4")
+	if err := os.WriteFile(fixturePath, fixture, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	serverPrivate, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverPublicDER, err := x509.MarshalPKIXPublicKey(&serverPrivate.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverPublicPath := filepath.Join(tmp, "server-public.pem")
+	if err := os.WriteFile(serverPublicPath, pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: serverPublicDER}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/v1/devices/cam-a/clips/clip-a/playback-session":
+			if req.Header.Get("Authorization") != "Bearer app-token" {
+				t.Fatalf("session bearer = %q", req.Header.Get("Authorization"))
+			}
+			var body map[string]string
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil || body["clipkey"] == "" || body["pubkey"] == "" {
+				t.Fatalf("invalid playback session body: %#v, err=%v", body, err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{"playback_url": server.URL + "/download/cam-a/clip-a?token=short-lived"})
+		case "/download/cam-a/clip-a":
+			if req.Header.Get("Authorization") != "" {
+				t.Fatalf("playback request leaked bearer header")
+			}
+			if req.Header.Get("Range") != "bytes=0-15" {
+				t.Fatalf("playback Range = %q", req.Header.Get("Range"))
+			}
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write(fixture[:16])
+		default:
+			t.Fatalf("unexpected path %s", req.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	session, playback := NewRunner(server.Client()).playbackSessionRange(context.Background(), Config{
+		APIURL:                  server.URL,
+		HTTPTimeout:             time.Second,
+		ClipFixturePath:         fixturePath,
+		ClipUserPrivateKeyPath:  userPrivatePath,
+		ClipServerPublicKeyPath: serverPublicPath,
+	}, "cam-a", "clip-a", storedClipKey, "app-token")
+	if !session.Success || !playback.Success {
+		t.Fatalf("session=%#v playback=%#v", session, playback)
+	}
+	if !strings.Contains(playback.Evidence, "bearer_in_request=false") {
+		t.Fatalf("playback evidence = %q", playback.Evidence)
+	}
+}
 
 func TestPoissonClipScheduleIsDeterministicAndBounded(t *testing.T) {
 	ids := []string{"cam-a", "cam-b", "cam-c"}

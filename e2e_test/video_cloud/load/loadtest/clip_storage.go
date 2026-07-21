@@ -394,9 +394,14 @@ func (r *Runner) verifyUploadedClipSamples(ctx context.Context, cfg Config, oper
 			info,
 			r.downloadClipRange(ctx, cfg, "clip_download_range", upload.DeviceID, clipID, "bytes=0-15", bearer, false),
 			r.downloadDecryptedClipRange(ctx, cfg, upload.DeviceID, clipID, storedClipKey, bearer),
+		}
+		playbackSession, playbackRange := r.playbackSessionRange(ctx, cfg, upload.DeviceID, clipID, storedClipKey, bearer)
+		samples = append(samples,
+			playbackSession,
+			playbackRange,
 			r.downloadClipRange(ctx, cfg, "clip_thumbnail_download", upload.DeviceID, clipID+".jpg", "bytes=0-15", bearer, false),
 			r.post(ctx, cfg, ActorApp, "clip_delete", upload.DeviceID, "", "/delete_clip", map[string]any{"devid": upload.DeviceID, "clipid": clipID}, bearer),
-		}
+		)
 		for i := range samples {
 			samples[i].Evidence = appendEvidence(samples[i].Evidence, "clipid="+clipID)
 		}
@@ -465,6 +470,75 @@ func (r *Runner) downloadDecryptedClipRange(ctx context.Context, cfg Config, dev
 		op.Evidence = "bytes=16 decrypted=true"
 	}
 	return op
+}
+
+func (r *Runner) playbackSessionRange(ctx context.Context, cfg Config, deviceID, clipID, storedClipKey, bearer string) (Operation, Operation) {
+	query, err := buildEncryptedDownloadQuery(cfg.ClipUserPrivateKeyPath, cfg.ClipServerPublicKeyPath, storedClipKey)
+	if err != nil {
+		failed := Operation{Actor: ActorApp, Name: "clip_playback_session", DeviceID: deviceID, ErrorClass: ClassMalformed, ErrorDetail: redactDetail(err.Error())}
+		return failed, Operation{Actor: ActorApp, Name: "clip_playback_range", DeviceID: deviceID, Skipped: true, SkipReason: "playback session preparation failed"}
+	}
+	session, raw := r.postRaw(ctx, cfg, ActorApp, "clip_playback_session", deviceID, "",
+		"/v1/devices/"+url.PathEscape(deviceID)+"/clips/"+url.PathEscape(clipID)+"/playback-session",
+		map[string]any{"clipkey": query.Get("clipkey"), "pubkey": query.Get("pubkey")}, bearer)
+	if !session.Success {
+		return session, Operation{Actor: ActorApp, Name: "clip_playback_range", DeviceID: deviceID, Skipped: true, SkipReason: "playback session request failed"}
+	}
+	var response struct {
+		PlaybackURL string `json:"playback_url"`
+	}
+	if json.Unmarshal(raw, &response) != nil || strings.TrimSpace(response.PlaybackURL) == "" {
+		session.Success = false
+		session.ErrorClass = ClassMalformed
+		session.ErrorDetail = "playback session response is missing playback_url"
+		return session, Operation{Actor: ActorApp, Name: "clip_playback_range", DeviceID: deviceID, Skipped: true, SkipReason: "invalid playback session response"}
+	}
+	parsed, err := url.Parse(response.PlaybackURL)
+	if err != nil || parsed.Query().Get("token") == "" {
+		session.Success = false
+		session.ErrorClass = ClassMalformed
+		session.ErrorDetail = "playback URL is invalid or missing its short-lived token"
+		return session, Operation{Actor: ActorApp, Name: "clip_playback_range", DeviceID: deviceID, Skipped: true, SkipReason: "invalid playback URL"}
+	}
+	session.Evidence = appendEvidence(session.Evidence, "short_lived_url=true")
+
+	playback := Operation{Actor: ActorApp, Name: "clip_playback_range", DeviceID: deviceID}
+	started := time.Now()
+	plaintext, readErr := os.ReadFile(cfg.ClipFixturePath)
+	if readErr != nil || len(plaintext) < 16 {
+		playback.ErrorClass = ClassMalformed
+		playback.ErrorDetail = "read clip fixture for playback verification"
+		return session, playback
+	}
+	opCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.HTTPTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(opCtx, http.MethodGet, response.PlaybackURL, nil)
+	if err == nil {
+		req.Header.Set("Range", "bytes=0-15")
+		var resp *http.Response
+		resp, err = r.client.Do(req)
+		if resp != nil {
+			playback.StatusCode = resp.StatusCode
+			var body []byte
+			body, err = io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if err == nil && resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
+				err = fmt.Errorf("playback range returned HTTP %d", resp.StatusCode)
+			}
+			if err == nil && !bytes.Equal(body, plaintext[:16]) {
+				err = fmt.Errorf("playback range does not match fixture plaintext")
+			}
+		}
+	}
+	playback.LatencyMS = time.Since(started).Milliseconds()
+	playback.Success = err == nil
+	if err != nil {
+		playback.ErrorClass = ClassifyError(playback.StatusCode, nil, err)
+		playback.ErrorDetail = redactDetail(err.Error())
+	} else {
+		playback.Evidence = "bytes=16 decrypted=true bearer_in_request=false"
+	}
+	return session, playback
 }
 
 func buildEncryptedDownloadQuery(userPrivatePath, serverPublicPath, storedClipKey string) (url.Values, error) {
@@ -567,7 +641,7 @@ func summarizeClipStorage(cfg Config, operations []Operation) ClipStorageMetrics
 			}
 		}
 		switch op.Name {
-		case "clip_authorize", "clip_put", "thumbnail_put", "clip_complete", "clip_verify_ready", "clip_info", "clip_enum", "clip_download_range", "clip_download_decrypt", "clip_thumbnail_download", "clip_delete":
+		case "clip_authorize", "clip_put", "thumbnail_put", "clip_complete", "clip_verify_ready", "clip_info", "clip_enum", "clip_download_range", "clip_download_decrypt", "clip_playback_session", "clip_playback_range", "clip_thumbnail_download", "clip_delete":
 			if op.Success || op.StatusCode > 0 {
 				stageLatencies[op.Name] = append(stageLatencies[op.Name], op.LatencyMS)
 			}

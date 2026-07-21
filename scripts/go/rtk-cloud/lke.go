@@ -1987,10 +1987,17 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/metricsexpo
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/turnregistry ./cmd/turnregistry
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/logingester ./cmd/logingester
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/mqttusage ./cmd/mqttusage
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/clipverifier ./cmd/clipverifier
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/clipuploadpreflight ./cmd/clipuploadpreflight
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/clipreconcile ./cmd/clipreconcile
 
 FROM debian:bookworm-slim
 WORKDIR /app
-RUN useradd -r -u 10001 app && chown app:app /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -r -u 10001 app \
+    && chown app:app /app
 COPY --from=builder /out/api /app/api
 COPY --from=builder /out/certissuer /app/certissuer
 COPY --from=builder /out/factoryenroll /app/factoryenroll
@@ -2000,6 +2007,9 @@ COPY --from=builder /out/metricsexporter /app/metricsexporter
 COPY --from=builder /out/turnregistry /app/turnregistry
 COPY --from=builder /out/logingester /app/logingester
 COPY --from=builder /out/mqttusage /app/mqttusage
+COPY --from=builder /out/clipverifier /app/clipverifier
+COPY --from=builder /out/clipuploadpreflight /app/clipuploadpreflight
+COPY --from=builder /out/clipreconcile /app/clipreconcile
 USER app
 EXPOSE 8080
 ENTRYPOINT ["/app/api"]
