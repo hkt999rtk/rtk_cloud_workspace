@@ -69,6 +69,42 @@ cleanup_runner() {
 }
 trap cleanup_runner EXIT
 
+load_local_deployment_credentials() {
+  local env_root="${CLOUD_VALIDATION_ENV_ROOT:-}"
+  local video_auth_file logger_token_file video_secret
+  if [[ "${CLOUD_VALIDATION_DISABLE_LOCAL_CREDENTIAL_DISCOVERY:-0}" == "1" || -z "$env_root" || ! -d "$env_root" ]]; then
+    return
+  fi
+  env_root="$(cd "$env_root" && pwd -P)"
+
+  if [[ -z "${CLOUD_VALIDATION_PLATFORM_ADMIN_TOKEN:-}" ]]; then
+    CLOUD_VALIDATION_PLATFORM_ADMIN_TOKEN="$({
+      cd "$workspace_root/scripts/go"
+      GOWORK=off go run ./rtk-cloud -- platform-admin-token --workspace "$workspace_root" --env-root "$env_root"
+    })"
+    export CLOUD_VALIDATION_PLATFORM_ADMIN_TOKEN
+  fi
+
+  video_auth_file="$env_root/state/secrets/video-auth"
+  if [[ -z "${CLOUD_VALIDATION_VIDEO_CLOUD_ADMIN_TOKEN:-}" && -s "$video_auth_file" ]]; then
+    video_secret="$(<"$video_auth_file")"
+    CLOUD_VALIDATION_VIDEO_CLOUD_ADMIN_TOKEN="$({
+      cd "$workspace_root/repos/rtk_video_cloud"
+      VIDEO_CLOUD_AUTH_SECRET="$video_secret" GOWORK=off go run ./cmd/admin-token --ttl 30m
+    })"
+    unset video_secret
+    export CLOUD_VALIDATION_VIDEO_CLOUD_ADMIN_TOKEN
+  fi
+
+  logger_token_file="$env_root/state/secrets/cloud-logger-ingest-token"
+  if [[ -z "${CLOUD_VALIDATION_CLOUD_LOGGER_TOKEN:-}" && -s "$logger_token_file" ]]; then
+    CLOUD_VALIDATION_CLOUD_LOGGER_TOKEN="$(<"$logger_token_file")"
+    export CLOUD_VALIDATION_CLOUD_LOGGER_TOKEN
+  fi
+}
+
+load_local_deployment_credentials
+
 run_platform() {
   local selected_platform="$1"
   local selected_run_id="$run_id"

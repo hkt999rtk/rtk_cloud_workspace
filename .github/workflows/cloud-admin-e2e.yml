@@ -56,6 +56,26 @@ jobs:
         working-directory: repos/rtk_cloud_admin/web
         run: npm run e2e:smoke
 
+      - name: Run Brandname Fleet E2E smoke
+        working-directory: repos/rtk_cloud_admin/web
+        run: npm run e2e:brand-fleet:smoke
+
+      - name: Run Brandname Fleet E2E full local suite
+        working-directory: repos/rtk_cloud_admin/web
+        run: npm run e2e:brand-fleet:full
+
+      - name: Run Brandname Fleet E2E error states
+        working-directory: repos/rtk_cloud_admin/web
+        run: npm run e2e:brand-fleet:errors
+
+      - name: Run Brandname Fleet expired-result contract
+        working-directory: repos/rtk_cloud_admin/web
+        run: npm run e2e:brand-fleet:expired
+
+      - name: Run Brandname Fleet source-state matrix
+        working-directory: repos/rtk_cloud_admin/web
+        run: npm run e2e:brand-fleet:source-states
+
       - name: Upload E2E artifacts
         if: always()
         uses: actions/upload-artifact@v4

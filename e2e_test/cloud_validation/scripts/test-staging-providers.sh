@@ -23,6 +23,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 slug="$(printf '%s' "$brandname" | tr '[:upper:] ' '[:lower:]-')"
+case "$slug" in
+  sdk-e2e-ios) tenant_slug="sdk-e2e-ios-a579a0e7" ;;
+  sdk-e2e-android) tenant_slug="sdk-e2e-android-0d152276" ;;
+  *) tenant_slug="$slug" ;;
+esac
 db="$env_root/artifacts/test-data/${slug}-test-data.sqlite"
 mkdir -p "$(dirname "$db")"
 cloud_id="cloud-${slug}"
@@ -33,8 +38,8 @@ account_device_id="account-device-${slug}"
 create table users (brandname text, email text, brand_cloud_id text, tenant_slug text, app_credentials_json text, app_certificate_json text, body_json text);
 create table device_bindings (brandname text, tenant_slug text, device_id text, account_device_id text, assigned_email text, assignment_index integer);
 create table device_credentials (brandname text, device_id text, cert_pem text, key_pem text, chain_pem text);
-insert into users values ('$brandname','run-user@users.local','$cloud_id','$slug','{"private_key_pem":"-----BEGIN PRIVATE KEY-----\\nkey\\n-----END PRIVATE KEY-----"}','{"certificate_pem":"-----BEGIN CERTIFICATE-----\\nleaf\\n-----END CERTIFICATE-----","certificate_chain_pem":"-----BEGIN CERTIFICATE-----\\nchain\\n-----END CERTIFICATE-----"}','{"brand_cloud_user_id":"$user_id"}');
-insert into device_bindings values ('$brandname','$slug','$device_id','$account_device_id','run-user@users.local',1);
+insert into users values ('$brandname','run-user@users.local','$cloud_id','$tenant_slug','{"private_key_pem":"-----BEGIN PRIVATE KEY-----\\nkey\\n-----END PRIVATE KEY-----"}','{"certificate_pem":"-----BEGIN CERTIFICATE-----\\nleaf\\n-----END CERTIFICATE-----","certificate_chain_pem":"-----BEGIN CERTIFICATE-----\\nchain\\n-----END CERTIFICATE-----"}','{"brand_cloud_user_id":"$user_id"}');
+insert into device_bindings values ('$brandname','$tenant_slug','$device_id','$account_device_id','run-user@users.local',1);
 insert into device_credentials values ('$brandname','$device_id','-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----','-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----','-----BEGIN CERTIFICATE-----\nchain\n-----END CERTIFICATE-----');
 SQL
 chmod 600 "$db"
@@ -66,7 +71,7 @@ elif [[ "$joined" == *"--write-out"* && "$joined" == *"direct-invalid-probe-head
 elif [[ "$joined" == *"--write-out"* ]]; then
   printf '204'
 elif [[ "$joined" == *"/v1/admin/brand-clouds"* ]]; then
-  printf '%s\n' '{"brand_clouds":[{"id":"cloud-sdk-e2e-ios","name":"SDK E2E iOS","tenant_slug":"sdk-e2e-ios","status":"active"},{"id":"cloud-sdk-e2e-android","name":"SDK E2E Android","tenant_slug":"sdk-e2e-android","status":"active"}]}'
+  printf '%s\n' '{"brand_clouds":[{"id":"cloud-sdk-e2e-ios","name":"SDK E2E iOS","tenant_slug":"sdk-e2e-ios-a579a0e7","status":"active"},{"id":"cloud-sdk-e2e-android","name":"SDK E2E Android","tenant_slug":"sdk-e2e-android-0d152276","status":"active"}]}'
 elif [[ "$joined" == *"/request_token"* ]]; then
   printf '%s\n' '{"access_token":"live-access","refresh_token":"live-refresh"}'
 elif [[ "$joined" == *"/api/devices/device-sdk-e2e-ios/shadow"* ]]; then
@@ -139,8 +144,8 @@ export CLOUD_VALIDATION_PLATFORM_ADMIN_TOKEN="secret-admin"
 export CLOUD_VALIDATION_VIDEO_CLOUD_ADMIN_TOKEN="secret-video-admin"
 export CLOUD_VALIDATION_CA_BUNDLE="ca.pem"
 export CLOUD_VALIDATION_SECRET_ROOT="$tmp/secrets"
-export CLOUD_VALIDATION_IOS_CLOUD_SLUG="sdk-e2e-ios"
-export CLOUD_VALIDATION_ANDROID_CLOUD_SLUG="sdk-e2e-android"
+export CLOUD_VALIDATION_IOS_CLOUD_SLUG="sdk-e2e-ios-a579a0e7"
+export CLOUD_VALIDATION_ANDROID_CLOUD_SLUG="sdk-e2e-android-0d152276"
 export CLOUD_VALIDATION_DEVICE_TOKEN_HELPER="$tmp/bin/request-device-token"
 
 (cd "$tmp" && "$root/e2e_test/cloud_validation/providers/setup-staging-fixture.sh")
@@ -154,7 +159,7 @@ done < <(sed -nE 's/.*--device-prefix ([^ ]+).*/\1/p' "$SETUP_ARGS_LOG")
 export CLOUD_VALIDATION_ENV_ROOT="$tmp/source-env"
 export CLOUD_VALIDATION_CA_BUNDLE="$tmp/ca.pem"
 test "$(stat -f '%Lp' "$CLOUD_VALIDATION_RUNTIME_BUNDLE")" = "600"
-jq -e '.run_id == "run-ios" and .brand_cloud_active == true and .app.device_id == "device-sdk-e2e-ios" and (.app.device_transport_access_token | length > 0) and .app.foreign_device_id == "device-sdk-e2e-android" and ((.resources | length) == 7)' "$CLOUD_VALIDATION_RUNTIME_BUNDLE" >/dev/null
+jq -e '.run_id == "run-ios" and .brand_cloud_slug == "sdk-e2e-ios-a579a0e7" and .brand_cloud_active == true and .app.device_id == "device-sdk-e2e-ios" and (.app.device_transport_access_token | length > 0) and .app.foreign_device_id == "device-sdk-e2e-android" and (.test_data_db | endswith("/sdk-e2e-ios-test-data.sqlite")) and ((.resources | length) == 7)' "$CLOUD_VALIDATION_RUNTIME_BUNDLE" >/dev/null
 
 export CLOUD_VALIDATION_READY_FILE="$tmp/out/virtual-device-ready.json"
 export CLOUD_VALIDATION_ACCOUNT_MANAGER_URL="https://account.test"
