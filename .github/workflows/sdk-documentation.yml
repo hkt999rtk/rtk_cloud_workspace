@@ -36,10 +36,19 @@ jobs:
 
       - name: Initialize SDK documentation repositories
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
         run: |
           set -euo pipefail
-          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "git@github-work.com:"
+          if [ -z "$CI_RUNNER_GITHUB_WORK_KEY" ]; then
+            echo "CI_RUNNER_GITHUB_WORK_KEY is required to fetch private SDK repositories." >&2
+            exit 1
+          fi
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$CI_RUNNER_GITHUB_WORK_KEY" > ~/.ssh/id_ed25519_github_work
+          chmod 0600 ~/.ssh/id_ed25519_github_work
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          git config --global core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
+          git config --global url."git@github.com:".insteadOf "git@github-work.com:"
           git submodule update --init --depth=1 \
             repos/rtk_cloud_client \
             repos/rtk_cloud_frontend
