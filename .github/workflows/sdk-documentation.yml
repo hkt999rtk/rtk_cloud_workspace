@@ -28,10 +28,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Check out workspace and SDK repositories
+      - name: Check out workspace metadata
         uses: actions/checkout@v6
         with:
-          submodules: recursive
+          fetch-depth: 1
+          submodules: false
+
+      - name: Initialize SDK documentation repositories
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "git@github-work.com:"
+          git submodule update --init --depth=1 \
+            repos/rtk_cloud_client \
+            repos/rtk_cloud_frontend
 
       - name: Install document tools
         run: |
