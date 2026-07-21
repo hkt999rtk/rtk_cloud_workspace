@@ -3196,7 +3196,7 @@ func TestGeneratedGoServiceDockerfileUsesGoModVersion(t *testing.T) {
 	}
 }
 
-func TestVideoCloudDockerfileIncludesCertIssuerBinary(t *testing.T) {
+func TestVideoCloudDockerfileIncludesRuntimeAndClipStorageBinaries(t *testing.T) {
 	contextDir := t.TempDir()
 	writeTestFile(t, filepath.Join(contextDir, "go.mod"), "module video_cloud\n\ngo 1.25.1\n")
 
@@ -3209,6 +3209,7 @@ func TestVideoCloudDockerfileIncludesCertIssuerBinary(t *testing.T) {
 	body := readTestFile(t, dockerfile)
 	for _, want := range []string{
 		"FROM golang:1.25-bookworm AS builder",
+		"apt-get install -y --no-install-recommends ca-certificates",
 		"go build -trimpath -o /out/api ./cmd/api",
 		"go build -trimpath -o /out/certissuer ./cmd/certissuer",
 		"go build -trimpath -o /out/factoryenroll ./cmd/factoryenroll",
@@ -3218,6 +3219,9 @@ func TestVideoCloudDockerfileIncludesCertIssuerBinary(t *testing.T) {
 		"go build -trimpath -o /out/turnregistry ./cmd/turnregistry",
 		"go build -trimpath -o /out/logingester ./cmd/logingester",
 		"go build -trimpath -o /out/mqttusage ./cmd/mqttusage",
+		"go build -trimpath -o /out/clipverifier ./cmd/clipverifier",
+		"go build -trimpath -o /out/clipuploadpreflight ./cmd/clipuploadpreflight",
+		"go build -trimpath -o /out/clipreconcile ./cmd/clipreconcile",
 		"COPY --from=builder /out/certissuer /app/certissuer",
 		"COPY --from=builder /out/factoryenroll /app/factoryenroll",
 		"COPY --from=builder /out/cleaner /app/cleaner",
@@ -3226,6 +3230,9 @@ func TestVideoCloudDockerfileIncludesCertIssuerBinary(t *testing.T) {
 		"COPY --from=builder /out/turnregistry /app/turnregistry",
 		"COPY --from=builder /out/logingester /app/logingester",
 		"COPY --from=builder /out/mqttusage /app/mqttusage",
+		"COPY --from=builder /out/clipverifier /app/clipverifier",
+		"COPY --from=builder /out/clipuploadpreflight /app/clipuploadpreflight",
+		"COPY --from=builder /out/clipreconcile /app/clipreconcile",
 		"ENTRYPOINT [\"/app/api\"]",
 	} {
 		if !strings.Contains(body, want) {

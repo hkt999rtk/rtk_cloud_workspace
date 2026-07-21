@@ -5121,10 +5121,10 @@ func BuildCoverageMatrix(cfg Config, operations []Operation) map[string]Coverage
 func coverageForClipStorage(operations []Operation) CoverageItem {
 	item := coverageForFamily([]string{
 		"clip_authorize", "clip_put", "thumbnail_put", "clip_complete", "clip_verify_ready", "clip_upload",
-		"clip_total", "clip_enum", "clip_info", "clip_download_range", "clip_download_decrypt", "clip_thumbnail_download", "clip_delete",
+		"clip_total", "clip_enum", "clip_info", "clip_download_range", "clip_download_decrypt", "clip_playback_session", "clip_playback_range", "clip_thumbnail_download", "clip_delete",
 	}, operations)
 	if item.Status == CoverageStatusPass {
-		item.Summary = "direct upload, verified ready state, metadata, ciphertext range, plaintext decryption, thumbnail, and deletion samples passed"
+		item.Summary = "direct upload, verified ready state, metadata, ciphertext range, short-lived playback, plaintext decryption, thumbnail, and deletion samples passed"
 	}
 	return item
 }
