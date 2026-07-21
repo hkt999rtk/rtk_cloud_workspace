@@ -1,0 +1,73 @@
+name: SDK Documentation
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/sdk-documentation.yml"
+      - "repos/rtk_cloud_client"
+      - "repos/rtk_cloud_frontend"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/sdk-documentation.yml"
+      - "repos/rtk_cloud_client"
+      - "repos/rtk_cloud_frontend"
+  workflow_dispatch:
+    inputs:
+      sdk_version:
+        description: SDK documentation version
+        default: 0.1.0-rc1
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build SDK HTML and PDF manuals
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out workspace and SDK repositories
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install document tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pandoc poppler-utils python3-weasyprint python3-yaml
+
+      - name: Validate canonical source and API inventory
+        working-directory: repos/rtk_cloud_frontend
+        run: |
+          python3 -m unittest discover -s tools/tests -p 'test_build_sdk_docs.py' -v
+          python3 tools/build_sdk_docs.py check \
+            --source content/manual/sdk \
+            --sdk-repo ../rtk_cloud_client
+
+      - name: Generate HTML and PDF documentation
+        working-directory: repos/rtk_cloud_frontend
+        env:
+          SDK_VERSION: ${{ inputs.sdk_version || '0.1.0-rc1' }}
+        run: |
+          python3 tools/build_sdk_docs.py build \
+            --source content/manual/sdk \
+            --sdk-repo ../rtk_cloud_client \
+            --version "$SDK_VERSION" \
+            --output dist/sdk-docs
+          cd "dist/sdk-docs/$SDK_VERSION"
+          sha256sum --check SHA256SUMS
+          pdfinfo "pdf/rtk-cloud-sdk-user-manual-$SDK_VERSION.pdf" | grep -q '^Pages:'
+          pdftotext "pdf/rtk-cloud-sdk-user-manual-$SDK_VERSION.pdf" manual.txt
+          grep -q 'Stored video workflows' manual.txt
+          grep -q 'Exported symbols' manual.txt
+          rm manual.txt
+
+      - name: Upload generated website and PDF bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: rtk-cloud-sdk-documentation
+          path: repos/rtk_cloud_frontend/dist/sdk-docs/
+          if-no-files-found: error
+          retention-days: 14
