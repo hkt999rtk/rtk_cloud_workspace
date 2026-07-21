@@ -56,7 +56,12 @@ jobs:
       - name: Install document tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y pandoc poppler-utils python3-weasyprint python3-yaml
+          sudo apt-get install -y pandoc poppler-utils python3-venv
+          python3 -m venv .sdk-docs-venv
+          .sdk-docs-venv/bin/python -m pip install \
+            PyYAML==6.0.2 \
+            WeasyPrint==68.1
+          echo "$PWD/.sdk-docs-venv/bin" >> "$GITHUB_PATH"
 
       - name: Validate canonical source and API inventory
         working-directory: repos/rtk_cloud_frontend
