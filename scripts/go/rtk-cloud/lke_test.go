@@ -808,6 +808,8 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"kind: Service\nmetadata:\n  name: mqtt",
 		"kind: Service\nmetadata:\n  name: mqtt-headless",
 		"kind: NetworkPolicy\nmetadata:\n  name: allow-emqx-cluster",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-video-cloud-mqtt-clients",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-video-cloud-api-internal",
 		"port: 4369",
 		"port: 4370",
 		"port: 5369",
@@ -815,6 +817,11 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		if !strings.Contains(log, want) {
 			t.Fatalf("expected %q in kubectl manifests, got:\n%s", want, log)
 		}
+	}
+	clientPolicyIndex := strings.Index(log, "kind: NetworkPolicy\nmetadata:\n  name: allow-video-cloud-mqtt-clients")
+	mqttStatefulSetIndex := strings.Index(log, "kind: StatefulSet\nmetadata:\n  name: mqtt")
+	if clientPolicyIndex < 0 || mqttStatefulSetIndex < 0 || clientPolicyIndex > mqttStatefulSetIndex {
+		t.Fatalf("MQTT client policy must be applied before the broker starts:\n%s", log)
 	}
 	if strings.Contains(log, "device-ca.key") || strings.Contains(log, "app-ca.key") {
 		t.Fatalf("certissuer runtime must not mount CA private keys, got:\n%s", log)
@@ -882,6 +889,13 @@ func TestLKEAllowEMQXClusterNetworkPolicyManifestIsValidYAMLShape(t *testing.T) 
 		if !strings.Contains(manifest, want) {
 			t.Fatalf("expected EMQX cluster port entry %q, got:\n%s", want, manifest)
 		}
+	}
+}
+
+func TestLKEMQTTRewritePreservesSharedPhysicalSubscriptions(t *testing.T) {
+	config := lkeEMQXTenantBaseHOCON(map[string]string{})
+	if !strings.Contains(config, `\\$share/[^/]+/_bc/`) {
+		t.Fatalf("tenant rewrite must exclude shared subscriptions that already contain a physical namespace:\n%s", config)
 	}
 }
 
