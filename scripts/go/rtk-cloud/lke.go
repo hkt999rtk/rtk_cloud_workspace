@@ -2302,6 +2302,15 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 		if err := kubectlApply(lkeAllowEMQXClusterNetworkPolicyManifest(env)); err != nil {
 			return err
 		}
+		// API and worker MQTT clients start before public HTTPS/ACME setup.
+		// Apply their ingress grant here so a later public-edge failure cannot
+		// leave the internal MQTT data plane disconnected.
+		if err := kubectlApply(lkeAllowVideoCloudMQTTClientsNetworkPolicyManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env)); err != nil {
+			return err
+		}
 		if lkeEnvBool("LKE_PUBLIC_MQTT_LOADBALANCER") {
 			if err := lkeApplyPublicMQTTNodePort(env); err != nil {
 				return err
@@ -4033,7 +4042,7 @@ rewrite = [
   {
     action = "all"
     source_topic = "#"
-    re = "^(?!_bc/)(.+)$"
+    re = "^(?!(?:_bc/|\\$share/[^/]+/_bc/))(.+)$"
     dest_topic = "_bc/${username}/$1"
   },
   {
