@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -26,5 +28,59 @@ func TestTestCaseIDPattern(t *testing.T) {
 		if testCaseIDPattern.MatchString(id) {
 			t.Fatalf("expected %s to be invalid", id)
 		}
+	}
+}
+
+func TestExpectedUITestIDsAllowsPartialServiceCheckout(t *testing.T) {
+	workspace := t.TempDir()
+	uiSource := filepath.Join(workspace, "repos", "rtk_cloud_admin", "web", "e2e", "catalog.spec.mjs")
+	if err := os.MkdirAll(filepath.Dir(uiSource), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(workspace, "tests"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(uiSource, []byte(`test('[UI-CA-SMOKE-001] renders dashboard', async () => {})`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	catalog := `schema_version: 1
+cases:
+  - id: UI-CA-SMOKE-001
+    title: Renders dashboard
+    layer: ui
+    owner: rtk_cloud_admin
+    source: repos/rtk_cloud_admin/web/e2e/catalog.spec.mjs
+    selector: renders dashboard
+    method: Headless browser
+    runner: test-ui
+    targets: [desktop]
+    environments: [local]
+    evidence: [screenshot]
+    status: active
+  - id: SVC-AM-SUITE-001
+    title: Account Manager suite
+    layer: service
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/go.mod
+    selector: module
+    method: Go tests
+    runner: test-services
+    environments: [ci]
+    evidence: [junit]
+    status: active
+`
+	if err := os.WriteFile(filepath.Join(workspace, "tests", "catalog.yaml"), []byte(catalog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ids, err := expectedUITestIDs(workspace, "desktop", "local", false)
+	if err != nil {
+		t.Fatalf("UI catalog validation should not require service sources: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != "UI-CA-SMOKE-001" {
+		t.Fatalf("unexpected UI test IDs: %v", ids)
+	}
+	if _, err := loadAndValidateTestCatalog(workspace); err == nil {
+		t.Fatal("full catalog validation should still require service sources")
 	}
 }

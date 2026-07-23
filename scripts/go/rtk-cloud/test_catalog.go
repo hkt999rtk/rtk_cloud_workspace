@@ -101,6 +101,10 @@ func checkTestCatalog(workspace string, checkRendered bool) error {
 }
 
 func loadAndValidateTestCatalog(workspace string) (testCatalog, error) {
+	return loadAndValidateTestCatalogForRunner(workspace, "")
+}
+
+func loadAndValidateTestCatalogForRunner(workspace, sourceRunner string) (testCatalog, error) {
 	path := filepath.Join(workspace, "tests", "catalog.yaml")
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -161,13 +165,17 @@ func loadAndValidateTestCatalog(workspace string) (testCatalog, error) {
 		if len(tc.Environments) == 0 {
 			return testCatalog{}, fmt.Errorf("%s %s requires at least one environment", prefix, tc.ID)
 		}
-		sourcePath := filepath.Join(workspace, filepath.FromSlash(tc.Source))
-		source, err := os.ReadFile(sourcePath)
-		if err != nil {
-			return testCatalog{}, fmt.Errorf("%s %s source %s: %w", prefix, tc.ID, tc.Source, err)
-		}
-		if !bytes.Contains(source, []byte(tc.Selector)) {
-			return testCatalog{}, fmt.Errorf("%s %s selector %q not found in %s", prefix, tc.ID, tc.Selector, tc.Source)
+		var source []byte
+		validateSource := sourceRunner == "" || tc.Runner == sourceRunner
+		if validateSource {
+			sourcePath := filepath.Join(workspace, filepath.FromSlash(tc.Source))
+			source, err = os.ReadFile(sourcePath)
+			if err != nil {
+				return testCatalog{}, fmt.Errorf("%s %s source %s: %w", prefix, tc.ID, tc.Source, err)
+			}
+			if !bytes.Contains(source, []byte(tc.Selector)) {
+				return testCatalog{}, fmt.Errorf("%s %s selector %q not found in %s", prefix, tc.ID, tc.Selector, tc.Source)
+			}
 		}
 		if tc.Layer == "ui" {
 			if !strings.HasPrefix(tc.ID, "UI-") {
@@ -179,14 +187,16 @@ func loadAndValidateTestCatalog(workspace string) (testCatalog, error) {
 			if !catalogContainsString(tc.Targets, "desktop") && !catalogContainsString(tc.Targets, "mobile") {
 				return testCatalog{}, fmt.Errorf("%s %s UI case requires desktop or mobile target", prefix, tc.ID)
 			}
-			if !bytes.Contains(source, []byte("["+tc.ID+"]")) {
+			if validateSource && !bytes.Contains(source, []byte("["+tc.ID+"]")) {
 				return testCatalog{}, fmt.Errorf("%s %s source title is missing [%s]", prefix, tc.ID, tc.ID)
 			}
 			catalogUI[tc.ID] = true
 		}
 	}
-	if err := validatePlaywrightCatalogCoverage(workspace, catalogUI); err != nil {
-		return testCatalog{}, err
+	if sourceRunner == "" || sourceRunner == "test-ui" {
+		if err := validatePlaywrightCatalogCoverage(workspace, catalogUI); err != nil {
+			return testCatalog{}, err
+		}
 	}
 	return catalog, nil
 }
@@ -267,7 +277,7 @@ func catalogContainsString(values []string, wanted string) bool {
 }
 
 func expectedUITestIDs(workspace, target, environment string, smokeOnly bool) ([]string, error) {
-	catalog, err := loadAndValidateTestCatalog(workspace)
+	catalog, err := loadAndValidateTestCatalogForRunner(workspace, "test-ui")
 	if err != nil {
 		return nil, err
 	}
