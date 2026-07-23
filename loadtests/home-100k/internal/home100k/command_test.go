@@ -2124,7 +2124,10 @@ JSON
 func TestHome100KScriptDocumentsWebRTCOnlyWorkflow(t *testing.T) {
 	script := filepath.Join("..", "..", "scripts", "home-100k.sh")
 	cmd := exec.Command("bash", script, "--help")
-	cmd.Env = home100KTestEnv()
+	cmd.Env = home100KTestEnv(
+		"HOME100K_REGION=",
+		"HOME100K_ENV_ROOT="+t.TempDir(),
+	)
 	raw, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("home-100k.sh --help failed: %v\n%s", err, raw)
@@ -2138,6 +2141,22 @@ func TestHome100KScriptDocumentsWebRTCOnlyWorkflow(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("help missing %q:\n%s", want, body)
 		}
+	}
+}
+
+func TestHome100KScriptRequiresResolvedRegionForPlan(t *testing.T) {
+	script := filepath.Join("..", "..", "scripts", "home-100k.sh")
+	cmd := exec.Command("bash", script, "plan")
+	cmd.Env = home100KTestEnv(
+		"HOME100K_REGION=",
+		"HOME100K_ENV_ROOT="+t.TempDir(),
+	)
+	raw, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("home-100k.sh plan unexpectedly passed without a provider region:\n%s", raw)
+	}
+	if !strings.Contains(string(raw), "provider region is unresolved") {
+		t.Fatalf("home-100k.sh plan reported the wrong error:\n%s", raw)
 	}
 }
 
@@ -2587,12 +2606,22 @@ func TestHome100KScriptDocumentsCloudLoggerEvidenceOverrides(t *testing.T) {
 }
 
 func home100KTestEnv(extra ...string) []string {
-	env := make([]string, 0, len(os.Environ())+len(extra))
+	env := make([]string, 0, len(os.Environ())+len(extra)+1)
 	for _, item := range os.Environ() {
 		if strings.HasPrefix(item, "HOME100K_") {
 			continue
 		}
 		env = append(env, item)
+	}
+	hasRegionOverride := false
+	for _, item := range extra {
+		if strings.HasPrefix(item, "HOME100K_REGION=") {
+			hasRegionOverride = true
+			break
+		}
+	}
+	if !hasRegionOverride {
+		env = append(env, "HOME100K_REGION=us-sea")
 	}
 	return append(env, extra...)
 }

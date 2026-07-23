@@ -79,10 +79,6 @@ if [[ -z "$region" ]]; then
     region="$(awk -F= '$1 == "PROVIDER_REGION" {print $2; exit}' "$provider_preflight_file")"
   fi
 fi
-if [[ -z "$region" ]]; then
-  echo "provider region is unresolved; run rtk-cloud deployment plan --environment $environment" >&2
-  exit 2
-fi
 linode_type="${HOME100K_LINODE_TYPE:-}"
 vm_label_prefix="${HOME100K_VM_LABEL_PREFIX:-lg}"
 run_id="${HOME100K_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
@@ -2237,6 +2233,10 @@ command="${1:-workflow-live}"
 if [[ "$command" == "-h" || "$command" == "--help" ]]; then
   usage
   exit 0
+fi
+if [[ -z "$region" ]]; then
+  echo "provider region is unresolved; run rtk-cloud deployment plan --environment $environment" >&2
+  exit 2
 fi
 if [[ "$#" -gt 0 ]]; then
   shift
