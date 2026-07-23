@@ -999,6 +999,23 @@ func TestMQTTTopicsEquivalentNormalizesPhysicalTenantPrefix(t *testing.T) {
 	}
 }
 
+func TestBoundedShadowClientTokenHonorsProtocolLimit(t *testing.T) {
+	longRunID := strings.Repeat("qualification-run-", 8)
+	token := boundedShadowClientToken("cmd", longRunID, "device-0001")
+	if len(token) > 64 {
+		t.Fatalf("client token length = %d, want <= 64: %q", len(token), token)
+	}
+	if token != boundedShadowClientToken("cmd", longRunID, "device-0001") {
+		t.Fatal("bounded client token is not deterministic")
+	}
+	if token == boundedShadowClientToken("cmd", longRunID, "device-0002") {
+		t.Fatal("different device identities produced the same client token")
+	}
+	if got := boundedShadowClientToken("cmd", "short", "device"); got != "cmd-short-device" {
+		t.Fatalf("short token changed unexpectedly: %q", got)
+	}
+}
+
 func TestAccountLoginTokenManagerKeepsValidAccessTokenPastHalfLife(t *testing.T) {
 	baseTime := time.Date(2026, 6, 22, 8, 0, 0, 0, time.UTC)
 	oldToken := testJWT(t, baseTime, baseTime.Add(2*time.Minute))
@@ -1495,6 +1512,52 @@ func TestSustainedShadowCommandFailsBeforeDeltaWhenAcceptedIsMissing(t *testing.
 	}
 	if totals.FailureReasons["device_delta_wait_failed"] != 0 {
 		t.Fatalf("failure reasons = %#v, should not report device_delta_wait_failed before accepted", totals.FailureReasons)
+	}
+}
+
+func TestShadowPolicyProbeCapturesVersionDuplicateAndAuthorizationEvidence(t *testing.T) {
+	broker := newFakeTLSMQTTBroker(t)
+	broker.RejectForbiddenTopics = true
+	defer broker.Close()
+	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(rawPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM, keyPEM, _ := testAppMaterial(t, "policy-device")
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, map[string]string{"scope": "device", "access_token": testMQTTToken("device")})
+	}))
+	defer api.Close()
+	appConn, err := connectMQTTActor(mqttActorProbe{
+		DeviceID: "policy-device", Brandname: "RTK", RunID: "policy-run", AppToken: testMQTTToken("app"),
+		Dial: broker.TLSDial, Timeout: time.Second, Now: fixedProbeTime,
+	}, "app-controller", testMQTTToken("app"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer appConn.Close()
+	rejectedTopic := "$vc/devices/policy-device/shadow/update/rejected"
+	if err := mqttSubscribe(appConn, 1, rejectedTopic); err != nil {
+		t.Fatal(err)
+	}
+	var totals mqttIOTotals
+	err = runShadowPolicyProbe(sustainedDeviceSession{
+		Record: certRecord{
+			DeviceID: "policy-device", DeviceType: "light",
+			CertPEM: certPEM, KeyPEM: keyPEM,
+		},
+		MQTTTarget: mqttEndpointTarget{Host: host, Port: port},
+	}, "RTK", "policy-run", api.URL, appConn, rejectedTopic, map[string]any{"power": true}, "command-1",
+		map[string]any{"version": float64(1)}, time.Now().Add(5*time.Second), time.Second, &totals)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if totals.VersionConflicts != 1 || totals.RejectedUpdates != 2 || totals.DuplicateSuppressions != 1 || totals.UnauthorizedRejections != 1 || totals.AuthViolations != 0 {
+		t.Fatalf("policy totals = %+v", totals)
 	}
 }
 
@@ -2401,6 +2464,7 @@ type fakeMQTTBroker struct {
 	publishPayloads        map[string][][]byte
 	shadowStates           map[string]map[string]any
 	RejectUsername         string
+	RejectForbiddenTopics  bool
 	SuppressShadowAccepted bool
 }
 
@@ -2659,6 +2723,10 @@ func (b *fakeMQTTBroker) handle(conn net.Conn) {
 			if !ok {
 				return
 			}
+			if b.RejectForbiddenTopics && strings.Contains(topic, "-forbidden/") {
+				_ = mqttWritePacket(conn, 0x90, []byte{byte(packetID >> 8), byte(packetID), 0x80})
+				continue
+			}
 			b.mu.Lock()
 			b.subscribers[topic] = append(b.subscribers[topic], conn)
 			b.mu.Unlock()
@@ -2729,16 +2797,22 @@ func (b *fakeMQTTBroker) publishShadowResponses(topic string, payload []byte) {
 		return
 	}
 	var req struct {
-		State map[string]map[string]any `json:"state"`
-		Token string                    `json:"clientToken"`
+		State   map[string]map[string]any `json:"state"`
+		Token   string                    `json:"clientToken"`
+		Version *int64                    `json:"version"`
 	}
 	if err := json.Unmarshal(payload, &req); err != nil {
 		return
 	}
 	acceptedTopic := topic + "/accepted"
+	rejectedTopic := topic + "/rejected"
 	documentsTopic := topic + "/documents"
 	deltaTopic := topic + "/delta"
 	deviceID := strings.TrimSuffix(strings.TrimPrefix(topic, "$vc/devices/"), "/shadow/update")
+	if req.Version != nil && *req.Version == 0 {
+		b.publishToSubscribers(rejectedTopic, map[string]any{"clientToken": req.Token, "code": float64(http.StatusConflict)})
+		return
+	}
 	accepted := map[string]any{"clientToken": req.Token, "version": 1, "state": req.State}
 	if !b.SuppressShadowAccepted {
 		b.publishToSubscribers(acceptedTopic, accepted)

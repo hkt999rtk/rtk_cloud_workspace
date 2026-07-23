@@ -39,6 +39,15 @@ The `home-100k run` command writes these files under `--out-dir`:
 - `TEST_REPORT.md`
 - `billing-usage-report.json`
 
+The workspace `test-feature` orchestrator adds
+`runtime-log-evidence.json`, `evidence-manifest.json`, and `TEST_REPORT.md`
+under the feature stage directory. Its additive evidence schema records Test
+ID, covered load Test ID, purpose, method, start/completion time, duration,
+case-level status and assessment, scale target/actual metrics, operation
+mapping, correlation, evidence SHA-256 values, run ID, and workspace/service
+commit anchors. Existing Home load reports remain readable without these
+orchestrator-owned fields.
+
 `billing-usage-report.json` is the generic service/metric traffic summary for
 the run. When `billing_usage_events.json` is present, it aggregates the
 generic billing usage envelope by `service_code`, `metric_code`, `unit`, and
@@ -211,6 +220,8 @@ Each target-window result must include:
 - `duplicate_apply_count`
 - `version_conflict_count`
 - `rejected_update_count`
+- `unauthorized_rejection_count`
+- `duplicate_suppression_count`
 - `authorization_violation_count`
 - `client_token_correlation_count`
 

@@ -369,8 +369,6 @@ jobs:
     env:
       LINODE_TOKEN: ${{ secrets.linode_token }}
       HOME100K_RUN_ID: sdk-followup-${{ github.run_id }}-${{ github.run_attempt }}
-      HOME100K_DESCRIPTION_FILE: loadtests/home-100k/scenarios/default.description.env
-      HOME100K_DEVICES: "1000"
       HOME100K_PRESERVE_VMS: "0"
       HOME100K_AUTO_DESTROY_ON_EXIT: "1"
     steps:
@@ -380,18 +378,25 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: "1.24.x"
-      - name: Run separate 1K workflow-live smoke
-        run: loadtests/home-100k/scripts/home-100k.sh workflow-live
+      - name: Run shared Shadow feature qualification
+        run: |
+          go run ./scripts/go/rtk-cloud -- test-feature \
+            --feature device-shadow \
+            --profile qualification-1k \
+            --environment staging \
+            --env-root cloud_env/staging/lke \
+            --run-id "$HOME100K_RUN_ID" \
+            --run \
+            --confirm video-cloud-staging
       - name: Require complete successful 1K report
         run: |
-          report="loadtests/home-100k/reports/${HOME100K_RUN_ID}/TEST_REPORT.md"
+          report=".artifacts/test-runs/${HOME100K_RUN_ID}/features/device-shadow/qualification-report.md"
           test -f "$report"
-          grep -Fq -- '- Status: COMPLETE' "$report"
-          grep -Fq -- '- Result: SUCCESS' "$report"
+          grep -Fq -- '- Status: **PASS**' "$report"
       - name: Upload independent 1K report
         if: always()
         uses: actions/upload-artifact@v6
         with:
           name: sdk-followup-1k-${{ github.run_id }}-${{ github.run_attempt }}
-          path: loadtests/home-100k/reports/${{ env.HOME100K_RUN_ID }}/**
+          path: .artifacts/test-runs/${{ env.HOME100K_RUN_ID }}/features/device-shadow/**
           if-no-files-found: error

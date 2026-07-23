@@ -167,8 +167,11 @@ clip_storage_loadtest_script="${HOME100K_CLIP_STORAGE_LOADTEST_SCRIPT:-$repo_roo
 clip_storage_loadtest_artifact_dir="${HOME100K_CLIP_STORAGE_LOADTEST_ARTIFACT_DIR:-$repo_root/$out_dir/clip-storage}"
 clip_storage_camera_ids_file="${HOME100K_CLIP_STORAGE_CAMERA_IDS_FILE:-}"
 clip_storage_token_map_file="${HOME100K_CLIP_STORAGE_TOKEN_MAP_FILE:-}"
+clip_storage_device_ids_file="${HOME100K_CLIP_STORAGE_DEVICE_IDS_FILE:-}"
+clip_storage_mixed_nonclip="${HOME100K_CLIP_STORAGE_MIXED_NONCLIP:-false}"
 clip_storage_fixture="${HOME100K_CLIP_STORAGE_FIXTURE:-$repo_root/e2e_test/video_cloud/load/testdata/clip_1080p_h264_3mbps_15s.mp4}"
 clip_storage_thumbnail="${HOME100K_CLIP_STORAGE_THUMBNAIL:-$repo_root/e2e_test/video_cloud/load/testdata/thumbnail_1080p.jpg}"
+clip_storage_camera_devices="${HOME100K_CLIP_STORAGE_CAMERA_DEVICES:-1000}"
 clip_storage_count_per_camera="${HOME100K_CLIP_STORAGE_CLIPS_PER_CAMERA:-10}"
 clip_storage_window="${HOME100K_CLIP_STORAGE_WINDOW:-30m}"
 clip_storage_seed="${HOME100K_CLIP_STORAGE_POISSON_SEED:-20260719}"
@@ -1038,7 +1041,7 @@ video_loadtest_enabled() {
       return 1
       ;;
     auto|"")
-      [[ "$scenario_profile" == "video-1k-v1" || "$scenario_profile" == "video-50k-turn-v1" || "$scenario_profile" == "video-100k-turn-v1" ]]
+      [[ "$scenario_profile" == "video-canary-v1" || "$scenario_profile" == "video-1k-v1" || "$scenario_profile" == "video-50k-turn-v1" || "$scenario_profile" == "video-100k-turn-v1" ]]
       ;;
     *)
       echo "invalid HOME100K_VIDEO_LOADTEST: $video_loadtest" >&2
@@ -1920,7 +1923,7 @@ clip_storage_loadtest_enabled() {
   case "$clip_storage_loadtest" in
     off|false|0) return 1 ;;
     on|true|1) return 0 ;;
-    auto) [[ "$scenario_profile" == "clip-storage-10k-v2" ]] ;;
+    auto) [[ "$scenario_profile" == "clip-storage-canary-v1" || "$scenario_profile" == "clip-storage-1k-v1" || "$scenario_profile" == "clip-storage-10k-v2" ]] ;;
     *) echo "invalid HOME100K_CLIP_STORAGE_LOADTEST: $clip_storage_loadtest" >&2; return 2 ;;
   esac
 }
@@ -1932,14 +1935,48 @@ run_clip_storage_loadtest_step() {
     return 1
   fi
   if [[ -z "$clip_storage_camera_ids_file" || -z "$clip_storage_token_map_file" ]]; then
-    echo "clip storage loadtest requires HOME100K_CLIP_STORAGE_CAMERA_IDS_FILE and HOME100K_CLIP_STORAGE_TOKEN_MAP_FILE" >&2
+    local token_dir="$clip_storage_loadtest_artifact_dir/credentials"
+    mkdir -p "$token_dir"
+    ensure_video_loadtest_tokens "$clip_storage_camera_devices"
+    video_loadtest_first_device_ids "$clip_storage_camera_devices" | tr ',' '\n' >"$token_dir/camera-device-ids.txt"
+    clip_storage_camera_ids_file="$token_dir/camera-device-ids.txt"
+    clip_storage_token_map_file="${VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE:-}"
+  fi
+  if [[ ! -s "$clip_storage_camera_ids_file" || ! -s "$clip_storage_token_map_file" ]]; then
+    echo "clip storage camera inventory or token map is unavailable" >&2
     return 1
+  fi
+  if [[ "$clip_storage_mixed_nonclip" == "true" && -z "$clip_storage_device_ids_file" ]]; then
+    clip_storage_device_ids_file="$clip_storage_loadtest_artifact_dir/credentials/all-device-ids.txt"
+    python3 - "$(local_env_root_path)" "$devices" "$clip_storage_device_ids_file" <<'PY'
+import sqlite3
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+required = int(sys.argv[2])
+out = Path(sys.argv[3])
+ids = []
+for db_path in sorted((root / "artifacts" / "test-data").glob("*-test-data.sqlite")):
+    conn = sqlite3.connect(db_path)
+    try:
+        ids.extend(str(row[0]) for row in conn.execute("select device_id from device_bindings order by device_id"))
+    finally:
+        conn.close()
+ids = list(dict.fromkeys(ids))
+if len(ids) < required:
+    raise SystemExit(f"mixed clip inventory has {len(ids)} devices, requires {required}")
+out.parent.mkdir(parents=True, exist_ok=True)
+out.write_text("\n".join(ids[:required]) + "\n")
+PY
   fi
   set_phase "run-clip-storage-loadtest"
   VIDEO_CLOUD_LOAD_RUN_ID="${VIDEO_CLOUD_LOAD_RUN_ID:-$run_id-clip-storage}" \
   VIDEO_CLOUD_LOAD_ARTIFACT_DIR="$clip_storage_loadtest_artifact_dir" \
   VIDEO_CLOUD_LOAD_CLIP_DEVICE_IDS_FILE="$clip_storage_camera_ids_file" \
   VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE="$clip_storage_token_map_file" \
+  VIDEO_CLOUD_LOAD_DEVICE_IDS_FILE="$clip_storage_device_ids_file" \
+  VIDEO_CLOUD_LOAD_CLIP_MIXED_NONCLIP="$clip_storage_mixed_nonclip" \
   VIDEO_CLOUD_LOAD_CLIP_FIXTURE="$clip_storage_fixture" \
   VIDEO_CLOUD_LOAD_CLIP_THUMBNAIL="$clip_storage_thumbnail" \
   VIDEO_CLOUD_LOAD_CLIP_COUNT_PER_DEVICE="$clip_storage_count_per_camera" \

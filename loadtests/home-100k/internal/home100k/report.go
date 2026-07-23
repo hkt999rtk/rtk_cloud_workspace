@@ -328,10 +328,10 @@ func RenderReport(input ReportInput) string {
 
 	if len(input.StageResults) > 0 {
 		fmt.Fprintln(&b, "## Target Results")
-		fmt.Fprintln(&b, "| Window | Devices | MQTT connect | Reconnects | Shadow get p50 | Shadow get p95 | Shadow get p99 | Desired update p95 | Delta receive p95 | Desired->reported p95 | Offline desired p95 | desired/reported convergence | offline desired convergence | Delta clear | Conflicts | Rejected | Auth violations | Client tokens | Duplicate apply |")
-		fmt.Fprintln(&b, "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+		fmt.Fprintln(&b, "| Window | Devices | MQTT connect | Reconnects | Shadow get p50 | Shadow get p95 | Shadow get p99 | Desired update p95 | Delta receive p95 | Desired->reported p95 | Offline desired p95 | desired/reported convergence | offline desired convergence | Delta clear | Conflicts | Rejected | Unauthorized rejected | Auth violations | Client tokens | Duplicate suppressed | Duplicate apply |")
+		fmt.Fprintln(&b, "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
 		for _, stage := range input.StageResults {
-			fmt.Fprintf(&b, "| %s | %d | %.2f%% | %d | %.2f ms | %.2f ms | %.2f ms | %.2f ms | %.2f ms | %.2f ms | %.2f ms | %.2f%% | %.2f%% | %.2f%% | %d | %d | %d | %d | %d |\n",
+			fmt.Fprintf(&b, "| %s | %d | %.2f%% | %d | %.2f ms | %.2f ms | %.2f ms | %.2f ms | %.2f ms | %.2f ms | %.2f ms | %.2f%% | %.2f%% | %.2f%% | %d | %d | %d | %d | %d | %d | %d |\n",
 				stage.Name,
 				stage.ConnectedDevices,
 				stage.MQTTConnectSuccessRatePercent,
@@ -348,8 +348,10 @@ func RenderReport(input ReportInput) string {
 				stage.DeltaClearSuccessRatePercent,
 				stage.VersionConflictCount,
 				stage.RejectedUpdateCount,
+				stage.UnauthorizedRejectionCount,
 				stage.AuthorizationViolationCount,
 				stage.ClientTokenCorrelationCount,
+				stage.DuplicateSuppressionCount,
 				stage.DuplicateApplyCount,
 			)
 		}
@@ -889,6 +891,9 @@ func aggregateDeviceTypeTotals(stages []StageResult) map[string]DeviceTypeTotals
 }
 
 func missingDeviceTypeEvidence(plan Plan, stages []StageResult) []string {
+	if strings.Contains(strings.ToLower(strings.TrimSpace(plan.ScenarioProfile)), "canary") {
+		return nil
+	}
 	required := requiredDeviceTypesForPlan(plan)
 	if len(required) == 0 {
 		return nil

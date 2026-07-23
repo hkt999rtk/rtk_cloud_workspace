@@ -31,6 +31,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -50,6 +51,8 @@ var homeTypes = map[string]bool{
 	"appliance":          true,
 	"gateway":            true,
 }
+
+var errMQTTSubscriptionRejected = errors.New("mqtt subscription rejected")
 
 type userArtifact struct {
 	Brandname    string           `json:"brandname"`
@@ -234,6 +237,10 @@ type mqttIOTotals struct {
 	TotalBytesSent             int64                       `json:"total_bytes_sent"`
 	TotalBytesReceived         int64                       `json:"total_bytes_received"`
 	AuthViolations             int64                       `json:"auth_violations"`
+	VersionConflicts           int64                       `json:"version_conflicts"`
+	RejectedUpdates            int64                       `json:"rejected_updates"`
+	UnauthorizedRejections     int64                       `json:"unauthorized_rejections"`
+	DuplicateSuppressions      int64                       `json:"duplicate_suppressions"`
 	HTTPRequests               int64                       `json:"http_requests"`
 	HTTPSuccesses              int64                       `json:"http_successes"`
 	HTTPFailures               int64                       `json:"http_failures"`
@@ -283,6 +290,7 @@ type sustainedCommandContext struct {
 	Deadline           time.Time
 	Timeout            time.Duration
 	DisableRuntimeLogs bool
+	RunPolicyProbe     bool
 }
 
 type appBootstrapStatus struct {
@@ -1874,6 +1882,7 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 		}
 		var eventMu sync.Mutex
 		var eventWG sync.WaitGroup
+		var policyProbeClaimed atomic.Bool
 		commandLimit := sustainedCommandConcurrency(opts, len(sessions))
 		commandSlots := make(chan struct{}, commandLimit)
 		sessionLocks := make([]sync.Mutex, len(sessions))
@@ -1930,7 +1939,8 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 				}
 				eventWG.Add(1)
 				commandSlots <- struct{}{}
-				go func(event sustainedEvent, session sustainedDeviceSession, sessionSlot int) {
+				runPolicyProbe := policyProbeClaimed.CompareAndSwap(false, true)
+				go func(event sustainedEvent, session sustainedDeviceSession, sessionSlot int, runPolicyProbe bool) {
 					defer eventWG.Done()
 					defer func() { <-commandSlots }()
 					sessionLocks[sessionSlot].Lock()
@@ -1944,6 +1954,7 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 						Deadline:           stageDeadline,
 						Timeout:            shadowCommandTimeout(opts),
 						DisableRuntimeLogs: !opts.RuntimeLogs,
+						RunPolicyProbe:     runPolicyProbe,
 					})
 					eventMu.Lock()
 					defer eventMu.Unlock()
@@ -1956,7 +1967,7 @@ func runStagedSustainedHome100KLoad(assignments []assignment, certs []certRecord
 					} else {
 						stageResult.Status = "FAIL"
 					}
-				}(event, session, sessionSlot)
+				}(event, session, sessionSlot, runPolicyProbe)
 			}
 		}
 		eventWG.Wait()
@@ -2664,6 +2675,7 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 
 	shadowUpdateTopic := "$vc/devices/" + session.Record.DeviceID + "/shadow/update"
 	acceptedTopic := shadowUpdateTopic + "/accepted"
+	rejectedTopic := shadowUpdateTopic + "/rejected"
 	documentsTopic := shadowUpdateTopic + "/documents"
 	deltaTopic := shadowUpdateTopic + "/delta"
 	if err := mqttSubscribe(appConn, 1, acceptedTopic); err != nil {
@@ -2674,7 +2686,14 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		totals.HTTPFailures++
 		return fail("app_shadow_documents_subscribe", "app_shadow_documents_subscribe_failed", err)
 	}
-	commandID := fmt.Sprintf("cmd-home100k-%s-%s-%d", probeCorrelationID(runID, time.Now()), session.Record.DeviceID, time.Now().UnixNano())
+	if ctx.RunPolicyProbe {
+		if err := mqttSubscribe(appConn, 3, rejectedTopic); err != nil {
+			totals.HTTPFailures++
+			return fail("app_shadow_rejected_subscribe", "app_shadow_rejected_subscribe_failed", err)
+		}
+	}
+	commandID := boundedShadowClientToken("cmd", probeCorrelationID(runID, time.Now()), session.Record.DeviceID, strconv.FormatInt(time.Now().UnixNano(), 10))
+	reportedToken := boundedShadowClientToken("reported", commandID)
 	ctx.CommandID = commandID
 	desiredState := shadowStateWithLoadTestMarker(desiredStateForCapability(session.Record.DeviceType), probeCorrelationID(runID, time.Now()), commandID)
 	reportedState := shadowStateWithLoadTestMarker(reportedStateForCapability(session.Record.DeviceType), probeCorrelationID(runID, time.Now()), commandID)
@@ -2718,9 +2737,10 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		totals.HTTPFailures++
 		return fail("app_shadow_accepted_wait", "app_shadow_accepted_wait_failed", err)
 	}
-	if _, err := waitForMQTTPublishWithDeadline(appConn, acceptedTopic, acceptedTimeout, func(doc map[string]any) bool {
+	acceptedDoc, err := waitForMQTTPublishWithDeadline(appConn, acceptedTopic, acceptedTimeout, func(doc map[string]any) bool {
 		return doc["clientToken"] == commandID
-	}); err != nil {
+	})
+	if err != nil {
 		retryTimeout, retryErr := timeoutUntilDeadline(deadline, commandTimeout, "app_shadow_accepted_retry")
 		if retryErr != nil {
 			totals.HTTPFailures++
@@ -2731,9 +2751,11 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 			return fail("app_desired_retry_publish", "app_desired_retry_publish_failed", retryPublishErr)
 		}
 		totals.TotalHTTPBytesSent += int64(len(shadowUpdateTopic) + len(desiredPayload))
-		if _, retryWaitErr := waitForMQTTPublishWithDeadline(appConn, acceptedTopic, retryTimeout, func(doc map[string]any) bool {
+		var retryWaitErr error
+		acceptedDoc, retryWaitErr = waitForMQTTPublishWithDeadline(appConn, acceptedTopic, retryTimeout, func(doc map[string]any) bool {
 			return doc["clientToken"] == commandID
-		}); retryWaitErr != nil {
+		})
+		if retryWaitErr != nil {
 			totals.HTTPFailures++
 			return fail("app_shadow_accepted_wait", "app_shadow_accepted_wait_failed", err)
 		}
@@ -2761,7 +2783,7 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 	}
 	reportedPayload, err := json.Marshal(map[string]any{
 		"state":       map[string]any{"reported": reportedState},
-		"clientToken": "reported-" + commandID,
+		"clientToken": reportedToken,
 	})
 	if err != nil {
 		totals.HTTPFailures++
@@ -2788,7 +2810,7 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		return fail("app_delta_clear_wait", "app_delta_clear_wait_failed", err)
 	}
 	if _, err := waitForMQTTPublishWithDeadline(appConn, documentsTopic, documentsTimeout, func(doc map[string]any) bool {
-		return doc["clientToken"] == "reported-"+commandID && shadowDocumentsDeltaCleared(doc)
+		return doc["clientToken"] == reportedToken && shadowDocumentsDeltaCleared(doc)
 	}); err != nil {
 		totals.HTTPFailures++
 		return fail("app_delta_clear_wait", "app_delta_clear_wait_failed", err)
@@ -2811,10 +2833,117 @@ func runSustainedShadowCommandWithContext(session sustainedDeviceSession, brandn
 		clearConnDeadline(appConn)
 		commandEvent.ExpectedLogs = append(commandEvent.ExpectedLogs, expect)
 	}
+	if ctx.RunPolicyProbe {
+		if err := runShadowPolicyProbe(session, brandname, runID, apiBaseURL, appConn, rejectedTopic, desiredState, commandID, acceptedDoc, deadline, commandTimeout, totals); err != nil {
+			return fail("shadow_policy_probe", "shadow_policy_probe_failed", err)
+		}
+	}
 	totals.AppReceivedAcks++
 	totals.HTTPSuccesses++
 	totals.CommandEvents = append(totals.CommandEvents, commandEvent)
 	return nil
+}
+
+func runShadowPolicyProbe(session sustainedDeviceSession, brandname, runID, apiBaseURL string, appConn io.ReadWriter, rejectedTopic string, desiredState map[string]any, commandID string, acceptedDoc map[string]any, deadline time.Time, timeout time.Duration, totals *mqttIOTotals) error {
+	version, ok := jsonInt64(acceptedDoc["version"])
+	if !ok || version <= 0 {
+		return errors.New("shadow accepted response missing positive version")
+	}
+	staleToken := boundedShadowClientToken("stale", commandID)
+	stalePayload, err := json.Marshal(map[string]any{
+		"state":       map[string]any{"desired": desiredState},
+		"version":     version - 1,
+		"clientToken": staleToken,
+	})
+	if err != nil {
+		return err
+	}
+	shadowUpdateTopic := "$vc/devices/" + session.Record.DeviceID + "/shadow/update"
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := mqttPublish(appConn, shadowUpdateTopic, stalePayload); err != nil {
+			return fmt.Errorf("publish stale shadow version: %w", err)
+		}
+		waitTimeout, err := timeoutUntilDeadline(deadline, timeout, "shadow_version_rejected_wait")
+		if err != nil {
+			return err
+		}
+		rejected, err := waitForMQTTPublishWithDeadline(appConn, rejectedTopic, waitTimeout, func(doc map[string]any) bool {
+			return doc["clientToken"] == staleToken
+		})
+		if err != nil {
+			return fmt.Errorf("wait for stale shadow rejection: %w", err)
+		}
+		code, ok := jsonInt64(rejected["code"])
+		if !ok || code != http.StatusConflict {
+			return fmt.Errorf("stale shadow update rejection code = %v, want %d", rejected["code"], http.StatusConflict)
+		}
+		totals.RejectedUpdates++
+		if attempt == 0 {
+			totals.VersionConflicts++
+		} else {
+			totals.DuplicateSuppressions++
+		}
+	}
+
+	cert, err := loadLeafFirstX509KeyPairForRecord(session.Record)
+	if err != nil {
+		return fmt.Errorf("load device certificate for authorization probe: %w", err)
+	}
+	tokenTimeout, err := timeoutUntilDeadline(deadline, timeout, "unauthorized_device_token")
+	if err != nil {
+		return err
+	}
+	deviceToken, err := requestDeviceTokenWithTimeout(apiBaseURL, cert, session.Record.DeviceID, tokenTimeout)
+	if err != nil {
+		return fmt.Errorf("request authorization probe token: %w", err)
+	}
+	target := session.MQTTTarget
+	probeConn, err := connectMQTTActor(mqttActorProbe{
+		DeviceID:    session.Record.DeviceID,
+		DeviceType:  session.Record.DeviceType,
+		Brandname:   brandname,
+		RunID:       runID + "-authorization-probe",
+		DeviceToken: deviceToken,
+		Dial: func() (io.ReadWriteCloser, error) {
+			return tls.DialWithDialer(&net.Dialer{Timeout: tokenTimeout}, "tcp", net.JoinHostPort(target.Host, strconv.Itoa(target.Port)), &tls.Config{InsecureSkipVerify: true})
+		},
+		Timeout: tokenTimeout,
+		Now:     time.Now,
+	}, "device-policy-probe", deviceToken)
+	if err != nil {
+		return fmt.Errorf("connect authorization probe: %w", err)
+	}
+	defer probeConn.Close()
+	forbiddenDeviceID := session.Record.DeviceID + "-forbidden"
+	err = mqttSubscribe(probeConn, 1, "$vc/devices/"+forbiddenDeviceID+"/shadow/update/accepted")
+	if errors.Is(err, errMQTTSubscriptionRejected) {
+		totals.UnauthorizedRejections++
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("authorization probe returned indeterminate subscription error: %w", err)
+	}
+	totals.AuthViolations++
+	return errors.New("device token subscribed to another device shadow topic")
+}
+
+func jsonInt64(value any) (int64, bool) {
+	switch number := value.(type) {
+	case float64:
+		if number != math.Trunc(number) {
+			return 0, false
+		}
+		return int64(number), true
+	case json.Number:
+		result, err := number.Int64()
+		return result, err == nil
+	case int64:
+		return number, true
+	case int:
+		return int64(number), true
+	default:
+		return 0, false
+	}
 }
 
 func timeoutUntilDeadline(deadline time.Time, fallback time.Duration, phase string) (time.Duration, error) {
@@ -3487,7 +3616,7 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 	result.TelemetryStatus = "PASS"
 	telemetryLatency := float64(time.Since(start).Milliseconds())
 
-	commandID := fmt.Sprintf("cmd-mqtt-e2e-%s-%s", correlationID, probe.DeviceID)
+	commandID := boundedShadowClientToken("cmd", correlationID, probe.DeviceID)
 	legacyCommandPayload, err := sampleHomeCommand(probe.DeviceID, probe.DeviceType, commandID, probe.Now().UTC())
 	if err != nil {
 		result.Error = redactedError(err)
@@ -3576,6 +3705,15 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 	result.SuccessPercent = 100
 	result.LatencyMS = []float64{telemetryLatency, float64(time.Since(commandStart).Milliseconds())}
 	return result
+}
+
+func boundedShadowClientToken(prefix string, parts ...string) string {
+	raw := strings.Trim(strings.Join(append([]string{prefix}, parts...), "-"), "-")
+	if len(raw) <= 64 {
+		return raw
+	}
+	sum := sha256.Sum256([]byte(raw))
+	return strings.Trim(strings.TrimSpace(prefix), "-") + "-" + hex.EncodeToString(sum[:16])
 }
 
 const sustainedMQTTKeepAliveSeconds uint16 = 30
@@ -3856,6 +3994,10 @@ func attachMQTTIOTotals(result map[string]any, totals mqttIOTotals) {
 	result["total_bytes_sent"] = totals.TotalBytesSent
 	result["total_bytes_received"] = totals.TotalBytesReceived
 	result["auth_violations"] = totals.AuthViolations
+	result["version_conflicts"] = totals.VersionConflicts
+	result["rejected_updates"] = totals.RejectedUpdates
+	result["unauthorized_rejections"] = totals.UnauthorizedRejections
+	result["duplicate_suppressions"] = totals.DuplicateSuppressions
 	result["http_requests"] = totals.HTTPRequests
 	result["http_successes"] = totals.HTTPSuccesses
 	result["http_failures"] = totals.HTTPFailures
@@ -3980,6 +4122,10 @@ func addMQTTIOTotals(a mqttIOTotals, b mqttIOTotals) mqttIOTotals {
 	a.TotalBytesSent += b.TotalBytesSent
 	a.TotalBytesReceived += b.TotalBytesReceived
 	a.AuthViolations += b.AuthViolations
+	a.VersionConflicts += b.VersionConflicts
+	a.RejectedUpdates += b.RejectedUpdates
+	a.UnauthorizedRejections += b.UnauthorizedRejections
+	a.DuplicateSuppressions += b.DuplicateSuppressions
 	a.HTTPRequests += b.HTTPRequests
 	a.HTTPSuccesses += b.HTTPSuccesses
 	a.HTTPFailures += b.HTTPFailures
@@ -4056,6 +4202,10 @@ func isZeroMQTTIOTotals(t mqttIOTotals) bool {
 		t.TotalBytesSent == 0 &&
 		t.TotalBytesReceived == 0 &&
 		t.AuthViolations == 0 &&
+		t.VersionConflicts == 0 &&
+		t.RejectedUpdates == 0 &&
+		t.UnauthorizedRejections == 0 &&
+		t.DuplicateSuppressions == 0 &&
 		t.HTTPRequests == 0 &&
 		t.HTTPSuccesses == 0 &&
 		t.HTTPFailures == 0 &&
@@ -5510,8 +5660,11 @@ func mqttSubscribe(w io.ReadWriter, packetID uint16, topic string) error {
 	if err != nil {
 		return err
 	}
-	if packetType != 0x90 || len(response) < 3 || response[2] == 0x80 {
+	if packetType != 0x90 || len(response) < 3 {
 		return errors.New("mqtt suback failed")
+	}
+	if response[2] == 0x80 {
+		return errMQTTSubscriptionRejected
 	}
 	return nil
 }

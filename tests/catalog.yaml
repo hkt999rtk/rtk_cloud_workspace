@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 
 ui_local: &ui_local
   layer: ui
@@ -106,14 +106,64 @@ cases:
   - { id: E2E-PROV-ACCOUNT-001, title: Account and Video Cloud provisioning smoke completes, layer: e2e, owner: provisioning, source: e2e_test/README.md, selector: "provisioning/account_video_smoke/", method: Go E2E runner provisions isolated test identities across Account Manager and Video Cloud., runner: test-e2e, environments: [staging], evidence: [json, markdown], status: active }
   - { id: E2E-PROV-BULK-001, title: Bulk bind artifacts validate for staged onboarding, layer: e2e, owner: provisioning, source: e2e_test/README.md, selector: "provisioning/bulk_bind_validation/", method: Go validator checks bulk-bind input output and per-device consistency., runner: test-e2e, environments: [local, staging], evidence: [json, markdown], status: active }
 
+  - { id: E2E-HOME-SHADOW-001, title: Online desired delta and reported state converge, layer: e2e, feature: device-shadow, profile: canary, owner: home_cloud, source: loadtests/home-100k/scenarios/mqtt-canary.description.env, selector: "test_id: E2E-HOME-SHADOW-001", method: Home load actors write desired state receive delta publish reported state and require delta clearance., runner: test-feature, environments: [staging], evidence: [json, markdown, logs], status: active }
+  - { id: E2E-HOME-SHADOW-002, title: Offline desired state converges after reconnect, layer: e2e, feature: device-shadow, profile: canary, owner: home_cloud, source: loadtests/home-100k/scenarios/mqtt-canary.description.env, selector: "test_id: E2E-HOME-SHADOW-002", method: Offline actors queue desired state reconnect read shadow publish reported state and clear delta., runner: test-feature, environments: [staging], evidence: [json, markdown, logs], status: active }
+  - { id: E2E-HOME-SHADOW-003, title: Shadow versions duplicates and unauthorized updates are enforced, layer: e2e, feature: device-shadow, profile: canary, owner: home_cloud, source: loadtests/home-100k/scenarios/mqtt-canary.description.env, selector: "test_id: E2E-HOME-SHADOW-003", method: Shadow actors verify version conflicts duplicate suppression and rejection of unauthorized desired writes., runner: test-feature, environments: [staging], evidence: [json, markdown, logs], status: active }
+  - { id: E2E-VC-WEBRTC-001, title: H264 WebRTC create first RTP and close succeed, layer: e2e, feature: video-webrtc, profile: canary, owner: video_cloud, source: loadtests/home-100k/scenarios/video-canary.description.env, selector: "test_id: E2E-VC-WEBRTC-001", method: Camera and viewer actors establish H264 media observe first RTP and close the session., runner: test-feature, environments: [staging], evidence: [json, markdown, logs], status: active }
+  - { id: E2E-VC-TURN-001, title: Dynamic TURN registry supplies an active relay path, layer: e2e, feature: video-webrtc, profile: canary, owner: video_cloud, source: loadtests/home-100k/scenarios/video-canary.description.env, selector: "test_id: E2E-VC-TURN-001", method: Relay-only WebRTC actors require dynamic TURN resolution relay candidates and active TURN evidence., runner: test-feature, environments: [staging], evidence: [json, markdown, logs], status: active }
+  - { id: E2E-VC-CLIP-001, title: Clip upload readiness playback and delete lifecycle succeeds, layer: e2e, feature: clip-storage, profile: canary, owner: video_cloud, source: loadtests/home-100k/scenarios/clip-storage-canary.description.env, selector: "test_id: E2E-VC-CLIP-001", method: Camera and app actors upload reconcile list range-download verify and delete encrypted clips., runner: test-feature, environments: [staging], evidence: [json, markdown, logs], status: active }
+
   - { id: LIVE-STG-ONBOARD-001, title: Staging onboarding and service integration flow succeeds, layer: live, owner: cloud_platform, source: scripts/go/rtk-cloud/main.go, selector: "staging-e2e-test", method: Workspace orchestration runs the live staging E2E plan against dedicated test resources., runner: test-live, environments: [staging], evidence: [json, markdown, logs], status: active }
 
-  - { id: LOAD-HOME-SHADOW-001, title: Home MQTT one-thousand-device smoke meets thresholds, layer: load, owner: home_cloud, source: loadtests/home-100k/scenarios/mqtt-1k.description.env, selector: "HOME100K_DEVICES=1000", method: Distributed load generators exercise MQTT shadow traffic and aggregate latency error and capacity thresholds., runner: test-live, environments: [staging], evidence: [json, markdown, logs], status: active }
-  - { id: LOAD-HOME-SHADOW-002, title: Home one-hundred-thousand-device load meets thresholds, layer: load, owner: home_cloud, source: loadtests/home-100k/scenarios/default.description.env, selector: "HOME100K_ENVIRONMENT=staging", method: Distributed load generators exercise the full Home Cloud mix and aggregate latency error and capacity thresholds., runner: test-live, environments: [staging], evidence: [json, markdown, logs], status: active }
-  - { id: LOAD-HOME-VIDEO-001, title: One-thousand-device video smoke meets thresholds, layer: load, owner: video_cloud, source: loadtests/home-100k/scenarios/video-1k.description.env, selector: "HOME100K_SCENARIO_PROFILE=video-1k-v1", method: Video load clients exercise signaling and media setup while collecting threshold evidence., runner: test-live, environments: [staging], evidence: [json, markdown, logs], status: active }
-  - { id: LOAD-HOME-TURN-001, title: Fifty-thousand-device TURN load meets thresholds, layer: load, owner: video_cloud, source: loadtests/home-100k/scenarios/video-50k-turn.description.env, selector: "HOME100K_SCENARIO_PROFILE=video-50k-turn-v1", method: Distributed video clients exercise TURN-assisted sessions and aggregate capacity evidence., runner: test-live, environments: [staging], evidence: [json, markdown, logs], status: active }
-  - { id: LOAD-HOME-TURN-002, title: One-hundred-thousand-device TURN load meets thresholds, layer: load, owner: video_cloud, source: loadtests/home-100k/scenarios/video-100k-turn.description.env, selector: "HOME100K_SCENARIO_PROFILE=video-100k-turn-v1", method: Distributed video clients exercise TURN-assisted sessions and aggregate capacity evidence., runner: test-live, environments: [staging], evidence: [json, markdown, logs], status: active }
-  - { id: LOAD-VC-CLIP-001, title: Ten-thousand-device clip storage load meets thresholds, layer: load, owner: video_cloud, source: loadtests/home-100k/scenarios/clip-storage-10k.description.env, selector: "HOME100K_SCENARIO_PROFILE=clip-storage-10k-v2", method: Clip clients upload and retrieve deterministic media fixtures while collecting latency error and storage evidence., runner: test-live, environments: [staging], evidence: [json, markdown, logs], status: active }
+  - id: LOAD-HOME-SHADOW-001
+    title: Home MQTT one-thousand-device qualification meets thresholds
+    layer: load
+    feature: device-shadow
+    profile: qualification-1k
+    covers: [E2E-HOME-SHADOW-001, E2E-HOME-SHADOW-002, E2E-HOME-SHADOW-003]
+    change_paths: [repos/rtk_video_cloud/internal/deviceshadow/**, repos/rtk_video_cloud/internal/mqtt/**, loadtests/home-100k/**, scripts/go/rtk-cloud/**, repos/rtk_cloud_contracts_doc/**]
+    owner: home_cloud
+    source: loadtests/home-100k/scenarios/mqtt-1k.description.env
+    selector: HOME100K_DEVICES=1000
+    method: Distributed load generators exercise MQTT shadow behavior and require functional latency completeness and exact-correlation gates.
+    runner: test-feature
+    environments: [staging]
+    evidence: [json, markdown, logs]
+    status: active
+  - { id: LOAD-HOME-SHADOW-002, title: Home one-hundred-thousand-device load meets thresholds, layer: load, feature: device-shadow, profile: capacity, covers: [E2E-HOME-SHADOW-001, E2E-HOME-SHADOW-002, E2E-HOME-SHADOW-003], owner: home_cloud, source: loadtests/home-100k/scenarios/default.description.env, selector: "HOME100K_ENVIRONMENT=staging", method: Distributed load generators exercise the full Home Cloud mix and aggregate latency error and capacity thresholds., runner: test-live, environments: [staging], evidence: [json, markdown, logs], status: active }
+  - id: LOAD-HOME-VIDEO-001
+    title: One-thousand-device video qualification meets thresholds
+    layer: load
+    feature: video-webrtc
+    profile: qualification-1k
+    covers: [E2E-VC-WEBRTC-001, E2E-VC-TURN-001]
+    change_paths: [repos/rtk_video_cloud/internal/webrtc/**, repos/rtk_video_cloud/internal/turnregistry/**, repos/rtk_video_cloud/deploy/coturn/**, e2e_test/video_cloud/load/**, loadtests/home-100k/**, scripts/go/rtk-cloud/**, repos/rtk_cloud_contracts_doc/**]
+    owner: video_cloud
+    source: loadtests/home-100k/scenarios/video-1k.description.env
+    selector: HOME100K_SCENARIO_PROFILE=video-1k-v1
+    method: One-thousand Home devices and one hundred concurrent H264 relay sessions require dynamic TURN first-RTP close and capacity evidence.
+    runner: test-feature
+    environments: [staging]
+    evidence: [json, markdown, logs]
+    status: active
+  - { id: LOAD-HOME-TURN-001, title: Fifty-thousand-device TURN load meets thresholds, layer: load, feature: video-webrtc, profile: capacity, covers: [E2E-VC-WEBRTC-001, E2E-VC-TURN-001], owner: video_cloud, source: loadtests/home-100k/scenarios/video-50k-turn.description.env, selector: "HOME100K_SCENARIO_PROFILE=video-50k-turn-v1", method: Distributed video clients exercise TURN-assisted sessions and aggregate capacity evidence., runner: test-live, environments: [staging], evidence: [json, markdown, logs], status: active }
+  - { id: LOAD-HOME-TURN-002, title: One-hundred-thousand-device TURN load meets thresholds, layer: load, feature: video-webrtc, profile: capacity, covers: [E2E-VC-WEBRTC-001, E2E-VC-TURN-001], owner: video_cloud, source: loadtests/home-100k/scenarios/video-100k-turn.description.env, selector: "HOME100K_SCENARIO_PROFILE=video-100k-turn-v1", method: Distributed video clients exercise TURN-assisted sessions and aggregate capacity evidence., runner: test-live, environments: [staging], evidence: [json, markdown, logs], status: active }
+  - { id: LOAD-VC-CLIP-001, title: Ten-thousand-device clip storage load meets thresholds, layer: load, feature: clip-storage, profile: capacity, covers: [E2E-VC-CLIP-001], owner: video_cloud, source: loadtests/home-100k/scenarios/clip-storage-10k.description.env, selector: "HOME100K_SCENARIO_PROFILE=clip-storage-10k-v2", method: Clip clients upload and retrieve deterministic media fixtures while collecting latency error and storage evidence., runner: test-live, environments: [staging], evidence: [json, markdown, logs], status: active }
+  - id: LOAD-VC-CLIP-002
+    title: One-thousand-device clip storage qualification meets thresholds
+    layer: load
+    feature: clip-storage
+    profile: qualification-1k
+    covers: [E2E-VC-CLIP-001]
+    change_paths: [repos/rtk_video_cloud/internal/clip**, repos/rtk_video_cloud/internal/blob/**, e2e_test/video_cloud/load/**, loadtests/home-100k/**, scripts/go/rtk-cloud/**, repos/rtk_cloud_contracts_doc/**]
+    owner: video_cloud
+    source: loadtests/home-100k/scenarios/clip-storage-1k.description.env
+    selector: HOME100K_SCENARIO_PROFILE=clip-storage-1k-v1
+    method: One thousand Home devices and one thousand clip uploads require lifecycle reconciliation functional and latency evidence.
+    runner: test-feature
+    environments: [staging]
+    evidence: [json, markdown, logs]
+    status: active
 
   - { id: SVC-AM-SUITE-001, title: Account Manager unit and service suite passes, layer: service, owner: rtk_account_manager, source: repos/rtk_account_manager/go.mod, selector: "module", method: Go test executes all Account Manager packages., runner: test-services, environments: [local, ci], evidence: [console], status: active }
   - { id: SVC-CA-SUITE-001, title: Cloud Admin unit and service suite passes, layer: service, owner: rtk_cloud_admin, source: repos/rtk_cloud_admin/go.mod, selector: "module", method: Go test and Node test execute Cloud Admin backend and frontend unit suites., runner: test-services, environments: [local, ci], evidence: [console], status: active }

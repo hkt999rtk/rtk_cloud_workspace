@@ -1,0 +1,416 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestResolveFeatureSpecsQualificationRunsCanaryFirst(t *testing.T) {
+	catalog := testCatalog{Cases: []testCatalogCase{
+		{ID: "E2E-HOME-SHADOW-002", Layer: "e2e", Feature: "device-shadow", Profile: "canary", Runner: "test-feature", Status: "active", Source: "canary.env", Method: "offline"},
+		{ID: "E2E-HOME-SHADOW-001", Layer: "e2e", Feature: "device-shadow", Profile: "canary", Runner: "test-feature", Status: "active", Source: "canary.env", Method: "online"},
+		{ID: "LOAD-HOME-SHADOW-001", Layer: "load", Feature: "device-shadow", Profile: "qualification-1k", Runner: "test-feature", Status: "active", Source: "1k.env", Covers: []string{"E2E-HOME-SHADOW-001", "E2E-HOME-SHADOW-002"}},
+	}}
+	specs, err := resolveFeatureSpecs(catalog, "device-shadow", "qualification-1k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(specs) != 2 || specs[0].Profile != "canary" || specs[1].Profile != "qualification-1k" {
+		t.Fatalf("unexpected execution order: %+v", specs)
+	}
+	if strings.Join(specs[0].TestIDs, ",") != "E2E-HOME-SHADOW-001,E2E-HOME-SHADOW-002" {
+		t.Fatalf("canary IDs are not stable and sorted: %v", specs[0].TestIDs)
+	}
+}
+
+func TestFeatureRootsSeparateDeploymentAndLoadRuntime(t *testing.T) {
+	deploymentRoot := filepath.Join("/workspace", "cloud_env", "staging", "lke")
+	if got, want := featureLoadEnvRoot(deploymentRoot), filepath.Join("/workspace", "cloud_env", "staging", "runtime"); got != want {
+		t.Fatalf("featureLoadEnvRoot() = %q, want %q", got, want)
+	}
+	if got, want := featureKubeconfigPath(deploymentRoot), filepath.Join(deploymentRoot, "state", "kubeconfig.yaml"); got != want {
+		t.Fatalf("featureKubeconfigPath() = %q, want %q", got, want)
+	}
+	if got, want := featureDeviceCABundlePath(deploymentRoot), filepath.Join(deploymentRoot, "state", "secrets", "device-client-ca-bundle.pem"); got != want {
+		t.Fatalf("featureDeviceCABundlePath() = %q, want %q", got, want)
+	}
+}
+
+func TestBoundedFeatureStageRunIDHonorsLinodeTagLimit(t *testing.T) {
+	runID := strings.Repeat("qualification-", 8)
+	got := boundedFeatureStageRunID(runID, "device-shadow", "qualification-1k")
+	if len(got) > 50 {
+		t.Fatalf("stage run ID length = %d, want <= 50: %q", len(got), got)
+	}
+	if got != boundedFeatureStageRunID(runID, "device-shadow", "qualification-1k") {
+		t.Fatal("bounded stage run ID is not deterministic")
+	}
+	if got == boundedFeatureStageRunID(runID, "video-webrtc", "qualification-1k") {
+		t.Fatal("different feature produced the same bounded stage run ID")
+	}
+}
+
+func TestFeatureLoadEnvRootUsesRuntimeSiblingForLKEDeployment(t *testing.T) {
+	got := featureLoadEnvRoot("/workspace/cloud_env/staging/lke")
+	if got != "/workspace/cloud_env/staging/runtime" {
+		t.Fatalf("load env root = %q", got)
+	}
+}
+
+func TestFeatureSelectionUsesChangedPathsAndLabels(t *testing.T) {
+	catalog := testCatalog{Cases: []testCatalogCase{
+		{ID: "LOAD-HOME-SHADOW-001", Layer: "load", Feature: "device-shadow", Profile: "qualification-1k", Status: "active", ChangePaths: []string{"repos/rtk_video_cloud/internal/deviceshadow/**"}},
+		{ID: "LOAD-HOME-VIDEO-001", Layer: "load", Feature: "video-webrtc", Profile: "qualification-1k", Status: "active", ChangePaths: []string{"repos/rtk_video_cloud/internal/webrtc/**"}},
+	}}
+	selection, err := selectFeatureQualifications(catalog,
+		[]string{"repos/rtk_video_cloud/internal/deviceshadow/service.go"},
+		[]string{"qualification/clip-storage"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(selection.Features, ",") != "clip-storage,device-shadow" {
+		t.Fatalf("unexpected selected features: %v", selection.Features)
+	}
+	if !selection.Required {
+		t.Fatal("selected features must require qualification")
+	}
+}
+
+func TestFeatureSelectionSharedPathSelectsAllFeatures(t *testing.T) {
+	selection, err := selectFeatureQualifications(testCatalog{},
+		[]string{"tests/catalog.yaml"},
+		nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(selection.Features, ",") != "clip-storage,device-shadow,video-webrtc" {
+		t.Fatalf("shared path selected features = %v", selection.Features)
+	}
+	for _, feature := range selection.Features {
+		if strings.Join(selection.MatchedPaths[feature], ",") != "tests/catalog.yaml" {
+			t.Fatalf("%s matched paths = %v", feature, selection.MatchedPaths[feature])
+		}
+	}
+}
+
+func TestFeatureSelectionVideoCloudGitlinkSelectsAllFeatures(t *testing.T) {
+	selection, err := selectFeatureQualifications(testCatalog{},
+		[]string{"repos/rtk_video_cloud"},
+		nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(selection.Features) != 3 {
+		t.Fatalf("video cloud gitlink must conservatively select all features: %v", selection.Features)
+	}
+}
+
+func TestClassifyFeatureRunRejectsMissingEvidence(t *testing.T) {
+	results := map[string]any{
+		"status": "COMPLETE", "result": "SUCCESS",
+		"server_evidence":         map[string]any{"complete": false},
+		"server_correlation":      map[string]any{"status": "complete"},
+		"runtime_log_correlation": map[string]any{"status": "complete"},
+	}
+	status, _ := classifyFeatureRun(results, nil, nil)
+	if status != "INCOMPLETE" {
+		t.Fatalf("status = %s, want INCOMPLETE", status)
+	}
+}
+
+func TestClassifyFeatureRunAcceptsRunnerPassCorrelationStatus(t *testing.T) {
+	results := map[string]any{
+		"status": "COMPLETE", "result": "SUCCESS",
+		"server_evidence":         map[string]any{"complete": true},
+		"server_correlation":      map[string]any{"status": "pass"},
+		"runtime_log_correlation": map[string]any{"status": "pass"},
+	}
+	status, _ := classifyFeatureRun(results, nil, nil)
+	if status != "PASS" {
+		t.Fatalf("status = %s, want PASS", status)
+	}
+}
+
+func TestEvaluateFeatureEvidenceDoesNotPassCasesWhenAggregateIsIncomplete(t *testing.T) {
+	stageDir := t.TempDir()
+	results := map[string]any{
+		"status": "COMPLETE", "result": "SUCCESS",
+		"server_evidence":         map[string]any{"complete": false},
+		"server_correlation":      map[string]any{"status": "complete"},
+		"runtime_log_correlation": map[string]any{"status": "complete"},
+		"stage_results": []any{map[string]any{
+			"desired_reported_convergence_rate_percent": float64(100),
+			"offline_desired_convergence_rate_percent":  float64(100),
+			"version_conflict_count":                    float64(1),
+			"rejected_update_count":                     float64(1),
+			"unauthorized_rejection_count":              float64(1),
+			"duplicate_suppression_count":               float64(1),
+			"duplicate_apply_count":                     float64(0),
+			"authorization_violation_count":             float64(0),
+			"device_mqtt_totals":                        map[string]any{"delta_received": float64(1), "reported_publishes": float64(1)},
+		}},
+	}
+	if err := writeJSONFile(filepath.Join(stageDir, "results.json"), results); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	manifest := evaluateFeatureEvidence(stageDir, "run", "staging", featureRunSpec{
+		Feature: "device-shadow", Profile: "canary", TestIDs: []string{"E2E-HOME-SHADOW-001"},
+	}, map[string]string{}, now, now.Add(time.Second), nil)
+	if manifest.Status != "INCOMPLETE" || manifest.Cases[0].Status != "INCOMPLETE" {
+		t.Fatalf("manifest/case status = %s/%s", manifest.Status, manifest.Cases[0].Status)
+	}
+}
+
+func TestEvaluateFeatureEvidenceBehaviorFailureFailsQualification(t *testing.T) {
+	stageDir := t.TempDir()
+	results := map[string]any{
+		"status": "COMPLETE", "result": "SUCCESS",
+		"server_evidence":         map[string]any{"complete": true},
+		"server_correlation":      map[string]any{"status": "pass"},
+		"runtime_log_correlation": map[string]any{"status": "pass"},
+		"stage_results":           []any{map[string]any{}},
+	}
+	if err := writeJSONFile(filepath.Join(stageDir, "results.json"), results); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	manifest := evaluateFeatureEvidence(stageDir, "run", "staging", featureRunSpec{
+		Feature: "device-shadow", Profile: "canary", TestIDs: []string{"E2E-HOME-SHADOW-001"},
+	}, map[string]string{}, now, now.Add(time.Second), nil)
+	if manifest.Status != "FAIL" || manifest.Cases[0].Status != "FAIL" {
+		t.Fatalf("behavior failure status = %s/%s", manifest.Status, manifest.Cases[0].Status)
+	}
+}
+
+func TestClassifyFeatureRunThresholdFailureIsFail(t *testing.T) {
+	results := map[string]any{
+		"status": "COMPLETE", "result": "FAIL",
+		"server_evidence":         map[string]any{"complete": true},
+		"server_correlation":      map[string]any{"status": "pass"},
+		"runtime_log_correlation": map[string]any{"status": "pass"},
+	}
+	status, _ := classifyFeatureRun(results, nil, nil)
+	if status != "FAIL" {
+		t.Fatalf("threshold failure status = %s", status)
+	}
+}
+
+func TestClipQualificationMissingCredentialsIsBlocked(t *testing.T) {
+	t.Setenv("VIDEO_CLOUD_LOAD_ADMIN_TOKEN", "")
+	err := validateFeaturePrerequisites(featureRunSpec{Feature: "clip-storage", Profile: "qualification-1k"})
+	if err == nil {
+		t.Fatal("missing Clip qualification credentials must block the run")
+	}
+}
+
+func TestVerifyFeatureDeploymentCommitsRequiresDigestAndCommit(t *testing.T) {
+	envRoot := t.TempDir()
+	manifestDir := filepath.Join(envRoot, "artifacts", "lke-images")
+	if err := os.MkdirAll(manifestDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	images := []any{
+		map[string]any{
+			"source_path": "repos/rtk_video_cloud", "source_commit": "video-commit",
+			"image": "registry/video:test", "digest": "sha256:video",
+		},
+		map[string]any{
+			"source_path": "repos/rtk_account_manager", "source_commit": "account-commit",
+			"image": "registry/account:test", "digest": "sha256:account",
+		},
+		map[string]any{
+			"source_path": "repos/rtk_cloud_logger", "source_commit": "logger-commit",
+			"image": "registry/logger:test", "digest": "sha256:logger",
+		},
+	}
+	path := filepath.Join(manifestDir, "lke-image-manifest.json")
+	if err := writeJSONFile(path, map[string]any{"images": images}); err != nil {
+		t.Fatal(err)
+	}
+	commits := map[string]string{"video_cloud": "video-commit", "account_manager": "account-commit", "cloud_logger": "logger-commit"}
+	if err := verifyFeatureDeploymentCommits(envRoot, commits); err != nil {
+		t.Fatalf("valid deployment anchors rejected: %v", err)
+	}
+	images[0].(map[string]any)["digest"] = ""
+	if err := writeJSONFile(path, map[string]any{"images": images}); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyFeatureDeploymentCommits(envRoot, commits); err == nil || !strings.Contains(err.Error(), "digest") {
+		t.Fatalf("missing digest error = %v", err)
+	}
+}
+
+func TestEvaluateShadowCasesRequiresBehaviorEvidence(t *testing.T) {
+	results := map[string]any{
+		"runtime_log_correlation": map[string]any{"status": "pass"},
+		"stage_results": []any{map[string]any{
+			"mqtt_connect_success_rate_percent":         float64(100),
+			"desired_reported_convergence_rate_percent": float64(100),
+			"offline_desired_convergence_rate_percent":  float64(100),
+			"version_conflict_count":                    float64(1),
+			"rejected_update_count":                     float64(1),
+			"unauthorized_rejection_count":              float64(1),
+			"duplicate_suppression_count":               float64(1),
+			"duplicate_apply_count":                     float64(0),
+			"authorization_violation_count":             float64(0),
+			"device_mqtt_totals":                        map[string]any{"delta_received": float64(1), "reported_publishes": float64(1)},
+		}},
+	}
+	spec := featureRunSpec{Feature: "device-shadow", Profile: "canary"}
+	_, _, _, exact, cases := evaluateFeatureCases(spec, results, t.TempDir())
+	if exact != 100 {
+		t.Fatalf("exact correlation = %v", exact)
+	}
+	for _, id := range []string{"E2E-HOME-SHADOW-001", "E2E-HOME-SHADOW-002", "E2E-HOME-SHADOW-003"} {
+		if cases[id].Status != "PASS" {
+			t.Fatalf("%s = %+v", id, cases[id])
+		}
+	}
+}
+
+func TestEvaluateVideoCasesRequiresMediaAndDynamicTURN(t *testing.T) {
+	results := map[string]any{
+		"video_evidence": map[string]any{
+			"complete": true,
+			"webrtc_totals": map[string]any{
+				"create_success": float64(2), "setup_success": float64(2), "close_success": float64(2),
+				"success_rate_percent": float64(100),
+			},
+			"webrtc_media_totals":         map[string]any{"successes": float64(2), "time_to_first_rtp_p95_ms": float64(120)},
+			"turn_evidence":               map[string]any{"api_dynamic_turn_count": float64(2)},
+			"relay_candidate_samples":     float64(2),
+			"non_relay_candidate_samples": float64(0),
+		},
+	}
+	spec := featureRunSpec{Feature: "video-webrtc", Profile: "canary"}
+	_, _, _, _, cases := evaluateFeatureCases(spec, results, t.TempDir())
+	for _, id := range []string{"E2E-VC-WEBRTC-001", "E2E-VC-TURN-001"} {
+		if cases[id].Status != "PASS" {
+			t.Fatalf("%s = %+v", id, cases[id])
+		}
+	}
+}
+
+func TestEvaluateClipCasesRequiresOperationsAndReconciliation(t *testing.T) {
+	stageDir := t.TempDir()
+	clipDir := filepath.Join(stageDir, "clip-storage")
+	if err := os.MkdirAll(clipDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	operations := []any{}
+	for _, name := range []string{"clip_upload", "clip_verify_ready", "clip_info", "clip_total", "clip_enum", "clip_download_range", "clip_download_invalid_range", "clip_delete"} {
+		operations = append(operations, map[string]any{"name": name, "success": true})
+	}
+	if err := writeJSONFile(filepath.Join(clipDir, "load-results.json"), map[string]any{
+		"thresholds": map[string]any{"passed": true},
+		"operations": operations,
+		"clip_storage": map[string]any{
+			"camera_devices": float64(2), "upload_successes": float64(4),
+			"success_rate": float64(100), "p95_latency_ms": float64(40),
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(clipDir, "reconciliation.json"), []byte(`{"status":"complete"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spec := featureRunSpec{
+		Feature: "clip-storage", Profile: "canary",
+		Scale: map[string]any{"cameras": 2, "clip_uploads": 4},
+	}
+	_, _, _, _, cases := evaluateFeatureCases(spec, nil, stageDir)
+	if cases["E2E-VC-CLIP-001"].Status != "PASS" {
+		t.Fatalf("clip case = %+v", cases["E2E-VC-CLIP-001"])
+	}
+}
+
+func TestIncompleteFeatureManifestMarksEveryCaseIncomplete(t *testing.T) {
+	manifest := incompleteFeatureManifest("run", "device-shadow", "qualification-1k", "staging", map[string]string{},
+		[]featureRunSpec{{
+			Feature: "device-shadow", Profile: "qualification-1k",
+			TestIDs: []string{"E2E-HOME-SHADOW-001"}, LoadTestID: "LOAD-HOME-SHADOW-001",
+		}}, "deployment commit mismatch")
+	if manifest.Status != "INCOMPLETE" || len(manifest.Cases) != 2 {
+		t.Fatalf("manifest = %+v", manifest)
+	}
+	for _, result := range manifest.Cases {
+		if result.Status != "INCOMPLETE" {
+			t.Fatalf("%s status = %s", result.TestID, result.Status)
+		}
+	}
+}
+
+func TestFeatureEvidenceRejectsUnredactedSecrets(t *testing.T) {
+	stageDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(stageDir, "unsafe.json"), []byte(`{"access_token":"real-secret-token"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := findUnredactedFeatureEvidence(stageDir); len(got) != 1 || got[0] != "unsafe.json" {
+		t.Fatalf("unredacted files = %v", got)
+	}
+	if err := os.WriteFile(filepath.Join(stageDir, "safe.json"), []byte(`{"access_token":"<redacted>"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := findUnredactedFeatureEvidence(stageDir); len(got) != 1 {
+		t.Fatalf("redacted value should not add a match: %v", got)
+	}
+}
+
+func TestPurgeFeatureSecretArtifacts(t *testing.T) {
+	stageDir := t.TempDir()
+	for _, name := range []string{"token-env.sh", "device-token-map.json", "app-token-map.json", "clip-private-key.pem"} {
+		if err := os.WriteFile(filepath.Join(stageDir, name), []byte("secret"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	safePath := filepath.Join(stageDir, "results.json")
+	if err := os.WriteFile(safePath, []byte(`{"status":"COMPLETE"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	purgeFeatureSecretArtifacts(stageDir)
+	for _, name := range []string{"token-env.sh", "device-token-map.json", "app-token-map.json", "clip-private-key.pem"} {
+		if _, err := os.Stat(filepath.Join(stageDir, name)); !os.IsNotExist(err) {
+			t.Fatalf("%s was not purged", name)
+		}
+	}
+	if _, err := os.Stat(safePath); err != nil {
+		t.Fatalf("safe evidence was removed: %v", err)
+	}
+}
+
+func TestMaterializeRuntimeLogEvidence(t *testing.T) {
+	stageDir := t.TempDir()
+	if err := writeJSONFile(filepath.Join(stageDir, "results.json"), map[string]any{
+		"runtime_log_correlation": map[string]any{"status": "complete", "matched": float64(10)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := materializeRuntimeLogEvidence(stageDir); err != nil {
+		t.Fatal(err)
+	}
+	var evidence map[string]any
+	if err := readJSONFile(filepath.Join(stageDir, "runtime-log-evidence.json"), &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if evidence["status"] != "complete" {
+		t.Fatalf("runtime evidence = %v", evidence)
+	}
+}
+
+func TestRenderFeatureReportIncludesTimingPurposeMethodAndResult(t *testing.T) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	report := string(renderFeatureReport(featureEvidenceManifest{
+		RunID: "run-1", Feature: "device-shadow", Profile: "canary", Environment: "staging",
+		Status: "PASS", Assessment: "passed", StartedAt: now, CompletedAt: now, DurationMS: 12,
+		Cases: []featureCaseEvidence{{TestID: "E2E-HOME-SHADOW-001", Purpose: "purpose", Method: "method", DurationMS: 12, Status: "PASS", Assessment: "passed"}},
+	}))
+	for _, wanted := range []string{"Started:", "Completed:", "Duration:", "purpose", "method", "**PASS**"} {
+		if !strings.Contains(report, wanted) {
+			t.Fatalf("report missing %q:\n%s", wanted, report)
+		}
+	}
+}

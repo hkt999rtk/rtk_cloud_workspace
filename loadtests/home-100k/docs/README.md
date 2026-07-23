@@ -16,8 +16,15 @@ READMEs.
   reference used as background for the formal Home 100K runner.
 - `../scenarios/mqtt-1k.description.env`: non-secret 1K MQTT/Device Shadow
   deployment-validation profile with the full `home-diverse-v1` device mix.
+- `../scenarios/mqtt-canary.description.env`: ten-device correctness gate that
+  must pass before the 1K Shadow qualification.
 - `../scenarios/video-1k.description.env`: non-secret 1K Home + WebRTC pilot
-  profile.
+  profile with 100 concurrent H264 relay sessions.
+- `../scenarios/video-canary.description.env`: two-session WebRTC/TURN
+  correctness gate.
+- `../scenarios/clip-storage-canary.description.env` and
+  `../scenarios/clip-storage-1k.description.env`: Clip lifecycle canary and
+  one-thousand-upload feature qualification.
 - `../scenarios/video-50k-turn.description.env`: non-secret 50K Home +
   relay-only WebRTC/TURN sizing profile.
 - `../scenarios/video-100k-turn.description.env`: non-secret 100K Home +

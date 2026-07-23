@@ -90,6 +90,7 @@ var commands = map[string]commandSpec{
 	"sync-all":                         {run: runSyncAll},
 	"test-data":                        {run: runTestData},
 	"test-e2e":                         {run: runTestE2E},
+	"test-feature":                     {run: runTestFeature},
 	"test-live":                        {run: runTestLive},
 	"test-matrix":                      {run: runTestMatrix},
 	"test-services":                    {run: runTestServices},
@@ -201,6 +202,9 @@ func normalizeEnvironmentArgs(args []string) ([]string, error) {
 		workspace = "."
 	}
 	envRoot := filepath.Join(workspace, "cloud_env", environment, "runtime")
+	if args[0] == "test-feature" {
+		envRoot = filepath.Join(workspace, "cloud_env", environment, "lke")
+	}
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--environment" {

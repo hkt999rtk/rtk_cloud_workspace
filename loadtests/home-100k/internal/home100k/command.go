@@ -1463,6 +1463,9 @@ type rawLiveMQTTResult struct {
 	TotalHTTPBytesSent         int64                       `json:"total_http_bytes_sent"`
 	TotalHTTPBytesReceived     int64                       `json:"total_http_bytes_received"`
 	RejectedUpdates            int64                       `json:"rejected_updates"`
+	VersionConflicts           int64                       `json:"version_conflicts"`
+	UnauthorizedRejections     int64                       `json:"unauthorized_rejections"`
+	DuplicateSuppressions      int64                       `json:"duplicate_suppressions"`
 	DeviceMQTTTotals           DeviceMQTTTotals            `json:"device_mqtt_totals"`
 	AppUserTotals              AppUserTotals               `json:"app_user_totals"`
 	FailureReasons             map[string]int64            `json:"failure_reasons"`
@@ -1619,8 +1622,12 @@ func convertLiveMQTTStageResult(raw rawLiveMQTTResult, stage Stage, maxConnected
 		MQTTConnectSuccessRatePercent:  connectSuccessPercent(DeviceMQTTTotals{ConnectAttempts: connectAttempts, ConnectSuccess: connectSuccess}),
 		DesiredReportedConvergenceRate: percent(commandsPassed, commandsAttempted),
 		OfflineDesiredConvergenceRate:  100,
+		DuplicateApplyCount:            maxInt(0, int(raw.RejectedUpdates-raw.DuplicateSuppressions*2)),
+		VersionConflictCount:           int(raw.VersionConflicts),
 		DeltaClearSuccessRatePercent:   percent(commandsPassed, commandsAttempted),
 		RejectedUpdateCount:            int(raw.RejectedUpdates),
+		UnauthorizedRejectionCount:     int(raw.UnauthorizedRejections),
+		DuplicateSuppressionCount:      int(raw.DuplicateSuppressions),
 		AuthorizationViolationCount:    int(raw.AuthViolations),
 		ClientTokenCorrelationCount:    int(httpSuccesses),
 		FailureReasons:                 raw.FailureReasons,

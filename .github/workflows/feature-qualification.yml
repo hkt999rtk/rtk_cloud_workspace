@@ -1,0 +1,309 @@
+name: Feature Qualification
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    paths:
+      - "tests/catalog.yaml"
+      - "scripts/go/**"
+      - "loadtests/home-100k/**"
+      - "e2e_test/video_cloud/load/**"
+      - "repos/rtk_video_cloud"
+      - "repos/rtk_account_manager"
+      - "repos/rtk_cloud_contracts_doc"
+      - ".github/workflows/feature-qualification.yml"
+  workflow_dispatch:
+    inputs:
+      features:
+        description: "Comma-separated feature override: device-shadow,video-webrtc,clip-storage"
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      features:
+        description: "Comma-separated feature override"
+        required: false
+        type: string
+    secrets:
+      CI_RUNNER_GITHUB_WORK_KEY:
+        required: true
+      linode_token:
+        required: true
+      video_cloud_admin_token:
+        required: true
+      clip_user_private_key_path:
+        required: true
+      clip_server_public_key_path:
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  select:
+    name: Select load-sensitive features
+    runs-on: ubuntu-latest
+    outputs:
+      required: ${{ steps.selection.outputs.required }}
+      features: ${{ steps.selection.outputs.features }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Initialize private submodules
+        shell: bash
+        env:
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$CI_RUNNER_GITHUB_WORK_KEY"
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$CI_RUNNER_GITHUB_WORK_KEY" > ~/.ssh/id_ed25519_github_work
+          chmod 0600 ~/.ssh/id_ed25519_github_work
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          git config --global core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
+          git config --global --add url."git@github.com:".insteadOf "git@github.com-work:"
+          git submodule sync --recursive
+          git submodule update --init --recursive --depth=1
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.work
+          cache-dependency-path: scripts/go/go.sum
+
+      - id: selection
+        name: Match changed paths and labels
+        shell: bash
+        env:
+          INPUT_FEATURES: ${{ inputs.features }}
+        run: |
+          set -euo pipefail
+          base_ref="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$base_ref" ]; then
+            base_ref="${{ github.event.before }}"
+          fi
+          if [ -z "$base_ref" ] || [ "$base_ref" = "0000000000000000000000000000000000000000" ]; then
+            base_ref="HEAD^"
+          fi
+          labels="$(jq -r '[(.pull_request.labels // [])[].name] | join(",")' "$GITHUB_EVENT_PATH")"
+          if [ -n "${INPUT_FEATURES:-}" ]; then
+            forced="$(printf '%s' "$INPUT_FEATURES" | tr ',' '\n' | sed '/^$/d;s#^#qualification/#' | paste -sd, -)"
+            labels="${labels:+$labels,}$forced"
+          fi
+          go run ./scripts/go/rtk-cloud -- test-feature select \
+            --base-ref "$base_ref" \
+            --head-ref HEAD \
+            --labels "$labels" \
+            --output .artifacts/feature-selection.json
+          required="$(jq -r '.required' .artifacts/feature-selection.json)"
+          features="$(jq -c '.features' .artifacts/feature-selection.json)"
+          echo "required=$required" >> "$GITHUB_OUTPUT"
+          echo "features=$features" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Feature qualification selection"
+            echo
+            echo "- Required: \`$required\`"
+            echo "- Features: \`$features\`"
+            echo
+            echo '```json'
+            cat .artifacts/feature-selection.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload selection evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: feature-qualification-selection-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .artifacts/feature-selection.json
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 90 }}
+
+  qualify:
+    name: Shared staging feature qualification
+    needs: select
+    if: needs.select.outputs.required == 'true'
+    concurrency:
+      group: feature-qualification-staging
+      cancel-in-progress: false
+    runs-on: [self-hosted, macOS, ARM64, rtk_cloud_client, jarvis-macos]
+    timeout-minutes: 240
+    env:
+      FEATURE_LIST_JSON: ${{ needs.select.outputs.features }}
+      FEATURE_RUN_ID: fq-${{ github.run_id }}-${{ github.run_attempt }}
+      FEATURE_ENV_ROOT: ${{ github.workspace }}/cloud_env/staging/lke
+      FEATURE_LOAD_ENV_ROOT: ${{ github.workspace }}/cloud_env/staging/runtime
+      LKE_IMAGE_REGISTRY: ghcr.io/hkt999rtk/rtk_cloud_workspace/qualification
+      LINODE_TOKEN: ${{ secrets.linode_token }}
+      VIDEO_CLOUD_LOAD_ADMIN_TOKEN: ${{ secrets.video_cloud_admin_token }}
+      VIDEO_CLOUD_LOAD_CLIP_USER_PRIVATE_KEY: ${{ secrets.clip_user_private_key_path }}
+      VIDEO_CLOUD_LOAD_CLIP_SERVER_PUBLIC_KEY: ${{ secrets.clip_server_public_key_path }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Initialize private submodules
+        shell: bash
+        env:
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$CI_RUNNER_GITHUB_WORK_KEY"
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$CI_RUNNER_GITHUB_WORK_KEY" > ~/.ssh/id_ed25519_github_work
+          chmod 0600 ~/.ssh/id_ed25519_github_work
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          git config --global core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
+          git config --global --add url."git@github.com:".insteadOf "git@github.com-work:"
+          git submodule sync --recursive
+          git submodule update --init --recursive --depth=1
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.work
+          cache-dependency-path: |
+            scripts/go/go.sum
+            loadtests/home-100k/go.sum
+
+      - name: Run catalog and service checks before deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run ./scripts/go/rtk-cloud -- test-catalog check
+          go run ./scripts/go/rtk-cloud -- test-services
+          (cd loadtests/home-100k && go test ./...)
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push candidate service images
+        shell: bash
+        run: |
+          set -euo pipefail
+          video_commit="$(git -C repos/rtk_video_cloud rev-parse HEAD)"
+          account_commit="$(git -C repos/rtk_account_manager rev-parse HEAD)"
+          logger_commit="$(git -C repos/rtk_cloud_logger rev-parse HEAD)"
+          video_image="${LKE_IMAGE_REGISTRY}/video-cloud-api:sha-${video_commit:0:12}"
+          account_image="${LKE_IMAGE_REGISTRY}/account-manager:sha-${account_commit:0:12}"
+          logger_image="${LKE_IMAGE_REGISTRY}/cloud-logger:sha-${logger_commit:0:12}"
+          go run ./scripts/go/rtk-cloud -- lke-build-images \
+            --workspace "$GITHUB_WORKSPACE" --env-root "$FEATURE_ENV_ROOT" \
+            --workloads video-cloud --image "$video_image"
+          go run ./scripts/go/rtk-cloud -- lke-build-images \
+            --workspace "$GITHUB_WORKSPACE" --env-root "$FEATURE_ENV_ROOT" \
+            --workloads account-manager --image "$account_image"
+          go run ./scripts/go/rtk-cloud -- lke-build-images \
+            --workspace "$GITHUB_WORKSPACE" --env-root "$FEATURE_ENV_ROOT" \
+            --workloads cloud-logger --image "$logger_image"
+          video_digest="$(docker buildx imagetools inspect "$video_image" --format '{{json .Manifest}}' | jq -er '.digest')"
+          account_digest="$(docker buildx imagetools inspect "$account_image" --format '{{json .Manifest}}' | jq -er '.digest')"
+          logger_digest="$(docker buildx imagetools inspect "$logger_image" --format '{{json .Manifest}}' | jq -er '.digest')"
+          [[ "$video_digest" == sha256:* ]]
+          [[ "$account_digest" == sha256:* ]]
+          [[ "$logger_digest" == sha256:* ]]
+          echo "LKE_VIDEO_CLOUD_IMAGE=$video_image" >> "$GITHUB_ENV"
+          echo "LKE_VIDEO_CLOUD_IMAGE_DIGEST=$video_digest" >> "$GITHUB_ENV"
+          echo "LKE_ACCOUNT_MANAGER_IMAGE=$account_image" >> "$GITHUB_ENV"
+          echo "LKE_ACCOUNT_MANAGER_IMAGE_DIGEST=$account_digest" >> "$GITHUB_ENV"
+          echo "LKE_CLOUD_LOGGER_IMAGE=$logger_image" >> "$GITHUB_ENV"
+          echo "LKE_CLOUD_LOGGER_IMAGE_DIGEST=$logger_digest" >> "$GITHUB_ENV"
+
+      - name: Resolve commit-anchored image manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$FEATURE_ENV_ROOT/artifacts/lke-images"
+          go run ./scripts/go/rtk-cloud -- lke-resolve-images \
+            --workspace "$GITHUB_WORKSPACE" \
+            --env-root "$FEATURE_ENV_ROOT" \
+            --owner hkt999rtk \
+            --out "$FEATURE_ENV_ROOT/artifacts/lke-images/lke-image-manifest.json"
+
+      - name: Deploy candidate once to shared staging
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run ./scripts/go/rtk-cloud -- staging-provision \
+            --workspace "$GITHUB_WORKSPACE" \
+            --env-root "$FEATURE_ENV_ROOT" \
+            --confirm video-cloud-staging
+
+      - name: Run selected canary and 1K qualifications
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -r '.[]' <<<"$FEATURE_LIST_JSON" | while IFS= read -r feature; do
+            go run ./scripts/go/rtk-cloud -- test-feature \
+              --feature "$feature" \
+              --profile qualification-1k \
+              --environment staging \
+              --env-root "$FEATURE_ENV_ROOT" \
+              --run-id "$FEATURE_RUN_ID" \
+              --run \
+              --confirm video-cloud-staging
+          done
+
+      - name: Upload qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: feature-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .artifacts/test-runs/${{ env.FEATURE_RUN_ID }}/features/**
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 90 }}
+
+      - name: Destroy any leftover load generators
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=".artifacts/test-runs/${FEATURE_RUN_ID}/features"
+          [ -d "$root" ] || exit 0
+          while IFS= read -r state; do
+            out_dir="$(dirname "$state")"
+            stage_run_id="$(jq -r '.run_id // empty' "$out_dir/results.json" 2>/dev/null || true)"
+            if [ -z "$stage_run_id" ]; then
+              stage_run_id="$(jq -r '.run_id // (.created[0].run_id // empty) // (.vms[0].run_id // empty)' "$state" 2>/dev/null || true)"
+            fi
+            [ -n "$stage_run_id" ] || continue
+            HOME100K_ENV_ROOT="$FEATURE_LOAD_ENV_ROOT" \
+            HOME100K_OUT_DIR="$out_dir" \
+            HOME100K_RUN_ID="$stage_run_id" \
+            HOME100K_PRESERVE_VMS=0 \
+              loadtests/home-100k/scripts/home-100k.sh destroy-vms --live --confirm-live
+          done < <(find "$root" -name vms.json -type f -print)
+
+  result:
+    name: Feature qualification result
+    if: always()
+    needs: [select, qualify]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce selected qualification result
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.select.result }}" != "success" ]; then
+            echo "Feature selection failed." >&2
+            exit 1
+          fi
+          if [ "${{ needs.select.outputs.required }}" != "true" ]; then
+            echo "PASS: no load-sensitive feature changed."
+            exit 0
+          fi
+          if [ "${{ needs.qualify.result }}" != "success" ]; then
+            echo "Feature qualification did not pass: ${{ needs.qualify.result }}" >&2
+            exit 1
+          fi
+          echo "PASS: all selected feature qualifications passed."

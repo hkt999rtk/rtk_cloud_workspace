@@ -2,13 +2,14 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestRenderTestCatalogIsStableAndSorted(t *testing.T) {
-	catalog := testCatalog{SchemaVersion: 1, Cases: []testCatalogCase{
+	catalog := testCatalog{SchemaVersion: 2, Cases: []testCatalogCase{
 		{ID: "UI-CA-ZETA-002", Title: "Zeta", Layer: "ui", Owner: "owner", Targets: []string{"mobile"}, Environments: []string{"local"}, Runner: "test-ui", Status: "active"},
 		{ID: "E2E-SDK-AUTH-001", Title: "Auth", Layer: "e2e", Owner: "owner", Environments: []string{"staging"}, Runner: "test-e2e", Status: "active"},
 	}}
@@ -43,7 +44,7 @@ func TestExpectedUITestIDsAllowsPartialServiceCheckout(t *testing.T) {
 	if err := os.WriteFile(uiSource, []byte(`test('[UI-CA-SMOKE-001] renders dashboard', async () => {})`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	catalog := `schema_version: 1
+	catalog := `schema_version: 2
 cases:
   - id: UI-CA-SMOKE-001
     title: Renders dashboard
@@ -82,5 +83,60 @@ cases:
 	}
 	if _, err := loadAndValidateTestCatalog(workspace); err == nil {
 		t.Fatal("full catalog validation should still require service sources")
+	}
+}
+
+func TestCatalogGlobRegexpSupportsRecursivePaths(t *testing.T) {
+	re, err := catalogGlobRegexp("repos/rtk_video_cloud/internal/deviceshadow/**")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !re.MatchString("repos/rtk_video_cloud/internal/deviceshadow/service.go") {
+		t.Fatal("recursive catalog glob did not match a nested source file")
+	}
+	if re.MatchString("repos/rtk_video_cloud/internal/mqtt/service.go") {
+		t.Fatal("recursive catalog glob matched another package")
+	}
+}
+
+func TestCatalogCoversRequiresMatchingFeature(t *testing.T) {
+	catalog := testCatalog{SchemaVersion: 2, Cases: []testCatalogCase{
+		{ID: "E2E-HOME-SHADOW-001", Layer: "e2e", Feature: "device-shadow", Status: "active"},
+		{ID: "LOAD-HOME-SHADOW-001", Layer: "load", Feature: "video-webrtc", Status: "active", Covers: []string{"E2E-HOME-SHADOW-001"}},
+	}}
+	if err := validateCatalogRelationships(catalog); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("expected covers feature mismatch, got %v", err)
+	}
+}
+
+func TestCatalogCoversRejectsUnknownCase(t *testing.T) {
+	catalog := testCatalog{SchemaVersion: 2, Cases: []testCatalogCase{
+		{ID: "LOAD-HOME-SHADOW-001", Layer: "load", Feature: "device-shadow", Status: "active", Covers: []string{"E2E-HOME-MISSING-001"}},
+	}}
+	if err := validateCatalogRelationships(catalog); err == nil || !strings.Contains(err.Error(), "unknown or inactive") {
+		t.Fatalf("expected unknown covers error, got %v", err)
+	}
+}
+
+func TestCatalogChangePathRejectsEmptyAndUnmatchedGlobs(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "tracked.txt"), []byte("tracked"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init"}, {"add", "tracked.txt"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = workspace
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, output)
+		}
+	}
+	if err := validateCatalogChangePath(workspace, ""); err == nil {
+		t.Fatal("empty change path must fail")
+	}
+	if err := validateCatalogChangePath(workspace, "missing/**"); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("unmatched change path error = %v", err)
+	}
+	if err := validateCatalogChangePath(workspace, "tracked.txt"); err != nil {
+		t.Fatalf("tracked change path rejected: %v", err)
 	}
 }

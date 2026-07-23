@@ -75,6 +75,8 @@ type StageResult struct {
 	DuplicateApplyCount            int                         `json:"duplicate_apply_count"`
 	VersionConflictCount           int                         `json:"version_conflict_count"`
 	RejectedUpdateCount            int                         `json:"rejected_update_count"`
+	UnauthorizedRejectionCount     int                         `json:"unauthorized_rejection_count"`
+	DuplicateSuppressionCount      int                         `json:"duplicate_suppression_count"`
 	AuthorizationViolationCount    int                         `json:"authorization_violation_count"`
 	ClientTokenCorrelationCount    int                         `json:"client_token_correlation_count"`
 	FailureReasons                 map[string]int64            `json:"failure_reasons,omitempty"`
@@ -1496,6 +1498,8 @@ func aggregateStageResults(items []StageResult) StageResult {
 		result.DuplicateApplyCount += item.DuplicateApplyCount
 		result.VersionConflictCount += item.VersionConflictCount
 		result.RejectedUpdateCount += item.RejectedUpdateCount
+		result.UnauthorizedRejectionCount += item.UnauthorizedRejectionCount
+		result.DuplicateSuppressionCount += item.DuplicateSuppressionCount
 		result.AuthorizationViolationCount += item.AuthorizationViolationCount
 		result.ClientTokenCorrelationCount += item.ClientTokenCorrelationCount
 		result.FailureReasons = addFailureReasons(result.FailureReasons, item.FailureReasons)

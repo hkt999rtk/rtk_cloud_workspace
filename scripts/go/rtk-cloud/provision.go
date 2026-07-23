@@ -94,6 +94,12 @@ func runProvision(args []string) error {
 			return err
 		}
 	}
+	if err := mergeSharedRuntimeEnvDefaults(envRoot, env.Values); err != nil {
+		return err
+	}
+	if err := mergeObjectStorageCredentialDefaults(envRoot, env.Values); err != nil {
+		return err
+	}
 	provider, err := newCloudProvider(env.Values["CLOUD_PROVIDER"])
 	if err != nil {
 		return err
@@ -103,6 +109,82 @@ func runProvision(args []string) error {
 		return provider.RunProvision(ctx)
 	}
 	return provider.RunProvision(ctx)
+}
+
+func mergeSharedRuntimeEnvDefaults(envRoot string, values map[string]string) error {
+	if filepath.Base(envRoot) != "lke" {
+		return nil
+	}
+	runtimeRoot := filepath.Join(filepath.Dir(envRoot), "runtime")
+	if _, err := os.Stat(filepath.Join(runtimeRoot, "env", "stack.env")); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	runtimeEnv, err := envroot.Load(runtimeRoot, "")
+	if err != nil {
+		return fmt.Errorf("load shared runtime environment: %w", err)
+	}
+	for _, key := range []string{
+		"VIDEO_CLOUD_BLOB_ENDPOINT",
+		"VIDEO_CLOUD_BLOB_REGION",
+		"VIDEO_CLOUD_BLOB_BUCKET",
+		"VIDEO_CLOUD_BLOB_PREFIX",
+		"VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE",
+		"VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED",
+		"VIDEO_CLOUD_CLIP_VERIFIER_ADDR",
+		"VIDEO_CLOUD_CLIP_UPLOAD_URL_TTL",
+		"VIDEO_CLOUD_CLIP_UPLOAD_SESSION_TTL",
+		"VIDEO_CLOUD_CLIP_UPLOAD_MAX_BYTES",
+		"VIDEO_CLOUD_CLIP_THUMBNAIL_MAX_BYTES",
+		"VIDEO_CLOUD_CLIP_VERIFY_POLL_INTERVAL",
+		"VIDEO_CLOUD_CLIP_VERIFY_SWEEP_INTERVAL",
+	} {
+		if strings.TrimSpace(values[key]) == "" {
+			values[key] = runtimeEnv.Values[key]
+		}
+	}
+	return nil
+}
+
+func mergeObjectStorageCredentialDefaults(envRoot string, values map[string]string) error {
+	candidates := []string{
+		filepath.Join(envRoot, "env", "operator.env"),
+	}
+	if filepath.Base(envRoot) == "lke" {
+		stagingRoot := filepath.Dir(envRoot)
+		candidates = append(candidates,
+			filepath.Join(stagingRoot, "runtime", "env", "operator.env"),
+			filepath.Join(stagingRoot, "linode", "env", "operator.env"),
+		)
+	}
+	for _, path := range candidates {
+		operator, err := readEnvFile(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("load object-storage operator credentials: %w", err)
+		}
+		for _, key := range []string{
+			"LINODE_OBJ_ACCESS_KEY_ID",
+			"LINODE_OBJ_SECRET_ACCESS_KEY",
+			"AWS_ACCESS_KEY_ID",
+			"AWS_SECRET_ACCESS_KEY",
+		} {
+			if strings.TrimSpace(values[key]) == "" {
+				values[key] = operator[key]
+			}
+		}
+	}
+	if values["LINODE_OBJ_ACCESS_KEY_ID"] == "" {
+		values["LINODE_OBJ_ACCESS_KEY_ID"] = values["AWS_ACCESS_KEY_ID"]
+	}
+	if values["LINODE_OBJ_SECRET_ACCESS_KEY"] == "" {
+		values["LINODE_OBJ_SECRET_ACCESS_KEY"] = values["AWS_SECRET_ACCESS_KEY"]
+	}
+	return nil
 }
 
 func defaultProvisionEnvValues() map[string]string {

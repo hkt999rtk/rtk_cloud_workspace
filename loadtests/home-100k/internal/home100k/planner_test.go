@@ -124,6 +124,78 @@ func TestVideo1KPlanUsesVideoPilotDeviceMix(t *testing.T) {
 	}
 }
 
+func TestVideoCanaryPlanUsesTwoRelayActors(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:         "cloud_env/staging/runtime",
+		Brandname:       "RTK",
+		Region:          "us-sea",
+		ScenarioProfile: VideoCanaryScenarioProfile,
+		DeviceCount:     2,
+		UserCount:       1,
+		DevicesPerUser:  2,
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+	if plan.VideoProfile.VideoDevices != 2 || plan.VideoProfile.VideoViewers != 2 ||
+		plan.VideoProfile.WebRTCMediaSet != "h264" || plan.VideoProfile.WebRTCICEPolicy != "relay" {
+		t.Fatalf("video canary profile = %#v", plan.VideoProfile)
+	}
+	if plan.DeviceMix["camera"] != 2 || len(plan.DeviceMix) != 1 {
+		t.Fatalf("video canary device mix = %#v", plan.DeviceMix)
+	}
+	if !containsString(plan.Workflow, "run-video-loadtest") {
+		t.Fatalf("video canary workflow = %#v", plan.Workflow)
+	}
+}
+
+func TestClipStorageCanaryPlanUsesTwoCamerasAndFourClips(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:         "cloud_env/staging/runtime",
+		Brandname:       "RTK",
+		Region:          "us-sea",
+		ScenarioProfile: ClipStorageCanaryScenarioProfile,
+		DeviceCount:     2,
+		UserCount:       1,
+		DevicesPerUser:  2,
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+	profile := plan.ClipStorageProfile
+	if plan.DeviceMix["camera"] != 2 || len(plan.DeviceMix) != 1 ||
+		profile.CameraDevices != 2 || profile.ClipsPerCameraPerDay != 2 {
+		t.Fatalf("clip canary mix=%#v profile=%#v", plan.DeviceMix, profile)
+	}
+}
+
+func TestClipStorageQualificationPlanUsesOneThousandUploads(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:         "cloud_env/staging/runtime",
+		Brandname:       "RTK",
+		Region:          "us-sea",
+		ScenarioProfile: ClipStorage1KScenarioProfile,
+		DeviceCount:     1000,
+		UserCount:       50,
+		DevicesPerUser:  20,
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+	profile := plan.ClipStorageProfile
+	if profile.CameraDevices != 100 || profile.ClipsPerCameraPerDay != 10 ||
+		profile.CameraDevices*profile.ClipsPerCameraPerDay != 1000 {
+		t.Fatalf("clip qualification profile = %#v", profile)
+	}
+	if plan.DeviceMix["camera"] != 100 || plan.DeviceMix["light"] != 300 ||
+		plan.DeviceMix["air_conditioner"] != 300 || plan.DeviceMix["smart_meter"] != 300 {
+		t.Fatalf("clip qualification device mix = %#v", plan.DeviceMix)
+	}
+	if !containsString(plan.Workflow, "run-clip-storage-loadtest") || containsString(plan.Workflow, "run-video-loadtest") {
+		t.Fatalf("clip qualification workflow = %#v", plan.Workflow)
+	}
+}
+
 func TestClipStorage10KPlanPreservesMixedDeviceMix(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
 		EnvRoot:         "cloud_env/staging/runtime",

@@ -6,7 +6,8 @@ Use this workspace to coordinate validation across pinned submodule commits.
 
 [`tests/catalog.yaml`](../tests/catalog.yaml) is the only source of truth for
 published Test IDs, purpose, method, owner, source selector, targets,
-environments, and evidence policy. The generated
+environments, feature/profile relationships, load `covers` links, PR
+`change_paths`, and evidence policy. The generated
 [`docs/test-catalog.md`](test-catalog.md) is the human-readable index.
 
 ```sh
@@ -38,6 +39,7 @@ Use the explicit test layers when broader validation is needed:
 (cd scripts/go && go run ./rtk-cloud -- test-e2e)
 (cd scripts/go && go run ./rtk-cloud -- test-ui)
 (cd scripts/go && go run ./rtk-cloud -- test-live --environment staging --plan)
+(cd scripts/go && go run ./rtk-cloud -- test-feature --feature device-shadow --profile qualification-1k --plan)
 ```
 
 `test-services` runs local service, SDK, frontend, and repository tooling tests.
@@ -55,6 +57,47 @@ deprecated wrapper governance test remains a separate migration gate because
 it is expected to fail while legacy compatibility wrappers still exist.
 `test-live` is plan-only by default and delegates to the staging E2E flow; a
 live run still requires `--run --confirm <CLOUD_STACK_NAME>`.
+
+## Feature Qualification
+
+`test-feature` reuses the Home, Video, and Clip load runners to qualify
+load-sensitive behavior. It does not replace service tests or browser UI
+tests. A `qualification-1k` run always executes the feature canary first and
+does not allocate the 1K load when the canary is not `PASS`.
+
+```sh
+go run ./scripts/go/rtk-cloud -- test-feature \
+  --feature device-shadow \
+  --profile qualification-1k \
+  --environment staging \
+  --env-root cloud_env/staging/lke \
+  --run-id manual-shadow-001 \
+  --run \
+  --confirm video-cloud-staging
+```
+
+The initial managed features are `device-shadow`, `video-webrtc`, and
+`clip-storage`. Their 1K scale is feature-specific: 1,000 MQTT devices for
+Shadow; 1,000 Home devices plus 100 concurrent H264 relay sessions for Video;
+and 1,000 Home devices plus 100 cameras uploading 10 clips each for Clip.
+Larger 10K/50K/100K profiles remain capacity exercises.
+
+Pull-request selection is catalog-driven:
+
+```sh
+go run ./scripts/go/rtk-cloud -- test-feature select \
+  --base-ref origin/main \
+  --head-ref HEAD
+```
+
+The reusable Feature Qualification workflow serializes shared-staging use,
+deploys commit-anchored candidate images once, runs selected features, uploads
+evidence, and cleans up load-generator resources even when the run fails.
+Catalog, shared runner/contracts/deployment changes and an unresolved
+`rtk_video_cloud` submodule pointer diff conservatively select all three
+features. The workflow is intended to run in non-required observation mode for
+the first week; after each feature has produced at least one complete `PASS`,
+the repository branch rule can make `Feature qualification result` required.
 
 `docs-check` is read-only and validates documentation governance assumptions:
 workspace repository entries, key docs entry points, and contracts submodule
@@ -85,6 +128,33 @@ screenshots fail the run. Desktop `--full` automatically runs the fixture
 phases needed by conditional error, stale, expiry, retry, and lifecycle cases,
 then merges them into one report. Staging evidence may only contain dedicated
 test data.
+
+Feature qualification output is written to:
+
+```text
+.artifacts/test-runs/<run_id>/features/<feature>/
+  canary/
+    results.json
+    evidence-manifest.json
+    TEST_REPORT.md
+  qualification-1k/
+    plan.json
+    results.json
+    server-evidence.json
+    runtime-log-evidence.json
+    evidence-manifest.json
+    TEST_REPORT.md
+  qualification-report.json
+  qualification-report.md
+```
+
+`PASS` requires case-level behavior evidence, complete server/runtime-log
+correlation, commit anchors, target completeness, and load thresholds.
+`FAIL`, `INCOMPLETE`, and `BLOCKED` are distinct non-passing outcomes.
+Clip qualification additionally requires mixed non-clip control traffic and
+dedicated staging credentials for sampled download/decryption. Generated token
+maps and private-key material are removed before artifact hashing/upload, and a
+credential-like value found in text evidence forces `INCOMPLETE`.
 
 ## LAN Interop
 
