@@ -35,6 +35,19 @@ Do not commit private keys, passwords, bearer tokens, raw service responses that
 contain secrets, or generated certificates unless a repository explicitly marks a
 sample fixture as safe and non-secret.
 
+## Test IDs and Reports
+
+All case-level E2E scenarios are registered in the workspace
+`tests/catalog.yaml`; repositories must not create a competing ID scheme. A
+published ID is immutable. Retired cases keep their ID with `status: retired`.
+SDK cloud-validation manifests retain the legacy `id` as `scenario_id` and add
+the catalog `test_id`; JSON, JUnit, and Markdown reports expose both.
+
+Each final report records the Test ID, execution time and duration, purpose,
+method, result, and explicit `PASS`/`FAIL` assessment. Run-scoped fixtures and
+evidence must be attributable to the same run ID and preserve workspace,
+submodule, SDK, or server revisions as applicable.
+
 ## Ownership Rules
 
 - Workspace owns cross-repo orchestration, E2E runners, fixture indexing, and

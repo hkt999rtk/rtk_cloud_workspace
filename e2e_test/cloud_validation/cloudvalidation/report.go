@@ -83,7 +83,11 @@ func renderJUnit(report RunReport) ([]byte, error) {
 	}
 	if report.PlatformResult != nil {
 		for _, result := range report.PlatformResult.Results {
-			appendCase("cloud_validation.scenario", result.ScenarioID, result.Status, result.DurationMS, result.ReasonCode, result.Reason)
+			name := result.ScenarioID
+			if result.TestID != "" {
+				name = result.TestID + " / " + result.ScenarioID
+			}
+			appendCase("cloud_validation.scenario", name, result.Status, result.DurationMS, result.ReasonCode, result.Reason)
 		}
 	}
 	suite.Tests = len(suite.Cases)
@@ -129,10 +133,22 @@ func renderMarkdown(report RunReport) string {
 		fmt.Fprintln(&b)
 		fmt.Fprintln(&b, "## Scenarios")
 		fmt.Fprintln(&b)
-		fmt.Fprintln(&b, "| Scenario | Status | Duration ms | SDK error | Reason |")
-		fmt.Fprintln(&b, "| --- | --- | ---: | --- | --- |")
+		fmt.Fprintln(&b, "| Test ID | Scenario ID | Purpose | Method | Status | Assessment | Duration ms | SDK error | Reason |")
+		fmt.Fprintln(&b, "| --- | --- | --- | --- | --- | --- | ---: | --- | --- |")
+		scenarios := make(map[string]Scenario, len(report.Scenarios))
+		for _, scenario := range report.Scenarios {
+			scenarios[scenario.ID] = scenario
+		}
 		for _, result := range report.PlatformResult.Results {
-			fmt.Fprintf(&b, "| %s | %s | %d | %s | %s |\n", md(result.ScenarioID), result.Status, result.DurationMS, md(result.SDKErrorCode), md(Redact(result.Reason)))
+			scenario := scenarios[result.ScenarioID]
+			assessment := "FAIL"
+			if result.Status == StatusPass {
+				assessment = "PASS"
+			}
+			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %d | %s | %s |\n",
+				md(result.TestID), md(result.ScenarioID), md(scenario.ExpectedSDKResult),
+				md("SDK action: "+scenario.AppAction+"; verify cloud evidence: "+strings.Join(scenario.ExpectedCloudEvidence, ", ")),
+				result.Status, assessment, result.DurationMS, md(result.SDKErrorCode), md(Redact(result.Reason)))
 		}
 	}
 	return b.String()

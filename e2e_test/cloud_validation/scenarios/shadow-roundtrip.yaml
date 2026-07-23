@@ -1,6 +1,7 @@
 schema_version: 1
 scenarios:
   - id: shadow_online_roundtrip
+    test_id: E2E-SDK-SHADOW-001
     required_capabilities: [app_shadow]
     device_profile: online
     app_action: write_desired_and_observe_documents

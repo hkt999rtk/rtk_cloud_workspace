@@ -67,6 +67,19 @@ setup-data)
 		esac
 	done
 	mkdir -p "\$out_dir/logs" "\$out_dir/bind-validation" "$ENV_ROOT/artifacts/users" "$ENV_ROOT/artifacts/device-bind"
+	test_data_db="$ENV_ROOT/artifacts/test-data/rtk-test-data.sqlite"
+	mkdir -p "$ENV_ROOT/artifacts/test-data"
+	python3 - "\$test_data_db" <<'PY'
+import sqlite3
+import sys
+
+db = sqlite3.connect(sys.argv[1])
+db.execute("DROP TABLE IF EXISTS device_bindings")
+db.execute("CREATE TABLE device_bindings (assignment_index INTEGER, device_id TEXT, brand_cloud_id TEXT)")
+db.execute("INSERT INTO device_bindings VALUES (0, 'dev-1', 'org-rtk')")
+db.commit()
+db.close()
+PY
 	printf '{"brandname":"RTK","users":[{"email":"rtk+001@users.local"}]}\\n' > "$ENV_ROOT/artifacts/users/rtk-users-test.json"
 	printf '{"brandname":"RTK","count":1,"assignments":[{"device_id":"dev-1"}]}\\n' > "$ENV_ROOT/artifacts/device-bind/rtk-device-bind-test.json"
 	cat > "\$out_dir/summary.json" <<JSON
@@ -75,6 +88,7 @@ setup-data)
   "summary_file": "\$out_dir/summary.json",
   "users_file": "$ENV_ROOT/artifacts/users/rtk-users-test.json",
   "device_bind_file": "$ENV_ROOT/artifacts/device-bind/rtk-device-bind-test.json",
+  "test_data_db": "\$test_data_db",
   "bind_validation_dir": "\$out_dir/bind-validation",
   "steps": [
     {"name": "create_brand", "status": "PASS", "exit_code": 0, "duration_seconds": 1, "log_file": "\$out_dir/logs/create_brand.log"},
@@ -85,7 +99,7 @@ setup-data)
   ]
 }
 JSON
-	printf '{"overall":"pass","summary_file":"%s","users_file":"%s","device_bind_file":"%s"}\\n' "\$out_dir/summary.json" "$ENV_ROOT/artifacts/users/rtk-users-test.json" "$ENV_ROOT/artifacts/device-bind/rtk-device-bind-test.json"
+	printf '{"overall":"pass","summary_file":"%s","users_file":"%s","device_bind_file":"%s","test_data_db":"%s"}\\n' "\$out_dir/summary.json" "$ENV_ROOT/artifacts/users/rtk-users-test.json" "$ENV_ROOT/artifacts/device-bind/rtk-device-bind-test.json" "\$test_data_db"
 	;;
 mqtt-test)
 	mkdir -p "$TMP/mqtt-report"
@@ -110,6 +124,23 @@ mqtt-log-verify)
 	printf '{"overall":"pass","checked_devices":1,"checked_logs":1}\\n' > "\$out_dir/summary.json"
 	printf '{"overall":"pass","summary_file":"%s"}\\n' "\$out_dir/summary.json"
 	;;
+billing-verify)
+	out_dir=""
+	while [[ \$# -gt 0 ]]; do
+		case "\$1" in
+			--out-dir)
+				out_dir="\$2"
+				shift 2
+				;;
+			*)
+				shift
+				;;
+		esac
+	done
+	mkdir -p "\$out_dir"
+	printf '{"overall":"pass","checks":{"log":true,"db":true}}\\n' > "\$out_dir/summary.json"
+	printf '{"overall":"pass","summary_file":"%s"}\\n' "\$out_dir/summary.json"
+	;;
 esac
 SH
 	chmod +x "$path"
@@ -127,6 +158,7 @@ make_stub "$TMP/validate-bind.sh" validate-bind
 make_stub "$TMP/setup-data.sh" setup-data
 make_stub "$TMP/mqtt-test.sh" mqtt-test
 make_stub "$TMP/mqtt-log-verify.sh" mqtt-log-verify
+make_stub "$TMP/billing-verify.sh" billing-verify
 
 export LKE_VIDEO_CLOUD_IMAGE=registry.example.test/rtk/video-cloud:test
 export LKE_ACCOUNT_MANAGER_IMAGE=registry.example.test/rtk/account-manager:test
@@ -219,6 +251,7 @@ ACCEPTANCE_RUN_OUT="$TMP/acceptance-run.out"
 CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT="$TMP/setup-data.sh" \
 CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT="$TMP/mqtt-test.sh" \
 CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT="$TMP/mqtt-log-verify.sh" \
+CLOUD_STAGING_E2E_BILLING_VERIFY_SCRIPT="$TMP/billing-verify.sh" \
 CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0 \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-acceptance \
 	--workspace "$WORKSPACE" \
@@ -229,7 +262,7 @@ CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0 \
 	--device-count 3 \
 	--device-mix camera=1,light=1,smart_meter=1 \
 	--skip-mqtt-probe > "$ACCEPTANCE_RUN_OUT"
-expected_acceptance=$'setup-data\nmqtt-test\nmqtt-log-verify'
+expected_acceptance=$'setup-data\nmqtt-test\nmqtt-log-verify\nbilling-verify'
 actual_acceptance="$(cut -f1 "$COMMAND_LOG")"
 [[ "$actual_acceptance" == "$expected_acceptance" ]] || {
 	printf 'unexpected acceptance command order:\n%s\n' "$actual_acceptance" >&2
@@ -261,6 +294,7 @@ CLOUD_STAGING_E2E_PROVISION_K8S_SCRIPT="$TMP/provision-k8s.sh" \
 CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT="$TMP/setup-data.sh" \
 CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT="$TMP/mqtt-test.sh" \
 CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT="$TMP/mqtt-log-verify.sh" \
+CLOUD_STAGING_E2E_BILLING_VERIFY_SCRIPT="$TMP/billing-verify.sh" \
 CLOUD_STAGING_E2E_PROGRESS_INTERVAL=100ms \
 CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0 \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-e2e-test \
@@ -274,7 +308,7 @@ CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0 \
 	--device-mix camera=1,light=1,smart_meter=1 \
 	--skip-mqtt-probe > "$RUN_OUT" 2> "$RUN_ERR"
 
-expected=$'remove-k8s\nprovision-k8s\nsetup-data\nmqtt-test\nmqtt-log-verify'
+expected=$'remove-k8s\nprovision-k8s\nsetup-data\nmqtt-test\nmqtt-log-verify\nbilling-verify'
 actual="$(cut -f1 "$COMMAND_LOG")"
 [[ "$actual" == "$expected" ]] || {
 	printf 'unexpected command order:\n%s\n' "$actual" >&2
@@ -288,7 +322,7 @@ if grep -E '(^|[[:space:]])(remove-all-vm|provision|deploy|remove_vm|provision_a
 	echo "staging-e2e-test should not invoke retired VM runtime commands" >&2
 	exit 1
 fi
-for step in reset_k8s provision_k8s setup_brand_devices cloud_mqtt_test verify_mqtt_logs; do
+for step in reset_k8s provision_k8s setup_brand_devices cloud_mqtt_test verify_mqtt_logs verify_billing; do
 	grep -E "\\[cloud-staging-e2e\\] pass: ${step} duration_seconds=[0-9]+" "$RUN_ERR" >/dev/null
 done
 grep -E "\\[cloud-staging-e2e\\] start: provision_k8s log=.*/logs/provision_k8s.log" "$RUN_ERR" >/dev/null
@@ -297,12 +331,13 @@ SUMMARY="$(jq -r '.summary_file' "$RUN_OUT")"
 REPORT="$(jq -r '.report_file' "$RUN_OUT")"
 test -f "$SUMMARY"
 test -f "$REPORT"
-jq -e '.overall == "pass" and .target == "k8s" and (.steps | length == 5) and .artifacts.data_setup_summary_file != "" and .artifacts.bind_validation_dir != "" and .artifacts.mqtt_log_verify_summary_file != ""' "$SUMMARY" >/dev/null
+jq -e '.overall == "pass" and .target == "k8s" and (.steps | length == 6) and .artifacts.data_setup_summary_file != "" and .artifacts.bind_validation_dir != "" and .artifacts.mqtt_log_verify_summary_file != "" and .artifacts.billing_verify_summary_file != ""' "$SUMMARY" >/dev/null
 jq -e '.steps[] | select(.name == "setup_brand_devices")' "$SUMMARY" >/dev/null
 grep -F 'Staging E2E Test Report' "$REPORT" >/dev/null
 grep -F 'Data setup summary' "$REPORT" >/dev/null
 grep -F 'cloud_mqtt_test' "$REPORT" >/dev/null
 grep -F 'verify_mqtt_logs' "$REPORT" >/dev/null
+grep -F 'verify_billing' "$REPORT" >/dev/null
 if grep -R -Ei 'super-secret|password|bearer|token|PRIVATE KEY|-----BEGIN' "$SUMMARY" "$REPORT" >/dev/null; then
 	echo "orchestrator reports must be redacted" >&2
 	exit 1
@@ -316,6 +351,7 @@ CLOUD_STAGING_E2E_PROVISION_K8S_SCRIPT="$TMP/provision-k8s.sh" \
 CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT="$TMP/setup-data.sh" \
 CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT="$TMP/mqtt-test.sh" \
 CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT="$TMP/mqtt-log-verify.sh" \
+CLOUD_STAGING_E2E_BILLING_VERIFY_SCRIPT="$TMP/billing-verify.sh" \
 CLOUD_STAGING_E2E_PROGRESS_INTERVAL=100ms \
 CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0 \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-e2e-test \
@@ -355,6 +391,7 @@ CLOUD_STAGING_E2E_PROVISION_SCRIPT="$TMP/provision.sh" \
 CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT="$TMP/setup-data.sh" \
 CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT="$TMP/mqtt-test.sh" \
 CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT="$TMP/mqtt-log-verify.sh" \
+CLOUD_STAGING_E2E_BILLING_VERIFY_SCRIPT="$TMP/billing-verify.sh" \
 CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0 \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-e2e-test \
 	--workspace "$WORKSPACE" \

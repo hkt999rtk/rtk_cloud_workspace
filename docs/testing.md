@@ -2,17 +2,89 @@
 
 Use this workspace to coordinate validation across pinned submodule commits.
 
+## Test Case Governance
+
+[`tests/catalog.yaml`](../tests/catalog.yaml) is the only source of truth for
+published Test IDs, purpose, method, owner, source selector, targets,
+environments, and evidence policy. The generated
+[`docs/test-catalog.md`](test-catalog.md) is the human-readable index.
+
+```sh
+(cd scripts/go && go run ./rtk-cloud -- test-catalog check)
+(cd scripts/go && go run ./rtk-cloud -- test-catalog render)
+```
+
+IDs use `<layer>-<system>-<feature>-<NNN>`. Published IDs are immutable and are
+never reused; removed cases remain in the catalog with `status: retired`.
+Case-level IDs are required for UI, E2E, live, and load tests. Unit and service
+tests use one suite ID per managed suite.
+
 ## Local Baseline
 
 ```sh
-go run ./scripts/go/rtk-cloud -- status-all
-go run ./scripts/go/rtk-cloud -- docs-check
-go run ./scripts/go/rtk-cloud -- test-matrix
+(cd scripts/go && go run ./rtk-cloud -- status-all)
+(cd scripts/go && go run ./rtk-cloud -- docs-check)
+(cd scripts/go && go run ./rtk-cloud -- test-matrix)
 ```
+
+`test-matrix` is the fast workspace baseline: it checks the workspace diff,
+workspace-owned Go tooling, catalog validity and generated-document drift, and
+repository/submodule status. It does not run every service or product E2E test.
+
+Use the explicit test layers when broader validation is needed:
+
+```sh
+(cd scripts/go && go run ./rtk-cloud -- test-services)
+(cd scripts/go && go run ./rtk-cloud -- test-e2e)
+(cd scripts/go && go run ./rtk-cloud -- test-ui)
+(cd scripts/go && go run ./rtk-cloud -- test-live --environment staging --plan)
+```
+
+`test-services` runs local service, SDK, frontend, and repository tooling tests.
+`test-e2e` runs deterministic workspace E2E and harness tests; add `--scripts`
+to opt into the root staging script contract tests. `test-ui` runs the Cloud
+Admin UI in a headless Chromium browser against the real local Go BFF and
+fixture upstreams. Desktop and mobile are separate targets:
+`test-ui --desktop` and `test-ui --mobile`; the default runs both sequentially
+with isolated BFF state and artifact directories. Use `test-ui --staging` with
+the required `E2E_*` session variables and `E2E_EVIDENCE_SAFE=1` for read-only
+desktop-browser validation against dedicated staging test accounts and data.
+Use `--run-id ID` to correlate desktop and mobile outputs; CI uses
+`gh-<run_id>-<run_attempt>`. The
+deprecated wrapper governance test remains a separate migration gate because
+it is expected to fail while legacy compatibility wrappers still exist.
+`test-live` is plan-only by default and delegates to the staging E2E flow; a
+live run still requires `--run --confirm <CLOUD_STACK_NAME>`.
 
 `docs-check` is read-only and validates documentation governance assumptions:
 workspace repository entries, key docs entry points, and contracts submodule
 commit alignment.
+
+## Reports and Evidence
+
+Case-level runners must report Test ID, target/environment, start and completion
+time, duration, purpose, method, result, and an explicit `PASS` or `FAIL`
+assessment. UI output is written to:
+
+```text
+.artifacts/test-runs/<run_id>/ui/<desktop|mobile>/
+  results.json
+  junit.xml
+  evidence-manifest.json
+  TEST_REPORT.md
+  evidence/<test-id>.png
+  playwright-report/
+  raw/
+```
+
+Every executed UI case must produce a final viewport screenshot, including
+passing cases. Failed cases additionally retain trace, video, error context,
+and all retry attempts. A retry that ultimately passes is reported as `FLAKY`
+with final assessment `PASS`. Missing Test IDs, catalog-required results, or
+screenshots fail the run. Desktop `--full` automatically runs the fixture
+phases needed by conditional error, stale, expiry, retry, and lifecycle cases,
+then merges them into one report. Staging evidence may only contain dedicated
+test data.
 
 ## LAN Interop
 

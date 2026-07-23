@@ -1,6 +1,7 @@
 schema_version: 1
 scenarios:
   - id: shadow_offline_reconnect
+    test_id: E2E-SDK-SHADOW-002
     required_capabilities: [app_shadow, device_reconnect_control]
     device_profile: offline_reconnect
     app_action: write_desired_and_wait_for_reconnect

@@ -89,7 +89,12 @@ var commands = map[string]commandSpec{
 	"sync-env":                         {run: runSyncEnv},
 	"sync-all":                         {run: runSyncAll},
 	"test-data":                        {run: runTestData},
+	"test-e2e":                         {run: runTestE2E},
+	"test-live":                        {run: runTestLive},
 	"test-matrix":                      {run: runTestMatrix},
+	"test-services":                    {run: runTestServices},
+	"test-catalog":                     {run: runTestCatalog},
+	"test-ui":                          {run: runTestUI},
 	"unprovision-devices":              {run: runUnprovisionDevices},
 	"validate-device-bind":             {run: runValidateDeviceBind},
 	"video-loadtest-tokens":            {run: runVideoLoadtestTokens},
@@ -1078,11 +1083,16 @@ func runTestMatrix(args []string) error {
 		return err
 	}
 	fmt.Fprintln(os.Stdout)
-	fmt.Fprintln(os.Stdout, "== workspace Go validation ==")
+	fmt.Fprintln(os.Stdout, "== workspace baseline validation ==")
 	if err := runCmd(workspace, "git", "diff", "--check"); err != nil {
 		return err
 	}
 	if err := runCmd(workspace, "go", "test", "./scripts/go/..."); err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stdout)
+	fmt.Fprintln(os.Stdout, "== test catalog ==")
+	if err := checkTestCatalog(workspace, true); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stdout)
@@ -1103,6 +1113,369 @@ func runTestMatrix(args []string) error {
 		}
 	}
 	return nil
+}
+
+type serviceTestSpec struct {
+	name string
+	dir  string
+	cmd  []string
+}
+
+func runTestServices(args []string) error {
+	fs := flag.NewFlagSet("test-services", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	repoFilter := fs.String("repo", "", "comma-separated repository names; default runs all local service and SDK tests")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	workspace, err := workspaceRoot()
+	if err != nil {
+		return err
+	}
+	selected := map[string]bool{}
+	for _, name := range strings.Split(*repoFilter, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			selected[name] = true
+		}
+	}
+	shouldRun := func(name string) bool {
+		if len(selected) == 0 || selected[name] {
+			return true
+		}
+		for repo := range selected {
+			if strings.HasPrefix(name, repo+"/") {
+				return true
+			}
+		}
+		return false
+	}
+
+	specs := []serviceTestSpec{
+		{name: "rtk_account_manager", dir: filepath.Join(workspace, "repos", "rtk_account_manager"), cmd: []string{"go", "test", "./..."}},
+		{name: "rtk_cloud_admin", dir: filepath.Join(workspace, "repos", "rtk_cloud_admin"), cmd: []string{"go", "test", "./..."}},
+		{name: "rtk_cloud_admin/web", dir: filepath.Join(workspace, "repos", "rtk_cloud_admin", "web"), cmd: []string{"npm", "test"}},
+		{name: "rtk_cloud_frontend", dir: filepath.Join(workspace, "repos", "rtk_cloud_frontend"), cmd: []string{"go", "test", "./..."}},
+		{name: "rtk_cloud_logger", dir: filepath.Join(workspace, "repos", "rtk_cloud_logger"), cmd: []string{"go", "test", "./..."}},
+		{name: "rtk_video_cloud", dir: filepath.Join(workspace, "repos", "rtk_video_cloud"), cmd: []string{"go", "test", "./..."}},
+		{name: "rtk_cloud_client/javascript", dir: filepath.Join(workspace, "repos", "rtk_cloud_client", "packages", "javascript"), cmd: []string{"npm", "test"}},
+		{name: "rtk_cloud_client/tools", dir: filepath.Join(workspace, "repos", "rtk_cloud_client"), cmd: []string{"python3", "-m", "unittest", "discover", "-s", "tools/tests"}},
+		{name: "rtk_video_cloud/tools", dir: filepath.Join(workspace, "repos", "rtk_video_cloud"), cmd: []string{"python3", "-m", "unittest", "discover", "-s", "tools/tests"}},
+	}
+	for _, spec := range specs {
+		if !shouldRun(spec.name) {
+			continue
+		}
+		if !exists(spec.dir) {
+			fmt.Fprintf(os.Stdout, "SKIP: %s is missing\n", spec.name)
+			continue
+		}
+		fmt.Fprintf(os.Stdout, "== service tests: %s ==\n", spec.name)
+		if spec.cmd[0] == "go" {
+			if err := runCmdWithEnv(spec.dir, map[string]string{"GOWORK": "off"}, spec.cmd[0], spec.cmd[1:]...); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := runCmd(spec.dir, spec.cmd[0], spec.cmd[1:]...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runTestE2E(args []string) error {
+	fs := flag.NewFlagSet("test-e2e", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	scripts := fs.Bool("scripts", false, "also run root staging script contract tests")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	workspace, err := workspaceRoot()
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintln(os.Stdout, "== E2E Go packages ==")
+	if err := runCmdWithEnv(filepath.Join(workspace, "e2e_test"), map[string]string{"GOWORK": "off"}, "go", "test", "./..."); err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stdout, "== MQTT E2E harness ==")
+	if err := runCmdWithEnv(filepath.Join(workspace, "scripts", "go"), map[string]string{"GOWORK": "off"}, "go", "test", "./cloud-mqtt-test"); err != nil {
+		return err
+	}
+	if *scripts {
+		fmt.Fprintln(os.Stdout, "== workspace staging script contract tests ==")
+		tests, err := filepath.Glob(filepath.Join(workspace, "tests", "*.test.sh"))
+		if err != nil {
+			return err
+		}
+		sort.Strings(tests)
+		for _, test := range tests {
+			if filepath.Base(test) == "no-deprecated-staging-wrappers.test.sh" {
+				fmt.Fprintln(os.Stdout, "SKIP: no-deprecated-staging-wrappers.test.sh is a repository governance gate, not an E2E test")
+				continue
+			}
+			if err := runCmd(workspace, "bash", test); err != nil {
+				return err
+			}
+		}
+	}
+	fmt.Fprintln(os.Stdout, "== E2E report-tool tests ==")
+	if err := runCmd(workspace, "python3", "-m", "unittest", "discover", "-s", "e2e_test/video_cloud/load/tools/tests"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func runTestUI(args []string) error {
+	fs := flag.NewFlagSet("test-ui", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	install := fs.Bool("install", false, "install npm dependencies and the Chromium browser before testing")
+	full := fs.Bool("full", false, "run the full browser suite instead of the smoke suite")
+	staging := fs.Bool("staging", false, "run read-only headless tests against E2E_BASE_URL")
+	desktop := fs.Bool("desktop", false, "run the desktop Chromium project")
+	mobile := fs.Bool("mobile", false, "run the mobile viewport project")
+	runID := fs.String("run-id", "", "stable test run ID; defaults to GitHub run identity or a UTC timestamp")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *staging && *mobile {
+		return errors.New("test-ui --staging currently supports the desktop browser project only")
+	}
+	if *runID == "" {
+		if githubRunID, githubAttempt := strings.TrimSpace(os.Getenv("GITHUB_RUN_ID")), strings.TrimSpace(os.Getenv("GITHUB_RUN_ATTEMPT")); githubRunID != "" && githubAttempt != "" {
+			*runID = "gh-" + githubRunID + "-" + githubAttempt
+		} else {
+			*runID = time.Now().UTC().Format("20060102T150405Z")
+		}
+	}
+	if ok, _ := regexp.MatchString(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`, *runID); !ok {
+		return errors.New("--run-id must contain only letters, digits, dot, underscore, and hyphen")
+	}
+	workspace, err := workspaceRoot()
+	if err != nil {
+		return err
+	}
+	webRoot := filepath.Join(workspace, "repos", "rtk_cloud_admin", "web")
+	if !exists(webRoot) {
+		return errors.New("rtk_cloud_admin/web is missing")
+	}
+	if *install {
+		fmt.Fprintln(os.Stdout, "== UI dependencies ==")
+		if err := runCmd(webRoot, "npm", "ci"); err != nil {
+			return err
+		}
+		if err := runCmd(webRoot, "npx", "playwright", "install", "chromium"); err != nil {
+			return err
+		}
+	}
+	if !exists(filepath.Join(webRoot, "node_modules", ".bin", "playwright")) {
+		return errors.New("Playwright is not installed; rerun test-ui with --install")
+	}
+
+	fmt.Fprintln(os.Stdout, "== UI build ==")
+	if err := runCmd(webRoot, "npm", "run", "build"); err != nil {
+		return err
+	}
+	if *staging {
+		for _, name := range []string{"E2E_BASE_URL", "E2E_PLATFORM_SESSION_ID", "E2E_CUSTOMER_SESSION_ID", "E2E_EVIDENCE_SAFE"} {
+			if strings.TrimSpace(os.Getenv(name)) == "" {
+				return fmt.Errorf("%s is required for test-ui --staging", name)
+			}
+		}
+		if os.Getenv("E2E_EVIDENCE_SAFE") != "1" {
+			return errors.New("test-ui --staging requires E2E_EVIDENCE_SAFE=1 to confirm dedicated test data is safe for artifact upload")
+		}
+		fmt.Fprintln(os.Stdout, "== headless UI E2E: deployed staging backend ==")
+		playwrightArgs := []string{"playwright", "test", "--project=staging"}
+		expected, err := expectedUITestIDs(workspace, "desktop", "staging", !*full)
+		if err != nil {
+			return err
+		}
+		env, err := uiEvidenceEnv(workspace, webRoot, *runID, "desktop", "staging", expected)
+		if err != nil {
+			return err
+		}
+		env["E2E_UI_TARGET"] = "staging"
+		if err := os.RemoveAll(env["E2E_TEST_RUN_DIR"]); err != nil {
+			return fmt.Errorf("reset UI artifact directory: %w", err)
+		}
+		runErr := runCmdWithEnv(webRoot, env, "npx", playwrightArgs...)
+		evidenceErr := validateUIEvidenceRun(env["E2E_TEST_RUN_DIR"], expected)
+		if evidenceErr != nil {
+			return evidenceErr
+		}
+		return runErr
+	}
+
+	fmt.Fprintln(os.Stdout, "== UI fixture generation ==")
+	if err := runCmd(webRoot, "npm", "run", "e2e:generate-fixture"); err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stdout, "== headless UI E2E: browser -> Go BFF -> fixture upstreams ==")
+	targets := []string{}
+	if *desktop {
+		targets = append(targets, "chromium")
+	}
+	if *mobile {
+		targets = append(targets, "mobile")
+	}
+	if len(targets) == 0 {
+		targets = []string{"chromium", "mobile"}
+	}
+	for _, target := range targets {
+		evidenceTarget := target
+		if target == "chromium" {
+			evidenceTarget = "desktop"
+		}
+		fmt.Fprintf(os.Stdout, "-- UI target: %s (run %s)\n", evidenceTarget, *runID)
+		playwrightArgs := []string{"playwright", "test", "--project=" + target}
+		if !*full {
+			playwrightArgs = append(playwrightArgs, "--grep", "@smoke")
+		}
+		expected, err := expectedUITestIDs(workspace, evidenceTarget, "local", !*full)
+		if err != nil {
+			return err
+		}
+		env, err := uiEvidenceEnv(workspace, webRoot, *runID, evidenceTarget, "local", expected)
+		if err != nil {
+			return err
+		}
+		if err := os.RemoveAll(env["E2E_TEST_RUN_DIR"]); err != nil {
+			return fmt.Errorf("reset UI artifact directory: %w", err)
+		}
+		if *full && evidenceTarget == "desktop" {
+			env["E2E_EXPECTED_TEST_IDS"] = ""
+		}
+		runErr := runCmdWithEnv(webRoot, env, "npx", playwrightArgs...)
+		if *full && evidenceTarget == "desktop" {
+			phases := []struct {
+				name string
+				grep string
+				env  map[string]string
+			}{
+				{name: "unavailable", grep: "UI-CA-(SOURCE-003|SOURCE-004|REPORT-001|CHIPSET-003|CLOUD-003|DASH-002)", env: map[string]string{"E2E_SCENARIO_MODE": "unavailable", "E2E_PROMETHEUS_MODE": "unavailable"}},
+				{name: "empty", grep: "UI-CA-(SOURCE-001|DASH-003)", env: map[string]string{"E2E_SCENARIO_MODE": "empty", "E2E_PROMETHEUS_MODE": "empty"}},
+				{name: "stale", grep: "UI-CA-(SOURCE-002|DASH-003)", env: map[string]string{"E2E_SCENARIO_MODE": "stale", "E2E_PROMETHEUS_MODE": "stale"}},
+				{name: "expired", grep: "UI-CA-REPORT-002", env: map[string]string{"E2E_RESULT_EXPIRED": "true"}},
+				{name: "partial-failure", grep: "UI-CA-BATCH-001", env: map[string]string{"E2E_SCENARIO_MODE": "partial_failure"}},
+				{name: "slow", grep: "UI-CA-BATCH-002", env: map[string]string{"E2E_SCENARIO_MODE": "slow"}},
+				{name: "member-assign-failure", grep: "UI-CA-CLOUD-006", env: map[string]string{"E2E_FAIL_ACTION": "member-assign"}},
+			}
+			for _, phase := range phases {
+				fmt.Fprintf(os.Stdout, "-- UI phase: %s\n", phase.name)
+				phaseEnv := make(map[string]string, len(env)+len(phase.env)+1)
+				for key, value := range env {
+					phaseEnv[key] = value
+				}
+				for key, value := range phase.env {
+					phaseEnv[key] = value
+				}
+				phaseEnv["E2E_TEST_PHASE"] = phase.name
+				if err := runCmdWithEnv(webRoot, phaseEnv, "npx", "playwright", "test", "--project=chromium", "--grep", phase.grep); err != nil {
+					fmt.Fprintf(os.Stderr, "UI phase %s reported a test failure: %v\n", phase.name, err)
+					runErr = err
+				}
+			}
+		}
+		if err := validateUIEvidenceRun(env["E2E_TEST_RUN_DIR"], expected); err != nil {
+			return err
+		}
+		if runErr != nil {
+			return runErr
+		}
+	}
+	return nil
+}
+
+func uiEvidenceEnv(workspace, webRoot, runID, target, environment string, expected []string) (map[string]string, error) {
+	workspaceCommit, err := gitOutput(workspace, "rev-parse", "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	submoduleRoot := filepath.Dir(webRoot)
+	submoduleCommit, err := gitOutput(submoduleRoot, "rev-parse", "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{
+		"E2E_UI_TARGET":         target,
+		"E2E_TEST_RUN_ID":       runID,
+		"E2E_TEST_TARGET":       target,
+		"E2E_TEST_ENVIRONMENT":  environment,
+		"E2E_TEST_RUN_DIR":      filepath.Join(workspace, ".artifacts", "test-runs", runID, "ui", target),
+		"E2E_EXPECTED_TEST_IDS": strings.Join(expected, ","),
+		"E2E_WORKSPACE_COMMIT":  strings.TrimSpace(workspaceCommit),
+		"E2E_SUBMODULE_COMMIT":  strings.TrimSpace(submoduleCommit),
+	}, nil
+}
+
+func validateUIEvidenceRun(runDir string, expected []string) error {
+	raw, err := os.ReadFile(filepath.Join(runDir, "evidence-manifest.json"))
+	if err != nil {
+		return fmt.Errorf("read UI evidence manifest: %w", err)
+	}
+	var manifest struct {
+		Cases []struct {
+			TestID           string `json:"test_id"`
+			Assessment       string `json:"assessment"`
+			ScreenshotPath   string `json:"screenshot_path"`
+			ScreenshotSHA256 string `json:"screenshot_sha256"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return fmt.Errorf("parse UI evidence manifest: %w", err)
+	}
+	byID := make(map[string]struct {
+		assessment string
+		screenshot string
+		checksum   string
+	}, len(manifest.Cases))
+	for _, item := range manifest.Cases {
+		byID[item.TestID] = struct {
+			assessment string
+			screenshot string
+			checksum   string
+		}{item.Assessment, item.ScreenshotPath, item.ScreenshotSHA256}
+	}
+	var failures []string
+	for _, id := range expected {
+		item, ok := byID[id]
+		if !ok {
+			failures = append(failures, id+" has no result")
+			continue
+		}
+		if item.assessment != "PASS" {
+			failures = append(failures, id+" assessment is "+item.assessment)
+			continue
+		}
+		screenshot := filepath.Join(runDir, filepath.FromSlash(item.screenshot))
+		content, err := os.ReadFile(screenshot)
+		if err != nil {
+			failures = append(failures, id+" screenshot is missing")
+			continue
+		}
+		sum := fmt.Sprintf("%x", sha256.Sum256(content))
+		if item.checksum == "" || sum != item.checksum {
+			failures = append(failures, id+" screenshot checksum is invalid")
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("UI evidence validation failed: %s", strings.Join(failures, "; "))
+	}
+	fmt.Fprintf(os.Stdout, "UI evidence valid: %d required cases in %s\n", len(expected), runDir)
+	return nil
+}
+
+func runTestLive(args []string) error {
+	return runStagingE2ETest(ensureTestLiveMode(args))
+}
+
+func ensureTestLiveMode(args []string) []string {
+	if hasFlag(args, "--plan") || hasFlag(args, "--run") {
+		return args
+	}
+	return append(append([]string(nil), args...), "--plan")
 }
 
 type loadDeviceType struct {

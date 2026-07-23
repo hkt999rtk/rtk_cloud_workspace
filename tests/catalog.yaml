@@ -1,0 +1,123 @@
+schema_version: 1
+
+ui_local: &ui_local
+  layer: ui
+  owner: rtk_cloud_admin
+  runner: test-ui
+  targets: [desktop]
+  environments: [local]
+  evidence: [screenshot]
+  method: Playwright headless browser drives the UI through the real Go BFF and deterministic fixture upstreams.
+  status: active
+
+ui_smoke: &ui_smoke
+  <<: *ui_local
+  targets: [desktop, mobile]
+  tags: [smoke]
+
+ui_staging: &ui_staging
+  layer: ui
+  owner: rtk_cloud_admin
+  runner: test-ui
+  targets: [desktop]
+  environments: [staging]
+  tags: [smoke, staging]
+  evidence: [screenshot]
+  method: Playwright headless browser performs read-only UI checks against staging with dedicated test accounts and data.
+  status: active
+
+sdk_e2e: &sdk_e2e
+  layer: e2e
+  owner: rtk_cloud_client
+  runner: test-e2e
+  targets: [ios, android]
+  environments: [staging]
+  evidence: [cloud-evidence, junit]
+  method: Native SDK driver runs the declarative scenario and correlates app observations with cloud evidence.
+  status: active
+
+cases:
+  - { <<: *ui_local, id: UI-CA-ACCESS-001, title: Anonymous users cannot read the platform admin API, source: repos/rtk_cloud_admin/web/e2e/access-control.spec.mjs, selector: "[UI-CA-ACCESS-001]" }
+  - { <<: *ui_local, id: UI-CA-ACCESS-002, title: Customer users cannot read the platform admin API, source: repos/rtk_cloud_admin/web/e2e/access-control.spec.mjs, selector: "[UI-CA-ACCESS-002]" }
+  - { <<: *ui_local, id: UI-CA-ACCESS-003, title: Customer navigation remains separated from platform navigation, source: repos/rtk_cloud_admin/web/e2e/access-control.spec.mjs, selector: "[UI-CA-ACCESS-003]" }
+  - { <<: *ui_local, id: UI-CA-AUDIT-001, title: Platform admins can review audit records after a Brand Cloud action, source: repos/rtk_cloud_admin/web/e2e/audit.spec.mjs, selector: "[UI-CA-AUDIT-001]" }
+  - { <<: *ui_local, id: UI-CA-BATCH-001, title: Partial batch failure preserves item results and supports a new retry attempt, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-lifecycle.spec.mjs, selector: "[UI-CA-BATCH-001]" }
+  - { <<: *ui_local, id: UI-CA-BATCH-002, title: Batch jobs enforce valid pause resume and cancel transitions, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-lifecycle.spec.mjs, selector: "[UI-CA-BATCH-002]" }
+  - { <<: *ui_local, id: UI-CA-BATCH-003, title: Completed batch results can be downloaded as JSON and CSV, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-lifecycle.spec.mjs, selector: "[UI-CA-BATCH-003]" }
+  - { <<: *ui_local, id: UI-CA-CHIPSET-001, title: Chipset provider page exposes loading and validation states, source: repos/rtk_cloud_admin/web/e2e/chipset-sdk.spec.mjs, selector: "[UI-CA-CHIPSET-001]" }
+  - { <<: *ui_local, id: UI-CA-CHIPSET-002, title: Read-only provider capability hides mutation controls, source: repos/rtk_cloud_admin/web/e2e/chipset-sdk.spec.mjs, selector: "[UI-CA-CHIPSET-002]" }
+  - { <<: *ui_local, id: UI-CA-CHIPSET-003, title: Provider and developer pages expose safe upstream-unavailable states, source: repos/rtk_cloud_admin/web/e2e/chipset-sdk.spec.mjs, selector: "[UI-CA-CHIPSET-003]" }
+  - { <<: *ui_smoke, id: UI-CA-CHIPSET-004, title: Provider publish refresh fallback and unpublish lifecycle works, source: repos/rtk_cloud_admin/web/e2e/chipset-sdk.spec.mjs, selector: "[UI-CA-CHIPSET-004]", tags: [smoke, chipset-sdk] }
+  - { <<: *ui_smoke, id: UI-CA-CHIPSET-005, title: Platform provider design matches the approved visual baseline, source: repos/rtk_cloud_admin/web/e2e/chipset-sdk.visual.spec.mjs, selector: "[UI-CA-CHIPSET-005]", tags: [smoke, chipset-sdk, visual] }
+  - { <<: *ui_smoke, id: UI-CA-CHIPSET-006, title: Developer resource design matches the approved visual baseline, source: repos/rtk_cloud_admin/web/e2e/chipset-sdk.visual.spec.mjs, selector: "[UI-CA-CHIPSET-006]", tags: [smoke, chipset-sdk, visual] }
+  - { <<: *ui_smoke, id: UI-CA-CLOUD-001, title: Brand Cloud filters and detail reload show Account Manager data, source: repos/rtk_cloud_admin/web/e2e/brand-cloud.spec.mjs, selector: "[UI-CA-CLOUD-001]" }
+  - { <<: *ui_local, id: UI-CA-CLOUD-002, title: Brand Cloud status filter selects disabled clouds, source: repos/rtk_cloud_admin/web/e2e/brand-cloud.spec.mjs, selector: "[UI-CA-CLOUD-002]" }
+  - { <<: *ui_local, id: UI-CA-CLOUD-003, title: Brand Cloud list renders upstream failures safely, source: repos/rtk_cloud_admin/web/e2e/brand-cloud.spec.mjs, selector: "[UI-CA-CLOUD-003]" }
+  - { <<: *ui_local, id: UI-CA-CLOUD-004, title: Brand Cloud detail supports cloud and user lifecycle actions, source: repos/rtk_cloud_admin/web/e2e/brand-cloud.spec.mjs, selector: "[UI-CA-CLOUD-004]" }
+  - { <<: *ui_local, id: UI-CA-CLOUD-005, title: Brand Cloud creation stepper completes successfully, source: repos/rtk_cloud_admin/web/e2e/brand-cloud.spec.mjs, selector: "[UI-CA-CLOUD-005]" }
+  - { <<: *ui_local, id: UI-CA-CLOUD-006, title: Brand Cloud creation surfaces partial owner-assignment failure, source: repos/rtk_cloud_admin/web/e2e/brand-cloud.spec.mjs, selector: "[UI-CA-CLOUD-006]" }
+  - { <<: *ui_smoke, id: UI-CA-DASH-001, title: Platform admins can triage the platform dashboard, source: repos/rtk_cloud_admin/web/e2e/platform-dashboard.spec.mjs, selector: "[UI-CA-DASH-001]" }
+  - { <<: *ui_local, id: UI-CA-DASH-002, title: Dashboard reports degraded state when Prometheus is unavailable, source: repos/rtk_cloud_admin/web/e2e/platform-dashboard.spec.mjs, selector: "[UI-CA-DASH-002]" }
+  - { <<: *ui_local, id: UI-CA-DASH-003, title: Dashboard exposes empty and stale Prometheus states, source: repos/rtk_cloud_admin/web/e2e/platform-dashboard.spec.mjs, selector: "[UI-CA-DASH-003]" }
+  - { <<: *ui_smoke, id: UI-CA-FLEETPAGE-001, title: Customer fleet pages load through the real BFF, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-pages.spec.mjs, selector: "[UI-CA-FLEETPAGE-001]" }
+  - { <<: *ui_local, id: UI-CA-FLEETPAGE-002, title: Device fleet remains server paginated, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-pages.spec.mjs, selector: "[UI-CA-FLEETPAGE-002]" }
+  - { <<: *ui_local, id: UI-CA-JOBS-001, title: Batch jobs use server scope idempotency and result lifecycle, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-jobs.spec.mjs, selector: "[UI-CA-JOBS-001]" }
+  - { <<: *ui_local, id: UI-CA-LOGS-001, title: Platform admins can inspect service-log incident context, source: repos/rtk_cloud_admin/web/e2e/service-logs.spec.mjs, selector: "[UI-CA-LOGS-001]" }
+  - { <<: *ui_local, id: UI-CA-OPS-001, title: Platform admins can open operations and service logs, source: repos/rtk_cloud_admin/web/e2e/operations.spec.mjs, selector: "[UI-CA-OPS-001]" }
+  - { <<: *ui_smoke, id: UI-CA-OTA-001, title: OTA scope preview is server calculated and immutable, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-workflows.spec.mjs, selector: "[UI-CA-OTA-001]" }
+  - { <<: *ui_local, id: UI-CA-PROV-001, title: Invalid-device validation is immutable and cannot execute, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-provisioning.spec.mjs, selector: "[UI-CA-PROV-001]" }
+  - { <<: *ui_local, id: UI-CA-PROV-002, title: Provisioning upload replay is idempotent and conflicts are rejected, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-provisioning.spec.mjs, selector: "[UI-CA-PROV-002]" }
+  - { <<: *ui_local, id: UI-CA-PROV-003, title: Observers cannot start provisioning from browser or API, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-provisioning.spec.mjs, selector: "[UI-CA-PROV-003]" }
+  - { <<: *ui_smoke, id: UI-CA-PROV-004, title: Provisioning CSV upload starts browser validation, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-workflows.spec.mjs, selector: "[UI-CA-PROV-004]" }
+  - { <<: *ui_local, id: UI-CA-PROV-005, title: Provisioning upload validates before creating an execution job, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-workflows.spec.mjs, selector: "[UI-CA-PROV-005]" }
+  - { <<: *ui_local, id: UI-CA-REPORT-001, title: Report failure remains customer-safe when upstream is unavailable, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-report-states.spec.mjs, selector: "[UI-CA-REPORT-001]" }
+  - { <<: *ui_local, id: UI-CA-REPORT-002, title: Expired report results return an explicit expired state, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-report-states.spec.mjs, selector: "[UI-CA-REPORT-002]" }
+  - { <<: *ui_smoke, id: UI-CA-REPORT-003, title: Report builder submits complete metadata from the browser, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-workflows.spec.mjs, selector: "[UI-CA-REPORT-003]" }
+  - { <<: *ui_local, id: UI-CA-REPORT-004, title: Reports preserve scope metadata and expose async download, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-workflows.spec.mjs, selector: "[UI-CA-REPORT-004]" }
+  - { <<: *ui_local, id: UI-CA-REPORT-005, title: Report idempotency replay and conflict preserve original scope, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-workflows.spec.mjs, selector: "[UI-CA-REPORT-005]" }
+  - { <<: *ui_local, id: UI-CA-ROLE-001, title: Developer and release roles can manage release surfaces, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-access.spec.mjs, selector: "[UI-CA-ROLE-001]" }
+  - { <<: *ui_local, id: UI-CA-ROLE-002, title: Operations role cannot mutate SKU policy or release metadata, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-access.spec.mjs, selector: "[UI-CA-ROLE-002]" }
+  - { <<: *ui_local, id: UI-CA-ROLE-003, title: Observer role is read-only through UI and API, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-access.spec.mjs, selector: "[UI-CA-ROLE-003]" }
+  - { <<: *ui_smoke, id: UI-CA-SCOPE-001, title: Brand Cloud switching keeps URL and data scope aligned, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-cloud.spec.mjs, selector: "[UI-CA-SCOPE-001]" }
+  - { <<: *ui_local, id: UI-CA-SCOPE-002, title: Non-member cloud links are forbidden without changing active cloud, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-cloud.spec.mjs, selector: "[UI-CA-SCOPE-002]" }
+  - { <<: *ui_local, id: UI-CA-SOURCE-001, title: Empty upstream source renders an empty state, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-errors.spec.mjs, selector: "[UI-CA-SOURCE-001]" }
+  - { <<: *ui_local, id: UI-CA-SOURCE-002, title: Stale upstream source keeps data and exposes freshness, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-errors.spec.mjs, selector: "[UI-CA-SOURCE-002]" }
+  - { <<: *ui_local, id: UI-CA-SOURCE-003, title: Unavailable source is distinguished from an empty source, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-errors.spec.mjs, selector: "[UI-CA-SOURCE-003]" }
+  - { <<: *ui_local, id: UI-CA-SOURCE-004, title: Customer-safe errors do not expose upstream credentials, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-errors.spec.mjs, selector: "[UI-CA-SOURCE-004]" }
+  - { <<: *ui_staging, id: UI-CA-STAGING-001, title: Staging platform admin can read operations, source: repos/rtk_cloud_admin/web/e2e/staging.spec.mjs, selector: "[UI-CA-STAGING-001]" }
+  - { <<: *ui_staging, id: UI-CA-STAGING-002, title: Staging customer can perform the read-only Brand Fleet smoke flow, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-staging.spec.mjs, selector: "[UI-CA-STAGING-002]" }
+  - { <<: *ui_local, id: UI-CA-TEAM-001, title: Developer team management uses its namespace and is replay-safe, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-team.spec.mjs, selector: "[UI-CA-TEAM-001]" }
+
+  - { <<: *sdk_e2e, id: E2E-SDK-AUTH-001, title: SDK token mTLS HTTP authorization succeeds, source: e2e_test/cloud_validation/scenarios/core-smoke.yaml, selector: "test_id: E2E-SDK-AUTH-001" }
+  - { <<: *sdk_e2e, id: E2E-SDK-AUTH-002, title: SDK cross-cloud access is denied, source: e2e_test/cloud_validation/scenarios/core-smoke.yaml, selector: "test_id: E2E-SDK-AUTH-002" }
+  - { <<: *sdk_e2e, id: E2E-SDK-AUTH-003, title: SDK invalid or expired token is normalized, source: e2e_test/cloud_validation/scenarios/core-smoke.yaml, selector: "test_id: E2E-SDK-AUTH-003" }
+  - { <<: *sdk_e2e, id: E2E-SDK-CERT-001, title: SDK app certificate rotation rejects the old certificate, source: e2e_test/cloud_validation/scenarios/nightly-resilience.yaml, selector: "test_id: E2E-SDK-CERT-001" }
+  - { <<: *sdk_e2e, id: E2E-SDK-CONTROL-001, title: SDK cancellation and timeout controls behave consistently, source: e2e_test/cloud_validation/scenarios/core-smoke.yaml, selector: "test_id: E2E-SDK-CONTROL-001" }
+  - { <<: *sdk_e2e, id: E2E-SDK-ERROR-001, title: SDK unavailable endpoint errors are normalized, source: e2e_test/cloud_validation/scenarios/core-smoke.yaml, selector: "test_id: E2E-SDK-ERROR-001" }
+  - { <<: *sdk_e2e, id: E2E-SDK-LIFECYCLE-001, title: SDK destroy suppresses late callbacks, source: e2e_test/cloud_validation/scenarios/core-smoke.yaml, selector: "test_id: E2E-SDK-LIFECYCLE-001" }
+  - { <<: *sdk_e2e, id: E2E-SDK-LIFECYCLE-002, title: SDK recovers after app restart, source: e2e_test/cloud_validation/scenarios/nightly-resilience.yaml, selector: "test_id: E2E-SDK-LIFECYCLE-002" }
+  - { <<: *sdk_e2e, id: E2E-SDK-SHADOW-001, title: SDK online shadow desired delta and reported roundtrip completes, source: e2e_test/cloud_validation/scenarios/shadow-roundtrip.yaml, selector: "test_id: E2E-SDK-SHADOW-001" }
+  - { <<: *sdk_e2e, id: E2E-SDK-SHADOW-002, title: SDK offline shadow queues and converges after reconnect, source: e2e_test/cloud_validation/scenarios/shadow-offline-nightly.yaml, selector: "test_id: E2E-SDK-SHADOW-002" }
+  - { <<: *sdk_e2e, id: E2E-SDK-WS-001, title: SDK websocket lifecycle connects sends and disconnects, source: e2e_test/cloud_validation/scenarios/core-smoke.yaml, selector: "test_id: E2E-SDK-WS-001" }
+  - { <<: *sdk_e2e, id: E2E-SDK-WS-002, title: SDK websocket receives a cloud-triggered message, source: e2e_test/cloud_validation/scenarios/core-smoke.yaml, selector: "test_id: E2E-SDK-WS-002" }
+  - { <<: *sdk_e2e, id: E2E-SDK-WS-003, title: SDK websocket survives repeated connect and disconnect, source: e2e_test/cloud_validation/scenarios/nightly-resilience.yaml, selector: "test_id: E2E-SDK-WS-003" }
+
+  - { id: E2E-FACTORY-ENROLL-001, title: Factory enrollment issues a usable device certificate, layer: e2e, owner: factory_enroll, source: e2e_test/README.md, selector: "factory_enroll/", method: Go E2E runner enrolls a test device and validates the issued identity and certificate chain., runner: test-e2e, environments: [local, staging], evidence: [json, markdown], status: active }
+  - { id: E2E-PROV-ACCOUNT-001, title: Account and Video Cloud provisioning smoke completes, layer: e2e, owner: provisioning, source: e2e_test/README.md, selector: "provisioning/account_video_smoke/", method: Go E2E runner provisions isolated test identities across Account Manager and Video Cloud., runner: test-e2e, environments: [staging], evidence: [json, markdown], status: active }
+  - { id: E2E-PROV-BULK-001, title: Bulk bind artifacts validate for staged onboarding, layer: e2e, owner: provisioning, source: e2e_test/README.md, selector: "provisioning/bulk_bind_validation/", method: Go validator checks bulk-bind input output and per-device consistency., runner: test-e2e, environments: [local, staging], evidence: [json, markdown], status: active }
+
+  - { id: LIVE-STG-ONBOARD-001, title: Staging onboarding and service integration flow succeeds, layer: live, owner: cloud_platform, source: scripts/go/rtk-cloud/main.go, selector: "staging-e2e-test", method: Workspace orchestration runs the live staging E2E plan against dedicated test resources., runner: test-live, environments: [staging], evidence: [json, markdown, logs], status: active }
+
+  - { id: LOAD-HOME-SHADOW-001, title: Home MQTT one-thousand-device smoke meets thresholds, layer: load, owner: home_cloud, source: loadtests/home-100k/scenarios/mqtt-1k.description.env, selector: "HOME100K_DEVICES=1000", method: Distributed load generators exercise MQTT shadow traffic and aggregate latency error and capacity thresholds., runner: test-live, environments: [staging], evidence: [json, markdown, logs], status: active }
+  - { id: LOAD-HOME-SHADOW-002, title: Home one-hundred-thousand-device load meets thresholds, layer: load, owner: home_cloud, source: loadtests/home-100k/scenarios/default.description.env, selector: "HOME100K_ENVIRONMENT=staging", method: Distributed load generators exercise the full Home Cloud mix and aggregate latency error and capacity thresholds., runner: test-live, environments: [staging], evidence: [json, markdown, logs], status: active }
+  - { id: LOAD-HOME-VIDEO-001, title: One-thousand-device video smoke meets thresholds, layer: load, owner: video_cloud, source: loadtests/home-100k/scenarios/video-1k.description.env, selector: "HOME100K_SCENARIO_PROFILE=video-1k-v1", method: Video load clients exercise signaling and media setup while collecting threshold evidence., runner: test-live, environments: [staging], evidence: [json, markdown, logs], status: active }
+  - { id: LOAD-HOME-TURN-001, title: Fifty-thousand-device TURN load meets thresholds, layer: load, owner: video_cloud, source: loadtests/home-100k/scenarios/video-50k-turn.description.env, selector: "HOME100K_SCENARIO_PROFILE=video-50k-turn-v1", method: Distributed video clients exercise TURN-assisted sessions and aggregate capacity evidence., runner: test-live, environments: [staging], evidence: [json, markdown, logs], status: active }
+  - { id: LOAD-HOME-TURN-002, title: One-hundred-thousand-device TURN load meets thresholds, layer: load, owner: video_cloud, source: loadtests/home-100k/scenarios/video-100k-turn.description.env, selector: "HOME100K_SCENARIO_PROFILE=video-100k-turn-v1", method: Distributed video clients exercise TURN-assisted sessions and aggregate capacity evidence., runner: test-live, environments: [staging], evidence: [json, markdown, logs], status: active }
+  - { id: LOAD-VC-CLIP-001, title: Ten-thousand-device clip storage load meets thresholds, layer: load, owner: video_cloud, source: loadtests/home-100k/scenarios/clip-storage-10k.description.env, selector: "HOME100K_SCENARIO_PROFILE=clip-storage-10k-v2", method: Clip clients upload and retrieve deterministic media fixtures while collecting latency error and storage evidence., runner: test-live, environments: [staging], evidence: [json, markdown, logs], status: active }
+
+  - { id: SVC-AM-SUITE-001, title: Account Manager unit and service suite passes, layer: service, owner: rtk_account_manager, source: repos/rtk_account_manager/go.mod, selector: "module", method: Go test executes all Account Manager packages., runner: test-services, environments: [local, ci], evidence: [console], status: active }
+  - { id: SVC-CA-SUITE-001, title: Cloud Admin unit and service suite passes, layer: service, owner: rtk_cloud_admin, source: repos/rtk_cloud_admin/go.mod, selector: "module", method: Go test and Node test execute Cloud Admin backend and frontend unit suites., runner: test-services, environments: [local, ci], evidence: [console], status: active }
+  - { id: SVC-CLIENT-SUITE-001, title: Cloud Client SDK unit suites pass, layer: service, owner: rtk_cloud_client, source: repos/rtk_cloud_client/README.md, selector: "rtk_cloud_client", method: JavaScript and Python test runners execute Cloud Client SDK and tooling suites., runner: test-services, environments: [local, ci], evidence: [console], status: active }
+  - { id: SVC-FRONTEND-SUITE-001, title: Cloud Frontend service suite passes, layer: service, owner: rtk_cloud_frontend, source: repos/rtk_cloud_frontend/go.mod, selector: "module", method: Go test executes all Cloud Frontend packages., runner: test-services, environments: [local, ci], evidence: [console], status: active }
+  - { id: SVC-LOGGER-SUITE-001, title: Cloud Logger service suite passes, layer: service, owner: rtk_cloud_logger, source: repos/rtk_cloud_logger/go.mod, selector: "module", method: Go test executes all Cloud Logger packages., runner: test-services, environments: [local, ci], evidence: [console], status: active }
+  - { id: SVC-VC-SUITE-001, title: Video Cloud unit and service suite passes, layer: service, owner: rtk_video_cloud, source: repos/rtk_video_cloud/go.mod, selector: "module", method: Go and Python test runners execute Video Cloud service and tooling suites., runner: test-services, environments: [local, ci], evidence: [console], status: active }
