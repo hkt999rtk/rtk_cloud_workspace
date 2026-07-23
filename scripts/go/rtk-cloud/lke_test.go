@@ -1717,6 +1717,7 @@ func TestRunProvisionLKEDNSStopsBeforeDNSWhenCertificateIssuanceFails(t *testing
 	fakeHelm(t)
 	goLog := fakeGoDaddyAPI(t)
 	fakeFailingCertbot(t)
+	t.Setenv("LKE_PUBLIC_HTTPS_ACME_ATTEMPTS", "1")
 	t.Setenv("GODADDY_KEY", "test-key")
 	t.Setenv("GODADDY_SECRET", "test-secret")
 
@@ -1726,6 +1727,20 @@ func TestRunProvisionLKEDNSStopsBeforeDNSWhenCertificateIssuanceFails(t *testing
 	}
 	if _, statErr := os.Stat(goLog); !os.IsNotExist(statErr) {
 		t.Fatalf("GoDaddy A record upsert must not run after certbot failure, log=%q body=%q", goLog, readTestFile(t, goLog))
+	}
+}
+
+func TestLKEACMERetryOnlyRecognizesMissingAccount(t *testing.T) {
+	for _, output := range []string{
+		"urn:ietf:params:acme:error:accountDoesNotExist",
+		`Unable to validate JWS :: Account "https://acme.example/acct/1" not found`,
+	} {
+		if !lkeACMEAccountMissing(output) {
+			t.Fatalf("expected missing account output to be retryable: %q", output)
+		}
+	}
+	if lkeACMEAccountMissing("GoDaddy API returned 401 Unauthorized") {
+		t.Fatal("credential failures must not be retried as ACME account failures")
 	}
 }
 
@@ -2765,6 +2780,24 @@ func TestLKEClipVerifierDefaultsToFourReplicas(t *testing.T) {
 	}
 }
 
+func TestLKEClipVerifierScalesToZeroWhenDirectUploadDisabled(t *testing.T) {
+	env := map[string]string{
+		"CLOUD_STACK_NAME":                       "video-cloud-dev",
+		"LKE_VIDEO_CLOUD_IMAGE":                  "registry.example.test/video-cloud:test",
+		"VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED": "false",
+	}
+	manifest := lkeVideoCloudAuxiliaryDeploymentManifest(env, lkeVideoCloudAuxiliaryService{Name: "video-cloud-clipverifier", Binary: "clipverifier", Port: 19500, PortName: "http"})
+	if !strings.Contains(manifest, "spec:\n  replicas: 0\n") {
+		t.Fatalf("expected verifier to scale to zero, got:\n%s", manifest)
+	}
+	if strings.Contains(lkeVideoCloudPrometheusConfigManifest(env, provisionOptions{}), "video-cloud-clipverifier") {
+		t.Fatal("expected disabled verifier to be omitted from Prometheus targets")
+	}
+	if !strings.Contains(lkeBlobEnvironmentManifest(env, "video-cloud-runtime"), "value: \"false\"") {
+		t.Fatal("expected direct upload environment to be disabled")
+	}
+}
+
 func TestLKEPrometheusDeploymentChecksumTracksScrapeConfig(t *testing.T) {
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
 
@@ -3020,6 +3053,48 @@ func TestLKEVideoCloudAuxiliaryRolloutsWaitAfterAllApplies(t *testing.T) {
 	}
 }
 
+func TestLKERestartsLogIngesterAfterAPIAuthenticationIsReady(t *testing.T) {
+	logPath := fakeKubectl(t)
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev"}
+
+	if err := lkeRestartVideoCloudLogIngester(env); err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, logPath)
+	for _, want := range []string{
+		"ARGS -n video-cloud-dev-video-cloud rollout restart deployment/video-cloud-logingester",
+		"ARGS -n video-cloud-dev-video-cloud rollout status deployment/video-cloud-logingester --timeout 5m",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("expected %q in kubectl log, got:\n%s", want, log)
+		}
+	}
+}
+
+func TestLKEEMQXBillingJobUsesRuntimeCredentialsAndEnvironmentNamespace(t *testing.T) {
+	env := map[string]string{
+		"CLOUD_STACK_NAME": "video-cloud-dev",
+	}
+	manifest := lkeEMQXBillingJobManifest(env)
+	for _, want := range []string{
+		"namespace: video-cloud-dev-video-cloud",
+		"http://mqtt:18083/api/v5/login",
+		"name: EMQX_DASHBOARD_PASSWORD",
+		"name: VIDEO_CLOUD_MQTT_USAGE_INGEST_TOKEN",
+		"http://video-cloud-mqttusage.video-cloud-dev-video-cloud.svc.cluster.local:19400",
+		"exec /scripts/configure-emqx-billing.sh",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("expected %q in EMQX billing job:\n%s", want, manifest)
+		}
+	}
+	service := lkeMQTTServiceManifest(env)
+	if !strings.Contains(service, "name: dashboard\n      port: 18083") {
+		t.Fatalf("MQTT service does not expose the internal dashboard API:\n%s", service)
+	}
+}
+
 func TestRunProvisionLKEDeployWritesLegacyStackAndVideoState(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	fakeKubectl(t)
@@ -3054,6 +3129,33 @@ func TestRunProvisionLKEDeployWritesLegacyStackAndVideoState(t *testing.T) {
 	} {
 		if !strings.Contains(state, want) {
 			t.Fatalf("expected %q in video state, got:\n%s", want, state)
+		}
+	}
+}
+
+func TestWriteLKECompatibilityArtifactsForKubernetesArchitecture(t *testing.T) {
+	envRoot := t.TempDir()
+	env := map[string]string{
+		"DEPLOYMENT_ARCHITECTURE": "kubernetes",
+		"CLOUD_ENV_NAME":          "dev",
+		"CLOUD_STACK_NAME":        "video-cloud-dev",
+		"CLOUD_REGION":            "us-sea",
+		"CLOUD_DNS_ROOT_DOMAIN":   "realtekconnect.com",
+		"VIDEO_CLOUD_DOMAIN":      "video-cloud-dev.realtekconnect.com",
+	}
+	paths := provisionPaths{EnvRoot: envRoot}
+
+	if err := writeLKECompatibilityArtifacts(paths, env); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{
+		filepath.Join(envRoot, "state", "video-cloud.state.json"),
+		filepath.Join(envRoot, "state", "video-cloud-dev.state.json"),
+	} {
+		state := readTestFile(t, path)
+		if !strings.Contains(state, `"stack": "video-cloud-dev"`) {
+			t.Fatalf("expected environment-specific stack in %s, got:\n%s", path, state)
 		}
 	}
 }

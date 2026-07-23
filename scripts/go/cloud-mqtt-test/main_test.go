@@ -55,6 +55,46 @@ func TestVideoStatePathUsesConfiguredStackName(t *testing.T) {
 	}
 }
 
+func TestShadowDocumentsDeltaClearedUsesDesiredAndReportedSnapshots(t *testing.T) {
+	tests := []struct {
+		name string
+		doc  map[string]any
+		want bool
+	}{
+		{
+			name: "matching snapshots with extra reported state",
+			doc: map[string]any{"current": map[string]any{"state": map[string]any{
+				"desired":  map[string]any{"power": true},
+				"reported": map[string]any{"power": true, "online": true},
+			}}},
+			want: true,
+		},
+		{
+			name: "missing desired value",
+			doc: map[string]any{"current": map[string]any{"state": map[string]any{
+				"desired":  map[string]any{"power": true},
+				"reported": map[string]any{"online": true},
+			}}},
+			want: false,
+		},
+		{
+			name: "nested mismatch",
+			doc: map[string]any{"current": map[string]any{"state": map[string]any{
+				"desired":  map[string]any{"settings": map[string]any{"mode": "cool"}},
+				"reported": map[string]any{"settings": map[string]any{"mode": "heat"}},
+			}}},
+			want: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shadowDocumentsDeltaCleared(tc.doc); got != tc.want {
+				t.Fatalf("shadowDocumentsDeltaCleared() = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestLatestHomeMQTTBindArtifactSkipsIncompleteLatestArtifact(t *testing.T) {
 	root := t.TempDir()
 	older := filepath.Join(root, "rtk-device-bind-older.json")

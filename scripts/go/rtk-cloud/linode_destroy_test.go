@@ -77,6 +77,33 @@ func TestDestroyLinodeStagingResourcesDryRunListsMatchesWithoutDeleting(t *testi
 	}
 }
 
+func TestDestroyEnvironmentResourcesDoesNotMatchLegacySharedLoadGenerators(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	curlLog := fakeLinodeCurl(t, map[string]string{
+		"/lke/clusters?page_size=500":           `{"data":[]}`,
+		"/linode/instances?page_size=500":       `{"data":[{"id":202,"label":"home-100k-lg-1","region":"us-sea","status":"running","tags":["home-100k"]}]}`,
+		"/networking/firewalls?page_size=500":   `{"data":[]}`,
+		"/vpcs?page_size=500":                   `{"data":[]}`,
+		"/object-storage/buckets?page_size=500": `{"data":[]}`,
+		"/volumes?page_size=500":                `{"data":[]}`,
+	})
+	t.Setenv("LINODE_TOKEN", "test-token")
+
+	var err error
+	out := captureStdoutForDestroyTest(t, func() {
+		err = run([]string{"destroy-environment-resources", "--workspace", workspace, "--env-root", envRoot})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "home-100k-lg-1") {
+		t.Fatalf("generic environment cleanup must not match shared load generators, got:\n%s", out)
+	}
+	if strings.Contains(readTestFile(t, curlLog), "DELETE ") {
+		t.Fatalf("dry-run deleted a resource, got:\n%s", readTestFile(t, curlLog))
+	}
+}
+
 func TestDestroyLinodeStagingResourcesConfirmedDeletesMatchedResources(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	writeTestFile(t, filepath.Join(envRoot, "adapters", "lke", "state.env"), "LKE_CLUSTER_ID=101\n")

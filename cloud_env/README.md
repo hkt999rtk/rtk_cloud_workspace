@@ -126,6 +126,26 @@ go run ./scripts/go/rtk-cloud -- deployment provision \
   --confirm video-cloud-qa
 ```
 
+## 統一的 environment test lifecycle
+
+所有 environment 使用同一支 script 與相同參數格式；不要為 dev、staging 或
+prod 複製 deployment script：
+
+```sh
+scripts/deploy-environment.sh plan --environment dev
+scripts/deploy-environment.sh test --environment dev --confirm video-cloud-dev
+scripts/deploy-environment.sh test --environment staging --confirm video-cloud-staging
+scripts/deploy-environment.sh test --environment prod --confirm video-cloud-prod
+```
+
+`test` 固定執行 `provision -> acceptance -> cleanup`。Provision 或 acceptance
+失敗時仍會執行 cleanup。Cleanup 只依該 environment 的 stack ownership 移除
+DNS、LKE、VM、firewall、VPC 與 environment-owned empty Object Storage bucket；
+sanitized test evidence 保留在 ignored `runtime/artifacts/`。如果任何 provider
+resource 無法移除，整個 test 必須回報失敗，不得把 environment 視為已清除。
+執行 public HTTPS DNS-01 前，operator host 必須已安裝 `certbot`，且 GoDaddy
+credential 必須能讀寫 `CLOUD_DNS_ROOT_DOMAIN` 的 DNS records。
+
 LKE mutation 需要 operator 提供 `LINODE_TOKEN`。Token、kubeconfig、certificates、service secrets、device credentials、SQLite、state 與 artifacts 只能存在 `cloud_env/qa/runtime/` 或 operator secret source，不得寫入上述 tracked `.env` 檔，也不得 commit。
 
 ## Review checklist

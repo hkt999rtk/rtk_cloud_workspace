@@ -53,6 +53,7 @@ var commands = map[string]commandSpec{
 	"create-users":                     {run: runCreateUsers},
 	"deploy":                           {run: runDeploy},
 	"deployment":                       {run: runDeployment},
+	"destroy-environment-resources":    {run: runDestroyEnvironmentResources},
 	"dns-hook":                         {run: runDNSHook},
 	"destroy-linode-staging-resources": {run: runDestroyLinodeStagingResources},
 	"docs-check":                       {run: runDocsCheck},
@@ -73,10 +74,14 @@ var commands = map[string]commandSpec{
 	"remove-k8s":                       {run: runRemoveK8s},
 	"run-staging-e2e":                  {run: runStagingE2E},
 	"secrets-check":                    {run: runSecretsCheck},
+	"environment-acceptance":           {run: runEnvironmentAcceptance},
 	"staging-acceptance":               {run: runStagingAcceptance},
 	"staging-e2e-billing-verify":       {run: runStagingE2EBillingVerify},
+	"environment-e2e-billing-verify":   {run: runStagingE2EBillingVerify},
 	"staging-e2e-data-setup":           {run: runStagingE2EDataSetup},
+	"environment-e2e-data-setup":       {run: runStagingE2EDataSetup},
 	"staging-e2e-mqtt-log-verify":      {run: runStagingE2EMQTTLogVerify},
+	"environment-e2e-mqtt-log-verify":  {run: runStagingE2EMQTTLogVerify},
 	"staging-e2e-test":                 {run: runStagingE2ETest},
 	"staging-provision":                {run: runStagingProvision},
 	"staging-reset-k8s":                {run: runStagingResetK8s},
@@ -3274,11 +3279,15 @@ func runStagingProvision(args []string) error {
 }
 
 func runStagingAcceptance(args []string) error {
-	fs := flag.NewFlagSet("staging-acceptance", flag.ContinueOnError)
+	return runEnvironmentAcceptance(args)
+}
+
+func runEnvironmentAcceptance(args []string) error {
+	fs := flag.NewFlagSet("environment-acceptance", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	workspaceFlag := fs.String("workspace", "", "workspace root")
 	stackFileFlag := fs.String("stack-file", os.Getenv("RTK_CLOUD_STACK_FILE"), "stack.env path")
-	envRootFlag := fs.String("env-root", os.Getenv("RTK_CLOUD_STAGING_ENV_ROOT"), "staging environment root")
+	envRootFlag := fs.String("env-root", os.Getenv("RTK_CLOUD_STAGING_ENV_ROOT"), "environment runtime root")
 	confirm := fs.String("confirm", "", "stack name confirmation")
 	planMode := fs.Bool("plan", false, "print acceptance plan")
 	outDir := fs.String("out-dir", "", "override report output directory")
@@ -3310,7 +3319,7 @@ func runStagingAcceptance(args []string) error {
 	}
 	if !*planMode && *confirm != ctx.stackName {
 		if *confirm == "" {
-			return fmt.Errorf("--confirm %s is required before running staging acceptance", ctx.stackName)
+			return fmt.Errorf("--confirm %s is required before running environment acceptance", ctx.stackName)
 		}
 		return fmt.Errorf("--confirm must be %s, got %s", ctx.stackName, *confirm)
 	}
@@ -3418,10 +3427,10 @@ func runStagingE2ETest(args []string) error {
 	scripts := map[string]string{
 		"remove-k8s":      firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_REMOVE_K8S_SCRIPT"), selfCommandPath("remove-k8s")),
 		"provision-k8s":   firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_PROVISION_K8S_SCRIPT"), selfCommandPath("provision-k8s")),
-		"setup-data":      firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT"), filepath.Join(workspace, "scripts", "setup-staging-e2e-data.sh")),
+		"setup-data":      firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT"), selfCommandPath("environment-e2e-data-setup")),
 		"mqtt-test":       firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT"), selfCommandPath("mqtt-test")),
-		"mqtt-log-verify": firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT"), selfCommandPath("staging-e2e-mqtt-log-verify")),
-		"billing-verify":  firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BILLING_VERIFY_SCRIPT"), selfCommandPath("staging-e2e-billing-verify")),
+		"mqtt-log-verify": firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT"), selfCommandPath("environment-e2e-mqtt-log-verify")),
+		"billing-verify":  firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BILLING_VERIFY_SCRIPT"), selfCommandPath("environment-e2e-billing-verify")),
 	}
 	if provider == "lke" {
 		if lkeRemoveScript != "" {
@@ -4204,6 +4213,13 @@ func queryMissingK8SMQTTRuntimeLogs(kubeconfig, stack string, expectations []mqt
 	}
 	for _, deviceID := range deviceIDs {
 		values := url.Values{}
+		// Loki keeps device_id, component, and source out of labels to avoid
+		// unbounded cardinality. Restrict the label selector to the video-cloud
+		// service and dedicated ingester unit before those fields are post-filtered.
+		// Otherwise busy clusters can push expected records outside Loki's
+		// candidate limit.
+		values.Set("service", "video_cloud")
+		values.Set("unit", "video_cloud-logingester.service")
 		values.Set("device_id", deviceID)
 		values.Set("component", "device_runtime_log")
 		values.Set("source", "device-runtime")
@@ -4277,7 +4293,7 @@ func sqlLiteral(value string) string {
 }
 
 func printE2EPlan(workspace, envRoot, stack, phase, brandname string, userCount, deviceCount int, deviceMix string, userConcurrency, deviceConcurrency, bindConcurrency int, skipRemove, skipProvision bool, selectedSteps string, scripts map[string]string) {
-	fmt.Fprintln(os.Stdout, "cloud-staging-e2e-test plan")
+	fmt.Fprintln(os.Stdout, "cloud-environment-e2e-test plan")
 	fmt.Fprintf(os.Stdout, "workspace: %s\n", workspace)
 	fmt.Fprintf(os.Stdout, "env_root: %s\n", envRoot)
 	fmt.Fprintf(os.Stdout, "stack: %s\n", stack)
@@ -4296,10 +4312,10 @@ func printE2EPlan(workspace, envRoot, stack, phase, brandname string, userCount,
 	fmt.Fprintln(os.Stdout, "steps:")
 	selection, _ := parseE2ESteps(selectedSteps, skipRemove, skipProvision)
 	if selection.Reset {
-		fmt.Fprintf(os.Stdout, "  - reset K8s staging with %s\n", displayCommand(scripts["remove-k8s"]))
+		fmt.Fprintf(os.Stdout, "  - reset environment K8s with %s\n", displayCommand(scripts["remove-k8s"]))
 	}
 	if selection.Provision {
-		fmt.Fprintf(os.Stdout, "  - provision K8s staging with %s\n", displayCommand(scripts["provision-k8s"]))
+		fmt.Fprintf(os.Stdout, "  - provision environment K8s with %s\n", displayCommand(scripts["provision-k8s"]))
 	}
 	if selection.Data {
 		fmt.Fprintf(os.Stdout, "  - setup brand/users/devices with %s\n", displayCommand(scripts["setup-data"]))

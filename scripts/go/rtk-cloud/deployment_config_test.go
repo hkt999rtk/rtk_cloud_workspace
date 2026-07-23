@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,164 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestDeploymentTestUsesIdenticalLifecycleForEveryEnvironment(t *testing.T) {
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		t.Run(environment, func(t *testing.T) {
+			workspace := writeDeploymentFixture(t, environment, "lke")
+			calls := []string{}
+			ops := deploymentOperations{
+				prepareTest: func(deploymentConfig) error { return nil },
+				provision: func(deploymentConfig) error {
+					calls = append(calls, "provision")
+					return nil
+				},
+				acceptance: func(deploymentConfig) error {
+					calls = append(calls, "acceptance")
+					return nil
+				},
+				cleanup: func(deploymentConfig) error {
+					calls = append(calls, "cleanup")
+					return nil
+				},
+				normalize: func(deploymentConfig) error {
+					calls = append(calls, "normalize")
+					return nil
+				},
+			}
+			err := runDeploymentWithOperations([]string{
+				"test", "--workspace", workspace, "--environment", environment,
+				"--confirm", "video-cloud-" + environment,
+			}, ops)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []string{"provision", "acceptance", "cleanup", "normalize"}
+			if !reflect.DeepEqual(calls, want) {
+				t.Fatalf("calls = %v, want %v", calls, want)
+			}
+		})
+	}
+}
+
+func TestDeploymentTestAlwaysCleansUpAfterFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		provisionErr      error
+		acceptanceErr     error
+		wantAcceptanceRun bool
+		wantError         string
+	}{
+		{name: "provision", provisionErr: errors.New("partial provision"), wantError: "provision phase failed"},
+		{name: "acceptance", acceptanceErr: errors.New("probe failed"), wantAcceptanceRun: true, wantError: "acceptance phase failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workspace := writeDeploymentFixture(t, "dev", "lke")
+			acceptanceRan := false
+			cleanupRan := false
+			ops := deploymentOperations{
+				prepareTest: func(deploymentConfig) error { return nil },
+				provision:   func(deploymentConfig) error { return tc.provisionErr },
+				acceptance: func(deploymentConfig) error {
+					acceptanceRan = true
+					return tc.acceptanceErr
+				},
+				cleanup: func(deploymentConfig) error {
+					cleanupRan = true
+					return nil
+				},
+				normalize: func(deploymentConfig) error { return nil },
+			}
+			err := runDeploymentWithOperations([]string{
+				"test", "--workspace", workspace, "--environment", "dev", "--confirm", "video-cloud-dev",
+			}, ops)
+			if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("error = %v, want %q", err, tc.wantError)
+			}
+			if acceptanceRan != tc.wantAcceptanceRun {
+				t.Fatalf("acceptanceRan = %t, want %t", acceptanceRan, tc.wantAcceptanceRun)
+			}
+			if !cleanupRan {
+				t.Fatal("cleanup did not run")
+			}
+		})
+	}
+}
+
+func TestDeploymentTestReportsCleanupFailure(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "prod", "lke")
+	ops := deploymentOperations{
+		prepareTest: func(deploymentConfig) error { return nil },
+		provision:   func(deploymentConfig) error { return nil },
+		acceptance:  func(deploymentConfig) error { return nil },
+		cleanup:     func(deploymentConfig) error { return errors.New("resource remained") },
+		normalize:   func(deploymentConfig) error { return nil },
+	}
+	err := runDeploymentWithOperations([]string{
+		"test", "--workspace", workspace, "--environment", "prod", "--confirm", "video-cloud-prod",
+	}, ops)
+	if err == nil || !strings.Contains(err.Error(), "cleanup phase failed") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestDeploymentTestDoesNotCleanupPreExistingEnvironment(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "staging", "lke")
+	cleanupRan := false
+	ops := deploymentOperations{
+		prepareTest: func(deploymentConfig) error { return errors.New("stack already exists") },
+		provision:   func(deploymentConfig) error { return errors.New("must not run") },
+		acceptance:  func(deploymentConfig) error { return errors.New("must not run") },
+		cleanup: func(deploymentConfig) error {
+			cleanupRan = true
+			return nil
+		},
+		normalize: func(deploymentConfig) error { return nil },
+	}
+	err := runDeploymentWithOperations([]string{
+		"test", "--workspace", workspace, "--environment", "staging", "--confirm", "video-cloud-staging",
+	}, ops)
+	if err == nil || !strings.Contains(err.Error(), "ephemeral test preflight failed") {
+		t.Fatalf("error = %v", err)
+	}
+	if cleanupRan {
+		t.Fatal("cleanup must not run for a pre-existing environment")
+	}
+}
+
+func TestDeploymentEnvironmentResourceLabelsExcludeUnownedOrphans(t *testing.T) {
+	plan := linodeDestroyPlan{
+		LKEClusters:         []linodeDestroyResource{{Label: "stack-lke"}},
+		Instances:           []linodeDestroyResource{{Label: "stack-edge"}},
+		ObjectBuckets:       []linodeDestroyResource{{Label: "stack-artifacts"}},
+		OrphanVolumes:       []linodeDestroyResource{{Label: "pvc-unrelated"}},
+		OrphanNodeBalancers: []linodeDestroyResource{{Label: "lke-unrelated"}},
+	}
+	want := []string{"stack-artifacts", "stack-edge", "stack-lke"}
+	if got := deploymentEnvironmentResourceLabels(plan); !reflect.DeepEqual(got, want) {
+		t.Fatalf("labels = %v, want %v", got, want)
+	}
+}
+
+func TestPersistentVolumeIDsForStackSelectsOnlyOwnedNumericHandles(t *testing.T) {
+	body := []byte(`{"items":[
+		{"spec":{"claimRef":{"namespace":"video-cloud-dev-platform"},"csi":{"volumeHandle":"102-pvc-example"}}},
+		{"spec":{"claimRef":{"namespace":"video-cloud-dev-video-cloud"},"csi":{"volumeHandle":"101"}}},
+		{"spec":{"claimRef":{"namespace":"video-cloud-staging-platform"},"csi":{"volumeHandle":"999"}}}
+	]}`)
+	got, err := persistentVolumeIDsForStack(body, "video-cloud-dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"101", "102"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ids = %v, want %v", got, want)
+	}
+	bad := []byte(`{"items":[{"spec":{"claimRef":{"namespace":"video-cloud-dev-platform"},"csi":{"volumeHandle":"not-a-linode-id"}}}]}`)
+	if _, err := persistentVolumeIDsForStack(bad, "video-cloud-dev"); err == nil {
+		t.Fatal("expected non-numeric owned volume handle to fail")
+	}
+}
 
 func TestResolveDeploymentConfigSupportsMultipleEnvironments(t *testing.T) {
 	workspace := writeDeploymentFixture(t, "staging", "lke")
