@@ -41,7 +41,9 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version-file: go.work
+          # The baseline must satisfy the highest Go version required by any
+          # service module, not only the workspace tooling version in go.work.
+          go-version: "1.26.3"
           cache-dependency-path: |
             scripts/go/go.sum
             e2e_test/go.sum
