@@ -11,6 +11,12 @@ mkdir -p "$artifact_dir"
 clip_ids_file="${VIDEO_CLOUD_LOAD_CLIP_DEVICE_IDS_FILE:?VIDEO_CLOUD_LOAD_CLIP_DEVICE_IDS_FILE is required}"
 fixture="${VIDEO_CLOUD_LOAD_CLIP_FIXTURE:-${workspace_root}/e2e_test/video_cloud/load/testdata/clip_1080p_h264_3mbps_15s.mp4}"
 thumbnail="${VIDEO_CLOUD_LOAD_CLIP_THUMBNAIL:-${workspace_root}/e2e_test/video_cloud/load/testdata/thumbnail_1080p.jpg}"
+if [[ "$fixture" != /* ]]; then
+  fixture="${workspace_root}/${fixture}"
+fi
+if [[ "$thumbnail" != /* ]]; then
+  thumbnail="${workspace_root}/${thumbnail}"
+fi
 api_url="${VIDEO_CLOUD_LOAD_API_URL:?VIDEO_CLOUD_LOAD_API_URL is required}"
 token_map="${VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE:?VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE is required}"
 mixed_non_clip="${VIDEO_CLOUD_LOAD_CLIP_MIXED_NONCLIP:-false}"
@@ -33,7 +39,7 @@ runner_exec="${VIDEO_CLOUD_LOAD_RUNNER_EXEC:-local}"
 runner_namespace="${VIDEO_CLOUD_LOAD_RUNNER_NAMESPACE:-clip-upload-loadtest}"
 runner_pod="${VIDEO_CLOUD_LOAD_RUNNER_POD:-clip-load-runner}"
 runner_binary="${VIDEO_CLOUD_LOAD_RUNNER_BINARY:-/tmp/rtk-video-loadtest}"
-storage_env=()
+storage_env=(env)
 for mapping in \
   "VIDEO_CLOUD_LOAD_BLOB_ENDPOINT:VIDEO_CLOUD_BLOB_ENDPOINT" \
   "VIDEO_CLOUD_LOAD_BLOB_REGION:VIDEO_CLOUD_BLOB_REGION" \
@@ -64,7 +70,7 @@ fi
 
 run_storage_preflight() {
   if [[ "$storage_exec" == "kubernetes" ]]; then
-    kubectl -n "$storage_namespace" exec "$storage_target" -- env "${storage_env[@]}" "$storage_preflight_binary"
+    kubectl -n "$storage_namespace" exec "$storage_target" -- "${storage_env[@]}" "$storage_preflight_binary"
     return
   fi
   (cd "$video_cloud_root" && GOWORK=off go run ./cmd/clipuploadpreflight)
@@ -73,7 +79,7 @@ run_storage_preflight() {
 run_storage_reconcile() {
   if [[ "$storage_exec" == "kubernetes" ]]; then
     kubectl -n "$storage_namespace" exec -i "$storage_target" -- \
-      env "${storage_env[@]}" CLIP_RUN_ID="$run_id" CLIP_RECONCILE_WAIT="${VIDEO_CLOUD_LOAD_RECONCILE_WAIT:-5m}" CLIP_RECONCILE_BINARY="$storage_reconcile_binary" \
+      "${storage_env[@]}" CLIP_RUN_ID="$run_id" CLIP_RECONCILE_WAIT="${VIDEO_CLOUD_LOAD_RECONCILE_WAIT:-5m}" CLIP_RECONCILE_BINARY="$storage_reconcile_binary" \
       sh -c 'result=$(mktemp /tmp/clip-load-results.XXXXXX); trap '\''rm -f "$result"'\'' EXIT; cat >"$result"; "$CLIP_RECONCILE_BINARY" --run-id "$CLIP_RUN_ID" --load-results "$result" --wait-backlog "$CLIP_RECONCILE_WAIT"' \
       <"$artifact_dir/load-results.json"
     return
@@ -170,7 +176,6 @@ runner_ramp_up="${VIDEO_CLOUD_LOAD_CLIP_CONTROL_RAMP_UP:-1ns}"
 runner_virtual_devices=1
 runner_app_concurrency=1
 runner_device_concurrency=1
-mixed_args=()
 if [[ "$mixed_non_clip" == "true" ]]; then
   # The current HTTP surface has no /camera_event route; the established app
   # actor is the non-clip control traffic for all devices. Device transport
@@ -183,7 +188,6 @@ if [[ "$mixed_non_clip" == "true" ]]; then
   runner_virtual_devices="$mixed_device_count"
   runner_app_concurrency="${VIDEO_CLOUD_LOAD_MIXED_APP_CONCURRENCY:-64}"
   runner_device_concurrency="${VIDEO_CLOUD_LOAD_MIXED_DEVICE_CONCURRENCY:-64}"
-  mixed_args+=(--device-ids-file "$runner_device_ids" --clip-mixed-nonclip=true)
 fi
 runner_args=(
   run
@@ -219,16 +223,18 @@ runner_args=(
     --http-timeout "${VIDEO_CLOUD_LOAD_HTTP_TIMEOUT:-60s}" \
     --min-success-rate "${VIDEO_CLOUD_LOAD_MIN_SUCCESS_RATE:-0.995}" \
     --output "$runner_output" \
-    --report-output "$runner_report" \
-    "${mixed_args[@]}" \
-    "$@"
+    --report-output "$runner_report"
 )
+if [[ "$mixed_non_clip" == "true" ]]; then
+  runner_args+=(--device-ids-file "$runner_device_ids" --clip-mixed-nonclip=true)
+fi
+runner_args+=("$@")
 if [[ "$runner_exec" == "kubernetes" ]]; then
-  runner_env=()
+  runner_env=(env)
   if [[ -n "${VIDEO_CLOUD_LOAD_ADMIN_TOKEN:-}" ]]; then
     runner_env+=("VIDEO_CLOUD_LOAD_ADMIN_TOKEN=$VIDEO_CLOUD_LOAD_ADMIN_TOKEN")
   fi
-  kubectl -n "$runner_namespace" exec "pod/$runner_pod" -- env "${runner_env[@]}" "$runner_binary" "${runner_args[@]}" || load_rc=$?
+  kubectl -n "$runner_namespace" exec "pod/$runner_pod" -- "${runner_env[@]}" "$runner_binary" "${runner_args[@]}" || load_rc=$?
   kubectl -n "$runner_namespace" cp "$runner_pod:$runner_output" "$artifact_dir/load-results.json"
   kubectl -n "$runner_namespace" cp "$runner_pod:$runner_report" "$artifact_dir/load-report.md"
 else

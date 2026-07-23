@@ -115,7 +115,7 @@ func TestClassifyFeatureRunRejectsMissingEvidence(t *testing.T) {
 		"server_correlation":      map[string]any{"status": "complete"},
 		"runtime_log_correlation": map[string]any{"status": "complete"},
 	}
-	status, _ := classifyFeatureRun(results, nil, nil)
+	status, _ := classifyFeatureRun(featureRunSpec{Feature: "device-shadow"}, results, nil, nil)
 	if status != "INCOMPLETE" {
 		t.Fatalf("status = %s, want INCOMPLETE", status)
 	}
@@ -128,9 +128,30 @@ func TestClassifyFeatureRunAcceptsRunnerPassCorrelationStatus(t *testing.T) {
 		"server_correlation":      map[string]any{"status": "pass"},
 		"runtime_log_correlation": map[string]any{"status": "pass"},
 	}
-	status, _ := classifyFeatureRun(results, nil, nil)
+	status, _ := classifyFeatureRun(featureRunSpec{Feature: "device-shadow"}, results, nil, nil)
 	if status != "PASS" {
 		t.Fatalf("status = %s, want PASS", status)
+	}
+}
+
+func TestClassifyVideoFeatureRunAcceptsSkippedShadowCorrelations(t *testing.T) {
+	results := map[string]any{
+		"status": "COMPLETE", "result": "SUCCESS",
+		"server_evidence":         map[string]any{"complete": true},
+		"server_correlation":      map[string]any{"status": "skipped"},
+		"runtime_log_correlation": map[string]any{"status": "skipped"},
+	}
+	status, _ := classifyFeatureRun(featureRunSpec{Feature: "video-webrtc"}, results, nil, nil)
+	if status != "PASS" {
+		t.Fatalf("video status = %s, want PASS", status)
+	}
+	status, _ = classifyFeatureRun(featureRunSpec{Feature: "device-shadow"}, results, nil, nil)
+	if status != "INCOMPLETE" {
+		t.Fatalf("shadow status = %s, want INCOMPLETE", status)
+	}
+	status, _ = classifyFeatureRun(featureRunSpec{Feature: "clip-storage"}, results, nil, nil)
+	if status != "PASS" {
+		t.Fatalf("clip status = %s, want PASS", status)
 	}
 }
 
@@ -193,7 +214,7 @@ func TestClassifyFeatureRunThresholdFailureIsFail(t *testing.T) {
 		"server_correlation":      map[string]any{"status": "pass"},
 		"runtime_log_correlation": map[string]any{"status": "pass"},
 	}
-	status, _ := classifyFeatureRun(results, nil, nil)
+	status, _ := classifyFeatureRun(featureRunSpec{Feature: "device-shadow"}, results, nil, nil)
 	if status != "FAIL" {
 		t.Fatalf("threshold failure status = %s", status)
 	}

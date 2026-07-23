@@ -31,33 +31,33 @@ type clipUploadEvent struct {
 	Sequence int
 }
 
-// poissonClipSchedule creates one deterministic aggregate Poisson process and
-// assigns each arrival to a camera. The count is intentionally stochastic:
-// ClipCountPerDevice describes the expected daily rate, not an exact quota.
+// poissonClipSchedule creates a deterministic Poisson-shaped schedule with an
+// exact per-camera quota. Conditioning the exponential spacings on the fixed
+// total keeps qualification runs repeatable while preserving bursty arrivals.
 func poissonClipSchedule(deviceIDs []string, clipsPerDevice int, window time.Duration, seed int64) []clipUploadEvent {
 	if len(deviceIDs) == 0 || clipsPerDevice <= 0 || window <= 0 {
 		return nil
 	}
-	lambda := float64(len(deviceIDs)*clipsPerDevice) / window.Seconds()
-	if lambda <= 0 {
-		return nil
-	}
 	rng := mathrand.New(mathrand.NewSource(seed))
-	sequence := make(map[string]int, len(deviceIDs))
-	events := make([]clipUploadEvent, 0, len(deviceIDs)*clipsPerDevice)
-	var elapsed float64
-	for {
-		elapsed += rng.ExpFloat64() / lambda
-		if elapsed >= window.Seconds() {
-			break
+	total := len(deviceIDs) * clipsPerDevice
+	events := make([]clipUploadEvent, 0, total)
+	for _, deviceID := range deviceIDs {
+		for sequence := 0; sequence < clipsPerDevice; sequence++ {
+			events = append(events, clipUploadEvent{DeviceID: deviceID, Sequence: sequence})
 		}
-		deviceID := deviceIDs[rng.Intn(len(deviceIDs))]
-		sequence[deviceID]++
-		events = append(events, clipUploadEvent{
-			Offset:   time.Duration(elapsed * float64(time.Second)),
-			DeviceID: deviceID,
-			Sequence: sequence[deviceID] - 1,
-		})
+	}
+	rng.Shuffle(len(events), func(i, j int) { events[i], events[j] = events[j], events[i] })
+
+	spacings := make([]float64, total+1)
+	var spacingTotal float64
+	for i := range spacings {
+		spacings[i] = rng.ExpFloat64()
+		spacingTotal += spacings[i]
+	}
+	var elapsed float64
+	for i := range events {
+		elapsed += spacings[i]
+		events[i].Offset = time.Duration(elapsed / spacingTotal * float64(window))
 	}
 	return events
 }
@@ -74,6 +74,15 @@ func (r *Runner) runClipStorageWorkload(ctx context.Context, cfg Config) []Opera
 	events := poissonClipSchedule(cfg.ClipDeviceIDs, cfg.ClipCountPerDevice, cfg.ClipScheduleWindow, cfg.ClipPoissonSeed)
 	if len(events) == 0 {
 		return nil
+	}
+	if cfg.DeviceTokens == nil {
+		cfg.DeviceTokens = make(map[string]string, len(cfg.ClipDeviceIDs))
+	}
+	operations := r.prepareClipRecipientKeys(ctx, cfg)
+	for _, operation := range operations {
+		if !operation.Success {
+			return operations
+		}
 	}
 	started := time.Now()
 	sem := make(chan struct{}, cfg.ClipUploadConcurrency)
@@ -113,12 +122,117 @@ func (r *Runner) runClipStorageWorkload(ctx context.Context, cfg Config) []Opera
 		workers.Wait()
 		close(results)
 	}()
-	operations := make([]Operation, 0, len(events))
+	verificationStarted := false
+	verificationDone := make(chan []Operation, 1)
+	sampleUploads := make([]Operation, 0, 3)
+	sampledDevices := make(map[string]bool, 3)
 	for op := range results {
 		operations = append(operations, op)
+		if !verificationStarted && op.Name == "clip_upload" && op.Success && !sampledDevices[op.DeviceID] {
+			sampledDevices[op.DeviceID] = true
+			sampleUploads = append(sampleUploads, op)
+			if len(sampleUploads) == 3 {
+				verificationStarted = true
+				samples := append([]Operation(nil), sampleUploads...)
+				go func() {
+					verificationDone <- r.verifyUploadedClipSamples(ctx, cfg, samples)
+				}()
+			}
+		}
 	}
-	operations = append(operations, r.verifyUploadedClipSamples(ctx, cfg, operations)...)
+	if verificationStarted {
+		operations = append(operations, <-verificationDone...)
+	} else {
+		operations = append(operations, r.verifyUploadedClipSamples(ctx, cfg, operations)...)
+	}
 	return operations
+}
+
+func (r *Runner) prepareClipRecipientKeys(ctx context.Context, cfg Config) []Operation {
+	if strings.TrimSpace(cfg.AdminToken) == "" || strings.TrimSpace(cfg.ClipUserPrivateKeyPath) == "" {
+		return nil
+	}
+	publicKey, err := clipUserPublicKey(cfg.ClipUserPrivateKeyPath)
+	if err != nil {
+		return []Operation{{
+			Actor: ActorApp, Name: "clip_recipient_prepare", Success: false,
+			ErrorClass: ClassMalformed, ErrorDetail: redactDetail(err.Error()),
+		}}
+	}
+	seen := map[string]bool{}
+	operations := make([]Operation, 0, len(cfg.ClipDeviceIDs))
+	for _, deviceID := range cfg.ClipDeviceIDs {
+		if seen[deviceID] {
+			continue
+		}
+		seen[deviceID] = true
+		path := "/api/devices/" + deviceID
+		body := map[string]any{
+			"devid":           deviceID,
+			"clip_public_key": publicKey,
+			"activityid":      safeIDPart(cfg.RunID) + "-clip-recipient-" + safeIDPart(deviceID),
+		}
+		operation, raw := r.postRaw(ctx, cfg, ActorApp, "clip_recipient_prepare", deviceID, "", path+"/activate", body, cfg.AdminToken)
+		operation.Evidence = clipRecipientPreparationEvidence(operation)
+		if operation.StatusCode == http.StatusConflict {
+			deactivate := r.post(ctx, cfg, ActorApp, "clip_recipient_deactivate", deviceID, "", path+"/deactivate", nil, cfg.AdminToken)
+			deactivate.Evidence = clipRecipientPreparationEvidence(deactivate)
+			operations = append(operations, deactivate)
+			if !deactivate.Success {
+				continue
+			}
+			operation, raw = r.postRaw(ctx, cfg, ActorApp, "clip_recipient_prepare", deviceID, "", path+"/activate", body, cfg.AdminToken)
+			operation.Evidence = clipRecipientPreparationEvidence(operation)
+		}
+		if operation.Success {
+			if token := activationDeviceToken(raw); token != "" {
+				cfg.DeviceTokens[deviceID] = token
+			}
+		}
+		operations = append(operations, operation)
+	}
+	return operations
+}
+
+func activationDeviceToken(raw []byte) string {
+	var response struct {
+		Endpoints []struct {
+			ClientAuthToken string `json:"client_auth_token"`
+		} `json:"endpoints_with_credentials"`
+	}
+	if json.Unmarshal(raw, &response) != nil {
+		return ""
+	}
+	for _, endpoint := range response.Endpoints {
+		if token := strings.TrimSpace(endpoint.ClientAuthToken); token != "" {
+			return token
+		}
+	}
+	return ""
+}
+
+func clipRecipientPreparationEvidence(operation Operation) string {
+	return fmt.Sprintf("recipient_key_prepared=%t status_code=%d", operation.Success, operation.StatusCode)
+}
+
+func clipUserPublicKey(privateKeyPath string) (string, error) {
+	privatePEM, err := os.ReadFile(privateKeyPath)
+	if err != nil {
+		return "", fmt.Errorf("read clip user private key: %w", err)
+	}
+	block, _ := pem.Decode(privatePEM)
+	if block == nil {
+		return "", fmt.Errorf("clip user private key is not PEM")
+	}
+	privateKey, err := x509.ParseECPrivateKey(block.Bytes)
+	if err != nil || privateKey.Curve != elliptic.P256() {
+		return "", fmt.Errorf("clip user private key is not P-256")
+	}
+	publicDER, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		return "", fmt.Errorf("marshal clip user public key: %w", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: publicDER})), nil
 }
 
 type directClipAuthorization struct {
@@ -222,22 +336,31 @@ func (r *Runner) directClipRecipientKey(ctx context.Context, cfg Config, deviceI
 func (r *Runner) putDirectClipAsset(ctx context.Context, cfg Config, deviceID, name string, target directClipPut, body []byte) Operation {
 	started := time.Now()
 	op := Operation{Actor: ActorDevice, Name: name, DeviceID: deviceID}
-	opCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.HTTPTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(opCtx, http.MethodPut, target.URL, bytes.NewReader(body))
-	if err == nil {
-		for key, value := range target.Headers {
-			req.Header.Set(key, value)
-		}
-		var resp *http.Response
-		resp, err = r.client.Do(req)
-		if resp != nil {
-			op.StatusCode = resp.StatusCode
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
-			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-				err = fmt.Errorf("object PUT returned HTTP %d", resp.StatusCode)
+	var err error
+	attempts := 0
+	for attempts < 2 {
+		attempts++
+		opCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.HTTPTimeout)
+		var req *http.Request
+		req, err = http.NewRequestWithContext(opCtx, http.MethodPut, target.URL, bytes.NewReader(body))
+		if err == nil {
+			for key, value := range target.Headers {
+				req.Header.Set(key, value)
 			}
+			var resp *http.Response
+			resp, err = r.client.Do(req)
+			if resp != nil {
+				op.StatusCode = resp.StatusCode
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+				if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+					err = fmt.Errorf("object PUT returned HTTP %d", resp.StatusCode)
+				}
+			}
+		}
+		cancel()
+		if err == nil || ClassifyError(op.StatusCode, nil, err) != ClassTimeout {
+			break
 		}
 	}
 	op.LatencyMS = time.Since(started).Milliseconds()
@@ -246,7 +369,7 @@ func (r *Runner) putDirectClipAsset(ctx context.Context, cfg Config, deviceID, n
 		op.ErrorClass = ClassifyError(op.StatusCode, nil, err)
 		op.ErrorDetail = redactDetail(err.Error())
 	} else {
-		op.Evidence = fmt.Sprintf("direct_object_bytes=%d", len(body))
+		op.Evidence = fmt.Sprintf("direct_object_bytes=%d put_attempts=%d", len(body), attempts)
 	}
 	return op
 }
@@ -382,9 +505,9 @@ func (r *Runner) verifyUploadedClipSamples(ctx context.Context, cfg Config, oper
 			continue
 		}
 		seenDevices[upload.DeviceID] = true
-		bearer := cfg.AccountBearerFor(upload.DeviceID)
+		bearer := cfg.AdminToken
 		if bearer == "" {
-			bearer = cfg.AdminToken
+			bearer = cfg.AccountBearerFor(upload.DeviceID)
 		}
 		info, infoRaw := r.postRaw(ctx, cfg, ActorApp, "clip_info", upload.DeviceID, "", "/get_clip_info", map[string]any{"devid": upload.DeviceID, "clipid": clipID}, bearer)
 		storedClipKey := clipKeyFromInfo(infoRaw)
@@ -393,6 +516,7 @@ func (r *Runner) verifyUploadedClipSamples(ctx context.Context, cfg Config, oper
 			r.post(ctx, cfg, ActorApp, "clip_enum", upload.DeviceID, "", "/enum_clips", map[string]any{"devid": upload.DeviceID, "offset": 0, "count": 10}, bearer),
 			info,
 			r.downloadClipRange(ctx, cfg, "clip_download_range", upload.DeviceID, clipID, "bytes=0-15", bearer, false),
+			r.downloadClipRange(ctx, cfg, "clip_download_invalid_range", upload.DeviceID, clipID, "bytes=999999999-", bearer, true),
 			r.downloadDecryptedClipRange(ctx, cfg, upload.DeviceID, clipID, storedClipKey, bearer),
 		}
 		playbackSession, playbackRange := r.playbackSessionRange(ctx, cfg, upload.DeviceID, clipID, storedClipKey, bearer)
@@ -641,7 +765,7 @@ func summarizeClipStorage(cfg Config, operations []Operation) ClipStorageMetrics
 			}
 		}
 		switch op.Name {
-		case "clip_authorize", "clip_put", "thumbnail_put", "clip_complete", "clip_verify_ready", "clip_info", "clip_enum", "clip_download_range", "clip_download_decrypt", "clip_playback_session", "clip_playback_range", "clip_thumbnail_download", "clip_delete":
+		case "clip_authorize", "clip_put", "thumbnail_put", "clip_complete", "clip_verify_ready", "clip_info", "clip_enum", "clip_download_range", "clip_download_invalid_range", "clip_download_decrypt", "clip_playback_session", "clip_playback_range", "clip_thumbnail_download", "clip_delete":
 			if op.Success || op.StatusCode > 0 {
 				stageLatencies[op.Name] = append(stageLatencies[op.Name], op.LatencyMS)
 			}

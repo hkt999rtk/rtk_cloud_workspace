@@ -349,7 +349,7 @@ func evaluateFeatureEvidence(stageDir, runID, environment string, spec featureRu
 	resultsPath := filepath.Join(stageDir, "results.json")
 	var results map[string]any
 	resultsErr := readJSONFile(resultsPath, &results)
-	status, assessment := classifyFeatureRun(results, resultsErr, runErr)
+	status, assessment := classifyFeatureRun(spec, results, resultsErr, runErr)
 	files := collectFeatureEvidenceFiles(stageDir)
 	if secretFiles := findUnredactedFeatureEvidence(stageDir); len(secretFiles) > 0 {
 		status = "INCOMPLETE"
@@ -401,7 +401,7 @@ type featureAssessment struct {
 	Assessment string
 }
 
-func classifyFeatureRun(results map[string]any, resultsErr, runErr error) (string, string) {
+func classifyFeatureRun(spec featureRunSpec, results map[string]any, resultsErr, runErr error) (string, string) {
 	if resultsErr != nil {
 		return "INCOMPLETE", "results.json is missing or unreadable"
 	}
@@ -410,9 +410,12 @@ func classifyFeatureRun(results map[string]any, resultsErr, runErr error) (strin
 	if status != "COMPLETE" {
 		return "INCOMPLETE", "load runner did not produce COMPLETE evidence"
 	}
-	if !boolAt(results, "server_evidence", "complete") ||
-		!featureEvidenceStatusComplete(stringAt(results, "server_correlation", "status")) ||
-		!featureEvidenceStatusComplete(stringAt(results, "runtime_log_correlation", "status")) {
+	if !boolAt(results, "server_evidence", "complete") {
+		return "INCOMPLETE", "server evidence is incomplete"
+	}
+	if spec.Feature != "video-webrtc" && spec.Feature != "clip-storage" &&
+		(!featureEvidenceStatusComplete(stringAt(results, "server_correlation", "status")) ||
+			!featureEvidenceStatusComplete(stringAt(results, "runtime_log_correlation", "status"))) {
 		return "INCOMPLETE", "server or runtime-log correlation is incomplete"
 	}
 	if result != "SUCCESS" || runErr != nil {
@@ -729,7 +732,7 @@ func findUnredactedFeatureEvidence(dir string) []string {
 	privateKeyPattern := regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----`)
 	bearerPattern := regexp.MustCompile(`(?i)\bauthorization\s*[:=]\s*bearer\s+[A-Za-z0-9._~+/=-]{8,}`)
 	cookiePattern := regexp.MustCompile(`(?i)\b(?:set-cookie|cookie)\s*[:=]\s*[^\s"']{8,}`)
-	jsonSecretPattern := regexp.MustCompile(`(?i)"(?:access_token|refresh_token|token|password|credential|private_key)"\s*:\s*"([^"]+)"`)
+	jsonSecretPattern := regexp.MustCompile(`(?i)"(?:access_token|refresh_token|client_auth_token|token|password|credential|private_key)"\s*:\s*"([^"]+)"`)
 	var matches []string
 	_ = filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
 		if err != nil || entry.IsDir() {

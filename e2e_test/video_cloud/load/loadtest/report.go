@@ -92,7 +92,7 @@ func RenderMarkdown(result *Result) string {
 			fmt.Fprintf(&b, "| Concurrent non-clip failures | %d |\n", clip.NonClipFailures)
 			fmt.Fprintf(&b, "| Concurrent non-clip success rate | %.2f%% |\n", clip.NonClipSuccessRate*100)
 		}
-		for _, stage := range []string{"clip_authorize", "clip_put", "thumbnail_put", "clip_complete", "clip_verify_ready", "clip_info", "clip_enum", "clip_download_range", "clip_thumbnail_download", "clip_delete"} {
+		for _, stage := range []string{"clip_authorize", "clip_put", "thumbnail_put", "clip_complete", "clip_verify_ready", "clip_info", "clip_enum", "clip_download_range", "clip_download_invalid_range", "clip_thumbnail_download", "clip_delete"} {
 			if value, ok := clip.StageP95MS[stage]; ok {
 				fmt.Fprintf(&b, "| %s p95 | %d ms |\n", stage, value)
 			}

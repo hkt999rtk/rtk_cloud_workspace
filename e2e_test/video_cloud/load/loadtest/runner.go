@@ -6251,7 +6251,9 @@ func sanitizeEvidenceAny(value any) any {
 }
 
 func sensitiveEvidenceKey(lower string) bool {
-	return lower == "credential" || lower == "username" || lower == "access_token" || lower == "refresh_token" || lower == "token" || lower == "url" || strings.HasSuffix(lower, "_url")
+	return lower == "credential" || lower == "username" || lower == "access_token" || lower == "refresh_token" ||
+		lower == "client_auth_token" || lower == "token" || lower == "url" || strings.HasSuffix(lower, "_url") ||
+		strings.HasSuffix(lower, "_token")
 }
 
 func redactDetail(detail string) string {

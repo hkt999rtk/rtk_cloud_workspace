@@ -176,6 +176,7 @@ clip_storage_count_per_camera="${HOME100K_CLIP_STORAGE_CLIPS_PER_CAMERA:-10}"
 clip_storage_window="${HOME100K_CLIP_STORAGE_WINDOW:-30m}"
 clip_storage_seed="${HOME100K_CLIP_STORAGE_POISSON_SEED:-20260719}"
 clip_storage_concurrency="${HOME100K_CLIP_STORAGE_UPLOAD_CONCURRENCY:-64}"
+clip_storage_http_timeout="${HOME100K_CLIP_STORAGE_HTTP_TIMEOUT:-60s}"
 if [[ -z "$video_loadtest_shard_mode" ]]; then
   case "$scenario_profile:$video_loadtest_mode" in
     video-50k-turn-v1:remote-sharded|video-100k-turn-v1:remote-sharded)
@@ -1948,7 +1949,7 @@ run_clip_storage_loadtest_step() {
   fi
   if [[ "$clip_storage_mixed_nonclip" == "true" && -z "$clip_storage_device_ids_file" ]]; then
     clip_storage_device_ids_file="$clip_storage_loadtest_artifact_dir/credentials/all-device-ids.txt"
-    python3 - "$(local_env_root_path)" "$devices" "$clip_storage_device_ids_file" <<'PY'
+    python3 - "$(local_env_root_path)" "$device_count" "$clip_storage_device_ids_file" <<'PY'
 import sqlite3
 import sys
 from pathlib import Path
@@ -1983,6 +1984,7 @@ PY
   VIDEO_CLOUD_LOAD_CLIP_SCHEDULE_WINDOW="$clip_storage_window" \
   VIDEO_CLOUD_LOAD_CLIP_POISSON_SEED="$clip_storage_seed" \
   VIDEO_CLOUD_LOAD_CLIP_UPLOAD_CONCURRENCY="$clip_storage_concurrency" \
+  VIDEO_CLOUD_LOAD_HTTP_TIMEOUT="$clip_storage_http_timeout" \
   VIDEO_CLOUD_LOAD_API_URL="${VIDEO_CLOUD_LOAD_API_URL:-$video_cloud_public_url}" \
   VIDEO_CLOUD_LOAD_STORAGE_EXEC="${VIDEO_CLOUD_LOAD_STORAGE_EXEC:-kubernetes}" \
   KUBECONFIG="${KUBECONFIG:-$(k8s_kubeconfig)}" \
@@ -2095,6 +2097,10 @@ run_live_sync_with_retries() {
   local retry_delay="${HOME100K_SYNC_RETRY_DELAY_SECONDS:-20}"
   local attempt rc
   for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    # Provider IPs can be reused immediately after a previous stage destroys
+    # its VM. Rebuild this run-scoped trust-on-first-use cache on every retry
+    # so a transitional or recycled host key cannot poison all later attempts.
+    rm -f "$ssh_known_hosts_file"
     if run_home100k sync "${workflow_args[@]}" --run-id "$run_id" --out-dir "$local_out_dir" --vm-state-file "$local_vm_state_file" --live --remote-workspace "$remote_workspace" --remote-env-root "$remote_env_root" --remote-out-root "$remote_out_root" --ssh-key "$ssh_key"; then
       return 0
     else
