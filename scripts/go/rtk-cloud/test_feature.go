@@ -879,10 +879,17 @@ func runTestFeatureSelect(args []string) error {
 	}
 	raw = append(raw, '\n')
 	if *output != "" {
-		return os.WriteFile(*output, raw, 0o644)
+		return writeFeatureSelectionFile(*output, raw)
 	}
 	_, err = os.Stdout.Write(raw)
 	return err
+}
+
+func writeFeatureSelectionFile(path string, raw []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, raw, 0o644)
 }
 
 func selectFeatureQualifications(catalog testCatalog, changedFiles, labels []string) (featureSelection, error) {

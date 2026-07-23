@@ -108,6 +108,21 @@ func TestFeatureSelectionVideoCloudGitlinkSelectsAllFeatures(t *testing.T) {
 	}
 }
 
+func TestWriteFeatureSelectionFileCreatesParentDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "artifacts", "feature-selection.json")
+	raw := []byte("{\"required\":true}\n")
+	if err := writeFeatureSelectionFile(path, raw); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(raw) {
+		t.Fatalf("selection file = %q, want %q", got, raw)
+	}
+}
+
 func TestClassifyFeatureRunRejectsMissingEvidence(t *testing.T) {
 	results := map[string]any{
 		"status": "COMPLETE", "result": "SUCCESS",
