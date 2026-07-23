@@ -47,6 +47,7 @@ jobs:
     outputs:
       required: ${{ steps.selection.outputs.required }}
       features: ${{ steps.selection.outputs.features }}
+      mode: ${{ steps.selection.outputs.mode }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -100,11 +101,21 @@ jobs:
             --output .artifacts/feature-selection.json
           required="$(jq -r '.required' .artifacts/feature-selection.json)"
           features="$(jq -c '.features' .artifacts/feature-selection.json)"
+          mode="${{ vars.FEATURE_QUALIFICATION_MODE || 'observe' }}"
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            mode="required"
+          fi
+          if [ "$mode" != "observe" ] && [ "$mode" != "required" ]; then
+            echo "FEATURE_QUALIFICATION_MODE must be observe or required, got: $mode" >&2
+            exit 1
+          fi
           echo "required=$required" >> "$GITHUB_OUTPUT"
           echo "features=$features" >> "$GITHUB_OUTPUT"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
           {
             echo "## Feature qualification selection"
             echo
+            echo "- Mode: \`$mode\`"
             echo "- Required: \`$required\`"
             echo "- Features: \`$features\`"
             echo
@@ -124,7 +135,7 @@ jobs:
   qualify:
     name: Shared staging feature qualification
     needs: select
-    if: needs.select.outputs.required == 'true'
+    if: needs.select.outputs.required == 'true' && needs.select.outputs.mode == 'required'
     concurrency:
       group: feature-qualification-staging
       cancel-in-progress: false
@@ -300,6 +311,10 @@ jobs:
           fi
           if [ "${{ needs.select.outputs.required }}" != "true" ]; then
             echo "PASS: no load-sensitive feature changed."
+            exit 0
+          fi
+          if [ "${{ needs.select.outputs.mode }}" = "observe" ]; then
+            echo "PASS: observation mode selected ${{ needs.select.outputs.features }}; live qualification is not enforced."
             exit 0
           fi
           if [ "${{ needs.qualify.result }}" != "success" ]; then

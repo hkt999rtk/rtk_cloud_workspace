@@ -95,9 +95,14 @@ deploys commit-anchored candidate images once, runs selected features, uploads
 evidence, and cleans up load-generator resources even when the run fails.
 Catalog, shared runner/contracts/deployment changes and an unresolved
 `rtk_video_cloud` submodule pointer diff conservatively select all three
-features. The workflow is intended to run in non-required observation mode for
-the first week; after each feature has produced at least one complete `PASS`,
-the repository branch rule can make `Feature qualification result` required.
+features. Pull requests default to `observe` mode: selection and its report run,
+but the environment-coupled live job is skipped and the result check explicitly
+reports that qualification was not enforced. Set the repository variable
+`FEATURE_QUALIFICATION_MODE=required` only after the dedicated workspace runner,
+staging runtime restore, and CI credentials have been verified. Manual and
+reusable dispatches always run in `required` mode. After each feature has
+produced at least one complete `PASS`, enable required mode and make
+`Feature qualification result` a required branch check.
 
 `docs-check` is read-only and validates documentation governance assumptions:
 workspace repository entries, key docs entry points, and contracts submodule
