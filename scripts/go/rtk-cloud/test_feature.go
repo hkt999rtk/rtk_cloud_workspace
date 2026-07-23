@@ -161,33 +161,60 @@ func runTestFeature(args []string) error {
 		return fmt.Errorf("feature qualification INCOMPLETE: %w", err)
 	}
 
-	var manifests []featureEvidenceManifest
-	for _, spec := range specs {
-		manifest, runErr := executeFeatureSpec(workspace, envRoot, *runID, *environment, spec, commits)
-		manifests = append(manifests, manifest)
-		if writeErr := writeFeatureStageReports(filepath.Join(runRoot, spec.Profile), manifest); writeErr != nil {
-			return writeErr
-		}
-		if runErr != nil || manifest.Status != "PASS" {
-			combined := combineFeatureManifests(*runID, *feature, *profile, *environment, commits, manifests)
-			if err := writeFeatureQualificationReports(runRoot, combined); err != nil {
-				return err
-			}
-			if runErr != nil {
-				return runErr
-			}
-			return fmt.Errorf("feature qualification %s: %s", manifest.Status, manifest.Assessment)
-		}
-	}
+	manifests, sequenceErr := executeFeatureSequence(
+		*runID, *feature, *environment, commits, specs,
+		func(spec featureRunSpec) (featureEvidenceManifest, error) {
+			return executeFeatureSpec(workspace, envRoot, *runID, *environment, spec, commits)
+		},
+		func(manifest featureEvidenceManifest) error {
+			return writeFeatureStageReports(filepath.Join(runRoot, manifest.Profile), manifest)
+		},
+	)
 	combined := combineFeatureManifests(*runID, *feature, *profile, *environment, commits, manifests)
 	if err := writeFeatureQualificationReports(runRoot, combined); err != nil {
 		return err
+	}
+	if sequenceErr != nil {
+		return sequenceErr
 	}
 	if combined.Status != "PASS" {
 		return fmt.Errorf("feature qualification %s: %s", combined.Status, combined.Assessment)
 	}
 	fmt.Fprintf(os.Stdout, "feature qualification PASS: %s %s (%s)\n", *feature, *profile, *runID)
 	return nil
+}
+
+func executeFeatureSequence(
+	runID, feature, environment string,
+	commits map[string]string,
+	specs []featureRunSpec,
+	execute func(featureRunSpec) (featureEvidenceManifest, error),
+	record func(featureEvidenceManifest) error,
+) ([]featureEvidenceManifest, error) {
+	manifests := make([]featureEvidenceManifest, 0, len(specs))
+	for index, spec := range specs {
+		manifest, runErr := execute(spec)
+		manifests = append(manifests, manifest)
+		if err := record(manifest); err != nil {
+			return manifests, err
+		}
+		if runErr == nil && manifest.Status == "PASS" {
+			continue
+		}
+		reason := fmt.Sprintf("%s did not pass; later qualification stages were not started", spec.Profile)
+		for _, remaining := range specs[index+1:] {
+			notRun := notRunFeatureManifest(runID, feature, remaining.Profile, environment, commits, []featureRunSpec{remaining}, reason)
+			manifests = append(manifests, notRun)
+			if err := record(notRun); err != nil {
+				return manifests, err
+			}
+		}
+		if runErr != nil {
+			return manifests, runErr
+		}
+		return manifests, fmt.Errorf("feature qualification %s: %s", manifest.Status, manifest.Assessment)
+	}
+	return manifests, nil
 }
 
 func regexpMatchRunID(value string) (bool, error) {
@@ -598,6 +625,10 @@ func blockedFeatureManifest(runID, feature, profile, environment string, commits
 
 func incompleteFeatureManifest(runID, feature, profile, environment string, commits map[string]string, specs []featureRunSpec, reason string) featureEvidenceManifest {
 	return nonPassingFeatureManifest(runID, feature, profile, environment, commits, specs, "INCOMPLETE", reason)
+}
+
+func notRunFeatureManifest(runID, feature, profile, environment string, commits map[string]string, specs []featureRunSpec, reason string) featureEvidenceManifest {
+	return nonPassingFeatureManifest(runID, feature, profile, environment, commits, specs, "NOT_RUN", reason)
 }
 
 func nonPassingFeatureManifest(runID, feature, profile, environment string, commits map[string]string, specs []featureRunSpec, status, reason string) featureEvidenceManifest {

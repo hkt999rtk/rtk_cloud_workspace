@@ -26,6 +26,58 @@ func TestResolveFeatureSpecsQualificationRunsCanaryFirst(t *testing.T) {
 	}
 }
 
+func TestExecuteFeatureSequenceMarksQualificationNotRunAfterCanaryFailure(t *testing.T) {
+	specs := []featureRunSpec{
+		{
+			Feature: "device-shadow", Profile: "canary",
+			TestIDs: []string{"E2E-HOME-SHADOW-001"},
+		},
+		{
+			Feature: "device-shadow", Profile: "qualification-1k",
+			TestIDs: []string{"E2E-HOME-SHADOW-001"}, LoadTestID: "LOAD-HOME-SHADOW-001",
+		},
+	}
+	executed := []string{}
+	recorded := []featureEvidenceManifest{}
+	manifests, err := executeFeatureSequence(
+		"run", "device-shadow", "staging", map[string]string{"workspace": "commit"}, specs,
+		func(spec featureRunSpec) (featureEvidenceManifest, error) {
+			executed = append(executed, spec.Profile)
+			if spec.Profile != "canary" {
+				t.Fatalf("qualification executor was called after canary failure: %s", spec.Profile)
+			}
+			return nonPassingFeatureManifest(
+				"run", spec.Feature, spec.Profile, "staging", nil, []featureRunSpec{spec},
+				"FAIL", "canary assertion failed",
+			), nil
+		},
+		func(manifest featureEvidenceManifest) error {
+			recorded = append(recorded, manifest)
+			return nil
+		},
+	)
+	if err == nil {
+		t.Fatal("canary failure must return a non-nil qualification error")
+	}
+	if strings.Join(executed, ",") != "canary" {
+		t.Fatalf("executed stages = %v, want only canary", executed)
+	}
+	if len(manifests) != 2 || len(recorded) != 2 {
+		t.Fatalf("manifests/recorded = %d/%d, want 2/2", len(manifests), len(recorded))
+	}
+	if manifests[0].Status != "FAIL" || manifests[1].Status != "NOT_RUN" {
+		t.Fatalf("stage statuses = %s/%s, want FAIL/NOT_RUN", manifests[0].Status, manifests[1].Status)
+	}
+	if manifests[1].Profile != "qualification-1k" || len(manifests[1].Cases) != 2 {
+		t.Fatalf("NOT_RUN qualification manifest = %+v", manifests[1])
+	}
+	for _, result := range manifests[1].Cases {
+		if result.Status != "NOT_RUN" {
+			t.Fatalf("NOT_RUN case = %+v", result)
+		}
+	}
+}
+
 func TestFeatureRootsSeparateDeploymentAndLoadRuntime(t *testing.T) {
 	deploymentRoot := filepath.Join("/workspace", "cloud_env", "staging", "lke")
 	if got, want := featureLoadEnvRoot(deploymentRoot), filepath.Join("/workspace", "cloud_env", "staging", "runtime"); got != want {
