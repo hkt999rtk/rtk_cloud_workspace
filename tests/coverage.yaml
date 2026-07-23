@@ -1,0 +1,115 @@
+schema_version: 1
+
+# Overall floors are ratchets measured from the commits pinned by this
+# workspace. They may only move upward. New and changed Go statements are held
+# to the separate 80% differential threshold below.
+differential:
+  minimum_statement_percent: 80.0
+
+modules:
+  - test_id: SVC-WS-TOOL-001
+    name: workspace-tooling
+    kind: go
+    path: scripts/go
+    packages: [./...]
+    minimum_statement_percent: 56.0
+    target_statement_percent: 80.0
+    differential: true
+    purpose: Protect workspace CLI, catalog, deployment, and test orchestration behavior.
+    method: Run every Go package with statement instrumentation and evaluate changed statements against the PR diff.
+
+  - test_id: SVC-WS-E2E-001
+    name: workspace-e2e
+    kind: go
+    path: e2e_test
+    packages: [./...]
+    minimum_statement_percent: 66.0
+    target_statement_percent: 80.0
+    differential: true
+    purpose: Protect deterministic cross-service E2E harness and report behavior.
+    method: Run every E2E Go package with statement instrumentation and evaluate changed statements against the PR diff.
+
+  - test_id: SVC-HOME-LOAD-001
+    name: home-load-runner
+    kind: go
+    path: loadtests/home-100k
+    packages: [./...]
+    minimum_statement_percent: 75.0
+    target_statement_percent: 80.0
+    differential: true
+    purpose: Protect Home qualification and capacity planning, execution, evidence, and reporting.
+    method: Run every Home load-runner Go package with statement instrumentation and evaluate changed statements against the PR diff.
+
+  - test_id: SVC-AM-SUITE-001
+    name: account-manager
+    kind: go
+    path: repos/rtk_account_manager
+    packages: [./...]
+    minimum_statement_percent: 29.0
+    target_statement_percent: 80.0
+    purpose: Prevent Account Manager unit and service coverage from regressing.
+    method: Run every Account Manager Go package with statement instrumentation.
+
+  - test_id: SVC-CA-SUITE-001
+    name: cloud-admin-backend
+    kind: go
+    path: repos/rtk_cloud_admin
+    packages: [./...]
+    minimum_statement_percent: 65.0
+    target_statement_percent: 80.0
+    purpose: Enforce the Cloud Admin backend coverage floor used by its native CI.
+    method: Run every Cloud Admin Go package with statement instrumentation.
+
+  - test_id: SVC-CA-SUITE-001
+    name: cloud-admin-web
+    kind: node
+    path: repos/rtk_cloud_admin/web
+    test_globs: [src/*.test.mjs]
+    minimum_line_percent: 92.0
+    minimum_branch_percent: 79.0
+    minimum_function_percent: 94.0
+    purpose: Protect Cloud Admin browser-helper logic across lines, branches, and functions.
+    method: Run Node unit tests with V8 coverage instrumentation.
+
+  - test_id: SVC-CLIENT-SUITE-001
+    name: cloud-client-javascript
+    kind: node
+    path: repos/rtk_cloud_client/packages/javascript
+    build: [npm, run, build]
+    test_globs: [dist/test/*.test.js]
+    minimum_line_percent: 84.0
+    minimum_branch_percent: 80.0
+    minimum_function_percent: 87.0
+    purpose: Protect JavaScript SDK behavior across lines, branches, and functions.
+    method: Build the SDK and run Node unit tests with V8 coverage instrumentation.
+
+  - test_id: SVC-FRONTEND-SUITE-001
+    name: cloud-frontend
+    kind: go
+    path: repos/rtk_cloud_frontend
+    packages: [./...]
+    minimum_statement_percent: 68.0
+    target_statement_percent: 80.0
+    purpose: Prevent Cloud Frontend service coverage from regressing.
+    method: Run every Cloud Frontend Go package with statement instrumentation.
+
+  - test_id: SVC-LOGGER-SUITE-001
+    name: cloud-logger
+    kind: go
+    path: repos/rtk_cloud_logger
+    packages: [./...]
+    minimum_statement_percent: 67.0
+    target_statement_percent: 80.0
+    purpose: Prevent Cloud Logger service coverage from regressing.
+    method: Run every Cloud Logger Go package with statement instrumentation.
+
+  - test_id: SVC-VC-SUITE-001
+    name: video-cloud
+    kind: go
+    path: repos/rtk_video_cloud
+    packages: [./...]
+    minimum_statement_percent: 56.0
+    target_statement_percent: 80.0
+    critical_command: [make, check-coverage]
+    purpose: Protect Video Cloud overall coverage and its risk-selected critical package thresholds.
+    method: Run every Video Cloud Go package with statement instrumentation and then enforce its native critical-package coverage policy.

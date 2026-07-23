@@ -48,7 +48,7 @@ var catalogOwners = map[string]bool{
 	"rtk_account_manager": true, "rtk_cloud_admin": true, "rtk_cloud_client": true,
 	"rtk_cloud_frontend": true, "rtk_cloud_logger": true, "rtk_video_cloud": true, "video_cloud": true,
 }
-var catalogRunners = map[string]bool{"test-services": true, "test-e2e": true, "test-ui": true, "test-live": true, "test-feature": true}
+var catalogRunners = map[string]bool{"test-services": true, "test-coverage": true, "test-e2e": true, "test-ui": true, "test-live": true, "test-feature": true}
 var catalogTargets = map[string]bool{"desktop": true, "mobile": true, "ios": true, "android": true}
 var catalogEnvironments = map[string]bool{"local": true, "ci": true, "staging": true}
 var catalogProfiles = map[string]bool{"canary": true, "qualification-1k": true, "capacity": true}

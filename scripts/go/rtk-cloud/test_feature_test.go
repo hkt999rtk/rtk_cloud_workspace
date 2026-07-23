@@ -9,6 +9,119 @@ import (
 	"time"
 )
 
+func TestRunTestFeatureValidatesPublicArguments(t *testing.T) {
+	for name, args := range map[string][]string{
+		"missing feature":     nil,
+		"invalid profile":     {"--feature", "device-shadow", "--profile", "invalid"},
+		"invalid environment": {"--feature", "device-shadow", "--environment", "production"},
+		"conflicting modes":   {"--feature", "device-shadow", "--plan", "--run"},
+		"invalid run ID":      {"--feature", "device-shadow", "--run-id", "not allowed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := runTestFeature(args); err == nil {
+				t.Fatalf("runTestFeature(%v) unexpectedly passed", args)
+			}
+		})
+	}
+}
+
+func TestRunTestFeaturePlanUsesCatalogAndCommitAnchors(t *testing.T) {
+	if err := runTestFeature([]string{
+		"--feature", "device-shadow",
+		"--profile", "canary",
+		"--environment", "staging",
+		"--run-id", "unit-plan",
+		"--plan",
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunTestFeatureSelectWritesSelectionReport(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "selection", "result.json")
+	if err := runTestFeature([]string{
+		"select",
+		"--base-ref", "HEAD",
+		"--head-ref", "HEAD",
+		"--labels", "qualification/device-shadow",
+		"--output", output,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var selection featureSelection
+	if err := readJSONFile(output, &selection); err != nil {
+		t.Fatal(err)
+	}
+	if !selection.Required || !reflect.DeepEqual(selection.Features, []string{"device-shadow"}) {
+		t.Fatalf("selection = %#v", selection)
+	}
+}
+
+func TestFeatureActualScaleMapsEveryManagedFeature(t *testing.T) {
+	results := map[string]any{
+		"stage_results": []any{map[string]any{
+			"connected_devices":  1000.0,
+			"device_mqtt_totals": map[string]any{"connect_success": 999.0},
+		}},
+		"video_evidence": map[string]any{
+			"webrtc_totals":           map[string]any{"create_success": 100.0},
+			"webrtc_media_totals":     map[string]any{"successes": 99.0},
+			"relay_candidate_samples": 100.0,
+		},
+	}
+	shadow := featureActualScale(featureRunSpec{Feature: "device-shadow"}, results, t.TempDir())
+	if shadow["connected_home_devices"] != 1000.0 || shadow["mqtt_connect_successes"] != 999.0 {
+		t.Fatalf("shadow actual scale = %#v", shadow)
+	}
+	video := featureActualScale(featureRunSpec{Feature: "video-webrtc"}, results, t.TempDir())
+	if video["webrtc_create_successes"] != 100.0 || video["h264_media_successes"] != 99.0 || video["relay_candidate_samples"] != 100.0 {
+		t.Fatalf("video actual scale = %#v", video)
+	}
+	clipDir := t.TempDir()
+	clipResults := map[string]any{"clip_storage": map[string]any{
+		"camera_devices": 100.0, "upload_attempts": 1000.0, "upload_successes": 1000.0, "non_clip_attempts": 50.0,
+	}}
+	if err := writeJSONFile(filepath.Join(clipDir, "clip-storage", "load-results.json"), clipResults); err == nil {
+		t.Fatal("writeJSONFile unexpectedly created a missing parent directory")
+	}
+	if err := os.MkdirAll(filepath.Join(clipDir, "clip-storage"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(filepath.Join(clipDir, "clip-storage", "load-results.json"), clipResults); err != nil {
+		t.Fatal(err)
+	}
+	clip := featureActualScale(featureRunSpec{Feature: "clip-storage"}, results, clipDir)
+	if clip["camera_devices"] != 100.0 || clip["upload_successes"] != 1000.0 || clip["mixed_control_attempts"] != 50.0 {
+		t.Fatalf("clip actual scale = %#v", clip)
+	}
+}
+
+func TestCombineAndWriteFeatureQualificationReports(t *testing.T) {
+	first := featureEvidenceManifest{
+		Status: "PASS", StartedAt: "2026-07-24T00:00:00Z", CompletedAt: "2026-07-24T00:00:01Z", DurationMS: 1000,
+		Cases: []featureCaseEvidence{{TestID: "E2E-HOME-SHADOW-001", Status: "PASS"}},
+	}
+	second := blockedFeatureManifest(
+		"run", "device-shadow", "qualification-1k", "staging", map[string]string{"workspace": "commit"},
+		[]featureRunSpec{{Feature: "device-shadow", Profile: "qualification-1k", TestIDs: []string{"E2E-HOME-SHADOW-001"}, LoadTestID: "LOAD-HOME-SHADOW-001"}},
+		"environment unavailable",
+	)
+	second.DurationMS = 2000
+	combined := combineFeatureManifests("run", "device-shadow", "qualification-1k", "staging", map[string]string{"workspace": "commit"}, []featureEvidenceManifest{first, second})
+	if combined.Status != "BLOCKED" || combined.DurationMS != 3000 || len(combined.Cases) != 3 {
+		t.Fatalf("combined manifest = %#v", combined)
+	}
+	outDir := t.TempDir()
+	if err := writeFeatureQualificationReports(outDir, combined); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"qualification-report.json", "qualification-report.md"} {
+		if stat, err := os.Stat(filepath.Join(outDir, name)); err != nil || stat.Size() == 0 {
+			t.Fatalf("%s: stat=%v err=%v", name, stat, err)
+		}
+	}
+}
+
 func TestResolveFeatureSpecsQualificationRunsCanaryFirst(t *testing.T) {
 	catalog := testCatalog{Cases: []testCatalogCase{
 		{ID: "E2E-HOME-SHADOW-002", Layer: "e2e", Feature: "device-shadow", Profile: "canary", Runner: "test-feature", Status: "active", Source: "canary.env", Method: "offline"},

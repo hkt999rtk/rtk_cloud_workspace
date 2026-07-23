@@ -96,6 +96,7 @@ var commands = map[string]commandSpec{
 	"test-matrix":                      {run: runTestMatrix},
 	"test-services":                    {run: runTestServices},
 	"test-catalog":                     {run: runTestCatalog},
+	"test-coverage":                    {run: runTestCoverage},
 	"test-ui":                          {run: runTestUI},
 	"unprovision-devices":              {run: runUnprovisionDevices},
 	"validate-device-bind":             {run: runValidateDeviceBind},
@@ -1099,6 +1100,11 @@ func runTestMatrix(args []string) error {
 	fmt.Fprintln(os.Stdout, "== test catalog ==")
 	if err := checkTestCatalog(workspace, true); err != nil {
 		return err
+	}
+	if cfg, err := loadCoverageConfig(workspace); err != nil {
+		return err
+	} else {
+		fmt.Fprintf(os.Stdout, "coverage policy valid: %d modules, %.1f%% differential minimum\n", len(cfg.Modules), cfg.Differential.MinimumStatementPercent)
 	}
 	fmt.Fprintln(os.Stdout)
 	fmt.Fprintln(os.Stdout, "== repository status checks ==")

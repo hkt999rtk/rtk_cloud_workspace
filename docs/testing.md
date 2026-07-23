@@ -36,6 +36,7 @@ Use the explicit test layers when broader validation is needed:
 
 ```sh
 (cd scripts/go && go run ./rtk-cloud -- test-services)
+(cd scripts/go && go run ./rtk-cloud -- test-coverage --base-ref origin/main)
 (cd scripts/go && go run ./rtk-cloud -- test-e2e)
 (cd scripts/go && go run ./rtk-cloud -- test-ui)
 (cd scripts/go && go run ./rtk-cloud -- test-live --environment staging --plan)
@@ -48,6 +49,26 @@ repositories affected by a workspace diff while installing JavaScript test
 dependencies. Changes to the workspace test runner, catalog, contracts pointer,
 Go workspace, or baseline workflow conservatively select all managed service
 repositories.
+`test-coverage` enforces the policy in `tests/coverage.yaml`. Every managed Go
+module has a non-regression statement-coverage ratchet and an explicit 80%
+target. Workspace-owned Go changes must additionally meet 80% differential
+statement coverage against `--base-ref`; this prevents legacy debt from
+lowering the standard for new code. Cloud Admin web helpers and the JavaScript
+SDK enforce line, branch, and function thresholds using Node/V8 coverage.
+Video Cloud also runs its native critical-package gate. The command writes
+machine-readable results, a human report, raw logs, Go profiles, and profile
+SHA-256 hashes under:
+
+```text
+.artifacts/test-runs/<run-id>/coverage/
+  results.json
+  TEST_REPORT.md
+  profiles/*.out
+  logs/*.log
+```
+
+Coverage artifacts are scanned for private keys, bearer tokens, cookies, and
+credential-like JSON values before the run can pass.
 `test-e2e` runs deterministic workspace E2E and harness tests; add `--scripts`
 to opt into the root staging script contract tests. `test-ui` runs the Cloud
 Admin UI in a headless Chromium browser against the real local Go BFF and
@@ -122,6 +143,11 @@ diff. This gate is independent of shared staging and therefore still runs while
 feature qualification is in observation mode. Repository-native CI remains
 responsible for language/platform-specific coverage gates, race tests, native
 SDK builds, and release checks.
+
+The same workflow also runs the complete measurable coverage policy on every
+PR, uploads the report and profiles for 30 days (90 days on `main`), and fails
+when an overall ratchet, JavaScript metric, Video Cloud critical-package policy,
+artifact redaction scan, or the 80% changed-Go-statement threshold fails.
 
 ## Reports and Evidence
 
