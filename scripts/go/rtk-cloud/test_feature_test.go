@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -78,6 +79,52 @@ func TestExecuteFeatureSequenceMarksQualificationNotRunAfterCanaryFailure(t *tes
 	}
 }
 
+func TestWriteFeatureStageReportsMaterializesNotRunArtifactsWithoutOverwritingResults(t *testing.T) {
+	spec := featureRunSpec{
+		Feature: "device-shadow", Profile: "qualification-1k",
+		TestIDs: []string{"E2E-HOME-SHADOW-001"}, LoadTestID: "LOAD-HOME-SHADOW-001",
+		ScenarioPath: "loadtests/home-100k/scenarios/shadow.env",
+		Scale:        map[string]any{"mqtt_devices": 1000},
+		Purpose:      "qualify shadow",
+		Method:       "distributed load",
+	}
+	manifest := notRunFeatureManifest(
+		"run", spec.Feature, spec.Profile, "staging", map[string]string{"workspace": "commit"},
+		[]featureRunSpec{spec}, "canary failed",
+	)
+	stageDir := filepath.Join(t.TempDir(), "qualification-1k")
+	if err := writeFeatureStageReports(stageDir, spec, manifest); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"plan.json", "results.json", "evidence-manifest.json", "TEST_REPORT.md"} {
+		if stat, err := os.Stat(filepath.Join(stageDir, name)); err != nil || stat.Size() == 0 {
+			t.Fatalf("%s was not materialized: stat=%v err=%v", name, stat, err)
+		}
+	}
+	var results map[string]any
+	if err := readJSONFile(filepath.Join(stageDir, "results.json"), &results); err != nil {
+		t.Fatal(err)
+	}
+	if results["status"] != "NOT_RUN" {
+		t.Fatalf("fallback results status = %v, want NOT_RUN", results["status"])
+	}
+
+	original := []byte("{\"runner_result\":true}\n")
+	if err := os.WriteFile(filepath.Join(stageDir, "results.json"), original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFeatureStageReports(stageDir, spec, manifest); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(stageDir, "results.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("runner results were overwritten: %q", got)
+	}
+}
+
 func TestFeatureRootsSeparateDeploymentAndLoadRuntime(t *testing.T) {
 	deploymentRoot := filepath.Join("/workspace", "cloud_env", "staging", "lke")
 	if got, want := featureLoadEnvRoot(deploymentRoot), filepath.Join("/workspace", "cloud_env", "staging", "runtime"); got != want {
@@ -145,6 +192,29 @@ func TestFeatureSelectionSharedPathSelectsAllFeatures(t *testing.T) {
 		if strings.Join(selection.MatchedPaths[feature], ",") != "tests/catalog.yaml" {
 			t.Fatalf("%s matched paths = %v", feature, selection.MatchedPaths[feature])
 		}
+	}
+}
+
+func TestFeatureSelectionSharedDeploymentPathsSelectAllFeatures(t *testing.T) {
+	paths := []string{
+		".github/workflows/feature-qualification.yml",
+		"cloud_deploy/roles/video-cloud/tasks/main.yml",
+		"cloud_env/staging/deployment.env",
+		"cloud_env/staging/environment.env",
+		"cloud_env/staging/overrides/video-cloud.env",
+		"repos/rtk_cloud_logger",
+	}
+	want := []string{"clip-storage", "device-shadow", "video-webrtc"}
+	for _, changedPath := range paths {
+		t.Run(changedPath, func(t *testing.T) {
+			selection, err := selectFeatureQualifications(testCatalog{}, []string{changedPath}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(selection.Features, want) {
+				t.Fatalf("%s must select all features: got %v, want %v", changedPath, selection.Features, want)
+			}
+		})
 	}
 }
 
@@ -244,12 +314,61 @@ func TestEvaluateFeatureEvidenceDoesNotPassCasesWhenAggregateIsIncomplete(t *tes
 	if err := writeJSONFile(filepath.Join(stageDir, "results.json"), results); err != nil {
 		t.Fatal(err)
 	}
+	if err := writeJSONFile(filepath.Join(stageDir, "server-evidence.json"), map[string]any{"complete": true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(filepath.Join(stageDir, "runtime-log-evidence.json"), map[string]any{"status": "pass"}); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now().UTC()
 	manifest := evaluateFeatureEvidence(stageDir, "run", "staging", featureRunSpec{
 		Feature: "device-shadow", Profile: "canary", TestIDs: []string{"E2E-HOME-SHADOW-001"},
 	}, map[string]string{}, now, now.Add(time.Second), nil)
 	if manifest.Status != "INCOMPLETE" || manifest.Cases[0].Status != "INCOMPLETE" {
 		t.Fatalf("manifest/case status = %s/%s", manifest.Status, manifest.Cases[0].Status)
+	}
+}
+
+func TestEvaluateFeatureEvidenceMissingStandaloneServerEvidenceIsIncomplete(t *testing.T) {
+	stageDir := t.TempDir()
+	results := map[string]any{
+		"status": "COMPLETE", "result": "SUCCESS",
+		"server_evidence":         map[string]any{"complete": true},
+		"server_correlation":      map[string]any{"status": "pass"},
+		"runtime_log_correlation": map[string]any{"status": "pass"},
+	}
+	if err := writeJSONFile(filepath.Join(stageDir, "results.json"), results); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(filepath.Join(stageDir, "runtime-log-evidence.json"), map[string]any{"status": "pass"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	manifest := evaluateFeatureEvidence(
+		stageDir, "run", "staging", featureRunSpec{Feature: "device-shadow", Profile: "canary"},
+		map[string]string{}, now, now.Add(time.Second), nil,
+	)
+	if manifest.Status != "INCOMPLETE" || !strings.Contains(manifest.Assessment, "server-evidence.json") {
+		t.Fatalf("missing standalone server evidence manifest = %+v", manifest)
+	}
+}
+
+func TestValidateFeatureEvidenceFilesRequiresRuntimeStatus(t *testing.T) {
+	stageDir := t.TempDir()
+	if err := writeJSONFile(filepath.Join(stageDir, "server-evidence.json"), map[string]any{"complete": true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(filepath.Join(stageDir, "runtime-log-evidence.json"), map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateFeatureEvidenceFiles(stageDir, featureRunSpec{Feature: "video-webrtc"}); err == nil {
+		t.Fatal("runtime evidence without status must be incomplete")
+	}
+	if err := writeJSONFile(filepath.Join(stageDir, "runtime-log-evidence.json"), map[string]any{"status": "skipped"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateFeatureEvidenceFiles(stageDir, featureRunSpec{Feature: "video-webrtc"}); err != nil {
+		t.Fatalf("documented non-shadow skipped correlation rejected: %v", err)
 	}
 }
 
@@ -263,6 +382,12 @@ func TestEvaluateFeatureEvidenceBehaviorFailureFailsQualification(t *testing.T) 
 		"stage_results":           []any{map[string]any{}},
 	}
 	if err := writeJSONFile(filepath.Join(stageDir, "results.json"), results); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(filepath.Join(stageDir, "server-evidence.json"), map[string]any{"complete": true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(filepath.Join(stageDir, "runtime-log-evidence.json"), map[string]any{"status": "pass"}); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
@@ -398,7 +523,7 @@ func TestEvaluateClipCasesRequiresOperationsAndReconciliation(t *testing.T) {
 		"operations": operations,
 		"clip_storage": map[string]any{
 			"camera_devices": float64(2), "upload_successes": float64(4),
-			"success_rate": float64(100), "p95_latency_ms": float64(40),
+			"success_rate": float64(1), "p95_latency_ms": float64(40),
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -410,7 +535,10 @@ func TestEvaluateClipCasesRequiresOperationsAndReconciliation(t *testing.T) {
 		Feature: "clip-storage", Profile: "canary",
 		Scale: map[string]any{"cameras": 2, "clip_uploads": 4},
 	}
-	_, _, _, _, cases := evaluateFeatureCases(spec, nil, stageDir)
+	_, successRate, _, _, cases := evaluateFeatureCases(spec, nil, stageDir)
+	if successRate != 100 {
+		t.Fatalf("clip success rate = %v, want percentage 100", successRate)
+	}
 	if cases["E2E-VC-CLIP-001"].Status != "PASS" {
 		t.Fatalf("clip case = %+v", cases["E2E-VC-CLIP-001"])
 	}

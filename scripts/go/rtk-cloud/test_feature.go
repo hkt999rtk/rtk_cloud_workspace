@@ -156,18 +156,30 @@ func runTestFeature(args []string) error {
 		return err
 	}
 	if err := verifyFeatureDeploymentCommits(envRoot, commits); err != nil {
-		manifest := incompleteFeatureManifest(*runID, *feature, *profile, *environment, commits, specs, err.Error())
-		_ = writeFeatureQualificationReports(runRoot, manifest)
+		manifests := make([]featureEvidenceManifest, 0, len(specs))
+		for _, spec := range specs {
+			manifest := incompleteFeatureManifest(*runID, *feature, spec.Profile, *environment, commits, []featureRunSpec{spec}, err.Error())
+			manifests = append(manifests, manifest)
+			if writeErr := writeFeatureStageReports(filepath.Join(runRoot, spec.Profile), spec, manifest); writeErr != nil {
+				return writeErr
+			}
+		}
+		combined := combineFeatureManifests(*runID, *feature, *profile, *environment, commits, manifests)
+		_ = writeFeatureQualificationReports(runRoot, combined)
 		return fmt.Errorf("feature qualification INCOMPLETE: %w", err)
 	}
 
+	specByProfile := make(map[string]featureRunSpec, len(specs))
+	for _, spec := range specs {
+		specByProfile[spec.Profile] = spec
+	}
 	manifests, sequenceErr := executeFeatureSequence(
 		*runID, *feature, *environment, commits, specs,
 		func(spec featureRunSpec) (featureEvidenceManifest, error) {
 			return executeFeatureSpec(workspace, envRoot, *runID, *environment, spec, commits)
 		},
 		func(manifest featureEvidenceManifest) error {
-			return writeFeatureStageReports(filepath.Join(runRoot, manifest.Profile), manifest)
+			return writeFeatureStageReports(filepath.Join(runRoot, manifest.Profile), specByProfile[manifest.Profile], manifest)
 		},
 	)
 	combined := combineFeatureManifests(*runID, *feature, *profile, *environment, commits, manifests)
@@ -377,6 +389,10 @@ func evaluateFeatureEvidence(stageDir, runID, environment string, spec featureRu
 	var results map[string]any
 	resultsErr := readJSONFile(resultsPath, &results)
 	status, assessment := classifyFeatureRun(spec, results, resultsErr, runErr)
+	if evidenceErr := validateFeatureEvidenceFiles(stageDir, spec); evidenceErr != nil {
+		status = "INCOMPLETE"
+		assessment = evidenceErr.Error()
+	}
 	files := collectFeatureEvidenceFiles(stageDir)
 	if secretFiles := findUnredactedFeatureEvidence(stageDir); len(secretFiles) > 0 {
 		status = "INCOMPLETE"
@@ -414,6 +430,29 @@ func evaluateFeatureEvidence(stageDir, runID, environment string, spec featureRu
 	}
 	manifest.Status, manifest.Assessment = status, assessment
 	return manifest
+}
+
+func validateFeatureEvidenceFiles(stageDir string, spec featureRunSpec) error {
+	var serverEvidence map[string]any
+	if err := readJSONFile(filepath.Join(stageDir, "server-evidence.json"), &serverEvidence); err != nil {
+		return fmt.Errorf("server-evidence.json is missing or unreadable: %w", err)
+	}
+	if !boolAt(serverEvidence, "complete") {
+		return errors.New("server-evidence.json is incomplete")
+	}
+	var runtimeEvidence map[string]any
+	if err := readJSONFile(filepath.Join(stageDir, "runtime-log-evidence.json"), &runtimeEvidence); err != nil {
+		return fmt.Errorf("runtime-log-evidence.json is missing or unreadable: %w", err)
+	}
+	runtimeStatus := stringAt(runtimeEvidence, "status")
+	if spec.Feature == "device-shadow" {
+		if !featureEvidenceStatusComplete(runtimeStatus) {
+			return errors.New("runtime-log-evidence.json is incomplete")
+		}
+	} else if runtimeStatus == "" {
+		return errors.New("runtime-log-evidence.json is missing status")
+	}
+	return nil
 }
 
 func featureCasePurposeMethod(spec featureRunSpec, testID string) (string, string) {
@@ -533,7 +572,7 @@ func evaluateFeatureCases(spec featureRunSpec, results map[string]any, stageDir 
 		if stat, err := os.Stat(reconcilePath); err != nil || stat.Size() == 0 {
 			allSuccess = false
 		}
-		successRate = numberAt(clip, "clip_storage", "success_rate")
+		successRate = numberAt(clip, "clip_storage", "success_rate") * 100
 		latency["upload_p95_ms"] = numberAt(clip, "clip_storage", "p95_latency_ms")
 		assessments["E2E-VC-CLIP-001"] = passFail(allSuccess, "clip upload, readiness, playback, delete, and reconciliation evidence")
 	}
@@ -675,14 +714,52 @@ func validateFeaturePrerequisites(spec featureRunSpec) error {
 	return nil
 }
 
-func writeFeatureStageReports(dir string, manifest featureEvidenceManifest) error {
+func writeFeatureStageReports(dir string, spec featureRunSpec, manifest featureEvidenceManifest) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	if err := writeJSONFileIfMissing(filepath.Join(dir, "plan.json"), map[string]any{
+		"schema_version": "rtk-cloud-feature-stage-plan/v1",
+		"run_id":         manifest.RunID,
+		"feature":        manifest.Feature,
+		"profile":        manifest.Profile,
+		"scenario_path":  spec.ScenarioPath,
+		"test_ids":       spec.TestIDs,
+		"load_test_id":   spec.LoadTestID,
+		"scale":          spec.Scale,
+		"purpose":        spec.Purpose,
+		"method":         spec.Method,
+		"status":         manifest.Status,
+	}); err != nil {
+		return err
+	}
+	if err := writeJSONFileIfMissing(filepath.Join(dir, "results.json"), map[string]any{
+		"schema_version": "rtk-cloud-feature-stage-result/v1",
+		"run_id":         manifest.RunID,
+		"feature":        manifest.Feature,
+		"profile":        manifest.Profile,
+		"status":         manifest.Status,
+		"assessment":     manifest.Assessment,
+		"started_at":     manifest.StartedAt,
+		"completed_at":   manifest.CompletedAt,
+		"duration_ms":    manifest.DurationMS,
+		"cases":          manifest.Cases,
+	}); err != nil {
 		return err
 	}
 	if err := writeJSONFile(filepath.Join(dir, "evidence-manifest.json"), manifest); err != nil {
 		return err
 	}
 	return os.WriteFile(filepath.Join(dir, "TEST_REPORT.md"), renderFeatureReport(manifest), 0o644)
+}
+
+func writeJSONFileIfMissing(path string, value any) error {
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return writeJSONFile(path, value)
 }
 
 func writeFeatureQualificationReports(dir string, manifest featureEvidenceManifest) error {
@@ -935,8 +1012,13 @@ func selectFeatureQualifications(catalog testCatalog, changedFiles, labels []str
 		"e2e_test/video_cloud/load/**",
 		"repos/rtk_video_cloud",
 		"repos/rtk_account_manager",
+		"repos/rtk_cloud_logger",
 		"repos/rtk_cloud_contracts_doc",
 		"repos/rtk_cloud_contracts_doc/**",
+		"cloud_deploy/**",
+		"cloud_env/*/deployment.env",
+		"cloud_env/*/environment.env",
+		"cloud_env/*/overrides/**",
 		"cloud_env/staging/lke/**",
 		".github/workflows/feature-qualification.yml",
 	}

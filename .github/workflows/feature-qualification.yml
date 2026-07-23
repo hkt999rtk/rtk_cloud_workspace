@@ -10,7 +10,12 @@ on:
       - "e2e_test/video_cloud/load/**"
       - "repos/rtk_video_cloud"
       - "repos/rtk_account_manager"
+      - "repos/rtk_cloud_logger"
       - "repos/rtk_cloud_contracts_doc"
+      - "cloud_deploy/**"
+      - "cloud_env/*/deployment.env"
+      - "cloud_env/*/environment.env"
+      - "cloud_env/*/overrides/**"
       - ".github/workflows/feature-qualification.yml"
   workflow_dispatch:
     inputs:
