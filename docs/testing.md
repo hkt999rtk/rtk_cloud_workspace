@@ -43,6 +43,11 @@ Use the explicit test layers when broader validation is needed:
 ```
 
 `test-services` runs local service, SDK, frontend, and repository tooling tests.
+Use `test-services --changed-since <git-ref> --install` in CI to run only
+repositories affected by a workspace diff while installing JavaScript test
+dependencies. Changes to the workspace test runner, catalog, contracts pointer,
+Go workspace, or baseline workflow conservatively select all managed service
+repositories.
 `test-e2e` runs deterministic workspace E2E and harness tests; add `--scripts`
 to opt into the root staging script contract tests. `test-ui` runs the Cloud
 Admin UI in a headless Chromium browser against the real local Go BFF and
@@ -107,6 +112,16 @@ produced at least one complete `PASS`, enable required mode and make
 `docs-check` is read-only and validates documentation governance assumptions:
 workspace repository entries, key docs entry points, and contracts submodule
 commit alignment.
+
+## Pull Request Coverage Gate
+
+The `Workspace Test Baseline` workflow runs for every pull request and for
+updates to `main`. It executes `test-matrix`, deterministic workspace E2E,
+Home load-runner contract tests, and service suites selected from the workspace
+diff. This gate is independent of shared staging and therefore still runs while
+feature qualification is in observation mode. Repository-native CI remains
+responsible for language/platform-specific coverage gates, race tests, native
+SDK builds, and release checks.
 
 ## Reports and Evidence
 
