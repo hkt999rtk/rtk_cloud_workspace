@@ -206,9 +206,11 @@ func loadAndValidateTestCatalogForRunner(workspace, sourceRunner string) (testCa
 				return testCatalog{}, fmt.Errorf("%s %s selector %q not found in %s", prefix, tc.ID, tc.Selector, tc.Source)
 			}
 		}
-		for _, changePath := range tc.ChangePaths {
-			if err := validateCatalogChangePath(workspace, changePath); err != nil {
-				return testCatalog{}, fmt.Errorf("%s %s change_path %q: %w", prefix, tc.ID, changePath, err)
+		if validateSource {
+			for _, changePath := range tc.ChangePaths {
+				if err := validateCatalogChangePath(workspace, changePath); err != nil {
+					return testCatalog{}, fmt.Errorf("%s %s change_path %q: %w", prefix, tc.ID, changePath, err)
+				}
 			}
 		}
 		if tc.Layer == "ui" {

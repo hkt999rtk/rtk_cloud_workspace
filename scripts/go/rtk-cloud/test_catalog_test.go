@@ -68,6 +68,7 @@ cases:
     runner: test-services
     environments: [ci]
     evidence: [junit]
+    change_paths: [repos/rtk_account_manager/internal/**]
     status: active
 `
 	if err := os.WriteFile(filepath.Join(workspace, "tests", "catalog.yaml"), []byte(catalog), 0o644); err != nil {
