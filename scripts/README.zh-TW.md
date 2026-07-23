@@ -167,12 +167,87 @@ go run ./scripts/go/rtk-cloud -- sync-all
 
 ### `go run ./scripts/go/rtk-cloud -- test-matrix`
 
-執行 workspace 快速驗證矩陣，包括 workspace 狀態、submodule 狀態，以及 Go-based workspace checks。
+執行 workspace 快速基線驗證，包括 workspace 狀態、submodule 狀態、diff check，以及 Go-based workspace checks；不會執行所有 service 或 product E2E 測試。
 
 用法：
 
 ```sh
-go run ./scripts/go/rtk-cloud -- test-matrix
+(cd scripts/go && go run ./rtk-cloud -- test-matrix)
+```
+
+### `test-services`
+
+執行各 service、SDK、frontend 與 repository tooling 的本地測試。可用
+`--repo NAME` 只測指定 repository；Go 測試會自動使用 `GOWORK=off`，避免被
+workspace 根目錄的 `go.work` 干擾。
+
+```sh
+(cd scripts/go && go run ./rtk-cloud -- test-services)
+(cd scripts/go && go run ./rtk-cloud -- test-services --repo rtk_cloud_admin)
+```
+
+### `test-e2e`
+
+執行 workspace-owned 的 deterministic E2E、MQTT harness 與 load-report tooling
+tests。加上 `--scripts` 才會執行根目錄 staging script contract tests；其中
+`no-deprecated-staging-wrappers.test.sh` 是獨立的 repository governance
+migration gate，不會被視為 E2E 測試。
+
+```sh
+(cd scripts/go && go run ./rtk-cloud -- test-e2e)
+(cd scripts/go && go run ./rtk-cloud -- test-e2e --scripts)
+```
+
+### `test-ui`
+
+使用 Playwright + headless Chromium 驗證 UI 行為。預設啟動真正的 Cloud Admin
+Go BFF 與 deterministic fixture upstream，測試 browser → BFF → backend contract，
+每個案例成功或失敗都保留最終 viewport screenshot；失敗另保留 video、trace、
+error context 與所有 retry artifacts。輸出 `results.json`、JUnit、
+`evidence-manifest.json`、`TEST_REPORT.md` 與 HTML report。報告逐項記錄測試時間、
+目的、手法、結果和 PASS/FAIL 評斷。Desktop `--full` 會自動執行並合併
+unavailable、empty、stale、expired、partial-failure 與 lifecycle 等 fixture
+phases，確保條件式案例不會只留下 SKIP。`--full` 執行完整 browser
+suite；`--install` 先安裝 npm dependencies 與 Chromium。Desktop 與 mobile
+是獨立 target，分別輸出 artifacts；未指定 target 時會依序執行兩者。
+
+```sh
+(cd scripts/go && go run ./rtk-cloud -- test-ui)
+(cd scripts/go && go run ./rtk-cloud -- test-ui --desktop)
+(cd scripts/go && go run ./rtk-cloud -- test-ui --mobile)
+(cd scripts/go && go run ./rtk-cloud -- test-ui --full)
+(cd scripts/go && go run ./rtk-cloud -- test-ui --desktop --run-id local-review-001)
+(cd scripts/go && go run ./rtk-cloud -- test-ui --install)
+```
+
+對部署中的 staging backend 執行唯讀 UI E2E 時，需提供
+`E2E_BASE_URL`、`E2E_PLATFORM_SESSION_ID`、`E2E_CUSTOMER_SESSION_ID`，並明確設定
+`E2E_EVIDENCE_SAFE=1`，確認只會截取專用測試帳號與測試資料：
+
+```sh
+(cd scripts/go && go run ./rtk-cloud -- test-ui --staging)
+```
+
+### `test-catalog`
+
+`tests/catalog.yaml` 是 Test ID、owner、目的、手法、source selector、target、
+environment 與 evidence policy 的唯一來源。`check` 驗證編號、重複、來源、
+Playwright 登錄與 generated Markdown drift；`render` 更新
+`docs/test-catalog.md`。已發布 ID 不得換號或重用，移除時改成 `retired`。
+
+```sh
+(cd scripts/go && go run ./rtk-cloud -- test-catalog check)
+(cd scripts/go && go run ./rtk-cloud -- test-catalog render)
+```
+
+### `test-live`
+
+staging/live E2E 的明確入口。預設只輸出 plan，不會改動環境；執行 live flow
+必須明確指定 `--run` 與正確的 `--confirm`。
+
+```sh
+(cd scripts/go && go run ./rtk-cloud -- test-live --environment staging --plan)
+(cd scripts/go && go run ./rtk-cloud -- test-live --environment staging --run --confirm video-cloud-staging)
 ```
 
 ### `go run ./scripts/go/rtk-cloud -- docs-check`

@@ -1,6 +1,7 @@
 schema_version: 1
 scenarios:
   - id: token_mtls_http
+    test_id: E2E-SDK-AUTH-001
     required_capabilities: [token, mtls, http]
     device_profile: online
     app_action: request_token_and_read_device
@@ -9,6 +10,7 @@ scenarios:
     timeout: 30s
     cleanup: run_owned_resources
   - id: websocket_lifecycle
+    test_id: E2E-SDK-WS-001
     required_capabilities: [token, websocket]
     device_profile: online
     app_action: connect_send_disconnect
@@ -17,6 +19,7 @@ scenarios:
     timeout: 45s
     cleanup: close_sessions
   - id: websocket_receive_roundtrip
+    test_id: E2E-SDK-WS-002
     required_capabilities: [token, websocket, cloud_command_trigger]
     device_profile: online
     app_action: receive_cloud_triggered_message
@@ -25,6 +28,7 @@ scenarios:
     timeout: 45s
     cleanup: close_sessions
   - id: cross_cloud_denied
+    test_id: E2E-SDK-AUTH-002
     required_capabilities: [token, http]
     device_profile: cross_cloud
     app_action: read_foreign_device
@@ -33,6 +37,7 @@ scenarios:
     timeout: 20s
     cleanup: run_owned_resources
   - id: unavailable_normalized
+    test_id: E2E-SDK-ERROR-001
     required_capabilities: [http]
     device_profile: none
     app_action: connect_unavailable_endpoint
@@ -41,6 +46,7 @@ scenarios:
     timeout: 10s
     cleanup: local_only
   - id: invalid_or_expired_token
+    test_id: E2E-SDK-AUTH-003
     required_capabilities: [http, normalized_errors]
     device_profile: online
     app_action: read_device_with_invalid_or_expired_token
@@ -49,6 +55,7 @@ scenarios:
     timeout: 20s
     cleanup: local_only
   - id: operation_controls
+    test_id: E2E-SDK-CONTROL-001
     required_capabilities: [cancel, timeout]
     device_profile: none
     app_action: cancel_before_connect_and_timeout_unavailable
@@ -57,6 +64,7 @@ scenarios:
     timeout: 10s
     cleanup: local_only
   - id: destroy_callback_suppression
+    test_id: E2E-SDK-LIFECYCLE-001
     required_capabilities: [session_destroy]
     device_profile: none
     app_action: destroy_session_and_reject_late_callbacks

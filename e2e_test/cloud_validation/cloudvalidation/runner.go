@@ -20,7 +20,7 @@ func Run(ctx context.Context, cfg Config) (RunReport, error) {
 	started := time.Now().UTC()
 	scenarios, scenarioErr := LoadScenarios(cfg.ScenarioFiles)
 	report := RunReport{
-		SchemaVersion:    1,
+		SchemaVersion:    2,
 		RunID:            cfg.RunID,
 		Environment:      cfg.Environment,
 		Platform:         cfg.Platform,
@@ -89,6 +89,8 @@ func Run(ctx context.Context, cfg Config) (RunReport, error) {
 		result, err := readPlatformResult(cfg.PlatformResult, cfg)
 		if err != nil {
 			report.Steps = append(report.Steps, failedStep("platform_result", "invalid_platform_result", err.Error()))
+		} else if err := attachTestIDs(&result, scenarios); err != nil {
+			report.Steps = append(report.Steps, failedStep("platform_result", "invalid_test_id", err.Error()))
 		} else if err := validateScenarioCoverage(result, scenarios); err != nil {
 			report.Steps = append(report.Steps, failedStep("platform_result", "incomplete_scenario_coverage", err.Error()))
 		} else if err := validateExpectedScenarioResults(result, scenarios); err != nil {
@@ -113,6 +115,24 @@ func Run(ctx context.Context, cfg Config) (RunReport, error) {
 		report.Steps = append(report.Steps, failedStep("cloud_evidence", "cloud_evidence_missing", "required Cloud evidence file is missing"))
 	}
 	return finishAfterVirtual(ctx, cfg, report, virtual)
+}
+
+func attachTestIDs(result *PlatformResult, scenarios []Scenario) error {
+	byScenario := make(map[string]string, len(scenarios))
+	for _, scenario := range scenarios {
+		byScenario[scenario.ID] = scenario.TestID
+	}
+	for i := range result.Results {
+		expected := byScenario[result.Results[i].ScenarioID]
+		if expected == "" {
+			continue
+		}
+		if result.Results[i].TestID != "" && result.Results[i].TestID != expected {
+			return fmt.Errorf("scenario %s reported test_id %s, want %s", result.Results[i].ScenarioID, result.Results[i].TestID, expected)
+		}
+		result.Results[i].TestID = expected
+	}
+	return nil
 }
 
 func validateExpectedScenarioResults(result PlatformResult, scenarios []Scenario) error {
@@ -497,7 +517,7 @@ func readPlatformResult(path string, cfg Config) (PlatformResult, error) {
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return result, err
 	}
-	if result.SchemaVersion != 1 || result.RunID != cfg.RunID || result.Platform != cfg.Platform {
+	if (result.SchemaVersion != 1 && result.SchemaVersion != 2) || result.RunID != cfg.RunID || result.Platform != cfg.Platform {
 		return result, fmt.Errorf("platform result identity does not match run")
 	}
 	if strings.TrimSpace(result.SDKCommit) == "" || strings.TrimSpace(result.ServerVersion) == "" || !validStatus(result.Status) || len(result.Results) == 0 {

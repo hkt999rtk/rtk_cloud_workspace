@@ -3,9 +3,19 @@ name: Cloud Admin E2E
 on:
   pull_request:
     paths:
+      - 'tests/catalog.yaml'
+      - 'docs/testing.md'
+      - 'docs/test-catalog.md'
+      - 'scripts/go/rtk-cloud/**'
       - 'loadtests/home-100k/**'
       - 'repos/rtk_cloud_admin/**'
       - '.github/workflows/cloud-admin-e2e.yml'
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 18 * * *'
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -13,9 +23,13 @@ permissions:
 
 jobs:
   playwright:
-    name: Playwright local E2E
+    name: Playwright ${{ matrix.ui }} E2E
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        ui: [desktop, mobile]
     steps:
       - name: Check out workspace
         uses: actions/checkout@v6
@@ -41,28 +55,25 @@ jobs:
           cache: npm
           cache-dependency-path: repos/rtk_cloud_admin/web/package-lock.json
 
-      - name: Install and build Cloud Admin
+      - name: Install Cloud Admin browser dependencies
         working-directory: repos/rtk_cloud_admin/web
         run: |
           npm ci
           npx playwright install --with-deps chromium
-          npm run build
 
-      - name: Generate load-test-backed E2E fixture
-        working-directory: repos/rtk_cloud_admin/web
-        run: npm run e2e:generate-fixture
-
-      - name: Run Playwright smoke
-        working-directory: repos/rtk_cloud_admin/web
-        run: npm run e2e:smoke
+      - name: Run headless UI-to-BFF E2E
+        working-directory: scripts/go
+        env:
+          E2E_TEST_RUN_ID: gh-${{ github.run_id }}-${{ github.run_attempt }}
+        run: go run ./rtk-cloud -- test-ui --${{ matrix.ui }} --full --run-id "$E2E_TEST_RUN_ID"
 
       - name: Upload E2E artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cloud-admin-playwright-e2e
+          name: cloud-admin-ui-${{ matrix.ui }}-gh-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            repos/rtk_cloud_admin/.artifacts/playwright-report
-            repos/rtk_cloud_admin/.artifacts/playwright-results
+            .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}/ui/${{ matrix.ui }}
             repos/rtk_cloud_admin/.artifacts/e2e-fixtures
           if-no-files-found: warn
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 90 }}

@@ -18,6 +18,7 @@ type ScenarioManifest struct {
 
 type Scenario struct {
 	ID                    string   `yaml:"id" json:"id"`
+	TestID                string   `yaml:"test_id" json:"test_id"`
 	RequiredCapabilities  []string `yaml:"required_capabilities" json:"required_capabilities"`
 	DeviceProfile         string   `yaml:"device_profile" json:"device_profile"`
 	AppAction             string   `yaml:"app_action" json:"app_action"`
@@ -71,6 +72,7 @@ type PlatformResult struct {
 }
 
 type ScenarioResult struct {
+	TestID        string   `json:"test_id,omitempty"`
 	ScenarioID    string   `json:"scenario_id"`
 	Status        Status   `json:"status"`
 	ReasonCode    string   `json:"reason_code,omitempty"`

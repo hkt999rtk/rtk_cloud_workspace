@@ -11,6 +11,7 @@ import (
 )
 
 var scenarioIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_]{0,63}$`)
+var testIDPattern = regexp.MustCompile(`^E2E-[A-Z0-9]+-[A-Z0-9]+-[0-9]{3}$`)
 
 func LoadScenarios(paths []string) ([]Scenario, error) {
 	var scenarios []Scenario
@@ -47,6 +48,9 @@ func LoadScenarios(paths []string) ([]Scenario, error) {
 func validateScenario(s Scenario) error {
 	if !scenarioIDPattern.MatchString(s.ID) {
 		return fmt.Errorf("scenario id %q must match %s", s.ID, scenarioIDPattern)
+	}
+	if s.TestID != "" && !testIDPattern.MatchString(s.TestID) {
+		return fmt.Errorf("scenario %s test_id %q must match %s", s.ID, s.TestID, testIDPattern)
 	}
 	if strings.TrimSpace(s.DeviceProfile) == "" || strings.TrimSpace(s.AppAction) == "" || strings.TrimSpace(s.ExpectedSDKResult) == "" {
 		return fmt.Errorf("scenario %s requires device_profile, app_action, and expected_sdk_result", s.ID)
