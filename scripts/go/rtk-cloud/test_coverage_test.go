@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"math"
 	"os"
 	"path/filepath"
@@ -303,6 +304,58 @@ func TestRunTestCoverageRejectsUnknownModuleBeforeExecutingTests(t *testing.T) {
 	err = runTestCoverage([]string{"--run-id", runID, "--module", "not-managed"})
 	if err == nil || !strings.Contains(err.Error(), "unknown coverage module") {
 		t.Fatalf("unknown module error = %v", err)
+	}
+}
+
+func TestRunTestCoverageWritesPassingReportForSelectedModule(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := "unit-passing-coverage-report"
+	runDir := filepath.Join(workspace, ".artifacts", "test-runs", runID)
+	defer os.RemoveAll(runDir)
+
+	if err := runTestCoverage([]string{"--run-id", runID, "--module", "home-load-runner"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(runDir, "coverage", "results.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report coverageReport
+	if err := json.Unmarshal(raw, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != "PASS" || report.RedactionStatus != "PASS" || len(report.Cases) != 1 {
+		t.Fatalf("coverage report = %#v", report)
+	}
+	if report.Cases[0].Name != "home-load-runner" || report.Cases[0].Status != "PASS" {
+		t.Fatalf("selected coverage case = %#v", report.Cases[0])
+	}
+	markdown, err := os.ReadFile(filepath.Join(runDir, "coverage", "TEST_REPORT.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(markdown), "Result: **PASS**") {
+		t.Fatalf("coverage Markdown did not record PASS:\n%s", markdown)
+	}
+}
+
+func TestRunCoverageModuleClassifiesUnsupportedKindAsFailure(t *testing.T) {
+	result := runCoverageModule(t.TempDir(), t.TempDir(), coverageConfig{}, coverageModule{
+		TestID:  "SVC-TEST-SUITE-001",
+		Name:    "unsupported",
+		Kind:    "rust",
+		Path:    "module",
+		Purpose: "verify unsupported runner handling",
+		Method:  "request an unsupported coverage kind",
+	}, "", "HEAD", false)
+	if result.Status != "FAIL" || !strings.Contains(result.Assessment, "unsupported coverage kind") {
+		t.Fatalf("unsupported coverage result = %#v", result)
+	}
+	if result.StartedAt == "" || result.CompletedAt == "" || result.LogPath == "" {
+		t.Fatalf("failure result lacks traceability fields: %#v", result)
 	}
 }
 
