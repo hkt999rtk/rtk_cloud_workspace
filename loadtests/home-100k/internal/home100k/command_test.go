@@ -1926,7 +1926,7 @@ func TestHome100KScriptEnvOverridesDescriptionRampUpAndRuntimeWindows(t *testing
 	}
 	script := filepath.Join("..", "..", "scripts", "home-100k.sh")
 	cmd := exec.Command("bash", script, "plan")
-	cmd.Env = append(os.Environ(),
+	cmd.Env = home100KTestEnv(
 		"HOME100K_DESCRIPTION_FILE="+descriptionFile,
 		"HOME100K_RUN_ID=test-env-priority",
 		"HOME100K_OUT_DIR="+filepath.Join(outDir, "report"),
