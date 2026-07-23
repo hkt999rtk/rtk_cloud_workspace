@@ -48,6 +48,8 @@ cases:
   - { <<: *ui_local, id: UI-CA-CHIPSET-002, title: Read-only provider capability hides mutation controls, source: repos/rtk_cloud_admin/web/e2e/chipset-sdk.spec.mjs, selector: "[UI-CA-CHIPSET-002]" }
   - { <<: *ui_local, id: UI-CA-CHIPSET-003, title: Provider and developer pages expose safe upstream-unavailable states, source: repos/rtk_cloud_admin/web/e2e/chipset-sdk.spec.mjs, selector: "[UI-CA-CHIPSET-003]" }
   - { <<: *ui_smoke, id: UI-CA-CHIPSET-004, title: Provider publish refresh fallback and unpublish lifecycle works, source: repos/rtk_cloud_admin/web/e2e/chipset-sdk.spec.mjs, selector: "[UI-CA-CHIPSET-004]", tags: [smoke, chipset-sdk] }
+  - { <<: *ui_smoke, id: UI-CA-CHIPSET-005, title: Platform provider design matches the approved visual baseline, source: repos/rtk_cloud_admin/web/e2e/chipset-sdk.visual.spec.mjs, selector: "[UI-CA-CHIPSET-005]", tags: [smoke, chipset-sdk, visual] }
+  - { <<: *ui_smoke, id: UI-CA-CHIPSET-006, title: Developer resource design matches the approved visual baseline, source: repos/rtk_cloud_admin/web/e2e/chipset-sdk.visual.spec.mjs, selector: "[UI-CA-CHIPSET-006]", tags: [smoke, chipset-sdk, visual] }
   - { <<: *ui_smoke, id: UI-CA-CLOUD-001, title: Brand Cloud filters and detail reload show Account Manager data, source: repos/rtk_cloud_admin/web/e2e/brand-cloud.spec.mjs, selector: "[UI-CA-CLOUD-001]" }
   - { <<: *ui_local, id: UI-CA-CLOUD-002, title: Brand Cloud status filter selects disabled clouds, source: repos/rtk_cloud_admin/web/e2e/brand-cloud.spec.mjs, selector: "[UI-CA-CLOUD-002]" }
   - { <<: *ui_local, id: UI-CA-CLOUD-003, title: Brand Cloud list renders upstream failures safely, source: repos/rtk_cloud_admin/web/e2e/brand-cloud.spec.mjs, selector: "[UI-CA-CLOUD-003]" }
