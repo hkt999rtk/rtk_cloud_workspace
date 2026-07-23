@@ -24,12 +24,17 @@ jobs:
       - name: Initialize workspace submodules
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
         run: |
           set -euo pipefail
-          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "git@github-work.com:"
-          git config --global --add url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com-work:"
-          git config --global --add url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
+          test -n "$CI_RUNNER_GITHUB_WORK_KEY"
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$CI_RUNNER_GITHUB_WORK_KEY" > ~/.ssh/id_ed25519_github_work
+          chmod 0600 ~/.ssh/id_ed25519_github_work
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          git config --global core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
+          git config --global --add url."git@github.com:".insteadOf "git@github-work.com:"
+          git config --global --add url."git@github.com:".insteadOf "git@github.com-work:"
           git submodule sync --recursive
           git submodule update --init --recursive --depth=1
 
