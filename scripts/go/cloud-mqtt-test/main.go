@@ -26,6 +26,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -4393,10 +4394,38 @@ func traceDataSummary(doc map[string]any) string {
 }
 
 func shadowDocumentsDeltaCleared(doc map[string]any) bool {
-	current, _ := doc["current"].(map[string]any)
-	state, _ := current["state"].(map[string]any)
-	delta, ok := state["delta"].(map[string]any)
-	return ok && len(delta) == 0
+	current, ok := doc["current"].(map[string]any)
+	if !ok {
+		return false
+	}
+	state, ok := current["state"].(map[string]any)
+	if !ok {
+		return false
+	}
+	desired, _ := state["desired"].(map[string]any)
+	reported, _ := state["reported"].(map[string]any)
+	return shadowDesiredStateSatisfied(desired, reported)
+}
+
+func shadowDesiredStateSatisfied(desired, reported map[string]any) bool {
+	for key, desiredValue := range desired {
+		reportedValue, ok := reported[key]
+		if !ok {
+			return false
+		}
+		desiredObject, nested := desiredValue.(map[string]any)
+		if nested {
+			reportedObject, ok := reportedValue.(map[string]any)
+			if !ok || !shadowDesiredStateSatisfied(desiredObject, reportedObject) {
+				return false
+			}
+			continue
+		}
+		if !reflect.DeepEqual(desiredValue, reportedValue) {
+			return false
+		}
+	}
+	return true
 }
 
 func traceDataSummaryFromPayload(payload []byte, direction string) string {

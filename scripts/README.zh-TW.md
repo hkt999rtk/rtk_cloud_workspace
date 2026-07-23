@@ -19,6 +19,18 @@ go run ./scripts/go/rtk-cloud -- deployment provision --environment staging --co
 go run ./scripts/go/rtk-cloud -- deployment acceptance --environment staging
 ```
 
+Environment rehearsal 一律使用同一入口：
+
+```sh
+scripts/deploy-environment.sh test \
+  --environment dev \
+  --confirm video-cloud-dev
+```
+
+把 `dev` 與 confirmation stack 換成 `staging` 或 `prod` 即可；script 本身不得
+複製或分叉。`test` 在成功或失敗後都會清除該 stack 擁有的 cloud/DNS resources，
+並保留 sanitized evidence。
+
 Generated kubeconfig、services、secrets、devices 與 artifacts 位於 git-ignored 的
 `cloud_env/<environment>/runtime/`。LKE cluster/pool/resource IDs 位於 adapter-private
 runtime state；shared Kubernetes runtime 與 load test 只讀 normalized runtime。

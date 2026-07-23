@@ -6,10 +6,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type deploymentConfig struct {
@@ -25,6 +27,15 @@ type deploymentConfig struct {
 	AdapterResolved map[string]string
 	DNSValues       map[string]string
 	Capacity        sharedCapacityPlan
+}
+
+type deploymentOperations struct {
+	plan        func(deploymentConfig) error
+	prepareTest func(deploymentConfig) error
+	provision   func(deploymentConfig) error
+	acceptance  func(deploymentConfig) error
+	cleanup     func(deploymentConfig) error
+	normalize   func(deploymentConfig) error
 }
 
 var deploymentIntegerKeys = map[string]bool{
@@ -53,6 +64,7 @@ func architectureKeySet() map[string]bool {
 		"NODE_CLASS_BROKER_MIN_VCPU", "NODE_CLASS_BROKER_MIN_MEMORY_GIB",
 		"NODE_CLASS_DATABASE_MIN_VCPU", "NODE_CLASS_DATABASE_MIN_MEMORY_GIB",
 		"MQTT_HARD_ANTI_AFFINITY", "POSTGRES_LIMIT_MEMORY", "CLOUD_LOGGER_LIMIT_MEMORY",
+		"VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED",
 		"EDGE_REPLICAS", "EDGE_MAX_CONNECTIONS", "TURN_REPLICAS", "TURN_MIN_PORT", "TURN_MAX_PORT",
 	)
 	for _, key := range capacitySourceKeys() {
@@ -70,6 +82,25 @@ func keySet(keys ...string) map[string]bool {
 }
 
 func runDeployment(args []string) error {
+	return runDeploymentWithOperations(args, defaultDeploymentOperations())
+}
+
+func defaultDeploymentOperations() deploymentOperations {
+	return deploymentOperations{
+		plan: func(cfg deploymentConfig) error {
+			return runProvision([]string{"--workspace", cfg.Workspace, "--env-root", cfg.RuntimeRoot, "--plan"})
+		},
+		prepareTest: validateEphemeralDeploymentEnvironmentAbsent,
+		provision:   provisionDeploymentEnvironment,
+		acceptance: func(cfg deploymentConfig) error {
+			return runEnvironmentAcceptance([]string{"--workspace", cfg.Workspace, "--env-root", cfg.RuntimeRoot, "--confirm", cfg.Values["CLOUD_STACK_NAME"], "--no-resume"})
+		},
+		cleanup:   cleanupDeploymentEnvironment,
+		normalize: normalizeDeploymentRuntime,
+	}
+}
+
+func runDeploymentWithOperations(args []string, ops deploymentOperations) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
 		printDeploymentUsage()
 		return nil
@@ -84,7 +115,7 @@ func runDeployment(args []string) error {
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
-	if action != "plan" && action != "provision" && action != "acceptance" && action != "remove" {
+	if action != "plan" && action != "provision" && action != "acceptance" && action != "remove" && action != "test" {
 		return fmt.Errorf("unknown deployment action %q", action)
 	}
 	cfg, err := resolveDeploymentConfig(*workspace, *environment, *environmentRoot)
@@ -95,7 +126,7 @@ func runDeployment(args []string) error {
 		return err
 	}
 	stack := cfg.Values["CLOUD_STACK_NAME"]
-	if action != "plan" && action != "acceptance" && *confirm != stack {
+	if action != "plan" && *confirm != stack {
 		return fmt.Errorf("--confirm %s is required", stack)
 	}
 	if cfg.Adapter != "lke" && action != "plan" {
@@ -108,34 +139,235 @@ func runDeployment(args []string) error {
 			fmt.Printf("infrastructure: adapter not implemented; mutation will fail fast\n")
 			return normalizeDeploymentRuntime(cfg)
 		}
-		if err := runProvision([]string{"--workspace", cfg.Workspace, "--env-root", cfg.RuntimeRoot, "--plan"}); err != nil {
+		if err := ops.plan(cfg); err != nil {
 			return err
 		}
-		return normalizeDeploymentRuntime(cfg)
+		return ops.normalize(cfg)
 	case "provision":
-		if err := validateDNSBeforeMutation(cfg); err != nil {
-			return err
-		}
-		if cfg.Adapter == "lke" {
-			if err := validateLKEEnvironmentStateBeforeMutation(cfg); err != nil {
-				return err
-			}
-			if err := resolveLKEImagesIfNeeded(cfg.Workspace, cfg.RuntimeRoot); err != nil {
-				return err
-			}
-		}
-		err = runProvision([]string{"--workspace", cfg.Workspace, "--env-root", cfg.RuntimeRoot, "--preflight", "--plan", "--apply", "--deploy", "--dns", "--artifacts", "--confirm", stack})
+		err = ops.provision(cfg)
 	case "acceptance":
-		err = runStagingAcceptance([]string{"--workspace", cfg.Workspace, "--env-root", cfg.RuntimeRoot, "--confirm", stack})
+		err = ops.acceptance(cfg)
 	case "remove":
-		if err = removeOwnedDNSRecords(newProvisionPaths(cfg.Workspace, cfg.RuntimeRoot, provisionOptions{}), appendMap(cfg.Values, cfg.DNSValues)); err == nil {
-			err = runRemoveK8s([]string{"--workspace", cfg.Workspace, "--env-root", cfg.RuntimeRoot, "--confirm", stack})
+		err = ops.cleanup(cfg)
+	case "test":
+		if err = ops.prepareTest(cfg); err != nil {
+			return fmt.Errorf("ephemeral test preflight failed: %w", err)
 		}
+		provisionErr := ops.provision(cfg)
+		var acceptanceErr error
+		if provisionErr == nil {
+			acceptanceErr = ops.acceptance(cfg)
+		}
+		cleanupErr := ops.cleanup(cfg)
+		err = errors.Join(
+			wrapDeploymentPhaseError("provision", provisionErr),
+			wrapDeploymentPhaseError("acceptance", acceptanceErr),
+			wrapDeploymentPhaseError("cleanup", cleanupErr),
+		)
 	}
 	if err != nil {
 		return err
 	}
-	return normalizeDeploymentRuntime(cfg)
+	return ops.normalize(cfg)
+}
+
+func wrapDeploymentPhaseError(phase string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s phase failed: %w", phase, err)
+}
+
+func provisionDeploymentEnvironment(cfg deploymentConfig) error {
+	if err := validateDNSBeforeMutation(cfg); err != nil {
+		return err
+	}
+	if cfg.Adapter == "lke" {
+		if err := validateLKEEnvironmentStateBeforeMutation(cfg); err != nil {
+			return err
+		}
+		if err := resolveLKEImagesIfNeeded(cfg.Workspace, cfg.RuntimeRoot); err != nil {
+			return err
+		}
+	}
+	return runProvision([]string{"--workspace", cfg.Workspace, "--env-root", cfg.RuntimeRoot, "--preflight", "--plan", "--apply", "--deploy", "--dns", "--artifacts", "--confirm", cfg.Values["CLOUD_STACK_NAME"]})
+}
+
+func cleanupDeploymentEnvironment(cfg deploymentConfig) error {
+	stack := cfg.Values["CLOUD_STACK_NAME"]
+	volumeIDs, volumeCaptureErr := deploymentPersistentVolumeIDs(cfg)
+	k8sErr := purgeDeploymentK8s(cfg)
+	dnsErr := removeOwnedDNSRecords(
+		newProvisionPaths(cfg.Workspace, cfg.RuntimeRoot, provisionOptions{}),
+		appendMap(cfg.Values, cfg.DNSValues),
+	)
+	resourceErr := runDestroyEnvironmentResources([]string{
+		"--workspace", cfg.Workspace,
+		"--env-root", cfg.RuntimeRoot,
+		"--yes",
+		"--confirm-text", "destroy " + stack,
+		"--include-object-storage",
+	})
+	if resourceErr == nil {
+		resourceErr = deleteDeploymentVolumesWhenDetached(resolveLinodeToken(cfg.RuntimeRoot), volumeIDs, envDurationDefault("RTK_CLOUD_ENVIRONMENT_CLEANUP_TIMEOUT", 10*time.Minute))
+	}
+	if resourceErr == nil {
+		resourceErr = waitForDeploymentEnvironmentRemoval(cfg)
+	}
+	return errors.Join(
+		wrapDeploymentPhaseError("persistent volume ownership capture", volumeCaptureErr),
+		wrapDeploymentPhaseError("Kubernetes storage cleanup", k8sErr),
+		wrapDeploymentPhaseError("DNS cleanup", dnsErr),
+		wrapDeploymentPhaseError("provider cleanup", resourceErr),
+	)
+}
+
+func deploymentPersistentVolumeIDs(cfg deploymentConfig) ([]string, error) {
+	kubeconfig := filepath.Join(cfg.RuntimeRoot, "state", "kubeconfig.yaml")
+	if _, err := os.Stat(kubeconfig); os.IsNotExist(err) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfig, "get", "persistentvolume", "-o", "json")
+	body, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && len(exitErr.Stderr) > 0 {
+			return nil, fmt.Errorf("list persistent volumes: %s", strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return nil, fmt.Errorf("list persistent volumes: %w", err)
+	}
+	return persistentVolumeIDsForStack(body, cfg.Values["CLOUD_STACK_NAME"])
+}
+
+func persistentVolumeIDsForStack(body []byte, stack string) ([]string, error) {
+	var listed struct {
+		Items []struct {
+			Spec struct {
+				ClaimRef struct {
+					Namespace string `json:"namespace"`
+				} `json:"claimRef"`
+				CSI struct {
+					VolumeHandle string `json:"volumeHandle"`
+				} `json:"csi"`
+			} `json:"spec"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(body, &listed); err != nil {
+		return nil, fmt.Errorf("decode persistent volumes: %w", err)
+	}
+	seen := map[string]bool{}
+	ids := []string{}
+	for _, item := range listed.Items {
+		if !strings.HasPrefix(item.Spec.ClaimRef.Namespace, stack+"-") {
+			continue
+		}
+		id := strings.TrimSpace(item.Spec.CSI.VolumeHandle)
+		if id == "" {
+			continue
+		}
+		volumeID := id
+		if numericID, suffix, ok := strings.Cut(id, "-"); ok && strings.HasPrefix(suffix, "pvc-") {
+			volumeID = numericID
+		}
+		if _, err := strconv.Atoi(volumeID); err != nil {
+			return nil, fmt.Errorf("stack %s persistent volume has unsupported Linode volume handle %q", stack, id)
+		}
+		if !seen[volumeID] {
+			seen[volumeID] = true
+			ids = append(ids, volumeID)
+		}
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
+func purgeDeploymentK8s(cfg deploymentConfig) error {
+	kubeconfig := filepath.Join(cfg.RuntimeRoot, "state", "kubeconfig.yaml")
+	if _, err := os.Stat(kubeconfig); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	old, hadOld := os.LookupEnv("CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET")
+	if err := os.Setenv("CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET", "1"); err != nil {
+		return err
+	}
+	defer func() {
+		if hadOld {
+			_ = os.Setenv("CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET", old)
+		} else {
+			_ = os.Unsetenv("CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET")
+		}
+	}()
+	return runRemoveK8s([]string{
+		"--workspace", cfg.Workspace,
+		"--env-root", cfg.RuntimeRoot,
+		"--yes",
+		"--purge-storage",
+	})
+}
+
+func validateEphemeralDeploymentEnvironmentAbsent(cfg deploymentConfig) error {
+	if cfg.Adapter != "lke" {
+		return fmt.Errorf("ephemeral test preflight is not implemented for adapter %s", cfg.Adapter)
+	}
+	token := resolveLinodeToken(cfg.RuntimeRoot)
+	if token == "" {
+		return errors.New("LKE credentials reference is required before ephemeral test preflight")
+	}
+	plan, err := buildLinodeDestroyPlan(token, cfg.Values, cfg.Values["CLOUD_STACK_NAME"], "")
+	if err != nil {
+		return err
+	}
+	if labels := deploymentEnvironmentResourceLabels(plan); len(labels) > 0 {
+		return fmt.Errorf("stack %s already owns provider resources: %s; use acceptance for an existing environment or remove it explicitly", cfg.Values["CLOUD_STACK_NAME"], strings.Join(labels, ", "))
+	}
+	ownership := filepath.Join(cfg.RuntimeRoot, "dns", cfg.DNSAdapter, "ownership.json")
+	if body, readErr := os.ReadFile(ownership); readErr == nil && len(strings.TrimSpace(string(body))) > 0 {
+		return fmt.Errorf("stack %s has existing DNS ownership state at %s", cfg.Values["CLOUD_STACK_NAME"], ownership)
+	} else if readErr != nil && !os.IsNotExist(readErr) {
+		return readErr
+	}
+	return nil
+}
+
+func waitForDeploymentEnvironmentRemoval(cfg deploymentConfig) error {
+	if cfg.Adapter != "lke" {
+		return nil
+	}
+	token := resolveLinodeToken(cfg.RuntimeRoot)
+	if token == "" {
+		return errors.New("LKE credentials reference is required to verify provider cleanup")
+	}
+	stack := cfg.Values["CLOUD_STACK_NAME"]
+	timeout := envDurationDefault("RTK_CLOUD_ENVIRONMENT_CLEANUP_TIMEOUT", 10*time.Minute)
+	deadline := time.Now().Add(timeout)
+	for {
+		plan, err := buildLinodeDestroyPlan(token, cfg.Values, stack, "")
+		if err != nil {
+			return err
+		}
+		labels := deploymentEnvironmentResourceLabels(plan)
+		if len(labels) == 0 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out after %s waiting for stack %s cleanup; resources still present: %s", timeout, stack, strings.Join(labels, ", "))
+		}
+		time.Sleep(5 * time.Second)
+	}
+}
+
+func deploymentEnvironmentResourceLabels(plan linodeDestroyPlan) []string {
+	labels := []string{}
+	for _, group := range [][]linodeDestroyResource{plan.LKEClusters, plan.Instances, plan.Firewalls, plan.VPCs, plan.ObjectBuckets} {
+		for _, resource := range group {
+			labels = append(labels, resource.Label)
+		}
+	}
+	sort.Strings(labels)
+	return labels
 }
 
 func validateDNSBeforeMutation(cfg deploymentConfig) error {
@@ -193,8 +425,9 @@ func printDeploymentUsage() {
 	fmt.Fprint(os.Stdout, `Usage:
   rtk-cloud deployment plan --environment NAME
   rtk-cloud deployment provision --environment NAME --confirm STACK
-  rtk-cloud deployment acceptance --environment NAME
+  rtk-cloud deployment acceptance --environment NAME --confirm STACK
   rtk-cloud deployment remove --environment NAME --confirm STACK
+  rtk-cloud deployment test --environment NAME --confirm STACK
 `)
 }
 
@@ -581,7 +814,8 @@ func deploymentLegacyLKEValues(v map[string]string, environment string) map[stri
 		"LKE_MQTT_REPLICAS": v["MQTT_EFFECTIVE_REPLICAS"], "LKE_VIDEO_CLOUD_REPLICAS": v["VIDEO_CLOUD_API_EFFECTIVE_REPLICAS"],
 		"LKE_POSTGRES_REQUEST_CPU": v["POSTGRES_REQUEST_CPU"], "LKE_POSTGRES_REQUEST_MEMORY": v["POSTGRES_REQUEST_MEMORY"], "LKE_POSTGRES_LIMIT_MEMORY": v["POSTGRES_LIMIT_MEMORY"],
 		"LKE_CLOUD_LOGGER_REQUEST_CPU": v["CLOUD_LOGGER_REQUEST_CPU"], "LKE_CLOUD_LOGGER_REQUEST_MEMORY": v["CLOUD_LOGGER_REQUEST_MEMORY"], "LKE_CLOUD_LOGGER_LIMIT_MEMORY": v["CLOUD_LOGGER_LIMIT_MEMORY"],
-		"LKE_EDGE_HAPROXY_COUNT": v["EDGE_REPLICAS"], "LKE_EDGE_HAPROXY_MAXCONN": v["EDGE_MAX_CONNECTIONS"],
+		"VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED": v["VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED"],
+		"LKE_EDGE_HAPROXY_COUNT":                 v["EDGE_REPLICAS"], "LKE_EDGE_HAPROXY_MAXCONN": v["EDGE_MAX_CONNECTIONS"],
 		"LKE_COTURN_VM_COUNT": v["TURN_REPLICAS"], "LKE_COTURN_MIN_PORT": v["TURN_MIN_PORT"], "LKE_COTURN_MAX_PORT": v["TURN_MAX_PORT"],
 	}
 	for _, prefix := range []string{"INGRESS", "REDIS", "REDIS_EXPORTER"} {

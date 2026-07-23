@@ -440,7 +440,7 @@ func lkePlan(env map[string]string, opts provisionOptions) {
 			lkeCoturnDomain(nodeEnv))
 	}
 	fmt.Fprintf(os.Stdout, "  - turn_registry: domain=%s registrar_node_id=%s\n", lkeTurnRegistryPublicDomain(env), lkeCoturnVMName(env))
-	fmt.Fprintln(os.Stdout, "- secrets: OpenBao standalone/AppRole for staging PKI; certissuer delegates device/app signing to OpenBao and Kubernetes Secrets do not carry CA private keys")
+	fmt.Fprintln(os.Stdout, "- secrets: OpenBao standalone/AppRole for environment PKI; certissuer delegates device/app signing to OpenBao and Kubernetes Secrets do not carry CA private keys")
 	fmt.Fprintln(os.Stdout, "- deploy images:")
 	for _, workload := range lkeWorkloads(env) {
 		status := "TODO"
@@ -830,7 +830,10 @@ func lkeIssuePublicHTTPSCertificate(paths provisionPaths, env map[string]string,
 	if err := os.WriteFile(cleanupHook, []byte(certbotDNSHookScript(hookBinary, paths.EnvRoot, paths.OperatorEnv, "cleanup")), 0o700); err != nil {
 		return "", "", err
 	}
-	configDir := filepath.Join(workDir, "config")
+	configDir := filepath.Join(paths.EnvRoot, "state", "acme")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		return "", "", err
+	}
 	certbot := firstNonEmpty(os.Getenv("RTK_CLOUD_CERTBOT"), "certbot")
 	args := []string{
 		"certonly",
@@ -855,12 +858,32 @@ func lkeIssuePublicHTTPSCertificate(paths provisionPaths, env map[string]string,
 	for _, host := range hosts {
 		args = append(args, "-d", host)
 	}
-	cmd := exec.Command(certbot, args...)
-	cmd.Env = os.Environ()
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return "", "", fmt.Errorf("public HTTPS ACME DNS-01 issuance failed: %w", err)
+	attempts := envIntDefault("LKE_PUBLIC_HTTPS_ACME_ATTEMPTS", 3)
+	retryDelay := time.Duration(envIntDefault("LKE_PUBLIC_HTTPS_ACME_RETRY_SECONDS", 10)) * time.Second
+	var certbotErr error
+	attemptsUsed := 0
+	for attempt := 1; attempt <= attempts; attempt++ {
+		attemptsUsed = attempt
+		var certbotOutput bytes.Buffer
+		cmd := exec.Command(certbot, args...)
+		cmd.Env = os.Environ()
+		cmd.Stdout = io.MultiWriter(os.Stdout, &certbotOutput)
+		cmd.Stderr = io.MultiWriter(os.Stderr, &certbotOutput)
+		certbotErr = cmd.Run()
+		if certbotErr == nil {
+			break
+		}
+		output := certbotOutput.String()
+		accountMissing := lkeACMEAccountMissing(output)
+		if accountMissing && attempt < attempts {
+			fmt.Fprintf(os.Stderr, "[lke] ACME issuance failed, retrying with the registered account attempt %d/%d: %v\n", attempt+1, attempts, certbotErr)
+			time.Sleep(retryDelay)
+			continue
+		}
+		break
+	}
+	if certbotErr != nil {
+		return "", "", fmt.Errorf("public HTTPS ACME DNS-01 issuance failed after %d attempt(s): %w", attemptsUsed, certbotErr)
 	}
 	liveDir := filepath.Join(configDir, "live", hosts[0])
 	certPEM, err := os.ReadFile(filepath.Join(liveDir, "fullchain.pem"))
@@ -875,6 +898,11 @@ func lkeIssuePublicHTTPSCertificate(paths provisionPaths, env map[string]string,
 		return "", "", errors.New("public HTTPS ACME DNS-01 issuance produced an empty certificate or key")
 	}
 	return string(certPEM), string(keyPEM), nil
+}
+
+func lkeACMEAccountMissing(output string) bool {
+	return strings.Contains(output, "accountDoesNotExist") ||
+		(strings.Contains(output, "Unable to validate JWS") && strings.Contains(output, "not found"))
 }
 
 func lkeExistingPublicHTTPSTLSSecretCoversHosts(env map[string]string, hosts []string) (bool, error) {
@@ -1859,7 +1887,21 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return err
 		}
 	}
-	return lkeWaitForRollouts(k8sRolloutTargetsFromEnv(selectedWorkloads))
+	if err := lkeWaitForRollouts(k8sRolloutTargetsFromEnv(selectedWorkloads)); err != nil {
+		return err
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") {
+		return lkeRestartVideoCloudLogIngester(env)
+	}
+	return nil
+}
+
+func lkeRestartVideoCloudLogIngester(env map[string]string) error {
+	namespace := lkeNamespaceName(env, "video-cloud")
+	if err := runKubectl("-n", namespace, "rollout", "restart", "deployment/video-cloud-logingester"); err != nil {
+		return err
+	}
+	return runKubectl("-n", namespace, "rollout", "status", "deployment/video-cloud-logingester", "--timeout", firstNonEmpty(os.Getenv("LKE_ROLLOUT_TIMEOUT"), "5m"))
 }
 
 func ensureLKEDeployImages(env map[string]string, opts provisionOptions) error {
@@ -2334,6 +2376,9 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 		if err := lkeApplyVideoCloudAuxiliaryServices(env, opts); err != nil {
 			return err
 		}
+		if err := lkeConfigureEMQXBilling(paths, env); err != nil {
+			return err
+		}
 	}
 	if !lkeWorkloadSelected(env, opts, "account-manager") {
 		return nil
@@ -2480,6 +2525,164 @@ func lkeApplyVideoCloudAuxiliaryServices(env map[string]string, opts provisionOp
 	return lkeApplyGrafana(env)
 }
 
+func lkeConfigureEMQXBilling(paths provisionPaths, env map[string]string) error {
+	workspace := strings.TrimSpace(paths.Workspace)
+	if workspace == "" {
+		var err error
+		workspace, err = workspaceRoot()
+		if err != nil {
+			return err
+		}
+	}
+	scriptPath := filepath.Join(workspace, "scripts", "configure-emqx-billing.sh")
+	script, err := os.ReadFile(scriptPath)
+	if errors.Is(err, os.ErrNotExist) {
+		if sourceWorkspace, sourceErr := workspaceRoot(); sourceErr == nil && sourceWorkspace != workspace {
+			scriptPath = filepath.Join(sourceWorkspace, "scripts", "configure-emqx-billing.sh")
+			script, err = os.ReadFile(scriptPath)
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("read EMQX billing configurator %s: %w", scriptPath, err)
+	}
+	if err := kubectlApply(lkeAllowEMQXBillingConfigureNetworkPolicyManifest(env)); err != nil {
+		return err
+	}
+	if err := kubectlApply(lkeAllowEMQXMQTTUsageNetworkPolicyManifest(env)); err != nil {
+		return err
+	}
+	if err := kubectlApply(lkeEMQXBillingConfigMapManifest(env, string(script))); err != nil {
+		return err
+	}
+	namespace := lkeNamespaceName(env, "video-cloud")
+	if err := runKubectl("-n", namespace, "delete", "job/emqx-billing-configure", "--ignore-not-found=true", "--wait=true"); err != nil {
+		return err
+	}
+	if err := kubectlApply(lkeEMQXBillingJobManifest(env)); err != nil {
+		return err
+	}
+	if err := runKubectl("-n", namespace, "wait", "--for=condition=complete", "job/emqx-billing-configure", "--timeout", firstNonEmpty(os.Getenv("LKE_EMQX_BILLING_CONFIGURE_TIMEOUT"), "5m")); err != nil {
+		_ = runKubectl("-n", namespace, "logs", "job/emqx-billing-configure")
+		return fmt.Errorf("configure EMQX billing rules: %w", err)
+	}
+	if err := runKubectl("-n", namespace, "logs", "job/emqx-billing-configure"); err != nil {
+		return err
+	}
+	if err := runKubectl("-n", namespace, "delete", "job/emqx-billing-configure", "--wait=true"); err != nil {
+		return err
+	}
+	return runKubectl("-n", namespace, "delete", "configmap/emqx-billing-configure", "--ignore-not-found=true")
+}
+
+func lkeEMQXBillingConfigMapManifest(env map[string]string, script string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: emqx-billing-configure
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: emqx-billing-configure
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+data:
+  configure-emqx-billing.sh: |
+%s
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], indentManifest(script, 4))
+}
+
+func lkeEMQXBillingJobManifest(env map[string]string) string {
+	callbackURL := fmt.Sprintf("http://video-cloud-mqttusage.%s.svc.cluster.local:19400", lkeNamespaceName(env, "video-cloud"))
+	return fmt.Sprintf(`apiVersion: batch/v1
+kind: Job
+metadata:
+  name: emqx-billing-configure
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: emqx-billing-configure
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: emqx-billing-configure
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: configure
+          image: alpine:3.20
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              apk add --no-cache bash curl jq >/dev/null
+              login_response="$(curl --fail --silent --show-error --max-time 10 --retry 12 --retry-all-errors --retry-delay 2 \
+                -H 'content-type: application/json' \
+                -d "{\"username\":\"admin\",\"password\":\"${EMQX_DASHBOARD_PASSWORD}\"}" \
+                http://mqtt:18083/api/v5/login)"
+              EMQX_API_TOKEN="$(printf '%%s' "$login_response" | jq -er '.token')"
+              export EMQX_API_TOKEN
+              exec /scripts/configure-emqx-billing.sh
+          env:
+            - name: EMQX_API_URL
+              value: "http://mqtt:18083/api/v5"
+            - name: EMQX_DASHBOARD_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mqtt-runtime
+                  key: EMQX_DASHBOARD_PASSWORD
+            - name: VIDEO_CLOUD_MQTT_USAGE_INGEST_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-workers-runtime
+                  key: VIDEO_CLOUD_MQTT_USAGE_INGEST_TOKEN
+            - name: VIDEO_CLOUD_MQTT_USAGE_CALLBACK_URL
+              value: %q
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: scripts
+          configMap:
+            name: emqx-billing-configure
+            defaultMode: 0555
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], callbackURL)
+}
+
+func lkeAllowEMQXBillingConfigureNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-emqx-billing-configure
+  namespace: %s
+  labels:
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mqtt
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: emqx-billing-configure
+      ports:
+        - protocol: TCP
+          port: 18083
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
+}
+
 func lkeApplyGrafana(env map[string]string) error {
 	manifests := []string{
 		lkeGrafanaAdminSecretManifest(env),
@@ -2526,9 +2729,6 @@ func lkeWaitForRollouts(targets []lkeRolloutTarget) error {
 }
 
 func writeLKECompatibilityArtifacts(paths provisionPaths, env map[string]string) error {
-	if env["DEPLOYMENT_ARCHITECTURE"] != "" {
-		return nil
-	}
 	if err := os.MkdirAll(filepath.Join(paths.EnvRoot, "env"), 0o755); err != nil {
 		return err
 	}
@@ -4003,7 +4203,8 @@ stringData:
   key.pem: %q
   cacert.pem: %q
   EMQX_HTTP_AUTHENTICATION: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], material.ServerCert, material.ServerKey, material.ServerCert, material.ServerKey, material.ServerCert, lkeEMQXHTTPAuthentication(env))
+  EMQX_DASHBOARD_PASSWORD: %q
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], material.ServerCert, material.ServerKey, material.ServerCert, material.ServerKey, material.ServerCert, lkeEMQXHTTPAuthentication(env), lkeRuntimeSecretValue("emqx-dashboard-password"))
 }
 
 func lkeEMQXHTTPAuthentication(env map[string]string) string {
@@ -4171,6 +4372,11 @@ spec:
               value: "%s"
             - name: EMQX_FORCE_SHUTDOWN__MAX_HEAP_SIZE
               value: "%s"
+            - name: EMQX_DASHBOARD__DEFAULT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mqtt-runtime
+                  key: EMQX_DASHBOARD_PASSWORD
 %s
 %s
           ports:
@@ -4178,6 +4384,8 @@ spec:
               containerPort: 1883
             - name: mqtts
               containerPort: 8883
+            - name: dashboard
+              containerPort: 18083
           volumeMounts:
             - name: mqtt-runtime
               mountPath: /opt/emqx/etc/certs
@@ -4431,6 +4639,9 @@ spec:
     - name: mqtts
       port: 8883
       targetPort: 8883
+    - name: dashboard
+      port: 18083
+      targetPort: 18083
 `, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
 }
 
@@ -4668,7 +4879,11 @@ spec:
 func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lkeVideoCloudAuxiliaryService) string {
 	replicas := 1
 	if service.Name == "video-cloud-clipverifier" {
-		replicas = envIntDefault("LKE_VIDEO_CLOUD_CLIPVERIFIER_REPLICAS", 4)
+		if lkeClipDirectUploadEnabled(env) {
+			replicas = envIntDefault("LKE_VIDEO_CLOUD_CLIPVERIFIER_REPLICAS", 4)
+		} else {
+			replicas = 0
+		}
 	}
 	ports := ""
 	if service.Port > 0 {
@@ -4868,7 +5083,17 @@ spec:
 }
 
 func lkePrometheusTargets(env map[string]string, opts provisionOptions) []lkePrometheusTarget {
-	return k8sPrometheusTargets(env, opts)
+	targets := k8sPrometheusTargets(env, opts)
+	if lkeClipDirectUploadEnabled(env) {
+		return targets
+	}
+	filtered := make([]lkePrometheusTarget, 0, len(targets))
+	for _, target := range targets {
+		if target.Service != "video-cloud-clipverifier" {
+			filtered = append(filtered, target)
+		}
+	}
+	return filtered
 }
 
 func lkeVideoCloudPrometheusConfigManifest(env map[string]string, opts provisionOptions) string {
@@ -6435,7 +6660,16 @@ func lkeBlobEnvironmentManifest(env map[string]string, secretName string) string
                 secretKeyRef:
                   name: %s
                   key: AWS_SECRET_ACCESS_KEY
-`, env["VIDEO_CLOUD_BLOB_ENDPOINT"], env["VIDEO_CLOUD_BLOB_REGION"], env["VIDEO_CLOUD_BLOB_BUCKET"], env["VIDEO_CLOUD_BLOB_PREFIX"], firstNonEmpty(env["VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE"], "false"), firstNonEmpty(env["VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED"], "true"), firstNonEmpty(env["VIDEO_CLOUD_CLIP_VERIFIER_ADDR"], "0.0.0.0:19500"), firstNonEmpty(env["VIDEO_CLOUD_CLIP_UPLOAD_URL_TTL"], "10m"), firstNonEmpty(env["VIDEO_CLOUD_CLIP_UPLOAD_SESSION_TTL"], "30m"), firstNonEmpty(env["VIDEO_CLOUD_CLIP_UPLOAD_MAX_BYTES"], "268435456"), firstNonEmpty(env["VIDEO_CLOUD_CLIP_THUMBNAIL_MAX_BYTES"], "5242880"), firstNonEmpty(env["VIDEO_CLOUD_CLIP_VERIFY_POLL_INTERVAL"], "500ms"), firstNonEmpty(env["VIDEO_CLOUD_CLIP_VERIFY_SWEEP_INTERVAL"], "1m"), secretName, secretName)
+`, env["VIDEO_CLOUD_BLOB_ENDPOINT"], env["VIDEO_CLOUD_BLOB_REGION"], env["VIDEO_CLOUD_BLOB_BUCKET"], env["VIDEO_CLOUD_BLOB_PREFIX"], firstNonEmpty(env["VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE"], "false"), strconv.FormatBool(lkeClipDirectUploadEnabled(env)), firstNonEmpty(env["VIDEO_CLOUD_CLIP_VERIFIER_ADDR"], "0.0.0.0:19500"), firstNonEmpty(env["VIDEO_CLOUD_CLIP_UPLOAD_URL_TTL"], "10m"), firstNonEmpty(env["VIDEO_CLOUD_CLIP_UPLOAD_SESSION_TTL"], "30m"), firstNonEmpty(env["VIDEO_CLOUD_CLIP_UPLOAD_MAX_BYTES"], "268435456"), firstNonEmpty(env["VIDEO_CLOUD_CLIP_THUMBNAIL_MAX_BYTES"], "5242880"), firstNonEmpty(env["VIDEO_CLOUD_CLIP_VERIFY_POLL_INTERVAL"], "500ms"), firstNonEmpty(env["VIDEO_CLOUD_CLIP_VERIFY_SWEEP_INTERVAL"], "1m"), secretName, secretName)
+}
+
+func lkeClipDirectUploadEnabled(env map[string]string) bool {
+	value := strings.TrimSpace(env["VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED"])
+	if value == "" {
+		return true
+	}
+	enabled, err := strconv.ParseBool(value)
+	return err != nil || enabled
 }
 
 func lkeVideoCloudRuntimeChecksum(env map[string]string) string {

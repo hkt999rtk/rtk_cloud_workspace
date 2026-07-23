@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,11 +37,18 @@ type linodeDestroyResource struct {
 }
 
 func runDestroyLinodeStagingResources(args []string) error {
-	fs := flag.NewFlagSet("destroy-linode-staging-resources", flag.ContinueOnError)
+	if !hasFlag(args, "--loadtest-prefix") {
+		args = append(args, "--loadtest-prefix", "home-100k")
+	}
+	return runDestroyEnvironmentResources(args)
+}
+
+func runDestroyEnvironmentResources(args []string) error {
+	fs := flag.NewFlagSet("destroy-environment-resources", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	workspaceFlag := fs.String("workspace", "", "workspace")
 	envRootFlag := fs.String("env-root", "", "environment root")
-	loadTestPrefix := fs.String("loadtest-prefix", "home-100k", "load generator VM label/tag prefix")
+	loadTestPrefix := fs.String("loadtest-prefix", "", "optional load generator VM label/tag prefix")
 	yes := fs.Bool("yes", false, "delete resources after listing the plan")
 	confirmText := fs.String("confirm-text", "", "confirmation text; must equal: destroy <stack>")
 	includeObjectStorage := fs.Bool("include-object-storage", false, "delete matched Object Storage buckets too; buckets must already be empty")
@@ -308,6 +316,35 @@ func listDestroyObjectBuckets(token string, match func(string, []string) bool) (
 }
 
 func listDestroyOrphanVolumes(token string) ([]linodeDestroyResource, error) {
+	all, err := listLinodeVolumes(token)
+	if err != nil {
+		return nil, err
+	}
+	out := []linodeDestroyResource{}
+	for _, item := range all {
+		if item.LinodeID != nil || item.Status != "active" || !strings.HasPrefix(item.Label, "pvc-") {
+			continue
+		}
+		out = append(out, linodeDestroyResource{
+			ID:     item.ID,
+			Label:  item.Label,
+			Region: item.Region,
+			Status: "unattached",
+			Path:   "/volumes/" + item.ID,
+		})
+	}
+	return sortedDestroyResources(out), nil
+}
+
+type linodeVolume struct {
+	ID       string
+	Label    string
+	Region   string
+	Status   string
+	LinodeID *int
+}
+
+func listLinodeVolumes(token string) ([]linodeVolume, error) {
 	var listed struct {
 		Data []struct {
 			ID       int      `json:"id"`
@@ -321,20 +358,63 @@ func listDestroyOrphanVolumes(token string) ([]linodeDestroyResource, error) {
 	if err := linodeDestroyList(token, "/volumes?page_size=500", &listed); err != nil {
 		return nil, err
 	}
-	out := []linodeDestroyResource{}
+	out := []linodeVolume{}
 	for _, item := range listed.Data {
-		if item.LinodeID != nil || item.Status != "active" || !strings.HasPrefix(item.Label, "pvc-") {
-			continue
-		}
-		out = append(out, linodeDestroyResource{
-			ID:     fmt.Sprint(item.ID),
-			Label:  item.Label,
-			Region: item.Region,
-			Status: "unattached",
-			Path:   fmt.Sprintf("/volumes/%d", item.ID),
+		out = append(out, linodeVolume{
+			ID:       strconv.Itoa(item.ID),
+			Label:    item.Label,
+			Region:   item.Region,
+			Status:   item.Status,
+			LinodeID: item.LinodeID,
 		})
 	}
-	return sortedDestroyResources(out), nil
+	return out, nil
+}
+
+func deleteDeploymentVolumesWhenDetached(token string, volumeIDs []string, timeout time.Duration) error {
+	if len(volumeIDs) == 0 {
+		return nil
+	}
+	if strings.TrimSpace(token) == "" {
+		return errors.New("LINODE_TOKEN is required to remove environment persistent volumes")
+	}
+	wanted := map[string]bool{}
+	for _, id := range volumeIDs {
+		wanted[id] = true
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		volumes, err := listLinodeVolumes(token)
+		if err != nil {
+			return err
+		}
+		remaining := map[string]linodeVolume{}
+		for _, volume := range volumes {
+			if wanted[volume.ID] {
+				remaining[volume.ID] = volume
+			}
+		}
+		if len(remaining) == 0 {
+			return nil
+		}
+		for id, volume := range remaining {
+			if volume.LinodeID != nil || volume.Status != "active" {
+				continue
+			}
+			if _, err := linodeRequestRaw(token, "DELETE", "/volumes/"+id, ""); err != nil {
+				return fmt.Errorf("delete environment volume %s: %w", id, err)
+			}
+		}
+		if time.Now().After(deadline) {
+			ids := make([]string, 0, len(remaining))
+			for id := range remaining {
+				ids = append(ids, id)
+			}
+			sort.Strings(ids)
+			return fmt.Errorf("timed out after %s waiting to remove environment volumes: %s", timeout, strings.Join(ids, ", "))
+		}
+		time.Sleep(5 * time.Second)
+	}
 }
 
 func listDestroyOrphanNodeBalancers(token string, env map[string]string) ([]linodeDestroyResource, error) {
