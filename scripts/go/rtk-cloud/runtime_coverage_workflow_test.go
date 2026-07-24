@@ -38,10 +38,12 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"RUNTIME_COVERAGE_PLANNED_PVCS: \"5\"",
 		"RUNTIME_COVERAGE_PLANNED_LOAD_BALANCERS: \"0\"",
 		"RUNTIME_COVERAGE_PLANNED_GENERATORS: \"0\"",
-		"LINODE_OBJ_ACCESS_KEY_ID: ${{ secrets.LINODE_OBJ_ACCESS_KEY_ID }}",
-		"LINODE_OBJ_SECRET_ACCESS_KEY: ${{ secrets.LINODE_OBJ_SECRET_ACCESS_KEY }}",
-		"LINODE_OBJ_ENDPOINT: ${{ secrets.LINODE_OBJ_ENDPOINT }}",
-		"LINODE_OBJ_BUCKET: ${{ secrets.LINODE_OBJ_BUCKET }}",
+		`get secret video-cloud-runtime -o json`,
+		`.data.AWS_ACCESS_KEY_ID | @base64d`,
+		`deployment_env VIDEO_CLOUD_BLOB_ENDPOINT`,
+		`deployment_env VIDEO_CLOUD_BLOB_REGION`,
+		`deployment_env VIDEO_CLOUD_BLOB_BUCKET`,
+		`RUNTIME_COVERAGE_STORAGE_SOURCE_NAMESPACE=$staging_video_namespace`,
 		"VIDEO_CLOUD_BLOB_PREFIX=runtime-coverage/%s",
 		"--preflight --plan --apply --deploy --artifacts",
 		"Prepare run-scoped Clip credentials",
@@ -73,6 +75,10 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"secrets.VIDEO_CLOUD_ADMIN_TOKEN",
 		"secrets.CLIP_USER_PRIVATE_KEY_PATH",
 		"secrets.CLIP_SERVER_PUBLIC_KEY_PATH",
+		"secrets.LINODE_OBJ_ACCESS_KEY_ID",
+		"secrets.LINODE_OBJ_SECRET_ACCESS_KEY",
+		"secrets.LINODE_OBJ_ENDPOINT",
+		"secrets.LINODE_OBJ_BUCKET",
 	} {
 		if strings.Contains(workflow, forbidden) {
 			t.Fatalf("runtime workflow contains forbidden value %q", forbidden)
@@ -278,6 +284,40 @@ func TestRuntimeCoveragePreflightWrongRunnerArchitectureIsBlocked(t *testing.T) 
 		parsed.Runner.Architecture != "ARM64" ||
 		!strings.Contains(strings.Join(parsed.Failures, "\n"), "runner architecture must be X64") {
 		t.Fatalf("preflight report = %#v", parsed)
+	}
+}
+
+func TestRuntimeCoveragePreflightRequiresSharedStagingStorageSource(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := filepath.Join(t.TempDir(), "preflight.json")
+	command := exec.Command("bash", filepath.Join(workspace, "scripts", "ci", "runtime-coverage-preflight.sh"))
+	command.Env = append(os.Environ(),
+		"GITHUB_WORKSPACE="+workspace,
+		"RUNTIME_COVERAGE_RUN_ID=unit-preflight",
+		"RUNTIME_COVERAGE_MODE=preflight",
+		"CLOUD_STAGING_LKE_CLUSTER_LABEL=video-cloud-staging-lke",
+		"RUNTIME_COVERAGE_RUNNER_LABEL=ubuntu-24.04",
+		"RUNTIME_COVERAGE_PREFLIGHT_REPORT="+report,
+		"RUNTIME_COVERAGE_STORAGE_SOURCE_NAMESPACE=unexpected",
+	)
+	if err := command.Run(); err == nil {
+		t.Fatal("preflight accepted object storage outside shared staging")
+	}
+	raw, err := os.ReadFile(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct {
+		Failures []string `json:"failures"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(parsed.Failures, "\n"), "object storage must be sourced from the shared staging") {
+		t.Fatalf("preflight failures = %#v", parsed.Failures)
 	}
 }
 

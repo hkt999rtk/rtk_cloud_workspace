@@ -61,9 +61,12 @@ for name in \
   LINODE_OBJ_ACCESS_KEY_ID \
   LINODE_OBJ_SECRET_ACCESS_KEY \
   LINODE_OBJ_ENDPOINT \
+  LINODE_OBJ_REGION \
   LINODE_OBJ_BUCKET; do
   [[ -n "${!name:-}" ]] || fail "missing required credential: $name"
 done
+[[ "${RUNTIME_COVERAGE_STORAGE_SOURCE_NAMESPACE:-}" == "video-cloud-staging-video-cloud" ]] ||
+  fail "runtime object storage must be sourced from the shared staging video-cloud namespace"
 [[ -s "$workspace/repos/rtk_video_cloud/cmd/admin-token/main.go" ]] ||
   fail "run-scoped Video Cloud admin-token source is missing"
 grep -Fq "admin-token" "$workspace/tests/runtime-coverage/Dockerfile.video-cloud" ||

@@ -52,10 +52,6 @@ jobs:
       RUNTIME_COVERAGE_PLANNED_LOAD_BALANCERS: "0"
       RUNTIME_COVERAGE_PLANNED_GENERATORS: "0"
       LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
-      LINODE_OBJ_ACCESS_KEY_ID: ${{ secrets.LINODE_OBJ_ACCESS_KEY_ID }}
-      LINODE_OBJ_SECRET_ACCESS_KEY: ${{ secrets.LINODE_OBJ_SECRET_ACCESS_KEY }}
-      LINODE_OBJ_ENDPOINT: ${{ secrets.LINODE_OBJ_ENDPOINT }}
-      LINODE_OBJ_BUCKET: ${{ secrets.LINODE_OBJ_BUCKET }}
       GHCR_PULL_USERNAME: ${{ github.actor }}
       GHCR_PULL_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -108,6 +104,45 @@ jobs:
             echo "RTK_CLOUD_LKE_KUBECONFIG=$kubeconfig"
             echo "RUNTIME_ENV_ROOT=$runtime_env_root"
           } >> "$GITHUB_ENV"
+          staging_video_namespace="$(
+            kubectl --kubeconfig "$kubeconfig" get deployment -A -o json |
+              jq -er '
+                [.items[]
+                  | select(.metadata.name == "video-cloud-api")
+                  | select(.metadata.labels["rtk.realtek.com/stack"] == "video-cloud-staging")
+                  | .metadata.namespace
+                ] | if length == 1 then .[0] else error("expected one shared staging video-cloud-api deployment") end
+              '
+          )"
+          staging_deployment="$RUNNER_TEMP/runtime-coverage-staging-video-deployment.json"
+          staging_secret="$RUNNER_TEMP/runtime-coverage-staging-video-secret.json"
+          kubectl --kubeconfig "$kubeconfig" -n "$staging_video_namespace" \
+            get deployment video-cloud-api -o json > "$staging_deployment"
+          kubectl --kubeconfig "$kubeconfig" -n "$staging_video_namespace" \
+            get secret video-cloud-runtime -o json > "$staging_secret"
+          deployment_env() {
+            jq -er --arg name "$1" '
+              [.spec.template.spec.containers[].env[]?
+                | select(.name == $name)
+                | .value
+              ] | if length > 0 and .[0] != null and .[0] != "" then .[0] else error("missing deployment environment value") end
+            ' "$staging_deployment"
+          }
+          blob_access_key="$(jq -er '.data.AWS_ACCESS_KEY_ID | @base64d | select(length > 0)' "$staging_secret")"
+          blob_secret_key="$(jq -er '.data.AWS_SECRET_ACCESS_KEY | @base64d | select(length > 0)' "$staging_secret")"
+          blob_endpoint="$(deployment_env VIDEO_CLOUD_BLOB_ENDPOINT)"
+          blob_region="$(deployment_env VIDEO_CLOUD_BLOB_REGION)"
+          blob_bucket="$(deployment_env VIDEO_CLOUD_BLOB_BUCKET)"
+          echo "::add-mask::$blob_access_key"
+          echo "::add-mask::$blob_secret_key"
+          {
+            echo "RUNTIME_COVERAGE_STORAGE_SOURCE_NAMESPACE=$staging_video_namespace"
+            echo "LINODE_OBJ_ACCESS_KEY_ID=$blob_access_key"
+            echo "LINODE_OBJ_SECRET_ACCESS_KEY=$blob_secret_key"
+            echo "LINODE_OBJ_ENDPOINT=$blob_endpoint"
+            echo "LINODE_OBJ_REGION=$blob_region"
+            echo "LINODE_OBJ_BUCKET=$blob_bucket"
+          } >> "$GITHUB_ENV"
 
       - name: Snapshot shared staging deployment anchors
         continue-on-error: true
@@ -153,6 +188,7 @@ jobs:
           [[ "$RUNTIME_COVERAGE_STACK" != *staging* ]]
           [[ "$RUNTIME_COVERAGE_STACK" != *prod* ]]
           test -f "$RUNTIME_SOURCE_STACK_ENV"
+          test "$RUNTIME_COVERAGE_STORAGE_SOURCE_NAMESPACE" = "video-cloud-staging-video-cloud"
           mkdir -p "$RUNTIME_ENV_ROOT/env" "$RUNTIME_ENV_ROOT/adapters/lke"
           cp "$RUNTIME_SOURCE_STACK_ENV" "$RUNTIME_ENV_ROOT/env/stack.env"
           perl -0pi -e "s/^CLOUD_STACK_NAME=.*/CLOUD_STACK_NAME=$RUNTIME_COVERAGE_STACK/m; s/^CLOUD_ENV_NAME=.*/CLOUD_ENV_NAME=runtime-coverage/m; s/^CLOUD_PROVIDER=.*/CLOUD_PROVIDER=lke/m" \
@@ -162,13 +198,11 @@ jobs:
           blob_endpoint="$LINODE_OBJ_ENDPOINT"
           [[ "$blob_endpoint" == http://* || "$blob_endpoint" == https://* ]] ||
             blob_endpoint="https://$blob_endpoint"
-          blob_host="${blob_endpoint#*://}"
-          blob_region="${blob_host%%.*}"
-          test -n "$blob_region"
+          test -n "$LINODE_OBJ_REGION"
           {
             printf '\nCLOUD_RUNTIME_COVERAGE_STACK=%s\n' "$RUNTIME_COVERAGE_STACK"
             printf 'VIDEO_CLOUD_BLOB_ENDPOINT=%s\n' "$blob_endpoint"
-            printf 'VIDEO_CLOUD_BLOB_REGION=%s\n' "$blob_region"
+            printf 'VIDEO_CLOUD_BLOB_REGION=%s\n' "$LINODE_OBJ_REGION"
             printf 'VIDEO_CLOUD_BLOB_BUCKET=%s\n' "$LINODE_OBJ_BUCKET"
             printf 'VIDEO_CLOUD_BLOB_PREFIX=runtime-coverage/%s\n' "$RUNTIME_COVERAGE_RUN_ID"
             printf 'VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE=false\n'

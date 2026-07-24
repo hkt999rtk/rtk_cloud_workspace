@@ -197,7 +197,10 @@ run-scoped namespaces whose stack name starts with `coverage-`. Manual
 `preflight` validates the configured GitHub runner, credentials, cluster label,
 repository capacity variable, live Linode instance/volume/NodeBalancer
 headroom, orphaned coverage PVs, commit anchors, and staging deployment snapshot
-without creating resources. The quota-bounded runtime profile uses ephemeral
+without creating resources. Object-storage endpoint, bucket, region, and
+credentials are read from the current shared-staging Video Cloud deployment
+rather than duplicated GitHub secrets; runtime data remains isolated by its
+run-specific object prefix. The quota-bounded runtime profile uses ephemeral
 PostgreSQL/OpenBao storage, five namespace-level coverage PVCs, ClusterIP plus
 runner-local tunnels, and a bounded local-live canary runner. It therefore
 projects five additional active services and creates no LoadBalancer or
