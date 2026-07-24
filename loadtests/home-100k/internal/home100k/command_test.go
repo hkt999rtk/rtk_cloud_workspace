@@ -1172,6 +1172,9 @@ func TestExecuteSyncLiveHonorsExplicitVMCountOverride(t *testing.T) {
 			t.Fatalf("extra vars %s = %q, want absolute path", key, extraVars[key])
 		}
 	}
+	if got := extraVars["scenario_profile"]; got != DefaultScenarioProfile {
+		t.Fatalf("extra vars scenario_profile = %v, want %q", got, DefaultScenarioProfile)
+	}
 	localRTKCloud, _ := extraVars["local_rtk_cloud"].(string)
 	if !filepath.IsAbs(localRTKCloud) {
 		t.Fatalf("extra vars local_rtk_cloud = %q, want absolute path", extraVars["local_rtk_cloud"])
@@ -1923,7 +1926,7 @@ func TestHome100KScriptEnvOverridesDescriptionRampUpAndRuntimeWindows(t *testing
 	}
 	script := filepath.Join("..", "..", "scripts", "home-100k.sh")
 	cmd := exec.Command("bash", script, "plan")
-	cmd.Env = append(os.Environ(),
+	cmd.Env = home100KTestEnv(
 		"HOME100K_DESCRIPTION_FILE="+descriptionFile,
 		"HOME100K_RUN_ID=test-env-priority",
 		"HOME100K_OUT_DIR="+filepath.Join(outDir, "report"),
@@ -2121,7 +2124,10 @@ JSON
 func TestHome100KScriptDocumentsWebRTCOnlyWorkflow(t *testing.T) {
 	script := filepath.Join("..", "..", "scripts", "home-100k.sh")
 	cmd := exec.Command("bash", script, "--help")
-	cmd.Env = home100KTestEnv()
+	cmd.Env = home100KTestEnv(
+		"HOME100K_REGION=",
+		"HOME100K_ENV_ROOT="+t.TempDir(),
+	)
 	raw, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("home-100k.sh --help failed: %v\n%s", err, raw)
@@ -2135,6 +2141,63 @@ func TestHome100KScriptDocumentsWebRTCOnlyWorkflow(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("help missing %q:\n%s", want, body)
 		}
+	}
+}
+
+func TestHome100KScriptRequiresResolvedRegionForPlan(t *testing.T) {
+	script := filepath.Join("..", "..", "scripts", "home-100k.sh")
+	cmd := exec.Command("bash", script, "plan")
+	cmd.Env = home100KTestEnv(
+		"HOME100K_REGION=",
+		"HOME100K_ENV_ROOT="+t.TempDir(),
+	)
+	raw, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("home-100k.sh plan unexpectedly passed without a provider region:\n%s", raw)
+	}
+	if !strings.Contains(string(raw), "provider region is unresolved") {
+		t.Fatalf("home-100k.sh plan reported the wrong error:\n%s", raw)
+	}
+}
+
+func TestHome100KClipMixedInventoryUsesConfiguredDeviceCount(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "home-100k.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	start := strings.Index(body, "\nrun_clip_storage_loadtest_step() {")
+	if start < 0 {
+		t.Fatal("home-100k.sh missing run_clip_storage_loadtest_step")
+	}
+	end := strings.Index(body[start:], "\ncollect_clip_storage_evidence() {")
+	if end < 0 {
+		t.Fatal("run_clip_storage_loadtest_step is not terminated before evidence collection")
+	}
+	helper := body[start : start+end]
+	if !strings.Contains(helper, `python3 - "$(local_env_root_path)" "$device_count"`) {
+		t.Fatalf("clip mixed inventory does not use configured device_count:\n%s", helper)
+	}
+	if strings.Contains(helper, `python3 - "$(local_env_root_path)" "$devices"`) {
+		t.Fatalf("clip mixed inventory references function-local video variable:\n%s", helper)
+	}
+}
+
+func TestMQTTDeviceTrafficProfileUsesHomeProfileForFeatureWorkloads(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		plan Plan
+		want string
+	}{
+		{name: "shadow", plan: Plan{ScenarioProfile: "home-diverse-v1"}, want: "home-diverse-v1"},
+		{name: "video", plan: Plan{ScenarioProfile: Video1KScenarioProfile, VideoProfile: VideoProfile{Name: Video1KScenarioProfile}}, want: DefaultScenarioProfile},
+		{name: "clip", plan: Plan{ScenarioProfile: "clip-storage-1k-v1", ClipStorageProfile: ClipStorageProfile{Name: "clip-storage-1k-v1"}}, want: DefaultScenarioProfile},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := mqttDeviceTrafficProfile(test.plan); got != test.want {
+				t.Fatalf("mqttDeviceTrafficProfile() = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 
@@ -2543,12 +2606,22 @@ func TestHome100KScriptDocumentsCloudLoggerEvidenceOverrides(t *testing.T) {
 }
 
 func home100KTestEnv(extra ...string) []string {
-	env := make([]string, 0, len(os.Environ())+len(extra))
+	env := make([]string, 0, len(os.Environ())+len(extra)+1)
 	for _, item := range os.Environ() {
 		if strings.HasPrefix(item, "HOME100K_") {
 			continue
 		}
 		env = append(env, item)
+	}
+	hasRegionOverride := false
+	for _, item := range extra {
+		if strings.HasPrefix(item, "HOME100K_REGION=") {
+			hasRegionOverride = true
+			break
+		}
+	}
+	if !hasRegionOverride {
+		env = append(env, "HOME100K_REGION=us-sea")
 	}
 	return append(env, extra...)
 }
@@ -2609,6 +2682,7 @@ func TestAnsibleStartRunnerUsesPrebuiltCloudMQTTTestAndDaemonWait(t *testing.T) 
 		`--users "{{ user_count }}"`,
 		`--devices-per-user "{{ devices_per_user }}"`,
 		`--load-generator-devices-per-vm "{{ load_generator_devices_per_vm }}"`,
+		`--scenario-profile "{{ scenario_profile }}"`,
 		`--vm-label-prefix "{{ vm_label_prefix | default('lg') }}"`,
 		`--mqtt-concurrency "{{ mqtt_concurrency | default(1000) }}"`,
 		`--runtime-logs="{{ runtime_logs | default(true) | string | lower }}"`,
@@ -2625,10 +2699,11 @@ func TestAnsibleStartRunnerUsesPrebuiltCloudMQTTTestAndDaemonWait(t *testing.T) 
 
 func TestRunnerDaemonAcceptsRuntimeLogsFlag(t *testing.T) {
 	var stderr bytes.Buffer
-	_, values, err := parseRunnerDaemonFlags("home-100k runner-daemon", []string{
+	opts, values, err := parseRunnerDaemonFlags("home-100k runner-daemon", []string{
 		"--env-root", "cloud_env/staging/runtime",
 		"--brandname", "RTK",
 		"--region", "us-sea",
+		"--scenario-profile", ClipStorageCanaryScenarioProfile,
 		"--run-id", "run-cli",
 		"--role", "mixed",
 		"--shard-index", "0",
@@ -2639,6 +2714,9 @@ func TestRunnerDaemonAcceptsRuntimeLogsFlag(t *testing.T) {
 	}
 	if values.runtimeLogs {
 		t.Fatalf("runtimeLogs = true, want false")
+	}
+	if opts.ScenarioProfile != ClipStorageCanaryScenarioProfile {
+		t.Fatalf("scenario profile = %q, want %q", opts.ScenarioProfile, ClipStorageCanaryScenarioProfile)
 	}
 }
 

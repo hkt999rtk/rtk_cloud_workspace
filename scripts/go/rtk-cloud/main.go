@@ -30,6 +30,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -90,10 +91,12 @@ var commands = map[string]commandSpec{
 	"sync-all":                         {run: runSyncAll},
 	"test-data":                        {run: runTestData},
 	"test-e2e":                         {run: runTestE2E},
+	"test-feature":                     {run: runTestFeature},
 	"test-live":                        {run: runTestLive},
 	"test-matrix":                      {run: runTestMatrix},
 	"test-services":                    {run: runTestServices},
 	"test-catalog":                     {run: runTestCatalog},
+	"test-coverage":                    {run: runTestCoverage},
 	"test-ui":                          {run: runTestUI},
 	"unprovision-devices":              {run: runUnprovisionDevices},
 	"validate-device-bind":             {run: runValidateDeviceBind},
@@ -201,6 +204,9 @@ func normalizeEnvironmentArgs(args []string) ([]string, error) {
 		workspace = "."
 	}
 	envRoot := filepath.Join(workspace, "cloud_env", environment, "runtime")
+	if args[0] == "test-feature" {
+		envRoot = filepath.Join(workspace, "cloud_env", environment, "lke")
+	}
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--environment" {
@@ -1095,6 +1101,11 @@ func runTestMatrix(args []string) error {
 	if err := checkTestCatalog(workspace, true); err != nil {
 		return err
 	}
+	if cfg, err := loadCoverageConfig(workspace); err != nil {
+		return err
+	} else {
+		fmt.Fprintf(os.Stdout, "coverage policy valid: %d modules, %.1f%% differential minimum\n", len(cfg.Modules), cfg.Differential.MinimumStatementPercent)
+	}
 	fmt.Fprintln(os.Stdout)
 	fmt.Fprintln(os.Stdout, "== repository status checks ==")
 	submodules, err := submodulePaths(workspace)
@@ -1121,12 +1132,27 @@ type serviceTestSpec struct {
 	cmd  []string
 }
 
+var managedServiceRepos = []string{
+	"rtk_account_manager",
+	"rtk_cloud_admin",
+	"rtk_cloud_client",
+	"rtk_cloud_frontend",
+	"rtk_cloud_logger",
+	"rtk_video_cloud",
+}
+
 func runTestServices(args []string) error {
 	fs := flag.NewFlagSet("test-services", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	repoFilter := fs.String("repo", "", "comma-separated repository names; default runs all local service and SDK tests")
+	changedSince := fs.String("changed-since", "", "run repositories affected between this git ref and --head-ref")
+	headRef := fs.String("head-ref", "HEAD", "head git ref used with --changed-since")
+	install := fs.Bool("install", false, "install npm dependencies before JavaScript service tests")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if strings.TrimSpace(*repoFilter) != "" && strings.TrimSpace(*changedSince) != "" {
+		return errors.New("test-services accepts either --repo or --changed-since, not both")
 	}
 	workspace, err := workspaceRoot()
 	if err != nil {
@@ -1135,7 +1161,25 @@ func runTestServices(args []string) error {
 	selected := map[string]bool{}
 	for _, name := range strings.Split(*repoFilter, ",") {
 		if name = strings.TrimSpace(name); name != "" {
+			if !slices.Contains(managedServiceRepos, name) {
+				return fmt.Errorf("unknown managed service repository %q", name)
+			}
 			selected[name] = true
+		}
+	}
+	if strings.TrimSpace(*changedSince) != "" {
+		changed, err := gitOutput(workspace, "diff", "--name-only", strings.TrimSpace(*changedSince)+"..."+strings.TrimSpace(*headRef))
+		if err != nil {
+			return fmt.Errorf("select changed service repositories: %w", err)
+		}
+		repos := selectChangedServiceRepos(strings.Fields(changed))
+		if len(repos) == 0 {
+			fmt.Fprintln(os.Stdout, "No service repository tests selected by the workspace diff.")
+			return nil
+		}
+		fmt.Fprintf(os.Stdout, "Selected service repositories: %s\n", strings.Join(repos, ","))
+		for _, repo := range repos {
+			selected[repo] = true
 		}
 	}
 	shouldRun := func(name string) bool {
@@ -1176,11 +1220,60 @@ func runTestServices(args []string) error {
 			}
 			continue
 		}
+		if *install && spec.cmd[0] == "npm" {
+			fmt.Fprintf(os.Stdout, "== install test dependencies: %s ==\n", spec.name)
+			npmCache := filepath.Join(workspace, ".artifacts", "npm-cache")
+			if err := os.MkdirAll(npmCache, 0o755); err != nil {
+				return fmt.Errorf("create isolated npm cache: %w", err)
+			}
+			if err := runCmdWithEnv(spec.dir, map[string]string{"NPM_CONFIG_CACHE": npmCache}, "npm", "ci"); err != nil {
+				return err
+			}
+		}
 		if err := runCmd(spec.dir, spec.cmd[0], spec.cmd[1:]...); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func selectChangedServiceRepos(changedFiles []string) []string {
+	selected := map[string]bool{}
+	selectAll := false
+	for _, changed := range changedFiles {
+		changed = filepath.ToSlash(strings.TrimSpace(changed))
+		if changed == "" {
+			continue
+		}
+		switch {
+		case changed == ".gitmodules",
+			changed == "go.work",
+			changed == "go.work.sum",
+			changed == "tests/catalog.yaml",
+			strings.HasPrefix(changed, ".github/workflows/"),
+			strings.HasPrefix(changed, "scripts/go/rtk-cloud/"),
+			changed == "repos/rtk_cloud_contracts_doc":
+			selectAll = true
+		}
+		for _, repo := range managedServiceRepos {
+			prefix := "repos/" + repo
+			if changed == prefix || strings.HasPrefix(changed, prefix+"/") {
+				selected[repo] = true
+			}
+		}
+	}
+	if selectAll {
+		for _, repo := range managedServiceRepos {
+			selected[repo] = true
+		}
+	}
+	repos := make([]string, 0, len(selected))
+	for _, repo := range managedServiceRepos {
+		if selected[repo] {
+			repos = append(repos, repo)
+		}
+	}
+	return repos
 }
 
 func runTestE2E(args []string) error {

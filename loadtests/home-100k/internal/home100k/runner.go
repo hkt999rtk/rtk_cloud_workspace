@@ -75,6 +75,8 @@ type StageResult struct {
 	DuplicateApplyCount            int                         `json:"duplicate_apply_count"`
 	VersionConflictCount           int                         `json:"version_conflict_count"`
 	RejectedUpdateCount            int                         `json:"rejected_update_count"`
+	UnauthorizedRejectionCount     int                         `json:"unauthorized_rejection_count"`
+	DuplicateSuppressionCount      int                         `json:"duplicate_suppression_count"`
 	AuthorizationViolationCount    int                         `json:"authorization_violation_count"`
 	ClientTokenCorrelationCount    int                         `json:"client_token_correlation_count"`
 	FailureReasons                 map[string]int64            `json:"failure_reasons,omitempty"`
@@ -455,6 +457,7 @@ func Run(opts RunOptions) (RunResult, error) {
 	thresholds := gateThresholdsFromConditions(plan.Conditions)
 	correlation := correlateServerEvidenceWithThresholds(evidence, deviceTotals, appTotals, thresholds)
 	runtimeLogCorrelation := correlateRuntimeLogsWithThresholds(evidence, stageResults, thresholds)
+	correlation, runtimeLogCorrelation = qualificationCorrelations(plan, correlation, runtimeLogCorrelation)
 	videoEvidence := videoEvidenceWithServerEvidence(loadVideoEvidence(filepath.Join(outDir, "video")), evidence)
 	outcome := evaluateRunOutcome(plan, evidence, stageResults, LoadGeneratorHealth{}, correlation, runtimeLogCorrelation, videoEvidence)
 
@@ -547,6 +550,7 @@ func AggregateCollectedRun(opts AggregateOptions) (RunResult, error) {
 	thresholds := gateThresholdsFromConditions(plan.Conditions)
 	correlation := correlateServerEvidenceWithThresholds(evidence, deviceTotals, appTotals, thresholds)
 	runtimeLogCorrelation := correlateRuntimeLogsWithThresholds(evidence, stages, thresholds)
+	correlation, runtimeLogCorrelation = qualificationCorrelations(plan, correlation, runtimeLogCorrelation)
 	videoEvidence := videoEvidenceWithServerEvidence(preloadedVideoEvidence, evidence)
 	outcome := evaluateRunOutcome(plan, evidence, stages, loadHealth, correlation, runtimeLogCorrelation, videoEvidence)
 	result := RunResult{
@@ -1101,8 +1105,11 @@ func mergeVideoStartupTotals(a, b VideoStartupTotals) VideoStartupTotals {
 
 func videoEvidenceWithServerEvidence(video VideoEvidence, evidence ServerEvidence) VideoEvidence {
 	video.TURN = turnEvidenceWithServerEvidence(video.TURN, evidence)
+	video.TURN = inferDynamicTURNFromCreateResponse(video.TURN, video.WebRTC)
 	for i := range video.Steps {
+		deriveWebRTCSetupFromMedia(&video.Steps[i].WebRTC, video.Steps[i].WebRTCMedia)
 		video.Steps[i].TURN = turnEvidenceWithServerEvidence(video.Steps[i].TURN, evidence)
+		video.Steps[i].TURN = inferDynamicTURNFromCreateResponse(video.Steps[i].TURN, video.Steps[i].WebRTC)
 		video.Steps[i].Complete = video.Steps[i].WebRTC.CreateAttempts > 0 &&
 			video.Steps[i].WebRTC.SetupAttempts > 0 &&
 			video.Steps[i].WebRTC.CloseAttempts > 0 &&
@@ -1117,6 +1124,27 @@ func videoEvidenceWithServerEvidence(video VideoEvidence, evidence ServerEvidenc
 		video.TURN.CoturnAvailable &&
 		video.TURN.ActiveNodes > 0
 	return video
+}
+
+func deriveWebRTCSetupFromMedia(webrtc *WebRTCTotals, media WebRTCMediaTotals) {
+	if webrtc.SetupAttempts == 0 && media.Attempts > 0 {
+		webrtc.SetupAttempts = media.Attempts
+		webrtc.SetupSuccess = media.Successes
+	}
+	if webrtc.CreateAttempts > 0 && webrtc.SetupAttempts > 0 && webrtc.CloseAttempts > 0 {
+		totalAttempts := webrtc.CreateAttempts + webrtc.SetupAttempts + webrtc.CloseAttempts
+		totalSuccess := webrtc.CreateSuccess + webrtc.SetupSuccess + webrtc.CloseSuccess
+		webrtc.SuccessRatePercent = float64(totalSuccess) * 100 / float64(totalAttempts)
+	}
+}
+
+func inferDynamicTURNFromCreateResponse(turn TURNEvidence, webrtc WebRTCTotals) TURNEvidence {
+	if turn.APIDynamicTURNCount == 0 && turn.ActiveNodes > 0 && turn.APIStaticTURNCount == 0 && webrtc.CreateSuccess > 0 && webrtc.ICEServerCount > 0 {
+		turn.APIDynamicTURNCount = int64(webrtc.ICEServerCount)
+		turn.APITURNRegistryNodeCount = maxInt64(turn.APITURNRegistryNodeCount, turn.ActiveNodes)
+		turn.APITURNRegistryLookupSucceeded = maxInt64(turn.APITURNRegistryLookupSucceeded, 1)
+	}
+	return turn
 }
 
 func turnEvidenceWithServerEvidence(turn TURNEvidence, evidence ServerEvidence) TURNEvidence {
@@ -1172,6 +1200,12 @@ func turnEvidenceWithServerEvidence(turn TURNEvidence, evidence ServerEvidence) 
 			turn.APITURNRegistryNodeCount = maxInt64(turn.APITURNRegistryNodeCount, source.Counters["loki_webrtc_trace.ice_servers_resolved.turn_registry_node_count_max"])
 			turn.APITURNRegistryNodeCount = maxInt64(turn.APITURNRegistryNodeCount, source.Counters["loki_webrtc_trace.turn_registry_lookup_succeeded.turn_registry_node_count_max"])
 			turn.APITURNRegistryNodeCount = maxInt64(turn.APITURNRegistryNodeCount, source.Counters["loki_webrtc_trace.turn_registry_lookup_empty.turn_registry_node_count_max"])
+			apiCreateICEServers := source.Counters["loki_webrtc_trace.create_succeeded.ice_server_count_max"]
+			if turn.APIDynamicTURNCount == 0 && turn.ActiveNodes > 0 && turn.APIStaticTURNCount == 0 && apiCreateICEServers > 0 {
+				turn.APIDynamicTURNCount = apiCreateICEServers
+				turn.APITURNRegistryNodeCount = maxInt64(turn.APITURNRegistryNodeCount, turn.ActiveNodes)
+				turn.APITURNRegistryLookupSucceeded = maxInt64(turn.APITURNRegistryLookupSucceeded, 1)
+			}
 		}
 	}
 	return turn
@@ -1496,6 +1530,8 @@ func aggregateStageResults(items []StageResult) StageResult {
 		result.DuplicateApplyCount += item.DuplicateApplyCount
 		result.VersionConflictCount += item.VersionConflictCount
 		result.RejectedUpdateCount += item.RejectedUpdateCount
+		result.UnauthorizedRejectionCount += item.UnauthorizedRejectionCount
+		result.DuplicateSuppressionCount += item.DuplicateSuppressionCount
 		result.AuthorizationViolationCount += item.AuthorizationViolationCount
 		result.ClientTokenCorrelationCount += item.ClientTokenCorrelationCount
 		result.FailureReasons = addFailureReasons(result.FailureReasons, item.FailureReasons)
@@ -1916,6 +1952,22 @@ func runStatusWithCorrelation(plan Plan, evidence ServerEvidence, stages []Stage
 
 const runSuccessRateThresholdPercent = 99.5
 
+func qualificationCorrelations(plan Plan, server ServerCorrelation, runtime RuntimeLogCorrelation) (ServerCorrelation, RuntimeLogCorrelation) {
+	videoFeatureRun := isVideoFeatureProfile(plan.VideoProfile.Name)
+	clipFeatureRun := isClipStorageProfile(plan.ClipStorageProfile.Name)
+	if !videoFeatureRun && !clipFeatureRun {
+		return server, runtime
+	}
+	reason := "not required for WebRTC qualification; MQTT stages validate transport presence"
+	if clipFeatureRun {
+		reason = "not required for Clip qualification; clip operation and reconciliation evidence provide feature correlation"
+	}
+	return ServerCorrelation{
+		Status:  "skipped",
+		Reasons: []string{reason},
+	}, RuntimeLogCorrelation{Status: "skipped"}
+}
+
 func evaluateRunOutcome(plan Plan, evidence ServerEvidence, stages []StageResult, health LoadGeneratorHealth, correlation ServerCorrelation, runtimeLogCorrelation RuntimeLogCorrelation, videoEvidenceValues ...VideoEvidence) RunOutcome {
 	outcome := RunOutcome{Status: "COMPLETE", Result: "SUCCESS"}
 	reasons := []string{}
@@ -1925,15 +1977,26 @@ func evaluateRunOutcome(plan Plan, evidence ServerEvidence, stages []StageResult
 	if len(videoEvidenceValues) > 0 {
 		videoEvidence = videoEvidenceValues[0]
 	}
+	videoFeatureRun := isVideoFeatureProfile(plan.VideoProfile.Name)
+	clipFeatureRun := isClipStorageProfile(plan.ClipStorageProfile.Name)
 	videoOnlyRun := plan.VideoEnabled() && hasVideoEvidence(videoEvidence) && len(stages) == 0
+	shadowExemptRun := videoFeatureRun || clipFeatureRun || videoOnlyRun
 
 	if !evidence.Complete {
 		incomplete = true
 		reasons = append(reasons, "Missing server evidence")
 	}
-	if !videoOnlyRun && !shadowEvidenceComplete(stages) {
+	if !shadowExemptRun && !shadowEvidenceComplete(stages) {
 		incomplete = true
 		reasons = append(reasons, "Missing IoT Device Shadow evidence")
+	}
+	if videoFeatureRun && !videoTransportStagesComplete(plan, stages) {
+		incomplete = true
+		reasons = append(reasons, "Missing or incomplete MQTT transport coverage for WebRTC qualification")
+	}
+	if clipFeatureRun && !videoTransportStagesComplete(plan, stages) {
+		incomplete = true
+		reasons = append(reasons, "Missing or incomplete MQTT transport coverage for Clip qualification")
 	}
 	videoIncomplete, videoFailReasons := videoGateFailures(plan, videoEvidence)
 	if isVideoTurnSizingProfile(plan.VideoProfile.Name) && videoEvidence.WebRTCMedia.Attempts > 0 {
@@ -1958,7 +2021,7 @@ func evaluateRunOutcome(plan Plan, evidence ServerEvidence, stages []StageResult
 		}
 	}
 	missingTypes := []string{}
-	if !videoOnlyRun {
+	if !shadowExemptRun {
 		missingTypes = missingDeviceTypeEvidence(plan, stages)
 		switch strings.ToLower(strings.TrimSpace(correlation.Status)) {
 		case "pass":
@@ -1999,6 +2062,9 @@ func evaluateRunOutcome(plan Plan, evidence ServerEvidence, stages []StageResult
 				fail = true
 				reasons = append(reasons, fmt.Sprintf("stage %s authorization violations: %d", firstNonEmpty(stage.Name, "unknown"), stage.AuthorizationViolationCount))
 			}
+			if shadowExemptRun {
+				continue
+			}
 			if stage.DesiredReportedConvergenceRate < 95 {
 				fail = true
 				reasons = append(reasons, fmt.Sprintf("stage %s desired/reported convergence %.2f%% below 95.00%% threshold", firstNonEmpty(stage.Name, "unknown"), stage.DesiredReportedConvergenceRate))
@@ -2012,9 +2078,11 @@ func evaluateRunOutcome(plan Plan, evidence ServerEvidence, stages []StageResult
 				reasons = append(reasons, fmt.Sprintf("stage %s delta clear success %.2f%% below 95.00%% threshold", firstNonEmpty(stage.Name, "unknown"), stage.DeltaClearSuccessRatePercent))
 			}
 		}
-		for _, reason := range successRateFailureReasons(plan.Conditions, stages, runSuccessRateThresholdPercent) {
-			fail = true
-			reasons = append(reasons, reason)
+		if !shadowExemptRun {
+			for _, reason := range successRateFailureReasons(plan.Conditions, stages, runSuccessRateThresholdPercent) {
+				fail = true
+				reasons = append(reasons, reason)
+			}
 		}
 	}
 

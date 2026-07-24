@@ -42,6 +42,7 @@ type lkeImageArtifact struct {
 	Name         string `json:"name"`
 	EnvKey       string `json:"env_key"`
 	Image        string `json:"image"`
+	Digest       string `json:"digest,omitempty"`
 	SourceRepo   string `json:"source_repo,omitempty"`
 	SourcePath   string `json:"source_path,omitempty"`
 	SourceCommit string `json:"source_commit,omitempty"`
@@ -244,11 +245,20 @@ func runLKEResolveImages(args []string) error {
 	}
 	for _, source := range lkeServiceImageSources() {
 		if pinnedImage := firstNonEmpty(os.Getenv(source.EnvKey), env.Values[source.EnvKey]); pinnedImage != "" {
+			repoDir := filepath.Join(workspaceAbs, source.RepoPath)
+			fullCommit, err := gitOutput(repoDir, "rev-parse", "HEAD")
+			if err != nil {
+				return fmt.Errorf("resolve %s source commit from %s: %w", source.Key, source.RepoPath, err)
+			}
 			artifacts = append(artifacts, lkeImageArtifact{
-				Key:    source.Key,
-				Name:   source.Name,
-				EnvKey: source.EnvKey,
-				Image:  pinnedImage,
+				Key:          source.Key,
+				Name:         source.Name,
+				EnvKey:       source.EnvKey,
+				Image:        pinnedImage,
+				Digest:       strings.TrimSpace(os.Getenv(source.EnvKey + "_DIGEST")),
+				SourceRepo:   source.RepoName,
+				SourcePath:   source.RepoPath,
+				SourceCommit: strings.TrimSpace(fullCommit),
 			})
 			continue
 		}
@@ -1917,6 +1927,26 @@ func validateLKEDeployInputs(env map[string]string, opts provisionOptions) error
 	if len(missing) > 0 {
 		sort.Strings(missing)
 		return fmt.Errorf("LKE deploy requires container image environment variables; generate them with lke-resolve-images: %s", strings.Join(missing, ", "))
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeClipDirectUploadEnabled(env) {
+		missingBlob := []string{}
+		for _, key := range []string{"VIDEO_CLOUD_BLOB_ENDPOINT", "VIDEO_CLOUD_BLOB_REGION", "VIDEO_CLOUD_BLOB_BUCKET"} {
+			if strings.TrimSpace(env[key]) == "" {
+				missingBlob = append(missingBlob, key)
+			}
+		}
+		if len(missingBlob) > 0 {
+			return fmt.Errorf("LKE video-cloud deploy requires blob configuration when direct clip upload is enabled: %s", strings.Join(missingBlob, ", "))
+		}
+		missingCredentials := []string{}
+		for _, key := range []string{"LINODE_OBJ_ACCESS_KEY_ID", "LINODE_OBJ_SECRET_ACCESS_KEY"} {
+			if lkeObjectStorageCredential(env, key) == "" {
+				missingCredentials = append(missingCredentials, key)
+			}
+		}
+		if len(missingCredentials) > 0 {
+			return fmt.Errorf("LKE video-cloud deploy requires object-storage credentials when direct clip upload is enabled: %s", strings.Join(missingCredentials, ", "))
+		}
 	}
 	return nil
 }
@@ -4166,7 +4196,7 @@ stringData:
   AWS_ACCESS_KEY_ID: %q
   AWS_SECRET_ACCESS_KEY: %q
   clip-private-key.pem: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("video-auth"), lkeInternalAuthToken(), lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"), lkeRuntimeSecretValue("turn-shared"), lkeRuntimeSecretValue("mqtt-broker-auth"), lkeRuntimeSecretValue("mqtt-server-password"), lkeObjectStorageCredential("LINODE_OBJ_ACCESS_KEY_ID"), lkeObjectStorageCredential("LINODE_OBJ_SECRET_ACCESS_KEY"), lkeClipPrivateKeyPEM())
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("video-auth"), lkeInternalAuthToken(), lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"), lkeRuntimeSecretValue("turn-shared"), lkeRuntimeSecretValue("mqtt-broker-auth"), lkeRuntimeSecretValue("mqtt-server-password"), lkeObjectStorageCredential(env, "LINODE_OBJ_ACCESS_KEY_ID"), lkeObjectStorageCredential(env, "LINODE_OBJ_SECRET_ACCESS_KEY"), lkeClipPrivateKeyPEM())
 }
 
 func lkeClipPrivateKeyPEM() string {
@@ -6131,8 +6161,8 @@ func lkeInternalAuthToken() string {
 	return lkeRuntimeSecretValue("internal-auth")
 }
 
-func lkeObjectStorageCredential(name string) string {
-	return strings.TrimSpace(os.Getenv(name))
+func lkeObjectStorageCredential(env map[string]string, name string) string {
+	return strings.TrimSpace(firstNonEmpty(os.Getenv(name), env[name]))
 }
 
 func lkeAccountManagerSecretManifest(env map[string]string) string {
@@ -6683,6 +6713,8 @@ func lkeVideoCloudRuntimeChecksum(env map[string]string) string {
 		env["VIDEO_CLOUD_BLOB_REGION"],
 		env["VIDEO_CLOUD_BLOB_BUCKET"],
 		env["VIDEO_CLOUD_BLOB_PREFIX"],
+		lkeObjectStorageCredential(env, "LINODE_OBJ_ACCESS_KEY_ID"),
+		lkeObjectStorageCredential(env, "LINODE_OBJ_SECRET_ACCESS_KEY"),
 		strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)),
 	)
 }

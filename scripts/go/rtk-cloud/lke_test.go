@@ -387,6 +387,130 @@ func TestRunProvisionLKEDeployRequiresImages(t *testing.T) {
 	}
 }
 
+func TestValidateLKEDeployInputsRequiresBlobConfiguration(t *testing.T) {
+	env := map[string]string{
+		"LKE_POSTGRES_IMAGE":           "postgres:16-alpine",
+		"LKE_VIDEO_CLOUD_IMAGE":        "registry.example.test/video-cloud:test",
+		"LKE_ACCOUNT_MANAGER_IMAGE":    "registry.example.test/account-manager:test",
+		"LKE_CLOUD_ADMIN_IMAGE":        "registry.example.test/cloud-admin:test",
+		"LKE_FRONTEND_IMAGE":           "registry.example.test/frontend:test",
+		"LKE_CLOUD_LOGGER_IMAGE":       "registry.example.test/cloud-logger:test",
+		"LINODE_OBJ_ACCESS_KEY_ID":     "test-access-key",
+		"LINODE_OBJ_SECRET_ACCESS_KEY": "test-secret-key",
+	}
+	err := validateLKEDeployInputs(env, provisionOptions{})
+	if err == nil || !strings.Contains(err.Error(), "VIDEO_CLOUD_BLOB_ENDPOINT, VIDEO_CLOUD_BLOB_REGION, VIDEO_CLOUD_BLOB_BUCKET") {
+		t.Fatalf("expected missing blob configuration error, got %v", err)
+	}
+
+	env["VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED"] = "false"
+	if err := validateLKEDeployInputs(env, provisionOptions{}); err != nil {
+		t.Fatalf("disabled direct upload should not require blob configuration: %v", err)
+	}
+}
+
+func TestValidateLKEDeployInputsRequiresObjectStorageCredentials(t *testing.T) {
+	env := map[string]string{
+		"LKE_POSTGRES_IMAGE":        "postgres:16-alpine",
+		"LKE_VIDEO_CLOUD_IMAGE":     "registry.example.test/video-cloud:test",
+		"LKE_ACCOUNT_MANAGER_IMAGE": "registry.example.test/account-manager:test",
+		"LKE_CLOUD_ADMIN_IMAGE":     "registry.example.test/cloud-admin:test",
+		"LKE_FRONTEND_IMAGE":        "registry.example.test/frontend:test",
+		"LKE_CLOUD_LOGGER_IMAGE":    "registry.example.test/cloud-logger:test",
+		"VIDEO_CLOUD_BLOB_ENDPOINT": "https://objects.example.test",
+		"VIDEO_CLOUD_BLOB_REGION":   "test-region",
+		"VIDEO_CLOUD_BLOB_BUCKET":   "test-bucket",
+	}
+	err := validateLKEDeployInputs(env, provisionOptions{})
+	if err == nil || !strings.Contains(err.Error(), "LINODE_OBJ_ACCESS_KEY_ID, LINODE_OBJ_SECRET_ACCESS_KEY") {
+		t.Fatalf("expected missing object-storage credentials error, got %v", err)
+	}
+}
+
+func TestLKEVideoCloudRuntimeChecksumTracksObjectStorageCredentials(t *testing.T) {
+	base := map[string]string{
+		"VIDEO_CLOUD_BLOB_ENDPOINT":    "https://objects.example.test",
+		"VIDEO_CLOUD_BLOB_REGION":      "test-region",
+		"VIDEO_CLOUD_BLOB_BUCKET":      "test-bucket",
+		"LINODE_OBJ_ACCESS_KEY_ID":     "access-a",
+		"LINODE_OBJ_SECRET_ACCESS_KEY": "secret-a",
+	}
+	changed := make(map[string]string, len(base))
+	for key, value := range base {
+		changed[key] = value
+	}
+	changed["LINODE_OBJ_SECRET_ACCESS_KEY"] = "secret-b"
+	if lkeVideoCloudRuntimeChecksum(base) == lkeVideoCloudRuntimeChecksum(changed) {
+		t.Fatal("object-storage credential rotation must change the video-cloud runtime checksum")
+	}
+}
+
+func TestRunProvisionLKEMergesLegacyOperatorObjectStorageCredentials(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	fakeKubectl(t)
+	legacyOperator := filepath.Join(workspace, "cloud_env", "staging", "linode", "env", "operator.env")
+	writeTestFile(t, legacyOperator, "LINODE_OBJ_ACCESS_KEY_ID=test-access\\nLINODE_OBJ_SECRET_ACCESS_KEY=test-secret\\n")
+	t.Setenv("LKE_POSTGRES_IMAGE", "postgres:16-alpine")
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/video-cloud:test")
+	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/account-manager:test")
+	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/cloud-admin:test")
+	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/frontend:test")
+	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/cloud-logger:test")
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
+
+	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := lkeObjectStorageCredential(map[string]string{"LINODE_OBJ_ACCESS_KEY_ID": "test-access"}, "LINODE_OBJ_ACCESS_KEY_ID"); got != "test-access" {
+		t.Fatalf("merged access key not available to manifest, got %q", got)
+	}
+}
+
+func TestRunProvisionLKEMergesSharedRuntimeBlobConfiguration(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	logPath := fakeKubectl(t)
+	lkeStackPath := filepath.Join(envRoot, "env", "stack.env")
+	writeTestFile(t, lkeStackPath, `CLOUD_ENV_NAME=staging
+CLOUD_PROVIDER=lke
+CLOUD_REGION=us-sea
+CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+`)
+	runtimeRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
+	writeTestFile(t, filepath.Join(runtimeRoot, "env", "stack.env"), `CLOUD_ENV_NAME=staging
+CLOUD_PROVIDER=linode
+CLOUD_REGION=us-sea
+CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+VIDEO_CLOUD_BLOB_ENDPOINT=https://runtime-objects.example.test
+VIDEO_CLOUD_BLOB_REGION=runtime-region
+VIDEO_CLOUD_BLOB_BUCKET=runtime-bucket
+`)
+	writeTestFile(t, filepath.Join(runtimeRoot, "env", "operator.env"), "LINODE_OBJ_ACCESS_KEY_ID=test-access-key\nLINODE_OBJ_SECRET_ACCESS_KEY=test-secret-key\n")
+	t.Setenv("LKE_POSTGRES_IMAGE", "postgres:16-alpine")
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/video-cloud:test")
+	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/account-manager:test")
+	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/cloud-admin:test")
+	t.Setenv("LKE_FRONTEND_IMAGE", "registry.example.test/frontend:test")
+	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/cloud-logger:test")
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
+
+	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy"}); err != nil {
+		t.Fatal(err)
+	}
+	log := readTestFile(t, logPath)
+	for _, want := range []string{
+		`VIDEO_CLOUD_BLOB_ENDPOINT
+              value: "https://runtime-objects.example.test"`,
+		`VIDEO_CLOUD_BLOB_REGION
+              value: "runtime-region"`,
+		`VIDEO_CLOUD_BLOB_BUCKET
+              value: "runtime-bucket"`,
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("expected shared runtime value %q in manifest, got:\n%s", want, log)
+		}
+	}
+}
+
 func TestRunProvisionLKEDeployUsesImageManifestDefaults(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)
@@ -3179,6 +3303,11 @@ LKE_MQTT_REQUEST_MEMORY=512Mi
 LKE_MQTT_LIMIT_MEMORY=1Gi
 LKE_EDGE_HAPROXY_MAXCONN=200000
 LKE_EDGE_HAPROXY_TOKEN=must-not-be-written
+VIDEO_CLOUD_BLOB_ENDPOINT=https://objects.example.test
+VIDEO_CLOUD_BLOB_REGION=test-region
+VIDEO_CLOUD_BLOB_BUCKET=test-bucket
+LINODE_OBJ_ACCESS_KEY_ID=test-access-key
+LINODE_OBJ_SECRET_ACCESS_KEY=test-secret-key
 `)
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
 	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/rtk/account-manager:test")
@@ -4337,6 +4466,11 @@ func makeLKETestEnv(t *testing.T) (string, string) {
 CLOUD_PROVIDER=lke
 CLOUD_REGION=us-sea
 CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+VIDEO_CLOUD_BLOB_ENDPOINT=https://objects.example.test
+VIDEO_CLOUD_BLOB_REGION=test-region
+VIDEO_CLOUD_BLOB_BUCKET=test-bucket
+LINODE_OBJ_ACCESS_KEY_ID=test-access-key
+LINODE_OBJ_SECRET_ACCESS_KEY=test-secret-key
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}

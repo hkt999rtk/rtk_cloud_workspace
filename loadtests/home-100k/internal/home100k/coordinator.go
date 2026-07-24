@@ -81,6 +81,7 @@ func parseRunnerDaemonFlags(name string, args []string, stderr io.Writer) (PlanO
 	fs.SetOutput(stderr)
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
+	scenarioProfile := fs.String("scenario-profile", "", "scenario profile")
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
@@ -107,7 +108,7 @@ func parseRunnerDaemonFlags(name string, args []string, stderr io.Writer) (PlanO
 	if strings.TrimSpace(*role) == "" {
 		return PlanOptions{}, runnerDaemonFlagValues{}, fmt.Errorf("--role is required")
 	}
-	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, Region: *region}
+	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, ScenarioProfile: *scenarioProfile, Region: *region}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix)

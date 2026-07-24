@@ -25,7 +25,10 @@ const (
 	DefaultStageSteady               = "90s"
 	DefaultStageCoolDown             = "30s"
 	DefaultScenarioProfile           = "home-diverse-v1"
+	VideoCanaryScenarioProfile       = "video-canary-v1"
 	Video1KScenarioProfile           = "video-1k-v1"
+	ClipStorageCanaryScenarioProfile = "clip-storage-canary-v1"
+	ClipStorage1KScenarioProfile     = "clip-storage-1k-v1"
 	ClipStorage10KScenarioProfile    = "clip-storage-10k-v2"
 	Video50KTurnScenarioProfile      = "video-50k-turn-v1"
 	Video100KTurnScenarioProfile     = "video-100k-turn-v1"
@@ -346,7 +349,7 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	if deviceTokenRequestRetries < 0 {
 		return Plan{}, fmt.Errorf("device token request retries must be non-negative, got %d", deviceTokenRequestRetries)
 	}
-	if videoProfile.Name == Video1KScenarioProfile || isVideoTurnSizingProfile(videoProfile.Name) {
+	if videoProfile.Name == VideoCanaryScenarioProfile || videoProfile.Name == Video1KScenarioProfile || isVideoTurnSizingProfile(videoProfile.Name) {
 		videoProfile.VideoDevices = minInt(videoProfile.VideoDevices, devices)
 		videoProfile.VideoViewers = minInt(videoProfile.VideoViewers, videoProfile.VideoDevices)
 	}
@@ -431,23 +434,55 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 }
 
 func clipStorageProfileForScenario(scenario string) ClipStorageProfile {
-	if strings.TrimSpace(scenario) != ClipStorage10KScenarioProfile {
+	switch strings.TrimSpace(scenario) {
+	case ClipStorageCanaryScenarioProfile:
+		return ClipStorageProfile{
+			Name:                 ClipStorageCanaryScenarioProfile,
+			CameraDevices:        2,
+			ClipsPerCameraPerDay: 2,
+			ScheduleWindow:       "30s",
+			PoissonSeed:          20260723,
+			UploadConcurrency:    2,
+			Fixture:              "e2e_test/video_cloud/load/testdata/clip_1080p_h264_3mbps_15s.mp4",
+			Thumbnail:            "e2e_test/video_cloud/load/testdata/thumbnail_1080p.jpg",
+		}
+	case ClipStorage1KScenarioProfile:
+		return ClipStorageProfile{
+			Name:                 ClipStorage1KScenarioProfile,
+			CameraDevices:        100,
+			ClipsPerCameraPerDay: 10,
+			ScheduleWindow:       "10m",
+			PoissonSeed:          20260723,
+			UploadConcurrency:    32,
+			Fixture:              "e2e_test/video_cloud/load/testdata/clip_1080p_h264_3mbps_15s.mp4",
+			Thumbnail:            "e2e_test/video_cloud/load/testdata/thumbnail_1080p.jpg",
+		}
+	case ClipStorage10KScenarioProfile:
+		return ClipStorageProfile{
+			Name:                 ClipStorage10KScenarioProfile,
+			CameraDevices:        1000,
+			ClipsPerCameraPerDay: 10,
+			ScheduleWindow:       "30m",
+			PoissonSeed:          20260719,
+			UploadConcurrency:    64,
+			Fixture:              "e2e_test/video_cloud/load/testdata/clip_1080p_h264_3mbps_15s.mp4",
+			Thumbnail:            "e2e_test/video_cloud/load/testdata/thumbnail_1080p.jpg",
+		}
+	default:
 		return ClipStorageProfile{}
-	}
-	return ClipStorageProfile{
-		Name:                 ClipStorage10KScenarioProfile,
-		CameraDevices:        1000,
-		ClipsPerCameraPerDay: 10,
-		ScheduleWindow:       "30m",
-		PoissonSeed:          20260719,
-		UploadConcurrency:    64,
-		Fixture:              "e2e_test/video_cloud/load/testdata/clip_1080p_h264_3mbps_15s.mp4",
-		Thumbnail:            "e2e_test/video_cloud/load/testdata/thumbnail_1080p.jpg",
 	}
 }
 
 func videoProfileForScenario(scenario string) VideoProfile {
 	switch strings.TrimSpace(scenario) {
+	case VideoCanaryScenarioProfile:
+		return VideoProfile{
+			Name: VideoCanaryScenarioProfile, VideoDevices: 2, VideoViewers: 2,
+			WebRTCMediaSet: DefaultVideo1KMediaSet, WebRTCICEPolicy: "relay",
+			TURNTransport: "udp,tcp", MediaSecurity: "dtls-srtp",
+			SignalingLayer: "webrtc-signaling", MediaLayer: "webrtc-media",
+			DeviceActorRole: "device", AppActorRole: "app", ViewerActorRole: "viewer",
+		}
 	case Video1KScenarioProfile:
 		return VideoProfile{
 			Name:            Video1KScenarioProfile,
@@ -514,7 +549,11 @@ func isVideoTurnSizingProfile(name string) bool {
 }
 
 func deviceMixForScenario(scenario string, devices int) map[string]int {
-	if strings.TrimSpace(scenario) == Video1KScenarioProfile || strings.TrimSpace(scenario) == ClipStorage10KScenarioProfile {
+	switch strings.TrimSpace(scenario) {
+	case VideoCanaryScenarioProfile, ClipStorageCanaryScenarioProfile:
+		return map[string]int{"camera": devices}
+	}
+	if isVideoFeatureProfile(scenario) || isClipStorageProfile(scenario) {
 		return proportionalMix(devices, []ratioBucket{
 			{Name: "camera", Weight: 10},
 			{Name: "light", Weight: 30},
@@ -530,7 +569,7 @@ func deviceMixForScenario(scenario string, devices int) map[string]int {
 
 func deviceProfilesForScenario(scenario string) map[string]DeviceProfile {
 	profiles := homeDiverseDeviceProfiles()
-	if strings.TrimSpace(scenario) == Video1KScenarioProfile || strings.TrimSpace(scenario) == ClipStorage10KScenarioProfile || isVideoTurnSizingProfile(scenario) {
+	if isVideoFeatureProfile(scenario) || isClipStorageProfile(scenario) || isVideoTurnSizingProfile(scenario) {
 		profiles["camera"] = DeviceProfile{RatioWeight: 10, TrafficProfile: "event_burst", PayloadClass: "camera_status"}
 	}
 	return profiles
@@ -541,11 +580,29 @@ func workflowSteps(scenario string, video VideoProfile) []string {
 	if strings.TrimSpace(video.Name) != "" {
 		steps = append(steps, "run-video-loadtest", "collect-video-evidence")
 	}
-	if strings.TrimSpace(scenario) == ClipStorage10KScenarioProfile {
+	if isClipStorageProfile(scenario) {
 		steps = append(steps, "run-clip-storage-loadtest", "collect-clip-storage-evidence")
 	}
 	steps = append(steps, "collect-server-evidence", "aggregate", "destroy-vms")
 	return steps
+}
+
+func isVideoFeatureProfile(name string) bool {
+	switch strings.TrimSpace(name) {
+	case VideoCanaryScenarioProfile, Video1KScenarioProfile:
+		return true
+	default:
+		return false
+	}
+}
+
+func isClipStorageProfile(name string) bool {
+	switch strings.TrimSpace(name) {
+	case ClipStorageCanaryScenarioProfile, ClipStorage1KScenarioProfile, ClipStorage10KScenarioProfile:
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeGateThresholds(opts PlanOptions) (GateThresholds, error) {

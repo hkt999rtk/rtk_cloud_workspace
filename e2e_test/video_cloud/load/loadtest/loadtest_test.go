@@ -4678,6 +4678,29 @@ func TestBuildResultAddsCameraRecordingClipCoverage(t *testing.T) {
 	}
 }
 
+func TestRenderMarkdownIncludesClipStageAndMixedTrafficMetrics(t *testing.T) {
+	result := &Result{
+		ClipStorage: ClipStorageMetrics{
+			Enabled:             true,
+			MixedNonClipEnabled: true,
+			NonClipAttempts:     10,
+			NonClipSuccesses:    10,
+			StageP95MS:          map[string]int64{"clip_authorize": 25},
+		},
+		Thresholds: ThresholdEvaluation{Passed: true},
+	}
+	md := RenderMarkdown(result)
+	for _, want := range []string{
+		"| Concurrent non-clip attempts | 10 |",
+		"| Concurrent non-clip successes | 10 |",
+		"| clip_authorize p95 | 25 ms |",
+	} {
+		if !strings.Contains(md, want) {
+			t.Fatalf("markdown missing %q:\n%s", want, md)
+		}
+	}
+}
+
 func operationSucceeded(ops []Operation, name string) bool {
 	for _, op := range ops {
 		if op.Name == name && op.Success {

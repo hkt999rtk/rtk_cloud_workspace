@@ -26,6 +26,10 @@ type testCatalogCase struct {
 	ID           string   `yaml:"id"`
 	Title        string   `yaml:"title"`
 	Layer        string   `yaml:"layer"`
+	Feature      string   `yaml:"feature,omitempty"`
+	Profile      string   `yaml:"profile,omitempty"`
+	Covers       []string `yaml:"covers,omitempty"`
+	ChangePaths  []string `yaml:"change_paths,omitempty"`
 	Owner        string   `yaml:"owner"`
 	Source       string   `yaml:"source"`
 	Selector     string   `yaml:"selector"`
@@ -44,9 +48,10 @@ var catalogOwners = map[string]bool{
 	"rtk_account_manager": true, "rtk_cloud_admin": true, "rtk_cloud_client": true,
 	"rtk_cloud_frontend": true, "rtk_cloud_logger": true, "rtk_video_cloud": true, "video_cloud": true,
 }
-var catalogRunners = map[string]bool{"test-services": true, "test-e2e": true, "test-ui": true, "test-live": true}
+var catalogRunners = map[string]bool{"test-services": true, "test-coverage": true, "test-e2e": true, "test-ui": true, "test-live": true, "test-feature": true}
 var catalogTargets = map[string]bool{"desktop": true, "mobile": true, "ios": true, "android": true}
 var catalogEnvironments = map[string]bool{"local": true, "ci": true, "staging": true}
+var catalogProfiles = map[string]bool{"canary": true, "qualification-1k": true, "capacity": true}
 var catalogEvidence = map[string]bool{
 	"screenshot": true, "cloud-evidence": true, "junit": true, "json": true,
 	"markdown": true, "logs": true, "console": true,
@@ -114,8 +119,8 @@ func loadAndValidateTestCatalogForRunner(workspace, sourceRunner string) (testCa
 	if err := yaml.Unmarshal(raw, &catalog); err != nil {
 		return testCatalog{}, fmt.Errorf("parse test catalog: %w", err)
 	}
-	if catalog.SchemaVersion != 1 {
-		return testCatalog{}, fmt.Errorf("test catalog schema_version=%d, want 1", catalog.SchemaVersion)
+	if catalog.SchemaVersion != 2 {
+		return testCatalog{}, fmt.Errorf("test catalog schema_version=%d, want 2", catalog.SchemaVersion)
 	}
 	seen := map[string]bool{}
 	catalogUI := map[string]bool{}
@@ -162,6 +167,30 @@ func loadAndValidateTestCatalogForRunner(workspace, sourceRunner string) (testCa
 		if tc.Status == "retired" {
 			continue
 		}
+		if tc.Profile != "" && !catalogProfiles[tc.Profile] {
+			return testCatalog{}, fmt.Errorf("%s %s has unsupported profile %q", prefix, tc.ID, tc.Profile)
+		}
+		if tc.Runner == "test-feature" {
+			if tc.Feature == "" || tc.Profile == "" {
+				return testCatalog{}, fmt.Errorf("%s %s test-feature case requires feature and profile", prefix, tc.ID)
+			}
+			if tc.Layer != "e2e" && tc.Layer != "load" {
+				return testCatalog{}, fmt.Errorf("%s %s test-feature runner requires e2e or load layer", prefix, tc.ID)
+			}
+		}
+		if tc.Layer == "load" && (tc.Feature == "" || tc.Profile == "") {
+			return testCatalog{}, fmt.Errorf("%s %s load case requires feature and profile", prefix, tc.ID)
+		}
+		if tc.Profile == "qualification-1k" {
+			if tc.Layer != "load" || len(tc.Covers) == 0 || len(tc.ChangePaths) == 0 {
+				return testCatalog{}, fmt.Errorf("%s %s qualification-1k case requires load layer, covers, and change_paths", prefix, tc.ID)
+			}
+			for _, required := range []string{"json", "markdown", "logs"} {
+				if !catalogContainsString(tc.Evidence, required) {
+					return testCatalog{}, fmt.Errorf("%s %s qualification-1k case requires %s evidence", prefix, tc.ID, required)
+				}
+			}
+		}
 		if len(tc.Environments) == 0 {
 			return testCatalog{}, fmt.Errorf("%s %s requires at least one environment", prefix, tc.ID)
 		}
@@ -175,6 +204,13 @@ func loadAndValidateTestCatalogForRunner(workspace, sourceRunner string) (testCa
 			}
 			if !bytes.Contains(source, []byte(tc.Selector)) {
 				return testCatalog{}, fmt.Errorf("%s %s selector %q not found in %s", prefix, tc.ID, tc.Selector, tc.Source)
+			}
+		}
+		if validateSource {
+			for _, changePath := range tc.ChangePaths {
+				if err := validateCatalogChangePath(workspace, changePath); err != nil {
+					return testCatalog{}, fmt.Errorf("%s %s change_path %q: %w", prefix, tc.ID, changePath, err)
+				}
 			}
 		}
 		if tc.Layer == "ui" {
@@ -193,12 +229,36 @@ func loadAndValidateTestCatalogForRunner(workspace, sourceRunner string) (testCa
 			catalogUI[tc.ID] = true
 		}
 	}
+	if err := validateCatalogRelationships(catalog); err != nil {
+		return testCatalog{}, err
+	}
 	if sourceRunner == "" || sourceRunner == "test-ui" {
 		if err := validatePlaywrightCatalogCoverage(workspace, catalogUI); err != nil {
 			return testCatalog{}, err
 		}
 	}
 	return catalog, nil
+}
+
+func validateCatalogRelationships(catalog testCatalog) error {
+	for i, tc := range catalog.Cases {
+		if tc.Status != "active" {
+			continue
+		}
+		for _, coveredID := range tc.Covers {
+			covered, ok := catalogCaseByID(catalog.Cases, coveredID)
+			if !ok || covered.Status != "active" {
+				return fmt.Errorf("cases[%d] %s covers unknown or inactive case %q", i, tc.ID, coveredID)
+			}
+			if tc.Layer != "load" || covered.Layer != "e2e" {
+				return fmt.Errorf("cases[%d] %s covers %s; covers requires load -> e2e", i, tc.ID, coveredID)
+			}
+			if tc.Feature == "" || tc.Feature != covered.Feature {
+				return fmt.Errorf("cases[%d] %s feature %q does not match covered case %s feature %q", i, tc.ID, tc.Feature, coveredID, covered.Feature)
+			}
+		}
+	}
+	return nil
 }
 
 func validatePlaywrightCatalogCoverage(workspace string, catalogUI map[string]bool) error {
@@ -241,15 +301,78 @@ func renderTestCatalog(catalog testCatalog) []byte {
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "> Generated from `tests/catalog.yaml`; do not edit this file directly.")
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "| Test ID | Purpose | Method | Layer | Owner | Targets | Environments | Runner | Evidence | Status |")
-	fmt.Fprintln(&b, "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+	fmt.Fprintln(&b, "| Test ID | Purpose | Method | Layer | Feature | Profile | Covers | Change Paths | Owner | Targets | Environments | Runner | Evidence | Status |")
+	fmt.Fprintln(&b, "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
 	for _, tc := range cases {
-		fmt.Fprintf(&b, "| `%s` | %s | %s | `%s` | `%s` | %s | %s | `%s` | %s | `%s` |\n",
-			tc.ID, escapeMarkdownCell(tc.Title), escapeMarkdownCell(tc.Method), tc.Layer, tc.Owner,
+		fmt.Fprintf(&b, "| `%s` | %s | %s | `%s` | %s | %s | %s | %s | `%s` | %s | %s | `%s` | %s | `%s` |\n",
+			tc.ID, escapeMarkdownCell(tc.Title), escapeMarkdownCell(tc.Method), tc.Layer,
+			catalogOptionalCode(tc.Feature), catalogOptionalCode(tc.Profile), joinCatalogValues(tc.Covers),
+			joinCatalogValues(tc.ChangePaths), tc.Owner,
 			joinCatalogValues(tc.Targets), joinCatalogValues(tc.Environments), tc.Runner,
 			joinCatalogValues(tc.Evidence), tc.Status)
 	}
 	return []byte(b.String())
+}
+
+func catalogOptionalCode(value string) string {
+	if value == "" {
+		return "—"
+	}
+	return "`" + value + "`"
+}
+
+func catalogCaseByID(cases []testCatalogCase, id string) (testCatalogCase, bool) {
+	for _, tc := range cases {
+		if tc.ID == id {
+			return tc, true
+		}
+	}
+	return testCatalogCase{}, false
+}
+
+func validateCatalogChangePath(workspace, pattern string) error {
+	if pattern == "" || filepath.IsAbs(pattern) || strings.Contains(pattern, `\`) || strings.Contains(pattern, "..") {
+		return errors.New("must be a non-empty workspace-relative glob without backslashes or parent traversal")
+	}
+	files, err := gitOutput(workspace, "ls-files", "--recurse-submodules")
+	if err != nil {
+		return fmt.Errorf("list tracked files: %w", err)
+	}
+	re, err := catalogGlobRegexp(pattern)
+	if err != nil {
+		return err
+	}
+	for _, tracked := range strings.Fields(files) {
+		if re.MatchString(filepath.ToSlash(tracked)) {
+			return nil
+		}
+	}
+	return errors.New("does not match a tracked file")
+}
+
+func catalogGlobRegexp(pattern string) (*regexp.Regexp, error) {
+	var b strings.Builder
+	b.WriteString("^")
+	for i := 0; i < len(pattern); {
+		switch pattern[i] {
+		case '*':
+			if i+1 < len(pattern) && pattern[i+1] == '*' {
+				b.WriteString(".*")
+				i += 2
+			} else {
+				b.WriteString("[^/]*")
+				i++
+			}
+		case '?':
+			b.WriteString("[^/]")
+			i++
+		default:
+			b.WriteString(regexp.QuoteMeta(string(pattern[i])))
+			i++
+		}
+	}
+	b.WriteString("$")
+	return regexp.Compile(b.String())
 }
 
 func joinCatalogValues(values []string) string {

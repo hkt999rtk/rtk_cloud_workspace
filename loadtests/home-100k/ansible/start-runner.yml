@@ -108,6 +108,7 @@
           --env-root "{{ remote_env_root }}" \
           --brandname "{{ brandname }}" \
           --region "{{ region }}" \
+          --scenario-profile "{{ scenario_profile }}" \
           --vm-label-prefix "{{ vm_label_prefix | default('lg') }}" \
           --devices "{{ device_count }}" \
           --users "{{ user_count }}" \

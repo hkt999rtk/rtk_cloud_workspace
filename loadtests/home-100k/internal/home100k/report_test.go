@@ -544,9 +544,38 @@ func TestVideoEvidenceDerivesSetupFromMediaWhenRunnerOmitsSetupTotals(t *testing
 	video = videoEvidenceWithServerEvidence(video, ServerEvidence{Sources: map[string]EvidenceSource{
 		"turn_registry": {Available: true, Counters: map[string]int64{"turn_registry.active_nodes": 1}},
 		"coturn":        {Available: true},
+		"loki_webrtc_trace": {Available: true, Counters: map[string]int64{
+			"loki_webrtc_trace.create_succeeded.ice_server_count_max": 2,
+		}},
 	}})
 	if !video.Complete {
 		t.Fatalf("video evidence should be complete after media setup derivation and TURN merge: %+v", video)
+	}
+}
+
+func TestVideoEvidenceDerivesStepSetupAndDynamicTURNFromCreateResponse(t *testing.T) {
+	video := VideoEvidence{
+		Steps: []VideoStepEvidence{{
+			WebRTC: WebRTCTotals{
+				CreateAttempts: 2, CreateSuccess: 2,
+				CloseAttempts: 2, CloseSuccess: 2,
+			},
+			WebRTCMedia: WebRTCMediaTotals{Attempts: 2, Successes: 2},
+		}},
+	}
+	video = videoEvidenceWithServerEvidence(video, ServerEvidence{Sources: map[string]EvidenceSource{
+		"turn_registry": {Available: true, Counters: map[string]int64{"turn_registry.active_nodes": 1}},
+		"coturn":        {Available: true},
+		"loki_webrtc_trace": {Available: true, Counters: map[string]int64{
+			"loki_webrtc_trace.create_succeeded.ice_server_count_max": 2,
+		}},
+	}})
+	step := video.Steps[0]
+	if !step.Complete || step.WebRTC.SetupAttempts != 2 || step.WebRTC.SetupSuccess != 2 {
+		t.Fatalf("step = %+v, want media-derived setup and complete evidence", step)
+	}
+	if step.TURN.APIDynamicTURNCount != 2 || step.TURN.APITURNRegistryLookupSucceeded != 1 {
+		t.Fatalf("TURN = %+v, want dynamic TURN inferred from successful create response and active registry", step.TURN)
 	}
 }
 

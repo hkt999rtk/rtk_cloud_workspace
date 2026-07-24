@@ -509,6 +509,104 @@ func TestRunStatusMarksMissingPerTypeEvidenceIncomplete(t *testing.T) {
 	}
 }
 
+func TestVideoQualificationUsesMQTTStagesAsTransportCoverage(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:         "cloud_env/staging/runtime",
+		Brandname:       "RTK",
+		Region:          "us-sea",
+		ScenarioProfile: VideoCanaryScenarioProfile,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := plan.Stages[0].ConnectedDevices
+	stages := []StageResult{{
+		Name:                          plan.Stages[0].Name,
+		ConnectedDevices:              target,
+		MQTTConnectSuccessRatePercent: 100,
+		DeviceMQTTTotals: DeviceMQTTTotals{
+			ConnectAttempts:   int64(target),
+			ConnectSuccess:    int64(target),
+			ActiveConnections: int64(target),
+		},
+	}}
+	video := VideoEvidence{
+		Complete: true,
+		WebRTC: WebRTCTotals{
+			CreateAttempts: 2, CreateSuccess: 2,
+			SetupAttempts: 2, SetupSuccess: 2,
+			CloseAttempts: 2, CloseSuccess: 2,
+			SuccessRatePercent: 100,
+		},
+		WebRTCMedia: WebRTCMediaTotals{
+			Attempts: 2, Successes: 2, ICEConnectedP95MS: 1, TimeToFirstRTPP95MS: 1,
+		},
+		TURN: TURNEvidence{RegistryAvailable: true, CoturnAvailable: true, ActiveNodes: 1},
+	}
+	serverCorrelation, runtimeCorrelation := qualificationCorrelations(
+		plan,
+		ServerCorrelation{Status: "incomplete"},
+		RuntimeLogCorrelation{Status: "incomplete"},
+	)
+	outcome := evaluateRunOutcome(
+		plan,
+		ServerEvidence{Complete: true, Sources: requiredEvidenceSources(true)},
+		stages,
+		LoadGeneratorHealth{},
+		serverCorrelation,
+		runtimeCorrelation,
+		video,
+	)
+	if outcome.Status != "COMPLETE" || outcome.Result != "SUCCESS" {
+		t.Fatalf("outcome = %+v, want COMPLETE/SUCCESS", outcome)
+	}
+	if serverCorrelation.Status != "skipped" || runtimeCorrelation.Status != "skipped" {
+		t.Fatalf("correlations = %s/%s, want skipped/skipped", serverCorrelation.Status, runtimeCorrelation.Status)
+	}
+}
+
+func TestClipQualificationUsesMQTTStagesAsTransportCoverage(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:         "cloud_env/staging/runtime",
+		Brandname:       "RTK",
+		Region:          "us-sea",
+		ScenarioProfile: ClipStorageCanaryScenarioProfile,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := plan.Stages[0].ConnectedDevices
+	stages := []StageResult{{
+		Name:                          plan.Stages[0].Name,
+		ConnectedDevices:              target,
+		MQTTConnectSuccessRatePercent: 100,
+		DeviceMQTTTotals: DeviceMQTTTotals{
+			ConnectAttempts:   int64(target),
+			ConnectSuccess:    int64(target),
+			ActiveConnections: int64(target),
+		},
+	}}
+	serverCorrelation, runtimeCorrelation := qualificationCorrelations(
+		plan,
+		ServerCorrelation{Status: "incomplete"},
+		RuntimeLogCorrelation{Status: "incomplete"},
+	)
+	outcome := evaluateRunOutcome(
+		plan,
+		ServerEvidence{Complete: true, Sources: requiredEvidenceSources(true)},
+		stages,
+		LoadGeneratorHealth{},
+		serverCorrelation,
+		runtimeCorrelation,
+	)
+	if outcome.Status != "COMPLETE" || outcome.Result != "SUCCESS" {
+		t.Fatalf("outcome = %+v, want COMPLETE/SUCCESS", outcome)
+	}
+	if serverCorrelation.Status != "skipped" || runtimeCorrelation.Status != "skipped" {
+		t.Fatalf("correlations = %s/%s, want skipped/skipped", serverCorrelation.Status, runtimeCorrelation.Status)
+	}
+}
+
 func TestSummarizeStageTotalsUsesMaxForActiveConnectionGauges(t *testing.T) {
 	stages := []StageResult{
 		{

@@ -363,6 +363,17 @@ func TestNormalizeEnvironmentArgs(t *testing.T) {
 	}
 }
 
+func TestNormalizeEnvironmentArgsUsesLKEDeploymentRootForFeatureQualification(t *testing.T) {
+	args, err := normalizeEnvironmentArgs([]string{"test-feature", "--workspace", "/tmp/ws", "--environment", "staging", "--feature", "device-shadow"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"test-feature", "--workspace", "/tmp/ws", "--env-root", "/tmp/ws/cloud_env/staging/lke", "--feature", "device-shadow"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("normalizeEnvironmentArgs() = %#v, want %#v", args, want)
+	}
+}
+
 func writeDeploymentFixture(t *testing.T, environment, adapter string) string {
 	t.Helper()
 	root := t.TempDir()

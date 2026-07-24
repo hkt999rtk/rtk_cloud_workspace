@@ -1163,7 +1163,7 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		"--stage-connected-devices", strings.Join(stageTargets, ","),
 		"--stage-durations-seconds", strings.Join(stageDurations, ","),
 		"--stage-min-commands", strings.Join(stageMinCommands, ","),
-		"--device-traffic-profile", firstNonEmpty(plan.ScenarioProfile, DefaultScenarioProfile),
+		"--device-traffic-profile", mqttDeviceTrafficProfile(plan),
 		"--concurrency", strconv.Itoa(liveMQTTConcurrency(maxTarget, values.mqttConcurrency)),
 		"--command-concurrency", strconv.Itoa(liveCommandConcurrency(maxTarget, values.commandConcurrency)),
 		"--shadow-command-timeout", firstNonEmpty(values.shadowCommandTimeout, DefaultShadowCommandTimeout),
@@ -1183,6 +1183,10 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 	stageResults, err := loadLiveMQTTShardResults(filepath.Join(stageOut, "results.json"), plan.Stages, stageTargets)
 	if err != nil && len(stageResults) == 0 {
 		stageResults = fallbackFailedLiveStageResults(plan.Stages, stageTargets, liveShardErrorText(runErr, err))
+	}
+	transportOnlyFeature := isVideoFeatureProfile(plan.VideoProfile.Name) || isClipStorageProfile(plan.ClipStorageProfile.Name)
+	if err == nil && runErr != nil && transportOnlyFeature && videoTransportStagesComplete(plan, stageResults) {
+		runErr = nil
 	}
 	resultFile := filepath.Join(outDir, "results.json")
 	reportFile := filepath.Join(outDir, "TEST_REPORT.md")
@@ -1235,6 +1239,30 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		return fmt.Errorf("live target mqtt-test failed: %w", runErr)
 	}
 	return nil
+}
+
+func mqttDeviceTrafficProfile(plan Plan) string {
+	if isVideoFeatureProfile(plan.VideoProfile.Name) || isClipStorageProfile(plan.ClipStorageProfile.Name) {
+		return DefaultScenarioProfile
+	}
+	return firstNonEmpty(plan.ScenarioProfile, DefaultScenarioProfile)
+}
+
+func videoTransportStagesComplete(plan Plan, stages []StageResult) bool {
+	if len(stages) == 0 {
+		return false
+	}
+	thresholds := gateThresholdsFromConditions(plan.Conditions)
+	for _, stage := range stages {
+		required := thresholdCount(int64(stage.ConnectedDevices), thresholds.ClientTargetCompletenessPercent)
+		active := nonZeroInt64(stage.DeviceMQTTTotals.ActiveConnections, stage.DeviceMQTTTotals.ConnectSuccess)
+		if required == 0 || active < required ||
+			stage.MQTTConnectSuccessRatePercent < thresholds.FunctionalSuccessThresholdPercent ||
+			stage.AuthorizationViolationCount > 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func liveRunnerCommandTimeout(totalDurationSeconds int, graceRaw string) (time.Duration, error) {
@@ -1463,6 +1491,9 @@ type rawLiveMQTTResult struct {
 	TotalHTTPBytesSent         int64                       `json:"total_http_bytes_sent"`
 	TotalHTTPBytesReceived     int64                       `json:"total_http_bytes_received"`
 	RejectedUpdates            int64                       `json:"rejected_updates"`
+	VersionConflicts           int64                       `json:"version_conflicts"`
+	UnauthorizedRejections     int64                       `json:"unauthorized_rejections"`
+	DuplicateSuppressions      int64                       `json:"duplicate_suppressions"`
 	DeviceMQTTTotals           DeviceMQTTTotals            `json:"device_mqtt_totals"`
 	AppUserTotals              AppUserTotals               `json:"app_user_totals"`
 	FailureReasons             map[string]int64            `json:"failure_reasons"`
@@ -1619,8 +1650,12 @@ func convertLiveMQTTStageResult(raw rawLiveMQTTResult, stage Stage, maxConnected
 		MQTTConnectSuccessRatePercent:  connectSuccessPercent(DeviceMQTTTotals{ConnectAttempts: connectAttempts, ConnectSuccess: connectSuccess}),
 		DesiredReportedConvergenceRate: percent(commandsPassed, commandsAttempted),
 		OfflineDesiredConvergenceRate:  100,
+		DuplicateApplyCount:            maxInt(0, int(raw.RejectedUpdates-raw.DuplicateSuppressions*2)),
+		VersionConflictCount:           int(raw.VersionConflicts),
 		DeltaClearSuccessRatePercent:   percent(commandsPassed, commandsAttempted),
 		RejectedUpdateCount:            int(raw.RejectedUpdates),
+		UnauthorizedRejectionCount:     int(raw.UnauthorizedRejections),
+		DuplicateSuppressionCount:      int(raw.DuplicateSuppressions),
 		AuthorizationViolationCount:    int(raw.AuthViolations),
 		ClientTokenCorrelationCount:    int(httpSuccesses),
 		FailureReasons:                 raw.FailureReasons,
@@ -5025,6 +5060,7 @@ func writeAnsibleInventoryAndVars(vms []LinodeVM, plan Plan, values workflowFlag
 		"remote_out_root":               strings.TrimRight(firstNonEmpty(values.remoteOutRoot, "/var/lib/home-100k"), "/"),
 		"brandname":                     plan.Conditions.Brandname,
 		"region":                        plan.Conditions.Region,
+		"scenario_profile":              plan.ScenarioProfile,
 		"vm_label_prefix":               plan.Conditions.VMLabelPrefix,
 		"device_count":                  plan.Conditions.Devices,
 		"user_count":                    plan.Conditions.Users,

@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -111,9 +112,10 @@ func TestPoissonClipScheduleIsDeterministicAndBounded(t *testing.T) {
 	if len(one) == 0 || len(one) != len(two) {
 		t.Fatalf("schedule lengths = %d and %d", len(one), len(two))
 	}
-	if len(one) < 20 || len(one) > 80 {
-		t.Fatalf("schedule length = %d, want a plausible Poisson sample around 30", len(one))
+	if len(one) != 30 {
+		t.Fatalf("schedule length = %d, want exact qualification count 30", len(one))
 	}
+	counts := map[string]int{}
 	for i, event := range one {
 		if event.Offset < 0 || event.Offset >= 30*time.Minute {
 			t.Fatalf("event %d offset = %s, outside window", i, event.Offset)
@@ -121,6 +123,232 @@ func TestPoissonClipScheduleIsDeterministicAndBounded(t *testing.T) {
 		if event != two[i] {
 			t.Fatalf("event %d differs for same seed: %#v != %#v", i, event, two[i])
 		}
+		counts[event.DeviceID]++
+	}
+	for _, id := range ids {
+		if counts[id] != 10 {
+			t.Fatalf("camera %s count = %d, want 10", id, counts[id])
+		}
+	}
+}
+
+func TestPrepareClipRecipientKeysActivatesEachCameraWithUserPublicKey(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateDER, err := x509.MarshalECPrivateKey(privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privatePath := filepath.Join(t.TempDir(), "user-private.pem")
+	if err := os.WriteFile(privatePath, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: privateDER}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	activated := map[string]bool{}
+	deactivated := map[string]bool{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Header.Get("Authorization") != "Bearer admin-token" {
+			t.Fatalf("authorization = %q", req.Header.Get("Authorization"))
+		}
+		if strings.HasSuffix(req.URL.Path, "/deactivate") {
+			deviceID := strings.TrimPrefix(strings.TrimSuffix(req.URL.Path, "/deactivate"), "/api/devices/")
+			deactivated[deviceID] = true
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+			return
+		}
+		var body map[string]string
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		deviceID := strings.TrimPrefix(strings.TrimSuffix(req.URL.Path, "/activate"), "/api/devices/")
+		if body["devid"] != deviceID {
+			t.Fatalf("body devid = %q, path device = %q", body["devid"], deviceID)
+		}
+		if _, err := parseP256PublicKey(body["clip_public_key"]); err != nil {
+			t.Fatalf("clip public key: %v", err)
+		}
+		if deviceID == "cam-b" && !deactivated[deviceID] {
+			http.Error(w, `{"status":"fail","reason":"public key mismatch"}`, http.StatusConflict)
+			return
+		}
+		activated[deviceID] = true
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ok",
+			"endpoints_with_credentials": []map[string]string{{
+				"service_id": "API", "client_auth_token": "must-not-enter-evidence",
+			}},
+		})
+	}))
+	defer server.Close()
+
+	deviceTokens := map[string]string{"cam-a": "old-a", "cam-b": "old-b"}
+	operations := NewRunner(server.Client()).prepareClipRecipientKeys(context.Background(), Config{
+		APIURL:                 server.URL,
+		HTTPTimeout:            time.Second,
+		RunID:                  "run-clip",
+		AdminToken:             "admin-token",
+		DeviceTokens:           deviceTokens,
+		ClipUserPrivateKeyPath: privatePath,
+		ClipDeviceIDs:          []string{"cam-a", "cam-b", "cam-a"},
+	})
+	if len(operations) != 3 {
+		t.Fatalf("operations = %#v", operations)
+	}
+	for _, operation := range operations {
+		if !operation.Success {
+			t.Fatalf("operation = %#v, want success", operation)
+		}
+		if strings.Contains(operation.Evidence, "must-not-enter-evidence") {
+			t.Fatalf("operation leaked activation token: %#v", operation)
+		}
+	}
+	if !activated["cam-a"] || !activated["cam-b"] || !deactivated["cam-b"] {
+		t.Fatalf("activated = %#v deactivated = %#v", activated, deactivated)
+	}
+	if deviceTokens["cam-a"] != "must-not-enter-evidence" || deviceTokens["cam-b"] != "must-not-enter-evidence" {
+		t.Fatalf("activation tokens were not refreshed: %#v", deviceTokens)
+	}
+}
+
+func TestRunClipStorageWorkloadStopsWhenRecipientPreparationFails(t *testing.T) {
+	tmp := t.TempDir()
+	clipPath := filepath.Join(tmp, "clip.mp4")
+	thumbnailPath := filepath.Join(tmp, "thumbnail.jpg")
+	privatePath := filepath.Join(tmp, "invalid-private.pem")
+	for path, body := range map[string][]byte{
+		clipPath:      []byte("0123456789abcdef-clip"),
+		thumbnailPath: []byte("thumbnail"),
+		privatePath:   []byte("not-a-private-key"),
+	} {
+		if err := os.WriteFile(path, body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := Config{
+		RunID:                  "recipient-failure",
+		AdminToken:             "admin-token",
+		ClipDeviceIDs:          []string{"cam-a"},
+		ClipCountPerDevice:     1,
+		ClipScheduleWindow:     time.Second,
+		ClipUploadConcurrency:  1,
+		ClipFixturePath:        clipPath,
+		ClipThumbnailPath:      thumbnailPath,
+		ClipUserPrivateKeyPath: privatePath,
+	}
+	operations := NewRunner(http.DefaultClient).runClipStorageWorkload(context.Background(), cfg)
+	if len(operations) != 1 || operations[0].Name != "clip_recipient_prepare" || operations[0].Success {
+		t.Fatalf("operations = %#v, want one failed recipient preparation", operations)
+	}
+	if cfg.DeviceTokens != nil {
+		t.Fatal("runClipStorageWorkload must not mutate the caller's Config map")
+	}
+}
+
+func TestClipUserPublicKeyRejectsInvalidPrivateKeys(t *testing.T) {
+	tmp := t.TempDir()
+	if _, err := clipUserPublicKey(filepath.Join(tmp, "missing.pem")); err == nil {
+		t.Fatal("missing private key unexpectedly passed")
+	}
+	malformed := filepath.Join(tmp, "malformed.pem")
+	if err := os.WriteFile(malformed, []byte("not PEM"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := clipUserPublicKey(malformed); err == nil || !strings.Contains(err.Error(), "not PEM") {
+		t.Fatalf("malformed private key error = %v", err)
+	}
+	wrongCurve, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongDER, err := x509.MarshalECPrivateKey(wrongCurve)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongPath := filepath.Join(tmp, "p384.pem")
+	if err := os.WriteFile(wrongPath, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: wrongDER}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := clipUserPublicKey(wrongPath); err == nil || !strings.Contains(err.Error(), "not P-256") {
+		t.Fatalf("wrong-curve private key error = %v", err)
+	}
+}
+
+func TestVerifyUploadedClipSamplesUsesAppBearerAndDeduplicatesDevices(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		requests.Add(1)
+		if req.Header.Get("Authorization") != "Bearer app-token" {
+			t.Fatalf("authorization = %q", req.Header.Get("Authorization"))
+		}
+		if strings.HasPrefix(req.URL.Path, "/download/") {
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write([]byte("0123456789abcdef"))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+	}))
+	defer server.Close()
+
+	operations := []Operation{
+		{Name: "clip_upload", DeviceID: "cam-a", Success: false, Evidence: "clipid=failed"},
+		{Name: "clip_upload", DeviceID: "cam-a", Success: true, Evidence: "clipid=clip-a"},
+		{Name: "clip_upload", DeviceID: "cam-a", Success: true, Evidence: "clipid=duplicate"},
+	}
+	got := NewRunner(server.Client()).verifyUploadedClipSamples(context.Background(), Config{
+		APIURL:      server.URL,
+		HTTPTimeout: time.Second,
+		AppTokens:   map[string]string{"cam-a": "app-token"},
+	}, operations)
+	if len(got) == 0 || requests.Load() == 0 {
+		t.Fatalf("verification=%#v requests=%d", got, requests.Load())
+	}
+	for _, operation := range got {
+		if strings.Contains(operation.Evidence, "duplicate") {
+			t.Fatalf("duplicate device was verified: %#v", got)
+		}
+	}
+}
+
+func TestPutDirectClipAssetRetriesOneTimeout(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if attempts.Add(1) == 1 {
+			time.Sleep(50 * time.Millisecond)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	operation := NewRunner(server.Client()).putDirectClipAsset(context.Background(), Config{
+		HTTPTimeout: 10 * time.Millisecond,
+	}, "cam-a", "clip_put", directClipPut{URL: server.URL}, []byte("clip"))
+	if !operation.Success || attempts.Load() != 2 {
+		t.Fatalf("operation=%#v attempts=%d, want one successful retry", operation, attempts.Load())
+	}
+	if !strings.Contains(operation.Evidence, "put_attempts=2") {
+		t.Fatalf("evidence = %q", operation.Evidence)
+	}
+}
+
+func TestPutDirectClipAssetAppliesHeadersAndReportsHTTPFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Header.Get("X-Upload-Test") != "expected" {
+			t.Fatalf("upload header = %q", req.Header.Get("X-Upload-Test"))
+		}
+		http.Error(w, "failed", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	operation := NewRunner(server.Client()).putDirectClipAsset(context.Background(), Config{
+		HTTPTimeout: time.Second,
+	}, "cam-a", "clip_put", directClipPut{
+		URL:     server.URL,
+		Headers: map[string]string{"X-Upload-Test": "expected"},
+	}, []byte("clip"))
+	if operation.Success || operation.StatusCode != http.StatusInternalServerError || operation.ErrorClass != ClassHTTP {
+		t.Fatalf("operation = %#v, want classified HTTP failure", operation)
 	}
 }
 
