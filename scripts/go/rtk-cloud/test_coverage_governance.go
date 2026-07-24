@@ -432,8 +432,9 @@ func runRuntimeCoverage(workspace, outDir string, cfg coverageConfig, report cov
 	if err != nil {
 		started = time.Now().UTC()
 	}
+	filterActive := len(selected) > 0
 	for _, module := range cfg.Modules {
-		if module.Kind != "go" || (len(selected) > 0 && !selected[module.Name]) {
+		if module.Kind != "go" || (filterActive && !selected[module.Name]) {
 			continue
 		}
 		delete(selected, module.Name)

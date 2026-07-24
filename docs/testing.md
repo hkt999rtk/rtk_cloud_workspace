@@ -194,7 +194,7 @@ changed-Go-statement coverage below 80%.
 `Go Runtime Coverage Nightly` is deliberately separate. It builds
 coverage-only images into the existing staging LKE cluster while deploying only
 run-scoped namespaces whose stack name starts with `coverage-`. Manual
-`preflight` validates the self-hosted runner, credentials, cluster label,
+`preflight` validates the configured GitHub runner, credentials, cluster label,
 repository capacity variable, live Linode instance/volume/NodeBalancer
 headroom, orphaned coverage PVs, commit anchors, and staging deployment snapshot
 without creating resources. The quota-bounded runtime profile uses ephemeral
@@ -207,7 +207,12 @@ headroom is reported as `BLOCKED` before mutation. Manual `run` requires the exa
 module namespace, pins that namespace's instrumented deployments to one node
 for ReadWriteOnce sharing, runs onboarding, all three feature canaries, and deployed
 desktop/mobile smoke, then scales services down before collecting `covmeta` and
-`covcounters`. Commit/run anchors are required before aggregation. Runtime
+`covcounters`. Each coverage-only command includes a test-only SIGTERM hook
+that snapshots atomic counters before Kubernetes terminates the process; the
+hook is not present in normal staging or production images. `test-live` owns
+its direct onboarding port-forwards, while feature canaries use the separate
+runner-local HTTPS/MQTT tunnel. Commit/run anchors are required before
+aggregation. Runtime
 coverage and feature qualification share the `staging-mutating-tests`
 concurrency lock. Cleanup deletes only that isolated stack's namespaces, PVCs,
 collectors, generator resources, retained PV objects, and their exact Linode

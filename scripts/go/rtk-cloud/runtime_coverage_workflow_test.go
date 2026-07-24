@@ -7,7 +7,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
@@ -48,6 +50,7 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"VIDEO_CLOUD_LOAD_CLIP_SERVER_PUBLIC_KEY=$server_public",
 		"--metadata-file",
 		"--provenance=false",
+		"--build-context runtime_coverage_helper=tests/runtime-coverage",
 		"pinned_image=\"$image@$digest\"",
 		"${env_key}_DIGEST=$digest",
 		"lke-image-manifest.json",
@@ -81,6 +84,112 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 	}
 	if !strings.Contains(string(feature), "group: staging-mutating-tests") {
 		t.Fatal("feature qualification does not share the staging mutation lock")
+	}
+	dockerfiles, err := filepath.Glob(filepath.Join(workspace, "tests", "runtime-coverage", "Dockerfile.*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dockerfiles) != 5 {
+		t.Fatalf("runtime coverage Dockerfiles = %d, want 5", len(dockerfiles))
+	}
+	for _, dockerfile := range dockerfiles {
+		raw, err := os.ReadFile(dockerfile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := string(raw)
+		if !strings.Contains(body, "runtime_coverage_helper") ||
+			!strings.Contains(body, "-covermode=atomic") ||
+			!strings.Contains(body, "-coverpkg=./...") {
+			t.Fatalf("%s does not inject the atomic runtime coverage flush helper", dockerfile)
+		}
+	}
+	onboardingStart := strings.Index(workflow, "- name: Run onboarding and cross-service lifecycle checks")
+	canaryStart := strings.Index(workflow, "- name: Run all feature canaries")
+	uiStart := strings.Index(workflow, "- name: Run desktop and mobile deployed UI smoke")
+	if onboardingStart < 0 || canaryStart < 0 || uiStart < 0 {
+		t.Fatal("runtime workflow lifecycle steps are missing")
+	}
+	if strings.Contains(workflow[onboardingStart:canaryStart], "tunnel-start") {
+		t.Fatal("onboarding must let test-live own its direct service port-forwards")
+	}
+	if !strings.Contains(workflow[canaryStart:uiStart], "tunnel-start") {
+		t.Fatal("feature canaries require the shared HTTPS/MQTT tunnel")
+	}
+}
+
+func TestRuntimeCoverageFlushHelperWritesMetadataAndCountersOnSIGTERM(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	helper, err := os.ReadFile(filepath.Join(workspace, "tests", "runtime-coverage", "coverage_flush.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "coverage_flush.go"), helper, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(`package main
+import (
+	"os"
+	"time"
+)
+func main() {
+	_ = os.WriteFile(os.Getenv("READY_FILE"), []byte("ready"), 0o600)
+	for {
+		covered()
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+func covered() int { return 1 }
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module runtimeflush\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(dir, "runtimeflush")
+	build := exec.Command("go", "build", "-cover", "-covermode=atomic", "-coverpkg=./...", "-o", binary, ".")
+	build.Dir = dir
+	build.Env = append(os.Environ(), "GOWORK=off")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build runtime flush fixture: %v\n%s", err, output)
+	}
+	coverageDir := filepath.Join(dir, "coverage")
+	if err := os.Mkdir(coverageDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(binary)
+	readyFile := filepath.Join(dir, "ready")
+	command.Env = append(os.Environ(), "GOCOVERDIR="+coverageDir, "READY_FILE="+readyFile)
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 100 && !exists(readyFile); attempt++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !exists(readyFile) {
+		_ = command.Process.Kill()
+		t.Fatal("coverage fixture did not become ready")
+	}
+	if err := command.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Wait(); err != nil {
+		t.Fatalf("coverage fixture exit: %v", err)
+	}
+	meta, err := filepath.Glob(filepath.Join(coverageDir, "covmeta.*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	counters, err := filepath.Glob(filepath.Join(coverageDir, "covcounters.*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(meta) == 0 || len(counters) == 0 {
+		t.Fatalf("coverage flush files: meta=%v counters=%v", meta, counters)
 	}
 }
 
@@ -193,6 +302,7 @@ func TestRuntimeCleanupWritesResidualAndStagingAnchorReport(t *testing.T) {
 		"claim=\"${module}-runtime-coverage\"",
 		"group_by(.) | max_by(length)[0]",
 		"nodeSelector:{\"kubernetes.io/hostname\":$node_name}",
+		`test "${GOCOVERDIR:-}" = /coverage && test -w "$GOCOVERDIR"`,
 		"VIDEO_CLOUD_LOAD_STORAGE_NAMESPACE=$video_namespace",
 		"running pod image IDs do not match the expected digest",
 		"residual_namespaces",

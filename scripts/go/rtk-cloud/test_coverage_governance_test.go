@@ -543,6 +543,44 @@ func TestRuntimeCoverageValidationCoversIncompleteLayoutsAndUnknownModules(t *te
 	}
 }
 
+func TestRuntimeCoverageModuleFilterDoesNotExpandAfterSelectedModule(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outDir := t.TempDir()
+	report := coverageReport{
+		SchemaVersion: 2, RunID: "filtered-runtime", Profile: "runtime",
+		StartedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	cfg := coverageConfig{Modules: []coverageModule{
+		{Name: "workspace-tooling", Kind: "go", Path: "scripts/go"},
+		{Name: "godaddy-dns-toolkit", Kind: "go", Path: "repos/rtk_video_cloud/tools/godaddy-dns"},
+	}}
+	err = runRuntimeCoverage(
+		workspace,
+		outDir,
+		cfg,
+		report,
+		map[string]bool{"workspace-tooling": true},
+		t.TempDir(),
+	)
+	if err == nil {
+		t.Fatal("missing selected runtime evidence unexpectedly passed")
+	}
+	raw, readErr := os.ReadFile(filepath.Join(outDir, "results.json"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	var result coverageReport
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Cases) != 1 || result.Cases[0].Name != "workspace-tooling" {
+		t.Fatalf("runtime filter expanded after selected module: %#v", result.Cases)
+	}
+}
+
 func TestRunCoverageJSONCommandAndEvidenceCopy(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "logs", "test.log")

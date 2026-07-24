@@ -660,6 +660,8 @@ prepare_deployment() {
     }}}}')"
   kubectl --kubeconfig "$kubeconfig" -n "$namespace" patch "deployment/$deployment" --type strategic -p "$patch"
   kubectl --kubeconfig "$kubeconfig" -n "$namespace" rollout status "deployment/$deployment" --timeout=10m
+  kubectl --kubeconfig "$kubeconfig" -n "$namespace" exec "deployment/$deployment" -c "$container" -- \
+    sh -c 'test "${GOCOVERDIR:-}" = /coverage && test -w "$GOCOVERDIR"'
 }
 
 prepare_namespace() {

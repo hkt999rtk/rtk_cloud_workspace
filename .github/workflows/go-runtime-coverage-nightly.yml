@@ -206,6 +206,7 @@ jobs:
               --platform linux/amd64 \
               --push \
               --provenance=false \
+              --build-context runtime_coverage_helper=tests/runtime-coverage \
               --metadata-file "$metadata" \
               -f "$dockerfile" \
               -t "$image" \
@@ -318,8 +319,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          scripts/ci/runtime-coverage-k8s.sh tunnel-start
-          trap 'scripts/ci/runtime-coverage-k8s.sh tunnel-stop' EXIT
           go run ./scripts/go/rtk-cloud -- test-live \
             --env-root "$RUNTIME_ENV_ROOT" \
             --run --confirm "$RUNTIME_COVERAGE_STACK" \
