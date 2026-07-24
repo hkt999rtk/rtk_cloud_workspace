@@ -247,6 +247,7 @@ Commands:
   destroy-vms             Review or live-destroy VMs by state file; manual cleanup only.
   workflow-dry-run        Run plan plus dry-run lifecycle review commands.
   workflow-live           Create VMs and run the live lifecycle through aggregate.
+  workflow-local-live     Run the formal live lifecycle on this runner without generator VMs.
   workflow-resume-live    Resume an existing live run from sync using <out-dir>/vms.json.
   workflow-video-live     Run only the live WebRTC video lifecycle; skips MQTT/shadow.
   workflow-video-resume-live
@@ -263,6 +264,7 @@ Defaults can be overridden with:
   HOME100K_REGION         explicit test-only provider region override; normally resolved from environment
   HOME100K_LINODE_TYPE    optional Linode VM type for load generators, passed to provision-vms
   HOME100K_VM_LABEL_PREFIX default: lg; load-generator VM labels are <prefix>01..<prefix>NN
+  HOME100K_LOCAL_LIVE_MAX_DEVICES default: 100; safety limit for workflow-local-live
   HOME100K_RUN_ID         default: current UTC timestamp
   HOME100K_OUT_DIR        default: loadtests/home-100k/reports/<run-id>
   HOME100K_REMOTE_WORKSPACE default: /root/rtk_cloud_workspace
@@ -763,7 +765,7 @@ export_kubeconfig_if_available() {
 
 command_needs_public_mqtt_addr() {
   case "$1" in
-    sync|run-stages|workflow-live|workflow-resume-live)
+    sync|run-stages|workflow-live|workflow-resume-live|workflow-local-live)
       return 0
       ;;
     *)
@@ -2535,6 +2537,95 @@ case "$command" in
       exit "$workflow_rc"
     fi
     exit "$cleanup_rc"
+    ;;
+  workflow-local-live)
+    local_live_max_devices="${HOME100K_LOCAL_LIVE_MAX_DEVICES:-100}"
+    if ! [[ "$local_live_max_devices" =~ ^[1-9][0-9]*$ ]]; then
+      echo "HOME100K_LOCAL_LIVE_MAX_DEVICES must be a positive integer" >&2
+      exit 2
+    fi
+    if ! [[ "${device_count:-}" =~ ^[1-9][0-9]*$ ]] || ((device_count > local_live_max_devices)); then
+      echo "workflow-local-live requires HOME100K_DEVICES between 1 and $local_live_max_devices" >&2
+      exit 2
+    fi
+    mkdir -p "$local_out_dir/shards" "$local_out_dir/bin"
+    ca_bundle_path="$(device_ca_bundle_path || true)"
+    if [[ -z "$ca_bundle_path" ]]; then
+      echo "CERTIFICATE_CA_MISSING: current device/app CA bundle is required for local-live workflow" >&2
+      exit 1
+    fi
+    export HOME100K_DEVICE_CLIENT_CA_BUNDLE="$ca_bundle_path"
+    run_fixture_preflight "$ca_bundle_path"
+    run_single_device_smoke
+    plan_file="$local_out_dir/plan.json"
+    run_home100k plan "${plan_condition_args[@]}" > "$plan_file"
+    rtk_cloud_binary="$local_out_dir/bin/rtk-cloud"
+    (
+      cd "$repo_root"
+      go build -o "$rtk_cloud_binary" ./scripts/go/rtk-cloud
+    )
+    export_kubeconfig_if_available
+    run_home100k collect-server-evidence \
+      "${workflow_args[@]}" \
+      --run-id "$run_id" \
+      --out-dir "$local_out_dir" \
+      --server-evidence-file "$local_out_dir/server-evidence-baseline.json" \
+      --live
+    workflow_rc=0
+    clip_storage_pid=""
+    if clip_storage_loadtest_enabled; then
+      run_clip_storage_loadtest_step &
+      clip_storage_pid=$!
+    fi
+    while IFS= read -r assignment; do
+      label="$(jq -r '.label' <<< "$assignment")"
+      role="$(jq -r '.role' <<< "$assignment")"
+      shard_index="$(jq -r '.index' <<< "$assignment")"
+      assignment_dir="$local_out_dir/shards/$label"
+      assignment_manifest="$assignment_dir/assignment.json"
+      mkdir -p "$assignment_dir"
+      printf '%s\n' "$assignment" > "$assignment_manifest"
+      run_home100k shard-run \
+        "${workflow_args[@]}" \
+        --run-id "$run_id" \
+        --out-dir "$assignment_dir" \
+        --role "$role" \
+        --shard-index "$shard_index" \
+        --shard-manifest "$assignment_manifest" \
+        --runner-mode live \
+        --rtk-cloud-binary "$rtk_cloud_binary" \
+        --workspace "$repo_root" || workflow_rc=$?
+    done < <(jq -c '.vm_assignments[] | select((.task_shards | length) > 0)' "$plan_file")
+    if [[ -n "$clip_storage_pid" ]]; then
+      clip_storage_rc=0
+      wait "$clip_storage_pid" || clip_storage_rc=$?
+      if [[ "$clip_storage_rc" -ne 0 ]]; then
+        workflow_rc=$clip_storage_rc
+      else
+        collect_clip_storage_evidence || workflow_rc=$?
+      fi
+    fi
+    if [[ "$workflow_rc" -eq 0 ]]; then
+      run_video_loadtest_step || workflow_rc=$?
+    fi
+    run_home100k collect-server-evidence \
+      "${workflow_args[@]}" \
+      --run-id "$run_id" \
+      --out-dir "$local_out_dir" \
+      --live
+    run_home100k aggregate \
+      "${workflow_args[@]}" \
+      --run-id "$run_id" \
+      --out-dir "$local_out_dir"
+    generate_report_from_artifacts
+    report_status="$(current_report_status)"
+    report_result="$(current_report_result)"
+    if [[ "$workflow_rc" -eq 0 && ( "$report_status" != "COMPLETE" || "$report_result" != "SUCCESS" ) ]]; then
+      workflow_rc=1
+      echo "local-live report status is $report_status result is $report_result" >&2
+    fi
+    echo "local-live workflow artifacts: $out_dir"
+    exit "$workflow_rc"
     ;;
   workflow-resume-live)
     if [[ ! -f "$ssh_key" ]]; then

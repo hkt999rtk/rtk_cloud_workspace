@@ -40,15 +40,17 @@ jobs:
       RUNTIME_COVERAGE_OUTPUT_ROOT: ${{ github.workspace }}/.artifacts/runtime-coverage/runtime-${{ github.run_id }}-${{ github.run_attempt }}
       RUNTIME_COVERAGE_PREFLIGHT_REPORT: ${{ github.workspace }}/.artifacts/runtime-coverage/runtime-${{ github.run_id }}-${{ github.run_attempt }}/preflight-report.json
       RUNTIME_COVERAGE_SHARED_CLUSTER: "1"
+      RUNTIME_COVERAGE_FEATURE_WORKFLOW: workflow-local-live
       RUNTIME_COVERAGE_RUNNER_LABEL: ubuntu-24.04
       RUNTIME_COVERAGE_RUNNER_OS: Linux
       RUNTIME_COVERAGE_RUNNER_ARCH: X64
       CLOUD_STAGING_LKE_CLUSTER_LABEL: video-cloud-staging-lke
       LKE_CLUSTER_LABEL: video-cloud-staging-lke
       LKE_ACTIVE_SERVICE_LIMIT: ${{ vars.LKE_ACTIVE_SERVICE_LIMIT }}
-      RUNTIME_COVERAGE_PLANNED_PVCS: "15"
-      RUNTIME_COVERAGE_PLANNED_LOAD_BALANCERS: "2"
-      RUNTIME_COVERAGE_PLANNED_GENERATORS: "1"
+      LKE_POSTGRES_STORAGE_MODE: emptydir
+      RUNTIME_COVERAGE_PLANNED_PVCS: "5"
+      RUNTIME_COVERAGE_PLANNED_LOAD_BALANCERS: "0"
+      RUNTIME_COVERAGE_PLANNED_GENERATORS: "0"
       LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
       LINODE_OBJ_ACCESS_KEY_ID: ${{ secrets.LINODE_OBJ_ACCESS_KEY_ID }}
       LINODE_OBJ_SECRET_ACCESS_KEY: ${{ secrets.LINODE_OBJ_SECRET_ACCESS_KEY }}
@@ -315,6 +317,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          scripts/ci/runtime-coverage-k8s.sh tunnel-start
+          trap 'scripts/ci/runtime-coverage-k8s.sh tunnel-stop' EXIT
           go run ./scripts/go/rtk-cloud -- test-live \
             --env-root "$RUNTIME_ENV_ROOT" \
             --run --confirm "$RUNTIME_COVERAGE_STACK" \
@@ -328,6 +332,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          scripts/ci/runtime-coverage-k8s.sh tunnel-start
+          trap 'scripts/ci/runtime-coverage-k8s.sh tunnel-stop' EXIT
           for feature in device-shadow video-webrtc clip-storage; do
             go run ./scripts/go/rtk-cloud -- test-feature \
               --feature "$feature" \

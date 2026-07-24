@@ -1819,6 +1819,29 @@ func TestHome100KResumeLiveSkipsProvisionWhenVMStateExists(t *testing.T) {
 	}
 }
 
+func TestHome100KScriptHasBoundedLocalLiveWorkflow(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "home-100k.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, want := range []string{
+		"workflow-local-live)",
+		"HOME100K_LOCAL_LIVE_MAX_DEVICES",
+		"run_home100k shard-run",
+		"--runner-mode live",
+		"--rtk-cloud-binary \"$rtk_cloud_binary\"",
+		"run_video_loadtest_step",
+		"run_clip_storage_loadtest_step",
+		"run_home100k collect-server-evidence",
+		"run_home100k aggregate",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("home-100k.sh missing bounded local-live marker %q:\n%s", want, body)
+		}
+	}
+}
+
 func TestHome100KScriptSyncRetrySurvivesSetE(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "home-100k.sh"))
 	if err != nil {

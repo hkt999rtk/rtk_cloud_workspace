@@ -346,12 +346,32 @@ func executeFeatureSpec(workspace, envRoot, runID, environment string, spec feat
 		"HOME100K_PRESERVE_VMS":            "0",
 		"HOME100K_AUTO_DESTROY_ON_EXIT":    "1",
 	}
-	runErr := runCmdWithEnv(workspace, env, filepath.Join(workspace, "loadtests", "home-100k", "scripts", "home-100k.sh"), "workflow-live")
+	workflowCommand, workflowErr := featureWorkflowCommand()
+	if workflowErr != nil {
+		return blockedFeatureManifest(
+			runID, spec.Feature, spec.Profile, environment, commits, []featureRunSpec{spec},
+			workflowErr.Error(),
+		), workflowErr
+	}
+	runErr := runCmdWithEnv(
+		workspace,
+		env,
+		filepath.Join(workspace, "loadtests", "home-100k", "scripts", "home-100k.sh"),
+		workflowCommand,
+	)
 	completed := time.Now().UTC()
 	purgeFeatureSecretArtifacts(stageDir)
 	_ = materializeRuntimeLogEvidence(stageDir)
 	manifest := evaluateFeatureEvidence(stageDir, runID, environment, spec, commits, started, completed, runErr)
 	return manifest, runErr
+}
+
+func featureWorkflowCommand() (string, error) {
+	command := firstNonEmpty(os.Getenv("RUNTIME_COVERAGE_FEATURE_WORKFLOW"), "workflow-live")
+	if command != "workflow-live" && command != "workflow-local-live" {
+		return "", fmt.Errorf("RUNTIME_COVERAGE_FEATURE_WORKFLOW must be workflow-live or workflow-local-live, got %q", command)
+	}
+	return command, nil
 }
 
 func featureLoadEnvRoot(deploymentEnvRoot string) string {

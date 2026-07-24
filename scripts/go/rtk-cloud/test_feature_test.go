@@ -533,6 +533,22 @@ func TestClipQualificationMissingCredentialsIsBlocked(t *testing.T) {
 	}
 }
 
+func TestFeatureWorkflowCommandAllowsBoundedLocalLiveCanary(t *testing.T) {
+	t.Setenv("RUNTIME_COVERAGE_FEATURE_WORKFLOW", "workflow-local-live")
+	command, err := featureWorkflowCommand()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if command != "workflow-local-live" {
+		t.Fatalf("feature workflow command = %q", command)
+	}
+
+	t.Setenv("RUNTIME_COVERAGE_FEATURE_WORKFLOW", "sample")
+	if _, err := featureWorkflowCommand(); err == nil {
+		t.Fatal("unsupported feature workflow command was accepted")
+	}
+}
+
 func TestVerifyFeatureDeploymentCommitsRequiresDigestAndCommit(t *testing.T) {
 	envRoot := t.TempDir()
 	manifestDir := filepath.Join(envRoot, "artifacts", "lke-images")

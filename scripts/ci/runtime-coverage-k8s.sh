@@ -9,7 +9,7 @@ kubeconfig="${KUBECONFIG:-}"
 output_root="${RUNTIME_COVERAGE_OUTPUT_ROOT:-$workspace/.artifacts/runtime-coverage/$run_id}"
 
 usage() {
-  echo "usage: runtime-coverage-k8s.sh snapshot|verify|endpoints|prepare|collect|cleanup" >&2
+  echo "usage: runtime-coverage-k8s.sh snapshot|verify|endpoints|tunnel-start|tunnel-stop|prepare|collect|cleanup" >&2
 }
 
 staging_snapshot_path() {
@@ -261,11 +261,14 @@ create_feature_endpoints() {
   local video_namespace="$stack-video-cloud"
   local ingress_namespace="$stack-ingress"
   local ingress_service="runtime-coverage-ingress"
-  local mqtt_service="runtime-coverage-mqtt"
   local account_domain="account.$stack.invalid"
   local video_domain="video.$stack.invalid"
   local device_domain="device.video.$stack.invalid"
-  local ingress_host mqtt_host endpoint_env report tls_tmp tls_crt tls_key ca_bundle
+  local ingress_host="127.0.0.1"
+  local mqtt_host="127.0.0.1"
+  local https_port="18443"
+  local mqtt_port="18883"
+  local endpoint_env report tls_tmp tls_crt tls_key ca_bundle
   local server_ca server_ca_key server_csr server_ext
   tls_tmp="$(mktemp -d)"
   tls_crt="$tls_tmp/tls.crt"
@@ -342,43 +345,64 @@ metadata:
     rtk-cloud-run-id: $run_id
     rtk.realtek.com/stack: $stack
 data:
-  default.conf: |
-    server {
-      listen 443 ssl;
-      server_name $account_domain;
-      ssl_certificate /etc/runtime-tls/tls.crt;
-      ssl_certificate_key /etc/runtime-tls/tls.key;
-      location / {
-        proxy_set_header Host \$host;
-        proxy_set_header X-Forwarded-Proto https;
-        proxy_pass http://account-manager.$account_namespace.svc.cluster.local:80;
+  nginx.conf: |
+    user nginx;
+    worker_processes auto;
+    error_log /var/log/nginx/error.log notice;
+    pid /run/nginx.pid;
+    events {
+      worker_connections 1024;
+    }
+    http {
+      include /etc/nginx/mime.types;
+      default_type application/octet-stream;
+      sendfile on;
+      keepalive_timeout 65;
+      server {
+        listen 443 ssl;
+        server_name $account_domain;
+        ssl_certificate /etc/runtime-tls/tls.crt;
+        ssl_certificate_key /etc/runtime-tls/tls.key;
+        location / {
+          proxy_set_header Host \$host;
+          proxy_set_header X-Forwarded-Proto https;
+          proxy_pass http://account-manager.$account_namespace.svc.cluster.local:80;
+        }
+      }
+      server {
+        listen 443 ssl;
+        server_name $video_domain;
+        ssl_certificate /etc/runtime-tls/tls.crt;
+        ssl_certificate_key /etc/runtime-tls/tls.key;
+        location / {
+          proxy_set_header Host \$host;
+          proxy_set_header X-Forwarded-Proto https;
+          proxy_pass http://video-cloud-api.$video_namespace.svc.cluster.local:80;
+        }
+      }
+      server {
+        listen 443 ssl;
+        server_name $device_domain;
+        ssl_certificate /etc/runtime-tls/tls.crt;
+        ssl_certificate_key /etc/runtime-tls/tls.key;
+        ssl_client_certificate /etc/runtime-client-ca/ca.crt;
+        ssl_verify_client on;
+        ssl_verify_depth 2;
+        location / {
+          proxy_set_header Host \$host;
+          proxy_set_header X-Forwarded-Proto https;
+          proxy_set_header X-Client-Verify \$ssl_client_verify;
+          proxy_set_header X-Client-S-DN \$ssl_client_s_dn_legacy;
+          proxy_pass http://video-cloud-api.$video_namespace.svc.cluster.local:80;
+        }
       }
     }
-    server {
-      listen 443 ssl;
-      server_name $video_domain;
-      ssl_certificate /etc/runtime-tls/tls.crt;
-      ssl_certificate_key /etc/runtime-tls/tls.key;
-      location / {
-        proxy_set_header Host \$host;
-        proxy_set_header X-Forwarded-Proto https;
-        proxy_pass http://video-cloud-api.$video_namespace.svc.cluster.local:80;
-      }
-    }
-    server {
-      listen 443 ssl;
-      server_name $device_domain;
-      ssl_certificate /etc/runtime-tls/tls.crt;
-      ssl_certificate_key /etc/runtime-tls/tls.key;
-      ssl_client_certificate /etc/runtime-client-ca/ca.crt;
-      ssl_verify_client on;
-      ssl_verify_depth 2;
-      location / {
-        proxy_set_header Host \$host;
-        proxy_set_header X-Forwarded-Proto https;
-        proxy_set_header X-Client-Verify \$ssl_client_verify;
-        proxy_set_header X-Client-S-DN \$ssl_client_s_dn_legacy;
-        proxy_pass http://video-cloud-api.$video_namespace.svc.cluster.local:80;
+    stream {
+      server {
+        listen 8883;
+        proxy_connect_timeout 10s;
+        proxy_timeout 10m;
+        proxy_pass mqtt.$video_namespace.svc.cluster.local:8883;
       }
     }
 ---
@@ -409,12 +433,15 @@ spec:
           ports:
             - name: https
               containerPort: 443
+            - name: mqtts
+              containerPort: 8883
           readinessProbe:
             tcpSocket:
               port: https
           volumeMounts:
             - name: config
-              mountPath: /etc/nginx/conf.d
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
             - name: tls
               mountPath: /etc/runtime-tls
               readOnly: true
@@ -443,39 +470,34 @@ metadata:
     rtk-cloud-run-id: $run_id
     rtk.realtek.com/stack: $stack
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   selector:
     app.kubernetes.io/name: runtime-coverage-ingress
   ports:
     - name: https
       port: 443
       targetPort: https
+    - name: mqtts
+      port: 8883
+      targetPort: mqtts
 EOF
   rm -rf "$tls_tmp"
-  apply_feature_endpoint "$video_namespace" "$mqtt_service" mqtt 8883 mqtts
   allow_feature_endpoint_ingress "$video_namespace" mqtt 8883
   kubectl --kubeconfig "$kubeconfig" -n "$ingress_namespace" \
     rollout status deployment/runtime-coverage-ingress --timeout=5m
-  ingress_host="$(feature_endpoint_host "$ingress_namespace" "$ingress_service")"
-  mqtt_host="$(feature_endpoint_host "$video_namespace" "$mqtt_service")"
-  curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 --insecure --noproxy '*' \
-    --resolve "$account_domain:443:$ingress_host" "https://$account_domain/healthz" >/dev/null
-  curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 --insecure --noproxy '*' \
-    --resolve "$video_domain:443:$ingress_host" "https://$video_domain/healthz" >/dev/null
-  timeout 10 bash -c 'exec 3<>"/dev/tcp/$1/$2"' _ "$mqtt_host" 8883
   endpoint_env="$output_root/feature-endpoints.env"
   report="$output_root/feature-endpoints.json"
   mkdir -p "$output_root"
   cat > "$endpoint_env" <<EOF
-ACCOUNT_MANAGER_BASE_URL=https://$account_domain
-VIDEO_CLOUD_BASE_URL=https://$video_domain
-VIDEO_CLOUD_PUBLIC_BASE_URL=https://$video_domain
-VIDEO_CLOUD_TOKEN_BASE_URL=https://$device_domain
-VIDEO_CLOUD_MQTT_ADDR=$mqtt_host:8883
-HOME100K_ACCOUNT_MANAGER_BASE_URL=https://$account_domain
-HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL=https://$video_domain
-HOME100K_VIDEO_CLOUD_TOKEN_BASE_URL=https://$device_domain
-HOME100K_MQTT_ADDR=$mqtt_host:8883
+ACCOUNT_MANAGER_BASE_URL=https://$account_domain:$https_port
+VIDEO_CLOUD_BASE_URL=https://$video_domain:$https_port
+VIDEO_CLOUD_PUBLIC_BASE_URL=https://$video_domain:$https_port
+VIDEO_CLOUD_TOKEN_BASE_URL=https://$device_domain:$https_port
+VIDEO_CLOUD_MQTT_ADDR=$mqtt_host:$mqtt_port
+HOME100K_ACCOUNT_MANAGER_BASE_URL=https://$account_domain:$https_port
+HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL=https://$video_domain:$https_port
+HOME100K_VIDEO_CLOUD_TOKEN_BASE_URL=https://$device_domain:$https_port
+HOME100K_MQTT_ADDR=$mqtt_host:$mqtt_port
 HOME100K_GENERATOR_HOSTS_OVERRIDE_IP=$ingress_host
 RUNTIME_COVERAGE_INGRESS_IP=$ingress_host
 RUNTIME_COVERAGE_HOSTNAMES=$account_domain,$video_domain,$device_domain
@@ -490,11 +512,11 @@ EOF
     --arg ingress_service "$ingress_service" \
     --arg ingress_host "$ingress_host" \
     --arg account_domain "$account_domain" \
-    --arg video_namespace "$video_namespace" \
     --arg video_domain "$video_domain" \
     --arg device_domain "$device_domain" \
-    --arg mqtt_service "$mqtt_service" \
     --arg mqtt_host "$mqtt_host" \
+    --argjson https_port "$https_port" \
+    --argjson mqtt_port "$mqtt_port" \
     --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     '{
       schema_version: 1,
@@ -508,13 +530,54 @@ EOF
           namespace: $ingress_namespace,
           service: $ingress_service,
           host: $ingress_host,
-          port: 443,
+          port: $https_port,
           virtual_hosts: [$account_domain, $video_domain, $device_domain],
           device_mtls: true
         },
-        {kind: "mqtt", namespace: $video_namespace, service: $mqtt_service, host: $mqtt_host, port: 8883}
+        {kind: "mqtt-tunnel", namespace: $ingress_namespace, service: $ingress_service, host: $mqtt_host, port: $mqtt_port}
       ]
     }' > "$report"
+}
+
+tunnel_start() {
+  local ingress_namespace="$stack-ingress"
+  local tunnel_dir="$output_root/tunnels"
+  local pid_file="$tunnel_dir/port-forward.pid"
+  local log_file="$tunnel_dir/port-forward.log"
+  mkdir -p "$tunnel_dir"
+  tunnel_stop
+  RUNNER_TRACKING_ID="" nohup kubectl --kubeconfig "$kubeconfig" -n "$ingress_namespace" \
+    port-forward --address 127.0.0.1 service/runtime-coverage-ingress \
+    18443:443 18883:8883 > "$log_file" 2>&1 &
+  tunnel_pid=$!
+  printf '%s\n' "$tunnel_pid" > "$pid_file"
+  for _ in {1..60}; do
+    if kill -0 "$tunnel_pid" 2>/dev/null &&
+      timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/18443' &&
+      timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/18883'; then
+      return 0
+    fi
+    sleep 1
+  done
+  cat "$log_file" >&2 || true
+  tunnel_stop
+  echo "runtime coverage local tunnels did not become ready" >&2
+  return 1
+}
+
+tunnel_stop() {
+  local tunnel_dir="$output_root/tunnels"
+  local pid_file="$tunnel_dir/port-forward.pid"
+  local tunnel_pid=""
+  mkdir -p "$tunnel_dir"
+  if [[ -f "$pid_file" ]]; then
+    tunnel_pid="$(tr -d '[:space:]' < "$pid_file")"
+  fi
+  if [[ "$tunnel_pid" =~ ^[1-9][0-9]*$ ]]; then
+    kill "$tunnel_pid" 2>/dev/null || true
+    wait "$tunnel_pid" 2>/dev/null || true
+  fi
+  : > "$pid_file"
 }
 
 validate_scope() {
@@ -572,28 +635,18 @@ stack_namespaces() {
 prepare_deployment() {
   local namespace="$1"
   local deployment="$2"
-  local claim="${deployment}-runtime-coverage"
+  local claim="$3"
+  local node_name="$4"
   local container patch
-  kubectl --kubeconfig "$kubeconfig" -n "$namespace" apply -f - <<EOF
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: $claim
-  labels:
-    rtk-cloud-run-id: $run_id
-    rtk-cloud-purpose: runtime-coverage
-spec:
-  accessModes: [ReadWriteOnce]
-  resources:
-    requests:
-      storage: 1Gi
-EOF
+  kubectl --kubeconfig "$kubeconfig" -n "$namespace" scale "deployment/$deployment" --replicas=1
   container="$(kubectl --kubeconfig "$kubeconfig" -n "$namespace" get "deployment/$deployment" -o jsonpath='{.spec.template.spec.containers[0].name}')"
   patch="$(jq -cn \
     --arg container "$container" \
     --arg claim "$claim" \
     --arg run_id "$run_id" \
+    --arg node_name "$node_name" \
     '{spec:{template:{spec:{
+      nodeSelector:{"kubernetes.io/hostname":$node_name},
       securityContext:{fsGroup:10001,fsGroupChangePolicy:"OnRootMismatch"},
       volumes:[{name:"runtime-coverage",persistentVolumeClaim:{claimName:$claim}}],
       containers:[{
@@ -609,14 +662,46 @@ EOF
   kubectl --kubeconfig "$kubeconfig" -n "$namespace" rollout status "deployment/$deployment" --timeout=10m
 }
 
+prepare_namespace() {
+  local namespace="$1"
+  local module claim node_name deployment
+  module="$(namespace_module "$namespace")"
+  claim="${module}-runtime-coverage"
+  node_name="$(
+    kubectl --kubeconfig "$kubeconfig" -n "$namespace" get pods \
+      -l "rtk.realtek.com/stack=$stack" -o json |
+      jq -er '[
+        .items[]
+        | select(.status.phase == "Running")
+        | .spec.nodeName
+        | select(length > 0)
+      ] | group_by(.) | max_by(length)[0]'
+  )"
+  kubectl --kubeconfig "$kubeconfig" -n "$namespace" apply -f - <<EOF
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: $claim
+  labels:
+    rtk-cloud-run-id: $run_id
+    rtk-cloud-purpose: runtime-coverage
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+EOF
+  while IFS= read -r deployment; do
+    [[ -n "$deployment" ]] || continue
+    prepare_deployment "$namespace" "$deployment" "$claim" "$node_name"
+  done < <(kubectl --kubeconfig "$kubeconfig" -n "$namespace" get deployment \
+    -l "rtk.realtek.com/stack=$stack" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+}
+
 prepare() {
   while IFS= read -r namespace; do
     kubectl --kubeconfig "$kubeconfig" get namespace "$namespace" >/dev/null
-    while IFS= read -r deployment; do
-      [[ -n "$deployment" ]] || continue
-      prepare_deployment "$namespace" "$deployment"
-    done < <(kubectl --kubeconfig "$kubeconfig" -n "$namespace" get deployment \
-      -l "rtk.realtek.com/stack=$stack" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+    prepare_namespace "$namespace"
   done < <(coverage_namespaces)
 }
 
@@ -709,6 +794,7 @@ cleanup() {
   deleted_cloud_volumes_file="$report_root/deleted-cloud-volumes.jsonl"
   : > "$deleted_cloud_volumes_file"
   set +e
+  tunnel_stop
   while IFS= read -r namespace; do
     kubectl --kubeconfig "$kubeconfig" delete namespace "$namespace" --ignore-not-found=true --wait=true
     if [[ $? -ne 0 ]]; then
@@ -854,6 +940,8 @@ case "$action" in
   snapshot) snapshot ;;
   verify) verify_deployments ;;
   endpoints) create_feature_endpoints ;;
+  tunnel-start) tunnel_start ;;
+  tunnel-stop) tunnel_stop ;;
   prepare) prepare ;;
   collect) collect ;;
   cleanup) cleanup ;;

@@ -197,11 +197,15 @@ run-scoped namespaces whose stack name starts with `coverage-`. Manual
 `preflight` validates the self-hosted runner, credentials, cluster label,
 repository capacity variable, live Linode instance/volume/NodeBalancer
 headroom, orphaned coverage PVs, commit anchors, and staging deployment snapshot
-without creating resources. Projected capacity includes 15 persistent volumes,
-two temporary LoadBalancers, and one peak load-generator VM; insufficient
+without creating resources. The quota-bounded runtime profile uses ephemeral
+PostgreSQL/OpenBao storage, five namespace-level coverage PVCs, ClusterIP plus
+runner-local tunnels, and a bounded local-live canary runner. It therefore
+projects five additional active services and creates no LoadBalancer or
+load-generator VM; insufficient
 headroom is reported as `BLOCKED` before mutation. Manual `run` requires the exact confirmation
 `video-cloud-staging-lke`. It mounts one run-scoped PVC per instrumented
-deployment, runs onboarding, all three feature canaries, and deployed
+module namespace, pins that namespace's instrumented deployments to one node
+for ReadWriteOnce sharing, runs onboarding, all three feature canaries, and deployed
 desktop/mobile smoke, then scales services down before collecting `covmeta` and
 `covcounters`. Commit/run anchors are required before aggregation. Runtime
 coverage and feature qualification share the `staging-mutating-tests`

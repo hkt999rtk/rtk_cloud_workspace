@@ -816,6 +816,13 @@ same 30-second samples are persisted for report generation:
 - `resource-samples/load-vms.tsv`
 - `resource-samples/k8s-nodes.tsv`
 
+`workflow-local-live` is the bounded canary variant used by isolated nightly
+runtime coverage. It runs the same formal MQTT actor, video/clip runners,
+server evidence collection, correlation, and aggregate report locally, without
+provisioning or SSHing into a load-generator VM. It requires
+`HOME100K_DEVICES` to be at most `HOME100K_LOCAL_LIVE_MAX_DEVICES` (default
+100); qualification and capacity profiles continue to use `workflow-live`.
+
 For focused WebRTC/TURN investigation, use `workflow-video-live` or
 `workflow-video-resume-live`. These commands keep the same scripted VM
 provision, sync, host preparation, server evidence, token generation, and

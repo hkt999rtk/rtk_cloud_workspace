@@ -1773,6 +1773,18 @@ func TestLKEOpenBaoHelmValuesDisableClusterScopedAuthDelegator(t *testing.T) {
 	if !strings.Contains(values, "authDelegator:\n    enabled: false") {
 		t.Fatalf("expected OpenBao auth delegator to be disabled for isolated stacks:\n%s", values)
 	}
+	for _, expected := range []string{
+		"dataStorage:\n    enabled: false",
+		"auditStorage:\n    enabled: false",
+		"name: runtime-openbao-data\n      emptyDir: {}",
+		"name: runtime-openbao-audit\n      emptyDir: {}",
+		"mountPath: /openbao/data",
+		"mountPath: /openbao/audit",
+	} {
+		if !strings.Contains(values, expected) {
+			t.Fatalf("expected ephemeral OpenBao value %q for isolated stacks:\n%s", expected, values)
+		}
+	}
 }
 
 func TestLKEEnsureOpenBaoSkipsRestartWhenTLSSecretUnchanged(t *testing.T) {
