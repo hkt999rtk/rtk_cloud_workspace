@@ -17,14 +17,23 @@ staging_snapshot_path() {
 }
 
 read_staging_deployments() {
-  local deployments pods
-  deployments="$(kubectl --kubeconfig "$kubeconfig" get deployments -A \
-    -l "rtk.realtek.com/stack=video-cloud-staging" -o json)"
-  pods="$(kubectl --kubeconfig "$kubeconfig" get pods -A \
-    -l "rtk.realtek.com/stack=video-cloud-staging" -o json)"
-  jq -n --argjson deployments "$deployments" --argjson pods "$pods" '{
+  local snapshot_tmp deployments_file pods_file
+  snapshot_tmp="$(mktemp -d)"
+  deployments_file="$snapshot_tmp/deployments.json"
+  pods_file="$snapshot_tmp/pods.json"
+  if ! kubectl --kubeconfig "$kubeconfig" get deployments -A \
+    -l "rtk.realtek.com/stack=video-cloud-staging" -o json > "$deployments_file"; then
+    rm -rf "$snapshot_tmp"
+    return 1
+  fi
+  if ! kubectl --kubeconfig "$kubeconfig" get pods -A \
+    -l "rtk.realtek.com/stack=video-cloud-staging" -o json > "$pods_file"; then
+    rm -rf "$snapshot_tmp"
+    return 1
+  fi
+  if jq -n --slurpfile deployments "$deployments_file" --slurpfile pods "$pods_file" '{
     deployments: [
-      $deployments.items[] | {
+      $deployments[0].items[] | {
         namespace: .metadata.namespace,
         name: .metadata.name,
         uid: .metadata.uid,
@@ -32,10 +41,17 @@ read_staging_deployments() {
       }
     ] | sort_by(.namespace, .name),
     image_digests: ([
-      $pods.items[].status.containerStatuses[]?.imageID
+      $pods[0].items[].status.containerStatuses[]?.imageID
       | select(length > 0)
     ] | unique | sort)
-  }'
+  }'; then
+    rm -rf "$snapshot_tmp"
+    return 0
+  else
+    status=$?
+    rm -rf "$snapshot_tmp"
+    return "$status"
+  fi
 }
 
 snapshot() {

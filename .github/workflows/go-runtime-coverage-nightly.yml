@@ -47,9 +47,6 @@ jobs:
       LKE_CLUSTER_LABEL: video-cloud-staging-lke
       LKE_ACTIVE_SERVICE_LIMIT: ${{ vars.LKE_ACTIVE_SERVICE_LIMIT }}
       LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
-      VIDEO_CLOUD_LOAD_ADMIN_TOKEN: ${{ secrets.VIDEO_CLOUD_ADMIN_TOKEN }}
-      VIDEO_CLOUD_LOAD_CLIP_USER_PRIVATE_KEY: ${{ secrets.CLIP_USER_PRIVATE_KEY_PATH }}
-      VIDEO_CLOUD_LOAD_CLIP_SERVER_PUBLIC_KEY: ${{ secrets.CLIP_SERVER_PUBLIC_KEY_PATH }}
       GHCR_PULL_USERNAME: ${{ github.actor }}
       GHCR_PULL_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -198,6 +195,35 @@ jobs:
         if: env.RUNTIME_COVERAGE_MODE == 'run'
         run: scripts/ci/runtime-coverage-k8s.sh prepare
 
+      - name: Prepare run-scoped Clip credentials
+        if: env.RUNTIME_COVERAGE_MODE == 'run'
+        shell: bash
+        run: |
+          set -euo pipefail
+          namespace="$RUNTIME_COVERAGE_STACK-video-cloud"
+          user_private="$RUNNER_TEMP/runtime-coverage-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-clip-user-private.pem"
+          server_private="$RUNNER_TEMP/runtime-coverage-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-clip-server-private.pem"
+          server_public="$RUNNER_TEMP/runtime-coverage-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-clip-server-public.pem"
+          openssl ecparam -name prime256v1 -genkey -noout -out "$user_private"
+          kubectl --kubeconfig "$KUBECONFIG" -n "$namespace" \
+            get secret video-cloud-runtime -o jsonpath='{.data.clip-private-key\.pem}' |
+            openssl base64 -d -A > "$server_private"
+          chmod 0600 "$user_private" "$server_private"
+          openssl ec -in "$server_private" -pubout -out "$server_public" 2>/dev/null
+          chmod 0600 "$server_public"
+          rm -f "$server_private"
+          admin_token="$(
+            kubectl --kubeconfig "$KUBECONFIG" -n "$namespace" \
+              exec deployment/video-cloud-api -- /app/admin-token --ttl 1h
+          )"
+          test -n "$admin_token"
+          echo "::add-mask::$admin_token"
+          {
+            echo "VIDEO_CLOUD_LOAD_ADMIN_TOKEN=$admin_token"
+            echo "VIDEO_CLOUD_LOAD_CLIP_USER_PRIVATE_KEY=$user_private"
+            echo "VIDEO_CLOUD_LOAD_CLIP_SERVER_PUBLIC_KEY=$server_public"
+          } >> "$GITHUB_ENV"
+
       - name: Run onboarding and cross-service lifecycle checks
         if: env.RUNTIME_COVERAGE_MODE == 'run'
         shell: bash
@@ -323,3 +349,10 @@ jobs:
           if [[ "${KUBECONFIG:-}" == "$RUNNER_TEMP/"* ]]; then
             rm -f "$KUBECONFIG"
           fi
+          for credential_path in \
+            "${VIDEO_CLOUD_LOAD_CLIP_USER_PRIVATE_KEY:-}" \
+            "${VIDEO_CLOUD_LOAD_CLIP_SERVER_PUBLIC_KEY:-}"; do
+            if [[ "$credential_path" == "$RUNNER_TEMP/runtime-coverage-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-clip-"*".pem" ]]; then
+              rm -f "$credential_path"
+            fi
+          done

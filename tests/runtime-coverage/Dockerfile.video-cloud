@@ -1,7 +1,7 @@
 FROM golang:1.25-bookworm AS builder
 WORKDIR /src
 COPY . .
-RUN mkdir -p /out && for command in api certissuer factoryenroll cleaner clipverifier clipuploadpreflight clipreconcile statistics metricsexporter turnregistry logingester mqttusage; do \
+RUN mkdir -p /out && for command in api admin-token certissuer factoryenroll cleaner clipverifier clipuploadpreflight clipreconcile statistics metricsexporter turnregistry logingester mqttusage; do \
       CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -cover -coverpkg=./internal/... -trimpath -o "/out/$command" "./cmd/$command"; \
     done
 FROM debian:bookworm-slim

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,13 +30,24 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"runs-on: ubuntu-24.04",
 		"RUNTIME_COVERAGE_RUNNER_LABEL: ubuntu-24.04",
 		"--preflight --plan --apply --deploy --artifacts",
+		"Prepare run-scoped Clip credentials",
+		"exec deployment/video-cloud-api -- /app/admin-token --ttl 1h",
+		"VIDEO_CLOUD_LOAD_CLIP_USER_PRIVATE_KEY=$user_private",
+		"VIDEO_CLOUD_LOAD_CLIP_SERVER_PUBLIC_KEY=$server_public",
 		"runtime-coverage-k8s.sh cleanup",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("runtime workflow missing %q", required)
 		}
 	}
-	for _, forbidden := range []string{"--dns", "cloud_env/staging/lke\n", "jarvis-macos"} {
+	for _, forbidden := range []string{
+		"--dns",
+		"cloud_env/staging/lke\n",
+		"jarvis-macos",
+		"secrets.VIDEO_CLOUD_ADMIN_TOKEN",
+		"secrets.CLIP_USER_PRIVATE_KEY_PATH",
+		"secrets.CLIP_SERVER_PUBLIC_KEY_PATH",
+	} {
 		if strings.Contains(workflow, forbidden) {
 			t.Fatalf("runtime workflow contains forbidden value %q", forbidden)
 		}
@@ -158,5 +170,84 @@ func TestRuntimeCleanupWritesResidualAndStagingAnchorReport(t *testing.T) {
 		if !strings.Contains(script, required) {
 			t.Fatalf("cleanup gate missing %q", required)
 		}
+	}
+}
+
+func TestRuntimeSnapshotHandlesKubernetesPayloadBeyondArgumentLimit(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	deployments := filepath.Join(root, "deployments.json")
+	pods := filepath.Join(root, "pods.json")
+	if err := os.WriteFile(deployments, []byte(`{"items":[{"metadata":{"namespace":"video-cloud-staging-video-cloud","name":"api","uid":"deployment-uid"},"spec":{"template":{"spec":{"containers":[{"image":"example/api:main"}]}}}}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	podItems := make([]map[string]any, 0, 18000)
+	for index := 0; index < cap(podItems); index++ {
+		podItems = append(podItems, map[string]any{
+			"status": map[string]any{
+				"containerStatuses": []map[string]string{{
+					"imageID": fmt.Sprintf("docker-pullable://example/api@sha256:%064x", index),
+				}},
+			},
+		})
+	}
+	podJSON, err := json.Marshal(map[string]any{"items": podItems})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(podJSON) < 2*1024*1024 {
+		t.Fatalf("fixture must exceed a typical ARG_MAX, got %d bytes", len(podJSON))
+	}
+	if err := os.WriteFile(pods, podJSON, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	kubectl := filepath.Join(bin, "kubectl")
+	fakeKubectl := `#!/usr/bin/env bash
+case " $* " in
+  *" get deployments "*) cat "$FAKE_DEPLOYMENTS" ;;
+  *" get pods "*) cat "$FAKE_PODS" ;;
+  *) exit 1 ;;
+esac
+`
+	if err := os.WriteFile(kubectl, []byte(fakeKubectl), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	kubeconfig := filepath.Join(root, "kubeconfig")
+	if err := os.WriteFile(kubeconfig, []byte("test"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("bash", filepath.Join(workspace, "scripts", "ci", "runtime-coverage-k8s.sh"), "snapshot")
+	command.Env = append(os.Environ(),
+		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"GITHUB_WORKSPACE="+root,
+		"RUNTIME_COVERAGE_RUN_ID=runtime-large-snapshot",
+		"RUNTIME_COVERAGE_STACK=coverage-large-snapshot",
+		"KUBECONFIG="+kubeconfig,
+		"FAKE_DEPLOYMENTS="+deployments,
+		"FAKE_PODS="+pods,
+	)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("snapshot failed: %v\n%s", err, output)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, ".artifacts", "runtime-coverage", "runtime-large-snapshot", "staging-before.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshot struct {
+		Deployments  []any    `json:"deployments"`
+		ImageDigests []string `json:"image_digests"`
+	}
+	if err := json.Unmarshal(raw, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Deployments) != 1 || len(snapshot.ImageDigests) != len(podItems) {
+		t.Fatalf("snapshot counts = deployments:%d digests:%d", len(snapshot.Deployments), len(snapshot.ImageDigests))
 	}
 }
