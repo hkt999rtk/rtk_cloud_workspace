@@ -34,6 +34,15 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"exec deployment/video-cloud-api -- /app/admin-token --ttl 1h",
 		"VIDEO_CLOUD_LOAD_CLIP_USER_PRIVATE_KEY=$user_private",
 		"VIDEO_CLOUD_LOAD_CLIP_SERVER_PUBLIC_KEY=$server_public",
+		"--metadata-file",
+		"--provenance=false",
+		"pinned_image=\"$image@$digest\"",
+		"${env_key}_DIGEST=$digest",
+		"lke-image-manifest.json",
+		"runtime-coverage-k8s.sh verify",
+		"runtime-coverage-k8s.sh endpoints",
+		"feature-endpoints.env",
+		"CLOUD_DNS_ROOT_DOMAIN=$RUNTIME_COVERAGE_STACK.invalid",
 		"runtime-coverage-k8s.sh cleanup",
 	} {
 		if !strings.Contains(workflow, required) {
@@ -161,9 +170,14 @@ func TestRuntimeCleanupWritesResidualAndStagingAnchorReport(t *testing.T) {
 	script := string(raw)
 	for _, required := range []string{
 		"cleanup-report.json",
+		"deployment-anchors.json",
+		"feature-endpoints.json",
+		"VIDEO_CLOUD_LOAD_STORAGE_NAMESPACE=$video_namespace",
+		"running pod image IDs do not match the expected digest",
 		"residual_namespaces",
 		"residual_pvcs",
 		"residual_pods",
+		"residual_services",
 		"staging deployment UID or image changed",
 		"rtk-cloud-run-id=$run_id",
 	} {
@@ -249,5 +263,177 @@ esac
 	}
 	if len(snapshot.Deployments) != 1 || len(snapshot.ImageDigests) != len(podItems) {
 		t.Fatalf("snapshot counts = deployments:%d digests:%d", len(snapshot.Deployments), len(snapshot.ImageDigests))
+	}
+}
+
+func TestRuntimeDeploymentAnchorRejectsPodDigestMismatch(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	kubectl := filepath.Join(bin, "kubectl")
+	fakeKubectl := `#!/usr/bin/env bash
+case " $* " in
+  *" rollout status "*) exit 0 ;;
+  *" get deployment/"*)
+    printf '{"spec":{"template":{"spec":{"containers":[{"image":"%s"}]}}}}\n' "$FAKE_IMAGE"
+    ;;
+  *" get pods "*)
+    printf '{"items":[{"status":{"containerStatuses":[{"image":"%s","imageID":"docker-pullable://example/runtime@sha256:wrong"}]}}]}\n' "$FAKE_IMAGE"
+    ;;
+  *) exit 1 ;;
+esac
+`
+	if err := os.WriteFile(kubectl, []byte(fakeKubectl), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	kubeconfig := filepath.Join(root, "kubeconfig")
+	if err := os.WriteFile(kubeconfig, []byte("test"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(root, "output")
+	image := "ghcr.io/example/runtime:test"
+	digest := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	command := exec.Command("bash", filepath.Join(workspace, "scripts", "ci", "runtime-coverage-k8s.sh"), "verify")
+	command.Env = append(os.Environ(),
+		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"GITHUB_WORKSPACE="+workspace,
+		"RUNTIME_COVERAGE_RUN_ID=runtime-digest-mismatch",
+		"RUNTIME_COVERAGE_STACK=coverage-digest-mismatch",
+		"RUNTIME_COVERAGE_OUTPUT_ROOT="+output,
+		"KUBECONFIG="+kubeconfig,
+		"FAKE_IMAGE="+image,
+		"LKE_ACCOUNT_MANAGER_IMAGE="+image,
+		"LKE_ACCOUNT_MANAGER_IMAGE_DIGEST="+digest,
+		"LKE_CLOUD_ADMIN_IMAGE="+image,
+		"LKE_CLOUD_ADMIN_IMAGE_DIGEST="+digest,
+		"LKE_FRONTEND_IMAGE="+image,
+		"LKE_FRONTEND_IMAGE_DIGEST="+digest,
+		"LKE_CLOUD_LOGGER_IMAGE="+image,
+		"LKE_CLOUD_LOGGER_IMAGE_DIGEST="+digest,
+		"LKE_VIDEO_CLOUD_IMAGE="+image,
+		"LKE_VIDEO_CLOUD_IMAGE_DIGEST="+digest,
+	)
+	if outputBytes, err := command.CombinedOutput(); err == nil {
+		t.Fatalf("digest mismatch passed unexpectedly:\n%s", outputBytes)
+	}
+	raw, err := os.ReadFile(filepath.Join(output, "deployment-anchors.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report struct {
+		Status      string   `json:"status"`
+		Deployments []any    `json:"deployments"`
+		Errors      []string `json:"errors"`
+	}
+	if err := json.Unmarshal(raw, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != "FAIL" || len(report.Deployments) != 5 ||
+		!strings.Contains(strings.Join(report.Errors, "\n"), "running pod image IDs do not match the expected digest") {
+		t.Fatalf("deployment anchor report = %#v", report)
+	}
+}
+
+func TestRuntimeFeatureEndpointsAreRunScopedAndDoNotRequireDNS(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	kubectl := filepath.Join(bin, "kubectl")
+	fakeKubectl := `#!/usr/bin/env bash
+case " $* " in
+  *" get service/"*)
+    printf '{"status":{"loadBalancer":{"ingress":[{"ip":"203.0.113.10"}]}}}\n'
+    ;;
+  *)
+    cat >/dev/null || true
+    ;;
+esac
+`
+	if err := os.WriteFile(kubectl, []byte(fakeKubectl), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{"curl", "timeout"} {
+		path := filepath.Join(bin, command)
+		if err := os.WriteFile(path, []byte("#!/usr/bin/env bash\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	kubeconfig := filepath.Join(root, "kubeconfig")
+	if err := os.WriteFile(kubeconfig, []byte("test"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runtimeEnvRoot := filepath.Join(root, "runtime-env")
+	if err := os.MkdirAll(filepath.Join(runtimeEnvRoot, "state", "secrets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(runtimeEnvRoot, "state", "secrets", "device-client-ca-bundle.pem"),
+		[]byte("test client CA bundle\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(root, "output")
+	command := exec.Command("bash", filepath.Join(workspace, "scripts", "ci", "runtime-coverage-k8s.sh"), "endpoints")
+	command.Env = append(os.Environ(),
+		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"GITHUB_WORKSPACE="+workspace,
+		"RUNTIME_COVERAGE_RUN_ID=runtime-endpoints",
+		"RUNTIME_COVERAGE_STACK=coverage-endpoints",
+		"RUNTIME_COVERAGE_OUTPUT_ROOT="+output,
+		"RUNTIME_ENV_ROOT="+runtimeEnvRoot,
+		"KUBECONFIG="+kubeconfig,
+	)
+	if outputBytes, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("endpoint setup failed: %v\n%s", err, outputBytes)
+	}
+	envRaw, err := os.ReadFile(filepath.Join(output, "feature-endpoints.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	envText := string(envRaw)
+	for _, expected := range []string{
+		"HOME100K_ACCOUNT_MANAGER_BASE_URL=https://account.coverage-endpoints.invalid",
+		"HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL=https://video.coverage-endpoints.invalid",
+		"HOME100K_VIDEO_CLOUD_TOKEN_BASE_URL=https://device.video.coverage-endpoints.invalid",
+		"HOME100K_MQTT_ADDR=203.0.113.10:8883",
+		"HOME100K_GENERATOR_HOSTS_OVERRIDE_IP=203.0.113.10",
+		"RUNTIME_COVERAGE_HOSTNAMES=account.coverage-endpoints.invalid,video.coverage-endpoints.invalid,device.video.coverage-endpoints.invalid",
+		"RUNTIME_COVERAGE_SERVER_CA=" + filepath.Join(runtimeEnvRoot, "state", "secrets", "runtime-coverage-server-ca.crt"),
+		"VIDEO_CLOUD_LOAD_STORAGE_NAMESPACE=coverage-endpoints-video-cloud",
+	} {
+		if !strings.Contains(envText, expected+"\n") {
+			t.Fatalf("feature endpoint env missing %q:\n%s", expected, envText)
+		}
+	}
+	if strings.Contains(envText, "video-cloud-staging.realtekconnect.com") {
+		t.Fatalf("feature endpoint env leaked shared staging endpoint:\n%s", envText)
+	}
+	reportRaw, err := os.ReadFile(filepath.Join(output, "feature-endpoints.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report struct {
+		Status     string `json:"status"`
+		DNSCreated bool   `json:"dns_created"`
+		Endpoints  []any  `json:"endpoints"`
+	}
+	if err := json.Unmarshal(reportRaw, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != "PASS" || report.DNSCreated || len(report.Endpoints) != 2 {
+		t.Fatalf("feature endpoint report = %#v", report)
 	}
 }
