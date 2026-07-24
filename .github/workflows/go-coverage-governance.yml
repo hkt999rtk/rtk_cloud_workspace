@@ -1,0 +1,259 @@
+name: Go Coverage Governance
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  policy:
+    name: Catalog, policy, and inventory
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: false
+      - name: Initialize workspace submodules
+        env:
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
+        run: scripts/ci/init-submodules.sh
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.3"
+          cache: false
+      - name: Validate catalog, policy, inventory, and generated docs
+        working-directory: scripts/go
+        run: go run ./rtk-cloud -- test-matrix
+
+  unit:
+    name: Go unit coverage (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - workspace-tooling
+          - workspace-e2e
+          - home-load-runner
+          - account-manager
+          - cloud-admin-backend
+          - cloud-client-golang
+          - cloud-frontend
+          - cloud-logger
+          - video-cloud
+          - godaddy-dns-toolkit
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          lfs: true
+          submodules: false
+      - name: Initialize workspace submodules
+        env:
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
+        run: scripts/ci/init-submodules.sh
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.3"
+          cache: false
+      - name: Resolve comparison base
+        id: diff
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "base_ref=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            echo "base_ref=${{ github.event.before }}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run governed unit coverage
+        working-directory: scripts/go
+        shell: bash
+        env:
+          BASE_REF: ${{ steps.diff.outputs.base_ref }}
+          MODULE: ${{ matrix.module }}
+        run: |
+          args=(--profile unit --module "$MODULE" --run-id "gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${MODULE}")
+          if [ -n "${BASE_REF:-}" ] && [ "$BASE_REF" != "0000000000000000000000000000000000000000" ]; then
+            args+=(--base-ref "$BASE_REF" --head-ref HEAD)
+          fi
+          go run ./rtk-cloud -- test-coverage "${args[@]}"
+      - name: Upload module evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: go-coverage-unit-${{ matrix.module }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.module }}/coverage/**
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 90 }}
+
+  account-manager-postgres:
+    name: Account Manager PostgreSQL coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: am_${{ github.run_id }}_${{ github.run_attempt }}
+          POSTGRES_USER: am_${{ github.run_id }}_${{ github.run_attempt }}
+          POSTGRES_PASSWORD: integration_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: false
+      - name: Initialize workspace submodules
+        env:
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
+        run: scripts/ci/init-submodules.sh
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.3"
+          cache: false
+      - name: Run integration-aware coverage
+        working-directory: scripts/go
+        env:
+          TEST_DATABASE_URL: postgres://am_${{ github.run_id }}_${{ github.run_attempt }}:integration_password@127.0.0.1:5432/am_${{ github.run_id }}_${{ github.run_attempt }}?sslmode=disable
+        run: go run ./rtk-cloud -- test-coverage --profile pr --module account-manager --run-id "gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-account-manager-pr"
+      - name: Upload Account Manager evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: go-coverage-pr-account-manager-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}-account-manager-pr/coverage/**
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 90 }}
+
+  video-cloud-postgres-emqx:
+    name: Video Cloud PostgreSQL and EMQX coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: vc_${{ github.run_id }}_${{ github.run_attempt }}
+          POSTGRES_USER: vc_${{ github.run_id }}_${{ github.run_attempt }}
+          POSTGRES_PASSWORD: integration_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: false
+      - name: Initialize workspace submodules
+        env:
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
+        run: scripts/ci/init-submodules.sh
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.3"
+          cache: false
+      - name: Start isolated EMQX
+        working-directory: repos/rtk_video_cloud
+        run: docker compose -f deploy/docker-compose.emqx.yml -f deploy/docker-compose.emqx.integration.yml up -d
+      - name: Wait for EMQX
+        working-directory: repos/rtk_video_cloud
+        env:
+          GOWORK: "off"
+          VIDEO_CLOUD_MQTT_TEST_ADDR: 127.0.0.1:1883
+        shell: bash
+        run: |
+          for attempt in {1..30}; do
+            if go test ./internal/mqtt -run '^TestBrokerPublishSubscribeIntegration$' -count=1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          exit 1
+      - name: Run integration-aware coverage
+        working-directory: scripts/go
+        env:
+          VIDEO_CLOUD_TEST_DSN: postgres://vc_${{ github.run_id }}_${{ github.run_attempt }}:integration_password@127.0.0.1:5432/vc_${{ github.run_id }}_${{ github.run_attempt }}?sslmode=disable
+          VIDEO_CLOUD_MQTT_TEST_ADDR: 127.0.0.1:1883
+        run: go run ./rtk-cloud -- test-coverage --profile pr --module video-cloud --run-id "gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-video-cloud-pr"
+      - name: Collect EMQX diagnostics
+        if: always()
+        working-directory: repos/rtk_video_cloud
+        run: |
+          mkdir -p ../../.artifacts/test-runs/gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-video-cloud-pr/coverage/modules/video-cloud/logs
+          docker compose -f deploy/docker-compose.emqx.yml -f deploy/docker-compose.emqx.integration.yml ps > ../../.artifacts/test-runs/gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-video-cloud-pr/coverage/modules/video-cloud/logs/emqx-ps.txt
+          docker compose -f deploy/docker-compose.emqx.yml -f deploy/docker-compose.emqx.integration.yml logs --no-color emqx > ../../.artifacts/test-runs/gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-video-cloud-pr/coverage/modules/video-cloud/logs/emqx.log
+      - name: Stop EMQX and remove volumes
+        if: always()
+        working-directory: repos/rtk_video_cloud
+        run: docker compose -f deploy/docker-compose.emqx.yml -f deploy/docker-compose.emqx.integration.yml down --volumes --remove-orphans
+      - name: Upload Video Cloud evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: go-coverage-pr-video-cloud-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}-video-cloud-pr/coverage/**
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 90 }}
+
+  aggregate:
+    name: Coverage aggregate and redaction
+    if: always()
+    needs: [policy, unit, account-manager-postgres, video-cloud-postgres-emqx]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: false
+      - name: Initialize workspace submodules
+        env:
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
+        run: scripts/ci/init-submodules.sh
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.3"
+          cache: false
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: go-coverage-*
+          path: .artifacts/coverage-input
+      - name: Aggregate ten-module coverage
+        working-directory: scripts/go
+        run: go run ./rtk-cloud -- test-coverage-aggregate --input-dir ../../.artifacts/coverage-input --run-id "gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Upload aggregate report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: go-coverage-aggregate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}/coverage/**
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 90 }}
+      - name: Publish summary
+        if: always()
+        run: |
+          report=".artifacts/test-runs/gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/coverage/TEST_REPORT.md"
+          if [ -f "$report" ]; then
+            cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          fi

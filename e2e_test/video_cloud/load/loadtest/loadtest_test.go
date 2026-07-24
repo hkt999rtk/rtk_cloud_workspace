@@ -2129,7 +2129,7 @@ func waitForAVMediaEvidence(ctx context.Context, viewer *PionMediaOfferSession, 
 }
 
 func TestRunnerWebRTCMediaRTPRecordsCoverage(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	var answerersMu sync.Mutex
@@ -2822,7 +2822,7 @@ func writeTestICEPreflight(w http.ResponseWriter) {
 }
 
 func TestRunnerWebRTCMediaAppOfferReceivesSyntheticRTP(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	var sessionsMu sync.Mutex

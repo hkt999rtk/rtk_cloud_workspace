@@ -1,64 +1,219 @@
-schema_version: 1
+schema_version: 2
 
-# Overall floors are ratchets measured from the commits pinned by this
-# workspace. They may only move upward. New and changed Go statements are held
-# to the separate 80% differential threshold below.
+# Ratchets are enforced immediately. Targets describe the first coverage
+# improvement milestone and become the new ratchet when a module reaches them.
 differential:
   minimum_statement_percent: 80.0
+
+risk_thresholds:
+  critical: 80.0
+  high: 70.0
+  normal: 60.0
 
 modules:
   - test_id: SVC-WS-TOOL-001
     name: workspace-tooling
     kind: go
+    owner: cloud_platform
+    default_risk: normal
     path: scripts/go
     packages: [./...]
-    minimum_statement_percent: 56.0
-    target_statement_percent: 80.0
+    minimum_statement_percent: 70.0
+    target_statement_percent: 70.0
     differential: true
+    package_policies:
+      - { package: rtk-cloud-workspace/scripts/go/rtk-cloud, risk: high, minimum_statement_percent: 70.0, target_statement_percent: 70.0 }
+      - { package: rtk-cloud-workspace/scripts/go/cloud-mqtt-test, risk: high, minimum_statement_percent: 70.8, target_statement_percent: 70.0 }
+      - { package: rtk-cloud-workspace/scripts/go/linode-object-storage, risk: wiring, exclusion_reason: Thin object-storage CLI wiring is covered by service integration and release smoke tests. }
     purpose: Protect workspace CLI, catalog, deployment, and test orchestration behavior.
-    method: Run every Go package with statement instrumentation and evaluate changed statements against the PR diff.
+    method: Run every Go package with statement instrumentation and evaluate governed packages and changed statements.
 
   - test_id: SVC-WS-E2E-001
     name: workspace-e2e
     kind: go
+    owner: cloud_platform
+    default_risk: normal
     path: e2e_test
     packages: [./...]
-    minimum_statement_percent: 66.0
-    target_statement_percent: 80.0
+    minimum_statement_percent: 75.0
+    target_statement_percent: 75.0
     differential: true
+    package_policies:
+      - { package: github.com/hkt999rtk/rtk_cloud_workspace/e2e_test/video_cloud/load/loadtest, risk: high, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
+      - { package: github.com/hkt999rtk/rtk_cloud_workspace/e2e_test/cloud_validation/cloudvalidation, risk: high, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
+      - { package: github.com/hkt999rtk/rtk_cloud_workspace/e2e_test/cloud_validation/cmd/request-token, risk: wiring, exclusion_reason: Token-request command only maps flags and environment into the governed mTLS request client. }
+      - { package: github.com/hkt999rtk/rtk_cloud_workspace/e2e_test/cloud_validation/cmd/cloud-validation, risk: wiring, exclusion_reason: Thin command entrypoint delegates to the governed cloudvalidation package. }
+      - { package: github.com/hkt999rtk/rtk_cloud_workspace/e2e_test/factory_enroll/cmd/rtk-factory-enroll-test, risk: wiring, exclusion_reason: Thin command entrypoint delegates to the governed factory enrollment package. }
+      - { package: github.com/hkt999rtk/rtk_cloud_workspace/e2e_test/provisioning/account_video_smoke/cmd/rtk-account-video-smoke, risk: wiring, exclusion_reason: Thin command entrypoint delegates to the governed provisioning package. }
+      - { package: github.com/hkt999rtk/rtk_cloud_workspace/e2e_test/provisioning/bulk_bind_validation/cmd/rtk-bulk-bind-validate, risk: wiring, exclusion_reason: Thin command entrypoint delegates to the governed validation package. }
+      - { package: github.com/hkt999rtk/rtk_cloud_workspace/e2e_test/video_cloud/load/cmd/rtk-video-loadtest, risk: wiring, exclusion_reason: Load-test command only maps flags and environment into the governed loadtest package and report renderer. }
     purpose: Protect deterministic cross-service E2E harness and report behavior.
-    method: Run every E2E Go package with statement instrumentation and evaluate changed statements against the PR diff.
+    method: Run every E2E Go package with governed statement and differential coverage gates.
 
   - test_id: SVC-HOME-LOAD-001
     name: home-load-runner
     kind: go
+    owner: home_cloud
+    default_risk: high
     path: loadtests/home-100k
     packages: [./...]
-    minimum_statement_percent: 75.0
+    minimum_statement_percent: 80.0
     target_statement_percent: 80.0
     differential: true
+    package_policies:
+      - { package: rtk-cloud-workspace/loadtests/home-100k/cmd/home-100k, risk: wiring, exclusion_reason: Thin CLI bootstrap delegates qualification behavior to internal/home100k. }
+      - { package: rtk-cloud-workspace/loadtests/home-100k/internal/home100k, risk: high, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
     purpose: Protect Home qualification and capacity planning, execution, evidence, and reporting.
-    method: Run every Home load-runner Go package with statement instrumentation and evaluate changed statements against the PR diff.
+    method: Instrument planning execution evidence cleanup and reporting code with governed and differential gates.
 
   - test_id: SVC-AM-SUITE-001
     name: account-manager
     kind: go
+    owner: rtk_account_manager
+    default_risk: normal
     path: repos/rtk_account_manager
     packages: [./...]
-    minimum_statement_percent: 29.0
+    cover_packages: [./internal/...]
+    pr_required_env: [TEST_DATABASE_URL]
+    pr_required_tests: [TestIntegrationAuthorizationAndTenancyMatrix, TestIntegrationDatabaseSchemaInvariants]
+    minimum_statement_percent: 29.1
+    pr_minimum_statement_percent: 80.0
     target_statement_percent: 80.0
-    purpose: Prevent Account Manager unit and service coverage from regressing.
-    method: Run every Account Manager Go package with statement instrumentation.
+    package_policies:
+      - { package: rtk_account_manager/internal/api, risk: critical, minimum_statement_percent: 24.5, pr_minimum_statement_percent: 80.1, target_statement_percent: 80.0 }
+      - { package: rtk_account_manager/internal/auth, risk: critical, minimum_statement_percent: 81.0, pr_minimum_statement_percent: 84.0, target_statement_percent: 80.0 }
+      - { package: rtk_account_manager/internal/store, risk: critical, minimum_statement_percent: 4.0, pr_minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
+      - { package: rtk_account_manager/internal/database, risk: critical, minimum_statement_percent: 30.6, pr_minimum_statement_percent: 84.0, target_statement_percent: 80.0 }
+      - { package: rtk_account_manager/internal/usercache, risk: high, minimum_statement_percent: 81.0, pr_minimum_statement_percent: 81.0, target_statement_percent: 70.0 }
+      - { package: rtk_account_manager/internal/worker/inbox, risk: high, minimum_statement_percent: 90.2, pr_minimum_statement_percent: 90.2, target_statement_percent: 70.0 }
+      - { package: rtk_account_manager/internal/worker/outbox, risk: high, minimum_statement_percent: 83.6, pr_minimum_statement_percent: 83.6, target_statement_percent: 70.0 }
+      - { package: rtk_account_manager/cmd/server, risk: wiring, exclusion_reason: Server bootstrap is covered by API integration and deployed readiness tests. }
+      - { package: rtk_account_manager/cmd/migrate, risk: wiring, exclusion_reason: Migration entrypoint delegates to internal/database and is covered by schema integration tests. }
+    critical_cases:
+      - test_id: UNIT-AM-AUTH-001
+        canonical_key: go://account-manager/internal/auth#TestOIDCTokenErrorsDoNotContainProviderTokens
+        purpose: OIDC failures must not expose provider tokens.
+    purpose: Protect Account Manager unit and PostgreSQL-backed service behavior.
+    method: Unit profile reports all packages; PR profile runs PostgreSQL integration with internal cross-package instrumentation.
 
   - test_id: SVC-CA-SUITE-001
     name: cloud-admin-backend
     kind: go
+    owner: rtk_cloud_admin
+    default_risk: normal
     path: repos/rtk_cloud_admin
     packages: [./...]
-    minimum_statement_percent: 65.0
+    minimum_statement_percent: 72.0
+    target_statement_percent: 72.0
+    package_policies:
+      - { package: rtk_cloud_admin/internal/app, risk: critical, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
+      - { package: rtk_cloud_admin/internal/store, risk: critical, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
+      - { package: rtk_cloud_admin/internal/accountclient, risk: high, minimum_statement_percent: 88.4, target_statement_percent: 70.0 }
+      - { package: rtk_cloud_admin/internal/videoclient, risk: high, minimum_statement_percent: 86.2, target_statement_percent: 70.0 }
+      - { package: rtk_cloud_admin/cmd/server, risk: wiring, exclusion_reason: Thin server bootstrap is covered by real-BFF Playwright and service integration tests. }
+    purpose: Protect Cloud Admin backend authorization BFF store and upstream client behavior.
+    method: Run all backend packages with governed package and module ratchets.
+
+  - test_id: SVC-CLIENT-SUITE-001
+    name: cloud-client-golang
+    kind: go
+    owner: rtk_cloud_client
+    default_risk: normal
+    path: repos/rtk_cloud_client/packages/golang
+    packages: [./...]
+    minimum_statement_percent: 60.0
+    target_statement_percent: 60.0
+    package_policies:
+      - { package: github.com/hkt999rtk/rtk_cloud_client/packages/golang/rtkc, risk: high, minimum_statement_percent: 70.0, target_statement_percent: 70.0 }
+      - { package: github.com/hkt999rtk/rtk_cloud_client/packages/golang/rtkc/auth, risk: critical, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
+      - { package: github.com/hkt999rtk/rtk_cloud_client/packages/golang/rtkc/firmware, risk: high, minimum_statement_percent: 70.0, target_statement_percent: 70.0 }
+      - { package: github.com/hkt999rtk/rtk_cloud_client/packages/golang/rtkc/telemetry, risk: normal, minimum_statement_percent: 95.6, target_statement_percent: 60.0 }
+      - { package: github.com/hkt999rtk/rtk_cloud_client/packages/golang/rtkc/internal, risk: critical, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
+      - { package: github.com/hkt999rtk/rtk_cloud_client/packages/golang/rtkc/transport, risk: critical, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
+    purpose: Protect the Go SDK authentication transport firmware telemetry and error contracts.
+    method: Run all Go SDK packages and enforce package risk ratchets.
+
+  - test_id: SVC-FRONTEND-SUITE-001
+    name: cloud-frontend
+    kind: go
+    owner: rtk_cloud_frontend
+    default_risk: normal
+    path: repos/rtk_cloud_frontend
+    packages: [./...]
+    minimum_statement_percent: 72.0
+    target_statement_percent: 72.0
+    package_policies:
+      - { package: realtek-connect/internal/web, risk: high, minimum_statement_percent: 80.0, target_statement_percent: 70.0 }
+      - { package: realtek-connect/internal/search, risk: high, minimum_statement_percent: 70.0, target_statement_percent: 70.0 }
+      - { package: realtek-connect/cmd/search-index, risk: wiring, exclusion_reason: Search indexing CLI only loads configuration and delegates collection embedding and repository writes to governed internal packages. }
+      - { package: realtek-connect/cmd/server, risk: wiring, exclusion_reason: Server bootstrap delegates to governed internal/web handlers. }
+      - { package: realtek-connect/cmd/visual-smoke, risk: wiring, exclusion_reason: Visual smoke entrypoint is exercised through browser smoke evidence. }
+    purpose: Prevent Cloud Frontend content search analytics and web behavior from regressing.
+    method: Run all service packages with governed package and module ratchets.
+
+  - test_id: SVC-LOGGER-SUITE-001
+    name: cloud-logger
+    kind: go
+    owner: rtk_cloud_logger
+    default_risk: normal
+    path: repos/rtk_cloud_logger
+    packages: [./...]
+    minimum_statement_percent: 72.0
+    target_statement_percent: 72.0
+    package_policies:
+      - { package: github.com/hkt999rtk/rtk_cloud_logger, risk: high, minimum_statement_percent: 73.5, target_statement_percent: 72.0 }
+      - { package: github.com/hkt999rtk/rtk_cloud_logger/cmd/rtk-cloud-log-forwarder, risk: wiring, exclusion_reason: Forwarder bootstrap is validated by deployed ingestion and retry evidence. }
+      - { package: github.com/hkt999rtk/rtk_cloud_logger/cmd/rtk-cloud-logger, risk: wiring, exclusion_reason: Logger command is a thin bootstrap over the governed root package. }
+    purpose: Prevent Cloud Logger ingestion query redaction and retry behavior from regressing.
+    method: Run all logger packages with governed package and module ratchets.
+
+  - test_id: SVC-VC-SUITE-001
+    name: video-cloud
+    kind: go
+    owner: rtk_video_cloud
+    default_risk: normal
+    path: repos/rtk_video_cloud
+    packages: [./...]
+    cover_packages: [./internal/...]
+    pr_required_env: [VIDEO_CLOUD_TEST_DSN, VIDEO_CLOUD_MQTT_TEST_ADDR]
+    pr_required_tests: [TestRepositoriesIntegration, TestBrokerPublishSubscribeIntegration]
+    minimum_statement_percent: 60.1
+    pr_minimum_statement_percent: 65.0
+    target_statement_percent: 65.0
+    critical_command: [make, check-coverage]
+    package_policies:
+      - { package: video_cloud/internal/auth, risk: critical, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
+      - { package: video_cloud/internal/deviceshadow, risk: critical, minimum_statement_percent: 82.0, target_statement_percent: 80.0 }
+      - { package: video_cloud/internal/postgres, risk: critical, minimum_statement_percent: 1.8, pr_minimum_statement_percent: 80.3, target_statement_percent: 80.0 }
+      - { package: video_cloud/internal/httpapi, risk: critical, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
+      - { package: video_cloud/internal/clip, risk: high, minimum_statement_percent: 70.5, target_statement_percent: 70.0 }
+      - { package: video_cloud/internal/clipupload, risk: high, minimum_statement_percent: 88.1, target_statement_percent: 70.0 }
+      - { package: video_cloud/internal/clipreconcile, risk: high, minimum_statement_percent: 77.1, target_statement_percent: 70.0 }
+      - { package: video_cloud/internal/mqtt, risk: high, minimum_statement_percent: 65.5, pr_minimum_statement_percent: 70.0, target_statement_percent: 70.0 }
+      - { package: video_cloud/internal/signaling, risk: high, minimum_statement_percent: 82.8, target_statement_percent: 70.0 }
+      - { package: video_cloud/internal/turnregistry, risk: high, minimum_statement_percent: 70.0, target_statement_percent: 70.0 }
+      - { package: video_cloud/internal/webrtc, risk: high, minimum_statement_percent: 70.2, target_statement_percent: 70.0 }
+    critical_cases:
+      - test_id: UNIT-VC-SHADOW-001
+        canonical_key: go://video-cloud/internal/deviceshadow#TestServiceRejectsStaleVersion
+        purpose: Device shadow stale versions must be rejected deterministically.
+    purpose: Protect Video Cloud identity storage shadow clip MQTT WebRTC TURN and HTTP behavior.
+    method: Unit profile reports all packages; PR profile adds PostgreSQL and EMQX integration coverage.
+
+  - test_id: SVC-DNS-SUITE-001
+    name: godaddy-dns-toolkit
+    kind: go
+    owner: rtk_video_cloud
+    default_risk: high
+    path: repos/rtk_video_cloud/tools/godaddy-dns
+    packages: [./...]
+    minimum_statement_percent: 80.0
     target_statement_percent: 80.0
-    purpose: Enforce the Cloud Admin backend coverage floor used by its native CI.
-    method: Run every Cloud Admin Go package with statement instrumentation.
+    package_policies:
+      - { package: github.com/hkt999rtk/rtk_video_cloud/tools/godaddy-dns, risk: high, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
+      - { package: github.com/hkt999rtk/rtk_video_cloud/tools/godaddy-dns/cmd/godaddy-dns, risk: wiring, exclusion_reason: Thin CLI delegates all provider operations to the governed toolkit package. }
+    purpose: Protect GoDaddy DNS discovery mutation error and credential-redaction behavior.
+    method: Run toolkit packages with governed package and module ratchets.
 
   - test_id: SVC-CA-SUITE-001
     name: cloud-admin-web
@@ -68,7 +223,7 @@ modules:
     minimum_line_percent: 92.0
     minimum_branch_percent: 79.0
     minimum_function_percent: 94.0
-    purpose: Protect Cloud Admin browser-helper logic across lines, branches, and functions.
+    purpose: Protect Cloud Admin browser-helper logic across lines branches and functions.
     method: Run Node unit tests with V8 coverage instrumentation.
 
   - test_id: SVC-CLIENT-SUITE-001
@@ -80,36 +235,5 @@ modules:
     minimum_line_percent: 84.0
     minimum_branch_percent: 80.0
     minimum_function_percent: 87.0
-    purpose: Protect JavaScript SDK behavior across lines, branches, and functions.
+    purpose: Protect JavaScript SDK behavior across lines branches and functions.
     method: Build the SDK and run Node unit tests with V8 coverage instrumentation.
-
-  - test_id: SVC-FRONTEND-SUITE-001
-    name: cloud-frontend
-    kind: go
-    path: repos/rtk_cloud_frontend
-    packages: [./...]
-    minimum_statement_percent: 68.0
-    target_statement_percent: 80.0
-    purpose: Prevent Cloud Frontend service coverage from regressing.
-    method: Run every Cloud Frontend Go package with statement instrumentation.
-
-  - test_id: SVC-LOGGER-SUITE-001
-    name: cloud-logger
-    kind: go
-    path: repos/rtk_cloud_logger
-    packages: [./...]
-    minimum_statement_percent: 67.0
-    target_statement_percent: 80.0
-    purpose: Prevent Cloud Logger service coverage from regressing.
-    method: Run every Cloud Logger Go package with statement instrumentation.
-
-  - test_id: SVC-VC-SUITE-001
-    name: video-cloud
-    kind: go
-    path: repos/rtk_video_cloud
-    packages: [./...]
-    minimum_statement_percent: 56.0
-    target_statement_percent: 80.0
-    critical_command: [make, check-coverage]
-    purpose: Protect Video Cloud overall coverage and its risk-selected critical package thresholds.
-    method: Run every Video Cloud Go package with statement instrumentation and then enforce its native critical-package coverage policy.
