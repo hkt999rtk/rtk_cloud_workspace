@@ -203,11 +203,222 @@ func TestRunTestInventoryRejectsInvalidArguments(t *testing.T) {
 		"missing command": nil,
 		"unknown command": {"unknown"},
 		"missing run":     {"check"},
+		"missing update":  {"update"},
+		"invalid render":  {"render", "--unknown"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := runTestInventory(args); err == nil {
 				t.Fatal("invalid inventory arguments unexpectedly passed")
 			}
 		})
+	}
+}
+
+func TestValidateUnitInventoryRejectsInvalidLedgerEntries(t *testing.T) {
+	workspace := t.TempDir()
+	module := coverageModule{
+		Name:            "module",
+		Kind:            "node",
+		Path:            "module",
+		Owner:           "owner",
+		SourceTestGlobs: []string{"test/*.test.js"},
+	}
+	source := "test/case.test.js"
+	if err := os.MkdirAll(filepath.Join(workspace, module.Path, "test"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, module.Path, source), []byte("// test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	valid := unitInventoryCase{
+		CanonicalKey: canonicalJSKey(module.Name, source, "case"),
+		Module:       module.Name,
+		Language:     "javascript",
+		Source:       source,
+		Title:        "case",
+		Owner:        module.Owner,
+		Status:       "active",
+	}
+	cfg := coverageConfig{Modules: []coverageModule{module}}
+	clone := func(item unitInventoryCase) unitInventoryCase { return item }
+	tests := map[string]unitInventoryLedger{}
+
+	item := clone(valid)
+	item.Language = "go"
+	tests["language"] = unitInventoryLedger{Cases: []unitInventoryCase{item}}
+	item = clone(valid)
+	item.CanonicalKey += "-wrong"
+	tests["canonical"] = unitInventoryLedger{Cases: []unitInventoryCase{item}}
+	tests["duplicate"] = unitInventoryLedger{Cases: []unitInventoryCase{valid, valid}}
+	item = clone(valid)
+	item.Owner = "wrong"
+	tests["owner"] = unitInventoryLedger{Cases: []unitInventoryCase{item}}
+	item = clone(valid)
+	item.Source = "test/missing.test.js"
+	item.CanonicalKey = canonicalJSKey(item.Module, item.Source, item.Title)
+	tests["missing source"] = unitInventoryLedger{Cases: []unitInventoryCase{item}}
+	item = clone(valid)
+	item.RetiredAt = "2026-07-24"
+	item.Reason = "not retired"
+	tests["active retirement"] = unitInventoryLedger{Cases: []unitInventoryCase{item}}
+	item = clone(valid)
+	item.Status = "retired"
+	tests["retired metadata"] = unitInventoryLedger{Cases: []unitInventoryCase{item}}
+	item = clone(valid)
+	item.Status = "unknown"
+	tests["status"] = unitInventoryLedger{Cases: []unitInventoryCase{item}}
+	item = clone(valid)
+	item.TestID = "UNIT-X-CASE-001"
+	tests["unexpected permanent id"] = unitInventoryLedger{Cases: []unitInventoryCase{item}}
+
+	for name, ledger := range tests {
+		t.Run(name, func(t *testing.T) {
+			if err := validateUnitInventory(workspace, ledger, cfg); err == nil {
+				t.Fatal("invalid ledger unexpectedly passed")
+			}
+		})
+	}
+
+	criticalModule := module
+	criticalModule.CriticalCases = []coverageCriticalCase{{
+		TestID:       "UNIT-X-CASE-001",
+		CanonicalKey: valid.CanonicalKey,
+	}}
+	if err := validateUnitInventory(workspace, unitInventoryLedger{}, coverageConfig{
+		Modules: []coverageModule{criticalModule},
+	}); err == nil {
+		t.Fatal("missing critical mapping unexpectedly passed")
+	}
+}
+
+func TestUpdateAndCheckUnitInventoryAgainstRunManifests(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tempWorkspace := t.TempDir()
+	entries, err := os.ReadDir(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Name() == "tests" || entry.Name() == "docs" || entry.Name() == ".artifacts" {
+			continue
+		}
+		if err := os.Symlink(filepath.Join(workspace, entry.Name()), filepath.Join(tempWorkspace, entry.Name())); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(tempWorkspace, "tests"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(tempWorkspace, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"catalog.yaml", "coverage.yaml", "unit-inventory.yaml"} {
+		raw, err := os.ReadFile(filepath.Join(workspace, "tests", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(tempWorkspace, "tests", name), raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	renderedInventory, err := os.ReadFile(filepath.Join(workspace, "docs", "unit-test-inventory.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tempWorkspace, "docs", "unit-test-inventory.md"), renderedInventory, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ledger, err := loadUnitInventory(tempWorkspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalCount := len(ledger.Cases)
+	testsByModule := map[string][]nodeUnitResult{}
+	for _, item := range ledger.Cases {
+		if item.Status != "active" {
+			continue
+		}
+		testsByModule[item.Module] = append(testsByModule[item.Module], nodeUnitResult{
+			CanonicalKey: item.CanonicalKey,
+			Module:       item.Module,
+			Language:     item.Language,
+			Source:       item.Source,
+			Title:        item.Title,
+			Status:       "PASS",
+			TestID:       item.TestID,
+		})
+	}
+	runDir := filepath.Join(t.TempDir(), "coverage")
+	writeManifests := func() {
+		t.Helper()
+		for module, units := range testsByModule {
+			path := filepath.Join(runDir, "modules", module, "unit-manifest.json")
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeJSON(path, nodeUnitManifest{
+				SchemaVersion: 1,
+				Module:        module,
+				Profile:       "unit",
+				Commit:        "0123456789012345678901234567890123456789",
+				Tests:         units,
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	writeManifests()
+	if err := runTestInventoryAtWorkspace(tempWorkspace, []string{"check", "--from-run", runDir}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runTestInventory([]string{"check", "--from-run", runDir}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadCoverageConfig(tempWorkspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifests, err := loadNodeUnitManifests(runDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compareUnitInventoryMustPass(tempWorkspace, cfg, manifests); err != nil {
+		t.Fatal(err)
+	}
+
+	const newTitle = "inventory update preserves newly observed case"
+	base := ledger.Cases[0]
+	testsByModule[base.Module] = append(testsByModule[base.Module], nodeUnitResult{
+		CanonicalKey: canonicalJSKey(base.Module, base.Source, newTitle),
+		Module:       base.Module,
+		Language:     "javascript",
+		Source:       base.Source,
+		Title:        newTitle,
+		Status:       "PASS",
+	})
+	writeManifests()
+
+	if err := runTestInventoryAtWorkspace(tempWorkspace, []string{"update", "--from-run", runDir}); err != nil {
+		t.Fatal(err)
+	}
+	if err := updateUnitInventory(tempWorkspace, runDir); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := loadUnitInventory(tempWorkspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Cases) != originalCount+1 {
+		t.Fatalf("updated inventory has %d cases, want %d", len(updated.Cases), originalCount+1)
+	}
+	if err := runTestInventoryAtWorkspace(tempWorkspace, []string{"render"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkUnitInventory(tempWorkspace, runDir, false); err != nil {
+		t.Fatal(err)
 	}
 }

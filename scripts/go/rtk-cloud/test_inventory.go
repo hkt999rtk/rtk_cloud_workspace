@@ -85,6 +85,10 @@ func runTestInventory(args []string) error {
 	if err != nil {
 		return err
 	}
+	return runTestInventoryAtWorkspace(workspace, args)
+}
+
+func runTestInventoryAtWorkspace(workspace string, args []string) error {
 	switch args[0] {
 	case "check":
 		flags := flag.NewFlagSet("test-inventory check", flag.ContinueOnError)
