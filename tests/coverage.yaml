@@ -185,7 +185,7 @@ modules:
       - { package: video_cloud/internal/auth, risk: critical, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
       - { package: video_cloud/internal/deviceshadow, risk: critical, minimum_statement_percent: 82.0, target_statement_percent: 80.0 }
       - { package: video_cloud/internal/postgres, risk: critical, minimum_statement_percent: 1.8, pr_minimum_statement_percent: 80.3, target_statement_percent: 80.0 }
-      - { package: video_cloud/internal/httpapi, risk: critical, minimum_statement_percent: 77.3, target_statement_percent: 80.0 }
+      - { package: video_cloud/internal/httpapi, risk: critical, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
       - { package: video_cloud/internal/clip, risk: high, minimum_statement_percent: 70.5, target_statement_percent: 70.0 }
       - { package: video_cloud/internal/clipupload, risk: high, minimum_statement_percent: 88.1, target_statement_percent: 70.0 }
       - { package: video_cloud/internal/clipreconcile, risk: high, minimum_statement_percent: 77.1, target_statement_percent: 70.0 }
