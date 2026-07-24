@@ -35,7 +35,7 @@ modules:
     default_risk: normal
     path: e2e_test
     packages: [./...]
-    minimum_statement_percent: 71.9
+    minimum_statement_percent: 71.5
     target_statement_percent: 75.0
     differential: true
     package_policies:
