@@ -1,0 +1,193 @@
+name: Go Runtime Coverage Nightly
+
+on:
+  schedule:
+    - cron: "30 17 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: go-runtime-coverage-nightly
+  cancel-in-progress: false
+
+jobs:
+  runtime-coverage:
+    name: Isolated deployed Go coverage
+    runs-on: [self-hosted, macOS, ARM64, rtk_cloud_client, jarvis-macos]
+    timeout-minutes: 240
+    env:
+      RUNTIME_COVERAGE_RUN_ID: runtime-${{ github.run_id }}-${{ github.run_attempt }}
+      RUNTIME_COVERAGE_STACK: coverage-${{ github.run_id }}-${{ github.run_attempt }}
+      RUNTIME_COVERAGE_REGISTRY: ghcr.io/hkt999rtk/rtk_cloud_workspace/runtime-coverage
+      RUNTIME_SOURCE_ENV_ROOT: ${{ github.workspace }}/cloud_env/staging/lke
+      RUNTIME_ENV_ROOT: ${{ github.workspace }}/cloud_env/runtime-coverage/${{ github.run_id }}-${{ github.run_attempt }}/lke
+      RUNTIME_COVERAGE_OUTPUT_ROOT: ${{ github.workspace }}/.artifacts/runtime-coverage/runtime-${{ github.run_id }}-${{ github.run_attempt }}
+      LINODE_TOKEN: ${{ secrets.linode_token }}
+      VIDEO_CLOUD_LOAD_ADMIN_TOKEN: ${{ secrets.video_cloud_admin_token }}
+      VIDEO_CLOUD_LOAD_CLIP_USER_PRIVATE_KEY: ${{ secrets.clip_user_private_key_path }}
+      VIDEO_CLOUD_LOAD_CLIP_SERVER_PUBLIC_KEY: ${{ secrets.clip_server_public_key_path }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Initialize private submodules
+        env:
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
+        run: scripts/ci/init-submodules.sh
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.work
+          cache-dependency-path: |
+            scripts/go/go.sum
+            e2e_test/go.sum
+            loadtests/home-100k/go.sum
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare isolated run-scoped environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RUNTIME_COVERAGE_STACK" == coverage-* ]]
+          [[ "$RUNTIME_COVERAGE_STACK" != *staging* ]]
+          [[ "$RUNTIME_COVERAGE_STACK" != *prod* ]]
+          test -f "$RUNTIME_SOURCE_ENV_ROOT/env/stack.env"
+          rm -rf "$RUNTIME_ENV_ROOT"
+          mkdir -p "$RUNTIME_ENV_ROOT"
+          rsync -a \
+            --exclude 'artifacts/' \
+            --exclude '*.stale-*' \
+            "$RUNTIME_SOURCE_ENV_ROOT/" "$RUNTIME_ENV_ROOT/"
+          perl -0pi -e "s/^CLOUD_STACK_NAME=.*/CLOUD_STACK_NAME=$RUNTIME_COVERAGE_STACK/m; s/^CLOUD_ENV_NAME=.*/CLOUD_ENV_NAME=runtime-coverage/m" \
+            "$RUNTIME_ENV_ROOT/env/stack.env"
+          grep -qx "CLOUD_STACK_NAME=$RUNTIME_COVERAGE_STACK" "$RUNTIME_ENV_ROOT/env/stack.env"
+          echo "KUBECONFIG=$RUNTIME_ENV_ROOT/state/kubeconfig.yaml" >> "$GITHUB_ENV"
+
+      - name: Build and push coverage-only images
+        shell: bash
+        run: |
+          set -euo pipefail
+          account_image="$RUNTIME_COVERAGE_REGISTRY/account-manager:$RUNTIME_COVERAGE_RUN_ID"
+          admin_image="$RUNTIME_COVERAGE_REGISTRY/cloud-admin:$RUNTIME_COVERAGE_RUN_ID"
+          frontend_image="$RUNTIME_COVERAGE_REGISTRY/cloud-frontend:$RUNTIME_COVERAGE_RUN_ID"
+          logger_image="$RUNTIME_COVERAGE_REGISTRY/cloud-logger:$RUNTIME_COVERAGE_RUN_ID"
+          video_image="$RUNTIME_COVERAGE_REGISTRY/video-cloud:$RUNTIME_COVERAGE_RUN_ID"
+          docker buildx build --platform linux/amd64 --push -f tests/runtime-coverage/Dockerfile.account-manager -t "$account_image" repos/rtk_account_manager
+          docker buildx build --platform linux/amd64 --push -f tests/runtime-coverage/Dockerfile.cloud-admin -t "$admin_image" repos/rtk_cloud_admin
+          docker buildx build --platform linux/amd64 --push -f tests/runtime-coverage/Dockerfile.cloud-frontend -t "$frontend_image" repos/rtk_cloud_frontend
+          docker buildx build --platform linux/amd64 --push -f tests/runtime-coverage/Dockerfile.cloud-logger -t "$logger_image" repos/rtk_cloud_logger
+          docker buildx build --platform linux/amd64 --push -f tests/runtime-coverage/Dockerfile.video-cloud -t "$video_image" repos/rtk_video_cloud
+          {
+            echo "LKE_ACCOUNT_MANAGER_IMAGE=$account_image"
+            echo "LKE_CLOUD_ADMIN_IMAGE=$admin_image"
+            echo "LKE_FRONTEND_IMAGE=$frontend_image"
+            echo "LKE_CLOUD_LOGGER_IMAGE=$logger_image"
+            echo "LKE_VIDEO_CLOUD_IMAGE=$video_image"
+          } >> "$GITHUB_ENV"
+
+      - name: Deploy isolated stack without public DNS or edge VMs
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run ./scripts/go/rtk-cloud -- provision \
+            --workspace "$GITHUB_WORKSPACE" \
+            --env-root "$RUNTIME_ENV_ROOT" \
+            --preflight --plan --apply --deploy --artifacts \
+            --confirm "$RUNTIME_COVERAGE_STACK"
+
+      - name: Attach run-scoped coverage PVCs
+        run: scripts/ci/runtime-coverage-k8s.sh prepare
+
+      - name: Run onboarding and cross-service lifecycle checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run ./scripts/go/rtk-cloud -- test-live \
+            --env-root "$RUNTIME_ENV_ROOT" \
+            --run --confirm "$RUNTIME_COVERAGE_STACK" \
+            --skip-remove --skip-provision \
+            --steps data,mqtt,runtime-logs,billing-log,billing-db \
+            --user-count 2 --device-count 10 \
+            --out-dir ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID/live"
+
+      - name: Run all feature canaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          for feature in device-shadow video-webrtc clip-storage; do
+            go run ./scripts/go/rtk-cloud -- test-feature \
+              --feature "$feature" \
+              --profile canary \
+              --environment staging \
+              --env-root "$RUNTIME_ENV_ROOT" \
+              --run-id "$RUNTIME_COVERAGE_RUN_ID" \
+              --run --confirm "$RUNTIME_COVERAGE_STACK"
+          done
+
+      - name: Run desktop and mobile deployed UI smoke
+        shell: bash
+        env:
+          E2E_PLATFORM_SESSION_ID: ${{ secrets.E2E_PLATFORM_SESSION_ID }}
+          E2E_CUSTOMER_SESSION_ID: ${{ secrets.E2E_CUSTOMER_SESSION_ID }}
+          E2E_EVIDENCE_SAFE: "1"
+        run: |
+          set -euo pipefail
+          kubectl --kubeconfig "$KUBECONFIG" -n "$RUNTIME_COVERAGE_STACK-admin" \
+            port-forward svc/cloud-admin 18082:80 > /tmp/runtime-coverage-admin-port-forward.log 2>&1 &
+          port_forward_pid=$!
+          trap 'kill "$port_forward_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if curl -fsS http://127.0.0.1:18082/healthz >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:18082/healthz >/dev/null
+          E2E_BASE_URL=http://127.0.0.1:18082 \
+            go run ./scripts/go/rtk-cloud -- test-ui \
+              --staging --desktop --mobile --install \
+              --run-id "$RUNTIME_COVERAGE_RUN_ID"
+
+      - name: Gracefully stop services and collect runtime counters
+        if: always()
+        run: scripts/ci/runtime-coverage-k8s.sh collect
+
+      - name: Aggregate runtime coverage and verify anchors
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run ./scripts/go/rtk-cloud -- test-coverage \
+            --profile runtime \
+            --module account-manager,cloud-admin-backend,cloud-frontend,cloud-logger,video-cloud \
+            --runtime-dir "$RUNTIME_COVERAGE_OUTPUT_ROOT" \
+            --run-id "$RUNTIME_COVERAGE_RUN_ID"
+
+      - name: Upload runtime reports and evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: go-runtime-coverage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .artifacts/runtime-coverage/${{ env.RUNTIME_COVERAGE_RUN_ID }}/**
+            .artifacts/test-runs/${{ env.RUNTIME_COVERAGE_RUN_ID }}/**
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Delete isolated namespaces and PVCs
+        if: always()
+        run: scripts/ci/runtime-coverage-k8s.sh cleanup

@@ -26,68 +26,127 @@ type coverageConfig struct {
 	Differential  struct {
 		MinimumStatementPercent float64 `yaml:"minimum_statement_percent"`
 	} `yaml:"differential"`
-	Modules []coverageModule `yaml:"modules"`
+	RiskThresholds map[string]float64 `yaml:"risk_thresholds,omitempty"`
+	Modules        []coverageModule   `yaml:"modules"`
 }
 
 type coverageModule struct {
-	TestID                  string   `yaml:"test_id"`
-	Name                    string   `yaml:"name"`
-	Kind                    string   `yaml:"kind"`
-	Path                    string   `yaml:"path"`
-	Packages                []string `yaml:"packages,omitempty"`
-	Build                   []string `yaml:"build,omitempty"`
-	TestGlobs               []string `yaml:"test_globs,omitempty"`
-	CriticalCommand         []string `yaml:"critical_command,omitempty"`
-	MinimumStatementPercent float64  `yaml:"minimum_statement_percent,omitempty"`
-	TargetStatementPercent  float64  `yaml:"target_statement_percent,omitempty"`
-	MinimumLinePercent      float64  `yaml:"minimum_line_percent,omitempty"`
-	MinimumBranchPercent    float64  `yaml:"minimum_branch_percent,omitempty"`
-	MinimumFunctionPercent  float64  `yaml:"minimum_function_percent,omitempty"`
-	Differential            bool     `yaml:"differential,omitempty"`
-	Purpose                 string   `yaml:"purpose"`
-	Method                  string   `yaml:"method"`
+	TestID                  string                  `yaml:"test_id"`
+	Name                    string                  `yaml:"name"`
+	Kind                    string                  `yaml:"kind"`
+	Path                    string                  `yaml:"path"`
+	Packages                []string                `yaml:"packages,omitempty"`
+	Build                   []string                `yaml:"build,omitempty"`
+	TestGlobs               []string                `yaml:"test_globs,omitempty"`
+	CriticalCommand         []string                `yaml:"critical_command,omitempty"`
+	MinimumStatementPercent float64                 `yaml:"minimum_statement_percent,omitempty"`
+	PRMinimumStatement      float64                 `yaml:"pr_minimum_statement_percent,omitempty"`
+	TargetStatementPercent  float64                 `yaml:"target_statement_percent,omitempty"`
+	MinimumLinePercent      float64                 `yaml:"minimum_line_percent,omitempty"`
+	MinimumBranchPercent    float64                 `yaml:"minimum_branch_percent,omitempty"`
+	MinimumFunctionPercent  float64                 `yaml:"minimum_function_percent,omitempty"`
+	Differential            bool                    `yaml:"differential,omitempty"`
+	Owner                   string                  `yaml:"owner,omitempty"`
+	DefaultRisk             string                  `yaml:"default_risk,omitempty"`
+	CoverPackages           []string                `yaml:"cover_packages,omitempty"`
+	PRRequiredEnv           []string                `yaml:"pr_required_env,omitempty"`
+	PRRequiredTests         []string                `yaml:"pr_required_tests,omitempty"`
+	PackagePolicies         []coveragePackagePolicy `yaml:"package_policies,omitempty"`
+	CriticalCases           []coverageCriticalCase  `yaml:"critical_cases,omitempty"`
+	Purpose                 string                  `yaml:"purpose"`
+	Method                  string                  `yaml:"method"`
+}
+
+type coveragePackagePolicy struct {
+	Package                 string  `yaml:"package"`
+	Risk                    string  `yaml:"risk"`
+	MinimumStatementPercent float64 `yaml:"minimum_statement_percent,omitempty"`
+	PRMinimumStatement      float64 `yaml:"pr_minimum_statement_percent,omitempty"`
+	TargetStatementPercent  float64 `yaml:"target_statement_percent,omitempty"`
+	ExclusionReason         string  `yaml:"exclusion_reason,omitempty"`
+	Owner                   string  `yaml:"owner,omitempty"`
+}
+
+type coverageCriticalCase struct {
+	TestID       string `yaml:"test_id"`
+	CanonicalKey string `yaml:"canonical_key"`
+	Purpose      string `yaml:"purpose"`
+}
+
+type coveragePackageResult struct {
+	Package                  string   `json:"package"`
+	Risk                     string   `json:"risk"`
+	Owner                    string   `json:"owner,omitempty"`
+	RawStatementPercent      float64  `json:"raw_statement_percent"`
+	GovernedStatementPercent *float64 `json:"governed_statement_percent,omitempty"`
+	MinimumStatementPercent  *float64 `json:"minimum_statement_percent,omitempty"`
+	TargetStatementPercent   *float64 `json:"target_statement_percent,omitempty"`
+	CoveredStatements        int      `json:"covered_statements"`
+	Statements               int      `json:"statements"`
+	Status                   string   `json:"status"`
+	Assessment               string   `json:"assessment"`
+	ExclusionReason          string   `json:"exclusion_reason,omitempty"`
+}
+
+type coverageArtifactEvidence struct {
+	Kind   string `json:"kind"`
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
 }
 
 type coverageMetrics struct {
-	StatementPercent         *float64 `json:"statement_percent,omitempty"`
-	StatementMinimumPercent  *float64 `json:"statement_minimum_percent,omitempty"`
-	StatementTargetPercent   *float64 `json:"statement_target_percent,omitempty"`
-	ChangedStatementPercent  *float64 `json:"changed_statement_percent,omitempty"`
-	ChangedStatementMinimum  *float64 `json:"changed_statement_minimum_percent,omitempty"`
-	ChangedStatements        int      `json:"changed_statements,omitempty"`
-	CoveredChangedStatements int      `json:"covered_changed_statements,omitempty"`
-	UncoveredChanged         []string `json:"uncovered_changed_statements,omitempty"`
-	LinePercent              *float64 `json:"line_percent,omitempty"`
-	LineMinimumPercent       *float64 `json:"line_minimum_percent,omitempty"`
-	BranchPercent            *float64 `json:"branch_percent,omitempty"`
-	BranchMinimumPercent     *float64 `json:"branch_minimum_percent,omitempty"`
-	FunctionPercent          *float64 `json:"function_percent,omitempty"`
-	FunctionMinimumPercent   *float64 `json:"function_minimum_percent,omitempty"`
-	IndustryTargetMet        *bool    `json:"industry_target_met,omitempty"`
+	RawStatementPercent      *float64                `json:"raw_statement_percent,omitempty"`
+	GovernedStatementPercent *float64                `json:"governed_statement_percent,omitempty"`
+	GovernedMinimumPercent   *float64                `json:"governed_minimum_percent,omitempty"`
+	StatementPercent         *float64                `json:"statement_percent,omitempty"`
+	StatementMinimumPercent  *float64                `json:"statement_minimum_percent,omitempty"`
+	StatementTargetPercent   *float64                `json:"statement_target_percent,omitempty"`
+	ChangedStatementPercent  *float64                `json:"changed_statement_percent,omitempty"`
+	ChangedStatementMinimum  *float64                `json:"changed_statement_minimum_percent,omitempty"`
+	ChangedStatements        int                     `json:"changed_statements,omitempty"`
+	CoveredChangedStatements int                     `json:"covered_changed_statements,omitempty"`
+	UncoveredChanged         []string                `json:"uncovered_changed_statements,omitempty"`
+	LinePercent              *float64                `json:"line_percent,omitempty"`
+	LineMinimumPercent       *float64                `json:"line_minimum_percent,omitempty"`
+	BranchPercent            *float64                `json:"branch_percent,omitempty"`
+	BranchMinimumPercent     *float64                `json:"branch_minimum_percent,omitempty"`
+	FunctionPercent          *float64                `json:"function_percent,omitempty"`
+	FunctionMinimumPercent   *float64                `json:"function_minimum_percent,omitempty"`
+	IndustryTargetMet        *bool                   `json:"industry_target_met,omitempty"`
+	Packages                 []coveragePackageResult `json:"packages,omitempty"`
 }
 
 type coverageCaseResult struct {
-	TestID       string          `json:"test_id"`
-	Name         string          `json:"name"`
-	Kind         string          `json:"kind"`
-	Path         string          `json:"path"`
-	Purpose      string          `json:"purpose"`
-	Method       string          `json:"method"`
-	StartedAt    string          `json:"started_at"`
-	CompletedAt  string          `json:"completed_at"`
-	DurationMS   int64           `json:"duration_ms"`
-	Status       string          `json:"status"`
-	Assessment   string          `json:"assessment"`
-	Metrics      coverageMetrics `json:"metrics"`
-	ProfilePath  string          `json:"profile_path,omitempty"`
-	ProfileSHA   string          `json:"profile_sha256,omitempty"`
-	LogPath      string          `json:"log_path"`
-	CriticalGate string          `json:"critical_gate,omitempty"`
+	TestID              string                     `json:"test_id"`
+	Name                string                     `json:"name"`
+	Kind                string                     `json:"kind"`
+	Path                string                     `json:"path"`
+	Purpose             string                     `json:"purpose"`
+	Method              string                     `json:"method"`
+	StartedAt           string                     `json:"started_at"`
+	CompletedAt         string                     `json:"completed_at"`
+	DurationMS          int64                      `json:"duration_ms"`
+	Status              string                     `json:"status"`
+	Assessment          string                     `json:"assessment"`
+	Metrics             coverageMetrics            `json:"metrics"`
+	ProfilePath         string                     `json:"profile_path,omitempty"`
+	ProfileSHA          string                     `json:"profile_sha256,omitempty"`
+	LogPath             string                     `json:"log_path"`
+	PackageCoveragePath string                     `json:"package_coverage_path,omitempty"`
+	UnitManifestPath    string                     `json:"unit_manifest_path,omitempty"`
+	JUnitPath           string                     `json:"junit_path,omitempty"`
+	TestEventsPath      string                     `json:"test_events_path,omitempty"`
+	SubmoduleCommit     string                     `json:"submodule_commit,omitempty"`
+	RuntimeEvidencePath string                     `json:"runtime_evidence_path,omitempty"`
+	RuntimeEvidenceSHA  string                     `json:"runtime_evidence_sha256,omitempty"`
+	Evidence            []coverageArtifactEvidence `json:"evidence,omitempty"`
+	CriticalGate        string                     `json:"critical_gate,omitempty"`
 }
 
 type coverageReport struct {
 	SchemaVersion   int                  `json:"schema_version"`
 	RunID           string               `json:"run_id"`
+	Profile         string               `json:"profile"`
 	WorkspaceCommit string               `json:"workspace_commit"`
 	BaseRef         string               `json:"base_ref,omitempty"`
 	HeadRef         string               `json:"head_ref"`
@@ -112,9 +171,19 @@ func runTestCoverage(args []string) error {
 	baseRef := fs.String("base-ref", "", "base git ref for differential coverage; omit to skip the differential gate")
 	headRef := fs.String("head-ref", "HEAD", "head git ref for differential coverage")
 	moduleFilter := fs.String("module", "", "comma-separated coverage module names; default runs all")
+	profile := fs.String("profile", "unit", "coverage profile: unit, pr, or runtime")
+	runtimeDir := fs.String("runtime-dir", "", "GOCOVERDIR root to aggregate with --profile runtime")
 	install := fs.Bool("install", false, "install Node dependencies before JavaScript coverage")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	switch *profile {
+	case "unit", "pr", "runtime":
+	default:
+		return fmt.Errorf("unsupported coverage profile %q", *profile)
+	}
+	if *profile == "runtime" && strings.TrimSpace(*runtimeDir) == "" {
+		return errors.New("--runtime-dir is required with --profile runtime")
 	}
 	workspace, err := workspaceRoot()
 	if err != nil {
@@ -136,8 +205,9 @@ func runTestCoverage(args []string) error {
 	}
 	started := time.Now().UTC()
 	report := coverageReport{
-		SchemaVersion: 1,
+		SchemaVersion: 2,
 		RunID:         *runID,
+		Profile:       *profile,
 		BaseRef:       strings.TrimSpace(*baseRef),
 		HeadRef:       strings.TrimSpace(*headRef),
 		StartedAt:     started.Format(time.RFC3339),
@@ -153,12 +223,15 @@ func runTestCoverage(args []string) error {
 		}
 	}
 	filterActive := len(selected) > 0
+	if *profile == "runtime" {
+		return runRuntimeCoverage(workspace, outDir, cfg, report, selected, strings.TrimSpace(*runtimeDir))
+	}
 	for _, module := range cfg.Modules {
 		if filterActive && !selected[module.Name] {
 			continue
 		}
 		delete(selected, module.Name)
-		result := runCoverageModule(workspace, outDir, cfg, module, report.BaseRef, report.HeadRef, *install)
+		result := runCoverageModuleProfile(workspace, outDir, cfg, module, report.BaseRef, report.HeadRef, *profile, *install)
 		report.Cases = append(report.Cases, result)
 		if result.Status != "PASS" {
 			report.Status = "FAIL"
@@ -211,8 +284,8 @@ func loadCoverageConfig(workspace string) (coverageConfig, error) {
 	if err := yaml.Unmarshal(raw, &cfg); err != nil {
 		return coverageConfig{}, fmt.Errorf("parse coverage config: %w", err)
 	}
-	if cfg.SchemaVersion != 1 {
-		return coverageConfig{}, fmt.Errorf("coverage config schema_version must be 1, got %d", cfg.SchemaVersion)
+	if cfg.SchemaVersion != 2 {
+		return coverageConfig{}, fmt.Errorf("coverage config schema_version must be 2, got %d", cfg.SchemaVersion)
 	}
 	if cfg.Differential.MinimumStatementPercent <= 0 || cfg.Differential.MinimumStatementPercent > 100 {
 		return coverageConfig{}, errors.New("coverage differential minimum must be in (0,100]")
@@ -230,15 +303,57 @@ func loadCoverageConfig(workspace string) (coverageConfig, error) {
 	if err := validateCoverageConfig(workspace, cfg, activeIDs); err != nil {
 		return coverageConfig{}, err
 	}
+	if err := validateRequiredGoCoverageModules(workspace, cfg); err != nil {
+		return coverageConfig{}, err
+	}
 	return cfg, nil
 }
 
+func validateRequiredGoCoverageModules(workspace string, cfg coverageConfig) error {
+	required := map[string]string{
+		"workspace-tooling":   "scripts/go",
+		"workspace-e2e":       "e2e_test",
+		"home-load-runner":    "loadtests/home-100k",
+		"account-manager":     "repos/rtk_account_manager",
+		"cloud-admin-backend": "repos/rtk_cloud_admin",
+		"cloud-client-golang": "repos/rtk_cloud_client/packages/golang",
+		"cloud-frontend":      "repos/rtk_cloud_frontend",
+		"cloud-logger":        "repos/rtk_cloud_logger",
+		"video-cloud":         "repos/rtk_video_cloud",
+		"godaddy-dns-toolkit": "repos/rtk_video_cloud/tools/godaddy-dns",
+	}
+	configured := make(map[string]coverageModule, len(cfg.Modules))
+	for _, module := range cfg.Modules {
+		if module.Kind == "go" {
+			configured[module.Name] = module
+		}
+	}
+	for name, path := range required {
+		module, ok := configured[name]
+		if !ok {
+			return fmt.Errorf("required Go coverage module %q is missing", name)
+		}
+		if filepath.Clean(module.Path) != filepath.Clean(path) {
+			return fmt.Errorf("required Go coverage module %q path must be %s, got %s", name, path, module.Path)
+		}
+		if !exists(filepath.Join(workspace, path, "go.mod")) {
+			return fmt.Errorf("required Go coverage module %q has no go.mod at %s", name, path)
+		}
+	}
+	return nil
+}
+
 func validateCoverageConfig(workspace string, cfg coverageConfig, activeIDs map[string]bool) error {
-	if cfg.SchemaVersion != 1 {
-		return fmt.Errorf("coverage config schema_version must be 1, got %d", cfg.SchemaVersion)
+	if cfg.SchemaVersion != 2 {
+		return fmt.Errorf("coverage config schema_version must be 2, got %d", cfg.SchemaVersion)
 	}
 	if cfg.Differential.MinimumStatementPercent <= 0 || cfg.Differential.MinimumStatementPercent > 100 {
 		return errors.New("coverage differential minimum must be in (0,100]")
+	}
+	for risk, target := range map[string]float64{"critical": 80, "high": 70, "normal": 60} {
+		if cfg.RiskThresholds[risk] != target {
+			return fmt.Errorf("coverage risk threshold %s must be %.1f", risk, target)
+		}
 	}
 	names := map[string]bool{}
 	for index, module := range cfg.Modules {
@@ -267,6 +382,45 @@ func validateCoverageConfig(workspace string, cfg coverageConfig, activeIDs map[
 			if module.TargetStatementPercent < module.MinimumStatementPercent || module.TargetStatementPercent > 100 {
 				return fmt.Errorf("%s target must be between its minimum and 100", prefix)
 			}
+			if strings.TrimSpace(module.Owner) == "" {
+				return fmt.Errorf("%s Go module requires owner", prefix)
+			}
+			if module.DefaultRisk == "" {
+				module.DefaultRisk = "normal"
+			}
+			if !validCoverageRisk(module.DefaultRisk) {
+				return fmt.Errorf("%s has invalid default_risk %q", prefix, module.DefaultRisk)
+			}
+			packageNames := map[string]bool{}
+			for _, policy := range module.PackagePolicies {
+				if strings.TrimSpace(policy.Package) == "" || !validCoverageRisk(policy.Risk) {
+					return fmt.Errorf("%s has invalid package policy for %q", prefix, policy.Package)
+				}
+				if packageNames[policy.Package] {
+					return fmt.Errorf("%s has duplicate package policy %q", prefix, policy.Package)
+				}
+				packageNames[policy.Package] = true
+				if policy.Risk == "wiring" {
+					if strings.TrimSpace(policy.ExclusionReason) == "" {
+						return fmt.Errorf("%s wiring package %q requires exclusion_reason", prefix, policy.Package)
+					}
+					continue
+				}
+				if policy.MinimumStatementPercent < 0 || policy.MinimumStatementPercent > 100 ||
+					policy.PRMinimumStatement < 0 || policy.PRMinimumStatement > 100 ||
+					policy.TargetStatementPercent <= 0 || policy.TargetStatementPercent > 100 {
+					return fmt.Errorf("%s package %q has invalid thresholds", prefix, policy.Package)
+				}
+				riskTarget := cfg.RiskThresholds[policy.Risk]
+				if policy.TargetStatementPercent+0.0001 < riskTarget {
+					return fmt.Errorf("%s package %q target %.1f is below %s risk target %.1f", prefix, policy.Package, policy.TargetStatementPercent, policy.Risk, riskTarget)
+				}
+			}
+			for _, critical := range module.CriticalCases {
+				if !activeIDs[critical.TestID] || strings.TrimSpace(critical.CanonicalKey) == "" || strings.TrimSpace(critical.Purpose) == "" {
+					return fmt.Errorf("%s has invalid critical case %q", prefix, critical.TestID)
+				}
+			}
 		case "node":
 			if len(module.TestGlobs) == 0 {
 				return fmt.Errorf("%s Node module requires test_globs", prefix)
@@ -287,6 +441,10 @@ func validateCoverageConfig(workspace string, cfg coverageConfig, activeIDs map[
 }
 
 func runCoverageModule(workspace, outDir string, cfg coverageConfig, module coverageModule, baseRef, headRef string, install bool) coverageCaseResult {
+	return runCoverageModuleProfile(workspace, outDir, cfg, module, baseRef, headRef, "unit", install)
+}
+
+func runCoverageModuleProfile(workspace, outDir string, cfg coverageConfig, module coverageModule, baseRef, headRef, profile string, install bool) coverageCaseResult {
 	started := time.Now().UTC()
 	result := coverageCaseResult{
 		TestID:    module.TestID,
@@ -304,7 +462,7 @@ func runCoverageModule(workspace, outDir string, cfg coverageConfig, module cove
 	var runErr error
 	switch module.Kind {
 	case "go":
-		runErr = runGoCoverageModule(workspace, outDir, logPath, cfg, module, baseRef, headRef, &result)
+		runErr = runGoCoverageModuleProfile(workspace, outDir, logPath, cfg, module, baseRef, headRef, profile, &result)
 	case "node":
 		runErr = runNodeCoverageModule(workspace, logPath, module, install, &result)
 	default:
@@ -314,11 +472,7 @@ func runCoverageModule(workspace, outDir string, cfg coverageConfig, module cove
 		result.Assessment = runErr.Error()
 	} else {
 		result.Status = "PASS"
-		if result.Metrics.IndustryTargetMet != nil && !*result.Metrics.IndustryTargetMet {
-			result.Assessment = "PASS: enforced ratchet and differential gates passed; the 80% overall target remains tracked debt."
-		} else {
-			result.Assessment = "PASS: all configured coverage gates passed."
-		}
+		result.Assessment = passingCoverageAssessment(result.Metrics)
 	}
 	completed := time.Now().UTC()
 	result.CompletedAt = completed.Format(time.RFC3339)
@@ -326,19 +480,54 @@ func runCoverageModule(workspace, outDir string, cfg coverageConfig, module cove
 	return result
 }
 
+func passingCoverageAssessment(metrics coverageMetrics) string {
+	if metrics.IndustryTargetMet == nil || *metrics.IndustryTargetMet {
+		return "PASS: all configured coverage gates passed."
+	}
+	target := 80.0
+	if metrics.StatementTargetPercent != nil {
+		target = *metrics.StatementTargetPercent
+	}
+	return fmt.Sprintf(
+		"PASS: enforced ratchet and differential gates passed; the %.2f%% target remains tracked debt.",
+		target,
+	)
+}
+
 func runGoCoverageModule(workspace, outDir, logPath string, cfg coverageConfig, module coverageModule, baseRef, headRef string, result *coverageCaseResult) error {
+	return runGoCoverageModuleProfile(workspace, outDir, logPath, cfg, module, baseRef, headRef, "unit", result)
+}
+
+func runGoCoverageModuleProfile(workspace, outDir, logPath string, cfg coverageConfig, module coverageModule, baseRef, headRef, profile string, result *coverageCaseResult) error {
 	moduleDir := filepath.Join(workspace, module.Path)
-	profileRel := filepath.ToSlash(filepath.Join("profiles", module.Name+".out"))
+	moduleRel := filepath.ToSlash(filepath.Join("modules", module.Name))
+	profileRel := filepath.ToSlash(filepath.Join(moduleRel, "coverage.out"))
 	profilePath := filepath.Join(outDir, filepath.FromSlash(profileRel))
 	if err := os.MkdirAll(filepath.Dir(profilePath), 0o755); err != nil {
 		return err
 	}
-	args := append([]string{"test"}, module.Packages...)
+	eventsRel := filepath.ToSlash(filepath.Join(moduleRel, "test-events.json"))
+	eventsPath := filepath.Join(outDir, filepath.FromSlash(eventsRel))
+	args := []string{"test", "-json", "-count=1"}
+	args = append(args, module.Packages...)
 	args = append(args, "-coverprofile="+profilePath)
-	if err := runCoverageCommand(moduleDir, logPath, map[string]string{"GOWORK": "off"}, "go", args...); err != nil {
-		return fmt.Errorf("Go coverage tests failed: %w", err)
+	if profile == "pr" && len(module.CoverPackages) > 0 {
+		args = append(args, "-coverpkg="+strings.Join(module.CoverPackages, ","))
 	}
-	total, _, _, err := parseGoCoverageProfile(profilePath, nil)
+	env := map[string]string{"GOWORK": "off"}
+	if profile == "pr" {
+		for _, name := range module.PRRequiredEnv {
+			if strings.TrimSpace(os.Getenv(name)) == "" {
+				return fmt.Errorf("PR integration coverage requires environment variable %s", name)
+			}
+			env[name] = os.Getenv(name)
+		}
+	}
+	commandErr := runCoverageJSONCommand(moduleDir, logPath, eventsPath, env, "go", args...)
+	if commandErr != nil && !exists(profilePath) {
+		return fmt.Errorf("Go coverage tests failed before producing a profile: %w", commandErr)
+	}
+	rawTotal, governedTotal, packages, err := analyzeGoCoverageProfile(profilePath, module, profile)
 	if err != nil {
 		return err
 	}
@@ -347,13 +536,89 @@ func runGoCoverageModule(workspace, outDir, logPath string, cfg coverageConfig, 
 	if err != nil {
 		return err
 	}
-	result.Metrics.StatementPercent = floatPointer(total)
-	result.Metrics.StatementMinimumPercent = floatPointer(module.MinimumStatementPercent)
+	minimum := module.MinimumStatementPercent
+	if profile == "pr" && module.PRMinimumStatement > 0 {
+		minimum = module.PRMinimumStatement
+	}
+	result.Metrics.RawStatementPercent = floatPointer(rawTotal)
+	result.Metrics.GovernedStatementPercent = floatPointer(governedTotal)
+	result.Metrics.GovernedMinimumPercent = floatPointer(minimum)
+	result.Metrics.StatementPercent = floatPointer(governedTotal)
+	result.Metrics.StatementMinimumPercent = floatPointer(minimum)
 	result.Metrics.StatementTargetPercent = floatPointer(module.TargetStatementPercent)
-	targetMet := total+0.0001 >= module.TargetStatementPercent
+	result.Metrics.Packages = packages
+	targetMet := governedTotal+0.0001 >= module.TargetStatementPercent
 	result.Metrics.IndustryTargetMet = &targetMet
-	if total+0.0001 < module.MinimumStatementPercent {
-		return fmt.Errorf("statement coverage %.2f%% is below %.2f%% ratchet", total, module.MinimumStatementPercent)
+	manifestRel := filepath.ToSlash(filepath.Join(moduleRel, "unit-manifest.json"))
+	junitRel := filepath.ToSlash(filepath.Join(moduleRel, "junit.xml"))
+	packageRel := filepath.ToSlash(filepath.Join(moduleRel, "package-coverage.json"))
+	units, unitErr := parseGoTestEvents(eventsPath, moduleDir, module)
+	if unitErr != nil {
+		return unitErr
+	}
+	validationModule := module
+	if profile != "pr" {
+		validationModule.PRRequiredTests = nil
+	}
+	requiredErr := validateRequiredGoTests(validationModule, units)
+	if err := writeJSON(filepath.Join(outDir, filepath.FromSlash(manifestRel)), map[string]any{
+		"schema_version": 1,
+		"module":         module.Name,
+		"profile":        profile,
+		"tests":          units,
+	}); err != nil {
+		return err
+	}
+	if err := writeJSON(filepath.Join(outDir, filepath.FromSlash(packageRel)), map[string]any{
+		"schema_version":   1,
+		"module":           module.Name,
+		"profile":          profile,
+		"raw_percent":      rawTotal,
+		"governed_percent": governedTotal,
+		"packages":         packages,
+	}); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(outDir, filepath.FromSlash(junitRel)), renderGoJUnit(module.Name, units), 0o644); err != nil {
+		return err
+	}
+	result.UnitManifestPath = manifestRel
+	result.JUnitPath = junitRel
+	result.TestEventsPath = eventsRel
+	result.PackageCoveragePath = packageRel
+	for kind, rel := range map[string]string{
+		"coverage-profile": profileRel,
+		"go-test-events":   eventsRel,
+		"unit-inventory":   manifestRel,
+		"junit":            junitRel,
+		"package-report":   packageRel,
+		"test-log":         result.LogPath,
+	} {
+		sha, hashErr := fileSHA256(filepath.Join(outDir, filepath.FromSlash(rel)))
+		if hashErr != nil {
+			return hashErr
+		}
+		result.Evidence = append(result.Evidence, coverageArtifactEvidence{Kind: kind, Path: rel, SHA256: sha})
+	}
+	sort.Slice(result.Evidence, func(i, j int) bool { return result.Evidence[i].Path < result.Evidence[j].Path })
+	if commit, commitErr := gitOutput(moduleDir, "rev-parse", "HEAD"); commitErr == nil {
+		result.SubmoduleCommit = strings.TrimSpace(commit)
+	}
+	// Always publish the complete evidence set, including when a ratchet fails.
+	// This keeps a failing result diagnosable without rerunning the test.
+	if commandErr != nil {
+		return fmt.Errorf("Go coverage tests failed: %w", commandErr)
+	}
+	if requiredErr != nil {
+		return requiredErr
+	}
+	if governedTotal+0.0001 < minimum {
+		return fmt.Errorf("governed statement coverage %.2f%% is below %.2f%% ratchet (raw %.2f%%)", governedTotal, minimum, rawTotal)
+	}
+	for _, item := range packages {
+		if item.Status == "FAIL" {
+			return fmt.Errorf("package coverage gate failed for %s: %s", item.Package, item.Assessment)
+		}
 	}
 	if module.Differential && strings.TrimSpace(baseRef) != "" {
 		changedLines, diffErr := changedGoLines(workspace, baseRef, headRef, module.Path)
@@ -520,11 +785,72 @@ func parseGoCoverageProfile(path string, changed map[string]map[int]bool) (perce
 }
 
 func changedGoLines(workspace, baseRef, headRef, modulePath string) (map[string]map[int]bool, error) {
+	moduleDir := filepath.Join(workspace, filepath.FromSlash(modulePath))
+	repositoryRoot, rootErr := gitOutput(moduleDir, "rev-parse", "--show-toplevel")
+	if rootErr == nil {
+		repositoryRoot = strings.TrimSpace(repositoryRoot)
+		workspaceAbs, _ := filepath.Abs(workspace)
+		repositoryAbs, _ := filepath.Abs(repositoryRoot)
+		if repositoryAbs != workspaceAbs {
+			repositoryRel, err := filepath.Rel(workspaceAbs, repositoryAbs)
+			if err != nil || strings.HasPrefix(repositoryRel, "..") {
+				return nil, fmt.Errorf("resolve submodule repository for %s", modulePath)
+			}
+			repositoryRel = filepath.ToSlash(repositoryRel)
+			baseCommit, err := gitOutput(workspace, "rev-parse", baseRef+":"+repositoryRel)
+			if err != nil {
+				return nil, fmt.Errorf("resolve %s base gitlink: %w", modulePath, err)
+			}
+			headCommit, err := gitOutput(workspace, "rev-parse", headRef+":"+repositoryRel)
+			if err != nil {
+				return nil, fmt.Errorf("resolve %s head gitlink: %w", modulePath, err)
+			}
+			for _, commit := range []string{strings.TrimSpace(baseCommit), strings.TrimSpace(headCommit)} {
+				if err := ensureGitCommit(repositoryAbs, commit); err != nil {
+					return nil, fmt.Errorf("prepare %s differential commit: %w", modulePath, err)
+				}
+			}
+			innerPath, err := filepath.Rel(repositoryAbs, moduleDir)
+			if err != nil {
+				return nil, err
+			}
+			diffArgs := []string{"diff", "--unified=0", "--no-color", strings.TrimSpace(baseCommit), strings.TrimSpace(headCommit)}
+			if innerPath != "." {
+				diffArgs = append(diffArgs, "--", filepath.ToSlash(innerPath))
+			}
+			output, err := gitOutput(repositoryAbs, diffArgs...)
+			if err != nil {
+				return nil, fmt.Errorf("read submodule differential coverage diff: %w", err)
+			}
+			changed, err := parseChangedGoLines(output)
+			if err != nil {
+				return nil, err
+			}
+			prefixed := make(map[string]map[int]bool, len(changed))
+			for path, lines := range changed {
+				prefixed[filepath.ToSlash(filepath.Join(repositoryRel, path))] = lines
+			}
+			return prefixed, nil
+		}
+	}
 	output, err := gitOutput(workspace, "diff", "--unified=0", "--no-color", baseRef+"..."+headRef, "--", modulePath)
 	if err != nil {
 		return nil, fmt.Errorf("read differential coverage diff: %w", err)
 	}
 	return parseChangedGoLines(output)
+}
+
+func ensureGitCommit(repository, commit string) error {
+	if _, err := gitOutput(repository, "cat-file", "-e", commit+"^{commit}"); err == nil {
+		return nil
+	}
+	if _, err := gitOutput(repository, "fetch", "--no-tags", "origin", commit); err != nil {
+		return fmt.Errorf("fetch missing git commit %s: %w", commit, err)
+	}
+	if _, err := gitOutput(repository, "cat-file", "-e", commit+"^{commit}"); err != nil {
+		return fmt.Errorf("git commit %s is unavailable after fetch: %w", commit, err)
+	}
+	return nil
 }
 
 func parseChangedGoLines(output string) (map[string]map[int]bool, error) {
@@ -668,6 +994,7 @@ func renderCoverageReport(report coverageReport) []byte {
 	var out strings.Builder
 	fmt.Fprintf(&out, "# Coverage Test Report\n\n")
 	fmt.Fprintf(&out, "- Run ID: `%s`\n", report.RunID)
+	fmt.Fprintf(&out, "- Profile: `%s`\n", report.Profile)
 	fmt.Fprintf(&out, "- Workspace commit: `%s`\n", report.WorkspaceCommit)
 	if report.BaseRef != "" {
 		fmt.Fprintf(&out, "- Differential range: `%s...%s`\n", report.BaseRef, report.HeadRef)
@@ -685,6 +1012,10 @@ func renderCoverageReport(report coverageReport) []byte {
 		coverage := "-"
 		if item.Metrics.StatementPercent != nil {
 			coverage = fmt.Sprintf("%.2f%% ≥ %.2f%%", *item.Metrics.StatementPercent, *item.Metrics.StatementMinimumPercent)
+			if item.Metrics.RawStatementPercent != nil && item.Metrics.GovernedStatementPercent != nil {
+				coverage = fmt.Sprintf("governed %.2f%% ≥ %.2f%%; raw %.2f%%",
+					*item.Metrics.GovernedStatementPercent, *item.Metrics.GovernedMinimumPercent, *item.Metrics.RawStatementPercent)
+			}
 		} else if item.Metrics.LinePercent != nil {
 			coverage = fmt.Sprintf("line %.2f%% / branch %.2f%% / function %.2f%%", *item.Metrics.LinePercent, *item.Metrics.BranchPercent, *item.Metrics.FunctionPercent)
 		}
@@ -703,6 +1034,11 @@ func renderCoverageReport(report coverageReport) []byte {
 		fmt.Fprintf(&out, "- `%s`: `%s`", item.Name, item.LogPath)
 		if item.ProfilePath != "" {
 			fmt.Fprintf(&out, ", `%s` (SHA-256 `%s`)", item.ProfilePath, item.ProfileSHA)
+		}
+		for _, path := range []string{item.PackageCoveragePath, item.UnitManifestPath, item.JUnitPath, item.TestEventsPath} {
+			if path != "" {
+				fmt.Fprintf(&out, ", `%s`", path)
+			}
 		}
 		fmt.Fprintln(&out)
 	}

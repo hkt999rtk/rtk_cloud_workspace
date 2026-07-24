@@ -397,6 +397,9 @@ func readJSONMap(path string) (map[string]any, error) {
 
 func writeStateVar(path, key, value string) error {
 	values, _ := readEnvFile(path)
+	if values == nil {
+		values = map[string]string{}
+	}
 	values[key] = value
 	return writeEnvMap(path, values, 0o600)
 }

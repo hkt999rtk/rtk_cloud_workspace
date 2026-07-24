@@ -1117,17 +1117,16 @@ func videoRelayTraceEventForOperation(op videoRelayLoadOperation) (string, strin
 }
 
 func sanitizeVideoRelayTraceEvidence(evidence string) string {
-	evidence = sanitizeVideoRelayText(evidence)
 	if strings.HasPrefix(strings.TrimSpace(evidence), "{") {
 		var value any
 		if err := json.Unmarshal([]byte(evidence), &value); err == nil {
 			value = pruneVideoRelayTraceEvidence(value)
 			if raw, err := json.Marshal(value); err == nil {
-				return string(raw)
+				return sanitizeVideoRelayText(string(raw))
 			}
 		}
 	}
-	return evidence
+	return sanitizeVideoRelayText(evidence)
 }
 
 func pruneVideoRelayTraceEvidence(value any) any {

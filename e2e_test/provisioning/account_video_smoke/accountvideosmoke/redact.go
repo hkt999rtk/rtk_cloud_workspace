@@ -11,11 +11,14 @@ var redactors = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)([?&][^=[:space:]]*(token|secret|password|passwd|dsn|key|auth)[^=[:space:]]*=)[^&[:space:]]+`),
 }
 
+var jsonSecretRedactor = regexp.MustCompile(`(?i)("(?:[^"]*(?:token|secret|password|passwd|dsn|key|credential)[^"]*)"\s*:\s*")[^"]*(")`)
+
 func Redact(input string) string {
 	out := input
 	for _, re := range redactors {
 		out = re.ReplaceAllString(out, `${1}<redacted>`)
 	}
+	out = jsonSecretRedactor.ReplaceAllString(out, `${1}<redacted>${2}`)
 	out = redactPEMBlock(out, "PRIVATE KEY")
 	out = redactPEMBlock(out, "CERTIFICATE")
 	out = redactPEMBlock(out, "CERTIFICATE REQUEST")

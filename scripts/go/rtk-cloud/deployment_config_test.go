@@ -374,6 +374,17 @@ func TestNormalizeEnvironmentArgsUsesLKEDeploymentRootForFeatureQualification(t 
 	}
 }
 
+func TestNormalizeEnvironmentArgsAllowsExplicitFeatureEnvironmentRoot(t *testing.T) {
+	input := []string{"test-feature", "--environment", "staging", "--env-root", "/tmp/runtime", "--feature", "device-shadow"}
+	args, err := normalizeEnvironmentArgs(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(args, input) {
+		t.Fatalf("normalizeEnvironmentArgs() = %#v, want %#v", args, input)
+	}
+}
+
 func writeDeploymentFixture(t *testing.T, environment, adapter string) string {
 	t.Helper()
 	root := t.TempDir()

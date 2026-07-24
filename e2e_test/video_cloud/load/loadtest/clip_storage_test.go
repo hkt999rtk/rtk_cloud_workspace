@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -349,6 +350,84 @@ func TestPutDirectClipAssetAppliesHeadersAndReportsHTTPFailure(t *testing.T) {
 	}, []byte("clip"))
 	if operation.Success || operation.StatusCode != http.StatusInternalServerError || operation.ErrorClass != ClassHTTP {
 		t.Fatalf("operation = %#v, want classified HTTP failure", operation)
+	}
+}
+
+func TestRunDirectClipUploadCompletesReadyLifecycle(t *testing.T) {
+	recipient, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicDER, err := x509.MarshalPKIXPublicKey(&recipient.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: publicDER}))
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if strings.HasPrefix(req.URL.Path, "/api/") || strings.HasPrefix(req.URL.Path, "/v1/") {
+			if req.Header.Get("Authorization") != "Bearer device-token" {
+				t.Fatalf("authorization = %q", req.Header.Get("Authorization"))
+			}
+		}
+		switch {
+		case req.Method == http.MethodGet && req.URL.Path == "/api/devices/cam-a/config":
+			_ = json.NewEncoder(w).Encode(map[string]any{"clip_upload": map[string]string{"recipient_public_key": publicPEM}})
+		case req.Method == http.MethodPost && req.URL.Path == "/v1/devices/cam-a/clip-uploads":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"upload_id": "upload-1",
+				"clip_id":   "clip-1",
+				"clip": map[string]any{
+					"object_key": "clips/clip-1", "url": server.URL + "/objects/clip",
+					"headers": map[string]string{"X-Upload": "clip"},
+				},
+				"thumbnail": map[string]any{
+					"object_key": "thumbnails/clip-1", "url": server.URL + "/objects/thumbnail",
+					"headers": map[string]string{"X-Upload": "thumbnail"},
+				},
+			})
+		case req.Method == http.MethodPut && strings.HasPrefix(req.URL.Path, "/objects/"):
+			if req.Header.Get("X-Upload") == "" {
+				t.Fatal("direct object PUT header missing")
+			}
+			w.WriteHeader(http.StatusOK)
+		case req.Method == http.MethodPost && req.URL.Path == "/v1/devices/cam-a/clip-uploads/upload-1/complete":
+			_ = json.NewEncoder(w).Encode(map[string]string{"state": "processing"})
+		case req.Method == http.MethodGet && req.URL.Path == "/v1/devices/cam-a/clip-uploads/upload-1":
+			_ = json.NewEncoder(w).Encode(map[string]string{"state": "ready"})
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	defer server.Close()
+
+	operations := NewRunner(server.Client()).runDirectClipUpload(
+		context.Background(),
+		Config{
+			APIURL:      server.URL,
+			HTTPTimeout: time.Second,
+			DeviceTokens: map[string]string{
+				"cam-a": "device-token",
+			},
+		},
+		"cam-a",
+		"clip-1",
+		[]byte("0123456789abcdef-video"),
+		[]byte("thumbnail"),
+		&sync.Map{},
+	)
+	if len(operations) < 7 {
+		t.Fatalf("operations = %#v", operations)
+	}
+	for _, operation := range operations {
+		if !operation.Success {
+			t.Fatalf("operation = %#v", operation)
+		}
+	}
+	aggregate := operations[len(operations)-1]
+	if aggregate.Name != "clip_upload" || !strings.Contains(aggregate.Evidence, "state=ready") {
+		t.Fatalf("aggregate = %#v", aggregate)
 	}
 }
 
