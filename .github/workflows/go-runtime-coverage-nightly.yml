@@ -355,7 +355,7 @@ jobs:
           set -euo pipefail
           scripts/ci/runtime-coverage-k8s.sh tunnel-start
           trap 'scripts/ci/runtime-coverage-k8s.sh tunnel-stop' EXIT
-          curl --fail --silent --show-error --max-time 10 "$ACCOUNT_MANAGER_BASE_URL/healthz" >/dev/null
+          curl --fail --silent --show-error --max-time 10 "$ACCOUNT_MANAGER_BASE_URL/v1/health" >/dev/null
           curl --fail --silent --show-error --max-time 10 "$VIDEO_CLOUD_BASE_URL/version" >/dev/null
           export CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE="$VIDEO_CLOUD_TOKEN_BASE_URL"
           export CLOUD_STAGING_E2E_FACTORY_ENROLL_PORT=18444
