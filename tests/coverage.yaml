@@ -39,8 +39,8 @@ modules:
     target_statement_percent: 75.0
     differential: true
     package_policies:
-      - { package: github.com/hkt999rtk/rtk_cloud_workspace/e2e_test/video_cloud/load/loadtest, risk: high, minimum_statement_percent: 75.9, target_statement_percent: 80.0 }
-      - { package: github.com/hkt999rtk/rtk_cloud_workspace/e2e_test/cloud_validation/cloudvalidation, risk: high, minimum_statement_percent: 73.6, target_statement_percent: 80.0 }
+      - { package: github.com/hkt999rtk/rtk_cloud_workspace/e2e_test/video_cloud/load/loadtest, risk: high, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
+      - { package: github.com/hkt999rtk/rtk_cloud_workspace/e2e_test/cloud_validation/cloudvalidation, risk: high, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
       - { package: github.com/hkt999rtk/rtk_cloud_workspace/e2e_test/cloud_validation/cmd/request-token, risk: wiring, exclusion_reason: Token-request command only maps flags and environment into the governed mTLS request client. }
       - { package: github.com/hkt999rtk/rtk_cloud_workspace/e2e_test/cloud_validation/cmd/cloud-validation, risk: wiring, exclusion_reason: Thin command entrypoint delegates to the governed cloudvalidation package. }
       - { package: github.com/hkt999rtk/rtk_cloud_workspace/e2e_test/factory_enroll/cmd/rtk-factory-enroll-test, risk: wiring, exclusion_reason: Thin command entrypoint delegates to the governed factory enrollment package. }
