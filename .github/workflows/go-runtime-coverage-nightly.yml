@@ -47,6 +47,10 @@ jobs:
       LKE_CLUSTER_LABEL: video-cloud-staging-lke
       LKE_ACTIVE_SERVICE_LIMIT: ${{ vars.LKE_ACTIVE_SERVICE_LIMIT }}
       LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
+      LINODE_OBJ_ACCESS_KEY_ID: ${{ secrets.LINODE_OBJ_ACCESS_KEY_ID }}
+      LINODE_OBJ_SECRET_ACCESS_KEY: ${{ secrets.LINODE_OBJ_SECRET_ACCESS_KEY }}
+      LINODE_OBJ_ENDPOINT: ${{ secrets.LINODE_OBJ_ENDPOINT }}
+      LINODE_OBJ_BUCKET: ${{ secrets.LINODE_OBJ_BUCKET }}
       GHCR_PULL_USERNAME: ${{ github.actor }}
       GHCR_PULL_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -150,7 +154,21 @@ jobs:
             "$RUNTIME_ENV_ROOT/env/stack.env"
           perl -0pi -e "s/^CLOUD_DNS_ROOT_DOMAIN=.*/CLOUD_DNS_ROOT_DOMAIN=$RUNTIME_COVERAGE_STACK.invalid/m; s/^VIDEO_CLOUD_DOMAIN=.*/VIDEO_CLOUD_DOMAIN=video.$RUNTIME_COVERAGE_STACK.invalid/m; s/^VIDEO_CLOUD_CERTISSUER_DOMAIN=.*/VIDEO_CLOUD_CERTISSUER_DOMAIN=certissuer.$RUNTIME_COVERAGE_STACK.invalid/m; s/^ACCOUNT_MANAGER_DOMAIN=.*/ACCOUNT_MANAGER_DOMAIN=account.$RUNTIME_COVERAGE_STACK.invalid/m; s/^CLOUD_ADMIN_DOMAIN=.*/CLOUD_ADMIN_DOMAIN=admin.$RUNTIME_COVERAGE_STACK.invalid/m; s/^CLOUD_LOGGER_DOMAIN=.*/CLOUD_LOGGER_DOMAIN=logger.$RUNTIME_COVERAGE_STACK.invalid/m" \
             "$RUNTIME_ENV_ROOT/env/stack.env"
-          printf '\nCLOUD_RUNTIME_COVERAGE_STACK=%s\n' "$RUNTIME_COVERAGE_STACK" >> "$RUNTIME_ENV_ROOT/env/stack.env"
+          blob_endpoint="$LINODE_OBJ_ENDPOINT"
+          [[ "$blob_endpoint" == http://* || "$blob_endpoint" == https://* ]] ||
+            blob_endpoint="https://$blob_endpoint"
+          blob_host="${blob_endpoint#*://}"
+          blob_region="${blob_host%%.*}"
+          test -n "$blob_region"
+          {
+            printf '\nCLOUD_RUNTIME_COVERAGE_STACK=%s\n' "$RUNTIME_COVERAGE_STACK"
+            printf 'VIDEO_CLOUD_BLOB_ENDPOINT=%s\n' "$blob_endpoint"
+            printf 'VIDEO_CLOUD_BLOB_REGION=%s\n' "$blob_region"
+            printf 'VIDEO_CLOUD_BLOB_BUCKET=%s\n' "$LINODE_OBJ_BUCKET"
+            printf 'VIDEO_CLOUD_BLOB_PREFIX=runtime-coverage/%s\n' "$RUNTIME_COVERAGE_RUN_ID"
+            printf 'VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE=false\n'
+            printf 'VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED=true\n'
+          } >> "$RUNTIME_ENV_ROOT/env/stack.env"
           printf 'LKE_ACTIVE_SERVICE_LIMIT=%s\n' "$LKE_ACTIVE_SERVICE_LIMIT" > "$RUNTIME_ENV_ROOT/adapters/lke/account.env"
           printf 'LKE_CLUSTER_ID=%s\nLKE_CLUSTER_LABEL=%s\n' "$LKE_CLUSTER_ID" "$LKE_CLUSTER_LABEL" > "$RUNTIME_ENV_ROOT/adapters/lke/state.env"
           go run ./scripts/go/rtk-cloud -- sync-env \
@@ -226,6 +244,7 @@ jobs:
             --env-root "$RUNTIME_ENV_ROOT" \
             --preflight --plan --apply --deploy --artifacts \
             --confirm "$RUNTIME_COVERAGE_STACK"
+          echo "RUNTIME_COVERAGE_DEPLOYED=1" >> "$GITHUB_ENV"
 
       - name: Verify isolated deployment image digests and commits
         if: env.RUNTIME_COVERAGE_MODE == 'run'
@@ -368,11 +387,11 @@ jobs:
               --run-id "$RUNTIME_COVERAGE_RUN_ID"
 
       - name: Gracefully stop services and collect runtime counters
-        if: always() && env.RUNTIME_COVERAGE_MODE == 'run'
+        if: always() && env.RUNTIME_COVERAGE_MODE == 'run' && env.RUNTIME_COVERAGE_DEPLOYED == '1'
         run: scripts/ci/runtime-coverage-k8s.sh collect
 
       - name: Aggregate runtime coverage and verify anchors
-        if: always() && env.RUNTIME_COVERAGE_MODE == 'run'
+        if: always() && env.RUNTIME_COVERAGE_MODE == 'run' && env.RUNTIME_COVERAGE_DEPLOYED == '1'
         shell: bash
         run: |
           set -euo pipefail
