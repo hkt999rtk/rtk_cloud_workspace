@@ -195,17 +195,21 @@ changed-Go-statement coverage below 80%.
 coverage-only images into the existing staging LKE cluster while deploying only
 run-scoped namespaces whose stack name starts with `coverage-`. Manual
 `preflight` validates the self-hosted runner, credentials, cluster label,
-repository capacity variable, commit anchors, and staging deployment snapshot
-without creating resources. Manual `run` requires the exact confirmation
+repository capacity variable, live Linode instance/volume/NodeBalancer
+headroom, orphaned coverage PVs, commit anchors, and staging deployment snapshot
+without creating resources. Projected capacity includes 15 persistent volumes,
+two temporary LoadBalancers, and one peak load-generator VM; insufficient
+headroom is reported as `BLOCKED` before mutation. Manual `run` requires the exact confirmation
 `video-cloud-staging-lke`. It mounts one run-scoped PVC per instrumented
 deployment, runs onboarding, all three feature canaries, and deployed
 desktop/mobile smoke, then scales services down before collecting `covmeta` and
 `covcounters`. Commit/run anchors are required before aggregation. Runtime
 coverage and feature qualification share the `staging-mutating-tests`
 concurrency lock. Cleanup deletes only that isolated stack's namespaces, PVCs,
-collectors, and generator resources, then verifies the shared staging
+collectors, generator resources, retained PV objects, and their exact Linode
+block-volume handles, then verifies the shared staging
 deployment UIDs/images are unchanged and writes `cleanup-report.json`. Any
-residual resource fails the run. The cron remains disabled until repository
+residual Kubernetes or Linode resource fails the run. The cron remains disabled until repository
 variable `RUNTIME_COVERAGE_NIGHTLY_ENABLED=true`; enable it only after the first
 manual run passes. Coverage images are never used by shared staging or
 production.
