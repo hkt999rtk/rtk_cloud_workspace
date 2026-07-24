@@ -18,12 +18,12 @@ modules:
     default_risk: normal
     path: scripts/go
     packages: [./...]
-    minimum_statement_percent: 57.0
+    minimum_statement_percent: 65.0
     target_statement_percent: 65.0
     differential: true
     package_policies:
-      - { package: rtk-cloud-workspace/scripts/go/rtk-cloud, risk: high, minimum_statement_percent: 56.9, target_statement_percent: 70.0 }
-      - { package: rtk-cloud-workspace/scripts/go/cloud-mqtt-test, risk: high, minimum_statement_percent: 63.5, target_statement_percent: 70.0 }
+      - { package: rtk-cloud-workspace/scripts/go/rtk-cloud, risk: high, minimum_statement_percent: 63.5, target_statement_percent: 70.0 }
+      - { package: rtk-cloud-workspace/scripts/go/cloud-mqtt-test, risk: high, minimum_statement_percent: 70.8, target_statement_percent: 70.0 }
       - { package: rtk-cloud-workspace/scripts/go/linode-object-storage, risk: wiring, exclusion_reason: Thin object-storage CLI wiring is covered by service integration and release smoke tests. }
     purpose: Protect workspace CLI, catalog, deployment, and test orchestration behavior.
     method: Run every Go package with statement instrumentation and evaluate governed packages and changed statements.
@@ -35,7 +35,7 @@ modules:
     default_risk: normal
     path: e2e_test
     packages: [./...]
-    minimum_statement_percent: 71.5
+    minimum_statement_percent: 75.0
     target_statement_percent: 75.0
     differential: true
     package_policies:
@@ -57,12 +57,12 @@ modules:
     default_risk: high
     path: loadtests/home-100k
     packages: [./...]
-    minimum_statement_percent: 76.6
+    minimum_statement_percent: 80.0
     target_statement_percent: 80.0
     differential: true
     package_policies:
       - { package: rtk-cloud-workspace/loadtests/home-100k/cmd/home-100k, risk: wiring, exclusion_reason: Thin CLI bootstrap delegates qualification behavior to internal/home100k. }
-      - { package: rtk-cloud-workspace/loadtests/home-100k/internal/home100k, risk: high, minimum_statement_percent: 76.6, target_statement_percent: 80.0 }
+      - { package: rtk-cloud-workspace/loadtests/home-100k/internal/home100k, risk: high, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
     purpose: Protect Home qualification and capacity planning, execution, evidence, and reporting.
     method: Instrument planning execution evidence cleanup and reporting code with governed and differential gates.
 
@@ -82,8 +82,8 @@ modules:
     package_policies:
       - { package: rtk_account_manager/internal/api, risk: critical, minimum_statement_percent: 24.5, pr_minimum_statement_percent: 80.1, target_statement_percent: 80.0 }
       - { package: rtk_account_manager/internal/auth, risk: critical, minimum_statement_percent: 81.0, pr_minimum_statement_percent: 84.0, target_statement_percent: 80.0 }
-      - { package: rtk_account_manager/internal/store, risk: critical, minimum_statement_percent: 4.0, pr_minimum_statement_percent: 77.7, target_statement_percent: 80.0 }
-      - { package: rtk_account_manager/internal/database, risk: critical, minimum_statement_percent: 30.6, pr_minimum_statement_percent: 65.3, target_statement_percent: 80.0 }
+      - { package: rtk_account_manager/internal/store, risk: critical, minimum_statement_percent: 4.0, pr_minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
+      - { package: rtk_account_manager/internal/database, risk: critical, minimum_statement_percent: 30.6, pr_minimum_statement_percent: 84.0, target_statement_percent: 80.0 }
       - { package: rtk_account_manager/internal/usercache, risk: high, minimum_statement_percent: 81.0, pr_minimum_statement_percent: 81.0, target_statement_percent: 70.0 }
       - { package: rtk_account_manager/internal/worker/inbox, risk: high, minimum_statement_percent: 90.2, pr_minimum_statement_percent: 90.2, target_statement_percent: 70.0 }
       - { package: rtk_account_manager/internal/worker/outbox, risk: high, minimum_statement_percent: 83.6, pr_minimum_statement_percent: 83.6, target_statement_percent: 70.0 }
@@ -106,7 +106,7 @@ modules:
     minimum_statement_percent: 72.0
     target_statement_percent: 72.0
     package_policies:
-      - { package: rtk_cloud_admin/internal/app, risk: critical, minimum_statement_percent: 70.0, target_statement_percent: 80.0 }
+      - { package: rtk_cloud_admin/internal/app, risk: critical, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
       - { package: rtk_cloud_admin/internal/store, risk: critical, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
       - { package: rtk_cloud_admin/internal/accountclient, risk: high, minimum_statement_percent: 88.4, target_statement_percent: 70.0 }
       - { package: rtk_cloud_admin/internal/videoclient, risk: high, minimum_statement_percent: 86.2, target_statement_percent: 70.0 }
@@ -177,20 +177,20 @@ modules:
     cover_packages: [./internal/...]
     pr_required_env: [VIDEO_CLOUD_TEST_DSN, VIDEO_CLOUD_MQTT_TEST_ADDR]
     pr_required_tests: [TestRepositoriesIntegration, TestBrokerPublishSubscribeIntegration]
-    minimum_statement_percent: 56.1
+    minimum_statement_percent: 57.7
     pr_minimum_statement_percent: 65.0
     target_statement_percent: 65.0
     critical_command: [make, check-coverage]
     package_policies:
       - { package: video_cloud/internal/auth, risk: critical, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
       - { package: video_cloud/internal/deviceshadow, risk: critical, minimum_statement_percent: 82.0, target_statement_percent: 80.0 }
-      - { package: video_cloud/internal/postgres, risk: critical, minimum_statement_percent: 1.8, target_statement_percent: 80.0 }
+      - { package: video_cloud/internal/postgres, risk: critical, minimum_statement_percent: 1.8, pr_minimum_statement_percent: 80.3, target_statement_percent: 80.0 }
       - { package: video_cloud/internal/httpapi, risk: critical, minimum_statement_percent: 57.6, target_statement_percent: 80.0 }
-      - { package: video_cloud/internal/clip, risk: high, minimum_statement_percent: 35.6, target_statement_percent: 70.0 }
-      - { package: video_cloud/internal/clipupload, risk: high, minimum_statement_percent: 63.1, target_statement_percent: 70.0 }
+      - { package: video_cloud/internal/clip, risk: high, minimum_statement_percent: 70.5, target_statement_percent: 70.0 }
+      - { package: video_cloud/internal/clipupload, risk: high, minimum_statement_percent: 88.1, target_statement_percent: 70.0 }
       - { package: video_cloud/internal/clipreconcile, risk: high, minimum_statement_percent: 77.1, target_statement_percent: 70.0 }
       - { package: video_cloud/internal/mqtt, risk: high, minimum_statement_percent: 68.3, pr_minimum_statement_percent: 70.0, target_statement_percent: 70.0 }
-      - { package: video_cloud/internal/signaling, risk: high, minimum_statement_percent: 55.8, target_statement_percent: 70.0 }
+      - { package: video_cloud/internal/signaling, risk: high, minimum_statement_percent: 82.8, target_statement_percent: 70.0 }
       - { package: video_cloud/internal/turnregistry, risk: high, minimum_statement_percent: 64.1, target_statement_percent: 70.0 }
       - { package: video_cloud/internal/webrtc, risk: high, minimum_statement_percent: 70.2, target_statement_percent: 70.0 }
     critical_cases:

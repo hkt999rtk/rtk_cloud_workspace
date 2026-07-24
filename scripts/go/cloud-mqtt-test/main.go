@@ -53,6 +53,7 @@ var homeTypes = map[string]bool{
 }
 
 var errMQTTSubscriptionRejected = errors.New("mqtt subscription rejected")
+var exitProcess = os.Exit
 
 type userArtifact struct {
 	Brandname    string           `json:"brandname"`
@@ -5914,7 +5915,7 @@ func writeOutputs(outDir string, result map[string]any) error {
 	if result["overall"] == "pass" {
 		return nil
 	}
-	os.Exit(1)
+	exitProcess(1)
 	return nil
 }
 
