@@ -256,3 +256,382 @@ func TestRunTestCoverageAggregateCombinesTenGoModules(t *testing.T) {
 		t.Fatalf("aggregate report = %#v", report)
 	}
 }
+
+func TestCoverageGovernanceHandlesPolicyAndInputBranches(t *testing.T) {
+	for _, risk := range []string{"critical", "high", "normal", "wiring"} {
+		if !validCoverageRisk(risk) {
+			t.Fatalf("validCoverageRisk(%q) = false", risk)
+		}
+	}
+	if validCoverageRisk("unknown") {
+		t.Fatal("unknown risk accepted")
+	}
+
+	dir := t.TempDir()
+	profile := filepath.Join(dir, "coverage.out")
+	if err := os.WriteFile(profile, []byte(strings.Join([]string{
+		"mode: set",
+		"example.test/module/internal/auth/auth.go:1.1,2.1 10 0",
+		"example.test/module/internal/store/store.go:1.1,2.1 10 1",
+		"",
+	}, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	module := coverageModule{
+		Owner:       "team",
+		DefaultRisk: "normal",
+		PackagePolicies: []coveragePackagePolicy{
+			{
+				Package: "example.test/module/internal/auth", Risk: "critical", Owner: "security",
+				MinimumStatementPercent: 0, PRMinimumStatement: 80, TargetStatementPercent: 80,
+			},
+			{
+				Package: "example.test/module/internal/store", Risk: "high",
+				MinimumStatementPercent: 70, TargetStatementPercent: 70,
+			},
+		},
+	}
+	raw, governed, packages, err := analyzeGoCoverageProfile(profile, module, "pr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw != 50 || governed != 50 || len(packages) != 2 {
+		t.Fatalf("coverage = %v/%v, packages=%#v", raw, governed, packages)
+	}
+	if packages[0].Status != "FAIL" || packages[0].Owner != "security" ||
+		!strings.Contains(packages[0].Assessment, "below") {
+		t.Fatalf("failed package = %#v", packages[0])
+	}
+	if packages[1].Status != "PASS" || packages[1].Assessment != "ratchet and risk target passed" {
+		t.Fatalf("passing package = %#v", packages[1])
+	}
+	module.PackagePolicies[1].TargetStatementPercent = 101
+	_, _, packages, err = analyzeGoCoverageProfile(profile, module, "unit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(packages[1].Assessment, "target remains tracked debt") {
+		t.Fatalf("target debt assessment = %#v", packages[1])
+	}
+	if coveragePercent(1, 0) != 0 {
+		t.Fatal("zero-statement coverage must be zero")
+	}
+
+	badProfile := filepath.Join(dir, "bad.out")
+	if err := os.WriteFile(badProfile, []byte("mode: set\nnot a coverage row\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readUniqueGoCoverageBlocks(badProfile); err == nil {
+		t.Fatal("malformed coverage row accepted")
+	}
+	if _, err := readUniqueGoCoverageBlocks(filepath.Join(dir, "missing.out")); err == nil {
+		t.Fatal("missing coverage profile accepted")
+	}
+	if _, _, _, err := analyzeGoCoverageProfile(filepath.Join(dir, "missing.out"), module, "unit"); err == nil {
+		t.Fatal("missing coverage profile was accepted by analyzer")
+	}
+}
+
+func TestGoTestInventoryHandlesFailuresSkipsAndMalformedEvents(t *testing.T) {
+	moduleDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(moduleDir, "go.mod"), []byte("module example.test/module\n\ngo 1.25\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testDir := filepath.Join(moduleDir, "pkg")
+	if err := os.MkdirAll(testDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(testDir, "thing_test.go"), []byte("package pkg\n\nfunc TestThing(t *testing.T) {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	events := filepath.Join(t.TempDir(), "events.json")
+	rows := []goTestEvent{
+		{Time: "2026-07-24T00:00:00Z", Action: "run", Package: "example.test/module/pkg", Test: "TestThing"},
+		{Time: "2026-07-24T00:00:00.1Z", Action: "fail", Package: "example.test/module/pkg", Test: "TestThing", Elapsed: .1},
+		{Time: "2026-07-24T00:00:00.2Z", Action: "skip", Package: "external.test/pkg", Test: "TestSkipped", Elapsed: .2},
+		{Time: "2026-07-24T00:00:00.3Z", Action: "output", Package: "example.test/module/pkg", Test: "TestIgnored"},
+		{Time: "2026-07-24T00:00:00.4Z", Action: "pass", Package: "example.test/module/pkg"},
+	}
+	var encoded strings.Builder
+	for _, row := range rows {
+		raw, _ := json.Marshal(row)
+		encoded.Write(raw)
+		encoded.WriteByte('\n')
+	}
+	if err := os.WriteFile(events, []byte(encoded.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	units, err := parseGoTestEvents(events, moduleDir, coverageModule{
+		Name: "module",
+		CriticalCases: []coverageCriticalCase{{
+			TestID: "UNIT-TEST-001", CanonicalKey: "go://module/pkg#TestThing",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byKey := map[string]goUnitResult{}
+	for _, unit := range units {
+		byKey[unit.CanonicalKey] = unit
+	}
+	if len(units) != 2 || byKey["go://module/pkg#TestThing"].Status != "FAIL" ||
+		byKey["go://module/pkg#TestThing"].TestID != "UNIT-TEST-001" ||
+		byKey["go://module/external.test/pkg#TestSkipped"].Status != "SKIP" ||
+		byKey["go://module/external.test/pkg#TestSkipped"].Source != "" {
+		t.Fatalf("units = %#v", units)
+	}
+	junit := string(renderGoJUnit("module<&", units))
+	for _, expected := range []string{"failures=\"1\"", "skipped=\"1\"", "<failure", "<skipped/>", "module&lt;&amp;"} {
+		if !strings.Contains(junit, expected) {
+			t.Fatalf("JUnit missing %q:\n%s", expected, junit)
+		}
+	}
+	if err := validateRequiredGoTests(coverageModule{PRRequiredTests: []string{"TestMissing"}}, units); err == nil {
+		t.Fatal("missing required test accepted")
+	}
+
+	if err := os.WriteFile(events, []byte("{bad json}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseGoTestEvents(events, moduleDir, coverageModule{Name: "module"}); err == nil {
+		t.Fatal("malformed Go event accepted")
+	}
+	if _, err := parseGoTestEvents(filepath.Join(moduleDir, "missing.json"), moduleDir, coverageModule{Name: "module"}); err == nil {
+		t.Fatal("missing Go event stream accepted")
+	}
+	emptyEvents := filepath.Join(t.TempDir(), "events.json")
+	if err := os.WriteFile(emptyEvents, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseGoTestEvents(emptyEvents, t.TempDir(), coverageModule{Name: "module"}); err == nil {
+		t.Fatal("event inventory without go.mod accepted")
+	}
+}
+
+func TestRuntimeCoverageValidationCoversIncompleteLayoutsAndUnknownModules(t *testing.T) {
+	root := t.TempDir()
+	if _, err := runtimeCoverageDirs(root); err == nil || !strings.Contains(err.Error(), "no covmeta") {
+		t.Fatalf("empty runtime error = %v", err)
+	}
+	counterOnly := filepath.Join(root, "counter-only")
+	if err := os.MkdirAll(counterOnly, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(counterOnly, "covcounters.hash.1.1"), []byte("counter"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	metaOnly := filepath.Join(root, "meta-only")
+	if err := os.MkdirAll(metaOnly, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(metaOnly, "covmeta.hash"), []byte("meta"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtimeCoverageDirs(root); err == nil || !strings.Contains(err.Error(), "no counters") {
+		t.Fatalf("mixed incomplete runtime error = %v", err)
+	}
+	counterMismatch := t.TempDir()
+	complete := filepath.Join(counterMismatch, "complete")
+	orphan := filepath.Join(counterMismatch, "orphan")
+	for _, dir := range []string{complete, orphan} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(complete, "covmeta.hash"), []byte("meta"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(complete, "covcounters.hash.1.1"), []byte("counter"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(orphan, "covcounters.hash.1.1"), []byte("counter"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtimeCoverageDirs(counterMismatch); err == nil || !strings.Contains(err.Error(), "no metadata") {
+		t.Fatalf("orphan counter error = %v", err)
+	}
+
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	module := coverageModule{Name: "workspace-tooling", Path: "scripts/go"}
+	if _, _, err := validateRuntimeCoverageAnchor(workspace, module, t.TempDir(), "run"); err == nil {
+		t.Fatal("missing runtime anchor accepted")
+	}
+	anchorRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(anchorRoot, "coverage-runtime.json"), []byte("{bad json}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := validateRuntimeCoverageAnchor(workspace, module, anchorRoot, "run"); err == nil {
+		t.Fatal("malformed runtime anchor accepted")
+	}
+	if err := writeJSON(filepath.Join(anchorRoot, "coverage-runtime.json"), runtimeCoverageAnchor{
+		SchemaVersion: 1, RunID: "other", Module: module.Name,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := validateRuntimeCoverageAnchor(workspace, module, anchorRoot, "run"); err == nil ||
+		!strings.Contains(err.Error(), "incomplete") {
+		t.Fatalf("incomplete anchor error = %v", err)
+	}
+
+	outDir := t.TempDir()
+	report := coverageReport{
+		SchemaVersion: 2, RunID: "unknown-runtime", Profile: "runtime",
+		StartedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if err := runRuntimeCoverage(workspace, outDir, coverageConfig{}, report, map[string]bool{"missing": true}, root); err == nil ||
+		!strings.Contains(err.Error(), "unknown or non-Go") {
+		t.Fatalf("unknown runtime module error = %v", err)
+	}
+	result := coverageCaseResult{StartedAt: "not-a-time"}
+	completeRuntimeCoverageCase(&result)
+	if result.CompletedAt == "" {
+		t.Fatal("runtime completion timestamp missing")
+	}
+}
+
+func TestRunCoverageJSONCommandAndEvidenceCopy(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "logs", "test.log")
+	eventsPath := filepath.Join(dir, "events", "test.json")
+	if err := runCoverageJSONCommand(dir, logPath, eventsPath, map[string]string{"COVERAGE_TEST_VALUE": "ok"},
+		"sh", "-c", `printf '{"Action":"pass"}\n'; printf '%s' "$COVERAGE_TEST_VALUE" >&2`); err != nil {
+		t.Fatal(err)
+	}
+	logRaw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventsRaw, err := os.ReadFile(eventsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(logRaw), "ok") || !strings.Contains(string(eventsRaw), `"pass"`) {
+		t.Fatalf("log=%q events=%q", logRaw, eventsRaw)
+	}
+	if err := runCoverageJSONCommand(dir, logPath, eventsPath, nil, "sh", "-c", "exit 7"); err == nil {
+		t.Fatal("failed coverage command returned nil")
+	}
+
+	source := filepath.Join(dir, "source")
+	target := filepath.Join(dir, "target")
+	rel := "modules/example/coverage.out"
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(source, rel)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, rel), []byte("mode: set\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyCoverageCaseEvidence(source, target, coverageCaseResult{ProfilePath: rel}); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(filepath.Join(target, rel)) {
+		t.Fatal("coverage evidence was not copied")
+	}
+	if err := copyCoverageCaseEvidence(source, target, coverageCaseResult{ProfilePath: "missing"}); err == nil {
+		t.Fatal("missing coverage evidence accepted")
+	}
+}
+
+func TestRuntimeCoverageEmptySelectionWritesPassingReport(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outDir := t.TempDir()
+	report := coverageReport{
+		SchemaVersion: 2, RunID: "empty-runtime", Profile: "runtime",
+		StartedAt: "not-a-time",
+	}
+	cfg := coverageConfig{Modules: []coverageModule{{Name: "node-only", Kind: "node"}}}
+	if err := runRuntimeCoverage(workspace, outDir, cfg, report, map[string]bool{}, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(outDir, "results.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result coverageReport
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "PASS" || result.Assessment == "" || result.RedactionStatus != "PASS" {
+		t.Fatalf("empty runtime report = %#v", result)
+	}
+}
+
+func TestCoverageAggregateRejectsMissingAndMalformedInputs(t *testing.T) {
+	if err := runTestCoverageAggregate(nil); err == nil || !strings.Contains(err.Error(), "required") {
+		t.Fatalf("missing aggregate flags error = %v", err)
+	}
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := "aggregate-missing-modules"
+	defer os.RemoveAll(filepath.Join(workspace, ".artifacts", "test-runs", runID))
+	if err := runTestCoverageAggregate([]string{
+		"--input-dir", t.TempDir(), "--run-id", runID,
+	}); err == nil {
+		t.Fatal("aggregate accepted missing module results")
+	}
+	raw, err := os.ReadFile(filepath.Join(workspace, ".artifacts", "test-runs", runID, "coverage", "results.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report coverageReport
+	if err := json.Unmarshal(raw, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != "FAIL" || len(report.Cases) != 10 || report.Cases[0].Status != "INCOMPLETE" {
+		t.Fatalf("missing-module aggregate = %#v", report)
+	}
+
+	malformed := t.TempDir()
+	if err := os.WriteFile(filepath.Join(malformed, "results.json"), []byte("{bad json}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runTestCoverageAggregate([]string{
+		"--input-dir", malformed, "--run-id", "aggregate-malformed",
+	}); err == nil || !strings.Contains(err.Error(), "parse") {
+		t.Fatalf("malformed aggregate error = %v", err)
+	}
+}
+
+func TestPRCoverageRequiresEnvironmentBeforeExecutingGo(t *testing.T) {
+	workspace := t.TempDir()
+	moduleDir := filepath.Join(workspace, "module")
+	if err := os.MkdirAll(moduleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleDir, "go.mod"), []byte("module example.test/module\n\ngo 1.25\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	name := "COVERAGE_GOVERNANCE_REQUIRED_ENV"
+	t.Setenv(name, "")
+	result := coverageCaseResult{}
+	err := runGoCoverageModuleProfile(workspace, t.TempDir(), filepath.Join(t.TempDir(), "coverage.log"),
+		coverageConfig{}, coverageModule{
+			Name: "module", Path: "module", Packages: []string{"./..."},
+			PRRequiredEnv: []string{name}, CoverPackages: []string{"./..."},
+		}, "", "HEAD", "pr", &result)
+	if err == nil || !strings.Contains(err.Error(), name) {
+		t.Fatalf("missing PR environment error = %v", err)
+	}
+}
+
+func TestChangedGoLinesResolvesWorkspaceSubmoduleGitlinks(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := changedGoLines(workspace, "HEAD^", "HEAD", "repos/rtk_cloud_admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed == nil {
+		t.Fatal("submodule differential returned nil")
+	}
+}

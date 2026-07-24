@@ -255,6 +255,7 @@ func TestValidateCoverageConfigRejectsInvalidPolicies(t *testing.T) {
 	tests := map[string]func(*coverageConfig){
 		"schema":           func(cfg *coverageConfig) { cfg.SchemaVersion = 1 },
 		"differential":     func(cfg *coverageConfig) { cfg.Differential.MinimumStatementPercent = 0 },
+		"risk threshold":   func(cfg *coverageConfig) { cfg.RiskThresholds["critical"] = 79 },
 		"missing identity": func(cfg *coverageConfig) { cfg.Modules[0].Name = "" },
 		"duplicate name":   func(cfg *coverageConfig) { cfg.Modules = append(cfg.Modules, cfg.Modules[0]) },
 		"inactive ID":      func(cfg *coverageConfig) { cfg.Modules[0].TestID = "SVC-NO-SUITE-001" },
@@ -262,6 +263,35 @@ func TestValidateCoverageConfigRejectsInvalidPolicies(t *testing.T) {
 		"missing purpose":  func(cfg *coverageConfig) { cfg.Modules[0].Purpose = "" },
 		"missing packages": func(cfg *coverageConfig) { cfg.Modules[0].Packages = nil },
 		"invalid target":   func(cfg *coverageConfig) { cfg.Modules[0].TargetStatementPercent = 50 },
+		"missing owner":    func(cfg *coverageConfig) { cfg.Modules[0].Owner = "" },
+		"invalid default risk": func(cfg *coverageConfig) {
+			cfg.Modules[0].DefaultRisk = "urgent"
+		},
+		"invalid package policy": func(cfg *coverageConfig) {
+			cfg.Modules[0].PackagePolicies = []coveragePackagePolicy{{Package: "", Risk: "high"}}
+		},
+		"duplicate package policy": func(cfg *coverageConfig) {
+			policy := coveragePackagePolicy{Package: "example/module", Risk: "high", TargetStatementPercent: 70}
+			cfg.Modules[0].PackagePolicies = []coveragePackagePolicy{policy, policy}
+		},
+		"wiring without reason": func(cfg *coverageConfig) {
+			cfg.Modules[0].PackagePolicies = []coveragePackagePolicy{{Package: "example/module", Risk: "wiring"}}
+		},
+		"invalid package threshold": func(cfg *coverageConfig) {
+			cfg.Modules[0].PackagePolicies = []coveragePackagePolicy{{
+				Package: "example/module", Risk: "high", MinimumStatementPercent: 101, TargetStatementPercent: 70,
+			}}
+		},
+		"package target below risk": func(cfg *coverageConfig) {
+			cfg.Modules[0].PackagePolicies = []coveragePackagePolicy{{
+				Package: "example/module", Risk: "critical", MinimumStatementPercent: 60, TargetStatementPercent: 70,
+			}}
+		},
+		"invalid critical case": func(cfg *coverageConfig) {
+			cfg.Modules[0].CriticalCases = []coverageCriticalCase{{
+				TestID: "UNIT-NO-CASE-001", CanonicalKey: "", Purpose: "",
+			}}
+		},
 		"unsupported kind": func(cfg *coverageConfig) { cfg.Modules[0].Kind = "rust" },
 		"missing path":     func(cfg *coverageConfig) { cfg.Modules[0].Path = "missing" },
 		"node missing globs": func(cfg *coverageConfig) {
@@ -293,6 +323,16 @@ func TestValidateCoverageConfigRejectsInvalidPolicies(t *testing.T) {
 	if err := validateCoverageConfig(workspace, valid(), active); err != nil {
 		t.Fatalf("valid policy failed: %v", err)
 	}
+	node := valid()
+	node.Modules[0].Kind = "node"
+	node.Modules[0].Packages = nil
+	node.Modules[0].TestGlobs = []string{"*.test.mjs"}
+	node.Modules[0].MinimumLinePercent = 80
+	node.Modules[0].MinimumBranchPercent = 80
+	node.Modules[0].MinimumFunctionPercent = 80
+	if err := validateCoverageConfig(workspace, node, active); err != nil {
+		t.Fatalf("valid Node policy failed: %v", err)
+	}
 }
 
 func TestRunTestCoverageRejectsUnknownModuleBeforeExecutingTests(t *testing.T) {
@@ -305,6 +345,15 @@ func TestRunTestCoverageRejectsUnknownModuleBeforeExecutingTests(t *testing.T) {
 	err = runTestCoverage([]string{"--run-id", runID, "--module", "not-managed"})
 	if err == nil || !strings.Contains(err.Error(), "unknown coverage module") {
 		t.Fatalf("unknown module error = %v", err)
+	}
+}
+
+func TestRunTestCoverageRejectsInvalidProfiles(t *testing.T) {
+	if err := runTestCoverage([]string{"--profile", "unknown"}); err == nil || !strings.Contains(err.Error(), "unsupported") {
+		t.Fatalf("unsupported profile error = %v", err)
+	}
+	if err := runTestCoverage([]string{"--profile", "runtime"}); err == nil || !strings.Contains(err.Error(), "--runtime-dir") {
+		t.Fatalf("missing runtime directory error = %v", err)
 	}
 }
 
@@ -322,6 +371,18 @@ func TestValidateRequiredGoCoverageModulesRejectsMissingModule(t *testing.T) {
 	})
 	if err := validateRequiredGoCoverageModules(workspace, cfg); err == nil || !strings.Contains(err.Error(), "video-cloud") {
 		t.Fatalf("missing module error = %v", err)
+	}
+	cfg, err = loadCoverageConfig(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range cfg.Modules {
+		if cfg.Modules[i].Name == "video-cloud" {
+			cfg.Modules[i].Path = "repos/rtk_cloud_admin"
+		}
+	}
+	if err := validateRequiredGoCoverageModules(workspace, cfg); err == nil || !strings.Contains(err.Error(), "path must be") {
+		t.Fatalf("wrong module path error = %v", err)
 	}
 }
 

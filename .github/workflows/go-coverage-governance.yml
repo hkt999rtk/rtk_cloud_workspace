@@ -53,6 +53,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          lfs: true
           submodules: false
       - name: Initialize workspace submodules
         env:
