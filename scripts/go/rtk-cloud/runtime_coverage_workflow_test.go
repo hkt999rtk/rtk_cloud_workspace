@@ -50,6 +50,7 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"CLOUD_DNS_ROOT_DOMAIN=$RUNTIME_COVERAGE_STACK.invalid",
 		"runtime-coverage-k8s.sh cleanup",
 		"RUNTIME_COVERAGE_DEPLOYED=1",
+		"RUNTIME_COVERAGE_PREPARED=1",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("runtime workflow missing %q", required)
@@ -287,10 +288,10 @@ func TestRuntimeDeploymentAnchorRejectsPodDigestMismatch(t *testing.T) {
 case " $* " in
   *" rollout status "*) exit 0 ;;
   *" get deployment/"*)
-    printf '{"spec":{"template":{"spec":{"containers":[{"image":"%s"}]}}}}\n' "$FAKE_IMAGE"
+    printf '{"spec":{"selector":{"matchLabels":{"app":"runtime"}},"template":{"spec":{"containers":[{"name":"app","image":"%s"}]}}}}\n' "$FAKE_IMAGE"
     ;;
   *" get pods "*)
-    printf '{"items":[{"status":{"containerStatuses":[{"image":"%s","imageID":"docker-pullable://example/runtime@sha256:wrong"}]}}]}\n' "$FAKE_IMAGE"
+    printf '{"items":[{"status":{"containerStatuses":[{"name":"app","image":"ghcr.io/example/runtime@sha256:normalized","imageID":"docker-pullable://example/runtime@sha256:wrong"}]}}]}\n'
     ;;
   *) exit 1 ;;
 esac
