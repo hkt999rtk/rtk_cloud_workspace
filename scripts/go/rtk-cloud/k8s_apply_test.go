@@ -53,7 +53,9 @@ exit 2
 	}
 	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
 	t.Setenv("RTK_CLOUD_KUBECTL_RETRY_ATTEMPTS", "1")
-	t.Setenv("RTK_CLOUD_KUBE_API_READY_TIMEOUT", "1s")
+	// Process startup can take longer under the coverage/race matrix even though
+	// the fake kubectl itself is deterministic.
+	t.Setenv("RTK_CLOUD_KUBE_API_READY_TIMEOUT", "5s")
 	t.Setenv("RTK_CLOUD_KUBE_API_READY_POLL", "1ms")
 	t.Setenv("RTK_CLOUD_KUBE_API_READY_STABLE_CHECKS", "3")
 

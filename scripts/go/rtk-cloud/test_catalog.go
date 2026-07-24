@@ -13,7 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var testCaseIDPattern = regexp.MustCompile(`^(SVC|E2E|UI|LIVE|LOAD)-[A-Z0-9]+-[A-Z0-9]+-[0-9]{3}$`)
+var testCaseIDPattern = regexp.MustCompile(`^(SVC|UNIT|E2E|UI|LIVE|LOAD)-[A-Z0-9]+-[A-Z0-9]+-[0-9]{3}$`)
 var playwrightTestPattern = regexp.MustCompile(`(?m)^\s*test\(\s*['"\x60](\[[A-Z0-9-]+\])`)
 var playwrightAnyTestPattern = regexp.MustCompile(`(?m)^\s*test\(\s*['"\x60]`)
 
@@ -42,7 +42,7 @@ type testCatalogCase struct {
 	Status       string   `yaml:"status"`
 }
 
-var catalogLayers = map[string]string{"service": "SVC-", "e2e": "E2E-", "ui": "UI-", "live": "LIVE-", "load": "LOAD-"}
+var catalogLayers = map[string]string{"service": "SVC-", "unit": "UNIT-", "e2e": "E2E-", "ui": "UI-", "live": "LIVE-", "load": "LOAD-"}
 var catalogOwners = map[string]bool{
 	"cloud_platform": true, "factory_enroll": true, "home_cloud": true, "provisioning": true,
 	"rtk_account_manager": true, "rtk_cloud_admin": true, "rtk_cloud_client": true,

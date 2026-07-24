@@ -94,7 +94,7 @@ jobs:
           fi
           go run ./rtk-cloud -- test-services "${args[@]}"
 
-      - name: Enforce measurable coverage policy
+      - name: Enforce Node coverage policy
         working-directory: scripts/go
         shell: bash
         env:
@@ -102,9 +102,10 @@ jobs:
         run: |
           set -euo pipefail
           args=(
-            --run-id "gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            --run-id "gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-node"
             --head-ref HEAD
             --install
+            --module "cloud-admin-web,cloud-client-javascript"
           )
           if [ -n "$BASE_REF" ]; then
             args+=(--base-ref "$BASE_REF")
@@ -115,8 +116,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: workspace-coverage-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}/coverage/**
+          name: workspace-node-coverage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}-node/coverage/**
           if-no-files-found: error
           include-hidden-files: true
           retention-days: ${{ github.event_name == 'pull_request' && 30 || 90 }}
@@ -133,7 +134,7 @@ jobs:
             echo "- Load-runner contracts: \`loadtests/home-100k\`"
             echo "- Services: selected from the workspace diff; all on shared test-governance changes"
             echo "- Coverage: per-module overall ratchets, 80% changed-Go-statement gate, JavaScript line/branch/function gates, and Video Cloud critical-package gates"
-            report=".artifacts/test-runs/gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/coverage/TEST_REPORT.md"
+            report=".artifacts/test-runs/gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-node/coverage/TEST_REPORT.md"
             if [ -f "$report" ]; then
               echo
               sed -n '1,12p' "$report"

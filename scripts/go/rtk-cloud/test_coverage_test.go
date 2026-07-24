@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -104,11 +105,11 @@ func TestLoadCoverageConfigLinksEveryModuleToCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.SchemaVersion != 1 || cfg.Differential.MinimumStatementPercent != 80 {
+	if cfg.SchemaVersion != 2 || cfg.Differential.MinimumStatementPercent != 80 {
 		t.Fatalf("coverage config header = %#v", cfg)
 	}
-	if len(cfg.Modules) != 10 {
-		t.Fatalf("coverage modules = %d, want 10", len(cfg.Modules))
+	if len(cfg.Modules) != 12 {
+		t.Fatalf("coverage policy entries = %d, want 12 (10 Go and 2 Node)", len(cfg.Modules))
 	}
 	for _, module := range cfg.Modules {
 		if module.TestID == "" || module.Name == "" || module.Purpose == "" || module.Method == "" {
@@ -242,17 +243,17 @@ func TestValidateCoverageConfigRejectsInvalidPolicies(t *testing.T) {
 		t.Fatal(err)
 	}
 	valid := func() coverageConfig {
-		cfg := coverageConfig{SchemaVersion: 1}
+		cfg := coverageConfig{SchemaVersion: 2, RiskThresholds: map[string]float64{"critical": 80, "high": 70, "normal": 60}}
 		cfg.Differential.MinimumStatementPercent = 80
 		cfg.Modules = []coverageModule{{
 			TestID: "SVC-TEST-SUITE-001", Name: "module", Kind: "go", Path: "module",
 			Packages: []string{"./..."}, MinimumStatementPercent: 60, TargetStatementPercent: 80,
-			Purpose: "purpose", Method: "method",
+			Owner: "cloud_platform", DefaultRisk: "normal", Purpose: "purpose", Method: "method",
 		}}
 		return cfg
 	}
 	tests := map[string]func(*coverageConfig){
-		"schema":           func(cfg *coverageConfig) { cfg.SchemaVersion = 2 },
+		"schema":           func(cfg *coverageConfig) { cfg.SchemaVersion = 1 },
 		"differential":     func(cfg *coverageConfig) { cfg.Differential.MinimumStatementPercent = 0 },
 		"missing identity": func(cfg *coverageConfig) { cfg.Modules[0].Name = "" },
 		"duplicate name":   func(cfg *coverageConfig) { cfg.Modules = append(cfg.Modules, cfg.Modules[0]) },
@@ -304,6 +305,23 @@ func TestRunTestCoverageRejectsUnknownModuleBeforeExecutingTests(t *testing.T) {
 	err = runTestCoverage([]string{"--run-id", runID, "--module", "not-managed"})
 	if err == nil || !strings.Contains(err.Error(), "unknown coverage module") {
 		t.Fatalf("unknown module error = %v", err)
+	}
+}
+
+func TestValidateRequiredGoCoverageModulesRejectsMissingModule(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadCoverageConfig(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Modules = slices.DeleteFunc(cfg.Modules, func(module coverageModule) bool {
+		return module.Name == "video-cloud"
+	})
+	if err := validateRequiredGoCoverageModules(workspace, cfg); err == nil || !strings.Contains(err.Error(), "video-cloud") {
+		t.Fatalf("missing module error = %v", err)
 	}
 }
 
