@@ -4405,7 +4405,7 @@ func writeLKEImageEnvFile(path string, env map[string]string) error {
 	sort.Strings(keys)
 	var buf bytes.Buffer
 	for _, key := range keys {
-		fmt.Fprintf(&buf, "export %s=%s\n", key, shellQuote(env[key]))
+		fmt.Fprintf(&buf, "export %s=%s\n", key, shellQuoteArg(env[key]))
 	}
 	return os.WriteFile(path, buf.Bytes(), 0o644)
 }

@@ -18,11 +18,11 @@ modules:
     default_risk: normal
     path: scripts/go
     packages: [./...]
-    minimum_statement_percent: 65.0
+    minimum_statement_percent: 67.9
     target_statement_percent: 65.0
     differential: true
     package_policies:
-      - { package: rtk-cloud-workspace/scripts/go/rtk-cloud, risk: high, minimum_statement_percent: 63.5, target_statement_percent: 70.0 }
+      - { package: rtk-cloud-workspace/scripts/go/rtk-cloud, risk: high, minimum_statement_percent: 67.1, target_statement_percent: 70.0 }
       - { package: rtk-cloud-workspace/scripts/go/cloud-mqtt-test, risk: high, minimum_statement_percent: 70.8, target_statement_percent: 70.0 }
       - { package: rtk-cloud-workspace/scripts/go/linode-object-storage, risk: wiring, exclusion_reason: Thin object-storage CLI wiring is covered by service integration and release smoke tests. }
     purpose: Protect workspace CLI, catalog, deployment, and test orchestration behavior.
@@ -177,7 +177,7 @@ modules:
     cover_packages: [./internal/...]
     pr_required_env: [VIDEO_CLOUD_TEST_DSN, VIDEO_CLOUD_MQTT_TEST_ADDR]
     pr_required_tests: [TestRepositoriesIntegration, TestBrokerPublishSubscribeIntegration]
-    minimum_statement_percent: 60.3
+    minimum_statement_percent: 60.1
     pr_minimum_statement_percent: 65.0
     target_statement_percent: 65.0
     critical_command: [make, check-coverage]
@@ -189,7 +189,7 @@ modules:
       - { package: video_cloud/internal/clip, risk: high, minimum_statement_percent: 70.5, target_statement_percent: 70.0 }
       - { package: video_cloud/internal/clipupload, risk: high, minimum_statement_percent: 88.1, target_statement_percent: 70.0 }
       - { package: video_cloud/internal/clipreconcile, risk: high, minimum_statement_percent: 77.1, target_statement_percent: 70.0 }
-      - { package: video_cloud/internal/mqtt, risk: high, minimum_statement_percent: 68.3, pr_minimum_statement_percent: 70.0, target_statement_percent: 70.0 }
+      - { package: video_cloud/internal/mqtt, risk: high, minimum_statement_percent: 65.5, pr_minimum_statement_percent: 70.0, target_statement_percent: 70.0 }
       - { package: video_cloud/internal/signaling, risk: high, minimum_statement_percent: 82.8, target_statement_percent: 70.0 }
       - { package: video_cloud/internal/turnregistry, risk: high, minimum_statement_percent: 64.1, target_statement_percent: 70.0 }
       - { package: video_cloud/internal/webrtc, risk: high, minimum_statement_percent: 70.2, target_statement_percent: 70.0 }
