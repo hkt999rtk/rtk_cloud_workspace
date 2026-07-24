@@ -3731,12 +3731,15 @@ func writeLKEOpenBaoHelmValues(env map[string]string) (string, func(), error) {
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 	path := filepath.Join(dir, "values.yaml")
+	authDelegatorEnabled := os.Getenv("RUNTIME_COVERAGE_SHARED_CLUSTER") != "1"
 	body := fmt.Sprintf(`global:
   tlsDisable: false
 injector:
   enabled: false
 server:
   enabled: true
+  authDelegator:
+    enabled: %t
   standalone:
     enabled: true
     config: |
@@ -3777,7 +3780,7 @@ server:
     - name: openbao-tls
       mountPath: /openbao/tls
       readOnly: true
-`, firstNonEmpty(os.Getenv("LKE_OPENBAO_DATA_STORAGE"), "10Gi"), firstNonEmpty(os.Getenv("LKE_OPENBAO_AUDIT_STORAGE"), "5Gi"))
+`, authDelegatorEnabled, firstNonEmpty(os.Getenv("LKE_OPENBAO_DATA_STORAGE"), "10Gi"), firstNonEmpty(os.Getenv("LKE_OPENBAO_AUDIT_STORAGE"), "5Gi"))
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		cleanup()
 		return "", func() {}, err

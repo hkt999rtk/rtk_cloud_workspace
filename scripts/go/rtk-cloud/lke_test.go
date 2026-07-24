@@ -1761,6 +1761,20 @@ func TestLKENetworkPoliciesAllowVideoCloudAPITurnRegistryRouting(t *testing.T) {
 	}
 }
 
+func TestLKEOpenBaoHelmValuesDisableClusterScopedAuthDelegator(t *testing.T) {
+	t.Setenv("RUNTIME_COVERAGE_SHARED_CLUSTER", "1")
+	path, cleanup, err := writeLKEOpenBaoHelmValues(map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	values := readTestFile(t, path)
+	if !strings.Contains(values, "authDelegator:\n    enabled: false") {
+		t.Fatalf("expected OpenBao auth delegator to be disabled for isolated stacks:\n%s", values)
+	}
+}
+
 func TestLKEEnsureOpenBaoSkipsRestartWhenTLSSecretUnchanged(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	_ = workspace
