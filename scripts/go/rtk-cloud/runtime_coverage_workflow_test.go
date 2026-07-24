@@ -116,11 +116,25 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 	if onboardingStart < 0 || canaryStart < 0 || uiStart < 0 {
 		t.Fatal("runtime workflow lifecycle steps are missing")
 	}
-	if strings.Contains(workflow[onboardingStart:canaryStart], "tunnel-start") {
-		t.Fatal("onboarding must let test-live own its direct service port-forwards")
+	onboarding := workflow[onboardingStart:canaryStart]
+	if !strings.Contains(onboarding, "tunnel-start") ||
+		!strings.Contains(onboarding, "CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE") ||
+		!strings.Contains(onboarding, "CLOUD_STAGING_E2E_MQTT_PORT=18884") {
+		t.Fatal("onboarding must use the isolated mTLS tunnel for token issuance without colliding with test-live MQTT forwarding")
 	}
 	if !strings.Contains(workflow[canaryStart:uiStart], "tunnel-start") {
 		t.Fatal("feature canaries require the shared HTTPS/MQTT tunnel")
+	}
+}
+
+func TestK8SE2ETokenBaseURLSupportsMTLSTunnelOverride(t *testing.T) {
+	t.Setenv("CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE", "")
+	if got := k8sE2ETokenBaseURL("18080"); got != "http://127.0.0.1:18080" {
+		t.Fatalf("default token base URL = %q", got)
+	}
+	t.Setenv("CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE", "https://device.coverage.invalid:18443")
+	if got := k8sE2ETokenBaseURL("18080"); got != "https://device.coverage.invalid:18443" {
+		t.Fatalf("overridden token base URL = %q", got)
 	}
 }
 

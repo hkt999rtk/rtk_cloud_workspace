@@ -353,6 +353,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          scripts/ci/runtime-coverage-k8s.sh tunnel-start
+          trap 'scripts/ci/runtime-coverage-k8s.sh tunnel-stop' EXIT
+          export CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE="$VIDEO_CLOUD_TOKEN_BASE_URL"
+          export CLOUD_STAGING_E2E_MQTT_PORT=18884
           go run ./scripts/go/rtk-cloud -- test-live \
             --env-root "$RUNTIME_ENV_ROOT" \
             --run --confirm "$RUNTIME_COVERAGE_STACK" \
