@@ -160,6 +160,19 @@ func TestRenderCoverageReportIncludesMetricsAndEvidence(t *testing.T) {
 	}
 }
 
+func TestRunCoverageModuleProfileReportsConfiguredTargetDebt(t *testing.T) {
+	target := 65.0
+	targetMet := false
+	metrics := coverageMetrics{
+		StatementTargetPercent: &target,
+		IndustryTargetMet:      &targetMet,
+	}
+	assessment := passingCoverageAssessment(metrics)
+	if !strings.Contains(assessment, "65.00% target remains tracked debt") {
+		t.Fatalf("assessment = %q, want configured target", assessment)
+	}
+}
+
 func TestCoverageParsersRejectMalformedInput(t *testing.T) {
 	profile := filepath.Join(t.TempDir(), "invalid.out")
 	if err := os.WriteFile(profile, []byte("mode: set\nnot-a-profile-line\n"), 0o644); err != nil {

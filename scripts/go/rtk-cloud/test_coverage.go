@@ -472,16 +472,26 @@ func runCoverageModuleProfile(workspace, outDir string, cfg coverageConfig, modu
 		result.Assessment = runErr.Error()
 	} else {
 		result.Status = "PASS"
-		if result.Metrics.IndustryTargetMet != nil && !*result.Metrics.IndustryTargetMet {
-			result.Assessment = "PASS: enforced ratchet and differential gates passed; the 80% overall target remains tracked debt."
-		} else {
-			result.Assessment = "PASS: all configured coverage gates passed."
-		}
+		result.Assessment = passingCoverageAssessment(result.Metrics)
 	}
 	completed := time.Now().UTC()
 	result.CompletedAt = completed.Format(time.RFC3339)
 	result.DurationMS = completed.Sub(started).Milliseconds()
 	return result
+}
+
+func passingCoverageAssessment(metrics coverageMetrics) string {
+	if metrics.IndustryTargetMet == nil || *metrics.IndustryTargetMet {
+		return "PASS: all configured coverage gates passed."
+	}
+	target := 80.0
+	if metrics.StatementTargetPercent != nil {
+		target = *metrics.StatementTargetPercent
+	}
+	return fmt.Sprintf(
+		"PASS: enforced ratchet and differential gates passed; the %.2f%% target remains tracked debt.",
+		target,
+	)
 }
 
 func runGoCoverageModule(workspace, outDir, logPath string, cfg coverageConfig, module coverageModule, baseRef, headRef string, result *coverageCaseResult) error {
