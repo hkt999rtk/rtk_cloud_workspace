@@ -701,8 +701,13 @@ cleanup() {
   local report_root="$workspace/.artifacts/test-runs/$run_id/coverage"
   local report="$report_root/cleanup-report.json"
   local before after residual_namespaces residual_pvcs residual_pods residual_services
+  local retained_targets residual_retained_pvs residual_cloud_volumes deleted_cloud_volumes
+  local deleted_cloud_volumes_file
   local cleanup_errors=()
   local status="PASS"
+  mkdir -p "$report_root"
+  deleted_cloud_volumes_file="$report_root/deleted-cloud-volumes.jsonl"
+  : > "$deleted_cloud_volumes_file"
   set +e
   while IFS= read -r namespace; do
     kubectl --kubeconfig "$kubeconfig" delete namespace "$namespace" --ignore-not-found=true --wait=true
@@ -724,6 +729,80 @@ cleanup() {
   [[ -z "$residual_pods" ]] || cleanup_errors+=("coverage or generator pods remain")
   [[ -z "$residual_services" ]] || cleanup_errors+=("coverage LoadBalancer services remain")
 
+  retained_targets="$(
+    kubectl --kubeconfig "$kubeconfig" get pv -o json 2>/dev/null |
+      jq -r --arg prefix "$stack-" '
+        .items[]
+        | select((.spec.claimRef.namespace // "") | startswith($prefix))
+        | select(.spec.persistentVolumeReclaimPolicy == "Retain")
+        | [
+            .metadata.name,
+            (.spec.csi.volumeHandle // ""),
+            (.spec.claimRef.namespace // ""),
+            (.spec.claimRef.name // "")
+          ]
+        | @tsv
+      '
+  )"
+  while IFS=$'\t' read -r pv_name volume_handle claim_namespace claim_name; do
+    [[ -n "$pv_name" ]] || continue
+    volume_id="${volume_handle%%-*}"
+    if [[ ! "$pv_name" =~ ^pvc-[a-f0-9]+$ ]] ||
+      [[ ! "$volume_id" =~ ^[0-9]+$ ]] ||
+      [[ "$claim_namespace" != "$stack-"* ]]; then
+      cleanup_errors+=("refused unsafe retained-volume target $pv_name/$claim_namespace/$volume_handle")
+      continue
+    fi
+    if [[ -z "${LINODE_TOKEN:-}" ]]; then
+      cleanup_errors+=("LINODE_TOKEN is required to delete retained coverage volume $volume_id")
+      continue
+    fi
+    http_status="$(
+      curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+        -H "Authorization: Bearer $LINODE_TOKEN" \
+        "https://api.linode.com/v4/volumes/$volume_id"
+    )"
+    if [[ "$http_status" != "200" && "$http_status" != "404" ]]; then
+      cleanup_errors+=("failed to delete retained coverage volume $volume_id: HTTP $http_status")
+      continue
+    fi
+    if ! kubectl --kubeconfig "$kubeconfig" delete pv "$pv_name" --ignore-not-found=true --wait=true; then
+      cleanup_errors+=("failed to delete retained coverage PV $pv_name")
+      continue
+    fi
+    jq -cn \
+      --arg volume_id "$volume_id" \
+      --arg pv_name "$pv_name" \
+      --arg claim_namespace "$claim_namespace" \
+      --arg claim_name "$claim_name" \
+      '{volume_id:$volume_id,pv_name:$pv_name,claim_namespace:$claim_namespace,claim_name:$claim_name}' \
+      >> "$deleted_cloud_volumes_file"
+  done <<< "$retained_targets"
+
+  residual_retained_pvs="$(
+    kubectl --kubeconfig "$kubeconfig" get pv -o json 2>/dev/null |
+      jq -r --arg prefix "$stack-" '
+        .items[]
+        | select((.spec.claimRef.namespace // "") | startswith($prefix))
+        | .metadata.name
+      '
+  )"
+  residual_cloud_volumes=""
+  while IFS= read -r volume_id; do
+    [[ -n "$volume_id" ]] || continue
+    http_status="$(
+      curl -sS -o /dev/null -w '%{http_code}' \
+        -H "Authorization: Bearer $LINODE_TOKEN" \
+        "https://api.linode.com/v4/volumes/$volume_id"
+    )"
+    if [[ "$http_status" != "404" ]]; then
+      residual_cloud_volumes+="${residual_cloud_volumes:+$'\n'}$volume_id"
+    fi
+  done < <(jq -r '.volume_id' "$deleted_cloud_volumes_file")
+  [[ -z "$residual_retained_pvs" ]] || cleanup_errors+=("retained coverage PVs remain")
+  [[ -z "$residual_cloud_volumes" ]] || cleanup_errors+=("retained Linode coverage volumes remain")
+  deleted_cloud_volumes="$(jq -s '.' "$deleted_cloud_volumes_file")"
+
   before="$(staging_snapshot_path)"
   after="$workspace/.artifacts/runtime-coverage/$run_id/staging-after.json"
   mkdir -p "$(dirname "$after")"
@@ -738,7 +817,6 @@ cleanup() {
   if ((${#cleanup_errors[@]})); then
     status="FAIL"
   fi
-  mkdir -p "$report_root"
   error_json="$(printf '%s\n' "${cleanup_errors[@]:-}" | jq -Rsc 'split("\n") | map(select(length > 0))')"
   jq -n \
     --arg status "$status" \
@@ -748,6 +826,9 @@ cleanup() {
     --arg residual_pvcs "$residual_pvcs" \
     --arg residual_pods "$residual_pods" \
     --arg residual_services "$residual_services" \
+    --arg residual_retained_pvs "$residual_retained_pvs" \
+    --arg residual_cloud_volumes "$residual_cloud_volumes" \
+    --argjson deleted_cloud_volumes "$deleted_cloud_volumes" \
     --argjson errors "$error_json" \
     '{
       schema_version: 1,
@@ -759,6 +840,9 @@ cleanup() {
       residual_pvcs: ($residual_pvcs | split("\n") | map(select(length > 0))),
       residual_pods: ($residual_pods | split("\n") | map(select(length > 0))),
       residual_services: ($residual_services | split("\n") | map(select(length > 0))),
+      deleted_cloud_volumes: $deleted_cloud_volumes,
+      residual_retained_pvs: ($residual_retained_pvs | split("\n") | map(select(length > 0))),
+      residual_cloud_volumes: ($residual_cloud_volumes | split("\n") | map(select(length > 0))),
       errors: $errors
     }' > "$report"
   set -e

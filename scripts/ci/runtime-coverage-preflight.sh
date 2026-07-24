@@ -11,6 +11,7 @@ runner_os="${RUNNER_OS:-unknown}"
 runner_arch="${RUNNER_ARCH:-unknown}"
 report="${RUNTIME_COVERAGE_PREFLIGHT_REPORT:-$workspace/.artifacts/runtime-coverage/$run_id/preflight-report.json}"
 failures=()
+capacity_json='{}'
 
 fail() {
   failures+=("$1")
@@ -45,6 +46,14 @@ fi
 if ! [[ "${LKE_ACTIVE_SERVICE_LIMIT:-}" =~ ^[1-9][0-9]*$ ]]; then
   fail "LKE_ACTIVE_SERVICE_LIMIT repository variable must be a positive integer"
 fi
+for name in \
+  RUNTIME_COVERAGE_PLANNED_PVCS \
+  RUNTIME_COVERAGE_PLANNED_LOAD_BALANCERS \
+  RUNTIME_COVERAGE_PLANNED_GENERATORS; do
+  if ! [[ "${!name:-}" =~ ^[0-9]+$ ]]; then
+    fail "$name must be a non-negative integer"
+  fi
+done
 
 for name in \
   LINODE_TOKEN \
@@ -66,6 +75,93 @@ if [[ -z "${KUBECONFIG:-}" || ! -s "${KUBECONFIG:-}" ]]; then
   fail "run-scoped kubeconfig is missing"
 elif ! kubectl --kubeconfig "$KUBECONFIG" get --raw=/readyz >/dev/null 2>&1; then
   fail "shared staging Kubernetes API is not ready"
+fi
+
+if [[ -n "${LINODE_TOKEN:-}" ]] &&
+  [[ "${LKE_ACTIVE_SERVICE_LIMIT:-}" =~ ^[1-9][0-9]*$ ]] &&
+  [[ "${RUNTIME_COVERAGE_PLANNED_PVCS:-}" =~ ^[0-9]+$ ]] &&
+  [[ "${RUNTIME_COVERAGE_PLANNED_LOAD_BALANCERS:-}" =~ ^[0-9]+$ ]] &&
+  [[ "${RUNTIME_COVERAGE_PLANNED_GENERATORS:-}" =~ ^[0-9]+$ ]]; then
+  capacity_dir="$(mktemp -d)"
+  capacity_failed=0
+  for entry in \
+    "instances:linode/instances" \
+    "volumes:volumes" \
+    "nodebalancers:nodebalancers"; do
+    key="${entry%%:*}"
+    endpoint="${entry#*:}"
+    if ! curl -fsS \
+      -H "Authorization: Bearer $LINODE_TOKEN" \
+      "https://api.linode.com/v4/$endpoint?page_size=500" > "$capacity_dir/$key.json"; then
+      fail "unable to query Linode $key for active-service headroom"
+      capacity_failed=1
+    fi
+  done
+  if [[ "$capacity_failed" == "0" ]]; then
+    current_instances="$(jq -er '.results // (.data | length)' "$capacity_dir/instances.json")"
+    current_volumes="$(jq -er '.results // (.data | length)' "$capacity_dir/volumes.json")"
+    current_nodebalancers="$(jq -er '.results // (.data | length)' "$capacity_dir/nodebalancers.json")"
+    current_total="$((current_instances + current_volumes + current_nodebalancers))"
+    planned_total="$((
+      RUNTIME_COVERAGE_PLANNED_PVCS +
+      RUNTIME_COVERAGE_PLANNED_LOAD_BALANCERS +
+      RUNTIME_COVERAGE_PLANNED_GENERATORS
+    ))"
+    projected_total="$((current_total + planned_total))"
+    headroom="$((LKE_ACTIVE_SERVICE_LIMIT - current_total))"
+    capacity_json="$(
+      jq -n \
+        --argjson configured_limit "$LKE_ACTIVE_SERVICE_LIMIT" \
+        --argjson current_instances "$current_instances" \
+        --argjson current_volumes "$current_volumes" \
+        --argjson current_nodebalancers "$current_nodebalancers" \
+        --argjson current_total "$current_total" \
+        --argjson planned_pvcs "$RUNTIME_COVERAGE_PLANNED_PVCS" \
+        --argjson planned_load_balancers "$RUNTIME_COVERAGE_PLANNED_LOAD_BALANCERS" \
+        --argjson planned_generators "$RUNTIME_COVERAGE_PLANNED_GENERATORS" \
+        --argjson planned_total "$planned_total" \
+        --argjson headroom "$headroom" \
+        --argjson projected_total "$projected_total" \
+        '{
+          configured_limit: $configured_limit,
+          current: {
+            instances: $current_instances,
+            volumes: $current_volumes,
+            nodebalancers: $current_nodebalancers,
+            total: $current_total
+          },
+          planned: {
+            persistent_volumes: $planned_pvcs,
+            load_balancers: $planned_load_balancers,
+            generators: $planned_generators,
+            total: $planned_total
+          },
+          available_headroom: $headroom,
+          projected_total: $projected_total,
+          sufficient: ($projected_total <= $configured_limit)
+        }'
+    )"
+    if ((projected_total > LKE_ACTIVE_SERVICE_LIMIT)); then
+      fail "Linode active-service headroom is insufficient: current=$current_total planned=$planned_total projected=$projected_total limit=$LKE_ACTIVE_SERVICE_LIMIT"
+    fi
+  fi
+  unlink "$capacity_dir/instances.json" 2>/dev/null || true
+  unlink "$capacity_dir/volumes.json" 2>/dev/null || true
+  unlink "$capacity_dir/nodebalancers.json" 2>/dev/null || true
+  rmdir "$capacity_dir" 2>/dev/null || true
+fi
+
+if [[ -n "${KUBECONFIG:-}" && -s "${KUBECONFIG:-}" ]]; then
+  released_coverage_pvs="$(
+    kubectl --kubeconfig "$KUBECONFIG" get pv -o json 2>/dev/null |
+      jq -r '.items[]
+        | select(.status.phase == "Released")
+        | select((.spec.claimRef.namespace // "") | startswith("coverage-"))
+        | .metadata.name'
+  )"
+  if [[ -n "$released_coverage_pvs" ]]; then
+    fail "released runtime-coverage PVs must be cleaned before a new run: $(printf '%s' "$released_coverage_pvs" | paste -sd, -)"
+  fi
 fi
 
 snapshot="$workspace/.artifacts/runtime-coverage/$run_id/staging-before.json"
@@ -98,6 +194,7 @@ jq -n \
   --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --argjson failures "$failure_json" \
   --argjson submodule_commits "$submodule_commits" \
+  --argjson active_service_capacity "$capacity_json" \
   '{
     schema_version: 1,
     status: $status,
@@ -120,6 +217,7 @@ jq -n \
     },
     workspace_commit: $workspace_commit,
     submodule_commits: $submodule_commits,
+    active_service_capacity: $active_service_capacity,
     generated_at: $generated_at,
     failures: $failures
   }' > "$report"
