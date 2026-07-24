@@ -2571,6 +2571,16 @@ case "$command" in
       --out-dir "$local_out_dir" \
       --server-evidence-file "$local_out_dir/server-evidence-baseline.json" \
       --live
+    local_shard_args=(
+      "${base_args[@]}"
+      "--mqtt-concurrency" "$mqtt_concurrency"
+      "--command-concurrency" "$command_concurrency"
+      "--shadow-command-timeout" "$shadow_command_timeout"
+      "--device-token-request-timeout" "$device_token_request_timeout"
+      "--device-token-request-retries" "$device_token_request_retries"
+      "--runtime-logs=$runtime_logs"
+      "--live-runner-timeout-grace" "$live_runner_timeout_grace"
+    )
     workflow_rc=0
     clip_storage_pid=""
     if clip_storage_loadtest_enabled; then
@@ -2586,7 +2596,7 @@ case "$command" in
       mkdir -p "$assignment_dir"
       printf '%s\n' "$assignment" > "$assignment_manifest"
       run_home100k shard-run \
-        "${workflow_args[@]}" \
+        "${local_shard_args[@]}" \
         --run-id "$run_id" \
         --out-dir "$assignment_dir" \
         --role "$role" \

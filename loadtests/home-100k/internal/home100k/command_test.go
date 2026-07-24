@@ -1828,7 +1828,9 @@ func TestHome100KScriptHasBoundedLocalLiveWorkflow(t *testing.T) {
 	for _, want := range []string{
 		"workflow-local-live)",
 		"HOME100K_LOCAL_LIVE_MAX_DEVICES",
+		"local_shard_args=(",
 		"run_home100k shard-run",
+		`"${local_shard_args[@]}"`,
 		"--runner-mode live",
 		"--rtk-cloud-binary \"$rtk_cloud_binary\"",
 		"run_video_loadtest_step",
@@ -1839,6 +1841,22 @@ func TestHome100KScriptHasBoundedLocalLiveWorkflow(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("home-100k.sh missing bounded local-live marker %q:\n%s", want, body)
 		}
+	}
+	localLive, _, ok := strings.Cut(body, "\n  workflow-resume-live)")
+	if !ok {
+		t.Fatal("home-100k.sh local-live case is not terminated")
+	}
+	localLive = localLive[strings.LastIndex(localLive, "\n  workflow-local-live)"):]
+	_, shardCall, ok := strings.Cut(localLive, "run_home100k shard-run")
+	if !ok {
+		t.Fatal("home-100k.sh local-live shard call is missing")
+	}
+	shardCall, _, ok = strings.Cut(shardCall, "--run-id \"$run_id\"")
+	if !ok {
+		t.Fatal("home-100k.sh local-live shard call is missing")
+	}
+	if strings.Contains(shardCall, `"${workflow_args[@]}"`) {
+		t.Fatal("local-live shard-run must not receive VM workflow-only flags")
 	}
 }
 
