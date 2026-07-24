@@ -191,7 +191,7 @@ modules:
       - { package: video_cloud/internal/clipreconcile, risk: high, minimum_statement_percent: 77.1, target_statement_percent: 70.0 }
       - { package: video_cloud/internal/mqtt, risk: high, minimum_statement_percent: 65.5, pr_minimum_statement_percent: 70.0, target_statement_percent: 70.0 }
       - { package: video_cloud/internal/signaling, risk: high, minimum_statement_percent: 82.8, target_statement_percent: 70.0 }
-      - { package: video_cloud/internal/turnregistry, risk: high, minimum_statement_percent: 64.1, target_statement_percent: 70.0 }
+      - { package: video_cloud/internal/turnregistry, risk: high, minimum_statement_percent: 70.0, target_statement_percent: 70.0 }
       - { package: video_cloud/internal/webrtc, risk: high, minimum_statement_percent: 70.2, target_statement_percent: 70.0 }
     critical_cases:
       - test_id: UNIT-VC-SHADOW-001
