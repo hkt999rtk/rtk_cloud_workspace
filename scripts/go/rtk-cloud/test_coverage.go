@@ -795,6 +795,11 @@ func changedGoLines(workspace, baseRef, headRef, modulePath string) (map[string]
 			if err != nil {
 				return nil, fmt.Errorf("resolve %s head gitlink: %w", modulePath, err)
 			}
+			for _, commit := range []string{strings.TrimSpace(baseCommit), strings.TrimSpace(headCommit)} {
+				if err := ensureGitCommit(repositoryAbs, commit); err != nil {
+					return nil, fmt.Errorf("prepare %s differential commit: %w", modulePath, err)
+				}
+			}
 			innerPath, err := filepath.Rel(repositoryAbs, moduleDir)
 			if err != nil {
 				return nil, err
@@ -823,6 +828,19 @@ func changedGoLines(workspace, baseRef, headRef, modulePath string) (map[string]
 		return nil, fmt.Errorf("read differential coverage diff: %w", err)
 	}
 	return parseChangedGoLines(output)
+}
+
+func ensureGitCommit(repository, commit string) error {
+	if _, err := gitOutput(repository, "cat-file", "-e", commit+"^{commit}"); err == nil {
+		return nil
+	}
+	if _, err := gitOutput(repository, "fetch", "--no-tags", "origin", commit); err != nil {
+		return fmt.Errorf("fetch missing git commit %s: %w", commit, err)
+	}
+	if _, err := gitOutput(repository, "cat-file", "-e", commit+"^{commit}"); err != nil {
+		return fmt.Errorf("git commit %s is unavailable after fetch: %w", commit, err)
+	}
+	return nil
 }
 
 func parseChangedGoLines(output string) (map[string]map[int]bool, error) {

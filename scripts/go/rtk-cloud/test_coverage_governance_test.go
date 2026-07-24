@@ -635,3 +635,64 @@ func TestChangedGoLinesResolvesWorkspaceSubmoduleGitlinks(t *testing.T) {
 		t.Fatal("submodule differential returned nil")
 	}
 }
+
+func TestEnsureGitCommitFetchesMissingCommitFromOrigin(t *testing.T) {
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	if _, err := gitOutput(root, "init", "--bare", remote); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(root, "source")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"init"},
+		{"config", "user.email", "coverage@example.test"},
+		{"config", "user.name", "Coverage Test"},
+		{"remote", "add", "origin", remote},
+	} {
+		if _, err := gitOutput(source, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	file := filepath.Join(source, "value.txt")
+	if err := os.WriteFile(file, []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitOutput(source, "add", "value.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitOutput(source, "commit", "-m", "one"); err != nil {
+		t.Fatal(err)
+	}
+	first, err := gitOutput(source, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitOutput(source, "commit", "-am", "two"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitOutput(source, "push", "origin", "HEAD:main"); err != nil {
+		t.Fatal(err)
+	}
+	clone := filepath.Join(root, "clone")
+	if _, err := gitOutput(root, "clone", "--depth=1", "--branch", "main", "file://"+remote, clone); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitOutput(clone, "cat-file", "-e", strings.TrimSpace(first)+"^{commit}"); err == nil {
+		t.Fatal("shallow clone unexpectedly contains the old commit")
+	}
+	if err := ensureGitCommit(clone, strings.TrimSpace(first)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitOutput(clone, "cat-file", "-e", strings.TrimSpace(first)+"^{commit}"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureGitCommit(clone, "not-a-commit"); err == nil || !strings.Contains(err.Error(), "fetch missing") {
+		t.Fatalf("missing commit error = %v", err)
+	}
+}
