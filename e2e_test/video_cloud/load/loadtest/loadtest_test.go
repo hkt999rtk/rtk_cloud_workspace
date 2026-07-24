@@ -4892,6 +4892,30 @@ func TestClassifyError(t *testing.T) {
 	}
 }
 
+func TestRecordSelectedCandidatePairStatsCopiesEveryCounter(t *testing.T) {
+	stats := &WebRTCMediaStats{}
+	recordSelectedCandidatePairStats(stats, selectedCandidatePairStatsEvidence{
+		RequestsSent:            1,
+		RequestsReceived:        2,
+		ResponsesSent:           3,
+		ResponsesReceived:       4,
+		RetransmissionsSent:     5,
+		RetransmissionsReceived: 6,
+		ConsentRequestsSent:     7,
+		CurrentRoundTripTimeMS:  8,
+	})
+	if stats.ICERequestsSent != 1 ||
+		stats.ICERequestsReceived != 2 ||
+		stats.ICEResponsesSent != 3 ||
+		stats.ICEResponsesReceived != 4 ||
+		stats.ICERetransmissionsSent != 5 ||
+		stats.ICERetransmissionsReceived != 6 ||
+		stats.ICEConsentRequestsSent != 7 ||
+		stats.ICECurrentRoundTripTimeMS != 8 {
+		t.Fatalf("selected candidate pair stats = %#v", stats)
+	}
+}
+
 func TestValidateWebRTCSetup(t *testing.T) {
 	offer, cleanup, err := NewPionOffer()
 	if err != nil {

@@ -2,6 +2,7 @@ package loadtest
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -87,6 +88,26 @@ func TestMediaSchedulerDropsWhenWorkerQueueFull(t *testing.T) {
 	joined := strings.Join(logs, "\n")
 	if !strings.Contains(joined, "media_scheduler_queue_full") {
 		t.Fatalf("expected queue-full log, got %q", joined)
+	}
+}
+
+func TestMediaSchedulerCompletesCancelledTaskDeterministically(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	task := &mediaPacedTask{
+		ctx:  ctx,
+		done: make(chan mediaPacedResult, 1),
+	}
+	now := time.Now()
+	(&mediaPacer{}).enqueueDueTask(task, now, func(*mediaPacedTask, time.Time) {
+		t.Fatal("cancelled task was rescheduled")
+	})
+	result := <-task.done
+	if !errors.Is(result.err, context.Canceled) {
+		t.Fatalf("result error = %v", result.err)
+	}
+	if !result.stats.EndedAt.Equal(now) {
+		t.Fatalf("ended at = %s, want %s", result.stats.EndedAt, now)
 	}
 }
 

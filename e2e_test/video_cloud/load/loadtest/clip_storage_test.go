@@ -628,6 +628,41 @@ func TestClipStorageMixedNonClipThresholdIsIndependent(t *testing.T) {
 	}
 }
 
+func TestClipStorageThresholdReportsAllEvidenceFailures(t *testing.T) {
+	evaluation := ThresholdEvaluation{Passed: true}
+	ApplyClipStorageThreshold(&evaluation, ClipStorageMetrics{
+		Enabled:             true,
+		SuccessRate:         0.9,
+		UploadSuccesses:     2,
+		ReadyUploads:        1,
+		CorrelatedReady:     0,
+		ControlPlaneBytes:   100,
+		DirectPutBytes:      0,
+		VerificationP95MS:   30001,
+		VerificationP99MS:   60001,
+		MixedNonClipEnabled: true,
+		NonClipAttempts:     0,
+		NonClipSuccessRate:  0,
+	})
+	failures := strings.Join(evaluation.Failures, "\n")
+	for _, want := range []string{
+		"success rate",
+		"ready correlation",
+		"clip correlation",
+		"no direct object PUT",
+		"verification p95",
+		"verification p99",
+		"no non-clip attempts",
+	} {
+		if !strings.Contains(failures, want) {
+			t.Fatalf("threshold failures missing %q: %s", want, failures)
+		}
+	}
+	if evaluation.Passed {
+		t.Fatalf("invalid clip evidence passed: %v", evaluation.Failures)
+	}
+}
+
 func TestSanitizeEvidenceRedactsPresignedURLs(t *testing.T) {
 	raw := []byte(`{"upload_id":"upload-1","clip":{"object_key":"clips/device/clip.mp4","url":"https://storage.test/clip?X-Amz-Signature=secret"},"thumbnail_url":"https://api.test/thumb"}`)
 	got := sanitizeEvidence(raw)
