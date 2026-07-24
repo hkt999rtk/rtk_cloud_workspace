@@ -345,7 +345,7 @@ func executeFeatureSpec(workspace, envRoot, runID, environment string, spec feat
 	stageRunID := boundedFeatureStageRunID(runID, spec.Feature, spec.Profile)
 	env := map[string]string{
 		"HOME100K_DESCRIPTION_FILE":        filepath.Join(workspace, filepath.FromSlash(spec.ScenarioPath)),
-		"HOME100K_ENV_ROOT":                featureLoadEnvRoot(envRoot),
+		"HOME100K_ENV_ROOT":                featureExecutionLoadEnvRoot(envRoot),
 		"HOME100K_REGION":                  region,
 		"HOME100K_KUBECONFIG":              featureKubeconfigPath(envRoot),
 		"HOME100K_DEVICE_CLIENT_CA_BUNDLE": featureDeviceCABundlePath(envRoot),
@@ -387,6 +387,10 @@ func featureLoadEnvRoot(deploymentEnvRoot string) string {
 		return filepath.Join(filepath.Dir(filepath.Clean(deploymentEnvRoot)), "runtime")
 	}
 	return deploymentEnvRoot
+}
+
+func featureExecutionLoadEnvRoot(deploymentEnvRoot string) string {
+	return firstNonEmpty(os.Getenv("HOME100K_ENV_ROOT"), featureLoadEnvRoot(deploymentEnvRoot))
 }
 
 func featureKubeconfigPath(deploymentEnvRoot string) string {

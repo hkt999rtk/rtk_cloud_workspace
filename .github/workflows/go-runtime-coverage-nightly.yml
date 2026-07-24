@@ -373,6 +373,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export HOME100K_ENV_ROOT="$RUNTIME_ENV_ROOT"
           scripts/ci/runtime-coverage-k8s.sh tunnel-start
           trap 'scripts/ci/runtime-coverage-k8s.sh tunnel-stop' EXIT
           for feature in device-shadow video-webrtc clip-storage; do

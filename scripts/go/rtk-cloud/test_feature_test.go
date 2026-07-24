@@ -292,6 +292,14 @@ func TestFeatureLoadEnvRootUsesRuntimeSiblingForLKEDeployment(t *testing.T) {
 	}
 }
 
+func TestFeatureExecutionLoadEnvRootHonorsExplicitOverride(t *testing.T) {
+	t.Setenv("HOME100K_ENV_ROOT", "/tmp/runtime-coverage/lke")
+	got := featureExecutionLoadEnvRoot("/workspace/cloud_env/staging/lke")
+	if got != "/tmp/runtime-coverage/lke" {
+		t.Fatalf("execution load env root = %q", got)
+	}
+}
+
 func TestFeatureSelectionUsesChangedPathsAndLabels(t *testing.T) {
 	catalog := testCatalog{Cases: []testCatalogCase{
 		{ID: "LOAD-HOME-SHADOW-001", Layer: "load", Feature: "device-shadow", Profile: "qualification-1k", Status: "active", ChangePaths: []string{"repos/rtk_video_cloud/internal/deviceshadow/**"}},
