@@ -19,7 +19,7 @@ ui_staging: &ui_staging
   layer: ui
   owner: rtk_cloud_admin
   runner: test-ui
-  targets: [desktop]
+  targets: [desktop, mobile]
   environments: [staging]
   tags: [smoke, staging]
   evidence: [screenshot]
@@ -37,6 +37,28 @@ sdk_e2e: &sdk_e2e
   status: active
 
 cases:
+  - id: UNIT-AM-AUTH-001
+    title: OIDC failures do not expose provider tokens
+    layer: unit
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/auth/oidc_test.go
+    selector: TestOIDCTokenErrorsDoNotContainProviderTokens
+    method: Go unit test injects provider token failures and asserts all returned errors are redacted.
+    runner: test-coverage
+    environments: [local, ci]
+    evidence: [json, junit]
+    status: active
+  - id: UNIT-VC-SHADOW-001
+    title: Device shadow rejects stale versions
+    layer: unit
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/deviceshadow/service_test.go
+    selector: TestServiceRejectsStaleVersion
+    method: Go unit test applies a stale expected version and asserts deterministic version-conflict rejection.
+    runner: test-coverage
+    environments: [local, ci]
+    evidence: [json, junit]
+    status: active
   - { <<: *ui_local, id: UI-CA-ACCESS-001, title: Anonymous users cannot read the platform admin API, source: repos/rtk_cloud_admin/web/e2e/access-control.spec.mjs, selector: "[UI-CA-ACCESS-001]" }
   - { <<: *ui_local, id: UI-CA-ACCESS-002, title: Customer users cannot read the platform admin API, source: repos/rtk_cloud_admin/web/e2e/access-control.spec.mjs, selector: "[UI-CA-ACCESS-002]" }
   - { <<: *ui_local, id: UI-CA-ACCESS-003, title: Customer navigation remains separated from platform navigation, source: repos/rtk_cloud_admin/web/e2e/access-control.spec.mjs, selector: "[UI-CA-ACCESS-003]" }
@@ -171,6 +193,12 @@ cases:
   - { id: SVC-FRONTEND-SUITE-001, title: Cloud Frontend service suite passes, layer: service, owner: rtk_cloud_frontend, source: repos/rtk_cloud_frontend/go.mod, selector: "module", method: Go test executes all Cloud Frontend packages., runner: test-services, environments: [local, ci], evidence: [console], status: active }
   - { id: SVC-LOGGER-SUITE-001, title: Cloud Logger service suite passes, layer: service, owner: rtk_cloud_logger, source: repos/rtk_cloud_logger/go.mod, selector: "module", method: Go test executes all Cloud Logger packages., runner: test-services, environments: [local, ci], evidence: [console], status: active }
   - { id: SVC-VC-SUITE-001, title: Video Cloud unit and service suite passes, layer: service, owner: rtk_video_cloud, source: repos/rtk_video_cloud/go.mod, selector: "module", method: Go and Python test runners execute Video Cloud service and tooling suites., runner: test-services, environments: [local, ci], evidence: [console], status: active }
+  - { id: SVC-DNS-SUITE-001, title: GoDaddy DNS toolkit suite passes, layer: service, owner: rtk_video_cloud, source: repos/rtk_video_cloud/tools/godaddy-dns/go.mod, selector: "module", method: Go test executes DNS provider discovery mutation and redaction tests., runner: test-services, environments: [local, ci], evidence: [console], status: active }
   - { id: SVC-WS-TOOL-001, title: Workspace tooling suite passes coverage gates, layer: service, owner: cloud_platform, source: scripts/go/go.mod, selector: "module", method: Go tests instrument workspace CLI and orchestration code with overall and differential coverage gates., runner: test-coverage, environments: [local, ci], evidence: [json, markdown], status: active }
   - { id: SVC-WS-E2E-001, title: Workspace deterministic E2E suite passes coverage gates, layer: service, owner: cloud_platform, source: e2e_test/go.mod, selector: "module", method: Go tests instrument deterministic E2E harness and report code with overall and differential coverage gates., runner: test-coverage, environments: [local, ci], evidence: [json, markdown], status: active }
   - { id: SVC-HOME-LOAD-001, title: Home load-runner contract suite passes coverage gates, layer: service, owner: home_cloud, source: loadtests/home-100k/go.mod, selector: "module", method: Go tests instrument load planning execution evidence and reporting code with overall and differential coverage gates., runner: test-coverage, environments: [local, ci], evidence: [json, markdown], status: active }
+  - { id: UNIT-CA-AUTH-001, title: Cloud Admin login continuation rejects open redirects, layer: unit, owner: rtk_cloud_admin, source: repos/rtk_cloud_admin/web/src/auth-routing.test.mjs, selector: "login next rejects open redirects and unrelated app paths", method: Node unit test exercises accepted and rejected redirect destinations through the authentication routing helper., runner: test-coverage, environments: [local, ci], evidence: [json, junit], status: active }
+  - { id: UNIT-CA-ERROR-001, title: Cloud Admin SSO errors hide internal configuration, layer: unit, owner: rtk_cloud_admin, source: repos/rtk_cloud_admin/web/src/http.test.mjs, selector: "userFacingSSOError hides internal SSO configuration details", method: Node unit test verifies internal SSO error material is normalized to customer-safe copy., runner: test-coverage, environments: [local, ci], evidence: [json, junit], status: active }
+  - { id: UNIT-CLIENT-PKI-001, title: JavaScript SDK Node PKI mTLS helper contract is preserved, layer: unit, owner: rtk_cloud_client, source: repos/rtk_cloud_client/packages/javascript/test/package.test.ts, selector: "implements Node PKI mTLS helper surface with temp PEM files", method: Node unit test creates temporary PEM material and verifies the SDK mTLS helper surface., runner: test-coverage, environments: [local, ci], evidence: [json, junit], status: active }
+  - { id: UNIT-CLIENT-TRANS-001, title: JavaScript SDK HTTP timeout and cancellation controls work, layer: unit, owner: rtk_cloud_client, source: repos/rtk_cloud_client/packages/javascript/test/package.test.ts, selector: "supports production HTTP timeout and cancellation controls", method: Node unit test drives timeout and cancellation paths through the production HTTP transport., runner: test-coverage, environments: [local, ci], evidence: [json, junit], status: active }
+  - { id: UNIT-CLIENT-ERROR-001, title: JavaScript SDK HTTP errors remain normalized and compatible, layer: unit, owner: rtk_cloud_client, source: repos/rtk_cloud_client/packages/javascript/test/package.test.ts, selector: "normalizes HTTP failures and preserves legacy error body", method: Node unit test verifies HTTP failure normalization and the legacy error body contract., runner: test-coverage, environments: [local, ci], evidence: [json, junit], status: active }

@@ -103,7 +103,9 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 			Name:  "ensure-lke-node-pool",
 			Phase: "provider",
 			Enabled: func(ctx provisionContext) bool {
-				return provider.Name() == "lke" && (ctx.Opts.mode.apply || ctx.Opts.mode.deploy)
+				return provider.Name() == "lke" &&
+					(ctx.Opts.mode.apply || ctx.Opts.mode.deploy) &&
+					os.Getenv("RUNTIME_COVERAGE_SHARED_CLUSTER") != "1"
 			},
 			Run: func(ctx provisionContext) error {
 				return ensureLKENodePool(ctx.Paths, ctx.Env)

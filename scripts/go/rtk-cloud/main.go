@@ -97,6 +97,8 @@ var commands = map[string]commandSpec{
 	"test-services":                    {run: runTestServices},
 	"test-catalog":                     {run: runTestCatalog},
 	"test-coverage":                    {run: runTestCoverage},
+	"test-coverage-aggregate":          {run: runTestCoverageAggregate},
+	"test-inventory":                   {run: runTestInventory},
 	"test-ui":                          {run: runTestUI},
 	"unprovision-devices":              {run: runUnprovisionDevices},
 	"validate-device-bind":             {run: runValidateDeviceBind},
@@ -195,6 +197,9 @@ func normalizeEnvironmentArgs(args []string) ([]string, error) {
 		return args, nil
 	}
 	if hasEnvRoot {
+		if args[0] == "test-feature" {
+			return args, nil
+		}
 		return nil, errors.New("--environment and --env-root cannot be used together")
 	}
 	if filepath.Base(environment) != environment || environment == "." || environment == ".." {
@@ -1106,6 +1111,9 @@ func runTestMatrix(args []string) error {
 	} else {
 		fmt.Fprintf(os.Stdout, "coverage policy valid: %d modules, %.1f%% differential minimum\n", len(cfg.Modules), cfg.Differential.MinimumStatementPercent)
 	}
+	if err := checkUnitInventory(workspace, "", true); err != nil {
+		return err
+	}
 	fmt.Fprintln(os.Stdout)
 	fmt.Fprintln(os.Stdout, "== repository status checks ==")
 	submodules, err := submodulePaths(workspace)
@@ -1198,9 +1206,11 @@ func runTestServices(args []string) error {
 		{name: "rtk_account_manager", dir: filepath.Join(workspace, "repos", "rtk_account_manager"), cmd: []string{"go", "test", "./..."}},
 		{name: "rtk_cloud_admin", dir: filepath.Join(workspace, "repos", "rtk_cloud_admin"), cmd: []string{"go", "test", "./..."}},
 		{name: "rtk_cloud_admin/web", dir: filepath.Join(workspace, "repos", "rtk_cloud_admin", "web"), cmd: []string{"npm", "test"}},
+		{name: "rtk_cloud_client/golang", dir: filepath.Join(workspace, "repos", "rtk_cloud_client", "packages", "golang"), cmd: []string{"go", "test", "./..."}},
 		{name: "rtk_cloud_frontend", dir: filepath.Join(workspace, "repos", "rtk_cloud_frontend"), cmd: []string{"go", "test", "./..."}},
 		{name: "rtk_cloud_logger", dir: filepath.Join(workspace, "repos", "rtk_cloud_logger"), cmd: []string{"go", "test", "./..."}},
 		{name: "rtk_video_cloud", dir: filepath.Join(workspace, "repos", "rtk_video_cloud"), cmd: []string{"go", "test", "./..."}},
+		{name: "rtk_video_cloud/godaddy-dns", dir: filepath.Join(workspace, "repos", "rtk_video_cloud", "tools", "godaddy-dns"), cmd: []string{"go", "test", "./..."}},
 		{name: "rtk_cloud_client/javascript", dir: filepath.Join(workspace, "repos", "rtk_cloud_client", "packages", "javascript"), cmd: []string{"npm", "test"}},
 		{name: "rtk_cloud_client/tools", dir: filepath.Join(workspace, "repos", "rtk_cloud_client"), cmd: []string{"python3", "-m", "unittest", "discover", "-s", "tools/tests"}},
 		{name: "rtk_video_cloud/tools", dir: filepath.Join(workspace, "repos", "rtk_video_cloud"), cmd: []string{"python3", "-m", "unittest", "discover", "-s", "tools/tests"}},
@@ -1332,9 +1342,6 @@ func runTestUI(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *staging && *mobile {
-		return errors.New("test-ui --staging currently supports the desktop browser project only")
-	}
 	if *runID == "" {
 		if githubRunID, githubAttempt := strings.TrimSpace(os.Getenv("GITHUB_RUN_ID")), strings.TrimSpace(os.Getenv("GITHUB_RUN_ATTEMPT")); githubRunID != "" && githubAttempt != "" {
 			*runID = "gh-" + githubRunID + "-" + githubAttempt
@@ -1380,25 +1387,42 @@ func runTestUI(args []string) error {
 			return errors.New("test-ui --staging requires E2E_EVIDENCE_SAFE=1 to confirm dedicated test data is safe for artifact upload")
 		}
 		fmt.Fprintln(os.Stdout, "== headless UI E2E: deployed staging backend ==")
-		playwrightArgs := []string{"playwright", "test", "--project=staging"}
-		expected, err := expectedUITestIDs(workspace, "desktop", "staging", !*full)
-		if err != nil {
-			return err
+		targets := []string{}
+		if *desktop {
+			targets = append(targets, "desktop")
 		}
-		env, err := uiEvidenceEnv(workspace, webRoot, *runID, "desktop", "staging", expected)
-		if err != nil {
-			return err
+		if *mobile {
+			targets = append(targets, "mobile")
 		}
-		env["E2E_UI_TARGET"] = "staging"
-		if err := os.RemoveAll(env["E2E_TEST_RUN_DIR"]); err != nil {
-			return fmt.Errorf("reset UI artifact directory: %w", err)
+		if len(targets) == 0 {
+			targets = []string{"desktop"}
 		}
-		runErr := runCmdWithEnv(webRoot, env, "npx", playwrightArgs...)
-		evidenceErr := validateUIEvidenceRun(env["E2E_TEST_RUN_DIR"], expected)
-		if evidenceErr != nil {
-			return evidenceErr
+		for _, target := range targets {
+			project := "staging"
+			if target == "mobile" {
+				project = "staging-mobile"
+			}
+			expected, err := expectedUITestIDs(workspace, target, "staging", !*full)
+			if err != nil {
+				return err
+			}
+			env, err := uiEvidenceEnv(workspace, webRoot, *runID, target, "staging", expected)
+			if err != nil {
+				return err
+			}
+			env["E2E_UI_TARGET"] = target
+			if err := os.RemoveAll(env["E2E_TEST_RUN_DIR"]); err != nil {
+				return fmt.Errorf("reset UI artifact directory: %w", err)
+			}
+			runErr := runCmdWithEnv(webRoot, env, "npx", "playwright", "test", "--project="+project)
+			if evidenceErr := validateUIEvidenceRun(env["E2E_TEST_RUN_DIR"], expected); evidenceErr != nil {
+				return evidenceErr
+			}
+			if runErr != nil {
+				return runErr
+			}
 		}
-		return runErr
+		return nil
 	}
 
 	fmt.Fprintln(os.Stdout, "== UI fixture generation ==")
@@ -4385,7 +4409,7 @@ func writeLKEImageEnvFile(path string, env map[string]string) error {
 	sort.Strings(keys)
 	var buf bytes.Buffer
 	for _, key := range keys {
-		fmt.Fprintf(&buf, "export %s=%s\n", key, shellQuote(env[key]))
+		fmt.Fprintf(&buf, "export %s=%s\n", key, shellQuoteArg(env[key]))
 	}
 	return os.WriteFile(path, buf.Bytes(), 0o644)
 }

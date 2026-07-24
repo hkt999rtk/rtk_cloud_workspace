@@ -1,0 +1,14 @@
+FROM golang:1.25-bookworm AS builder
+WORKDIR /src
+COPY . .
+RUN mkdir -p /out && for command in api certissuer factoryenroll cleaner clipverifier clipuploadpreflight clipreconcile statistics metricsexporter turnregistry logingester mqttusage; do \
+      CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -cover -coverpkg=./internal/... -trimpath -o "/out/$command" "./cmd/$command"; \
+    done
+FROM debian:bookworm-slim
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/* \
+    && useradd -r -u 10001 app && chown app:app /app
+COPY --from=builder /out/ /app/
+USER app
+EXPOSE 8080
+ENTRYPOINT ["/app/api"]

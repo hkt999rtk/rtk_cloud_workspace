@@ -142,6 +142,53 @@ CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
 	}
 }
 
+func TestLoadAcceptsRuntimeCoverageStackOverride(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "metadata", "runtime-coverage", "lke")
+	mkdir(t, filepath.Join(root, "env"))
+	write(t, filepath.Join(root, "env", "stack.env"), `CLOUD_ENV_NAME=runtime-coverage
+CLOUD_PROVIDER=lke
+CLOUD_REGION=us-sea
+CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+CLOUD_RUNTIME_COVERAGE_STACK=coverage-unit-1
+`)
+	env, err := Load(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.Values["CLOUD_STACK_NAME"] != "coverage-unit-1" {
+		t.Fatalf("stack got %s", env.Values["CLOUD_STACK_NAME"])
+	}
+	if env.Values["VIDEO_CLOUD_DOMAIN"] != "coverage-unit-1.realtekconnect.com" {
+		t.Fatalf("video domain got %s", env.Values["VIDEO_CLOUD_DOMAIN"])
+	}
+}
+
+func TestLoadRejectsInvalidRuntimeCoverageStackOverride(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		provider string
+		stack    string
+	}{
+		{name: "unsafe name", provider: "lke", stack: "video-cloud-staging"},
+		{name: "non lke provider", provider: "linode", stack: "coverage-unit-1"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "metadata", "runtime-coverage", testCase.provider)
+			mkdir(t, filepath.Join(root, "env"))
+			write(t, filepath.Join(root, "env", "stack.env"), `CLOUD_ENV_NAME=runtime-coverage
+CLOUD_PROVIDER=`+testCase.provider+`
+CLOUD_REGION=us-sea
+CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+CLOUD_RUNTIME_COVERAGE_STACK=`+testCase.stack+`
+`)
+			_, err := Load(root, "")
+			if err == nil || !strings.Contains(err.Error(), "requires a coverage-* name and CLOUD_PROVIDER=lke") {
+				t.Fatalf("expected runtime coverage stack rejection, got %v", err)
+			}
+		})
+	}
+}
+
 func TestDeriveStackValuesFromEnvName(t *testing.T) {
 	values := Derive(map[string]string{
 		"CLOUD_ENV_NAME":        "stg",

@@ -12,6 +12,8 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -97,6 +99,57 @@ func TestRunnerEnrollsMultipleDevicesAndValidatesCertificates(t *testing.T) {
 		if !device.Success || !device.ClientAuthUsable || device.CA {
 			t.Fatalf("device result = %+v", device)
 		}
+	}
+}
+
+func TestReportRoundTripRendersStableEvidenceAndSortedErrors(t *testing.T) {
+	started := time.Date(2026, 7, 24, 1, 2, 3, 0, time.UTC)
+	result := &Result{
+		Schema:    ResultSchema,
+		RunID:     "run-report-001",
+		StartedAt: started,
+		EndedAt:   started.Add(3 * time.Second),
+		Config: ResultConfig{
+			FactoryURL: "https://factory.example.test", Count: 2, Concurrency: 2, BatchID: "batch-001",
+		},
+		Summary: Summary{
+			Total: 2, Successes: 1, Failures: 1, SuccessRate: .5,
+			P95LatencyMS: 20, P99LatencyMS: 25, DurationMillis: 3000,
+		},
+		Errors: map[string]int{"z_transport": 1, "a_certificate": 1},
+		Devices: []DeviceResult{
+			{Index: 1, DeviceID: "pk-good", Success: true, StatusCode: http.StatusOK, LatencyMillis: 12},
+			{Index: 2, DeviceID: "pk-bad", Success: false, StatusCode: http.StatusBadRequest, LatencyMillis: 18, ErrorClass: "certificate", Error: "invalid | certificate\nrejected"},
+		},
+	}
+	dir := t.TempDir()
+	jsonPath := filepath.Join(dir, "result.json")
+	reportPath := filepath.Join(dir, "report.md")
+	if err := WriteJSON(jsonPath, result); err != nil {
+		t.Fatal(err)
+	}
+	roundTrip, err := ReadJSON(jsonPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if roundTrip.RunID != result.RunID || roundTrip.Summary.Failures != 1 {
+		t.Fatalf("round trip = %#v", roundTrip)
+	}
+	if err := WriteMarkdown(reportPath, roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	report, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(report)
+	for _, want := range []string{"Overall result: `FAIL`", "certificate CN/public key/clientAuth validated", "invalid \\| certificate rejected", "`a_certificate`", "`z_transport`"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("report missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Index(text, "`a_certificate`") > strings.Index(text, "`z_transport`") {
+		t.Fatal("error classes are not sorted")
 	}
 }
 

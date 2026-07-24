@@ -142,7 +142,7 @@ jobs:
     needs: select
     if: needs.select.outputs.required == 'true' && needs.select.outputs.mode == 'required'
     concurrency:
-      group: feature-qualification-staging
+      group: staging-mutating-tests
       cancel-in-progress: false
     runs-on: [self-hosted, macOS, ARM64, rtk_cloud_client, jarvis-macos]
     timeout-minutes: 240

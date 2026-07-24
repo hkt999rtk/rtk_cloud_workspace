@@ -158,6 +158,49 @@ func TestRoute53DNS01UsesQuotedMultiValueRecordSet(t *testing.T) {
 	}
 }
 
+func TestRoute53CleanupRemovesOnlyRequestedTXTValuesAndCollectsEvidence(t *testing.T) {
+	zone := dnsZone{Name: "example.test", ID: "z1"}
+	ctx := dnsAdapterContext{
+		RootDomain: "example.test", RuntimeRoot: t.TempDir(),
+		Values: map[string]string{"DNS_RECORD_TTL": "600", "DNS_PROPAGATION_TIMEOUT_SECONDS": "1", "DNS_PROPAGATION_INTERVAL_SECONDS": "1"},
+	}
+	fake := &fakeRoute53API{records: []types.ResourceRecordSet{{
+		Name: aws.String("_acme-challenge.api.example.test."), Type: types.RRTypeTxt, TTL: aws.Int64(600),
+		ResourceRecords: []types.ResourceRecord{{Value: aws.String(`"keep"`)}, {Value: aws.String(`"remove"`)}},
+	}}}
+	adapter := &route53DNSAdapter{client: fake}
+	if err := adapter.CleanupDNS01Challenge(context.Background(), ctx, zone, "api.example.test", "remove"); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.changes) != 1 || fake.changes[0].Action != types.ChangeActionUpsert {
+		t.Fatalf("changes = %#v", fake.changes)
+	}
+	values := fake.changes[0].ResourceRecordSet.ResourceRecords
+	if len(values) != 1 || aws.ToString(values[0].Value) != `"keep"` {
+		t.Fatalf("remaining values = %#v", values)
+	}
+
+	fake.records[0].ResourceRecords = []types.ResourceRecord{{Value: aws.String(`"remove"`)}}
+	if err := adapter.DeleteRecordValues(context.Background(), ctx, zone, dnsRecordSet{
+		Name: "_acme-challenge.api.example.test", Type: "TXT", Values: []string{"remove"}, TTL: 600,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.changes) != 2 || fake.changes[1].Action != types.ChangeActionDelete {
+		t.Fatalf("changes = %#v", fake.changes)
+	}
+	if err := adapter.CollectEvidence(context.Background(), ctx, zone); err != nil {
+		t.Fatal(err)
+	}
+	state, err := os.ReadFile(filepath.Join(ctx.RuntimeRoot, "dns", "route53", "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(state), `"hosted_zone_id": "z1"`) {
+		t.Fatalf("provider state = %s", state)
+	}
+}
+
 func TestDeploymentDNSPlanIsIdenticalAcrossDNSAdapters(t *testing.T) {
 	workspace := writeDeploymentFixture(t, "staging", "lke")
 	writeTestFile(t, filepath.Join(workspace, "cloud_deploy", "dns_adapters", "route53", "defaults.env"), "DNS_RECORD_TTL=600\nDNS_PROPAGATION_TIMEOUT_SECONDS=900\nDNS_PROPAGATION_INTERVAL_SECONDS=10\nROUTE53_CONTROL_PLANE_REGION=us-east-1\n")
