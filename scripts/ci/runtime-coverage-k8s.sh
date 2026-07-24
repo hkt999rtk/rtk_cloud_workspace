@@ -482,6 +482,8 @@ spec:
       targetPort: mqtts
 EOF
   rm -rf "$tls_tmp"
+  allow_feature_endpoint_ingress "$account_namespace" account-manager 8080
+  allow_feature_endpoint_ingress "$video_namespace" video-cloud-api 8080
   allow_feature_endpoint_ingress "$video_namespace" mqtt 8883
   kubectl --kubeconfig "$kubeconfig" -n "$ingress_namespace" \
     rollout status deployment/runtime-coverage-ingress --timeout=5m

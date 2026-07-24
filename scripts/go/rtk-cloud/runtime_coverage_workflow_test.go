@@ -118,6 +118,8 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 	}
 	onboarding := workflow[onboardingStart:canaryStart]
 	if !strings.Contains(onboarding, "tunnel-start") ||
+		!strings.Contains(onboarding, "$ACCOUNT_MANAGER_BASE_URL/healthz") ||
+		!strings.Contains(onboarding, "$VIDEO_CLOUD_BASE_URL/version") ||
 		!strings.Contains(onboarding, "CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE") ||
 		!strings.Contains(onboarding, "CLOUD_STAGING_E2E_FACTORY_ENROLL_PORT=18444") ||
 		!strings.Contains(onboarding, "CLOUD_STAGING_E2E_MQTT_PORT=18884") {
