@@ -119,8 +119,9 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 	onboarding := workflow[onboardingStart:canaryStart]
 	if !strings.Contains(onboarding, "tunnel-start") ||
 		!strings.Contains(onboarding, "CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE") ||
+		!strings.Contains(onboarding, "CLOUD_STAGING_E2E_FACTORY_ENROLL_PORT=18444") ||
 		!strings.Contains(onboarding, "CLOUD_STAGING_E2E_MQTT_PORT=18884") {
-		t.Fatal("onboarding must use the isolated mTLS tunnel for token issuance without colliding with test-live MQTT forwarding")
+		t.Fatal("onboarding must use the isolated mTLS tunnel for token issuance without colliding with test-live factory/MQTT forwarding")
 	}
 	if !strings.Contains(workflow[canaryStart:uiStart], "tunnel-start") {
 		t.Fatal("feature canaries require the shared HTTPS/MQTT tunnel")
