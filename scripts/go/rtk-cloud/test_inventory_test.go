@@ -125,3 +125,89 @@ func TestValidateCriticalNodeTestsRequiresPass(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRenderNodeJUnitAndUnitInventory(t *testing.T) {
+	units := []nodeUnitResult{
+		{
+			CanonicalKey: "js://module/test/case.test.ts#passes",
+			Module:       "module",
+			Language:     "javascript",
+			Source:       "test/case.test.ts",
+			Title:        "passes",
+			DurationMS:   0.625,
+			Status:       "PASS",
+			TestID:       "UNIT-X-CASE-001",
+		},
+		{
+			CanonicalKey: "js://module/test/case.test.ts#fails",
+			Module:       "module",
+			Language:     "javascript",
+			Source:       "test/case.test.ts",
+			Title:        "fails",
+			DurationMS:   1.5,
+			Status:       "FAIL",
+			Error:        "unsafe <detail>",
+		},
+		{
+			CanonicalKey: "js://module/test/case.test.ts#skips",
+			Module:       "module",
+			Language:     "javascript",
+			Source:       "test/case.test.ts",
+			Title:        "skips",
+			Status:       "SKIP",
+		},
+		{
+			CanonicalKey: "js://module/test/case.test.ts#todo",
+			Module:       "module",
+			Language:     "javascript",
+			Source:       "test/case.test.ts",
+			Title:        "todo",
+			Status:       "TODO",
+		},
+	}
+	junit := string(renderNodeJUnit("module", units))
+	for _, expected := range []string{
+		`tests="4" failures="1" skipped="2"`,
+		`time="0.001"`,
+		`<failure message="unsafe &lt;detail&gt;"/>`,
+		`<skipped message="skip"/>`,
+		`<skipped message="todo"/>`,
+	} {
+		if !strings.Contains(junit, expected) {
+			t.Fatalf("JUnit missing %q:\n%s", expected, junit)
+		}
+	}
+
+	ledger := unitInventoryLedger{SchemaVersion: 1, Cases: []unitInventoryCase{
+		{
+			CanonicalKey: units[0].CanonicalKey,
+			Module:       "module",
+			Language:     "javascript",
+			Source:       units[0].Source,
+			Title:        "passes | safely",
+			Owner:        "owner",
+			Status:       "active",
+			TestID:       units[0].TestID,
+		},
+	}}
+	rendered := string(renderUnitInventory(ledger))
+	if !strings.Contains(rendered, "Generated from `tests/unit-inventory.yaml`") ||
+		!strings.Contains(rendered, "passes \\| safely") ||
+		!strings.Contains(rendered, "UNIT-X-CASE-001") {
+		t.Fatalf("unexpected rendered inventory:\n%s", rendered)
+	}
+}
+
+func TestRunTestInventoryRejectsInvalidArguments(t *testing.T) {
+	for name, args := range map[string][]string{
+		"missing command": nil,
+		"unknown command": {"unknown"},
+		"missing run":     {"check"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := runTestInventory(args); err == nil {
+				t.Fatal("invalid inventory arguments unexpectedly passed")
+			}
+		})
+	}
+}
