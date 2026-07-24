@@ -63,6 +63,9 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"runtime-coverage-k8s.sh cleanup",
 		"RUNTIME_COVERAGE_DEPLOYED=1",
 		"RUNTIME_COVERAGE_PREPARED=1",
+		"--device-count 12",
+		"--device-mix light=10,camera=2",
+		`export HOME100K_ENV_ROOT="$RUNTIME_ENV_ROOT"`,
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("runtime workflow missing %q", required)
