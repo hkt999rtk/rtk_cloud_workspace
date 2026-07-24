@@ -6,6 +6,9 @@ run_id="${RUNTIME_COVERAGE_RUN_ID:-}"
 mode="${RUNTIME_COVERAGE_MODE:-preflight}"
 confirm="${RUNTIME_COVERAGE_CONFIRM:-}"
 cluster_label="${CLOUD_STAGING_LKE_CLUSTER_LABEL:-}"
+runner_label="${RUNTIME_COVERAGE_RUNNER_LABEL:-}"
+runner_os="${RUNNER_OS:-unknown}"
+runner_arch="${RUNNER_ARCH:-unknown}"
 report="${RUNTIME_COVERAGE_PREFLIGHT_REPORT:-$workspace/.artifacts/runtime-coverage/$run_id/preflight-report.json}"
 failures=()
 
@@ -29,6 +32,15 @@ if [[ "$mode" == "run" && "$confirm" != "video-cloud-staging-lke" ]]; then
 fi
 if [[ "$cluster_label" != "video-cloud-staging-lke" ]]; then
   fail "CLOUD_STAGING_LKE_CLUSTER_LABEL must be video-cloud-staging-lke"
+fi
+if [[ -z "$runner_label" ]]; then
+  fail "RUNTIME_COVERAGE_RUNNER_LABEL is required"
+fi
+if [[ "${GITHUB_ACTIONS:-}" == "true" && "$runner_os" != "${RUNTIME_COVERAGE_RUNNER_OS:-Linux}" ]]; then
+  fail "runner OS must be ${RUNTIME_COVERAGE_RUNNER_OS:-Linux}"
+fi
+if [[ "${GITHUB_ACTIONS:-}" == "true" && "$runner_arch" != "${RUNTIME_COVERAGE_RUNNER_ARCH:-X64}" ]]; then
+  fail "runner architecture must be ${RUNTIME_COVERAGE_RUNNER_ARCH:-X64}"
 fi
 if ! [[ "${LKE_ACTIVE_SERVICE_LIMIT:-}" =~ ^[1-9][0-9]*$ ]]; then
   fail "LKE_ACTIVE_SERVICE_LIMIT repository variable must be a positive integer"
@@ -74,6 +86,10 @@ jq -n \
   --arg mode "$mode" \
   --arg run_id "$run_id" \
   --arg cluster_label "$cluster_label" \
+  --arg runner_label "$runner_label" \
+  --arg runner_name "${RUNNER_NAME:-}" \
+  --arg runner_os "$runner_os" \
+  --arg runner_arch "$runner_arch" \
   --arg workspace_commit "$workspace_commit" \
   --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --argjson failures "$failure_json" \
@@ -84,6 +100,12 @@ jq -n \
     mode: $mode,
     run_id: $run_id,
     cluster_label: $cluster_label,
+    runner: {
+      label: $runner_label,
+      name: $runner_name,
+      os: $runner_os,
+      architecture: $runner_arch
+    },
     workspace_commit: $workspace_commit,
     submodule_commits: $submodule_commits,
     generated_at: $generated_at,

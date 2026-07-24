@@ -26,6 +26,8 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"group: staging-mutating-tests",
 		"RUNTIME_COVERAGE_NIGHTLY_ENABLED",
 		"RUNTIME_COVERAGE_SHARED_CLUSTER: \"1\"",
+		"runs-on: ubuntu-24.04",
+		"RUNTIME_COVERAGE_RUNNER_LABEL: ubuntu-24.04",
 		"--preflight --plan --apply --deploy --artifacts",
 		"runtime-coverage-k8s.sh cleanup",
 	} {
@@ -33,7 +35,7 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 			t.Fatalf("runtime workflow missing %q", required)
 		}
 	}
-	for _, forbidden := range []string{"--dns", "cloud_env/staging/lke\n"} {
+	for _, forbidden := range []string{"--dns", "cloud_env/staging/lke\n", "jarvis-macos"} {
 		if strings.Contains(workflow, forbidden) {
 			t.Fatalf("runtime workflow contains forbidden value %q", forbidden)
 		}
@@ -60,6 +62,12 @@ func TestRuntimeCoveragePreflightWrongConfirmationIsBlocked(t *testing.T) {
 		"RUNTIME_COVERAGE_MODE=run",
 		"RUNTIME_COVERAGE_CONFIRM=wrong-stack",
 		"CLOUD_STAGING_LKE_CLUSTER_LABEL=video-cloud-staging-lke",
+		"RUNTIME_COVERAGE_RUNNER_LABEL=ubuntu-24.04",
+		"RUNTIME_COVERAGE_RUNNER_OS=Linux",
+		"RUNTIME_COVERAGE_RUNNER_ARCH=X64",
+		"GITHUB_ACTIONS=true",
+		"RUNNER_OS=Linux",
+		"RUNNER_ARCH=X64",
 		"RUNTIME_COVERAGE_PREFLIGHT_REPORT="+report,
 	)
 	if err := command.Run(); err == nil {
@@ -77,6 +85,54 @@ func TestRuntimeCoveragePreflightWrongConfirmationIsBlocked(t *testing.T) {
 		t.Fatal(err)
 	}
 	if parsed.Status != "BLOCKED" || !strings.Contains(strings.Join(parsed.Failures, "\n"), "requires confirmation") {
+		t.Fatalf("preflight report = %#v", parsed)
+	}
+}
+
+func TestRuntimeCoveragePreflightWrongRunnerArchitectureIsBlocked(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := filepath.Join(t.TempDir(), "preflight.json")
+	command := exec.Command("bash", filepath.Join(workspace, "scripts", "ci", "runtime-coverage-preflight.sh"))
+	command.Env = append(os.Environ(),
+		"GITHUB_WORKSPACE="+workspace,
+		"RUNTIME_COVERAGE_RUN_ID=unit-preflight",
+		"RUNTIME_COVERAGE_MODE=preflight",
+		"CLOUD_STAGING_LKE_CLUSTER_LABEL=video-cloud-staging-lke",
+		"RUNTIME_COVERAGE_RUNNER_LABEL=ubuntu-24.04",
+		"RUNTIME_COVERAGE_RUNNER_OS=Linux",
+		"RUNTIME_COVERAGE_RUNNER_ARCH=X64",
+		"GITHUB_ACTIONS=true",
+		"RUNNER_OS=Linux",
+		"RUNNER_ARCH=ARM64",
+		"RUNTIME_COVERAGE_PREFLIGHT_REPORT="+report,
+	)
+	if err := command.Run(); err == nil {
+		t.Fatal("preflight accepted a wrong runner architecture")
+	}
+	raw, err := os.ReadFile(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct {
+		Status string `json:"status"`
+		Runner struct {
+			Label        string `json:"label"`
+			OS           string `json:"os"`
+			Architecture string `json:"architecture"`
+		} `json:"runner"`
+		Failures []string `json:"failures"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Status != "BLOCKED" ||
+		parsed.Runner.Label != "ubuntu-24.04" ||
+		parsed.Runner.OS != "Linux" ||
+		parsed.Runner.Architecture != "ARM64" ||
+		!strings.Contains(strings.Join(parsed.Failures, "\n"), "runner architecture must be X64") {
 		t.Fatalf("preflight report = %#v", parsed)
 	}
 }
