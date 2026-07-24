@@ -18,11 +18,11 @@ modules:
     default_risk: normal
     path: scripts/go
     packages: [./...]
-    minimum_statement_percent: 67.9
-    target_statement_percent: 65.0
+    minimum_statement_percent: 70.0
+    target_statement_percent: 70.0
     differential: true
     package_policies:
-      - { package: rtk-cloud-workspace/scripts/go/rtk-cloud, risk: high, minimum_statement_percent: 67.1, target_statement_percent: 70.0 }
+      - { package: rtk-cloud-workspace/scripts/go/rtk-cloud, risk: high, minimum_statement_percent: 70.0, target_statement_percent: 70.0 }
       - { package: rtk-cloud-workspace/scripts/go/cloud-mqtt-test, risk: high, minimum_statement_percent: 70.8, target_statement_percent: 70.0 }
       - { package: rtk-cloud-workspace/scripts/go/linode-object-storage, risk: wiring, exclusion_reason: Thin object-storage CLI wiring is covered by service integration and release smoke tests. }
     purpose: Protect workspace CLI, catalog, deployment, and test orchestration behavior.

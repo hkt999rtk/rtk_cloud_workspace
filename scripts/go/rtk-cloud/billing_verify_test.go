@@ -166,3 +166,26 @@ func TestBillingHelpersRejectMissingDataAndParseGeneratedAt(t *testing.T) {
 		t.Fatalf("generated at = %v, %v", got, err)
 	}
 }
+
+func TestQueryBillingUsageFactsUsesIsolatedKubectl(t *testing.T) {
+	binDir := t.TempDir()
+	writeExecutable(t, filepath.Join(binDir, "kubectl"), `#!/bin/sh
+case "$*" in
+  *"get secret"*) printf '%s\n' '{"data":{"POSTGRES_PASSWORD":"dGVzdC1wYXNzd29yZA=="}}' ;;
+  *) printf '3\t120\t80\n' ;;
+esac
+`)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	got, err := queryBillingUsageFacts(
+		filepath.Join(t.TempDir(), "kubeconfig"),
+		"qualification",
+		"brand-1",
+		time.Date(2026, 7, 24, 1, 2, 3, 0, time.UTC),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Count != 3 || got.PublishBytes != 120 || got.DeliveryBytes != 80 {
+		t.Fatalf("billing facts = %#v", got)
+	}
+}

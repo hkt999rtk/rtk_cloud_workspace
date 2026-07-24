@@ -189,3 +189,40 @@ func TestVideoRelayArtifactReadersAndDeviceSelection(t *testing.T) {
 		t.Fatalf("empty selected = %#v, blockers = %#v", selected, blockers)
 	}
 }
+
+func TestVideoRelayCLIValidationBoundaries(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "missing_env", want: "--env-root"},
+		{name: "missing_brand", args: []string{"--env-root", "/tmp"}, want: "--brandname"},
+		{name: "bad_profile", args: []string{"--env-root", "/tmp", "--brandname", "RTK", "--profile", "load"}, want: "--profile"},
+		{name: "bad_trace", args: []string{"--env-root", "/tmp", "--brandname", "RTK", "--trace-detail", "everything"}, want: "--trace-detail"},
+		{name: "bad_role", args: []string{"--env-root", "/tmp", "--brandname", "RTK", "--webrtc-relay-role", "invalid"}, want: "--webrtc-relay-role"},
+		{name: "bad_ice", args: []string{"--env-root", "/tmp", "--brandname", "RTK", "--webrtc-ice-policy", "invalid"}, want: "--webrtc-ice-policy"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := runVideoRelayTest(test.args)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validation error = %v, want %q", err, test.want)
+			}
+		})
+	}
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "missing_env", want: "--env-root"},
+		{name: "missing_output", args: []string{"--env-root", "/tmp"}, want: "--out-env"},
+	} {
+		t.Run("tokens_"+test.name, func(t *testing.T) {
+			err := runVideoLoadtestTokens(test.args)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validation error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
