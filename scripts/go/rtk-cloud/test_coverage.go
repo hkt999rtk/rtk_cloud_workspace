@@ -799,7 +799,7 @@ func changedGoLines(workspace, baseRef, headRef, modulePath string) (map[string]
 			if err != nil {
 				return nil, err
 			}
-			diffArgs := []string{"diff", "--unified=0", "--no-color", strings.TrimSpace(baseCommit) + "..." + strings.TrimSpace(headCommit)}
+			diffArgs := []string{"diff", "--unified=0", "--no-color", strings.TrimSpace(baseCommit), strings.TrimSpace(headCommit)}
 			if innerPath != "." {
 				diffArgs = append(diffArgs, "--", filepath.ToSlash(innerPath))
 			}
