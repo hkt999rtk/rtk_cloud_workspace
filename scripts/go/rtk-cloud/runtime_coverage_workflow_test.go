@@ -29,6 +29,11 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"RUNTIME_COVERAGE_SHARED_CLUSTER: \"1\"",
 		"runs-on: ubuntu-24.04",
 		"RUNTIME_COVERAGE_RUNNER_LABEL: ubuntu-24.04",
+		"LINODE_OBJ_ACCESS_KEY_ID: ${{ secrets.LINODE_OBJ_ACCESS_KEY_ID }}",
+		"LINODE_OBJ_SECRET_ACCESS_KEY: ${{ secrets.LINODE_OBJ_SECRET_ACCESS_KEY }}",
+		"LINODE_OBJ_ENDPOINT: ${{ secrets.LINODE_OBJ_ENDPOINT }}",
+		"LINODE_OBJ_BUCKET: ${{ secrets.LINODE_OBJ_BUCKET }}",
+		"VIDEO_CLOUD_BLOB_PREFIX=runtime-coverage/%s",
 		"--preflight --plan --apply --deploy --artifacts",
 		"Prepare run-scoped Clip credentials",
 		"exec deployment/video-cloud-api -- /app/admin-token --ttl 1h",
@@ -44,6 +49,7 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"feature-endpoints.env",
 		"CLOUD_DNS_ROOT_DOMAIN=$RUNTIME_COVERAGE_STACK.invalid",
 		"runtime-coverage-k8s.sh cleanup",
+		"RUNTIME_COVERAGE_DEPLOYED=1",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("runtime workflow missing %q", required)

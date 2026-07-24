@@ -46,7 +46,13 @@ if ! [[ "${LKE_ACTIVE_SERVICE_LIMIT:-}" =~ ^[1-9][0-9]*$ ]]; then
   fail "LKE_ACTIVE_SERVICE_LIMIT repository variable must be a positive integer"
 fi
 
-for name in LINODE_TOKEN GHCR_PULL_TOKEN; do
+for name in \
+  LINODE_TOKEN \
+  GHCR_PULL_TOKEN \
+  LINODE_OBJ_ACCESS_KEY_ID \
+  LINODE_OBJ_SECRET_ACCESS_KEY \
+  LINODE_OBJ_ENDPOINT \
+  LINODE_OBJ_BUCKET; do
   [[ -n "${!name:-}" ]] || fail "missing required credential: $name"
 done
 [[ -s "$workspace/repos/rtk_video_cloud/cmd/admin-token/main.go" ]] ||
@@ -106,6 +112,7 @@ jq -n \
     },
     credential_strategy: {
       cluster_access: "repository-secret",
+      clip_object_storage: "repository-secret-with-run-scoped-prefix",
       admin_token: "run-scoped-after-deploy",
       clip_user_key: "run-scoped-after-deploy",
       clip_server_public_key: "derived-from-run-scoped-stack",
