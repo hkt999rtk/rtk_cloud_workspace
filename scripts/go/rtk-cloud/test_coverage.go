@@ -38,6 +38,9 @@ type coverageModule struct {
 	Packages                []string                `yaml:"packages,omitempty"`
 	Build                   []string                `yaml:"build,omitempty"`
 	TestGlobs               []string                `yaml:"test_globs,omitempty"`
+	SourceTestGlobs         []string                `yaml:"source_test_globs,omitempty"`
+	RuntimeTestGlobs        []string                `yaml:"runtime_test_globs,omitempty"`
+	SourceRewrites          []coverageSourceRewrite `yaml:"source_rewrites,omitempty"`
 	CriticalCommand         []string                `yaml:"critical_command,omitempty"`
 	MinimumStatementPercent float64                 `yaml:"minimum_statement_percent,omitempty"`
 	PRMinimumStatement      float64                 `yaml:"pr_minimum_statement_percent,omitempty"`
@@ -55,6 +58,12 @@ type coverageModule struct {
 	CriticalCases           []coverageCriticalCase  `yaml:"critical_cases,omitempty"`
 	Purpose                 string                  `yaml:"purpose"`
 	Method                  string                  `yaml:"method"`
+}
+
+type coverageSourceRewrite struct {
+	FromPrefix string `yaml:"from_prefix"`
+	ToPrefix   string `yaml:"to_prefix"`
+	Extension  string `yaml:"extension,omitempty"`
 }
 
 type coveragePackagePolicy struct {
@@ -245,6 +254,10 @@ func runTestCoverage(args []string) error {
 		sort.Strings(names)
 		return fmt.Errorf("unknown coverage module(s): %s", strings.Join(names, ", "))
 	}
+	if err := writeCrossLanguageUnitInventory(outDir, report.Cases); err != nil {
+		report.Status = "FAIL"
+		report.Assessment = "Cross-language unit inventory is incomplete: " + err.Error()
+	}
 	report.RedactionStatus = "PASS"
 	if issues := findUnredactedFeatureEvidence(outDir); len(issues) > 0 {
 		report.RedactionStatus = "FAIL"
@@ -284,8 +297,8 @@ func loadCoverageConfig(workspace string) (coverageConfig, error) {
 	if err := yaml.Unmarshal(raw, &cfg); err != nil {
 		return coverageConfig{}, fmt.Errorf("parse coverage config: %w", err)
 	}
-	if cfg.SchemaVersion != 2 {
-		return coverageConfig{}, fmt.Errorf("coverage config schema_version must be 2, got %d", cfg.SchemaVersion)
+	if cfg.SchemaVersion != 3 {
+		return coverageConfig{}, fmt.Errorf("coverage config schema_version must be 3, got %d", cfg.SchemaVersion)
 	}
 	if cfg.Differential.MinimumStatementPercent <= 0 || cfg.Differential.MinimumStatementPercent > 100 {
 		return coverageConfig{}, errors.New("coverage differential minimum must be in (0,100]")
@@ -344,8 +357,8 @@ func validateRequiredGoCoverageModules(workspace string, cfg coverageConfig) err
 }
 
 func validateCoverageConfig(workspace string, cfg coverageConfig, activeIDs map[string]bool) error {
-	if cfg.SchemaVersion != 2 {
-		return fmt.Errorf("coverage config schema_version must be 2, got %d", cfg.SchemaVersion)
+	if cfg.SchemaVersion != 3 {
+		return fmt.Errorf("coverage config schema_version must be 3, got %d", cfg.SchemaVersion)
 	}
 	if cfg.Differential.MinimumStatementPercent <= 0 || cfg.Differential.MinimumStatementPercent > 100 {
 		return errors.New("coverage differential minimum must be in (0,100]")
@@ -422,12 +435,29 @@ func validateCoverageConfig(workspace string, cfg coverageConfig, activeIDs map[
 				}
 			}
 		case "node":
-			if len(module.TestGlobs) == 0 {
-				return fmt.Errorf("%s Node module requires test_globs", prefix)
+			if len(module.SourceTestGlobs) == 0 || len(module.RuntimeTestGlobs) == 0 {
+				return fmt.Errorf("%s Node module requires source_test_globs and runtime_test_globs", prefix)
+			}
+			if strings.TrimSpace(module.Owner) == "" {
+				return fmt.Errorf("%s Node module requires owner", prefix)
 			}
 			for _, threshold := range []float64{module.MinimumLinePercent, module.MinimumBranchPercent, module.MinimumFunctionPercent} {
 				if threshold <= 0 || threshold > 100 {
 					return fmt.Errorf("%s Node thresholds must be in (0,100]", prefix)
+				}
+			}
+			for _, rewrite := range module.SourceRewrites {
+				if rewrite.FromPrefix == "" || rewrite.ToPrefix == "" ||
+					filepath.IsAbs(rewrite.FromPrefix) || filepath.IsAbs(rewrite.ToPrefix) {
+					return fmt.Errorf("%s has invalid source rewrite", prefix)
+				}
+			}
+			for _, critical := range module.CriticalCases {
+				if !activeIDs[critical.TestID] || strings.TrimSpace(critical.CanonicalKey) == "" || strings.TrimSpace(critical.Purpose) == "" {
+					return fmt.Errorf("%s has invalid critical case %q", prefix, critical.TestID)
+				}
+				if !strings.HasPrefix(critical.CanonicalKey, "js://"+module.Name+"/") {
+					return fmt.Errorf("%s critical case %q belongs to another module", prefix, critical.TestID)
 				}
 			}
 		default:
@@ -464,7 +494,7 @@ func runCoverageModuleProfile(workspace, outDir string, cfg coverageConfig, modu
 	case "go":
 		runErr = runGoCoverageModuleProfile(workspace, outDir, logPath, cfg, module, baseRef, headRef, profile, &result)
 	case "node":
-		runErr = runNodeCoverageModule(workspace, logPath, module, install, &result)
+		runErr = runNodeCoverageModule(workspace, outDir, logPath, module, install, &result)
 	default:
 		runErr = fmt.Errorf("unsupported coverage kind %q", module.Kind)
 	}
@@ -610,7 +640,13 @@ func runGoCoverageModuleProfile(workspace, outDir, logPath string, cfg coverageC
 		return fmt.Errorf("Go coverage tests failed: %w", commandErr)
 	}
 	if requiredErr != nil {
+		if len(module.CriticalCases) > 0 {
+			result.CriticalGate = "FAIL"
+		}
 		return requiredErr
+	}
+	if len(module.CriticalCases) > 0 {
+		result.CriticalGate = "PASS"
 	}
 	if governedTotal+0.0001 < minimum {
 		return fmt.Errorf("governed statement coverage %.2f%% is below %.2f%% ratchet (raw %.2f%%)", governedTotal, minimum, rawTotal)
@@ -650,8 +686,19 @@ func runGoCoverageModuleProfile(workspace, outDir, logPath string, cfg coverageC
 	return nil
 }
 
-func runNodeCoverageModule(workspace, logPath string, module coverageModule, install bool, result *coverageCaseResult) error {
+func runNodeCoverageModule(workspace, outDir, logPath string, module coverageModule, install bool, result *coverageCaseResult) error {
 	moduleDir := filepath.Join(workspace, module.Path)
+	moduleRel := filepath.ToSlash(filepath.Join("modules", module.Name))
+	logRel := filepath.ToSlash(filepath.Join(moduleRel, "coverage.log"))
+	logPath = filepath.Join(outDir, filepath.FromSlash(logRel))
+	result.LogPath = logRel
+	eventsRel := filepath.ToSlash(filepath.Join(moduleRel, "test-events.json"))
+	eventsPath := filepath.Join(outDir, filepath.FromSlash(eventsRel))
+	manifestRel := filepath.ToSlash(filepath.Join(moduleRel, "unit-manifest.json"))
+	junitRel := filepath.ToSlash(filepath.Join(moduleRel, "junit.xml"))
+	if err := os.MkdirAll(filepath.Dir(eventsPath), 0o755); err != nil {
+		return err
+	}
 	if install {
 		npmCache := filepath.Join(workspace, ".artifacts", "npm-cache")
 		if err := os.MkdirAll(npmCache, 0o755); err != nil {
@@ -667,7 +714,7 @@ func runNodeCoverageModule(workspace, logPath string, module coverageModule, ins
 		}
 	}
 	testFiles := []string{}
-	for _, pattern := range module.TestGlobs {
+	for _, pattern := range module.RuntimeTestGlobs {
 		matches, err := filepath.Glob(filepath.Join(moduleDir, filepath.FromSlash(pattern)))
 		if err != nil {
 			return fmt.Errorf("expand test glob %q: %w", pattern, err)
@@ -684,10 +731,17 @@ func runNodeCoverageModule(workspace, logPath string, module coverageModule, ins
 	if len(testFiles) == 0 {
 		return errors.New("Node coverage selected no test files")
 	}
-	args := append([]string{"--test", "--experimental-test-coverage"}, testFiles...)
-	if err := runCoverageCommand(moduleDir, logPath, nil, "node", args...); err != nil {
-		return fmt.Errorf("Node coverage tests failed: %w", err)
+	reporter := filepath.Join(workspace, "scripts", "node", "test-event-reporter.mjs")
+	args := []string{
+		"--test",
+		"--experimental-test-coverage",
+		"--test-reporter=spec",
+		"--test-reporter=" + reporter,
+		"--test-reporter-destination=stdout",
+		"--test-reporter-destination=" + eventsPath,
 	}
+	args = append(args, testFiles...)
+	commandErr := runCoverageCommand(moduleDir, logPath, nil, "node", args...)
 	raw, err := os.ReadFile(logPath)
 	if err != nil {
 		return err
@@ -704,6 +758,59 @@ func runNodeCoverageModule(workspace, logPath string, module coverageModule, ins
 	result.Metrics.FunctionMinimumPercent = floatPointer(module.MinimumFunctionPercent)
 	targetMet := line >= 80 && branch >= 80 && function >= 80
 	result.Metrics.IndustryTargetMet = &targetMet
+	units, err := parseNodeTestEvents(eventsPath, moduleDir, module)
+	if err != nil {
+		return err
+	}
+	commit := ""
+	if value, commitErr := gitOutput(moduleDir, "rev-parse", "HEAD"); commitErr == nil {
+		commit = strings.TrimSpace(value)
+		result.SubmoduleCommit = commit
+	}
+	manifest := nodeUnitManifest{
+		SchemaVersion: 1,
+		Module:        module.Name,
+		Profile:       "unit",
+		Commit:        commit,
+		Tests:         units,
+	}
+	if err := writeJSON(filepath.Join(outDir, filepath.FromSlash(manifestRel)), manifest); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(outDir, filepath.FromSlash(junitRel)), renderNodeJUnit(module.Name, units), 0o644); err != nil {
+		return err
+	}
+	result.UnitManifestPath = manifestRel
+	result.JUnitPath = junitRel
+	result.TestEventsPath = eventsRel
+	for kind, rel := range map[string]string{
+		"node-test-events": eventsRel,
+		"unit-inventory":   manifestRel,
+		"junit":            junitRel,
+		"coverage-log":     logRel,
+	} {
+		sha, hashErr := fileSHA256(filepath.Join(outDir, filepath.FromSlash(rel)))
+		if hashErr != nil {
+			return hashErr
+		}
+		result.Evidence = append(result.Evidence, coverageArtifactEvidence{Kind: kind, Path: rel, SHA256: sha})
+	}
+	sort.Slice(result.Evidence, func(i, j int) bool { return result.Evidence[i].Path < result.Evidence[j].Path })
+	ledger, err := loadUnitInventory(workspace)
+	if err != nil {
+		return err
+	}
+	if err := compareUnitInventory(ledger, []nodeUnitManifest{manifest}); err != nil {
+		return err
+	}
+	if err := validateCriticalNodeTests(module, units); err != nil {
+		result.CriticalGate = "FAIL"
+		return err
+	}
+	result.CriticalGate = "PASS"
+	if commandErr != nil {
+		return fmt.Errorf("Node coverage tests failed: %w", commandErr)
+	}
 	if line+0.0001 < module.MinimumLinePercent {
 		return fmt.Errorf("line coverage %.2f%% is below %.2f%%", line, module.MinimumLinePercent)
 	}

@@ -98,6 +98,7 @@ var commands = map[string]commandSpec{
 	"test-catalog":                     {run: runTestCatalog},
 	"test-coverage":                    {run: runTestCoverage},
 	"test-coverage-aggregate":          {run: runTestCoverageAggregate},
+	"test-inventory":                   {run: runTestInventory},
 	"test-ui":                          {run: runTestUI},
 	"unprovision-devices":              {run: runUnprovisionDevices},
 	"validate-device-bind":             {run: runValidateDeviceBind},
@@ -1109,6 +1110,9 @@ func runTestMatrix(args []string) error {
 		return err
 	} else {
 		fmt.Fprintf(os.Stdout, "coverage policy valid: %d modules, %.1f%% differential minimum\n", len(cfg.Modules), cfg.Differential.MinimumStatementPercent)
+	}
+	if err := checkUnitInventory(workspace, "", true); err != nil {
+		return err
 	}
 	fmt.Fprintln(os.Stdout)
 	fmt.Fprintln(os.Stdout, "== repository status checks ==")

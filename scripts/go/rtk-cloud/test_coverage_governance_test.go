@@ -198,7 +198,7 @@ func TestRunRuntimeCoverageReportsMissingEvidenceAsIncomplete(t *testing.T) {
 	}
 }
 
-func TestRunTestCoverageAggregateCombinesTenGoModules(t *testing.T) {
+func TestRunTestCoverageAggregateCombinesGoAndJavaScriptModules(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
 		t.Fatal(err)
@@ -212,27 +212,78 @@ func TestRunTestCoverageAggregateCombinesTenGoModules(t *testing.T) {
 		t.Fatal(err)
 	}
 	input := t.TempDir()
+	ledger, err := loadUnitInventory(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, module := range cfg.Modules {
-		if module.Kind != "go" {
-			continue
-		}
 		source := filepath.Join(input, module.Name)
-		profileRel := filepath.ToSlash(filepath.Join("modules", module.Name, "coverage.out"))
-		profilePath := filepath.Join(source, filepath.FromSlash(profileRel))
-		if err := os.MkdirAll(filepath.Dir(profilePath), 0o755); err != nil {
+		moduleRel := filepath.ToSlash(filepath.Join("modules", module.Name))
+		if err := os.MkdirAll(filepath.Join(source, filepath.FromSlash(moduleRel)), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(profilePath, []byte("mode: set\n"), 0o644); err != nil {
-			t.Fatal(err)
+		result := coverageCaseResult{
+			TestID: module.TestID, Name: module.Name, Kind: module.Kind, Path: module.Path,
+			Purpose: module.Purpose, Method: module.Method, Status: "PASS",
+			Assessment: "source passed",
+		}
+		if len(module.CriticalCases) > 0 {
+			result.CriticalGate = "PASS"
+		}
+		result.UnitManifestPath = filepath.ToSlash(filepath.Join(moduleRel, "unit-manifest.json"))
+		result.JUnitPath = filepath.ToSlash(filepath.Join(moduleRel, "junit.xml"))
+		result.TestEventsPath = filepath.ToSlash(filepath.Join(moduleRel, "test-events.json"))
+		result.LogPath = filepath.ToSlash(filepath.Join(moduleRel, "coverage.log"))
+		if module.Kind == "go" {
+			result.ProfilePath = filepath.ToSlash(filepath.Join(moduleRel, "coverage.out"))
+			result.PackageCoveragePath = filepath.ToSlash(filepath.Join(moduleRel, "package-coverage.json"))
+			if err := os.WriteFile(filepath.Join(source, filepath.FromSlash(result.ProfilePath)), []byte("mode: set\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeJSON(filepath.Join(source, filepath.FromSlash(result.PackageCoveragePath)), map[string]any{"module": module.Name}); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeJSON(filepath.Join(source, filepath.FromSlash(result.UnitManifestPath)), map[string]any{
+				"schema_version": 1, "module": module.Name, "tests": []goUnitResult{},
+			}); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			manifest := nodeUnitManifest{SchemaVersion: 1, Module: module.Name, Profile: "unit"}
+			for _, item := range ledger.Cases {
+				if item.Module == module.Name && item.Status == "active" {
+					manifest.Tests = append(manifest.Tests, nodeUnitResult{
+						CanonicalKey: item.CanonicalKey, Module: item.Module, Language: item.Language,
+						Source: item.Source, Title: item.Title, Status: "PASS", TestID: item.TestID,
+					})
+				}
+			}
+			if err := writeJSON(filepath.Join(source, filepath.FromSlash(result.UnitManifestPath)), manifest); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, rel := range []string{result.JUnitPath, result.TestEventsPath, result.LogPath} {
+			if err := os.WriteFile(filepath.Join(source, filepath.FromSlash(rel)), []byte("evidence\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, rel := range []string{
+			result.ProfilePath, result.PackageCoveragePath, result.UnitManifestPath,
+			result.JUnitPath, result.TestEventsPath, result.LogPath,
+		} {
+			if rel == "" {
+				continue
+			}
+			sha, err := fileSHA256(filepath.Join(source, filepath.FromSlash(rel)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			result.Evidence = append(result.Evidence, coverageArtifactEvidence{Path: rel, SHA256: sha})
 		}
 		report := coverageReport{
 			SchemaVersion: 2, RunID: "source-" + module.Name, Profile: "unit",
 			WorkspaceCommit: strings.TrimSpace(commit), Status: "PASS",
-			Cases: []coverageCaseResult{{
-				TestID: module.TestID, Name: module.Name, Kind: "go", Path: module.Path,
-				Purpose: module.Purpose, Method: module.Method, Status: "PASS",
-				ProfilePath: profileRel, Assessment: "source passed",
-			}},
+			Cases: []coverageCaseResult{result},
 		}
 		if err := writeJSON(filepath.Join(source, "results.json"), report); err != nil {
 			t.Fatal(err)
@@ -252,7 +303,7 @@ func TestRunTestCoverageAggregateCombinesTenGoModules(t *testing.T) {
 	if err := json.Unmarshal(raw, &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.Status != "PASS" || report.Profile != "aggregate" || len(report.Cases) != 10 {
+	if report.Status != "PASS" || report.Profile != "aggregate" || len(report.Cases) != len(cfg.Modules) {
 		t.Fatalf("aggregate report = %#v", report)
 	}
 }
@@ -524,7 +575,14 @@ func TestRunCoverageJSONCommandAndEvidenceCopy(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(source, rel), []byte("mode: set\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := copyCoverageCaseEvidence(source, target, coverageCaseResult{ProfilePath: rel}); err != nil {
+	sha, err := fileSHA256(filepath.Join(source, rel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := copyCoverageCaseEvidence(source, target, coverageCaseResult{
+		ProfilePath: rel,
+		Evidence:    []coverageArtifactEvidence{{Path: rel, SHA256: sha}},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if !exists(filepath.Join(target, rel)) {
@@ -585,7 +643,11 @@ func TestCoverageAggregateRejectsMissingAndMalformedInputs(t *testing.T) {
 	if err := json.Unmarshal(raw, &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.Status != "FAIL" || len(report.Cases) != 10 || report.Cases[0].Status != "INCOMPLETE" {
+	cfg, configErr := loadCoverageConfig(workspace)
+	if configErr != nil {
+		t.Fatal(configErr)
+	}
+	if report.Status != "FAIL" || len(report.Cases) != len(cfg.Modules) || report.Cases[0].Status != "INCOMPLETE" {
 		t.Fatalf("missing-module aggregate = %#v", report)
 	}
 

@@ -94,6 +94,57 @@ jobs:
           include-hidden-files: true
           retention-days: ${{ github.event_name == 'pull_request' && 30 || 90 }}
 
+  node:
+    name: JavaScript unit coverage and inventory (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - cloud-admin-web
+          - cloud-client-javascript
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          lfs: true
+          submodules: false
+      - name: Initialize workspace submodules
+        env:
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
+        run: scripts/ci/init-submodules.sh
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.3"
+          cache: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Run governed JavaScript coverage and individual inventory
+        working-directory: scripts/go
+        env:
+          MODULE: ${{ matrix.module }}
+          RUN_ID: gh-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.module }}
+        shell: bash
+        run: |
+          go run ./rtk-cloud -- test-coverage \
+            --profile unit \
+            --module "$MODULE" \
+            --run-id "$RUN_ID" \
+            --install
+          go run ./rtk-cloud -- test-inventory check \
+            --from-run "../../.artifacts/test-runs/$RUN_ID/coverage"
+      - name: Upload JavaScript evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: go-coverage-unit-${{ matrix.module }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.module }}/coverage/**
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 90 }}
+
   account-manager-postgres:
     name: Account Manager PostgreSQL coverage
     runs-on: ubuntu-latest
@@ -218,7 +269,7 @@ jobs:
   aggregate:
     name: Coverage aggregate and redaction
     if: always()
-    needs: [policy, unit, account-manager-postgres, video-cloud-postgres-emqx]
+    needs: [policy, unit, node, account-manager-postgres, video-cloud-postgres-emqx]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -238,7 +289,7 @@ jobs:
         with:
           pattern: go-coverage-*
           path: .artifacts/coverage-input
-      - name: Aggregate ten-module coverage
+      - name: Aggregate Go and JavaScript coverage
         working-directory: scripts/go
         run: go run ./rtk-cloud -- test-coverage-aggregate --input-dir ../../.artifacts/coverage-input --run-id "gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
       - name: Upload aggregate report

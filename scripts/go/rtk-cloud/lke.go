@@ -500,6 +500,10 @@ data:
 	if err := kubectlApply(config); err != nil {
 		return err
 	}
+	if os.Getenv("RUNTIME_COVERAGE_SHARED_CLUSTER") == "1" {
+		fmt.Fprintln(os.Stdout, "[lke] shared runtime-coverage cluster: preserving cluster-scoped metrics-server")
+		return nil
+	}
 	return lkeInstallMetricsServer()
 }
 

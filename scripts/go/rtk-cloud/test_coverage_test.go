@@ -105,7 +105,7 @@ func TestLoadCoverageConfigLinksEveryModuleToCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.SchemaVersion != 2 || cfg.Differential.MinimumStatementPercent != 80 {
+	if cfg.SchemaVersion != 3 || cfg.Differential.MinimumStatementPercent != 80 {
 		t.Fatalf("coverage config header = %#v", cfg)
 	}
 	if len(cfg.Modules) != 12 {
@@ -231,6 +231,19 @@ func TestRunCoverageModuleExecutesNodeMetricGates(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(moduleDir, "src"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(workspace, "scripts", "node"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(workspace, "tests"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	reporter, err := os.ReadFile(filepath.Join("..", "..", "node", "test-event-reporter.mjs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "scripts", "node", "test-event-reporter.mjs"), reporter, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(moduleDir, "src", "value.mjs"), []byte("export const value = () => 42;\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -238,9 +251,14 @@ func TestRunCoverageModuleExecutesNodeMetricGates(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(moduleDir, "src", "value.test.mjs"), []byte(testBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	ledger := "schema_version: 1\ncases:\n  - canonical_key: js://covered-node/src/value.test.mjs#value\n    module: covered-node\n    language: javascript\n    source: src/value.test.mjs\n    title: value\n    owner: test\n    status: active\n"
+	if err := os.WriteFile(filepath.Join(workspace, "tests", "unit-inventory.yaml"), []byte(ledger), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	module := coverageModule{
 		TestID: "SVC-TEST-SUITE-001", Name: "covered-node", Kind: "node", Path: "web",
-		Build: []string{"node", "--check", "src/value.mjs"}, TestGlobs: []string{"src/*.test.mjs"},
+		Build: []string{"node", "--check", "src/value.mjs"}, SourceTestGlobs: []string{"src/*.test.mjs"},
+		RuntimeTestGlobs: []string{"src/*.test.mjs"}, Owner: "test",
 		MinimumLinePercent: 100, MinimumBranchPercent: 100, MinimumFunctionPercent: 100,
 		Purpose: "test purpose", Method: "test method",
 	}
@@ -256,7 +274,7 @@ func TestValidateCoverageConfigRejectsInvalidPolicies(t *testing.T) {
 		t.Fatal(err)
 	}
 	valid := func() coverageConfig {
-		cfg := coverageConfig{SchemaVersion: 2, RiskThresholds: map[string]float64{"critical": 80, "high": 70, "normal": 60}}
+		cfg := coverageConfig{SchemaVersion: 3, RiskThresholds: map[string]float64{"critical": 80, "high": 70, "normal": 60}}
 		cfg.Differential.MinimumStatementPercent = 80
 		cfg.Modules = []coverageModule{{
 			TestID: "SVC-TEST-SUITE-001", Name: "module", Kind: "go", Path: "module",
@@ -317,7 +335,8 @@ func TestValidateCoverageConfigRejectsInvalidPolicies(t *testing.T) {
 		"node invalid threshold": func(cfg *coverageConfig) {
 			cfg.Modules[0].Kind = "node"
 			cfg.Modules[0].Packages = nil
-			cfg.Modules[0].TestGlobs = []string{"*.test.mjs"}
+			cfg.Modules[0].SourceTestGlobs = []string{"*.test.mjs"}
+			cfg.Modules[0].RuntimeTestGlobs = []string{"*.test.mjs"}
 			cfg.Modules[0].MinimumLinePercent = 80
 			cfg.Modules[0].MinimumBranchPercent = 0
 			cfg.Modules[0].MinimumFunctionPercent = 80
@@ -339,7 +358,8 @@ func TestValidateCoverageConfigRejectsInvalidPolicies(t *testing.T) {
 	node := valid()
 	node.Modules[0].Kind = "node"
 	node.Modules[0].Packages = nil
-	node.Modules[0].TestGlobs = []string{"*.test.mjs"}
+	node.Modules[0].SourceTestGlobs = []string{"*.test.mjs"}
+	node.Modules[0].RuntimeTestGlobs = []string{"*.test.mjs"}
 	node.Modules[0].MinimumLinePercent = 80
 	node.Modules[0].MinimumBranchPercent = 80
 	node.Modules[0].MinimumFunctionPercent = 80

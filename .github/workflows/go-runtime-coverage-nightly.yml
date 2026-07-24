@@ -4,31 +4,51 @@ on:
   schedule:
     - cron: "30 17 * * *"
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Validate prerequisites or execute the isolated runtime suite
+        type: choice
+        options: [preflight, run]
+        default: preflight
+        required: true
+      confirm:
+        description: Run mode requires video-cloud-staging-lke
+        type: string
+        required: false
 
 permissions:
   contents: read
   packages: write
 
 concurrency:
-  group: go-runtime-coverage-nightly
+  group: staging-mutating-tests
   cancel-in-progress: false
 
 jobs:
   runtime-coverage:
     name: Isolated deployed Go coverage
+    if: github.event_name == 'workflow_dispatch' || vars.RUNTIME_COVERAGE_NIGHTLY_ENABLED == 'true'
     runs-on: [self-hosted, macOS, ARM64, rtk_cloud_client, jarvis-macos]
     timeout-minutes: 240
     env:
+      RUNTIME_COVERAGE_MODE: ${{ github.event_name == 'schedule' && 'run' || inputs.mode }}
+      RUNTIME_COVERAGE_CONFIRM: ${{ github.event_name == 'schedule' && 'video-cloud-staging-lke' || inputs.confirm }}
       RUNTIME_COVERAGE_RUN_ID: runtime-${{ github.run_id }}-${{ github.run_attempt }}
       RUNTIME_COVERAGE_STACK: coverage-${{ github.run_id }}-${{ github.run_attempt }}
       RUNTIME_COVERAGE_REGISTRY: ghcr.io/hkt999rtk/rtk_cloud_workspace/runtime-coverage
-      RUNTIME_SOURCE_ENV_ROOT: ${{ github.workspace }}/cloud_env/staging/lke
-      RUNTIME_ENV_ROOT: ${{ github.workspace }}/cloud_env/runtime-coverage/${{ github.run_id }}-${{ github.run_attempt }}/lke
+      RUNTIME_SOURCE_STACK_ENV: ${{ github.workspace }}/cloud_env/staging/linode/env/stack.env
       RUNTIME_COVERAGE_OUTPUT_ROOT: ${{ github.workspace }}/.artifacts/runtime-coverage/runtime-${{ github.run_id }}-${{ github.run_attempt }}
-      LINODE_TOKEN: ${{ secrets.linode_token }}
-      VIDEO_CLOUD_LOAD_ADMIN_TOKEN: ${{ secrets.video_cloud_admin_token }}
-      VIDEO_CLOUD_LOAD_CLIP_USER_PRIVATE_KEY: ${{ secrets.clip_user_private_key_path }}
-      VIDEO_CLOUD_LOAD_CLIP_SERVER_PUBLIC_KEY: ${{ secrets.clip_server_public_key_path }}
+      RUNTIME_COVERAGE_PREFLIGHT_REPORT: ${{ github.workspace }}/.artifacts/runtime-coverage/runtime-${{ github.run_id }}-${{ github.run_attempt }}/preflight-report.json
+      RUNTIME_COVERAGE_SHARED_CLUSTER: "1"
+      CLOUD_STAGING_LKE_CLUSTER_LABEL: video-cloud-staging-lke
+      LKE_CLUSTER_LABEL: video-cloud-staging-lke
+      LKE_ACTIVE_SERVICE_LIMIT: ${{ vars.LKE_ACTIVE_SERVICE_LIMIT }}
+      LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
+      VIDEO_CLOUD_LOAD_ADMIN_TOKEN: ${{ secrets.VIDEO_CLOUD_ADMIN_TOKEN }}
+      VIDEO_CLOUD_LOAD_CLIP_USER_PRIVATE_KEY: ${{ secrets.CLIP_USER_PRIVATE_KEY_PATH }}
+      VIDEO_CLOUD_LOAD_CLIP_SERVER_PUBLIC_KEY: ${{ secrets.CLIP_SERVER_PUBLIC_KEY_PATH }}
+      GHCR_PULL_USERNAME: ${{ github.actor }}
+      GHCR_PULL_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -48,35 +68,97 @@ jobs:
             e2e_test/go.sum
             loadtests/home-100k/go.sum
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
       - uses: docker/setup-buildx-action@v3
 
+      - name: Acquire shared staging kubeconfig without mutating the cluster
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          clusters="$RUNNER_TEMP/runtime-coverage-clusters.json"
+          response="$RUNNER_TEMP/runtime-coverage-kubeconfig.json"
+          kubeconfig="$RUNNER_TEMP/runtime-coverage-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.kubeconfig"
+          runtime_env_root="$RUNNER_TEMP/rtk-runtime-coverage/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/lke"
+          curl -fsS \
+            -H "Authorization: Bearer $LINODE_TOKEN" \
+            "https://api.linode.com/v4/lke/clusters?page_size=100" > "$clusters"
+          cluster_id="$(jq -er --arg label "$CLOUD_STAGING_LKE_CLUSTER_LABEL" '.data[] | select(.label == $label) | .id' "$clusters")"
+          curl -fsS \
+            -H "Authorization: Bearer $LINODE_TOKEN" \
+            "https://api.linode.com/v4/lke/clusters/$cluster_id/kubeconfig" > "$response"
+          jq -er '.kubeconfig' "$response" | openssl base64 -d -A > "$kubeconfig"
+          chmod 0600 "$kubeconfig"
+          {
+            echo "CLOUD_STAGING_LKE_CLUSTER_ID=$cluster_id"
+            echo "LKE_CLUSTER_ID=$cluster_id"
+            echo "KUBECONFIG=$kubeconfig"
+            echo "RTK_CLOUD_LKE_KUBECONFIG=$kubeconfig"
+            echo "RUNTIME_ENV_ROOT=$runtime_env_root"
+          } >> "$GITHUB_ENV"
+
+      - name: Snapshot shared staging deployment anchors
+        continue-on-error: true
+        run: scripts/ci/runtime-coverage-k8s.sh snapshot
+
+      - name: Validate runtime prerequisites
+        id: preflight
+        run: scripts/ci/runtime-coverage-preflight.sh
+
+      - name: Publish preflight report
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f "$RUNTIME_COVERAGE_PREFLIGHT_REPORT" ]]; then
+            {
+              echo "## Runtime coverage preflight"
+              echo
+              echo '```json'
+              cat "$RUNTIME_COVERAGE_PREFLIGHT_REPORT"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Stop after read-only preflight
+        if: env.RUNTIME_COVERAGE_MODE == 'preflight'
+        run: echo "Preflight completed without creating runtime resources."
+
       - name: Log in to GHCR
+        if: env.RUNTIME_COVERAGE_MODE == 'run'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Prepare isolated run-scoped environment
+      - name: Prepare run-scoped environment from tracked configuration
+        if: env.RUNTIME_COVERAGE_MODE == 'run'
         shell: bash
         run: |
           set -euo pipefail
+          [[ "$RUNTIME_COVERAGE_CONFIRM" == "$CLOUD_STAGING_LKE_CLUSTER_LABEL" ]]
           [[ "$RUNTIME_COVERAGE_STACK" == coverage-* ]]
           [[ "$RUNTIME_COVERAGE_STACK" != *staging* ]]
           [[ "$RUNTIME_COVERAGE_STACK" != *prod* ]]
-          test -f "$RUNTIME_SOURCE_ENV_ROOT/env/stack.env"
-          rm -rf "$RUNTIME_ENV_ROOT"
-          mkdir -p "$RUNTIME_ENV_ROOT"
-          rsync -a \
-            --exclude 'artifacts/' \
-            --exclude '*.stale-*' \
-            "$RUNTIME_SOURCE_ENV_ROOT/" "$RUNTIME_ENV_ROOT/"
-          perl -0pi -e "s/^CLOUD_STACK_NAME=.*/CLOUD_STACK_NAME=$RUNTIME_COVERAGE_STACK/m; s/^CLOUD_ENV_NAME=.*/CLOUD_ENV_NAME=runtime-coverage/m" \
+          test -f "$RUNTIME_SOURCE_STACK_ENV"
+          mkdir -p "$RUNTIME_ENV_ROOT/env" "$RUNTIME_ENV_ROOT/adapters/lke"
+          cp "$RUNTIME_SOURCE_STACK_ENV" "$RUNTIME_ENV_ROOT/env/stack.env"
+          perl -0pi -e "s/^CLOUD_STACK_NAME=.*/CLOUD_STACK_NAME=$RUNTIME_COVERAGE_STACK/m; s/^CLOUD_ENV_NAME=.*/CLOUD_ENV_NAME=runtime-coverage/m; s/^CLOUD_PROVIDER=.*/CLOUD_PROVIDER=lke/m" \
             "$RUNTIME_ENV_ROOT/env/stack.env"
+          printf '\nCLOUD_RUNTIME_COVERAGE_STACK=%s\n' "$RUNTIME_COVERAGE_STACK" >> "$RUNTIME_ENV_ROOT/env/stack.env"
+          printf 'LKE_ACTIVE_SERVICE_LIMIT=%s\n' "$LKE_ACTIVE_SERVICE_LIMIT" > "$RUNTIME_ENV_ROOT/adapters/lke/account.env"
+          printf 'LKE_CLUSTER_ID=%s\nLKE_CLUSTER_LABEL=%s\n' "$LKE_CLUSTER_ID" "$LKE_CLUSTER_LABEL" > "$RUNTIME_ENV_ROOT/adapters/lke/state.env"
+          go run ./scripts/go/rtk-cloud -- sync-env \
+            --workspace "$GITHUB_WORKSPACE" \
+            --env-root "$RUNTIME_ENV_ROOT"
           grep -qx "CLOUD_STACK_NAME=$RUNTIME_COVERAGE_STACK" "$RUNTIME_ENV_ROOT/env/stack.env"
-          echo "KUBECONFIG=$RUNTIME_ENV_ROOT/state/kubeconfig.yaml" >> "$GITHUB_ENV"
+          grep -qx "CLOUD_PROVIDER=lke" "$RUNTIME_ENV_ROOT/env/stack.env"
 
       - name: Build and push coverage-only images
+        if: env.RUNTIME_COVERAGE_MODE == 'run'
         shell: bash
         run: |
           set -euo pipefail
@@ -98,7 +180,8 @@ jobs:
             echo "LKE_VIDEO_CLOUD_IMAGE=$video_image"
           } >> "$GITHUB_ENV"
 
-      - name: Deploy isolated stack without public DNS or edge VMs
+      - name: Deploy isolated stack without public DNS, edge VMs, or cluster changes
+        if: env.RUNTIME_COVERAGE_MODE == 'run'
         shell: bash
         run: |
           set -euo pipefail
@@ -109,9 +192,11 @@ jobs:
             --confirm "$RUNTIME_COVERAGE_STACK"
 
       - name: Attach run-scoped coverage PVCs
+        if: env.RUNTIME_COVERAGE_MODE == 'run'
         run: scripts/ci/runtime-coverage-k8s.sh prepare
 
       - name: Run onboarding and cross-service lifecycle checks
+        if: env.RUNTIME_COVERAGE_MODE == 'run'
         shell: bash
         run: |
           set -euo pipefail
@@ -124,6 +209,7 @@ jobs:
             --out-dir ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID/live"
 
       - name: Run all feature canaries
+        if: env.RUNTIME_COVERAGE_MODE == 'run'
         shell: bash
         run: |
           set -euo pipefail
@@ -138,17 +224,20 @@ jobs:
           done
 
       - name: Run desktop and mobile deployed UI smoke
+        if: env.RUNTIME_COVERAGE_MODE == 'run'
         shell: bash
         env:
-          E2E_PLATFORM_SESSION_ID: ${{ secrets.E2E_PLATFORM_SESSION_ID }}
-          E2E_CUSTOMER_SESSION_ID: ${{ secrets.E2E_CUSTOMER_SESSION_ID }}
           E2E_EVIDENCE_SAFE: "1"
         run: |
           set -euo pipefail
           kubectl --kubeconfig "$KUBECONFIG" -n "$RUNTIME_COVERAGE_STACK-admin" \
-            port-forward svc/cloud-admin 18082:80 > /tmp/runtime-coverage-admin-port-forward.log 2>&1 &
+            port-forward svc/cloud-admin 18082:80 > "$RUNNER_TEMP/runtime-coverage-admin-port-forward.log" 2>&1 &
           port_forward_pid=$!
-          trap 'kill "$port_forward_pid" 2>/dev/null || true' EXIT
+          platform_payload="$RUNNER_TEMP/runtime-platform-login.json"
+          customer_payload="$RUNNER_TEMP/runtime-customer-login.json"
+          platform_headers="$RUNNER_TEMP/runtime-platform-headers.txt"
+          customer_headers="$RUNNER_TEMP/runtime-customer-headers.txt"
+          trap 'kill "$port_forward_pid" 2>/dev/null || true; rm -f "$platform_payload" "$customer_payload" "$platform_headers" "$customer_headers"' EXIT
           for attempt in {1..30}; do
             if curl -fsS http://127.0.0.1:18082/healthz >/dev/null; then
               break
@@ -156,17 +245,45 @@ jobs:
             sleep 2
           done
           curl -fsS http://127.0.0.1:18082/healthz >/dev/null
+          platform_email="$(kubectl --kubeconfig "$KUBECONFIG" -n "$RUNTIME_COVERAGE_STACK-account-manager" \
+            get secret account-manager-runtime -o jsonpath='{.data.ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL}' | openssl base64 -d -A)"
+          platform_password="$(kubectl --kubeconfig "$KUBECONFIG" -n "$RUNTIME_COVERAGE_STACK-account-manager" \
+            get secret account-manager-runtime -o jsonpath='{.data.ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD}' | openssl base64 -d -A)"
+          test_data_db="$RUNTIME_ENV_ROOT/artifacts/test-data/rtk-test-data.sqlite"
+          test -s "$test_data_db"
+          customer_email="$(sqlite3 "$test_data_db" "select email from users where role = 'member' order by email limit 1;")"
+          customer_password="$(sqlite3 "$test_data_db" "select password from users where role = 'member' order by email limit 1;")"
+          jq -n --arg email "$platform_email" --arg password "$platform_password" \
+            '{email:$email,password:$password}' > "$platform_payload"
+          jq -n --arg email "$customer_email" --arg password "$customer_password" \
+            '{email:$email,password:$password}' > "$customer_payload"
+          chmod 0600 "$platform_payload" "$customer_payload"
+          curl -fsS -D "$platform_headers" -o /dev/null \
+            -H 'content-type: application/json' \
+            --data-binary "@$platform_payload" \
+            http://127.0.0.1:18082/api/auth/platform/login
+          curl -fsS -D "$customer_headers" -o /dev/null \
+            -H 'content-type: application/json' \
+            --data-binary "@$customer_payload" \
+            http://127.0.0.1:18082/api/auth/customer/login
+          E2E_PLATFORM_SESSION_ID="$(sed -nE 's/^[Ss]et-[Cc]ookie: rtk_admin_session=([^;]+).*/\1/p' "$platform_headers" | head -1)"
+          E2E_CUSTOMER_SESSION_ID="$(sed -nE 's/^[Ss]et-[Cc]ookie: rtk_admin_session=([^;]+).*/\1/p' "$customer_headers" | head -1)"
+          test -n "$E2E_PLATFORM_SESSION_ID"
+          test -n "$E2E_CUSTOMER_SESSION_ID"
+          echo "::add-mask::$E2E_PLATFORM_SESSION_ID"
+          echo "::add-mask::$E2E_CUSTOMER_SESSION_ID"
+          export E2E_PLATFORM_SESSION_ID E2E_CUSTOMER_SESSION_ID
           E2E_BASE_URL=http://127.0.0.1:18082 \
             go run ./scripts/go/rtk-cloud -- test-ui \
               --staging --desktop --mobile --install \
               --run-id "$RUNTIME_COVERAGE_RUN_ID"
 
       - name: Gracefully stop services and collect runtime counters
-        if: always()
+        if: always() && env.RUNTIME_COVERAGE_MODE == 'run'
         run: scripts/ci/runtime-coverage-k8s.sh collect
 
       - name: Aggregate runtime coverage and verify anchors
-        if: always()
+        if: always() && env.RUNTIME_COVERAGE_MODE == 'run'
         shell: bash
         run: |
           set -euo pipefail
@@ -175,6 +292,10 @@ jobs:
             --module account-manager,cloud-admin-backend,cloud-frontend,cloud-logger,video-cloud \
             --runtime-dir "$RUNTIME_COVERAGE_OUTPUT_ROOT" \
             --run-id "$RUNTIME_COVERAGE_RUN_ID"
+
+      - name: Delete isolated resources and verify shared staging
+        if: always() && env.RUNTIME_COVERAGE_MODE == 'run'
+        run: scripts/ci/runtime-coverage-k8s.sh cleanup
 
       - name: Upload runtime reports and evidence
         if: always()
@@ -188,6 +309,14 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      - name: Delete isolated namespaces and PVCs
+      - name: Remove runner-local credentials and run state
         if: always()
-        run: scripts/ci/runtime-coverage-k8s.sh cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${RUNTIME_ENV_ROOT:-}" == "$RUNNER_TEMP/rtk-runtime-coverage/"*"/lke" ]]; then
+            rm -rf "$RUNTIME_ENV_ROOT"
+          fi
+          if [[ "${KUBECONFIG:-}" == "$RUNNER_TEMP/"* ]]; then
+            rm -f "$KUBECONFIG"
+          fi

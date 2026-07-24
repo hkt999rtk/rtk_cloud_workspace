@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"html"
@@ -659,11 +660,8 @@ func runTestCoverageAggregate(args []string) error {
 			return fmt.Errorf("parse %s: %w", path, err)
 		}
 		for _, item := range report.Cases {
-			if item.Kind != "go" {
-				continue
-			}
 			current, exists := selected[item.Name]
-			if !exists || (report.Profile == "pr" && current.report.Profile != "pr") {
+			if !exists || (item.Kind == "go" && report.Profile == "pr" && current.report.Profile != "pr") {
 				selected[item.Name] = selectedCase{result: item, report: report, sourceDir: filepath.Dir(path)}
 			}
 		}
@@ -689,14 +687,11 @@ func runTestCoverageAggregate(args []string) error {
 		report.WorkspaceCommit = strings.TrimSpace(commit)
 	}
 	for _, module := range cfg.Modules {
-		if module.Kind != "go" {
-			continue
-		}
 		item, ok := selected[module.Name]
 		if !ok {
 			report.Status = "FAIL"
 			report.Cases = append(report.Cases, coverageCaseResult{
-				TestID: module.TestID, Name: module.Name, Kind: "go", Path: module.Path,
+				TestID: module.TestID, Name: module.Name, Kind: module.Kind, Path: module.Path,
 				Purpose: module.Purpose, Method: module.Method, StartedAt: report.StartedAt,
 				CompletedAt: report.StartedAt, Status: "INCOMPLETE",
 				Assessment: "required module result is missing from aggregate inputs",
@@ -710,12 +705,35 @@ func runTestCoverageAggregate(args []string) error {
 		if item.result.Status != "PASS" {
 			report.Status = "FAIL"
 		}
+		if len(module.CriticalCases) > 0 && item.result.CriticalGate != "PASS" {
+			item.result.Status = "INCOMPLETE"
+			item.result.Assessment = "critical permanent Test ID gate is missing or non-passing"
+			report.Status = "FAIL"
+		}
+		if evidenceErr := validateCoverageCaseArtifactIndex(item.result); evidenceErr != nil {
+			item.result.Status = "INCOMPLETE"
+			item.result.Assessment = evidenceErr.Error()
+			report.Status = "FAIL"
+		}
 		if err := copyCoverageCaseEvidence(item.sourceDir, outDir, item.result); err != nil {
 			item.result.Status = "INCOMPLETE"
 			item.result.Assessment = "copy coverage evidence: " + err.Error()
 			report.Status = "FAIL"
 		}
 		report.Cases = append(report.Cases, item.result)
+	}
+	if manifests, inventoryErr := loadNodeUnitManifests(outDir); inventoryErr != nil {
+		report.Status = "FAIL"
+		report.Assessment = "JavaScript individual inventory is incomplete: " + inventoryErr.Error()
+	} else {
+		if inventoryErr := compareUnitInventoryMustPass(workspace, cfg, manifests); inventoryErr != nil {
+			report.Status = "FAIL"
+			report.Assessment = "JavaScript individual inventory gate failed: " + inventoryErr.Error()
+		}
+	}
+	if err := writeCrossLanguageUnitInventory(outDir, report.Cases); err != nil {
+		report.Status = "FAIL"
+		report.Assessment = "Cross-language unit inventory is incomplete: " + err.Error()
 	}
 	report.CompletedAt = time.Now().UTC().Format(time.RFC3339)
 	report.DurationMS = time.Since(now).Milliseconds()
@@ -726,9 +744,9 @@ func runTestCoverageAggregate(args []string) error {
 		report.Status = "FAIL"
 	}
 	if report.Status == "PASS" {
-		report.Assessment = "All ten governed Go module results, inventories, integration requirements, and evidence passed."
+		report.Assessment = "All governed Go and JavaScript module results, individual inventories, integration requirements, and evidence passed."
 	} else {
-		report.Assessment = "One or more governed Go module results or evidence sets are missing or failed."
+		report.Assessment = "One or more governed Go or JavaScript module results, inventories, or evidence sets are missing or failed."
 	}
 	if err := writeJSON(filepath.Join(outDir, "results.json"), report); err != nil {
 		return err
@@ -738,6 +756,28 @@ func runTestCoverageAggregate(args []string) error {
 	}
 	if report.Status != "PASS" {
 		return exitCode(1)
+	}
+	return nil
+}
+
+func validateCoverageCaseArtifactIndex(result coverageCaseResult) error {
+	required := map[string]string{
+		"unit manifest": result.UnitManifestPath,
+		"JUnit":         result.JUnitPath,
+		"test events":   result.TestEventsPath,
+		"test log":      result.LogPath,
+	}
+	if result.Kind == "go" {
+		required["coverage profile"] = result.ProfilePath
+		required["package coverage"] = result.PackageCoveragePath
+	}
+	for label, path := range required {
+		if strings.TrimSpace(path) == "" {
+			return fmt.Errorf("%s evidence path is missing", label)
+		}
+	}
+	if len(result.Evidence) < len(required) {
+		return errors.New("coverage evidence SHA-256 index is incomplete")
 	}
 	return nil
 }
@@ -752,11 +792,26 @@ func copyCoverageCaseEvidence(sourceDir, outDir string, result coverageCaseResul
 		result.LogPath,
 		result.RuntimeEvidencePath,
 	}
+	expectedHashes := map[string]string{}
+	for _, evidence := range result.Evidence {
+		expectedHashes[evidence.Path] = evidence.SHA256
+	}
 	for _, rel := range paths {
 		if rel == "" {
 			continue
 		}
 		source := filepath.Join(sourceDir, filepath.FromSlash(rel))
+		expectedSHA := expectedHashes[rel]
+		if expectedSHA == "" {
+			return fmt.Errorf("artifact %s has no SHA-256 evidence entry", rel)
+		}
+		actualSHA, err := fileSHA256(source)
+		if err != nil {
+			return err
+		}
+		if actualSHA != expectedSHA {
+			return fmt.Errorf("artifact %s SHA-256 mismatch", rel)
+		}
 		raw, err := os.ReadFile(source)
 		if err != nil {
 			return err

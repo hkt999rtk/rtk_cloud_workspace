@@ -20,7 +20,21 @@ never reused; removed cases remain in the catalog with `status: retired`.
 Case-level IDs are required for UI, E2E, live, and load tests. Every Go unit
 function and subtest receives an automatically generated canonical key; only
 security-critical or long-lived regression cases additionally receive a
-permanent `UNIT-*` catalog ID. Service suites retain one `SVC-*` ID per module.
+permanent `UNIT-*` catalog ID. The governed JavaScript suites use the same
+model: every Node TestStream case is registered in
+[`tests/unit-inventory.yaml`](../tests/unit-inventory.yaml) with a stable
+`js://<module>/<source>#<percent-encoded-title>` key. Service suites retain one
+`SVC-*` ID per module.
+
+```sh
+(cd scripts/go && go run ./rtk-cloud -- test-inventory check --from-run RUN_DIR)
+(cd scripts/go && go run ./rtk-cloud -- test-inventory update --from-run RUN_DIR)
+(cd scripts/go && go run ./rtk-cloud -- test-inventory render)
+```
+
+`update` only appends new canonical keys. A removed or renamed test remains
+visible until its ledger entry is explicitly marked `retired` with a date and
+reason.
 
 ## Local Baseline
 
@@ -53,36 +67,45 @@ repositories affected by a workspace diff while installing JavaScript test
 dependencies. Changes to the workspace test runner, catalog, contracts pointer,
 Go workspace, or baseline workflow conservatively select all managed service
 repositories.
-`test-coverage` enforces schema v2 in `tests/coverage.yaml` across all ten Go
-modules. Reports show raw and governed coverage separately. Governed coverage
+`test-coverage` enforces schema v3 in `tests/coverage.yaml` across all ten Go
+modules and the two governed JavaScript modules. Reports show raw and governed
+Go coverage separately. Governed coverage
 uses explicit package risk (`critical`, `high`, `normal`, or reporting-only
 `wiring`), per-package ratchets, targets, owners, and documented exclusions.
 The default remains the local `unit` profile for compatibility. The `pr`
 profile additionally requires the configured PostgreSQL/EMQX integration
 environment and fails when a required integration test is skipped. The
 `runtime` profile aggregates deployed-process `GOCOVERDIR` evidence.
-`test-coverage-aggregate` combines the ten required Go module jobs and prefers
-the integration-aware PR result for Account Manager and Video Cloud.
+`test-coverage-aggregate` combines the ten required Go module jobs and two
+required JavaScript jobs, preferring the integration-aware PR result for
+Account Manager and Video Cloud.
 
 New or modified Go statements must meet 80% differential coverage against
 `--base-ref`; this prevents legacy debt from lowering the standard for new
 code. Every Go test function and subtest is discovered from `go test -json`
 and recorded as `go://<module>/<package>#<TestName>/<Subtest>`. Critical
 security and regression tests also map to permanent `UNIT-*` catalog IDs.
-Cloud Admin web helpers and the JavaScript SDK continue to enforce Node/V8
-line, branch, and function thresholds. The command writes:
+Cloud Admin web helpers and the JavaScript SDK enforce Node/V8 line, branch,
+and function thresholds. A custom Node reporter consumes structured TestStream
+events and writes per-case timing, result, source, canonical key, commit anchor,
+JUnit, and JSON. Build output such as Cloud Client `dist/test/*.js` is mapped
+back to its TypeScript source path before inventory comparison. Duplicate
+titles in one source file, missing completion events, unregistered tests,
+missing active tests, or a non-passing critical ID fail the job. The command
+writes:
 
 ```text
 .artifacts/test-runs/<run-id>/coverage/
   results.json
   TEST_REPORT.md
+  unit-inventory.json
   modules/<module>/
     coverage.out
     package-coverage.json
     unit-manifest.json
     junit.xml
     test-events.json
-  logs/<module>.log
+    coverage.log
 ```
 
 Coverage artifacts are scanned for private keys, bearer tokens, cookies, and
@@ -155,13 +178,13 @@ commit alignment.
 
 ## Pull Request Coverage Gate
 
-`Go Coverage Governance` separates policy/catalog validation, the ten-module
-unit matrix, Account Manager PostgreSQL integration, Video Cloud
-PostgreSQL/EMQX integration, and final aggregation/redaction into parallel
-required jobs. `Workspace Test Baseline` continues to run `test-matrix`,
-deterministic workspace E2E, Home load-runner contracts, Node/V8 coverage, and
-service suites selected from the diff. These gates do not depend on shared
-staging.
+`Go Coverage Governance` separates policy/catalog/inventory validation, the
+ten-module Go matrix, the two-module JavaScript inventory matrix, Account
+Manager PostgreSQL integration, Video Cloud PostgreSQL/EMQX integration, and
+final cross-language aggregation/redaction into parallel required jobs.
+`Workspace Test Baseline` continues to run `test-matrix`, deterministic
+workspace E2E, Home load-runner contracts, Node/V8 coverage, and service suites
+selected from the diff. These gates do not depend on shared staging.
 
 Coverage evidence is retained for 30 days on pull requests and 90 days on
 `main`. A gate fails for test failure, required integration SKIP, package or
@@ -169,13 +192,23 @@ module ratchet regression, missing critical permanent ID, unsafe artifact, or
 changed-Go-statement coverage below 80%.
 
 `Go Runtime Coverage Nightly` is deliberately separate. It builds
-coverage-only images, deploys a run-scoped stack whose name must start with
-`coverage-`, mounts one run-scoped PVC per instrumented deployment, runs
-onboarding, all three feature canaries, and deployed desktop/mobile smoke, then
-scales services down before collecting `covmeta` and `covcounters`. Commit/run
-anchors are required before aggregation. The cleanup step deletes only that
-isolated stack's namespaces and PVCs and runs even after a failed test.
-Coverage images are never used by shared staging or production.
+coverage-only images into the existing staging LKE cluster while deploying only
+run-scoped namespaces whose stack name starts with `coverage-`. Manual
+`preflight` validates the self-hosted runner, credentials, cluster label,
+repository capacity variable, commit anchors, and staging deployment snapshot
+without creating resources. Manual `run` requires the exact confirmation
+`video-cloud-staging-lke`. It mounts one run-scoped PVC per instrumented
+deployment, runs onboarding, all three feature canaries, and deployed
+desktop/mobile smoke, then scales services down before collecting `covmeta` and
+`covcounters`. Commit/run anchors are required before aggregation. Runtime
+coverage and feature qualification share the `staging-mutating-tests`
+concurrency lock. Cleanup deletes only that isolated stack's namespaces, PVCs,
+collectors, and generator resources, then verifies the shared staging
+deployment UIDs/images are unchanged and writes `cleanup-report.json`. Any
+residual resource fails the run. The cron remains disabled until repository
+variable `RUNTIME_COVERAGE_NIGHTLY_ENABLED=true`; enable it only after the first
+manual run passes. Coverage images are never used by shared staging or
+production.
 
 ## Reports and Evidence
 

@@ -1,4 +1,4 @@
-schema_version: 2
+schema_version: 3
 
 # Ratchets are enforced immediately. Targets describe the first coverage
 # improvement milestone and become the new ratchet when a module reaches them.
@@ -218,22 +218,35 @@ modules:
   - test_id: SVC-CA-SUITE-001
     name: cloud-admin-web
     kind: node
+    owner: rtk_cloud_admin
     path: repos/rtk_cloud_admin/web
-    test_globs: [src/*.test.mjs]
+    source_test_globs: [src/*.test.mjs]
+    runtime_test_globs: [src/*.test.mjs]
     minimum_line_percent: 92.0
     minimum_branch_percent: 79.0
     minimum_function_percent: 94.0
+    critical_cases:
+      - { test_id: UNIT-CA-AUTH-001, canonical_key: "js://cloud-admin-web/src/auth-routing.test.mjs#login%20next%20rejects%20open%20redirects%20and%20unrelated%20app%20paths", purpose: Login continuation validation must reject open redirects. }
+      - { test_id: UNIT-CA-ERROR-001, canonical_key: "js://cloud-admin-web/src/http.test.mjs#userFacingSSOError%20hides%20internal%20SSO%20configuration%20details", purpose: Browser-facing SSO failures must not expose internal configuration. }
     purpose: Protect Cloud Admin browser-helper logic across lines branches and functions.
-    method: Run Node unit tests with V8 coverage instrumentation.
+    method: Run Node unit tests with V8 coverage instrumentation and TestStream individual-case inventory.
 
   - test_id: SVC-CLIENT-SUITE-001
     name: cloud-client-javascript
     kind: node
+    owner: rtk_cloud_client
     path: repos/rtk_cloud_client/packages/javascript
     build: [npm, run, build]
-    test_globs: [dist/test/*.test.js]
+    source_test_globs: [test/*.test.ts]
+    runtime_test_globs: [dist/test/*.test.js]
+    source_rewrites:
+      - { from_prefix: dist/test/, to_prefix: test/, extension: .ts }
     minimum_line_percent: 84.0
     minimum_branch_percent: 80.0
     minimum_function_percent: 87.0
+    critical_cases:
+      - { test_id: UNIT-CLIENT-PKI-001, canonical_key: "js://cloud-client-javascript/test/package.test.ts#implements%20Node%20PKI%20mTLS%20helper%20surface%20with%20temp%20PEM%20files", purpose: Node PKI helpers must preserve the mTLS contract. }
+      - { test_id: UNIT-CLIENT-TRANS-001, canonical_key: "js://cloud-client-javascript/test/package.test.ts#supports%20production%20HTTP%20timeout%20and%20cancellation%20controls", purpose: Production HTTP timeout and cancellation controls must remain deterministic. }
+      - { test_id: UNIT-CLIENT-ERROR-001, canonical_key: "js://cloud-client-javascript/test/package.test.ts#normalizes%20HTTP%20failures%20and%20preserves%20legacy%20error%20body", purpose: SDK HTTP errors must remain normalized and backward compatible. }
     purpose: Protect JavaScript SDK behavior across lines branches and functions.
-    method: Build the SDK and run Node unit tests with V8 coverage instrumentation.
+    method: Build the SDK and run Node unit tests with V8 coverage instrumentation and source-rewritten TestStream inventory.

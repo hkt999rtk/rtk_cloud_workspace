@@ -108,6 +108,11 @@ func Load(root, dnsOverride string) (Environment, error) {
 		values["CLOUD_PROVIDER"] = "lke"
 	}
 	derived := Derive(values)
+	if runtimeStack := strings.TrimSpace(values["CLOUD_RUNTIME_COVERAGE_STACK"]); runtimeStack != "" {
+		if !strings.HasPrefix(runtimeStack, "coverage-") || values["CLOUD_PROVIDER"] != "lke" {
+			return Environment{}, fmt.Errorf("CLOUD_RUNTIME_COVERAGE_STACK requires a coverage-* name and CLOUD_PROVIDER=lke")
+		}
+	}
 	for _, key := range generatedKeys {
 		expected := derived[key]
 		if expected == "" {
@@ -169,7 +174,10 @@ func Derive(values map[string]string) map[string]string {
 		dnsRoot = "realtekconnect.com"
 		out["CLOUD_DNS_ROOT_DOMAIN"] = dnsRoot
 	}
-	stack := "video-cloud-" + envName
+	stack := strings.TrimSpace(out["CLOUD_RUNTIME_COVERAGE_STACK"])
+	if stack == "" {
+		stack = "video-cloud-" + envName
+	}
 	out["CLOUD_STACK_NAME"] = stack
 	out["VIDEO_CLOUD_DOMAIN"] = stack + "." + dnsRoot
 	out["VIDEO_CLOUD_CERTISSUER_DOMAIN"] = "certissuer." + stack + "." + dnsRoot
