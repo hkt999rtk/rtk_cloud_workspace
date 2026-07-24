@@ -251,6 +251,26 @@ func TestFeatureRootsSeparateDeploymentAndLoadRuntime(t *testing.T) {
 	}
 }
 
+func TestExecuteFeatureSpecRequiresDeploymentRegion(t *testing.T) {
+	workspace := t.TempDir()
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")
+	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spec := featureRunSpec{
+		Feature:      "device-shadow",
+		Profile:      "canary",
+		ScenarioPath: "missing-description.env",
+	}
+	manifest, err := executeFeatureSpec(workspace, envRoot, "test-run", "staging", spec, map[string]string{})
+	if err == nil || !strings.Contains(err.Error(), "CLOUD_REGION is missing") {
+		t.Fatalf("executeFeatureSpec() error = %v, want missing CLOUD_REGION", err)
+	}
+	if manifest.Status != "BLOCKED" {
+		t.Fatalf("manifest status = %q, want BLOCKED", manifest.Status)
+	}
+}
+
 func TestBoundedFeatureStageRunIDHonorsLinodeTagLimit(t *testing.T) {
 	runID := strings.Repeat("qualification-", 8)
 	got := boundedFeatureStageRunID(runID, "device-shadow", "qualification-1k")

@@ -335,10 +335,18 @@ func executeFeatureSpec(workspace, envRoot, runID, environment string, spec feat
 	if err := validateFeaturePrerequisites(spec); err != nil {
 		return blockedFeatureManifest(runID, spec.Feature, spec.Profile, environment, commits, []featureRunSpec{spec}, err.Error()), err
 	}
+	region := envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_REGION")
+	if region == "" {
+		return blockedFeatureManifest(
+			runID, spec.Feature, spec.Profile, environment, commits, []featureRunSpec{spec},
+			"CLOUD_REGION is missing from the deployment stack environment",
+		), errors.New("CLOUD_REGION is missing from the deployment stack environment")
+	}
 	stageRunID := boundedFeatureStageRunID(runID, spec.Feature, spec.Profile)
 	env := map[string]string{
 		"HOME100K_DESCRIPTION_FILE":        filepath.Join(workspace, filepath.FromSlash(spec.ScenarioPath)),
 		"HOME100K_ENV_ROOT":                featureLoadEnvRoot(envRoot),
+		"HOME100K_REGION":                  region,
 		"HOME100K_KUBECONFIG":              featureKubeconfigPath(envRoot),
 		"HOME100K_DEVICE_CLIENT_CA_BUNDLE": featureDeviceCABundlePath(envRoot),
 		"HOME100K_OUT_DIR":                 stageDir,
