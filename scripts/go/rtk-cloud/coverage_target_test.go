@@ -497,12 +497,20 @@ with open(os.path.join(root, "evidence-manifest.json"), "w") as handle:
 PY
 `)
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	runID := "coverage-ui-desktop"
-	if err := runTestUI([]string{"--desktop", "--run-id", runID}); err != nil {
-		t.Fatal(err)
-	}
 	workspace, err := workspaceRoot()
 	if err != nil {
+		t.Fatal(err)
+	}
+	playwrightPath := filepath.Join(workspace, "repos", "rtk_cloud_admin", "web", "node_modules", ".bin", "playwright")
+	if !exists(playwrightPath) {
+		if err := os.MkdirAll(filepath.Dir(playwrightPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeExecutable(t, playwrightPath, "#!/bin/sh\nexit 0\n")
+		t.Cleanup(func() { _ = os.Remove(playwrightPath) })
+	}
+	runID := "coverage-ui-desktop"
+	if err := runTestUI([]string{"--desktop", "--run-id", runID}); err != nil {
 		t.Fatal(err)
 	}
 	runDir := filepath.Join(workspace, ".artifacts", "test-runs", runID)
