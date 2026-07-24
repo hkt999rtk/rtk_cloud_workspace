@@ -211,7 +211,7 @@ func TestRunCoverageModuleExecutesGoCoverageAndWritesEvidence(t *testing.T) {
 	module := coverageModule{
 		TestID: "SVC-TEST-SUITE-001", Name: "covered-go", Kind: "go", Path: "module",
 		Packages: []string{"./..."}, MinimumStatementPercent: 100, TargetStatementPercent: 100,
-		Purpose: "test purpose", Method: "test method",
+		Purpose: "test purpose", Method: "test method", CriticalCommand: []string{"go", "test", "./..."},
 	}
 	result := runCoverageModule(workspace, outDir, cfg, module, "", "HEAD", false)
 	if result.Status != "PASS" || result.ProfileSHA == "" || result.Metrics.StatementPercent == nil || *result.Metrics.StatementPercent != 100 {
@@ -221,6 +221,19 @@ func TestRunCoverageModuleExecutesGoCoverageAndWritesEvidence(t *testing.T) {
 		if stat, err := os.Stat(filepath.Join(outDir, filepath.FromSlash(relative))); err != nil || stat.Size() == 0 {
 			t.Fatalf("coverage evidence %s: stat=%v err=%v", relative, stat, err)
 		}
+	}
+	var logSHA string
+	for _, evidence := range result.Evidence {
+		if evidence.Path == result.LogPath {
+			logSHA = evidence.SHA256
+		}
+	}
+	currentLogSHA, err := fileSHA256(filepath.Join(outDir, filepath.FromSlash(result.LogPath)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if logSHA == "" || logSHA != currentLogSHA {
+		t.Fatalf("test log SHA = %q, current SHA = %q", logSHA, currentLogSHA)
 	}
 }
 

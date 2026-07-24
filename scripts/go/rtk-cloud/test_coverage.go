@@ -616,6 +616,15 @@ func runGoCoverageModuleProfile(workspace, outDir, logPath string, cfg coverageC
 	result.JUnitPath = junitRel
 	result.TestEventsPath = eventsRel
 	result.PackageCoveragePath = packageRel
+	var criticalErr error
+	if len(module.CriticalCommand) > 0 {
+		criticalErr = runCoverageCommand(moduleDir, logPath, map[string]string{"GOWORK": "off"}, module.CriticalCommand[0], module.CriticalCommand[1:]...)
+		if criticalErr != nil {
+			result.CriticalGate = "FAIL"
+		} else {
+			result.CriticalGate = "PASS"
+		}
+	}
 	for kind, rel := range map[string]string{
 		"coverage-profile": profileRel,
 		"go-test-events":   eventsRel,
@@ -644,6 +653,9 @@ func runGoCoverageModuleProfile(workspace, outDir, logPath string, cfg coverageC
 			result.CriticalGate = "FAIL"
 		}
 		return requiredErr
+	}
+	if criticalErr != nil {
+		return fmt.Errorf("critical package coverage gate failed: %w", criticalErr)
 	}
 	if len(module.CriticalCases) > 0 {
 		result.CriticalGate = "PASS"
@@ -675,13 +687,6 @@ func runGoCoverageModuleProfile(workspace, outDir, logPath string, cfg coverageC
 				return fmt.Errorf("differential statement coverage %.2f%% is below %.2f%% (%d/%d statements)", changedPercent, cfg.Differential.MinimumStatementPercent, covered, statements)
 			}
 		}
-	}
-	if len(module.CriticalCommand) > 0 {
-		if err := runCoverageCommand(moduleDir, logPath, map[string]string{"GOWORK": "off"}, module.CriticalCommand[0], module.CriticalCommand[1:]...); err != nil {
-			result.CriticalGate = "FAIL"
-			return fmt.Errorf("critical package coverage gate failed: %w", err)
-		}
-		result.CriticalGate = "PASS"
 	}
 	return nil
 }
