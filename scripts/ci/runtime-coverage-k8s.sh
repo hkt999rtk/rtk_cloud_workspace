@@ -69,7 +69,7 @@ snapshot() {
 
 verify_deployments() {
   local report="$output_root/deployment-anchors.json"
-  local entries_file pods_file deployment_file source_commit expected_image expected_digest
+  local entries_file pods_file deployment_file source_commit expected_image expected_digest expected_container pod_selector
   local module namespace deployment image_env digest_env module_path error_json
   local status="PASS"
   local errors=()
@@ -100,13 +100,26 @@ verify_deployments() {
       'any(.spec.template.spec.containers[]?; .image == $image)' "$deployment_file" >/dev/null; then
       errors+=("$module deployment does not reference the expected coverage image")
     fi
+    expected_container="$(
+      jq -r --arg image "$expected_image" \
+        '.spec.template.spec.containers[]? | select(.image == $image) | .name' \
+        "$deployment_file" | head -n 1
+    )"
+    pod_selector="$(
+      jq -r '
+        .spec.selector.matchLabels
+        | to_entries
+        | map("\(.key)=\(.value)")
+        | join(",")
+      ' "$deployment_file"
+    )"
     if ! kubectl --kubeconfig "$kubeconfig" -n "$namespace" \
-      get pods -l "app.kubernetes.io/name=$deployment,rtk.realtek.com/stack=$stack" -o json > "$pods_file"; then
+      get pods -l "$pod_selector" -o json > "$pods_file"; then
       errors+=("$module deployment pods are unavailable")
       printf '{"items":[]}\n' > "$pods_file"
     fi
-    if ! jq -e --arg image "$expected_image" --arg digest "$expected_digest" '
-      [.items[].status.containerStatuses[]? | select(.image == $image)] as $statuses
+    if ! jq -e --arg container "$expected_container" --arg digest "$expected_digest" '
+      [.items[].status.containerStatuses[]? | select(.name == $container)] as $statuses
       | ($statuses | length) > 0
         and all($statuses[]; ((.imageID // "") | contains($digest)))
     ' "$pods_file" >/dev/null; then
@@ -118,6 +131,7 @@ verify_deployments() {
       --arg deployment "$deployment" \
       --arg image "$expected_image" \
       --arg digest "$expected_digest" \
+      --arg container "$expected_container" \
       --arg source_path "$module_path" \
       --arg source_commit "$source_commit" \
       --slurpfile pods "$pods_file" \
@@ -131,7 +145,7 @@ verify_deployments() {
         source_commit: $source_commit,
         pod_image_ids: ([
           $pods[0].items[].status.containerStatuses[]?
-          | select(.image == $image)
+          | select(.name == $container)
           | .imageID
         ] | unique | sort)
       }' >> "$entries_file"
@@ -164,6 +178,9 @@ EOF
       errors: $errors
     }' > "$report"
   rm -f "$entries_file" "$pods_file" "$deployment_file"
+  if [[ "$status" != "PASS" ]]; then
+    printf '%s\n' "${errors[@]}" >&2
+  fi
   [[ "$status" == "PASS" ]]
 }
 

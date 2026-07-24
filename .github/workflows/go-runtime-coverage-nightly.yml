@@ -272,7 +272,11 @@ jobs:
 
       - name: Attach run-scoped coverage PVCs
         if: env.RUNTIME_COVERAGE_MODE == 'run'
-        run: scripts/ci/runtime-coverage-k8s.sh prepare
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/ci/runtime-coverage-k8s.sh prepare
+          echo "RUNTIME_COVERAGE_PREPARED=1" >> "$GITHUB_ENV"
 
       - name: Prepare run-scoped Clip credentials
         if: env.RUNTIME_COVERAGE_MODE == 'run'
@@ -387,11 +391,11 @@ jobs:
               --run-id "$RUNTIME_COVERAGE_RUN_ID"
 
       - name: Gracefully stop services and collect runtime counters
-        if: always() && env.RUNTIME_COVERAGE_MODE == 'run' && env.RUNTIME_COVERAGE_DEPLOYED == '1'
+        if: always() && env.RUNTIME_COVERAGE_MODE == 'run' && env.RUNTIME_COVERAGE_PREPARED == '1'
         run: scripts/ci/runtime-coverage-k8s.sh collect
 
       - name: Aggregate runtime coverage and verify anchors
-        if: always() && env.RUNTIME_COVERAGE_MODE == 'run' && env.RUNTIME_COVERAGE_DEPLOYED == '1'
+        if: always() && env.RUNTIME_COVERAGE_MODE == 'run' && env.RUNTIME_COVERAGE_PREPARED == '1'
         shell: bash
         run: |
           set -euo pipefail
