@@ -41,3 +41,23 @@ func TestReportPersistenceAndPublicThresholdWrappers(t *testing.T) {
 		t.Fatalf("threshold evaluation = %#v", evaluation)
 	}
 }
+
+func TestReportPersistenceRejectsInvalidPathsAndJSON(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := ReadJSON(filepath.Join(dir, "missing.json")); err == nil {
+		t.Fatal("ReadJSON accepted a missing file")
+	}
+	invalidJSON := filepath.Join(dir, "invalid.json")
+	if err := os.WriteFile(invalidJSON, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadJSON(invalidJSON); err == nil {
+		t.Fatal("ReadJSON accepted malformed JSON")
+	}
+	if err := WriteJSON(dir, &Result{}); err == nil {
+		t.Fatal("WriteJSON accepted a directory path")
+	}
+	if err := WriteMarkdown(dir, &Result{}); err == nil {
+		t.Fatal("WriteMarkdown accepted a directory path")
+	}
+}

@@ -549,6 +549,39 @@ func TestFeatureWorkflowCommandAllowsBoundedLocalLiveCanary(t *testing.T) {
 	}
 }
 
+func TestExecuteFeatureSpecUsesSelectedWorkflowCommand(t *testing.T) {
+	workspace := t.TempDir()
+	scriptPath := filepath.Join(workspace, "loadtests", "home-100k", "scripts", "home-100k.sh")
+	if err := os.MkdirAll(filepath.Dir(scriptPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spec := featureRunSpec{
+		Feature:      "device-shadow",
+		Profile:      "canary",
+		TestIDs:      []string{"E2E-HOME-SHADOW-001"},
+		ScenarioPath: "scenario.env",
+		Scale:        map[string]any{"devices": 10},
+	}
+
+	t.Setenv("RUNTIME_COVERAGE_FEATURE_WORKFLOW", "unsupported")
+	blocked, err := executeFeatureSpec(workspace, t.TempDir(), "unit-invalid-workflow", "staging", spec, map[string]string{"workspace": "abc"})
+	if err == nil || blocked.Status != "BLOCKED" {
+		t.Fatalf("invalid workflow result = %#v, %v", blocked, err)
+	}
+
+	t.Setenv("RUNTIME_COVERAGE_FEATURE_WORKFLOW", "workflow-local-live")
+	manifest, err := executeFeatureSpec(workspace, t.TempDir(), "unit-local-workflow", "staging", spec, map[string]string{"workspace": "abc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Status != "INCOMPLETE" {
+		t.Fatalf("manifest status = %q, want INCOMPLETE without generated evidence", manifest.Status)
+	}
+}
+
 func TestVerifyFeatureDeploymentCommitsRequiresDigestAndCommit(t *testing.T) {
 	envRoot := t.TempDir()
 	manifestDir := filepath.Join(envRoot, "artifacts", "lke-images")

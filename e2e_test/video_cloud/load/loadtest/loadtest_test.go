@@ -4865,6 +4865,31 @@ func TestClassifyError(t *testing.T) {
 			}
 		})
 	}
+	errorCases := []struct {
+		name   string
+		status int
+		body   []byte
+		err    error
+		want   string
+	}{
+		{"cancelled", 0, nil, context.Canceled, ClassCancelled},
+		{"deadline", 0, nil, context.DeadlineExceeded, ClassTimeout},
+		{"network timeout", 0, nil, &net.DNSError{IsTimeout: true}, ClassTimeout},
+		{"valid bad request", 400, []byte(`{"status":"fail"}`), nil, ClassHTTP},
+		{"forbidden", 403, nil, nil, ClassAuth},
+		{"server error", 500, nil, nil, ClassHTTP},
+		{"other status", 429, nil, nil, ClassHTTP},
+		{"webrtc setup", 0, nil, errors.New("WebRTC negotiation failed"), ClassWebRTCSetup},
+		{"network", 0, nil, errors.New("connection reset"), ClassNetwork},
+		{"unknown", 0, nil, nil, ClassUnknown},
+	}
+	for _, tc := range errorCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ClassifyError(tc.status, tc.body, tc.err); got != tc.want {
+				t.Fatalf("ClassifyError = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }
 
 func TestValidateWebRTCSetup(t *testing.T) {

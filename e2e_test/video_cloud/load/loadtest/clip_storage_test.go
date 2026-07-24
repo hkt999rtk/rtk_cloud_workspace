@@ -106,6 +106,84 @@ func TestPlaybackSessionRangeUsesShortLivedURLWithoutBearer(t *testing.T) {
 	}
 }
 
+func TestBuildEncryptedDownloadQueryRejectsInvalidKeyMaterial(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "missing.pem")
+	if _, err := buildEncryptedDownloadQuery(missing, missing, ""); err == nil {
+		t.Fatal("empty stored clip key was accepted")
+	}
+	if _, err := buildEncryptedDownloadQuery(missing, missing, "key"); err == nil {
+		t.Fatal("missing user private key was accepted")
+	}
+
+	invalidPrivate := filepath.Join(dir, "invalid-private.pem")
+	if err := os.WriteFile(invalidPrivate, []byte("not pem"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := buildEncryptedDownloadQuery(invalidPrivate, missing, "key"); err == nil {
+		t.Fatal("non-PEM user private key was accepted")
+	}
+
+	p384Private, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p384DER, err := x509.MarshalECPrivateKey(p384Private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p384Path := filepath.Join(dir, "p384-private.pem")
+	if err := os.WriteFile(p384Path, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: p384DER}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := buildEncryptedDownloadQuery(p384Path, missing, "key"); err == nil {
+		t.Fatal("non-P256 user private key was accepted")
+	}
+
+	p256Private, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p256DER, err := x509.MarshalECPrivateKey(p256Private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p256Path := filepath.Join(dir, "p256-private.pem")
+	if err := os.WriteFile(p256Path, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: p256DER}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := buildEncryptedDownloadQuery(p256Path, missing, "not a public key"); err == nil {
+		t.Fatal("invalid stored clip key was accepted")
+	}
+
+	userPublicDER, err := x509.MarshalPKIXPublicKey(&p256Private.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	userPublic := string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: userPublicDER}))
+	_, storedClipKey, err := encryptLegacyClip(userPublic, []byte("0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := buildEncryptedDownloadQuery(p256Path, missing, storedClipKey); err == nil {
+		t.Fatal("missing server public key was accepted")
+	}
+	invalidServer := filepath.Join(dir, "invalid-server.pem")
+	if err := os.WriteFile(invalidServer, []byte("not pem"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := buildEncryptedDownloadQuery(p256Path, invalidServer, storedClipKey); err == nil {
+		t.Fatal("invalid server public key was accepted")
+	}
+
+	if got := clipIDFromEvidence("status=ok clipid=clip-123 ready=true"); got != "clip-123" {
+		t.Fatalf("clipIDFromEvidence = %q", got)
+	}
+	if got := clipIDFromEvidence("status=ok"); got != "" {
+		t.Fatalf("clipIDFromEvidence without clip id = %q", got)
+	}
+}
+
 func TestPoissonClipScheduleIsDeterministicAndBounded(t *testing.T) {
 	ids := []string{"cam-a", "cam-b", "cam-c"}
 	one := poissonClipSchedule(ids, 10, 30*time.Minute, 20260719)
