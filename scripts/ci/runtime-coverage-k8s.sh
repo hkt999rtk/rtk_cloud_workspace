@@ -458,9 +458,9 @@ EOF
     rollout status deployment/runtime-coverage-ingress --timeout=5m
   ingress_host="$(feature_endpoint_host "$ingress_namespace" "$ingress_service")"
   mqtt_host="$(feature_endpoint_host "$video_namespace" "$mqtt_service")"
-  curl --fail --silent --show-error --retry 12 --retry-delay 5 --insecure --noproxy '*' \
+  curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 --insecure --noproxy '*' \
     --resolve "$account_domain:443:$ingress_host" "https://$account_domain/healthz" >/dev/null
-  curl --fail --silent --show-error --retry 12 --retry-delay 5 --insecure --noproxy '*' \
+  curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 --insecure --noproxy '*' \
     --resolve "$video_domain:443:$ingress_host" "https://$video_domain/healthz" >/dev/null
   timeout 10 bash -c 'exec 3<>"/dev/tcp/$1/$2"' _ "$mqtt_host" 8883
   endpoint_env="$output_root/feature-endpoints.env"

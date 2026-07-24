@@ -179,6 +179,7 @@ func TestRuntimeCleanupWritesResidualAndStagingAnchorReport(t *testing.T) {
 		"cleanup-report.json",
 		"deployment-anchors.json",
 		"feature-endpoints.json",
+		"--retry-all-errors",
 		"VIDEO_CLOUD_LOAD_STORAGE_NAMESPACE=$video_namespace",
 		"running pod image IDs do not match the expected digest",
 		"residual_namespaces",
