@@ -354,6 +354,7 @@ func TestRuntimeCleanupWritesResidualAndStagingAnchorReport(t *testing.T) {
 		"feature-endpoints.json",
 		"tunnel_start",
 		"tunnel_stop",
+		"ingress.log",
 		"type: ClusterIP",
 		"18443:443 18883:8883",
 		"claim=\"${module}-runtime-coverage\"",

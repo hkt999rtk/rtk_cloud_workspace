@@ -348,7 +348,7 @@ data:
   nginx.conf: |
     user nginx;
     worker_processes auto;
-    error_log /var/log/nginx/error.log notice;
+    error_log /dev/stderr info;
     pid /run/nginx.pid;
     events {
       worker_connections 1024;
@@ -356,6 +356,7 @@ data:
     http {
       include /etc/nginx/mime.types;
       default_type application/octet-stream;
+      access_log /dev/stdout combined;
       sendfile on;
       keepalive_timeout 65;
       server {
@@ -545,7 +546,9 @@ tunnel_start() {
   local ingress_namespace="$stack-ingress"
   local tunnel_dir="$output_root/tunnels"
   local pid_file="$tunnel_dir/port-forward.pid"
+  local ingress_log_pid_file="$tunnel_dir/ingress-log.pid"
   local log_file="$tunnel_dir/port-forward.log"
+  local ingress_log_file="$tunnel_dir/ingress.log"
   mkdir -p "$tunnel_dir"
   tunnel_stop
   RUNNER_TRACKING_ID="" nohup kubectl --kubeconfig "$kubeconfig" -n "$ingress_namespace" \
@@ -553,6 +556,9 @@ tunnel_start() {
     18443:443 18883:8883 > "$log_file" 2>&1 &
   tunnel_pid=$!
   printf '%s\n' "$tunnel_pid" > "$pid_file"
+  RUNNER_TRACKING_ID="" nohup kubectl --kubeconfig "$kubeconfig" -n "$ingress_namespace" \
+    logs --follow deployment/runtime-coverage-ingress > "$ingress_log_file" 2>&1 &
+  printf '%s\n' "$!" > "$ingress_log_pid_file"
   for _ in {1..60}; do
     if kill -0 "$tunnel_pid" 2>/dev/null &&
       timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/18443' &&
@@ -570,6 +576,7 @@ tunnel_start() {
 tunnel_stop() {
   local tunnel_dir="$output_root/tunnels"
   local pid_file="$tunnel_dir/port-forward.pid"
+  local ingress_log_pid_file="$tunnel_dir/ingress-log.pid"
   local tunnel_pid=""
   mkdir -p "$tunnel_dir"
   if [[ -f "$pid_file" ]]; then
@@ -579,7 +586,15 @@ tunnel_stop() {
     kill "$tunnel_pid" 2>/dev/null || true
     wait "$tunnel_pid" 2>/dev/null || true
   fi
+  if [[ -f "$ingress_log_pid_file" ]]; then
+    ingress_log_pid="$(tr -d '[:space:]' < "$ingress_log_pid_file")"
+    if [[ "$ingress_log_pid" =~ ^[1-9][0-9]*$ ]]; then
+      kill "$ingress_log_pid" 2>/dev/null || true
+      wait "$ingress_log_pid" 2>/dev/null || true
+    fi
+  fi
   : > "$pid_file"
+  : > "$ingress_log_pid_file"
 }
 
 validate_scope() {
