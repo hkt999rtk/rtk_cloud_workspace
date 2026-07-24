@@ -46,17 +46,15 @@ if ! [[ "${LKE_ACTIVE_SERVICE_LIMIT:-}" =~ ^[1-9][0-9]*$ ]]; then
   fail "LKE_ACTIVE_SERVICE_LIMIT repository variable must be a positive integer"
 fi
 
-for name in LINODE_TOKEN VIDEO_CLOUD_LOAD_ADMIN_TOKEN GHCR_PULL_TOKEN; do
+for name in LINODE_TOKEN GHCR_PULL_TOKEN; do
   [[ -n "${!name:-}" ]] || fail "missing required credential: $name"
 done
-for name in VIDEO_CLOUD_LOAD_CLIP_USER_PRIVATE_KEY VIDEO_CLOUD_LOAD_CLIP_SERVER_PUBLIC_KEY; do
-  value="${!name:-}"
-  if [[ -z "$value" ]]; then
-    fail "missing required credential path: $name"
-  elif [[ ! -r "$value" ]]; then
-    fail "credential path is not readable: $name"
-  fi
-done
+[[ -s "$workspace/repos/rtk_video_cloud/cmd/admin-token/main.go" ]] ||
+  fail "run-scoped Video Cloud admin-token source is missing"
+grep -Fq "admin-token" "$workspace/tests/runtime-coverage/Dockerfile.video-cloud" ||
+  fail "runtime Video Cloud image does not include admin-token"
+openssl ecparam -list_curves 2>/dev/null | grep -Fq "prime256v1" ||
+  fail "OpenSSL prime256v1 support is unavailable"
 
 if [[ -z "${KUBECONFIG:-}" || ! -s "${KUBECONFIG:-}" ]]; then
   fail "run-scoped kubeconfig is missing"
@@ -105,6 +103,13 @@ jq -n \
       name: $runner_name,
       os: $runner_os,
       architecture: $runner_arch
+    },
+    credential_strategy: {
+      cluster_access: "repository-secret",
+      admin_token: "run-scoped-after-deploy",
+      clip_user_key: "run-scoped-after-deploy",
+      clip_server_public_key: "derived-from-run-scoped-stack",
+      ui_sessions: "run-scoped-test-accounts"
     },
     workspace_commit: $workspace_commit,
     submodule_commits: $submodule_commits,

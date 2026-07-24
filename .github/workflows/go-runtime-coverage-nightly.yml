@@ -47,9 +47,6 @@ jobs:
       LKE_CLUSTER_LABEL: video-cloud-staging-lke
       LKE_ACTIVE_SERVICE_LIMIT: ${{ vars.LKE_ACTIVE_SERVICE_LIMIT }}
       LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
-      VIDEO_CLOUD_LOAD_ADMIN_TOKEN: ${{ secrets.VIDEO_CLOUD_ADMIN_TOKEN }}
-      VIDEO_CLOUD_LOAD_CLIP_USER_PRIVATE_KEY: ${{ secrets.CLIP_USER_PRIVATE_KEY_PATH }}
-      VIDEO_CLOUD_LOAD_CLIP_SERVER_PUBLIC_KEY: ${{ secrets.CLIP_SERVER_PUBLIC_KEY_PATH }}
       GHCR_PULL_USERNAME: ${{ github.actor }}
       GHCR_PULL_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -151,6 +148,8 @@ jobs:
           cp "$RUNTIME_SOURCE_STACK_ENV" "$RUNTIME_ENV_ROOT/env/stack.env"
           perl -0pi -e "s/^CLOUD_STACK_NAME=.*/CLOUD_STACK_NAME=$RUNTIME_COVERAGE_STACK/m; s/^CLOUD_ENV_NAME=.*/CLOUD_ENV_NAME=runtime-coverage/m; s/^CLOUD_PROVIDER=.*/CLOUD_PROVIDER=lke/m" \
             "$RUNTIME_ENV_ROOT/env/stack.env"
+          perl -0pi -e "s/^CLOUD_DNS_ROOT_DOMAIN=.*/CLOUD_DNS_ROOT_DOMAIN=$RUNTIME_COVERAGE_STACK.invalid/m; s/^VIDEO_CLOUD_DOMAIN=.*/VIDEO_CLOUD_DOMAIN=video.$RUNTIME_COVERAGE_STACK.invalid/m; s/^VIDEO_CLOUD_CERTISSUER_DOMAIN=.*/VIDEO_CLOUD_CERTISSUER_DOMAIN=certissuer.$RUNTIME_COVERAGE_STACK.invalid/m; s/^ACCOUNT_MANAGER_DOMAIN=.*/ACCOUNT_MANAGER_DOMAIN=account.$RUNTIME_COVERAGE_STACK.invalid/m; s/^CLOUD_ADMIN_DOMAIN=.*/CLOUD_ADMIN_DOMAIN=admin.$RUNTIME_COVERAGE_STACK.invalid/m; s/^CLOUD_LOGGER_DOMAIN=.*/CLOUD_LOGGER_DOMAIN=logger.$RUNTIME_COVERAGE_STACK.invalid/m" \
+            "$RUNTIME_ENV_ROOT/env/stack.env"
           printf '\nCLOUD_RUNTIME_COVERAGE_STACK=%s\n' "$RUNTIME_COVERAGE_STACK" >> "$RUNTIME_ENV_ROOT/env/stack.env"
           printf 'LKE_ACTIVE_SERVICE_LIMIT=%s\n' "$LKE_ACTIVE_SERVICE_LIMIT" > "$RUNTIME_ENV_ROOT/adapters/lke/account.env"
           printf 'LKE_CLUSTER_ID=%s\nLKE_CLUSTER_LABEL=%s\n' "$LKE_CLUSTER_ID" "$LKE_CLUSTER_LABEL" > "$RUNTIME_ENV_ROOT/adapters/lke/state.env"
@@ -165,23 +164,57 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          metadata_dir="$RUNNER_TEMP/runtime-coverage-image-metadata"
+          mkdir -p "$metadata_dir"
           account_image="$RUNTIME_COVERAGE_REGISTRY/account-manager:$RUNTIME_COVERAGE_RUN_ID"
           admin_image="$RUNTIME_COVERAGE_REGISTRY/cloud-admin:$RUNTIME_COVERAGE_RUN_ID"
           frontend_image="$RUNTIME_COVERAGE_REGISTRY/cloud-frontend:$RUNTIME_COVERAGE_RUN_ID"
           logger_image="$RUNTIME_COVERAGE_REGISTRY/cloud-logger:$RUNTIME_COVERAGE_RUN_ID"
           video_image="$RUNTIME_COVERAGE_REGISTRY/video-cloud:$RUNTIME_COVERAGE_RUN_ID"
-          docker buildx build --platform linux/amd64 --push -f tests/runtime-coverage/Dockerfile.account-manager -t "$account_image" repos/rtk_account_manager
-          docker buildx build --platform linux/amd64 --push -f tests/runtime-coverage/Dockerfile.cloud-admin -t "$admin_image" repos/rtk_cloud_admin
-          docker buildx build --platform linux/amd64 --push -f tests/runtime-coverage/Dockerfile.cloud-frontend -t "$frontend_image" repos/rtk_cloud_frontend
-          docker buildx build --platform linux/amd64 --push -f tests/runtime-coverage/Dockerfile.cloud-logger -t "$logger_image" repos/rtk_cloud_logger
-          docker buildx build --platform linux/amd64 --push -f tests/runtime-coverage/Dockerfile.video-cloud -t "$video_image" repos/rtk_video_cloud
-          {
-            echo "LKE_ACCOUNT_MANAGER_IMAGE=$account_image"
-            echo "LKE_CLOUD_ADMIN_IMAGE=$admin_image"
-            echo "LKE_FRONTEND_IMAGE=$frontend_image"
-            echo "LKE_CLOUD_LOGGER_IMAGE=$logger_image"
-            echo "LKE_VIDEO_CLOUD_IMAGE=$video_image"
-          } >> "$GITHUB_ENV"
+          build_coverage_image() {
+            local env_key="$1"
+            local metadata_name="$2"
+            local image="$3"
+            local dockerfile="$4"
+            local context="$5"
+            local metadata="$metadata_dir/$metadata_name.json"
+            local digest pinned_image
+            docker buildx build \
+              --platform linux/amd64 \
+              --push \
+              --provenance=false \
+              --metadata-file "$metadata" \
+              -f "$dockerfile" \
+              -t "$image" \
+              "$context"
+            digest="$(jq -er '."containerimage.digest"' "$metadata")"
+            [[ "$digest" == sha256:* ]]
+            pinned_image="$image@$digest"
+            export "$env_key=$pinned_image"
+            export "${env_key}_DIGEST=$digest"
+            {
+              echo "$env_key=$pinned_image"
+              echo "${env_key}_DIGEST=$digest"
+            } >> "$GITHUB_ENV"
+          }
+          build_coverage_image LKE_ACCOUNT_MANAGER_IMAGE account-manager "$account_image" tests/runtime-coverage/Dockerfile.account-manager repos/rtk_account_manager
+          build_coverage_image LKE_CLOUD_ADMIN_IMAGE cloud-admin "$admin_image" tests/runtime-coverage/Dockerfile.cloud-admin repos/rtk_cloud_admin
+          build_coverage_image LKE_FRONTEND_IMAGE cloud-frontend "$frontend_image" tests/runtime-coverage/Dockerfile.cloud-frontend repos/rtk_cloud_frontend
+          build_coverage_image LKE_CLOUD_LOGGER_IMAGE cloud-logger "$logger_image" tests/runtime-coverage/Dockerfile.cloud-logger repos/rtk_cloud_logger
+          build_coverage_image LKE_VIDEO_CLOUD_IMAGE video-cloud "$video_image" tests/runtime-coverage/Dockerfile.video-cloud repos/rtk_video_cloud
+          manifest="$RUNTIME_ENV_ROOT/artifacts/lke-images/lke-image-manifest.json"
+          mkdir -p "$(dirname "$manifest")"
+          go run ./scripts/go/rtk-cloud -- lke-resolve-images \
+            --workspace "$GITHUB_WORKSPACE" \
+            --env-root "$RUNTIME_ENV_ROOT" \
+            --skip-verify \
+            --out "$manifest"
+          jq -e '
+            [.images[]
+              | select(.source_path != null)
+              | select((.digest | startswith("sha256:")) and (.source_commit | length == 40))
+            ] | length == 5
+          ' "$manifest" >/dev/null
 
       - name: Deploy isolated stack without public DNS, edge VMs, or cluster changes
         if: env.RUNTIME_COVERAGE_MODE == 'run'
@@ -194,9 +227,62 @@ jobs:
             --preflight --plan --apply --deploy --artifacts \
             --confirm "$RUNTIME_COVERAGE_STACK"
 
+      - name: Verify isolated deployment image digests and commits
+        if: env.RUNTIME_COVERAGE_MODE == 'run'
+        run: scripts/ci/runtime-coverage-k8s.sh verify
+
+      - name: Create run-scoped feature endpoints without DNS
+        if: env.RUNTIME_COVERAGE_MODE == 'run'
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/ci/runtime-coverage-k8s.sh endpoints
+          endpoint_env="$RUNTIME_COVERAGE_OUTPUT_ROOT/feature-endpoints.env"
+          test -s "$endpoint_env"
+          cat "$endpoint_env" >> "$GITHUB_ENV"
+          ingress_ip="$(awk -F= '$1 == "RUNTIME_COVERAGE_INGRESS_IP" {print $2}' "$endpoint_env")"
+          hostnames="$(awk -F= '$1 == "RUNTIME_COVERAGE_HOSTNAMES" {print $2}' "$endpoint_env" | tr ',' ' ')"
+          test -n "$ingress_ip"
+          test -n "$hostnames"
+          printf '%s %s # runtime-coverage-%s\n' "$ingress_ip" "$hostnames" "$RUNTIME_COVERAGE_RUN_ID" |
+            sudo tee -a /etc/hosts >/dev/null
+          test -s "$RUNTIME_COVERAGE_SERVER_CA"
+          sudo cp "$RUNTIME_COVERAGE_SERVER_CA" \
+            "/usr/local/share/ca-certificates/$RUNTIME_COVERAGE_RUN_ID.crt"
+          sudo update-ca-certificates
+
       - name: Attach run-scoped coverage PVCs
         if: env.RUNTIME_COVERAGE_MODE == 'run'
         run: scripts/ci/runtime-coverage-k8s.sh prepare
+
+      - name: Prepare run-scoped Clip credentials
+        if: env.RUNTIME_COVERAGE_MODE == 'run'
+        shell: bash
+        run: |
+          set -euo pipefail
+          namespace="$RUNTIME_COVERAGE_STACK-video-cloud"
+          user_private="$RUNNER_TEMP/runtime-coverage-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-clip-user-private.pem"
+          server_private="$RUNNER_TEMP/runtime-coverage-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-clip-server-private.pem"
+          server_public="$RUNNER_TEMP/runtime-coverage-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-clip-server-public.pem"
+          openssl ecparam -name prime256v1 -genkey -noout -out "$user_private"
+          kubectl --kubeconfig "$KUBECONFIG" -n "$namespace" \
+            get secret video-cloud-runtime -o jsonpath='{.data.clip-private-key\.pem}' |
+            openssl base64 -d -A > "$server_private"
+          chmod 0600 "$user_private" "$server_private"
+          openssl ec -in "$server_private" -pubout -out "$server_public" 2>/dev/null
+          chmod 0600 "$server_public"
+          rm -f "$server_private"
+          admin_token="$(
+            kubectl --kubeconfig "$KUBECONFIG" -n "$namespace" \
+              exec deployment/video-cloud-api -- /app/admin-token --ttl 1h
+          )"
+          test -n "$admin_token"
+          echo "::add-mask::$admin_token"
+          {
+            echo "VIDEO_CLOUD_LOAD_ADMIN_TOKEN=$admin_token"
+            echo "VIDEO_CLOUD_LOAD_CLIP_USER_PRIVATE_KEY=$user_private"
+            echo "VIDEO_CLOUD_LOAD_CLIP_SERVER_PUBLIC_KEY=$server_public"
+          } >> "$GITHUB_ENV"
 
       - name: Run onboarding and cross-service lifecycle checks
         if: env.RUNTIME_COVERAGE_MODE == 'run'
@@ -317,9 +403,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          sudo sed -i "/# runtime-coverage-$RUNTIME_COVERAGE_RUN_ID$/d" /etc/hosts
+          sudo rm -f "/usr/local/share/ca-certificates/$RUNTIME_COVERAGE_RUN_ID.crt"
+          sudo update-ca-certificates
           if [[ "${RUNTIME_ENV_ROOT:-}" == "$RUNNER_TEMP/rtk-runtime-coverage/"*"/lke" ]]; then
             rm -rf "$RUNTIME_ENV_ROOT"
           fi
           if [[ "${KUBECONFIG:-}" == "$RUNNER_TEMP/"* ]]; then
             rm -f "$KUBECONFIG"
           fi
+          for credential_path in \
+            "${VIDEO_CLOUD_LOAD_CLIP_USER_PRIVATE_KEY:-}" \
+            "${VIDEO_CLOUD_LOAD_CLIP_SERVER_PUBLIC_KEY:-}"; do
+            if [[ "$credential_path" == "$RUNNER_TEMP/runtime-coverage-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-clip-"*".pem" ]]; then
+              rm -f "$credential_path"
+            fi
+          done

@@ -62,14 +62,33 @@
           exit 0
         fi
         marker="# home-100k generator override"
-        hosts="video-cloud-staging.realtekconnect.com device.video-cloud-staging.realtekconnect.com account-manager.video-cloud-staging.realtekconnect.com"
+        urls="{{ video_cloud_public_url | default('') }} {{ video_cloud_token_url | default('') }} {{ account_manager_url | default('') }}"
+        hosts=""
+        for url in $urls; do
+          host="${url#*://}"
+          host="${host%%/*}"
+          host="${host%%:*}"
+          if [ -n "$host" ]; then
+            hosts="$hosts $host"
+          fi
+        done
+        hosts="$(printf '%s\n' $hosts | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
+        if [ -z "$hosts" ]; then
+          echo "generator hostname override requested but no endpoint hostnames were provided" >&2
+          exit 1
+        fi
+        runtime_ca="{{ remote_env_root }}/state/secrets/runtime-coverage-server-ca.crt"
+        if [ -s "$runtime_ca" ]; then
+          cp "$runtime_ca" /usr/local/share/ca-certificates/runtime-coverage-server-ca.crt
+          update-ca-certificates
+        fi
         sed -i '/# home-100k generator override$/d' /etc/hosts
         for host in $hosts; do
           printf '%s %s %s\n' "$override_ip" "$host" "$marker" >> /etc/hosts
         done
-        getent ahostsv4 video-cloud-staging.realtekconnect.com
-        getent ahostsv4 device.video-cloud-staging.realtekconnect.com
-        getent ahostsv4 account-manager.video-cloud-staging.realtekconnect.com
+        for host in $hosts; do
+          getent ahostsv4 "$host"
+        done
       args:
         executable: /bin/bash
       changed_when: (generator_hosts_override_ip | default('')) != ''
