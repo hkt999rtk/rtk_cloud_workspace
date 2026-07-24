@@ -31,6 +31,8 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"RUNTIME_COVERAGE_RUNNER_LABEL: ubuntu-24.04",
 		"RUNTIME_COVERAGE_FEATURE_WORKFLOW: workflow-local-live",
 		"LKE_POSTGRES_STORAGE_MODE: emptydir",
+		`server_ca="$(awk -F= '$1 == "RUNTIME_COVERAGE_SERVER_CA"`,
+		`sudo cp "$server_ca"`,
 		"RUNTIME_COVERAGE_PLANNED_PVCS: \"5\"",
 		"RUNTIME_COVERAGE_PLANNED_LOAD_BALANCERS: \"0\"",
 		"RUNTIME_COVERAGE_PLANNED_GENERATORS: \"0\"",

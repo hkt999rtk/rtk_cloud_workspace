@@ -266,12 +266,13 @@ jobs:
           cat "$endpoint_env" >> "$GITHUB_ENV"
           ingress_ip="$(awk -F= '$1 == "RUNTIME_COVERAGE_INGRESS_IP" {print $2}' "$endpoint_env")"
           hostnames="$(awk -F= '$1 == "RUNTIME_COVERAGE_HOSTNAMES" {print $2}' "$endpoint_env" | tr ',' ' ')"
+          server_ca="$(awk -F= '$1 == "RUNTIME_COVERAGE_SERVER_CA" {print substr($0, index($0, \"=\") + 1)}' "$endpoint_env")"
           test -n "$ingress_ip"
           test -n "$hostnames"
+          test -s "$server_ca"
           printf '%s %s # runtime-coverage-%s\n' "$ingress_ip" "$hostnames" "$RUNTIME_COVERAGE_RUN_ID" |
             sudo tee -a /etc/hosts >/dev/null
-          test -s "$RUNTIME_COVERAGE_SERVER_CA"
-          sudo cp "$RUNTIME_COVERAGE_SERVER_CA" \
+          sudo cp "$server_ca" \
             "/usr/local/share/ca-certificates/$RUNTIME_COVERAGE_RUN_ID.crt"
           sudo update-ca-certificates
 
