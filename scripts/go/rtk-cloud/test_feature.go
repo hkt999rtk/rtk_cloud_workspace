@@ -844,6 +844,12 @@ func collectFeatureEvidenceFiles(dir string) []featureEvidenceFile {
 		if relErr != nil {
 			return nil
 		}
+		// The stage report is rendered only after the manifest is written. Including
+		// it here would record the hash of the previous report and make the final
+		// artifact unverifiable.
+		if filepath.Base(rel) == "TEST_REPORT.md" {
+			return nil
+		}
 		raw, readErr := os.ReadFile(path)
 		if readErr != nil {
 			return nil

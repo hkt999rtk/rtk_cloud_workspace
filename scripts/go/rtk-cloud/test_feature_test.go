@@ -238,6 +238,20 @@ func TestWriteFeatureStageReportsMaterializesNotRunArtifactsWithoutOverwritingRe
 	}
 }
 
+func TestCollectFeatureEvidenceFilesExcludesRenderedStageReport(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "results.json"), []byte(`{"status":"PASS"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "TEST_REPORT.md"), []byte("rendered after manifest"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files := collectFeatureEvidenceFiles(dir)
+	if len(files) != 1 || files[0].Path != "results.json" {
+		t.Fatalf("evidence files = %+v, want only stable results.json", files)
+	}
+}
+
 func TestFeatureRootsSeparateDeploymentAndLoadRuntime(t *testing.T) {
 	deploymentRoot := filepath.Join("/workspace", "cloud_env", "staging", "lke")
 	if got, want := featureLoadEnvRoot(deploymentRoot), filepath.Join("/workspace", "cloud_env", "staging", "runtime"); got != want {
