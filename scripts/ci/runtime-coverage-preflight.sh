@@ -17,10 +17,24 @@ fail() {
   failures+=("$1")
 }
 
-for command in docker kubectl go node jq git curl sqlite3 openssl; do
+for command in docker kubectl go node jq git curl sqlite3 openssl sha256sum; do
   command -v "$command" >/dev/null 2>&1 || fail "missing command: $command"
 done
 docker buildx version >/dev/null 2>&1 || fail "docker buildx is unavailable"
+
+h264_fixture_rel="e2e_test/video_cloud/load/testdata/testsrc2_1080p_2s.h264"
+h264_fixture="$workspace/$h264_fixture_rel"
+h264_fixture_oid="$(
+  git -C "$workspace" show "HEAD:$h264_fixture_rel" 2>/dev/null |
+    awk '/^oid sha256:/ {sub(/^oid sha256:/, ""); print; exit}'
+)"
+if [[ -z "$h264_fixture_oid" ]]; then
+  fail "H264 fixture Git LFS object ID is missing"
+elif [[ ! -s "$h264_fixture" ]]; then
+  fail "H264 fixture is missing"
+elif [[ "$(sha256sum "$h264_fixture" | awk '{print $1}')" != "$h264_fixture_oid" ]]; then
+  fail "H264 fixture is not materialized from Git LFS"
+fi
 
 if [[ "$(node -p 'process.versions.node.split(`.`)[0]' 2>/dev/null)" != "22" ]]; then
   fail "Node 22 is required"

@@ -32,6 +32,7 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"runs-on: ubuntu-24.04",
 		"RUNTIME_COVERAGE_RUNNER_LABEL: ubuntu-24.04",
 		"RUNTIME_COVERAGE_FEATURE_WORKFLOW: workflow-local-live",
+		"lfs: true",
 		"LKE_POSTGRES_STORAGE_MODE: emptydir",
 		`server_ca="$(awk -F= '$1 == "RUNTIME_COVERAGE_SERVER_CA"`,
 		`sudo cp "$server_ca"`,
@@ -74,6 +75,21 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("runtime workflow missing %q", required)
+		}
+	}
+	preflightRaw, err := os.ReadFile(filepath.Join(workspace, "scripts", "ci", "runtime-coverage-preflight.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	preflight := string(preflightRaw)
+	for _, required := range []string{
+		"testsrc2_1080p_2s.h264",
+		"oid sha256:",
+		"sha256sum",
+		"H264 fixture is not materialized from Git LFS",
+	} {
+		if !strings.Contains(preflight, required) {
+			t.Fatalf("runtime preflight missing H264 fixture guard %q", required)
 		}
 	}
 	for _, forbidden := range []string{
