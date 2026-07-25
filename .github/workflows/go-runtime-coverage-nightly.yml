@@ -40,26 +40,25 @@ jobs:
       RUNTIME_COVERAGE_OUTPUT_ROOT: ${{ github.workspace }}/.artifacts/runtime-coverage/runtime-${{ github.run_id }}-${{ github.run_attempt }}
       RUNTIME_COVERAGE_PREFLIGHT_REPORT: ${{ github.workspace }}/.artifacts/runtime-coverage/runtime-${{ github.run_id }}-${{ github.run_attempt }}/preflight-report.json
       RUNTIME_COVERAGE_SHARED_CLUSTER: "1"
+      RUNTIME_COVERAGE_FEATURE_WORKFLOW: workflow-local-live
       RUNTIME_COVERAGE_RUNNER_LABEL: ubuntu-24.04
       RUNTIME_COVERAGE_RUNNER_OS: Linux
       RUNTIME_COVERAGE_RUNNER_ARCH: X64
       CLOUD_STAGING_LKE_CLUSTER_LABEL: video-cloud-staging-lke
       LKE_CLUSTER_LABEL: video-cloud-staging-lke
       LKE_ACTIVE_SERVICE_LIMIT: ${{ vars.LKE_ACTIVE_SERVICE_LIMIT }}
-      RUNTIME_COVERAGE_PLANNED_PVCS: "15"
-      RUNTIME_COVERAGE_PLANNED_LOAD_BALANCERS: "2"
-      RUNTIME_COVERAGE_PLANNED_GENERATORS: "1"
+      LKE_POSTGRES_STORAGE_MODE: emptydir
+      RUNTIME_COVERAGE_PLANNED_PVCS: "5"
+      RUNTIME_COVERAGE_PLANNED_LOAD_BALANCERS: "0"
+      RUNTIME_COVERAGE_PLANNED_GENERATORS: "0"
       LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
-      LINODE_OBJ_ACCESS_KEY_ID: ${{ secrets.LINODE_OBJ_ACCESS_KEY_ID }}
-      LINODE_OBJ_SECRET_ACCESS_KEY: ${{ secrets.LINODE_OBJ_SECRET_ACCESS_KEY }}
-      LINODE_OBJ_ENDPOINT: ${{ secrets.LINODE_OBJ_ENDPOINT }}
-      LINODE_OBJ_BUCKET: ${{ secrets.LINODE_OBJ_BUCKET }}
       GHCR_PULL_USERNAME: ${{ github.actor }}
       GHCR_PULL_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          lfs: true
           submodules: false
 
       - name: Initialize private submodules
@@ -106,6 +105,58 @@ jobs:
             echo "RTK_CLOUD_LKE_KUBECONFIG=$kubeconfig"
             echo "RUNTIME_ENV_ROOT=$runtime_env_root"
           } >> "$GITHUB_ENV"
+          staging_video_namespace="$(
+            kubectl --kubeconfig "$kubeconfig" get deployment -A -o json |
+              jq -er '
+                [.items[]
+                  | select(.metadata.name == "video-cloud-api")
+                  | select(.metadata.labels["rtk.realtek.com/stack"] == "video-cloud-staging")
+                  | .metadata.namespace
+                ] | if length == 1 then .[0] else error("expected one shared staging video-cloud-api deployment") end
+              '
+          )"
+          staging_deployment="$RUNNER_TEMP/runtime-coverage-staging-video-deployment.json"
+          staging_secret="$RUNNER_TEMP/runtime-coverage-staging-video-secret.json"
+          kubectl --kubeconfig "$kubeconfig" -n "$staging_video_namespace" \
+            get deployment video-cloud-api -o json > "$staging_deployment"
+          kubectl --kubeconfig "$kubeconfig" -n "$staging_video_namespace" \
+            get secret video-cloud-runtime -o json > "$staging_secret"
+          deployment_env() {
+            jq -er --arg name "$1" '
+              [.spec.template.spec.containers[].env[]?
+                | select(.name == $name)
+                | .value
+              ] | if length > 0 and .[0] != null and .[0] != "" then .[0] else error("missing deployment environment value") end
+            ' "$staging_deployment"
+          }
+          blob_access_key="$(jq -er '.data.AWS_ACCESS_KEY_ID | @base64d | select(length > 0)' "$staging_secret")"
+          blob_secret_key="$(jq -er '.data.AWS_SECRET_ACCESS_KEY | @base64d | select(length > 0)' "$staging_secret")"
+          turn_shared_secret="$(jq -er '.data.VIDEO_CLOUD_TURN_SHARED_SECRET | @base64d | select(length > 0)' "$staging_secret")"
+          blob_endpoint="$(deployment_env VIDEO_CLOUD_BLOB_ENDPOINT)"
+          blob_region="$(deployment_env VIDEO_CLOUD_BLOB_REGION)"
+          blob_bucket="$(deployment_env VIDEO_CLOUD_BLOB_BUCKET)"
+          turn_urls="$(deployment_env VIDEO_CLOUD_WEBRTC_TURN_URLS)"
+          turn_public_host="$(
+            printf '%s\n' "$turn_urls" |
+              tr ',' '\n' |
+              sed -E 's#^[a-z]+:##; s#[?].*$##; s#:[0-9]+$##' |
+              head -n 1
+          )"
+          test -n "$turn_public_host"
+          echo "::add-mask::$blob_access_key"
+          echo "::add-mask::$blob_secret_key"
+          echo "::add-mask::$turn_shared_secret"
+          {
+            echo "RUNTIME_COVERAGE_STORAGE_SOURCE_NAMESPACE=$staging_video_namespace"
+            echo "RUNTIME_COVERAGE_SHARED_TURN_HOST=$turn_public_host"
+            echo "LINODE_OBJ_ACCESS_KEY_ID=$blob_access_key"
+            echo "LINODE_OBJ_SECRET_ACCESS_KEY=$blob_secret_key"
+            echo "LINODE_OBJ_ENDPOINT=$blob_endpoint"
+            echo "LINODE_OBJ_REGION=$blob_region"
+            echo "LINODE_OBJ_BUCKET=$blob_bucket"
+            echo "LKE_TURN_SHARED=$turn_shared_secret"
+            echo "VIDEO_CLOUD_WEBRTC_TURN_URLS=$turn_urls"
+          } >> "$GITHUB_ENV"
 
       - name: Snapshot shared staging deployment anchors
         continue-on-error: true
@@ -151,26 +202,31 @@ jobs:
           [[ "$RUNTIME_COVERAGE_STACK" != *staging* ]]
           [[ "$RUNTIME_COVERAGE_STACK" != *prod* ]]
           test -f "$RUNTIME_SOURCE_STACK_ENV"
+          test "$RUNTIME_COVERAGE_STORAGE_SOURCE_NAMESPACE" = "video-cloud-staging-video-cloud"
           mkdir -p "$RUNTIME_ENV_ROOT/env" "$RUNTIME_ENV_ROOT/adapters/lke"
           cp "$RUNTIME_SOURCE_STACK_ENV" "$RUNTIME_ENV_ROOT/env/stack.env"
           perl -0pi -e "s/^CLOUD_STACK_NAME=.*/CLOUD_STACK_NAME=$RUNTIME_COVERAGE_STACK/m; s/^CLOUD_ENV_NAME=.*/CLOUD_ENV_NAME=runtime-coverage/m; s/^CLOUD_PROVIDER=.*/CLOUD_PROVIDER=lke/m" \
             "$RUNTIME_ENV_ROOT/env/stack.env"
           perl -0pi -e "s/^CLOUD_DNS_ROOT_DOMAIN=.*/CLOUD_DNS_ROOT_DOMAIN=$RUNTIME_COVERAGE_STACK.invalid/m; s/^VIDEO_CLOUD_DOMAIN=.*/VIDEO_CLOUD_DOMAIN=video.$RUNTIME_COVERAGE_STACK.invalid/m; s/^VIDEO_CLOUD_CERTISSUER_DOMAIN=.*/VIDEO_CLOUD_CERTISSUER_DOMAIN=certissuer.$RUNTIME_COVERAGE_STACK.invalid/m; s/^ACCOUNT_MANAGER_DOMAIN=.*/ACCOUNT_MANAGER_DOMAIN=account.$RUNTIME_COVERAGE_STACK.invalid/m; s/^CLOUD_ADMIN_DOMAIN=.*/CLOUD_ADMIN_DOMAIN=admin.$RUNTIME_COVERAGE_STACK.invalid/m; s/^CLOUD_LOGGER_DOMAIN=.*/CLOUD_LOGGER_DOMAIN=logger.$RUNTIME_COVERAGE_STACK.invalid/m" \
             "$RUNTIME_ENV_ROOT/env/stack.env"
+          cloud_region="$(awk -F= '$1 == "CLOUD_REGION" {print substr($0, index($0, "=") + 1)}' "$RUNTIME_ENV_ROOT/env/stack.env")"
+          test -n "$cloud_region"
+          echo "CLOUD_REGION=$cloud_region" >> "$GITHUB_ENV"
           blob_endpoint="$LINODE_OBJ_ENDPOINT"
           [[ "$blob_endpoint" == http://* || "$blob_endpoint" == https://* ]] ||
             blob_endpoint="https://$blob_endpoint"
-          blob_host="${blob_endpoint#*://}"
-          blob_region="${blob_host%%.*}"
-          test -n "$blob_region"
+          test -n "$LINODE_OBJ_REGION"
+          video_cloud_api_base_url="https://video.$RUNTIME_COVERAGE_STACK.invalid:18443"
           {
             printf '\nCLOUD_RUNTIME_COVERAGE_STACK=%s\n' "$RUNTIME_COVERAGE_STACK"
+            printf 'VIDEO_CLOUD_API_BASE_URL=%s\n' "$video_cloud_api_base_url"
             printf 'VIDEO_CLOUD_BLOB_ENDPOINT=%s\n' "$blob_endpoint"
-            printf 'VIDEO_CLOUD_BLOB_REGION=%s\n' "$blob_region"
+            printf 'VIDEO_CLOUD_BLOB_REGION=%s\n' "$LINODE_OBJ_REGION"
             printf 'VIDEO_CLOUD_BLOB_BUCKET=%s\n' "$LINODE_OBJ_BUCKET"
             printf 'VIDEO_CLOUD_BLOB_PREFIX=runtime-coverage/%s\n' "$RUNTIME_COVERAGE_RUN_ID"
             printf 'VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE=false\n'
             printf 'VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED=true\n'
+            printf 'VIDEO_CLOUD_WEBRTC_TURN_URLS=%s\n' "$VIDEO_CLOUD_WEBRTC_TURN_URLS"
           } >> "$RUNTIME_ENV_ROOT/env/stack.env"
           printf 'LKE_ACTIVE_SERVICE_LIMIT=%s\n' "$LKE_ACTIVE_SERVICE_LIMIT" > "$RUNTIME_ENV_ROOT/adapters/lke/account.env"
           printf 'LKE_CLUSTER_ID=%s\nLKE_CLUSTER_LABEL=%s\n' "$LKE_CLUSTER_ID" "$LKE_CLUSTER_LABEL" > "$RUNTIME_ENV_ROOT/adapters/lke/state.env"
@@ -179,6 +235,7 @@ jobs:
             --env-root "$RUNTIME_ENV_ROOT"
           grep -qx "CLOUD_STACK_NAME=$RUNTIME_COVERAGE_STACK" "$RUNTIME_ENV_ROOT/env/stack.env"
           grep -qx "CLOUD_PROVIDER=lke" "$RUNTIME_ENV_ROOT/env/stack.env"
+          grep -Fxq "VIDEO_CLOUD_API_BASE_URL=$video_cloud_api_base_url" "$RUNTIME_ENV_ROOT/env/stack.env"
 
       - name: Build and push coverage-only images
         if: env.RUNTIME_COVERAGE_MODE == 'run'
@@ -204,6 +261,7 @@ jobs:
               --platform linux/amd64 \
               --push \
               --provenance=false \
+              --build-context runtime_coverage_helper=tests/runtime-coverage \
               --metadata-file "$metadata" \
               -f "$dockerfile" \
               -t "$image" \
@@ -264,12 +322,13 @@ jobs:
           cat "$endpoint_env" >> "$GITHUB_ENV"
           ingress_ip="$(awk -F= '$1 == "RUNTIME_COVERAGE_INGRESS_IP" {print $2}' "$endpoint_env")"
           hostnames="$(awk -F= '$1 == "RUNTIME_COVERAGE_HOSTNAMES" {print $2}' "$endpoint_env" | tr ',' ' ')"
+          server_ca="$(awk -F= '$1 == "RUNTIME_COVERAGE_SERVER_CA" {print substr($0, index($0, "=") + 1)}' "$endpoint_env")"
           test -n "$ingress_ip"
           test -n "$hostnames"
+          test -s "$server_ca"
           printf '%s %s # runtime-coverage-%s\n' "$ingress_ip" "$hostnames" "$RUNTIME_COVERAGE_RUN_ID" |
             sudo tee -a /etc/hosts >/dev/null
-          test -s "$RUNTIME_COVERAGE_SERVER_CA"
-          sudo cp "$RUNTIME_COVERAGE_SERVER_CA" \
+          sudo cp "$server_ca" \
             "/usr/local/share/ca-certificates/$RUNTIME_COVERAGE_RUN_ID.crt"
           sudo update-ca-certificates
 
@@ -315,12 +374,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          RUNTIME_COVERAGE_LOGGER_TUNNEL=false scripts/ci/runtime-coverage-k8s.sh tunnel-start
+          trap 'scripts/ci/runtime-coverage-k8s.sh tunnel-stop' EXIT
+          curl --fail --silent --show-error --max-time 10 "$ACCOUNT_MANAGER_BASE_URL/v1/health" >/dev/null
+          curl --fail --silent --show-error --max-time 10 "$VIDEO_CLOUD_BASE_URL/version" >/dev/null
+          export CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE="$VIDEO_CLOUD_TOKEN_BASE_URL"
+          export CLOUD_STAGING_E2E_FACTORY_ENROLL_PORT=18444
+          export CLOUD_STAGING_E2E_MQTT_PORT=18884
           go run ./scripts/go/rtk-cloud -- test-live \
             --env-root "$RUNTIME_ENV_ROOT" \
             --run --confirm "$RUNTIME_COVERAGE_STACK" \
             --skip-remove --skip-provision \
             --steps data,mqtt,runtime-logs,billing-log,billing-db \
-            --user-count 2 --device-count 10 \
+            --user-count 2 --device-count 12 \
+            --device-mix light=10,camera=2 \
             --out-dir ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID/live"
 
       - name: Run all feature canaries
@@ -328,6 +395,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export HOME100K_ENV_ROOT="$RUNTIME_ENV_ROOT"
+          scripts/ci/runtime-coverage-k8s.sh tunnel-start
+          trap 'scripts/ci/runtime-coverage-k8s.sh tunnel-stop' EXIT
           for feature in device-shadow video-webrtc clip-storage; do
             go run ./scripts/go/rtk-cloud -- test-feature \
               --feature "$feature" \
@@ -347,12 +417,17 @@ jobs:
           set -euo pipefail
           kubectl --kubeconfig "$KUBECONFIG" -n "$RUNTIME_COVERAGE_STACK-admin" \
             port-forward svc/cloud-admin 18082:80 > "$RUNNER_TEMP/runtime-coverage-admin-port-forward.log" 2>&1 &
-          port_forward_pid=$!
+          admin_port_forward_pid=$!
+          kubectl --kubeconfig "$KUBECONFIG" -n "$RUNTIME_COVERAGE_STACK-account-manager" \
+            port-forward svc/account-manager 18081:80 > "$RUNNER_TEMP/runtime-coverage-account-manager-port-forward.log" 2>&1 &
+          account_manager_port_forward_pid=$!
           platform_payload="$RUNNER_TEMP/runtime-platform-login.json"
           customer_payload="$RUNNER_TEMP/runtime-customer-login.json"
+          customer_register_payload="$RUNNER_TEMP/runtime-customer-register.json"
+          customer_register_response="$RUNNER_TEMP/runtime-customer-register-response.json"
           platform_headers="$RUNNER_TEMP/runtime-platform-headers.txt"
           customer_headers="$RUNNER_TEMP/runtime-customer-headers.txt"
-          trap 'kill "$port_forward_pid" 2>/dev/null || true; rm -f "$platform_payload" "$customer_payload" "$platform_headers" "$customer_headers"' EXIT
+          trap 'kill "$admin_port_forward_pid" "$account_manager_port_forward_pid" 2>/dev/null || true; rm -f "$platform_payload" "$customer_payload" "$customer_register_payload" "$customer_register_response" "$platform_headers" "$customer_headers"' EXIT
           for attempt in {1..30}; do
             if curl -fsS http://127.0.0.1:18082/healthz >/dev/null; then
               break
@@ -360,6 +435,13 @@ jobs:
             sleep 2
           done
           curl -fsS http://127.0.0.1:18082/healthz >/dev/null
+          for attempt in {1..30}; do
+            if curl -fsS http://127.0.0.1:18081/v1/health >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:18081/v1/health >/dev/null
           platform_email="$(kubectl --kubeconfig "$KUBECONFIG" -n "$RUNTIME_COVERAGE_STACK-account-manager" \
             get secret account-manager-runtime -o jsonpath='{.data.ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL}' | openssl base64 -d -A)"
           platform_password="$(kubectl --kubeconfig "$KUBECONFIG" -n "$RUNTIME_COVERAGE_STACK-account-manager" \
@@ -372,7 +454,15 @@ jobs:
             '{email:$email,password:$password}' > "$platform_payload"
           jq -n --arg email "$customer_email" --arg password "$customer_password" \
             '{email:$email,password:$password}' > "$customer_payload"
-          chmod 0600 "$platform_payload" "$customer_payload"
+          jq -n --arg email "$customer_email" --arg password "$customer_password" \
+            '{email:$email,password:$password,organization_name:"Runtime Coverage Customer"}' > "$customer_register_payload"
+          chmod 0600 "$platform_payload" "$customer_payload" "$customer_register_payload"
+          curl -fsS -o "$customer_register_response" \
+            -H 'content-type: application/json' \
+            --data-binary "@$customer_register_payload" \
+            http://127.0.0.1:18081/v1/auth/register
+          E2E_BRAND_CLOUD_ID="$(jq -r '.organization.id // empty' "$customer_register_response")"
+          test -n "$E2E_BRAND_CLOUD_ID"
           curl -fsS -D "$platform_headers" -o /dev/null \
             -H 'content-type: application/json' \
             --data-binary "@$platform_payload" \
@@ -387,7 +477,7 @@ jobs:
           test -n "$E2E_CUSTOMER_SESSION_ID"
           echo "::add-mask::$E2E_PLATFORM_SESSION_ID"
           echo "::add-mask::$E2E_CUSTOMER_SESSION_ID"
-          export E2E_PLATFORM_SESSION_ID E2E_CUSTOMER_SESSION_ID
+          export E2E_PLATFORM_SESSION_ID E2E_CUSTOMER_SESSION_ID E2E_BRAND_CLOUD_ID
           E2E_BASE_URL=http://127.0.0.1:18082 \
             go run ./scripts/go/rtk-cloud -- test-ui \
               --staging --desktop --mobile --install \

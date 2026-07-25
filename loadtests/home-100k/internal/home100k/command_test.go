@@ -173,6 +173,70 @@ func writeHome100KCoverageArtifacts(t *testing.T, envRoot string) {
 	writeHomeSQLiteTestData(t, envRoot, users, assignments)
 }
 
+func TestServerEvidenceProbesUseRunScopedNamespaces(t *testing.T) {
+	envRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(envRoot, "env", "stack.env"),
+		[]byte("CLOUD_STACK_NAME=coverage-runtime\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RUNTIME_COVERAGE_SHARED_TURN_HOST", "turn.shared.example.test")
+	probes := serverEvidenceProbes(envRoot, "runtime-123", "--since=5m")
+	for _, probe := range probes {
+		if probe.command != "bash" || len(probe.args) < 2 {
+			continue
+		}
+		script := probe.args[len(probe.args)-1]
+		switch probe.source {
+		case "emqx", "emqx_listener_stats", "video_cloud_api", "turn_registry", "coturn":
+			if !strings.Contains(script, "coverage-runtime-video-cloud") {
+				t.Fatalf("%s probe does not use the run-scoped video namespace:\n%s", probe.source, script)
+			}
+		case "postgres", "redis_valkey":
+			if !strings.Contains(script, "coverage-runtime-platform") {
+				t.Fatalf("%s probe does not use the run-scoped platform namespace:\n%s", probe.source, script)
+			}
+		case "ingress_nginx":
+			if !strings.Contains(script, "coverage-runtime-ingress") {
+				t.Fatalf("%s probe does not use the run-scoped ingress namespace:\n%s", probe.source, script)
+			}
+			if !strings.Contains(script, "app.kubernetes.io/name=runtime-coverage-ingress") {
+				t.Fatalf("%s probe does not select the runtime coverage ingress:\n%s", probe.source, script)
+			}
+		}
+	}
+}
+
+func TestServerEvidenceProbesKeepStagingIngressSelector(t *testing.T) {
+	envRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(envRoot, "env", "stack.env"),
+		[]byte("CLOUD_STACK_NAME=video-cloud-staging\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	for _, probe := range serverEvidenceProbes(envRoot, "staging-123", "--since=5m") {
+		if probe.source != "ingress_nginx" {
+			continue
+		}
+		script := strings.Join(probe.args, " ")
+		if !strings.Contains(script, "app.kubernetes.io/name=ingress-nginx") {
+			t.Fatalf("staging ingress probe selector changed unexpectedly:\n%s", script)
+		}
+		return
+	}
+	t.Fatal("serverEvidenceProbes() missing ingress_nginx probe")
+}
+
 func readTarGzNames(t *testing.T, path string) map[string]bool {
 	t.Helper()
 	file, err := os.Open(path)
@@ -1819,6 +1883,47 @@ func TestHome100KResumeLiveSkipsProvisionWhenVMStateExists(t *testing.T) {
 	}
 }
 
+func TestHome100KScriptHasBoundedLocalLiveWorkflow(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "home-100k.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, want := range []string{
+		"workflow-local-live)",
+		"HOME100K_LOCAL_LIVE_MAX_DEVICES",
+		"local_shard_args=(",
+		"run_home100k shard-run",
+		`"${local_shard_args[@]}"`,
+		"--runner-mode live",
+		"--rtk-cloud-binary \"$rtk_cloud_binary\"",
+		"run_video_loadtest_step",
+		"run_clip_storage_loadtest_step",
+		"run_home100k collect-server-evidence",
+		"run_home100k aggregate",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("home-100k.sh missing bounded local-live marker %q:\n%s", want, body)
+		}
+	}
+	localLive, _, ok := strings.Cut(body, "\n  workflow-resume-live)")
+	if !ok {
+		t.Fatal("home-100k.sh local-live case is not terminated")
+	}
+	localLive = localLive[strings.LastIndex(localLive, "\n  workflow-local-live)"):]
+	_, shardCall, ok := strings.Cut(localLive, "run_home100k shard-run")
+	if !ok {
+		t.Fatal("home-100k.sh local-live shard call is missing")
+	}
+	shardCall, _, ok = strings.Cut(shardCall, "--run-id \"$run_id\"")
+	if !ok {
+		t.Fatal("home-100k.sh local-live shard call is missing")
+	}
+	if strings.Contains(shardCall, `"${workflow_args[@]}"`) {
+		t.Fatal("local-live shard-run must not receive VM workflow-only flags")
+	}
+}
+
 func TestHome100KScriptSyncRetrySurvivesSetE(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "home-100k.sh"))
 	if err != nil {
@@ -2190,6 +2295,7 @@ func TestMQTTDeviceTrafficProfileUsesHomeProfileForFeatureWorkloads(t *testing.T
 		want string
 	}{
 		{name: "shadow", plan: Plan{ScenarioProfile: "home-diverse-v1"}, want: "home-diverse-v1"},
+		{name: "shadow canary", plan: Plan{ScenarioProfile: MQTTShadowCanaryScenarioProfile}, want: DefaultScenarioProfile},
 		{name: "video", plan: Plan{ScenarioProfile: Video1KScenarioProfile, VideoProfile: VideoProfile{Name: Video1KScenarioProfile}}, want: DefaultScenarioProfile},
 		{name: "clip", plan: Plan{ScenarioProfile: "clip-storage-1k-v1", ClipStorageProfile: ClipStorageProfile{Name: "clip-storage-1k-v1"}}, want: DefaultScenarioProfile},
 	} {
@@ -3225,6 +3331,50 @@ func TestKubernetesRuntimeLoggerEvidenceUsesNormalizedKubeconfig(t *testing.T) {
 	}
 	if !usesKubernetesRuntimeLoggerEvidence(envRoot) {
 		t.Fatal("runtime logger evidence not enabled by normalized kubeconfig")
+	}
+}
+
+func TestExplicitCentralLoggerEndpointOverridesKubernetesLokiAdapter(t *testing.T) {
+	logger := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/logs" {
+			t.Fatalf("logger path = %q, want /v1/logs", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer runtime-token" {
+			t.Fatalf("logger authorization = %q", r.Header.Get("Authorization"))
+		}
+		_, _ = io.WriteString(w, `{"events":[{"event_id":"runtime-event"}]}`)
+	}))
+	defer logger.Close()
+
+	envRoot := t.TempDir()
+	stateDir := filepath.Join(envRoot, "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "kubeconfig.yaml"), []byte("apiVersion: v1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME100K_CLOUD_LOGGER_ENDPOINT", logger.URL)
+	t.Setenv("HOME100K_CLOUD_LOGGER_INGEST_TOKEN", "runtime-token")
+	if !hasExplicitCentralLoggerEndpoint() {
+		t.Fatal("explicit central logger endpoint was not detected")
+	}
+	events, err := queryCentralLoggerRuntimeEvidenceEvents(
+		envRoot,
+		"runtime-run",
+		time.Now().Add(-time.Minute),
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].EventID != "runtime-event" {
+		t.Fatalf("central logger events = %#v", events)
+	}
+	t.Setenv("HOME100K_CLOUD_LOGGER_ENDPOINT", "")
+	t.Setenv("CLOUD_LOGGER_ENDPOINT", "")
+	if hasExplicitCentralLoggerEndpoint() {
+		t.Fatal("central logger endpoint reported explicit without an environment override")
 	}
 }
 

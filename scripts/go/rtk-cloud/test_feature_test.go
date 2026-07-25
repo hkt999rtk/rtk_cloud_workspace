@@ -238,6 +238,20 @@ func TestWriteFeatureStageReportsMaterializesNotRunArtifactsWithoutOverwritingRe
 	}
 }
 
+func TestCollectFeatureEvidenceFilesExcludesRenderedStageReport(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "results.json"), []byte(`{"status":"PASS"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "TEST_REPORT.md"), []byte("rendered after manifest"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files := collectFeatureEvidenceFiles(dir)
+	if len(files) != 1 || files[0].Path != "results.json" {
+		t.Fatalf("evidence files = %+v, want only stable results.json", files)
+	}
+}
+
 func TestFeatureRootsSeparateDeploymentAndLoadRuntime(t *testing.T) {
 	deploymentRoot := filepath.Join("/workspace", "cloud_env", "staging", "lke")
 	if got, want := featureLoadEnvRoot(deploymentRoot), filepath.Join("/workspace", "cloud_env", "staging", "runtime"); got != want {
@@ -248,6 +262,26 @@ func TestFeatureRootsSeparateDeploymentAndLoadRuntime(t *testing.T) {
 	}
 	if got, want := featureDeviceCABundlePath(deploymentRoot), filepath.Join(deploymentRoot, "state", "secrets", "device-client-ca-bundle.pem"); got != want {
 		t.Fatalf("featureDeviceCABundlePath() = %q, want %q", got, want)
+	}
+}
+
+func TestExecuteFeatureSpecRequiresDeploymentRegion(t *testing.T) {
+	workspace := t.TempDir()
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")
+	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spec := featureRunSpec{
+		Feature:      "device-shadow",
+		Profile:      "canary",
+		ScenarioPath: "missing-description.env",
+	}
+	manifest, err := executeFeatureSpec(workspace, envRoot, "test-run", "staging", spec, map[string]string{})
+	if err == nil || !strings.Contains(err.Error(), "CLOUD_REGION is missing") {
+		t.Fatalf("executeFeatureSpec() error = %v, want missing CLOUD_REGION", err)
+	}
+	if manifest.Status != "BLOCKED" {
+		t.Fatalf("manifest status = %q, want BLOCKED", manifest.Status)
 	}
 }
 
@@ -269,6 +303,14 @@ func TestFeatureLoadEnvRootUsesRuntimeSiblingForLKEDeployment(t *testing.T) {
 	got := featureLoadEnvRoot("/workspace/cloud_env/staging/lke")
 	if got != "/workspace/cloud_env/staging/runtime" {
 		t.Fatalf("load env root = %q", got)
+	}
+}
+
+func TestFeatureExecutionLoadEnvRootHonorsExplicitOverride(t *testing.T) {
+	t.Setenv("HOME100K_ENV_ROOT", "/tmp/runtime-coverage/lke")
+	got := featureExecutionLoadEnvRoot("/workspace/cloud_env/staging/lke")
+	if got != "/tmp/runtime-coverage/lke" {
+		t.Fatalf("execution load env root = %q", got)
 	}
 }
 
@@ -530,6 +572,62 @@ func TestClipQualificationMissingCredentialsIsBlocked(t *testing.T) {
 	err := validateFeaturePrerequisites(featureRunSpec{Feature: "clip-storage", Profile: "qualification-1k"})
 	if err == nil {
 		t.Fatal("missing Clip qualification credentials must block the run")
+	}
+}
+
+func TestFeatureWorkflowCommandAllowsBoundedLocalLiveCanary(t *testing.T) {
+	t.Setenv("RUNTIME_COVERAGE_FEATURE_WORKFLOW", "workflow-local-live")
+	command, err := featureWorkflowCommand()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if command != "workflow-local-live" {
+		t.Fatalf("feature workflow command = %q", command)
+	}
+
+	t.Setenv("RUNTIME_COVERAGE_FEATURE_WORKFLOW", "sample")
+	if _, err := featureWorkflowCommand(); err == nil {
+		t.Fatal("unsupported feature workflow command was accepted")
+	}
+}
+
+func TestExecuteFeatureSpecUsesSelectedWorkflowCommand(t *testing.T) {
+	workspace := t.TempDir()
+	scriptPath := filepath.Join(workspace, "loadtests", "home-100k", "scripts", "home-100k.sh")
+	if err := os.MkdirAll(filepath.Dir(scriptPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spec := featureRunSpec{
+		Feature:      "device-shadow",
+		Profile:      "canary",
+		TestIDs:      []string{"E2E-HOME-SHADOW-001"},
+		ScenarioPath: "scenario.env",
+		Scale:        map[string]any{"devices": 10},
+	}
+
+	t.Setenv("RUNTIME_COVERAGE_FEATURE_WORKFLOW", "unsupported")
+	blocked, err := executeFeatureSpec(workspace, t.TempDir(), "unit-invalid-workflow", "staging", spec, map[string]string{"workspace": "abc"})
+	if err == nil || blocked.Status != "BLOCKED" {
+		t.Fatalf("invalid workflow result = %#v, %v", blocked, err)
+	}
+
+	t.Setenv("RUNTIME_COVERAGE_FEATURE_WORKFLOW", "workflow-local-live")
+	envRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envRoot, "env", "stack.env"), []byte("CLOUD_REGION=us-sea\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := executeFeatureSpec(workspace, envRoot, "unit-local-workflow", "staging", spec, map[string]string{"workspace": "abc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Status != "INCOMPLETE" {
+		t.Fatalf("manifest status = %q, want INCOMPLETE without generated evidence", manifest.Status)
 	}
 }
 

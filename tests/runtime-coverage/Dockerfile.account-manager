@@ -1,7 +1,8 @@
 FROM golang:1.24-bookworm AS builder
 WORKDIR /src
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -cover -coverpkg=./internal/... -trimpath -o /out/server ./cmd/server
+COPY --from=runtime_coverage_helper coverage_flush.go ./cmd/server/zz_runtime_coverage_flush.go
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -cover -covermode=atomic -coverpkg=./... -trimpath -o /out/server ./cmd/server
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/migrate ./cmd/migrate
 FROM debian:bookworm-slim
 WORKDIR /app

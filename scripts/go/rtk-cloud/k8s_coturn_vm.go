@@ -249,6 +249,9 @@ func lkeCoturnSTUNURLs(env map[string]string) string {
 }
 
 func lkeCoturnTURNURLs(env map[string]string) string {
+	if override := firstNonEmpty(os.Getenv("VIDEO_CLOUD_WEBRTC_TURN_URLS"), env["VIDEO_CLOUD_WEBRTC_TURN_URLS"]); override != "" {
+		return override
+	}
 	urls := []string{}
 	for _, host := range lkeCoturnDomains(env) {
 		urls = append(urls, "turn:"+host+":3478?transport=udp", "turn:"+host+":3478?transport=tcp")

@@ -3450,7 +3450,7 @@ func startK8SE2EPortForwardsForServices(workspace, envRoot string, includeMQTT b
 	env := []string{
 		"ACCOUNT_MANAGER_BASE_URL=http://127.0.0.1:" + accountPort,
 		"VIDEO_CLOUD_BASE_URL=http://127.0.0.1:" + videoPort,
-		"VIDEO_CLOUD_TOKEN_BASE_URL=http://127.0.0.1:" + videoPort,
+		"VIDEO_CLOUD_TOKEN_BASE_URL=" + k8sE2ETokenBaseURL(videoPort),
 		"FACTORY_ENROLL_URL=" + strings.Join(factoryURLs, ","),
 		"VIDEO_CLOUD_LOAD_MQTT_SET=broker",
 		"CLOUD_STAGING_E2E_SKIP_BOOTSTRAP=1",
@@ -3479,6 +3479,13 @@ func startK8SE2EPortForwardsForServices(workspace, envRoot string, includeMQTT b
 		return nil, nil, err
 	}
 	return env, cleanup, nil
+}
+
+func k8sE2ETokenBaseURL(videoPort string) string {
+	return firstNonEmpty(
+		os.Getenv("CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE"),
+		"http://127.0.0.1:"+videoPort,
+	)
 }
 
 func streamK8SPortForwardOutput(label string, r io.Reader) {
