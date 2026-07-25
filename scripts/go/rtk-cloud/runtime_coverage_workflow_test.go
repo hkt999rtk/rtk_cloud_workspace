@@ -167,6 +167,7 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"svc/account-manager 18081:80",
 		"http://127.0.0.1:18081/v1/auth/register",
 		"customer_register_payload",
+		"E2E_BRAND_CLOUD_ID",
 		"organization_name:\"Runtime Coverage Customer\"",
 	} {
 		if !strings.Contains(ui, expected) {
