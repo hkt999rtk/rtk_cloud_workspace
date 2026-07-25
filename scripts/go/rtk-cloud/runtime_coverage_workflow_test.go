@@ -162,6 +162,17 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 	if !strings.Contains(workflow[canaryStart:uiStart], "tunnel-start") {
 		t.Fatal("feature canaries require the shared HTTPS/MQTT tunnel")
 	}
+	ui := workflow[uiStart:]
+	for _, expected := range []string{
+		"svc/account-manager 18081:80",
+		"http://127.0.0.1:18081/v1/auth/register",
+		"customer_register_payload",
+		"organization_name:\"Runtime Coverage Customer\"",
+	} {
+		if !strings.Contains(ui, expected) {
+			t.Fatalf("runtime UI smoke must provision its run-scoped customer identity: missing %q", expected)
+		}
+	}
 }
 
 func TestK8SE2ETokenBaseURLSupportsMTLSTunnelOverride(t *testing.T) {
