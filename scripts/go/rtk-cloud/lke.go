@@ -6669,11 +6669,13 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 `
 	}
 	if workload.Key == "cloud-admin" {
-		extraEnv = fmt.Sprintf(`            - name: CLOUD_ADMIN_GRAFANA_BASE_URL
+		extraEnv = fmt.Sprintf(`            - name: ACCOUNT_MANAGER_BASE_URL
+              value: %q
+            - name: CLOUD_ADMIN_GRAFANA_BASE_URL
               value: %q
             - name: CLOUD_ADMIN_GRAFANA_DASHBOARD_PATH
               value: %q
-`, lkeGrafanaInternalURL(env), lkeGrafanaDashboardPath(env))
+`, lkeAccountManagerInternalURL(env), lkeGrafanaInternalURL(env), lkeGrafanaDashboardPath(env))
 	}
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment

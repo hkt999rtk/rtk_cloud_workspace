@@ -3093,6 +3093,7 @@ func TestRunProvisionLKEDeployAppliesPrivateGrafana(t *testing.T) {
 		"emptyDir: {}",
 		"kind: Service\nmetadata:\n  name: video-cloud-grafana",
 		"type: ClusterIP",
+		"ACCOUNT_MANAGER_BASE_URL\n              value: \"http://account-manager.video-cloud-staging-account-manager.svc.cluster.local:80\"",
 		"CLOUD_ADMIN_GRAFANA_BASE_URL\n              value: \"http://video-cloud-grafana.video-cloud-staging-observability.svc.cluster.local:3000\"",
 		"CLOUD_ADMIN_GRAFANA_DASHBOARD_PATH\n              value: \"/d/rtk-lke-staging/rtk-lke-staging-overview\"",
 		"kind: NetworkPolicy\nmetadata:\n  name: allow-cloud-admin-grafana",
