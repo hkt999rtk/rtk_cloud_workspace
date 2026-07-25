@@ -3961,6 +3961,10 @@ func serverEvidenceProbes(envRoot string, runID string, logsSinceArg string) []s
 	videoNamespace := stack + "-video-cloud"
 	platformNamespace := stack + "-platform"
 	ingressNamespace := stack + "-ingress"
+	ingressSelector := "app.kubernetes.io/name=ingress-nginx"
+	if strings.HasPrefix(stack, "coverage-") {
+		ingressSelector = "app.kubernetes.io/name=runtime-coverage-ingress"
+	}
 	return []serverEvidenceProbe{
 		{
 			source:  "host_pod_resources",
@@ -3986,7 +3990,7 @@ func serverEvidenceProbes(envRoot string, runID string, logsSinceArg string) []s
 		kubectlLogsProbe("postgres", platformNamespace, "app.kubernetes.io/name=postgresql", logsSinceArg, "PostgreSQL logs captured"),
 		redisInfoProbe(runID, platformNamespace),
 		kubectlLogsProbe("redis_valkey", platformNamespace, "app.kubernetes.io/name=redis", logsSinceArg, "Redis/Valkey logs captured when enabled"),
-		kubectlLogsProbe("ingress_nginx", ingressNamespace, "app.kubernetes.io/name=ingress-nginx", logsSinceArg, "Ingress/nginx logs captured for run_id "+runID),
+		kubectlLogsProbe("ingress_nginx", ingressNamespace, ingressSelector, logsSinceArg, "Ingress/nginx logs captured for run_id "+runID),
 	}
 }
 

@@ -205,8 +205,36 @@ func TestServerEvidenceProbesUseRunScopedNamespaces(t *testing.T) {
 			if !strings.Contains(script, "coverage-runtime-ingress") {
 				t.Fatalf("%s probe does not use the run-scoped ingress namespace:\n%s", probe.source, script)
 			}
+			if !strings.Contains(script, "app.kubernetes.io/name=runtime-coverage-ingress") {
+				t.Fatalf("%s probe does not select the runtime coverage ingress:\n%s", probe.source, script)
+			}
 		}
 	}
+}
+
+func TestServerEvidenceProbesKeepStagingIngressSelector(t *testing.T) {
+	envRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(envRoot, "env", "stack.env"),
+		[]byte("CLOUD_STACK_NAME=video-cloud-staging\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	for _, probe := range serverEvidenceProbes(envRoot, "staging-123", "--since=5m") {
+		if probe.source != "ingress_nginx" {
+			continue
+		}
+		script := strings.Join(probe.args, " ")
+		if !strings.Contains(script, "app.kubernetes.io/name=ingress-nginx") {
+			t.Fatalf("staging ingress probe selector changed unexpectedly:\n%s", script)
+		}
+		return
+	}
+	t.Fatal("serverEvidenceProbes() missing ingress_nginx probe")
 }
 
 func readTarGzNames(t *testing.T, path string) map[string]bool {
