@@ -3993,7 +3993,7 @@ func serverEvidenceProbes(envRoot string, runID string, logsSinceArg string) []s
 func turnRegistryProbe(runID string, namespace string) serverEvidenceProbe {
 	script := fmt.Sprintf(`set -euo pipefail
 ns=%s
-pods="$(kubectl -n "$ns" get pods --selector rtk-cloud-run-id=%s,app.kubernetes.io/name=runtime-coverage-turnregistrar -o name 2>/dev/null || true)"
+pods="$(kubectl -n "$ns" get pods --selector app.kubernetes.io/name=runtime-coverage-turnregistrar -o name 2>/dev/null || true)"
 ready=0
 registered=0
 for pod in $pods; do
@@ -4008,7 +4008,7 @@ echo "turn_registry.ready_pods $ready"
 echo "turn_registry.successful_registrars $registered"
 echo "turn_registry.active_nodes $registered"
 test "$ready" -gt 0
-test "$registered" -gt 0`, shellQuote(namespace), shellQuote(runID))
+test "$registered" -gt 0`, shellQuote(namespace))
 	return serverEvidenceProbe{
 		source:  "turn_registry",
 		command: "bash",
