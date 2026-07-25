@@ -1242,7 +1242,9 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 }
 
 func mqttDeviceTrafficProfile(plan Plan) string {
-	if isVideoFeatureProfile(plan.VideoProfile.Name) || isClipStorageProfile(plan.ClipStorageProfile.Name) {
+	if plan.ScenarioProfile == MQTTShadowCanaryScenarioProfile ||
+		isVideoFeatureProfile(plan.VideoProfile.Name) ||
+		isClipStorageProfile(plan.ClipStorageProfile.Name) {
 		return DefaultScenarioProfile
 	}
 	return firstNonEmpty(plan.ScenarioProfile, DefaultScenarioProfile)

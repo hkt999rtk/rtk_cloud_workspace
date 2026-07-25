@@ -2231,6 +2231,7 @@ func TestMQTTDeviceTrafficProfileUsesHomeProfileForFeatureWorkloads(t *testing.T
 		want string
 	}{
 		{name: "shadow", plan: Plan{ScenarioProfile: "home-diverse-v1"}, want: "home-diverse-v1"},
+		{name: "shadow canary", plan: Plan{ScenarioProfile: MQTTShadowCanaryScenarioProfile}, want: DefaultScenarioProfile},
 		{name: "video", plan: Plan{ScenarioProfile: Video1KScenarioProfile, VideoProfile: VideoProfile{Name: Video1KScenarioProfile}}, want: DefaultScenarioProfile},
 		{name: "clip", plan: Plan{ScenarioProfile: "clip-storage-1k-v1", ClipStorageProfile: ClipStorageProfile{Name: "clip-storage-1k-v1"}}, want: DefaultScenarioProfile},
 	} {
