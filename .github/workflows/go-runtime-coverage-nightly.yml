@@ -353,7 +353,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          scripts/ci/runtime-coverage-k8s.sh tunnel-start
+          RUNTIME_COVERAGE_LOGGER_TUNNEL=false scripts/ci/runtime-coverage-k8s.sh tunnel-start
           trap 'scripts/ci/runtime-coverage-k8s.sh tunnel-stop' EXIT
           curl --fail --silent --show-error --max-time 10 "$ACCOUNT_MANAGER_BASE_URL/v1/health" >/dev/null
           curl --fail --silent --show-error --max-time 10 "$VIDEO_CLOUD_BASE_URL/version" >/dev/null

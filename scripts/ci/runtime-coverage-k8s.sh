@@ -502,6 +502,7 @@ HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL=https://$video_domain:$https_port
 HOME100K_VIDEO_CLOUD_TOKEN_BASE_URL=https://$device_domain:$https_port
 HOME100K_MQTT_ADDR=$mqtt_host:$mqtt_port
 HOME100K_GENERATOR_HOSTS_OVERRIDE_IP=$ingress_host
+HOME100K_CLOUD_LOGGER_ENDPOINT=http://127.0.0.1:18090
 RUNTIME_COVERAGE_INGRESS_IP=$ingress_host
 RUNTIME_COVERAGE_HOSTNAMES=$account_domain,$video_domain,$device_domain
 RUNTIME_COVERAGE_SERVER_CA=$server_ca
@@ -546,9 +547,14 @@ tunnel_start() {
   local ingress_namespace="$stack-ingress"
   local tunnel_dir="$output_root/tunnels"
   local pid_file="$tunnel_dir/port-forward.pid"
+  local logger_pid_file="$tunnel_dir/logger-port-forward.pid"
   local ingress_log_pid_file="$tunnel_dir/ingress-log.pid"
   local log_file="$tunnel_dir/port-forward.log"
+  local logger_log_file="$tunnel_dir/logger-port-forward.log"
   local ingress_log_file="$tunnel_dir/ingress.log"
+  local logger_namespace="$stack-logger"
+  local logger_tunnel_enabled="${RUNTIME_COVERAGE_LOGGER_TUNNEL:-true}"
+  local tunnel_pid logger_tunnel_pid
   mkdir -p "$tunnel_dir"
   tunnel_stop
   RUNNER_TRACKING_ID="" nohup kubectl --kubeconfig "$kubeconfig" -n "$ingress_namespace" \
@@ -556,18 +562,30 @@ tunnel_start() {
     18443:443 18883:8883 > "$log_file" 2>&1 &
   tunnel_pid=$!
   printf '%s\n' "$tunnel_pid" > "$pid_file"
+  if [[ "$logger_tunnel_enabled" == "true" ]]; then
+    RUNNER_TRACKING_ID="" nohup kubectl --kubeconfig "$kubeconfig" -n "$logger_namespace" \
+      port-forward --address 127.0.0.1 service/cloud-logger \
+      18090:80 > "$logger_log_file" 2>&1 &
+    logger_tunnel_pid=$!
+    printf '%s\n' "$logger_tunnel_pid" > "$logger_pid_file"
+  fi
   RUNNER_TRACKING_ID="" nohup kubectl --kubeconfig "$kubeconfig" -n "$ingress_namespace" \
     logs --follow deployment/runtime-coverage-ingress > "$ingress_log_file" 2>&1 &
   printf '%s\n' "$!" > "$ingress_log_pid_file"
   for _ in {1..60}; do
     if kill -0 "$tunnel_pid" 2>/dev/null &&
+      { [[ "$logger_tunnel_enabled" != "true" ]] || kill -0 "$logger_tunnel_pid" 2>/dev/null; } &&
       timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/18443' &&
-      timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/18883'; then
+      timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/18883' &&
+      { [[ "$logger_tunnel_enabled" != "true" ]] || timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/18090'; }; then
       return 0
     fi
     sleep 1
   done
   cat "$log_file" >&2 || true
+  if [[ "$logger_tunnel_enabled" == "true" ]]; then
+    cat "$logger_log_file" >&2 || true
+  fi
   tunnel_stop
   echo "runtime coverage local tunnels did not become ready" >&2
   return 1
@@ -576,8 +594,10 @@ tunnel_start() {
 tunnel_stop() {
   local tunnel_dir="$output_root/tunnels"
   local pid_file="$tunnel_dir/port-forward.pid"
+  local logger_pid_file="$tunnel_dir/logger-port-forward.pid"
   local ingress_log_pid_file="$tunnel_dir/ingress-log.pid"
   local tunnel_pid=""
+  local logger_tunnel_pid=""
   mkdir -p "$tunnel_dir"
   if [[ -f "$pid_file" ]]; then
     tunnel_pid="$(tr -d '[:space:]' < "$pid_file")"
@@ -585,6 +605,13 @@ tunnel_stop() {
   if [[ "$tunnel_pid" =~ ^[1-9][0-9]*$ ]]; then
     kill "$tunnel_pid" 2>/dev/null || true
     wait "$tunnel_pid" 2>/dev/null || true
+  fi
+  if [[ -f "$logger_pid_file" ]]; then
+    logger_tunnel_pid="$(tr -d '[:space:]' < "$logger_pid_file")"
+  fi
+  if [[ "$logger_tunnel_pid" =~ ^[1-9][0-9]*$ ]]; then
+    kill "$logger_tunnel_pid" 2>/dev/null || true
+    wait "$logger_tunnel_pid" 2>/dev/null || true
   fi
   if [[ -f "$ingress_log_pid_file" ]]; then
     ingress_log_pid="$(tr -d '[:space:]' < "$ingress_log_pid_file")"
@@ -594,6 +621,7 @@ tunnel_stop() {
     fi
   fi
   : > "$pid_file"
+  : > "$logger_pid_file"
   : > "$ingress_log_pid_file"
 }
 

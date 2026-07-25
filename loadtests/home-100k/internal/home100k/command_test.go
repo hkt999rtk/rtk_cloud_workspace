@@ -3270,6 +3270,50 @@ func TestKubernetesRuntimeLoggerEvidenceUsesNormalizedKubeconfig(t *testing.T) {
 	}
 }
 
+func TestExplicitCentralLoggerEndpointOverridesKubernetesLokiAdapter(t *testing.T) {
+	logger := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/logs" {
+			t.Fatalf("logger path = %q, want /v1/logs", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer runtime-token" {
+			t.Fatalf("logger authorization = %q", r.Header.Get("Authorization"))
+		}
+		_, _ = io.WriteString(w, `{"events":[{"event_id":"runtime-event"}]}`)
+	}))
+	defer logger.Close()
+
+	envRoot := t.TempDir()
+	stateDir := filepath.Join(envRoot, "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "kubeconfig.yaml"), []byte("apiVersion: v1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME100K_CLOUD_LOGGER_ENDPOINT", logger.URL)
+	t.Setenv("HOME100K_CLOUD_LOGGER_INGEST_TOKEN", "runtime-token")
+	if !hasExplicitCentralLoggerEndpoint() {
+		t.Fatal("explicit central logger endpoint was not detected")
+	}
+	events, err := queryCentralLoggerRuntimeEvidenceEvents(
+		envRoot,
+		"runtime-run",
+		time.Now().Add(-time.Minute),
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].EventID != "runtime-event" {
+		t.Fatalf("central logger events = %#v", events)
+	}
+	t.Setenv("HOME100K_CLOUD_LOGGER_ENDPOINT", "")
+	t.Setenv("CLOUD_LOGGER_ENDPOINT", "")
+	if hasExplicitCentralLoggerEndpoint() {
+		t.Fatal("central logger endpoint reported explicit without an environment override")
+	}
+}
+
 func TestCentralLoggerRuntimeCountersRequireStructuredRuntimeLogFields(t *testing.T) {
 	events := []centralLoggerRuntimeEvent{
 		{

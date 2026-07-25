@@ -3062,7 +3062,7 @@ func usesKubernetesRuntimeLoggerEvidence(envRoot string) bool {
 }
 
 func queryCentralLoggerRuntimeEvidenceEvents(envRoot, runID string, since, until time.Time) ([]centralLoggerRuntimeEvent, error) {
-	if usesKubernetesRuntimeLoggerEvidence(envRoot) {
+	if usesKubernetesRuntimeLoggerEvidence(envRoot) && !hasExplicitCentralLoggerEndpoint() {
 		baseURL, cleanup, err := lokiEvidenceBaseURL(envRoot)
 		if err != nil {
 			return nil, err
@@ -3082,6 +3082,13 @@ func queryCentralLoggerRuntimeEvidenceEvents(envRoot, runID string, since, until
 	}
 	budget := &centralLoggerRuntimeQueryBudget{remaining: centralLoggerRuntimeQueryMaxWindows()}
 	return queryCentralLoggerRuntimeEventsWindowed(endpoint, token, since, until, budget, 0)
+}
+
+func hasExplicitCentralLoggerEndpoint() bool {
+	return strings.TrimSpace(firstNonEmpty(
+		os.Getenv("HOME100K_CLOUD_LOGGER_ENDPOINT"),
+		os.Getenv("CLOUD_LOGGER_ENDPOINT"),
+	)) != ""
 }
 
 func parseCentralLoggerRuntimeLokiLines(lines []string) []centralLoggerRuntimeEvent {
