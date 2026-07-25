@@ -843,6 +843,30 @@ spec:
               value: "1"
             - name: VIDEO_CLOUD_TURN_NODE_HEARTBEAT_INTERVAL
               value: "10s"
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-runtime-coverage-turnregistrar
+  labels:
+    rtk.realtek.com/stack: $stack
+    rtk-cloud-run-id: $run_id
+    rtk-cloud-purpose: runtime-coverage
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: video-cloud-turnregistry
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: runtime-coverage-turnregistrar
+              rtk-cloud-run-id: $run_id
+      ports:
+        - protocol: TCP
+          port: 18190
 EOF
   kubectl --kubeconfig "$kubeconfig" -n "$namespace" \
     rollout status deployment/runtime-coverage-turnregistrar --timeout=5m

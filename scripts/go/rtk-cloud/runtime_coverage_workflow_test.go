@@ -368,6 +368,8 @@ func TestRuntimeCleanupWritesResidualAndStagingAnchorReport(t *testing.T) {
 		"deployment-anchors.json",
 		"feature-endpoints.json",
 		"runtime-coverage-turnregistrar",
+		"allow-runtime-coverage-turnregistrar",
+		"port: 18190",
 		"tunnel_start",
 		"tunnel_stop",
 		"ingress.log",
