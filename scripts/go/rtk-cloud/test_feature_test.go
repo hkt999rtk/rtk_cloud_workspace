@@ -601,7 +601,14 @@ func TestExecuteFeatureSpecUsesSelectedWorkflowCommand(t *testing.T) {
 	}
 
 	t.Setenv("RUNTIME_COVERAGE_FEATURE_WORKFLOW", "workflow-local-live")
-	manifest, err := executeFeatureSpec(workspace, t.TempDir(), "unit-local-workflow", "staging", spec, map[string]string{"workspace": "abc"})
+	envRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envRoot, "env", "stack.env"), []byte("CLOUD_REGION=us-sea\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := executeFeatureSpec(workspace, envRoot, "unit-local-workflow", "staging", spec, map[string]string{"workspace": "abc"})
 	if err != nil {
 		t.Fatal(err)
 	}
