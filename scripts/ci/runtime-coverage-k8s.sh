@@ -359,6 +359,10 @@ data:
       access_log /dev/stdout combined;
       sendfile on;
       keepalive_timeout 65;
+      map \$http_upgrade \$connection_upgrade {
+        default upgrade;
+        '' close;
+      }
       server {
         listen 443 ssl;
         server_name $account_domain;
@@ -376,8 +380,12 @@ data:
         ssl_certificate /etc/runtime-tls/tls.crt;
         ssl_certificate_key /etc/runtime-tls/tls.key;
         location / {
+          proxy_http_version 1.1;
           proxy_set_header Host \$host;
           proxy_set_header X-Forwarded-Proto https;
+          proxy_set_header Upgrade \$http_upgrade;
+          proxy_set_header Connection \$connection_upgrade;
+          proxy_read_timeout 75s;
           proxy_pass http://video-cloud-api.$video_namespace.svc.cluster.local:80;
         }
       }
@@ -390,10 +398,14 @@ data:
         ssl_verify_client on;
         ssl_verify_depth 2;
         location / {
+          proxy_http_version 1.1;
           proxy_set_header Host \$host;
           proxy_set_header X-Forwarded-Proto https;
           proxy_set_header X-Client-Verify \$ssl_client_verify;
           proxy_set_header X-Client-S-DN \$ssl_client_s_dn_legacy;
+          proxy_set_header Upgrade \$http_upgrade;
+          proxy_set_header Connection \$connection_upgrade;
+          proxy_read_timeout 75s;
           proxy_pass http://video-cloud-api.$video_namespace.svc.cluster.local:80;
         }
       }
