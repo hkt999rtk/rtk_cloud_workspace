@@ -21,6 +21,7 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1932,6 +1933,11 @@ func validateLKEDeployInputs(env map[string]string, opts provisionOptions) error
 		sort.Strings(missing)
 		return fmt.Errorf("LKE deploy requires container image environment variables; generate them with lke-resolve-images: %s", strings.Join(missing, ", "))
 	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") {
+		if err := validateRuntimeCoverageVideoCloudAPIBaseURL(env); err != nil {
+			return err
+		}
+	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeClipDirectUploadEnabled(env) {
 		missingBlob := []string{}
 		for _, key := range []string{"VIDEO_CLOUD_BLOB_ENDPOINT", "VIDEO_CLOUD_BLOB_REGION", "VIDEO_CLOUD_BLOB_BUCKET"} {
@@ -1951,6 +1957,45 @@ func validateLKEDeployInputs(env map[string]string, opts provisionOptions) error
 		if len(missingCredentials) > 0 {
 			return fmt.Errorf("LKE video-cloud deploy requires object-storage credentials when direct clip upload is enabled: %s", strings.Join(missingCredentials, ", "))
 		}
+	}
+	return nil
+}
+
+func lkeVideoCloudAPIBaseURL(env map[string]string) string {
+	if value := strings.TrimSpace(env["VIDEO_CLOUD_API_BASE_URL"]); value != "" {
+		return value
+	}
+	if domain := strings.TrimSpace(env["VIDEO_CLOUD_DOMAIN"]); domain != "" {
+		return "https://" + domain
+	}
+	return "http://video-cloud-api." + lkeNamespaceName(env, "video-cloud") + ".svc.cluster.local:8080"
+}
+
+func validateRuntimeCoverageVideoCloudAPIBaseURL(env map[string]string) error {
+	stack := strings.TrimSpace(env["CLOUD_RUNTIME_COVERAGE_STACK"])
+	if stack == "" {
+		return nil
+	}
+	if strings.TrimSpace(env["CLOUD_STACK_NAME"]) != stack {
+		return fmt.Errorf("runtime coverage API base URL stack marker %q does not match CLOUD_STACK_NAME %q", stack, strings.TrimSpace(env["CLOUD_STACK_NAME"]))
+	}
+	raw := strings.TrimSpace(env["VIDEO_CLOUD_API_BASE_URL"])
+	if raw == "" {
+		return errors.New("runtime coverage requires VIDEO_CLOUD_API_BASE_URL")
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("parse runtime coverage VIDEO_CLOUD_API_BASE_URL: %w", err)
+	}
+	expectedHost := "video." + stack + ".invalid"
+	if parsed.Scheme != "https" ||
+		parsed.Hostname() != expectedHost ||
+		parsed.Port() != "18443" ||
+		parsed.User != nil ||
+		(parsed.Path != "" && parsed.Path != "/") ||
+		parsed.RawQuery != "" ||
+		parsed.Fragment != "" {
+		return fmt.Errorf("runtime coverage VIDEO_CLOUD_API_BASE_URL must be https://%s:18443", expectedHost)
 	}
 	return nil
 }
@@ -4959,13 +5004,6 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
 	}
 	clipVerifierEnv := ""
 	if service.Name == "video-cloud-clipverifier" {
-		apiBaseURL := strings.TrimSpace(env["VIDEO_CLOUD_API_BASE_URL"])
-		if apiBaseURL == "" && strings.TrimSpace(env["VIDEO_CLOUD_DOMAIN"]) != "" {
-			apiBaseURL = "https://" + strings.TrimSpace(env["VIDEO_CLOUD_DOMAIN"])
-		}
-		if apiBaseURL == "" {
-			apiBaseURL = "http://video-cloud-api." + lkeNamespaceName(env, "video-cloud") + ".svc.cluster.local:8080"
-		}
 		clipVerifierEnv = fmt.Sprintf(`            - name: VIDEO_CLOUD_AUTH_SECRET
               valueFrom:
                 secretKeyRef:
@@ -4973,7 +5011,7 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
                   key: VIDEO_CLOUD_AUTH_SECRET
             - name: VIDEO_CLOUD_API_BASE_URL
               value: %q
-`, apiBaseURL)
+`, lkeVideoCloudAPIBaseURL(env))
 	}
 	mqttUsageEnv := ""
 	if service.Name == "video-cloud-mqttusage" {
@@ -6432,6 +6470,8 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
                   key: VIDEO_CLOUD_AUTH_SECRET
             - name: VIDEO_CLOUD_API_ADDR
               value: ":8080"
+            - name: VIDEO_CLOUD_API_BASE_URL
+              value: %q
             - name: VIDEO_CLOUD_DB_DSN
               value: "postgres://postgres:$(POSTGRES_PASSWORD)@postgresql.%s.svc.cluster.local:5432/video_cloud?sslmode=disable"
             - name: VIDEO_CLOUD_DB_MAX_OPEN_CONNS
@@ -6572,6 +6612,7 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
             - name: VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_TTL_GRACE
               value: %q
 `,
+			lkeVideoCloudAPIBaseURL(env),
 			lkeNamespaceName(env, "platform"),
 			lkeVideoCloudAPIDBMaxOpenConns(env),
 			lkeVideoCloudAPIDBMaxIdleConns(env),
@@ -6736,6 +6777,7 @@ func lkeVideoCloudRuntimeChecksum(env map[string]string) string {
 		lkeRuntimeSecretValue("mqtt-broker-auth"),
 		lkeRuntimeSecretValue("mqtt-server-password"),
 		lkeClipPrivateKeyPEM(),
+		lkeVideoCloudAPIBaseURL(env),
 		env["VIDEO_CLOUD_BLOB_ENDPOINT"],
 		env["VIDEO_CLOUD_BLOB_REGION"],
 		env["VIDEO_CLOUD_BLOB_BUCKET"],

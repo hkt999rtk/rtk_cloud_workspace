@@ -216,8 +216,10 @@ jobs:
           [[ "$blob_endpoint" == http://* || "$blob_endpoint" == https://* ]] ||
             blob_endpoint="https://$blob_endpoint"
           test -n "$LINODE_OBJ_REGION"
+          video_cloud_api_base_url="https://video.$RUNTIME_COVERAGE_STACK.invalid:18443"
           {
             printf '\nCLOUD_RUNTIME_COVERAGE_STACK=%s\n' "$RUNTIME_COVERAGE_STACK"
+            printf 'VIDEO_CLOUD_API_BASE_URL=%s\n' "$video_cloud_api_base_url"
             printf 'VIDEO_CLOUD_BLOB_ENDPOINT=%s\n' "$blob_endpoint"
             printf 'VIDEO_CLOUD_BLOB_REGION=%s\n' "$LINODE_OBJ_REGION"
             printf 'VIDEO_CLOUD_BLOB_BUCKET=%s\n' "$LINODE_OBJ_BUCKET"
@@ -233,6 +235,7 @@ jobs:
             --env-root "$RUNTIME_ENV_ROOT"
           grep -qx "CLOUD_STACK_NAME=$RUNTIME_COVERAGE_STACK" "$RUNTIME_ENV_ROOT/env/stack.env"
           grep -qx "CLOUD_PROVIDER=lke" "$RUNTIME_ENV_ROOT/env/stack.env"
+          grep -Fxq "VIDEO_CLOUD_API_BASE_URL=$video_cloud_api_base_url" "$RUNTIME_ENV_ROOT/env/stack.env"
 
       - name: Build and push coverage-only images
         if: env.RUNTIME_COVERAGE_MODE == 'run'

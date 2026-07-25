@@ -445,6 +445,74 @@ func TestLKEVideoCloudRuntimeChecksumTracksObjectStorageCredentials(t *testing.T
 	}
 }
 
+func TestLKEVideoCloudRuntimeChecksumTracksAPIBaseURL(t *testing.T) {
+	base := map[string]string{
+		"VIDEO_CLOUD_API_BASE_URL": "https://video.coverage-1.invalid:18443",
+	}
+	changed := map[string]string{
+		"VIDEO_CLOUD_API_BASE_URL": "https://video.coverage-2.invalid:18443",
+	}
+	if lkeVideoCloudRuntimeChecksum(base) == lkeVideoCloudRuntimeChecksum(changed) {
+		t.Fatal("API base URL change must change the video-cloud runtime checksum")
+	}
+}
+
+func TestValidateRuntimeCoverageVideoCloudAPIBaseURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		stack   string
+		baseURL string
+		wantErr bool
+	}{
+		{name: "valid", stack: "coverage-123-1", baseURL: "https://video.coverage-123-1.invalid:18443"},
+		{name: "localhost", stack: "coverage-123-1", baseURL: "https://localhost:18443", wantErr: true},
+		{name: "loopback", stack: "coverage-123-1", baseURL: "https://127.0.0.1:18443", wantErr: true},
+		{name: "different coverage stack", stack: "coverage-123-1", baseURL: "https://video.coverage-456-1.invalid:18443", wantErr: true},
+		{name: "shared staging", stack: "coverage-123-1", baseURL: "https://video-cloud-staging.realtekconnect.com:18443", wantErr: true},
+		{name: "production", stack: "coverage-123-1", baseURL: "https://video.realtekconnect.com:18443", wantErr: true},
+		{name: "http", stack: "coverage-123-1", baseURL: "http://video.coverage-123-1.invalid:18443", wantErr: true},
+		{name: "wrong port", stack: "coverage-123-1", baseURL: "https://video.coverage-123-1.invalid:443", wantErr: true},
+		{name: "missing", stack: "coverage-123-1", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := map[string]string{
+				"CLOUD_STACK_NAME":             tt.stack,
+				"CLOUD_RUNTIME_COVERAGE_STACK": tt.stack,
+				"VIDEO_CLOUD_API_BASE_URL":     tt.baseURL,
+			}
+			err := validateRuntimeCoverageVideoCloudAPIBaseURL(env)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validateRuntimeCoverageVideoCloudAPIBaseURL() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestLKEVideoCloudAPIAndClipVerifierShareBaseURL(t *testing.T) {
+	env := map[string]string{
+		"CLOUD_STACK_NAME":         "coverage-123-1",
+		"VIDEO_CLOUD_API_BASE_URL": "https://video.coverage-123-1.invalid:18443",
+	}
+	api := lkeDeploymentManifest(env, lkeWorkload{
+		Key:       "video-cloud",
+		Name:      "video-cloud-api",
+		Namespace: lkeNamespaceName(env, "video-cloud"),
+		Image:     "video-cloud:test",
+		Port:      8080,
+		Host:      "video.coverage-123-1.invalid",
+	}, nil)
+	verifier := lkeVideoCloudAuxiliaryDeploymentManifest(env, lkeVideoCloudAuxiliaryService{
+		Name: "video-cloud-clipverifier", Binary: "clipverifier", Port: 19500, PortName: "http",
+	})
+	want := "name: VIDEO_CLOUD_API_BASE_URL\n              value: \"https://video.coverage-123-1.invalid:18443\""
+	for name, manifest := range map[string]string{"video-cloud-api": api, "video-cloud-clipverifier": verifier} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("%s manifest missing shared API base URL:\n%s", name, manifest)
+		}
+	}
+}
+
 func TestRunProvisionLKEMergesLegacyOperatorObjectStorageCredentials(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	fakeKubectl(t)
