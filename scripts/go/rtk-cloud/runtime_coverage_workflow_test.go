@@ -43,6 +43,11 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		`deployment_env VIDEO_CLOUD_BLOB_ENDPOINT`,
 		`deployment_env VIDEO_CLOUD_BLOB_REGION`,
 		`deployment_env VIDEO_CLOUD_BLOB_BUCKET`,
+		`deployment_env VIDEO_CLOUD_WEBRTC_TURN_URLS`,
+		`.data.VIDEO_CLOUD_TURN_SHARED_SECRET | @base64d`,
+		`RUNTIME_COVERAGE_SHARED_TURN_HOST=$turn_public_host`,
+		`LKE_TURN_SHARED=$turn_shared_secret`,
+		`VIDEO_CLOUD_WEBRTC_TURN_URLS=$turn_urls`,
 		`RUNTIME_COVERAGE_STORAGE_SOURCE_NAMESPACE=$staging_video_namespace`,
 		"VIDEO_CLOUD_BLOB_PREFIX=runtime-coverage/%s",
 		"--preflight --plan --apply --deploy --artifacts",
@@ -112,6 +117,13 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 			!strings.Contains(body, "-coverpkg=./...") {
 			t.Fatalf("%s does not inject the atomic runtime coverage flush helper", dockerfile)
 		}
+	}
+	videoDockerfile, err := os.ReadFile(filepath.Join(workspace, "tests", "runtime-coverage", "Dockerfile.video-cloud"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(videoDockerfile), "turnregistrar") {
+		t.Fatal("runtime Video Cloud image must include the run-scoped TURN registrar")
 	}
 	onboardingStart := strings.Index(workflow, "- name: Run onboarding and cross-service lifecycle checks")
 	canaryStart := strings.Index(workflow, "- name: Run all feature canaries")
@@ -355,6 +367,7 @@ func TestRuntimeCleanupWritesResidualAndStagingAnchorReport(t *testing.T) {
 		"cleanup-report.json",
 		"deployment-anchors.json",
 		"feature-endpoints.json",
+		"runtime-coverage-turnregistrar",
 		"tunnel_start",
 		"tunnel_stop",
 		"ingress.log",

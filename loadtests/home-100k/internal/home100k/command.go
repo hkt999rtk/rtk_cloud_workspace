@@ -3954,6 +3954,13 @@ func serverEvidenceProbes(envRoot string, runID string, logsSinceArg string) []s
 	if strings.TrimSpace(logsSinceArg) == "" {
 		logsSinceArg = "--since=30m"
 	}
+	stack := strings.TrimSpace(parseEnvFile(filepath.Join(envRoot, "env", "stack.env"))["CLOUD_STACK_NAME"])
+	if stack == "" {
+		stack = "video-cloud-staging"
+	}
+	videoNamespace := stack + "-video-cloud"
+	platformNamespace := stack + "-platform"
+	ingressNamespace := stack + "-ingress"
 	return []serverEvidenceProbe{
 		{
 			source:  "host_pod_resources",
@@ -3967,63 +3974,54 @@ func serverEvidenceProbes(envRoot string, runID string, logsSinceArg string) []s
 			args:    []string{"-lc", "kubectl top pods -A || true"},
 			detail:  "pod resource usage captured",
 		},
-		kubectlLogsProbe("emqx", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=mqtt", logsSinceArg, "MQTT broker logs and client churn evidence captured for run_id "+runID),
-		emqxBrokerMetricsProbe(runID),
-		emqxListenerStatsProbe(runID),
+		kubectlLogsProbe("emqx", videoNamespace, "app.kubernetes.io/name=mqtt", logsSinceArg, "MQTT broker logs and client churn evidence captured for run_id "+runID),
+		emqxBrokerMetricsProbe(runID, videoNamespace),
+		emqxListenerStatsProbe(runID, videoNamespace),
 		edgeHAProxyProbe(envRoot, runID),
-		videoCloudAPIRequestTokenCounterProbe(runID, logsSinceArg),
-		videoCloudAPIMetricsProbe(runID),
-		kubectlLogsProbe("video_cloud_api", "video-cloud-staging-video-cloud", "app.kubernetes.io/name=video-cloud-api", logsSinceArg, "Video Cloud API logs captured for run_id "+runID),
-		turnRegistryProbe(runID),
-		coturnProbe(envRoot, runID),
-		kubectlLogsProbe("postgres", "video-cloud-staging-platform", "app.kubernetes.io/name=postgresql", logsSinceArg, "PostgreSQL logs captured"),
-		redisInfoProbe(runID),
-		kubectlLogsProbe("redis_valkey", "video-cloud-staging-platform", "app.kubernetes.io/name=redis", logsSinceArg, "Redis/Valkey logs captured when enabled"),
-		kubectlLogsProbe("ingress_nginx", "video-cloud-staging-ingress", "app.kubernetes.io/name=ingress-nginx", logsSinceArg, "Ingress/nginx logs captured for run_id "+runID),
+		videoCloudAPIRequestTokenCounterProbe(runID, logsSinceArg, videoNamespace),
+		videoCloudAPIMetricsProbe(runID, videoNamespace),
+		kubectlLogsProbe("video_cloud_api", videoNamespace, "app.kubernetes.io/name=video-cloud-api", logsSinceArg, "Video Cloud API logs captured for run_id "+runID),
+		turnRegistryProbe(runID, videoNamespace),
+		coturnProbe(envRoot, runID, videoNamespace),
+		kubectlLogsProbe("postgres", platformNamespace, "app.kubernetes.io/name=postgresql", logsSinceArg, "PostgreSQL logs captured"),
+		redisInfoProbe(runID, platformNamespace),
+		kubectlLogsProbe("redis_valkey", platformNamespace, "app.kubernetes.io/name=redis", logsSinceArg, "Redis/Valkey logs captured when enabled"),
+		kubectlLogsProbe("ingress_nginx", ingressNamespace, "app.kubernetes.io/name=ingress-nginx", logsSinceArg, "Ingress/nginx logs captured for run_id "+runID),
 	}
 }
 
-func turnRegistryProbe(runID string) serverEvidenceProbe {
-	script := `set -euo pipefail
-ns=video-cloud-staging-video-cloud
-selectors='app.kubernetes.io/name=turnregistry app.kubernetes.io/name=turn-registry app.kubernetes.io/name=video-cloud-turnregistry app=turnregistry app=video-cloud-turnregistry'
-pods=''
-for selector in $selectors; do
-  pods="$(printf '%s\n%s\n' "$pods" "$(kubectl -n "$ns" get pods --selector "$selector" -o name 2>/dev/null || true)")"
-done
-pods="$(printf '%s\n%s\n' "$pods" "$(kubectl -n "$ns" get pods -o name 2>/dev/null | grep -Ei 'turn.*registry|turnregistry' || true)" | sed '/^$/d' | sort -u)"
-services="$(kubectl -n "$ns" get svc -o name 2>/dev/null | grep -Ei 'turn.*registry|turnregistry' || true)"
-endpoints="$(kubectl -n "$ns" get endpoints -o name 2>/dev/null | grep -Ei 'turn.*registry|turnregistry' || true)"
+func turnRegistryProbe(runID string, namespace string) serverEvidenceProbe {
+	script := fmt.Sprintf(`set -euo pipefail
+ns=%s
+pods="$(kubectl -n "$ns" get pods --selector rtk-cloud-run-id=%s,app.kubernetes.io/name=runtime-coverage-turnregistrar -o name 2>/dev/null || true)"
 ready=0
+registered=0
 for pod in $pods; do
   if [ "$(kubectl -n "$ns" get "$pod" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)" = "True" ]; then
     ready=$((ready + 1))
   fi
+  if kubectl -n "$ns" logs "$pod" --tail=200 2>/dev/null | grep -q 'turn registry register succeeded'; then
+    registered=$((registered + 1))
+  fi
 done
-service_count="$(printf '%s\n' "$services" | sed '/^$/d' | wc -l | tr -d ' ')"
-endpoint_count="$(printf '%s\n' "$endpoints" | sed '/^$/d' | wc -l | tr -d ' ')"
-active="$ready"
-if [ "$active" -eq 0 ] && [ "$endpoint_count" -gt 0 ]; then
-  active="$endpoint_count"
-fi
 echo "turn_registry.ready_pods $ready"
-echo "turn_registry.services $service_count"
-echo "turn_registry.endpoints $endpoint_count"
-echo "turn_registry.active_nodes $active"
-test "$active" -gt 0`
+echo "turn_registry.successful_registrars $registered"
+echo "turn_registry.active_nodes $registered"
+test "$ready" -gt 0
+test "$registered" -gt 0`, shellQuote(namespace), shellQuote(runID))
 	return serverEvidenceProbe{
 		source:  "turn_registry",
 		command: "bash",
 		args:    []string{"-lc", script},
-		detail:  "TURN registry readiness and active node evidence captured for run_id " + runID,
+		detail:  "run-scoped TURN registrar readiness and successful registration evidence captured for run_id " + runID,
 	}
 }
 
-func coturnProbe(envRoot string, runID string) serverEvidenceProbe {
+func coturnProbe(envRoot string, runID string, namespace string) serverEvidenceProbe {
 	artifact := filepath.Join(envRoot, "artifacts", "coturn-vm", "coturn-vm.json")
 	summaryArtifact := filepath.Join(envRoot, "artifacts", "coturn-vm", "coturn-vms.json")
 	script := fmt.Sprintf(`set -euo pipefail
-ns=video-cloud-staging-video-cloud
+ns=%s
 selectors='app.kubernetes.io/name=coturn app.kubernetes.io/name=turn app=coturn app=turn'
 pods=''
 for selector in $selectors; do
@@ -4040,7 +4038,11 @@ done
 service_count="$(printf '%%s\n' "$services" | sed '/^$/d' | wc -l | tr -d ' ')"
 domains=''
 configured_nodes=0
-if [ -f %s ]; then
+if [ -n %s ]; then
+  domains=%s
+  configured_nodes="$(printf '%%s\n' "$domains" | sed '/^$/d' | wc -l | tr -d ' ')"
+fi
+if [ -z "$domains" ] && [ -f %s ]; then
   domains="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print("\n".join([(item.get("domain") or "").strip() for item in data.get("coturn_vms", []) if (item.get("domain") or "").strip()]))' %s 2>/dev/null || true)"
   configured_nodes="$(printf '%%s\n' "$domains" | sed '/^$/d' | wc -l | tr -d ' ')"
 fi
@@ -4059,7 +4061,11 @@ echo "coturn.services $service_count"
 echo "coturn.public_tcp_available $public_tcp"
 echo "coturn.configured_nodes $configured_nodes"
 echo "coturn.active_nodes $public_tcp"
-test "$ready" -gt 0 || test "$public_tcp" -gt 0`, shellQuote(summaryArtifact), shellQuote(summaryArtifact), shellQuote(artifact), shellQuote(artifact))
+test "$ready" -gt 0 || test "$public_tcp" -gt 0`,
+		shellQuote(namespace),
+		shellQuote(strings.TrimSpace(os.Getenv("RUNTIME_COVERAGE_SHARED_TURN_HOST"))),
+		shellQuote(strings.TrimSpace(os.Getenv("RUNTIME_COVERAGE_SHARED_TURN_HOST"))),
+		shellQuote(summaryArtifact), shellQuote(summaryArtifact), shellQuote(artifact), shellQuote(artifact))
 	return serverEvidenceProbe{
 		source:  "coturn",
 		command: "bash",
@@ -4068,14 +4074,14 @@ test "$ready" -gt 0 || test "$public_tcp" -gt 0`, shellQuote(summaryArtifact), s
 	}
 }
 
-func redisInfoProbe(runID string) serverEvidenceProbe {
-	script := `set -euo pipefail
-pods="$(kubectl -n video-cloud-staging-platform get pods --selector app.kubernetes.io/name=redis -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}')"
+func redisInfoProbe(runID string, namespace string) serverEvidenceProbe {
+	script := strings.ReplaceAll(`set -euo pipefail
+pods="$(kubectl -n __NAMESPACE__ get pods --selector app.kubernetes.io/name=redis -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}')"
 test -n "$pods"
 for pod in $pods; do
   echo "pod:$pod"
-  kubectl -n video-cloud-staging-platform exec "$pod" -- redis-cli INFO stats clients memory keyspace commandstats
-done`
+  kubectl -n __NAMESPACE__ exec "$pod" -- redis-cli INFO stats clients memory keyspace commandstats
+done`, "__NAMESPACE__", shellQuote(namespace))
 	return serverEvidenceProbe{
 		source:  "redis_valkey",
 		command: "bash",
@@ -4126,13 +4132,13 @@ func kubectlLogsProbe(source string, namespace string, selector string, logsSinc
 	}
 }
 
-func emqxListenerStatsProbe(runID string) serverEvidenceProbe {
-	script := `set -euo pipefail
-pods="$(kubectl -n video-cloud-staging-video-cloud get pods --selector app.kubernetes.io/name=mqtt -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}')"
+func emqxListenerStatsProbe(runID string, namespace string) serverEvidenceProbe {
+	script := strings.ReplaceAll(`set -euo pipefail
+pods="$(kubectl -n __NAMESPACE__ get pods --selector app.kubernetes.io/name=mqtt -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}')"
 test -n "$pods"
 for pod in $pods; do
   safe_pod="$(printf '%s' "$pod" | tr -c 'A-Za-z0-9_' '_')"
-  listener_out="$(kubectl -n video-cloud-staging-video-cloud exec "$pod" -- emqx ctl listeners 2>&1 || true)"
+  listener_out="$(kubectl -n __NAMESPACE__ exec "$pod" -- emqx ctl listeners 2>&1 || true)"
   if [ -z "$listener_out" ]; then
     continue
   fi
@@ -4149,7 +4155,7 @@ for pod in $pods; do
       if ($0 ~ /discarded/) {s=$0; sub(/^.*discarded,/, "", s); sub(/[^0-9].*$/, "", s); if (s != "") {print listener, "discarded", s; print "emqx.pod_" pod "." safe_listener ".shutdown_discarded", s}}
     }
   '
-done`
+done`, "__NAMESPACE__", shellQuote(namespace))
 	return serverEvidenceProbe{
 		source:  "emqx_listener_stats",
 		command: "bash",
@@ -4158,13 +4164,13 @@ done`
 	}
 }
 
-func emqxBrokerMetricsProbe(runID string) serverEvidenceProbe {
-	script := `set -euo pipefail
-pods="$(kubectl -n video-cloud-staging-video-cloud get pods --selector app.kubernetes.io/name=mqtt -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}')"
+func emqxBrokerMetricsProbe(runID string, namespace string) serverEvidenceProbe {
+	script := strings.ReplaceAll(`set -euo pipefail
+pods="$(kubectl -n __NAMESPACE__ get pods --selector app.kubernetes.io/name=mqtt -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}')"
 test -n "$pods"
 for pod in $pods; do
   safe_pod="$(printf '%s' "$pod" | tr -c 'A-Za-z0-9_' '_')"
-  metrics="$(kubectl -n video-cloud-staging-video-cloud exec "$pod" -- emqx ctl broker metrics 2>/dev/null || true)"
+  metrics="$(kubectl -n __NAMESPACE__ exec "$pod" -- emqx ctl broker metrics 2>/dev/null || true)"
   test -n "$metrics"
   printf '%s\n' "$metrics" | awk -F ':' -v pod="$safe_pod" '
     {
@@ -4177,7 +4183,7 @@ for pod in $pods; do
       print "emqx.pod_" pod ".metric." key, value
     }
   '
-done`
+done`, "__NAMESPACE__", shellQuote(namespace))
 	return serverEvidenceProbe{
 		source:  "emqx",
 		command: "bash",
@@ -4230,14 +4236,14 @@ REMOTE
 	}
 }
 
-func videoCloudAPIRequestTokenCounterProbe(runID string, logsSinceArg string) serverEvidenceProbe {
-	script := `set -euo pipefail
-pods="$(kubectl -n video-cloud-staging-video-cloud get pods --selector app.kubernetes.io/name=video-cloud-api -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}')"
+func videoCloudAPIRequestTokenCounterProbe(runID string, logsSinceArg string, namespace string) serverEvidenceProbe {
+	script := strings.ReplaceAll(`set -euo pipefail
+pods="$(kubectl -n __NAMESPACE__ get pods --selector app.kubernetes.io/name=video-cloud-api -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}')"
 test -n "$pods"
 bounded_logs() {
   pod="$1"
   tmp="$(mktemp)"
-  kubectl -n video-cloud-staging-video-cloud logs ` + shellQuote(logsSinceArg) + ` "$pod" --tail=5000 --request-timeout=30s >"$tmp" 2>&1 &
+  kubectl -n __NAMESPACE__ logs `+shellQuote(logsSinceArg)+` "$pod" --tail=5000 --request-timeout=30s >"$tmp" 2>&1 &
   pid="$!"
   for _ in $(seq 1 30); do
     if ! kill -0 "$pid" 2>/dev/null; then
@@ -4255,7 +4261,7 @@ bounded_logs() {
 }
 for pod in $pods; do
   safe_pod="$(printf '%s' "$pod" | tr -c 'A-Za-z0-9_' '_')"
-  { timeout 20s kubectl -n video-cloud-staging-video-cloud logs ` + shellQuote(logsSinceArg) + ` "$pod" --tail=` + serverEvidenceLogTailLines + ` || true; } \
+  { timeout 20s kubectl -n __NAMESPACE__ logs `+shellQuote(logsSinceArg)+` "$pod" --tail=`+serverEvidenceLogTailLines+` || true; } \
     | jq -sr --arg pod "$safe_pod" '
         [.[] | select(.path == "/request_token")] as $rt
         | [
@@ -4274,7 +4280,7 @@ for pod in $pods; do
           ]
         | .[]'
 done
-`
+`, "__NAMESPACE__", shellQuote(namespace))
 	return serverEvidenceProbe{
 		source:  "video_cloud_api",
 		command: "bash",
@@ -4283,12 +4289,12 @@ done
 	}
 }
 
-func videoCloudAPIMetricsProbe(runID string) serverEvidenceProbe {
-	script := `set -euo pipefail
-pods="$(kubectl -n video-cloud-staging-video-cloud get pods --selector app.kubernetes.io/name=video-cloud-api -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}')"
+func videoCloudAPIMetricsProbe(runID string, namespace string) serverEvidenceProbe {
+	script := strings.ReplaceAll(`set -euo pipefail
+pods="$(kubectl -n __NAMESPACE__ get pods --selector app.kubernetes.io/name=video-cloud-api -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}')"
 test -n "$pods"
 running_pods="$(printf '%s\n' "$pods" | awk 'NF {count++} END {print count+0}')"
-desired_replicas="$(kubectl -n video-cloud-staging-video-cloud get deploy video-cloud-api -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
+desired_replicas="$(kubectl -n __NAMESPACE__ get deploy video-cloud-api -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
 if [[ "$desired_replicas" =~ ^[0-9]+$ ]]; then
   printf 'video_cloud_api.k8s.desired_replicas %s\n' "$desired_replicas"
 fi
@@ -4298,7 +4304,7 @@ signaling_store_addr_pods=0
 signaling_store_prefix_pods=0
 for pod in $pods; do
   safe_pod="$(printf '%s' "$pod" | tr -c 'A-Za-z0-9_' '_')"
-  pod_env="$(kubectl -n video-cloud-staging-video-cloud exec "$pod" -- sh -c 'env' 2>/dev/null || true)"
+  pod_env="$(kubectl -n __NAMESPACE__ exec "$pod" -- sh -c 'env' 2>/dev/null || true)"
   if printf '%s\n' "$pod_env" | grep -q '^VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_ENABLED=true$'; then
     signaling_store_enabled_pods=$((signaling_store_enabled_pods + 1))
   fi
@@ -4308,7 +4314,7 @@ for pod in $pods; do
   if printf '%s\n' "$pod_env" | grep -q '^VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_PREFIX=.\+'; then
     signaling_store_prefix_pods=$((signaling_store_prefix_pods + 1))
   fi
-  metrics="$(kubectl -n video-cloud-staging-video-cloud exec "$pod" -- sh -c 'wget -qO- http://127.0.0.1:8080/metrics/prometheus 2>/dev/null || curl -fsS http://127.0.0.1:8080/metrics/prometheus' 2>/dev/null || true)"
+  metrics="$(kubectl -n __NAMESPACE__ exec "$pod" -- sh -c 'wget -qO- http://127.0.0.1:8080/metrics/prometheus 2>/dev/null || curl -fsS http://127.0.0.1:8080/metrics/prometheus' 2>/dev/null || true)"
   if test -n "$metrics"; then
     printf '%s\n' "$metrics" | awk -v pod="$safe_pod" '
       /^request_token_step_duration_seconds_/ || /^pkcs11_sign_(wait|duration)_seconds_/ {
@@ -4331,7 +4337,7 @@ done
 printf 'video_cloud_api.webrtc_signaling_store.enabled_pods %s\n' "$signaling_store_enabled_pods"
 printf 'video_cloud_api.webrtc_signaling_store.addr_pods %s\n' "$signaling_store_addr_pods"
 printf 'video_cloud_api.webrtc_signaling_store.prefix_pods %s\n' "$signaling_store_prefix_pods"
-`
+`, "__NAMESPACE__", shellQuote(namespace))
 	return serverEvidenceProbe{
 		source:  "video_cloud_api",
 		command: "bash",

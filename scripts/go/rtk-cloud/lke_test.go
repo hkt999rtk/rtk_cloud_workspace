@@ -1344,6 +1344,18 @@ func TestLKECoturnMultiVMUsesPerNodeDomainsAndURLs(t *testing.T) {
 	}
 }
 
+func TestLKECoturnTURNURLsSupportsExplicitRuntimeDataplane(t *testing.T) {
+	t.Setenv("VIDEO_CLOUD_WEBRTC_TURN_URLS", "")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":             "coverage-runtime",
+		"CLOUD_DNS_ROOT_DOMAIN":        "coverage-runtime.invalid",
+		"VIDEO_CLOUD_WEBRTC_TURN_URLS": "turn:shared-turn.example.test:3478?transport=udp,turn:shared-turn.example.test:3478?transport=tcp",
+	}
+	if got := lkeCoturnTURNURLs(env); got != env["VIDEO_CLOUD_WEBRTC_TURN_URLS"] {
+		t.Fatalf("explicit TURN URLs = %q", got)
+	}
+}
+
 func TestLKECoturnMultiVMProvidedIPsWritesArtifacts(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	env := map[string]string{

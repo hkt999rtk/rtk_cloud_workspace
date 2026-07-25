@@ -130,18 +130,31 @@ jobs:
           }
           blob_access_key="$(jq -er '.data.AWS_ACCESS_KEY_ID | @base64d | select(length > 0)' "$staging_secret")"
           blob_secret_key="$(jq -er '.data.AWS_SECRET_ACCESS_KEY | @base64d | select(length > 0)' "$staging_secret")"
+          turn_shared_secret="$(jq -er '.data.VIDEO_CLOUD_TURN_SHARED_SECRET | @base64d | select(length > 0)' "$staging_secret")"
           blob_endpoint="$(deployment_env VIDEO_CLOUD_BLOB_ENDPOINT)"
           blob_region="$(deployment_env VIDEO_CLOUD_BLOB_REGION)"
           blob_bucket="$(deployment_env VIDEO_CLOUD_BLOB_BUCKET)"
+          turn_urls="$(deployment_env VIDEO_CLOUD_WEBRTC_TURN_URLS)"
+          turn_public_host="$(
+            printf '%s\n' "$turn_urls" |
+              tr ',' '\n' |
+              sed -E 's#^[a-z]+:##; s#[?].*$##; s#:[0-9]+$##' |
+              head -n 1
+          )"
+          test -n "$turn_public_host"
           echo "::add-mask::$blob_access_key"
           echo "::add-mask::$blob_secret_key"
+          echo "::add-mask::$turn_shared_secret"
           {
             echo "RUNTIME_COVERAGE_STORAGE_SOURCE_NAMESPACE=$staging_video_namespace"
+            echo "RUNTIME_COVERAGE_SHARED_TURN_HOST=$turn_public_host"
             echo "LINODE_OBJ_ACCESS_KEY_ID=$blob_access_key"
             echo "LINODE_OBJ_SECRET_ACCESS_KEY=$blob_secret_key"
             echo "LINODE_OBJ_ENDPOINT=$blob_endpoint"
             echo "LINODE_OBJ_REGION=$blob_region"
             echo "LINODE_OBJ_BUCKET=$blob_bucket"
+            echo "LKE_TURN_SHARED=$turn_shared_secret"
+            echo "VIDEO_CLOUD_WEBRTC_TURN_URLS=$turn_urls"
           } >> "$GITHUB_ENV"
 
       - name: Snapshot shared staging deployment anchors
@@ -195,6 +208,9 @@ jobs:
             "$RUNTIME_ENV_ROOT/env/stack.env"
           perl -0pi -e "s/^CLOUD_DNS_ROOT_DOMAIN=.*/CLOUD_DNS_ROOT_DOMAIN=$RUNTIME_COVERAGE_STACK.invalid/m; s/^VIDEO_CLOUD_DOMAIN=.*/VIDEO_CLOUD_DOMAIN=video.$RUNTIME_COVERAGE_STACK.invalid/m; s/^VIDEO_CLOUD_CERTISSUER_DOMAIN=.*/VIDEO_CLOUD_CERTISSUER_DOMAIN=certissuer.$RUNTIME_COVERAGE_STACK.invalid/m; s/^ACCOUNT_MANAGER_DOMAIN=.*/ACCOUNT_MANAGER_DOMAIN=account.$RUNTIME_COVERAGE_STACK.invalid/m; s/^CLOUD_ADMIN_DOMAIN=.*/CLOUD_ADMIN_DOMAIN=admin.$RUNTIME_COVERAGE_STACK.invalid/m; s/^CLOUD_LOGGER_DOMAIN=.*/CLOUD_LOGGER_DOMAIN=logger.$RUNTIME_COVERAGE_STACK.invalid/m" \
             "$RUNTIME_ENV_ROOT/env/stack.env"
+          cloud_region="$(awk -F= '$1 == "CLOUD_REGION" {print substr($0, index($0, "=") + 1)}' "$RUNTIME_ENV_ROOT/env/stack.env")"
+          test -n "$cloud_region"
+          echo "CLOUD_REGION=$cloud_region" >> "$GITHUB_ENV"
           blob_endpoint="$LINODE_OBJ_ENDPOINT"
           [[ "$blob_endpoint" == http://* || "$blob_endpoint" == https://* ]] ||
             blob_endpoint="https://$blob_endpoint"
@@ -207,6 +223,7 @@ jobs:
             printf 'VIDEO_CLOUD_BLOB_PREFIX=runtime-coverage/%s\n' "$RUNTIME_COVERAGE_RUN_ID"
             printf 'VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE=false\n'
             printf 'VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED=true\n'
+            printf 'VIDEO_CLOUD_WEBRTC_TURN_URLS=%s\n' "$VIDEO_CLOUD_WEBRTC_TURN_URLS"
           } >> "$RUNTIME_ENV_ROOT/env/stack.env"
           printf 'LKE_ACTIVE_SERVICE_LIMIT=%s\n' "$LKE_ACTIVE_SERVICE_LIMIT" > "$RUNTIME_ENV_ROOT/adapters/lke/account.env"
           printf 'LKE_CLUSTER_ID=%s\nLKE_CLUSTER_LABEL=%s\n' "$LKE_CLUSTER_ID" "$LKE_CLUSTER_LABEL" > "$RUNTIME_ENV_ROOT/adapters/lke/state.env"

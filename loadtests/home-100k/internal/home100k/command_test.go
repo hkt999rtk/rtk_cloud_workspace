@@ -173,6 +173,42 @@ func writeHome100KCoverageArtifacts(t *testing.T, envRoot string) {
 	writeHomeSQLiteTestData(t, envRoot, users, assignments)
 }
 
+func TestServerEvidenceProbesUseRunScopedNamespaces(t *testing.T) {
+	envRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(envRoot, "env", "stack.env"),
+		[]byte("CLOUD_STACK_NAME=coverage-runtime\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RUNTIME_COVERAGE_SHARED_TURN_HOST", "turn.shared.example.test")
+	probes := serverEvidenceProbes(envRoot, "runtime-123", "--since=5m")
+	for _, probe := range probes {
+		if probe.command != "bash" || len(probe.args) < 2 {
+			continue
+		}
+		script := probe.args[len(probe.args)-1]
+		switch probe.source {
+		case "emqx", "emqx_listener_stats", "video_cloud_api", "turn_registry", "coturn":
+			if !strings.Contains(script, "coverage-runtime-video-cloud") {
+				t.Fatalf("%s probe does not use the run-scoped video namespace:\n%s", probe.source, script)
+			}
+		case "postgres", "redis_valkey":
+			if !strings.Contains(script, "coverage-runtime-platform") {
+				t.Fatalf("%s probe does not use the run-scoped platform namespace:\n%s", probe.source, script)
+			}
+		case "ingress_nginx":
+			if !strings.Contains(script, "coverage-runtime-ingress") {
+				t.Fatalf("%s probe does not use the run-scoped ingress namespace:\n%s", probe.source, script)
+			}
+		}
+	}
+}
+
 func readTarGzNames(t *testing.T, path string) map[string]bool {
 	t.Helper()
 	file, err := os.Open(path)

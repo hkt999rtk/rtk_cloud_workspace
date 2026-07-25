@@ -762,6 +762,102 @@ prepare() {
     kubectl --kubeconfig "$kubeconfig" get namespace "$namespace" >/dev/null
     prepare_namespace "$namespace"
   done < <(coverage_namespaces)
+  prepare_turn_registrar
+}
+
+prepare_turn_registrar() {
+  local namespace="$stack-video-cloud"
+  local shared_turn_host="${RUNTIME_COVERAGE_SHARED_TURN_HOST:-}"
+  local video_image
+  [[ -n "$shared_turn_host" ]] || {
+    echo "RUNTIME_COVERAGE_SHARED_TURN_HOST is required" >&2
+    exit 1
+  }
+  video_image="$(
+    kubectl --kubeconfig "$kubeconfig" -n "$namespace" \
+      get deployment video-cloud-api -o jsonpath='{.spec.template.spec.containers[0].image}'
+  )"
+  [[ -n "$video_image" ]] || {
+    echo "video-cloud coverage image is unavailable" >&2
+    exit 1
+  }
+  kubectl --kubeconfig "$kubeconfig" -n "$namespace" apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runtime-coverage-turnregistrar
+  labels:
+    app.kubernetes.io/name: runtime-coverage-turnregistrar
+    rtk.realtek.com/stack: $stack
+    rtk-cloud-run-id: $run_id
+    rtk-cloud-purpose: runtime-coverage
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: runtime-coverage-turnregistrar
+      rtk-cloud-run-id: $run_id
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: runtime-coverage-turnregistrar
+        rtk.realtek.com/stack: $stack
+        rtk-cloud-run-id: $run_id
+        rtk-cloud-purpose: runtime-coverage
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: turnregistrar
+          image: $video_image
+          imagePullPolicy: IfNotPresent
+          command: ["/app/turnregistrar"]
+          env:
+            - name: VIDEO_CLOUD_TURN_REGISTRY_ADDR
+              value: "http://video-cloud-turnregistry.$namespace.svc.cluster.local:18190"
+            - name: VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-workers-runtime
+                  key: VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY
+            - name: VIDEO_CLOUD_TURN_NODE_ID
+              value: "runtime-coverage-$run_id"
+            - name: VIDEO_CLOUD_TURN_NODE_REGION
+              value: "${CLOUD_REGION:-us-sea}"
+            - name: VIDEO_CLOUD_TURN_NODE_ZONE
+              value: "${CLOUD_REGION:-us-sea}"
+            - name: VIDEO_CLOUD_TURN_NODE_PUBLIC_HOST
+              value: "$shared_turn_host"
+            - name: VIDEO_CLOUD_TURN_NODE_UDP_PORT
+              value: "3478"
+            - name: VIDEO_CLOUD_TURN_NODE_TCP_PORT
+              value: "3478"
+            - name: VIDEO_CLOUD_TURN_NODE_TLS_PORT
+              value: "0"
+            - name: VIDEO_CLOUD_TURN_NODE_MAX_SESSIONS
+              value: "6000"
+            - name: VIDEO_CLOUD_TURN_NODE_WEIGHT
+              value: "100"
+            - name: VIDEO_CLOUD_TURN_NODE_SECRET_VERSION
+              value: "1"
+            - name: VIDEO_CLOUD_TURN_NODE_HEARTBEAT_INTERVAL
+              value: "10s"
+EOF
+  kubectl --kubeconfig "$kubeconfig" -n "$namespace" \
+    rollout status deployment/runtime-coverage-turnregistrar --timeout=5m
+  for attempt in {1..30}; do
+    if kubectl --kubeconfig "$kubeconfig" -n "$namespace" \
+      logs deployment/runtime-coverage-turnregistrar --tail=100 |
+      grep -q 'turn registry register succeeded'; then
+      return 0
+    fi
+    sleep 2
+  done
+  kubectl --kubeconfig "$kubeconfig" -n "$namespace" \
+    logs deployment/runtime-coverage-turnregistrar --tail=200 >&2 || true
+  echo "run-scoped TURN registrar did not register successfully" >&2
+  exit 1
 }
 
 collect_claim() {
