@@ -3515,12 +3515,59 @@ func TestAccountManagerDockerfileIncludesMigrateBinaryAndMigrations(t *testing.T
 		"go build -trimpath -o /out/rtk-account-manager ./cmd/server",
 		"go build -trimpath -o /out/rtk-account-manager-migrate ./cmd/migrate",
 		"go build -trimpath -o /out/rtk-account-manager-user-cache ./cmd/user-cache",
+		"go build -trimpath -o /out/rtk-account-manager-email-worker ./cmd/email-worker",
+		"go build -trimpath -o /out/rtk-account-manager-email-outbox-admin ./cmd/email-outbox-admin",
+		"apt-get install -y --no-install-recommends ca-certificates",
 		"COPY --from=builder /out/rtk-account-manager-migrate /app/rtk-account-manager-migrate",
 		"COPY --from=builder /out/rtk-account-manager-user-cache /app/rtk-account-manager-user-cache",
+		"COPY --from=builder /out/rtk-account-manager-email-worker /app/rtk-account-manager-email-worker",
+		"COPY --from=builder /out/rtk-account-manager-email-outbox-admin /app/rtk-account-manager-email-outbox-admin",
 		"COPY --from=builder /src/migrations /app/migrations",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected %q in Dockerfile, got:\n%s", want, body)
+		}
+	}
+}
+
+func TestAccountManagerEmailWorkerManifestUsesCanonicalSMTPSecret(t *testing.T) {
+	t.Setenv("AUTH_TOKEN_DELIVERY", "smtp")
+	t.Setenv("SMTP_HOST", "mail.example.test")
+	t.Setenv("SMTP_PORT", "587")
+	t.Setenv("SMTP_USERNAME", "no-reply@example.test")
+	t.Setenv("SMTP_PASSWORD", "smtp-password")
+	t.Setenv("SMTP_FROM", "no-reply@example.test")
+	t.Setenv("EMAIL_OUTBOX_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/account-manager:test")
+	env := map[string]string{
+		"CLOUD_STACK_NAME": "video-cloud-production",
+	}
+	secret := lkeAccountManagerSecretManifest(env)
+	for _, want := range []string{
+		`AUTH_TOKEN_DELIVERY: "smtp"`,
+		`SMTP_HOST: "mail.example.test"`,
+		`SMTP_PORT: "587"`,
+		`SMTP_USERNAME: "no-reply@example.test"`,
+		`SMTP_FROM: "no-reply@example.test"`,
+		`SMTP_ENCRYPTION: "starttls"`,
+		`EMAIL_OUTBOX_BATCH_SIZE: "20"`,
+		`EMAIL_OUTBOX_MAX_ATTEMPTS: "8"`,
+	} {
+		if !strings.Contains(secret, want) {
+			t.Fatalf("secret does not contain %q:\n%s", want, secret)
+		}
+	}
+	manifest := lkeAccountManagerEmailWorkerManifest(env)
+	for _, want := range []string{
+		"name: account-manager-email-worker",
+		"replicas: 1",
+		`command: ["/app/rtk-account-manager-email-worker"]`,
+		"name: account-manager-runtime",
+		"cpu: 25m",
+		"memory: 64Mi",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("worker manifest does not contain %q:\n%s", want, manifest)
 		}
 	}
 }

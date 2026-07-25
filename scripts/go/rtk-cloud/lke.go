@@ -1901,8 +1901,22 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return err
 		}
 	}
+	if lkeWorkloadSelected(env, opts, "account-manager") {
+		if lkeEmailDeliveryEnabled(env) {
+			if err := kubectlApply(lkeAccountManagerEmailWorkerManifest(env)); err != nil {
+				return err
+			}
+		} else if err := runKubectl("-n", lkeNamespaceName(env, "account-manager"), "delete", "deployment/account-manager-email-worker", "--ignore-not-found=true"); err != nil {
+			return err
+		}
+	}
 	if err := lkeWaitForRollouts(k8sRolloutTargetsFromEnv(selectedWorkloads)); err != nil {
 		return err
+	}
+	if lkeWorkloadSelected(env, opts, "account-manager") && lkeEmailDeliveryEnabled(env) {
+		if err := runKubectl("-n", lkeNamespaceName(env, "account-manager"), "rollout", "status", "deployment/account-manager-email-worker", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "10m")); err != nil {
+			return err
+		}
 	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") {
 		return lkeRestartVideoCloudLogIngester(env)
@@ -2111,13 +2125,21 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account-manager ./cmd/server
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account-manager-migrate ./cmd/migrate
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account-manager-user-cache ./cmd/user-cache
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account-manager-email-worker ./cmd/email-worker
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account-manager-email-outbox-admin ./cmd/email-outbox-admin
 
 FROM debian:bookworm-slim
 WORKDIR /app
-RUN useradd -r -u 10001 app && chown app:app /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -r -u 10001 app \
+    && chown app:app /app
 COPY --from=builder /out/rtk-account-manager /app/rtk-account-manager
 COPY --from=builder /out/rtk-account-manager-migrate /app/rtk-account-manager-migrate
 COPY --from=builder /out/rtk-account-manager-user-cache /app/rtk-account-manager-user-cache
+COPY --from=builder /out/rtk-account-manager-email-worker /app/rtk-account-manager-email-worker
+COPY --from=builder /out/rtk-account-manager-email-outbox-admin /app/rtk-account-manager-email-outbox-admin
 COPY --from=builder /src/migrations /app/migrations
 USER app
 EXPOSE 8080
@@ -6173,6 +6195,23 @@ func lkeObjectStorageCredential(env map[string]string, name string) string {
 }
 
 func lkeAccountManagerSecretManifest(env map[string]string) string {
+	accountEnv := firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_ENV"), env["ACCOUNT_MANAGER_ENV"], "staging")
+	smtpHost := lkeEnvValue(env, "SMTP_HOST")
+	authDelivery := strings.ToLower(strings.TrimSpace(firstNonEmpty(
+		os.Getenv("AUTH_TOKEN_DELIVERY"),
+		env["AUTH_TOKEN_DELIVERY"],
+	)))
+	if authDelivery == "" {
+		if smtpHost != "" {
+			authDelivery = "smtp"
+		} else {
+			authDelivery = "log"
+		}
+	}
+	authBaseURL := firstNonEmpty(os.Getenv("AUTH_TOKEN_BASE_URL"), env["AUTH_TOKEN_BASE_URL"])
+	if authBaseURL == "" && strings.TrimSpace(env["FRONTEND_DOMAIN"]) != "" {
+		authBaseURL = "https://" + strings.TrimSpace(env["FRONTEND_DOMAIN"])
+	}
 	return fmt.Sprintf(`apiVersion: v1
 kind: Secret
 metadata:
@@ -6194,15 +6233,109 @@ stringData:
   ACCOUNT_MANAGER_USER_CACHE_ENABLED: "true"
   ACCOUNT_MANAGER_USER_CACHE_ADDR: %q
   ACCOUNT_MANAGER_USER_CACHE_PREFIX: "account_manager:user"
-  ACCOUNT_MANAGER_ENV: "staging"
+  ACCOUNT_MANAGER_ENV: %q
   ACCOUNT_MANAGER_LOG_LEVEL: %q
-  AUTH_TOKEN_DELIVERY: "log"
+  AUTH_TOKEN_DELIVERY: %q
+  AUTH_TOKEN_BASE_URL: %q
+  SMTP_HOST: %q
+  SMTP_PORT: %q
+  SMTP_USERNAME: %q
+  SMTP_PASSWORD: %q
+  SMTP_FROM: %q
+  SMTP_FROM_NAME: %q
+  SMTP_ENCRYPTION: %q
+  EMAIL_OUTBOX_ENCRYPTION_KEY: %q
+  EMAIL_OUTBOX_POLL_INTERVAL: %q
+  EMAIL_OUTBOX_BATCH_SIZE: %q
+  EMAIL_OUTBOX_MAX_ATTEMPTS: %q
+  EMAIL_OUTBOX_RETRY_BASE: %q
+  EMAIL_OUTBOX_RETRY_MAX: %q
   CROSS_SERVICE_BROKER: "log"
   APP_CERT_ISSUER_BASE_URL: %q
   APP_CERT_ISSUER_CLIENT_CERT: "/etc/rtk-account-manager/certissuer/client.crt"
   APP_CERT_ISSUER_CLIENT_KEY: "/etc/rtk-account-manager/certissuer/client.key"
   APP_CERT_ISSUER_CA_FILE: "/etc/rtk-account-manager/certissuer/ca.crt"
-`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), lkeCertIssuerBaseURL(env))
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authDelivery, authBaseURL, smtpHost, firstNonEmpty(lkeEnvValue(env, "SMTP_PORT"), "587"), lkeEnvValue(env, "SMTP_USERNAME"), lkeEnvValue(env, "SMTP_PASSWORD"), lkeEnvValue(env, "SMTP_FROM"), firstNonEmpty(lkeEnvValue(env, "SMTP_FROM_NAME"), "Realtek Connect"), firstNonEmpty(lkeEnvValue(env, "SMTP_ENCRYPTION"), "starttls"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeCertIssuerBaseURL(env))
+}
+
+func lkeEmailOutboxEncryptionKey(env map[string]string) string {
+	if value := strings.TrimSpace(firstNonEmpty(os.Getenv("EMAIL_OUTBOX_ENCRYPTION_KEY"), env["EMAIL_OUTBOX_ENCRYPTION_KEY"])); value != "" {
+		return value
+	}
+	seed := sha256.Sum256([]byte(lkeRuntimeSecretValue("email-outbox-encryption")))
+	return base64.StdEncoding.EncodeToString(seed[:])
+}
+
+func lkeEmailDeliveryEnabled(env map[string]string) bool {
+	delivery := strings.ToLower(strings.TrimSpace(firstNonEmpty(os.Getenv("AUTH_TOKEN_DELIVERY"), env["AUTH_TOKEN_DELIVERY"])))
+	if delivery == "" {
+		return strings.TrimSpace(lkeEnvValue(env, "SMTP_HOST")) != ""
+	}
+	return delivery == "smtp"
+}
+
+func lkeAccountManagerEmailWorkerManifest(env map[string]string) string {
+	image := ""
+	for _, workload := range lkeWorkloads(env) {
+		if workload.Key == "account-manager" {
+			image = workload.Image
+			break
+		}
+	}
+	checksum := lkeConfigChecksum(
+		lkeAccountManagerDatabaseURL(env),
+		lkeEnvValue(env, "SMTP_HOST"),
+		lkeEnvValue(env, "SMTP_PORT"),
+		lkeEnvValue(env, "SMTP_USERNAME"),
+		lkeEnvValue(env, "SMTP_PASSWORD"),
+		lkeEnvValue(env, "SMTP_FROM"),
+		lkeEmailOutboxEncryptionKey(env),
+	)
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: account-manager-email-worker
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: account-manager-email-worker
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: account-manager-email-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: account-manager-email-worker
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+      annotations:
+        rtk.realtek.com/runtime-checksum: %q
+    spec:
+      imagePullSecrets:
+        - name: %s
+      containers:
+        - name: worker
+          image: %s
+          imagePullPolicy: IfNotPresent
+          command: ["/app/rtk-account-manager-email-worker"]
+          envFrom:
+            - secretRef:
+                name: account-manager-runtime
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], checksum, lkeImagePullSecretName(env), image)
 }
 
 func lkeAccountManagerMigrationJobManifest(env map[string]string) string {
@@ -6349,6 +6482,11 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 			lkePlatformAdminEmail(env),
 			lkeRuntimeSecretValue("platform-admin"),
 			lkeCertIssuerBaseURL(env),
+			lkeEnvValue(env, "SMTP_HOST"),
+			lkeEnvValue(env, "SMTP_USERNAME"),
+			lkeEnvValue(env, "SMTP_PASSWORD"),
+			lkeEnvValue(env, "SMTP_FROM"),
+			lkeEmailOutboxEncryptionKey(env),
 		}
 		if certIssuerMaterial != nil {
 			checksumValues = append(checksumValues, certIssuerMaterial.ClientCert, certIssuerMaterial.ServiceCA)
