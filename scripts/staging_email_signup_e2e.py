@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the opt-in cloud SMTP + IMAP signup activation E2E.
+"""Run the opt-in cloud Send Mail + local IMAP signup activation E2E.
 
 Secrets are read only from an operator dotenv file and passed to child
 processes through their environment.  They are never written to reports,
@@ -15,6 +15,7 @@ import pathlib
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -76,23 +77,52 @@ def plus_address(mailbox: str, run_id: str) -> str:
     return f"{local}+{run_id}@{domain}"
 
 
-def canonical_smtp_env(settings: dict[str, str], admin_url: str) -> dict[str, str]:
-    smtp_from = required(settings, "SMTP_EMAIL_ADDR").lower()
-    if smtp_from != EXPECTED_FROM:
-        raise E2EError("SMTP_EMAIL_ADDR must be no-reply@realtekconnect.com")
-    encryption = required(settings, "SMTP_ENCRYPTION").lower()
-    if encryption != "starttls":
-        raise E2EError("SMTP_ENCRYPTION must be starttls for deployed staging")
+def imap_connect_host(settings: dict[str, str], sendmail_base_url: str) -> str:
+    host = required(settings, "IMAP_SERVER")
+    port = int(required(settings, "IMAP_EMAIL_PORT"))
+    try:
+        socket.getaddrinfo(host, port)
+        return ""
+    except socket.gaierror:
+        fallback = urlparse(sendmail_base_url).hostname or ""
+        if not fallback:
+            raise E2EError("IMAP_SERVER DNS failed and no safe connect host exists")
+        try:
+            socket.getaddrinfo(fallback, port)
+        except socket.gaierror as exc:
+            raise E2EError(
+                "IMAP_SERVER and Send Mail connect-host DNS both failed"
+            ) from exc
+        return fallback
+
+
+def canonical_sendmail_env(settings: dict[str, str], admin_url: str) -> dict[str, str]:
+    raw_base_url = os.environ.get(
+        "SENDMAIL_HTTP_BASE_URL",
+        settings.get("SENDMAIL_HTTP_BASE_URL", "https://sm.realtekconnect.com"),
+    ).strip()
+    parsed = urlparse(raw_base_url)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "sm.realtekconnect.com"
+        or parsed.port is not None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise E2EError(
+            "SENDMAIL_HTTP_BASE_URL must be https://sm.realtekconnect.com"
+        )
     return {
-        "AUTH_TOKEN_DELIVERY": "smtp",
+        "AUTH_TOKEN_DELIVERY": "sendmail_http",
         "AUTH_TOKEN_BASE_URL": admin_url,
-        "SMTP_HOST": required(settings, "SMTP_SERVER"),
-        "SMTP_PORT": required(settings, "SMTP_PORT"),
-        "SMTP_USERNAME": smtp_from,
-        "SMTP_PASSWORD": required(settings, "SMTP_EMAIL_PASSWORD"),
-        "SMTP_FROM": EXPECTED_FROM,
-        "SMTP_FROM_NAME": "Realtek Connect",
-        "SMTP_ENCRYPTION": encryption,
+        "SENDMAIL_HTTP_BASE_URL": raw_base_url.rstrip("/"),
+        "SENDMAIL_HTTP_BEARER_TOKEN": required(
+            settings, "SENDMAIL_HTTP_BEARER_TOKEN"
+        ),
+        "SENDMAIL_HTTP_TIMEOUT": "15s",
     }
 
 
@@ -132,13 +162,11 @@ def use_deployed_images(workspace: pathlib.Path, env: dict[str, str]) -> None:
     for key, (namespace, deployment) in targets.items():
         env[key] = deployed_image(workspace, env, namespace, deployment)
 
-    # The currently deployed image predates the SMTP outbox merge and does not
-    # contain the email-worker binary.  Use the merged Account Manager main
-    # image while keeping every unrelated staging workload on its deployed
-    # digest/tag.
+    # Use the current committed Account Manager source so the scoped rollout is
+    # anchored to the exact HTTPS delivery adapter under test.
     account_repo = workspace / "repos" / "rtk_account_manager"
     sha = subprocess.run(
-        ["git", "rev-parse", "origin/main"], cwd=account_repo,
+        ["git", "rev-parse", "HEAD"], cwd=account_repo,
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
         check=False, timeout=10,
     ).stdout.decode().strip()
@@ -180,7 +208,6 @@ def main() -> int:
 
     settings = parse_dotenv(pathlib.Path(args.env_file).expanduser())
     for name in (
-        "SMTP_SERVER", "SMTP_PORT", "SMTP_EMAIL_ADDR", "SMTP_EMAIL_PASSWORD", "SMTP_ENCRYPTION",
         "IMAP_SERVER", "IMAP_EMAIL_ADDR", "IMAP_EMAIL_PASSWORD", "IMAP_EMAIL_PORT", "IMAP_EMAIL_SECURITY", "IMAP_EMAIL_FOLDER",
     ):
         required(settings, name)
@@ -192,18 +219,27 @@ def main() -> int:
         raise E2EError("run ID must use lowercase letters, digits, and hyphens")
     recipient = plus_address(required(settings, "IMAP_EMAIL_ADDR"), run_id)
     child_env = os.environ.copy()
-    child_env.update(settings)
-    child_env.update(canonical_smtp_env(settings, admin_url))
+    for name in (
+        "IMAP_SERVER", "IMAP_EMAIL_ADDR", "IMAP_EMAIL_PASSWORD",
+        "IMAP_EMAIL_PORT", "IMAP_EMAIL_SECURITY", "IMAP_EMAIL_FOLDER",
+    ):
+        child_env[name] = required(settings, name)
+    child_env.update(canonical_sendmail_env(settings, admin_url))
+    connect_host = imap_connect_host(
+        settings, child_env["SENDMAIL_HTTP_BASE_URL"]
+    )
+    if connect_host:
+        child_env["IMAP_CONNECT_HOST"] = connect_host
     # The checked-in staging file retains legacy provider metadata; this E2E
     # must use the current Kubernetes-only deployment path.
     child_env["CLOUD_PROVIDER"] = "lke"
     child_env["RTK_CLOUD_STAGING_PROVIDER"] = "lke"
 
     if not args.skip_deploy:
-        print(f"Configuring SMTP delivery and waiting for {STACK} rollout...")
+        print(f"Configuring Send Mail delivery and waiting for {STACK} rollout...")
         kubeconfig = pathlib.Path(child_env.get("CLOUD_STAGING_K8S_KUBECONFIG") or child_env.get("KUBECONFIG") or workspace / ".artifacts" / "kube" / f"{STACK}-lke.kubeconfig")
         if not kubeconfig.is_file():
-            raise E2EError("KUBECONFIG or CLOUD_STAGING_K8S_KUBECONFIG is required for the LKE SMTP rollout")
+            raise E2EError("KUBECONFIG or CLOUD_STAGING_K8S_KUBECONFIG is required for the LKE Send Mail rollout")
         use_deployed_images(workspace, child_env)
         for runtime_root in temporary_runtime_root(workspace, child_env):
             run_checked(
@@ -235,7 +271,7 @@ def main() -> int:
     }
     print(f"Running cloud signup activation E2E (run {run_id})...")
     run_checked(["npm", "run", "e2e:email-signup-live"], admin_web, browser_env, timeout=360)
-    print(f"Cloud SMTP + IMAP signup E2E passed (run {run_id}; evidence redacted).")
+    print(f"Cloud Send Mail + local IMAP signup E2E passed (run {run_id}; evidence redacted).")
     return 0
 
 

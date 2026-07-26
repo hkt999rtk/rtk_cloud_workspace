@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -3662,6 +3663,47 @@ func TestAccountManagerEmailWorkerManifestUsesCanonicalSMTPSecret(t *testing.T) 
 		if !strings.Contains(manifest, want) {
 			t.Fatalf("worker manifest does not contain %q:\n%s", want, manifest)
 		}
+	}
+}
+
+func TestAccountManagerEmailWorkerManifestUsesSendMailHTTPSecret(t *testing.T) {
+	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/account-manager:test")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":           "video-cloud-staging",
+		"AUTH_TOKEN_DELIVERY":        "sendmail_http",
+		"AUTH_TOKEN_BASE_URL":        "https://admin.video-cloud-staging.example.test",
+		"SENDMAIL_HTTP_BASE_URL":     "https://sm.realtekconnect.com",
+		"SENDMAIL_HTTP_BEARER_TOKEN": "opaque-token",
+		"SENDMAIL_HTTP_TIMEOUT":      "15s",
+	}
+	if !lkeEmailDeliveryEnabled(env) {
+		t.Fatal("sendmail_http must enable the email worker")
+	}
+	secret := lkeAccountManagerSecretManifest(env)
+	for _, want := range []string{
+		`AUTH_TOKEN_DELIVERY: "sendmail_http"`,
+		`SENDMAIL_HTTP_BASE_URL: "https://sm.realtekconnect.com"`,
+		`SENDMAIL_HTTP_BEARER_TOKEN: "opaque-token"`,
+		`SENDMAIL_HTTP_TIMEOUT: "15s"`,
+	} {
+		if !strings.Contains(secret, want) {
+			t.Fatalf("secret missing %q:\n%s", want, secret)
+		}
+	}
+	manifest := lkeAccountManagerEmailWorkerManifest(env)
+	if !strings.Contains(manifest, "account-manager-email-worker") ||
+		!strings.Contains(manifest, "registry.example.test/account-manager:test") {
+		t.Fatalf("unexpected worker manifest:\n%s", manifest)
+	}
+	changedURL := maps.Clone(env)
+	changedURL["SENDMAIL_HTTP_BASE_URL"] = "https://other.example.test"
+	if lkeAccountManagerEmailWorkerManifest(changedURL) == manifest {
+		t.Fatal("Send Mail base URL change must update the worker runtime checksum")
+	}
+	changedTimeout := maps.Clone(env)
+	changedTimeout["SENDMAIL_HTTP_TIMEOUT"] = "30s"
+	if lkeAccountManagerEmailWorkerManifest(changedTimeout) == manifest {
+		t.Fatal("Send Mail timeout change must update the worker runtime checksum")
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/envroot"
 )
@@ -26,6 +27,9 @@ var accountManagerEmailSecretKeys = []string{
 	"SMTP_FROM",
 	"SMTP_FROM_NAME",
 	"SMTP_ENCRYPTION",
+	"SENDMAIL_HTTP_BASE_URL",
+	"SENDMAIL_HTTP_BEARER_TOKEN",
+	"SENDMAIL_HTTP_TIMEOUT",
 	"EMAIL_OUTBOX_ENCRYPTION_KEY",
 	"EMAIL_OUTBOX_POLL_INTERVAL",
 	"EMAIL_OUTBOX_BATCH_SIZE",
@@ -86,18 +90,13 @@ func runAccountManagerEmailDeploy(args []string) error {
 }
 
 func validateAccountManagerEmailDeployEnv(env map[string]string) error {
-	required := []string{
-		"LKE_ACCOUNT_MANAGER_IMAGE", "AUTH_TOKEN_BASE_URL", "SMTP_HOST",
-		"SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM",
-	}
+	required := []string{"LKE_ACCOUNT_MANAGER_IMAGE", "AUTH_TOKEN_BASE_URL"}
 	for _, key := range required {
 		if strings.TrimSpace(lkeEnvValue(env, key)) == "" {
 			return fmt.Errorf("%s is required for Account Manager email deploy", key)
 		}
 	}
-	if strings.ToLower(strings.TrimSpace(firstNonEmpty(os.Getenv("AUTH_TOKEN_DELIVERY"), env["AUTH_TOKEN_DELIVERY"]))) != "smtp" {
-		return errors.New("AUTH_TOKEN_DELIVERY must be smtp")
-	}
+	delivery := strings.ToLower(strings.TrimSpace(firstNonEmpty(os.Getenv("AUTH_TOKEN_DELIVERY"), env["AUTH_TOKEN_DELIVERY"])))
 	baseURL, err := url.Parse(strings.TrimSpace(firstNonEmpty(os.Getenv("AUTH_TOKEN_BASE_URL"), env["AUTH_TOKEN_BASE_URL"])))
 	if err != nil || baseURL.Scheme != "https" || baseURL.Host == "" || baseURL.User != nil || baseURL.RawQuery != "" || baseURL.Fragment != "" {
 		return errors.New("AUTH_TOKEN_BASE_URL must be a credential-free HTTPS origin")
@@ -105,9 +104,52 @@ func validateAccountManagerEmailDeployEnv(env map[string]string) error {
 	if baseURL.Path != "" && baseURL.Path != "/" {
 		return errors.New("AUTH_TOKEN_BASE_URL must not contain a path")
 	}
+	switch delivery {
+	case "smtp":
+		for _, key := range []string{"SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM"} {
+			if strings.TrimSpace(lkeEnvValue(env, key)) == "" {
+				return fmt.Errorf("%s is required for SMTP delivery", key)
+			}
+		}
+	case "sendmail_http":
+		if err := validateSendMailHTTPDeployEnv(env); err != nil {
+			return err
+		}
+	default:
+		return errors.New("AUTH_TOKEN_DELIVERY must be smtp or sendmail_http")
+	}
+	if delivery != "smtp" {
+		return nil
+	}
 	port, err := strconv.Atoi(strings.TrimSpace(lkeEnvValue(env, "SMTP_PORT")))
 	if err != nil || port < 1 || port > 65535 {
 		return errors.New("SMTP_PORT must be a valid TCP port")
+	}
+	return nil
+}
+
+func validateSendMailHTTPDeployEnv(env map[string]string) error {
+	raw := strings.TrimSpace(lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"))
+	baseURL, err := url.Parse(raw)
+	if err != nil || baseURL.Scheme != "https" || baseURL.Host == "" ||
+		baseURL.User != nil || baseURL.RawQuery != "" || baseURL.Fragment != "" {
+		return errors.New("SENDMAIL_HTTP_BASE_URL must be a credential-free HTTPS origin")
+	}
+	if baseURL.Path != "" && baseURL.Path != "/" {
+		return errors.New("SENDMAIL_HTTP_BASE_URL must not contain a path")
+	}
+	const expectedHost = "sm.realtekconnect.com"
+	if !strings.EqualFold(baseURL.Hostname(), expectedHost) || baseURL.Port() != "" {
+		return fmt.Errorf("SENDMAIL_HTTP_BASE_URL host must equal %s with the default HTTPS port", expectedHost)
+	}
+	if strings.TrimSpace(lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN")) == "" {
+		return errors.New("SENDMAIL_HTTP_BEARER_TOKEN is required")
+	}
+	if timeout := strings.TrimSpace(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT")); timeout != "" {
+		value, err := time.ParseDuration(timeout)
+		if err != nil || value <= 0 {
+			return errors.New("SENDMAIL_HTTP_TIMEOUT must be a positive duration")
+		}
 	}
 	return nil
 }
@@ -123,8 +165,10 @@ func deployExistingAccountManagerEmail(env map[string]string) error {
 			return fmt.Errorf("existing Account Manager prerequisite %s is unavailable: %w", resource, err)
 		}
 	}
-	if err := checkAccountManagerSMTPSubmissionEgress(env); err != nil {
-		return err
+	if strings.EqualFold(strings.TrimSpace(lkeEnvValue(env, "AUTH_TOKEN_DELIVERY")), "smtp") {
+		if err := checkAccountManagerSMTPSubmissionEgress(env); err != nil {
+			return err
+		}
 	}
 
 	secret, err := kubectlResourceJSON(namespace, "secret", "account-manager-runtime")
@@ -280,6 +324,7 @@ func mergeAccountManagerEmailSecret(secret map[string]any, env map[string]string
 	defaults := map[string]string{
 		"SMTP_FROM_NAME":             "Realtek Connect",
 		"SMTP_ENCRYPTION":            "starttls",
+		"SENDMAIL_HTTP_TIMEOUT":      "15s",
 		"EMAIL_OUTBOX_POLL_INTERVAL": "5s",
 		"EMAIL_OUTBOX_BATCH_SIZE":    "20",
 		"EMAIL_OUTBOX_MAX_ATTEMPTS":  "8",
