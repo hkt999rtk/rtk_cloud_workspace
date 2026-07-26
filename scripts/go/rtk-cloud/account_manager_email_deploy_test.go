@@ -167,6 +167,18 @@ func TestKubectlResourceJSONRejectsInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestKubectlResourceJSONReturnsCommandFailure(t *testing.T) {
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	if err := os.WriteFile(kubectl, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	t.Setenv("RTK_CLOUD_KUBECTL_RETRY_ATTEMPTS", "1")
+	if _, err := kubectlResourceJSON("test", "secret", "runtime"); err == nil {
+		t.Fatal("kubectl command failure accepted")
+	}
+}
+
 func TestValidateAccountManagerEmailDeployEnv(t *testing.T) {
 	for _, key := range append([]string{"LKE_ACCOUNT_MANAGER_IMAGE"}, accountManagerEmailSecretKeys...) {
 		t.Setenv(key, "")
