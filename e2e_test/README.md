@@ -13,6 +13,7 @@ scripts, and E2E fixture documentation should be indexed here.
 | `video_cloud/load/` | API-level video cloud load and WebRTC setup runner. | Implemented. |
 | `provisioning/account_video_smoke/` | Account Manager + Video Cloud provisioning smoke using test users and factory certsets. | Implemented; live staging prerequisites may report `BLOCKED`. |
 | `provisioning/bulk_bind_validation/` | Bulk bind/provision artifact validation for 100-device staging onboarding. | Implemented. |
+| `../scripts/staging_email_signup_e2e.py` | Deployed staging customer signup, HTTPS Send Mail delivery, local IMAP receipt, and browser activation. | Implemented; explicit operator opt-in only. |
 | `admin_bff/` | Admin dashboard live BFF E2E entry points and ownership notes. | Indexed; runner still lives in `rtk_cloud_admin` until migrated. |
 | `cloud_validation/` | Android/iOS sample app SDK validation against a deployed Cloud plus a real-certificate virtual device. | Implemented with built-in staging fixture/evidence/cleanup providers, Cloud WebSocket command trigger, and deploy/nightly/release profiles. |
 | `fixtures/` | Fixture layout and local secret/artifact conventions for E2E runs. | Documentation only; secrets stay untracked. |
@@ -69,3 +70,27 @@ Known local fixtures may exist at:
 The first stores Account Manager test users. The second stores operator-held
 factory-enrolled device keys and certificates. Both are local-only and must stay
 outside tracked git content.
+
+## Cloud Send Mail + local IMAP signup activation
+
+`E2E-CA-SIGNUP-EMAIL-001` validates the deployed staging flow: Account Manager
+queues an email verification message, the cloud email worker sends it from
+`no-reply@realtekconnect.com`, and a browser completes the customer activation.
+It is intentionally not a CI/nightly test because the operator-held Send Mail
+Bearer token and IMAP credentials must remain outside tracked content.
+
+The receiver mailbox must support plus-addressing. Each run uses
+`imap-test01+<run-id>@realtekconnect.com`, polls the `imap-test01` inbox in
+read-only mode, and keeps the created E2E account/organization for audit.
+
+```sh
+RUN_LIVE_EMAIL_E2E=1 \
+  python3 scripts/staging_email_signup_e2e.py \
+  --confirm video-cloud-staging
+```
+
+The command passes `SENDMAIL_HTTP_BEARER_TOKEN` only to the scoped LKE
+Account Manager rollout and maps IMAP credentials from `~/.env` only to the
+local browser/helper process. It writes redacted evidence to
+`.artifacts/e2e_test/email-signup/<run-id>/`. Use `--skip-deploy` only after
+the same Send Mail configuration has already rolled out successfully.

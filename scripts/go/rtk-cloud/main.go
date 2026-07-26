@@ -47,6 +47,7 @@ type commandSpec struct {
 
 var commands = map[string]commandSpec{
 	"bind-devices":                     {run: runBindDevices},
+	"account-manager-email-deploy":     {run: runAccountManagerEmailDeploy},
 	"check-certificates":               {run: runCheckCertificates},
 	"collect-evidence":                 {run: runCollectEvidence},
 	"contracts-check":                  {run: runContractsCheck},

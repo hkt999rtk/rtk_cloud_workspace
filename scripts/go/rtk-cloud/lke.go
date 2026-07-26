@@ -6302,6 +6302,9 @@ stringData:
   SMTP_FROM: %q
   SMTP_FROM_NAME: %q
   SMTP_ENCRYPTION: %q
+  SENDMAIL_HTTP_BASE_URL: %q
+  SENDMAIL_HTTP_BEARER_TOKEN: %q
+  SENDMAIL_HTTP_TIMEOUT: %q
   EMAIL_OUTBOX_ENCRYPTION_KEY: %q
   EMAIL_OUTBOX_POLL_INTERVAL: %q
   EMAIL_OUTBOX_BATCH_SIZE: %q
@@ -6313,7 +6316,7 @@ stringData:
   APP_CERT_ISSUER_CLIENT_CERT: "/etc/rtk-account-manager/certissuer/client.crt"
   APP_CERT_ISSUER_CLIENT_KEY: "/etc/rtk-account-manager/certissuer/client.key"
   APP_CERT_ISSUER_CA_FILE: "/etc/rtk-account-manager/certissuer/ca.crt"
-`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authDelivery, authBaseURL, smtpHost, firstNonEmpty(lkeEnvValue(env, "SMTP_PORT"), "587"), lkeEnvValue(env, "SMTP_USERNAME"), lkeEnvValue(env, "SMTP_PASSWORD"), lkeEnvValue(env, "SMTP_FROM"), firstNonEmpty(lkeEnvValue(env, "SMTP_FROM_NAME"), "Realtek Connect"), firstNonEmpty(lkeEnvValue(env, "SMTP_ENCRYPTION"), "starttls"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeCertIssuerBaseURL(env))
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authDelivery, authBaseURL, smtpHost, firstNonEmpty(lkeEnvValue(env, "SMTP_PORT"), "587"), lkeEnvValue(env, "SMTP_USERNAME"), lkeEnvValue(env, "SMTP_PASSWORD"), lkeEnvValue(env, "SMTP_FROM"), firstNonEmpty(lkeEnvValue(env, "SMTP_FROM_NAME"), "Realtek Connect"), firstNonEmpty(lkeEnvValue(env, "SMTP_ENCRYPTION"), "starttls"), lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeCertIssuerBaseURL(env))
 }
 
 func lkeEmailOutboxEncryptionKey(env map[string]string) string {
@@ -6329,10 +6332,30 @@ func lkeEmailDeliveryEnabled(env map[string]string) bool {
 	if delivery == "" {
 		return strings.TrimSpace(lkeEnvValue(env, "SMTP_HOST")) != ""
 	}
-	return delivery == "smtp"
+	return delivery == "smtp" || delivery == "sendmail_http"
 }
 
 func lkeAccountManagerEmailWorkerManifest(env map[string]string) string {
+	checksum := lkeConfigChecksum(
+		lkeAccountManagerDatabaseURL(env),
+		lkeEnvValue(env, "AUTH_TOKEN_DELIVERY"),
+		lkeEnvValue(env, "AUTH_TOKEN_BASE_URL"),
+		lkeEnvValue(env, "SMTP_HOST"),
+		lkeEnvValue(env, "SMTP_PORT"),
+		lkeEnvValue(env, "SMTP_USERNAME"),
+		lkeEnvValue(env, "SMTP_PASSWORD"),
+		lkeEnvValue(env, "SMTP_FROM"),
+		lkeEnvValue(env, "SMTP_FROM_NAME"),
+		lkeEnvValue(env, "SMTP_ENCRYPTION"),
+		lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"),
+		lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"),
+		lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"),
+		lkeEmailOutboxEncryptionKey(env),
+	)
+	return lkeAccountManagerEmailWorkerManifestWithChecksum(env, checksum)
+}
+
+func lkeAccountManagerEmailWorkerManifestWithChecksum(env map[string]string, checksum string) string {
 	image := ""
 	for _, workload := range lkeWorkloads(env) {
 		if workload.Key == "account-manager" {
@@ -6340,15 +6363,6 @@ func lkeAccountManagerEmailWorkerManifest(env map[string]string) string {
 			break
 		}
 	}
-	checksum := lkeConfigChecksum(
-		lkeAccountManagerDatabaseURL(env),
-		lkeEnvValue(env, "SMTP_HOST"),
-		lkeEnvValue(env, "SMTP_PORT"),
-		lkeEnvValue(env, "SMTP_USERNAME"),
-		lkeEnvValue(env, "SMTP_PASSWORD"),
-		lkeEnvValue(env, "SMTP_FROM"),
-		lkeEmailOutboxEncryptionKey(env),
-	)
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -6540,10 +6554,18 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 			lkePlatformAdminEmail(env),
 			lkeRuntimeSecretValue("platform-admin"),
 			lkeCertIssuerBaseURL(env),
+			lkeEnvValue(env, "AUTH_TOKEN_DELIVERY"),
+			lkeEnvValue(env, "AUTH_TOKEN_BASE_URL"),
 			lkeEnvValue(env, "SMTP_HOST"),
+			lkeEnvValue(env, "SMTP_PORT"),
 			lkeEnvValue(env, "SMTP_USERNAME"),
 			lkeEnvValue(env, "SMTP_PASSWORD"),
 			lkeEnvValue(env, "SMTP_FROM"),
+			lkeEnvValue(env, "SMTP_FROM_NAME"),
+			lkeEnvValue(env, "SMTP_ENCRYPTION"),
+			lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"),
+			lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"),
+			lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"),
 			lkeEmailOutboxEncryptionKey(env),
 		}
 		if certIssuerMaterial != nil {

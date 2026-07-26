@@ -13,7 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var testCaseIDPattern = regexp.MustCompile(`^(SVC|UNIT|E2E|UI|LIVE|LOAD)-[A-Z0-9]+-[A-Z0-9]+-[0-9]{3}$`)
+var testCaseIDPattern = regexp.MustCompile(`^(SVC|UNIT|E2E|UI|LIVE|LOAD)(-[A-Z0-9]+){2,3}-[0-9]{3}$`)
 var playwrightTestPattern = regexp.MustCompile(`(?m)^\s*test\(\s*['"\x60](\[[A-Z0-9-]+\])`)
 var playwrightAnyTestPattern = regexp.MustCompile(`(?m)^\s*test\(\s*['"\x60]`)
 

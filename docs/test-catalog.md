@@ -4,6 +4,7 @@
 
 | Test ID | Purpose | Method | Layer | Feature | Profile | Covers | Change Paths | Owner | Targets | Environments | Runner | Evidence | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `E2E-CA-SIGNUP-EMAIL-001` | Cloud Send Mail and IMAP customer signup activation completes | Operator runner configures deployed staging HTTPS Send Mail delivery then verifies a plus-address signup email through local IMAP and browser activation/login. | `e2e` | — | — | — | — | `cloud_platform` | — | `staging` | `test-live` | `json`, `logs` | `active` |
 | `E2E-FACTORY-ENROLL-001` | Factory enrollment issues a usable device certificate | Go E2E runner enrolls a test device and validates the issued identity and certificate chain. | `e2e` | — | — | — | — | `factory_enroll` | — | `local`, `staging` | `test-e2e` | `json`, `markdown` | `active` |
 | `E2E-HOME-SHADOW-001` | Online desired delta and reported state converge | Home load actors write desired state receive delta publish reported state and require delta clearance. | `e2e` | `device-shadow` | `canary` | — | — | `home_cloud` | — | `staging` | `test-feature` | `json`, `markdown`, `logs` | `active` |
 | `E2E-HOME-SHADOW-002` | Offline desired state converges after reconnect | Offline actors queue desired state reconnect read shadow publish reported state and clear delta. | `e2e` | `device-shadow` | `canary` | — | — | `home_cloud` | — | `staging` | `test-feature` | `json`, `markdown`, `logs` | `active` |
