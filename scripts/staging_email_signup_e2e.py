@@ -97,9 +97,16 @@ def canonical_smtp_env(settings: dict[str, str], admin_url: str) -> dict[str, st
 
 
 def run_checked(args: list[str], cwd: pathlib.Path, env: dict[str, str], timeout: int = 600) -> None:
-    completed = subprocess.run(args, cwd=cwd, env=env, stdin=subprocess.DEVNULL, timeout=timeout, check=False)
+    completed = subprocess.run(
+        args, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, timeout=timeout, check=False,
+    )
     if completed.returncode:
-        raise E2EError(f"command failed: {args[0]}")
+        detail = (completed.stderr or completed.stdout).decode(errors="replace")[-1200:]
+        for value in env.values():
+            if value and len(value) >= 6:
+                detail = detail.replace(value, "<redacted>")
+        raise E2EError(f"command failed: {args[0]}: {detail.strip()}")
 
 
 def deployed_image(workspace: pathlib.Path, env: dict[str, str], namespace: str, deployment: str) -> str:
