@@ -8,6 +8,11 @@ import (
 	"strings"
 )
 
+var (
+	loadRunIDPattern    = regexp.MustCompile(`^[a-z0-9-]{8,64}$`)
+	loadBrandKeyPattern = regexp.MustCompile(`^b[0-9]{2}$`)
+)
+
 type loadTestBrandPlan struct {
 	TotalDevices   int                   `json:"total_devices"`
 	DevicesPerUser int                   `json:"devices_per_user"`
@@ -30,7 +35,7 @@ type loadTestBrandConfig struct {
 
 func resolveLoadTestBrandPlan(plan loadTestBrandPlan, target, runID, mailbox string) (loadTestBrandPlan, error) {
 	runID = strings.ToLower(strings.TrimSpace(runID))
-	if !regexp.MustCompile(`^[a-z0-9-]{8,64}$`).MatchString(runID) {
+	if !loadRunIDPattern.MatchString(runID) {
 		return loadTestBrandPlan{}, fmt.Errorf("run_id must use lowercase letters, digits, and hyphens")
 	}
 	target = strings.ToUpper(strings.TrimSpace(target))

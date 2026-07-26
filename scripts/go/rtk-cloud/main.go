@@ -2474,7 +2474,14 @@ func runStagingE2EMultiBrandDataSetup(cfg stagingE2EMultiBrandConfig) error {
 		if len(brand.DeviceMix) > 0 {
 			deviceMix = deviceMixString(brand.DeviceMix)
 		}
-		args := []string{"--workspace", cfg.Workspace, "--env-root", cfg.EnvRoot, "--brandname", brand.Brandname, "--user-count", strconv.Itoa(brand.NormalUsers), "--device-count", strconv.Itoa(brand.Devices), "--device-mix", deviceMix, "--device-prefix", cfg.DevicePrefix + "-" + brandSlug, "--user-concurrency", strconv.Itoa(cfg.UserConcurrency), "--device-concurrency", strconv.Itoa(cfg.DeviceConcurrency), "--bind-concurrency", strconv.Itoa(cfg.BindConcurrency)}
+		devicePrefix := cfg.DevicePrefix + "-" + brandSlug
+		if cfg.EmailOwners {
+			devicePrefix, err = loadEmailDevicePrefix(cfg.RunID, brand.BrandKey)
+			if err != nil {
+				return err
+			}
+		}
+		args := []string{"--workspace", cfg.Workspace, "--env-root", cfg.EnvRoot, "--brandname", brand.Brandname, "--user-count", strconv.Itoa(brand.NormalUsers), "--device-count", strconv.Itoa(brand.Devices), "--device-mix", deviceMix, "--device-prefix", devicePrefix, "--user-concurrency", strconv.Itoa(cfg.UserConcurrency), "--device-concurrency", strconv.Itoa(cfg.DeviceConcurrency), "--bind-concurrency", strconv.Itoa(cfg.BindConcurrency)}
 		if cfg.EmailOwners {
 			args = append(args, "--user-email-prefix", brand.MemberPrefix, "--user-email-domain", "users.invalid")
 		}
@@ -2527,6 +2534,21 @@ func runStagingE2EMultiBrandDataSetup(cfg stagingE2EMultiBrandConfig) error {
 		return exitCode(1)
 	}
 	return nil
+}
+
+func loadEmailDevicePrefix(runID, brandKey string) (string, error) {
+	runID = strings.ToLower(strings.TrimSpace(runID))
+	brandKey = strings.ToLower(strings.TrimSpace(brandKey))
+	if !loadRunIDPattern.MatchString(runID) || !loadBrandKeyPattern.MatchString(brandKey) {
+		return "", errors.New("run-scoped device prefix requires a safe run ID and Brand key B<nn>")
+	}
+	prefix := "load-" + runID + "-" + brandKey
+	// generate-load-devices appends "-0001"; OpenBao rejects a DNS label
+	// longer than 63 bytes even when hostname enforcement is disabled.
+	if len(prefix)+len("-0001") > 63 {
+		return "", fmt.Errorf("run-scoped device prefix exceeds the OpenBao 63-byte label limit: %s", prefix)
+	}
+	return prefix, nil
 }
 
 func deviceMixString(mix map[string]int) string {

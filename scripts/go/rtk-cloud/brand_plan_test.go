@@ -242,6 +242,7 @@ func TestEmailOwnerActivationCompletesBeforeEachBrandSetup(t *testing.T) {
 	}
 	if !strings.Contains(log, "--user-email-domain users.invalid") ||
 		!strings.Contains(log, "--user-email-prefix load-run-20260726-b01") ||
+		!strings.Contains(log, "--device-prefix load-run-20260726-b01") ||
 		!strings.Contains(log, "--no-resume") {
 		t.Fatalf("synthetic setup did not use the resolved test-only identity plan:\n%s", log)
 	}
@@ -260,6 +261,22 @@ func TestEmailOwnerActivationCompletesBeforeEachBrandSetup(t *testing.T) {
 	if resolved.Brands[0].Brandname != "RTK-LOAD-CANARY-run-20260726-B01" ||
 		resolved.Brands[1].OwnerEmail != "imap-test01+load-run-20260726-b02@realtekconnect.com" {
 		t.Fatalf("resolved plan = %+v", resolved)
+	}
+}
+
+func TestLoadEmailDevicePrefixIsRunScopedAndOpenBaoSafe(t *testing.T) {
+	prefix, err := loadEmailDevicePrefix("run-20260726", "B01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prefix != "load-run-20260726-b01" || len(prefix+"-0001") > 63 {
+		t.Fatalf("unsafe device prefix %q", prefix)
+	}
+	if _, err := loadEmailDevicePrefix("run-20260726-extraordinarily-long-identifier-that-cannot-fit", "B01"); err == nil {
+		t.Fatal("overlong OpenBao device label accepted")
+	}
+	if _, err := loadEmailDevicePrefix("run-20260726", "brand-1"); err == nil {
+		t.Fatal("invalid Brand key accepted")
 	}
 }
 
