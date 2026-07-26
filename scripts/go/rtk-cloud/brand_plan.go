@@ -42,8 +42,8 @@ func resolveLoadTestBrandPlan(plan loadTestBrandPlan, target, runID, mailbox str
 	if target == "" {
 		target = fmt.Sprintf("%dK", plan.TotalDevices/1000)
 	}
-	if target != "50K" && target != "100K" && target != "CANARY" {
-		return loadTestBrandPlan{}, fmt.Errorf("target must be 50K, 100K, or CANARY")
+	if target != "1K" && target != "50K" && target != "100K" && target != "CANARY" {
+		return loadTestBrandPlan{}, fmt.Errorf("target must be 1K, 50K, 100K, or CANARY")
 	}
 	local, domain, ok := strings.Cut(strings.ToLower(strings.TrimSpace(mailbox)), "@")
 	if !ok || local == "" || domain == "" || strings.Contains(local, "+") {
