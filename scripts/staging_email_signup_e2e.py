@@ -14,8 +14,10 @@ import os
 import pathlib
 import re
 import secrets
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from urllib.parse import urlparse
 
@@ -124,6 +126,26 @@ def use_deployed_images(workspace: pathlib.Path, env: dict[str, str]) -> None:
         env[key] = deployed_image(workspace, env, namespace, deployment)
 
 
+def temporary_runtime_root(workspace: pathlib.Path, env: dict[str, str]):
+    source = workspace / "cloud_env" / "staging" / "runtime"
+    if not (source / "env" / "stack.env").is_file():
+        raise E2EError("staging LKE runtime environment is unavailable")
+    with tempfile.TemporaryDirectory(prefix="rtk-email-e2e-runtime-") as temp:
+        runtime = pathlib.Path(temp) / "runtime"
+        shutil.copytree(source, runtime)
+        values = {
+            "VIDEO_CLOUD_BLOB_ENDPOINT": env["VIDEO_CLOUD_BLOB_ENDPOINT"],
+            "VIDEO_CLOUD_BLOB_REGION": env["VIDEO_CLOUD_BLOB_REGION"],
+            "VIDEO_CLOUD_BLOB_BUCKET": env["VIDEO_CLOUD_BLOB_BUCKET"],
+        }
+        if any("\n" in value or "\r" in value for value in values.values()):
+            raise E2EError("Object Storage configuration must not contain line breaks")
+        with (runtime / "env" / "stack.env").open("a", encoding="utf-8") as stack_file:
+            for key, value in values.items():
+                stack_file.write(f"\n{key}={value}")
+        yield runtime
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace", default=".")
@@ -159,6 +181,12 @@ def main() -> int:
     child_env = os.environ.copy()
     child_env.update(settings)
     child_env.update(canonical_smtp_env(settings, admin_url))
+    # The shared staging runtime keeps Object Storage credentials in the
+    # operator dotenv. Preserve the existing direct-upload capability while
+    # applying the SMTP-only configuration change.
+    child_env["VIDEO_CLOUD_BLOB_ENDPOINT"] = required(settings, "LINODE_OBJ_ENDPOINT")
+    child_env["VIDEO_CLOUD_BLOB_BUCKET"] = required(settings, "LINODE_OBJ_BUCKET")
+    child_env["VIDEO_CLOUD_BLOB_REGION"] = os.environ.get("LINODE_OBJ_REGION", "us-sea").strip() or "us-sea"
     # The checked-in staging file retains legacy provider metadata; this E2E
     # must use the current Kubernetes-only deployment path.
     child_env["CLOUD_PROVIDER"] = "lke"
@@ -170,11 +198,12 @@ def main() -> int:
         if not kubeconfig.is_file():
             raise E2EError("KUBECONFIG or CLOUD_STAGING_K8S_KUBECONFIG is required for the LKE SMTP rollout")
         use_deployed_images(workspace, child_env)
-        run_checked(
-            ["go", "run", "./scripts/go/rtk-cloud", "--", "provision", "--env-root", "cloud_env/staging/runtime", "--deploy"],
-            workspace,
-            child_env,
-        )
+        for runtime_root in temporary_runtime_root(workspace, child_env):
+            run_checked(
+                ["go", "run", "./scripts/go/rtk-cloud", "--", "provision", "--env-root", str(runtime_root), "--deploy"],
+                workspace,
+                child_env,
+            )
 
     evidence_dir = workspace / ".artifacts" / "e2e_test" / "email-signup" / run_id
     evidence_dir.mkdir(parents=True, exist_ok=False)
