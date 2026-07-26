@@ -49,6 +49,12 @@ class StagingEmailSignupE2ETest(unittest.TestCase):
     def test_run_id_pattern_accepts_generated_timestamp_shape(self):
         self.assertRegex("20260726t182526z-1a2b3c4d", r"^[a-z0-9-]{8,64}$")
 
+    def test_runner_uses_scoped_account_manager_email_deploy(self):
+        source = MODULE_PATH.read_text(encoding="utf-8")
+        self.assertIn('"account-manager-email-deploy"', source)
+        self.assertIn('"--confirm", STACK', source)
+        self.assertNotIn('"provision", "--env-root", str(runtime_root), "--deploy"', source)
+
 
 if __name__ == "__main__":
     unittest.main()

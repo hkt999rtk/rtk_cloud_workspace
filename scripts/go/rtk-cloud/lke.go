@@ -6333,13 +6333,6 @@ func lkeEmailDeliveryEnabled(env map[string]string) bool {
 }
 
 func lkeAccountManagerEmailWorkerManifest(env map[string]string) string {
-	image := ""
-	for _, workload := range lkeWorkloads(env) {
-		if workload.Key == "account-manager" {
-			image = workload.Image
-			break
-		}
-	}
 	checksum := lkeConfigChecksum(
 		lkeAccountManagerDatabaseURL(env),
 		lkeEnvValue(env, "SMTP_HOST"),
@@ -6349,6 +6342,17 @@ func lkeAccountManagerEmailWorkerManifest(env map[string]string) string {
 		lkeEnvValue(env, "SMTP_FROM"),
 		lkeEmailOutboxEncryptionKey(env),
 	)
+	return lkeAccountManagerEmailWorkerManifestWithChecksum(env, checksum)
+}
+
+func lkeAccountManagerEmailWorkerManifestWithChecksum(env map[string]string, checksum string) string {
+	image := ""
+	for _, workload := range lkeWorkloads(env) {
+		if workload.Key == "account-manager" {
+			image = workload.Image
+			break
+		}
+	}
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata:

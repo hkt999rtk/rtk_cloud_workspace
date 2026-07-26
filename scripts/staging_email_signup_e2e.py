@@ -132,6 +132,22 @@ def use_deployed_images(workspace: pathlib.Path, env: dict[str, str]) -> None:
     for key, (namespace, deployment) in targets.items():
         env[key] = deployed_image(workspace, env, namespace, deployment)
 
+    # The currently deployed image predates the SMTP outbox merge and does not
+    # contain the email-worker binary.  Use the merged Account Manager main
+    # image while keeping every unrelated staging workload on its deployed
+    # digest/tag.
+    account_repo = workspace / "repos" / "rtk_account_manager"
+    sha = subprocess.run(
+        ["git", "rev-parse", "origin/main"], cwd=account_repo,
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        check=False, timeout=10,
+    ).stdout.decode().strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise E2EError("could not resolve merged Account Manager main commit")
+    env["LKE_ACCOUNT_MANAGER_IMAGE"] = (
+        f"ghcr.io/hkt999rtk/rtk_account_manager/account-manager:sha-{sha[:12]}"
+    )
+
 
 def temporary_runtime_root(workspace: pathlib.Path, env: dict[str, str]):
     source = workspace / "cloud_env" / "staging" / "runtime"
@@ -140,16 +156,6 @@ def temporary_runtime_root(workspace: pathlib.Path, env: dict[str, str]):
     with tempfile.TemporaryDirectory(prefix="rtk-email-e2e-runtime-") as temp:
         runtime = pathlib.Path(temp) / "runtime"
         shutil.copytree(source, runtime)
-        values = {
-            "VIDEO_CLOUD_BLOB_ENDPOINT": env["VIDEO_CLOUD_BLOB_ENDPOINT"],
-            "VIDEO_CLOUD_BLOB_REGION": env["VIDEO_CLOUD_BLOB_REGION"],
-            "VIDEO_CLOUD_BLOB_BUCKET": env["VIDEO_CLOUD_BLOB_BUCKET"],
-        }
-        if any("\n" in value or "\r" in value for value in values.values()):
-            raise E2EError("Object Storage configuration must not contain line breaks")
-        with (runtime / "env" / "stack.env").open("a", encoding="utf-8") as stack_file:
-            for key, value in values.items():
-                stack_file.write(f"\n{key}={value}")
         yield runtime
 
 
@@ -188,12 +194,6 @@ def main() -> int:
     child_env = os.environ.copy()
     child_env.update(settings)
     child_env.update(canonical_smtp_env(settings, admin_url))
-    # The shared staging runtime keeps Object Storage credentials in the
-    # operator dotenv. Preserve the existing direct-upload capability while
-    # applying the SMTP-only configuration change.
-    child_env["VIDEO_CLOUD_BLOB_ENDPOINT"] = required(settings, "LINODE_OBJ_ENDPOINT")
-    child_env["VIDEO_CLOUD_BLOB_BUCKET"] = required(settings, "LINODE_OBJ_BUCKET")
-    child_env["VIDEO_CLOUD_BLOB_REGION"] = os.environ.get("LINODE_OBJ_REGION", "us-sea").strip() or "us-sea"
     # The checked-in staging file retains legacy provider metadata; this E2E
     # must use the current Kubernetes-only deployment path.
     child_env["CLOUD_PROVIDER"] = "lke"
@@ -207,7 +207,14 @@ def main() -> int:
         use_deployed_images(workspace, child_env)
         for runtime_root in temporary_runtime_root(workspace, child_env):
             run_checked(
-                ["go", "run", "./scripts/go/rtk-cloud", "--", "provision", "--env-root", str(runtime_root), "--deploy"],
+                [
+                    "go", "run", "./scripts/go/rtk-cloud", "--",
+                    "account-manager-email-deploy",
+                    "--workspace", str(workspace),
+                    "--env-root", str(runtime_root),
+                    "--kubeconfig", str(kubeconfig),
+                    "--confirm", STACK,
+                ],
                 workspace,
                 child_env,
             )
@@ -236,5 +243,9 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except (E2EError, subprocess.TimeoutExpired) as exc:
+        diagnostic = pathlib.Path(".artifacts/e2e_test/email-signup/last-error.txt")
+        diagnostic.parent.mkdir(parents=True, exist_ok=True)
+        diagnostic.write_text(f"{exc}\n", encoding="utf-8")
+        diagnostic.chmod(0o600)
         print(f"Cloud email E2E failed: {exc}", file=sys.stderr)
         raise SystemExit(1)
