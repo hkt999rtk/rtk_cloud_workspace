@@ -2573,7 +2573,7 @@ func runStagingE2EDataSetup(args []string) error {
 	brandname := fs.String("brandname", "RTK", "brand name")
 	brandPlanFile := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
 	loadRunID := fs.String("load-run-id", "", "run ID for run-scoped Brand Cloud/account names")
-	loadTarget := fs.String("load-target", "", "load target: 50K, 100K, or CANARY")
+	loadTarget := fs.String("load-target", "", "load target: 1K, 50K, 100K, or CANARY")
 	emailActivateOwners := fs.Bool("email-activate-owners", false, "activate one formal owner per Brand through Send Mail and local IMAP")
 	operatorEnvFile := fs.String("operator-env-file", filepath.Join(userHomeDir(), ".env"), "operator dotenv containing IMAP settings")
 	userCount := fs.Int("user-count", 10, "user count")

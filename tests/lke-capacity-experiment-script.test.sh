@@ -303,6 +303,10 @@ PATH="$FAKE_RETRY_ROOT/fakebin:$PATH" \
 	--live \
 	--confirm video-cloud-staging > "$TMP/account-incomplete.out" 2> "$TMP/account-incomplete.err"
 
+grep -F -- "--brand-plan $BRAND_PLAN" "$FAKE_RETRY_ROOT/setup-args.log" |
+	grep -F -- '--load-target 1K' |
+	grep -F -- '--email-activate-owners' >/dev/null
+
 if [[ -e "$FAKE_RETRY_ROOT/cloud_env/staging/lke/artifacts/capacity-experiments/cap-account-incomplete/logs/destroy-vms.log" ]]; then
 	echo "load-generator VMs must be preserved when formal owner activation evidence is incomplete" >&2
 	exit 1

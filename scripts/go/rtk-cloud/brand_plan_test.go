@@ -48,6 +48,28 @@ func TestLoadTestBrandPlan100KScenarioUsesTenBrandClouds(t *testing.T) {
 	}
 }
 
+func TestLoadTestBrandPlan1KScenarioUsesOneFormalOwner(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "loadtests", "home-100k", "scenarios", "brand-plan-1k.json")
+	plan, err := loadLoadTestBrandPlan(path)
+	if err != nil {
+		t.Fatalf("loadLoadTestBrandPlan() error = %v", err)
+	}
+	if len(plan.Brands) != 1 ||
+		plan.TotalDevices != 1000 ||
+		plan.normalUserCount() != 50 ||
+		plan.developerUserCount() != 1 {
+		t.Fatalf("1K totals brands=%d devices=%d normal=%d developer=%d",
+			len(plan.Brands), plan.TotalDevices, plan.normalUserCount(), plan.developerUserCount())
+	}
+	brand := plan.Brands[0]
+	if brand.Devices != 1000 ||
+		brand.NormalUsers != 50 ||
+		brand.DeveloperUsers["owner"] != 1 ||
+		brand.DeveloperUsers["admin"] != 0 {
+		t.Fatalf("brand %+v, want 1000 devices, 50 normal users, one owner, no admin", brand)
+	}
+}
+
 func TestPlannedUsersKeepsMemberEmailAndSeparatesDeveloperRoles(t *testing.T) {
 	member := plannedUsers("RTK Primary", "rtk-primary", "member", 1)[0]["email"].(string)
 	owner := plannedUsers("RTK Primary", "rtk-primary", "owner", 1)[0]["email"].(string)
@@ -99,6 +121,27 @@ func TestResolveLoadTestBrandPlanUsesFormalOwnerAliasesAndSyntheticDomain(t *tes
 		if got := member["email"]; got != fmt.Sprintf("load-run-20260726-b%02d+001@users.invalid", i+1) {
 			t.Fatalf("member email = %v", got)
 		}
+	}
+}
+
+func TestResolve1KLoadPlanCreatesRunScopedFormalOwner(t *testing.T) {
+	source, err := loadLoadTestBrandPlan(filepath.Join("..", "..", "..", "loadtests", "home-100k", "scenarios", "brand-plan-1k.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := resolveLoadTestBrandPlan(source, "1K", "run-1k-20260727", "imap-test01@realtekconnect.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Target != "1K" || len(plan.Brands) != 1 {
+		t.Fatalf("resolved plan metadata = %+v", plan)
+	}
+	brand := plan.Brands[0]
+	if brand.Brandname != "RTK-LOAD-1K-run-1k-20260727-B01" ||
+		brand.OwnerEmail != "imap-test01+load-run-1k-20260727-b01@realtekconnect.com" ||
+		brand.OwnerName != "RTK Load 1K run-1k-20260727 Brand 01 Owner" ||
+		brand.MemberPrefix != "load-run-1k-20260727-b01" {
+		t.Fatalf("resolved 1K brand = %+v", brand)
 	}
 }
 
