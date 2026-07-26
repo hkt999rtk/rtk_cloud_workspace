@@ -53,6 +53,42 @@ func writeTinyEnvRoot(t *testing.T) string {
 	return root
 }
 
+func TestPreflightAcceptsBrandPlan(t *testing.T) {
+	envRoot := t.TempDir()
+	planFile := filepath.Join(t.TempDir(), "brand-plan.json")
+	if err := os.WriteFile(planFile, []byte(`{
+		"total_devices": 1,
+		"devices_per_user": 1,
+		"brands": [{
+			"brandname": "RTK-LOAD-1K-run-12345-B01",
+			"devices": 1,
+			"normal_users": 1,
+			"developer_users": {"owner": 1},
+			"device_mix": {"light": 1}
+		}]
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := executePreflight([]string{
+		"--env-root", envRoot,
+		"--brandname", "RTK",
+		"--brand-plan", planFile,
+		"--region", "us-sea",
+		"--devices", "1",
+		"--users", "1",
+		"--devices-per-user", "1",
+		"--vm-count", "1",
+		"--ca-bundle", filepath.Join(envRoot, "missing-ca.pem"),
+	}, &stdout, &stderr)
+	if code != 1 || !strings.Contains(stderr.String(), "FIXTURE_UNAVAILABLE") {
+		t.Fatalf("preflight code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if strings.Contains(stderr.String(), "flag provided but not defined") {
+		t.Fatalf("preflight rejected --brand-plan: %s", stderr.String())
+	}
+}
+
 func writeHomeSQLiteTestData(t *testing.T, envRoot string, users []string, assignments []map[string]any) {
 	t.Helper()
 	writeHomeSQLiteTestDataForBrand(t, envRoot, "RTK", "brand-cloud-1", "tenant-1", users, assignments)

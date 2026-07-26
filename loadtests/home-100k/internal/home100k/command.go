@@ -208,6 +208,7 @@ func executePreflight(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
+	brandPlan := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
 	scenarioProfile := fs.String("scenario-profile", "", "scenario profile")
 	region := fs.String("region", "", "Linode region")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
@@ -219,7 +220,7 @@ func executePreflight(args []string, stdout io.Writer, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, ScenarioProfile: *scenarioProfile, Region: *region}
+	opts := PlanOptions{EnvRoot: *envRoot, Brandname: *brandname, BrandPlanFile: *brandPlan, ScenarioProfile: *scenarioProfile, Region: *region}
 	applyVMLabelPrefixFlag(&opts, vmLabelPrefix)
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix)
