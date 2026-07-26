@@ -85,6 +85,9 @@ class StagingEmailSignupE2ETest(unittest.TestCase):
         source = MODULE_PATH.read_text(encoding="utf-8")
         self.assertIn('"account-manager-email-deploy"', source)
         self.assertIn('"--confirm", STACK', source)
+        self.assertIn('"LKE_ACCOUNT_MANAGER_IMAGE": (', source)
+        self.assertIn('"LKE_CLOUD_ADMIN_IMAGE": (', source)
+        self.assertIn('"ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin"', source)
         self.assertNotIn('"provision", "--env-root", str(runtime_root), "--deploy"', source)
 
 
