@@ -160,6 +160,26 @@ func TestValidateAccountManagerEmailDeployEnv(t *testing.T) {
 	if err := validateAccountManagerEmailDeployEnv(env); err == nil {
 		t.Fatal("invalid SMTP_PORT accepted")
 	}
+	for name, mutate := range map[string]func(map[string]string){
+		"missing image": func(candidate map[string]string) {
+			candidate["LKE_ACCOUNT_MANAGER_IMAGE"] = ""
+		},
+		"missing SMTP credential": func(candidate map[string]string) {
+			candidate["SMTP_PASSWORD"] = ""
+		},
+		"unsupported delivery": func(candidate map[string]string) {
+			candidate["AUTH_TOKEN_DELIVERY"] = "log"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := cloneStringMap(env)
+			candidate["SMTP_PORT"] = "587"
+			mutate(candidate)
+			if err := validateAccountManagerEmailDeployEnv(candidate); err == nil {
+				t.Fatal("invalid delivery configuration accepted")
+			}
+		})
+	}
 }
 
 func TestValidateAccountManagerSendMailHTTPDeployEnv(t *testing.T) {
@@ -194,6 +214,33 @@ func TestValidateAccountManagerSendMailHTTPDeployEnv(t *testing.T) {
 			}
 		})
 	}
+	for name, mutate := range map[string]func(map[string]string){
+		"missing token": func(candidate map[string]string) {
+			candidate["SENDMAIL_HTTP_BEARER_TOKEN"] = ""
+		},
+		"invalid timeout": func(candidate map[string]string) {
+			candidate["SENDMAIL_HTTP_TIMEOUT"] = "never"
+		},
+		"non-positive timeout": func(candidate map[string]string) {
+			candidate["SENDMAIL_HTTP_TIMEOUT"] = "0s"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := cloneStringMap(env)
+			mutate(candidate)
+			if err := validateAccountManagerEmailDeployEnv(candidate); err == nil {
+				t.Fatal("invalid Send Mail setting accepted")
+			}
+		})
+	}
+}
+
+func cloneStringMap(source map[string]string) map[string]string {
+	clone := make(map[string]string, len(source))
+	for key, value := range source {
+		clone[key] = value
+	}
+	return clone
 }
 
 func TestMergeAccountManagerEmailSecretPreservesExistingData(t *testing.T) {
@@ -269,6 +316,30 @@ func TestMergeAccountManagerSendMailHTTPSecret(t *testing.T) {
 	}
 }
 
+func TestMergeAccountManagerEmailSecretReusesAndValidatesEncryptionKey(t *testing.T) {
+	for _, key := range accountManagerEmailSecretKeys {
+		t.Setenv(key, "")
+	}
+	existingKey := base64.StdEncoding.EncodeToString([]byte("existing-key"))
+	env := map[string]string{}
+	secret := map[string]any{"data": map[string]any{
+		"EMAIL_OUTBOX_ENCRYPTION_KEY": existingKey,
+	}}
+	if _, err := mergeAccountManagerEmailSecret(secret, env); err != nil {
+		t.Fatal(err)
+	}
+	if env["EMAIL_OUTBOX_ENCRYPTION_KEY"] != "existing-key" {
+		t.Fatal("existing encryption key was not reused")
+	}
+
+	invalid := map[string]any{"data": map[string]any{
+		"EMAIL_OUTBOX_ENCRYPTION_KEY": "not-base64!",
+	}}
+	if _, err := mergeAccountManagerEmailSecret(invalid, map[string]string{}); err == nil {
+		t.Fatal("invalid existing encryption key accepted")
+	}
+}
+
 func TestUpdateAccountManagerDeploymentOnlyChangesImageAndChecksum(t *testing.T) {
 	deployment := map[string]any{
 		"spec": map[string]any{
@@ -298,6 +369,54 @@ func TestUpdateAccountManagerDeploymentOnlyChangesImageAndChecksum(t *testing.T)
 	container := template["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)
 	if container["image"] != "new" || len(container["env"].([]any)) != 1 {
 		t.Fatalf("container = %#v", container)
+	}
+}
+
+func TestUpdateAccountManagerDeploymentInitializesMetadataAndRejectsInvalidShapes(t *testing.T) {
+	deployment := map[string]any{
+		"spec": map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"containers": []any{map[string]any{"name": "app", "image": "old"}},
+				},
+			},
+		},
+	}
+	if err := updateAccountManagerDeployment(deployment, "new", "checksum"); err != nil {
+		t.Fatal(err)
+	}
+	template := deployment["spec"].(map[string]any)["template"].(map[string]any)
+	annotations := template["metadata"].(map[string]any)["annotations"].(map[string]any)
+	if annotations["rtk.realtek.com/runtime-checksum"] != "checksum" {
+		t.Fatalf("annotations = %#v", annotations)
+	}
+
+	for name, candidate := range map[string]map[string]any{
+		"missing spec": {},
+		"missing template": {
+			"spec": map[string]any{},
+		},
+		"missing pod spec": {
+			"spec": map[string]any{"template": map[string]any{}},
+		},
+		"missing containers": {
+			"spec": map[string]any{"template": map[string]any{
+				"spec": map[string]any{},
+			}},
+		},
+		"missing app container": {
+			"spec": map[string]any{"template": map[string]any{
+				"spec": map[string]any{
+					"containers": []any{map[string]any{"name": "sidecar"}},
+				},
+			}},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := updateAccountManagerDeployment(candidate, "new", "checksum"); err == nil {
+				t.Fatal("invalid Deployment shape accepted")
+			}
+		})
 	}
 }
 
