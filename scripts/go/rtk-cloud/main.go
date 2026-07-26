@@ -3587,7 +3587,7 @@ func shouldLogK8SPortForwardLine(line string) bool {
 }
 
 func readK8SSecretEnv(kubeconfig, namespace, secret string, keys ...string) ([]string, error) {
-	cmd := exec.Command("kubectl", "-n", namespace, "get", "secret", secret, "-o", "json")
+	cmd := exec.Command(lkeKubectl(), "-n", namespace, "get", "secret", secret, "-o", "json")
 	cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfig)
 	out, err := cmd.Output()
 	if err != nil {
@@ -6345,14 +6345,49 @@ func accountManagerContextFromFlags(workspaceFlag, envRootFlag string) (accountM
 		PlatformAdminEnv: platformEnv,
 	}
 	if firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), stackEnv["CLOUD_PROVIDER"]) == "lke" && os.Getenv("ACCOUNT_MANAGER_BASE_URL") == "" {
+		stack := firstNonEmpty(stackEnv["CLOUD_STACK_NAME"], "video-cloud-staging")
 		forwardURL, cleanup, err := lkeAccountManagerPortForward(envRoot, map[string]string{
-			"CLOUD_STACK_NAME": firstNonEmpty(stackEnv["CLOUD_STACK_NAME"], "video-cloud-staging"),
+			"CLOUD_STACK_NAME": stack,
 		})
 		if err != nil {
 			return accountManagerContext{}, err
 		}
 		ctx.BaseURL = forwardURL
 		ctx.cleanup = cleanup
+		if ctx.AdminEmail == "" || ctx.AdminPassword == "" {
+			kubeconfig := firstNonEmpty(
+				os.Getenv("RTK_CLOUD_LKE_KUBECONFIG"),
+				os.Getenv("LKE_KUBECONFIG"),
+				filepath.Join(envRoot, "state", "kubeconfig.yaml"),
+			)
+			secretEnv, err := readK8SSecretEnv(
+				kubeconfig,
+				stack+"-account-manager",
+				"account-manager-runtime",
+				"ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL",
+				"ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD",
+			)
+			if err != nil {
+				ctx.Close()
+				return accountManagerContext{}, fmt.Errorf("read Account Manager platform-admin credentials from LKE runtime secret: %w", err)
+			}
+			for _, item := range secretEnv {
+				key, value, ok := strings.Cut(item, "=")
+				if !ok {
+					continue
+				}
+				switch key {
+				case "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL":
+					if ctx.AdminEmail == "" {
+						ctx.AdminEmail = value
+					}
+				case "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD":
+					if ctx.AdminPassword == "" {
+						ctx.AdminPassword = value
+					}
+				}
+			}
+		}
 	}
 	return ctx, nil
 }

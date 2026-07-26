@@ -3813,6 +3813,24 @@ func TestAccountManagerContextForLKEUsesPortForward(t *testing.T) {
 	}
 }
 
+func TestAccountManagerContextForLKELoadsMissingPlatformAdminFromRuntimeSecret(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	fakeKubectl(t)
+	t.Setenv("RTK_CLOUD_LKE_PORT_FORWARD_WAIT", "0s")
+
+	ctx, err := accountManagerContextFromFlags(workspace, envRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctx.Close()
+
+	if ctx.AdminEmail != "admin@example.test" || ctx.AdminPassword != "password123" {
+		t.Fatal("LKE runtime Secret credentials were not resolved")
+	}
+	time.Sleep(100 * time.Millisecond)
+	ctx.Close()
+}
+
 func TestLKEFactoryEnrollPortForward(t *testing.T) {
 	_, envRoot := makeLKETestEnv(t)
 	kubectlLog := fakeKubectl(t)
@@ -4775,6 +4793,10 @@ if [[ "$*" == *"get nodes -o json"* ]]; then
 fi
 if [[ "$*" == *"get secret openbao-tls -o json"* && -n "${FAKE_OPENBAO_TLS_SECRET_JSON:-}" ]]; then
   printf '%s\n' "$FAKE_OPENBAO_TLS_SECRET_JSON"
+  exit 0
+fi
+if [[ "$*" == *"get secret account-manager-runtime -o json"* ]]; then
+  printf '{"data":{"ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL":"YWRtaW5AZXhhbXBsZS50ZXN0","ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD":"cGFzc3dvcmQxMjM="}}\n'
   exit 0
 fi
 if [[ "$*" == *"get secret certissuer-runtime -o json"* ]]; then
