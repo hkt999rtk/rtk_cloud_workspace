@@ -2407,6 +2407,9 @@ func runStagingE2EMultiBrandDataSetup(cfg stagingE2EMultiBrandConfig) error {
 	if cfg.OutDir == "" {
 		cfg.OutDir = filepath.Join(cfg.EnvRoot, "artifacts", "staging-e2e-data", time.Now().UTC().Format("20060102T150405Z"))
 	}
+	if err := os.MkdirAll(cfg.OutDir, 0o755); err != nil {
+		return err
+	}
 	if cfg.EmailOwners {
 		resolvedPath := filepath.Join(cfg.OutDir, "resolved-brand-plan.json")
 		if err := writeJSON(resolvedPath, plan); err != nil {
@@ -2486,7 +2489,8 @@ func runStagingE2EMultiBrandDataSetup(cfg stagingE2EMultiBrandConfig) error {
 		if cfg.Quiet {
 			args = append(args, "--quiet")
 		}
-		if err := runStep(brandSlug+"_member_devices_bind_validate", commandWithArgs(selfCommandPath("staging-e2e-data-setup"), args...)...); err != nil {
+		setupCommand := firstNonEmpty(cfg.Scripts["setup-brand"], selfCommandPath("staging-e2e-data-setup"))
+		if err := runStep(brandSlug+"_member_devices_bind_validate", commandWithArgs(setupCommand, args...)...); err != nil {
 			return err
 		}
 	}
@@ -2602,6 +2606,7 @@ func runStagingE2EDataSetup(args []string) error {
 		"create-brand":     firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT"), selfCommandPath("create-brandname-cloud")),
 		"create-users":     firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT"), selfCommandPath("create-users")),
 		"activate-owner":   firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_ACTIVATE_OWNER_SCRIPT"), selfCommandPath("activate-load-owner")),
+		"setup-brand":      firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_SETUP_BRAND_SCRIPT"), selfCommandPath("staging-e2e-data-setup")),
 		"generate-devices": firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT"), selfCommandPath("generate-load-devices")),
 		"bind-devices":     firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT"), selfCommandPath("bind-devices")),
 		"validate-bind":    firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT"), selfCommandPath("validate-device-bind")),

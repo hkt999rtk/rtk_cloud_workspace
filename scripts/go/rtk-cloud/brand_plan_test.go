@@ -184,6 +184,110 @@ func TestEmailOwnerActivationFailureStopsBeforeSyntheticMembersAndDevices(t *tes
 	}
 }
 
+func TestEmailOwnerActivationCompletesBeforeEachBrandSetup(t *testing.T) {
+	temp := t.TempDir()
+	operatorEnv := filepath.Join(temp, "operator.env")
+	if err := os.WriteFile(operatorEnv, []byte("IMAP_EMAIL_ADDR=imap-test01@realtekconnect.com\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	commandLog := filepath.Join(temp, "commands.log")
+	makeCommand := func(name string) string {
+		path := filepath.Join(temp, name+".sh")
+		body := fmt.Sprintf("#!/bin/sh\nprintf '%s %%s\\n' \"$*\" >> %q\n", name, commandLog)
+		if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	outDir := filepath.Join(temp, "evidence")
+	err := runStagingE2EMultiBrandDataSetup(stagingE2EMultiBrandConfig{
+		Workspace:       filepath.Join("..", "..", ".."),
+		EnvRoot:         temp,
+		BrandPlanFile:   filepath.Join("..", "..", "..", "loadtests", "home-100k", "scenarios", "brand-plan-email-owner-canary.json"),
+		DeviceMix:       "camera=2",
+		DevicePrefix:    "canary",
+		UserConcurrency: 2, DeviceConcurrency: 3, BindConcurrency: 4,
+		OutDir: outDir, RunID: "run-20260726", LoadTarget: "CANARY",
+		EmailOwners: true, OperatorEnvFile: operatorEnv, NoResume: true,
+		Scripts: map[string]string{
+			"create-brand":   makeCommand("create-brand"),
+			"activate-owner": makeCommand("activate-owner"),
+			"create-users":   makeCommand("create-users"),
+			"setup-brand":    makeCommand("setup-brand"),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := string(raw)
+	if strings.Count(log, "create-brand ") != 2 ||
+		strings.Count(log, "activate-owner ") != 2 ||
+		strings.Count(log, "setup-brand ") != 2 ||
+		strings.Contains(log, "create-users ") {
+		t.Fatalf("unexpected command counts:\n%s", log)
+	}
+	firstCreate := strings.Index(log, "create-brand ")
+	firstActivate := strings.Index(log, "activate-owner ")
+	firstSetup := strings.Index(log, "setup-brand ")
+	secondCreate := strings.LastIndex(log, "create-brand ")
+	secondActivate := strings.LastIndex(log, "activate-owner ")
+	secondSetup := strings.LastIndex(log, "setup-brand ")
+	if !(firstCreate < firstActivate && firstActivate < firstSetup &&
+		firstSetup < secondCreate && secondCreate < secondActivate && secondActivate < secondSetup) {
+		t.Fatalf("formal activation was not sequenced before synthetic setup:\n%s", log)
+	}
+	if !strings.Contains(log, "--user-email-domain users.invalid") ||
+		!strings.Contains(log, "--user-email-prefix load-run-20260726-b01") ||
+		!strings.Contains(log, "--no-resume") {
+		t.Fatalf("synthetic setup did not use the resolved test-only identity plan:\n%s", log)
+	}
+
+	var summary map[string]any
+	if err := readJSONFile(filepath.Join(outDir, "summary.json"), &summary); err != nil {
+		t.Fatal(err)
+	}
+	if summary["overall"] != "pass" || asFloat(summary["activated_owners"]) != 2 || asFloat(summary["synthetic_members"]) != 4 {
+		t.Fatalf("summary = %+v", summary)
+	}
+	var resolved loadTestBrandPlan
+	if err := readJSONFile(filepath.Join(outDir, "resolved-brand-plan.json"), &resolved); err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Brands[0].Brandname != "RTK-LOAD-CANARY-run-20260726-B01" ||
+		resolved.Brands[1].OwnerEmail != "imap-test01+load-run-20260726-b02@realtekconnect.com" {
+		t.Fatalf("resolved plan = %+v", resolved)
+	}
+}
+
+func TestResolveLoadTestBrandPlanRejectsInvalidInputs(t *testing.T) {
+	base := loadTestBrandPlan{
+		TotalDevices: 1, DevicesPerUser: 1,
+		Brands: []loadTestBrandConfig{{
+			Brandname: "Brand", Devices: 1, NormalUsers: 1,
+			DeveloperUsers: map[string]int{"owner": 1},
+		}},
+	}
+	tests := []struct {
+		name, target, runID, mailbox string
+	}{
+		{"short run", "CANARY", "short", "imap@example.test"},
+		{"bad target", "25K", "run-12345", "imap@example.test"},
+		{"missing local", "CANARY", "run-12345", "@example.test"},
+		{"plus mailbox", "CANARY", "run-12345", "imap+old@example.test"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := resolveLoadTestBrandPlan(base, test.target, test.runID, test.mailbox); err == nil {
+				t.Fatal("invalid plan identity accepted")
+			}
+		})
+	}
+}
+
 func TestLoadOwnerEvidenceSchemaDoesNotPersistCredentialsOrActivationURL(t *testing.T) {
 	path := filepath.Join("..", "..", "..", "repos", "rtk_cloud_admin", "web", "scripts", "load-owner-activation-live-e2e.mjs")
 	raw, err := os.ReadFile(path)

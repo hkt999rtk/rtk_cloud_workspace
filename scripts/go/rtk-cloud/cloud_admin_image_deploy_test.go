@@ -120,6 +120,18 @@ func TestUpdateDeploymentContainerImage(t *testing.T) {
 	if err := updateDeploymentContainerImage(deployment, "missing", image); err == nil {
 		t.Fatal("missing container accepted")
 	}
+	for name, candidate := range map[string]map[string]any{
+		"spec":       {},
+		"template":   {"spec": map[string]any{}},
+		"pod spec":   {"spec": map[string]any{"template": map[string]any{}}},
+		"containers": {"spec": map[string]any{"template": map[string]any{"spec": map[string]any{}}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := updateDeploymentContainerImage(candidate, "app", image); err == nil {
+				t.Fatal("malformed deployment accepted")
+			}
+		})
+	}
 }
 
 func TestCloudAdminCommitImagePattern(t *testing.T) {
@@ -134,5 +146,32 @@ func TestCloudAdminCommitImagePattern(t *testing.T) {
 	}
 	if image := "ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin:sha-0123456789ab"; !cloudAdminCommitImagePattern.MatchString(image) {
 		t.Fatalf("commit image rejected: %s", image)
+	}
+}
+
+func TestRunCloudAdminImageDeployRejectsInvalidInputs(t *testing.T) {
+	if err := runCloudAdminImageDeploy([]string{"--unknown"}); err == nil {
+		t.Fatal("unknown flag accepted")
+	}
+	if err := runCloudAdminImageDeploy(nil); err == nil {
+		t.Fatal("missing env root accepted")
+	}
+	workspace := t.TempDir()
+	envRoot := filepath.Join(workspace, "runtime")
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), `CLOUD_ENV_NAME=staging
+CLOUD_PROVIDER=lke
+CLOUD_REGION=us-sea
+CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+LKE_CLOUD_ADMIN_IMAGE=cloud-admin:latest
+`)
+	if err := runCloudAdminImageDeploy([]string{
+		"--workspace", workspace, "--env-root", envRoot, "--confirm", "wrong",
+	}); err == nil {
+		t.Fatal("incorrect stack confirmation accepted")
+	}
+	if err := runCloudAdminImageDeploy([]string{
+		"--workspace", workspace, "--env-root", envRoot, "--confirm", "video-cloud-staging",
+	}); err == nil {
+		t.Fatal("non-commit image accepted")
 	}
 }
