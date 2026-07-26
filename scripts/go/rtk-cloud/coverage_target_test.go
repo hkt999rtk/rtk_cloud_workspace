@@ -371,13 +371,16 @@ func TestRefreshUserTokensLogsInUsersAndPersistsSessions(t *testing.T) {
 
 func TestClaimResolveFallbackCreatesIndependentDeviceResults(t *testing.T) {
 	var created []string
+	var createdMu sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/admin/device-claim-tokens":
 			var request map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&request)
 			deviceID := request["video_cloud_devid"].(string)
+			createdMu.Lock()
 			created = append(created, deviceID)
+			createdMu.Unlock()
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]string{"claim_token": "raw-" + deviceID})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/orgs/brand-001/devices/claim/resolve":
@@ -413,7 +416,10 @@ func TestClaimResolveFallbackCreatesIndependentDeviceResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary.Created != 2 || summary.Failed != 0 || len(results) != 2 || len(created) != 2 {
+	createdMu.Lock()
+	createdCount := len(created)
+	createdMu.Unlock()
+	if summary.Created != 2 || summary.Failed != 0 || len(results) != 2 || createdCount != 2 {
 		t.Fatalf("summary=%#v results=%#v created=%v", summary, results, created)
 	}
 	if results["device-1"].AccountDeviceID != "account-device-1" || results["device-2"].Status != "created" {
