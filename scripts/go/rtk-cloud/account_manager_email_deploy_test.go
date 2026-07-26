@@ -66,6 +66,38 @@ SENDMAIL_HTTP_TIMEOUT=15s
 	}
 }
 
+func TestRunAccountManagerEmailDeployRejectsInvalidInputs(t *testing.T) {
+	if err := runAccountManagerEmailDeploy([]string{"--unknown"}); err == nil {
+		t.Fatal("unknown flag accepted")
+	}
+	if err := runAccountManagerEmailDeploy(nil); err == nil {
+		t.Fatal("missing env root accepted")
+	}
+
+	workspace := t.TempDir()
+	if err := runAccountManagerEmailDeploy([]string{
+		"--workspace", workspace,
+		"--env-root", filepath.Join(workspace, "missing"),
+		"--confirm", "video-cloud-staging",
+	}); err == nil {
+		t.Fatal("missing environment accepted")
+	}
+
+	envRoot := filepath.Join(workspace, "runtime")
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), `CLOUD_ENV_NAME=staging
+CLOUD_PROVIDER=lke
+CLOUD_REGION=us-sea
+CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+`)
+	if err := runAccountManagerEmailDeploy([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--confirm", "wrong-stack",
+	}); err == nil {
+		t.Fatal("incorrect stack confirmation accepted")
+	}
+}
+
 func fakeKubectlForAccountManagerEmailDeploy(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
