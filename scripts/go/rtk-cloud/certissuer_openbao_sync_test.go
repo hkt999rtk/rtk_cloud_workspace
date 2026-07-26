@@ -55,6 +55,20 @@ func TestReconcileCertIssuerOpenBaoCARejectsMissingAppRole(t *testing.T) {
 	}
 }
 
+func TestRequireOpenBaoUnsealed(t *testing.T) {
+	if err := requireOpenBaoUnsealed(lkeOpenBaoStatus{Initialized: true}); err != nil {
+		t.Fatalf("unsealed OpenBao rejected: %v", err)
+	}
+	for _, status := range []lkeOpenBaoStatus{
+		{},
+		{Initialized: true, Sealed: true},
+	} {
+		if err := requireOpenBaoUnsealed(status); err == nil {
+			t.Fatalf("unsafe OpenBao status accepted: %+v", status)
+		}
+	}
+}
+
 func testOpenBaoCAPEM(t *testing.T) []byte {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)

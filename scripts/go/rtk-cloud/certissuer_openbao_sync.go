@@ -60,6 +60,13 @@ func runCertIssuerOpenBaoSync(args []string) error {
 	if err := waitForKubernetesAPIReady(); err != nil {
 		return err
 	}
+	status, err := lkeOpenBaoStatusValue(env)
+	if err != nil {
+		return fmt.Errorf("check OpenBao status before certissuer trust sync: %w", err)
+	}
+	if err := requireOpenBaoUnsealed(status); err != nil {
+		return err
+	}
 
 	openBaoTLS, err := kubectlResourceJSON(lkeNamespaceName(env, "secrets"), "secret", "openbao-tls")
 	if err != nil {
@@ -95,6 +102,16 @@ func runCertIssuerOpenBaoSync(args []string) error {
 		return err
 	}
 	fmt.Fprintln(os.Stdout, "certissuer_openbao_ca=synchronized")
+	return nil
+}
+
+func requireOpenBaoUnsealed(status lkeOpenBaoStatus) error {
+	if !status.Initialized {
+		return errors.New("OpenBao is not initialized")
+	}
+	if status.Sealed {
+		return errors.New("OpenBao is sealed; unseal it with the matching operator recovery material before synchronizing certissuer trust")
+	}
 	return nil
 }
 

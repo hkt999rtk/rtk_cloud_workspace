@@ -6184,21 +6184,24 @@ func runActivateLoadOwner(args []string) error {
 		return fmt.Errorf("owner browser activation failed: %s", truncateForLog(detail, 500))
 	}
 	appCertificateSubject := "app-brand-cloud-user:" + brandCloudUserID
-	privateKey, csr, err := generateAppCertificateCSR(appCertificateSubject)
+	appCredentials, appCertificate, ownerSession, err := accountIssueUserAppCertificate(
+		ctx,
+		tenantSlug,
+		strings.ToLower(strings.TrimSpace(*email)),
+		password,
+		appCertificateSubject,
+		brandCloudUserID,
+		"ed25519",
+	)
 	if err != nil {
 		return err
-	}
-	login, err := accountLoginUserFull(ctx, tenantSlug, strings.ToLower(strings.TrimSpace(*email)), password, csr)
-	if err != nil {
-		return err
-	}
-	if login.AppCertificate.Status != "issued" {
-		return errors.New("activated owner app certificate was not issued")
 	}
 	user := map[string]any{
-		"id": login.User.ID, "email": strings.ToLower(strings.TrimSpace(*email)), "display_name": strings.TrimSpace(*displayName),
-		"role": "owner", "password": password, "access_token": login.Tokens.AccessToken, "refresh_token": login.Tokens.RefreshToken,
-		"app_private_key_pem": privateKey, "app_csr_pem": csr, "app_certificate": accountAppCertificateMap(login.AppCertificate),
+		"id": brandCloudUserID, "email": strings.ToLower(strings.TrimSpace(*email)), "display_name": strings.TrimSpace(*displayName),
+		"role": "owner", "password": password, "access_token": ownerSession.AccessToken, "refresh_token": ownerSession.RefreshToken,
+		"app_private_key_pem": stringValue(appCredentials["private_key_pem"]),
+		"app_csr_pem":         stringValue(appCredentials["csr_pem"]),
+		"app_certificate":     appCertificate,
 	}
 	store, err := openTestDataStore(ctx.EnvRoot, *brandname)
 	if err != nil {
