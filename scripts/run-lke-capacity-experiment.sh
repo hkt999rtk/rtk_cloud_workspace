@@ -246,6 +246,9 @@ run_data_setup() {
 		)
 		if [[ -n "$BRAND_PLAN" ]]; then
 			setup_args+=(--brand-plan "$BRAND_PLAN")
+			if [[ "$LIVE" -eq 1 ]]; then
+				setup_args+=(--load-run-id "$RUN_ID" --load-target "$((TARGET_DEVICES / 1000))K" --email-activate-owners)
+			fi
 		fi
 		if [[ "${#from_step_args[@]}" -gt 0 ]]; then
 			setup_args+=("${from_step_args[@]}")
@@ -258,6 +261,9 @@ run_data_setup() {
 		rc=$?
 		set -e
 		if [[ "$rc" -eq 0 ]]; then
+			if [[ -f "$DATA_DIR/resolved-brand-plan.json" ]]; then
+				BRAND_PLAN="$DATA_DIR/resolved-brand-plan.json"
+			fi
 			return 0
 		fi
 		local attempt_logs="$CAPACITY_DIR/data-setup-attempt-$attempt-logs"
@@ -514,6 +520,9 @@ else
 	)
 	if [[ -n "$BRAND_PLAN" ]]; then
 		data_setup_plan_args+=(--brand-plan "$BRAND_PLAN")
+		if [[ "$LIVE" -eq 1 ]]; then
+			data_setup_plan_args+=(--load-run-id "$RUN_ID" --load-target "$((TARGET_DEVICES / 1000))K" --email-activate-owners)
+		fi
 	fi
 	run_or_print env \
 		CLOUD_STAGING_E2E_FACTORY_ENROLL_PORTS="$FACTORY_ENROLL_PORTS" \

@@ -2,9 +2,46 @@ package home100k
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestReportSeparatesFormalOwnerActivationsFromSyntheticMembers(t *testing.T) {
+	dir := t.TempDir()
+	planFile := filepath.Join(dir, "resolved-brand-plan.json")
+	if err := os.WriteFile(planFile, []byte(`{
+		"run_id":"run-20260726",
+		"target":"CANARY",
+		"brands":[{"normal_users":2},{"normal_users":3}]
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	evidenceDir := filepath.Join(dir, "owner-activation")
+	if err := os.MkdirAll(evidenceDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"b01.json", "b02.json"} {
+		if err := os.WriteFile(filepath.Join(evidenceDir, name), []byte(`{"status":"PASS","run_id":"run-20260726"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plan, err := NewPlan(PlanOptions{EnvRoot: "runtime", Brandname: "RTK", Region: "us-sea"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Conditions.BrandPlanFile = planFile
+	report := RenderReport(ReportInput{Plan: plan, RunID: "run-20260726", LoadGeneratorHealthy: true})
+	for _, want := range []string{
+		"Formal email-activated owners: 2/2 (PASS)",
+		"Synthetic bulk-provisioned members: 5",
+		"synthetic members are not signup accounts",
+	} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("report missing %q:\n%s", want, report)
+		}
+	}
+}
 
 func TestReportRendersRequiredScenariosAndIncompleteEvidence(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{

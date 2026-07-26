@@ -3,6 +3,8 @@ package home100k
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -39,6 +41,7 @@ func RenderReport(input ReportInput) string {
 		fmt.Fprintf(&b, "- %s\n", reason)
 	}
 	fmt.Fprintln(&b)
+	renderLoadAccountActivation(&b, input.Plan.Conditions.BrandPlanFile)
 
 	fmt.Fprintln(&b, "## Status Summary")
 	if len(reasons) == 0 {
@@ -628,6 +631,48 @@ func RenderReport(input ReportInput) string {
 		fmt.Fprintln(&b)
 	}
 	return b.String()
+}
+
+func renderLoadAccountActivation(b *strings.Builder, planFile string) {
+	raw, err := os.ReadFile(strings.TrimSpace(planFile))
+	if err != nil {
+		return
+	}
+	var plan struct {
+		RunID  string `json:"run_id"`
+		Target string `json:"target"`
+		Brands []struct {
+			NormalUsers int `json:"normal_users"`
+		} `json:"brands"`
+	}
+	if json.Unmarshal(raw, &plan) != nil || plan.RunID == "" {
+		return
+	}
+	synthetic := 0
+	for _, brand := range plan.Brands {
+		synthetic += brand.NormalUsers
+	}
+	passed := 0
+	evidenceFiles, _ := filepath.Glob(filepath.Join(filepath.Dir(planFile), "owner-activation", "*.json"))
+	for _, path := range evidenceFiles {
+		var evidence struct {
+			Status string `json:"status"`
+			RunID  string `json:"run_id"`
+		}
+		value, readErr := os.ReadFile(path)
+		if readErr == nil && json.Unmarshal(value, &evidence) == nil && evidence.Status == "PASS" && evidence.RunID == plan.RunID {
+			passed++
+		}
+	}
+	status := "INCOMPLETE"
+	if passed == len(plan.Brands) && passed > 0 {
+		status = "PASS"
+	}
+	fmt.Fprintln(b, "## Account Activation")
+	fmt.Fprintf(b, "- Formal email-activated owners: %d/%d (%s)\n", passed, len(plan.Brands), status)
+	fmt.Fprintf(b, "- Synthetic bulk-provisioned members: %d\n", synthetic)
+	fmt.Fprintln(b, "- Formal owners are Send Mail + local IMAP activations; synthetic members are not signup accounts.")
+	fmt.Fprintln(b)
 }
 
 func renderWebRTCPhase(b *strings.Builder, label string, attempts int64, successes int64) {
