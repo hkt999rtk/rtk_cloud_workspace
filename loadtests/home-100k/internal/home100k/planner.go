@@ -25,6 +25,7 @@ const (
 	DefaultStageSteady               = "90s"
 	DefaultStageCoolDown             = "30s"
 	DefaultScenarioProfile           = "home-diverse-v1"
+	MQTTShadowCanaryScenarioProfile  = "mqtt-shadow-canary-v1"
 	VideoCanaryScenarioProfile       = "video-canary-v1"
 	Video1KScenarioProfile           = "video-1k-v1"
 	ClipStorageCanaryScenarioProfile = "clip-storage-canary-v1"
@@ -550,6 +551,8 @@ func isVideoTurnSizingProfile(name string) bool {
 
 func deviceMixForScenario(scenario string, devices int) map[string]int {
 	switch strings.TrimSpace(scenario) {
+	case MQTTShadowCanaryScenarioProfile:
+		return map[string]int{"light": devices}
 	case VideoCanaryScenarioProfile, ClipStorageCanaryScenarioProfile:
 		return map[string]int{"camera": devices}
 	}

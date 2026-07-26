@@ -7,7 +7,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
@@ -29,13 +31,25 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"RUNTIME_COVERAGE_SHARED_CLUSTER: \"1\"",
 		"runs-on: ubuntu-24.04",
 		"RUNTIME_COVERAGE_RUNNER_LABEL: ubuntu-24.04",
-		"RUNTIME_COVERAGE_PLANNED_PVCS: \"15\"",
-		"RUNTIME_COVERAGE_PLANNED_LOAD_BALANCERS: \"2\"",
-		"RUNTIME_COVERAGE_PLANNED_GENERATORS: \"1\"",
-		"LINODE_OBJ_ACCESS_KEY_ID: ${{ secrets.LINODE_OBJ_ACCESS_KEY_ID }}",
-		"LINODE_OBJ_SECRET_ACCESS_KEY: ${{ secrets.LINODE_OBJ_SECRET_ACCESS_KEY }}",
-		"LINODE_OBJ_ENDPOINT: ${{ secrets.LINODE_OBJ_ENDPOINT }}",
-		"LINODE_OBJ_BUCKET: ${{ secrets.LINODE_OBJ_BUCKET }}",
+		"RUNTIME_COVERAGE_FEATURE_WORKFLOW: workflow-local-live",
+		"lfs: true",
+		"LKE_POSTGRES_STORAGE_MODE: emptydir",
+		`server_ca="$(awk -F= '$1 == "RUNTIME_COVERAGE_SERVER_CA"`,
+		`sudo cp "$server_ca"`,
+		"RUNTIME_COVERAGE_PLANNED_PVCS: \"5\"",
+		"RUNTIME_COVERAGE_PLANNED_LOAD_BALANCERS: \"0\"",
+		"RUNTIME_COVERAGE_PLANNED_GENERATORS: \"0\"",
+		`get secret video-cloud-runtime -o json`,
+		`.data.AWS_ACCESS_KEY_ID | @base64d`,
+		`deployment_env VIDEO_CLOUD_BLOB_ENDPOINT`,
+		`deployment_env VIDEO_CLOUD_BLOB_REGION`,
+		`deployment_env VIDEO_CLOUD_BLOB_BUCKET`,
+		`deployment_env VIDEO_CLOUD_WEBRTC_TURN_URLS`,
+		`.data.VIDEO_CLOUD_TURN_SHARED_SECRET | @base64d`,
+		`RUNTIME_COVERAGE_SHARED_TURN_HOST=$turn_public_host`,
+		`LKE_TURN_SHARED=$turn_shared_secret`,
+		`VIDEO_CLOUD_WEBRTC_TURN_URLS=$turn_urls`,
+		`RUNTIME_COVERAGE_STORAGE_SOURCE_NAMESPACE=$staging_video_namespace`,
 		"VIDEO_CLOUD_BLOB_PREFIX=runtime-coverage/%s",
 		"--preflight --plan --apply --deploy --artifacts",
 		"Prepare run-scoped Clip credentials",
@@ -44,6 +58,7 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"VIDEO_CLOUD_LOAD_CLIP_SERVER_PUBLIC_KEY=$server_public",
 		"--metadata-file",
 		"--provenance=false",
+		"--build-context runtime_coverage_helper=tests/runtime-coverage",
 		"pinned_image=\"$image@$digest\"",
 		"${env_key}_DIGEST=$digest",
 		"lke-image-manifest.json",
@@ -51,12 +66,33 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"runtime-coverage-k8s.sh endpoints",
 		"feature-endpoints.env",
 		"CLOUD_DNS_ROOT_DOMAIN=$RUNTIME_COVERAGE_STACK.invalid",
+		`video_cloud_api_base_url="https://video.$RUNTIME_COVERAGE_STACK.invalid:18443"`,
+		`printf 'VIDEO_CLOUD_API_BASE_URL=%s\n' "$video_cloud_api_base_url"`,
+		`grep -Fxq "VIDEO_CLOUD_API_BASE_URL=$video_cloud_api_base_url"`,
 		"runtime-coverage-k8s.sh cleanup",
 		"RUNTIME_COVERAGE_DEPLOYED=1",
 		"RUNTIME_COVERAGE_PREPARED=1",
+		"--device-count 12",
+		"--device-mix light=10,camera=2",
+		`export HOME100K_ENV_ROOT="$RUNTIME_ENV_ROOT"`,
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("runtime workflow missing %q", required)
+		}
+	}
+	preflightRaw, err := os.ReadFile(filepath.Join(workspace, "scripts", "ci", "runtime-coverage-preflight.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	preflight := string(preflightRaw)
+	for _, required := range []string{
+		"testsrc2_1080p_2s.h264",
+		"oid sha256:",
+		"sha256sum",
+		"H264 fixture is not materialized from Git LFS",
+	} {
+		if !strings.Contains(preflight, required) {
+			t.Fatalf("runtime preflight missing H264 fixture guard %q", required)
 		}
 	}
 	for _, forbidden := range []string{
@@ -66,6 +102,10 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"secrets.VIDEO_CLOUD_ADMIN_TOKEN",
 		"secrets.CLIP_USER_PRIVATE_KEY_PATH",
 		"secrets.CLIP_SERVER_PUBLIC_KEY_PATH",
+		"secrets.LINODE_OBJ_ACCESS_KEY_ID",
+		"secrets.LINODE_OBJ_SECRET_ACCESS_KEY",
+		"secrets.LINODE_OBJ_ENDPOINT",
+		"secrets.LINODE_OBJ_BUCKET",
 	} {
 		if strings.Contains(workflow, forbidden) {
 			t.Fatalf("runtime workflow contains forbidden value %q", forbidden)
@@ -77,6 +117,148 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 	}
 	if !strings.Contains(string(feature), "group: staging-mutating-tests") {
 		t.Fatal("feature qualification does not share the staging mutation lock")
+	}
+	dockerfiles, err := filepath.Glob(filepath.Join(workspace, "tests", "runtime-coverage", "Dockerfile.*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dockerfiles) != 5 {
+		t.Fatalf("runtime coverage Dockerfiles = %d, want 5", len(dockerfiles))
+	}
+	for _, dockerfile := range dockerfiles {
+		raw, err := os.ReadFile(dockerfile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := string(raw)
+		if !strings.Contains(body, "runtime_coverage_helper") ||
+			!strings.Contains(body, "-covermode=atomic") ||
+			!strings.Contains(body, "-coverpkg=./...") {
+			t.Fatalf("%s does not inject the atomic runtime coverage flush helper", dockerfile)
+		}
+	}
+	videoDockerfile, err := os.ReadFile(filepath.Join(workspace, "tests", "runtime-coverage", "Dockerfile.video-cloud"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(videoDockerfile), "turnregistrar") {
+		t.Fatal("runtime Video Cloud image must include the run-scoped TURN registrar")
+	}
+	onboardingStart := strings.Index(workflow, "- name: Run onboarding and cross-service lifecycle checks")
+	canaryStart := strings.Index(workflow, "- name: Run all feature canaries")
+	uiStart := strings.Index(workflow, "- name: Run desktop and mobile deployed UI smoke")
+	if onboardingStart < 0 || canaryStart < 0 || uiStart < 0 {
+		t.Fatal("runtime workflow lifecycle steps are missing")
+	}
+	onboarding := workflow[onboardingStart:canaryStart]
+	if !strings.Contains(onboarding, "tunnel-start") ||
+		!strings.Contains(onboarding, "$ACCOUNT_MANAGER_BASE_URL/v1/health") ||
+		!strings.Contains(onboarding, "$VIDEO_CLOUD_BASE_URL/version") ||
+		!strings.Contains(onboarding, "CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE") ||
+		!strings.Contains(onboarding, "CLOUD_STAGING_E2E_FACTORY_ENROLL_PORT=18444") ||
+		!strings.Contains(onboarding, "CLOUD_STAGING_E2E_MQTT_PORT=18884") {
+		t.Fatal("onboarding must use the isolated mTLS tunnel for token issuance without colliding with test-live factory/MQTT forwarding")
+	}
+	if !strings.Contains(workflow[canaryStart:uiStart], "tunnel-start") {
+		t.Fatal("feature canaries require the shared HTTPS/MQTT tunnel")
+	}
+	ui := workflow[uiStart:]
+	for _, expected := range []string{
+		"svc/account-manager 18081:80",
+		"http://127.0.0.1:18081/v1/auth/register",
+		"customer_register_payload",
+		"E2E_BRAND_CLOUD_ID",
+		"organization_name:\"Runtime Coverage Customer\"",
+	} {
+		if !strings.Contains(ui, expected) {
+			t.Fatalf("runtime UI smoke must provision its run-scoped customer identity: missing %q", expected)
+		}
+	}
+}
+
+func TestK8SE2ETokenBaseURLSupportsMTLSTunnelOverride(t *testing.T) {
+	t.Setenv("CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE", "")
+	if got := k8sE2ETokenBaseURL("18080"); got != "http://127.0.0.1:18080" {
+		t.Fatalf("default token base URL = %q", got)
+	}
+	t.Setenv("CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE", "https://device.coverage.invalid:18443")
+	if got := k8sE2ETokenBaseURL("18080"); got != "https://device.coverage.invalid:18443" {
+		t.Fatalf("overridden token base URL = %q", got)
+	}
+}
+
+func TestRuntimeCoverageFlushHelperWritesMetadataAndCountersOnSIGTERM(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	helper, err := os.ReadFile(filepath.Join(workspace, "tests", "runtime-coverage", "coverage_flush.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "coverage_flush.go"), helper, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(`package main
+import (
+	"os"
+	"time"
+)
+func main() {
+	_ = os.WriteFile(os.Getenv("READY_FILE"), []byte("ready"), 0o600)
+	for {
+		covered()
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+func covered() int { return 1 }
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module runtimeflush\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(dir, "runtimeflush")
+	build := exec.Command("go", "build", "-cover", "-covermode=atomic", "-coverpkg=./...", "-o", binary, ".")
+	build.Dir = dir
+	build.Env = append(os.Environ(), "GOWORK=off")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build runtime flush fixture: %v\n%s", err, output)
+	}
+	coverageDir := filepath.Join(dir, "coverage")
+	if err := os.Mkdir(coverageDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(binary)
+	readyFile := filepath.Join(dir, "ready")
+	command.Env = append(os.Environ(), "GOCOVERDIR="+coverageDir, "READY_FILE="+readyFile)
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 100 && !exists(readyFile); attempt++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !exists(readyFile) {
+		_ = command.Process.Kill()
+		t.Fatal("coverage fixture did not become ready")
+	}
+	if err := command.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Wait(); err != nil {
+		t.Fatalf("coverage fixture exit: %v", err)
+	}
+	meta, err := filepath.Glob(filepath.Join(coverageDir, "covmeta.*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	counters, err := filepath.Glob(filepath.Join(coverageDir, "covcounters.*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(meta) == 0 || len(counters) == 0 {
+		t.Fatalf("coverage flush files: meta=%v counters=%v", meta, counters)
 	}
 }
 
@@ -168,6 +350,40 @@ func TestRuntimeCoveragePreflightWrongRunnerArchitectureIsBlocked(t *testing.T) 
 	}
 }
 
+func TestRuntimeCoveragePreflightRequiresSharedStagingStorageSource(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := filepath.Join(t.TempDir(), "preflight.json")
+	command := exec.Command("bash", filepath.Join(workspace, "scripts", "ci", "runtime-coverage-preflight.sh"))
+	command.Env = append(os.Environ(),
+		"GITHUB_WORKSPACE="+workspace,
+		"RUNTIME_COVERAGE_RUN_ID=unit-preflight",
+		"RUNTIME_COVERAGE_MODE=preflight",
+		"CLOUD_STAGING_LKE_CLUSTER_LABEL=video-cloud-staging-lke",
+		"RUNTIME_COVERAGE_RUNNER_LABEL=ubuntu-24.04",
+		"RUNTIME_COVERAGE_PREFLIGHT_REPORT="+report,
+		"RUNTIME_COVERAGE_STORAGE_SOURCE_NAMESPACE=unexpected",
+	)
+	if err := command.Run(); err == nil {
+		t.Fatal("preflight accepted object storage outside shared staging")
+	}
+	raw, err := os.ReadFile(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct {
+		Failures []string `json:"failures"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(parsed.Failures, "\n"), "object storage must be sourced from the shared staging") {
+		t.Fatalf("preflight failures = %#v", parsed.Failures)
+	}
+}
+
 func TestRuntimeCleanupWritesResidualAndStagingAnchorReport(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
@@ -182,7 +398,22 @@ func TestRuntimeCleanupWritesResidualAndStagingAnchorReport(t *testing.T) {
 		"cleanup-report.json",
 		"deployment-anchors.json",
 		"feature-endpoints.json",
-		"--retry-all-errors",
+		"runtime-coverage-turnregistrar",
+		"allow-runtime-coverage-turnregistrar",
+		"port: 18190",
+		"tunnel_start",
+		"tunnel_stop",
+		"ingress.log",
+		"type: ClusterIP",
+		"18443:443 18883:8883",
+		"18090:80",
+		`map \$http_upgrade \$connection_upgrade`,
+		`proxy_set_header Upgrade \$http_upgrade`,
+		`proxy_set_header Connection \$connection_upgrade`,
+		"claim=\"${module}-runtime-coverage\"",
+		"group_by(.) | max_by(length)[0]",
+		"nodeSelector:{\"kubernetes.io/hostname\":$node_name}",
+		`test "${GOCOVERDIR:-}" = /coverage && test -w "$GOCOVERDIR"`,
 		"VIDEO_CLOUD_LOAD_STORAGE_NAMESPACE=$video_namespace",
 		"running pod image IDs do not match the expected digest",
 		"residual_namespaces",
@@ -421,11 +652,12 @@ esac
 	}
 	envText := string(envRaw)
 	for _, expected := range []string{
-		"HOME100K_ACCOUNT_MANAGER_BASE_URL=https://account.coverage-endpoints.invalid",
-		"HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL=https://video.coverage-endpoints.invalid",
-		"HOME100K_VIDEO_CLOUD_TOKEN_BASE_URL=https://device.video.coverage-endpoints.invalid",
-		"HOME100K_MQTT_ADDR=203.0.113.10:8883",
-		"HOME100K_GENERATOR_HOSTS_OVERRIDE_IP=203.0.113.10",
+		"HOME100K_ACCOUNT_MANAGER_BASE_URL=https://account.coverage-endpoints.invalid:18443",
+		"HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL=https://video.coverage-endpoints.invalid:18443",
+		"HOME100K_VIDEO_CLOUD_TOKEN_BASE_URL=https://device.video.coverage-endpoints.invalid:18443",
+		"HOME100K_MQTT_ADDR=127.0.0.1:18883",
+		"HOME100K_GENERATOR_HOSTS_OVERRIDE_IP=127.0.0.1",
+		"HOME100K_CLOUD_LOGGER_ENDPOINT=http://127.0.0.1:18090",
 		"RUNTIME_COVERAGE_HOSTNAMES=account.coverage-endpoints.invalid,video.coverage-endpoints.invalid,device.video.coverage-endpoints.invalid",
 		"RUNTIME_COVERAGE_SERVER_CA=" + filepath.Join(runtimeEnvRoot, "state", "secrets", "runtime-coverage-server-ca.crt"),
 		"VIDEO_CLOUD_LOAD_STORAGE_NAMESPACE=coverage-endpoints-video-cloud",

@@ -335,10 +335,18 @@ func executeFeatureSpec(workspace, envRoot, runID, environment string, spec feat
 	if err := validateFeaturePrerequisites(spec); err != nil {
 		return blockedFeatureManifest(runID, spec.Feature, spec.Profile, environment, commits, []featureRunSpec{spec}, err.Error()), err
 	}
+	region := envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_REGION")
+	if region == "" {
+		return blockedFeatureManifest(
+			runID, spec.Feature, spec.Profile, environment, commits, []featureRunSpec{spec},
+			"CLOUD_REGION is missing from the deployment stack environment",
+		), errors.New("CLOUD_REGION is missing from the deployment stack environment")
+	}
 	stageRunID := boundedFeatureStageRunID(runID, spec.Feature, spec.Profile)
 	env := map[string]string{
 		"HOME100K_DESCRIPTION_FILE":        filepath.Join(workspace, filepath.FromSlash(spec.ScenarioPath)),
-		"HOME100K_ENV_ROOT":                featureLoadEnvRoot(envRoot),
+		"HOME100K_ENV_ROOT":                featureExecutionLoadEnvRoot(envRoot),
+		"HOME100K_REGION":                  region,
 		"HOME100K_KUBECONFIG":              featureKubeconfigPath(envRoot),
 		"HOME100K_DEVICE_CLIENT_CA_BUNDLE": featureDeviceCABundlePath(envRoot),
 		"HOME100K_OUT_DIR":                 stageDir,
@@ -346,7 +354,19 @@ func executeFeatureSpec(workspace, envRoot, runID, environment string, spec feat
 		"HOME100K_PRESERVE_VMS":            "0",
 		"HOME100K_AUTO_DESTROY_ON_EXIT":    "1",
 	}
-	runErr := runCmdWithEnv(workspace, env, filepath.Join(workspace, "loadtests", "home-100k", "scripts", "home-100k.sh"), "workflow-live")
+	workflowCommand, workflowErr := featureWorkflowCommand()
+	if workflowErr != nil {
+		return blockedFeatureManifest(
+			runID, spec.Feature, spec.Profile, environment, commits, []featureRunSpec{spec},
+			workflowErr.Error(),
+		), workflowErr
+	}
+	runErr := runCmdWithEnv(
+		workspace,
+		env,
+		filepath.Join(workspace, "loadtests", "home-100k", "scripts", "home-100k.sh"),
+		workflowCommand,
+	)
 	completed := time.Now().UTC()
 	purgeFeatureSecretArtifacts(stageDir)
 	_ = materializeRuntimeLogEvidence(stageDir)
@@ -354,11 +374,23 @@ func executeFeatureSpec(workspace, envRoot, runID, environment string, spec feat
 	return manifest, runErr
 }
 
+func featureWorkflowCommand() (string, error) {
+	command := firstNonEmpty(os.Getenv("RUNTIME_COVERAGE_FEATURE_WORKFLOW"), "workflow-live")
+	if command != "workflow-live" && command != "workflow-local-live" {
+		return "", fmt.Errorf("RUNTIME_COVERAGE_FEATURE_WORKFLOW must be workflow-live or workflow-local-live, got %q", command)
+	}
+	return command, nil
+}
+
 func featureLoadEnvRoot(deploymentEnvRoot string) string {
 	if filepath.Base(filepath.Clean(deploymentEnvRoot)) == "lke" {
 		return filepath.Join(filepath.Dir(filepath.Clean(deploymentEnvRoot)), "runtime")
 	}
 	return deploymentEnvRoot
+}
+
+func featureExecutionLoadEnvRoot(deploymentEnvRoot string) string {
+	return firstNonEmpty(os.Getenv("HOME100K_ENV_ROOT"), featureLoadEnvRoot(deploymentEnvRoot))
 }
 
 func featureKubeconfigPath(deploymentEnvRoot string) string {
@@ -810,6 +842,12 @@ func collectFeatureEvidenceFiles(dir string) []featureEvidenceFile {
 		}
 		rel, relErr := filepath.Rel(dir, path)
 		if relErr != nil {
+			return nil
+		}
+		// The stage report is rendered only after the manifest is written. Including
+		// it here would record the hash of the previous report and make the final
+		// artifact unverifiable.
+		if filepath.Base(rel) == "TEST_REPORT.md" {
 			return nil
 		}
 		raw, readErr := os.ReadFile(path)

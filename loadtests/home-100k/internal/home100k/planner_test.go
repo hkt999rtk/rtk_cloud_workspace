@@ -149,6 +149,24 @@ func TestVideoCanaryPlanUsesTwoRelayActors(t *testing.T) {
 	}
 }
 
+func TestMQTTShadowCanaryPlanUsesLightActors(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:         "cloud_env/staging/runtime",
+		Brandname:       "RTK",
+		Region:          "us-sea",
+		ScenarioProfile: MQTTShadowCanaryScenarioProfile,
+		DeviceCount:     10,
+		UserCount:       2,
+		DevicesPerUser:  5,
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+	if plan.DeviceMix["light"] != 10 || len(plan.DeviceMix) != 1 {
+		t.Fatalf("shadow canary device mix = %#v", plan.DeviceMix)
+	}
+}
+
 func TestClipStorageCanaryPlanUsesTwoCamerasAndFourClips(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
 		EnvRoot:         "cloud_env/staging/runtime",
