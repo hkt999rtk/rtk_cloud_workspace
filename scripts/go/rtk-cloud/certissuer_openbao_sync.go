@@ -53,9 +53,17 @@ func runCertIssuerOpenBaoSync(args []string) error {
 		return fmt.Errorf("--confirm must equal CLOUD_STACK_NAME %q", stack)
 	}
 	if strings.TrimSpace(*kubeconfig) != "" {
+		previousKubeconfig, hadPreviousKubeconfig := os.LookupEnv("RTK_CLOUD_KUBECONFIG")
 		if err := os.Setenv("RTK_CLOUD_KUBECONFIG", strings.TrimSpace(*kubeconfig)); err != nil {
 			return err
 		}
+		defer func() {
+			if hadPreviousKubeconfig {
+				_ = os.Setenv("RTK_CLOUD_KUBECONFIG", previousKubeconfig)
+			} else {
+				_ = os.Unsetenv("RTK_CLOUD_KUBECONFIG")
+			}
+		}()
 	}
 	if err := waitForKubernetesAPIReady(); err != nil {
 		return err

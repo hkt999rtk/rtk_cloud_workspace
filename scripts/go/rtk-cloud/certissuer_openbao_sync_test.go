@@ -8,9 +8,94 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"math/big"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestRunCertIssuerOpenBaoSyncScopesTrustRepair(t *testing.T) {
+	workspace := t.TempDir()
+	envRoot := filepath.Join(workspace, "runtime")
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), `CLOUD_ENV_NAME=staging
+CLOUD_PROVIDER=lke
+CLOUD_REGION=us-sea
+CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+CLOUD_STACK_NAME=video-cloud-staging
+`)
+	logPath := fakeKubectlForCertIssuerOpenBaoSync(t, base64.StdEncoding.EncodeToString(testOpenBaoCAPEM(t)))
+	kubeconfig := filepath.Join(workspace, "kubeconfig")
+	writeTestFile(t, kubeconfig, "test")
+	t.Setenv("RTK_CLOUD_KUBECONFIG", "previous-kubeconfig")
+
+	if err := runCertIssuerOpenBaoSync([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--kubeconfig", kubeconfig,
+		"--confirm", "video-cloud-staging",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := os.Getenv("RTK_CLOUD_KUBECONFIG"); got != "previous-kubeconfig" {
+		t.Fatalf("RTK_CLOUD_KUBECONFIG was not restored: %q", got)
+	}
+	if err := os.Unsetenv("RTK_CLOUD_KUBECONFIG"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCertIssuerOpenBaoSync([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--kubeconfig", kubeconfig,
+		"--confirm", "video-cloud-staging",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := os.LookupEnv("RTK_CLOUD_KUBECONFIG"); ok {
+		t.Fatal("RTK_CLOUD_KUBECONFIG was left set after command")
+	}
+	log := readTestFile(t, logPath)
+	for _, want := range []string{
+		"get secret openbao-tls -o json",
+		"get secret certissuer-openbao-auth -o json",
+		"get deployment certissuer -o json",
+		`"rtk.realtek.com/openbao-ca-checksum"`,
+		"rollout status deployment/certissuer --timeout 5m",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("scoped sync log missing %q:\n%s", want, log)
+		}
+	}
+	for _, forbidden := range []string{"account-manager", "factoryenroll", "video-cloud-api", "cloud-admin"} {
+		if strings.Contains(log, forbidden) {
+			t.Fatalf("scoped sync touched %q:\n%s", forbidden, log)
+		}
+	}
+}
+
+func TestRunCertIssuerOpenBaoSyncRejectsInvalidInputs(t *testing.T) {
+	if err := runCertIssuerOpenBaoSync([]string{"--unknown"}); err == nil {
+		t.Fatal("unknown flag accepted")
+	}
+	if err := runCertIssuerOpenBaoSync(nil); err == nil {
+		t.Fatal("missing env root accepted")
+	}
+	workspace := t.TempDir()
+	envRoot := filepath.Join(workspace, "runtime")
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), `CLOUD_ENV_NAME=staging
+CLOUD_PROVIDER=lke
+CLOUD_REGION=us-sea
+CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+CLOUD_STACK_NAME=video-cloud-staging
+`)
+	if err := runCertIssuerOpenBaoSync([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--confirm", "wrong-stack",
+	}); err == nil {
+		t.Fatal("incorrect stack confirmation accepted")
+	}
+}
 
 func TestReconcileCertIssuerOpenBaoCAPreservesAppRoleAndRollsDeployment(t *testing.T) {
 	ca := testOpenBaoCAPEM(t)
@@ -97,4 +182,50 @@ func testOpenBaoCAPEM(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
+
+func fakeKubectlForCertIssuerOpenBaoSync(t *testing.T, encodedCA string) string {
+	t.Helper()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "kubectl.log")
+	kubectl := filepath.Join(dir, "kubectl")
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+line='ARGS'
+for arg in "$@"; do line="$line $arg"; done
+printf '%s\n' "$line" >> "` + logPath + `"
+if [[ "$*" == *"get --raw=/readyz"* ]]; then printf 'ok\n'; exit 0; fi
+if [[ "$*" == *"get nodes -o name"* ]]; then printf 'node/test\n'; exit 0; fi
+if [[ "$*" == *"exec openbao-0"*"bao status -format=json"* ]]; then
+  printf '{"initialized":true,"sealed":false}\n'
+  exit 0
+fi
+if [[ "$*" == *"get secret openbao-tls -o json"* ]]; then
+  printf '{"data":{"ca.crt":"` + encodedCA + `"}}\n'
+  exit 0
+fi
+if [[ "$*" == *"get secret certissuer-openbao-auth -o json"* ]]; then
+  printf '{"data":{"ca.crt":"c3RhbGU=","role_id":"cm9sZQ==","secret_id":"c2VjcmV0"}}\n'
+  exit 0
+fi
+if [[ "$*" == *"get deployment certissuer -o json"* ]]; then
+  printf '{"spec":{"template":{"metadata":{"annotations":{"keep":"yes"}}}}}\n'
+  exit 0
+fi
+if [[ "$*" == *"replace -f -"* ]]; then
+  cat >> "` + logPath + `"
+  printf '\n---\n' >> "` + logPath + `"
+  exit 0
+fi
+if [[ "$*" == *"rollout status deployment/certissuer"* ]]; then exit 0; fi
+exit 0
+`
+	if err := os.WriteFile(kubectl, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	t.Setenv("RTK_CLOUD_KUBECTL_RETRY_ATTEMPTS", "1")
+	t.Setenv("RTK_CLOUD_KUBE_API_READY_POLL", "1ms")
+	t.Setenv("RTK_CLOUD_KUBE_API_READY_STABLE_CHECKS", "1")
+	return logPath
 }
