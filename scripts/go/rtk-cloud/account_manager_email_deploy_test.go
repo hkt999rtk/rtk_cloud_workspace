@@ -39,6 +39,10 @@ func TestValidateAccountManagerEmailDeployEnv(t *testing.T) {
 			}
 		})
 	}
+	env["SMTP_PORT"] = "not-a-port"
+	if err := validateAccountManagerEmailDeployEnv(env); err == nil {
+		t.Fatal("invalid SMTP_PORT accepted")
+	}
 }
 
 func TestMergeAccountManagerEmailSecretPreservesExistingData(t *testing.T) {
@@ -125,6 +129,37 @@ func TestAccountManagerEmailWorkerManifestUsesProvidedChecksum(t *testing.T) {
 	} {
 		if !strings.Contains(manifest, want) {
 			t.Fatalf("manifest missing %q:\n%s", want, manifest)
+		}
+	}
+}
+
+func TestAccountManagerSMTPEgressCheckManifestContainsNoCredentials(t *testing.T) {
+	t.Setenv("LKE_SMTP_EGRESS_CHECK_IMAGE", "")
+	t.Setenv("SMTP_HOST", "")
+	t.Setenv("SMTP_PORT", "")
+	env := map[string]string{
+		"CLOUD_STACK_NAME": "video-cloud-staging",
+		"SMTP_HOST":        "smtp.example.test",
+		"SMTP_PORT":        "587",
+		"SMTP_USERNAME":    "no-reply@example.test",
+		"SMTP_PASSWORD":    "smtp-secret-value",
+	}
+	manifest := accountManagerSMTPEgressCheckPodManifest(env, "smtp-check")
+	for _, want := range []string{
+		"name: smtp-check",
+		"namespace: video-cloud-staging-account-manager",
+		"image: busybox:1.36",
+		"terminationGracePeriodSeconds: 0",
+		`value: "smtp.example.test"`,
+		`value: "587"`,
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("manifest missing %q:\n%s", want, manifest)
+		}
+	}
+	for _, forbidden := range []string{"no-reply@example.test", "smtp-secret-value"} {
+		if strings.Contains(manifest, forbidden) {
+			t.Fatalf("manifest leaked %q", forbidden)
 		}
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/envroot"
@@ -104,6 +105,10 @@ func validateAccountManagerEmailDeployEnv(env map[string]string) error {
 	if baseURL.Path != "" && baseURL.Path != "/" {
 		return errors.New("AUTH_TOKEN_BASE_URL must not contain a path")
 	}
+	port, err := strconv.Atoi(strings.TrimSpace(lkeEnvValue(env, "SMTP_PORT")))
+	if err != nil || port < 1 || port > 65535 {
+		return errors.New("SMTP_PORT must be a valid TCP port")
+	}
 	return nil
 }
 
@@ -117,6 +122,9 @@ func deployExistingAccountManagerEmail(env map[string]string) error {
 		if _, err := kubectlCombinedOutput(nil, "-n", namespace, "get", resource, "-o", "name"); err != nil {
 			return fmt.Errorf("existing Account Manager prerequisite %s is unavailable: %w", resource, err)
 		}
+	}
+	if err := checkAccountManagerSMTPSubmissionEgress(env); err != nil {
+		return err
 	}
 
 	secret, err := kubectlResourceJSON(namespace, "secret", "account-manager-runtime")
@@ -159,6 +167,70 @@ func deployExistingAccountManagerEmail(env map[string]string) error {
 		}
 	}
 	return nil
+}
+
+func checkAccountManagerSMTPSubmissionEgress(env map[string]string) error {
+	namespace := lkeNamespaceName(env, "account-manager")
+	name := "account-manager-smtp-egress-check"
+	_ = runKubectl("-n", namespace, "delete", "pod/"+name, "--ignore-not-found=true", "--wait=true")
+	if err := kubectlApply(accountManagerSMTPEgressCheckPodManifest(env, name)); err != nil {
+		return err
+	}
+	defer func() {
+		_ = runKubectl("-n", namespace, "delete", "pod/"+name, "--ignore-not-found=true", "--wait=true")
+	}()
+	if err := runKubectl("-n", namespace, "wait", "--for=condition=Ready", "pod/"+name, "--timeout", firstNonEmpty(os.Getenv("LKE_SMTP_EGRESS_CHECK_READY_TIMEOUT"), "90s")); err != nil {
+		return errors.New("SMTP egress preflight pod did not become ready")
+	}
+	out, err := kubectlCombinedOutput(nil,
+		"-n", namespace,
+		"exec", "pod/"+name, "--",
+		"sh", "-c", `nc -z -w 10 "$SMTP_HOST" "$SMTP_PORT"`,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"LKE outbound SMTP submission is blocked on configured port %s; verify Akamai SMTP restrictions before retrying",
+			strings.TrimSpace(lkeEnvValue(env, "SMTP_PORT")),
+		)
+	}
+	if len(bytes.TrimSpace(out)) != 0 {
+		return errors.New("SMTP egress preflight returned unexpected output")
+	}
+	return nil
+}
+
+func accountManagerSMTPEgressCheckPodManifest(env map[string]string, name string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Pod
+metadata:
+  name: %s
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: account-manager-smtp-egress-check
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 0
+  containers:
+    - name: check
+      image: %s
+      imagePullPolicy: IfNotPresent
+      command: ["sh", "-c", "sleep 3600"]
+      env:
+        - name: SMTP_HOST
+          value: %q
+        - name: SMTP_PORT
+          value: %q
+      resources:
+        requests:
+          cpu: 5m
+          memory: 8Mi
+        limits:
+          cpu: 25m
+          memory: 32Mi
+`, name, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_SMTP_EGRESS_CHECK_IMAGE"), "busybox:1.36"), lkeEnvValue(env, "SMTP_HOST"), lkeEnvValue(env, "SMTP_PORT"))
 }
 
 func kubectlResourceJSON(namespace, kind, name string) (map[string]any, error) {
