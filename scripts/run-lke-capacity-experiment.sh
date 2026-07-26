@@ -162,8 +162,19 @@ cleanup_load_generators() {
 report_success() {
 	local report="$REPORT_DIR/TEST_REPORT.md"
 	[[ -f "$report" ]] || return 1
-	grep -F -- '- Status: COMPLETE' "$report" >/dev/null &&
-		grep -F -- '- Result: SUCCESS' "$report" >/dev/null
+	grep -F -- '- Status: COMPLETE' "$report" >/dev/null || return 1
+	grep -F -- '- Result: SUCCESS' "$report" >/dev/null || return 1
+	if [[ -n "$BRAND_PLAN" ]]; then
+		awk '
+			$1 == "-" && $2 == "Formal" && $3 == "email-activated" && $4 == "owners:" {
+				split($5, counts, "/")
+				if (counts[1] + 0 > 0 && counts[1] == counts[2] && $6 == "(PASS)") {
+					found = 1
+				}
+			}
+			END { exit(found ? 0 : 1) }
+		' "$report" || return 1
+	fi
 }
 
 record_abort() {
@@ -566,7 +577,7 @@ CURRENT_PHASE="workflow-live"
 			HOME100K_AUTHORIZED_KEY_FILE="$HOME/.ssh/id_ed25519_rtkcloud.pub" \
 			./scripts/home-100k.sh destroy-vms --live --confirm-live
 	else
-		printf '[capacity] workflow-live returned zero but report is not COMPLETE/SUCCESS; preserving load-generator VMs for investigation\n' >&2
+		printf '[capacity] workflow-live returned zero but final report acceptance gates failed; preserving load-generator VMs for investigation\n' >&2
 	fi
 )
 

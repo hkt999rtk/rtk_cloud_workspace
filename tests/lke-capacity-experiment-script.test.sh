@@ -244,6 +244,9 @@ case "${1:-}" in
 - Status: COMPLETE
 - Result: SUCCESS
 EOF_REPORT
+		if [[ "$run_id" == "cap-account-pass" ]]; then
+			printf '%s\n' '- Formal email-activated owners: 2/2 (PASS)' >> "reports/$run_id/TEST_REPORT.md"
+		fi
 		;;
 	destroy-vms)
 		echo "destroy-vms called"
@@ -284,3 +287,39 @@ if [[ -e "$RETRY_CAP_DIR/data-setup-attempt-2-logs/bind_devices.log" ]]; then
 	echo "successful retry logs should not be archived as failed attempt logs" >&2
 	exit 1
 fi
+
+BRAND_PLAN="$FAKE_RETRY_ROOT/brand-plan.json"
+printf '{"total_devices":1000,"devices_per_user":20,"brands":[]}\n' > "$BRAND_PLAN"
+
+PATH="$FAKE_RETRY_ROOT/fakebin:$PATH" \
+"$FAKE_RETRY_ROOT/scripts/run-lke-capacity-experiment.sh" \
+	--env-root "$FAKE_RETRY_ROOT/cloud_env/staging/lke" \
+	--brand-plan "$BRAND_PLAN" \
+	--target-devices 1000 \
+	--mqtt-pods 1 \
+	--node-count 1 \
+	--node-type g6-standard-2 \
+	--run-id cap-account-incomplete \
+	--live \
+	--confirm video-cloud-staging > "$TMP/account-incomplete.out" 2> "$TMP/account-incomplete.err"
+
+if [[ -e "$FAKE_RETRY_ROOT/cloud_env/staging/lke/artifacts/capacity-experiments/cap-account-incomplete/logs/destroy-vms.log" ]]; then
+	echo "load-generator VMs must be preserved when formal owner activation evidence is incomplete" >&2
+	exit 1
+fi
+grep -F 'final report acceptance gates failed; preserving load-generator VMs' "$TMP/account-incomplete.err" >/dev/null
+
+PATH="$FAKE_RETRY_ROOT/fakebin:$PATH" \
+"$FAKE_RETRY_ROOT/scripts/run-lke-capacity-experiment.sh" \
+	--env-root "$FAKE_RETRY_ROOT/cloud_env/staging/lke" \
+	--brand-plan "$BRAND_PLAN" \
+	--target-devices 1000 \
+	--mqtt-pods 1 \
+	--node-count 1 \
+	--node-type g6-standard-2 \
+	--run-id cap-account-pass \
+	--live \
+	--confirm video-cloud-staging > "$TMP/account-pass.out" 2> "$TMP/account-pass.err"
+
+grep -F 'destroy-vms called' \
+	"$FAKE_RETRY_ROOT/cloud_env/staging/lke/artifacts/capacity-experiments/cap-account-pass/logs/destroy-vms.log" >/dev/null
