@@ -51,6 +51,7 @@ var commands = map[string]commandSpec{
 	"account-manager-email-deploy":     {run: runAccountManagerEmailDeploy},
 	"activate-load-owner":              {run: runActivateLoadOwner},
 	"check-certificates":               {run: runCheckCertificates},
+	"cloud-admin-image-deploy":         {run: runCloudAdminImageDeploy},
 	"collect-evidence":                 {run: runCollectEvidence},
 	"contracts-check":                  {run: runContractsCheck},
 	"create-brandname-cloud":           {run: runCreateBrandnameCloud},

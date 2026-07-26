@@ -263,6 +263,18 @@ def main() -> int:
                 workspace,
                 child_env,
             )
+            run_checked(
+                [
+                    "go", "run", "./scripts/go/rtk-cloud", "--",
+                    "cloud-admin-image-deploy",
+                    "--workspace", str(workspace),
+                    "--env-root", str(runtime_root),
+                    "--kubeconfig", str(kubeconfig),
+                    "--confirm", STACK,
+                ],
+                workspace,
+                child_env,
+            )
 
     evidence_dir = workspace / ".artifacts" / "e2e_test" / "email-signup" / run_id
     evidence_dir.mkdir(parents=True, exist_ok=False)
