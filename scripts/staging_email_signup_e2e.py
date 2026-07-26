@@ -162,19 +162,28 @@ def use_deployed_images(workspace: pathlib.Path, env: dict[str, str]) -> None:
     for key, (namespace, deployment) in targets.items():
         env[key] = deployed_image(workspace, env, namespace, deployment)
 
-    # Use the current committed Account Manager source so the scoped rollout is
-    # anchored to the exact HTTPS delivery adapter under test.
-    account_repo = workspace / "repos" / "rtk_account_manager"
-    sha = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=account_repo,
-        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-        check=False, timeout=10,
-    ).stdout.decode().strip()
-    if not re.fullmatch(r"[0-9a-f]{40}", sha):
-        raise E2EError("could not resolve merged Account Manager main commit")
-    env["LKE_ACCOUNT_MANAGER_IMAGE"] = (
-        f"ghcr.io/hkt999rtk/rtk_account_manager/account-manager:sha-{sha[:12]}"
-    )
+    # Roll out only the two services under test from their exact committed
+    # submodule revisions. Other shared staging workloads stay pinned to the
+    # images read above.
+    source_images = {
+        "LKE_ACCOUNT_MANAGER_IMAGE": (
+            workspace / "repos" / "rtk_account_manager",
+            "ghcr.io/hkt999rtk/rtk_account_manager/account-manager",
+        ),
+        "LKE_CLOUD_ADMIN_IMAGE": (
+            workspace / "repos" / "rtk_cloud_admin",
+            "ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin",
+        ),
+    }
+    for key, (repo, image) in source_images.items():
+        sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo,
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, check=False, timeout=10,
+        ).stdout.decode().strip()
+        if not re.fullmatch(r"[0-9a-f]{40}", sha):
+            raise E2EError(f"could not resolve committed source for {key}")
+        env[key] = f"{image}:sha-{sha[:12]}"
 
 
 def temporary_runtime_root(workspace: pathlib.Path, env: dict[str, str]):
@@ -246,6 +255,18 @@ def main() -> int:
                 [
                     "go", "run", "./scripts/go/rtk-cloud", "--",
                     "account-manager-email-deploy",
+                    "--workspace", str(workspace),
+                    "--env-root", str(runtime_root),
+                    "--kubeconfig", str(kubeconfig),
+                    "--confirm", STACK,
+                ],
+                workspace,
+                child_env,
+            )
+            run_checked(
+                [
+                    "go", "run", "./scripts/go/rtk-cloud", "--",
+                    "cloud-admin-image-deploy",
                     "--workspace", str(workspace),
                     "--env-root", str(runtime_root),
                     "--kubeconfig", str(kubeconfig),

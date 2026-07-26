@@ -10,6 +10,11 @@ BRAND_PLAN=""
 SCENARIO_PROFILE=""
 USER_COUNT="10"
 USER_EMAIL_PREFIX=""
+USER_EMAIL_DOMAIN="users.local"
+LOAD_RUN_ID=""
+LOAD_TARGET=""
+EMAIL_ACTIVATE_OWNERS=0
+OPERATOR_ENV_FILE="${HOME}/.env"
 DEVICE_COUNT="100"
 DEVICE_MIX="camera=40,light=25,air_conditioner=20,smart_meter=15"
 DEVICE_PREFIX="load-device"
@@ -75,6 +80,11 @@ Options:
   --description-file FILE         HOME100K description env; HOME100K_* values become data setup defaults.
   --user-count N                  Users to create. Default: 10.
   --user-email-prefix PREFIX      Optional run-scoped user email prefix.
+  --user-email-domain DOMAIN      Test-only member domain. Default: users.local.
+  --load-run-id ID                Run ID used in all resolved Brand/account names.
+  --load-target TARGET            50K, 100K, or CANARY.
+  --email-activate-owners         Require one Send Mail + local IMAP owner activation per Brand.
+  --operator-env-file FILE        Operator-only IMAP dotenv. Default: ~/.env.
   --device-count N                Devices to create and bind. Default: 100.
   --device-mix MIX                Device mix for generate-load-devices.
   --device-prefix PREFIX          Device prefix. Default: load-device.
@@ -122,6 +132,10 @@ DEVICE_PREFIX="${HOME100K_DEVICE_PREFIX:-$DEVICE_PREFIX}"
 USER_CONCURRENCY="${HOME100K_USER_CONCURRENCY:-$USER_CONCURRENCY}"
 DEVICE_CONCURRENCY="${HOME100K_DEVICE_CONCURRENCY:-$DEVICE_CONCURRENCY}"
 BIND_CONCURRENCY="${HOME100K_BIND_CONCURRENCY:-$BIND_CONCURRENCY}"
+LOAD_RUN_ID="${HOME100K_RUN_ID:-$LOAD_RUN_ID}"
+LOAD_TARGET="${HOME100K_LOAD_TARGET:-$LOAD_TARGET}"
+EMAIL_ACTIVATE_OWNERS="${HOME100K_EMAIL_ACTIVATE_OWNERS:-$EMAIL_ACTIVATE_OWNERS}"
+OPERATOR_ENV_FILE="${HOME100K_OPERATOR_ENV_FILE:-$OPERATOR_ENV_FILE}"
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -183,6 +197,30 @@ while [[ $# -gt 0 ]]; do
 				printf 'error: --user-email-prefix requires a value\n' >&2
 				exit 2
 			fi
+			shift 2
+			;;
+		--user-email-domain)
+			USER_EMAIL_DOMAIN="${2:-}"
+			[[ -n "$USER_EMAIL_DOMAIN" ]] || { printf 'error: --user-email-domain requires a value\n' >&2; exit 2; }
+			shift 2
+			;;
+		--load-run-id)
+			LOAD_RUN_ID="${2:-}"
+			[[ -n "$LOAD_RUN_ID" ]] || { printf 'error: --load-run-id requires a value\n' >&2; exit 2; }
+			shift 2
+			;;
+		--load-target)
+			LOAD_TARGET="${2:-}"
+			[[ -n "$LOAD_TARGET" ]] || { printf 'error: --load-target requires a value\n' >&2; exit 2; }
+			shift 2
+			;;
+		--email-activate-owners)
+			EMAIL_ACTIVATE_OWNERS=1
+			shift
+			;;
+		--operator-env-file)
+			OPERATOR_ENV_FILE="${2:-}"
+			[[ -n "$OPERATOR_ENV_FILE" ]] || { printf 'error: --operator-env-file requires a value\n' >&2; exit 2; }
 			shift 2
 			;;
 		--device-count)
@@ -320,6 +358,7 @@ run_args=(
 	--env-root "$ENV_ROOT"
 	--brandname "$BRANDNAME"
 	--user-count "$USER_COUNT"
+	--user-email-domain "$USER_EMAIL_DOMAIN"
 	--device-count "$DEVICE_COUNT"
 	--device-mix "$DEVICE_MIX"
 	--device-prefix "$DEVICE_PREFIX"
@@ -329,6 +368,15 @@ run_args=(
 )
 if [[ -n "$USER_EMAIL_PREFIX" ]]; then
 	run_args+=(--user-email-prefix "$USER_EMAIL_PREFIX")
+fi
+if [[ -n "$LOAD_RUN_ID" ]]; then
+	run_args+=(--load-run-id "$LOAD_RUN_ID")
+fi
+if [[ -n "$LOAD_TARGET" ]]; then
+	run_args+=(--load-target "$LOAD_TARGET")
+fi
+if [[ "$EMAIL_ACTIVATE_OWNERS" -eq 1 ]]; then
+	run_args+=(--email-activate-owners --operator-env-file "$OPERATOR_ENV_FILE")
 fi
 if [[ -n "$BRAND_PLAN" ]]; then
 	run_args+=(--brand-plan "$BRAND_PLAN")

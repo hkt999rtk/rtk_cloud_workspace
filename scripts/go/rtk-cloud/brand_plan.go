@@ -4,12 +4,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
+)
+
+var (
+	loadRunIDPattern    = regexp.MustCompile(`^[a-z0-9-]{8,64}$`)
+	loadBrandKeyPattern = regexp.MustCompile(`^b[0-9]{2}$`)
 )
 
 type loadTestBrandPlan struct {
 	TotalDevices   int                   `json:"total_devices"`
 	DevicesPerUser int                   `json:"devices_per_user"`
+	RunID          string                `json:"run_id,omitempty"`
+	Target         string                `json:"target,omitempty"`
 	Brands         []loadTestBrandConfig `json:"brands"`
 }
 
@@ -19,6 +27,42 @@ type loadTestBrandConfig struct {
 	NormalUsers    int            `json:"normal_users"`
 	DeveloperUsers map[string]int `json:"developer_users"`
 	DeviceMix      map[string]int `json:"device_mix,omitempty"`
+	BrandKey       string         `json:"brand_key,omitempty"`
+	OwnerEmail     string         `json:"owner_email,omitempty"`
+	OwnerName      string         `json:"owner_display_name,omitempty"`
+	MemberPrefix   string         `json:"member_email_prefix,omitempty"`
+}
+
+func resolveLoadTestBrandPlan(plan loadTestBrandPlan, target, runID, mailbox string) (loadTestBrandPlan, error) {
+	runID = strings.ToLower(strings.TrimSpace(runID))
+	if !loadRunIDPattern.MatchString(runID) {
+		return loadTestBrandPlan{}, fmt.Errorf("run_id must use lowercase letters, digits, and hyphens")
+	}
+	target = strings.ToUpper(strings.TrimSpace(target))
+	if target == "" {
+		target = fmt.Sprintf("%dK", plan.TotalDevices/1000)
+	}
+	if target != "50K" && target != "100K" && target != "CANARY" {
+		return loadTestBrandPlan{}, fmt.Errorf("target must be 50K, 100K, or CANARY")
+	}
+	local, domain, ok := strings.Cut(strings.ToLower(strings.TrimSpace(mailbox)), "@")
+	if !ok || local == "" || domain == "" || strings.Contains(local, "+") {
+		return loadTestBrandPlan{}, fmt.Errorf("operator mailbox must be a plain email address")
+	}
+	resolved := plan
+	resolved.RunID = runID
+	resolved.Target = target
+	resolved.Brands = make([]loadTestBrandConfig, len(plan.Brands))
+	for i, source := range plan.Brands {
+		brand := source
+		brand.BrandKey = fmt.Sprintf("B%02d", i+1)
+		brand.Brandname = fmt.Sprintf("RTK-LOAD-%s-%s-%s", target, runID, brand.BrandKey)
+		brand.OwnerEmail = fmt.Sprintf("%s+load-%s-b%02d@%s", local, runID, i+1, domain)
+		brand.OwnerName = fmt.Sprintf("RTK Load %s %s Brand %02d Owner", target, runID, i+1)
+		brand.MemberPrefix = fmt.Sprintf("load-%s-b%02d", runID, i+1)
+		resolved.Brands[i] = brand
+	}
+	return resolved, resolved.validate()
 }
 
 func loadLoadTestBrandPlan(path string) (loadTestBrandPlan, error) {

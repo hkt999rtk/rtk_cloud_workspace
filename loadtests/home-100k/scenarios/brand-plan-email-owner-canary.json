@@ -1,0 +1,30 @@
+{
+  "total_devices": 4,
+  "devices_per_user": 1,
+  "brands": [
+    {
+      "brandname": "RTK-CANARY-01",
+      "devices": 2,
+      "normal_users": 2,
+      "developer_users": {
+        "owner": 1,
+        "admin": 0
+      },
+      "device_mix": {
+        "camera": 2
+      }
+    },
+    {
+      "brandname": "RTK-CANARY-02",
+      "devices": 2,
+      "normal_users": 2,
+      "developer_users": {
+        "owner": 1,
+        "admin": 0
+      },
+      "device_mix": {
+        "camera": 2
+      }
+    }
+  ]
+}

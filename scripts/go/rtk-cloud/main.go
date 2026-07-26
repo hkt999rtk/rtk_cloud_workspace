@@ -14,6 +14,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -48,7 +49,10 @@ type commandSpec struct {
 var commands = map[string]commandSpec{
 	"bind-devices":                     {run: runBindDevices},
 	"account-manager-email-deploy":     {run: runAccountManagerEmailDeploy},
+	"activate-load-owner":              {run: runActivateLoadOwner},
 	"check-certificates":               {run: runCheckCertificates},
+	"certissuer-openbao-sync":          {run: runCertIssuerOpenBaoSync},
+	"cloud-admin-image-deploy":         {run: runCloudAdminImageDeploy},
 	"collect-evidence":                 {run: runCollectEvidence},
 	"contracts-check":                  {run: runContractsCheck},
 	"create-brandname-cloud":           {run: runCreateBrandnameCloud},
@@ -2125,6 +2129,7 @@ func runCreateUsers(args []string) error {
 	envRootFlag := fs.String("env-root", "", "environment root")
 	brandname := fs.String("brandname", "", "brand name")
 	userEmailPrefix := fs.String("user-email-prefix", "", "optional run-scoped email prefix")
+	userEmailDomain := fs.String("user-email-domain", "users.local", "test-only email domain")
 	count := fs.Int("count", 10, "count")
 	role := fs.String("role", "member", "role")
 	rotatePassword := fs.Bool("rotate-password", false, "rotate password")
@@ -2182,7 +2187,7 @@ func runCreateUsers(args []string) error {
 	}
 	logCreateUsers("brand cloud found: id=%s", brandCloudID)
 	slug := brandSlug(*brandname)
-	planned := plannedUsersWithPrefix(*brandname, slug, *role, *count, *userEmailPrefix)
+	planned := plannedUsersWithPrefixAndDomain(*brandname, slug, *role, *count, *userEmailPrefix, *userEmailDomain)
 	if *dryRun {
 		return json.NewEncoder(os.Stdout).Encode(map[string]any{"action": "dry_run", "brand_cloud": brandCloud, "role": *role, "users": planned})
 	}
@@ -2362,12 +2367,28 @@ type stagingE2EMultiBrandConfig struct {
 	FromStep          string
 	PlanMode          bool
 	Scripts           map[string]string
+	RunID             string
+	LoadTarget        string
+	EmailOwners       bool
+	OperatorEnvFile   string
 }
 
 func runStagingE2EMultiBrandDataSetup(cfg stagingE2EMultiBrandConfig) error {
 	plan, err := loadLoadTestBrandPlan(cfg.BrandPlanFile)
 	if err != nil {
 		return err
+	}
+	if cfg.EmailOwners {
+		operator, readErr := readEnvFile(cfg.OperatorEnvFile)
+		if readErr != nil {
+			return fmt.Errorf("read operator env: %w", readErr)
+		}
+		mailbox := firstNonEmpty(os.Getenv("IMAP_EMAIL_ADDR"), operator["IMAP_EMAIL_ADDR"])
+		plan, err = resolveLoadTestBrandPlan(plan, cfg.LoadTarget, cfg.RunID, mailbox)
+		if err != nil {
+			return err
+		}
+		cfg.RunID = plan.RunID
 	}
 	if cfg.PlanMode {
 		fmt.Fprintf(os.Stdout, "multi_brand_plan: %s\n", cfg.BrandPlanFile)
@@ -2387,6 +2408,16 @@ func runStagingE2EMultiBrandDataSetup(cfg stagingE2EMultiBrandConfig) error {
 	if cfg.OutDir == "" {
 		cfg.OutDir = filepath.Join(cfg.EnvRoot, "artifacts", "staging-e2e-data", time.Now().UTC().Format("20060102T150405Z"))
 	}
+	if err := os.MkdirAll(cfg.OutDir, 0o755); err != nil {
+		return err
+	}
+	if cfg.EmailOwners {
+		resolvedPath := filepath.Join(cfg.OutDir, "resolved-brand-plan.json")
+		if err := writeJSON(resolvedPath, plan); err != nil {
+			return err
+		}
+		cfg.BrandPlanFile = resolvedPath
+	}
 	logsDir := filepath.Join(cfg.OutDir, "logs")
 	if err := os.MkdirAll(logsDir, 0o755); err != nil {
 		return err
@@ -2397,12 +2428,36 @@ func runStagingE2EMultiBrandDataSetup(cfg stagingE2EMultiBrandConfig) error {
 		steps = append(steps, step)
 		return err
 	}
+	activatedOwners := 0
 	for _, brand := range plan.Brands {
 		brandSlug := brandSlug(brand.Brandname)
 		if err := runStep(brandSlug+"_create_brand", commandWithArgs(cfg.Scripts["create-brand"], "--workspace", cfg.Workspace, "--env-root", cfg.EnvRoot, "--brandname", brand.Brandname)...); err != nil {
 			return err
 		}
+		if cfg.EmailOwners {
+			if brand.DeveloperUsers["owner"] != 1 {
+				return fmt.Errorf("%s must define exactly one owner for email activation", brand.Brandname)
+			}
+			evidencePath := filepath.Join(cfg.OutDir, "owner-activation", strings.ToLower(brand.BrandKey)+".json")
+			args := []string{
+				"--workspace", cfg.Workspace, "--env-root", cfg.EnvRoot,
+				"--brandname", brand.Brandname, "--email", brand.OwnerEmail,
+				"--display-name", brand.OwnerName, "--run-id", cfg.RunID,
+				"--operator-env-file", cfg.OperatorEnvFile, "--evidence-path", evidencePath,
+			}
+			if cfg.Resume {
+				args = append(args, "--resume")
+			}
+			activationCommand := firstNonEmpty(cfg.Scripts["activate-owner"], selfCommandPath("activate-load-owner"))
+			if err := runStep(brandSlug+"_activate_owner", commandWithArgs(activationCommand, args...)...); err != nil {
+				return err
+			}
+			activatedOwners++
+		}
 		for _, role := range []string{"owner", "admin"} {
+			if cfg.EmailOwners && role == "owner" {
+				continue
+			}
 			count := brand.DeveloperUsers[role]
 			if count <= 0 {
 				continue
@@ -2419,7 +2474,17 @@ func runStagingE2EMultiBrandDataSetup(cfg stagingE2EMultiBrandConfig) error {
 		if len(brand.DeviceMix) > 0 {
 			deviceMix = deviceMixString(brand.DeviceMix)
 		}
-		args := []string{"--workspace", cfg.Workspace, "--env-root", cfg.EnvRoot, "--brandname", brand.Brandname, "--user-count", strconv.Itoa(brand.NormalUsers), "--device-count", strconv.Itoa(brand.Devices), "--device-mix", deviceMix, "--device-prefix", cfg.DevicePrefix + "-" + brandSlug, "--user-concurrency", strconv.Itoa(cfg.UserConcurrency), "--device-concurrency", strconv.Itoa(cfg.DeviceConcurrency), "--bind-concurrency", strconv.Itoa(cfg.BindConcurrency)}
+		devicePrefix := cfg.DevicePrefix + "-" + brandSlug
+		if cfg.EmailOwners {
+			devicePrefix, err = loadEmailDevicePrefix(cfg.RunID, brand.BrandKey)
+			if err != nil {
+				return err
+			}
+		}
+		args := []string{"--workspace", cfg.Workspace, "--env-root", cfg.EnvRoot, "--brandname", brand.Brandname, "--user-count", strconv.Itoa(brand.NormalUsers), "--device-count", strconv.Itoa(brand.Devices), "--device-mix", deviceMix, "--device-prefix", devicePrefix, "--user-concurrency", strconv.Itoa(cfg.UserConcurrency), "--device-concurrency", strconv.Itoa(cfg.DeviceConcurrency), "--bind-concurrency", strconv.Itoa(cfg.BindConcurrency)}
+		if cfg.EmailOwners {
+			args = append(args, "--user-email-prefix", brand.MemberPrefix, "--user-email-domain", "users.invalid")
+		}
 		if cfg.Resume {
 			args = append(args, "--resume")
 		} else {
@@ -2432,7 +2497,8 @@ func runStagingE2EMultiBrandDataSetup(cfg stagingE2EMultiBrandConfig) error {
 		if cfg.Quiet {
 			args = append(args, "--quiet")
 		}
-		if err := runStep(brandSlug+"_member_devices_bind_validate", commandWithArgs(selfCommandPath("staging-e2e-data-setup"), args...)...); err != nil {
+		setupCommand := firstNonEmpty(cfg.Scripts["setup-brand"], selfCommandPath("staging-e2e-data-setup"))
+		if err := runStep(brandSlug+"_member_devices_bind_validate", commandWithArgs(setupCommand, args...)...); err != nil {
 			return err
 		}
 	}
@@ -2444,17 +2510,19 @@ func runStagingE2EMultiBrandDataSetup(cfg stagingE2EMultiBrandConfig) error {
 	}
 	summaryFile := filepath.Join(cfg.OutDir, "summary.json")
 	summary := map[string]any{
-		"overall":          overall,
-		"generated_at":     time.Now().UTC().Format(time.RFC3339),
-		"env_root":         cfg.EnvRoot,
-		"brand_plan_file":  cfg.BrandPlanFile,
-		"brand_count":      len(plan.Brands),
-		"normal_users":     plan.normalUserCount(),
-		"developer_users":  plan.developerUserCount(),
-		"devices":          plan.TotalDevices,
-		"devices_per_user": plan.DevicesPerUser,
-		"summary_file":     summaryFile,
-		"steps":            steps,
+		"overall":           overall,
+		"generated_at":      time.Now().UTC().Format(time.RFC3339),
+		"env_root":          cfg.EnvRoot,
+		"brand_plan_file":   cfg.BrandPlanFile,
+		"brand_count":       len(plan.Brands),
+		"normal_users":      plan.normalUserCount(),
+		"developer_users":   plan.developerUserCount(),
+		"activated_owners":  activatedOwners,
+		"synthetic_members": plan.normalUserCount(),
+		"devices":           plan.TotalDevices,
+		"devices_per_user":  plan.DevicesPerUser,
+		"summary_file":      summaryFile,
+		"steps":             steps,
 	}
 	if err := writeJSON(summaryFile, summary); err != nil {
 		return err
@@ -2466,6 +2534,21 @@ func runStagingE2EMultiBrandDataSetup(cfg stagingE2EMultiBrandConfig) error {
 		return exitCode(1)
 	}
 	return nil
+}
+
+func loadEmailDevicePrefix(runID, brandKey string) (string, error) {
+	runID = strings.ToLower(strings.TrimSpace(runID))
+	brandKey = strings.ToLower(strings.TrimSpace(brandKey))
+	if !loadRunIDPattern.MatchString(runID) || !loadBrandKeyPattern.MatchString(brandKey) {
+		return "", errors.New("run-scoped device prefix requires a safe run ID and Brand key B<nn>")
+	}
+	prefix := "load-" + runID + "-" + brandKey
+	// generate-load-devices appends "-0001"; OpenBao rejects a DNS label
+	// longer than 63 bytes even when hostname enforcement is disabled.
+	if len(prefix)+len("-0001") > 63 {
+		return "", fmt.Errorf("run-scoped device prefix exceeds the OpenBao 63-byte label limit: %s", prefix)
+	}
+	return prefix, nil
 }
 
 func deviceMixString(mix map[string]int) string {
@@ -2489,11 +2572,16 @@ func runStagingE2EDataSetup(args []string) error {
 	planMode := fs.Bool("plan", false, "plan")
 	brandname := fs.String("brandname", "RTK", "brand name")
 	brandPlanFile := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
+	loadRunID := fs.String("load-run-id", "", "run ID for run-scoped Brand Cloud/account names")
+	loadTarget := fs.String("load-target", "", "load target: 50K, 100K, or CANARY")
+	emailActivateOwners := fs.Bool("email-activate-owners", false, "activate one formal owner per Brand through Send Mail and local IMAP")
+	operatorEnvFile := fs.String("operator-env-file", filepath.Join(userHomeDir(), ".env"), "operator dotenv containing IMAP settings")
 	userCount := fs.Int("user-count", 10, "user count")
 	deviceCount := fs.Int("device-count", 100, "device count")
 	deviceMix := fs.String("device-mix", "camera=40,light=25,air_conditioner=20,smart_meter=15", "device mix")
 	devicePrefix := fs.String("device-prefix", "load-device", "device prefix")
 	userEmailPrefix := fs.String("user-email-prefix", "", "optional run-scoped user email prefix")
+	userEmailDomain := fs.String("user-email-domain", "users.local", "test-only user email domain")
 	userConcurrency := fs.Int("user-concurrency", envInt("CLOUD_STAGING_E2E_USER_CONCURRENCY", 64), "user creation concurrency")
 	deviceConcurrency := fs.Int("device-concurrency", envInt("CLOUD_STAGING_E2E_DEVICE_CONCURRENCY", 64), "device generation concurrency")
 	bindConcurrency := fs.Int("bind-concurrency", envInt("CLOUD_STAGING_E2E_BIND_CONCURRENCY", 64), "device bind concurrency")
@@ -2540,6 +2628,8 @@ func runStagingE2EDataSetup(args []string) error {
 	scripts := map[string]string{
 		"create-brand":     firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_CREATE_BRAND_SCRIPT"), selfCommandPath("create-brandname-cloud")),
 		"create-users":     firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT"), selfCommandPath("create-users")),
+		"activate-owner":   firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_ACTIVATE_OWNER_SCRIPT"), selfCommandPath("activate-load-owner")),
+		"setup-brand":      firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_SETUP_BRAND_SCRIPT"), selfCommandPath("staging-e2e-data-setup")),
 		"generate-devices": firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT"), selfCommandPath("generate-load-devices")),
 		"bind-devices":     firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT"), selfCommandPath("bind-devices")),
 		"validate-bind":    firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT"), selfCommandPath("validate-device-bind")),
@@ -2561,6 +2651,10 @@ func runStagingE2EDataSetup(args []string) error {
 			FromStep:          *fromStep,
 			PlanMode:          *planMode,
 			Scripts:           scripts,
+			RunID:             *loadRunID,
+			LoadTarget:        *loadTarget,
+			EmailOwners:       *emailActivateOwners,
+			OperatorEnvFile:   *operatorEnvFile,
 		})
 	}
 	if *planMode {
@@ -2616,6 +2710,7 @@ func runStagingE2EDataSetup(args []string) error {
 		if strings.TrimSpace(*userEmailPrefix) != "" {
 			args = append(args, "--user-email-prefix", *userEmailPrefix)
 		}
+		args = append(args, "--user-email-domain", *userEmailDomain)
 		if !*resume {
 			args = append(args, "--no-reuse-local-users")
 		}
@@ -3515,7 +3610,7 @@ func shouldLogK8SPortForwardLine(line string) bool {
 }
 
 func readK8SSecretEnv(kubeconfig, namespace, secret string, keys ...string) ([]string, error) {
-	cmd := exec.Command("kubectl", "-n", namespace, "get", "secret", secret, "-o", "json")
+	cmd := exec.Command(lkeKubectl(), "-n", namespace, "get", "secret", secret, "-o", "json")
 	cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfig)
 	out, err := cmd.Output()
 	if err != nil {
@@ -5914,13 +6009,21 @@ func plannedUsers(brandname, slug, role string, count int) []map[string]any {
 }
 
 func plannedUsersWithPrefix(brandname, slug, role string, count int, emailPrefix string) []map[string]any {
+	return plannedUsersWithPrefixAndDomain(brandname, slug, role, count, emailPrefix, "users.local")
+}
+
+func plannedUsersWithPrefixAndDomain(brandname, slug, role string, count int, emailPrefix, emailDomain string) []map[string]any {
 	emailPrefix = brandSlug(firstNonEmpty(strings.TrimSpace(emailPrefix), slug))
+	emailDomain = strings.ToLower(strings.TrimSpace(emailDomain))
+	if emailDomain == "" {
+		emailDomain = "users.local"
+	}
 	users := make([]map[string]any, 0, count)
 	for i := 1; i <= count; i++ {
 		suffix := fmt.Sprintf("%03d", i)
-		email := fmt.Sprintf("%s+%s@users.local", emailPrefix, suffix)
+		email := fmt.Sprintf("%s+%s@%s", emailPrefix, suffix, emailDomain)
 		if role != "member" {
-			email = fmt.Sprintf("%s+%s-%s@users.local", emailPrefix, role, suffix)
+			email = fmt.Sprintf("%s+%s-%s@%s", emailPrefix, role, suffix, emailDomain)
 		}
 		users = append(users, map[string]any{
 			"email":        email,
@@ -5929,6 +6032,292 @@ func plannedUsersWithPrefix(brandname, slug, role string, count int, emailPrefix
 		})
 	}
 	return users
+}
+
+func runActivateLoadOwner(args []string) error {
+	fs := flag.NewFlagSet("activate-load-owner", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	workspaceFlag := fs.String("workspace", "", "workspace")
+	envRootFlag := fs.String("env-root", "", "environment root")
+	brandname := fs.String("brandname", "", "resolved run-scoped Brand Cloud name")
+	email := fs.String("email", "", "owner plus-alias recipient")
+	displayName := fs.String("display-name", "", "owner display name")
+	runID := fs.String("run-id", "", "load run ID")
+	evidencePath := fs.String("evidence-path", "", "redacted evidence output")
+	operatorEnvFile := fs.String("operator-env-file", filepath.Join(userHomeDir(), ".env"), "operator dotenv containing IMAP settings")
+	resume := fs.Bool("resume", false, "reuse only a matching verified owner artifact from this run")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	for name, value := range map[string]string{
+		"--brandname": *brandname, "--email": *email, "--display-name": *displayName, "--run-id": *runID,
+	} {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("%s is required", name)
+		}
+	}
+	if !regexp.MustCompile(`^[a-z0-9-]{8,64}$`).MatchString(*runID) {
+		return errors.New("--run-id must use lowercase letters, digits, and hyphens")
+	}
+	workspace := *workspaceFlag
+	if workspace == "" {
+		var err error
+		workspace, err = workspaceRoot()
+		if err != nil {
+			return err
+		}
+	}
+	ctx, err := accountManagerContextFromFlags(workspace, *envRootFlag)
+	if err != nil {
+		return err
+	}
+	defer ctx.Close()
+	if *evidencePath == "" {
+		*evidencePath = filepath.Join(ctx.EnvRoot, "artifacts", "load-owner-activation", *runID, brandSlug(*brandname)+".json")
+	}
+	if *resume {
+		reused, reuseErr := reuseVerifiedLoadOwner(ctx, *brandname, *email, *runID, *evidencePath)
+		if reuseErr != nil {
+			return reuseErr
+		}
+		if reused {
+			return json.NewEncoder(os.Stdout).Encode(map[string]any{
+				"status": "PASS", "action": "resumed", "run_id": *runID, "brandname": *brandname,
+				"activated_owners": 1, "evidence_path": *evidencePath,
+			})
+		}
+	}
+	operator, err := readEnvFile(*operatorEnvFile)
+	if err != nil {
+		return fmt.Errorf("read operator env: %w", err)
+	}
+	childEnv := os.Environ()
+	for _, key := range []string{"IMAP_SERVER", "IMAP_EMAIL_ADDR", "IMAP_EMAIL_PASSWORD", "IMAP_EMAIL_PORT", "IMAP_EMAIL_SECURITY", "IMAP_EMAIL_FOLDER"} {
+		value := firstNonEmpty(os.Getenv(key), operator[key])
+		if value == "" {
+			return fmt.Errorf("missing operator IMAP setting: %s", key)
+		}
+		childEnv = append(childEnv, key+"="+value)
+	}
+	connectHost := firstNonEmpty(os.Getenv("IMAP_CONNECT_HOST"), operator["IMAP_CONNECT_HOST"])
+	imapServer := firstNonEmpty(os.Getenv("IMAP_SERVER"), operator["IMAP_SERVER"])
+	if connectHost == "" {
+		if _, lookupErr := net.LookupHost(imapServer); lookupErr != nil {
+			if _, fallbackErr := net.LookupHost("sm.realtekconnect.com"); fallbackErr != nil {
+				return errors.New("IMAP server DNS failed and no safe connect host is available")
+			}
+			connectHost = "sm.realtekconnect.com"
+		}
+	}
+	if connectHost != "" {
+		childEnv = append(childEnv, "IMAP_CONNECT_HOST="+connectHost)
+	}
+	stackEnv, _ := readEnvFile(filepath.Join(ctx.EnvRoot, "env", "stack.env"))
+	adminBaseURL := "https://" + strings.TrimSpace(stackEnv["CLOUD_ADMIN_DOMAIN"])
+	if parsed, parseErr := url.Parse(adminBaseURL); parseErr != nil || parsed.Scheme != "https" || parsed.Hostname() == "" {
+		return errors.New("staging Cloud Admin HTTPS origin is unavailable")
+	}
+	helper := filepath.Join(workspace, "repos", "rtk_account_manager", "scripts", "email_signup_imap.py")
+	imapEnv := append(childEnv,
+		"EMAIL_E2E_SIGNUP_EMAIL="+strings.TrimSpace(*email),
+		"EMAIL_E2E_EXPECTED_FROM=no-reply@realtekconnect.com",
+		"EMAIL_E2E_EXPECTED_SUBJECT=Activate your Realtek Connect brand account",
+		"EMAIL_E2E_EXPECTED_PATH=/brand-cloud/activate",
+		"AUTH_TOKEN_BASE_URL="+adminBaseURL,
+	)
+	snapshot, err := runIMAPJSON(helper, imapEnv, "snapshot")
+	if err != nil {
+		return err
+	}
+	uidStart := int(asFloat(snapshot["uid_next"]))
+	if uidStart < 1 {
+		return errors.New("IMAP snapshot did not return a valid UIDNEXT")
+	}
+	session, err := accountLoginSession(ctx, func(string, ...any) {})
+	if err != nil {
+		return err
+	}
+	brandCloud, err := accountFindBrandCloud(ctx, session.AccessToken, *brandname)
+	if err != nil {
+		return err
+	}
+	brandCloudID := stringValue(brandCloud["id"])
+	tenantSlug := stringValue(brandCloud["tenant_slug"])
+	if brandCloudID == "" || tenantSlug == "" {
+		return errors.New("resolved Brand Cloud is missing id or tenant_slug")
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"email": strings.ToLower(strings.TrimSpace(*email)), "display_name": strings.TrimSpace(*displayName),
+		"role": "owner", "activation_mode": "email",
+	})
+	body, status, err := curlJSONStatus(
+		fmt.Sprintf("%s/v1/admin/brand-clouds/%s/users", ctx.BaseURL, url.PathEscape(brandCloudID)),
+		session.AccessToken, payload,
+	)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusCreated {
+		return fmt.Errorf("pending owner creation failed: HTTP %d%s", status, accountAPIErrorSuffix(body))
+	}
+	var created map[string]any
+	if err := json.Unmarshal(body, &created); err != nil {
+		return fmt.Errorf("decode pending owner response: %w", err)
+	}
+	brandCloudUser, _ := created["brand_cloud_user"].(map[string]any)
+	brandCloudUserID := stringValue(brandCloudUser["id"])
+	if brandCloudUserID == "" {
+		return errors.New("pending owner response is missing brand_cloud_user.id")
+	}
+	delivered, err := runIMAPJSON(helper, imapEnv, "wait", "--uid-start", strconv.Itoa(uidStart), "--timeout", firstNonEmpty(os.Getenv("LOAD_OWNER_IMAP_TIMEOUT"), "180"))
+	if err != nil {
+		return err
+	}
+	activationURL := stringValue(delivered["url"])
+	imapUID := int(asFloat(delivered["uid"]))
+	if activationURL == "" || imapUID < 1 {
+		return errors.New("IMAP delivery did not contain a valid activation URL and UID")
+	}
+	password, err := randomPassword()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(*evidencePath), 0o700); err != nil {
+		return err
+	}
+	browserEnv := append(imapEnv,
+		"LOAD_OWNER_ACTIVATION_URL="+activationURL,
+		"LOAD_OWNER_PASSWORD="+password,
+		"LOAD_OWNER_EMAIL="+strings.ToLower(strings.TrimSpace(*email)),
+		"LOAD_OWNER_DISPLAY_NAME="+strings.TrimSpace(*displayName),
+		"LOAD_OWNER_BRAND_NAME="+strings.TrimSpace(*brandname),
+		"LOAD_OWNER_TENANT_SLUG="+tenantSlug,
+		"LOAD_OWNER_ADMIN_BASE_URL="+adminBaseURL,
+		"LOAD_OWNER_EVIDENCE_PATH="+*evidencePath,
+		"LOAD_OWNER_RUN_ID="+*runID,
+		"LOAD_OWNER_IMAP_UID="+strconv.Itoa(imapUID),
+	)
+	cmd := exec.Command("npm", "run", "e2e:load-owner-activation-live")
+	cmd.Dir = filepath.Join(workspace, "repos", "rtk_cloud_admin", "web")
+	cmd.Env = browserEnv
+	if output, runErr := cmd.CombinedOutput(); runErr != nil {
+		detail := strings.ReplaceAll(string(output), activationURL, "<redacted-activation-url>")
+		detail = strings.ReplaceAll(detail, password, "<redacted-password>")
+		return fmt.Errorf("owner browser activation failed: %s", truncateForLog(detail, 500))
+	}
+	appCertificateSubject := "app-brand-cloud-user:" + brandCloudUserID
+	appCredentials, appCertificate, ownerSession, err := accountIssueUserAppCertificate(
+		ctx,
+		tenantSlug,
+		strings.ToLower(strings.TrimSpace(*email)),
+		password,
+		appCertificateSubject,
+		brandCloudUserID,
+		"ed25519",
+	)
+	if err != nil {
+		return err
+	}
+	user := map[string]any{
+		"id": brandCloudUserID, "email": strings.ToLower(strings.TrimSpace(*email)), "display_name": strings.TrimSpace(*displayName),
+		"role": "owner", "password": password, "access_token": ownerSession.AccessToken, "refresh_token": ownerSession.RefreshToken,
+		"app_private_key_pem": stringValue(appCredentials["private_key_pem"]),
+		"app_csr_pem":         stringValue(appCredentials["csr_pem"]),
+		"app_certificate":     appCertificate,
+	}
+	store, err := openTestDataStore(ctx.EnvRoot, *brandname)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	if err := store.ReplaceUsers(*brandname, brandCloudID, tenantSlug, "owner", []map[string]any{user}); err != nil {
+		return err
+	}
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"status": "PASS", "run_id": *runID, "brandname": *brandname, "tenant_slug": tenantSlug,
+		"activated_owners": 1, "imap_uid": imapUID, "evidence_path": *evidencePath,
+	})
+}
+
+func reuseVerifiedLoadOwner(ctx accountManagerContext, brandname, email, runID, evidencePath string) (bool, error) {
+	raw, err := os.ReadFile(evidencePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var evidence struct {
+		Status         string `json:"status"`
+		RunID          string `json:"run_id"`
+		BrandName      string `json:"brand_name"`
+		RecipientAlias string `json:"recipient_alias"`
+		TenantSlug     string `json:"tenant_slug"`
+	}
+	if json.Unmarshal(raw, &evidence) != nil ||
+		evidence.Status != "PASS" ||
+		evidence.RunID != runID ||
+		evidence.BrandName != brandname ||
+		!strings.EqualFold(evidence.RecipientAlias, email) ||
+		evidence.TenantSlug == "" {
+		return false, errors.New("resume owner evidence does not match this run-scoped brand plan")
+	}
+	store, err := openTestDataStore(ctx.EnvRoot, brandname)
+	if err != nil {
+		return false, err
+	}
+	defer store.Close()
+	var storedEmail, password string
+	err = store.DB.QueryRow(`
+		SELECT email, password
+		FROM users
+		WHERE brandname = ? AND role = 'owner'
+	`, brandname).Scan(&storedEmail, &password)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, errors.New("resume evidence exists but the matching owner credential is absent")
+	}
+	if err != nil {
+		return false, err
+	}
+	if !strings.EqualFold(storedEmail, email) || password == "" {
+		return false, errors.New("resume owner credential does not match this run-scoped recipient")
+	}
+	login, err := accountLoginUserFull(ctx, evidence.TenantSlug, storedEmail, password, "")
+	if err != nil {
+		return false, errors.New("resume owner is not verified or cannot log in")
+	}
+	return login.User.ID != "", nil
+}
+
+func runIMAPJSON(helper string, env []string, args ...string) (map[string]any, error) {
+	cmd := exec.Command("python3", append([]string{helper}, args...)...)
+	cmd.Env = env
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("IMAP %s failed: %s", firstNonEmpty(firstString(args), "operation"), truncateForLog(stderr.String(), 300))
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		return nil, errors.New("IMAP helper returned invalid JSON")
+	}
+	return parsed, nil
+}
+
+func firstString(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
+func userHomeDir() string {
+	value, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return value
 }
 
 func brandSlug(value string) string {
@@ -5992,14 +6381,49 @@ func accountManagerContextFromFlags(workspaceFlag, envRootFlag string) (accountM
 		PlatformAdminEnv: platformEnv,
 	}
 	if firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), stackEnv["CLOUD_PROVIDER"]) == "lke" && os.Getenv("ACCOUNT_MANAGER_BASE_URL") == "" {
+		stack := firstNonEmpty(stackEnv["CLOUD_STACK_NAME"], "video-cloud-staging")
 		forwardURL, cleanup, err := lkeAccountManagerPortForward(envRoot, map[string]string{
-			"CLOUD_STACK_NAME": firstNonEmpty(stackEnv["CLOUD_STACK_NAME"], "video-cloud-staging"),
+			"CLOUD_STACK_NAME": stack,
 		})
 		if err != nil {
 			return accountManagerContext{}, err
 		}
 		ctx.BaseURL = forwardURL
 		ctx.cleanup = cleanup
+		if ctx.AdminEmail == "" || ctx.AdminPassword == "" {
+			kubeconfig := firstNonEmpty(
+				os.Getenv("RTK_CLOUD_LKE_KUBECONFIG"),
+				os.Getenv("LKE_KUBECONFIG"),
+				filepath.Join(envRoot, "state", "kubeconfig.yaml"),
+			)
+			secretEnv, err := readK8SSecretEnv(
+				kubeconfig,
+				stack+"-account-manager",
+				"account-manager-runtime",
+				"ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL",
+				"ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD",
+			)
+			if err != nil {
+				ctx.Close()
+				return accountManagerContext{}, fmt.Errorf("read Account Manager platform-admin credentials from LKE runtime secret: %w", err)
+			}
+			for _, item := range secretEnv {
+				key, value, ok := strings.Cut(item, "=")
+				if !ok {
+					continue
+				}
+				switch key {
+				case "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL":
+					if ctx.AdminEmail == "" {
+						ctx.AdminEmail = value
+					}
+				case "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD":
+					if ctx.AdminPassword == "" {
+						ctx.AdminPassword = value
+					}
+				}
+			}
+		}
 	}
 	return ctx, nil
 }
