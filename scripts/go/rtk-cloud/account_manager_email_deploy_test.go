@@ -155,6 +155,18 @@ exit 0
 	return logPath
 }
 
+func TestKubectlResourceJSONRejectsInvalidJSON(t *testing.T) {
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	if err := os.WriteFile(kubectl, []byte("#!/bin/sh\nprintf 'not-json'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	t.Setenv("RTK_CLOUD_KUBECTL_RETRY_ATTEMPTS", "1")
+	if _, err := kubectlResourceJSON("test", "secret", "runtime"); err == nil {
+		t.Fatal("invalid Kubernetes JSON accepted")
+	}
+}
+
 func TestValidateAccountManagerEmailDeployEnv(t *testing.T) {
 	for _, key := range append([]string{"LKE_ACCOUNT_MANAGER_IMAGE"}, accountManagerEmailSecretKeys...) {
 		t.Setenv(key, "")
@@ -369,6 +381,9 @@ func TestMergeAccountManagerEmailSecretReusesAndValidatesEncryptionKey(t *testin
 	}}
 	if _, err := mergeAccountManagerEmailSecret(invalid, map[string]string{}); err == nil {
 		t.Fatal("invalid existing encryption key accepted")
+	}
+	if _, err := mergeAccountManagerEmailSecret(map[string]any{}, map[string]string{}); err == nil {
+		t.Fatal("Secret without data accepted")
 	}
 }
 
