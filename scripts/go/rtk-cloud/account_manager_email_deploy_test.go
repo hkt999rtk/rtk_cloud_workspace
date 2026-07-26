@@ -2,9 +2,126 @@ package main
 
 import (
 	"encoding/base64"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestRunAccountManagerSendMailHTTPDeployScopesExistingWorkloads(t *testing.T) {
+	t.Setenv("RTK_CLOUD_KUBECONFIG", "")
+	workspace := t.TempDir()
+	envRoot := filepath.Join(workspace, "runtime")
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), `CLOUD_ENV_NAME=staging
+CLOUD_PROVIDER=lke
+CLOUD_REGION=us-sea
+CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+LKE_ACCOUNT_MANAGER_IMAGE=example.test/account-manager:sha-abc
+AUTH_TOKEN_DELIVERY=sendmail_http
+AUTH_TOKEN_BASE_URL=https://admin.video-cloud-staging.realtekconnect.com
+SENDMAIL_HTTP_BASE_URL=https://sm.realtekconnect.com
+SENDMAIL_HTTP_BEARER_TOKEN=opaque-token
+SENDMAIL_HTTP_TIMEOUT=15s
+`)
+	logPath := fakeKubectlForAccountManagerEmailDeploy(t)
+	kubeconfig := filepath.Join(workspace, "kubeconfig")
+	writeTestFile(t, kubeconfig, "test")
+
+	if err := runAccountManagerEmailDeploy([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--kubeconfig", kubeconfig,
+		"--confirm", "video-cloud-staging",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, logPath)
+	for _, want := range []string{
+		"get deployment/account-manager -o name",
+		"get secret/account-manager-runtime -o name",
+		"get secret/account-manager-certissuer-client -o name",
+		"kind: Job",
+		"name: account-manager-migrate",
+		"kind: Deployment",
+		"name: account-manager-email-worker",
+		"rollout status deployment/account-manager --timeout 10m",
+		"rollout status deployment/account-manager-email-worker --timeout 10m",
+		`"image":"example.test/account-manager:sha-abc"`,
+		`"rtk.realtek.com/runtime-checksum"`,
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("kubectl log missing %q:\n%s", want, log)
+		}
+	}
+	for _, forbidden := range []string{
+		"account-manager-smtp-egress-check",
+		"video-cloud-api",
+		"cloud-admin",
+		"openbao",
+	} {
+		if strings.Contains(log, forbidden) {
+			t.Fatalf("scoped Send Mail deploy touched %q:\n%s", forbidden, log)
+		}
+	}
+}
+
+func fakeKubectlForAccountManagerEmailDeploy(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "kubectl.log")
+	kubectl := filepath.Join(dir, "kubectl")
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+line='ARGS'
+for arg in "$@"; do
+  line="$line $arg"
+done
+printf '%s\n' "$line" >> "` + logPath + `"
+if [[ "$*" == *"get --raw=/readyz"* ]]; then
+  printf 'ok\n'
+  exit 0
+fi
+if [[ "$*" == *"get nodes -o name"* ]]; then
+  printf 'node/test\n'
+  exit 0
+fi
+if [[ "$*" == *"get deployment/account-manager -o name"* ]]; then
+  printf 'deployment.apps/account-manager\n'
+  exit 0
+fi
+if [[ "$*" == *"get secret/account-manager-runtime -o name"* ]]; then
+  printf 'secret/account-manager-runtime\n'
+  exit 0
+fi
+if [[ "$*" == *"get secret/account-manager-certissuer-client -o name"* ]]; then
+  printf 'secret/account-manager-certissuer-client\n'
+  exit 0
+fi
+if [[ "$*" == *"get secret account-manager-runtime -o json"* ]]; then
+  printf '{"data":{"DATABASE_URL":"cHJlc2VydmU="}}\n'
+  exit 0
+fi
+if [[ "$*" == *"get deployment account-manager -o json"* ]]; then
+  printf '{"spec":{"replicas":1,"template":{"metadata":{"annotations":{"keep":"yes"}},"spec":{"containers":[{"name":"app","image":"old","env":[{"name":"KEEP","value":"yes"}]}]}}}}\n'
+  exit 0
+fi
+if [[ "$*" == *"apply -f -"* || "$*" == *"replace -f -"* ]]; then
+  cat >> "` + logPath + `"
+  printf '\n---\n' >> "` + logPath + `"
+  exit 0
+fi
+exit 0
+`
+	if err := os.WriteFile(kubectl, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	t.Setenv("RTK_CLOUD_KUBECTL_RETRY_ATTEMPTS", "1")
+	t.Setenv("RTK_CLOUD_KUBE_API_READY_POLL", "1ms")
+	t.Setenv("RTK_CLOUD_KUBE_API_READY_STABLE_CHECKS", "1")
+	return logPath
+}
 
 func TestValidateAccountManagerEmailDeployEnv(t *testing.T) {
 	for _, key := range append([]string{"LKE_ACCOUNT_MANAGER_IMAGE"}, accountManagerEmailSecretKeys...) {
