@@ -82,7 +82,7 @@ Options:
   --user-email-prefix PREFIX      Optional run-scoped user email prefix.
   --user-email-domain DOMAIN      Test-only member domain. Default: users.local.
   --load-run-id ID                Run ID used in all resolved Brand/account names.
-  --load-target TARGET            50K, 100K, or CANARY.
+  --load-target TARGET            1K, 50K, 100K, or CANARY.
   --email-activate-owners         Require one Send Mail + local IMAP owner activation per Brand.
   --operator-env-file FILE        Operator-only IMAP dotenv. Default: ~/.env.
   --device-count N                Devices to create and bind. Default: 100.
