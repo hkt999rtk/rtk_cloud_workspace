@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -18,7 +20,7 @@ func TestRunActivateLoadOwnerCompletesFormalEmailFlowAndStoresCredentials(t *tes
 		ownerEmail  = "imap-test01+load-run-20260726-b01@realtekconnect.com"
 		displayName = "RTK Load CANARY run-20260726 Brand 01 Owner"
 	)
-	var createdPayload map[string]any
+	var createdPayload, ownerLoginPayload map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("content-type", "application/json")
 		switch {
@@ -33,10 +35,13 @@ func TestRunActivateLoadOwnerCompletesFormalEmailFlowAndStoresCredentials(t *tes
 			w.WriteHeader(http.StatusCreated)
 			fmt.Fprint(w, `{"action":"pending_activation","brand_cloud_user":{"id":"owner-id"}}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/brand-clouds/"+tenantSlug+"/auth/login":
+			if err := json.NewDecoder(r.Body).Decode(&ownerLoginPayload); err != nil {
+				t.Errorf("decode owner login payload: %v", err)
+			}
 			fmt.Fprintf(w, `{
 				"user":{"id":"owner-id","email":%q},
 				"tokens":{"access_token":"owner-access","refresh_token":"owner-refresh"},
-				"app_certificate":{"status":"issued","subject":"load-owner","fingerprint_sha256":"abc123"}
+				"app_certificate":{"status":"issued","subject":"app-brand-cloud-user:owner-id","certificate_pem":"certificate","fingerprint_sha256":"abc123"}
 			}`, ownerEmail)
 		default:
 			http.Error(w, "unexpected request", http.StatusNotFound)
@@ -111,6 +116,18 @@ IMAP_EMAIL_FOLDER=INBOX
 		createdPayload["role"] != "owner" ||
 		createdPayload["email"] != ownerEmail {
 		t.Fatalf("pending owner payload = %+v", createdPayload)
+	}
+	csrPEM, _ := ownerLoginPayload["app_csr_pem"].(string)
+	block, _ := pem.Decode([]byte(csrPEM))
+	if block == nil {
+		t.Fatal("owner login did not include a valid CSR PEM")
+	}
+	csr, err := x509.ParseCertificateRequest(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if csr.Subject.CommonName != "app-brand-cloud-user:owner-id" {
+		t.Fatalf("owner CSR subject = %q", csr.Subject.CommonName)
 	}
 	if _, err := os.Stat(evidencePath); err != nil {
 		t.Fatalf("browser evidence missing: %v", err)

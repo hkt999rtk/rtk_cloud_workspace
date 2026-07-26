@@ -6137,6 +6137,15 @@ func runActivateLoadOwner(args []string) error {
 	if status != http.StatusCreated {
 		return fmt.Errorf("pending owner creation failed: HTTP %d%s", status, accountAPIErrorSuffix(body))
 	}
+	var created map[string]any
+	if err := json.Unmarshal(body, &created); err != nil {
+		return fmt.Errorf("decode pending owner response: %w", err)
+	}
+	brandCloudUser, _ := created["brand_cloud_user"].(map[string]any)
+	brandCloudUserID := stringValue(brandCloudUser["id"])
+	if brandCloudUserID == "" {
+		return errors.New("pending owner response is missing brand_cloud_user.id")
+	}
 	delivered, err := runIMAPJSON(helper, imapEnv, "wait", "--uid-start", strconv.Itoa(uidStart), "--timeout", firstNonEmpty(os.Getenv("LOAD_OWNER_IMAP_TIMEOUT"), "180"))
 	if err != nil {
 		return err
@@ -6173,7 +6182,8 @@ func runActivateLoadOwner(args []string) error {
 		detail = strings.ReplaceAll(detail, password, "<redacted-password>")
 		return fmt.Errorf("owner browser activation failed: %s", truncateForLog(detail, 500))
 	}
-	privateKey, csr, err := generateAppCertificateCSR("load-owner-" + *runID + "-" + brandSlug(*brandname))
+	appCertificateSubject := "app-brand-cloud-user:" + brandCloudUserID
+	privateKey, csr, err := generateAppCertificateCSR(appCertificateSubject)
 	if err != nil {
 		return err
 	}
