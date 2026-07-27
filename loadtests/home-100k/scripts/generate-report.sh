@@ -263,6 +263,40 @@ def test_conditions():
     ])
     return "\n".join(lines)
 
+def account_activation():
+    plan = result.get("plan") or {}
+    conditions = plan.get("conditions") or {}
+    brand_plan_value = str(conditions.get("brand_plan_file") or "").strip()
+    if not brand_plan_value:
+        return ""
+    brand_plan_path = Path(brand_plan_value)
+    if not brand_plan_path.is_absolute() and not brand_plan_path.exists():
+        brand_plan_path = out_dir / brand_plan_path
+    try:
+        brand_plan = json.loads(brand_plan_path.read_text())
+    except (OSError, ValueError):
+        return ""
+    run_id = str(brand_plan.get("run_id") or "").strip()
+    brands = brand_plan.get("brands") or []
+    if not run_id or not brands:
+        return ""
+    passed = 0
+    for evidence_path in sorted((brand_plan_path.parent / "owner-activation").glob("*.json")):
+        try:
+            evidence = json.loads(evidence_path.read_text())
+        except (OSError, ValueError):
+            continue
+        if evidence.get("status") == "PASS" and evidence.get("run_id") == run_id:
+            passed += 1
+    synthetic_members = sum(num(brand.get("normal_users"), 0) for brand in brands)
+    activation_status = "PASS" if passed == len(brands) and passed > 0 else "INCOMPLETE"
+    return "\n".join([
+        "## Account Activation",
+        f"- Formal email-activated owners: {passed}/{len(brands)} ({activation_status})",
+        f"- Synthetic bulk-provisioned members: {synthetic_members}",
+        "- Formal owners are Send Mail + local IMAP activations; synthetic members are not signup accounts.",
+    ])
+
 def video_load_profile():
     plan = result.get("plan") or {}
     profile = plan.get("video_profile") or {}
@@ -1333,6 +1367,7 @@ replacements = {
     "STATUS": md(result.get("status", "UNKNOWN")),
     "RESULT": md(result.get("result", "UNKNOWN")),
     "STATUS_SUMMARY": status_summary(),
+    "ACCOUNT_ACTIVATION": account_activation(),
     "TEST_CONDITIONS": test_conditions(),
     "GATE_STANDARDS": gate_standards(),
     "VIDEO_LOAD_PROFILE": video_load_profile(),

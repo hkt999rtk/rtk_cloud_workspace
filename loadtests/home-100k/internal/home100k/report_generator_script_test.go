@@ -24,7 +24,8 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 	if err != nil {
 		t.Fatalf("NewPlan() error = %v", err)
 	}
-	plan.Conditions.BrandPlanFile = "loadtests/home-100k/scenarios/brand-plan-100k.json"
+	brandPlanFile := filepath.Join(outDir, "resolved-brand-plan.json")
+	plan.Conditions.BrandPlanFile = brandPlanFile
 	plan.Conditions.DeveloperUsers = 2
 	plan.BrandDistribution = []BrandDistributionEntry{{
 		Brandname:      "RTK-BRAND-01",
@@ -170,6 +171,38 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 		},
 		ReportFile: filepath.Join(outDir, "TEST_REPORT.md"),
 	}
+	brandPlan := map[string]any{
+		"run_id": "script-report-test",
+		"target": "50K",
+		"brands": []map[string]any{
+			{"brand_key": "B01", "normal_users": 1250},
+			{"brand_key": "B02", "normal_users": 1250},
+		},
+	}
+	brandPlanRaw, err := json.MarshalIndent(brandPlan, "", "  ")
+	if err != nil {
+		t.Fatalf("MarshalIndent(brand plan) error = %v", err)
+	}
+	if err := os.WriteFile(brandPlanFile, brandPlanRaw, 0o644); err != nil {
+		t.Fatalf("WriteFile(brand plan) error = %v", err)
+	}
+	evidenceDir := filepath.Join(outDir, "owner-activation")
+	if err := os.MkdirAll(evidenceDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(owner-activation) error = %v", err)
+	}
+	for _, brandKey := range []string{"b01", "b02"} {
+		evidenceRaw, marshalErr := json.Marshal(map[string]any{
+			"schema": "rtk.load-owner-activation.evidence.v1",
+			"status": "PASS",
+			"run_id": "script-report-test",
+		})
+		if marshalErr != nil {
+			t.Fatalf("Marshal(owner evidence) error = %v", marshalErr)
+		}
+		if err := os.WriteFile(filepath.Join(evidenceDir, brandKey+".json"), evidenceRaw, 0o644); err != nil {
+			t.Fatalf("WriteFile(owner evidence) error = %v", err)
+		}
+	}
 	raw, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		t.Fatalf("MarshalIndent() error = %v", err)
@@ -224,6 +257,9 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 		"Mem max",
 		"Brand clouds: 2",
 		"| RTK-BRAND-01 | 25000 | 1250 | owner=1 |",
+		"## Account Activation",
+		"Formal email-activated owners: 2/2 (PASS)",
+		"Synthetic bulk-provisioned members: 2500",
 		"## Load Generator Start Coordination",
 		"- max start skew ms: 12\n\n| VM | IP | Status | Ready at |",
 		"## Report Source Artifacts",
