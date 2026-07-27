@@ -1883,6 +1883,8 @@ func TestHome100KSingleDeviceSmokeUsesResolvedBrandPlan(t *testing.T) {
 		`smoke_brandname="$(jq -er '.brands[0].brandname`,
 		`brand_file="$(printf '%s' "$smoke_brandname"`,
 		`-brandname "$smoke_brandname"`,
+		`smoke_run_id="$run_id-single-device-smoke-`,
+		`-run-id "$smoke_run_id"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("home-100k.sh single-device smoke missing resolved Brand marker %q", want)

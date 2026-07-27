@@ -386,7 +386,7 @@ run_fixture_preflight() {
 run_single_device_smoke() {
   [[ "$single_device_smoke" == "1" || "$single_device_smoke" == "true" || "$single_device_smoke" == "TRUE" ]] || return 0
   [[ "$runner_mode" == "live" ]] || return 0
-  local ca_bundle db_path smoke_dir brand_file smoke_brandname
+  local ca_bundle db_path smoke_dir brand_file smoke_brandname smoke_run_id
   ca_bundle="$(device_ca_bundle_path)" || { echo "CERTIFICATE_CA_MISSING: current device CA bundle not found" >&2; return 1; }
   smoke_brandname="$brandname"
   if [[ -n "$brand_plan" ]]; then
@@ -399,8 +399,9 @@ run_single_device_smoke() {
   db_path="$(local_env_root_path)/artifacts/test-data/${brand_file}-test-data.sqlite"
   [[ -f "$db_path" ]] || { echo "FIXTURE_UNAVAILABLE: test-data DB not found: $db_path" >&2; return 1; }
   smoke_dir="$local_out_dir/single-device-smoke"
+  smoke_run_id="$run_id-single-device-smoke-$(date -u +%Y%m%d%H%M%S)-$$"
   mkdir -p "$smoke_dir"
-  echo "running single-device actor smoke before VM provisioning" >&2
+  echo "running single-device actor smoke before VM provisioning: run_id=$smoke_run_id" >&2
   if ! (cd "$repo_root/scripts/go/cloud-mqtt-test" && \
     HOME100K_DEVICE_CLIENT_CA_BUNDLE="$ca_bundle" \
     ACCOUNT_MANAGER_BASE_URL="$account_manager_base_url" \
@@ -411,7 +412,7 @@ run_single_device_smoke() {
       -root "$repo_root" -env-root "$(local_env_root_path)" -test-data-db "$db_path" \
       -brandname "$smoke_brandname" -out-dir "$smoke_dir" -load-model actor-separated-probe \
       -max-connected-devices 1 -max-users 1 -concurrency 1 -duration-seconds 5 -mqtt-probe true \
-      -run-id "$run_id-single-device-smoke" >"$smoke_dir/console.log" 2>&1); then
+      -run-id "$smoke_run_id" >"$smoke_dir/console.log" 2>&1); then
     echo "TOKEN_BOOTSTRAP_FAILED or MQTT_SMOKE_FAILED: see $smoke_dir/console.log" >&2
     return 1
   fi
