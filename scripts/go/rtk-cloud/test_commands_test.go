@@ -1,12 +1,29 @@
 package main
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestTestLayerCommandsAreRegistered(t *testing.T) {
 	for _, name := range []string{"test-catalog", "test-coverage", "test-matrix", "test-services", "test-e2e", "test-ui", "test-live"} {
 		if _, ok := commands[name]; !ok {
 			t.Fatalf("command %q is not registered", name)
 		}
+	}
+}
+
+func TestLiveCommandFlagHelpers(t *testing.T) {
+	args := []string{"--run", "--run-id=run-1", "--workspace", "/workspace", "--out-dir", "/evidence"}
+	if got := commandFlagValue(args, "--run-id"); got != "run-1" {
+		t.Fatalf("run ID = %q", got)
+	}
+	if got := commandFlagValue(args, "--workspace"); got != "/workspace" {
+		t.Fatalf("workspace = %q", got)
+	}
+	want := []string{"--run", "--workspace", "/workspace", "--out-dir", "/evidence"}
+	if got := removeFlagValue(args, "--run-id"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("args without run ID = %v, want %v", got, want)
 	}
 }
 

@@ -384,11 +384,15 @@ func validateFeatureRequirements(workspace string, catalog testCatalog, sourceRu
 				return fmt.Errorf("%s requires known kind, source, and selector", surfacePrefix)
 			}
 			if surface.Exclusion != "" {
-				if strings.TrimSpace(surface.Owner) == "" || strings.TrimSpace(surface.Expires) == "" {
+				if !catalogOwners[surface.Owner] || strings.TrimSpace(surface.Expires) == "" {
 					return fmt.Errorf("%s exclusion requires owner and expires", surfacePrefix)
 				}
-				if _, err := time.Parse("2006-01-02", surface.Expires); err != nil {
+				expires, err := time.Parse("2006-01-02", surface.Expires)
+				if err != nil {
 					return fmt.Errorf("%s exclusion expires must be YYYY-MM-DD", surfacePrefix)
+				}
+				if expires.Before(time.Now().UTC().Truncate(24 * time.Hour)) {
+					return fmt.Errorf("%s exclusion expired on %s", surfacePrefix, surface.Expires)
 				}
 			}
 			if sourceRunner == "" {
@@ -437,6 +441,13 @@ func validateFeatureRequirements(workspace string, catalog testCatalog, sourceRu
 			if requirement.Gate == "scheduled" || requirement.Gate == "operator-release" {
 				if requirement.AcceptanceLayer != "live" || requirement.FreshnessHours <= 0 {
 					return fmt.Errorf("%s %s live gate requires acceptance_layer live and positive freshness_hours", requirementPrefix, requirement.ID)
+				}
+				expectedFreshness := 168
+				if requirement.Gate == "scheduled" && feature.Risk == "critical" {
+					expectedFreshness = 36
+				}
+				if requirement.FreshnessHours != expectedFreshness {
+					return fmt.Errorf("%s %s freshness_hours must be %d", requirementPrefix, requirement.ID, expectedFreshness)
 				}
 			} else if requirement.FreshnessHours != 0 {
 				return fmt.Errorf("%s %s deterministic gate must not set freshness_hours", requirementPrefix, requirement.ID)

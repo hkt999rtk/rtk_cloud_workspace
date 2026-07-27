@@ -7,10 +7,13 @@ features:
     risk: critical
     change_paths:
     - repos/rtk_account_manager/**
+    - repos/rtk_cloud_admin/**
     - scripts/go/rtk-cloud/main.go
     - scripts/staging_email_signup_e2e.py
     commit_anchors:
     - workspace
+    - account_manager
+    - cloud_admin
     surfaces:
     - kind: operator-workflow
       source: scripts/staging_email_signup_e2e.py
@@ -723,6 +726,7 @@ features:
     - loadtests/home-100k/scenarios/mqtt-canary.description.env
     commit_anchors:
     - workspace
+    - video_cloud
     surfaces:
     - kind: operator-workflow
       source: loadtests/home-100k/scenarios/mqtt-canary.description.env
@@ -808,10 +812,14 @@ features:
     change_paths:
     - e2e_test/**
     - scripts/go/rtk-cloud/**
+    - repos/rtk_account_manager/**
+    - repos/rtk_video_cloud/**
     - e2e_test/README.md
     - scripts/go/rtk-cloud/main.go
     commit_anchors:
     - workspace
+    - account_manager
+    - video_cloud
     surfaces:
     - kind: operator-workflow
       source: e2e_test/README.md
@@ -881,6 +889,7 @@ features:
     - e2e_test/cloud_validation/scenarios/nightly-resilience.yaml
     commit_anchors:
     - workspace
+    - cloud_client
     surfaces:
     - kind: sdk-api
       source: e2e_test/cloud_validation/scenarios/core-smoke.yaml
@@ -945,6 +954,7 @@ features:
     - e2e_test/cloud_validation/scenarios/shadow-roundtrip.yaml
     commit_anchors:
     - workspace
+    - cloud_client
     surfaces:
     - kind: sdk-api
       source: e2e_test/cloud_validation/scenarios/core-smoke.yaml
@@ -1059,6 +1069,7 @@ features:
     - loadtests/home-100k/scenarios/clip-storage-canary.description.env
     commit_anchors:
     - workspace
+    - video_cloud
     surfaces:
     - kind: operator-workflow
       source: loadtests/home-100k/scenarios/clip-storage-canary.description.env
@@ -1120,6 +1131,7 @@ features:
     - loadtests/home-100k/scenarios/video-canary.description.env
     commit_anchors:
     - workspace
+    - video_cloud
     surfaces:
     - kind: operator-workflow
       source: loadtests/home-100k/scenarios/video-canary.description.env

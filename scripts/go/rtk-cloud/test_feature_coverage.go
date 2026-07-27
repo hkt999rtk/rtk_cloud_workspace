@@ -19,6 +19,7 @@ const featureEvidenceSchemaV2 = "rtk-cloud-feature-coverage-evidence/v2"
 type featureCoverageEvidenceFile struct {
 	Path   string `json:"path"`
 	SHA256 string `json:"sha256"`
+	Type   string `json:"type"`
 }
 
 type featureRequirementAssertion struct {
@@ -81,21 +82,30 @@ func runTestFeatureCoverage(args []string) error {
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		action, args = args[0], args[1:]
 	}
-	if action != "audit" && action != "check" && action != "select" {
-		return errors.New("usage: test-feature-coverage [audit|select|check] [--evidence PATHS] [--mode pr|main|release] [--output-dir PATH]")
+	if action != "audit" && action != "check" && action != "select" && action != "record" {
+		return errors.New("usage: test-feature-coverage [audit|select|check|record] [--evidence PATHS] [--mode pr|main|release] [--output-dir PATH]")
 	}
 	fs := flag.NewFlagSet("test-feature-coverage "+action, flag.ContinueOnError)
-	var evidence, mode, outputDir, base, head string
+	var evidence, mode, outputDir, base, head, testID, runID, environment, target, startedAt, completedAt string
 	fs.StringVar(&evidence, "evidence", "", "comma-separated evidence files or directories")
 	fs.StringVar(&mode, "mode", "pr", "qualification mode: pr, main, or release")
-	fs.StringVar(&outputDir, "output-dir", ".artifacts/feature-coverage", "report directory")
+	fs.StringVar(&outputDir, "output-dir", "", "report directory")
 	fs.StringVar(&base, "base", "", "selection base commit")
 	fs.StringVar(&head, "head", "HEAD", "selection head commit")
+	fs.StringVar(&testID, "test-id", "", "record: catalog Test ID")
+	fs.StringVar(&runID, "run-id", "", "record: stable live run ID")
+	fs.StringVar(&environment, "environment", "", "record: catalog environment")
+	fs.StringVar(&target, "target", "", "record: optional catalog target")
+	fs.StringVar(&startedAt, "started-at", "", "record: RFC3339 start")
+	fs.StringVar(&completedAt, "completed-at", "", "record: RFC3339 completion")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if mode != "pr" && mode != "main" && mode != "release" {
 		return fmt.Errorf("unsupported mode %q", mode)
+	}
+	if action != "record" && outputDir == "" {
+		outputDir = ".artifacts/feature-coverage"
 	}
 	workspace, err := workspaceRoot()
 	if err != nil {
@@ -104,6 +114,17 @@ func runTestFeatureCoverage(args []string) error {
 	catalog, err := loadAndValidateTestCatalog(workspace)
 	if err != nil {
 		return err
+	}
+	if action == "record" {
+		if testID == "" || runID == "" || environment == "" || outputDir == "" || startedAt == "" || completedAt == "" {
+			return errors.New("record requires --test-id, --run-id, --environment, --output-dir, --started-at, and --completed-at")
+		}
+		started, startErr := time.Parse(time.RFC3339, startedAt)
+		completed, completeErr := time.Parse(time.RFC3339, completedAt)
+		if startErr != nil || completeErr != nil || completed.Before(started) {
+			return errors.New("record start/completion timestamps are invalid")
+		}
+		return writeCaseFeatureEvidence(workspace, outputDir, testID, runID, environment, target, started, completed)
 	}
 	selected, err := selectCatalogFeatures(workspace, catalog, base, head)
 	if err != nil {
@@ -292,8 +313,17 @@ func validateFeatureEvidenceManifestV2(manifest featureEvidenceManifestV2, catal
 		if !catalogEnvironments[item.Environment] {
 			return fmt.Errorf("%s has invalid environment %q", item.TestID, item.Environment)
 		}
+		if !catalogContainsString(tc.Environments, item.Environment) {
+			return fmt.Errorf("%s environment %q is not declared by the test case", item.TestID, item.Environment)
+		}
 		if item.Target != "" && !catalogTargets[item.Target] {
 			return fmt.Errorf("%s has invalid target %q", item.TestID, item.Target)
+		}
+		if item.Target != "" && !catalogContainsString(tc.Targets, item.Target) {
+			return fmt.Errorf("%s target %q is not declared by the test case", item.TestID, item.Target)
+		}
+		if len(tc.Targets) > 0 && item.Target == "" {
+			return fmt.Errorf("%s target is required by the test case", item.TestID)
 		}
 		started, startErr := time.Parse(time.RFC3339, item.StartedAt)
 		completed, completeErr := time.Parse(time.RFC3339, item.CompletedAt)
@@ -303,6 +333,7 @@ func validateFeatureEvidenceManifestV2(manifest featureEvidenceManifestV2, catal
 		if strings.TrimSpace(item.WorkspaceCommit) == "" {
 			return fmt.Errorf("%s workspace_commit is required", item.TestID)
 		}
+		asserted := map[string]bool{}
 		for _, assertion := range item.Requirements {
 			if _, ok := catalogRequirementIndex(catalog)[assertion.RequirementID]; !ok {
 				return fmt.Errorf("%s has unknown requirement assertion %s", item.TestID, assertion.RequirementID)
@@ -310,8 +341,25 @@ func validateFeatureEvidenceManifestV2(manifest featureEvidenceManifestV2, catal
 			if !catalogContainsString(tc.Verifies, assertion.RequirementID) {
 				return fmt.Errorf("%s is not mapped to requirement %s", item.TestID, assertion.RequirementID)
 			}
+			if asserted[assertion.RequirementID] {
+				return fmt.Errorf("%s repeats requirement assertion %s", item.TestID, assertion.RequirementID)
+			}
+			asserted[assertion.RequirementID] = true
 			if !allowedStatus[assertion.Status] {
 				return fmt.Errorf("%s requirement %s has invalid status %q", item.TestID, assertion.RequirementID, assertion.Status)
+			}
+			if len(assertion.Assertions) == 0 {
+				return fmt.Errorf("%s requirement %s has no assertion results", item.TestID, assertion.RequirementID)
+			}
+			for _, ref := range assertion.Evidence {
+				if !catalogEvidence[ref.Type] {
+					return fmt.Errorf("%s requirement %s has invalid evidence type %q", item.TestID, assertion.RequirementID, ref.Type)
+				}
+			}
+		}
+		for _, requirementID := range tc.Verifies {
+			if !asserted[requirementID] {
+				return fmt.Errorf("%s is missing requirement assertion %s", item.TestID, requirementID)
 			}
 		}
 	}
@@ -398,10 +446,10 @@ func adaptLegacyFeatureEvidence(raw []byte, path string, catalog testCatalog) (f
 		}
 		var refs []featureCoverageEvidenceFile
 		if item.ScreenshotPath != "" {
-			refs = append(refs, featureCoverageEvidenceFile{Path: item.ScreenshotPath, SHA256: item.ScreenshotSHA256})
+			refs = append(refs, featureCoverageEvidenceFile{Path: item.ScreenshotPath, SHA256: item.ScreenshotSHA256, Type: "screenshot"})
 		}
 		for _, ref := range item.Evidence {
-			refs = append(refs, featureCoverageEvidenceFile{Path: ref.Path, SHA256: ref.SHA256})
+			refs = append(refs, featureCoverageEvidenceFile{Path: ref.Path, SHA256: ref.SHA256, Type: featureEvidenceType(ref.Path)})
 		}
 		var assertions []featureRequirementAssertion
 		// Legacy adapters are safe only for one-to-one cases. Multi-requirement
@@ -579,6 +627,10 @@ func evaluateRequirementEvidence(workspace string, requirement testCatalogRequir
 				lastReason = err.Error()
 				continue
 			}
+			if missing := missingFeatureEvidenceTypes(requirement.Evidence, assertion.Evidence); len(missing) > 0 {
+				lastReason = "required evidence types missing: " + strings.Join(missing, ", ")
+				continue
+			}
 			passedTargets[targetKey] = true
 			if len(passedTargets) == len(requiredTargets) {
 				return "PASS", "qualified evidence for every required target", mapped
@@ -607,15 +659,7 @@ func evaluateRequirementEvidence(workspace string, requirement testCatalogRequir
 }
 
 func validateFeatureCommits(workspace string, feature testCatalogFeature, commits map[string]string) error {
-	repositories := map[string]string{
-		"account_manager": filepath.Join(workspace, "repos", "rtk_account_manager"),
-		"cloud_admin":     filepath.Join(workspace, "repos", "rtk_cloud_admin"),
-		"cloud_client":    filepath.Join(workspace, "repos", "rtk_cloud_client"),
-		"video_cloud":     filepath.Join(workspace, "repos", "rtk_video_cloud"),
-		"cloud_logger":    filepath.Join(workspace, "repos", "rtk_cloud_logger"),
-		"contracts":       filepath.Join(workspace, "repos", "rtk_cloud_contracts_doc"),
-		"frontend":        filepath.Join(workspace, "repos", "rtk_cloud_frontend"),
-	}
+	repositories := featureCommitRepositories(workspace)
 	for _, anchor := range feature.CommitAnchors {
 		if anchor == "workspace" {
 			continue
@@ -636,6 +680,36 @@ func validateFeatureCommits(workspace string, feature testCatalogFeature, commit
 	return nil
 }
 
+func featureCommitRepositories(workspace string) map[string]string {
+	return map[string]string{
+		"account_manager": filepath.Join(workspace, "repos", "rtk_account_manager"),
+		"cloud_admin":     filepath.Join(workspace, "repos", "rtk_cloud_admin"),
+		"cloud_client":    filepath.Join(workspace, "repos", "rtk_cloud_client"),
+		"video_cloud":     filepath.Join(workspace, "repos", "rtk_video_cloud"),
+		"cloud_logger":    filepath.Join(workspace, "repos", "rtk_cloud_logger"),
+		"contracts":       filepath.Join(workspace, "repos", "rtk_cloud_contracts_doc"),
+		"frontend":        filepath.Join(workspace, "repos", "rtk_cloud_frontend"),
+	}
+}
+
+func currentFeatureCommits(workspace string, feature testCatalogFeature) (map[string]string, error) {
+	repositories := featureCommitRepositories(workspace)
+	repositories["workspace"] = workspace
+	commits := map[string]string{}
+	for _, anchor := range feature.CommitAnchors {
+		repository, ok := repositories[anchor]
+		if !ok {
+			return nil, fmt.Errorf("unsupported feature commit anchor %s", anchor)
+		}
+		current, err := gitOutput(repository, "rev-parse", "HEAD")
+		if err != nil {
+			return nil, fmt.Errorf("resolve feature commit anchor %s: %w", anchor, err)
+		}
+		commits[anchor] = strings.TrimSpace(current)
+	}
+	return commits, nil
+}
+
 func verifyFeatureEvidenceFiles(files []featureCoverageEvidenceFile) error {
 	if len(files) == 0 {
 		return errors.New("requirement evidence file missing")
@@ -651,6 +725,166 @@ func verifyFeatureEvidenceFiles(files []featureCoverageEvidenceFile) error {
 		}
 	}
 	return nil
+}
+
+func featureEvidenceType(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".json":
+		return "json"
+	case ".xml":
+		return "junit"
+	case ".md", ".markdown":
+		return "markdown"
+	case ".log", ".txt":
+		return "logs"
+	case ".png", ".jpg", ".jpeg", ".webp":
+		return "screenshot"
+	default:
+		return "cloud-evidence"
+	}
+}
+
+func missingFeatureEvidenceTypes(required []string, actual []featureCoverageEvidenceFile) []string {
+	present := map[string]bool{}
+	for _, ref := range actual {
+		present[ref.Type] = true
+	}
+	var missing []string
+	for _, evidenceType := range required {
+		if !present[evidenceType] {
+			missing = append(missing, evidenceType)
+		}
+	}
+	sort.Strings(missing)
+	return missing
+}
+
+func writeCaseFeatureEvidence(workspace, outputDir, testID, runID, environment, target string, started, completed time.Time) error {
+	catalog, err := loadAndValidateTestCatalog(workspace)
+	if err != nil {
+		return err
+	}
+	tc, ok := catalogCaseByID(catalog.Cases, testID)
+	if !ok || tc.Status != "active" {
+		return fmt.Errorf("cannot record unknown or inactive test case %s", testID)
+	}
+	if len(tc.Verifies) == 0 {
+		return fmt.Errorf("test case %s does not verify a requirement", testID)
+	}
+	features := catalogFeatureByRequirement(catalog)
+	feature, ok := features[tc.Verifies[0]]
+	if !ok {
+		return fmt.Errorf("test case %s has no feature mapping", testID)
+	}
+	for _, requirementID := range tc.Verifies[1:] {
+		if mapped := features[requirementID]; mapped.ID != feature.ID {
+			return fmt.Errorf("test case %s spans multiple features", testID)
+		}
+	}
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return err
+	}
+	if matches := findUnredactedFeatureEvidence(outputDir); len(matches) > 0 {
+		return fmt.Errorf("unredacted credential-like content found in live evidence: %s", strings.Join(matches, ", "))
+	}
+	refs, err := collectCaseFeatureEvidence(outputDir)
+	if err != nil {
+		return err
+	}
+	commits, err := currentFeatureCommits(workspace, feature)
+	if err != nil {
+		return err
+	}
+	assertions := make([]featureRequirementAssertion, 0, len(tc.Verifies))
+	requirements := catalogRequirementIndex(catalog)
+	for _, requirementID := range tc.Verifies {
+		requirement := requirements[requirementID]
+		if missing := missingFeatureEvidenceTypes(requirement.Evidence, refs); len(missing) > 0 {
+			return fmt.Errorf("%s required evidence types missing: %s", requirementID, strings.Join(missing, ", "))
+		}
+		assertions = append(assertions, featureRequirementAssertion{
+			RequirementID: requirementID,
+			Status:        "PASS",
+			Assessment:    "live product assertions and evidence contract passed",
+			Assertions: map[string]string{
+				"native_flow":       "PASS",
+				"evidence_contract": "PASS",
+			},
+			Evidence: refs,
+		})
+	}
+	manifest := featureEvidenceManifestV2{
+		SchemaVersion: featureEvidenceSchemaV2,
+		RunID:         runID,
+		GeneratedAt:   completed.UTC().Format(time.RFC3339),
+		Cases: []featureCaseEvidenceV2{{
+			TestID:          testID,
+			Status:          "PASS",
+			Assessment:      "live product flow passed",
+			Environment:     environment,
+			Target:          target,
+			StartedAt:       started.UTC().Format(time.RFC3339),
+			CompletedAt:     completed.UTC().Format(time.RFC3339),
+			WorkspaceCommit: commits["workspace"],
+			Commits:         commits,
+			Requirements:    assertions,
+		}},
+	}
+	if err := validateFeatureEvidenceManifestV2(manifest, catalog); err != nil {
+		return err
+	}
+	if err := writeJSON(filepath.Join(outputDir, "feature-evidence.json"), manifest); err != nil {
+		return err
+	}
+	if err := writeJSON(filepath.Join(outputDir, "feature-results.json"), map[string]any{
+		"schema_version": featureEvidenceSchemaV2,
+		"run_id":         runID, "test_id": testID, "status": "PASS",
+		"started_at": started.UTC().Format(time.RFC3339), "completed_at": completed.UTC().Format(time.RFC3339),
+	}); err != nil {
+		return err
+	}
+	duration := completed.Sub(started).Seconds()
+	junit := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?><testsuite name="feature-live" tests="1" failures="0" time="%.3f"><testcase classname="feature-live" name="%s" time="%.3f"/></testsuite>`+"\n", duration, testID, duration)
+	if err := os.WriteFile(filepath.Join(outputDir, "feature-junit.xml"), []byte(junit), 0o644); err != nil {
+		return err
+	}
+	report := fmt.Sprintf("# Live Feature Evidence\n\n- Test ID: `%s`\n- Run ID: `%s`\n- Status: **PASS**\n- Requirements: `%s`\n- Workspace commit: `%s`\n", testID, runID, strings.Join(tc.Verifies, "`, `"), commits["workspace"])
+	return os.WriteFile(filepath.Join(outputDir, "FEATURE_REPORT.md"), []byte(report), 0o644)
+}
+
+func collectCaseFeatureEvidence(outputDir string) ([]featureCoverageEvidenceFile, error) {
+	excluded := map[string]bool{
+		"feature-evidence.json": true, "feature-results.json": true,
+		"feature-junit.xml": true, "FEATURE_REPORT.md": true,
+	}
+	var refs []featureCoverageEvidenceFile
+	err := filepath.WalkDir(outputDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || excluded[entry.Name()] {
+			return nil
+		}
+		evidenceType := featureEvidenceType(path)
+		if !catalogEvidence[evidenceType] {
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(raw)
+		rel, err := filepath.Rel(outputDir, path)
+		if err != nil {
+			return err
+		}
+		refs = append(refs, featureCoverageEvidenceFile{
+			Path: filepath.ToSlash(rel), SHA256: hex.EncodeToString(sum[:]), Type: evidenceType,
+		})
+		return nil
+	})
+	sort.Slice(refs, func(i, j int) bool { return refs[i].Path < refs[j].Path })
+	return refs, err
 }
 
 func writeFeatureSelection(outputDir string, selected []string) error {
@@ -685,5 +919,22 @@ func writeFeatureCoverageReport(outputDir string, report featureCoverageReport) 
 		fmt.Fprintf(&b, "| `%s` | `%s` | `%s` | `%s` | **%s** | %s |\n",
 			result.FeatureID, result.RequirementID, result.Risk, result.Gate, result.Status, escapeMarkdownCell(result.Detail))
 	}
-	return os.WriteFile(filepath.Join(outputDir, "FEATURE_COVERAGE.md"), []byte(b.String()), 0o644)
+	rendered := []byte(b.String())
+	if err := os.WriteFile(filepath.Join(outputDir, "FEATURE_COVERAGE.md"), rendered, 0o644); err != nil {
+		return err
+	}
+	if summaryPath := strings.TrimSpace(os.Getenv("GITHUB_STEP_SUMMARY")); summaryPath != "" {
+		summary, err := os.OpenFile(summaryPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			return fmt.Errorf("open GitHub summary: %w", err)
+		}
+		if _, err := summary.Write(rendered); err != nil {
+			_ = summary.Close()
+			return fmt.Errorf("write GitHub summary: %w", err)
+		}
+		if err := summary.Close(); err != nil {
+			return fmt.Errorf("close GitHub summary: %w", err)
+		}
+	}
+	return nil
 }

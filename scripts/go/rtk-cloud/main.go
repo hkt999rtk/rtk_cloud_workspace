@@ -1510,6 +1510,11 @@ func runTestUI(args []string) error {
 		playwrightArgs := []string{"playwright", "test", "--project=" + target}
 		if !*full {
 			playwrightArgs = append(playwrightArgs, "--grep", "@smoke")
+		} else {
+			// Full qualification cases share a mutable fixture backend (for
+			// example provider lifecycle state), so parallel workers can
+			// invalidate another case's navigation or expected state.
+			playwrightArgs = append(playwrightArgs, "--workers=1")
 		}
 		expected, err := expectedUITestIDs(workspace, evidenceTarget, "local", !*full)
 		if err != nil {
@@ -1550,7 +1555,7 @@ func runTestUI(args []string) error {
 					phaseEnv[key] = value
 				}
 				phaseEnv["E2E_TEST_PHASE"] = phase.name
-				if err := runCmdWithEnv(webRoot, phaseEnv, "npx", "playwright", "test", "--project=chromium", "--grep", phase.grep); err != nil {
+				if err := runCmdWithEnv(webRoot, phaseEnv, "npx", "playwright", "test", "--project=chromium", "--workers=1", "--grep", phase.grep); err != nil {
 					fmt.Fprintf(os.Stderr, "UI phase %s reported a test failure: %v\n", phase.name, err)
 					runErr = err
 				}
@@ -1664,7 +1669,63 @@ func writeNormalizedUIEvidence(workspace, runDir string) error {
 }
 
 func runTestLive(args []string) error {
-	return runStagingE2ETest(ensureTestLiveMode(args))
+	args = ensureTestLiveMode(args)
+	runID := commandFlagValue(args, "--run-id")
+	args = removeFlagValue(args, "--run-id")
+	if runID == "" {
+		runID = firstNonEmpty(os.Getenv("RUNTIME_COVERAGE_RUN_ID"), time.Now().UTC().Format("20060102T150405Z")+"-live")
+	}
+	workspace := commandFlagValue(args, "--workspace")
+	if workspace == "" {
+		var err error
+		workspace, err = workspaceRoot()
+		if err != nil {
+			return err
+		}
+	}
+	if hasFlag(args, "--run") && commandFlagValue(args, "--out-dir") == "" {
+		args = append(args, "--out-dir", filepath.Join(workspace, ".artifacts", "test-runs", runID, "live"))
+	}
+	started := time.Now().UTC()
+	if err := runStagingE2ETest(args); err != nil {
+		return err
+	}
+	if !hasFlag(args, "--run") {
+		return nil
+	}
+	return writeCaseFeatureEvidence(
+		workspace, commandFlagValue(args, "--out-dir"), "LIVE-STG-ONBOARD-001", runID,
+		"staging", "", started, time.Now().UTC(),
+	)
+}
+
+func commandFlagValue(args []string, name string) string {
+	for i, arg := range args {
+		if arg == name && i+1 < len(args) {
+			return args[i+1]
+		}
+		if key, value, ok := strings.Cut(arg, "="); ok && key == name {
+			return value
+		}
+	}
+	return ""
+}
+
+func removeFlagValue(args []string, name string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		if args[i] == name {
+			if i+1 < len(args) {
+				i++
+			}
+			continue
+		}
+		if key, _, ok := strings.Cut(args[i], "="); ok && key == name {
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return out
 }
 
 func ensureTestLiveMode(args []string) []string {
@@ -2448,6 +2509,7 @@ type stagingE2EMultiBrandConfig struct {
 }
 
 func runStagingE2EMultiBrandDataSetup(cfg stagingE2EMultiBrandConfig) error {
+	started := time.Now().UTC()
 	plan, err := loadLoadTestBrandPlan(cfg.BrandPlanFile)
 	if err != nil {
 		return err
@@ -2606,6 +2668,14 @@ func runStagingE2EMultiBrandDataSetup(cfg stagingE2EMultiBrandConfig) error {
 	}
 	if overall != "pass" {
 		return exitCode(1)
+	}
+	if cfg.EmailOwners {
+		if err := writeCaseFeatureEvidence(
+			cfg.Workspace, cfg.OutDir, "E2E-LOAD-ACCOUNT-001", cfg.RunID,
+			"staging", "", started, time.Now().UTC(),
+		); err != nil {
+			return err
+		}
 	}
 	return nil
 }

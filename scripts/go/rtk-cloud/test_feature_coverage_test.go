@@ -50,7 +50,7 @@ func featureCoverageFixture(t *testing.T) (string, testCatalog, featureCaseEvide
 		Requirements: []featureRequirementAssertion{{
 			RequirementID: requirement.ID, Status: "PASS",
 			Assertions: map[string]string{"product_flow": "PASS"},
-			Evidence:   []featureCoverageEvidenceFile{{Path: evidencePath, SHA256: fmt.Sprintf("%x", sum)}},
+			Evidence:   []featureCoverageEvidenceFile{{Path: evidencePath, SHA256: fmt.Sprintf("%x", sum), Type: "json"}},
 		}},
 	}
 	return workspace, catalog, item, now
@@ -87,6 +87,15 @@ func TestFeatureCoveragePassesQualifiedRequirementEvidence(t *testing.T) {
 	report := assessFeatureCoverage(workspace, catalog, []featureEvidenceManifestV2{{Cases: []featureCaseEvidenceV2{item}}}, []string{"FEAT-TEST-FLOW-001"}, "pr", now)
 	if report.Overall != "PASS" || report.Pass != 1 || report.Required != 1 {
 		t.Fatalf("qualified product evidence should pass: %+v", report)
+	}
+}
+
+func TestFeatureCoverageRequiresEveryDeclaredEvidenceType(t *testing.T) {
+	workspace, catalog, item, now := featureCoverageFixture(t)
+	catalog.Features[0].Requirements[0].Evidence = []string{"json", "logs"}
+	report := assessFeatureCoverage(workspace, catalog, []featureEvidenceManifestV2{{Cases: []featureCaseEvidenceV2{item}}}, []string{"FEAT-TEST-FLOW-001"}, "pr", now)
+	if report.Overall != "FAIL" || !strings.Contains(report.Requirements[0].Detail, "logs") {
+		t.Fatalf("missing declared evidence type must fail: %+v", report)
 	}
 }
 
@@ -154,11 +163,19 @@ func TestFeatureEvidenceContractRejectsMalformedCases(t *testing.T) {
 		"wrong environment":  func(value *featureEvidenceManifestV2) { value.Cases[0].Environment = "production" },
 		"missing commit":     func(value *featureEvidenceManifestV2) { value.Cases[0].WorkspaceCommit = "" },
 		"invalid timestamps": func(value *featureEvidenceManifestV2) { value.Cases[0].CompletedAt = "yesterday" },
+		"missing assertion":  func(value *featureEvidenceManifestV2) { value.Cases[0].Requirements = nil },
+		"empty assertion": func(value *featureEvidenceManifestV2) {
+			value.Cases[0].Requirements[0].Assertions = nil
+		},
+		"duplicate assertion": func(value *featureEvidenceManifestV2) {
+			value.Cases[0].Requirements = append(value.Cases[0].Requirements, value.Cases[0].Requirements[0])
+		},
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
 			value := base
 			value.Cases = append([]featureCaseEvidenceV2(nil), base.Cases...)
+			value.Cases[0].Requirements = append([]featureRequirementAssertion(nil), base.Cases[0].Requirements...)
 			mutate(&value)
 			err := validateFeatureEvidenceManifestV2(value, catalog)
 			if name == "skip" {
@@ -202,6 +219,23 @@ func TestFeatureCoverageCommandAuditSelectAndCheck(t *testing.T) {
 	}
 	if err := runTestFeatureCoverage([]string{"audit", "--unknown"}); err == nil {
 		t.Fatal("invalid flag accepted")
+	}
+	recordDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(recordDir, "evidence.json"), []byte(`{"status":"PASS"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(recordDir, "run.log"), []byte("status=PASS\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second).Format(time.RFC3339)
+	if err := runTestFeatureCoverage([]string{
+		"record", "--test-id", "E2E-CA-SIGNUP-EMAIL-001", "--run-id", "record-command-test",
+		"--environment", "staging", "--started-at", now, "--completed-at", now, "--output-dir", recordDir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runTestFeatureCoverage([]string{"record"}); err == nil {
+		t.Fatal("incomplete record arguments accepted")
 	}
 }
 
@@ -315,6 +349,8 @@ func TestWriteFeatureCoverageReportAndCommitValidation(t *testing.T) {
 		}},
 	}
 	dir := t.TempDir()
+	summary := filepath.Join(t.TempDir(), "summary.md")
+	t.Setenv("GITHUB_STEP_SUMMARY", summary)
 	if err := writeFeatureCoverageReport(dir, report); err != nil {
 		t.Fatal(err)
 	}
@@ -325,6 +361,10 @@ func TestWriteFeatureCoverageReportAndCommitValidation(t *testing.T) {
 	var decoded featureCoverageReport
 	if err := json.Unmarshal(raw, &decoded); err != nil || decoded.Missing != 1 {
 		t.Fatalf("report JSON = %+v, %v", decoded, err)
+	}
+	summaryRaw, err := os.ReadFile(summary)
+	if err != nil || !strings.Contains(string(summaryRaw), "Product requirements") || !strings.Contains(string(summaryRaw), "proof \\| absent") {
+		t.Fatalf("GitHub summary missing feature report: %v\n%s", err, summaryRaw)
 	}
 	if err := validateFeatureCommits(workspace, catalog.Features[0], nil); err != nil {
 		t.Fatalf("workspace-only anchor should pass: %v", err)
@@ -380,5 +420,75 @@ func TestFeatureEvidenceFileErrorsAndFailedAssertion(t *testing.T) {
 	report = assessFeatureCoverage(workspace, catalog, []featureEvidenceManifestV2{{Cases: []featureCaseEvidenceV2{item}}}, []string{"FEAT-TEST-FLOW-001"}, "pr", now)
 	if report.Overall != "FAIL" {
 		t.Fatal("environment mismatch passed")
+	}
+}
+
+func TestWriteCaseFeatureEvidenceProducesCompleteLiveContract(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "logs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "summary.json"), []byte(`{"overall":"pass"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "TEST_REPORT.md"), []byte("# PASS\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "logs", "run.log"), []byte("status=PASS\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	completed := time.Now().UTC().Truncate(time.Second)
+	if err := writeCaseFeatureEvidence(
+		workspace, dir, "LIVE-STG-ONBOARD-001", "live-contract-test",
+		"staging", "", started, completed,
+	); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"feature-evidence.json", "feature-results.json", "feature-junit.xml", "FEATURE_REPORT.md"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	catalog, err := loadAndValidateTestCatalog(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifests, _, err := loadFeatureEvidence(workspace, catalog, filepath.Join(dir, "feature-evidence.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertion := manifests[0].Cases[0].Requirements[0]
+	if missing := missingFeatureEvidenceTypes([]string{"json", "markdown", "logs"}, assertion.Evidence); len(missing) != 0 {
+		t.Fatalf("live evidence types missing: %v", missing)
+	}
+}
+
+func TestWriteCaseFeatureEvidenceRejectsMissingRequiredTypeAndSecrets(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	missingLogs := t.TempDir()
+	if err := os.WriteFile(filepath.Join(missingLogs, "evidence.json"), []byte(`{"status":"PASS"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeCaseFeatureEvidence(workspace, missingLogs, "E2E-CA-SIGNUP-EMAIL-001", "missing-log-test", "staging", "", now, now); err == nil || !strings.Contains(err.Error(), "logs") {
+		t.Fatalf("missing log evidence error = %v", err)
+	}
+	secretDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(secretDir, "evidence.json"), []byte(`{"status":"PASS","password":"not-redacted"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(secretDir, "run.log"), []byte("status=PASS\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeCaseFeatureEvidence(workspace, secretDir, "E2E-CA-SIGNUP-EMAIL-001", "secret-test", "staging", "", now, now); err == nil || !strings.Contains(err.Error(), "unredacted") {
+		t.Fatalf("secret evidence error = %v", err)
 	}
 }

@@ -809,7 +809,7 @@ func writeNormalizedFeatureEvidence(dir string, manifest featureEvidenceManifest
 		}
 		refs := make([]featureCoverageEvidenceFile, 0, len(item.Evidence))
 		for _, ref := range item.Evidence {
-			refs = append(refs, featureCoverageEvidenceFile{Path: ref.Path, SHA256: ref.SHA256})
+			refs = append(refs, featureCoverageEvidenceFile{Path: ref.Path, SHA256: ref.SHA256, Type: featureEvidenceType(ref.Path)})
 		}
 		status := normalizeFeatureEvidenceStatus(item.Status)
 		assertions := make([]featureRequirementAssertion, 0, len(tc.Verifies))
@@ -948,8 +948,9 @@ func findUnredactedFeatureEvidence(dir string) []string {
 		found := privateKeyPattern.Match(raw) || bearerPattern.Match(raw) || cookiePattern.Match(raw)
 		for _, match := range jsonSecretPattern.FindAllSubmatch(raw, -1) {
 			value := strings.ToLower(strings.TrimSpace(string(match[1])))
-			if value != "" && !strings.Contains(value, "redact") && !strings.Contains(value, "***") &&
-				!strings.HasPrefix(value, "${") && !strings.HasPrefix(value, "<") {
+			safePlaceholder := value == "redacted" || value == "[redacted]" || value == "<redacted>" ||
+				value == "***" || strings.HasPrefix(value, "${")
+			if value != "" && !safePlaceholder {
 				found = true
 			}
 		}

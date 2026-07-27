@@ -152,6 +152,29 @@ func TestCatalogRequiredRequirementRejectsSupportingOnlyProof(t *testing.T) {
 	}
 }
 
+func TestCatalogSurfaceExclusionRequiresOwnedUnexpiredReason(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := loadAndValidateTestCatalog(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	surface := &catalog.Features[0].Surfaces[0]
+	surface.Exclusion = "temporary compatibility surface"
+	surface.Owner = "cloud_platform"
+	surface.Expires = "2000-01-01"
+	if err := validateFeatureRequirements(workspace, catalog, "test-ui"); err == nil || !strings.Contains(err.Error(), "expired") {
+		t.Fatalf("expired surface exclusion accepted: %v", err)
+	}
+	surface.Expires = "2999-01-01"
+	surface.Owner = "unknown"
+	if err := validateFeatureRequirements(workspace, catalog, "test-ui"); err == nil || !strings.Contains(err.Error(), "requires owner") {
+		t.Fatalf("unowned surface exclusion accepted: %v", err)
+	}
+}
+
 func TestCatalogRejectsOrphanRequirementReference(t *testing.T) {
 	catalog := testCatalog{
 		Features: []testCatalogFeature{{
