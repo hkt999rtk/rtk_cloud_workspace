@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -154,6 +156,110 @@ func TestSpecImpactMarksRevisionChangesAndIllegalRemoval(t *testing.T) {
 	report = compareSpecInventories("base", "head", before, specInventory{})
 	if len(report.Changes) != 1 || report.Changes[0].Kind != "REMOVED" {
 		t.Fatalf("removed requirement impact=%+v", report.Changes)
+	}
+}
+
+func TestSpecInventoryCommandsWriteReportsAndEnforceMode(t *testing.T) {
+	output := t.TempDir()
+	if err := runTestSpecInventory([]string{"check", "--mode", "observe", "--output-dir", output}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"spec-inventory.json", "SPEC_TRACEABILITY.md"} {
+		if _, err := os.Stat(filepath.Join(output, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := runTestSpecInventory([]string{"render", "--mode", "observe", "--output-dir", t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runTestSpecInventory([]string{"check", "--mode", "required", "--output-dir", t.TempDir()}); err == nil ||
+		!strings.Contains(err.Error(), "blocking findings") {
+		t.Fatalf("required mode accepted known OpenAPI gaps: %v", err)
+	}
+	for _, args := range [][]string{{"unknown"}, {"check", "--mode", "invalid"}, {"check", "--unknown"}} {
+		if err := runTestSpecInventory(args); err == nil {
+			t.Fatalf("invalid spec inventory command accepted: %v", args)
+		}
+	}
+}
+
+func TestSpecImpactCommandWritesEmptyHeadComparison(t *testing.T) {
+	output := t.TempDir()
+	if err := runTestSpecImpact([]string{"--base", "HEAD", "--head", "HEAD", "--output-dir", output}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"spec-impact.json", "SPEC_IMPACT.md"} {
+		if _, err := os.Stat(filepath.Join(output, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := runTestSpecImpact(nil); err == nil {
+		t.Fatal("spec impact accepted missing base")
+	}
+	if err := runTestSpecImpact([]string{"--base", "HEAD", "--unknown"}); err == nil {
+		t.Fatal("spec impact accepted an unknown flag")
+	}
+}
+
+func TestSpecRegistryRejectsInvalidSources(t *testing.T) {
+	valid := `schema_version: 1
+sources:
+  - id: SPEC-TEST
+    path: specs/test.md
+    parser: markdown
+    authority: service
+    owner: cloud_platform
+`
+	for name, body := range map[string]string{
+		"schema":    strings.Replace(valid, "schema_version: 1", "schema_version: 2", 1),
+		"owner":     strings.Replace(valid, "cloud_platform", "unknown", 1),
+		"parser":    strings.Replace(valid, "parser: markdown", "parser: pdf", 1),
+		"authority": strings.Replace(valid, "authority: service", "authority: rumor", 1),
+		"path":      strings.Replace(valid, "specs/test.md", "../test.md", 1),
+		"duplicate": valid + `  - id: SPEC-TEST
+    path: specs/other.md
+    parser: markdown
+    authority: service
+    owner: cloud_platform
+`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parseSpecSourceRegistry([]byte(body)); err == nil {
+				t.Fatal("invalid registry accepted")
+			}
+		})
+	}
+	if _, err := parseSpecSourceRegistry([]byte(valid)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSpecParserRejectsMalformedMetadataAndTracksIDs(t *testing.T) {
+	source := specSourceRegistryItem{ID: "SPEC-TEST", Path: "spec.md", Parser: "markdown", Authority: "service", Owner: "cloud_platform"}
+	missingFeatureMetadata := strings.Replace(string(specFixture("Acceptance.")), "<!-- rtk-feature", "<!-- missing-feature", 1)
+	if _, _, err := parseMarkdownSpec(source, []byte(missingFeatureMetadata)); err == nil {
+		t.Fatal("feature without metadata accepted")
+	}
+	missingRequirementMetadata := strings.Replace(string(specFixture("Acceptance.")), "<!-- rtk-requirement", "<!-- missing-requirement", 1)
+	if _, _, err := parseMarkdownSpec(source, []byte(missingRequirementMetadata)); err == nil {
+		t.Fatal("requirement without metadata accepted")
+	}
+	orphan := specFixtureFrontMatter + `
+### [REQ-E2E-TEST-FLOW-001] Orphan
+<!-- rtk-requirement
+acceptance_layer: e2e
+gate: pr
+environments: [ci]
+status: active
+-->
+Acceptance.
+`
+	if _, _, err := parseMarkdownSpec(source, []byte(orphan)); err == nil {
+		t.Fatal("orphan requirement accepted")
+	}
+	ids := scanSpecIDs(specFixture("Acceptance."))
+	if strings.Join(ids, ",") != "FEAT-TEST-FLOW-001,REQ-E2E-TEST-FLOW-001" {
+		t.Fatalf("scan IDs=%v", ids)
 	}
 }
 
