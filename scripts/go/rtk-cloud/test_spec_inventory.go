@@ -213,6 +213,32 @@ func loadSpecInventory(workspace string) (specInventory, error) {
 	})
 }
 
+// loadAvailableSpecInventory supports runner-specific partial checkouts. The
+// registry remains the allow-list, but a test-ui/test-e2e runner only needs the
+// spec repositories present in that job. Central inventory commands always use
+// loadSpecInventory and therefore still require every registered source.
+func loadAvailableSpecInventory(workspace string) (specInventory, error) {
+	registry, err := loadSpecSourceRegistry(workspace)
+	if err != nil {
+		return specInventory{}, err
+	}
+	available := registry
+	available.Sources = nil
+	for _, source := range registry.Sources {
+		if _, statErr := os.Stat(filepath.Join(workspace, filepath.FromSlash(source.Path))); statErr == nil {
+			available.Sources = append(available.Sources, source)
+		} else if !os.IsNotExist(statErr) {
+			return specInventory{}, fmt.Errorf("inspect spec source %s: %w", source.Path, statErr)
+		}
+	}
+	if len(available.Sources) == 0 {
+		return specInventory{}, errors.New("runner checkout contains no registered spec source")
+	}
+	return loadSpecInventoryWithReader(available, func(path string) ([]byte, error) {
+		return os.ReadFile(filepath.Join(workspace, filepath.FromSlash(path)))
+	})
+}
+
 func loadSpecInventoryWithReader(registry specSourceRegistry, readFile func(string) ([]byte, error)) (specInventory, error) {
 	inventory := specInventory{SchemaVersion: specInventorySchema, Sources: registry.Sources}
 	featureIndex, requirementIndex := map[string]int{}, map[string]string{}

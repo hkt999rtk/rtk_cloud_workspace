@@ -172,7 +172,12 @@ func loadAndValidateTestCatalogForRunner(workspace, sourceRunner string) (testCa
 	if len(catalog.Features) != 0 {
 		return testCatalog{}, errors.New("test catalog schema v4 derives features and requirements from registered specs; remove catalog features")
 	}
-	inventory, err := loadSpecInventory(workspace)
+	var inventory specInventory
+	if sourceRunner == "" {
+		inventory, err = loadSpecInventory(workspace)
+	} else {
+		inventory, err = loadAvailableSpecInventory(workspace)
+	}
 	if err != nil {
 		return testCatalog{}, err
 	}
@@ -229,9 +234,11 @@ func loadAndValidateTestCatalogForRunner(workspace, sourceRunner string) (testCa
 		if tc.Layer != "unit" && tc.Layer != "service" && len(tc.Verifies) == 0 {
 			return testCatalog{}, fmt.Errorf("%s %s product case requires verifies", prefix, tc.ID)
 		}
-		for _, requirementID := range append(append([]string{}, tc.Verifies...), tc.Supports...) {
-			if _, ok := requirements[requirementID]; !ok {
-				return testCatalog{}, fmt.Errorf("%s %s references unknown requirement %q", prefix, tc.ID, requirementID)
+		if sourceRunner == "" || tc.Runner == sourceRunner {
+			for _, requirementID := range append(append([]string{}, tc.Verifies...), tc.Supports...) {
+				if _, ok := requirements[requirementID]; !ok {
+					return testCatalog{}, fmt.Errorf("%s %s references unknown requirement %q", prefix, tc.ID, requirementID)
+				}
 			}
 		}
 		if tc.Profile != "" && !catalogProfiles[tc.Profile] {

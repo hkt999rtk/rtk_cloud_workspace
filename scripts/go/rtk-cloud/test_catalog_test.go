@@ -55,6 +55,11 @@ sources:
     parser: markdown
     authority: service
     owner: rtk_cloud_admin
+  - id: SPEC-NOT-CHECKED-OUT
+    path: repos/not-checked-out/docs/SPEC.md
+    parser: markdown
+    authority: service
+    owner: cloud_platform
 `
 	spec := `---
 rtk_spec:
