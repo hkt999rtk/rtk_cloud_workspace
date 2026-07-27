@@ -31,6 +31,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"sort"
 	"strconv"
@@ -1423,7 +1424,7 @@ func runTestUI(args []string) error {
 		if err := runCmd(webRoot, "npm", "ci"); err != nil {
 			return err
 		}
-		if err := runCmd(webRoot, "npx", "playwright", "install", "chromium"); err != nil {
+		if err := runCmd(webRoot, "npx", playwrightInstallArguments(runtime.GOOS)...); err != nil {
 			return err
 		}
 	}
@@ -1580,6 +1581,17 @@ func runTestUI(args []string) error {
 		}
 	}
 	return nil
+}
+
+func playwrightInstallArguments(goos string) []string {
+	// Visual qualification snapshots depend on the same system font and browser
+	// libraries in every Linux runner. Installing Chromium alone can render a
+	// stable but different image from the dedicated UI job, which installs
+	// Playwright's OS dependencies as well.
+	if goos == "linux" {
+		return []string{"playwright", "install", "--with-deps", "chromium"}
+	}
+	return []string{"playwright", "install", "chromium"}
 }
 
 func uiEvidenceEnv(workspace, webRoot, runID, target, environment string, expected []string) (map[string]string, error) {

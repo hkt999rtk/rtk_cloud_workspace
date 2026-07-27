@@ -2,6 +2,7 @@ package main
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -10,6 +11,15 @@ func TestTestLayerCommandsAreRegistered(t *testing.T) {
 		if _, ok := commands[name]; !ok {
 			t.Fatalf("command %q is not registered", name)
 		}
+	}
+}
+
+func TestPlaywrightInstallArgumentsIncludeLinuxSystemDependencies(t *testing.T) {
+	if got, want := strings.Join(playwrightInstallArguments("linux"), " "), "playwright install --with-deps chromium"; got != want {
+		t.Fatalf("linux install arguments = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(playwrightInstallArguments("darwin"), " "), "playwright install chromium"; got != want {
+		t.Fatalf("darwin install arguments = %q, want %q", got, want)
 	}
 }
 
