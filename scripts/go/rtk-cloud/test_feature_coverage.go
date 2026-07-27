@@ -1,0 +1,689 @@
+package main
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+)
+
+const featureEvidenceSchemaV2 = "rtk-cloud-feature-coverage-evidence/v2"
+
+type featureCoverageEvidenceFile struct {
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+}
+
+type featureRequirementAssertion struct {
+	RequirementID string                        `json:"requirement_id"`
+	Status        string                        `json:"status"`
+	Assessment    string                        `json:"assessment,omitempty"`
+	Assertions    map[string]string             `json:"assertions,omitempty"`
+	Evidence      []featureCoverageEvidenceFile `json:"evidence,omitempty"`
+}
+
+type featureCaseEvidenceV2 struct {
+	TestID          string                        `json:"test_id"`
+	Status          string                        `json:"status"`
+	Assessment      string                        `json:"assessment,omitempty"`
+	Environment     string                        `json:"environment"`
+	Target          string                        `json:"target,omitempty"`
+	StartedAt       string                        `json:"started_at"`
+	CompletedAt     string                        `json:"completed_at"`
+	WorkspaceCommit string                        `json:"workspace_commit"`
+	Commits         map[string]string             `json:"commits,omitempty"`
+	Requirements    []featureRequirementAssertion `json:"requirements"`
+}
+
+type featureEvidenceManifestV2 struct {
+	SchemaVersion string                  `json:"schema_version"`
+	RunID         string                  `json:"run_id"`
+	GeneratedAt   string                  `json:"generated_at"`
+	Cases         []featureCaseEvidenceV2 `json:"cases"`
+}
+
+type featureRequirementResult struct {
+	FeatureID     string   `json:"feature_id"`
+	RequirementID string   `json:"requirement_id"`
+	Risk          string   `json:"risk"`
+	Gate          string   `json:"gate"`
+	Status        string   `json:"status"`
+	TestIDs       []string `json:"test_ids,omitempty"`
+	Detail        string   `json:"detail,omitempty"`
+}
+
+type featureCoverageReport struct {
+	SchemaVersion  string                     `json:"schema_version"`
+	GeneratedAt    string                     `json:"generated_at"`
+	Mode           string                     `json:"mode"`
+	Overall        string                     `json:"overall"`
+	Required       int                        `json:"required"`
+	Pass           int                        `json:"pass"`
+	Missing        int                        `json:"missing"`
+	Failed         int                        `json:"failed"`
+	Stale          int                        `json:"stale"`
+	DeferredLive   int                        `json:"deferred_live"`
+	CodeCoverage   string                     `json:"code_coverage"`
+	Requirements   []featureRequirementResult `json:"requirements"`
+	Selected       []string                   `json:"selected_features,omitempty"`
+	EvidenceInputs []string                   `json:"evidence_inputs,omitempty"`
+}
+
+func runTestFeatureCoverage(args []string) error {
+	action := "audit"
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		action, args = args[0], args[1:]
+	}
+	if action != "audit" && action != "check" && action != "select" {
+		return errors.New("usage: test-feature-coverage [audit|select|check] [--evidence PATHS] [--mode pr|main|release] [--output-dir PATH]")
+	}
+	fs := flag.NewFlagSet("test-feature-coverage "+action, flag.ContinueOnError)
+	var evidence, mode, outputDir, base, head string
+	fs.StringVar(&evidence, "evidence", "", "comma-separated evidence files or directories")
+	fs.StringVar(&mode, "mode", "pr", "qualification mode: pr, main, or release")
+	fs.StringVar(&outputDir, "output-dir", ".artifacts/feature-coverage", "report directory")
+	fs.StringVar(&base, "base", "", "selection base commit")
+	fs.StringVar(&head, "head", "HEAD", "selection head commit")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if mode != "pr" && mode != "main" && mode != "release" {
+		return fmt.Errorf("unsupported mode %q", mode)
+	}
+	workspace, err := workspaceRoot()
+	if err != nil {
+		return err
+	}
+	catalog, err := loadAndValidateTestCatalog(workspace)
+	if err != nil {
+		return err
+	}
+	selected, err := selectCatalogFeatures(workspace, catalog, base, head)
+	if err != nil {
+		return err
+	}
+	if action == "select" {
+		return writeFeatureSelection(outputDir, selected)
+	}
+	manifests, inputs, err := loadFeatureEvidence(workspace, catalog, evidence)
+	if err != nil {
+		return err
+	}
+	report := assessFeatureCoverage(workspace, catalog, manifests, selected, mode, time.Now().UTC())
+	report.EvidenceInputs = inputs
+	if err := writeFeatureCoverageReport(outputDir, report); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stdout, "feature coverage: %s (%d/%d required PASS; code coverage is reported separately)\n", report.Overall, report.Pass, report.Required)
+	if action == "check" && report.Overall != "PASS" {
+		return fmt.Errorf("feature coverage %s: %d missing, %d failed, %d stale", report.Overall, report.Missing, report.Failed, report.Stale)
+	}
+	return nil
+}
+
+func selectCatalogFeatures(workspace string, catalog testCatalog, base, head string) ([]string, error) {
+	all := make([]string, 0, len(catalog.Features))
+	for _, feature := range catalog.Features {
+		if feature.Status == "active" {
+			all = append(all, feature.ID)
+		}
+	}
+	sort.Strings(all)
+	if strings.TrimSpace(base) == "" {
+		return all, nil
+	}
+	raw, err := gitOutput(workspace, "diff", "--name-only", base+"..."+head)
+	if err != nil {
+		return nil, fmt.Errorf("select feature changes: %w", err)
+	}
+	paths := strings.Fields(raw)
+	for _, path := range paths {
+		if path == "tests/catalog.yaml" || strings.HasPrefix(path, "scripts/go/rtk-cloud/test_feature_coverage") ||
+			strings.HasPrefix(path, ".github/workflows/") || strings.HasPrefix(path, "scripts/test_") {
+			return all, nil
+		}
+	}
+	var selected []string
+	matchedPaths := map[string]bool{}
+	for _, feature := range catalog.Features {
+		if feature.Status != "active" {
+			continue
+		}
+		featureSelected := false
+		for _, pattern := range feature.ChangePaths {
+			re, regexErr := catalogGlobRegexp(pattern)
+			if regexErr != nil {
+				return nil, regexErr
+			}
+			for _, path := range paths {
+				if re.MatchString(path) {
+					matchedPaths[path] = true
+					featureSelected = true
+				}
+			}
+		}
+		if featureSelected {
+			selected = append(selected, feature.ID)
+		}
+	}
+	for _, path := range paths {
+		if governedProductSurfacePath(path) && !matchedPaths[path] {
+			return nil, fmt.Errorf("product surface %s is not mapped to a catalog feature", path)
+		}
+	}
+	sort.Strings(selected)
+	return selected, nil
+}
+
+func governedProductSurfacePath(path string) bool {
+	path = filepath.ToSlash(path)
+	if strings.HasPrefix(path, "repos/rtk_account_manager/") {
+		return strings.HasSuffix(path, ".go") || strings.Contains(path, "/web/")
+	}
+	if strings.HasPrefix(path, "repos/rtk_cloud_admin/") {
+		return strings.HasSuffix(path, ".go") || strings.Contains(path, "/web/src/")
+	}
+	if strings.HasPrefix(path, "repos/rtk_cloud_client/") {
+		return strings.Contains(path, "/src/") || strings.Contains(path, "/include/")
+	}
+	if strings.HasPrefix(path, "repos/rtk_cloud_frontend/") {
+		return strings.HasSuffix(path, ".go")
+	}
+	return strings.HasPrefix(path, "scripts/") && (strings.HasSuffix(path, ".sh") || strings.HasSuffix(path, ".py"))
+}
+
+func loadFeatureEvidence(workspace string, catalog testCatalog, rawPaths string) ([]featureEvidenceManifestV2, []string, error) {
+	if strings.TrimSpace(rawPaths) == "" {
+		return nil, nil, nil
+	}
+	var files []string
+	for _, value := range strings.Split(rawPaths, ",") {
+		path := strings.TrimSpace(value)
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(workspace, path)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !info.IsDir() {
+			files = append(files, path)
+			continue
+		}
+		err = filepath.WalkDir(path, func(candidate string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if !entry.IsDir() && (entry.Name() == "feature-evidence.json" || entry.Name() == "evidence-manifest.json") {
+				files = append(files, candidate)
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	sort.Strings(files)
+	var manifests []featureEvidenceManifestV2
+	for _, path := range files {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return nil, nil, err
+		}
+		var header struct {
+			SchemaVersion json.RawMessage `json:"schema_version"`
+		}
+		if err := json.Unmarshal(raw, &header); err != nil {
+			return nil, nil, fmt.Errorf("parse %s: %w", path, err)
+		}
+		var manifest featureEvidenceManifestV2
+		if string(header.SchemaVersion) == `"`+featureEvidenceSchemaV2+`"` {
+			if err := json.Unmarshal(raw, &manifest); err != nil {
+				return nil, nil, fmt.Errorf("parse %s: %w", path, err)
+			}
+		} else {
+			var adaptErr error
+			manifest, adaptErr = adaptLegacyFeatureEvidence(raw, path, catalog)
+			if adaptErr != nil {
+				return nil, nil, adaptErr
+			}
+		}
+		if err := validateFeatureEvidenceManifestV2(manifest, catalog); err != nil {
+			return nil, nil, fmt.Errorf("%s: %w", path, err)
+		}
+		for caseIndex := range manifest.Cases {
+			for assertionIndex := range manifest.Cases[caseIndex].Requirements {
+				for evidenceIndex := range manifest.Cases[caseIndex].Requirements[assertionIndex].Evidence {
+					ref := &manifest.Cases[caseIndex].Requirements[assertionIndex].Evidence[evidenceIndex]
+					if !filepath.IsAbs(ref.Path) {
+						ref.Path = filepath.Join(filepath.Dir(path), ref.Path)
+					}
+				}
+			}
+		}
+		manifests = append(manifests, manifest)
+	}
+	return manifests, files, nil
+}
+
+func validateFeatureEvidenceManifestV2(manifest featureEvidenceManifestV2, catalog testCatalog) error {
+	if strings.TrimSpace(manifest.RunID) == "" {
+		return errors.New("run_id is required")
+	}
+	if _, err := time.Parse(time.RFC3339, manifest.GeneratedAt); err != nil {
+		return errors.New("generated_at must be RFC3339")
+	}
+	allowedStatus := map[string]bool{"PASS": true, "FAIL": true, "INCOMPLETE": true, "SKIP": true, "STALE": true}
+	for _, item := range manifest.Cases {
+		tc, ok := catalogCaseByID(catalog.Cases, item.TestID)
+		if !ok {
+			return fmt.Errorf("unknown test_id %s", item.TestID)
+		}
+		if !allowedStatus[item.Status] {
+			return fmt.Errorf("%s has invalid status %q", item.TestID, item.Status)
+		}
+		if !catalogEnvironments[item.Environment] {
+			return fmt.Errorf("%s has invalid environment %q", item.TestID, item.Environment)
+		}
+		if item.Target != "" && !catalogTargets[item.Target] {
+			return fmt.Errorf("%s has invalid target %q", item.TestID, item.Target)
+		}
+		started, startErr := time.Parse(time.RFC3339, item.StartedAt)
+		completed, completeErr := time.Parse(time.RFC3339, item.CompletedAt)
+		if startErr != nil || completeErr != nil || completed.Before(started) {
+			return fmt.Errorf("%s has invalid start/completion timestamps", item.TestID)
+		}
+		if strings.TrimSpace(item.WorkspaceCommit) == "" {
+			return fmt.Errorf("%s workspace_commit is required", item.TestID)
+		}
+		for _, assertion := range item.Requirements {
+			if _, ok := catalogRequirementIndex(catalog)[assertion.RequirementID]; !ok {
+				return fmt.Errorf("%s has unknown requirement assertion %s", item.TestID, assertion.RequirementID)
+			}
+			if !catalogContainsString(tc.Verifies, assertion.RequirementID) {
+				return fmt.Errorf("%s is not mapped to requirement %s", item.TestID, assertion.RequirementID)
+			}
+			if !allowedStatus[assertion.Status] {
+				return fmt.Errorf("%s requirement %s has invalid status %q", item.TestID, assertion.RequirementID, assertion.Status)
+			}
+		}
+	}
+	return nil
+}
+
+func normalizeFeatureEvidenceStatus(status string) string {
+	switch strings.ToUpper(status) {
+	case "PASS", "FAIL", "INCOMPLETE", "SKIP", "STALE":
+		return strings.ToUpper(status)
+	default:
+		return "INCOMPLETE"
+	}
+}
+
+func adaptLegacyFeatureEvidence(raw []byte, path string, catalog testCatalog) (featureEvidenceManifestV2, error) {
+	var legacy struct {
+		SchemaVersion   any               `json:"schema_version"`
+		RunID           string            `json:"run_id"`
+		Environment     string            `json:"environment"`
+		Target          string            `json:"target"`
+		GeneratedAt     string            `json:"generated_at"`
+		WorkspaceCommit string            `json:"workspace_commit"`
+		SubmoduleCommit string            `json:"submodule_commit"`
+		Commits         map[string]string `json:"commits"`
+		Cases           []struct {
+			TestID           string                `json:"test_id"`
+			Status           string                `json:"status"`
+			Assessment       string                `json:"assessment"`
+			CompletedAt      string                `json:"completed_at"`
+			GeneratedAt      string                `json:"generated_at"`
+			WorkspaceCommit  string                `json:"workspace_commit"`
+			SubmoduleCommit  string                `json:"submodule_commit"`
+			ScreenshotPath   string                `json:"screenshot_path"`
+			ScreenshotSHA256 string                `json:"screenshot_sha256"`
+			Evidence         []featureEvidenceFile `json:"evidence"`
+			Commits          map[string]string     `json:"commits"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &legacy); err != nil {
+		return featureEvidenceManifestV2{}, fmt.Errorf("parse legacy evidence %s: %w", path, err)
+	}
+	if legacy.RunID == "" || len(legacy.Cases) == 0 {
+		return featureEvidenceManifestV2{}, fmt.Errorf("%s is neither evidence manifest v2 nor a supported UI/feature manifest", path)
+	}
+	out := featureEvidenceManifestV2{SchemaVersion: featureEvidenceSchemaV2, RunID: legacy.RunID, GeneratedAt: legacy.GeneratedAt}
+	for _, item := range legacy.Cases {
+		tc, ok := catalogCaseByID(catalog.Cases, item.TestID)
+		if !ok {
+			continue
+		}
+		status := strings.ToUpper(item.Status)
+		if status == "" {
+			status = strings.ToUpper(item.Assessment)
+		}
+		status = normalizeFeatureEvidenceStatus(status)
+		completed := item.CompletedAt
+		if completed == "" {
+			completed = item.GeneratedAt
+		}
+		if completed == "" {
+			completed = legacy.GeneratedAt
+		}
+		workspaceCommit := item.WorkspaceCommit
+		if workspaceCommit == "" {
+			workspaceCommit = legacy.WorkspaceCommit
+		}
+		if workspaceCommit == "" {
+			workspaceCommit = legacy.Commits["workspace"]
+		}
+		commits := item.Commits
+		if commits == nil {
+			commits = map[string]string{}
+			for key, value := range legacy.Commits {
+				commits[key] = value
+			}
+		}
+		submodule := item.SubmoduleCommit
+		if submodule == "" {
+			submodule = legacy.SubmoduleCommit
+		}
+		if submodule != "" && strings.HasPrefix(item.TestID, "UI-CA-") {
+			commits["cloud_admin"] = submodule
+		}
+		var refs []featureCoverageEvidenceFile
+		if item.ScreenshotPath != "" {
+			refs = append(refs, featureCoverageEvidenceFile{Path: item.ScreenshotPath, SHA256: item.ScreenshotSHA256})
+		}
+		for _, ref := range item.Evidence {
+			refs = append(refs, featureCoverageEvidenceFile{Path: ref.Path, SHA256: ref.SHA256})
+		}
+		var assertions []featureRequirementAssertion
+		// Legacy adapters are safe only for one-to-one cases. Multi-requirement
+		// cases must migrate to v2 and report each assertion explicitly.
+		if len(tc.Verifies) == 1 {
+			assertions = append(assertions, featureRequirementAssertion{
+				RequirementID: tc.Verifies[0], Status: status, Assessment: item.Assessment,
+				Assertions: map[string]string{"case_assessment": status}, Evidence: refs,
+			})
+		}
+		out.Cases = append(out.Cases, featureCaseEvidenceV2{
+			TestID: item.TestID, Status: status, Assessment: item.Assessment,
+			Environment: legacy.Environment, Target: legacy.Target, StartedAt: completed, CompletedAt: completed,
+			WorkspaceCommit: workspaceCommit, Commits: commits, Requirements: assertions,
+		})
+	}
+	return out, nil
+}
+
+func assessFeatureCoverage(workspace string, catalog testCatalog, manifests []featureEvidenceManifestV2, selected []string, mode string, now time.Time) featureCoverageReport {
+	report := featureCoverageReport{
+		SchemaVersion: featureEvidenceSchemaV2, GeneratedAt: now.Format(time.RFC3339),
+		Mode: mode, Overall: "PASS", CodeCoverage: "SEPARATE_NOT_SCORED", Selected: selected,
+	}
+	selectedSet := map[string]bool{}
+	for _, id := range selected {
+		selectedSet[id] = true
+	}
+	caseByID := map[string]testCatalogCase{}
+	for _, tc := range catalog.Cases {
+		caseByID[tc.ID] = tc
+	}
+	var allCases []featureCaseEvidenceV2
+	for _, manifest := range manifests {
+		allCases = append(allCases, manifest.Cases...)
+	}
+	for _, feature := range catalog.Features {
+		if feature.Status != "active" || !selectedSet[feature.ID] {
+			continue
+		}
+		for _, requirement := range feature.Requirements {
+			if requirement.Status != "active" || !requirementRequired(requirement) {
+				continue
+			}
+			result := featureRequirementResult{FeatureID: feature.ID, RequirementID: requirement.ID, Risk: feature.Risk, Gate: requirement.Gate}
+			if !requirementEvaluatedInMode(requirement, mode) {
+				result.Status, result.Detail = "DEFERRED_LIVE", "not executable in this gate; no PASS credit awarded"
+				report.DeferredLive++
+				report.Requirements = append(report.Requirements, result)
+				continue
+			}
+			report.Required++
+			result.Status, result.Detail, result.TestIDs = evaluateRequirementEvidence(workspace, requirement, feature, caseByID, allCases, now)
+			switch result.Status {
+			case "PASS":
+				report.Pass++
+			case "STALE":
+				report.Stale++
+			case "FAIL":
+				report.Failed++
+			default:
+				report.Missing++
+			}
+			report.Requirements = append(report.Requirements, result)
+		}
+	}
+	if report.Pass != report.Required {
+		report.Overall = "FAIL"
+	}
+	sort.Slice(report.Requirements, func(i, j int) bool {
+		if report.Requirements[i].FeatureID == report.Requirements[j].FeatureID {
+			return report.Requirements[i].RequirementID < report.Requirements[j].RequirementID
+		}
+		return report.Requirements[i].FeatureID < report.Requirements[j].FeatureID
+	})
+	return report
+}
+
+func requirementEvaluatedInMode(requirement testCatalogRequirement, mode string) bool {
+	switch mode {
+	case "pr":
+		return requirement.Gate == "pr"
+	default:
+		return true
+	}
+}
+
+func evaluateRequirementEvidence(workspace string, requirement testCatalogRequirement, feature testCatalogFeature, cases map[string]testCatalogCase, evidence []featureCaseEvidenceV2, now time.Time) (string, string, []string) {
+	var mapped []string
+	for _, tc := range cases {
+		if tc.Status == "active" && catalogContainsString(tc.Verifies, requirement.ID) {
+			mapped = append(mapped, tc.ID)
+		}
+	}
+	sort.Strings(mapped)
+	if len(mapped) == 0 {
+		return "MISSING", "no mapped qualifying test", nil
+	}
+	requiredTargets := map[string]bool{"": true}
+	if len(requirement.Targets) > 0 {
+		requiredTargets = map[string]bool{}
+		for _, target := range requirement.Targets {
+			requiredTargets[target] = true
+		}
+	}
+	passedTargets := map[string]bool{}
+	staleTargets := map[string]bool{}
+	var lastReason = "no evidence manifest contains an explicit requirement assertion"
+	for _, item := range evidence {
+		tc, ok := cases[item.TestID]
+		if !ok || !catalogContainsString(mapped, item.TestID) || tc.Layer == "unit" || tc.Layer == "service" {
+			continue
+		}
+		if len(tc.Verifies) > 1 && len(item.Requirements) < len(tc.Verifies) {
+			lastReason = "multi-requirement case is missing explicit assertions"
+			continue
+		}
+		for _, assertion := range item.Requirements {
+			if assertion.RequirementID != requirement.ID {
+				continue
+			}
+			if strings.ToUpper(item.Status) != "PASS" || strings.ToUpper(assertion.Status) != "PASS" {
+				lastReason = "case or requirement assertion did not PASS"
+				continue
+			}
+			if len(assertion.Assertions) == 0 {
+				lastReason = "requirement assertion results missing"
+				continue
+			}
+			assertionsPass := true
+			for _, value := range assertion.Assertions {
+				if strings.ToUpper(value) != "PASS" {
+					assertionsPass = false
+					break
+				}
+			}
+			if !assertionsPass {
+				lastReason = "one or more requirement assertions did not PASS"
+				continue
+			}
+			if !catalogContainsString(requirement.Environments, item.Environment) {
+				lastReason = "environment mismatch"
+				continue
+			}
+			targetKey := ""
+			if len(requirement.Targets) > 0 {
+				targetKey = item.Target
+			}
+			if !requiredTargets[targetKey] {
+				lastReason = "target mismatch"
+				continue
+			}
+			if requirement.FreshnessHours > 0 {
+				completed, err := time.Parse(time.RFC3339, item.CompletedAt)
+				if err != nil || now.Sub(completed) > time.Duration(requirement.FreshnessHours)*time.Hour {
+					staleTargets[targetKey] = true
+					lastReason = "evidence exceeds freshness policy"
+					continue
+				}
+			}
+			if strings.TrimSpace(item.WorkspaceCommit) == "" {
+				lastReason = "workspace commit anchor missing"
+				continue
+			}
+			commit, err := gitOutput(workspace, "rev-parse", "HEAD")
+			if err == nil && strings.TrimSpace(commit) != item.WorkspaceCommit {
+				lastReason = "workspace commit mismatch"
+				continue
+			}
+			if err := validateFeatureCommits(workspace, feature, item.Commits); err != nil {
+				lastReason = err.Error()
+				continue
+			}
+			if err := verifyFeatureEvidenceFiles(assertion.Evidence); err != nil {
+				lastReason = err.Error()
+				continue
+			}
+			passedTargets[targetKey] = true
+			if len(passedTargets) == len(requiredTargets) {
+				return "PASS", "qualified evidence for every required target", mapped
+			}
+		}
+	}
+	if len(passedTargets) > 0 {
+		var missing []string
+		for target := range requiredTargets {
+			if !passedTargets[target] {
+				missing = append(missing, target)
+			}
+		}
+		sort.Strings(missing)
+		lastReason = "qualified evidence missing for targets: " + strings.Join(missing, ", ")
+	}
+	for target := range requiredTargets {
+		if !passedTargets[target] && staleTargets[target] {
+			return "STALE", "latest qualifying evidence exceeds freshness policy", mapped
+		}
+	}
+	if strings.Contains(lastReason, "did not PASS") {
+		return "FAIL", lastReason, mapped
+	}
+	return "MISSING", lastReason, mapped
+}
+
+func validateFeatureCommits(workspace string, feature testCatalogFeature, commits map[string]string) error {
+	repositories := map[string]string{
+		"account_manager": filepath.Join(workspace, "repos", "rtk_account_manager"),
+		"cloud_admin":     filepath.Join(workspace, "repos", "rtk_cloud_admin"),
+		"cloud_client":    filepath.Join(workspace, "repos", "rtk_cloud_client"),
+		"video_cloud":     filepath.Join(workspace, "repos", "rtk_video_cloud"),
+		"cloud_logger":    filepath.Join(workspace, "repos", "rtk_cloud_logger"),
+		"contracts":       filepath.Join(workspace, "repos", "rtk_cloud_contracts_doc"),
+		"frontend":        filepath.Join(workspace, "repos", "rtk_cloud_frontend"),
+	}
+	for _, anchor := range feature.CommitAnchors {
+		if anchor == "workspace" {
+			continue
+		}
+		value := strings.TrimSpace(commits[anchor])
+		if value == "" {
+			return fmt.Errorf("feature commit anchor %s missing", anchor)
+		}
+		repository, ok := repositories[anchor]
+		if !ok {
+			return fmt.Errorf("unsupported feature commit anchor %s", anchor)
+		}
+		current, err := gitOutput(repository, "rev-parse", "HEAD")
+		if err != nil || strings.TrimSpace(current) != value {
+			return fmt.Errorf("feature commit anchor %s mismatch", anchor)
+		}
+	}
+	return nil
+}
+
+func verifyFeatureEvidenceFiles(files []featureCoverageEvidenceFile) error {
+	if len(files) == 0 {
+		return errors.New("requirement evidence file missing")
+	}
+	for _, file := range files {
+		raw, err := os.ReadFile(file.Path)
+		if err != nil {
+			return fmt.Errorf("read evidence: %w", err)
+		}
+		sum := sha256.Sum256(raw)
+		if !strings.EqualFold(hex.EncodeToString(sum[:]), file.SHA256) {
+			return errors.New("evidence SHA-256 mismatch")
+		}
+	}
+	return nil
+}
+
+func writeFeatureSelection(outputDir string, selected []string) error {
+	payload := struct {
+		SchemaVersion string   `json:"schema_version"`
+		Features      []string `json:"features"`
+	}{featureEvidenceSchemaV2, selected}
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return err
+	}
+	return writeJSON(filepath.Join(outputDir, "feature-selection.json"), payload)
+}
+
+func writeFeatureCoverageReport(outputDir string, report featureCoverageReport) error {
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return err
+	}
+	if err := writeJSON(filepath.Join(outputDir, "feature-coverage.json"), report); err != nil {
+		return err
+	}
+	var b strings.Builder
+	fmt.Fprintln(&b, "# Feature Coverage")
+	fmt.Fprintln(&b)
+	fmt.Fprintf(&b, "- Overall: **%s**\n", report.Overall)
+	fmt.Fprintf(&b, "- Product requirements: **%d/%d PASS**\n", report.Pass, report.Required)
+	fmt.Fprintf(&b, "- Deferred live (no PASS credit): **%d**\n", report.DeferredLive)
+	fmt.Fprintln(&b, "- Code coverage: **separate quality metric; never contributes to feature coverage**")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "| Feature | Requirement | Risk | Gate | Status | Detail |")
+	fmt.Fprintln(&b, "| --- | --- | --- | --- | --- | --- |")
+	for _, result := range report.Requirements {
+		fmt.Fprintf(&b, "| `%s` | `%s` | `%s` | `%s` | **%s** | %s |\n",
+			result.FeatureID, result.RequirementID, result.Risk, result.Gate, result.Status, escapeMarkdownCell(result.Detail))
+	}
+	return os.WriteFile(filepath.Join(outputDir, "FEATURE_COVERAGE.md"), []byte(b.String()), 0o644)
+}

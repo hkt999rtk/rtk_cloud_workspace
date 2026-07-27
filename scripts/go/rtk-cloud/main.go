@@ -97,6 +97,7 @@ var commands = map[string]commandSpec{
 	"test-data":                        {run: runTestData},
 	"test-e2e":                         {run: runTestE2E},
 	"test-feature":                     {run: runTestFeature},
+	"test-feature-coverage":            {run: runTestFeatureCoverage},
 	"test-live":                        {run: runTestLive},
 	"test-matrix":                      {run: runTestMatrix},
 	"test-services":                    {run: runTestServices},
@@ -1295,6 +1296,8 @@ func runTestE2E(args []string) error {
 	fs := flag.NewFlagSet("test-e2e", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	scripts := fs.Bool("scripts", false, "also run root staging script contract tests")
+	runID := fs.String("run-id", "", "stable evidence run ID")
+	outputDir := fs.String("output-dir", "", "evidence output directory")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -1302,6 +1305,13 @@ func runTestE2E(args []string) error {
 	if err != nil {
 		return err
 	}
+	if *runID == "" {
+		*runID = time.Now().UTC().Format("20060102T150405Z") + "-e2e"
+	}
+	if *outputDir == "" {
+		*outputDir = filepath.Join(workspace, ".artifacts", "test-runs", *runID, "e2e")
+	}
+	started := time.Now().UTC()
 
 	fmt.Fprintln(os.Stdout, "== E2E Go packages ==")
 	if err := runCmdWithEnv(filepath.Join(workspace, "e2e_test"), map[string]string{"GOWORK": "off"}, "go", "test", "./..."); err != nil {
@@ -1332,7 +1342,50 @@ func runTestE2E(args []string) error {
 	if err := runCmd(workspace, "python3", "-m", "unittest", "discover", "-s", "e2e_test/video_cloud/load/tools/tests"); err != nil {
 		return err
 	}
-	return nil
+	return writeDeterministicE2EEvidence(workspace, *outputDir, *runID, started, time.Now().UTC(), *scripts)
+}
+
+func writeDeterministicE2EEvidence(workspace, outputDir, runID string, started, completed time.Time, scripts bool) error {
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return err
+	}
+	commit, err := gitOutput(workspace, "rev-parse", "HEAD")
+	if err != nil {
+		return err
+	}
+	summary := map[string]any{
+		"schema_version": "rtk-cloud-deterministic-e2e-result/v2",
+		"run_id":         runID, "status": "PASS", "assessment": "deterministic E2E harness suites passed",
+		"started_at": started.Format(time.RFC3339), "completed_at": completed.Format(time.RFC3339),
+		"workspace_commit": strings.TrimSpace(commit), "scripts_included": scripts,
+	}
+	resultsPath := filepath.Join(outputDir, "results.json")
+	if err := writeJSON(resultsPath, summary); err != nil {
+		return err
+	}
+	raw, err := os.ReadFile(resultsPath)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(raw)
+	manifest := featureEvidenceManifestV2{
+		SchemaVersion: featureEvidenceSchemaV2, RunID: runID, GeneratedAt: completed.Format(time.RFC3339),
+		Cases: []featureCaseEvidenceV2{{
+			TestID: "SVC-WS-E2E-001", Status: "PASS", Assessment: "supporting deterministic harness evidence",
+			Environment: "ci", StartedAt: started.Format(time.RFC3339), CompletedAt: completed.Format(time.RFC3339), WorkspaceCommit: strings.TrimSpace(commit),
+			Commits: map[string]string{"workspace": strings.TrimSpace(commit)}, Requirements: []featureRequirementAssertion{},
+		}},
+	}
+	if err := writeJSON(filepath.Join(outputDir, "evidence-manifest.json"), manifest); err != nil {
+		return err
+	}
+	junit := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?><testsuite name="workspace-deterministic-e2e" tests="1" failures="0" time="%.3f"><testcase classname="workspace" name="SVC-WS-E2E-001" time="%.3f"><system-out>results.json sha256=%x</system-out></testcase></testsuite>`+"\n",
+		completed.Sub(started).Seconds(), completed.Sub(started).Seconds(), sum)
+	if err := os.WriteFile(filepath.Join(outputDir, "junit.xml"), []byte(junit), 0o644); err != nil {
+		return err
+	}
+	report := fmt.Sprintf("# Deterministic E2E\n\n- Status: **PASS**\n- Test ID: `SVC-WS-E2E-001` (supporting evidence only)\n- Run ID: `%s`\n- Workspace commit: `%s`\n- Results SHA-256: `%x`\n", runID, strings.TrimSpace(commit), sum)
+	return os.WriteFile(filepath.Join(outputDir, "TEST_REPORT.md"), []byte(report), 0o644)
 }
 
 func runTestUI(args []string) error {
@@ -1423,6 +1476,9 @@ func runTestUI(args []string) error {
 			if evidenceErr := validateUIEvidenceRun(env["E2E_TEST_RUN_DIR"], expected); evidenceErr != nil {
 				return evidenceErr
 			}
+			if evidenceErr := writeNormalizedUIEvidence(workspace, env["E2E_TEST_RUN_DIR"]); evidenceErr != nil {
+				return evidenceErr
+			}
 			if runErr != nil {
 				return runErr
 			}
@@ -1501,6 +1557,9 @@ func runTestUI(args []string) error {
 			}
 		}
 		if err := validateUIEvidenceRun(env["E2E_TEST_RUN_DIR"], expected); err != nil {
+			return err
+		}
+		if err := writeNormalizedUIEvidence(workspace, env["E2E_TEST_RUN_DIR"]); err != nil {
 			return err
 		}
 		if runErr != nil {
@@ -1587,6 +1646,21 @@ func validateUIEvidenceRun(runDir string, expected []string) error {
 	}
 	fmt.Fprintf(os.Stdout, "UI evidence valid: %d required cases in %s\n", len(expected), runDir)
 	return nil
+}
+
+func writeNormalizedUIEvidence(workspace, runDir string) error {
+	catalog, err := loadAndValidateTestCatalogForRunner(workspace, "test-ui")
+	if err != nil {
+		return err
+	}
+	manifests, _, err := loadFeatureEvidence(workspace, catalog, filepath.Join(runDir, "evidence-manifest.json"))
+	if err != nil {
+		return err
+	}
+	if len(manifests) != 1 {
+		return errors.New("UI evidence normalization requires exactly one source manifest")
+	}
+	return writeJSON(filepath.Join(runDir, "feature-evidence.json"), manifests[0])
 }
 
 func runTestLive(args []string) error {

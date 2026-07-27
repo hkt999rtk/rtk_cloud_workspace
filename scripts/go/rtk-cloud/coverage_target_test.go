@@ -481,7 +481,7 @@ func TestUICommandRunsDesktopSmokeAndValidatesGeneratedEvidence(t *testing.T) {
 	writeExecutable(t, filepath.Join(binDir, "npm"), "#!/bin/sh\nexit 0\n")
 	writeExecutable(t, filepath.Join(binDir, "npx"), `#!/bin/sh
 /usr/bin/python3 - <<'PY'
-import hashlib, json, os
+import datetime, hashlib, json, os
 root = os.environ["E2E_TEST_RUN_DIR"]
 evidence = os.path.join(root, "evidence")
 os.makedirs(evidence, exist_ok=True)
@@ -499,7 +499,21 @@ for test_id in filter(None, os.environ.get("E2E_EXPECTED_TEST_IDS", "").split(",
         "screenshot_sha256": hashlib.sha256(data).hexdigest(),
     })
 with open(os.path.join(root, "evidence-manifest.json"), "w") as handle:
-    json.dump({"cases": cases}, handle)
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+    for case in cases:
+        case["workspace_commit"] = os.environ["E2E_WORKSPACE_COMMIT"]
+        case["submodule_commit"] = os.environ["E2E_SUBMODULE_COMMIT"]
+        case["generated_at"] = now
+    json.dump({
+        "schema_version": 1,
+        "run_id": os.environ["E2E_TEST_RUN_ID"],
+        "target": os.environ["E2E_TEST_TARGET"],
+        "environment": os.environ["E2E_TEST_ENVIRONMENT"],
+        "workspace_commit": os.environ["E2E_WORKSPACE_COMMIT"],
+        "submodule_commit": os.environ["E2E_SUBMODULE_COMMIT"],
+        "generated_at": now,
+        "cases": cases,
+    }, handle)
 PY
 `)
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))

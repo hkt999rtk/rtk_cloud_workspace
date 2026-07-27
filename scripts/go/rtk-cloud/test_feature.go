@@ -782,7 +782,59 @@ func writeFeatureStageReports(dir string, spec featureRunSpec, manifest featureE
 	if err := writeJSONFile(filepath.Join(dir, "evidence-manifest.json"), manifest); err != nil {
 		return err
 	}
+	if err := writeNormalizedFeatureEvidence(dir, manifest); err != nil {
+		return err
+	}
 	return os.WriteFile(filepath.Join(dir, "TEST_REPORT.md"), renderFeatureReport(manifest), 0o644)
+}
+
+func writeNormalizedFeatureEvidence(dir string, manifest featureEvidenceManifest) error {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		return err
+	}
+	catalog, err := loadAndValidateTestCatalogForRunner(workspace, "test-feature")
+	if err != nil {
+		return err
+	}
+	out := featureEvidenceManifestV2{
+		SchemaVersion: featureEvidenceSchemaV2,
+		RunID:         manifest.RunID,
+		GeneratedAt:   manifest.GeneratedAt,
+	}
+	for _, item := range manifest.Cases {
+		tc, ok := catalogCaseByID(catalog.Cases, item.TestID)
+		if !ok {
+			continue
+		}
+		refs := make([]featureCoverageEvidenceFile, 0, len(item.Evidence))
+		for _, ref := range item.Evidence {
+			refs = append(refs, featureCoverageEvidenceFile{Path: ref.Path, SHA256: ref.SHA256})
+		}
+		status := normalizeFeatureEvidenceStatus(item.Status)
+		assertions := make([]featureRequirementAssertion, 0, len(tc.Verifies))
+		for _, requirementID := range tc.Verifies {
+			assertions = append(assertions, featureRequirementAssertion{
+				RequirementID: requirementID,
+				Status:        status,
+				Assessment:    item.Assessment,
+				Assertions:    map[string]string{"case_assessment": status},
+				Evidence:      refs,
+			})
+		}
+		out.Cases = append(out.Cases, featureCaseEvidenceV2{
+			TestID:          item.TestID,
+			Status:          status,
+			Assessment:      item.Assessment,
+			Environment:     manifest.Environment,
+			StartedAt:       item.StartedAt,
+			CompletedAt:     item.CompletedAt,
+			WorkspaceCommit: item.Commits["workspace"],
+			Commits:         item.Commits,
+			Requirements:    assertions,
+		})
+	}
+	return writeJSONFile(filepath.Join(dir, "feature-evidence.json"), out)
 }
 
 func writeJSONFileIfMissing(path string, value any) error {
