@@ -195,7 +195,7 @@ func TestWorkspaceBaselineRunsAndCanEnforceDeterministicFeatureEvidence(t *testi
 		"--full --desktop --mobile --install",
 		"FEATURE_QUALIFICATION_MODE",
 		"action=check",
-		`--evidence "../../.artifacts/test-runs/$FEATURE_EVIDENCE_RUN_ID"`,
+		`--evidence ".artifacts/test-runs/$FEATURE_EVIDENCE_RUN_ID"`,
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("workspace baseline missing feature governance wiring %q", required)

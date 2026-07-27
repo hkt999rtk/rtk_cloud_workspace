@@ -158,7 +158,7 @@ jobs:
           args=(
             "$action"
             --mode "$coverage_mode"
-            --evidence "../../.artifacts/test-runs/$FEATURE_EVIDENCE_RUN_ID"
+            --evidence ".artifacts/test-runs/$FEATURE_EVIDENCE_RUN_ID"
             --output-dir "../../.artifacts/test-runs/gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-feature-coverage"
           )
           if [ -n "$BASE_REF" ]; then

@@ -1514,7 +1514,9 @@ func runTestUI(args []string) error {
 			// Full qualification cases share a mutable fixture backend (for
 			// example provider lifecycle state), so parallel workers can
 			// invalidate another case's navigation or expected state.
-			playwrightArgs = append(playwrightArgs, "--workers=1")
+			// Visual snapshots run in a separate invocation so lifecycle tests
+			// cannot change the fixture state they compare against.
+			playwrightArgs = append(playwrightArgs, "--workers=1", "--grep-invert", "@visual")
 		}
 		expected, err := expectedUITestIDs(workspace, evidenceTarget, "local", !*full)
 		if err != nil {
@@ -1527,23 +1529,29 @@ func runTestUI(args []string) error {
 		if err := os.RemoveAll(env["E2E_TEST_RUN_DIR"]); err != nil {
 			return fmt.Errorf("reset UI artifact directory: %w", err)
 		}
-		if *full && evidenceTarget == "desktop" {
+		if *full {
 			env["E2E_EXPECTED_TEST_IDS"] = ""
 		}
 		runErr := runCmdWithEnv(webRoot, env, "npx", playwrightArgs...)
-		if *full && evidenceTarget == "desktop" {
-			phases := []struct {
+		if *full {
+			type uiPhase struct {
 				name string
 				grep string
 				env  map[string]string
-			}{
-				{name: "unavailable", grep: "UI-CA-(SOURCE-003|SOURCE-004|REPORT-001|CHIPSET-003|CLOUD-003|DASH-002)", env: map[string]string{"E2E_SCENARIO_MODE": "unavailable", "E2E_PROMETHEUS_MODE": "unavailable"}},
-				{name: "empty", grep: "UI-CA-(SOURCE-001|DASH-003)", env: map[string]string{"E2E_SCENARIO_MODE": "empty", "E2E_PROMETHEUS_MODE": "empty"}},
-				{name: "stale", grep: "UI-CA-(SOURCE-002|DASH-003)", env: map[string]string{"E2E_SCENARIO_MODE": "stale", "E2E_PROMETHEUS_MODE": "stale"}},
-				{name: "expired", grep: "UI-CA-REPORT-002", env: map[string]string{"E2E_RESULT_EXPIRED": "true"}},
-				{name: "partial-failure", grep: "UI-CA-BATCH-001", env: map[string]string{"E2E_SCENARIO_MODE": "partial_failure"}},
-				{name: "slow", grep: "UI-CA-BATCH-002", env: map[string]string{"E2E_SCENARIO_MODE": "slow"}},
-				{name: "member-assign-failure", grep: "UI-CA-CLOUD-006", env: map[string]string{"E2E_FAIL_ACTION": "member-assign"}},
+			}
+			phases := []uiPhase{
+				{name: "visual", grep: "@visual", env: map[string]string{}},
+			}
+			if evidenceTarget == "desktop" {
+				phases = append(phases,
+					uiPhase{name: "unavailable", grep: "UI-CA-(SOURCE-003|SOURCE-004|REPORT-001|CHIPSET-003|CLOUD-003|DASH-002)", env: map[string]string{"E2E_SCENARIO_MODE": "unavailable", "E2E_PROMETHEUS_MODE": "unavailable"}},
+					uiPhase{name: "empty", grep: "UI-CA-(SOURCE-001|DASH-003)", env: map[string]string{"E2E_SCENARIO_MODE": "empty", "E2E_PROMETHEUS_MODE": "empty"}},
+					uiPhase{name: "stale", grep: "UI-CA-(SOURCE-002|DASH-003)", env: map[string]string{"E2E_SCENARIO_MODE": "stale", "E2E_PROMETHEUS_MODE": "stale"}},
+					uiPhase{name: "expired", grep: "UI-CA-REPORT-002", env: map[string]string{"E2E_RESULT_EXPIRED": "true"}},
+					uiPhase{name: "partial-failure", grep: "UI-CA-BATCH-001", env: map[string]string{"E2E_SCENARIO_MODE": "partial_failure"}},
+					uiPhase{name: "slow", grep: "UI-CA-BATCH-002", env: map[string]string{"E2E_SCENARIO_MODE": "slow"}},
+					uiPhase{name: "member-assign-failure", grep: "UI-CA-CLOUD-006", env: map[string]string{"E2E_FAIL_ACTION": "member-assign"}},
+				)
 			}
 			for _, phase := range phases {
 				fmt.Fprintf(os.Stdout, "-- UI phase: %s\n", phase.name)
@@ -1555,7 +1563,7 @@ func runTestUI(args []string) error {
 					phaseEnv[key] = value
 				}
 				phaseEnv["E2E_TEST_PHASE"] = phase.name
-				if err := runCmdWithEnv(webRoot, phaseEnv, "npx", "playwright", "test", "--project=chromium", "--workers=1", "--grep", phase.grep); err != nil {
+				if err := runCmdWithEnv(webRoot, phaseEnv, "npx", "playwright", "test", "--project="+target, "--workers=1", "--grep", phase.grep); err != nil {
 					fmt.Fprintf(os.Stderr, "UI phase %s reported a test failure: %v\n", phase.name, err)
 					runErr = err
 				}
