@@ -386,9 +386,16 @@ run_fixture_preflight() {
 run_single_device_smoke() {
   [[ "$single_device_smoke" == "1" || "$single_device_smoke" == "true" || "$single_device_smoke" == "TRUE" ]] || return 0
   [[ "$runner_mode" == "live" ]] || return 0
-  local ca_bundle db_path smoke_dir brand_file
+  local ca_bundle db_path smoke_dir brand_file smoke_brandname
   ca_bundle="$(device_ca_bundle_path)" || { echo "CERTIFICATE_CA_MISSING: current device CA bundle not found" >&2; return 1; }
-  brand_file="$(printf '%s' "$brandname" | tr '[:upper:]' '[:lower:]')"
+  smoke_brandname="$brandname"
+  if [[ -n "$brand_plan" ]]; then
+    smoke_brandname="$(jq -er '.brands[0].brandname | select(type == "string" and length > 0)' "$brand_plan")" || {
+      echo "FIXTURE_UNAVAILABLE: brand plan has no smoke-test Brand Cloud" >&2
+      return 1
+    }
+  fi
+  brand_file="$(printf '%s' "$smoke_brandname" | tr '[:upper:]' '[:lower:]')"
   db_path="$(local_env_root_path)/artifacts/test-data/${brand_file}-test-data.sqlite"
   [[ -f "$db_path" ]] || { echo "FIXTURE_UNAVAILABLE: test-data DB not found: $db_path" >&2; return 1; }
   smoke_dir="$local_out_dir/single-device-smoke"
@@ -402,7 +409,7 @@ run_single_device_smoke() {
     VIDEO_CLOUD_PUBLIC_BASE_URL="$video_cloud_public_url" \
     GOWORK=off go run . \
       -root "$repo_root" -env-root "$(local_env_root_path)" -test-data-db "$db_path" \
-      -brandname "$brandname" -out-dir "$smoke_dir" -load-model actor-separated-probe \
+      -brandname "$smoke_brandname" -out-dir "$smoke_dir" -load-model actor-separated-probe \
       -max-connected-devices 1 -max-users 1 -concurrency 1 -duration-seconds 5 -mqtt-probe true \
       -run-id "$run_id-single-device-smoke" >"$smoke_dir/console.log" 2>&1); then
     echo "TOKEN_BOOTSTRAP_FAILED or MQTT_SMOKE_FAILED: see $smoke_dir/console.log" >&2

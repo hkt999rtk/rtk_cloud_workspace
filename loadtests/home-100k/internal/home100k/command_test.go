@@ -1873,6 +1873,23 @@ func TestHome100KScriptKeepsVMsForFailedOrIncompleteRunsByDefault(t *testing.T) 
 	}
 }
 
+func TestHome100KSingleDeviceSmokeUsesResolvedBrandPlan(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "home-100k.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, want := range []string{
+		`smoke_brandname="$(jq -er '.brands[0].brandname`,
+		`brand_file="$(printf '%s' "$smoke_brandname"`,
+		`-brandname "$smoke_brandname"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("home-100k.sh single-device smoke missing resolved Brand marker %q", want)
+		}
+	}
+}
+
 func TestHome100KScriptIncludesK8SRuntimeHealthProbe(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "home-100k.sh"))
 	if err != nil {
