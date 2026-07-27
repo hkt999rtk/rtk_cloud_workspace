@@ -9,7 +9,7 @@ import (
 )
 
 func TestRenderTestCatalogIsStableAndSorted(t *testing.T) {
-	catalog := testCatalog{SchemaVersion: 3, Cases: []testCatalogCase{
+	catalog := testCatalog{SchemaVersion: 4, Cases: []testCatalogCase{
 		{ID: "UI-CA-ZETA-002", Title: "Zeta", Layer: "ui", Owner: "owner", Targets: []string{"mobile"}, Environments: []string{"local"}, Runner: "test-ui", Status: "active"},
 		{ID: "E2E-SDK-AUTH-001", Title: "Auth", Layer: "e2e", Owner: "owner", Environments: []string{"staging"}, Runner: "test-e2e", Status: "active"},
 	}}
@@ -44,28 +44,54 @@ func TestExpectedUITestIDsAllowsPartialServiceCheckout(t *testing.T) {
 	if err := os.WriteFile(uiSource, []byte(`test('[UI-CA-SMOKE-001] renders dashboard', async () => {})`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	catalog := `schema_version: 3
-features:
-  - id: FEAT-CA-SMOKE-001
-    title: Dashboard smoke
+	specDir := filepath.Join(workspace, "specs")
+	if err := os.MkdirAll(specDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	registry := `schema_version: 1
+sources:
+  - id: SPEC-CA-SMOKE
+    path: specs/smoke.md
+    parser: markdown
+    authority: service
     owner: rtk_cloud_admin
-    risk: high
-    change_paths: [repos/rtk_cloud_admin/web/e2e/catalog.spec.mjs]
-    commit_anchors: [workspace, cloud_admin]
-    surfaces:
-      - kind: ui-route
-        source: repos/rtk_cloud_admin/web/e2e/catalog.spec.mjs
-        selector: renders dashboard
-    requirements:
-      - id: REQ-UI-CA-SMOKE-001
-        title: Dashboard renders
-        acceptance_layer: ui
-        gate: pr
-        environments: [local]
-        targets: [desktop]
-        evidence: [screenshot]
-        status: active
-    status: active
+`
+	spec := `---
+rtk_spec:
+  id: SPEC-CA-SMOKE
+  status: normative
+  owner: rtk_cloud_admin
+---
+## [FEAT-CA-SMOKE-001] Dashboard smoke
+<!-- rtk-feature
+owner: rtk_cloud_admin
+risk: high
+status: active
+change_paths: [repos/rtk_cloud_admin/web/e2e/catalog.spec.mjs]
+commit_anchors: [workspace, cloud_admin]
+surfaces:
+  - kind: ui-route
+    source: repos/rtk_cloud_admin/web/e2e/catalog.spec.mjs
+    selector: renders dashboard
+-->
+### [REQ-UI-CA-SMOKE-001] Dashboard renders
+<!-- rtk-requirement
+acceptance_layer: ui
+gate: pr
+environments: [local]
+targets: [desktop]
+evidence: [screenshot]
+status: active
+-->
+The dashboard renders.
+`
+	if err := os.WriteFile(filepath.Join(workspace, "tests", "spec-sources.yaml"), []byte(registry), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(specDir, "smoke.md"), []byte(spec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	catalog := `schema_version: 4
 cases:
   - id: UI-CA-SMOKE-001
     title: Renders dashboard
@@ -123,7 +149,7 @@ func TestCatalogGlobRegexpSupportsRecursivePaths(t *testing.T) {
 }
 
 func TestCatalogCoversRequiresMatchingFeature(t *testing.T) {
-	catalog := testCatalog{SchemaVersion: 3, Cases: []testCatalogCase{
+	catalog := testCatalog{SchemaVersion: 4, Cases: []testCatalogCase{
 		{ID: "E2E-HOME-SHADOW-001", Layer: "e2e", Feature: "device-shadow", Status: "active"},
 		{ID: "LOAD-HOME-SHADOW-001", Layer: "load", Feature: "video-webrtc", Status: "active", Covers: []string{"E2E-HOME-SHADOW-001"}},
 	}}
@@ -134,7 +160,7 @@ func TestCatalogCoversRequiresMatchingFeature(t *testing.T) {
 
 func TestCatalogRequiredRequirementRejectsSupportingOnlyProof(t *testing.T) {
 	catalog := testCatalog{
-		SchemaVersion: 3,
+		SchemaVersion: 4,
 		Features: []testCatalogFeature{{
 			ID: "FEAT-TEST-FLOW-001", Status: "active",
 			Requirements: []testCatalogRequirement{{

@@ -151,6 +151,15 @@ jobs:
           if [ "$qualification" = "required" ]; then
             action=check
           fi
+          go run ./rtk-cloud -- test-spec-inventory check \
+            --mode "$qualification" \
+            --output-dir "../../.artifacts/test-runs/gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-spec-inventory"
+          if [ -n "$BASE_REF" ]; then
+            go run ./rtk-cloud -- test-spec-impact \
+              --base "$BASE_REF" \
+              --head HEAD \
+              --output-dir "../../.artifacts/test-runs/gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-spec-impact"
+          fi
           coverage_mode=pr
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             coverage_mode=main
@@ -171,7 +180,10 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: workspace-feature-coverage-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}-feature-coverage/**
+          path: |
+            .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}-feature-coverage/**
+            .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}-spec-inventory/**
+            .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}-spec-impact/**
           if-no-files-found: error
           include-hidden-files: true
           retention-days: ${{ github.event_name == 'pull_request' && 30 || 90 }}

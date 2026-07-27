@@ -315,7 +315,7 @@ func TestUpdateAndCheckUnitInventoryAgainstRunManifests(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(tempWorkspace, "docs"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"catalog.yaml", "coverage.yaml", "unit-inventory.yaml"} {
+	for _, name := range []string{"catalog.yaml", "coverage.yaml", "unit-inventory.yaml", "spec-sources.yaml"} {
 		raw, err := os.ReadFile(filepath.Join(workspace, "tests", name))
 		if err != nil {
 			t.Fatal(err)

@@ -32,9 +32,13 @@ func featureCoverageFixture(t *testing.T) (string, testCatalog, featureCaseEvide
 	requirement := testCatalogRequirement{
 		ID: "REQ-E2E-TEST-FLOW-001", Title: "Product flow completes", AcceptanceLayer: "e2e",
 		Gate: "pr", Environments: []string{"ci"}, Evidence: []string{"json"}, Status: "active",
+		Revision: "fixture-revision",
+		SpecSource: specRequirementSource{
+			DocumentID: "SPEC-TEST", Path: "docs/SPEC.md", Section: "REQ-E2E-TEST-FLOW-001",
+		},
 	}
 	catalog := testCatalog{
-		SchemaVersion: 3,
+		SchemaVersion: 4,
 		Features: []testCatalogFeature{{
 			ID: "FEAT-TEST-FLOW-001", Title: "Test flow", Owner: "cloud_platform", Risk: "critical",
 			CommitAnchors: []string{"workspace"}, Status: "active", Requirements: []testCatalogRequirement{requirement},
@@ -48,7 +52,7 @@ func featureCoverageFixture(t *testing.T) (string, testCatalog, featureCaseEvide
 		TestID: "E2E-TEST-FLOW-001", Status: "PASS", Environment: "ci",
 		StartedAt: now.Add(-time.Minute).Format(time.RFC3339), CompletedAt: now.Format(time.RFC3339), WorkspaceCommit: strings.TrimSpace(commit),
 		Requirements: []featureRequirementAssertion{{
-			RequirementID: requirement.ID, Status: "PASS",
+			RequirementID: requirement.ID, Revision: requirement.Revision, SpecSource: requirement.SpecSource, Status: "PASS",
 			Assertions: map[string]string{"product_flow": "PASS"},
 			Evidence:   []featureCoverageEvidenceFile{{Path: evidencePath, SHA256: fmt.Sprintf("%x", sum), Type: "json"}},
 		}},
@@ -117,6 +121,15 @@ func TestFeatureCoverageRejectsTamperedAndStaleEvidence(t *testing.T) {
 	}
 }
 
+func TestFeatureCoverageMarksOldRequirementRevisionStaleSpec(t *testing.T) {
+	workspace, catalog, item, now := featureCoverageFixture(t)
+	item.Requirements[0].Revision = "prior-spec-revision"
+	report := assessFeatureCoverage(workspace, catalog, []featureEvidenceManifestV2{{Cases: []featureCaseEvidenceV2{item}}}, []string{"FEAT-TEST-FLOW-001"}, "pr", now)
+	if report.Overall != "FAIL" || report.StaleSpec != 1 || report.Requirements[0].Status != "STALE_SPEC" {
+		t.Fatalf("old spec revision must be STALE_SPEC: %+v", report)
+	}
+}
+
 func TestGovernedProductSurfaceClassification(t *testing.T) {
 	for _, path := range []string{
 		"repos/rtk_account_manager/internal/http/signup.go",
@@ -153,7 +166,7 @@ func TestFeatureCoverageRequiresEveryDeclaredTarget(t *testing.T) {
 func TestFeatureEvidenceContractRejectsMalformedCases(t *testing.T) {
 	_, catalog, item, now := featureCoverageFixture(t)
 	base := featureEvidenceManifestV2{
-		SchemaVersion: featureEvidenceSchemaV2, RunID: "contract-test",
+		SchemaVersion: featureEvidenceSchemaV3, RunID: "contract-test", SpecCommit: "fixture-spec-commit",
 		GeneratedAt: now.Format(time.RFC3339), Cases: []featureCaseEvidenceV2{item},
 	}
 	tests := map[string]func(*featureEvidenceManifestV2){
@@ -239,14 +252,19 @@ func TestFeatureCoverageCommandAuditSelectAndCheck(t *testing.T) {
 	}
 }
 
-func TestLoadFeatureEvidenceV2AndLegacyUIAdapter(t *testing.T) {
+func TestLoadFeatureEvidenceV3AndLegacyUIAdapter(t *testing.T) {
 	workspace, catalog, item, now := featureCoverageFixture(t)
 	root := t.TempDir()
-	v2 := featureEvidenceManifestV2{
-		SchemaVersion: featureEvidenceSchemaV2, RunID: "v2-run",
+	v3 := featureEvidenceManifestV2{
+		SchemaVersion: featureEvidenceSchemaV3, RunID: "v3-run",
 		GeneratedAt: now.Format(time.RFC3339), Cases: []featureCaseEvidenceV2{item},
 	}
-	if err := writeJSON(filepath.Join(root, "feature-evidence.json"), v2); err != nil {
+	specCommit, err := currentCanonicalSpecCommit(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v3.SpecCommit = specCommit
+	if err := writeJSON(filepath.Join(root, "feature-evidence.json"), v3); err != nil {
 		t.Fatal(err)
 	}
 	manifests, files, err := loadFeatureEvidence(workspace, catalog, root)
@@ -254,7 +272,7 @@ func TestLoadFeatureEvidenceV2AndLegacyUIAdapter(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(manifests) != 1 || len(files) != 1 {
-		t.Fatalf("v2 load = %d manifests, %d files", len(manifests), len(files))
+		t.Fatalf("v3 load = %d manifests, %d files", len(manifests), len(files))
 	}
 
 	evidencePath := item.Requirements[0].Evidence[0].Path
@@ -341,7 +359,7 @@ func TestFeatureSelectionUsesChangePathsAndRejectsUnmappedSurface(t *testing.T) 
 func TestWriteFeatureCoverageReportAndCommitValidation(t *testing.T) {
 	workspace, catalog, _, now := featureCoverageFixture(t)
 	report := featureCoverageReport{
-		SchemaVersion: featureEvidenceSchemaV2, GeneratedAt: now.Format(time.RFC3339),
+		SchemaVersion: "rtk-cloud-feature-coverage-report/v3", GeneratedAt: now.Format(time.RFC3339),
 		Mode: "pr", Overall: "FAIL", Required: 1, Missing: 1, CodeCoverage: "SEPARATE_NOT_SCORED",
 		Requirements: []featureRequirementResult{{
 			FeatureID: "FEAT-TEST-FLOW-001", RequirementID: "REQ-E2E-TEST-FLOW-001",

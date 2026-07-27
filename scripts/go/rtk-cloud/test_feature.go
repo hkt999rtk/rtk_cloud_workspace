@@ -798,10 +798,15 @@ func writeNormalizedFeatureEvidence(dir string, manifest featureEvidenceManifest
 		return err
 	}
 	out := featureEvidenceManifestV2{
-		SchemaVersion: featureEvidenceSchemaV2,
+		SchemaVersion: featureEvidenceSchemaV3,
 		RunID:         manifest.RunID,
 		GeneratedAt:   manifest.GeneratedAt,
 	}
+	out.SpecCommit, err = currentCanonicalSpecCommit(workspace)
+	if err != nil {
+		return err
+	}
+	requirements := catalogRequirementIndex(catalog)
 	for _, item := range manifest.Cases {
 		tc, ok := catalogCaseByID(catalog.Cases, item.TestID)
 		if !ok {
@@ -814,8 +819,11 @@ func writeNormalizedFeatureEvidence(dir string, manifest featureEvidenceManifest
 		status := normalizeFeatureEvidenceStatus(item.Status)
 		assertions := make([]featureRequirementAssertion, 0, len(tc.Verifies))
 		for _, requirementID := range tc.Verifies {
+			requirement := requirements[requirementID]
 			assertions = append(assertions, featureRequirementAssertion{
 				RequirementID: requirementID,
+				Revision:      requirement.Revision,
+				SpecSource:    requirement.SpecSource,
 				Status:        status,
 				Assessment:    item.Assessment,
 				Assertions:    map[string]string{"case_assessment": status},

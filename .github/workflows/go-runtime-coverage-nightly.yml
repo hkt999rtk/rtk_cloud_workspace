@@ -488,7 +488,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          go run ./scripts/go/rtk-cloud -- test-feature-coverage audit \
+          qualification="${{ vars.FEATURE_QUALIFICATION_MODE || 'observe' }}"
+          if [ "$qualification" != "observe" ] && [ "$qualification" != "required" ]; then
+            echo "FEATURE_QUALIFICATION_MODE must be observe or required, got: $qualification" >&2
+            exit 1
+          fi
+          go run ./scripts/go/rtk-cloud -- test-spec-inventory check \
+            --mode "$qualification" \
+            --output-dir ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID/spec-inventory"
+          action=audit
+          if [ "$qualification" = "required" ]; then
+            action=check
+          fi
+          go run ./scripts/go/rtk-cloud -- test-feature-coverage "$action" \
             --mode main \
             --evidence ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID" \
             --output-dir ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID/feature-coverage"

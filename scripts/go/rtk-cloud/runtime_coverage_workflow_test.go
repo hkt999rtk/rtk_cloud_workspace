@@ -76,7 +76,8 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"--device-mix light=10,camera=2",
 		`export HOME100K_ENV_ROOT="$RUNTIME_ENV_ROOT"`,
 		"Aggregate runtime feature evidence",
-		"test-feature-coverage audit",
+		`test-feature-coverage "$action"`,
+		"test-spec-inventory check",
 		`--evidence ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID"`,
 	} {
 		if !strings.Contains(workflow, required) {
@@ -195,6 +196,8 @@ func TestWorkspaceBaselineRunsAndCanEnforceDeterministicFeatureEvidence(t *testi
 		"--full --desktop --mobile --install",
 		"FEATURE_QUALIFICATION_MODE",
 		"action=check",
+		"test-spec-inventory check",
+		"test-spec-impact",
 		`--evidence ".artifacts/test-runs/$FEATURE_EVIDENCE_RUN_ID"`,
 	} {
 		if !strings.Contains(workflow, required) {

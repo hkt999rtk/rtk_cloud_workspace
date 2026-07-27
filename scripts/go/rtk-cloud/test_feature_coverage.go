@@ -14,7 +14,10 @@ import (
 	"time"
 )
 
-const featureEvidenceSchemaV2 = "rtk-cloud-feature-coverage-evidence/v2"
+const (
+	featureEvidenceSchemaV2 = "rtk-cloud-feature-coverage-evidence/v2"
+	featureEvidenceSchemaV3 = "rtk-cloud-feature-coverage-evidence/v3"
+)
 
 type featureCoverageEvidenceFile struct {
 	Path   string `json:"path"`
@@ -24,6 +27,8 @@ type featureCoverageEvidenceFile struct {
 
 type featureRequirementAssertion struct {
 	RequirementID string                        `json:"requirement_id"`
+	Revision      string                        `json:"requirement_revision"`
+	SpecSource    specRequirementSource         `json:"spec_source"`
 	Status        string                        `json:"status"`
 	Assessment    string                        `json:"assessment,omitempty"`
 	Assertions    map[string]string             `json:"assertions,omitempty"`
@@ -47,17 +52,20 @@ type featureEvidenceManifestV2 struct {
 	SchemaVersion string                  `json:"schema_version"`
 	RunID         string                  `json:"run_id"`
 	GeneratedAt   string                  `json:"generated_at"`
+	SpecCommit    string                  `json:"spec_commit"`
 	Cases         []featureCaseEvidenceV2 `json:"cases"`
 }
 
 type featureRequirementResult struct {
-	FeatureID     string   `json:"feature_id"`
-	RequirementID string   `json:"requirement_id"`
-	Risk          string   `json:"risk"`
-	Gate          string   `json:"gate"`
-	Status        string   `json:"status"`
-	TestIDs       []string `json:"test_ids,omitempty"`
-	Detail        string   `json:"detail,omitempty"`
+	FeatureID     string                `json:"feature_id"`
+	RequirementID string                `json:"requirement_id"`
+	Risk          string                `json:"risk"`
+	Gate          string                `json:"gate"`
+	Revision      string                `json:"requirement_revision"`
+	SpecSource    specRequirementSource `json:"spec_source"`
+	Status        string                `json:"status"`
+	TestIDs       []string              `json:"test_ids,omitempty"`
+	Detail        string                `json:"detail,omitempty"`
 }
 
 type featureCoverageReport struct {
@@ -70,6 +78,7 @@ type featureCoverageReport struct {
 	Missing        int                        `json:"missing"`
 	Failed         int                        `json:"failed"`
 	Stale          int                        `json:"stale"`
+	StaleSpec      int                        `json:"stale_spec"`
 	DeferredLive   int                        `json:"deferred_live"`
 	CodeCoverage   string                     `json:"code_coverage"`
 	Requirements   []featureRequirementResult `json:"requirements"`
@@ -166,12 +175,15 @@ func selectCatalogFeatures(workspace string, catalog testCatalog, base, head str
 	}
 	paths := strings.Fields(raw)
 	for _, path := range paths {
-		if path == "tests/catalog.yaml" || strings.HasPrefix(path, "scripts/go/rtk-cloud/test_feature_coverage") ||
+		if path == "tests/catalog.yaml" || path == "tests/spec-sources.yaml" ||
+			strings.HasPrefix(path, "scripts/go/rtk-cloud/test_feature_coverage") ||
+			strings.HasPrefix(path, "scripts/go/rtk-cloud/test_spec_") ||
 			strings.HasPrefix(path, ".github/workflows/") || strings.HasPrefix(path, "scripts/test_") {
 			return all, nil
 		}
 	}
 	var selected []string
+	selectedSet := map[string]bool{}
 	matchedPaths := map[string]bool{}
 	for _, feature := range catalog.Features {
 		if feature.Status != "active" {
@@ -192,7 +204,20 @@ func selectCatalogFeatures(workspace string, catalog testCatalog, base, head str
 		}
 		if featureSelected {
 			selected = append(selected, feature.ID)
+			selectedSet[feature.ID] = true
 		}
+	}
+	before, beforeErr := loadSpecInventoryAt(workspace, base)
+	after, afterErr := loadSpecInventoryAt(workspace, head)
+	if beforeErr == nil && afterErr == nil {
+		for _, change := range compareSpecInventories(base, head, before, after).Changes {
+			if !selectedSet[change.FeatureID] {
+				selected = append(selected, change.FeatureID)
+				selectedSet[change.FeatureID] = true
+			}
+		}
+	} else if isMissingSpecRegistry(beforeErr) && afterErr == nil {
+		return all, nil
 	}
 	for _, path := range paths {
 		if governedProductSurfacePath(path) && !matchedPaths[path] {
@@ -265,19 +290,28 @@ func loadFeatureEvidence(workspace string, catalog testCatalog, rawPaths string)
 			return nil, nil, fmt.Errorf("parse %s: %w", path, err)
 		}
 		var manifest featureEvidenceManifestV2
-		if string(header.SchemaVersion) == `"`+featureEvidenceSchemaV2+`"` {
+		if string(header.SchemaVersion) == `"`+featureEvidenceSchemaV3+`"` {
 			if err := json.Unmarshal(raw, &manifest); err != nil {
 				return nil, nil, fmt.Errorf("parse %s: %w", path, err)
 			}
+		} else if string(header.SchemaVersion) == `"`+featureEvidenceSchemaV2+`"` {
+			return nil, nil, fmt.Errorf("%s uses retired evidence schema v2; rerun the case against spec revision metadata", path)
 		} else {
 			var adaptErr error
-			manifest, adaptErr = adaptLegacyFeatureEvidence(raw, path, catalog)
+			manifest, adaptErr = adaptLegacyFeatureEvidence(workspace, raw, path, catalog)
 			if adaptErr != nil {
 				return nil, nil, adaptErr
 			}
 		}
 		if err := validateFeatureEvidenceManifestV2(manifest, catalog); err != nil {
 			return nil, nil, fmt.Errorf("%s: %w", path, err)
+		}
+		currentSpecCommit, commitErr := currentCanonicalSpecCommit(workspace)
+		if commitErr != nil {
+			return nil, nil, commitErr
+		}
+		if manifest.SpecCommit != currentSpecCommit {
+			return nil, nil, fmt.Errorf("%s: spec_commit does not match the canonical spec checkout", path)
 		}
 		for caseIndex := range manifest.Cases {
 			for assertionIndex := range manifest.Cases[caseIndex].Requirements {
@@ -295,6 +329,12 @@ func loadFeatureEvidence(workspace string, catalog testCatalog, rawPaths string)
 }
 
 func validateFeatureEvidenceManifestV2(manifest featureEvidenceManifestV2, catalog testCatalog) error {
+	if manifest.SchemaVersion != featureEvidenceSchemaV3 {
+		return fmt.Errorf("schema_version=%q, want %s", manifest.SchemaVersion, featureEvidenceSchemaV3)
+	}
+	if strings.TrimSpace(manifest.SpecCommit) == "" {
+		return errors.New("spec_commit is required")
+	}
 	if strings.TrimSpace(manifest.RunID) == "" {
 		return errors.New("run_id is required")
 	}
@@ -335,8 +375,15 @@ func validateFeatureEvidenceManifestV2(manifest featureEvidenceManifestV2, catal
 		}
 		asserted := map[string]bool{}
 		for _, assertion := range item.Requirements {
-			if _, ok := catalogRequirementIndex(catalog)[assertion.RequirementID]; !ok {
+			_, ok := catalogRequirementIndex(catalog)[assertion.RequirementID]
+			if !ok {
 				return fmt.Errorf("%s has unknown requirement assertion %s", item.TestID, assertion.RequirementID)
+			}
+			if assertion.Revision == "" {
+				return fmt.Errorf("%s requirement %s has missing spec revision", item.TestID, assertion.RequirementID)
+			}
+			if strings.TrimSpace(assertion.SpecSource.Path) == "" || strings.TrimSpace(assertion.SpecSource.Section) == "" {
+				return fmt.Errorf("%s requirement %s has missing spec source", item.TestID, assertion.RequirementID)
 			}
 			if !catalogContainsString(tc.Verifies, assertion.RequirementID) {
 				return fmt.Errorf("%s is not mapped to requirement %s", item.TestID, assertion.RequirementID)
@@ -375,7 +422,7 @@ func normalizeFeatureEvidenceStatus(status string) string {
 	}
 }
 
-func adaptLegacyFeatureEvidence(raw []byte, path string, catalog testCatalog) (featureEvidenceManifestV2, error) {
+func adaptLegacyFeatureEvidence(workspace string, raw []byte, path string, catalog testCatalog) (featureEvidenceManifestV2, error) {
 	var legacy struct {
 		SchemaVersion   any               `json:"schema_version"`
 		RunID           string            `json:"run_id"`
@@ -405,7 +452,11 @@ func adaptLegacyFeatureEvidence(raw []byte, path string, catalog testCatalog) (f
 	if legacy.RunID == "" || len(legacy.Cases) == 0 {
 		return featureEvidenceManifestV2{}, fmt.Errorf("%s is neither evidence manifest v2 nor a supported UI/feature manifest", path)
 	}
-	out := featureEvidenceManifestV2{SchemaVersion: featureEvidenceSchemaV2, RunID: legacy.RunID, GeneratedAt: legacy.GeneratedAt}
+	specCommit, _ := currentCanonicalSpecCommit(workspace)
+	out := featureEvidenceManifestV2{
+		SchemaVersion: featureEvidenceSchemaV3, RunID: legacy.RunID, GeneratedAt: legacy.GeneratedAt,
+		SpecCommit: specCommit,
+	}
 	for _, item := range legacy.Cases {
 		tc, ok := catalogCaseByID(catalog.Cases, item.TestID)
 		if !ok {
@@ -453,10 +504,12 @@ func adaptLegacyFeatureEvidence(raw []byte, path string, catalog testCatalog) (f
 		}
 		var assertions []featureRequirementAssertion
 		// Legacy adapters are safe only for one-to-one cases. Multi-requirement
-		// cases must migrate to v2 and report each assertion explicitly.
+		// cases must migrate to v3 and report each assertion explicitly.
 		if len(tc.Verifies) == 1 {
+			requirement := catalogRequirementIndex(catalog)[tc.Verifies[0]]
 			assertions = append(assertions, featureRequirementAssertion{
-				RequirementID: tc.Verifies[0], Status: status, Assessment: item.Assessment,
+				RequirementID: tc.Verifies[0], Revision: requirement.Revision, SpecSource: requirement.SpecSource,
+				Status: status, Assessment: item.Assessment,
 				Assertions: map[string]string{"case_assessment": status}, Evidence: refs,
 			})
 		}
@@ -471,7 +524,7 @@ func adaptLegacyFeatureEvidence(raw []byte, path string, catalog testCatalog) (f
 
 func assessFeatureCoverage(workspace string, catalog testCatalog, manifests []featureEvidenceManifestV2, selected []string, mode string, now time.Time) featureCoverageReport {
 	report := featureCoverageReport{
-		SchemaVersion: featureEvidenceSchemaV2, GeneratedAt: now.Format(time.RFC3339),
+		SchemaVersion: "rtk-cloud-feature-coverage-report/v3", GeneratedAt: now.Format(time.RFC3339),
 		Mode: mode, Overall: "PASS", CodeCoverage: "SEPARATE_NOT_SCORED", Selected: selected,
 	}
 	selectedSet := map[string]bool{}
@@ -494,7 +547,10 @@ func assessFeatureCoverage(workspace string, catalog testCatalog, manifests []fe
 			if requirement.Status != "active" || !requirementRequired(requirement) {
 				continue
 			}
-			result := featureRequirementResult{FeatureID: feature.ID, RequirementID: requirement.ID, Risk: feature.Risk, Gate: requirement.Gate}
+			result := featureRequirementResult{
+				FeatureID: feature.ID, RequirementID: requirement.ID, Risk: feature.Risk, Gate: requirement.Gate,
+				Revision: requirement.Revision, SpecSource: requirement.SpecSource,
+			}
 			if !requirementEvaluatedInMode(requirement, mode) {
 				result.Status, result.Detail = "DEFERRED_LIVE", "not executable in this gate; no PASS credit awarded"
 				report.DeferredLive++
@@ -508,6 +564,8 @@ func assessFeatureCoverage(workspace string, catalog testCatalog, manifests []fe
 				report.Pass++
 			case "STALE":
 				report.Stale++
+			case "STALE_SPEC":
+				report.StaleSpec++
 			case "FAIL":
 				report.Failed++
 			default:
@@ -558,6 +616,7 @@ func evaluateRequirementEvidence(workspace string, requirement testCatalogRequir
 	passedTargets := map[string]bool{}
 	staleTargets := map[string]bool{}
 	var lastReason = "no evidence manifest contains an explicit requirement assertion"
+	specRevisionStale := false
 	for _, item := range evidence {
 		tc, ok := cases[item.TestID]
 		if !ok || !catalogContainsString(mapped, item.TestID) || tc.Layer == "unit" || tc.Layer == "service" {
@@ -569,6 +628,12 @@ func evaluateRequirementEvidence(workspace string, requirement testCatalogRequir
 		}
 		for _, assertion := range item.Requirements {
 			if assertion.RequirementID != requirement.ID {
+				continue
+			}
+			if assertion.Revision != requirement.Revision || assertion.SpecSource.Path != requirement.SpecSource.Path ||
+				assertion.SpecSource.Section != requirement.SpecSource.Section {
+				specRevisionStale = true
+				lastReason = "evidence requirement revision or source does not match the current spec"
 				continue
 			}
 			if strings.ToUpper(item.Status) != "PASS" || strings.ToUpper(assertion.Status) != "PASS" {
@@ -651,6 +716,9 @@ func evaluateRequirementEvidence(workspace string, requirement testCatalogRequir
 		if !passedTargets[target] && staleTargets[target] {
 			return "STALE", "latest qualifying evidence exceeds freshness policy", mapped
 		}
+	}
+	if specRevisionStale {
+		return "STALE_SPEC", "latest evidence was produced for a different spec revision", mapped
 	}
 	if strings.Contains(lastReason, "did not PASS") {
 		return "FAIL", lastReason, mapped
@@ -804,6 +872,8 @@ func writeCaseFeatureEvidence(workspace, outputDir, testID, runID, environment, 
 		}
 		assertions = append(assertions, featureRequirementAssertion{
 			RequirementID: requirementID,
+			Revision:      requirement.Revision,
+			SpecSource:    requirement.SpecSource,
 			Status:        "PASS",
 			Assessment:    "live product assertions and evidence contract passed",
 			Assertions: map[string]string{
@@ -813,10 +883,15 @@ func writeCaseFeatureEvidence(workspace, outputDir, testID, runID, environment, 
 			Evidence: refs,
 		})
 	}
+	specCommit, err := currentCanonicalSpecCommit(workspace)
+	if err != nil {
+		return err
+	}
 	manifest := featureEvidenceManifestV2{
-		SchemaVersion: featureEvidenceSchemaV2,
+		SchemaVersion: featureEvidenceSchemaV3,
 		RunID:         runID,
 		GeneratedAt:   completed.UTC().Format(time.RFC3339),
+		SpecCommit:    specCommit,
 		Cases: []featureCaseEvidenceV2{{
 			TestID:          testID,
 			Status:          "PASS",
@@ -837,7 +912,7 @@ func writeCaseFeatureEvidence(workspace, outputDir, testID, runID, environment, 
 		return err
 	}
 	if err := writeJSON(filepath.Join(outputDir, "feature-results.json"), map[string]any{
-		"schema_version": featureEvidenceSchemaV2,
+		"schema_version": featureEvidenceSchemaV3,
 		"run_id":         runID, "test_id": testID, "status": "PASS",
 		"started_at": started.UTC().Format(time.RFC3339), "completed_at": completed.UTC().Format(time.RFC3339),
 	}); err != nil {
@@ -850,6 +925,14 @@ func writeCaseFeatureEvidence(workspace, outputDir, testID, runID, environment, 
 	}
 	report := fmt.Sprintf("# Live Feature Evidence\n\n- Test ID: `%s`\n- Run ID: `%s`\n- Status: **PASS**\n- Requirements: `%s`\n- Workspace commit: `%s`\n", testID, runID, strings.Join(tc.Verifies, "`, `"), commits["workspace"])
 	return os.WriteFile(filepath.Join(outputDir, "FEATURE_REPORT.md"), []byte(report), 0o644)
+}
+
+func currentCanonicalSpecCommit(workspace string) (string, error) {
+	commit, err := gitOutput(filepath.Join(workspace, "repos", "rtk_cloud_contracts_doc"), "rev-parse", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("resolve canonical spec commit: %w", err)
+	}
+	return strings.TrimSpace(commit), nil
 }
 
 func collectCaseFeatureEvidence(outputDir string) ([]featureCoverageEvidenceFile, error) {
@@ -891,7 +974,7 @@ func writeFeatureSelection(outputDir string, selected []string) error {
 	payload := struct {
 		SchemaVersion string   `json:"schema_version"`
 		Features      []string `json:"features"`
-	}{featureEvidenceSchemaV2, selected}
+	}{"rtk-cloud-feature-selection/v2", selected}
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return err
 	}
@@ -910,14 +993,16 @@ func writeFeatureCoverageReport(outputDir string, report featureCoverageReport) 
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "- Overall: **%s**\n", report.Overall)
 	fmt.Fprintf(&b, "- Product requirements: **%d/%d PASS**\n", report.Pass, report.Required)
+	fmt.Fprintf(&b, "- Stale spec revision: **%d**\n", report.StaleSpec)
 	fmt.Fprintf(&b, "- Deferred live (no PASS credit): **%d**\n", report.DeferredLive)
 	fmt.Fprintln(&b, "- Code coverage: **separate quality metric; never contributes to feature coverage**")
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "| Feature | Requirement | Risk | Gate | Status | Detail |")
-	fmt.Fprintln(&b, "| --- | --- | --- | --- | --- | --- |")
+	fmt.Fprintln(&b, "| Feature | Requirement | Spec source | Revision | Risk | Gate | Status | Detail |")
+	fmt.Fprintln(&b, "| --- | --- | --- | --- | --- | --- | --- | --- |")
 	for _, result := range report.Requirements {
-		fmt.Fprintf(&b, "| `%s` | `%s` | `%s` | `%s` | **%s** | %s |\n",
-			result.FeatureID, result.RequirementID, result.Risk, result.Gate, result.Status, escapeMarkdownCell(result.Detail))
+		fmt.Fprintf(&b, "| `%s` | `%s` | `%s#%s` | `%s` | `%s` | `%s` | **%s** | %s |\n",
+			result.FeatureID, result.RequirementID, result.SpecSource.Path, result.SpecSource.Section,
+			shortRevision(result.Revision), result.Risk, result.Gate, result.Status, escapeMarkdownCell(result.Detail))
 	}
 	rendered := []byte(b.String())
 	if err := os.WriteFile(filepath.Join(outputDir, "FEATURE_COVERAGE.md"), rendered, 0o644); err != nil {
@@ -937,4 +1022,11 @@ func writeFeatureCoverageReport(outputDir string, report featureCoverageReport) 
 		}
 	}
 	return nil
+}
+
+func shortRevision(revision string) string {
+	if len(revision) > 12 {
+		return revision[:12]
+	}
+	return revision
 }

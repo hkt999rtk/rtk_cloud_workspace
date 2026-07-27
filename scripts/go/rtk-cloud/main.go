@@ -106,6 +106,8 @@ var commands = map[string]commandSpec{
 	"test-coverage":                    {run: runTestCoverage},
 	"test-coverage-aggregate":          {run: runTestCoverageAggregate},
 	"test-inventory":                   {run: runTestInventory},
+	"test-spec-inventory":              {run: runTestSpecInventory},
+	"test-spec-impact":                 {run: runTestSpecImpact},
 	"test-ui":                          {run: runTestUI},
 	"unprovision-devices":              {run: runUnprovisionDevices},
 	"validate-device-bind":             {run: runValidateDeviceBind},
@@ -1369,8 +1371,12 @@ func writeDeterministicE2EEvidence(workspace, outputDir, runID string, started, 
 		return err
 	}
 	sum := sha256.Sum256(raw)
+	specCommit, err := currentCanonicalSpecCommit(workspace)
+	if err != nil {
+		return err
+	}
 	manifest := featureEvidenceManifestV2{
-		SchemaVersion: featureEvidenceSchemaV2, RunID: runID, GeneratedAt: completed.Format(time.RFC3339),
+		SchemaVersion: featureEvidenceSchemaV3, RunID: runID, GeneratedAt: completed.Format(time.RFC3339), SpecCommit: specCommit,
 		Cases: []featureCaseEvidenceV2{{
 			TestID: "SVC-WS-E2E-001", Status: "PASS", Assessment: "supporting deterministic harness evidence",
 			Environment: "ci", StartedAt: started.Format(time.RFC3339), CompletedAt: completed.Format(time.RFC3339), WorkspaceCommit: strings.TrimSpace(commit),

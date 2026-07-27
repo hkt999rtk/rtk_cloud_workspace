@@ -7,7 +7,7 @@ import (
 )
 
 func TestTestLayerCommandsAreRegistered(t *testing.T) {
-	for _, name := range []string{"test-catalog", "test-coverage", "test-matrix", "test-services", "test-e2e", "test-ui", "test-live"} {
+	for _, name := range []string{"test-catalog", "test-coverage", "test-matrix", "test-services", "test-e2e", "test-ui", "test-live", "test-spec-inventory", "test-spec-impact"} {
 		if _, ok := commands[name]; !ok {
 			t.Fatalf("command %q is not registered", name)
 		}
