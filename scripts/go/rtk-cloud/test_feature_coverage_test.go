@@ -2,8 +2,10 @@ package main
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -169,5 +171,214 @@ func TestFeatureEvidenceContractRejectsMalformedCases(t *testing.T) {
 				t.Fatal("malformed evidence was accepted")
 			}
 		})
+	}
+}
+
+func TestFeatureCoverageCommandAuditSelectAndCheck(t *testing.T) {
+	auditDir := filepath.Join(t.TempDir(), "audit")
+	if err := runTestFeatureCoverage([]string{"audit", "--mode", "pr", "--output-dir", auditDir}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"feature-coverage.json", "FEATURE_COVERAGE.md"} {
+		if _, err := os.Stat(filepath.Join(auditDir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	selectDir := filepath.Join(t.TempDir(), "select")
+	if err := runTestFeatureCoverage([]string{"select", "--output-dir", selectDir}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(selectDir, "feature-selection.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := runTestFeatureCoverage([]string{"check", "--mode", "pr", "--output-dir", filepath.Join(t.TempDir(), "check")}); err == nil {
+		t.Fatal("check unexpectedly accepted missing deterministic evidence")
+	}
+	if err := runTestFeatureCoverage([]string{"audit", "--mode", "production"}); err == nil {
+		t.Fatal("invalid mode accepted")
+	}
+	if err := runTestFeatureCoverage([]string{"unknown"}); err == nil {
+		t.Fatal("invalid action accepted")
+	}
+	if err := runTestFeatureCoverage([]string{"audit", "--unknown"}); err == nil {
+		t.Fatal("invalid flag accepted")
+	}
+}
+
+func TestLoadFeatureEvidenceV2AndLegacyUIAdapter(t *testing.T) {
+	workspace, catalog, item, now := featureCoverageFixture(t)
+	root := t.TempDir()
+	v2 := featureEvidenceManifestV2{
+		SchemaVersion: featureEvidenceSchemaV2, RunID: "v2-run",
+		GeneratedAt: now.Format(time.RFC3339), Cases: []featureCaseEvidenceV2{item},
+	}
+	if err := writeJSON(filepath.Join(root, "feature-evidence.json"), v2); err != nil {
+		t.Fatal(err)
+	}
+	manifests, files, err := loadFeatureEvidence(workspace, catalog, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifests) != 1 || len(files) != 1 {
+		t.Fatalf("v2 load = %d manifests, %d files", len(manifests), len(files))
+	}
+
+	evidencePath := item.Requirements[0].Evidence[0].Path
+	content, err := os.ReadFile(evidencePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(content)
+	legacyPath := filepath.Join(t.TempDir(), "evidence-manifest.json")
+	legacy := map[string]any{
+		"schema_version": 1, "run_id": "legacy-ui", "environment": "ci",
+		"generated_at": now.Format(time.RFC3339), "workspace_commit": item.WorkspaceCommit,
+		"cases": []map[string]any{{
+			"test_id": item.TestID, "assessment": "PASS", "generated_at": now.Format(time.RFC3339),
+			"workspace_commit": item.WorkspaceCommit, "screenshot_path": evidencePath,
+			"screenshot_sha256": fmt.Sprintf("%x", sum),
+		}},
+	}
+	if err := writeJSON(legacyPath, legacy); err != nil {
+		t.Fatal(err)
+	}
+	manifests, _, err = loadFeatureEvidence(workspace, catalog, legacyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := manifests[0].Cases[0].Requirements; len(got) != 1 || got[0].Assertions["case_assessment"] != "PASS" {
+		t.Fatalf("legacy adapter = %+v", manifests[0])
+	}
+}
+
+func TestFeatureEvidenceLoaderRejectsUnsupportedManifestAndMissingPath(t *testing.T) {
+	workspace, catalog, _, _ := featureCoverageFixture(t)
+	path := filepath.Join(t.TempDir(), "evidence-manifest.json")
+	if err := os.WriteFile(path, []byte(`{"schema_version":7}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := loadFeatureEvidence(workspace, catalog, path); err == nil {
+		t.Fatal("unsupported manifest accepted")
+	}
+	if _, _, err := loadFeatureEvidence(workspace, catalog, filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("missing evidence path accepted")
+	}
+}
+
+func TestFeatureSelectionUsesChangePathsAndRejectsUnmappedSurface(t *testing.T) {
+	repository := t.TempDir()
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repository
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.invalid", "GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.invalid")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, output)
+		}
+	}
+	runGit("init", "-q")
+	if err := os.MkdirAll(filepath.Join(repository, "repos", "rtk_cloud_admin", "web", "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(repository, "repos", "rtk_cloud_admin", "web", "src", "routes.ts")
+	if err := os.WriteFile(source, []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", ".")
+	runGit("commit", "-q", "-m", "base")
+	base, _ := gitOutput(repository, "rev-parse", "HEAD")
+	if err := os.WriteFile(source, []byte("two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("commit", "-qam", "change")
+	catalog := testCatalog{Features: []testCatalogFeature{{
+		ID: "FEAT-CA-TEST-001", Status: "active", ChangePaths: []string{"repos/rtk_cloud_admin/**"},
+	}}}
+	selected, err := selectCatalogFeatures(repository, catalog, strings.TrimSpace(base), "HEAD")
+	if err != nil || len(selected) != 1 || selected[0] != "FEAT-CA-TEST-001" {
+		t.Fatalf("selection = %v, %v", selected, err)
+	}
+	catalog.Features[0].ChangePaths = []string{"docs/**"}
+	if _, err := selectCatalogFeatures(repository, catalog, strings.TrimSpace(base), "HEAD"); err == nil {
+		t.Fatal("unmapped product surface accepted")
+	}
+}
+
+func TestWriteFeatureCoverageReportAndCommitValidation(t *testing.T) {
+	workspace, catalog, _, now := featureCoverageFixture(t)
+	report := featureCoverageReport{
+		SchemaVersion: featureEvidenceSchemaV2, GeneratedAt: now.Format(time.RFC3339),
+		Mode: "pr", Overall: "FAIL", Required: 1, Missing: 1, CodeCoverage: "SEPARATE_NOT_SCORED",
+		Requirements: []featureRequirementResult{{
+			FeatureID: "FEAT-TEST-FLOW-001", RequirementID: "REQ-E2E-TEST-FLOW-001",
+			Risk: "critical", Gate: "pr", Status: "MISSING", Detail: "proof | absent",
+		}},
+	}
+	dir := t.TempDir()
+	if err := writeFeatureCoverageReport(dir, report); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "feature-coverage.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded featureCoverageReport
+	if err := json.Unmarshal(raw, &decoded); err != nil || decoded.Missing != 1 {
+		t.Fatalf("report JSON = %+v, %v", decoded, err)
+	}
+	if err := validateFeatureCommits(workspace, catalog.Features[0], nil); err != nil {
+		t.Fatalf("workspace-only anchor should pass: %v", err)
+	}
+	catalog.Features[0].CommitAnchors = []string{"workspace", "cloud_admin"}
+	if err := validateFeatureCommits(workspace, catalog.Features[0], map[string]string{"cloud_admin": "wrong"}); err == nil {
+		t.Fatal("commit mismatch accepted")
+	}
+	if err := validateFeatureCommits(workspace, catalog.Features[0], nil); err == nil {
+		t.Fatal("missing commit anchor accepted")
+	}
+	catalog.Features[0].CommitAnchors = []string{"workspace", "unknown"}
+	if err := validateFeatureCommits(workspace, catalog.Features[0], map[string]string{"unknown": "commit"}); err == nil {
+		t.Fatal("unsupported commit anchor accepted")
+	}
+}
+
+func TestFeatureEvidenceFileErrorsAndFailedAssertion(t *testing.T) {
+	if err := verifyFeatureEvidenceFiles(nil); err == nil {
+		t.Fatal("missing evidence accepted")
+	}
+	if err := verifyFeatureEvidenceFiles([]featureCoverageEvidenceFile{{Path: filepath.Join(t.TempDir(), "missing"), SHA256: "x"}}); err == nil {
+		t.Fatal("missing evidence file accepted")
+	}
+	path := filepath.Join(t.TempDir(), "evidence.json")
+	if err := os.WriteFile(path, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyFeatureEvidenceFiles([]featureCoverageEvidenceFile{{Path: path, SHA256: strings.Repeat("0", 64)}}); err == nil {
+		t.Fatal("incorrect evidence digest accepted")
+	}
+	workspace, catalog, item, now := featureCoverageFixture(t)
+	item.Status = "FAIL"
+	item.Requirements[0].Status = "FAIL"
+	item.Requirements[0].Assertions["product_flow"] = "FAIL"
+	report := assessFeatureCoverage(workspace, catalog, []featureEvidenceManifestV2{{Cases: []featureCaseEvidenceV2{item}}}, []string{"FEAT-TEST-FLOW-001"}, "pr", now)
+	if report.Requirements[0].Status != "FAIL" {
+		t.Fatalf("failed assertion = %+v", report)
+	}
+	requirement := catalog.Features[0].Requirements[0]
+	if status, _, _ := evaluateRequirementEvidence(workspace, requirement, catalog.Features[0], map[string]testCatalogCase{}, nil, now); status != "MISSING" {
+		t.Fatalf("unmapped requirement status = %s", status)
+	}
+	item.Status = "PASS"
+	item.Requirements[0].Status = "PASS"
+	item.Requirements[0].Assertions = nil
+	report = assessFeatureCoverage(workspace, catalog, []featureEvidenceManifestV2{{Cases: []featureCaseEvidenceV2{item}}}, []string{"FEAT-TEST-FLOW-001"}, "pr", now)
+	if report.Overall != "FAIL" {
+		t.Fatal("missing assertion results passed")
+	}
+	item.Requirements[0].Assertions = map[string]string{"product_flow": "PASS"}
+	item.Environment = "local"
+	report = assessFeatureCoverage(workspace, catalog, []featureEvidenceManifestV2{{Cases: []featureCaseEvidenceV2{item}}}, []string{"FEAT-TEST-FLOW-001"}, "pr", now)
+	if report.Overall != "FAIL" {
+		t.Fatal("environment mismatch passed")
 	}
 }
