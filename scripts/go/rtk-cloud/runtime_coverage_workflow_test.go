@@ -75,6 +75,10 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"--device-count 12",
 		"--device-mix light=10,camera=2",
 		`export HOME100K_ENV_ROOT="$RUNTIME_ENV_ROOT"`,
+		"Aggregate runtime feature evidence",
+		`test-feature-coverage "$action"`,
+		"test-spec-inventory check",
+		`--evidence ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID"`,
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("runtime workflow missing %q", required)
@@ -172,6 +176,32 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 	} {
 		if !strings.Contains(ui, expected) {
 			t.Fatalf("runtime UI smoke must provision its run-scoped customer identity: missing %q", expected)
+		}
+	}
+}
+
+func TestWorkspaceBaselineRunsAndCanEnforceDeterministicFeatureEvidence(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", "workspace-test-baseline.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(raw)
+	for _, required := range []string{
+		"FEATURE_EVIDENCE_RUN_ID:",
+		"Run deterministic product UI evidence",
+		"--full --desktop --mobile --install",
+		"FEATURE_QUALIFICATION_MODE",
+		"action=check",
+		"test-spec-inventory check",
+		"test-spec-impact",
+		`--evidence ".artifacts/test-runs/$FEATURE_EVIDENCE_RUN_ID"`,
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Fatalf("workspace baseline missing feature governance wiring %q", required)
 		}
 	}
 }

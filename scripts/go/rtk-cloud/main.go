@@ -31,6 +31,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"sort"
 	"strconv"
@@ -97,6 +98,7 @@ var commands = map[string]commandSpec{
 	"test-data":                        {run: runTestData},
 	"test-e2e":                         {run: runTestE2E},
 	"test-feature":                     {run: runTestFeature},
+	"test-feature-coverage":            {run: runTestFeatureCoverage},
 	"test-live":                        {run: runTestLive},
 	"test-matrix":                      {run: runTestMatrix},
 	"test-services":                    {run: runTestServices},
@@ -104,6 +106,8 @@ var commands = map[string]commandSpec{
 	"test-coverage":                    {run: runTestCoverage},
 	"test-coverage-aggregate":          {run: runTestCoverageAggregate},
 	"test-inventory":                   {run: runTestInventory},
+	"test-spec-inventory":              {run: runTestSpecInventory},
+	"test-spec-impact":                 {run: runTestSpecImpact},
 	"test-ui":                          {run: runTestUI},
 	"unprovision-devices":              {run: runUnprovisionDevices},
 	"validate-device-bind":             {run: runValidateDeviceBind},
@@ -1295,6 +1299,8 @@ func runTestE2E(args []string) error {
 	fs := flag.NewFlagSet("test-e2e", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	scripts := fs.Bool("scripts", false, "also run root staging script contract tests")
+	runID := fs.String("run-id", "", "stable evidence run ID")
+	outputDir := fs.String("output-dir", "", "evidence output directory")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -1302,6 +1308,13 @@ func runTestE2E(args []string) error {
 	if err != nil {
 		return err
 	}
+	if *runID == "" {
+		*runID = time.Now().UTC().Format("20060102T150405Z") + "-e2e"
+	}
+	if *outputDir == "" {
+		*outputDir = filepath.Join(workspace, ".artifacts", "test-runs", *runID, "e2e")
+	}
+	started := time.Now().UTC()
 
 	fmt.Fprintln(os.Stdout, "== E2E Go packages ==")
 	if err := runCmdWithEnv(filepath.Join(workspace, "e2e_test"), map[string]string{"GOWORK": "off"}, "go", "test", "./..."); err != nil {
@@ -1332,7 +1345,54 @@ func runTestE2E(args []string) error {
 	if err := runCmd(workspace, "python3", "-m", "unittest", "discover", "-s", "e2e_test/video_cloud/load/tools/tests"); err != nil {
 		return err
 	}
-	return nil
+	return writeDeterministicE2EEvidence(workspace, *outputDir, *runID, started, time.Now().UTC(), *scripts)
+}
+
+func writeDeterministicE2EEvidence(workspace, outputDir, runID string, started, completed time.Time, scripts bool) error {
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return err
+	}
+	commit, err := gitOutput(workspace, "rev-parse", "HEAD")
+	if err != nil {
+		return err
+	}
+	summary := map[string]any{
+		"schema_version": "rtk-cloud-deterministic-e2e-result/v2",
+		"run_id":         runID, "status": "PASS", "assessment": "deterministic E2E harness suites passed",
+		"started_at": started.Format(time.RFC3339), "completed_at": completed.Format(time.RFC3339),
+		"workspace_commit": strings.TrimSpace(commit), "scripts_included": scripts,
+	}
+	resultsPath := filepath.Join(outputDir, "results.json")
+	if err := writeJSON(resultsPath, summary); err != nil {
+		return err
+	}
+	raw, err := os.ReadFile(resultsPath)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(raw)
+	specCommit, err := currentCanonicalSpecCommit(workspace)
+	if err != nil {
+		return err
+	}
+	manifest := featureEvidenceManifestV2{
+		SchemaVersion: featureEvidenceSchemaV3, RunID: runID, GeneratedAt: completed.Format(time.RFC3339), SpecCommit: specCommit,
+		Cases: []featureCaseEvidenceV2{{
+			TestID: "SVC-WS-E2E-001", Status: "PASS", Assessment: "supporting deterministic harness evidence",
+			Environment: "ci", StartedAt: started.Format(time.RFC3339), CompletedAt: completed.Format(time.RFC3339), WorkspaceCommit: strings.TrimSpace(commit),
+			Commits: map[string]string{"workspace": strings.TrimSpace(commit)}, Requirements: []featureRequirementAssertion{},
+		}},
+	}
+	if err := writeJSON(filepath.Join(outputDir, "evidence-manifest.json"), manifest); err != nil {
+		return err
+	}
+	junit := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?><testsuite name="workspace-deterministic-e2e" tests="1" failures="0" time="%.3f"><testcase classname="workspace" name="SVC-WS-E2E-001" time="%.3f"><system-out>results.json sha256=%x</system-out></testcase></testsuite>`+"\n",
+		completed.Sub(started).Seconds(), completed.Sub(started).Seconds(), sum)
+	if err := os.WriteFile(filepath.Join(outputDir, "junit.xml"), []byte(junit), 0o644); err != nil {
+		return err
+	}
+	report := fmt.Sprintf("# Deterministic E2E\n\n- Status: **PASS**\n- Test ID: `SVC-WS-E2E-001` (supporting evidence only)\n- Run ID: `%s`\n- Workspace commit: `%s`\n- Results SHA-256: `%x`\n", runID, strings.TrimSpace(commit), sum)
+	return os.WriteFile(filepath.Join(outputDir, "TEST_REPORT.md"), []byte(report), 0o644)
 }
 
 func runTestUI(args []string) error {
@@ -1370,7 +1430,7 @@ func runTestUI(args []string) error {
 		if err := runCmd(webRoot, "npm", "ci"); err != nil {
 			return err
 		}
-		if err := runCmd(webRoot, "npx", "playwright", "install", "chromium"); err != nil {
+		if err := runCmd(webRoot, "npx", playwrightInstallArguments(runtime.GOOS)...); err != nil {
 			return err
 		}
 	}
@@ -1423,6 +1483,9 @@ func runTestUI(args []string) error {
 			if evidenceErr := validateUIEvidenceRun(env["E2E_TEST_RUN_DIR"], expected); evidenceErr != nil {
 				return evidenceErr
 			}
+			if evidenceErr := writeNormalizedUIEvidence(workspace, env["E2E_TEST_RUN_DIR"]); evidenceErr != nil {
+				return evidenceErr
+			}
 			if runErr != nil {
 				return runErr
 			}
@@ -1454,6 +1517,13 @@ func runTestUI(args []string) error {
 		playwrightArgs := []string{"playwright", "test", "--project=" + target}
 		if !*full {
 			playwrightArgs = append(playwrightArgs, "--grep", "@smoke")
+		} else {
+			// Full qualification cases share a mutable fixture backend (for
+			// example provider lifecycle state), so parallel workers can
+			// invalidate another case's navigation or expected state.
+			// Visual snapshots run in a separate invocation so lifecycle tests
+			// cannot change the fixture state they compare against.
+			playwrightArgs = append(playwrightArgs, "--workers=1", "--grep-invert", "@visual")
 		}
 		expected, err := expectedUITestIDs(workspace, evidenceTarget, "local", !*full)
 		if err != nil {
@@ -1466,23 +1536,29 @@ func runTestUI(args []string) error {
 		if err := os.RemoveAll(env["E2E_TEST_RUN_DIR"]); err != nil {
 			return fmt.Errorf("reset UI artifact directory: %w", err)
 		}
-		if *full && evidenceTarget == "desktop" {
+		if *full {
 			env["E2E_EXPECTED_TEST_IDS"] = ""
 		}
 		runErr := runCmdWithEnv(webRoot, env, "npx", playwrightArgs...)
-		if *full && evidenceTarget == "desktop" {
-			phases := []struct {
+		if *full {
+			type uiPhase struct {
 				name string
 				grep string
 				env  map[string]string
-			}{
-				{name: "unavailable", grep: "UI-CA-(SOURCE-003|SOURCE-004|REPORT-001|CHIPSET-003|CLOUD-003|DASH-002)", env: map[string]string{"E2E_SCENARIO_MODE": "unavailable", "E2E_PROMETHEUS_MODE": "unavailable"}},
-				{name: "empty", grep: "UI-CA-(SOURCE-001|DASH-003)", env: map[string]string{"E2E_SCENARIO_MODE": "empty", "E2E_PROMETHEUS_MODE": "empty"}},
-				{name: "stale", grep: "UI-CA-(SOURCE-002|DASH-003)", env: map[string]string{"E2E_SCENARIO_MODE": "stale", "E2E_PROMETHEUS_MODE": "stale"}},
-				{name: "expired", grep: "UI-CA-REPORT-002", env: map[string]string{"E2E_RESULT_EXPIRED": "true"}},
-				{name: "partial-failure", grep: "UI-CA-BATCH-001", env: map[string]string{"E2E_SCENARIO_MODE": "partial_failure"}},
-				{name: "slow", grep: "UI-CA-BATCH-002", env: map[string]string{"E2E_SCENARIO_MODE": "slow"}},
-				{name: "member-assign-failure", grep: "UI-CA-CLOUD-006", env: map[string]string{"E2E_FAIL_ACTION": "member-assign"}},
+			}
+			phases := []uiPhase{
+				{name: "visual", grep: "@visual", env: map[string]string{}},
+			}
+			if evidenceTarget == "desktop" {
+				phases = append(phases,
+					uiPhase{name: "unavailable", grep: "UI-CA-(SOURCE-003|SOURCE-004|REPORT-001|CHIPSET-003|CLOUD-003|DASH-002)", env: map[string]string{"E2E_SCENARIO_MODE": "unavailable", "E2E_PROMETHEUS_MODE": "unavailable"}},
+					uiPhase{name: "empty", grep: "UI-CA-(SOURCE-001|DASH-003)", env: map[string]string{"E2E_SCENARIO_MODE": "empty", "E2E_PROMETHEUS_MODE": "empty"}},
+					uiPhase{name: "stale", grep: "UI-CA-(SOURCE-002|DASH-003)", env: map[string]string{"E2E_SCENARIO_MODE": "stale", "E2E_PROMETHEUS_MODE": "stale"}},
+					uiPhase{name: "expired", grep: "UI-CA-REPORT-002", env: map[string]string{"E2E_RESULT_EXPIRED": "true"}},
+					uiPhase{name: "partial-failure", grep: "UI-CA-BATCH-001", env: map[string]string{"E2E_SCENARIO_MODE": "partial_failure"}},
+					uiPhase{name: "slow", grep: "UI-CA-BATCH-002", env: map[string]string{"E2E_SCENARIO_MODE": "slow"}},
+					uiPhase{name: "member-assign-failure", grep: "UI-CA-CLOUD-006", env: map[string]string{"E2E_FAIL_ACTION": "member-assign"}},
+				)
 			}
 			for _, phase := range phases {
 				fmt.Fprintf(os.Stdout, "-- UI phase: %s\n", phase.name)
@@ -1494,7 +1570,7 @@ func runTestUI(args []string) error {
 					phaseEnv[key] = value
 				}
 				phaseEnv["E2E_TEST_PHASE"] = phase.name
-				if err := runCmdWithEnv(webRoot, phaseEnv, "npx", "playwright", "test", "--project=chromium", "--grep", phase.grep); err != nil {
+				if err := runCmdWithEnv(webRoot, phaseEnv, "npx", "playwright", "test", "--project="+target, "--workers=1", "--grep", phase.grep); err != nil {
 					fmt.Fprintf(os.Stderr, "UI phase %s reported a test failure: %v\n", phase.name, err)
 					runErr = err
 				}
@@ -1503,11 +1579,25 @@ func runTestUI(args []string) error {
 		if err := validateUIEvidenceRun(env["E2E_TEST_RUN_DIR"], expected); err != nil {
 			return err
 		}
+		if err := writeNormalizedUIEvidence(workspace, env["E2E_TEST_RUN_DIR"]); err != nil {
+			return err
+		}
 		if runErr != nil {
 			return runErr
 		}
 	}
 	return nil
+}
+
+func playwrightInstallArguments(goos string) []string {
+	// Visual qualification snapshots depend on the same system font and browser
+	// libraries in every Linux runner. Installing Chromium alone can render a
+	// stable but different image from the dedicated UI job, which installs
+	// Playwright's OS dependencies as well.
+	if goos == "linux" {
+		return []string{"playwright", "install", "--with-deps", "chromium"}
+	}
+	return []string{"playwright", "install", "chromium"}
 }
 
 func uiEvidenceEnv(workspace, webRoot, runID, target, environment string, expected []string) (map[string]string, error) {
@@ -1589,8 +1679,79 @@ func validateUIEvidenceRun(runDir string, expected []string) error {
 	return nil
 }
 
+func writeNormalizedUIEvidence(workspace, runDir string) error {
+	catalog, err := loadAndValidateTestCatalogForRunner(workspace, "test-ui")
+	if err != nil {
+		return err
+	}
+	manifests, _, err := loadFeatureEvidence(workspace, catalog, filepath.Join(runDir, "evidence-manifest.json"))
+	if err != nil {
+		return err
+	}
+	if len(manifests) != 1 {
+		return errors.New("UI evidence normalization requires exactly one source manifest")
+	}
+	return writeJSON(filepath.Join(runDir, "feature-evidence.json"), manifests[0])
+}
+
 func runTestLive(args []string) error {
-	return runStagingE2ETest(ensureTestLiveMode(args))
+	args = ensureTestLiveMode(args)
+	runID := commandFlagValue(args, "--run-id")
+	args = removeFlagValue(args, "--run-id")
+	if runID == "" {
+		runID = firstNonEmpty(os.Getenv("RUNTIME_COVERAGE_RUN_ID"), time.Now().UTC().Format("20060102T150405Z")+"-live")
+	}
+	workspace := commandFlagValue(args, "--workspace")
+	if workspace == "" {
+		var err error
+		workspace, err = workspaceRoot()
+		if err != nil {
+			return err
+		}
+	}
+	if hasFlag(args, "--run") && commandFlagValue(args, "--out-dir") == "" {
+		args = append(args, "--out-dir", filepath.Join(workspace, ".artifacts", "test-runs", runID, "live"))
+	}
+	started := time.Now().UTC()
+	if err := runStagingE2ETest(args); err != nil {
+		return err
+	}
+	if !hasFlag(args, "--run") {
+		return nil
+	}
+	return writeCaseFeatureEvidence(
+		workspace, commandFlagValue(args, "--out-dir"), "LIVE-STG-ONBOARD-001", runID,
+		"staging", "", started, time.Now().UTC(),
+	)
+}
+
+func commandFlagValue(args []string, name string) string {
+	for i, arg := range args {
+		if arg == name && i+1 < len(args) {
+			return args[i+1]
+		}
+		if key, value, ok := strings.Cut(arg, "="); ok && key == name {
+			return value
+		}
+	}
+	return ""
+}
+
+func removeFlagValue(args []string, name string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		if args[i] == name {
+			if i+1 < len(args) {
+				i++
+			}
+			continue
+		}
+		if key, _, ok := strings.Cut(args[i], "="); ok && key == name {
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return out
 }
 
 func ensureTestLiveMode(args []string) []string {
@@ -2374,6 +2535,7 @@ type stagingE2EMultiBrandConfig struct {
 }
 
 func runStagingE2EMultiBrandDataSetup(cfg stagingE2EMultiBrandConfig) error {
+	started := time.Now().UTC()
 	plan, err := loadLoadTestBrandPlan(cfg.BrandPlanFile)
 	if err != nil {
 		return err
@@ -2532,6 +2694,14 @@ func runStagingE2EMultiBrandDataSetup(cfg stagingE2EMultiBrandConfig) error {
 	}
 	if overall != "pass" {
 		return exitCode(1)
+	}
+	if cfg.EmailOwners {
+		if err := writeCaseFeatureEvidence(
+			cfg.Workspace, cfg.OutDir, "E2E-LOAD-ACCOUNT-001", cfg.RunID,
+			"staging", "", started, time.Now().UTC(),
+		); err != nil {
+			return err
+		}
 	}
 	return nil
 }

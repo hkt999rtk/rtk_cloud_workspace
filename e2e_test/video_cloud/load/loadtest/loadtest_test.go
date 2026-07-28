@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v3"
 )
 
@@ -1930,6 +1931,26 @@ func TestH264MediaPlanLoopsTwoSecondFixtureForTwentySeconds(t *testing.T) {
 	}
 	if !strings.Contains(plan.Evidence.String(), "duration_ms=20000") || !strings.Contains(plan.Evidence.String(), "loops=10") {
 		t.Fatalf("evidence missing 20s loop details: %s", plan.Evidence.String())
+	}
+}
+
+func TestValidateH264RTPSequenceAcceptsTimestampWrap(t *testing.T) {
+	packets := []*rtp.Packet{
+		{Header: rtp.Header{SequenceNumber: 65535, Timestamp: ^uint32(0) - 37}},
+		{Header: rtp.Header{SequenceNumber: 0, Timestamp: 2962}},
+	}
+	if err := validateH264RTPSequence(packets); err != nil {
+		t.Fatalf("legal RTP serial wrap rejected: %v", err)
+	}
+}
+
+func TestValidateH264RTPSequenceRejectsTimestampMovingBackwards(t *testing.T) {
+	packets := []*rtp.Packet{
+		{Header: rtp.Header{SequenceNumber: 10, Timestamp: 6000}},
+		{Header: rtp.Header{SequenceNumber: 11, Timestamp: 3000}},
+	}
+	if err := validateH264RTPSequence(packets); err == nil || !strings.Contains(err.Error(), "timestamp moved backwards") {
+		t.Fatalf("backwards RTP timestamp error = %v", err)
 	}
 }
 

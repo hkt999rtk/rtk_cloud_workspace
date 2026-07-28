@@ -14,6 +14,8 @@ jobs:
     name: Workspace baseline, E2E, and affected services
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      FEATURE_EVIDENCE_RUN_ID: gh-${{ github.run_id }}-${{ github.run_attempt }}-feature
     steps:
       - name: Check out workspace
         uses: actions/checkout@v6
@@ -73,7 +75,17 @@ jobs:
 
       - name: Run deterministic workspace E2E
         working-directory: scripts/go
-        run: go run ./rtk-cloud -- test-e2e
+        run: |
+          go run ./rtk-cloud -- test-e2e \
+            --run-id "$FEATURE_EVIDENCE_RUN_ID" \
+            --output-dir "../../.artifacts/test-runs/$FEATURE_EVIDENCE_RUN_ID/e2e"
+
+      - name: Run deterministic product UI evidence
+        working-directory: scripts/go
+        run: |
+          go run ./rtk-cloud -- test-ui \
+            --full --desktop --mobile --install \
+            --run-id "$FEATURE_EVIDENCE_RUN_ID"
 
       - name: Run Home load-runner contract tests
         working-directory: loadtests/home-100k
@@ -122,6 +134,60 @@ jobs:
           include-hidden-files: true
           retention-days: ${{ github.event_name == 'pull_request' && 30 || 90 }}
 
+      - name: Audit product feature coverage
+        if: always()
+        working-directory: scripts/go
+        shell: bash
+        env:
+          BASE_REF: ${{ steps.diff.outputs.base_ref }}
+        run: |
+          set -euo pipefail
+          qualification="${{ vars.FEATURE_QUALIFICATION_MODE || 'observe' }}"
+          if [ "$qualification" != "observe" ] && [ "$qualification" != "required" ]; then
+            echo "FEATURE_QUALIFICATION_MODE must be observe or required, got: $qualification" >&2
+            exit 1
+          fi
+          action=audit
+          if [ "$qualification" = "required" ]; then
+            action=check
+          fi
+          go run ./rtk-cloud -- test-spec-inventory check \
+            --mode "$qualification" \
+            --output-dir "../../.artifacts/test-runs/gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-spec-inventory"
+          if [ -n "$BASE_REF" ]; then
+            go run ./rtk-cloud -- test-spec-impact \
+              --base "$BASE_REF" \
+              --head HEAD \
+              --output-dir "../../.artifacts/test-runs/gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-spec-impact"
+          fi
+          coverage_mode=pr
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            coverage_mode=main
+          fi
+          args=(
+            "$action"
+            --mode "$coverage_mode"
+            --evidence ".artifacts/test-runs/$FEATURE_EVIDENCE_RUN_ID"
+            --output-dir "../../.artifacts/test-runs/gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-feature-coverage"
+          )
+          if [ -n "$BASE_REF" ]; then
+            args+=(--base "$BASE_REF" --head HEAD)
+          fi
+          go run ./rtk-cloud -- test-feature-coverage "${args[@]}"
+
+      - name: Upload feature coverage audit
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: workspace-feature-coverage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}-feature-coverage/**
+            .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}-spec-inventory/**
+            .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}-spec-impact/**
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 90 }}
+
       - name: Publish coverage summary
         if: always()
         shell: bash
@@ -133,10 +199,16 @@ jobs:
             echo "- Deterministic E2E: \`test-e2e\`"
             echo "- Load-runner contracts: \`loadtests/home-100k\`"
             echo "- Services: selected from the workspace diff; all on shared test-governance changes"
-            echo "- Coverage: per-module overall ratchets, 80% changed-Go-statement gate, JavaScript line/branch/function gates, and Video Cloud critical-package gates"
+            echo "- Code coverage: per-module overall ratchets, 80% changed-Go-statement gate, JavaScript line/branch/function gates, and Video Cloud critical-package gates"
+            echo "- Feature coverage: requirement-level product evidence; currently observe-only and never increased by code coverage"
             report=".artifacts/test-runs/gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-node/coverage/TEST_REPORT.md"
             if [ -f "$report" ]; then
               echo
               sed -n '1,12p' "$report"
+            fi
+            feature_report=".artifacts/test-runs/gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-feature-coverage/FEATURE_COVERAGE.md"
+            if [ -f "$feature_report" ]; then
+              echo
+              sed -n '1,10p' "$feature_report"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
