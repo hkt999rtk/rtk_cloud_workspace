@@ -483,6 +483,28 @@ jobs:
               --staging --desktop --mobile --install \
               --run-id "$RUNTIME_COVERAGE_RUN_ID"
 
+      - name: Aggregate runtime feature evidence
+        if: always() && env.RUNTIME_COVERAGE_MODE == 'run' && env.RUNTIME_COVERAGE_PREPARED == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          qualification="${{ vars.FEATURE_QUALIFICATION_MODE || 'observe' }}"
+          if [ "$qualification" != "observe" ] && [ "$qualification" != "required" ]; then
+            echo "FEATURE_QUALIFICATION_MODE must be observe or required, got: $qualification" >&2
+            exit 1
+          fi
+          go run ./scripts/go/rtk-cloud -- test-spec-inventory check \
+            --mode "$qualification" \
+            --output-dir ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID/spec-inventory"
+          action=audit
+          if [ "$qualification" = "required" ]; then
+            action=check
+          fi
+          go run ./scripts/go/rtk-cloud -- test-feature-coverage "$action" \
+            --mode main \
+            --evidence ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID" \
+            --output-dir ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID/feature-coverage"
+
       - name: Gracefully stop services and collect runtime counters
         if: always() && env.RUNTIME_COVERAGE_MODE == 'run' && env.RUNTIME_COVERAGE_PREPARED == '1'
         run: scripts/ci/runtime-coverage-k8s.sh collect

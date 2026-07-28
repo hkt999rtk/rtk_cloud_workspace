@@ -1838,7 +1838,10 @@ func validateH264RTPSequence(packets []*rtp.Packet) error {
 		if packets[i].SequenceNumber != packets[i-1].SequenceNumber+1 {
 			return fmt.Errorf("RTP sequence discontinuity at %d: %d after %d", i, packets[i].SequenceNumber, packets[i-1].SequenceNumber)
 		}
-		if packets[i].Timestamp < packets[i-1].Timestamp {
+		// RTP timestamps are uint32 serial numbers. A lower numeric value can
+		// be the next timestamp after a legal wrap; only a delta in the older
+		// half of the serial-number space represents backwards movement.
+		if delta := packets[i].Timestamp - packets[i-1].Timestamp; delta >= 1<<31 {
 			return fmt.Errorf("RTP timestamp moved backwards at %d: %d after %d", i, packets[i].Timestamp, packets[i-1].Timestamp)
 		}
 	}

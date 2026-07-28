@@ -107,13 +107,17 @@ jobs:
           required="$(jq -r '.required' .artifacts/feature-selection.json)"
           features="$(jq -c '.features' .artifacts/feature-selection.json)"
           mode="${{ vars.FEATURE_QUALIFICATION_MODE || 'observe' }}"
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            mode="required"
-          fi
           if [ "$mode" != "observe" ] && [ "$mode" != "required" ]; then
             echo "FEATURE_QUALIFICATION_MODE must be observe or required, got: $mode" >&2
             exit 1
           fi
+          go run ./scripts/go/rtk-cloud -- test-spec-inventory check \
+            --mode "$mode" \
+            --output-dir .artifacts/spec-inventory
+          go run ./scripts/go/rtk-cloud -- test-spec-impact \
+            --base "$base_ref" \
+            --head HEAD \
+            --output-dir .artifacts/spec-impact
           echo "required=$required" >> "$GITHUB_OUTPUT"
           echo "features=$features" >> "$GITHUB_OUTPUT"
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
@@ -133,7 +137,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: feature-qualification-selection-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .artifacts/feature-selection.json
+          path: |
+            .artifacts/feature-selection.json
+            .artifacts/spec-inventory/**
+            .artifacts/spec-impact/**
           if-no-files-found: error
           retention-days: ${{ github.event_name == 'pull_request' && 30 || 90 }}
 

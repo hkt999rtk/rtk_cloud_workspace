@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -18,8 +19,9 @@ var playwrightTestPattern = regexp.MustCompile(`(?m)^\s*test\(\s*['"\x60](\[[A-Z
 var playwrightAnyTestPattern = regexp.MustCompile(`(?m)^\s*test\(\s*['"\x60]`)
 
 type testCatalog struct {
-	SchemaVersion int               `yaml:"schema_version"`
-	Cases         []testCatalogCase `yaml:"cases"`
+	SchemaVersion int                  `yaml:"schema_version"`
+	Features      []testCatalogFeature `yaml:"features"`
+	Cases         []testCatalogCase    `yaml:"cases"`
 }
 
 type testCatalogCase struct {
@@ -39,7 +41,46 @@ type testCatalogCase struct {
 	Environments []string `yaml:"environments"`
 	Tags         []string `yaml:"tags,omitempty"`
 	Evidence     []string `yaml:"evidence,omitempty"`
+	Verifies     []string `yaml:"verifies,omitempty"`
+	Supports     []string `yaml:"supports,omitempty"`
 	Status       string   `yaml:"status"`
+}
+
+type testCatalogFeature struct {
+	ID            string                   `yaml:"id"`
+	Title         string                   `yaml:"title"`
+	Owner         string                   `yaml:"owner"`
+	Risk          string                   `yaml:"risk"`
+	ChangePaths   []string                 `yaml:"change_paths"`
+	CommitAnchors []string                 `yaml:"commit_anchors,omitempty"`
+	Surfaces      []testCatalogSurface     `yaml:"surfaces"`
+	Requirements  []testCatalogRequirement `yaml:"requirements"`
+	Status        string                   `yaml:"status"`
+	SpecSource    specRequirementSource    `yaml:"-"`
+}
+
+type testCatalogSurface struct {
+	Kind      string `yaml:"kind"`
+	Source    string `yaml:"source"`
+	Selector  string `yaml:"selector"`
+	Exclusion string `yaml:"exclusion,omitempty"`
+	Owner     string `yaml:"owner,omitempty"`
+	Expires   string `yaml:"expires,omitempty"`
+}
+
+type testCatalogRequirement struct {
+	ID              string                `yaml:"id" json:"id"`
+	Title           string                `yaml:"title" json:"title"`
+	AcceptanceLayer string                `yaml:"acceptance_layer" json:"acceptance_layer"`
+	Gate            string                `yaml:"gate" json:"gate"`
+	Environments    []string              `yaml:"environments" json:"environments"`
+	Targets         []string              `yaml:"targets,omitempty" json:"targets,omitempty"`
+	Evidence        []string              `yaml:"evidence,omitempty" json:"evidence,omitempty"`
+	FreshnessHours  int                   `yaml:"freshness_hours,omitempty" json:"freshness_hours,omitempty"`
+	Required        *bool                 `yaml:"required,omitempty" json:"required,omitempty"`
+	Status          string                `yaml:"status" json:"status"`
+	Revision        string                `yaml:"-" json:"revision"`
+	SpecSource      specRequirementSource `yaml:"-" json:"spec_source"`
 }
 
 var catalogLayers = map[string]string{"service": "SVC-", "unit": "UNIT-", "e2e": "E2E-", "ui": "UI-", "live": "LIVE-", "load": "LOAD-"}
@@ -56,6 +97,12 @@ var catalogEvidence = map[string]bool{
 	"screenshot": true, "cloud-evidence": true, "junit": true, "json": true,
 	"markdown": true, "logs": true, "console": true,
 }
+var featureIDPattern = regexp.MustCompile(`^FEAT(-[A-Z0-9]+){2,3}-[0-9]{3}$`)
+var requirementIDPattern = regexp.MustCompile(`^REQ(-[A-Z0-9]+){2,4}-[0-9]{3}$`)
+var catalogFeatureRisks = map[string]bool{"critical": true, "high": true, "normal": true}
+var catalogAcceptanceLayers = map[string]bool{"integration": true, "ui": true, "e2e": true, "live": true}
+var catalogRequirementGates = map[string]bool{"pr": true, "main": true, "scheduled": true, "operator-release": true}
+var catalogSurfaceKinds = map[string]bool{"api-route": true, "ui-route": true, "sdk-api": true, "operator-workflow": true}
 
 func runTestCatalog(args []string) error {
 	action := "check"
@@ -119,9 +166,26 @@ func loadAndValidateTestCatalogForRunner(workspace, sourceRunner string) (testCa
 	if err := yaml.Unmarshal(raw, &catalog); err != nil {
 		return testCatalog{}, fmt.Errorf("parse test catalog: %w", err)
 	}
-	if catalog.SchemaVersion != 2 {
-		return testCatalog{}, fmt.Errorf("test catalog schema_version=%d, want 2", catalog.SchemaVersion)
+	if catalog.SchemaVersion != 4 {
+		return testCatalog{}, fmt.Errorf("test catalog schema_version=%d, want 4", catalog.SchemaVersion)
 	}
+	if len(catalog.Features) != 0 {
+		return testCatalog{}, errors.New("test catalog schema v4 derives features and requirements from registered specs; remove catalog features")
+	}
+	var inventory specInventory
+	if sourceRunner == "" {
+		inventory, err = loadSpecInventory(workspace)
+	} else {
+		inventory, err = loadAvailableSpecInventory(workspace)
+	}
+	if err != nil {
+		return testCatalog{}, err
+	}
+	catalog.Features = inventory.Features
+	if err := validateFeatureRequirements(workspace, catalog, sourceRunner); err != nil {
+		return testCatalog{}, err
+	}
+	requirements := catalogRequirementIndex(catalog)
 	seen := map[string]bool{}
 	catalogUI := map[string]bool{}
 	for i, tc := range catalog.Cases {
@@ -166,6 +230,16 @@ func loadAndValidateTestCatalogForRunner(workspace, sourceRunner string) (testCa
 		}
 		if tc.Status == "retired" {
 			continue
+		}
+		if tc.Layer != "unit" && tc.Layer != "service" && len(tc.Verifies) == 0 {
+			return testCatalog{}, fmt.Errorf("%s %s product case requires verifies", prefix, tc.ID)
+		}
+		if sourceRunner == "" || tc.Runner == sourceRunner {
+			for _, requirementID := range append(append([]string{}, tc.Verifies...), tc.Supports...) {
+				if _, ok := requirements[requirementID]; !ok {
+					return testCatalog{}, fmt.Errorf("%s %s references unknown requirement %q", prefix, tc.ID, requirementID)
+				}
+			}
 		}
 		if tc.Profile != "" && !catalogProfiles[tc.Profile] {
 			return testCatalog{}, fmt.Errorf("%s %s has unsupported profile %q", prefix, tc.ID, tc.Profile)
@@ -258,7 +332,198 @@ func validateCatalogRelationships(catalog testCatalog) error {
 			}
 		}
 	}
+	if err := validateRequirementProofMappings(catalog); err != nil {
+		return err
+	}
 	return nil
+}
+
+func catalogRequirementIndex(catalog testCatalog) map[string]testCatalogRequirement {
+	out := map[string]testCatalogRequirement{}
+	for _, feature := range catalog.Features {
+		for _, requirement := range feature.Requirements {
+			out[requirement.ID] = requirement
+		}
+	}
+	return out
+}
+
+func catalogFeatureByRequirement(catalog testCatalog) map[string]testCatalogFeature {
+	out := map[string]testCatalogFeature{}
+	for _, feature := range catalog.Features {
+		for _, requirement := range feature.Requirements {
+			out[requirement.ID] = feature
+		}
+	}
+	return out
+}
+
+func requirementRequired(requirement testCatalogRequirement) bool {
+	return requirement.Required == nil || *requirement.Required
+}
+
+func validateFeatureRequirements(workspace string, catalog testCatalog, sourceRunner string) error {
+	if len(catalog.Features) == 0 {
+		return errors.New("test catalog requires at least one feature")
+	}
+	featureIDs := map[string]bool{}
+	requirementIDs := map[string]bool{}
+	for i, feature := range catalog.Features {
+		prefix := fmt.Sprintf("features[%d]", i)
+		if !featureIDPattern.MatchString(feature.ID) {
+			return fmt.Errorf("%s id %q is invalid", prefix, feature.ID)
+		}
+		if featureIDs[feature.ID] {
+			return fmt.Errorf("duplicate feature id %q", feature.ID)
+		}
+		featureIDs[feature.ID] = true
+		if strings.TrimSpace(feature.Title) == "" || !catalogOwners[feature.Owner] || !catalogFeatureRisks[feature.Risk] {
+			return fmt.Errorf("%s %s requires title, known owner, and valid risk", prefix, feature.ID)
+		}
+		if feature.Status != "active" && feature.Status != "planned" && feature.Status != "review_required" && feature.Status != "deprecated" && feature.Status != "retired" {
+			return fmt.Errorf("%s %s has unsupported status %q", prefix, feature.ID, feature.Status)
+		}
+		if feature.Status != "active" {
+			continue
+		}
+		if len(feature.ChangePaths) == 0 || len(feature.Surfaces) == 0 || len(feature.Requirements) == 0 {
+			return fmt.Errorf("%s %s requires change_paths, surfaces, and requirements", prefix, feature.ID)
+		}
+		for _, changePath := range feature.ChangePaths {
+			if sourceRunner == "" {
+				if err := validateCatalogChangePath(workspace, changePath); err != nil {
+					return fmt.Errorf("%s %s change_path %q: %w", prefix, feature.ID, changePath, err)
+				}
+			}
+		}
+		for j, surface := range feature.Surfaces {
+			surfacePrefix := fmt.Sprintf("%s.surfaces[%d]", prefix, j)
+			if !catalogSurfaceKinds[surface.Kind] || strings.TrimSpace(surface.Source) == "" || strings.TrimSpace(surface.Selector) == "" {
+				return fmt.Errorf("%s requires known kind, source, and selector", surfacePrefix)
+			}
+			if surface.Exclusion != "" {
+				if !catalogOwners[surface.Owner] || strings.TrimSpace(surface.Expires) == "" {
+					return fmt.Errorf("%s exclusion requires owner and expires", surfacePrefix)
+				}
+				expires, err := time.Parse("2006-01-02", surface.Expires)
+				if err != nil {
+					return fmt.Errorf("%s exclusion expires must be YYYY-MM-DD", surfacePrefix)
+				}
+				if expires.Before(time.Now().UTC().Truncate(24 * time.Hour)) {
+					return fmt.Errorf("%s exclusion expired on %s", surfacePrefix, surface.Expires)
+				}
+			}
+			if sourceRunner == "" {
+				raw, err := os.ReadFile(filepath.Join(workspace, filepath.FromSlash(surface.Source)))
+				if err != nil {
+					return fmt.Errorf("%s source: %w", surfacePrefix, err)
+				}
+				if !bytes.Contains(raw, []byte(surface.Selector)) {
+					return fmt.Errorf("%s selector %q not found in %s", surfacePrefix, surface.Selector, surface.Source)
+				}
+			}
+		}
+		for j, requirement := range feature.Requirements {
+			requirementPrefix := fmt.Sprintf("%s.requirements[%d]", prefix, j)
+			if !requirementIDPattern.MatchString(requirement.ID) || requirementIDs[requirement.ID] {
+				return fmt.Errorf("%s id %q is invalid or reused", requirementPrefix, requirement.ID)
+			}
+			requirementIDs[requirement.ID] = true
+			if strings.TrimSpace(requirement.Title) == "" || !catalogAcceptanceLayers[requirement.AcceptanceLayer] || !catalogRequirementGates[requirement.Gate] {
+				return fmt.Errorf("%s %s requires title, acceptance_layer, and gate", requirementPrefix, requirement.ID)
+			}
+			if requirement.Status != "active" && requirement.Status != "planned" && requirement.Status != "review_required" && requirement.Status != "deprecated" && requirement.Status != "retired" {
+				return fmt.Errorf("%s %s has unsupported status %q", requirementPrefix, requirement.ID, requirement.Status)
+			}
+			if requirement.Status != "active" {
+				continue
+			}
+			if len(requirement.Environments) == 0 {
+				return fmt.Errorf("%s %s requires environments", requirementPrefix, requirement.ID)
+			}
+			for _, environment := range requirement.Environments {
+				if !catalogEnvironments[environment] {
+					return fmt.Errorf("%s %s has unknown environment %q", requirementPrefix, requirement.ID, environment)
+				}
+			}
+			for _, target := range requirement.Targets {
+				if !catalogTargets[target] {
+					return fmt.Errorf("%s %s has unknown target %q", requirementPrefix, requirement.ID, target)
+				}
+			}
+			for _, evidence := range requirement.Evidence {
+				if !catalogEvidence[evidence] {
+					return fmt.Errorf("%s %s has unknown evidence %q", requirementPrefix, requirement.ID, evidence)
+				}
+			}
+			if requirement.Gate == "scheduled" || requirement.Gate == "operator-release" {
+				if requirement.AcceptanceLayer != "live" || requirement.FreshnessHours <= 0 {
+					return fmt.Errorf("%s %s live gate requires acceptance_layer live and positive freshness_hours", requirementPrefix, requirement.ID)
+				}
+				expectedFreshness := 168
+				if requirement.Gate == "scheduled" && feature.Risk == "critical" {
+					expectedFreshness = 36
+				}
+				if requirement.FreshnessHours != expectedFreshness {
+					return fmt.Errorf("%s %s freshness_hours must be %d", requirementPrefix, requirement.ID, expectedFreshness)
+				}
+			} else if requirement.FreshnessHours != 0 {
+				return fmt.Errorf("%s %s deterministic gate must not set freshness_hours", requirementPrefix, requirement.ID)
+			}
+		}
+	}
+	return nil
+}
+
+func validateRequirementProofMappings(catalog testCatalog) error {
+	requirements := catalogRequirementIndex(catalog)
+	proofs := map[string][]testCatalogCase{}
+	for _, tc := range catalog.Cases {
+		if tc.Status != "active" {
+			continue
+		}
+		for _, requirementID := range tc.Verifies {
+			proofs[requirementID] = append(proofs[requirementID], tc)
+		}
+	}
+	for requirementID, requirement := range requirements {
+		if requirement.Status != "active" || !requirementRequired(requirement) {
+			continue
+		}
+		var valid bool
+		for _, tc := range proofs[requirementID] {
+			if tc.Layer == "unit" || tc.Layer == "service" {
+				continue
+			}
+			if requirement.AcceptanceLayer == "ui" && tc.Layer != "ui" {
+				continue
+			}
+			if requirement.AcceptanceLayer == "live" && !catalogContainsString(tc.Environments, "staging") {
+				continue
+			}
+			if !catalogSlicesOverlap(requirement.Environments, tc.Environments) {
+				continue
+			}
+			if len(requirement.Targets) > 0 && !catalogSlicesOverlap(requirement.Targets, tc.Targets) {
+				continue
+			}
+			valid = true
+			break
+		}
+		if !valid {
+			return fmt.Errorf("required requirement %s has no qualifying integration/UI/E2E/live proof case", requirementID)
+		}
+	}
+	return nil
+}
+
+func catalogSlicesOverlap(left, right []string) bool {
+	for _, item := range left {
+		if catalogContainsString(right, item) {
+			return true
+		}
+	}
+	return false
 }
 
 func validatePlaywrightCatalogCoverage(workspace string, catalogUI map[string]bool) error {
@@ -299,14 +564,39 @@ func renderTestCatalog(catalog testCatalog) []byte {
 	var b strings.Builder
 	fmt.Fprintln(&b, "# Test Catalog")
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "> Generated from `tests/catalog.yaml`; do not edit this file directly.")
+	fmt.Fprintln(&b, "> Features and requirements are generated from `tests/spec-sources.yaml` and the registered specs. Test cases are generated from `tests/catalog.yaml`; do not edit this file directly.")
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "| Test ID | Purpose | Method | Layer | Feature | Profile | Covers | Change Paths | Owner | Targets | Environments | Runner | Evidence | Status |")
-	fmt.Fprintln(&b, "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+	fmt.Fprintln(&b, "## Feature requirements")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "| Spec source | Feature ID | Feature | Risk | Requirement ID | Requirement | Revision | Layer | Gate | Freshness | Owner | Status |")
+	fmt.Fprintln(&b, "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+	features := append([]testCatalogFeature(nil), catalog.Features...)
+	sort.Slice(features, func(i, j int) bool { return features[i].ID < features[j].ID })
+	for _, feature := range features {
+		requirements := append([]testCatalogRequirement(nil), feature.Requirements...)
+		sort.Slice(requirements, func(i, j int) bool { return requirements[i].ID < requirements[j].ID })
+		for _, requirement := range requirements {
+			freshness := "—"
+			if requirement.FreshnessHours > 0 {
+				freshness = fmt.Sprintf("%dh", requirement.FreshnessHours)
+			}
+			fmt.Fprintf(&b, "| `%s#%s` | `%s` | %s | `%s` | `%s` | %s | `%s` | `%s` | `%s` | %s | `%s` | `%s` |\n",
+				requirement.SpecSource.Path, requirement.SpecSource.Section,
+				feature.ID, escapeMarkdownCell(feature.Title), feature.Risk, requirement.ID,
+				escapeMarkdownCell(requirement.Title), shortRevision(requirement.Revision),
+				requirement.AcceptanceLayer, requirement.Gate, freshness, feature.Owner, requirement.Status)
+		}
+	}
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Test cases")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "| Test ID | Purpose | Method | Layer | Feature | Profile | Verifies | Supports | Covers | Change Paths | Owner | Targets | Environments | Runner | Evidence | Status |")
+	fmt.Fprintln(&b, "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
 	for _, tc := range cases {
-		fmt.Fprintf(&b, "| `%s` | %s | %s | `%s` | %s | %s | %s | %s | `%s` | %s | %s | `%s` | %s | `%s` |\n",
+		fmt.Fprintf(&b, "| `%s` | %s | %s | `%s` | %s | %s | %s | %s | %s | %s | `%s` | %s | %s | `%s` | %s | `%s` |\n",
 			tc.ID, escapeMarkdownCell(tc.Title), escapeMarkdownCell(tc.Method), tc.Layer,
-			catalogOptionalCode(tc.Feature), catalogOptionalCode(tc.Profile), joinCatalogValues(tc.Covers),
+			catalogOptionalCode(tc.Feature), catalogOptionalCode(tc.Profile), joinCatalogValues(tc.Verifies),
+			joinCatalogValues(tc.Supports), joinCatalogValues(tc.Covers),
 			joinCatalogValues(tc.ChangePaths), tc.Owner,
 			joinCatalogValues(tc.Targets), joinCatalogValues(tc.Environments), tc.Runner,
 			joinCatalogValues(tc.Evidence), tc.Status)

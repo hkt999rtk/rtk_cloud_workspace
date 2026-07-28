@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import datetime
 import os
 import pathlib
 import re
@@ -197,6 +198,7 @@ def temporary_runtime_root(workspace: pathlib.Path, env: dict[str, str]):
 
 
 def main() -> int:
+    started_at = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace", default=".")
     parser.add_argument("--env-file", default=str(pathlib.Path.home() / ".env"))
@@ -292,6 +294,25 @@ def main() -> int:
     }
     print(f"Running cloud signup activation E2E (run {run_id})...")
     run_checked(["npm", "run", "e2e:email-signup-live"], admin_web, browser_env, timeout=360)
+    completed_at = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    (evidence_dir / "run.log").write_text(
+        f"test_id=E2E-CA-SIGNUP-EMAIL-001 run_id={run_id} status=PASS\n",
+        encoding="utf-8",
+    )
+    run_checked(
+        [
+            "go", "run", "./scripts/go/rtk-cloud", "--",
+            "test-feature-coverage", "record",
+            "--test-id", "E2E-CA-SIGNUP-EMAIL-001",
+            "--run-id", run_id,
+            "--environment", "staging",
+            "--started-at", started_at,
+            "--completed-at", completed_at,
+            "--output-dir", str(evidence_dir),
+        ],
+        workspace,
+        child_env,
+    )
     print(f"Cloud Send Mail + local IMAP signup E2E passed (run {run_id}; evidence redacted).")
     return 0
 
