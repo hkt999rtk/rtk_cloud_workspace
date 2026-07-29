@@ -13,6 +13,9 @@ func TestRunTestServicesValidatesFiltersBeforeExecutingSuites(t *testing.T) {
 	if err := runTestServices([]string{"--repo", "not-managed"}); err == nil || !strings.Contains(err.Error(), "unknown managed service") {
 		t.Fatalf("unknown repository error = %v", err)
 	}
+	if err := runTestServices([]string{"--qualification-only"}); err == nil || !strings.Contains(err.Error(), "requires --qualification-output-dir") {
+		t.Fatalf("qualification-only error = %v", err)
+	}
 }
 
 func TestRunTestServicesEmptyDiffDoesNotExecuteSuites(t *testing.T) {

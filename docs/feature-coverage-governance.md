@@ -63,6 +63,13 @@ mapped to a spec feature and atomic requirement. A new required requirement
 without qualifying product-level proof is `MISSING_TEST`. Unit and service
 tests may support a requirement but cannot close it.
 
+During migration, `FEATURE_QUALIFICATION_MODE=observe` allows the catalog and
+inventory to load a newly discovered requirement before its qualifying test is
+implemented. The feature-coverage report must show that requirement as
+`MISSING`; it receives no PASS credit. With
+`FEATURE_QUALIFICATION_MODE=required`, the same missing high-level proof is a
+catalog and gate error. Invalid qualification-mode values are always rejected.
+
 ## Evidence contract
 
 Normalized manifests use `rtk-cloud-feature-coverage-evidence/v3`. Every
@@ -75,6 +82,20 @@ The aggregator rejects missing assertions, SKIP/INCOMPLETE states,
 target/environment mismatch, commit mismatch, expired evidence, modified
 evidence files, or a requirement revision mismatch. A prior PASS against an old
 revision becomes `STALE_SPEC`.
+
+Canonical authorization integration evidence is produced with targeted,
+named PostgreSQL and Video Cloud tests:
+
+```sh
+go run ./scripts/go/rtk-cloud -- test-services \
+  --repo rtk_account_manager,rtk_video_cloud \
+  --qualification-only \
+  --qualification-output-dir <evidence-dir>
+```
+
+The runner rejects skipped tests and emits an explicit assertion map for every
+Requirement referenced by each `INT-*` case. A whole service-suite PASS is not
+expanded into Requirement PASS results.
 
 ## Gates and rollout
 

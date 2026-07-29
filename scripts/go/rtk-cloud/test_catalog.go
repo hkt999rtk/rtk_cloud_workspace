@@ -14,7 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var testCaseIDPattern = regexp.MustCompile(`^(SVC|UNIT|E2E|UI|LIVE|LOAD)(-[A-Z0-9]+){2,3}-[0-9]{3}$`)
+var testCaseIDPattern = regexp.MustCompile(`^(SVC|UNIT|INT|E2E|UI|LIVE|LOAD)(-[A-Z0-9]+){2,3}-[0-9]{3}$`)
 var playwrightTestPattern = regexp.MustCompile(`(?m)^\s*test\(\s*['"\x60](\[[A-Z0-9-]+\])`)
 var playwrightAnyTestPattern = regexp.MustCompile(`(?m)^\s*test\(\s*['"\x60]`)
 
@@ -84,7 +84,7 @@ type testCatalogRequirement struct {
 	SpecSource      specRequirementSource `yaml:"-" json:"spec_source"`
 }
 
-var catalogLayers = map[string]string{"service": "SVC-", "unit": "UNIT-", "e2e": "E2E-", "ui": "UI-", "live": "LIVE-", "load": "LOAD-"}
+var catalogLayers = map[string]string{"service": "SVC-", "unit": "UNIT-", "integration": "INT-", "e2e": "E2E-", "ui": "UI-", "live": "LIVE-", "load": "LOAD-"}
 var catalogOwners = map[string]bool{
 	"cloud_platform": true, "factory_enroll": true, "home_cloud": true, "provisioning": true,
 	"rtk_account_manager": true, "rtk_cloud_admin": true, "rtk_cloud_client": true,
@@ -169,6 +169,9 @@ func loadAndValidateTestCatalogForRunner(workspace, sourceRunner string) (testCa
 	}
 	if catalog.SchemaVersion != 4 {
 		return testCatalog{}, fmt.Errorf("test catalog schema_version=%d, want 4", catalog.SchemaVersion)
+	}
+	if mode := featureQualificationMode(); mode != "observe" && mode != "required" {
+		return testCatalog{}, fmt.Errorf("FEATURE_QUALIFICATION_MODE must be observe or required, got %q", mode)
 	}
 	if len(catalog.Features) != 0 {
 		return testCatalog{}, errors.New("test catalog schema v4 derives features and requirements from registered specs; remove catalog features")
@@ -333,10 +336,20 @@ func validateCatalogRelationships(catalog testCatalog) error {
 			}
 		}
 	}
-	if err := validateRequirementProofMappings(catalog); err != nil {
-		return err
+	if featureQualificationMode() == "required" {
+		if err := validateRequirementProofMappings(catalog); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func featureQualificationMode() string {
+	mode := strings.TrimSpace(os.Getenv("FEATURE_QUALIFICATION_MODE"))
+	if mode == "" {
+		return "observe"
+	}
+	return mode
 }
 
 func catalogRequirementIndex(catalog testCatalog) map[string]testCatalogRequirement {

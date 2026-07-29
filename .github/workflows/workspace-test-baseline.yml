@@ -14,8 +14,21 @@ jobs:
     name: Workspace baseline, E2E, and affected services
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     env:
       FEATURE_EVIDENCE_RUN_ID: gh-${{ github.run_id }}-${{ github.run_attempt }}-feature
+      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
     steps:
       - name: Check out workspace
         uses: actions/checkout@v6
@@ -112,6 +125,15 @@ jobs:
           fi
           go run ./rtk-cloud -- test-services "${args[@]}"
 
+      - name: Qualify canonical authorization requirements
+        working-directory: scripts/go
+        run: |
+          go run ./rtk-cloud -- test-services \
+            --repo rtk_account_manager,rtk_video_cloud \
+            --qualification-only \
+            --qualification-run-id "$FEATURE_EVIDENCE_RUN_ID" \
+            --qualification-output-dir "../../.artifacts/test-runs/$FEATURE_EVIDENCE_RUN_ID/authorization"
+
       - name: Enforce Node coverage policy
         working-directory: scripts/go
         shell: bash
@@ -153,6 +175,7 @@ jobs:
             echo "FEATURE_QUALIFICATION_MODE must be observe or required, got: $qualification" >&2
             exit 1
           fi
+          export FEATURE_QUALIFICATION_MODE="$qualification"
           action=audit
           if [ "$qualification" = "required" ]; then
             action=check

@@ -48,6 +48,114 @@ cases:
     environments: [local, ci]
     evidence: [json, junit]
     status: active
+  - id: INT-AM-AUTHZ-MATRIX-001
+    title: Product authorization and tenancy matrix enforces route and compatibility boundaries
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: TestIntegrationAuthorizationAndTenancyMatrix
+    method: PostgreSQL-backed Account Manager integration test exercises owner, admin, member, outsider, platform-admin, and disabled-user requests and asserts scoped success, non-disclosing denial, and compatibility behavior.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-AUTHZ-ROUTES-001, REQ-CONTRACT-AUTHZ-COMPAT-001]
+    status: active
+  - id: INT-AM-AUTHZ-BOUNDARY-001
+    title: Video Cloud runtime scopes cannot grant Account Manager product roles
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: TestIntegrationVideoCloudRuntimeScopeDoesNotGrantProductRole
+    method: PostgreSQL-backed Account Manager integration test presents a Video Cloud-shaped admin runtime token to product-user and platform ACL routes and requires unauthorized rejection.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-AUTHZ-BOUNDARY-001]
+    status: active
+  - id: INT-AM-AUTHZ-SOURCE-001
+    title: External identity groups grant permissions only through persisted scoped assignments
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/store/acl_integration_test.go
+    selector: TestACLExternalGroupMappingCreatesScopedAssignment
+    method: PostgreSQL-backed store integration test persists an external-group mapping and verifies only its explicit organization-scoped role assignment grants access.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-AUTHZ-SOURCE-001]
+    status: active
+  - id: INT-AM-AUTHZ-MODEL-001
+    title: Explicit role assignments authorize only inside their declared resource scope
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/store/acl_integration_test.go
+    selector: TestACLRoleAssignmentsAuthorizeInsideScopeOnly
+    method: PostgreSQL-backed store integration test creates scoped role assignments and asserts allowed reads, denied writes, and cross-scope denial.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-AUTHZ-MODEL-001]
+    status: active
+  - id: INT-AM-AUTHZ-CATALOG-001
+    title: Permission catalog and default system roles preserve declared grants
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/store/acl_integration_test.go
+    selector: TestACLSeedPermissionCatalogAndSystemRoles
+    method: PostgreSQL-backed store integration test validates seeded permission names and positive and negative grants for the default system roles.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-AUTHZ-CATALOG-001, REQ-CONTRACT-AUTHZ-DEFAULTS-001]
+    status: active
+  - id: INT-AM-AUTHZ-PROVIDER-001
+    title: Chipset provider capabilities independently guard read edit and publish actions
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/chipset_providers_integration_test.go
+    selector: TestIntegrationChipsetProviderACLRefreshVisibilityAndAudit
+    method: PostgreSQL-backed API integration test assigns independent provider permissions and verifies lifecycle authorization, developer visibility, and audit records.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-AUTHZ-PROVIDER-001]
+    status: active
+  - id: INT-VC-OTA-OPERATOR-001
+    title: OTA operator and device identities come from verified authorization context
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/httpapi/sku_ota_test.go
+    selector: TestSKUOTAOperatorAndDeviceAuthenticationBoundaries
+    method: Video Cloud HTTP integration test verifies operator brand context, missing-context rejection, device-token subject binding, and rejection of non-device credentials.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-AUTHZ-OTA-OPERATOR-001, REQ-CONTRACT-AUTHZ-OTA-DEVICE-001]
+    status: active
+  - id: INT-VC-OTA-ARTIFACT-001
+    title: OTA artifact grants reject foreign devices and are deployment-scoped and expiring
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/skuota/ota_test.go
+    selector: TestArtifactTokenIsDeploymentScopedAndExpires
+    method: Video Cloud service integration test rejects a foreign device, binds the signed artifact grant to one deployment, and rejects it after expiry.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-AUTHZ-OTA-ARTIFACT-001]
+    status: active
+  - id: INT-VC-OTA-TENANT-001
+    title: OTA repository rejects cross-tenant release reads without leaking state
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/skuota/ota_test.go
+    selector: TestTenantIsolationAndEventIdempotency
+    method: Video Cloud service integration test attempts a foreign-brand release read and asserts the canonical forbidden result while preserving event replay idempotency.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-AUTHZ-OTA-TENANT-001]
+    status: active
   - id: UNIT-VC-SHADOW-001
     title: Device shadow rejects stale versions
     layer: unit

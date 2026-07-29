@@ -183,6 +183,38 @@ func TestCatalogRequiredRequirementRejectsSupportingOnlyProof(t *testing.T) {
 	}
 }
 
+func TestCatalogObserveReportsProofGapsWithoutBlockingMigration(t *testing.T) {
+	catalog := testCatalog{
+		SchemaVersion: 4,
+		Features: []testCatalogFeature{{
+			ID: "FEAT-TEST-FLOW-001", Status: "active",
+			Requirements: []testCatalogRequirement{{
+				ID: "REQ-E2E-TEST-FLOW-001", Status: "active",
+				AcceptanceLayer: "e2e", Environments: []string{"ci"},
+			}},
+		}},
+	}
+	t.Setenv("FEATURE_QUALIFICATION_MODE", "observe")
+	if err := validateCatalogRelationships(catalog); err != nil {
+		t.Fatalf("observe mode must leave missing proof to the feature coverage report: %v", err)
+	}
+	t.Setenv("FEATURE_QUALIFICATION_MODE", "required")
+	if err := validateCatalogRelationships(catalog); err == nil || !strings.Contains(err.Error(), "no qualifying") {
+		t.Fatalf("required mode must reject missing proof, got %v", err)
+	}
+}
+
+func TestCatalogRejectsUnknownFeatureQualificationMode(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FEATURE_QUALIFICATION_MODE", "typo")
+	if _, err := loadAndValidateTestCatalog(workspace); err == nil || !strings.Contains(err.Error(), "must be observe or required") {
+		t.Fatalf("unknown feature qualification mode accepted: %v", err)
+	}
+}
+
 func TestCatalogSurfaceExclusionRequiresOwnedUnexpiredReason(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {

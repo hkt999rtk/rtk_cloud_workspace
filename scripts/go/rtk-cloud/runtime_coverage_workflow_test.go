@@ -198,6 +198,11 @@ func TestWorkspaceBaselineRunsAndCanEnforceDeterministicFeatureEvidence(t *testi
 		"action=check",
 		"test-spec-inventory check",
 		"test-spec-impact",
+		"Qualify canonical authorization requirements",
+		"--qualification-only",
+		"--qualification-output-dir",
+		"TEST_DATABASE_URL:",
+		`export FEATURE_QUALIFICATION_MODE="$qualification"`,
 		`--evidence ".artifacts/test-runs/$FEATURE_EVIDENCE_RUN_ID"`,
 	} {
 		if !strings.Contains(workflow, required) {

@@ -1165,11 +1165,17 @@ func runTestServices(args []string) error {
 	changedSince := fs.String("changed-since", "", "run repositories affected between this git ref and --head-ref")
 	headRef := fs.String("head-ref", "HEAD", "head git ref used with --changed-since")
 	install := fs.Bool("install", false, "install npm dependencies before JavaScript service tests")
+	qualificationOutputDir := fs.String("qualification-output-dir", "", "write explicit integration requirement evidence to this directory")
+	qualificationRunID := fs.String("qualification-run-id", "", "stable run ID for integration requirement evidence")
+	qualificationOnly := fs.Bool("qualification-only", false, "run only targeted integration qualification cases")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if strings.TrimSpace(*repoFilter) != "" && strings.TrimSpace(*changedSince) != "" {
 		return errors.New("test-services accepts either --repo or --changed-since, not both")
+	}
+	if *qualificationOnly && strings.TrimSpace(*qualificationOutputDir) == "" {
+		return errors.New("--qualification-only requires --qualification-output-dir")
 	}
 	workspace, err := workspaceRoot()
 	if err != nil {
@@ -1225,6 +1231,9 @@ func runTestServices(args []string) error {
 		{name: "rtk_video_cloud/tools", dir: filepath.Join(workspace, "repos", "rtk_video_cloud"), cmd: []string{"python3", "-m", "unittest", "discover", "-s", "tools/tests"}},
 	}
 	for _, spec := range specs {
+		if *qualificationOnly {
+			break
+		}
 		if !shouldRun(spec.name) {
 			continue
 		}
@@ -1250,6 +1259,16 @@ func runTestServices(args []string) error {
 			}
 		}
 		if err := runCmd(spec.dir, spec.cmd[0], spec.cmd[1:]...); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(*qualificationOutputDir) != "" {
+		for _, requiredRepo := range []string{"rtk_account_manager", "rtk_video_cloud"} {
+			if len(selected) > 0 && !selected[requiredRepo] {
+				return fmt.Errorf("--qualification-output-dir requires %s to be selected", requiredRepo)
+			}
+		}
+		if err := runAuthorizationQualification(workspace, *qualificationOutputDir, *qualificationRunID); err != nil {
 			return err
 		}
 	}
