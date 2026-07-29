@@ -18,7 +18,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const specInventorySchema = "rtk-cloud-spec-inventory/v1"
+const specInventorySchema = "rtk-cloud-spec-inventory/v2"
 
 type specSourceRegistry struct {
 	SchemaVersion int                      `yaml:"schema_version"`
@@ -85,6 +85,51 @@ type specOpenAPIOperation struct {
 	Revision       string   `json:"revision"`
 }
 
+type specWorkflowDependency struct {
+	Step string `yaml:"step" json:"step"`
+	Type string `yaml:"type" json:"type"`
+}
+
+type specWorkflowStateTransition struct {
+	From string `yaml:"from" json:"from,omitempty"`
+	To   string `yaml:"to" json:"to,omitempty"`
+}
+
+type specWorkflowStep struct {
+	ID              string                      `yaml:"id" json:"id"`
+	OperationRef    string                      `yaml:"operation_ref" json:"operation_ref"`
+	Dependencies    []specWorkflowDependency    `yaml:"depends_on" json:"depends_on,omitempty"`
+	Consumes        []string                    `yaml:"consumes" json:"consumes,omitempty"`
+	Produces        []string                    `yaml:"produces" json:"produces,omitempty"`
+	StateTransition specWorkflowStateTransition `yaml:"state_transition" json:"state_transition,omitempty"`
+	Expected        string                      `yaml:"expected" json:"expected"`
+	Always          bool                        `yaml:"always" json:"always,omitempty"`
+}
+
+type specWorkflow struct {
+	ID             string             `yaml:"id" json:"id"`
+	Title          string             `yaml:"title" json:"title"`
+	FeatureID      string             `yaml:"feature_id" json:"feature_id"`
+	RequirementIDs []string           `yaml:"requirement_ids" json:"requirement_ids"`
+	Inputs         []string           `yaml:"inputs" json:"inputs,omitempty"`
+	Steps          []specWorkflowStep `yaml:"steps" json:"steps"`
+	DocumentID     string             `json:"document_id"`
+	SourcePath     string             `json:"source_path"`
+	Authority      string             `json:"authority"`
+	Status         string             `json:"status"`
+	Revision       string             `json:"revision"`
+}
+
+type specWorkflowDocument struct {
+	SchemaVersion int `yaml:"schema_version"`
+	RTKSpec       struct {
+		ID     string `yaml:"id"`
+		Status string `yaml:"status"`
+		Owner  string `yaml:"owner"`
+	} `yaml:"rtk_spec"`
+	Workflows []specWorkflow `yaml:"workflows"`
+}
+
 type specInventoryFinding struct {
 	Code       string `json:"code"`
 	Source     string `json:"source"`
@@ -97,6 +142,7 @@ type specInventory struct {
 	SchemaVersion string                   `json:"schema_version"`
 	Features      []testCatalogFeature     `json:"-"`
 	Operations    []specOpenAPIOperation   `json:"operations"`
+	Workflows     []specWorkflow           `json:"workflows"`
 	Findings      []specInventoryFinding   `json:"findings"`
 	Sources       []specSourceRegistryItem `json:"sources"`
 }
@@ -155,8 +201,8 @@ func runTestSpecInventory(args []string) error {
 			blocking++
 		}
 	}
-	fmt.Fprintf(os.Stdout, "spec inventory: %d features, %d requirements, %d operations, %d blocking findings\n",
-		len(inventory.Features), countSpecRequirements(inventory.Features), len(inventory.Operations), blocking)
+	fmt.Fprintf(os.Stdout, "spec inventory: %d features, %d requirements, %d operations, %d workflows, %d blocking findings\n",
+		len(inventory.Features), countSpecRequirements(inventory.Features), len(inventory.Operations), len(inventory.Workflows), blocking)
 	if action == "check" && mode == "required" && blocking > 0 {
 		return fmt.Errorf("spec inventory has %d blocking findings", blocking)
 	}
@@ -190,7 +236,7 @@ func parseSpecSourceRegistry(raw []byte) (specSourceRegistry, error) {
 			return specSourceRegistry{}, fmt.Errorf("duplicate spec source id or path at sources[%d]", i)
 		}
 		seenID[source.ID], seenPath[source.Path] = true, true
-		if source.Parser != "markdown" && source.Parser != "openapi" {
+		if source.Parser != "markdown" && source.Parser != "openapi" && source.Parser != "workflow" {
 			return specSourceRegistry{}, fmt.Errorf("spec source %s has unsupported parser %q", source.ID, source.Parser)
 		}
 		if !authorities[source.Authority] {
@@ -242,10 +288,19 @@ func loadAvailableSpecInventory(workspace string) (specInventory, error) {
 func loadSpecInventoryWithReader(registry specSourceRegistry, readFile func(string) ([]byte, error)) (specInventory, error) {
 	inventory := specInventory{SchemaVersion: specInventorySchema, Sources: registry.Sources}
 	featureIndex, requirementIndex := map[string]int{}, map[string]string{}
+	type pendingWorkflowSource struct {
+		source specSourceRegistryItem
+		raw    []byte
+	}
+	var workflowSources []pendingWorkflowSource
 	for _, source := range registry.Sources {
 		raw, readErr := readFile(source.Path)
 		if readErr != nil {
 			return specInventory{}, fmt.Errorf("read spec source %s: %w", source.Path, readErr)
+		}
+		if source.Parser == "workflow" {
+			workflowSources = append(workflowSources, pendingWorkflowSource{source: source, raw: raw})
+			continue
 		}
 		if source.Parser == "markdown" {
 			features, findings, parseErr := parseMarkdownSpec(source, raw)
@@ -284,13 +339,27 @@ func loadSpecInventoryWithReader(registry specSourceRegistry, readFile func(stri
 	}
 	featureSet := map[string]bool{}
 	requirementSet := map[string]bool{}
+	requirementFeature := map[string]string{}
 	for _, feature := range inventory.Features {
 		featureSet[feature.ID] = true
 		for _, requirement := range feature.Requirements {
 			requirementSet[requirement.ID] = true
+			requirementFeature[requirement.ID] = feature.ID
 		}
 	}
+	operationRefs := map[string]string{}
 	for _, operation := range inventory.Operations {
+		operationRef := operation.DocumentID + "#" + operation.OperationID
+		if operationRef != operation.DocumentID+"#" {
+			if prior, exists := operationRefs[operationRef]; exists {
+				inventory.Findings = append(inventory.Findings, specInventoryFinding{
+					Code: "DUPLICATE_OPERATION_REF", Source: operation.SourcePath, Reference: operationRef, Blocking: true,
+					Assessment: "operation reference is also defined by " + prior,
+				})
+			} else {
+				operationRefs[operationRef] = operation.SourcePath
+			}
+		}
 		if operation.FeatureID != "" && !featureSet[operation.FeatureID] {
 			inventory.Findings = append(inventory.Findings, specInventoryFinding{
 				Code: "UNKNOWN_OPERATION_FEATURE", Source: operation.SourcePath, Reference: operation.OperationID, Blocking: true,
@@ -303,10 +372,35 @@ func loadSpecInventoryWithReader(registry specSourceRegistry, readFile func(stri
 					Code: "UNKNOWN_OPERATION_REQUIREMENT", Source: operation.SourcePath, Reference: operation.OperationID, Blocking: true,
 					Assessment: "OpenAPI operation references an unknown spec requirement " + requirementID,
 				})
+			} else if operation.FeatureID != "" && requirementFeature[requirementID] != operation.FeatureID {
+				inventory.Findings = append(inventory.Findings, specInventoryFinding{
+					Code: "OPERATION_REQUIREMENT_FEATURE_MISMATCH", Source: operation.SourcePath, Reference: operation.OperationID, Blocking: true,
+					Assessment: fmt.Sprintf("requirement %s belongs to %s, not operation feature %s", requirementID, requirementFeature[requirementID], operation.FeatureID),
+				})
 			}
 		}
 	}
+	workflowRefs := map[string]string{}
+	for _, pending := range workflowSources {
+		workflows, findings, parseErr := parseWorkflowSpec(pending.source, pending.raw, inventory.Features, inventory.Operations)
+		if parseErr != nil {
+			return specInventory{}, parseErr
+		}
+		for _, workflow := range workflows {
+			if prior := workflowRefs[workflow.ID]; prior != "" {
+				inventory.Findings = append(inventory.Findings, specInventoryFinding{
+					Code: "DUPLICATE_WORKFLOW", Source: pending.source.Path, Reference: workflow.ID, Blocking: true,
+					Assessment: "workflow is also defined by " + prior,
+				})
+				continue
+			}
+			workflowRefs[workflow.ID] = pending.source.Path
+			inventory.Workflows = append(inventory.Workflows, workflow)
+		}
+		inventory.Findings = append(inventory.Findings, findings...)
+	}
 	sort.Slice(inventory.Features, func(i, j int) bool { return inventory.Features[i].ID < inventory.Features[j].ID })
+	sort.Slice(inventory.Workflows, func(i, j int) bool { return inventory.Workflows[i].ID < inventory.Workflows[j].ID })
 	sort.Slice(inventory.Findings, func(i, j int) bool {
 		if inventory.Findings[i].Source == inventory.Findings[j].Source {
 			return inventory.Findings[i].Reference < inventory.Findings[j].Reference
@@ -560,6 +654,253 @@ func parseOpenAPISpec(source specSourceRegistryItem, raw []byte) ([]specOpenAPIO
 	return operations, findings, nil
 }
 
+func parseWorkflowSpec(
+	source specSourceRegistryItem,
+	raw []byte,
+	features []testCatalogFeature,
+	operations []specOpenAPIOperation,
+) ([]specWorkflow, []specInventoryFinding, error) {
+	var document specWorkflowDocument
+	if err := yaml.Unmarshal(raw, &document); err != nil {
+		return nil, nil, fmt.Errorf("parse workflow spec %s: %w", source.Path, err)
+	}
+	var findings []specInventoryFinding
+	if document.SchemaVersion != 1 {
+		findings = append(findings, workflowFinding(source, "", "INVALID_WORKFLOW_SCHEMA", "workflow spec requires schema_version 1"))
+	}
+	if document.RTKSpec.ID != source.ID ||
+		(document.RTKSpec.Owner != "" && document.RTKSpec.Owner != source.Owner) {
+		findings = append(findings, workflowFinding(source, "", "DOCUMENT_METADATA_MISMATCH",
+			"rtk_spec id/owner does not match spec-sources.yaml"))
+	}
+	if !specDocumentStatusMatchesAuthority(document.RTKSpec.Status, source.Authority) {
+		findings = append(findings, workflowFinding(source, "", "DOCUMENT_STATUS_MISMATCH",
+			fmt.Sprintf("workflow status %q does not match registry authority %q", document.RTKSpec.Status, source.Authority)))
+	}
+	featureRequirements := map[string]map[string]bool{}
+	for _, feature := range features {
+		featureRequirements[feature.ID] = map[string]bool{}
+		for _, requirement := range feature.Requirements {
+			featureRequirements[feature.ID][requirement.ID] = true
+		}
+	}
+	operationIndex := map[string]specOpenAPIOperation{}
+	for _, operation := range operations {
+		ref := operation.DocumentID + "#" + operation.OperationID
+		if prior, exists := operationIndex[ref]; exists {
+			findings = append(findings, workflowFinding(source, ref, "DUPLICATE_OPERATION_REF",
+				fmt.Sprintf("operation reference is ambiguous between %s and %s", prior.SourcePath, operation.SourcePath)))
+			continue
+		}
+		operationIndex[ref] = operation
+	}
+	workflowIDs := map[string]bool{}
+	workflowIDPattern := regexp.MustCompile(`^WF(?:-[A-Z0-9]+){2,5}-[0-9]{3}$`)
+	stepIDPattern := regexp.MustCompile(`^[a-z][a-z0-9_]{1,63}$`)
+	artifactPattern := regexp.MustCompile(`^[a-z][a-z0-9_]{1,63}$`)
+	dependencyTypes := map[string]bool{
+		"auth": true, "session": true, "data": true, "state": true,
+		"readiness": true, "cleanup": true,
+	}
+	for workflowIndex := range document.Workflows {
+		workflow := &document.Workflows[workflowIndex]
+		workflow.DocumentID = source.ID
+		workflow.SourcePath = source.Path
+		workflow.Authority = source.Authority
+		workflow.Status = document.RTKSpec.Status
+		workflow.Revision = specWorkflowRevision(*workflow)
+		if !workflowIDPattern.MatchString(workflow.ID) {
+			findings = append(findings, workflowFinding(source, workflow.ID, "INVALID_WORKFLOW_ID", "workflow requires a stable WF-* ID"))
+		}
+		if workflowIDs[workflow.ID] {
+			findings = append(findings, workflowFinding(source, workflow.ID, "DUPLICATE_WORKFLOW", "workflow ID is repeated"))
+		}
+		workflowIDs[workflow.ID] = true
+		if strings.TrimSpace(workflow.Title) == "" {
+			findings = append(findings, workflowFinding(source, workflow.ID, "MISSING_WORKFLOW_TITLE", "workflow title is required"))
+		}
+		requirements, featureExists := featureRequirements[workflow.FeatureID]
+		if !featureExists {
+			findings = append(findings, workflowFinding(source, workflow.ID, "UNKNOWN_WORKFLOW_FEATURE", "workflow references an unknown feature"))
+		}
+		if len(workflow.RequirementIDs) == 0 {
+			findings = append(findings, workflowFinding(source, workflow.ID, "MISSING_WORKFLOW_REQUIREMENT", "workflow must bind at least one requirement"))
+		}
+		requirementSet := map[string]bool{}
+		for _, requirementID := range workflow.RequirementIDs {
+			if requirementSet[requirementID] {
+				findings = append(findings, workflowFinding(source, workflow.ID, "DUPLICATE_WORKFLOW_REQUIREMENT", "workflow repeats requirement "+requirementID))
+			}
+			requirementSet[requirementID] = true
+			if !requirements[requirementID] {
+				findings = append(findings, workflowFinding(source, workflow.ID, "WORKFLOW_REQUIREMENT_FEATURE_MISMATCH",
+					"requirement "+requirementID+" is not owned by workflow feature "+workflow.FeatureID))
+			}
+		}
+		if len(workflow.Steps) < 2 {
+			findings = append(findings, workflowFinding(source, workflow.ID, "WORKFLOW_TOO_SHORT", "workflow must contain at least two ordered steps"))
+		}
+		inputs := map[string]bool{}
+		for _, input := range workflow.Inputs {
+			if !artifactPattern.MatchString(input) || inputs[input] {
+				findings = append(findings, workflowFinding(source, workflow.ID, "INVALID_WORKFLOW_INPUT", "workflow inputs must be unique stable artifact names"))
+			}
+			inputs[input] = true
+		}
+		stepIndex := map[string]specWorkflowStep{}
+		for _, step := range workflow.Steps {
+			if !stepIDPattern.MatchString(step.ID) || stepIndex[step.ID].ID != "" {
+				findings = append(findings, workflowFinding(source, workflow.ID+"#"+step.ID, "INVALID_WORKFLOW_STEP_ID", "step IDs must be unique lower_snake_case identifiers"))
+			}
+			stepIndex[step.ID] = step
+		}
+		for _, step := range workflow.Steps {
+			ref := workflow.ID + "#" + step.ID
+			operation, exists := operationIndex[step.OperationRef]
+			if !exists {
+				findings = append(findings, workflowFinding(source, ref, "UNKNOWN_WORKFLOW_OPERATION", "unknown operation reference "+step.OperationRef))
+			} else {
+				if operation.FeatureID != workflow.FeatureID {
+					findings = append(findings, workflowFinding(source, ref, "WORKFLOW_OPERATION_FEATURE_MISMATCH",
+						fmt.Sprintf("operation feature %s does not match workflow feature %s", operation.FeatureID, workflow.FeatureID)))
+				}
+				overlap := false
+				for _, requirementID := range operation.RequirementIDs {
+					overlap = overlap || requirementSet[requirementID]
+				}
+				if !overlap {
+					findings = append(findings, workflowFinding(source, ref, "WORKFLOW_OPERATION_REQUIREMENT_MISMATCH",
+						"operation does not reference a requirement bound to this workflow"))
+				}
+			}
+			if step.Expected != "success" && step.Expected != "rejected" {
+				findings = append(findings, workflowFinding(source, ref, "INVALID_WORKFLOW_EXPECTATION", "expected must be success or rejected"))
+			}
+			if (step.StateTransition.From == "") != (step.StateTransition.To == "") {
+				findings = append(findings, workflowFinding(source, ref, "INVALID_STATE_TRANSITION", "state_transition requires both from and to"))
+			}
+			if len(step.Dependencies) == 0 && step.ID != workflow.Steps[0].ID {
+				findings = append(findings, workflowFinding(source, ref, "MISSING_WORKFLOW_DEPENDENCY", "every step after the first must declare a dependency"))
+			}
+			for _, dependency := range step.Dependencies {
+				if dependency.Step == step.ID || stepIndex[dependency.Step].ID == "" {
+					findings = append(findings, workflowFinding(source, ref, "UNKNOWN_WORKFLOW_DEPENDENCY", "dependency step is missing or self-referential: "+dependency.Step))
+				}
+				if !dependencyTypes[dependency.Type] {
+					findings = append(findings, workflowFinding(source, ref, "INVALID_WORKFLOW_DEPENDENCY_TYPE", "unsupported dependency type "+dependency.Type))
+				}
+			}
+			for _, artifact := range append(append([]string{}, step.Consumes...), step.Produces...) {
+				if !artifactPattern.MatchString(artifact) {
+					findings = append(findings, workflowFinding(source, ref, "INVALID_WORKFLOW_ARTIFACT", "invalid artifact name "+artifact))
+				}
+			}
+			if step.Always {
+				hasCleanupDependency := false
+				for _, dependency := range step.Dependencies {
+					hasCleanupDependency = hasCleanupDependency || dependency.Type == "cleanup"
+				}
+				if !hasCleanupDependency {
+					findings = append(findings, workflowFinding(source, ref, "INVALID_ALWAYS_STEP", "always step requires a cleanup dependency"))
+				}
+			}
+		}
+		if cycle := workflowDependencyCycle(workflow.Steps); len(cycle) > 0 {
+			findings = append(findings, workflowFinding(source, workflow.ID, "WORKFLOW_DEPENDENCY_CYCLE", "workflow dependency cycle: "+strings.Join(cycle, " -> ")))
+		} else {
+			for _, step := range workflow.Steps {
+				available := map[string]bool{}
+				for input := range inputs {
+					available[input] = true
+				}
+				for ancestor := range workflowAncestors(step.ID, stepIndex) {
+					for _, artifact := range stepIndex[ancestor].Produces {
+						available[artifact] = true
+					}
+				}
+				for _, artifact := range step.Consumes {
+					if !available[artifact] {
+						findings = append(findings, workflowFinding(source, workflow.ID+"#"+step.ID, "UNSATISFIED_WORKFLOW_ARTIFACT",
+							"consumed artifact is not an input or produced by a transitive dependency: "+artifact))
+					}
+				}
+			}
+		}
+	}
+	sort.Slice(document.Workflows, func(i, j int) bool { return document.Workflows[i].ID < document.Workflows[j].ID })
+	return document.Workflows, findings, nil
+}
+
+func workflowFinding(source specSourceRegistryItem, reference, code, assessment string) specInventoryFinding {
+	return specInventoryFinding{Code: code, Source: source.Path, Reference: reference, Assessment: assessment, Blocking: true}
+}
+
+func specWorkflowRevision(workflow specWorkflow) string {
+	workflow.DocumentID = ""
+	workflow.SourcePath = ""
+	workflow.Authority = ""
+	workflow.Status = ""
+	workflow.Revision = ""
+	raw, _ := json.Marshal(workflow)
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func workflowDependencyCycle(steps []specWorkflowStep) []string {
+	index := map[string]specWorkflowStep{}
+	for _, step := range steps {
+		index[step.ID] = step
+	}
+	visiting, visited := map[string]bool{}, map[string]bool{}
+	var stack, cycle []string
+	var visit func(string) bool
+	visit = func(id string) bool {
+		if visiting[id] {
+			start := 0
+			for stack[start] != id {
+				start++
+			}
+			cycle = append(append([]string{}, stack[start:]...), id)
+			return true
+		}
+		if visited[id] {
+			return false
+		}
+		visiting[id] = true
+		stack = append(stack, id)
+		for _, dependency := range index[id].Dependencies {
+			if index[dependency.Step].ID != "" && visit(dependency.Step) {
+				return true
+			}
+		}
+		stack = stack[:len(stack)-1]
+		visiting[id] = false
+		visited[id] = true
+		return false
+	}
+	for _, step := range steps {
+		if visit(step.ID) {
+			return cycle
+		}
+	}
+	return nil
+}
+
+func workflowAncestors(stepID string, index map[string]specWorkflowStep) map[string]bool {
+	ancestors := map[string]bool{}
+	var visit func(string)
+	visit = func(id string) {
+		for _, dependency := range index[id].Dependencies {
+			if !ancestors[dependency.Step] {
+				ancestors[dependency.Step] = true
+				visit(dependency.Step)
+			}
+		}
+	}
+	visit(stepID)
+	return ancestors
+}
+
 func openAPIBlockScalar(lines []string, key string) string {
 	re := regexp.MustCompile(`^\s+` + regexp.QuoteMeta(key) + `:\s*["']?([^"'\s]+)["']?\s*$`)
 	for _, line := range lines {
@@ -699,6 +1040,37 @@ func renderSpecInventoryReport(inventory specInventory, cases []testCatalogCase)
 		}
 	}
 	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Operation Cross-Reference")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "| Operation | Method and path | Feature | Requirements | Revision |")
+	fmt.Fprintln(&b, "| --- | --- | --- | --- | --- |")
+	for _, operation := range inventory.Operations {
+		fmt.Fprintf(&b, "| `%s#%s` | `%s %s` | `%s` | %s | `%s` |\n",
+			operation.DocumentID, operation.OperationID, operation.Method, operation.Path, operation.FeatureID,
+			joinCatalogValues(operation.RequirementIDs), shortDigest(operation.Revision))
+	}
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Required Workflow Dependencies")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "| Workflow | Feature | Requirements | Step | Operation | Depends on | Consumes → produces | Transition | Expected |")
+	fmt.Fprintln(&b, "| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+	for _, workflow := range inventory.Workflows {
+		for _, step := range workflow.Steps {
+			var dependencies []string
+			for _, dependency := range step.Dependencies {
+				dependencies = append(dependencies, dependency.Step+" ("+dependency.Type+")")
+			}
+			transition := ""
+			if step.StateTransition.From != "" {
+				transition = step.StateTransition.From + " → " + step.StateTransition.To
+			}
+			fmt.Fprintf(&b, "| `%s` | `%s` | %s | `%s` | `%s` | %s | %s → %s | %s | `%s` |\n",
+				workflow.ID, workflow.FeatureID, joinCatalogValues(workflow.RequirementIDs), step.ID, step.OperationRef,
+				joinCatalogValues(dependencies), joinCatalogValues(step.Consumes), joinCatalogValues(step.Produces),
+				escapeMarkdownCell(transition), step.Expected)
+		}
+	}
+	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Findings")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "| Code | Source | Reference | Blocking | Assessment |")
@@ -727,7 +1099,7 @@ func inventoryReportJSON(inventory specInventory) map[string]any {
 	}
 	return map[string]any{
 		"schema_version": inventory.SchemaVersion, "features": features, "operations": inventory.Operations,
-		"findings": inventory.Findings, "sources": inventory.Sources,
+		"workflows": inventory.Workflows, "findings": inventory.Findings, "sources": inventory.Sources,
 	}
 }
 

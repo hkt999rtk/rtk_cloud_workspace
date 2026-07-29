@@ -16,6 +16,7 @@ type specImpactChange struct {
 	Kind          string `json:"kind"`
 	FeatureID     string `json:"feature_id"`
 	RequirementID string `json:"requirement_id"`
+	WorkflowID    string `json:"workflow_id,omitempty"`
 	BaseRevision  string `json:"base_revision,omitempty"`
 	HeadRevision  string `json:"head_revision,omitempty"`
 }
@@ -55,9 +56,12 @@ func runTestSpecImpact(args []string) error {
 	if err := writeSpecImpactReport(outputDir, report); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stdout, "spec impact: %d requirement changes\n", len(report.Changes))
+	fmt.Fprintf(os.Stdout, "spec impact: %d requirement/workflow changes\n", len(report.Changes))
 	for _, change := range report.Changes {
-		if change.Kind == "REMOVED" {
+		if change.Kind == "REMOVED" || change.Kind == "WORKFLOW_REMOVED" {
+			if change.WorkflowID != "" {
+				return fmt.Errorf("workflow %s was removed without a deprecated lifecycle record", change.WorkflowID)
+			}
 			return fmt.Errorf("requirement %s was removed without a deprecated lifecycle record", change.RequirementID)
 		}
 	}
@@ -129,7 +133,7 @@ func compareSpecInventories(base, head string, before, after specInventory) spec
 			afterIndex[requirement.ID] = indexedRequirement{FeatureID: feature.ID, Item: requirement}
 		}
 	}
-	report := specImpactReport{SchemaVersion: "rtk-cloud-spec-impact/v1", Base: base, Head: head}
+	report := specImpactReport{SchemaVersion: "rtk-cloud-spec-impact/v2", Base: base, Head: head}
 	for id, current := range afterIndex {
 		previous, exists := beforeIndex[id]
 		kind := ""
@@ -155,8 +159,48 @@ func compareSpecInventories(base, head string, before, after specInventory) spec
 			})
 		}
 	}
+	beforeWorkflows, afterWorkflows := map[string]specWorkflow{}, map[string]specWorkflow{}
+	for _, workflow := range before.Workflows {
+		beforeWorkflows[workflow.ID] = workflow
+	}
+	for _, workflow := range after.Workflows {
+		afterWorkflows[workflow.ID] = workflow
+	}
+	for id, current := range afterWorkflows {
+		previous, exists := beforeWorkflows[id]
+		kind := ""
+		switch {
+		case !exists:
+			kind = "WORKFLOW_ADDED"
+		case current.Revision != previous.Revision:
+			kind = "WORKFLOW_MODIFIED"
+		}
+		if kind == "" {
+			continue
+		}
+		for _, requirementID := range current.RequirementIDs {
+			report.Changes = append(report.Changes, specImpactChange{
+				Kind: kind, FeatureID: current.FeatureID, RequirementID: requirementID, WorkflowID: id,
+				BaseRevision: previous.Revision, HeadRevision: current.Revision,
+			})
+		}
+	}
+	for id, previous := range beforeWorkflows {
+		if _, exists := afterWorkflows[id]; exists {
+			continue
+		}
+		for _, requirementID := range previous.RequirementIDs {
+			report.Changes = append(report.Changes, specImpactChange{
+				Kind: "WORKFLOW_REMOVED", FeatureID: previous.FeatureID, RequirementID: requirementID, WorkflowID: id,
+				BaseRevision: previous.Revision,
+			})
+		}
+	}
 	sort.Slice(report.Changes, func(i, j int) bool {
 		if report.Changes[i].FeatureID == report.Changes[j].FeatureID {
+			if report.Changes[i].RequirementID == report.Changes[j].RequirementID {
+				return report.Changes[i].WorkflowID < report.Changes[j].WorkflowID
+			}
 			return report.Changes[i].RequirementID < report.Changes[j].RequirementID
 		}
 		return report.Changes[i].FeatureID < report.Changes[j].FeatureID
@@ -179,10 +223,10 @@ func writeSpecImpactReport(outputDir string, report specImpactReport) error {
 	fmt.Fprintln(&b, "# Spec Impact")
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "- Base: `%s`\n- Head: `%s`\n- Changes: **%d**\n\n", report.Base, report.Head, len(report.Changes))
-	fmt.Fprintln(&b, "| Change | Feature | Requirement | Base revision | Head revision |")
-	fmt.Fprintln(&b, "| --- | --- | --- | --- | --- |")
+	fmt.Fprintln(&b, "| Change | Feature | Requirement | Workflow | Base revision | Head revision |")
+	fmt.Fprintln(&b, "| --- | --- | --- | --- | --- | --- |")
 	for _, change := range report.Changes {
-		fmt.Fprintf(&b, "| `%s` | `%s` | `%s` | `%s` | `%s` |\n", change.Kind, change.FeatureID, change.RequirementID, shortDigest(change.BaseRevision), shortDigest(change.HeadRevision))
+		fmt.Fprintf(&b, "| `%s` | `%s` | `%s` | `%s` | `%s` | `%s` |\n", change.Kind, change.FeatureID, change.RequirementID, change.WorkflowID, shortDigest(change.BaseRevision), shortDigest(change.HeadRevision))
 	}
 	return os.WriteFile(filepath.Join(outputDir, "SPEC_IMPACT.md"), []byte(b.String()), 0o644)
 }

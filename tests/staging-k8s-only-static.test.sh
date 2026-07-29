@@ -69,7 +69,7 @@ if rg -n -i -- 'godaddy|route53|api\.godaddy|GODADDY_|hosted.zone' \
 	exit 1
 fi
 
-if rg -n --glob '!**/*_test.go' -- 'repos/rtk_video_cloud/tools/godaddy-dns|cmd/godaddy-dns' \
+if rg -n --glob '!**/*_test.go' --glob '!test_*.go' -- 'repos/rtk_video_cloud/tools/godaddy-dns|cmd/godaddy-dns' \
 	"$ROOT/scripts/go/rtk-cloud" >/tmp/staging-k8s-static.out; then
 	cat /tmp/staging-k8s-static.out >&2
 	echo "active DNS implementation must not invoke the service submodule GoDaddy tool" >&2

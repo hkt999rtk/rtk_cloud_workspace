@@ -234,7 +234,19 @@ func TestFeatureCoverageCommandAuditSelectAndCheck(t *testing.T) {
 		t.Fatal("invalid flag accepted")
 	}
 	recordDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(recordDir, "evidence.json"), []byte(`{"status":"PASS"}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(recordDir, "evidence.json"), []byte(`{
+  "status":"PASS",
+  "workflow":{
+    "workflow_id":"WF-AM-SIGNUP-001",
+    "steps":{
+      "submit_signup":"PASS",
+      "verify_email":"PASS",
+      "read_authenticated_user":"PASS",
+      "password_login":"PASS",
+      "reject_token_replay":"PASS"
+    }
+  }
+}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(recordDir, "run.log"), []byte("status=PASS\n"), 0o600); err != nil {
@@ -508,5 +520,42 @@ func TestWriteCaseFeatureEvidenceRejectsMissingRequiredTypeAndSecrets(t *testing
 	}
 	if err := writeCaseFeatureEvidence(workspace, secretDir, "E2E-CA-SIGNUP-EMAIL-001", "secret-test", "staging", "", now, now); err == nil || !strings.Contains(err.Error(), "unredacted") {
 		t.Fatalf("secret evidence error = %v", err)
+	}
+}
+
+func TestWorkflowBoundRequirementNeedsEveryCurrentStep(t *testing.T) {
+	workflow := specWorkflow{
+		ID: "WF-TEST-FLOW-001", Revision: "workflow-revision",
+		Steps: []specWorkflowStep{
+			{ID: "create", OperationRef: "SPEC-API#create"},
+			{ID: "read", OperationRef: "SPEC-API#read"},
+		},
+	}
+	item := featureCaseEvidenceV2{}
+	if ok, reason := qualifyingWorkflowEvidence(item, []specWorkflow{workflow}); ok ||
+		!strings.Contains(reason, "missing") {
+		t.Fatalf("missing workflow evidence accepted: ok=%t reason=%q", ok, reason)
+	}
+	item.Workflows = []featureWorkflowAssertion{{
+		WorkflowID: workflow.ID, Revision: workflow.Revision, Status: "PASS",
+		Steps: []featureWorkflowStepAssertion{{
+			StepID: "create", OperationRef: "SPEC-API#create", Status: "PASS",
+			Assertions: map[string]string{"created": "PASS"},
+		}},
+	}}
+	if ok, reason := qualifyingWorkflowEvidence(item, []specWorkflow{workflow}); ok ||
+		!strings.Contains(reason, "read") {
+		t.Fatalf("partial workflow evidence accepted: ok=%t reason=%q", ok, reason)
+	}
+	item.Workflows[0].Steps = append(item.Workflows[0].Steps, featureWorkflowStepAssertion{
+		StepID: "read", OperationRef: "SPEC-API#read", Status: "PASS",
+		Assertions: map[string]string{"state_matches": "PASS"},
+	})
+	if ok, reason := qualifyingWorkflowEvidence(item, []specWorkflow{workflow}); !ok {
+		t.Fatalf("complete workflow evidence rejected: %s", reason)
+	}
+	item.Workflows[0].Steps[1].Assertions["state_matches"] = "FAIL"
+	if ok, _ := qualifyingWorkflowEvidence(item, []specWorkflow{workflow}); ok {
+		t.Fatal("failed step assertion counted as workflow PASS")
 	}
 }
