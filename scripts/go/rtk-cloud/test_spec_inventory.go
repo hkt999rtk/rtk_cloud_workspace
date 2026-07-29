@@ -53,7 +53,7 @@ type specFeatureMetadata struct {
 
 type specRequirementMetadata struct {
 	AcceptanceLayer string   `yaml:"acceptance_layer"`
-	OperationModel  string   `yaml:"operation_model"`
+	OperationModel  string   `yaml:"operation_model" json:"operation_model,omitempty"`
 	Gate            string   `yaml:"gate"`
 	Environments    []string `yaml:"environments"`
 	Targets         []string `yaml:"targets"`
