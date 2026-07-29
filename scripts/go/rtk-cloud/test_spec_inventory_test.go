@@ -144,6 +144,20 @@ func TestNormativeCandidateDigestIgnoresFormattingAndTracksMeaning(t *testing.T)
 	}
 }
 
+func TestNormativeCandidateScanIgnoresMarkdownTableHeaders(t *testing.T) {
+	source := specSourceRegistryItem{ID: "SPEC-TEST", Path: "spec.md", Parser: "markdown", Authority: "service", Owner: "cloud_platform"}
+	raw := []byte(specFixtureFrontMatter + `## Contract
+
+| Field | Required | Meaning |
+| :--- | ---: | --- |
+| token | yes | Clients MUST retain the issued token. |
+`)
+	candidates := scanMarkdownRequirementCandidates(source, raw)
+	if len(candidates) != 1 || !strings.Contains(candidates[0].Statement, "Clients MUST retain") {
+		t.Fatalf("table header was treated as normative or table requirement was lost: %+v", candidates)
+	}
+}
+
 func TestDraftSpecRequirementsArePlanned(t *testing.T) {
 	source := specSourceRegistryItem{ID: "SPEC-TEST", Path: "spec.md", Parser: "markdown", Authority: "draft", Owner: "cloud_platform"}
 	features, _, err := parseMarkdownSpec(source, specFixture("The planned flow completes."))

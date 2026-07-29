@@ -676,6 +676,9 @@ func scanMarkdownRequirementCandidates(source specSourceRegistryItem, raw []byte
 		if requirementLevel > 0 || !normativeClausePattern.MatchString(trimmed) {
 			continue
 		}
+		if markdownTableHeader(lines, i) {
+			continue
+		}
 		statement := normalizeNormativeStatement(trimmed)
 		if statement == "" {
 			continue
@@ -698,6 +701,31 @@ func scanMarkdownRequirementCandidates(source specSourceRegistryItem, raw []byte
 		})
 	}
 	return candidates
+}
+
+func markdownTableHeader(lines []string, index int) bool {
+	if index < 0 || index+1 >= len(lines) {
+		return false
+	}
+	header := strings.TrimSpace(lines[index])
+	separator := strings.TrimSpace(lines[index+1])
+	if !strings.HasPrefix(header, "|") || !strings.HasSuffix(header, "|") ||
+		!strings.HasPrefix(separator, "|") || !strings.HasSuffix(separator, "|") {
+		return false
+	}
+	cells := strings.Split(strings.Trim(separator, "|"), "|")
+	if len(cells) == 0 {
+		return false
+	}
+	for _, cell := range cells {
+		cell = strings.TrimSpace(cell)
+		cell = strings.TrimPrefix(cell, ":")
+		cell = strings.TrimSuffix(cell, ":")
+		if len(cell) < 3 || strings.Trim(cell, "-") != "" {
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeNormativeStatement(value string) string {
