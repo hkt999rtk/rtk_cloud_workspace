@@ -129,7 +129,7 @@ jobs:
         working-directory: scripts/go
         run: |
           go run ./rtk-cloud -- test-services \
-            --repo rtk_account_manager,rtk_video_cloud \
+            --repo rtk_account_manager,rtk_cloud_admin,rtk_video_cloud \
             --qualification-only \
             --qualification-run-id "$FEATURE_EVIDENCE_RUN_ID" \
             --qualification-output-dir "../../.artifacts/test-runs/$FEATURE_EVIDENCE_RUN_ID/authorization"

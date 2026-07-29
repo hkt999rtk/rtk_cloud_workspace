@@ -12,6 +12,29 @@ import (
 	"time"
 )
 
+func TestCloudAdminE2EInitializesCanonicalRequirementSource(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", "cloud-admin-e2e.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(raw)
+	for _, required := range []string{
+		"'repos/rtk_cloud_contracts_doc'",
+		"CI_RUNNER_GITHUB_WORK_KEY",
+		`core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"`,
+		"repos/rtk_cloud_admin \\",
+		"repos/rtk_cloud_contracts_doc",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Fatalf("Cloud Admin E2E workflow is missing canonical requirement source %q", required)
+		}
+	}
+}
+
 func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
