@@ -94,6 +94,7 @@ jobs:
           if [ -z "$base_ref" ] || [ "$base_ref" = "0000000000000000000000000000000000000000" ]; then
             base_ref="HEAD^"
           fi
+          ./scripts/fetch-spec-impact-base.sh "$base_ref"
           labels="$(jq -r '[(.pull_request.labels // [])[].name] | join(",")' "$GITHUB_EVENT_PATH")"
           if [ -n "${INPUT_FEATURES:-}" ]; then
             forced="$(printf '%s' "$INPUT_FEATURES" | tr ',' '\n' | sed '/^$/d;s#^#qualification/#' | paste -sd, -)"

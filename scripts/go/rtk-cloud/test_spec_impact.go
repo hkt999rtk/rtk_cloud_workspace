@@ -12,6 +12,8 @@ import (
 	"strings"
 )
 
+var errSpecRegistryMissing = errors.New("spec source registry is absent at comparison ref")
+
 type specImpactChange struct {
 	Kind               string `json:"kind"`
 	FeatureID          string `json:"feature_id,omitempty"`
@@ -75,6 +77,9 @@ func loadSpecInventoryAt(workspace, ref string) (specInventory, error) {
 	}
 	registryRaw, err := gitFileAt(workspace, ref, "tests/spec-sources.yaml")
 	if err != nil {
+		if commitErr := exec.Command("git", "-C", workspace, "cat-file", "-e", ref+"^{commit}").Run(); commitErr == nil {
+			return specInventory{}, fmt.Errorf("%w: %s", errSpecRegistryMissing, ref)
+		}
 		return specInventory{}, fmt.Errorf("read spec registry at %s: %w", ref, err)
 	}
 	registry, err := parseSpecSourceRegistry(registryRaw)
@@ -114,8 +119,7 @@ func gitFileAt(repository, ref, path string) ([]byte, error) {
 }
 
 func isMissingSpecRegistry(err error) bool {
-	text := err.Error()
-	return strings.Contains(text, "does not exist") || strings.Contains(text, "exists on disk, but not in")
+	return errors.Is(err, errSpecRegistryMissing)
 }
 
 func compareSpecInventories(base, head string, before, after specInventory) specImpactReport {

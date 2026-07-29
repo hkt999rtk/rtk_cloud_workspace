@@ -69,6 +69,12 @@ jobs:
           fi
           echo "base_ref=$base_ref" >> "$GITHUB_OUTPUT"
 
+      - name: Fetch comparison submodule commits
+        if: steps.diff.outputs.base_ref != ''
+        env:
+          BASE_REF: ${{ steps.diff.outputs.base_ref }}
+        run: ./scripts/fetch-spec-impact-base.sh "$BASE_REF"
+
       - name: Run workspace matrix
         working-directory: scripts/go
         run: go run ./rtk-cloud -- test-matrix

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -453,6 +455,47 @@ func TestSpecImpactCommandWritesEmptyHeadComparison(t *testing.T) {
 	}
 	if err := runTestSpecImpact([]string{"--base", "HEAD", "--unknown"}); err == nil {
 		t.Fatal("spec impact accepted an unknown flag")
+	}
+}
+
+func TestMissingSpecRegistryDetectionDoesNotHideSubmoduleFetchErrors(t *testing.T) {
+	if !isMissingSpecRegistry(fmt.Errorf("comparison: %w", errSpecRegistryMissing)) {
+		t.Fatal("typed missing registry error was not recognized")
+	}
+	if isMissingSpecRegistry(errors.New("fatal: object does not exist in shallow submodule")) {
+		t.Fatal("generic shallow-submodule failure was treated as an absent root registry")
+	}
+}
+
+func TestSpecImpactWorkflowsFetchBaseSubmoduleCommits(t *testing.T) {
+	workspace := mustWorkspaceRoot(t)
+	script, err := os.ReadFile(filepath.Join(workspace, "scripts", "fetch-spec-impact-base.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		`git -C "$workspace" ls-tree -r "$base_ref"`,
+		`"$mode" != "160000"`,
+		`git -C "$repository" fetch --no-tags --depth=1 origin "$object"`,
+		`git -C "$repository" cat-file -e "${object}^{commit}"`,
+	} {
+		if !strings.Contains(string(script), required) {
+			t.Fatalf("base submodule fetch helper lacks %q", required)
+		}
+	}
+	for _, workflow := range []string{
+		".github/workflows/workspace-test-baseline.yml",
+		".github/workflows/feature-qualification.yml",
+	} {
+		raw, readErr := os.ReadFile(filepath.Join(workspace, workflow))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		fetchAt := strings.Index(string(raw), `fetch-spec-impact-base.sh`)
+		impactAt := strings.Index(string(raw), `test-spec-impact`)
+		if fetchAt < 0 || impactAt < 0 || fetchAt > impactAt {
+			t.Fatalf("%s does not fetch base submodule commits before spec impact", workflow)
+		}
 	}
 }
 
