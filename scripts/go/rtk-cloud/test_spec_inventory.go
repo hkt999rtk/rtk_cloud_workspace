@@ -98,14 +98,16 @@ type specWorkflowStateTransition struct {
 }
 
 type specWorkflowStep struct {
-	ID              string                      `yaml:"id" json:"id"`
-	OperationRef    string                      `yaml:"operation_ref" json:"operation_ref"`
-	Dependencies    []specWorkflowDependency    `yaml:"depends_on" json:"depends_on,omitempty"`
-	Consumes        []string                    `yaml:"consumes" json:"consumes,omitempty"`
-	Produces        []string                    `yaml:"produces" json:"produces,omitempty"`
-	StateTransition specWorkflowStateTransition `yaml:"state_transition" json:"state_transition,omitempty"`
-	Expected        string                      `yaml:"expected" json:"expected"`
-	Always          bool                        `yaml:"always" json:"always,omitempty"`
+	ID                      string                      `yaml:"id" json:"id"`
+	OperationRef            string                      `yaml:"operation_ref" json:"operation_ref"`
+	OperationFeatureID      string                      `yaml:"operation_feature_id" json:"operation_feature_id,omitempty"`
+	OperationRequirementIDs []string                    `yaml:"operation_requirement_ids" json:"operation_requirement_ids,omitempty"`
+	Dependencies            []specWorkflowDependency    `yaml:"depends_on" json:"depends_on,omitempty"`
+	Consumes                []string                    `yaml:"consumes" json:"consumes,omitempty"`
+	Produces                []string                    `yaml:"produces" json:"produces,omitempty"`
+	StateTransition         specWorkflowStateTransition `yaml:"state_transition" json:"state_transition,omitempty"`
+	Expected                string                      `yaml:"expected" json:"expected"`
+	Always                  bool                        `yaml:"always" json:"always,omitempty"`
 }
 
 type specWorkflow struct {
@@ -979,15 +981,30 @@ func parseWorkflowSpec(
 			if !exists {
 				findings = append(findings, workflowFinding(source, ref, "UNKNOWN_WORKFLOW_OPERATION", "unknown operation reference "+step.OperationRef))
 			} else {
-				if operation.FeatureID != workflow.FeatureID {
+				crossFeature := operation.FeatureID != workflow.FeatureID
+				if crossFeature && step.OperationFeatureID == "" {
 					findings = append(findings, workflowFinding(source, ref, "WORKFLOW_OPERATION_FEATURE_MISMATCH",
-						fmt.Sprintf("operation feature %s does not match workflow feature %s", operation.FeatureID, workflow.FeatureID)))
+						fmt.Sprintf("cross-feature operation %s must explicitly declare operation_feature_id %s", step.OperationRef, operation.FeatureID)))
+				} else if step.OperationFeatureID != "" && step.OperationFeatureID != operation.FeatureID {
+					findings = append(findings, workflowFinding(source, ref, "WORKFLOW_OPERATION_FEATURE_MISMATCH",
+						fmt.Sprintf("declared operation feature %s does not match source feature %s", step.OperationFeatureID, operation.FeatureID)))
 				}
-				overlap := false
-				for _, requirementID := range operation.RequirementIDs {
-					overlap = overlap || requirementSet[requirementID]
-				}
-				if !overlap {
+				if crossFeature {
+					if len(step.OperationRequirementIDs) == 0 {
+						findings = append(findings, workflowFinding(source, ref, "WORKFLOW_OPERATION_REQUIREMENT_MISMATCH",
+							"cross-feature operation must explicitly declare operation_requirement_ids"))
+					}
+					sourceRequirements := map[string]bool{}
+					for _, requirementID := range operation.RequirementIDs {
+						sourceRequirements[requirementID] = true
+					}
+					for _, requirementID := range step.OperationRequirementIDs {
+						if !sourceRequirements[requirementID] {
+							findings = append(findings, workflowFinding(source, ref, "WORKFLOW_OPERATION_REQUIREMENT_MISMATCH",
+								"declared operation requirement "+requirementID+" is not mapped by "+step.OperationRef))
+						}
+					}
+				} else if !operationRequirementOverlap(operation.RequirementIDs, requirementSet) {
 					findings = append(findings, workflowFinding(source, ref, "WORKFLOW_OPERATION_REQUIREMENT_MISMATCH",
 						"operation does not reference a requirement bound to this workflow"))
 				}
@@ -1063,6 +1080,15 @@ func specWorkflowRevision(workflow specWorkflow) string {
 	raw, _ := json.Marshal(workflow)
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
+}
+
+func operationRequirementOverlap(operationRequirements []string, workflowRequirements map[string]bool) bool {
+	for _, requirementID := range operationRequirements {
+		if workflowRequirements[requirementID] {
+			return true
+		}
+	}
+	return false
 }
 
 func workflowDependencyCycle(steps []specWorkflowStep) []string {

@@ -366,10 +366,11 @@ func TestCleanupScriptRetainsRecoverySecretsAfterProviderFailure(t *testing.T) {
 	manifest := filepath.Join(dir, "resource-manifest.json")
 	bundle := filepath.Join(dir, "runtime-bundle.json")
 	privateFile := filepath.Join(dir, "device.key")
+	privateValue := "recovery-secret-content-do-not-leak"
 	if err := os.WriteFile(manifest, []byte(`{"cleanup_required":true}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(privateFile, []byte("private"), 0o600); err != nil {
+	if err := os.WriteFile(privateFile, []byte(privateValue), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	raw := fmt.Sprintf(`{"local_temporary_files":[%q]}`, privateFile)
@@ -400,7 +401,7 @@ func TestCleanupScriptRetainsRecoverySecretsAfterProviderFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cleanup retry instructions missing: %v", err)
 	}
-	if strings.Contains(string(retry), "private") || !strings.Contains(string(retry), "cleanup-fixture.sh") {
+	if strings.Contains(string(retry), privateValue) || !strings.Contains(string(retry), "cleanup-fixture.sh") {
 		t.Fatalf("cleanup retry instructions are unsafe or incomplete: %s", retry)
 	}
 }

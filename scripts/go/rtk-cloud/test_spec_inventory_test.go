@@ -306,9 +306,14 @@ func TestWorkflowDependenciesValidateDAGArtifactsAndOperations(t *testing.T) {
 		ID:           "FEAT-TEST-FLOW-001",
 		Requirements: []testCatalogRequirement{{ID: "REQ-E2E-TEST-FLOW-001"}},
 	}
+	dependencyFeature := testCatalogFeature{
+		ID:           "FEAT-TEST-DEPENDENCY-001",
+		Requirements: []testCatalogRequirement{{ID: "REQ-E2E-TEST-DEPENDENCY-001"}},
+	}
 	operations := []specOpenAPIOperation{
 		{DocumentID: "SPEC-API", OperationID: "create", FeatureID: feature.ID, RequirementIDs: []string{"REQ-E2E-TEST-FLOW-001"}},
 		{DocumentID: "SPEC-API", OperationID: "read", FeatureID: feature.ID, RequirementIDs: []string{"REQ-E2E-TEST-FLOW-001"}},
+		{DocumentID: "SPEC-DEPENDENCY-API", OperationID: "authorize", FeatureID: dependencyFeature.ID, RequirementIDs: []string{"REQ-E2E-TEST-DEPENDENCY-001"}},
 	}
 	valid := []byte(`schema_version: 1
 rtk_spec: { id: SPEC-WORKFLOWS, status: canonical, owner: cloud_platform }
@@ -362,6 +367,25 @@ workflows:
 	}
 	if !hasSpecFinding(findings, "UNKNOWN_WORKFLOW_OPERATION") {
 		t.Fatalf("unknown workflow operation was accepted: %+v", findings)
+	}
+	crossFeature := strings.Replace(string(valid),
+		"        operation_ref: SPEC-API#create",
+		"        operation_ref: SPEC-DEPENDENCY-API#authorize\n        operation_feature_id: FEAT-TEST-DEPENDENCY-001\n        operation_requirement_ids: [REQ-E2E-TEST-DEPENDENCY-001]", 1)
+	_, findings, err = parseWorkflowSpec(source, []byte(crossFeature), []testCatalogFeature{feature, dependencyFeature}, operations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("explicit cross-feature dependency was rejected: %+v", findings)
+	}
+	undeclaredCrossFeature := strings.Replace(string(valid), "SPEC-API#create", "SPEC-DEPENDENCY-API#authorize", 1)
+	_, findings, err = parseWorkflowSpec(source, []byte(undeclaredCrossFeature), []testCatalogFeature{feature, dependencyFeature}, operations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasSpecFinding(findings, "WORKFLOW_OPERATION_FEATURE_MISMATCH") ||
+		!hasSpecFinding(findings, "WORKFLOW_OPERATION_REQUIREMENT_MISMATCH") {
+		t.Fatalf("undeclared cross-feature dependency was accepted: %+v", findings)
 	}
 }
 

@@ -27,3 +27,30 @@ scenarios:
     expected_cloud_evidence: []
     timeout: 90s
     cleanup: revoke_rotated_certificate
+  - id: app_certificate_token_bootstrap
+    test_id: E2E-AUTH-APPBOOT-001
+    required_capabilities: [account_login, app_csr, app_mtls, token]
+    device_profile: online
+    app_action: login_with_csr_and_request_subject_bound_app_token
+    expected_sdk_result: success
+    expected_cloud_evidence: [account_session_issued, app_certificate_issued, token_issued, authorized_device_read]
+    timeout: 120s
+    cleanup: revoke_app_certificate
+  - id: device_token_certificate_recovery
+    test_id: E2E-AUTH-DEVRECOVERY-001
+    required_capabilities: [device_mtls, token, token_expiry]
+    device_profile: online
+    app_action: reissue_then_expire_and_recover_with_device_certificate
+    expected_sdk_result: success
+    expected_cloud_evidence: [device_mtls_authenticated, token_issued, token_reissued, certificate_recovery_succeeded]
+    timeout: 120s
+    cleanup: run_owned_resources
+  - id: deactivated_certificate_rejected
+    test_id: E2E-AUTH-DEVREVOCATION-001
+    required_capabilities: [device_mtls, token, device_deactivation]
+    device_profile: online
+    app_action: deactivate_device_and_reject_certificate_rebootstrap
+    expected_sdk_result: auth_failure
+    expected_cloud_evidence: [token_issued, device_deactivated, certificate_rejected]
+    timeout: 120s
+    cleanup: run_owned_resources
