@@ -72,6 +72,7 @@ type testCatalogRequirement struct {
 	ID              string                `yaml:"id" json:"id"`
 	Title           string                `yaml:"title" json:"title"`
 	AcceptanceLayer string                `yaml:"acceptance_layer" json:"acceptance_layer"`
+	OperationModel  string                `yaml:"operation_model,omitempty" json:"operation_model,omitempty"`
 	Gate            string                `yaml:"gate" json:"gate"`
 	Environments    []string              `yaml:"environments" json:"environments"`
 	Targets         []string              `yaml:"targets,omitempty" json:"targets,omitempty"`

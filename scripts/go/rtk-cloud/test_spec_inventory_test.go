@@ -12,6 +12,7 @@ rtk_spec:
   id: SPEC-TEST
   status: normative
   owner: cloud_platform
+  requirement_inventory: complete
 ---
 `
 
@@ -60,6 +61,84 @@ func TestMarkdownSpecDigestIgnoresFormattingButTracksSemantics(t *testing.T) {
 	}
 	if first[0].Requirements[0].Revision == changed[0].Requirements[0].Revision {
 		t.Fatal("acceptance semantic change did not alter requirement revision")
+	}
+}
+
+func TestMarkdownSpecSurfacesUnspecifiedNormativeClauses(t *testing.T) {
+	source := specSourceRegistryItem{ID: "SPEC-TEST", Path: "spec.md", Parser: "markdown", Authority: "service", Owner: "cloud_platform"}
+	raw := []byte(specFixtureFrontMatter + `
+## Existing product behavior
+
+The service MUST preserve the tenant boundary.
+
+## [FEAT-TEST-FLOW-001] Product flow
+<!-- rtk-feature
+owner: cloud_platform
+risk: critical
+status: active
+change_paths: [scripts/go/rtk-cloud/**]
+commit_anchors: [workspace]
+-->
+### [REQ-E2E-TEST-FLOW-001] Product flow completes
+<!-- rtk-requirement
+acceptance_layer: e2e
+gate: pr
+environments: [ci]
+evidence: [json]
+status: active
+-->
+The flow MUST complete.
+`)
+	candidates := scanMarkdownRequirementCandidates(source, raw)
+	if len(candidates) != 1 {
+		t.Fatalf("candidates=%+v, want only the untagged normative clause", candidates)
+	}
+	if candidates[0].Status != "required" || candidates[0].Section != "Existing product behavior" ||
+		!strings.Contains(candidates[0].Statement, "tenant boundary") {
+		t.Fatalf("candidate=%+v", candidates[0])
+	}
+
+	draft := source
+	draft.Authority = "draft"
+	draftRaw := strings.Replace(string(raw), "status: normative", "status: draft", 1)
+	candidates = scanMarkdownRequirementCandidates(draft, []byte(draftRaw))
+	if len(candidates) != 1 || candidates[0].Status != "planned" {
+		t.Fatalf("draft candidates=%+v", candidates)
+	}
+}
+
+func TestMarkdownSourceRequiresExplicitInventoryReview(t *testing.T) {
+	source := specSourceRegistryItem{ID: "SPEC-TEST", Path: "spec.md", Parser: "markdown", Authority: "service", Owner: "cloud_platform"}
+	withoutReview := strings.Replace(string(specFixture("The flow MUST complete.")), "  requirement_inventory: complete\n", "", 1)
+	_, findings, err := parseMarkdownSpec(source, []byte(withoutReview))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasSpecFinding(findings, "REQUIREMENT_INVENTORY_REVIEW_REQUIRED") {
+		t.Fatalf("unreviewed normative source was accepted: %+v", findings)
+	}
+	_, findings, err = parseMarkdownSpec(source, specFixture("The flow MUST complete."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasSpecFinding(findings, "REQUIREMENT_INVENTORY_REVIEW_REQUIRED") {
+		t.Fatalf("completed source review remained incomplete: %+v", findings)
+	}
+}
+
+func TestNormativeCandidateDigestIgnoresFormattingAndTracksMeaning(t *testing.T) {
+	source := specSourceRegistryItem{ID: "SPEC-TEST", Path: "spec.md", Parser: "markdown", Authority: "service", Owner: "cloud_platform"}
+	first := scanMarkdownRequirementCandidates(source, []byte(specFixtureFrontMatter+"## Contract\n\n- Clients MUST retain state.\n"))
+	formatted := scanMarkdownRequirementCandidates(source, []byte(specFixtureFrontMatter+"## Contract\n\n  -   Clients   MUST retain state.  \n"))
+	changed := scanMarkdownRequirementCandidates(source, []byte(specFixtureFrontMatter+"## Contract\n\n- Clients MUST retain durable state.\n"))
+	if len(first) != 1 || len(formatted) != 1 || len(changed) != 1 {
+		t.Fatalf("unexpected candidate scans: %v %v %v", first, formatted, changed)
+	}
+	if first[0].Revision != formatted[0].Revision {
+		t.Fatal("format-only candidate change altered revision")
+	}
+	if first[0].Revision == changed[0].Revision {
+		t.Fatal("candidate semantic change did not alter revision")
 	}
 }
 
@@ -141,6 +220,64 @@ paths:
 	}
 	if first[0].Revision == third[0].Revision {
 		t.Fatal("OpenAPI contract change did not alter operation revision")
+	}
+}
+
+func TestMultiOperationRequirementRequiresDependencyClassification(t *testing.T) {
+	registry := specSourceRegistry{SchemaVersion: 1, Sources: []specSourceRegistryItem{
+		{ID: "SPEC-TEST", Path: "spec.md", Parser: "markdown", Authority: "service", Owner: "cloud_platform"},
+		{ID: "SPEC-API", Path: "openapi.yaml", Parser: "openapi", Authority: "service", Owner: "cloud_platform"},
+	}}
+	openAPI := []byte(`openapi: 3.1.0
+x-rtk-spec:
+  id: SPEC-API
+  status: normative
+paths:
+  /resources:
+    post:
+      operationId: createResource
+      x-rtk-feature-id: FEAT-TEST-FLOW-001
+      x-rtk-requirement-ids:
+        - REQ-E2E-TEST-FLOW-001
+      responses: { "200": { description: ok } }
+    get:
+      operationId: listResources
+      x-rtk-feature-id: FEAT-TEST-FLOW-001
+      x-rtk-requirement-ids:
+        - REQ-E2E-TEST-FLOW-001
+      responses: { "200": { description: ok } }
+`)
+	load := func(markdown []byte) specInventory {
+		t.Helper()
+		inventory, err := loadSpecInventoryWithReader(registry, func(path string) ([]byte, error) {
+			if path == "spec.md" {
+				return markdown, nil
+			}
+			return openAPI, nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return inventory
+	}
+	unclassified := load(specFixture("Acceptance."))
+	if !hasSpecFinding(unclassified.Findings, "OPERATION_DEPENDENCY_REVIEW_REQUIRED") {
+		t.Fatalf("multi-operation requirement escaped dependency review: %+v", unclassified.Findings)
+	}
+	independent := strings.Replace(
+		string(specFixture("Acceptance.")),
+		"acceptance_layer: e2e",
+		"acceptance_layer: e2e\noperation_model: independent",
+		1,
+	)
+	classified := load([]byte(independent))
+	if hasSpecFinding(classified.Findings, "OPERATION_DEPENDENCY_REVIEW_REQUIRED") {
+		t.Fatalf("explicit independent operation model was ignored: %+v", classified.Findings)
+	}
+	workflow := strings.Replace(independent, "operation_model: independent", "operation_model: workflow", 1)
+	missingWorkflow := load([]byte(workflow))
+	if !hasSpecFinding(missingWorkflow.Findings, "MISSING_OPERATION_WORKFLOW") {
+		t.Fatalf("workflow model without DAG was accepted: %+v", missingWorkflow.Findings)
 	}
 }
 
@@ -227,6 +364,24 @@ func TestSpecImpactIncludesWorkflowRevisionChanges(t *testing.T) {
 	}
 }
 
+func TestSpecImpactIncludesUnspecifiedNormativeCandidateChanges(t *testing.T) {
+	before := specInventory{Candidates: []specRequirementCandidate{{
+		DocumentID: "SPEC-TEST", SourcePath: "spec.md", Section: "Contract", Line: 10, Revision: "old",
+	}}}
+	after := specInventory{Candidates: []specRequirementCandidate{{
+		DocumentID: "SPEC-TEST", SourcePath: "spec.md", Section: "Contract", Line: 10, Revision: "new",
+	}}}
+	report := compareSpecInventories("base", "head", before, after)
+	if len(report.Changes) != 2 ||
+		report.Changes[0].Kind != "UNSPECIFIED_ADDED" ||
+		report.Changes[1].Kind != "UNSPECIFIED_REMOVED" {
+		t.Fatalf("candidate impact=%+v", report.Changes)
+	}
+	if report.Changes[0].FeatureID != "" || report.Changes[1].FeatureID != "" {
+		t.Fatalf("unclassified candidate invented a feature mapping: %+v", report.Changes)
+	}
+}
+
 func TestSpecImpactMarksRevisionChangesAndIllegalRemoval(t *testing.T) {
 	requirement := testCatalogRequirement{ID: "REQ-E2E-TEST-FLOW-001", Revision: "old", Status: "active"}
 	before := specInventory{Features: []testCatalogFeature{{ID: "FEAT-TEST-FLOW-001", Requirements: []testCatalogRequirement{requirement}}}}
@@ -255,14 +410,32 @@ func TestSpecInventoryCommandsWriteReportsAndEnforceMode(t *testing.T) {
 	if err := runTestSpecInventory([]string{"render", "--mode", "observe", "--output-dir", t.TempDir()}); err != nil {
 		t.Fatal(err)
 	}
-	if err := runTestSpecInventory([]string{"check", "--mode", "required", "--output-dir", t.TempDir()}); err != nil {
-		t.Fatalf("required mode rejected fully mapped inventory: %v", err)
+	inventory, err := loadSpecInventory(mustWorkspaceRoot(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requiredErr := runTestSpecInventory([]string{"check", "--mode", "required", "--output-dir", t.TempDir()})
+	hasBlocking := false
+	for _, finding := range inventory.Findings {
+		hasBlocking = hasBlocking || finding.Blocking
+	}
+	if hasBlocking != (requiredErr != nil) {
+		t.Fatalf("required mode result does not match current blocking findings: blockers=%t err=%v", hasBlocking, requiredErr)
 	}
 	for _, args := range [][]string{{"unknown"}, {"check", "--mode", "invalid"}, {"check", "--unknown"}} {
 		if err := runTestSpecInventory(args); err == nil {
 			t.Fatalf("invalid spec inventory command accepted: %v", args)
 		}
 	}
+}
+
+func mustWorkspaceRoot(t *testing.T) string {
+	t.Helper()
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return workspace
 }
 
 func TestSpecImpactCommandWritesEmptyHeadComparison(t *testing.T) {

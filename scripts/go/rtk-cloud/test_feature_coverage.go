@@ -84,21 +84,25 @@ type featureRequirementResult struct {
 }
 
 type featureCoverageReport struct {
-	SchemaVersion  string                     `json:"schema_version"`
-	GeneratedAt    string                     `json:"generated_at"`
-	Mode           string                     `json:"mode"`
-	Overall        string                     `json:"overall"`
-	Required       int                        `json:"required"`
-	Pass           int                        `json:"pass"`
-	Missing        int                        `json:"missing"`
-	Failed         int                        `json:"failed"`
-	Stale          int                        `json:"stale"`
-	StaleSpec      int                        `json:"stale_spec"`
-	DeferredLive   int                        `json:"deferred_live"`
-	CodeCoverage   string                     `json:"code_coverage"`
-	Requirements   []featureRequirementResult `json:"requirements"`
-	Selected       []string                   `json:"selected_features,omitempty"`
-	EvidenceInputs []string                   `json:"evidence_inputs,omitempty"`
+	SchemaVersion        string                     `json:"schema_version"`
+	GeneratedAt          string                     `json:"generated_at"`
+	Mode                 string                     `json:"mode"`
+	Overall              string                     `json:"overall"`
+	SpecInventory        string                     `json:"spec_inventory"`
+	SpecBlockingFindings int                        `json:"spec_blocking_findings"`
+	UnspecifiedRequired  int                        `json:"unspecified_required"`
+	UnspecifiedPlanned   int                        `json:"unspecified_planned"`
+	Required             int                        `json:"required"`
+	Pass                 int                        `json:"pass"`
+	Missing              int                        `json:"missing"`
+	Failed               int                        `json:"failed"`
+	Stale                int                        `json:"stale"`
+	StaleSpec            int                        `json:"stale_spec"`
+	DeferredLive         int                        `json:"deferred_live"`
+	CodeCoverage         string                     `json:"code_coverage"`
+	Requirements         []featureRequirementResult `json:"requirements"`
+	Selected             []string                   `json:"selected_features,omitempty"`
+	EvidenceInputs       []string                   `json:"evidence_inputs,omitempty"`
 }
 
 func runTestFeatureCoverage(args []string) error {
@@ -230,6 +234,12 @@ func selectCatalogFeatures(workspace string, catalog testCatalog, base, head str
 	after, afterErr := loadSpecInventoryAt(workspace, head)
 	if beforeErr == nil && afterErr == nil {
 		for _, change := range compareSpecInventories(base, head, before, after).Changes {
+			if change.FeatureID == "" {
+				// An unclassified normative spec change has no trustworthy
+				// feature boundary yet. Select everything rather than silently
+				// narrowing qualification around an unknown product impact.
+				return all, nil
+			}
 			if !selectedSet[change.FeatureID] {
 				selected = append(selected, change.FeatureID)
 				selectedSet[change.FeatureID] = true
@@ -615,8 +625,27 @@ func assessFeatureCoverageWithInventory(
 	now time.Time,
 ) featureCoverageReport {
 	report := featureCoverageReport{
-		SchemaVersion: "rtk-cloud-feature-coverage-report/v3", GeneratedAt: now.Format(time.RFC3339),
-		Mode: mode, Overall: "PASS", CodeCoverage: "SEPARATE_NOT_SCORED", Selected: selected,
+		SchemaVersion: "rtk-cloud-feature-coverage-report/v4", GeneratedAt: now.Format(time.RFC3339),
+		Mode: mode, Overall: "PASS", SpecInventory: "NOT_ASSESSED",
+		CodeCoverage: "SEPARATE_NOT_SCORED", Selected: selected,
+	}
+	if inventory.SchemaVersion != "" {
+		report.SpecInventory = "COMPLETE"
+		for _, finding := range inventory.Findings {
+			if finding.Blocking {
+				report.SpecBlockingFindings++
+			}
+		}
+		for _, candidate := range inventory.Candidates {
+			if candidate.Status == "required" {
+				report.UnspecifiedRequired++
+			} else {
+				report.UnspecifiedPlanned++
+			}
+		}
+		if report.SpecBlockingFindings > 0 {
+			report.SpecInventory = "INCOMPLETE"
+		}
 	}
 	selectedSet := map[string]bool{}
 	for _, id := range selected {
@@ -674,6 +703,9 @@ func assessFeatureCoverageWithInventory(
 	}
 	if report.Pass != report.Required {
 		report.Overall = "FAIL"
+	}
+	if report.SpecInventory == "INCOMPLETE" {
+		report.Overall = "INCOMPLETE_SPEC"
 	}
 	sort.Slice(report.Requirements, func(i, j int) bool {
 		if report.Requirements[i].FeatureID == report.Requirements[j].FeatureID {
@@ -1226,6 +1258,8 @@ func writeFeatureCoverageReport(outputDir string, report featureCoverageReport) 
 	fmt.Fprintln(&b, "# Feature Coverage")
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "- Overall: **%s**\n", report.Overall)
+	fmt.Fprintf(&b, "- Spec inventory: **%s** (%d blocking findings; %d required and %d planned unspecified clauses)\n",
+		report.SpecInventory, report.SpecBlockingFindings, report.UnspecifiedRequired, report.UnspecifiedPlanned)
 	fmt.Fprintf(&b, "- Product requirements: **%d/%d PASS**\n", report.Pass, report.Required)
 	fmt.Fprintf(&b, "- Stale spec revision: **%d**\n", report.StaleSpec)
 	fmt.Fprintf(&b, "- Deferred live (no PASS credit): **%d**\n", report.DeferredLive)

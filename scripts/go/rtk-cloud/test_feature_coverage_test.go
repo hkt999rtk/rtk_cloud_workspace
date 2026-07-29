@@ -94,6 +94,31 @@ func TestFeatureCoveragePassesQualifiedRequirementEvidence(t *testing.T) {
 	}
 }
 
+func TestFeatureCoverageCannotPassWithIncompleteSpecInventory(t *testing.T) {
+	workspace, catalog, item, now := featureCoverageFixture(t)
+	inventory := specInventory{
+		SchemaVersion: specInventorySchema,
+		Candidates: []specRequirementCandidate{{
+			DocumentID: "SPEC-TEST", SourcePath: "docs/SPEC.md", Status: "required", Revision: "candidate",
+		}},
+		Findings: []specInventoryFinding{{
+			Code: "UNSPECIFIED_NORMATIVE_CLAUSE", Source: "docs/SPEC.md", Blocking: true,
+		}},
+	}
+	report := assessFeatureCoverageWithInventory(
+		workspace, catalog, inventory,
+		[]featureEvidenceManifestV2{{Cases: []featureCaseEvidenceV2{item}}},
+		[]string{"FEAT-TEST-FLOW-001"}, "pr", now,
+	)
+	if report.Pass != 1 || report.Required != 1 {
+		t.Fatalf("qualified requirement evidence was lost: %+v", report)
+	}
+	if report.Overall != "INCOMPLETE_SPEC" || report.SpecInventory != "INCOMPLETE" ||
+		report.SpecBlockingFindings != 1 || report.UnspecifiedRequired != 1 {
+		t.Fatalf("incomplete source inventory was reported as covered: %+v", report)
+	}
+}
+
 func TestFeatureCoverageRequiresEveryDeclaredEvidenceType(t *testing.T) {
 	workspace, catalog, item, now := featureCoverageFixture(t)
 	catalog.Features[0].Requirements[0].Evidence = []string{"json", "logs"}
@@ -371,7 +396,7 @@ func TestFeatureSelectionUsesChangePathsAndRejectsUnmappedSurface(t *testing.T) 
 func TestWriteFeatureCoverageReportAndCommitValidation(t *testing.T) {
 	workspace, catalog, _, now := featureCoverageFixture(t)
 	report := featureCoverageReport{
-		SchemaVersion: "rtk-cloud-feature-coverage-report/v3", GeneratedAt: now.Format(time.RFC3339),
+		SchemaVersion: "rtk-cloud-feature-coverage-report/v4", GeneratedAt: now.Format(time.RFC3339),
 		Mode: "pr", Overall: "FAIL", Required: 1, Missing: 1, CodeCoverage: "SEPARATE_NOT_SCORED",
 		Requirements: []featureRequirementResult{{
 			FeatureID: "FEAT-TEST-FLOW-001", RequirementID: "REQ-E2E-TEST-FLOW-001",

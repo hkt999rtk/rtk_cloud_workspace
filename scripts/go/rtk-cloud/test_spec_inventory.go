@@ -18,7 +18,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const specInventorySchema = "rtk-cloud-spec-inventory/v2"
+const specInventorySchema = "rtk-cloud-spec-inventory/v3"
 
 type specSourceRegistry struct {
 	SchemaVersion int                      `yaml:"schema_version"`
@@ -35,9 +35,10 @@ type specSourceRegistryItem struct {
 
 type specDocumentMetadata struct {
 	RTKSpec struct {
-		ID     string `yaml:"id"`
-		Status string `yaml:"status"`
-		Owner  string `yaml:"owner"`
+		ID                   string `yaml:"id"`
+		Status               string `yaml:"status"`
+		Owner                string `yaml:"owner"`
+		RequirementInventory string `yaml:"requirement_inventory"`
 	} `yaml:"rtk_spec"`
 }
 
@@ -52,6 +53,7 @@ type specFeatureMetadata struct {
 
 type specRequirementMetadata struct {
 	AcceptanceLayer string   `yaml:"acceptance_layer"`
+	OperationModel  string   `yaml:"operation_model"`
 	Gate            string   `yaml:"gate"`
 	Environments    []string `yaml:"environments"`
 	Targets         []string `yaml:"targets"`
@@ -138,13 +140,29 @@ type specInventoryFinding struct {
 	Blocking   bool   `json:"blocking"`
 }
 
+// specRequirementCandidate is a normative statement that is present in a
+// registered source document but has not yet been promoted to a stable REQ-*
+// record. Candidates are migration gaps, not requirements invented by tests,
+// and therefore never enter the feature-coverage denominator.
+type specRequirementCandidate struct {
+	DocumentID string `json:"document_id"`
+	SourcePath string `json:"source_path"`
+	Authority  string `json:"authority"`
+	Section    string `json:"section,omitempty"`
+	Line       int    `json:"line"`
+	Statement  string `json:"statement"`
+	Revision   string `json:"revision"`
+	Status     string `json:"status"`
+}
+
 type specInventory struct {
-	SchemaVersion string                   `json:"schema_version"`
-	Features      []testCatalogFeature     `json:"-"`
-	Operations    []specOpenAPIOperation   `json:"operations"`
-	Workflows     []specWorkflow           `json:"workflows"`
-	Findings      []specInventoryFinding   `json:"findings"`
-	Sources       []specSourceRegistryItem `json:"sources"`
+	SchemaVersion string                     `json:"schema_version"`
+	Features      []testCatalogFeature       `json:"-"`
+	Operations    []specOpenAPIOperation     `json:"operations"`
+	Workflows     []specWorkflow             `json:"workflows"`
+	Candidates    []specRequirementCandidate `json:"candidates"`
+	Findings      []specInventoryFinding     `json:"findings"`
+	Sources       []specSourceRegistryItem   `json:"sources"`
 }
 
 var (
@@ -201,8 +219,8 @@ func runTestSpecInventory(args []string) error {
 			blocking++
 		}
 	}
-	fmt.Fprintf(os.Stdout, "spec inventory: %d features, %d requirements, %d operations, %d workflows, %d blocking findings\n",
-		len(inventory.Features), countSpecRequirements(inventory.Features), len(inventory.Operations), len(inventory.Workflows), blocking)
+	fmt.Fprintf(os.Stdout, "spec inventory: %d features, %d requirements, %d operations, %d workflows, %d unspecified normative candidates, %d blocking findings\n",
+		len(inventory.Features), countSpecRequirements(inventory.Features), len(inventory.Operations), len(inventory.Workflows), len(inventory.Candidates), blocking)
 	if action == "check" && mode == "required" && blocking > 0 {
 		return fmt.Errorf("spec inventory has %d blocking findings", blocking)
 	}
@@ -307,6 +325,17 @@ func loadSpecInventoryWithReader(registry specSourceRegistry, readFile func(stri
 			if parseErr != nil {
 				return specInventory{}, parseErr
 			}
+			candidates := scanMarkdownRequirementCandidates(source, raw)
+			inventory.Candidates = append(inventory.Candidates, candidates...)
+			for _, candidate := range candidates {
+				inventory.Findings = append(inventory.Findings, specInventoryFinding{
+					Code:       "UNSPECIFIED_NORMATIVE_CLAUSE",
+					Source:     candidate.SourcePath,
+					Reference:  fmt.Sprintf("%s@L%d", candidate.Section, candidate.Line),
+					Assessment: fmt.Sprintf("normative clause %s requires a stable FEAT-*/REQ-* source mapping: %s", shortDigest(candidate.Revision), candidate.Statement),
+					Blocking:   candidate.Status == "required",
+				})
+			}
 			inventory.Findings = append(inventory.Findings, findings...)
 			for _, feature := range features {
 				if existing, ok := featureIndex[feature.ID]; ok {
@@ -399,8 +428,50 @@ func loadSpecInventoryWithReader(registry specSourceRegistry, readFile func(stri
 		}
 		inventory.Findings = append(inventory.Findings, findings...)
 	}
+	operationCounts := map[string]int{}
+	for _, operation := range inventory.Operations {
+		for _, requirementID := range operation.RequirementIDs {
+			operationCounts[requirementID]++
+		}
+	}
+	workflowCounts := map[string]int{}
+	for _, workflow := range inventory.Workflows {
+		for _, requirementID := range workflow.RequirementIDs {
+			workflowCounts[requirementID]++
+		}
+	}
+	for _, feature := range inventory.Features {
+		for _, requirement := range feature.Requirements {
+			switch {
+			case requirement.OperationModel == "" && operationCounts[requirement.ID] > 1:
+				inventory.Findings = append(inventory.Findings, specInventoryFinding{
+					Code: "OPERATION_DEPENDENCY_REVIEW_REQUIRED", Source: requirement.SpecSource.Path, Reference: requirement.ID, Blocking: true,
+					Assessment: fmt.Sprintf("%d operations map to this requirement; the source spec must declare operation_model: independent or provide operation_model: workflow with a canonical DAG", operationCounts[requirement.ID]),
+				})
+			case requirement.OperationModel == "workflow" && workflowCounts[requirement.ID] == 0:
+				inventory.Findings = append(inventory.Findings, specInventoryFinding{
+					Code: "MISSING_OPERATION_WORKFLOW", Source: requirement.SpecSource.Path, Reference: requirement.ID, Blocking: true,
+					Assessment: "requirement declares operation_model: workflow but no canonical workflow binds it",
+				})
+			case requirement.OperationModel == "independent" && workflowCounts[requirement.ID] > 0:
+				inventory.Findings = append(inventory.Findings, specInventoryFinding{
+					Code: "OPERATION_MODEL_WORKFLOW_CONFLICT", Source: requirement.SpecSource.Path, Reference: requirement.ID, Blocking: true,
+					Assessment: "requirement declares independent operations but is bound to a canonical workflow",
+				})
+			}
+		}
+	}
 	sort.Slice(inventory.Features, func(i, j int) bool { return inventory.Features[i].ID < inventory.Features[j].ID })
 	sort.Slice(inventory.Workflows, func(i, j int) bool { return inventory.Workflows[i].ID < inventory.Workflows[j].ID })
+	sort.Slice(inventory.Candidates, func(i, j int) bool {
+		if inventory.Candidates[i].SourcePath == inventory.Candidates[j].SourcePath {
+			if inventory.Candidates[i].Line == inventory.Candidates[j].Line {
+				return inventory.Candidates[i].Revision < inventory.Candidates[j].Revision
+			}
+			return inventory.Candidates[i].Line < inventory.Candidates[j].Line
+		}
+		return inventory.Candidates[i].SourcePath < inventory.Candidates[j].SourcePath
+	})
 	sort.Slice(inventory.Findings, func(i, j int) bool {
 		if inventory.Findings[i].Source == inventory.Findings[j].Source {
 			return inventory.Findings[i].Reference < inventory.Findings[j].Reference
@@ -435,6 +506,21 @@ func parseMarkdownSpec(source specSourceRegistryItem, raw []byte) ([]testCatalog
 			Code: "DOCUMENT_STATUS_MISMATCH", Source: source.Path, Blocking: true,
 			Assessment: fmt.Sprintf("document status %q does not match registry authority %q", metadata.RTKSpec.Status, source.Authority),
 		})
+	}
+	if hasMetadata {
+		switch metadata.RTKSpec.RequirementInventory {
+		case "complete":
+		case "", "review_required":
+			findings = append(findings, specInventoryFinding{
+				Code: "REQUIREMENT_INVENTORY_REVIEW_REQUIRED", Source: source.Path, Blocking: documentRequired,
+				Assessment: "source owner has not confirmed that every normative clause has a stable FEAT-*/REQ-* mapping",
+			})
+		default:
+			findings = append(findings, specInventoryFinding{
+				Code: "INVALID_REQUIREMENT_INVENTORY_STATUS", Source: source.Path, Blocking: true,
+				Assessment: "rtk_spec.requirement_inventory must be complete or review_required",
+			})
+		}
 	}
 	if hasMetadata && !specDocumentStatusRequired(metadata.RTKSpec.Status) {
 		documentRequired = false
@@ -496,14 +582,26 @@ func parseMarkdownSpec(source specSourceRegistryItem, raw []byte) ([]testCatalog
 					strings.TrimSpace(requirementMetadata.ApprovedAt) == "") {
 				return nil, findings, fmt.Errorf("%s:%d deprecated requirement %s requires deprecation_owner, deprecation_reason, and approved_at", source.Path, i+1, match[2])
 			}
+			if requirementMetadata.OperationModel != "" &&
+				requirementMetadata.OperationModel != "independent" &&
+				requirementMetadata.OperationModel != "workflow" {
+				return nil, findings, fmt.Errorf("%s:%d requirement %s operation_model must be independent or workflow", source.Path, i+1, match[2])
+			}
 			end := next
-			for end < len(lines) && specFeatureHeading.FindStringSubmatch(lines[end]) == nil && specRequirementHeading.FindStringSubmatch(lines[end]) == nil {
+			requirementLevel := len(match[1])
+			headingPattern := regexp.MustCompile(`^(#{1,6})\s+`)
+			for end < len(lines) {
+				heading := headingPattern.FindStringSubmatch(lines[end])
+				if heading != nil && len(heading[1]) <= requirementLevel {
+					break
+				}
 				end++
 			}
 			revision := specRequirementRevision(match[3], requirementMetadata, strings.Join(lines[next:end], "\n"))
 			current.Requirements = append(current.Requirements, testCatalogRequirement{
 				ID: match[2], Title: strings.TrimSpace(match[3]), AcceptanceLayer: requirementMetadata.AcceptanceLayer,
-				Gate: requirementMetadata.Gate, Environments: requirementMetadata.Environments, Targets: requirementMetadata.Targets,
+				OperationModel: requirementMetadata.OperationModel,
+				Gate:           requirementMetadata.Gate, Environments: requirementMetadata.Environments, Targets: requirementMetadata.Targets,
 				Evidence: requirementMetadata.Evidence, FreshnessHours: requirementMetadata.FreshnessHours,
 				Required: requirementMetadata.Required, Status: status, Revision: revision,
 				SpecSource: specRequirementSource{
@@ -514,6 +612,99 @@ func parseMarkdownSpec(source specSourceRegistryItem, raw []byte) ([]testCatalog
 		}
 	}
 	return features, findings, nil
+}
+
+var normativeClausePattern = regexp.MustCompile(`(?i)\b(must|shall|should|required)\b|必須|不得|應當|應該`)
+
+func scanMarkdownRequirementCandidates(source specSourceRegistryItem, raw []byte) []specRequirementCandidate {
+	metadata, hasMetadata := parseSpecFrontMatter(raw)
+	required := sourceAuthorityRequired(source.Authority)
+	if hasMetadata {
+		required = specDocumentStatusRequired(metadata.RTKSpec.Status)
+	}
+	status := "planned"
+	if required {
+		status = "required"
+	}
+
+	lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
+	headingPattern := regexp.MustCompile(`^(#{1,6})\s+(.+?)\s*$`)
+	inFence, inComment := false, false
+	requirementLevel := 0
+	section := ""
+	seen := map[string]bool{}
+	var candidates []specRequirementCandidate
+	inFrontMatter := len(lines) > 0 && strings.TrimSpace(lines[0]) == "---"
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if inFrontMatter {
+			if i > 0 && trimmed == "---" {
+				inFrontMatter = false
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
+		if inComment {
+			if strings.Contains(trimmed, "-->") {
+				inComment = false
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "<!--") {
+			if !strings.Contains(trimmed, "-->") {
+				inComment = true
+			}
+			continue
+		}
+		if heading := headingPattern.FindStringSubmatch(line); heading != nil {
+			level := len(heading[1])
+			if requirementLevel > 0 && level <= requirementLevel {
+				requirementLevel = 0
+			}
+			section = strings.TrimSpace(heading[2])
+			if specRequirementHeading.FindStringSubmatch(line) != nil {
+				requirementLevel = level
+			}
+			continue
+		}
+		if requirementLevel > 0 || !normativeClausePattern.MatchString(trimmed) {
+			continue
+		}
+		statement := normalizeNormativeStatement(trimmed)
+		if statement == "" {
+			continue
+		}
+		sum := sha256.Sum256([]byte(source.ID + "\n" + section + "\n" + statement))
+		revision := hex.EncodeToString(sum[:])
+		if seen[revision] {
+			continue
+		}
+		seen[revision] = true
+		candidates = append(candidates, specRequirementCandidate{
+			DocumentID: source.ID,
+			SourcePath: source.Path,
+			Authority:  source.Authority,
+			Section:    section,
+			Line:       i + 1,
+			Statement:  statement,
+			Revision:   revision,
+			Status:     status,
+		})
+	}
+	return candidates
+}
+
+func normalizeNormativeStatement(value string) string {
+	value = strings.TrimSpace(value)
+	value = regexp.MustCompile(`^(?:[-*+]|\d+[.)])\s+`).ReplaceAllString(value, "")
+	value = regexp.MustCompile(`\s+`).ReplaceAllString(value, " ")
+	return strings.TrimSpace(value)
 }
 
 func parseSpecFrontMatter(raw []byte) (specDocumentMetadata, bool) {
@@ -1018,8 +1209,8 @@ func renderSpecInventoryReport(inventory specInventory, cases []testCatalogCase)
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "> Generated from registered canonical/normative/approved specs; tests do not define the requirement denominator.")
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "| Spec | Feature | Requirement | Revision | Authority | Status | Test IDs | Runners |")
-	fmt.Fprintln(&b, "| --- | --- | --- | --- | --- | --- | --- | --- |")
+	fmt.Fprintln(&b, "| Spec | Feature | Requirement | Operation model | Revision | Authority | Status | Test IDs | Runners |")
+	fmt.Fprintln(&b, "| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
 	for _, feature := range inventory.Features {
 		for _, requirement := range feature.Requirements {
 			var testIDs, runners []string
@@ -1033,9 +1224,9 @@ func renderSpecInventoryReport(inventory specInventory, cases []testCatalogCase)
 			}
 			sort.Strings(testIDs)
 			sort.Strings(runners)
-			fmt.Fprintf(&b, "| `%s#%s` | `%s` | `%s` | `%s` | `%s` | `%s` | %s | %s |\n",
+			fmt.Fprintf(&b, "| `%s#%s` | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | %s | %s |\n",
 				requirement.SpecSource.Path, requirement.SpecSource.Section, feature.ID, requirement.ID,
-				shortDigest(requirement.Revision), requirement.SpecSource.Authority, requirement.Status,
+				requirement.OperationModel, shortDigest(requirement.Revision), requirement.SpecSource.Authority, requirement.Status,
 				joinCatalogValues(testIDs), joinCatalogValues(runners))
 		}
 	}
@@ -1071,6 +1262,18 @@ func renderSpecInventoryReport(inventory specInventory, cases []testCatalogCase)
 		}
 	}
 	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "## Unspecified Normative Candidates")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "> These statements come from the registered specs but do not yet have stable Feature/Requirement IDs. They are reported as migration gaps and do not receive feature-coverage credit.")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "| Spec | Section and line | Authority | Status | Candidate revision | Statement |")
+	fmt.Fprintln(&b, "| --- | --- | --- | --- | --- | --- |")
+	for _, candidate := range inventory.Candidates {
+		fmt.Fprintf(&b, "| `%s` | `%s@L%d` | `%s` | `%s` | `%s` | %s |\n",
+			candidate.SourcePath, candidate.Section, candidate.Line, candidate.Authority, candidate.Status,
+			shortDigest(candidate.Revision), escapeMarkdownCell(candidate.Statement))
+	}
+	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Findings")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "| Code | Source | Reference | Blocking | Assessment |")
@@ -1099,7 +1302,8 @@ func inventoryReportJSON(inventory specInventory) map[string]any {
 	}
 	return map[string]any{
 		"schema_version": inventory.SchemaVersion, "features": features, "operations": inventory.Operations,
-		"workflows": inventory.Workflows, "findings": inventory.Findings, "sources": inventory.Sources,
+		"workflows": inventory.Workflows, "candidates": inventory.Candidates,
+		"findings": inventory.Findings, "sources": inventory.Sources,
 	}
 }
 
