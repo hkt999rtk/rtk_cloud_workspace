@@ -35,6 +35,20 @@ type featureRequirementAssertion struct {
 	Evidence      []featureCoverageEvidenceFile `json:"evidence,omitempty"`
 }
 
+type featureWorkflowStepAssertion struct {
+	StepID       string            `json:"step_id"`
+	OperationRef string            `json:"operation_ref"`
+	Status       string            `json:"status"`
+	Assertions   map[string]string `json:"assertions"`
+}
+
+type featureWorkflowAssertion struct {
+	WorkflowID string                         `json:"workflow_id"`
+	Revision   string                         `json:"workflow_revision"`
+	Status     string                         `json:"status"`
+	Steps      []featureWorkflowStepAssertion `json:"steps"`
+}
+
 type featureCaseEvidenceV2 struct {
 	TestID          string                        `json:"test_id"`
 	Status          string                        `json:"status"`
@@ -46,6 +60,7 @@ type featureCaseEvidenceV2 struct {
 	WorkspaceCommit string                        `json:"workspace_commit"`
 	Commits         map[string]string             `json:"commits,omitempty"`
 	Requirements    []featureRequirementAssertion `json:"requirements"`
+	Workflows       []featureWorkflowAssertion    `json:"workflows,omitempty"`
 }
 
 type featureEvidenceManifestV2 struct {
@@ -69,21 +84,25 @@ type featureRequirementResult struct {
 }
 
 type featureCoverageReport struct {
-	SchemaVersion  string                     `json:"schema_version"`
-	GeneratedAt    string                     `json:"generated_at"`
-	Mode           string                     `json:"mode"`
-	Overall        string                     `json:"overall"`
-	Required       int                        `json:"required"`
-	Pass           int                        `json:"pass"`
-	Missing        int                        `json:"missing"`
-	Failed         int                        `json:"failed"`
-	Stale          int                        `json:"stale"`
-	StaleSpec      int                        `json:"stale_spec"`
-	DeferredLive   int                        `json:"deferred_live"`
-	CodeCoverage   string                     `json:"code_coverage"`
-	Requirements   []featureRequirementResult `json:"requirements"`
-	Selected       []string                   `json:"selected_features,omitempty"`
-	EvidenceInputs []string                   `json:"evidence_inputs,omitempty"`
+	SchemaVersion        string                     `json:"schema_version"`
+	GeneratedAt          string                     `json:"generated_at"`
+	Mode                 string                     `json:"mode"`
+	Overall              string                     `json:"overall"`
+	SpecInventory        string                     `json:"spec_inventory"`
+	SpecBlockingFindings int                        `json:"spec_blocking_findings"`
+	UnspecifiedRequired  int                        `json:"unspecified_required"`
+	UnspecifiedPlanned   int                        `json:"unspecified_planned"`
+	Required             int                        `json:"required"`
+	Pass                 int                        `json:"pass"`
+	Missing              int                        `json:"missing"`
+	Failed               int                        `json:"failed"`
+	Stale                int                        `json:"stale"`
+	StaleSpec            int                        `json:"stale_spec"`
+	DeferredLive         int                        `json:"deferred_live"`
+	CodeCoverage         string                     `json:"code_coverage"`
+	Requirements         []featureRequirementResult `json:"requirements"`
+	Selected             []string                   `json:"selected_features,omitempty"`
+	EvidenceInputs       []string                   `json:"evidence_inputs,omitempty"`
 }
 
 func runTestFeatureCoverage(args []string) error {
@@ -135,6 +154,10 @@ func runTestFeatureCoverage(args []string) error {
 		}
 		return writeCaseFeatureEvidence(workspace, outputDir, testID, runID, environment, target, started, completed)
 	}
+	inventory, err := loadSpecInventory(workspace)
+	if err != nil {
+		return err
+	}
 	selected, err := selectCatalogFeatures(workspace, catalog, base, head)
 	if err != nil {
 		return err
@@ -146,7 +169,7 @@ func runTestFeatureCoverage(args []string) error {
 	if err != nil {
 		return err
 	}
-	report := assessFeatureCoverage(workspace, catalog, manifests, selected, mode, time.Now().UTC())
+	report := assessFeatureCoverageWithInventory(workspace, catalog, inventory, manifests, selected, mode, time.Now().UTC())
 	report.EvidenceInputs = inputs
 	if err := writeFeatureCoverageReport(outputDir, report); err != nil {
 		return err
@@ -211,6 +234,12 @@ func selectCatalogFeatures(workspace string, catalog testCatalog, base, head str
 	after, afterErr := loadSpecInventoryAt(workspace, head)
 	if beforeErr == nil && afterErr == nil {
 		for _, change := range compareSpecInventories(base, head, before, after).Changes {
+			if change.FeatureID == "" {
+				// An unclassified normative spec change has no trustworthy
+				// feature boundary yet. Select everything rather than silently
+				// narrowing qualification around an unknown product impact.
+				return all, nil
+			}
 			if !selectedSet[change.FeatureID] {
 				selected = append(selected, change.FeatureID)
 				selectedSet[change.FeatureID] = true
@@ -277,6 +306,10 @@ func loadFeatureEvidence(workspace string, catalog testCatalog, rawPaths string)
 		}
 	}
 	sort.Strings(files)
+	inventory, err := loadAvailableSpecInventory(workspace)
+	if err != nil {
+		return nil, nil, err
+	}
 	var manifests []featureEvidenceManifestV2
 	for _, path := range files {
 		raw, err := os.ReadFile(path)
@@ -303,7 +336,7 @@ func loadFeatureEvidence(workspace string, catalog testCatalog, rawPaths string)
 				return nil, nil, adaptErr
 			}
 		}
-		if err := validateFeatureEvidenceManifestV2(manifest, catalog); err != nil {
+		if err := validateFeatureEvidenceManifestV2(manifest, catalog, inventory); err != nil {
 			return nil, nil, fmt.Errorf("%s: %w", path, err)
 		}
 		currentSpecCommit, commitErr := currentCanonicalSpecCommit(workspace)
@@ -328,7 +361,7 @@ func loadFeatureEvidence(workspace string, catalog testCatalog, rawPaths string)
 	return manifests, files, nil
 }
 
-func validateFeatureEvidenceManifestV2(manifest featureEvidenceManifestV2, catalog testCatalog) error {
+func validateFeatureEvidenceManifestV2(manifest featureEvidenceManifestV2, catalog testCatalog, inventories ...specInventory) error {
 	if manifest.SchemaVersion != featureEvidenceSchemaV3 {
 		return fmt.Errorf("schema_version=%q, want %s", manifest.SchemaVersion, featureEvidenceSchemaV3)
 	}
@@ -342,6 +375,12 @@ func validateFeatureEvidenceManifestV2(manifest featureEvidenceManifestV2, catal
 		return errors.New("generated_at must be RFC3339")
 	}
 	allowedStatus := map[string]bool{"PASS": true, "FAIL": true, "INCOMPLETE": true, "SKIP": true, "STALE": true}
+	workflowIndex := map[string]specWorkflow{}
+	if len(inventories) > 0 {
+		for _, workflow := range inventories[0].Workflows {
+			workflowIndex[workflow.ID] = workflow
+		}
+	}
 	for _, item := range manifest.Cases {
 		tc, ok := catalogCaseByID(catalog.Cases, item.TestID)
 		if !ok {
@@ -407,6 +446,56 @@ func validateFeatureEvidenceManifestV2(manifest featureEvidenceManifestV2, catal
 		for _, requirementID := range tc.Verifies {
 			if !asserted[requirementID] {
 				return fmt.Errorf("%s is missing requirement assertion %s", item.TestID, requirementID)
+			}
+		}
+		assertedWorkflows := map[string]bool{}
+		for _, assertion := range item.Workflows {
+			if assertion.WorkflowID == "" || assertedWorkflows[assertion.WorkflowID] {
+				return fmt.Errorf("%s has missing or duplicate workflow assertion %s", item.TestID, assertion.WorkflowID)
+			}
+			assertedWorkflows[assertion.WorkflowID] = true
+			if !allowedStatus[assertion.Status] {
+				return fmt.Errorf("%s workflow %s has invalid status %q", item.TestID, assertion.WorkflowID, assertion.Status)
+			}
+			if assertion.Revision == "" {
+				return fmt.Errorf("%s workflow %s has missing revision", item.TestID, assertion.WorkflowID)
+			}
+			expectedWorkflow, checkCurrent := workflowIndex[assertion.WorkflowID]
+			if checkCurrent {
+				if assertion.Revision != expectedWorkflow.Revision {
+					return fmt.Errorf("%s workflow %s revision does not match current spec", item.TestID, assertion.WorkflowID)
+				}
+				bindsTestRequirement := false
+				for _, requirementID := range expectedWorkflow.RequirementIDs {
+					bindsTestRequirement = bindsTestRequirement || catalogContainsString(tc.Verifies, requirementID)
+				}
+				if !bindsTestRequirement {
+					return fmt.Errorf("%s is not mapped to a requirement bound by workflow %s", item.TestID, assertion.WorkflowID)
+				}
+			}
+			stepAssertions := map[string]featureWorkflowStepAssertion{}
+			for _, step := range assertion.Steps {
+				if step.StepID == "" || stepAssertions[step.StepID].StepID != "" {
+					return fmt.Errorf("%s workflow %s repeats or omits a step ID", item.TestID, assertion.WorkflowID)
+				}
+				if !allowedStatus[step.Status] || len(step.Assertions) == 0 {
+					return fmt.Errorf("%s workflow %s step %s has invalid status or no assertions", item.TestID, assertion.WorkflowID, step.StepID)
+				}
+				stepAssertions[step.StepID] = step
+			}
+			if checkCurrent {
+				for _, expectedStep := range expectedWorkflow.Steps {
+					step, exists := stepAssertions[expectedStep.ID]
+					if !exists {
+						return fmt.Errorf("%s workflow %s is missing step %s", item.TestID, assertion.WorkflowID, expectedStep.ID)
+					}
+					if step.OperationRef != expectedStep.OperationRef {
+						return fmt.Errorf("%s workflow %s step %s operation mismatch", item.TestID, assertion.WorkflowID, expectedStep.ID)
+					}
+				}
+				if len(stepAssertions) != len(expectedWorkflow.Steps) {
+					return fmt.Errorf("%s workflow %s contains unknown steps", item.TestID, assertion.WorkflowID)
+				}
 			}
 		}
 	}
@@ -523,9 +612,40 @@ func adaptLegacyFeatureEvidence(workspace string, raw []byte, path string, catal
 }
 
 func assessFeatureCoverage(workspace string, catalog testCatalog, manifests []featureEvidenceManifestV2, selected []string, mode string, now time.Time) featureCoverageReport {
+	return assessFeatureCoverageWithInventory(workspace, catalog, specInventory{}, manifests, selected, mode, now)
+}
+
+func assessFeatureCoverageWithInventory(
+	workspace string,
+	catalog testCatalog,
+	inventory specInventory,
+	manifests []featureEvidenceManifestV2,
+	selected []string,
+	mode string,
+	now time.Time,
+) featureCoverageReport {
 	report := featureCoverageReport{
-		SchemaVersion: "rtk-cloud-feature-coverage-report/v3", GeneratedAt: now.Format(time.RFC3339),
-		Mode: mode, Overall: "PASS", CodeCoverage: "SEPARATE_NOT_SCORED", Selected: selected,
+		SchemaVersion: "rtk-cloud-feature-coverage-report/v4", GeneratedAt: now.Format(time.RFC3339),
+		Mode: mode, Overall: "PASS", SpecInventory: "NOT_ASSESSED",
+		CodeCoverage: "SEPARATE_NOT_SCORED", Selected: selected,
+	}
+	if inventory.SchemaVersion != "" {
+		report.SpecInventory = "COMPLETE"
+		for _, finding := range inventory.Findings {
+			if finding.Blocking {
+				report.SpecBlockingFindings++
+			}
+		}
+		for _, candidate := range inventory.Candidates {
+			if candidate.Status == "required" {
+				report.UnspecifiedRequired++
+			} else {
+				report.UnspecifiedPlanned++
+			}
+		}
+		if report.SpecBlockingFindings > 0 {
+			report.SpecInventory = "INCOMPLETE"
+		}
 	}
 	selectedSet := map[string]bool{}
 	for _, id := range selected {
@@ -538,6 +658,12 @@ func assessFeatureCoverage(workspace string, catalog testCatalog, manifests []fe
 	var allCases []featureCaseEvidenceV2
 	for _, manifest := range manifests {
 		allCases = append(allCases, manifest.Cases...)
+	}
+	workflowsByRequirement := map[string][]specWorkflow{}
+	for _, workflow := range inventory.Workflows {
+		for _, requirementID := range workflow.RequirementIDs {
+			workflowsByRequirement[requirementID] = append(workflowsByRequirement[requirementID], workflow)
+		}
 	}
 	for _, feature := range catalog.Features {
 		if feature.Status != "active" || !selectedSet[feature.ID] {
@@ -558,7 +684,8 @@ func assessFeatureCoverage(workspace string, catalog testCatalog, manifests []fe
 				continue
 			}
 			report.Required++
-			result.Status, result.Detail, result.TestIDs = evaluateRequirementEvidence(workspace, requirement, feature, caseByID, allCases, now)
+			result.Status, result.Detail, result.TestIDs = evaluateRequirementEvidence(
+				workspace, requirement, feature, caseByID, allCases, now, workflowsByRequirement[requirement.ID]...)
 			switch result.Status {
 			case "PASS":
 				report.Pass++
@@ -576,6 +703,9 @@ func assessFeatureCoverage(workspace string, catalog testCatalog, manifests []fe
 	}
 	if report.Pass != report.Required {
 		report.Overall = "FAIL"
+	}
+	if report.SpecInventory == "INCOMPLETE" {
+		report.Overall = "INCOMPLETE_SPEC"
 	}
 	sort.Slice(report.Requirements, func(i, j int) bool {
 		if report.Requirements[i].FeatureID == report.Requirements[j].FeatureID {
@@ -595,7 +725,15 @@ func requirementEvaluatedInMode(requirement testCatalogRequirement, mode string)
 	}
 }
 
-func evaluateRequirementEvidence(workspace string, requirement testCatalogRequirement, feature testCatalogFeature, cases map[string]testCatalogCase, evidence []featureCaseEvidenceV2, now time.Time) (string, string, []string) {
+func evaluateRequirementEvidence(
+	workspace string,
+	requirement testCatalogRequirement,
+	feature testCatalogFeature,
+	cases map[string]testCatalogCase,
+	evidence []featureCaseEvidenceV2,
+	now time.Time,
+	workflows ...specWorkflow,
+) (string, string, []string) {
 	var mapped []string
 	for _, tc := range cases {
 		if tc.Status == "active" && catalogContainsString(tc.Verifies, requirement.ID) {
@@ -653,6 +791,10 @@ func evaluateRequirementEvidence(workspace string, requirement testCatalogRequir
 			}
 			if !assertionsPass {
 				lastReason = "one or more requirement assertions did not PASS"
+				continue
+			}
+			if ok, reason := qualifyingWorkflowEvidence(item, workflows); !ok {
+				lastReason = reason
 				continue
 			}
 			if !catalogContainsString(requirement.Environments, item.Environment) {
@@ -724,6 +866,44 @@ func evaluateRequirementEvidence(workspace string, requirement testCatalogRequir
 		return "FAIL", lastReason, mapped
 	}
 	return "MISSING", lastReason, mapped
+}
+
+func qualifyingWorkflowEvidence(item featureCaseEvidenceV2, workflows []specWorkflow) (bool, string) {
+	if len(workflows) == 0 {
+		return true, ""
+	}
+	assertions := map[string]featureWorkflowAssertion{}
+	for _, assertion := range item.Workflows {
+		assertions[assertion.WorkflowID] = assertion
+	}
+	for _, workflow := range workflows {
+		assertion, exists := assertions[workflow.ID]
+		if !exists {
+			return false, "required workflow assertion is missing: " + workflow.ID
+		}
+		if assertion.Revision != workflow.Revision {
+			return false, "workflow evidence revision does not match the current spec: " + workflow.ID
+		}
+		if strings.ToUpper(assertion.Status) != "PASS" {
+			return false, "workflow assertion did not PASS: " + workflow.ID
+		}
+		stepAssertions := map[string]featureWorkflowStepAssertion{}
+		for _, step := range assertion.Steps {
+			stepAssertions[step.StepID] = step
+		}
+		for _, expected := range workflow.Steps {
+			step, exists := stepAssertions[expected.ID]
+			if !exists || step.OperationRef != expected.OperationRef || strings.ToUpper(step.Status) != "PASS" {
+				return false, "workflow step did not PASS: " + workflow.ID + "#" + expected.ID
+			}
+			for _, status := range step.Assertions {
+				if strings.ToUpper(status) != "PASS" {
+					return false, "workflow step assertion did not PASS: " + workflow.ID + "#" + expected.ID
+				}
+			}
+		}
+	}
+	return true, ""
 }
 
 func validateFeatureCommits(workspace string, feature testCatalogFeature, commits map[string]string) error {
@@ -887,6 +1067,14 @@ func writeCaseFeatureEvidence(workspace, outputDir, testID, runID, environment, 
 	if err != nil {
 		return err
 	}
+	inventory, err := loadSpecInventory(workspace)
+	if err != nil {
+		return err
+	}
+	workflowAssertions, err := loadLiveWorkflowAssertions(outputDir, tc, inventory)
+	if err != nil {
+		return err
+	}
 	manifest := featureEvidenceManifestV2{
 		SchemaVersion: featureEvidenceSchemaV3,
 		RunID:         runID,
@@ -903,9 +1091,10 @@ func writeCaseFeatureEvidence(workspace, outputDir, testID, runID, environment, 
 			WorkspaceCommit: commits["workspace"],
 			Commits:         commits,
 			Requirements:    assertions,
+			Workflows:       workflowAssertions,
 		}},
 	}
-	if err := validateFeatureEvidenceManifestV2(manifest, catalog); err != nil {
+	if err := validateFeatureEvidenceManifestV2(manifest, catalog, inventory); err != nil {
 		return err
 	}
 	if err := writeJSON(filepath.Join(outputDir, "feature-evidence.json"), manifest); err != nil {
@@ -925,6 +1114,83 @@ func writeCaseFeatureEvidence(workspace, outputDir, testID, runID, environment, 
 	}
 	report := fmt.Sprintf("# Live Feature Evidence\n\n- Test ID: `%s`\n- Run ID: `%s`\n- Status: **PASS**\n- Requirements: `%s`\n- Workspace commit: `%s`\n", testID, runID, strings.Join(tc.Verifies, "`, `"), commits["workspace"])
 	return os.WriteFile(filepath.Join(outputDir, "FEATURE_REPORT.md"), []byte(report), 0o644)
+}
+
+func loadLiveWorkflowAssertions(outputDir string, tc testCatalogCase, inventory specInventory) ([]featureWorkflowAssertion, error) {
+	bound := map[string]specWorkflow{}
+	for _, workflow := range inventory.Workflows {
+		for _, requirementID := range workflow.RequirementIDs {
+			if catalogContainsString(tc.Verifies, requirementID) {
+				bound[workflow.ID] = workflow
+			}
+		}
+	}
+	if len(bound) == 0 {
+		return nil, nil
+	}
+	type liveWorkflow struct {
+		WorkflowID string            `json:"workflow_id"`
+		Steps      map[string]string `json:"steps"`
+	}
+	var candidates []string
+	if err := filepath.WalkDir(outputDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") &&
+			entry.Name() != "feature-evidence.json" && entry.Name() != "feature-results.json" {
+			candidates = append(candidates, path)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	declared := map[string]liveWorkflow{}
+	for _, path := range candidates {
+		var payload struct {
+			Workflow liveWorkflow `json:"workflow"`
+		}
+		if err := readJSONFile(path, &payload); err != nil || payload.Workflow.WorkflowID == "" {
+			continue
+		}
+		if _, repeated := declared[payload.Workflow.WorkflowID]; repeated {
+			return nil, fmt.Errorf("live evidence repeats workflow %s", payload.Workflow.WorkflowID)
+		}
+		declared[payload.Workflow.WorkflowID] = payload.Workflow
+	}
+	var assertions []featureWorkflowAssertion
+	for workflowID, workflow := range bound {
+		actual, exists := declared[workflowID]
+		if !exists {
+			return nil, fmt.Errorf("%s requires step-level live workflow evidence for %s", tc.ID, workflowID)
+		}
+		statuses := actual.Steps
+		assertion, err := buildWorkflowAssertion(workflow, statuses)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", tc.ID, err)
+		}
+		assertions = append(assertions, assertion)
+	}
+	sort.Slice(assertions, func(i, j int) bool { return assertions[i].WorkflowID < assertions[j].WorkflowID })
+	return assertions, nil
+}
+
+func buildWorkflowAssertion(workflow specWorkflow, statuses map[string]string) (featureWorkflowAssertion, error) {
+	assertion := featureWorkflowAssertion{WorkflowID: workflow.ID, Revision: workflow.Revision, Status: "PASS"}
+	for _, step := range workflow.Steps {
+		status := strings.ToUpper(strings.TrimSpace(statuses[step.ID]))
+		if status != "PASS" {
+			return featureWorkflowAssertion{}, fmt.Errorf("workflow %s step %s did not provide PASS evidence", workflow.ID, step.ID)
+		}
+		assertion.Steps = append(assertion.Steps, featureWorkflowStepAssertion{
+			StepID: step.ID, OperationRef: step.OperationRef, Status: status,
+			Assertions: map[string]string{"operation_and_transition": "PASS"},
+		})
+	}
+	if len(statuses) != len(workflow.Steps) {
+		return featureWorkflowAssertion{}, fmt.Errorf("workflow %s evidence contains missing or unknown steps", workflow.ID)
+	}
+	return assertion, nil
 }
 
 func currentCanonicalSpecCommit(workspace string) (string, error) {
@@ -992,6 +1258,8 @@ func writeFeatureCoverageReport(outputDir string, report featureCoverageReport) 
 	fmt.Fprintln(&b, "# Feature Coverage")
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "- Overall: **%s**\n", report.Overall)
+	fmt.Fprintf(&b, "- Spec inventory: **%s** (%d blocking findings; %d required and %d planned unspecified clauses)\n",
+		report.SpecInventory, report.SpecBlockingFindings, report.UnspecifiedRequired, report.UnspecifiedPlanned)
 	fmt.Fprintf(&b, "- Product requirements: **%d/%d PASS**\n", report.Pass, report.Required)
 	fmt.Fprintf(&b, "- Stale spec revision: **%d**\n", report.StaleSpec)
 	fmt.Fprintf(&b, "- Deferred live (no PASS credit): **%d**\n", report.DeferredLive)

@@ -704,8 +704,12 @@ func TestEvaluateVideoCasesRequiresMediaAndDynamicTURN(t *testing.T) {
 				"create_success": float64(2), "setup_success": float64(2), "close_success": float64(2),
 				"success_rate_percent": float64(100),
 			},
-			"webrtc_media_totals":         map[string]any{"successes": float64(2), "time_to_first_rtp_p95_ms": float64(120)},
-			"turn_evidence":               map[string]any{"api_dynamic_turn_count": float64(2)},
+			"webrtc_media_totals": map[string]any{"successes": float64(2), "time_to_first_rtp_p95_ms": float64(120)},
+			"turn_evidence": map[string]any{
+				"registry_available": true, "active_nodes": float64(1),
+				"api_turn_registry_lookup_succeeded": float64(1), "api_turn_registry_node_count": float64(1),
+				"api_dynamic_turn_count": float64(2),
+			},
 			"relay_candidate_samples":     float64(2),
 			"non_relay_candidate_samples": float64(0),
 		},
@@ -752,6 +756,45 @@ func TestEvaluateClipCasesRequiresOperationsAndReconciliation(t *testing.T) {
 	}
 	if cases["E2E-VC-CLIP-001"].Status != "PASS" {
 		t.Fatalf("clip case = %+v", cases["E2E-VC-CLIP-001"])
+	}
+}
+
+func TestNormalizedFeatureEvidenceCarriesExplicitWorkflowSteps(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	inventory, err := loadSpecInventory(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := loadAndValidateTestCatalog(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for testID, operations := range map[string][]string{
+		"E2E-HOME-SHADOW-003": {"desired_write", "reported_publish", "version_conflict"},
+		"E2E-VC-WEBRTC-001":   {"ice_preflight", "webrtc_create", "webrtc_setup", "webrtc_close"},
+		"E2E-VC-TURN-001":     {"turn_node_registered", "turn_node_active", "dynamic_turn_resolve"},
+		"E2E-VC-CLIP-001":     {"clip_upload", "clip_verify_ready", "clip_enum", "clip_download_range", "clip_delete"},
+	} {
+		tc, ok := catalogCaseByID(catalog.Cases, testID)
+		if !ok {
+			t.Fatalf("missing catalog case %s", testID)
+		}
+		assertions := normalizedFeatureWorkflowAssertions(featureCaseEvidence{
+			TestID: testID, Status: "PASS", Operations: operations,
+		}, tc, inventory)
+		if len(assertions) != 1 {
+			t.Fatalf("%s workflow assertions=%+v", testID, assertions)
+		}
+		workflow := map[string]specWorkflow{}
+		for _, item := range inventory.Workflows {
+			workflow[item.ID] = item
+		}
+		if current := workflow[assertions[0].WorkflowID]; len(assertions[0].Steps) != len(current.Steps) {
+			t.Fatalf("%s steps=%d want=%d", testID, len(assertions[0].Steps), len(current.Steps))
+		}
 	}
 }
 

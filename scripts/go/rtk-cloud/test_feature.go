@@ -553,7 +553,7 @@ func evaluateFeatureCases(spec featureRunSpec, results map[string]any, stageDir 
 		assessments["E2E-HOME-SHADOW-002"] = passFail(offlineOK, "offline desired convergence")
 		assessments["E2E-HOME-SHADOW-003"] = passFail(policyOK, "version conflict and unauthorized update enforcement")
 	case "video-webrtc":
-		operations = []string{"webrtc_create", "webrtc_setup", "first_h264_rtp", "webrtc_close", "dynamic_turn_resolve", "relay_candidate"}
+		operations = []string{}
 		target := float64(2)
 		if spec.Profile == "qualification-1k" {
 			target = 100
@@ -565,9 +565,31 @@ func evaluateFeatureCases(spec featureRunSpec, results map[string]any, stageDir 
 		successRate = numberAt(results, "video_evidence", "webrtc_totals", "success_rate_percent")
 		latency["first_rtp_p95_ms"] = numberAt(results, "video_evidence", "webrtc_media_totals", "time_to_first_rtp_p95_ms")
 		webrtcOK := boolAt(results, "video_evidence", "complete") && create >= target && setup >= target && closeCount >= target && media >= target
-		turnOK := numberAt(results, "video_evidence", "turn_evidence", "api_dynamic_turn_count") > 0 &&
+		if numberAt(results, "video_evidence", "turn_evidence", "api_turn_registry_lookup_succeeded") > 0 {
+			operations = append(operations, "ice_preflight")
+		}
+		if create >= target {
+			operations = append(operations, "webrtc_create")
+		}
+		if setup >= target {
+			operations = append(operations, "webrtc_setup")
+		}
+		if media >= target {
+			operations = append(operations, "first_h264_rtp")
+		}
+		if closeCount >= target {
+			operations = append(operations, "webrtc_close")
+		}
+		turnOK := boolAt(results, "video_evidence", "turn_evidence", "registry_available") &&
+			numberAt(results, "video_evidence", "turn_evidence", "active_nodes") > 0 &&
+			numberAt(results, "video_evidence", "turn_evidence", "api_turn_registry_lookup_succeeded") > 0 &&
+			numberAt(results, "video_evidence", "turn_evidence", "api_turn_registry_node_count") > 0 &&
+			numberAt(results, "video_evidence", "turn_evidence", "api_dynamic_turn_count") > 0 &&
 			numberAt(results, "video_evidence", "relay_candidate_samples") >= target &&
 			numberAt(results, "video_evidence", "non_relay_candidate_samples") == 0
+		if turnOK {
+			operations = append(operations, "turn_node_registered", "turn_node_active", "dynamic_turn_resolve", "relay_candidate")
+		}
 		assessments["E2E-VC-WEBRTC-001"] = passFail(webrtcOK, "H264 create, media, first-RTP, and close evidence")
 		assessments["E2E-VC-TURN-001"] = passFail(turnOK, "dynamic TURN registry and relay-only evidence")
 	case "clip-storage":
@@ -807,6 +829,10 @@ func writeNormalizedFeatureEvidence(dir string, manifest featureEvidenceManifest
 		return err
 	}
 	requirements := catalogRequirementIndex(catalog)
+	inventory, err := loadAvailableSpecInventory(workspace)
+	if err != nil {
+		return err
+	}
 	for _, item := range manifest.Cases {
 		tc, ok := catalogCaseByID(catalog.Cases, item.TestID)
 		if !ok {
@@ -830,6 +856,7 @@ func writeNormalizedFeatureEvidence(dir string, manifest featureEvidenceManifest
 				Evidence:      refs,
 			})
 		}
+		workflowAssertions := normalizedFeatureWorkflowAssertions(item, tc, inventory)
 		out.Cases = append(out.Cases, featureCaseEvidenceV2{
 			TestID:          item.TestID,
 			Status:          status,
@@ -840,9 +867,58 @@ func writeNormalizedFeatureEvidence(dir string, manifest featureEvidenceManifest
 			WorkspaceCommit: item.Commits["workspace"],
 			Commits:         item.Commits,
 			Requirements:    assertions,
+			Workflows:       workflowAssertions,
 		})
 	}
 	return writeJSONFile(filepath.Join(dir, "feature-evidence.json"), out)
+}
+
+func normalizedFeatureWorkflowAssertions(item featureCaseEvidence, tc testCatalogCase, inventory specInventory) []featureWorkflowAssertion {
+	if strings.ToUpper(item.Status) != "PASS" {
+		return nil
+	}
+	stepOperations := map[string]map[string]string{
+		"WF-HOME-SHADOW-001": {
+			"update_shadow": "desired_write", "read_converged_shadow": "reported_publish", "reject_stale_version": "version_conflict",
+		},
+		"WF-VC-WEBRTC-001": {
+			"preflight_ice": "ice_preflight", "request_stream": "webrtc_create",
+			"wait_for_answer": "webrtc_setup", "close_stream": "webrtc_close",
+		},
+		"WF-VC-TURN-001": {
+			"register_node": "turn_node_registered", "heartbeat_node": "turn_node_active",
+			"discover_active_node": "dynamic_turn_resolve",
+		},
+		"WF-VC-CLIP-001": {
+			"create_upload": "clip_upload", "complete_upload": "clip_upload", "wait_until_ready": "clip_verify_ready",
+			"enumerate_clip": "clip_enum", "download_clip": "clip_download_range", "delete_clip": "clip_delete",
+		},
+	}
+	observed := map[string]bool{}
+	for _, operation := range item.Operations {
+		observed[operation] = true
+	}
+	var assertions []featureWorkflowAssertion
+	for _, workflow := range inventory.Workflows {
+		bound := false
+		for _, requirementID := range workflow.RequirementIDs {
+			bound = bound || catalogContainsString(tc.Verifies, requirementID)
+		}
+		mapping, supported := stepOperations[workflow.ID]
+		if !bound || !supported {
+			continue
+		}
+		statuses := map[string]string{}
+		for _, step := range workflow.Steps {
+			if observed[mapping[step.ID]] {
+				statuses[step.ID] = "PASS"
+			}
+		}
+		if assertion, err := buildWorkflowAssertion(workflow, statuses); err == nil {
+			assertions = append(assertions, assertion)
+		}
+	}
+	return assertions
 }
 
 func writeJSONFileIfMissing(path string, value any) error {
