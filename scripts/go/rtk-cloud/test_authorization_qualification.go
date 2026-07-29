@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -22,6 +21,7 @@ type authorizationQualificationSpec struct {
 	Package    string
 	GoTest     string
 	Assertions map[string]map[string]string
+	Workflows  map[string]map[string]string
 }
 
 var authorizationQualificationSpecs = []authorizationQualificationSpec{
@@ -131,6 +131,92 @@ var authorizationQualificationSpecs = []authorizationQualificationSpec{
 			},
 		},
 	},
+	{
+		TestID: "INT-AM-BRANDPROFILE-001", Repository: "rtk_account_manager", Package: "./internal/api", GoTest: "TestIntegrationPlatformAdminDeviceItemProfileLifecycle",
+		Assertions: map[string]map[string]string{
+			"REQ-CA-BRAND-PROFILE-001": {
+				"inventory_metadata_preserved":    "PASS",
+				"service_options_explicit":        "PASS",
+				"category_derived_acl_rejected":   "PASS",
+				"invalid_service_option_rejected": "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-AM-BRANDIDENT-001", Repository: "rtk_account_manager", Package: "./internal/api", GoTest: "TestIntegrationAppEndUserClaimCreatesMultiBrandBindings",
+		Assertions: map[string]map[string]string{
+			"REQ-CA-BRAND-IDENTITY-001": {
+				"global_app_subject_created":   "PASS",
+				"claim_creates_brand_link":     "PASS",
+				"claim_creates_device_binding": "PASS",
+			},
+			"REQ-CA-BRAND-PRIVACY-001": {
+				"current_brand_only":         "PASS",
+				"foreign_brand_not_returned": "PASS",
+				"direct_email_not_returned":  "PASS",
+			},
+		},
+		Workflows: map[string]map[string]string{
+			"WF-CA-BRAND-IDENTITY-001": {
+				"login_app_end_user":       "PASS",
+				"resolve_app_device_claim": "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-AM-BRANDADMIN-001", Repository: "rtk_account_manager", Package: "./internal/api", GoTest: "TestIntegrationPlatformAdminBrandCloudLifecycle",
+		Assertions: map[string]map[string]string{
+			"REQ-CA-BRAND-ADMIN-AUTH-001": {
+				"platform_admin_allowed": "PASS",
+				"ordinary_user_rejected": "PASS",
+				"brand_scope_preserved":  "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-AM-BRANDUSER-001", Repository: "rtk_account_manager", Package: "./internal/api", GoTest: "TestIntegrationPlatformAdminCreatesActiveBrandCloudUser",
+		Assertions: map[string]map[string]string{
+			"REQ-CA-BRAND-USER-PROVISION-001": {
+				"brand_identity_isolated": "PASS",
+				"verified_state_created":  "PASS",
+				"password_not_reused":     "PASS",
+				"lifecycle_is_idempotent": "PASS",
+			},
+			"REQ-CA-BRAND-AUDIT-001": {
+				"lifecycle_events_recorded": "PASS",
+				"platform_actor_attributed": "PASS",
+				"brand_subject_attributed":  "PASS",
+			},
+		},
+		Workflows: map[string]map[string]string{
+			"WF-CA-AUDIT-001": {
+				"create_audited_brand_cloud": "PASS",
+				"read_brand_cloud_audit":     "PASS",
+			},
+			"WF-CA-BRAND-001": {
+				"create_brand_cloud":  "PASS",
+				"create_brand_owner":  "PASS",
+				"disable_brand_owner": "PASS",
+				"enable_brand_owner":  "PASS",
+				"delete_brand_owner":  "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-CA-BRANDBFF-001", Repository: "rtk_cloud_admin", Package: "./internal/app", GoTest: "TestPlatformAdminBrandCloudsProxyRequiresUpstreamToken",
+		Assertions: map[string]map[string]string{
+			"REQ-CA-BRAND-SOURCE-001": {
+				"account_manager_results_returned": "PASS",
+				"upstream_authority_required":      "PASS",
+				"local_fallback_rejected":          "PASS",
+			},
+			"REQ-CA-BRAND-BFF-001": {
+				"bearer_token_forwarded":   "PASS",
+				"request_fields_forwarded": "PASS",
+				"upstream_failure_safe":    "PASS",
+			},
+		},
+	},
 }
 
 type goTestJSONEvent struct {
@@ -223,13 +309,13 @@ func runAuthorizationQualification(workspace, outputDir, runID string) error {
 	}
 	requirements := catalogRequirementIndex(catalog)
 	features := catalogFeatureByRequirement(catalog)
-	feature, ok := features["REQ-CONTRACT-AUTHZ-SOURCE-001"]
-	if !ok {
-		return errors.New("canonical authorization feature is missing")
-	}
-	commits, err := currentFeatureCommits(workspace, feature)
+	inventory, err := loadSpecInventory(workspace)
 	if err != nil {
 		return err
+	}
+	workflows := map[string]specWorkflow{}
+	for _, workflow := range inventory.Workflows {
+		workflows[workflow.ID] = workflow
 	}
 	resultByID := map[string]authorizationQualificationResult{}
 	for _, result := range results {
@@ -244,6 +330,7 @@ func runAuthorizationQualification(workspace, outputDir, runID string) error {
 	for _, spec := range authorizationQualificationSpecs {
 		result := resultByID[spec.TestID]
 		assertions := make([]featureRequirementAssertion, 0, len(spec.Assertions))
+		workflowAssertions := make([]featureWorkflowAssertion, 0, len(spec.Workflows))
 		requirementIDs := make([]string, 0, len(spec.Assertions))
 		for requirementID := range spec.Assertions {
 			requirementIDs = append(requirementIDs, requirementID)
@@ -259,15 +346,46 @@ func runAuthorizationQualification(workspace, outputDir, runID string) error {
 				Revision:      requirement.Revision,
 				SpecSource:    requirement.SpecSource,
 				Status:        "PASS",
-				Assessment:    "explicit PostgreSQL-backed integration assertions passed",
+				Assessment:    "explicit targeted integration assertions passed",
 				Assertions:    spec.Assertions[requirementID],
 				Evidence:      refs,
 			})
 		}
+		workflowIDs := make([]string, 0, len(spec.Workflows))
+		for workflowID := range spec.Workflows {
+			workflowIDs = append(workflowIDs, workflowID)
+		}
+		sort.Strings(workflowIDs)
+		for _, workflowID := range workflowIDs {
+			workflow, ok := workflows[workflowID]
+			if !ok {
+				return fmt.Errorf("%s references unknown workflow %s", spec.TestID, workflowID)
+			}
+			assertion, err := buildWorkflowAssertion(workflow, spec.Workflows[workflowID])
+			if err != nil {
+				return fmt.Errorf("%s: %w", spec.TestID, err)
+			}
+			workflowAssertions = append(workflowAssertions, assertion)
+		}
+		var caseFeature testCatalogFeature
+		for _, requirementID := range requirementIDs {
+			feature, ok := features[requirementID]
+			if !ok {
+				return fmt.Errorf("%s requirement %s has no canonical feature", spec.TestID, requirementID)
+			}
+			if caseFeature.ID != "" && caseFeature.ID != feature.ID {
+				return fmt.Errorf("%s spans features %s and %s", spec.TestID, caseFeature.ID, feature.ID)
+			}
+			caseFeature = feature
+		}
+		commits, err := currentFeatureCommits(workspace, caseFeature)
+		if err != nil {
+			return err
+		}
 		manifest.Cases = append(manifest.Cases, featureCaseEvidenceV2{
 			TestID: spec.TestID, Status: "PASS", Assessment: "targeted integration test executed and passed",
 			Environment: "ci", StartedAt: result.StartedAt, CompletedAt: result.CompletedAt,
-			WorkspaceCommit: strings.TrimSpace(workspaceCommit), Commits: commits, Requirements: assertions,
+			WorkspaceCommit: strings.TrimSpace(workspaceCommit), Commits: commits, Requirements: assertions, Workflows: workflowAssertions,
 		})
 	}
 	return writeJSON(filepath.Join(outputDir, "feature-evidence.json"), manifest)

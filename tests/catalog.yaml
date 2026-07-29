@@ -156,6 +156,66 @@ cases:
     evidence: [json, junit]
     verifies: [REQ-CONTRACT-AUTHZ-OTA-TENANT-001]
     status: active
+  - id: INT-AM-BRANDPROFILE-001
+    title: Device item profiles keep inventory metadata separate from explicit service entitlement
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: TestIntegrationPlatformAdminDeviceItemProfileLifecycle
+    method: PostgreSQL-backed API integration test rejects category-derived ACL input and preserves explicit service_options independently from inventory metadata.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CA-BRAND-PROFILE-001]
+    status: active
+  - id: INT-AM-BRANDIDENT-001
+    title: APP claims create tenant-isolated Brand projections without direct-identifier leakage
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: TestIntegrationAppEndUserClaimCreatesMultiBrandBindings
+    method: PostgreSQL-backed API integration test logs in a global APP end user, claims devices in two Brands, and verifies each response is scoped to its current Brand without email or foreign-Brand identifiers.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CA-BRAND-IDENTITY-001, REQ-CA-BRAND-PRIVACY-001]
+    status: active
+  - id: INT-AM-BRANDADMIN-001
+    title: Brand Cloud administration requires platform authority and records its mutations
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: TestIntegrationPlatformAdminBrandCloudLifecycle
+    method: PostgreSQL-backed API integration test rejects ordinary users, executes the authoritative Brand lifecycle, and reads the resulting audit records.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CA-BRAND-ADMIN-AUTH-001]
+    status: active
+  - id: INT-AM-BRANDUSER-001
+    title: Operator provisioning isolates Brand users and preserves actor-correct lifecycle audit
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: TestIntegrationPlatformAdminCreatesActiveBrandCloudUser
+    method: PostgreSQL-backed API integration test creates an isolated verified Brand user, exercises reactivation, rotation, disable, enable and deletion, and checks the audit actor and subject.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CA-BRAND-USER-PROVISION-001, REQ-CA-BRAND-AUDIT-001]
+    status: active
+  - id: INT-CA-BRANDBFF-001
+    title: Cloud Admin Brand routes require and forward Account Manager authority
+    layer: integration
+    owner: rtk_cloud_admin
+    source: repos/rtk_cloud_admin/internal/app/app_test.go
+    selector: TestPlatformAdminBrandCloudsProxyRequiresUpstreamToken
+    method: In-process BFF integration test requires an upstream token, forwards Brand requests to Account Manager, returns upstream results, and rejects an unavailable upstream instead of using local state.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CA-BRAND-SOURCE-001, REQ-CA-BRAND-BFF-001]
+    status: active
   - id: UNIT-VC-SHADOW-001
     title: Device shadow rejects stale versions
     layer: unit

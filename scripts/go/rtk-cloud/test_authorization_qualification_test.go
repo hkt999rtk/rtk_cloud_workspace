@@ -92,6 +92,7 @@ printf '{"Action":"pass","Test":"%s"}\n' "$name"
 	if len(manifest.Cases) != len(authorizationQualificationSpecs) {
 		t.Fatalf("cases=%d, want %d", len(manifest.Cases), len(authorizationQualificationSpecs))
 	}
+	workflowCases := 0
 	for _, evidenceCase := range manifest.Cases {
 		if evidenceCase.Status != "PASS" || len(evidenceCase.Requirements) == 0 {
 			t.Fatalf("incomplete evidence case: %+v", evidenceCase)
@@ -101,6 +102,17 @@ printf '{"Action":"pass","Test":"%s"}\n' "$name"
 				t.Fatalf("incomplete requirement evidence: %+v", requirement)
 			}
 		}
+		if len(evidenceCase.Workflows) > 0 {
+			workflowCases++
+		}
+		for _, workflow := range evidenceCase.Workflows {
+			if workflow.Revision == "" || workflow.Status != "PASS" || len(workflow.Steps) == 0 {
+				t.Fatalf("incomplete workflow evidence: %+v", workflow)
+			}
+		}
+	}
+	if workflowCases != 2 {
+		t.Fatalf("workflow cases=%d, want 2", workflowCases)
 	}
 
 	junit, err := os.ReadFile(filepath.Join(outputDir, "junit.xml"))
