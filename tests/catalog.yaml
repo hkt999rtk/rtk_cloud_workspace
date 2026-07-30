@@ -540,6 +540,66 @@ cases:
     evidence: [json, junit]
     verifies: [REQ-CONTRACT-PROV-PROJECTION-001]
     status: active
+  - id: INT-AM-PROV-CLAIM-001
+    title: Account claim resolution preserves authoritative ownership and explicit service entitlements
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: "./internal/api#TestIntegrationClaimResolveEndpoint,./internal/api#TestIntegrationProvisioningEndpoints,./internal/api#TestIntegrationPlatformAdminDeviceItemProfileLifecycle,./internal/store#TestCreateOrGetDeviceOperationIsIdempotent"
+    method: PostgreSQL-backed claim, profile, and lifecycle tests resolve one opaque Claim Token into a tenant-owned registry UUID, reject raw or foreign ownership material, keep category separate from explicit service_options, and preserve operation idempotency.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-CLAIM-RESOLUTION-001, REQ-AM-SERVICE-ENTITLEMENT-BOUNDARY-001, REQ-AM-DEVICE-OWNERSHIP-001]
+    status: active
+  - id: INT-AM-PROV-UNPROVISION-001
+    title: User unprovision releases the binding while preserving consumed claim and factory identity
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: TestIntegrationDeviceUserUnprovisionWorkflow
+    method: PostgreSQL-backed workflow resolves a Claim Token, atomically deletes the current registry binding with audit and outbox facts, rejects old-device access and token replay, then permits a fresh token for the same factory identity.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-USER-UNPROVISION-001]
+    status: active
+  - id: INT-AM-PROV-OVERRIDE-001
+    title: Platform support unprovision, transfer, and reclaim require evidence and audit
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: "./internal/api#TestIntegrationAdminDeviceUnprovisionOverride,./internal/api#TestIntegrationAdminDeviceClaimOverrideWorkflow"
+    method: PostgreSQL-backed support workflows reject non-admin and evidence-free requests, perform explicit unprovision, transfer and reclaim mutations, preserve actor and before/after ownership facts, and expose only redacted audit results.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-ADMIN-UNPROVISION-001, REQ-AM-CLAIM-TRANSFER-001, REQ-AM-CLAIM-RECLAIM-001]
+    status: active
+  - id: INT-AM-PROV-LIFECYCLE-001
+    title: Account lifecycle persists before publish and projects activation and deactivation truthfully
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: "./internal/api#TestIntegrationProvisioningEndpoints,./internal/api#TestIntegrationInternalDeviceProvisioningResult,./internal/api#TestIntegrationDeactivateEndpointUsesProjectedVideoMetadata"
+    method: PostgreSQL-backed lifecycle tests atomically persist operation and outbox rows, reject conflicting replay, observe projected activation, keep success distinct from online, request deactivation from projected identity, and expose terminal failure attribution.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-LIFECYCLE-OPERATION-001]
+    status: active
+  - id: INT-AM-PROV-READINESS-001
+    title: Account readiness is authorized, source-explicit, and state-correct
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: "./internal/api#TestIntegrationProvisioningStateReturnsRegistryOnlyReadiness,./internal/api#TestIntegrationProvisioningEndpoints,./internal/api#TestReadinessFromProjectionStates,./internal/store#TestProjectDeviceProvisioningAndOnlineRules"
+    method: API and projection integration tests reject foreign reads and derive registered, pending, failed, activated, transport-pending, online, deactivation, and disabled states only from durable account-owned sources without exposing external credential state.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-READINESS-PROJECTION-001, REQ-AM-READINESS-STATES-001]
+    status: active
   - id: UNIT-VC-SHADOW-001
     title: Device shadow rejects stale versions
     layer: unit
