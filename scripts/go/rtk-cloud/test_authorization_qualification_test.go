@@ -55,6 +55,24 @@ func TestAuthorizationQualificationRequiresPerRequirementAssertions(t *testing.T
 	}
 }
 
+func TestAuthorizationQualificationTargetsRenderCompositeSelector(t *testing.T) {
+	spec := authorizationQualificationSpec{
+		Targets: []authorizationQualificationTarget{
+			{Package: "./internal/httpapi", GoTest: "TestActivate"},
+			{Package: "./internal/workflow", GoTest: "TestAuthorize"},
+		},
+	}
+	targets, err := authorizationQualificationTargets(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := authorizationQualificationSelector(spec, targets)
+	want := "./internal/httpapi#TestActivate,./internal/workflow#TestAuthorize"
+	if got != want {
+		t.Fatalf("selector=%q, want %q", got, want)
+	}
+}
+
 func TestRunAuthorizationQualificationEmitsPassingEvidence(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {

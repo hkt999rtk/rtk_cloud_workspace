@@ -496,6 +496,24 @@ func TestWriteCaseFeatureEvidenceProducesCompleteLiveContract(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "logs", "run.log"), []byte("status=PASS\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	inventory, err := loadSpecInventory(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, workflow := range inventory.Workflows {
+		if !catalogContainsString(workflow.RequirementIDs, "REQ-LIVE-STG-ONBOARD-001") {
+			continue
+		}
+		steps := map[string]string{}
+		for _, step := range workflow.Steps {
+			steps[step.ID] = "PASS"
+		}
+		if err := writeJSON(filepath.Join(dir, "workflow-"+workflow.ID+".json"), map[string]any{
+			"workflow": map[string]any{"workflow_id": workflow.ID, "steps": steps},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	started := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
 	completed := time.Now().UTC().Truncate(time.Second)
 	if err := writeCaseFeatureEvidence(

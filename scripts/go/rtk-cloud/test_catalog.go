@@ -280,7 +280,7 @@ func loadAndValidateTestCatalogForRunner(workspace, sourceRunner string) (testCa
 			if err != nil {
 				return testCatalog{}, fmt.Errorf("%s %s source %s: %w", prefix, tc.ID, tc.Source, err)
 			}
-			if !bytes.Contains(source, []byte(tc.Selector)) {
+			if !catalogSelectorExists(workspace, tc, source) {
 				return testCatalog{}, fmt.Errorf("%s %s selector %q not found in %s", prefix, tc.ID, tc.Selector, tc.Source)
 			}
 		}
@@ -316,6 +316,47 @@ func loadAndValidateTestCatalogForRunner(workspace, sourceRunner string) (testCa
 		}
 	}
 	return catalog, nil
+}
+
+func catalogSelectorExists(workspace string, tc testCatalogCase, source []byte) bool {
+	if bytes.Contains(source, []byte(tc.Selector)) {
+		return true
+	}
+	if !strings.Contains(tc.Selector, "#") {
+		return false
+	}
+	sourceParts := strings.Split(filepath.ToSlash(tc.Source), "/")
+	if len(sourceParts) < 2 || sourceParts[0] != "repos" {
+		return false
+	}
+	repositoryRoot := filepath.Join(workspace, sourceParts[0], sourceParts[1])
+	for _, selector := range strings.Split(tc.Selector, ",") {
+		packageName, testName, ok := strings.Cut(selector, "#")
+		if !ok || !strings.HasPrefix(packageName, "./") || strings.TrimSpace(testName) == "" {
+			return false
+		}
+		packageDir := filepath.Join(repositoryRoot, filepath.FromSlash(strings.TrimPrefix(packageName, "./")))
+		entries, err := os.ReadDir(packageDir)
+		if err != nil {
+			return false
+		}
+		found := false
+		needle := []byte("func " + testName + "(")
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), "_test.go") {
+				continue
+			}
+			raw, err := os.ReadFile(filepath.Join(packageDir, entry.Name()))
+			if err == nil && bytes.Contains(raw, needle) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 func validateCatalogRelationships(catalog testCatalog) error {

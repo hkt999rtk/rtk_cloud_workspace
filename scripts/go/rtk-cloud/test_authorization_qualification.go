@@ -20,8 +20,14 @@ type authorizationQualificationSpec struct {
 	Repository string
 	Package    string
 	GoTest     string
+	Targets    []authorizationQualificationTarget
 	Assertions map[string]map[string]string
 	Workflows  map[string]map[string]string
+}
+
+type authorizationQualificationTarget struct {
+	Package string
+	GoTest  string
 }
 
 var authorizationQualificationSpecs = []authorizationQualificationSpec{
@@ -327,6 +333,77 @@ var authorizationQualificationSpecs = []authorizationQualificationSpec{
 			},
 		},
 	},
+	{
+		TestID: "INT-VC-PROV-CHANNEL-001", Repository: "rtk_video_cloud",
+		Targets: []authorizationQualificationTarget{
+			{Package: "./internal/crossserviceworker", GoTest: "TestProvisioningWorkerPublishesSuccessAndAcks"},
+			{Package: "./internal/crossserviceworker", GoTest: "TestProvisioningWorkerReplaysCachedResultAcrossRestartWithFileStore"},
+			{Package: "./internal/crossserviceworker", GoTest: "TestProvisioningWorkerDeadLettersPartitionKeyMismatchWithoutPublishing"},
+		},
+		Assertions: map[string]map[string]string{
+			"REQ-CONTRACT-PROV-CHANNEL-001": {
+				"account_command_stream_consumed": "PASS",
+				"video_result_stream_published":   "PASS",
+				"registry_partition_key_enforced": "PASS",
+				"operation_replay_is_idempotent":  "PASS",
+				"successful_message_acknowledged": "PASS",
+			},
+			"REQ-CONTRACT-PROV-IDENTITY-MAP-001": {
+				"registry_device_id_preserved":  "PASS",
+				"video_cloud_devid_preserved":   "PASS",
+				"organization_id_preserved":     "PASS",
+				"activation_uses_cloud_subject": "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-VC-PROV-SERVICE-001", Repository: "rtk_video_cloud",
+		Targets: []authorizationQualificationTarget{
+			{Package: "./internal/httpapi", GoTest: "TestActivateEmbedsCanonicalServiceOptionsInCameraToken"},
+			{Package: "./internal/workflow", GoTest: "TestUploadClipRequiresVideoStorageAndRejectsOtherServiceOptions"},
+		},
+		Assertions: map[string]map[string]string{
+			"REQ-CONTRACT-PROV-SERVICE-OPTIONS-001": {
+				"canonical_options_embedded_in_token": "PASS",
+				"granted_service_is_allowed":          "PASS",
+				"missing_service_is_rejected":         "PASS",
+				"unrelated_service_is_rejected":       "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-VC-PROV-ACTIVATION-001", Repository: "rtk_video_cloud",
+		Targets: []authorizationQualificationTarget{
+			{Package: "./internal/httpapi", GoTest: "TestActivateEmbedsCanonicalServiceOptionsInCameraToken"},
+			{Package: "./internal/httpapi", GoTest: "TestCanonicalDeviceLifecycleInfoConfigAndEvents"},
+		},
+		Assertions: map[string]map[string]string{
+			"REQ-CONTRACT-PROV-ACTIVATION-001": {
+				"mapped_device_subject_activated": "PASS",
+				"factory_entitlements_preserved":  "PASS",
+				"activity_id_returned":            "PASS",
+				"active_lifecycle_observed":       "PASS",
+			},
+		},
+		Workflows: map[string]map[string]string{
+			"WF-PROV-ACTIVATION-001": {
+				"activate_video_device":     "PASS",
+				"wait_for_device_lifecycle": "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-AM-PROV-PROJECTION-001", Repository: "rtk_account_manager", Package: "./internal/store", GoTest: "TestProjectDeviceProvisioningAndOnlineRules",
+		Assertions: map[string]map[string]string{
+			"REQ-CONTRACT-PROV-PROJECTION-001": {
+				"provisioning_metadata_merged":    "PASS",
+				"unrelated_metadata_preserved":    "PASS",
+				"provision_success_not_online":    "PASS",
+				"last_error_cleared_on_success":   "PASS",
+				"online_event_controls_readiness": "PASS",
+			},
+		},
+	},
 }
 
 type goTestJSONEvent struct {
@@ -364,30 +441,37 @@ func runAuthorizationQualification(workspace, outputDir, runID string) error {
 		if !ok || tc.Status != "active" || tc.Layer != "integration" {
 			return fmt.Errorf("authorization qualification case %s is missing or is not an active integration case", spec.TestID)
 		}
-		if tc.Selector != spec.GoTest {
-			return fmt.Errorf("authorization qualification case %s selector=%q, want %q", spec.TestID, tc.Selector, spec.GoTest)
+		targets, err := authorizationQualificationTargets(spec)
+		if err != nil {
+			return fmt.Errorf("%s: %w", spec.TestID, err)
+		}
+		selector := authorizationQualificationSelector(spec, targets)
+		if tc.Selector != selector {
+			return fmt.Errorf("authorization qualification case %s selector=%q, want %q", spec.TestID, tc.Selector, selector)
 		}
 		if err := validateAuthorizationQualificationAssertions(tc, spec); err != nil {
 			return err
 		}
 		started := time.Now().UTC()
-		command := exec.Command("go", "test", "-json", "-count=1", spec.Package, "-run", "^"+spec.GoTest+"$")
-		command.Dir = filepath.Join(workspace, "repos", spec.Repository)
-		command.Env = append(os.Environ(), "GOWORK=off")
-		output, commandErr := command.CombinedOutput()
+		for _, target := range targets {
+			command := exec.Command("go", "test", "-json", "-count=1", target.Package, "-run", "^"+target.GoTest+"$")
+			command.Dir = filepath.Join(workspace, "repos", spec.Repository)
+			command.Env = append(os.Environ(), "GOWORK=off")
+			output, commandErr := command.CombinedOutput()
+			passed, skipped, parseErr := qualificationGoTestStatus(output, target.GoTest)
+			if parseErr != nil {
+				return fmt.Errorf("%s target %s#%s result: %w", spec.TestID, target.Package, target.GoTest, parseErr)
+			}
+			if commandErr != nil {
+				return fmt.Errorf("%s target %s#%s failed: %w", spec.TestID, target.Package, target.GoTest, commandErr)
+			}
+			if skipped || !passed {
+				return fmt.Errorf("%s target %s#%s did not execute to PASS (skipped=%t)", spec.TestID, target.Package, target.GoTest, skipped)
+			}
+		}
 		completed := time.Now().UTC()
-		passed, skipped, parseErr := qualificationGoTestStatus(output, spec.GoTest)
-		if parseErr != nil {
-			return fmt.Errorf("%s result: %w", spec.TestID, parseErr)
-		}
-		if commandErr != nil {
-			return fmt.Errorf("%s failed: %w", spec.TestID, commandErr)
-		}
-		if skipped || !passed {
-			return fmt.Errorf("%s did not execute to PASS (skipped=%t)", spec.TestID, skipped)
-		}
 		results = append(results, authorizationQualificationResult{
-			TestID: spec.TestID, Selector: spec.GoTest, Status: "PASS",
+			TestID: spec.TestID, Selector: selector, Status: "PASS",
 			StartedAt: started.Format(time.RFC3339), CompletedAt: completed.Format(time.RFC3339),
 			DurationMS: completed.Sub(started).Milliseconds(),
 		})
@@ -499,6 +583,32 @@ func runAuthorizationQualification(workspace, outputDir, runID string) error {
 		})
 	}
 	return writeJSON(filepath.Join(outputDir, "feature-evidence.json"), manifest)
+}
+
+func authorizationQualificationTargets(spec authorizationQualificationSpec) ([]authorizationQualificationTarget, error) {
+	if len(spec.Targets) > 0 {
+		for _, target := range spec.Targets {
+			if strings.TrimSpace(target.Package) == "" || strings.TrimSpace(target.GoTest) == "" {
+				return nil, fmt.Errorf("qualification target requires package and Go test")
+			}
+		}
+		return spec.Targets, nil
+	}
+	if strings.TrimSpace(spec.Package) == "" || strings.TrimSpace(spec.GoTest) == "" {
+		return nil, fmt.Errorf("qualification spec requires a target")
+	}
+	return []authorizationQualificationTarget{{Package: spec.Package, GoTest: spec.GoTest}}, nil
+}
+
+func authorizationQualificationSelector(spec authorizationQualificationSpec, targets []authorizationQualificationTarget) string {
+	if len(spec.Targets) == 0 && len(targets) == 1 {
+		return targets[0].GoTest
+	}
+	parts := make([]string, 0, len(targets))
+	for _, target := range targets {
+		parts = append(parts, target.Package+"#"+target.GoTest)
+	}
+	return strings.Join(parts, ",")
 }
 
 func validateAuthorizationQualificationAssertions(tc testCatalogCase, spec authorizationQualificationSpec) error {

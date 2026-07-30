@@ -336,6 +336,54 @@ cases:
     evidence: [json, junit]
     verifies: [REQ-CA-BRAND-SOURCE-001, REQ-CA-BRAND-BFF-001]
     status: active
+  - id: INT-VC-PROV-CHANNEL-001
+    title: Provisioning channel preserves device partition identity and operation replay safety
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/crossserviceworker/provision_test.go
+    selector: "./internal/crossserviceworker#TestProvisioningWorkerPublishesSuccessAndAcks,./internal/crossserviceworker#TestProvisioningWorkerReplaysCachedResultAcrossRestartWithFileStore,./internal/crossserviceworker#TestProvisioningWorkerDeadLettersPartitionKeyMismatchWithoutPublishing"
+    method: Targeted worker integration tests prove the canonical command/result streams, explicit registry-to-cloud identity mapping, per-device partition rejection, durable operation replay, and acknowledgement.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-PROV-CHANNEL-001, REQ-CONTRACT-PROV-IDENTITY-MAP-001]
+    status: active
+  - id: INT-VC-PROV-SERVICE-001
+    title: Canonical service options flow into runtime credentials and gate service access
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/httpapi/mtls_test.go
+    selector: "./internal/httpapi#TestActivateEmbedsCanonicalServiceOptionsInCameraToken,./internal/workflow#TestUploadClipRequiresVideoStorageAndRejectsOtherServiceOptions"
+    method: Targeted API and workflow integration tests prove activation embeds canonical service options and runtime access allows only the matching entitlement.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-PROV-SERVICE-OPTIONS-001]
+    status: active
+  - id: INT-VC-PROV-ACTIVATION-001
+    title: Device activation preserves entitlement and reaches the active lifecycle state
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/httpapi/mtls_test.go
+    selector: "./internal/httpapi#TestActivateEmbedsCanonicalServiceOptionsInCameraToken,./internal/httpapi#TestCanonicalDeviceLifecycleInfoConfigAndEvents"
+    method: Targeted API integration tests activate the mapped cloud device with canonical entitlements and observe its lifecycle readiness through the canonical read route.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-PROV-ACTIVATION-001]
+    status: active
+  - id: INT-AM-PROV-PROJECTION-001
+    title: Provisioning results merge into the registry without inventing online readiness
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/store/device_projection_integration_test.go
+    selector: TestProjectDeviceProvisioningAndOnlineRules
+    method: PostgreSQL-backed projection integration test preserves unrelated metadata, clears resolved failures, keeps provisioning distinct from online state, and accepts online readiness only from the transport event.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-PROV-PROJECTION-001]
+    status: active
   - id: UNIT-VC-SHADOW-001
     title: Device shadow rejects stale versions
     layer: unit
@@ -417,7 +465,7 @@ cases:
 
   - { id: E2E-FACTORY-ENROLL-001, title: Factory enrollment issues a usable device certificate, layer: e2e, owner: factory_enroll, source: e2e_test/README.md, selector: "factory_enroll/", method: Go E2E runner enrolls a test device and validates the issued identity and certificate chain., runner: test-e2e, environments: [local, staging], evidence: [json, markdown], verifies: [REQ-E2E-FACTORY-ENROLL-001], status: active }
   - { id: E2E-AUTH-FACTORY-BOOTSTRAP-001, title: Factory-issued certificate bootstraps runtime device authentication, layer: e2e, owner: rtk_video_cloud, source: e2e_test/README.md, selector: "factory_enroll/", method: Go E2E runner uses the factory-issued device identity to obtain and exercise a subject-bound runtime token., runner: test-e2e, environments: [staging], evidence: [json, markdown], verifies: [REQ-CONTRACT-AUTH-FACTORY-ENROLL-001], status: active }
-  - { id: E2E-PROV-ACCOUNT-001, title: Account and Video Cloud provisioning smoke completes, layer: e2e, owner: provisioning, source: e2e_test/README.md, selector: "provisioning/account_video_smoke/", method: Go E2E runner provisions isolated test identities across Account Manager and Video Cloud., runner: test-e2e, environments: [staging], evidence: [json, markdown], verifies: [REQ-E2E-PROV-ACCOUNT-001], status: active }
+  - { id: E2E-PROV-ACCOUNT-001, title: Account and Video Cloud provisioning smoke completes, layer: e2e, owner: provisioning, source: e2e_test/README.md, selector: "provisioning/account_video_smoke/", method: Go E2E runner resolves a possession claim, provisions isolated Account Manager and Video Cloud identities, waits for provisioning state, and proves device mTLS token issuance., runner: test-e2e, environments: [staging], evidence: [json, markdown], verifies: [REQ-CONTRACT-PROV-CLAIM-BOUNDARY-001, REQ-E2E-PROV-ACCOUNT-001], status: active }
   - { id: E2E-CA-SIGNUP-EMAIL-001, title: Cloud Send Mail and IMAP customer signup activation completes, layer: e2e, owner: cloud_platform, source: scripts/staging_email_signup_e2e.py, selector: "RUN_LIVE_EMAIL_E2E=1", method: Operator runner configures deployed staging HTTPS Send Mail delivery then verifies a plus-address signup email through local IMAP and browser activation/login., runner: test-live, environments: [staging], evidence: [json, logs], verifies: [REQ-E2E-CA-SIGNUP-EMAIL-001], status: active }
   - { id: E2E-AUTH-ACCOUNT-ONBOARDING-001, title: Public account authentication remains pending until email verification, layer: e2e, owner: rtk_video_cloud, source: scripts/staging_email_signup_e2e.py, selector: "RUN_LIVE_EMAIL_E2E=1", method: Operator runner proves signup creates no session, email verification is required, and only the verified account can establish the initial authenticated session., runner: test-live, environments: [staging], evidence: [json, logs], verifies: [REQ-CONTRACT-AUTH-ACCOUNT-CROSSREF-001], status: active }
   - { id: E2E-LOAD-ACCOUNT-001, title: Load-test Brand owners complete formal email activation, layer: e2e, owner: cloud_platform, source: scripts/go/rtk-cloud/main.go, selector: "email-activate-owners", method: Each resolved run-scoped Brand creates one pending owner through Send Mail; operator-held local IMAP and browser activation must pass before synthetic members or devices are provisioned., runner: test-live, environments: [staging], evidence: [json, logs], verifies: [REQ-E2E-LOAD-ACCOUNT-001], status: active }
