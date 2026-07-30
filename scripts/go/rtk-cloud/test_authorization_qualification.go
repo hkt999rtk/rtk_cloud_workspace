@@ -697,6 +697,144 @@ var authorizationQualificationSpecs = []authorizationQualificationSpec{
 			},
 		},
 	},
+	{
+		TestID: "INT-AM-PROV-CLAIM-001", Repository: "rtk_account_manager",
+		Targets: []authorizationQualificationTarget{
+			{Package: "./internal/api", GoTest: "TestIntegrationClaimResolveEndpoint"},
+			{Package: "./internal/api", GoTest: "TestIntegrationProvisioningEndpoints"},
+			{Package: "./internal/api", GoTest: "TestIntegrationPlatformAdminDeviceItemProfileLifecycle"},
+			{Package: "./internal/store", GoTest: "TestCreateOrGetDeviceOperationIsIdempotent"},
+		},
+		Assertions: map[string]map[string]string{
+			"REQ-AM-CLAIM-RESOLUTION-001": {
+				"opaque_claim_token_resolved":      "PASS",
+				"account_policy_decides_ownership": "PASS",
+				"raw_claim_fields_rejected":        "PASS",
+				"already_claimed_replay_rejected":  "PASS",
+				"cross_tenant_claim_rejected":      "PASS",
+			},
+			"REQ-AM-SERVICE-ENTITLEMENT-BOUNDARY-001": {
+				"category_not_used_as_service_acl": "PASS",
+				"service_options_explicit":         "PASS",
+				"service_options_preserved":        "PASS",
+				"unsupported_option_rejected":      "PASS",
+			},
+			"REQ-AM-DEVICE-OWNERSHIP-001": {
+				"registry_uuid_is_owner_record":   "PASS",
+				"active_membership_required":      "PASS",
+				"external_identity_not_owner_key": "PASS",
+				"same_operation_reused":           "PASS",
+				"conflicting_operation_rejected":  "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-AM-PROV-UNPROVISION-001", Repository: "rtk_account_manager", Package: "./internal/api", GoTest: "TestIntegrationDeviceUserUnprovisionWorkflow",
+		Assertions: map[string]map[string]string{
+			"REQ-AM-USER-UNPROVISION-001": {
+				"active_member_required":           "PASS",
+				"binding_and_audit_atomic":         "PASS",
+				"durable_outbox_created":           "PASS",
+				"old_device_access_rejected":       "PASS",
+				"consumed_claim_replay_rejected":   "PASS",
+				"factory_identity_preserved":       "PASS",
+				"fresh_claim_creates_new_registry": "PASS",
+			},
+		},
+		Workflows: map[string]map[string]string{
+			"WF-AM-USER-UNPROVISION-001": {
+				"resolve_owned_device":          "PASS",
+				"release_account_binding":       "PASS",
+				"reject_released_device_access": "PASS",
+				"reject_consumed_claim_replay":  "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-AM-PROV-OVERRIDE-001", Repository: "rtk_account_manager",
+		Targets: []authorizationQualificationTarget{
+			{Package: "./internal/api", GoTest: "TestIntegrationAdminDeviceUnprovisionOverride"},
+			{Package: "./internal/api", GoTest: "TestIntegrationAdminDeviceClaimOverrideWorkflow"},
+		},
+		Assertions: map[string]map[string]string{
+			"REQ-AM-ADMIN-UNPROVISION-001": {
+				"platform_admin_required":      "PASS",
+				"reason_and_evidence_required": "PASS",
+				"operator_actor_recorded":      "PASS",
+				"redacted_audit_recorded":      "PASS",
+				"override_outbox_marked":       "PASS",
+			},
+			"REQ-AM-CLAIM-TRANSFER-001": {
+				"platform_admin_required":         "PASS",
+				"target_and_evidence_required":    "PASS",
+				"ownership_moved_to_target":       "PASS",
+				"transferred_claim_replay_denied": "PASS",
+				"before_after_audit_recorded":     "PASS",
+			},
+			"REQ-AM-CLAIM-RECLAIM-001": {
+				"implicit_reclaim_rejected":    "PASS",
+				"operator_evidence_required":   "PASS",
+				"reclaim_target_explicit":      "PASS",
+				"reclaim_audit_recorded":       "PASS",
+				"raw_claim_token_not_returned": "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-AM-PROV-LIFECYCLE-001", Repository: "rtk_account_manager",
+		Targets: []authorizationQualificationTarget{
+			{Package: "./internal/api", GoTest: "TestIntegrationProvisioningEndpoints"},
+			{Package: "./internal/api", GoTest: "TestIntegrationInternalDeviceProvisioningResult"},
+			{Package: "./internal/api", GoTest: "TestIntegrationDeactivateEndpointUsesProjectedVideoMetadata"},
+		},
+		Assertions: map[string]map[string]string{
+			"REQ-AM-LIFECYCLE-OPERATION-001": {
+				"operation_and_outbox_atomic":        "PASS",
+				"pending_metadata_not_success":       "PASS",
+				"idempotent_replay_reuses_operation": "PASS",
+				"conflicting_replay_rejected":        "PASS",
+				"activation_projection_observed":     "PASS",
+				"activation_does_not_invent_online":  "PASS",
+				"deactivation_uses_projected_id":     "PASS",
+				"terminal_failure_attributed":        "PASS",
+			},
+		},
+		Workflows: map[string]map[string]string{
+			"WF-AM-LIFECYCLE-001": {
+				"persist_provisioning_request":    "PASS",
+				"observe_activation_projection":   "PASS",
+				"request_product_deactivation":    "PASS",
+				"observe_deactivation_projection": "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-AM-PROV-READINESS-001", Repository: "rtk_account_manager",
+		Targets: []authorizationQualificationTarget{
+			{Package: "./internal/api", GoTest: "TestIntegrationProvisioningStateReturnsRegistryOnlyReadiness"},
+			{Package: "./internal/api", GoTest: "TestIntegrationProvisioningEndpoints"},
+			{Package: "./internal/api", GoTest: "TestReadinessFromProjectionStates"},
+			{Package: "./internal/store", GoTest: "TestProjectDeviceProvisioningAndOnlineRules"},
+		},
+		Assertions: map[string]map[string]string{
+			"REQ-AM-READINESS-PROJECTION-001": {
+				"active_member_read_allowed":        "PASS",
+				"cross_tenant_read_not_disclosed":   "PASS",
+				"registry_only_sources_returned":    "PASS",
+				"external_credentials_not_invented": "PASS",
+				"missing_device_rejected":           "PASS",
+			},
+			"REQ-AM-READINESS-STATES-001": {
+				"registered_state_derived":        "PASS",
+				"activation_pending_derived":      "PASS",
+				"activation_failure_attributed":   "PASS",
+				"transport_pending_distinct":      "PASS",
+				"online_requires_transport_event": "PASS",
+				"deactivation_states_derived":     "PASS",
+				"disabled_not_deactivated":        "PASS",
+			},
+		},
+	},
 }
 
 type goTestJSONEvent struct {
