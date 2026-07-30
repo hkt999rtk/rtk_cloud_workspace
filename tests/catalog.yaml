@@ -240,6 +240,162 @@ cases:
     evidence: [json, junit]
     verifies: [REQ-CONTRACT-AUTHZ-PROVIDER-001]
     status: active
+  - id: INT-AM-IDENTITY-ORG-001
+    title: PostgreSQL remains authoritative for organization identity and tenant kind
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: "./internal/api#TestIntegrationOwnerCanUpdateOrganization,./internal/store#TestDeveloperSignupCreatesDefaultBrandCloudAndEnforcesCloudLimit,./internal/store#TestIntegrationDatabaseSchemaInvariants"
+    method: PostgreSQL-backed API and store tests create customer and Brand Cloud organizations, preserve their tenant kind, reject blank names and cross-tenant mutation, and verify the maintained database constraints.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-ORG-AUTHORITY-001, REQ-AM-ORG-DATA-001]
+    status: active
+  - id: INT-AM-IDENTITY-SESSION-001
+    title: Platform credentials fail closed and refresh sessions rotate and revoke
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: "./internal/api#TestIntegrationRegisterLoginRefreshAndLogout,./internal/api#TestIntegrationDisabledUserCannotUseExistingTokens,./internal/auth#TestPasswordHashAndCheck,./internal/store#TestIntegrationDatabaseSchemaInvariants"
+    method: PostgreSQL-backed auth tests create a hashed local credential, read the protected identity, rotate refresh tokens, reject replay and logged-out refresh, and reject every disabled-user credential path.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-USER-CREDENTIAL-001, REQ-AM-PASSWORD-SESSION-001]
+    status: active
+  - id: INT-AM-IDENTITY-MEMBERSHIP-001
+    title: Organization membership preserves a live owner and denies disabled actors
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: "./internal/api#TestIntegrationOwnerCanUpdateAndRemoveMember,./internal/api#TestIntegrationOwnerCanDisableAndEnableMemberUser,./internal/api#TestIntegrationLastOwnerCannotBeRemovedOrDowngraded"
+    method: PostgreSQL-backed member lifecycle tests add, promote, disable, re-enable, and remove a member while API and database constraints reject final-owner downgrade, disablement, and removal.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-MEMBERSHIP-INVARIANT-001]
+    status: active
+  - id: INT-AM-IDENTITY-ENDUSER-001
+    title: APP end-user identity stays global while Brand projections and device control remain isolated
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: "./internal/api#TestIntegrationAppEndUserLoginDoesNotCreateBrandLinkAndIssuesGlobalSubject,./internal/api#TestIntegrationAppEndUserClaimCreatesMultiBrandBindings"
+    method: PostgreSQL-backed APP tests keep login separate from Brand linkage, claim devices in two Brands, authorize only an active binding, reject wrong-subject and invalid-claim paths, rotate and revoke the APP session, and return only the current masked Brand projection.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-END-USER-ISOLATION-001, REQ-AM-END-USER-PROJECTION-001, REQ-AM-DEVICE-BINDING-AUTH-001, REQ-AM-APP-AUTHORIZATION-001]
+    status: active
+  - id: INT-AM-IDENTITY-BRANDUSER-001
+    title: Brand user credentials remain tenant-scoped and cannot authorize platform or APP identity routes
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: TestIntegrationPlatformAdminCreatesActiveBrandCloudUser
+    method: PostgreSQL-backed Brand user lifecycle test proves normalized tenant-local identity, platform-login and APP-route rejection, verified and disabled state enforcement, and Brand-only credential rotation.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-BRAND-USER-BOUNDARY-001]
+    status: active
+  - id: INT-AM-IDENTITY-REGISTRY-001
+    title: Registry device, group, and tag data preserve canonical scoped identity
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: "./internal/api#TestIntegrationRoleAuthorizationDeviceScopeAndSerialUniqueness,./internal/api#TestIntegrationFleetGroupsAndTags,./internal/store#TestIntegrationDatabaseSchemaInvariants"
+    method: PostgreSQL-backed registry tests preserve server UUID identity, reject invalid and duplicate device data, enforce organization scope, and verify group and tag validation, idempotency, and disabled-target retention.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-DEVICE-IDENTITY-001, REQ-AM-DEVICE-DATA-001, REQ-AM-FLEET-DATA-001]
+    status: active
+  - id: INT-AM-IDENTITY-FACTORY-001
+    title: Factory enrollment bearer context is signed, immutable, and absent from audit payloads
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: TestIntegrationPlatformAdminDeviceItemProfileLifecycle
+    method: PostgreSQL-backed production-run API test binds the Brand, product profile, run and factory context into a signed audience-scoped JWT and verifies neither the JWT nor signing secret enters the persisted audit payload.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-FACTORY-CONTEXT-001]
+    status: active
+  - id: INT-AM-IDENTITY-TOKEN-001
+    title: One-time account tokens are scoped, throttled, expiring, and replay-safe
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: "./internal/api#TestIntegrationEmailVerificationAndPasswordRecovery,./internal/store#TestBrandCloudLoginActivationTokenIsTenantScoped"
+    method: PostgreSQL-backed auth tests cover hashed verification, login and reset token purposes, enumeration-safe throttling, tenant scope, expiry, single use and replay rejection.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-ONE-TIME-TOKEN-001]
+    status: active
+  - id: INT-AM-IDENTITY-LIFECYCLE-001
+    title: Lifecycle inbox and outbox preserve device partition and message integrity
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/store/device_messages_integration_test.go
+    selector: "./internal/store#TestDeviceMessagePersistenceRejectsInvalidSchemaValues,./internal/store#TestCreateOrGetDeviceOperationIsIdempotent,./internal/worker/inbox#TestRunOnceDeadLettersLifecycleMessagesWithMismatchedPartitionKeys"
+    method: Persistence and worker integration tests reject invalid stream/schema/message values, preserve idempotent operation identity, and dead-letter lifecycle events whose partition does not match the registry device.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-LIFECYCLE-MESSAGE-INTEGRITY-001]
+    status: active
+  - id: INT-AM-OPERATIONS-CONFIG-001
+    title: Runtime signer and production email adapter configuration fails closed
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/config/config_test.go
+    selector: "./internal/config#TestLoadRequiresJWTSecrets,./internal/config#TestLoadAcceptsPEMJWTSignerWithoutSharedSecrets,./internal/config#TestLoadRejectsIncompletePEMJWTSigner,./internal/config#TestLoadRejectsUnknownJWTSignerProvider,./internal/config#TestProductionEmailConfigurationFailsClosed,./internal/config#TestProductionSendMailHTTPConfiguration"
+    method: Runtime configuration contract tests exercise the selected signer and production email-delivery adapter as one startup boundary and require complete supported settings while rejecting unknown, incomplete, insecure, or credential-missing combinations.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-RUNTIME-CONFIG-001]
+    status: active
+  - id: INT-AM-OPERATIONS-CACHE-001
+    title: Cache outages preserve PostgreSQL reads and committed mutations
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/usercache/store_test.go
+    selector: "./internal/usercache#TestStoreGetUserFallsBackToPostgresWhenRedisUnavailable,./internal/usercache#TestStoreRegisterRefreshesUserAuthCacheAfterCommit,./internal/usercache#TestStoreBrandAndEndUserMutationsRefreshCache,./internal/usercache#TestStoreIgnoresCacheReadAndWriteErrors"
+    method: Store-decorator integration tests inject Redis read/write failures across platform, Brand and end-user paths and require PostgreSQL reads and committed mutations to remain authoritative.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-CACHE-RESILIENCE-001]
+    status: active
+  - id: INT-AM-OPERATIONS-OIDC-001
+    title: OIDC runtime secrets remain indirect and redacted across login failures
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: "./internal/api#TestIntegrationOIDCProviderLoginAndCallback,./internal/auth#TestProviderResolverRejectsUnsupportedOrUnsetSecretRefs,./internal/auth#TestOIDCTokenErrorsDoNotContainProviderTokens"
+    method: OIDC integration and redaction tests require supported runtime secret references, complete the provider callback, and prove provider credentials and token payloads are absent from surfaced errors.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-OIDC-SECRET-001]
+    status: active
+  - id: INT-AM-SIGNUP-EMAIL-001
+    title: Signup email delivery is transactional, encrypted, and enumeration-safe
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: "./internal/api#TestIntegrationSignupQueuesEncryptedEmailWithoutCallingSMTP,./internal/store#TestEmailOutboxTokenAndQueueAreTransactional,./internal/api#TestIntegrationEmailVerificationAndPasswordRecovery"
+    method: PostgreSQL-backed signup and outbox tests atomically persist a scoped hashed token with encrypted email payload, avoid direct SMTP, and preserve enumeration-safe delivery failure and replay behavior.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-EMAIL-DELIVERY-001]
+    status: active
   - id: INT-VC-OTA-OPERATOR-001
     title: OTA operator and device identities come from verified authorization context
     layer: integration
