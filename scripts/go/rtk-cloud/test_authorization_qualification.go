@@ -213,6 +213,299 @@ var authorizationQualificationSpecs = []authorizationQualificationSpec{
 		},
 	},
 	{
+		TestID: "INT-AM-IDENTITY-ORG-001", Repository: "rtk_account_manager",
+		Targets: []authorizationQualificationTarget{
+			{Package: "./internal/api", GoTest: "TestIntegrationOwnerCanUpdateOrganization"},
+			{Package: "./internal/store", GoTest: "TestDeveloperSignupCreatesDefaultBrandCloudAndEnforcesCloudLimit"},
+			{Package: "./internal/store", GoTest: "TestIntegrationDatabaseSchemaInvariants"},
+		},
+		Assertions: map[string]map[string]string{
+			"REQ-AM-ORG-AUTHORITY-001": {
+				"postgres_records_are_authoritative": "PASS",
+				"customer_and_brand_kinds_preserved": "PASS",
+				"cross_tenant_mutation_rejected":     "PASS",
+			},
+			"REQ-AM-ORG-DATA-001": {
+				"blank_name_rejected":           "PASS",
+				"tenant_kind_constraint_exists": "PASS",
+				"tenant_slug_is_normalized":     "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-AM-IDENTITY-SESSION-001", Repository: "rtk_account_manager",
+		Targets: []authorizationQualificationTarget{
+			{Package: "./internal/api", GoTest: "TestIntegrationRegisterLoginRefreshAndLogout"},
+			{Package: "./internal/api", GoTest: "TestIntegrationDisabledUserCannotUseExistingTokens"},
+			{Package: "./internal/auth", GoTest: "TestPasswordHashAndCheck"},
+			{Package: "./internal/store", GoTest: "TestIntegrationDatabaseSchemaInvariants"},
+		},
+		Assertions: map[string]map[string]string{
+			"REQ-AM-USER-CREDENTIAL-001": {
+				"normalized_email_constraint_exists": "PASS",
+				"modern_password_hash_verified":      "PASS",
+				"disabled_login_rejected":            "PASS",
+				"disabled_refresh_rejected":          "PASS",
+				"disabled_access_token_rejected":     "PASS",
+			},
+			"REQ-AM-PASSWORD-SESSION-001": {
+				"password_login_succeeds":       "PASS",
+				"protected_identity_read":       "PASS",
+				"refresh_token_rotated":         "PASS",
+				"rotated_token_replay_rejected": "PASS",
+				"logout_revokes_refresh":        "PASS",
+			},
+		},
+		Workflows: map[string]map[string]string{
+			"WF-AM-PASSWORD-SESSION-001": {
+				"login_with_password":         "PASS",
+				"rotate_refresh_token":        "PASS",
+				"reject_rotated_token_replay": "PASS",
+				"logout_rotated_session":      "PASS",
+				"reject_logged_out_refresh":   "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-AM-IDENTITY-MEMBERSHIP-001", Repository: "rtk_account_manager",
+		Targets: []authorizationQualificationTarget{
+			{Package: "./internal/api", GoTest: "TestIntegrationOwnerCanUpdateAndRemoveMember"},
+			{Package: "./internal/api", GoTest: "TestIntegrationOwnerCanDisableAndEnableMemberUser"},
+			{Package: "./internal/api", GoTest: "TestIntegrationLastOwnerCannotBeRemovedOrDowngraded"},
+		},
+		Assertions: map[string]map[string]string{
+			"REQ-AM-MEMBERSHIP-INVARIANT-001": {
+				"member_add_update_remove_succeeds": "PASS",
+				"disabled_member_access_rejected":   "PASS",
+				"final_owner_downgrade_rejected":    "PASS",
+				"final_owner_disable_rejected":      "PASS",
+				"final_owner_remove_rejected":       "PASS",
+				"database_owner_invariant_enforced": "PASS",
+			},
+		},
+		Workflows: map[string]map[string]string{
+			"WF-AM-MEMBERSHIP-001": {
+				"add_organization_member":       "PASS",
+				"update_member_role":            "PASS",
+				"reject_final_owner_downgrade":  "PASS",
+				"reject_final_owner_disable":    "PASS",
+				"disable_non_owner_member":      "PASS",
+				"reject_disabled_member_access": "PASS",
+				"enable_non_owner_member":       "PASS",
+				"remove_non_owner_member":       "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-AM-IDENTITY-ENDUSER-001", Repository: "rtk_account_manager",
+		Targets: []authorizationQualificationTarget{
+			{Package: "./internal/api", GoTest: "TestIntegrationAppEndUserLoginDoesNotCreateBrandLinkAndIssuesGlobalSubject"},
+			{Package: "./internal/api", GoTest: "TestIntegrationAppEndUserClaimCreatesMultiBrandBindings"},
+		},
+		Assertions: map[string]map[string]string{
+			"REQ-AM-END-USER-ISOLATION-001": {
+				"global_subject_stable_across_brands": "PASS",
+				"login_does_not_create_brand_link":    "PASS",
+				"platform_subject_rejected":           "PASS",
+				"foreign_brand_not_exposed":           "PASS",
+				"direct_identifier_masked":            "PASS",
+			},
+			"REQ-AM-END-USER-PROJECTION-001": {
+				"brand_projection_created_on_claim": "PASS",
+				"current_brand_projection_only":     "PASS",
+				"multi_brand_subject_preserved":     "PASS",
+			},
+			"REQ-AM-DEVICE-BINDING-AUTH-001": {
+				"claim_creates_active_binding":   "PASS",
+				"bound_device_authorized":        "PASS",
+				"unbound_device_rejected":        "PASS",
+				"certificate_alone_insufficient": "PASS",
+			},
+			"REQ-AM-APP-AUTHORIZATION-001": {
+				"app_subject_type_enforced":      "PASS",
+				"app_refresh_namespace_enforced": "PASS",
+				"app_logout_revokes_session":     "PASS",
+				"invalid_claim_rejected":         "PASS",
+				"active_device_binding_required": "PASS",
+			},
+		},
+		Workflows: map[string]map[string]string{
+			"WF-AM-END-USER-001": {
+				"login_app_end_user":          "PASS",
+				"bind_claimed_device":         "PASS",
+				"read_isolated_end_user":      "PASS",
+				"reject_invalid_device_claim": "PASS",
+				"logout_app_end_user":         "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-AM-IDENTITY-BRANDUSER-001", Repository: "rtk_account_manager", Package: "./internal/api", GoTest: "TestIntegrationPlatformAdminCreatesActiveBrandCloudUser",
+		Assertions: map[string]map[string]string{
+			"REQ-AM-BRAND-USER-BOUNDARY-001": {
+				"brand_email_normalized":         "PASS",
+				"tenant_login_required":          "PASS",
+				"platform_login_rejected":        "PASS",
+				"app_identity_route_rejected":    "PASS",
+				"disabled_brand_user_rejected":   "PASS",
+				"brand_password_rotation_scoped": "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-AM-IDENTITY-REGISTRY-001", Repository: "rtk_account_manager",
+		Targets: []authorizationQualificationTarget{
+			{Package: "./internal/api", GoTest: "TestIntegrationRoleAuthorizationDeviceScopeAndSerialUniqueness"},
+			{Package: "./internal/api", GoTest: "TestIntegrationFleetGroupsAndTags"},
+			{Package: "./internal/store", GoTest: "TestIntegrationDatabaseSchemaInvariants"},
+		},
+		Assertions: map[string]map[string]string{
+			"REQ-AM-DEVICE-IDENTITY-001": {
+				"server_uuid_is_canonical":    "PASS",
+				"external_serial_is_metadata": "PASS",
+				"same_serial_other_tenant_ok": "PASS",
+			},
+			"REQ-AM-DEVICE-DATA-001": {
+				"blank_name_constraint_exists":     "PASS",
+				"tenant_serial_unique":             "PASS",
+				"cross_tenant_read_rejected":       "PASS",
+				"disabled_device_remains_readable": "PASS",
+				"disabled_mutation_rejected":       "PASS",
+				"delete_is_idempotent":             "PASS",
+			},
+			"REQ-AM-FLEET-DATA-001": {
+				"blank_group_rejected":             "PASS",
+				"group_assignment_is_idempotent":   "PASS",
+				"disabled_target_retained":         "PASS",
+				"tag_assignment_is_idempotent":     "PASS",
+				"cross_tenant_group_read_rejected": "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-AM-IDENTITY-FACTORY-001", Repository: "rtk_account_manager", Package: "./internal/api", GoTest: "TestIntegrationPlatformAdminDeviceItemProfileLifecycle",
+		Assertions: map[string]map[string]string{
+			"REQ-AM-FACTORY-CONTEXT-001": {
+				"signed_brand_context_preserved":   "PASS",
+				"signed_profile_context_preserved": "PASS",
+				"signed_run_context_preserved":     "PASS",
+				"audience_is_factory_enroll":       "PASS",
+				"audit_payload_excludes_bearer":    "PASS",
+				"audit_payload_excludes_secret":    "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-AM-IDENTITY-TOKEN-001", Repository: "rtk_account_manager",
+		Targets: []authorizationQualificationTarget{
+			{Package: "./internal/api", GoTest: "TestIntegrationEmailVerificationAndPasswordRecovery"},
+			{Package: "./internal/store", GoTest: "TestBrandCloudLoginActivationTokenIsTenantScoped"},
+		},
+		Assertions: map[string]map[string]string{
+			"REQ-AM-ONE-TIME-TOKEN-001": {
+				"token_hash_persisted":      "PASS",
+				"purpose_isolated":          "PASS",
+				"tenant_scope_enforced":     "PASS",
+				"expiry_rejected":           "PASS",
+				"replay_rejected":           "PASS",
+				"throttle_enumeration_safe": "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-AM-IDENTITY-LIFECYCLE-001", Repository: "rtk_account_manager",
+		Targets: []authorizationQualificationTarget{
+			{Package: "./internal/store", GoTest: "TestDeviceMessagePersistenceRejectsInvalidSchemaValues"},
+			{Package: "./internal/store", GoTest: "TestCreateOrGetDeviceOperationIsIdempotent"},
+			{Package: "./internal/worker/inbox", GoTest: "TestRunOnceDeadLettersLifecycleMessagesWithMismatchedPartitionKeys"},
+		},
+		Assertions: map[string]map[string]string{
+			"REQ-AM-LIFECYCLE-MESSAGE-INTEGRITY-001": {
+				"stream_values_validated":          "PASS",
+				"message_types_validated":          "PASS",
+				"schema_versions_validated":        "PASS",
+				"operation_identity_is_idempotent": "PASS",
+				"device_partition_key_enforced":    "PASS",
+				"invalid_partition_dead_lettered":  "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-AM-OPERATIONS-CONFIG-001", Repository: "rtk_account_manager",
+		Targets: []authorizationQualificationTarget{
+			{Package: "./internal/config", GoTest: "TestLoadRequiresJWTSecrets"},
+			{Package: "./internal/config", GoTest: "TestLoadAcceptsPEMJWTSignerWithoutSharedSecrets"},
+			{Package: "./internal/config", GoTest: "TestLoadRejectsIncompletePEMJWTSigner"},
+			{Package: "./internal/config", GoTest: "TestLoadRejectsUnknownJWTSignerProvider"},
+			{Package: "./internal/config", GoTest: "TestProductionEmailConfigurationFailsClosed"},
+			{Package: "./internal/config", GoTest: "TestProductionSendMailHTTPConfiguration"},
+		},
+		Assertions: map[string]map[string]string{
+			"REQ-AM-RUNTIME-CONFIG-001": {
+				"hs256_requires_secrets":              "PASS",
+				"pem_signer_complete":                 "PASS",
+				"incomplete_pem_rejected":             "PASS",
+				"unknown_signer_rejected":             "PASS",
+				"production_email_fails_closed":       "PASS",
+				"sendmail_https_and_bearer_validated": "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-AM-OPERATIONS-CACHE-001", Repository: "rtk_account_manager",
+		Targets: []authorizationQualificationTarget{
+			{Package: "./internal/usercache", GoTest: "TestStoreGetUserFallsBackToPostgresWhenRedisUnavailable"},
+			{Package: "./internal/usercache", GoTest: "TestStoreRegisterRefreshesUserAuthCacheAfterCommit"},
+			{Package: "./internal/usercache", GoTest: "TestStoreBrandAndEndUserMutationsRefreshCache"},
+			{Package: "./internal/usercache", GoTest: "TestStoreIgnoresCacheReadAndWriteErrors"},
+		},
+		Assertions: map[string]map[string]string{
+			"REQ-AM-CACHE-RESILIENCE-001": {
+				"postgres_read_survives_cache_outage": "PASS",
+				"committed_write_not_rolled_back":     "PASS",
+				"platform_cache_refreshed":            "PASS",
+				"brand_cache_refreshed":               "PASS",
+				"end_user_cache_refreshed":            "PASS",
+				"cache_write_failure_ignored":         "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-AM-OPERATIONS-OIDC-001", Repository: "rtk_account_manager",
+		Targets: []authorizationQualificationTarget{
+			{Package: "./internal/api", GoTest: "TestIntegrationOIDCProviderLoginAndCallback"},
+			{Package: "./internal/auth", GoTest: "TestProviderResolverRejectsUnsupportedOrUnsetSecretRefs"},
+			{Package: "./internal/auth", GoTest: "TestOIDCTokenErrorsDoNotContainProviderTokens"},
+		},
+		Assertions: map[string]map[string]string{
+			"REQ-AM-OIDC-SECRET-001": {
+				"runtime_secret_reference_required": "PASS",
+				"unsupported_secret_ref_rejected":   "PASS",
+				"oidc_callback_completes":           "PASS",
+				"provider_tokens_redacted":          "PASS",
+				"client_secret_not_surfaced":        "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-AM-SIGNUP-EMAIL-001", Repository: "rtk_account_manager",
+		Targets: []authorizationQualificationTarget{
+			{Package: "./internal/api", GoTest: "TestIntegrationSignupQueuesEncryptedEmailWithoutCallingSMTP"},
+			{Package: "./internal/store", GoTest: "TestEmailOutboxTokenAndQueueAreTransactional"},
+			{Package: "./internal/api", GoTest: "TestIntegrationEmailVerificationAndPasswordRecovery"},
+		},
+		Assertions: map[string]map[string]string{
+			"REQ-AM-EMAIL-DELIVERY-001": {
+				"token_and_outbox_atomic":        "PASS",
+				"outbox_payload_encrypted":       "PASS",
+				"direct_smtp_not_called":         "PASS",
+				"delivery_failure_safe":          "PASS",
+				"enumeration_safe_response":      "PASS",
+				"one_time_token_replay_rejected": "PASS",
+			},
+		},
+	},
+	{
 		TestID: "INT-VC-OTA-OPERATOR-001", Repository: "rtk_video_cloud", Package: "./internal/httpapi", GoTest: "TestSKUOTAOperatorAndDeviceAuthenticationBoundaries",
 		Assertions: map[string]map[string]string{
 			"REQ-CONTRACT-AUTHZ-OTA-OPERATOR-001": {
