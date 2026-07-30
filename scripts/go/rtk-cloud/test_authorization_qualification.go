@@ -26,6 +26,116 @@ type authorizationQualificationSpec struct {
 
 var authorizationQualificationSpecs = []authorizationQualificationSpec{
 	{
+		TestID: "INT-VC-AUTH-BOUNDARY-001", Repository: "rtk_video_cloud", Package: "./internal/httpapi", GoTest: "TestRequestTokenRequiresAuthorization",
+		Assertions: map[string]map[string]string{
+			"REQ-CONTRACT-AUTH-CREDENTIAL-BOUNDARY-001": {
+				"missing_bootstrap_credential_rejected": "PASS",
+				"bearer_token_route_preserved":          "PASS",
+			},
+			"REQ-CONTRACT-AUTH-ROUTE-SCOPE-001": {
+				"token_route_scope_enforced":   "PASS",
+				"unauthenticated_issue_denied": "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-VC-AUTH-LIFETIME-001", Repository: "rtk_video_cloud", Package: "./internal/httpapi", GoTest: "TestRequestTokenSuccess",
+		Assertions: map[string]map[string]string{
+			"REQ-CONTRACT-AUTH-LIFETIME-001": {
+				"signed_iat_exp_authoritative": "PASS",
+				"requested_lifetime_signed":    "PASS",
+				"unsigned_expiry_not_exported": "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-VC-AUTH-REISSUE-001", Repository: "rtk_video_cloud", Package: "./internal/httpapi", GoTest: "TestRefreshTokenAllowsReuseForAppScope",
+		Assertions: map[string]map[string]string{
+			"REQ-CONTRACT-AUTH-REISSUE-001": {
+				"signed_source_validated":       "PASS",
+				"fresh_access_token_issued":     "PASS",
+				"source_token_remains_reusable": "PASS",
+			},
+		},
+		Workflows: map[string]map[string]string{
+			"WF-CONTRACT-AUTH-REISSUE-001": {
+				"issue_source_token":       "PASS",
+				"reissue_signed_token":     "PASS",
+				"reuse_valid_source_token": "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-VC-AUTH-IDENTITY-001", Repository: "rtk_video_cloud", Package: "./internal/httpapi", GoTest: "TestRequestTokenRejectsMTLSDeviceMismatch",
+		Assertions: map[string]map[string]string{
+			"REQ-CONTRACT-AUTH-SUBJECT-001": {
+				"certificate_subject_enforced": "PASS",
+				"foreign_device_rejected":      "PASS",
+			},
+			"REQ-CONTRACT-AUTH-CERT-IDENTITY-001": {
+				"certificate_identity_canonical": "PASS",
+				"request_override_rejected":      "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-VC-AUTH-MQTT-001", Repository: "rtk_video_cloud", Package: "./internal/httpapi", GoTest: "TestMQTTAuthenticateDeniesForgedTenantAndClientID",
+		Assertions: map[string]map[string]string{
+			"REQ-CONTRACT-AUTH-MQTT-TENANT-001": {
+				"forged_tenant_rejected":     "PASS",
+				"unbound_client_id_rejected": "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-VC-AUTH-MQTTBILL-001", Repository: "rtk_video_cloud", Package: "./internal/mqttusageapp", GoTest: "TestMQTTBrokerCallbackFeedsMeterAndRequiresToken",
+		Assertions: map[string]map[string]string{
+			"REQ-CONTRACT-AUTH-MQTT-BILLING-001": {
+				"broker_identity_attributed": "PASS",
+				"payload_override_ignored":   "PASS",
+				"broker_auth_required":       "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-VC-AUTH-MTLS-001", Repository: "rtk_video_cloud", Package: "./internal/apiapp", GoTest: "TestBuildAPITLSConfigRequiresVerifiedClientCertWhenMTLSRequired",
+		Assertions: map[string]map[string]string{
+			"REQ-CONTRACT-AUTH-MTLS-TRUST-001": {
+				"verified_client_cert_required": "PASS",
+				"runtime_mtls_fail_closed":      "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-VC-AUTH-ENTITLEMENT-001", Repository: "rtk_video_cloud", Package: "./internal/httpapi", GoTest: "TestRequestTokenMTLSProjectionErrorsFailClosed",
+		Assertions: map[string]map[string]string{
+			"REQ-CONTRACT-AUTH-ENTITLEMENT-001": {
+				"missing_projection_rejected":     "PASS",
+				"unavailable_projection_rejected": "PASS",
+				"revoked_entitlement_rejected":    "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-VC-AUTH-FACTORYCTX-001", Repository: "rtk_video_cloud", Package: "./internal/factoryenroll", GoTest: "TestServiceUsesProductionJWTContextForIssuerSelection",
+		Assertions: map[string]map[string]string{
+			"REQ-CONTRACT-AUTH-FACTORY-CONTEXT-001": {
+				"signed_brand_cloud_selected": "PASS",
+				"signed_profile_selected":     "PASS",
+				"request_override_ignored":    "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-VC-AUTH-LEGACY-001", Repository: "rtk_video_cloud", Package: "./internal/httpapi", GoTest: "TestDeviceSocketRejectsLegacyCertWithoutBearer",
+		Assertions: map[string]map[string]string{
+			"REQ-CONTRACT-AUTH-LEGACY-001": {
+				"legacy_certificate_header_rejected": "PASS",
+				"websocket_bearer_required":          "PASS",
+			},
+		},
+	},
+	{
 		TestID: "INT-AM-AUTHZ-BOUNDARY-001", Repository: "rtk_account_manager", Package: "./internal/api", GoTest: "TestIntegrationVideoCloudRuntimeScopeDoesNotGrantProductRole",
 		Assertions: map[string]map[string]string{
 			"REQ-CONTRACT-AUTHZ-BOUNDARY-001": {

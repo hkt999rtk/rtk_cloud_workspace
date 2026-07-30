@@ -48,6 +48,126 @@ cases:
     environments: [local, ci]
     evidence: [json, junit]
     status: active
+  - id: INT-VC-AUTH-BOUNDARY-001
+    title: Runtime token issuance rejects missing credentials and legacy certificate headers
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/httpapi/router_test.go
+    selector: TestRequestTokenRequiresAuthorization
+    method: Video Cloud HTTP integration test requires a supported bootstrap credential and rejects unauthenticated token issuance.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-AUTH-CREDENTIAL-BOUNDARY-001, REQ-CONTRACT-AUTH-ROUTE-SCOPE-001]
+    status: active
+  - id: INT-VC-AUTH-LIFETIME-001
+    title: Token response uses the signed JWT expiry as the authoritative lifetime
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/httpapi/router_test.go
+    selector: TestRequestTokenSuccess
+    method: Video Cloud HTTP integration test requests a lifetime, validates the signed iat and exp claims, and confirms unsigned expiry fields are not exported.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-AUTH-LIFETIME-001]
+    status: active
+  - id: INT-VC-AUTH-REISSUE-001
+    title: Stateless token reissue preserves source-token validity
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/httpapi/router_test.go
+    selector: TestRefreshTokenAllowsReuseForAppScope
+    method: Video Cloud HTTP integration test issues an app token, reissues it, and proves the still-valid source token can be reissued again without a refresh-grant store.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-AUTH-REISSUE-001]
+    status: active
+  - id: INT-VC-AUTH-IDENTITY-001
+    title: Certificate identity and runtime subject binding reject conflicting devices
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/httpapi/mtls_test.go
+    selector: TestRequestTokenRejectsMTLSDeviceMismatch
+    method: Video Cloud mTLS integration test presents a verified device certificate with a conflicting request device and requires a typed rejection.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-AUTH-SUBJECT-001, REQ-CONTRACT-AUTH-CERT-IDENTITY-001]
+    status: active
+  - id: INT-VC-AUTH-MQTT-001
+    title: MQTT authentication binds tenant namespace and client identity to signed claims
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/httpapi/mqtt_auth_test.go
+    selector: TestMQTTAuthenticateDeniesForgedTenantAndClientID
+    method: MQTT broker-auth HTTP integration test rejects forged Brand Cloud routing identity and an unbound client ID.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-AUTH-MQTT-TENANT-001]
+    status: active
+  - id: INT-VC-AUTH-MQTTBILL-001
+    title: MQTT usage ignores payload tenant overrides and requires broker authentication
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/mqttusageapp/app_test.go
+    selector: TestMQTTBrokerCallbackFeedsMeterAndRequiresToken
+    method: MQTT usage HTTP integration test attributes usage from verified broker identity, ignores a forged payload Brand Cloud ID, and rejects missing broker authorization.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-AUTH-MQTT-BILLING-001]
+    status: active
+  - id: INT-VC-AUTH-MTLS-001
+    title: Runtime TLS requires verified client certificates
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/apiapp/tls_test.go
+    selector: TestBuildAPITLSConfigRequiresVerifiedClientCertWhenMTLSRequired
+    method: API TLS integration test builds the production listener configuration and requires verified client certificates when runtime mTLS is enabled.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-AUTH-MTLS-TRUST-001]
+    status: active
+  - id: INT-VC-AUTH-ENTITLEMENT-001
+    title: Device token issuance fails closed on projection errors
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/httpapi/mtls_test.go
+    selector: TestRequestTokenMTLSProjectionErrorsFailClosed
+    method: Video Cloud mTLS integration test rejects missing, unavailable, and revoked device entitlement projections without issuing a token.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-AUTH-ENTITLEMENT-001]
+    status: active
+  - id: INT-VC-AUTH-FACTORYCTX-001
+    title: Factory issuer selection uses only signed production context
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/factoryenroll/service_test.go
+    selector: TestServiceUsesProductionJWTContextForIssuerSelection
+    method: Factory enrollment service integration test proves signed Brand Cloud and device-profile claims select issuer context instead of CSR or request overrides.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-AUTH-FACTORY-CONTEXT-001]
+    status: active
+  - id: INT-VC-AUTH-LEGACY-001
+    title: Legacy certificate headers cannot authorize protected device transport
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/httpapi/router_test.go
+    selector: TestDeviceSocketRejectsLegacyCertWithoutBearer
+    method: Video Cloud websocket integration test presents only a legacy certificate header and requires bearer-auth rejection.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-AUTH-LEGACY-001]
+    status: active
   - id: INT-AM-AUTHZ-MATRIX-001
     title: Product authorization and tenancy matrix enforces route and compatibility boundaries
     layer: integration
@@ -291,10 +411,15 @@ cases:
   - { <<: *sdk_e2e, id: E2E-SDK-WS-001, title: SDK websocket lifecycle connects sends and disconnects, source: e2e_test/cloud_validation/scenarios/core-smoke.yaml, selector: "test_id: E2E-SDK-WS-001", verifies: [REQ-E2E-SDK-WS-001] }
   - { <<: *sdk_e2e, id: E2E-SDK-WS-002, title: SDK websocket receives a cloud-triggered message, source: e2e_test/cloud_validation/scenarios/core-smoke.yaml, selector: "test_id: E2E-SDK-WS-002", verifies: [REQ-E2E-SDK-WS-002] }
   - { <<: *sdk_e2e, id: E2E-SDK-WS-003, title: SDK websocket survives repeated connect and disconnect, source: e2e_test/cloud_validation/scenarios/nightly-resilience.yaml, selector: "test_id: E2E-SDK-WS-003", verifies: [REQ-E2E-SDK-WS-003] }
+  - { <<: *sdk_e2e, id: E2E-AUTH-APPBOOT-001, title: App login CSR and mTLS token bootstrap completes, source: e2e_test/cloud_validation/scenarios/nightly-resilience.yaml, selector: "test_id: E2E-AUTH-APPBOOT-001", verifies: [REQ-CONTRACT-AUTH-APP-BOOTSTRAP-001] }
+  - { <<: *sdk_e2e, id: E2E-AUTH-DEVRECOVERY-001, title: Device token reissue and certificate recovery completes, source: e2e_test/cloud_validation/scenarios/nightly-resilience.yaml, selector: "test_id: E2E-AUTH-DEVRECOVERY-001", verifies: [REQ-CONTRACT-AUTH-DEVICE-BOOTSTRAP-001, REQ-CONTRACT-AUTH-RECOVERY-001] }
+  - { <<: *sdk_e2e, id: E2E-AUTH-DEVREVOCATION-001, title: Deactivated device certificate cannot bootstrap again, source: e2e_test/cloud_validation/scenarios/nightly-resilience.yaml, selector: "test_id: E2E-AUTH-DEVREVOCATION-001", verifies: [REQ-CONTRACT-AUTH-REVOCATION-001] }
 
   - { id: E2E-FACTORY-ENROLL-001, title: Factory enrollment issues a usable device certificate, layer: e2e, owner: factory_enroll, source: e2e_test/README.md, selector: "factory_enroll/", method: Go E2E runner enrolls a test device and validates the issued identity and certificate chain., runner: test-e2e, environments: [local, staging], evidence: [json, markdown], verifies: [REQ-E2E-FACTORY-ENROLL-001], status: active }
+  - { id: E2E-AUTH-FACTORY-BOOTSTRAP-001, title: Factory-issued certificate bootstraps runtime device authentication, layer: e2e, owner: rtk_video_cloud, source: e2e_test/README.md, selector: "factory_enroll/", method: Go E2E runner uses the factory-issued device identity to obtain and exercise a subject-bound runtime token., runner: test-e2e, environments: [staging], evidence: [json, markdown], verifies: [REQ-CONTRACT-AUTH-FACTORY-ENROLL-001], status: active }
   - { id: E2E-PROV-ACCOUNT-001, title: Account and Video Cloud provisioning smoke completes, layer: e2e, owner: provisioning, source: e2e_test/README.md, selector: "provisioning/account_video_smoke/", method: Go E2E runner provisions isolated test identities across Account Manager and Video Cloud., runner: test-e2e, environments: [staging], evidence: [json, markdown], verifies: [REQ-E2E-PROV-ACCOUNT-001], status: active }
   - { id: E2E-CA-SIGNUP-EMAIL-001, title: Cloud Send Mail and IMAP customer signup activation completes, layer: e2e, owner: cloud_platform, source: scripts/staging_email_signup_e2e.py, selector: "RUN_LIVE_EMAIL_E2E=1", method: Operator runner configures deployed staging HTTPS Send Mail delivery then verifies a plus-address signup email through local IMAP and browser activation/login., runner: test-live, environments: [staging], evidence: [json, logs], verifies: [REQ-E2E-CA-SIGNUP-EMAIL-001], status: active }
+  - { id: E2E-AUTH-ACCOUNT-ONBOARDING-001, title: Public account authentication remains pending until email verification, layer: e2e, owner: rtk_video_cloud, source: scripts/staging_email_signup_e2e.py, selector: "RUN_LIVE_EMAIL_E2E=1", method: Operator runner proves signup creates no session, email verification is required, and only the verified account can establish the initial authenticated session., runner: test-live, environments: [staging], evidence: [json, logs], verifies: [REQ-CONTRACT-AUTH-ACCOUNT-CROSSREF-001], status: active }
   - { id: E2E-LOAD-ACCOUNT-001, title: Load-test Brand owners complete formal email activation, layer: e2e, owner: cloud_platform, source: scripts/go/rtk-cloud/main.go, selector: "email-activate-owners", method: Each resolved run-scoped Brand creates one pending owner through Send Mail; operator-held local IMAP and browser activation must pass before synthetic members or devices are provisioned., runner: test-live, environments: [staging], evidence: [json, logs], verifies: [REQ-E2E-LOAD-ACCOUNT-001], status: active }
   - { id: E2E-PROV-BULK-001, title: Bulk bind artifacts validate for staged onboarding, layer: e2e, owner: provisioning, source: e2e_test/README.md, selector: "provisioning/bulk_bind_validation/", method: Go validator checks bulk-bind input output and per-device consistency., runner: test-e2e, environments: [local, staging], evidence: [json, markdown], verifies: [REQ-E2E-PROV-BULK-001], status: active }
 
