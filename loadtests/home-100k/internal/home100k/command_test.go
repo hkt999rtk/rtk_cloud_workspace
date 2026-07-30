@@ -4012,6 +4012,25 @@ func TestLoadLiveMQTTStageResultPreservesFailureReasons(t *testing.T) {
 	}
 }
 
+func TestLoadLiveMQTTStageResultPreservesAWSNamespaceRejectionEvidence(t *testing.T) {
+	outDir := t.TempDir()
+	payload := map[string]any{
+		"unauthorized_rejections":  float64(1),
+		"aws_namespace_rejections": float64(1),
+		"auth_violations":          float64(0),
+	}
+	if err := writeJSONFile(filepath.Join(outDir, "results.json"), payload); err != nil {
+		t.Fatal(err)
+	}
+	result, err := loadLiveMQTTStageResult(filepath.Join(outDir, "results.json"), Stage{Name: "canary", ConnectedDevices: 10}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.UnauthorizedRejectionCount != 1 || result.AWSNamespaceRejectionCount != 1 || result.AuthorizationViolationCount != 0 {
+		t.Fatalf("policy rejection evidence not preserved: %+v", result)
+	}
+}
+
 func TestLoadLiveMQTTStageResultPreservesFailureEvents(t *testing.T) {
 	outDir := t.TempDir()
 	payload := map[string]any{

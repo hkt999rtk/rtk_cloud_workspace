@@ -600,6 +600,116 @@ cases:
     evidence: [json, junit]
     verifies: [REQ-AM-READINESS-PROJECTION-001, REQ-AM-READINESS-STATES-001]
     status: active
+  - id: INT-VC-SHADOW-CONTRACT-001
+    title: Canonical Device Shadow HTTP MQTT mutation and durability contract
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/httpapi/device_shadow_test.go
+    selector: "./internal/deviceshadow#TestServiceUpdateMergesDesiredAndReportedAndComputesDelta,./internal/deviceshadow#TestServiceUpdateDeletesNullFieldsAndTreatsArraysAsAtomic,./internal/deviceshadow#TestServiceDeleteIncrementsVersionAndRecreateDoesNotReset,./internal/deviceshadow#TestServiceConcurrentVersionedUpdateAllowsExactlyOneWriter,./internal/deviceshadow#TestServiceConcurrentUnversionedPatchesDoNotLoseFields,./internal/deviceshadow#TestAWSShadowProtocolSerializers,./internal/httpapi#TestDeviceShadowAWSRoutesPaginationAndLegacyRemoval,./internal/httpapi#TestDeviceShadowHTTPNamedListDeleteAndVersionConflict,./internal/httpapi#TestDeviceShadowHTTPUsesSharedAWSUpdateValidationMessages,./internal/httpapi#TestDeviceShadowAWSGoServiceSDKCustomEndpoint,./internal/httpapi#TestDeviceShadowHTTPAcceptsAWSServiceSDKSignature,./internal/httpapi#TestDeviceShadowHTTPRejectsInvalidSigV4ScopeFreshnessAndPayload,./internal/mqtt#TestAdapterReceiveShadowUpdatePublishesAcceptedDocumentsAndDelta,./internal/mqtt#TestAdapterReceiveShadowNamedGetAndDelete,./internal/rediscache#TestDeviceShadowStoreOutboxSerializesAcrossWorkers,./internal/rediscache#TestDeviceShadowStoreOutboxRetriesCommittedMutation,./internal/rediscache#TestDeviceShadowStoreOutboxSurvivesWorkerRestart,./internal/rediscache#TestDeviceShadowStoreOutboxDeadLettersAndExportsMetrics,./internal/rediscache#TestDeviceShadowDeleteCommitsOutboxAndLifecycleAuditTogether"
+    method: Cross-protocol integration fixtures exercise AWS-compatible HTTP and RTK MQTT surfaces, named identity, merge deletion delta and array semantics, SigV4 and exact errors, concurrent mutation, Redis retry and replay, tombstone recreation, and ordered durable outbox delivery.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-SHADOW-COMPATIBILITY-001, REQ-SHADOW-IDENTITY-001, REQ-SHADOW-HTTP-API-001, REQ-SHADOW-MQTT-API-001, REQ-SHADOW-MUTATION-001, REQ-SHADOW-RESPONSE-001, REQ-SHADOW-VALIDATION-001, REQ-SHADOW-DELETE-001, REQ-SHADOW-NOTIFICATION-001, REQ-SHADOW-CLIENT-001, REQ-SHADOW-CONFORMANCE-HTTP-001, REQ-SHADOW-CONFORMANCE-DURABILITY-001]
+    status: active
+  - id: INT-VC-TRANSPORT-CONTRACT-001
+    title: Canonical device owner transport routing and capability contract
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/transportregression/regression_test.go
+    selector: "./internal/transportregression#TestSharedTransportRegressionKeepsReplacementOwnerOnDuplicateReconnect,./internal/transportregression#TestSharedTransportRegressionFailsClearlyWithoutActiveOwner,./internal/transportregression#TestSharedTransportRegressionPublishesTowardRemoteOwner,./internal/transportregression#TestSharedTransportRegressionForwardsAtMostOnceWhenOwnerChanges,./internal/transportregression#TestSharedTransportRegressionRoutesLegacyInboundMessages,./internal/transportregression#TestSharedTransportRegressionRoutesSnapshotBinaryPayload,./internal/transportregression#TestSharedTransportRegressionReportsCurrentOwnerTransportCapabilities,./internal/devicebus#TestSessionLifecycleOwnerConnectedRejectsLowerPriorityTransport,./internal/devicebus#TestTransportMuxSendsIdenticalOfferOnlyToCurrentOwnerWithoutFallback,./internal/httpapi#TestDeviceSocketSession,./internal/httpapi#TestNotifyCameraReturnsUnsupportedCapabilityContract"
+    method: Cross-component transport regression tests exercise single-owner replacement, websocket priority, current-owner routing, websocket frames, MQTT topic behavior, WebRTC payload parity, capability reporting, unsupported-capability errors, and device command separation.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-TRANSPORT-SURFACES-001, REQ-CONTRACT-TRANSPORT-LIFECYCLE-001, REQ-CONTRACT-TRANSPORT-OWNER-001, REQ-CONTRACT-TRANSPORT-PRIORITY-001, REQ-CONTRACT-TRANSPORT-ROUTING-001, REQ-CONTRACT-TRANSPORT-WEBSOCKET-001, REQ-CONTRACT-TRANSPORT-WEBRTC-001, REQ-CONTRACT-TRANSPORT-MQTT-001, REQ-CONTRACT-TRANSPORT-CAPABILITY-001, REQ-CONTRACT-TRANSPORT-UNSUPPORTED-001, REQ-CONTRACT-TRANSPORT-COMMAND-001]
+    status: active
+  - id: INT-SDK-TRANSPORT-CONTRACT-001
+    title: JavaScript SDK preserves the transport adapter boundary
+    layer: integration
+    owner: rtk_cloud_client
+    source: repos/rtk_cloud_client/packages/javascript/test/package.test.ts
+    selector: "uses WebSocket adapter boundary for session, events, and snapshot framing"
+    method: The built JavaScript package opens an adapter-backed websocket session, sends control and transport-specific snapshot frames, receives events, and closes without coupling device identity to upgrade authentication.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-TRANSPORT-CLIENT-001]
+    status: active
+  - id: INT-VC-SNAPSHOT-CONTRACT-001
+    title: Snapshot transport models remain logically equivalent and wire-distinct
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/transportregression/regression_test.go
+    selector: "./internal/transportregression#TestSharedTransportRegressionRoutesSnapshotBinaryPayload,./internal/transportregression#TestSharedTransportRegressionNormalizesEquivalentSnapshotAcrossWebsocketAndMQTT,./internal/mqtt#TestApplicationSideSnapshotIngestionSmokeRoutesMQTTBase64ToWorkflowSideEffects,./internal/httpapi#TestDeviceSocketLegacyEventAndSnapshotCompatibility"
+    method: Websocket and MQTT integration flows prove metadata-before-binary websocket framing, single-envelope MQTT base64 framing, equivalent snapshot effects, and explicit native-binary capability differences.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-SNAPSHOT-MODEL-001, REQ-CONTRACT-SNAPSHOT-WEBSOCKET-001, REQ-CONTRACT-SNAPSHOT-MQTT-001, REQ-CONTRACT-SNAPSHOT-CAPABILITY-001]
+    status: active
+  - id: INT-VC-MEDIA-CONTRACT-001
+    title: Direct clip upload and media download compatibility contract
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/httpapi/clip_upload_test.go
+    selector: "./internal/httpapi#TestDirectClipUploadAPI,./internal/httpapi#TestRetiredMultipartClipIsNotBuffered,./internal/httpapi#TestUploadClipGetInfoDownloadAndDelete,./internal/httpapi#TestClipDownloadSupportsRangeRequests,./internal/httpapi#TestSnapshotAndThumbnailDownloadAcceptQueryTokens,./internal/httpapi#TestEncryptedClipDownloadCompatibility"
+    method: HTTP integration tests create and verify direct encrypted uploads, reject retired multipart clips, exercise the compatibility lifecycle, enforce media-only token placement, and validate scoped content and byte-range responses.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-MEDIA-ROUTES-001, REQ-CONTRACT-MEDIA-DIRECT-UPLOAD-001, REQ-CONTRACT-MEDIA-TOKEN-001, REQ-CONTRACT-MEDIA-DOWNLOAD-001]
+    status: active
+  - id: INT-SDK-MEDIA-CONTRACT-001
+    title: JavaScript SDK isolates snapshot and media helpers
+    layer: integration
+    owner: rtk_cloud_client
+    source: repos/rtk_cloud_client/packages/javascript/test/package.test.ts
+    selector: "implements media upload and download helpers with fixtures"
+    method: The built JavaScript package executes fixture-backed snapshot upload and media download helpers, including bearer and legacy query-token placement, independently of standard JSON routes.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-MEDIA-CLIENT-001]
+    status: active
+  - id: INT-VC-STREAMING-CONTRACT-001
+    title: Canonical WebRTC signaling and TURN registry workflows
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/httpapi/router_test.go
+    selector: "./internal/httpapi#TestRequestWebRTCRoundTrip,./internal/httpapi#TestRequestWebRTCUsesAppTokenServiceOptionsClaim,./internal/httpapi#TestRequestWebRTCDeviceNotOnlineLogsStructuredContext,./internal/httpapi#TestRequestWebRTCCloseExpiredSessionReturnsGone,./internal/httpapi#TestRequestWebRTCICEPreflightReturnsServersWithoutSession,./internal/httpapi#TestRequestWebRTCICEServersFromRegistryTURN,./internal/httpapi#TestTURNRegistryRouterLifecycle,./internal/httpapi#TestTURNRegistryRouterRejectsInvalidNodeAuth,./internal/httpapi#TestTURNRegistryRouterFailureMetricsAndRedaction,./internal/devicebus#TestTransportMuxSendsIdenticalOfferOnlyToCurrentOwnerWithoutFallback"
+    method: HTTP and transport integration tests execute ICE preflight, APP offer, device answer, answer readiness, close, stable failures, and the signed TURN node lifecycle with redaction and current-owner offer delivery.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-STREAMING-SURFACE-001, REQ-CONTRACT-STREAMING-AUTH-001, REQ-CONTRACT-STREAMING-ICE-001, REQ-CONTRACT-STREAMING-CREATE-001, REQ-CONTRACT-TURN-REGISTRY-001, REQ-CONTRACT-STREAMING-WAIT-001, REQ-CONTRACT-STREAMING-ANSWER-001, REQ-CONTRACT-STREAMING-CLOSE-001, REQ-CONTRACT-STREAMING-LIFECYCLE-001, REQ-CONTRACT-STREAMING-ERROR-001]
+    status: active
+  - id: INT-SDK-STREAMING-CONTRACT-001
+    title: JavaScript SDK preserves WebRTC session SDP and ICE payloads
+    layer: integration
+    owner: rtk_cloud_client
+    source: repos/rtk_cloud_client/packages/javascript/test/package.test.ts
+    selector: "implements token and HTTP device/config subset with fixtures"
+    method: The built JavaScript package executes fixture-backed WebRTC create, answer and close helpers and preserves opaque session IDs and protocol-owned SDP and ICE payloads.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-STREAMING-CLIENT-001]
+    status: active
+  - id: LIVE-VC-SHADOWMQTT-001
+    title: Scheduled Shadow MQTT namespace conformance
+    layer: live
+    owner: home_cloud
+    feature: device-shadow
+    profile: canary
+    source: loadtests/home-100k/scenarios/mqtt-canary.description.env
+    selector: "test_id: LIVE-VC-SHADOWMQTT-001"
+    method: The scheduled isolated runtime run proves RTK $vc MQTT requests succeed while the AWS topic namespace is rejected by broker policy.
+    runner: test-feature
+    environments: [staging]
+    evidence: [json, junit, logs]
+    verifies: [REQ-SHADOW-CONFORMANCE-MQTT-001]
+    status: active
   - id: UNIT-VC-SHADOW-001
     title: Device shadow rejects stale versions
     layer: unit

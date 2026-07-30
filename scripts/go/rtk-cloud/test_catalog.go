@@ -252,8 +252,8 @@ func loadAndValidateTestCatalogForRunner(workspace, sourceRunner string) (testCa
 			if tc.Feature == "" || tc.Profile == "" {
 				return testCatalog{}, fmt.Errorf("%s %s test-feature case requires feature and profile", prefix, tc.ID)
 			}
-			if tc.Layer != "e2e" && tc.Layer != "load" {
-				return testCatalog{}, fmt.Errorf("%s %s test-feature runner requires e2e or load layer", prefix, tc.ID)
+			if tc.Layer != "e2e" && tc.Layer != "live" && tc.Layer != "load" {
+				return testCatalog{}, fmt.Errorf("%s %s test-feature runner requires e2e, live, or load layer", prefix, tc.ID)
 			}
 		}
 		if tc.Layer == "load" && (tc.Feature == "" || tc.Profile == "") {

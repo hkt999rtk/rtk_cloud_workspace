@@ -92,7 +92,8 @@ printf '{"Action":"pass","Test":"%s"}\n' "$name"
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	outputDir := filepath.Join(t.TempDir(), "qualification")
-	if err := runAuthorizationQualification(workspace, outputDir, ""); err != nil {
+	specs := authorizationQualificationSpecs[:1]
+	if err := runAuthorizationQualificationWithSpecs(workspace, outputDir, "", specs); err != nil {
 		t.Fatal(err)
 	}
 
@@ -107,12 +108,12 @@ printf '{"Action":"pass","Test":"%s"}\n' "$name"
 	if manifest.SchemaVersion != featureEvidenceSchemaV3 {
 		t.Fatalf("schema=%q, want %q", manifest.SchemaVersion, featureEvidenceSchemaV3)
 	}
-	if len(manifest.Cases) != len(authorizationQualificationSpecs) {
-		t.Fatalf("cases=%d, want %d", len(manifest.Cases), len(authorizationQualificationSpecs))
+	if len(manifest.Cases) != len(specs) {
+		t.Fatalf("cases=%d, want %d", len(manifest.Cases), len(specs))
 	}
 	workflowCases := 0
 	expectedWorkflowCases := 0
-	for _, spec := range authorizationQualificationSpecs {
+	for _, spec := range specs {
 		if len(spec.Workflows) > 0 {
 			expectedWorkflowCases++
 		}

@@ -76,6 +76,7 @@ type StageResult struct {
 	VersionConflictCount           int                         `json:"version_conflict_count"`
 	RejectedUpdateCount            int                         `json:"rejected_update_count"`
 	UnauthorizedRejectionCount     int                         `json:"unauthorized_rejection_count"`
+	AWSNamespaceRejectionCount     int                         `json:"aws_namespace_rejection_count"`
 	DuplicateSuppressionCount      int                         `json:"duplicate_suppression_count"`
 	AuthorizationViolationCount    int                         `json:"authorization_violation_count"`
 	ClientTokenCorrelationCount    int                         `json:"client_token_correlation_count"`
@@ -1531,6 +1532,7 @@ func aggregateStageResults(items []StageResult) StageResult {
 		result.VersionConflictCount += item.VersionConflictCount
 		result.RejectedUpdateCount += item.RejectedUpdateCount
 		result.UnauthorizedRejectionCount += item.UnauthorizedRejectionCount
+		result.AWSNamespaceRejectionCount += item.AWSNamespaceRejectionCount
 		result.DuplicateSuppressionCount += item.DuplicateSuppressionCount
 		result.AuthorizationViolationCount += item.AuthorizationViolationCount
 		result.ClientTokenCorrelationCount += item.ClientTokenCorrelationCount

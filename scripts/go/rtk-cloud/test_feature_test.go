@@ -126,6 +126,7 @@ func TestResolveFeatureSpecsQualificationRunsCanaryFirst(t *testing.T) {
 	catalog := testCatalog{Cases: []testCatalogCase{
 		{ID: "E2E-HOME-SHADOW-002", Layer: "e2e", Feature: "device-shadow", Profile: "canary", Runner: "test-feature", Status: "active", Source: "canary.env", Method: "offline"},
 		{ID: "E2E-HOME-SHADOW-001", Layer: "e2e", Feature: "device-shadow", Profile: "canary", Runner: "test-feature", Status: "active", Source: "canary.env", Method: "online"},
+		{ID: "LIVE-VC-SHADOWMQTT-001", Layer: "live", Feature: "device-shadow", Profile: "canary", Runner: "test-feature", Status: "active", Source: "canary.env", Method: "broker policy"},
 		{ID: "LOAD-HOME-SHADOW-001", Layer: "load", Feature: "device-shadow", Profile: "qualification-1k", Runner: "test-feature", Status: "active", Source: "1k.env", Covers: []string{"E2E-HOME-SHADOW-001", "E2E-HOME-SHADOW-002"}},
 	}}
 	specs, err := resolveFeatureSpecs(catalog, "device-shadow", "qualification-1k")
@@ -135,7 +136,7 @@ func TestResolveFeatureSpecsQualificationRunsCanaryFirst(t *testing.T) {
 	if len(specs) != 2 || specs[0].Profile != "canary" || specs[1].Profile != "qualification-1k" {
 		t.Fatalf("unexpected execution order: %+v", specs)
 	}
-	if strings.Join(specs[0].TestIDs, ",") != "E2E-HOME-SHADOW-001,E2E-HOME-SHADOW-002" {
+	if strings.Join(specs[0].TestIDs, ",") != "E2E-HOME-SHADOW-001,E2E-HOME-SHADOW-002,LIVE-VC-SHADOWMQTT-001" {
 		t.Fatalf("canary IDs are not stable and sorted: %v", specs[0].TestIDs)
 	}
 }
@@ -460,6 +461,7 @@ func TestEvaluateFeatureEvidenceDoesNotPassCasesWhenAggregateIsIncomplete(t *tes
 			"version_conflict_count":                    float64(1),
 			"rejected_update_count":                     float64(1),
 			"unauthorized_rejection_count":              float64(1),
+			"aws_namespace_rejection_count":             float64(1),
 			"duplicate_suppression_count":               float64(1),
 			"duplicate_apply_count":                     float64(0),
 			"authorization_violation_count":             float64(0),
@@ -678,6 +680,7 @@ func TestEvaluateShadowCasesRequiresBehaviorEvidence(t *testing.T) {
 			"version_conflict_count":                    float64(1),
 			"rejected_update_count":                     float64(1),
 			"unauthorized_rejection_count":              float64(1),
+			"aws_namespace_rejection_count":             float64(1),
 			"duplicate_suppression_count":               float64(1),
 			"duplicate_apply_count":                     float64(0),
 			"authorization_violation_count":             float64(0),
@@ -689,10 +692,23 @@ func TestEvaluateShadowCasesRequiresBehaviorEvidence(t *testing.T) {
 	if exact != 100 {
 		t.Fatalf("exact correlation = %v", exact)
 	}
-	for _, id := range []string{"E2E-HOME-SHADOW-001", "E2E-HOME-SHADOW-002", "E2E-HOME-SHADOW-003"} {
+	for _, id := range []string{"E2E-HOME-SHADOW-001", "E2E-HOME-SHADOW-002", "E2E-HOME-SHADOW-003", "LIVE-VC-SHADOWMQTT-001"} {
 		if cases[id].Status != "PASS" {
 			t.Fatalf("%s = %+v", id, cases[id])
 		}
+	}
+}
+
+func TestEvaluateShadowCasesRejectsMissingAWSNamespaceEvidence(t *testing.T) {
+	results := map[string]any{
+		"runtime_log_correlation": map[string]any{"status": "pass"},
+		"stage_results": []any{map[string]any{
+			"authorization_violation_count": float64(0),
+		}},
+	}
+	_, _, _, _, cases := evaluateFeatureCases(featureRunSpec{Feature: "device-shadow", Profile: "canary"}, results, t.TempDir())
+	if cases["LIVE-VC-SHADOWMQTT-001"].Status != "FAIL" {
+		t.Fatalf("missing AWS namespace rejection = %+v", cases["LIVE-VC-SHADOWMQTT-001"])
 	}
 }
 

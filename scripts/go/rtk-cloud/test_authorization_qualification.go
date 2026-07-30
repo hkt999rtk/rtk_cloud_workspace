@@ -26,11 +26,16 @@ type authorizationQualificationSpec struct {
 }
 
 type authorizationQualificationTarget struct {
-	Package string
-	GoTest  string
+	Package        string
+	GoTest         string
+	WorkingDir     string
+	SetupCommands  [][]string
+	Command        []string
+	Label          string
+	OutputContains []string
 }
 
-var authorizationQualificationSpecs = []authorizationQualificationSpec{
+var authorizationQualificationSpecs = append([]authorizationQualificationSpec{
 	{
 		TestID: "INT-VC-AUTH-BOUNDARY-001", Repository: "rtk_video_cloud", Package: "./internal/httpapi", GoTest: "TestRequestTokenRequiresAuthorization",
 		Assertions: map[string]map[string]string{
@@ -835,7 +840,7 @@ var authorizationQualificationSpecs = []authorizationQualificationSpec{
 			},
 		},
 	},
-}
+}, deviceContractQualificationSpecs...)
 
 type goTestJSONEvent struct {
 	Action string `json:"Action"`
@@ -852,6 +857,10 @@ type authorizationQualificationResult struct {
 }
 
 func runAuthorizationQualification(workspace, outputDir, runID string) error {
+	return runAuthorizationQualificationWithSpecs(workspace, outputDir, runID, authorizationQualificationSpecs)
+}
+
+func runAuthorizationQualificationWithSpecs(workspace, outputDir, runID string, specs []authorizationQualificationSpec) error {
 	if strings.TrimSpace(runID) == "" {
 		runID = time.Now().UTC().Format("20060102T150405Z") + "-account-authz"
 	}
@@ -866,8 +875,8 @@ func runAuthorizationQualification(workspace, outputDir, runID string) error {
 	for _, tc := range catalog.Cases {
 		caseByID[tc.ID] = tc
 	}
-	results := make([]authorizationQualificationResult, 0, len(authorizationQualificationSpecs))
-	for _, spec := range authorizationQualificationSpecs {
+	results := make([]authorizationQualificationResult, 0, len(specs))
+	for _, spec := range specs {
 		tc, ok := caseByID[spec.TestID]
 		if !ok || tc.Status != "active" || tc.Layer != "integration" {
 			return fmt.Errorf("authorization qualification case %s is missing or is not an active integration case", spec.TestID)
@@ -885,16 +894,41 @@ func runAuthorizationQualification(workspace, outputDir, runID string) error {
 		}
 		started := time.Now().UTC()
 		for _, target := range targets {
+			if len(target.Command) > 0 {
+				for _, setup := range target.SetupCommands {
+					if len(setup) == 0 {
+						return fmt.Errorf("%s target %s has an empty setup command", spec.TestID, target.Label)
+					}
+					setupCommand := exec.Command(setup[0], setup[1:]...)
+					setupCommand.Dir = filepath.Join(workspace, "repos", spec.Repository, target.WorkingDir)
+					output, commandErr := setupCommand.CombinedOutput()
+					if commandErr != nil {
+						return fmt.Errorf("%s target %s setup failed: %w\n%s", spec.TestID, target.Label, commandErr, output)
+					}
+				}
+				command := exec.Command(target.Command[0], target.Command[1:]...)
+				command.Dir = filepath.Join(workspace, "repos", spec.Repository, target.WorkingDir)
+				output, commandErr := command.CombinedOutput()
+				if commandErr != nil {
+					return fmt.Errorf("%s target %s failed: %w\n%s", spec.TestID, target.Label, commandErr, output)
+				}
+				for _, expected := range target.OutputContains {
+					if !bytes.Contains(output, []byte(expected)) {
+						return fmt.Errorf("%s target %s output is missing %q", spec.TestID, target.Label, expected)
+					}
+				}
+				continue
+			}
 			command := exec.Command("go", "test", "-json", "-count=1", target.Package, "-run", "^"+target.GoTest+"$")
 			command.Dir = filepath.Join(workspace, "repos", spec.Repository)
 			command.Env = append(os.Environ(), "GOWORK=off")
 			output, commandErr := command.CombinedOutput()
+			if commandErr != nil {
+				return fmt.Errorf("%s target %s#%s failed: %w\n%s", spec.TestID, target.Package, target.GoTest, commandErr, output)
+			}
 			passed, skipped, parseErr := qualificationGoTestStatus(output, target.GoTest)
 			if parseErr != nil {
 				return fmt.Errorf("%s target %s#%s result: %w", spec.TestID, target.Package, target.GoTest, parseErr)
-			}
-			if commandErr != nil {
-				return fmt.Errorf("%s target %s#%s failed: %w", spec.TestID, target.Package, target.GoTest, commandErr)
 			}
 			if skipped || !passed {
 				return fmt.Errorf("%s target %s#%s did not execute to PASS (skipped=%t)", spec.TestID, target.Package, target.GoTest, skipped)
@@ -952,7 +986,7 @@ func runAuthorizationQualification(workspace, outputDir, runID string) error {
 		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
 		SpecCommit:    specCommit,
 	}
-	for _, spec := range authorizationQualificationSpecs {
+	for _, spec := range specs {
 		result := resultByID[spec.TestID]
 		assertions := make([]featureRequirementAssertion, 0, len(spec.Assertions))
 		workflowAssertions := make([]featureWorkflowAssertion, 0, len(spec.Workflows))
@@ -1019,7 +1053,9 @@ func runAuthorizationQualification(workspace, outputDir, runID string) error {
 func authorizationQualificationTargets(spec authorizationQualificationSpec) ([]authorizationQualificationTarget, error) {
 	if len(spec.Targets) > 0 {
 		for _, target := range spec.Targets {
-			if strings.TrimSpace(target.Package) == "" || strings.TrimSpace(target.GoTest) == "" {
+			hasGoTest := strings.TrimSpace(target.Package) != "" && strings.TrimSpace(target.GoTest) != ""
+			hasCommand := len(target.Command) > 0 && strings.TrimSpace(target.Label) != ""
+			if hasGoTest == hasCommand {
 				return nil, fmt.Errorf("qualification target requires package and Go test")
 			}
 		}
@@ -1037,6 +1073,10 @@ func authorizationQualificationSelector(spec authorizationQualificationSpec, tar
 	}
 	parts := make([]string, 0, len(targets))
 	for _, target := range targets {
+		if len(target.Command) > 0 {
+			parts = append(parts, target.Label)
+			continue
+		}
 		parts = append(parts, target.Package+"#"+target.GoTest)
 	}
 	return strings.Join(parts, ",")
