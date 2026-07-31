@@ -1074,9 +1074,18 @@ func writeCaseFeatureEvidence(workspace, outputDir, testID, runID, environment, 
 	if err != nil {
 		return err
 	}
-	workflowAssertions, err := loadLiveWorkflowAssertions(outputDir, tc, inventory)
+	workflowAssertions, evidenceStatus, evidenceAssessment, err := qualifyLiveWorkflowEvidence(
+		outputDir, tc, inventory, featureQualificationMode(),
+	)
 	if err != nil {
 		return err
+	}
+	if evidenceStatus == "INCOMPLETE" {
+		for i := range assertions {
+			assertions[i].Status = evidenceStatus
+			assertions[i].Assessment = evidenceAssessment
+			assertions[i].Assertions["workflow_contract"] = evidenceStatus
+		}
 	}
 	manifest := featureEvidenceManifestV2{
 		SchemaVersion: featureEvidenceSchemaV3,
@@ -1085,8 +1094,8 @@ func writeCaseFeatureEvidence(workspace, outputDir, testID, runID, environment, 
 		SpecCommit:    specCommit,
 		Cases: []featureCaseEvidenceV2{{
 			TestID:          testID,
-			Status:          "PASS",
-			Assessment:      "live product flow passed",
+			Status:          evidenceStatus,
+			Assessment:      evidenceAssessment,
 			Environment:     environment,
 			Target:          target,
 			StartedAt:       started.UTC().Format(time.RFC3339),
@@ -1105,18 +1114,34 @@ func writeCaseFeatureEvidence(workspace, outputDir, testID, runID, environment, 
 	}
 	if err := writeJSON(filepath.Join(outputDir, "feature-results.json"), map[string]any{
 		"schema_version": featureEvidenceSchemaV3,
-		"run_id":         runID, "test_id": testID, "status": "PASS",
+		"run_id":         runID, "test_id": testID, "status": evidenceStatus, "assessment": evidenceAssessment,
 		"started_at": started.UTC().Format(time.RFC3339), "completed_at": completed.UTC().Format(time.RFC3339),
 	}); err != nil {
 		return err
 	}
 	duration := completed.Sub(started).Seconds()
-	junit := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?><testsuite name="feature-live" tests="1" failures="0" time="%.3f"><testcase classname="feature-live" name="%s" time="%.3f"/></testsuite>`+"\n", duration, testID, duration)
+	junitCase := fmt.Sprintf(`<testcase classname="feature-live" name="%s" time="%.3f"/>`, testID, duration)
+	if evidenceStatus == "INCOMPLETE" {
+		junitCase = fmt.Sprintf(`<testcase classname="feature-live" name="%s" time="%.3f"><skipped message="canonical workflow evidence incomplete"/></testcase>`, testID, duration)
+	}
+	junit := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?><testsuite name="feature-live" tests="1" failures="0" skipped="%d" time="%.3f">%s</testsuite>`+"\n", map[bool]int{true: 1}[evidenceStatus == "INCOMPLETE"], duration, junitCase)
 	if err := os.WriteFile(filepath.Join(outputDir, "feature-junit.xml"), []byte(junit), 0o644); err != nil {
 		return err
 	}
-	report := fmt.Sprintf("# Live Feature Evidence\n\n- Test ID: `%s`\n- Run ID: `%s`\n- Status: **PASS**\n- Requirements: `%s`\n- Workspace commit: `%s`\n", testID, runID, strings.Join(tc.Verifies, "`, `"), commits["workspace"])
+	report := fmt.Sprintf("# Live Feature Evidence\n\n- Test ID: `%s`\n- Run ID: `%s`\n- Status: **%s**\n- Assessment: %s\n- Requirements: `%s`\n- Workspace commit: `%s`\n", testID, runID, evidenceStatus, evidenceAssessment, strings.Join(tc.Verifies, "`, `"), commits["workspace"])
 	return os.WriteFile(filepath.Join(outputDir, "FEATURE_REPORT.md"), []byte(report), 0o644)
+}
+
+func qualifyLiveWorkflowEvidence(outputDir string, tc testCatalogCase, inventory specInventory, mode string) ([]featureWorkflowAssertion, string, string, error) {
+	assertions, err := loadLiveWorkflowAssertions(outputDir, tc, inventory)
+	if err == nil {
+		return assertions, "PASS", "live product flow passed", nil
+	}
+	if mode == "required" {
+		return nil, "", "", err
+	}
+	assessment := "live product flow passed but canonical workflow evidence is incomplete: " + err.Error()
+	return nil, "INCOMPLETE", assessment, nil
 }
 
 func loadLiveWorkflowAssertions(outputDir string, tc testCatalogCase, inventory specInventory) ([]featureWorkflowAssertion, error) {
